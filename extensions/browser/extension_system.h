@@ -46,6 +46,9 @@ class ValueStoreFactory;
 // their own right.
 class ExtensionSystem : public KeyedService {
  public:
+  // A callback to be executed when InstallUpdate finishes.
+  using InstallUpdateCallback = base::OnceCallback<void(bool success)>;
+
   ExtensionSystem();
   ~ExtensionSystem() override;
 
@@ -57,7 +60,8 @@ class ExtensionSystem : public KeyedService {
   // controlled by |extensions_enabled|.
   virtual void InitForRegularProfile(bool extensions_enabled) = 0;
 
-  // The ExtensionService is created at startup.
+  // The ExtensionService is created at startup. ExtensionService is only
+  // defined in Chrome.
   virtual ExtensionService* extension_service() = 0;
 
   // Per-extension data that can change during the life of the process but
@@ -109,7 +113,7 @@ class ExtensionSystem : public KeyedService {
   // EXTENSION_UNLOADED notification have finished running.
   virtual void UnregisterExtensionWithRequestContexts(
       const std::string& extension_id,
-      const UnloadedExtensionInfo::Reason reason) {}
+      const UnloadedExtensionReason reason) {}
 
   // Signaled when the extension system has completed its startup tasks.
   virtual const OneShotEvent& ready() const = 0;
@@ -124,11 +128,11 @@ class ExtensionSystem : public KeyedService {
       const Extension* extension) = 0;
 
   // Install an updated version of |extension_id| with the version given in
-  // temp_dir. Ownership of |temp_dir| in the filesystem is transferred and
-  // implementors of this function are responsible for cleaning it up on
-  // errors, etc.
+  // |unpacked_dir|. Ownership of |unpacked_dir| in the filesystem is
+  // transferred and implementors of this function are responsible for cleaning
+  // it up on errors, etc.
   virtual void InstallUpdate(const std::string& extension_id,
-                             const base::FilePath& temp_dir) = 0;
+                             const base::FilePath& unpacked_dir) = 0;
 };
 
 }  // namespace extensions

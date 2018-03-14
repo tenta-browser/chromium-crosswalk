@@ -4,13 +4,15 @@
 
 #include "ash/frame/header_view.h"
 
+#include <memory>
+
+#include "ash/frame/caption_buttons/frame_back_button.h"
 #include "ash/frame/caption_buttons/frame_caption_button_container_view.h"
-#include "ash/frame/default_header_painter.h"
-#include "ash/session/session_state_delegate.h"
+#include "ash/frame/custom_frame_view_ash.h"
+#include "ash/frame/default_frame_header.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
-#include "ash/wm_window.h"
-#include "ui/gfx/canvas.h"
+#include "ash/wm/tablet_mode/tablet_mode_controller.h"
+#include "ash/wm/window_state.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/widget/widget.h"
 
@@ -19,27 +21,28 @@ namespace ash {
 HeaderView::HeaderView(views::Widget* target_widget,
                        mojom::WindowStyle window_style)
     : target_widget_(target_widget),
-      header_painter_(base::MakeUnique<DefaultHeaderPainter>(window_style)),
       avatar_icon_(nullptr),
       caption_button_container_(nullptr),
-      fullscreen_visible_fraction_(0) {
+      fullscreen_visible_fraction_(0),
+      should_paint_(true) {
   caption_button_container_ =
       new FrameCaptionButtonContainerView(target_widget_);
   caption_button_container_->UpdateSizeButtonVisibility();
   AddChildView(caption_button_container_);
 
-  header_painter_->Init(target_widget_, this, caption_button_container_);
-  UpdateAvatarIcon();
+  frame_header_ = std::make_unique<DefaultFrameHeader>(
+      target_widget_, this, caption_button_container_, window_style);
 
-  Shell::Get()->AddShellObserver(this);
+  Shell::Get()->tablet_mode_controller()->AddObserver(this);
 }
 
 HeaderView::~HeaderView() {
-  Shell::Get()->RemoveShellObserver(this);
+  if (Shell::Get()->tablet_mode_controller())
+    Shell::Get()->tablet_mode_controller()->RemoveObserver(this);
 }
 
 void HeaderView::SchedulePaintForTitle() {
-  header_painter_->SchedulePaintForTitle();
+  frame_header_->SchedulePaintForTitle();
 }
 
 void HeaderView::ResetWindowControls() {
@@ -47,7 +50,13 @@ void HeaderView::ResetWindowControls() {
 }
 
 int HeaderView::GetPreferredOnScreenHeight() {
-  if (is_immersive_delegate_ && target_widget_->IsFullscreen()) {
+  const bool should_hide_titlebar_in_tablet_mode =
+      Shell::Get()->tablet_mode_controller() &&
+      Shell::Get()->tablet_mode_controller()->ShouldAutoHideTitlebars() &&
+      target_widget_->IsMaximized();
+
+  if (is_immersive_delegate_ &&
+      (target_widget_->IsFullscreen() || should_hide_titlebar_in_tablet_mode)) {
     return static_cast<int>(GetPreferredHeight() *
                             fullscreen_visible_fraction_);
   }
@@ -58,32 +67,44 @@ int HeaderView::GetPreferredHeight() {
   // Calculating the preferred height requires at least one Layout().
   if (!did_layout_)
     Layout();
-  return header_painter_->GetHeaderHeightForPainting();
+  return frame_header_->GetHeaderHeightForPainting();
 }
 
 int HeaderView::GetMinimumWidth() const {
-  return header_painter_->GetMinimumHeaderWidth();
+  return frame_header_->GetMinimumHeaderWidth();
 }
 
-void HeaderView::UpdateAvatarIcon() {
-  SessionStateDelegate* delegate = ShellPort::Get()->GetSessionStateDelegate();
-  WmWindow* window = WmWindow::Get(target_widget_->GetNativeWindow());
-  bool show = delegate->ShouldShowAvatar(window);
+void HeaderView::SetAvatarIcon(const gfx::ImageSkia& avatar) {
+  const bool show = !avatar.isNull();
   if (!show) {
     if (!avatar_icon_)
       return;
     delete avatar_icon_;
     avatar_icon_ = nullptr;
   } else {
-    gfx::ImageSkia image = delegate->GetAvatarImageForWindow(window);
-    DCHECK_EQ(image.width(), image.height());
+    DCHECK_EQ(avatar.width(), avatar.height());
     if (!avatar_icon_) {
       avatar_icon_ = new views::ImageView();
       AddChildView(avatar_icon_);
     }
-    avatar_icon_->SetImage(image);
+    avatar_icon_->SetImage(avatar);
   }
-  header_painter_->UpdateLeftHeaderView(avatar_icon_);
+  frame_header_->set_left_header_view(avatar_icon_);
+  Layout();
+}
+
+void HeaderView::SetBackButtonState(FrameBackButtonState state) {
+  if (state != FrameBackButtonState::kInvisible) {
+    if (!back_button_) {
+      back_button_ = new FrameBackButton();
+      AddChildView(back_button_);
+    }
+    back_button_->SetEnabled(state == FrameBackButtonState::kVisibleEnabled);
+  } else {
+    delete back_button_;
+    back_button_ = nullptr;
+  }
+  frame_header_->set_back_button(back_button_);
   Layout();
 }
 
@@ -95,15 +116,15 @@ void HeaderView::SizeConstraintsChanged() {
 
 void HeaderView::SetFrameColors(SkColor active_frame_color,
                                 SkColor inactive_frame_color) {
-  header_painter_->SetFrameColors(active_frame_color, inactive_frame_color);
+  frame_header_->SetFrameColors(active_frame_color, inactive_frame_color);
 }
 
 SkColor HeaderView::GetActiveFrameColor() const {
-  return header_painter_->GetActiveFrameColor();
+  return frame_header_->GetActiveFrameColor();
 }
 
 SkColor HeaderView::GetInactiveFrameColor() const {
-  return header_painter_->GetInactiveFrameColor();
+  return frame_header_->GetInactiveFrameColor();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -111,18 +132,22 @@ SkColor HeaderView::GetInactiveFrameColor() const {
 
 void HeaderView::Layout() {
   did_layout_ = true;
-  header_painter_->LayoutHeader();
+  if (back_button_)
+    back_button_->set_use_light_images(frame_header_->ShouldUseLightImages());
+  frame_header_->LayoutHeader();
 }
 
 void HeaderView::OnPaint(gfx::Canvas* canvas) {
+  if (!should_paint_)
+    return;
+
   bool paint_as_active =
       target_widget_->non_client_view()->frame_view()->ShouldPaintAsActive();
-  caption_button_container_->SetPaintAsActive(paint_as_active);
+  frame_header_->SetPaintAsActive(paint_as_active);
 
-  HeaderPainter::Mode header_mode = paint_as_active
-                                        ? HeaderPainter::MODE_ACTIVE
-                                        : HeaderPainter::MODE_INACTIVE;
-  header_painter_->PaintHeader(canvas, header_mode);
+  FrameHeader::Mode header_mode =
+      paint_as_active ? FrameHeader::MODE_ACTIVE : FrameHeader::MODE_INACTIVE;
+  frame_header_->PaintHeader(canvas, header_mode);
 }
 
 void HeaderView::ChildPreferredSizeChanged(views::View* child) {
@@ -135,29 +160,30 @@ void HeaderView::ChildPreferredSizeChanged(views::View* child) {
   parent()->Layout();
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// HeaderView, ShellObserver overrides:
-
-void HeaderView::OnOverviewModeStarting() {
-  caption_button_container_->SetVisible(false);
-}
-
-void HeaderView::OnOverviewModeEnded() {
-  caption_button_container_->SetVisible(true);
-}
-
-void HeaderView::OnMaximizeModeStarted() {
+void HeaderView::OnTabletModeStarted() {
   caption_button_container_->UpdateSizeButtonVisibility();
   parent()->Layout();
+  if (Shell::Get()->tablet_mode_controller()->ShouldAutoHideTitlebars())
+    target_widget_->non_client_view()->Layout();
 }
 
-void HeaderView::OnMaximizeModeEnded() {
+void HeaderView::OnTabletModeEnded() {
   caption_button_container_->UpdateSizeButtonVisibility();
   parent()->Layout();
+  target_widget_->non_client_view()->Layout();
 }
 
 views::View* HeaderView::avatar_icon() const {
   return avatar_icon_;
+}
+
+void HeaderView::SetShouldPaintHeader(bool paint) {
+  if (should_paint_ == paint)
+    return;
+
+  should_paint_ = paint;
+  caption_button_container_->SetVisible(should_paint_);
+  SchedulePaint();
 }
 
 ///////////////////////////////////////////////////////////////////////////////

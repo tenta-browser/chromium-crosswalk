@@ -23,6 +23,7 @@
 #include "extensions/common/extensions_client.h"
 #include "extensions/common/features/feature_channel.h"
 #include "extensions/common/features/feature_session_type.h"
+#include "extensions/common/permissions/permissions_data.h"
 #include "ui/base/webui/web_ui_util.h"
 
 using content::BrowserContext;
@@ -102,8 +103,11 @@ void RendererStartupHelper::InitializeProcess(
   // Extensions need to know the channel and the session type for API
   // restrictions. The values are sent to all renderers, as the non-extension
   // renderers may have content scripts.
-  process->Send(new ExtensionMsg_SetSessionInfo(
-      GetCurrentChannel(), GetCurrentFeatureSessionType()));
+  bool is_lock_screen_context =
+      client->IsLockScreenContext(process->GetBrowserContext());
+  process->Send(new ExtensionMsg_SetSessionInfo(GetCurrentChannel(),
+                                                GetCurrentFeatureSessionType(),
+                                                is_lock_screen_context));
 
   // Platform apps need to know the system font.
   // TODO(dbeam): this is not the system font in all cases.
@@ -122,6 +126,15 @@ void RendererStartupHelper::InitializeProcess(
     process->Send(new ExtensionMsg_SetWebViewPartitionID(
         WebViewGuest::GetPartitionID(process)));
   }
+
+  // Load default policy_blocked_hosts and policy_allowed_hosts settings, part
+  // of the ExtensionSettings policy.
+  ExtensionMsg_UpdateDefaultPolicyHostRestrictions_Params params;
+  params.default_policy_blocked_hosts =
+      PermissionsData::default_policy_blocked_hosts();
+  params.default_policy_allowed_hosts =
+      PermissionsData::default_policy_allowed_hosts();
+  process->Send(new ExtensionMsg_UpdateDefaultPolicyHostRestrictions(params));
 
   // Loaded extensions.
   std::vector<ExtensionMsg_Loaded_Params> loaded_extensions;

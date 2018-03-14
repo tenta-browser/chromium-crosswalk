@@ -14,9 +14,9 @@
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/leveldatabase/src/helpers/memenv/memenv.h"
+#include "third_party/leveldatabase/env_chromium.h"
+#include "third_party/leveldatabase/leveldb_chrome.h"
 #include "third_party/leveldatabase/src/include/leveldb/db.h"
-#include "third_party/leveldatabase/src/include/leveldb/env.h"
 
 namespace sync_file_system {
 namespace drive_backend {
@@ -32,7 +32,7 @@ class LevelDBWrapperTest : public testing::Test {
 
   void SetUp() override {
     ASSERT_TRUE(database_dir_.CreateUniqueTempDir());
-    in_memory_env_.reset(leveldb::NewMemEnv(leveldb::Env::Default()));
+    in_memory_env_.reset(leveldb_chrome::NewMemEnv(leveldb::Env::Default()));
     InitializeLevelDB();
   }
 
@@ -49,7 +49,7 @@ class LevelDBWrapperTest : public testing::Test {
     const char* keys[] = {"ab", "a", "d", "bb", "d"};
     for (size_t i = 0; i < arraysize(keys); ++i) {
       leveldb::Status status =
-          db->Put(leveldb::WriteOptions(), keys[i], base::SizeTToString(i));
+          db->Put(leveldb::WriteOptions(), keys[i], base::NumberToString(i));
       ASSERT_TRUE(status.ok());
     }
   }
@@ -74,16 +74,16 @@ class LevelDBWrapperTest : public testing::Test {
 
  private:
   void InitializeLevelDB() {
-    leveldb::DB* db = nullptr;
-    leveldb::Options options;
+    std::unique_ptr<leveldb::DB> db;
+    leveldb_env::Options options;
     options.create_if_missing = true;
     options.max_open_files = 0;  // Use minimum.
     options.env = in_memory_env_.get();
-    leveldb::Status status =
-        leveldb::DB::Open(options, database_dir_.GetPath().AsUTF8Unsafe(), &db);
+    leveldb::Status status = leveldb_env::OpenDB(
+        options, database_dir_.GetPath().AsUTF8Unsafe(), &db);
     ASSERT_TRUE(status.ok());
 
-    db_.reset(new LevelDBWrapper(base::WrapUnique(db)));
+    db_.reset(new LevelDBWrapper(std::move(db)));
   }
 
   base::ScopedTempDir database_dir_;

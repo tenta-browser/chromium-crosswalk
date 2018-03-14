@@ -65,7 +65,7 @@ class CORE_EXPORT SharedWorker final
 
   bool HasPendingActivity() const final;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   explicit SharedWorker(ExecutionContext*);

@@ -4,6 +4,7 @@
 
 package org.chromium.chromoting.jni;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 
 import org.chromium.base.ContextUtils;
@@ -26,6 +27,7 @@ public class JniInterface {
     private static final String LIBRARY_NAME = "remoting_client_jni";
 
     // Used to fetch auth token for native client.
+    @SuppressLint("StaticFieldLeak")
     private static OAuthTokenConsumer sLoggerTokenConsumer;
 
     private static String sAccount;
@@ -37,6 +39,7 @@ public class JniInterface {
      */
     public static void loadLibrary(Context context) {
         ContextUtils.initApplicationContext(context.getApplicationContext());
+        JniOAuthTokenGetter.setContext(context);
         sLoggerTokenConsumer = new OAuthTokenConsumer(context.getApplicationContext(), TOKEN_SCOPE);
         try {
             System.loadLibrary(LIBRARY_NAME);
@@ -44,7 +47,6 @@ public class JniInterface {
             Log.w(TAG, "Couldn't load " + LIBRARY_NAME + ", trying " + LIBRARY_NAME + ".cr");
             System.loadLibrary(LIBRARY_NAME + ".cr");
         }
-        ContextUtils.initApplicationContextForNative();
         nativeLoadNative();
     }
 

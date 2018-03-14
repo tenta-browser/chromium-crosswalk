@@ -94,9 +94,6 @@ using base::scoped_nsobject;
 }
 
 - (void)discoverDescriptorsForCharacteristic:(CBCharacteristic*)characteristic {
-  MockCBCharacteristic* mock_characteristic =
-      ObjCCast<MockCBCharacteristic>(characteristic);
-  [mock_characteristic discoverDescriptors];
 }
 
 - (void)readValueForCharacteristic:(CBCharacteristic*)characteristic {
@@ -126,11 +123,11 @@ using base::scoped_nsobject;
 }
 
 - (void)removeAllServices {
-  [_services.get() removeAllObjects];
+  [_services removeAllObjects];
 }
 
 - (void)addServices:(NSArray*)services {
-  if (!_services.get()) {
+  if (!_services) {
     _services.reset([[NSMutableArray alloc] init]);
   }
   for (CBUUID* uuid in services) {
@@ -138,7 +135,7 @@ using base::scoped_nsobject;
         initWithPeripheral:self.peripheral
                     CBUUID:uuid
                    primary:YES]);
-    [_services.get() addObject:service.get().service];
+    [_services addObject:[service service]];
   }
 }
 
@@ -150,12 +147,25 @@ using base::scoped_nsobject;
   base::scoped_nsobject<CBService> serviceToRemove(service,
                                                    base::scoped_policy::RETAIN);
   DCHECK(serviceToRemove);
-  [_services.get() removeObject:serviceToRemove];
+  [_services removeObject:serviceToRemove];
   [self didModifyServices:@[ serviceToRemove ]];
 }
 
 - (void)mockDidDiscoverServices {
   [_delegate peripheral:self.peripheral didDiscoverServices:nil];
+}
+
+- (void)mockDidDiscoverCharacteristicsForService:(CBService*)service {
+  [_delegate peripheral:self.peripheral
+      didDiscoverCharacteristicsForService:service
+                                     error:nil];
+}
+
+- (void)mockDidDiscoverDescriptorsForCharacteristic:
+    (CBCharacteristic*)characteristic {
+  [_delegate peripheral:self.peripheral
+      didDiscoverDescriptorsForCharacteristic:characteristic
+                                        error:nil];
 }
 
 - (void)mockDidDiscoverEvents {
@@ -165,9 +175,7 @@ using base::scoped_nsobject;
   // so -[<CBPeripheralDelegate peripheral:didDiscoverCharacteristicsForService:
   // error:] needs to be called for all services.
   for (CBService* service in _services.get()) {
-    [_delegate peripheral:self.peripheral
-        didDiscoverCharacteristicsForService:service
-                                       error:nil];
+    [self mockDidDiscoverCharacteristicsForService:service];
     for (CBCharacteristic* characteristic in service.characteristics) {
       // After discovering services, BluetoothLowEnergyDeviceMac is expected to
       // discover characteristics for all services.
@@ -192,15 +200,15 @@ using base::scoped_nsobject;
 }
 
 - (NSUUID*)identifier {
-  return _identifier.get();
+  return _identifier;
 }
 
 - (NSString*)name {
-  return _name.get();
+  return _name;
 }
 
 - (NSArray*)services {
-  return _services.get();
+  return _services;
 }
 
 - (CBPeripheral*)peripheral {

@@ -1,5 +1,5 @@
 <?php
-    header("ACCEPT-CH: DPR, Width, Viewport-Width");
+    header("ACCEPT-CH: DPR, Width, Viewport-Width, Device-Memory");
 ?>
 <!DOCTYPE html>
 <script src="../resources/testharness.js"></script>
@@ -11,11 +11,18 @@
             assert_unreached("Image should have loaded.");
         };
 
+        var loadDeviceMemoryImage = function() {
+            var img = new Image();
+            img.src = 'resources/image-checks-for-device-memory.php';
+            img.onload = t.step_func(function(){ t.done(); });
+            img.onerror = t.step_func(unreached);
+            document.body.appendChild(img);
+        };
         var loadRWImage = function() {
             var img = new Image();
             img.src = 'resources/image-checks-for-width.php';
             img.sizes = '500';
-            img.onload = t.step_func(function(){ t.done(); });
+            img.onload = t.step_func(loadDeviceMemoryImage);
             img.onerror = t.step_func(unreached);
             document.body.appendChild(img);
         };

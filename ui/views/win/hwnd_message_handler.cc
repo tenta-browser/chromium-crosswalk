@@ -8,6 +8,7 @@
 #include <oleacc.h>
 #include <shellapi.h>
 #include <tchar.h>
+#include <wrl/client.h>
 
 #include <utility>
 
@@ -16,12 +17,19 @@
 #include "base/debug/alias.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "base/win/scoped_gdi_object.h"
 #include "base/win/windows_version.h"
+#include "ui/accessibility/platform/ax_platform_node_win.h"
+#include "ui/accessibility/platform/ax_system_caret_win.h"
+#include "ui/base/ime/input_method.h"
+#include "ui/base/ime/text_input_client.h"
+#include "ui/base/ime/text_input_type.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/base/view_prop.h"
 #include "ui/base/win/internal_constants.h"
 #include "ui/base/win/lock_state.h"
@@ -222,14 +230,27 @@ bool IsTopLevelWindow(HWND window) {
   return !parent || (parent == ::GetDesktopWindow());
 }
 
+ui::EventType GetTouchEventType(POINTER_FLAGS pointer_flags) {
+  if (pointer_flags & POINTER_FLAG_DOWN)
+    return ui::ET_TOUCH_PRESSED;
+  if (pointer_flags & POINTER_FLAG_UPDATE)
+    return ui::ET_TOUCH_MOVED;
+  if (pointer_flags & POINTER_FLAG_UP)
+    return ui::ET_TOUCH_RELEASED;
+  return ui::ET_TOUCH_MOVED;
+}
+
 const int kTouchDownContextResetTimeout = 500;
 
-// Windows does not flag synthesized mouse messages from touch in all cases.
-// This causes us grief as we don't want to process touch and mouse messages
-// concurrently. Hack as per msdn is to check if the time difference between
-// the touch message and the mouse move is within 500 ms and at the same
-// location as the cursor.
-const int kSynthesizedMouseTouchMessagesTimeDifference = 500;
+// Windows does not flag synthesized mouse messages from touch or pen in all
+// cases. This causes us grief as we don't want to process touch and mouse
+// messages concurrently. Hack as per msdn is to check if the time difference
+// between the touch/pen message and the mouse move is within 500 ms and at the
+// same location as the cursor.
+const int kSynthesizedMouseMessagesTimeDifference = 500;
+
+// Currently this flag is always false - see http://crbug.com/763223
+const bool kUsePointerEventsForTouch = false;
 
 }  // namespace
 
@@ -319,7 +340,7 @@ base::LazyInstance<HWNDMessageHandler::FullscreenWindowMonitorMap>::
 ////////////////////////////////////////////////////////////////////////////////
 // HWNDMessageHandler, public:
 
-long HWNDMessageHandler::last_touch_message_time_ = 0;
+long HWNDMessageHandler::last_touch_or_pen_message_time_ = 0;
 
 HWNDMessageHandler::HWNDMessageHandler(HWNDMessageHandlerDelegate* delegate)
     : msg_handled_(FALSE),
@@ -340,6 +361,9 @@ HWNDMessageHandler::HWNDMessageHandler(HWNDMessageHandlerDelegate* delegate)
       is_first_nccalc_(true),
       menu_depth_(0),
       id_generator_(0),
+      pen_processor_(
+          &id_generator_,
+          base::FeatureList::IsEnabled(features::kDirectManipulationStylus)),
       in_size_loop_(false),
       touch_down_contexts_(0),
       last_mouse_hwheel_time_(0),
@@ -351,6 +375,8 @@ HWNDMessageHandler::HWNDMessageHandler(HWNDMessageHandlerDelegate* delegate)
       weak_factory_(this) {}
 
 HWNDMessageHandler::~HWNDMessageHandler() {
+  DCHECK(delegate_->GetHWNDMessageDelegateInputMethod());
+  delegate_->GetHWNDMessageDelegateInputMethod()->RemoveObserver(this);
   delegate_ = NULL;
   // Prevent calls back into this class via WNDPROC now that we've been
   // destroyed.
@@ -384,6 +410,8 @@ void HWNDMessageHandler::Init(HWND parent, const gfx::Rect& bounds) {
   prop_window_target_.reset(new ui::ViewProp(hwnd(),
                             ui::WindowEventTarget::kWin32InputEventTarget,
                             static_cast<ui::WindowEventTarget*>(this)));
+  DCHECK(delegate_->GetHWNDMessageDelegateInputMethod());
+  delegate_->GetHWNDMessageDelegateInputMethod()->AddObserver(this);
 
   // Direct Manipulation is enabled on Windows 10+. The CreateInstance function
   // returns NULL if Direct Manipulation is not available.
@@ -938,6 +966,36 @@ LRESULT HWNDMessageHandler::OnWndProc(UINT message,
   return result;
 }
 
+void HWNDMessageHandler::OnFocus() {}
+
+void HWNDMessageHandler::OnBlur() {}
+
+void HWNDMessageHandler::OnCaretBoundsChanged(
+    const ui::TextInputClient* client) {
+  if (!client || client->GetTextInputType() == ui::TEXT_INPUT_TYPE_NONE)
+    return;
+
+  if (!ax_system_caret_)
+    ax_system_caret_ = std::make_unique<ui::AXSystemCaretWin>(hwnd());
+
+  const gfx::Rect dip_caret_bounds(client->GetCaretBounds());
+  gfx::Rect caret_bounds =
+      display::win::ScreenWin::DIPToScreenRect(hwnd(), dip_caret_bounds);
+  // Collapse any selection.
+  caret_bounds.set_width(1);
+  ax_system_caret_->MoveCaretTo(caret_bounds);
+}
+
+void HWNDMessageHandler::OnTextInputStateChanged(
+    const ui::TextInputClient* client) {}
+
+void HWNDMessageHandler::OnInputMethodDestroyed(
+    const ui::InputMethod* input_method) {
+  DestroyAXSystemCaret();
+}
+
+void HWNDMessageHandler::OnShowImeIfNeeded() {}
+
 LRESULT HWNDMessageHandler::HandleMouseMessage(unsigned int message,
                                                WPARAM w_param,
                                                LPARAM l_param,
@@ -1084,6 +1142,11 @@ void HWNDMessageHandler::PostProcessActivateMessage(
     GetMonitorInfo(MonitorFromWindow(hwnd(), MONITOR_DEFAULTTOPRIMARY),
                    &monitor_info);
     SetBoundsInternal(gfx::Rect(monitor_info.rcMonitor), false);
+    // Inform the taskbar that this window is now a fullscreen window so it go
+    // behind the window in the Z-Order. The taskbar heuristics to detect
+    // fullscreen windows are not reliable. Marking it explicitly seems to work
+    // around these problems.
+    fullscreen_handler()->MarkFullscreen(true);
     background_fullscreen_hack_ = false;
   } else {
     // If the window becoming active has a fullscreen window on the same
@@ -1518,14 +1581,19 @@ LRESULT HWNDMessageHandler::OnGetObject(UINT message,
   DWORD obj_id = static_cast<DWORD>(static_cast<DWORD_PTR>(l_param));
 
   // Accessibility readers will send an OBJID_CLIENT message
-  if (static_cast<DWORD>(OBJID_CLIENT) == obj_id) {
+  if (delegate_->GetNativeViewAccessible() &&
+      static_cast<DWORD>(OBJID_CLIENT) == obj_id) {
     // Retrieve MSAA dispatch object for the root view.
-    base::win::ScopedComPtr<IAccessible> root(
+    Microsoft::WRL::ComPtr<IAccessible> root(
         delegate_->GetNativeViewAccessible());
-
-    // Create a reference that MSAA will marshall to the client.
     reference_result = LresultFromObject(IID_IAccessible, w_param,
         static_cast<IAccessible*>(root.Detach()));
+  } else if (::GetFocus() == hwnd() && ax_system_caret_ &&
+             static_cast<DWORD>(OBJID_CARET) == obj_id) {
+    Microsoft::WRL::ComPtr<IAccessible> ax_system_caret_accessible =
+        ax_system_caret_->GetCaret();
+    reference_result = LresultFromObject(IID_IAccessible, w_param,
+                                         ax_system_caret_accessible.Detach());
   }
 
   return reference_result;
@@ -1657,8 +1725,8 @@ LRESULT HWNDMessageHandler::OnPointerActivate(UINT message,
 LRESULT HWNDMessageHandler::OnPointerEvent(UINT message,
                                            WPARAM w_param,
                                            LPARAM l_param) {
-  // WM_POINTER is not supported on Windows 7 or lower.
-  if (base::win::GetVersion() <= base::win::VERSION_WIN7) {
+  // WM_POINTER is not supported on Windows 7.
+  if (base::win::GetVersion() == base::win::VERSION_WIN7) {
     SetMsgHandled(FALSE);
     return -1;
   }
@@ -1671,100 +1739,22 @@ LRESULT HWNDMessageHandler::OnPointerEvent(UINT message,
   // If the WM_POINTER messages are not sent from a stylus device, then we do
   // not handle them to make sure we do not change the current behavior of
   // touch and mouse inputs.
-  if (!get_pointer_type || !get_pointer_type(pointer_id, &pointer_type) ||
-      pointer_type != PT_PEN) {
+  if (!get_pointer_type || !get_pointer_type(pointer_id, &pointer_type)) {
     SetMsgHandled(FALSE);
     return -1;
   }
 
-  using GetPointerPenInfoFn = BOOL(WINAPI*)(UINT32, POINTER_PEN_INFO*);
-  POINTER_PEN_INFO pointer_pen_info;
-  static GetPointerPenInfoFn get_pointer_pen_info =
-      reinterpret_cast<GetPointerPenInfoFn>(
-          GetProcAddress(GetModuleHandleA("user32.dll"), "GetPointerPenInfo"));
-  if (!get_pointer_pen_info ||
-      !get_pointer_pen_info(pointer_id, &pointer_pen_info)) {
-    SetMsgHandled(FALSE);
-    return -1;
-  }
-
-  // We are now creating a fake mouse event with pointer type of pen from
-  // the WM_POINTER message and then setting up an associated pointer
-  // details in the MouseEvent which contains the pen's information.
-  ui::EventPointerType input_type = ui::EventPointerType::POINTER_TYPE_PEN;
-  // TODO(lanwei): penFlags of PEN_FLAG_INVERTED may also indicate we are using
-  // an eraser, but it is under debate. Please see
-  // https://github.com/w3c/pointerevents/issues/134/.
-  if (pointer_pen_info.penFlags & PEN_FLAG_ERASER)
-    input_type = ui::EventPointerType::POINTER_TYPE_ERASER;
-
-  float pressure = static_cast<float>(pointer_pen_info.pressure) / 1024;
-  float rotation = pointer_pen_info.rotation;
-  int tilt_x = pointer_pen_info.tiltX;
-  int tilt_y = pointer_pen_info.tiltY;
-  POINT client_point = pointer_pen_info.pointerInfo.ptPixelLocationRaw;
-  ScreenToClient(hwnd(), &client_point);
-  gfx::Point point = gfx::Point(client_point.x, client_point.y);
-  ui::EventType event_type = ui::ET_MOUSE_MOVED;
-  int flag = 0;
-  int click_count = 0;
-  switch (message) {
-    case WM_POINTERDOWN:
-      event_type = ui::ET_MOUSE_PRESSED;
-      if (pointer_pen_info.pointerInfo.ButtonChangeType ==
-          POINTER_CHANGE_SECONDBUTTON_DOWN) {
-        flag = ui::EF_RIGHT_MOUSE_BUTTON;
-      } else {
-        flag = ui::EF_LEFT_MOUSE_BUTTON;
-      }
-      click_count = 1;
-      break;
-    case WM_POINTERUP:
-      event_type = ui::ET_MOUSE_RELEASED;
-      if (pointer_pen_info.pointerInfo.ButtonChangeType ==
-          POINTER_CHANGE_SECONDBUTTON_UP) {
-        flag = ui::EF_RIGHT_MOUSE_BUTTON;
-      } else {
-        flag = ui::EF_LEFT_MOUSE_BUTTON;
-      }
-      click_count = 1;
-      break;
-    case WM_POINTERUPDATE:
-      event_type = ui::ET_MOUSE_DRAGGED;
-      if (pointer_pen_info.pointerInfo.pointerFlags &
-          POINTER_FLAG_FIRSTBUTTON) {
-        flag = ui::EF_LEFT_MOUSE_BUTTON;
-      } else if (pointer_pen_info.pointerInfo.pointerFlags &
-                 POINTER_FLAG_SECONDBUTTON) {
-        flag = ui::EF_RIGHT_MOUSE_BUTTON;
-      } else {
-        event_type = ui::ET_MOUSE_MOVED;
-      }
-      break;
-    case WM_POINTERENTER:
-      event_type = ui::ET_MOUSE_ENTERED;
-      break;
-    case WM_POINTERLEAVE:
-      event_type = ui::ET_MOUSE_EXITED;
-      break;
+  switch (pointer_type) {
+    case PT_PEN:
+      return HandlePointerEventTypePen(message, w_param, l_param);
+    case PT_TOUCH:
+      if (kUsePointerEventsForTouch)
+        return HandlePointerEventTypeTouch(message, w_param, l_param);
+    // FALLTHROUGH_INTENDED
     default:
-      NOTREACHED();
+      SetMsgHandled(FALSE);
+      return -1;
   }
-  ui::PointerDetails pointer_details(
-      input_type, pointer_id, /* radius_x */ 0.0f, /* radius_y */ 0.0f,
-      pressure, tilt_x, tilt_y, /* tangential_pressure */ 0.0f, rotation);
-  ui::MouseEvent event(event_type, point, point, base::TimeTicks::Now(), flag,
-                       flag, pointer_details);
-  event.SetClickCount(click_count);
-
-  // There are cases where the code handling the message destroys the
-  // window, so use the weak ptr to check if destruction occured or not.
-  base::WeakPtr<HWNDMessageHandler> ref(weak_factory_.GetWeakPtr());
-  bool handled = delegate_->HandleMouseEvent(event);
-
-  if (ref)
-    SetMsgHandled(handled);
-  return 0;
 }
 
 void HWNDMessageHandler::OnMove(const gfx::Point& point) {
@@ -1818,7 +1808,11 @@ LRESULT HWNDMessageHandler::OnNCActivate(UINT message,
   if (IsVisible())
     delegate_->SchedulePaint();
 
-  if (delegate_->GetFrameMode() == FrameMode::CUSTOM_DRAWN) {
+  // Calling DefWindowProc is only necessary if there's a system frame being
+  // drawn. Otherwise it can draw an incorrect title bar and cause visual
+  // corruption.
+  if (!delegate_->HasFrame() ||
+      delegate_->GetFrameMode() == FrameMode::CUSTOM_DRAWN) {
     SetMsgHandled(TRUE);
     return TRUE;
   }
@@ -2245,6 +2239,7 @@ void HWNDMessageHandler::OnSysCommand(UINT notification_code,
         (notification_code & sc_mask) == SC_MAXIMIZE ||
         (notification_code & sc_mask) == SC_RESTORE) {
       delegate_->ResetWindowControls();
+      DestroyAXSystemCaret();
     } else if ((notification_code & sc_mask) == SC_MOVE ||
                (notification_code & sc_mask) == SC_SIZE) {
       if (!IsVisible()) {
@@ -2253,6 +2248,7 @@ void HWNDMessageHandler::OnSysCommand(UINT notification_code,
         SetWindowLong(hwnd(), GWL_STYLE,
                       GetWindowLong(hwnd(), GWL_STYLE) | WS_VISIBLE);
       }
+      DestroyAXSystemCaret();
     }
   }
 
@@ -2331,7 +2327,7 @@ LRESULT HWNDMessageHandler::OnTouchEvent(UINT message,
 
       ScreenToClient(hwnd(), &point);
 
-      last_touch_message_time_ = ::GetMessageTime();
+      last_touch_or_pen_message_time_ = ::GetMessageTime();
 
       gfx::Point touch_point(point.x, point.y);
       unsigned int touch_id = id_generator_.GetGeneratedID(input[i].dwID);
@@ -2493,6 +2489,10 @@ void HWNDMessageHandler::OnWindowPosChanging(WINDOWPOS* window_pos) {
     // in that case.
     PostMessage(hwnd(), WM_WINDOWSIZINGFINISHED, ++current_window_size_message_,
                 0);
+    // Copying the old bits can sometimes cause a flash of black when
+    // resizing. See https://crbug.com/739724
+    if (is_translucent_)
+      window_pos->flags |= SWP_NOCOPYBITS;
   }
 
   if (ScopedFullscreenVisibility::IsHiddenForFullscreen(hwnd())) {
@@ -2705,6 +2705,118 @@ LRESULT HWNDMessageHandler::HandleMouseEventInternal(UINT message,
   return 0;
 }
 
+LRESULT HWNDMessageHandler::HandlePointerEventTypeTouch(UINT message,
+                                                        WPARAM w_param,
+                                                        LPARAM l_param) {
+  UINT32 pointer_id = GET_POINTERID_WPARAM(w_param);
+  using GetPointerTouchInfoFn = BOOL(WINAPI*)(UINT32, POINTER_TOUCH_INFO*);
+  POINTER_TOUCH_INFO pointer_touch_info;
+  static GetPointerTouchInfoFn get_pointer_touch_info =
+      reinterpret_cast<GetPointerTouchInfoFn>(GetProcAddress(
+          GetModuleHandleA("user32.dll"), "GetPointerTouchInfo"));
+  if (!get_pointer_touch_info ||
+      !get_pointer_touch_info(pointer_id, &pointer_touch_info)) {
+    SetMsgHandled(FALSE);
+    return -1;
+  }
+
+  // Ignore enter/leave events, otherwise they will be converted in
+  // |GetTouchEventType| to ET_TOUCH_PRESSED/ET_TOUCH_RELEASED events, which
+  // is not correct.
+  if (message == WM_POINTERENTER || message == WM_POINTERLEAVE) {
+    SetMsgHandled(TRUE);
+    return 0;
+  }
+
+  unsigned int mapped_pointer_id = id_generator_.GetGeneratedID(pointer_id);
+  POINTER_INFO pointer_info = pointer_touch_info.pointerInfo;
+  POINT client_point = pointer_info.ptPixelLocationRaw;
+  ScreenToClient(hwnd(), &client_point);
+  gfx::Point touch_point = gfx::Point(client_point.x, client_point.y);
+
+  POINTER_FLAGS pointer_flags = pointer_info.pointerFlags;
+  ui::EventType event_type = GetTouchEventType(pointer_flags);
+  const base::TimeTicks event_time = ui::EventTimeForNow();
+
+  // The pressure from POINTER_TOUCH_INFO is normalized to a range between 0
+  // and 1024, but we define the pressure of the range of [0,1].
+  float pressure = static_cast<float>(pointer_touch_info.pressure) / 1024;
+  float radius_x =
+      (pointer_touch_info.rcContact.right - pointer_touch_info.rcContact.left) /
+      2.0;
+  float radius_y =
+      (pointer_touch_info.rcContact.bottom - pointer_touch_info.rcContact.top) /
+      2.0;
+  int rotation_angle = pointer_touch_info.orientation;
+  rotation_angle %= 180;
+  if (rotation_angle < 0)
+    rotation_angle += 180;
+
+  ui::TouchEvent event(
+      event_type, touch_point, event_time,
+      ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH,
+                         mapped_pointer_id, radius_x, radius_y, pressure, 0.0f,
+                         0.0f, 0.0f, pointer_touch_info.orientation),
+      ui::GetModifiersFromKeyState(), rotation_angle);
+
+  event.latency()->AddLatencyNumberWithTimestamp(
+      ui::INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 0, 0, event_time, 1);
+
+  // There are cases where the code handling the message destroys the
+  // window, so use the weak ptr to check if destruction occured or not.
+  base::WeakPtr<HWNDMessageHandler> ref(weak_factory_.GetWeakPtr());
+  delegate_->HandleTouchEvent(event);
+
+  if (event_type == ui::ET_TOUCH_RELEASED)
+    id_generator_.ReleaseNumber(pointer_id);
+  if (ref)
+    SetMsgHandled(TRUE);
+  return 0;
+}
+
+LRESULT HWNDMessageHandler::HandlePointerEventTypePen(UINT message,
+                                                      WPARAM w_param,
+                                                      LPARAM l_param) {
+  UINT32 pointer_id = GET_POINTERID_WPARAM(w_param);
+  using GetPointerPenInfoFn = BOOL(WINAPI*)(UINT32, POINTER_PEN_INFO*);
+  POINTER_PEN_INFO pointer_pen_info;
+  static GetPointerPenInfoFn get_pointer_pen_info =
+      reinterpret_cast<GetPointerPenInfoFn>(
+          GetProcAddress(GetModuleHandleA("user32.dll"), "GetPointerPenInfo"));
+  if (!get_pointer_pen_info ||
+      !get_pointer_pen_info(pointer_id, &pointer_pen_info)) {
+    SetMsgHandled(FALSE);
+    return -1;
+  }
+
+  POINT client_point = pointer_pen_info.pointerInfo.ptPixelLocationRaw;
+  ScreenToClient(hwnd(), &client_point);
+  gfx::Point point = gfx::Point(client_point.x, client_point.y);
+
+  std::unique_ptr<ui::Event> event = pen_processor_.GenerateEvent(
+      message, pointer_id, pointer_pen_info, point);
+
+  // There are cases where the code handling the message destroys the
+  // window, so use the weak ptr to check if destruction occured or not.
+  base::WeakPtr<HWNDMessageHandler> ref(weak_factory_.GetWeakPtr());
+  if (event) {
+    if (event->IsTouchEvent()) {
+      delegate_->HandleTouchEvent(*event->AsTouchEvent());
+    } else if (event->IsMouseEvent()) {
+      delegate_->HandleMouseEvent(*event->AsMouseEvent());
+    } else {
+      NOTREACHED();
+    }
+    last_touch_or_pen_message_time_ = ::GetMessageTime();
+  }
+
+  // Always mark as handled as we don't want to generate WM_MOUSE compatiblity
+  // events.
+  if (ref)
+    SetMsgHandled(TRUE);
+  return 0;
+}
+
 bool HWNDMessageHandler::IsSynthesizedMouseMessage(unsigned int message,
                                                    int message_time,
                                                    LPARAM l_param) {
@@ -2713,9 +2825,10 @@ bool HWNDMessageHandler::IsSynthesizedMouseMessage(unsigned int message,
   // Ignore mouse messages which occur at the same location as the current
   // cursor position and within a time difference of 500 ms from the last
   // touch message.
-  if (last_touch_message_time_ && message_time >= last_touch_message_time_ &&
-      ((message_time - last_touch_message_time_) <=
-          kSynthesizedMouseTouchMessagesTimeDifference)) {
+  if (last_touch_or_pen_message_time_ &&
+      message_time >= last_touch_or_pen_message_time_ &&
+      ((message_time - last_touch_or_pen_message_time_) <=
+       kSynthesizedMouseMessagesTimeDifference)) {
     POINT mouse_location = CR_POINT_INITIALIZER_FROM_LPARAM(l_param);
     ::ClientToScreen(hwnd(), &mouse_location);
     POINT cursor_pos = {0};
@@ -2912,6 +3025,15 @@ void HWNDMessageHandler::OnBackgroundFullscreen() {
   shrunk_rect.set_height(shrunk_rect.height() - 1);
   background_fullscreen_hack_ = true;
   SetBoundsInternal(shrunk_rect, false);
+  // Inform the taskbar that this window is no longer a fullscreen window so it
+  // can bring itself to the top of the Z-Order. The taskbar heuristics to
+  // detect fullscreen windows are not reliable. Marking it explicitly seems to
+  // work around these problems.
+  fullscreen_handler()->MarkFullscreen(false);
+}
+
+void HWNDMessageHandler::DestroyAXSystemCaret() {
+  ax_system_caret_ = nullptr;
 }
 
 }  // namespace views

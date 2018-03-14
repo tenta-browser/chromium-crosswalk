@@ -8,14 +8,14 @@
  * See |setSdpDefaultCodec|.
  */
 function setSdpDefaultAudioCodec(sdp, codec) {
-  return setSdpDefaultCodec(sdp, 'audio', codec);
+  return setSdpDefaultCodec(sdp, 'audio', codec, false /* preferHwCodec */);
 }
 
 /**
  * See |setSdpDefaultCodec|.
  */
-function setSdpDefaultVideoCodec(sdp, codec) {
-  return setSdpDefaultCodec(sdp, 'video', codec);
+function setSdpDefaultVideoCodec(sdp, codec, preferHwCodec) {
+  return setSdpDefaultCodec(sdp, 'video', codec, preferHwCodec);
 }
 
 /**
@@ -29,7 +29,7 @@ function setOpusDtxEnabled(sdp) {
   var defaultCodec = getSdpDefaultAudioCodec(sdp);
   if (defaultCodec !== 'opus') {
     failure('setOpusDtxEnabled',
-             'Default audio codec is not set to \'opus\'.');
+            'Default audio codec is not set to \'opus\'.');
   }
 
   // Find codec ID for Opus, e.g. 111 if 'a=rtpmap:111 opus/48000/2'.
@@ -58,20 +58,24 @@ function setOpusDtxEnabled(sdp) {
  * the 'm=|type|' line, where |type| is 'audio' or 'video'.
  * @private
  */
-function setSdpDefaultCodec(sdp, type, codec) {
+function setSdpDefaultCodec(sdp, type, codec, preferHwCodec) {
   var sdpLines = splitSdpLines(sdp);
 
   // Find codec ID, e.g. 100 for 'VP8' if 'a=rtpmap:100 VP8/9000'.
-  var codecId = findRtpmapId(sdpLines, codec);
+  // TODO(magjed): We need a more stable order of the video codecs, e.g. that HW
+  // codecs are always listed before SW codecs.
+  var useLastInstance = !preferHwCodec;
+  var codecId = findRtpmapId(sdpLines, codec, useLastInstance);
   if (codecId === null) {
-    failure('sdpPreferCodec', 'Unknown ID for |codec| = \'' + codec + '\'.');
+    failure('setSdpDefaultCodec',
+            'Unknown ID for |codec| = \'' + codec + '\'.');
   }
 
   // Find 'm=|type|' line, e.g. 'm=video 9 UDP/TLS/RTP/SAVPF 100 101 107 116'.
   var mLineNo = findLine(sdpLines, 'm=' + type);
   if (mLineNo === null) {
     failure('setSdpDefaultCodec',
-             '\'m=' + type + '\' line missing from |sdp|.');
+            '\'m=' + type + '\' line missing from |sdp|.');
   }
 
   // Modify video line to use the desired codec as the default.
@@ -106,21 +110,21 @@ function getSdpDefaultCodec(sdp, type) {
   var mLineNo = findLine(sdpLines, 'm=' + type);
   if (mLineNo === null) {
     failure('getSdpDefaultCodec',
-             '\'m=' + type + '\' line missing from |sdp|.');
+            '\'m=' + type + '\' line missing from |sdp|.');
   }
 
   // The default codec's ID.
   var defaultCodecId = getMLineDefaultCodec(sdpLines[mLineNo]);
   if (defaultCodecId === null) {
     failure('getSdpDefaultCodec',
-             '\'m=' + type + '\' line contains no codecs.');
+            '\'m=' + type + '\' line contains no codecs.');
   }
 
   // Find codec name, e.g. 'VP8' for 100 if 'a=rtpmap:100 VP8/9000'.
   var defaultCodec = findRtpmapCodec(sdpLines, defaultCodecId);
   if (defaultCodec === null) {
     failure('getSdpDefaultCodec',
-             'Unknown codec name for default codec ' + defaultCodecId + '.');
+            'Unknown codec name for default codec ' + defaultCodecId + '.');
   }
   return defaultCodec;
 }
@@ -128,13 +132,15 @@ function getSdpDefaultCodec(sdp, type) {
 /**
  * Searches through all |sdpLines| for the 'a=rtpmap:' line for the codec of
  * the specified name, returning its ID as an int if found, or null otherwise.
- * |codec| is the case-sensitive name of the codec.
+ * |codec| is the case-sensitive name of the codec. If |lastInstance|
+ * is true, it will return the last such ID, and if false, it will return the
+ * first such ID.
  * For example, if |sdpLines| contains 'a=rtpmap:100 VP8/9000' and |codec| is
  * 'VP8', this function returns 100.
  * @private
  */
-function findRtpmapId(sdpLines, codec) {
-  var lineNo = findRtpmapLine(sdpLines, codec);
+function findRtpmapId(sdpLines, codec, lastInstance) {
+  var lineNo = findRtpmapLine(sdpLines, codec, lastInstance);
   if (lineNo === null)
     return null;
   // Parse <id> from 'a=rtpmap:<id> <codec>/<rate>'.
@@ -162,25 +168,43 @@ function findRtpmapCodec(sdpLines, id) {
 }
 
 /**
- * Finds the first 'a=rtpmap:' line from |sdpLines| that contains |contains| and
- * returns its line index, or null if no such line was found. |contains| may be
- * the codec ID, codec name or bitrate. An 'a=rtpmap:' line looks like this:
- * 'a=rtpmap:<id> <codec>/<rate>'.
+ * Finds a 'a=rtpmap:' line from |sdpLines| that contains |contains| and returns
+ * its line index, or null if no such line was found. |contains| may be the
+ * codec ID, codec name or bitrate. If |lastInstance| is true, it will return
+ * the last such line index, and if false, it will return the first such line
+ * index.
+ * An 'a=rtpmap:' line looks like this: 'a=rtpmap:<id> <codec>/<rate>'.
  */
-function findRtpmapLine(sdpLines, contains) {
-  for (var i = 0; i < sdpLines.length; i++) {
-    // Is 'a=rtpmap:' line containing |contains| string?
-    if (sdpLines[i].startsWith('a=rtpmap:') &&
-        sdpLines[i].indexOf(contains) != -1) {
-      // Expecting pattern 'a=rtpmap:<id> <codec>/<rate>'.
-      var pattern = new RegExp('a=rtpmap:(\\d+) \\w+\\/\\d+');
-      if (!sdpLines[i].match(pattern))
-        failure('findRtpmapLine', 'Unexpected "a=rtpmap:" pattern.');
-      // Return line index.
-      return i;
+function findRtpmapLine(sdpLines, contains, lastInstance) {
+  if (lastInstance === true) {
+    for (var i = sdpLines.length - 1; i >= 0 ; i--) {
+      if (isRtpmapLine(sdpLines[i], contains))
+        return i;
+    }
+  } else {
+    for (var i = 0; i < sdpLines.length; i++) {
+      if (isRtpmapLine(sdpLines[i], contains))
+        return i;
     }
   }
   return null;
+}
+
+/**
+ * Returns true if |sdpLine| contains |contains| and is of pattern
+ * 'a=rtpmap:<id> <codec>/<rate>'.
+ */
+function isRtpmapLine(sdpLine, contains) {
+  // Is 'a=rtpmap:' line containing |contains| string?
+  if (sdpLine.startsWith('a=rtpmap:') &&
+      sdpLine.indexOf(contains) != -1) {
+    // Expecting pattern 'a=rtpmap:<id> <codec>/<rate>'.
+    var pattern = new RegExp('a=rtpmap:(\\d+) \\w+\\/\\d+');
+    if (!sdpLine.match(pattern))
+      failure('isRtpmapLine', 'Unexpected "a=rtpmap:" pattern.');
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -244,9 +268,9 @@ function mergeSdpLines(sdpLines) {
 }
 
 /** @private */
-function findLine(lines, startsWith) {
-  for (var i = 0; i < lines.length; i++) {
-    if (lines[i].startsWith(startsWith))
+function findLine(lines, lineStartsWith, startingLine = 0) {
+  for (var i = startingLine; i < lines.length; i++) {
+    if (lines[i].startsWith(lineStartsWith))
       return i;
   }
   return null;

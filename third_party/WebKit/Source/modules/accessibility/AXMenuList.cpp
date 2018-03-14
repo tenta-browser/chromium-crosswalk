@@ -25,7 +25,7 @@
 
 #include "modules/accessibility/AXMenuList.h"
 
-#include "core/html/HTMLSelectElement.h"
+#include "core/html/forms/HTMLSelectElement.h"
 #include "core/layout/LayoutMenuList.h"
 #include "modules/accessibility/AXMenuListPopup.h"
 #include "modules/accessibility/AXObjectCacheImpl.h"
@@ -48,7 +48,7 @@ AccessibilityRole AXMenuList::DetermineAccessibilityRole() {
   return kPopUpButtonRole;
 }
 
-bool AXMenuList::Press() {
+bool AXMenuList::OnNativeClickAction() {
   if (!layout_object_)
     return false;
 
@@ -72,15 +72,11 @@ void AXMenuList::ClearChildren() {
   children_dirty_ = false;
 }
 
-bool AXMenuList::NameFromContents() const {
-  return false;
-}
-
 void AXMenuList::AddChildren() {
   DCHECK(!IsDetached());
   have_children_ = true;
 
-  AXObjectCacheImpl& cache = AxObjectCache();
+  AXObjectCacheImpl& cache = AXObjectCache();
 
   AXObject* list = cache.GetOrCreate(kMenuListPopupRole);
   if (!list)
@@ -88,7 +84,7 @@ void AXMenuList::AddChildren() {
 
   ToAXMockObject(list)->SetParent(this);
   if (list->AccessibilityIsIgnored()) {
-    cache.Remove(list->AxObjectID());
+    cache.Remove(list->AXObjectID());
     return;
   }
 
@@ -113,26 +109,24 @@ AccessibilityExpanded AXMenuList::IsExpanded() const {
   return kExpandedExpanded;
 }
 
-bool AXMenuList::CanSetFocusAttribute() const {
-  if (!GetNode())
-    return false;
-
-  return !ToElement(GetNode())->IsDisabledFormControl();
-}
-
 void AXMenuList::DidUpdateActiveOption(int option_index) {
-  const auto& child_objects = Children();
-  if (!child_objects.IsEmpty()) {
-    DCHECK(child_objects.size() == 1);
-    DCHECK(child_objects[0]->IsMenuListPopup());
+  bool suppress_notifications =
+      (GetNode() && !GetNode()->IsFinishedParsingChildren());
 
-    if (child_objects[0]->IsMenuListPopup()) {
-      if (AXMenuListPopup* popup = ToAXMenuListPopup(child_objects[0].Get()))
-        popup->DidUpdateActiveOption(option_index);
+  if (HasChildren()) {
+    const auto& child_objects = Children();
+    if (!child_objects.IsEmpty()) {
+      DCHECK_EQ(child_objects.size(), 1ul);
+      DCHECK(child_objects[0]->IsMenuListPopup());
+
+      if (child_objects[0]->IsMenuListPopup()) {
+        if (AXMenuListPopup* popup = ToAXMenuListPopup(child_objects[0].Get()))
+          popup->DidUpdateActiveOption(option_index, !suppress_notifications);
+      }
     }
   }
 
-  AxObjectCache().PostNotification(this,
+  AXObjectCache().PostNotification(this,
                                    AXObjectCacheImpl::kAXMenuListValueChanged);
 }
 
@@ -152,7 +146,7 @@ void AXMenuList::DidHidePopup() {
   popup->DidHide();
 
   if (GetNode() && GetNode()->IsFocused())
-    AxObjectCache().PostNotification(
+    AXObjectCache().PostNotification(
         this, AXObjectCacheImpl::kAXFocusedUIElementChanged);
 }
 

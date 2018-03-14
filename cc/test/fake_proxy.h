@@ -8,6 +8,7 @@
 #include "base/single_thread_task_runner.h"
 #include "cc/trees/layer_tree_host.h"
 #include "cc/trees/proxy.h"
+#include "services/metrics/public/cpp/ukm_recorder.h"
 
 namespace cc {
 
@@ -19,9 +20,9 @@ class FakeProxy : public Proxy {
 
   bool IsStarted() const override;
   bool CommitToActiveTree() const override;
-  void SetCompositorFrameSink(
-      CompositorFrameSink* compositor_frame_sink) override {}
-  void ReleaseCompositorFrameSink() override;
+  void SetLayerTreeFrameSink(
+      LayerTreeFrameSink* layer_tree_frame_sink) override {}
+  void ReleaseLayerTreeFrameSink() override {}
   void SetVisible(bool visible) override {}
   void SetNeedsAnimate() override {}
   void SetNeedsUpdateLayers() override {}
@@ -40,6 +41,8 @@ class FakeProxy : public Proxy {
   void UpdateBrowserControlsState(BrowserControlsState constraints,
                                   BrowserControlsState current,
                                   bool animate) override {}
+  void RequestBeginMainFrameNotExpected(bool new_state) override {}
+  void SetURLForUkm(const GURL& url) override {}
 
  private:
   LayerTreeHost* layer_tree_host_;

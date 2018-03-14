@@ -27,13 +27,12 @@
 #define AudioBufferSourceNode_h
 
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "modules/webaudio/AudioBuffer.h"
 #include "modules/webaudio/AudioParam.h"
 #include "modules/webaudio/AudioScheduledSourceNode.h"
 #include "modules/webaudio/PannerNode.h"
 #include "platform/audio/AudioBus.h"
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/Threading.h"
 
 namespace blink {
@@ -48,7 +47,7 @@ class BaseAudioContext;
 
 class AudioBufferSourceHandler final : public AudioScheduledSourceHandler {
  public:
-  static PassRefPtr<AudioBufferSourceHandler> Create(
+  static scoped_refptr<AudioBufferSourceHandler> Create(
       AudioNode&,
       float sample_rate,
       AudioParamHandler& playback_rate,
@@ -131,8 +130,8 @@ class AudioBufferSourceHandler final : public AudioScheduledSourceHandler {
   std::unique_ptr<const float* []> source_channels_;
   std::unique_ptr<float* []> destination_channels_;
 
-  RefPtr<AudioParamHandler> playback_rate_;
-  RefPtr<AudioParamHandler> detune_;
+  scoped_refptr<AudioParamHandler> playback_rate_;
+  scoped_refptr<AudioParamHandler> detune_;
 
   bool DidSetLooping() const { return AcquireLoad(&did_set_looping_); }
   void SetDidSetLooping(bool loop) {
@@ -168,8 +167,22 @@ class AudioBufferSourceHandler final : public AudioScheduledSourceHandler {
   // conversion factor, and the value of playbackRate and detune AudioParams.
   double ComputePlaybackRate();
 
+  double GetMinPlaybackRate();
+
   // The minimum playbackRate value ever used for this source.
   double min_playback_rate_;
+
+  // |min_playback_rate_| may be updated by the audio thread
+  // while the main thread checks if the node is in a stoppable
+  // state, hence access needs to be atomic.
+  //
+  // TODO: when the codebase adopts std::atomic<>, use it for
+  // |min_playback_rate_|.
+  Mutex min_playback_rate_mutex_;
+
+  // True if the |buffer| attribute has ever been set to a non-null
+  // value.  Defaults to false.
+  bool buffer_has_been_set_;
 };
 
 class AudioBufferSourceNode final : public AudioScheduledSourceNode {
@@ -180,7 +193,7 @@ class AudioBufferSourceNode final : public AudioScheduledSourceNode {
   static AudioBufferSourceNode* Create(BaseAudioContext*,
                                        AudioBufferSourceOptions&,
                                        ExceptionState&);
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
   AudioBufferSourceHandler& GetAudioBufferSourceHandler() const;
 
   AudioBuffer* buffer() const;

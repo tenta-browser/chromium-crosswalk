@@ -4,6 +4,10 @@
 
 import("//build/config/ios/rules.gni")
 import("//ios/build/config.gni")
+import("//mojo/public/tools/bindings/mojom.gni")
+import("//services/service_manager/public/service_manifest.gni")
+import("//tools/grit/grit_rule.gni")
+import("//tools/grit/repack.gni")
 
 ios_app_bundle("ios_web_shell") {
   info_plist = "Info.plist"
@@ -13,7 +17,7 @@ ios_app_bundle("ios_web_shell") {
 
     # All shared libraries must have the sanitizer deps to properly link in
     # asan mode (this target will be empty in other cases).
-    "//build/config/sanitizers:deps",
+    "//build/config:exe_and_shlib_deps",
   ]
 
   configs += [ "//build/config/compiler:enable_arc" ]
@@ -31,6 +35,59 @@ bundle_data("shell_bundle_data") {
   ]
   outputs = [
     "{{bundle_resources_dir}}/{{source_file_part}}",
+  ]
+}
+
+service_manifest("shell_packaged_services_manifest_overlay") {
+  source = "web_shell_packaged_services_manifest_overlay.json"
+  packaged_services = [ "//services/test/echo:manifest" ]
+}
+
+service_manifest("shell_browser_manifest_overlay") {
+  source = "web_shell_browser_manifest_overlay.json"
+  packaged_services = [ "//services/test/user_id:manifest" ]
+}
+
+grit("resources") {
+  visibility = [ ":*" ]
+  source = "shell_resources.grd"
+
+  # The .grd contains references to generated files.
+  source_is_generated = true
+
+  grit_flags = [
+    "-E",
+    "root_gen_dir=" + rebase_path(root_gen_dir, root_build_dir),
+  ]
+  outputs = [
+    "grit/shell_resources.h",
+    "shell_resources.pak",
+  ]
+  deps = [
+    ":shell_browser_manifest_overlay",
+    ":shell_packaged_services_manifest_overlay",
+  ]
+}
+
+repack("packed_resources") {
+  visibility = [ ":shell" ]
+  sources = [
+    "$root_gen_dir/ios/web/ios_web_resources.pak",
+    "$root_gen_dir/ios/web/shell/shell_resources.pak",
+  ]
+  deps = [
+    "//ios/web:resources",
+  ]
+  public_deps = [
+    ":resources",
+  ]
+  output = "$target_gen_dir/web_shell_resources.pak"
+  copy_data_to_bundle = true
+}
+
+mojom("shell_interfaces") {
+  sources = [
+    "web_usage_controller.mojom",
   ]
 }
 
@@ -56,14 +113,21 @@ source_set("shell") {
   ]
 
   deps = [
+    ":packed_resources",
     ":shell_bundle_data",
+    ":shell_interfaces",
     "//base",
     "//ios/net",
     "//ios/web",
-    "//ios/web:user_agent",
+    "//ios/web/public",
     "//ios/web/public/app",
     "//net",
     "//net:extras",
+    "//services/service_manager/public/cpp",
+    "//services/test/echo:lib",
+    "//services/test/echo/public/interfaces",
+    "//services/test/user_id:lib",
+    "//services/test/user_id/public/interfaces",
     "//ui/base",
   ]
 

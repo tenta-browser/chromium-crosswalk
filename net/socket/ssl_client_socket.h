@@ -22,7 +22,6 @@
 
 namespace base {
 class FilePath;
-class SequencedTaskRunner;
 }
 
 namespace crypto {
@@ -63,7 +62,33 @@ struct SSLClientSocketContext {
   // ssl_session_cache_shard is an opaque string that identifies a shard of the
   // SSL session cache. SSL sockets with the same ssl_session_cache_shard may
   // resume each other's SSL sessions but we'll never sessions between shards.
-  const std::string ssl_session_cache_shard;
+  std::string ssl_session_cache_shard;
+};
+
+// Details on a failed operation. This enum is used to diagnose causes of TLS
+// version interference by buggy middleboxes. The values are histogramed so they
+// must not be changed.
+enum class SSLErrorDetails {
+  kOther = 0,
+  // The failure was due to ERR_CONNECTION_CLOSED. BlueCoat has a bug with this
+  // failure mode. https://crbug.com/694593.
+  kConnectionClosed = 1,
+  // The failure was due to ERR_CONNECTION_RESET.
+  kConnectionReset = 2,
+  // The failure was due to receiving an access_denied alert. Fortinet has a
+  // bug with this failure mode. https://crbug.com/676969.
+  kAccessDeniedAlert = 3,
+  // The failure was due to receiving a bad_record_mac alert.
+  kBadRecordMACAlert = 4,
+  // The failure was due to receiving an unencrypted application_data record
+  // during the handshake. Watchguard has a bug with this failure
+  // mode. https://crbug.com/733223.
+  kApplicationDataInsteadOfHandshake = 5,
+  // The failure was due to failing to negotiate a version or cipher suite.
+  kVersionOrCipherMismatch = 6,
+  // The failure was due to some other protocol error.
+  kProtocolError = 7,
+  kLastValue = kProtocolError,
 };
 
 // A client socket that uses SSL as the transport layer.
@@ -81,16 +106,14 @@ class NET_EXPORT SSLClientSocket : public SSLSocket {
   virtual void GetSSLCertRequestInfo(
       SSLCertRequestInfo* cert_request_info) = 0;
 
-  // Log SSL key material to |path| on |task_runner|. Must be called before any
+  // Log SSL key material to |path|. Must be called before any
   // SSLClientSockets are created.
   //
   // TODO(davidben): Switch this to a parameter on the SSLClientSocketContext
-  // once https://crbug.com/458365 is resolved. This will require splitting
-  // SSLKeyLogger into an interface, built with OS_NACL and a non-NaCl
-  // SSLKeyLoggerImpl.
-  static void SetSSLKeyLogFile(
-      const base::FilePath& path,
-      const scoped_refptr<base::SequencedTaskRunner>& task_runner);
+  // once https://crbug.com/458365 is resolved. To avoid a dependency from
+  // OS_NACL to file I/O logic, this will require splitting SSLKeyLogger into an
+  // interface, built with OS_NACL and a non-NaCl SSLKeyLoggerImpl.
+  static void SetSSLKeyLogFile(const base::FilePath& path);
 
   // Returns true if |error| is OK or |load_flags| ignores certificate errors
   // and |error| is a certificate error.
@@ -115,6 +138,10 @@ class NET_EXPORT SSLClientSocket : public SSLSocket {
   // that bug is closed. This returns the channel ID key that was used when
   // establishing the connection (or NULL if no channel ID was used).
   virtual crypto::ECPrivateKey* GetChannelIDKey() const = 0;
+
+  // Returns details for a failed Connect() operation. This method is used to
+  // track causes of TLS version interference by buggy middleboxes.
+  virtual SSLErrorDetails GetConnectErrorDetails() const;
 
  protected:
   void set_signed_cert_timestamps_received(

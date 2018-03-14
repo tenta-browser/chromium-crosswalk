@@ -9,7 +9,6 @@
 #include <stdint.h>
 
 #include <cstring>
-#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -19,7 +18,6 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
@@ -360,17 +358,20 @@ struct SSLSocketDataProvider {
   SSLSocketDataProvider(const SSLSocketDataProvider& other);
   ~SSLSocketDataProvider();
 
+  // Result for Connect().
   MockConnect connect;
+
+  // Result for GetNegotiatedProtocol().
   NextProto next_proto;
-  NextProtoVector next_protos_expected_in_ssl_config;
-  bool client_cert_sent;
+
+  // Result for GetSSLInfo().
+  SSLInfo ssl_info;
+
+  // Result for GetSSLCertRequestInfo().
   SSLCertRequestInfo* cert_request_info;
-  scoped_refptr<X509Certificate> cert;
-  bool channel_id_sent;
+
   ChannelIDService* channel_id_service;
-  int connection_status;
-  bool token_binding_negotiated;
-  TokenBindingParam token_binding_key_param;
+  NextProtoVector next_protos_expected_in_ssl_config;
 };
 
 // Uses the sequence_number field in the mock reads and writes to

@@ -41,23 +41,26 @@ class CORE_EXPORT HTMLEmbedElement final : public HTMLPlugInElement {
 
   void ParseAttribute(const AttributeModificationParams&) override;
   bool IsPresentationAttribute(const QualifiedName&) const override;
-  void CollectStyleForPresentationAttribute(const QualifiedName&,
-                                            const AtomicString&,
-                                            MutableStylePropertySet*) override;
+  void CollectStyleForPresentationAttribute(
+      const QualifiedName&,
+      const AtomicString&,
+      MutableCSSPropertyValueSet*) override;
 
   bool LayoutObjectIsNeeded(const ComputedStyle&) override;
 
   bool IsURLAttribute(const Attribute&) const override;
   const QualifiedName& SubResourceAttributeName() const override;
 
-  LayoutPart* ExistingLayoutPart() const override;
+  LayoutEmbeddedContent* ExistingLayoutEmbeddedContent() const override;
 
   void UpdatePluginInternal() override;
 
   void ParametersForPlugin(Vector<String>& param_names,
                            Vector<String>& param_values);
 
-  bool ShouldRegisterAsNamedItem() const override { return true; }
+  NamedItemType GetNamedItemType() const override {
+    return NamedItemType::kName;
+  }
   bool IsInteractiveContent() const override;
 };
 

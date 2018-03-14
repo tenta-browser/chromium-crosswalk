@@ -14,6 +14,7 @@
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/skbitmap_operations.h"
+#include "ui/gfx/skia_util.h"
 #include "ui/native_theme/native_theme_dark_aura.h"
 
 namespace libgtkui {
@@ -127,10 +128,6 @@ SkColor SkColorFromColorId(ui::NativeTheme::ColorId color_id) {
       return GetFgColor(
           "GtkMenu#menu GtkMenuItem#menuitem GtkLabel.accelerator");
     case ui::NativeTheme::kColorId_MenuSeparatorColor:
-    // MenuButton borders are used as vertical menu separators in Chrome.
-    case ui::NativeTheme::kColorId_EnabledMenuButtonBorderColor:
-    case ui::NativeTheme::kColorId_FocusedMenuButtonBorderColor:
-    case ui::NativeTheme::kColorId_HoverMenuButtonBorderColor:
       if (GtkVersionCheck(3, 20)) {
         return GetSeparatorColor(
             "GtkMenu#menu GtkSeparator#separator.horizontal");
@@ -221,6 +218,15 @@ SkColor SkColorFromColorId(ui::NativeTheme::ColorId color_id) {
       return GetFgColor(
           "GtkTreeView#treeview.view "
           "GtkTreeView#treeview.view.cell:selected:focus GtkLabel");
+
+    // TabbedPane
+    case ui::NativeTheme::kColorId_TabTitleColorActive:
+      return GetFgColor("GtkLabel");
+    case ui::NativeTheme::kColorId_TabTitleColorInactive:
+      return GetFgColor("GtkLabel:disabled");
+    case ui::NativeTheme::kColorId_TabBottomBorder:
+      return GetBorderColor(GtkVersionCheck(3, 20) ? "GtkFrame#frame #border"
+                                                   : "GtkFrame#frame");
 
     // Textfield
     case ui::NativeTheme::kColorId_TextfieldDefaultColor:
@@ -407,6 +413,9 @@ NativeThemeGtk3::NativeThemeGtk3() {
   // doesn't optimize away this code.
   g_type_class_unref(g_type_class_ref(gtk_button_get_type()));
   g_type_class_unref(g_type_class_ref(gtk_entry_get_type()));
+  g_type_class_unref(g_type_class_ref(gtk_frame_get_type()));
+  g_type_class_unref(g_type_class_ref(gtk_header_bar_get_type()));
+  g_type_class_unref(g_type_class_ref(gtk_image_get_type()));
   g_type_class_unref(g_type_class_ref(gtk_info_bar_get_type()));
   g_type_class_unref(g_type_class_ref(gtk_label_get_type()));
   g_type_class_unref(g_type_class_ref(gtk_menu_get_type()));
@@ -418,6 +427,7 @@ NativeThemeGtk3::NativeThemeGtk3() {
   g_type_class_unref(g_type_class_ref(gtk_separator_get_type()));
   g_type_class_unref(g_type_class_ref(gtk_spinner_get_type()));
   g_type_class_unref(g_type_class_ref(gtk_text_view_get_type()));
+  g_type_class_unref(g_type_class_ref(gtk_toggle_button_get_type()));
   g_type_class_unref(g_type_class_ref(gtk_tree_view_get_type()));
   g_type_class_unref(g_type_class_ref(gtk_window_get_type()));
 
@@ -566,6 +576,17 @@ void NativeThemeGtk3::PaintMenuSeparator(
     State state,
     const gfx::Rect& rect,
     const MenuSeparatorExtraParams& menu_separator) const {
+  // TODO(estade): use GTK to draw vertical separators too. See
+  // crbug.com/710183
+  if (menu_separator.type == ui::VERTICAL_SEPARATOR) {
+    cc::PaintFlags paint;
+    paint.setStyle(cc::PaintFlags::kFill_Style);
+    paint.setColor(
+        GetSystemColor(ui::NativeTheme::kColorId_MenuSeparatorColor));
+    canvas->drawRect(gfx::RectToSkRect(rect), paint);
+    return;
+  }
+
   auto separator_offset = [&](int separator_thickness) {
     switch (menu_separator.type) {
       case ui::LOWER_SEPARATOR:
@@ -614,7 +635,9 @@ void NativeThemeGtk3::PaintMenuSeparator(
     } else {
       cc::PaintFlags flags;
       flags.setColor(GetFgColorFromStyleContext(context));
-      canvas->drawLine(x, y, x + w, y, flags);
+      flags.setAntiAlias(true);
+      flags.setStrokeWidth(1);
+      canvas->drawLine(x + 0.5f, y + 0.5f, x + w + 0.5f, y + 0.5f, flags);
     }
   }
 }

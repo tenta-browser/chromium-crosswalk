@@ -43,15 +43,16 @@
 
 namespace blink {
 
+class WebCoalescedInputEvent;
 class WebDragData;
-class WebInputEvent;
 class WebPluginContainer;
 class WebURLResponse;
-struct WebCompositionUnderline;
+struct WebImeTextSpan;
 struct WebCursorInfo;
 struct WebPrintParams;
 struct WebPrintPresetOptions;
 struct WebPoint;
+struct WebFloatPoint;
 struct WebRect;
 struct WebURLError;
 template <typename T>
@@ -111,21 +112,20 @@ class WebPlugin {
   virtual void UpdateGeometry(const WebRect& window_rect,
                               const WebRect& clip_rect,
                               const WebRect& unobscured_rect,
-                              const WebVector<WebRect>& cut_outs_rects,
                               bool is_visible) = 0;
 
   virtual void UpdateFocus(bool focused, WebFocusType) = 0;
 
   virtual void UpdateVisibility(bool) = 0;
 
-  virtual WebInputEventResult HandleInputEvent(const WebInputEvent&,
+  virtual WebInputEventResult HandleInputEvent(const WebCoalescedInputEvent&,
                                                WebCursorInfo&) = 0;
 
   virtual bool HandleDragStatusUpdate(WebDragStatus,
                                       const WebDragData&,
                                       WebDragOperationsMask,
-                                      const WebPoint& position,
-                                      const WebPoint& screen_position) {
+                                      const WebFloatPoint& position,
+                                      const WebFloatPoint& screen_position) {
     return false;
   }
 
@@ -160,6 +160,8 @@ class WebPlugin {
   virtual WebString SelectionAsText() const { return WebString(); }
   virtual WebString SelectionAsMarkup() const { return WebString(); }
 
+  virtual bool CanEditText() const { return false; }
+
   virtual bool ExecuteEditCommand(const WebString& name) { return false; }
   virtual bool ExecuteEditCommand(const WebString& name,
                                   const WebString& value) {
@@ -169,12 +171,11 @@ class WebPlugin {
   // Sets composition text from input method, and returns true if the
   // composition is set successfully. If |replacementRange| is not null, the
   // text inside |replacementRange| will be replaced by |text|
-  virtual bool SetComposition(
-      const WebString& text,
-      const WebVector<WebCompositionUnderline>& underlines,
-      const WebRange& replacement_range,
-      int selection_start,
-      int selection_end) {
+  virtual bool SetComposition(const WebString& text,
+                              const WebVector<WebImeTextSpan>& ime_text_spans,
+                              const WebRange& replacement_range,
+                              int selection_start,
+                              int selection_end) {
     return false;
   }
 
@@ -182,7 +183,7 @@ class WebPlugin {
   // moves the caret according to relativeCaretPosition. If |replacementRange|
   // is not null, the text inside |replacementRange| will be replaced by |text|.
   virtual bool CommitText(const WebString& text,
-                          const WebVector<WebCompositionUnderline>& underlines,
+                          const WebVector<WebImeTextSpan>& ime_text_spans,
                           const WebRange& replacement_range,
                           int relative_caret_position) {
     return false;
@@ -239,11 +240,16 @@ class WebPlugin {
   virtual bool CanRotateView() { return false; }
   // Rotates the plugin's view of its content.
   virtual void RotateView(RotationType type) {}
-
+  // Check whether a plugin can be interacted with. A positive return value
+  // means the plugin has not loaded and hence cannot be interacted with.
+  // The plugin could, however, load successfully later.
   virtual bool IsPlaceholder() { return true; }
+  // Check whether a plugin failed to load, with there being no possibility of
+  // it loading later.
+  virtual bool IsErrorPlaceholder() { return false; }
 
  protected:
-  ~WebPlugin() {}
+  virtual ~WebPlugin() {}
 };
 
 }  // namespace blink

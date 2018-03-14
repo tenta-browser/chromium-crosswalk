@@ -10,82 +10,222 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "mojo/public/cpp/bindings/struct_traits.h"  // nogncheck
+#include "third_party/skia/include/core/SkColor.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/paint_vector_icon.h"
+#include "ui/gfx/skia_util.h"
+#include "ui/gfx/vector_icon_types.h"
 #include "ui/message_center/message_center_export.h"
 #include "ui/message_center/notification_delegate.h"
 #include "ui/message_center/notification_types.h"
-#include "ui/message_center/notifier_settings.h"
+#include "ui/message_center/notifier_id.h"
 #include "url/gurl.h"
 
-#if !defined(OS_IOS)
-#include "mojo/public/cpp/bindings/struct_traits.h"  // nogncheck
-#endif
+namespace gfx {
+struct VectorIcon;
+}  // namespace gfx
 
 namespace message_center {
 
-#if !defined(OS_IOS)
 namespace mojom {
 class NotificationDataView;
 }
-#endif
 
+// Represents an individual item in NOTIFICATION_TYPE_MULTIPLE notifications.
 struct MESSAGE_CENTER_EXPORT NotificationItem {
+  NotificationItem(const base::string16& title, const base::string16& message);
+
   base::string16 title;
   base::string16 message;
-
-  NotificationItem(const base::string16& title, const base::string16& message);
 };
 
-enum class ButtonType { BUTTON, TEXT };
+enum class ButtonType {
+  // A simple button having an icon and a title that the user can click on.
+  BUTTON,
 
+  // A button having an icon and a title that should also enable the user to
+  // input text, enabling them to quickly respond from the notification.
+  TEXT
+};
+
+enum class SettingsButtonHandler {
+  NONE,     // No button. This is the default.
+  TRAY,     // Button shown, the tray handles clicks. Only used on Chrome OS.
+  DELEGATE  // Button shown, notification's delegate handles action.
+};
+
+enum class SystemNotificationWarningLevel { NORMAL, WARNING, CRITICAL_WARNING };
+
+// Represents a button to be shown as part of a notification.
 struct MESSAGE_CENTER_EXPORT ButtonInfo {
-  base::string16 title;
-  gfx::Image icon;
-  ButtonType type = ButtonType::BUTTON;
-  base::string16 placeholder;
-
   explicit ButtonInfo(const base::string16& title);
   ButtonInfo(const ButtonInfo& other);
   ~ButtonInfo();
   ButtonInfo& operator=(const ButtonInfo& other);
+
+  // Title that should be displayed on the notification button.
+  base::string16 title;
+
+  // Icon that should be displayed on the notification button. Optional. On some
+  // platforms, a mask will be applied to the icon, to match the visual
+  // requirements of the notification.
+  gfx::Image icon;
+
+  // Type of this button.
+  ButtonType type = ButtonType::BUTTON;
+
+  // The placeholder string that should be displayed in the input field for TEXT
+  // type buttons until the user has entered a response themselves.
+  base::string16 placeholder;
 };
 
+// TODO(estade): add an ALWAYS value to mark notifications as additionally
+// visible over system fullscreen windows such as Chrome OS login so we don't
+// need to centrally track Ash system notification IDs.
+enum class FullscreenVisibility {
+  NONE,       // Don't show the notification over fullscreen (default).
+  OVER_USER,  // Show over the current fullscreened client window.
+              // windows (like Chrome OS login).
+};
+
+// Represents rich features available for notifications.
 class MESSAGE_CENTER_EXPORT RichNotificationData {
  public:
   RichNotificationData();
   RichNotificationData(const RichNotificationData& other);
   ~RichNotificationData();
 
-  int priority;
-  bool never_timeout;
+  // Priority of the notification. This must be one of the NotificationPriority
+  // values defined in notification_types.h.
+  int priority = DEFAULT_PRIORITY;
+
+  // Whether the notification should remain on screen indefinitely.
+  bool never_timeout = false;
+
+  // Time indicating when the notification was shown. Defaults to the time at
+  // which the RichNotificationData instance is constructed.
   base::Time timestamp;
+
+  // Context message to display below the notification's content. Optional. May
+  // not be used for notifications that have an explicit origin URL set.
   base::string16 context_message;
+
+  // Large image to display on the notification. Optional.
   gfx::Image image;
+
+  // Small badge to display on the notification to illustrate the source of the
+  // notification. Optional.
   gfx::Image small_image;
+
+  // Vector version of |small_image|.
+  // Used by Notification::GenerateMaskedSmallIcon.
+  // If not available, |small_image| will be used by the method. Optional.
+  //
+  // Due to the restriction of CreateVectorIcon, this should be a pointer to
+  // globally defined VectorIcon instance e.g. kNotificationCapsLockIcon.
+  // gfx::Image created by gfx::CreateVectorIcon internally stores reference to
+  // VectorIcon, so the VectorIcon should live longer than gfx::Image instance.
+  // As a temporary solution to this problem, we make this variable a pointer
+  // and only pass globally defined constants.
+  // TODO(tetsui): Remove the pointer, after fixing VectorIconSource not to
+  // retain VectorIcon reference.  https://crbug.com/760866
+  const gfx::VectorIcon* vector_small_image = &gfx::kNoneIcon;
+
+  // Items to display on the notification. Only applicable for notifications
+  // that have type NOTIFICATION_TYPE_MULTIPLE.
   std::vector<NotificationItem> items;
-  int progress;
+
+  // Progress, in range of [0-100], of NOTIFICATION_TYPE_PROGRESS notifications.
+  // Values outside of the range (e.g. -1) will show an infinite loading
+  // progress bar.
+  int progress = 0;
+
+  // Status text string shown in NOTIFICATION_TYPE_PROGRESS notifications.
+  // If MD style notification is not enabled, this attribute is ignored.
+  base::string16 progress_status;
+
+  // Buttons that should show up on the notification. A maximum of 16 buttons
+  // is supported by the current implementation, but this may differ between
+  // platforms.
   std::vector<ButtonInfo> buttons;
-  bool should_make_spoken_feedback_for_popup_updates;
-  bool clickable;
+
+  // Whether updates to the visible notification should be announced to users
+  // depending on visual assistance systems.
+  bool should_make_spoken_feedback_for_popup_updates = true;
+
+  // Whether it should be possible for the user to click on the notification.
+  bool clickable = false;
+
 #if defined(OS_CHROMEOS)
   // Flag if the notification is pinned. If true, the notification is pinned
-  // and user can't remove it.
-  bool pinned;
+  // and the user can't remove it.
+  bool pinned = false;
 #endif  // defined(OS_CHROMEOS)
+
+  // Vibration pattern to play when displaying the notification. There must be
+  // an odd number of entries in this pattern when it's set: numbers of
+  // milliseconds to vibrate separated by numbers of milliseconds to pause.
   std::vector<int> vibration_pattern;
-  bool renotify;
-  bool silent;
+
+  // Whether the vibration pattern and other applicable announcement mechanisms
+  // should be considered when updating the notification.
+  bool renotify = false;
+
+  // Whether all announcement mechansims should be suppressed when displaying
+  // the notification.
+  bool silent = false;
+
+  // An accessible description of the notification's contents.
   base::string16 accessible_name;
+
+  // Unified theme color used in new style notification.
+  // Usually, it should not be set directly.
+  // For system notification, CreateSystemNotification with
+  // SystemNotificationWarningLevel should be used.
+  SkColor accent_color = SK_ColorTRANSPARENT;
+
+  // Shows |image| as the right icon when notification is collapsed,
+  // and hides the icon when the notification is expanded.
+  // This is only effective when new style notification is enabled.
+  bool use_image_as_icon = false;
+
+  // Controls whether a settings button should appear on the notification. See
+  // enum definition. TODO(estade): turn this into a boolean. See
+  // crbug.com/780342
+  SettingsButtonHandler settings_button_handler = SettingsButtonHandler::NONE;
+
+  FullscreenVisibility fullscreen_visibility = FullscreenVisibility::NONE;
 };
 
 class MESSAGE_CENTER_EXPORT Notification {
  public:
-  // Default constructor needed for generated mojom files
+  // Default constructor needed for generated mojom files.
   Notification();
 
+  // Creates a new notification.
+  //
+  // |type|: Type of the notification that dictates the layout.
+  // |id|: Identifier of the notification. Showing a notification that shares
+  //       its profile and identifier with an already visible notification will
+  //       replace the former one
+  // |title|: Title of the notification.
+  // |message|: Body text of the notification. May not be used for certain
+  //            values of |type|, for example list-style notifications.
+  // |icon|: Icon to show alongside of the notification.
+  // |display_source|: Textual representation of who's shown the notification.
+  // |origin_url|: URL of the website responsible for showing the notification.
+  // |notifier_id|: NotifierId instance representing the system responsible for
+  //                showing the notification.
+  // |optional_fields|: Rich data that can be used to assign more elaborate
+  //                    features to notifications.
+  // |delegate|: Delegate that will influence the behaviour of this notification
+  //             and receives events on its behalf. May be omitted.
   Notification(NotificationType type,
                const std::string& id,
                const base::string16& title,
@@ -95,15 +235,29 @@ class MESSAGE_CENTER_EXPORT Notification {
                const GURL& origin_url,
                const NotifierId& notifier_id,
                const RichNotificationData& optional_fields,
-               NotificationDelegate* delegate);
+               scoped_refptr<NotificationDelegate> delegate);
 
+  // Creates a copy of the |other| notification. The delegate, if any, will be
+  // identical for both the Notification instances. The |id| of the notification
+  // will be replaced by the given value.
   Notification(const std::string& id, const Notification& other);
 
+  // Creates a copy of the |other| notification. The delegate, if any, will be
+  // identical for both the Notification instances.
   Notification(const Notification& other);
 
   Notification& operator=(const Notification& other);
 
   virtual ~Notification();
+
+  // Performs a deep copy of |notification|, including images and (optionally)
+  // the body image, small image, and icon images which are not supported on all
+  // platforms.
+  static std::unique_ptr<Notification> DeepCopy(
+      const Notification& notification,
+      bool include_body_image,
+      bool include_small_image,
+      bool include_icon_images);
 
   // Copies the internal on-memory state from |base|, i.e. shown_as_popup,
   // is_read and never_timeout.
@@ -129,6 +283,7 @@ class MESSAGE_CENTER_EXPORT Notification {
   // Can be empty if the notification is requested by an extension or
   // Chrome app.
   const GURL& origin_url() const { return origin_url_; }
+  void set_origin_url(const GURL& origin_url) { origin_url_ = origin_url; }
 
   // A display string for the source of the notification.
   const base::string16& display_source() const { return display_source_; }
@@ -188,6 +343,14 @@ class MESSAGE_CENTER_EXPORT Notification {
 
   int progress() const { return optional_fields_.progress; }
   void set_progress(int progress) { optional_fields_.progress = progress; }
+
+  base::string16 progress_status() const {
+    return optional_fields_.progress_status;
+  }
+  void set_progress_status(const base::string16& progress_status) {
+    optional_fields_.progress_status = progress_status;
+  }
+
   // End unpacked values.
 
   // Images fetched asynchronously.
@@ -201,6 +364,23 @@ class MESSAGE_CENTER_EXPORT Notification {
   void set_small_image(const gfx::Image& image) {
     optional_fields_.small_image = image;
   }
+
+  const gfx::VectorIcon& vector_small_image() const {
+    return *optional_fields_.vector_small_image;
+  }
+  // Due to the restriction of CreateVectorIcon, this should be a pointer to
+  // globally defined VectorIcon instance e.g. kNotificationCapsLockIcon.
+  // See detailed comment in RichNotificationData::vector_small_image.
+  void set_vector_small_image(const gfx::VectorIcon& image) {
+    optional_fields_.vector_small_image = &image;
+  }
+
+  // Mask the color of |small_image| to the given |color|.
+  // If |vector_small_image| is available, it returns the vector image
+  // filled by the |color|.
+  // Otherwise, it uses alpha channel of the rasterized |small_image| for
+  // masking.
+  gfx::Image GenerateMaskedSmallIcon(int dip_size, SkColor color) const;
 
   // Buttons, with icons fetched asynchronously.
   const std::vector<ButtonInfo>& buttons() const {
@@ -251,10 +431,37 @@ class MESSAGE_CENTER_EXPORT Notification {
     return optional_fields_.accessible_name;
   }
 
+  SkColor accent_color() const { return optional_fields_.accent_color; }
+  void set_accent_color(SkColor accent_color) {
+    optional_fields_.accent_color = accent_color;
+  }
+
+  bool use_image_as_icon() const { return optional_fields_.use_image_as_icon; }
+  void set_use_image_as_icon(bool use_image_as_icon) {
+    optional_fields_.use_image_as_icon = use_image_as_icon;
+  }
+
+  bool should_show_settings_button() const {
+    return optional_fields_.settings_button_handler !=
+           SettingsButtonHandler::NONE;
+  }
+
+  FullscreenVisibility fullscreen_visibility() const {
+    return optional_fields_.fullscreen_visibility;
+  }
+  void set_fullscreen_visibility(FullscreenVisibility visibility) {
+    optional_fields_.fullscreen_visibility = visibility;
+  }
+
   NotificationDelegate* delegate() const { return delegate_.get(); }
 
   const RichNotificationData& rich_notification_data() const {
     return optional_fields_;
+  }
+
+  void set_delegate(scoped_refptr<NotificationDelegate> delegate) {
+    DCHECK(!delegate_);
+    delegate_ = delegate;
   }
 
   // Set the priority to SYSTEM. The system priority user needs to call this
@@ -263,13 +470,19 @@ class MESSAGE_CENTER_EXPORT Notification {
 
   // Delegate actions.
   void Display() const { delegate()->Display(); }
-  bool HasClickedListener() const { return delegate()->HasClickedListener(); }
   void Click() const { delegate()->Click(); }
   void ButtonClick(int index) const { delegate()->ButtonClick(index); }
   void Close(bool by_user) const { delegate()->Close(by_user); }
 
   // Helper method to create a simple system notification. |click_callback|
   // will be invoked when the notification is clicked.
+  //
+  // It should only be used for critical notification, as SetSystemPriority and
+  // CRITICAL_WARNING color are set inside, which means the notification would
+  // not go away without user interaction.
+  //
+  // TODO(tetsui): Add a function parameter |small_image| of gfx::VectorIcon, so
+  // display source of critical system notification is illustrated by icon.
   static std::unique_ptr<Notification> CreateSystemNotification(
       const std::string& notification_id,
       const base::string16& title,
@@ -277,6 +490,25 @@ class MESSAGE_CENTER_EXPORT Notification {
       const gfx::Image& icon,
       const std::string& system_component_id,
       const base::Closure& click_callback);
+
+  // Factory method to create all kinds of notifications generated by system,
+  // from normal priority ones to critical priority ones.
+  // |small_image| is a small icon show on the upper left header to illustrate
+  // |display_source| of the notification.
+  // One specified in the |optional_fields| is overridden.
+  static std::unique_ptr<Notification> CreateSystemNotification(
+      NotificationType type,
+      const std::string& id,
+      const base::string16& title,
+      const base::string16& message,
+      const gfx::Image& icon,
+      const base::string16& display_source,
+      const GURL& origin_url,
+      const NotifierId& notifier_id,
+      const RichNotificationData& optional_fields,
+      scoped_refptr<NotificationDelegate> delegate,
+      const gfx::VectorIcon& small_image,
+      SystemNotificationWarningLevel color_type);
 
  protected:
   // The type of notification we'd like displayed.
@@ -290,10 +522,13 @@ class MESSAGE_CENTER_EXPORT Notification {
   gfx::Image icon_;
 
   // The display string for the source of the notification.  Could be
-  // the same as origin_url_, or the name of an extension.
+  // the same as |origin_url_|, or the name of an extension.
+  // Expected to be a localized user facing string.
   base::string16 display_source_;
 
  private:
+  friend struct mojo::StructTraits<mojom::NotificationDataView, Notification>;
+
   // The origin URL of the script which requested the notification.
   // Can be empty if requested through a chrome app or extension or if
   // it's a system notification.
@@ -307,10 +542,6 @@ class MESSAGE_CENTER_EXPORT Notification {
   // A proxy object that allows access back to the JavaScript object that
   // represents the notification, for firing events.
   scoped_refptr<NotificationDelegate> delegate_;
-
-#if !defined(OS_IOS)
-  friend struct mojo::StructTraits<mojom::NotificationDataView, Notification>;
-#endif
 };
 
 }  // namespace message_center

@@ -25,14 +25,16 @@
 
 #include "core/CoreExport.h"
 #include "core/dom/Element.h"
+#include "platform/text/TextDirection.h"
 
 namespace blink {
 
+struct AttributeTriggers;
+class Color;
 class DocumentFragment;
 class ExceptionState;
 class FormAssociated;
 class HTMLFormElement;
-class HTMLMenuElement;
 class KeyboardEvent;
 
 enum TranslateAttributeMode {
@@ -107,10 +109,6 @@ class CORE_EXPORT HTMLElement : public Element {
 
   static const AtomicString& EventParameterName();
 
-  HTMLMenuElement* AssignedContextMenu() const;
-  HTMLMenuElement* contextMenu() const;
-  void setContextMenu(HTMLMenuElement*);
-
   virtual String AltText() const { return String(); }
 
   int offsetLeftForBinding();
@@ -126,31 +124,34 @@ class CORE_EXPORT HTMLElement : public Element {
   HTMLElement(const QualifiedName& tag_name, Document&, ConstructionType);
 
   enum AllowPercentage { kDontAllowPercentageValues, kAllowPercentageValues };
-  void AddHTMLLengthToStyle(MutableStylePropertySet*,
+  void AddHTMLLengthToStyle(MutableCSSPropertyValueSet*,
                             CSSPropertyID,
                             const String& value,
                             AllowPercentage = kAllowPercentageValues);
-  void AddHTMLColorToStyle(MutableStylePropertySet*,
+  void AddHTMLColorToStyle(MutableCSSPropertyValueSet*,
                            CSSPropertyID,
                            const String& color);
 
   void ApplyAlignmentAttributeToStyle(const AtomicString&,
-                                      MutableStylePropertySet*);
+                                      MutableCSSPropertyValueSet*);
   void ApplyBorderAttributeToStyle(const AtomicString&,
-                                   MutableStylePropertySet*);
+                                   MutableCSSPropertyValueSet*);
 
   void AttributeChanged(const AttributeModificationParams&) override;
   void ParseAttribute(const AttributeModificationParams&) override;
   static bool ParseColorWithLegacyRules(const String& attribute_value,
                                         Color& parsed_color);
   bool IsPresentationAttribute(const QualifiedName&) const override;
-  void CollectStyleForPresentationAttribute(const QualifiedName&,
-                                            const AtomicString&,
-                                            MutableStylePropertySet*) override;
+  void CollectStyleForPresentationAttribute(
+      const QualifiedName&,
+      const AtomicString&,
+      MutableCSSPropertyValueSet*) override;
   unsigned ParseBorderWidthAttribute(const AtomicString&) const;
 
   void ChildrenChanged(const ChildrenChange&) override;
   void CalculateAndAdjustDirectionality();
+
+  InsertionNotificationRequest InsertedInto(ContainerNode*) override;
 
  private:
   String DebugNodeName() const final;
@@ -162,20 +163,29 @@ class CORE_EXPORT HTMLElement : public Element {
       delete;  // This will catch anyone doing an unnecessary check.
 
   void MapLanguageAttributeToLocale(const AtomicString&,
-                                    MutableStylePropertySet*);
+                                    MutableCSSPropertyValueSet*);
 
   DocumentFragment* TextToFragment(const String&, ExceptionState&);
 
   bool SelfOrAncestorHasDirAutoAttribute() const;
-  void DirAttributeChanged(const AtomicString&);
   void AdjustDirectionalityIfNeededAfterChildAttributeChanged(Element* child);
   void AdjustDirectionalityIfNeededAfterChildrenChanged(const ChildrenChange&);
   TextDirection Directionality(
-      Node** strong_directionality_text_node = 0) const;
+      Node** strong_directionality_text_node = nullptr) const;
 
   TranslateAttributeMode GetTranslateAttributeMode() const;
 
   void HandleKeypressEvent(KeyboardEvent*);
+
+  static AttributeTriggers* TriggersForAttributeName(
+      const QualifiedName& attr_name);
+
+  void OnDirAttrChanged(const AttributeModificationParams&);
+  void OnInertAttrChanged(const AttributeModificationParams&);
+  void OnLangAttrChanged(const AttributeModificationParams&);
+  void OnNonceAttrChanged(const AttributeModificationParams&);
+  void OnTabIndexAttrChanged(const AttributeModificationParams&);
+  void OnXMLLangAttrChanged(const AttributeModificationParams&);
 };
 
 DEFINE_ELEMENT_TYPE_CASTS(HTMLElement, IsHTMLElement());
@@ -240,6 +250,6 @@ class HasHTMLTagName {
 
 }  // namespace blink
 
-#include "core/HTMLElementTypeHelpers.h"
+#include "core/html_element_type_helpers.h"
 
 #endif  // HTMLElement_h

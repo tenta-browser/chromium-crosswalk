@@ -8,34 +8,47 @@
 #include <string>
 
 #include "base/macros.h"
-#include "components/arc/arc_service.h"
+#include "base/threading/thread_checker.h"
 #include "components/arc/common/clipboard.mojom.h"
-#include "components/arc/instance_holder.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "components/keyed_service/core/keyed_service.h"
+#include "ui/base/clipboard/clipboard_observer.h"
+
+namespace content {
+class BrowserContext;
+}  // namespace content
 
 namespace arc {
 
-class ArcClipboardBridge
-    : public ArcService,
-      public InstanceHolder<mojom::ClipboardInstance>::Observer,
-      public mojom::ClipboardHost {
+class ArcBridgeService;
+
+class ArcClipboardBridge : public KeyedService,
+                           public ui::ClipboardObserver,
+                           public mojom::ClipboardHost {
  public:
-  explicit ArcClipboardBridge(ArcBridgeService* bridge_service);
+  // Returns singleton instance for the given BrowserContext,
+  // or nullptr if the browser |context| is not allowed to use ARC.
+  static ArcClipboardBridge* GetForBrowserContext(
+      content::BrowserContext* context);
+
+  ArcClipboardBridge(content::BrowserContext* context,
+                     ArcBridgeService* bridge_service);
   ~ArcClipboardBridge() override;
 
-  // InstanceHolder<mojom::ClipboardInstance>::Observer overrides.
-  void OnInstanceReady() override;
+  // ClipboardObserver overrides.
+  void OnClipboardDataChanged() override;
 
   // mojom::ClipboardHost overrides.
-  void SetTextContent(const std::string& text) override;
-  void GetTextContent() override;
+  void SetTextContentDeprecated(const std::string& text) override;
+  void GetTextContentDeprecated() override;
+  void SetClipContent(mojom::ClipDataPtr clip_data) override;
+  void GetClipContent(GetClipContentCallback callback) override;
 
  private:
-  bool CalledOnValidThread();
+  ArcBridgeService* const arc_bridge_service_;  // Owned by ArcServiceManager.
 
-  mojo::Binding<mojom::ClipboardHost> binding_;
+  bool event_originated_at_instance_;
 
-  base::ThreadChecker thread_checker_;
+  THREAD_CHECKER(thread_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(ArcClipboardBridge);
 };

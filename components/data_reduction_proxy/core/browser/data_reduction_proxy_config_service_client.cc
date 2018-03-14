@@ -28,6 +28,7 @@
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_util.h"
 #include "components/data_reduction_proxy/proto/client_config.pb.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
+#include "components/variations/net/variations_http_headers.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_flags.h"
 #include "net/base/load_timing_info.h"
@@ -38,6 +39,7 @@
 #include "net/http/http_status_code.h"
 #include "net/log/net_log_source_type.h"
 #include "net/proxy/proxy_server.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request_status.h"
 
@@ -237,10 +239,15 @@ void DataReductionProxyConfigServiceClient::RetrieveConfig() {
   RetrieveRemoteConfig();
 }
 
+bool DataReductionProxyConfigServiceClient::RemoteConfigApplied() const {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  return remote_config_applied_;
+}
+
 void DataReductionProxyConfigServiceClient::ApplySerializedConfig(
     const std::string& config_value) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (remote_config_applied_)
+  if (RemoteConfigApplied())
     return;
 
   std::string decoded_config;
@@ -389,6 +396,15 @@ void DataReductionProxyConfigServiceClient::RetrieveRemoteConfig() {
 
   fetcher_ = std::move(fetcher);
   fetch_in_progress_ = true;
+
+  // Attach variations headers.
+  net::HttpRequestHeaders headers;
+  variations::AppendVariationHeaders(config_service_url_, false /* incognito */,
+                                     false /* uma_enabled */,
+                                     false /* is_signed_in */, &headers);
+  if (!headers.IsEmpty())
+    fetcher_->SetExtraRequestHeaders(headers.ToString());
+
   fetcher_->Start();
 }
 
@@ -399,7 +415,7 @@ void DataReductionProxyConfigServiceClient::InvalidateConfig() {
   request_options_->Invalidate();
   config_values_->Invalidate();
   io_data_->SetPingbackReportingFraction(0.0f);
-  config_->ReloadConfig();
+  config_->OnNewClientConfigFetched();
 }
 
 std::unique_ptr<net::URLFetcher>
@@ -407,20 +423,44 @@ DataReductionProxyConfigServiceClient::GetURLFetcherForConfig(
     const GURL& secure_proxy_check_url,
     const std::string& request_body) {
   DCHECK(thread_checker_.CalledOnValidThread());
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("data_reduction_proxy_config", R"(
+        semantics {
+          sender: "Data Reduction Proxy"
+          description:
+            "Requests a configuration that specifies how to connect to the "
+            "data reduction proxy."
+          trigger:
+            "Requested when Data Saver is enabled and the browser does not "
+            "have a configuration that is not older than a threshold set by "
+            "the server."
+          data: "None."
+          destination: GOOGLE_OWNED_SERVICE
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "Users can control Data Saver on Android via 'Data Saver' setting. "
+            "Data Saver is not available on iOS, and on desktop it is enabled "
+            "by insalling the Data Saver extension."
+          policy_exception_justification: "Not implemented."
+        })");
   std::unique_ptr<net::URLFetcher> fetcher(net::URLFetcher::Create(
-      secure_proxy_check_url, net::URLFetcher::POST, this));
+      secure_proxy_check_url, net::URLFetcher::POST, this, traffic_annotation));
   data_use_measurement::DataUseUserData::AttachToFetcher(
       fetcher.get(),
       data_use_measurement::DataUseUserData::DATA_REDUCTION_PROXY);
-  fetcher->SetLoadFlags(net::LOAD_BYPASS_PROXY);
+  fetcher->SetLoadFlags(net::LOAD_BYPASS_PROXY | net::LOAD_DO_NOT_SEND_COOKIES |
+                        net::LOAD_DO_NOT_SAVE_COOKIES);
   fetcher->SetUploadData("application/x-protobuf", request_body);
   DCHECK(url_request_context_getter_);
   fetcher->SetRequestContext(url_request_context_getter_);
   // |fetcher| should not retry on 5xx errors since the server may already be
   // overloaded. Spurious 5xx errors are still retried on exponential backoff.
-  // |fetcher| should not retry on network changes since a new fetch will be
-  // initiated.
-  fetcher->SetAutomaticallyRetryOnNetworkChanges(0);
+  // |fetcher| should retry on network changes since the network stack may
+  // receive the connection change event later than |this|.
+  static const int kMaxRetries = 5;
+  fetcher->SetAutomaticallyRetryOnNetworkChanges(kMaxRetries);
   return fetcher;
 }
 
@@ -503,7 +543,7 @@ bool DataReductionProxyConfigServiceClient::ParseAndApplyProxyConfig(
 
   request_options_->SetSecureSession(config.session_key());
   config_values_->UpdateValues(proxies);
-  config_->ReloadConfig();
+  config_->OnNewClientConfigFetched();
   remote_config_applied_ = true;
   return true;
 }

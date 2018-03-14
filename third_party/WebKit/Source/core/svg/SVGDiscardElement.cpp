@@ -30,13 +30,13 @@
 
 #include "core/svg/SVGDiscardElement.h"
 
-#include "core/SVGNames.h"
+#include "core/svg_names.h"
 
 namespace blink {
 
 inline SVGDiscardElement::SVGDiscardElement(Document& document)
     : SVGSMILElement(SVGNames::discardTag, document) {
-  DCHECK(RuntimeEnabledFeatures::smilEnabled());
+  DCHECK(RuntimeEnabledFeatures::SMILEnabled());
 }
 
 DEFINE_NODE_FACTORY(SVGDiscardElement)

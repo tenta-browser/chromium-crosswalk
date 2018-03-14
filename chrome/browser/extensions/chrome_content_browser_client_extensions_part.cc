@@ -33,6 +33,7 @@
 #include "components/guest_view/browser/guest_view_message_filter.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/browser_url_handler.h"
+#include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -64,6 +65,7 @@
 #include "extensions/common/manifest_handlers/web_accessible_resources_info.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/switches.h"
+#include "url/origin.h"
 
 #if defined(OS_CHROMEOS)
 #include "extensions/browser/api/vpn_provider/vpn_service.h"
@@ -263,7 +265,8 @@ ChromeContentBrowserClientExtensionsPart::
 
 // static
 GURL ChromeContentBrowserClientExtensionsPart::GetEffectiveURL(
-    Profile* profile, const GURL& url) {
+    Profile* profile,
+    const GURL& url) {
   // If the input |url| is part of an installed app, the effective URL is an
   // extension URL with the ID of that extension as the host. This has the
   // effect of grouping apps together in a common SiteInstance.
@@ -280,6 +283,31 @@ GURL ChromeContentBrowserClientExtensionsPart::GetEffectiveURL(
   // treated as normal URLs.
   if (extension->from_bookmark())
     return url;
+
+  // If |url| corresponds to both an isolated origin and a hosted app,
+  // determine whether to use the effective URL, which also determines whether
+  // the isolated origin should take precedence over a matching hosted app:
+  // - Chrome Web Store should always be resolved to its effective URL, so that
+  //   the CWS process gets proper bindings.
+  // - for other hosted apps, if the isolated origin covers the app's entire
+  //   web extent (i.e., *all* URLs matched by the hosted app will have this
+  //   isolated origin), allow the hosted app to take effect and return an
+  //   effective URL.
+  // - for other cases, disallow effective URLs, as otherwise this would allow
+  //   the isolated origin to share the hosted app process with other origins
+  //   it does not trust, due to https://crbug.com/791796.
+  //
+  // TODO(alexmos): Revisit and possibly remove this once
+  // https://crbug.com/791796 is fixed.
+  url::Origin isolated_origin;
+  auto* policy = content::ChildProcessSecurityPolicy::GetInstance();
+  bool is_isolated_origin = policy->GetMatchingIsolatedOrigin(
+      url::Origin::Create(url), &isolated_origin);
+  if (is_isolated_origin && extension->id() != kWebStoreAppId &&
+      !DoesOriginMatchAllURLsInWebExtent(isolated_origin,
+                                         extension->web_extent())) {
+    return url;
+  }
 
   // If the URL is part of an extension's web extent, convert it to an
   // extension URL.
@@ -323,27 +351,23 @@ bool ChromeContentBrowserClientExtensionsPart::ShouldUseProcessPerSite(
 bool ChromeContentBrowserClientExtensionsPart::DoesSiteRequireDedicatedProcess(
     content::BrowserContext* browser_context,
     const GURL& effective_site_url) {
-  if (IsIsolateExtensionsEnabled()) {
-    const Extension* extension =
-        ExtensionRegistry::Get(browser_context)
-            ->enabled_extensions()
-            .GetExtensionOrAppByURL(effective_site_url);
-    if (extension) {
-      // Always isolate Chrome Web Store.
-      if (extension->id() == kWebStoreAppId)
-        return true;
+  const Extension* extension = ExtensionRegistry::Get(browser_context)
+                                   ->enabled_extensions()
+                                   .GetExtensionOrAppByURL(effective_site_url);
+  if (!extension)
+    return false;
 
-      // --isolate-extensions should isolate extensions, except for hosted
-      // apps. Isolating hosted apps is a good idea, but ought to be a separate
-      // knob.
-      if (extension->is_hosted_app())
-        return false;
+  // Always isolate Chrome Web Store.
+  if (extension->id() == kWebStoreAppId)
+    return true;
 
-      // Isolate all extensions.
-      return true;
-    }
-  }
-  return false;
+  // Extensions should be isolated, except for hosted apps. Isolating hosted
+  // apps is a good idea, but ought to be a separate knob.
+  if (extension->is_hosted_app())
+    return false;
+
+  // Isolate all extensions.
+  return true;
 }
 
 // static
@@ -363,13 +387,21 @@ bool ChromeContentBrowserClientExtensionsPart::ShouldLockToOrigin(
 
     // http://crbug.com/600441 workaround: Extension process reuse, implemented
     // in ShouldTryToUseExistingProcessHost(), means that extension processes
-    // aren't always actually dedicated to a single origin, even in
-    // --isolate-extensions. TODO(nick): Fix this.
+    // aren't always actually dedicated to a single origin.
+    // TODO(nick): Fix this.
     if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
             ::switches::kSitePerProcess))
       return false;
   }
   return true;
+}
+
+bool ChromeContentBrowserClientExtensionsPart::ShouldBypassDocumentBlocking(
+    const url::Origin& initiator) {
+  // Don't block responses for extension processes or for content scripts.
+  // TODO(creis): This check can be made stricter by checking what the extension
+  // has access to.
+  return initiator.scheme() == extensions::kExtensionScheme;
 }
 
 // static
@@ -574,7 +606,7 @@ bool ChromeContentBrowserClientExtensionsPart::ShouldAllowOpenURL(
 
   // Using url::Origin is important to properly handle blob: and filesystem:
   // URLs.
-  url::Origin to_origin(to_url);
+  url::Origin to_origin = url::Origin::Create(to_url);
   if (to_origin.scheme() != kExtensionScheme) {
     // We're not responsible for protecting this resource.  Note that hosted
     // apps fall into this category.
@@ -589,7 +621,9 @@ bool ChromeContentBrowserClientExtensionsPart::ShouldAllowOpenURL(
   const Extension* to_extension =
       registry->enabled_extensions().GetByID(to_origin.host());
   if (!to_extension) {
-    *result = true;
+    // Treat non-existent extensions the same as an extension without accessible
+    // resources.
+    *result = false;
     return true;
   }
 
@@ -626,14 +660,16 @@ bool ChromeContentBrowserClientExtensionsPart::ShouldAllowOpenURL(
     return true;
   }
 
-  // Navigations from chrome:// or chrome-search:// pages need to be allowed,
-  // even if |to_url| is not web-accessible.  See https://crbug.com/662602.
+  // Navigations from chrome://, chrome-search:// and chrome-devtools:// pages
+  // need to be allowed, even if |to_url| is not web-accessible. See
+  // https://crbug.com/662602.
   //
   // Note that this is intentionally done after the check for blob: and
   // filesystem: URLs above, for consistency with the renderer-side checks
   // which already disallow navigations from chrome URLs to blob/filesystem
   // URLs.
   if (site_url.SchemeIs(content::kChromeUIScheme) ||
+      site_url.SchemeIs(content::kChromeDevToolsScheme) ||
       site_url.SchemeIs(chrome::kChromeSearchScheme)) {
     *result = true;
     return true;
@@ -685,6 +721,19 @@ ChromeContentBrowserClientExtensionsPart::GetVpnServiceProxy(
 }
 
 // static
+bool ChromeContentBrowserClientExtensionsPart::
+    ShouldFrameShareParentSiteInstanceDespiteTopDocumentIsolation(
+        const GURL& subframe_url,
+        content::SiteInstance* parent_site_instance) {
+  const Extension* extension =
+      ExtensionRegistry::Get(parent_site_instance->GetBrowserContext())
+          ->enabled_extensions()
+          .GetExtensionOrAppByURL(parent_site_instance->GetSiteURL());
+
+  return extension && extension->is_hosted_app();
+}
+
+// static
 void ChromeContentBrowserClientExtensionsPart::RecordShouldAllowOpenURLFailure(
     ShouldAllowOpenURLFailureReason reason,
     const GURL& site_url) {
@@ -731,6 +780,36 @@ void ChromeContentBrowserClientExtensionsPart::RecordShouldAllowOpenURLFailure(
                             scheme, SCHEME_LAST);
 }
 
+// static
+bool ChromeContentBrowserClientExtensionsPart::
+    DoesOriginMatchAllURLsInWebExtent(const url::Origin& origin,
+                                      const URLPatternSet& web_extent) {
+  // This function assumes |origin| is an isolated origin, which can only have
+  // an HTTP or HTTPS scheme (see IsolatedOriginUtil::IsValidIsolatedOrigin()),
+  // so these are the only schemes allowed to be matched below.
+  DCHECK(origin.scheme() == url::kHttpsScheme ||
+         origin.scheme() == url::kHttpScheme);
+  URLPattern origin_pattern(URLPattern::SCHEME_HTTPS | URLPattern::SCHEME_HTTP);
+  // TODO(alexmos): Temporarily disable precise scheme matching on
+  // |origin_pattern| to allow apps that use *://foo.com/ in their web extent
+  // to still work with isolated origins.  See https://crbug.com/799638.  We
+  // should use SetScheme(origin.scheme()) here once https://crbug.com/791796
+  // is fixed.
+  origin_pattern.SetScheme("*");
+  origin_pattern.SetHost(origin.host());
+  origin_pattern.SetPath("/*");
+  // We allow matching subdomains here because |origin| is the precise origin
+  // retrieved from site isolation policy. Thus, we'll only allow an extent of
+  // foo.example.com and bar.example.com if the isolated origin was
+  // example.com; if the isolated origin is foo.example.com, this will
+  // correctly fail.
+  origin_pattern.SetMatchSubdomains(true);
+
+  URLPatternSet origin_pattern_list;
+  origin_pattern_list.AddPattern(origin_pattern);
+  return origin_pattern_list.Contains(web_extent);
+}
+
 void ChromeContentBrowserClientExtensionsPart::RenderProcessWillLaunch(
     content::RenderProcessHost* host) {
   int id = host->GetID();
@@ -754,9 +833,16 @@ void ChromeContentBrowserClientExtensionsPart::SiteInstanceGotProcess(
   if (!registry)
     return;
 
-  const Extension* extension =
-      registry->enabled_extensions().GetExtensionOrAppByURL(
-          site_instance->GetSiteURL());
+  // Only add the process to the map if the SiteInstance's site URL is already
+  // a chrome-extension:// URL. This includes hosted apps, except in rare cases
+  // that a URL in the hosted app's extent is not treated as a hosted app (e.g.,
+  // for isolated origins or cross-site iframes). For that case, don't look up
+  // the hosted app's Extension from the site URL using GetExtensionOrAppByURL,
+  // since it isn't treated as a hosted app.
+  if (!site_instance->GetSiteURL().SchemeIs(kExtensionScheme))
+    return;
+  const Extension* extension = registry->enabled_extensions().GetByID(
+      site_instance->GetSiteURL().host());
   if (!extension)
     return;
 
@@ -766,9 +852,10 @@ void ChromeContentBrowserClientExtensionsPart::SiteInstanceGotProcess(
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&InfoMap::RegisterExtensionProcess,
-                 ExtensionSystem::Get(context)->info_map(), extension->id(),
-                 site_instance->GetProcess()->GetID(), site_instance->GetId()));
+      base::BindOnce(&InfoMap::RegisterExtensionProcess,
+                     ExtensionSystem::Get(context)->info_map(), extension->id(),
+                     site_instance->GetProcess()->GetID(),
+                     site_instance->GetId()));
 }
 
 void ChromeContentBrowserClientExtensionsPart::SiteInstanceDeleting(
@@ -790,9 +877,10 @@ void ChromeContentBrowserClientExtensionsPart::SiteInstanceDeleting(
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&InfoMap::UnregisterExtensionProcess,
-                 ExtensionSystem::Get(context)->info_map(), extension->id(),
-                 site_instance->GetProcess()->GetID(), site_instance->GetId()));
+      base::BindOnce(&InfoMap::UnregisterExtensionProcess,
+                     ExtensionSystem::Get(context)->info_map(), extension->id(),
+                     site_instance->GetProcess()->GetID(),
+                     site_instance->GetId()));
 }
 
 void ChromeContentBrowserClientExtensionsPart::OverrideWebkitPrefs(
@@ -846,12 +934,8 @@ void ChromeContentBrowserClientExtensionsPart::GetAdditionalFileSystemBackends(
     const base::FilePath& storage_partition_path,
     std::vector<std::unique_ptr<storage::FileSystemBackend>>*
         additional_backends) {
-  base::SequencedWorkerPool* pool = content::BrowserThread::GetBlockingPool();
-  auto sequence_token =
-      pool->GetNamedSequenceToken(MediaFileSystemBackend::kMediaTaskRunnerName);
-  additional_backends->push_back(base::MakeUnique<MediaFileSystemBackend>(
-      storage_partition_path,
-      pool->GetSequencedTaskRunner(sequence_token).get()));
+  additional_backends->push_back(
+      base::MakeUnique<MediaFileSystemBackend>(storage_partition_path));
 
   additional_backends->push_back(
       base::MakeUnique<sync_file_system::SyncFileSystemBackend>(

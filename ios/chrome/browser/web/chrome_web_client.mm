@@ -5,14 +5,16 @@
 #include "ios/chrome/browser/web/chrome_web_client.h"
 
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/files/file_util.h"
 #include "base/ios/ios_util.h"
 #include "base/mac/bundle_locations.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/dom_distiller/core/url_constants.h"
+#include "components/payments/core/features.h"
 #include "components/prefs/pref_service.h"
 #include "components/strings/grit/components_strings.h"
-#include "components/task_scheduler_util/browser/initialization.h"
 #include "components/version_info/version_info.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_about_rewriter.h"
@@ -21,6 +23,7 @@
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/ios_chrome_main_parts.h"
+#include "ios/chrome/browser/passwords/credential_manager_features.h"
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/ssl/ios_ssl_error_handler.h"
 #import "ios/chrome/browser/ui/chrome_web_view_factory.h"
@@ -33,6 +36,10 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "url/gurl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 // Returns an autoreleased string containing the JavaScript loaded from a
@@ -53,14 +60,15 @@ NSString* GetPageScript(NSString* script_file_name) {
   DCHECK(content);
   return content;
 }
-}
+}  // namespace
 
 ChromeWebClient::ChromeWebClient() {}
 
 ChromeWebClient::~ChromeWebClient() {}
 
-web::WebMainParts* ChromeWebClient::CreateWebMainParts() {
-  return new IOSChromeMainParts(*base::CommandLine::ForCurrentProcess());
+std::unique_ptr<web::WebMainParts> ChromeWebClient::CreateWebMainParts() {
+  return base::MakeUnique<IOSChromeMainParts>(
+      *base::CommandLine::ForCurrentProcess());
 }
 
 void ChromeWebClient::PreWebViewCreation() const {
@@ -77,10 +85,9 @@ void ChromeWebClient::PreWebViewCreation() const {
   }
 }
 
-void ChromeWebClient::AddAdditionalSchemes(
-    std::vector<url::SchemeWithType>* additional_standard_schemes) const {
-  url::SchemeWithType scheme = {kChromeUIScheme, url::SCHEME_WITHOUT_PORT};
-  additional_standard_schemes->push_back(scheme);
+void ChromeWebClient::AddAdditionalSchemes(Schemes* schemes) const {
+  schemes->standard_schemes.push_back(kChromeUIScheme);
+  schemes->secure_schemes.push_back(kChromeUIScheme);
 }
 
 std::string ChromeWebClient::GetAcceptLangs(web::BrowserState* state) const {
@@ -136,13 +143,14 @@ base::string16 ChromeWebClient::GetLocalizedString(int message_id) const {
 base::StringPiece ChromeWebClient::GetDataResource(
     int resource_id,
     ui::ScaleFactor scale_factor) const {
-  return ResourceBundle::GetSharedInstance().GetRawDataResourceForScale(
+  return ui::ResourceBundle::GetSharedInstance().GetRawDataResourceForScale(
       resource_id, scale_factor);
 }
 
 base::RefCountedMemory* ChromeWebClient::GetDataResourceBytes(
     int resource_id) const {
-  return ResourceBundle::GetSharedInstance().LoadDataResourceBytes(resource_id);
+  return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytes(
+      resource_id);
 }
 
 void ChromeWebClient::GetAdditionalWebUISchemes(
@@ -157,7 +165,18 @@ void ChromeWebClient::PostBrowserURLRewriterCreation(
 
 NSString* ChromeWebClient::GetEarlyPageScript(
     web::BrowserState* browser_state) const {
-  return GetPageScript(@"chrome_bundle");
+  NSMutableArray* scripts = [NSMutableArray array];
+  [scripts addObject:GetPageScript(@"chrome_bundle")];
+
+  if (base::FeatureList::IsEnabled(features::kCredentialManager)) {
+    [scripts addObject:GetPageScript(@"credential_manager")];
+  }
+
+  if (base::FeatureList::IsEnabled(payments::features::kWebPayments)) {
+    [scripts addObject:GetPageScript(@"payment_request")];
+  }
+
+  return [scripts componentsJoinedByString:@";"];
 }
 
 void ChromeWebClient::AllowCertificateError(
@@ -167,15 +186,10 @@ void ChromeWebClient::AllowCertificateError(
     const GURL& request_url,
     bool overridable,
     const base::Callback<void(bool)>& callback) {
+  // TODO(crbug.com/760873): IOSSSLErrorHandler will present an interstitial
+  // for the user to decide if it is safe to proceed.
+  // Handle the case of web_state not presenting UI to users like prerender tabs
+  // or web_state used to fetch offline content in Reading List.
   IOSSSLErrorHandler::HandleSSLError(web_state, cert_error, info, request_url,
                                      overridable, callback);
-}
-
-std::unique_ptr<base::TaskScheduler::InitParams>
-ChromeWebClient::GetTaskSchedulerInitParams() {
-  return task_scheduler_util::GetBrowserTaskSchedulerInitParamsFromVariations();
-}
-
-void ChromeWebClient::PerformExperimentalTaskSchedulerRedirections() {
-  task_scheduler_util::MaybePerformBrowserTaskSchedulerRedirection();
 }

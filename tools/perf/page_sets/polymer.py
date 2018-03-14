@@ -19,7 +19,8 @@ class PolymerPage(page_module.Page):
     super(PolymerPage, self).__init__(
       url=url,
       shared_page_state_class=shared_page_state.SharedMobilePageState,
-      page_set=page_set)
+      page_set=page_set,
+      name=url)
     self.script_to_evaluate_on_commit = '''
       document.addEventListener("polymer-ready", function() {
         window.__polymer_ready = true;

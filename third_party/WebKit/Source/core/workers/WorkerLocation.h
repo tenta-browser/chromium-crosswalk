@@ -27,16 +27,14 @@
 #ifndef WorkerLocation_h
 #define WorkerLocation_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "core/dom/DOMURLUtilsReadOnly.h"
-#include "platform/heap/Handle.h"
+#include "core/url/DOMURLUtilsReadOnly.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/wtf/Forward.h"
 
 namespace blink {
 
-class WorkerLocation final : public GarbageCollectedFinalized<WorkerLocation>,
-                             public ScriptWrappable,
+class WorkerLocation final : public ScriptWrappable,
                              public DOMURLUtilsReadOnly {
   DEFINE_WRAPPERTYPEINFO();
 
@@ -50,8 +48,6 @@ class WorkerLocation final : public GarbageCollectedFinalized<WorkerLocation>,
     NOTREACHED();
     return String();
   }
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   explicit WorkerLocation(const KURL& url) : url_(url) {}

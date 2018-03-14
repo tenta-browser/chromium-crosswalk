@@ -36,12 +36,11 @@ class QUIC_EXPORT_PRIVATE GeneralLossAlgorithm : public LossDetectionInterface {
   void SetLossDetectionType(LossDetectionType loss_type);
 
   // Uses |largest_acked| and time to decide when packets are lost.
-  void DetectLosses(
-      const QuicUnackedPacketMap& unacked_packets,
-      QuicTime time,
-      const RttStats& rtt_stats,
-      QuicPacketNumber largest_newly_acked,
-      SendAlgorithmInterface::CongestionVector* packets_lost) override;
+  void DetectLosses(const QuicUnackedPacketMap& unacked_packets,
+                    QuicTime time,
+                    const RttStats& rtt_stats,
+                    QuicPacketNumber largest_newly_acked,
+                    LostPacketVector* packets_lost) override;
 
   // Returns a non-zero value when the early retransmit timer is active.
   QuicTime GetLossTimeout() const override;
@@ -59,6 +58,8 @@ class QUIC_EXPORT_PRIVATE GeneralLossAlgorithm : public LossDetectionInterface {
   QuicTime loss_detection_timeout_;
   // Largest sent packet when a spurious retransmit is detected.
   // Prevents increasing the reordering threshold multiple times per epoch.
+  // TODO(ianswett): Deprecate when
+  // quic_reloadable_flag_quic_fix_adaptive_time_loss is deprecated.
   QuicPacketNumber largest_sent_on_spurious_retransmit_;
   LossDetectionType loss_type_;
   // Fraction of a max(SRTT, latest_rtt) to permit reordering before declaring

@@ -27,11 +27,12 @@
 #ifndef TextCodecICU_h
 #define TextCodecICU_h
 
+#include <unicode/utypes.h>
+#include <memory>
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "platform/wtf/text/TextCodec.h"
 #include "platform/wtf/text/TextEncoding.h"
-#include <memory>
-#include <unicode/utypes.h>
 
 typedef struct UConverter UConverter;
 
@@ -65,12 +66,6 @@ class TextCodecICU final : public TextCodec {
 
   void CreateICUConverter() const;
   void ReleaseICUConverter() const;
-#if defined(USING_SYSTEM_ICU)
-  bool needsGBKFallbacks() const { return m_needsGBKFallbacks; }
-  void setNeedsGBKFallbacks(bool needsFallbacks) {
-    m_needsGBKFallbacks = needsFallbacks;
-  }
-#endif
 
   int DecodeToBuffer(UChar* buffer,
                      UChar* buffer_limit,
@@ -81,25 +76,24 @@ class TextCodecICU final : public TextCodec {
                      UErrorCode&);
 
   TextEncoding encoding_;
-  mutable UConverter* converter_icu_;
+  mutable UConverter* converter_icu_ = nullptr;
 #if defined(USING_SYSTEM_ICU)
-  mutable bool m_needsGBKFallbacks;
+  mutable bool needs_gbk_fallbacks_ = false;
 #endif
 
   FRIEND_TEST_ALL_PREFIXES(TextCodecICUTest, IgnorableCodePoint);
-  FRIEND_TEST_ALL_PREFIXES(TextCodecICUTest, UTF32AndQuestionMarks);
-  FRIEND_TEST_ALL_PREFIXES(TextCodecICUTest, UTF32Aliases);
 };
 
 struct ICUConverterWrapper {
-  WTF_MAKE_NONCOPYABLE(ICUConverterWrapper);
   USING_FAST_MALLOC(ICUConverterWrapper);
 
  public:
-  ICUConverterWrapper() : converter(0) {}
+  ICUConverterWrapper() : converter(nullptr) {}
   ~ICUConverterWrapper();
 
   UConverter* converter;
+
+  DISALLOW_COPY_AND_ASSIGN(ICUConverterWrapper);
 };
 
 }  // namespace WTF

@@ -31,7 +31,7 @@
 #ifndef MIDIMessageEvent_h
 #define MIDIMessageEvent_h
 
-#include "core/dom/DOMTypedArray.h"
+#include "core/typed_arrays/DOMTypedArray.h"
 #include "modules/EventModules.h"
 
 namespace blink {
@@ -57,7 +57,7 @@ class MIDIMessageEvent final : public Event {
     return EventNames::MIDIMessageEvent;
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  virtual void Trace(blink::Visitor* visitor) {
     visitor->Trace(data_);
     Event::Trace(visitor);
   }

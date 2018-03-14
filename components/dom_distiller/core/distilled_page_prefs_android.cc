@@ -61,18 +61,14 @@ jfloat DistilledPagePrefsAndroid::GetFontScaling(
   return distilled_page_prefs_->GetFontScaling();
 }
 
-jlong Init(JNIEnv* env,
-           const JavaParamRef<jobject>& obj,
-           jlong distilled_page_prefs_ptr) {
+jlong JNI_DistilledPagePrefs_Init(JNIEnv* env,
+                                  const JavaParamRef<jobject>& obj,
+                                  jlong distilled_page_prefs_ptr) {
   DistilledPagePrefs* distilled_page_prefs =
       reinterpret_cast<DistilledPagePrefs*>(distilled_page_prefs_ptr);
   DistilledPagePrefsAndroid* distilled_page_prefs_android =
       new DistilledPagePrefsAndroid(env, obj, distilled_page_prefs);
   return reinterpret_cast<intptr_t>(distilled_page_prefs_android);
-}
-
-bool DistilledPagePrefsAndroid::Register(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 void DistilledPagePrefsAndroid::AddObserver(JNIEnv* env,
@@ -126,7 +122,9 @@ void DistilledPagePrefsObserverAndroid::OnChangeFontScaling(
                                                              scaling);
 }
 
-jlong InitObserverAndroid(JNIEnv* env, const JavaParamRef<jobject>& obj) {
+jlong JNI_DistilledPagePrefsObserverWrapper_InitObserverAndroid(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj) {
   DistilledPagePrefsObserverAndroid* observer_android =
       new DistilledPagePrefsObserverAndroid(env, obj);
   return reinterpret_cast<intptr_t>(observer_android);

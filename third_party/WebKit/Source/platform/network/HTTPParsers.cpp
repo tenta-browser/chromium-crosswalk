@@ -32,10 +32,14 @@
 
 #include "platform/network/HTTPParsers.h"
 
+#include <memory>
+#include "net/http/http_content_disposition.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
 #include "platform/json/JSONParser.h"
 #include "platform/loader/fetch/ResourceResponse.h"
+#include "platform/network/HeaderFieldTokenizer.h"
+#include "platform/network/http_names.h"
 #include "platform/weborigin/Suborigin.h"
 #include "platform/wtf/DateMath.h"
 #include "platform/wtf/MathExtras.h"
@@ -46,8 +50,6 @@
 #include "platform/wtf/text/StringUTF8Adaptor.h"
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/WebString.h"
-
-using namespace WTF;
 
 namespace blink {
 
@@ -72,7 +74,7 @@ bool IsWhitespace(UChar chr) {
 // if |matcher| is nullptr, isWhitespace() is used.
 inline bool SkipWhiteSpace(const String& str,
                            unsigned& pos,
-                           CharacterMatchFunctionPtr matcher = nullptr) {
+                           WTF::CharacterMatchFunctionPtr matcher = nullptr) {
   unsigned len = str.length();
 
   if (matcher) {
@@ -167,14 +169,14 @@ const UChar* ParseSuboriginName(const UChar* begin,
 
   const UChar* position = begin;
 
-  if (!skipExactly<UChar, IsASCIILower>(position, end)) {
+  if (!SkipExactly<UChar, IsASCIILower>(position, end)) {
     messages.push_back("Invalid character \'" + String(position, 1) +
                        "\' in suborigin. First character must be a lower case "
                        "alphabetic character.");
     return nullptr;
   }
 
-  skipWhile<UChar, IsASCIILowerAlphaOrDigit>(position, end);
+  SkipWhile<UChar, IsASCIILowerAlphaOrDigit>(position, end);
   if (position != end && !IsASCIISpace(*position)) {
     messages.push_back("Invalid character \'" + String(position, 1) +
                        "\' in suborigin.");
@@ -200,7 +202,7 @@ const UChar* ParseSuboriginPolicyOption(const UChar* begin,
   }
   position = position + 1;
 
-  skipWhile<UChar, IsASCIILowerAlphaOrDigitOrHyphen>(position, end);
+  SkipWhile<UChar, IsASCIILowerAlphaOrDigitOrHyphen>(position, end);
   if (position == end || IsASCIISpace(*position)) {
     messages.push_back(String("Expected \' to end policy option."));
     return nullptr;
@@ -212,11 +214,32 @@ const UChar* ParseSuboriginPolicyOption(const UChar* begin,
     return nullptr;
   }
 
-  ASSERT(position > begin);
+  DCHECK_GT(position, begin);
   size_t length = (position + 1) - begin;
 
   option = String(begin, length);
   return position + 1;
+}
+
+// Parse a number with ignoring trailing [0-9.].
+// Returns NaN if the source contains invalid characters.
+double ParseRefreshTime(const String& source) {
+  int full_stop_count = 0;
+  unsigned number_end = source.length();
+  for (unsigned i = 0; i < source.length(); ++i) {
+    UChar ch = source[i];
+    if (ch == kFullstopCharacter) {
+      // TODO(tkent): According to the HTML specification, we should support
+      // only integers. However we support fractional numbers.
+      if (++full_stop_count == 2)
+        number_end = i;
+    } else if (!IsASCIIDigit(ch)) {
+      return std::numeric_limits<double>::quiet_NaN();
+    }
+  }
+  bool ok;
+  double time = source.Left(number_end).ToDouble(&ok);
+  return ok ? time : std::numeric_limits<double>::quiet_NaN();
 }
 
 }  // namespace
@@ -227,32 +250,6 @@ bool IsValidHTTPHeaderValue(const String& name) {
 
   return name.ContainsOnlyLatin1() && !name.Contains('\r') &&
          !name.Contains('\n') && !name.Contains('\0');
-}
-
-// See RFC 7230, Section 3.2.
-// Checks whether |value| matches field-content in RFC 7230.
-// link: http://tools.ietf.org/html/rfc7230#section-3.2
-bool IsValidHTTPFieldContentRFC7230(const String& value) {
-  if (value.IsEmpty())
-    return false;
-
-  UChar first_character = value[0];
-  if (first_character == ' ' || first_character == '\t')
-    return false;
-
-  UChar last_character = value[value.length() - 1];
-  if (last_character == ' ' || last_character == '\t')
-    return false;
-
-  for (unsigned i = 0; i < value.length(); ++i) {
-    UChar c = value[i];
-    // TODO(mkwst): Extract this character class to a central location,
-    // https://crbug.com/527324.
-    if (c == 0x7F || c > 0xFF || (c < 0x20 && c != '\t'))
-      return false;
-  }
-
-  return true;
 }
 
 // See RFC 7230, Section 3.2.6.
@@ -267,41 +264,15 @@ bool IsValidHTTPToken(const String& characters) {
   return true;
 }
 
-ContentDispositionType GetContentDispositionType(
-    const String& content_disposition) {
-  if (content_disposition.IsEmpty())
-    return kContentDispositionNone;
-
-  Vector<String> parameters;
-  content_disposition.Split(';', parameters);
-
-  if (parameters.IsEmpty())
-    return kContentDispositionNone;
-
-  String disposition_type = parameters[0];
-  disposition_type.StripWhiteSpace();
-
-  if (DeprecatedEqualIgnoringCase(disposition_type, "inline"))
-    return kContentDispositionInline;
-
-  // Some broken sites just send bogus headers like
-  //
-  //   Content-Disposition: ; filename="file"
-  //   Content-Disposition: filename="file"
-  //   Content-Disposition: name="file"
-  //
-  // without a disposition token... screen those out.
-  if (!IsValidHTTPToken(disposition_type))
-    return kContentDispositionNone;
-
-  // We have a content-disposition of "attachment" or unknown.
-  // RFC 2183, section 2.8 says that an unknown disposition
-  // value should be treated as "attachment"
-  return kContentDispositionAttachment;
+bool IsContentDispositionAttachment(const String& content_disposition) {
+  CString cstring(content_disposition.Utf8());
+  std::string string(cstring.data(), cstring.length());
+  return net::HttpContentDisposition(string, std::string()).is_attachment();
 }
 
+// https://html.spec.whatwg.org/multipage/semantics.html#attr-meta-http-equiv-refresh
 bool ParseHTTPRefresh(const String& refresh,
-                      CharacterMatchFunctionPtr matcher,
+                      WTF::CharacterMatchFunctionPtr matcher,
                       double& delay,
                       String& url) {
   unsigned len = refresh.length();
@@ -317,13 +288,11 @@ bool ParseHTTPRefresh(const String& refresh,
 
   if (pos == len) {  // no URL
     url = String();
-    bool ok;
-    delay = refresh.StripWhiteSpace().ToDouble(&ok);
-    return ok;
+    delay = ParseRefreshTime(refresh.StripWhiteSpace());
+    return std::isfinite(delay);
   } else {
-    bool ok;
-    delay = refresh.Left(pos).StripWhiteSpace().ToDouble(&ok);
-    if (!ok)
+    delay = ParseRefreshTime(refresh.Left(pos).StripWhiteSpace());
+    if (!std::isfinite(delay))
       return false;
 
     SkipWhiteSpace(refresh, pos, matcher);
@@ -331,8 +300,7 @@ bool ParseHTTPRefresh(const String& refresh,
       ++pos;
     SkipWhiteSpace(refresh, pos, matcher);
     unsigned url_start_pos = pos;
-    if (refresh.Find("url", url_start_pos, kTextCaseASCIIInsensitive) ==
-        url_start_pos) {
+    if (refresh.FindIgnoringASCIICase("url", url_start_pos) == url_start_pos) {
       url_start_pos += 3;
       SkipWhiteSpace(refresh, url_start_pos, matcher);
       if (refresh[url_start_pos] == '=') {
@@ -370,7 +338,7 @@ bool ParseHTTPRefresh(const String& refresh,
 }
 
 double ParseDate(const String& value) {
-  return ParseDateFromNullTerminatedCharacters(value.Utf8().Data());
+  return ParseDateFromNullTerminatedCharacters(value.Utf8().data());
 }
 
 AtomicString ExtractMIMETypeFromMediaType(const AtomicString& media_type) {
@@ -413,64 +381,6 @@ AtomicString ExtractMIMETypeFromMediaType(const AtomicString& media_type) {
 
   return AtomicString(
       media_type.GetString().Substring(type_start, type_end - type_start));
-}
-
-String ExtractCharsetFromMediaType(const String& media_type) {
-  unsigned pos, len;
-  FindCharsetInMediaType(media_type, pos, len);
-  return media_type.Substring(pos, len);
-}
-
-void FindCharsetInMediaType(const String& media_type,
-                            unsigned& charset_pos,
-                            unsigned& charset_len,
-                            unsigned start) {
-  charset_pos = start;
-  charset_len = 0;
-
-  size_t pos = start;
-  unsigned length = media_type.length();
-
-  while (pos < length) {
-    pos = media_type.Find("charset", pos, kTextCaseASCIIInsensitive);
-    if (pos == kNotFound || !pos) {
-      charset_len = 0;
-      return;
-    }
-
-    // is what we found a beginning of a word?
-    if (media_type[pos - 1] > ' ' && media_type[pos - 1] != ';') {
-      pos += 7;
-      continue;
-    }
-
-    pos += 7;
-
-    // skip whitespace
-    while (pos != length && media_type[pos] <= ' ')
-      ++pos;
-
-    if (media_type[pos++] !=
-        '=')  // this "charset" substring wasn't a parameter
-              // name, but there may be others
-      continue;
-
-    while (pos != length && (media_type[pos] <= ' ' || media_type[pos] == '"' ||
-                             media_type[pos] == '\''))
-      ++pos;
-
-    // we don't handle spaces within quoted parameter values, because charset
-    // names cannot have any
-    unsigned endpos = pos;
-    while (pos != length && media_type[endpos] > ' ' &&
-           media_type[endpos] != '"' && media_type[endpos] != '\'' &&
-           media_type[endpos] != ';')
-      ++endpos;
-
-    charset_pos = pos;
-    charset_len = endpos - pos;
-    return;
-  }
 }
 
 ReflectedXSSDisposition ParseXSSProtectionHeader(const String& header,
@@ -575,8 +485,13 @@ ReflectedXSSDisposition ParseXSSProtectionHeader(const String& header,
 }
 
 ContentTypeOptionsDisposition ParseContentTypeOptionsHeader(
-    const String& header) {
-  if (header.StripWhiteSpace().DeprecatedLower() == "nosniff")
+    const String& value) {
+  if (value.IsEmpty())
+    return kContentTypeOptionsNone;
+
+  Vector<String> results;
+  value.Split(",", results);
+  if (results[0].StripWhiteSpace().LowerASCII() == "nosniff")
     return kContentTypeOptionsNosniff;
   return kContentTypeOptionsNone;
 }
@@ -622,8 +537,8 @@ static void ParseCacheHeader(const String& header,
   const String safe_header = header.RemoveCharacters(IsControlCharacter);
   unsigned max = safe_header.length();
   for (unsigned pos = 0; pos < max; /* pos incremented in loop */) {
-    size_t next_comma_position = safe_header.Find(',', pos);
-    size_t next_equal_sign_position = safe_header.Find('=', pos);
+    size_t next_comma_position = safe_header.find(',', pos);
+    size_t next_equal_sign_position = safe_header.find('=', pos);
     if (next_equal_sign_position != kNotFound &&
         (next_equal_sign_position < next_comma_position ||
          next_comma_position == kNotFound)) {
@@ -637,16 +552,16 @@ static void ParseCacheHeader(const String& header,
       String value = safe_header.Substring(pos, max - pos).StripWhiteSpace();
       if (value[0] == '"') {
         // The value is a quoted string
-        size_t next_double_quote_position = value.Find('"', 1);
+        size_t next_double_quote_position = value.find('"', 1);
         if (next_double_quote_position != kNotFound) {
           // Store the value as a quoted string without quotes
           result.push_back(std::pair<String, String>(
               directive, value.Substring(1, next_double_quote_position - 1)
                              .StripWhiteSpace()));
-          pos += (safe_header.Find('"', pos) - pos) +
+          pos += (safe_header.find('"', pos) - pos) +
                  next_double_quote_position + 1;
           // Move past next comma, if there is one
-          size_t next_comma_position2 = safe_header.Find(',', pos);
+          size_t next_comma_position2 = safe_header.find(',', pos);
           if (next_comma_position2 != kNotFound)
             pos += next_comma_position2 - pos + 1;
           else
@@ -661,14 +576,14 @@ static void ParseCacheHeader(const String& header,
         }
       } else {
         // The value is a token until the next comma
-        size_t next_comma_position2 = value.Find(',');
+        size_t next_comma_position2 = value.find(',');
         if (next_comma_position2 != kNotFound) {
           // The value is delimited by the next comma
           result.push_back(std::pair<String, String>(
               directive,
               TrimToNextSeparator(
                   value.Substring(0, next_comma_position2).StripWhiteSpace())));
-          pos += (safe_header.Find(',', pos) - pos) + 1;
+          pos += (safe_header.find(',', pos) - pos) + 1;
         } else {
           // The rest is the value; no change to value needed
           result.push_back(
@@ -771,10 +686,10 @@ bool ParseSuboriginHeader(const String& header,
   Vector<UChar> characters;
   headers[0].AppendTo(characters);
 
-  const UChar* position = characters.Data();
+  const UChar* position = characters.data();
   const UChar* end = position + characters.size();
 
-  skipWhile<UChar, IsASCIISpace>(position, end);
+  SkipWhile<UChar, IsASCIISpace>(position, end);
 
   String name;
   position = ParseSuboriginName(position, end, name, messages);
@@ -787,7 +702,7 @@ bool ParseSuboriginHeader(const String& header,
   suborigin->SetName(name);
 
   while (position < end) {
-    skipWhile<UChar, IsASCIISpace>(position, end);
+    SkipWhile<UChar, IsASCIISpace>(position, end);
     if (position == end)
       return true;
 
@@ -855,6 +770,46 @@ bool ParseMultipartHeadersFromBody(const char* bytes,
   return true;
 }
 
+bool ParseMultipartFormHeadersFromBody(const char* bytes,
+                                       size_t size,
+                                       HTTPHeaderMap* header_fields,
+                                       size_t* end) {
+  DCHECK_EQ(0u, header_fields->size());
+
+  int headersEndPos =
+      net::HttpUtil::LocateEndOfAdditionalHeaders(bytes, size, 0);
+
+  if (headersEndPos < 0)
+    return false;
+
+  *end = headersEndPos;
+
+  // Eat headers and prepend a status line as is required by
+  // HttpResponseHeaders.
+  std::string headers("HTTP/1.1 200 OK\r\n");
+  headers.append(bytes, headersEndPos);
+
+  scoped_refptr<net::HttpResponseHeaders> responseHeaders =
+      new net::HttpResponseHeaders(
+          net::HttpUtil::AssembleRawHeaders(headers.data(), headers.length()));
+
+  // Copy selected header fields.
+  const AtomicString* const headerNamePointers[] = {
+      &HTTPNames::Content_Disposition, &HTTPNames::Content_Type};
+  for (const AtomicString* headerNamePointer : headerNamePointers) {
+    StringUTF8Adaptor adaptor(*headerNamePointer);
+    size_t iterator = 0;
+    base::StringPiece headerNameStringPiece = adaptor.AsStringPiece();
+    std::string value;
+    while (responseHeaders->EnumerateHeader(&iterator, headerNameStringPiece,
+                                            &value)) {
+      header_fields->Add(*headerNamePointer, WebString::FromUTF8(value));
+    }
+  }
+
+  return true;
+}
+
 // See https://tools.ietf.org/html/draft-ietf-httpbis-jfv-01, Section 4.
 std::unique_ptr<JSONArray> ParseJSONHeader(const String& header,
                                            int max_parse_depth) {
@@ -874,6 +829,49 @@ bool ParseContentRangeHeaderFor206(const String& content_range,
   return net::HttpUtil::ParseContentRangeHeaderFor206(
       StringUTF8Adaptor(content_range).AsStringPiece(), first_byte_position,
       last_byte_position, instance_length);
+}
+
+std::unique_ptr<ServerTimingHeaderVector> ParseServerTimingHeader(
+    const String& headerValue) {
+  std::unique_ptr<ServerTimingHeaderVector> headers =
+      std::make_unique<ServerTimingHeaderVector>();
+
+  if (!headerValue.IsNull()) {
+    DCHECK(headerValue.Is8Bit());
+
+    HeaderFieldTokenizer tokenizer(headerValue);
+    while (!tokenizer.IsConsumed()) {
+      StringView name;
+      if (!tokenizer.ConsumeToken(Mode::kNormal, name)) {
+        break;
+      }
+
+      ServerTimingHeader header(name.ToString());
+
+      while (tokenizer.Consume(';')) {
+        StringView parameter_name;
+        if (!tokenizer.ConsumeToken(Mode::kNormal, parameter_name)) {
+          break;
+        }
+
+        if (tokenizer.Consume('=')) {
+          String value;
+          if (!tokenizer.ConsumeTokenOrQuotedString(Mode::kNormal, value)) {
+            break;
+          }
+
+          header.SetParameter(parameter_name, value);
+        }
+      }
+
+      headers->push_back(std::make_unique<ServerTimingHeader>(header));
+
+      if (!tokenizer.Consume(',')) {
+        break;
+      }
+    }
+  }
+  return headers;
 }
 
 }  // namespace blink

@@ -13,7 +13,7 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/message_center/message_center_export.h"
-#include "ui/message_center/views/message_center_controller.h"
+#include "ui/message_center/views/message_view_delegate.h"
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/widget/widget_observer.h"
 
@@ -37,14 +37,14 @@ class MessageView;
 class Notification;
 class PopupAlignmentDelegate;
 
-// The widget host for a popup. Also implements MessageCenterController
+// The widget host for a popup. Also implements MessageViewDelegate
 // which delegates over to MessagePopupCollection, but takes care about
 // checking the weakref since MessagePopupCollection may disappear before
 // widget/views are closed/destructed.
 class MESSAGE_CENTER_EXPORT ToastContentsView
     : public views::WidgetDelegateView,
       public views::WidgetObserver,
-      public MessageCenterController,
+      public MessageViewDelegate,
       public gfx::AnimationDelegate {
  public:
   static const char kViewClassName[];
@@ -75,9 +75,6 @@ class MESSAGE_CENTER_EXPORT ToastContentsView
 
   void SetBoundsWithAnimation(gfx::Rect new_bounds);
 
-  // Makes the toast activatable, then activate.
-  void ActivateToast();
-
   // Origin and bounds are not 'instant', but rather 'current stable values',
   // there could be animation in progress that targets these values.
   gfx::Point origin() { return origin_; }
@@ -89,23 +86,22 @@ class MESSAGE_CENTER_EXPORT ToastContentsView
   void OnMouseEntered(const ui::MouseEvent& event) override;
   void OnMouseExited(const ui::MouseEvent& event) override;
   void Layout() override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   const char* GetClassName() const override;
 
  private:
   friend class test::MessagePopupCollectionTest;
 
-  // Overridden from MessageCenterController:
+  // Overridden from MessageViewDelegate:
   void ClickOnNotification(const std::string& notification_id) override;
   void RemoveNotification(const std::string& notification_id,
                           bool by_user) override;
-  std::unique_ptr<ui::MenuModel> CreateMenuModel(
-      const NotifierId& notifier_id,
-      const base::string16& display_source) override;
-  bool HasClickedListener(const std::string& notification_id) override;
   void ClickOnNotificationButton(const std::string& notification_id,
                                  int button_index) override;
+  void ClickOnNotificationButtonWithReply(const std::string& notification_id,
+                                          int button_index,
+                                          const base::string16& reply) override;
   void ClickOnSettingsButton(const std::string& notification_id) override;
   void UpdateNotificationSize(const std::string& notification_id) override;
 

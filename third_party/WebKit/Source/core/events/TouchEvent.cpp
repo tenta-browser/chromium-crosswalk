@@ -26,16 +26,19 @@
 
 #include "core/events/TouchEvent.h"
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "core/events/EventDispatcher.h"
+#include "core/dom/events/EventDispatcher.h"
 #include "core/frame/FrameConsole.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/Intervention.h"
 #include "core/frame/LocalDOMWindow.h"
+#include "core/frame/LocalFrameView.h"
+#include "core/frame/UseCounter.h"
 #include "core/html/HTMLElement.h"
 #include "core/input/InputDeviceCapabilities.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "platform/Histogram.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/ScriptState.h"
+#include "public/platform/WebCoalescedInputEvent.h"
 
 namespace blink {
 
@@ -177,7 +180,7 @@ void LogTouchTargetHistogram(EventTarget* event_target,
   }
 
   if (document) {
-    FrameView* view = document->View();
+    LocalFrameView* view = document->View();
     if (view && view->IsScrollable())
       result += kTouchTargetHistogramScrollableDocumentOffset;
   }
@@ -196,13 +199,17 @@ void LogTouchTargetHistogram(EventTarget* event_target,
       static_cast<TouchTargetAndDispatchResultType>(result));
 }
 
+// Helper function to get WebTouchEvent from WebCoalescedInputEvent.
+const WebTouchEvent* GetWebTouchEvent(const WebCoalescedInputEvent& event) {
+  return static_cast<const WebTouchEvent*>(&event.Event());
+}
 }  // namespace
 
 TouchEvent::TouchEvent()
     : default_prevented_before_current_target_(false),
-      current_touch_action_(kTouchActionAuto) {}
+      current_touch_action_(TouchAction::kTouchActionAuto) {}
 
-TouchEvent::TouchEvent(const WebTouchEvent& event,
+TouchEvent::TouchEvent(const WebCoalescedInputEvent& event,
                        TouchList* touches,
                        TouchList* target_touches,
                        TouchList* changed_touches,
@@ -215,11 +222,11 @@ TouchEvent::TouchEvent(const WebTouchEvent& event,
     : UIEventWithKeyState(
           type,
           true,
-          event.IsCancelable(),
+          GetWebTouchEvent(event)->IsCancelable(),
           view,
           0,
-          static_cast<WebInputEvent::Modifiers>(event.GetModifiers()),
-          TimeTicks::FromSeconds(event.TimeStampSeconds()),
+          static_cast<WebInputEvent::Modifiers>(event.Event().GetModifiers()),
+          TimeTicks::FromSeconds(event.Event().TimeStampSeconds()),
           view ? view->GetInputDeviceCapabilities()->FiresTouchEvents(true)
                : nullptr),
       touches_(touches),
@@ -227,7 +234,8 @@ TouchEvent::TouchEvent(const WebTouchEvent& event,
       changed_touches_(changed_touches),
       default_prevented_before_current_target_(false),
       current_touch_action_(current_touch_action) {
-  native_event_.reset(new WebTouchEvent(event));
+  DCHECK(WebInputEvent::IsTouchEventType(event.Event().GetType()));
+  native_event_.reset(new WebCoalescedInputEvent(event));
 }
 
 TouchEvent::TouchEvent(const AtomicString& type,
@@ -236,7 +244,7 @@ TouchEvent::TouchEvent(const AtomicString& type,
       touches_(TouchList::Create(initializer.touches())),
       target_touches_(TouchList::Create(initializer.targetTouches())),
       changed_touches_(TouchList::Create(initializer.changedTouches())),
-      current_touch_action_(kTouchActionAuto) {}
+      current_touch_action_(TouchAction::kTouchActionAuto) {}
 
 TouchEvent::~TouchEvent() {}
 
@@ -260,22 +268,22 @@ void TouchEvent::preventDefault() {
     case PassiveMode::kNotPassive:
     case PassiveMode::kNotPassiveDefault:
       if (!cancelable()) {
-        if (view() && view()->GetFrame()) {
+        if (view() && view()->IsLocalDOMWindow() && view()->GetFrame()) {
           UseCounter::Count(
-              view()->GetFrame(),
-              UseCounter::kUncancellableTouchEventPreventDefaulted);
+              ToLocalFrame(view()->GetFrame()),
+              WebFeature::kUncancelableTouchEventPreventDefaulted);
         }
 
         if (native_event_ &&
-            native_event_->dispatch_type ==
+            GetWebTouchEvent(*native_event_)->dispatch_type ==
                 WebInputEvent::
                     kListenersForcedNonBlockingDueToMainThreadResponsiveness) {
           // Non blocking due to main thread responsiveness.
-          if (view() && view()->GetFrame()) {
+          if (view() && view()->IsLocalDOMWindow() && view()->GetFrame()) {
             UseCounter::Count(
-                view()->GetFrame(),
-                UseCounter::
-                    kUncancellableTouchEventDueToMainThreadResponsivenessPreventDefaulted);
+                ToLocalFrame(view()->GetFrame()),
+                WebFeature::
+                    kUncancelableTouchEventDueToMainThreadResponsivenessPreventDefaulted);
           }
           message_source = kInterventionMessageSource;
           warning_message =
@@ -296,7 +304,7 @@ void TouchEvent::preventDefault() {
       // Only enable the warning when the current touch action is auto because
       // an author may use touch action but call preventDefault for interop with
       // browsers that don't support touch-action.
-      if (current_touch_action_ == kTouchActionAuto) {
+      if (current_touch_action_ == TouchAction::kTouchActionAuto) {
         message_source = kInterventionMessageSource;
         warning_message =
             "Unable to preventDefault inside passive event listener due to "
@@ -310,24 +318,23 @@ void TouchEvent::preventDefault() {
 
   if (!warning_message.IsEmpty() && view() && view()->IsLocalDOMWindow() &&
       view()->GetFrame()) {
-    ToLocalDOMWindow(view())->GetFrame()->Console().AddMessage(
-        ConsoleMessage::Create(message_source, kWarningMessageLevel,
-                               warning_message));
+    Intervention::GenerateReport(ToLocalDOMWindow(view())->GetFrame(),
+                                 warning_message);
   }
 
   if ((type() == EventTypeNames::touchstart ||
        type() == EventTypeNames::touchmove) &&
-      view() && view()->GetFrame() &&
-      current_touch_action_ == kTouchActionAuto) {
+      view() && view()->IsLocalDOMWindow() && view()->GetFrame() &&
+      current_touch_action_ == TouchAction::kTouchActionAuto) {
     switch (HandlingPassive()) {
       case PassiveMode::kNotPassiveDefault:
-        UseCounter::Count(view()->GetFrame(),
-                          UseCounter::kTouchEventPreventedNoTouchAction);
+        UseCounter::Count(ToLocalFrame(view()->GetFrame()),
+                          WebFeature::kTouchEventPreventedNoTouchAction);
         break;
       case PassiveMode::kPassiveForcedDocumentLevel:
         UseCounter::Count(
-            view()->GetFrame(),
-            UseCounter::kTouchEventPreventedForcedDocumentPassiveNoTouchAction);
+            ToLocalFrame(view()->GetFrame()),
+            WebFeature::kTouchEventPreventedForcedDocumentPassiveNoTouchAction);
         break;
       default:
         break;
@@ -338,7 +345,7 @@ void TouchEvent::preventDefault() {
 bool TouchEvent::IsTouchStartOrFirstTouchMove() const {
   if (!native_event_)
     return false;
-  return native_event_->touch_start_or_first_touch_move;
+  return GetWebTouchEvent(*native_event_)->touch_start_or_first_touch_move;
 }
 
 void TouchEvent::DoneDispatchingEventAtCurrentTarget() {
@@ -355,32 +362,15 @@ void TouchEvent::DoneDispatchingEventAtCurrentTarget() {
   default_prevented_before_current_target_ = canceled;
 }
 
-EventDispatchMediator* TouchEvent::CreateMediator() {
-  return TouchEventDispatchMediator::Create(this);
-}
-
-DEFINE_TRACE(TouchEvent) {
+void TouchEvent::Trace(blink::Visitor* visitor) {
   visitor->Trace(touches_);
   visitor->Trace(target_touches_);
   visitor->Trace(changed_touches_);
   UIEventWithKeyState::Trace(visitor);
 }
 
-TouchEventDispatchMediator* TouchEventDispatchMediator::Create(
-    TouchEvent* touch_event) {
-  return new TouchEventDispatchMediator(touch_event);
-}
-
-TouchEventDispatchMediator::TouchEventDispatchMediator(TouchEvent* touch_event)
-    : EventDispatchMediator(touch_event) {}
-
-TouchEvent& TouchEventDispatchMediator::Event() const {
-  return ToTouchEvent(EventDispatchMediator::GetEvent());
-}
-
-DispatchEventResult TouchEventDispatchMediator::DispatchEvent(
-    EventDispatcher& dispatcher) const {
-  Event().GetEventPath().AdjustForTouchEvent(Event());
+DispatchEventResult TouchEvent::DispatchEvent(EventDispatcher& dispatcher) {
+  GetEventPath().AdjustForTouchEvent(*this);
   return dispatcher.Dispatch();
 }
 

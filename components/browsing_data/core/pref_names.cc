@@ -27,6 +27,7 @@ const char kDeletePasswords[] = "browser.clear_data.passwords";
 const char kDeleteFormData[] = "browser.clear_data.form_data";
 const char kDeleteHostedAppsData[] = "browser.clear_data.hosted_apps_data";
 const char kDeleteMediaLicenses[] = "browser.clear_data.media_licenses";
+const char kDeleteSiteSettings[] = "browser.clear_data.site_settings";
 
 // Other Clear Browsing Data preferences.
 const char kLastClearBrowsingDataTime[] =
@@ -76,15 +77,13 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterBooleanPref(
       kDeleteMediaLicenses, false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(
+      kDeleteSiteSettings, false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterInt64Pref(prefs::kLastClearBrowsingDataTime, 0);
 #endif  // !defined(OS_IOS)
 
-#if defined(OS_ANDROID)
-  registry->RegisterIntegerPref(
-      kLastClearBrowsingDataTab, 0,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-#endif
-
+  registry->RegisterIntegerPref(kLastClearBrowsingDataTab, 0);
   registry->RegisterBooleanPref(
       kPreferencesMigratedToBasic, false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);

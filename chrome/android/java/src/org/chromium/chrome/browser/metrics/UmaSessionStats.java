@@ -9,6 +9,9 @@ import android.content.Context;
 import android.content.res.Configuration;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.chrome.browser.DefaultBrowserInfo;
+import org.chromium.chrome.browser.instantapps.InstantAppsHandler;
 import org.chromium.chrome.browser.preferences.privacy.PrivacyPreferencesManager;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModel;
@@ -52,6 +55,10 @@ public class UmaSessionStats {
         nativeRecordPageLoaded(isDesktopUserAgent);
         if (mKeyboardConnected) {
             nativeRecordPageLoadedWithKeyboard();
+        }
+
+        if (InstantAppsHandler.getInstance().getInstantAppIntentForUrl(tab.getUrl()) != null) {
+            RecordUserAction.record("Android.InstantApps.InstantAppsEligiblePageLoaded");
         }
 
         // If the session has ended (i.e. chrome is in the background), escape early. Ideally we
@@ -102,6 +109,7 @@ public class UmaSessionStats {
         nativeUmaResumeSession(sNativeUmaSessionStats);
         updatePreferences();
         updateMetricsServiceState();
+        DefaultBrowserInfo.logDefaultBrowserStats();
     }
 
     private static void ensureNativeInitialized() {
@@ -139,10 +147,6 @@ public class UmaSessionStats {
                 .edit()
                 .putLong(LAST_USED_TIME_PREF, System.currentTimeMillis())
                 .apply();
-    }
-
-    public static void logRendererCrash() {
-        nativeLogRendererCrash();
     }
 
     /**
@@ -203,7 +207,6 @@ public class UmaSessionStats {
     private static native void nativeUpdateMetricsServiceState(boolean mayUpload);
     private native void nativeUmaResumeSession(long nativeUmaSessionStats);
     private native void nativeUmaEndSession(long nativeUmaSessionStats);
-    private static native void nativeLogRendererCrash();
     private static native void nativeRegisterExternalExperiment(
             String studyName, int[] experimentIds);
     private static native void nativeRegisterSyntheticFieldTrial(

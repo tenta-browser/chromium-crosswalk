@@ -5,15 +5,15 @@
 #include <vector>
 
 #include "ash/shell.h"
+#include "ash/system/cast/tray_cast_test_api.h"
 #include "ash/system/tray/system_tray.h"
-#include "ash/system/tray/system_tray_delegate.h"
-#include "ash/test/tray_cast_test_api.h"
+#include "ash/system/tray/system_tray_test_api.h"
 #include "base/macros.h"
 #include "chrome/browser/media/router/media_routes_observer.h"
 #include "chrome/browser/media/router/media_sinks_observer.h"
-#include "chrome/browser/media/router/media_source_helper.h"
 #include "chrome/browser/media/router/mock_media_router.h"
 #include "chrome/browser/ui/ash/cast_config_client_media_router.h"
+#include "chrome/common/media_router/media_source_helper.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/test_utils.h"
 #include "url/gurl.h"
@@ -25,8 +25,7 @@ namespace {
 // Helper to create a MediaSink intance.
 media_router::MediaSink MakeSink(const std::string& id,
                                  const std::string& name) {
-  return media_router::MediaSink(id, name,
-                                 media_router::MediaSink::IconType::GENERIC);
+  return media_router::MediaSink(id, name, media_router::SinkIconType::GENERIC);
 }
 
 // Helper to create a MediaRoute instance.
@@ -44,9 +43,10 @@ ash::TrayCast* GetTrayCast() {
 
   // Make sure we actually popup the tray, otherwise the TrayCast instance will
   // not be created.
-  tray->ShowDefaultView(ash::BubbleCreationType::BUBBLE_CREATE_NEW);
+  tray->ShowDefaultView(ash::BubbleCreationType::BUBBLE_CREATE_NEW,
+                        false /* show_by_click */);
 
-  return tray->GetTrayCastForTesting();
+  return ash::SystemTrayTestApi(tray).tray_cast();
 }
 
 class SystemTrayTrayCastMediaRouterChromeOSTest : public InProcessBrowserTest {
@@ -75,8 +75,6 @@ class SystemTrayTrayCastMediaRouterChromeOSTest : public InProcessBrowserTest {
   }
 
   void SetUpInProcessBrowserTestFixture() override {
-    InProcessBrowserTest::SetUpInProcessBrowserTestFixture();
-
     ON_CALL(media_router_, RegisterMediaSinksObserver(_))
         .WillByDefault(Invoke(
             this, &SystemTrayTrayCastMediaRouterChromeOSTest::CaptureSink));
@@ -88,7 +86,6 @@ class SystemTrayTrayCastMediaRouterChromeOSTest : public InProcessBrowserTest {
 
   void TearDownInProcessBrowserTestFixture() override {
     CastConfigClientMediaRouter::SetMediaRouterForTest(nullptr);
-    InProcessBrowserTest::TearDownInProcessBrowserTestFixture();
   }
 
   media_router::MockMediaRouter media_router_;

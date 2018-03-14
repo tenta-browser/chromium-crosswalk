@@ -59,12 +59,24 @@ class CONTENT_EXPORT RenderViewHostDelegateView {
   virtual void UpdateDragCursor(blink::WebDragOperation operation) {}
 
   // Notification that view for this delegate got the focus.
-  virtual void GotFocus() {}
+  virtual void GotFocus(RenderWidgetHostImpl* render_widget_host) {}
+
+  // Notification that view for this delegate lost the focus.
+  virtual void LostFocus(RenderWidgetHostImpl* render_widget_host) {}
 
   // Callback to inform the browser that the page is returning the focus to
   // the browser's chrome. If reverse is true, it means the focus was
   // retrieved by doing a Shift-Tab.
   virtual void TakeFocus(bool reverse) {}
+
+  // Returns the height of the top controls in DIP.
+  virtual int GetTopControlsHeight() const;
+
+  // Returns the height of the bottom controls in DIP.
+  virtual int GetBottomControlsHeight() const;
+
+  // Returns true if the browser controls resize Blink's view size.
+  virtual bool DoBrowserControlsShrinkBlinkSize() const;
 
 #if BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
   // Shows a popup menu with the specified items.

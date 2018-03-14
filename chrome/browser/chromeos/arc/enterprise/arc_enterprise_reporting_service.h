@@ -10,10 +10,13 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
-#include "components/arc/arc_service.h"
 #include "components/arc/common/enterprise_reporting.mojom.h"
-#include "components/arc/instance_holder.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "mojo/public/cpp/bindings/binding.h"
+
+namespace content {
+class BrowserContext;
+}  // namespace content
 
 namespace arc {
 
@@ -21,23 +24,25 @@ class ArcBridgeService;
 
 // This class controls the ARC enterprise reporting.
 class ArcEnterpriseReportingService
-    : public ArcService,
-      public InstanceHolder<mojom::EnterpriseReportingInstance>::Observer,
+    : public KeyedService,
       public mojom::EnterpriseReportingHost {
  public:
-  explicit ArcEnterpriseReportingService(ArcBridgeService* arc_bridge_service);
-  ~ArcEnterpriseReportingService() override;
+  // Returns singleton instance for the given BrowserContext,
+  // or nullptr if the browser |context| is not allowed to use ARC.
+  static ArcEnterpriseReportingService* GetForBrowserContext(
+      content::BrowserContext* context);
 
-  // InstanceHolder<mojom::EnterpriseReportingInstance>::Observer overrides:
-  void OnInstanceReady() override;
+  ArcEnterpriseReportingService(content::BrowserContext* context,
+                                ArcBridgeService* arc_bridge_service);
+  ~ArcEnterpriseReportingService() override;
 
   // mojom::EnterpriseReportingHost overrides:
   void ReportManagementState(mojom::ManagementState state) override;
 
  private:
-  base::ThreadChecker thread_checker_;
+  THREAD_CHECKER(thread_checker_);
 
-  mojo::Binding<mojom::EnterpriseReportingHost> binding_;
+  ArcBridgeService* const arc_bridge_service_;  // Owned by ArcServiceManager.
 
   base::WeakPtrFactory<ArcEnterpriseReportingService> weak_ptr_factory_;
 

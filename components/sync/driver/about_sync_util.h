@@ -7,9 +7,8 @@
 
 #include <memory>
 
+#include "components/signin/core/browser/account_info.h"
 #include "components/version_info/version_info.h"
-
-class SigninManagerBase;
 
 namespace base {
 class DictionaryValue;
@@ -38,6 +37,8 @@ extern const char kSyncLogJS[];
 extern const char kSyncNodeBrowserJS[];
 extern const char kSyncSearchJS[];
 extern const char kTypesJS[];
+extern const char kUserEventsJS[];
+extern const char kTrafficLogJS[];
 
 // Message handlers.
 // Must match the constants used in the resource files.
@@ -48,6 +49,10 @@ extern const char kRegisterForEvents[];
 extern const char kRegisterForPerTypeCounters[];
 extern const char kRequestListOfTypes[];
 extern const char kRequestUpdatedAboutInfo[];
+extern const char kRequestUserEventsVisibility[];
+extern const char kSetIncludeSpecifics[];
+extern const char kUserEventsVisibilityCallback[];
+extern const char kWriteUserEvent[];
 
 // Other strings.
 // Must match the constants used in the resource files.
@@ -66,9 +71,20 @@ extern const char kUpdate[];
 // This function returns a DictionaryValue which contains all the information
 // required to populate the 'About' tab of about:sync.
 // Note that |service| may be null.
+// DEPRECATED: Use the below function instead. crbug.com/783144
+std::unique_ptr<base::DictionaryValue> ConstructAboutInformation_DEPRECATED(
+    SyncService* service,
+    version_info::Channel channel);
+
+// This function returns a DictionaryValue which contains all the information
+// required to populate the 'About' tab of about:sync.
+// Note that |service| may be null.
+// |primary_account_info| should contain the information of the user's signed-in
+// account. It can be empty if the user is not signed in or the information is
+// not available for any other reason.
 std::unique_ptr<base::DictionaryValue> ConstructAboutInformation(
     SyncService* service,
-    SigninManagerBase* signin,
+    AccountInfo primary_account_info,
     version_info::Channel channel);
 
 }  // namespace sync_ui_util

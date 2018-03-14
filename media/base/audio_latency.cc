@@ -9,7 +9,17 @@
 #include <algorithm>
 
 #include "base/logging.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
+#include "media/base/limits.h"
+
+#if defined(OS_ANDROID)
+#include "base/android/build_info.h"
+#endif
+
+#if defined(OS_MACOSX)
+#include "media/base/mac/audio_latency_mac.h"
+#endif
 
 namespace media {
 
@@ -29,6 +39,23 @@ uint32_t RoundUpToPowerOfTwo(uint32_t v) {
 }
 #endif
 }  // namespace
+
+// static
+bool AudioLatency::IsResamplingPassthroughSupported(LatencyType type) {
+#if defined(OS_CHROMEOS)
+  return true;
+#elif defined(OS_ANDROID)
+  // Only N MR1+ has support for OpenSLES performance modes which allow for
+  // power efficient playback. Per the Android audio team, we shouldn't waste
+  // cycles on resampling when using the playback mode. See OpenSLESOutputStream
+  // for additional implementation details.
+  return type == LATENCY_PLAYBACK &&
+         base::android::BuildInfo::GetInstance()->sdk_int() >=
+             base::android::SDK_VERSION_NOUGAT_MR1;
+#else
+  return false;
+#endif
+}
 
 // static
 int AudioLatency::GetHighLatencyBufferSize(int sample_rate,
@@ -60,11 +87,7 @@ int AudioLatency::GetHighLatencyBufferSize(int sample_rate,
   const int high_latency_buffer_size = RoundUpToPowerOfTwo(twenty_ms_size);
 #endif  // defined(OS_WIN)
 
-#if defined(OS_CHROMEOS)
-  return high_latency_buffer_size;  // No preference.
-#else
   return std::max(preferred_buffer_size, high_latency_buffer_size);
-#endif  // defined(OS_CHROMEOS)
 }
 
 // static
@@ -83,10 +106,10 @@ int AudioLatency::GetRtcBufferSize(int sample_rate, int hardware_buffer_size) {
     return frames_per_buffer;
   }
 
-#if defined(OS_LINUX) || defined(OS_MACOSX)
-  // On Linux and MacOS, the low level IO implementations on the browser side
-  // supports all buffer size the clients want. We use the native peer
-  // connection buffer size (10ms) to achieve best possible performance.
+#if defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_FUCHSIA)
+  // On Linux, MacOS and Fuchsia, the low level IO implementations on the
+  // browser side supports all buffer size the clients want. We use the native
+  // peer connection buffer size (10ms) to achieve best possible performance.
   frames_per_buffer = sample_rate / 100;
 #elif defined(OS_ANDROID)
   // TODO(olka/henrika): This settings are very old, need to be revisited.
@@ -119,11 +142,47 @@ int AudioLatency::GetInteractiveBufferSize(int hardware_buffer_size) {
   // the jitter.
   const int kSmallBufferSize = 1024;
   const int kDefaultCallbackBufferSize = 2048;
+
+  LOG(INFO) << "audioHardwareBufferSize = " << hardware_buffer_size;
+
   if (hardware_buffer_size <= kSmallBufferSize)
-    return kDefaultCallbackBufferSize;
+    hardware_buffer_size = kDefaultCallbackBufferSize;
+
+  LOG(INFO) << "callbackBufferSize      = " << hardware_buffer_size;
 #endif
 
   return hardware_buffer_size;
+}
+
+int AudioLatency::GetExactBufferSize(base::TimeDelta duration,
+                                     int sample_rate,
+                                     int hardware_buffer_size) {
+  DCHECK_NE(0, hardware_buffer_size);
+
+// Other platforms do not currently support custom buffer sizes.
+#if !defined(OS_MACOSX) && !defined(USE_CRAS)
+  return hardware_buffer_size;
+#else
+  const double requested_buffer_size = duration.InSecondsF() * sample_rate;
+  int minimum_buffer_size = hardware_buffer_size;
+
+// On OSX and CRAS the preferred buffer size is larger than the minimum,
+// however we allow values down to the minimum if requested explicitly.
+#if defined(OS_MACOSX)
+  minimum_buffer_size =
+      GetMinAudioBufferSizeMacOS(limits::kMinAudioBufferSize, sample_rate);
+#elif defined(USE_CRAS)
+  minimum_buffer_size = limits::kMinAudioBufferSize;
+#endif
+
+  // Round the requested size to the nearest multiple of the hardware size
+  const int buffer_size =
+      std::round(std::max(requested_buffer_size, 1.0) / hardware_buffer_size) *
+      hardware_buffer_size;
+
+  return std::min(static_cast<int>(limits::kMaxAudioBufferSize),
+                  std::max(buffer_size, minimum_buffer_size));
+#endif
 }
 
 }  // namespace media

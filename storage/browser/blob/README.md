@@ -82,12 +82,14 @@ https://cs.chromium.org/chromium/src/storage/browser/blob/blob_memory_controller
 **In-Memory Storage Limit**
 
 * If the architecture is x64 and NOT Chrome OS or Android: `2GB`
-* Otherwise: `total_physical_memory / 5`
+* If Chrome OS: `total_physical_memory / 5`
+* If Android: `total_physical_memory / 100`
+
 
 **Disk Storage Limit**
 
 * If Chrome OS: `disk_size / 2`
-* If Android: `disk_size / 20`
+* If Android: `6 * disk_size / 100`
 * Else: `disk_size / 10`
 
 Note: Chrome OS's disk is part of the user partition, which is separate from the
@@ -102,16 +104,14 @@ we use is:
 
 ## Example Limits
 
-(All sizes in GB)
-
 | Device | Ram | In-Memory Limit | Disk | Disk Limit | Min Disk Availability |
 | --- | --- | --- | --- | --- | --- |
-| Cast | 0.5 | 0.1 | 0 | 0 | 0 |
-| Android Minimal | 0.5 | 0.1 | 8 | 0.4 | 0.2 |
-| Android Fat | 2 | 0.4 | 32 | 1.5 | 0.8 |
-| CrOS | 2 | 0.4 | 8 | 4 | 0.8 |
-| Desktop 32 | 3 | 0.6 | 500 | 50 | 1.2 |
-| Desktop 64 | 4 | 2 | 500 | 50 | 4 |
+| Cast | 512 MB | 102 MB | 0 | 0 | 0 |
+| Android Minimal | 512 MB | 5 MB | 8 GB | 491 MB | 10 MB |
+| Android Fat | 2 GB | 20 MB | 32 GB | 1.9 GB | 40 MB |
+| CrOS | 2 GB | 409 MB | 8 GB | 4 GB | 0.8 GB |
+| Desktop 32 | 3 GB | 614 MB | 500 GB | 50 GB | 1.2 GB |
+| Desktop 64 | 4 GB | 2 GB | 500 GB | 50 GB | 4 GB |
 
 # Common Pitfalls
 
@@ -128,7 +128,7 @@ the renderer can get rid of the data.
 ## Leaking Blob References
 
 If the blob object in Javascript is kept around, then the data will never be
-cleaned up in the backend. This will unnecessarily us memory, so make sure to
+cleaned up in the backend. This will unnecessarily use memory, so make sure to
 dereference blob objects if they are no longer needed.
 
 Similarily if a URL is created for a blob, this will keep the blob data around
@@ -180,14 +180,14 @@ renderer needs to:
  4. Hold the blob data until the browser is finished requesting it.
 
 The meat of blob construction starts in the [WebBlobRegistryImpl](
-https://cs.chromium.org/chromium/src/content/child/blob_storage/webblobregistry_impl.h)'s
+https://cs.chromium.org/chromium/src/content/renderer/blob_storage/webblobregistry_impl.h)'s
 `createBuilder(uuid, content_type)`.
 
 ## Blob Data Consolidation
 
 Since blobs are often constructed with arrays with single bytes, we try to
 consolidate all **adjacent** memory blob items into one. This is done in
-[BlobConsolidation](https://cs.chromium.org/chromium/src/content/child/blob_storage/blob_consolidation.h).
+[BlobConsolidation](https://cs.chromium.org/chromium/src/content/renderer/blob_storage/blob_consolidation.h).
 The implementation doesn't actually do any copying or allocating of new memory
 buffers, instead it facilitates the transformation between the 'consolidated'
 blob items and the underlying bytes items. This way we don't waste any memory.
@@ -195,27 +195,27 @@ blob items and the underlying bytes items. This way we don't waste any memory.
 ## Blob Transportation (Renderer)
 
 After the blob has been 'consolidated', it is given to the
-[BlobTransportController](https://cs.chromium.org/chromium/src/content/child/blob_storage/blob_transport_controller.h).
+[BlobTransportController](https://cs.chromium.org/chromium/src/content/renderer/blob_storage/blob_transport_controller.h).
 This class:
 
 1. Immediately communicates the blob description to the Browser. We also
-[optimistically send](https://cs.chromium.org/chromium/src/content/child/blob_storage/blob_transport_controller.cc?l=325)
+[optimistically send](https://cs.chromium.org/chromium/src/content/renderer/blob_storage/blob_transport_controller.cc?l=325)
 the blob data if the total memory is less than our IPC threshold.
 2. Stores the blob consolidation for data requests from the browser.
 3. Answers requests from the browser to populate or send the blob data. The
 browser can request the renderer:
   1. Send items and populate the data in IPC ([code](
-https://cs.chromium.org/chromium/src/content/child/blob_storage/blob_transport_controller.cc?q="case+IPCBlobItemRequestStrategy::IPC")).
+https://cs.chromium.org/chromium/src/content/renderer/blob_storage/blob_transport_controller.cc?q="case+IPCBlobItemRequestStrategy::IPC")).
   2. Populate items in shared memory and notify the browser when population is
-complete ([code](https://cs.chromium.org/chromium/src/content/child/blob_storage/blob_transport_controller.cc?q="case+IPCBlobItemRequestStrategy::SHARED_MEMORY")).
+complete ([code](https://cs.chromium.org/chromium/src/content/renderer/blob_storage/blob_transport_controller.cc?q="case+IPCBlobItemRequestStrategy::SHARED_MEMORY")).
   3. Populate items in files and notify the browser when population is complete
-([code](https://cs.chromium.org/chromium/src/content/child/blob_storage/blob_transport_controller.cc?q="case+IPCBlobItemRequestStrategy::FILE")).
+([code](https://cs.chromium.org/chromium/src/content/renderer/blob_storage/blob_transport_controller.cc?q="case+IPCBlobItemRequestStrategy::FILE")).
 4. Destroys the blob consolidation when the browser says it's done.
 
 The transport controller also tries to keep the renderer alive while we are
 sending blobs, as if the renderer is closed then we would lose any pending blob
 data. It does this the [incrementing and decrementing the process reference
-count](https://cs.chromium.org/chromium/src/content/child/blob_storage/blob_transport_controller.cc?l=62),
+count](https://cs.chromium.org/chromium/src/content/renderer/blob_storage/blob_transport_controller.cc?l=62),
 which should prevent fast shutdown.
 
 # Blob Transportation & Storage (Browser)

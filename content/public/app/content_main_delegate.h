@@ -9,8 +9,19 @@
 #include <string>
 #include <vector>
 
+#include "base/callback_forward.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
+#include "services/service_manager/embedder/process_type.h"
+
+namespace base {
+class CommandLine;
+}
+
+namespace service_manager {
+class BackgroundServiceManager;
+class Identity;
+}  // namespace service_manager
 
 namespace content {
 
@@ -65,7 +76,7 @@ class CONTENT_EXPORT ContentMainDelegate {
   // want it at all.
   virtual bool DelaySandboxInitialization(const std::string& process_type);
 
-#elif defined(OS_POSIX) && !defined(OS_ANDROID)
+#elif defined(OS_LINUX)
   // Tells the embedder that the zygote process is starting, and allows it to
   // specify one or more zygote delegates if it wishes by storing them in
   // |*delegates|.
@@ -74,12 +85,31 @@ class CONTENT_EXPORT ContentMainDelegate {
 
   // Called every time the zygote process forks.
   virtual void ZygoteForked() {}
-#endif  // OS_MACOSX
+#endif  // defined(OS_LINUX)
 
   // TODO(vadimt, yiyaoliu): Remove this function once crbug.com/453640 is
   // fixed.
   // Returns whether or not profiler recording should be enabled.
   virtual bool ShouldEnableProfilerRecording();
+
+  // Overrides the Service Manager process type to use for the currently running
+  // process.
+  virtual service_manager::ProcessType OverrideProcessType();
+
+  // Allows the content embedder to adjust arbitrary command line arguments for
+  // any service process started by the Service Manager.
+  virtual void AdjustServiceProcessCommandLine(
+      const service_manager::Identity& identity,
+      base::CommandLine* command_line);
+
+  // Allows the embedder to perform arbitrary initialization within the Service
+  // Manager process immediately before the Service Manager runs its main loop.
+  //
+  // |quit_closure| is a callback the embedder may retain and invoke at any time
+  // to cleanly terminate Service Manager execution.
+  virtual void OnServiceManagerInitialized(
+      const base::Closure& quit_closure,
+      service_manager::BackgroundServiceManager* service_manager);
 
  protected:
   friend class ContentClientInitializer;

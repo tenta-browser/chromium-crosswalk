@@ -10,19 +10,24 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_base.h"
+#include "base/sequenced_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "components/metrics/metrics_provider.h"
 #include "components/metrics/net/wifi_access_point_info_provider.h"
-#include "components/metrics/proto/system_profile.pb.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/network_interfaces.h"
 #include "net/nqe/effective_connection_type.h"
+#include "third_party/metrics_proto/system_profile.pb.h"
 
 namespace net {
 class NetworkQualityEstimator;
 }
 
 namespace metrics {
+
+SystemProfileProto::Network::EffectiveConnectionType
+ConvertEffectiveConnectionType(
+    net::EffectiveConnectionType effective_connection_type);
 
 // Registers as observer with net::NetworkChangeNotifier and keeps track of
 // the network environment.
@@ -35,8 +40,12 @@ class NetworkMetricsProvider
    public:
     virtual ~NetworkQualityEstimatorProvider() {}
 
-    // Returns the network quality estimator. May be nullptr.
-    virtual net::NetworkQualityEstimator* GetNetworkQualityEstimator() = 0;
+    // Returns the network quality estimator by calling |io_callback|. The
+    // returned network quality estimator may be nullptr. |io_callback| must be
+    // called on the IO thread. |io_callback| can be destroyed on IO thread only
+    // after |this| is destroyed.
+    virtual void PostReplyNetworkQualityEstimator(
+        base::Callback<void(net::NetworkQualityEstimator*)> io_callback) = 0;
 
     // Returns the task runner on which |this| should be used and destroyed.
     virtual scoped_refptr<base::SequencedTaskRunner> GetTaskRunner() = 0;
@@ -48,30 +57,29 @@ class NetworkMetricsProvider
     DISALLOW_COPY_AND_ASSIGN(NetworkQualityEstimatorProvider);
   };
 
-  // Creates a NetworkMetricsProvider, where |io_task_runner| is used to post
-  // network info collection tasks.
-  explicit NetworkMetricsProvider(base::TaskRunner* io_task_runner);
-
-  // Creates a NetworkMetricsProvider, where |io_task_runner| is used to post
-  // network info collection tasks.  |network_quality_estimator_provider|
-  // should be set if it is useful to attach the quality of the network to the
-  // metrics report.
-  NetworkMetricsProvider(std::unique_ptr<NetworkQualityEstimatorProvider>
-                             network_quality_estimator_provider,
-                         base::TaskRunner* io_task_runner);
-
+  // Creates a NetworkMetricsProvider, where
+  // |network_quality_estimator_provider| should be set if it is useful to
+  // attach the quality of the network to the metrics report.
+  explicit NetworkMetricsProvider(
+      std::unique_ptr<NetworkQualityEstimatorProvider>
+          network_quality_estimator_provider = nullptr);
   ~NetworkMetricsProvider() override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(NetworkMetricsProviderTest, EffectiveConnectionType);
   FRIEND_TEST_ALL_PREFIXES(NetworkMetricsProviderTest,
                            ECTAmbiguousOnConnectionTypeChange);
+  FRIEND_TEST_ALL_PREFIXES(NetworkMetricsProviderTest,
+                           ECTNotAmbiguousOnOffline);
+  FRIEND_TEST_ALL_PREFIXES(NetworkMetricsProviderTest,
+                           ConnectionTypeIsAmbiguous);
 
   // Listens to the changes in the effective conection type.
   class EffectiveConnectionTypeObserver;
 
   // MetricsProvider:
-  void ProvideGeneralMetrics(ChromeUserMetricsExtension* uma_proto) override;
+  void ProvideCurrentSessionData(
+      ChromeUserMetricsExtension* uma_proto) override;
   void ProvideSystemProfileMetrics(SystemProfileProto* system_profile) override;
 
   // ConnectionTypeObserver:
@@ -81,8 +89,6 @@ class NetworkMetricsProvider
   SystemProfileProto::Network::ConnectionType GetConnectionType() const;
   SystemProfileProto::Network::WifiPHYLayerProtocol GetWifiPHYLayerProtocol()
       const;
-  SystemProfileProto::Network::EffectiveConnectionType
-  GetEffectiveConnectionType() const;
 
   // Posts a call to net::GetWifiPHYLayerProtocol on the blocking pool.
   void ProbeWifiPHYLayerProtocol();
@@ -103,13 +109,12 @@ class NetworkMetricsProvider
   // has changed to |type|.
   void OnEffectiveConnectionTypeChanged(net::EffectiveConnectionType type);
 
-  // Task runner used for blocking file I/O.
-  base::TaskRunner* io_task_runner_;
-
   // True if |connection_type_| changed during the lifetime of the log.
   bool connection_type_is_ambiguous_;
   // The connection type according to net::NetworkChangeNotifier.
   net::NetworkChangeNotifier::ConnectionType connection_type_;
+  // True if the network change notifier has been initialized.
+  bool network_change_notifier_initialized_;
 
   // True if |wifi_phy_layer_protocol_| changed during the lifetime of the log.
   bool wifi_phy_layer_protocol_is_ambiguous_;
@@ -130,20 +135,17 @@ class NetworkMetricsProvider
       network_quality_estimator_provider_;
 
   // Listens to the changes in the effective connection type. Initialized and
-  // destroyed using |network_quality_task_runner_|. May be null.
+  // destroyed on the IO thread. May be null.
   std::unique_ptr<EffectiveConnectionTypeObserver>
       effective_connection_type_observer_;
-
-  // Task runner using which |effective_connection_type_observer_| is
-  // initialized and destroyed. May be null.
-  scoped_refptr<base::SequencedTaskRunner> network_quality_task_runner_;
 
   // Last known effective connection type.
   net::EffectiveConnectionType effective_connection_type_;
 
-  // True if |effective_connection_type_| changed during the lifetime of the
-  // log.
-  bool effective_connection_type_is_ambiguous_;
+  // Minimum and maximum effective connection type since the metrics were last
+  // provided.
+  net::EffectiveConnectionType min_effective_connection_type_;
+  net::EffectiveConnectionType max_effective_connection_type_;
 
   base::ThreadChecker thread_checker_;
 

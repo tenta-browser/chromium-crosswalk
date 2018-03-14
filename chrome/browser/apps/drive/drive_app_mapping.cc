@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/values.h"
 #include "chrome/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -25,11 +27,11 @@ std::unique_ptr<base::DictionaryValue> CreateInfoDict(
     const std::string& chrome_app_id,
     bool generated) {
   std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
-  dict->SetStringWithoutPathExpansion(kKeyChromeApp, chrome_app_id);
+  dict->SetKey(kKeyChromeApp, base::Value(chrome_app_id));
 
   // Only writes non-default value.
   if (generated)
-    dict->SetBooleanWithoutPathExpansion(kKeyGenerated, true);
+    dict->SetKey(kKeyGenerated, base::Value(true));
   return dict;
 }
 
@@ -53,8 +55,8 @@ void DriveAppMapping::Add(const std::string& drive_app_id,
                           const std::string& chrome_app_id,
                           bool generated) {
   DictionaryPrefUpdate update(prefs_, prefs::kAppLauncherDriveAppMapping);
-  update->SetWithoutPathExpansion(
-      drive_app_id, CreateInfoDict(chrome_app_id, generated).release());
+  update->SetWithoutPathExpansion(drive_app_id,
+                                  CreateInfoDict(chrome_app_id, generated));
 }
 
 void DriveAppMapping::Remove(const std::string& drive_app_id) {
@@ -84,7 +86,7 @@ std::string DriveAppMapping::GetDriveApp(
        it.Advance()) {
     const base::DictionaryValue* info_dict;
     std::string value_string;
-    DCHECK(it.value().IsType(base::Value::Type::DICTIONARY));
+    DCHECK(it.value().is_dict());
     if (it.value().GetAsDictionary(&info_dict) &&
         info_dict->GetStringWithoutPathExpansion(kKeyChromeApp,
                                                  &value_string) &&
@@ -104,7 +106,7 @@ bool DriveAppMapping::IsChromeAppGenerated(
     const base::DictionaryValue* info_dict;
     std::string value_string;
     bool generated = false;
-    DCHECK(it.value().IsType(base::Value::Type::DICTIONARY));
+    DCHECK(it.value().is_dict());
     if (it.value().GetAsDictionary(&info_dict) &&
         info_dict->GetStringWithoutPathExpansion(kKeyChromeApp,
                                                  &value_string) &&

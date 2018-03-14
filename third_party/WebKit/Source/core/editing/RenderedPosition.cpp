@@ -30,12 +30,15 @@
 
 #include "core/editing/RenderedPosition.h"
 
+#include "core/editing/InlineBoxPosition.h"
+#include "core/editing/InlineBoxTraversal.h"
 #include "core/editing/TextAffinity.h"
 #include "core/editing/VisiblePosition.h"
 #include "core/editing/VisibleUnits.h"
+#include "core/html/forms/TextControlElement.h"
 #include "core/layout/api/LineLayoutAPIShim.h"
-#include "core/layout/compositing/CompositedSelectionBound.h"
 #include "core/paint/PaintLayer.h"
+#include "core/paint/compositing/CompositedSelectionBound.h"
 
 namespace blink {
 
@@ -73,16 +76,15 @@ RenderedPosition::RenderedPosition(const VisiblePosition& position)
 RenderedPosition::RenderedPosition(const VisiblePositionInFlatTree& position)
     : RenderedPosition(position.DeepEquivalent(), position.Affinity()) {}
 
+// TODO(editing-dev): Stop duplicating code in the two constructors
+
 RenderedPosition::RenderedPosition(const Position& position,
                                    TextAffinity affinity)
-    : layout_object_(nullptr),
-      inline_box_(nullptr),
-      offset_(0),
-      prev_leaf_child_(UncachedInlineBox()),
-      next_leaf_child_(UncachedInlineBox()) {
+    : layout_object_(nullptr), inline_box_(nullptr), offset_(0) {
   if (position.IsNull())
     return;
-  InlineBoxPosition box_position = ComputeInlineBoxPosition(position, affinity);
+  InlineBoxPosition box_position =
+      ComputeInlineBoxPosition(PositionWithAffinity(position, affinity));
   inline_box_ = box_position.inline_box;
   offset_ = box_position.offset_in_box;
   if (inline_box_)
@@ -94,14 +96,11 @@ RenderedPosition::RenderedPosition(const Position& position,
 
 RenderedPosition::RenderedPosition(const PositionInFlatTree& position,
                                    TextAffinity affinity)
-    : layout_object_(nullptr),
-      inline_box_(nullptr),
-      offset_(0),
-      prev_leaf_child_(UncachedInlineBox()),
-      next_leaf_child_(UncachedInlineBox()) {
+    : layout_object_(nullptr), inline_box_(nullptr), offset_(0) {
   if (position.IsNull())
     return;
-  InlineBoxPosition box_position = ComputeInlineBoxPosition(position, affinity);
+  InlineBoxPosition box_position = ComputeInlineBoxPosition(
+      PositionInFlatTreeWithAffinity(position, affinity));
   inline_box_ = box_position.inline_box;
   offset_ = box_position.offset_in_box;
   if (inline_box_)
@@ -111,16 +110,16 @@ RenderedPosition::RenderedPosition(const PositionInFlatTree& position,
     layout_object_ = LayoutObjectFromPosition(position);
 }
 
-InlineBox* RenderedPosition::PrevLeafChild() const {
-  if (prev_leaf_child_ == UncachedInlineBox())
+const InlineBox* RenderedPosition::PrevLeafChild() const {
+  if (!prev_leaf_child_.has_value())
     prev_leaf_child_ = inline_box_->PrevLeafChildIgnoringLineBreak();
-  return prev_leaf_child_;
+  return prev_leaf_child_.value();
 }
 
-InlineBox* RenderedPosition::NextLeafChild() const {
-  if (next_leaf_child_ == UncachedInlineBox())
+const InlineBox* RenderedPosition::NextLeafChild() const {
+  if (!next_leaf_child_.has_value())
     next_leaf_child_ = inline_box_->NextLeafChildIgnoringLineBreak();
-  return next_leaf_child_;
+  return next_leaf_child_.value();
 }
 
 bool RenderedPosition::IsEquivalent(const RenderedPosition& other) const {
@@ -133,12 +132,14 @@ bool RenderedPosition::IsEquivalent(const RenderedPosition& other) const {
 }
 
 unsigned char RenderedPosition::BidiLevelOnLeft() const {
-  InlineBox* box = AtLeftmostOffsetInBox() ? PrevLeafChild() : inline_box_;
+  const InlineBox* box =
+      AtLeftmostOffsetInBox() ? PrevLeafChild() : inline_box_;
   return box ? box->BidiLevel() : 0;
 }
 
 unsigned char RenderedPosition::BidiLevelOnRight() const {
-  InlineBox* box = AtRightmostOffsetInBox() ? NextLeafChild() : inline_box_;
+  const InlineBox* box =
+      AtRightmostOffsetInBox() ? NextLeafChild() : inline_box_;
   return box ? box->BidiLevel() : 0;
 }
 
@@ -147,18 +148,12 @@ RenderedPosition RenderedPosition::LeftBoundaryOfBidiRun(
   if (!inline_box_ || bidi_level_of_run > inline_box_->BidiLevel())
     return RenderedPosition();
 
-  InlineBox* box = inline_box_;
-  do {
-    InlineBox* prev = box->PrevLeafChildIgnoringLineBreak();
-    if (!prev || prev->BidiLevel() < bidi_level_of_run)
-      return RenderedPosition(
-          LineLayoutAPIShim::LayoutObjectFrom(box->GetLineLayoutItem()), box,
-          box->CaretLeftmostOffset());
-    box = prev;
-  } while (box);
-
-  NOTREACHED();
-  return RenderedPosition();
+  const InlineBox* const box =
+      InlineBoxTraversal::FindLeftBoundaryOfEntireBidiRunIgnoringLineBreak(
+          *inline_box_, bidi_level_of_run);
+  return RenderedPosition(
+      LineLayoutAPIShim::LayoutObjectFrom(box->GetLineLayoutItem()), box,
+      box->CaretLeftmostOffset());
 }
 
 RenderedPosition RenderedPosition::RightBoundaryOfBidiRun(
@@ -166,18 +161,12 @@ RenderedPosition RenderedPosition::RightBoundaryOfBidiRun(
   if (!inline_box_ || bidi_level_of_run > inline_box_->BidiLevel())
     return RenderedPosition();
 
-  InlineBox* box = inline_box_;
-  do {
-    InlineBox* next = box->NextLeafChildIgnoringLineBreak();
-    if (!next || next->BidiLevel() < bidi_level_of_run)
-      return RenderedPosition(
-          LineLayoutAPIShim::LayoutObjectFrom(box->GetLineLayoutItem()), box,
-          box->CaretRightmostOffset());
-    box = next;
-  } while (box);
-
-  NOTREACHED();
-  return RenderedPosition();
+  const InlineBox* const box =
+      InlineBoxTraversal::FindRightBoundaryOfEntireBidiRunIgnoringLineBreak(
+          *inline_box_, bidi_level_of_run);
+  return RenderedPosition(
+      LineLayoutAPIShim::LayoutObjectFrom(box->GetLineLayoutItem()), box,
+      box->CaretRightmostOffset());
 }
 
 bool RenderedPosition::AtLeftBoundaryOfBidiRun(
@@ -303,6 +292,33 @@ FloatPoint RenderedPosition::LocalToInvalidationBackingPoint(
   return container_point;
 }
 
+void RenderedPosition::GetLocalSelectionEndpoints(
+    bool selection_start,
+    LayoutPoint& edge_top_in_layer,
+    LayoutPoint& edge_bottom_in_layer,
+    bool& is_text_direction_rtl) const {
+  const LayoutRect rect = layout_object_->LocalCaretRect(inline_box_, offset_);
+  if (layout_object_->Style()->IsHorizontalWritingMode()) {
+    edge_top_in_layer = rect.MinXMinYCorner();
+    edge_bottom_in_layer = rect.MinXMaxYCorner();
+    return;
+  }
+  edge_top_in_layer = rect.MinXMinYCorner();
+  edge_bottom_in_layer = rect.MaxXMinYCorner();
+
+  // When text is vertical, it looks better for the start handle baseline to
+  // be at the starting edge, to enclose the selection fully between the
+  // handles.
+  if (selection_start) {
+    LayoutUnit x_swap = edge_bottom_in_layer.X();
+    edge_bottom_in_layer.SetX(edge_top_in_layer.X());
+    edge_top_in_layer.SetX(x_swap);
+  }
+
+  // Flipped blocks writing mode is not only vertical but also right to left.
+  is_text_direction_rtl = layout_object_->HasFlippedBlocksWritingMode();
+}
+
 void RenderedPosition::PositionInGraphicsLayerBacking(
     CompositedSelectionBound& bound,
     bool selection_start) const {
@@ -312,30 +328,62 @@ void RenderedPosition::PositionInGraphicsLayerBacking(
   if (IsNull())
     return;
 
-  LayoutRect rect = layout_object_->LocalCaretRect(inline_box_, offset_);
-  if (layout_object_->Style()->IsHorizontalWritingMode()) {
-    bound.edge_top_in_layer =
-        LocalToInvalidationBackingPoint(rect.MinXMinYCorner(), &bound.layer);
-    bound.edge_bottom_in_layer =
-        LocalToInvalidationBackingPoint(rect.MinXMaxYCorner(), nullptr);
-  } else {
-    bound.edge_top_in_layer =
-        LocalToInvalidationBackingPoint(rect.MinXMinYCorner(), &bound.layer);
-    bound.edge_bottom_in_layer =
-        LocalToInvalidationBackingPoint(rect.MaxXMinYCorner(), nullptr);
+  LayoutPoint edge_top_in_layer;
+  LayoutPoint edge_bottom_in_layer;
+  GetLocalSelectionEndpoints(selection_start, edge_top_in_layer,
+                             edge_bottom_in_layer, bound.is_text_direction_rtl);
 
-    // When text is vertical, it looks better for the start handle baseline to
-    // be at the starting edge, to enclose the selection fully between the
-    // handles.
-    if (selection_start) {
-      float x_swap = bound.edge_bottom_in_layer.X();
-      bound.edge_bottom_in_layer.SetX(bound.edge_top_in_layer.X());
-      bound.edge_top_in_layer.SetX(x_swap);
-    }
+  bound.edge_top_in_layer =
+      LocalToInvalidationBackingPoint(edge_top_in_layer, &bound.layer);
+  bound.edge_bottom_in_layer =
+      LocalToInvalidationBackingPoint(edge_bottom_in_layer, nullptr);
+}
 
-    // Flipped blocks writing mode is not only vertical but also right to left.
-    bound.is_text_direction_rtl = layout_object_->HasFlippedBlocksWritingMode();
-  }
+LayoutPoint RenderedPosition::GetSamplePointForVisibility(
+    const LayoutPoint& edge_top_in_layer,
+    const LayoutPoint& edge_bottom_in_layer) {
+  FloatSize diff(edge_top_in_layer - edge_bottom_in_layer);
+  // Adjust by ~1px to avoid integer snapping error. This logic is the same
+  // as that in ComputeViewportSelectionBound in cc.
+  diff.Scale(1 / diff.DiagonalLength());
+  LayoutPoint sample_point = edge_bottom_in_layer;
+  sample_point.Move(LayoutSize(diff));
+  return sample_point;
+}
+
+bool RenderedPosition::IsVisible(bool selection_start) {
+  if (IsNull())
+    return false;
+
+  Node* node = layout_object_->GetNode();
+  if (!node)
+    return true;
+  TextControlElement* text_control = EnclosingTextControl(node);
+  if (!text_control)
+    return true;
+  if (!IsHTMLInputElement(text_control))
+    return true;
+
+  LayoutObject* layout_object = text_control->GetLayoutObject();
+  if (!layout_object || !layout_object->IsBox())
+    return true;
+
+  LayoutPoint edge_top_in_layer;
+  LayoutPoint edge_bottom_in_layer;
+  bool ignored2;
+  GetLocalSelectionEndpoints(selection_start, edge_top_in_layer,
+                             edge_bottom_in_layer, ignored2);
+  LayoutPoint sample_point =
+      GetSamplePointForVisibility(edge_top_in_layer, edge_bottom_in_layer);
+
+  LayoutBox* text_control_object = ToLayoutBox(layout_object);
+  LayoutPoint position_in_input(layout_object_->LocalToAncestorPoint(
+      FloatPoint(sample_point), text_control_object,
+      kTraverseDocumentBoundaries));
+  if (!text_control_object->BorderBoxRect().Contains(position_in_input))
+    return false;
+
+  return true;
 }
 
 bool LayoutObjectContainsPosition(LayoutObject* target,

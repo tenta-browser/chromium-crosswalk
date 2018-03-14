@@ -35,18 +35,13 @@ class Layer;
 
 namespace cc_blink {
 
-class CC_BLINK_EXPORT WebLayerImpl : public NON_EXPORTED_BASE(blink::WebLayer) {
+class CC_BLINK_EXPORT WebLayerImpl : public blink::WebLayer {
  public:
   WebLayerImpl();
   explicit WebLayerImpl(scoped_refptr<cc::Layer>);
   ~WebLayerImpl() override;
 
   cc::Layer* layer() const;
-
-  // If set to true, content opaqueness cannot be changed using setOpaque.
-  // However, it can still be modified using SetContentsOpaque on the
-  // cc::Layer.
-  void SetContentsOpaqueIsFixed(bool fixed);
 
   // WebLayer implementation.
   int Id() const override;
@@ -65,10 +60,13 @@ class CC_BLINK_EXPORT WebLayerImpl : public NON_EXPORTED_BASE(blink::WebLayer) {
   void SetMaskLayer(blink::WebLayer* mask) override;
   void SetOpacity(float opacity) override;
   float Opacity() const override;
+  void SetContentsOpaqueIsFixed(bool fixed) override;
+
   void SetBlendMode(blink::WebBlendMode blend_mode) override;
   blink::WebBlendMode BlendMode() const override;
   void SetIsRootForIsolatedGroup(bool root) override;
   bool IsRootForIsolatedGroup() override;
+  void SetHitTestableWithoutDrawsContent(bool should_hit_test) override;
   void SetOpaque(bool opaque) override;
   bool Opaque() const override;
   void SetPosition(const blink::WebFloatPoint& position) override;
@@ -89,9 +87,10 @@ class CC_BLINK_EXPORT WebLayerImpl : public NON_EXPORTED_BASE(blink::WebLayer) {
   void SetFiltersOrigin(const blink::WebFloatPoint& origin) override;
   void SetBackgroundFilters(const cc::FilterOperations& filters) override;
   bool HasTickingAnimationForTesting() override;
+  void SetScrollable(const blink::WebSize&) override;
+  blink::WebSize ScrollContainerBoundsForTesting() const override;
   void SetScrollPosition(blink::WebFloatPoint position) override;
   blink::WebFloatPoint ScrollPosition() const override;
-  void SetScrollClipLayer(blink::WebLayer* clip_layer) override;
   bool Scrollable() const override;
   void SetUserScrollable(bool horizontal, bool vertical) override;
   bool UserScrollableHorizontal() const override;
@@ -106,10 +105,14 @@ class CC_BLINK_EXPORT WebLayerImpl : public NON_EXPORTED_BASE(blink::WebLayer) {
       const blink::WebVector<blink::WebRect>& region) override;
   blink::WebVector<blink::WebRect> NonFastScrollableRegion() const override;
   void SetTouchEventHandlerRegion(
-      const blink::WebVector<blink::WebRect>& region) override;
+      const blink::WebVector<blink::WebTouchInfo>& touch_info) override;
   blink::WebVector<blink::WebRect> TouchEventHandlerRegion() const override;
+  blink::WebVector<blink::WebRect>
+      TouchEventHandlerRegionForTouchActionForTesting(
+          cc::TouchAction) const override;
   void SetIsContainerForFixedPositionLayers(bool is_container) override;
   bool IsContainerForFixedPositionLayers() const override;
+  void SetIsResizedByBrowserControls(bool) override;
   void SetPositionConstraint(
       const blink::WebLayerPositionConstraint& constraint) override;
   blink::WebLayerPositionConstraint PositionConstraint() const override;
@@ -118,15 +121,15 @@ class CC_BLINK_EXPORT WebLayerImpl : public NON_EXPORTED_BASE(blink::WebLayer) {
   blink::WebLayerStickyPositionConstraint StickyPositionConstraint()
       const override;
   void SetScrollClient(blink::WebLayerScrollClient* client) override;
+  void SetScrollOffsetFromImplSideForTesting(const gfx::ScrollOffset&) override;
   void SetLayerClient(cc::LayerClient* client) override;
   const cc::Layer* CcLayer() const override;
   cc::Layer* CcLayer() override;
   void SetElementId(const cc::ElementId&) override;
   cc::ElementId GetElementId() const override;
-  void SetCompositorMutableProperties(uint32_t properties) override;
-  uint32_t CompositorMutableProperties() const override;
   void SetHasWillChangeTransformHint(bool has_will_change) override;
   void ShowScrollbars() override;
+  void SetOverscrollBehavior(const blink::WebOverscrollBehavior&) override;
 
   void SetScrollParent(blink::WebLayer* parent) override;
   void SetClipParent(blink::WebLayer* parent) override;

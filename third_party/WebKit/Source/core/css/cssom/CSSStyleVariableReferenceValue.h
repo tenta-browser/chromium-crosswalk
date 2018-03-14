@@ -5,20 +5,21 @@
 #ifndef CSSStyleVariableReferenceValue_h
 #define CSSStyleVariableReferenceValue_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "base/macros.h"
 #include "core/CoreExport.h"
 #include "core/css/cssom/CSSUnparsedValue.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
+// CSSStyleVariableReferenceValue represents a CSS var() value for CSS Typed OM.
+// The corresponding idl file is CSSVariableReferenceValue.idl.
 class CORE_EXPORT CSSStyleVariableReferenceValue final
-    : public GarbageCollectedFinalized<CSSStyleVariableReferenceValue>,
-      public ScriptWrappable {
-  WTF_MAKE_NONCOPYABLE(CSSStyleVariableReferenceValue);
+    : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  virtual ~CSSStyleVariableReferenceValue() {}
+  virtual ~CSSStyleVariableReferenceValue() = default;
 
   static CSSStyleVariableReferenceValue* Create(
       const String& variable,
@@ -32,7 +33,10 @@ class CORE_EXPORT CSSStyleVariableReferenceValue final
     return const_cast<CSSUnparsedValue*>(fallback_.Get());
   }
 
-  DEFINE_INLINE_TRACE() { visitor->Trace(fallback_); }
+  void Trace(blink::Visitor* visitor) override {
+    visitor->Trace(fallback_);
+    ScriptWrappable::Trace(visitor);
+  }
 
  protected:
   CSSStyleVariableReferenceValue(const String& variable,
@@ -41,6 +45,9 @@ class CORE_EXPORT CSSStyleVariableReferenceValue final
 
   String variable_;
   Member<const CSSUnparsedValue> fallback_;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(CSSStyleVariableReferenceValue);
 };
 
 }  // namespace blink

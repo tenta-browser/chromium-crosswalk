@@ -2,17 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ash/public/cpp/window_properties.h"
 #include "ash/scoped_root_window_for_new_windows.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/window_positioner.h"
 #include "ash/wm/window_resizer.h"
-#include "ash/wm/window_state.h"
-#include "ash/wm/window_state_aura.h"
-#include "ash/wm_window.h"
 #include "base/memory/ptr_util.h"
-#include "build/build_config.h"
 #include "chrome/browser/ui/ash/ash_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/window_sizer/window_sizer_common_unittest.h"
@@ -30,7 +26,7 @@
 #include "ui/display/screen.h"
 #include "ui/wm/public/activation_client.h"
 
-typedef ash::test::AshTestBase WindowSizerAshTest;
+using WindowSizerAshTest = ash::AshTestBase;
 
 namespace {
 
@@ -43,8 +39,8 @@ std::unique_ptr<Browser> CreateTestBrowser(aura::Window* window,
       chrome::CreateBrowserWithAuraTestWindowForParams(base::WrapUnique(window),
                                                        params);
   if (!browser->is_type_popup()) {
-    ash::wm::GetWindowState(browser->window()->GetNativeWindow())
-        ->set_window_position_managed(true);
+    browser->window()->GetNativeWindow()->SetProperty(
+        ash::kWindowPositionManagedTypeKey, true);
   }
   return browser;
 }
@@ -54,9 +50,6 @@ std::unique_ptr<Browser> CreateTestBrowser(aura::Window* window,
 // Test that the window is sized appropriately for the first run experience
 // where the default window bounds calculation is invoked.
 TEST_F(WindowSizerAshTest, DefaultSizeCase) {
-#if defined(OS_WIN)
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(switches::kOpenAsh);
-#endif
   { // 4:3 monitor case, 1024x768, no taskbar
     gfx::Rect window_bounds;
     GetWindowBounds(p1024x768, p1024x768, gfx::Rect(), gfx::Rect(),
@@ -418,7 +411,7 @@ TEST_F(WindowSizerAshTest, PlaceNewWindows) {
   // existing windows.
   Browser::CreateParams native_params(profile.get(), true);
   std::unique_ptr<Browser> browser(
-      chrome::CreateBrowserWithTestWindowForParams(&native_params));
+      CreateBrowserWithTestWindowForParams(&native_params));
 
   // Creating a popup handler here to make sure it does not interfere with the
   // existing windows.
@@ -484,7 +477,7 @@ TEST_F(WindowSizerAshTest, PlaceNewBrowserWindowOnEmptyDesktop) {
   std::unique_ptr<TestingProfile> profile(new TestingProfile());
   Browser::CreateParams native_params(profile.get(), true);
   std::unique_ptr<Browser> browser(
-      chrome::CreateBrowserWithTestWindowForParams(&native_params));
+      CreateBrowserWithTestWindowForParams(&native_params));
 
   // A common screen size for Chrome OS devices where this behavior is
   // desirable.
@@ -542,22 +535,11 @@ TEST_F(WindowSizerAshTest, PlaceNewBrowserWindowOnEmptyDesktop) {
       gfx::Rect(),             // Don't request valid bounds.
       0u,                      // Display index.
       &window_bounds, &out_show_state3);
-#if defined(OS_WIN)
-  EXPECT_EQ(ui::SHOW_STATE_MAXIMIZED, out_show_state3);
-#else
   EXPECT_EQ(ui::SHOW_STATE_DEFAULT, out_show_state3);
-#endif
 }
 
-#if defined(OS_CHROMEOS)
-#define MAYBE_PlaceNewWindowsOnMultipleDisplays PlaceNewWindowsOnMultipleDisplays
-#else
-// No multiple displays on windows ash.
-#define MAYBE_PlaceNewWindowsOnMultipleDisplays DISABLED_PlaceNewWindowsOnMultipleDisplays
-#endif
-
 // Test the placement of newly created windows on multiple dislays.
-TEST_F(WindowSizerAshTest, MAYBE_PlaceNewWindowsOnMultipleDisplays) {
+TEST_F(WindowSizerAshTest, PlaceNewWindowsOnMultipleDisplays) {
   UpdateDisplay("1600x1200,1600x1200");
   gfx::Rect primary_bounds =
       display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
@@ -615,7 +597,7 @@ TEST_F(WindowSizerAshTest, MAYBE_PlaceNewWindowsOnMultipleDisplays) {
     browser_window->GetNativeWindow()->SetBoundsInScreen(
         gfx::Rect(secondary_bounds.CenterPoint().x() - 100, 10, 200, 200),
         second_display);
-    aura::client::GetActivationClient(native_window->GetRootWindow())
+    wm::GetActivationClient(native_window->GetRootWindow())
         ->ActivateWindow(native_window);
     EXPECT_NE(ash::Shell::GetPrimaryRootWindow(),
               ash::Shell::GetRootWindowForNewWindows());
@@ -634,7 +616,7 @@ TEST_F(WindowSizerAshTest, MAYBE_PlaceNewWindowsOnMultipleDisplays) {
   // Activate another window in the primary display and create a new window.
   // It should be created in the primary display.
   {
-    aura::client::GetActivationClient(another_native_window->GetRootWindow())
+    wm::GetActivationClient(another_native_window->GetRootWindow())
         ->ActivateWindow(another_native_window);
     EXPECT_EQ(ash::Shell::GetPrimaryRootWindow(),
               ash::Shell::GetRootWindowForNewWindows());
@@ -740,15 +722,11 @@ TEST_F(WindowSizerAshTest, TestShowStateDefaults) {
                         gfx::Rect(16, 32, 128, 256), &params_popup));
 
   // Check that a browser creation state always get used if not given as
-  // SHOW_STATE_DEFAULT. On Windows ASH it should be SHOW_STATE_MAXIMIZED.
+  // SHOW_STATE_DEFAULT.
   ui::WindowShowState window_show_state =
       GetWindowShowState(ui::SHOW_STATE_MAXIMIZED, ui::SHOW_STATE_MAXIMIZED,
                          DEFAULT, browser.get(), p1600x1200, p1600x1200);
-#if defined(OS_WIN)
-  EXPECT_EQ(window_show_state, ui::SHOW_STATE_MAXIMIZED);
-#else
   EXPECT_EQ(window_show_state, ui::SHOW_STATE_DEFAULT);
-#endif
 
   browser->set_initial_show_state(ui::SHOW_STATE_MINIMIZED);
   EXPECT_EQ(
@@ -787,7 +765,7 @@ TEST_F(WindowSizerAshTest, DefaultStateBecomesMaximized) {
   std::unique_ptr<TestingProfile> profile(new TestingProfile());
   Browser::CreateParams native_params(profile.get(), true);
   std::unique_ptr<Browser> browser(
-      chrome::CreateBrowserWithTestWindowForParams(&native_params));
+      CreateBrowserWithTestWindowForParams(&native_params));
 
   gfx::Rect display_bounds =
       display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
@@ -824,8 +802,8 @@ TEST_F(WindowSizerAshTest, DefaultBoundsInTargetDisplay) {
   UpdateDisplay("500x500,600x600");
 
   // By default windows are placed on the primary display.
-  ash::WmWindow* first_root = ash::ShellPort::Get()->GetAllRootWindows()[0];
-  EXPECT_EQ(first_root, ash::Shell::GetWmRootWindowForNewWindows());
+  aura::Window* first_root = ash::Shell::GetAllRootWindows()[0];
+  EXPECT_EQ(first_root, ash::Shell::GetRootWindowForNewWindows());
   gfx::Rect bounds;
   ui::WindowShowState show_state;
   WindowSizer::GetBrowserWindowBoundsAndShowState(std::string(), gfx::Rect(),
@@ -834,7 +812,7 @@ TEST_F(WindowSizerAshTest, DefaultBoundsInTargetDisplay) {
 
   {
     // When the second display is active new windows are placed there.
-    ash::WmWindow* second_root = ash::ShellPort::Get()->GetAllRootWindows()[1];
+    aura::Window* second_root = ash::Shell::GetAllRootWindows()[1];
     ash::ScopedRootWindowForNewWindows tmp(second_root);
     gfx::Rect bounds;
     ui::WindowShowState show_state;

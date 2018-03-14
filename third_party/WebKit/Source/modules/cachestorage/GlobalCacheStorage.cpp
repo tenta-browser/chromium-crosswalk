@@ -60,7 +60,7 @@ class GlobalCacheStorageImpl final
     if (!caches_) {
       caches_ = CacheStorage::Create(
           GlobalFetch::ScopedFetcher::From(fetching_scope),
-          Platform::Current()->CacheStorage(
+          Platform::Current()->CreateCacheStorage(
               WebSecurityOrigin(context->GetSecurityOrigin())));
     }
     return caches_;
@@ -68,7 +68,7 @@ class GlobalCacheStorageImpl final
 
   // Promptly dispose of associated CacheStorage.
   EAGERLY_FINALIZE();
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  virtual void Trace(blink::Visitor* visitor) {
     visitor->Trace(caches_);
     Supplement<T>::Trace(visitor);
   }

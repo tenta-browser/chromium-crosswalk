@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "content/browser/renderer_host/input/mouse_wheel_phase_handler.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "ui/aura/window_tracker.h"
@@ -31,6 +32,7 @@ class TouchSelectionController;
 }
 
 namespace content {
+
 struct ContextMenuParams;
 class OverscrollController;
 class RenderWidgetHostImpl;
@@ -62,8 +64,10 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
     // to the renderer instead. |update_event| (if non-null) is set to indicate
     // whether ui::KeyEvent::SetHandled() should be called on the underlying
     // ui::KeyEvent.
-    virtual void ForwardKeyboardEvent(const NativeWebKeyboardEvent& event,
-                                      bool* update_event) = 0;
+    virtual void ForwardKeyboardEventWithLatencyInfo(
+        const NativeWebKeyboardEvent& event,
+        const ui::LatencyInfo& latency,
+        bool* update_event) = 0;
     // Returns whether the widget needs to grab mouse capture to work properly.
     virtual bool NeedsMouseCapture() = 0;
     virtual void SetTooltipsEnabled(bool enable) = 0;
@@ -106,6 +110,10 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
   // Begin tracking a host window, such as when RenderWidgetHostViewBase is
   // fullscreen.
   void TrackHost(aura::Window* reference_window);
+
+  MouseWheelPhaseHandler& mouse_wheel_phase_handler() {
+    return mouse_wheel_phase_handler_;
+  }
 
 #if defined(OS_WIN)
   // Sets the ContextMenuParams when a context menu is triggered. Required for
@@ -168,6 +176,9 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
   void ModifyEventMovementAndCoords(const ui::MouseEvent& ui_mouse_event,
                                     blink::WebMouseEvent* event);
 
+  // This method moves cursor to window center for pointer lock.
+  void MoveCursorToCenter();
+
   // Helper function to set keyboard focus to the main window.
   void SetKeyboardFocus();
 
@@ -217,11 +228,11 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
   // While the mouse is locked, they store the last known position just as mouse
   // lock was entered.
   // Relative to the upper-left corner of the view.
-  gfx::Point unlocked_mouse_position_;
+  gfx::PointF unlocked_mouse_position_;
   // Relative to the upper-left corner of the screen.
-  gfx::Point unlocked_global_mouse_position_;
+  gfx::PointF unlocked_global_mouse_position_;
   // Last cursor position relative to screen. Used to compute movementX/Y.
-  gfx::Point global_mouse_position_;
+  gfx::PointF global_mouse_position_;
   // In mouse locked mode, we synthetically move the mouse cursor to the center
   // of the window when it reaches the window borders to avoid it going outside.
   // This flag is used to differentiate between these synthetic mouse move
@@ -246,6 +257,7 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
   ui::EventHandler* popup_child_event_handler_;
   Delegate* const delegate_;
   aura::Window* window_;
+  MouseWheelPhaseHandler mouse_wheel_phase_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostViewEventHandler);
 };

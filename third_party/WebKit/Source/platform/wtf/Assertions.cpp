@@ -34,52 +34,41 @@
 
 #include "platform/wtf/Assertions.h"
 
-#include "platform/wtf/Compiler.h"
+#include "build/build_config.h"
 #include "platform/wtf/PtrUtil.h"
-#include "platform/wtf/ThreadSpecific.h"
-#include "platform/wtf/Threading.h"
-#include <memory>
-#include <stdarg.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
-#if OS(MACOSX)
-#include <AvailabilityMacros.h>
-#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 1080
-#define WTF_USE_APPLE_SYSTEM_LOG 1
+#if defined(OS_MACOSX)
 #include <asl.h>
-#endif
-#endif  // OS(MACOSX)
+#endif  // defined(OS_MACOSX)
 
-#if COMPILER(MSVC)
+#if defined(COMPILER_MSVC)
 #include <crtdbg.h>
 #endif
 
-#if OS(WIN)
+#if defined(OS_WIN)
 #include <windows.h>
 #endif
 
-#if OS(MACOSX) || (OS(LINUX) && !defined(__UCLIBC__))
+#if defined(OS_MACOSX) || (defined(OS_LINUX) && !defined(__UCLIBC__))
 #include <cxxabi.h>
 #include <dlfcn.h>
 #include <execinfo.h>
 #endif
 
-#if OS(ANDROID)
+#if defined(OS_ANDROID)
 #include <android/log.h>
 #endif
 
 PRINTF_FORMAT(1, 0)
-static void vprintf_stderr_common(const char* format, va_list args) {
-#if OS(MACOSX) && USE(APPLE_SYSTEM_LOG)
+void vprintf_stderr_common(const char* format, va_list args) {
+#if defined(OS_MACOSX)
   va_list copyOfArgs;
   va_copy(copyOfArgs, args);
   asl_vlog(0, 0, ASL_LEVEL_NOTICE, format, copyOfArgs);
   va_end(copyOfArgs);
-#elif OS(ANDROID)
+#elif defined(OS_ANDROID)
   __android_log_vprint(ANDROID_LOG_WARN, "WebKit", format, args);
-#elif OS(WIN)
+#elif defined(OS_WIN)
   if (IsDebuggerPresent()) {
     size_t size = 1024;
 
@@ -102,160 +91,11 @@ static void vprintf_stderr_common(const char* format, va_list args) {
   vfprintf(stderr, format, args);
 }
 
-#if COMPILER(CLANG) || (COMPILER(GCC) && GCC_VERSION_AT_LEAST(4, 6, 0))
+#if defined(COMPILER_GCC)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-nonliteral"
 #endif
 
-static void vprintf_stderr_with_trailing_newline(const char* format,
-                                                 va_list args) {
-  size_t formatLength = strlen(format);
-  if (formatLength && format[formatLength - 1] == '\n') {
-    vprintf_stderr_common(format, args);
-    return;
-  }
-
-  std::unique_ptr<char[]> formatWithNewline =
-      WrapArrayUnique(new char[formatLength + 2]);
-  memcpy(formatWithNewline.get(), format, formatLength);
-  formatWithNewline[formatLength] = '\n';
-  formatWithNewline[formatLength + 1] = 0;
-
-  vprintf_stderr_common(formatWithNewline.get(), args);
-}
-
-#if COMPILER(CLANG) || (COMPILER(GCC) && GCC_VERSION_AT_LEAST(4, 6, 0))
+#if defined(COMPILER_GCC)
 #pragma GCC diagnostic pop
 #endif
-
-namespace {
-
-class FrameToNameScope {
- public:
-  explicit FrameToNameScope(void*);
-  ~FrameToNameScope();
-  const char* nullableName() { return m_name; }
-
- private:
-  const char* m_name;
-  char* m_cxaDemangled;
-};
-
-FrameToNameScope::FrameToNameScope(void* addr) : m_name(0), m_cxaDemangled(0) {
-#if OS(MACOSX) || (OS(LINUX) && !defined(__UCLIBC__))
-  Dl_info info;
-  if (!dladdr(addr, &info) || !info.dli_sname)
-    return;
-  const char* mangledName = info.dli_sname;
-  if ((m_cxaDemangled = abi::__cxa_demangle(mangledName, 0, 0, 0)))
-    m_name = m_cxaDemangled;
-  else
-    m_name = mangledName;
-#else
-  (void)addr;
-#endif
-}
-
-FrameToNameScope::~FrameToNameScope() {
-  free(m_cxaDemangled);
-}
-
-}  // anonymous namespace
-
-#if !LOG_DISABLED
-namespace WTF {
-
-ScopedLogger::ScopedLogger(bool condition, const char* format, ...)
-    : parent_(condition ? Current() : 0), multiline_(false) {
-  if (!condition)
-    return;
-
-  va_list args;
-  va_start(args, format);
-  Init(format, args);
-  va_end(args);
-}
-
-ScopedLogger::~ScopedLogger() {
-  if (Current() == this) {
-    if (multiline_)
-      Indent();
-    else
-      Print(" ");
-    Print(")\n");
-    Current() = parent_;
-  }
-}
-
-void ScopedLogger::SetPrintFuncForTests(PrintFunctionPtr ptr) {
-  print_func_ = ptr;
-};
-
-void ScopedLogger::Init(const char* format, va_list args) {
-  Current() = this;
-  if (parent_)
-    parent_->WriteNewlineIfNeeded();
-  Indent();
-  Print("( ");
-  print_func_(format, args);
-}
-
-void ScopedLogger::WriteNewlineIfNeeded() {
-  if (!multiline_) {
-    Print("\n");
-    multiline_ = true;
-  }
-}
-
-void ScopedLogger::Indent() {
-  if (parent_) {
-    parent_->Indent();
-    PrintIndent();
-  }
-}
-
-void ScopedLogger::Log(const char* format, ...) {
-  if (Current() != this)
-    return;
-
-  va_list args;
-  va_start(args, format);
-
-  WriteNewlineIfNeeded();
-  Indent();
-  PrintIndent();
-  print_func_(format, args);
-  Print("\n");
-
-  va_end(args);
-}
-
-void ScopedLogger::Print(const char* format, ...) {
-  va_list args;
-  va_start(args, format);
-  print_func_(format, args);
-  va_end(args);
-}
-
-void ScopedLogger::PrintIndent() {
-  Print("  ");
-}
-
-ScopedLogger*& ScopedLogger::Current() {
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(ThreadSpecific<ScopedLogger*>, ref,
-                                  new ThreadSpecific<ScopedLogger*>);
-  return *ref;
-}
-
-ScopedLogger::PrintFunctionPtr ScopedLogger::print_func_ =
-    vprintf_stderr_common;
-
-}  // namespace WTF
-#endif  // !LOG_DISABLED
-
-void WTFLogAlways(const char* format, ...) {
-  va_list args;
-  va_start(args, format);
-  vprintf_stderr_with_trailing_newline(format, args);
-  va_end(args);
-}

@@ -26,8 +26,8 @@
 #ifndef DOMStringList_h
 #define DOMStringList_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/WTFString.h"
@@ -36,16 +36,14 @@ namespace blink {
 
 // FIXME: Some consumers of this class may benefit from lazily fetching items
 // rather than creating the list statically as is currently the only option.
-class CORE_EXPORT DOMStringList final
-    : public GarbageCollectedFinalized<DOMStringList>,
-      public ScriptWrappable {
+class CORE_EXPORT DOMStringList final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   static DOMStringList* Create() { return new DOMStringList(); }
 
   bool IsEmpty() const { return strings_.IsEmpty(); }
-  void Clear() { strings_.Clear(); }
+  void clear() { strings_.clear(); }
   void Append(const String& string) { strings_.push_back(string); }
   void Sort();
 
@@ -56,8 +54,6 @@ class CORE_EXPORT DOMStringList final
   bool contains(const String&) const;
 
   operator const Vector<String>&() const { return strings_; }
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   explicit DOMStringList() {}

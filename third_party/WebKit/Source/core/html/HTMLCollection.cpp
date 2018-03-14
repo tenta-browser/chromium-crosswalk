@@ -23,19 +23,19 @@
 
 #include "core/html/HTMLCollection.h"
 
-#include "core/HTMLNames.h"
 #include "core/dom/ClassCollection.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/dom/NodeRareData.h"
 #include "core/html/DocumentNameCollection.h"
-#include "core/html/HTMLDataListOptionsCollection.h"
 #include "core/html/HTMLElement.h"
-#include "core/html/HTMLFormControlElement.h"
 #include "core/html/HTMLObjectElement.h"
-#include "core/html/HTMLOptionElement.h"
-#include "core/html/HTMLOptionsCollection.h"
 #include "core/html/HTMLTagCollection.h"
 #include "core/html/WindowNameCollection.h"
+#include "core/html/forms/HTMLDataListOptionsCollection.h"
+#include "core/html/forms/HTMLFormControlElement.h"
+#include "core/html/forms/HTMLOptionElement.h"
+#include "core/html/forms/HTMLOptionsCollection.h"
+#include "core/html_names.h"
 #include "platform/wtf/HashSet.h"
 
 namespace blink {
@@ -46,6 +46,7 @@ static bool ShouldTypeOnlyIncludeDirectChildren(CollectionType type) {
   switch (type) {
     case kClassCollectionType:
     case kTagCollectionType:
+    case kTagCollectionNSType:
     case kHTMLTagCollectionType:
     case kDocAll:
     case kDocAnchors:
@@ -95,6 +96,7 @@ static NodeListRootType RootTypeFromCollectionType(const ContainerNode& owner,
       return NodeListRootType::kTreeScope;
     case kClassCollectionType:
     case kTagCollectionType:
+    case kTagCollectionNSType:
     case kHTMLTagCollectionType:
     case kNodeChildren:
     case kTableTBodies:
@@ -107,9 +109,9 @@ static NodeListRootType RootTypeFromCollectionType(const ContainerNode& owner,
     case kMapAreas:
       return NodeListRootType::kNode;
     case kFormControls:
-      if (isHTMLFieldSetElement(owner))
+      if (IsHTMLFieldSetElement(owner))
         return NodeListRootType::kNode;
-      DCHECK(isHTMLFormElement(owner));
+      DCHECK(IsHTMLFormElement(owner));
       return NodeListRootType::kTreeScope;
     case kNameNodeListType:
     case kRadioNodeListType:
@@ -125,6 +127,7 @@ static NodeListInvalidationType InvalidationTypeExcludingIdAndNameAttributes(
     CollectionType type) {
   switch (type) {
     case kTagCollectionType:
+    case kTagCollectionNSType:
     case kHTMLTagCollectionType:
     case kDocImages:
     case kDocEmbeds:
@@ -222,16 +225,16 @@ static inline bool IsMatchingHTMLElement(const HTMLCollection& html_collection,
     case kSelectOptions:
       return ToHTMLOptionsCollection(html_collection).ElementMatches(element);
     case kSelectedOptions:
-      return isHTMLOptionElement(element) &&
-             toHTMLOptionElement(element).Selected();
+      return IsHTMLOptionElement(element) &&
+             ToHTMLOptionElement(element).Selected();
     case kDataListOptions:
       return ToHTMLDataListOptionsCollection(html_collection)
           .ElementMatches(element);
     case kMapAreas:
       return element.HasTagName(areaTag);
     case kDocApplets:
-      return isHTMLObjectElement(element) &&
-             toHTMLObjectElement(element).ContainsJavaApplet();
+      return IsHTMLObjectElement(element) &&
+             ToHTMLObjectElement(element).ContainsJavaApplet();
     case kDocEmbeds:
       return element.HasTagName(embedTag);
     case kDocLinks:
@@ -240,10 +243,11 @@ static inline bool IsMatchingHTMLElement(const HTMLCollection& html_collection,
     case kDocAnchors:
       return element.HasTagName(aTag) && element.FastHasAttribute(nameAttr);
     case kFormControls:
-      DCHECK(isHTMLFieldSetElement(html_collection.ownerNode()));
-      return isHTMLObjectElement(element) || IsHTMLFormControlElement(element);
+      DCHECK(IsHTMLFieldSetElement(html_collection.ownerNode()));
+      return IsHTMLObjectElement(element) || IsHTMLFormControlElement(element);
     case kClassCollectionType:
     case kTagCollectionType:
+    case kTagCollectionNSType:
     case kHTMLTagCollectionType:
     case kDocAll:
     case kNodeChildren:
@@ -270,6 +274,8 @@ inline bool HTMLCollection::ElementMatches(const Element& element) const {
       return ToTagCollection(*this).ElementMatches(element);
     case kHTMLTagCollectionType:
       return ToHTMLTagCollection(*this).ElementMatches(element);
+    case kTagCollectionNSType:
+      return ToTagCollectionNS(*this).ElementMatches(element);
     case kWindowNamedItems:
       return ToWindowNameCollection(*this).ElementMatches(element);
     default:
@@ -336,7 +342,7 @@ Element* HTMLCollection::TraverseToFirst() const {
           RootNode(), MakeIsMatch(ToClassCollection(*this)));
     default:
       if (OverridesItemAfter())
-        return VirtualItemAfter(0);
+        return VirtualItemAfter(nullptr);
       if (ShouldOnlyIncludeDirectChildren())
         return ElementTraversal::FirstChild(RootNode(), MakeIsMatch(*this));
       return ElementTraversal::FirstWithin(RootNode(), MakeIsMatch(*this));
@@ -519,9 +525,10 @@ void HTMLCollection::NamedItems(const AtomicString& name,
 
 HTMLCollection::NamedItemCache::NamedItemCache() {}
 
-DEFINE_TRACE(HTMLCollection) {
+void HTMLCollection::Trace(blink::Visitor* visitor) {
   visitor->Trace(named_item_cache_);
   visitor->Trace(collection_items_cache_);
+  ScriptWrappable::Trace(visitor);
   LiveNodeListBase::Trace(visitor);
 }
 

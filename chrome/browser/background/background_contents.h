@@ -57,6 +57,7 @@ class BackgroundContents : public extensions::DeferredStartRenderHost,
 
   BackgroundContents(
       scoped_refptr<content::SiteInstance> site_instance,
+      content::RenderFrameHost* opener,
       int32_t routing_id,
       int32_t main_frame_routing_id,
       int32_t main_frame_widget_routing_id,
@@ -132,7 +133,7 @@ struct BackgroundContentsOpenedDetails {
   const std::string& frame_name;
 
   // The ID of the parent application (if any).
-  const base::string16& application_id;
+  const std::string& application_id;
 };
 
 #endif  // CHROME_BROWSER_BACKGROUND_BACKGROUND_CONTENTS_H_

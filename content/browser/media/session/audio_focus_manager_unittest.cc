@@ -23,6 +23,8 @@ class MockMediaSessionPlayerObserver : public MediaSessionPlayerObserver {
  public:
   void OnSuspend(int player_id) override {}
   void OnResume(int player_id) override {}
+  void OnSeekForward(int player_id, base::TimeDelta seek_time) override {}
+  void OnSeekBackward(int player_id, base::TimeDelta seek_time) override {}
   void OnSetVolumeMultiplier(
       int player_id, double volume_multiplier) override {}
   RenderFrameHost* render_frame_host() const override { return nullptr; }
@@ -39,9 +41,9 @@ class AudioFocusManagerTest : public testing::Test {
 
   void SetUp() override {
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
-        switches::kEnableDefaultMediaSession);
+        switches::kEnableAudioFocus);
     rph_factory_.reset(new MockRenderProcessHostFactory());
-    SiteInstanceImpl::set_render_process_host_factory(rph_factory_.get());
+    RenderProcessHostImpl::set_render_process_host_factory(rph_factory_.get());
     browser_context_.reset(new TestBrowserContext());
     pepper_observer_.reset(new MockMediaSessionPlayerObserver());
   }
@@ -51,7 +53,7 @@ class AudioFocusManagerTest : public testing::Test {
     base::RunLoop().RunUntilIdle();
 
     browser_context_.reset();
-    SiteInstanceImpl::set_render_process_host_factory(nullptr);
+    RenderProcessHostImpl::set_render_process_host_factory(nullptr);
     rph_factory_.reset();
   }
 

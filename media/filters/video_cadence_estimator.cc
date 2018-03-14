@@ -80,8 +80,7 @@ VideoCadenceEstimator::VideoCadenceEstimator(
   Reset();
 }
 
-VideoCadenceEstimator::~VideoCadenceEstimator() {
-}
+VideoCadenceEstimator::~VideoCadenceEstimator() = default;
 
 void VideoCadenceEstimator::Reset() {
   cadence_.clear();
@@ -189,6 +188,8 @@ VideoCadenceEstimator::Cadence VideoCadenceEstimator::CalculateCadence(
   // within minimum_time_until_max_drift.
   if (max_acceptable_drift >= minimum_time_until_max_drift_) {
     int cadence_value = round(perfect_cadence);
+    if (cadence_value < 0)
+      return Cadence();
     if (cadence_value == 0)
       cadence_value = 1;
     Cadence result = ConstructCadence(cadence_value, 1);

@@ -30,6 +30,13 @@ using ::testing::Invoke;
 using ::testing::_;
 
 namespace device {
+
+using mojom::UsbDevicePtr;
+using mojom::UsbDeviceInfoPtr;
+using mojom::UsbDeviceManagerClientPtr;
+using mojom::UsbDeviceManagerPtr;
+using mojom::UsbEnumerationOptionsPtr;
+
 namespace usb {
 
 namespace {
@@ -44,11 +51,11 @@ ACTION_P2(ExpectGuidAndThen, expected_guid, callback) {
 class USBDeviceManagerImplTest : public testing::Test {
  public:
   USBDeviceManagerImplTest() : message_loop_(new base::MessageLoop) {}
-  ~USBDeviceManagerImplTest() override {}
+  ~USBDeviceManagerImplTest() override = default;
 
  protected:
-  DeviceManagerPtr ConnectToDeviceManager() {
-    DeviceManagerPtr device_manager;
+  UsbDeviceManagerPtr ConnectToDeviceManager() {
+    UsbDeviceManagerPtr device_manager;
     DeviceManagerImpl::Create(permission_provider_.GetWeakPtr(),
                               mojo::MakeRequest(&device_manager));
     return device_manager;
@@ -61,32 +68,34 @@ class USBDeviceManagerImplTest : public testing::Test {
   std::unique_ptr<base::MessageLoop> message_loop_;
 };
 
-class MockDeviceManagerClient : public DeviceManagerClient {
+class MockDeviceManagerClient : public mojom::UsbDeviceManagerClient {
  public:
   MockDeviceManagerClient() : binding_(this) {}
-  ~MockDeviceManagerClient() {}
+  ~MockDeviceManagerClient() = default;
 
-  DeviceManagerClientPtr CreateInterfacePtrAndBind() {
-    return binding_.CreateInterfacePtrAndBind();
+  UsbDeviceManagerClientPtr CreateInterfacePtrAndBind() {
+    UsbDeviceManagerClientPtr client;
+    binding_.Bind(mojo::MakeRequest(&client));
+    return client;
   }
 
-  MOCK_METHOD1(DoOnDeviceAdded, void(DeviceInfo*));
-  void OnDeviceAdded(DeviceInfoPtr device_info) {
+  MOCK_METHOD1(DoOnDeviceAdded, void(mojom::UsbDeviceInfo*));
+  void OnDeviceAdded(UsbDeviceInfoPtr device_info) {
     DoOnDeviceAdded(device_info.get());
   }
 
-  MOCK_METHOD1(DoOnDeviceRemoved, void(DeviceInfo*));
-  void OnDeviceRemoved(DeviceInfoPtr device_info) {
+  MOCK_METHOD1(DoOnDeviceRemoved, void(mojom::UsbDeviceInfo*));
+  void OnDeviceRemoved(UsbDeviceInfoPtr device_info) {
     DoOnDeviceRemoved(device_info.get());
   }
 
  private:
-  mojo::Binding<DeviceManagerClient> binding_;
+  mojo::Binding<mojom::UsbDeviceManagerClient> binding_;
 };
 
 void ExpectDevicesAndThen(const std::set<std::string>& expected_guids,
                           const base::Closure& continuation,
-                          std::vector<DeviceInfoPtr> results) {
+                          std::vector<UsbDeviceInfoPtr> results) {
   EXPECT_EQ(expected_guids.size(), results.size());
   std::set<std::string> actual_guids;
   for (size_t i = 0; i < results.size(); ++i)
@@ -111,13 +120,13 @@ TEST_F(USBDeviceManagerImplTest, GetDevices) {
   device_client_.usb_service()->AddDevice(device1);
   device_client_.usb_service()->AddDevice(device2);
 
-  DeviceManagerPtr device_manager = ConnectToDeviceManager();
+  UsbDeviceManagerPtr device_manager = ConnectToDeviceManager();
 
-  EnumerationOptionsPtr options = EnumerationOptions::New();
-  UsbDeviceFilter filter;
-  filter.vendor_id = 0x1234;
-  options->filters.emplace();
-  options->filters->push_back(filter);
+  auto filter = mojom::UsbDeviceFilter::New();
+  filter->has_vendor_id = true;
+  filter->vendor_id = 0x1234;
+  UsbEnumerationOptionsPtr options = mojom::UsbEnumerationOptions::New();
+  options->filters.push_back(std::move(filter));
 
   std::set<std::string> guids;
   guids.insert(device0->guid());
@@ -138,11 +147,11 @@ TEST_F(USBDeviceManagerImplTest, GetDevice) {
 
   device_client_.usb_service()->AddDevice(mock_device);
 
-  DeviceManagerPtr device_manager = ConnectToDeviceManager();
+  UsbDeviceManagerPtr device_manager = ConnectToDeviceManager();
 
   {
     base::RunLoop loop;
-    DevicePtr device;
+    UsbDevicePtr device;
     device_manager->GetDevice(mock_device->guid(), mojo::MakeRequest(&device));
     // Close is a no-op if the device hasn't been opened but ensures that the
     // pipe was successfully connected.
@@ -150,7 +159,7 @@ TEST_F(USBDeviceManagerImplTest, GetDevice) {
     loop.Run();
   }
 
-  DevicePtr bad_device;
+  UsbDevicePtr bad_device;
   device_manager->GetDevice("not a real guid", mojo::MakeRequest(&bad_device));
 
   {
@@ -173,7 +182,7 @@ TEST_F(USBDeviceManagerImplTest, Client) {
 
   device_client_.usb_service()->AddDevice(device0);
 
-  DeviceManagerPtr device_manager = ConnectToDeviceManager();
+  UsbDeviceManagerPtr device_manager = ConnectToDeviceManager();
   MockDeviceManagerClient mock_client;
   device_manager->SetClient(mock_client.CreateInterfacePtrAndBind());
 

@@ -8,40 +8,46 @@
 #include <utility>
 
 #include "base/callback.h"
+#include "base/memory/ref_counted.h"
 #include "build/build_config.h"
+#include "chrome/browser/component_updater/component_updater_utils.h"
 
+// This component is behind a Finch experiment. To enable the registration of
+// the component, run Chrome with --enable-features=ImprovedRecoveryComponent.
 namespace component_updater {
 
 // The SHA256 of the SubjectPublicKeyInfo used to sign the component CRX.
-// The component id is: iddcipcljjhfegcfaaaapdilddpplalp
+// The component id is: ihnlcenocehgdaegdmhbidjhnhdchfmm
 constexpr uint8_t kPublicKeySHA256[32] = {
-    0x83, 0x32, 0x8f, 0x2b, 0x99, 0x75, 0x46, 0x25, 0x00, 0x00, 0xf3,
-    0x8b, 0x33, 0xff, 0xb0, 0xbf, 0xea, 0xea, 0x19, 0xb3, 0x38, 0xfb,
-    0xdc, 0xb3, 0x28, 0x90, 0x5f, 0xe2, 0xbe, 0x28, 0x89, 0x11};
+    0x87, 0xdb, 0x24, 0xde, 0x24, 0x76, 0x30, 0x46, 0x3c, 0x71, 0x83,
+    0x97, 0xd7, 0x32, 0x75, 0xcc, 0xd5, 0x7f, 0xec, 0x09, 0x60, 0x6d,
+    0x20, 0xc3, 0x81, 0xd7, 0xce, 0x7b, 0x10, 0x15, 0x44, 0xd1};
 
-RecoveryImprovedInstallerTraits::RecoveryImprovedInstallerTraits(
+RecoveryImprovedInstallerPolicy::RecoveryImprovedInstallerPolicy(
     PrefService* prefs)
     : prefs_(prefs) {}
 
-RecoveryImprovedInstallerTraits::~RecoveryImprovedInstallerTraits() {}
+RecoveryImprovedInstallerPolicy::~RecoveryImprovedInstallerPolicy() {}
 
-bool RecoveryImprovedInstallerTraits::
+bool RecoveryImprovedInstallerPolicy::
     SupportsGroupPolicyEnabledComponentUpdates() const {
   return true;
 }
 
-bool RecoveryImprovedInstallerTraits::RequiresNetworkEncryption() const {
+bool RecoveryImprovedInstallerPolicy::RequiresNetworkEncryption() const {
   return false;
 }
 
 update_client::CrxInstaller::Result
-RecoveryImprovedInstallerTraits::OnCustomInstall(
+RecoveryImprovedInstallerPolicy::OnCustomInstall(
     const base::DictionaryValue& manifest,
     const base::FilePath& install_dir) {
   return update_client::CrxInstaller::Result(0);
 }
 
-void RecoveryImprovedInstallerTraits::ComponentReady(
+void RecoveryImprovedInstallerPolicy::OnCustomUninstall() {}
+
+void RecoveryImprovedInstallerPolicy::ComponentReady(
     const base::Version& version,
     const base::FilePath& install_dir,
     std::unique_ptr<base::DictionaryValue> manifest) {
@@ -49,31 +55,31 @@ void RecoveryImprovedInstallerTraits::ComponentReady(
 }
 
 // Called during startup and installation before ComponentReady().
-bool RecoveryImprovedInstallerTraits::VerifyInstallation(
+bool RecoveryImprovedInstallerPolicy::VerifyInstallation(
     const base::DictionaryValue& manifest,
     const base::FilePath& install_dir) const {
   return true;
 }
 
-base::FilePath RecoveryImprovedInstallerTraits::GetRelativeInstallDir() const {
+base::FilePath RecoveryImprovedInstallerPolicy::GetRelativeInstallDir() const {
   return base::FilePath(FILE_PATH_LITERAL("RecoveryImproved"));
 }
 
-void RecoveryImprovedInstallerTraits::GetHash(
+void RecoveryImprovedInstallerPolicy::GetHash(
     std::vector<uint8_t>* hash) const {
   hash->assign(std::begin(kPublicKeySHA256), std::end(kPublicKeySHA256));
 }
 
-std::string RecoveryImprovedInstallerTraits::GetName() const {
+std::string RecoveryImprovedInstallerPolicy::GetName() const {
   return "Chrome Improved Recovery";
 }
 
 update_client::InstallerAttributes
-RecoveryImprovedInstallerTraits::GetInstallerAttributes() const {
+RecoveryImprovedInstallerPolicy::GetInstallerAttributes() const {
   return update_client::InstallerAttributes();
 }
 
-std::vector<std::string> RecoveryImprovedInstallerTraits::GetMimeTypes() const {
+std::vector<std::string> RecoveryImprovedInstallerPolicy::GetMimeTypes() const {
   return std::vector<std::string>();
 }
 
@@ -81,14 +87,18 @@ void RegisterRecoveryImprovedComponent(ComponentUpdateService* cus,
                                        PrefService* prefs) {
 #if defined(GOOGLE_CHROME_BUILD)
 #if defined(OS_WIN) || defined(OS_MACOSX)
+  // The improved recovery components requires elevation in the case where
+  // Chrome is installed per-machine. The elevation mechanism is not implemented
+  // yet; therefore, the component is not registered in this case.
+  if (!IsPerUserInstall())
+    return;
+
   DVLOG(1) << "Registering RecoveryImproved component.";
 
-  std::unique_ptr<ComponentInstallerTraits> traits(
-      new RecoveryImprovedInstallerTraits(prefs));
-  // |cus| will take ownership of |installer| during installer->Register(cus).
-  DefaultComponentInstaller* installer =
-      new DefaultComponentInstaller(std::move(traits));
-  installer->Register(cus, base::Closure());
+  // |cus| takes ownership of |installer| through the CrxComponent instance.
+  auto installer = base::MakeRefCounted<ComponentInstaller>(
+      std::make_unique<RecoveryImprovedInstallerPolicy>(prefs));
+  installer->Register(cus, base::OnceClosure());
 #endif
 #endif
 }

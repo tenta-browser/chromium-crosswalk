@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/find_in_page/find_tab_helper.h"
 
+#include "base/memory/ptr_util.h"
 #import "ios/chrome/browser/find_in_page/find_in_page_controller.h"
 #import "ios/chrome/browser/find_in_page/find_in_page_model.h"
 
@@ -19,15 +20,15 @@ void FindTabHelper::CreateForWebState(
     id<FindInPageControllerDelegate> controller_delegate) {
   DCHECK(web_state);
   if (!FromWebState(web_state)) {
-    web_state->SetUserData(UserDataKey(),
-                           new FindTabHelper(web_state, controller_delegate));
+    web_state->SetUserData(UserDataKey(), base::WrapUnique(new FindTabHelper(
+                                              web_state, controller_delegate)));
   }
 }
 
 FindTabHelper::FindTabHelper(
     web::WebState* web_state,
-    id<FindInPageControllerDelegate> controller_delegate)
-    : web::WebStateObserver(web_state) {
+    id<FindInPageControllerDelegate> controller_delegate) {
+  web_state->AddObserver(this);
   controller_.reset([[FindInPageController alloc]
       initWithWebState:web_state
               delegate:controller_delegate]);
@@ -93,10 +94,12 @@ void FindTabHelper::RestoreSearchTerm() {
 }
 
 void FindTabHelper::NavigationItemCommitted(
+    web::WebState* web_state,
     const web::LoadCommittedDetails& load_details) {
   StopFinding(nil);
 }
 
-void FindTabHelper::WebStateDestroyed() {
+void FindTabHelper::WebStateDestroyed(web::WebState* web_state) {
   [controller_ detachFromWebState];
+  web_state->RemoveObserver(this);
 }

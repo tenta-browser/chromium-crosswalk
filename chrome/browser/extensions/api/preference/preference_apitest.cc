@@ -13,8 +13,6 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/lifetime/keep_alive_types.h"
-#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/net/prediction_options.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -23,9 +21,12 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/autofill/core/common/autofill_pref_names.h"
 #include "components/content_settings/core/common/pref_names.h"
+#include "components/keep_alive_registry/keep_alive_types.h"
+#include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
-#include "components/translate/core/common/translate_pref_names.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
+#include "components/translate/core/browser/translate_pref_names.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/common/webrtc_ip_handling_policy.h"
 #include "extensions/browser/extension_registry.h"
@@ -49,7 +50,7 @@ class ExtensionPreferenceApiTest : public ExtensionApiTest {
     EXPECT_FALSE(prefs->GetBoolean(prefs::kBlockThirdPartyCookies));
     EXPECT_TRUE(prefs->GetBoolean(prefs::kEnableHyperlinkAuditing));
     EXPECT_TRUE(prefs->GetBoolean(prefs::kEnableReferrers));
-    EXPECT_TRUE(prefs->GetBoolean(prefs::kEnableTranslate));
+    EXPECT_TRUE(prefs->GetBoolean(prefs::kOfferTranslateEnabled));
     EXPECT_EQ(chrome_browser_net::NETWORK_PREDICTION_DEFAULT,
               prefs->GetInteger(prefs::kNetworkPredictionOptions));
     EXPECT_TRUE(
@@ -69,7 +70,7 @@ class ExtensionPreferenceApiTest : public ExtensionApiTest {
     EXPECT_TRUE(prefs->GetBoolean(prefs::kBlockThirdPartyCookies));
     EXPECT_FALSE(prefs->GetBoolean(prefs::kEnableHyperlinkAuditing));
     EXPECT_FALSE(prefs->GetBoolean(prefs::kEnableReferrers));
-    EXPECT_FALSE(prefs->GetBoolean(prefs::kEnableTranslate));
+    EXPECT_FALSE(prefs->GetBoolean(prefs::kOfferTranslateEnabled));
     EXPECT_EQ(chrome_browser_net::NETWORK_PREDICTION_NEVER,
               prefs->GetInteger(prefs::kNetworkPredictionOptions));
     EXPECT_FALSE(
@@ -96,8 +97,8 @@ class ExtensionPreferenceApiTest : public ExtensionApiTest {
     // BrowserProcess::Shutdown() needs to be called in a message loop, so we
     // post a task to release the keep alive, then run the message loop.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&std::unique_ptr<ScopedKeepAlive>::reset,
-                              base::Unretained(&keep_alive_), nullptr));
+        FROM_HERE, base::BindOnce(&std::unique_ptr<ScopedKeepAlive>::reset,
+                                  base::Unretained(&keep_alive_), nullptr));
     content::RunAllPendingInMessageLoop();
 
     ExtensionApiTest::TearDownOnMainThread();
@@ -120,7 +121,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionPreferenceApiTest, MAYBE_Standard) {
   prefs->SetBoolean(prefs::kBlockThirdPartyCookies, true);
   prefs->SetBoolean(prefs::kEnableHyperlinkAuditing, false);
   prefs->SetBoolean(prefs::kEnableReferrers, false);
-  prefs->SetBoolean(prefs::kEnableTranslate, false);
+  prefs->SetBoolean(prefs::kOfferTranslateEnabled, false);
   prefs->SetInteger(prefs::kNetworkPredictionOptions,
                     chrome_browser_net::NETWORK_PREDICTION_NEVER);
   prefs->SetBoolean(password_manager::prefs::kCredentialsEnableService, false);

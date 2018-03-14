@@ -24,6 +24,7 @@
 
 #include "platform/fonts/FontCache.h"
 
+#include "build/build_config.h"
 #include "platform/fonts/FontPlatformData.h"
 #include "platform/fonts/SimpleFontData.h"
 #include "platform/wtf/text/CString.h"
@@ -38,7 +39,7 @@ FontCache::FontCache()
     : purge_prevent_count_(0), font_manager_(sk_ref_sp(static_font_manager_)) {}
 
 static AtomicString& MutableSystemFontFamily() {
-  DEFINE_STATIC_LOCAL(AtomicString, system_font_family, ());
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(AtomicString, system_font_family, ());
   return system_font_family;
 }
 
@@ -61,8 +62,9 @@ void FontCache::GetFontForCharacter(
     WebFallbackFont web_fallback_font;
     Platform::Current()->GetSandboxSupport()->GetFallbackFontForCharacter(
         c, preferred_locale, &web_fallback_font);
-    fallback_font->name = String::FromUTF8(CString(web_fallback_font.name));
-    fallback_font->filename = web_fallback_font.filename;
+    fallback_font->name = web_fallback_font.name;
+    fallback_font->filename = CString(web_fallback_font.filename.Data(),
+                                      web_fallback_font.filename.size());
     fallback_font->fontconfig_interface_id =
         web_fallback_font.fontconfig_interface_id;
     fallback_font->ttc_index = web_fallback_font.ttc_index;
@@ -83,8 +85,8 @@ void FontCache::GetFontForCharacter(
   }
 }
 
-#if !OS(ANDROID)
-PassRefPtr<SimpleFontData> FontCache::FallbackFontForCharacter(
+#if !defined(OS_ANDROID)
+scoped_refptr<SimpleFontData> FontCache::PlatformFallbackFontForCharacter(
     const FontDescription& font_description,
     UChar32 c,
     const SimpleFontData*,
@@ -116,9 +118,9 @@ PassRefPtr<SimpleFontData> FontCache::FallbackFontForCharacter(
 
   // First try the specified font with standard style & weight.
   if (fallback_priority != FontFallbackPriority::kEmojiEmoji &&
-      (font_description.Style() == kFontStyleItalic ||
-       font_description.Weight() >= kFontWeight600)) {
-    RefPtr<SimpleFontData> font_data =
+      (font_description.Style() == ItalicSlopeValue() ||
+       font_description.Weight() >= BoldThreshold())) {
+    scoped_refptr<SimpleFontData> font_data =
         FallbackOnStandardFontStyle(font_description, c);
     if (font_data)
       return font_data;
@@ -126,7 +128,7 @@ PassRefPtr<SimpleFontData> FontCache::FallbackFontForCharacter(
 
   FontCache::PlatformFallbackFont fallback_font;
   FontCache::GetFontForCharacter(
-      c, font_description.LocaleOrDefault().Ascii().Data(), &fallback_font);
+      c, font_description.LocaleOrDefault().Ascii().data(), &fallback_font);
   if (fallback_font.name.IsEmpty())
     return nullptr;
 
@@ -141,18 +143,17 @@ PassRefPtr<SimpleFontData> FontCache::FallbackFontForCharacter(
   bool should_set_synthetic_bold = false;
   bool should_set_synthetic_italic = false;
   FontDescription description(font_description);
-  if (fallback_font.is_bold && description.Weight() < kFontWeightBold)
-    description.SetWeight(kFontWeightBold);
-  if (!fallback_font.is_bold && description.Weight() >= kFontWeightBold) {
+  if (fallback_font.is_bold && description.Weight() < BoldThreshold())
+    description.SetWeight(BoldWeightValue());
+  if (!fallback_font.is_bold && description.Weight() >= BoldThreshold()) {
     should_set_synthetic_bold = true;
-    description.SetWeight(kFontWeightNormal);
+    description.SetWeight(NormalWeightValue());
   }
-  if (fallback_font.is_italic && description.Style() == kFontStyleNormal)
-    description.SetStyle(kFontStyleItalic);
-  if (!fallback_font.is_italic && (description.Style() == kFontStyleItalic ||
-                                   description.Style() == kFontStyleOblique)) {
+  if (fallback_font.is_italic && description.Style() == NormalSlopeValue())
+    description.SetStyle(ItalicSlopeValue());
+  if (!fallback_font.is_italic && (description.Style() == ItalicSlopeValue())) {
     should_set_synthetic_italic = true;
-    description.SetStyle(kFontStyleNormal);
+    description.SetStyle(NormalSlopeValue());
   }
 
   FontPlatformData* substitute_platform_data =
@@ -167,6 +168,6 @@ PassRefPtr<SimpleFontData> FontCache::FallbackFontForCharacter(
   return FontDataFromFontPlatformData(platform_data.get(), kDoNotRetain);
 }
 
-#endif  // !OS(ANDROID)
+#endif  // !defined(OS_ANDROID)
 
 }  // namespace blink

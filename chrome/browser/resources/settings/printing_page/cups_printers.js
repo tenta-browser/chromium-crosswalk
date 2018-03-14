@@ -4,7 +4,7 @@
 
 /**
  * @fileoverview 'settings-cups-printers' is a component for showing CUPS
- * Printer settings subpage (chrome://md-settings/cupsPrinters). It is used to
+ * Printer settings subpage (chrome://settings/cupsPrinters). It is used to
  * set up legacy & non-CloudPrint printers on ChromeOS by leveraging CUPS (the
  * unix printing system) and the many open source drivers built for CUPS.
  */
@@ -21,12 +21,25 @@ Polymer({
       notify: true,
     },
 
+    /** @type {?CupsPrinterInfo} */
+    activePrinter: {
+      type: Object,
+      notify: true,
+    },
+
     searchTerm: {
       type: String,
     },
 
     /** @private */
     canAddPrinter_: Boolean,
+
+    /** @private */
+    showCupsEditPrinterDialog_: Boolean,
+  },
+
+  listeners: {
+    'edit-cups-printer-details': 'onShowCupsEditPrinterDialog_',
   },
 
   /**
@@ -61,8 +74,10 @@ Polymer({
    */
   refreshNetworks_: function() {
     chrome.networkingPrivate.getNetworks(
-        {'networkType': chrome.networkingPrivate.NetworkType.ALL,
-         'configured': true},
+        {
+          'networkType': chrome.networkingPrivate.NetworkType.ALL,
+          'configured': true
+        },
         this.onNetworksReceived_.bind(this));
   },
 
@@ -75,24 +90,58 @@ Polymer({
   onNetworksReceived_: function(states) {
     this.canAddPrinter_ = states.some(function(entry) {
       return entry.hasOwnProperty('ConnectionState') &&
-             entry.ConnectionState == 'Connected';
+          entry.ConnectionState == 'Connected';
     });
   },
 
   /**
-   * @param {boolean} success
+   * @param {PrinterSetupResult} result_code
    * @param {string} printerName
    * @private
    */
-  onAddPrinter_: function(success, printerName) {
-    if (success) {
+  onAddPrinter_: function(result_code, printerName) {
+    if (result_code == PrinterSetupResult.SUCCESS) {
       this.updateCupsPrintersList_();
       var message = this.$.addPrinterDoneMessage;
-      message.textContent = loadTimeData.getStringF(
-          'printerAddedSuccessfulMessage', printerName);
+      message.textContent =
+          loadTimeData.getStringF('printerAddedSuccessfulMessage', printerName);
     } else {
       var message = this.$.addPrinterErrorMessage;
+      var messageText = this.$.addPrinterFailedMessage;
+      switch (result_code) {
+        case PrinterSetupResult.FATAL_ERROR:
+          messageText.textContent =
+              loadTimeData.getString('printerAddedFatalErrorMessage');
+          break;
+        case PrinterSetupResult.PRINTER_UNREACHABLE:
+          messageText.textContent =
+              loadTimeData.getString('printerAddedUnreachableMessage');
+          break;
+        case PrinterSetupResult.DBUS_ERROR:
+          // Simply display a generic error message as this error should only
+          // occur when a call to Dbus fails which isn't meaningful to the user.
+          messageText.textContent =
+              loadTimeData.getString('printerAddedFailedmMessage');
+          break;
+        case PrinterSetupResult.PPD_TOO_LARGE:
+          messageText.textContent =
+              loadTimeData.getString('printerAddedPpdTooLargeMessage');
+          break;
+        case PrinterSetupResult.INVALID_PPD:
+          messageText.textContent =
+              loadTimeData.getString('printerAddedInvalidPpdMessage');
+          break;
+        case PrinterSetupResult.PPD_NOT_FOUND:
+          messageText.textContent =
+              loadTimeData.getString('printerAddedPpdNotFoundMessage');
+          break;
+        case PrinterSetupResult.PPD_UNRETRIEVABLE:
+          messageText.textContent =
+              loadTimeData.getString('printerAddedPpdUnretrievableMessage');
+          break;
+      }
     }
+
     message.hidden = false;
     window.setTimeout(function() {
       message.hidden = true;
@@ -101,8 +150,9 @@ Polymer({
 
   /** @private */
   updateCupsPrintersList_: function() {
-    settings.CupsPrintersBrowserProxyImpl.getInstance().
-        getCupsPrintersList().then(this.printersChanged_.bind(this));
+    settings.CupsPrintersBrowserProxyImpl.getInstance()
+        .getCupsPrintersList()
+        .then(this.printersChanged_.bind(this));
   },
 
   /**
@@ -121,6 +171,18 @@ Polymer({
 
   /** @private */
   onAddPrinterDialogClose_: function() {
-    this.$$('#addPrinter').focus();
+    cr.ui.focusWithoutInk(assert(this.$$('#addPrinter')));
   },
+
+  /** @private */
+  onShowCupsEditPrinterDialog_: function() {
+    this.showCupsEditPrinterDialog_ = true;
+    this.async(function() {
+      var dialog = this.$$('settings-cups-edit-printer-dialog');
+      dialog.addEventListener('close', function() {
+        this.showCupsEditPrinterDialog_ = false;
+      }.bind(this));
+    });
+  },
+
 });

@@ -12,30 +12,31 @@ namespace blink {
 
 PaintRenderingContext2D::PaintRenderingContext2D(
     std::unique_ptr<ImageBuffer> image_buffer,
-    bool has_alpha,
+    const PaintRenderingContext2DSettings& context_settings,
     float zoom)
-    : image_buffer_(std::move(image_buffer)), has_alpha_(has_alpha) {
+    : image_buffer_(std::move(image_buffer)),
+      context_settings_(context_settings) {
   clip_antialiasing_ = kAntiAliased;
   ModifiableState().SetShouldAntialias(true);
 
   // RecordingImageBufferSurface doesn't call ImageBufferSurface::clear
   // explicitly.
   DCHECK(image_buffer_);
-  image_buffer_->Canvas()->clear(has_alpha ? SK_ColorTRANSPARENT
-                                           : SK_ColorBLACK);
+  image_buffer_->Canvas()->clear(context_settings.alpha() ? SK_ColorTRANSPARENT
+                                                          : SK_ColorBLACK);
   image_buffer_->DidDraw(FloatRect(0, 0, Width(), Height()));
 
   image_buffer_->Canvas()->scale(zoom, zoom);
 }
 
 int PaintRenderingContext2D::Width() const {
-  ASSERT(image_buffer_);
-  return image_buffer_->size().Width();
+  DCHECK(image_buffer_);
+  return image_buffer_->Size().Width();
 }
 
 int PaintRenderingContext2D::Height() const {
-  ASSERT(image_buffer_);
-  return image_buffer_->size().Height();
+  DCHECK(image_buffer_);
+  return image_buffer_->Size().Height();
 }
 
 bool PaintRenderingContext2D::ParseColorOrCurrentColor(
@@ -48,26 +49,17 @@ bool PaintRenderingContext2D::ParseColorOrCurrentColor(
   return ::blink::ParseColorOrCurrentColor(color, color_string, nullptr);
 }
 
-ColorBehavior PaintRenderingContext2D::DrawImageColorBehavior() const {
-  return ColorBehavior::TransformToGlobalTarget();
-}
-
 PaintCanvas* PaintRenderingContext2D::DrawingCanvas() const {
   return image_buffer_->Canvas();
 }
 
 PaintCanvas* PaintRenderingContext2D::ExistingDrawingCanvas() const {
-  ASSERT(image_buffer_);
+  DCHECK(image_buffer_);
   return image_buffer_->Canvas();
 }
 
-AffineTransform PaintRenderingContext2D::BaseTransform() const {
-  ASSERT(image_buffer_);
-  return image_buffer_->BaseTransform();
-}
-
 void PaintRenderingContext2D::DidDraw(const SkIRect& dirty_rect) {
-  ASSERT(image_buffer_);
+  DCHECK(image_buffer_);
   return image_buffer_->DidDraw(SkRect::Make(dirty_rect));
 }
 
@@ -78,6 +70,14 @@ void PaintRenderingContext2D::ValidateStateStack() const {
               state_stack_.size() + 1);
   }
 #endif
+}
+
+bool PaintRenderingContext2D::StateHasFilter() {
+  return GetState().HasFilterForOffscreenCanvas(IntSize(Width(), Height()));
+}
+
+sk_sp<PaintFilter> PaintRenderingContext2D::StateGetFilter() {
+  return GetState().GetFilterForOffscreenCanvas(IntSize(Width(), Height()));
 }
 
 }  // namespace blink

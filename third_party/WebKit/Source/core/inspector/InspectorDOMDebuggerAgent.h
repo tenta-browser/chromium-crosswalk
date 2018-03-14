@@ -36,10 +36,9 @@
 #include "core/inspector/InspectorBaseAgent.h"
 #include "core/inspector/InspectorDOMAgent.h"
 #include "core/inspector/protocol/DOMDebugger.h"
-#include "wtf/HashMap.h"
-#include "wtf/text/WTFString.h"
-
-#include <v8-inspector.h>
+#include "platform/wtf/HashMap.h"
+#include "platform/wtf/text/WTFString.h"
+#include "v8/include/v8-inspector.h"
 
 namespace blink {
 
@@ -69,7 +68,7 @@ class CORE_EXPORT InspectorDOMDebuggerAgent final
                             InspectorDOMAgent*,
                             v8_inspector::V8InspectorSession*);
   ~InspectorDOMDebuggerAgent() override;
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
   // DOMDebugger API for frontend
   protocol::Response setDOMBreakpoint(int node_id, const String& type) override;

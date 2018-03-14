@@ -6,13 +6,13 @@
 
 #include <stddef.h>
 
-#include <algorithm>
 #include <functional>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/process/process_metrics.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -38,20 +38,18 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
-#include "content/public/browser/resource_request_details.h"
 #include "content/public/browser/session_storage_namespace.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/common/frame_navigate_params.h"
 #include "net/http/http_response_headers.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/gfx/geometry/size.h"
 
 using content::BrowserThread;
 using content::OpenURLParams;
 using content::RenderViewHost;
-using content::ResourceRedirectDetails;
 using content::SessionStorageNamespace;
 using content::WebContents;
 
@@ -140,6 +138,7 @@ class PrerenderContents::WebContentsDelegateImpl
 
   bool ShouldCreateWebContents(
       content::WebContents* web_contents,
+      content::RenderFrameHost* opener,
       content::SiteInstance* source_site_instance,
       int32_t route_id,
       int32_t main_frame_route_id,
@@ -220,6 +219,8 @@ PrerenderContents::PrerenderContents(
       network_bytes_(0),
       weak_factory_(this) {
   DCHECK(prerender_manager);
+  registry_.AddInterface(base::Bind(
+      &PrerenderContents::OnPrerenderCancelerRequest, base::Unretained(this)));
 }
 
 bool PrerenderContents::Init() {
@@ -334,10 +335,6 @@ void PrerenderContents::StartPrerendering(
     load_url_params.transition_type = ui::PageTransitionFromInt(
         ui::PAGE_TRANSITION_TYPED |
         ui::PAGE_TRANSITION_FROM_ADDRESS_BAR);
-  } else if (origin_ == ORIGIN_INSTANT) {
-    load_url_params.transition_type = ui::PageTransitionFromInt(
-        ui::PAGE_TRANSITION_GENERATED |
-        ui::PAGE_TRANSITION_FROM_ADDRESS_BAR);
   }
   load_url_params.override_user_agent =
       prerender_manager_->config().is_overriding_user_agent ?
@@ -376,9 +373,7 @@ PrerenderContents::~PrerenderContents() {
   DCHECK_NE(ORIGIN_MAX, origin());
 
   prerender_manager_->RecordFinalStatus(origin(), final_status());
-
-  bool used = final_status() == FINAL_STATUS_USED;
-  prerender_manager_->RecordNetworkBytes(origin(), used, network_bytes_);
+  prerender_manager_->RecordNetworkBytesConsumed(origin(), network_bytes_);
 
   // Broadcast the removal of aliases.
   for (content::RenderProcessHost::iterator host_iterator =
@@ -484,8 +479,7 @@ bool PrerenderContents::CheckURL(const GURL& url) {
     Destroy(FINAL_STATUS_UNSUPPORTED_SCHEME);
     return false;
   }
-  if (origin() != ORIGIN_OFFLINE &&
-      prerender_manager_->HasRecentlyBeenNavigatedTo(origin(), url)) {
+  if (prerender_manager_->HasRecentlyBeenNavigatedTo(origin(), url)) {
     Destroy(FINAL_STATUS_RECENTLY_VISITED);
     return false;
   }
@@ -518,8 +512,7 @@ bool PrerenderContents::Matches(
       session_storage_namespace_id_ != session_storage_namespace->id()) {
     return false;
   }
-  return std::find(alias_urls_.begin(), alias_urls_.end(), url) !=
-         alias_urls_.end();
+  return base::ContainsValue(alias_urls_, url);
 }
 
 void PrerenderContents::RenderProcessGone(base::TerminationStatus status) {
@@ -531,12 +524,15 @@ void PrerenderContents::RenderProcessGone(base::TerminationStatus status) {
   Destroy(FINAL_STATUS_RENDERER_CRASHED);
 }
 
+void PrerenderContents::OnInterfaceRequestFromFrame(
+    content::RenderFrameHost* render_frame_host,
+    const std::string& interface_name,
+    mojo::ScopedMessagePipeHandle* interface_pipe) {
+  registry_.TryBindInterface(interface_name, interface_pipe);
+}
+
 void PrerenderContents::RenderFrameCreated(
     content::RenderFrameHost* render_frame_host) {
-  render_frame_host->GetInterfaceRegistry()->AddInterface(
-      base::Bind(&PrerenderContents::OnPrerenderCancelerRequest,
-                 weak_factory_.GetWeakPtr()));
-
   // When a new RenderFrame is created for a prerendering WebContents, tell the
   // new RenderFrame it's being used for prerendering before any navigations
   // occur.  Note that this is always triggered before the first navigation, so
@@ -575,6 +571,17 @@ void PrerenderContents::DidStartNavigation(
   has_finished_loading_ = false;
 }
 
+void PrerenderContents::DidRedirectNavigation(
+    content::NavigationHandle* navigation_handle) {
+  if (!navigation_handle->IsInMainFrame())
+    return;
+
+  // If it's a redirect on the top-level resource, the name needs to be
+  // remembered for future matching, and if it redirects to an https resource,
+  // it needs to be canceled. If a subresource is redirected, nothing changes.
+  CheckURL(navigation_handle->GetURL());
+}
+
 void PrerenderContents::DidFinishLoad(
     content::RenderFrameHost* render_frame_host,
     const GURL& validated_url) {
@@ -605,13 +612,6 @@ void PrerenderContents::DidFinishNavigation(
     return;
   }
 
-  // Prevent ORIGIN_OFFLINE prerenders from being destroyed on location.href
-  // change, since the history is never merged for offline prerenders. Also
-  // avoid adding aliases as they may potentially mark other valid requests to
-  // offline as duplicate.
-  if (origin() == ORIGIN_OFFLINE)
-    return;
-
   // If the prerender made a second navigation entry, abort the prerender. This
   // avoids having to correctly implement a complex history merging case (this
   // interacts with location.replace) and correctly synchronize with the
@@ -634,17 +634,6 @@ void PrerenderContents::DidFinishNavigation(
     if (!AddAliasURL(redirect))
       return;
   }
-}
-
-void PrerenderContents::DidGetRedirectForResourceRequest(
-    const content::ResourceRedirectDetails& details) {
-  // DidGetRedirectForResourceRequest can come for any resource on a page.  If
-  // it's a redirect on the top-level resource, the name needs to be remembered
-  // for future matching, and if it redirects to an https resource, it needs to
-  // be canceled. If a subresource is redirected, nothing changes.
-  if (details.resource_type != content::RESOURCE_TYPE_MAIN_FRAME)
-    return;
-  CheckURL(details.new_url);
 }
 
 void PrerenderContents::Destroy(FinalStatus final_status) {
@@ -763,7 +752,7 @@ void PrerenderContents::PrepareForUse() {
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&ResumeThrottles, resource_throttles_, idle_resources_));
+      base::BindOnce(&ResumeThrottles, resource_throttles_, idle_resources_));
   resource_throttles_.clear();
   idle_resources_.clear();
 }

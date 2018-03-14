@@ -124,6 +124,8 @@ VISIT_PROTO_FIELDS(const sync_pb::AppSpecifics& proto) {
   VISIT(bookmark_app_description);
   VISIT(bookmark_app_icon_color);
   VISIT_REP(linked_app_icons);
+  VISIT(bookmark_app_scope);
+  VISIT(bookmark_app_theme_color);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::ArcPackageSpecifics& proto) {
@@ -187,6 +189,7 @@ VISIT_PROTO_FIELDS(const sync_pb::AutofillProfileSpecifics& proto) {
   VISIT(address_home_dependent_locality);
   VISIT(address_home_language_code);
   VISIT_REP(phone_home_whole_number);
+  VISIT(validity_state_bitfield);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::AutofillSpecifics& proto) {
@@ -472,6 +475,16 @@ VISIT_PROTO_FIELDS(const sync_pb::FaviconTrackingSpecifics& proto) {
   VISIT(is_bookmarked);
 }
 
+VISIT_PROTO_FIELDS(
+    const sync_pb::UserEventSpecifics::FieldTrial::FieldTrialPair& proto) {
+  VISIT(name_id);
+  VISIT(group_id);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::UserEventSpecifics::FieldTrial& proto) {
+  VISIT_REP(field_trial_pairs);
+}
+
 VISIT_PROTO_FIELDS(const sync_pb::GcmChannelFlags& proto) {
   VISIT(enabled);
 }
@@ -529,6 +542,18 @@ VISIT_PROTO_FIELDS(const sync_pb::HistoryDeleteDirectives& proto) {
 
 VISIT_PROTO_FIELDS(const sync_pb::KeystoreEncryptionFlags& proto) {
   VISIT(enabled);
+}
+
+VISIT_PROTO_FIELDS(
+    const sync_pb::UserEventSpecifics::LanguageDetection::Language& proto) {
+  VISIT(language_code);
+  VISIT(is_reliable);
+}
+
+VISIT_PROTO_FIELDS(
+    const sync_pb::UserEventSpecifics::LanguageDetection& proto) {
+  VISIT_REP(detected_languages);
+  VISIT(adopted_language_code);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::LinkedAppIconInfo& proto) {
@@ -650,6 +675,7 @@ VISIT_PROTO_FIELDS(const sync_pb::PreferenceSpecifics& proto) {
 VISIT_PROTO_FIELDS(const sync_pb::PrinterPPDReference& proto) {
   VISIT(user_supplied_ppd_url);
   VISIT(effective_make_and_model);
+  VISIT(autoconf);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::PrinterSpecifics& proto) {
@@ -661,6 +687,7 @@ VISIT_PROTO_FIELDS(const sync_pb::PrinterSpecifics& proto) {
   VISIT(uri);
   VISIT(uuid);
   VISIT(ppd_reference);
+  VISIT(make_and_model);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::PriorityPreferenceSpecifics& proto) {
@@ -688,15 +715,12 @@ VISIT_PROTO_FIELDS(const sync_pb::SearchEngineSpecifics& proto) {
   VISIT(suggestions_url);
   VISIT(prepopulate_id);
   VISIT(autogenerate_keyword);
-  VISIT(instant_url);
   VISIT(last_modified);
   VISIT(sync_guid);
   VISIT_REP(alternate_urls);
-  VISIT(search_terms_replacement_key);
   VISIT(image_url);
   VISIT(search_url_post_params);
   VISIT(suggestions_url_post_params);
-  VISIT(instant_url_post_params);
   VISIT(image_url_post_params);
   VISIT(new_tab_url);
 }
@@ -785,6 +809,38 @@ VISIT_PROTO_FIELDS(const sync_pb::SyncedNotificationAppInfoSpecifics& proto) {}
 
 VISIT_PROTO_FIELDS(const sync_pb::SyncedNotificationSpecifics& proto) {}
 
+VISIT_PROTO_FIELDS(
+    const sync_pb::UserEventSpecifics::GaiaPasswordReuse& proto) {
+  VISIT(reuse_detected);
+  VISIT(reuse_lookup);
+  VISIT(dialog_interaction);
+}
+
+VISIT_PROTO_FIELDS(
+    const sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseDetected&
+        proto) {
+  VISIT(status);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::UserEventSpecifics::GaiaPasswordReuse::
+                       PasswordReuseDetected::SafeBrowsingStatus& proto) {
+  VISIT(enabled);
+  VISIT_ENUM(safe_browsing_reporting_population);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::UserEventSpecifics::GaiaPasswordReuse::
+                       PasswordReuseDialogInteraction& proto) {
+  VISIT_ENUM(interaction_result);
+}
+
+VISIT_PROTO_FIELDS(
+    const sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup&
+        proto) {
+  VISIT_ENUM(lookup_result);
+  VISIT_ENUM(verdict);
+  VISIT(verdict_token);
+}
+
 VISIT_PROTO_FIELDS(const sync_pb::TabNavigation& proto) {
   VISIT(virtual_url);
   VISIT(referrer);
@@ -799,7 +855,6 @@ VISIT_PROTO_FIELDS(const sync_pb::TabNavigation& proto) {
   VISIT(navigation_chain_start);
   VISIT(navigation_chain_end);
   VISIT(global_id);
-  VISIT(search_terms);
   VISIT(favicon_url);
   VISIT_ENUM(blocked_state);
   VISIT_REP(content_pack_categories);
@@ -810,6 +865,8 @@ VISIT_PROTO_FIELDS(const sync_pb::TabNavigation& proto) {
   VISIT(last_navigation_redirect_url);
   VISIT(correct_referrer_policy);
   VISIT_ENUM(password_state);
+  VISIT(task_id);
+  VISIT_REP(ancestor_task_id);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::ThemeSpecifics& proto) {
@@ -823,6 +880,20 @@ VISIT_PROTO_FIELDS(const sync_pb::ThemeSpecifics& proto) {
 VISIT_PROTO_FIELDS(const sync_pb::TimeRangeDirective& proto) {
   VISIT(start_time_usec);
   VISIT(end_time_usec);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::UserEventSpecifics::Translation& proto) {
+  VISIT(from_language_code);
+  VISIT(to_language_code);
+  VISIT_ENUM(interaction);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::UserEventSpecifics::UserConsent& proto) {
+  VISIT(feature);
+  VISIT_REP(consent_grd_ids);
+  VISIT_REP(placeholder_replacements);
+  VISIT(locale);
+  VISIT_ENUM(status);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::TypeHint& proto) {
@@ -848,7 +919,16 @@ VISIT_PROTO_FIELDS(const sync_pb::UniquePosition& proto) {
 VISIT_PROTO_FIELDS(const sync_pb::UserEventSpecifics& proto) {
   VISIT(event_time_usec);
   VISIT(navigation_id);
+  VISIT(session_id);
+  VISIT(test_event);
+  VISIT(field_trial_event);
+  VISIT(language_detection_event);
+  VISIT(translation_event);
+  VISIT(user_consent);
+  VISIT(gaia_password_reuse_event);
 }
+
+VISIT_PROTO_FIELDS(const sync_pb::UserEventSpecifics::Test& proto) {}
 
 VISIT_PROTO_FIELDS(const sync_pb::WalletMaskedCreditCard& proto) {
   VISIT(id);

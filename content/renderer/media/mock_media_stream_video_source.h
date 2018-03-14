@@ -14,9 +14,8 @@ namespace content {
 
 class MockMediaStreamVideoSource : public MediaStreamVideoSource {
  public:
-  explicit MockMediaStreamVideoSource(bool manual_get_supported_formats);
-  MockMediaStreamVideoSource(bool manual_get_supported_formats,
-                             bool respond_to_request_refresh_frame);
+  MockMediaStreamVideoSource();
+  explicit MockMediaStreamVideoSource(bool respond_to_request_refresh_frame);
   MockMediaStreamVideoSource(const media::VideoCaptureFormat& format,
                              bool respond_to_request_refresh_frame);
   virtual ~MockMediaStreamVideoSource();
@@ -33,16 +32,10 @@ class MockMediaStreamVideoSource : public MediaStreamVideoSource {
   // or FailToStartMockedSource has not been called.
   bool SourceHasAttemptedToStart() { return attempted_to_start_; }
 
-  void SetSupportedFormats(const media::VideoCaptureFormats& formats) {
-    supported_formats_ = formats;
-  }
-
   // Delivers |frame| to all registered tracks on the IO thread. Its up to the
   // call to make sure MockMediaStreamVideoSource is not destroyed before the
   // frame has been delivered.
   void DeliverVideoFrame(const scoped_refptr<media::VideoFrame>& frame);
-
-  void CompleteGetSupportedFormats();
 
   const media::VideoCaptureFormat& start_format() const { return format_; }
   int max_requested_height() const { return max_requested_height_; }
@@ -54,34 +47,40 @@ class MockMediaStreamVideoSource : public MediaStreamVideoSource {
     DoSetMutedState(muted_state);
   }
 
+  void EnableStopForRestart() { can_stop_for_restart_ = true; }
+  void DisableStopForRestart() { can_stop_for_restart_ = false; }
+
+  void EnableRestart() { can_restart_ = true; }
+  void DisableRestart() { can_restart_ = false; }
+
+  bool is_suspended() { return is_suspended_; }
+
   // Implements MediaStreamVideoSource.
   void RequestRefreshFrame() override;
+  base::Optional<media::VideoCaptureParams> GetCurrentCaptureParams()
+      const override;
+  void OnHasConsumers(bool has_consumers) override;
 
  protected:
   // Implements MediaStreamVideoSource.
-  void GetCurrentSupportedFormats(
-      int max_requested_height,
-      int max_requested_width,
-      double max_requested_frame_rate,
-      const VideoCaptureDeviceFormatsCB& callback) override;
   void StartSourceImpl(
-      const media::VideoCaptureFormat& format,
-      const blink::WebMediaConstraints& constraints,
       const VideoCaptureDeliverFrameCB& frame_callback) override;
   void StopSourceImpl() override;
-  base::Optional<media::VideoCaptureFormat> GetCurrentFormatImpl()
-      const override;
+  base::Optional<media::VideoCaptureFormat> GetCurrentFormat() const override;
+  void StopSourceForRestartImpl() override;
+  void RestartSourceImpl(const media::VideoCaptureFormat& new_format) override;
 
  private:
   media::VideoCaptureFormat format_;
-  media::VideoCaptureFormats supported_formats_;
-  bool manual_get_supported_formats_;
   bool respond_to_request_refresh_frame_;
   int max_requested_height_;
   int max_requested_width_;
   double max_requested_frame_rate_;
   bool attempted_to_start_;
-  VideoCaptureDeviceFormatsCB formats_callback_;
+  bool is_stopped_for_restart_ = false;
+  bool can_stop_for_restart_ = true;
+  bool can_restart_ = true;
+  bool is_suspended_ = false;
   VideoCaptureDeliverFrameCB frame_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(MockMediaStreamVideoSource);

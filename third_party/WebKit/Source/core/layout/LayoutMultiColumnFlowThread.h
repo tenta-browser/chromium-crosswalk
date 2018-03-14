@@ -166,7 +166,7 @@ class CORE_EXPORT LayoutMultiColumnFlowThread : public LayoutFlowThread,
     // The flow thread is the first child of the multicol container. If the flow
     // thread is also the last child, it means that there are no siblings; i.e.
     // we have no column boxes.
-    return last_sibling_box != this ? last_sibling_box : 0;
+    return last_sibling_box != this ? last_sibling_box : nullptr;
   }
 
   // Find the first set inside which the specified layoutObject (which is a
@@ -229,7 +229,7 @@ class CORE_EXPORT LayoutMultiColumnFlowThread : public LayoutFlowThread,
   LayoutPoint VisualPointToFlowThreadPoint(
       const LayoutPoint& visual_point) const override;
 
-  int InlineBlockBaseline(LineDirectionMode) const override;
+  LayoutUnit InlineBlockBaseline(LineDirectionMode) const override;
 
   LayoutMultiColumnSet* ColumnSetAtBlockOffset(LayoutUnit,
                                                PageBoundaryRule) const final;
@@ -252,6 +252,11 @@ class CORE_EXPORT LayoutMultiColumnFlowThread : public LayoutFlowThread,
   // of columns, unless we have a bug.
   bool ColumnHeightsChanged() const { return column_heights_changed_; }
   void SetColumnHeightsChanged() { column_heights_changed_ = true; }
+
+  // Finish multicol layout. Returns true if we're really done, or false if we
+  // need another layout pass (typically because columns got new heights in the
+  // previous pass, so that we need to refragment).
+  bool FinishLayout();
 
   void ColumnRuleStyleDidChange();
 
@@ -351,6 +356,8 @@ class CORE_EXPORT LayoutMultiColumnFlowThread : public LayoutFlowThread,
 
   // Set when column heights are out of sync with actual layout.
   bool column_heights_changed_;
+
+  bool all_columns_have_known_height_ = false;
 
   // Always true for regular multicol. False for paged-y overflow.
   bool progression_is_inline_;

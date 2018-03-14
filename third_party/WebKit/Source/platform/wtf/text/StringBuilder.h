@@ -27,6 +27,7 @@
 #ifndef StringBuilder_h
 #define StringBuilder_h
 
+#include "base/macros.h"
 #include "platform/wtf/WTFExport.h"
 #include "platform/wtf/text/AtomicString.h"
 #include "platform/wtf/text/StringView.h"
@@ -35,8 +36,6 @@
 namespace WTF {
 
 class WTF_EXPORT StringBuilder {
-  WTF_MAKE_NONCOPYABLE(StringBuilder);
-
  public:
   StringBuilder() : buffer_(nullptr), length_(0), is8_bit_(true) {}
 
@@ -145,6 +144,8 @@ class WTF_EXPORT StringBuilder {
   void AppendNumber(unsigned long long);
   void AppendNumber(double, unsigned precision = 6);
 
+  void erase(unsigned);
+
   String ToString();
   AtomicString ToAtomicString();
   String Substring(unsigned start, unsigned length) const;
@@ -172,7 +173,7 @@ class WTF_EXPORT StringBuilder {
     if (!string_.IsNull())
       return string_.Characters8();
     DCHECK(buffer8_);
-    return buffer8_->Data();
+    return buffer8_->data();
   }
 
   const UChar* Characters16() const {
@@ -182,7 +183,7 @@ class WTF_EXPORT StringBuilder {
     if (!string_.IsNull())
       return string_.Characters16();
     DCHECK(buffer16_);
-    return buffer16_->Data();
+    return buffer16_->data();
   }
 
   bool Is8Bit() const { return is8_bit_; }
@@ -221,6 +222,8 @@ class WTF_EXPORT StringBuilder {
   };
   unsigned length_;
   bool is8_bit_;
+
+  DISALLOW_COPY_AND_ASSIGN(StringBuilder);
 };
 
 template <typename CharType>

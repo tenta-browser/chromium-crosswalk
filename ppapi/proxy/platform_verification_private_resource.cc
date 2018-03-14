@@ -88,14 +88,52 @@ void PlatformVerificationPrivateResource::OnChallengePlatformReply(
   if (params.result() == PP_OK) {
     *(output_params.signed_data) =
         (PpapiGlobals::Get()->GetVarTracker()->MakeArrayBufferVar(
-            static_cast<uint32_t>(raw_signed_data.size()),
-            &raw_signed_data.front()))->GetPPVar();
+             static_cast<uint32_t>(raw_signed_data.size()),
+             raw_signed_data.data()))
+            ->GetPPVar();
     *(output_params.signed_data_signature) =
         (PpapiGlobals::Get()->GetVarTracker()->MakeArrayBufferVar(
-            static_cast<uint32_t>(raw_signed_data_signature.size()),
-            &raw_signed_data_signature.front()))->GetPPVar();
+             static_cast<uint32_t>(raw_signed_data_signature.size()),
+             raw_signed_data_signature.data()))
+            ->GetPPVar();
     *(output_params.platform_key_certificate) =
         (new StringVar(raw_platform_key_certificate))->GetPPVar();
+  }
+  output_params.callback->Run(params.result());
+}
+
+int32_t PlatformVerificationPrivateResource::GetStorageId(
+    PP_Var* storage_id,
+    const scoped_refptr<TrackedCallback>& callback) {
+  // Prevent null types for obvious reasons, but also ref-counted types to
+  // avoid leaks on failures (since they're only written to on success).
+  if (!storage_id || VarTracker::IsVarTypeRefcounted(storage_id->type)) {
+    return PP_ERROR_BADARGUMENT;
+  }
+
+  GetStorageIdParams output_params = {storage_id, callback};
+
+  Call<PpapiHostMsg_PlatformVerification_GetStorageIdReply>(
+      BROWSER, PpapiHostMsg_PlatformVerification_GetStorageId(),
+      base::Bind(&PlatformVerificationPrivateResource::OnGetStorageIdReply,
+                 base::Unretained(this), output_params));
+  return PP_OK_COMPLETIONPENDING;
+}
+
+void PlatformVerificationPrivateResource::OnGetStorageIdReply(
+    GetStorageIdParams output_params,
+    const ResourceMessageReplyParams& params,
+    const std::vector<uint8_t>& storage_id) {
+  if (!TrackedCallback::IsPending(output_params.callback) ||
+      TrackedCallback::IsScheduledToRun(output_params.callback)) {
+    return;
+  }
+
+  if (params.result() == PP_OK) {
+    *(output_params.storage_id) =
+        (PpapiGlobals::Get()->GetVarTracker()->MakeArrayBufferVar(
+             static_cast<uint32_t>(storage_id.size()), storage_id.data()))
+            ->GetPPVar();
   }
   output_params.callback->Run(params.result());
 }

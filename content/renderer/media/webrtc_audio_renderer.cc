@@ -18,10 +18,10 @@
 #include "content/renderer/media/media_stream_audio_track.h"
 #include "content/renderer/media/webrtc/peer_connection_remote_audio_source.h"
 #include "content/renderer/media/webrtc_logging.h"
-#include "media/audio/sample_rates.h"
 #include "media/base/audio_capturer_source.h"
 #include "media/base/audio_latency.h"
 #include "media/base/audio_parameters.h"
+#include "media/base/sample_rates.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
 #include "third_party/webrtc/api/mediastreaminterface.h"
 
@@ -173,7 +173,7 @@ WebRtcAudioRenderer::WebRtcAudioRenderer(
       session_id_(session_id),
       signaling_thread_(signaling_thread),
       media_stream_(media_stream),
-      source_(NULL),
+      source_(nullptr),
       play_ref_count_(0),
       start_ref_count_(0),
       sink_params_(kFormat, kChannelLayout, 0, kBitsPerSample, 0),
@@ -324,7 +324,7 @@ void WebRtcAudioRenderer::Stop() {
     DVLOG(1) << "Calling RemoveAudioRenderer and Stop().";
 
     source_->RemoveAudioRenderer(this);
-    source_ = NULL;
+    source_ = nullptr;
     state_ = UNINITIALIZED;
   }
 
@@ -531,8 +531,9 @@ void WebRtcAudioRenderer::UpdateSourceVolume(
     // Libjingle hands out proxy objects in most cases, but the audio source
     // object is an exception (bug?).  So, to work around that, we need to make
     // sure we call SetVolume on the signaling thread.
-    signaling_thread_->PostTask(FROM_HERE,
-        base::Bind(&webrtc::AudioSourceInterface::SetVolume, source, volume));
+    signaling_thread_->PostTask(
+        FROM_HERE, base::BindOnce(&webrtc::AudioSourceInterface::SetVolume,
+                                  source, volume));
   } else {
     source->SetVolume(volume);
   }

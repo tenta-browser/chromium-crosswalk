@@ -61,7 +61,7 @@ SandboxFileStreamWriter::SandboxFileStreamWriter(
   DCHECK(url_.is_valid());
 }
 
-SandboxFileStreamWriter::~SandboxFileStreamWriter() {}
+SandboxFileStreamWriter::~SandboxFileStreamWriter() = default;
 
 int SandboxFileStreamWriter::Write(
     net::IOBuffer* buf, int buf_len,
@@ -118,7 +118,7 @@ void SandboxFileStreamWriter::DidCreateSnapshotFile(
     base::File::Error file_error,
     const base::File::Info& file_info,
     const base::FilePath& platform_path,
-    const scoped_refptr<storage::ShareableFileReference>& file_ref) {
+    scoped_refptr<storage::ShareableFileReference> file_ref) {
   DCHECK(!file_ref.get());
 
   if (CancelIfRequested())

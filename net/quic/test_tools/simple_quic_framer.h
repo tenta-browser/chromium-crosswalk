@@ -24,8 +24,9 @@ class SimpleFramerVisitor;
 class SimpleQuicFramer {
  public:
   SimpleQuicFramer();
-  explicit SimpleQuicFramer(const QuicVersionVector& supported_versions);
-  SimpleQuicFramer(const QuicVersionVector& supported_versions,
+  explicit SimpleQuicFramer(
+      const QuicTransportVersionVector& supported_versions);
+  SimpleQuicFramer(const QuicTransportVersionVector& supported_versions,
                    Perspective perspective);
   ~SimpleQuicFramer();
 
@@ -38,15 +39,18 @@ class SimpleQuicFramer {
   const std::vector<QuicConnectionCloseFrame>& connection_close_frames() const;
   const std::vector<QuicStopWaitingFrame>& stop_waiting_frames() const;
   const std::vector<QuicPingFrame>& ping_frames() const;
+  const std::vector<QuicWindowUpdateFrame>& window_update_frames() const;
   const std::vector<QuicGoAwayFrame>& goaway_frames() const;
   const std::vector<QuicRstStreamFrame>& rst_stream_frames() const;
   const std::vector<std::unique_ptr<QuicStreamFrame>>& stream_frames() const;
+  const std::vector<QuicPaddingFrame>& padding_frames() const;
   const QuicVersionNegotiationPacket* version_negotiation_packet() const;
 
   QuicFramer* framer();
 
-  void SetSupportedVersions(const QuicVersionVector& versions) {
-    framer_.SetSupportedVersions(versions);
+  void SetSupportedTransportVersions(
+      const QuicTransportVersionVector& versions) {
+    framer_.SetSupportedTransportVersions(versions);
   }
 
  private:

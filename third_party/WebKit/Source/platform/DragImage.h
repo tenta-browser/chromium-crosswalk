@@ -27,17 +27,18 @@
 #define DragImage_h
 
 #include <memory>
+
+#include "base/macros.h"
 #include "platform/geometry/FloatSize.h"
 #include "platform/geometry/IntSize.h"
 #include "platform/graphics/GraphicsTypes.h"
 #include "platform/graphics/ImageOrientation.h"
 #include "platform/graphics/paint/DisplayItemClient.h"
+#include "platform/graphics/paint/PaintImage.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Forward.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
-
-class SkImage;
 
 namespace blink {
 
@@ -47,14 +48,13 @@ class KURL;
 
 class PLATFORM_EXPORT DragImage {
   USING_FAST_MALLOC(DragImage);
-  WTF_MAKE_NONCOPYABLE(DragImage);
 
  public:
   static std::unique_ptr<DragImage> Create(
       Image*,
       RespectImageOrientationEnum = kDoNotRespectImageOrientation,
       float device_scale_factor = 1,
-      InterpolationQuality = kInterpolationHigh,
+      InterpolationQuality = kInterpolationDefault,
       float opacity = 1,
       FloatSize image_scale = FloatSize(1, 1));
 
@@ -74,8 +74,8 @@ class PLATFORM_EXPORT DragImage {
 
   void Scale(float scale_x, float scale_y);
 
-  static sk_sp<SkImage> ResizeAndOrientImage(
-      sk_sp<SkImage>,
+  static PaintImage ResizeAndOrientImage(
+      const PaintImage&,
       ImageOrientation,
       FloatSize image_scale = FloatSize(1, 1),
       float opacity = 1.0,
@@ -87,6 +87,8 @@ class PLATFORM_EXPORT DragImage {
   SkBitmap bitmap_;
   float resolution_scale_;
   InterpolationQuality interpolation_quality_;
+
+  DISALLOW_COPY_AND_ASSIGN(DragImage);
 };
 
 }  // namespace blink

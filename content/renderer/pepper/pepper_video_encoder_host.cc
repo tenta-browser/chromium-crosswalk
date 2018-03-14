@@ -12,6 +12,7 @@
 #include "base/numerics/safe_math.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
+#include "content/common/gpu_stream_constants.h"
 #include "content/common/pepper_file_util.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "content/renderer/pepper/gfx_conversion.h"
@@ -24,7 +25,7 @@
 #include "media/base/video_frame.h"
 #include "media/gpu/gpu_video_accelerator_util.h"
 #include "media/gpu/ipc/client/gpu_video_encode_accelerator_host.h"
-#include "media/renderers/gpu_video_accelerator_factories.h"
+#include "media/video/gpu_video_accelerator_factories.h"
 #include "media/video/video_encode_accelerator.h"
 #include "ppapi/c/pp_codecs.h"
 #include "ppapi/c/pp_errors.h"
@@ -403,7 +404,7 @@ void PepperVideoEncoderHost::RequireBitstreamBuffers(
       break;
     }
 
-    shm_buffers_.push_back(base::MakeUnique<ShmBuffer>(i, std::move(shm)));
+    shm_buffers_.push_back(std::make_unique<ShmBuffer>(i, std::move(shm)));
   }
 
   // Feed buffers to the encoder.
@@ -529,12 +530,13 @@ bool PepperVideoEncoderHost::EnsureGpuChannel() {
   if (!channel)
     return false;
 
-  command_buffer_ = gpu::CommandBufferProxyImpl::Create(
-      std::move(channel), gpu::kNullSurfaceHandle, nullptr,
-      gpu::GPU_STREAM_DEFAULT, gpu::GpuStreamPriority::NORMAL,
-      gpu::gles2::ContextCreationAttribHelper(), GURL::EmptyGURL(),
+  command_buffer_ = std::make_unique<gpu::CommandBufferProxyImpl>(
+      std::move(channel), kGpuStreamIdDefault,
       base::ThreadTaskRunnerHandle::Get());
-  if (!command_buffer_) {
+  auto result = command_buffer_->Initialize(
+      gpu::kNullSurfaceHandle, nullptr, kGpuStreamPriorityDefault,
+      gpu::gles2::ContextCreationAttribHelper(), GURL::EmptyGURL());
+  if (result != gpu::ContextResult::kSuccess) {
     Close();
     return false;
   }
@@ -654,8 +656,8 @@ scoped_refptr<media::VideoFrame> PepperVideoEncoderHost::CreateVideoFrame(
     return frame;
   }
   frame->AddDestructionObserver(
-      base::Bind(&PepperVideoEncoderHost::FrameReleased,
-                 weak_ptr_factory_.GetWeakPtr(), reply_context, frame_id));
+      base::BindOnce(&PepperVideoEncoderHost::FrameReleased,
+                     weak_ptr_factory_.GetWeakPtr(), reply_context, frame_id));
   return frame;
 }
 

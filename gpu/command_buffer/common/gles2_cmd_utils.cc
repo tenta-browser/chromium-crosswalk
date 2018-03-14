@@ -288,6 +288,15 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
     case GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT:
       return 1;
 
+    // -- glGetBooleanv, glGetFloatv, glGetIntergerv with
+    //    GL_EXT_window_rectangles
+    case GL_WINDOW_RECTANGLE_MODE_EXT:
+      return 1;
+    case GL_MAX_WINDOW_RECTANGLES_EXT:
+      return 1;
+    case GL_NUM_WINDOW_RECTANGLES_EXT:
+      return 1;
+
     // -- glGetBufferParameteriv
     case GL_BUFFER_SIZE:
       return 1;
@@ -1471,6 +1480,7 @@ void GLES2Util::GetColorFormatComponentSizes(
     case GL_R16F:
     case GL_R16UI:
     case GL_R16I:
+    case GL_R16_EXT:
       *r = 16;
       break;
     case GL_R32F:
@@ -1765,6 +1775,8 @@ uint32_t GLES2Util::ConvertToSizedFormat(uint32_t format, uint32_t type) {
           return GL_R16F;
         case GL_FLOAT:
           return GL_R32F;
+        case GL_UNSIGNED_SHORT:
+          return GL_R16_EXT;
         default:
           NOTREACHED();
           break;
@@ -1817,22 +1829,6 @@ uint32_t GLES2Util::ConvertToSizedFormat(uint32_t format, uint32_t type) {
   return format;
 }
 
-// static
-bool GLES2Util::ComputeDataSize(uint32_t count,
-                                size_t size,
-                                unsigned int elements_per_unit,
-                                uint32_t* dst) {
-  uint32_t value;
-  if (!SafeMultiplyUint32(count, static_cast<uint32_t>(size), &value)) {
-    return false;
-  }
-  if (!SafeMultiplyUint32(value, elements_per_unit, &value)) {
-    return false;
-  }
-  *dst = value;
-  return true;
-}
-
 namespace {
 
 // GL context configuration attributes. Those in the 16-bit range are the same
@@ -1853,6 +1849,7 @@ const int32_t kSampleBuffers = 0x3032;    // EGL_SAMPLE_BUFFERS
 const int32_t kNone = 0x3038;             // EGL_NONE
 const int32_t kSwapBehavior = 0x3093;     // EGL_SWAP_BEHAVIOR
 const int32_t kBufferPreserved = 0x3094;  // EGL_BUFFER_PRESERVED
+const int32_t kSingleBuffer = 0x3085;     // EGL_SINGLE_BUFFER
 
 // Chromium only.
 const int32_t kBindGeneratesResource = 0x10000;
@@ -1908,23 +1905,7 @@ bool IsWebGL2OrES3ContextType(ContextType context_type) {
   return false;
 }
 
-ContextCreationAttribHelper::ContextCreationAttribHelper()
-    : gpu_preference(gl::PreferIntegratedGpu),
-      alpha_size(-1),
-      blue_size(-1),
-      green_size(-1),
-      red_size(-1),
-      depth_size(-1),
-      stencil_size(-1),
-      samples(-1),
-      sample_buffers(-1),
-      buffer_preserved(true),
-      bind_generates_resource(true),
-      fail_if_major_perf_caveat(false),
-      lose_context_when_out_of_memory(false),
-      should_use_native_gmb_for_backbuffer(false),
-      own_offscreen_surface(false),
-      context_type(CONTEXT_TYPE_OPENGLES2) {}
+ContextCreationAttribHelper::ContextCreationAttribHelper() = default;
 
 ContextCreationAttribHelper::ContextCreationAttribHelper(
     const ContextCreationAttribHelper& other) = default;
@@ -1982,6 +1963,9 @@ bool ContextCreationAttribHelper::Parse(const std::vector<int32_t>& attribs) {
         break;
       case kShouldUseNativeGMBForBackbuffer:
         should_use_native_gmb_for_backbuffer = value != 0;
+        break;
+      case kSingleBuffer:
+        single_buffer = value != 0;
         break;
       case kContextType:
         context_type = static_cast<ContextType>(value);

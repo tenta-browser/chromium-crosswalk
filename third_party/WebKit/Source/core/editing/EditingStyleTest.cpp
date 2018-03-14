@@ -4,9 +4,9 @@
 
 #include "core/editing/EditingStyle.h"
 
-#include "core/css/StylePropertySet.h"
+#include "core/css/CSSPropertyValueSet.h"
 #include "core/dom/Document.h"
-#include "core/editing/EditingTestBase.h"
+#include "core/editing/testing/EditingTestBase.h"
 #include "core/html/HTMLBodyElement.h"
 #include "core/html/HTMLDivElement.h"
 #include "core/html/HTMLHeadElement.h"
@@ -23,9 +23,9 @@ TEST_F(EditingStyleTest, mergeInlineStyleOfElement) {
   UpdateAllLifecyclePhases();
 
   EditingStyle* editing_style =
-      EditingStyle::Create(ToHTMLElement(GetDocument().GetElementById("s2")));
+      EditingStyle::Create(ToHTMLElement(GetDocument().getElementById("s2")));
   editing_style->MergeInlineStyleOfElement(
-      ToHTMLElement(GetDocument().GetElementById("s1")),
+      ToHTMLElement(GetDocument().getElementById("s1")),
       EditingStyle::kOverrideValues);
 
   EXPECT_FALSE(editing_style->Style()->HasProperty(CSSPropertyFloat))

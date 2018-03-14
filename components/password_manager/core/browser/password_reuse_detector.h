@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_REUSE_DETECTOR_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_REUSE_DETECTOR_H_
 
+#include <stdint.h>
 #include <map>
 #include <memory>
 #include <set>
@@ -12,7 +13,9 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/optional.h"
 #include "base/strings/string16.h"
+#include "components/password_manager/core/browser/hash_password_manager.h"
 #include "components/password_manager/core/browser/password_store_change.h"
 #include "components/password_manager/core/browser/password_store_consumer.h"
 
@@ -43,13 +46,19 @@ class PasswordReuseDetector : public PasswordStoreConsumer {
   void OnLoginsChanged(const PasswordStoreChangeList& changes);
 
   // Checks that some suffix of |input| equals to a password saved on another
-  // registry controlled domain than |domain|.
+  // registry controlled domain than |domain| or to a sync password.
   // If such suffix is found, |consumer|->OnReuseFound() is called on the same
   // thread on which this method is called.
   // |consumer| should not be null.
   void CheckReuse(const base::string16& input,
                   const std::string& domain,
                   PasswordReuseDetectorConsumer* consumer);
+
+  // Stores internal |sync_password_data| for password reuse checking.
+  void UseSyncPasswordHash(base::Optional<SyncPasswordData> sync_password_data);
+
+  // Clears a sync password hash if it was saved.
+  void ClearSyncPasswordHash();
 
  private:
   using passwords_iterator = std::map<base::string16,
@@ -59,11 +68,30 @@ class PasswordReuseDetector : public PasswordStoreConsumer {
   // Add password from |form| to |passwords_|.
   void AddPassword(const autofill::PasswordForm& form);
 
+  // If sync-password reuse is found, return the length of the reused
+  // password. If no reuse is found, return 0.
+  size_t CheckSyncPasswordReuse(const base::string16& input,
+                                const std::string& domain);
+
+  // If saved-password reuse is found, fill in the registry-controlled
+  // domains that match any reused password, and return the length of the
+  // longest password matched.  If no reuse is found, return 0.
+  size_t CheckSavedPasswordReuse(
+      const base::string16& input,
+      const std::string& domain,
+      std::vector<std::string>* matching_domains_out);
+
   // Returns the iterator to |passwords_| that corresponds to the longest key in
   // |passwords_| that is a suffix of |input|. Returns passwords_.end() in case
   // when no key in |passwords_| is a prefix of |input|.
-  passwords_iterator FindSavedPassword(const base::string16& input);
+  passwords_iterator FindFirstSavedPassword(const base::string16& input);
 
+  // Call this repeatedly with iterator from |FindFirstSavedPassword| to
+  // find other matching passwords. This returns the iterator to |passwords_|
+  // that is the next previous matching entry that's a suffix of |input|, or
+  // passwords_.end() if there are no more.
+  passwords_iterator FindNextSavedPassword(const base::string16& input,
+                                           passwords_iterator it);
   // Contains all passwords.
   // A key is a password.
   // A value is a set of registry controlled domains on which the password
@@ -73,6 +101,8 @@ class PasswordReuseDetector : public PasswordStoreConsumer {
   // Number of passwords in |passwords_|, each password is calculated the number
   // of times how many different sites it's saved on.
   int saved_passwords_ = 0;
+
+  base::Optional<SyncPasswordData> sync_password_data_;
 
   DISALLOW_COPY_AND_ASSIGN(PasswordReuseDetector);
 };

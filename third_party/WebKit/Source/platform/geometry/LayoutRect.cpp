@@ -159,9 +159,13 @@ LayoutRect EnclosingLayoutRect(const FloatRect& rect) {
   return LayoutRect(location, max_point - location);
 }
 
+std::ostream& operator<<(std::ostream& ostream, const LayoutRect& rect) {
+  return ostream << rect.ToString();
+}
+
 String LayoutRect::ToString() const {
-  return String::Format("%s %s", Location().ToString().Ascii().Data(),
-                        Size().ToString().Ascii().Data());
+  return String::Format("%s %s", Location().ToString().Ascii().data(),
+                        Size().ToString().Ascii().data());
 }
 
 }  // namespace blink

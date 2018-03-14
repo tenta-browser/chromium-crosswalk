@@ -17,19 +17,25 @@
 #include "base/power_monitor/power_monitor.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/default_tick_clock.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "media/base/audio_buffer.h"
 #include "media/base/audio_buffer_converter.h"
 #include "media/base/audio_latency.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/channel_mixing_matrix.h"
 #include "media/base/demuxer_stream.h"
+#include "media/base/media_client.h"
 #include "media/base/media_log.h"
-#include "media/base/media_switches.h"
 #include "media/base/renderer_client.h"
 #include "media/base/timestamp_constants.h"
 #include "media/filters/audio_clock.h"
 #include "media/filters/decrypting_demuxer_stream.h"
+
+#if defined(OS_WIN)
+#include "media/base/media_switches.h"
+#endif  // defined(OS_WIN)
 
 namespace media {
 
@@ -37,7 +43,7 @@ AudioRendererImpl::AudioRendererImpl(
     const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
     media::AudioRendererSink* sink,
     const CreateAudioDecodersCB& create_audio_decoders_cb,
-    const scoped_refptr<MediaLog>& media_log)
+    MediaLog* media_log)
     : task_runner_(task_runner),
       expecting_config_changes_(false),
       sink_(sink),
@@ -47,6 +53,8 @@ AudioRendererImpl::AudioRendererImpl(
       last_audio_memory_usage_(0),
       last_decoded_sample_rate_(0),
       last_decoded_channel_layout_(CHANNEL_LAYOUT_NONE),
+      is_encrypted_(false),
+      last_decoded_channels_(0),
       playback_rate_(0.0),
       state_(kUninitialized),
       create_audio_decoders_cb_(create_audio_decoders_cb),
@@ -57,6 +65,7 @@ AudioRendererImpl::AudioRendererImpl(
       received_end_of_stream_(false),
       rendered_end_of_stream_(false),
       is_suspending_(false),
+      is_passthrough_(false),
       weak_factory_(this) {
   DCHECK(create_audio_decoders_cb_);
   // Tests may not have a power monitor.
@@ -340,6 +349,18 @@ void AudioRendererImpl::Initialize(DemuxerStream* stream,
   DCHECK(state_ == kUninitialized || state_ == kFlushed);
   DCHECK(sink_.get());
 
+  // Trying to track down AudioClock crash, http://crbug.com/674856.
+  // Initialize should never be called while Rendering is ongoing. This can lead
+  // to race conditions between media/audio-device threads.
+  CHECK(!sink_playing_);
+  // This lock is not required by Initialize, but failing to acquire the lock
+  // would indicate a race with the rendering thread, which should not be active
+  // at this time. This is just extra verification on the |sink_playing_| CHECK
+  // above. We hold |lock_| while setting |sink_playing_|, but release the lock
+  // when calling sink_->Pause() to avoid deadlocking with the AudioMixer.
+  CHECK(lock_.Try());
+  lock_.Release();
+
   // If we are re-initializing playback (e.g. switching media tracks), stop the
   // sink first.
   if (state_ == kFlushed) {
@@ -347,16 +368,14 @@ void AudioRendererImpl::Initialize(DemuxerStream* stream,
     audio_clock_.reset();
   }
 
-  // Trying to track down AudioClock crash, http://crbug.com/674856.
-  // AudioRenderImpl should only be initialized once to avoid destroying
-  // AudioClock while the audio thread is still using it.
-  CHECK_EQ(audio_clock_.get(), nullptr);
-
   state_ = kInitializing;
   client_ = client;
 
+  current_decoder_config_ = stream->audio_decoder_config();
+  DCHECK(current_decoder_config_.IsValidConfig());
+
   audio_buffer_stream_ = base::MakeUnique<AudioBufferStream>(
-      task_runner_, create_audio_decoders_cb_.Run(), media_log_);
+      task_runner_, create_audio_decoders_cb_, media_log_);
 
   audio_buffer_stream_->set_config_change_observer(base::Bind(
       &AudioRendererImpl::OnConfigChange, weak_factory_.GetWeakPtr()));
@@ -367,40 +386,83 @@ void AudioRendererImpl::Initialize(DemuxerStream* stream,
 
   auto output_device_info = sink_->GetOutputDeviceInfo();
   const AudioParameters& hw_params = output_device_info.output_params();
+  AudioCodec codec = stream->audio_decoder_config().codec();
+  if (auto* mc = GetMediaClient())
+    is_passthrough_ = mc->IsSupportedBitstreamAudioCodec(codec);
+  else
+    is_passthrough_ = false;
   expecting_config_changes_ = stream->SupportsConfigChanges();
-  if (!expecting_config_changes_ || !hw_params.IsValid() ||
-      hw_params.format() == AudioParameters::AUDIO_FAKE) {
-    // The actual buffer size is controlled via the size of the AudioBus
-    // provided to Render(), but we should choose a value here based on hardware
-    // parameters if possible since it affects the initial buffer size used by
-    // the algorithm. Too little will cause underflow on Bluetooth devices.
-    int buffer_size =
-        std::max(stream->audio_decoder_config().samples_per_second() / 100,
-                 hw_params.IsValid() ? hw_params.frames_per_buffer() : 0);
+
+  bool use_stream_params = !expecting_config_changes_ || !hw_params.IsValid() ||
+                           hw_params.format() == AudioParameters::AUDIO_FAKE ||
+                           !sink_->IsOptimizedForHardwareParameters();
+
+  if (stream->audio_decoder_config().channel_layout() ==
+          CHANNEL_LAYOUT_DISCRETE &&
+      sink_->IsOptimizedForHardwareParameters()) {
+    use_stream_params = false;
+  }
+
+  // Target ~20ms for our buffer size (which is optimal for power efficiency and
+  // responsiveness to play/pause events), but if the hardware needs something
+  // even larger (say for Bluetooth devices) prefer that.
+  //
+  // Even if |use_stream_params| is true we should choose a value here based on
+  // hardware parameters since it affects the initial buffer size used by
+  // AudioRendererAlgorithm. Too small and we will underflow if the hardware
+  // asks for a buffer larger than the initial algorithm capacity.
+  const int preferred_buffer_size =
+      std::max(2 * stream->audio_decoder_config().samples_per_second() / 100,
+               hw_params.IsValid() ? hw_params.frames_per_buffer() : 0);
+
+  if (is_passthrough_) {
+    AudioParameters::Format format = AudioParameters::AUDIO_FAKE;
+    if (codec == kCodecAC3) {
+      format = AudioParameters::AUDIO_BITSTREAM_AC3;
+    } else if (codec == kCodecEAC3) {
+      format = AudioParameters::AUDIO_BITSTREAM_EAC3;
+    } else {
+      NOTREACHED();
+    }
+
+    // If we want the precise PCM frame count here, we have to somehow peek the
+    // audio bitstream and parse the header ahead of time. Instead, we ensure
+    // audio bus being large enough to accommodate
+    // kMaxFramesPerCompressedAudioBuffer frames. The real data size and frame
+    // count for bitstream formats will be carried in additional fields of
+    // AudioBus.
+    const int buffer_size =
+        AudioParameters::kMaxFramesPerCompressedAudioBuffer *
+        stream->audio_decoder_config().bytes_per_frame();
+
+    audio_parameters_.Reset(
+        format, stream->audio_decoder_config().channel_layout(),
+        stream->audio_decoder_config().samples_per_second(),
+        stream->audio_decoder_config().bits_per_channel(), buffer_size);
+    buffer_converter_.reset();
+  } else if (use_stream_params) {
     audio_parameters_.Reset(AudioParameters::AUDIO_PCM_LOW_LATENCY,
                             stream->audio_decoder_config().channel_layout(),
                             stream->audio_decoder_config().samples_per_second(),
                             stream->audio_decoder_config().bits_per_channel(),
-                            buffer_size);
+                            preferred_buffer_size);
+    audio_parameters_.set_channels_for_discrete(
+        stream->audio_decoder_config().channels());
     buffer_converter_.reset();
   } else {
     // To allow for seamless sample rate adaptations (i.e. changes from say
     // 16kHz to 48kHz), always resample to the hardware rate.
     int sample_rate = hw_params.sample_rate();
-    int preferred_buffer_size = hw_params.frames_per_buffer();
 
-#if defined(OS_CHROMEOS)
-    // On ChromeOS let the OS level resampler handle resampling unless the
-    // initial sample rate is too low; this allows support for sample rate
-    // adaptations where necessary.
-    if (stream->audio_decoder_config().samples_per_second() >= 44100) {
+    // If supported by the OS and the initial sample rate is not too low, let
+    // the OS level resampler handle resampling for power efficiency.
+    if (AudioLatency::IsResamplingPassthroughSupported(
+            AudioLatency::LATENCY_PLAYBACK) &&
+        stream->audio_decoder_config().samples_per_second() >= 44100) {
       sample_rate = stream->audio_decoder_config().samples_per_second();
-      preferred_buffer_size = 0;  // No preference.
     }
-#endif
 
-    int stream_channel_count = ChannelLayoutToChannelCount(
-        stream->audio_decoder_config().channel_layout());
+    int stream_channel_count = stream->audio_decoder_config().channels();
 
     bool try_supported_channel_layouts = false;
 #if defined(OS_WIN)
@@ -451,8 +513,14 @@ void AudioRendererImpl::Initialize(DemuxerStream* stream,
                                 sample_rate, preferred_buffer_size));
   }
 
+  audio_parameters_.set_latency_tag(AudioLatency::LATENCY_PLAYBACK);
+
   last_decoded_channel_layout_ =
       stream->audio_decoder_config().channel_layout();
+
+  is_encrypted_ = stream->audio_decoder_config().is_encrypted();
+
+  last_decoded_channels_ = stream->audio_decoder_config().channels();
 
   audio_clock_.reset(
       new AudioClock(base::TimeDelta(), audio_parameters_.sample_rate()));
@@ -482,6 +550,10 @@ void AudioRendererImpl::OnAudioBufferStreamInitialized(bool success) {
     DVLOG(1) << __func__ << ": Invalid audio parameters: "
              << audio_parameters_.AsHumanReadableString();
     ChangeState_Locked(kUninitialized);
+    // TODO(flim): If the channel layout is discrete but channel count is 0, a
+    // possible cause is that the input stream has > 8 channels but there is no
+    // Web Audio renderer attached and no channel mixing matrices defined for
+    // hardware renderers. Adding one for previewing content could be useful.
     base::ResetAndReturn(&init_cb_).Run(PIPELINE_ERROR_INITIALIZATION_FAILED);
     return;
   }
@@ -492,7 +564,7 @@ void AudioRendererImpl::OnAudioBufferStreamInitialized(bool success) {
   // We're all good! Continue initializing the rest of the audio renderer
   // based on the decoder format.
   algorithm_.reset(new AudioRendererAlgorithm());
-  algorithm_->Initialize(audio_parameters_);
+  algorithm_->Initialize(audio_parameters_, is_encrypted_);
   ConfigureChannelMask();
 
   ChangeState_Locked(kFlushed);
@@ -553,6 +625,11 @@ void AudioRendererImpl::OnResume() {
   is_suspending_ = false;
 }
 
+void AudioRendererImpl::SetPlayDelayCBForTesting(PlayDelayCBForTesting cb) {
+  DCHECK_EQ(state_, kUninitialized);
+  play_delay_cb_for_testing_ = std::move(cb);
+}
+
 void AudioRendererImpl::DecodedAudioReady(
     AudioBufferStream::Status status,
     const scoped_refptr<AudioBuffer>& buffer) {
@@ -595,12 +672,14 @@ void AudioRendererImpl::DecodedAudioReady(
                  << " ts:" << buffer->timestamp().InMicroseconds()
                  << " old:" << last_decoded_sample_rate_
                  << " new:" << buffer->sample_rate();
-        OnConfigChange();
+        // Send a bogus config to reset timestamp state.
+        OnConfigChange(AudioDecoderConfig());
       }
       last_decoded_sample_rate_ = buffer->sample_rate();
 
       if (last_decoded_channel_layout_ != buffer->channel_layout()) {
         last_decoded_channel_layout_ = buffer->channel_layout();
+        last_decoded_channels_ = buffer->channel_count();
 
         // Input layouts should never be discrete.
         DCHECK_NE(last_decoded_channel_layout_, CHANNEL_LAYOUT_DISCRETE);
@@ -651,7 +730,19 @@ bool AudioRendererImpl::HandleDecodedBuffer_Locked(
   if (buffer->end_of_stream()) {
     received_end_of_stream_ = true;
   } else {
-    if (state_ == kPlaying) {
+    if (buffer->IsBitstreamFormat() && state_ == kPlaying) {
+      if (IsBeforeStartTime(buffer))
+        return true;
+
+      // Adjust the start time since we are unable to trim a compressed audio
+      // buffer.
+      if (buffer->timestamp() < start_timestamp_ &&
+          (buffer->timestamp() + buffer->duration()) > start_timestamp_) {
+        start_timestamp_ = buffer->timestamp();
+        audio_clock_.reset(new AudioClock(buffer->timestamp(),
+                                          audio_parameters_.sample_rate()));
+      }
+    } else if (state_ == kPlaying) {
       if (IsBeforeStartTime(buffer))
         return true;
 
@@ -750,6 +841,13 @@ void AudioRendererImpl::SetPlaybackRate(double playback_rate) {
 
   base::AutoLock auto_lock(lock_);
 
+  if (is_passthrough_ && playback_rate != 0 && playback_rate != 1) {
+    MEDIA_LOG(INFO, media_log_) << "Playback rate changes are not supported "
+                                   "when output compressed bitstream."
+                                << " Playback Rate: " << playback_rate;
+    return;
+  }
+
   // We have two cases here:
   // Play: current_playback_rate == 0 && playback_rate != 0
   // Pause: current_playback_rate != 0 && playback_rate == 0
@@ -781,7 +879,8 @@ int AudioRendererImpl::Render(base::TimeDelta delay,
                               base::TimeTicks delay_timestamp,
                               int prior_frames_skipped,
                               AudioBus* audio_bus) {
-  const int frames_requested = audio_bus->frames();
+  TRACE_EVENT1("media", "AudioRendererImpl::Render", "id", media_log_->id());
+  int frames_requested = audio_bus->frames();
   DVLOG(4) << __func__ << " delay:" << delay
            << " prior_frames_skipped:" << prior_frames_skipped
            << " frames_requested:" << frames_requested;
@@ -820,15 +919,37 @@ int AudioRendererImpl::Render(base::TimeDelta delay,
       return 0;
     }
 
-    // Delay playback by writing silence if we haven't reached the first
-    // timestamp yet; this can occur if the video starts before the audio.
-    if (algorithm_->frames_buffered() > 0) {
+    if (is_passthrough_ && algorithm_->frames_buffered() > 0) {
+      // TODO(tsunghung): For compressed bitstream formats, play zeroed buffer
+      // won't generate delay. It could be discarded immediately. Need another
+      // way to generate audio delay.
+      const base::TimeDelta play_delay =
+          first_packet_timestamp_ - audio_clock_->back_timestamp();
+      if (play_delay > base::TimeDelta()) {
+        MEDIA_LOG(ERROR, media_log_)
+            << "Cannot add delay for compressed audio bitstream foramt."
+            << " Requested delay: " << play_delay;
+      }
+
+      frames_written += algorithm_->FillBuffer(audio_bus, 0, frames_requested,
+                                               playback_rate_);
+
+      // See Initialize(), the |audio_bus| should be bigger than we need in
+      // bitstream cases. Fix |frames_requested| to avoid incorrent time
+      // calculation of |audio_clock_| below.
+      frames_requested = frames_written;
+    } else if (algorithm_->frames_buffered() > 0) {
+      // Delay playback by writing silence if we haven't reached the first
+      // timestamp yet; this can occur if the video starts before the audio.
       CHECK_NE(first_packet_timestamp_, kNoTimestamp);
       CHECK_GE(first_packet_timestamp_, base::TimeDelta());
       const base::TimeDelta play_delay =
           first_packet_timestamp_ - audio_clock_->back_timestamp();
       if (play_delay > base::TimeDelta()) {
         DCHECK_EQ(frames_written, 0);
+
+        if (!play_delay_cb_for_testing_.is_null())
+          play_delay_cb_for_testing_.Run(play_delay);
 
         // Don't multiply |play_delay| out since it can be a huge value on
         // poorly encoded media and multiplying by the sample rate could cause
@@ -962,10 +1083,19 @@ void AudioRendererImpl::ChangeState_Locked(State new_state) {
   state_ = new_state;
 }
 
-void AudioRendererImpl::OnConfigChange() {
+void AudioRendererImpl::OnConfigChange(const AudioDecoderConfig& config) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(expecting_config_changes_);
   buffer_converter_->ResetTimestampState();
+
+  // An invalid config may be supplied by callers who simply want to reset
+  // internal state outside of detecting a new config from the demuxer stream.
+  // RendererClient only cares to know about config changes that differ from
+  // previous configs.
+  if (config.IsValidConfig() && !current_decoder_config_.Matches(config)) {
+    current_decoder_config_ = config;
+    client_->OnAudioConfigChange(config);
+  }
 }
 
 void AudioRendererImpl::SetBufferingState_Locked(
@@ -986,14 +1116,10 @@ void AudioRendererImpl::ConfigureChannelMask() {
   DCHECK(audio_parameters_.IsValid());
   DCHECK_NE(last_decoded_channel_layout_, CHANNEL_LAYOUT_NONE);
   DCHECK_NE(last_decoded_channel_layout_, CHANNEL_LAYOUT_UNSUPPORTED);
-  DCHECK_NE(last_decoded_channel_layout_, CHANNEL_LAYOUT_DISCRETE);
-
-  const int input_channel_count =
-      ChannelLayoutToChannelCount(last_decoded_channel_layout_);
 
   // If we're actually downmixing the signal, no mask is necessary, but ensure
   // we clear any existing mask if present.
-  if (input_channel_count >= audio_parameters_.channels()) {
+  if (last_decoded_channels_ >= audio_parameters_.channels()) {
     algorithm_->SetChannelMask(
         std::vector<bool>(audio_parameters_.channels(), true));
     return;
@@ -1001,7 +1127,7 @@ void AudioRendererImpl::ConfigureChannelMask() {
 
   // Determine the matrix used to upmix the channels.
   std::vector<std::vector<float>> matrix;
-  ChannelMixingMatrix(last_decoded_channel_layout_, input_channel_count,
+  ChannelMixingMatrix(last_decoded_channel_layout_, last_decoded_channels_,
                       audio_parameters_.channel_layout(),
                       audio_parameters_.channels())
       .CreateTransformationMatrix(&matrix);

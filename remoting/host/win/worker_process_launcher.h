@@ -13,23 +13,20 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
 #include "base/timer/timer.h"
 #include "base/win/object_watcher.h"
 #include "base/win/scoped_handle.h"
 #include "net/base/backoff_entry.h"
 
 namespace base {
+class Location;
 class TimeDelta;
 } // namespace base
 
 namespace IPC {
 class Message;
 } // namespace IPC
-
-namespace tracked_objects {
-class Location;
-}  // namespace tracked_objects
 
 namespace remoting {
 
@@ -39,9 +36,7 @@ class WorkerProcessIpcDelegate;
 // interaction with the spawned process is through WorkerProcessIpcDelegate and
 // Send() method. In case of error the channel is closed and the worker process
 // is terminated.
-class WorkerProcessLauncher
-    : public base::NonThreadSafe,
-      public base::win::ObjectWatcher::Delegate {
+class WorkerProcessLauncher : public base::win::ObjectWatcher::Delegate {
  public:
   class Delegate {
    public:
@@ -74,7 +69,7 @@ class WorkerProcessLauncher
   // channel. |location| is passed to the worker so that it is on the stack in
   // the dump. Restarts the worker process forcefully, if it does
   // not exit on its own.
-  void Crash(const tracked_objects::Location& location);
+  void Crash(const base::Location& location);
 
   // Sends an IPC message to the worker process. The message will be silently
   // dropped if Send() is called before Start() or after stutdown has been
@@ -162,6 +157,8 @@ class WorkerProcessLauncher
 
   // The handle of the worker process, if launched.
   base::win::ScopedHandle worker_process_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(WorkerProcessLauncher);
 };

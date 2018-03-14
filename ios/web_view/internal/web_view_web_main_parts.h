@@ -7,12 +7,10 @@
 
 #include <memory>
 
+#include "base/macros.h"
 #include "ios/web/public/app/web_main_parts.h"
 
-@protocol CWVDelegate;
-
 namespace ios_web_view {
-class WebViewBrowserState;
 
 // WebView implementation of WebMainParts.
 class WebViewWebMainParts : public web::WebMainParts {
@@ -20,23 +18,15 @@ class WebViewWebMainParts : public web::WebMainParts {
   WebViewWebMainParts();
   ~WebViewWebMainParts() override;
 
-  // WebMainParts implementation.
-  void PreMainMessageLoopRun() override;
-
-  // Returns the WebViewBrowserState for this embedder.
-  WebViewBrowserState* browser_state() const { return browser_state_.get(); }
-
-  // Returns the off the record WebViewBrowserState for this embedder.
-  WebViewBrowserState* off_the_record_browser_state() const {
-    return off_the_record_browser_state_.get();
-  }
-
  private:
-  // The BrowserState for this embedder.
-  std::unique_ptr<WebViewBrowserState> browser_state_;
+  // web::WebMainParts implementation.
+  void PreMainMessageLoopStart() override;
+  void PreCreateThreads() override;
+  void PreMainMessageLoopRun() override;
+  void PostMainMessageLoopRun() override;
+  void PostDestroyThreads() override;
 
-  // Off The Record BrowserState for this embedder.
-  std::unique_ptr<WebViewBrowserState> off_the_record_browser_state_;
+  DISALLOW_COPY_AND_ASSIGN(WebViewWebMainParts);
 };
 
 }  // namespace ios_web_view

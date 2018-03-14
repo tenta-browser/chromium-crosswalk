@@ -13,88 +13,40 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "chrome/browser/predictors/glowplug_key_value_table.h"
 #include "chrome/browser/predictors/predictor_table_base.h"
 #include "chrome/browser/predictors/resource_prefetch_common.h"
 #include "chrome/browser/predictors/resource_prefetch_predictor.pb.h"
-#include "components/precache/core/proto/precache.pb.h"
 
-namespace sql {
-class Statement;
+namespace base {
+class Location;
 }
 
 namespace predictors {
 
-// From resource_prefetch_predictor.proto.
-using RedirectStat = RedirectData_RedirectStat;
-
 // Interface for database tables used by the ResourcePrefetchPredictor.
-// All methods except the constructor and destructor need to be called on the DB
+// All methods except the ExecuteDBTaskOnDBSequence need to be called on the UI
 // thread.
 //
 // Currently manages:
-//  - UrlResourceTable - resources per Urls.
-//  - UrlRedirectTable - redirects per Urls.
-//  - HostResourceTable - resources per host.
-//  - HostRedirectTable - redirects per host.
+//  - UrlResourceTable - key: url, value: PrefetchData
+//  - UrlRedirectTable - key: url, value: RedirectData
+//  - HostResourceTable - key: host, value: PrefetchData
+//  - HostRedirectTable - key: host, value: RedirectData
+//  - OriginTable - key: host, value: OriginData
 class ResourcePrefetchPredictorTables : public PredictorTableBase {
  public:
-  typedef std::map<std::string, PrefetchData> PrefetchDataMap;
-  typedef std::map<std::string, RedirectData> RedirectDataMap;
-  typedef std::map<std::string, precache::PrecacheManifest> ManifestDataMap;
-  typedef std::map<std::string, OriginData> OriginDataMap;
+  typedef base::OnceCallback<void(sql::Connection*)> DBTask;
 
-  // Returns data for all Urls and Hosts.
-  virtual void GetAllData(PrefetchDataMap* url_data_map,
-                          PrefetchDataMap* host_data_map,
-                          RedirectDataMap* url_redirect_data_map,
-                          RedirectDataMap* host_redirect_data_map,
-                          ManifestDataMap* manifest_map,
-                          OriginDataMap* origin_data_map);
+  virtual void ScheduleDBTask(const base::Location& from_here, DBTask task);
 
-  // Updates resource data for the input |data|.
-  // Note that the primary key in |data| should be less than |kMaxStringLength|
-  // in length.
-  virtual void UpdateResourceData(const PrefetchData& data,
-                                  PrefetchKeyType key_type);
+  virtual void ExecuteDBTaskOnDBSequence(DBTask task);
 
-  // Updates redirect data for the input |data|.
-  // Note that the primary key in |data| should be less than |kMaxStringLength|
-  // in length.
-  virtual void UpdateRedirectData(const RedirectData& data,
-                                  PrefetchKeyType key_type);
-
-  // Updates manifest data for the input |host|.
-  virtual void UpdateManifestData(
-      const std::string& host,
-      const precache::PrecacheManifest& manifest_data);
-
-  // Updates a given origin data point.
-  virtual void UpdateOriginData(const OriginData& origin_data);
-
-  // Delete data for the input |urls| and |hosts|.
-  virtual void DeleteResourceData(const std::vector<std::string>& urls,
-                                  const std::vector<std::string>& hosts);
-
-  // Wrapper over DeleteResourceData for convenience.
-  virtual void DeleteSingleResourceDataPoint(const std::string& key,
-                                             PrefetchKeyType key_type);
-
-  // Delete data for the input |urls| and |hosts|.
-  virtual void DeleteRedirectData(const std::vector<std::string>& urls,
-                                  const std::vector<std::string>& hosts);
-
-  // Wrapper over DeleteRedirectData for convenience.
-  virtual void DeleteSingleRedirectDataPoint(const std::string& key,
-                                             PrefetchKeyType key_type);
-
-  // Delete data for the input |hosts|.
-  virtual void DeleteManifestData(const std::vector<std::string>& hosts);
-
-  // Deletes the origin data for a list of |hosts|.
-  virtual void DeleteOriginData(const std::vector<std::string>& hosts);
-
-  // Deletes all data in all the tables.
-  virtual void DeleteAllData();
+  virtual GlowplugKeyValueTable<PrefetchData>* url_resource_table();
+  virtual GlowplugKeyValueTable<RedirectData>* url_redirect_table();
+  virtual GlowplugKeyValueTable<PrefetchData>* host_resource_table();
+  virtual GlowplugKeyValueTable<RedirectData>* host_redirect_table();
+  virtual GlowplugKeyValueTable<OriginData>* origin_table();
 
   // Removes the resources with more than |max_consecutive_misses| consecutive
   // misses from |data|.
@@ -114,10 +66,12 @@ class ResourcePrefetchPredictorTables : public PredictorTableBase {
   // misses from |data|.
   static void TrimOrigins(OriginData* data, size_t max_consecutive_misses);
 
-  // Sorts the origins by score, decreasing.
-  static void SortOrigins(OriginData* data);
+  // Sorts the origins by score, decreasing. Prioritizes |main_frame_origin|
+  // if found in |data|.
+  static void SortOrigins(OriginData* data,
+                          const std::string& main_frame_origin);
 
-  // Computes score of |data|.
+  // Computes score of |origin|.
   static float ComputeOriginScore(const OriginStat& origin);
 
   // The maximum length of the string that can be stored in the DB.
@@ -126,15 +80,11 @@ class ResourcePrefetchPredictorTables : public PredictorTableBase {
  protected:
   // Protected for testing. Use PredictorDatabase::resource_prefetch_tables()
   // instead of this constructor.
-  ResourcePrefetchPredictorTables();
+  ResourcePrefetchPredictorTables(
+      scoped_refptr<base::SequencedTaskRunner> db_task_runner);
   ~ResourcePrefetchPredictorTables() override;
 
  private:
-  // Represents the type of information that is stored in prefetch database.
-  enum class PrefetchDataType { RESOURCE, REDIRECT, MANIFEST, ORIGIN };
-
-  enum class TableOperationType { INSERT, REMOVE };
-
   friend class PredictorDatabaseInternal;
   FRIEND_TEST_ALL_PREFIXES(ResourcePrefetchPredictorTablesTest,
                            DatabaseVersionIsSet);
@@ -143,24 +93,7 @@ class ResourcePrefetchPredictorTables : public PredictorTableBase {
 
   // Database version. Always increment it when any change is made to the data
   // schema (including the .proto).
-  static constexpr int kDatabaseVersion = 7;
-
-  // Helper functions below help perform functions on the Url and host table
-  // using the same code.
-  void GetAllResourceDataHelper(PrefetchKeyType key_type,
-                                PrefetchDataMap* data_map);
-  void GetAllRedirectDataHelper(PrefetchKeyType key_type,
-                                RedirectDataMap* redirect_map);
-  void GetAllManifestDataHelper(ManifestDataMap* manifest_map);
-  void GetAllOriginDataHelper(OriginDataMap* manifest_map);
-
-  void UpdateDataHelper(PrefetchKeyType key_type,
-                        PrefetchDataType data_type,
-                        const std::string& key,
-                        const google::protobuf::MessageLite& data);
-  void DeleteDataHelper(PrefetchKeyType key_type,
-                        PrefetchDataType data_type,
-                        const std::vector<std::string>& keys);
+  static constexpr int kDatabaseVersion = 10;
 
   // PredictorTableBase:
   void CreateTableIfNonExistent() override;
@@ -170,14 +103,11 @@ class ResourcePrefetchPredictorTables : public PredictorTableBase {
   static int GetDatabaseVersion(sql::Connection* db);
   static bool SetDatabaseVersion(sql::Connection* db, int version);
 
-  // Helper to return cached Statements.
-  std::unique_ptr<sql::Statement> GetTableUpdateStatement(
-      PrefetchKeyType key_type,
-      PrefetchDataType data_type,
-      TableOperationType op_type);
-
-  static const char* GetTableName(PrefetchKeyType key_type,
-                                  PrefetchDataType data_type);
+  std::unique_ptr<GlowplugKeyValueTable<PrefetchData>> url_resource_table_;
+  std::unique_ptr<GlowplugKeyValueTable<RedirectData>> url_redirect_table_;
+  std::unique_ptr<GlowplugKeyValueTable<PrefetchData>> host_resource_table_;
+  std::unique_ptr<GlowplugKeyValueTable<RedirectData>> host_redirect_table_;
+  std::unique_ptr<GlowplugKeyValueTable<OriginData>> origin_table_;
 
   DISALLOW_COPY_AND_ASSIGN(ResourcePrefetchPredictorTables);
 };

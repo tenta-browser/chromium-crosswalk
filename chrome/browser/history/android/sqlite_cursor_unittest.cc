@@ -12,6 +12,7 @@
 #include "base/android/jni_string.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/cancelable_task_tracker.h"
@@ -28,7 +29,7 @@
 #include "components/history/core/browser/android/android_time.h"
 #include "components/history/core/browser/history_service.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/test/test_browser_thread.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -36,7 +37,6 @@ namespace {
 
 using base::Bind;
 using base::Time;
-using content::BrowserThread;
 using history::AndroidStatement;
 using history::HistoryAndBookmarkRow;
 using history::SearchRow;
@@ -46,12 +46,7 @@ using history::SearchRow;
 class SQLiteCursorTest : public testing::Test,
                          public SQLiteCursor::TestObserver {
  public:
-  SQLiteCursorTest()
-      : profile_manager_(
-          TestingBrowserProcess::GetGlobal()),
-        ui_thread_(BrowserThread::UI, &message_loop_),
-        file_thread_(BrowserThread::FILE, &message_loop_) {
-  }
+  SQLiteCursorTest() : profile_manager_(TestingBrowserProcess::GetGlobal()) {}
   ~SQLiteCursorTest() override {}
 
  protected:
@@ -73,12 +68,6 @@ class SQLiteCursorTest : public testing::Test,
     service_.reset(new AndroidHistoryProviderService(testing_profile_));
     hs_ = HistoryServiceFactory::GetForProfile(
         testing_profile_, ServiceAccessType::EXPLICIT_ACCESS);
-  }
-
-  void TearDown() override {
-    testing_profile_->DestroyHistoryService();
-    profile_manager_.DeleteTestingProfile(chrome::kInitialProfile);
-    testing_profile_ = NULL;
   }
 
   // Override SQLiteCursor::TestObserver.
@@ -107,10 +96,8 @@ class SQLiteCursorTest : public testing::Test,
   }
 
  protected:
+  content::TestBrowserThreadBundle test_browser_thread_bundle_;
   TestingProfileManager profile_manager_;
-  base::MessageLoop message_loop_;
-  content::TestBrowserThread ui_thread_;
-  content::TestBrowserThread file_thread_;
   std::unique_ptr<AndroidHistoryProviderService> service_;
   base::CancelableTaskTracker cancelable_tracker_;
   TestingProfile* testing_profile_;
@@ -138,13 +125,13 @@ class CallbackHelper : public base::RefCountedThreadSafe<CallbackHelper> {
 
   void OnInserted(int64_t id) {
     success_ = id != 0;
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   void OnQueryResult(AndroidStatement* statement) {
     success_ = statement != NULL;
     statement_ = statement;
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
  private:

@@ -12,8 +12,10 @@
 #include "cc/cc_export.h"
 #include "cc/input/event_listener_properties.h"
 #include "cc/input/main_thread_scrolling_reason.h"
+#include "cc/input/overscroll_behavior.h"
 #include "cc/input/scroll_state.h"
 #include "cc/input/scrollbar.h"
+#include "cc/input/touch_action.h"
 #include "cc/trees/swap_promise_monitor.h"
 
 namespace gfx {
@@ -44,6 +46,9 @@ struct CC_EXPORT InputHandlerScrollResult {
   // The amount of the scroll delta argument to this ScrollBy call that was not
   // used for scrolling.
   gfx::Vector2dF unused_scroll_delta;
+  // How the browser should handle the overscroll navigation based on the css
+  // property scroll-boundary-behavior.
+  OverscrollBehavior overscroll_behavior;
 };
 
 class CC_EXPORT InputHandlerClient {
@@ -90,12 +95,14 @@ class CC_EXPORT InputHandler {
     ScrollStatus()
         : thread(SCROLL_ON_IMPL_THREAD),
           main_thread_scrolling_reasons(
-              MainThreadScrollingReason::kNotScrollingOnMain) {}
+              MainThreadScrollingReason::kNotScrollingOnMain),
+          bubble(false) {}
     ScrollStatus(ScrollThread thread, uint32_t main_thread_scrolling_reasons)
         : thread(thread),
           main_thread_scrolling_reasons(main_thread_scrolling_reasons) {}
     ScrollThread thread;
     uint32_t main_thread_scrolling_reasons;
+    bool bubble;
   };
 
   enum ScrollInputType {
@@ -104,7 +111,7 @@ class CC_EXPORT InputHandler {
     NON_BUBBLING_GESTURE
   };
 
-  enum class TouchStartEventListenerType {
+  enum class TouchStartOrMoveEventListenerType {
     NO_HANDLER,
     HANDLER,
     HANDLER_ON_SCROLLING_LAYER
@@ -131,8 +138,7 @@ class CC_EXPORT InputHandler {
 
   // Returns SCROLL_ON_IMPL_THREAD if a layer is actively being scrolled or
   // a subsequent call to ScrollAnimated can begin on the impl thread.
-  virtual ScrollStatus ScrollAnimatedBegin(
-      const gfx::Point& viewport_point) = 0;
+  virtual ScrollStatus ScrollAnimatedBegin(ScrollState* scroll_state) = 0;
 
   // Returns SCROLL_ON_IMPL_THREAD if an animation is initiated on the impl
   // thread. delayed_by is the delay that is taken into account when determining
@@ -179,7 +185,7 @@ class CC_EXPORT InputHandler {
   virtual void PinchGestureBegin() = 0;
   virtual void PinchGestureUpdate(float magnify_delta,
                                   const gfx::Point& anchor) = 0;
-  virtual void PinchGestureEnd() = 0;
+  virtual void PinchGestureEnd(const gfx::Point& anchor, bool snap_to_min) = 0;
 
   // Request another callback to InputHandlerClient::Animate().
   virtual void SetNeedsAnimateInput() = 0;
@@ -194,12 +200,18 @@ class CC_EXPORT InputHandler {
   virtual EventListenerProperties GetEventListenerProperties(
       EventListenerClass event_class) const = 0;
 
-  // It returns the type of a touch start event listener at |viewport_point|.
-  // Whether the page should be given the opportunity to suppress scrolling by
-  // consuming touch events that started at |viewport_point|, and whether
-  // |viewport_point| is on the currently scrolling layer.
-  virtual TouchStartEventListenerType EventListenerTypeForTouchStartAt(
-      const gfx::Point& viewport_point) = 0;
+  // It returns the type of a touch start or move event listener at
+  // |viewport_point|. Whether the page should be given the opportunity to
+  // suppress scrolling by consuming touch events that started at
+  // |viewport_point|, and whether |viewport_point| is on the currently
+  // scrolling layer.
+  // |out_touch_action| is assigned the whitelisted touch action for the
+  // |viewport_point|. In the case there are no touch handlers or touch action
+  // regions, |out_touch_action| is assigned kTouchActionAuto since the default
+  // touch action is auto.
+  virtual TouchStartOrMoveEventListenerType
+  EventListenerTypeForTouchStartOrMoveAt(const gfx::Point& viewport_point,
+                                         TouchAction* out_touch_action) = 0;
 
   // Calling CreateLatencyInfoSwapPromiseMonitor() to get a scoped
   // LatencyInfoSwapPromiseMonitor. During the life time of the

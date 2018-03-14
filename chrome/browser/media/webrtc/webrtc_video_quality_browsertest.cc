@@ -16,6 +16,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/test_timeouts.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -96,8 +97,8 @@ static const struct VideoQualityTestConfig {
 // * ffmpeg 0.11.1 or compatible version (see http://www.ffmpeg.org)
 //
 // The test runs several custom binaries - rgba_to_i420 converter and
-// frame_analyzer. Both tools can be found under third_party/webrtc/tools. The
-// test also runs a stand alone Python implementation of a WebSocket server
+// frame_analyzer. Both tools can be found under third_party/webrtc/rtc_tools.
+// The test also runs a stand alone Python implementation of a WebSocket server
 // (pywebsocket) and a barcode_decoder script.
 class WebRtcVideoQualityBrowserTest : public WebRtcTestBase,
     public testing::WithParamInterface<VideoQualityTestConfig> {
@@ -193,7 +194,7 @@ class WebRtcVideoQualityBrowserTest : public WebRtcTestBase,
     base::FilePath path_to_analyzer = base::MakeAbsoluteFilePath(
         GetBrowserDir().Append(kFrameAnalyzerExecutable));
     base::FilePath path_to_compare_script = GetSourceDir().Append(
-        FILE_PATH_LITERAL("third_party/webrtc/tools/compare_videos.py"));
+        FILE_PATH_LITERAL("third_party/webrtc/rtc_tools/compare_videos.py"));
 
     if (!base::PathExists(path_to_analyzer)) {
       LOG(ERROR) << "Missing frame analyzer: should be in "
@@ -258,7 +259,8 @@ class WebRtcVideoQualityBrowserTest : public WebRtcTestBase,
     return true;
   }
 
-  void TestVideoQuality(const std::string& video_codec) {
+  void TestVideoQuality(const std::string& video_codec,
+                        bool prefer_hw_video_codec) {
     ASSERT_GE(TestTimeouts::action_max_timeout().InSeconds(), 150)
         << "This is a long-running test; you must specify "
            "--ui-test-action-max-timeout to have a value of at least 150000.";
@@ -278,8 +280,8 @@ class WebRtcVideoQualityBrowserTest : public WebRtcTestBase,
     SetupPeerconnectionWithLocalStream(right_tab);
 
     if (!video_codec.empty()) {
-      SetDefaultVideoCodec(left_tab, video_codec);
-      SetDefaultVideoCodec(right_tab, video_codec);
+      SetDefaultVideoCodec(left_tab, video_codec, prefer_hw_video_codec);
+      SetDefaultVideoCodec(right_tab, video_codec, prefer_hw_video_codec);
     }
     NegotiateCall(left_tab, right_tab);
 
@@ -344,18 +346,28 @@ INSTANTIATE_TEST_CASE_P(
 
 IN_PROC_BROWSER_TEST_P(WebRtcVideoQualityBrowserTest,
                        MANUAL_TestVideoQualityVp8) {
-  TestVideoQuality("VP8");
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  TestVideoQuality("VP8", false /* prefer_hw_video_codec */);
 }
 
 IN_PROC_BROWSER_TEST_P(WebRtcVideoQualityBrowserTest,
                        MANUAL_TestVideoQualityVp9) {
-  TestVideoQuality("VP9");
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  TestVideoQuality("VP9", false /* prefer_hw_video_codec */);
 }
 
 #if BUILDFLAG(RTC_USE_H264)
 
+// Flaky on mac: crbug.com/754684
+#if defined(OS_MACOSX)
+#define MAYBE_MANUAL_TestVideoQualityH264 DISABLED_MANUAL_TestVideoQualityH264
+#else
+#define MAYBE_MANUAL_TestVideoQualityH264 MANUAL_TestVideoQualityH264
+#endif
+
 IN_PROC_BROWSER_TEST_P(WebRtcVideoQualityBrowserTest,
-                       MANUAL_TestVideoQualityH264) {
+                       MAYBE_MANUAL_TestVideoQualityH264) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   // Only run test if run-time feature corresponding to |rtc_use_h264| is on.
   if (!base::FeatureList::IsEnabled(content::kWebRtcH264WithOpenH264FFmpeg)) {
     LOG(WARNING) << "Run-time feature WebRTC-H264WithOpenH264FFmpeg disabled. "
@@ -363,7 +375,7 @@ IN_PROC_BROWSER_TEST_P(WebRtcVideoQualityBrowserTest,
         "(test \"OK\")";
     return;
   }
-  TestVideoQuality("H264");
+  TestVideoQuality("H264", true /* prefer_hw_video_codec */);
 }
 
 #endif  // BUILDFLAG(RTC_USE_H264)

@@ -40,13 +40,15 @@ class InfoBarAndroid : public infobars::InfoBar {
 
   virtual void SetJavaInfoBar(
       const base::android::JavaRef<jobject>& java_info_bar);
-  jobject GetJavaInfoBar();
+  const base::android::JavaRef<jobject>& GetJavaInfoBar();
   bool HasSetJavaInfoBar() const;
 
   // Tells the Java-side counterpart of this InfoBar to point to the replacement
   // InfoBar instead of this one.
   void ReassignJavaInfoBar(InfoBarAndroid* replacement);
 
+  int GetInfoBarIdentifier(JNIEnv* env,
+                           const base::android::JavaParamRef<jobject>& obj);
   virtual void OnLinkClicked(JNIEnv* env,
                              const base::android::JavaParamRef<jobject>& obj) {}
   void OnButtonClicked(JNIEnv* env,
@@ -78,8 +80,5 @@ class InfoBarAndroid : public infobars::InfoBar {
 
   DISALLOW_COPY_AND_ASSIGN(InfoBarAndroid);
 };
-
-// Registers the NativeInfoBar's native methods through JNI.
-bool RegisterNativeInfoBar(JNIEnv* env);
 
 #endif  // CHROME_BROWSER_UI_ANDROID_INFOBARS_INFOBAR_ANDROID_H_

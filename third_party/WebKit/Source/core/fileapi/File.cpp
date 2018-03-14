@@ -27,17 +27,17 @@
 
 #include <memory>
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/fileapi/FilePropertyBag.h"
 #include "core/frame/UseCounter.h"
 #include "platform/FileMetadata.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/blob/BlobData.h"
 #include "platform/network/mime/MIMETypeRegistry.h"
+#include "platform/wtf/DateMath.h"
+#include "platform/wtf/Time.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebFileUtilities.h"
-#include "wtf/CurrentTime.h"
-#include "wtf/DateMath.h"
 
 namespace blink {
 
@@ -133,7 +133,7 @@ File* File::Create(
   DCHECK(options.hasEndings());
   bool normalize_line_endings_to_native = options.endings() == "native";
   if (normalize_line_endings_to_native)
-    UseCounter::Count(context, UseCounter::kFileAPINativeLineEndings);
+    UseCounter::Count(context, WebFeature::kFileAPINativeLineEndings);
 
   std::unique_ptr<BlobData> blob_data = BlobData::Create();
   blob_data->SetContentType(NormalizeType(options.type()));
@@ -184,7 +184,7 @@ File::File(const String& path,
            bool has_snapshot_data,
            uint64_t size,
            double last_modified,
-           PassRefPtr<BlobDataHandle> blob_data_handle)
+           scoped_refptr<BlobDataHandle> blob_data_handle)
     : Blob(std::move(blob_data_handle)),
       has_backing_file_(!path.IsEmpty() || !relative_path.IsEmpty()),
       user_visibility_(user_visibility),
@@ -197,7 +197,7 @@ File::File(const String& path,
 
 File::File(const String& name,
            double modification_time_ms,
-           PassRefPtr<BlobDataHandle> blob_data_handle)
+           scoped_refptr<BlobDataHandle> blob_data_handle)
     : Blob(std::move(blob_data_handle)),
       has_backing_file_(false),
       user_visibility_(File::kIsNotUserVisible),
@@ -306,12 +306,6 @@ Blob* File::slice(long long start,
                   long long end,
                   const String& content_type,
                   ExceptionState& exception_state) const {
-  if (isClosed()) {
-    exception_state.ThrowDOMException(kInvalidStateError,
-                                      "File has been closed.");
-    return nullptr;
-  }
-
   if (!has_backing_file_)
     return Blob::slice(start, end, content_type, exception_state);
 
@@ -357,24 +351,6 @@ void File::CaptureSnapshot(long long& snapshot_size,
 
   snapshot_size = metadata.length;
   snapshot_modification_time_ms = metadata.modification_time;
-}
-
-void File::close(ScriptState* script_state, ExceptionState& exception_state) {
-  if (isClosed()) {
-    exception_state.ThrowDOMException(kInvalidStateError,
-                                      "Blob has been closed.");
-    return;
-  }
-
-  // Reset the File to its closed representation, an empty
-  // Blob. The name isn't cleared, as it should still be
-  // available.
-  has_backing_file_ = false;
-  path_ = String();
-  file_system_url_ = KURL();
-  InvalidateSnapshotMetadata();
-  relative_path_ = String();
-  Blob::close(script_state, exception_state);
 }
 
 void File::AppendTo(BlobData& blob_data) const {

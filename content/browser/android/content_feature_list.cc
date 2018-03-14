@@ -7,6 +7,7 @@
 #include "base/android/jni_string.h"
 #include "base/feature_list.h"
 #include "base/macros.h"
+#include "content/public/common/content_features.h"
 #include "jni/ContentFeatureList_jni.h"
 
 using base::android::ConvertJavaStringToUTF8;
@@ -38,18 +39,15 @@ const base::Feature* FindFeatureExposedToJava(const std::string& feature_name) {
 
 // Alphabetical:
 const base::Feature kRequestUnbufferedDispatch{
-    "RequestUnbufferedDispatch", base::FEATURE_DISABLED_BY_DEFAULT};
+    "RequestUnbufferedDispatch", base::FEATURE_ENABLED_BY_DEFAULT};
 
-static jboolean IsEnabled(JNIEnv* env,
-                          const JavaParamRef<jclass>& clazz,
-                          const JavaParamRef<jstring>& jfeature_name) {
+static jboolean JNI_ContentFeatureList_IsEnabled(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    const JavaParamRef<jstring>& jfeature_name) {
   const base::Feature* feature =
       FindFeatureExposedToJava(ConvertJavaStringToUTF8(env, jfeature_name));
   return base::FeatureList::IsEnabled(*feature);
-}
-
-bool RegisterContentFeatureListJni(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace android

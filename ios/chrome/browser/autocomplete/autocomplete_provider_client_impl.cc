@@ -10,6 +10,7 @@
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/prefs/pref_service.h"
+#include "components/signin/core/browser/signin_manager.h"
 #include "components/sync/driver/sync_service_utils.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/autocomplete/autocomplete_classifier_factory.h"
@@ -22,6 +23,7 @@
 #include "ios/chrome/browser/history/top_sites_factory.h"
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/search_engines/template_url_service_factory.h"
+#include "ios/chrome/browser/signin/signin_manager_factory.h"
 #include "ios/chrome/browser/sync/ios_chrome_profile_sync_service_factory.h"
 
 AutocompleteProviderClientImpl::AutocompleteProviderClientImpl(
@@ -82,6 +84,12 @@ AutocompleteProviderClientImpl::GetTemplateURLService() const {
   return ios::TemplateURLServiceFactory::GetForBrowserState(browser_state_);
 }
 
+ContextualSuggestionsService*
+AutocompleteProviderClientImpl::GetContextualSuggestionsService(
+    bool create_if_necessary) const {
+  return nullptr;
+}
+
 const SearchTermsData& AutocompleteProviderClientImpl::GetSearchTermsData()
     const {
   return search_terms_data_;
@@ -119,14 +127,21 @@ AutocompleteProviderClientImpl::GetEmbedderRepresentationOfAboutScheme() {
 }
 
 std::vector<base::string16> AutocompleteProviderClientImpl::GetBuiltinURLs() {
-  // iOS does not supports BuiltinProvider.
-  return std::vector<base::string16>();
+  std::vector<std::string> chrome_builtins(
+      kChromeHostURLs, kChromeHostURLs + kNumberOfChromeHostURLs);
+  std::sort(chrome_builtins.begin(), chrome_builtins.end());
+
+  std::vector<base::string16> builtins;
+  for (auto& url : chrome_builtins) {
+    builtins.push_back(base::ASCIIToUTF16(url));
+  }
+  return builtins;
 }
 
 std::vector<base::string16>
 AutocompleteProviderClientImpl::GetBuiltinsToProvideAsUserTypes() {
-  // iOS does not supports BuiltinProvider.
-  return std::vector<base::string16>();
+  return {base::ASCIIToUTF16(kChromeUIChromeURLsURL),
+          base::ASCIIToUTF16(kChromeUIVersionURL)};
 }
 
 bool AutocompleteProviderClientImpl::IsOffTheRecord() const {
@@ -141,6 +156,12 @@ bool AutocompleteProviderClientImpl::TabSyncEnabledAndUnencrypted() const {
   return syncer::IsTabSyncEnabledAndUnencrypted(
       IOSChromeProfileSyncServiceFactory::GetForBrowserState(browser_state_),
       browser_state_->GetPrefs());
+}
+
+bool AutocompleteProviderClientImpl::IsAuthenticated() const {
+  SigninManagerBase* signin_manager =
+      ios::SigninManagerFactory::GetForBrowserState(browser_state_);
+  return signin_manager != nullptr && signin_manager->IsAuthenticated();
 }
 
 void AutocompleteProviderClientImpl::Classify(
@@ -166,4 +187,8 @@ void AutocompleteProviderClientImpl::PrefetchImage(const GURL& url) {}
 void AutocompleteProviderClientImpl::OnAutocompleteControllerResultReady(
     AutocompleteController* controller) {
   // iOS currently has no client for this event.
+}
+
+bool AutocompleteProviderClientImpl::IsTabOpenWithURL(const GURL& url) {
+  return false;
 }

@@ -31,37 +31,38 @@
 
 #include <memory>
 #include "core/CoreExport.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "core/dom/WeakIdentifierMap.h"
+#include "core/editing/Forward.h"
 #include "core/frame/Frame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/loader/FrameLoader.h"
 #include "core/page/FrameTree.h"
-#include "core/paint/PaintPhase.h"
 #include "platform/Supplementable.h"
-#include "platform/graphics/ImageOrientation.h"
 #include "platform/heap/Handle.h"
 #include "platform/scroll/ScrollTypes.h"
-#include "platform/wtf/HashSet.h"
+
+namespace service_manager {
+class InterfaceProvider;
+}
 
 namespace blink {
 
+class AssociatedInterfaceProvider;
 class Color;
 class ContentSettingsClient;
 class Document;
-class DragImage;
 class Editor;
-template <typename Traversal>
-class EditingAlgorithm;
 class Element;
-template <typename Strategy>
-class EphemeralRangeTemplate;
 class EventHandler;
+class FetchParameters;
 class FloatSize;
 class FrameConsole;
+class FrameResourceCoordinator;
 class FrameSelection;
-class FrameView;
 class InputMethodController;
 class CoreProbeSink;
-class InterfaceProvider;
+class IdlenessDetector;
 class InterfaceRegistry;
 class IntPoint;
 class IntSize;
@@ -74,12 +75,13 @@ class NavigationScheduler;
 class Node;
 class NodeTraversal;
 class PerformanceMonitor;
-template <typename Strategy>
-class PositionWithAffinityTemplate;
 class PluginData;
 class ScriptController;
 class SpellChecker;
+class TextSuggestionController;
 class WebFrameScheduler;
+class WebPluginContainerImpl;
+class WebURLLoaderFactory;
 
 extern template class CORE_EXTERN_TEMPLATE_EXPORT Supplement<LocalFrame>;
 
@@ -87,17 +89,14 @@ class CORE_EXPORT LocalFrame final : public Frame,
                                      public Supplementable<LocalFrame> {
   USING_GARBAGE_COLLECTED_MIXIN(LocalFrame);
 
-  friend class LocalFrameTest;
-
  public:
   static LocalFrame* Create(LocalFrameClient*,
                             Page&,
                             FrameOwner*,
-                            InterfaceProvider* = nullptr,
                             InterfaceRegistry* = nullptr);
 
   void Init();
-  void SetView(FrameView*);
+  void SetView(LocalFrameView*);
   void CreateView(const IntSize&,
                   const Color&,
                   ScrollbarMode = kScrollbarAuto,
@@ -107,13 +106,14 @@ class CORE_EXPORT LocalFrame final : public Frame,
 
   // Frame overrides:
   ~LocalFrame() override;
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
   void Navigate(Document& origin_document,
                 const KURL&,
                 bool replace_current_item,
                 UserGestureStatus) override;
   void Navigate(const FrameLoadRequest&) override;
   void Reload(FrameLoadType, ClientRedirectPolicy) override;
+  void AddResourceTiming(const ResourceTimingInfo&) override;
   void Detach(FrameDetachType) override;
   bool ShouldClose() override;
   SecurityContext* GetSecurityContext() const override;
@@ -121,9 +121,16 @@ class CORE_EXPORT LocalFrame final : public Frame,
   void PrintNavigationWarning(const String&) override;
   bool PrepareForCommit() override;
   void DidChangeVisibilityState() override;
+  // This sets the is_inert_ flag and also recurses through this frame's
+  // subtree, updating the inert bit on all descendant frames.
+  void SetIsInert(bool) override;
 
   void DetachChildren();
   void DocumentAttached();
+
+  Frame* FindFrameForNavigation(const AtomicString& name,
+                                LocalFrame& active_frame,
+                                const KURL& destination_url);
 
   // Note: these two functions are not virtual but intentionally shadow the
   // corresponding method in the Frame base class to return the
@@ -131,7 +138,7 @@ class CORE_EXPORT LocalFrame final : public Frame,
   LocalWindowProxy* WindowProxy(DOMWrapperWorld&);
   LocalDOMWindow* DomWindow() const;
   void SetDOMWindow(LocalDOMWindow*);
-  FrameView* View() const;
+  LocalFrameView* View() const override;
   Document* GetDocument() const;
   void SetPagePopupOwner(Element&);
   Element* PagePopupOwner() const { return page_popup_owner_.Get(); }
@@ -146,6 +153,7 @@ class CORE_EXPORT LocalFrame final : public Frame,
   NavigationScheduler& GetNavigationScheduler() const;
   FrameSelection& Selection() const;
   InputMethodController& GetInputMethodController() const;
+  TextSuggestionController& GetTextSuggestionController() const;
   ScriptController& GetScriptController() const;
   SpellChecker& GetSpellChecker() const;
   FrameConsole& Console() const;
@@ -154,7 +162,7 @@ class CORE_EXPORT LocalFrame final : public Frame,
   // frame's in-process subtree.
   // FIXME: This is a temporary hack to support RemoteFrames, and callers
   // should be updated to avoid storing things on the main frame.
-  LocalFrame* LocalFrameRoot();
+  LocalFrame& LocalFrameRoot() const;
 
   // Note that the result of this function should not be cached: a frame is
   // not necessarily detached when it is navigated, so the return value can
@@ -164,14 +172,14 @@ class CORE_EXPORT LocalFrame final : public Frame,
   // behavior for detached windows.
   bool IsCrossOriginSubframe() const;
 
-  CoreProbeSink* InstrumentingAgents() { return instrumenting_agents_.Get(); }
+  CoreProbeSink* GetProbeSink() { return probe_sink_.Get(); }
 
   // =========================================================================
   // All public functions below this point are candidates to move out of
   // LocalFrame into another class.
 
   // See GraphicsLayerClient.h for accepted flags.
-  String LayerTreeAsText(unsigned flags = 0) const;
+  String GetLayerTreeAsTextForTesting(unsigned flags = 0) const;
 
   void SetPrinting(bool printing,
                    const FloatSize& page_size,
@@ -179,7 +187,7 @@ class CORE_EXPORT LocalFrame final : public Frame,
                    float maximum_shrink_ratio);
   bool ShouldUsePrintingLayout() const;
   FloatSize ResizePageRectsKeepingRatio(const FloatSize& original_size,
-                                        const FloatSize& expected_size);
+                                        const FloatSize& expected_size) const;
 
   bool InViewSourceMode() const;
   void SetInViewSourceMode(bool = true);
@@ -194,15 +202,12 @@ class CORE_EXPORT LocalFrame final : public Frame,
   void DeviceScaleFactorChanged();
   double DevicePixelRatio() const;
 
-  std::unique_ptr<DragImage> NodeImage(Node&);
-  std::unique_ptr<DragImage> DragImageForSelection(float opacity);
-
   String SelectedText() const;
   String SelectedTextForClipboard() const;
 
   PositionWithAffinityTemplate<EditingAlgorithm<NodeTraversal>>
-  PositionForPoint(const IntPoint& frame_point);
-  Document* DocumentAtPoint(const IntPoint&);
+  PositionForPoint(const LayoutPoint& frame_point);
+  Document* DocumentAtPoint(const LayoutPoint&);
   EphemeralRangeTemplate<EditingAlgorithm<NodeTraversal>> RangeForPoint(
       const IntPoint& frame_point);
 
@@ -213,27 +218,83 @@ class CORE_EXPORT LocalFrame final : public Frame,
 
   // Returns the frame scheduler, creating one if needed.
   WebFrameScheduler* FrameScheduler();
+  scoped_refptr<WebTaskRunner> GetTaskRunner(TaskType);
   void ScheduleVisualUpdateUnlessThrottled();
 
   bool IsNavigationAllowed() const { return navigation_disable_count_ == 0; }
 
-  InterfaceProvider* GetInterfaceProvider() { return interface_provider_; }
+  // destination_url is only used when a navigation is blocked due to
+  // framebusting defenses, in order to give the option of restarting the
+  // navigation at a later time.
+  bool CanNavigate(const Frame&, const KURL& destination_url = KURL());
+
+  service_manager::InterfaceProvider& GetInterfaceProvider();
   InterfaceRegistry* GetInterfaceRegistry() { return interface_registry_; }
+
+  // Returns an AssociatedInterfaceProvider the frame can use to request
+  // navigation-associated interfaces from the browser. Messages transmitted
+  // over such interfaces will be dispatched in FIFO order with respect to each
+  // other and messages implementing navigation.
+  //
+  // Carefully consider whether an interface needs to be navigation-associated
+  // before introducing new navigation-associated interfaces.
+  //
+  // Navigation-associated interfaces are currently implemented as
+  // channel-associated interfaces. See
+  // https://chromium.googlesource.com/chromium/src/+/master/ipc#Using-Channel_associated-Interfaces.
+  AssociatedInterfaceProvider* GetRemoteNavigationAssociatedInterfaces();
+
+  String GetInstrumentationToken() { return instrumentation_token_; }
 
   LocalFrameClient* Client() const;
 
   ContentSettingsClient* GetContentSettingsClient();
 
+  // GetFrameResourceCoordinator may return nullptr when it can not hook up to
+  // services/resource_coordinator.
+  FrameResourceCoordinator* GetFrameResourceCoordinator();
+
   PluginData* GetPluginData() const;
 
   PerformanceMonitor* GetPerformanceMonitor() { return performance_monitor_; }
+  IdlenessDetector* GetIdlenessDetector() { return idleness_detector_; }
 
-  using FrameInitCallback = void (*)(LocalFrame*);
-  // Allows for the registration of a callback that is invoked whenever a new
-  // LocalFrame is initialized. Callbacks are executed in the order that they
-  // were added using registerInitializationCallback, and there are no checks
-  // for adding a callback multiple times.
-  static void RegisterInitializationCallback(FrameInitCallback);
+  // Convenience function to allow loading image placeholders for the request if
+  // either the flag in Settings() for using image placeholders is set, or if
+  // the embedder decides that Client Lo-Fi should be used for this request.
+  void MaybeAllowImagePlaceholder(FetchParameters&) const;
+
+  // The returned value is a off-heap raw-ptr and should not be stored.
+  WebURLLoaderFactory* GetURLLoaderFactory();
+
+  bool IsInert() const { return is_inert_; }
+
+  // If the frame hosts a PluginDocument, this method returns the
+  // WebPluginContainerImpl that hosts the plugin. If the provided node is a
+  // plugin, then it returns its WebPluginContainerImpl. Otherwise, uses the
+  // currently focused element (if any).
+  // TODO(slangley): Refactor this method to extract the logic of looking up
+  // focused element or passed node into explicit methods.
+  WebPluginContainerImpl* GetWebPluginContainer(Node* = nullptr) const;
+
+  // Called on a view for a LocalFrame with a RemoteFrame parent. This makes
+  // viewport intersection available that accounts for remote ancestor frames
+  // and their respective scroll positions, clips, etc.
+  void SetViewportIntersectionFromParent(const IntRect&);
+  IntRect RemoteViewportIntersection() { return remote_viewport_intersection_; }
+
+  // Dummy leftover for compile test.
+  static std::unique_ptr<UserGestureIndicator> CreateUserGesture(
+      LocalFrame*,
+      UserGestureToken::Status = UserGestureToken::kPossiblyExistingGesture) {
+    return std::make_unique<UserGestureIndicator>();
+  }
+
+  // Replaces the initial empty document with a Document suitable for
+  // |mime_type| and populated with the contents of |data|. Only intended for
+  // use in internal-implementation LocalFrames that aren't in the frame tree.
+  void ForceSynchronousDocumentInstall(const AtomicString& mime_type,
+                                       scoped_refptr<SharedBuffer> data);
 
  private:
   friend class FrameNavigationDisabler;
@@ -241,7 +302,6 @@ class CORE_EXPORT LocalFrame final : public Frame,
   LocalFrame(LocalFrameClient*,
              Page&,
              FrameOwner*,
-             InterfaceProvider*,
              InterfaceRegistry*);
 
   // Intentionally private to prevent redundant checks when the type is
@@ -252,6 +312,10 @@ class CORE_EXPORT LocalFrame final : public Frame,
   void EnableNavigation() { --navigation_disable_count_; }
   void DisableNavigation() { ++navigation_disable_count_; }
 
+  bool CanNavigateWithoutFramebusting(const Frame&, String& error_reason);
+
+  void PropagateInertToChildFrames();
+
   std::unique_ptr<WebFrameScheduler> frame_scheduler_;
 
   mutable FrameLoader loader_;
@@ -259,7 +323,7 @@ class CORE_EXPORT LocalFrame final : public Frame,
 
   // Cleared by LocalFrame::detach(), so as to keep the observable lifespan
   // of LocalFrame::view().
-  Member<FrameView> view_;
+  Member<LocalFrameView> view_;
   // Usually 0. Non-null if this is the top frame of PagePopup.
   Member<Element> page_popup_owner_;
 
@@ -270,6 +334,7 @@ class CORE_EXPORT LocalFrame final : public Frame,
   const Member<EventHandler> event_handler_;
   const Member<FrameConsole> console_;
   const Member<InputMethodController> input_method_controller_;
+  const Member<TextSuggestionController> text_suggestion_controller_;
 
   int navigation_disable_count_;
 
@@ -278,11 +343,18 @@ class CORE_EXPORT LocalFrame final : public Frame,
 
   bool in_view_source_mode_;
 
-  Member<CoreProbeSink> instrumenting_agents_;
+  Member<CoreProbeSink> probe_sink_;
   Member<PerformanceMonitor> performance_monitor_;
+  Member<IdlenessDetector> idleness_detector_;
 
-  InterfaceProvider* const interface_provider_;
   InterfaceRegistry* const interface_registry_;
+  String instrumentation_token_;
+
+  IntRect remote_viewport_intersection_;
+  std::unique_ptr<FrameResourceCoordinator> frame_resource_coordinator_;
+
+  // Per-frame URLLoader factory.
+  std::unique_ptr<WebURLLoaderFactory> url_loader_factory_;
 };
 
 inline FrameLoader& LocalFrame::Loader() const {
@@ -290,11 +362,11 @@ inline FrameLoader& LocalFrame::Loader() const {
 }
 
 inline NavigationScheduler& LocalFrame::GetNavigationScheduler() const {
-  ASSERT(navigation_scheduler_);
+  DCHECK(navigation_scheduler_);
   return *navigation_scheduler_.Get();
 }
 
-inline FrameView* LocalFrame::View() const {
+inline LocalFrameView* LocalFrame::View() const {
   return view_.Get();
 }
 
@@ -322,6 +394,11 @@ inline InputMethodController& LocalFrame::GetInputMethodController() const {
   return *input_method_controller_;
 }
 
+inline TextSuggestionController& LocalFrame::GetTextSuggestionController()
+    const {
+  return *text_suggestion_controller_;
+}
+
 inline bool LocalFrame::InViewSourceMode() const {
   return in_view_source_mode_;
 }
@@ -331,7 +408,7 @@ inline void LocalFrame::SetInViewSourceMode(bool mode) {
 }
 
 inline EventHandler& LocalFrame::GetEventHandler() const {
-  ASSERT(event_handler_);
+  DCHECK(event_handler_);
   return *event_handler_;
 }
 
@@ -369,15 +446,24 @@ class FrameNavigationDisabler {
 // In Trace Viewer, we can find the cost of slice |foo| attributed to |frame|.
 // Design doc:
 // https://docs.google.com/document/d/15BB-suCb9j-nFt55yCFJBJCGzLg2qUm3WaSOPb8APtI/edit?usp=sharing
+//
+// This class is used in performance-sensitive code (like V8 entry), so care
+// should be taken to ensure that it has an efficient fast path (for the common
+// case where we are not tracking this).
 class ScopedFrameBlamer {
   WTF_MAKE_NONCOPYABLE(ScopedFrameBlamer);
   STACK_ALLOCATED();
 
  public:
   explicit ScopedFrameBlamer(LocalFrame*);
-  ~ScopedFrameBlamer();
+  ~ScopedFrameBlamer() {
+    if (UNLIKELY(frame_))
+      LeaveContext();
+  }
 
  private:
+  void LeaveContext();
+
   Member<LocalFrame> frame_;
 };
 

@@ -13,8 +13,11 @@
 #include "base/macros.h"
 #include "chrome/browser/notifications/displayed_notifications_dispatch_callback.h"
 #include "chrome/browser/notifications/notification_common.h"
+#include "chrome/browser/notifications/notification_handler.h"
 
+namespace message_center {
 class Notification;
+}
 
 // Provides the low-level interface that enables notifications to be displayed
 // and interacted with on the user's screen, orthogonal of whether this
@@ -22,16 +25,25 @@ class Notification;
 // TODO(miguelg): Add support for click and close events.
 class NotificationPlatformBridge {
  public:
+  using NotificationBridgeReadyCallback =
+      base::OnceCallback<void(bool /* success */)>;
+
   static NotificationPlatformBridge* Create();
+
+  // Returns whether a native bridge can handle a notification of the given
+  // type. Ideally, this would always return true, but for now some platforms
+  // can't handle TRANSIENT notifications.
+  static bool CanHandleType(NotificationHandler::Type notification_type);
 
   virtual ~NotificationPlatformBridge() {}
 
   // Shows a toast on screen using the data passed in |notification|.
-  virtual void Display(NotificationCommon::Type notification_type,
-                       const std::string& notification_id,
-                       const std::string& profile_id,
-                       bool is_incognito,
-                       const Notification& notification) = 0;
+  virtual void Display(
+      NotificationHandler::Type notification_type,
+      const std::string& profile_id,
+      bool is_incognito,
+      const message_center::Notification& notification,
+      std::unique_ptr<NotificationCommon::Metadata> metadata) = 0;
 
   // Closes a nofication with |notification_id| and |profile_id| if being
   // displayed.
@@ -44,6 +56,11 @@ class NotificationPlatformBridge {
       const std::string& profile_id,
       bool incognito,
       const GetDisplayedNotificationsCallback& callback) const = 0;
+
+  // Calls |callback| once |this| is initialized. The argument is
+  // true if |this| is ready to be used and false if initialization
+  // failed. |callback| may be called directly or from a posted task.
+  virtual void SetReadyCallback(NotificationBridgeReadyCallback callback) = 0;
 
  protected:
   NotificationPlatformBridge() {}

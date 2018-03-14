@@ -6,12 +6,15 @@
 
 #include <functional>
 
+#include "base/containers/queue.h"
 #include "base/hash.h"
 #include "base/memory/ptr_util.h"
+#include "base/strings/string_piece.h"
 #include "base/time/default_clock.h"
 #include "chrome/browser/permissions/permission_request.h"
 #include "chrome/common/safe_browsing/permission_report.pb.h"
 #include "components/variations/active_field_trials.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/report_sender.h"
 
 namespace safe_browsing {
@@ -19,7 +22,7 @@ namespace safe_browsing {
 namespace {
 // URL to upload permission action reports.
 const char kPermissionActionReportingUploadUrl[] =
-    "https://safebrowsing.googleusercontent.com/safebrowsing/clientreport/"
+    "https://safebrowsing.google.com/safebrowsing/clientreport/"
     "chrome-permissions";
 
 const int kMaximumReportsPerOriginPerPermissionPerMinute = 5;
@@ -29,8 +32,6 @@ PermissionReport::PermissionType PermissionTypeForReport(
   switch (permission) {
     case CONTENT_SETTINGS_TYPE_MIDI_SYSEX:
       return PermissionReport::MIDI_SYSEX;
-    case CONTENT_SETTINGS_TYPE_PUSH_MESSAGING:
-      return PermissionReport::PUSH_MESSAGING;
     case CONTENT_SETTINGS_TYPE_NOTIFICATIONS:
       return PermissionReport::NOTIFICATIONS;
     case CONTENT_SETTINGS_TYPE_GEOLOCATION:
@@ -113,20 +114,51 @@ PermissionReport::GestureType GestureTypeForReport(
   return PermissionReport::GESTURE_TYPE_UNSPECIFIED;
 }
 
-PermissionReport::PersistDecision PersistDecisionForReport(
-    PermissionPersistDecision persist_decision) {
-  switch (persist_decision) {
-    case PermissionPersistDecision::UNSPECIFIED:
-      return PermissionReport::PERSIST_DECISION_UNSPECIFIED;
-    case PermissionPersistDecision::PERSISTED:
-      return PermissionReport::PERSISTED;
-    case PermissionPersistDecision::NOT_PERSISTED:
-      return PermissionReport::NOT_PERSISTED;
-  }
-
-  NOTREACHED();
-  return PermissionReport::PERSIST_DECISION_UNSPECIFIED;
-}
+constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
+    net::DefineNetworkTrafficAnnotation("permission_reporting", R"(
+        semantics {
+          sender: "Safe Browsing"
+          description:
+            "When a website prompts for a permission request, the origin and "
+            "the action taken are reported to Google Safe Browsing for a "
+            "subset of users. This is to find sites that are abusing "
+            "permissions or asking much too often."
+          trigger:
+            "When a permission prompt closes for any reason, and the user is "
+            "opted into safe browsing, metrics reporting, and history sync. "
+            "These are throttled to less than five (permission, origin) pairs "
+            "per minute."
+          data:
+            "The type of permission, the action taken on it, and the origin."
+          destination: GOOGLE_OWNED_SERVICE
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "Users can control this feature via either of the 'Protect you and "
+            "your device from dangerous sites' setting under 'Privacy', or "
+            "'Automatically send usage statistics and crash reports to Google' "
+            "setting under 'Privacy' or 'History sync' setting under 'Sign in, "
+            "Advanced sync settings'."
+          chrome_policy {
+            MetricsReportingEnabled {
+              policy_options {mode: MANDATORY}
+              MetricsReportingEnabled: false
+            }
+          }
+          chrome_policy {
+            SyncDisabled {
+              policy_options {mode: MANDATORY}
+              SyncDisabled: true
+            }
+          }
+          chrome_policy {
+            SafeBrowsingEnabled {
+              policy_options {mode: MANDATORY}
+              SafeBrowsingEnabled: false
+            }
+          }
+        })");
 
 }  // namespace
 
@@ -145,9 +177,8 @@ std::size_t PermissionAndOriginHash::operator()(
 
 PermissionReporter::PermissionReporter(net::URLRequestContext* request_context)
     : PermissionReporter(
-          base::MakeUnique<net::ReportSender>(
-              request_context,
-              net::ReportSender::CookiesPreference::DO_NOT_SEND_COOKIES),
+          base::MakeUnique<net::ReportSender>(request_context,
+                                              kTrafficAnnotation),
           base::WrapUnique(new base::DefaultClock)) {}
 
 PermissionReporter::PermissionReporter(
@@ -164,10 +195,10 @@ void PermissionReporter::SendReport(const PermissionReportInfo& report_info) {
 
   std::string serialized_report;
   BuildReport(report_info, &serialized_report);
-  permission_report_sender_->Send(GURL(kPermissionActionReportingUploadUrl),
-                                  "application/octet-stream", serialized_report,
-                                  base::Closure(),
-                                  base::Callback<void(const GURL&, int)>());
+  permission_report_sender_->Send(
+      GURL(kPermissionActionReportingUploadUrl), "application/octet-stream",
+      serialized_report, base::Callback<void()>(),
+      base::Callback<void(const GURL&, int, int)>());
 }
 
 // static
@@ -179,8 +210,8 @@ bool PermissionReporter::BuildReport(const PermissionReportInfo& report_info,
   report.set_action(PermissionActionForReport(report_info.action));
   report.set_source_ui(SourceUIForReport(report_info.source_ui));
   report.set_gesture(GestureTypeForReport(report_info.gesture_type));
-  report.set_persisted(
-      PersistDecisionForReport(report_info.persist_decision));
+  // The persistence experiment was removed in M64.
+  report.set_persisted(PermissionReport::PERSIST_DECISION_UNSPECIFIED);
   report.set_num_prior_dismissals(report_info.num_prior_dismissals);
   report.set_num_prior_ignores(report_info.num_prior_ignores);
 
@@ -196,7 +227,8 @@ bool PermissionReporter::BuildReport(const PermissionReportInfo& report_info,
 
   // Collect field trial data.
   std::vector<variations::ActiveGroupId> active_group_ids;
-  variations::GetFieldTrialActiveGroupIds(&active_group_ids);
+  variations::GetFieldTrialActiveGroupIds(base::StringPiece(),
+                                          &active_group_ids);
   for (auto active_group_id : active_group_ids) {
     PermissionReport::FieldTrial* field_trial = report.add_field_trials();
     field_trial->set_name_id(active_group_id.name);
@@ -208,7 +240,7 @@ bool PermissionReporter::BuildReport(const PermissionReportInfo& report_info,
 bool PermissionReporter::IsReportThresholdExceeded(
     ContentSettingsType permission,
     const GURL& origin) {
-  std::queue<base::Time>& log = report_logs_[{permission, origin}];
+  base::queue<base::Time>& log = report_logs_[{permission, origin}];
   base::Time current_time = clock_->Now();
   // Remove entries that are sent more than one minute ago.
   while (!log.empty() &&

@@ -8,16 +8,16 @@
 #include <utility>
 
 #include "base/mac/scoped_nsobject.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_task_environment.h"
 #import "ui/gfx/test/ui_cocoa_test_helper.h"
 #import "ui/message_center/cocoa/notification_controller.h"
 #import "ui/message_center/cocoa/popup_controller.h"
 #include "ui/message_center/message_center.h"
-#include "ui/message_center/message_center_style.h"
 #include "ui/message_center/notification.h"
+#include "ui/message_center/public/cpp/message_center_constants.h"
 
 using base::ASCIIToUTF16;
 
@@ -25,7 +25,9 @@ namespace message_center {
 
 class PopupCollectionTest : public ui::CocoaTest {
  public:
-  PopupCollectionTest() {
+  PopupCollectionTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI) {
     message_center::MessageCenter::Initialize();
     center_ = message_center::MessageCenter::Get();
     collection_.reset(
@@ -83,8 +85,8 @@ class PopupCollectionTest : public ui::CocoaTest {
     CGFloat minY = NSMinY([[upper window] frame]);
     CGFloat maxY = NSMaxY([[lower window] frame]);
     CGFloat delta = minY - maxY;
-    EXPECT_EQ(message_center::kMarginBetweenItems, delta);
-    return delta == message_center::kMarginBetweenItems;
+    EXPECT_EQ(message_center::kMarginBetweenPopups, delta);
+    return delta == message_center::kMarginBetweenPopups;
   }
 
   void WaitForAnimationEnded() {
@@ -95,7 +97,7 @@ class PopupCollectionTest : public ui::CocoaTest {
     nested_run_loop_.reset();
   }
 
-  base::MessageLoopForUI message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<base::RunLoop> nested_run_loop_;
   message_center::MessageCenter* center_;
   base::scoped_nsobject<MCPopupCollection> collection_;
@@ -152,7 +154,7 @@ TEST_F(PopupCollectionTest, LayoutSpacing) {
   AddThreeNotifications();
   NSArray* popups = [collection_ popups];
 
-  EXPECT_EQ(message_center::kMarginBetweenItems,
+  EXPECT_EQ(message_center::kMarginBetweenPopups,
             kScreenSize - NSMaxY([[[popups objectAtIndex:0] window] frame]));
 
   EXPECT_TRUE(CheckSpacingBetween([popups objectAtIndex:0],
@@ -184,7 +186,7 @@ TEST_F(PopupCollectionTest, LayoutSpacing) {
   // Remove "1".
   center_->RemoveNotification("2", true);
   WaitForAnimationEnded();
-  EXPECT_EQ(message_center::kMarginBetweenItems,
+  EXPECT_EQ(message_center::kMarginBetweenPopups,
             kScreenSize - NSMaxY([[[popups objectAtIndex:0] window] frame]));
   EXPECT_TRUE(CheckSpacingBetween([popups objectAtIndex:0],
                                   [popups objectAtIndex:1]));

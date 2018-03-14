@@ -58,7 +58,7 @@ HTMLViewSourceDocument::HTMLViewSourceDocument(const DocumentInit& initializer,
   // FIXME: Why do view-source pages need to load in quirks mode?
   SetCompatibilityMode(kQuirksMode);
   LockCompatibilityMode();
-  UseCounter::Count(*this, UseCounter::kViewSourceDocument);
+  UseCounter::Count(*this, WebFeature::kViewSourceDocument);
 }
 
 DocumentParser* HTMLViewSourceDocument::CreateParser() {
@@ -352,7 +352,7 @@ void HTMLViewSourceDocument::MaybeAddSpanForAnnotation(
   }
 }
 
-DEFINE_TRACE(HTMLViewSourceDocument) {
+void HTMLViewSourceDocument::Trace(blink::Visitor* visitor) {
   visitor->Trace(current_);
   visitor->Trace(tbody_);
   visitor->Trace(td_);

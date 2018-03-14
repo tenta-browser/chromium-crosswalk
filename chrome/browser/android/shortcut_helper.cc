@@ -12,6 +12,7 @@
 #include "base/android/jni_string.h"
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/feature_list.h"
 #include "base/guid.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
@@ -19,9 +20,10 @@
 #include "chrome/browser/android/webapk/chrome_webapk_host.h"
 #include "chrome/browser/android/webapk/webapk_install_service.h"
 #include "chrome/browser/android/webapk/webapk_metrics.h"
-#include "chrome/browser/manifest/manifest_icon_downloader.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/manifest_icon_downloader.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/ShortcutHelper_jni.h"
 #include "ui/gfx/android/java_bitmap.h"
@@ -92,8 +94,11 @@ void AddWebappWithSkBitmap(const ShortcutInfo& info,
   ScopedJavaLocalRef<jstring> java_best_primary_icon_url =
       base::android::ConvertUTF8ToJavaString(env,
                                              info.best_primary_icon_url.spec());
+  ScopedJavaLocalRef<jstring> java_splash_screen_url =
+      base::android::ConvertUTF8ToJavaString(env,
+                                             info.splash_screen_url.spec());
   ScopedJavaLocalRef<jobject> java_bitmap;
-  if (icon_bitmap.getSize())
+  if (!icon_bitmap.drawsNothing())
     java_bitmap = gfx::ConvertToJavaBitmap(&icon_bitmap);
 
   // The callback will need to be run after shortcut creation completes in order
@@ -107,7 +112,7 @@ void AddWebappWithSkBitmap(const ShortcutInfo& info,
       env, java_webapp_id, java_url, java_scope_url, java_user_title, java_name,
       java_short_name, java_best_primary_icon_url, java_bitmap, info.display,
       info.orientation, info.source, info.theme_color, info.background_color,
-      callback_pointer);
+      java_splash_screen_url, callback_pointer);
 }
 
 // Adds a shortcut which opens in a browser tab to the launcher.
@@ -122,7 +127,7 @@ void AddShortcutWithSkBitmap(const ShortcutInfo& info,
   ScopedJavaLocalRef<jstring> java_user_title =
       base::android::ConvertUTF16ToJavaString(env, info.user_title);
   ScopedJavaLocalRef<jobject> java_bitmap;
-  if (icon_bitmap.getSize())
+  if (!icon_bitmap.drawsNothing())
     java_bitmap = gfx::ConvertToJavaBitmap(&icon_bitmap);
 
   Java_ShortcutHelper_addShortcut(env, java_id, java_url, java_user_title,
@@ -138,31 +143,17 @@ void ShortcutHelper::AddToLauncherWithSkBitmap(
     const SkBitmap& icon_bitmap) {
   std::string webapp_id = base::GenerateGUID();
   if (info.display == blink::kWebDisplayModeStandalone ||
-      info.display == blink::kWebDisplayModeFullscreen) {
+      info.display == blink::kWebDisplayModeFullscreen ||
+      (info.display == blink::kWebDisplayModeMinimalUi &&
+       base::FeatureList::IsEnabled(features::kPwaMinimalUi))) {
     AddWebappWithSkBitmap(
         info, webapp_id, icon_bitmap,
         base::Bind(&ShortcutHelper::FetchSplashScreenImage, web_contents,
                    info.splash_image_url, info.ideal_splash_image_size_in_px,
                    info.minimum_splash_image_size_in_px, webapp_id));
-    GooglePlayInstallState state =
-        ChromeWebApkHost::GetGooglePlayInstallState();
-    if (state != GooglePlayInstallState::SUPPORTED)
-      webapk::TrackGooglePlayInstallState(state);
     return;
   }
   AddShortcutWithSkBitmap(info, webapp_id, icon_bitmap);
-}
-
-// static
-void ShortcutHelper::InstallWebApkWithSkBitmap(
-    content::WebContents* web_contents,
-    const ShortcutInfo& info,
-    const SkBitmap& primary_icon_bitmap,
-    const SkBitmap& badge_icon_bitmap,
-    const WebApkInstallService::FinishCallback& callback) {
-  WebApkInstallService::Get(web_contents->GetBrowserContext())
-      ->InstallAsync(info, primary_icon_bitmap, badge_icon_bitmap, callback);
-  webapk::TrackGooglePlayInstallState(GooglePlayInstallState::SUPPORTED);
 }
 
 void ShortcutHelper::ShowWebApkInstallInProgressToast() {
@@ -209,7 +200,7 @@ void ShortcutHelper::FetchSplashScreenImage(
     const std::string& webapp_id) {
   // This is a fire and forget task. It is not vital for the splash screen image
   // to be downloaded so if the downloader returns false there is no fallback.
-  ManifestIconDownloader::Download(
+  content::ManifestIconDownloader::Download(
       web_contents, image_url, ideal_splash_image_size_in_px,
       minimum_splash_image_size_in_px,
       base::Bind(&ShortcutHelper::StoreWebappSplashImage, webapp_id));
@@ -236,7 +227,7 @@ SkBitmap ShortcutHelper::FinalizeLauncherIconInBackground(
     const SkBitmap& bitmap,
     const GURL& url,
     bool* is_generated) {
-  DCHECK(content::BrowserThread::GetBlockingPool()->RunsTasksOnCurrentThread());
+  base::AssertBlockingAllowed();
 
   JNIEnv* env = base::android::AttachCurrentThread();
   ScopedJavaLocalRef<jobject> result;
@@ -321,9 +312,9 @@ void ShortcutHelper::RetrieveWebApks(const WebApkInfoCallback& callback) {
 // This callback should only ever be called when the shortcut was for a
 // webapp-capable site; otherwise, |splash_image_callback| will have never been
 // allocated and doesn't need to be run or deleted.
-void OnWebappDataStored(JNIEnv* env,
-                        const JavaParamRef<jclass>& clazz,
-                        jlong jsplash_image_callback) {
+void JNI_ShortcutHelper_OnWebappDataStored(JNIEnv* env,
+                                           const JavaParamRef<jclass>& clazz,
+                                           jlong jsplash_image_callback) {
   DCHECK(jsplash_image_callback);
   base::Closure* splash_image_callback =
       reinterpret_cast<base::Closure*>(jsplash_image_callback);
@@ -331,22 +322,23 @@ void OnWebappDataStored(JNIEnv* env,
   delete splash_image_callback;
 }
 
-void OnWebApksRetrieved(JNIEnv* env,
-                        const JavaParamRef<jclass>& clazz,
-                        const jlong jcallback_pointer,
-                        const JavaParamRef<jobjectArray>& jnames,
-                        const JavaParamRef<jobjectArray>& jshort_names,
-                        const JavaParamRef<jobjectArray>& jpackage_names,
-                        const JavaParamRef<jintArray>& jshell_apk_versions,
-                        const JavaParamRef<jintArray>& jversion_codes,
-                        const JavaParamRef<jobjectArray>& juris,
-                        const JavaParamRef<jobjectArray>& jscopes,
-                        const JavaParamRef<jobjectArray>& jmanifest_urls,
-                        const JavaParamRef<jobjectArray>& jmanifest_start_urls,
-                        const JavaParamRef<jintArray>& jdisplay_modes,
-                        const JavaParamRef<jintArray>& jorientations,
-                        const JavaParamRef<jlongArray>& jtheme_colors,
-                        const JavaParamRef<jlongArray>& jbackground_colors) {
+void JNI_ShortcutHelper_OnWebApksRetrieved(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    const jlong jcallback_pointer,
+    const JavaParamRef<jobjectArray>& jnames,
+    const JavaParamRef<jobjectArray>& jshort_names,
+    const JavaParamRef<jobjectArray>& jpackage_names,
+    const JavaParamRef<jintArray>& jshell_apk_versions,
+    const JavaParamRef<jintArray>& jversion_codes,
+    const JavaParamRef<jobjectArray>& juris,
+    const JavaParamRef<jobjectArray>& jscopes,
+    const JavaParamRef<jobjectArray>& jmanifest_urls,
+    const JavaParamRef<jobjectArray>& jmanifest_start_urls,
+    const JavaParamRef<jintArray>& jdisplay_modes,
+    const JavaParamRef<jintArray>& jorientations,
+    const JavaParamRef<jlongArray>& jtheme_colors,
+    const JavaParamRef<jlongArray>& jbackground_colors) {
   DCHECK(jcallback_pointer);
   std::vector<std::string> names;
   base::android::AppendJavaStringArrayToStringVector(env, jnames, &names);
@@ -411,8 +403,4 @@ void OnWebApksRetrieved(JNIEnv* env,
       reinterpret_cast<ShortcutHelper::WebApkInfoCallback*>(jcallback_pointer);
   webapk_list_callback->Run(webapk_list);
   delete webapk_list_callback;
-}
-
-bool ShortcutHelper::RegisterShortcutHelper(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }

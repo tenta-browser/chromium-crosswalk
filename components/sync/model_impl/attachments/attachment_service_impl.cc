@@ -9,7 +9,6 @@
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
@@ -23,8 +22,7 @@ namespace syncer {
 // GetOrDownloadState tracks completion of these calls and posts callback for
 // consumer once all attachments are either retrieved or reported unavailable.
 class AttachmentServiceImpl::GetOrDownloadState
-    : public base::RefCounted<GetOrDownloadState>,
-      public base::NonThreadSafe {
+    : public base::RefCounted<GetOrDownloadState> {
  public:
   // GetOrDownloadState gets parameter from values passed to
   // AttachmentService::GetOrDownloadAttachments.
@@ -57,6 +55,8 @@ class AttachmentServiceImpl::GetOrDownloadState
   AttachmentIdSet unavailable_attachments_;
   std::unique_ptr<AttachmentMap> retrieved_attachments_;
 
+  SEQUENCE_CHECKER(sequence_checker_);
+
   DISALLOW_COPY_AND_ASSIGN(GetOrDownloadState);
 };
 
@@ -71,12 +71,12 @@ AttachmentServiceImpl::GetOrDownloadState::GetOrDownloadState(
 }
 
 AttachmentServiceImpl::GetOrDownloadState::~GetOrDownloadState() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
 
 void AttachmentServiceImpl::GetOrDownloadState::AddAttachment(
     const Attachment& attachment) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(retrieved_attachments_->find(attachment.GetId()) ==
          retrieved_attachments_->end());
   retrieved_attachments_->insert(
@@ -89,7 +89,7 @@ void AttachmentServiceImpl::GetOrDownloadState::AddAttachment(
 
 void AttachmentServiceImpl::GetOrDownloadState::AddUnavailableAttachmentId(
     const AttachmentId& attachment_id) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(unavailable_attachments_.find(attachment_id) ==
          unavailable_attachments_.end());
   unavailable_attachments_.insert(attachment_id);
@@ -123,14 +123,14 @@ AttachmentServiceImpl::AttachmentServiceImpl(
       attachment_downloader_(std::move(attachment_downloader)),
       delegate_(delegate),
       weak_ptr_factory_(this) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(attachment_store_.get());
 
   // TODO(maniscalco): Observe network connectivity change events.  When the
   // network becomes disconnected, consider suspending queue dispatch.  When
   // connectivity is restored, consider clearing any dispatch backoff (bug
   // 411981).
-  upload_task_queue_ = base::MakeUnique<TaskQueue<AttachmentId>>(
+  upload_task_queue_ = std::make_unique<TaskQueue<AttachmentId>>(
       base::Bind(&AttachmentServiceImpl::BeginUpload,
                  weak_ptr_factory_.GetWeakPtr()),
       initial_backoff_delay, max_backoff_delay);
@@ -139,14 +139,14 @@ AttachmentServiceImpl::AttachmentServiceImpl(
 }
 
 AttachmentServiceImpl::~AttachmentServiceImpl() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   net::NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
 }
 
 void AttachmentServiceImpl::GetOrDownloadAttachments(
     const AttachmentIdList& attachment_ids,
     const GetOrDownloadCallback& callback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   scoped_refptr<GetOrDownloadState> state(
       new GetOrDownloadState(attachment_ids, callback));
   // SetModelTypeReference() makes attachments visible for model type.
@@ -205,7 +205,7 @@ void AttachmentServiceImpl::WriteDone(
 void AttachmentServiceImpl::UploadDone(
     const AttachmentUploader::UploadResult& result,
     const AttachmentId& attachment_id) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   AttachmentIdList ids;
   ids.push_back(attachment_id);
   switch (result) {
@@ -251,7 +251,7 @@ void AttachmentServiceImpl::DownloadDone(
 }
 
 void AttachmentServiceImpl::BeginUpload(const AttachmentId& attachment_id) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   AttachmentIdList attachment_ids;
   attachment_ids.push_back(attachment_id);
   attachment_store_->Read(attachment_ids,
@@ -261,7 +261,7 @@ void AttachmentServiceImpl::BeginUpload(const AttachmentId& attachment_id) {
 
 void AttachmentServiceImpl::UploadAttachments(
     const AttachmentIdList& attachment_ids) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!attachment_uploader_.get()) {
     return;
   }
@@ -284,7 +284,7 @@ void AttachmentServiceImpl::ReadDoneNowUpload(
     const AttachmentStore::Result& result,
     std::unique_ptr<AttachmentMap> attachments,
     std::unique_ptr<AttachmentIdList> unavailable_attachment_ids) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!unavailable_attachment_ids->empty()) {
     // TODO(maniscalco): We failed to read some attachments. What should we do
     // now?

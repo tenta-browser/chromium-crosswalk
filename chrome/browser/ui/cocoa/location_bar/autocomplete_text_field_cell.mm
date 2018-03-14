@@ -9,19 +9,19 @@
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/mac_logging.h"
+#include "base/stl_util.h"
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/ui/cocoa/l10n_util.h"
 #import "chrome/browser/ui/cocoa/location_bar/autocomplete_text_field.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_decoration.h"
 #import "chrome/browser/ui/cocoa/themed_window.h"
-#include "chrome/grit/theme_resources.h"
 #import "extensions/common/feature_switch.h"
 #import "third_party/mozilla/NSPasteboard+Utils.h"
 #import "ui/base/cocoa/appkit_utils.h"
-#import "ui/base/cocoa/tracking_area.h"
 #import "ui/base/cocoa/nsview_additions.h"
 #include "ui/base/cocoa/scoped_cg_context_smooth_fonts.h"
+#import "ui/base/cocoa/tracking_area.h"
 #include "ui/base/material_design/material_design_controller.h"
 
 using extensions::FeatureSwitch;
@@ -35,6 +35,9 @@ const CGFloat kCornerRadius = 3.0;
 // bounds.
 const CGFloat kTrailingDecorationXPadding = 2.0;
 const CGFloat kLeadingDecorationXPadding = 1.0;
+
+// The padding between each decoration on the right.
+const CGFloat kRightDecorationPadding = 1.0f;
 
 // How much the text frame needs to overlap the outermost leading
 // decoration.
@@ -53,7 +56,8 @@ const NSTimeInterval kLocationIconDragTimeout = 0.25;
 // |x_edge| describes the edge to layout the decorations against
 // (|NSMinXEdge| or |NSMaxXEdge|).  |regular_padding| is the padding
 // from the edge of |cell_frame| to use when the first visible decoration
-// is a regular decoration.
+// is a regular decoration. |decoration_padding| is the padding between each
+// decoration.
 void CalculatePositionsHelper(
     NSRect frame,
     const std::vector<LocationBarDecoration*>& all_decorations,
@@ -61,7 +65,8 @@ void CalculatePositionsHelper(
     CGFloat regular_padding,
     std::vector<LocationBarDecoration*>* decorations,
     std::vector<NSRect>* decoration_frames,
-    NSRect* remaining_frame) {
+    NSRect* remaining_frame,
+    CGFloat decoration_padding) {
   DCHECK(x_edge == NSMinXEdge || x_edge == NSMaxXEdge);
   DCHECK_EQ(decorations->size(), decoration_frames->size());
 
@@ -75,6 +80,8 @@ void CalculatePositionsHelper(
       if (is_first_visible_decoration) {
         padding = regular_padding;
         is_first_visible_decoration = false;
+      } else {
+        padding = decoration_padding;
       }
 
       NSRect padding_rect, available;
@@ -131,7 +138,7 @@ size_t CalculatePositionsInFrame(
   // Layout |leading_decorations| against the leading side.
   CalculatePositionsHelper(*text_frame, leading_decorations, NSMinXEdge,
                            kLeadingDecorationXPadding, decorations,
-                           decoration_frames, text_frame);
+                           decoration_frames, text_frame, 0.0f);
   DCHECK_EQ(decorations->size(), decoration_frames->size());
 
   // Capture the number of visible leading decorations.
@@ -147,7 +154,8 @@ size_t CalculatePositionsInFrame(
   // Layout |trailing_decorations| against the trailing side.
   CalculatePositionsHelper(*text_frame, trailing_decorations, NSMaxXEdge,
                            kTrailingDecorationXPadding, decorations,
-                           decoration_frames, text_frame);
+                           decoration_frames, text_frame,
+                           kRightDecorationPadding);
   DCHECK_EQ(decorations->size(), decoration_frames->size());
 
   // Reverse the right-hand decorations so that overall everything is
@@ -159,9 +167,10 @@ size_t CalculatePositionsInFrame(
   // Flip all frames in RTL.
   if (cocoa_l10n_util::ShouldDoExperimentalRTLLayout()) {
     for (NSRect& rect : *decoration_frames)
-      rect.origin.x = NSWidth(frame) - NSWidth(rect) - NSMinX(rect);
-    text_frame->origin.x =
-        NSWidth(frame) - NSWidth(*text_frame) - NSMinX(*text_frame);
+      rect.origin.x =
+          NSMinX(frame) + NSMaxX(frame) - NSWidth(rect) - NSMinX(rect);
+    text_frame->origin.x = NSMinX(frame) + NSMaxX(frame) -
+                           NSWidth(*text_frame) - NSMinX(*text_frame);
     leading_count = decorations->size() - leading_count;
   }
 
@@ -193,6 +202,16 @@ size_t CalculatePositionsInFrame(
 
 - (CGFloat)lineHeight {
   return 17;
+}
+
+- (NSText*)setUpFieldEditorAttributes:(NSText*)textObj {
+  NSText* fieldEditor = [super setUpFieldEditorAttributes:textObj];
+
+  // -[NSTextFieldCell setUpFieldEditorAttributes:] matches the field editor's
+  // background to its own background, which can cover our decorations in their
+  // hover state. See https://crbug.com/669870.
+  [fieldEditor setDrawsBackground:NO];
+  return fieldEditor;
 }
 
 - (void)clearTrackingArea {
@@ -250,23 +269,16 @@ size_t CalculatePositionsInFrame(
 
   // Decorations which are not visible should have been filtered out
   // at the top, but return |NSZeroRect| rather than a 0-width rect
-  // for consistency.
-  NOTREACHED();
+  // for consistency. This can happen while a window is being resized, if it
+  // becomes too small to contain a decoration in the process of shrinking.
   return NSZeroRect;
 }
 
-- (NSRect)backgroundFrameForDecoration:(LocationBarDecoration*)decoration
-                               inFrame:(NSRect)cellFrame
-                      isLeftDecoration:(BOOL*)isLeftDecoration {
-  NSRect decorationFrame =
-      [self frameForDecoration:decoration inFrame:cellFrame];
+- (BOOL)isLeftDecoration:(LocationBarDecoration*)decoration {
   std::vector<LocationBarDecoration*>& left_decorations =
       cocoa_l10n_util::ShouldDoExperimentalRTLLayout() ? trailingDecorations_
                                                        : leadingDecorations_;
-  *isLeftDecoration =
-      std::find(left_decorations.begin(), left_decorations.end(), decoration) !=
-      left_decorations.end();
-  return decoration->GetBackgroundFrame(decorationFrame);
+  return base::ContainsValue(left_decorations, decoration);
 }
 
 // Overriden to account for the decorations.
@@ -306,7 +318,7 @@ size_t CalculatePositionsInFrame(
   // Determine the left-most extent for the i-beam cursor.
   CGFloat minX = NSMinX(textFrame);
   for (size_t index = left_count; index--; ) {
-    if (decorations[index]->AcceptsMousePress())
+    if (decorations[index]->AcceptsMousePress() != AcceptsPress::NEVER)
       break;
 
     // If at leftmost decoration, expand to edge of cell.
@@ -319,7 +331,7 @@ size_t CalculatePositionsInFrame(
   // Determine the right-most extent for the i-beam cursor.
   CGFloat maxX = NSMaxX(textFrame);
   for (size_t index = left_count; index < decorations.size(); ++index) {
-    if (decorations[index]->AcceptsMousePress())
+    if (decorations[index]->AcceptsMousePress() != AcceptsPress::NEVER)
       break;
 
     // If at rightmost decoration, expand to edge of cell.
@@ -336,31 +348,17 @@ size_t CalculatePositionsInFrame(
 - (void)drawWithFrame:(NSRect)frame inView:(NSView*)controlView {
   BOOL inDarkMode = [[controlView window] inIncognitoModeWithSystemTheme];
   BOOL showingFirstResponder = [self showsFirstResponder];
-  // Adjust the inset by 1/2 the line width to get a crisp line (screen pixels
-  // lay between cooridnate space lines).
-  CGFloat insetSize = 1 - singlePixelLineWidth_ / 2.;
-  if (showingFirstResponder && !inDarkMode) {
-    insetSize++;
-  }
 
-  // Compute the border's bezier path.
-  NSRect pathRect = NSInsetRect(frame, insetSize, insetSize);
-  NSBezierPath* path =
-      [NSBezierPath bezierPathWithRoundedRect:pathRect
-                                      xRadius:kCornerRadius
-                                      yRadius:kCornerRadius];
-  [path setLineWidth:showingFirstResponder ? singlePixelLineWidth_ * 2
-                                           : singlePixelLineWidth_];
+  // There's a special focus color for incognito, which needs to replace the
+  // border stroke to provide sufficient contrast with focus.
+  NSColor* opaqueFocusColor = inDarkMode
+                                  ? [NSColor colorWithSRGBRed:123 / 255.
+                                                        green:170 / 255.
+                                                         blue:247 / 255.
+                                                        alpha:1]
+                                  : [NSColor keyboardFocusIndicatorColor];
 
-  // Fill the background.
-  [[self backgroundColor] set];
-  if (isPopupMode_) {
-    NSRectFillUsingOperation(NSInsetRect(frame, 1, 1), NSCompositeSourceOver);
-  } else {
-    [path fill];
-  }
-
-  // Draw the border.
+  // Set the border color.
   const ui::ThemeProvider* provider = [[controlView window] themeProvider];
   bool increaseContrast = provider && provider->ShouldIncreaseContrast();
   if (!inDarkMode) {
@@ -373,32 +371,66 @@ size_t CalculatePositionsInFrame(
   } else {
     if (increaseContrast) {
       [[NSColor whiteColor] set];
+    } else if (showingFirstResponder) {
+      [opaqueFocusColor set];
     } else {
       const CGFloat k30PercentAlpha = 0.3;
       [[NSColor colorWithCalibratedWhite:0 alpha:k30PercentAlpha] set];
     }
   }
-  [path stroke];
+
+  // First, draw the border with a filled rounded rectangle, and draw the
+  // "background" over it to make a stroke. This avoids drawing a stroke with
+  // inner and outer radii that differ by an irrational delta. The stroke is
+  // inset by one screen pixel from the frame to make room for the focus ring,
+  // should it be needed.
+  NSRect rect =
+      NSInsetRect(frame, singlePixelLineWidth_, singlePixelLineWidth_);
+  NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:rect
+                                                       xRadius:kCornerRadius
+                                                       yRadius:kCornerRadius];
+  [path fill];
+
+  // Draw the "background". This will look terrible if it's not opaque. Note
+  // that insetting rounded rectangles also decreases the corner radius,
+  // consistent with SkRRect::inset().
+  DCHECK_EQ(1.0, [[self backgroundColor] alphaComponent]);
+  [[self backgroundColor] set];
+  const CGFloat innerBorderRadius = kCornerRadius - singlePixelLineWidth_;
+  rect =
+      NSInsetRect(frame, 2 * singlePixelLineWidth_, 2 * singlePixelLineWidth_);
+  path = [NSBezierPath bezierPathWithRoundedRect:rect
+                                         xRadius:innerBorderRadius
+                                         yRadius:innerBorderRadius];
+  [path fill];
 
   // Draw the interior contents. We do this after drawing the border as some
   // of the interior controls draw over it.
   [self drawInteriorWithFrame:frame inView:controlView];
 
-  // Draw the focus ring.
-  if (showingFirstResponder) {
-    CGFloat alphaComponent = 0.5 / singlePixelLineWidth_;
-    if (inDarkMode) {
-      // Special focus color for Material Incognito.
-      [[NSColor colorWithSRGBRed:123 / 255.
-                           green:170 / 255.
-                            blue:247 / 255.
-                           alpha:1] set];
-    } else {
-      [[[NSColor keyboardFocusIndicatorColor]
-          colorWithAlphaComponent:alphaComponent] set];
-    }
-    [path stroke];
-  }
+  if (!showingFirstResponder)
+    return;
+
+  // Draw the focus ring. It is always 1 real pixel either side of the border.
+  // That is, 3 real pixels wide; filling the frame.
+  constexpr CGFloat kFocusAlpha = 0.5;
+  [[opaqueFocusColor colorWithAlphaComponent:kFocusAlpha] set];
+  const CGFloat outerFocusRadius = kCornerRadius + singlePixelLineWidth_;
+  const CGFloat innerFocusRadius = kCornerRadius - 2 * singlePixelLineWidth_;
+  rect =
+      NSInsetRect(frame, 3 * singlePixelLineWidth_, 3 * singlePixelLineWidth_);
+  path = [NSBezierPath bezierPathWithRoundedRect:rect
+                                         xRadius:innerFocusRadius
+                                         yRadius:innerFocusRadius];
+  [path setWindingRule:NSEvenOddWindingRule];
+  [path appendBezierPath:[NSBezierPath
+                             bezierPathWithRoundedRect:frame
+                                               xRadius:outerFocusRadius
+                                               yRadius:outerFocusRadius]];
+  gfx::ScopedNSGraphicsContextSaveGState scopedGState;
+  [path addClip];
+  // Clipping determines the shape, so just fill.
+  NSRectFillUsingOperation(frame, NSCompositeSourceOver);
 }
 
 - (void)drawInteriorWithFrame:(NSRect)cellFrame inView:(NSView*)controlView {
@@ -496,7 +528,7 @@ size_t CalculatePositionsInFrame(
 
   LocationBarDecoration* decoration =
       [self decorationForEvent:theEvent inRect:cellFrame ofView:controlView];
-  if (!decoration || !decoration->AcceptsMousePress())
+  if (!decoration || decoration->AcceptsMousePress() == AcceptsPress::NEVER)
     return NO;
 
   decoration->OnMouseDown();
@@ -558,7 +590,7 @@ size_t CalculatePositionsInFrame(
 
   const NSPoint mouseLocation = [theEvent locationInWindow];
   const NSPoint point = [controlView convertPoint:mouseLocation fromView:nil];
-  return decoration->OnMousePressed(
+  return decoration->HandleMousePressed(
       decorationRect, NSMakePoint(point.x - decorationRect.origin.x,
                                   point.y - decorationRect.origin.y));
 }
@@ -734,6 +766,13 @@ static NSString* UnusedLegalNameForNewDropFile(NSURL* saveLocation,
     const bool controlDown = ([event modifierFlags] & NSControlKeyMask) != 0;
     [controlView observer]->OnSetFocus(controlDown);
   }
+}
+
+- (int)leadingDecorationIndex:(LocationBarDecoration*)decoration {
+  for (size_t i = 0; i < leadingDecorations_.size(); ++i)
+    if (leadingDecorations_[i] == decoration)
+      return leadingDecorations_.size() - (i + 1);
+  return -1;
 }
 
 @end

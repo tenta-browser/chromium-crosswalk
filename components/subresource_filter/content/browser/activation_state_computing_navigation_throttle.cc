@@ -9,7 +9,9 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "components/subresource_filter/content/browser/async_document_subresource_filter.h"
+#include "components/subresource_filter/core/common/time_measurements.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -50,7 +52,10 @@ ActivationStateComputingNavigationThrottle::
       weak_ptr_factory_(this) {}
 
 ActivationStateComputingNavigationThrottle::
-    ~ActivationStateComputingNavigationThrottle() {}
+    ~ActivationStateComputingNavigationThrottle() {
+  if (!destruction_closure_.is_null())
+    std::move(destruction_closure_).Run();
+}
 
 void ActivationStateComputingNavigationThrottle::
     NotifyPageActivationWithRuleset(
@@ -74,7 +79,7 @@ ActivationStateComputingNavigationThrottle::WillProcessResponse() {
       parent_activation_state_->activation_level == ActivationLevel::DISABLED) {
     DCHECK(navigation_handle()->IsInMainFrame());
     DCHECK(!ruleset_handle_);
-    return content::NavigationThrottle::ThrottleCheckResult::PROCEED;
+    return content::NavigationThrottle::PROCEED;
   }
 
   DCHECK(ruleset_handle_);
@@ -82,9 +87,7 @@ ActivationStateComputingNavigationThrottle::WillProcessResponse() {
   params.document_url = navigation_handle()->GetURL();
   params.parent_activation_state = parent_activation_state_.value();
   if (!navigation_handle()->IsInMainFrame()) {
-    content::RenderFrameHost* parent =
-        navigation_handle()->GetWebContents()->FindFrameByFrameTreeNodeId(
-            navigation_handle()->GetParentFrameTreeNodeId());
+    content::RenderFrameHost* parent = navigation_handle()->GetParentFrame();
     DCHECK(parent);
     params.parent_document_origin = parent->GetLastCommittedOrigin();
   }
@@ -94,12 +97,41 @@ ActivationStateComputingNavigationThrottle::WillProcessResponse() {
       base::Bind(&ActivationStateComputingNavigationThrottle::
                      OnActivationStateComputed,
                  weak_ptr_factory_.GetWeakPtr()));
-  return content::NavigationThrottle::ThrottleCheckResult::DEFER;
+
+  defer_timestamp_ = base::TimeTicks::Now();
+  return content::NavigationThrottle::DEFER;
+}
+
+const char* ActivationStateComputingNavigationThrottle::GetNameForLogging() {
+  return "ActivationStateComputingNavigationThrottle";
 }
 
 void ActivationStateComputingNavigationThrottle::OnActivationStateComputed(
     ActivationState state) {
-  navigation_handle()->Resume();
+  DCHECK(!defer_timestamp_.is_null());
+  base::TimeDelta delay = base::TimeTicks::Now() - defer_timestamp_;
+  UMA_HISTOGRAM_CUSTOM_MICRO_TIMES(
+      "SubresourceFilter.DocumentLoad.ActivationComputingDelay", delay,
+      base::TimeDelta::FromMicroseconds(1), base::TimeDelta::FromSeconds(10),
+      50);
+  if (navigation_handle()->IsInMainFrame()) {
+    UMA_HISTOGRAM_CUSTOM_MICRO_TIMES(
+        "SubresourceFilter.DocumentLoad.ActivationComputingDelay.MainFrame",
+        delay, base::TimeDelta::FromMicroseconds(1),
+        base::TimeDelta::FromSeconds(10), 50);
+  }
+  Resume();
+}
+
+AsyncDocumentSubresourceFilter*
+ActivationStateComputingNavigationThrottle::filter() const {
+  // TODO(csharrison): This should not really be necessary, as we should be
+  // delaying the navigation until the filter has computed an activation state.
+  // See crbug.com/736249. In the mean time, have a check here to avoid
+  // returning a filter in an invalid state.
+  if (async_filter_ && async_filter_->has_activation_state())
+    return async_filter_.get();
+  return nullptr;
 }
 
 // Ensure the caller cannot take ownership of a subresource filter for cases

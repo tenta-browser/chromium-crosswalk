@@ -4,6 +4,9 @@
 
 #include "chromeos/components/tether/fake_ble_connection_manager.h"
 
+#include "chromeos/components/tether/timer_factory.h"
+#include "device/bluetooth/bluetooth_adapter.h"
+
 namespace chromeos {
 
 namespace tether {
@@ -14,12 +17,10 @@ FakeBleConnectionManager::StatusAndRegisteredMessageTypes::
 
 FakeBleConnectionManager::StatusAndRegisteredMessageTypes::
     StatusAndRegisteredMessageTypes(
-        const StatusAndRegisteredMessageTypes& other)
-    : status(other.status),
-      registered_message_types(other.registered_message_types) {}
+        const StatusAndRegisteredMessageTypes& other) = default;
 
 FakeBleConnectionManager::StatusAndRegisteredMessageTypes::
-    ~StatusAndRegisteredMessageTypes() {}
+    ~StatusAndRegisteredMessageTypes() = default;
 
 FakeBleConnectionManager::FakeBleConnectionManager()
     : BleConnectionManager(nullptr,
@@ -27,10 +28,9 @@ FakeBleConnectionManager::FakeBleConnectionManager()
                            nullptr,
                            nullptr,
                            nullptr,
-                           nullptr,
                            nullptr) {}
 
-FakeBleConnectionManager::~FakeBleConnectionManager() {}
+FakeBleConnectionManager::~FakeBleConnectionManager() = default;
 
 void FakeBleConnectionManager::SetDeviceStatus(
     const cryptauth::RemoteDevice& remote_device,
@@ -55,6 +55,16 @@ void FakeBleConnectionManager::ReceiveMessage(
   SendMessageReceivedEvent(remote_device, payload);
 }
 
+void FakeBleConnectionManager::SetMessageSent(int sequence_number) {
+  DCHECK(sequence_number < next_sequence_number_);
+  SendMessageSentEvent(sequence_number);
+}
+
+bool FakeBleConnectionManager::IsRegistered(
+    const cryptauth::RemoteDevice& remote_device) {
+  return base::ContainsKey(device_map_, remote_device);
+}
+
 void FakeBleConnectionManager::RegisterRemoteDevice(
     const cryptauth::RemoteDevice& remote_device,
     const MessageType& connection_reason) {
@@ -72,10 +82,11 @@ void FakeBleConnectionManager::UnregisterRemoteDevice(
   }
 }
 
-void FakeBleConnectionManager::SendMessage(
+int FakeBleConnectionManager::SendMessage(
     const cryptauth::RemoteDevice& remote_device,
     const std::string& message) {
   sent_messages_.push_back({remote_device, message});
+  return next_sequence_number_++;
 }
 
 bool FakeBleConnectionManager::GetStatusForDevice(

@@ -264,7 +264,7 @@ void SetProxyPrefValue(const std::string& network_guid,
     }
   } else if (path == kProxyIgnoreList) {
     net::ProxyBypassRules bypass_rules;
-    if (in_value->GetType() == base::Value::Type::LIST) {
+    if (in_value->is_list()) {
       const base::ListValue* list_value =
           static_cast<const base::ListValue*>(in_value);
       for (size_t x = 0; x < list_value->GetSize(); x++) {
@@ -282,12 +282,10 @@ void SetProxyPrefValue(const std::string& network_guid,
   config_service->SetProxyConfig(network_guid, config);
 }
 
-// TODO(crbug.com/697817): Change |out_value| to be
-// std::unique_ptr<base::Value>*.
 bool GetProxyPrefValue(const std::string& network_guid,
                        const std::string& path,
                        UIProxyConfigService* config_service,
-                       base::Value** out_value) {
+                       std::unique_ptr<base::Value>* out_value) {
   std::string controlled_by;
   std::unique_ptr<base::Value> data;
   UIProxyConfig config;
@@ -358,12 +356,12 @@ bool GetProxyPrefValue(const std::string& network_guid,
       list->AppendString(rule->ToString());
     data = std::move(list);
   } else {
-    *out_value = NULL;
+    out_value->reset();
     return false;
   }
 
   // Decorate pref value as CoreOptionsHandler::CreateValueForPref() does.
-  base::DictionaryValue* dict = new base::DictionaryValue;
+  auto dict = base::MakeUnique<base::DictionaryValue>();
   if (!data)
     data = base::MakeUnique<base::Value>(base::Value::Type::STRING);
   dict->Set("value", std::move(data));
@@ -374,7 +372,7 @@ bool GetProxyPrefValue(const std::string& network_guid,
   } else {
     dict->SetBoolean("disabled", false);
   }
-  *out_value = dict;
+  *out_value = std::move(dict);
   return true;
 }
 

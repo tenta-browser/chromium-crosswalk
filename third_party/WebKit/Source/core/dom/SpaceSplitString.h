@@ -21,6 +21,7 @@
 #ifndef SpaceSplitString_h
 #define SpaceSplitString_h
 
+#include "core/CoreExport.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/RefCounted.h"
 #include "platform/wtf/Vector.h"
@@ -28,22 +29,19 @@
 
 namespace blink {
 
-class SpaceSplitString {
+class CORE_EXPORT SpaceSplitString {
   USING_FAST_MALLOC(SpaceSplitString);
 
  public:
-  enum CaseFolding { kShouldNotFoldCase, kShouldFoldCase };
   SpaceSplitString() {}
-  SpaceSplitString(const AtomicString& string, CaseFolding case_folding) {
-    Set(string, case_folding);
-  }
+  explicit SpaceSplitString(const AtomicString& string) { Set(string); }
 
   bool operator!=(const SpaceSplitString& other) const {
     return data_ != other.data_;
   }
 
-  void Set(const AtomicString&, CaseFolding);
-  void Clear() { data_.Clear(); }
+  void Set(const AtomicString&);
+  void Clear() { data_ = nullptr; }
 
   bool Contains(const AtomicString& string) const {
     return data_ && data_->Contains(string);
@@ -53,6 +51,8 @@ class SpaceSplitString {
   }
   void Add(const AtomicString&);
   bool Remove(const AtomicString&);
+  void Remove(size_t index);
+  void ReplaceAt(size_t index, const AtomicString&);
 
   size_t size() const { return data_ ? data_->size() : 0; }
   bool IsNull() const { return !data_; }
@@ -61,8 +61,8 @@ class SpaceSplitString {
  private:
   class Data : public RefCounted<Data> {
    public:
-    static PassRefPtr<Data> Create(const AtomicString&);
-    static PassRefPtr<Data> CreateUnique(const Data&);
+    static scoped_refptr<Data> Create(const AtomicString&);
+    static scoped_refptr<Data> CreateUnique(const Data&);
 
     ~Data();
 
@@ -81,15 +81,18 @@ class SpaceSplitString {
 
     bool IsUnique() const { return key_string_.IsNull(); }
     size_t size() const { return vector_.size(); }
-    const AtomicString& operator[](size_t i) { return vector_[i]; }
+    const AtomicString& operator[](size_t i) const { return vector_[i]; }
+    AtomicString& operator[](size_t i) { return vector_[i]; }
 
    private:
     explicit Data(const AtomicString&);
     explicit Data(const Data&);
 
-    void CreateVector(const String&);
+    void CreateVector(const AtomicString&);
     template <typename CharacterType>
-    inline void CreateVector(const CharacterType*, unsigned);
+    inline void CreateVector(const AtomicString&,
+                             const CharacterType*,
+                             unsigned);
 
     AtomicString key_string_;
     Vector<AtomicString, 4> vector_;
@@ -103,7 +106,7 @@ class SpaceSplitString {
       data_ = Data::CreateUnique(*data_);
   }
 
-  RefPtr<Data> data_;
+  scoped_refptr<Data> data_;
 };
 
 }  // namespace blink

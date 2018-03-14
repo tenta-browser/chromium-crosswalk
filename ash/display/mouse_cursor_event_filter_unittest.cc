@@ -6,7 +6,7 @@
 
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/cursor_manager_test_api.h"
+#include "ash/wm/cursor_manager_test_api.h"
 #include "ui/aura/env.h"
 #include "ui/display/display_layout.h"
 #include "ui/display/manager/display_manager.h"
@@ -15,10 +15,10 @@
 
 namespace ash {
 
-class MouseCursorEventFilterTest : public test::AshTestBase {
+class MouseCursorEventFilterTest : public AshTestBase {
  public:
-  MouseCursorEventFilterTest() {}
-  ~MouseCursorEventFilterTest() override {}
+  MouseCursorEventFilterTest() = default;
+  ~MouseCursorEventFilterTest() override = default;
 
  protected:
   MouseCursorEventFilter* event_filter() {
@@ -26,8 +26,8 @@ class MouseCursorEventFilterTest : public test::AshTestBase {
   }
 
   bool TestIfMouseWarpsAt(const gfx::Point& point_in_screen) {
-    return test::AshTestBase::TestIfMouseWarpsAt(GetEventGenerator(),
-                                                 point_in_screen);
+    return AshTestBase::TestIfMouseWarpsAt(GetEventGenerator(),
+                                           point_in_screen);
   }
 
  private:
@@ -116,7 +116,7 @@ TEST_F(MouseCursorEventFilterTest, WarpMouseDifferentScaleDisplaysInNative) {
   // 1st dislay.
   EXPECT_TRUE(TestIfMouseWarpsAt(gfx::Point(500, 123)));
   // TODO(oshima): Due to a bug in EventGenerator, the screen coordinates
-  // is shrinked by dsf once. Fix this.
+  // is shrunk by dsf once. Fix this.
   EXPECT_EQ("498,61",
             aura::Env::GetInstance()->last_mouse_location().ToString());
 }
@@ -145,7 +145,7 @@ TEST_F(MouseCursorEventFilterTest, CursorDeviceScaleFactor) {
   display_manager()->SetLayoutForCurrentDisplays(
       display::test::CreateDisplayLayout(display_manager(),
                                          display::DisplayPlacement::RIGHT, 0));
-  test::CursorManagerTestApi cursor_test_api(Shell::Get()->cursor_manager());
+  CursorManagerTestApi cursor_test_api(Shell::Get()->cursor_manager());
 
   EXPECT_EQ(1.0f, cursor_test_api.GetCurrentCursor().device_scale_factor());
   TestIfMouseWarpsAt(gfx::Point(399, 200));

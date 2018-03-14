@@ -15,16 +15,11 @@ class PropertyRegistry : public GarbageCollected<PropertyRegistry> {
  public:
   static PropertyRegistry* Create() { return new PropertyRegistry(); }
 
-  void RegisterProperty(const AtomicString&,
-                        const CSSSyntaxDescriptor&,
-                        bool inherits,
-                        const CSSValue* initial,
-                        PassRefPtr<CSSVariableData> initial_variable_data,
-                        CSSInterpolationTypes);
+  void RegisterProperty(const AtomicString&, PropertyRegistration&);
   const PropertyRegistration* Registration(const AtomicString&) const;
   size_t RegistrationCount() const { return registrations_.size(); }
 
-  DEFINE_INLINE_TRACE() { visitor->Trace(registrations_); }
+  void Trace(blink::Visitor* visitor) { visitor->Trace(registrations_); }
 
  private:
   HeapHashMap<AtomicString, Member<PropertyRegistration>> registrations_;

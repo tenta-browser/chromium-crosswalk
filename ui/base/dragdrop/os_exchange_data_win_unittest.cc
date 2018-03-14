@@ -21,7 +21,7 @@ TEST(OSExchangeDataWinTest, StringDataAccessViaCOM) {
   OSExchangeData data;
   std::wstring input = L"O hai googlz.";
   data.SetString(input);
-  base::win::ScopedComPtr<IDataObject> com_data(
+  Microsoft::WRL::ComPtr<IDataObject> com_data(
       OSExchangeDataProviderWin::GetIDataObject(data));
 
   FORMATETC format_etc =
@@ -41,7 +41,7 @@ TEST(OSExchangeDataWinTest, StringDataWritingViaCOM) {
   OSExchangeData data;
   std::wstring input = L"http://www.google.com/";
 
-  base::win::ScopedComPtr<IDataObject> com_data(
+  Microsoft::WRL::ComPtr<IDataObject> com_data(
       OSExchangeDataProviderWin::GetIDataObject(data));
 
   // Store data in the object using the COM SetData API.
@@ -76,7 +76,7 @@ TEST(OSExchangeDataWinTest, RemoveData) {
   std::wstring input = L"http://www.google.com/";
   std::wstring input2 = L"http://www.google2.com/";
 
-  base::win::ScopedComPtr<IDataObject> com_data(
+  Microsoft::WRL::ComPtr<IDataObject> com_data(
       OSExchangeDataProviderWin::GetIDataObject(data));
 
   // Store data in the object using the COM SetData API.
@@ -104,7 +104,7 @@ TEST(OSExchangeDataWinTest, RemoveData) {
     medium.pUnkForRelease = NULL;
     EXPECT_EQ(S_OK, com_data->SetData(&format_etc, &medium, TRUE));
   }
-  EXPECT_EQ(1u, static_cast<DataObjectImpl*>(com_data.get())->size());
+  EXPECT_EQ(1u, static_cast<DataObjectImpl*>(com_data.Get())->size());
 
   // Construct a new object with the old object so that we can use our access
   // APIs.
@@ -121,7 +121,7 @@ TEST(OSExchangeDataWinTest, URLDataAccessViaCOM) {
   OSExchangeData data;
   GURL url("http://www.google.com/");
   data.SetURL(url, L"");
-  base::win::ScopedComPtr<IDataObject> com_data(
+  Microsoft::WRL::ComPtr<IDataObject> com_data(
       OSExchangeDataProviderWin::GetIDataObject(data));
 
   CLIPFORMAT cfstr_ineturl = RegisterClipboardFormat(CFSTR_INETURL);
@@ -145,7 +145,7 @@ TEST(OSExchangeDataWinTest, MultipleFormatsViaCOM) {
   data.SetURL(url, L"Google");
   data.SetString(text);
 
-  base::win::ScopedComPtr<IDataObject> com_data(
+  Microsoft::WRL::ComPtr<IDataObject> com_data(
       OSExchangeDataProviderWin::GetIDataObject(data));
 
   CLIPFORMAT cfstr_ineturl = RegisterClipboardFormat(CFSTR_INETURL);
@@ -181,11 +181,11 @@ TEST(OSExchangeDataWinTest, EnumerationViaCOM) {
       RegisterClipboardFormat(CFSTR_FILEDESCRIPTOR);
   CLIPFORMAT text_x_moz_url = RegisterClipboardFormat(L"text/x-moz-url");
 
-  base::win::ScopedComPtr<IDataObject> com_data(
+  Microsoft::WRL::ComPtr<IDataObject> com_data(
       OSExchangeDataProviderWin::GetIDataObject(data));
-  base::win::ScopedComPtr<IEnumFORMATETC> enumerator;
-  EXPECT_EQ(S_OK, com_data.get()->EnumFormatEtc(DATADIR_GET,
-                                                enumerator.Receive()));
+  Microsoft::WRL::ComPtr<IEnumFORMATETC> enumerator;
+  EXPECT_EQ(S_OK, com_data.Get()->EnumFormatEtc(DATADIR_GET,
+                                                enumerator.GetAddressOf()));
 
   // Test that we can get one item.
   {
@@ -237,9 +237,9 @@ TEST(OSExchangeDataWinTest, EnumerationViaCOM) {
   {
     EXPECT_EQ(S_OK, enumerator->Reset());
     EXPECT_EQ(S_OK, enumerator->Skip(1));
-    base::win::ScopedComPtr<IEnumFORMATETC> cloned_enumerator;
-    EXPECT_EQ(S_OK, enumerator.get()->Clone(cloned_enumerator.Receive()));
-    EXPECT_EQ(S_OK, enumerator.get()->Reset());
+    Microsoft::WRL::ComPtr<IEnumFORMATETC> cloned_enumerator;
+    EXPECT_EQ(S_OK, enumerator.Get()->Clone(cloned_enumerator.GetAddressOf()));
+    EXPECT_EQ(S_OK, enumerator.Get()->Reset());
 
     {
       ULONG retrieved = 0;
@@ -269,7 +269,7 @@ TEST(OSExchangeDataWinTest, TestURLExchangeFormatsViaCOM) {
   data.SetURL(url, url_title);
 
   // File contents access via COM
-  base::win::ScopedComPtr<IDataObject> com_data(
+  Microsoft::WRL::ComPtr<IDataObject> com_data(
       OSExchangeDataProviderWin::GetIDataObject(data));
   {
     CLIPFORMAT cfstr_file_contents =

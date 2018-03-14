@@ -23,15 +23,14 @@ class PermissionServiceContext::PermissionSubscription {
   PermissionSubscription(PermissionServiceContext* context,
                          PermissionObserverPtr observer)
       : context_(context), observer_(std::move(observer)) {
-    observer_.set_connection_error_handler(base::Bind(
+    observer_.set_connection_error_handler(base::BindOnce(
         &PermissionSubscription::OnConnectionError, base::Unretained(this)));
   }
 
   ~PermissionSubscription() {
     DCHECK_NE(id_, 0);
     BrowserContext* browser_context = context_->GetBrowserContext();
-    DCHECK(browser_context);
-    if (browser_context->GetPermissionManager()) {
+    if (browser_context && browser_context->GetPermissionManager()) {
       browser_context->GetPermissionManager()
           ->UnsubscribePermissionStatusChange(id_);
     }
@@ -72,9 +71,9 @@ PermissionServiceContext::~PermissionServiceContext() {
 }
 
 void PermissionServiceContext::CreateService(
-    mojo::InterfaceRequest<blink::mojom::PermissionService> request) {
-  services_.push_back(
-      base::MakeUnique<PermissionServiceImpl>(this, std::move(request)));
+    blink::mojom::PermissionServiceRequest request) {
+  services_.AddBinding(std::make_unique<PermissionServiceImpl>(this),
+                       std::move(request));
 }
 
 void PermissionServiceContext::CreateSubscription(
@@ -82,12 +81,11 @@ void PermissionServiceContext::CreateSubscription(
     const url::Origin& origin,
     PermissionObserverPtr observer) {
   BrowserContext* browser_context = GetBrowserContext();
-  DCHECK(browser_context);
-  if (!browser_context->GetPermissionManager())
+  if (!browser_context || !browser_context->GetPermissionManager())
     return;
 
   auto subscription =
-      base::MakeUnique<PermissionSubscription>(this, std::move(observer));
+      std::make_unique<PermissionSubscription>(this, std::move(observer));
   GURL requesting_origin(origin.Serialize());
   GURL embedding_origin = GetEmbeddingOrigin();
   int subscription_id =
@@ -101,17 +99,6 @@ void PermissionServiceContext::CreateSubscription(
   subscriptions_[subscription_id] = std::move(subscription);
 }
 
-void PermissionServiceContext::ServiceHadConnectionError(
-    PermissionServiceImpl* service) {
-  auto it = std::find_if(
-      services_.begin(), services_.end(),
-      [service](const std::unique_ptr<PermissionServiceImpl>& this_service) {
-        return service == this_service.get();
-      });
-  DCHECK(it != services_.end());
-  services_.erase(it);
-}
-
 void PermissionServiceContext::ObserverHadConnectionError(int subscription_id) {
   auto it = subscriptions_.find(subscription_id);
   DCHECK(it != subscriptions_.end());
@@ -121,12 +108,12 @@ void PermissionServiceContext::ObserverHadConnectionError(int subscription_id) {
 void PermissionServiceContext::RenderFrameHostChanged(
     RenderFrameHost* old_host,
     RenderFrameHost* new_host) {
-  CancelPendingOperations(old_host);
+  CloseBindings(old_host);
 }
 
 void PermissionServiceContext::FrameDeleted(
     RenderFrameHost* render_frame_host) {
-  CancelPendingOperations(render_frame_host);
+  CloseBindings(render_frame_host);
 }
 
 void PermissionServiceContext::DidFinishNavigation(
@@ -134,27 +121,29 @@ void PermissionServiceContext::DidFinishNavigation(
   if (!navigation_handle->HasCommitted() || navigation_handle->IsSameDocument())
     return;
 
-  CancelPendingOperations(navigation_handle->GetRenderFrameHost());
+  CloseBindings(navigation_handle->GetRenderFrameHost());
 }
 
-void PermissionServiceContext::CancelPendingOperations(
+void PermissionServiceContext::CloseBindings(
     RenderFrameHost* render_frame_host) {
   DCHECK(render_frame_host_);
   if (render_frame_host != render_frame_host_)
     return;
 
-  for (const auto& service : services_)
-    service->CancelPendingOperations();
-
+  services_.CloseAllBindings();
   subscriptions_.clear();
 }
 
 BrowserContext* PermissionServiceContext::GetBrowserContext() const {
-  if (!web_contents()) {
-    DCHECK(render_process_host_);
+  // web_contents() may return nullptr during teardown, or when showing
+  // an interstitial.
+  if (web_contents())
+    return web_contents()->GetBrowserContext();
+
+  if (render_process_host_)
     return render_process_host_->GetBrowserContext();
-  }
-  return web_contents()->GetBrowserContext();
+
+  return nullptr;
 }
 
 GURL PermissionServiceContext::GetEmbeddingOrigin() const {

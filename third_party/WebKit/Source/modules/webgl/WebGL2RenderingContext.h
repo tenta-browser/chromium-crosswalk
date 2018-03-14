@@ -29,12 +29,8 @@ class WebGL2RenderingContext : public WebGL2RenderingContextBase {
     Factory() {}
     ~Factory() override {}
 
-    CanvasRenderingContext* Create(HTMLCanvasElement*,
-                                   const CanvasContextCreationAttributes&,
-                                   Document&) override;
     CanvasRenderingContext* Create(
-        ScriptState*,
-        OffscreenCanvas*,
+        CanvasRenderingContextHost*,
         const CanvasContextCreationAttributes&) override;
     CanvasRenderingContext::ContextType GetContextType() const override {
       return CanvasRenderingContext::kContextWebgl2;
@@ -51,19 +47,15 @@ class WebGL2RenderingContext : public WebGL2RenderingContextBase {
   void SetCanvasGetContextResult(RenderingContext&) final;
   void SetOffscreenCanvasGetContextResult(OffscreenRenderingContext&) final;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
 
  protected:
   WebGL2RenderingContext(
-      HTMLCanvasElement* passed_canvas,
+      CanvasRenderingContextHost*,
       std::unique_ptr<WebGraphicsContext3DProvider>,
-      const CanvasContextCreationAttributes& requested_attributes);
-
-  WebGL2RenderingContext(
-      OffscreenCanvas* passed_offscreen_canvas,
-      std::unique_ptr<WebGraphicsContext3DProvider>,
+      bool using_gpu_compositing,
       const CanvasContextCreationAttributes& requested_attributes);
 
   Member<EXTColorBufferFloat> ext_color_buffer_float_;

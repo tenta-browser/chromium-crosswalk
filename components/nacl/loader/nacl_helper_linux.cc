@@ -28,7 +28,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/posix/global_descriptors.h"
-#include "base/posix/unix_domain_socket_linux.h"
+#include "base/posix/unix_domain_socket.h"
 #include "base/process/kill.h"
 #include "base/process/process_handle.h"
 #include "base/rand_util.h"
@@ -39,7 +39,6 @@
 #include "content/public/common/mojo_channel_switches.h"
 #include "content/public/common/send_zygote_child_ping_linux.h"
 #include "content/public/common/zygote_fork_delegate_linux.h"
-#include "ipc/ipc_descriptors.h"
 #include "mojo/edk/embedder/embedder.h"
 #include "sandbox/linux/services/credentials.h"
 #include "sandbox/linux/services/namespace_sandbox.h"
@@ -88,8 +87,8 @@ void BecomeNaClLoader(base::ScopedFD browser_fd,
   // In Non-SFI mode, it's important to close any non-expected IPC channels.
   CHECK(uses_nonsfi_mode);
   // The low-level kSandboxIPCChannel is used by renderers and NaCl for
-  // various operations. See the LinuxSandbox::METHOD_* methods. NaCl uses
-  // LinuxSandbox::METHOD_MAKE_SHARED_MEMORY_SEGMENT in SFI mode, so this
+  // various operations. See the SandboxLinux::METHOD_* methods. NaCl uses
+  // SandboxLinux::METHOD_MAKE_SHARED_MEMORY_SEGMENT in SFI mode, so this
   // should only be closed in Non-SFI mode.
   // This file descriptor is insidiously used by a number of APIs. Closing it
   // could lead to difficult to debug issues. Instead of closing it, replace
@@ -411,21 +410,8 @@ static size_t CheckReservedAtZero() {
 // Do not install the SIGSEGV handler in ASan. This should make the NaCl
 // platform qualification test pass.
 // detect_odr_violation=0: http://crbug.com/376306
-static const char kAsanDefaultOptionsNaCl[] =
-    "handle_segv=0:detect_odr_violation=0";
-
-// Override the default ASan options for the NaCl helper.
-// __asan_default_options should not be instrumented, because it is called
-// before ASan is initialized.
-extern "C"
-__attribute__((no_sanitize_address))
-// The function isn't referenced from the executable itself. Make sure it isn't
-// stripped by the linker.
-__attribute__((used))
-__attribute__((visibility("default")))
-const char* __asan_default_options() {
-  return kAsanDefaultOptionsNaCl;
-}
+extern const char* kAsanDefaultOptionsNaCl;
+const char* kAsanDefaultOptionsNaCl = "handle_segv=0:detect_odr_violation=0";
 #endif
 
 int main(int argc, char* argv[]) {

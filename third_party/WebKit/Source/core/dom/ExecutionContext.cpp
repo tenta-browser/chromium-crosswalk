@@ -27,13 +27,11 @@
 
 #include "core/dom/ExecutionContext.h"
 
-#include <memory>
 #include "bindings/core/v8/SourceLocation.h"
-#include "core/dom/ExecutionContextTask.h"
-#include "core/dom/SuspendableObject.h"
-#include "core/dom/TaskRunnerHelper.h"
+#include "bindings/core/v8/V8BindingForCore.h"
+#include "core/dom/PausableObject.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/events/ErrorEvent.h"
-#include "core/events/EventTarget.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/PublicURLManager.h"
 #include "core/inspector/ConsoleMessage.h"
@@ -43,34 +41,48 @@
 #include "platform/loader/fetch/MemoryCache.h"
 #include "platform/weborigin/SecurityPolicy.h"
 #include "platform/wtf/PtrUtil.h"
+#include "public/platform/TaskType.h"
 
 namespace blink {
 
 ExecutionContext::ExecutionContext()
     : circular_sequential_id_(0),
       in_dispatch_error_event_(false),
-      is_context_suspended_(false),
+      is_context_paused_(false),
       is_context_destroyed_(false),
       window_interaction_tokens_(0),
       referrer_policy_(kReferrerPolicyDefault) {}
 
 ExecutionContext::~ExecutionContext() {}
 
+// static
 ExecutionContext* ExecutionContext::From(const ScriptState* script_state) {
   v8::HandleScope scope(script_state->GetIsolate());
   return ToExecutionContext(script_state->GetContext());
 }
 
-void ExecutionContext::SuspendSuspendableObjects() {
-  DCHECK(!is_context_suspended_);
-  NotifySuspendingSuspendableObjects();
-  is_context_suspended_ = true;
+// static
+ExecutionContext* ExecutionContext::ForCurrentRealm(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
+  return ToExecutionContext(info.GetIsolate()->GetCurrentContext());
 }
 
-void ExecutionContext::ResumeSuspendableObjects() {
-  DCHECK(is_context_suspended_);
-  is_context_suspended_ = false;
-  NotifyResumingSuspendableObjects();
+// static
+ExecutionContext* ExecutionContext::ForRelevantRealm(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
+  return ToExecutionContext(info.Holder()->CreationContext());
+}
+
+void ExecutionContext::PausePausableObjects() {
+  DCHECK(!is_context_paused_);
+  NotifySuspendingPausableObjects();
+  is_context_paused_ = true;
+}
+
+void ExecutionContext::UnpausePausableObjects() {
+  DCHECK(is_context_paused_);
+  is_context_paused_ = false;
+  NotifyResumingPausableObjects();
 }
 
 void ExecutionContext::NotifyContextDestroyed() {
@@ -78,24 +90,23 @@ void ExecutionContext::NotifyContextDestroyed() {
   ContextLifecycleNotifier::NotifyContextDestroyed();
 }
 
-void ExecutionContext::SuspendScheduledTasks() {
-  SuspendSuspendableObjects();
-  TasksWereSuspended();
+void ExecutionContext::PauseScheduledTasks() {
+  PausePausableObjects();
+  TasksWerePaused();
 }
 
-void ExecutionContext::ResumeScheduledTasks() {
-  ResumeSuspendableObjects();
-  TasksWereResumed();
+void ExecutionContext::UnpauseScheduledTasks() {
+  UnpausePausableObjects();
+  TasksWereUnpaused();
 }
 
-void ExecutionContext::SuspendSuspendableObjectIfNeeded(
-    SuspendableObject* object) {
+void ExecutionContext::PausePausableObjectIfNeeded(PausableObject* object) {
 #if DCHECK_IS_ON()
   DCHECK(Contains(object));
 #endif
-  // Ensure all SuspendableObjects are suspended also newly created ones.
-  if (is_context_suspended_)
-    object->Suspend();
+  // Ensure all PausableObjects are paused also newly created ones.
+  if (is_context_paused_)
+    object->Pause();
 }
 
 bool ExecutionContext::ShouldSanitizeScriptError(
@@ -125,7 +136,7 @@ void ExecutionContext::DispatchErrorEvent(ErrorEvent* error_event,
     return;
   for (ErrorEvent* e : pending_exceptions_)
     ExceptionThrown(e);
-  pending_exceptions_.Clear();
+  pending_exceptions_.clear();
 }
 
 bool ExecutionContext::DispatchErrorEventInternal(
@@ -163,16 +174,12 @@ SecurityOrigin* ExecutionContext::GetSecurityOrigin() {
   return GetSecurityContext().GetSecurityOrigin();
 }
 
+SecurityOrigin* ExecutionContext::GetMutableSecurityOrigin() {
+  return GetSecurityContext().GetMutableSecurityOrigin();
+}
+
 ContentSecurityPolicy* ExecutionContext::GetContentSecurityPolicy() {
   return GetSecurityContext().GetContentSecurityPolicy();
-}
-
-const KURL& ExecutionContext::Url() const {
-  return VirtualURL();
-}
-
-KURL ExecutionContext::CompleteURL(const String& url) const {
-  return VirtualCompleteURL(url);
 }
 
 void ExecutionContext::AllowWindowInteraction() {
@@ -189,10 +196,9 @@ bool ExecutionContext::IsWindowInteractionAllowed() const {
   return window_interaction_tokens_ > 0;
 }
 
-bool ExecutionContext::IsSecureContext(
-    const SecureContextCheck privilege_context_check) const {
+bool ExecutionContext::IsSecureContext() const {
   String unused_error_message;
-  return IsSecureContext(unused_error_message, privilege_context_check);
+  return IsSecureContext(unused_error_message);
 }
 
 String ExecutionContext::OutgoingReferrer() const {
@@ -216,7 +222,9 @@ void ExecutionContext::ParseAndSetReferrerPolicy(const String& policies,
                  ? "'always', 'default', 'never', 'origin-when-crossorigin', "
                  : "") +
             "'no-referrer', 'no-referrer-when-downgrade', 'origin', "
-            "'origin-when-cross-origin', or 'unsafe-url'. The referrer policy "
+            "'origin-when-cross-origin', 'same-origin', 'strict-origin', "
+            "'strict-origin-when-cross-origin', or 'unsafe-url'. The referrer "
+            "policy "
             "has been left unchanged."));
     return;
   }
@@ -227,9 +235,9 @@ void ExecutionContext::ParseAndSetReferrerPolicy(const String& policies,
 void ExecutionContext::SetReferrerPolicy(ReferrerPolicy referrer_policy) {
   // When a referrer policy has already been set, the latest value takes
   // precedence.
-  UseCounter::Count(this, UseCounter::kSetReferrerPolicy);
+  UseCounter::Count(this, WebFeature::kSetReferrerPolicy);
   if (referrer_policy_ != kReferrerPolicyDefault)
-    UseCounter::Count(this, UseCounter::kResetReferrerPolicy);
+    UseCounter::Count(this, WebFeature::kResetReferrerPolicy);
 
   referrer_policy_ = referrer_policy;
 }
@@ -238,7 +246,7 @@ void ExecutionContext::RemoveURLFromMemoryCache(const KURL& url) {
   GetMemoryCache()->RemoveURLFromCache(url);
 }
 
-DEFINE_TRACE(ExecutionContext) {
+void ExecutionContext::Trace(blink::Visitor* visitor) {
   visitor->Trace(public_url_manager_);
   visitor->Trace(pending_exceptions_);
   ContextLifecycleNotifier::Trace(visitor);

@@ -71,7 +71,7 @@ bool DOMFilePath::IsParentOf(const String& parent, const String& may_be_child) {
   if (parent == DOMFilePath::kRoot && may_be_child != DOMFilePath::kRoot)
     return true;
   if (parent.length() >= may_be_child.length() ||
-      !may_be_child.StartsWith(parent, kTextCaseUnicodeInsensitive))
+      !may_be_child.StartsWithIgnoringCase(parent))
     return false;
   if (may_be_child[parent.length()] != DOMFilePath::kSeparator)
     return false;
@@ -108,12 +108,12 @@ bool DOMFilePath::IsValidPath(const String& path) {
     return true;
 
   // Embedded NULs are not allowed.
-  if (path.Find(static_cast<UChar>(0)) != WTF::kNotFound)
+  if (path.find(static_cast<UChar>(0)) != WTF::kNotFound)
     return false;
 
   // While not [yet] restricted by the spec, '\\' complicates implementation for
   // Chromium.
-  if (path.Find('\\') != WTF::kNotFound)
+  if (path.find('\\') != WTF::kNotFound)
     return false;
 
   // This method is only called on fully-evaluated absolute paths. Any sign of

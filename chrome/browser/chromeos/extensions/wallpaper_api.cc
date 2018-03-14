@@ -12,8 +12,8 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/sequenced_task_runner.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/worker_pool.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/extensions/wallpaper_private_api.h"
@@ -27,7 +27,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
-#include "components/wallpaper/wallpaper_layout.h"
+#include "components/wallpaper/wallpaper_info.h"
 #include "extensions/browser/event_router.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_status_code.h"
@@ -152,15 +152,9 @@ void WallpaperSetWallpaperFunction::OnWallpaperDecoded(
   chromeos::WallpaperManager* wallpaper_manager =
       chromeos::WallpaperManager::Get();
   base::FilePath thumbnail_path = wallpaper_manager->GetCustomWallpaperPath(
-      wallpaper::kThumbnailWallpaperSubDir, wallpaper_files_id_,
+      chromeos::kThumbnailWallpaperSubDir, wallpaper_files_id_,
       params_->details.filename);
 
-  scoped_refptr<base::SequencedTaskRunner> task_runner =
-      BrowserThread::GetBlockingPool()
-          ->GetSequencedTaskRunnerWithShutdownBehavior(
-              BrowserThread::GetBlockingPool()->GetNamedSequenceToken(
-                  wallpaper::kWallpaperSequenceTokenName),
-              base::SequencedWorkerPool::BLOCK_SHUTDOWN);
   wallpaper::WallpaperLayout layout = wallpaper_api_util::GetLayoutEnum(
       extensions::api::wallpaper::ToString(params_->details.layout));
   wallpaper_api_util::RecordCustomWallpaperLayout(layout);
@@ -170,7 +164,7 @@ void WallpaperSetWallpaperFunction::OnWallpaperDecoded(
       user_manager::UserManager::Get()->GetActiveUser()->GetAccountId();
   wallpaper_manager->SetCustomWallpaper(
       account_id_, wallpaper_files_id_, params_->details.filename, layout,
-      user_manager::User::CUSTOMIZED, image, update_wallpaper);
+      wallpaper::CUSTOMIZED, image, update_wallpaper);
   unsafe_wallpaper_decoder_ = NULL;
 
   // Save current extension name. It will be displayed in the component
@@ -196,16 +190,16 @@ void WallpaperSetWallpaperFunction::OnWallpaperDecoded(
   std::unique_ptr<gfx::ImageSkia> deep_copy(image.DeepCopy());
   // Generates thumbnail before call api function callback. We can then
   // request thumbnail in the javascript callback.
-  task_runner->PostTask(
+  GetBlockingTaskRunner()->PostTask(
       FROM_HERE,
-      base::Bind(&WallpaperSetWallpaperFunction::GenerateThumbnail, this,
-                 thumbnail_path, base::Passed(std::move(deep_copy))));
+      base::BindOnce(&WallpaperSetWallpaperFunction::GenerateThumbnail, this,
+                     thumbnail_path, std::move(deep_copy)));
 }
 
 void WallpaperSetWallpaperFunction::GenerateThumbnail(
     const base::FilePath& thumbnail_path,
     std::unique_ptr<gfx::ImageSkia> image) {
-  wallpaper::AssertCalledOnWallpaperSequence();
+  chromeos::AssertCalledOnWallpaperSequence(GetBlockingTaskRunner());
   if (!base::PathExists(thumbnail_path.DirName()))
     base::CreateDirectory(thumbnail_path.DirName());
 
@@ -216,13 +210,13 @@ void WallpaperSetWallpaperFunction::GenerateThumbnail(
       image->height(), &original_data, NULL);
   chromeos::WallpaperManager::Get()->ResizeImage(
       *image, wallpaper::WALLPAPER_LAYOUT_STRETCH,
-      wallpaper::kWallpaperThumbnailWidth, wallpaper::kWallpaperThumbnailHeight,
+      chromeos::kWallpaperThumbnailWidth, chromeos::kWallpaperThumbnailHeight,
       &thumbnail_data, NULL);
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&WallpaperSetWallpaperFunction::ThumbnailGenerated, this,
-                 base::RetainedRef(original_data),
-                 base::RetainedRef(thumbnail_data)));
+      base::BindOnce(&WallpaperSetWallpaperFunction::ThumbnailGenerated, this,
+                     base::RetainedRef(original_data),
+                     base::RetainedRef(thumbnail_data)));
 }
 
 void WallpaperSetWallpaperFunction::ThumbnailGenerated(

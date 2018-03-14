@@ -35,10 +35,11 @@ AmbientLightSensor::AmbientLightSensor(ExecutionContext* execution_context,
              SensorType::AMBIENT_LIGHT) {}
 
 double AmbientLightSensor::illuminance(bool& is_null) const {
-  return ReadingValue(0, is_null);
+  INIT_IS_NULL_AND_RETURN(is_null, 0.0);
+  return proxy()->reading().als.value;
 }
 
-DEFINE_TRACE(AmbientLightSensor) {
+void AmbientLightSensor::Trace(blink::Visitor* visitor) {
   Sensor::Trace(visitor);
 }
 

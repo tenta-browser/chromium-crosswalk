@@ -14,7 +14,7 @@ namespace gpu {
 class GpuMemoryBufferManager;
 }
 
-namespace display_compositor {
+namespace viz {
 class BufferQueue;
 class GLHelper;
 }
@@ -28,7 +28,7 @@ class GpuSurfacelessBrowserCompositorOutputSurface
       scoped_refptr<ui::ContextProviderCommandBuffer> context,
       gpu::SurfaceHandle surface_handle,
       const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
-      std::unique_ptr<display_compositor::CompositorOverlayCandidateValidator>
+      std::unique_ptr<viz::CompositorOverlayCandidateValidator>
           overlay_candidate_validator,
       unsigned int target,
       unsigned int internalformat,
@@ -36,8 +36,8 @@ class GpuSurfacelessBrowserCompositorOutputSurface
       gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager);
   ~GpuSurfacelessBrowserCompositorOutputSurface() override;
 
-  // cc::OutputSurface implementation.
-  void SwapBuffers(cc::OutputSurfaceFrame frame) override;
+  // viz::OutputSurface implementation.
+  void SwapBuffers(viz::OutputSurfaceFrame frame) override;
   void BindFramebuffer() override;
   uint32_t GetFramebufferCopyTextureFormat() override;
   void Reshape(const gfx::Size& size,
@@ -47,19 +47,19 @@ class GpuSurfacelessBrowserCompositorOutputSurface
                bool use_stencil) override;
   bool IsDisplayedAsOverlayPlane() const override;
   unsigned GetOverlayTextureId() const override;
+  gfx::BufferFormat GetOverlayBufferFormat() const override;
 
   // BrowserCompositorOutputSurface implementation.
   void OnGpuSwapBuffersCompleted(
-      const std::vector<ui::LatencyInfo>& latency_info,
-      gfx::SwapResult result,
+      const gfx::SwapResponse& response,
       const gpu::GpuProcessHostedCALayerTreeParamsMac* params_mac) override;
 
  private:
   gfx::Size reshape_size_;
   gfx::Size swap_size_;
 
-  std::unique_ptr<display_compositor::GLHelper> gl_helper_;
-  std::unique_ptr<display_compositor::BufferQueue> buffer_queue_;
+  std::unique_ptr<viz::GLHelper> gl_helper_;
+  std::unique_ptr<viz::BufferQueue> buffer_queue_;
   gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager_;
 };
 

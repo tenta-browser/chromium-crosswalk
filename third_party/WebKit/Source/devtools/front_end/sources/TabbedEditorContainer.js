@@ -45,14 +45,14 @@ Sources.TabbedEditorContainer = class extends Common.Object {
   /**
    * @param {!Sources.TabbedEditorContainerDelegate} delegate
    * @param {!Common.Setting} setting
-   * @param {string} placeholderText
+   * @param {!Element} placeholderElement
    */
-  constructor(delegate, setting, placeholderText) {
+  constructor(delegate, setting, placeholderElement) {
     super();
     this._delegate = delegate;
 
     this._tabbedPane = new UI.TabbedPane();
-    this._tabbedPane.setPlaceholderText(placeholderText);
+    this._tabbedPane.setPlaceholderElement(placeholderElement);
     this._tabbedPane.setTabDelegate(new Sources.EditorContainerTabDelegate(this));
 
     this._tabbedPane.setCloseableTabs(true);
@@ -240,6 +240,8 @@ Sources.TabbedEditorContainer = class extends Common.Object {
     var range = /** @type {!TextUtils.TextRange} */ (event.data);
     this._history.updateSelectionRange(this._currentFile.url(), range);
     this._history.save(this._previouslyViewedFilesSetting);
+
+    Extensions.extensionServer.sourceSelectionChanged(this._currentFile.url(), range);
   }
 
   /**
@@ -281,7 +283,7 @@ Sources.TabbedEditorContainer = class extends Common.Object {
   _titleForFile(uiSourceCode) {
     var maxDisplayNameLength = 30;
     var title = uiSourceCode.displayName(true).trimMiddle(maxDisplayNameLength);
-    if (uiSourceCode.isDirty() || Persistence.persistence.hasUnsavedCommittedChanges(uiSourceCode))
+    if (uiSourceCode.isDirty())
       title += '*';
     return title;
   }

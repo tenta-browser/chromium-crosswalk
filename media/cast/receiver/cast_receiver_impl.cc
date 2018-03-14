@@ -46,7 +46,7 @@ CastReceiverImpl::CastReceiverImpl(
       audio_codec_(audio_config.codec),
       video_codec_(video_config.codec) {}
 
-CastReceiverImpl::~CastReceiverImpl() {}
+CastReceiverImpl::~CastReceiverImpl() = default;
 
 void CastReceiverImpl::ReceivePacket(std::unique_ptr<Packet> packet) {
   const uint8_t* const data = &packet->front();
@@ -143,17 +143,15 @@ void CastReceiverImpl::DecodeEncodedVideoFrame(
     std::unique_ptr<EncodedFrame> encoded_frame) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
   if (!encoded_frame) {
-    callback.Run(
-        make_scoped_refptr<VideoFrame>(NULL), base::TimeTicks(), false);
+    callback.Run(base::WrapRefCounted<VideoFrame>(NULL), base::TimeTicks(),
+                 false);
     return;
   }
 
   // Used by chrome/browser/extension/api/cast_streaming/performance_test.cc
-  TRACE_EVENT_INSTANT2(
-      "cast_perf_test", "PullEncodedVideoFrame",
-      TRACE_EVENT_SCOPE_THREAD,
-      "rtp_timestamp", encoded_frame->rtp_timestamp.lower_32_bits(),
-      "render_time", encoded_frame->reference_time.ToInternalValue());
+  TRACE_EVENT_INSTANT1("cast_perf_test", "PullEncodedVideoFrame",
+                       TRACE_EVENT_SCOPE_THREAD, "rtp_timestamp",
+                       encoded_frame->rtp_timestamp.lower_32_bits());
 
   if (!video_decoder_)
     video_decoder_.reset(new VideoDecoder(cast_environment_, video_codec_));
@@ -217,10 +215,10 @@ void CastReceiverImpl::EmitDecodedVideoFrame(
     cast_environment->logger()->DispatchFrameEvent(std::move(playout_event));
 
     // Used by chrome/browser/extension/api/cast_streaming/performance_test.cc
-    TRACE_EVENT_INSTANT1(
-        "cast_perf_test", "FrameDecoded",
-        TRACE_EVENT_SCOPE_THREAD,
-        "rtp_timestamp", rtp_timestamp.lower_32_bits());
+    TRACE_EVENT_INSTANT2("cast_perf_test", "VideoFrameDecoded",
+                         TRACE_EVENT_SCOPE_THREAD, "rtp_timestamp",
+                         rtp_timestamp.lower_32_bits(), "playout_time",
+                         (playout_time - base::TimeTicks()).InMicroseconds());
   }
 
   callback.Run(video_frame, playout_time, is_continuous);

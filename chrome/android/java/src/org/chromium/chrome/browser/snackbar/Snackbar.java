@@ -4,7 +4,7 @@
 
 package org.chromium.chrome.browser.snackbar;
 
-import android.graphics.Bitmap;
+import android.graphics.drawable.Drawable;
 
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.browser.snackbar.SnackbarManager.SnackbarController;
@@ -55,6 +55,12 @@ public class Snackbar {
     // Obsolete; don't use: UMA_BLIMP = 15;
     public static final int UMA_DATA_REDUCTION_PROMO = 16;
     public static final int UMA_HISTORY_LINK_COPIED = 17;
+    public static final int UMA_TRANSLATE_ALWAYS = 18;
+    public static final int UMA_TRANSLATE_NEVER = 19;
+    public static final int UMA_TRANSLATE_NEVER_SITE = 20;
+    public static final int UMA_SNIPPET_FETCH_FAILED = 21;
+    public static final int UMA_CHROME_HOME_OPT_OUT_SURVEY = 22;
+    public static final int UMA_SNIPPET_FETCH_NO_NEW_SUGGESTIONS = 23;
 
     private SnackbarController mController;
     private CharSequence mText;
@@ -62,9 +68,10 @@ public class Snackbar {
     private String mActionText;
     private Object mActionData;
     private int mBackgroundColor;
+    private int mTextApperanceResId;
     private boolean mSingleLine = true;
     private int mDurationMs;
-    private Bitmap mProfileImage;
+    private Drawable mProfileImage;
     private int mType;
     private int mIdentifier = UMA_UNKNOWN;
 
@@ -117,7 +124,7 @@ public class Snackbar {
      * If null, there won't be a profile image. The ability to have an icon is exclusive to
      * identity snackbars.
      */
-    public Snackbar setProfileImage(Bitmap profileImage) {
+    public Snackbar setProfileImage(Drawable profileImage) {
         mProfileImage = profileImage;
         return this;
     }
@@ -144,6 +151,15 @@ public class Snackbar {
      */
     public Snackbar setBackgroundColor(int color) {
         mBackgroundColor = color;
+        return this;
+    }
+
+    /**
+     * Sets the text appearance for the snackbar. If 0, the snackbar will use default text
+     * appearance.
+     */
+    public Snackbar setTextAppearance(int resId) {
+        mTextApperanceResId = resId;
         return this;
     }
 
@@ -191,9 +207,16 @@ public class Snackbar {
     }
 
     /**
+     * If method returns zero, then default text appearance for snackbar will be used.
+     */
+    int getTextAppearance() {
+        return mTextApperanceResId;
+    }
+
+    /**
      * If method returns null, then no profileImage will be shown in snackbar.
      */
-    Bitmap getProfileImage() {
+    Drawable getProfileImage() {
         return mProfileImage;
     }
 

@@ -6,11 +6,18 @@
 
 #import <Foundation/Foundation.h>
 
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/test/test_simple_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #import "ios/net/cookies/cookie_store_ios.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_options.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace net {
 
@@ -41,11 +48,11 @@ void TestPersistentCookieStore::RunLoadedCallback() {
   cookies.push_back(std::move(cookie));
 
   std::unique_ptr<net::CanonicalCookie> bad_canonical_cookie(
-      net::CanonicalCookie::Create(
-          GURL("http://domain/"), "name", "\x81r\xe4\xbd\xa0\xe5\xa5\xbd",
-          std::string(), "/path/",
+      base::MakeUnique<net::CanonicalCookie>(
+          "name", "\x81r\xe4\xbd\xa0\xe5\xa5\xbd", "domain", "/path/",
           base::Time(),  // creation
           base::Time(),  // expires
+          base::Time(),  // last accessed
           false,         // secure
           false,         // httponly
           net::CookieSameSite::DEFAULT_MODE, net::COOKIE_PRIORITY_DEFAULT));
@@ -79,7 +86,10 @@ void TestPersistentCookieStore::DeleteCookie(const net::CanonicalCookie& cc) {}
 
 void TestPersistentCookieStore::SetForceKeepSessionState() {}
 
-void TestPersistentCookieStore::Flush(const base::Closure& callback) {
+void TestPersistentCookieStore::SetBeforeFlushCallback(
+    base::RepeatingClosure callback) {}
+
+void TestPersistentCookieStore::Flush(base::OnceClosure callback) {
   flushed_ = true;
 }
 
@@ -103,6 +113,33 @@ void GetCookieCallback::Run(const std::string& cookie_line) {
   ASSERT_FALSE(did_run_);
   did_run_ = true;
   cookie_line_ = cookie_line;
+}
+
+#pragma mark -
+#pragma mark TestCookieStoreIOSClient
+
+TestCookieStoreIOSClient::TestCookieStoreIOSClient() {}
+
+#pragma mark -
+#pragma mark TestCookieStoreIOSClient methods
+
+scoped_refptr<base::SequencedTaskRunner>
+TestCookieStoreIOSClient::GetTaskRunner() const {
+  return base::ThreadTaskRunnerHandle::Get();
+}
+
+#pragma mark -
+#pragma mark ScopedTestingCookieStoreIOSClient
+
+ScopedTestingCookieStoreIOSClient::ScopedTestingCookieStoreIOSClient(
+    std::unique_ptr<CookieStoreIOSClient> cookie_store_client)
+    : cookie_store_client_(std::move(cookie_store_client)),
+      original_client_(GetCookieStoreIOSClient()) {
+  SetCookieStoreIOSClient(cookie_store_client_.get());
+}
+
+ScopedTestingCookieStoreIOSClient::~ScopedTestingCookieStoreIOSClient() {
+  SetCookieStoreIOSClient(original_client_);
 }
 
 //------------------------------------------------------------------------------

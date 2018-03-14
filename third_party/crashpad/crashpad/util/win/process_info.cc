@@ -28,6 +28,7 @@
 #include "base/process/memory.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
+#include "util/misc/from_pointer_cast.h"
 #include "util/numeric/safe_assignment.h"
 #include "util/win/get_function.h"
 #include "util/win/handle.h"
@@ -133,7 +134,7 @@ bool RegionIsAccessible(const MEMORY_BASIC_INFORMATION64& memory_info) {
 MEMORY_BASIC_INFORMATION64 MemoryBasicInformationToMemoryBasicInformation64(
     const MEMORY_BASIC_INFORMATION& mbi) {
   MEMORY_BASIC_INFORMATION64 mbi64 = {0};
-  mbi64.BaseAddress = reinterpret_cast<ULONGLONG>(mbi.BaseAddress);
+  mbi64.BaseAddress = FromPointerCast<ULONGLONG>(mbi.BaseAddress);
   mbi64.AllocationBase = reinterpret_cast<ULONGLONG>(mbi.AllocationBase);
   mbi64.AllocationProtect = mbi.AllocationProtect;
   mbi64.RegionSize = mbi.RegionSize;
@@ -328,7 +329,7 @@ bool ReadProcessData(HANDLE process,
 bool ReadMemoryInfo(HANDLE process, bool is_64_bit, ProcessInfo* process_info) {
   DCHECK(process_info->memory_info_.empty());
 
-  const WinVMAddress min_address = 0;
+  constexpr WinVMAddress min_address = 0;
   // We can't use GetSystemInfo() to get the address space range for another
   // process. VirtualQueryEx() will fail with ERROR_INVALID_PARAMETER if the
   // address is above the highest memory address accessible to the process, so
@@ -627,20 +628,23 @@ ProcessInfo::GetReadableRanges(
 bool ProcessInfo::LoggingRangeIsFullyReadable(
     const CheckedRange<WinVMAddress, WinVMSize>& range) const {
   const auto ranges = GetReadableRanges(range);
-  if (ranges.size() != 1) {
+  if (ranges.empty()) {
     LOG(ERROR) << base::StringPrintf(
         "range at 0x%llx, size 0x%llx fully unreadable",
         range.base(),
         range.size());
     return false;
   }
-  if (ranges[0].base() != range.base() || ranges[0].size() != range.size()) {
+
+  if (ranges.size() != 1 ||
+      ranges[0].base() != range.base() || ranges[0].size() != range.size()) {
     LOG(ERROR) << base::StringPrintf(
-        "some of range at 0x%llx, size 0x%llx unreadable",
+        "range at 0x%llx, size 0x%llx partially unreadable",
         range.base(),
         range.size());
     return false;
   }
+
   return true;
 }
 

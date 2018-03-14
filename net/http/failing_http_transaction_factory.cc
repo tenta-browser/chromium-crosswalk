@@ -41,8 +41,8 @@ class FailingHttpTransaction : public HttpTransaction {
             const CompletionCallback& callback,
             const NetLogWithSource& net_log) override;
   int RestartIgnoringLastError(const CompletionCallback& callback) override;
-  int RestartWithCertificate(X509Certificate* client_cert,
-                             SSLPrivateKey* client_private_key,
+  int RestartWithCertificate(scoped_refptr<X509Certificate> client_cert,
+                             scoped_refptr<SSLPrivateKey> client_private_key,
                              const CompletionCallback& callback) override;
   int RestartWithAuth(const AuthCredentials& credentials,
                       const CompletionCallback& callback) override;
@@ -70,6 +70,8 @@ class FailingHttpTransaction : public HttpTransaction {
       const BeforeHeadersSentCallback& callback) override;
   int ResumeNetworkStart() override;
   void GetConnectionAttempts(ConnectionAttempts* out) const override;
+  void SetRequestHeadersCallback(RequestHeadersCallback) override {}
+  void SetResponseHeadersCallback(ResponseHeadersCallback) override {}
 
  private:
   Error error_;
@@ -80,7 +82,7 @@ FailingHttpTransaction::FailingHttpTransaction(Error error) : error_(error) {
   DCHECK_LT(error, OK);
 }
 
-FailingHttpTransaction::~FailingHttpTransaction() {}
+FailingHttpTransaction::~FailingHttpTransaction() = default;
 
 int FailingHttpTransaction::Start(const HttpRequestInfo* request_info,
                                   const CompletionCallback& callback,
@@ -96,8 +98,8 @@ int FailingHttpTransaction::RestartIgnoringLastError(
 }
 
 int FailingHttpTransaction::RestartWithCertificate(
-    X509Certificate* client_cert,
-    SSLPrivateKey* client_private_key,
+    scoped_refptr<X509Certificate> client_cert,
+    scoped_refptr<SSLPrivateKey> client_private_key,
     const CompletionCallback& callback) {
   return ERR_FAILED;
 }
@@ -195,7 +197,7 @@ FailingHttpTransactionFactory::FailingHttpTransactionFactory(
   DCHECK_LT(error, OK);
 }
 
-FailingHttpTransactionFactory::~FailingHttpTransactionFactory() {}
+FailingHttpTransactionFactory::~FailingHttpTransactionFactory() = default;
 
 // HttpTransactionFactory:
 int FailingHttpTransactionFactory::CreateTransaction(

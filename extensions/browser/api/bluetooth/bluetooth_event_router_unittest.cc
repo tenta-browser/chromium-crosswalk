@@ -42,12 +42,13 @@ namespace bluetooth = api::bluetooth;
 class BluetoothEventRouterTest : public ExtensionsTest {
  public:
   BluetoothEventRouterTest()
-      : mock_adapter_(new testing::StrictMock<device::MockBluetoothAdapter>()) {
+      : ExtensionsTest(std::make_unique<content::TestBrowserThreadBundle>()),
+        mock_adapter_(new testing::StrictMock<device::MockBluetoothAdapter>()) {
   }
 
   void SetUp() override {
     ExtensionsTest::SetUp();
-    router_ = base::MakeUnique<BluetoothEventRouter>(browser_context());
+    router_ = std::make_unique<BluetoothEventRouter>(browser_context());
     router_->SetAdapterForTest(mock_adapter_);
   }
 
@@ -59,7 +60,6 @@ class BluetoothEventRouterTest : public ExtensionsTest {
   }
 
  protected:
-  content::TestBrowserThreadBundle test_browser_thread_bundle_;
   testing::StrictMock<device::MockBluetoothAdapter>* mock_adapter_;
   std::unique_ptr<BluetoothEventRouter> router_;
 };
@@ -94,8 +94,8 @@ TEST_F(BluetoothEventRouterTest, UnloadExtension) {
           .SetID(kTestExtensionId)
           .Build();
 
-  ExtensionRegistry::Get(browser_context())->TriggerOnUnloaded(
-      extension.get(), UnloadedExtensionInfo::REASON_DISABLE);
+  ExtensionRegistry::Get(browser_context())
+      ->TriggerOnUnloaded(extension.get(), UnloadedExtensionReason::DISABLE);
 
   EXPECT_CALL(*mock_adapter_, RemoveObserver(testing::_)).Times(1);
 }

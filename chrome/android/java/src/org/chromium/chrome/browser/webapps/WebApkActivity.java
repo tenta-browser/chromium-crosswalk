@@ -4,22 +4,20 @@
 
 package org.chromium.chrome.browser.webapps;
 
+import static org.chromium.webapk.lib.common.WebApkConstants.WEBAPK_PACKAGE_PREFIX;
+
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.SystemClock;
 
-import org.chromium.base.ContextUtils;
 import org.chromium.base.library_loader.LibraryProcessType;
-import org.chromium.base.process_launcher.ChildProcessCreationParams;
-import org.chromium.chrome.browser.externalnav.ExternalNavigationParams;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.browser.metrics.WebApkUma;
-import org.chromium.chrome.browser.tab.BrowserControlsVisibilityDelegate;
-import org.chromium.chrome.browser.tab.InterceptNavigationDelegateImpl;
-import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tab.TabDelegateFactory;
-import org.chromium.chrome.browser.tab.TabRedirectHandler;
-import org.chromium.components.navigation_interception.NavigationParams;
-import org.chromium.webapk.lib.client.WebApkServiceConnectionManager;
+import org.chromium.chrome.browser.util.IntentUtils;
+import org.chromium.content.browser.ChildProcessCreationParams;
+import org.chromium.webapk.lib.common.WebApkConstants;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * An Activity is designed for WebAPKs (native Android apps) and displays a webapp in a nearly
@@ -38,6 +36,27 @@ public class WebApkActivity extends WebappActivity {
     /** The start time that the activity becomes focused. */
     private long mStartTime;
 
+    private static final String TAG = "cr_WebApkActivity";
+
+    /**
+     * Tries extracting the WebAPK short name from the passed in intent. Returns null if the intent
+     * does not launch a WebApkActivity. This method is slow. It makes several PackageManager calls.
+     */
+    public static String slowExtractNameFromIntentIfTargetIsWebApk(Intent intent) {
+        // Check for intents targetted at WebApkActivity and WebApkActivity0-9.
+        if (!intent.getComponent().getClassName().startsWith(WebApkActivity.class.getName())) {
+            return null;
+        }
+
+        WebApkInfo info = WebApkInfo.create(intent);
+        return (info != null) ? info.shortName() : null;
+    }
+
+    @Override
+    protected boolean isVerified() {
+        return true;
+    }
+
     @Override
     protected WebappInfo createWebappInfo(Intent intent) {
         return (intent == null) ? WebApkInfo.createEmpty() : WebApkInfo.create(intent);
@@ -50,38 +69,14 @@ public class WebApkActivity extends WebappActivity {
     }
 
     @Override
-    protected TabDelegateFactory createTabDelegateFactory() {
-        return new WebappDelegateFactory(this) {
-            @Override
-            public InterceptNavigationDelegateImpl createInterceptNavigationDelegate(Tab tab) {
-                return new InterceptNavigationDelegateImpl(tab) {
-                    @Override
-                    public ExternalNavigationParams.Builder buildExternalNavigationParams(
-                            NavigationParams navigationParams,
-                            TabRedirectHandler tabRedirectHandler, boolean shouldCloseTab) {
-                        ExternalNavigationParams.Builder builder =
-                                super.buildExternalNavigationParams(
-                                        navigationParams, tabRedirectHandler, shouldCloseTab);
-                        builder.setWebApkPackageName(getWebApkPackageName());
-                        return builder;
-                    }
-                };
-            }
+    public boolean shouldPreferLightweightFre(Intent intent) {
+        // We cannot use getWebApkPackageName() because {@link WebappActivity#preInflationStartup()}
+        // may not have been called yet.
+        String webApkPackageName =
+                IntentUtils.safeGetStringExtra(intent, WebApkConstants.EXTRA_WEBAPK_PACKAGE_NAME);
 
-            @Override
-            public boolean canShowAppBanners(Tab tab) {
-                // Do not show app banners for WebAPKs regardless of the current page URL.
-                // A WebAPK can display a page outside of its WebAPK scope if a page within the
-                // WebAPK scope navigates via JavaScript while the WebAPK is in the background.
-                return false;
-            }
-
-            @Override
-            public BrowserControlsVisibilityDelegate createBrowserControlsVisibilityDelegate(
-                    Tab tab) {
-                return new WebApkBrowserControlsDelegate(WebApkActivity.this, tab);
-            }
-        };
+        // Use the lightweight FRE for unbound WebAPKs.
+        return webApkPackageName != null && !webApkPackageName.startsWith(WEBAPK_PACKAGE_PREFIX);
     }
 
     @Override
@@ -92,25 +87,8 @@ public class WebApkActivity extends WebappActivity {
     }
 
     @Override
-    public void onStop() {
-        super.onStop();
-        WebApkServiceConnectionManager.getInstance().disconnect(
-                ContextUtils.getApplicationContext(), getWebApkPackageName());
-    }
-
-    @Override
-    public void onStopWithNative() {
-        super.onStopWithNative();
-        if (mUpdateManager != null && mUpdateManager.requestPendingUpdate()) {
-            WebApkUma.recordUpdateRequestSent(WebApkUma.UPDATE_REQUEST_SENT_ONSTOP);
-        }
-    }
-
-    /**
-     * Returns the WebAPK's package name.
-     */
-    public String getWebApkPackageName() {
-        return getWebappInfo().webApkPackageName();
+    public String getNativeClientPackageName() {
+        return getWebappInfo().apkPackageName();
     }
 
     @Override
@@ -131,32 +109,30 @@ public class WebApkActivity extends WebappActivity {
     }
 
     @Override
-    protected void onDeferredStartupWithStorage(WebappDataStorage storage) {
-        super.onDeferredStartupWithStorage(storage);
+    protected void recordIntentToCreationTime(long timeMs) {
+        super.recordIntentToCreationTime(timeMs);
 
-        mUpdateManager = new WebApkUpdateManager(WebApkActivity.this, storage);
-        mUpdateManager.updateIfNeeded(getActivityTab(),
-                (WebApkInfo) mWebappInfo);
+        RecordHistogram.recordTimesHistogram(
+                "MobileStartup.IntentToCreationTime.WebApk", timeMs, TimeUnit.MILLISECONDS);
     }
 
     @Override
-    protected void onDeferredStartupWithNullStorage() {
-        super.onDeferredStartupWithNullStorage();
+    protected void onDeferredStartupWithStorage(WebappDataStorage storage) {
+        super.onDeferredStartupWithStorage(storage);
 
-        // Register the WebAPK. The WebAPK is not registered when it is created so it has to be
-        // registered now. The WebAPK may also become unregistered after a user clears Chrome's
-        // data.
-        WebappRegistry.getInstance().register(
-                mWebappInfo.id(), new WebappRegistry.FetchWebappDataStorageCallback() {
-                    @Override
-                    public void onWebappDataStorageRetrieved(WebappDataStorage storage) {
-                        // Initialize the time of the last is-update-needed check with the
-                        // registration time. This prevents checking for updates on the first run.
-                        storage.updateTimeOfLastCheckForUpdatedWebManifest();
+        WebApkInfo info = (WebApkInfo) mWebappInfo;
+        WebApkUma.recordShellApkVersion(info.shellApkVersion(), info.apkPackageName());
 
-                        onDeferredStartupWithStorage(storage);
-                    }
-                });
+        mUpdateManager = new WebApkUpdateManager(storage);
+        mUpdateManager.updateIfNeeded(getActivityTab(), info);
+    }
+
+    @Override
+    protected void onUpdatedLastUsedTime(
+            WebappDataStorage storage, boolean previouslyLaunched, long previousUsageTimestamp) {
+        if (previouslyLaunched) {
+            WebApkUma.recordLaunchInterval(storage.getLastUsedTime() - previousUsageTimestamp);
+        }
     }
 
     @Override
@@ -183,8 +159,10 @@ public class WebApkActivity extends WebappActivity {
         if (isForWebApk) {
             boolean isExternalService = false;
             boolean bindToCaller = false;
-            params = new ChildProcessCreationParams(getWebappInfo().webApkPackageName(),
-                    isExternalService, LibraryProcessType.PROCESS_CHILD, bindToCaller);
+            boolean ignoreVisibilityForImportance = false;
+            params = new ChildProcessCreationParams(getWebappInfo().apkPackageName(),
+                    isExternalService, LibraryProcessType.PROCESS_CHILD, bindToCaller,
+                    ignoreVisibilityForImportance);
         }
         ChildProcessCreationParams.registerDefault(params);
     }

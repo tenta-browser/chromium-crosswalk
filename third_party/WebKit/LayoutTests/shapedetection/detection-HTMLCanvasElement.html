@@ -1,48 +1,53 @@
 <!DOCTYPE html>
 <script src="../resources/testharness.js"></script>
 <script src="../resources/testharnessreport.js"></script>
-<script src="../resources/mojo-helpers.js"></script>
+<script src="file:///gen/layout_test_data/mojo/public/js/mojo_bindings.js"></script>
+<script src="file:///gen/services/shape_detection/public/interfaces/barcodedetection.mojom.js"></script>
+<script src="file:///gen/services/shape_detection/public/interfaces/facedetection.mojom.js"></script>
+<script src="file:///gen/services/shape_detection/public/interfaces/facedetection_provider.mojom.js"></script>
+<script src="file:///gen/services/shape_detection/public/interfaces/textdetection.mojom.js"></script>
 <script src="resources/mock-barcodedetection.js"></script>
 <script src="resources/mock-facedetection.js"></script>
 <script src="resources/mock-textdetection.js"></script>
 <script>
 
+function detectShapeForCanvas(createDetector,
+                              createCanvas,
+                              mock,
+                              detectionResultTest) {
+  return new Promise(function(resolve, reject) {
+      var img = new Image();
+      img.onload = function() {
+        var canvas = createCanvas();
+        canvas.getContext("2d").drawImage(img, 0, 0);
+
+        var detector = createDetector();
+        detector.detect(canvas)
+          .then(detectionResult => {
+            detectionResultTest(detectionResult, mock);
+            resolve("Success");
+          }, error => {
+            assert_unreached("Error during detect(canvas): " + error);
+          });
+      };
+
+      img.src = "../media/content/greenbox.png";
+  });
+}
+
 var createTestForCanvasElement = function(createDetector,
                                           createCanvas,
-                                          mockReady,
+                                          mock,
                                           detectionResultTest) {
-  async_test(function(t) {
-
-    var img = new Image();
-    img.onload = function() {
-
-      var canvas = createCanvas();
-      canvas.getContext("2d").drawImage(img, 0, 0);
-
-      var theMock = null;
-      mockReady()
-        .then(mock => {
-          theMock = mock;
-          var detector = createDetector();
-          return detector;
-        })
-        .catch(error => {
-          assert_unreached("Error creating Mock Detector: " + error);
-        })
-        .then(detector => {
-          return detector.detect(canvas);
-        })
-        .then(detectionResult => {
-          detectionResultTest(detectionResult, theMock);
-          t.done();
-        })
-        .catch(error => {
-          assert_unreached("Error during detect(canvas): " + error);
+  promise_test(function() {
+    return detectShapeForCanvas(createDetector,
+                                createCanvas,
+                                mock,
+                                detectionResultTest)
+        .then(function(result) {
+            assert_equals(result, "Success", "Detect 'Success'");
         });
-    }
-
-    img.src = "../media/content/greenbox.png";
-  }, "Detector detect(HTMLCanvasElement)");
+  });
 };
 
 function FaceDetectorDetectionResultTest(detectionResult, mock) {
@@ -70,45 +75,45 @@ function TextDetectorDetectionResultTest(detectionResult, mock) {
 // mock-{barcode,face}detection.js.
 generate_tests(createTestForCanvasElement, [
   [
-    "Face - HTMLCanvasElement",
+    "Face - detect(HTMLCanvasElement)",
     () => { return new FaceDetector(); },
     () => { return document.createElement("canvas"); },
-    () => { return mockFaceDetectionProviderReady; },
+    mockFaceDetectionProvider,
     FaceDetectorDetectionResultTest
   ],
   [
-    "Face - OffscreenCanvas",
+    "Face - detect(OffscreenCanvas)",
     () => { return new FaceDetector(); },
     () => { return new OffscreenCanvas(300, 150); },
-    () => { return mockFaceDetectionProviderReady; },
+    mockFaceDetectionProvider,
     FaceDetectorDetectionResultTest
   ],
   [
-    "Barcode - HTMLCanvasElement",
+    "Barcode - detect(HTMLCanvasElement)",
     () => { return new BarcodeDetector(); },
     () => { return document.createElement("canvas"); },
-    () => { return mockBarcodeDetectionReady; },
+    mockBarcodeDetection,
     BarcodeDetectorDetectionResultTest
   ],
   [
-    "Barcode - OffscreenCanvas",
+    "Barcode - detect(OffscreenCanvas)",
     () => { return new BarcodeDetector(); },
     () => { return new OffscreenCanvas(300, 150); },
-    () => { return mockBarcodeDetectionReady; },
+    mockBarcodeDetection,
     BarcodeDetectorDetectionResultTest
   ],
   [
-    "Text - HTMLCanvasElement",
+    "Text - detect(HTMLCanvasElement)",
     () => { return new TextDetector(); },
     () => { return document.createElement("canvas"); },
-    () => { return mockTextDetectionReady; },
+    mockTextDetection,
     TextDetectorDetectionResultTest
   ],
   [
-    "Text - OffscreenCanvas",
+    "Text - detect(OffscreenCanvas)",
     () => { return new TextDetector(); },
     () => { return new OffscreenCanvas(300, 150); },
-    () => { return mockTextDetectionReady; },
+    mockTextDetection,
     TextDetectorDetectionResultTest
   ]
 ]);

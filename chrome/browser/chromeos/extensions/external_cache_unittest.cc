@@ -14,13 +14,14 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
-#include "base/test/sequenced_worker_pool_owner.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
 #include "chrome/browser/extensions/external_provider_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/test_utils.h"
 #include "extensions/common/extension_urls.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_fetcher_impl.h"
@@ -39,6 +40,27 @@ const char kNonWebstoreUpdateUrl[] = "https://localhost/service/update2/crx";
 
 namespace chromeos {
 
+class TestExternalCache : public ExternalCache {
+ public:
+  TestExternalCache(const base::FilePath& cache_dir,
+                    net::URLRequestContextGetter* request_context,
+                const scoped_refptr<base::SequencedTaskRunner>&
+                    backend_task_runner,
+                Delegate* delegate,
+                bool always_check_updates,
+                bool wait_for_cache_initialization)
+    : ExternalCache(cache_dir, request_context, backend_task_runner, delegate,
+                    always_check_updates, wait_for_cache_initialization) {}
+
+ protected:
+  service_manager::Connector* GetConnector() override {
+    return nullptr;
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(TestExternalCache);
+};
+
 class ExternalCacheTest : public testing::Test,
                           public ExternalCache::Delegate {
  public:
@@ -46,10 +68,6 @@ class ExternalCacheTest : public testing::Test,
     : thread_bundle_(content::TestBrowserThreadBundle::REAL_IO_THREAD) {
   }
   ~ExternalCacheTest() override {}
-
-  scoped_refptr<base::SequencedTaskRunner> background_task_runner() {
-    return background_task_runner_;
-  }
 
   net::URLRequestContextGetter* request_context_getter() {
     return request_context_getter_.get();
@@ -65,11 +83,6 @@ class ExternalCacheTest : public testing::Test,
         content::BrowserThread::GetTaskRunnerForThread(
             content::BrowserThread::IO));
     fetcher_factory_.reset(new net::TestURLFetcherFactory());
-
-    pool_owner_.reset(
-        new base::SequencedWorkerPoolOwner(3, "Background Pool"));
-    background_task_runner_ = pool_owner_->pool()->GetSequencedTaskRunner(
-        pool_owner_->pool()->GetNamedSequenceToken("background"));
   }
 
   // ExternalCache::Delegate:
@@ -125,13 +138,6 @@ class ExternalCacheTest : public testing::Test,
     return entry;
   }
 
-  void WaitForCompletion() {
-    // Wait for background task completion that sends replay to UI thread.
-    pool_owner_->pool()->FlushForTesting();
-    // Wait for UI thread task completion.
-    base::RunLoop().RunUntilIdle();
-  }
-
   void AddInstalledExtension(const std::string& id,
                              const std::string& version) {
     installed_extensions_[id] = version;
@@ -142,9 +148,6 @@ class ExternalCacheTest : public testing::Test,
 
   scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
   std::unique_ptr<net::TestURLFetcherFactory> fetcher_factory_;
-
-  std::unique_ptr<base::SequencedWorkerPoolOwner> pool_owner_;
-  scoped_refptr<base::SequencedTaskRunner> background_task_runner_;
 
   base::ScopedTempDir cache_dir_;
   base::ScopedTempDir temp_dir_;
@@ -159,8 +162,10 @@ class ExternalCacheTest : public testing::Test,
 
 TEST_F(ExternalCacheTest, Basic) {
   base::FilePath cache_dir(CreateCacheDir(false));
-  ExternalCache external_cache(cache_dir, request_context_getter(),
-      background_task_runner(), this, true, false);
+  TestExternalCache external_cache(
+      cache_dir, request_context_getter(),
+      base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()}), this, true,
+      false);
 
   std::unique_ptr<base::DictionaryValue> prefs(new base::DictionaryValue);
   prefs->Set(kTestExtensionId1, CreateEntryWithUpdateUrl(true));
@@ -171,7 +176,7 @@ TEST_F(ExternalCacheTest, Basic) {
   prefs->Set(kTestExtensionId4, CreateEntryWithUpdateUrl(false));
 
   external_cache.UpdateExtensionsList(std::move(prefs));
-  WaitForCompletion();
+  content::RunAllTasksUntilIdle();
 
   ASSERT_TRUE(provided_prefs());
   EXPECT_EQ(provided_prefs()->size(), 2ul);
@@ -211,7 +216,7 @@ TEST_F(ExternalCacheTest, Basic) {
       extensions::ExtensionDownloaderDelegate::PingResult(), std::set<int>(),
       extensions::ExtensionDownloaderDelegate::InstallCallback());
 
-  WaitForCompletion();
+  content::RunAllTasksUntilIdle();
   EXPECT_EQ(provided_prefs()->size(), 3ul);
 
   const base::DictionaryValue* entry2 = NULL;
@@ -237,7 +242,7 @@ TEST_F(ExternalCacheTest, Basic) {
       extensions::ExtensionDownloaderDelegate::PingResult(), std::set<int>(),
       extensions::ExtensionDownloaderDelegate::InstallCallback());
 
-  WaitForCompletion();
+  content::RunAllTasksUntilIdle();
   EXPECT_EQ(provided_prefs()->size(), 4ul);
 
   const base::DictionaryValue* entry4 = NULL;
@@ -256,7 +261,7 @@ TEST_F(ExternalCacheTest, Basic) {
   // Damaged file should be removed from disk.
   external_cache.OnDamagedFileDetected(
       GetExtensionFile(cache_dir, kTestExtensionId2, "2"));
-  WaitForCompletion();
+  content::RunAllTasksUntilIdle();
   EXPECT_EQ(provided_prefs()->size(), 3ul);
   EXPECT_FALSE(base::PathExists(
       GetExtensionFile(cache_dir, kTestExtensionId2, "2")));
@@ -267,21 +272,23 @@ TEST_F(ExternalCacheTest, Basic) {
         base::Bind(&ExternalCacheTest::OnExtensionListsUpdated,
                    base::Unretained(this),
                    base::Unretained(empty.get())));
-  WaitForCompletion();
+  content::RunAllTasksUntilIdle();
   EXPECT_EQ(provided_prefs()->size(), 0ul);
 
   // After Shutdown directory shouldn't be touched.
   external_cache.OnDamagedFileDetected(
       GetExtensionFile(cache_dir, kTestExtensionId4, "4"));
-  WaitForCompletion();
+  content::RunAllTasksUntilIdle();
   EXPECT_TRUE(base::PathExists(
       GetExtensionFile(cache_dir, kTestExtensionId4, "4")));
 }
 
 TEST_F(ExternalCacheTest, PreserveInstalled) {
   base::FilePath cache_dir(CreateCacheDir(false));
-  ExternalCache external_cache(cache_dir, request_context_getter(),
-      background_task_runner(), this, true, false);
+  TestExternalCache external_cache(
+      cache_dir, request_context_getter(),
+      base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()}), this, true,
+      false);
 
   std::unique_ptr<base::DictionaryValue> prefs(new base::DictionaryValue);
   prefs->Set(kTestExtensionId1, CreateEntryWithUpdateUrl(true));
@@ -290,7 +297,7 @@ TEST_F(ExternalCacheTest, PreserveInstalled) {
   AddInstalledExtension(kTestExtensionId1, "1");
 
   external_cache.UpdateExtensionsList(std::move(prefs));
-  WaitForCompletion();
+  content::RunAllTasksUntilIdle();
 
   ASSERT_TRUE(provided_prefs());
   EXPECT_EQ(provided_prefs()->size(), 1ul);

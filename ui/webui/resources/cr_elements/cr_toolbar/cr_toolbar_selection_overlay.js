@@ -17,6 +17,13 @@ Polymer({
     cancelLabel: String,
 
     selectionLabel: String,
+
+    deleteDisabled: Boolean,
+  },
+
+  /** @return {PaperButtonElement} */
+  get deleteButton() {
+    return this.$.delete;
   },
 
   /** @private */

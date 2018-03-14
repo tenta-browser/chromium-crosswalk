@@ -7,7 +7,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/android/context_utils.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
@@ -31,10 +30,7 @@ namespace gcm {
      : GCMDriver(store_path, blocking_task_runner),
        recorder_(this) {
   JNIEnv* env = AttachCurrentThread();
-  java_ref_.Reset(
-      Java_GCMDriver_create(env,
-                            reinterpret_cast<intptr_t>(this),
-                            base::android::GetApplicationContext()));
+  java_ref_.Reset(Java_GCMDriver_create(env, reinterpret_cast<intptr_t>(this)));
 }
 
 GCMDriverAndroid::~GCMDriverAndroid() {
@@ -111,11 +107,6 @@ void GCMDriverAndroid::OnMessageReceived(
                                       message_byte_size);
 
   DispatchMessage(app_id, message);
-}
-
-// static
-bool GCMDriverAndroid::RegisterJni(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 void GCMDriverAndroid::ValidateRegistration(
@@ -271,9 +262,8 @@ void GCMDriverAndroid::SendImpl(const std::string& app_id,
   NOTIMPLEMENTED();
 }
 
-void GCMDriverAndroid::RecordDecryptionFailure(
-    const std::string& app_id,
-    GCMEncryptionProvider::DecryptionResult result) {
+void GCMDriverAndroid::RecordDecryptionFailure(const std::string& app_id,
+                                               GCMDecryptionResult result) {
   recorder_.RecordDecryptionFailure(app_id, result);
 }
 

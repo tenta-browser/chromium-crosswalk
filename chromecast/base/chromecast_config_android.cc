@@ -4,6 +4,8 @@
 
 #include "chromecast/base/chromecast_config_android.h"
 
+#include <utility>
+
 #include "base/android/jni_android.h"
 #include "base/lazy_instance.h"
 #include "jni/ChromecastConfigAndroid_jni.h"
@@ -23,11 +25,6 @@ ChromecastConfigAndroid* ChromecastConfigAndroid::GetInstance() {
   return g_instance.Pointer();
 }
 
-// static
-bool ChromecastConfigAndroid::RegisterJni(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
 ChromecastConfigAndroid::ChromecastConfigAndroid() {
 }
 
@@ -43,16 +40,21 @@ bool ChromecastConfigAndroid::CanSendUsageStats() {
 
 // Registers a handler to be notified when SendUsageStats is changed.
 void ChromecastConfigAndroid::SetSendUsageStatsChangedCallback(
-    const base::Callback<void(bool)>& callback) {
-  send_usage_stats_changed_callback_ = callback;
+    base::RepeatingCallback<void(bool)> callback) {
+  send_usage_stats_changed_callback_ = std::move(callback);
+}
+
+void ChromecastConfigAndroid::RunSendUsageStatsChangedCallback(bool enabled) {
+  send_usage_stats_changed_callback_.Run(enabled);
 }
 
 // Called from Java.
-void SetSendUsageStatsEnabled(JNIEnv* env,
-                              const JavaParamRef<jclass>& caller,
-                              jboolean enabled) {
-  ChromecastConfigAndroid::GetInstance()->
-      send_usage_stats_changed_callback().Run(enabled);
+void JNI_ChromecastConfigAndroid_SetSendUsageStatsEnabled(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& caller,
+    jboolean enabled) {
+  ChromecastConfigAndroid::GetInstance()->RunSendUsageStatsChangedCallback(
+      enabled);
 }
 
 }  // namespace android

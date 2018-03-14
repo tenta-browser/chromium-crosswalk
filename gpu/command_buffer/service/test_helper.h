@@ -117,17 +117,18 @@ class TestHelper {
       const char* gl_renderer,
       const char* gl_version,
       ContextType context_type);
-  static void SetupTextureManagerInitExpectations(::gl::MockGLInterface* gl,
-                                                  bool is_es3_enabled,
-                                                  bool is_es3_capable,
-                                                  bool is_desktop_core_profile,
-                                                  const char* extensions,
-                                                  bool use_default_textures);
+  static void SetupTextureManagerInitExpectations(
+      ::gl::MockGLInterface* gl,
+      bool is_es3_enabled,
+      bool is_es3_capable,
+      bool is_desktop_core_profile,
+      const gl::ExtensionSet& extensions,
+      bool use_default_textures);
   static void SetupTextureManagerDestructionExpectations(
       ::gl::MockGLInterface* gl,
       bool is_es3_enabled,
       bool is_desktop_core_profile,
-      const char* extensions,
+      const gl::ExtensionSet& extensions,
       bool use_default_textures);
 
   static void SetupExpectationsForClearingUniforms(::gl::MockGLInterface* gl,
@@ -198,11 +199,16 @@ class TestHelper {
       const VaryingMap* const expected_varying_map,
       const InterfaceBlockMap* const expected_interface_block_map,
       const OutputVariableList* const expected_output_variable_list,
-      const NameMap* const expected_name_map);
+      OptionsAffectingCompilationString* options_affecting_compilation);
 
   static void SetShaderStates(::gl::MockGLInterface* gl,
                               Shader* shader,
                               bool valid);
+
+  static void SetShaderStates(::gl::MockGLInterface* gl,
+                              Shader* shader,
+                              bool valid,
+                              const std::string& options_affecting_compilation);
 
   static sh::Attribute ConstructAttribute(
       GLenum type, GLint array_size, GLenum precision,
@@ -213,6 +219,20 @@ class TestHelper {
   static sh::Varying ConstructVarying(
       GLenum type, GLint array_size, GLenum precision,
       bool static_use, const std::string& name);
+  static sh::InterfaceBlockField ConstructInterfaceBlockField(
+      GLenum type,
+      GLint array_size,
+      GLenum precision,
+      bool static_use,
+      const std::string& name);
+  static sh::InterfaceBlock ConstructInterfaceBlock(
+      GLint array_size,
+      sh::BlockLayoutType layout,
+      bool is_row_major_layout,
+      bool static_use,
+      const std::string& name,
+      const std::string& instance_name,
+      const std::vector<sh::InterfaceBlockField>& fields);
   static sh::OutputVariable ConstructOutputVariable(GLenum type,
                                                     GLint array_size,
                                                     GLenum precision,

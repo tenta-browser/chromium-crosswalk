@@ -50,8 +50,8 @@ class ContentFaviconDriverTest : public content::RenderViewHostTestHarness {
   void SetUp() override {
     RenderViewHostTestHarness::SetUp();
 
-    ContentFaviconDriver::CreateForWebContents(
-        web_contents(), &favicon_service_, nullptr, nullptr);
+    ContentFaviconDriver::CreateForWebContents(web_contents(),
+                                               &favicon_service_, nullptr);
   }
 
   content::WebContentsTester* web_contents_tester() {
@@ -64,6 +64,8 @@ class ContentFaviconDriverTest : public content::RenderViewHostTestHarness {
     ContentFaviconDriver* favicon_driver =
         ContentFaviconDriver::FromWebContents(web_contents());
     web_contents_tester()->NavigateAndCommit(page_url);
+    static_cast<content::WebContentsObserver*>(favicon_driver)
+        ->DocumentOnLoadCompletedInMainFrame();
     static_cast<content::WebContentsObserver*>(favicon_driver)
         ->DidUpdateFaviconURL(candidates);
     base::RunLoop().RunUntilIdle();
@@ -78,10 +80,24 @@ TEST_F(ContentFaviconDriverTest, ShouldCauseImageDownload) {
   // Mimic a page load.
   TestFetchFaviconForPage(
       kPageURL,
-      {content::FaviconURL(kIconURL, content::FaviconURL::FAVICON,
+      {content::FaviconURL(kIconURL, content::FaviconURL::IconType::kFavicon,
                            kEmptyIconSizes)});
   EXPECT_TRUE(web_contents_tester()->TestDidDownloadImage(
       kIconURL, 200, kEmptyIcons, kEmptyIconSizes));
+}
+
+// Test that no download is initiated when DocumentOnLoadCompletedInMainFrame()
+// is not triggered (e.g. user stopped an ongoing page load).
+TEST_F(ContentFaviconDriverTest, ShouldNotCauseImageDownload) {
+  ContentFaviconDriver* favicon_driver =
+      ContentFaviconDriver::FromWebContents(web_contents());
+  web_contents_tester()->NavigateAndCommit(kPageURL);
+  static_cast<content::WebContentsObserver*>(favicon_driver)
+      ->DidUpdateFaviconURL({content::FaviconURL(
+          kIconURL, content::FaviconURL::IconType::kFavicon, kEmptyIconSizes)});
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_FALSE(web_contents_tester()->HasPendingDownloadImage(kIconURL));
 }
 
 // Test that Favicon is not requested repeatedly during the same session if
@@ -92,7 +108,7 @@ TEST_F(ContentFaviconDriverTest, ShouldNotRequestRepeatedlyIfUnavailable) {
   // Mimic a page load.
   TestFetchFaviconForPage(
       kPageURL,
-      {content::FaviconURL(kIconURL, content::FaviconURL::FAVICON,
+      {content::FaviconURL(kIconURL, content::FaviconURL::IconType::kFavicon,
                            kEmptyIconSizes)});
   // Verify that no download request is pending for the image.
   EXPECT_FALSE(web_contents_tester()->HasPendingDownloadImage(kIconURL));
@@ -105,9 +121,10 @@ TEST_F(ContentFaviconDriverTest, ShouldDownloadSecondIfFirstUnavailable) {
   // Mimic a page load.
   TestFetchFaviconForPage(
       kPageURL,
-      {content::FaviconURL(kIconURL, content::FaviconURL::FAVICON,
+      {content::FaviconURL(kIconURL, content::FaviconURL::IconType::kFavicon,
                            kEmptyIconSizes),
-       content::FaviconURL(kOtherIconURL, content::FaviconURL::FAVICON,
+       content::FaviconURL(kOtherIconURL,
+                           content::FaviconURL::IconType::kFavicon,
                            kEmptyIconSizes)});
   // Verify a  download request is pending for the second image.
   EXPECT_FALSE(web_contents_tester()->HasPendingDownloadImage(kIconURL));
@@ -121,9 +138,9 @@ TEST_F(ContentFaviconDriverTest, FaviconUpdateNoLastCommittedEntry) {
   ASSERT_EQ(nullptr, web_contents()->GetController().GetLastCommittedEntry());
 
   std::vector<content::FaviconURL> favicon_urls;
-  favicon_urls.push_back(
-      content::FaviconURL(GURL("http://www.google.ca/favicon.ico"),
-                          content::FaviconURL::FAVICON, kEmptyIconSizes));
+  favicon_urls.push_back(content::FaviconURL(
+      GURL("http://www.google.ca/favicon.ico"),
+      content::FaviconURL::IconType::kFavicon, kEmptyIconSizes));
   favicon::ContentFaviconDriver* driver =
       favicon::ContentFaviconDriver::FromWebContents(web_contents());
   static_cast<content::WebContentsObserver*>(driver)
@@ -136,14 +153,13 @@ TEST_F(ContentFaviconDriverTest, FaviconUpdateNoLastCommittedEntry) {
 TEST_F(ContentFaviconDriverTest, RecordsHistorgramsForCandidates) {
   const std::vector<gfx::Size> kSizes16x16and32x32({{16, 16}, {32, 32}});
   base::HistogramTester tester;
-  content::WebContentsObserver* driver_as_observer =
-      ContentFaviconDriver::FromWebContents(web_contents());
 
   // Navigation to a page updating one icon.
-  NavigateAndCommit(GURL("http://www.youtube.com"));
-  driver_as_observer->DidUpdateFaviconURL(
+  TestFetchFaviconForPage(
+      GURL("http://www.youtube.com"),
       {content::FaviconURL(GURL("http://www.youtube.com/favicon.ico"),
-                           content::FaviconURL::FAVICON, kSizes16x16and32x32)});
+                           content::FaviconURL::IconType::kFavicon,
+                           kSizes16x16and32x32)});
 
   EXPECT_THAT(tester.GetAllSamples("Favicons.CandidatesCount"),
               ElementsAre(base::Bucket(/*min=*/1, /*count=*/1)));
@@ -154,18 +170,18 @@ TEST_F(ContentFaviconDriverTest, RecordsHistorgramsForCandidates) {
 
   std::vector<content::FaviconURL> favicon_urls = {
       content::FaviconURL(GURL("http://www.google.ca/favicon.ico"),
-                          content::FaviconURL::FAVICON, kSizes16x16and32x32),
+                          content::FaviconURL::IconType::kFavicon,
+                          kSizes16x16and32x32),
       content::FaviconURL(GURL("http://www.google.ca/precomposed_icon.png"),
-                          content::FaviconURL::TOUCH_PRECOMPOSED_ICON,
+                          content::FaviconURL::IconType::kTouchPrecomposedIcon,
                           kEmptyIconSizes),
       content::FaviconURL(GURL("http://www.google.ca/touch_icon.png"),
-                          content::FaviconURL::TOUCH_ICON, kEmptyIconSizes)};
+                          content::FaviconURL::IconType::kTouchIcon,
+                          kEmptyIconSizes)};
 
   // Double navigation to a page with 3 different icons.
-  NavigateAndCommit(GURL("http://www.google.ca"));
-  driver_as_observer->DidUpdateFaviconURL(favicon_urls);
-  NavigateAndCommit(GURL("http://www.google.ca"));
-  driver_as_observer->DidUpdateFaviconURL(favicon_urls);
+  TestFetchFaviconForPage(GURL("http://www.google.ca"), favicon_urls);
+  TestFetchFaviconForPage(GURL("http://www.google.ca"), favicon_urls);
 
   EXPECT_THAT(tester.GetAllSamples("Favicons.CandidatesCount"),
               ElementsAre(base::Bucket(/*min=*/1, /*count=*/1),

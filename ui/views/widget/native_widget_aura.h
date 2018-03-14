@@ -31,14 +31,13 @@ class FocusManagerEventHandler;
 class TooltipManagerAura;
 class WindowReorderer;
 
-class VIEWS_EXPORT NativeWidgetAura
-    : public internal::NativeWidgetPrivate,
-      public aura::WindowDelegate,
-      public aura::WindowObserver,
-      public aura::client::ActivationDelegate,
-      public aura::client::ActivationChangeObserver,
-      public aura::client::FocusChangeObserver,
-      public aura::client::DragDropDelegate {
+class VIEWS_EXPORT NativeWidgetAura : public internal::NativeWidgetPrivate,
+                                      public aura::WindowDelegate,
+                                      public aura::WindowObserver,
+                                      public wm::ActivationDelegate,
+                                      public wm::ActivationChangeObserver,
+                                      public aura::client::FocusChangeObserver,
+                                      public aura::client::DragDropDelegate {
  public:
   // |is_parallel_widget_in_window_manager| is true only when this
   // NativeWidgetAura is created in the window manager to represent a client
@@ -100,7 +99,7 @@ class VIEWS_EXPORT NativeWidgetAura
   void SetSize(const gfx::Size& size) override;
   void StackAbove(gfx::NativeView native_view) override;
   void StackAtTop() override;
-  void SetShape(std::unique_ptr<SkRegion> shape) override;
+  void SetShape(std::unique_ptr<Widget::ShapeRects> shape) override;
   void Close() override;
   void CloseNow() override;
   void Show() override;
@@ -161,7 +160,8 @@ class VIEWS_EXPORT NativeWidgetAura
   bool CanFocus() override;
   void OnCaptureLost() override;
   void OnPaint(const ui::PaintContext& context) override;
-  void OnDeviceScaleFactorChanged(float device_scale_factor) override;
+  void OnDeviceScaleFactorChanged(float old_device_scale_factor,
+                                  float new_device_scale_factor) override;
   void OnWindowDestroying(aura::Window* window) override;
   void OnWindowDestroyed(aura::Window* window) override;
   void OnWindowTargetVisibilityChanged(bool visible) override;
@@ -179,14 +179,13 @@ class VIEWS_EXPORT NativeWidgetAura
   void OnScrollEvent(ui::ScrollEvent* event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
 
-  // Overridden from aura::client::ActivationDelegate:
+  // Overridden from wm::ActivationDelegate:
   bool ShouldActivate() const override;
 
-  // Overridden from aura::client::ActivationChangeObserver:
-  void OnWindowActivated(
-      aura::client::ActivationChangeObserver::ActivationReason reason,
-      aura::Window* gained_active,
-      aura::Window* lost_active) override;
+  // Overridden from wm::ActivationChangeObserver:
+  void OnWindowActivated(wm::ActivationChangeObserver::ActivationReason reason,
+                         aura::Window* gained_active,
+                         aura::Window* lost_active) override;
 
   // Overridden from aura::client::FocusChangeObserver:
   void OnWindowFocused(aura::Window* gained_focus,

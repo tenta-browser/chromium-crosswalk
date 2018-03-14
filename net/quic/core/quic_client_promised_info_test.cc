@@ -10,10 +10,12 @@
 #include "net/quic/core/spdy_utils.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_socket_address.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/quic_client_promised_info_peer.h"
+#include "net/quic/test_tools/quic_spdy_session_peer.h"
 #include "net/test/gtest_util.h"
-#include "net/tools/quic/quic_client_session.h"
+#include "net/tools/quic/quic_spdy_client_session.h"
 
 using std::string;
 using testing::StrictMock;
@@ -22,11 +24,12 @@ namespace net {
 namespace test {
 namespace {
 
-class MockQuicClientSession : public QuicClientSession {
+class MockQuicSpdyClientSession : public QuicSpdyClientSession {
  public:
-  explicit MockQuicClientSession(QuicConnection* connection,
-                                 QuicClientPushPromiseIndex* push_promise_index)
-      : QuicClientSession(
+  explicit MockQuicSpdyClientSession(
+      QuicConnection* connection,
+      QuicClientPushPromiseIndex* push_promise_index)
+      : QuicSpdyClientSession(
             DefaultQuicConfig(),
             connection,
             QuicServerId("example.com", 443, PRIVACY_MODE_DISABLED),
@@ -34,7 +37,7 @@ class MockQuicClientSession : public QuicClientSession {
             push_promise_index),
         crypto_config_(crypto_test_utils::ProofVerifierForTesting()),
         authorized_(true) {}
-  ~MockQuicClientSession() override {}
+  ~MockQuicSpdyClientSession() override {}
 
   bool IsAuthorized(const string& authority) override { return authorized_; }
 
@@ -47,10 +50,10 @@ class MockQuicClientSession : public QuicClientSession {
 
   bool authorized_;
 
-  DISALLOW_COPY_AND_ASSIGN(MockQuicClientSession);
+  DISALLOW_COPY_AND_ASSIGN(MockQuicSpdyClientSession);
 };
 
-class QuicClientPromisedInfoTest : public ::testing::Test {
+class QuicClientPromisedInfoTest : public QuicTest {
  public:
   class StreamVisitor;
 
@@ -60,13 +63,15 @@ class QuicClientPromisedInfoTest : public ::testing::Test {
                                                        Perspective::IS_CLIENT)),
         session_(connection_, &push_promise_index_),
         body_("hello world"),
-        promise_id_(kServerDataStreamId1) {
+        promise_id_(kInvalidStreamId) {
     session_.Initialize();
 
     headers_[":status"] = "200";
     headers_["content-length"] = "11";
 
-    stream_.reset(new QuicSpdyClientStream(kClientDataStreamId1, &session_));
+    stream_.reset(new QuicSpdyClientStream(
+        QuicSpdySessionPeer::GetNthClientInitiatedStreamId(session_, 0),
+        &session_));
     stream_visitor_.reset(new StreamVisitor());
     stream_->set_visitor(stream_visitor_.get());
 
@@ -79,6 +84,8 @@ class QuicClientPromisedInfoTest : public ::testing::Test {
     promise_url_ = SpdyUtils::GetUrlFromHeaderBlock(push_promise_);
 
     client_request_ = push_promise_.Clone();
+    promise_id_ =
+        QuicSpdySessionPeer::GetNthServerInitiatedStreamId(session_, 0);
   }
 
   class StreamVisitor : public QuicSpdyClientStream::Visitor {
@@ -98,7 +105,7 @@ class QuicClientPromisedInfoTest : public ::testing::Test {
   StrictMock<MockQuicConnection>* connection_;
   QuicClientPushPromiseIndex push_promise_index_;
 
-  MockQuicClientSession session_;
+  MockQuicSpdyClientSession session_;
   std::unique_ptr<QuicSpdyClientStream> stream_;
   std::unique_ptr<StreamVisitor> stream_visitor_;
   std::unique_ptr<QuicSpdyClientStream> promised_stream_;
@@ -137,6 +144,19 @@ TEST_F(QuicClientPromisedInfoTest, PushPromiseCleanupAlarm) {
 TEST_F(QuicClientPromisedInfoTest, PushPromiseInvalidMethod) {
   // Promise with an unsafe method
   push_promise_[":method"] = "PUT";
+
+  EXPECT_CALL(*connection_,
+              SendRstStream(promise_id_, QUIC_INVALID_PROMISE_METHOD, 0));
+  ReceivePromise(promise_id_);
+
+  // Verify that the promise headers were ignored
+  EXPECT_EQ(session_.GetPromisedById(promise_id_), nullptr);
+  EXPECT_EQ(session_.GetPromisedByUrl(promise_url_), nullptr);
+}
+
+TEST_F(QuicClientPromisedInfoTest, PushPromiseMissingMethod) {
+  // Promise with a missing method
+  push_promise_.erase(":method");
 
   EXPECT_CALL(*connection_,
               SendRstStream(promise_id_, QUIC_INVALID_PROMISE_METHOD, 0));

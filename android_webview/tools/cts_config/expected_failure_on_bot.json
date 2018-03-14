@@ -9,20 +9,30 @@
       "_bug_id": "crbug.com/698369"
     },
     {
-      "name": "testClearFormData",
-      "_bug_id": "crbug.com/711338"
+      "name": "testJavascriptInterfaceCustomPropertiesClearedOnReload",
+      "_bug_id": "crbug.com/767847"
     }
   ],
   "android.webkit.cts.WebSettingsTest": [
     {
       "name": "testLocalImageLoads",
       "_bug_id": "crbug.com/680759"
+    },
+    {
+      "name": "testAllowMixedMode",
+      "_bug_id": "crbug.com/777393"
     }
   ],
   "android.webkit.cts.WebViewClientTest": [
     {
       "name": "testShouldOverrideUrlLoadingOnCreateWindow",
       "_bug_id": "crbug.com/659077"
+    }
+  ],
+  "android.webkit.cts.WebChromeClientTest": [
+    {
+      "name": "testOnJsBeforeUnloadIsCalled",
+      "_bug_id": "crbug.com/719974"
     }
   ],
   "android.webkit.cts.ServiceWorkerClientTest": [

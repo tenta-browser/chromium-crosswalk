@@ -20,7 +20,6 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/render_view_host.h"
 #include "content/public/common/content_switches.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
@@ -42,26 +41,26 @@ ChromeExtensionWebContentsObserver::ChromeExtensionWebContentsObserver(
 
 ChromeExtensionWebContentsObserver::~ChromeExtensionWebContentsObserver() {}
 
-void ChromeExtensionWebContentsObserver::RenderViewCreated(
-    content::RenderViewHost* render_view_host) {
-  ReloadIfTerminated(render_view_host);
-  ExtensionWebContentsObserver::RenderViewCreated(render_view_host);
+void ChromeExtensionWebContentsObserver::RenderFrameCreated(
+    content::RenderFrameHost* render_frame_host) {
+  ReloadIfTerminated(render_frame_host);
+  ExtensionWebContentsObserver::RenderFrameCreated(render_frame_host);
 
-  const Extension* extension = GetExtension(render_view_host);
+  const Extension* extension = GetExtensionFromFrame(render_frame_host, false);
   if (!extension)
     return;
 
-  int process_id = render_view_host->GetProcess()->GetID();
+  int process_id = render_frame_host->GetProcess()->GetID();
   auto* policy = content::ChildProcessSecurityPolicy::GetInstance();
 
   // Components of chrome that are implemented as extensions or platform apps
   // are allowed to use chrome://resources/ and chrome://theme/ URLs.
   if ((extension->is_extension() || extension->is_platform_app()) &&
       Manifest::IsComponentLocation(extension->location())) {
+    policy->GrantOrigin(
+        process_id, url::Origin::Create(GURL(content::kChromeUIResourcesURL)));
     policy->GrantOrigin(process_id,
-                        url::Origin(GURL(content::kChromeUIResourcesURL)));
-    policy->GrantOrigin(process_id,
-                        url::Origin(GURL(chrome::kChromeUIThemeURL)));
+                        url::Origin::Create(GURL(chrome::kChromeUIThemeURL)));
   }
 
   // Extensions, legacy packaged apps, and component platform apps are allowed
@@ -73,17 +72,16 @@ void ChromeExtensionWebContentsObserver::RenderViewCreated(
       (extension->is_platform_app() &&
        Manifest::IsComponentLocation(extension->location()))) {
     policy->GrantOrigin(process_id,
-                        url::Origin(GURL(chrome::kChromeUIFaviconURL)));
-    policy->GrantOrigin(process_id,
-                        url::Origin(GURL(chrome::kChromeUIExtensionIconURL)));
+                        url::Origin::Create(GURL(chrome::kChromeUIFaviconURL)));
+    policy->GrantOrigin(
+        process_id,
+        url::Origin::Create(GURL(chrome::kChromeUIExtensionIconURL)));
   }
 }
 
 void ChromeExtensionWebContentsObserver::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
   ExtensionWebContentsObserver::DidFinishNavigation(navigation_handle);
-  if (navigation_handle->HasCommitted())
-    SetExtensionIsolationTrial(navigation_handle->GetRenderFrameHost());
 }
 
 bool ChromeExtensionWebContentsObserver::OnMessageReceived(
@@ -137,8 +135,8 @@ void ChromeExtensionWebContentsObserver::InitializeRenderFrame(
 }
 
 void ChromeExtensionWebContentsObserver::ReloadIfTerminated(
-    content::RenderViewHost* render_view_host) {
-  std::string extension_id = GetExtensionId(render_view_host);
+    content::RenderFrameHost* render_frame_host) {
+  std::string extension_id = GetExtensionIdFromFrame(render_frame_host);
   if (extension_id.empty())
     return;
 
@@ -151,80 +149,6 @@ void ChromeExtensionWebContentsObserver::ReloadIfTerminated(
   if (registry->GetExtensionById(extension_id, ExtensionRegistry::TERMINATED)) {
     ExtensionSystem::Get(browser_context())->
         extension_service()->ReloadExtension(extension_id);
-  }
-}
-
-void ChromeExtensionWebContentsObserver::SetExtensionIsolationTrial(
-    content::RenderFrameHost* render_frame_host) {
-  content::RenderFrameHost* parent = render_frame_host->GetParent();
-  if (!parent)
-    return;
-
-  GURL frame_url = render_frame_host->GetLastCommittedURL();
-  GURL parent_url = parent->GetLastCommittedURL();
-
-  content::BrowserContext* browser_context =
-      render_frame_host->GetSiteInstance()->GetBrowserContext();
-  extensions::ExtensionRegistry* registry =
-      extensions::ExtensionRegistry::Get(browser_context);
-
-  bool frame_is_extension = false;
-  if (frame_url.SchemeIs(extensions::kExtensionScheme)) {
-    const extensions::Extension* frame_extension =
-        registry->enabled_extensions().GetExtensionOrAppByURL(frame_url);
-    if (frame_extension && !frame_extension->is_hosted_app())
-      frame_is_extension = true;
-  }
-
-  bool parent_is_extension = false;
-  if (parent_url.SchemeIs(extensions::kExtensionScheme)) {
-    const extensions::Extension* parent_extension =
-        registry->enabled_extensions().GetExtensionOrAppByURL(parent_url);
-    if (parent_extension && !parent_extension->is_hosted_app())
-      parent_is_extension = true;
-  }
-
-  // If this is a case where an out-of-process iframe would be possible, then
-  // create a synthetic field trial for this client. The trial will indicate
-  // whether the client is manually using a flag to create OOPIFs
-  // (--site-per-process or --isolate-extensions), whether a field trial made
-  // OOPIFs possible, or whether they are in default mode and will not have an
-  // OOPIF.
-  if (parent_is_extension != frame_is_extension) {
-    if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-            ::switches::kSitePerProcess)) {
-      ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
-          "SiteIsolationExtensionsActive", "SitePerProcessFlag");
-    } else if (extensions::IsIsolateExtensionsEnabled()) {
-      if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-              switches::kIsolateExtensions)) {
-        ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
-            "SiteIsolationExtensionsActive", "IsolateExtensionsFlag");
-      } else {
-        ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
-            "SiteIsolationExtensionsActive", "FieldTrial");
-      }
-    } else {
-      if (!base::FieldTrialList::FindFullName("SiteIsolationExtensions")
-               .empty()) {
-        // The field trial is active, but we are in a control group with oopifs
-        // disabled.
-        ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
-            "SiteIsolationExtensionsActive", "Control");
-      } else {
-        // The field trial is not active for this version.
-        ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial(
-            "SiteIsolationExtensionsActive", "Default");
-      }
-    }
-
-    if (rappor::RapporServiceImpl* rappor =
-            g_browser_process->rappor_service()) {
-      const std::string& extension_id =
-          parent_is_extension ? parent_url.host() : frame_url.host();
-      rappor->RecordSampleString("Extensions.AffectedByIsolateExtensions",
-                                 rappor::UMA_RAPPOR_TYPE, extension_id);
-    }
   }
 }
 

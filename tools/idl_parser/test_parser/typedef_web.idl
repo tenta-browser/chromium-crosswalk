@@ -7,17 +7,9 @@
 Run with --test to generate an AST and verify that all comments accurately
 reflect the state of the Nodes.
 
-BUILD Type(Name)
-This comment signals that a node of type <Type> is created with the
-name <Name>.
-
 ERROR Error String
 This comment signals that a error of <Error String> is generated.  The error
 is not assigned to a node, but are expected in order.
-
-PROP Key=Value
-This comment signals that a property has been set on the Node such that
-<Key> = <Value>.
 
 TREE
 Type(Name)
@@ -30,165 +22,134 @@ symatics should exist.  This is an exact match.
 */
 
 
-/* TREE
+/** TREE
  *Typedef(MyLong)
  *  Type()
  *    PrimitiveType(long)
  */
 typedef long MyLong;
 
-/* TREE
+/** TREE
  *Typedef(MyLong)
- *  ExtAttributes()
- *    ExtAttribute(foo)
  *  Type()
  *    PrimitiveType(long)
+ *    ExtAttributes()
+ *      ExtAttribute(foo)
  */
 typedef [foo] long MyLong;
 
-/* TREE
- *Typedef(MyLongArray)
+/** TREE
+ *Typedef(MyLongSequence)
  *  Type()
- *    PrimitiveType(long)
- *    Array()
+ *    Sequence()
+ *      Type()
+ *        PrimitiveType(long)
  */
-typedef long[] MyLongArray;
+typedef sequence<long> MyLongSequence;
 
-/* TREE
- *Typedef(MyLongSizedArray)
+/** TREE
+ *Typedef(MyTypeSequence)
  *  Type()
- *    PrimitiveType(long)
- *    Array(4)
+ *    Sequence()
+ *      Type()
+ *        Typeref(MyType)
  */
-typedef long[4] MyLongSizedArray;
+typedef sequence<MyType> MyTypeSequence;
 
-/* TREE
- *Typedef(MyLongSizedArrayArray)
- *  Type()
- *    PrimitiveType(long)
- *    Array(4)
- *      Array(5)
- */
-typedef long[4][5] MyLongSizedArrayArray;
-
-/* TREE
- *Typedef(MyLongArraySizedArray)
- *  Type()
- *    PrimitiveType(long)
- *    Array()
- *      Array(5)
- */
-typedef long[][5] MyLongArraySizedArray;
-
-/* TREE
- *Typedef(MyTypeFive)
- *  Type()
- *    Typeref(MyType)
- *    Array(5)
- */
-typedef MyType[5] MyTypeFive;
-
-/* TREE
- *Typedef(MyTypeUnsizedFive)
- *  Type()
- *    Typeref(MyType)
- *    Array()
- *      Array(5)
- */
-typedef MyType[][5] MyTypeUnsizedFive;
-
-/* TREE
+/** TREE
  *Typedef(MyLongLong)
  *  Type()
  *    PrimitiveType(long long)
  */
 typedef long long MyLongLong;
 
-/* TREE
+/** TREE
  *Typedef(MyULong)
  *  Type()
  *    PrimitiveType(unsigned long)
  */
 typedef unsigned long MyULong;
 
-/* TREE
+/** TREE
  *Typedef(MyULongLong)
  *  Type()
  *    PrimitiveType(unsigned long long)
  */
 typedef unsigned long long MyULongLong;
 
-/* TREE
+/** TREE
  *Typedef(MyString)
  *  Type()
  *    StringType(DOMString)
  */
 typedef DOMString MyString;
 
-/* TREE
+/** TREE
  *Typedef(MyObject)
  *  Type()
  *    PrimitiveType(object)
  */
 typedef object MyObject;
 
-/* TREE
+/** TREE
  *Typedef(MyDate)
  *  Type()
  *    PrimitiveType(Date)
  */
 typedef Date MyDate;
 
-/* TREE
+/** TREE
  *Typedef(MyFloat)
  *  Type()
  *    PrimitiveType(float)
  */
 typedef float MyFloat;
 
-/* TREE
+/** TREE
  *Typedef(MyUFloat)
  *  Type()
  *    PrimitiveType(float)
+ *      UNRESTRICTED: True
  */
 typedef unrestricted float MyUFloat;
 
-/* TREE
+/** TREE
  *Typedef(MyDouble)
  *  Type()
  *    PrimitiveType(double)
  */
 typedef double MyDouble;
 
-/* TREE
+/** TREE
  *Typedef(MyUDouble)
  *  Type()
  *    PrimitiveType(double)
+ *      UNRESTRICTED: True
  */
 typedef unrestricted double MyUDouble;
 
-/* TREE
+/** TREE
  *Typedef(MyBool)
  *  Type()
  *    PrimitiveType(boolean)
  */
 typedef boolean MyBool;
 
-/* TREE
+/** TREE
  *Typedef(MyByte)
  *  Type()
  *    PrimitiveType(byte)
  */
 typedef byte MyByte;
 
-/* TREE
+/** TREE
  *Typedef(MyOctet)
  *  Type()
  *    PrimitiveType(octet)
  */
 typedef octet MyOctet;
 
-/* TREE
+/** TREE
  *Typedef(MyRecord)
  *  Type()
  *    Record()
@@ -198,7 +159,7 @@ typedef octet MyOctet;
  */
 typedef record<ByteString, int> MyRecord;
 
-/* TREE
+/** TREE
  *Typedef(MyInvalidRecord)
  *  Type()
  *    Error(Unexpected keyword "double" after "<".)

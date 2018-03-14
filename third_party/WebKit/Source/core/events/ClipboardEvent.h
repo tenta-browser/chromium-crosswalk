@@ -26,8 +26,8 @@
 #define ClipboardEvent_h
 
 #include "core/clipboard/DataTransfer.h"
+#include "core/dom/events/Event.h"
 #include "core/events/ClipboardEventInit.h"
-#include "core/events/Event.h"
 
 namespace blink {
 
@@ -51,7 +51,7 @@ class ClipboardEvent final : public Event {
 
   DataTransfer* clipboardData() const { return clipboard_data_.Get(); }
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   ClipboardEvent(const AtomicString& type,

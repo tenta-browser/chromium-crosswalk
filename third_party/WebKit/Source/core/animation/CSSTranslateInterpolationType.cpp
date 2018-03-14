@@ -8,6 +8,7 @@
 #include "core/animation/LengthInterpolationFunctions.h"
 #include "core/css/CSSValueList.h"
 #include "core/css/resolver/StyleResolverState.h"
+#include "core/style/ComputedStyle.h"
 #include "platform/transforms/TranslateTransformOperation.h"
 #include "platform/wtf/PtrUtil.h"
 
@@ -23,20 +24,21 @@ bool IsNoneValue(const InterpolationValue& value) {
   return ToInterpolableList(*value.interpolable_value).length() == 0;
 }
 
-class InheritedTranslateChecker : public InterpolationType::ConversionChecker {
+class InheritedTranslateChecker
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
-  ~InheritedTranslateChecker() {}
+  ~InheritedTranslateChecker() override {}
 
   static std::unique_ptr<InheritedTranslateChecker> Create(
-      PassRefPtr<TranslateTransformOperation> inherited_translate) {
+      scoped_refptr<TranslateTransformOperation> inherited_translate) {
     return WTF::WrapUnique(
         new InheritedTranslateChecker(std::move(inherited_translate)));
   }
 
-  bool IsValid(const InterpolationEnvironment& environment,
+  bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
     const TransformOperation* inherited_translate =
-        environment.GetState().ParentStyle()->Translate();
+        state.ParentStyle()->Translate();
     if (inherited_translate_ == inherited_translate)
       return true;
     if (!inherited_translate_ || !inherited_translate)
@@ -46,10 +48,10 @@ class InheritedTranslateChecker : public InterpolationType::ConversionChecker {
 
  private:
   InheritedTranslateChecker(
-      PassRefPtr<TranslateTransformOperation> inherited_translate)
+      scoped_refptr<TranslateTransformOperation> inherited_translate)
       : inherited_translate_(std::move(inherited_translate)) {}
 
-  RefPtr<TransformOperation> inherited_translate_;
+  scoped_refptr<TransformOperation> inherited_translate_;
 };
 
 enum TranslateComponentIndex : unsigned {
@@ -206,7 +208,7 @@ void CSSTranslateInterpolationType::ApplyStandardPropertyValue(
           *list.Get(kTranslateZ), nullptr, conversion_data, kValueRangeAll)
           .Pixels();
 
-  RefPtr<TranslateTransformOperation> result =
+  scoped_refptr<TranslateTransformOperation> result =
       TranslateTransformOperation::Create(x, y, z,
                                           TransformOperation::kTranslate3D);
   state.Style()->SetTranslate(std::move(result));

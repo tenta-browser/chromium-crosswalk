@@ -33,9 +33,11 @@
 #include "platform/loader/fetch/FetchContext.h"
 #include "platform/loader/fetch/FetchInitiatorInfo.h"
 #include "platform/loader/fetch/FetchParameters.h"
+#include "platform/loader/fetch/PreloadKey.h"
 #include "platform/loader/fetch/Resource.h"
 #include "platform/loader/fetch/ResourceError.h"
 #include "platform/loader/fetch/ResourceLoadPriority.h"
+#include "platform/loader/fetch/ResourceLoadScheduler.h"
 #include "platform/loader/fetch/ResourceLoaderOptions.h"
 #include "platform/loader/fetch/SubstituteData.h"
 #include "platform/wtf/HashMap.h"
@@ -68,7 +70,7 @@ class PLATFORM_EXPORT ResourceFetcher
     return new ResourceFetcher(context);
   }
   virtual ~ResourceFetcher();
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   Resource* RequestResource(FetchParameters&,
                             const ResourceFactory&,
@@ -78,11 +80,17 @@ class PLATFORM_EXPORT ResourceFetcher
 
   using DocumentResourceMap = HeapHashMap<String, WeakMember<Resource>>;
   const DocumentResourceMap& AllResources() const {
-    return document_resources_;
+    return cached_resources_map_;
   }
 
-  // Actually starts loading a Resource if it wasn't started during
-  // requestResource().
+  void HoldResourcesFromPreviousFetcher(ResourceFetcher*);
+  void ClearResourcesFromPreviousFetcher();
+
+  // Binds the given Resource instance to this ResourceFetcher instance to
+  // start loading the Resource actually.
+  // Usually, RequestResource() calls this method internally, but needs to
+  // call this method explicitly on cases such as ResourceNeedsLoad() returning
+  // false.
   bool StartLoad(Resource*);
 
   void SetAutoLoadImages(bool);
@@ -95,6 +103,7 @@ class PLATFORM_EXPORT ResourceFetcher
 
   int BlockingRequestCount() const;
   int NonblockingRequestCount() const;
+  int ActiveRequestCount() const;
 
   enum ClearPreloadsPolicy {
     kClearAllPreloads,
@@ -104,9 +113,8 @@ class PLATFORM_EXPORT ResourceFetcher
   void EnableIsPreloadedForTest();
   bool IsPreloadedForTest(const KURL&) const;
 
-  int CountPreloads() const { return preloads_ ? preloads_->size() : 0; }
+  int CountPreloads() const { return preloads_.size(); }
   void ClearPreloads(ClearPreloadsPolicy = kClearAllPreloads);
-  void PreloadStarted(Resource*);
   void LogPreloadStats(ClearPreloadsPolicy);
   void WarnUnusedPreloads();
 
@@ -115,7 +123,6 @@ class PLATFORM_EXPORT ResourceFetcher
 
   void SetDefersLoading(bool);
   void StopFetching();
-  bool IsFetching() const;
 
   bool ShouldDeferImageLoad(const KURL&) const;
 
@@ -126,14 +133,12 @@ class PLATFORM_EXPORT ResourceFetcher
   void HandleLoaderError(Resource*, const ResourceError&);
   bool IsControlledByServiceWorker() const;
 
-  static const ResourceLoaderOptions& DefaultResourceOptions();
-
   String GetCacheIdentifier() const;
 
+  enum IsImageSet { kImageNotImageSet, kImageIsImageSet };
+
   WARN_UNUSED_RESULT static WebURLRequest::RequestContext
-  DetermineRequestContext(Resource::Type, bool is_main_frame);
-  WARN_UNUSED_RESULT WebURLRequest::RequestContext DetermineRequestContext(
-      Resource::Type) const;
+  DetermineRequestContext(Resource::Type, IsImageSet, bool is_main_frame);
 
   void UpdateAllImageResourcePriorities();
 
@@ -142,9 +147,12 @@ class PLATFORM_EXPORT ResourceFetcher
   // Calling this method before main document resource is fetched is invalid.
   ResourceTimingInfo* GetNavigationTimingInfo();
 
-  bool ContainsAsPreloadForTesting(Resource* resource) const {
-    return preloads_ && preloads_->Contains(resource);
-  }
+  // Returns whether the given resource is contained as a preloaded resource.
+  bool ContainsAsPreload(Resource*) const;
+
+  void RemovePreload(Resource*);
+
+  void OnNetworkQuiet() { scheduler_->OnNetworkQuiet(); }
 
   // Workaround for https://crbug.com/666214.
   // TODO(hiroshige): Remove this hack.
@@ -155,12 +163,15 @@ class PLATFORM_EXPORT ResourceFetcher
 
  private:
   friend class ResourceCacheValidationSuppressor;
+  enum class StopFetchingTarget {
+    kExcludingKeepaliveLoaders,
+    kIncludingKeepaliveLoaders,
+  };
 
-  explicit ResourceFetcher(FetchContext*);
+  ResourceFetcher(FetchContext*);
 
   void InitializeRevalidation(ResourceRequest&, Resource*);
   Resource* CreateResourceForLoading(FetchParameters&,
-                                     const String& charset,
                                      const ResourceFactory&);
   void StorePerformanceTimingInitiatorInformation(Resource*);
   ResourceLoadPriority ComputeLoadPriority(
@@ -187,12 +198,33 @@ class PLATFORM_EXPORT ResourceFetcher
                                       const ResourceFactory&,
                                       ResourceRequestBlockedReason);
 
+  Resource* MatchPreload(const FetchParameters& params, Resource::Type);
+  void InsertAsPreloadIfNecessary(Resource*,
+                                  const FetchParameters& params,
+                                  Resource::Type);
+
+  bool IsImageResourceDisallowedToBeReused(const Resource&) const;
+
+  void StopFetchingInternal(StopFetchingTarget);
+  void StopFetchingIncludingKeepaliveLoaders();
+
   // RevalidationPolicy enum values are used in UMAs https://crbug.com/579496.
   enum RevalidationPolicy { kUse, kRevalidate, kReload, kLoad };
-  RevalidationPolicy DetermineRevalidationPolicy(Resource::Type,
-                                                 const FetchParameters&,
-                                                 Resource* existing_resource,
-                                                 bool is_static_data) const;
+
+  // A wrapper just for placing a trace_event macro.
+  RevalidationPolicy DetermineRevalidationPolicy(
+      Resource::Type,
+      const FetchParameters&,
+      const Resource& existing_resource,
+      bool is_static_data) const;
+  // Determines a RevalidationPolicy given a FetchParameters and an existing
+  // resource retrieved from the memory cache (can be a newly constructed one
+  // for a static data).
+  RevalidationPolicy DetermineRevalidationPolicyInternal(
+      Resource::Type,
+      const FetchParameters&,
+      const Resource& existing_resource,
+      bool is_static_data) const;
 
   void MakePreloadedResourceBlockOnloadIfNeeded(Resource*,
                                                 const FetchParameters&);
@@ -200,9 +232,6 @@ class PLATFORM_EXPORT ResourceFetcher
   void RemoveResourceLoader(ResourceLoader*);
   void HandleLoadCompletion(Resource*);
 
-  void InitializeResourceRequest(ResourceRequest&,
-                                 Resource::Type,
-                                 FetchParameters::DeferOption);
   void RequestLoadStarted(unsigned long identifier,
                           Resource*,
                           const FetchParameters&,
@@ -226,44 +255,37 @@ class PLATFORM_EXPORT ResourceFetcher
                               bool is_static_data) const;
 
   Member<FetchContext> context_;
+  Member<ResourceLoadScheduler> scheduler_;
 
-  HashSet<String> validated_urls_;
-  mutable DocumentResourceMap document_resources_;
+  DocumentResourceMap cached_resources_map_;
+  HeapHashSet<WeakMember<Resource>> document_resources_;
 
-  Member<HeapListHashSet<Member<Resource>>> preloads_;
+  // When populated, forces Resources to remain alive across a navigation, to
+  // increase the odds the next document will be able to reuse resources from
+  // the previous page. Unpopulated unless experiment is enabled.
+  HeapHashSet<Member<Resource>> resources_from_previous_fetcher_;
+
+  HeapHashMap<PreloadKey, Member<Resource>> preloads_;
+  HeapVector<Member<Resource>> matched_preloads_;
   Member<MHTMLArchive> archive_;
 
   TaskRunnerTimer<ResourceFetcher> resource_timing_report_timer_;
 
   using ResourceTimingInfoMap =
-      HeapHashMap<Member<Resource>, RefPtr<ResourceTimingInfo>>;
+      HeapHashMap<Member<Resource>, scoped_refptr<ResourceTimingInfo>>;
   ResourceTimingInfoMap resource_timing_info_map_;
 
-  RefPtr<ResourceTimingInfo> navigation_timing_info_;
+  scoped_refptr<ResourceTimingInfo> navigation_timing_info_;
 
-  Vector<RefPtr<ResourceTimingInfo>> scheduled_resource_timing_reports_;
+  Vector<scoped_refptr<ResourceTimingInfo>> scheduled_resource_timing_reports_;
 
   HeapHashSet<Member<ResourceLoader>> loaders_;
   HeapHashSet<Member<ResourceLoader>> non_blocking_loaders_;
 
-  // Used in hit rate histograms.
-  class DeadResourceStatsRecorder {
-    DISALLOW_NEW();
-
-   public:
-    DeadResourceStatsRecorder();
-    ~DeadResourceStatsRecorder();
-
-    void Update(RevalidationPolicy);
-
-   private:
-    int use_count_;
-    int revalidate_count_;
-    int load_count_;
-  };
-  DeadResourceStatsRecorder dead_stats_recorder_;
-
   std::unique_ptr<HashSet<String>> preloaded_urls_for_test_;
+
+  // Timeout timer for keepalive requests.
+  TaskHandle keepalive_loaders_task_handle_;
 
   // 28 bits left
   bool auto_load_images_ : 1;

@@ -10,9 +10,15 @@
 #include <cups/cups.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "base/version.h"
 #include "printing/printing_export.h"
+
+// This file contains a collection of functions used to query IPP printers or
+// print servers and the related code to parse these responses.  All Get*
+// operations block on the network request and cannot be run on the UI thread.
 
 namespace printing {
 
@@ -29,6 +35,10 @@ struct PRINTING_EXPORT CupsJob {
     CANCELED,    // either the spooler or a user canclled the job
     ABORTED      // an error occurred causing the printer to give up
   };
+
+  CupsJob();
+  CupsJob(const CupsJob& other);
+  ~CupsJob();
 
   // job id
   int id = -1;
@@ -47,7 +57,7 @@ struct PRINTING_EXPORT CupsJob {
 
 // Represents the status of a printer containing the properties printer-state,
 // printer-state-reasons, and printer-state-message.
-struct PrinterStatus {
+struct PRINTING_EXPORT PrinterStatus {
   struct PrinterReason {
     // Standardized reasons from RFC2911.
     enum Reason {
@@ -94,12 +104,37 @@ struct PrinterStatus {
     Severity severity;
   };
 
+  PrinterStatus();
+  PrinterStatus(const PrinterStatus& other);
+  ~PrinterStatus();
+
   // printer-state
   ipp_pstate_t state;
   // printer-state-reasons
   std::vector<PrinterReason> reasons;
   // printer-state-message
   std::string message;
+};
+
+struct PRINTING_EXPORT PrinterInfo {
+  PrinterInfo();
+  PrinterInfo(const PrinterInfo& info);
+
+  ~PrinterInfo();
+
+  // printer-make-and-model
+  std::string make_and_model;
+
+  // document-format-supported
+  // MIME types for supported formats.
+  std::vector<std::string> document_formats;
+
+  // ipp-versions-supported
+  // A collection of supported IPP protocol versions.
+  std::vector<base::Version> ipp_versions;
+
+  // Does ipp-features-supported contain 'ipp-everywhere'.
+  bool ipp_everywhere = false;
 };
 
 // Specifies classes of jobs.
@@ -116,6 +151,15 @@ void ParseJobsResponse(ipp_t* response,
 
 // Attempts to extract a PrinterStatus object out of |response|.
 void ParsePrinterStatus(ipp_t* response, PrinterStatus* printer_status);
+
+// Queries the printer at |address| on |port| with a Get-Printer-Attributes
+// request to populate |printer_info|. If |encrypted| is true, request is made
+// using ipps, otherwise, ipp is used. Returns false if the request failed.
+bool PRINTING_EXPORT GetPrinterInfo(const std::string& address,
+                                    const int port,
+                                    const std::string& resource,
+                                    bool encrypted,
+                                    PrinterInfo* printer_info);
 
 // Attempts to retrieve printer status using connection |http| for |printer_id|.
 // Returns true if succcssful and updates the fields in |printer_status| as

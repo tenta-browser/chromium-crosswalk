@@ -28,26 +28,27 @@ void NthIndexCacheTest::SetUp() {
 }
 
 TEST_F(NthIndexCacheTest, NthIndex) {
-  GetDocument().documentElement()->setInnerHTML(
-      "<body>"
-      "<span "
-      "id=first></span><span></span><span></span><span></span><span></span>"
-      "<span></span><span></span><span></span><span></span><span></span>"
-      "Text does not count"
-      "<span id=nth-last-child></span>"
-      "<span id=nth-child></span>"
-      "<span></span><span></span><span></span><span></span><span></span>"
-      "<span></span><span></span><span></span><span></span><span "
-      "id=last></span>"
-      "</body>");
+  GetDocument().documentElement()->SetInnerHTMLFromString(R"HTML(
+    <body>
+    <span
+    id=first></span><span></span><span></span><span></span><span></span>
+    <span></span><span></span><span></span><span></span><span></span>
+    Text does not count
+    <span id=nth-last-child></span>
+    <span id=nth-child></span>
+    <span></span><span></span><span></span><span></span><span></span>
+    <span></span><span></span><span></span><span></span><span
+    id=last></span>
+    </body>
+  )HTML");
 
   NthIndexCache nth_index_cache(GetDocument());
 
   EXPECT_EQ(
-      nth_index_cache.NthChildIndex(*GetDocument().GetElementById("nth-child")),
+      nth_index_cache.NthChildIndex(*GetDocument().getElementById("nth-child")),
       12U);
   EXPECT_EQ(nth_index_cache.NthLastChildIndex(
-                *GetDocument().GetElementById("nth-last-child")),
+                *GetDocument().getElementById("nth-last-child")),
             12U);
 }
 

@@ -9,7 +9,6 @@
 #include <set>
 #include <string>
 
-#include "apps/metrics_names.h"
 #include "base/macros.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
@@ -72,10 +71,9 @@ class AppLauncherHandler
   // extensions::ExtensionRegistryObserver:
   void OnExtensionLoaded(content::BrowserContext* browser_context,
                          const extensions::Extension* extension) override;
-  void OnExtensionUnloaded(
-      content::BrowserContext* browser_context,
-      const extensions::Extension* extension,
-      extensions::UnloadedExtensionInfo::Reason reason) override;
+  void OnExtensionUnloaded(content::BrowserContext* browser_context,
+                           const extensions::Extension* extension,
+                           extensions::UnloadedExtensionReason reason) override;
   void OnExtensionUninstalled(content::BrowserContext* browser_context,
                               const extensions::Extension* extension,
                               extensions::UninstallReason reason) override;
@@ -131,12 +129,6 @@ class AppLauncherHandler
   // page_index].
   void HandleGenerateAppForLink(const base::ListValue* args);
 
-  // Handles "stopShowingAppLauncherPromo" message with unused |args|.
-  void HandleStopShowingAppLauncherPromo(const base::ListValue* args);
-
-  // Handles "learnMore" message with unused |args|.
-  void HandleOnLearnMore(const base::ListValue* args);
-
   // Handles "pageSelected" message with |args| containing [page_index].
   void HandlePageSelected(const base::ListValue* args);
 
@@ -166,7 +158,7 @@ class AppLauncherHandler
 
   // Returns the ExtensionUninstallDialog object for this class, creating it if
   // needed.
-  extensions::ExtensionUninstallDialog* GetExtensionUninstallDialog();
+  extensions::ExtensionUninstallDialog* CreateExtensionUninstallDialog();
 
   // Continuation for installing a bookmark app after favicon lookup.
   void OnFaviconForApp(std::unique_ptr<AppInstallInfo> install_info,
@@ -176,8 +168,6 @@ class AppLauncherHandler
   void SetAppToBeHighlighted();
 
   void OnExtensionPreferenceChanged();
-
-  void OnLocalStatePreferenceChanged();
 
   // Called when an app is removed (unloaded or uninstalled). Updates the UI.
   void AppRemoved(const extensions::Extension* extension, bool is_uninstall);

@@ -15,7 +15,6 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/statistics_recorder.h"
-#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
@@ -31,14 +30,10 @@
 #include "components/sync/model/sync_error_factory_mock.h"
 #include "components/sync/protocol/sync.pb.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/test_utils.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#if defined(OS_WIN)
-// For version specific disabled tests below (http://crbug.com/230534).
-#include "base/win/windows_version.h"
-#endif
 
 using base::HistogramBase;
 using base::HistogramSamples;
@@ -130,9 +125,8 @@ class SyncErrorFactoryStub : public syncer::SyncErrorFactory {
   ~SyncErrorFactoryStub() override {}
 
   // Overridden from syncer::SyncErrorFactory:
-  syncer::SyncError CreateAndUploadError(
-      const tracked_objects::Location& location,
-      const std::string& message) override {
+  syncer::SyncError CreateAndUploadError(const base::Location& location,
+                                         const std::string& message) override {
     (*error_counter_)++;
     return syncer::SyncError(location,
                              syncer::SyncError::DATATYPE_ERROR,
@@ -519,7 +513,7 @@ TEST_F(SpellcheckCustomDictionaryTest, SyncBeforeLoadDoesNotDuplicateWords) {
   EXPECT_EQ(expected_words_in_memory, custom_dictionary->GetWords());
 
   // Finish all writes to disk.
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   std::string actual_contents_on_disk;
   base::ReadFileToString(path, &actual_contents_on_disk);
@@ -1138,12 +1132,14 @@ TEST_F(SpellcheckCustomDictionaryTest, DictionarySyncLimit) {
             server_custom_dictionary->GetWords().size());
 }
 
-TEST_F(SpellcheckCustomDictionaryTest, RecordSizeStatsCorrectly) {
 #if defined(OS_WIN)
-// Failing consistently on Win7. See crbug.com/230534.
-  if (base::win::GetVersion() >= base::win::VERSION_VISTA)
-    return;
+// Failing consistently on Win7+. See crbug.com/230534.
+#define MAYBE_RecordSizeStatsCorrectly DISABLED_RecordSizeStatsCorrectly
+#else
+#define MAYBE_RecordSizeStatsCorrectly RecordSizeStatsCorrectly
 #endif
+
+TEST_F(SpellcheckCustomDictionaryTest, MAYBE_RecordSizeStatsCorrectly) {
   // Record a baseline.
   SpellCheckHostMetrics::RecordCustomWordCountStats(123);
 

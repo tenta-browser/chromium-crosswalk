@@ -4,13 +4,13 @@
 
 #include "core/dom/ScriptRunner.h"
 
-#include "bindings/core/v8/HTMLScriptElementOrSVGScriptElement.h"
-#include "core/dom/Document.h"
+#include "core/dom/MockScriptElementBase.h"
 #include "core/dom/ScriptLoader.h"
+#include "platform/bindings/RuntimeCallStats.h"
 #include "platform/heap/Handle.h"
-#include "platform/testing/TestingPlatformSupport.h"
+#include "platform/scheduler/renderer/web_view_scheduler.h"
+#include "platform/testing/TestingPlatformSupportWithMockScheduler.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebViewScheduler.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -19,66 +19,107 @@ using ::testing::ElementsAre;
 using ::testing::Return;
 using ::testing::WhenSorted;
 using ::testing::ElementsAreArray;
+using ::testing::_;
 
 namespace blink {
 
-class MockScriptElementBase
-    : public GarbageCollectedFinalized<MockScriptElementBase>,
-      public ScriptElementBase {
-  USING_GARBAGE_COLLECTED_MIXIN(MockScriptElementBase);
-
+class MockPendingScript : public PendingScript {
  public:
-  static MockScriptElementBase* Create() {
-    return new testing::StrictMock<MockScriptElementBase>();
+  static MockPendingScript* Create() { return new MockPendingScript; }
+  ~MockPendingScript() override {}
+
+  MOCK_CONST_METHOD0(GetScriptType, ScriptType());
+  MOCK_CONST_METHOD2(GetSource, Script*(const KURL&, bool&));
+  MOCK_CONST_METHOD0(IsReady, bool());
+  MOCK_CONST_METHOD0(IsExternal, bool());
+  MOCK_CONST_METHOD0(ErrorOccurred, bool());
+  MOCK_CONST_METHOD0(WasCanceled, bool());
+  MOCK_CONST_METHOD0(UrlForTracing, KURL());
+  MOCK_METHOD0(RemoveFromMemoryCache, void());
+
+  MOCK_CONST_METHOD0(IsCurrentlyStreaming, bool());
+  // The currently released googletest cannot mock methods with C++ move-only
+  // types like std::unique_ptr. This has been promised to be fixed in a
+  // future release of googletest, but for now we use the recommended
+  // workaround of 'bumping' the method-to-be-mocked to another method.
+  bool StartStreamingIfPossible(ScriptStreamer::Type type,
+                                WTF::Closure closure) override {
+    return DoStartStreamingIfPossible(type, &closure);
   }
+  MOCK_METHOD2(DoStartStreamingIfPossible,
+               bool(ScriptStreamer::Type, WTF::Closure*));
 
-  MOCK_METHOD0(DispatchLoadEvent, void());
-  MOCK_METHOD0(DispatchErrorEvent, void());
-  MOCK_CONST_METHOD0(AsyncAttributeValue, bool());
-  MOCK_CONST_METHOD0(CharsetAttributeValue, String());
-  MOCK_CONST_METHOD0(CrossOriginAttributeValue, String());
-  MOCK_CONST_METHOD0(DeferAttributeValue, bool());
-  MOCK_CONST_METHOD0(EventAttributeValue, String());
-  MOCK_CONST_METHOD0(ForAttributeValue, String());
-  MOCK_CONST_METHOD0(IntegrityAttributeValue, String());
-  MOCK_CONST_METHOD0(LanguageAttributeValue, String());
-  MOCK_CONST_METHOD0(SourceAttributeValue, String());
-  MOCK_CONST_METHOD0(TypeAttributeValue, String());
+ protected:
+  MOCK_METHOD0(DisposeInternal, void());
+  MOCK_CONST_METHOD0(CheckState, void());
 
-  MOCK_METHOD0(TextFromChildren, String());
-  MOCK_CONST_METHOD0(TextContent, String());
-  MOCK_CONST_METHOD0(HasSourceAttribute, bool());
-  MOCK_CONST_METHOD0(IsConnected, bool());
-  MOCK_CONST_METHOD0(HasChildren, bool());
-  MOCK_CONST_METHOD0(IsNonceableElement, bool());
-  MOCK_CONST_METHOD0(InitiatorName, AtomicString());
-  MOCK_METHOD3(AllowInlineScriptForCSP,
-               bool(const AtomicString&,
-                    const WTF::OrdinalNumber&,
-                    const String&));
-  MOCK_CONST_METHOD0(GetDocument, Document&());
-  MOCK_METHOD1(SetScriptElementForBinding,
-               void(HTMLScriptElementOrSVGScriptElement&));
-
-  DEFINE_INLINE_VIRTUAL_TRACE() { ScriptElementBase::Trace(visitor); }
+ private:
+  MockPendingScript() : PendingScript(nullptr, TextPosition()) {}
 };
 
 class MockScriptLoader final : public ScriptLoader {
  public:
-  static MockScriptLoader* Create() { return new MockScriptLoader(); }
+  static MockScriptLoader* Create() {
+    return (new MockScriptLoader())->SetupForNonStreaming();
+  }
   ~MockScriptLoader() override {}
 
   MOCK_METHOD0(Execute, void());
   MOCK_CONST_METHOD0(IsReady, bool());
+  MOCK_METHOD0(GetPendingScriptIfScriptIsAsync, PendingScript*());
+
+  // Set up the mock for streaming. The closure passed in will receive the
+  // 'finish streaming' callback, so that the test case can control when
+  // the mock streaming has mock finished.
+  MockScriptLoader* SetupForStreaming(WTF::Closure& finished_callback);
+  MockScriptLoader* SetupForNonStreaming();
+
+  virtual void Trace(blink::Visitor*);
 
  private:
   explicit MockScriptLoader()
       : ScriptLoader(MockScriptElementBase::Create(), false, false, false) {}
+  Member<MockPendingScript> mock_pending_script_;
 };
 
-class ScriptRunnerTest : public testing::Test {
+void MockScriptLoader::Trace(blink::Visitor* visitor) {
+  ScriptLoader::Trace(visitor);
+  visitor->Trace(mock_pending_script_);
+}
+
+MockScriptLoader* MockScriptLoader::SetupForStreaming(
+    WTF::Closure& finished_callback) {
+  mock_pending_script_ = MockPendingScript::Create();
+  SetupForNonStreaming();
+
+  // Mock the streaming functions and save the 'streaming done' callback
+  // into the callback done variable. This way, we can control when
+  // streamig is done.
+  EXPECT_CALL(*mock_pending_script_, DoStartStreamingIfPossible(_, _))
+      .WillOnce(Return(false))
+      .WillOnce(Invoke([&finished_callback](ScriptStreamer::Type,
+                                            WTF::Closure* callback) -> bool {
+        finished_callback = std::move(*callback);
+        return true;
+      }))
+      .WillRepeatedly(Return(false));
+  EXPECT_CALL(*mock_pending_script_, IsCurrentlyStreaming())
+      .WillRepeatedly(
+          Invoke([&finished_callback] { return !!finished_callback; }));
+  return this;
+}
+
+MockScriptLoader* MockScriptLoader::SetupForNonStreaming() {
+  EXPECT_CALL(*this, GetPendingScriptIfScriptIsAsync())
+      .WillRepeatedly(Invoke([this]() -> PendingScript* {
+        return this->mock_pending_script_.Get();
+      }));
+  return this;
+}
+
+class ScriptRunnerTest : public ::testing::Test {
  public:
-  ScriptRunnerTest() : document_(Document::Create()) {}
+  ScriptRunnerTest() : document_(Document::CreateForTest()) {}
 
   void SetUp() override {
     // We have to create ScriptRunner after initializing platform, because we
@@ -86,8 +127,12 @@ class ScriptRunnerTest : public testing::Test {
     // loadingTaskRunner() to be initialized before creating ScriptRunner to
     // save it in constructor.
     script_runner_ = ScriptRunner::Create(document_.Get());
+    RuntimeCallStats::SetRuntimeCallStatsForTesting();
   }
-  void TearDown() override { script_runner_.Release(); }
+  void TearDown() override {
+    script_runner_.Release();
+    RuntimeCallStats::ClearRuntimeCallStatsForTesting();
+  }
 
  protected:
   Persistent<Document> document_;
@@ -335,7 +380,7 @@ TEST_F(ScriptRunnerTest, QueueReentrantScript_ManyAsyncScripts) {
   int expected[] = {0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
                     10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
 
-  EXPECT_THAT(order_, testing::ElementsAreArray(expected));
+  EXPECT_THAT(order_, ::testing::ElementsAreArray(expected));
 }
 
 TEST_F(ScriptRunnerTest, ResumeAndSuspend_InOrder) {
@@ -467,6 +512,37 @@ TEST_F(ScriptRunnerTest, TasksWithDeadScriptRunner) {
   EXPECT_CALL(*script_loader1, Execute()).Times(0);
   EXPECT_CALL(*script_loader2, Execute()).Times(0);
 
+  platform_->RunUntilIdle();
+}
+
+TEST_F(ScriptRunnerTest, TryStreamWhenEnqueingScript) {
+  Persistent<MockScriptLoader> script_loader1 = MockScriptLoader::Create();
+  EXPECT_CALL(*script_loader1, IsReady()).WillRepeatedly(Return(true));
+  script_runner_->QueueScriptForExecution(script_loader1, ScriptRunner::kAsync);
+}
+
+TEST_F(ScriptRunnerTest, DontExecuteWhileStreaming) {
+  WTF::Closure callback;
+  Persistent<MockScriptLoader> script_loader1 =
+      MockScriptLoader::Create()->SetupForStreaming(callback);
+  EXPECT_CALL(*script_loader1, IsReady()).WillRepeatedly(Return(true));
+
+  // Enqueue script & make it ready.
+  script_runner_->QueueScriptForExecution(script_loader1, ScriptRunner::kAsync);
+  script_runner_->NotifyScriptReady(script_loader1, ScriptRunner::kAsync);
+
+  // We should have started streaming by now.
+  CHECK(callback);
+
+  // Note that there is no expectation for ScriptLoader::Execute() yet,
+  // so the mock will fail if it's called anyway.
+  platform_->RunUntilIdle();
+
+  // Finish streaming.
+  std::move(callback).Run();
+
+  // Now that streaming is finished, expect Execute() to be called.
+  EXPECT_CALL(*script_loader1, Execute()).Times(1);
   platform_->RunUntilIdle();
 }
 

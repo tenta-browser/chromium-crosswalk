@@ -204,9 +204,10 @@
         },
         {
             "type": "@UI.ToolbarItem.Provider",
-            "className": "Main.Main.WarningErrorCounter",
-            "order": 1,
-            "location": "main-toolbar-right"
+            "className": "Main.Main.NodeIndicator",
+            "order": 2,
+            "location": "main-toolbar-left",
+            "condition": "!nodeFrontend"
         },
         {
             "type": "@UI.ToolbarItem.Provider",
@@ -234,6 +235,7 @@
             "settingType": "boolean",
             "order": 0,
             "defaultValue": false,
+            "userActionCondition": "hasOtherClients",
             "options": [
                 {
                     "value": true,
@@ -247,21 +249,20 @@
         },
         {
             "type": "setting",
-            "category": "Debugger",
-            "title": "Disable JavaScript",
-            "settingName": "javaScriptDisabled",
+            "category": "Network",
+            "title": "Force ad blocking on this site",
+            "settingName": "network.adBlockingEnabled",
             "settingType": "boolean",
             "storageType": "session",
-            "order": 1,
             "defaultValue": false,
             "options": [
                 {
                     "value": true,
-                    "title": "Disable JavaScript"
+                    "title": "Block ads on this site"
                 },
                 {
                     "value": false,
-                    "title": "Enable JavaScript"
+                    "title": "Show ads on this site, if allowed"
                 }
             ]
         },
@@ -367,26 +368,13 @@
             "className": "Main.ShowMetricsRulersSettingUI"
         },
         {
-            "type": "context-menu-item",
-            "location": "mainMenu/navigate",
-            "title": "More tools",
-            "subMenuId": "mainMenuMoreTools",
-            "order": 80
-        },
-        {
-            "type": "context-menu-item",
-            "location": "mainMenu/footer",
-            "title": "Help",
-            "subMenuId": "mainMenuHelp",
-            "order": 30
-        },
-        {
             "type": "view",
             "location": "drawer-view",
             "id": "rendering",
             "title": "Rendering",
             "persistence": "closeable",
             "order": 50,
+            "condition": "!v8only",
             "className": "Main.RenderingOptionsView"
         },
         {
@@ -398,14 +386,17 @@
             "options": [
                 {
                     "value": "right",
+                    "text": "Right",
                     "title": "Dock to right"
                 },
                 {
                     "value": "bottom",
+                    "text": "Bottom",
                     "title": "Dock to bottom"
                 },
                 {
                     "value": "undocked",
+                    "text": "Undocked",
                     "title": "Undock into separate window"
                 }
             ]
@@ -413,6 +404,13 @@
         {
             "type": "@UI.ViewLocationResolver",
             "name": "drawer-view",
+            "category": "Drawer",
+            "className": "UI.InspectorView"
+        },
+        {
+            "type": "@UI.ViewLocationResolver",
+            "name": "panel",
+            "category": "Panel",
             "className": "UI.InspectorView"
         },
         {
@@ -438,19 +436,19 @@
         "persistence",
         "help",
         "console_model",
-        "network_log"
+        "network_log",
+        "console_counters"
     ],
     "scripts": [
         "RenderingOptions.js",
         "SimpleApp.js",
-        "OverlayController.js",
         "GCActionDelegate.js",
         "RequestAppBannerActionDelegate.js",
         "ExecutionContextSelector.js",
         "Main.js"
     ],
     "resources": [
-        "errorWarningCounter.css",
+        "nodeIcon.css",
         "remoteDebuggingTerminatedScreen.css",
         "renderingOptions.css",
         "targetCrashedScreen.css"

@@ -31,15 +31,14 @@
 #ifndef GCObservation_h
 #define GCObservation_h
 
-#include "bindings/core/v8/ScopedPersistent.h"
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScopedPersistent.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "v8/include/v8.h"
 
 namespace blink {
 
-class GCObservation final : public GarbageCollectedFinalized<GCObservation>,
-                            public ScriptWrappable {
+class GCObservation final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -53,8 +52,6 @@ class GCObservation final : public GarbageCollectedFinalized<GCObservation>,
   // common case.
   bool wasCollected() const { return collected_; }
   void SetWasCollected();
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   explicit GCObservation(v8::Local<v8::Value>);

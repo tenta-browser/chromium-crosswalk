@@ -28,7 +28,7 @@
 #include "core/dom/ExecutionContext.h"
 #include "modules/speech/SpeechSynthesisEvent.h"
 #include "platform/speech/PlatformSpeechSynthesisVoice.h"
-#include "platform/wtf/CurrentTime.h"
+#include "platform/wtf/Time.h"
 
 namespace blink {
 
@@ -47,7 +47,7 @@ void SpeechSynthesis::SetPlatformSynthesizer(
 }
 
 void SpeechSynthesis::VoicesDidChange() {
-  voice_list_.Clear();
+  voice_list_.clear();
   if (GetExecutionContext())
     DispatchEvent(Event::Create(EventTypeNames::voiceschanged));
 }
@@ -58,7 +58,7 @@ const HeapVector<Member<SpeechSynthesisVoice>>& SpeechSynthesis::getVoices() {
 
   // If the voiceList is empty, that's the cue to get the voices from the
   // platform again.
-  const Vector<RefPtr<PlatformSpeechSynthesisVoice>>& platform_voices =
+  const Vector<scoped_refptr<PlatformSpeechSynthesisVoice>>& platform_voices =
       platform_speech_synthesizer_->VoiceList();
   size_t voice_count = platform_voices.size();
   for (size_t k = 0; k < voice_count; k++)
@@ -86,7 +86,7 @@ bool SpeechSynthesis::paused() const {
 
 void SpeechSynthesis::StartSpeakingImmediately() {
   SpeechSynthesisUtterance* utterance = CurrentSpeechUtterance();
-  ASSERT(utterance);
+  DCHECK(utterance);
 
   utterance->SetStartTime(MonotonicallyIncreasingTime());
   is_paused_ = false;
@@ -94,7 +94,7 @@ void SpeechSynthesis::StartSpeakingImmediately() {
 }
 
 void SpeechSynthesis::speak(SpeechSynthesisUtterance* utterance) {
-  ASSERT(utterance);
+  DCHECK(utterance);
 
   utterance_queue_.push_back(utterance);
 
@@ -107,7 +107,7 @@ void SpeechSynthesis::cancel() {
   // Remove all the items from the utterance queue. The platform
   // may still have references to some of these utterances and may
   // fire events on them asynchronously.
-  utterance_queue_.Clear();
+  utterance_queue_.clear();
   platform_speech_synthesizer_->Cancel();
 }
 
@@ -138,7 +138,7 @@ void SpeechSynthesis::FireEvent(const AtomicString& type,
 void SpeechSynthesis::HandleSpeakingCompleted(
     SpeechSynthesisUtterance* utterance,
     bool error_occurred) {
-  ASSERT(utterance);
+  DCHECK(utterance);
 
   bool should_start_speaking = false;
   // If the utterance that completed was the one we're currently speaking,
@@ -179,7 +179,7 @@ void SpeechSynthesis::BoundaryEventOccurred(
                 char_index, sentence_boundary_string);
       break;
     default:
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
   }
 }
 
@@ -234,7 +234,7 @@ const AtomicString& SpeechSynthesis::InterfaceName() const {
   return EventTargetNames::SpeechSynthesis;
 }
 
-DEFINE_TRACE(SpeechSynthesis) {
+void SpeechSynthesis::Trace(blink::Visitor* visitor) {
   visitor->Trace(platform_speech_synthesizer_);
   visitor->Trace(voice_list_);
   visitor->Trace(utterance_queue_);

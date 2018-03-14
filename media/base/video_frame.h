@@ -15,6 +15,7 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/md5.h"
+#include "base/memory/aligned_memory.h"
 #include "base/memory/shared_memory.h"
 #include "base/synchronization/lock.h"
 #include "build/build_config.h"
@@ -37,6 +38,9 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
   enum {
     kFrameSizeAlignment = 16,
     kFrameSizePadding = 16,
+
+    // Note: This value is dependent on what's used by ffmpeg, do not change
+    // without inspecting av_frame_get_buffer() first.
     kFrameAddressAlignment = 32
   };
 
@@ -99,11 +103,10 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
                             const gfx::Rect& visible_rect,
                             const gfx::Size& natural_size);
 
-  // Creates a new YUV frame in system memory with given parameters (|format|
-  // must be YUV). Buffers for the frame are allocated but not initialized. The
-  // caller most not make assumptions about the actual underlying size(s), but
-  // check the returned VideoFrame instead.
-  // TODO(mcasas): implement the RGB version of this factory method.
+  // Creates a new frame in system memory with given parameters. Buffers for the
+  // frame are allocated but not initialized. The caller most not make
+  // assumptions about the actual underlying size(s), but check the returned
+  // VideoFrame instead.
   static scoped_refptr<VideoFrame> CreateFrame(VideoPixelFormat format,
                                                const gfx::Size& coded_size,
                                                const gfx::Rect& visible_rect,
@@ -190,7 +193,7 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
 
 #if defined(OS_LINUX)
   // Wraps provided dmabufs
-  // (https://www.kernel.org/doc/Documentation/dma-buf-sharing.txt) with a
+  // (https://www.kernel.org/doc/html/latest/driver-api/dma-buf.html) with a
   // VideoFrame. The dmabuf fds are dup()ed on creation, so that the VideoFrame
   // retains a reference to them, and are automatically close()d on destruction,
   // dropping the reference. The caller may safely close() its reference after
@@ -294,6 +297,9 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
   // accessed via data(), visible_data() etc.
   bool HasTextures() const;
 
+  // Returns the number of native textures.
+  size_t NumTextures() const;
+
   // Returns the color space of this frame's content.
   gfx::ColorSpace ColorSpace() const;
   void set_color_space(const gfx::ColorSpace& color_space);
@@ -370,7 +376,7 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
   // VideoFrame is permitted while the callback executes (including
   // VideoFrameMetadata), clients should not assume the data pointers are
   // valid.
-  void AddDestructionObserver(const base::Closure& callback);
+  void AddDestructionObserver(base::OnceClosure callback);
 
   // Returns a dictionary of optional metadata.  This contains information
   // associated with the frame that downstream clients might use for frame-level
@@ -389,11 +395,11 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
     timestamp_ = timestamp;
   }
 
-  // It uses |client| to insert a new sync point and potentially waits on a
-  // older sync point. The final sync point will be used to release this
-  // VideoFrame.
+  // It uses |client| to insert a new sync token and potentially waits on an
+  // older sync token. The final sync point will be used to release this
+  // VideoFrame. Also returns the new sync token.
   // This method is thread safe. Both blink and compositor threads can call it.
-  void UpdateReleaseSyncToken(SyncTokenClient* client);
+  gpu::SyncToken UpdateReleaseSyncToken(SyncTokenClient* client);
 
   // Returns a human-readable string describing |*this|.
   std::string AsHumanReadableString();
@@ -487,7 +493,7 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
   // alignment for each individual plane.
   static gfx::Size CommonAlignment(VideoPixelFormat format);
 
-  void AllocateYUV(bool zero_initialize_memory);
+  void AllocateMemory(bool zero_initialize_memory);
 
   // Frame format.
   const VideoPixelFormat format_;
@@ -541,7 +547,7 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
   base::ScopedCFTypeRef<CVPixelBufferRef> cv_pixel_buffer_;
 #endif
 
-  std::vector<base::Closure> done_callbacks_;
+  std::vector<base::OnceClosure> done_callbacks_;
 
   base::TimeDelta timestamp_;
 

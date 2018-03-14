@@ -7,7 +7,7 @@
 #include <stddef.h>
 
 #include "base/logging.h"
-#include "content/public/child/worker_thread.h"
+#include "content/public/renderer/worker_thread.h"
 #include "extensions/common/extension_api.h"
 #include "extensions/renderer/console.h"
 #include "extensions/renderer/module_system.h"
@@ -57,10 +57,8 @@ void ObjectBackedNativeHandler::Router(
       !feature_name_value->IsString()) {
     ScriptContext* script_context =
         ScriptContextSet::GetContextByV8Context(context);
-    console::AddMessage(
-        script_context ? script_context->GetRenderFrame() : nullptr,
-        content::CONSOLE_MESSAGE_LEVEL_ERROR,
-        "Extension view no longer exists");
+    console::AddMessage(script_context, content::CONSOLE_MESSAGE_LEVEL_ERROR,
+                        "Extension view no longer exists");
     return;
   }
 

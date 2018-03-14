@@ -4,10 +4,10 @@
 
 #include "core/svg/SVGAnimatedHref.h"
 
-#include "core/SVGNames.h"
-#include "core/XLinkNames.h"
 #include "core/frame/UseCounter.h"
 #include "core/svg/SVGElement.h"
+#include "core/svg_names.h"
+#include "core/xlink_names.h"
 
 namespace blink {
 
@@ -15,7 +15,7 @@ SVGAnimatedHref* SVGAnimatedHref::Create(SVGElement* context_element) {
   return new SVGAnimatedHref(context_element);
 }
 
-DEFINE_TRACE(SVGAnimatedHref) {
+void SVGAnimatedHref::Trace(blink::Visitor* visitor) {
   visitor->Trace(xlink_href_);
   SVGAnimatedString::Trace(visitor);
 }
@@ -45,20 +45,20 @@ const SVGString* SVGAnimatedHref::CurrentValue() const {
 
 String SVGAnimatedHref::baseVal() {
   UseCounter::Count(contextElement()->GetDocument(),
-                    UseCounter::kSVGHrefBaseVal);
+                    WebFeature::kSVGHrefBaseVal);
   return BackingString()->SVGAnimatedString::baseVal();
 }
 
 void SVGAnimatedHref::setBaseVal(const String& value,
                                  ExceptionState& exception_state) {
   UseCounter::Count(contextElement()->GetDocument(),
-                    UseCounter::kSVGHrefBaseVal);
+                    WebFeature::kSVGHrefBaseVal);
   return BackingString()->SVGAnimatedString::setBaseVal(value, exception_state);
 }
 
 String SVGAnimatedHref::animVal() {
   UseCounter::Count(contextElement()->GetDocument(),
-                    UseCounter::kSVGHrefAnimVal);
+                    WebFeature::kSVGHrefAnimVal);
   return BackingString()->SVGAnimatedString::animVal();
 }
 

@@ -29,16 +29,13 @@
 """Unit testing base class for Port implementations."""
 
 import collections
-import errno
 import optparse
-import socket
 
 from webkitpy.common import exit_codes
 from webkitpy.common.system.executive_mock import MockExecutive
 from webkitpy.common.system.log_testing import LoggingTestCase
 from webkitpy.common.system.system_host import SystemHost
 from webkitpy.common.system.system_host_mock import MockSystemHost
-from webkitpy.layout_tests.models import test_run_results
 from webkitpy.layout_tests.port.base import Port
 
 
@@ -53,6 +50,10 @@ class FakePrinter(object):
 
 class PortTestCase(LoggingTestCase):
     """Tests that all Port implementations must pass."""
+
+    # Some tests in this class test or override protected methods
+    # pylint: disable=protected-access
+
     HTTP_PORTS = (8000, 8080, 8443)
     WEBSOCKET_PORTS = (8880,)
 
@@ -72,34 +73,29 @@ class PortTestCase(LoggingTestCase):
 
     def test_check_build(self):
         port = self.make_port()
+
+        # Here we override methods to make it appear as though the build
+        # requirements are all met and the driver is found. We get a warning
+        # about PrettyPatch, bu the exit code is still OK.
         port._check_file_exists = lambda path, desc: True
         if port._dump_reader:
             port._dump_reader.check_is_functional = lambda: True
         port._options.build = True
         port._check_driver_build_up_to_date = lambda config: True
         port.check_httpd = lambda: True
-        self.assertEqual(port.check_build(needs_http=True, printer=FakePrinter()),
-                         exit_codes.OK_EXIT_STATUS)
-        # We should get a warning about PrettyPatch being missing,
-        # but not the driver itself.
+        self.assertEqual(
+            port.check_build(needs_http=True, printer=FakePrinter()),
+            exit_codes.OK_EXIT_STATUS)
         logs = ''.join(self.logMessages())
         self.assertIn('pretty patches', logs)
         self.assertNotIn('build requirements', logs)
 
-        self.assertLog([
-            'ERROR: \n',
-            'WARNING: Unable to find /mock-checkout/third_party/WebKit/Tools/Scripts/webkitruby/'
-            'PrettyPatch/prettify.rb; can\'t generate pretty patches.\n',
-            'WARNING: \n'
-        ])
-
+        # And here, after changing it so that the driver binary is not found,
+        # we get an error exit status and message about build requirements.
         port._check_file_exists = lambda path, desc: False
-        port._check_driver_build_up_to_date = lambda config: False
         self.assertEqual(port.check_build(needs_http=True, printer=FakePrinter()),
                          exit_codes.UNEXPECTED_ERROR_EXIT_STATUS)
-        # And, here we should get warnings about both.
         logs = ''.join(self.logMessages())
-        self.assertIn('pretty patches', logs)
         self.assertIn('build requirements', logs)
 
     def test_default_batch_size(self):
@@ -195,39 +191,61 @@ class PortTestCase(LoggingTestCase):
         port = self.make_port()
         self.assertTrue(port.test_configuration())
 
-    def test_get_crash_log(self):
+    def test_get_crash_log_all_none(self):
         port = self.make_port()
-        self.assertEqual(port._get_crash_log(None, None, None, None, newer_than=None),
-                         (None,
-                          'crash log for <unknown process name> (pid <unknown>):\n'
-                          'STDOUT: <empty>\n'
-                          'STDERR: <empty>\n'))
+        stderr, details, crash_site = port._get_crash_log(None, None, None, None, newer_than=None)
+        self.assertIsNone(stderr)
+        self.assertEqual(details,
+                         'crash log for <unknown process name> (pid <unknown>):\n'
+                         'STDOUT: <empty>\n'
+                         'STDERR: <empty>\n')
+        self.assertIsNone(crash_site)
 
-        self.assertEqual(port._get_crash_log('foo', 1234, 'out bar\nout baz', 'err bar\nerr baz\n', newer_than=None),
-                         ('err bar\nerr baz\n',
-                          'crash log for foo (pid 1234):\n'
-                          'STDOUT: out bar\n'
-                          'STDOUT: out baz\n'
-                          'STDERR: err bar\n'
-                          'STDERR: err baz\n'))
+    def test_get_crash_log_simple(self):
+        port = self.make_port()
+        stderr, details, crash_site = port._get_crash_log('foo', 1234, 'out bar\nout baz', 'err bar\nerr baz\n', newer_than=None)
+        self.assertEqual(stderr, 'err bar\nerr baz\n')
+        self.assertEqual(details,
+                         'crash log for foo (pid 1234):\n'
+                         'STDOUT: out bar\n'
+                         'STDOUT: out baz\n'
+                         'STDERR: err bar\n'
+                         'STDERR: err baz\n')
+        self.assertIsNone(crash_site)
 
-        self.assertEqual(port._get_crash_log('foo', 1234, 'foo\xa6bar', 'foo\xa6bar', newer_than=None),
-                         ('foo\xa6bar',
-                          u'crash log for foo (pid 1234):\n'
-                          u'STDOUT: foo\ufffdbar\n'
-                          u'STDERR: foo\ufffdbar\n'))
+    def test_get_crash_log_non_ascii(self):
+        port = self.make_port()
+        stderr, details, crash_site = port._get_crash_log('foo', 1234, 'foo\xa6bar', 'foo\xa6bar', newer_than=None)
+        self.assertEqual(stderr, 'foo\xa6bar')
+        self.assertEqual(details,
+                         u'crash log for foo (pid 1234):\n'
+                         u'STDOUT: foo\ufffdbar\n'
+                         u'STDERR: foo\ufffdbar\n')
+        self.assertIsNone(crash_site)
 
-        self.assertEqual(port._get_crash_log('foo', 1234, 'foo\xa6bar', 'foo\xa6bar', newer_than=1.0),
-                         ('foo\xa6bar',
-                          u'crash log for foo (pid 1234):\n'
-                          u'STDOUT: foo\ufffdbar\n'
-                          u'STDERR: foo\ufffdbar\n'))
+    def test_get_crash_log_newer_than(self):
+        port = self.make_port()
+        stderr, details, crash_site = port._get_crash_log('foo', 1234, 'foo\xa6bar', 'foo\xa6bar', newer_than=1.0)
+        self.assertEqual(stderr, 'foo\xa6bar')
+        self.assertEqual(details,
+                         u'crash log for foo (pid 1234):\n'
+                         u'STDOUT: foo\ufffdbar\n'
+                         u'STDERR: foo\ufffdbar\n')
+        self.assertIsNone(crash_site)
 
-    def assert_build_path(self, options, dirs, expected_path):
-        port = self.make_port(options=options)
-        for directory in dirs:
-            port.host.filesystem.maybe_make_directory(directory)
-        self.assertEqual(port._build_path(), expected_path)
+    def test_get_crash_log_crash_site(self):
+        port = self.make_port()
+        stderr, details, crash_site = port._get_crash_log('foo',
+                                                          1234,
+                                                          'out bar',
+                                                          '[1:2:3:4:FATAL:example.cc(567)] Check failed.',
+                                                          newer_than=None)
+        self.assertEqual(stderr, '[1:2:3:4:FATAL:example.cc(567)] Check failed.')
+        self.assertEqual(details,
+                         'crash log for foo (pid 1234):\n'
+                         'STDOUT: out bar\n'
+                         'STDERR: [1:2:3:4:FATAL:example.cc(567)] Check failed.\n')
+        self.assertEqual(crash_site, 'example.cc(567)')
 
     def test_expectations_files(self):
         port = self.make_port()
@@ -267,7 +285,8 @@ class PortTestCase(LoggingTestCase):
         port = self.make_port()
 
         port.host.environ['WEBKIT_HTTP_SERVER_CONF_PATH'] = '/path/to/httpd.conf'
-        self.assertRaises(IOError, port.path_to_apache_config_file)
+        with self.assertRaises(IOError):
+            port.path_to_apache_config_file()
         port.host.filesystem.write_text_file('/existing/httpd.conf', 'Hello, world!')
         port.host.environ['WEBKIT_HTTP_SERVER_CONF_PATH'] = '/existing/httpd.conf'
         self.assertEqual(port.path_to_apache_config_file(), '/existing/httpd.conf')

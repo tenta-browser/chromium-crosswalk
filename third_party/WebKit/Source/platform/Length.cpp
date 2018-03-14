@@ -25,22 +25,21 @@
 
 #include "platform/Length.h"
 
+#include "base/macros.h"
 #include "platform/CalculationValue.h"
 #include "platform/animation/AnimationUtilities.h"
-
-using namespace WTF;
+#include "platform/wtf/HashMap.h"
 
 namespace blink {
 
 class CalculationValueHandleMap {
   USING_FAST_MALLOC(CalculationValueHandleMap);
-  WTF_MAKE_NONCOPYABLE(CalculationValueHandleMap);
 
  public:
   CalculationValueHandleMap() : index_(1) {}
 
-  int insert(PassRefPtr<CalculationValue> calc_value) {
-    ASSERT(index_);
+  int insert(scoped_refptr<CalculationValue> calc_value) {
+    DCHECK(index_);
     // FIXME calc(): https://bugs.webkit.org/show_bug.cgi?id=80489
     // This monotonically increasing handle generation scheme is potentially
     // wasteful of the handle space. Consider reusing empty handles.
@@ -53,17 +52,17 @@ class CalculationValueHandleMap {
   }
 
   void Remove(int index) {
-    ASSERT(map_.Contains(index));
+    DCHECK(map_.Contains(index));
     map_.erase(index);
   }
 
   CalculationValue& Get(int index) {
-    ASSERT(map_.Contains(index));
+    DCHECK(map_.Contains(index));
     return *map_.at(index);
   }
 
   void DecrementRef(int index) {
-    ASSERT(map_.Contains(index));
+    DCHECK(map_.Contains(index));
     CalculationValue* value = map_.at(index);
     if (value->HasOneRef()) {
       // Force the CalculationValue destructor early to avoid a potential
@@ -71,13 +70,15 @@ class CalculationValueHandleMap {
       map_.Set(index, nullptr);
       map_.erase(index);
     } else {
-      value->Deref();
+      value->Release();
     }
   }
 
  private:
   int index_;
-  HashMap<int, RefPtr<CalculationValue>> map_;
+  HashMap<int, scoped_refptr<CalculationValue>> map_;
+
+  DISALLOW_COPY_AND_ASSIGN(CalculationValueHandleMap);
 };
 
 static CalculationValueHandleMap& CalcHandles() {
@@ -85,7 +86,7 @@ static CalculationValueHandleMap& CalcHandles() {
   return handle_map;
 }
 
-Length::Length(PassRefPtr<CalculationValue> calc)
+Length::Length(scoped_refptr<CalculationValue> calc)
     : quirk_(false), type_(kCalculated), is_float_(false) {
   int_value_ = CalcHandles().insert(std::move(calc));
 }
@@ -93,8 +94,8 @@ Length::Length(PassRefPtr<CalculationValue> calc)
 Length Length::BlendMixedTypes(const Length& from,
                                double progress,
                                ValueRange range) const {
-  ASSERT(from.IsSpecified());
-  ASSERT(IsSpecified());
+  DCHECK(from.IsSpecified());
+  DCHECK(IsSpecified());
   PixelsAndPercent from_pixels_and_percent = from.GetPixelsAndPercent();
   PixelsAndPercent to_pixels_and_percent = GetPixelsAndPercent();
   const float pixels = blink::Blend(from_pixels_and_percent.pixels,
@@ -103,6 +104,19 @@ Length Length::BlendMixedTypes(const Length& from,
                                      to_pixels_and_percent.percent, progress);
   return Length(
       CalculationValue::Create(PixelsAndPercent(pixels, percent), range));
+}
+
+Length Length::BlendSameTypes(const Length& from,
+                              double progress,
+                              ValueRange range) const {
+  LengthType result_type = GetType();
+  if (IsZero())
+    result_type = from.GetType();
+
+  float blended_value = blink::Blend(from.Value(), Value(), progress);
+  if (range == kValueRangeNonNegative)
+    blended_value = clampTo<float>(blended_value, 0);
+  return Length(blended_value, result_type);
 }
 
 PixelsAndPercent Length::GetPixelsAndPercent() const {
@@ -114,7 +128,7 @@ PixelsAndPercent Length::GetPixelsAndPercent() const {
     case kCalculated:
       return GetCalculationValue().GetPixelsAndPercent();
     default:
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
       return PixelsAndPercent(0, 0);
   }
 }
@@ -146,22 +160,22 @@ Length Length::Zoom(double factor) const {
 }
 
 CalculationValue& Length::GetCalculationValue() const {
-  ASSERT(IsCalculated());
+  DCHECK(IsCalculated());
   return CalcHandles().Get(CalculationHandle());
 }
 
 void Length::IncrementCalculatedRef() const {
-  ASSERT(IsCalculated());
-  GetCalculationValue().Ref();
+  DCHECK(IsCalculated());
+  GetCalculationValue().AddRef();
 }
 
 void Length::DecrementCalculatedRef() const {
-  ASSERT(IsCalculated());
+  DCHECK(IsCalculated());
   CalcHandles().DecrementRef(CalculationHandle());
 }
 
 float Length::NonNanCalculatedValue(LayoutUnit max_value) const {
-  ASSERT(IsCalculated());
+  DCHECK(IsCalculated());
   float result = GetCalculationValue().Evaluate(max_value.ToFloat());
   if (std::isnan(result))
     return 0;

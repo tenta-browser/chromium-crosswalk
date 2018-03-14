@@ -4,6 +4,7 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/metrics/statistics_recorder.h"
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_discardable_memory_allocator.h"
 #include "base/test/test_suite.h"
@@ -14,16 +15,13 @@
 #include "mojo/edk/embedder/embedder.h"
 
 #if defined(OS_ANDROID)
-#include "base/android/jni_android.h"
 #include "media/base/android/media_codec_util.h"
-#include "media/base/android/media_jni_registrar.h"
-#include "ui/gl/android/gl_jni_registrar.h"
 #endif
 
 class TestSuiteNoAtExit : public base::TestSuite {
  public:
   TestSuiteNoAtExit(int argc, char** argv) : TestSuite(argc, argv) {}
-  ~TestSuiteNoAtExit() override {}
+  ~TestSuiteNoAtExit() override = default;
 
  protected:
   void Initialize() override;
@@ -36,17 +34,13 @@ void TestSuiteNoAtExit::Initialize() {
   // Run TestSuite::Initialize first so that logging is initialized.
   base::TestSuite::Initialize();
 
+  // Ensure histograms hit during tests are registered properly.
+  base::StatisticsRecorder::Initialize();
+
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   command_line->AppendSwitch(switches::kEnableInbandTextTracks);
 
 #if defined(OS_ANDROID)
-  // Register JNI bindings for android.
-  JNIEnv* env = base::android::AttachCurrentThread();
-  // Needed for surface texture support.
-  ui::gl::android::RegisterJni(env);
-
-  media::RegisterJni(env);
-
   if (media::MediaCodecUtil::IsMediaCodecAvailable())
     media::EnablePlatformDecoderSupport();
 #endif

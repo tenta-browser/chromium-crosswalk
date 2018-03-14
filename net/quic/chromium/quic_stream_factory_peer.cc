@@ -53,12 +53,6 @@ QuicChromiumClientSession* QuicStreamFactoryPeer::GetActiveSession(
   return factory->active_sessions_[server_id];
 }
 
-std::unique_ptr<QuicHttpStream> QuicStreamFactoryPeer::CreateFromSession(
-    QuicStreamFactory* factory,
-    QuicChromiumClientSession* session) {
-  return factory->CreateFromSession(session);
-}
-
 bool QuicStreamFactoryPeer::IsLiveSession(QuicStreamFactory* factory,
                                           QuicChromiumClientSession* session) {
   for (QuicStreamFactory::SessionIdMap::iterator it =
@@ -70,23 +64,15 @@ bool QuicStreamFactoryPeer::IsLiveSession(QuicStreamFactory* factory,
   return false;
 }
 
-void QuicStreamFactoryPeer::SetTaskRunner(QuicStreamFactory* factory,
-                                          base::TaskRunner* task_runner) {
+void QuicStreamFactoryPeer::SetTaskRunner(
+    QuicStreamFactory* factory,
+    base::SequencedTaskRunner* task_runner) {
   factory->task_runner_ = task_runner;
 }
 
 QuicTime::Delta QuicStreamFactoryPeer::GetPingTimeout(
     QuicStreamFactory* factory) {
   return factory->ping_timeout_;
-}
-
-bool QuicStreamFactoryPeer::GetDelayTcpRace(QuicStreamFactory* factory) {
-  return factory->delay_tcp_race_;
-}
-
-void QuicStreamFactoryPeer::SetDelayTcpRace(QuicStreamFactory* factory,
-                                            bool delay_tcp_race) {
-  factory->delay_tcp_race_ = delay_tcp_race;
 }
 
 bool QuicStreamFactoryPeer::GetRaceCertVerification(
@@ -117,29 +103,6 @@ void QuicStreamFactoryPeer::SetYieldAfterDuration(
     QuicStreamFactory* factory,
     QuicTime::Delta yield_after_duration) {
   factory->yield_after_duration_ = yield_after_duration;
-}
-
-size_t QuicStreamFactoryPeer::GetNumberOfActiveJobs(
-    QuicStreamFactory* factory,
-    const QuicServerId& server_id) {
-  auto it = factory->active_jobs_.find(server_id);
-  if (it == factory->active_jobs_.end())
-    return 0;
-  return it->second.size();
-}
-
-void QuicStreamFactoryPeer::MaybeInitialize(QuicStreamFactory* factory) {
-  factory->MaybeInitialize();
-}
-
-bool QuicStreamFactoryPeer::HasInitializedData(QuicStreamFactory* factory) {
-  return factory->has_initialized_data_;
-}
-
-bool QuicStreamFactoryPeer::SupportsQuicAtStartUp(QuicStreamFactory* factory,
-                                                  HostPortPair host_port_pair) {
-  return base::ContainsKey(factory->quic_supported_servers_at_startup_,
-                           host_port_pair);
 }
 
 bool QuicStreamFactoryPeer::CryptoConfigCacheIsEmpty(

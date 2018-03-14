@@ -202,15 +202,6 @@ void CloudPolicyClientRegistrationHelper::StartRegistrationWithLoginToken(
                  base::Unretained(this)));
 }
 
-void CloudPolicyClientRegistrationHelper::StartRegistrationWithAccessToken(
-    const std::string& access_token,
-    const base::Closure& callback) {
-  DCHECK(!client_->is_registered());
-  callback_ = callback;
-  client_->AddObserver(this);
-  OnTokenFetched(access_token);
-}
-
 // static
 std::vector<std::string>
 CloudPolicyClientRegistrationHelper::GetScopes() {
@@ -274,7 +265,8 @@ void CloudPolicyClientRegistrationHelper::OnGetUserInfoSuccess(
   client_->Register(
       registration_type_,
       enterprise_management::DeviceRegisterRequest::FLAVOR_USER_REGISTRATION,
-      oauth_access_token_, std::string(), std::string(), std::string());
+      enterprise_management::LicenseType::UNDEFINED, oauth_access_token_,
+      std::string(), std::string(), std::string());
 }
 
 void CloudPolicyClientRegistrationHelper::OnPolicyFetched(
@@ -301,7 +293,7 @@ void CloudPolicyClientRegistrationHelper::RequestCompleted() {
   if (client_) {
     client_->RemoveObserver(this);
     // |client_| may be freed by the callback so clear it now.
-    client_ = NULL;
+    client_ = nullptr;
     callback_.Run();
   }
 }

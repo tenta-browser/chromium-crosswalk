@@ -6,13 +6,13 @@
 #define BluetoothRemoteGATTDescriptor_h
 
 #include <memory>
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "core/dom/DOMArrayPiece.h"
-#include "core/dom/DOMDataView.h"
+#include "core/typed_arrays/DOMArrayPiece.h"
+#include "core/typed_arrays/DOMDataView.h"
 #include "modules/EventTargetModules.h"
 #include "modules/bluetooth/Bluetooth.h"
 #include "modules/bluetooth/BluetoothRemoteGATTCharacteristic.h"
 #include "modules/bluetooth/BluetoothRemoteGATTService.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
 
@@ -25,9 +25,7 @@ class ScriptState;
 // BluetoothRemoteGATTDescriptor represents a GATT Descriptor, which is
 // a basic data element that provides further information about a peripheral's
 // characteristic.
-class BluetoothRemoteGATTDescriptor final
-    : public GarbageCollectedFinalized<BluetoothRemoteGATTDescriptor>,
-      public ScriptWrappable {
+class BluetoothRemoteGATTDescriptor final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -49,7 +47,7 @@ class BluetoothRemoteGATTDescriptor final
   ScriptPromise writeValue(ScriptState*, const DOMArrayPiece&);
 
   // Interface required by garbage collection.
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   friend class DescriptorReadValueCallback;

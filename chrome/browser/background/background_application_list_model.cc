@@ -9,7 +9,6 @@
 
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/background/background_contents_service.h"
 #include "chrome/browser/background/background_contents_service_factory.h"
@@ -46,7 +45,7 @@ using extensions::ExtensionList;
 using extensions::ExtensionRegistry;
 using extensions::ExtensionSet;
 using extensions::PermissionSet;
-using extensions::UnloadedExtensionInfo;
+using extensions::UnloadedExtensionReason;
 using extensions::UpdatedExtensionPermissionsInfo;
 
 class ExtensionNameComparator {
@@ -267,14 +266,13 @@ bool BackgroundApplicationListModel::IsBackgroundApp(
 
   BackgroundContentsService* service =
       BackgroundContentsServiceFactory::GetForProfile(profile);
-  base::string16 app_id = base::ASCIIToUTF16(extension.id());
   // If we have an active or registered background contents for this app, then
   // it's a background app. This covers the cases where the app has created its
   // background contents, but it hasn't navigated yet, or the background
   // contents crashed and hasn't yet been restarted - in both cases we still
   // want to treat the app as a background app.
-  if (service->GetAppBackgroundContents(app_id) ||
-      service->HasRegisteredBackgroundContents(app_id)) {
+  if (service->GetAppBackgroundContents(extension.id()) ||
+      service->HasRegisteredBackgroundContents(extension.id())) {
     return true;
   }
 
@@ -326,7 +324,7 @@ void BackgroundApplicationListModel::OnExtensionLoaded(
 void BackgroundApplicationListModel::OnExtensionUnloaded(
     content::BrowserContext* browser_context,
     const Extension* extension,
-    UnloadedExtensionInfo::Reason reason) {
+    UnloadedExtensionReason reason) {
   if (!IsBackgroundApp(*extension, profile_))
     return;
   Update();

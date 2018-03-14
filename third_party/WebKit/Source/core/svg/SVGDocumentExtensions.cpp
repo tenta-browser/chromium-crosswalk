@@ -43,7 +43,7 @@ void SVGDocumentExtensions::RemoveTimeContainer(SVGSVGElement* element) {
 
 void SVGDocumentExtensions::AddWebAnimationsPendingSVGElement(
     SVGElement& element) {
-  DCHECK(RuntimeEnabledFeatures::webAnimationsSVGEnabled());
+  DCHECK(RuntimeEnabledFeatures::WebAnimationsSVGEnabled());
   web_animations_pending_svg_elements_.insert(&element);
 }
 
@@ -54,7 +54,7 @@ void SVGDocumentExtensions::ServiceOnAnimationFrame(Document& document) {
 }
 
 void SVGDocumentExtensions::ServiceAnimations() {
-  if (RuntimeEnabledFeatures::smilEnabled()) {
+  if (RuntimeEnabledFeatures::SMILEnabled()) {
     HeapVector<Member<SVGSVGElement>> time_containers;
     CopyToVector(time_containers_, time_containers);
     for (const auto& container : time_containers)
@@ -62,7 +62,7 @@ void SVGDocumentExtensions::ServiceAnimations() {
   }
 
   SVGElementSet web_animations_pending_svg_elements;
-  web_animations_pending_svg_elements.Swap(
+  web_animations_pending_svg_elements.swap(
       web_animations_pending_svg_elements_);
 
   // TODO(alancutter): Make SVG animation effect application a separate document
@@ -163,8 +163,7 @@ void SVGDocumentExtensions::UpdatePan(const FloatPoint& pos) const {
 }
 
 SVGSVGElement* SVGDocumentExtensions::rootElement(const Document& document) {
-  Element* elem = document.documentElement();
-  return isSVGSVGElement(elem) ? toSVGSVGElement(elem) : 0;
+  return ToSVGSVGElementOrNull(document.documentElement());
 }
 
 SVGSVGElement* SVGDocumentExtensions::rootElement() const {
@@ -172,7 +171,7 @@ SVGSVGElement* SVGDocumentExtensions::rootElement() const {
   return rootElement(*document_);
 }
 
-DEFINE_TRACE(SVGDocumentExtensions) {
+void SVGDocumentExtensions::Trace(blink::Visitor* visitor) {
   visitor->Trace(document_);
   visitor->Trace(time_containers_);
   visitor->Trace(web_animations_pending_svg_elements_);

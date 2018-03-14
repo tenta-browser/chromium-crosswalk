@@ -27,7 +27,6 @@ namespace storage {
 class BlobDataSnapshot;
 class BlobReader;
 class BlobStorageContext;
-class FileSystemContext;
 
 // BlobDataHandle ensures that the underlying blob (keyed by the uuid) remains
 // in the BlobStorageContext's collection while this object is alive. Anything
@@ -65,17 +64,24 @@ class STORAGE_EXPORT BlobDataHandle
   // The callback will be run on the IO thread when construction of the blob
   // is complete. If construction is already complete, then the task is run
   // immediately on the current message loop (i.e. IO thread).
-  // Must be called on IO thread.  Returns if construction successful.
+  // Must be called on IO thread.
   // Calling this multiple times results in registering multiple
   // completion callbacks.
   void RunOnConstructionComplete(const BlobStatusCallback& done);
 
+  // The callback will be run on the IO thread when construction of the blob
+  // has began. If construction has already began (or has finished already),
+  // then the task is run immediately on the current message loop (i.e. IO
+  // thread).
+  // Must be called on IO thread.
+  // Calling this multiple times results in registering multiple
+  // callbacks.
+  void RunOnConstructionBegin(const BlobStatusCallback& done);
+
   // A BlobReader is used to read the data from the blob.  This object is
   // intended to be transient and should not be stored for any extended period
   // of time.
-  std::unique_ptr<BlobReader> CreateReader(
-      FileSystemContext* file_system_context,
-      base::SequencedTaskRunner* file_task_runner) const;
+  std::unique_ptr<BlobReader> CreateReader() const;
 
   // May be accessed on any thread.
   const std::string& uuid() const;

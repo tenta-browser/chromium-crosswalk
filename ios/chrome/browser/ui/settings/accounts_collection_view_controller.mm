@@ -28,20 +28,18 @@
 #import "ios/chrome/browser/ui/alert_coordinator/alert_coordinator.h"
 #import "ios/chrome/browser/ui/authentication/account_control_item.h"
 #import "ios/chrome/browser/ui/authentication/resized_avatar_cache.h"
-#import "ios/chrome/browser/ui/authentication/signin_interaction_controller.h"
 #import "ios/chrome/browser/ui/collection_view/cells/MDCCollectionViewCell+Chrome.h"
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_account_item.h"
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_text_item.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
-#import "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
-#import "ios/chrome/browser/ui/commands/generic_chrome_command.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
+#import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/commands/open_url_command.h"
 #import "ios/chrome/browser/ui/icons/chrome_icon.h"
 #import "ios/chrome/browser/ui/settings/settings_navigation_controller.h"
 #import "ios/chrome/browser/ui/settings/sync_settings_collection_view_controller.h"
-#import "ios/chrome/browser/ui/sync/sync_util.h"
+#import "ios/chrome/browser/ui/settings/sync_utils/sync_util.h"
+#import "ios/chrome/browser/ui/signin_interaction/signin_interaction_coordinator.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/public/provider/chrome/browser/chrome_browser_provider.h"
@@ -58,6 +56,8 @@
 
 NSString* const kSettingsAccountsId = @"kSettingsAccountsId";
 NSString* const kSettingsHeaderId = @"kSettingsHeaderId";
+NSString* const kSettingsAccountsAddAccountCellId =
+    @"kSettingsAccountsAddAccountCellId";
 NSString* const kSettingsAccountsSignoutCellId =
     @"kSettingsAccountsSignoutCellId";
 NSString* const kSettingsAccountsSyncCellId = @"kSettingsAccountsSyncCellId";
@@ -90,7 +90,6 @@ typedef NS_ENUM(NSInteger, ItemType) {
   BOOL _closeSettingsOnAddAccount;
   std::unique_ptr<SyncObserverBridge> _syncObserver;
   std::unique_ptr<OAuth2TokenServiceObserverBridge> _tokenServiceObserver;
-  SigninInteractionController* _signinInteractionController;
   // Modal alert for sign out.
   AlertCoordinator* _alertCoordinator;
   // Whether an authentication operation is in progress (e.g switch accounts,
@@ -107,6 +106,11 @@ typedef NS_ENUM(NSInteger, ItemType) {
   NSDictionary<NSString*, CollectionViewItem*>* _identityMap;
 }
 
+// The SigninInteractionCoordinator that presents Sign In UI for the Accounts
+// Settings page.
+@property(nonatomic, strong)
+    SigninInteractionCoordinator* signinInteractionCoordinator;
+
 // Stops observing browser state services. This is required during the shutdown
 // phase to avoid observing services for a browser state that is being killed.
 - (void)stopBrowserStateServiceObservers;
@@ -115,11 +119,16 @@ typedef NS_ENUM(NSInteger, ItemType) {
 
 @implementation AccountsCollectionViewController
 
+@synthesize dispatcher = _dispatcher;
+@synthesize signinInteractionCoordinator = _signinInteractionCoordinator;
+
 - (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState
            closeSettingsOnAddAccount:(BOOL)closeSettingsOnAddAccount {
   DCHECK(browserState);
   DCHECK(!browserState->IsOffTheRecord());
-  self = [super initWithStyle:CollectionViewControllerStyleAppBar];
+  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+  self =
+      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
   if (self) {
     _browserState = browserState;
     _closeSettingsOnAddAccount = closeSettingsOnAddAccount;
@@ -142,6 +151,8 @@ typedef NS_ENUM(NSInteger, ItemType) {
     _avatarCache = [[ResizedAvatarCache alloc] init];
     _identityServiceObserver.reset(
         new ChromeIdentityServiceObserverBridge(self));
+    // TODO(crbug.com/764578): -loadModel should not be called from
+    // initializer. A possible fix is to move this call to -viewDidLoad.
     [self loadModel];
   }
 
@@ -160,7 +171,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
 #pragma mark - SettingsControllerProtocol
 
 - (void)settingsWillBeDismissed {
-  [_signinInteractionController cancel];
+  [self.signinInteractionCoordinator cancel];
   [_alertCoordinator stop];
   [self stopBrowserStateServiceObservers];
 }
@@ -266,6 +277,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
       [[CollectionViewAccountItem alloc] initWithType:ItemTypeAddAccount];
   item.text =
       l10n_util::GetNSString(IDS_IOS_OPTIONS_ACCOUNTS_ADD_ACCOUNT_BUTTON);
+  item.accessibilityIdentifier = kSettingsAccountsAddAccountCellId;
   item.image = [UIImage imageNamed:@"settings_accounts_add_account"];
   return item;
 }
@@ -280,6 +292,8 @@ typedef NS_ENUM(NSInteger, ItemType) {
   return item;
 }
 
+// Updates the sync item according to the sync status (in progress, sync error,
+// mdm error, sync disabled or sync enabled).
 - (void)updateSyncItem:(AccountControlItem*)syncItem {
   SyncSetupService* syncSetupService =
       SyncSetupServiceFactory::GetForBrowserState(_browserState);
@@ -292,24 +306,31 @@ typedef NS_ENUM(NSInteger, ItemType) {
   }
 
   ChromeIdentity* identity = [self authService]->GetAuthenticatedIdentity();
-  bool hasSyncError = !ios_internal::sync::IsTransientSyncError(
-      syncSetupService->GetSyncServiceState());
-  bool hasMDMError = [self authService]->HasCachedMDMErrorForIdentity(identity);
-  if (hasSyncError || hasMDMError) {
-    syncItem.image = [UIImage imageNamed:@"settings_error"];
-    syncItem.detailText =
-        ios_internal::sync::GetSyncErrorDescriptionForBrowserState(
-            _browserState);
+  if (!IsTransientSyncError(syncSetupService->GetSyncServiceState())) {
+    // Sync error.
     syncItem.shouldDisplayError = YES;
-  } else {
+    NSString* errorMessage =
+        GetSyncErrorDescriptionForBrowserState(_browserState);
+    DCHECK(errorMessage);
+    syncItem.detailText = errorMessage;
+  } else if ([self authService]->HasCachedMDMErrorForIdentity(identity)) {
+    // MDM error.
+    syncItem.shouldDisplayError = YES;
+    syncItem.detailText =
+        l10n_util::GetNSString(IDS_IOS_OPTIONS_ACCOUNTS_SYNC_ERROR);
+  } else if (!syncSetupService->IsSyncEnabled()) {
+    // Sync disabled.
+    syncItem.shouldDisplayError = NO;
     syncItem.image = [UIImage imageNamed:@"settings_sync"];
     syncItem.detailText =
-        syncSetupService->IsSyncEnabled()
-            ? l10n_util::GetNSStringF(
-                  IDS_IOS_SIGN_IN_TO_CHROME_SETTING_SYNCING,
-                  base::SysNSStringToUTF16([identity userEmail]))
-            : l10n_util::GetNSString(IDS_IOS_OPTIONS_ACCOUNTS_SYNC_IS_OFF);
+        l10n_util::GetNSString(IDS_IOS_OPTIONS_ACCOUNTS_SYNC_IS_OFF);
+  } else {
+    // Sync enabled.
     syncItem.shouldDisplayError = NO;
+    syncItem.image = [UIImage imageNamed:@"settings_sync"];
+    syncItem.detailText =
+        l10n_util::GetNSStringF(IDS_IOS_SIGN_IN_TO_CHROME_SETTING_SYNCING,
+                                base::SysNSStringToUTF16([identity userEmail]));
   }
 }
 
@@ -432,10 +453,11 @@ typedef NS_ENUM(NSInteger, ItemType) {
     return;
   }
 
-  UIViewController* controllerToPush =
+  SyncSettingsCollectionViewController* controllerToPush =
       [[SyncSettingsCollectionViewController alloc]
             initWithBrowserState:_browserState
           allowSwitchSyncAccount:YES];
+  controllerToPush.dispatcher = self.dispatcher;
   [self.navigationController pushViewController:controllerToPush animated:YES];
 }
 
@@ -447,7 +469,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
   UINavigationController* settingsDetails =
       ios::GetChromeBrowserProvider()
           ->GetChromeIdentityService()
-          ->NewWebAndAppSettingDetails(
+          ->CreateWebAndAppSettingDetailsController(
               [self authService]->GetAuthenticatedIdentity(), self);
   UIImage* closeIcon = [ChromeIcon closeIcon];
   SEL action = @selector(closeGoogleActivitySettings:);
@@ -472,44 +494,42 @@ typedef NS_ENUM(NSInteger, ItemType) {
 - (void)showAddAccount {
   if ([_alertCoordinator isVisible])
     return;
-  if (_signinInteractionController) {
-    // Ignore this user action if there is already an add account operation
-    // in-progress.
-    return;
-  }
-  _signinInteractionController = [[SigninInteractionController alloc]
-          initWithBrowserState:_browserState
-      presentingViewController:self.navigationController
-         isPresentedOnSettings:YES
-             signInAccessPoint:signin_metrics::AccessPoint::
-                                   ACCESS_POINT_SETTINGS];
 
-  // |_authenticationOperationInProgress| is reset when the signin interaction
-  // controller is dismissed.
+  if (!self.signinInteractionCoordinator) {
+    self.signinInteractionCoordinator = [[SigninInteractionCoordinator alloc]
+        initWithBrowserState:_browserState
+                  dispatcher:self.dispatcher];
+  }
+
+  // |_authenticationOperationInProgress| is reset when the signin operation is
+  // completed.
   _authenticationOperationInProgress = YES;
   __weak AccountsCollectionViewController* weakSelf = self;
-  [_signinInteractionController addAccountWithCompletion:^(BOOL success) {
-    [weakSelf handleDidAddAccount:success];
-  }
-                                          viewController:self];
+  [self.signinInteractionCoordinator
+      addAccountWithAccessPoint:signin_metrics::AccessPoint::
+                                    ACCESS_POINT_SETTINGS
+                    promoAction:signin_metrics::PromoAction::
+                                    PROMO_ACTION_NO_SIGNIN_PROMO
+       presentingViewController:self.navigationController
+                     completion:^(BOOL success) {
+                       [weakSelf handleDidAddAccount:success];
+                     }];
 }
 
 - (void)handleDidAddAccount:(BOOL)success {
-  _signinInteractionController = nil;
   [self handleAuthenticationOperationDidFinish];
   if (success && _closeSettingsOnAddAccount) {
-    GenericChromeCommand* closeSettingsCommand =
-        [[GenericChromeCommand alloc] initWithTag:IDC_CLOSE_SETTINGS];
-    [self chromeExecuteCommand:closeSettingsCommand];
+    [self.dispatcher closeSettingsUI];
   }
 }
 
 - (void)showAccountDetails:(ChromeIdentity*)identity {
   if ([_alertCoordinator isVisible])
     return;
-  UIViewController* accountDetails = ios::GetChromeBrowserProvider()
-                                         ->GetChromeIdentityService()
-                                         ->NewAccountDetails(identity, self);
+  UIViewController* accountDetails =
+      ios::GetChromeBrowserProvider()
+          ->GetChromeIdentityService()
+          ->CreateAccountDetailsController(identity, self);
   if (!accountDetails) {
     // Failed to create a new account details. Ignored.
     return;
@@ -604,7 +624,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
     return;
   }
   _isBeingDismissed = YES;
-  [_signinInteractionController cancelAndDismiss];
+  [self.signinInteractionCoordinator cancelAndDismiss];
   [_alertCoordinator stop];
   [self.navigationController popToViewController:self animated:NO];
   [base::mac::ObjCCastStrict<SettingsNavigationController>(
@@ -635,24 +655,24 @@ typedef NS_ENUM(NSInteger, ItemType) {
     viewController:(UIViewController*)viewController {
   OpenUrlCommand* command =
       [[OpenUrlCommand alloc] initWithURLFromChrome:net::GURLWithNSURL(url)];
-  [command setTag:IDC_CLOSE_SETTINGS_AND_OPEN_URL];
-  [self chromeExecuteCommand:command];
+  [self.dispatcher closeSettingsUIAndOpenURL:command];
 }
 
 #pragma mark - ChromeIdentityServiceObserver
 
-- (void)onProfileUpdate:(ChromeIdentity*)identity {
+- (void)profileUpdate:(ChromeIdentity*)identity {
   CollectionViewAccountItem* item =
       base::mac::ObjCCastStrict<CollectionViewAccountItem>(
           [_identityMap objectForKey:identity.gaiaID]);
+  if (!item) {
+    return;
+  }
   [self updateAccountItem:item withIdentity:identity];
-  NSIndexPath* indexPath =
-      [self.collectionViewModel indexPathForItem:item
-                         inSectionWithIdentifier:SectionIdentifierAccounts];
+  NSIndexPath* indexPath = [self.collectionViewModel indexPathForItem:item];
   [self.collectionView reloadItemsAtIndexPaths:@[ indexPath ]];
 }
 
-- (void)onChromeIdentityServiceWillBeDestroyed {
+- (void)chromeIdentityServiceWillBeDestroyed {
   _identityServiceObserver.reset();
 }
 

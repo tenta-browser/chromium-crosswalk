@@ -190,32 +190,19 @@ class WebViewTestProxy : public Base, public WebViewTestProxyBase {
                              const blink::WebWindowFeatures& features,
                              const blink::WebString& frame_name,
                              blink::WebNavigationPolicy policy,
-                             bool suppress_opener) override {
+                             bool suppress_opener,
+                             blink::WebSandboxFlags sandbox_flags) override {
     if (!view_test_client()->CreateView(creator, request, features, frame_name,
-                                        policy, suppress_opener))
+                                        policy, suppress_opener, sandbox_flags))
       return nullptr;
     return Base::CreateView(creator, request, features, frame_name, policy,
-                            suppress_opener);
-  }
-  void SetStatusText(const blink::WebString& text) override {
-    view_test_client()->SetStatusText(text);
-    Base::SetStatusText(text);
+                            suppress_opener, sandbox_flags);
   }
   void PrintPage(blink::WebLocalFrame* frame) override {
     view_test_client()->PrintPage(frame);
   }
   blink::WebSpeechRecognizer* SpeechRecognizer() override {
     return view_test_client()->SpeechRecognizer();
-  }
-  void ShowValidationMessage(
-      const blink::WebRect& anchor_in_root_view,
-      const blink::WebString& main_message,
-      blink::WebTextDirection main_message_hint,
-      const blink::WebString& sub_message,
-      blink::WebTextDirection sub_message_hint) override {
-    view_test_client()->ShowValidationMessage(anchor_in_root_view, main_message,
-                                              main_message_hint, sub_message,
-                                              sub_message_hint);
   }
   blink::WebString AcceptLanguages() override {
     return view_test_client()->AcceptLanguages();

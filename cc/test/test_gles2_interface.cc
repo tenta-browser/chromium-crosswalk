@@ -222,6 +222,15 @@ void TestGLES2Interface::TexStorage2DEXT(GLenum target,
   test_context_->texStorage2DEXT(target, levels, internalformat, width, height);
 }
 
+void TestGLES2Interface::TexStorage2DImageCHROMIUM(GLenum target,
+                                                   GLenum internalformat,
+                                                   GLenum bufferusage,
+                                                   GLsizei width,
+                                                   GLsizei height) {
+  test_context_->texStorage2DImageCHROMIUM(target, internalformat, bufferusage,
+                                           width, height);
+}
+
 void TestGLES2Interface::TexParameteri(GLenum target,
                                        GLenum pname,
                                        GLint param) {
@@ -357,11 +366,6 @@ void TestGLES2Interface::ProduceTextureDirectCHROMIUM(GLuint texture,
   test_context_->produceTextureDirectCHROMIUM(texture, target, mailbox);
 }
 
-void TestGLES2Interface::ConsumeTextureCHROMIUM(GLenum target,
-                                                const GLbyte* mailbox) {
-  test_context_->consumeTextureCHROMIUM(target, mailbox);
-}
-
 GLuint TestGLES2Interface::CreateAndConsumeTextureCHROMIUM(
     GLenum target,
     const GLbyte* mailbox) {
@@ -371,6 +375,7 @@ GLuint TestGLES2Interface::CreateAndConsumeTextureCHROMIUM(
 void TestGLES2Interface::ResizeCHROMIUM(GLuint width,
                                         GLuint height,
                                         float device_scale,
+                                        GLenum color_space,
                                         GLboolean has_alpha) {
   test_context_->reshapeWithScaleFactor(width, height, device_scale);
 }

@@ -20,11 +20,13 @@
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/history_service_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/ntp_snippets/breaking_news/breaking_news_gcm_app_handler.h"
 #include "components/ntp_snippets/callbacks.h"
 #include "components/ntp_snippets/category.h"
 #include "components/ntp_snippets/category_rankers/category_ranker.h"
 #include "components/ntp_snippets/category_status.h"
 #include "components/ntp_snippets/content_suggestions_provider.h"
+#include "components/ntp_snippets/logger.h"
 #include "components/ntp_snippets/remote/remote_suggestions_scheduler.h"
 #include "components/ntp_snippets/user_classifier.h"
 #include "components/signin/core/browser/signin_manager.h"
@@ -105,8 +107,8 @@ class ContentSuggestionsService : public KeyedService,
       std::unique_ptr<CategoryRanker> category_ranker,
       std::unique_ptr<UserClassifier> user_classifier,
       std::unique_ptr<RemoteSuggestionsScheduler>
-          remote_suggestions_scheduler  // Can be nullptr in unittests.
-      );
+          remote_suggestions_scheduler,  // Can be nullptr in unittests.
+      std::unique_ptr<Logger> debug_logger);
   ~ContentSuggestionsService() override;
 
   // Inherited from KeyedService.
@@ -138,7 +140,7 @@ class ContentSuggestionsService : public KeyedService,
   // the callback gets an empty image. The callback will not be called
   // synchronously.
   void FetchSuggestionImage(const ContentSuggestion::ID& suggestion_id,
-                            const ImageFetchedCallback& callback);
+                            ImageFetchedCallback callback);
 
   // Fetches the favicon from local cache (if larger than or equal to
   // |minimum_size_in_pixel|) or from Google server (if there is no icon in the
@@ -148,7 +150,7 @@ class ContentSuggestionsService : public KeyedService,
   void FetchSuggestionFavicon(const ContentSuggestion::ID& suggestion_id,
                               int minimum_size_in_pixel,
                               int desired_size_in_pixel,
-                              const ImageFetchedCallback& callback);
+                              ImageFetchedCallback callback);
 
   // Dismisses the suggestion with the given |suggestion_id|, if it exists.
   // This will not trigger an update through the observers (i.e. providers must
@@ -173,7 +175,7 @@ class ContentSuggestionsService : public KeyedService,
   // to get suggestions to just this async Fetch() API.
   void Fetch(const Category& category,
              const std::set<std::string>& known_suggestion_ids,
-             const FetchDoneCallback& callback);
+             FetchDoneCallback callback);
 
   // Reloads suggestions from all categories, from all providers. If a provider
   // naturally has some ability to generate fresh suggestions, it may provide a
@@ -183,6 +185,9 @@ class ContentSuggestionsService : public KeyedService,
   // may be vacant space because of the user dismissing suggestions in the
   // meantime).
   void ReloadSuggestions();
+
+  // Must be called when Chrome Home is turned on or off.
+  void OnChromeHomeStatusChanged(bool is_chrome_home_enabled);
 
   // Observer accessors.
   void AddObserver(Observer* observer);
@@ -204,16 +209,11 @@ class ContentSuggestionsService : public KeyedService,
                     const base::Callback<bool(const GURL& url)>& filter);
 
   // Removes all suggestions from all caches or internal stores in all
-  // providers. See |ClearCachedSuggestions|.
+  // providers. It does, however, not remove any suggestions from the provider's
+  // sources, so if its configuration hasn't changed, it might return the same
+  // results when it fetches the next time. In particular, calling this method
+  // will not mark any suggestions as dismissed.
   void ClearAllCachedSuggestions();
-
-  // Removes all suggestions of the given |category| from all caches or internal
-  // stores in the service and the corresponding provider. It does, however, not
-  // remove any suggestions from the provider's sources, so if its configuration
-  // hasn't changed, it might return the same results when it fetches the next
-  // time. In particular, calling this method will not mark any suggestions as
-  // dismissed.
-  void ClearCachedSuggestions(Category category);
 
   // Only for debugging use through the internals page.
   // Retrieves suggestions of the given |category| that have previously been
@@ -222,7 +222,7 @@ class ContentSuggestionsService : public KeyedService,
   // empty vector. The callback may be called synchronously.
   void GetDismissedSuggestionsForDebugging(
       Category category,
-      const DismissedSuggestionsCallback& callback);
+      DismissedSuggestionsCallback callback);
 
   // Only for debugging use through the internals page. Some providers
   // internally store a list of dismissed suggestions to prevent them from
@@ -231,18 +231,12 @@ class ContentSuggestionsService : public KeyedService,
   // supports it).
   void ClearDismissedSuggestionsForDebugging(Category category);
 
-  // Enables or disables the remote suggestions provider.
-  void SetRemoteSuggestionsEnabled(bool enabled);
+  std::string GetDebugLog() const {
+    return debug_logger_->GetHumanReadableLog();
+  }
 
   // Returns true if the remote suggestions provider is enabled.
   bool AreRemoteSuggestionsEnabled() const;
-
-  // Returns true if the remote provider is managed by an adminstrator's policy.
-  bool AreRemoteSuggestionsManaged() const;
-
-  // Returns true if the remote provider is managed by the guardian/parent of a
-  // child account.
-  bool AreRemoteSuggestionsManagedByCustodian() const;
 
   // The reference to the RemoteSuggestionsProvider provider should
   // only be set by the factory and only used for debugging.
@@ -273,6 +267,8 @@ class ContentSuggestionsService : public KeyedService,
 
   CategoryRanker* category_ranker() { return category_ranker_.get(); }
 
+  Logger* debug_logger() { return debug_logger_.get(); }
+
  private:
   friend class ContentSuggestionsServiceTest;
 
@@ -289,8 +285,7 @@ class ContentSuggestionsService : public KeyedService,
 
   // SigninManagerBase::Observer implementation
   void GoogleSigninSucceeded(const std::string& account_id,
-                             const std::string& username,
-                             const std::string& password) override;
+                             const std::string& username) override;
   void GoogleSignedOut(const std::string& account_id,
                        const std::string& username) override;
 
@@ -328,22 +323,35 @@ class ContentSuggestionsService : public KeyedService,
   void RestoreDismissedCategoriesFromPrefs();
   void StoreDismissedCategoriesToPrefs();
 
+  // Not implemented for articles. For all other categories, destroys its
+  // provider, deletes all mentions (except from dismissed list) and notifies
+  // observers that the category is disabled.
+  void DestroyCategoryAndItsProvider(Category category);
+
   // Get the domain of the suggestion suitable for fetching the favicon.
   GURL GetFaviconDomain(const ContentSuggestion::ID& suggestion_id);
+
+  // Initiate the fetch of a favicon from the local cache.
+  void GetFaviconFromCache(const GURL& publisher_url,
+                           int minimum_size_in_pixel,
+                           int desired_size_in_pixel,
+                           ImageFetchedCallback callback,
+                           bool continue_to_google_server);
+
   // Callbacks for fetching favicons.
   void OnGetFaviconFromCacheFinished(
       const GURL& publisher_url,
       int minimum_size_in_pixel,
       int desired_size_in_pixel,
-      const ImageFetchedCallback& callback,
+      ImageFetchedCallback callback,
       bool continue_to_google_server,
       const favicon_base::LargeIconImageResult& result);
   void OnGetFaviconFromGoogleServerFinished(
       const GURL& publisher_url,
       int minimum_size_in_pixel,
       int desired_size_in_pixel,
-      const ImageFetchedCallback& callback,
-      bool success);
+      ImageFetchedCallback callback,
+      favicon_base::GoogleFaviconServerRequestStatus status);
 
   // Whether the content suggestions feature is enabled.
   State state_;
@@ -410,6 +418,8 @@ class ContentSuggestionsService : public KeyedService,
 
   // Provides order for categories.
   std::unique_ptr<CategoryRanker> category_ranker_;
+
+  std::unique_ptr<Logger> debug_logger_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentSuggestionsService);
 };

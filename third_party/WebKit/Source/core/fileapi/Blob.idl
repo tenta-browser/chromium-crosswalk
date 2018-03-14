@@ -35,13 +35,11 @@ typedef (ArrayBuffer or ArrayBufferView or Blob or USVString) BlobPart;
     Constructor(optional sequence<BlobPart> blobParts, optional BlobPropertyBag options),
     ConstructorCallWith=ExecutionContext,
     RaisesException=Constructor,
-    Exposed=(Window,Worker),
+    Exposed=(Window,Worker)
 ] interface Blob {
     readonly attribute unsigned long long size;
     readonly attribute DOMString type;
-    [RuntimeEnabled=FileAPIBlobClose] readonly attribute boolean isClosed;
 
     // TODO(jsbell): start and end arguments should be [Clamp]
     [RaisesException] Blob slice(optional long long start, optional long long end, optional DOMString contentType);
-    [RaisesException, CallWith=ScriptState, RuntimeEnabled=FileAPIBlobClose] void close();
 };

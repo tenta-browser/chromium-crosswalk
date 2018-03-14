@@ -31,8 +31,8 @@
 #ifndef WebSecurityPolicy_h
 #define WebSecurityPolicy_h
 
-#include "../platform/WebCommon.h"
-#include "../platform/WebReferrerPolicy.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebReferrerPolicy.h"
 
 namespace blink {
 
@@ -50,6 +50,10 @@ class WebSecurityPolicy {
 
   // Registers a URL scheme that can register a ServiceWorker.
   BLINK_EXPORT static void RegisterURLSchemeAsAllowingServiceWorkers(
+      const WebString&);
+
+  // Registers an URL scheme as allowing 'wasm-eval' CSP source directive.
+  BLINK_EXPORT static void RegisterURLSchemeAsAllowingWasmEvalCSP(
       const WebString&);
 
   // Registers an HTTP-like URL scheme that supports the Fetch API.

@@ -9,6 +9,7 @@
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/threading/thread.h"
 #include "components/invalidation/impl/fake_invalidation_handler.h"
@@ -61,7 +62,7 @@ class NonBlockingInvalidatorTestDelegate {
 
   void DestroyInvalidator() {
     invalidator_.reset();
-    request_context_getter_ = NULL;
+    request_context_getter_ = nullptr;
     io_thread_.Stop();
     base::RunLoop().RunUntilIdle();
   }

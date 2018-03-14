@@ -4,23 +4,24 @@
 
 #include "platform/LayoutLocale.h"
 
+#include "platform/fonts/FontGlobalContext.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
 
 TEST(LayoutLocaleTest, Get) {
-  LayoutLocale::ClearForTesting();
+  FontGlobalContext::ClearForTesting();
 
   EXPECT_EQ(nullptr, LayoutLocale::Get(g_null_atom));
 
   EXPECT_EQ(g_empty_atom, LayoutLocale::Get(g_empty_atom)->LocaleString());
 
   EXPECT_STRCASEEQ("en-us",
-                   LayoutLocale::Get("en-us")->LocaleString().Ascii().Data());
+                   LayoutLocale::Get("en-us")->LocaleString().Ascii().data());
   EXPECT_STRCASEEQ("ja-jp",
-                   LayoutLocale::Get("ja-jp")->LocaleString().Ascii().Data());
+                   LayoutLocale::Get("ja-jp")->LocaleString().Ascii().data());
 
-  LayoutLocale::ClearForTesting();
+  FontGlobalContext::ClearForTesting();
 }
 
 TEST(LayoutLocaleTest, GetCaseInsensitive) {
@@ -100,7 +101,8 @@ TEST(LayoutLocaleTest, ScriptTest) {
   };
 
   for (const auto& test : tests) {
-    RefPtr<LayoutLocale> locale = LayoutLocale::CreateForTesting(test.locale);
+    scoped_refptr<LayoutLocale> locale =
+        LayoutLocale::CreateForTesting(test.locale);
     EXPECT_EQ(test.script, locale->GetScript()) << test.locale;
     EXPECT_EQ(test.has_script_for_han, locale->HasScriptForHan())
         << test.locale;
@@ -131,7 +133,8 @@ TEST(LayoutLocaleTest, BreakKeyword) {
       {"ja@lb=loose", "ja", LineBreakIteratorMode::kLoose},
   };
   for (const auto& test : tests) {
-    RefPtr<LayoutLocale> locale = LayoutLocale::CreateForTesting(test.locale);
+    scoped_refptr<LayoutLocale> locale =
+        LayoutLocale::CreateForTesting(test.locale);
     EXPECT_EQ(test.expected, locale->LocaleWithBreakKeyword(test.mode))
         << String::Format("'%s' with line-break %d should be '%s'", test.locale,
                           static_cast<int>(test.mode), test.expected);
@@ -143,7 +146,7 @@ TEST(LayoutLocaleTest, ExistingKeywordName) {
       "en@x=", "en@lb=xyz", "en@ =",
   };
   for (const auto& test : tests) {
-    RefPtr<LayoutLocale> locale = LayoutLocale::CreateForTesting(test);
+    scoped_refptr<LayoutLocale> locale = LayoutLocale::CreateForTesting(test);
     EXPECT_EQ(test,
               locale->LocaleWithBreakKeyword(LineBreakIteratorMode::kNormal));
   }

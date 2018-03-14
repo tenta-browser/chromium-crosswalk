@@ -22,17 +22,14 @@ group("perf") {
     # For blink_perf benchmarks.
     "//third_party/WebKit/PerformanceTests/",
 
-    # For blink_perf.BlinkPerfPywebsocket benchmark.
-    "//third_party/pywebsocket/",
-
     # For smoothness.tough_canvas_cases
     "//chrome/test/data/perf/",
 
     # For image_decoding.measurement
     "//chrome/test/data/image_decoding/",
 
-    # For indexeddb_perf
-    "//chrome/test/data/indexeddb/",
+    # For Pylib used by VR tests
+    "//build/android/pylib/",
   ]
 }
 

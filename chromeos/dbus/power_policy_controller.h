@@ -33,6 +33,9 @@ class CHROMEOS_EXPORT PowerPolicyController
   static PowerPolicyController* Get();
 
   // Reasons why a wake lock may be added.
+  // TODO(derat): Remove this enum in favor of device::mojom::WakeLockReason
+  // once this class has been moved to the device service:
+  // https://crbug.com/702449
   enum WakeLockReason {
     REASON_AUDIO_PLAYBACK,
     REASON_VIDEO_PLAYBACK,
@@ -112,6 +115,12 @@ class CHROMEOS_EXPORT PowerPolicyController
   // down.
   void NotifyChromeIsExiting();
 
+  // Adjusts policy when the migration of a user homedir to a new
+  // encryption format starts or stops. While migration is active,
+  // the lid-closed action is overridden to ensure the system
+  // doesn't shut down.
+  void SetEncryptionMigrationActive(bool active);
+
   // PowerManagerClient::Observer implementation:
   void PowerManagerRestarted() override;
 
@@ -126,6 +135,9 @@ class CHROMEOS_EXPORT PowerPolicyController
   // SCREEN will also prevent it from dimming. SYSTEM will prevent idle
   // suspends, but the screen will turn off and lock normally.
   struct WakeLock {
+    // TODO(derat): Remove this enum in favor of device::mojom::WakeLockType
+    // once this class has been moved to the device service:
+    // https://crbug.com/702449
     enum Type {
       TYPE_SCREEN,
       TYPE_DIM,
@@ -172,6 +184,9 @@ class CHROMEOS_EXPORT PowerPolicyController
 
   // True if Chrome is in the process of exiting.
   bool chrome_is_exiting_;
+
+  // True if a user homedir is in the process of migrating encryption formats.
+  bool encryption_migration_active_;
 
   DISALLOW_COPY_AND_ASSIGN(PowerPolicyController);
 };

@@ -24,8 +24,6 @@
 #include "extensions/common/constants.h"
 #endif  // (ENABLE_EXTENSIONS)
 
-namespace chrome {
-
 ////////////////////////////////////////////////////////////////////////////////
 // UnloadController, public:
 
@@ -394,10 +392,8 @@ void UnloadController::ClearUnloadState(content::WebContents* web_contents,
       if (weak_factory_.HasWeakPtrs())
         return;
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(&UnloadController::ProcessPendingTabs,
-                                weak_factory_.GetWeakPtr(), false));
+          FROM_HERE, base::BindOnce(&UnloadController::ProcessPendingTabs,
+                                    weak_factory_.GetWeakPtr(), false));
     }
   }
 }
-
-}  // namespace chrome

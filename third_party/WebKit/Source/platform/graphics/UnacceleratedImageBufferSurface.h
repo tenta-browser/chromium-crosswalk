@@ -45,16 +45,22 @@ class PLATFORM_EXPORT UnacceleratedImageBufferSurface
  public:
   UnacceleratedImageBufferSurface(
       const IntSize&,
-      OpacityMode = kNonOpaque,
       ImageInitializationMode = kInitializeImagePixels,
-      sk_sp<SkColorSpace> = nullptr,
-      SkColorType = kN32_SkColorType);
+      const CanvasColorParams& = CanvasColorParams(kSRGBCanvasColorSpace,
+                                                   kRGBA8CanvasPixelFormat,
+                                                   kNonOpaque));
   ~UnacceleratedImageBufferSurface() override;
 
   PaintCanvas* Canvas() override;
   bool IsValid() const override;
+  bool WritePixels(const SkImageInfo& orig_info,
+                   const void* pixels,
+                   size_t row_bytes,
+                   int x,
+                   int y) override;
 
-  sk_sp<SkImage> NewImageSnapshot(AccelerationHint, SnapshotReason) override;
+  scoped_refptr<StaticBitmapImage> NewImageSnapshot(AccelerationHint,
+                                                    SnapshotReason) override;
 
  private:
   sk_sp<SkSurface> surface_;

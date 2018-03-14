@@ -27,8 +27,6 @@
 
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/dom/CharacterData.h"
-#include "core/dom/ClientRect.h"
-#include "core/dom/ClientRectList.h"
 #include "core/dom/ContainerNode.h"
 #include "core/dom/DocumentFragment.h"
 #include "core/dom/ExceptionCode.h"
@@ -37,19 +35,24 @@
 #include "core/dom/NodeWithIndex.h"
 #include "core/dom/ProcessingInstruction.h"
 #include "core/dom/Text.h"
+#include "core/dom/events/ScopedEventQueue.h"
 #include "core/editing/EditingUtilities.h"
 #include "core/editing/EphemeralRange.h"
 #include "core/editing/FrameSelection.h"
+#include "core/editing/SelectionTemplate.h"
+#include "core/editing/SetSelectionOptions.h"
 #include "core/editing/VisiblePosition.h"
 #include "core/editing/VisibleUnits.h"
 #include "core/editing/iterators/TextIterator.h"
 #include "core/editing/serializers/Serialization.h"
-#include "core/events/ScopedEventQueue.h"
 #include "core/frame/Settings.h"
+#include "core/geometry/DOMRect.h"
+#include "core/geometry/DOMRectList.h"
 #include "core/html/HTMLBodyElement.h"
 #include "core/html/HTMLElement.h"
 #include "core/layout/LayoutObject.h"
 #include "core/layout/LayoutText.h"
+#include "core/layout/LayoutTextFragment.h"
 #include "core/svg/SVGSVGElement.h"
 #include "platform/EventDispatchForbiddenScope.h"
 #include "platform/geometry/FloatQuad.h"
@@ -63,6 +66,8 @@ namespace blink {
 
 class RangeUpdateScope {
   STACK_ALLOCATED();
+
+ public:
   explicit RangeUpdateScope(Range* range) {
     DCHECK(range);
     if (++scope_count_ == 1) {
@@ -170,8 +175,8 @@ Range* Range::CreateAdjustedToTreeScope(const TreeScope& tree_scope,
     return Create(tree_scope.GetDocument(), position, position);
   Node* const shadow_host = tree_scope.AncestorInThisScope(anchor_node);
   return Range::Create(tree_scope.GetDocument(),
-                       Position::BeforeNode(shadow_host),
-                       Position::BeforeNode(shadow_host));
+                       Position::BeforeNode(*shadow_host),
+                       Position::BeforeNode(*shadow_host));
 }
 
 void Range::Dispose() {
@@ -493,7 +498,7 @@ bool Range::intersectsNode(Node* ref_node, ExceptionState& exception_state) {
 static inline Node* HighestAncestorUnderCommonRoot(Node* node,
                                                    Node* common_root) {
   if (node == common_root)
-    return 0;
+    return nullptr;
 
   DCHECK(common_root->contains(node));
 
@@ -510,7 +515,7 @@ static inline Node* ChildOfCommonRootBeforeOffset(Node* container,
   DCHECK(common_root);
 
   if (!common_root->contains(container))
-    return 0;
+    return nullptr;
 
   if (container == common_root) {
     container = container->firstChild();
@@ -852,6 +857,7 @@ DocumentFragment* Range::cloneContents(ExceptionState& exception_state) {
   return ProcessContents(CLONE_CONTENTS, exception_state);
 }
 
+// https://dom.spec.whatwg.org/#concept-range-insert
 void Range::insertNode(Node* new_node, ExceptionState& exception_state) {
   if (!new_node) {
     // FIXME: Generated bindings code never calls with null, and neither should
@@ -860,149 +866,105 @@ void Range::insertNode(Node* new_node, ExceptionState& exception_state) {
     return;
   }
 
-  // HierarchyRequestError: Raised if the container of the start of the Range is
-  // of a type that does not allow children of the type of newNode or if newNode
-  // is an ancestor of the container.
-
-  // an extra one here - if a text node is going to split, it must have a parent
-  // to insert into
-  bool start_is_text = start_.Container().IsTextNode();
-  if (start_is_text && !start_.Container().parentNode()) {
+  // 1. If range’s start node is a ProcessingInstruction or Comment node, is a
+  // Text node whose parent is null, or is node, then throw a
+  // HierarchyRequestError.
+  Node& start_node = start_.Container();
+  if (start_node.getNodeType() == Node::kProcessingInstructionNode ||
+      start_node.getNodeType() == Node::kCommentNode) {
+    exception_state.ThrowDOMException(
+        kHierarchyRequestError,
+        "Nodes of type '" + new_node->nodeName() +
+            "' may not be inserted inside nodes of type '" +
+            start_node.nodeName() + "'.");
+    return;
+  }
+  const bool start_is_text = start_node.IsTextNode();
+  if (start_is_text && !start_node.parentNode()) {
     exception_state.ThrowDOMException(kHierarchyRequestError,
                                       "This operation would split a text node, "
                                       "but there's no parent into which to "
                                       "insert.");
     return;
   }
+  if (start_node == new_node) {
+    exception_state.ThrowDOMException(
+        kHierarchyRequestError,
+        "Unable to insert a node into a Range starting from the node itself.");
+    return;
+  }
 
-  // In the case where the container is a text node, we check against the
-  // container's parent, because text nodes get split up upon insertion.
-  Node* check_against;
+  // According to the specification, the following condition is checked in the
+  // step 6. However our EnsurePreInsertionValidity() supports only
+  // ContainerNode parent.
+  if (start_node.IsAttributeNode()) {
+    exception_state.ThrowDOMException(
+        kHierarchyRequestError,
+        "Nodes of type '" + new_node->nodeName() +
+            "' may not be inserted inside nodes of type 'Attr'.");
+    return;
+  }
+
+  // 2. Let referenceNode be null.
+  Node* reference_node = nullptr;
+  // 3. If range’s start node is a Text node, set referenceNode to that Text
+  // node.
+  // 4. Otherwise, set referenceNode to the child of start node whose index is
+  // start offset, and null if there is no such child.
   if (start_is_text)
-    check_against = start_.Container().parentNode();
+    reference_node = &start_node;
   else
-    check_against = &start_.Container();
+    reference_node = NodeTraversal::ChildAt(start_node, start_.Offset());
 
-  Node::NodeType new_node_type = new_node->getNodeType();
-  int num_new_children;
-  if (new_node_type == Node::kDocumentFragmentNode &&
-      !new_node->IsShadowRoot()) {
-    // check each child node, not the DocumentFragment itself
-    num_new_children = 0;
-    for (Node* c = ToDocumentFragment(new_node)->FirstChild(); c;
-         c = c->nextSibling()) {
-      if (!check_against->ChildTypeAllowed(c->getNodeType())) {
-        exception_state.ThrowDOMException(
-            kHierarchyRequestError,
-            "The node to be inserted contains a '" + c->nodeName() +
-                "' node, which may not be inserted here.");
-        return;
-      }
-      ++num_new_children;
-    }
-  } else {
-    num_new_children = 1;
-    if (!check_against->ChildTypeAllowed(new_node_type)) {
-      exception_state.ThrowDOMException(
-          kHierarchyRequestError,
-          "The node to be inserted is a '" + new_node->nodeName() +
-              "' node, which may not be inserted here.");
-      return;
-    }
-  }
+  // 5. Let parent be range’s start node if referenceNode is null, and
+  // referenceNode’s parent otherwise.
+  ContainerNode& parent = reference_node ? *reference_node->parentNode()
+                                         : ToContainerNode(start_node);
 
-  for (Node& node : NodeTraversal::InclusiveAncestorsOf(start_.Container())) {
-    if (node == new_node) {
-      exception_state.ThrowDOMException(kHierarchyRequestError,
-                                        "The node to be inserted contains the "
-                                        "insertion point; it may not be "
-                                        "inserted into itself.");
-      return;
-    }
-  }
-
-  // InvalidNodeTypeError: Raised if newNode is an Attr, Entity, Notation,
-  // ShadowRoot or Document node.
-  switch (new_node_type) {
-    case Node::kAttributeNode:
-    case Node::kDocumentNode:
-      exception_state.ThrowDOMException(
-          kInvalidNodeTypeError, "The node to be inserted is a '" +
-                                     new_node->nodeName() +
-                                     "' node, which may not be inserted here.");
-      return;
-    default:
-      if (new_node->IsShadowRoot()) {
-        exception_state.ThrowDOMException(kInvalidNodeTypeError,
-                                          "The node to be inserted is a shadow "
-                                          "root, which may not be inserted "
-                                          "here.");
-        return;
-      }
-      break;
-  }
+  // 6. Ensure pre-insertion validity of node into parent before referenceNode.
+  if (!parent.EnsurePreInsertionValidity(*new_node, reference_node, nullptr,
+                                         exception_state))
+    return;
 
   EventQueueScope scope;
-  bool collapsed = start_ == end_;
-  Node* container = nullptr;
+  // 7. If range's start node is a Text node, set referenceNode to the result of
+  // splitting it with offset range’s start offset.
   if (start_is_text) {
-    container = &start_.Container();
-    Text* new_text =
-        ToText(container)->splitText(start_.Offset(), exception_state);
+    reference_node =
+        ToText(start_node).splitText(start_.Offset(), exception_state);
     if (exception_state.HadException())
       return;
-
-    container = &start_.Container();
-    container->parentNode()->InsertBefore(new_node, new_text, exception_state);
-    if (exception_state.HadException())
-      return;
-
-    if (collapsed) {
-      // Some types of events don't support EventQueueScope.  Given
-      // circumstance may mutate the tree so newText->parentNode() may
-      // become null.
-      if (!new_text->parentNode()) {
-        exception_state.ThrowDOMException(
-            kHierarchyRequestError,
-            "This operation would set range's end to parent with new offset, "
-            "but there's no parent into which to continue.");
-        return;
-      }
-      end_.SetToBeforeChild(*new_text);
-    }
-  } else {
-    Node* last_child = (new_node_type == Node::kDocumentFragmentNode)
-                           ? ToDocumentFragment(new_node)->LastChild()
-                           : new_node;
-    if (last_child && last_child == start_.ChildBefore()) {
-      // The insertion will do nothing, but we need to extend the range to
-      // include the inserted nodes.
-      Node* first_child = (new_node_type == Node::kDocumentFragmentNode)
-                              ? ToDocumentFragment(new_node)->FirstChild()
-                              : new_node;
-      DCHECK(first_child);
-      start_.SetToBeforeChild(*first_child);
-      return;
-    }
-
-    container = &start_.Container();
-    Node* reference_node = NodeTraversal::ChildAt(*container, start_.Offset());
-    // TODO(tkent): The following check must be unnecessary if we follow the
-    // algorithm defined in the specification.
-    // https://dom.spec.whatwg.org/#concept-range-insert
-    if (new_node != reference_node) {
-      container->insertBefore(new_node, reference_node, exception_state);
-      if (exception_state.HadException())
-        return;
-    }
-
-    // Note that m_start.offset() may have changed as a result of
-    // container->insertBefore, when the node we are inserting comes before the
-    // range in the same container.
-    if (collapsed && num_new_children)
-      end_.Set(start_.Container(), start_.Offset() + num_new_children,
-               last_child);
   }
+
+  // 8. If node is referenceNode, set referenceNode to its next sibling.
+  if (new_node == reference_node)
+    reference_node = reference_node->nextSibling();
+
+  // 9. If node's parent is not null, remove node from its parent.
+  if (new_node->parentNode()) {
+    new_node->remove(exception_state);
+    if (exception_state.HadException())
+      return;
+  }
+
+  // 10. Let newOffset be parent's length if referenceNode is null, and
+  // referenceNode's index otherwise.
+  unsigned new_offset =
+      reference_node ? reference_node->NodeIndex() : LengthOfContents(&parent);
+
+  // 11. Increase newOffset by node's length if node is a DocumentFragment node,
+  // and one otherwise.
+  new_offset += new_node->IsDocumentFragment() ? LengthOfContents(new_node) : 1;
+
+  // 12. Pre-insert node into parent before referenceNode.
+  parent.insertBefore(new_node, reference_node, exception_state);
+  if (exception_state.HadException())
+    return;
+
+  // 13. If range's start and end are the same, set range's end to (parent,
+  // newOffset).
+  if (start_ == end_)
+    setEnd(&parent, new_offset, exception_state);
 }
 
 String Range::toString() const {
@@ -1053,7 +1015,7 @@ DocumentFragment* Range::createContextualFragment(
     element = node->parentElement();
 
   // Step 2.
-  if (!element || isHTMLHtmlElement(element)) {
+  if (!element || IsHTMLHtmlElement(element)) {
     Document& document = node->GetDocument();
 
     if (document.IsSVGDocument()) {
@@ -1441,57 +1403,7 @@ Node* Range::PastLastNode() const {
 }
 
 IntRect Range::BoundingBox() const {
-  IntRect result;
-  Vector<IntRect> rects;
-  TextRects(rects);
-  for (const IntRect& rect : rects)
-    result.Unite(rect);
-  return result;
-}
-
-void Range::TextRects(Vector<IntRect>& rects, bool use_selection_height) const {
-  Node* start_container = &start_.Container();
-  DCHECK(start_container);
-  Node* end_container = &end_.Container();
-  DCHECK(end_container);
-
-  Node* stop_node = PastLastNode();
-  for (Node* node = FirstNode(); node != stop_node;
-       node = NodeTraversal::Next(*node)) {
-    LayoutObject* r = node->GetLayoutObject();
-    if (!r || !r->IsText())
-      continue;
-    LayoutText* layout_text = ToLayoutText(r);
-    unsigned start_offset = node == start_container ? start_.Offset() : 0;
-    unsigned end_offset = node == end_container
-                              ? end_.Offset()
-                              : std::numeric_limits<unsigned>::max();
-    layout_text->AbsoluteRectsForRange(rects, start_offset, end_offset,
-                                       use_selection_height);
-  }
-}
-
-void Range::TextQuads(Vector<FloatQuad>& quads,
-                      bool use_selection_height) const {
-  Node* start_container = &start_.Container();
-  DCHECK(start_container);
-  Node* end_container = &end_.Container();
-  DCHECK(end_container);
-
-  Node* stop_node = PastLastNode();
-  for (Node* node = FirstNode(); node != stop_node;
-       node = NodeTraversal::Next(*node)) {
-    LayoutObject* r = node->GetLayoutObject();
-    if (!r || !r->IsText())
-      continue;
-    LayoutText* layout_text = ToLayoutText(r);
-    unsigned start_offset = node == start_container ? start_.Offset() : 0;
-    unsigned end_offset = node == end_container
-                              ? end_.Offset()
-                              : std::numeric_limits<unsigned>::max();
-    layout_text->AbsoluteQuadsForRange(quads, start_offset, end_offset,
-                                       use_selection_height);
-  }
+  return ComputeTextRect(EphemeralRange(this));
 }
 
 bool AreRangesEqual(const Range* a, const Range* b) {
@@ -1506,7 +1418,7 @@ bool AreRangesEqual(const Range* a, const Range* b) {
 static inline void BoundaryNodeChildrenWillBeRemoved(
     RangeBoundaryPoint& boundary,
     ContainerNode& container) {
-  for (Node* node_to_be_removed = container.FirstChild(); node_to_be_removed;
+  for (Node* node_to_be_removed = container.firstChild(); node_to_be_removed;
        node_to_be_removed = node_to_be_removed->nextSibling()) {
     if (boundary.ChildBefore() == node_to_be_removed) {
       boundary.SetToStartOfNode(container);
@@ -1556,10 +1468,10 @@ void Range::NodeWillBeRemoved(Node& node) {
 }
 
 static inline void BoundaryTextInserted(RangeBoundaryPoint& boundary,
-                                        Node* text,
+                                        const CharacterData& text,
                                         unsigned offset,
                                         unsigned length) {
-  if (boundary.Container() != text)
+  if (boundary.Container() != &text)
     return;
   boundary.MarkValid();
   unsigned boundary_offset = boundary.Offset();
@@ -1568,18 +1480,19 @@ static inline void BoundaryTextInserted(RangeBoundaryPoint& boundary,
   boundary.SetOffset(boundary_offset + length);
 }
 
-void Range::DidInsertText(Node* text, unsigned offset, unsigned length) {
-  DCHECK(text);
-  DCHECK_EQ(text->GetDocument(), owner_document_);
+void Range::DidInsertText(const CharacterData& text,
+                          unsigned offset,
+                          unsigned length) {
+  DCHECK_EQ(text.GetDocument(), owner_document_);
   BoundaryTextInserted(start_, text, offset, length);
   BoundaryTextInserted(end_, text, offset, length);
 }
 
 static inline void BoundaryTextRemoved(RangeBoundaryPoint& boundary,
-                                       Node* text,
+                                       const CharacterData& text,
                                        unsigned offset,
                                        unsigned length) {
-  if (boundary.Container() != text)
+  if (boundary.Container() != &text)
     return;
   boundary.MarkValid();
   unsigned boundary_offset = boundary.Offset();
@@ -1591,9 +1504,10 @@ static inline void BoundaryTextRemoved(RangeBoundaryPoint& boundary,
     boundary.SetOffset(boundary_offset - length);
 }
 
-void Range::DidRemoveText(Node* text, unsigned offset, unsigned length) {
-  DCHECK(text);
-  DCHECK_EQ(text->GetDocument(), owner_document_);
+void Range::DidRemoveText(const CharacterData& text,
+                          unsigned offset,
+                          unsigned length) {
+  DCHECK_EQ(text.GetDocument(), owner_document_);
   BoundaryTextRemoved(start_, text, offset, length);
   BoundaryTextRemoved(end_, text, offset, length);
 }
@@ -1604,12 +1518,12 @@ static inline void BoundaryTextNodesMerged(RangeBoundaryPoint& boundary,
   if (boundary.Container() == old_node.GetNode()) {
     Node* const previous_sibling = old_node.GetNode().previousSibling();
     DCHECK(previous_sibling);
-    boundary.Set(*previous_sibling, boundary.Offset() + offset, 0);
+    boundary.Set(*previous_sibling, boundary.Offset() + offset, nullptr);
   } else if (boundary.Container() == old_node.GetNode().parentNode() &&
              boundary.Offset() == static_cast<unsigned>(old_node.Index())) {
     Node* const previous_sibling = old_node.GetNode().previousSibling();
     DCHECK(previous_sibling);
-    boundary.Set(*previous_sibling, offset, 0);
+    boundary.Set(*previous_sibling, offset, nullptr);
   }
 }
 
@@ -1643,7 +1557,7 @@ static inline void BoundaryTextNodeSplit(RangeBoundaryPoint& boundary,
              boundary_offset > old_node.length()) {
     Node* const next_sibling = old_node.nextSibling();
     DCHECK(next_sibling);
-    boundary.Set(*next_sibling, boundary_offset - old_node.length(), 0);
+    boundary.Set(*next_sibling, boundary_offset - old_node.length(), nullptr);
   }
 }
 
@@ -1685,64 +1599,132 @@ void Range::expand(const String& unit, ExceptionState& exception_state) {
          end.DeepEquivalent().ComputeOffsetInContainerNode(), exception_state);
 }
 
-ClientRectList* Range::getClientRects() const {
+DOMRectList* Range::getClientRects() const {
   owner_document_->UpdateStyleAndLayoutIgnorePendingStylesheets();
 
   Vector<FloatQuad> quads;
   GetBorderAndTextQuads(quads);
 
-  return ClientRectList::Create(quads);
+  return DOMRectList::Create(quads);
 }
 
-ClientRect* Range::getBoundingClientRect() const {
-  return ClientRect::Create(BoundingRect());
+DOMRect* Range::getBoundingClientRect() const {
+  return DOMRect::FromFloatRect(BoundingRect());
 }
 
+// TODO(editing-dev): We should make
+// |Document::AdjustFloatQuadsForScrollAndAbsoluteZoom()| as const function
+// and takes |const LayoutObject&|.
+static Vector<FloatQuad> ComputeTextQuads(const Document& owner_document,
+                                          const LayoutText& layout_text,
+                                          unsigned start_offset,
+                                          unsigned end_offset) {
+  Vector<FloatQuad> text_quads;
+  layout_text.AbsoluteQuadsForRange(text_quads, start_offset, end_offset);
+  const_cast<Document&>(owner_document)
+      .AdjustFloatQuadsForScrollAndAbsoluteZoom(
+          text_quads, const_cast<LayoutText&>(layout_text));
+  return text_quads;
+}
+
+// https://www.w3.org/TR/cssom-view-1/#dom-range-getclientrects
 void Range::GetBorderAndTextQuads(Vector<FloatQuad>& quads) const {
   Node* start_container = &start_.Container();
   Node* end_container = &end_.Container();
   Node* stop_node = PastLastNode();
 
-  HeapHashSet<Member<Node>> node_set;
+  // Stores the elements selected by the range.
+  HeapHashSet<Member<const Node>> selected_elements;
   for (Node* node = FirstNode(); node != stop_node;
        node = NodeTraversal::Next(*node)) {
-    if (node->IsElementNode())
-      node_set.insert(node);
+    if (!node->IsElementNode())
+      continue;
+    if (selected_elements.Contains(node->parentNode()) ||
+        (!node->contains(start_container) && !node->contains(end_container))) {
+      DCHECK_LE(StartPosition(), Position::BeforeNode(*node));
+      DCHECK_GE(EndPosition(), Position::AfterNode(*node));
+      selected_elements.insert(node);
+    }
   }
 
-  for (Node* node = FirstNode(); node != stop_node;
+  for (const Node* node = FirstNode(); node != stop_node;
        node = NodeTraversal::Next(*node)) {
     if (node->IsElementNode()) {
-      // Exclude start & end container unless the entire corresponding
-      // node is included in the range.
-      if (!node_set.Contains(node->parentNode()) &&
-          (start_container == end_container ||
-           (!node->contains(start_container) &&
-            !node->contains(end_container)))) {
-        if (LayoutObject* layout_object = ToElement(node)->GetLayoutObject()) {
-          Vector<FloatQuad> element_quads;
-          layout_object->AbsoluteQuads(element_quads);
-          owner_document_->AdjustFloatQuadsForScrollAndAbsoluteZoom(
-              element_quads, *layout_object);
+      if (!selected_elements.Contains(node) ||
+          selected_elements.Contains(node->parentNode()))
+        continue;
+      LayoutObject* const layout_object = ToElement(node)->GetLayoutObject();
+      if (!layout_object)
+        continue;
+      Vector<FloatQuad> element_quads;
+      layout_object->AbsoluteQuads(element_quads);
+      owner_document_->AdjustFloatQuadsForScrollAndAbsoluteZoom(element_quads,
+                                                                *layout_object);
 
-          quads.AppendVector(element_quads);
-        }
+      quads.AppendVector(element_quads);
+      continue;
+    }
+
+    if (!node->IsTextNode())
+      continue;
+    LayoutText* const layout_text = ToText(node)->GetLayoutObject();
+    if (!layout_text)
+      continue;
+    if (!layout_text->IsTextFragment()) {
+      // TODO(editing-dev): Offset in |LayoutText| doesn't match to DOM offset
+      // when |text-transform| applied. We should map DOM offset to offset in
+      // |LayouText| for |start_offset| and |end_offset|.
+      const unsigned start_offset =
+          (node == start_container) ? start_.Offset() : 0;
+      const unsigned end_offset = (node == end_container)
+                                      ? end_.Offset()
+                                      : std::numeric_limits<unsigned>::max();
+      quads.AppendVector(ComputeTextQuads(*owner_document_, *layout_text,
+                                          start_offset, end_offset));
+      continue;
+    }
+    const LayoutTextFragment& first_letter_part =
+        *ToLayoutTextFragment(AssociatedLayoutObjectOf(*node, 0));
+    const LayoutTextFragment& remaining_part =
+        *ToLayoutTextFragment(layout_text);
+    // Set offsets in |LayoutTextFragment| to cover whole text in
+    // |LayoutTextFragment|.
+    unsigned first_letter_part_start = 0;
+    unsigned first_letter_part_end = first_letter_part.FragmentLength();
+    unsigned remaining_part_start = 0;
+    unsigned remaining_part_end = remaining_part.FragmentLength();
+    if (node == start_container) {
+      if (start_.Offset() < first_letter_part_end) {
+        // |this| range starts in first-letter part.
+        first_letter_part_start = start_.Offset();
+      } else {
+        first_letter_part_start = first_letter_part_end;
+        DCHECK_GE(static_cast<unsigned>(start_.Offset()),
+                  remaining_part.Start());
+        remaining_part_start = start_.Offset() - remaining_part.Start();
       }
-    } else if (node->IsTextNode()) {
-      if (LayoutText* layout_text = ToText(node)->GetLayoutObject()) {
-        unsigned start_offset = (node == start_container) ? start_.Offset() : 0;
-        unsigned end_offset = (node == end_container)
-                                  ? end_.Offset()
-                                  : std::numeric_limits<unsigned>::max();
-
-        Vector<FloatQuad> text_quads;
-        layout_text->AbsoluteQuadsForRange(text_quads, start_offset,
-                                           end_offset);
-        owner_document_->AdjustFloatQuadsForScrollAndAbsoluteZoom(text_quads,
-                                                                  *layout_text);
-
-        quads.AppendVector(text_quads);
+    }
+    if (node == end_container) {
+      if (end_.Offset() <= first_letter_part_end) {
+        // |this| range ends in first-letter part.
+        first_letter_part_end = end_.Offset();
+        remaining_part_end = remaining_part_start;
+      } else {
+        DCHECK_GE(static_cast<unsigned>(end_.Offset()), remaining_part.Start());
+        remaining_part_end = end_.Offset() - remaining_part.Start();
       }
+    }
+    DCHECK_LE(first_letter_part_start, first_letter_part_end);
+    DCHECK_LE(remaining_part_start, remaining_part_end);
+    if (first_letter_part_start < first_letter_part_end) {
+      quads.AppendVector(ComputeTextQuads(*owner_document_, first_letter_part,
+                                          first_letter_part_start,
+                                          first_letter_part_end));
+    }
+    if (remaining_part_start < remaining_part_end) {
+      quads.AppendVector(ComputeTextQuads(*owner_document_, remaining_part,
+                                          remaining_part_start,
+                                          remaining_part_end));
     }
   }
 }
@@ -1779,9 +1761,11 @@ void Range::UpdateSelectionIfAddedToSelection() {
                              .Collapse(StartPosition())
                              .Extend(EndPosition())
                              .Build(),
-                         FrameSelection::kCloseTyping |
-                             FrameSelection::kClearTypingStyle |
-                             FrameSelection::kDoNotSetFocus);
+                         SetSelectionOptions::Builder()
+                             .SetShouldCloseTyping(true)
+                             .SetShouldClearTypingStyle(true)
+                             .SetDoNotSetFocus(true)
+                             .Build());
   selection.CacheRangeOfDocument(this);
 }
 
@@ -1798,10 +1782,11 @@ void Range::RemoveFromSelectionIfInDifferentRoot(Document& old_document) {
   selection.ClearDocumentCachedRange();
 }
 
-DEFINE_TRACE(Range) {
+void Range::Trace(blink::Visitor* visitor) {
   visitor->Trace(owner_document_);
   visitor->Trace(start_);
   visitor->Trace(end_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink
@@ -1815,7 +1800,7 @@ void showTree(const blink::Range* range) {
                      ->ToMarkedTreeString(range->startContainer(), "S",
                                           range->endContainer(), "E")
                      .Utf8()
-                     .Data()
+                     .data()
               << "start offset: " << range->startOffset()
               << ", end offset: " << range->endOffset();
   } else {

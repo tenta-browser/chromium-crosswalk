@@ -5,10 +5,13 @@
 #import "chrome/browser/ui/cocoa/fullscreen/fullscreen_menubar_tracker.h"
 
 #include <Carbon/Carbon.h>
+#include <QuartzCore/QuartzCore.h>
 
+#include "base/mac/mac_util.h"
 #include "base/macros.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/fullscreen/fullscreen_toolbar_controller.h"
+#import "chrome/browser/ui/cocoa/fullscreen/fullscreen_toolbar_visibility_lock_controller.h"
 #include "ui/base/cocoa/appkit_utils.h"
 
 namespace {
@@ -137,8 +140,11 @@ OSStatus MenuBarRevealHandler(EventHandlerCallRef handler,
     state_ = FullscreenMenubarState::SHOWING;
 
   menubarFraction_ = progress;
+  [owner_ layoutToolbar];
 
-  [owner_ updateToolbarLayout];
+  // AppKit drives the menu bar animation from a nested run loop. Flush
+  // explicitly so that Chrome's UI updates during the animation.
+  [CATransaction flush];
 }
 
 - (BOOL)isMouseOnScreen {
@@ -149,7 +155,9 @@ OSStatus MenuBarRevealHandler(EventHandlerCallRef handler,
 - (void)activeSpaceDidChange:(NSNotification*)notification {
   menubarFraction_ = 0.0;
   state_ = FullscreenMenubarState::HIDDEN;
-  [owner_ updateToolbarLayout];
+  [[owner_ visibilityLockController] releaseToolbarVisibilityForOwner:self
+                                                        withAnimation:NO];
+  [owner_ layoutToolbar];
 }
 
 @end

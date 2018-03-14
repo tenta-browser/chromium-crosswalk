@@ -13,7 +13,7 @@ namespace headless {
 HeadlessClipboard::HeadlessClipboard()
     : default_store_type_(ui::CLIPBOARD_TYPE_COPY_PASTE) {}
 
-HeadlessClipboard::~HeadlessClipboard() {}
+HeadlessClipboard::~HeadlessClipboard() = default;
 
 void HeadlessClipboard::OnPreShutdown() {}
 
@@ -166,7 +166,10 @@ void HeadlessClipboard::WriteWebSmartPaste() {
 void HeadlessClipboard::WriteBitmap(const SkBitmap& bitmap) {
   // Create a dummy entry.
   GetDefaultStore().data[GetBitmapFormatType()];
-  bitmap.copyTo(&GetDefaultStore().image);
+  SkBitmap& dst = GetDefaultStore().image;
+  if (dst.tryAllocPixels(bitmap.info())) {
+    bitmap.readPixels(dst.info(), dst.getPixels(), dst.rowBytes(), 0, 0);
+  }
 }
 
 void HeadlessClipboard::WriteData(const FormatType& format,
@@ -179,7 +182,7 @@ HeadlessClipboard::DataStore::DataStore() : sequence_number(0) {}
 
 HeadlessClipboard::DataStore::DataStore(const DataStore& other) = default;
 
-HeadlessClipboard::DataStore::~DataStore() {}
+HeadlessClipboard::DataStore::~DataStore() = default;
 
 void HeadlessClipboard::DataStore::Clear() {
   data.clear();

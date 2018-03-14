@@ -61,7 +61,7 @@ class CONTENT_EXPORT MediaStreamAudioTrack : public MediaStreamTrack {
 
   // Halts the flow of audio data from the source (and to the sinks), and then
   // notifies all sinks of the "ended" state.
-  void Stop() final;
+  void StopAndNotify(base::OnceClosure callback) final;
 
   // MediaStreamTrack override.
   void SetEnabled(bool enabled) override;
@@ -91,8 +91,6 @@ class CONTENT_EXPORT MediaStreamAudioTrack : public MediaStreamTrack {
   // MediaStreamAudioSinks. While this track is disabled, silent audio will be
   // delivered to the sinks instead of the content of |audio_bus|.
   void OnData(const media::AudioBus& audio_bus, base::TimeTicks reference_time);
-
-  void GetSettings(blink::WebMediaStreamTrack::Settings& settings) override;
 
  private:
   // In debug builds, check that all methods that could cause object graph

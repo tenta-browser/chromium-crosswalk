@@ -21,8 +21,9 @@ from diff_util import PromptUserToAcceptDiff
 import path_util
 
 import print_style
+import histogram_paths
 
-HISTOGRAMS_PATH = path_util.GetHistogramsFile()
+ENUMS_PATH = histogram_paths.ENUMS_XML
 POLICY_TEMPLATES_PATH = 'components/policy/resources/policy_templates.json'
 ENUM_NAME = 'EnterprisePolicies'
 
@@ -33,22 +34,6 @@ class UserError(Exception):
   @property
   def message(self):
     return self.args[0]
-
-
-def FlattenPolicies(policy_definitions, policy_list):
-  """Appends a list of policies defined in |policy_definitions| to
-  |policy_list|, flattening subgroups.
-
-  Args:
-    policy_definitions: A list of policy definitions and groups, as in
-                        policy_templates.json file.
-    policy_list: A list that has policy definitions appended to it.
-  """
-  for policy in policy_definitions:
-    if policy['type'] == 'group':
-      FlattenPolicies(policy['policies'], policy_list)
-    else:
-      policy_list.append(policy)
 
 
 def UpdateHistogramDefinitions(policy_templates, doc):
@@ -79,8 +64,8 @@ def UpdateHistogramDefinitions(policy_templates, doc):
   policy_enum_node.appendChild(doc.createComment(comment))
 
   # Add values generated from policy templates.
-  ordered_policies = []
-  FlattenPolicies(policy_templates['policy_definitions'], ordered_policies)
+  ordered_policies = [x for x in policy_templates['policy_definitions']
+                      if x['type'] != 'group']
   ordered_policies.sort(key=lambda policy: policy['id'])
   for policy in ordered_policies:
     node = doc.createElement('int')
@@ -97,7 +82,7 @@ def main():
 
   with open(path_util.GetInputFile(POLICY_TEMPLATES_PATH), 'rb') as f:
     policy_templates = literal_eval(f.read())
-  with open(HISTOGRAMS_PATH, 'rb') as f:
+  with open(ENUMS_PATH, 'rb') as f:
     histograms_doc = minidom.parse(f)
     f.seek(0)
     xml = f.read()
@@ -105,7 +90,7 @@ def main():
   UpdateHistogramDefinitions(policy_templates, histograms_doc)
   new_xml = print_style.GetPrintStyle().PrettyPrintNode(histograms_doc)
   if PromptUserToAcceptDiff(xml, new_xml, 'Is the updated version acceptable?'):
-    with open(HISTOGRAMS_PATH, 'wb') as f:
+    with open(ENUMS_PATH, 'wb') as f:
       f.write(new_xml)
 
 

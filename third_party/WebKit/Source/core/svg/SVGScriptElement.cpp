@@ -20,24 +20,26 @@
 
 #include "core/svg/SVGScriptElement.h"
 
-#include "bindings/core/v8/HTMLScriptElementOrSVGScriptElement.h"
 #include "bindings/core/v8/ScriptEventListener.h"
-#include "core/HTMLNames.h"
-#include "core/XLinkNames.h"
+#include "bindings/core/v8/html_script_element_or_svg_script_element.h"
 #include "core/dom/Attribute.h"
 #include "core/dom/ScriptLoader.h"
 #include "core/dom/ScriptRunner.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/csp/ContentSecurityPolicy.h"
+#include "core/html_names.h"
+#include "core/xlink_names.h"
 
 namespace blink {
 
 inline SVGScriptElement::SVGScriptElement(Document& document,
                                           bool was_inserted_by_parser,
                                           bool already_started)
-    : SVGElement(SVGNames::scriptTag, document), SVGURIReference(this) {
-  InitializeScriptLoader(was_inserted_by_parser, already_started, false);
-}
+    : SVGElement(SVGNames::scriptTag, document),
+      SVGURIReference(this),
+      loader_(InitializeScriptLoader(was_inserted_by_parser,
+                                     already_started,
+                                     false)) {}
 
 SVGScriptElement* SVGScriptElement::Create(Document& document,
                                            bool inserted_by_parser) {
@@ -51,14 +53,6 @@ void SVGScriptElement::ParseAttribute(
         EventTypeNames::error,
         CreateAttributeEventListener(this, params.name, params.new_value,
                                      EventParameterName()));
-  } else if (params.name == HTMLNames::nonceAttr) {
-    if (params.new_value == ContentSecurityPolicy::GetNonceReplacementString())
-      return;
-    setNonce(params.new_value);
-    if (RuntimeEnabledFeatures::hideNonceContentAttributeEnabled()) {
-      setAttribute(HTMLNames::nonceAttr,
-                   ContentSecurityPolicy::GetNonceReplacementString());
-    }
   } else {
     SVGElement::ParseAttribute(params);
   }
@@ -122,10 +116,6 @@ String SVGScriptElement::TextFromChildren() {
   return Element::TextFromChildren();
 }
 
-String SVGScriptElement::TextContent() const {
-  return Node::textContent();
-}
-
 bool SVGScriptElement::HasSourceAttribute() const {
   return href()->IsSpecified();
 }
@@ -138,20 +128,19 @@ bool SVGScriptElement::HasChildren() const {
   return Node::hasChildren();
 }
 
-bool SVGScriptElement::IsNonceableElement() const {
-  return ContentSecurityPolicy::IsNonceableElement(this);
+const AtomicString& SVGScriptElement::GetNonceForElement() const {
+  return ContentSecurityPolicy::IsNonceableElement(this) ? nonce()
+                                                         : g_null_atom;
 }
 
 bool SVGScriptElement::AllowInlineScriptForCSP(
     const AtomicString& nonce,
     const WTF::OrdinalNumber& context_line,
-    const String& script_content) {
+    const String& script_content,
+    ContentSecurityPolicy::InlineType inline_type) {
   return GetDocument().GetContentSecurityPolicy()->AllowInlineScript(
-      this, GetDocument().Url(), nonce, context_line, script_content);
-}
-
-AtomicString SVGScriptElement::InitiatorName() const {
-  return Element::localName();
+      this, GetDocument().Url(), nonce, context_line, script_content,
+      inline_type);
 }
 
 Document& SVGScriptElement::GetDocument() const {
@@ -173,7 +162,7 @@ void SVGScriptElement::DispatchErrorEvent() {
 void SVGScriptElement::SetScriptElementForBinding(
     HTMLScriptElementOrSVGScriptElement& element) {
   if (!IsInV1ShadowTree())
-    element.setSVGScriptElement(this);
+    element.SetSVGScriptElement(this);
 }
 
 #if DCHECK_IS_ON()
@@ -185,10 +174,17 @@ bool SVGScriptElement::IsAnimatableAttribute(const QualifiedName& name) const {
 }
 #endif
 
-DEFINE_TRACE(SVGScriptElement) {
+void SVGScriptElement::Trace(blink::Visitor* visitor) {
+  visitor->Trace(loader_);
   SVGElement::Trace(visitor);
   SVGURIReference::Trace(visitor);
   ScriptElementBase::Trace(visitor);
+}
+
+void SVGScriptElement::TraceWrappers(
+    const ScriptWrappableVisitor* visitor) const {
+  visitor->TraceWrappers(loader_);
+  SVGElement::TraceWrappers(visitor);
 }
 
 }  // namespace blink

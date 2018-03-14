@@ -37,6 +37,7 @@ const char kSwitchIdeValueVs[] = "vs";
 const char kSwitchIdeValueVs2013[] = "vs2013";
 const char kSwitchIdeValueVs2015[] = "vs2015";
 const char kSwitchIdeValueVs2017[] = "vs2017";
+const char kSwitchIdeValueWinSdk[] = "winsdk";
 const char kSwitchIdeValueXcode[] = "xcode";
 const char kSwitchIdeValueJson[] = "json";
 const char kSwitchNinjaExtraArgs[] = "ninja-extra-args";
@@ -195,11 +196,11 @@ bool RunIdeWriter(const std::string& ide,
     return res;
   } else if (ide == kSwitchIdeValueVs || ide == kSwitchIdeValueVs2013 ||
              ide == kSwitchIdeValueVs2015 || ide == kSwitchIdeValueVs2017) {
-    VisualStudioWriter::Version version = VisualStudioWriter::Version::Vs2015;
+    VisualStudioWriter::Version version = VisualStudioWriter::Version::Vs2017;
     if (ide == kSwitchIdeValueVs2013)
       version = VisualStudioWriter::Version::Vs2013;
-    else if (ide == kSwitchIdeValueVs2017)
-      version = VisualStudioWriter::Version::Vs2017;
+    else if (ide == kSwitchIdeValueVs2015)
+      version = VisualStudioWriter::Version::Vs2015;
 
     std::string sln_name;
     if (command_line->HasSwitch(kSwitchSln))
@@ -207,9 +208,17 @@ bool RunIdeWriter(const std::string& ide,
     std::string filters;
     if (command_line->HasSwitch(kSwitchFilters))
       filters = command_line->GetSwitchValueASCII(kSwitchFilters);
+    std::string win_kit;
+    if (command_line->HasSwitch(kSwitchIdeValueWinSdk))
+      win_kit = command_line->GetSwitchValueASCII(kSwitchIdeValueWinSdk);
+    std::string ninja_extra_args;
+    if (command_line->HasSwitch(kSwitchNinjaExtraArgs))
+      ninja_extra_args =
+          command_line->GetSwitchValueASCII(kSwitchNinjaExtraArgs);
     bool no_deps = command_line->HasSwitch(kSwitchNoDeps);
     bool res = VisualStudioWriter::RunAndWriteFiles(
-        build_settings, builder, version, sln_name, filters, no_deps, err);
+        build_settings, builder, version, sln_name, filters, win_kit,
+        ninja_extra_args, no_deps, err);
     if (res && !quiet) {
       OutputString("Generating Visual Studio projects took " +
                    base::Int64ToString(timer.Elapsed().InMilliseconds()) +
@@ -272,9 +281,7 @@ bool RunIdeWriter(const std::string& ide,
 const char kGen[] = "gen";
 const char kGen_HelpShort[] = "gen: Generate ninja files.";
 const char kGen_Help[] =
-    R"(gn gen: Generate ninja files.
-
-  gn gen [<ide options>] <out_dir>
+    R"(gn gen [--check] [<ide options>] <out_dir>
 
   Generates ninja files from the current tree and puts them in the given output
   directory.
@@ -283,6 +290,9 @@ const char kGen_Help[] =
       //out/foo
   Or it can be a directory relative to the current directory such as:
       out/foo
+
+  "gn gen --check" is the same as running "gn check". See "gn help check"
+  for documentation on that mode.
 
   See "gn help switches" for the common command-line switches.
 
@@ -318,6 +328,15 @@ Visual Studio Flags
       Don't include targets dependencies to the solution. Changes the way how
       --filters option works. Only directly matching targets are included.
 
+  --winsdk=<sdk_version>
+      Use the specified Windows 10 SDK version to generate project files.
+      As an example, "10.0.15063.0" can be specified to use Creators Update SDK
+      instead of the default one.
+
+  --ninja-extra-args=<string>
+      This string is passed without any quoting to the ninja invocation
+      command-line. Can be used to configure ninja flags, like "-j".
+
 Xcode Flags
 
   --workspace=<file_name>
@@ -326,8 +345,7 @@ Xcode Flags
 
   --ninja-extra-args=<string>
       This string is passed without any quoting to the ninja invocation
-      command-line. Can be used to configure ninja flags, like "-j" if using
-      goma for example.
+      command-line. Can be used to configure ninja flags, like "-j".
 
   --root-target=<target_name>
       Name of the target corresponding to "All" target in Xcode. If unset,
@@ -353,9 +371,10 @@ Eclipse IDE Support
 
 Generic JSON Output
 
-  Dumps target information to JSON file and optionally invokes python script on
-  generated file. See comments at the beginning of json_project_writer.cc and
-  desc_builder.cc for overview of JSON file format.
+  Dumps target information to a JSON file and optionally invokes a
+  python script on the generated file. See the comments at the beginning
+  of json_project_writer.cc and desc_builder.cc for an overview of the JSON
+  file format.
 
   --json-file-name=<json_file_name>
       Overrides default file name (project.json) of generated JSON file.
@@ -443,12 +462,12 @@ int RunGen(const std::vector<std::string>& args) {
     for (const auto& rules : write_info.rules)
       targets_collected += rules.second.size();
 
-    std::string stats = "Made " + base::SizeTToString(targets_collected) +
-        " targets from " +
+    std::string stats =
+        "Made " + base::NumberToString(targets_collected) + " targets from " +
         base::IntToString(
             setup->scheduler().input_file_manager()->GetInputFileCount()) +
-        " files in " +
-        base::Int64ToString(elapsed_time.InMilliseconds()) + "ms\n";
+        " files in " + base::Int64ToString(elapsed_time.InMilliseconds()) +
+        "ms\n";
     OutputString(stats);
   }
 

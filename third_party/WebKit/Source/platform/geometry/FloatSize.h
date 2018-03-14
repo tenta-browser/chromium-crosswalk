@@ -29,19 +29,21 @@
 #define FloatSize_h
 
 #include <iosfwd>
+
+#include "build/build_config.h"
 #include "platform/geometry/IntPoint.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Forward.h"
-#include "platform/wtf/MathExtras.h"
-#include "third_party/skia/include/core/SkSize.h"
 
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
 typedef struct CGSize CGSize;
 
 #ifdef __OBJC__
 #import <Foundation/Foundation.h>
 #endif
 #endif
+
+struct SkSize;
 
 namespace blink {
 
@@ -56,8 +58,7 @@ class PLATFORM_EXPORT FloatSize {
   FloatSize(float width, float height) : width_(width), height_(height) {}
   explicit FloatSize(const IntSize& size)
       : width_(size.Width()), height_(size.Height()) {}
-  FloatSize(const SkSize& size)
-      : width_(size.width()), height_(size.height()) {}
+  FloatSize(const SkSize&);
   explicit FloatSize(const LayoutSize&);
 
   static FloatSize NarrowPrecision(double width, double height);
@@ -73,6 +74,8 @@ class PLATFORM_EXPORT FloatSize {
   bool IsExpressibleAsIntSize() const;
 
   float AspectRatio() const { return width_ / height_; }
+
+  float Area() const { return width_ * height_; }
 
   void Expand(float width, float height) {
     width_ += width;
@@ -114,18 +117,13 @@ class PLATFORM_EXPORT FloatSize {
     return FloatSize(width_ * scale_x, height_ * scale_y);
   }
 
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
   explicit FloatSize(
       const CGSize&);  // don't do this implicitly since it's lossy
   operator CGSize() const;
-#if defined(__OBJC__) && !defined(NSGEOMETRY_TYPES_SAME_AS_CGGEOMETRY_TYPES)
-  explicit FloatSize(
-      const NSSize&);  // don't do this implicitly since it's lossy
-  operator NSSize() const;
-#endif
 #endif
 
-  operator SkSize() const { return SkSize::Make(width_, height_); }
+  operator SkSize() const;
 
   String ToString() const;
 
@@ -193,10 +191,15 @@ inline IntPoint FlooredIntPoint(const FloatSize& p) {
                   clampTo<int>(floorf(p.Height())));
 }
 
+PLATFORM_EXPORT std::ostream& operator<<(std::ostream&, const FloatSize&);
+
 // Redeclared here to avoid ODR issues.
 // See platform/testing/GeometryPrinters.h.
 void PrintTo(const FloatSize&, std::ostream*);
 
 }  // namespace blink
+
+// Allows this class to be stored in a HeapVector.
+WTF_ALLOW_CLEAR_UNUSED_SLOTS_WITH_MEM_FUNCTIONS(blink::FloatSize);
 
 #endif  // FloatSize_h

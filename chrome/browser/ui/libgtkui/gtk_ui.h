@@ -12,18 +12,21 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
+#include "build/buildflag.h"
 #include "chrome/browser/ui/libgtkui/gtk_signal.h"
 #include "chrome/browser/ui/libgtkui/libgtkui_export.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/views/linux_ui/linux_ui.h"
 #include "ui/views/window/frame_buttons.h"
 
+typedef struct _GParamSpec GParamSpec;
 typedef struct _GtkStyle GtkStyle;
 typedef struct _GtkWidget GtkWidget;
 
 namespace libgtkui {
 class Gtk2KeyBindingsHandler;
-class GConfListener;
+class DeviceScaleFactorObserver;
+class NavButtonLayoutManager;
 
 // Interface to GTK2 desktop features.
 //
@@ -35,7 +38,7 @@ class GtkUi : public views::LinuxUI {
   typedef base::Callback<ui::NativeTheme*(aura::Window* window)>
       NativeThemeGetter;
 
-  // Setters used by GConfListener:
+  // Setters used by NavButtonLayoutManager:
   void SetWindowButtonOrdering(
       const std::vector<views::FrameButton>& leading_buttons,
       const std::vector<views::FrameButton>& trailing_buttons);
@@ -61,9 +64,9 @@ class GtkUi : public views::LinuxUI {
   // ui::ShellDialogLinux:
   ui::SelectFileDialog* CreateSelectFileDialog(
       ui::SelectFileDialog::Listener* listener,
-      ui::SelectFilePolicy* policy) const override;
+      std::unique_ptr<ui::SelectFilePolicy> policy) const override;
 
-  // ui::LinuxUI:
+  // views::LinuxUI:
   void Initialize() override;
   bool GetTint(int id, color_utils::HSL* tint) const override;
   bool GetColor(int id, SkColor* color) const override;
@@ -75,7 +78,7 @@ class GtkUi : public views::LinuxUI {
   SkColor GetActiveSelectionFgColor() const override;
   SkColor GetInactiveSelectionBgColor() const override;
   SkColor GetInactiveSelectionFgColor() const override;
-  double GetCursorBlinkInterval() const override;
+  base::TimeDelta GetCursorBlinkInterval() const override;
   ui::NativeTheme* GetNativeTheme(aura::Window* window) const override;
   void SetNativeThemeOverride(const NativeThemeGetter& callback) override;
   bool GetDefaultUsesSystemTheme() const override;
@@ -94,21 +97,32 @@ class GtkUi : public views::LinuxUI {
       views::WindowButtonOrderObserver* observer) override;
   void RemoveWindowButtonOrderObserver(
       views::WindowButtonOrderObserver* observer) override;
-  bool UnityIsRunning() override;
   NonClientMiddleClickAction GetNonClientMiddleClickAction() override;
   void NotifyWindowManagerStartupComplete() override;
+  void UpdateDeviceScaleFactor() override;
+  float GetDeviceScaleFactor() const override;
+  void AddDeviceScaleFactorObserver(
+      views::DeviceScaleFactorObserver* observer) override;
+  void RemoveDeviceScaleFactorObserver(
+      views::DeviceScaleFactorObserver* observer) override;
+  bool PreferDarkTheme() const override;
+#if BUILDFLAG(ENABLE_NATIVE_WINDOW_NAV_BUTTONS)
+  std::unique_ptr<views::NavButtonProvider> CreateNavButtonProvider() override;
+#endif
 
   // ui::TextEditKeybindingDelegate:
   bool MatchEvent(const ui::Event& event,
                   std::vector<ui::TextEditCommandAuraLinux>* commands) override;
 
-  // ui::Views::LinuxUI:
-  void UpdateDeviceScaleFactor() override;
-  float GetDeviceScaleFactor() const override;
-
  private:
   typedef std::map<int, SkColor> ColorMap;
   typedef std::map<int, color_utils::HSL> TintMap;
+
+  CHROMEG_CALLBACK_1(GtkUi,
+                     void,
+                     OnDeviceScaleFactorMaybeChanged,
+                     void*,
+                     GParamSpec*);
 
   // This method returns the colors webkit will use for the scrollbars. When no
   // colors are specified by the GTK+ theme, this function averages of the
@@ -129,9 +143,12 @@ class GtkUi : public views::LinuxUI {
   bool GetChromeStyleColor(const char* sytle_property,
                            SkColor* ret_color) const;
 
+  float GetRawDeviceScaleFactor();
+
   ui::NativeTheme* native_theme_;
 
-  // A GtkWindow object with the class "ChromeGtkFrame".
+  // On Gtk2, A GtkWindow object with the class "ChromeGtkFrame".  On
+  // Gtk3, a regular GtkWindow.
   GtkWidget* fake_window_;
 
   // Colors calculated by LoadGtkValues() that are given to the
@@ -157,21 +174,23 @@ class GtkUi : public views::LinuxUI {
   gfx::Font::Weight default_font_weight_ = gfx::Font::Weight::NORMAL;
   gfx::FontRenderParams default_font_render_params_;
 
-#if defined(USE_GCONF)
-  // Currently, the only source of window button configuration. This will
-  // change if we ever have to support XFCE's configuration system or KDE's.
-  std::unique_ptr<GConfListener> gconf_listener_;
-#endif  // defined(USE_GCONF)
+  std::unique_ptr<NavButtonLayoutManager> nav_button_layout_manager_;
 
-  // If either of these vectors are non-empty, they represent the current
-  // window button configuration.
+  // Frame button layout state.  If |nav_buttons_set_| is false, then
+  // |leading_buttons_| and |trailing_buttons_| are meaningless.
+  bool nav_buttons_set_ = false;
   std::vector<views::FrameButton> leading_buttons_;
   std::vector<views::FrameButton> trailing_buttons_;
 
   std::unique_ptr<Gtk2KeyBindingsHandler> key_bindings_handler_;
 
   // Objects to notify when the window frame button order changes.
-  base::ObserverList<views::WindowButtonOrderObserver> observer_list_;
+  base::ObserverList<views::WindowButtonOrderObserver>
+      window_button_order_observer_list_;
+
+  // Objects to notify when the device scale factor changes.
+  base::ObserverList<views::DeviceScaleFactorObserver>
+      device_scale_factor_observer_list_;
 
   // Whether we should lower the window on a middle click to the non client
   // area.

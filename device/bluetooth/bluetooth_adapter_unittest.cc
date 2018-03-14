@@ -42,8 +42,7 @@ namespace device {
 
 class TestBluetoothAdapter : public BluetoothAdapter {
  public:
-  TestBluetoothAdapter() {
-  }
+  TestBluetoothAdapter() = default;
 
   std::string GetAddress() const override { return ""; }
 
@@ -106,6 +105,9 @@ class TestBluetoothAdapter : public BluetoothAdapter {
       const base::TimeDelta& max,
       const base::Closure& callback,
       const AdvertisementErrorCallback& error_callback) override {}
+  void ResetAdvertising(
+      const base::Closure& callback,
+      const AdvertisementErrorCallback& error_callback) override {}
 #endif
 
   BluetoothLocalGattService* GetGattService(
@@ -135,7 +137,7 @@ class TestBluetoothAdapter : public BluetoothAdapter {
   }
 
  protected:
-  ~TestBluetoothAdapter() override {}
+  ~TestBluetoothAdapter() override = default;
 
   void AddDiscoverySession(
       BluetoothDiscoveryFilter* discovery_filter,
@@ -741,6 +743,36 @@ TEST_F(BluetoothTest, TogglePowerBeforeScan) {
 }
 #endif  // defined(OS_ANDROID)
 
+#if defined(OS_MACOSX)
+// TODO(crbug.com/725270): Enable on relevant platforms.
+TEST_F(BluetoothTest, TurnOffAdapterWithConnectedDevice) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
+
+  InitWithFakeAdapter();
+  TestBluetoothAdapterObserver observer(adapter_);
+
+  StartLowEnergyDiscoverySession();
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
+
+  device->CreateGattConnection(GetGattConnectionCallback(Call::EXPECTED),
+                               GetConnectErrorCallback(Call::NOT_EXPECTED));
+  SimulateGattConnection(device);
+  base::RunLoop().RunUntilIdle();
+
+  ASSERT_TRUE(device->IsGattConnected());
+
+  ResetEventCounts();
+  SimulateAdapterPoweredOff();
+
+  EXPECT_EQ(2, observer.device_changed_count());
+  EXPECT_FALSE(device->IsConnected());
+  EXPECT_FALSE(device->IsGattConnected());
+}
+#endif  // defined(OS_MACOSX)
+
 #if defined(OS_CHROMEOS) || defined(OS_LINUX)
 TEST_F(BluetoothTest, RegisterLocalGattServices) {
   InitWithFakeAdapter();
@@ -895,7 +927,9 @@ TEST_F(BluetoothTest, DiscoverConnectedLowEnergyDeviceWithNoFilter) {
   EXPECT_EQ(2, observer.device_added_count());
   EXPECT_EQ(2u, adapter_->GetDevices().size());
 }
+#endif  // defined(OS_MACOSX)
 
+#if defined(OS_MACOSX)
 // Simulate two devices being connected before calling
 // RetrieveGattConnectedDevicesWithDiscoveryFilter() with one service filter.
 TEST_F(BluetoothTest, DiscoverConnectedLowEnergyDeviceWithFilter) {
@@ -927,7 +961,9 @@ TEST_F(BluetoothTest, DiscoverConnectedLowEnergyDeviceWithFilter) {
   EXPECT_EQ(1, observer.device_added_count());
   EXPECT_EQ(1u, adapter_->GetDevices().size());
 }
+#endif  // defined(OS_MACOSX)
 
+#if defined(OS_MACOSX)
 // Simulate two devices being connected before calling
 // RetrieveGattConnectedDevicesWithDiscoveryFilter() with one service filter
 // that doesn't match.
@@ -954,7 +990,9 @@ TEST_F(BluetoothTest, DiscoverConnectedLowEnergyDeviceWithWrongFilter) {
   EXPECT_EQ(0, observer.device_added_count());
   EXPECT_EQ(0u, adapter_->GetDevices().size());
 }
+#endif  // defined(OS_MACOSX)
 
+#if defined(OS_MACOSX)
 // Simulate two devices being connected before calling
 // RetrieveGattConnectedDevicesWithDiscoveryFilter() with two service filters
 // that both match.
@@ -999,7 +1037,9 @@ TEST_F(BluetoothTest, DiscoverConnectedLowEnergyDeviceWithTwoFilters) {
   EXPECT_EQ(2, observer.device_added_count());
   EXPECT_EQ(2u, adapter_->GetDevices().size());
 }
+#endif  // defined(OS_MACOSX)
 
+#if defined(OS_MACOSX)
 // Simulate two devices being connected before calling
 // RetrieveGattConnectedDevicesWithDiscoveryFilter() with one service filter
 // that one match device, and then

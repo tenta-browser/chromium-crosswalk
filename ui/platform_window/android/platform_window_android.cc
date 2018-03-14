@@ -7,7 +7,6 @@
 #include <android/input.h>
 #include <android/native_window_jni.h>
 
-#include "base/android/context_utils.h"
 #include "base/android/jni_android.h"
 #include "jni/PlatformWindowAndroid_jni.h"
 #include "ui/events/event.h"
@@ -49,11 +48,6 @@ ui::EventType MotionEventActionToEventType(jint action) {
 
 ////////////////////////////////////////////////////////////////////////////////
 // PlatformWindowAndroid, public:
-
-// static
-bool PlatformWindowAndroid::Register(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
 
 PlatformWindowAndroid::PlatformWindowAndroid(PlatformWindowDelegate* delegate)
     : delegate_(delegate),
@@ -167,9 +161,9 @@ void PlatformWindowAndroid::Show() {
   JNIEnv* env = base::android::AttachCurrentThread();
   java_platform_window_android_ = JavaObjectWeakGlobalRef(
       env, Java_PlatformWindowAndroid_createForActivity(
-               env, base::android::GetApplicationContext(),
-               reinterpret_cast<jlong>(this),
-               reinterpret_cast<jlong>(&platform_ime_controller_)).obj());
+               env, reinterpret_cast<jlong>(this),
+               reinterpret_cast<jlong>(&platform_ime_controller_))
+               .obj());
 }
 
 void PlatformWindowAndroid::Hide() {

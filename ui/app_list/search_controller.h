@@ -9,10 +9,9 @@
 
 #include <memory>
 
+#include "ash/app_list/model/app_list_model.h"
 #include "base/macros.h"
-#include "base/timer/timer.h"
 #include "ui/app_list/app_list_export.h"
-#include "ui/app_list/app_list_model.h"
 #include "ui/app_list/search/mixer.h"
 #include "ui/app_list/speech_ui_model_observer.h"
 
@@ -33,8 +32,7 @@ class APP_LIST_EXPORT SearchController {
                    History* history);
   virtual ~SearchController();
 
-  void Start(bool is_voice_query);
-  void Stop();
+  void Start();
 
   void OpenResult(SearchResult* result, int event_flags);
   void InvokeResultAction(SearchResult* result,
@@ -42,7 +40,7 @@ class APP_LIST_EXPORT SearchController {
                           int event_flags);
 
   // Adds a new mixer group. See Mixer::AddGroup.
-  size_t AddGroup(size_t max_results, double multiplier);
+  size_t AddGroup(size_t max_results, double multiplier, double boost);
 
   // Takes ownership of |provider| and associates it with given mixer group.
   void AddProvider(size_t group_id, std::unique_ptr<SearchProvider> provider);
@@ -64,8 +62,6 @@ class APP_LIST_EXPORT SearchController {
   History* history_;  // KeyedService, not owned.
 
   bool is_voice_query_ = false;
-
-  base::OneShotTimer stop_timer_;
 
   DISALLOW_COPY_AND_ASSIGN(SearchController);
 };

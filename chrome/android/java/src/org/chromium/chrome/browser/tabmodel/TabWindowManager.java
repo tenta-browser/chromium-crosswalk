@@ -14,7 +14,6 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.ui.base.WindowAndroid;
 
 import java.util.ArrayList;
@@ -152,6 +151,20 @@ public class TabWindowManager implements ActivityStateListener {
     }
 
     /**
+     * @return Whether the incognito profile can be destroyed. It cannot be destroyed if it is
+     *         in use by any live tab model selectors.
+     */
+    public boolean canDestroyIncognitoProfile() {
+        for (int i = 0; i < mSelectors.size(); i++) {
+            if (mSelectors.get(i) != null && mSelectors.get(i).getModel(true).isPendingTabAdd()) {
+                return false;
+            }
+        }
+
+        return getIncognitoTabCount() == 0;
+    }
+
+    /**
      * @param tabId The ID of the tab in question.
      * @return Whether the given tab exists in any currently loaded selector.
      */
@@ -212,8 +225,7 @@ public class TabWindowManager implements ActivityStateListener {
             // other instances running. This indicates that it is a complete cold start of
             // ChromeTabbedActivity. Tabs should only be merged during a cold start of
             // ChromeTabbedActivity and not other instances (e.g. ChromeTabbedActivity2).
-            boolean mergeTabs = FeatureUtilities.isTabModelMergingEnabled()
-                    && activity.getClass().equals(ChromeTabbedActivity.class)
+            boolean mergeTabs = activity.getClass().equals(ChromeTabbedActivity.class)
                     && getInstance().getNumberOfAssignedTabModelSelectors() == 0;
             TabPersistencePolicy persistencePolicy = new TabbedModeTabPersistencePolicy(
                     selectorIndex, mergeTabs);

@@ -10,6 +10,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/accelerated_widget_mac/availability_macros.h"
 #include "ui/accelerated_widget_mac/ca_renderer_layer_tree.h"
 #include "ui/gfx/geometry/dip_util.h"
 #include "ui/gfx/mac/io_surface.h"
@@ -45,7 +46,7 @@ scoped_refptr<gl::GLImageIOSurface> CreateGLImage(const gfx::Size& size,
                                                   gfx::BufferFormat format,
                                                   bool video) {
   scoped_refptr<gl::GLImageIOSurface> gl_image(
-      new gl::GLImageIOSurface(size, GL_RGBA));
+      gl::GLImageIOSurface::Create(size, GL_RGBA));
   base::ScopedCFTypeRef<IOSurfaceRef> io_surface(
       gfx::CreateIOSurface(size, format));
   if (video) {
@@ -90,11 +91,12 @@ class CALayerTreeTest : public testing::Test {
   void SetUp() override {
     superlayer_.reset([[CALayer alloc] init]);
     fullscreen_low_power_layer_.reset(
-        [[AVSampleBufferDisplayLayer alloc] init]);
+        [[AVSampleBufferDisplayLayer109 alloc] init]);
   }
 
   base::scoped_nsobject<CALayer> superlayer_;
-  base::scoped_nsobject<AVSampleBufferDisplayLayer> fullscreen_low_power_layer_;
+  base::scoped_nsobject<AVSampleBufferDisplayLayer109>
+      fullscreen_low_power_layer_;
 };
 
 // Test updating each layer's properties.
@@ -757,6 +759,31 @@ TEST_F(CALayerTreeTest, AVLayer) {
     EXPECT_TRUE([content_layer3
         isKindOfClass:NSClassFromString(@"AVSampleBufferDisplayLayer")]);
     EXPECT_EQ(content_layer3, content_layer2);
+  }
+
+  properties.gl_image = CreateGLImage(
+      gfx::Size(513, 512), gfx::BufferFormat::YUV_420_BIPLANAR, true);
+
+  // Pass a frame with a CVPixelBuffer which, when scaled down, will have a
+  // fractional dimension.
+  {
+    UpdateCALayerTree(ca_layer_tree, &properties, superlayer_);
+
+    // Validate the tree structure.
+    EXPECT_EQ(1u, [[superlayer_ sublayers] count]);
+    root_layer = [[superlayer_ sublayers] objectAtIndex:0];
+    EXPECT_EQ(1u, [[root_layer sublayers] count]);
+    clip_and_sorting_layer = [[root_layer sublayers] objectAtIndex:0];
+    EXPECT_EQ(1u, [[clip_and_sorting_layer sublayers] count]);
+    transform_layer = [[clip_and_sorting_layer sublayers] objectAtIndex:0];
+    EXPECT_EQ(1u, [[transform_layer sublayers] count]);
+    content_layer3 = [[transform_layer sublayers] objectAtIndex:0];
+
+    // Validate that the layer's size is adjusted to include the fractional
+    // width, which works around a macOS bug (https://crbug.com/792632).
+    CGSize layer_size = content_layer3.bounds.size;
+    EXPECT_EQ(256.5, layer_size.width);
+    EXPECT_EQ(256, layer_size.height);
   }
 
   properties.gl_image = CreateGLImage(

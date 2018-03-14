@@ -6,13 +6,12 @@
 #define GamepadDispatcher_h
 
 #include "core/frame/PlatformEventDispatcher.h"
+#include "device/gamepad/public/cpp/gamepads.h"
+#include "device/gamepad/public/interfaces/gamepad.mojom-blink.h"
 #include "platform/heap/Handle.h"
-#include "public/platform/WebGamepad.h"
 #include "public/platform/WebGamepadListener.h"
 
 namespace blink {
-
-class WebGamepads;
 
 class GamepadDispatcher final
     : public GarbageCollectedFinalized<GamepadDispatcher>,
@@ -24,11 +23,20 @@ class GamepadDispatcher final
   static GamepadDispatcher& Instance();
   ~GamepadDispatcher() override;
 
-  void SampleGamepads(WebGamepads&);
+  void SampleGamepads(device::Gamepads&);
+
+  void PlayVibrationEffectOnce(int pad_index,
+                               device::mojom::blink::GamepadHapticEffectType,
+                               device::mojom::blink::GamepadEffectParametersPtr,
+                               device::mojom::blink::GamepadHapticsManager::
+                                   PlayVibrationEffectOnceCallback);
+  void ResetVibrationActuator(int pad_index,
+                              device::mojom::blink::GamepadHapticsManager::
+                                  ResetVibrationActuatorCallback);
 
   struct ConnectionChange {
     DISALLOW_NEW();
-    WebGamepad pad;
+    device::Gamepad pad;
     unsigned index;
   };
 
@@ -36,24 +44,28 @@ class GamepadDispatcher final
     return latest_change_;
   }
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   GamepadDispatcher();
 
+  void InitializeHaptics();
+
   // WebGamepadListener
-  void DidConnectGamepad(unsigned index, const WebGamepad&) override;
-  void DidDisconnectGamepad(unsigned index, const WebGamepad&) override;
+  void DidConnectGamepad(unsigned index, const device::Gamepad&) override;
+  void DidDisconnectGamepad(unsigned index, const device::Gamepad&) override;
 
   // PlatformEventDispatcher
   void StartListening() override;
   void StopListening() override;
 
   void DispatchDidConnectOrDisconnectGamepad(unsigned index,
-                                             const WebGamepad&,
+                                             const device::Gamepad&,
                                              bool connected);
 
   ConnectionChange latest_change_;
+
+  device::mojom::blink::GamepadHapticsManagerPtr gamepad_haptics_manager_;
 };
 
 }  // namespace blink

@@ -7,15 +7,11 @@
 #include <vector>
 
 #include "ash/accelerators/accelerator_controller.h"
-#include "ash/shelf/shelf_model.h"
 #include "ash/shell.h"
-#include "ash/system/tray/system_tray_delegate.h"
+#include "ash/shell_test_api.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/shell_test_api.h"
 #include "ash/wm/window_positioning_utils.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm/window_state_aura.h"
-#include "ash/wm_window.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "ui/aura/env.h"
@@ -39,14 +35,13 @@
 #include "ui/views/window/window_button_order_provider.h"
 
 namespace ash {
-namespace test {
 
 namespace {
 
 class ResizableWidgetDelegate : public views::WidgetDelegateView {
  public:
-  ResizableWidgetDelegate() {}
-  ~ResizableWidgetDelegate() override {}
+  ResizableWidgetDelegate() = default;
+  ~ResizableWidgetDelegate() override = default;
 
  private:
   bool CanResize() const override { return true; }
@@ -60,7 +55,7 @@ class ResizableWidgetDelegate : public views::WidgetDelegateView {
 // Support class for testing windows with a maximum size.
 class MaxSizeNCFV : public views::NonClientFrameView {
  public:
-  MaxSizeNCFV() {}
+  MaxSizeNCFV() = default;
 
  private:
   gfx::Size GetMaximumSize() const override { return gfx::Size(200, 200); }
@@ -87,8 +82,8 @@ class MaxSizeNCFV : public views::NonClientFrameView {
 
 class MaxSizeWidgetDelegate : public views::WidgetDelegateView {
  public:
-  MaxSizeWidgetDelegate() {}
-  ~MaxSizeWidgetDelegate() override {}
+  MaxSizeWidgetDelegate() = default;
+  ~MaxSizeWidgetDelegate() override = default;
 
  private:
   bool CanResize() const override { return true; }
@@ -108,7 +103,7 @@ class MaxSizeWidgetDelegate : public views::WidgetDelegateView {
 class SystemGestureEventFilterTest : public AshTestBase {
  public:
   SystemGestureEventFilterTest() : AshTestBase() {}
-  ~SystemGestureEventFilterTest() override {}
+  ~SystemGestureEventFilterTest() override = default;
 
   // Overridden from AshTestBase:
   void SetUp() override {
@@ -126,7 +121,7 @@ class SystemGestureEventFilterTest : public AshTestBase {
     views::WindowButtonOrderProvider::GetInstance()->SetWindowButtonOrder(
         leading, trailing);
 
-    test::AshTestBase::SetUp();
+    AshTestBase::SetUp();
     // Enable brightness key.
     display::test::DisplayManagerTestApi(Shell::Get()->display_manager())
         .SetFirstDisplayAsInternalDisplay();
@@ -347,11 +342,11 @@ TEST_F(SystemGestureEventFilterTest, TwoFingerDragDelayed) {
   bounds = toplevel->GetNativeWindow()->bounds();
   // Swipe right and down starting with one finger.
   // Add another finger after 120ms and continue dragging.
-  // The window should move and the drag should be determined by the center
-  // point between the fingers.
+  // The window should not move (see crbug.com/363625) and drag should be
+  // determined by the delta of center point between the fingers.
   generator.GestureMultiFingerScrollWithDelays(kTouchPoints, points, delays, 15,
                                                kSteps, 150, 150);
-  bounds += gfx::Vector2d(150 + (points[1].x() - points[0].x()) / 2, 150);
+  bounds += gfx::Vector2d(150, 150);
   EXPECT_EQ(bounds.ToString(),
             toplevel->GetNativeWindow()->bounds().ToString());
 }
@@ -418,8 +413,7 @@ TEST_F(SystemGestureEventFilterTest, DragLeftNearEdgeSnaps) {
   generator.GestureMultiFingerScroll(kTouchPoints, points, 120, kSteps, drag_x,
                                      0);
 
-  EXPECT_EQ(ash::wm::GetDefaultLeftSnappedWindowBoundsInParent(
-                ash::WmWindow::Get(toplevel_window))
+  EXPECT_EQ(ash::wm::GetDefaultLeftSnappedWindowBoundsInParent(toplevel_window)
                 .ToString(),
             toplevel_window->bounds().ToString());
 }
@@ -447,8 +441,7 @@ TEST_F(SystemGestureEventFilterTest, DragRightNearEdgeSnaps) {
   int drag_x = work_area.right() - 20 - points[0].x();
   generator.GestureMultiFingerScroll(kTouchPoints, points, 120, kSteps, drag_x,
                                      0);
-  EXPECT_EQ(wm::GetDefaultRightSnappedWindowBoundsInParent(
-                WmWindow::Get(toplevel_window))
+  EXPECT_EQ(wm::GetDefaultRightSnappedWindowBoundsInParent(toplevel_window)
                 .ToString(),
             toplevel_window->bounds().ToString());
 }
@@ -464,7 +457,7 @@ TEST_F(SystemGestureEventFilterTest,
   aura::test::EventCountDelegate delegate;
   delegate.set_window_component(HTCLIENT);
   std::unique_ptr<aura::Window> child(new aura::Window(&delegate));
-  child->SetType(ui::wm::WINDOW_TYPE_CONTROL);
+  child->SetType(aura::client::WINDOW_TYPE_CONTROL);
   child->Init(ui::LAYER_TEXTURED);
   parent->AddChild(child.get());
   child->SetBounds(gfx::Rect(100, 100));
@@ -484,5 +477,4 @@ TEST_F(SystemGestureEventFilterTest,
   aura::Env::GetInstance()->RemovePreTargetHandler(&event_handler);
 }
 
-}  // namespace test
 }  // namespace ash

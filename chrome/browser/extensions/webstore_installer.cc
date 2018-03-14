@@ -24,6 +24,8 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -55,6 +57,7 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/install/crx_install_error.h"
@@ -63,6 +66,7 @@
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_handlers/shared_module_info.h"
 #include "net/base/escape.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
@@ -108,19 +112,14 @@ const base::FilePath::CharType kWebstoreDownloadFolder[] =
 
 base::FilePath* g_download_directory_for_tests = NULL;
 
-// Must be executed on the FILE thread.
-void GetDownloadFilePath(
-    const base::FilePath& download_directory,
-    const std::string& id,
-    const base::Callback<void(const base::FilePath&)>& callback) {
+base::FilePath GetDownloadFilePath(const base::FilePath& download_directory,
+                                   const std::string& id) {
+  base::AssertBlockingAllowed();
   // Ensure the download directory exists. TODO(asargent) - make this use
   // common code from the downloads system.
-  if (!base::DirectoryExists(download_directory)) {
-    if (!base::CreateDirectory(download_directory)) {
-      BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                              base::Bind(callback, base::FilePath()));
-      return;
-    }
+  if (!base::DirectoryExists(download_directory) &&
+      !base::CreateDirectory(download_directory)) {
+    return base::FilePath();
   }
 
   // This is to help avoid a race condition between when we generate this
@@ -140,8 +139,7 @@ void GetDownloadFilePath(
         base::StringPrintf(" (%d)", uniquifier));
   }
 
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::Bind(callback, file));
+  return file;
 }
 
 void MaybeAppendAuthUserParameter(const std::string& authuser, GURL* url) {
@@ -496,12 +494,12 @@ void WebstoreInstaller::OnDownloadStarted(
     if (version_required.IsValid()) {
       approval->minimum_version.reset(new base::Version(version_required));
     }
-    download_item_->SetUserData(kApprovalKey, approval.release());
+    download_item_->SetUserData(kApprovalKey, std::move(approval));
   } else {
     // It is for the main module of the extension. We should use the provided
     // |approval_|.
     if (approval_)
-      download_item_->SetUserData(kApprovalKey, approval_.release());
+      download_item_->SetUserData(kApprovalKey, std::move(approval_));
   }
 
   if (!download_started_) {
@@ -600,10 +598,10 @@ void WebstoreInstaller::DownloadCrx(
   }
 #endif
 
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&GetDownloadFilePath, download_directory, extension_id,
-        base::Bind(&WebstoreInstaller::StartDownload, this, extension_id)));
+  base::PostTaskAndReplyWithResult(
+      GetExtensionFileTaskRunner().get(), FROM_HERE,
+      base::BindOnce(&GetDownloadFilePath, download_directory, extension_id),
+      base::BindOnce(&WebstoreInstaller::StartDownload, this, extension_id));
 }
 
 // http://crbug.com/165634
@@ -635,11 +633,11 @@ void WebstoreInstaller::StartDownload(const std::string& extension_id,
     ReportFailure(kDownloadDirectoryError, FAILURE_REASON_OTHER);
     return;
   }
-  if (!contents->GetRenderProcessHost()) {
+  if (!contents->GetRenderViewHost()) {
     ReportFailure(kDownloadDirectoryError, FAILURE_REASON_OTHER);
     return;
   }
-  if (!contents->GetRenderViewHost()) {
+  if (!contents->GetRenderViewHost()->GetProcess()) {
     ReportFailure(kDownloadDirectoryError, FAILURE_REASON_OTHER);
     return;
   }
@@ -658,7 +656,8 @@ void WebstoreInstaller::StartDownload(const std::string& extension_id,
   // We will navigate the current tab to this url to start the download. The
   // download system will then pass the crx to the CrxInstaller.
   RecordDownloadSource(DOWNLOAD_INITIATED_BY_WEBSTORE_INSTALLER);
-  int render_process_host_id = contents->GetRenderProcessHost()->GetID();
+  int render_process_host_id =
+      contents->GetRenderViewHost()->GetProcess()->GetID();
   int render_view_host_routing_id =
       contents->GetRenderViewHost()->GetRoutingID();
 
@@ -666,10 +665,40 @@ void WebstoreInstaller::StartDownload(const std::string& extension_id,
   content::StoragePartition* storage_partition =
       BrowserContext::GetStoragePartition(profile_,
                                           render_frame_host->GetSiteInstance());
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("webstore_installer", R"(
+        semantics {
+          sender: "Webstore Installer"
+          description: "Downloads an extension for installation."
+          trigger:
+            "User initiates a webstore extension installation flow, including "
+            "installing from the webstore, inline installation from a site, "
+            "re-installing a corrupted extension, and others."
+          data:
+            "The id of the extension to be installed and information about the "
+            "user's installation, including version, language, distribution "
+            "(Chrome vs Chromium), NaCl architecture, installation source (as "
+            "an enum), and accepted crx formats."
+          destination: GOOGLE_OWNED_SERVICE
+        }
+        policy {
+          cookies_allowed: YES
+          cookies_store: "user"
+          setting:
+            "This feature cannot be disabled. It is only activated if the user "
+            "triggers an extension installation."
+          chrome_policy {
+            ExtensionInstallBlacklist {
+              ExtensionInstallBlacklist: {
+                entries: '*'
+              }
+            }
+          }
+        })");
   std::unique_ptr<DownloadUrlParameters> params(new DownloadUrlParameters(
       download_url_, render_process_host_id, render_view_host_routing_id,
       render_frame_host->GetRoutingID(),
-      storage_partition->GetURLRequestContext()));
+      storage_partition->GetURLRequestContext(), traffic_annotation));
   params->set_file_path(file);
   if (controller.GetVisibleEntry())
     params->set_referrer(content::Referrer::SanitizeForRequest(

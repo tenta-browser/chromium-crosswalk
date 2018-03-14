@@ -24,9 +24,9 @@ import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
-import android.view.View.OnFocusChangeListener;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -121,8 +121,7 @@ public class CardUnmaskPrompt
 
         /**
          * Called when the user has entered a value and pressed "verify".
-         * @param userResponse The value the user entered (a CVC), or an empty string if the
-         *        user canceled.
+         * @param cvc The value the user entered (a CVC), or an empty string if the user canceled.
          * @param month The value the user selected for expiration month, if any.
          * @param year The value the user selected for expiration month, if any.
          * @param shouldStoreLocally The state of the "Save locally?" checkbox at the time.
@@ -199,6 +198,7 @@ public class CardUnmaskPrompt
                 .setNegativeButton(R.string.cancel, null)
                 .setPositiveButton(confirmButtonLabel, null)
                 .create();
+        mDialog.setCanceledOnTouchOutside(false);
         mDialog.setOnDismissListener(this);
 
         mShouldRequestExpirationDate = shouldRequestExpirationDate;
@@ -210,27 +210,28 @@ public class CardUnmaskPrompt
         mCardUnmaskInput.setFilters(
                 new InputFilter[] {new InputFilter.LengthFilter(mDelegate.getExpectedCvcLength())});
 
+        // Hitting the "submit" button on the software keyboard should submit the form if valid.
+        mCardUnmaskInput.setOnEditorActionListener((v14, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                Button positiveButton = mDialog.getButton(AlertDialog.BUTTON_POSITIVE);
+                if (positiveButton.isEnabled()) positiveButton.performClick();
+                return true;
+            }
+            return false;
+        });
+
         // Create the listeners to be notified when the user focuses out the input fields.
-        mCardUnmaskInput.setOnFocusChangeListener(new OnFocusChangeListener() {
-            @Override
-            public void onFocusChange(View v, boolean hasFocus) {
-                mDidFocusOnCvc = true;
-                validate();
-            }
+        mCardUnmaskInput.setOnFocusChangeListener((v13, hasFocus) -> {
+            mDidFocusOnCvc = true;
+            validate();
         });
-        mMonthInput.setOnFocusChangeListener(new OnFocusChangeListener() {
-            @Override
-            public void onFocusChange(View v, boolean hasFocus) {
-                mDidFocusOnMonth = true;
-                validate();
-            }
+        mMonthInput.setOnFocusChangeListener((v12, hasFocus) -> {
+            mDidFocusOnMonth = true;
+            validate();
         });
-        mYearInput.setOnFocusChangeListener(new OnFocusChangeListener() {
-            @Override
-            public void onFocusChange(View v, boolean hasFocus) {
-                mDidFocusOnYear = true;
-                validate();
-            }
+        mYearInput.setOnFocusChangeListener((v1, hasFocus) -> {
+            mDidFocusOnYear = true;
+            validate();
         });
 
         // Load the error messages to show to the user.
@@ -273,23 +274,14 @@ public class CardUnmaskPrompt
         // the dialog.
         Button verifyButton = mDialog.getButton(AlertDialog.BUTTON_POSITIVE);
         verifyButton.setEnabled(false);
-        verifyButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                mDelegate.onUserInput(mCardUnmaskInput.getText().toString(),
+        verifyButton.setOnClickListener(
+                view -> mDelegate.onUserInput(mCardUnmaskInput.getText().toString(),
                         mMonthInput.getText().toString(),
                         Integer.toString(getFourDigitYear()),
-                        mStoreLocallyCheckbox != null && mStoreLocallyCheckbox.isChecked());
-            }
-        });
+                        mStoreLocallyCheckbox != null && mStoreLocallyCheckbox.isChecked()));
 
         mCardUnmaskInput.addTextChangedListener(this);
-        mCardUnmaskInput.post(new Runnable() {
-            @Override
-            public void run() {
-                setInitialFocus();
-            }
-        });
+        mCardUnmaskInput.post(() -> setInitialFocus());
     }
 
     public void update(String title, String instructions, boolean shouldRequestExpirationDate) {
@@ -330,12 +322,7 @@ public class CardUnmaskPrompt
                 setNoRetryError(errorMessage);
             }
         } else {
-            Runnable dismissRunnable = new Runnable() {
-                @Override
-                public void run() {
-                    dismiss();
-                }
-            };
+            Runnable dismissRunnable = () -> dismiss();
             if (mSuccessMessageDurationMilliseconds > 0) {
                 mVerificationProgressBar.setVisibility(View.GONE);
                 mDialog.findViewById(R.id.verification_success).setVisibility(View.VISIBLE);
@@ -438,17 +425,9 @@ public class CardUnmaskPrompt
         mStoreLocallyTooltipPopup.setOutsideTouchable(true);
         mStoreLocallyTooltipPopup.setBackgroundDrawable(ApiCompatibilityUtils.getDrawable(
                 resources, R.drawable.store_locally_tooltip_background));
-        mStoreLocallyTooltipPopup.setOnDismissListener(new PopupWindow.OnDismissListener() {
-            @Override
-            public void onDismiss() {
-                Handler h = new Handler();
-                h.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        mStoreLocallyTooltipPopup = null;
-                    }
-                }, 200);
-            }
+        mStoreLocallyTooltipPopup.setOnDismissListener(() -> {
+            Handler h = new Handler();
+            h.postDelayed(() -> mStoreLocallyTooltipPopup = null, 200);
         });
         mStoreLocallyTooltipPopup.showAsDropDown(mStoreLocallyCheckbox,
                 ViewCompat.getPaddingStart(mStoreLocallyCheckbox), 0);
@@ -547,7 +526,8 @@ public class CardUnmaskPrompt
     /**
      * Applies the error filter to the invalid fields based on the errorType.
      *
-     * @param The ErrorType value representing the type of error found for the unmask fields.
+     * @param errorType The ErrorType value representing the type of error found for the unmask
+     *                  fields.
      */
     private void updateColorForInputs(@ErrorType int errorType) {
         // The rest of this code makes L-specific assumptions about the background being used to

@@ -6,7 +6,7 @@
 
 #include <utility>
 
-#include "cc/output/compositor_frame.h"
+#include "components/viz/common/quads/compositor_frame.h"
 
 namespace content {
 
@@ -42,10 +42,10 @@ TestSynchronousCompositor::DemandDrawHwAsync(
 }
 
 void TestSynchronousCompositor::ReturnResources(
-    uint32_t compositor_frame_sink_id,
-    const cc::ReturnedResourceArray& resources) {
+    uint32_t layer_tree_frame_sink_id,
+    const std::vector<viz::ReturnedResource>& resources) {
   ReturnedResources returned_resources;
-  returned_resources.compositor_frame_sink_id = compositor_frame_sink_id;
+  returned_resources.layer_tree_frame_sink_id = layer_tree_frame_sink_id;
   returned_resources.resources = resources;
   frame_ack_array_.push_back(returned_resources);
 }
@@ -61,14 +61,14 @@ bool TestSynchronousCompositor::DemandDrawSw(SkCanvas* canvas) {
 }
 
 void TestSynchronousCompositor::SetHardwareFrame(
-    uint32_t compositor_frame_sink_id,
-    std::unique_ptr<cc::CompositorFrame> frame) {
-  hardware_frame_.compositor_frame_sink_id = compositor_frame_sink_id;
+    uint32_t layer_tree_frame_sink_id,
+    std::unique_ptr<viz::CompositorFrame> frame) {
+  hardware_frame_.layer_tree_frame_sink_id = layer_tree_frame_sink_id;
   hardware_frame_.frame = std::move(frame);
 }
 
 TestSynchronousCompositor::ReturnedResources::ReturnedResources()
-    : compositor_frame_sink_id(0u) {}
+    : layer_tree_frame_sink_id(0u) {}
 
 TestSynchronousCompositor::ReturnedResources::ReturnedResources(
     const ReturnedResources& other) = default;

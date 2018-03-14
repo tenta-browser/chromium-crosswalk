@@ -28,6 +28,7 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/feedback/system_logs/system_logs_fetcher.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
@@ -42,7 +43,6 @@
 using content::WebContents;
 using content::WebUIMessageHandler;
 using system_logs::SystemLogsResponse;
-using system_logs::AboutSystemLogsFetcher;
 
 class SystemInfoUIHTMLSource : public content::URLDataSource{
  public:
@@ -116,7 +116,8 @@ void SystemInfoUIHTMLSource::StartDataRequest(
   path_ = path;
   callback_ = callback;
 
-  AboutSystemLogsFetcher* fetcher = new AboutSystemLogsFetcher();
+  system_logs::SystemLogsFetcher* fetcher =
+      system_logs::BuildAboutSystemLogsFetcher();
   fetcher->Fetch(base::Bind(&SystemInfoUIHTMLSource::SysInfoComplete,
                             weak_ptr_factory_.GetWeakPtr()));
 }
@@ -152,8 +153,7 @@ void SystemInfoUIHTMLSource::RequestComplete() {
   webui::SetLoadTimeDataDefaults(app_locale, &strings);
 
   if (response_.get()) {
-    base::ListValue* details = new base::ListValue();
-    strings.Set("details", details);
+    auto details = base::MakeUnique<base::ListValue>();
     for (SystemLogsResponse::const_iterator it = response_->begin();
          it != response_->end();
          ++it) {
@@ -162,9 +162,10 @@ void SystemInfoUIHTMLSource::RequestComplete() {
       val->SetString("statValue", it->second);
       details->Append(std::move(val));
     }
+    strings.Set("details", std::move(details));
   }
   static const base::StringPiece systeminfo_html(
-      ResourceBundle::GetSharedInstance().GetRawDataResource(
+      ui::ResourceBundle::GetSharedInstance().GetRawDataResource(
           IDR_ABOUT_SYS_HTML));
   std::string full_html = webui::GetI18nTemplateHtml(systeminfo_html, &strings);
   callback_.Run(base::RefCountedString::TakeString(&full_html));

@@ -4,11 +4,11 @@
 
 #include "content/browser/byte_stream.h"
 
-#include <deque>
 #include <set>
 #include <utility>
 
 #include "base/bind.h"
+#include "base/containers/circular_deque.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -17,8 +17,8 @@
 namespace content {
 namespace {
 
-typedef std::deque<std::pair<scoped_refptr<net::IOBuffer>, size_t> >
-ContentVector;
+using ContentVector =
+    base::circular_deque<std::pair<scoped_refptr<net::IOBuffer>, size_t>>;
 
 class ByteStreamReaderImpl;
 
@@ -185,13 +185,13 @@ ByteStreamWriterImpl::ByteStreamWriterImpl(
       my_lifetime_flag_(lifetime_flag),
       input_contents_size_(0),
       output_size_used_(0),
-      peer_(NULL) {
+      peer_(nullptr) {
   DCHECK(my_lifetime_flag_.get());
   my_lifetime_flag_->is_alive = true;
 }
 
 ByteStreamWriterImpl::~ByteStreamWriterImpl() {
-  // No RunsTasksOnCurrentThread() check to allow deleting a created writer
+  // No RunsTasksInCurrentSequence() check to allow deleting a created writer
   // before we start using it. Once started, should be deleted on the specified
   // task runner.
   my_lifetime_flag_->is_alive = false;
@@ -208,7 +208,7 @@ void ByteStreamWriterImpl::SetPeer(
 
 bool ByteStreamWriterImpl::Write(
     scoped_refptr<net::IOBuffer> buffer, size_t byte_count) {
-  DCHECK(my_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(my_task_runner_->RunsTasksInCurrentSequence());
 
   // Check overflow.
   //
@@ -233,24 +233,24 @@ bool ByteStreamWriterImpl::Write(
 }
 
 void ByteStreamWriterImpl::Flush() {
-  DCHECK(my_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(my_task_runner_->RunsTasksInCurrentSequence());
   if (input_contents_size_ > 0)
     PostToPeer(false, 0);
 }
 
 void ByteStreamWriterImpl::Close(int status) {
-  DCHECK(my_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(my_task_runner_->RunsTasksInCurrentSequence());
   PostToPeer(true, status);
 }
 
 void ByteStreamWriterImpl::RegisterCallback(
     const base::Closure& source_callback) {
-  DCHECK(my_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(my_task_runner_->RunsTasksInCurrentSequence());
   space_available_callback_ = source_callback;
 }
 
 size_t ByteStreamWriterImpl::GetTotalBufferedBytes() const {
-  DCHECK(my_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(my_task_runner_->RunsTasksInCurrentSequence());
   // This sum doesn't overflow since Write() fails if this sum is going to
   // overflow.
   return input_contents_size_ + output_size_used_;
@@ -267,7 +267,7 @@ void ByteStreamWriterImpl::UpdateWindow(
 }
 
 void ByteStreamWriterImpl::UpdateWindowInternal(size_t bytes_consumed) {
-  DCHECK(my_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(my_task_runner_->RunsTasksInCurrentSequence());
 
   bool was_above_limit = GetTotalBufferedBytes() > total_buffer_size_;
 
@@ -283,7 +283,7 @@ void ByteStreamWriterImpl::UpdateWindowInternal(size_t bytes_consumed) {
 }
 
 void ByteStreamWriterImpl::PostToPeer(bool complete, int status) {
-  DCHECK(my_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(my_task_runner_->RunsTasksInCurrentSequence());
   // Valid contexts in which to call.
   DCHECK(complete || 0 != input_contents_size_);
 
@@ -297,14 +297,10 @@ void ByteStreamWriterImpl::PostToPeer(bool complete, int status) {
     input_contents_size_ = 0;
   }
   peer_task_runner_->PostTask(
-      FROM_HERE, base::Bind(
-          &ByteStreamReaderImpl::TransferData,
-          peer_lifetime_flag_,
-          peer_,
-          base::Passed(&transfer_buffer),
-          buffer_size,
-          complete,
-          status));
+      FROM_HERE,
+      base::BindOnce(&ByteStreamReaderImpl::TransferData, peer_lifetime_flag_,
+                     peer_, base::Passed(&transfer_buffer), buffer_size,
+                     complete, status));
 }
 
 ByteStreamReaderImpl::ByteStreamReaderImpl(
@@ -317,13 +313,13 @@ ByteStreamReaderImpl::ByteStreamReaderImpl(
       received_status_(false),
       status_(0),
       unreported_consumed_bytes_(0),
-      peer_(NULL) {
+      peer_(nullptr) {
   DCHECK(my_lifetime_flag_.get());
   my_lifetime_flag_->is_alive = true;
 }
 
 ByteStreamReaderImpl::~ByteStreamReaderImpl() {
-  // No RunsTasksOnCurrentThread() check to allow deleting a created writer
+  // No RunsTasksInCurrentSequence() check to allow deleting a created writer
   // before we start using it. Once started, should be deleted on the specified
   // task runner.
   my_lifetime_flag_->is_alive = false;
@@ -341,7 +337,7 @@ void ByteStreamReaderImpl::SetPeer(
 ByteStreamReaderImpl::StreamState
 ByteStreamReaderImpl::Read(scoped_refptr<net::IOBuffer>* data,
                            size_t* length) {
-  DCHECK(my_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(my_task_runner_->RunsTasksInCurrentSequence());
 
   if (available_contents_.size()) {
     *data = available_contents_.front().first;
@@ -359,14 +355,14 @@ ByteStreamReaderImpl::Read(scoped_refptr<net::IOBuffer>* data,
 }
 
 int ByteStreamReaderImpl::GetStatus() const {
-  DCHECK(my_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(my_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(received_status_);
   return status_;
 }
 
 void ByteStreamReaderImpl::RegisterCallback(
     const base::Closure& sink_callback) {
-  DCHECK(my_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(my_task_runner_->RunsTasksInCurrentSequence());
 
   data_available_callback_ = sink_callback;
 }
@@ -391,7 +387,7 @@ void ByteStreamReaderImpl::TransferDataInternal(
     size_t buffer_size,
     bool source_complete,
     int status) {
-  DCHECK(my_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(my_task_runner_->RunsTasksInCurrentSequence());
 
   bool was_empty = available_contents_.empty();
 
@@ -418,18 +414,16 @@ void ByteStreamReaderImpl::TransferDataInternal(
 // Currently we do that whenever we've got unreported consumption
 // greater than 1/3 of total size.
 void ByteStreamReaderImpl::MaybeUpdateInput() {
-  DCHECK(my_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(my_task_runner_->RunsTasksInCurrentSequence());
 
   if (unreported_consumed_bytes_ <=
       total_buffer_size_ / kFractionReadBeforeWindowUpdate)
     return;
 
   peer_task_runner_->PostTask(
-      FROM_HERE, base::Bind(
-          &ByteStreamWriterImpl::UpdateWindow,
-          peer_lifetime_flag_,
-          peer_,
-          unreported_consumed_bytes_));
+      FROM_HERE,
+      base::BindOnce(&ByteStreamWriterImpl::UpdateWindow, peer_lifetime_flag_,
+                     peer_, unreported_consumed_bytes_));
   unreported_consumed_bytes_ = 0;
 }
 

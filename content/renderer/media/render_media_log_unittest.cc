@@ -18,11 +18,10 @@ namespace content {
 class RenderMediaLogTest : public testing::Test {
  public:
   RenderMediaLogTest()
-      : log_(new RenderMediaLog(GURL("http://foo.com"))),
-        tick_clock_(new base::SimpleTestTickClock()),
+      : log_(GURL("http://foo.com")),
         task_runner_(new base::TestMockTimeTaskRunner()) {
-    log_->SetTickClockForTesting(std::unique_ptr<base::TickClock>(tick_clock_));
-    log_->SetTaskRunnerForTesting(task_runner_);
+    log_.SetTickClockForTesting(&tick_clock_);
+    log_.SetTaskRunnerForTesting(task_runner_);
   }
 
   ~RenderMediaLogTest() override {
@@ -30,13 +29,13 @@ class RenderMediaLogTest : public testing::Test {
   }
 
   void AddEvent(media::MediaLogEvent::Type type) {
-    log_->AddEvent(log_->CreateEvent(type));
+    log_.AddEvent(log_.CreateEvent(type));
     // AddEvent() could post. Run the task runner to make sure it's executed.
     task_runner_->RunUntilIdle();
   }
 
   void Advance(base::TimeDelta delta) {
-    tick_clock_->Advance(delta);
+    tick_clock_.Advance(delta);
     task_runner_->FastForwardBy(delta);
   }
 
@@ -58,8 +57,8 @@ class RenderMediaLogTest : public testing::Test {
  private:
   base::MessageLoop message_loop_;
   MockRenderThread render_thread_;
-  scoped_refptr<RenderMediaLog> log_;
-  base::SimpleTestTickClock* tick_clock_;  // Owned by |log_|.
+  base::SimpleTestTickClock tick_clock_;
+  RenderMediaLog log_;
   scoped_refptr<base::TestMockTimeTaskRunner> task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderMediaLogTest);
@@ -99,29 +98,6 @@ TEST_F(RenderMediaLogTest, EventSentWithoutDelayAfterIpcInterval) {
   Advance(base::TimeDelta::FromMilliseconds(2000));
   AddEvent(media::MediaLogEvent::LOAD);
   EXPECT_EQ(2, message_count());
-}
-
-TEST_F(RenderMediaLogTest, BufferedExtents) {
-  AddEvent(media::MediaLogEvent::LOAD);
-  AddEvent(media::MediaLogEvent::SEEK);
-
-  // This event is handled separately and should always appear last regardless
-  // of how many times we see it.
-  AddEvent(media::MediaLogEvent::BUFFERED_EXTENTS_CHANGED);
-  AddEvent(media::MediaLogEvent::BUFFERED_EXTENTS_CHANGED);
-  AddEvent(media::MediaLogEvent::BUFFERED_EXTENTS_CHANGED);
-
-  EXPECT_EQ(0, message_count());
-  Advance(base::TimeDelta::FromMilliseconds(1000));
-  EXPECT_EQ(1, message_count());
-
-  // Verify contents. There should only be a single buffered extents changed
-  // event.
-  std::vector<media::MediaLogEvent> events = GetMediaLogEvents();
-  ASSERT_EQ(3u, events.size());
-  EXPECT_EQ(media::MediaLogEvent::LOAD, events[0].type);
-  EXPECT_EQ(media::MediaLogEvent::SEEK, events[1].type);
-  EXPECT_EQ(media::MediaLogEvent::BUFFERED_EXTENTS_CHANGED, events[2].type);
 }
 
 TEST_F(RenderMediaLogTest, DurationChanged) {

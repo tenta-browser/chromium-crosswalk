@@ -5,28 +5,28 @@
 #ifndef MEDIA_FILTERS_SOURCE_BUFFER_RANGE_H_
 #define MEDIA_FILTERS_SOURCE_BUFFER_RANGE_H_
 
-#include <stddef.h>
-
-#include <map>
-
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "media/base/media_export.h"
 #include "media/base/stream_parser_buffer.h"
 
 namespace media {
 
-// Helper class representing a range of buffered data. All buffers in a
-// SourceBufferRange are ordered sequentially in decode timestamp order with no
-// gaps.
-class SourceBufferRange {
+// Base class for representing a continuous range of buffered data in the
+// presentation timeline. All buffers in a SourceBufferRange are ordered
+// sequentially by GOP presentation interval, and within each GOP by decode
+// order. Unless constructed with |ALLOW_GAPS|, the range contains no internal
+// presentation gaps.
+class MEDIA_EXPORT SourceBufferRange {
  public:
-  // Returns the maximum distance in time between any buffer seen in this
-  // stream. Used to estimate the duration of a buffer if its duration is not
-  // known.
-  typedef base::Callback<base::TimeDelta()> InterbufferDistanceCB;
+  // Returns the maximum distance in time between any buffer seen in the stream
+  // of which this range is a part. Used to estimate the duration of a buffer if
+  // its duration is not known, and in GetFudgeRoom() for determining whether a
+  // time or coded frame is close enough to be considered part of this range.
+  using InterbufferDistanceCB = base::Callback<base::TimeDelta()>;
 
-  typedef StreamParser::BufferQueue BufferQueue;
+  using BufferQueue = StreamParser::BufferQueue;
 
   // Policy for handling large gaps between buffers. Continuous media like
   // audio & video should use NO_GAPS_ALLOWED. Discontinuous media like
@@ -37,22 +37,13 @@ class SourceBufferRange {
     ALLOW_GAPS
   };
 
-  // Return the config ID for the buffer at |timestamp|. Precondition: callers
-  // must first verify CanSeekTo(timestamp) == true.
-  int GetConfigIdAtTime(DecodeTimestamp timestamp);
-
-  // Return true if all buffers in range of [start, end] have the same config
-  // ID. Precondition: callers must first verify that
-  // CanSeekTo(start) ==  CanSeekTo(end) == true.
-  bool SameConfigThruRange(DecodeTimestamp start, DecodeTimestamp end);
-
   // Sequential buffers with the same decode timestamp make sense under certain
   // conditions, typically when the first buffer is a keyframe. Due to some
   // atypical media append behaviors where a new keyframe might have the same
-  // timestamp as a previous non-keyframe, the playback of the sequence might
-  // involve some throwaway decode work. This method supports detecting this
-  // situation so that callers can log warnings (it returns true in this case
-  // only).
+  // decode timestamp as a previous non-keyframe, the playback of the sequence
+  // might involve some throwaway decode work. This method supports detecting
+  // this situation so that callers can log warnings (it returns true in this
+  // case only).
   // For all other cases, including more typical same-DTS sequences, this method
   // returns false. Examples of typical situations where DTS of two consecutive
   // frames can be equal:
@@ -64,107 +55,16 @@ class SourceBufferRange {
   static bool IsUncommonSameTimestampSequence(bool prev_is_keyframe,
                                               bool current_is_keyframe);
 
-  // Creates a source buffer range with |new_buffers|. |new_buffers| cannot be
-  // empty and the front of |new_buffers| must be a keyframe.
-  // |range_start_time| refers to the starting timestamp for the coded frame
-  // group to which these buffers belong.
   SourceBufferRange(GapPolicy gap_policy,
-                    const BufferQueue& new_buffers,
-                    DecodeTimestamp range_start_time,
                     const InterbufferDistanceCB& interbuffer_distance_cb);
 
-  ~SourceBufferRange();
+  virtual ~SourceBufferRange();
 
-  // Appends |buffers| to the end of the range and updates |keyframe_map_| as
-  // it encounters new keyframes.
-  // If |new_buffers_group_start_timestamp| is kNoDecodeTimestamp(), then the
-  // first buffer in |buffers| must come directly after the last buffer in this
-  // range (within the fudge room).
-  // If |new_buffers_group_start_timestamp| is set otherwise, then that time
-  // must come directly after the last buffer in this range (within the fudge
-  // room). The latter scenario is required when a muxed coded frame group has
-  // such a large jagged start across tracks that its first buffer is not within
-  // the fudge room, yet its group start was.
-  void AppendBuffersToEnd(const BufferQueue& buffers,
-                          DecodeTimestamp new_buffers_group_start_timestamp);
-  bool CanAppendBuffersToEnd(
-      const BufferQueue& buffers,
-      DecodeTimestamp new_buffers_group_start_timestamp) const;
-
-  // Appends the buffers from |range| into this range.
-  // The first buffer in |range| must come directly after the last buffer
-  // in this range.
-  // If |transfer_current_position| is true, |range|'s |next_buffer_index_|
-  // is transfered to this SourceBufferRange.
-  // Note: Use these only to merge existing ranges. |range|'s first buffer
-  // timestamp must be adjacent to this range. No group start timestamp
-  // adjacency is involved in these methods.
-  void AppendRangeToEnd(const SourceBufferRange& range,
-                        bool transfer_current_position);
-  bool CanAppendRangeToEnd(const SourceBufferRange& range) const;
-
-  // Updates |next_buffer_index_| to point to the Buffer containing |timestamp|.
-  // Assumes |timestamp| is valid and in this range.
-  void Seek(DecodeTimestamp timestamp);
-
-  // Updates |next_buffer_index_| to point to next keyframe after or equal to
-  // |timestamp|.
-  void SeekAheadTo(DecodeTimestamp timestamp);
-
-  // Updates |next_buffer_index_| to point to next keyframe strictly after
-  // |timestamp|.
-  void SeekAheadPast(DecodeTimestamp timestamp);
+  // Deletes all buffers in range.
+  virtual void DeleteAll(BufferQueue* deleted_buffers) = 0;
 
   // Seeks to the beginning of the range.
   void SeekToStart();
-
-  // Finds the next keyframe from |buffers_| starting at or after |timestamp|
-  // and creates and returns a new SourceBufferRange with the buffers from that
-  // keyframe onward. The buffers in the new SourceBufferRange are moved out of
-  // this range. If there is no keyframe at or after |timestamp|, SplitRange()
-  // returns null and this range is unmodified. This range can become empty if
-  // |timestamp| <= the DTS of the first buffer in this range.
-  SourceBufferRange* SplitRange(DecodeTimestamp timestamp);
-
-  // Deletes the buffers from this range starting at |timestamp|, exclusive if
-  // |is_exclusive| is true, inclusive otherwise.
-  // Resets |next_buffer_index_| if the buffer at |next_buffer_index_| was
-  // deleted, and deletes the |keyframe_map_| entries for the buffers that
-  // were removed.
-  // |deleted_buffers| contains the buffers that were deleted from this range,
-  // starting at the buffer that had been at |next_buffer_index_|.
-  // Returns true if everything in the range was deleted. Otherwise
-  // returns false.
-  bool TruncateAt(DecodeTimestamp timestamp,
-                  BufferQueue* deleted_buffers, bool is_exclusive);
-  // Deletes all buffers in range.
-  void DeleteAll(BufferQueue* deleted_buffers);
-
-  // Deletes a GOP from the front or back of the range and moves these
-  // buffers into |deleted_buffers|. Returns the number of bytes deleted from
-  // the range (i.e. the size in bytes of |deleted_buffers|).
-  // This range must NOT be empty when these methods are called.
-  // The GOP being deleted must NOT contain the next buffer position.
-  size_t DeleteGOPFromFront(BufferQueue* deleted_buffers);
-  size_t DeleteGOPFromBack(BufferQueue* deleted_buffers);
-
-  // Gets the range of GOP to secure at least |bytes_to_free| from
-  // [|start_timestamp|, |end_timestamp|).
-  // Returns the size of the buffers to secure if the buffers of
-  // [|start_timestamp|, |end_removal_timestamp|) is removed.
-  // Will not update |end_removal_timestamp| if the returned size is 0.
-  size_t GetRemovalGOP(
-      DecodeTimestamp start_timestamp, DecodeTimestamp end_timestamp,
-      size_t bytes_to_free, DecodeTimestamp* end_removal_timestamp);
-
-  // Returns true iff the buffered end time of the first GOP in this range is
-  // at or before |media_time|.
-  bool FirstGOPEarlierThanMediaTime(DecodeTimestamp media_time) const;
-
-  // Indicates whether the GOP at the beginning or end of the range contains the
-  // next buffer position.
-  bool FirstGOPContainsNextBufferPosition() const;
-  bool LastGOPContainsNextBufferPosition() const;
 
   // Updates |out_buffer| with the next buffer in presentation order. Seek()
   // must be called before calls to GetNextBuffer(), and buffers are returned
@@ -186,100 +86,30 @@ class SourceBufferRange {
   // Resets this range to an "unseeked" state.
   void ResetNextBufferPosition();
 
-  // Returns the timestamp of the next buffer that will be returned from
-  // GetNextBuffer(), or kNoTimestamp if the timestamp is unknown.
-  DecodeTimestamp GetNextTimestamp() const;
-
-  // Returns the start timestamp of the range.
-  DecodeTimestamp GetStartTimestamp() const;
-
-  // Returns the timestamp of the last buffer in the range.
-  DecodeTimestamp GetEndTimestamp() const;
-
-  // Returns the timestamp for the end of the buffered region in this range.
-  // This is an approximation if the duration for the last buffer in the range
-  // is unset.
-  DecodeTimestamp GetBufferedEndTimestamp() const;
-
-  // Gets the timestamp for the keyframe that is after |timestamp|. If
-  // there isn't a keyframe in the range after |timestamp| then kNoTimestamp
-  // is returned. If |timestamp| is in the "gap" between the value  returned by
-  // GetStartTimestamp() and the timestamp on the first buffer in |buffers_|,
-  // then |timestamp| is returned.
-  DecodeTimestamp NextKeyframeTimestamp(DecodeTimestamp timestamp);
-
-  // Gets the timestamp for the closest keyframe that is <= |timestamp|. If
-  // there isn't a keyframe before |timestamp| or |timestamp| is outside
-  // this range, then kNoTimestamp is returned.
-  DecodeTimestamp KeyframeBeforeTimestamp(DecodeTimestamp timestamp);
-
-  // Returns whether a buffer with a starting timestamp of |timestamp| would
-  // belong in this range. This includes a buffer that would be appended to
-  // the end of the range.
-  bool BelongsToRange(DecodeTimestamp timestamp) const;
-
-  // Returns true if the range has enough data to seek to the specified
-  // |timestamp|, false otherwise.
-  bool CanSeekTo(DecodeTimestamp timestamp) const;
-
-  // Returns true if this range's buffered timespan completely overlaps the
-  // buffered timespan of |range|.
-  bool CompletelyOverlaps(const SourceBufferRange& range) const;
-
-  // Returns true if the end of this range contains buffers that overlaps with
-  // the beginning of |range|.
-  bool EndOverlaps(const SourceBufferRange& range) const;
-
-  // Returns true if |timestamp| is the timestamp of the next buffer in
-  // sequence after |buffers_.back()|, false otherwise.
-  bool IsNextInSequence(DecodeTimestamp timestamp) const;
-
-  // Adds all buffers which overlap [start, end) to the end of |buffers|.  If
-  // no buffers exist in the range returns false, true otherwise.
-  bool GetBuffersInRange(DecodeTimestamp start, DecodeTimestamp end,
-                         BufferQueue* buffers);
+  // TODO(wolenetz): Remove in favor of
+  // GetEndTimestamp()/GetBufferedEndTimestamp() once they report in PTS, not
+  // DTS. See https://crbug.com/718641.
+  void GetRangeEndTimesForTesting(base::TimeDelta* highest_pts,
+                                  base::TimeDelta* end_time) const;
 
   size_t size_in_bytes() const { return size_in_bytes_; }
 
- private:
-  typedef std::map<DecodeTimestamp, int> KeyframeMap;
+ protected:
+  // Friend of protected is only for IsNextInPresentationSequence testing.
+  friend class SourceBufferStreamTest;
 
   // Called during AppendBuffersToEnd to adjust estimated duration at the
   // end of the last append to match the delta in timestamps between
   // the last append and the upcoming append. This is a workaround for
-  // WebM media where a duration is not always specified.
+  // WebM media where a duration is not always specified. Caller should take
+  // care of updating |highest_frame_|.
   void AdjustEstimatedDurationForNewAppend(const BufferQueue& new_buffers);
 
-  // Seeks the range to the next keyframe after |timestamp|. If
-  // |skip_given_timestamp| is true, the seek will go to a keyframe with a
-  // timestamp strictly greater than |timestamp|.
-  void SeekAhead(DecodeTimestamp timestamp, bool skip_given_timestamp);
-
-  // Returns an iterator in |buffers_| pointing to the buffer at |timestamp|.
-  // If |skip_given_timestamp| is true, this returns the first buffer with
-  // timestamp greater than |timestamp|.
-  BufferQueue::iterator GetBufferItrAt(
-      DecodeTimestamp timestamp, bool skip_given_timestamp);
-
-  // Returns an iterator in |keyframe_map_| pointing to the next keyframe after
-  // |timestamp|. If |skip_given_timestamp| is true, this returns the first
-  // keyframe with a timestamp strictly greater than |timestamp|.
-  KeyframeMap::iterator GetFirstKeyframeAt(
-      DecodeTimestamp timestamp, bool skip_given_timestamp);
-
-  // Returns an iterator in |keyframe_map_| pointing to the first keyframe
-  // before or at |timestamp|.
-  KeyframeMap::iterator GetFirstKeyframeAtOrBefore(DecodeTimestamp timestamp);
-
-  // Helper method to delete buffers in |buffers_| starting at
-  // |starting_point|, an iterator in |buffers_|.
-  // Returns true if everything in the range was removed. Returns
-  // false if the range still contains buffers.
-  bool TruncateAt(const BufferQueue::iterator& starting_point,
-                  BufferQueue* deleted_buffers);
-
   // Frees the buffers in |buffers_| from [|start_point|,|ending_point|) and
-  // updates the |size_in_bytes_| accordingly. Does not update |keyframe_map_|.
+  // updates the |size_in_bytes_| accordingly. Note, this does not update
+  // |keyframe_map_|.
+  // TODO(wolenetz): elevate keyframe_map_ to base class so this comment has
+  // better context. See https://crbug.com/718641.
   void FreeBufferRange(const BufferQueue::iterator& starting_point,
                        const BufferQueue::iterator& ending_point);
 
@@ -290,35 +120,52 @@ class SourceBufferRange {
   // Returns the approximate duration of a buffer in this range.
   base::TimeDelta GetApproximateDuration() const;
 
+  // Updates |highest_frame_| if |new_buffer| has a higher PTS than
+  // |highest_frame_| or if the range was previously empty.
+  void UpdateEndTime(const scoped_refptr<StreamParserBuffer>& new_buffer);
+
+  // Returns true if |timestamp| is allowed in this range as the timestamp of
+  // the next buffer in presentation sequence at or after |highest_frame_|.
+  // |buffers_| must not be empty, and |highest_frame_| must not be nullptr.
+  // Uses |gap_policy_| to potentially allow gaps.
+  // TODO(wolenetz): Switch to using this helper in CanAppendBuffersToEnd(),
+  // etc, when switching to managing ranges by their presentation interval, and
+  // not necessarily just their decode times. See https://crbug.com/718641. Once
+  // being used and not just tested, the following also applies:
+  // Due to potential for out-of-order decode vs presentation time, this method
+  // should only be used to determine adjacency of keyframes with the end of
+  // |buffers_|.
+  bool IsNextInPresentationSequence(base::TimeDelta timestamp) const;
+
+  // Returns true if |decode_timestamp| is allowed in this range as the decode
+  // timestamp of the next buffer in decode sequence at or after the last buffer
+  // in |buffers_|'s decode timestamp.  |buffers_| must not be empty. Uses
+  // |gap_policy_| to potentially allow gaps.
+  // TODO(wolenetz): Switch to using this helper in CanAppendBuffersToEnd(),
+  // etc, appropriately when switching to managing ranges by their presentation
+  // interval between GOPs, and by their decode sequence within GOPs. See
+  // https://crbug.com/718641. Once that's done, the following also would apply:
+  // Due to potential for out-of-order decode vs presentation time, this method
+  // should only be used to determine adjacency of non-keyframes with the end of
+  // |buffers_|, when determining if a non-keyframe with |decode_timestamp|
+  // continues the decode sequence of the coded frame group at the end of
+  // |buffers_|.
+  bool IsNextInDecodeSequence(DecodeTimestamp decode_timestamp) const;
+
   // Keeps track of whether gaps are allowed.
   const GapPolicy gap_policy_;
 
   // An ordered list of buffers in this range.
   BufferQueue buffers_;
 
-  // Maps keyframe timestamps to its index position in |buffers_|.
-  KeyframeMap keyframe_map_;
-
-  // Index base of all positions in |keyframe_map_|. In other words, the
-  // real position of entry |k| of |keyframe_map_| in the range is:
-  //   keyframe_map_[k] - keyframe_map_index_base_
-  int keyframe_map_index_base_;
-
   // Index into |buffers_| for the next buffer to be returned by
   // GetNextBuffer(), set to -1 before Seek().
   int next_buffer_index_;
 
-  // If the first buffer in this range is the beginning of a coded frame group,
-  // |range_start_time_| is the time when the coded frame group begins. This is
-  // especially important in muxed media where the first coded frames for each
-  // track do not necessarily begin at the same time.
-  // |range_start_time_| may be <= the timestamp of the first buffer in
-  // |buffers_|. |range_start_time_| is kNoDecodeTimestamp() if this range does
-  // not start at the beginning of a coded frame group, which can happen by
-  // range removal or split when we don't have a way of knowing, across
-  // potentially multiple muxed streams, the coded frame group start timestamp
-  // for the new range.
-  DecodeTimestamp range_start_time_;
+  // Caches the buffer, if any, with the highest PTS currently in |buffers_|.
+  // This is nullptr if this range is empty.  This is useful in determining
+  // range membership and adjacency in SourceBufferRangeByPts.
+  scoped_refptr<StreamParserBuffer> highest_frame_;
 
   // Called to get the largest interbuffer distance seen so far in the stream.
   InterbufferDistanceCB interbuffer_distance_cb_;
@@ -326,6 +173,7 @@ class SourceBufferRange {
   // Stores the amount of memory taken up by the data in |buffers_|.
   size_t size_in_bytes_;
 
+ private:
   DISALLOW_COPY_AND_ASSIGN(SourceBufferRange);
 };
 

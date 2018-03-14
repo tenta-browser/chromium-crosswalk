@@ -42,7 +42,8 @@ int WebViewNetworkDelegate::OnHeadersReceived(
 void WebViewNetworkDelegate::OnBeforeRedirect(net::URLRequest* request,
                                               const GURL& new_location) {}
 
-void WebViewNetworkDelegate::OnResponseStarted(net::URLRequest* request) {}
+void WebViewNetworkDelegate::OnResponseStarted(net::URLRequest* request,
+                                               int net_error) {}
 
 void WebViewNetworkDelegate::OnNetworkBytesReceived(net::URLRequest* request,
                                                     int64_t bytes_received) {}
@@ -70,13 +71,15 @@ bool WebViewNetworkDelegate::OnCanGetCookies(
 }
 
 bool WebViewNetworkDelegate::OnCanSetCookie(const net::URLRequest& request,
-                                            const std::string& cookie_line,
+                                            const net::CanonicalCookie& cookie,
                                             net::CookieOptions* options) {
   return true;
 }
 
-bool WebViewNetworkDelegate::OnCanAccessFile(const net::URLRequest& request,
-                                             const base::FilePath& path) const {
+bool WebViewNetworkDelegate::OnCanAccessFile(
+    const net::URLRequest& request,
+    const base::FilePath& original_path,
+    const base::FilePath& absolute_path) const {
   return true;
 }
 

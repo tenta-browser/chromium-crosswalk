@@ -4,66 +4,16 @@
 
 package org.chromium.components.background_task_scheduler;
 
-import android.annotation.TargetApi;
 import android.content.Context;
-import android.os.Build;
-import android.support.annotation.Nullable;
-
-import org.chromium.base.Log;
-import org.chromium.base.ThreadUtils;
-
-import java.lang.reflect.Constructor;
 
 /**
- * A BackgroundTaskScheduler which is used to schedule jobs that run in the background.
+ * A BackgroundTaskScheduler is used to schedule jobs that run in the background.
  * It is backed by system APIs ({@link android.app.job.JobScheduler}) on newer platforms
  * and by GCM ({@link com.google.android.gms.gcm.GcmNetworkManager}) on older platforms.
  *
  * To get an instance of this class, use {@link BackgroundTaskSchedulerFactory#getScheduler()}.
  */
-@TargetApi(Build.VERSION_CODES.LOLLIPOP)
-public class BackgroundTaskScheduler {
-    private static final String TAG = "BkgrdTaskScheduler";
-
-    @Nullable
-    static BackgroundTask getBackgroundTaskFromClassName(String backgroundTaskClassName) {
-        if (backgroundTaskClassName == null) return null;
-
-        Class<?> clazz;
-        try {
-            clazz = Class.forName(backgroundTaskClassName);
-        } catch (ClassNotFoundException e) {
-            Log.w(TAG, "Unable to find BackgroundTask class with name " + backgroundTaskClassName);
-            return null;
-        }
-
-        if (!BackgroundTask.class.isAssignableFrom(clazz)) {
-            Log.w(TAG, "Class " + clazz + " is not a BackgroundTask");
-            return null;
-        }
-
-        try {
-            return (BackgroundTask) clazz.newInstance();
-        } catch (InstantiationException | IllegalAccessException e) {
-            Log.w(TAG, "Unable to instantiate class " + clazz);
-            return null;
-        }
-    }
-
-    static boolean hasParameterlessPublicConstructor(Class<? extends BackgroundTask> clazz) {
-        for (Constructor<?> constructor : clazz.getConstructors()) {
-            if (constructor.getParameterTypes().length == 0) return true;
-        }
-        return false;
-    }
-
-    private final BackgroundTaskSchedulerDelegate mSchedulerDelegate;
-
-    BackgroundTaskScheduler(BackgroundTaskSchedulerDelegate schedulerDelegate) {
-        assert schedulerDelegate != null;
-        mSchedulerDelegate = schedulerDelegate;
-    }
-
+public interface BackgroundTaskScheduler {
     /**
      * Schedules a background task. See {@link TaskInfo} for information on what types of tasks that
      * can be scheduled.
@@ -73,10 +23,7 @@ public class BackgroundTaskScheduler {
      * @return true if the schedule operation succeeded, and false otherwise.
      * @see TaskInfo
      */
-    public boolean schedule(Context context, TaskInfo taskInfo) {
-        ThreadUtils.assertOnUiThread();
-        return mSchedulerDelegate.schedule(context, taskInfo);
-    }
+    boolean schedule(Context context, TaskInfo taskInfo);
 
     /**
      * Cancels the task specified by the task ID.
@@ -84,8 +31,20 @@ public class BackgroundTaskScheduler {
      * @param context the current context.
      * @param taskId the ID of the task to cancel. See {@link TaskIds} for a list.
      */
-    public void cancel(Context context, int taskId) {
-        ThreadUtils.assertOnUiThread();
-        mSchedulerDelegate.cancel(context, taskId);
-    }
+    void cancel(Context context, int taskId);
+
+    /**
+     * Checks whether OS was upgraded and triggers rescheduling if it is necessary.
+     * Rescheduling is necessary if type of background task scheduler delegate is different for a
+     * new version of the OS.
+     *
+     * @param context the current context.
+     */
+    void checkForOSUpgrade(Context context);
+
+    /**
+     * Reschedules all the tasks currently scheduler through BackgroundTaskSheduler.
+     * @param context the current context.
+     */
+    void reschedule(Context context);
 }

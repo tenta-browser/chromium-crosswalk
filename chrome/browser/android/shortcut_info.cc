@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/feature_list.h"
 #include "chrome/browser/android/shortcut_info.h"
+#include "chrome/common/chrome_features.h"
 
 ShortcutInfo::ShortcutInfo(const GURL& shortcut_url)
     : url(shortcut_url),
@@ -20,14 +22,13 @@ ShortcutInfo::~ShortcutInfo() {
 }
 
 void ShortcutInfo::UpdateFromManifest(const content::Manifest& manifest) {
-  if (!manifest.short_name.is_null())
+  if (!manifest.short_name.string().empty() ||
+      !manifest.name.string().empty()) {
     short_name = manifest.short_name.string();
-  if (!manifest.name.is_null())
     name = manifest.name.string();
-  if (manifest.short_name.is_null() != manifest.name.is_null()) {
-    if (manifest.short_name.is_null())
+    if (short_name.empty())
       short_name = name;
-    else
+    else if (name.empty())
       name = short_name;
   }
   user_title = short_name;
@@ -43,22 +44,19 @@ void ShortcutInfo::UpdateFromManifest(const content::Manifest& manifest) {
   if (manifest.display != blink::kWebDisplayModeUndefined)
     display = manifest.display;
 
-  // 'minimal-ui' is not yet supported (see crbug.com/604390). Otherwise, set
-  // the source to be standalone if appropriate.
-  if (manifest.display == blink::kWebDisplayModeMinimalUi) {
+  if (manifest.display == blink::kWebDisplayModeMinimalUi &&
+      !base::FeatureList::IsEnabled(features::kPwaMinimalUi)) {
     display = blink::kWebDisplayModeBrowser;
   } else if (display == blink::kWebDisplayModeStandalone ||
-             display == blink::kWebDisplayModeFullscreen) {
+             display == blink::kWebDisplayModeFullscreen ||
+             (display == blink::kWebDisplayModeMinimalUi &&
+              base::FeatureList::IsEnabled(features::kPwaMinimalUi))) {
     source = SOURCE_ADD_TO_HOMESCREEN_STANDALONE;
-  }
-
-  // Set the orientation based on the manifest value, if any.
-  if (manifest.orientation != blink::kWebScreenOrientationLockDefault) {
-    // Ignore the orientation if the display mode is different from
-    // 'standalone' or 'fullscreen'.
-    // TODO(mlamouri): send a message to the developer console about this.
-    if (display == blink::kWebDisplayModeStandalone ||
-        display == blink::kWebDisplayModeFullscreen) {
+    // Set the orientation based on the manifest value, or ignore if the display
+    // mode is different from 'standalone', 'fullscreen' or 'minimal-ui'.
+    if (manifest.orientation != blink::kWebScreenOrientationLockDefault) {
+      // TODO(mlamouri): Send a message to the developer console if we ignored
+      // Manifest orientation because display property is not set.
       orientation = manifest.orientation;
     }
   }
@@ -71,10 +69,17 @@ void ShortcutInfo::UpdateFromManifest(const content::Manifest& manifest) {
   if (manifest.background_color != content::Manifest::kInvalidOrMissingColor)
     background_color = manifest.background_color;
 
+  // Sets the URL of the HTML splash screen, if any.
+  if (manifest.splash_screen_url.is_valid())
+    splash_screen_url = manifest.splash_screen_url;
+
   // Set the icon urls based on the icons in the manifest, if any.
   icon_urls.clear();
   for (const content::Manifest::Icon& icon : manifest.icons)
     icon_urls.push_back(icon.src.spec());
+
+  if (manifest.share_target)
+    share_target_url_template = manifest.share_target->url_template.string();
 }
 
 void ShortcutInfo::UpdateSource(const Source new_source) {

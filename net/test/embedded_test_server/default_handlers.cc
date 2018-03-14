@@ -5,27 +5,33 @@
 #include "net/test/embedded_test_server/default_handlers.h"
 
 #include <stdlib.h>
+
 #include <ctime>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "base/base64.h"
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
 #include "base/macros.h"
 #include "base/md5.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+#include "base/unguessable_token.h"
 #include "net/base/escape.h"
 #include "net/base/url_util.h"
+#include "net/filter/filter_source_stream_test_util.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
@@ -143,7 +149,7 @@ std::unique_ptr<HttpResponse> HandleEchoAll(const HttpRequest& request) {
   std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
 
   std::string body =
-      "<html><head><style>"
+      "<html><head><title>EmbeddedTestServer - EchoAll</title><style>"
       "pre { border: 1px solid black; margin: 5px; padding: 5px }"
       "</style></head><body>"
       "<div style=\"float: right\">"
@@ -160,9 +166,9 @@ std::unique_ptr<HttpResponse> HandleEchoAll(const HttpRequest& request) {
   body +=
       "</pre>"
       "<h1>Request Headers:</h1><pre>" +
-      request.all_headers +
-      "</pre>"
-      "</body></html>";
+      request.all_headers + "</pre>" +
+      "<h1>Response nonce:</h1><pre id='response-nonce'>" +
+      base::UnguessableToken::Create().ToString() + "</pre></body></html>";
 
   http_response->set_content_type("text/html");
   http_response->set_content(body);
@@ -172,7 +178,7 @@ std::unique_ptr<HttpResponse> HandleEchoAll(const HttpRequest& request) {
 // /echo-raw
 // Returns the query string as the raw response (no HTTP headers).
 std::unique_ptr<HttpResponse> HandleEchoRaw(const HttpRequest& request) {
-  return base::MakeUnique<RawHttpResponse>("", request.GetURL().query());
+  return std::make_unique<RawHttpResponse>("", request.GetURL().query());
 }
 
 // /set-cookie?COOKIES
@@ -599,7 +605,70 @@ std::unique_ptr<HttpResponse> HandleSlowServer(const HttpRequest& request) {
   return std::move(http_response);
 }
 
-}  // namespace anonymous
+// Never returns a response.
+class HungHttpResponse : public HttpResponse {
+ public:
+  HungHttpResponse() = default;
+
+  void SendResponse(const SendBytesCallback& send,
+                    const SendCompleteCallback& done) override {}
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(HungHttpResponse);
+};
+
+// /hung
+// Never returns a response.
+std::unique_ptr<HttpResponse> HandleHungResponse(const HttpRequest& request) {
+  return std::make_unique<HungHttpResponse>();
+}
+
+// Return headers, then hangs.
+class HungAfterHeadersHttpResponse : public HttpResponse {
+ public:
+  HungAfterHeadersHttpResponse() = default;
+
+  void SendResponse(const SendBytesCallback& send,
+                    const SendCompleteCallback& done) override {
+    send.Run("HTTP/1.1 OK\r\n\r\n", base::Bind(&base::DoNothing));
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(HungAfterHeadersHttpResponse);
+};
+
+// /hung-after-headers
+// Never returns a response.
+std::unique_ptr<HttpResponse> HandleHungAfterHeadersResponse(
+    const HttpRequest& request) {
+  return std::make_unique<HungAfterHeadersHttpResponse>();
+}
+
+// /gzip-body?<body>
+// Returns a response with a gzipped body of "<body>". Attempts to allocate
+// enough memory to contain the body, but DCHECKs if that fails.
+std::unique_ptr<HttpResponse> HandleGzipBody(const HttpRequest& request) {
+  std::string uncompressed_body = request.GetURL().query();
+  // Attempt to pick size that's large enough even in the worst case (deflate
+  // block headers should be shorter than 512 bytes, and deflating should never
+  // double size of data, modulo headers).
+  // TODO(mmenke): This is rather awkward. Worth improving CompressGzip?
+  std::vector<char> compressed_body(uncompressed_body.size() * 2 + 512);
+  size_t compressed_size = compressed_body.size();
+  CompressGzip(uncompressed_body.c_str(), uncompressed_body.size(),
+               compressed_body.data(), &compressed_size,
+               true /* gzip_framing */);
+  // CompressGzip should DCHECK itself if this fails, anyways.
+  DCHECK_GE(compressed_body.size(), compressed_size);
+
+  std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);
+  http_response->set_content(
+      std::string(compressed_body.data(), compressed_size));
+  http_response->AddCustomHeader("Content-Encoding", "gzip");
+  return std::move(http_response);
+}
+
+}  // anonymous namespace
 
 #define PREFIXED_HANDLER(prefix, handler) \
   base::Bind(&HandlePrefixedRequest, prefix, base::Bind(handler))
@@ -642,6 +711,12 @@ void RegisterDefaultHandlers(EmbeddedTestServer* server) {
   server->RegisterDefaultHandler(
       PREFIXED_HANDLER("/defaultresponse", &HandleDefaultResponse));
   server->RegisterDefaultHandler(PREFIXED_HANDLER("/slow", &HandleSlowServer));
+  server->RegisterDefaultHandler(
+      PREFIXED_HANDLER("/hung", &HandleHungResponse));
+  server->RegisterDefaultHandler(
+      PREFIXED_HANDLER("/hung-after-headers", &HandleHungAfterHeadersResponse));
+  server->RegisterDefaultHandler(
+      PREFIXED_HANDLER("/gzip-body", &HandleGzipBody));
 
   // TODO(svaldez): HandleDownload
   // TODO(svaldez): HandleDownloadFinish

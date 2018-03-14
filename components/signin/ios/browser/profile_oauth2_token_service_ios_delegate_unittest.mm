@@ -5,19 +5,25 @@
 #include "components/signin/ios/browser/profile_oauth2_token_service_ios_delegate.h"
 
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
+#include "components/signin/core/browser/signin_error_controller.h"
+#include "components/signin/core/browser/signin_pref_names.h"
 #include "components/signin/core/browser/test_signin_client.h"
-#include "components/signin/core/common/signin_pref_names.h"
 #include "components/signin/ios/browser/fake_profile_oauth2_token_service_ios_provider.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "google_apis/gaia/oauth2_access_token_consumer.h"
 #include "google_apis/gaia/oauth2_token_service_test_util.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 typedef ProfileOAuth2TokenServiceIOSProvider::AccountInfo ProviderAccount;
 
@@ -30,6 +36,8 @@ class ProfileOAuth2TokenServiceIOSDelegateTest
   ProfileOAuth2TokenServiceIOSDelegateTest()
       : factory_(NULL),
         client_(&prefs_),
+        signin_error_controller_(
+            SigninErrorController::AccountMode::ANY_ACCOUNT),
         token_available_count_(0),
         token_revoked_count_(0),
         tokens_loaded_count_(0),

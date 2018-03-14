@@ -27,39 +27,42 @@
 #include "core/html/parser/HTMLConstructionSite.h"
 
 #include <limits>
-#include "bindings/core/v8/Microtask.h"
-#include "bindings/core/v8/V8PerIsolateData.h"
-#include "core/HTMLElementFactory.h"
-#include "core/HTMLNames.h"
 #include "core/dom/Comment.h"
 #include "core/dom/DocumentFragment.h"
 #include "core/dom/DocumentType.h"
 #include "core/dom/Element.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/dom/IgnoreDestructiveWriteCountIncrementer.h"
+#include "core/dom/Node.h"
 #include "core/dom/TemplateContentDocumentFragment.h"
 #include "core/dom/Text.h"
 #include "core/dom/ThrowOnDynamicMarkupInsertionCountIncrementer.h"
-#include "core/dom/custom/CEReactionsScope.h"
-#include "core/dom/custom/CustomElementDefinition.h"
-#include "core/dom/custom/CustomElementDescriptor.h"
-#include "core/dom/custom/CustomElementRegistry.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
-#include "core/html/FormAssociated.h"
-#include "core/html/HTMLFormElement.h"
+#include "core/frame/UseCounter.h"
 #include "core/html/HTMLHtmlElement.h"
 #include "core/html/HTMLPlugInElement.h"
 #include "core/html/HTMLScriptElement.h"
+#include "core/html/HTMLStyleElement.h"
 #include "core/html/HTMLTemplateElement.h"
+#include "core/html/custom/CEReactionsScope.h"
+#include "core/html/custom/CustomElementDefinition.h"
+#include "core/html/custom/CustomElementDescriptor.h"
+#include "core/html/custom/CustomElementRegistry.h"
+#include "core/html/forms/FormAssociated.h"
+#include "core/html/forms/HTMLFormElement.h"
 #include "core/html/parser/AtomicHTMLToken.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/html/parser/HTMLParserReentryPermit.h"
 #include "core/html/parser/HTMLStackItem.h"
 #include "core/html/parser/HTMLToken.h"
+#include "core/html_element_factory.h"
+#include "core/html_names.h"
 #include "core/loader/FrameLoader.h"
 #include "core/svg/SVGScriptElement.h"
+#include "platform/bindings/Microtask.h"
+#include "platform/bindings/V8PerIsolateData.h"
 #include "platform/text/TextBreakIterator.h"
 
 namespace blink {
@@ -74,6 +77,10 @@ static inline void SetAttributes(Element* element,
   if (!ScriptingContentIsAllowed(parser_content_policy))
     element->StripScriptingAttributes(token->Attributes());
   element->ParserSetAttributes(token->Attributes());
+  if (token->HasDuplicateAttribute()) {
+    UseCounter::Count(element->GetDocument(), WebFeature::kDuplicatedAttribute);
+    element->SetHasDuplicateAttributes();
+  }
 }
 
 static bool HasImpliedEndTag(const HTMLStackItem* item) {
@@ -85,8 +92,8 @@ static bool HasImpliedEndTag(const HTMLStackItem* item) {
 }
 
 static bool ShouldUseLengthLimit(const ContainerNode& node) {
-  return !isHTMLScriptElement(node) && !isHTMLStyleElement(node) &&
-         !isSVGScriptElement(node);
+  return !IsHTMLScriptElement(node) && !IsHTMLStyleElement(node) &&
+         !IsSVGScriptElement(node);
 }
 
 static unsigned TextLengthLimitForContainer(const ContainerNode& node) {
@@ -99,8 +106,8 @@ static inline bool IsAllWhitespace(const String& string) {
 }
 
 static inline void Insert(HTMLConstructionSiteTask& task) {
-  if (isHTMLTemplateElement(*task.parent))
-    task.parent = toHTMLTemplateElement(task.parent.Get())->content();
+  if (auto* template_element = ToHTMLTemplateElementOrNull(*task.parent))
+    task.parent = template_element->content();
 
   // https://html.spec.whatwg.org/#insert-a-foreign-element
   // 3.1, (3) Push (pop) an element queue
@@ -132,7 +139,7 @@ static inline void ExecuteInsertTextTask(HTMLConstructionSiteTask& task) {
   // http://www.whatwg.org/specs/web-apps/current-work/multipage/tree-construction.html#insert-a-character
   Text* new_text = ToText(task.child.Get());
   Node* previous_child = task.next_child ? task.next_child->previousSibling()
-                                         : task.parent->LastChild();
+                                         : task.parent->lastChild();
   if (previous_child && previous_child->IsTextNode()) {
     Text* previous_text = ToText(previous_child);
     unsigned length_limit = TextLengthLimitForContainer(*task.parent);
@@ -323,7 +330,7 @@ void HTMLConstructionSite::ExecuteQueuedTasks() {
   // Copy the task queue into a local variable in case executeTask re-enters the
   // parser.
   TaskQueue queue;
-  queue.Swap(task_queue_);
+  queue.swap(task_queue_);
 
   for (auto& task : queue)
     ExecuteTask(task);
@@ -369,7 +376,7 @@ HTMLConstructionSite::~HTMLConstructionSite() {
   DCHECK(pending_text_.IsEmpty());
 }
 
-DEFINE_TRACE(HTMLConstructionSite) {
+void HTMLConstructionSite::Trace(blink::Visitor* visitor) {
   visitor->Trace(document_);
   visitor->Trace(attachment_root_);
   visitor->Trace(head_);
@@ -459,152 +466,124 @@ void HTMLConstructionSite::SetCompatibilityModeFromDoctype(
 
   // Check for Quirks Mode.
   if (name != "html" ||
-      public_id.StartsWith("+//Silmaril//dtd html Pro v0r11 19970101//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith(
-          "-//AdvaSoft Ltd//DTD HTML 3.0 asWedit + extensions//",
-          kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//AS//DTD HTML 3.0 asWedit + extensions//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML 2.0 Level 1//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML 2.0 Level 2//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML 2.0 Strict Level 1//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML 2.0 Strict Level 2//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML 2.0 Strict//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML 2.0//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML 2.1E//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML 3.0//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML 3.2 Final//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML 3.2//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML 3//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML Level 0//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML Level 1//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML Level 2//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML Level 3//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML Strict Level 0//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML Strict Level 1//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML Strict Level 2//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML Strict Level 3//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML Strict//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//IETF//DTD HTML//", kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//Metrius//DTD Metrius Presentational//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith(
-          "-//Microsoft//DTD Internet Explorer 2.0 HTML Strict//",
-          kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//Microsoft//DTD Internet Explorer 2.0 HTML//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//Microsoft//DTD Internet Explorer 2.0 Tables//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith(
-          "-//Microsoft//DTD Internet Explorer 3.0 HTML Strict//",
-          kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//Microsoft//DTD Internet Explorer 3.0 HTML//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//Microsoft//DTD Internet Explorer 3.0 Tables//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//Netscape Comm. Corp.//DTD HTML//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//Netscape Comm. Corp.//DTD Strict HTML//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//O'Reilly and Associates//DTD HTML 2.0//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith(
-          "-//O'Reilly and Associates//DTD HTML Extended 1.0//",
-          kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith(
-          "-//O'Reilly and Associates//DTD HTML Extended Relaxed 1.0//",
-          kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//SoftQuad Software//DTD HoTMetaL PRO "
-                           "6.0::19990601::extensions to HTML 4.0//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//SoftQuad//DTD HoTMetaL PRO "
-                           "4.0::19971010::extensions to HTML 4.0//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//Spyglass//DTD HTML 2.0 Extended//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//SQ//DTD HTML 2.0 HoTMetaL + extensions//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//Sun Microsystems Corp.//DTD HotJava HTML//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith(
-          "-//Sun Microsystems Corp.//DTD HotJava Strict HTML//",
-          kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//W3C//DTD HTML 3 1995-03-24//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//W3C//DTD HTML 3.2 Draft//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//W3C//DTD HTML 3.2 Final//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//W3C//DTD HTML 3.2//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//W3C//DTD HTML 3.2S Draft//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//W3C//DTD HTML 4.0 Frameset//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//W3C//DTD HTML 4.0 Transitional//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//W3C//DTD HTML Experimental 19960712//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//W3C//DTD HTML Experimental 970421//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//W3C//DTD W3 HTML//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//W3O//DTD W3 HTML 3.0//",
-                           kTextCaseASCIIInsensitive) ||
+      public_id.StartsWithIgnoringASCIICase(
+          "+//Silmaril//dtd html Pro v0r11 19970101//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//AdvaSoft Ltd//DTD HTML 3.0 asWedit + extensions//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//AS//DTD HTML 3.0 asWedit + extensions//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//IETF//DTD HTML 2.0 Level 1//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//IETF//DTD HTML 2.0 Level 2//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//IETF//DTD HTML 2.0 Strict Level 1//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//IETF//DTD HTML 2.0 Strict Level 2//") ||
+      public_id.StartsWithIgnoringASCIICase("-//IETF//DTD HTML 2.0 Strict//") ||
+      public_id.StartsWithIgnoringASCIICase("-//IETF//DTD HTML 2.0//") ||
+      public_id.StartsWithIgnoringASCIICase("-//IETF//DTD HTML 2.1E//") ||
+      public_id.StartsWithIgnoringASCIICase("-//IETF//DTD HTML 3.0//") ||
+      public_id.StartsWithIgnoringASCIICase("-//IETF//DTD HTML 3.2 Final//") ||
+      public_id.StartsWithIgnoringASCIICase("-//IETF//DTD HTML 3.2//") ||
+      public_id.StartsWithIgnoringASCIICase("-//IETF//DTD HTML 3//") ||
+      public_id.StartsWithIgnoringASCIICase("-//IETF//DTD HTML Level 0//") ||
+      public_id.StartsWithIgnoringASCIICase("-//IETF//DTD HTML Level 1//") ||
+      public_id.StartsWithIgnoringASCIICase("-//IETF//DTD HTML Level 2//") ||
+      public_id.StartsWithIgnoringASCIICase("-//IETF//DTD HTML Level 3//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//IETF//DTD HTML Strict Level 0//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//IETF//DTD HTML Strict Level 1//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//IETF//DTD HTML Strict Level 2//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//IETF//DTD HTML Strict Level 3//") ||
+      public_id.StartsWithIgnoringASCIICase("-//IETF//DTD HTML Strict//") ||
+      public_id.StartsWithIgnoringASCIICase("-//IETF//DTD HTML//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//Metrius//DTD Metrius Presentational//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//Microsoft//DTD Internet Explorer 2.0 HTML Strict//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//Microsoft//DTD Internet Explorer 2.0 HTML//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//Microsoft//DTD Internet Explorer 2.0 Tables//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//Microsoft//DTD Internet Explorer 3.0 HTML Strict//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//Microsoft//DTD Internet Explorer 3.0 HTML//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//Microsoft//DTD Internet Explorer 3.0 Tables//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//Netscape Comm. Corp.//DTD HTML//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//Netscape Comm. Corp.//DTD Strict HTML//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//O'Reilly and Associates//DTD HTML 2.0//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//O'Reilly and Associates//DTD HTML Extended 1.0//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//O'Reilly and Associates//DTD HTML Extended Relaxed 1.0//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//SoftQuad Software//DTD HoTMetaL PRO "
+          "6.0::19990601::extensions to HTML 4.0//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//SoftQuad//DTD HoTMetaL PRO "
+          "4.0::19971010::extensions to HTML 4.0//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//Spyglass//DTD HTML 2.0 Extended//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//SQ//DTD HTML 2.0 HoTMetaL + extensions//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//Sun Microsystems Corp.//DTD HotJava HTML//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//Sun Microsystems Corp.//DTD HotJava Strict HTML//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//W3C//DTD HTML 3 1995-03-24//") ||
+      public_id.StartsWithIgnoringASCIICase("-//W3C//DTD HTML 3.2 Draft//") ||
+      public_id.StartsWithIgnoringASCIICase("-//W3C//DTD HTML 3.2 Final//") ||
+      public_id.StartsWithIgnoringASCIICase("-//W3C//DTD HTML 3.2//") ||
+      public_id.StartsWithIgnoringASCIICase("-//W3C//DTD HTML 3.2S Draft//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//W3C//DTD HTML 4.0 Frameset//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//W3C//DTD HTML 4.0 Transitional//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//W3C//DTD HTML Experimental 19960712//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//W3C//DTD HTML Experimental 970421//") ||
+      public_id.StartsWithIgnoringASCIICase("-//W3C//DTD W3 HTML//") ||
+      public_id.StartsWithIgnoringASCIICase("-//W3O//DTD W3 HTML 3.0//") ||
       DeprecatedEqualIgnoringCase(public_id,
                                   "-//W3O//DTD W3 HTML Strict 3.0//EN//") ||
-      public_id.StartsWith("-//WebTechs//DTD Mozilla HTML 2.0//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//WebTechs//DTD Mozilla HTML//",
-                           kTextCaseASCIIInsensitive) ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//WebTechs//DTD Mozilla HTML 2.0//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//WebTechs//DTD Mozilla HTML//") ||
       DeprecatedEqualIgnoringCase(public_id,
                                   "-/W3C/DTD HTML 4.0 Transitional/EN") ||
       DeprecatedEqualIgnoringCase(public_id, "HTML") ||
       DeprecatedEqualIgnoringCase(
           system_id,
           "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd") ||
-      (system_id.IsEmpty() &&
-       public_id.StartsWith("-//W3C//DTD HTML 4.01 Frameset//",
-                            kTextCaseASCIIInsensitive)) ||
-      (system_id.IsEmpty() &&
-       public_id.StartsWith("-//W3C//DTD HTML 4.01 Transitional//",
-                            kTextCaseASCIIInsensitive))) {
+      (system_id.IsEmpty() && public_id.StartsWithIgnoringASCIICase(
+                                  "-//W3C//DTD HTML 4.01 Frameset//")) ||
+      (system_id.IsEmpty() && public_id.StartsWithIgnoringASCIICase(
+                                  "-//W3C//DTD HTML 4.01 Transitional//"))) {
     SetCompatibilityMode(Document::kQuirksMode);
     return;
   }
 
   // Check for Limited Quirks Mode.
-  if (public_id.StartsWith("-//W3C//DTD XHTML 1.0 Frameset//",
-                           kTextCaseASCIIInsensitive) ||
-      public_id.StartsWith("-//W3C//DTD XHTML 1.0 Transitional//",
-                           kTextCaseASCIIInsensitive) ||
-      (!system_id.IsEmpty() &&
-       public_id.StartsWith("-//W3C//DTD HTML 4.01 Frameset//",
-                            kTextCaseASCIIInsensitive)) ||
-      (!system_id.IsEmpty() &&
-       public_id.StartsWith("-//W3C//DTD HTML 4.01 Transitional//",
-                            kTextCaseASCIIInsensitive))) {
+  if (public_id.StartsWithIgnoringASCIICase(
+          "-//W3C//DTD XHTML 1.0 Frameset//") ||
+      public_id.StartsWithIgnoringASCIICase(
+          "-//W3C//DTD XHTML 1.0 Transitional//") ||
+      (!system_id.IsEmpty() && public_id.StartsWithIgnoringASCIICase(
+                                   "-//W3C//DTD HTML 4.01 Frameset//")) ||
+      (!system_id.IsEmpty() && public_id.StartsWithIgnoringASCIICase(
+                                   "-//W3C//DTD HTML 4.01 Transitional//"))) {
     SetCompatibilityMode(Document::kLimitedQuirksMode);
     return;
   }
@@ -677,14 +656,14 @@ void HTMLConstructionSite::InsertCommentOnHTMLHtmlElement(
 
 void HTMLConstructionSite::InsertHTMLHeadElement(AtomicHTMLToken* token) {
   DCHECK(!ShouldFosterParent());
-  head_ = HTMLStackItem::Create(CreateHTMLElement(token), token);
+  head_ = HTMLStackItem::Create(CreateElement(token, xhtmlNamespaceURI), token);
   AttachLater(CurrentNode(), head_->GetElement());
   open_elements_.PushHTMLHeadElement(head_);
 }
 
 void HTMLConstructionSite::InsertHTMLBodyElement(AtomicHTMLToken* token) {
   DCHECK(!ShouldFosterParent());
-  HTMLElement* body = CreateHTMLElement(token);
+  Element* body = CreateElement(token, xhtmlNamespaceURI);
   AttachLater(CurrentNode(), body);
   open_elements_.PushHTMLBodyElement(HTMLStackItem::Create(body, token));
   if (document_)
@@ -693,9 +672,8 @@ void HTMLConstructionSite::InsertHTMLBodyElement(AtomicHTMLToken* token) {
 
 void HTMLConstructionSite::InsertHTMLFormElement(AtomicHTMLToken* token,
                                                  bool is_demoted) {
-  HTMLElement* element = CreateHTMLElement(token);
-  DCHECK(isHTMLFormElement(element));
-  HTMLFormElement* form_element = toHTMLFormElement(element);
+  auto* form_element =
+      ToHTMLFormElement(CreateElement(token, xhtmlNamespaceURI));
   if (!OpenElements()->HasTemplateInHTMLScope())
     form_ = form_element;
   form_element->SetDemoted(is_demoted);
@@ -704,7 +682,7 @@ void HTMLConstructionSite::InsertHTMLFormElement(AtomicHTMLToken* token,
 }
 
 void HTMLConstructionSite::InsertHTMLElement(AtomicHTMLToken* token) {
-  HTMLElement* element = CreateHTMLElement(token);
+  Element* element = CreateElement(token, xhtmlNamespaceURI);
   AttachLater(CurrentNode(), element);
   open_elements_.Push(HTMLStackItem::Create(element, token));
 }
@@ -715,7 +693,7 @@ void HTMLConstructionSite::InsertSelfClosingHTMLElementDestroyingToken(
   // Normally HTMLElementStack is responsible for calling finishParsingChildren,
   // but self-closing elements are never in the element stack so the stack
   // doesn't get a chance to tell them that we're done parsing their children.
-  AttachLater(CurrentNode(), CreateHTMLElement(token), true);
+  AttachLater(CurrentNode(), CreateElement(token, xhtmlNamespaceURI), true);
   // FIXME: Do we want to acknowledge the token's self-closing flag?
   // http://www.whatwg.org/specs/web-apps/current-work/multipage/tokenization.html#acknowledge-self-closing-flag
 }
@@ -781,9 +759,8 @@ void HTMLConstructionSite::InsertTextNode(const StringView& string,
     FindFosterSite(dummy_task);
 
   // FIXME: This probably doesn't need to be done both here and in insert(Task).
-  if (isHTMLTemplateElement(*dummy_task.parent))
-    dummy_task.parent =
-        toHTMLTemplateElement(dummy_task.parent.Get())->content();
+  if (auto* template_element = ToHTMLTemplateElementOrNull(*dummy_task.parent))
+    dummy_task.parent = template_element->content();
 
   // Unclear when parent != case occurs. Somehow we insert text into two
   // separate nodes while processing the same Token. The nextChild !=
@@ -842,19 +819,9 @@ CreateElementFlags HTMLConstructionSite::GetCreateElementFlags() const {
   return is_parsing_fragment_ ? kCreatedByFragmentParser : kCreatedByParser;
 }
 
-Element* HTMLConstructionSite::CreateElement(
-    AtomicHTMLToken* token,
-    const AtomicString& namespace_uri) {
-  QualifiedName tag_name(g_null_atom, token->GetName(), namespace_uri);
-  Element* element = OwnerDocumentForCurrentNode().createElement(
-      tag_name, GetCreateElementFlags());
-  SetAttributes(element, token, parser_content_policy_);
-  return element;
-}
-
 inline Document& HTMLConstructionSite::OwnerDocumentForCurrentNode() {
-  if (isHTMLTemplateElement(*CurrentNode()))
-    return toHTMLTemplateElement(CurrentElement())->content()->GetDocument();
+  if (auto* template_element = ToHTMLTemplateElementOrNull(*CurrentNode()))
+    return template_element->content()->GetDocument();
   return CurrentNode()->GetDocument();
 }
 
@@ -885,22 +852,15 @@ CustomElementDefinition* HTMLConstructionSite::LookUpCustomElementDefinition(
 
 // "create an element for a token"
 // https://html.spec.whatwg.org/multipage/syntax.html#create-an-element-for-the-token
-// TODO(dominicc): When form association is separate from creation, unify this
-// with foreign element creation. Add a namespace parameter and check for HTML
-// namespace to lookupCustomElementDefinition.
-HTMLElement* HTMLConstructionSite::CreateHTMLElement(AtomicHTMLToken* token) {
+Element* HTMLConstructionSite::CreateElement(
+    AtomicHTMLToken* token,
+    const AtomicString& namespace_uri) {
   // "1. Let document be intended parent's node document."
   Document& document = OwnerDocumentForCurrentNode();
 
-  // Only associate the element with the current form if we're creating the new
-  // element in a document with a browsing context (rather than in <template>
-  // contents).
-  // TODO(dominicc): Change form to happen after element creation when
-  // implementing customized built-in elements.
-  HTMLFormElement* form = document.GetFrame() ? form_.Get() : nullptr;
-
   // "2. Let local name be the tag name of the token."
-  // "3. Let is be the value of the "is" attribute in the giev token ..." etc.
+  QualifiedName tag_name(g_null_atom, token->GetName(), namespace_uri);
+  // "3. Let is be the value of the "is" attribute in the given token ..." etc.
   // "4. Let definition be the result of looking up a custom element ..." etc.
   CustomElementDefinition* definition =
       is_parsing_fragment_ ? nullptr
@@ -910,7 +870,7 @@ HTMLElement* HTMLConstructionSite::CreateHTMLElement(AtomicHTMLToken* token) {
   // be true."
   bool will_execute_script = definition && !is_parsing_fragment_;
 
-  HTMLElement* element;
+  Element* element;
 
   if (will_execute_script) {
     // "6.1 Increment the document's throw-on-dynamic-insertion counter."
@@ -931,9 +891,7 @@ HTMLElement* HTMLConstructionSite::CreateHTMLElement(AtomicHTMLToken* token) {
     CEReactionsScope reactions;
 
     // 7.
-    QualifiedName element_q_name(g_null_atom, token->GetName(),
-                                 HTMLNames::xhtmlNamespaceURI);
-    element = definition->CreateElementSync(document, element_q_name);
+    element = definition->CreateElementSync(document, tag_name);
 
     // "8. Append each attribute in the given token to element." We don't use
     // setAttributes here because the custom element constructor may have
@@ -945,26 +903,65 @@ HTMLElement* HTMLConstructionSite::CreateHTMLElement(AtomicHTMLToken* token) {
     // and ThrowOnDynamicMarkupInsertionCountIncrementer destructors implement
     // steps 9.1-3.
   } else {
-    // FIXME: This can't use HTMLConstructionSite::createElement because we have
-    // to pass the current form element. We should rework form association to
-    // occur after construction to allow better code sharing here.
-    element = HTMLElementFactory::createHTMLElement(token->GetName(), document,
-                                                    GetCreateElementFlags());
-    if (FormAssociated* form_associated_element =
-            element->ToFormAssociatedOrNull()) {
-      form_associated_element->AssociateWith(form);
-    }
+    element = document.createElement(tag_name, GetCreateElementFlags());
     // Definition for the created element does not exist here and it cannot be
     // custom or failed.
     DCHECK_NE(element->GetCustomElementState(), CustomElementState::kCustom);
     DCHECK_NE(element->GetCustomElementState(), CustomElementState::kFailed);
 
+    // TODO(dominicc): Move these steps so they happen for custom
+    // elements as well as built-in elements when customized built in
+    // elements are implemented for resettable, listed elements.
+
+    // 10. If element has an xmlns attribute in the XMLNS namespace
+    // whose value is not exactly the same as the element's namespace,
+    // that is a parse error. Similarly, if element has an xmlns:xlink
+    // attribute in the XMLNS namespace whose value is not the XLink
+    // Namespace, that is a parse error.
+
+    // TODO(dominicc): Implement step 10 when the HTML parser does
+    // something useful with parse errors.
+
+    // 11. If element is a resettable element, invoke its reset
+    // algorithm. (This initializes the element's value and
+    // checkedness based on the element's attributes.)
+    // TODO(dominicc): Implement step 11, resettable elements.
+
+    // 12. If element is a form-associated element, and the form
+    // element pointer is not null, and there is no template element
+    // on the stack of open elements, ...
+    FormAssociated* form_associated_element =
+        element->IsHTMLElement()
+            ? ToHTMLElement(element)->ToFormAssociatedOrNull()
+            : nullptr;
+    if (form_associated_element && document.GetFrame() && form_.Get()) {
+      // ... and element is either not listed or doesn't have a form
+      // attribute, and the intended parent is in the same tree as the
+      // element pointed to by the form element pointer, associate
+      // element with the form element pointed to by the form element
+      // pointer, and suppress the running of the reset the form owner
+      // algorithm when the parser subsequently attempts to insert the
+      // element.
+
+      // TODO(dominicc): There are many differences to the spec here;
+      // some of them are observable:
+      //
+      // - The HTML spec tracks whether there is a template element on
+      //   the stack both for manipulating the form element pointer
+      //   and using it here.
+      // - FormAssociated::AssociateWith implementations don't do the
+      //   "same tree" check; for example
+      //   HTMLImageElement::AssociateWith just checks whether the form
+      //   is in *a* tree. This check should be done here consistently.
+      // - ListedElement is a mixin; add IsListedElement and skip
+      //   setting the form for listed attributes with form=. Instead
+      //   we set attributes (step 8) out of order, after this step,
+      //   to reset the form association.
+      form_associated_element->AssociateWith(form_.Get());
+    }
     // "8. Append each attribute in the given token to element."
     SetAttributes(element, token, parser_content_policy_);
   }
-
-  // TODO(dominicc): Implement steps 10-12 when customized built-in elements are
-  // implemented.
 
   return element;
 }
@@ -975,10 +972,7 @@ HTMLStackItem* HTMLConstructionSite::CreateElementFromSavedToken(
   // NOTE: Moving from item -> token -> item copies the Attribute vector twice!
   AtomicHTMLToken fake_token(HTMLToken::kStartTag, item->LocalName(),
                              item->Attributes());
-  if (item->NamespaceURI() == HTMLNames::xhtmlNamespaceURI)
-    element = CreateHTMLElement(&fake_token);
-  else
-    element = CreateElement(&fake_token, item->NamespaceURI());
+  element = CreateElement(&fake_token, item->NamespaceURI());
   return HTMLStackItem::Create(element, &fake_token, item->NamespaceURI());
 }
 
@@ -1085,7 +1079,7 @@ void HTMLConstructionSite::FosterParent(Node* node) {
   QueueTask(task);
 }
 
-DEFINE_TRACE(HTMLConstructionSite::PendingText) {
+void HTMLConstructionSite::PendingText::Trace(blink::Visitor* visitor) {
   visitor->Trace(parent);
   visitor->Trace(next_child);
 }

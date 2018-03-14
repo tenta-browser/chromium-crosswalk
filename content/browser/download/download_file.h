@@ -15,16 +15,16 @@
 #include "content/common/content_export.h"
 #include "content/public/browser/download_interrupt_reasons.h"
 #include "content/public/browser/download_item.h"
+#include "content/public/browser/download_manager.h"
+#include "mojo/public/cpp/system/data_pipe.h"
 
 class GURL;
 
 namespace content {
 
-class ByteStreamReader;
-
-// These objects live exclusively on the file thread and handle the writing
-// operations for one download. These objects live only for the duration that
-// the download is 'in progress': once the download has been completed or
+// These objects live exclusively on the download sequence and handle the
+// writing operations for one download. These objects live only for the duration
+// that the download is 'in progress': once the download has been completed or
 // cancelled, the DownloadFile is destroyed.
 class CONTENT_EXPORT DownloadFile {
  public:
@@ -43,7 +43,7 @@ class CONTENT_EXPORT DownloadFile {
       RenameCompletionCallback;
 
   // Used to drop the request, when the byte stream reader should be closed on
-  // FILE thread.
+  // download sequence.
   typedef base::Callback<void(int64_t offset)> CancelRequestCallback;
 
   virtual ~DownloadFile() {}
@@ -56,11 +56,16 @@ class CONTENT_EXPORT DownloadFile {
                           const DownloadItem::ReceivedSlices& received_slices,
                           bool is_parallelizable) = 0;
 
-  // Add a byte stream reader to write into a slice of the file, used for
-  // parallel download. Called on the file thread.
-  virtual void AddByteStream(std::unique_ptr<ByteStreamReader> stream_reader,
-                             int64_t offset,
-                             int64_t length) = 0;
+  // Add an input stream to write into a slice of the file, used for
+  // parallel download.
+  virtual void AddInputStream(
+      std::unique_ptr<DownloadManager::InputStream> stream,
+      int64_t offset,
+      int64_t length) = 0;
+
+  // Called when the response for the stream starting at |offset| is completed,
+  virtual void OnResponseCompleted(int64_t offset,
+                                   DownloadInterruptReason status) = 0;
 
   // Rename the download file to |full_path|.  If that file exists
   // |full_path| will be uniquified by suffixing " (<number>)" to the
@@ -93,7 +98,9 @@ class CONTENT_EXPORT DownloadFile {
 
   virtual const base::FilePath& FullPath() const = 0;
   virtual bool InProgress() const = 0;
-  virtual void WasPaused() = 0;
+
+  virtual void Pause() = 0;
+  virtual void Resume() = 0;
 };
 
 }  // namespace content

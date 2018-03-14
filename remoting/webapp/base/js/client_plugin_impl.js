@@ -278,10 +278,16 @@ remoting.ClientPluginImpl.prototype.handleMessageMethod_ = function(message) {
     base.getNumberAttr(message.data, 'videoBandwidth');
     base.getNumberAttr(message.data, 'videoFrameRate');
     base.getNumberAttr(message.data, 'captureLatency');
+    base.getNumberAttr(message.data, 'maxCaptureLatency');
     base.getNumberAttr(message.data, 'encodeLatency');
+    base.getNumberAttr(message.data, 'maxEncodeLatency');
     base.getNumberAttr(message.data, 'decodeLatency');
+    base.getNumberAttr(message.data, 'maxDecodeLatency');
     base.getNumberAttr(message.data, 'renderLatency');
+    base.getNumberAttr(message.data, 'maxRenderLatency');
     base.getNumberAttr(message.data, 'roundtripLatency');
+    base.getNumberAttr(message.data, 'maxRoundtripLatency');
+
     this.perfStats_ =
         /** @type {remoting.ClientSession.PerfStats} */ (message.data);
 
@@ -450,6 +456,17 @@ remoting.ClientPluginImpl.prototype.connectWithExperiments_ = function(
 
   this.plugin_.postMessage(JSON.stringify(
       { method: 'delegateLargeCursors', data: {} }));
+
+  // Enable stuck modifier detection for Linux, but not for the public app.
+  // TODO(jamiewalch): Revert this once crbug.com/787523 is fixed.
+  this.plugin_.postMessage(JSON.stringify({
+    method: 'enableStuckModifierKeyDetection',
+    data: {
+      'enable': remoting.platformIsLinux() &&
+          chrome.runtime.id != 'gbchcmhmhahfdphkhkmpfmihenigjmpp'
+    }
+  }));
+
   this.credentials_ = credentialsProvider;
   this.useAsyncPinDialog_();
   this.plugin_.postMessage(JSON.stringify({

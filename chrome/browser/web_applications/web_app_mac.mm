@@ -7,6 +7,7 @@
 #import <Cocoa/Cocoa.h>
 #include <stdint.h>
 
+#include <map>
 #include <utility>
 
 #include "base/command_line.h"
@@ -19,6 +20,7 @@
 #include "base/mac/scoped_cftyperef.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
@@ -30,6 +32,7 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task_scheduler/post_task.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/version.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_ui_util.h"
@@ -44,7 +47,6 @@
 #include "chrome/common/chrome_switches.h"
 #import "chrome/common/mac/app_mode_common.h"
 #include "chrome/grit/chrome_unscaled_resources.h"
-#include "chrome/grit/generated_resources.h"
 #include "components/crx_file/id_util.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
@@ -214,9 +216,9 @@ bool HasSameUserDataDir(const base::FilePath& bundle_path) {
       user_data_dir.value(), base::CompareCase::SENSITIVE);
 }
 
-void LaunchShimOnFileThread(const web_app::ShortcutInfo& shortcut_info,
-                            bool launched_after_rebuild) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::FILE);
+void LaunchShimOnFileThread(bool launched_after_rebuild,
+                            const web_app::ShortcutInfo& shortcut_info) {
+  base::AssertBlockingAllowed();
   base::FilePath shim_path = web_app::GetAppInstallPath(shortcut_info);
 
   if (shim_path.empty() ||
@@ -253,7 +255,7 @@ void UpdatePlatformShortcutsInternal(
     const base::FilePath& app_data_path,
     const base::string16& old_app_title,
     const web_app::ShortcutInfo& shortcut_info) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::FILE);
+  base::AssertBlockingAllowed();
   if (AppShimsDisabledForTest() &&
       !g_app_shims_allow_update_and_launch_in_tests) {
     return;
@@ -266,21 +268,18 @@ void UpdatePlatformShortcutsInternal(
 
 void UpdateAndLaunchShimOnFileThread(
     const web_app::ShortcutInfo& shortcut_info) {
+  base::AssertBlockingAllowed();
   base::FilePath shortcut_data_dir = web_app::GetWebAppDataDirectory(
       shortcut_info.profile_path, shortcut_info.extension_id, GURL());
   UpdatePlatformShortcutsInternal(shortcut_data_dir, base::string16(),
                                   shortcut_info);
-  LaunchShimOnFileThread(shortcut_info, true);
+  LaunchShimOnFileThread(true, shortcut_info);
 }
 
 void UpdateAndLaunchShim(std::unique_ptr<web_app::ShortcutInfo> shortcut_info) {
-  const web_app::ShortcutInfo& shortcut_info_ref = *shortcut_info;
-  content::BrowserThread::PostTaskAndReply(
-      content::BrowserThread::FILE, FROM_HERE,
-      base::Bind(&UpdateAndLaunchShimOnFileThread,
-                 base::ConstRef(shortcut_info_ref)),
-      base::Bind(&web_app::internals::DeleteShortcutInfoOnUIThread,
-                 base::Passed(&shortcut_info), base::Closure()));
+  web_app::ShortcutInfo::PostIOTask(
+      base::BindOnce(&UpdateAndLaunchShimOnFileThread),
+      std::move(shortcut_info));
 }
 
 void RebuildAppAndLaunch(std::unique_ptr<web_app::ShortcutInfo> shortcut_info) {
@@ -373,12 +372,76 @@ NSImageRep* OverlayImageRep(NSImage* background, NSImageRep* overlay) {
 
 // Helper function to extract the single NSImageRep held in a resource bundle
 // image.
-NSImageRep* ImageRepForResource(int resource_id) {
-  gfx::Image& image =
-      ResourceBundle::GetSharedInstance().GetNativeImageNamed(resource_id);
+base::scoped_nsobject<NSImageRep> ImageRepForGFXImage(const gfx::Image& image) {
   NSArray* image_reps = [image.AsNSImage() representations];
   DCHECK_EQ(1u, [image_reps count]);
-  return [image_reps objectAtIndex:0];
+  return base::scoped_nsobject<NSImageRep>([image_reps objectAtIndex:0],
+                                           base::scoped_policy::RETAIN);
+}
+
+using ResourceIDToImage = std::map<int, base::scoped_nsobject<NSImageRep>>;
+
+// Generates a map of NSImageReps used by SetWorkspaceIconOnFILEThread and
+// passes it to |io_task|. Since ui::ResourceBundle can only be used on UI
+// thread, this function also needs to run on UI thread, and the gfx::Images
+// need to be converted to NSImageReps on the UI thread due to non-thread-safety
+// of gfx::Image.
+void GetImageResourcesOnUIThread(
+    base::OnceCallback<void(std::unique_ptr<ResourceIDToImage>)> io_task) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
+  ui::ResourceBundle& resource_bundle = ui::ResourceBundle::GetSharedInstance();
+  std::unique_ptr<ResourceIDToImage> result =
+      base::MakeUnique<ResourceIDToImage>();
+
+  // These resource ID should match to the ones used by
+  // SetWorkspaceIconOnFILEThread below.
+  for (int id : {IDR_APPS_FOLDER_16, IDR_APPS_FOLDER_32,
+                 IDR_APPS_FOLDER_OVERLAY_128, IDR_APPS_FOLDER_OVERLAY_512}) {
+    gfx::Image image = resource_bundle.GetNativeImageNamed(id);
+    (*result)[id] = ImageRepForGFXImage(image);
+  }
+
+  base::PostTaskWithTraits(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+       base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
+      base::BindOnce(std::move(io_task), std::move(result)));
+}
+
+void SetWorkspaceIconOnWorkerThread(const base::FilePath& apps_directory,
+                                    std::unique_ptr<ResourceIDToImage> images) {
+  base::AssertBlockingAllowed();
+
+  base::scoped_nsobject<NSImage> folder_icon_image([[NSImage alloc] init]);
+  // Use complete assets for the small icon sizes. -[NSWorkspace setIcon:] has a
+  // bug when dealing with named NSImages where it incorrectly handles alpha
+  // premultiplication. This is most noticable with small assets since the 1px
+  // border is a much larger component of the small icons.
+  // See http://crbug.com/305373 for details.
+  for (int id : {IDR_APPS_FOLDER_16, IDR_APPS_FOLDER_32}) {
+    const auto& found = images->find(id);
+    DCHECK(found != images->end());
+    [folder_icon_image addRepresentation:found->second];
+  }
+
+  // Brand larger folder assets with an embossed app launcher logo to
+  // conserve distro size and for better consistency with changing hue
+  // across OSX versions. The folder is textured, so compresses poorly
+  // without this.
+  NSImage* base_image = [NSImage imageNamed:NSImageNameFolder];
+  for (int id : {IDR_APPS_FOLDER_OVERLAY_128, IDR_APPS_FOLDER_OVERLAY_512}) {
+    const auto& found = images->find(id);
+    DCHECK(found != images->end());
+    NSImageRep* with_overlay = OverlayImageRep(base_image, found->second);
+    DCHECK(with_overlay);
+    if (with_overlay)
+      [folder_icon_image addRepresentation:with_overlay];
+  }
+  [[NSWorkspace sharedWorkspace]
+      setIcon:folder_icon_image
+      forFile:base::mac::FilePathToNSString(apps_directory)
+      options:0];
 }
 
 // Adds a localized strings file for the Chrome Apps directory using the current
@@ -387,11 +450,11 @@ NSImageRep* ImageRepForResource(int resource_id) {
 // | + .localized
 // | | en.strings
 // | | de.strings
-void UpdateAppShortcutsSubdirLocalizedName(
+bool UpdateAppShortcutsSubdirLocalizedName(
     const base::FilePath& apps_directory) {
   base::FilePath localized = apps_directory.Append(".localized");
   if (!base::CreateDirectory(localized))
-    return;
+    return false;
 
   base::FilePath directory_name = apps_directory.BaseName().RemoveExtension();
   base::string16 localized_name =
@@ -409,35 +472,12 @@ void UpdateAppShortcutsSubdirLocalizedName(
   [strings_dict writeToFile:strings_path
                  atomically:YES];
 
-  base::scoped_nsobject<NSImage> folder_icon_image([[NSImage alloc] init]);
-
-  // Use complete assets for the small icon sizes. -[NSWorkspace setIcon:] has a
-  // bug when dealing with named NSImages where it incorrectly handles alpha
-  // premultiplication. This is most noticable with small assets since the 1px
-  // border is a much larger component of the small icons.
-  // See http://crbug.com/305373 for details.
-  [folder_icon_image addRepresentation:ImageRepForResource(IDR_APPS_FOLDER_16)];
-  [folder_icon_image addRepresentation:ImageRepForResource(IDR_APPS_FOLDER_32)];
-
-  // Brand larger folder assets with an embossed app launcher logo to conserve
-  // distro size and for better consistency with changing hue across OSX
-  // versions. The folder is textured, so compresses poorly without this.
-  const int kBrandResourceIds[] = {
-    IDR_APPS_FOLDER_OVERLAY_128,
-    IDR_APPS_FOLDER_OVERLAY_512,
-  };
-  NSImage* base_image = [NSImage imageNamed:NSImageNameFolder];
-  for (size_t i = 0; i < arraysize(kBrandResourceIds); ++i) {
-    NSImageRep* with_overlay =
-        OverlayImageRep(base_image, ImageRepForResource(kBrandResourceIds[i]));
-    DCHECK(with_overlay);
-    if (with_overlay)
-      [folder_icon_image addRepresentation:with_overlay];
-  }
-  [[NSWorkspace sharedWorkspace]
-      setIcon:folder_icon_image
-      forFile:base::mac::FilePathToNSString(apps_directory)
-      options:0];
+  content::BrowserThread::PostTask(
+      content::BrowserThread::UI, FROM_HERE,
+      base::BindOnce(
+          &GetImageResourcesOnUIThread,
+          base::BindOnce(&SetWorkspaceIconOnWorkerThread, apps_directory)));
+  return true;
 }
 
 void DeletePathAndParentIfEmpty(const base::FilePath& app_path) {
@@ -529,8 +569,8 @@ std::unique_ptr<web_app::ShortcutInfo> RecordAppShimErrorAndBuildShortcutInfo(
 }
 
 void RevealAppShimInFinderForAppOnFileThread(
-    const web_app::ShortcutInfo& shortcut_info,
-    const base::FilePath& app_path) {
+    const base::FilePath& app_path,
+    const web_app::ShortcutInfo& shortcut_info) {
   web_app::WebAppShortcutCreator shortcut_creator(app_path, &shortcut_info);
   shortcut_creator.RevealAppShimInFinder();
 }
@@ -649,7 +689,11 @@ bool WebAppShortcutCreator::CreateShortcuts(
     return false;
   }
 
-  UpdateAppShortcutsSubdirLocalizedName(applications_dir);
+  // Only set folder icons and a localized name once. This avoids concurrent
+  // calls to -[NSWorkspace setIcon:..], which is not reentrant.
+  static bool once = UpdateAppShortcutsSubdirLocalizedName(applications_dir);
+  if (!once)
+    LOG(ERROR) << "Failed to localize " << applications_dir.value();
 
   // If non-nil, this path is added to the OSX Dock after creating shortcuts.
   NSString* path_to_add_to_dock = nil;
@@ -979,13 +1023,8 @@ void MaybeLaunchShortcut(std::unique_ptr<ShortcutInfo> shortcut_info) {
     return;
   }
 
-  const web_app::ShortcutInfo& shortcut_info_ref = *shortcut_info;
-  content::BrowserThread::PostTaskAndReply(
-      content::BrowserThread::FILE, FROM_HERE,
-      base::Bind(&LaunchShimOnFileThread, base::ConstRef(shortcut_info_ref),
-                 false),
-      base::Bind(&web_app::internals::DeleteShortcutInfoOnUIThread,
-                 base::Passed(&shortcut_info), base::Closure()));
+  web_app::ShortcutInfo::PostIOTask(
+      base::BindOnce(&LaunchShimOnFileThread, false), std::move(shortcut_info));
 }
 
 bool MaybeRebuildShortcut(const base::CommandLine& command_line) {
@@ -993,11 +1032,10 @@ bool MaybeRebuildShortcut(const base::CommandLine& command_line) {
     return false;
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                     base::TaskPriority::BACKGROUND),
-      base::Bind(&RecordAppShimErrorAndBuildShortcutInfo,
-                 command_line.GetSwitchValuePath(app_mode::kAppShimError)),
-      base::Bind(&RebuildAppAndLaunch));
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      base::BindOnce(&RecordAppShimErrorAndBuildShortcutInfo,
+                     command_line.GetSwitchValuePath(app_mode::kAppShimError)),
+      base::BindOnce(&RebuildAppAndLaunch));
   return true;
 }
 
@@ -1026,24 +1064,18 @@ void UpdateShortcutsForAllApps(Profile* profile,
 
 void RevealAppShimInFinderForApp(Profile* profile,
                                  const extensions::Extension* app) {
-  std::unique_ptr<web_app::ShortcutInfo> shortcut_info =
-      ShortcutInfoForExtensionAndProfile(app, profile);
-  const web_app::ShortcutInfo& shortcut_info_ref = *shortcut_info;
-  content::BrowserThread::PostTaskAndReply(
-      content::BrowserThread::FILE, FROM_HERE,
-      base::Bind(&RevealAppShimInFinderForAppOnFileThread,
-                 base::ConstRef(shortcut_info_ref), app->path()),
-      base::Bind(&web_app::internals::DeleteShortcutInfoOnUIThread,
-                 base::Passed(&shortcut_info), base::Closure()));
+  web_app::ShortcutInfo::PostIOTask(
+      base::BindOnce(&RevealAppShimInFinderForAppOnFileThread, app->path()),
+      ShortcutInfoForExtensionAndProfile(app, profile));
 }
 
 namespace internals {
 
 bool CreatePlatformShortcuts(const base::FilePath& app_data_path,
-                             const ShortcutInfo& shortcut_info,
                              const ShortcutLocations& creation_locations,
-                             ShortcutCreationReason creation_reason) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::FILE);
+                             ShortcutCreationReason creation_reason,
+                             const ShortcutInfo& shortcut_info) {
+  base::AssertBlockingAllowed();
   if (AppShimsDisabledForTest())
     return true;
 
@@ -1053,7 +1085,7 @@ bool CreatePlatformShortcuts(const base::FilePath& app_data_path,
 
 void DeletePlatformShortcuts(const base::FilePath& app_data_path,
                              const ShortcutInfo& shortcut_info) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::FILE);
+  base::AssertBlockingAllowed();
   WebAppShortcutCreator shortcut_creator(app_data_path, &shortcut_info);
   shortcut_creator.DeleteShortcuts();
 }
@@ -1065,6 +1097,7 @@ void UpdatePlatformShortcuts(const base::FilePath& app_data_path,
 }
 
 void DeleteAllShortcutsForProfile(const base::FilePath& profile_path) {
+  base::AssertBlockingAllowed();
   const std::string profile_base_name = profile_path.BaseName().value();
   std::vector<base::FilePath> bundles = GetAllAppBundlesInPath(
       profile_path.Append(chrome::kWebAppDirname), profile_base_name);
@@ -1081,3 +1114,20 @@ void DeleteAllShortcutsForProfile(const base::FilePath& profile_path) {
 }  // namespace internals
 
 }  // namespace web_app
+
+namespace chrome {
+
+void ShowCreateChromeAppShortcutsDialog(
+    gfx::NativeWindow /*parent_window*/,
+    Profile* profile,
+    const extensions::Extension* app,
+    const base::Callback<void(bool)>& close_callback) {
+  // On Mac, the Applications folder is the only option, so don't bother asking
+  // the user anything. Just create shortcuts.
+  CreateShortcuts(web_app::SHORTCUT_CREATION_BY_USER,
+                  web_app::ShortcutLocations(), profile, app);
+  if (!close_callback.is_null())
+    close_callback.Run(true);
+}
+
+}  // namespace chrome

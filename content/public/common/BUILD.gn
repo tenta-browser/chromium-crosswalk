@@ -108,8 +108,6 @@ source_set("common_sources") {
 
   sources = [
     "appcache_info.h",
-    "associated_interface_provider.h",
-    "associated_interface_registry.h",
     "bind_interface_helpers.h",
     "bindings_policy.h",
     "browser_controls_state.h",
@@ -153,6 +151,9 @@ source_set("common_sources") {
     "frame_navigate_params.h",
     "injection_test_mac.h",
     "injection_test_win.h",
+    "input_event_ack_source.h",
+    "input_event_ack_state.h",
+    "isolated_world_ids.h",
     "javascript_dialog_type.h",
     "main_function_params.h",
     "manifest.cc",
@@ -169,11 +170,14 @@ source_set("common_sources") {
     "mhtml_generation_params.h",
     "mojo_channel_switches.cc",
     "mojo_channel_switches.h",
+    "network_connection_tracker.cc",
+    "network_connection_tracker.h",
     "notification_resources.cc",
     "notification_resources.h",
     "origin_trial_policy.cc",
     "origin_trial_policy.h",
     "origin_util.h",
+    "page_importance_signals.h",
     "page_state.cc",
     "page_state.h",
     "page_type.h",
@@ -189,8 +193,7 @@ source_set("common_sources") {
     "presentation_info.h",
     "previews_state.h",
     "process_type.h",
-    "push_messaging_status.cc",
-    "push_messaging_status.h",
+    "push_event_payload.h",
     "push_subscription_options.h",
     "quarantine.h",
     "referrer.cc",
@@ -201,6 +204,8 @@ source_set("common_sources") {
     "request_context_type.h",
     "resource_devtools_info.cc",
     "resource_devtools_info.h",
+    "resource_request.cc",
+    "resource_request.h",
     "resource_request_body.cc",
     "resource_request_body.h",
     "resource_response.cc",
@@ -211,17 +216,19 @@ source_set("common_sources") {
     "resource_type.h",
     "result_codes.h",
     "sandbox_init.h",
-    "sandbox_linux.h",
-    "sandbox_type.h",
     "sandboxed_process_launcher_delegate.cc",
     "sandboxed_process_launcher_delegate.h",
     "screen_info.cc",
     "screen_info.h",
     "screen_orientation_values.h",
     "send_zygote_child_ping_linux.h",
-    "service_info.cc",
-    "service_info.h",
     "service_manager_connection.h",
+    "service_worker_modes.h",
+    "simple_connection_filter.cc",
+    "simple_connection_filter.h",
+    "simple_url_loader.cc",
+    "simple_url_loader.h",
+    "socket_permission_request.h",
     "speech_recognition_error.h",
     "speech_recognition_grammar.h",
     "speech_recognition_result.cc",
@@ -232,6 +239,8 @@ source_set("common_sources") {
     "url_constants.cc",
     "url_constants.h",
     "url_fetcher.h",
+    "url_loader_throttle.cc",
+    "url_loader_throttle.h",
     "url_utils.cc",
     "url_utils.h",
     "user_agent.h",
@@ -239,6 +248,7 @@ source_set("common_sources") {
     "web_preferences.h",
     "webplugininfo.cc",
     "webplugininfo.h",
+    "webplugininfo_param_traits.h",
     "zygote_fork_delegate_linux.h",
     "zygote_handle.h",
   ]
@@ -251,16 +261,18 @@ source_set("common_sources") {
   public_configs = [ "//v8:external_startup_data" ]
 
   public_deps = [
+    ":interfaces",
     ":service_names",
     "//content/common",
-    "//content/public/common:interfaces",
     "//ipc",
     "//mojo/edk/system",
     "//mojo/public/cpp/bindings",
     "//net",
+    "//services/service_manager/embedder",
     "//services/service_manager/public/cpp",
     "//services/service_manager/public/interfaces",
     "//third_party/WebKit/public:blink_headers",
+    "//third_party/WebKit/public:mojo_bindings",
     "//ui/accessibility",
     "//ui/surface",
     "//url/ipc:url_ipc",
@@ -270,15 +282,16 @@ source_set("common_sources") {
 
     # This looks needless as we have //content/common in public_deps, but it's
     # needed because of allow_circular_includes_from.
-    "//components/mime_util",
     "//content/common:mojo_bindings",
     "//media",
     "//mojo/common",
     "//ppapi/c",
     "//ppapi/features",
+    "//services/network/public/interfaces:interfaces",
     "//services/service_manager/public/cpp",
     "//skia",
     "//storage/common",
+    "//third_party/WebKit/common:blink_common",
     "//third_party/icu",
     "//ui/accessibility",
     "//ui/base",
@@ -295,6 +308,7 @@ source_set("common_sources") {
 
   # //content/common needs to include public headers.
   allow_circular_includes_from = [
+    ":interfaces",
     "//content/common",
     "//content/common:mojo_bindings",
   ]
@@ -332,13 +346,48 @@ source_set("feature_h264_with_openh264_ffmpeg") {
 }
 
 mojom("interfaces") {
+  # Must depend on //content/public/common/ instead, for component build.
+  visibility = [
+    ":common_sources",
+    "//content/common/*",
+    "//chrome/common:mojo_bindings",
+    "//chrome/common:mojo_bindings_blink",
+  ]
+
   sources = [
+    "appcache_info.mojom",
+    "download_stream.mojom",
+    "network_service.mojom",
+    "network_service_test.mojom",
+    "push_messaging_status.mojom",
+    "url_loader.mojom",
+    "url_loader_factory.mojom",
+    "webplugininfo.mojom",
     "window_container_type.mojom",
   ]
+
+  public_deps = [
+    ":resource_type_bindings",
+    "//mojo/common:common_custom_types",
+    "//services/network/public/interfaces",
+    "//url/mojo:url_mojom_gurl",
+    "//url/mojo:url_mojom_origin",
+  ]
+
+  component_output_prefix = "content_public_common_mojo_bindings"
+  export_class_attribute = "CONTENT_EXPORT"
+  export_define = "CONTENT_IMPLEMENTATION=1"
+  export_header = "content/common/content_export.h"
 }
 
 mojom("service_names") {
   sources = [
     "service_names.mojom",
+  ]
+}
+
+mojom("resource_type_bindings") {
+  sources = [
+    "resource_type.mojom",
   ]
 }

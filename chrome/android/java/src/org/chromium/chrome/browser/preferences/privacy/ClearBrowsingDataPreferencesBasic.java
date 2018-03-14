@@ -6,9 +6,12 @@ package org.chromium.chrome.browser.preferences.privacy;
 
 import android.os.Bundle;
 
+import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.browsing_data.ClearBrowsingDataTab;
-import org.chromium.chrome.browser.preferences.ClearBrowsingDataTabCheckBoxPreference;
+import org.chromium.chrome.browser.preferences.ClearBrowsingDataCheckBoxPreference;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.document.TabDelegate;
@@ -20,30 +23,24 @@ import org.chromium.components.sync.ModelType;
  * A simpler version of {@link ClearBrowsingDataPreferences} with fewer dialog options and more
  * explanatory text.
  */
-public class ClearBrowsingDataPreferencesBasic extends ClearBrowsingDataPreferencesTab {
-    /** The my activity URL. */
-    private static final String MY_ACTIVITY_URL =
-            "https://myactivity.google.com/myactivity/?utm_source=chrome_cbd";
-
+public class ClearBrowsingDataPreferencesBasic extends ClearBrowsingDataPreferences {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        ClearBrowsingDataTabCheckBoxPreference historyCheckbox =
-                (ClearBrowsingDataTabCheckBoxPreference) findPreference(PREF_HISTORY);
-        ClearBrowsingDataTabCheckBoxPreference cookiesCheckbox =
-                (ClearBrowsingDataTabCheckBoxPreference) findPreference(PREF_COOKIES);
+        ClearBrowsingDataCheckBoxPreference historyCheckbox =
+                (ClearBrowsingDataCheckBoxPreference) findPreference(PREF_HISTORY);
+        ClearBrowsingDataCheckBoxPreference cookiesCheckbox =
+                (ClearBrowsingDataCheckBoxPreference) findPreference(PREF_COOKIES);
 
-        historyCheckbox.setLinkClickDelegate(new Runnable() {
-            @Override
-            public void run() {
-                new TabDelegate(false /* incognito */)
-                        .launchUrl(MY_ACTIVITY_URL, TabModel.TabLaunchType.FROM_CHROME_UI);
-            }
+        historyCheckbox.setLinkClickDelegate(() -> {
+            new TabDelegate(false /* incognito */)
+                    .launchUrl(UrlConstants.MY_ACTIVITY_URL_IN_CBD,
+                            TabModel.TabLaunchType.FROM_CHROME_UI);
         });
 
         if (ChromeSigninController.get().isSignedIn()) {
-            if (isHistorySyncEnabled()) { // is synced
+            if (isHistorySyncEnabled()) {
                 historyCheckbox.setSummary(R.string.clear_browsing_history_summary_synced);
             } else {
                 historyCheckbox.setSummary(R.string.clear_browsing_history_summary_signed_in);
@@ -57,7 +54,12 @@ public class ClearBrowsingDataPreferencesBasic extends ClearBrowsingDataPreferen
         boolean syncEnabled = AndroidSyncSettings.isSyncEnabled(getActivity());
         ProfileSyncService syncService = ProfileSyncService.get();
         return syncEnabled && syncService != null
-                && syncService.getPreferredDataTypes().contains(ModelType.TYPED_URLS);
+                && syncService.getActiveDataTypes().contains(ModelType.HISTORY_DELETE_DIRECTIVES);
+    }
+
+    @Override
+    protected int getPreferenceType() {
+        return ClearBrowsingDataTab.BASIC;
     }
 
     @Override
@@ -67,7 +69,10 @@ public class ClearBrowsingDataPreferencesBasic extends ClearBrowsingDataPreferen
     }
 
     @Override
-    protected int getPreferenceType() {
-        return ClearBrowsingDataTab.BASIC;
+    protected void onClearBrowsingData() {
+        super.onClearBrowsingData();
+        RecordHistogram.recordEnumeratedHistogram("History.ClearBrowsingData.UserDeletedFromTab",
+                ClearBrowsingDataTab.BASIC, ClearBrowsingDataTab.NUM_TYPES);
+        RecordUserAction.record("ClearBrowsingData_BasicTab");
     }
 }

@@ -4,12 +4,22 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
+        {
+          "object": "LayoutSVGInlineText #text",
+          "rect": [103, 24, 160, 116],
+          "reason": "geometry"
+        },
         {
           "object": "LayoutSVGText text",
           "rect": [103, 24, 160, 116],
           "reason": "full"
+        },
+        {
+          "object": "LayoutSVGInlineText #text",
+          "rect": [63, 24, 160, 116],
+          "reason": "geometry"
         },
         {
           "object": "LayoutSVGText text",
@@ -30,11 +40,11 @@
     },
     {
       "object": "LayoutSVGInlineText #text",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "InlineTextBox 'Foo'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     }
   ]
 }

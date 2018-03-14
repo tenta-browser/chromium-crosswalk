@@ -9,10 +9,11 @@
 #include <memory>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/engine/cycle/status_counters.h"
 #include "components/sync/engine/model_type_processor.h"
@@ -36,12 +37,12 @@ class ProcessorEntityTracker;
 // model type threads. See //docs/sync/uss/shared_model_type_processor.md for a
 // more thorough description.
 class SharedModelTypeProcessor : public ModelTypeProcessor,
-                                 public ModelTypeChangeProcessor,
-                                 base::NonThreadSafe {
+                                 public ModelTypeChangeProcessor {
  public:
   SharedModelTypeProcessor(ModelType type,
                            ModelTypeSyncBridge* bridge,
-                           const base::RepeatingClosure& dump_stack);
+                           const base::RepeatingClosure& dump_stack,
+                           bool commit_only);
   ~SharedModelTypeProcessor() override;
 
   // Whether the processor is allowing changes to its model type. If this is
@@ -57,18 +58,24 @@ class SharedModelTypeProcessor : public ModelTypeProcessor,
            MetadataChangeList* metadata_change_list) override;
   void Delete(const std::string& storage_key,
               MetadataChangeList* metadata_change_list) override;
+  void UpdateStorageKey(const EntityData& entity_data,
+                        const std::string& storage_key,
+                        MetadataChangeList* metadata_change_list) override;
+  void UntrackEntity(const EntityData& entity_data) override;
   void ModelReadyToSync(std::unique_ptr<MetadataBatch> batch) override;
   void OnSyncStarting(const ModelErrorHandler& error_handler,
                       const StartCallback& callback) override;
   void DisableSync() override;
   bool IsTrackingMetadata() override;
   void ReportError(const ModelError& error) override;
-  void ReportError(const tracked_objects::Location& location,
+  void ReportError(const base::Location& location,
                    const std::string& message) override;
 
   // ModelTypeProcessor implementation.
   void ConnectSync(std::unique_ptr<CommitQueue> worker) override;
   void DisconnectSync() override;
+  void GetLocalChanges(size_t max_entries,
+                       const GetLocalChangesCallback& callback) override;
   void OnCommitCompleted(const sync_pb::ModelTypeState& type_state,
                          const CommitResponseDataList& response_list) override;
   void OnUpdateReceived(const sync_pb::ModelTypeState& type_state,
@@ -115,8 +122,8 @@ class SharedModelTypeProcessor : public ModelTypeProcessor,
   // Caches EntityData from the |data_batch| in the entity trackers.
   void ConsumeDataBatch(std::unique_ptr<DataBatch> data_batch);
 
-  // Sends all commit requests that are due to be sent to the sync thread.
-  void FlushPendingCommitRequests();
+  // Nudges worker if there are any local entities to be committed.
+  void NudgeForCommitIfNeeded();
 
   // Computes the client tag hash for the given client |tag|.
   std::string GetHashForTag(const std::string& tag);
@@ -142,6 +149,38 @@ class SharedModelTypeProcessor : public ModelTypeProcessor,
 
   // Version of the above that generates a tag for |data|.
   ProcessorEntityTracker* CreateEntity(const EntityData& data);
+
+  // Returns true if all processor entity trackers have non-empty storage keys.
+  bool AllStorageKeysPopulated() const;
+
+  // Expires entries according to garbage collection directives.
+  void ExpireEntriesIfNeeded(
+      const sync_pb::DataTypeProgressMarker& progress_marker);
+
+  // Clear metadata for the entries in |storage_key_to_be_deleted|.
+  void ClearMetadataForEntries(
+      const std::vector<std::string>& storage_key_to_be_deleted,
+      MetadataChangeList* metadata_changes);
+
+  // Tombstones all entries whose versions are older than
+  // |version_watermark| unless they are unsynced.
+  void ExpireEntriesByVersion(int64_t version_watermark,
+                              MetadataChangeList* metadata_changes);
+
+  // Tombstones all entries whose ages are older than
+  // |age_watermark_in_days| unless they are unsynced.
+  void ExpireEntriesByAge(int32_t age_watermark_in_days,
+                          MetadataChangeList* metadata_changes);
+
+  // If the number of |entities_| exceeds |max_number_of_items|, the
+  // processor will tombstone the extra sync entities based on the LRU rule.
+  void ExpireEntriesByItemLimit(int32_t max_number_of_items,
+                                MetadataChangeList* metadata_changes);
+
+  // Removes entity tracker and clears metadata for entity from
+  // MetadataChangeList.
+  void RemoveEntity(ProcessorEntityTracker* entity,
+                    MetadataChangeList* metadata_change_list);
 
   /////////////////////
   // Processor state //
@@ -202,11 +241,35 @@ class SharedModelTypeProcessor : public ModelTypeProcessor,
   // entities may not always contain model type data/specifics.
   std::map<std::string, std::unique_ptr<ProcessorEntityTracker>> entities_;
 
-  // The bridge wants to communicate entirely via storage keys that is free to
-  // define and can understand more easily. All of the sync machinery wants to
-  // use client tag hash. This mapping allows us to convert from storage key to
-  // client tag hash. The other direction can use |entities_|.
+  // The bridge wants to communicate entirely via storage keys that it is free
+  // to define and can understand more easily. All of the sync machinery wants
+  // to use client tag hash. This mapping allows us to convert from storage key
+  // to client tag hash. The other direction can use |entities_|.
+  // Entity is temporarily not included in this map for the duration of
+  // MergeSyncData/ApplySyncChanges call when the bridge doesn't support
+  // GetStorageKey(). In this case the bridge is responsible for updating
+  // storage key with UpdateStorageKey() call from within
+  // MergeSyncData/ApplySyncChanges.
   std::map<std::string, std::string> storage_key_to_tag_hash_;
+
+  // If the processor should behave as if |type_| is one of the commit only
+  // model types. For this processor, being commit only means that on commit
+  // confirmation, we should delete local data, because the model side never
+  // intends to read it. This includes both data and metadata.
+  bool commit_only_;
+
+  // The version which processor already ran garbage collection against on.
+  // Cache this value is for saving resource purpose(ex. cpu, battery), so
+  // processor only run on each version once.
+  int64_t cached_gc_directive_version_;
+
+  // The day which processor already ran garbage collection against on.
+  // Cache this value is for saving resource purpose(ex. cpu, battery), we round
+  // up garbage collection age to day, so we only run GC once a day if server
+  // did not change the age out days.
+  base::Time cached_gc_directive_aged_out_day_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   // WeakPtrFactory for this processor which will be sent to sync thread.
   base::WeakPtrFactory<SharedModelTypeProcessor> weak_ptr_factory_;

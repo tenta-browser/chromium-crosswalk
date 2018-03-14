@@ -2,10 +2,6 @@
   "Android N5 Swarm": {
     "gtest_tests": [
       {
-        "override_compile_targets": [
-          "android_webview_test_apk"
-        ],
-        "override_isolate_target": "android_webview_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -14,28 +10,11 @@
               "device_type": "hammerhead"
             }
           ],
-          "shards": 7
-        },
-        "test": "android_webview_test_apk"
-      },
-      {
-        "override_isolate_target": "base_unittests",
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "device_os": "KTU84P",
-              "device_type": "hammerhead"
-            }
-          ]
+          "expiration": 10800
         },
         "test": "base_unittests"
       },
       {
-        "override_compile_targets": [
-          "chrome_public_test_apk"
-        ],
-        "override_isolate_target": "chrome_public_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -44,12 +23,12 @@
               "device_type": "hammerhead"
             }
           ],
+          "expiration": 10800,
           "shards": 14
         },
         "test": "chrome_public_test_apk"
       },
       {
-        "override_isolate_target": "content_browsertests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -58,12 +37,12 @@
               "device_type": "hammerhead"
             }
           ],
+          "expiration": 10800,
           "shards": 10
         },
         "test": "content_browsertests"
       },
       {
-        "override_isolate_target": "content_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -72,12 +51,26 @@
               "device_type": "hammerhead"
             }
           ],
+          "expiration": 10800,
+          "shards": 3
+        },
+        "test": "content_shell_test_apk"
+      },
+      {
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "expiration": 10800,
           "shards": 3
         },
         "test": "content_unittests"
       },
       {
-        "override_isolate_target": "net_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -86,12 +79,12 @@
               "device_type": "hammerhead"
             }
           ],
+          "expiration": 10800,
           "shards": 4
         },
         "test": "net_unittests"
       },
       {
-        "override_isolate_target": "unit_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -100,6 +93,7 @@
               "device_type": "hammerhead"
             }
           ],
+          "expiration": 10800,
           "shards": 5
         },
         "test": "unit_tests"
@@ -109,10 +103,6 @@
   "Android N5X Swarm": {
     "gtest_tests": [
       {
-        "override_compile_targets": [
-          "android_webview_test_apk"
-        ],
-        "override_isolate_target": "android_webview_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -121,28 +111,11 @@
               "device_type": "bullhead"
             }
           ],
-          "shards": 7
-        },
-        "test": "android_webview_test_apk"
-      },
-      {
-        "override_isolate_target": "base_unittests",
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "device_os": "MMB29Q",
-              "device_type": "bullhead"
-            }
-          ]
+          "expiration": 10800
         },
         "test": "base_unittests"
       },
       {
-        "override_compile_targets": [
-          "chrome_public_test_apk"
-        ],
-        "override_isolate_target": "chrome_public_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -151,26 +124,12 @@
               "device_type": "bullhead"
             }
           ],
-          "shards": 15
-        },
-        "test": "chrome_public_test_apk"
-      },
-      {
-        "override_isolate_target": "content_browsertests",
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "device_os": "MMB29Q",
-              "device_type": "bullhead"
-            }
-          ],
+          "expiration": 10800,
           "shards": 10
         },
         "test": "content_browsertests"
       },
       {
-        "override_isolate_target": "content_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -179,12 +138,26 @@
               "device_type": "bullhead"
             }
           ],
+          "expiration": 10800,
+          "shards": 3
+        },
+        "test": "content_shell_test_apk"
+      },
+      {
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "device_os": "MMB29Q",
+              "device_type": "bullhead"
+            }
+          ],
+          "expiration": 10800,
           "shards": 4
         },
         "test": "content_unittests"
       },
       {
-        "override_isolate_target": "net_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -193,12 +166,12 @@
               "device_type": "bullhead"
             }
           ],
+          "expiration": 10800,
           "shards": 4
         },
         "test": "net_unittests"
       },
       {
-        "override_isolate_target": "unit_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -207,9 +180,24 @@
               "device_type": "bullhead"
             }
           ],
+          "expiration": 10800,
           "shards": 8
         },
         "test": "unit_tests"
+      },
+      {
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "device_os": "MMB29Q",
+              "device_type": "bullhead"
+            }
+          ],
+          "expiration": 10800,
+          "shards": 7
+        },
+        "test": "webview_instrumentation_test_apk"
       }
     ]
   },

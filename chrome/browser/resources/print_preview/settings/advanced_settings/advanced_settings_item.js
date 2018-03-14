@@ -1,28 +1,38 @@
 // Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/**
+ * Specifies a custom vendor capability.
+ * @typedef {{
+ *   id: (string),
+ *   display_name: (string),
+ *   localized_display_name: (string | undefined),
+ *   type: (string),
+ *   select_cap: ({
+ *     option: (Array<{
+ *       display_name: (string),
+ *       type: (string | undefined),
+ *       value: (number | string | boolean),
+ *       is_default: (boolean | undefined)
+ *     }>|undefined)
+ *   }|undefined)
+ * }}
+ */
+print_preview.VendorCapability;
 
 cr.define('print_preview', function() {
   'use strict';
 
   /**
    * Component that renders a destination item in a destination list.
-   * @param {!cr.EventTarget} eventTarget Event target to dispatch selection
-   *     events to.
    * @param {!print_preview.PrintTicketStore} printTicketStore Contains the
    *     print ticket to print.
-   * @param {!Object} capability Capability to render.
+   * @param {!print_preview.VendorCapability} capability Capability to render.
    * @constructor
    * @extends {print_preview.Component}
    */
-  function AdvancedSettingsItem(eventTarget, printTicketStore, capability) {
+  function AdvancedSettingsItem(printTicketStore, capability) {
     print_preview.Component.call(this);
-
-    /**
-     * Event target to dispatch selection events to.
-     * @private {!cr.EventTarget}
-     */
-    this.eventTarget_ = eventTarget;
 
     /**
      * Contains the print ticket to print.
@@ -32,7 +42,7 @@ cr.define('print_preview', function() {
 
     /**
      * Capability this component renders.
-     * @private {!Object}
+     * @private {!print_preview.VendorCapability}
      */
     this.capability_ = capability;
 
@@ -58,15 +68,15 @@ cr.define('print_preview', function() {
 
     /** @private {!EventTracker} */
     this.tracker_ = new EventTracker();
-  };
+  }
 
   AdvancedSettingsItem.prototype = {
     __proto__: print_preview.Component.prototype,
 
     /** @override */
     createDom: function() {
-      this.setElementInternal(this.cloneTemplateInternal(
-          'advanced-settings-item-template'));
+      this.setElementInternal(
+          this.cloneTemplateInternal('advanced-settings-item-template'));
 
       this.tracker_.add(
           this.select_, 'change', this.onSelectChange_.bind(this));
@@ -112,20 +122,21 @@ cr.define('print_preview', function() {
     },
 
     /**
-     * @return {HTMLSelectElement} Select element.
+     * @return {!HTMLSelectElement} Select element.
      * @private
      */
     get select_() {
-      return this.getChildElement(
-          '.advanced-settings-item-value-select-control');
+      return /** @type {!HTMLSelectElement} */ (
+          this.getChildElement('.advanced-settings-item-value-select-control'));
     },
 
     /**
-     * @return {HTMLSelectElement} Text element.
+     * @return {!HTMLSelectElement} Text element.
      * @private
      */
     get text_() {
-      return this.getChildElement('.advanced-settings-item-value-text-control');
+      return /** @type {!HTMLSelectElement} */ (
+          this.getChildElement('.advanced-settings-item-value-text-control'));
     },
 
     /**
@@ -144,7 +155,7 @@ cr.define('print_preview', function() {
       this.selectedValue_ = this.text_.value || null;
 
       if (this.query_) {
-        var optionMatches = (this.selectedValue_ || '').match(this.query_);
+        const optionMatches = (this.selectedValue_ || '').match(this.query_);
         // Even if there's no match anymore, keep the item visible to do not
         // surprise user. Even if there's a match, do not show the bubble, user
         // is already aware that this option is visible and matches the search.
@@ -162,7 +173,7 @@ cr.define('print_preview', function() {
      * @private
      */
     getEntityDisplayName_: function(entity) {
-      var displayName = entity.display_name;
+      let displayName = entity.display_name;
       if (!displayName && entity.display_name_localized)
         displayName = getStringForCurrentLocale(entity.display_name_localized);
       return displayName || '';
@@ -173,22 +184,22 @@ cr.define('print_preview', function() {
      * @private
      */
     renderCapability_: function() {
-      var textContent = this.getEntityDisplayName_(this.capability_);
+      const textContent = this.getEntityDisplayName_(this.capability_);
       // Whether capability name matches the query.
-      var nameMatches = this.query_ ? !!textContent.match(this.query_) : true;
+      const nameMatches = this.query_ ? !!textContent.match(this.query_) : true;
       // An array of text segments of the capability value matching the query.
-      var optionMatches = null;
+      let optionMatches = null;
       if (this.query_) {
         if (this.capability_.type == 'SELECT') {
           // Look for the first option that matches the query.
-          for (var i = 0; i < this.select_.length && !optionMatches; i++)
+          for (let i = 0; i < this.select_.length && !optionMatches; i++)
             optionMatches = this.select_.options[i].text.match(this.query_);
         } else {
-          optionMatches = (this.text_.value || this.text_.placeholder || '')
-              .match(this.query_);
+          optionMatches = (this.text_.value || this.text_.placeholder ||
+                           '').match(this.query_);
         }
       }
-      var matches = nameMatches || !!optionMatches;
+      const matches = nameMatches || !!optionMatches;
 
       if (!optionMatches)
         this.hideSearchBubble_();
@@ -197,7 +208,7 @@ cr.define('print_preview', function() {
       if (!matches)
         return;
 
-      var nameEl = this.getChildElement('.advanced-settings-item-label');
+      const nameEl = this.getChildElement('.advanced-settings-item-label');
       if (this.query_) {
         nameEl.textContent = '';
         this.addTextWithHighlight_(nameEl, textContent);
@@ -216,7 +227,7 @@ cr.define('print_preview', function() {
      * @private
      */
     showSearchBubble_: function(text) {
-      var element =
+      const element =
           this.capability_.type == 'SELECT' ? this.select_ : this.text_;
       if (!this.searchBubble_) {
         this.searchBubble_ = new print_preview.SearchBubble(text);
@@ -257,18 +268,19 @@ cr.define('print_preview', function() {
      */
     initializeSelectValue_: function() {
       setIsVisible(
-          this.getChildElement('.advanced-settings-item-value-select'), true);
-      var selectEl = this.select_;
-      var indexToSelect = 0;
+          assert(this.getChildElement('.advanced-settings-item-value-select')),
+          true);
+      const selectEl = this.select_;
+      let indexToSelect = 0;
       this.capability_.select_cap.option.forEach(function(option, index) {
-        var item = document.createElement('option');
+        const item = document.createElement('option');
         item.text = this.getEntityDisplayName_(option);
         item.value = option.value;
         if (option.is_default)
           indexToSelect = index;
         selectEl.appendChild(item);
       }, this);
-      for (var i = 0, option; option = selectEl.options[i]; i++) {
+      for (let i = 0, option; (option = selectEl.options[i]); i++) {
         if (option.value == this.selectedValue_) {
           indexToSelect = i;
           break;
@@ -283,14 +295,15 @@ cr.define('print_preview', function() {
      */
     initializeTextValue_: function() {
       setIsVisible(
-          this.getChildElement('.advanced-settings-item-value-text'), true);
+          assert(this.getChildElement('.advanced-settings-item-value-text')),
+          true);
 
-      var defaultValue = null;
+      let defaultValue = null;
       if (this.capability_.type == 'TYPED_VALUE' &&
           this.capability_.typed_value_cap) {
         defaultValue = this.capability_.typed_value_cap.default || null;
-      } else if (this.capability_.type == 'RANGE' &&
-                 this.capability_.range_cap) {
+      } else if (
+          this.capability_.type == 'RANGE' && this.capability_.range_cap) {
         defaultValue = this.capability_.range_cap.default || null;
       }
 
@@ -311,7 +324,7 @@ cr.define('print_preview', function() {
         if (i % 2 == 0) {
           parent.appendChild(document.createTextNode(section));
         } else {
-          var span = document.createElement('span');
+          const span = document.createElement('span');
           span.className = 'advanced-settings-item-query-highlight';
           span.textContent = section;
           parent.appendChild(span);
@@ -321,7 +334,5 @@ cr.define('print_preview', function() {
   };
 
   // Export
-  return {
-    AdvancedSettingsItem: AdvancedSettingsItem
-  };
+  return {AdvancedSettingsItem: AdvancedSettingsItem};
 });

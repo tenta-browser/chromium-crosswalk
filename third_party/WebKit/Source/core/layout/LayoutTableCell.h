@@ -26,19 +26,21 @@
 #ifndef LayoutTableCell_h
 #define LayoutTableCell_h
 
+#include <memory>
 #include "core/CoreExport.h"
+#include "core/layout/CollapsedBorderValue.h"
 #include "core/layout/LayoutBlockFlow.h"
 #include "core/layout/LayoutTableRow.h"
 #include "core/layout/LayoutTableSection.h"
 #include "platform/LengthFunctions.h"
-#include <memory>
+#include "platform/text/WritingModeUtils.h"
 
 namespace blink {
 
-static const unsigned kUnsetColumnIndex = 0x1FFFFFFF;
-static const unsigned kMaxColumnIndex = 0x1FFFFFFE;  // 536,870,910
-
-enum IncludeBorderColorOrNot { kDoNotIncludeBorderColor, kIncludeBorderColor };
+#define BITS_OF_ABSOLUTE_COLUMN_INDEX 25
+static const unsigned kUnsetColumnIndex =
+    (1u << BITS_OF_ABSOLUTE_COLUMN_INDEX) - 1;
+static const unsigned kMaxColumnIndex = kUnsetColumnIndex - 1;
 
 class SubtreeLayoutScope;
 
@@ -84,7 +86,7 @@ class SubtreeLayoutScope;
 // LayoutTableCell is positioned with respect to the enclosing
 // LayoutTableSection. See callers of
 // LayoutTableSection::setLogicalPositionForCell() for when it is placed.
-class CORE_EXPORT LayoutTableCell final : public LayoutBlockFlow {
+class CORE_EXPORT LayoutTableCell : public LayoutBlockFlow {
  public:
   explicit LayoutTableCell(Element*);
 
@@ -103,9 +105,7 @@ class CORE_EXPORT LayoutTableCell final : public LayoutBlockFlow {
   void ColSpanOrRowSpanChanged();
 
   void SetAbsoluteColumnIndex(unsigned column) {
-    if (UNLIKELY(column > kMaxColumnIndex))
-      CRASH();
-
+    CHECK_LE(column, kMaxColumnIndex);
     absolute_column_index_ = column;
   }
 
@@ -178,23 +178,20 @@ class CORE_EXPORT LayoutTableCell final : public LayoutBlockFlow {
 
   void SetCellLogicalWidth(int constrained_logical_width, SubtreeLayoutScope&);
 
+  // Returns true if a non-column-spanning cell is in a collapsed column, or if
+  // a column-spanning cell starts in a collapsed column.
+  bool IsFirstColumnCollapsed() const;
+
   LayoutUnit BorderLeft() const override;
   LayoutUnit BorderRight() const override;
   LayoutUnit BorderTop() const override;
   LayoutUnit BorderBottom() const override;
-  LayoutUnit BorderStart() const override;
-  LayoutUnit BorderEnd() const override;
-  LayoutUnit BorderBefore() const override;
-  LayoutUnit BorderAfter() const override;
-
-  void CollectBorderValues(LayoutTable::CollapsedBorderValues&);
-  static void SortBorderValues(LayoutTable::CollapsedBorderValues&);
 
   void UpdateLayout() override;
 
   void Paint(const PaintInfo&, const LayoutPoint&) const override;
 
-  int CellBaselinePosition() const;
+  LayoutUnit CellBaselinePosition() const;
   bool IsBaselineAligned() const {
     EVerticalAlign va = Style()->VerticalAlign();
     return va == EVerticalAlign::kBaseline ||
@@ -206,7 +203,8 @@ class CORE_EXPORT LayoutTableCell final : public LayoutBlockFlow {
   // Align the cell in the block direction. This is done by calculating an
   // intrinsic padding before and after the cell contents, so that all cells in
   // the row get the same logical height.
-  void ComputeIntrinsicPadding(int row_height,
+  void ComputeIntrinsicPadding(int collapsed_height,
+                               int row_height,
                                EVerticalAlign,
                                SubtreeLayoutScope&);
 
@@ -220,21 +218,16 @@ class CORE_EXPORT LayoutTableCell final : public LayoutBlockFlow {
   LayoutUnit PaddingLeft() const override;
   LayoutUnit PaddingRight() const override;
 
-  // FIXME: For now we just assume the cell has the same block flow direction as
-  // the table. It's likely we'll create an extra anonymous LayoutBlock to
-  // handle mixing directionality anyway, in which case we can lock the block
-  // flow directionality of the cells to the table's directionality.
-  LayoutUnit PaddingBefore() const override;
-  LayoutUnit PaddingAfter() const override;
-
   void SetOverrideLogicalContentHeightFromRowHeight(LayoutUnit);
 
   void ScrollbarsChanged(bool horizontal_scrollbar_changed,
                          bool vertical_scrollbar_changed,
                          ScrollbarChangeContext = kLayout) override;
 
-  bool CellWidthChanged() const { return cell_width_changed_; }
-  void SetCellWidthChanged(bool b = true) { cell_width_changed_ = b; }
+  bool CellChildrenNeedLayout() const { return cell_children_need_layout_; }
+  void SetCellChildrenNeedLayout(bool b = true) {
+    cell_children_need_layout_ = b;
+  }
 
   static LayoutTableCell* CreateAnonymous(Document*);
   static LayoutTableCell* CreateAnonymousWithParent(const LayoutObject*);
@@ -243,91 +236,33 @@ class CORE_EXPORT LayoutTableCell final : public LayoutBlockFlow {
     return CreateAnonymousWithParent(parent);
   }
 
-  // This function is used to unify which table part's style we use for
-  // computing direction and writing mode. Writing modes are not allowed on row
-  // group and row but direction is. This means we can safely use the same style
-  // in all cases to simplify our code.
-  // FIXME: Eventually this function should replaced by style() once we support
-  // direction on all table parts and writing-mode on cells.
-  const ComputedStyle& StyleForCellFlow() const { return Row()->StyleRef(); }
+  // The table's style determines cell order and cell adjacency in the table.
+  // Collapsed borders also use in table's inline and block directions.
+  const ComputedStyle& TableStyle() const { return Table()->StyleRef(); }
 
-  const BorderValue& BorderAdjoiningTableStart() const {
-#if DCHECK_IS_ON()
-    DCHECK(IsFirstOrLastCellInRow());
-#endif
-    if (Section()->HasSameDirectionAs(Table()))
-      return Style()->BorderStart();
-
-    return Style()->BorderEnd();
+  BorderValue BorderStartInTableDirection() const {
+    return StyleRef().BorderStartUsing(TableStyle());
   }
-
-  const BorderValue& BorderAdjoiningTableEnd() const {
-#if DCHECK_IS_ON()
-    DCHECK(IsFirstOrLastCellInRow());
-#endif
-    if (Section()->HasSameDirectionAs(Table()))
-      return Style()->BorderEnd();
-
-    return Style()->BorderStart();
+  BorderValue BorderEndInTableDirection() const {
+    return StyleRef().BorderEndUsing(TableStyle());
   }
-
-  const BorderValue& BorderAdjoiningCellBefore(const LayoutTableCell* cell) {
-    DCHECK_EQ(Table()->CellAfter(cell), this);
-    // FIXME: https://webkit.org/b/79272 - Add support for mixed directionality
-    // at the cell level.
-    return Style()->BorderStart();
+  BorderValue BorderBeforeInTableDirection() const {
+    return StyleRef().BorderBeforeUsing(TableStyle());
   }
-
-  const BorderValue& BorderAdjoiningCellAfter(const LayoutTableCell* cell) {
-    DCHECK_EQ(Table()->CellBefore(cell), this);
-    // FIXME: https://webkit.org/b/79272 - Add support for mixed directionality
-    // at the cell level.
-    return Style()->BorderEnd();
+  BorderValue BorderAfterInTableDirection() const {
+    return StyleRef().BorderAfterUsing(TableStyle());
   }
-
-#if DCHECK_IS_ON()
-  bool IsFirstOrLastCellInRow() const {
-    return !Table()->CellAfter(this) || !Table()->CellBefore(this);
-  }
-#endif
 
   const char* GetName() const override { return "LayoutTableCell"; }
 
   bool BackgroundIsKnownToBeOpaqueInRect(const LayoutRect&) const override;
-  void InvalidateDisplayItemClients(PaintInvalidationReason) const override;
 
-  // TODO(wkorman): Consider renaming to more clearly differentiate from
-  // CollapsedBorderValue.
-  class CollapsedBorderValues : public DisplayItemClient {
-   public:
-    CollapsedBorderValues(const LayoutTableCell&,
-                          const CollapsedBorderValue& start_border,
-                          const CollapsedBorderValue& end_border,
-                          const CollapsedBorderValue& before_border,
-                          const CollapsedBorderValue& after_border);
-
-    const CollapsedBorderValue& StartBorder() const { return start_border_; }
-    const CollapsedBorderValue& EndBorder() const { return end_border_; }
-    const CollapsedBorderValue& BeforeBorder() const { return before_border_; }
-    const CollapsedBorderValue& AfterBorder() const { return after_border_; }
-
-    void SetCollapsedBorderValues(const CollapsedBorderValues& other);
-
-    // DisplayItemClient methods.
-    String DebugName() const;
-    LayoutRect VisualRect() const;
-
-   private:
-    const LayoutTableCell& layout_table_cell_;
-    CollapsedBorderValue start_border_;
-    CollapsedBorderValue end_border_;
-    CollapsedBorderValue before_border_;
-    CollapsedBorderValue after_border_;
-  };
-
-  bool UsesCompositedCellDisplayItemClients() const;
   const CollapsedBorderValues* GetCollapsedBorderValues() const {
+    UpdateCollapsedBorderValues();
     return collapsed_border_values_.get();
+  }
+  void InvalidateCollapsedBorderValues() {
+    collapsed_border_values_valid_ = false;
   }
 
   LayoutRect DebugRect() const override;
@@ -339,24 +274,95 @@ class CORE_EXPORT LayoutTableCell final : public LayoutBlockFlow {
 
   bool HasLineIfEmpty() const override;
 
+  static bool CompareInDOMOrder(const LayoutTableCell* cell1,
+                                const LayoutTableCell* cell2) {
+    DCHECK(cell1->Section() == cell2->Section());
+    if (cell1->RowIndex() == cell2->RowIndex())
+      return cell1->absolute_column_index_ < cell2->absolute_column_index_;
+    return cell1->RowIndex() < cell2->RowIndex();
+  }
+
+  // For the following methods, the 'start', 'end', 'before', 'after' directions
+  // are all in the table's inline and block directions.
+  unsigned CollapsedOuterBorderBefore() const {
+    return CollapsedBorderHalfBefore(true);
+  }
+  unsigned CollapsedOuterBorderAfter() const {
+    return CollapsedBorderHalfAfter(true);
+  }
+  unsigned CollapsedOuterBorderStart() const {
+    return CollapsedBorderHalfStart(true);
+  }
+  unsigned CollapsedOuterBorderEnd() const {
+    return CollapsedBorderHalfEnd(true);
+  }
+  unsigned CollapsedInnerBorderBefore() const {
+    return CollapsedBorderHalfBefore(false);
+  }
+  unsigned CollapsedInnerBorderAfter() const {
+    return CollapsedBorderHalfAfter(false);
+  }
+  unsigned CollapsedInnerBorderStart() const {
+    return CollapsedBorderHalfStart(false);
+  }
+  unsigned CollapsedInnerBorderEnd() const {
+    return CollapsedBorderHalfEnd(false);
+  }
+
+  bool StartsAtSameColumn(const LayoutTableCell* other) const {
+    return other && AbsoluteColumnIndex() == other->AbsoluteColumnIndex();
+  }
+  bool EndsAtSameColumn(const LayoutTableCell* other) const {
+    return other && AbsoluteColumnIndex() + ColSpan() ==
+                        other->AbsoluteColumnIndex() + other->ColSpan();
+  }
+  bool StartsAtSameRow(const LayoutTableCell* other) const {
+    return other && RowIndex() == other->RowIndex();
+  }
+  bool EndsAtSameRow(const LayoutTableCell* other) const {
+    return other &&
+           RowIndex() + RowSpan() == other->RowIndex() + other->RowSpan();
+  }
+
+  void SetIsSpanningCollapsedRow(bool spanningCollapsedRow) {
+    is_spanning_collapsed_row_ = spanningCollapsedRow;
+  }
+
+  bool IsSpanningCollapsedRow() const { return is_spanning_collapsed_row_; }
+
+  void SetIsSpanningCollapsedColumn(bool spanningCollapsedColumn) {
+    is_spanning_collapsed_column_ = spanningCollapsedColumn;
+  }
+
+  bool IsSpanningCollapsedColumn() const {
+    return is_spanning_collapsed_column_;
+  }
+
+  void ComputeOverflow(LayoutUnit old_client_after_edge,
+                       bool recompute_floats = false) override;
+
  protected:
   void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
   void ComputePreferredLogicalWidths() override;
 
-  void AddLayerHitTestRects(LayerHitTestRects&,
-                            const PaintLayer* current_composited_layer,
-                            const LayoutPoint& layer_offset,
-                            const LayoutRect& container_rect) const override;
+  void AddLayerHitTestRects(
+      LayerHitTestRects&,
+      const PaintLayer* current_composited_layer,
+      const LayoutPoint& layer_offset,
+      TouchAction supported_fast_actions,
+      const LayoutRect& container_rect,
+      TouchAction container_whitelisted_touch_action) const override;
 
-  PaintInvalidationReason InvalidatePaintIfNeeded(
+  PaintInvalidationReason InvalidatePaint(
       const PaintInvalidatorContext&) const override;
-  PaintInvalidationReason InvalidatePaintIfNeeded(
-      const PaintInvalidationState&) override;
 
- private:
+ protected:
   bool IsOfType(LayoutObjectType type) const override {
     return type == kLayoutObjectTableCell || LayoutBlockFlow::IsOfType(type);
   }
+
+ private:
+  friend class LayoutTableCellTest;
 
   void WillBeRemovedFromTree() override;
 
@@ -367,18 +373,84 @@ class CORE_EXPORT LayoutTableCell final : public LayoutBlockFlow {
   void PaintMask(const PaintInfo&, const LayoutPoint&) const override;
 
   LayoutSize OffsetFromContainer(const LayoutObject*) const override;
-  LayoutRect LocalVisualRect() const override;
 
-  LayoutUnit BorderHalfLeft(bool outer) const;
-  LayoutUnit BorderHalfRight(bool outer) const;
-  LayoutUnit BorderHalfTop(bool outer) const;
-  LayoutUnit BorderHalfBottom(bool outer) const;
+  bool ShouldClipOverflow() const override;
 
-  LayoutUnit BorderHalfStart(bool outer) const;
-  LayoutUnit BorderHalfEnd(bool outer) const;
-  LayoutUnit BorderHalfBefore(bool outer) const;
-  LayoutUnit BorderHalfAfter(bool outer) const;
+  using CollapsedBorderValuesMethod =
+      const CollapsedBorderValue& (CollapsedBorderValues::*)() const;
+  LogicalToPhysical<CollapsedBorderValuesMethod>
+  CollapsedBorderValuesMethodsPhysical() const {
+    return LogicalToPhysical<CollapsedBorderValuesMethod>(
+        // Collapsed border logical directions are in table's directions.
+        TableStyle().GetWritingMode(), TableStyle().Direction(),
+        &CollapsedBorderValues::StartBorder, &CollapsedBorderValues::EndBorder,
+        &CollapsedBorderValues::BeforeBorder,
+        &CollapsedBorderValues::AfterBorder);
+  }
 
+  // Give the extra pixel of half collapsed border to top and left.
+  static constexpr bool kInnerHalfPixelAsOneTop = true;
+  static constexpr bool kInnerHalfPixelAsOneRight = false;
+  static constexpr bool kInnerHalfPixelAsOneBottom = false;
+  static constexpr bool kInnerHalfPixelAsOneLeft = true;
+
+  PhysicalToLogical<bool> InnerHalfPixelAsOneLogical() const {
+    return PhysicalToLogical<bool>(
+        // Collapsed border logical directions are in table's directions.
+        TableStyle().GetWritingMode(), TableStyle().Direction(),
+        kInnerHalfPixelAsOneTop, kInnerHalfPixelAsOneRight,
+        kInnerHalfPixelAsOneBottom, kInnerHalfPixelAsOneLeft);
+  }
+
+  unsigned CollapsedBorderHalfLeft(bool outer) const {
+    return CollapsedBorderHalf(kInnerHalfPixelAsOneLeft ^ outer,
+                               CollapsedBorderValuesMethodsPhysical().Left());
+  }
+  unsigned CollapsedBorderHalfRight(bool outer) const {
+    return CollapsedBorderHalf(kInnerHalfPixelAsOneRight ^ outer,
+                               CollapsedBorderValuesMethodsPhysical().Right());
+  }
+  unsigned CollapsedBorderHalfTop(bool outer) const {
+    return CollapsedBorderHalf(kInnerHalfPixelAsOneTop ^ outer,
+                               CollapsedBorderValuesMethodsPhysical().Top());
+  }
+  unsigned CollapsedBorderHalfBottom(bool outer) const {
+    return CollapsedBorderHalf(kInnerHalfPixelAsOneBottom ^ outer,
+                               CollapsedBorderValuesMethodsPhysical().Bottom());
+  }
+
+  // For the following methods, the 'start', 'end', 'before', 'after' directions
+  // are all in the table's inline and block directions.
+  unsigned CollapsedBorderHalfStart(bool outer) const {
+    return CollapsedBorderHalf(InnerHalfPixelAsOneLogical().Start() ^ outer,
+                               &CollapsedBorderValues::StartBorder);
+  }
+  unsigned CollapsedBorderHalfEnd(bool outer) const {
+    return CollapsedBorderHalf(InnerHalfPixelAsOneLogical().End() ^ outer,
+                               &CollapsedBorderValues::EndBorder);
+  }
+  unsigned CollapsedBorderHalfBefore(bool outer) const {
+    return CollapsedBorderHalf(InnerHalfPixelAsOneLogical().Before() ^ outer,
+                               &CollapsedBorderValues::BeforeBorder);
+  }
+  unsigned CollapsedBorderHalfAfter(bool outer) const {
+    return CollapsedBorderHalf(InnerHalfPixelAsOneLogical().After() ^ outer,
+                               &CollapsedBorderValues::AfterBorder);
+  }
+
+  unsigned CollapsedBorderHalf(bool half_pixel_as_one,
+                               CollapsedBorderValuesMethod m) const {
+    UpdateCollapsedBorderValues();
+    if (const auto* values = GetCollapsedBorderValues())
+      return ((values->*m)().Width() + (half_pixel_as_one ? 1 : 0)) / 2;
+    return 0;
+  }
+
+  LogicalToPhysical<int> LogicalIntrinsicPaddingToPhysical() const {
+    return LogicalToPhysical<int>(
+        StyleRef().GetWritingMode(), StyleRef().Direction(), 0, 0,
+        intrinsic_padding_before_, intrinsic_padding_after_);
+  }
   void SetIntrinsicPaddingBefore(int p) { intrinsic_padding_before_ = p; }
   void SetIntrinsicPaddingAfter(int p) { intrinsic_padding_after_ = p; }
   void SetIntrinsicPadding(int before, int after) {
@@ -386,35 +458,21 @@ class CORE_EXPORT LayoutTableCell final : public LayoutBlockFlow {
     SetIntrinsicPaddingAfter(after);
   }
 
-  bool HasStartBorderAdjoiningTable() const;
-  bool HasEndBorderAdjoiningTable() const;
+  bool IsInStartColumn() const { return AbsoluteColumnIndex() == 0; }
+  bool IsInEndColumn() const;
 
-  // Those functions implement the CSS collapsing border conflict
-  // resolution algorithm.
-  // http://www.w3.org/TR/CSS2/tables.html#border-conflict-resolution
-  //
-  // The code is pretty complicated as it needs to handle mixed directionality
-  // between the table and the different table parts (cell, row, row group,
-  // column, column group).
-  // TODO(jchaffraix): It should be easier to compute all the borders in
-  // physical coordinates. However this is not the design of the current code.
-  //
-  // Blink's support for mixed directionality is currently partial. We only
-  // support the directionality up to |styleForCellFlow|. See comment on the
-  // function above for more details.
-  // See also https://code.google.com/p/chromium/issues/detail?id=128227 for
-  // some history.
-  //
-  // Those functions are called when the cache (m_collapsedBorders) is
-  // invalidated on LayoutTable.
-  CollapsedBorderValue ComputeCollapsedStartBorder(
-      IncludeBorderColorOrNot = kIncludeBorderColor) const;
-  CollapsedBorderValue ComputeCollapsedEndBorder(
-      IncludeBorderColorOrNot = kIncludeBorderColor) const;
-  CollapsedBorderValue ComputeCollapsedBeforeBorder(
-      IncludeBorderColorOrNot = kIncludeBorderColor) const;
-  CollapsedBorderValue ComputeCollapsedAfterBorder(
-      IncludeBorderColorOrNot = kIncludeBorderColor) const;
+  // These functions implement the CSS collapsing border conflict resolution
+  // algorithm http://www.w3.org/TR/CSS2/tables.html#border-conflict-resolution.
+  // They are called during UpdateCollapsedBorderValues(). The 'start', 'end',
+  // 'before', 'after' directions are all in the table's inline and block
+  // directions.
+  inline CSSPropertyID ResolveBorderProperty(const CSSProperty&) const;
+  CollapsedBorderValue ComputeCollapsedStartBorder() const;
+  CollapsedBorderValue ComputeCollapsedEndBorder() const;
+  CollapsedBorderValue ComputeCollapsedBeforeBorder() const;
+  CollapsedBorderValue ComputeCollapsedAfterBorder() const;
+
+  void UpdateCollapsedBorderValues() const;
 
   Length LogicalWidthFromColumns(LayoutTableCol* first_col_for_this_cell,
                                  Length width_from_style) const;
@@ -427,12 +485,22 @@ class CORE_EXPORT LayoutTableCell final : public LayoutBlockFlow {
   void NextSibling() const = delete;
   void PreviousSibling() const = delete;
 
+  unsigned absolute_column_index_ : BITS_OF_ABSOLUTE_COLUMN_INDEX;
+
+  // When adding or removing bits here, we should also adjust
+  // BITS_OF_ABSOLUTE_COLUMN_INDEX to use remaining bits of a 32-bit word.
   // Note MSVC will only pack members if they have identical types, hence we use
   // unsigned instead of bool here.
-  unsigned absolute_column_index_ : 29;
-  unsigned cell_width_changed_ : 1;
+  unsigned cell_children_need_layout_ : 1;
   unsigned has_col_span_ : 1;
   unsigned has_row_span_ : 1;
+  unsigned is_spanning_collapsed_row_ : 1;
+  unsigned is_spanning_collapsed_column_ : 1;
+
+  // This is set to false when |collapsed_border_values_| needs update.
+  mutable unsigned collapsed_border_values_valid_ : 1;
+  mutable unsigned collapsed_borders_need_paint_invalidation_ : 1;
+  mutable std::unique_ptr<CollapsedBorderValues> collapsed_border_values_;
 
   // The intrinsic padding.
   // See class comment for what they are.
@@ -441,8 +509,6 @@ class CORE_EXPORT LayoutTableCell final : public LayoutBlockFlow {
   // because we don't do fractional arithmetic on tables.
   int intrinsic_padding_before_;
   int intrinsic_padding_after_;
-
-  std::unique_ptr<CollapsedBorderValues> collapsed_border_values_;
 };
 
 DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutTableCell, IsTableCell());

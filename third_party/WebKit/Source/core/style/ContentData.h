@@ -61,7 +61,7 @@ class ContentData : public GarbageCollectedFinalized<ContentData> {
 
   virtual bool Equals(const ContentData&) const = 0;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   virtual ContentData* CloneInternal() const = 0;
@@ -95,7 +95,7 @@ class ImageContentData final : public ContentData {
            *GetImage();
   }
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   ImageContentData(StyleImage* image) : image_(image) { DCHECK(image_); }
@@ -200,11 +200,15 @@ class QuoteContentData final : public ContentData {
 DEFINE_CONTENT_DATA_TYPE_CASTS(Quote);
 
 inline bool operator==(const ContentData& a, const ContentData& b) {
-  return a.Equals(b);
-}
+  const ContentData* ptr_a = &a;
+  const ContentData* ptr_b = &b;
 
-inline bool operator!=(const ContentData& a, const ContentData& b) {
-  return !(a == b);
+  while (ptr_a && ptr_b && ptr_a->Equals(*ptr_b)) {
+    ptr_a = ptr_a->Next();
+    ptr_b = ptr_b->Next();
+  }
+
+  return !ptr_a && !ptr_b;
 }
 
 }  // namespace blink

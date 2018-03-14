@@ -22,7 +22,7 @@ class AdvancedFirewallManagerTest : public ::testing::Test {
   // Sets up the test fixture.
   void SetUp() override {
     if (base::GetCurrentProcessIntegrityLevel() != base::HIGH_INTEGRITY) {
-      LOG(WARNING) << "XP or not elevated. Skipping the test.";
+      LOG(WARNING) << "Not elevated. Skipping the test.";
       return;
     }
     skip_test_ = false;
@@ -41,7 +41,7 @@ class AdvancedFirewallManagerTest : public ::testing::Test {
   // Forwards calls to |manager_| to avoid making each test a friend of
   // |AdvancedFirewallManager|.
   void GetAllRules(std::vector<base::string16>* rule_names) {
-    std::vector<base::win::ScopedComPtr<INetFwRule> > rules;
+    std::vector<Microsoft::WRL::ComPtr<INetFwRule>> rules;
     manager_.GetAllRules(&rules);
     for (size_t i = 0; i < rules.size(); ++i) {
       base::win::ScopedBstr name;

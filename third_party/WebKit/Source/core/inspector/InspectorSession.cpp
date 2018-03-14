@@ -70,7 +70,7 @@ void InspectorSession::Dispose() {
   inspector_backend_dispatcher_.reset();
   for (size_t i = agents_.size(); i > 0; i--)
     agents_[i - 1]->Dispose();
-  agents_.Clear();
+  agents_.clear();
   v8_session_.reset();
 }
 
@@ -83,6 +83,21 @@ void InspectorSession::DispatchProtocolMessage(const String& method,
   } else {
     inspector_backend_dispatcher_->dispatch(
         protocol::StringUtil::parseJSON(message));
+  }
+}
+
+void InspectorSession::DispatchProtocolMessage(const String& message) {
+  DCHECK(!disposed_);
+  String method;
+  std::unique_ptr<protocol::DictionaryValue> parsedMessage;
+  if (!inspector_backend_dispatcher_->getCommandName(message, &method,
+                                                     &parsedMessage))
+    return;
+  if (v8_inspector::V8InspectorSession::canDispatchMethod(
+          ToV8InspectorStringView(method))) {
+    v8_session_->dispatchProtocolMessage(ToV8InspectorStringView(message));
+  } else {
+    inspector_backend_dispatcher_->dispatch(std::move(parsedMessage));
   }
 }
 
@@ -183,10 +198,10 @@ void InspectorSession::flushProtocolNotifications() {
     client_->SendProtocolMessage(session_id_, 0,
                                  notification_queue_[i]->Serialize(), String());
   }
-  notification_queue_.Clear();
+  notification_queue_.clear();
 }
 
-DEFINE_TRACE(InspectorSession) {
+void InspectorSession::Trace(blink::Visitor* visitor) {
   visitor->Trace(instrumenting_agents_);
   visitor->Trace(agents_);
 }

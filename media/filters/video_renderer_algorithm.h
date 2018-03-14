@@ -8,9 +8,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <deque>
-
 #include "base/callback.h"
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
@@ -51,7 +50,7 @@ class MediaLog;
 class MEDIA_EXPORT VideoRendererAlgorithm {
  public:
   VideoRendererAlgorithm(const TimeSource::WallClockTimeCB& wall_clock_time_cb,
-                         scoped_refptr<MediaLog> media_log);
+                         MediaLog* media_log);
   ~VideoRendererAlgorithm();
 
   // Chooses the best frame for the interval [deadline_min, deadline_max] based
@@ -101,8 +100,9 @@ class MEDIA_EXPORT VideoRendererAlgorithm {
   // rendered yet.  If it has been rendered, the new frame will be dropped.
   //
   // EnqueueFrame() will compute the current start time and an estimated end
-  // time of the frame based on previous frames so that EffectiveFramesQueued()
-  // is relatively accurate immediately after this call.
+  // time of the frame based on previous frames or the value of
+  // VideoFrameMetadata::FRAME_DURATION if no previous frames, so that
+  // EffectiveFramesQueued() is relatively accurate immediately after this call.
   void EnqueueFrame(const scoped_refptr<VideoFrame>& frame);
 
   // Removes all frames from the |frame_queue_| and clears predictors.  The
@@ -148,6 +148,13 @@ class MEDIA_EXPORT VideoRendererAlgorithm {
   // algorithm will never drop frames and instead always return every frame
   // for display at least once.
   void disable_frame_dropping() { frame_dropping_disabled_ = true; }
+
+  enum : int {
+    // The number of frames to store for moving average calculations.  Value
+    // picked after experimenting with playback of various local media and
+    // YouTube clips.
+    kMovingAverageSamples = 32
+  };
 
  private:
   friend class VideoRendererAlgorithmTest;
@@ -267,11 +274,11 @@ class MEDIA_EXPORT VideoRendererAlgorithm {
   // UpdateEffectiveFramesQueued().
   size_t CountEffectiveFramesQueued() const;
 
-  scoped_refptr<MediaLog> media_log_;
+  MediaLog* media_log_;
   int out_of_order_frame_logs_ = 0;
 
   // Queue of incoming frames waiting for rendering.
-  using VideoFrameQueue = std::deque<ReadyFrame>;
+  using VideoFrameQueue = base::circular_deque<ReadyFrame>;
   VideoFrameQueue frame_queue_;
 
   // Handles cadence detection and frame cadence assignments.

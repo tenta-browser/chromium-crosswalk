@@ -5,7 +5,7 @@
 #include "core/page/scrolling/ViewportScrollCallback.h"
 
 #include "core/frame/BrowserControls.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/RootFrameViewport.h"
 #include "core/frame/Settings.h"
 #include "core/page/scrolling/OverscrollController.h"
@@ -25,7 +25,7 @@ ViewportScrollCallback::ViewportScrollCallback(
 
 ViewportScrollCallback::~ViewportScrollCallback() {}
 
-DEFINE_TRACE(ViewportScrollCallback) {
+void ViewportScrollCallback::Trace(blink::Visitor* visitor) {
   visitor->Trace(browser_controls_);
   visitor->Trace(overscroll_controller_);
   visitor->Trace(root_frame_viewport_);

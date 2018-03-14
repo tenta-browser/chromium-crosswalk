@@ -9,12 +9,12 @@
 
 #include <map>
 #include <memory>
-#include <queue>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/cancelable_callback.h"
+#include "base/containers/queue.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
@@ -37,7 +37,7 @@ namespace net {
 class MDnsSocketFactoryImpl : public MDnsSocketFactory {
  public:
   MDnsSocketFactoryImpl() {}
-  ~MDnsSocketFactoryImpl() override{};
+  ~MDnsSocketFactoryImpl() override {}
 
   void CreateSockets(
       std::vector<std::unique_ptr<DatagramServerSocket>>* sockets) override;
@@ -88,7 +88,7 @@ class NET_EXPORT_PRIVATE MDnsConnection {
     DnsResponse response_;
     IPEndPoint multicast_addr_;
     bool send_in_progress_;
-    std::queue<std::pair<scoped_refptr<IOBuffer>, unsigned> > send_queue_;
+    base::queue<std::pair<scoped_refptr<IOBuffer>, unsigned>> send_queue_;
 
     DISALLOW_COPY_AND_ASSIGN(SocketHandler);
   };

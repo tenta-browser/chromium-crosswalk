@@ -9,9 +9,11 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/download_manager.h"
 #include "content/public/browser/download_url_parameters.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -49,15 +51,15 @@ void DownloadUpdatedObserver::OnDownloadUpdated(DownloadItem* item) {
   if (filter_.Run(item_))
     event_seen_ = true;
   if (waiting_ && event_seen_)
-    base::MessageLoopForUI::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 void DownloadUpdatedObserver::OnDownloadDestroyed(DownloadItem* item) {
   DCHECK_EQ(item_, item);
   item_->RemoveObserver(this);
-  item_ = NULL;
+  item_ = nullptr;
   if (waiting_)
-    base::MessageLoopForUI::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 DownloadTestObserver::DownloadTestObserver(
@@ -95,7 +97,7 @@ void DownloadTestObserver::Init() {
 
 void DownloadTestObserver::ManagerGoingDown(DownloadManager* manager) {
   CHECK_EQ(manager, download_manager_);
-  download_manager_ = NULL;
+  download_manager_ = nullptr;
   SignalIfFinished();
 }
 
@@ -109,7 +111,8 @@ void DownloadTestObserver::WaitForFinished() {
 
 bool DownloadTestObserver::IsFinished() const {
   return (finished_downloads_.size() - finished_downloads_at_construction_ >=
-          wait_count_) || (download_manager_ == NULL);
+          wait_count_) ||
+         (download_manager_ == nullptr);
 }
 
 void DownloadTestObserver::OnDownloadCreated(
@@ -150,9 +153,8 @@ void DownloadTestObserver::OnDownloadUpdated(DownloadItem* download) {
         // real UI would.
         BrowserThread::PostTask(
             BrowserThread::UI, FROM_HERE,
-            base::Bind(&DownloadTestObserver::AcceptDangerousDownload,
-                       weak_factory_.GetWeakPtr(),
-                       download->GetId()));
+            base::BindOnce(&DownloadTestObserver::AcceptDangerousDownload,
+                           weak_factory_.GetWeakPtr(), download->GetId()));
         break;
 
       case ON_DANGEROUS_DOWNLOAD_DENY:
@@ -160,9 +162,8 @@ void DownloadTestObserver::OnDownloadUpdated(DownloadItem* download) {
         // real UI would.
         BrowserThread::PostTask(
             BrowserThread::UI, FROM_HERE,
-            base::Bind(&DownloadTestObserver::DenyDangerousDownload,
-                       weak_factory_.GetWeakPtr(),
-                       download->GetId()));
+            base::BindOnce(&DownloadTestObserver::DenyDangerousDownload,
+                           weak_factory_.GetWeakPtr(), download->GetId()));
         break;
 
       case ON_DANGEROUS_DOWNLOAD_FAIL:
@@ -216,7 +217,7 @@ void DownloadTestObserver::DownloadInFinalState(DownloadItem* download) {
 
 void DownloadTestObserver::SignalIfFinished() {
   if (waiting_ && IsFinished())
-    base::MessageLoopForUI::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 void DownloadTestObserver::AcceptDangerousDownload(uint32_t download_id) {
@@ -318,8 +319,7 @@ void DownloadTestFlushObserver::WaitForFlush() {
   download_manager_->AddObserver(this);
   // The wait condition may have been met before WaitForFlush() was called.
   CheckDownloadsInProgress(true);
-  BrowserThread::GetBlockingPool()->FlushForTesting();
-  RunMessageLoop();
+  RunAllTasksUntilIdle();
 }
 
 void DownloadTestFlushObserver::OnDownloadCreated(
@@ -387,9 +387,9 @@ void DownloadTestFlushObserver::CheckDownloadsInProgress(
 
       // Trigger next step.  We need to go past the IO thread twice, as
       // there's a self-task posting in the IO thread cancel path.
-      BrowserThread::PostTask(
-          BrowserThread::FILE, FROM_HERE,
-          base::Bind(&DownloadTestFlushObserver::PingFileThread, this, 2));
+      DownloadManager::GetTaskRunner()->PostTask(
+          FROM_HERE,
+          base::BindOnce(&DownloadTestFlushObserver::PingFileThread, this, 2));
     }
   }
 }
@@ -397,14 +397,15 @@ void DownloadTestFlushObserver::CheckDownloadsInProgress(
 void DownloadTestFlushObserver::PingFileThread(int cycle) {
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&DownloadTestFlushObserver::PingIOThread, this, cycle));
+      base::BindOnce(&DownloadTestFlushObserver::PingIOThread, this, cycle));
 }
 
 void DownloadTestFlushObserver::PingIOThread(int cycle) {
   if (--cycle) {
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(&DownloadTestFlushObserver::PingFileThread, this, cycle));
+        base::BindOnce(&DownloadTestFlushObserver::PingFileThread, this,
+                       cycle));
   } else {
     BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
                             base::MessageLoop::QuitWhenIdleClosure());
@@ -443,13 +444,53 @@ void DownloadTestItemCreationObserver::DownloadItemCreationCallback(
   DCHECK_EQ(1u, called_back_count_);
 
   if (waiting_)
-    base::MessageLoopForUI::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 const DownloadUrlParameters::OnStartedCallback
     DownloadTestItemCreationObserver::callback() {
   return base::Bind(
       &DownloadTestItemCreationObserver::DownloadItemCreationCallback, this);
+}
+
+SavePackageFinishedObserver::SavePackageFinishedObserver(
+    DownloadManager* manager,
+    const base::Closure& callback)
+    : download_manager_(manager), download_(nullptr), callback_(callback) {
+  download_manager_->AddObserver(this);
+}
+
+SavePackageFinishedObserver::~SavePackageFinishedObserver() {
+  if (download_manager_)
+    download_manager_->RemoveObserver(this);
+
+  if (download_)
+    download_->RemoveObserver(this);
+}
+
+void SavePackageFinishedObserver::OnDownloadUpdated(DownloadItem* download) {
+  if (download->GetState() == DownloadItem::COMPLETE ||
+      download->GetState() == DownloadItem::CANCELLED) {
+    callback_.Run();
+  }
+}
+
+void SavePackageFinishedObserver::OnDownloadDestroyed(DownloadItem* download) {
+  download_->RemoveObserver(this);
+  download_ = nullptr;
+}
+
+void SavePackageFinishedObserver::OnDownloadCreated(DownloadManager* manager,
+                                                    DownloadItem* download) {
+  download_ = download;
+  download->AddObserver(this);
+}
+
+void SavePackageFinishedObserver::ManagerGoingDown(DownloadManager* manager) {
+  download_->RemoveObserver(this);
+  download_ = nullptr;
+  download_manager_->RemoveObserver(this);
+  download_manager_ = nullptr;
 }
 
 }  // namespace content

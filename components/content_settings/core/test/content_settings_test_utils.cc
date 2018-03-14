@@ -7,6 +7,7 @@
 #include "components/content_settings/core/browser/content_settings_observable_provider.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/content_settings/core/common/content_settings_utils.h"
 
 namespace content_settings {
 
@@ -19,8 +20,9 @@ base::Value* TestUtils::GetContentSettingValue(
     const std::string& resource_identifier,
     bool include_incognito) {
   return HostContentSettingsMap::GetContentSettingValueAndPatterns(
-      provider, primary_url, secondary_url, content_type, resource_identifier,
-      include_incognito, NULL, NULL).release();
+             provider, primary_url, secondary_url, content_type,
+             resource_identifier, include_incognito, nullptr, nullptr)
+      .release();
 }
 
 // static

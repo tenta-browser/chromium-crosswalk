@@ -5,7 +5,7 @@
 #include "bindings/core/v8/ToV8ForCore.h"
 
 #include <limits>
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8BindingForTesting.h"
 #include "core/testing/GarbageCollectedScriptWrappable.h"
 #include "platform/heap/Heap.h"
@@ -36,17 +36,19 @@ void TestToV8(V8TestingScope* scope,
   if (String(expected) != actual_string) {
     ADD_FAILURE_AT(path, line_number)
         << "toV8 returns an incorrect value.\n  Actual: "
-        << actual_string.Utf8().Data() << "\nExpected: " << expected;
+        << actual_string.Utf8().data() << "\nExpected: " << expected;
     return;
   }
 }
 
-class GarbageCollectedHolder : public GarbageCollected<GarbageCollectedHolder> {
+class GarbageCollectedHolderForToV8Test
+    : public GarbageCollected<GarbageCollectedHolderForToV8Test> {
  public:
-  GarbageCollectedHolder(GarbageCollectedScriptWrappable* script_wrappable)
+  GarbageCollectedHolderForToV8Test(
+      GarbageCollectedScriptWrappable* script_wrappable)
       : script_wrappable_(script_wrappable) {}
 
-  DEFINE_INLINE_TRACE() { visitor->Trace(script_wrappable_); }
+  void Trace(blink::Visitor* visitor) { visitor->Trace(script_wrappable_); }
 
   // This should be public in order to access a Member<X> object.
   Member<GarbageCollectedScriptWrappable> script_wrappable_;
@@ -66,7 +68,7 @@ TEST(ToV8Test, garbageCollectedScriptWrappable) {
   V8TestingScope scope;
   GarbageCollectedScriptWrappable* object =
       new GarbageCollectedScriptWrappable("world");
-  GarbageCollectedHolder holder(object);
+  GarbageCollectedHolderForToV8Test holder(object);
   OffHeapGarbageCollectedHolder off_heap_holder(object);
 
   TEST_TOV8("world", object);

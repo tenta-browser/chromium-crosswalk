@@ -9,7 +9,8 @@
 
 #include "base/time/time.h"
 #include "cc/animation/animation_export.h"
-#include "cc/base/filter_operations.h"
+#include "cc/paint/filter_operations.h"
+#include "ui/gfx/geometry/size_f.h"
 #include "ui/gfx/transform.h"
 
 namespace gfx {
@@ -22,12 +23,23 @@ class ColorAnimationCurve;
 class FilterAnimationCurve;
 class FloatAnimationCurve;
 class ScrollOffsetAnimationCurve;
+class SizeAnimationCurve;
 class TransformAnimationCurve;
+class TransformOperations;
 
 // An animation curve is a function that returns a value given a time.
 class CC_ANIMATION_EXPORT AnimationCurve {
  public:
-  enum CurveType { COLOR, FLOAT, TRANSFORM, FILTER, SCROLL_OFFSET };
+  enum CurveType {
+    COLOR = 0,
+    FLOAT,
+    TRANSFORM,
+    FILTER,
+    SCROLL_OFFSET,
+    SIZE,
+    // This must be last
+    LAST_CURVE_TYPE = SIZE,
+  };
 
   virtual ~AnimationCurve() {}
 
@@ -40,6 +52,7 @@ class CC_ANIMATION_EXPORT AnimationCurve {
   const TransformAnimationCurve* ToTransformAnimationCurve() const;
   const FilterAnimationCurve* ToFilterAnimationCurve() const;
   const ScrollOffsetAnimationCurve* ToScrollOffsetAnimationCurve() const;
+  const SizeAnimationCurve* ToSizeAnimationCurve() const;
 
   ScrollOffsetAnimationCurve* ToScrollOffsetAnimationCurve();
 };
@@ -50,7 +63,6 @@ class CC_ANIMATION_EXPORT ColorAnimationCurve : public AnimationCurve {
 
   virtual SkColor GetValue(base::TimeDelta t) const = 0;
 
-  // Partial Animation implementation.
   CurveType Type() const override;
 };
 
@@ -60,7 +72,6 @@ class CC_ANIMATION_EXPORT FloatAnimationCurve : public AnimationCurve {
 
   virtual float GetValue(base::TimeDelta t) const = 0;
 
-  // Partial Animation implementation.
   CurveType Type() const override;
 };
 
@@ -68,7 +79,7 @@ class CC_ANIMATION_EXPORT TransformAnimationCurve : public AnimationCurve {
  public:
   ~TransformAnimationCurve() override {}
 
-  virtual gfx::Transform GetValue(base::TimeDelta t) const = 0;
+  virtual TransformOperations GetValue(base::TimeDelta t) const = 0;
 
   // Sets |bounds| to be the bounding box for the region within which |box|
   // will move during this animation. If this region cannot be computed,
@@ -94,7 +105,6 @@ class CC_ANIMATION_EXPORT TransformAnimationCurve : public AnimationCurve {
   virtual bool MaximumTargetScale(bool forward_direction,
                                   float* max_scale) const = 0;
 
-  // Partial Animation implementation.
   CurveType Type() const override;
 };
 
@@ -105,7 +115,15 @@ class CC_ANIMATION_EXPORT FilterAnimationCurve : public AnimationCurve {
   virtual FilterOperations GetValue(base::TimeDelta t) const = 0;
   virtual bool HasFilterThatMovesPixels() const = 0;
 
-  // Partial Animation implementation.
+  CurveType Type() const override;
+};
+
+class CC_ANIMATION_EXPORT SizeAnimationCurve : public AnimationCurve {
+ public:
+  ~SizeAnimationCurve() override {}
+
+  virtual gfx::SizeF GetValue(base::TimeDelta t) const = 0;
+
   CurveType Type() const override;
 };
 

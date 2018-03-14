@@ -8,11 +8,11 @@
 #include <windows.h>
 
 #include <algorithm>
-#include <deque>
 #include <limits>
 #include <memory>
 
 #include "base/bind.h"
+#include "base/containers/queue.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -20,7 +20,7 @@
 #include "base/synchronization/lock.h"
 #include "base/task_runner.h"
 #include "base/win/win_util.h"
-#include "mojo/edk/embedder/platform_handle_vector.h"
+#include "mojo/edk/embedder/scoped_platform_handle.h"
 
 namespace mojo {
 namespace edk {
@@ -112,13 +112,14 @@ class ChannelWin : public Channel,
     if (write_error) {
       // Do not synchronously invoke OnError(). Write() may have been called by
       // the delegate and we don't want to re-enter it.
-      io_task_runner_->PostTask(FROM_HERE,
-                                base::Bind(&ChannelWin::OnError, this));
+      io_task_runner_->PostTask(
+          FROM_HERE,
+          base::Bind(&ChannelWin::OnError, this, Error::kDisconnected));
     }
   }
 
   void LeakHandle() override {
-    DCHECK(io_task_runner_->RunsTasksOnCurrentThread());
+    DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
     leak_handle_ = true;
   }
 
@@ -126,20 +127,20 @@ class ChannelWin : public Channel,
       size_t num_handles,
       const void* extra_header,
       size_t extra_header_size,
-      ScopedPlatformHandleVectorPtr* handles) override {
+      std::vector<ScopedPlatformHandle>* handles) override {
+    DCHECK(extra_header);
     if (num_handles > std::numeric_limits<uint16_t>::max())
       return false;
     using HandleEntry = Channel::Message::HandleEntry;
     size_t handles_size = sizeof(HandleEntry) * num_handles;
     if (handles_size > extra_header_size)
       return false;
-    DCHECK(extra_header);
-    handles->reset(new PlatformHandleVector(num_handles));
+    handles->reserve(num_handles);
     const HandleEntry* extra_header_handles =
         reinterpret_cast<const HandleEntry*>(extra_header);
     for (size_t i = 0; i < num_handles; i++) {
-      (*handles)->at(i).handle =
-          base::win::Uint32ToHandle(extra_header_handles[i].handle);
+      handles->emplace_back(ScopedPlatformHandle(PlatformHandle(
+          base::win::Uint32ToHandle(extra_header_handles[i].handle))));
     }
     return true;
   }
@@ -158,7 +159,7 @@ class ChannelWin : public Channel,
                                  &connect_context_.overlapped);
       if (ok) {
         PLOG(ERROR) << "Unexpected success while waiting for pipe connection";
-        OnError();
+        OnError(Error::kConnectionFailed);
         return;
       }
 
@@ -171,7 +172,7 @@ class ChannelWin : public Channel,
           AddRef();
           return;
         case ERROR_NO_DATA:
-          OnError();
+          OnError(Error::kConnectionFailed);
           return;
       }
     }
@@ -207,7 +208,7 @@ class ChannelWin : public Channel,
 
   // base::MessageLoop::DestructionObserver:
   void WillDestroyCurrentMessageLoop() override {
-    DCHECK(io_task_runner_->RunsTasksOnCurrentThread());
+    DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
     if (self_)
       ShutDownOnIOThread();
   }
@@ -217,7 +218,7 @@ class ChannelWin : public Channel,
                      DWORD bytes_transfered,
                      DWORD error) override {
     if (error != ERROR_SUCCESS) {
-      OnError();
+      OnError(Error::kDisconnected);
     } else if (context == &connect_context_) {
       DCHECK(wait_for_connect_);
       wait_for_connect_ = false;
@@ -243,10 +244,10 @@ class ChannelWin : public Channel,
       if (OnReadComplete(bytes_read, &next_read_size)) {
         ReadMore(next_read_size);
       } else {
-        OnError();
+        OnError(Error::kReceivedMalformedData);
       }
     } else if (bytes_read == 0) {
-      OnError();
+      OnError(Error::kDisconnected);
     }
   }
 
@@ -267,16 +268,16 @@ class ChannelWin : public Channel,
         outgoing_messages_.pop_front();
 
         // Clear any handles so they don't get closed on destruction.
-        ScopedPlatformHandleVectorPtr handles = message->TakeHandles();
-        if (handles)
-          handles->clear();
+        std::vector<ScopedPlatformHandle> handles = message->TakeHandles();
+        for (auto& handle : handles)
+          ignore_result(handle.release());
       }
 
       if (!WriteNextNoLock())
         reject_writes_ = write_error = true;
     }
     if (write_error)
-      OnError();
+      OnError(Error::kDisconnected);
   }
 
   void ReadMore(size_t next_read_size_hint) {
@@ -293,7 +294,7 @@ class ChannelWin : public Channel,
     if (ok || GetLastError() == ERROR_IO_PENDING) {
       AddRef();  // Will be balanced in OnIOCompleted
     } else {
-      OnError();
+      OnError(Error::kDisconnected);
     }
   }
 
@@ -336,7 +337,7 @@ class ChannelWin : public Channel,
   bool delay_writes_ = true;
 
   bool reject_writes_ = false;
-  std::deque<MessageView> outgoing_messages_;
+  base::circular_deque<MessageView> outgoing_messages_;
 
   bool wait_for_connect_;
 

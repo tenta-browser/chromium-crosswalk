@@ -8,17 +8,30 @@
 #include "core/paint/FilterEffectBuilder.h"
 #include "core/paint/LayerClipRecorder.h"
 #include "core/paint/PaintLayer.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/graphics/CompositorFilterOperations.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/GraphicsLayer.h"
 #include "platform/graphics/filters/FilterEffect.h"
-#include "platform/graphics/filters/SkiaImageFilterBuilder.h"
 #include "platform/graphics/paint/FilterDisplayItem.h"
 #include "platform/graphics/paint/PaintController.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/wtf/PtrUtil.h"
 
 namespace blink {
+
+sk_sp<PaintFilter> FilterPainter::GetImageFilter(PaintLayer& layer) {
+  if (RuntimeEnabledFeatures::SlimmingPaintV175Enabled())
+    return nullptr;
+
+  if (!layer.PaintsWithFilters())
+    return nullptr;
+
+  FilterEffect* last_effect = layer.LastFilterEffect();
+  if (!last_effect)
+    return nullptr;
+
+  return PaintFilterBuilder::Build(last_effect, kInterpolationSpaceSRGB);
+}
 
 FilterPainter::FilterPainter(PaintLayer& layer,
                              GraphicsContext& context,
@@ -29,33 +42,18 @@ FilterPainter::FilterPainter(PaintLayer& layer,
     : filter_in_progress_(false),
       context_(context),
       layout_object_(layer.GetLayoutObject()) {
-  if (!layer.PaintsWithFilters())
-    return;
-
-  FilterEffect* last_effect = layer.LastFilterEffect();
-  if (!last_effect)
-    return;
-
-  sk_sp<SkImageFilter> image_filter =
-      SkiaImageFilterBuilder::Build(last_effect, kColorSpaceDeviceRGB);
+  sk_sp<PaintFilter> image_filter = GetImageFilter(layer);
   if (!image_filter)
     return;
 
-  // We'll handle clipping to the dirty rect before filter rasterization.
-  // Filter processing will automatically expand the clip rect and the offscreen
-  // to accommodate any filter outsets.
-  // FIXME: It is incorrect to just clip to the damageRect here once multiple
-  // fragments are involved.
-
-  // Subsequent code should not clip to the dirty rect, since we've already
-  // done it above, and doing it later will defeat the outsets.
-  painting_info.clip_to_dirty_rect = false;
-
   if (clip_rect.Rect() != painting_info.paint_dirty_rect ||
       clip_rect.HasRadius()) {
+    // Apply clips outside the filter. See discussion about these clips
+    // in PaintLayerPainter regarding "clipping in the presence of filters".
     clip_recorder_ = WTF::WrapUnique(new LayerClipRecorder(
-        context, layer.GetLayoutObject(), DisplayItem::kClipLayerFilter,
-        clip_rect, painting_info.root_layer, LayoutPoint(), paint_flags));
+        context, layer, DisplayItem::kClipLayerFilter, clip_rect,
+        painting_info.root_layer, LayoutPoint(), paint_flags,
+        layer.GetLayoutObject()));
   }
 
   if (!context.GetPaintController().DisplayItemConstructionIsDisabled()) {
@@ -63,7 +61,7 @@ FilterPainter::FilterPainter(PaintLayer& layer,
         layer.CreateCompositorFilterOperationsForFilter(
             layout_object_.StyleRef());
     // FIXME: It's possible to have empty CompositorFilterOperations here even
-    // though the SkImageFilter produced above is non-null, since the
+    // though the PaintFilter produced above is non-null, since the
     // layer's FilterEffectBuilder can have a stale representation of
     // the layer's filter. See crbug.com/502026.
     if (compositor_filter_operations.IsEmpty())

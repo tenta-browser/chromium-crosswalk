@@ -32,6 +32,21 @@ public class ContextualSearchHeuristics {
     }
 
     /**
+     * Optionally logs data about the duration the panel was viewed and /or opened.
+     * Default is to not log anything.
+     * @param panelViewDurationMs The duration that the panel was viewed (Peek and opened) by the
+     *        user.  This should always be a positive number, since this method is only called when
+     *        the panel has been viewed (Peeked).
+     * @param panelOpenDurationMs The duration that the panel was opened, or 0 if it was never
+     *        opened.
+     */
+    public void logPanelViewedDurations(long panelViewDurationMs, long panelOpenDurationMs) {
+        for (ContextualSearchHeuristic heuristic : mHeuristics) {
+            heuristic.logPanelViewedDurations(panelViewDurationMs, panelOpenDurationMs);
+        }
+    }
+
+    /**
      * Logs the condition state for all the Tap suppression heuristics.
      */
     public void logContitionState() {
@@ -63,12 +78,22 @@ public class ContextualSearchHeuristics {
     }
 
     /**
-     * Logs all the heuristics to the given logger.
+     * Logs all the heuristics that want to provide a Ranker "feature" to the given logger.
      * @param logger The logger to log to.
      */
     public void logRankerTapSuppression(ContextualSearchRankerLogger logger) {
         for (ContextualSearchHeuristic heuristic : mHeuristics) {
             heuristic.logRankerTapSuppression(logger);
+        }
+    }
+
+    /**
+     * Logs all the heuristics that want to provide outcomes to Ranker to the given logger.
+     * @param logger The logger to log to.
+     */
+    public void logRankerTapSuppressionOutcome(ContextualSearchRankerLogger logger) {
+        for (ContextualSearchHeuristic heuristic : mHeuristics) {
+            heuristic.logRankerTapSuppressionOutcome(logger);
         }
     }
 }

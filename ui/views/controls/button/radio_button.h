@@ -18,7 +18,8 @@ class VIEWS_EXPORT RadioButton : public Checkbox {
   // The button's class name.
   static const char kViewClassName[];
 
-  RadioButton(const base::string16& label, int group_id);
+  // |force_md| forces MD even when --secondary-ui-md flag is not set.
+  RadioButton(const base::string16& label, int group_id, bool force_md = false);
   ~RadioButton() override;
 
   // Overridden from View:
@@ -36,7 +37,8 @@ class VIEWS_EXPORT RadioButton : public Checkbox {
 
   // Overridden from Checkbox:
   void SetChecked(bool checked) override;
-  void PaintFocusRing(gfx::Canvas* canvas,
+  void PaintFocusRing(View* view,
+                      gfx::Canvas* canvas,
                       const cc::PaintFlags& flags) override;
   const gfx::VectorIcon& GetVectorIcon() const override;
 

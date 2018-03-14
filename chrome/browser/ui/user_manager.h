@@ -25,12 +25,10 @@ class UserManager {
 
   // Shows the User Manager or re-activates an existing one, focusing the
   // profile given by |profile_path_to_focus|; passing an empty base::FilePath
-  // focuses no user pod. Based on the value of |tutorial_mode|, a tutorial
-  // could be shown, in which case |profile_path_to_focus| is ignored. Depending
-  // on the value of |user_manager_action|, executes an action once the user
-  // manager displays or after a profile is opened.
+  // focuses no user pod. Depending on the value of |user_manager_action|,
+  // executes an action once the user manager displays or after a profile is
+  // opened.
   static void Show(const base::FilePath& profile_path_to_focus,
-                   profiles::UserManagerTutorialMode tutorial_mode,
                    profiles::UserManagerAction user_manager_action);
 
   // Hides the User Manager.
@@ -58,11 +56,6 @@ class UserManager {
 // Dialog that will be displayed when a profile is selected in UserManager.
 class UserManagerProfileDialog {
  public:
-  // Dimensions of the reauth dialog displaying the old-style signin flow with
-  // the username and password challenge on the same form.
-  static constexpr int kPasswordCombinedDialogHeight = 440;
-  static constexpr int kPasswordCombinedDialogWidth = 360;
-
   // Dimensions of the reauth dialog displaying the password-separated signin
   // flow.
   static constexpr int kDialogHeight = 512;
@@ -82,8 +75,12 @@ class UserManagerProfileDialog {
 
   // Shows a dialog where the user logs into their profile for the first time
   // via the user manager.
+  // |reason| can be REASON_SIGNIN_PRIMARY_ACCOUNT or
+  // REASON_FORCED_SIGNIN_PRIMARY_ACCOUNT to indicate whether this sign in is
+  // forced or not.
   static void ShowSigninDialog(content::BrowserContext* browser_context,
-                               const base::FilePath& profile_path);
+                               const base::FilePath& profile_path,
+                               signin_metrics::Reason reason);
 
   // Show the dialog and display local sign in error message without browser.
   static void ShowDialogAndDisplayErrorMessage(

@@ -6,19 +6,17 @@
 #define PaymentAddress_h
 
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "components/payments/content/payment_request.mojom-blink.h"
 #include "modules/ModulesExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/WTFString.h"
+#include "public/platform/modules/payments/payment_request.mojom-blink.h"
 
 namespace blink {
 
-class MODULES_EXPORT PaymentAddress final
-    : public GarbageCollectedFinalized<PaymentAddress>,
-      public ScriptWrappable {
+class MODULES_EXPORT PaymentAddress final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
   WTF_MAKE_NONCOPYABLE(PaymentAddress);
 
@@ -39,8 +37,6 @@ class MODULES_EXPORT PaymentAddress final
   const String& organization() const { return organization_; }
   const String& recipient() const { return recipient_; }
   const String& phone() const { return phone_; }
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   String country_;

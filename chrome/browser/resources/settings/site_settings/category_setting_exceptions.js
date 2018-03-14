@@ -20,10 +20,15 @@ Polymer({
       type: Boolean,
       value: false,
     },
+
+    /**
+     * The heading text for the blocked exception list.
+     */
+    blockHeader: String,
   },
 
   /** @override */
   ready: function() {
-    this.PermissionValues = settings.PermissionValues;
+    this.ContentSetting = settings.ContentSetting;
   },
 });

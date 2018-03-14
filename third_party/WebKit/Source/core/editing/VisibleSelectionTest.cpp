@@ -5,8 +5,10 @@
 #include "core/editing/VisibleSelection.h"
 
 #include "core/dom/Range.h"
-#include "core/editing/EditingTestBase.h"
+#include "core/editing/EphemeralRange.h"
 #include "core/editing/SelectionAdjuster.h"
+#include "core/editing/SelectionTemplate.h"
+#include "core/editing/testing/EditingTestBase.h"
 
 #define LOREM_IPSUM                                                            \
   "Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod "  \
@@ -36,14 +38,27 @@ class VisibleSelectionTest : public EditingTestBase {
   void SetSelection(VisibleSelectionTemplate<Strategy>& selection,
                     int base,
                     int extend) {
-    Node* node = GetDocument().body()->FirstChild();
+    Node* node = GetDocument().body()->firstChild();
     selection = CreateVisibleSelection(
         typename SelectionTemplate<Strategy>::Builder(selection.AsSelection())
             .Collapse(PositionTemplate<Strategy>(node, base))
             .Extend(PositionTemplate<Strategy>(node, extend))
             .Build());
   }
+
+  std::string GetWordSelectionText(const std::string&);
 };
+
+std::string VisibleSelectionTest::GetWordSelectionText(
+    const std::string& selection_text) {
+  const PositionInFlatTree position =
+      ToPositionInFlatTree(SetSelectionTextToBody(selection_text).Base());
+  return GetSelectionTextInFlatTreeFromBody(
+      CreateVisibleSelectionWithGranularity(
+          SelectionInFlatTree::Builder().Collapse(position).Build(),
+          TextGranularity::kWord)
+          .AsSelection());
+}
 
 static void TestFlatTreePositionsToEqualToDOMTreePositions(
     const VisibleSelection& selection,
@@ -53,7 +68,7 @@ static void TestFlatTreePositionsToEqualToDOMTreePositions(
   // to DOM tree position.
   EXPECT_EQ(selection.Start(),
             ToPositionInDOMTree(selection_in_flat_tree.Start()));
-  EXPECT_EQ(selection.end(), ToPositionInDOMTree(selection_in_flat_tree.end()));
+  EXPECT_EQ(selection.End(), ToPositionInDOMTree(selection_in_flat_tree.End()));
   EXPECT_EQ(selection.Base(),
             ToPositionInDOMTree(selection_in_flat_tree.Base()));
   EXPECT_EQ(selection.Extent(),
@@ -64,15 +79,16 @@ template <typename Strategy>
 VisibleSelectionTemplate<Strategy> ExpandUsingGranularity(
     const VisibleSelectionTemplate<Strategy>& selection,
     TextGranularity granularity) {
-  return CreateVisibleSelection(
+  return CreateVisibleSelectionWithGranularity(
       typename SelectionTemplate<Strategy>::Builder()
           .SetBaseAndExtent(selection.Base(), selection.Extent())
-          .SetGranularity(granularity)
-          .Build());
+          .Build(),
+      granularity);
 }
 
+// TODO(editing-dev): We should move this test to "SelectionControllerTest.cpp"
 // For http://crbug.com/700368
-TEST_F(VisibleSelectionTest, appendTrailingWhitespaceWithAfterAnchor) {
+TEST_F(VisibleSelectionTest, AdjustSelectionWithTrailingWhitespace) {
   SetBodyContent(
       "<input type=checkbox>"
       "<div style='user-select:none'>abc</div>");
@@ -82,16 +98,19 @@ TEST_F(VisibleSelectionTest, appendTrailingWhitespaceWithAfterAnchor) {
   // TODO(editing-dev): We should remove above comment once we fix [1].
   // [1] http://crbug.com/701657 double-click on user-select:none should not
   // compute selection.
-  VisibleSelection selection =
-      CreateVisibleSelection(SelectionInDOMTree::Builder()
-                                 .Collapse(Position::BeforeNode(input))
-                                 .Extend(Position::AfterNode(input))
-                                 .SetGranularity(kWordGranularity)
-                                 .Build());
-  selection.AppendTrailingWhitespace();
+  const VisibleSelectionInFlatTree& selection =
+      CreateVisibleSelectionWithGranularity(
+          SelectionInFlatTree::Builder()
+              .Collapse(PositionInFlatTree::BeforeNode(*input))
+              .Extend(PositionInFlatTree::AfterNode(*input))
+              .Build(),
+          TextGranularity::kWord);
+  const SelectionInFlatTree& result =
+      AdjustSelectionWithTrailingWhitespace(selection.AsSelection());
 
-  EXPECT_EQ(Position::BeforeNode(input), selection.Start());
-  EXPECT_EQ(Position::AfterNode(input), selection.end());
+  EXPECT_EQ(PositionInFlatTree::BeforeNode(*input),
+            result.ComputeStartPosition());
+  EXPECT_EQ(PositionInFlatTree::AfterNode(*input), result.ComputeEndPosition());
 }
 
 TEST_F(VisibleSelectionTest, expandUsingGranularity) {
@@ -104,11 +123,11 @@ TEST_F(VisibleSelectionTest, expandUsingGranularity) {
   SetBodyContent(body_content);
   ShadowRoot* shadow_root = SetShadowContent(shadow_content, "host");
 
-  Node* one = GetDocument().GetElementById("one")->FirstChild();
-  Node* two = GetDocument().GetElementById("two")->FirstChild();
-  Node* three = shadow_root->GetElementById("three")->FirstChild();
-  Node* four = shadow_root->GetElementById("four")->FirstChild();
-  Node* five = shadow_root->GetElementById("five")->FirstChild();
+  Node* one = GetDocument().getElementById("one")->firstChild();
+  Node* two = GetDocument().getElementById("two")->firstChild();
+  Node* three = shadow_root->getElementById("three")->firstChild();
+  Node* four = shadow_root->getElementById("four")->firstChild();
+  Node* five = shadow_root->getElementById("five")->firstChild();
 
   VisibleSelection selection;
   VisibleSelectionInFlatTree selection_in_flat_tree;
@@ -116,107 +135,125 @@ TEST_F(VisibleSelectionTest, expandUsingGranularity) {
   // From a position at distributed node
   selection = CreateVisibleSelection(
       SelectionInDOMTree::Builder().Collapse(Position(one, 1)).Build());
-  selection = ExpandUsingGranularity(selection, kWordGranularity);
+  selection = ExpandUsingGranularity(selection, TextGranularity::kWord);
   selection_in_flat_tree =
       CreateVisibleSelection(SelectionInFlatTree::Builder()
                                  .Collapse(PositionInFlatTree(one, 1))
                                  .Build());
   selection_in_flat_tree =
-      ExpandUsingGranularity(selection_in_flat_tree, kWordGranularity);
+      ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
-  EXPECT_EQ(Position(one, 1), selection.Base());
-  EXPECT_EQ(Position(one, 1), selection.Extent());
+  EXPECT_EQ(selection.Start(), selection.Base());
+  EXPECT_EQ(selection.End(), selection.Extent());
   EXPECT_EQ(Position(one, 0), selection.Start());
-  EXPECT_EQ(Position(two, 2), selection.end());
+  EXPECT_EQ(Position(two, 2), selection.End());
 
-  EXPECT_EQ(PositionInFlatTree(one, 1), selection_in_flat_tree.Base());
-  EXPECT_EQ(PositionInFlatTree(one, 1), selection_in_flat_tree.Extent());
+  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Base());
+  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Extent());
   EXPECT_EQ(PositionInFlatTree(one, 0), selection_in_flat_tree.Start());
-  EXPECT_EQ(PositionInFlatTree(five, 5), selection_in_flat_tree.end());
+  EXPECT_EQ(PositionInFlatTree(five, 5), selection_in_flat_tree.End());
 
   // From a position at distributed node
   selection = CreateVisibleSelection(
       SelectionInDOMTree::Builder().Collapse(Position(two, 1)).Build());
-  selection = ExpandUsingGranularity(selection, kWordGranularity);
+  selection = ExpandUsingGranularity(selection, TextGranularity::kWord);
   selection_in_flat_tree =
       CreateVisibleSelection(SelectionInFlatTree::Builder()
                                  .Collapse(PositionInFlatTree(two, 1))
                                  .Build());
   selection_in_flat_tree =
-      ExpandUsingGranularity(selection_in_flat_tree, kWordGranularity);
+      ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
-  EXPECT_EQ(Position(two, 1), selection.Base());
-  EXPECT_EQ(Position(two, 1), selection.Extent());
+  EXPECT_EQ(selection.Start(), selection.Base());
+  EXPECT_EQ(selection.End(), selection.Extent());
   EXPECT_EQ(Position(one, 0), selection.Start());
-  EXPECT_EQ(Position(two, 2), selection.end());
+  EXPECT_EQ(Position(two, 2), selection.End());
 
-  EXPECT_EQ(PositionInFlatTree(two, 1), selection_in_flat_tree.Base());
-  EXPECT_EQ(PositionInFlatTree(two, 1), selection_in_flat_tree.Extent());
+  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Base());
+  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Extent());
   EXPECT_EQ(PositionInFlatTree(three, 0), selection_in_flat_tree.Start());
-  EXPECT_EQ(PositionInFlatTree(four, 4), selection_in_flat_tree.end());
+  EXPECT_EQ(PositionInFlatTree(four, 4), selection_in_flat_tree.End());
 
   // From a position at node in shadow tree
   selection = CreateVisibleSelection(
       SelectionInDOMTree::Builder().Collapse(Position(three, 1)).Build());
-  selection = ExpandUsingGranularity(selection, kWordGranularity);
+  selection = ExpandUsingGranularity(selection, TextGranularity::kWord);
   selection_in_flat_tree =
       CreateVisibleSelection(SelectionInFlatTree::Builder()
                                  .Collapse(PositionInFlatTree(three, 1))
                                  .Build());
   selection_in_flat_tree =
-      ExpandUsingGranularity(selection_in_flat_tree, kWordGranularity);
+      ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
-  EXPECT_EQ(Position(three, 1), selection.Base());
-  EXPECT_EQ(Position(three, 1), selection.Extent());
+  EXPECT_EQ(selection.Start(), selection.Base());
+  EXPECT_EQ(selection.End(), selection.Extent());
   EXPECT_EQ(Position(three, 0), selection.Start());
-  EXPECT_EQ(Position(four, 4), selection.end());
+  EXPECT_EQ(Position(four, 4), selection.End());
 
-  EXPECT_EQ(PositionInFlatTree(three, 1), selection_in_flat_tree.Base());
-  EXPECT_EQ(PositionInFlatTree(three, 1), selection_in_flat_tree.Extent());
+  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Base());
+  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Extent());
   EXPECT_EQ(PositionInFlatTree(three, 0), selection_in_flat_tree.Start());
-  EXPECT_EQ(PositionInFlatTree(four, 4), selection_in_flat_tree.end());
+  EXPECT_EQ(PositionInFlatTree(four, 4), selection_in_flat_tree.End());
 
   // From a position at node in shadow tree
   selection = CreateVisibleSelection(
       SelectionInDOMTree::Builder().Collapse(Position(four, 1)).Build());
-  selection = ExpandUsingGranularity(selection, kWordGranularity);
+  selection = ExpandUsingGranularity(selection, TextGranularity::kWord);
   selection_in_flat_tree =
       CreateVisibleSelection(SelectionInFlatTree::Builder()
                                  .Collapse(PositionInFlatTree(four, 1))
                                  .Build());
   selection_in_flat_tree =
-      ExpandUsingGranularity(selection_in_flat_tree, kWordGranularity);
+      ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
-  EXPECT_EQ(Position(four, 1), selection.Base());
-  EXPECT_EQ(Position(four, 1), selection.Extent());
+  EXPECT_EQ(selection.Start(), selection.Base());
+  EXPECT_EQ(selection.End(), selection.Extent());
   EXPECT_EQ(Position(three, 0), selection.Start());
-  EXPECT_EQ(Position(four, 4), selection.end());
+  EXPECT_EQ(Position(four, 4), selection.End());
 
-  EXPECT_EQ(PositionInFlatTree(four, 1), selection_in_flat_tree.Base());
-  EXPECT_EQ(PositionInFlatTree(four, 1), selection_in_flat_tree.Extent());
+  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Base());
+  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Extent());
   EXPECT_EQ(PositionInFlatTree(three, 0), selection_in_flat_tree.Start());
-  EXPECT_EQ(PositionInFlatTree(four, 4), selection_in_flat_tree.end());
+  EXPECT_EQ(PositionInFlatTree(four, 4), selection_in_flat_tree.End());
 
   // From a position at node in shadow tree
   selection = CreateVisibleSelection(
       SelectionInDOMTree::Builder().Collapse(Position(five, 1)).Build());
-  selection = ExpandUsingGranularity(selection, kWordGranularity);
+  selection = ExpandUsingGranularity(selection, TextGranularity::kWord);
   selection_in_flat_tree =
       CreateVisibleSelection(SelectionInFlatTree::Builder()
                                  .Collapse(PositionInFlatTree(five, 1))
                                  .Build());
   selection_in_flat_tree =
-      ExpandUsingGranularity(selection_in_flat_tree, kWordGranularity);
+      ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
-  EXPECT_EQ(Position(five, 1), selection.Base());
-  EXPECT_EQ(Position(five, 1), selection.Extent());
+  EXPECT_EQ(selection.Start(), selection.Base());
+  EXPECT_EQ(selection.End(), selection.Extent());
   EXPECT_EQ(Position(five, 0), selection.Start());
-  EXPECT_EQ(Position(five, 5), selection.end());
+  EXPECT_EQ(Position(five, 5), selection.End());
 
-  EXPECT_EQ(PositionInFlatTree(five, 1), selection_in_flat_tree.Base());
-  EXPECT_EQ(PositionInFlatTree(five, 1), selection_in_flat_tree.Extent());
+  EXPECT_EQ(selection_in_flat_tree.Start(), selection_in_flat_tree.Base());
+  EXPECT_EQ(selection_in_flat_tree.End(), selection_in_flat_tree.Extent());
   EXPECT_EQ(PositionInFlatTree(one, 0), selection_in_flat_tree.Start());
-  EXPECT_EQ(PositionInFlatTree(five, 5), selection_in_flat_tree.end());
+  EXPECT_EQ(PositionInFlatTree(five, 5), selection_in_flat_tree.End());
+}
+
+// For http://wkb.ug/32622
+TEST_F(VisibleSelectionTest, ExpandUsingGranularityWithEmptyCell) {
+  SetBodyContent(
+      "<div contentEditable><table cellspacing=0><tr>"
+      "<td id='first' width='50' height='25pt'></td>"
+      "<td id='second' width='50' height='25pt'></td>"
+      "</tr></table></div>");
+  Element* const first = GetDocument().getElementById("first");
+  const VisibleSelectionInFlatTree& selection =
+      CreateVisibleSelectionWithGranularity(
+          SelectionInFlatTree::Builder()
+              .Collapse(PositionInFlatTree(first, 0))
+              .Build(),
+          TextGranularity::kWord);
+  EXPECT_EQ(PositionInFlatTree(first, 0), selection.Start());
+  EXPECT_EQ(PositionInFlatTree(first, 0), selection.End());
 }
 
 TEST_F(VisibleSelectionTest, Initialisation) {
@@ -241,7 +278,93 @@ TEST_F(VisibleSelectionTest, Initialisation) {
 
   const VisibleSelection no_selection =
       CreateVisibleSelection(SelectionInDOMTree::Builder().Build());
-  EXPECT_EQ(kNoSelection, no_selection.GetSelectionType());
+  EXPECT_TRUE(no_selection.IsNone());
+}
+
+TEST_F(VisibleSelectionTest, FirstLetter) {
+  SetBodyContent(
+      "<style>p::first-letter { font-color: red; }</style>"
+      "<p>abc def</p>");
+  const Element* sample = GetDocument().QuerySelector("p");
+  const SelectionInDOMTree selection =
+      SelectionInDOMTree::Builder()
+          .Collapse(Position(sample->firstChild(), 0))
+          .Extend(Position(sample->firstChild(), 3))
+          .Build();
+  const VisibleSelection visible_selection = CreateVisibleSelection(selection);
+
+  EXPECT_EQ(selection, visible_selection.AsSelection());
+}
+
+TEST_F(VisibleSelectionTest, FirstLetterCollapsedWhitespace) {
+  SetBodyContent(
+      "<style>p::first-letter { font-color: red; }</style>"
+      "<p>  abc def</p>");
+  const Element* sample = GetDocument().QuerySelector("p");
+  const SelectionInDOMTree selection =
+      SelectionInDOMTree::Builder()
+          .Collapse(Position(sample->firstChild(), 0))
+          .Extend(Position(sample->firstChild(), 5))
+          .Build();
+  const VisibleSelection visible_selection = CreateVisibleSelection(selection);
+
+  EXPECT_EQ(SelectionInDOMTree::Builder()
+                .Collapse(Position(sample->firstChild(), 2))
+                .Extend(Position(sample->firstChild(), 5))
+                .Build(),
+            visible_selection.AsSelection())
+      << "VisibleSelection doesn't contains collapsed whitespaces";
+}
+
+TEST_F(VisibleSelectionTest, FirstLetterPartial) {
+  SetBodyContent(
+      "<style>p::first-letter { font-color: red; }</style>"
+      "<p>((a))bc def</p>");
+  const Element* sample = GetDocument().QuerySelector("p");
+  const SelectionInDOMTree selection =
+      SelectionInDOMTree::Builder()
+          .Collapse(Position(sample->firstChild(), 1))
+          .Extend(Position(sample->firstChild(), 4))
+          .Build();
+  const VisibleSelection visible_selection = CreateVisibleSelection(selection);
+
+  EXPECT_EQ(selection, visible_selection.AsSelection())
+      << "Select '(a)' of '((a))";
+}
+
+TEST_F(VisibleSelectionTest, FirstLetterTextTransform) {
+  SetBodyContent(
+      "<style>p::first-letter { text-transform: uppercase; }</style>"
+      "<p>\u00DFbc def</p>");  // uppercase(U+00DF) = "SS"
+  const Element* sample = GetDocument().QuerySelector("p");
+  const SelectionInDOMTree selection =
+      SelectionInDOMTree::Builder()
+          .Collapse(Position(sample->firstChild(), 0))
+          .Extend(Position(sample->firstChild(), 3))
+          .Build();
+  const VisibleSelection visible_selection = CreateVisibleSelection(selection);
+
+  EXPECT_EQ(selection, visible_selection.AsSelection());
+}
+
+TEST_F(VisibleSelectionTest, FirstLetterVisibilityHidden) {
+  SetBodyContent(
+      "<style>p::first-letter { visibility: hidden; }</style>"
+      "<p>abc def</p>");
+  const Element* sample = GetDocument().QuerySelector("p");
+  const SelectionInDOMTree selection =
+      SelectionInDOMTree::Builder()
+          .Collapse(Position(sample->firstChild(), 0))
+          .Extend(Position(sample->firstChild(), 3))
+          .Build();
+  const VisibleSelection visible_selection = CreateVisibleSelection(selection);
+
+  EXPECT_EQ(SelectionInDOMTree::Builder()
+                .Collapse(Position(sample->firstChild(), 1))
+                .Extend(Position(sample->firstChild(), 3))
+                .Build(),
+            visible_selection.AsSelection())
+      << "Exclude first-letter part since it is visibility::hidden";
 }
 
 // For http://crbug.com/695317
@@ -249,30 +372,67 @@ TEST_F(VisibleSelectionTest, SelectAllWithInputElement) {
   SetBodyContent("<input>123");
   Element* const html_element = GetDocument().documentElement();
   Element* const input = GetDocument().QuerySelector("input");
-  Node* const last_child = GetDocument().body()->LastChild();
+  Node* const last_child = GetDocument().body()->lastChild();
 
-  const VisibleSelection& visible_selectin_in_dom_tree = CreateVisibleSelection(
-      SelectionInDOMTree::Builder()
-          .Collapse(Position::FirstPositionInNode(html_element))
-          .Extend(Position::LastPositionInNode(html_element))
-          .Build());
+  const VisibleSelection& visible_selection_in_dom_tree =
+      CreateVisibleSelection(
+          SelectionInDOMTree::Builder()
+              .Collapse(Position::FirstPositionInNode(*html_element))
+              .Extend(Position::LastPositionInNode(*html_element))
+              .Build());
   EXPECT_EQ(SelectionInDOMTree::Builder()
-                .Collapse(Position::BeforeNode(input))
+                .Collapse(Position::BeforeNode(*input))
                 .Extend(Position(last_child, 3))
                 .Build(),
-            visible_selectin_in_dom_tree.AsSelection());
+            visible_selection_in_dom_tree.AsSelection());
 
-  const VisibleSelectionInFlatTree& visible_selectin_in_flat_tree =
+  const VisibleSelectionInFlatTree& visible_selection_in_flat_tree =
       CreateVisibleSelection(
           SelectionInFlatTree::Builder()
-              .Collapse(PositionInFlatTree::FirstPositionInNode(html_element))
-              .Extend(PositionInFlatTree::LastPositionInNode(html_element))
+              .Collapse(PositionInFlatTree::FirstPositionInNode(*html_element))
+              .Extend(PositionInFlatTree::LastPositionInNode(*html_element))
               .Build());
   EXPECT_EQ(SelectionInFlatTree::Builder()
-                .Collapse(PositionInFlatTree::BeforeNode(input))
+                .Collapse(PositionInFlatTree::BeforeNode(*input))
                 .Extend(PositionInFlatTree(last_child, 3))
                 .Build(),
-            visible_selectin_in_flat_tree.AsSelection());
+            visible_selection_in_flat_tree.AsSelection());
+}
+
+TEST_F(VisibleSelectionTest, GetWordSelectionTextWithTextSecurity) {
+  InsertStyleElement("s {-webkit-text-security:disc;}");
+  // Note: |CreateVisibleSelectionWithGranularity()| considers security
+  // characters as a sequence "x".
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("|abc<s>foo bar</s>baz"));
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("a|bc<s>foo bar</s>baz"));
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("abc|<s>foo bar</s>baz"));
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("abc<s>|foo bar</s>baz"));
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("abc<s>f|oo bar</s>baz"));
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("abc<s>fo|o bar</s>baz"));
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("abc<s>foo| bar</s>baz"));
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("abc<s>foo |bar</s>baz"));
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("abc<s>foo b|ar</s>baz"));
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("abc<s>foo ba|r</s>baz"));
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("abc<s>foo bar|</s>baz"));
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("abc<s>foo bar</s>|baz"));
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("abc<s>foo bar</s>b|az"));
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("abc<s>foo bar</s>ba|z"));
+  EXPECT_EQ("^abc<s>foo bar</s>baz|",
+            GetWordSelectionText("abc<s>foo bar</s>baz|"));
 }
 
 TEST_F(VisibleSelectionTest, ShadowCrossing) {
@@ -292,22 +452,22 @@ TEST_F(VisibleSelectionTest, ShadowCrossing) {
 
   VisibleSelection selection = CreateVisibleSelection(
       SelectionInDOMTree::Builder()
-          .Collapse(Position::FirstPositionInNode(one))
-          .Extend(Position::LastPositionInNode(shadow_root))
+          .Collapse(Position::FirstPositionInNode(*one))
+          .Extend(Position::LastPositionInNode(*shadow_root))
           .Build());
   VisibleSelectionInFlatTree selection_in_flat_tree = CreateVisibleSelection(
       SelectionInFlatTree::Builder()
-          .Collapse(PositionInFlatTree::FirstPositionInNode(one))
-          .Extend(PositionInFlatTree::LastPositionInNode(host))
+          .Collapse(PositionInFlatTree::FirstPositionInNode(*one))
+          .Extend(PositionInFlatTree::LastPositionInNode(*host))
           .Build());
 
   EXPECT_EQ(Position(host, PositionAnchorType::kBeforeAnchor),
             selection.Start());
-  EXPECT_EQ(Position(one->FirstChild(), 0), selection.end());
-  EXPECT_EQ(PositionInFlatTree(one->FirstChild(), 0),
+  EXPECT_EQ(Position(host, PositionAnchorType::kBeforeAnchor), selection.End());
+  EXPECT_EQ(PositionInFlatTree(one->firstChild(), 0),
             selection_in_flat_tree.Start());
-  EXPECT_EQ(PositionInFlatTree(six->FirstChild(), 2),
-            selection_in_flat_tree.end());
+  EXPECT_EQ(PositionInFlatTree(six->firstChild(), 2),
+            selection_in_flat_tree.End());
 }
 
 TEST_F(VisibleSelectionTest, ShadowV0DistributedNodes) {
@@ -327,21 +487,21 @@ TEST_F(VisibleSelectionTest, ShadowV0DistributedNodes) {
 
   VisibleSelection selection =
       CreateVisibleSelection(SelectionInDOMTree::Builder()
-                                 .Collapse(Position::FirstPositionInNode(one))
-                                 .Extend(Position::LastPositionInNode(two))
+                                 .Collapse(Position::FirstPositionInNode(*one))
+                                 .Extend(Position::LastPositionInNode(*two))
                                  .Build());
   VisibleSelectionInFlatTree selection_in_flat_tree = CreateVisibleSelection(
       SelectionInFlatTree::Builder()
-          .Collapse(PositionInFlatTree::FirstPositionInNode(one))
-          .Extend(PositionInFlatTree::LastPositionInNode(two))
+          .Collapse(PositionInFlatTree::FirstPositionInNode(*one))
+          .Extend(PositionInFlatTree::LastPositionInNode(*two))
           .Build());
 
-  EXPECT_EQ(Position(one->FirstChild(), 0), selection.Start());
-  EXPECT_EQ(Position(two->FirstChild(), 2), selection.end());
-  EXPECT_EQ(PositionInFlatTree(five->FirstChild(), 0),
+  EXPECT_EQ(Position(one->firstChild(), 0), selection.Start());
+  EXPECT_EQ(Position(two->firstChild(), 2), selection.End());
+  EXPECT_EQ(PositionInFlatTree(five->firstChild(), 0),
             selection_in_flat_tree.Start());
-  EXPECT_EQ(PositionInFlatTree(five->FirstChild(), 2),
-            selection_in_flat_tree.end());
+  EXPECT_EQ(PositionInFlatTree(five->firstChild(), 2),
+            selection_in_flat_tree.End());
 }
 
 TEST_F(VisibleSelectionTest, ShadowNested) {
@@ -373,22 +533,22 @@ TEST_F(VisibleSelectionTest, ShadowNested) {
 
   VisibleSelection selection = CreateVisibleSelection(
       SelectionInDOMTree::Builder()
-          .Collapse(Position::FirstPositionInNode(one))
-          .Extend(Position::LastPositionInNode(shadow_root2))
+          .Collapse(Position::FirstPositionInNode(*one))
+          .Extend(Position::LastPositionInNode(*shadow_root2))
           .Build());
   VisibleSelectionInFlatTree selection_in_flat_tree = CreateVisibleSelection(
       SelectionInFlatTree::Builder()
-          .Collapse(PositionInFlatTree::FirstPositionInNode(one))
-          .Extend(PositionInFlatTree::AfterNode(eight))
+          .Collapse(PositionInFlatTree::FirstPositionInNode(*one))
+          .Extend(PositionInFlatTree::AfterNode(*eight))
           .Build());
 
   EXPECT_EQ(Position(host, PositionAnchorType::kBeforeAnchor),
             selection.Start());
-  EXPECT_EQ(Position(one->FirstChild(), 0), selection.end());
-  EXPECT_EQ(PositionInFlatTree(eight->FirstChild(), 2),
+  EXPECT_EQ(Position(host, PositionAnchorType::kBeforeAnchor), selection.End());
+  EXPECT_EQ(PositionInFlatTree(eight->firstChild(), 2),
             selection_in_flat_tree.Start());
-  EXPECT_EQ(PositionInFlatTree(eight->FirstChild(), 2),
-            selection_in_flat_tree.end());
+  EXPECT_EQ(PositionInFlatTree(eight->firstChild(), 2),
+            selection_in_flat_tree.End());
 }
 
 TEST_F(VisibleSelectionTest, WordGranularity) {
@@ -401,9 +561,9 @@ TEST_F(VisibleSelectionTest, WordGranularity) {
   {
     SetSelection(selection, 0);
     SetSelection(selection_in_flat_tree, 0);
-    selection = ExpandUsingGranularity(selection, kWordGranularity);
+    selection = ExpandUsingGranularity(selection, TextGranularity::kWord);
     selection_in_flat_tree =
-        ExpandUsingGranularity(selection_in_flat_tree, kWordGranularity);
+        ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
     Range* range = CreateRange(FirstEphemeralRangeOf(selection));
     EXPECT_EQ(0u, range->startOffset());
@@ -417,9 +577,9 @@ TEST_F(VisibleSelectionTest, WordGranularity) {
   {
     SetSelection(selection, 8);
     SetSelection(selection_in_flat_tree, 8);
-    selection = ExpandUsingGranularity(selection, kWordGranularity);
+    selection = ExpandUsingGranularity(selection, TextGranularity::kWord);
     selection_in_flat_tree =
-        ExpandUsingGranularity(selection_in_flat_tree, kWordGranularity);
+        ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
     Range* range = CreateRange(FirstEphemeralRangeOf(selection));
     EXPECT_EQ(6u, range->startOffset());
@@ -435,9 +595,9 @@ TEST_F(VisibleSelectionTest, WordGranularity) {
   {
     SetSelection(selection, 5);
     SetSelection(selection_in_flat_tree, 5);
-    selection = ExpandUsingGranularity(selection, kWordGranularity);
+    selection = ExpandUsingGranularity(selection, TextGranularity::kWord);
     selection_in_flat_tree =
-        ExpandUsingGranularity(selection_in_flat_tree, kWordGranularity);
+        ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
     Range* range = CreateRange(FirstEphemeralRangeOf(selection));
     EXPECT_EQ(5u, range->startOffset());
@@ -453,9 +613,9 @@ TEST_F(VisibleSelectionTest, WordGranularity) {
   {
     SetSelection(selection, 26);
     SetSelection(selection_in_flat_tree, 26);
-    selection = ExpandUsingGranularity(selection, kWordGranularity);
+    selection = ExpandUsingGranularity(selection, TextGranularity::kWord);
     selection_in_flat_tree =
-        ExpandUsingGranularity(selection_in_flat_tree, kWordGranularity);
+        ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
     Range* range = CreateRange(FirstEphemeralRangeOf(selection));
     EXPECT_EQ(26u, range->startOffset());
@@ -469,9 +629,9 @@ TEST_F(VisibleSelectionTest, WordGranularity) {
   {
     SetSelection(selection, 27);
     SetSelection(selection_in_flat_tree, 27);
-    selection = ExpandUsingGranularity(selection, kWordGranularity);
+    selection = ExpandUsingGranularity(selection, TextGranularity::kWord);
     selection_in_flat_tree =
-        ExpandUsingGranularity(selection_in_flat_tree, kWordGranularity);
+        ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
     Range* range = CreateRange(FirstEphemeralRangeOf(selection));
     EXPECT_EQ(27u, range->startOffset());
@@ -485,9 +645,9 @@ TEST_F(VisibleSelectionTest, WordGranularity) {
   {
     SetSelection(selection, 0, 1);
     SetSelection(selection_in_flat_tree, 0, 1);
-    selection = ExpandUsingGranularity(selection, kWordGranularity);
+    selection = ExpandUsingGranularity(selection, TextGranularity::kWord);
     selection_in_flat_tree =
-        ExpandUsingGranularity(selection_in_flat_tree, kWordGranularity);
+        ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
     Range* range = CreateRange(FirstEphemeralRangeOf(selection));
     EXPECT_EQ(0u, range->startOffset());
@@ -501,9 +661,9 @@ TEST_F(VisibleSelectionTest, WordGranularity) {
   {
     SetSelection(selection, 2, 8);
     SetSelection(selection_in_flat_tree, 2, 8);
-    selection = ExpandUsingGranularity(selection, kWordGranularity);
+    selection = ExpandUsingGranularity(selection, TextGranularity::kWord);
     selection_in_flat_tree =
-        ExpandUsingGranularity(selection_in_flat_tree, kWordGranularity);
+        ExpandUsingGranularity(selection_in_flat_tree, TextGranularity::kWord);
 
     Range* range = CreateRange(FirstEphemeralRangeOf(selection));
     EXPECT_EQ(0u, range->startOffset());
@@ -519,23 +679,23 @@ TEST_F(VisibleSelectionTest, WordGranularity) {
 TEST_F(VisibleSelectionTest, updateIfNeededWithShadowHost) {
   SetBodyContent("<div id=host></div><div id=sample>foo</div>");
   SetShadowContent("<content>", "host");
-  Element* sample = GetDocument().GetElementById("sample");
+  Element* sample = GetDocument().getElementById("sample");
 
   // Simulates saving selection in undo stack.
   VisibleSelection selection =
       CreateVisibleSelection(SelectionInDOMTree::Builder()
-                                 .Collapse(Position(sample->FirstChild(), 0))
+                                 .Collapse(Position(sample->firstChild(), 0))
                                  .Build());
-  EXPECT_EQ(Position(sample->FirstChild(), 0), selection.Start());
+  EXPECT_EQ(Position(sample->firstChild(), 0), selection.Start());
 
   // Simulates modifying DOM tree to invalidate distribution.
-  Element* host = GetDocument().GetElementById("host");
+  Element* host = GetDocument().getElementById("host");
   host->AppendChild(sample);
   GetDocument().UpdateStyleAndLayout();
 
   // Simulates to restore selection from undo stack.
   selection = CreateVisibleSelection(selection.AsSelection());
-  EXPECT_EQ(Position(sample->FirstChild(), 0), selection.Start());
+  EXPECT_EQ(Position(sample->firstChild(), 0), selection.Start());
 }
 
 }  // namespace blink

@@ -44,8 +44,7 @@ FileSystemDirURLRequestJob::FileSystemDirURLRequestJob(
       weak_factory_(this) {
 }
 
-FileSystemDirURLRequestJob::~FileSystemDirURLRequestJob() {
-}
+FileSystemDirURLRequestJob::~FileSystemDirURLRequestJob() = default;
 
 int FileSystemDirURLRequestJob::ReadRawData(net::IOBuffer* dest,
                                             int dest_size) {
@@ -103,8 +102,8 @@ void FileSystemDirURLRequestJob::StartAsync() {
     return;
   }
   file_system_context_->operation_runner()->ReadDirectory(
-      url_, base::Bind(&FileSystemDirURLRequestJob::DidReadDirectory,
-                       weak_factory_.GetWeakPtr()));
+      url_, base::BindRepeating(&FileSystemDirURLRequestJob::DidReadDirectory,
+                                weak_factory_.GetWeakPtr()));
 }
 
 void FileSystemDirURLRequestJob::DidAttemptAutoMount(base::File::Error result) {
@@ -118,7 +117,7 @@ void FileSystemDirURLRequestJob::DidAttemptAutoMount(base::File::Error result) {
 
 void FileSystemDirURLRequestJob::DidReadDirectory(
     base::File::Error result,
-    const std::vector<DirectoryEntry>& entries,
+    std::vector<DirectoryEntry> entries,
     bool has_more) {
   if (result != base::File::FILE_OK) {
     int rv = net::ERR_FILE_NOT_FOUND;

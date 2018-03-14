@@ -12,13 +12,16 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/containers/flat_set.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
 #include "base/synchronization/lock.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/common/resource_type.h"
 #include "storage/common/fileapi/file_system_types.h"
+#include "url/origin.h"
 
 class GURL;
 
@@ -27,13 +30,17 @@ class FilePath;
 }
 
 namespace storage {
+class FileSystemContext;
 class FileSystemURL;
 }
 
 namespace content {
 
+class SiteInstance;
+class ResourceRequestBody;
+
 class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
-    : NON_EXPORTED_BASE(public ChildProcessSecurityPolicy) {
+    : public ChildProcessSecurityPolicy {
  public:
   // Object can only be created through GetInstance() so the constructor is
   // private.
@@ -85,9 +92,23 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   bool CanAccessDataForOrigin(int child_id, const GURL& url) override;
   bool HasSpecificPermissionForOrigin(int child_id,
                                       const url::Origin& origin) override;
+  bool GetMatchingIsolatedOrigin(const url::Origin& origin,
+                                 url::Origin* result) override;
 
   // Returns if |child_id| can read all of the |files|.
   bool CanReadAllFiles(int child_id, const std::vector<base::FilePath>& files);
+
+  // Validate that |child_id| in |file_system_context| is allowed to access
+  // data in the POST body specified by |body|.  Can be called on any thread.
+  bool CanReadRequestBody(int child_id,
+                          const storage::FileSystemContext* file_system_context,
+                          const scoped_refptr<ResourceRequestBody>& body);
+
+  // Validate that the renderer process for |site_instance| is allowed to access
+  // data in the POST body specified by |body|.  Has to be called on the UI
+  // thread.
+  bool CanReadRequestBody(SiteInstance* site_instance,
+                          const scoped_refptr<ResourceRequestBody>& body);
 
   // Pseudo schemes are treated differently than other schemes because they
   // cannot be requested like normal URLs.  There is no mechanism for revoking
@@ -158,8 +179,28 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
 
   // Sets the process as only permitted to use and see the cookies for the
   // given origin.
-  // Origin lock is applied only if the --site-per-process flag is used.
   void LockToOrigin(int child_id, const GURL& gurl);
+
+  // Used to indicate the result of comparing a process's origin lock to
+  // another value:
+  enum class CheckOriginLockResult {
+    // The process does not exist, or it has no origin lock.
+    NO_LOCK,
+    // The process has an origin lock and it matches the passed-in value.
+    HAS_EQUAL_LOCK,
+    // The process has an origin lock and it does not match the passed-in
+    // value.
+    HAS_WRONG_LOCK,
+  };
+
+  // Check the origin lock of the process specified by |child_id| against
+  // |site_url|.  See the definition of |CheckOriginLockResult| for possible
+  // returned values.
+  CheckOriginLockResult CheckOriginLock(int child_id, const GURL& site_url);
+
+  // Retrieves the current origin lock of process |child_id|.  Returns an empty
+  // GURL if the process does not exist or if it is not locked to an origin.
+  GURL GetOriginLock(int child_id);
 
   // Register FileSystem type and permission policy which should be used
   // for the type.  The |policy| must be a bitwise-or'd value of
@@ -170,12 +211,63 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   // Returns true if sending system exclusive messages is allowed.
   bool CanSendMidiSysExMessage(int child_id);
 
+  // Add |origins| to the list of origins that require process isolation.
+  // When making process model decisions for such origins, the full
+  // scheme+host+port tuple rather than scheme and eTLD+1 will be used.
+  // SiteInstances for these origins will also use the full origin as site URL.
+  //
+  // Subdomains of an isolated origin are considered to be part of that
+  // origin's site.  For example, if https://isolated.foo.com is added as an
+  // isolated origin, then https://bar.isolated.foo.com will be considered part
+  // of the site for https://isolated.foo.com.
+  //
+  // Note that origins from |origins| must not be unique - URLs that render with
+  // unique origins, such as data: URLs, are not supported.  Suborigins (see
+  // https://w3c.github.io/webappsec-suborigins/ -- not to be confused with
+  // subdomains) and non-standard schemes are also not supported.  Sandboxed
+  // frames (e.g., <iframe sandbox>) *are* supported, since process placement
+  // decisions will be based on the URLs such frames navigate to, and not the
+  // origin of committed documents (which might be unique).  If an isolated
+  // origin opens an about:blank popup, it will stay in the isolated origin's
+  // process. Nested URLs (filesystem: and blob:) retain process isolation
+  // behavior of their inner origin.
+  //
+  // Note that it is okay if |origins| contains duplicates - the set of origins
+  // will be deduplicated inside the method.
+  void AddIsolatedOrigins(std::vector<url::Origin> origins);
+
+  // Check whether |origin| requires origin-wide process isolation.
+  //
+  // Subdomains of an isolated origin are considered part of that isolated
+  // origin.  Thus, if https://isolated.foo.com/ had been added as an isolated
+  // origin, this will return true for https://isolated.foo.com/,
+  // https://bar.isolated.foo.com/, or https://baz.bar.isolated.foo.com/; and
+  // it will return false for https://foo.com/ or https://unisolated.foo.com/.
+  //
+  // Note that unlike site URLs for regular web sites, isolated origins care
+  // about port.
+  bool IsIsolatedOrigin(const url::Origin& origin);
+
+  // Removes a previously added isolated origin, currently only used in tests.
+  //
+  // TODO(alexmos): Exposing this more generally will require extra care, such
+  // as ensuring that there are no active SiteInstances in that origin.
+  void RemoveIsolatedOriginForTesting(const url::Origin& origin);
+
+  // Returns false for redirects that must be blocked no matter which renderer
+  // process initiated the request (if any).
+  // Note: Checking CanRedirectToURL is not enough. CanRequestURL(child_id, url)
+  //       represents a stricter subset. It must also be used for
+  //       renderer-initiated navigations.
+  bool CanRedirectToURL(const GURL& url);
+
  private:
   friend class ChildProcessSecurityPolicyInProcessBrowserTest;
   friend class ChildProcessSecurityPolicyTest;
   FRIEND_TEST_ALL_PREFIXES(ChildProcessSecurityPolicyInProcessBrowserTest,
                            NoLeak);
   FRIEND_TEST_ALL_PREFIXES(ChildProcessSecurityPolicyTest, FilePermissions);
+  FRIEND_TEST_ALL_PREFIXES(ChildProcessSecurityPolicyTest, AddIsolatedOrigins);
 
   class SecurityState;
 
@@ -259,6 +351,12 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   WorkerToMainProcessMap worker_map_;
 
   FileSystemPermissionPolicyMap file_system_policy_map_;
+
+  // Tracks origins for which the entire origin should be treated as a site
+  // when making process model decisions, rather than the origin's scheme and
+  // eTLD+1. Each of these origins requires a dedicated process.  This set is
+  // protected by |lock_|.
+  base::flat_set<url::Origin> isolated_origins_;
 
   DISALLOW_COPY_AND_ASSIGN(ChildProcessSecurityPolicyImpl);
 };

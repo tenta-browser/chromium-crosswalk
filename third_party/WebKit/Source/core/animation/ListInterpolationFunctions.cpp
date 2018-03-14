@@ -13,6 +13,8 @@ namespace blink {
 
 DEFINE_NON_INTERPOLABLE_VALUE_TYPE(NonInterpolableList);
 
+const size_t kRepeatableListMaxLength = 1000;
+
 bool ListInterpolationFunctions::EqualValues(
     const InterpolationValue& a,
     const InterpolationValue& b,
@@ -55,7 +57,14 @@ static size_t MatchLengths(size_t start_length,
   if (length_matching_strategy ==
       ListInterpolationFunctions::LengthMatchingStrategy::
           kLowestCommonMultiple) {
-    return lowestCommonMultiple(start_length, end_length);
+    // Combining the length expansion of lowestCommonMultiple with CSS
+    // transitions has the potential to create pathological cases where this
+    // algorithm compounds upon itself as the user starts transitions on already
+    // animating values multiple times. This maximum limit is to avoid locking
+    // up users' systems with memory consumption in the event that this occurs.
+    // See crbug.com/739197 for more context.
+    return std::min(kRepeatableListMaxLength,
+                    lowestCommonMultiple(start_length, end_length));
   }
   DCHECK_EQ(length_matching_strategy,
             ListInterpolationFunctions::LengthMatchingStrategy::kPadToLargest);
@@ -100,7 +109,7 @@ PairwiseInterpolationValue ListInterpolationFunctions::MaybeMergeSingles(
       InterpolableList::Create(final_length);
   std::unique_ptr<InterpolableList> result_end_interpolable_list =
       InterpolableList::Create(final_length);
-  Vector<RefPtr<NonInterpolableValue>> result_non_interpolable_values(
+  Vector<scoped_refptr<NonInterpolableValue>> result_non_interpolable_values(
       final_length);
 
   InterpolableList& start_interpolable_list =
@@ -170,7 +179,8 @@ static void RepeatToLength(InterpolationValue& value, size_t length) {
   DCHECK_LT(current_length, length);
   std::unique_ptr<InterpolableList> new_interpolable_list =
       InterpolableList::Create(length);
-  Vector<RefPtr<NonInterpolableValue>> new_non_interpolable_values(length);
+  Vector<scoped_refptr<NonInterpolableValue>> new_non_interpolable_values(
+      length);
   for (size_t i = length; i-- > 0;) {
     new_interpolable_list->Set(
         i, i < current_length
@@ -201,7 +211,7 @@ static void PadToSameLength(InterpolationValue& value,
   DCHECK_LT(current_length, target_length);
   std::unique_ptr<InterpolableList> new_interpolable_list =
       InterpolableList::Create(target_length);
-  Vector<RefPtr<NonInterpolableValue>> new_non_interpolable_values(
+  Vector<scoped_refptr<NonInterpolableValue>> new_non_interpolable_values(
       target_length);
   size_t index = 0;
   for (; index < current_length; index++) {

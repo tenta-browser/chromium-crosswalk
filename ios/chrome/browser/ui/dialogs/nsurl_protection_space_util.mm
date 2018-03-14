@@ -4,7 +4,6 @@
 
 #import "ios/chrome/browser/ui/dialogs/nsurl_protection_space_util.h"
 
-#import "base/mac/scoped_nsobject.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/strings/grit/components_strings.h"
@@ -13,7 +12,10 @@
 #include "url/gurl.h"
 #include "url/scheme_host_port.h"
 
-namespace ios_internal {
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace nsurlprotectionspace_util {
 
 NSString* MessageForHTTPAuth(NSURLProtectionSpace* protectionSpace) {
@@ -23,7 +25,7 @@ NSString* MessageForHTTPAuth(NSURLProtectionSpace* protectionSpace) {
     return RequesterIdentity(protectionSpace);
 
   NSString* securityWarning =
-      l10n_util::GetNSString(IDS_PAGE_INFO_NON_SECURE_TRANSPORT);
+      l10n_util::GetNSString(IDS_PAGE_INFO_NOT_SECURE_SUMMARY);
   return
       [NSString stringWithFormat:@"%@ %@", RequesterIdentity(protectionSpace),
                                  securityWarning];
@@ -66,4 +68,3 @@ GURL RequesterOrigin(NSURLProtectionSpace* protectionSpace) {
 }
 
 }  // namespace nsurlprotectionspace_util
-}  // namespace ios_internal

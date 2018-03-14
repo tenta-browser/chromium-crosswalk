@@ -23,7 +23,7 @@ class QuicClock;
 // milliseconds have passed, QuicChromiumPacketReader::StartReading() yields by
 // doing a QuicChromiumPacketReader::PostTask().
 const int kQuicYieldAfterPacketsRead = 32;
-const int kQuicYieldAfterDurationMilliseconds = 20;
+const int kQuicYieldAfterDurationMilliseconds = 2;
 
 class NET_EXPORT_PRIVATE QuicChromiumPacketReader {
  public:
@@ -33,8 +33,8 @@ class NET_EXPORT_PRIVATE QuicChromiumPacketReader {
     virtual void OnReadError(int result,
                              const DatagramClientSocket* socket) = 0;
     virtual bool OnPacket(const QuicReceivedPacket& packet,
-                          IPEndPoint local_address,
-                          IPEndPoint peer_address) = 0;
+                          const QuicSocketAddress& local_address,
+                          const QuicSocketAddress& peer_address) = 0;
   };
 
   QuicChromiumPacketReader(DatagramClientSocket* socket,
@@ -55,6 +55,8 @@ class NET_EXPORT_PRIVATE QuicChromiumPacketReader {
  private:
   // A completion callback invoked when a read completes.
   void OnReadComplete(int result);
+  // Return true if reading should continue.
+  bool ProcessReadResult(int result);
 
   DatagramClientSocket* socket_;
   Visitor* visitor_;

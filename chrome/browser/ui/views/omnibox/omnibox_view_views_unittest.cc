@@ -13,10 +13,12 @@
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
 #include "chrome/browser/command_updater.h"
+#include "chrome/browser/command_updater_impl.h"
 #include "chrome/browser/search_engines/template_url_service_factory_test_util.h"
 #include "chrome/browser/ui/omnibox/chrome_omnibox_client.h"
 #include "chrome/browser/ui/omnibox/chrome_omnibox_edit_controller.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chrome/test/views/chrome_views_test_base.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/toolbar/test_toolbar_model.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -24,6 +26,9 @@
 #include "ui/base/ime/text_edit_commands.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/keycodes/dom/dom_code.h"
+#include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/vector2d.h"
+#include "ui/gfx/render_text.h"
 #include "ui/views/controls/textfield/textfield_test_api.h"
 
 #if defined(OS_CHROMEOS)
@@ -53,6 +58,8 @@ class TestingOmniboxView : public OmniboxViewViews {
     return emphasize ? EMPHASIZED : DEEMPHASIZED;
   }
 
+  using views::Textfield::GetRenderText;
+
   void ResetEmphasisTestState();
 
   void CheckUpdatePopupCallInfo(size_t call_count,
@@ -65,6 +72,7 @@ class TestingOmniboxView : public OmniboxViewViews {
 
   // OmniboxViewViews:
   void EmphasizeURLComponents() override;
+  void OnFocus() override;
 
  private:
   // OmniboxViewViews:
@@ -120,6 +128,12 @@ void TestingOmniboxView::EmphasizeURLComponents() {
   UpdateTextStyle(text(), model()->client()->GetSchemeClassifier());
 }
 
+void TestingOmniboxView::OnFocus() {
+  views::Textfield::OnFocus();
+  model()->OnSetFocus(false);
+  GetRenderText()->SetElideBehavior(gfx::NO_ELIDE);
+}
+
 void TestingOmniboxView::UpdatePopup() {
   ++update_popup_call_count_;
   update_popup_text_ = text();
@@ -168,7 +182,7 @@ class TestingOmniboxEditController : public ChromeOmniboxEditController {
 
 // OmniboxViewViewsTest -------------------------------------------------------
 
-class OmniboxViewViewsTest : public testing::Test {
+class OmniboxViewViewsTest : public ChromeViewsTestBase {
  public:
   OmniboxViewViewsTest();
 
@@ -195,7 +209,7 @@ class OmniboxViewViewsTest : public testing::Test {
   content::TestBrowserThreadBundle thread_bundle_;
   TestingProfile profile_;
   TemplateURLServiceFactoryTestUtil util_;
-  CommandUpdater command_updater_;
+  CommandUpdaterImpl command_updater_;
   TestToolbarModel toolbar_model_;
   TestingOmniboxEditController omnibox_edit_controller_;
   std::unique_ptr<TestingOmniboxView> omnibox_view_;
@@ -223,6 +237,7 @@ void OmniboxViewViewsTest::SetAndEmphasizeText(const std::string& new_text,
 }
 
 void OmniboxViewViewsTest::SetUp() {
+  ChromeViewsTestBase::SetUp();
 #if defined(OS_CHROMEOS)
   chromeos::input_method::InitializeForTesting(
       new chromeos::input_method::MockInputMethodManagerImpl);
@@ -243,6 +258,7 @@ void OmniboxViewViewsTest::TearDown() {
 #if defined(OS_CHROMEOS)
   chromeos::input_method::Shutdown();
 #endif
+  ChromeViewsTestBase::TearDown();
 }
 
 // Actual tests ---------------------------------------------------------------
@@ -293,6 +309,44 @@ TEST_F(OmniboxViewViewsTest, ScheduledTextEditCommand) {
   omnibox_textfield()->OnKeyEvent(&up_pressed);
   EXPECT_EQ(ui::TextEditCommand::INVALID_COMMAND,
             scheduled_text_edit_command());
+}
+
+TEST_F(OmniboxViewViewsTest, OnBlur) {
+  // Make the Omnibox very narrow (so it couldn't fit the whole string).
+  int kOmniboxWidth = 60;
+  gfx::RenderText* render_text = omnibox_view()->GetRenderText();
+  render_text->SetDisplayRect(gfx::Rect(0, 0, kOmniboxWidth, 10));
+  render_text->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+
+  // (In this example, uppercase Latin letters represent Hebrew letters.)
+  // The string |kContentsRtl| is equivalent to:
+  //     RA.QWM/0123/abcd
+  // This is displayed as:
+  //     0123/MWQ.AR/abcd
+  // Enter focused mode, where the text should *not* be elided, and we expect
+  // SetWindowTextAndCaretPos to scroll such that the start of the string is
+  // on-screen. Because the domain is RTL, this scrolls to an offset greater
+  // than 0.
+  omnibox_view()->OnFocus();
+  const base::string16 kContentsRtl =
+      base::WideToUTF16(L"\x05e8\x05e2.\x05e7\x05d5\x05dd/0123/abcd");
+  static_cast<OmniboxView*>(omnibox_view())
+      ->SetWindowTextAndCaretPos(kContentsRtl, 0, false, false);
+  EXPECT_EQ(gfx::NO_ELIDE, render_text->elide_behavior());
+  // NOTE: Technically (depending on the font), this expectation could fail if
+  // the entire domain fits in 60 pixels. However, 60px is so small it should
+  // never happen with any font.
+  EXPECT_GT(0, render_text->GetUpdatedDisplayOffset().x());
+  omnibox_view()->SelectAll(false);
+  EXPECT_TRUE(omnibox_view()->IsSelectAll());
+
+  // Now enter blurred mode, where the text should be elided to 60px. This means
+  // the string itself is truncated. Scrolling would therefore mean the text is
+  // off-screen. Ensure that the horizontal scrolling has been reset to 0.
+  omnibox_view()->OnBlur();
+  EXPECT_EQ(gfx::ELIDE_TAIL, render_text->elide_behavior());
+  EXPECT_EQ(0, render_text->GetUpdatedDisplayOffset().x());
+  EXPECT_FALSE(omnibox_view()->IsSelectAll());
 }
 
 TEST_F(OmniboxViewViewsTest, Emphasis) {

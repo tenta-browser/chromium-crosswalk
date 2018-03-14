@@ -4,13 +4,46 @@
 
 #include "headless/public/util/http_url_fetcher.h"
 
+#include "headless/public/util/generic_url_request_job.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/io_buffer.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/http/http_response_headers.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
+
+namespace {
+
+constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
+    net::DefineNetworkTrafficAnnotation("headless_url_request", R"(
+        semantics {
+          sender: "Headless"
+          description:
+            "Headless Chromium allows running Chromium in a headless/server "
+            "environment. Expected use cases include loading web pages, "
+            "extracting metadata (e.g., the DOM) and generating bitmaps "
+            "from page contents, using all the modern web platform features "
+            "provided by Chromium and Blink."
+          trigger:
+            "User running Chrome in headless mode, please refer to https://"
+            "chromium.googlesource.com/chromium/src/+/lkgr/headless/README.md "
+            "for more information."
+          data: "Any data based on given request."
+          destination: OTHER
+        }
+        policy {
+          cookies_allowed: YES
+          cookies_store:
+            "Various, but cookies stores are deleted when session ends."
+          setting:
+            "This feature cannot be disabled by settings, but it is used only "
+            "if user enters the Headless mode."
+          policy_exception_justification: "Not implemented."
+        })");
+
+}  // namespace
 
 namespace headless {
 
@@ -67,7 +100,8 @@ HttpURLFetcher::Delegate::Delegate(
       buf_(new net::IOBuffer(kBufSize)),
       request_(url_request_context->CreateRequest(rewritten_url,
                                                   net::DEFAULT_PRIORITY,
-                                                  this)),
+                                                  this,
+                                                  kTrafficAnnotation)),
       result_listener_(result_listener) {
   request_->set_method(method);
 
@@ -82,7 +116,7 @@ HttpURLFetcher::Delegate::Delegate(
   request_->Start();
 }
 
-HttpURLFetcher::Delegate::~Delegate() {}
+HttpURLFetcher::Delegate::~Delegate() = default;
 
 void HttpURLFetcher::Delegate::OnAuthRequired(
     net::URLRequest* request,
@@ -178,29 +212,30 @@ void HttpURLFetcher::Delegate::OnResponseCompleted(net::URLRequest* request,
     return;
   }
 
+  // Extract LoadTimingInfo from the request to pass to the result listener.
+  net::LoadTimingInfo load_timing_info;
+  request->GetLoadTimingInfo(&load_timing_info);
+
   // TODO(alexclarke) apart from the headers there's a lot of stuff in
   // |request->response_info()| that we drop here.  Find a way to pipe it
   // through.
   result_listener_->OnFetchComplete(
-      request->url(), request->GetResponseCode(),
-      request->response_info().headers,
-      bytes_read_so_far_.c_str(), bytes_read_so_far_.size());
+      request->url(), request->response_info().headers,
+      bytes_read_so_far_.c_str(), bytes_read_so_far_.size(), load_timing_info);
 }
 
 HttpURLFetcher::HttpURLFetcher(
     const net::URLRequestContext* url_request_context)
     : url_request_context_(url_request_context) {}
 
-HttpURLFetcher::~HttpURLFetcher() {}
+HttpURLFetcher::~HttpURLFetcher() = default;
 
-void HttpURLFetcher::StartFetch(const GURL& rewritten_url,
-                                const std::string& method,
-                                const std::string& post_data,
-                                const net::HttpRequestHeaders& request_headers,
+void HttpURLFetcher::StartFetch(const Request* request,
                                 ResultListener* result_listener) {
-  delegate_.reset(new Delegate(rewritten_url, method, post_data,
-                               request_headers, url_request_context_,
-                               result_listener));
+  delegate_.reset(new Delegate(
+      request->GetURLRequest()->url(), request->GetURLRequest()->method(),
+      request->GetPostData(), request->GetHttpRequestHeaders(),
+      url_request_context_, result_listener));
 }
 
 }  // namespace headless

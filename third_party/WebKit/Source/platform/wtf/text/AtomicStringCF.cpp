@@ -25,16 +25,17 @@
 
 #include "platform/wtf/text/AtomicString.h"
 
+#include "build/build_config.h"
 #include "platform/wtf/text/AtomicStringTable.h"
 
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
 
 #include "platform/wtf/text/CString.h"
 #include <CoreFoundation/CoreFoundation.h>
 
 namespace WTF {
 
-PassRefPtr<StringImpl> AtomicString::Add(CFStringRef string) {
+scoped_refptr<StringImpl> AtomicString::Add(CFStringRef string) {
   if (!string)
     return nullptr;
 
@@ -49,11 +50,11 @@ PassRefPtr<StringImpl> AtomicString::Add(CFStringRef string) {
         reinterpret_cast<const UChar*>(ptr), length);
 
   Vector<UniChar, 1024> uchar_buffer(length);
-  CFStringGetCharacters(string, CFRangeMake(0, length), uchar_buffer.Data());
+  CFStringGetCharacters(string, CFRangeMake(0, length), uchar_buffer.data());
   return AtomicStringTable::Instance().Add(
-      reinterpret_cast<const UChar*>(uchar_buffer.Data()), length);
+      reinterpret_cast<const UChar*>(uchar_buffer.data()), length);
 }
 
 }  // namespace WTF
 
-#endif  // OS(MACOSX)
+#endif  // defined(OS_MACOSX)

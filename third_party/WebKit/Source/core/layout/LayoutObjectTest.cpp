@@ -4,14 +4,19 @@
 
 #include "core/layout/LayoutObject.h"
 
-#include "core/frame/FrameView.h"
+#include "bindings/core/v8/V8BindingForTesting.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/layout/LayoutTestHelper.h"
+#include "core/layout/LayoutTextFragment.h"
 #include "core/layout/LayoutView.h"
 #include "platform/json/JSONValues.h"
 #include "platform/testing/RuntimeEnabledFeaturesTestHelpers.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
+
+using ::testing::Return;
 
 class LayoutObjectTest : public RenderingTest {
  public:
@@ -20,24 +25,24 @@ class LayoutObjectTest : public RenderingTest {
 
 TEST_F(LayoutObjectTest, LayoutDecoratedNameCalledWithPositionedObject) {
   SetBodyInnerHTML("<div id='div' style='position: fixed'>test</div>");
-  Element* div = GetDocument().GetElementById(AtomicString("div"));
+  Element* div = GetDocument().getElementById(AtomicString("div"));
   DCHECK(div);
   LayoutObject* obj = div->GetLayoutObject();
   DCHECK(obj);
   EXPECT_STREQ("LayoutBlockFlow (positioned)",
-               obj->DecoratedName().Ascii().Data());
+               obj->DecoratedName().Ascii().data());
 }
 
 // Some display checks.
 TEST_F(LayoutObjectTest, DisplayNoneCreateObject) {
   SetBodyInnerHTML("<div style='display:none'></div>");
-  EXPECT_EQ(nullptr, GetDocument().body()->FirstChild()->GetLayoutObject());
+  EXPECT_EQ(nullptr, GetDocument().body()->firstChild()->GetLayoutObject());
 }
 
 TEST_F(LayoutObjectTest, DisplayBlockCreateObject) {
   SetBodyInnerHTML("<foo style='display:block'></foo>");
   LayoutObject* layout_object =
-      GetDocument().body()->FirstChild()->GetLayoutObject();
+      GetDocument().body()->firstChild()->GetLayoutObject();
   EXPECT_NE(nullptr, layout_object);
   EXPECT_TRUE(layout_object->IsLayoutBlockFlow());
   EXPECT_FALSE(layout_object->IsInline());
@@ -46,7 +51,7 @@ TEST_F(LayoutObjectTest, DisplayBlockCreateObject) {
 TEST_F(LayoutObjectTest, DisplayInlineBlockCreateObject) {
   SetBodyInnerHTML("<foo style='display:inline-block'></foo>");
   LayoutObject* layout_object =
-      GetDocument().body()->FirstChild()->GetLayoutObject();
+      GetDocument().body()->firstChild()->GetLayoutObject();
   EXPECT_NE(nullptr, layout_object);
   EXPECT_TRUE(layout_object->IsLayoutBlockFlow());
   EXPECT_TRUE(layout_object->IsInline());
@@ -114,13 +119,14 @@ TEST_F(
 }
 
 TEST_F(LayoutObjectTest, PaintingLayerOfOverflowClipLayerUnderColumnSpanAll) {
-  SetBodyInnerHTML(
-      "<div id='columns' style='columns: 3'>"
-      "  <div style='column-span: all'>"
-      "    <div id='overflow-clip-layer' style='height: 100px; overflow: "
-      "hidden'></div>"
-      "  </div>"
-      "</div>");
+  SetBodyInnerHTML(R"HTML(
+    <div id='columns' style='columns: 3'>
+      <div style='column-span: all'>
+        <div id='overflow-clip-layer' style='height: 100px; overflow:
+    hidden'></div>
+      </div>
+    </div>
+  )HTML");
 
   LayoutObject* overflow_clip_object =
       GetLayoutObjectByElementId("overflow-clip-layer");
@@ -129,12 +135,13 @@ TEST_F(LayoutObjectTest, PaintingLayerOfOverflowClipLayerUnderColumnSpanAll) {
 }
 
 TEST_F(LayoutObjectTest, FloatUnderBlock) {
-  SetBodyInnerHTML(
-      "<div id='layered-div' style='position: absolute'>"
-      "  <div id='container'>"
-      "    <div id='floating' style='float: left'>FLOAT</div>"
-      "  </div>"
-      "</div>");
+  SetBodyInnerHTML(R"HTML(
+    <div id='layered-div' style='position: absolute'>
+      <div id='container'>
+        <div id='floating' style='float: left'>FLOAT</div>
+      </div>
+    </div>
+  )HTML");
 
   LayoutBoxModelObject* layered_div =
       ToLayoutBoxModelObject(GetLayoutObjectByElementId("layered-div"));
@@ -149,14 +156,15 @@ TEST_F(LayoutObjectTest, FloatUnderBlock) {
 }
 
 TEST_F(LayoutObjectTest, FloatUnderInline) {
-  SetBodyInnerHTML(
-      "<div id='layered-div' style='position: absolute'>"
-      "  <div id='container'>"
-      "    <span id='layered-span' style='position: relative'>"
-      "      <div id='floating' style='float: left'>FLOAT</div>"
-      "    </span>"
-      "  </div>"
-      "</div>");
+  SetBodyInnerHTML(R"HTML(
+    <div id='layered-div' style='position: absolute'>
+      <div id='container'>
+        <span id='layered-span' style='position: relative'>
+          <div id='floating' style='float: left'>FLOAT</div>
+        </span>
+      </div>
+    </div>
+  )HTML");
 
   LayoutBoxModelObject* layered_div =
       ToLayoutBoxModelObject(GetLayoutObjectByElementId("layered-div"));
@@ -202,7 +210,6 @@ TEST_F(LayoutObjectTest, MutableForPaintingClearPaintFlags) {
   object->bitfields_.SetDescendantNeedsPaintPropertyUpdate(true);
   EXPECT_TRUE(object->DescendantNeedsPaintPropertyUpdate());
 
-  ScopedSlimmingPaintInvalidationForTest enable_sp_invalidation(true);
   GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInPrePaint);
   object->GetMutableForPainting().ClearPaintFlags();
 
@@ -223,7 +230,6 @@ TEST_F(LayoutObjectTest, SubtreeNeedsPaintPropertyUpdate) {
   EXPECT_TRUE(object->NeedsPaintPropertyUpdate());
   EXPECT_TRUE(object->Parent()->DescendantNeedsPaintPropertyUpdate());
 
-  ScopedSlimmingPaintInvalidationForTest enable_sp_invalidation(true);
   GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInPrePaint);
   object->GetMutableForPainting().ClearPaintFlags();
 
@@ -288,6 +294,149 @@ TEST_F(LayoutObjectTest, NeedsPaintOffsetAndVisualRectUpdate) {
   parent->ClearPaintInvalidationFlags();
   EXPECT_FALSE(parent->MayNeedPaintInvalidation());
   EXPECT_FALSE(parent->NeedsPaintOffsetAndVisualRectUpdate());
+}
+
+TEST_F(LayoutObjectTest, AssociatedLayoutObjectOfFirstLetterPunctuations) {
+  const char* body_content =
+      "<style>p:first-letter {color:red;}</style><p id=sample>(a)bc</p>";
+  SetBodyInnerHTML(body_content);
+
+  Node* sample = GetDocument().getElementById("sample");
+  Node* text = sample->firstChild();
+
+  const LayoutTextFragment* layout_object0 =
+      ToLayoutTextFragment(AssociatedLayoutObjectOf(*text, 0));
+  EXPECT_FALSE(layout_object0->IsRemainingTextLayoutObject());
+
+  const LayoutTextFragment* layout_object1 =
+      ToLayoutTextFragment(AssociatedLayoutObjectOf(*text, 1));
+  EXPECT_EQ(layout_object0, layout_object1)
+      << "A character 'a' should be part of first letter.";
+
+  const LayoutTextFragment* layout_object2 =
+      ToLayoutTextFragment(AssociatedLayoutObjectOf(*text, 2));
+  EXPECT_EQ(layout_object0, layout_object2)
+      << "close parenthesis should be part of first letter.";
+
+  const LayoutTextFragment* layout_object3 =
+      ToLayoutTextFragment(AssociatedLayoutObjectOf(*text, 3));
+  EXPECT_TRUE(layout_object3->IsRemainingTextLayoutObject());
+}
+
+TEST_F(LayoutObjectTest, AssociatedLayoutObjectOfFirstLetterSplit) {
+  V8TestingScope scope;
+
+  const char* body_content =
+      "<style>p:first-letter {color:red;}</style><p id=sample>abc</p>";
+  SetBodyInnerHTML(body_content);
+
+  Node* sample = GetDocument().getElementById("sample");
+  Node* first_letter = sample->firstChild();
+  // Split "abc" into "a" "bc"
+  ToText(first_letter)->splitText(1, ASSERT_NO_EXCEPTION);
+  GetDocument().View()->UpdateAllLifecyclePhases();
+
+  const LayoutTextFragment* layout_object0 =
+      ToLayoutTextFragment(AssociatedLayoutObjectOf(*first_letter, 0));
+  EXPECT_FALSE(layout_object0->IsRemainingTextLayoutObject());
+
+  const LayoutTextFragment* layout_object1 =
+      ToLayoutTextFragment(AssociatedLayoutObjectOf(*first_letter, 1));
+  EXPECT_EQ(layout_object0, layout_object1);
+}
+
+TEST_F(LayoutObjectTest,
+       AssociatedLayoutObjectOfFirstLetterWithTrailingWhitespace) {
+  const char* body_content =
+      "<style>div:first-letter {color:red;}</style><div id=sample>a\n "
+      "<div></div></div>";
+  SetBodyInnerHTML(body_content);
+
+  Node* sample = GetDocument().getElementById("sample");
+  Node* text = sample->firstChild();
+
+  const LayoutTextFragment* layout_object0 =
+      ToLayoutTextFragment(AssociatedLayoutObjectOf(*text, 0));
+  EXPECT_FALSE(layout_object0->IsRemainingTextLayoutObject());
+
+  const LayoutTextFragment* layout_object1 =
+      ToLayoutTextFragment(AssociatedLayoutObjectOf(*text, 1));
+  EXPECT_TRUE(layout_object1->IsRemainingTextLayoutObject());
+
+  const LayoutTextFragment* layout_object2 =
+      ToLayoutTextFragment(AssociatedLayoutObjectOf(*text, 2));
+  EXPECT_EQ(layout_object1, layout_object2);
+}
+
+TEST_F(LayoutObjectTest, VisualRect) {
+  class MockLayoutObject : public LayoutObject {
+   public:
+    MockLayoutObject() : LayoutObject(nullptr) {}
+    MOCK_CONST_METHOD0(VisualRectRespectsVisibility, bool());
+
+   private:
+    LayoutRect LocalVisualRectIgnoringVisibility() const {
+      return LayoutRect(10, 10, 20, 20);
+    }
+    const char* GetName() const final { return "MockLayoutObject"; }
+    void UpdateLayout() final {}
+    FloatRect LocalBoundingBoxRectForAccessibility() const final {
+      return FloatRect();
+    }
+  };
+
+  MockLayoutObject mock_object;
+  auto style = ComputedStyle::Create();
+  mock_object.SetStyle(style.get());
+  EXPECT_EQ(LayoutRect(10, 10, 20, 20), mock_object.LocalVisualRect());
+  EXPECT_EQ(LayoutRect(10, 10, 20, 20), mock_object.LocalVisualRect());
+
+  style->SetVisibility(EVisibility::kHidden);
+  EXPECT_CALL(mock_object, VisualRectRespectsVisibility())
+      .WillOnce(Return(true));
+  EXPECT_EQ(LayoutRect(), mock_object.LocalVisualRect());
+  EXPECT_CALL(mock_object, VisualRectRespectsVisibility())
+      .WillOnce(Return(false));
+  EXPECT_EQ(LayoutRect(10, 10, 20, 20), mock_object.LocalVisualRect());
+}
+
+TEST_F(LayoutObjectTest, LocationInBackingAndSelectionVisualRect) {
+  auto* object = GetDocument().body()->GetLayoutObject();
+  EXPECT_EQ(nullptr, object->FirstFragment().GetRarePaintData());
+
+  // Default LocationInBacking and SelectionVisualRect should not create
+  // RarePaintData.
+  object->GetMutableForPainting().FirstFragment().SetVisualRect(
+      LayoutRect(10, 20, 30, 400));
+  object->GetMutableForPainting().FirstFragment().SetLocationInBacking(
+      LayoutPoint(10, 20));
+  object->GetMutableForPainting().SetSelectionVisualRect(LayoutRect());
+  EXPECT_EQ(nullptr, object->FirstFragment().GetRarePaintData());
+  EXPECT_EQ(LayoutPoint(10, 20), object->FirstFragment().LocationInBacking());
+  EXPECT_EQ(LayoutRect(), object->SelectionVisualRect());
+
+  // Non-Default LocationInBacking and SelectionVisualRect create RarePaintData.
+  object->GetMutableForPainting().FirstFragment().SetLocationInBacking(
+      LayoutPoint(20, 30));
+  object->GetMutableForPainting().SetSelectionVisualRect(
+      LayoutRect(1, 2, 3, 4));
+  EXPECT_NE(nullptr, object->FirstFragment().GetRarePaintData());
+  EXPECT_EQ(LayoutPoint(20, 30), object->FirstFragment().LocationInBacking());
+  EXPECT_EQ(LayoutRect(1, 2, 3, 4), object->SelectionVisualRect());
+
+  // RarePaintData should store default LocationInBacking and
+  // SelectionVisualRect once it's created.
+  object->GetMutableForPainting().FirstFragment().SetLocationInBacking(
+      LayoutPoint(10, 20));
+  object->GetMutableForPainting().SetSelectionVisualRect(LayoutRect());
+  EXPECT_NE(nullptr, object->FirstFragment().GetRarePaintData());
+  EXPECT_EQ(LayoutPoint(10, 20), object->FirstFragment().LocationInBacking());
+  EXPECT_EQ(LayoutRect(), object->SelectionVisualRect());
+
+  object->ClearPreviousVisualRects();
+  EXPECT_EQ(LayoutRect(), object->FirstFragment().VisualRect());
+  EXPECT_EQ(LayoutPoint(), object->FirstFragment().LocationInBacking());
+  EXPECT_EQ(LayoutRect(), object->SelectionVisualRect());
 }
 
 }  // namespace blink

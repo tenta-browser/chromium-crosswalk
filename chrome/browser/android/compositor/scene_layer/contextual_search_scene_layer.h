@@ -26,7 +26,8 @@ class ContextualSearchLayer;
 class ContextualSearchSceneLayer : public SceneLayer,
     public chrome::BitmapFetcherDelegate {
  public:
-  ContextualSearchSceneLayer(JNIEnv* env, jobject jobj);
+  ContextualSearchSceneLayer(JNIEnv* env,
+                             const base::android::JavaRef<jobject>& jobj);
   ~ContextualSearchSceneLayer() override;
 
   void CreateContextualSearchLayer(
@@ -49,21 +50,21 @@ class ContextualSearchSceneLayer : public SceneLayer,
       jint progress_bar_background_resource_id,
       jint progress_bar_resource_id,
       jint search_promo_resource_id,
-      jint peek_promo_ripple_resource_id,
-      jint peek_promo_text_resource_id,
+      jint bar_banner_ripple_resource_id,
+      jint bar_banner_text_resource_id,
       jfloat dp_to_px,
       jfloat base_page_brightness,
       jfloat base_page_offset,
-      const base::android::JavaParamRef<jobject>& jcontent_view_core,
+      const base::android::JavaParamRef<jobject>& jweb_contents,
       jboolean search_promo_visible,
       jfloat search_promo_height,
       jfloat search_promo_opacity,
-      jboolean search_peek_promo_visible,
-      jfloat search_peek_promo_height,
-      jfloat search_peek_promo_padding,
-      jfloat search_peek_promo_ripple_width,
-      jfloat search_peek_promo_ripple_opacity,
-      jfloat search_peek_promo_text_opacity,
+      jboolean search_bar_banner_visible,
+      jfloat search_bar_banner_height,
+      jfloat search_bar_banner_padding,
+      jfloat search_bar_banner_ripple_width,
+      jfloat search_bar_banner_ripple_opacity,
+      jfloat search_bar_banner_text_opacity,
       jfloat search_panel_x,
       jfloat search_panel_y,
       jfloat search_panel_width,
@@ -100,10 +101,7 @@ class ContextualSearchSceneLayer : public SceneLayer,
       jboolean touch_highlight_visible,
       jfloat touch_highlight_x_offset,
       jfloat touch_highlight_width,
-      jint bar_handle_resource_id,
-      jfloat bar_handle_offset_y,
-      jfloat bar_padding_bottom,
-      jobject j_profile);
+      const base::android::JavaRef<jobject>& j_profile);
 
   // Inherited from BitmapFetcherDelegate
   void OnFetchComplete(
@@ -120,7 +118,7 @@ class ContextualSearchSceneLayer : public SceneLayer,
       const base::android::JavaParamRef<jobject>& jobj);
 
  private:
-  void FetchThumbnail(jobject j_profile);
+  void FetchThumbnail(const base::android::JavaRef<jobject>& j_profile);
 
   JNIEnv* env_;
   base::android::ScopedJavaGlobalRef<jobject> object_;
@@ -133,8 +131,6 @@ class ContextualSearchSceneLayer : public SceneLayer,
 
   DISALLOW_COPY_AND_ASSIGN(ContextualSearchSceneLayer);
 };
-
-bool RegisterContextualSearchSceneLayer(JNIEnv* env);
 
 }  // namespace android
 

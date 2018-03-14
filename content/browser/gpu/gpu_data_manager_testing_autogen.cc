@@ -15,10 +15,7 @@
 
 namespace gpu {
 
-const char kGpuDataManagerTestingVersion[] = "1.0";
-
-const size_t kGpuDataManagerTestingEntryCount = 10;
-const GpuControlList::Entry kGpuDataManagerTestingEntries[10] = {
+const GpuControlList::Entry kGpuDataManagerTestingEntries[] = {
     {
         1,  // id
         "GpuDataManagerImplPrivateTest.GpuSideBlacklisting.0",
@@ -280,4 +277,5 @@ const GpuControlList::Entry kGpuDataManagerTestingEntries[10] = {
         nullptr,  // exceptions
     },
 };
+const size_t kGpuDataManagerTestingEntryCount = 10;
 }  // namespace gpu

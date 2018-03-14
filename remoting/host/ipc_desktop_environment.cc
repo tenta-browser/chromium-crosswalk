@@ -19,6 +19,7 @@
 #include "remoting/host/client_session_control.h"
 #include "remoting/host/desktop_session.h"
 #include "remoting/host/desktop_session_proxy.h"
+#include "remoting/host/file_proxy_wrapper.h"
 #include "remoting/host/input_injector.h"
 #include "remoting/host/screen_controls.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
@@ -40,7 +41,7 @@ IpcDesktopEnvironment::IpcDesktopEnvironment(
       client_session_control, desktop_session_connector, options);
 }
 
-IpcDesktopEnvironment::~IpcDesktopEnvironment() {}
+IpcDesktopEnvironment::~IpcDesktopEnvironment() = default;
 
 std::unique_ptr<AudioCapturer> IpcDesktopEnvironment::CreateAudioCapturer() {
   return desktop_session_proxy_->CreateAudioCapturer();
@@ -62,6 +63,11 @@ IpcDesktopEnvironment::CreateMouseCursorMonitor() {
 std::unique_ptr<webrtc::DesktopCapturer>
 IpcDesktopEnvironment::CreateVideoCapturer() {
   return desktop_session_proxy_->CreateVideoCapturer();
+}
+
+std::unique_ptr<FileProxyWrapper>
+IpcDesktopEnvironment::CreateFileProxyWrapper() {
+  return FileProxyWrapper::Create();
 }
 
 std::string IpcDesktopEnvironment::GetCapabilities() const {
@@ -87,7 +93,7 @@ IpcDesktopEnvironmentFactory::IpcDesktopEnvironmentFactory(
       daemon_channel_(daemon_channel),
       connector_factory_(this) {}
 
-IpcDesktopEnvironmentFactory::~IpcDesktopEnvironmentFactory() {}
+IpcDesktopEnvironmentFactory::~IpcDesktopEnvironmentFactory() = default;
 
 std::unique_ptr<DesktopEnvironment> IpcDesktopEnvironmentFactory::Create(
     base::WeakPtr<ClientSessionControl> client_session_control,

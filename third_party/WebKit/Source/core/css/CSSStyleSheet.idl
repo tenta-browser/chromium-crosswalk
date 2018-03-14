@@ -18,19 +18,16 @@
  * Boston, MA 02110-1301, USA.
  */
 
-// https://dev.w3.org/csswg/cssom/#the-cssstylesheet-interface
+// https://drafts.csswg.org/cssom/#the-cssstylesheet-interface
 
-[
-    DependentLifetime,
-] interface CSSStyleSheet : StyleSheet {
+interface CSSStyleSheet : StyleSheet {
     readonly attribute CSSRule? ownerRule;
-    [SameObject] readonly attribute CSSRuleList cssRules;
-    // TODO(foolip): The index argument should not be optional. crbug.com/319695
-    [RaisesException] unsigned long insertRule(DOMString rule, optional unsigned long index);
+    [SameObject, RaisesException] readonly attribute CSSRuleList cssRules;
+    [RaisesException] unsigned long insertRule(DOMString rule, optional unsigned long index = 0);
     [RaisesException] void deleteRule(unsigned long index);
 
     // Non-standard APIs
-    [MeasureAs=CSSStyleSheetRules] readonly attribute CSSRuleList rules;
+    [MeasureAs=CSSStyleSheetRules, RaisesException] readonly attribute CSSRuleList rules;
     [MeasureAs=CSSStyleSheetAddRule, RaisesException] long addRule([Default=Undefined] optional DOMString selector, [Default=Undefined] optional DOMString style, optional unsigned long index);
     [MeasureAs=CSSStyleSheetRemoveRule, RaisesException] void removeRule([Default=Undefined] optional unsigned long index);
 };

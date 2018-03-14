@@ -33,13 +33,10 @@ using base::android::ScopedJavaLocalRef;
 
 namespace history_report {
 
-static jlong Init(JNIEnv* env, const JavaParamRef<jobject>& obj) {
+static jlong JNI_HistoryReportJniBridge_Init(JNIEnv* env,
+                                             const JavaParamRef<jobject>& obj) {
   HistoryReportJniBridge* bridge = new HistoryReportJniBridge(env, obj);
   return reinterpret_cast<intptr_t>(bridge);
-}
-
-bool RegisterHistoryReportJniBridge(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 HistoryReportJniBridge::HistoryReportJniBridge(JNIEnv* env, jobject obj)

@@ -51,6 +51,11 @@ SourceFrame.SourcesTextEditor = class extends TextEditor.CodeMirrorTextEditor {
     Common.moduleSetting('textEditorAutoDetectIndent').addChangeListener(this._onUpdateEditorIndentation, this);
     Common.moduleSetting('showWhitespacesInEditor').addChangeListener(this._updateWhitespace, this);
 
+    /** @type {?UI.AutocompleteConfig} */
+    this._autocompleteConfig = {isWordChar: TextUtils.TextUtils.isWordChar};
+    Common.moduleSetting('textEditorAutocompletion').addChangeListener(this._updateAutocomplete, this);
+    this._updateAutocomplete();
+
     this._onUpdateEditorIndentation();
     this._setupWhitespaceHighlight();
   }
@@ -215,17 +220,43 @@ SourceFrame.SourcesTextEditor = class extends TextEditor.CodeMirrorTextEditor {
     if (!this._executionLine)
       return;
 
-    this.codeMirror().addLineClass(this._executionLine, 'wrap', 'cm-execution-line');
+    this.showExecutionLineBackground();
+    this.codeMirror().addLineClass(this._executionLine, 'wrap', 'cm-execution-line-outline');
+    var token = this.tokenAtTextPosition(lineNumber, columnNumber);
+
+    if (token && !token.type && token.startColumn + 1 === token.endColumn) {
+      var tokenContent = this.codeMirror().getLine(lineNumber)[token.startColumn];
+      if (tokenContent === '.' || tokenContent === '(')
+        token = this.tokenAtTextPosition(lineNumber, token.endColumn + 1);
+    }
+
+    var endColumn;
+    if (token && token.type)
+      endColumn = token.endColumn;
+    else
+      endColumn = this.codeMirror().getLine(lineNumber).length;
+
     this._executionLineTailMarker = this.codeMirror().markText(
-        {line: lineNumber, ch: columnNumber}, {line: lineNumber, ch: this.codeMirror().getLine(lineNumber).length},
-        {className: 'cm-execution-line-tail'});
+        {line: lineNumber, ch: columnNumber}, {line: lineNumber, ch: endColumn}, {className: 'cm-execution-line-tail'});
+  }
+
+  showExecutionLineBackground() {
+    if (this._executionLine)
+      this.codeMirror().addLineClass(this._executionLine, 'wrap', 'cm-execution-line');
+  }
+
+  hideExecutionLineBackground() {
+    if (this._executionLine)
+      this.codeMirror().removeLineClass(this._executionLine, 'wrap', 'cm-execution-line');
   }
 
   clearExecutionLine() {
     this.clearPositionHighlight();
 
-    if (this._executionLine)
-      this.codeMirror().removeLineClass(this._executionLine, 'wrap', 'cm-execution-line');
+    if (this._executionLine) {
+      this.hideExecutionLineBackground();
+      this.codeMirror().removeLineClass(this._executionLine, 'wrap', 'cm-execution-line-outline');
+    }
     delete this._executionLine;
 
     if (this._executionLineTailMarker)
@@ -542,6 +573,20 @@ SourceFrame.SourcesTextEditor = class extends TextEditor.CodeMirrorTextEditor {
     var style = doc.createElement('style');
     style.textContent = rules;
     doc.head.appendChild(style);
+  }
+
+  /**
+   * @override
+   * @param {?UI.AutocompleteConfig} config
+   */
+  configureAutocomplete(config) {
+    this._autocompleteConfig = config;
+    this._updateAutocomplete();
+  }
+
+  _updateAutocomplete() {
+    super.configureAutocomplete(
+        Common.moduleSetting('textEditorAutocompletion').get() ? this._autocompleteConfig : null);
   }
 };
 

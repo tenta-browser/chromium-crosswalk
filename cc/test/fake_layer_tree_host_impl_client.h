@@ -5,20 +5,20 @@
 #ifndef CC_TEST_FAKE_LAYER_TREE_HOST_IMPL_CLIENT_H_
 #define CC_TEST_FAKE_LAYER_TREE_HOST_IMPL_CLIENT_H_
 
-#include "cc/output/begin_frame_args.h"
 #include "cc/trees/layer_tree_host_impl.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
 
 namespace cc {
 
 class FakeLayerTreeHostImplClient : public LayerTreeHostImplClient {
  public:
   // LayerTreeHostImplClient implementation.
-  void DidLoseCompositorFrameSinkOnImplThread() override {}
-  void SetBeginFrameSource(BeginFrameSource* source) override {}
+  void DidLoseLayerTreeFrameSinkOnImplThread() override {}
+  void SetBeginFrameSource(viz::BeginFrameSource* source) override {}
   void DidReceiveCompositorFrameAckOnImplThread() override {}
   void OnCanDrawStateChanged(bool can_draw) override {}
-  void NotifyReadyToActivate() override {}
-  void NotifyReadyToDraw() override {}
+  void NotifyReadyToActivate() override;
+  void NotifyReadyToDraw() override;
   void SetNeedsRedrawOnImplThread() override {}
   void SetNeedsOneBeginImplFrameOnImplThread() override {}
   void SetNeedsCommitOnImplThread() override {}
@@ -34,8 +34,28 @@ class FakeLayerTreeHostImplClient : public LayerTreeHostImplClient {
   void WillPrepareTiles() override {}
   void DidPrepareTiles() override {}
   void DidCompletePageScaleAnimationOnImplThread() override {}
-  void OnDrawForCompositorFrameSink(bool resourceless_software_draw) override {}
-  void NeedsImplSideInvalidation() override {}
+  void OnDrawForLayerTreeFrameSink(bool resourceless_software_draw) override {}
+  void NeedsImplSideInvalidation(bool needs_first_draw_on_activation) override;
+  void RequestBeginMainFrameNotExpected(bool new_state) override {}
+  void NotifyImageDecodeRequestFinished() override {}
+
+  void reset_did_request_impl_side_invalidation() {
+    did_request_impl_side_invalidation_ = false;
+  }
+  bool did_request_impl_side_invalidation() const {
+    return did_request_impl_side_invalidation_;
+  }
+
+  void reset_ready_to_activate() { ready_to_activate_ = false; }
+  bool ready_to_activate() const { return ready_to_activate_; }
+
+  void reset_ready_to_draw() { ready_to_draw_ = false; }
+  bool ready_to_draw() const { return ready_to_draw_; }
+
+ private:
+  bool did_request_impl_side_invalidation_ = false;
+  bool ready_to_activate_ = false;
+  bool ready_to_draw_ = false;
 };
 
 }  // namespace cc

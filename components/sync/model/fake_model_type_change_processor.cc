@@ -35,6 +35,14 @@ void FakeModelTypeChangeProcessor::Delete(
     const std::string& client_tag,
     MetadataChangeList* metadata_change_list) {}
 
+void FakeModelTypeChangeProcessor::UpdateStorageKey(
+    const EntityData& entity_data,
+    const std::string& storage_key,
+    MetadataChangeList* metadata_change_list) {}
+
+void FakeModelTypeChangeProcessor::UntrackEntity(
+    const EntityData& entity_data) {}
+
 void FakeModelTypeChangeProcessor::ModelReadyToSync(
     std::unique_ptr<MetadataBatch> batch) {}
 
@@ -57,9 +65,8 @@ void FakeModelTypeChangeProcessor::ReportError(const ModelError& error) {
   expect_error_ = false;
 }
 
-void FakeModelTypeChangeProcessor::ReportError(
-    const tracked_objects::Location& location,
-    const std::string& message) {
+void FakeModelTypeChangeProcessor::ReportError(const base::Location& location,
+                                               const std::string& message) {
   ReportError(ModelError(location, message));
 }
 

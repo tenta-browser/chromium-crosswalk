@@ -6,7 +6,6 @@
 
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
-#include "base/profiler/scoped_tracker.h"
 #include "base/stl_util.h"
 #include "base/trace_event/trace_event.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -71,27 +70,7 @@ std::vector<AccountIds> AccountTracker::GetAccounts() const {
   return accounts;
 }
 
-AccountIds AccountTracker::FindAccountIdsByGaiaId(const std::string& gaia_id) {
-  for (std::map<std::string, AccountState>::const_iterator it =
-           accounts_.begin();
-       it != accounts_.end();
-       ++it) {
-    const AccountState& state = it->second;
-    if (state.ids.gaia == gaia_id) {
-      return state.ids;
-    }
-  }
-
-  return AccountIds();
-}
-
 void AccountTracker::OnRefreshTokenAvailable(const std::string& account_id) {
-  // TODO(robliao): Remove ScopedTracker below once https://crbug.com/422460 is
-  // fixed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "422460 AccountTracker::OnRefreshTokenAvailable"));
-
   TRACE_EVENT1("identity",
                "AccountTracker::OnRefreshTokenAvailable",
                "account_key",
@@ -153,25 +132,7 @@ void AccountTracker::SetAccountStateForTest(AccountIds ids, bool is_signed_in) {
   }
 }
 
-void AccountTracker::NotifyAccountAdded(const AccountState& account) {
-  DCHECK(!account.ids.gaia.empty());
-  for (auto& observer : observer_list_)
-    observer.OnAccountAdded(account.ids);
-}
-
-void AccountTracker::NotifyAccountRemoved(const AccountState& account) {
-  DCHECK(!account.ids.gaia.empty());
-  for (auto& observer : observer_list_)
-    observer.OnAccountRemoved(account.ids);
-}
-
 void AccountTracker::NotifySignInChanged(const AccountState& account) {
-  // TODO(robliao): Remove ScopedTracker below once https://crbug.com/422460 is
-  // fixed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "422460 AccountTracker::NotifySignInChanged"));
-
   DCHECK(!account.ids.gaia.empty());
   for (auto& observer : observer_list_)
     observer.OnAccountSignInChanged(account.ids, account.is_signed_in);
@@ -179,12 +140,6 @@ void AccountTracker::NotifySignInChanged(const AccountState& account) {
 
 void AccountTracker::UpdateSignInState(const std::string& account_key,
                                        bool is_signed_in) {
-  // TODO(robliao): Remove ScopedTracker below once https://crbug.com/422460 is
-  // fixed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "422460 AccountTracker::UpdateSignInState"));
-
   StartTrackingAccount(account_key);
   AccountState& account = accounts_[account_key];
   bool needs_gaia_id = account.ids.gaia.empty();
@@ -199,12 +154,6 @@ void AccountTracker::UpdateSignInState(const std::string& account_key,
 }
 
 void AccountTracker::StartTrackingAccount(const std::string& account_key) {
-  // TODO(robliao): Remove ScopedTracker below once https://crbug.com/422460 is
-  // fixed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "422460 AccountTracker::StartTrackingAccount"));
-
   if (!base::ContainsKey(accounts_, account_key)) {
     DVLOG(1) << "StartTracking " << account_key;
     AccountState account_state;
@@ -221,7 +170,6 @@ void AccountTracker::StopTrackingAccount(const std::string account_key) {
     AccountState& account = accounts_[account_key];
     if (!account.ids.gaia.empty()) {
       UpdateSignInState(account_key, false);
-      NotifyAccountRemoved(account);
     }
     accounts_.erase(account_key);
   }
@@ -236,42 +184,17 @@ void AccountTracker::StopTrackingAllAccounts() {
 }
 
 void AccountTracker::StartFetchingUserInfo(const std::string& account_key) {
-  // TODO(robliao): Remove ScopedTracker below once https://crbug.com/422460 is
-  // fixed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "422460 AccountTracker::StartFetchingUserInfo"));
-
   if (base::ContainsKey(user_info_requests_, account_key)) {
-    // TODO(robliao): Remove ScopedTracker below once https://crbug.com/422460
-    // is fixed.
-    tracked_objects::ScopedTracker tracking_profile1(
-        FROM_HERE_WITH_EXPLICIT_FUNCTION(
-            "422460 AccountTracker::StartFetchingUserInfo 1"));
-
     DeleteFetcher(user_info_requests_[account_key].get());
   }
 
   DVLOG(1) << "StartFetching " << account_key;
-  // TODO(robliao): Remove ScopedTracker below once https://crbug.com/422460 is
-  // fixed.
-  tracked_objects::ScopedTracker tracking_profile2(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "422460 AccountTracker::StartFetchingUserInfo 2"));
-
   AccountIdFetcher* fetcher =
       new AccountIdFetcher(identity_provider_->GetTokenService(),
                            request_context_getter_.get(),
                            this,
                            account_key);
   user_info_requests_[account_key] = base::WrapUnique(fetcher);
-
-  // TODO(robliao): Remove ScopedTracker below once https://crbug.com/422460 is
-  // fixed.
-  tracked_objects::ScopedTracker tracking_profile3(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "422460 AccountTracker::StartFetchingUserInfo 3"));
-
   fetcher->Start();
 }
 
@@ -282,7 +205,6 @@ void AccountTracker::OnUserInfoFetchSuccess(AccountIdFetcher* fetcher,
   AccountState& account = accounts_[account_key];
 
   account.ids.gaia = gaia_id;
-  NotifyAccountAdded(account);
 
   if (account.is_signed_in)
     NotifySignInChanged(account);

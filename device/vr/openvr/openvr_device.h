@@ -5,9 +5,12 @@
 #ifndef DEVICE_VR_OPENVR_DEVICE_H
 #define DEVICE_VR_OPENVR_DEVICE_H
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/threading/simple_thread.h"
-#include "device/vr/vr_device.h"
+#include "base/single_thread_task_runner.h"
+#include "device/vr/vr_device_base.h"
+#include "device/vr/vr_service.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
 
 namespace vr {
@@ -16,57 +19,42 @@ class IVRSystem;
 
 namespace device {
 
-class OpenVRDevice : public VRDevice {
+class OpenVRRenderLoop;
+
+class OpenVRDevice : public VRDeviceBase {
  public:
-  OpenVRDevice();
+  OpenVRDevice(vr::IVRSystem* vr);
   ~OpenVRDevice() override;
 
-  // VRDevice
-  void CreateVRDisplayInfo(
-      const base::Callback<void(mojom::VRDisplayInfoPtr)>& on_created) override;
-
-  void RequestPresent(mojom::VRSubmitFrameClientPtr submit_client,
-                      const base::Callback<void(bool)>& callback) override;
-  void SetSecureOrigin(bool secure_origin) override;
+  // VRDeviceBase
+  void RequestPresent(
+      VRDisplayImpl* display,
+      mojom::VRSubmitFrameClientPtr submit_client,
+      mojom::VRPresentationProviderRequest request,
+      mojom::VRDisplayHost::RequestPresentCallback callback) override;
   void ExitPresent() override;
 
-  void SubmitFrame(int16_t frame_index,
-                   const gpu::MailboxHolder& mailbox) override;
-  void UpdateLayerBounds(int16_t frame_index,
-                         mojom::VRLayerBoundsPtr left_bounds,
-                         mojom::VRLayerBoundsPtr right_bounds,
-                         int16_t source_width,
-                         int16_t source_height) override;
-  void GetVRVSyncProvider(mojom::VRVSyncProviderRequest request) override;
+  void OnPollingEvents();
+
+  void OnRequestPresentResult(
+      mojom::VRDisplayHost::RequestPresentCallback callback,
+      bool result);
 
  private:
-  class OpenVRRenderLoop : public base::SimpleThread,
-                           device::mojom::VRVSyncProvider {
-   public:
-    OpenVRRenderLoop(vr::IVRSystem* vr);
+  // VRDeviceBase
+  void OnMagicWindowPoseRequest(
+      mojom::VRMagicWindowProvider::GetPoseCallback callback) override;
 
-    void Bind(mojom::VRVSyncProviderRequest request);
-
-    mojom::VRPosePtr getPose();
-
-   private:
-    void Run() override;
-
-    void GetVSync(const device::mojom::VRVSyncProvider::GetVSyncCallback&
-                      callback) override;
-
-    scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
-    vr::IVRSystem* vr_system_;
-    mojo::Binding<device::mojom::VRVSyncProvider> binding_;
-  };
-
-  std::unique_ptr<OpenVRRenderLoop>
-      render_loop_;  // TODO (BillOrr): This should not be a unique_ptr because
-                     // the render_loop_ binds to VRVSyncProvider requests,
-                     // so its lifetime should be tied to the lifetime of that
-                     // binding.
-
+  // TODO (BillOrr): This should not be a unique_ptr because the render_loop_
+  // binds to VRVSyncProvider requests, so its lifetime should be tied to the
+  // lifetime of that binding.
+  std::unique_ptr<OpenVRRenderLoop> render_loop_;
   mojom::VRSubmitFrameClientPtr submit_client_;
+  mojom::VRDisplayInfoPtr display_info_;
+  vr::IVRSystem* vr_system_;
+  scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
+
+  base::WeakPtrFactory<OpenVRDevice> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(OpenVRDevice);
 };

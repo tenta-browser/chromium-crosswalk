@@ -29,7 +29,8 @@ class COMPOSITOR_EXPORT PaintContext {
   // |invalidation|.
   PaintContext(cc::DisplayItemList* list,
                float device_scale_factor,
-               const gfx::Rect& invalidation);
+               const gfx::Rect& invalidation,
+               bool is_pixel_canvas);
 
   // Clone a PaintContext with an additional |offset|.
   PaintContext(const PaintContext& other, const gfx::Vector2d& offset);
@@ -45,6 +46,13 @@ class COMPOSITOR_EXPORT PaintContext {
   // When true, IsRectInvalid() can be called, otherwise its result would be
   // invalid.
   bool CanCheckInvalid() const { return !invalidation_.IsEmpty(); }
+
+  // The device scale of the frame being painted.
+  float device_scale_factor() const { return device_scale_factor_; }
+
+  // Returns true if the paint commands are recorded at pixel size instead of
+  // DIP.
+  bool is_pixel_canvas() const { return is_pixel_canvas_; }
 
   // When true, the |bounds| touches an invalidated area, so should be
   // re-painted. When false, re-painting can be skipped. Bounds should be in
@@ -85,11 +93,6 @@ class COMPOSITOR_EXPORT PaintContext {
   gfx::Rect ToLayerSpaceRect(const gfx::Rect& rect) const;
 
   cc::DisplayItemList* list_;
-  std::unique_ptr<cc::PaintRecorder> owned_recorder_;
-  // A pointer to the |owned_recorder_| in this PaintContext, or in another one
-  // which this was copied from. We expect a copied-from PaintContext to outlive
-  // copies made from it.
-  cc::PaintRecorder* recorder_;
   // The device scale of the frame being painted. Used to determine which bitmap
   // resources to use in the frame.
   float device_scale_factor_;
@@ -99,6 +102,8 @@ class COMPOSITOR_EXPORT PaintContext {
   // Offset from the PaintContext to the space of the paint root and the
   // |invalidation_|.
   gfx::Vector2d offset_;
+  // If enabled, the paint commands are recorded at pixel size.
+  const bool is_pixel_canvas_;
 
 #if DCHECK_IS_ON()
   // Used to verify that the |invalidation_| is only used to compare against

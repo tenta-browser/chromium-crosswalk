@@ -8,21 +8,13 @@
 #include "base/macros.h"
 #include "chrome/browser/ui/ash/launcher/launcher_context_menu.h"
 
-namespace ash {
-struct ShelfItem;
-class WmShelf;
-}
-
 // Class for context menu which is shown for ARC app in the shelf.
 class ArcLauncherContextMenu : public LauncherContextMenu {
  public:
-  ArcLauncherContextMenu(ChromeLauncherControllerImpl* controller,
+  ArcLauncherContextMenu(ChromeLauncherController* controller,
                          const ash::ShelfItem* item,
-                         ash::WmShelf* wm_shelf);
+                         int64_t display_id);
   ~ArcLauncherContextMenu() override;
-
-  // ui::SimpleMenuModel::Delegate overrides:
-  bool IsCommandIdEnabled(int command_id) const override;
 
  private:
   void Init();

@@ -26,8 +26,9 @@
 #include "core/editing/CaretDisplayItemClient.h"
 
 #include "core/editing/EditingUtilities.h"
+#include "core/editing/PositionWithAffinity.h"
 #include "core/editing/VisibleUnits.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/layout/LayoutBlock.h"
 #include "core/layout/LayoutView.h"
@@ -74,24 +75,28 @@ LayoutBlock* CaretDisplayItemClient::CaretLayoutBlock(const Node* node) {
 }
 
 static LayoutRect MapCaretRectToCaretPainter(
-    LayoutItem caret_layout_item,
-    LayoutBlockItem caret_painter_item,
-    const LayoutRect& passed_caret_rect) {
+    const LayoutBlockItem& caret_painter_item,
+    const LocalCaretRect& caret_rect) {
   // FIXME: This shouldn't be called on un-rooted subtrees.
   // FIXME: This should probably just use mapLocalToAncestor.
   // Compute an offset between the caretLayoutItem and the caretPainterItem.
 
+  // TODO(layout-dev): We should allow constructing a "const layout item" from a
+  // |const LayoutObject*| that allows using all const functions.
+  LayoutItem caret_layout_item =
+      LayoutItem(const_cast<LayoutObject*>(caret_rect.layout_object));
   DCHECK(caret_layout_item.IsDescendantOf(caret_painter_item));
 
-  LayoutRect caret_rect = passed_caret_rect;
+  LayoutRect result_rect = caret_rect.rect;
+  caret_painter_item.FlipForWritingMode(result_rect);
   while (caret_layout_item != caret_painter_item) {
     LayoutItem container_item = caret_layout_item.Container();
     if (container_item.IsNull())
       return LayoutRect();
-    caret_rect.Move(caret_layout_item.OffsetFromContainer(container_item));
+    result_rect.Move(caret_layout_item.OffsetFromContainer(container_item));
     caret_layout_item = container_item;
   }
-  return caret_rect;
+  return result_rect;
 }
 
 LayoutRect CaretDisplayItemClient::ComputeCaretRect(
@@ -102,19 +107,13 @@ LayoutRect CaretDisplayItemClient::ComputeCaretRect(
   DCHECK(caret_position.AnchorNode()->GetLayoutObject());
 
   // First compute a rect local to the layoutObject at the selection start.
-  LayoutObject* layout_object;
-  const LayoutRect& caret_local_rect =
-      LocalCaretRectOfPosition(caret_position, layout_object);
+  const LocalCaretRect& caret_rect = LocalCaretRectOfPosition(caret_position);
 
   // Get the layoutObject that will be responsible for painting the caret
   // (which is either the layoutObject we just found, or one of its containers).
-  LayoutBlockItem caret_painter_item =
+  const LayoutBlockItem caret_painter_item =
       LayoutBlockItem(CaretLayoutBlock(caret_position.AnchorNode()));
-  LayoutRect caret_local_rect_with_writing_mode = caret_local_rect;
-  caret_painter_item.FlipForWritingMode(caret_local_rect_with_writing_mode);
-  return MapCaretRectToCaretPainter(LayoutItem(layout_object),
-                                    caret_painter_item,
-                                    caret_local_rect_with_writing_mode);
+  return MapCaretRectToCaretPainter(caret_painter_item, caret_rect);
 }
 
 void CaretDisplayItemClient::ClearPreviousVisualRect(const LayoutBlock& block) {
@@ -189,7 +188,7 @@ void CaretDisplayItemClient::UpdateStyleAndLayoutIfNeeded(
     new_layout_block->SetMayNeedPaintInvalidation();
 }
 
-void CaretDisplayItemClient::InvalidatePaintIfNeeded(
+void CaretDisplayItemClient::InvalidatePaint(
     const LayoutBlock& block,
     const PaintInvalidatorContext& context) {
   if (block == layout_block_) {
@@ -207,15 +206,17 @@ void CaretDisplayItemClient::InvalidatePaintInPreviousLayoutBlock(
 
   ObjectPaintInvalidatorWithContext object_invalidator(*previous_layout_block_,
                                                        context);
-  if (!IsImmediateFullPaintInvalidationReason(
+  // For SPv175 raster invalidation will be done in PaintController.
+  if (!RuntimeEnabledFeatures::SlimmingPaintV175Enabled() &&
+      !IsImmediateFullPaintInvalidationReason(
           previous_layout_block_->FullPaintInvalidationReason())) {
     object_invalidator.InvalidatePaintRectangleWithContext(
-        visual_rect_in_previous_layout_block_, kPaintInvalidationCaret);
+        visual_rect_in_previous_layout_block_, PaintInvalidationReason::kCaret);
   }
 
   context.painting_layer->SetNeedsRepaint();
-  object_invalidator.InvalidateDisplayItemClient(*this,
-                                                 kPaintInvalidationCaret);
+  object_invalidator.InvalidateDisplayItemClient(
+      *this, PaintInvalidationReason::kCaret);
   previous_layout_block_ = nullptr;
 }
 
@@ -255,29 +256,30 @@ void CaretDisplayItemClient::InvalidatePaintInCurrentLayoutBlock(
     // paint invalidation.
     if (IsImmediateFullPaintInvalidationReason(
             layout_block_->FullPaintInvalidationReason()) ||
-        // For non-SPv2, ForcedSubtreeInvalidationChecking may hint change of
+        // For non-SPv2, kSubtreeInvalidationChecking may hint change of
         // paint offset. See ObjectPaintInvalidatorWithContext::
         // invalidatePaintIfNeededWithComputedReason().
-        (!RuntimeEnabledFeatures::slimmingPaintV2Enabled() &&
-         (context.forced_subtree_invalidation_flags &
-          PaintInvalidatorContext::kForcedSubtreeInvalidationChecking))) {
-      object_invalidator.InvalidateDisplayItemClient(*this,
-                                                     kPaintInvalidationCaret);
+        (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
+         (context.subtree_flags &
+          PaintInvalidatorContext::kSubtreeInvalidationChecking))) {
+      object_invalidator.InvalidateDisplayItemClient(
+          *this, PaintInvalidationReason::kCaret);
     }
     return;
   }
 
   needs_paint_invalidation_ = false;
 
-  if (!IsImmediateFullPaintInvalidationReason(
+  if (!RuntimeEnabledFeatures::SlimmingPaintV175Enabled() &&
+      !IsImmediateFullPaintInvalidationReason(
           layout_block_->FullPaintInvalidationReason())) {
-    object_invalidator.FullyInvalidatePaint(kPaintInvalidationCaret,
+    object_invalidator.FullyInvalidatePaint(PaintInvalidationReason::kCaret,
                                             visual_rect_, new_visual_rect);
   }
 
   context.painting_layer->SetNeedsRepaint();
-  object_invalidator.InvalidateDisplayItemClient(*this,
-                                                 kPaintInvalidationCaret);
+  object_invalidator.InvalidateDisplayItemClient(
+      *this, PaintInvalidationReason::kCaret);
 
   visual_rect_ = new_visual_rect;
 }
@@ -293,9 +295,8 @@ void CaretDisplayItemClient::PaintCaret(
   LayoutRect drawing_rect = local_rect_;
   drawing_rect.MoveBy(paint_offset);
 
+  DrawingRecorder recorder(context, *this, display_item_type);
   IntRect paint_rect = PixelSnappedIntRect(drawing_rect);
-  DrawingRecorder drawing_recorder(context, *this, display_item_type,
-                                   paint_rect);
   context.FillRect(paint_rect, color_);
 }
 

@@ -54,11 +54,6 @@ void ApplicationStatusListener::Notify(ApplicationState state) {
 }
 
 // static
-bool ApplicationStatusListener::RegisterBindings(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
-// static
 void ApplicationStatusListener::NotifyApplicationStateChange(
     ApplicationState state) {
   g_observers.Get().Notify(FROM_HERE, &ApplicationStatusListener::Notify,
@@ -71,9 +66,10 @@ ApplicationState ApplicationStatusListener::GetState() {
       Java_ApplicationStatus_getStateForApplication(AttachCurrentThread()));
 }
 
-static void OnApplicationStateChange(JNIEnv* env,
-                                     const JavaParamRef<jclass>& clazz,
-                                     jint new_state) {
+static void JNI_ApplicationStatus_OnApplicationStateChange(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    jint new_state) {
   ApplicationState application_state = static_cast<ApplicationState>(new_state);
   ApplicationStatusListener::NotifyApplicationStateChange(application_state);
 }

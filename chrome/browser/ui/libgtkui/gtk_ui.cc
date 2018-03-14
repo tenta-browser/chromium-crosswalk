@@ -4,7 +4,6 @@
 
 #include "chrome/browser/ui/libgtkui/gtk_ui.h"
 
-#include <X11/Xcursor/Xcursor.h>
 #include <dlfcn.h>
 #include <math.h>
 #include <pango/pango.h>
@@ -19,6 +18,9 @@
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/protected_memory.h"
+#include "base/memory/protected_memory_cfi.h"
+#include "base/memory/ptr_util.h"
 #include "base/nix/mime_util_xdg.h"
 #include "base/nix/xdg_util.h"
 #include "base/stl_util.h"
@@ -37,8 +39,6 @@
 #include "chrome/browser/ui/libgtkui/skia_utils_gtk.h"
 #include "chrome/browser/ui/libgtkui/unity_service.h"
 #include "chrome/browser/ui/libgtkui/x11_input_method_context_impl_gtk.h"
-#include "chrome/grit/theme_resources.h"
-#include "components/grit/components_scaled_resources.h"
 #include "printing/features/features.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -54,12 +54,14 @@
 #include "ui/gfx/image/image_skia_source.h"
 #include "ui/gfx/skbitmap_operations.h"
 #include "ui/gfx/skia_util.h"
+#include "ui/gfx/x/x11.h"
 #include "ui/gfx/x/x11_types.h"
 #include "ui/native_theme/native_theme.h"
-#include "ui/resources/grit/ui_resources.h"
+#include "ui/shell_dialogs/select_file_policy.h"
 #include "ui/views/controls/button/blue_button.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/button/label_button_border.h"
+#include "ui/views/linux_ui/device_scale_factor_observer.h"
 #include "ui/views/linux_ui/window_button_order_observer.h"
 #include "ui/views/resources/grit/views_resources.h"
 
@@ -67,13 +69,20 @@
 #include "chrome/browser/ui/libgtkui/native_theme_gtk2.h"  // nogncheck
 #elif GTK_MAJOR_VERSION == 3
 #include "chrome/browser/ui/libgtkui/native_theme_gtk3.h"  // nogncheck
+#include "chrome/browser/ui/libgtkui/nav_button_layout_manager_gtk3.h"  // nogncheck
+#include "chrome/browser/ui/libgtkui/nav_button_provider_gtk3.h"  // nogncheck
 #endif
 
 #if BUILDFLAG(ENABLE_BASIC_PRINTING)
 #include "printing/printing_context_linux.h"
 #endif
+
+#if BUILDFLAG(ENABLE_NATIVE_WINDOW_NAV_BUTTONS)
+#include "chrome/browser/ui/views/nav_button_provider.h"
+#endif
+
 #if defined(USE_GCONF)
-#include "chrome/browser/ui/libgtkui/gconf_listener.h"
+#include "chrome/browser/ui/libgtkui/nav_button_layout_manager_gconf.h"
 #endif
 
 // A minimized port of GtkThemeService into something that can provide colors
@@ -232,8 +241,8 @@ class GtkButtonPainter : public views::Painter {
 
   gfx::Size GetMinimumSize() const override { return gfx::Size(); }
   void Paint(gfx::Canvas* canvas, const gfx::Size& size) override {
-    gfx::ImageSkiaSource* source = new GtkButtonImageSource(idr_.c_str(), size);
-    gfx::ImageSkia image(source, 1);
+    gfx::ImageSkia image(
+        base::MakeUnique<GtkButtonImageSource>(idr_.c_str(), size), 1);
     canvas->DrawImageInt(image, 0, 0);
   }
 
@@ -265,6 +274,18 @@ int indicators_count;
 
 // The unknown content type.
 const char* kUnknownContentType = "application/octet-stream";
+
+std::unique_ptr<NavButtonLayoutManager> CreateNavButtonLayoutManager(
+    GtkUi* gtk_ui) {
+#if GTK_MAJOR_VERSION == 3
+  if (GtkVersionCheck(3, 14))
+    return std::make_unique<NavButtonLayoutManagerGtk3>(gtk_ui);
+#endif
+#if defined(USE_GCONF)
+  return std::make_unique<NavButtonLayoutManagerGconf>(gtk_ui);
+#endif
+  return nullptr;
+}
 
 // Returns a gfx::FontRenderParams corresponding to GTK's configuration.
 gfx::FontRenderParams GetGtkFontRenderParams() {
@@ -313,54 +334,6 @@ gfx::FontRenderParams GetGtkFontRenderParams() {
   g_free(rgba);
 
   return params;
-}
-
-float GtkDpiToScaleFactor(int dpi) {
-  // GTK multiplies the DPI by 1024 before storing it.
-  return dpi / (1024 * kDefaultDPI);
-}
-
-gint GetGdkScreenSettingInt(const char* setting_name) {
-  GValue value = G_VALUE_INIT;
-  g_value_init(&value, G_TYPE_INT);
-  if (!gdk_screen_get_setting(gdk_screen_get_default(), setting_name, &value))
-    return -1;
-  return g_value_get_int(&value);
-}
-
-float GetScaleFromGdkScreenSettings() {
-  gint window_scale = GetGdkScreenSettingInt("gdk-window-scaling-factor");
-  if (window_scale <= 0)
-    return -1;
-  gint font_dpi = GetGdkScreenSettingInt("gdk-unscaled-dpi");
-  if (font_dpi <= 0)
-    return -1;
-  return window_scale * GtkDpiToScaleFactor(font_dpi);
-}
-
-float GetScaleFromXftDPI() {
-  GtkSettings* gtk_settings = gtk_settings_get_default();
-  CHECK(gtk_settings);
-  gint gtk_dpi = -1;
-  g_object_get(gtk_settings, "gtk-xft-dpi", &gtk_dpi, nullptr);
-  if (gtk_dpi <= 0)
-    return -1;
-  return GtkDpiToScaleFactor(gtk_dpi);
-}
-
-float GetRawDeviceScaleFactor() {
-  if (display::Display::HasForceDeviceScaleFactor())
-    return display::Display::GetForcedDeviceScaleFactor();
-
-  float scale = GetScaleFromGdkScreenSettings();
-  if (scale > 0)
-    return scale;
-
-  scale = GetScaleFromXftDPI();
-  if (scale > 0)
-    return scale;
-
-  return 1;
 }
 
 views::LinuxUI::NonClientMiddleClickAction GetDefaultMiddleClickAction() {
@@ -431,6 +404,12 @@ SkColor GetToolbarTopSeparatorColor(SkColor header_fg,
 }
 #endif
 
+using GdkSetAllowedBackendsFn = void (*)(const gchar*);
+// Place this function pointers in read-only memory after being resolved to
+// prevent it being tampered with. See crbug.com/771365 for details.
+PROTECTED_MEMORY_SECTION base::ProtectedMemory<GdkSetAllowedBackendsFn>
+    g_gdk_set_allowed_backends;
+
 }  // namespace
 
 GtkUi::GtkUi() : middle_click_action_(GetDefaultMiddleClickAction()) {
@@ -439,31 +418,36 @@ GtkUi::GtkUi() : middle_click_action_(GetDefaultMiddleClickAction()) {
   // the use of X11 (eg. X11InputMethodContextImplGtk) and will crash under
   // other backends.
   // TODO(thomasanderson): Change this logic once Wayland support is added.
-  static auto* _gdk_set_allowed_backends =
+  static base::ProtectedMemory<GdkSetAllowedBackendsFn>::Initializer init(
+      &g_gdk_set_allowed_backends,
       reinterpret_cast<void (*)(const gchar*)>(
-          dlsym(GetGdkSharedLibrary(), "gdk_set_allowed_backends"));
+          dlsym(GetGdkSharedLibrary(), "gdk_set_allowed_backends")));
   if (GtkVersionCheck(3, 10))
-    DCHECK(_gdk_set_allowed_backends);
-  if (_gdk_set_allowed_backends)
-    _gdk_set_allowed_backends("x11");
+    DCHECK(*g_gdk_set_allowed_backends);
+  if (*g_gdk_set_allowed_backends)
+    base::UnsanitizedCfiCall(g_gdk_set_allowed_backends)("x11");
+#endif
+#if GTK_MAJOR_VERSION >= 3
+  // Avoid GTK initializing atk-bridge, and let AuraLinux implementation
+  // do it once it is ready.
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
+  env->SetVar("NO_AT_BRIDGE", "1");
 #endif
   GtkInitFromCommandLine(*base::CommandLine::ForCurrentProcess());
 #if GTK_MAJOR_VERSION == 2
   native_theme_ = NativeThemeGtk2::instance();
   fake_window_ = chrome_gtk_frame_new();
-  gtk_widget_realize(fake_window_);  // Is this necessary?
 #elif GTK_MAJOR_VERSION == 3
   native_theme_ = NativeThemeGtk3::instance();
-  (void)fake_window_;  // Silence the unused warning.
+  fake_window_ = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 #else
 #error "Unsupported GTK version"
 #endif
+  gtk_widget_realize(fake_window_);
 }
 
 GtkUi::~GtkUi() {
-#if GTK_MAJOR_VERSION == 2
   gtk_widget_destroy(fake_window_);
-#endif
 }
 
 void OnThemeChanged(GObject* obj, GParamSpec* param, GtkUi* gtkui) {
@@ -477,6 +461,17 @@ void GtkUi::Initialize() {
   g_signal_connect_after(settings, "notify::gtk-icon-theme-name",
                          G_CALLBACK(OnThemeChanged), this);
 
+  GdkScreen* screen = gdk_screen_get_default();
+  // Listen for DPI changes.
+  g_signal_connect_after(screen, "notify::resolution",
+                         G_CALLBACK(OnDeviceScaleFactorMaybeChangedThunk),
+                         this);
+  // Listen for scale factor changes.  We would prefer to listen on
+  // |screen|, but there is no scale-factor property, so use an
+  // unmapped window instead.
+  g_signal_connect(fake_window_, "notify::scale-factor",
+                   G_CALLBACK(OnDeviceScaleFactorMaybeChangedThunk), this);
+
   LoadGtkValues();
 
 #if BUILDFLAG(ENABLE_BASIC_PRINTING)
@@ -486,10 +481,8 @@ void GtkUi::Initialize() {
       &GetPdfPaperSizeDeviceUnitsGtk);
 #endif
 
-#if defined(USE_GCONF)
   // We must build this after GTK gets initialized.
-  gconf_listener_.reset(new GConfListener(this));
-#endif  // defined(USE_GCONF)
+  nav_button_layout_manager_ = CreateNavButtonLayoutManager(this);
 
   indicators_count = 0;
 
@@ -557,7 +550,7 @@ SkColor GtkUi::GetInactiveSelectionFgColor() const {
   return inactive_selection_fg_color_;
 }
 
-double GtkUi::GetCursorBlinkInterval() const {
+base::TimeDelta GtkUi::GetCursorBlinkInterval() const {
   // From http://library.gnome.org/devel/gtk/unstable/GtkSettings.html, this is
   // the default value for gtk-cursor-blink-time.
   static const gint kGtkDefaultCursorBlinkTime = 1200;
@@ -572,7 +565,9 @@ double GtkUi::GetCursorBlinkInterval() const {
   gboolean cursor_blink = TRUE;
   g_object_get(gtk_settings_get_default(), "gtk-cursor-blink-time",
                &cursor_blink_time, "gtk-cursor-blink", &cursor_blink, nullptr);
-  return cursor_blink ? (cursor_blink_time / kGtkCursorBlinkCycleFactor) : 0.0;
+  return cursor_blink ? base::TimeDelta::FromSecondsD(
+                            cursor_blink_time / kGtkCursorBlinkCycleFactor)
+                      : base::TimeDelta();
 }
 
 ui::NativeTheme* GtkUi::GetNativeTheme(aura::Window* window) const {
@@ -595,6 +590,7 @@ bool GtkUi::GetDefaultUsesSystemTheme() const {
 
   switch (base::nix::GetDesktopEnvironment(env.get())) {
     case base::nix::DESKTOP_ENVIRONMENT_GNOME:
+    case base::nix::DESKTOP_ENVIRONMENT_PANTHEON:
     case base::nix::DESKTOP_ENVIRONMENT_UNITY:
     case base::nix::DESKTOP_ENVIRONMENT_XFCE:
       return true;
@@ -734,16 +730,15 @@ std::unique_ptr<views::Border> GtkUi::CreateNativeBorder(
 
 void GtkUi::AddWindowButtonOrderObserver(
     views::WindowButtonOrderObserver* observer) {
-  if (!leading_buttons_.empty() || !trailing_buttons_.empty()) {
+  if (nav_buttons_set_)
     observer->OnWindowButtonOrderingChange(leading_buttons_, trailing_buttons_);
-  }
 
-  observer_list_.AddObserver(observer);
+  window_button_order_observer_list_.AddObserver(observer);
 }
 
 void GtkUi::RemoveWindowButtonOrderObserver(
     views::WindowButtonOrderObserver* observer) {
-  observer_list_.RemoveObserver(observer);
+  window_button_order_observer_list_.RemoveObserver(observer);
 }
 
 void GtkUi::SetWindowButtonOrdering(
@@ -751,9 +746,12 @@ void GtkUi::SetWindowButtonOrdering(
     const std::vector<views::FrameButton>& trailing_buttons) {
   leading_buttons_ = leading_buttons;
   trailing_buttons_ = trailing_buttons;
+  nav_buttons_set_ = true;
 
-  for (views::WindowButtonOrderObserver& observer : observer_list_)
+  for (views::WindowButtonOrderObserver& observer :
+       window_button_order_observer_list_) {
     observer.OnWindowButtonOrderingChange(leading_buttons_, trailing_buttons_);
+  }
 }
 
 void GtkUi::SetNonClientMiddleClickAction(NonClientMiddleClickAction action) {
@@ -786,12 +784,8 @@ void GtkUi::GetDefaultFontDescription(std::string* family_out,
 
 ui::SelectFileDialog* GtkUi::CreateSelectFileDialog(
     ui::SelectFileDialog::Listener* listener,
-    ui::SelectFilePolicy* policy) const {
-  return SelectFileDialogImpl::Create(listener, policy);
-}
-
-bool GtkUi::UnityIsRunning() {
-  return unity::IsRunning();
+    std::unique_ptr<ui::SelectFilePolicy> policy) const {
+  return SelectFileDialogImpl::Create(listener, std::move(policy));
 }
 
 views::LinuxUI::NonClientMiddleClickAction
@@ -805,6 +799,31 @@ void GtkUi::NotifyWindowManagerStartupComplete() {
   gdk_notify_startup_complete();
 }
 
+void GtkUi::AddDeviceScaleFactorObserver(
+    views::DeviceScaleFactorObserver* observer) {
+  device_scale_factor_observer_list_.AddObserver(observer);
+}
+
+void GtkUi::RemoveDeviceScaleFactorObserver(
+    views::DeviceScaleFactorObserver* observer) {
+  device_scale_factor_observer_list_.RemoveObserver(observer);
+}
+
+bool GtkUi::PreferDarkTheme() const {
+  gboolean dark = false;
+  g_object_get(gtk_settings_get_default(), "gtk-application-prefer-dark-theme",
+               &dark, nullptr);
+  return dark;
+}
+
+#if BUILDFLAG(ENABLE_NATIVE_WINDOW_NAV_BUTTONS)
+std::unique_ptr<views::NavButtonProvider> GtkUi::CreateNavButtonProvider() {
+  if (GtkVersionCheck(3, 14))
+    return base::MakeUnique<libgtkui::NavButtonProviderGtk3>();
+  return nullptr;
+}
+#endif
+
 bool GtkUi::MatchEvent(const ui::Event& event,
                        std::vector<ui::TextEditCommandAuraLinux>* commands) {
   // Ensure that we have a keyboard handler.
@@ -812,6 +831,10 @@ bool GtkUi::MatchEvent(const ui::Event& event,
     key_bindings_handler_.reset(new Gtk2KeyBindingsHandler);
 
   return key_bindings_handler_->MatchEvent(event, commands);
+}
+
+void GtkUi::OnDeviceScaleFactorMaybeChanged(void*, GParamSpec*) {
+  UpdateDeviceScaleFactor();
 }
 
 void GtkUi::SetScrollbarColors() {
@@ -936,8 +959,6 @@ void GtkUi::LoadGtkValues() {
   colors_[ThemeProperties::COLOR_TOOLBAR_BOTTOM_SEPARATOR] = tab_border;
   // Separates entries in the downloads bar.
   colors_[ThemeProperties::COLOR_TOOLBAR_VERTICAL_SEPARATOR] = tab_border;
-  // Separates the bookmark bar from the web content.
-  colors_[ThemeProperties::COLOR_DETACHED_BOOKMARK_BAR_SEPARATOR] = tab_border;
 
   // These colors represent the border drawn around tabs and between
   // the tabstrip and toolbar.
@@ -1074,14 +1095,38 @@ void GtkUi::ResetStyle() {
   native_theme_->NotifyObservers();
 }
 
-void GtkUi::UpdateDeviceScaleFactor() {
-  // Note: Linux chrome currently does not support dynamic DPI
-  // changes.  This is to allow flags to override the DPI settings
-  // during startup.
-  float scale = GetRawDeviceScaleFactor();
+float GtkUi::GetRawDeviceScaleFactor() {
+  if (display::Display::HasForceDeviceScaleFactor())
+    return display::Display::GetForcedDeviceScaleFactor();
+
+#if GTK_MAJOR_VERSION == 2
+  GtkSettings* gtk_settings = gtk_settings_get_default();
+  gint gtk_dpi = -1;
+  g_object_get(gtk_settings, "gtk-xft-dpi", &gtk_dpi, nullptr);
+  const float scale_factor = gtk_dpi / (1024 * kDefaultDPI);
+#else
+  GdkScreen* screen = gdk_screen_get_default();
+  gint scale = gtk_widget_get_scale_factor(fake_window_);
+  DCHECK_GT(scale, 0);
+  gdouble resolution = gdk_screen_get_resolution(screen);
+  const float scale_factor =
+      resolution <= 0 ? scale : resolution * scale / kDefaultDPI;
+#endif
+
   // Blacklist scaling factors <120% (crbug.com/484400) and round
   // to 1 decimal to prevent rendering problems (crbug.com/485183).
-  device_scale_factor_ = scale < 1.2f ? 1.0f : roundf(scale * 10) / 10;
+  return scale_factor < 1.2f ? 1.0f : roundf(scale_factor * 10) / 10;
+}
+
+void GtkUi::UpdateDeviceScaleFactor() {
+  float old_device_scale_factor = device_scale_factor_;
+  device_scale_factor_ = GetRawDeviceScaleFactor();
+  if (device_scale_factor_ != old_device_scale_factor) {
+    for (views::DeviceScaleFactorObserver& observer :
+         device_scale_factor_observer_list_) {
+      observer.OnDeviceScaleFactorChanged();
+    }
+  }
   UpdateDefaultFont();
 }
 

@@ -6,29 +6,54 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='composited'",
-      "position": [10, 10],
-      "transformOrigin": [-10, -10],
       "bounds": [590, 208],
-      "drawsContent": true
+      "transform": 1
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='composited'",
-      "position": [10, 260],
-      "transformOrigin": [-10, -10],
       "bounds": [590, 208],
-      "drawsContent": true
+      "transform": 2
     },
     {
       "name": "LayoutBlockFlow (relative positioned) DIV class='composited inner box'",
-      "position": [490, 108],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#0000FF"
+      "backgroundColor": "#0000FF",
+      "transform": 3
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [10, 10, 0, 1]
+      ]
+    },
+    {
+      "id": 2,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [10, 260, 0, 1]
+      ]
+    },
+    {
+      "id": 3,
+      "parent": 2,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [490, 108, 0, 1]
+      ]
     }
   ]
 }

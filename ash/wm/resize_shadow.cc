@@ -4,13 +4,17 @@
 
 #include "ash/wm/resize_shadow.h"
 
+#include <memory>
+
 #include "base/lazy_instance.h"
+#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "ui/aura/window.h"
 #include "ui/base/hit_test.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/image/canvas_image_source.h"
 
 namespace {
@@ -18,6 +22,11 @@ namespace {
 // The width of the resize shadow that appears on the hovered edge of the
 // window.
 constexpr int kVisualThickness = 8;
+
+// The corner radius of the resize shadow, which not coincidentally matches
+// the corner radius of the actual window.
+static constexpr int kCornerRadiusOfResizeShadow = 2;
+static constexpr int kCornerRadiusOfWindow = 2;
 
 // This class simply draws a roundrect. The layout and tiling is handled by
 // ResizeShadow and NinePatchLayer.
@@ -27,19 +36,23 @@ class ResizeShadowImageSource : public gfx::CanvasImageSource {
       : gfx::CanvasImageSource(gfx::Size(kImageSide, kImageSide),
                                false /* is opaque */) {}
 
-  ~ResizeShadowImageSource() override {}
+  ~ResizeShadowImageSource() override = default;
 
   // gfx::CanvasImageSource:
   void Draw(gfx::Canvas* canvas) override {
     cc::PaintFlags paint;
     paint.setAntiAlias(true);
     paint.setColor(SK_ColorBLACK);
-    canvas->DrawRoundRect(gfx::RectF(gfx::SizeF(size())), kCornerRadius, paint);
+    canvas->DrawRoundRect(gfx::RectF(gfx::SizeF(size())),
+                          kCornerRadiusOfResizeShadow, paint);
   }
 
  private:
-  static constexpr int kCornerRadius = 2;
-  static constexpr int kImageSide = 2 * kVisualThickness + 1;
+  // The image has to have enough space to depict the visual thickness (left and
+  // right) plus an inset for extending beneath the window's rounded corner plus
+  // one pixel for the center of the nine patch.
+  static constexpr int kImageSide =
+      2 * (kVisualThickness + kCornerRadiusOfWindow) + 1;
 
   DISALLOW_COPY_AND_ASSIGN(ResizeShadowImageSource);
 };
@@ -65,11 +78,13 @@ ResizeShadow::ResizeShadow(aura::Window* window)
 
   if (!g_shadow_image.Get()) {
     auto* source = new ResizeShadowImageSource();
-    g_shadow_image.Get().reset(new gfx::ImageSkia(source, source->size()));
+    g_shadow_image.Get() = std::make_unique<gfx::ImageSkia>(
+        base::WrapUnique(source), source->size());
   }
   layer_->UpdateNinePatchLayerImage(*g_shadow_image.Get());
   gfx::Rect aperture(g_shadow_image.Get()->size());
-  constexpr gfx::Insets kApertureInsets(kVisualThickness);
+  constexpr gfx::Insets kApertureInsets(kVisualThickness +
+                                        kCornerRadiusOfWindow);
   aperture.Inset(kApertureInsets);
   layer_->UpdateNinePatchLayerAperture(aperture);
   layer_->UpdateNinePatchLayerBorder(
@@ -85,7 +100,8 @@ ResizeShadow::~ResizeShadow() {
 
 void ResizeShadow::OnWindowBoundsChanged(aura::Window* window,
                                          const gfx::Rect& old_bounds,
-                                         const gfx::Rect& new_bounds) {
+                                         const gfx::Rect& new_bounds,
+                                         ui::PropertyChangeReason reason) {
   UpdateBoundsAndVisibility();
 }
 

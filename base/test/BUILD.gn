@@ -26,10 +26,9 @@ static_library("test_support") {
   testonly = true
   sources = [
     "../trace_event/trace_config_memory_test_util.h",
-    "android/java_handler_thread_for_testing.cc",
-    "android/java_handler_thread_for_testing.h",
-    "android/test_system_message_handler_link_android.cc",
-    "android/test_system_message_handler_link_android.h",
+    "android/java_handler_thread_helpers.cc",
+    "android/java_handler_thread_helpers.h",
+    "copy_only_int.h",
     "fuzzed_data_provider.cc",
     "fuzzed_data_provider.h",
     "gtest_util.cc",
@@ -57,6 +56,7 @@ static_library("test_support") {
     "mock_entropy_provider.h",
     "mock_log.cc",
     "mock_log.h",
+    "move_only_int.h",
     "multiprocess_test.cc",
     "multiprocess_test.h",
     "multiprocess_test_android.cc",
@@ -72,10 +72,10 @@ static_library("test_support") {
     "perf_time_logger.h",
     "power_monitor_test_base.cc",
     "power_monitor_test_base.h",
-    "scoped_async_task_scheduler.cc",
-    "scoped_async_task_scheduler.h",
     "scoped_command_line.cc",
     "scoped_command_line.h",
+    "scoped_environment_variable_override.cc",
+    "scoped_environment_variable_override.h",
     "scoped_feature_list.cc",
     "scoped_feature_list.h",
     "scoped_locale.cc",
@@ -86,8 +86,6 @@ static_library("test_support") {
     "scoped_path_override.h",
     "scoped_task_environment.cc",
     "scoped_task_environment.h",
-    "scoped_task_scheduler.cc",
-    "scoped_task_scheduler.h",
     "sequenced_task_runner_test_template.cc",
     "sequenced_task_runner_test_template.h",
     "sequenced_worker_pool_owner.cc",
@@ -196,6 +194,9 @@ static_library("test_support") {
   }
 
   if (is_android) {
+    set_sources_assignment_filter([])
+    sources += [ "test_file_util_linux.cc" ]
+    set_sources_assignment_filter(sources_assignment_filter)
     deps += [
       ":base_unittests_jni_headers",
       ":test_support_jni_headers",
@@ -322,7 +323,7 @@ if (is_linux) {
     ]
     deps = [
       "//base",
-      "//build/config/sanitizers:deps",
+      "//build/config:exe_and_shlib_deps",
     ]
   }
 }
@@ -331,8 +332,7 @@ if (is_android) {
   generate_jni("base_unittests_jni_headers") {
     sources = [
       "android/java/src/org/chromium/base/ContentUriTestUtils.java",
-      "android/java/src/org/chromium/base/JavaHandlerThreadTest.java",
-      "android/java/src/org/chromium/base/TestSystemMessageHandler.java",
+      "android/java/src/org/chromium/base/JavaHandlerThreadHelpers.java",
       "android/java/src/org/chromium/base/TestUiThread.java",
     ]
     jni_package = "base"
@@ -356,7 +356,6 @@ if (is_android) {
     ]
     srcjar_deps = [ ":test_support_java_aidl" ]
     java_files = [
-      "android/java/src/org/chromium/base/ChildProcessConstants.java",
       "android/java/src/org/chromium/base/MainReturnCodeResult.java",
       "android/java/src/org/chromium/base/MultiprocessTestClientLauncher.java",
       "android/java/src/org/chromium/base/MultiprocessTestClientService.java",
@@ -365,6 +364,7 @@ if (is_android) {
       "android/java/src/org/chromium/base/MultiprocessTestClientService2.java",
       "android/java/src/org/chromium/base/MultiprocessTestClientService3.java",
       "android/java/src/org/chromium/base/MultiprocessTestClientService4.java",
+      "android/java/src/org/chromium/base/MultiprocessTestClientServiceDelegate.java",
     ]
   }
 
@@ -376,7 +376,6 @@ if (is_android) {
     ]
     sources = [
       "android/java/src/org/chromium/base/ITestCallback.aidl",
-      "android/java/src/org/chromium/base/ITestClient.aidl",
       "android/java/src/org/chromium/base/ITestController.aidl",
     ]
   }

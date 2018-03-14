@@ -17,7 +17,12 @@
 #include "chrome/browser/profiles/profile.h"
 #include "components/domain_reliability/clear_mode.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
+#include "content/public/common/network_service.mojom.h"
 #include "extensions/features/features.h"
+
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
+#endif
 
 class BrowserContextDependencyManager;
 class ExtensionSpecialStoragePolicy;
@@ -26,7 +31,9 @@ class HostContentSettingsMap;
 namespace content {
 class MockResourceContext;
 class SSLHostStateDelegate;
+#if !defined(OS_ANDROID)
 class ZoomLevelDelegate;
+#endif  // !defined(OS_ANDROID)
 }
 
 namespace net {
@@ -193,15 +200,6 @@ class TestingProfile : public Profile {
   // for testing error conditions. Returns true on success.
   bool CreateHistoryService(bool delete_file, bool no_db) WARN_UNUSED_RESULT;
 
-  // !!!!!!!! WARNING: THIS IS GENERALLY NOT SAFE TO CALL! !!!!!!!!
-  // This bypasses the BrowserContextDependencyManager and thus may leave other
-  // KeyedServices with dangling pointers; see above. It's also usually not
-  // necessary to explicitly destroy the HistoryService; it'll be destroyed
-  // along with the TestingProfile anyway.
-  // !!!!!!!! WARNING: THIS IS GENERALLY NOT SAFE TO CALL! !!!!!!!!
-  // Shuts down and nulls out the reference to HistoryService.
-  void DestroyHistoryService();
-
   // Creates the BookmarkBarModel. If not invoked the bookmark bar model is
   // NULL. If |delete_file| is true, the bookmarks file is deleted first, then
   // the model is created. As TestingProfile deletes the directory containing
@@ -233,8 +231,10 @@ class TestingProfile : public Profile {
 
   // content::BrowserContext
   base::FilePath GetPath() const override;
+#if !defined(OS_ANDROID)
   std::unique_ptr<content::ZoomLevelDelegate> CreateZoomLevelDelegate(
       const base::FilePath& partition_path) override;
+#endif  // !defined(OS_ANDROID)
   scoped_refptr<base::SequencedTaskRunner> GetIOTaskRunner() override;
   bool IsOffTheRecord() const override;
   content::DownloadManagerDelegate* GetDownloadManagerDelegate() override;
@@ -244,7 +244,10 @@ class TestingProfile : public Profile {
   content::PushMessagingService* GetPushMessagingService() override;
   content::SSLHostStateDelegate* GetSSLHostStateDelegate() override;
   content::PermissionManager* GetPermissionManager() override;
+  content::BackgroundFetchDelegate* GetBackgroundFetchDelegate() override;
   content::BackgroundSyncController* GetBackgroundSyncController() override;
+  content::BrowsingDataRemoverDelegate* GetBrowsingDataRemoverDelegate()
+      override;
   net::URLRequestContextGetter* CreateRequestContext(
       content::ProtocolHandlerMap* protocol_handlers,
       content::URLRequestInterceptorScopedVector request_interceptors) override;
@@ -285,6 +288,7 @@ class TestingProfile : public Profile {
   void DestroyOffTheRecordProfile() override {}
   bool HasOffTheRecordProfile() override;
   Profile* GetOriginalProfile() override;
+  const Profile* GetOriginalProfile() const override;
   bool IsSupervised() const override;
   bool IsChild() const override;
   bool IsLegacySupervised() const override;
@@ -300,7 +304,9 @@ class TestingProfile : public Profile {
 
   PrefService* GetPrefs() override;
   const PrefService* GetPrefs() const override;
+#if !defined(OS_ANDROID)
   ChromeZoomLevelPrefs* GetZoomLevelPrefs() override;
+#endif  // !defined(OS_ANDROID)
   net::URLRequestContextGetter* GetRequestContext() override;
   net::URLRequestContextGetter* GetRequestContextForExtensions() override;
   net::SSLConfigService* GetSSLConfigService() override;
@@ -315,6 +321,7 @@ class TestingProfile : public Profile {
   bool IsGuestSession() const override;
   void SetExitType(ExitType exit_type) override {}
   ExitType GetLastSessionExitType() override;
+  content::mojom::NetworkContextPtr CreateMainNetworkContext() override;
 #if defined(OS_CHROMEOS)
   void ChangeAppLocale(const std::string&, AppLocaleChangedVia) override {}
   void OnLogin() override {}
@@ -329,10 +336,6 @@ class TestingProfile : public Profile {
   void BlockUntilHistoryProcessesPendingRequests();
 
   chrome_browser_net::Predictor* GetNetworkPredictor() override;
-  DevToolsNetworkControllerHandle* GetDevToolsNetworkControllerHandle()
-      override;
-  void ClearNetworkingHistorySince(base::Time time,
-                                   const base::Closure& completion) override;
   GURL GetHomePage() override;
 
   PrefService* GetOffTheRecordPrefs() override;
@@ -429,6 +432,11 @@ class TestingProfile : public Profile {
   Delegate* delegate_;
 
   std::string profile_name_;
+
+#if defined(OS_CHROMEOS)
+  std::unique_ptr<chromeos::ScopedCrosSettingsTestHelper>
+      scoped_cros_settings_test_helper_;
+#endif  // defined(OS_CHROMEOS)
 
   std::unique_ptr<policy::PolicyService> policy_service_;
 };

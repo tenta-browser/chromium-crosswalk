@@ -4,9 +4,9 @@
 
 #include "ui/base/idle/screensaver_window_finder_x11.h"
 
-#include <X11/extensions/scrnsaver.h>
-
 #include "ui/base/x/x11_util.h"
+#include "ui/gfx/x/x11.h"
+#include "ui/gfx/x/x11_atom_cache.h"
 #include "ui/gfx/x/x11_error_tracker.h"
 
 namespace ui {
@@ -32,7 +32,7 @@ bool ScreensaverWindowFinder::ScreensaverWindowExists() {
   // info.state == ScreenSaverOff or info.state == ScreenSaverDisabled does not
   // necessarily mean that a screensaver is not active, so add a special check
   // for xscreensaver.
-  static XAtom lock_atom = GetAtom("LOCK");
+  XAtom lock_atom = gfx::GetAtom("LOCK");
   std::vector<int> atom_properties;
   if (GetIntArrayProperty(root, "_SCREENSAVER_STATUS", &atom_properties) &&
       atom_properties.size() > 0) {

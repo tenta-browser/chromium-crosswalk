@@ -8,16 +8,17 @@
 #include <utility>
 #include "bindings/core/v8/CallbackPromiseAdapter.h"
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/DOMException.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "modules/EventTargetModules.h"
 #include "modules/serviceworkers/ServiceWorkerContainerClient.h"
 #include "modules/serviceworkers/ServiceWorkerError.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/wtf/PtrUtil.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerProvider.h"
+#include "public/platform/modules/serviceworker/service_worker_registration.mojom-blink.h"
 
 namespace blink {
 
@@ -66,12 +67,12 @@ void ServiceWorkerRegistration::SetActive(
 ServiceWorkerRegistration* ServiceWorkerRegistration::GetOrCreate(
     ExecutionContext* execution_context,
     std::unique_ptr<WebServiceWorkerRegistration::Handle> handle) {
-  ASSERT(handle);
+  DCHECK(handle);
 
   ServiceWorkerRegistration* existing_registration =
       static_cast<ServiceWorkerRegistration*>(handle->Registration()->Proxy());
   if (existing_registration) {
-    ASSERT(existing_registration->GetExecutionContext() == execution_context);
+    DCHECK_EQ(existing_registration->GetExecutionContext(), execution_context);
     return existing_registration;
   }
 
@@ -88,6 +89,19 @@ String ServiceWorkerRegistration::scope() const {
   return handle_->Registration()->Scope().GetString();
 }
 
+String ServiceWorkerRegistration::updateViaCache() const {
+  switch (handle_->Registration()->UpdateViaCache()) {
+    case mojom::ServiceWorkerUpdateViaCache::kImports:
+      return "imports";
+    case mojom::ServiceWorkerUpdateViaCache::kAll:
+      return "all";
+    case mojom::ServiceWorkerUpdateViaCache::kNone:
+      return "none";
+  }
+  NOTREACHED();
+  return "";
+}
+
 ScriptPromise ServiceWorkerRegistration::update(ScriptState* script_state) {
   ServiceWorkerContainerClient* client =
       ServiceWorkerContainerClient::From(GetExecutionContext());
@@ -101,8 +115,7 @@ ScriptPromise ServiceWorkerRegistration::update(ScriptState* script_state) {
   ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
   ScriptPromise promise = resolver->Promise();
   handle_->Registration()->Update(
-      client->Provider(),
-      WTF::MakeUnique<
+      std::make_unique<
           CallbackPromiseAdapter<void, ServiceWorkerErrorForUpdate>>(resolver));
   return promise;
 }
@@ -121,8 +134,7 @@ ScriptPromise ServiceWorkerRegistration::unregister(ScriptState* script_state) {
   ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
   ScriptPromise promise = resolver->Promise();
   handle_->Registration()->Unregister(
-      client->Provider(),
-      WTF::MakeUnique<CallbackPromiseAdapter<bool, ServiceWorkerError>>(
+      std::make_unique<CallbackPromiseAdapter<bool, ServiceWorkerError>>(
           resolver));
   return promise;
 }
@@ -133,8 +145,8 @@ ServiceWorkerRegistration::ServiceWorkerRegistration(
     : ContextLifecycleObserver(execution_context),
       handle_(std::move(handle)),
       stopped_(false) {
-  ASSERT(handle_);
-  ASSERT(!handle_->Registration()->Proxy());
+  DCHECK(handle_);
+  DCHECK(!handle_->Registration()->Proxy());
 
   if (!execution_context)
     return;
@@ -149,7 +161,7 @@ void ServiceWorkerRegistration::Dispose() {
   handle_.reset();
 }
 
-DEFINE_TRACE(ServiceWorkerRegistration) {
+void ServiceWorkerRegistration::Trace(blink::Visitor* visitor) {
   visitor->Trace(installing_);
   visitor->Trace(waiting_);
   visitor->Trace(active_);

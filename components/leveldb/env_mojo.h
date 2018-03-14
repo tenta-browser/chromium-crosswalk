@@ -7,16 +7,28 @@
 
 #include "components/filesystem/public/interfaces/directory.mojom.h"
 #include "components/leveldb/leveldb_mojo_proxy.h"
+#include "third_party/leveldatabase/env_chromium.h"
 #include "third_party/leveldatabase/src/include/leveldb/env.h"
 
 namespace leveldb {
+
+class MojoRetrierProvider {
+ public:
+  virtual int MaxRetryTimeMillis() const = 0;
+  virtual void RecordRetryTime(leveldb_env::MethodID method,
+                               base::TimeDelta time) const = 0;
+  virtual void RecordRecoveredFromError(leveldb_env::MethodID method,
+                                        base::File::Error error) const = 0;
+};
 
 // An implementation of the leveldb operating system interaction code which
 // proxies to a specified mojo:filesystem directory. Most of these methods are
 // synchronous and block on responses from the filesystem service. That's fine
 // since, for the most part, they merely open files or check for a file's
 // existence.
-class MojoEnv : public leveldb::Env {
+class MojoEnv : public Env,
+                public leveldb_env::UMALogger,
+                public MojoRetrierProvider {
  public:
   MojoEnv(scoped_refptr<LevelDBMojoProxy> file_thread,
           LevelDBMojoProxy::OpaqueDir* dir);
@@ -50,6 +62,20 @@ class MojoEnv : public leveldb::Env {
   void StartThread(void (*function)(void* arg), void* arg) override;
 
  private:
+  void RecordErrorAt(leveldb_env::MethodID method) const override;
+  void RecordOSError(leveldb_env::MethodID method,
+                     base::File::Error error) const override;
+  void RecordBytesRead(int amount) const override;
+  void RecordBytesWritten(int amount) const override;
+  int MaxRetryTimeMillis() const override;
+  void RecordRetryTime(leveldb_env::MethodID method,
+                       base::TimeDelta time) const override;
+  void RecordRecoveredFromError(leveldb_env::MethodID method,
+                                base::File::Error error) const override;
+
+  void RecordFileError(leveldb_env::MethodID method,
+                       filesystem::mojom::FileError error) const;
+
   scoped_refptr<LevelDBMojoProxy> thread_;
   LevelDBMojoProxy::OpaqueDir* dir_;
 

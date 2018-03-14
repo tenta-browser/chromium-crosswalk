@@ -4,11 +4,16 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
+          "object": "LayoutTableRow TR",
+          "rect": [8, 8, 114, 54],
+          "reason": "style change"
+        },
+        {
           "object": "LayoutTableCell TD id='foo'",
-          "rect": [8, 8, 60, 54],
+          "rect": [10, 10, 56, 50],
           "reason": "style change"
         },
         {
@@ -19,7 +24,7 @@
         {
           "object": "LayoutText #text",
           "rect": [90, 30, 11, 19],
-          "reason": "layoutObject removal"
+          "reason": "disappeared"
         }
       ]
     }
@@ -27,14 +32,10 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutText #text",
-      "reason": "layoutObject removal"
+      "reason": "disappeared"
     },
     {
-      "object": "LayoutTableCell TD id='foo'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutTableCell TD",
+      "object": "LayoutTableRow TR",
       "reason": "style change"
     },
     {

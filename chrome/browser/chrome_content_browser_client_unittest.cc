@@ -19,9 +19,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
-#include "chrome/browser/browsing_data/browsing_data_remover_factory.h"
 #include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
-#include "chrome/browser/browsing_data/mock_browsing_data_remover_delegate.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -30,6 +28,7 @@
 #include "components/variations/variations_associated_data.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browsing_data_filter_builder.h"
+#include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/storage_partition.h"
@@ -47,6 +46,12 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/search_test_utils.h"
+#endif
+
+#if defined(OS_CHROMEOS)
+#include "ash/public/interfaces/constants.mojom.h"
+#include "content/public/common/service_names.mojom.h"
+#include "services/ui/public/interfaces/constants.mojom.h"
 #endif
 
 using content::BrowsingDataFilterBuilder;
@@ -180,7 +185,7 @@ TEST_F(DisableWebRtcEncryptionFlagTest, StableChannel) {
 class BlinkSettingsFieldTrialTest : public testing::Test {
  public:
   static const char kParserFieldTrialName[];
-  static const char kIFrameFieldTrialName[];
+  static const char kPreloadScanningFieldTrialName[];
   static const char kFakeGroupName[];
   static const char kDefaultGroupName[];
 
@@ -237,8 +242,8 @@ class BlinkSettingsFieldTrialTest : public testing::Test {
 
 const char BlinkSettingsFieldTrialTest::kParserFieldTrialName[] =
     "BackgroundHtmlParserTokenLimits";
-const char BlinkSettingsFieldTrialTest::kIFrameFieldTrialName[] =
-    "LowPriorityIFrames";
+const char BlinkSettingsFieldTrialTest::kPreloadScanningFieldTrialName[] =
+    "HtmlPreloadScanning";
 const char BlinkSettingsFieldTrialTest::kFakeGroupName[] = "FakeGroup";
 const char BlinkSettingsFieldTrialTest::kDefaultGroupName[] = "Default";
 
@@ -275,7 +280,7 @@ TEST_F(BlinkSettingsFieldTrialTest, FieldTrialEnabled) {
 TEST_F(BlinkSettingsFieldTrialTest, MultipleFieldTrialsEnabled) {
   CreateFieldTrialWithParams(kParserFieldTrialName, kFakeGroupName,
                              "key1", "value1", "key2", "value2");
-  CreateFieldTrialWithParams(kIFrameFieldTrialName, kFakeGroupName,
+  CreateFieldTrialWithParams(kPreloadScanningFieldTrialName, kFakeGroupName,
                              "keyA", "valueA", "keyB", "valueB");
   AppendContentBrowserClientSwitches();
   EXPECT_TRUE(command_line().HasSwitch(switches::kBlinkSettings));
@@ -286,7 +291,7 @@ TEST_F(BlinkSettingsFieldTrialTest, MultipleFieldTrialsEnabled) {
 TEST_F(BlinkSettingsFieldTrialTest, MultipleFieldTrialsDuplicateKeys) {
   CreateFieldTrialWithParams(kParserFieldTrialName, kFakeGroupName,
                              "key1", "value1", "key2", "value2");
-  CreateFieldTrialWithParams(kIFrameFieldTrialName, kFakeGroupName,
+  CreateFieldTrialWithParams(kPreloadScanningFieldTrialName, kFakeGroupName,
                              "key2", "duplicate", "key3", "value3");
   AppendContentBrowserClientSwitches();
   EXPECT_TRUE(command_line().HasSwitch(switches::kBlinkSettings));
@@ -344,244 +349,96 @@ TEST_F(InstantNTPURLRewriteTest, UberURLHandler_InstantExtendedNewTabPage) {
 }  // namespace content
 #endif  // !defined(OS_ANDROID)
 
-namespace {
+class ChromeContentBrowserClientGetLoggingFileTest : public testing::Test {};
 
-// Tests for ChromeContentBrowserClient::ClearSiteData().
-class ChromeContentBrowserClientClearSiteDataTest : public testing::Test {
+TEST_F(ChromeContentBrowserClientGetLoggingFileTest, GetLoggingFile) {
+  base::CommandLine cmd_line(base::CommandLine::NO_PROGRAM);
+  ChromeContentBrowserClient client;
+  base::FilePath log_file_name;
+  EXPECT_FALSE(client.GetLoggingFileName(cmd_line).empty());
+}
+
+TEST_F(ChromeContentBrowserClientGetLoggingFileTest,
+       GetLoggingFileFromCommandLine) {
+  base::CommandLine cmd_line(base::CommandLine::NO_PROGRAM);
+  cmd_line.AppendSwitchASCII(switches::kLogFile, "test_log.txt");
+  ChromeContentBrowserClient client;
+  base::FilePath log_file_name;
+  EXPECT_EQ(base::FilePath(FILE_PATH_LITERAL("test_log.txt")).value(),
+            client.GetLoggingFileName(cmd_line).value());
+}
+
+class TestChromeContentBrowserClient : public ChromeContentBrowserClient {
  public:
-  void SetUp() override {
-    BrowsingDataRemoverFactory::GetForBrowserContext(profile())
-        ->SetEmbedderDelegate(
-            base::MakeUnique<MockBrowsingDataRemoverDelegate>());
-    run_loop_.reset(new base::RunLoop());
-  }
-
-  content::BrowserContext* profile() { return &profile_; }
-
-  MockBrowsingDataRemoverDelegate* delegate() {
-    return static_cast<MockBrowsingDataRemoverDelegate*>(
-        BrowsingDataRemoverFactory::GetForBrowserContext(profile())
-            ->GetEmbedderDelegate());
-  }
-
-  void OnClearingFinished() { run_loop_->Quit(); }
-
-  void WaitForClearingFinished() {
-    run_loop_->Run();
-    run_loop_.reset(new base::RunLoop());
-  }
-
- private:
-  std::unique_ptr<base::RunLoop> run_loop_;
-  content::TestBrowserThreadBundle thread_bundle_;
-  TestingProfile profile_;
+  using ChromeContentBrowserClient::HandleWebUI;
+  using ChromeContentBrowserClient::HandleWebUIReverse;
 };
 
-// Tests that the parameters to ClearBrowsingData() are translated to
-// the correct BrowsingDataRemover::RemoveInternal() operation. The fourth
-// parameter, |filter_builder|, is tested in detail in the RegistrableDomains
-// test below.
-TEST_F(ChromeContentBrowserClientClearSiteDataTest, Parameters) {
+TEST(ChromeContentBrowserClientTest, HandleWebUI) {
+  TestChromeContentBrowserClient test_content_browser_client;
+  const GURL http_help("http://help/");
+  GURL should_not_redirect = http_help;
+  test_content_browser_client.HandleWebUI(&should_not_redirect, nullptr);
+  EXPECT_EQ(http_help, should_not_redirect);
+
+  const GURL chrome_help("chrome://help/");
+  GURL should_redirect = chrome_help;
+  test_content_browser_client.HandleWebUI(&should_redirect, nullptr);
+  EXPECT_NE(chrome_help, should_redirect);
+}
+
+TEST(ChromeContentBrowserClientTest, HandleWebUIReverse) {
+  TestChromeContentBrowserClient test_content_browser_client;
+  GURL http_settings("http://settings/");
+  EXPECT_FALSE(
+      test_content_browser_client.HandleWebUIReverse(&http_settings, nullptr));
+  GURL chrome_settings("chrome://settings/");
+  EXPECT_TRUE(test_content_browser_client.HandleWebUIReverse(&chrome_settings,
+                                                             nullptr));
+}
+
+TEST(ChromeContentBrowserClientTest, GetMetricSuffixForURL) {
   ChromeContentBrowserClient client;
+  // Search is detected.
+  EXPECT_EQ("search", client.GetMetricSuffixForURL(GURL(
+                          "https://www.google.co.jp/search?q=whatsgoingon")));
+  // Not a Search host.
+  EXPECT_EQ("", client.GetMetricSuffixForURL(GURL(
+                    "https://www.google.example.com/search?q=whatsgoingon")));
+  // For now, non-https is considered a Search host.
+  EXPECT_EQ("search", client.GetMetricSuffixForURL(
+                          GURL("http://www.google.com/search?q=whatsgoingon")));
+  // Not a Search result page (no query).
+  EXPECT_EQ("", client.GetMetricSuffixForURL(
+                    GURL("https://www.google.com/search?notaquery=nope")));
+}
 
-  struct TestCase {
-    bool cookies;
-    bool storage;
-    bool cache;
-    int mask;
-  } test_cases[] = {
-      {false, false, false, 0},
-      {true, false, false,
-       BrowsingDataRemover::DATA_TYPE_COOKIES |
-           BrowsingDataRemover::DATA_TYPE_CHANNEL_IDS |
-           ChromeBrowsingDataRemoverDelegate::DATA_TYPE_PLUGIN_DATA},
-      {false, true, false, BrowsingDataRemover::DATA_TYPE_DOM_STORAGE},
-      {false, false, true, BrowsingDataRemover::DATA_TYPE_CACHE},
-      {true, true, false,
-       BrowsingDataRemover::DATA_TYPE_COOKIES |
-           BrowsingDataRemover::DATA_TYPE_CHANNEL_IDS |
-           ChromeBrowsingDataRemoverDelegate::DATA_TYPE_PLUGIN_DATA |
-           BrowsingDataRemover::DATA_TYPE_DOM_STORAGE},
-      {true, false, true,
-       BrowsingDataRemover::DATA_TYPE_COOKIES |
-           BrowsingDataRemover::DATA_TYPE_CHANNEL_IDS |
-           ChromeBrowsingDataRemoverDelegate::DATA_TYPE_PLUGIN_DATA |
-           BrowsingDataRemover::DATA_TYPE_CACHE},
-      {false, true, true,
-       BrowsingDataRemover::DATA_TYPE_DOM_STORAGE |
-           BrowsingDataRemover::DATA_TYPE_CACHE},
-      {true, true, true,
-       BrowsingDataRemover::DATA_TYPE_COOKIES |
-           BrowsingDataRemover::DATA_TYPE_CHANNEL_IDS |
-           ChromeBrowsingDataRemoverDelegate::DATA_TYPE_PLUGIN_DATA |
-           BrowsingDataRemover::DATA_TYPE_DOM_STORAGE |
-           BrowsingDataRemover::DATA_TYPE_CACHE},
+#if defined(OS_CHROMEOS)
+
+// This behavior only matters on Chrome OS, which is why this isn't wrapped in
+// ENABLE_MASH_PACKAGED_SERVICES (which is used for Linux Ozone).
+TEST(ChromeContentBrowserClientTest, ShouldTerminateOnServiceQuit) {
+  const struct {
+    std::string service_name;
+    bool expect_terminate;
+  } kTestCases[] = {
+      // Don't terminate for invalid service names.
+      {"", false},
+      {"unknown-name", false},
+      // Don't terminate for some well-known browser services.
+      {content::mojom::kBrowserServiceName, false},
+      {content::mojom::kGpuServiceName, false},
+      {content::mojom::kRendererServiceName, false},
+      // Do terminate for some mash-specific cases.
+      {ui::mojom::kServiceName, true},
+      {ash::mojom::kServiceName, true},
   };
-
-  for (unsigned int i = 0; i < arraysize(test_cases); ++i) {
-    SCOPED_TRACE(base::StringPrintf("Test case %d", i));
-    const TestCase& test_case = test_cases[i];
-
-    // We always delete data for all time and all origin types.
-    int all_origin_types = ChromeBrowsingDataRemoverDelegate::ALL_ORIGIN_TYPES;
-
-    // Some data are deleted for the origin and some for the registrable domain.
-    // Depending on the chosen datatypes, this might result into one or two
-    // calls. In the latter case, the removal mask will be split into two
-    // parts - one for the origin deletion and one for the registrable domain.
-    const int domain_scoped_types =
-        BrowsingDataRemover::DATA_TYPE_COOKIES |
-        BrowsingDataRemover::DATA_TYPE_CHANNEL_IDS |
-        ChromeBrowsingDataRemoverDelegate::DATA_TYPE_PLUGIN_DATA;
-    int registrable_domain_deletion_mask = test_case.mask & domain_scoped_types;
-    int origin_deletion_mask = test_case.mask & ~domain_scoped_types;
-
-    if (registrable_domain_deletion_mask) {
-      delegate()->ExpectCallDontCareAboutFilterBuilder(
-          base::Time(), base::Time::Max(), registrable_domain_deletion_mask,
-          all_origin_types);
-    }
-
-    if (origin_deletion_mask) {
-      delegate()->ExpectCallDontCareAboutFilterBuilder(
-          base::Time(), base::Time::Max(), origin_deletion_mask,
-          all_origin_types);
-    }
-
-    client.ClearSiteData(
-        profile(), url::Origin(GURL("https://www.example.com")),
-        test_case.cookies, test_case.storage, test_case.cache,
-        base::Bind(
-            &ChromeContentBrowserClientClearSiteDataTest::OnClearingFinished,
-            base::Unretained(this)));
-    WaitForClearingFinished();
-
-    delegate()->VerifyAndClearExpectations();
+  ChromeContentBrowserClient client;
+  for (const auto& test : kTestCases) {
+    service_manager::Identity id(test.service_name);
+    EXPECT_EQ(test.expect_terminate, client.ShouldTerminateOnServiceQuit(id))
+        << "for service name " << test.service_name;
   }
 }
 
-// Tests that ClearBrowsingData() called for an origin deletes cookies in the
-// scope of the registrable domain corresponding to that origin, while cache
-// is deleted for that exact origin.
-TEST_F(ChromeContentBrowserClientClearSiteDataTest, RegistrableDomains) {
-  ChromeContentBrowserClient client;
-
-  struct TestCase {
-    const char* origin;  // origin on which ClearSiteData() is called.
-    const char* domain;  // domain on which cookies will be deleted.
-  } test_cases[] = {
-      // TLD has no embedded dot.
-      {"https://example.com", "example.com"},
-      {"https://www.example.com", "example.com"},
-      {"https://www.fourth.third.second.com", "second.com"},
-
-      // TLD has one embedded dot.
-      {"https://www.example.co.uk", "example.co.uk"},
-      {"https://example.co.uk", "example.co.uk"},
-
-      // TLD has more embedded dots.
-      {"https://www.website.sp.nom.br", "website.sp.nom.br"},
-
-      // IP addresses.
-      {"http://127.0.0.1", "127.0.0.1"},
-      {"http://192.168.0.1", "192.168.0.1"},
-      {"http://192.168.0.1", "192.168.0.1"},
-
-      // Internal hostnames.
-      {"http://localhost", "localhost"},
-      {"http://fileserver", "fileserver"},
-
-      // These are not subdomains of internal hostnames, but subdomain of
-      // unknown TLDs.
-      {"http://subdomain.localhost", "subdomain.localhost"},
-      {"http://www.subdomain.localhost", "subdomain.localhost"},
-      {"http://documents.fileserver", "documents.fileserver"},
-
-      // Scheme and port don't matter.
-      {"http://example.com", "example.com"},
-      {"http://example.com:8080", "example.com"},
-      {"https://example.com:4433", "example.com"},
-  };
-
-  for (const TestCase& test_case : test_cases) {
-    SCOPED_TRACE(test_case.origin);
-
-    std::unique_ptr<BrowsingDataFilterBuilder>
-        registrable_domain_filter_builder(BrowsingDataFilterBuilder::Create(
-            BrowsingDataFilterBuilder::WHITELIST));
-    registrable_domain_filter_builder->AddRegisterableDomain(test_case.domain);
-
-    delegate()->ExpectCall(
-        base::Time(), base::Time::Max(),
-        BrowsingDataRemover::DATA_TYPE_COOKIES |
-            BrowsingDataRemover::DATA_TYPE_CHANNEL_IDS |
-            ChromeBrowsingDataRemoverDelegate::DATA_TYPE_PLUGIN_DATA,
-        ChromeBrowsingDataRemoverDelegate::ALL_ORIGIN_TYPES,
-        *registrable_domain_filter_builder);
-
-    std::unique_ptr<BrowsingDataFilterBuilder> origin_filter_builder(
-        BrowsingDataFilterBuilder::Create(
-            BrowsingDataFilterBuilder::WHITELIST));
-    origin_filter_builder->AddOrigin(url::Origin(GURL(test_case.origin)));
-
-    delegate()->ExpectCall(base::Time(), base::Time::Max(),
-                           BrowsingDataRemover::DATA_TYPE_CACHE,
-                           ChromeBrowsingDataRemoverDelegate::ALL_ORIGIN_TYPES,
-                           *origin_filter_builder);
-
-    client.ClearSiteData(
-        profile(), url::Origin(GURL(test_case.origin)), true /* cookies */,
-        false /* storage */, true /* cache */,
-        base::Bind(
-            &ChromeContentBrowserClientClearSiteDataTest::OnClearingFinished,
-            base::Unretained(this)));
-    WaitForClearingFinished();
-
-    delegate()->VerifyAndClearExpectations();
-  }
-}
-
-// Tests that we always wait for all scheduled BrowsingDataRemover tasks and
-// that BrowsingDataRemoverObserver never leaks.
-TEST_F(ChromeContentBrowserClientClearSiteDataTest, Tasks) {
-  ChromeContentBrowserClient client;
-  url::Origin origin(GURL("https://www.example.com"));
-
-  // No removal tasks.
-  client.ClearSiteData(
-      profile(), origin, false /* cookies */, false /* storage */,
-      false /* cache */,
-      base::Bind(
-          &ChromeContentBrowserClientClearSiteDataTest::OnClearingFinished,
-          base::Unretained(this)));
-  WaitForClearingFinished();
-
-  // One removal task: deleting cookies with a domain filter.
-  client.ClearSiteData(
-      profile(), origin, true /* cookies */, false /* storage */,
-      false /* cache */,
-      base::Bind(
-          &ChromeContentBrowserClientClearSiteDataTest::OnClearingFinished,
-          base::Unretained(this)));
-  WaitForClearingFinished();
-
-  // One removal task: deleting cache with a domain filter.
-  client.ClearSiteData(
-      profile(), origin, false /* cookies */, false /* storage */,
-      true /* cache */,
-      base::Bind(
-          &ChromeContentBrowserClientClearSiteDataTest::OnClearingFinished,
-          base::Unretained(this)));
-  WaitForClearingFinished();
-
-  // Two removal tasks, with domain and origin filters respectively.
-  client.ClearSiteData(
-      profile(), origin, true /* cookies */, false /* storage */,
-      true /* cache */,
-      base::Bind(
-          &ChromeContentBrowserClientClearSiteDataTest::OnClearingFinished,
-          base::Unretained(this)));
-  WaitForClearingFinished();
-}
-
-}  // namespace
+#endif  // defined(OS_CHROMEOS)

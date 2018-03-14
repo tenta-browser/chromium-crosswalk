@@ -28,15 +28,15 @@
 #include "core/css/MediaList.h"
 #include "core/css/MediaQueryEvaluator.h"
 #include "core/dom/Document.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 
 namespace blink {
 
 StyleMedia::StyleMedia(LocalFrame* frame) : ContextClient(frame) {}
 
 AtomicString StyleMedia::type() const {
-  FrameView* view = GetFrame() ? GetFrame()->View() : nullptr;
+  LocalFrameView* view = GetFrame() ? GetFrame()->View() : nullptr;
   if (view)
     return view->MediaType();
 
@@ -53,7 +53,7 @@ bool StyleMedia::matchMedium(const String& query) const {
   if (!document_element)
     return false;
 
-  RefPtr<MediaQuerySet> media = MediaQuerySet::Create();
+  scoped_refptr<MediaQuerySet> media = MediaQuerySet::Create();
   if (!media->Set(query))
     return false;
 
@@ -61,7 +61,8 @@ bool StyleMedia::matchMedium(const String& query) const {
   return screen_eval.Eval(*media);
 }
 
-DEFINE_TRACE(StyleMedia) {
+void StyleMedia::Trace(blink::Visitor* visitor) {
+  ScriptWrappable::Trace(visitor);
   ContextClient::Trace(visitor);
 }
 

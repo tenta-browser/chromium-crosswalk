@@ -9,17 +9,16 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "components/payments/content/payment_app.mojom.h"
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/binding.h"
+#include "third_party/WebKit/public/platform/modules/payments/payment_app.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
 
 class PaymentAppContextImpl;
 
-class CONTENT_EXPORT PaymentManager
-    : public NON_EXPORTED_BASE(payments::mojom::PaymentManager) {
+class CONTENT_EXPORT PaymentManager : public payments::mojom::PaymentManager {
  public:
   PaymentManager(
       PaymentAppContextImpl* payment_app_context,
@@ -29,20 +28,41 @@ class CONTENT_EXPORT PaymentManager
 
  private:
   friend class PaymentAppContentUnitTestBase;
+  friend class PaymentAppProviderTest;
+  friend class PaymentManagerTest;
 
   // payments::mojom::PaymentManager methods:
-  void Init(const std::string& scope) override;
-  void SetManifest(payments::mojom::PaymentAppManifestPtr manifest,
-                   const SetManifestCallback& callback) override;
-  void GetManifest(const GetManifestCallback& callback) override;
+  void Init(const std::string& context, const std::string& scope) override;
+  void DeletePaymentInstrument(
+      const std::string& instrument_key,
+      DeletePaymentInstrumentCallback callback) override;
+  void GetPaymentInstrument(const std::string& instrument_key,
+                            GetPaymentInstrumentCallback callback) override;
+  void KeysOfPaymentInstruments(
+      KeysOfPaymentInstrumentsCallback callback) override;
+  void HasPaymentInstrument(const std::string& instrument_key,
+                            HasPaymentInstrumentCallback callback) override;
+  void SetPaymentInstrument(const std::string& instrument_key,
+                            payments::mojom::PaymentInstrumentPtr details,
+                            SetPaymentInstrumentCallback callback) override;
+  void ClearPaymentInstruments(
+      ClearPaymentInstrumentsCallback callback) override;
+  void SetUserHint(const std::string& user_hint) override;
 
   // Called when an error is detected on binding_.
   void OnConnectionError();
 
+  void SetPaymentInstrumentIntermediateCallback(
+      PaymentManager::SetPaymentInstrumentCallback callback,
+      payments::mojom::PaymentHandlerStatus status);
+
   // PaymentAppContextImpl owns PaymentManager
   PaymentAppContextImpl* payment_app_context_;
 
+  bool should_set_payment_app_info_;
+  GURL context_;
   GURL scope_;
+  std::string user_hint_;
   mojo::Binding<payments::mojom::PaymentManager> binding_;
   base::WeakPtrFactory<PaymentManager> weak_ptr_factory_;
   DISALLOW_COPY_AND_ASSIGN(PaymentManager);

@@ -5,24 +5,6 @@
 import("//testing/test.gni")
 import("//v8/gni/v8.gni")
 
-# This is depended upon from the browser DLL on Windows, where V8 is not used,
-# but features are enabled. This cannot depend on V8.
-component("gin_features") {
-  sources = [
-    "gin_features.cc",
-    "gin_features_export.h",
-    "public/gin_features.h",
-  ]
-
-  defines = [ "GIN_FEATURES_IMPLEMENTATION" ]
-
-  deps = [
-    "//base",
-  ]
-
-  assert_no_deps = [ "//v8" ]
-}
-
 component("gin") {
   sources = [
     "arguments.cc",
@@ -32,6 +14,8 @@ component("gin") {
     "context_holder.cc",
     "converter.cc",
     "converter.h",
+    "data_object_builder.cc",
+    "data_object_builder.h",
     "debug_impl.cc",
     "debug_impl.h",
     "dictionary.cc",
@@ -75,6 +59,14 @@ component("gin") {
     "shell_runner.h",
     "try_catch.cc",
     "try_catch.h",
+    "v8_background_task_runner.cc",
+    "v8_background_task_runner.h",
+    "v8_foreground_task_runner.cc",
+    "v8_foreground_task_runner.h",
+    "v8_foreground_task_runner_base.cc",
+    "v8_foreground_task_runner_base.h",
+    "v8_foreground_task_runner_with_locker.cc",
+    "v8_foreground_task_runner_with_locker.h",
     "v8_initializer.cc",
     "v8_initializer.h",
     "v8_isolate_memory_dump_provider.cc",
@@ -99,9 +91,7 @@ component("gin") {
     "//v8",
   ]
   deps = [
-    ":gin_features",
     "//base/third_party/dynamic_annotations",
-    "//crypto",
   ]
 
   if (is_mac) {
@@ -120,7 +110,7 @@ executable("gin_shell") {
     ":gin",
     "//base",
     "//base:i18n",
-    "//build/config/sanitizers:deps",
+    "//build/config:exe_and_shlib_deps",
     "//build/win:default_exe_manifest",
     "//v8",
   ]
@@ -151,6 +141,7 @@ source_set("gin_test") {
     "//testing/gtest",
   ]
   deps = [
+    "//base/test:test_support",
     "//v8",
   ]
 
@@ -160,7 +151,9 @@ source_set("gin_test") {
 test("gin_unittests") {
   sources = [
     "arguments_unittest.cc",
+    "array_buffer_unittest.cc",
     "converter_unittest.cc",
+    "data_object_builder_unittest.cc",
     "interceptor_unittest.cc",
     "modules/module_registry_unittest.cc",
     "modules/timer_unittest.cc",

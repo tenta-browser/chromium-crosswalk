@@ -45,11 +45,13 @@
 #include "modules/filesystem/FileSystemCallbacks.h"
 #include "modules/filesystem/MetadataCallback.h"
 #include "platform/weborigin/SecurityOrigin.h"
+#include "platform/wtf/Assertions.h"
 #include "platform/wtf/text/StringBuilder.h"
 #include "platform/wtf/text/TextEncoding.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebFileSystem.h"
 #include "public/platform/WebFileSystemCallbacks.h"
+#include "public/platform/WebSecurityOrigin.h"
 
 namespace blink {
 
@@ -70,8 +72,9 @@ DOMFileSystemBase::DOMFileSystemBase(ExecutionContext* context,
 
 DOMFileSystemBase::~DOMFileSystemBase() {}
 
-DEFINE_TRACE(DOMFileSystemBase) {
+void DOMFileSystemBase::Trace(blink::Visitor* visitor) {
   visitor->Trace(context_);
+  ScriptWrappable::Trace(visitor);
 }
 
 WebFileSystem* DOMFileSystemBase::FileSystem() const {
@@ -104,7 +107,7 @@ KURL DOMFileSystemBase::CreateFileSystemRootURL(const String& origin,
     return KURL();
 
   String result = "filesystem:" + origin + "/" + type_string + "/";
-  return KURL(kParsedURLString, result);
+  return KURL(result);
 }
 
 bool DOMFileSystemBase::SupportsToURL() const {
@@ -130,7 +133,7 @@ KURL DOMFileSystemBase::CreateFileSystemURL(const String& full_path) const {
     result.Append(filesystem_root_url_.GetPath());
     // Remove the extra leading slash.
     result.Append(EncodeWithURLEscapeSequences(full_path.Substring(1)));
-    return KURL(kParsedURLString, result.ToString());
+    return KURL(result.ToString());
   }
 
   // For regular types we can just append the entry's fullPath to the
@@ -466,5 +469,10 @@ bool DOMFileSystemBase::WaitForAdditionalResult(int callbacks_id) {
     return false;
   return FileSystem()->WaitForAdditionalResult(callbacks_id);
 }
+
+STATIC_ASSERT_ENUM(WebFileSystem::kTypeTemporary, kFileSystemTypeTemporary);
+STATIC_ASSERT_ENUM(WebFileSystem::kTypePersistent, kFileSystemTypePersistent);
+STATIC_ASSERT_ENUM(WebFileSystem::kTypeExternal, kFileSystemTypeExternal);
+STATIC_ASSERT_ENUM(WebFileSystem::kTypeIsolated, kFileSystemTypeIsolated);
 
 }  // namespace blink

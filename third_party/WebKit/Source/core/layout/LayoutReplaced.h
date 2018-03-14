@@ -72,7 +72,8 @@ class CORE_EXPORT LayoutReplaced : public LayoutBox {
   LayoutRect LocalSelectionRect() const final;
 
   bool HasObjectFit() const {
-    return Style()->GetObjectFit() != ComputedStyle::InitialObjectFit();
+    return Style()->GetObjectFit() !=
+           ComputedStyleInitialValues::InitialObjectFit();
   }
 
   void Paint(const PaintInfo&, const LayoutPoint&) const override;
@@ -94,13 +95,16 @@ class CORE_EXPORT LayoutReplaced : public LayoutBox {
     void Transpose();
   };
 
+  // This function is public only so we can call it when computing
+  // intrinsic size in LayoutNG.
+  virtual void ComputeIntrinsicSizingInfo(IntrinsicSizingInfo&) const;
+
  protected:
   void WillBeDestroyed() override;
 
   void UpdateLayout() override;
 
   LayoutSize IntrinsicSize() const final { return intrinsic_size_; }
-  virtual void ComputeIntrinsicSizingInfo(IntrinsicSizingInfo&) const;
 
   void ComputePositionedLogicalWidth(
       LogicalExtentComputedValues&) const override;
@@ -116,13 +120,11 @@ class CORE_EXPORT LayoutReplaced : public LayoutBox {
   LayoutRect ComputeObjectFit(
       const LayoutSize* overridden_intrinsic_size = nullptr) const;
 
-  virtual LayoutUnit IntrinsicContentLogicalHeight() const {
+  LayoutUnit IntrinsicContentLogicalHeight() const override {
     return IntrinsicLogicalHeight();
   }
 
   virtual LayoutUnit MinimumReplacedHeight() const { return LayoutUnit(); }
-
-  void SetSelectionState(SelectionState) final;
 
   void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
 
@@ -148,8 +150,6 @@ class CORE_EXPORT LayoutReplaced : public LayoutBox {
  private:
   void ComputePreferredLogicalWidths() final;
 
-  bool CanBeSelectionLeaf() const override { return true; }
-
   void ComputeIntrinsicSizingInfoForReplacedContent(LayoutReplaced*,
                                                     IntrinsicSizingInfo&) const;
   FloatSize ConstrainIntrinsicSizeToMinMax(const IntrinsicSizingInfo&) const;
@@ -158,6 +158,8 @@ class CORE_EXPORT LayoutReplaced : public LayoutBox {
 
   mutable LayoutSize intrinsic_size_;
 };
+
+DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutReplaced, IsLayoutReplaced());
 
 }  // namespace blink
 

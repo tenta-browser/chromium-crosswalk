@@ -91,7 +91,7 @@ class MockDnsSocketPool : public DnsSocketPool {
   MockDnsSocketPool(ClientSocketFactory* factory, DnsSessionTest* test)
       : DnsSocketPool(factory, base::Bind(&base::RandInt)), test_(test) {}
 
-  ~MockDnsSocketPool() override {}
+  ~MockDnsSocketPool() override = default;
 
   void Initialize(const std::vector<IPEndPoint>* nameservers,
                   NetLog* net_log) override {
@@ -193,8 +193,7 @@ TestClientSocketFactory::CreateDatagramClientSocket(
   return std::move(socket);
 }
 
-TestClientSocketFactory::~TestClientSocketFactory() {
-}
+TestClientSocketFactory::~TestClientSocketFactory() = default;
 
 TEST_F(DnsSessionTest, AllocateFree) {
   std::unique_ptr<DnsSession::SocketLease> lease1, lease2;
@@ -242,6 +241,13 @@ TEST_F(DnsSessionTest, HistogramTimeoutLong) {
   Initialize(2);
   base::TimeDelta timeout = session_->NextTimeout(0, 0);
   EXPECT_EQ(timeout.InMilliseconds(), config_.timeout.InMilliseconds());
+}
+
+// Ensures that reported negative RTT values don't cause a crash. Regression
+// test for https://crbug.com/753568.
+TEST_F(DnsSessionTest, NegativeRtt) {
+  Initialize(2);
+  session_->RecordRTT(0, base::TimeDelta::FromMilliseconds(-1));
 }
 
 }  // namespace

@@ -22,15 +22,14 @@
 #include "base/time/time.h"
 #include "base/version.h"
 #include "components/update_client/update_query_params.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
+#include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/notification_types.h"
 #include "extensions/browser/updater/extension_cache.h"
 #include "extensions/browser/updater/extension_downloader_test_delegate.h"
 #include "extensions/browser/updater/request_queue_impl.h"
-#include "extensions/browser/updater/safe_manifest_parser.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/manifest_url_handlers.h"
 #include "google_apis/gaia/identity_provider.h"
@@ -39,13 +38,13 @@
 #include "net/base/net_errors.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_status_code.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_status.h"
 
 using base::Time;
 using base::TimeDelta;
-using content::BrowserThread;
 using update_client::UpdateQueryParams;
 
 namespace extensions {
@@ -196,10 +195,12 @@ ExtensionDownloader::ExtraParams::ExtraParams() : is_corrupt_reinstall(false) {}
 
 ExtensionDownloader::ExtensionDownloader(
     ExtensionDownloaderDelegate* delegate,
-    net::URLRequestContextGetter* request_context)
+    net::URLRequestContextGetter* request_context,
+    service_manager::Connector* connector)
     : OAuth2TokenService::Consumer(kTokenServiceConsumerId),
       delegate_(delegate),
       request_context_(request_context),
+      connector_(connector),
       manifests_queue_(&kDefaultBackoffPolicy,
                        base::Bind(&ExtensionDownloader::CreateManifestFetcher,
                                   base::Unretained(this))),
@@ -481,26 +482,58 @@ void ExtensionDownloader::CreateManifestFetcher() {
                   ? kUpdateInteractivityForeground
                   : kUpdateInteractivityBackground);
 
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("extension_manifest_fetcher", R"(
+        semantics {
+          sender: "Extension Downloader"
+          description:
+            "Fetches information about an extension manifest (using its "
+            "update_url, which is usually Chrome WebStore) in order to update "
+            "the extension."
+          trigger:
+            "An update timer indicates that it's time to update extensions, or "
+            "a user triggers an extension update flow."
+          data:
+            "The extension id, the user's chromium version, and a flag stating "
+            "if the request originated in the foreground or the background."
+          destination: WEBSITE
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "This feature cannot be disabled. It is only enabled when the user "
+            "has installed extensions."
+          chrome_policy {
+            ExtensionInstallBlacklist {
+              policy_options {mode: MANDATORY}
+              ExtensionInstallBlacklist: {
+                entries: '*'
+              }
+            }
+          }
+        })");
   manifest_fetcher_ =
       net::URLFetcher::Create(kManifestFetcherId, active_request->full_url(),
-                              net::URLFetcher::GET, this);
+                              net::URLFetcher::GET, this, traffic_annotation);
   manifest_fetcher_->SetRequestContext(request_context_.get());
   manifest_fetcher_->SetLoadFlags(net::LOAD_DO_NOT_SEND_COOKIES |
                                   net::LOAD_DO_NOT_SAVE_COOKIES |
                                   net::LOAD_DISABLE_CACHE);
 
-  // Send traffic-management headers.
+  // Send traffic-management headers to the webstore.
   // https://bugs.chromium.org/p/chromium/issues/detail?id=647516
-  manifest_fetcher_->AddExtraRequestHeader(base::StringPrintf(
-      "%s: %s", kUpdateInteractivityHeader,
-      active_request->foreground_check() ? kUpdateInteractivityForeground
-                                         : kUpdateInteractivityBackground));
-  manifest_fetcher_->AddExtraRequestHeader(
-      base::StringPrintf("%s: %s", kUpdateAppIdHeader, id_list.c_str()));
-  manifest_fetcher_->AddExtraRequestHeader(base::StringPrintf(
-      "%s: %s-%s", kUpdateUpdaterHeader,
-      UpdateQueryParams::GetProdIdString(UpdateQueryParams::CRX),
-      UpdateQueryParams::GetProdVersion().c_str()));
+  if (extension_urls::IsWebstoreUpdateUrl(active_request->full_url())) {
+    manifest_fetcher_->AddExtraRequestHeader(base::StringPrintf(
+        "%s: %s", kUpdateInteractivityHeader,
+        active_request->foreground_check() ? kUpdateInteractivityForeground
+                                           : kUpdateInteractivityBackground));
+    manifest_fetcher_->AddExtraRequestHeader(
+        base::StringPrintf("%s: %s", kUpdateAppIdHeader, id_list.c_str()));
+    manifest_fetcher_->AddExtraRequestHeader(base::StringPrintf(
+        "%s: %s-%s", kUpdateUpdaterHeader,
+        UpdateQueryParams::GetProdIdString(UpdateQueryParams::CRX),
+        UpdateQueryParams::GetProdVersion().c_str()));
+  }
 
   // Update checks can be interrupted if a network change is detected; this is
   // common for the retail mode AppPack on ChromeOS. Retrying once should be
@@ -546,11 +579,10 @@ void ExtensionDownloader::OnManifestFetchComplete(
                     manifests_queue_.active_request_failure_count(),
                     url);
     VLOG(2) << "beginning manifest parse for " << url;
-    auto callback = base::Bind(
-        &ExtensionDownloader::HandleManifestResults,
-        weak_ptr_factory_.GetWeakPtr(),
-        base::Owned(manifests_queue_.reset_active_request().release()));
-    ParseUpdateManifest(data, callback);
+    auto callback = base::BindOnce(&ExtensionDownloader::HandleManifestResults,
+                                   weak_ptr_factory_.GetWeakPtr(),
+                                   manifests_queue_.reset_active_request());
+    ParseUpdateManifest(connector_, data, std::move(callback));
   } else {
     VLOG(1) << "Failed to fetch manifest '" << url.possibly_invalid_spec()
             << "' response code:" << response_code;
@@ -575,8 +607,9 @@ void ExtensionDownloader::OnManifestFetchComplete(
 }
 
 void ExtensionDownloader::HandleManifestResults(
-    const ManifestFetchData* fetch_data,
-    const UpdateManifest::Results* results) {
+    std::unique_ptr<ManifestFetchData> fetch_data,
+    std::unique_ptr<UpdateManifestResults> results,
+    const base::Optional<std::string>& error) {
   // Keep a list of extensions that will not be updated, so that the |delegate_|
   // can be notified once we're done here.
   std::set<std::string> not_updated(fetch_data->extension_ids());
@@ -595,7 +628,7 @@ void ExtensionDownloader::HandleManifestResults(
   std::vector<int> updates;
   DetermineUpdates(*fetch_data, *results, &updates);
   for (size_t i = 0; i < updates.size(); i++) {
-    const UpdateManifest::Result* update = &(results->list.at(updates[i]));
+    const UpdateManifestResult* update = &(results->list.at(updates[i]));
     const std::string& id = update->extension_id;
     not_updated.erase(id);
 
@@ -647,10 +680,10 @@ void ExtensionDownloader::HandleManifestResults(
 
 void ExtensionDownloader::DetermineUpdates(
     const ManifestFetchData& fetch_data,
-    const UpdateManifest::Results& possible_updates,
+    const UpdateManifestResults& possible_updates,
     std::vector<int>* result) {
   for (size_t i = 0; i < possible_updates.list.size(); i++) {
-    const UpdateManifest::Result* update = &possible_updates.list[i];
+    const UpdateManifestResult* update = &possible_updates.list[i];
     const std::string& id = update->extension_id;
 
     if (!fetch_data.Includes(id)) {
@@ -778,8 +811,39 @@ void ExtensionDownloader::CacheInstallDone(
 
 void ExtensionDownloader::CreateExtensionFetcher() {
   const ExtensionFetch* fetch = extensions_queue_.active_request();
-  extension_fetcher_ = net::URLFetcher::Create(kExtensionFetcherId, fetch->url,
-                                               net::URLFetcher::GET, this);
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("extension_crx_fetcher", R"(
+        semantics {
+          sender: "Extension Downloader"
+          description:
+            "Downloads an extension's crx file in order to update the "
+            "extension, using update_url from the extension's manifest which "
+            "is usually Chrome WebStore."
+          trigger:
+            "An update check indicates an extension update is available."
+          data:
+            "URL and required data to specify the extension to download. "
+            "OAuth2 token is also sent if connection is secure and to Google."
+          destination: WEBSITE
+        }
+        policy {
+          cookies_allowed: YES
+          cookies_store: "user"
+          setting:
+            "This feature cannot be disabled. It is only enabled when the user "
+            "has installed extensions and it needs updating."
+          chrome_policy {
+            ExtensionInstallBlacklist {
+              policy_options {mode: MANDATORY}
+              ExtensionInstallBlacklist: {
+                entries: '*'
+              }
+            }
+          }
+        })");
+  extension_fetcher_ =
+      net::URLFetcher::Create(kExtensionFetcherId, fetch->url,
+                              net::URLFetcher::GET, this, traffic_annotation);
   extension_fetcher_->SetRequestContext(request_context_.get());
   extension_fetcher_->SetAutomaticallyRetryOnNetworkChanges(3);
 
@@ -794,7 +858,7 @@ void ExtensionDownloader::CreateExtensionFetcher() {
   // processed in memory, so it is fetched into a string.
   if (fetch->id != kBlacklistAppID) {
     extension_fetcher_->SaveResponseToTemporaryFile(
-        BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE));
+        GetExtensionFileTaskRunner());
   }
 
   if (fetch->credentials == ExtensionFetch::CREDENTIALS_OAUTH2_TOKEN &&

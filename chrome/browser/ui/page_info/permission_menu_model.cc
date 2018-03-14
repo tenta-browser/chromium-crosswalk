@@ -8,7 +8,7 @@
 #include "chrome/browser/plugins/plugin_utils.h"
 #include "chrome/browser/plugins/plugins_field_trial.h"
 #include "chrome/common/chrome_features.h"
-#include "chrome/grit/generated_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/common/origin_util.h"
 #include "ppapi/features/features.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -69,7 +69,9 @@ PermissionMenuModel::PermissionMenuModel(Profile* profile,
         effective_default_setting, permission_.source);
   }
 
-  AddCheckItem(CONTENT_SETTING_DEFAULT, label);
+  // The subresource filter permission does not display the default menu item.
+  if (permission_.type != CONTENT_SETTINGS_TYPE_ADS)
+    AddCheckItem(CONTENT_SETTING_DEFAULT, label);
 
   // Retrieve the string to show for allowing the permission.
   // Notifications does not support CONTENT_SETTING_ALLOW in incognito.
@@ -103,30 +105,15 @@ PermissionMenuModel::PermissionMenuModel(Profile* profile,
 
   // Retrieve the string to show for blocking the permission.
   label = l10n_util::GetStringUTF16(IDS_PAGE_INFO_MENU_ITEM_BLOCK);
+  if (permission_.type == CONTENT_SETTINGS_TYPE_ADS) {
+    label = l10n_util::GetStringUTF16(IDS_PAGE_INFO_MENU_ITEM_ADS_BLOCK);
+  }
   if (ui::MaterialDesignController::IsSecondaryUiMaterial()) {
     label = PageInfoUI::PermissionActionToUIString(
         profile, info.type, CONTENT_SETTING_BLOCK, effective_default_setting,
         info.source);
   }
   AddCheckItem(CONTENT_SETTING_BLOCK, label);
-}
-
-PermissionMenuModel::PermissionMenuModel(Profile* profile,
-                                         const GURL& url,
-                                         ContentSetting setting,
-                                         const ChangeCallback& callback)
-    : ui::SimpleMenuModel(this),
-      host_content_settings_map_(
-          HostContentSettingsMapFactory::GetForProfile(profile)),
-      callback_(callback) {
-  DCHECK(setting == CONTENT_SETTING_ALLOW || setting == CONTENT_SETTING_BLOCK);
-  permission_.type = CONTENT_SETTINGS_TYPE_DEFAULT;
-  permission_.setting = setting;
-  permission_.default_setting = CONTENT_SETTING_NUM_SETTINGS;
-  AddCheckItem(CONTENT_SETTING_ALLOW,
-               l10n_util::GetStringUTF16(IDS_PERMISSION_ALLOW));
-  AddCheckItem(CONTENT_SETTING_BLOCK,
-               l10n_util::GetStringUTF16(IDS_PERMISSION_DENY));
 }
 
 PermissionMenuModel::~PermissionMenuModel() {}

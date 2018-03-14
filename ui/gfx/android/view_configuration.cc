@@ -4,15 +4,13 @@
 
 #include "ui/gfx/android/view_configuration.h"
 
-#include "base/android/context_utils.h"
 #include "base/android/jni_android.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/synchronization/lock.h"
 #include "jni/ViewConfigurationHelper_jni.h"
 
 using base::android::AttachCurrentThread;
-using base::android::GetApplicationContext;
 using base::android::JavaParamRef;
 
 namespace gfx {
@@ -31,8 +29,7 @@ struct ViewConfigurationData {
         min_scaling_span_in_dips_(0) {
     JNIEnv* env = AttachCurrentThread();
     j_view_configuration_helper_.Reset(
-        Java_ViewConfigurationHelper_createWithListener(
-            env, base::android::GetApplicationContext()));
+        Java_ViewConfigurationHelper_createWithListener(env));
 
     double_tap_timeout_in_ms_ =
         Java_ViewConfigurationHelper_getDoubleTapTimeout(env);
@@ -134,13 +131,14 @@ base::LazyInstance<ViewConfigurationData>::Leaky g_view_configuration =
 
 }  // namespace
 
-static void UpdateSharedViewConfiguration(JNIEnv* env,
-                                          const JavaParamRef<jobject>& obj,
-                                          jfloat maximum_fling_velocity,
-                                          jfloat minimum_fling_velocity,
-                                          jfloat touch_slop,
-                                          jfloat double_tap_slop,
-                                          jfloat min_scaling_span) {
+static void JNI_ViewConfigurationHelper_UpdateSharedViewConfiguration(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    jfloat maximum_fling_velocity,
+    jfloat minimum_fling_velocity,
+    jfloat touch_slop,
+    jfloat double_tap_slop,
+    jfloat min_scaling_span) {
   g_view_configuration.Get().SynchronizedUpdate(
       maximum_fling_velocity, minimum_fling_velocity, touch_slop,
       double_tap_slop, min_scaling_span);
@@ -176,10 +174,6 @@ int ViewConfiguration::GetDoubleTapSlopInDips() {
 
 int ViewConfiguration::GetMinScalingSpanInDips() {
   return g_view_configuration.Get().min_scaling_span_in_dips();
-}
-
-bool ViewConfiguration::RegisterViewConfiguration(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace gfx

@@ -30,13 +30,12 @@
 
 #include "platform/fonts/FontDataCache.h"
 
+#include "build/build_config.h"
 #include "platform/fonts/SimpleFontData.h"
-
-using namespace WTF;
 
 namespace blink {
 
-#if !OS(ANDROID)
+#if !defined(OS_ANDROID)
 const unsigned kCMaxInactiveFontData = 250;
 const unsigned kCTargetInactiveFontData = 200;
 #else
@@ -44,10 +43,9 @@ const unsigned kCMaxInactiveFontData = 225;
 const unsigned kCTargetInactiveFontData = 200;
 #endif
 
-PassRefPtr<SimpleFontData> FontDataCache::Get(
-    const FontPlatformData* platform_data,
-    ShouldRetain should_retain,
-    bool subpixel_ascent_descent) {
+scoped_refptr<SimpleFontData> FontDataCache::Get(const FontPlatformData* platform_data,
+                                          ShouldRetain should_retain,
+                                          bool subpixel_ascent_descent) {
   if (!platform_data)
     return nullptr;
 
@@ -60,10 +58,10 @@ PassRefPtr<SimpleFontData> FontDataCache::Get(
     return nullptr;
   }
 
-  Cache::iterator result = cache_.Find(platform_data);
+  Cache::iterator result = cache_.find(platform_data);
   if (result == cache_.end()) {
-    std::pair<RefPtr<SimpleFontData>, unsigned> new_value(
-        SimpleFontData::Create(*platform_data, nullptr, false,
+    std::pair<scoped_refptr<SimpleFontData>, unsigned> new_value(
+        SimpleFontData::Create(*platform_data, nullptr,
                                subpixel_ascent_descent),
         should_retain == kRetain ? 1 : 0);
     // The new SimpleFontData takes a copy of the incoming FontPlatformData
@@ -73,7 +71,7 @@ PassRefPtr<SimpleFontData> FontDataCache::Get(
     cache_.Set(&new_value.first->PlatformData(), new_value);
     if (should_retain == kDoNotRetain)
       inactive_font_data_.insert(new_value.first);
-    return new_value.first.Release();
+    return std::move(new_value.first);
   }
 
   if (!result.Get()->value.second) {
@@ -100,7 +98,7 @@ bool FontDataCache::Contains(const FontPlatformData* font_platform_data) const {
 void FontDataCache::Release(const SimpleFontData* font_data) {
   DCHECK(!font_data->IsCustomFont());
 
-  Cache::iterator it = cache_.Find(&(font_data->PlatformData()));
+  Cache::iterator it = cache_.find(&(font_data->PlatformData()));
   DCHECK_NE(it, cache_.end());
   if (it == cache_.end())
     return;
@@ -108,17 +106,6 @@ void FontDataCache::Release(const SimpleFontData* font_data) {
   DCHECK(it->value.second);
   if (!--it->value.second)
     inactive_font_data_.insert(it->value.first);
-}
-
-void FontDataCache::MarkAllVerticalData() {
-  Cache::iterator end = cache_.end();
-  for (Cache::iterator font_data = cache_.begin(); font_data != end;
-       ++font_data) {
-    OpenTypeVerticalData* vertical_data = const_cast<OpenTypeVerticalData*>(
-        font_data->value.first->VerticalData());
-    if (vertical_data)
-      vertical_data->SetInFontCache(true);
-  }
 }
 
 bool FontDataCache::Purge(PurgeSeverity purge_severity) {
@@ -141,12 +128,11 @@ bool FontDataCache::PurgeLeastRecentlyUsed(int count) {
 
   is_purging = true;
 
-  Vector<RefPtr<SimpleFontData>, 20> font_data_to_delete;
-  ListHashSet<RefPtr<SimpleFontData>>::iterator end = inactive_font_data_.end();
-  ListHashSet<RefPtr<SimpleFontData>>::iterator it =
-      inactive_font_data_.begin();
+  Vector<scoped_refptr<SimpleFontData>, 20> font_data_to_delete;
+  auto end = inactive_font_data_.end();
+  auto it = inactive_font_data_.begin();
   for (int i = 0; i < count && it != end; ++it, ++i) {
-    RefPtr<SimpleFontData>& font_data = *it.Get();
+    scoped_refptr<SimpleFontData>& font_data = *it.Get();
     cache_.erase(&(font_data->PlatformData()));
     // We should not delete SimpleFontData here because deletion can modify
     // m_inactiveFontData. See http://trac.webkit.org/changeset/44011
@@ -155,7 +141,7 @@ bool FontDataCache::PurgeLeastRecentlyUsed(int count) {
 
   if (it == end) {
     // Removed everything
-    inactive_font_data_.Clear();
+    inactive_font_data_.clear();
   } else {
     for (int i = 0; i < count; ++i)
       inactive_font_data_.erase(inactive_font_data_.begin());
@@ -163,7 +149,7 @@ bool FontDataCache::PurgeLeastRecentlyUsed(int count) {
 
   bool did_work = font_data_to_delete.size();
 
-  font_data_to_delete.Clear();
+  font_data_to_delete.clear();
 
   is_purging = false;
 

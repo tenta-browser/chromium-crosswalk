@@ -28,7 +28,7 @@ ScreenTrayView::ScreenTrayView(ScreenTrayItem* screen_tray_item)
   Update();
 }
 
-ScreenTrayView::~ScreenTrayView() {}
+ScreenTrayView::~ScreenTrayView() = default;
 
 void ScreenTrayView::Update() {
   SetVisible(screen_tray_item_->is_started());
@@ -49,22 +49,21 @@ ScreenStatusView::ScreenStatusView(ScreenTrayItem* screen_tray_item,
   SetLayoutManager(new views::FillLayout);
   AddChildView(tri_view);
   tri_view->AddView(TriView::Container::START, icon_);
-  // TODO(bruthig): Multiline Labels don't lay out well with borders so we add
-  // the border to the Label's container instead. See https://crbug.com/678337 &
-  // https://crbug.com/682221.
-  tri_view->SetContainerBorder(
-      TriView::Container::CENTER,
-      views::CreateEmptyBorder(0, 0, 0, kTrayPopupLabelRightPadding));
   tri_view->AddView(TriView::Container::CENTER, label_);
   tri_view->AddView(TriView::Container::END, stop_button_);
+  // There should be |kTrayPopupButtonEndMargin| padding on both sides of the
+  // stop button. There is already |kTrayPopupLabelHorizontalPadding| padding on
+  // the right of the label.
   tri_view->SetContainerBorder(
       TriView::Container::END,
-      views::CreateEmptyBorder(0, 0, 0, kTrayPopupButtonEndMargin));
+      views::CreateEmptyBorder(
+          0, kTrayPopupButtonEndMargin - kTrayPopupLabelHorizontalPadding, 0,
+          kTrayPopupButtonEndMargin));
   if (screen_tray_item_)
     UpdateFromScreenTrayItem();
 }
 
-ScreenStatusView::~ScreenStatusView() {}
+ScreenStatusView::~ScreenStatusView() = default;
 
 void ScreenStatusView::ButtonPressed(views::Button* sender,
                                      const ui::Event& event) {
@@ -81,9 +80,6 @@ void ScreenStatusView::CreateItems() {
   label_ = TrayPopupUtils::CreateDefaultLabel();
   label_->SetMultiLine(true);
   label_->SetText(label_text_);
-  // TODO(bruthig): Multiline Labels don't lay out well with borders.
-  // See https://crbug.com/678337 & https://crbug.com/682221.
-  label_->SetBorder(nullptr);
   TrayPopupItemStyle style(TrayPopupItemStyle::FontStyle::DEFAULT_VIEW_LABEL);
   style.SetupLabel(label_);
 
@@ -98,7 +94,7 @@ ScreenNotificationDelegate::ScreenNotificationDelegate(
     ScreenTrayItem* screen_tray)
     : screen_tray_(screen_tray) {}
 
-ScreenNotificationDelegate::~ScreenNotificationDelegate() {}
+ScreenNotificationDelegate::~ScreenNotificationDelegate() = default;
 
 void ScreenNotificationDelegate::ButtonClick(int button_index) {
   DCHECK_EQ(0, button_index);
@@ -115,7 +111,7 @@ ScreenTrayItem::ScreenTrayItem(SystemTray* system_tray, UmaType uma_type)
       is_started_(false),
       stop_callback_(base::Bind(&base::DoNothing)) {}
 
-ScreenTrayItem::~ScreenTrayItem() {}
+ScreenTrayItem::~ScreenTrayItem() = default;
 
 void ScreenTrayItem::Update() {
   if (tray_view_)
@@ -140,8 +136,8 @@ void ScreenTrayItem::Start(const base::Closure& stop_callback) {
   if (default_view_)
     default_view_->UpdateFromScreenTrayItem();
 
-  if (!system_tray()->HasSystemBubbleType(
-          SystemTrayBubble::BUBBLE_TYPE_DEFAULT)) {
+  if (!system_tray()->HasSystemTrayType(
+          SystemTrayView::SYSTEM_TRAY_TYPE_DEFAULT)) {
     CreateOrUpdateNotification();
   }
 }
@@ -167,11 +163,11 @@ void ScreenTrayItem::RecordStoppedFromDefaultViewMetric() {}
 
 void ScreenTrayItem::RecordStoppedFromNotificationViewMetric() {}
 
-void ScreenTrayItem::DestroyTrayView() {
+void ScreenTrayItem::OnTrayViewDestroyed() {
   tray_view_ = nullptr;
 }
 
-void ScreenTrayItem::DestroyDefaultView() {
+void ScreenTrayItem::OnDefaultViewDestroyed() {
   default_view_ = nullptr;
 }
 

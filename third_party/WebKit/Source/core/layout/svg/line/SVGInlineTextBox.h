@@ -27,6 +27,8 @@
 
 namespace blink {
 
+class TextMatchMarker;
+
 class SVGInlineTextBox final : public InlineTextBox {
  public:
   SVGInlineTextBox(LineLayoutItem, int start, unsigned short length);
@@ -44,17 +46,19 @@ class SVGInlineTextBox final : public InlineTextBox {
              const LayoutPoint&,
              LayoutUnit line_top,
              LayoutUnit line_bottom) const override;
-  LayoutRect LocalSelectionRect(int start_position,
-                                int end_position) const override;
+  LayoutRect LocalSelectionRect(
+      int start_position,
+      int end_position,
+      bool consider_current_selection = true) const override;
 
   bool MapStartEndPositionsIntoFragmentCoordinates(const SVGTextFragment&,
                                                    int& start_position,
                                                    int& end_position) const;
 
   // Calculate the bounding rect of all text fragments.
-  LayoutRect CalculateBoundaries() const;
+  FloatRect CalculateBoundaries() const;
 
-  void ClearTextFragments() { text_fragments_.Clear(); }
+  void ClearTextFragments() { text_fragments_.clear(); }
   Vector<SVGTextFragment>& TextFragments() { return text_fragments_; }
   const Vector<SVGTextFragment>& TextFragments() const {
     return text_fragments_;
@@ -85,12 +89,12 @@ class SVGInlineTextBox final : public InlineTextBox {
                            bool) const final;
   void PaintTextMatchMarkerForeground(const PaintInfo&,
                                       const LayoutPoint&,
-                                      const DocumentMarker&,
+                                      const TextMatchMarker&,
                                       const ComputedStyle&,
                                       const Font&) const final;
   void PaintTextMatchMarkerBackground(const PaintInfo&,
                                       const LayoutPoint&,
-                                      const DocumentMarker&,
+                                      const TextMatchMarker&,
                                       const ComputedStyle&,
                                       const Font&) const final;
 

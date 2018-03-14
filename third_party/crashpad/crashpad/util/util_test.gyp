@@ -36,10 +36,15 @@
       ],
       'sources': [
         'file/delimited_file_reader_test.cc',
+        'file/directory_reader_test.cc',
         'file/file_io_test.cc',
         'file/file_reader_test.cc',
+        'file/filesystem_test.cc',
         'file/string_file_test.cc',
-        'linux/process_memory_test.cc',
+        'linux/auxiliary_vector_test.cc',
+        'linux/memory_map_test.cc',
+        'linux/proc_stat_reader_test.cc',
+        'linux/ptracer_test.cc',
         'linux/scoped_ptrace_attach_test.cc',
         'mac/launchd_test.mm',
         'mac/mac_util_test.mm',
@@ -62,11 +67,14 @@
         'mach/task_memory_test.cc',
         'misc/arraysize_unsafe_test.cc',
         'misc/clock_test.cc',
+        'misc/from_pointer_cast_test.cc',
         'misc/initialization_state_dcheck_test.cc',
         'misc/initialization_state_test.cc',
         'misc/paths_test.cc',
         'misc/scoped_forbid_return_test.cc',
         'misc/random_string_test.cc',
+        'misc/reinterpret_bytes_test.cc',
+        'misc/time_test.cc',
         'misc/uuid_test.cc',
         'net/http_body_gzip_test.cc',
         'net/http_body_test.cc',
@@ -74,6 +82,7 @@
         'net/http_body_test_util.h',
         'net/http_multipart_builder_test.cc',
         'net/http_transport_test.cc',
+        'net/url_test.cc',
         'numeric/checked_address_range_test.cc',
         'numeric/checked_range_test.cc',
         'numeric/in_range_cast_test.cc',
@@ -82,11 +91,14 @@
         'posix/scoped_mmap_test.cc',
         'posix/signals_test.cc',
         'posix/symbolic_constants_posix_test.cc',
+        'process/process_memory_range_test.cc',
+        'process/process_memory_test.cc',
         'stdlib/aligned_allocator_test.cc',
         'stdlib/map_insert_test.cc',
         'stdlib/string_number_conversion_test.cc',
         'stdlib/strlcpy_test.cc',
         'stdlib/strnlen_test.cc',
+        'stdlib/thread_safe_vector_test.cc',
         'string/split_string_test.cc',
         'synchronization/semaphore_test.cc',
         'thread/thread_log_messages_test.cc',
@@ -101,9 +113,9 @@
         'win/initial_client_data_test.cc',
         'win/process_info_test.cc',
         'win/registration_protocol_win_test.cc',
+        'win/safe_terminate_process_test.cc',
         'win/scoped_process_suspend_test.cc',
         'win/session_end_watcher_test.cc',
-        'win/time_test.cc',
       ],
       'conditions': [
         ['OS=="mac"', {
@@ -116,6 +128,7 @@
         ['OS=="win"', {
           'dependencies': [
             'crashpad_util_test_process_info_test_child',
+            'crashpad_util_test_safe_terminate_process_test_child',
           ],
           'link_settings': {
             'libraries': [
@@ -132,11 +145,10 @@
             ['exclude', '^net/http_transport_test\\.cc$'],
           ]
         }],
-        ['OS=="android" or OS=="linux"' , {
-          # Things not yet ported to Android or Linux
-          'sources/' : [
-            ['exclude', '^numeric/checked_address_range_test\\.cc$'],
-          ]
+        ['OS!="linux" and OS!="android"', {
+          'sources/': [
+            ['exclude', '^process/'],
+          ],
         }],
       ],
       'target_conditions': [
@@ -169,6 +181,13 @@
               'FixedBaseAddress': '2',  # /FIXED.
             },
           },
+        },
+        {
+          'target_name': 'crashpad_util_test_safe_terminate_process_test_child',
+          'type': 'executable',
+          'sources': [
+            'win/safe_terminate_process_test_child.cc',
+          ],
         },
       ]
     }],

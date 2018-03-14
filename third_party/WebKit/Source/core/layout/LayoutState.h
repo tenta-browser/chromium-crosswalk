@@ -83,6 +83,20 @@ class LayoutState {
   LayoutUnit PageLogicalOffset(const LayoutBox&,
                                const LayoutUnit& child_logical_offset) const;
 
+  LayoutUnit HeightOffsetForTableHeaders() const {
+    return height_offset_for_table_headers_;
+  }
+  void SetHeightOffsetForTableHeaders(LayoutUnit offset) {
+    height_offset_for_table_headers_ = offset;
+  }
+
+  LayoutUnit HeightOffsetForTableFooters() const {
+    return height_offset_for_table_footers_;
+  }
+  void SetHeightOffsetForTableFooters(LayoutUnit offset) {
+    height_offset_for_table_footers_ = offset;
+  }
+
   const LayoutSize& PaginationOffset() const { return pagination_offset_; }
   bool ContainingBlockLogicalWidthChanged() const {
     return containing_block_logical_width_changed_;
@@ -112,6 +126,14 @@ class LayoutState {
   // x/y offset from the logical top / start of the first page. Does not include
   // relative positioning or scroll offsets.
   LayoutSize pagination_offset_;
+
+  // The height we need to make available for repeating table headers in
+  // paginated layout.
+  LayoutUnit height_offset_for_table_headers_;
+
+  // The height we need to make available for repeating table footers in
+  // paginated layout.
+  LayoutUnit height_offset_for_table_footers_;
 
   LayoutObject& layout_object_;
 };

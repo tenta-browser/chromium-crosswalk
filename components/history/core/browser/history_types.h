@@ -8,7 +8,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <deque>
 #include <map>
 #include <set>
 #include <string>
@@ -18,7 +17,6 @@
 #include "base/containers/stack_container.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_vector.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "components/favicon_base/favicon_types.h"
@@ -134,26 +132,10 @@ struct PageVisit {
 // a given URL appears in those results.
 class QueryResults {
  public:
-  typedef std::vector<URLResult*> URLResultVector;
+  typedef std::vector<URLResult> URLResultVector;
 
   QueryResults();
   ~QueryResults();
-
-  // Indicates the first time that the query includes results for (queries are
-  // clipped at the beginning, so it will always include to the end of the time
-  // queried).
-  //
-  // If the number of results was clipped as a result of the max count, this
-  // will be the time of the first query returned. If there were fewer results
-  // than we were allowed to return, this represents the first date considered
-  // in the query (this will be before the first result if there was time
-  // queried with no results).
-  //
-  // TODO(brettw): bug 1203054: This field is not currently set properly! Do
-  // not use until the bug is fixed.
-  base::Time first_time_searched() const { return first_time_searched_; }
-  void set_first_time_searched(base::Time t) { first_time_searched_ = t; }
-  // Note: If you need end_time_searched, it can be added.
 
   void set_reached_beginning(bool reached) { reached_beginning_ = reached; }
   bool reached_beginning() { return reached_beginning_; }
@@ -161,11 +143,11 @@ class QueryResults {
   size_t size() const { return results_.size(); }
   bool empty() const { return results_.empty(); }
 
-  URLResult& back() { return *results_.back(); }
-  const URLResult& back() const { return *results_.back(); }
+  URLResult& back() { return results_.back(); }
+  const URLResult& back() const { return results_.back(); }
 
-  URLResult& operator[](size_t i) { return *results_[i]; }
-  const URLResult& operator[](size_t i) const { return *results_[i]; }
+  URLResult& operator[](size_t i) { return results_[i]; }
+  const URLResult& operator[](size_t i) const { return results_[i]; }
 
   URLResultVector::const_iterator begin() const { return results_.begin(); }
   URLResultVector::const_iterator end() const { return results_.end(); }
@@ -189,10 +171,9 @@ class QueryResults {
   // efficiently transferred without copying.
   void Swap(QueryResults* other);
 
-  // Adds the given result to the map, using swap() on the members to avoid
-  // copying (there are a lot of strings and vectors). This means the parameter
-  // object will be cleared after this call.
-  void AppendURLBySwapping(URLResult* result);
+  // Set the result vector, the parameter vector will be moved to results_.
+  // It means the parameter vector will be empty after calling this method.
+  void SetURLResults(std::vector<URLResult>&& results);
 
   // Removes all instances of the given URL from the result set.
   void DeleteURL(const GURL& url);
@@ -215,14 +196,12 @@ class QueryResults {
   // (this is inclusive). This is used when inserting or deleting.
   void AdjustResultMap(size_t begin, size_t end, ptrdiff_t delta);
 
-  base::Time first_time_searched_;
-
   // Whether the query reaches the beginning of the database.
   bool reached_beginning_;
 
   // The ordered list of results. The pointers inside this are owned by this
   // QueryResults object.
-  ScopedVector<URLResult> results_;
+  URLResultVector results_;
 
   // Maps URLs to entries in results_.
   URLToResultIndices url_to_results_;
@@ -318,9 +297,16 @@ struct MostVisitedURL {
   MostVisitedURL(const GURL& url,
                  const base::string16& title,
                  base::Time last_forced_time = base::Time());
+  MostVisitedURL(const GURL& url,
+                 const base::string16& title,
+                 const RedirectList& preceding_redirects);
   MostVisitedURL(const MostVisitedURL& other);
   MostVisitedURL(MostVisitedURL&& other) noexcept;
   ~MostVisitedURL();
+
+  // Initializes |redirects| from |preceding_redirects|, ensuring that |url| is
+  // always present as the last item.
+  void InitRedirects(const RedirectList& preceding_redirects);
 
   GURL url;
   base::string16 title;
@@ -375,7 +361,7 @@ struct HistoryAddPageArgs {
   //   HistoryAddPageArgs(
   //       GURL(), base::Time(), NULL, 0, GURL(),
   //       RedirectList(), ui::PAGE_TRANSITION_LINK,
-  //       SOURCE_BROWSED, false, true)
+  //       false, SOURCE_BROWSED, false, true)
   HistoryAddPageArgs();
   HistoryAddPageArgs(const GURL& url,
                      base::Time time,
@@ -384,6 +370,7 @@ struct HistoryAddPageArgs {
                      const GURL& referrer,
                      const RedirectList& redirects,
                      ui::PageTransition transition,
+                     bool hidden,
                      VisitSource source,
                      bool did_replace_entry,
                      bool consider_for_ntp_most_visited);
@@ -397,6 +384,7 @@ struct HistoryAddPageArgs {
   GURL referrer;
   RedirectList redirects;
   ui::PageTransition transition;
+  bool hidden;
   VisitSource visit_source;
   bool did_replace_entry;
   // Specifies whether a page visit should contribute to the Most Visited tiles
@@ -511,7 +499,7 @@ struct IconMapping {
   GURL icon_url;
 
   // The type of icon.
-  favicon_base::IconType icon_type = favicon_base::INVALID_ICON;
+  favicon_base::IconType icon_type = favicon_base::IconType::kInvalid;
 };
 
 // Defines a favicon bitmap and its associated pixel size.
@@ -524,6 +512,36 @@ struct FaviconBitmapIDSize {
 
   // The pixel dimensions of the associated bitmap.
   gfx::Size pixel_size;
+};
+
+enum FaviconBitmapType {
+  // The bitmap gets downloaded while visiting its page. Their life-time is
+  // bound to the life-time of the corresponding visit in history.
+  //  - These bitmaps are re-downloaded when visiting the page again and the
+  //  last_updated timestamp is old enough.
+  ON_VISIT,
+
+  // The bitmap gets downloaded because it is demanded by some Chrome UI (while
+  // not visiting its page). For this reason, their life-time cannot be bound to
+  // the life-time of the corresponding visit in history.
+  // - These bitmaps are evicted from the database based on the last time they
+  //   were requested.
+  // - Furthermore, on-demand bitmaps are immediately marked as expired. Hence,
+  //   they are always replaced by ON_VISIT favicons whenever their page gets
+  //   visited.
+  ON_DEMAND
+};
+
+// Defines all associated mappings of a given favicon.
+struct IconMappingsForExpiry {
+  IconMappingsForExpiry();
+  IconMappingsForExpiry(const IconMappingsForExpiry& other);
+  ~IconMappingsForExpiry();
+
+  // URL of a given favicon.
+  GURL icon_url;
+  // URLs of all pages mapped to a given favicon
+  std::vector<GURL> page_urls;
 };
 
 // Defines a favicon bitmap stored in the history backend.

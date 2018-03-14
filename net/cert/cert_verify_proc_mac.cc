@@ -8,16 +8,13 @@
 #include <CoreServices/CoreServices.h>
 #include <Security/Security.h>
 
-#include <set>
 #include <string>
 #include <vector>
 
-#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/mac/mac_logging.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_cftyperef.h"
-#include "base/sha1.h"
 #include "base/strings/string_piece.h"
 #include "base/synchronization/lock.h"
 #include "crypto/mac_security_services_lock.h"
@@ -32,10 +29,12 @@
 #include "net/cert/ev_root_ca_metadata.h"
 #include "net/cert/internal/certificate_policies.h"
 #include "net/cert/internal/parsed_certificate.h"
+#include "net/cert/known_roots_mac.h"
 #include "net/cert/test_keychain_search_list_mac.h"
 #include "net/cert/test_root_certs.h"
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util.h"
+#include "net/cert/x509_util_ios_and_mac.h"
 #include "net/cert/x509_util_mac.h"
 
 // CSSM functions are deprecated as of OSX 10.7, but have no replacement.
@@ -93,8 +92,19 @@ CertStatus CertStatusFromOSStatus(OSStatus status) {
 
     case CSSMERR_APPLETP_CRL_NOT_FOUND:
     case CSSMERR_APPLETP_OCSP_UNAVAILABLE:
-    case CSSMERR_APPLETP_INCOMPLETE_REVOCATION_CHECK:
       return CERT_STATUS_NO_REVOCATION_MECHANISM;
+
+    case CSSMERR_APPLETP_INCOMPLETE_REVOCATION_CHECK:
+      // Starting with later 10.12 versions,
+      // CSSMERR_APPLETP_INCOMPLETE_REVOCATION_CHECK is a catch-all code for
+      // failures to check revocation status.
+      // However, on pre-10.12 versions, it would also be used on revocation
+      // failures. (CERT_STATUS_NO_REVOCATION_MECHANISM isn't really right
+      // there either, but that's what the old code has, and it just gets
+      // masked off later so has no actual effect.)
+      return base::mac::IsAtLeastOS10_12()
+                 ? CERT_STATUS_UNABLE_TO_CHECK_REVOCATION
+                 : CERT_STATUS_NO_REVOCATION_MECHANISM;
 
     case CSSMERR_APPLETP_CRL_EXPIRED:
     case CSSMERR_APPLETP_CRL_NOT_VALID_YET:
@@ -232,15 +242,15 @@ bool CertUsesWeakHash(SecCertificateRef cert_handle) {
 
   const CSSM_OID* alg_oid = &sig_algorithm->algorithm;
 
-  return (CSSMOIDEqual(alg_oid, &CSSMOID_MD2WithRSA) ||
-          CSSMOIDEqual(alg_oid, &CSSMOID_MD4WithRSA) ||
-          CSSMOIDEqual(alg_oid, &CSSMOID_MD5WithRSA) ||
-          CSSMOIDEqual(alg_oid, &CSSMOID_SHA1WithRSA) ||
-          CSSMOIDEqual(alg_oid, &CSSMOID_SHA1WithRSA_OIW) ||
-          CSSMOIDEqual(alg_oid, &CSSMOID_SHA1WithDSA) ||
-          CSSMOIDEqual(alg_oid, &CSSMOID_SHA1WithDSA_CMS) ||
-          CSSMOIDEqual(alg_oid, &CSSMOID_SHA1WithDSA_JDK) ||
-          CSSMOIDEqual(alg_oid, &CSSMOID_ECDSA_WithSHA1));
+  return (x509_util::CSSMOIDEqual(alg_oid, &CSSMOID_MD2WithRSA) ||
+          x509_util::CSSMOIDEqual(alg_oid, &CSSMOID_MD4WithRSA) ||
+          x509_util::CSSMOIDEqual(alg_oid, &CSSMOID_MD5WithRSA) ||
+          x509_util::CSSMOIDEqual(alg_oid, &CSSMOID_SHA1WithRSA) ||
+          x509_util::CSSMOIDEqual(alg_oid, &CSSMOID_SHA1WithRSA_OIW) ||
+          x509_util::CSSMOIDEqual(alg_oid, &CSSMOID_SHA1WithDSA) ||
+          x509_util::CSSMOIDEqual(alg_oid, &CSSMOID_SHA1WithDSA_CMS) ||
+          x509_util::CSSMOIDEqual(alg_oid, &CSSMOID_SHA1WithDSA_JDK) ||
+          x509_util::CSSMOIDEqual(alg_oid, &CSSMOID_ECDSA_WithSHA1));
 }
 
 // Returns true if the intermediates (excluding trusted certificates) use a
@@ -336,14 +346,12 @@ bool CheckCertChainEV(const X509Certificate* cert,
       cert->GetIntermediateCertificates();
 
   // Root should have matching policy in EVRootCAMetadata.
-  std::string der_cert;
-  if (!X509Certificate::GetDEREncoded(os_cert_chain.back(), &der_cert))
+  if (os_cert_chain.empty())
     return false;
-  SHA1HashValue weak_fingerprint;
-  base::SHA1HashBytes(reinterpret_cast<const unsigned char*>(der_cert.data()),
-                      der_cert.size(), weak_fingerprint.data);
+  SHA256HashValue fingerprint =
+      X509Certificate::CalculateFingerprint256(os_cert_chain.back());
   EVRootCAMetadata* metadata = EVRootCAMetadata::GetInstance();
-  if (!metadata->HasEVPolicyOID(weak_fingerprint, ev_policy_oid))
+  if (!metadata->HasEVPolicyOID(fingerprint, ev_policy_oid))
     return false;
 
   // Intermediates should have Certificate Policies extension with the EV policy
@@ -379,10 +387,6 @@ void AppendPublicKeyHashes(CFArrayRef chain,
     base::StringPiece spki_bytes;
     if (!asn1::ExtractSPKIFromDERCert(der_bytes, &spki_bytes))
       continue;
-
-    HashValue sha1(HASH_VALUE_SHA1);
-    CC_SHA1(spki_bytes.data(), spki_bytes.size(), sha1.data());
-    hashes->push_back(sha1);
 
     HashValue sha256(HASH_VALUE_SHA256);
     CC_SHA256(spki_bytes.data(), spki_bytes.size(), sha256.data());
@@ -596,58 +600,16 @@ int BuildAndEvaluateSecTrustRef(CFArrayRef cert_array,
   return OK;
 }
 
-// Helper class for managing the set of OS X Known Roots. This is only safe
-// to initialize while the crypto::GetMacSecurityServicesLock() is held, due
-// to calling into Security.framework functions; however, once initialized,
-// it can be called at any time.
-// In practice, due to lazy initialization, it's best to just always guard
-// accesses with the lock.
-class OSXKnownRootHelper {
- public:
-  // IsIssuedByKnownRoot returns true if the given chain is rooted at a root CA
-  // that we recognise as a standard root.
-  bool IsIssuedByKnownRoot(CFArrayRef chain) {
-    // If there are no known roots, then an API failure occurred. For safety,
-    // assume that all certificates are issued by known roots.
-    if (known_roots_.empty())
-      return true;
-
-    CFIndex n = CFArrayGetCount(chain);
-    if (n < 1)
-      return false;
-    SecCertificateRef root_ref = reinterpret_cast<SecCertificateRef>(
-        const_cast<void*>(CFArrayGetValueAtIndex(chain, n - 1)));
-    SHA256HashValue hash = x509_util::CalculateFingerprint256(root_ref);
-    return known_roots_.find(hash) != known_roots_.end();
-  }
-
- private:
-  friend struct base::LazyInstanceTraitsBase<OSXKnownRootHelper>;
-
-  OSXKnownRootHelper() {
-    CFArrayRef cert_array = NULL;
-    OSStatus rv = SecTrustSettingsCopyCertificates(
-        kSecTrustSettingsDomainSystem, &cert_array);
-    if (rv != noErr) {
-      LOG(ERROR) << "Unable to determine trusted roots; assuming all roots are "
-                 << "trusted! Error " << rv;
-      return;
-    }
-    base::ScopedCFTypeRef<CFArrayRef> scoped_array(cert_array);
-    for (CFIndex i = 0, size = CFArrayGetCount(cert_array); i < size; ++i) {
-      SecCertificateRef cert = reinterpret_cast<SecCertificateRef>(
-          const_cast<void*>(CFArrayGetValueAtIndex(cert_array, i)));
-      known_roots_.insert(x509_util::CalculateFingerprint256(cert));
-    }
-  }
-
-  ~OSXKnownRootHelper() {}
-
-  std::set<SHA256HashValue, SHA256HashValueLessThan> known_roots_;
-};
-
-base::LazyInstance<OSXKnownRootHelper>::Leaky g_known_roots =
-    LAZY_INSTANCE_INITIALIZER;
+// IsIssuedByKnownRoot returns true if the given chain is rooted at a root CA
+// that we recognise as a standard root.
+bool IsIssuedByKnownRoot(CFArrayRef chain) {
+  CFIndex n = CFArrayGetCount(chain);
+  if (n < 1)
+    return false;
+  SecCertificateRef root_ref = reinterpret_cast<SecCertificateRef>(
+      const_cast<void*>(CFArrayGetValueAtIndex(chain, n - 1)));
+  return IsKnownRoot(root_ref);
+}
 
 // Runs path building & verification loop for |cert|, given |flags|. This is
 // split into a separate function so verification can be repeated with different
@@ -783,9 +745,12 @@ int VerifyWithGivenFlags(X509Certificate* cert,
     }
 
     ScopedCFTypeRef<CFMutableArrayRef> cert_array(
-        x509_util::CreateSecCertificateArrayForX509Certificate(cert));
-    if (!cert_array)
+        x509_util::CreateSecCertificateArrayForX509Certificate(
+            cert, x509_util::InvalidIntermediateBehavior::kIgnore));
+    if (!cert_array) {
+      verify_result->cert_status |= CERT_STATUS_INVALID;
       return ERR_CERT_INVALID;
+    }
 
     // Beginning with the certificate chain as supplied by the server, attempt
     // to verify the chain. If a failure is encountered, trim a certificate
@@ -953,11 +918,13 @@ int VerifyWithGivenFlags(X509Certificate* cert,
                      (flags & CertVerifier::VERIFY_REV_CHECKING_ENABLED) &&
                      chain_info[index].StatusCodes[status_code_index] ==
                          CSSMERR_TP_VERIFY_ACTION_FAILED &&
-                     base::mac::IsAtLeastOS10_12()) {
-            // On 10.12, using kSecRevocationRequirePositiveResponse flag
-            // causes a CSSMERR_TP_VERIFY_ACTION_FAILED status if revocation
-            // couldn't be checked. (Note: even if the cert had no
-            // crlDistributionPoints or OCSP AIA.)
+                     base::mac::IsOS10_12()) {
+            // On early versions of 10.12, using
+            // kSecRevocationRequirePositiveResponse flag causes a
+            // CSSMERR_TP_VERIFY_ACTION_FAILED status if revocation couldn't be
+            // checked. (Note: even if the cert had no crlDistributionPoints or
+            // OCSP AIA.) This isn't needed on later 10.12 versions, but it
+            // should be mostly harmless.
             mapped_status = CERT_STATUS_UNABLE_TO_CHECK_REVOCATION;
             policy_fail_already_mapped = true;
           } else {
@@ -1006,8 +973,7 @@ int VerifyWithGivenFlags(X509Certificate* cert,
   verify_result->cert_status &= ~CERT_STATUS_NO_REVOCATION_MECHANISM;
 
   AppendPublicKeyHashes(completed_chain, &verify_result->public_key_hashes);
-  verify_result->is_issued_by_known_root =
-      g_known_roots.Get().IsIssuedByKnownRoot(completed_chain);
+  verify_result->is_issued_by_known_root = IsIssuedByKnownRoot(completed_chain);
 
   if (IsCertStatusError(verify_result->cert_status))
     return MapCertStatusToNetError(verify_result->cert_status);

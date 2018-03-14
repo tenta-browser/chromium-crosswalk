@@ -13,49 +13,24 @@
 #include "net/quic/core/quic_header_list.h"
 #include "net/quic/core/quic_packets.h"
 #include "net/quic/platform/api/quic_export.h"
-#include "net/spdy/spdy_framer.h"
+#include "net/spdy/core/spdy_framer.h"
 
 namespace net {
 
 class QUIC_EXPORT_PRIVATE SpdyUtils {
  public:
-  static std::string SerializeUncompressedHeaders(
-      const SpdyHeaderBlock& headers);
-
-  // Parses |data| as a string containing serialized HTTP/2 HEADERS frame,
-  // populating |headers| with the key->value pairs found.
-  // |content_length| will be populated with the value of the content-length
-  // header if one or more are present.
-  // Returns true on success, false if parsing fails, or invalid keys are found.
-  static bool ParseHeaders(const char* data,
-                           uint32_t data_len,
-                           int64_t* content_length,
-                           SpdyHeaderBlock* headers);
-
   // Populate |content length| with the value of the content-length header.
   // Returns true on success, false if parsing fails or content-length header is
   // missing.
   static bool ExtractContentLengthFromHeaders(int64_t* content_length,
                                               SpdyHeaderBlock* headers);
 
-  // Parses |data| as a string containing serialized HTTP/2 HEADERS frame,
-  // populating |trailers| with the key->value pairs found.
-  // The final offset header will be excluded from |trailers|, and instead the
-  // value will be copied to |final_byte_offset|.
-  // Returns true on success, false if parsing fails, or invalid keys are found.
-  static bool ParseTrailers(const char* data,
-                            uint32_t data_len,
-                            size_t* final_byte_offset,
-                            SpdyHeaderBlock* trailers);
-
-  // Copies a list of headers to a SpdyHeaderBlock. Performs similar validation
-  // to SpdyFramer::ParseHeaderBlockInBuffer and ParseHeaders, above.
+  // Copies a list of headers to a SpdyHeaderBlock.
   static bool CopyAndValidateHeaders(const QuicHeaderList& header_list,
                                      int64_t* content_length,
                                      SpdyHeaderBlock* headers);
 
-  // Copies a list of headers to a SpdyHeaderBlock. Performs similar validation
-  // to SpdyFramer::ParseHeaderBlockInBuffer and ParseTrailers, above.
+  // Copies a list of headers to a SpdyHeaderBlock.
   static bool CopyAndValidateTrailers(const QuicHeaderList& header_list,
                                       size_t* final_byte_offset,
                                       SpdyHeaderBlock* trailers);

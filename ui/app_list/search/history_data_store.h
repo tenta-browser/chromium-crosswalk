@@ -17,7 +17,7 @@
 #include "ui/app_list/search/history_data.h"
 
 namespace base {
-class DictionaryValue;
+class Value;
 }
 
 namespace app_list {
@@ -41,7 +41,7 @@ class APP_LIST_EXPORT HistoryDataStore
 
   // Flushes pending writes. |on_flushed| is invoked when disk write is
   // finished.
-  void Flush(const DictionaryDataStore::OnFlushedCallback& on_flushed);
+  void Flush(DictionaryDataStore::OnFlushedCallback on_flushed);
 
   // Reads the persisted data from disk asynchronously. |on_read| is called
   // with the loaded and parsed data. If there is an error, |on_read| is called
@@ -64,10 +64,10 @@ class APP_LIST_EXPORT HistoryDataStore
   void Init(base::DictionaryValue* cached_dict);
 
   // Gets the dictionary for "associations" key.
-  base::DictionaryValue* GetAssociationDict();
+  base::Value* GetAssociationDict();
 
   // Gets entry dictionary for given |query|. Creates one if necessary.
-  base::DictionaryValue* GetEntryDict(const std::string& query);
+  base::Value* GetEntryDict(const std::string& query);
 
   void OnDictionaryLoadedCallback(OnLoadedCallback callback,
                                   std::unique_ptr<base::DictionaryValue> dict);

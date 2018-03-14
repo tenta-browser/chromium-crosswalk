@@ -25,7 +25,8 @@ void DoCallback(const base::WeakPtr<ThreadedSSLPrivateKey>& key,
     return;
   callback.Run(error, *signature);
 }
-}
+
+}  // anonymous namespace
 
 class ThreadedSSLPrivateKey::Core
     : public base::RefCountedThreadSafe<ThreadedSSLPrivateKey::Core> {
@@ -35,15 +36,15 @@ class ThreadedSSLPrivateKey::Core
 
   ThreadedSSLPrivateKey::Delegate* delegate() { return delegate_.get(); }
 
-  Error SignDigest(SSLPrivateKey::Hash hash,
-                   const base::StringPiece& input,
-                   std::vector<uint8_t>* signature) {
-    return delegate_->SignDigest(hash, input, signature);
+  Error Sign(uint16_t algorithm,
+             base::span<const uint8_t> input,
+             std::vector<uint8_t>* signature) {
+    return delegate_->Sign(algorithm, input, signature);
   }
 
  private:
   friend class base::RefCountedThreadSafe<Core>;
-  ~Core() {}
+  ~Core() = default;
 
   std::unique_ptr<ThreadedSSLPrivateKey::Delegate> delegate_;
 };
@@ -55,31 +56,23 @@ ThreadedSSLPrivateKey::ThreadedSSLPrivateKey(
       task_runner_(std::move(task_runner)),
       weak_factory_(this) {}
 
-SSLPrivateKey::Type ThreadedSSLPrivateKey::GetType() {
-  return core_->delegate()->GetType();
+std::vector<uint16_t> ThreadedSSLPrivateKey::GetAlgorithmPreferences() {
+  return core_->delegate()->GetAlgorithmPreferences();
 }
 
-std::vector<SSLPrivateKey::Hash> ThreadedSSLPrivateKey::GetDigestPreferences() {
-  return core_->delegate()->GetDigestPreferences();
-}
-
-size_t ThreadedSSLPrivateKey::GetMaxSignatureLengthInBytes() {
-  return core_->delegate()->GetMaxSignatureLengthInBytes();
-}
-
-void ThreadedSSLPrivateKey::SignDigest(
-    SSLPrivateKey::Hash hash,
-    const base::StringPiece& input,
-    const SSLPrivateKey::SignCallback& callback) {
+void ThreadedSSLPrivateKey::Sign(uint16_t algorithm,
+                                 base::span<const uint8_t> input,
+                                 const SSLPrivateKey::SignCallback& callback) {
   std::vector<uint8_t>* signature = new std::vector<uint8_t>;
   base::PostTaskAndReplyWithResult(
       task_runner_.get(), FROM_HERE,
-      base::Bind(&ThreadedSSLPrivateKey::Core::SignDigest, core_, hash,
-                 input.as_string(), base::Unretained(signature)),
+      base::Bind(&ThreadedSSLPrivateKey::Core::Sign, core_, algorithm,
+                 std::vector<uint8_t>(input.begin(), input.end()),
+                 base::Unretained(signature)),
       base::Bind(&DoCallback, weak_factory_.GetWeakPtr(), callback,
                  base::Owned(signature)));
 }
 
-ThreadedSSLPrivateKey::~ThreadedSSLPrivateKey() {}
+ThreadedSSLPrivateKey::~ThreadedSSLPrivateKey() = default;
 
 }  // namespace net

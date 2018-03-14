@@ -35,13 +35,12 @@ ExtensionThrottleManager::ExtensionThrottleManager()
   url_id_replacements_.ClearQuery();
   url_id_replacements_.ClearRef();
 
-  net::NetworkChangeNotifier::AddIPAddressObserver(this);
-  net::NetworkChangeNotifier::AddConnectionTypeObserver(this);
+  net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
 }
 
 ExtensionThrottleManager::~ExtensionThrottleManager() {
-  net::NetworkChangeNotifier::RemoveIPAddressObserver(this);
-  net::NetworkChangeNotifier::RemoveConnectionTypeObserver(this);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  net::NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
 
   // Since the manager object might conceivably go away before the
   // entries, detach the entries' back-pointer to the manager.
@@ -59,17 +58,18 @@ ExtensionThrottleManager::~ExtensionThrottleManager() {
 
 std::unique_ptr<content::ResourceThrottle>
 ExtensionThrottleManager::MaybeCreateThrottle(const net::URLRequest* request) {
-  if (request->first_party_for_cookies().scheme() !=
-      extensions::kExtensionScheme) {
+  if (request->site_for_cookies().scheme() != extensions::kExtensionScheme) {
     return nullptr;
   }
-  return base::MakeUnique<extensions::ExtensionRequestLimitingThrottle>(request,
+  return std::make_unique<extensions::ExtensionRequestLimitingThrottle>(request,
                                                                         this);
 }
 
 scoped_refptr<ExtensionThrottleEntryInterface>
 ExtensionThrottleManager::RegisterRequestUrl(const GURL& url) {
-  DCHECK(!enable_thread_checks_ || CalledOnValidThread());
+#if DCHECK_IS_ON()
+  DCHECK(!enable_thread_checks_ || sequence_checker_.CalledOnValidSequence());
+#endif  // DCHECK_IS_ON()
 
   // Normalize the url.
   std::string url_id = GetIdFromUrl(url);
@@ -166,13 +166,21 @@ net::NetLog* ExtensionThrottleManager::net_log() const {
   return net_log_.net_log();
 }
 
-void ExtensionThrottleManager::OnIPAddressChanged() {
-  OnNetworkChange();
-}
-
-void ExtensionThrottleManager::OnConnectionTypeChanged(
+void ExtensionThrottleManager::OnNetworkChanged(
     net::NetworkChangeNotifier::ConnectionType type) {
-  OnNetworkChange();
+  // When we switch from online to offline or change IP addresses, we
+  // clear all back-off history. This is a precaution in case the change in
+  // online state now lets us communicate without error with servers that
+  // we were previously getting 500 or 503 responses from (perhaps the
+  // responses are from a badly-written proxy that should have returned a
+  // 502 or 504 because it's upstream connection was down or it had no route
+  // to the server).
+  // Remove all entries.  Any entries that in-flight requests have a reference
+  // to will live until those requests end, and these entries may be
+  // inconsistent with new entries for the same URLs, but since what we
+  // want is a clean slate for the new connection type, this is OK.
+  url_entries_.clear();
+  requests_since_last_gc_ = 0;
 }
 
 std::string ExtensionThrottleManager::GetIdFromUrl(const GURL& url) const {
@@ -206,15 +214,6 @@ void ExtensionThrottleManager::GarbageCollectEntries() {
   while (url_entries_.size() > kMaximumNumberOfEntries) {
     url_entries_.erase(url_entries_.begin());
   }
-}
-
-void ExtensionThrottleManager::OnNetworkChange() {
-  // Remove all entries.  Any entries that in-flight requests have a reference
-  // to will live until those requests end, and these entries may be
-  // inconsistent with new entries for the same URLs, but since what we
-  // want is a clean slate for the new connection type, this is OK.
-  url_entries_.clear();
-  requests_since_last_gc_ = 0;
 }
 
 }  // namespace extensions

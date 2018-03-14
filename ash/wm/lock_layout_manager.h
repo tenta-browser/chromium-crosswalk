@@ -6,9 +6,9 @@
 #define ASH_WM_LOCK_LAYOUT_MANAGER_H_
 
 #include "ash/ash_export.h"
+#include "ash/shelf/shelf_observer.h"
 #include "ash/shell_observer.h"
 #include "ash/wm/wm_snap_to_pixel_layout_manager.h"
-#include "ash/wm/wm_types.h"
 #include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "ui/aura/window_observer.h"
@@ -17,6 +17,9 @@
 #include "ui/keyboard/keyboard_controller_observer.h"
 
 namespace ash {
+
+class Shelf;
+
 namespace wm {
 class WindowState;
 class WMEvent;
@@ -37,48 +40,57 @@ class ASH_EXPORT LockLayoutManager
     : public wm::WmSnapToPixelLayoutManager,
       public aura::WindowObserver,
       public ShellObserver,
+      public ShelfObserver,
       public keyboard::KeyboardControllerObserver {
  public:
-  explicit LockLayoutManager(WmWindow* window);
+  LockLayoutManager(aura::Window* window, Shelf* shelf);
   ~LockLayoutManager() override;
 
   // Overridden from WmSnapToPixelLayoutManager:
   void OnWindowResized() override;
-  void OnWindowAddedToLayout(WmWindow* child) override;
-  void OnWillRemoveWindowFromLayout(WmWindow* child) override;
-  void OnWindowRemovedFromLayout(WmWindow* child) override;
-  void OnChildWindowVisibilityChanged(WmWindow* child, bool visibile) override;
-  void SetChildBounds(WmWindow* child,
+  void OnWindowAddedToLayout(aura::Window* child) override;
+  void OnWillRemoveWindowFromLayout(aura::Window* child) override;
+  void OnWindowRemovedFromLayout(aura::Window* child) override;
+  void OnChildWindowVisibilityChanged(aura::Window* child,
+                                      bool visible) override;
+  void SetChildBounds(aura::Window* child,
                       const gfx::Rect& requested_bounds) override;
 
   // Overriden from aura::WindowObserver:
   void OnWindowDestroying(aura::Window* window) override;
   void OnWindowBoundsChanged(aura::Window* window,
                              const gfx::Rect& old_bounds,
-                             const gfx::Rect& new_bounds) override;
+                             const gfx::Rect& new_bounds,
+                             ui::PropertyChangeReason reason) override;
 
   // ShellObserver:
   void OnVirtualKeyboardStateChanged(bool activated,
-                                     WmWindow* root_window) override;
+                                     aura::Window* root_window) override;
+
+  // ShelfObserver:
+  void WillChangeVisibilityState(ShelfVisibilityState visibility) override;
 
   // keyboard::KeyboardControllerObserver overrides:
-  void OnKeyboardBoundsChanging(const gfx::Rect& new_bounds) override;
+  void OnKeyboardWorkspaceOccludedBoundsChanging(
+      const gfx::Rect& new_bounds) override;
   void OnKeyboardClosed() override;
 
- private:
+ protected:
   // Adjusts the bounds of all managed windows when the display area changes.
   // This happens when the display size, work area insets has changed.
   void AdjustWindowsForWorkAreaChange(const wm::WMEvent* event);
 
-  WmWindow* window_;
-  WmWindow* root_window_;
+  aura::Window* window() { return window_; }
+  aura::Window* root_window() { return root_window_; }
 
+ private:
+  aura::Window* window_;
+  aura::Window* root_window_;
+
+  ScopedObserver<Shelf, ShelfObserver> shelf_observer_;
   ScopedObserver<keyboard::KeyboardController,
                  keyboard::KeyboardControllerObserver>
       keyboard_observer_;
-
-  // The bounds of the keyboard.
-  gfx::Rect keyboard_bounds_;
 
   DISALLOW_COPY_AND_ASSIGN(LockLayoutManager);
 };

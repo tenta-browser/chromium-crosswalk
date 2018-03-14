@@ -27,8 +27,8 @@ const int kShowingDuration = 500;
 
 class ModeIndicatorFrameView : public views::BubbleFrameView {
  public:
-  explicit ModeIndicatorFrameView(const gfx::Insets& content_margins)
-      : views::BubbleFrameView(gfx::Insets(), content_margins) {}
+  explicit ModeIndicatorFrameView()
+      : views::BubbleFrameView(gfx::Insets(), gfx::Insets()) {}
   ~ModeIndicatorFrameView() override {}
 
  private:
@@ -44,15 +44,15 @@ class ModeIndicatorFrameView : public views::BubbleFrameView {
 
 }  // namespace
 
-
-ModeIndicatorView::ModeIndicatorView(gfx::NativeView parent,
+ModeIndicatorView::ModeIndicatorView(Delegate* delegate,
                                      const gfx::Rect& cursor_bounds,
                                      const base::string16& label)
-    : cursor_bounds_(cursor_bounds),
+    : delegate_(delegate),
+      cursor_bounds_(cursor_bounds),
       label_view_(new views::Label(label)) {
+  DCHECK(delegate_);
   set_can_activate(false);
   set_accept_events(false);
-  set_parent_window(parent);
   set_shadow(views::BubbleBorder::NO_SHADOW);
   set_arrow(views::BubbleBorder::TOP_CENTER);
 }
@@ -70,7 +70,13 @@ void ModeIndicatorView::ShowAndFadeOut() {
                &views::Widget::Close);
 }
 
-gfx::Size ModeIndicatorView::GetPreferredSize() const {
+void ModeIndicatorView::OnBeforeBubbleWidgetInit(
+    views::Widget::InitParams* params,
+    views::Widget* widget) const {
+  delegate_->InitWidgetContainer(params);
+}
+
+gfx::Size ModeIndicatorView::CalculatePreferredSize() const {
   gfx::Size size = label_view_->GetPreferredSize();
   size.SetToMax(gfx::Size(kMinSize, kMinSize));
   return size;
@@ -93,7 +99,7 @@ void ModeIndicatorView::Init() {
 
 views::NonClientFrameView* ModeIndicatorView::CreateNonClientFrameView(
     views::Widget* widget) {
-  views::BubbleFrameView* frame = new ModeIndicatorFrameView(margins());
+  views::BubbleFrameView* frame = new ModeIndicatorFrameView();
   // arrow adjustment in BubbleDialogDelegateView is unnecessary because arrow
   // of this bubble is always center.
   frame->SetBubbleBorder(std::unique_ptr<views::BubbleBorder>(

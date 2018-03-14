@@ -19,12 +19,11 @@ class MockPasswordStore : public PasswordStore {
  public:
   MockPasswordStore();
 
-  bool Init(const syncer::SyncableService::StartSyncFlare& flare) override {
-    return true;
-  };
   MOCK_METHOD1(RemoveLogin, void(const autofill::PasswordForm&));
   MOCK_METHOD2(GetLogins,
                void(const PasswordStore::FormDigest&, PasswordStoreConsumer*));
+  MOCK_METHOD2(GetLoginsForSameOrganizationName,
+               void(const std::string&, PasswordStoreConsumer*));
   MOCK_METHOD1(AddLogin, void(const autofill::PasswordForm&));
   MOCK_METHOD1(UpdateLogin, void(const autofill::PasswordForm&));
   MOCK_METHOD2(UpdateLoginWithPrimaryKey,
@@ -57,6 +56,10 @@ class MockPasswordStore : public PasswordStore {
       const PasswordStore::FormDigest& form) override {
     return std::vector<std::unique_ptr<autofill::PasswordForm>>();
   }
+  std::vector<std::unique_ptr<autofill::PasswordForm>>
+  FillLoginsForSameOrganizationName(const std::string& signon_realm) override {
+    return std::vector<std::unique_ptr<autofill::PasswordForm>>();
+  }
   MOCK_METHOD1(FillAutofillableLogins,
                bool(std::vector<std::unique_ptr<autofill::PasswordForm>>*));
   MOCK_METHOD1(FillBlacklistLogins,
@@ -73,12 +76,23 @@ class MockPasswordStore : public PasswordStore {
                void(const base::string16&,
                     const std::string&,
                     PasswordReuseDetectorConsumer*));
+#if !defined(OS_CHROMEOS)
+  MOCK_METHOD1(SaveSyncPasswordHash, void(const base::string16&));
+  MOCK_METHOD0(ClearSyncPasswordHash, void());
+#endif
 #endif
 
   PasswordStoreSync* GetSyncInterface() { return this; }
 
  protected:
-  virtual ~MockPasswordStore();
+  ~MockPasswordStore() override;
+
+ private:
+  // PasswordStore:
+  scoped_refptr<base::SequencedTaskRunner> CreateBackgroundTaskRunner()
+      const override;
+  void InitOnBackgroundSequence(
+      const syncer::SyncableService::StartSyncFlare& flare) override;
 };
 
 }  // namespace password_manager

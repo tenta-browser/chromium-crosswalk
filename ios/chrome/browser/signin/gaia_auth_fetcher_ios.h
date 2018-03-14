@@ -9,6 +9,7 @@
 
 #include "base/macros.h"
 #include "google_apis/gaia/gaia_auth_fetcher.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 class GaiaAuthFetcherIOSBridge;
 
@@ -28,7 +29,7 @@ class GaiaAuthFetcherIOS : public GaiaAuthFetcher {
   // Sets whether the iOS specialization of the GaiaAuthFetcher should be used.
   // Mainly used for testing.
   // Note that if |should_use| is true, it might still not be used if it is
-  // unecessary or WKWebView isn't enabled.
+  // unnecessary or WKWebView isn't enabled.
   static void SetShouldUseGaiaAuthFetcherIOSForTesting(
       bool use_gaia_fetcher_ios);
 
@@ -48,10 +49,12 @@ class GaiaAuthFetcherIOS : public GaiaAuthFetcher {
   friend class GaiaAuthFetcherIOSBridge;
   friend class GaiaAuthFetcherIOSTest;
 
-  void CreateAndStartGaiaFetcher(const std::string& body,
-                                 const std::string& headers,
-                                 const GURL& gaia_gurl,
-                                 int load_flags) override;
+  void CreateAndStartGaiaFetcher(
+      const std::string& body,
+      const std::string& headers,
+      const GURL& gaia_gurl,
+      int load_flags,
+      const net::NetworkTrafficAnnotationTag& traffic_annotation) override;
   void FetchComplete(const GURL& url,
                      const std::string& data,
                      const net::ResponseCookies& cookies,

@@ -4,25 +4,28 @@
 
 #include "remoting/host/host_attributes.h"
 
-#if defined(OS_WIN)
-#include <D3DCommon.h>
-#endif
-
+#include <string>
 #include <type_traits>
+#include <vector>
 
 #include "base/atomicops.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/strings/string_piece.h"
+#include "base/strings/string_util.h"
 #include "build/build_config.h"
 
 #if defined(OS_WIN)
-#include "third_party/webrtc/modules/desktop_capture/win/dxgi_duplicator_controller.h"
-#include "third_party/webrtc/modules/desktop_capture/win/screen_capturer_win_directx.h"
+#include "base/win/windows_version.h"
+#include "media/base/win/mf_initializer.h"
+#include "media/gpu/media_foundation_video_encode_accelerator_win.h"
+#include "remoting/host/win/evaluate_d3d.h"
 #endif
 
 namespace remoting {
 
 namespace {
+
 static constexpr char kSeparator[] = ",";
 
 struct Attribute {
@@ -64,32 +67,6 @@ inline constexpr bool IsNonOfficialBuild() {
   return !IsOfficialBuild();
 }
 
-#if defined(OS_WIN)
-inline bool MinD3DFeatureLevelGreatThan10() {
-  webrtc::DxgiDuplicatorController::D3dInfo info;
-  if (webrtc::DxgiDuplicatorController::Instance()->RetrieveD3dInfo(&info)) {
-    return info.min_feature_level >= D3D_FEATURE_LEVEL_10_0;
-  }
-  return false;
-}
-
-inline bool MinD3DFeatureLevelGreatThan11() {
-  webrtc::DxgiDuplicatorController::D3dInfo info;
-  if (webrtc::DxgiDuplicatorController::Instance()->RetrieveD3dInfo(&info)) {
-    return info.min_feature_level >= D3D_FEATURE_LEVEL_11_0;
-  }
-  return false;
-}
-
-inline bool MinD3DFeatureLevelGreatThan12() {
-  webrtc::DxgiDuplicatorController::D3dInfo info;
-  if (webrtc::DxgiDuplicatorController::Instance()->RetrieveD3dInfo(&info)) {
-    return info.min_feature_level >= D3D_FEATURE_LEVEL_12_0;
-  }
-  return false;
-}
-#endif
-
 // By using arraysize() macro in base/macros.h, it's illegal to have empty
 // arrays.
 //
@@ -106,12 +83,6 @@ static constexpr Attribute kAttributes[] = {
   { "ChromiumBrand", &IsChromiumBranded },
   { "OfficialBuild", &IsOfficialBuild },
   { "NonOfficialBuild", &IsNonOfficialBuild },
-#if defined(OS_WIN)
-  { "DirectX-Capturer", &webrtc::ScreenCapturerWinDirectx::IsSupported },
-  { "MinD3DGT10", &MinD3DFeatureLevelGreatThan10 },
-  { "MinD3DGT11", &MinD3DFeatureLevelGreatThan11 },
-  { "MinD3DGT12", &MinD3DFeatureLevelGreatThan12 },
-#endif
 };
 
 }  // namespace
@@ -119,7 +90,7 @@ static constexpr Attribute kAttributes[] = {
 static_assert(std::is_pod<Attribute>::value, "Attribute should be POD.");
 
 std::string GetHostAttributes() {
-  std::string result;
+  std::vector<std::string> result;
   // By using ranged for-loop, MSVC throws error C3316:
   // 'const remoting::StaticAttribute [0]':
   // an array of unknown size cannot be used in a range-based for statement.
@@ -127,14 +98,35 @@ std::string GetHostAttributes() {
     const auto& attribute = kAttributes[i];
     DCHECK_EQ(std::string(attribute.name).find(kSeparator), std::string::npos);
     if (attribute.get_value_func()) {
-      if (!result.empty()) {
-        result.append(kSeparator);
-      }
-      result.append(attribute.name);
+      result.push_back(attribute.name);
+    }
+  }
+#if defined(OS_WIN)
+  {
+    GetD3DCapability(&result);
+
+    auto version = base::win::GetVersion();
+    if (version >= base::win::VERSION_WIN8) {
+      result.push_back("Win8+");
+    }
+    if (version >= base::win::VERSION_WIN8_1) {
+      result.push_back("Win81+");
+    }
+    if (version >= base::win::VERSION_WIN10) {
+      result.push_back("Win10+");
     }
   }
 
-  return result;
+  if (media::MediaFoundationVideoEncodeAccelerator
+      ::PreSandboxInitialization() &&
+      media::InitializeMediaFoundation()) {
+    result.push_back("HWEncoder");
+  }
+#elif defined(OS_LINUX)
+  result.push_back("HWEncoder");
+#endif
+
+  return base::JoinString(result, kSeparator);
 }
 
 }  // namespace remoting

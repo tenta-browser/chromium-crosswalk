@@ -68,26 +68,6 @@ void glBlitFramebufferFn(GLint srcX0,
                          GLint dstY1,
                          GLbitfield mask,
                          GLenum filter) override {}
-void glBlitFramebufferANGLEFn(GLint srcX0,
-                              GLint srcY0,
-                              GLint srcX1,
-                              GLint srcY1,
-                              GLint dstX0,
-                              GLint dstY0,
-                              GLint dstX1,
-                              GLint dstY1,
-                              GLbitfield mask,
-                              GLenum filter) override {}
-void glBlitFramebufferEXTFn(GLint srcX0,
-                            GLint srcY0,
-                            GLint srcX1,
-                            GLint srcY1,
-                            GLint dstX0,
-                            GLint dstY0,
-                            GLint dstX1,
-                            GLint dstY1,
-                            GLbitfield mask,
-                            GLenum filter) override {}
 void glBufferDataFn(GLenum target,
                     GLsizeiptr size,
                     const void* data,
@@ -136,6 +116,15 @@ void glCompressedTexImage2DFn(GLenum target,
                               GLint border,
                               GLsizei imageSize,
                               const void* data) override {}
+void glCompressedTexImage2DRobustANGLEFn(GLenum target,
+                                         GLint level,
+                                         GLenum internalformat,
+                                         GLsizei width,
+                                         GLsizei height,
+                                         GLint border,
+                                         GLsizei imageSize,
+                                         GLsizei dataSize,
+                                         const void* data) override {}
 void glCompressedTexImage3DFn(GLenum target,
                               GLint level,
                               GLenum internalformat,
@@ -145,6 +134,16 @@ void glCompressedTexImage3DFn(GLenum target,
                               GLint border,
                               GLsizei imageSize,
                               const void* data) override {}
+void glCompressedTexImage3DRobustANGLEFn(GLenum target,
+                                         GLint level,
+                                         GLenum internalformat,
+                                         GLsizei width,
+                                         GLsizei height,
+                                         GLsizei depth,
+                                         GLint border,
+                                         GLsizei imageSize,
+                                         GLsizei dataSize,
+                                         const void* data) override {}
 void glCompressedTexSubImage2DFn(GLenum target,
                                  GLint level,
                                  GLint xoffset,
@@ -154,6 +153,16 @@ void glCompressedTexSubImage2DFn(GLenum target,
                                  GLenum format,
                                  GLsizei imageSize,
                                  const void* data) override {}
+void glCompressedTexSubImage2DRobustANGLEFn(GLenum target,
+                                            GLint level,
+                                            GLint xoffset,
+                                            GLint yoffset,
+                                            GLsizei width,
+                                            GLsizei height,
+                                            GLenum format,
+                                            GLsizei imageSize,
+                                            GLsizei dataSize,
+                                            const void* data) override {}
 void glCompressedTexSubImage3DFn(GLenum target,
                                  GLint level,
                                  GLint xoffset,
@@ -165,6 +174,18 @@ void glCompressedTexSubImage3DFn(GLenum target,
                                  GLenum format,
                                  GLsizei imageSize,
                                  const void* data) override {}
+void glCompressedTexSubImage3DRobustANGLEFn(GLenum target,
+                                            GLint level,
+                                            GLint xoffset,
+                                            GLint yoffset,
+                                            GLint zoffset,
+                                            GLsizei width,
+                                            GLsizei height,
+                                            GLsizei depth,
+                                            GLenum format,
+                                            GLsizei imageSize,
+                                            GLsizei dataSize,
+                                            const void* data) override {}
 void glCopyBufferSubDataFn(GLenum readTarget,
                            GLenum writeTarget,
                            GLintptr readOffset,
@@ -332,12 +353,6 @@ void glFramebufferTexture2DMultisampleEXTFn(GLenum target,
                                             GLuint texture,
                                             GLint level,
                                             GLsizei samples) override {}
-void glFramebufferTexture2DMultisampleIMGFn(GLenum target,
-                                            GLenum attachment,
-                                            GLenum textarget,
-                                            GLuint texture,
-                                            GLint level,
-                                            GLsizei samples) override {}
 void glFramebufferTextureLayerFn(GLenum target,
                                  GLenum attachment,
                                  GLuint texture,
@@ -490,6 +505,7 @@ void glGetInternalformativRobustANGLEFn(GLenum target,
                                         GLsizei bufSize,
                                         GLsizei* length,
                                         GLint* params) override {}
+void glGetMultisamplefvFn(GLenum pname, GLuint index, GLfloat* val) override {}
 void glGetMultisamplefvRobustANGLEFn(GLenum pname,
                                      GLuint index,
                                      GLsizei bufSize,
@@ -832,6 +848,7 @@ void glPathStencilFuncNVFn(GLenum func, GLint ref, GLuint mask) override {}
 void glPauseTransformFeedbackFn() override {}
 void glPixelStoreiFn(GLenum pname, GLint param) override {}
 void glPointParameteriFn(GLenum pname, GLint param) override {}
+void glPolygonModeFn(GLenum face, GLenum mode) override {}
 void glPolygonOffsetFn(GLfloat factor, GLfloat units) override {}
 void glPopDebugGroupFn() override {}
 void glPopGroupMarkerEXTFn() override {}
@@ -893,17 +910,7 @@ void glRenderbufferStorageMultisampleFn(GLenum target,
                                         GLenum internalformat,
                                         GLsizei width,
                                         GLsizei height) override {}
-void glRenderbufferStorageMultisampleANGLEFn(GLenum target,
-                                             GLsizei samples,
-                                             GLenum internalformat,
-                                             GLsizei width,
-                                             GLsizei height) override {}
 void glRenderbufferStorageMultisampleEXTFn(GLenum target,
-                                           GLsizei samples,
-                                           GLenum internalformat,
-                                           GLsizei width,
-                                           GLsizei height) override {}
-void glRenderbufferStorageMultisampleIMGFn(GLenum target,
                                            GLsizei samples,
                                            GLenum internalformat,
                                            GLsizei width,
@@ -1014,6 +1021,14 @@ void glStencilThenCoverStrokePathNVFn(GLuint path,
                                       GLenum coverMode) override {}
 GLboolean glTestFenceAPPLEFn(GLuint fence) override;
 GLboolean glTestFenceNVFn(GLuint fence) override;
+void glTexBufferFn(GLenum target,
+                   GLenum internalformat,
+                   GLuint buffer) override {}
+void glTexBufferRangeFn(GLenum target,
+                        GLenum internalformat,
+                        GLuint buffer,
+                        GLintptr offset,
+                        GLsizeiptr size) override {}
 void glTexImage2DFn(GLenum target,
                     GLint level,
                     GLint internalformat,
@@ -1251,4 +1266,7 @@ void glVertexAttribPointerFn(GLuint indx,
                              GLsizei stride,
                              const void* ptr) override {}
 void glViewportFn(GLint x, GLint y, GLsizei width, GLsizei height) override {}
-GLenum glWaitSyncFn(GLsync sync, GLbitfield flags, GLuint64 timeout) override;
+void glWaitSyncFn(GLsync sync, GLbitfield flags, GLuint64 timeout) override {}
+void glWindowRectanglesEXTFn(GLenum mode,
+                             GLsizei n,
+                             const GLint* box) override {}

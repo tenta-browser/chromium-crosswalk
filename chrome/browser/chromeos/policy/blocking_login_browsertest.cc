@@ -18,6 +18,7 @@
 #include "chrome/browser/chromeos/login/ui/webui_login_display.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/install_attributes.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "chrome/common/chrome_switches.h"
@@ -124,6 +125,10 @@ class BlockingLoginTest
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override {
     ASSERT_EQ(chrome::NOTIFICATION_PROFILE_ADDED, type);
+    if (chromeos::ProfileHelper::IsLockScreenAppProfile(
+            content::Source<Profile>(source).ptr())) {
+      return;
+    }
     ASSERT_FALSE(profile_added_);
     profile_added_ = content::Source<Profile>(source).ptr();
   }
@@ -175,7 +180,8 @@ class BlockingLoginTest
     std::unique_ptr<net::test_server::HttpResponse> response;
 
     GaiaUrls* gaia = GaiaUrls::GetInstance();
-    if (request.relative_url == gaia->client_login_to_oauth2_url().path() ||
+    if (request.relative_url ==
+            gaia->deprecated_client_login_to_oauth2_url().path() ||
         request.relative_url == gaia->oauth2_token_url().path() ||
         base::StartsWith(request.relative_url, kDMRegisterRequest,
                          base::CompareCase::SENSITIVE) ||
@@ -252,7 +258,8 @@ IN_PROC_BROWSER_TEST_P(BlockingLoginTest, LoginBlocksForUser) {
 
     EXPECT_FALSE(user_manager->IsUserLoggedIn());
     EXPECT_TRUE(browser_policy_connector()->IsEnterpriseManaged());
-    EXPECT_EQ(kDomain, browser_policy_connector()->GetEnterpriseDomain());
+    EXPECT_EQ(kDomain,
+              browser_policy_connector()->GetEnterpriseEnrollmentDomain());
     EXPECT_FALSE(profile_added_);
     RunUntilIdle();
     EXPECT_FALSE(

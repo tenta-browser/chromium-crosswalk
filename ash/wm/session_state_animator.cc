@@ -4,7 +4,9 @@
 
 #include "ash/wm/session_state_animator.h"
 
-#include "ash/ash_switches.h"
+#include <utility>
+
+#include "ash/public/cpp/ash_switches.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
 #include "ash/wm/window_animations.h"
@@ -20,9 +22,9 @@ namespace ash {
 
 namespace {
 
-bool IsTouchViewEnabled() {
+bool IsTabletModeEnabled() {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kAshEnableTouchView);
+      switches::kAshEnableTabletMode);
 }
 
 }  // namespace
@@ -34,17 +36,17 @@ const int SessionStateAnimator::kAllLockScreenContainersMask =
 
 const int SessionStateAnimator::kAllNonRootContainersMask =
     SessionStateAnimator::kAllLockScreenContainersMask |
-    SessionStateAnimator::WALLPAPER | SessionStateAnimator::LAUNCHER |
+    SessionStateAnimator::WALLPAPER | SessionStateAnimator::SHELF |
     SessionStateAnimator::NON_LOCK_SCREEN_CONTAINERS;
 
 SessionStateAnimator::AnimationSequence::AnimationSequence(
-    base::Closure callback)
+    base::OnceClosure callback)
     : sequence_ended_(false),
       animation_completed_(false),
       invoke_callback_(false),
-      callback_(callback) {}
+      callback_(std::move(callback)) {}
 
-SessionStateAnimator::AnimationSequence::~AnimationSequence() {}
+SessionStateAnimator::AnimationSequence::~AnimationSequence() = default;
 
 void SessionStateAnimator::AnimationSequence::EndSequence() {
   sequence_ended_ = true;
@@ -66,14 +68,14 @@ void SessionStateAnimator::AnimationSequence::OnAnimationAborted() {
 void SessionStateAnimator::AnimationSequence::CleanupIfSequenceCompleted() {
   if (sequence_ended_ && animation_completed_) {
     if (invoke_callback_)
-      callback_.Run();
+      std::move(callback_).Run();
     delete this;
   }
 }
 
-SessionStateAnimator::SessionStateAnimator() {}
+SessionStateAnimator::SessionStateAnimator() = default;
 
-SessionStateAnimator::~SessionStateAnimator() {}
+SessionStateAnimator::~SessionStateAnimator() = default;
 
 base::TimeDelta SessionStateAnimator::GetDuration(
     SessionStateAnimator::AnimationSpeed speed) {
@@ -93,8 +95,8 @@ base::TimeDelta SessionStateAnimator::GetDuration(
     case ANIMATION_SPEED_UNDO_MOVE_WINDOWS:
       return base::TimeDelta::FromMilliseconds(350);
     case ANIMATION_SPEED_SHUTDOWN:
-      return IsTouchViewEnabled() ? base::TimeDelta::FromMilliseconds(1500)
-                                  : base::TimeDelta::FromMilliseconds(1000);
+      return IsTabletModeEnabled() ? base::TimeDelta::FromMilliseconds(1500)
+                                   : base::TimeDelta::FromMilliseconds(1000);
     case ANIMATION_SPEED_REVERT_SHUTDOWN:
       return base::TimeDelta::FromMilliseconds(500);
   }

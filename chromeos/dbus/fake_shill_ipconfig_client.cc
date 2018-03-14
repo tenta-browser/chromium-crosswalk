@@ -4,6 +4,9 @@
 
 #include "chromeos/dbus/fake_shill_ipconfig_client.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
@@ -23,8 +26,7 @@ namespace chromeos {
 FakeShillIPConfigClient::FakeShillIPConfigClient() : weak_ptr_factory_(this) {
 }
 
-FakeShillIPConfigClient::~FakeShillIPConfigClient() {
-}
+FakeShillIPConfigClient::~FakeShillIPConfigClient() = default;
 
 void FakeShillIPConfigClient::Init(dbus::Bus* bus) {
 }
@@ -40,8 +42,7 @@ void FakeShillIPConfigClient::RemovePropertyChangedObserver(
 }
 
 void FakeShillIPConfigClient::Refresh(const dbus::ObjectPath& ipconfig_path,
-                                      const VoidDBusMethodCallback& callback) {
-}
+                                      VoidDBusMethodCallback callback) {}
 
 void FakeShillIPConfigClient::GetProperties(
     const dbus::ObjectPath& ipconfig_path,
@@ -55,39 +56,35 @@ void FakeShillIPConfigClient::GetProperties(
                             weak_ptr_factory_.GetWeakPtr(), dict, callback));
 }
 
-void FakeShillIPConfigClient::SetProperty(
-    const dbus::ObjectPath& ipconfig_path,
-    const std::string& name,
-    const base::Value& value,
-    const VoidDBusMethodCallback& callback) {
-  base::DictionaryValue* dict = NULL;
-  if (ipconfigs_.GetDictionaryWithoutPathExpansion(ipconfig_path.value(),
-                                                   &dict)) {
-    // Update existing ip config stub object's properties.
-    dict->SetWithoutPathExpansion(name, value.DeepCopy());
-  } else {
-    // Create a new stub ipconfig object, and update its properties.
-    base::DictionaryValue* dvalue = new base::DictionaryValue;
-    dvalue->SetWithoutPathExpansion(name, value.DeepCopy());
-    ipconfigs_.SetWithoutPathExpansion(ipconfig_path.value(),
-                                       dvalue);
+void FakeShillIPConfigClient::SetProperty(const dbus::ObjectPath& ipconfig_path,
+                                          const std::string& name,
+                                          const base::Value& value,
+                                          VoidDBusMethodCallback callback) {
+  base::Value* dict = ipconfigs_.FindKeyOfType(ipconfig_path.value(),
+                                               base::Value::Type::DICTIONARY);
+  if (!dict) {
+    dict = ipconfigs_.SetKey(ipconfig_path.value(),
+                             base::Value(base::Value::Type::DICTIONARY));
   }
+
+  // Update existing ip config stub object's properties.
+  dict->SetKey(name, value.Clone());
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, DBUS_METHOD_CALL_SUCCESS));
+      FROM_HERE, base::BindOnce(std::move(callback), true));
 }
 
 void FakeShillIPConfigClient::ClearProperty(
     const dbus::ObjectPath& ipconfig_path,
     const std::string& name,
-    const VoidDBusMethodCallback& callback) {
+    VoidDBusMethodCallback callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, DBUS_METHOD_CALL_SUCCESS));
+      FROM_HERE, base::BindOnce(std::move(callback), true));
 }
 
 void FakeShillIPConfigClient::Remove(const dbus::ObjectPath& ipconfig_path,
-                                     const VoidDBusMethodCallback& callback) {
+                                     VoidDBusMethodCallback callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, DBUS_METHOD_CALL_SUCCESS));
+      FROM_HERE, base::BindOnce(std::move(callback), true));
 }
 
 ShillIPConfigClient::TestInterface*
@@ -100,7 +97,7 @@ FakeShillIPConfigClient::GetTestInterface() {
 void FakeShillIPConfigClient::AddIPConfig(
     const std::string& ip_config_path,
     const base::DictionaryValue& properties) {
-  ipconfigs_.SetWithoutPathExpansion(ip_config_path, properties.DeepCopy());
+  ipconfigs_.SetKey(ip_config_path, properties.Clone());
 }
 
 // Private methods

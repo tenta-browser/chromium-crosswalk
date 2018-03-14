@@ -16,7 +16,6 @@
 #include "chrome/browser/ui/passwords/password_dialog_controller.h"
 #include "chrome/browser/ui/passwords/password_dialog_prompts.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/theme_resources.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/common/credential_manager_types.h"
 #include "skia/ext/skia_utils_mac.h"
@@ -219,8 +218,8 @@ constexpr CGFloat kMaxHeightAccounts = 3.5;
     } else {
       NSString* text = base::SysUTF16ToNSString(
           labels.first + base::ASCIIToUTF16("\n") + labels.second);
-      NSFont* font = ResourceBundle::GetSharedInstance()
-                         .GetFontList(ResourceBundle::SmallFont)
+      NSFont* font = ui::ResourceBundle::GetSharedInstance()
+                         .GetFontList(ui::ResourceBundle::SmallFont)
                          .GetPrimaryFont()
                          .GetNativeFont();
       NSDictionary* attrsDictionary =

@@ -9,7 +9,6 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "components/cdm/common/cdm_messages_android.h"
 #include "components/cdm/renderer/widevine_key_system_properties.h"
 #include "content/public/renderer/render_thread.h"
 #include "media/base/eme_constants.h"
@@ -92,6 +91,8 @@ class AndroidPlatformKeySystemProperties : public KeySystemProperties {
   const SupportedCodecs supported_codecs_;
 };
 
+}  // namespace
+
 SupportedKeySystemResponse QueryKeySystemSupport(
     const std::string& key_system) {
   SupportedKeySystemRequest request;
@@ -101,14 +102,13 @@ SupportedKeySystemResponse QueryKeySystemSupport(
   request.codecs = media::EME_CODEC_ALL;
   content::RenderThread::Get()->Send(
       new ChromeViewHostMsg_QueryKeySystemSupport(request, &response));
-  DCHECK(!(response.compositing_codecs & ~media::EME_CODEC_ALL))
+
+  DCHECK(!(response.non_secure_codecs & ~media::EME_CODEC_ALL))
       << "unrecognized codec";
-  DCHECK(!(response.non_compositing_codecs & ~media::EME_CODEC_ALL))
+  DCHECK(!(response.secure_codecs & ~media::EME_CODEC_ALL))
       << "unrecognized codec";
   return response;
 }
-
-}  // namespace
 
 void AddAndroidWidevine(
     std::vector<std::unique_ptr<KeySystemProperties>>* concrete_key_systems) {
@@ -124,11 +124,11 @@ void AddAndroidWidevine(
           ? EmeSessionTypeSupport::SUPPORTED_WITH_IDENTIFIER
           : EmeSessionTypeSupport::NOT_SUPPORTED;
 
-  if (response.compositing_codecs != media::EME_CODEC_NONE) {
+  if (response.non_secure_codecs != media::EME_CODEC_NONE) {
     DVLOG(3) << __func__ << " Widevine supported.";
     concrete_key_systems->emplace_back(new WidevineKeySystemProperties(
-        response.compositing_codecs,           // Regular codecs.
-        response.non_compositing_codecs,       // Hardware-secure codecs.
+        response.non_secure_codecs,            // Regular codecs.
+        response.secure_codecs,                // Hardware-secure codecs.
         Robustness::HW_SECURE_CRYPTO,          // Max audio robustness.
         Robustness::HW_SECURE_ALL,             // Max video robustness.
         persistent_license_support,            // persistent-license.
@@ -138,7 +138,7 @@ void AddAndroidWidevine(
   } else {
     // It doesn't make sense to support secure codecs but not regular codecs.
     DVLOG(3) << __func__ << " Widevine NOT supported.";
-    DCHECK(response.non_compositing_codecs == media::EME_CODEC_NONE);
+    DCHECK(response.secure_codecs == media::EME_CODEC_NONE);
   }
 }
 
@@ -151,9 +151,9 @@ void AddAndroidPlatformKeySystems(
   for (std::vector<std::string>::const_iterator it = key_system_names.begin();
        it != key_system_names.end(); ++it) {
     SupportedKeySystemResponse response = QueryKeySystemSupport(*it);
-    if (response.compositing_codecs != media::EME_CODEC_NONE) {
+    if (response.non_secure_codecs != media::EME_CODEC_NONE) {
       concrete_key_systems->emplace_back(new AndroidPlatformKeySystemProperties(
-          *it, response.compositing_codecs));
+          *it, response.non_secure_codecs));
     }
   }
 }

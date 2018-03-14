@@ -9,6 +9,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/single_thread_task_runner.h"
 #include "remoting/host/me2me_desktop_environment.h"
 
 namespace remoting {
@@ -29,6 +30,7 @@ class SessionDesktopEnvironment : public Me2MeDesktopEnvironment {
       scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
+      ui::SystemInputInjectorFactory* system_input_injector_factory,
       const base::Closure& inject_sas,
       const base::Closure& lock_workstation,
       const DesktopEnvironmentOptions& options);
@@ -50,6 +52,7 @@ class SessionDesktopEnvironmentFactory : public Me2MeDesktopEnvironmentFactory {
       scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
+      ui::SystemInputInjectorFactory* system_input_injector_factory,
       const base::Closure& inject_sas,
       const base::Closure& lock_workstation);
   ~SessionDesktopEnvironmentFactory() override;

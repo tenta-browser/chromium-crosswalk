@@ -35,7 +35,7 @@ class NoOpGLSurface : public GLSurface {
   bool Initialize(GLSurfaceFormat format) override { return true; }
   void Destroy() override {}
   bool IsOffscreen() override { return true; }
-  gfx::SwapResult SwapBuffers() override {
+  gfx::SwapResult SwapBuffers(const PresentationCallback& callback) override {
     NOTREACHED() << "Cannot call SwapBuffers on a NoOpGLSurface.";
     return gfx::SwapResult::SWAP_FAILED;
   }
@@ -141,6 +141,19 @@ scoped_refptr<GLSurface> CreateOffscreenGLSurfaceWithFormat(
       NOTREACHED();
       return nullptr;
   }
+}
+
+void SetDisabledExtensionsPlatform(const std::string& disabled_extensions) {
+  GLImplementation implementation = GetGLImplementation();
+  DCHECK_NE(kGLImplementationNone, implementation);
+  // TODO(zmo): Implement this if needs arise.
+}
+
+bool InitializeExtensionSettingsOneOffPlatform() {
+  GLImplementation implementation = GetGLImplementation();
+  DCHECK_NE(kGLImplementationNone, implementation);
+  // TODO(zmo): Implement this if needs arise.
+  return true;
 }
 
 }  // namespace init

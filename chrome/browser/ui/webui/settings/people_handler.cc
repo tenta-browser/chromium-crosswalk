@@ -29,22 +29,24 @@
 #include "chrome/browser/sync/sync_ui_util.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/user_manager.h"
 #include "chrome/browser/ui/webui/profile_helper.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/autofill_pref_names.h"
 #include "components/browser_sync/profile_sync_service.h"
 #include "components/prefs/pref_service.h"
+#include "components/signin/core/browser/profile_management_switches.h"
 #include "components/signin/core/browser/signin_error_controller.h"
 #include "components/signin/core/browser/signin_header_helper.h"
 #include "components/signin/core/browser/signin_metrics.h"
-#include "components/signin/core/common/profile_management_switches.h"
-#include "components/signin/core/common/signin_pref_names.h"
+#include "components/signin/core/browser/signin_pref_names.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/sync/base/passphrase_type.h"
 #include "components/sync/base/sync_prefs.h"
@@ -162,6 +164,8 @@ std::string GetSyncErrorAction(sync_ui_util::ActionType action_type) {
       return "upgradeClient";
     case sync_ui_util::ENTER_PASSPHRASE:
       return "enterPassphrase";
+    case sync_ui_util::CONFIRM_SYNC_SETTINGS:
+      return "confirmSyncSettings";
     default:
       return "noAction";
   }
@@ -194,6 +198,7 @@ PeopleHandler::~PeopleHandler() {
 }
 
 void PeopleHandler::RegisterMessages() {
+  InitializeSyncBlocker();
   web_ui()->RegisterMessageCallback(
       "SyncSetupDidClosePage",
       base::Bind(&PeopleHandler::OnDidClosePage, base::Unretained(this)));
@@ -292,7 +297,7 @@ void PeopleHandler::DisplayGaiaLoginInNewTabOrWindow(
           BrowserWindow::AVATAR_BUBBLE_MODE_REAUTH,
           signin::ManageAccountsParams(), access_point, false);
     } else {
-      url = signin::GetReauthURL(
+      url = signin::GetReauthURLForTab(
           access_point, signin_metrics::Reason::REASON_REAUTHENTICATION,
           browser->profile(), error_controller->error_account_id());
     }
@@ -302,7 +307,7 @@ void PeopleHandler::DisplayGaiaLoginInNewTabOrWindow(
           BrowserWindow::AVATAR_BUBBLE_MODE_SIGNIN,
           signin::ManageAccountsParams(), access_point, false);
     } else {
-      url = signin::GetPromoURL(
+      url = signin::GetPromoURLForTab(
           access_point, signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT,
           true);
     }
@@ -323,9 +328,7 @@ void PeopleHandler::DisplaySpinner() {
                              base::TimeDelta::FromSeconds(kTimeoutSec), this,
                              &PeopleHandler::DisplayTimeout);
 
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("page-status-changed"),
-                         base::Value(kSpinnerPageStatus));
+  FireWebUIListener("page-status-changed", base::Value(kSpinnerPageStatus));
 }
 
 void PeopleHandler::DisplayTimeout() {
@@ -335,9 +338,7 @@ void PeopleHandler::DisplayTimeout() {
   // Do not listen to sync startup events.
   sync_startup_tracker_.reset();
 
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("page-status-changed"),
-                         base::Value(kTimeoutPageStatus));
+  FireWebUIListener("page-status-changed", base::Value(kTimeoutPageStatus));
 }
 
 void PeopleHandler::OnDidClosePage(const base::ListValue* args) {
@@ -561,7 +562,7 @@ void PeopleHandler::HandleGetSyncStatus(const base::ListValue* args) {
 }
 
 void PeopleHandler::HandleManageOtherPeople(const base::ListValue* /* args */) {
-  UserManager::Show(base::FilePath(), profiles::USER_MANAGER_NO_TUTORIAL,
+  UserManager::Show(base::FilePath(),
                     profiles::USER_MANAGER_SELECT_PROFILE_NO_ACTION);
 }
 
@@ -627,7 +628,7 @@ void PeopleHandler::OpenSyncSetup() {
   GetLoginUIService()->SetLoginUI(this);
 
   ProfileSyncService* service = GetSyncService();
-  if (service)
+  if (service && !sync_blocker_)
     sync_blocker_ = service->GetSetupInProgressHandle();
 
   // There are several different UI flows that can bring the user here:
@@ -688,6 +689,20 @@ void PeopleHandler::OpenSyncSetup() {
   PushSyncPrefs();
 }
 
+void PeopleHandler::InitializeSyncBlocker() {
+  if (!web_ui())
+    return;
+  WebContents* web_contents = web_ui()->GetWebContents();
+  if (web_contents) {
+    ProfileSyncService* service = GetSyncService();
+    const GURL current_url = web_contents->GetVisibleURL();
+    if (service &&
+        current_url == chrome::GetSettingsUrl(chrome::kSyncSetupSubPage)) {
+      sync_blocker_ = service->GetSetupInProgressHandle();
+    }
+  }
+}
+
 void PeopleHandler::FocusUI() {
   WebContents* web_contents = web_ui()->GetWebContents();
   web_contents->GetDelegate()->ActivateContents(web_contents);
@@ -695,14 +710,11 @@ void PeopleHandler::FocusUI() {
 
 void PeopleHandler::CloseUI() {
   CloseSyncSetup();
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("page-status-changed"),
-                         base::Value(kDonePageStatus));
+  FireWebUIListener("page-status-changed", base::Value(kDonePageStatus));
 }
 
 void PeopleHandler::GoogleSigninSucceeded(const std::string& /* account_id */,
-                                          const std::string& /* username */,
-                                          const std::string& /* password */) {
+                                          const std::string& /* username */) {
   UpdateSyncStatus();
 }
 
@@ -721,9 +733,6 @@ void PeopleHandler::OnStateChanged(syncer::SyncService* sync) {
 
 std::unique_ptr<base::DictionaryValue>
 PeopleHandler::GetSyncStatusDictionary() {
-  // The items which are to be written into |sync_status| are also described in
-  // chrome/browser/resources/options/browser_options.js in @typedef
-  // for SyncStatus. Please update it whenever you add or remove any keys here.
   std::unique_ptr<base::DictionaryValue> sync_status(new base::DictionaryValue);
   if (profile_->IsGuestSession()) {
     // Cannot display signin status when running in guest mode on chromeos
@@ -885,8 +894,7 @@ void PeopleHandler::PushSyncPrefs() {
                    GetStringUTF16(IDS_SYNC_FULL_ENCRYPTION_BODY_CUSTOM));
   }
 
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("sync-prefs-changed"), args);
+  FireWebUIListener("sync-prefs-changed", args);
 }
 
 LoginUIService* PeopleHandler::GetLoginUIService() const {
@@ -894,9 +902,7 @@ LoginUIService* PeopleHandler::GetLoginUIService() const {
 }
 
 void PeopleHandler::UpdateSyncStatus() {
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("sync-status-changed"),
-                         *GetSyncStatusDictionary());
+  FireWebUIListener("sync-status-changed", *GetSyncStatusDictionary());
 }
 
 void PeopleHandler::MarkFirstSetupComplete() {

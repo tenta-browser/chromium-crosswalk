@@ -27,6 +27,8 @@
 
 #include "SkMatrix44.h"
 #include "core/dom/AccessibleNode.h"
+#include "core/html/forms/HTMLSelectElement.h"
+#include "modules/accessibility/AXMenuList.h"
 #include "modules/accessibility/AXMenuListPopup.h"
 #include "modules/accessibility/AXObjectCacheImpl.h"
 
@@ -47,6 +49,12 @@ void AXMenuListOption::Detach() {
   AXMockObject::Detach();
 }
 
+LocalFrameView* AXMenuListOption::DocumentFrameView() const {
+  if (IsDetached())
+    return nullptr;
+  return element_->GetDocument().View();
+}
+
 AccessibilityRole AXMenuListOption::RoleValue() const {
   const AtomicString& aria_role =
       GetAOMPropertyOrARIAAttribute(AOMStringProperty::kRole);
@@ -63,10 +71,31 @@ Element* AXMenuListOption::ActionElement() const {
   return element_;
 }
 
-bool AXMenuListOption::IsEnabled() const {
-  // isDisabledFormControl() returns true if the parent <select> element is
-  // disabled, which we don't want.
-  return element_ && !element_->OwnElementDisabled();
+AXObject* AXMenuListOption::ComputeParent() const {
+  Node* node = GetNode();
+  if (!node)
+    return nullptr;
+  HTMLSelectElement* select = ToHTMLOptionElement(node)->OwnerSelectElement();
+  if (!select)
+    return nullptr;
+  AXObject* select_ax_object = AXObjectCache().GetOrCreate(select);
+
+  // This happens if the <select> is not rendered. Return it and move on.
+  if (!select_ax_object->IsMenuList())
+    return select_ax_object;
+
+  AXMenuList* menu_list = ToAXMenuList(select_ax_object);
+  if (menu_list->HasChildren()) {
+    const auto& child_objects = menu_list->Children();
+    if (child_objects.IsEmpty())
+      return nullptr;
+    DCHECK_EQ(child_objects.size(), 1UL);
+    DCHECK(child_objects[0]->IsMenuListPopup());
+    ToAXMenuListPopup(child_objects[0].Get())->UpdateChildrenIfNecessary();
+  } else {
+    menu_list->UpdateChildrenIfNecessary();
+  }
+  return parent_.Get();
 }
 
 bool AXMenuListOption::IsVisible() const {
@@ -90,15 +119,12 @@ bool AXMenuListOption::IsSelected() const {
   return element_ && element_->Selected();
 }
 
-void AXMenuListOption::SetSelected(bool b) {
+bool AXMenuListOption::OnNativeSetSelectedAction(bool b) {
   if (!element_ || !CanSetSelectedAttribute())
-    return;
+    return false;
 
   element_->SetSelected(b);
-}
-
-bool AXMenuListOption::CanSetSelectedAttribute() const {
-  return IsEnabled();
+  return true;
 }
 
 bool AXMenuListOption::ComputeAccessibilityIsIgnored(
@@ -106,10 +132,10 @@ bool AXMenuListOption::ComputeAccessibilityIsIgnored(
   return AccessibilityIsIgnoredByDefault(ignored_reasons);
 }
 
-void AXMenuListOption::GetRelativeBounds(
-    AXObject** out_container,
-    FloatRect& out_bounds_in_container,
-    SkMatrix44& out_container_transform) const {
+void AXMenuListOption::GetRelativeBounds(AXObject** out_container,
+                                         FloatRect& out_bounds_in_container,
+                                         SkMatrix44& out_container_transform,
+                                         bool* clips_children) const {
   *out_container = nullptr;
   out_bounds_in_container = FloatRect();
   out_container_transform.setIdentity();
@@ -124,7 +150,7 @@ void AXMenuListOption::GetRelativeBounds(
     return;
   DCHECK(grandparent->IsMenuList());
   grandparent->GetRelativeBounds(out_container, out_bounds_in_container,
-                                 out_container_transform);
+                                 out_container_transform, clips_children);
 }
 
 String AXMenuListOption::TextAlternative(bool recursive,
@@ -160,7 +186,17 @@ String AXMenuListOption::TextAlternative(bool recursive,
   return text_alternative;
 }
 
-DEFINE_TRACE(AXMenuListOption) {
+HTMLSelectElement* AXMenuListOption::ParentSelectNode() const {
+  if (!GetNode())
+    return nullptr;
+
+  if (auto* option = ToHTMLOptionElementOrNull(GetNode()))
+    return option->OwnerSelectElement();
+
+  return nullptr;
+}
+
+void AXMenuListOption::Trace(blink::Visitor* visitor) {
   visitor->Trace(element_);
   AXMockObject::Trace(visitor);
 }

@@ -22,6 +22,9 @@ class GLOzoneEGL : public GLOzone {
   bool InitializeGLOneOffPlatform() override;
   bool InitializeStaticGLBindings(gl::GLImplementation implementation) override;
   void InitializeDebugGLBindings() override;
+  void SetDisabledExtensionsPlatform(
+      const std::string& disabled_extensions) override;
+  bool InitializeExtensionSettingsOneOffPlatform() override;
   void ShutdownGL() override;
   bool GetGLWindowSystemBindingInfo(
       gl::GLWindowSystemBindingInfo* info) override;
@@ -42,7 +45,7 @@ class GLOzoneEGL : public GLOzone {
   virtual intptr_t GetNativeDisplay() = 0;
 
   // Sets up GL bindings for the native surface.
-  virtual bool LoadGLES2Bindings() = 0;
+  virtual bool LoadGLES2Bindings(gl::GLImplementation implementation) = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(GLOzoneEGL);

@@ -20,6 +20,7 @@
 #include "third_party/icu/source/i18n/unicode/smpdtfmt.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/label.h"
@@ -122,32 +123,26 @@ void BaseDateTimeView::ChildPreferredSizeChanged(views::View* child) {
   PreferredSizeChanged();
 }
 
-void BaseDateTimeView::OnLocaleChanged() {
-  UpdateText();
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 
 DateView::DateView(SystemTrayItem* owner)
     : BaseDateTimeView(owner), action_(DateAction::NONE) {
-  // TODO(tdanderson): Tweak spacing and layout for material design.
   views::BoxLayout* box_layout =
-      new views::BoxLayout(views::BoxLayout::kHorizontal, 0, 0, 0);
-  box_layout->set_inside_border_insets(gfx::Insets(0, 12, 0, 0));
+      new views::BoxLayout(views::BoxLayout::kHorizontal,
+                           gfx::Insets(0, kTrayPopupLabelHorizontalPadding), 0);
   box_layout->set_main_axis_alignment(
-      views::BoxLayout::MAIN_AXIS_ALIGNMENT_START);
+      views::BoxLayout::MAIN_AXIS_ALIGNMENT_CENTER);
   box_layout->set_cross_axis_alignment(
       views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
   SetLayoutManager(box_layout);
   date_label_ = TrayPopupUtils::CreateDefaultLabel();
-  date_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   UpdateTextInternal(base::Time::Now());
   TrayPopupItemStyle style(TrayPopupItemStyle::FontStyle::SYSTEM_INFO);
   style.SetupLabel(date_label_);
   AddChildView(date_label_);
 }
 
-DateView::~DateView() {}
+DateView::~DateView() = default;
 
 void DateView::SetAction(DateAction action) {
   if (action == action_)
@@ -200,7 +195,7 @@ TimeView::TimeView(ClockLayout clock_layout) : BaseDateTimeView(nullptr) {
   UpdateClockLayout(clock_layout);
 }
 
-TimeView::~TimeView() {}
+TimeView::~TimeView() = default;
 
 void TimeView::UpdateTimeFormat() {
   hour_type_ = Shell::Get()->system_tray_controller()->hour_clock_type();
@@ -251,7 +246,7 @@ bool TimeView::OnMousePressed(const ui::MouseEvent& event) {
 }
 
 void TimeView::OnGestureEvent(ui::GestureEvent* event) {
-  // Skip gesture handling happening in CustomButton so that the container views
+  // Skip gesture handling happening in Button so that the container views
   // receive and handle them properly.
   // TODO(mohsen): Refactor TimeView/DateView classes so that they are not
   // ActionableView anymore. Create an ActionableView as a container for when
@@ -267,8 +262,7 @@ void TimeView::UpdateClockLayout(ClockLayout clock_layout) {
     AddChildView(horizontal_label_.get());
   } else {
     RemoveChildView(horizontal_label_.get());
-    views::GridLayout* layout = new views::GridLayout(this);
-    SetLayoutManager(layout);
+    views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
     const int kColumnId = 0;
     views::ColumnSet* columns = layout->AddColumnSet(kColumnId);
     columns->AddPaddingColumn(0, kVerticalClockLeftPadding);

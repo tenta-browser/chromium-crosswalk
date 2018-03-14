@@ -7,9 +7,10 @@
 #include <cmath>
 
 #include "base/strings/stringprintf.h"
+#include "ui/gfx/geometry/angle_conversions.h"
 
 namespace {
-const float kRadiansToDegrees = 180.0f / 3.14159265f;
+const double kEpsilon = 1.0e-6;
 }
 
 namespace gfx {
@@ -61,6 +62,15 @@ void Vector3dF::Cross(const Vector3dF& other) {
   z_ = z;
 }
 
+bool Vector3dF::GetNormalized(Vector3dF* out) const {
+  double length_squared = LengthSquared();
+  *out = *this;
+  if (length_squared < kEpsilon * kEpsilon)
+    return false;
+  out->Scale(1 / sqrt(length_squared));
+  return true;
+}
+
 float DotProduct(const Vector3dF& lhs, const Vector3dF& rhs) {
   return lhs.x() * rhs.x() + lhs.y() * rhs.y() + lhs.z() * rhs.z();
 }
@@ -76,8 +86,8 @@ Vector3dF ScaleVector3d(const Vector3dF& v,
 
 float AngleBetweenVectorsInDegrees(const gfx::Vector3dF& base,
                                    const gfx::Vector3dF& other) {
-  return acos(gfx::DotProduct(base, other) / base.Length() / other.Length()) *
-         kRadiansToDegrees;
+  return gfx::RadToDeg(
+      std::acos(gfx::DotProduct(base, other) / base.Length() / other.Length()));
 }
 
 float ClockwiseAngleBetweenVectorsInDegrees(const gfx::Vector3dF& base,

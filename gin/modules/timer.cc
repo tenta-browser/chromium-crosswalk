@@ -54,8 +54,7 @@ Timer::Timer(v8::Isolate* isolate, bool repeating, int delay_ms,
                base::Bind(&Timer::OnTimerFired, weak_factory_.GetWeakPtr()));
 }
 
-Timer::~Timer() {
-}
+Timer::~Timer() = default;
 
 void Timer::OnTimerFired() {
   // This can happen in spite of the weak callback because it is possible for
@@ -67,9 +66,14 @@ void Timer::OnTimerFired() {
 
   Runner::Scope scope(runner_.get());
   v8::Isolate* isolate = runner_->GetContextHolder()->isolate();
+
+  v8::Local<v8::Object> wrapper;
+  if (!GetWrapper(isolate).ToLocal(&wrapper)) {
+    return;
+  }
+
   v8::Local<v8::Function> function = v8::Local<v8::Function>::Cast(
-      GetWrapper(isolate)
-          .ToLocalChecked()
+      wrapper
           ->GetPrivate(runner_->GetContextHolder()->context(),
                        GetHiddenPropertyName(isolate))
           .ToLocalChecked());
@@ -92,11 +96,9 @@ v8::Local<v8::Value> TimerModule::GetModule(v8::Isolate* isolate) {
   return Create(isolate)->GetWrapper(isolate).ToLocalChecked();
 }
 
-TimerModule::TimerModule() {
-}
+TimerModule::TimerModule() = default;
 
-TimerModule::~TimerModule() {
-}
+TimerModule::~TimerModule() = default;
 
 ObjectTemplateBuilder TimerModule::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {

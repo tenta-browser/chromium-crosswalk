@@ -9,10 +9,12 @@
 
 #include <vector>
 
+#include "base/callback.h"
 #include "base/time/time.h"
 #include "content/browser/service_worker/service_worker_version.h"
 #include "content/common/content_export.h"
 #include "content/common/service_worker/service_worker_types.h"
+#include "third_party/WebKit/common/service_worker/service_worker_provider_type.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -24,11 +26,17 @@ struct CONTENT_EXPORT ServiceWorkerVersionInfo {
   struct CONTENT_EXPORT ClientInfo {
    public:
     ClientInfo();
-    ClientInfo(int process_id, int route_id, ServiceWorkerProviderType type);
+    ClientInfo(int process_id,
+               int route_id,
+               const base::Callback<WebContents*(void)>& web_contents_getter,
+               blink::mojom::ServiceWorkerProviderType type);
+    ClientInfo(const ClientInfo& other);
     ~ClientInfo();
     int process_id;
     int route_id;
-    ServiceWorkerProviderType type;
+    // |web_contents_getter| is only set for PlzNavigate.
+    base::Callback<WebContents*(void)> web_contents_getter;
+    blink::mojom::ServiceWorkerProviderType type;
   };
 
   ServiceWorkerVersionInfo();
@@ -48,7 +56,7 @@ struct CONTENT_EXPORT ServiceWorkerVersionInfo {
   EmbeddedWorkerStatus running_status;
   ServiceWorkerVersion::Status status;
   ServiceWorkerVersion::FetchHandlerExistence fetch_handler_existence;
-  NavigationPreloadState navigation_preload_state;
+  blink::mojom::NavigationPreloadState navigation_preload_state;
   GURL script_url;
   int64_t registration_id;
   int64_t version_id;

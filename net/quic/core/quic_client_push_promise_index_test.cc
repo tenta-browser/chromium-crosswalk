@@ -7,49 +7,55 @@
 #include <string>
 
 #include "net/quic/core/spdy_utils.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/mock_quic_client_promised_info.h"
+#include "net/quic/test_tools/quic_spdy_session_peer.h"
 #include "net/quic/test_tools/quic_test_utils.h"
-#include "net/tools/quic/quic_client_session.h"
+#include "net/tools/quic/quic_spdy_client_session.h"
 
-using testing::_;
 using testing::Return;
 using testing::StrictMock;
+using testing::_;
 using std::string;
 
 namespace net {
 namespace test {
 namespace {
 
-class MockQuicClientSession : public QuicClientSession {
+class MockQuicSpdyClientSession : public QuicSpdyClientSession {
  public:
-  explicit MockQuicClientSession(QuicConnection* connection,
-                                 QuicClientPushPromiseIndex* push_promise_index)
-      : QuicClientSession(
+  explicit MockQuicSpdyClientSession(
+      QuicConnection* connection,
+      QuicClientPushPromiseIndex* push_promise_index)
+      : QuicSpdyClientSession(
             DefaultQuicConfig(),
             connection,
             QuicServerId("example.com", 443, PRIVACY_MODE_DISABLED),
             &crypto_config_,
             push_promise_index),
         crypto_config_(crypto_test_utils::ProofVerifierForTesting()) {}
-  ~MockQuicClientSession() override {}
+  ~MockQuicSpdyClientSession() override {}
 
   MOCK_METHOD1(CloseStream, void(QuicStreamId stream_id));
 
  private:
   QuicCryptoClientConfig crypto_config_;
 
-  DISALLOW_COPY_AND_ASSIGN(MockQuicClientSession);
+  DISALLOW_COPY_AND_ASSIGN(MockQuicSpdyClientSession);
 };
 
-class QuicClientPushPromiseIndexTest : public ::testing::Test {
+class QuicClientPushPromiseIndexTest : public QuicTest {
  public:
   QuicClientPushPromiseIndexTest()
       : connection_(new StrictMock<MockQuicConnection>(&helper_,
                                                        &alarm_factory_,
                                                        Perspective::IS_CLIENT)),
         session_(connection_, &index_),
-        promised_(&session_, kServerDataStreamId1, url_) {
+        promised_(
+            &session_,
+            QuicSpdySessionPeer::GetNthServerInitiatedStreamId(session_, 0),
+            url_) {
     request_[":path"] = "/bar";
     request_[":authority"] = "www.google.com";
     request_[":version"] = "HTTP/1.1";
@@ -61,7 +67,7 @@ class QuicClientPushPromiseIndexTest : public ::testing::Test {
   MockQuicConnectionHelper helper_;
   MockAlarmFactory alarm_factory_;
   StrictMock<MockQuicConnection>* connection_;
-  MockQuicClientSession session_;
+  MockQuicSpdyClientSession session_;
   QuicClientPushPromiseIndex index_;
   SpdyHeaderBlock request_;
   string url_;

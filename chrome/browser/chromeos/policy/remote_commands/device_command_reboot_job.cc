@@ -16,6 +16,7 @@
 #include "base/time/time.h"
 #include "chromeos/dbus/power_manager_client.h"
 #include "components/policy/proto/device_management_backend.pb.h"
+#include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace policy {
 
@@ -63,12 +64,13 @@ void DeviceCommandRebootJob::RunImpl(
     SYSLOG(WARNING) << "Ignoring reboot command issued " << delta
                     << " before current boot time";
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(succeeded_callback, nullptr));
+        FROM_HERE, base::BindOnce(succeeded_callback, nullptr));
     return;
   }
 
   SYSLOG(INFO) << "Rebooting immediately.";
-  power_manager_client_->RequestRestart();
+  power_manager_client_->RequestRestart(power_manager::REQUEST_RESTART_OTHER,
+                                        "policy device command");
 }
 
 base::TimeDelta DeviceCommandRebootJob::GetCommmandTimeout() const {

@@ -6,8 +6,8 @@
 
 #include <memory>
 #include "core/animation/InterpolableValue.h"
-#include "core/animation/InterpolationEnvironment.h"
 #include "core/animation/NonInterpolableValue.h"
+#include "core/animation/SVGInterpolationEnvironment.h"
 #include "core/animation/StringKeyframe.h"
 #include "core/svg/SVGTransform.h"
 #include "core/svg/SVGTransformList.h"
@@ -17,11 +17,12 @@ namespace blink {
 
 class SVGTransformNonInterpolableValue : public NonInterpolableValue {
  public:
-  virtual ~SVGTransformNonInterpolableValue() {}
+  ~SVGTransformNonInterpolableValue() override {}
 
-  static PassRefPtr<SVGTransformNonInterpolableValue> Create(
+  static scoped_refptr<SVGTransformNonInterpolableValue> Create(
       Vector<SVGTransformType>& transform_types) {
-    return AdoptRef(new SVGTransformNonInterpolableValue(transform_types));
+    return base::AdoptRef(
+        new SVGTransformNonInterpolableValue(transform_types));
   }
 
   const Vector<SVGTransformType>& TransformTypes() const {
@@ -32,7 +33,7 @@ class SVGTransformNonInterpolableValue : public NonInterpolableValue {
 
  private:
   SVGTransformNonInterpolableValue(Vector<SVGTransformType>& transform_types) {
-    transform_types_.Swap(transform_types);
+    transform_types_.swap(transform_types);
   }
 
   Vector<SVGTransformType> transform_types_;
@@ -252,8 +253,10 @@ InterpolationValue SVGTransformListInterpolationType::MaybeConvertSingle(
   }
 
   if (!keyframe.IsNeutral()) {
-    SVGPropertyBase* svg_value = environment.SvgBaseValue().CloneForAnimation(
-        ToSVGPropertySpecificKeyframe(keyframe).Value());
+    SVGPropertyBase* svg_value =
+        ToSVGInterpolationEnvironment(environment)
+            .SvgBaseValue()
+            .CloneForAnimation(ToSVGPropertySpecificKeyframe(keyframe).Value());
     InterpolationValue value = MaybeConvertSVGValue(*svg_value);
     if (!value)
       return nullptr;

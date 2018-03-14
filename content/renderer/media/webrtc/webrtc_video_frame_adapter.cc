@@ -5,8 +5,65 @@
 #include "content/renderer/media/webrtc/webrtc_video_frame_adapter.h"
 
 #include "base/logging.h"
+#include "third_party/webrtc/common_video/include/video_frame_buffer.h"
+#include "third_party/webrtc/rtc_base/refcountedobject.h"
 
 namespace {
+
+template <typename Base>
+class FrameAdapter : public Base {
+ public:
+  explicit FrameAdapter(const scoped_refptr<media::VideoFrame>& frame)
+      : frame_(std::move(frame)) {}
+
+ private:
+  int width() const override { return frame_->visible_rect().width(); }
+  int height() const override { return frame_->visible_rect().height(); }
+
+  const uint8_t* DataY() const override {
+    return frame_->visible_data(media::VideoFrame::kYPlane);
+  }
+
+  const uint8_t* DataU() const override {
+    return frame_->visible_data(media::VideoFrame::kUPlane);
+  }
+
+  const uint8_t* DataV() const override {
+    return frame_->visible_data(media::VideoFrame::kVPlane);
+  }
+
+  int StrideY() const override {
+    return frame_->stride(media::VideoFrame::kYPlane);
+  }
+
+  int StrideU() const override {
+    return frame_->stride(media::VideoFrame::kUPlane);
+  }
+
+  int StrideV() const override {
+    return frame_->stride(media::VideoFrame::kVPlane);
+  }
+
+  scoped_refptr<media::VideoFrame> frame_;
+};
+
+template <typename BaseWithA>
+class FrameAdapterWithA : public FrameAdapter<BaseWithA> {
+ public:
+  FrameAdapterWithA(const scoped_refptr<media::VideoFrame>& frame)
+      : FrameAdapter<BaseWithA>(std::move(frame)), frame_(std::move(frame)) {}
+
+ private:
+  const uint8_t* DataA() const override {
+    return frame_->visible_data(media::VideoFrame::kAPlane);
+  }
+
+  int StrideA() const override {
+    return frame_->stride(media::VideoFrame::kAPlane);
+  }
+
+  scoped_refptr<media::VideoFrame> frame_;
+};
 
 void IsValidFrame(const scoped_refptr<media::VideoFrame>& frame) {
   // Paranoia checks.
@@ -15,7 +72,8 @@ void IsValidFrame(const scoped_refptr<media::VideoFrame>& frame) {
       frame->format(), frame->storage_type(), frame->coded_size(),
       frame->visible_rect(), frame->natural_size()));
   DCHECK(media::PIXEL_FORMAT_I420 == frame->format() ||
-         media::PIXEL_FORMAT_YV12 == frame->format());
+         media::PIXEL_FORMAT_YV12 == frame->format() ||
+         media::PIXEL_FORMAT_YV12A == frame->format());
   CHECK(reinterpret_cast<void*>(frame->data(media::VideoFrame::kYPlane)));
   CHECK(reinterpret_cast<void*>(frame->data(media::VideoFrame::kUPlane)));
   CHECK(reinterpret_cast<void*>(frame->data(media::VideoFrame::kVPlane)));
@@ -36,6 +94,10 @@ WebRtcVideoFrameAdapter::WebRtcVideoFrameAdapter(
 WebRtcVideoFrameAdapter::~WebRtcVideoFrameAdapter() {
 }
 
+webrtc::VideoFrameBuffer::Type WebRtcVideoFrameAdapter::type() const {
+  return Type::kNative;
+}
+
 int WebRtcVideoFrameAdapter::width() const {
   return frame_->visible_rect().width();
 }
@@ -44,42 +106,8 @@ int WebRtcVideoFrameAdapter::height() const {
   return frame_->visible_rect().height();
 }
 
-const uint8_t* WebRtcVideoFrameAdapter::DataY() const {
-  return frame_->visible_data(media::VideoFrame::kYPlane);
-}
-const uint8_t* WebRtcVideoFrameAdapter::DataU() const {
-  return frame_->visible_data(media::VideoFrame::kUPlane);
-}
-const uint8_t* WebRtcVideoFrameAdapter::DataV() const {
-  return frame_->visible_data(media::VideoFrame::kVPlane);
-}
-
-int WebRtcVideoFrameAdapter::StrideY() const {
-  return frame_->stride(media::VideoFrame::kYPlane);
-}
-int WebRtcVideoFrameAdapter::StrideU() const {
-  return frame_->stride(media::VideoFrame::kUPlane);
-}
-int WebRtcVideoFrameAdapter::StrideV() const {
-  return frame_->stride(media::VideoFrame::kVPlane);
-}
-
-void* WebRtcVideoFrameAdapter::native_handle() const {
-  // Keep native handle for shared memory backed frames, so that we can use
-  // the existing handle to share for hw encode.
-  if (frame_->HasTextures() ||
-      frame_->storage_type() == media::VideoFrame::STORAGE_SHMEM)
-    return frame_.get();
-  return nullptr;
-}
-
-rtc::scoped_refptr<webrtc::VideoFrameBuffer>
-WebRtcVideoFrameAdapter::NativeToI420Buffer() {
-  if (frame_->storage_type() == media::VideoFrame::STORAGE_SHMEM) {
-    IsValidFrame(frame_);
-    return this;
-  }
-
+rtc::scoped_refptr<webrtc::I420BufferInterface>
+WebRtcVideoFrameAdapter::ToI420() {
   if (frame_->HasTextures()) {
     if (copy_texture_callback_.is_null()) {
       DLOG(ERROR) << "Texture backed frame cannot be copied.";
@@ -91,12 +119,15 @@ WebRtcVideoFrameAdapter::NativeToI420Buffer() {
     if (!new_frame)
       return nullptr;
     frame_ = new_frame;
-    IsValidFrame(frame_);
-    return this;
   }
 
-  NOTREACHED();
-  return nullptr;
+  IsValidFrame(frame_);
+  if (media::PIXEL_FORMAT_YV12A == frame_->format()) {
+    return new rtc::RefCountedObject<
+        FrameAdapterWithA<webrtc::I420ABufferInterface>>(frame_);
+  }
+  return new rtc::RefCountedObject<FrameAdapter<webrtc::I420BufferInterface>>(
+      frame_);
 }
 
 }  // namespace content

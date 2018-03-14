@@ -14,19 +14,18 @@
 
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/shared_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
-#include "cc/resources/shared_bitmap_manager.h"
-#include "components/display_compositor/host_shared_bitmap_manager.h"
+#include "components/viz/common/resources/shared_bitmap_manager.h"
 #include "content/common/cache_storage/cache_storage_types.h"
 #include "content/common/render_message_filter.mojom.h"
 #include "content/public/browser/browser_associated_interface.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "gpu/config/gpu_info.h"
 #include "ipc/message_filter.h"
+#include "third_party/WebKit/public/platform/modules/cache_storage/cache_storage.mojom.h"
 #include "third_party/WebKit/public/web/WebPopupType.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/gpu_memory_buffer.h"
@@ -37,16 +36,7 @@
 #include <windows.h>
 #endif
 
-#if defined(OS_MACOSX)
-#include "content/common/mac/font_loader.h"
-#endif
-
-#if defined(OS_ANDROID)
-#include "base/threading/worker_pool.h"
-#endif
-
 class GURL;
-struct FontDescriptor;
 
 namespace media {
 struct MediaLogEvent;
@@ -104,55 +94,45 @@ class CONTENT_EXPORT RenderMessageFilter
 
   void OnGetProcessMemorySizes(size_t* private_bytes, size_t* shared_bytes);
 
-#if defined(OS_MACOSX)
-  // Messages for OOP font loading.
-  void OnLoadFont(const FontDescriptor& font, IPC::Message* reply_msg);
-  void SendLoadFontReply(IPC::Message* reply, FontLoader::Result* result);
-#endif
-
   // mojom::RenderMessageFilter:
-  void GenerateRoutingID(const GenerateRoutingIDCallback& routing_id) override;
-  void CreateNewWindow(mojom::CreateNewWindowParamsPtr params,
-                       const CreateNewWindowCallback& callback) override;
+  void GenerateRoutingID(GenerateRoutingIDCallback routing_id) override;
   void CreateNewWidget(int32_t opener_id,
                        blink::WebPopupType popup_type,
-                       const CreateNewWidgetCallback& callback) override;
-  void CreateFullscreenWidget(
-      int opener_id,
-      const CreateFullscreenWidgetCallback& callback) override;
-  void GetSharedBitmapManager(
-      cc::mojom::SharedBitmapManagerAssociatedRequest request) override;
+                       mojom::WidgetPtr widget,
+                       CreateNewWidgetCallback callback) override;
+  void CreateFullscreenWidget(int opener_id,
+                              mojom::WidgetPtr widget,
+                              CreateFullscreenWidgetCallback callback) override;
+  void DidGenerateCacheableMetadata(const GURL& url,
+                                    base::Time expected_response_time,
+                                    const std::vector<uint8_t>& data) override;
+  void DidGenerateCacheableMetadataInCacheStorage(
+      const GURL& url,
+      base::Time expected_response_time,
+      const std::vector<uint8_t>& data,
+      const url::Origin& cache_storage_origin,
+      const std::string& cache_storage_cache_name) override;
+  void HasGpuProcess(HasGpuProcessCallback callback) override;
+  void SetThreadPriority(int32_t ns_tid,
+                         base::ThreadPriority priority) override;
+  // Messages for OOP font loading.  Only used for MACOSX.
+  void LoadFont(const base::string16& font_to_load,
+                float font_point_size,
+                LoadFontCallback callback) override;
 
-  // Message handlers called on the browser IO thread:
-  void OnHasGpuProcess(IPC::Message* reply);
-  // Helper callbacks for the message handlers.
-  void GetHasGpuProcessCallback(std::unique_ptr<IPC::Message> reply,
-                                bool has_gpu);
   void OnResolveProxy(const GURL& url, IPC::Message* reply_msg);
 
 #if defined(OS_LINUX)
   void SetThreadPriorityOnFileThread(base::PlatformThreadId ns_tid,
                                      base::ThreadPriority priority);
-  void OnSetThreadPriority(base::PlatformThreadId ns_tid,
-                           base::ThreadPriority priority);
 #endif
 
-  void OnCacheableMetadataAvailable(const GURL& url,
-                                    base::Time expected_response_time,
-                                    const std::vector<char>& data);
-  void OnCacheableMetadataAvailableForCacheStorage(
-      const GURL& url,
-      base::Time expected_response_time,
-      const std::vector<char>& data,
-      const url::Origin& cache_storage_origin,
-      const std::string& cache_storage_cache_name);
-  void OnCacheStorageOpenCallback(
-      const GURL& url,
-      base::Time expected_response_time,
-      scoped_refptr<net::IOBuffer> buf,
-      int buf_len,
-      std::unique_ptr<CacheStorageCacheHandle> cache_handle,
-      CacheStorageError error);
+  void OnCacheStorageOpenCallback(const GURL& url,
+                                  base::Time expected_response_time,
+                                  scoped_refptr<net::IOBuffer> buf,
+                                  int buf_len,
+                                  CacheStorageCacheHandle cache_handle,
+                                  blink::mojom::CacheStorageError error);
   void OnMediaLogEvents(const std::vector<media::MediaLogEvent>&);
 
   bool CheckBenchmarkingEnabled() const;
@@ -162,8 +142,6 @@ class CONTENT_EXPORT RenderMessageFilter
   // not own it; it is managed by the BrowserProcess, which has a wider scope
   // than we do.
   ResourceDispatcherHostImpl* resource_dispatcher_host_;
-
-  display_compositor::HostSharedBitmapManagerClient bitmap_manager_client_;
 
   // Contextual information to be used for requests created here.
   scoped_refptr<net::URLRequestContextGetter> request_context_;

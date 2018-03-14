@@ -5,8 +5,9 @@
 #ifndef MojoHandle_h
 #define MojoHandle_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "core/CoreExport.h"
 #include "mojo/public/cpp/system/core.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
@@ -20,23 +21,24 @@ class MojoReadDataOptions;
 class MojoReadDataResult;
 class MojoReadMessageFlags;
 class MojoReadMessageResult;
-class MojoWatchCallback;
 class MojoWatcher;
 class MojoWriteDataOptions;
 class MojoWriteDataResult;
 class ScriptState;
+class V8MojoWatchCallback;
 
-class MojoHandle final : public GarbageCollectedFinalized<MojoHandle>,
-                         public ScriptWrappable {
+class MojoHandle final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   CORE_EXPORT static MojoHandle* Create(mojo::ScopedHandle);
 
+  mojo::ScopedHandle TakeHandle();
+
   void close();
   MojoWatcher* watch(ScriptState*,
                      const MojoHandleSignals&,
-                     MojoWatchCallback*);
+                     V8MojoWatchCallback*);
 
   // MessagePipe handle.
   MojoResult writeMessage(ArrayBufferOrArrayBufferView&,
@@ -59,8 +61,6 @@ class MojoHandle final : public GarbageCollectedFinalized<MojoHandle>,
   void mapBuffer(unsigned offset, unsigned num_bytes, MojoMapBufferResult&);
   void duplicateBufferHandle(const MojoDuplicateBufferHandleOptions&,
                              MojoCreateSharedBufferResult&);
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   explicit MojoHandle(mojo::ScopedHandle);

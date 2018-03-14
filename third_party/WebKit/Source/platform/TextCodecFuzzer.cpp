@@ -20,18 +20,14 @@ WTF::FlushBehavior kFlushBehavior[] = {WTF::kDoNotFlush, WTF::kFetchEOF,
                                        WTF::kDataEOF};
 
 WTF::UnencodableHandling kUnencodableHandlingOptions[] = {
-    WTF::kQuestionMarksForUnencodables, WTF::kEntitiesForUnencodables,
-    WTF::kURLEncodedEntitiesForUnencodables,
+    WTF::kEntitiesForUnencodables, WTF::kURLEncodedEntitiesForUnencodables,
     WTF::kCSSEncodedEntitiesForUnencodables};
 
 class TextCodecFuzzHarness {};
-extern "C" int LLVMFuzzerInitialize(int* argc, char*** argv) {
-  InitializeBlinkFuzzTest(argc, argv);
-  return 0;
-}
 
 // Fuzzer for WTF::TextCodec.
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+  static BlinkFuzzerTestSupport test_support = BlinkFuzzerTestSupport();
   // The fuzzer picks 3 bytes off the end of the data to initialize metadata, so
   // abort if the input is smaller than that.
   if (size < 3)
@@ -64,20 +60,20 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
   // Treat as bytes-off-the-wire.
   bool sawError;
-  const String decoded = codec->Decode(byteString.Data(), byteString.length(),
+  const String decoded = codec->Decode(byteString.data(), byteString.length(),
                                        flushBehavior, stopOnError, sawError);
 
   // Treat as blink 8-bit string (latin1).
   if (size % sizeof(LChar) == 0) {
     std::unique_ptr<TextCodec> codec = NewTextCodec(encoding);
-    codec->Encode(reinterpret_cast<const LChar*>(byteString.Data()),
+    codec->Encode(reinterpret_cast<const LChar*>(byteString.data()),
                   byteString.length() / sizeof(LChar), unencodableHandling);
   }
 
   // Treat as blink 16-bit string (utf-16) if there are an even number of bytes.
   if (size % sizeof(UChar) == 0) {
     std::unique_ptr<TextCodec> codec = NewTextCodec(encoding);
-    codec->Encode(reinterpret_cast<const UChar*>(byteString.Data()),
+    codec->Encode(reinterpret_cast<const UChar*>(byteString.data()),
                   byteString.length() / sizeof(UChar), unencodableHandling);
   }
 

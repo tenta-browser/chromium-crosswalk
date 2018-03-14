@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "media/base/audio_bus.h"
 
 namespace media {
@@ -23,9 +24,10 @@ MultiChannelResampler::MultiChannelResampler(int channels,
   // Allocate each channel's resampler.
   resamplers_.reserve(channels);
   for (int i = 0; i < channels; ++i) {
-    resamplers_.push_back(new SincResampler(
-        io_sample_rate_ratio, request_size, base::Bind(
-            &MultiChannelResampler::ProvideInput, base::Unretained(this), i)));
+    resamplers_.push_back(base::MakeUnique<SincResampler>(
+        io_sample_rate_ratio, request_size,
+        base::Bind(&MultiChannelResampler::ProvideInput, base::Unretained(this),
+                   i)));
   }
 
   // Setup the wrapped AudioBus for channel data.
@@ -42,7 +44,7 @@ MultiChannelResampler::MultiChannelResampler(int channels,
   }
 }
 
-MultiChannelResampler::~MultiChannelResampler() {}
+MultiChannelResampler::~MultiChannelResampler() = default;
 
 void MultiChannelResampler::Resample(int frames, AudioBus* audio_bus) {
   DCHECK_EQ(static_cast<size_t>(audio_bus->channels()), resamplers_.size());

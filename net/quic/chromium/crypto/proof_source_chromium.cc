@@ -80,9 +80,8 @@ bool ProofSourceChromium::GetProofInner(
     const QuicSocketAddress& server_addr,
     const string& hostname,
     const string& server_config,
-    QuicVersion quic_version,
+    QuicTransportVersion quic_version,
     QuicStringPiece chlo_hash,
-    const QuicTagVector& /* connection_options */,
     QuicReferenceCountedPointer<ProofSource::Chain>* out_chain,
     QuicCryptoProof* proof) {
   DCHECK(proof != nullptr);
@@ -136,9 +135,8 @@ bool ProofSourceChromium::GetProofInner(
 void ProofSourceChromium::GetProof(const QuicSocketAddress& server_addr,
                                    const std::string& hostname,
                                    const std::string& server_config,
-                                   QuicVersion quic_version,
+                                   QuicTransportVersion quic_version,
                                    QuicStringPiece chlo_hash,
-                                   const QuicTagVector& connection_options,
                                    std::unique_ptr<Callback> callback) {
   // As a transitional implementation, just call the synchronous version of
   // GetProof, then invoke the callback with the results and destroy it.
@@ -147,10 +145,50 @@ void ProofSourceChromium::GetProof(const QuicSocketAddress& server_addr,
   string leaf_cert_sct;
   QuicCryptoProof out_proof;
 
-  const bool ok =
-      GetProofInner(server_addr, hostname, server_config, quic_version,
-                    chlo_hash, connection_options, &chain, &out_proof);
+  const bool ok = GetProofInner(server_addr, hostname, server_config,
+                                quic_version, chlo_hash, &chain, &out_proof);
   callback->Run(ok, chain, out_proof, nullptr /* details */);
+}
+
+QuicReferenceCountedPointer<ProofSource::Chain>
+ProofSourceChromium::GetCertChain(const QuicSocketAddress& server_address,
+                                  const std::string& hostname) {
+  return chain_;
+}
+
+void ProofSourceChromium::ComputeTlsSignature(
+    const QuicSocketAddress& server_address,
+    const std::string& hostname,
+    uint16_t signature_algorithm,
+    QuicStringPiece in,
+    std::unique_ptr<SignatureCallback> callback) {
+  crypto::OpenSSLErrStackTracer err_tracer(FROM_HERE);
+  bssl::ScopedEVP_MD_CTX sign_context;
+  EVP_PKEY_CTX* pkey_ctx;
+
+  size_t siglen;
+  string sig;
+  if (!EVP_DigestSignInit(sign_context.get(), &pkey_ctx, EVP_sha256(), nullptr,
+                          private_key_->key()) ||
+      !EVP_PKEY_CTX_set_rsa_padding(pkey_ctx, RSA_PKCS1_PSS_PADDING) ||
+      !EVP_PKEY_CTX_set_rsa_pss_saltlen(pkey_ctx, -1) ||
+      !EVP_DigestSignUpdate(sign_context.get(),
+                            reinterpret_cast<const uint8_t*>(in.data()),
+                            in.size()) ||
+      !EVP_DigestSignFinal(sign_context.get(), nullptr, &siglen)) {
+    callback->Run(false, sig);
+    return;
+  }
+  sig.resize(siglen);
+  if (!EVP_DigestSignFinal(
+          sign_context.get(),
+          reinterpret_cast<uint8_t*>(const_cast<char*>(sig.data())), &siglen)) {
+    callback->Run(false, sig);
+    return;
+  }
+  sig.resize(siglen);
+
+  callback->Run(true, sig);
 }
 
 }  // namespace net

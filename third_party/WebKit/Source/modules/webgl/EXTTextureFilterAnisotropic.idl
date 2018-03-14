@@ -26,9 +26,8 @@
 // https://www.khronos.org/registry/webgl/extensions/EXT_texture_filter_anisotropic/
 
 [
-    DependentLifetime,
     NoInterfaceObject,
-    DoNotCheckConstants,
+    DoNotCheckConstants
 ] interface EXTTextureFilterAnisotropic {
     const unsigned long TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE;
     const unsigned long MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF;

@@ -13,15 +13,12 @@
 #include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/background/background_mode_manager.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/infobars/infobar_service.h"
-#include "chrome/browser/lifetime/keep_alive_types.h"
-#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_impl.h"
@@ -36,8 +33,6 @@
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/md_history_ui.h"
-#include "chrome/common/chrome_features.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -45,6 +40,8 @@
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
+#include "components/keep_alive_registry/keep_alive_types.h"
+#include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
@@ -178,6 +175,7 @@ class BetterSessionRestoreTest : public InProcessBrowserTest {
     test_files.push_back("post_with_password.html");
     test_files.push_back("session_cookies.html");
     test_files.push_back("session_storage.html");
+    test_files.push_back("subdomain_cookies.html");
     base::FilePath test_file_dir;
     CHECK(PathService::Get(base::DIR_SOURCE_ROOT, &test_file_dir));
     test_file_dir =
@@ -408,8 +406,7 @@ IN_PROC_BROWSER_TEST_F(ContinueWhereILeftOffTest, PRE_SessionCookies) {
   StoreDataWithPage("session_cookies.html");
 }
 
-// Flaky(crbug.com/700696)
-IN_PROC_BROWSER_TEST_F(ContinueWhereILeftOffTest, DISABLED_SessionCookies) {
+IN_PROC_BROWSER_TEST_F(ContinueWhereILeftOffTest, SessionCookies) {
   // The browsing session will be continued; just wait for the page to reload
   // and check the stored data.
   CheckReloadedPageRestored();
@@ -419,8 +416,7 @@ IN_PROC_BROWSER_TEST_F(ContinueWhereILeftOffTest, PRE_SessionStorage) {
   StoreDataWithPage("session_storage.html");
 }
 
-// Flaky(crbug.com/700699)
-IN_PROC_BROWSER_TEST_F(ContinueWhereILeftOffTest, DISABLED_SessionStorage) {
+IN_PROC_BROWSER_TEST_F(ContinueWhereILeftOffTest, SessionStorage) {
   CheckReloadedPageRestored();
 }
 
@@ -438,8 +434,8 @@ IN_PROC_BROWSER_TEST_F(ContinueWhereILeftOffTest,
       ->SetDefaultCookieSetting(CONTENT_SETTING_SESSION_ONLY);
 }
 
-// Crashes on Mac only. http://crbug.com/656211
-#if defined(OS_MACOSX)
+// Crashes on Mac and Windows. http://crbug.com/656211
+#if defined(OS_MACOSX) || defined(OS_WIN)
 #define MAYBE_LocalStorageClearedOnExit DISABLED_LocalStorageClearedOnExit
 #else
 #define MAYBE_LocalStorageClearedOnExit LocalStorageClearedOnExit
@@ -498,48 +494,6 @@ IN_PROC_BROWSER_TEST_F(ContinueWhereILeftOffTest, SessionCookiesBrowserClose) {
   // The browsing session will be continued; just wait for the page to reload
   // and check the stored data.
   CheckReloadedPageRestored(new_browser);
-}
-
-// Test that switching MD History on behaves correctly with session restore.
-IN_PROC_BROWSER_TEST_F(ContinueWhereILeftOffTest, MDHistoryUpgrade) {
-  MdHistoryUI::use_test_title_ = true;
-  Browser* current_browser = browser();
-  {
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndDisableFeature(features::kMaterialDesignHistory);
-    content::WebContents* web_contents =
-        current_browser->tab_strip_model()->GetActiveWebContents();
-    content::TitleWatcher title_watcher(web_contents,
-                                        base::ASCIIToUTF16("History"));
-    ui_test_utils::NavigateToURL(current_browser, GURL("chrome://history"));
-    base::string16 final_title = title_watcher.WaitAndGetTitle();
-    EXPECT_EQ(3u, current_browser->tab_strip_model()
-                     ->GetActiveWebContents()
-                     ->GetAllFrames()
-                     .size());
-  }
-  {
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndEnableFeature(features::kMaterialDesignHistory);
-    current_browser = QuitBrowserAndRestore(browser(), false);
-    // The new history page should have loaded.
-    CheckTitle(current_browser, base::ASCIIToUTF16("MD History"));
-    EXPECT_EQ(1u, current_browser->tab_strip_model()
-                     ->GetActiveWebContents()
-                     ->GetAllFrames()
-                     .size());
-  }
-  {
-    base::test::ScopedFeatureList feature_list;
-    feature_list.InitAndDisableFeature(features::kMaterialDesignHistory);
-    current_browser = QuitBrowserAndRestore(current_browser, false);
-    // The old history page should have loaded.
-    CheckTitle(current_browser, base::ASCIIToUTF16("History"));
-    EXPECT_EQ(3u, current_browser->tab_strip_model()
-                     ->GetActiveWebContents()
-                     ->GetAllFrames()
-                     .size());
-  }
 }
 
 // Test that leaving a popup open will not prevent session restore.
@@ -788,7 +742,14 @@ IN_PROC_BROWSER_TEST_F(NoSessionRestoreTest, PRE_LocalStorageClearedOnExit) {
       ->SetDefaultCookieSetting(CONTENT_SETTING_SESSION_ONLY);
 }
 
-IN_PROC_BROWSER_TEST_F(NoSessionRestoreTest, LocalStorageClearedOnExit) {
+// Crashes on Windows. http://crbug.com/732013
+#if defined(OS_WIN)
+#define MAYBE_NSRT_LocalStorageClearedOnExit DISABLED_LocalStorageClearedOnExit
+#else
+#define MAYBE_NSRT_LocalStorageClearedOnExit LocalStorageClearedOnExit
+#endif
+IN_PROC_BROWSER_TEST_F(NoSessionRestoreTest,
+                       MAYBE_NSRT_LocalStorageClearedOnExit) {
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   EXPECT_EQ(std::string(url::kAboutBlankURL), web_contents->GetURL().spec());
@@ -909,4 +870,26 @@ IN_PROC_BROWSER_TEST_F(NoSessionRestoreTest, CookiesClearedOnCloseAllBrowsers) {
   DisableBackgroundMode();
   new_browser = QuitBrowserAndRestore(new_browser, true);
   StoreDataWithPage(new_browser, "cookies.html");
+}
+
+// Check that cookies are cleared on a wrench menu quit only if cookies are set
+// to current session only, regardless of whether background mode is enabled.
+IN_PROC_BROWSER_TEST_F(NoSessionRestoreTest,
+                       SubdomainCookiesClearedOnCloseAllBrowsers) {
+  StoreDataWithPage("subdomain_cookies.html");
+
+  // Normally cookies are restored.
+  Browser* new_browser = QuitBrowserAndRestore(browser(), true);
+  NavigateAndCheckStoredData(new_browser, "subdomain_cookies.html");
+
+  // ... but not if the content setting is set to clear on exit.
+  auto cookie_settings =
+      CookieSettingsFactory::GetForProfile(new_browser->profile());
+  cookie_settings->SetDefaultCookieSetting(CONTENT_SETTING_BLOCK);
+  cookie_settings->SetCookieSetting(GURL("http://www.test.com"),
+                                    CONTENT_SETTING_SESSION_ONLY);
+
+  // Cookie for .test.com is created on www.test.com and deleted on shutdown.
+  new_browser = QuitBrowserAndRestore(new_browser, true);
+  StoreDataWithPage(new_browser, "subdomain_cookies.html");
 }

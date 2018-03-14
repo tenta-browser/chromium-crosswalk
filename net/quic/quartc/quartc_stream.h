@@ -1,4 +1,4 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright (c) 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -30,13 +30,21 @@ class QUIC_EXPORT_PRIVATE QuartcStream : public QuicStream,
   // QuartcStreamInterface overrides.
   uint32_t stream_id() override;
 
-  uint64_t buffered_amount() override;
+  uint64_t bytes_written() override;
 
   bool fin_sent() override;
+
+  int stream_error() override;
+
+  int connection_error() override;
 
   void Write(const char* data,
              size_t size,
              const WriteParameters& param) override;
+
+  void FinishWriting() override;
+
+  void FinishReading() override;
 
   void Close() override;
 

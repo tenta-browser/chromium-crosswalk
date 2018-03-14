@@ -40,10 +40,6 @@ namespace blink {
 
 namespace {
 
-const char* const kNullString = "null";
-const char* const kTrueString = "true";
-const char* const kFalseString = "false";
-
 inline bool EscapeChar(UChar c, StringBuilder* dst) {
   switch (c) {
     case '\b':
@@ -89,6 +85,10 @@ void WriteIndent(int depth, StringBuilder* output) {
 }
 
 }  // anonymous namespace
+
+const char* kJSONNullString = "null";
+const char* kJSONTrueString = "true";
+const char* kJSONFalseString = "false";
 
 void EscapeStringForJSON(const String& str, StringBuilder* dst) {
   for (unsigned i = 0; i < str.length(); ++i) {
@@ -150,7 +150,7 @@ String JSONValue::ToPrettyJSONString() const {
 
 void JSONValue::WriteJSON(StringBuilder* output) const {
   DCHECK(type_ == kTypeNull);
-  output->Append(kNullString, 4);
+  output->Append(kJSONNullString, 4);
 }
 
 void JSONValue::PrettyWriteJSON(StringBuilder* output) const {
@@ -198,12 +198,12 @@ void JSONBasicValue::WriteJSON(StringBuilder* output) const {
          GetType() == kTypeDouble);
   if (GetType() == kTypeBoolean) {
     if (bool_value_)
-      output->Append(kTrueString, 4);
+      output->Append(kJSONTrueString, 4);
     else
-      output->Append(kFalseString, 5);
+      output->Append(kJSONFalseString, 5);
   } else if (GetType() == kTypeDouble) {
     if (!std::isfinite(double_value_)) {
-      output->Append(kNullString, 4);
+      output->Append(kJSONNullString, 4);
       return;
     }
     output->Append(Decimal::FromDouble(double_value_).ToString());
@@ -301,7 +301,7 @@ bool JSONObject::GetString(const String& name, String* output) const {
   return value->AsString(output);
 }
 
-JSONObject* JSONObject::GetObject(const String& name) const {
+JSONObject* JSONObject::GetJSONObject(const String& name) const {
   return JSONObject::Cast(Get(name));
 }
 
@@ -310,7 +310,7 @@ JSONArray* JSONObject::GetArray(const String& name) const {
 }
 
 JSONValue* JSONObject::Get(const String& name) const {
-  Dictionary::const_iterator it = data_.Find(name);
+  Dictionary::const_iterator it = data_.find(name);
   if (it == data_.end())
     return nullptr;
   return it->value.get();
@@ -318,7 +318,7 @@ JSONValue* JSONObject::Get(const String& name) const {
 
 JSONObject::Entry JSONObject::at(size_t index) const {
   const String key = order_[index];
-  return std::make_pair(key, data_.Find(key)->value.get());
+  return std::make_pair(key, data_.find(key)->value.get());
 }
 
 bool JSONObject::BooleanProperty(const String& name, bool default_value) const {
@@ -344,7 +344,7 @@ void JSONObject::Remove(const String& name) {
   data_.erase(name);
   for (size_t i = 0; i < order_.size(); ++i) {
     if (order_[i] == name) {
-      order_.erase(i);
+      order_.EraseAt(i);
       break;
     }
   }
@@ -353,7 +353,7 @@ void JSONObject::Remove(const String& name) {
 void JSONObject::WriteJSON(StringBuilder* output) const {
   output->Append('{');
   for (size_t i = 0; i < order_.size(); ++i) {
-    Dictionary::const_iterator it = data_.Find(order_[i]);
+    Dictionary::const_iterator it = data_.find(order_[i]);
     CHECK(it != data_.end());
     if (i)
       output->Append(',');
@@ -368,7 +368,7 @@ void JSONObject::PrettyWriteJSONInternal(StringBuilder* output,
                                          int depth) const {
   output->Append("{\n");
   for (size_t i = 0; i < order_.size(); ++i) {
-    Dictionary::const_iterator it = data_.Find(order_[i]);
+    Dictionary::const_iterator it = data_.find(order_[i]);
     CHECK(it != data_.end());
     if (i)
       output->Append(",\n");
@@ -386,7 +386,7 @@ std::unique_ptr<JSONValue> JSONObject::Clone() const {
   std::unique_ptr<JSONObject> result = JSONObject::Create();
   for (size_t i = 0; i < order_.size(); ++i) {
     String key = order_[i];
-    Dictionary::const_iterator value = data_.Find(key);
+    Dictionary::const_iterator value = data_.find(key);
     DCHECK(value != data_.end() && value->value);
     result->SetValue(key, value->value->Clone());
   }

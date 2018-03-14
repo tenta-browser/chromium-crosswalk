@@ -24,7 +24,7 @@ function init() {
 function runTest() {
   init();
   if (gl)
-    window.webkitRequestAnimationFrame(draw);
+    window.requestAnimationFrame(draw);
   else
     endTest();
 }
@@ -37,12 +37,11 @@ function draw() {
   if (frameCount == 6) {
     endTest();
   } else {
-    window.webkitRequestAnimationFrame(draw);
+    window.requestAnimationFrame(draw);
   }
 }
 
 function endTest() {
-  domAutomationController.setAutomationId(1);
   domAutomationController.send("FINISHED");
 }
 </script>

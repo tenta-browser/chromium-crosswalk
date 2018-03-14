@@ -4,11 +4,16 @@
 
 #include "content/common/service_worker/service_worker_utils.h"
 
+#include <sstream>
 #include <string>
 
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
+#include "content/public/common/browser_side_navigation_policy.h"
+#include "content/public/common/content_features.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/common/origin_util.h"
 
 namespace content {
@@ -67,7 +72,7 @@ bool ServiceWorkerUtils::IsPathRestrictionSatisfied(
     }
     max_scope_string = max_scope.path();
   } else {
-    max_scope_string = script_url.Resolve(".").path();
+    max_scope_string = script_url.GetWithoutFilename().path();
   }
 
   std::string scope_string = scope.path();
@@ -133,8 +138,30 @@ bool ServiceWorkerUtils::AllOriginsMatchAndCanAccessServiceWorkers(
 }
 
 // static
-bool ServiceWorkerUtils::IsMojoForServiceWorkerEnabled() {
-  return true;
+bool ServiceWorkerUtils::IsServicificationEnabled() {
+  return IsBrowserSideNavigationEnabled() &&
+         base::FeatureList::IsEnabled(features::kNetworkService);
+}
+
+// static
+bool ServiceWorkerUtils::IsScriptStreamingEnabled() {
+  return base::FeatureList::IsEnabled(features::kServiceWorkerScriptStreaming);
+}
+
+// static
+std::string ServiceWorkerUtils::ErrorTypeToString(
+    blink::mojom::ServiceWorkerErrorType error) {
+  std::ostringstream oss;
+  oss << error;
+  return oss.str();
+}
+
+// static
+std::string ServiceWorkerUtils::ClientTypeToString(
+    blink::mojom::ServiceWorkerClientType type) {
+  std::ostringstream oss;
+  oss << type;
+  return oss.str();
 }
 
 bool LongestScopeMatcher::MatchLongest(const GURL& scope) {

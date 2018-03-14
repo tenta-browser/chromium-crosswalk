@@ -18,6 +18,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/proximity_auth/logging/logging.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace cryptauth {
 
@@ -45,6 +46,8 @@ const char kExternalDeviceKeyMobileHotspotSupported[] =
     "mobile_hotspot_supported";
 const char kExternalDeviceKeyDeviceType[] = "device_type";
 const char kExternalDeviceKeyBeaconSeeds[] = "beacon_seeds";
+const char kExternalDeviceKeyArcPlusPlus[] = "arc_plus_plus";
+const char kExternalDeviceKeyPixelPhone[] = "pixel_phone";
 const char kExternalDeviceKeyBeaconSeedData[] = "beacon_seed_data";
 const char kExternalDeviceKeyBeaconSeedStartMs[] = "beacon_seed_start_ms";
 const char kExternalDeviceKeyBeaconSeedEndMs[] = "beacon_seed_end_ms";
@@ -155,6 +158,15 @@ std::unique_ptr<base::DictionaryValue> UnlockKeyToDictionary(
                            device.device_type());
   }
 
+  if (device.has_arc_plus_plus()) {
+    dictionary->SetBoolean(kExternalDeviceKeyArcPlusPlus,
+                           device.arc_plus_plus());
+  }
+
+  if (device.has_pixel_phone()) {
+    dictionary->SetBoolean(kExternalDeviceKeyPixelPhone, device.pixel_phone());
+  }
+
   std::unique_ptr<base::ListValue> beacon_seed_list =
       BeaconSeedsToListValue(device.beacon_seeds());
   dictionary->Set(kExternalDeviceKeyBeaconSeeds, std::move(beacon_seed_list));
@@ -253,14 +265,12 @@ bool DictionaryToUnlockKey(const base::DictionaryValue& dictionary,
   }
 
   bool unlock_key;
-  if (dictionary.GetBoolean(kExternalDeviceKeyUnlockKey, &unlock_key)) {
+  if (dictionary.GetBoolean(kExternalDeviceKeyUnlockKey, &unlock_key))
     external_device->set_unlock_key(unlock_key);
-  }
 
   bool unlockable;
-  if (dictionary.GetBoolean(kExternalDeviceKeyUnlockable, &unlockable)) {
+  if (dictionary.GetBoolean(kExternalDeviceKeyUnlockable, &unlockable))
     external_device->set_unlockable(unlockable);
-  }
 
   std::string last_update_time_millis_str;
   if (dictionary.GetString(
@@ -290,24 +300,40 @@ bool DictionaryToUnlockKey(const base::DictionaryValue& dictionary,
 
   const base::ListValue* beacon_seeds = nullptr;
   dictionary.GetList(kExternalDeviceKeyBeaconSeeds, &beacon_seeds);
-  if (beacon_seeds) {
+  if (beacon_seeds)
     AddBeaconSeedsToExternalDevice(*beacon_seeds, *external_device);
-  }
+
+  bool arc_plus_plus;
+  if (dictionary.GetBoolean(kExternalDeviceKeyArcPlusPlus, &arc_plus_plus))
+    external_device->set_arc_plus_plus(arc_plus_plus);
+
+  bool pixel_phone;
+  if (dictionary.GetBoolean(kExternalDeviceKeyPixelPhone, &pixel_phone))
+    external_device->set_pixel_phone(pixel_phone);
 
   return true;
+}
+
+std::unique_ptr<SyncSchedulerImpl> CreateSyncScheduler(
+    SyncScheduler::Delegate* delegate) {
+  return base::MakeUnique<SyncSchedulerImpl>(
+      delegate, base::TimeDelta::FromHours(kRefreshPeriodHours),
+      base::TimeDelta::FromMinutes(kDeviceSyncBaseRecoveryPeriodMinutes),
+      kDeviceSyncMaxJitterRatio, "CryptAuth DeviceSync");
 }
 
 }  // namespace
 
 CryptAuthDeviceManager::CryptAuthDeviceManager(
-    std::unique_ptr<base::Clock> clock,
+    base::Clock* clock,
     std::unique_ptr<CryptAuthClientFactory> client_factory,
     CryptAuthGCMManager* gcm_manager,
     PrefService* pref_service)
-    : clock_(std::move(clock)),
+    : clock_(clock),
       client_factory_(std::move(client_factory)),
       gcm_manager_(gcm_manager),
       pref_service_(pref_service),
+      scheduler_(CreateSyncScheduler(this)),
       weak_ptr_factory_(this) {
   UpdateUnlockKeysFromPrefs();
 }
@@ -323,6 +349,25 @@ CryptAuthDeviceManager::CryptAuthDeviceManager()
 CryptAuthDeviceManager::~CryptAuthDeviceManager() {
   if (gcm_manager_) {
     gcm_manager_->RemoveObserver(this);
+  }
+}
+
+void CryptAuthDeviceManager::SetSyncSchedulerForTest(
+    std::unique_ptr<SyncScheduler> sync_scheduler) {
+  scheduler_ = std::move(sync_scheduler);
+}
+
+void CryptAuthDeviceManager::NotifySyncStarted() {
+  for (auto& observer : observers_) {
+    observer.OnSyncStarted();
+  }
+}
+
+void CryptAuthDeviceManager::NotifySyncFinished(
+    SyncResult sync_result,
+    DeviceChangeResult device_change_result) {
+  for (auto& observer : observers_) {
+    observer.OnSyncFinished(sync_result, device_change_result);
   }
 }
 
@@ -349,7 +394,6 @@ void CryptAuthDeviceManager::Start() {
           prefs::kCryptAuthDeviceSyncIsRecoveringFromFailure) ||
       last_successful_sync.is_null();
 
-  scheduler_ = CreateSyncScheduler();
   scheduler_->Start(elapsed_time_since_last_sync,
                     is_recovering_from_failure
                         ? SyncScheduler::Strategy::AGGRESSIVE_RECOVERY
@@ -405,6 +449,17 @@ std::vector<ExternalDeviceInfo> CryptAuthDeviceManager::GetUnlockKeys() const {
   return unlock_keys;
 }
 
+std::vector<ExternalDeviceInfo> CryptAuthDeviceManager::GetPixelUnlockKeys()
+    const {
+  std::vector<ExternalDeviceInfo> unlock_keys;
+  for (const auto& device : synced_devices_) {
+    if (device.unlock_key() && device.pixel_phone()) {
+      unlock_keys.push_back(device);
+    }
+  }
+  return unlock_keys;
+}
+
 std::vector<ExternalDeviceInfo> CryptAuthDeviceManager::GetTetherHosts() const {
   std::vector<ExternalDeviceInfo> tether_hosts;
   for (const auto& device : synced_devices_) {
@@ -415,14 +470,37 @@ std::vector<ExternalDeviceInfo> CryptAuthDeviceManager::GetTetherHosts() const {
   return tether_hosts;
 }
 
+std::vector<ExternalDeviceInfo> CryptAuthDeviceManager::GetPixelTetherHosts()
+    const {
+  std::vector<ExternalDeviceInfo> tether_hosts;
+  for (const auto& device : synced_devices_) {
+    if (device.mobile_hotspot_supported() && device.pixel_phone()) {
+      tether_hosts.push_back(device);
+    }
+  }
+  return tether_hosts;
+}
+
 void CryptAuthDeviceManager::OnGetMyDevicesSuccess(
     const GetMyDevicesResponse& response) {
   // Update the synced devices stored in the user's prefs.
   std::unique_ptr<base::ListValue> devices_as_list(new base::ListValue());
+
+  if (!response.devices().empty())
+    PA_LOG(INFO) << "Devices were successfully synced.";
+
   for (const auto& device : response.devices()) {
-    devices_as_list->Append(UnlockKeyToDictionary(device));
+    std::unique_ptr<base::DictionaryValue> device_dictionary =
+        UnlockKeyToDictionary(device);
+
+    const std::string& device_name = device.has_friendly_device_name()
+                                         ? device.friendly_device_name()
+                                         : "[unknown]";
+    PA_LOG(INFO) << "Synced device '" << device_name
+                 << "': " << *device_dictionary;
+
+    devices_as_list->Append(std::move(device_dictionary));
   }
-  PA_LOG(INFO) << "Devices Synced:\n" << *devices_as_list;
 
   bool unlock_keys_changed = !devices_as_list->Equals(
       pref_service_->GetList(prefs::kCryptAuthDeviceSyncUnlockKeys));
@@ -443,12 +521,9 @@ void CryptAuthDeviceManager::OnGetMyDevicesSuccess(
   sync_request_->OnDidComplete(true);
   cryptauth_client_.reset();
   sync_request_.reset();
-  for (auto& observer : observers_) {
-    observer.OnSyncFinished(SyncResult::SUCCESS,
-                            unlock_keys_changed
-                                ? DeviceChangeResult::CHANGED
-                                : DeviceChangeResult::UNCHANGED);
-  }
+  NotifySyncFinished(SyncResult::SUCCESS, unlock_keys_changed
+                                              ? DeviceChangeResult::CHANGED
+                                              : DeviceChangeResult::UNCHANGED);
 }
 
 void CryptAuthDeviceManager::OnGetMyDevicesFailure(const std::string& error) {
@@ -458,15 +533,7 @@ void CryptAuthDeviceManager::OnGetMyDevicesFailure(const std::string& error) {
   sync_request_->OnDidComplete(false);
   cryptauth_client_.reset();
   sync_request_.reset();
-  for (auto& observer : observers_)
-    observer.OnSyncFinished(SyncResult::FAILURE, DeviceChangeResult::UNCHANGED);
-}
-
-std::unique_ptr<SyncScheduler> CryptAuthDeviceManager::CreateSyncScheduler() {
-  return base::MakeUnique<SyncSchedulerImpl>(
-      this, base::TimeDelta::FromHours(kRefreshPeriodHours),
-      base::TimeDelta::FromMinutes(kDeviceSyncBaseRecoveryPeriodMinutes),
-      kDeviceSyncMaxJitterRatio, "CryptAuth DeviceSync");
+  NotifySyncFinished(SyncResult::FAILURE, DeviceChangeResult::UNCHANGED);
 }
 
 void CryptAuthDeviceManager::OnResyncMessage() {
@@ -496,8 +563,7 @@ void CryptAuthDeviceManager::UpdateUnlockKeysFromPrefs() {
 
 void CryptAuthDeviceManager::OnSyncRequested(
     std::unique_ptr<SyncScheduler::SyncRequest> sync_request) {
-  for (auto& observer : observers_)
-    observer.OnSyncStarted();
+  NotifySyncStarted();
 
   sync_request_ = std::move(sync_request);
   cryptauth_client_ = client_factory_->CreateInstance();
@@ -529,11 +595,38 @@ void CryptAuthDeviceManager::OnSyncRequested(
   GetMyDevicesRequest request;
   request.set_invocation_reason(invocation_reason);
   request.set_allow_stale_read(is_sync_speculative);
+  net::PartialNetworkTrafficAnnotationTag partial_traffic_annotation =
+      net::DefinePartialNetworkTrafficAnnotation("cryptauth_get_my_devices",
+                                                 "oauth2_api_call_flow", R"(
+      semantics {
+        sender: "CryptAuth Device Manager"
+        description:
+          "Gets a list of the devices registered (for the same user) on "
+          "CryptAuth."
+        trigger:
+          "Once every day, or by API request. Periodic calls happen because "
+          "devides that do not re-enrolled for more than X days (currently 45) "
+          "are automatically removed from the server."
+        data: "OAuth 2.0 token."
+        destination: GOOGLE_OWNED_SERVICE
+      }
+      policy {
+        setting:
+          "This feature cannot be disabled in settings. However, this request "
+          "is made only for signed-in users."
+        chrome_policy {
+          SigninAllowed {
+            SigninAllowed: false
+          }
+        }
+      })");
   cryptauth_client_->GetMyDevices(
-      request, base::Bind(&CryptAuthDeviceManager::OnGetMyDevicesSuccess,
-                          weak_ptr_factory_.GetWeakPtr()),
+      request,
+      base::Bind(&CryptAuthDeviceManager::OnGetMyDevicesSuccess,
+                 weak_ptr_factory_.GetWeakPtr()),
       base::Bind(&CryptAuthDeviceManager::OnGetMyDevicesFailure,
-                 weak_ptr_factory_.GetWeakPtr()));
+                 weak_ptr_factory_.GetWeakPtr()),
+      partial_traffic_annotation);
 }
 
 }  // namespace cryptauth

@@ -25,95 +25,77 @@
 
 #include "platform/loader/fetch/FetchParameters.h"
 
-#include "platform/loader/fetch/CrossOriginAccessControl.h"
+#include <memory>
+
 #include "platform/loader/fetch/ResourceFetcher.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SecurityOrigin.h"
-#include "platform/weborigin/Suborigin.h"
 
 namespace blink {
 
-FetchParameters::FetchParameters(const ResourceRequest& resource_request,
-                                 const AtomicString& initiator,
-                                 const String& charset)
+FetchParameters::FetchParameters(const ResourceRequest& resource_request)
     : resource_request_(resource_request),
-      charset_(charset),
-      options_(ResourceFetcher::DefaultResourceOptions()),
+      decoder_options_(TextResourceDecoderOptions::kPlainTextContent),
       speculative_preload_type_(SpeculativePreloadType::kNotSpeculative),
       preload_discovery_time_(0.0),
       defer_(kNoDefer),
       origin_restriction_(kUseDefaultOriginRestrictionForType),
-      placeholder_image_request_type_(kDisallowPlaceholder) {
-  options_.initiator_info.name = initiator;
-}
+      placeholder_image_request_type_(kDisallowPlaceholder) {}
+
+FetchParameters::FetchParameters(
+    std::unique_ptr<CrossThreadFetchParametersData> data)
+    : resource_request_(data->resource_request.get()),
+      decoder_options_(data->decoder_options),
+      options_(data->options),
+      speculative_preload_type_(data->speculative_preload_type),
+      preload_discovery_time_(data->preload_discovery_time),
+      defer_(data->defer),
+      origin_restriction_(data->origin_restriction),
+      resource_width_(data->resource_width),
+      client_hint_preferences_(data->client_hint_preferences),
+      placeholder_image_request_type_(data->placeholder_image_request_type) {}
 
 FetchParameters::FetchParameters(const ResourceRequest& resource_request,
-                                 const AtomicString& initiator,
                                  const ResourceLoaderOptions& options)
     : resource_request_(resource_request),
+      decoder_options_(TextResourceDecoderOptions::kPlainTextContent),
       options_(options),
       speculative_preload_type_(SpeculativePreloadType::kNotSpeculative),
       preload_discovery_time_(0.0),
       defer_(kNoDefer),
       origin_restriction_(kUseDefaultOriginRestrictionForType),
-      placeholder_image_request_type_(
-          PlaceholderImageRequestType::kDisallowPlaceholder) {
-  options_.initiator_info.name = initiator;
-}
-
-FetchParameters::FetchParameters(const ResourceRequest& resource_request,
-                                 const FetchInitiatorInfo& initiator)
-    : resource_request_(resource_request),
-      options_(ResourceFetcher::DefaultResourceOptions()),
-      speculative_preload_type_(SpeculativePreloadType::kNotSpeculative),
-      preload_discovery_time_(0.0),
-      defer_(kNoDefer),
-      origin_restriction_(kUseDefaultOriginRestrictionForType),
-      placeholder_image_request_type_(
-          PlaceholderImageRequestType::kDisallowPlaceholder) {
-  options_.initiator_info = initiator;
-}
+      placeholder_image_request_type_(kDisallowPlaceholder) {}
 
 FetchParameters::~FetchParameters() {}
 
 void FetchParameters::SetCrossOriginAccessControl(
     SecurityOrigin* origin,
     CrossOriginAttributeValue cross_origin) {
-  DCHECK_NE(cross_origin, kCrossOriginAttributeNotSet);
-  // Per https://w3c.github.io/webappsec-suborigins/#security-model-opt-outs,
-  // credentials are forced when credentials mode is "same-origin", the
-  // 'unsafe-credentials' option is set, and the request's physical origin is
-  // the same as the URL's.
-  const bool suborigin_policy_forces_credentials =
-      origin->HasSuborigin() &&
-      origin->GetSuborigin()->PolicyContains(
-          Suborigin::SuboriginPolicyOptions::kUnsafeCredentials) &&
-      SecurityOrigin::Create(Url())->IsSameSchemeHostPort(origin);
-  const bool use_credentials =
-      cross_origin == kCrossOriginAttributeUseCredentials ||
-      suborigin_policy_forces_credentials;
-  const bool is_same_origin_request =
-      origin && origin->CanRequestNoSuborigin(resource_request_.Url());
-
-  // Currently FetchParametersMode and FetchCredentialsMode are only used when
-  // the request goes to Service Worker.
-  resource_request_.SetFetchRequestMode(WebURLRequest::kFetchRequestModeCORS);
-  resource_request_.SetFetchCredentialsMode(
-      use_credentials ? WebURLRequest::kFetchCredentialsModeInclude
-                      : WebURLRequest::kFetchCredentialsModeSameOrigin);
-
-  if (is_same_origin_request || use_credentials) {
-    options_.allow_credentials = kAllowStoredCredentials;
-    resource_request_.SetAllowStoredCredentials(true);
-  } else {
-    options_.allow_credentials = kDoNotAllowStoredCredentials;
-    resource_request_.SetAllowStoredCredentials(false);
+  switch (cross_origin) {
+    case kCrossOriginAttributeNotSet:
+      NOTREACHED();
+      break;
+    case kCrossOriginAttributeAnonymous:
+      SetCrossOriginAccessControl(
+          origin, network::mojom::FetchCredentialsMode::kSameOrigin);
+      break;
+    case kCrossOriginAttributeUseCredentials:
+      SetCrossOriginAccessControl(
+          origin, network::mojom::FetchCredentialsMode::kInclude);
+      break;
   }
-  options_.cors_enabled = kIsCORSEnabled;
+}
+
+void FetchParameters::SetCrossOriginAccessControl(
+    SecurityOrigin* origin,
+    network::mojom::FetchCredentialsMode credentials_mode) {
+  // Currently FetchParametersMode is only used when the request goes to
+  // Service Worker.
+  resource_request_.SetFetchRequestMode(
+      network::mojom::FetchRequestMode::kCORS);
+  resource_request_.SetFetchCredentialsMode(credentials_mode);
+
   options_.security_origin = origin;
-  options_.credentials_requested = use_credentials
-                                       ? kClientRequestedCredentials
-                                       : kClientDidNotRequestCredentials;
 
   // TODO: Credentials should be removed only when the request is cross origin.
   resource_request_.RemoveUserAndPassFromURL();
@@ -139,7 +121,7 @@ void FetchParameters::SetSpeculativePreloadType(
 void FetchParameters::MakeSynchronous() {
   // Synchronous requests should always be max priority, lest they hang the
   // renderer.
-  resource_request_.SetPriority(kResourceLoadPriorityHighest);
+  resource_request_.SetPriority(ResourceLoadPriority::kHighest);
   resource_request_.SetTimeoutInterval(10);
   options_.synchronous_policy = kRequestSynchronously;
 }
@@ -149,6 +131,10 @@ void FetchParameters::SetAllowImagePlaceholder() {
   if (!resource_request_.Url().ProtocolIsInHTTPFamily() ||
       resource_request_.HttpMethod() != "GET" ||
       !resource_request_.HttpHeaderField("range").IsNull()) {
+    // Make sure that the request isn't marked as using Client Lo-Fi, since
+    // without loading an image placeholder, Client Lo-Fi isn't really in use.
+    resource_request_.SetPreviewsState(resource_request_.GetPreviewsState() &
+                                       ~(WebURLRequest::kClientLoFiOn));
     return;
   }
 
@@ -163,6 +149,22 @@ void FetchParameters::SetAllowImagePlaceholder() {
   // TODO(sclittle): Indicate somehow (e.g. through a new request bit) to the
   // embedder that it should return the full resource if the entire resource is
   // fresh in the cache.
+}
+
+std::unique_ptr<CrossThreadFetchParametersData> FetchParameters::CopyData()
+    const {
+  auto data = std::make_unique<CrossThreadFetchParametersData>();
+  data->resource_request = resource_request_.CopyData();
+  data->decoder_options = decoder_options_;
+  data->options = CrossThreadResourceLoaderOptionsData(options_);
+  data->speculative_preload_type = speculative_preload_type_;
+  data->preload_discovery_time = preload_discovery_time_;
+  data->defer = defer_;
+  data->origin_restriction = origin_restriction_;
+  data->resource_width = resource_width_;
+  data->client_hint_preferences = client_hint_preferences_;
+  data->placeholder_image_request_type = placeholder_image_request_type_;
+  return data;
 }
 
 }  // namespace blink

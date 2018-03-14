@@ -3,12 +3,13 @@
 // found in the LICENSE file.
 
 #include "net/quic/core/crypto/null_encrypter.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/quic/test_tools/quic_test_utils.h"
 
 namespace net {
 namespace test {
 
-class NullEncrypterTest : public ::testing::TestWithParam<bool> {};
+class NullEncrypterTest : public QuicTestWithParam<bool> {};
 
 TEST_F(NullEncrypterTest, EncryptClient) {
   unsigned char expected[] = {
@@ -56,7 +57,7 @@ TEST_F(NullEncrypterTest, EncryptClientPre37) {
   char encrypted[256];
   size_t encrypted_len = 0;
   NullEncrypter encrypter(Perspective::IS_CLIENT);
-  ASSERT_TRUE(encrypter.EncryptPacket(QUIC_VERSION_36, 0, "hello world!",
+  ASSERT_TRUE(encrypter.EncryptPacket(QUIC_VERSION_35, 0, "hello world!",
                                       "goodbye!", encrypted, &encrypted_len,
                                       256));
   test::CompareCharArraysWithHexError(
@@ -74,7 +75,7 @@ TEST_F(NullEncrypterTest, EncryptServerPre37) {
   char encrypted[256];
   size_t encrypted_len = 0;
   NullEncrypter encrypter(Perspective::IS_SERVER);
-  ASSERT_TRUE(encrypter.EncryptPacket(QUIC_VERSION_36, 0, "hello world!",
+  ASSERT_TRUE(encrypter.EncryptPacket(QUIC_VERSION_35, 0, "hello world!",
                                       "goodbye!", encrypted, &encrypted_len,
                                       256));
   test::CompareCharArraysWithHexError(

@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/android/preferences/autofill/autofill_profile_bridge.h"
-
-#include <jni.h>
-
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
@@ -38,7 +34,8 @@ using ::i18n::addressinput::IsFieldRequired;
 using ::i18n::addressinput::Localization;
 using ::i18n::addressinput::RECIPIENT;
 
-static ScopedJavaLocalRef<jstring> GetDefaultCountryCode(
+static ScopedJavaLocalRef<jstring>
+JNI_AutofillProfileBridge_GetDefaultCountryCode(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz) {
   std::string default_country_code =
@@ -47,7 +44,7 @@ static ScopedJavaLocalRef<jstring> GetDefaultCountryCode(
   return ConvertUTF8ToJavaString(env, default_country_code);
 }
 
-static void GetSupportedCountries(
+static void JNI_AutofillProfileBridge_GetSupportedCountries(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& j_country_code_list,
@@ -72,7 +69,7 @@ static void GetSupportedCountries(
       env, ToJavaArrayOfStrings(env, known_country_names), j_country_name_list);
 }
 
-static void GetRequiredFields(
+static void JNI_AutofillProfileBridge_GetRequiredFields(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& j_country_code,
@@ -93,7 +90,8 @@ static void GetRequiredFields(
                                             j_required_fields_list);
 }
 
-static ScopedJavaLocalRef<jstring> GetAddressUiComponents(
+static ScopedJavaLocalRef<jstring>
+JNI_AutofillProfileBridge_GetAddressUiComponents(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& j_country_code,
@@ -141,11 +139,6 @@ static ScopedJavaLocalRef<jstring> GetAddressUiComponents(
       env, ToJavaIntArray(env, component_length), j_length_list);
 
   return ConvertUTF8ToJavaString(env, best_language_tag);
-}
-
-// static
-bool RegisterAutofillProfileBridge(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 } // namespace autofill

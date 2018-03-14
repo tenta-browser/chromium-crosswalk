@@ -6,8 +6,8 @@
 
 #include <algorithm>
 #include <limits>
-#include <map>
 
+#include "base/debug/alias.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "mojo/edk/system/watch.h"
@@ -25,8 +25,8 @@ void WatcherDispatcher::NotifyHandleState(Dispatcher* dispatcher,
   if (it == watched_handles_.end())
     return;
 
-  // Maybe fire a notification to the watch assoicated with this dispatcher,
-  // provided we're armed it cares about the new state.
+  // Maybe fire a notification to the watch associated with this dispatcher,
+  // provided we're armed and it cares about the new state.
   if (it->second->NotifyState(state, armed_)) {
     ready_watches_.insert(it->second.get());
 
@@ -91,10 +91,11 @@ Dispatcher::Type WatcherDispatcher::GetType() const {
 MojoResult WatcherDispatcher::Close() {
   // We swap out all the watched handle information onto the stack so we can
   // call into their dispatchers without our own lock held.
-  std::map<uintptr_t, scoped_refptr<Watch>> watches;
+  base::flat_map<uintptr_t, scoped_refptr<Watch>> watches;
   {
     base::AutoLock lock(lock_);
-    DCHECK(!closed_);
+    if (closed_)
+      return MOJO_RESULT_INVALID_ARGUMENT;
     closed_ = true;
     std::swap(watches, watches_);
     watched_handles_.clear();
@@ -112,16 +113,21 @@ MojoResult WatcherDispatcher::Close() {
 MojoResult WatcherDispatcher::WatchDispatcher(
     scoped_refptr<Dispatcher> dispatcher,
     MojoHandleSignals signals,
+    MojoWatchCondition condition,
     uintptr_t context) {
   // NOTE: Because it's critical to avoid acquiring any other dispatcher locks
   // while |lock_| is held, we defer adding oursevles to the dispatcher until
   // after we've updated all our own relevant state and released |lock_|.
   {
     base::AutoLock lock(lock_);
+    if (closed_)
+      return MOJO_RESULT_INVALID_ARGUMENT;
+
     if (watches_.count(context) || watched_handles_.count(dispatcher.get()))
       return MOJO_RESULT_ALREADY_EXISTS;
 
-    scoped_refptr<Watch> watch = new Watch(this, dispatcher, context, signals);
+    scoped_refptr<Watch> watch =
+        new Watch(this, dispatcher, context, signals, condition);
     watches_.insert({context, watch});
     auto result =
         watched_handles_.insert(std::make_pair(dispatcher.get(), watch));
@@ -138,6 +144,18 @@ MojoResult WatcherDispatcher::WatchDispatcher(
     return rv;
   }
 
+  bool remove_now;
+  {
+    // If we've been closed already, there's a chance our closure raced with
+    // the call to AddWatcherRef() above. In that case we want to ensure we've
+    // removed our ref from |dispatcher|. Note that this may in turn race
+    // with normal removal, but that's fine.
+    base::AutoLock lock(lock_);
+    remove_now = closed_;
+  }
+  if (remove_now)
+    dispatcher->RemoveWatcherRef(this, context);
+
   return MOJO_RESULT_OK;
 }
 
@@ -147,6 +165,8 @@ MojoResult WatcherDispatcher::CancelWatch(uintptr_t context) {
   scoped_refptr<Watch> watch;
   {
     base::AutoLock lock(lock_);
+    if (closed_)
+      return MOJO_RESULT_INVALID_ARGUMENT;
     auto it = watches_.find(context);
     if (it == watches_.end())
       return MOJO_RESULT_NOT_FOUND;
@@ -165,7 +185,12 @@ MojoResult WatcherDispatcher::CancelWatch(uintptr_t context) {
   {
     base::AutoLock lock(lock_);
     auto handle_it = watched_handles_.find(watch->dispatcher().get());
-    DCHECK(handle_it != watched_handles_.end());
+
+    // If another thread races to close this watcher handler, |watched_handles_|
+    // may have been cleared by the time we reach this section.
+    if (handle_it == watched_handles_.end())
+      return MOJO_RESULT_OK;
+
     ready_watches_.erase(handle_it->second.get());
     watched_handles_.erase(handle_it);
   }
@@ -183,6 +208,8 @@ MojoResult WatcherDispatcher::Arm(
       (!ready_contexts || !ready_results || !ready_signals_states)) {
     return MOJO_RESULT_INVALID_ARGUMENT;
   }
+  if (closed_)
+    return MOJO_RESULT_INVALID_ARGUMENT;
 
   if (watched_handles_.empty())
     return MOJO_RESULT_NOT_FOUND;
@@ -226,7 +253,7 @@ MojoResult WatcherDispatcher::Arm(
   return MOJO_RESULT_FAILED_PRECONDITION;
 }
 
-WatcherDispatcher::~WatcherDispatcher() {}
+WatcherDispatcher::~WatcherDispatcher() = default;
 
 }  // namespace edk
 }  // namespace mojo

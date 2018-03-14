@@ -10,7 +10,7 @@
  */
 
 // Expose for testing.
-/** @type {!Map<string, !interfaces.BluetoothDevice.DevicePtr|!Promise} */
+/** @type {!Map<string, !bluetooth.mojom.DevicePtr|!Promise} */
 var connectedDevices = null;
 
 cr.define('device_broker', function() {
@@ -22,34 +22,34 @@ cr.define('device_broker', function() {
    * DevicePtr. If a connection is in progress, the promise resolves when
    * the existing connection request promise is fulfilled.
    * @param {string} address
-   * @return {!Promise<!interfaces.BluetoothDevice.DevicePtr>}
+   * @return {!Promise<!bluetooth.mojom.DevicePtr>}
    */
   function connectToDevice(address) {
     var deviceOrPromise = connectedDevices.get(address) || null;
     if (deviceOrPromise !== null)
       return Promise.resolve(deviceOrPromise);
 
-    var promise = adapter_broker.getAdapterBroker().then(
-        function(adapterBroker) {
-          return adapterBroker.connectToDevice(address);
-        }).then(function(device) {
-          connectedDevices.set(address, device);
+    var promise = adapter_broker.getAdapterBroker()
+                      .then(function(adapterBroker) {
+                        return adapterBroker.connectToDevice(address);
+                      })
+                      .then(function(device) {
+                        connectedDevices.set(address, device);
 
-          device.ptr.setConnectionErrorHandler(function() {
-            connectedDevices.delete(address);
-          });
+                        device.ptr.setConnectionErrorHandler(function() {
+                          connectedDevices.delete(address);
+                        });
 
-          return device;
-        }).catch(function(error) {
-          connectedDevices.delete(address);
-          throw error;
-        });
+                        return device;
+                      })
+                      .catch(function(error) {
+                        connectedDevices.delete(address);
+                        throw error;
+                      });
 
     connectedDevices.set(address, promise);
     return promise;
   }
 
-  return {
-    connectToDevice: connectToDevice
-  };
+  return {connectToDevice: connectToDevice};
 });

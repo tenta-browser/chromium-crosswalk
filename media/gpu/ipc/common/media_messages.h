@@ -12,6 +12,7 @@
 #include "gpu/ipc/common/gpu_param_traits_macros.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/param_traits_macros.h"
+#include "media/base/overlay_info.h"
 #include "media/gpu/ipc/common/media_param_traits.h"
 #include "media/video/jpeg_decode_accelerator.h"
 #include "media/video/video_decode_accelerator.h"
@@ -20,13 +21,6 @@
 #include "ui/gfx/ipc/gfx_param_traits.h"
 
 #define IPC_MESSAGE_START MediaMsgStart
-
-IPC_STRUCT_BEGIN(AcceleratedJpegDecoderMsg_Decode_Params)
-  IPC_STRUCT_MEMBER(media::BitstreamBuffer, input_buffer)
-  IPC_STRUCT_MEMBER(gfx::Size, coded_size)
-  IPC_STRUCT_MEMBER(base::SharedMemoryHandle, output_video_frame_handle)
-  IPC_STRUCT_MEMBER(uint32_t, output_buffer_size)
-IPC_STRUCT_END()
 
 IPC_STRUCT_BEGIN(AcceleratedVideoEncoderMsg_Encode_Params)
   IPC_STRUCT_MEMBER(int32_t, frame_id)
@@ -69,9 +63,6 @@ IPC_SYNC_MESSAGE_ROUTED2_1(GpuCommandBufferMsg_CreateVideoDecoder,
                            int32_t /* decoder_route_id */,
                            bool /* succeeded */)
 
-// Set a CDM on the decoder to handle encrypted buffers.
-IPC_MESSAGE_ROUTED1(AcceleratedVideoDecoderMsg_SetCdm, int32_t /* CDM ID */)
-
 // Send input buffer for decoding.
 IPC_MESSAGE_ROUTED1(AcceleratedVideoDecoderMsg_Decode, media::BitstreamBuffer)
 
@@ -92,9 +83,9 @@ IPC_MESSAGE_ROUTED0(AcceleratedVideoDecoderMsg_Flush)
 // Send reset request to the decoder.
 IPC_MESSAGE_ROUTED0(AcceleratedVideoDecoderMsg_Reset)
 
-// Send a surface id to the decoder.
-IPC_MESSAGE_ROUTED1(AcceleratedVideoDecoderMsg_SetSurface,
-                    int32_t) /* Surface ID */
+// Send overlay info to the decoder.
+IPC_MESSAGE_ROUTED1(AcceleratedVideoDecoderMsg_SetOverlayInfo,
+                    media::OverlayInfo)
 
 // Send destroy request to the decoder.
 IPC_MESSAGE_ROUTED0(AcceleratedVideoDecoderMsg_Destroy)
@@ -198,34 +189,3 @@ IPC_MESSAGE_ROUTED1(AcceleratedVideoEncoderHostMsg_NotifyError,
 
 // Send destroy request to the encoder.
 IPC_MESSAGE_ROUTED0(AcceleratedVideoEncoderMsg_Destroy)
-
-//------------------------------------------------------------------------------
-// Accelerated JPEG Decoder Messages
-// These messages are sent from the Browser process to GPU process.
-
-// Create and initialize a hardware jpeg decoder using the specified route_id.
-// Created decoders should be freed with AcceleratedJpegDecoderMsg_Destroy when
-// no longer needed.
-IPC_SYNC_MESSAGE_CONTROL1_1(GpuChannelMsg_CreateJpegDecoder,
-                            int32_t /* route_id */,
-                            bool /* succeeded */)
-
-// Decode one JPEG image from shared memory |input_buffer_handle| with size
-// |input_buffer_size|. The input buffer is associated with |input_buffer_id|
-// and the size of JPEG image is |coded_size|. Decoded I420 frame data will
-// be put onto shared memory associated with |output_video_frame_handle|
-// with size limit |output_buffer_size|.
-IPC_MESSAGE_ROUTED1(AcceleratedJpegDecoderMsg_Decode,
-                    AcceleratedJpegDecoderMsg_Decode_Params)
-
-// Send destroy request to the decoder.
-IPC_MESSAGE_ROUTED0(AcceleratedJpegDecoderMsg_Destroy)
-
-//------------------------------------------------------------------------------
-// Accelerated JPEG Decoder Host Messages
-// These messages are sent from the GPU process to Browser process.
-//
-// Report decode status.
-IPC_MESSAGE_ROUTED2(AcceleratedJpegDecoderHostMsg_DecodeAck,
-                    int32_t, /* bitstream_buffer_id */
-                    media::JpegDecodeAccelerator::Error /* error */)

@@ -790,7 +790,7 @@ IN_PROC_BROWSER_TEST_F(DeclarativeContentApiTest,
                   "} catch (e) {\n"
                   "  Return(e.message);\n"
                   "}\n"),
-              testing::ContainsRegex("css.*Expected 'array'"));
+              testing::ContainsRegex("css.*xpected '?array'?"));
   EXPECT_THAT(ExecuteScriptInBackgroundPage(
                   extension->id(),
                   "try {\n"
@@ -799,7 +799,7 @@ IN_PROC_BROWSER_TEST_F(DeclarativeContentApiTest,
                   "} catch (e) {\n"
                   "  Return(e.message);\n"
                   "}\n"),
-              testing::ContainsRegex("css\\.0.*Expected 'string'"));
+              testing::ContainsRegex("css.*0.*xpected '?string'?"));
   EXPECT_THAT(ExecuteScriptInBackgroundPage(
                   extension->id(),
                   "try {\n"
@@ -819,7 +819,7 @@ IN_PROC_BROWSER_TEST_F(DeclarativeContentApiTest,
                   "} catch (e) {\n"
                   "  Return(e.message);\n"
                   "}\n"),
-              testing::ContainsRegex("compound selector.*: div input$"));
+              testing::ContainsRegex("selector.*: div input$"));
 }
 
 // Tests that the rules with isBookmarked: true are evaluated when handling
@@ -935,7 +935,6 @@ IN_PROC_BROWSER_TEST_F(DeclarativeContentApiTest,
   ASSERT_TRUE(extension_service->UninstallExtension(
       extension->id(),
       UNINSTALL_REASON_FOR_TESTING,
-      base::Bind(&base::DoNothing),
       &error));
   ASSERT_EQ(base::ASCIIToUTF16(""), error);
 

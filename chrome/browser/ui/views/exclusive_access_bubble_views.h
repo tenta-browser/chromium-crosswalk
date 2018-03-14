@@ -10,6 +10,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_bubble.h"
+#include "chrome/browser/ui/exclusive_access/exclusive_access_bubble_hide_callback.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "ui/views/controls/link_listener.h"
@@ -36,15 +37,24 @@ class ExclusiveAccessBubbleViews : public ExclusiveAccessBubble,
                                    public views::WidgetObserver,
                                    public views::LinkListener {
  public:
-  ExclusiveAccessBubbleViews(ExclusiveAccessBubbleViewsContext* context,
-                             const GURL& url,
-                             ExclusiveAccessBubbleType bubble_type);
+  ExclusiveAccessBubbleViews(
+      ExclusiveAccessBubbleViewsContext* context,
+      const GURL& url,
+      ExclusiveAccessBubbleType bubble_type,
+      ExclusiveAccessBubbleHideCallback bubble_first_hide_callback);
   ~ExclusiveAccessBubbleViews() override;
 
-  void UpdateContent(const GURL& url, ExclusiveAccessBubbleType bubble_type);
+  void UpdateContent(
+      const GURL& url,
+      ExclusiveAccessBubbleType bubble_type,
+      ExclusiveAccessBubbleHideCallback bubble_first_hide_callback);
 
   // Repositions |popup_| if it is visible.
   void RepositionIfVisible();
+
+  // If popup is visible, hides |popup_| before the bubble automatically hides
+  // itself.
+  void HideImmediately();
 
   views::View* GetView();
 
@@ -61,7 +71,7 @@ class ExclusiveAccessBubbleViews : public ExclusiveAccessBubble,
   // Returns the root view containing |browser_view_|.
   views::View* GetBrowserRootView() const;
 
-  // ExclusiveAccessBubble overrides:
+  // ExclusiveAccessBubble:
   void AnimationProgressed(const gfx::Animation* animation) override;
   void AnimationEnded(const gfx::Animation* animation) override;
   gfx::Rect GetPopupRect(bool ignore_animation_state) const override;
@@ -71,22 +81,30 @@ class ExclusiveAccessBubbleViews : public ExclusiveAccessBubble,
   void Hide() override;
   void Show() override;
   bool IsAnimating() override;
-  bool CanMouseTriggerSlideIn() const override;
+  bool CanTriggerOnMouse() const override;
 
-  // content::NotificationObserver override:
+  // content::NotificationObserver:
   void Observe(int type,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
 
-  // views::WidgetObserver override:
+  // views::WidgetObserver:
+  void OnWidgetDestroyed(views::Widget* widget) override;
   void OnWidgetVisibilityChanged(views::Widget* widget, bool visible) override;
 
   // views::LinkListener override:
   void LinkClicked(views::Link* source, int event_flags) override;
 
+  void RunHideCallbackIfNeeded(ExclusiveAccessBubbleHideReason reason);
+
   ExclusiveAccessBubbleViewsContext* const bubble_view_context_;
 
   views::Widget* popup_;
+
+  // Classic mode: Bubble may show & hide multiple times. The callback only runs
+  // for the first hide.
+  // Simplified mode: Bubble only hides once.
+  ExclusiveAccessBubbleHideCallback bubble_first_hide_callback_;
 
   // Animation controlling showing/hiding of the exit bubble.
   std::unique_ptr<gfx::SlideAnimation> animation_;

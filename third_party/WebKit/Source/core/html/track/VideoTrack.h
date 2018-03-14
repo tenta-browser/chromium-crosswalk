@@ -5,16 +5,13 @@
 #ifndef VideoTrack_h
 #define VideoTrack_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
 #include "core/html/track/TrackBase.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
-class CORE_EXPORT VideoTrack final
-    : public GarbageCollectedFinalized<VideoTrack>,
-      public TrackBase,
-      public ScriptWrappable {
+class CORE_EXPORT VideoTrack final : public ScriptWrappable, public TrackBase {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(VideoTrack);
 
@@ -29,7 +26,7 @@ class CORE_EXPORT VideoTrack final
   }
 
   ~VideoTrack() override;
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
   bool selected() const { return selected_; }
   void setSelected(bool);

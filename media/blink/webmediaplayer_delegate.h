@@ -8,6 +8,9 @@
 namespace blink {
 class WebMediaPlayer;
 }
+namespace gfx {
+class Size;
+}
 namespace media {
 
 enum class MediaContentType;
@@ -49,6 +52,8 @@ class WebMediaPlayerDelegate {
     // Called when external controls are activated.
     virtual void OnPlay() = 0;
     virtual void OnPause() = 0;
+    virtual void OnSeekForward(double seconds) = 0;
+    virtual void OnSeekBackward(double seconds) = 0;
 
     // Called to control audio ducking. Output volume should be set to
     // |player_volume| * |multiplier|. The range of |multiplier| is [0, 1],
@@ -87,6 +92,12 @@ class WebMediaPlayerDelegate {
   // TODO(sandersd): It may be helpful to get |has_audio| and |has_video| here,
   // so that we can do the right thing with media that starts paused.
   virtual void DidPause(int player_id) = 0;
+
+  // Notify that the size of the media player is changed.
+  virtual void DidPlayerSizeChange(int delegate_id, const gfx::Size& size) = 0;
+
+  // Notify that the muted status of the media player has changed.
+  virtual void DidPlayerMutedStatusChange(int delegate_id, bool muted) = 0;
 
   // Notify that playback is stopped. This will drop wake locks and remove any
   // external controls.

@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/linux/gtk/gtk.gni")
 import("//build/config/linux/pkg_config.gni")
 import("//build/config/features.gni")
 import("//build/config/ui.gni")
@@ -18,6 +19,9 @@ component("accessibility") {
   sources = [
     "ax_action_data.cc",
     "ax_action_data.h",
+    "ax_event_generator.cc",
+    "ax_event_generator.h",
+    "ax_export.h",
     "ax_host_delegate.cc",
     "ax_host_delegate.h",
     "ax_node.cc",
@@ -50,14 +54,16 @@ component("accessibility") {
     "ax_tree_update.h",
     "platform/ax_android_constants.cc",
     "platform/ax_android_constants.h",
+    "platform/ax_platform_node.cc",
+    "platform/ax_platform_node.h",
     "platform/ax_platform_unique_id.cc",
     "platform/ax_platform_unique_id.h",
+    "platform/ax_snapshot_node_android_platform.cc",
+    "platform/ax_snapshot_node_android_platform.h",
   ]
 
   if (has_native_accessibility) {
     sources += [
-      "platform/ax_platform_node.cc",
-      "platform/ax_platform_node.h",
       "platform/ax_platform_node_base.cc",
       "platform/ax_platform_node_base.h",
       "platform/ax_platform_node_delegate.h",
@@ -65,6 +71,8 @@ component("accessibility") {
       "platform/ax_platform_node_mac.mm",
       "platform/ax_platform_node_win.cc",
       "platform/ax_platform_node_win.h",
+      "platform/ax_system_caret_win.cc",
+      "platform/ax_system_caret_win.h",
     ]
   }
 
@@ -82,6 +90,7 @@ component("accessibility") {
 
   if (is_win) {
     public_deps += [ "//third_party/iaccessible2" ]
+    libs = [ "oleacc.lib" ]
   }
 
   if (is_mac) {
@@ -95,6 +104,8 @@ component("accessibility") {
     sources += [
       "platform/atk_util_auralinux.cc",
       "platform/atk_util_auralinux.h",
+      "platform/ax_platform_atk_hyperlink.cc",
+      "platform/ax_platform_atk_hyperlink.h",
       "platform/ax_platform_node_auralinux.cc",
       "platform/ax_platform_node_auralinux.h",
     ]
@@ -103,6 +114,11 @@ component("accessibility") {
 
     if (use_glib) {
       configs += [ "//build/config/linux:glib" ]
+    }
+    if (use_gtk3) {
+      sources += [ "platform/atk_util_auralinux_gtk3.cc" ]
+    } else {
+      sources += [ "platform/atk_util_auralinux_gtk2.cc" ]
     }
   }
 
@@ -132,12 +148,13 @@ if (is_android) {
 }
 
 static_library("test_support") {
+  testonly = true
   sources = [
     "tree_generator.cc",
     "tree_generator.h",
   ]
 
-  if (is_win) {
+  if (is_win || use_atk) {
     sources += [
       "platform/test_ax_node_wrapper.cc",
       "platform/test_ax_node_wrapper.h",
@@ -150,13 +167,17 @@ static_library("test_support") {
 }
 
 test("accessibility_unittests") {
+  testonly = true
   sources = [
+    "ax_event_generator_unittest.cc",
     "ax_generated_tree_unittest.cc",
     "ax_node_position_unittest.cc",
     "ax_text_utils_unittest.cc",
     "ax_tree_combiner_unittest.cc",
     "ax_tree_serializer_unittest.cc",
     "ax_tree_unittest.cc",
+    "platform/ax_platform_node_unittest.cc",
+    "platform/ax_platform_node_unittest.h",
     "platform/ax_platform_node_win_unittest.cc",
   ]
 
@@ -175,6 +196,11 @@ test("accessibility_unittests") {
 
   if (is_win) {
     deps += [ "//third_party/iaccessible2" ]
+    libs = [ "oleacc.lib" ]
+  }
+  if (use_atk) {
+    sources += [ "platform/ax_platform_node_auralinux_unittest.cc" ]
+    configs += [ "//build/config/linux/atk" ]
   }
 }
 

@@ -4,8 +4,7 @@
 
 #include "net/base/mime_util.h"
 
-#include <algorithm>
-
+#include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -250,11 +249,7 @@ TEST(MimeUtilTest, TestGetExtensionsForMimeType) {
     {"message/", 0, NULL, true},
     {"image/bmp", 1, "bmp"},
     {"video/*", 6, "mp4"},
-#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_IOS)
-    {"video/*", 6, "mpg"},
-#else
     {"video/*", 6, "mpeg"},
-#endif
     {"audio/*", 6, "oga"},
     {"aUDIo/*", 6, "wav"},
   };
@@ -273,8 +268,7 @@ TEST(MimeUtilTest, TestGetExtensionsForMimeType) {
           test.contained_result,
           test.contained_result + strlen(test.contained_result));
 
-      bool found = std::find(extensions.begin(), extensions.end(),
-                             contained_result) != extensions.end();
+      bool found = base::ContainsValue(extensions, contained_result);
 
       ASSERT_TRUE(found) << "Must find at least the contained result within "
                          << test.mime_type;

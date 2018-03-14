@@ -20,6 +20,8 @@
 #include "components/browsing_data/core/counters/browsing_data_counter.h"
 #include "components/browsing_data/core/history_notice_utils.h"
 #include "components/browsing_data/core/pref_names.h"
+#include "components/feature_engagement/public/event_constants.h"
+#include "components/feature_engagement/public/tracker.h"
 #include "components/google/core/browser/google_util.h"
 #include "components/history/core/browser/web_history_service.h"
 #include "components/prefs/pref_service.h"
@@ -32,6 +34,7 @@
 #include "ios/chrome/browser/browsing_data/ios_chrome_browsing_data_remover.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/experimental_flags.h"
+#include "ios/chrome/browser/feature_engagement/tracker_factory.h"
 #include "ios/chrome/browser/history/web_history_service_factory.h"
 #include "ios/chrome/browser/signin/signin_manager_factory.h"
 #include "ios/chrome/browser/sync/ios_chrome_profile_sync_service_factory.h"
@@ -43,8 +46,8 @@
 #import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
 #import "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
+#import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/commands/clear_browsing_data_command.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
 #import "ios/chrome/browser/ui/commands/open_url_command.h"
 #import "ios/chrome/browser/ui/icons/chrome_icon.h"
 #import "ios/chrome/browser/ui/settings/time_range_selector_collection_view_controller.h"
@@ -185,7 +188,9 @@ const int kMaxTimesHistoryNoticeShown = 1;
 
 - (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState {
   DCHECK(browserState);
-  self = [super initWithStyle:CollectionViewControllerStyleAppBar];
+  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+  self =
+      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
   if (self) {
     self.accessibilityTraits |= UIAccessibilityTraitButton;
 
@@ -221,6 +226,8 @@ const int kMaxTimesHistoryNoticeShown = 1;
               base::BindBlockArc(dataClearedCallback));
     }
 
+    // TODO(crbug.com/764578): -loadModel should not be called from
+    // initializer. A possible fix is to move this call to -viewDidLoad.
     [self loadModel];
     [self restartCounters:IOSChromeBrowsingDataRemover::REMOVE_ALL];
   }
@@ -273,13 +280,10 @@ const int kMaxTimesHistoryNoticeShown = 1;
 
   // Data types section.
   [model addSectionWithIdentifier:SectionIdentifierDataTypes];
-  int clearBrowsingHistoryMask =
-      IOSChromeBrowsingDataRemover::REMOVE_HISTORY |
-      IOSChromeBrowsingDataRemover::REMOVE_GOOGLE_APP_LAUNCHER_DATA;
   CollectionViewItem* browsingHistoryItem =
       [self clearDataItemWithType:ItemTypeDataTypeBrowsingHistory
                           titleID:IDS_IOS_CLEAR_BROWSING_HISTORY
-                             mask:clearBrowsingHistoryMask
+                             mask:IOSChromeBrowsingDataRemover::REMOVE_HISTORY
                          prefName:browsing_data::prefs::kDeleteBrowsingHistory];
   [model addItem:browsingHistoryItem
       toSectionWithIdentifier:SectionIdentifierDataTypes];
@@ -410,8 +414,7 @@ const int kMaxTimesHistoryNoticeShown = 1;
     return;
   }
   clearDataItem.detailText = detailText;
-  [self reconfigureCellsForItems:@[ clearDataItem ]
-         inSectionWithIdentifier:SectionIdentifierDataTypes];
+  [self reconfigureCellsForItems:@[ clearDataItem ]];
   [self.collectionView.collectionViewLayout invalidateLayout];
 }
 
@@ -537,8 +540,7 @@ const int kMaxTimesHistoryNoticeShown = 1;
           [self updateCounter:itemType detailText:nil];
         }
       }
-      [self reconfigureCellsForItems:@[ clearDataItem ]
-             inSectionWithIdentifier:SectionIdentifierDataTypes];
+      [self reconfigureCellsForItems:@[ clearDataItem ]];
       break;
     }
     case ItemTypeClearBrowsingDataButton:
@@ -585,8 +587,7 @@ const int kMaxTimesHistoryNoticeShown = 1;
   // Add the new footer.
   [model addItem:footerItem
       toSectionWithIdentifier:SectionIdentifierGoogleAccount];
-  [self reconfigureCellsForItems:@[ footerItem ]
-         inSectionWithIdentifier:SectionIdentifierGoogleAccount];
+  [self reconfigureCellsForItems:@[ footerItem ]];
 
   // Relayout the cells to adapt to the new contents height.
   [self.collectionView.collectionViewLayout invalidateLayout];
@@ -639,6 +640,12 @@ const int kMaxTimesHistoryNoticeShown = 1;
                                                         mask:dataTypeMask
                                                   timePeriod:_timePeriod];
   [self chromeExecuteCommand:command];
+
+  // Send the "Cleared Browsing Data" event to the feature_engagement::Tracker
+  // when the user initiates a clear browsing data action. No event is sent if
+  // the browsing data is cleared without the user's input.
+  feature_engagement::TrackerFactory::GetForBrowserState(_browserState)
+      ->NotifyEvent(feature_engagement::events::kClearedBrowsingData);
 
   if (!!(dataTypeMask && IOSChromeBrowsingDataRemover::REMOVE_HISTORY)) {
     [self showBrowsingHistoryRemovedDialog];
@@ -701,8 +708,7 @@ const int kMaxTimesHistoryNoticeShown = 1;
 - (void)openMyActivityLink {
   OpenUrlCommand* openMyActivityCommand =
       [[OpenUrlCommand alloc] initWithURLFromChrome:GURL(kGoogleMyAccountURL)];
-  openMyActivityCommand.tag = IDC_CLOSE_SETTINGS_AND_OPEN_URL;
-  [self chromeExecuteCommand:openMyActivityCommand];
+  [self.dispatcher closeSettingsUIAndOpenURL:openMyActivityCommand];
 }
 
 - (NSString*)getAccessibilityIdentifierFromItemType:(NSInteger)itemType {
@@ -729,9 +735,7 @@ const int kMaxTimesHistoryNoticeShown = 1;
   if (!model)
     return;
 
-  if (data_mask &
-      (IOSChromeBrowsingDataRemover::REMOVE_HISTORY |
-       IOSChromeBrowsingDataRemover::REMOVE_GOOGLE_APP_LAUNCHER_DATA)) {
+  if (data_mask & IOSChromeBrowsingDataRemover::REMOVE_HISTORY) {
     NSIndexPath* indexPath = [self.collectionViewModel
         indexPathForItemType:ItemTypeDataTypeBrowsingHistory
            sectionIdentifier:SectionIdentifierDataTypes];

@@ -29,14 +29,18 @@
 
 #include "core/editing/serializers/StyledMarkupSerializer.h"
 
-#include "core/css/StylePropertySet.h"
+#include "base/macros.h"
+#include "core/css/CSSPropertyValueSet.h"
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
+#include "core/dom/ElementShadow.h"
 #include "core/dom/Text.h"
-#include "core/dom/shadow/ElementShadow.h"
 #include "core/editing/EditingStyle.h"
 #include "core/editing/EditingStyleUtilities.h"
 #include "core/editing/EditingUtilities.h"
+#include "core/editing/EphemeralRange.h"
+#include "core/editing/SelectionTemplate.h"
+#include "core/editing/VisiblePosition.h"
 #include "core/editing/VisibleSelection.h"
 #include "core/editing/VisibleUnits.h"
 #include "core/editing/serializers/Serialization.h"
@@ -84,7 +88,6 @@ using namespace HTMLNames;
 
 template <typename Strategy>
 class StyledMarkupTraverser {
-  WTF_MAKE_NONCOPYABLE(StyledMarkupTraverser);
   STACK_ALLOCATED();
 
  public:
@@ -107,6 +110,7 @@ class StyledMarkupTraverser {
   StyledMarkupAccumulator* accumulator_;
   Member<Node> last_closed_;
   Member<EditingStyle> wrapping_style_;
+  DISALLOW_COPY_AND_ASSIGN(StyledMarkupTraverser);
 };
 
 template <typename Strategy>
@@ -146,7 +150,7 @@ static bool NeedInterchangeNewlineAfter(
   // Add an interchange newline if a paragraph break is selected and a br won't
   // already be added to the markup to represent it.
   return IsEndOfParagraph(v) && IsStartOfParagraph(next) &&
-         !(isHTMLBRElement(*upstream_node) && upstream_node == downstream_node);
+         !(IsHTMLBRElement(*upstream_node) && upstream_node == downstream_node);
 }
 
 template <typename Strategy>
@@ -199,9 +203,9 @@ String StyledMarkupSerializer<Strategy>::CreateMarkup() {
 
     first_node = NextPositionOf(visible_start).DeepEquivalent().AnchorNode();
 
-    if (past_end && PositionTemplate<Strategy>::BeforeNode(first_node)
+    if (past_end && PositionTemplate<Strategy>::BeforeNode(*first_node)
                             .CompareTo(PositionTemplate<Strategy>::BeforeNode(
-                                past_end)) >= 0) {
+                                *past_end)) >= 0) {
       // This condition hits in editing/pasteboard/copy-display-none.html.
       return markup_accumulator.TakeResults();
     }
@@ -230,8 +234,8 @@ String StyledMarkupSerializer<Strategy>::CreateMarkup() {
     Node* common_ancestor = Strategy::CommonAncestor(
         *start_.ComputeContainerNode(), *end_.ComputeContainerNode());
     DCHECK(common_ancestor);
-    HTMLBodyElement* body = toHTMLBodyElement(EnclosingElementWithTag(
-        Position::FirstPositionInNode(common_ancestor), bodyTag));
+    HTMLBodyElement* body = ToHTMLBodyElement(EnclosingElementWithTag(
+        Position::FirstPositionInNode(*common_ancestor), bodyTag));
     HTMLBodyElement* fully_selected_root = nullptr;
     // FIXME: Do this for all fully selected blocks, not just the body.
     if (body && AreSameRanges(body, start_, end_))
@@ -253,11 +257,14 @@ String StyledMarkupSerializer<Strategy>::CreateMarkup() {
              !fully_selected_root_style->Style() ||
              !fully_selected_root_style->Style()->GetPropertyCSSValue(
                  CSSPropertyBackgroundImage)) &&
-            fully_selected_root->hasAttribute(backgroundAttr))
+            fully_selected_root->hasAttribute(backgroundAttr)) {
           fully_selected_root_style->Style()->SetProperty(
               CSSPropertyBackgroundImage,
               "url('" + fully_selected_root->getAttribute(backgroundAttr) +
-                  "')");
+                  "')",
+              /* important */ false,
+              fully_selected_root->GetDocument().GetSecureContextMode());
+        }
 
         if (fully_selected_root_style->Style()) {
           // Reset the CSS properties to avoid an assertion error in
@@ -357,7 +364,8 @@ Node* StyledMarkupTraverser<Strategy>::Traverse(Node* start_node,
       }
 
       if (!n->GetLayoutObject() &&
-          !EnclosingElementWithTag(FirstPositionInOrBeforeNode(n), selectTag)) {
+          !EnclosingElementWithTag(FirstPositionInOrBeforeNode(*n),
+                                   selectTag)) {
         next = Strategy::NextSkippingChildren(*n);
         // Don't skip over pastEnd.
         if (past_end && Strategy::IsDescendantOf(*past_end, *n))
@@ -478,7 +486,7 @@ void StyledMarkupTraverser<Strategy>::AppendStartMarkup(Node& node) {
   switch (node.getNodeType()) {
     case Node::kTextNode: {
       Text& text = ToText(node);
-      if (text.parentElement() && isHTMLTextAreaElement(text.parentElement())) {
+      if (text.parentElement() && IsHTMLTextAreaElement(text.parentElement())) {
         accumulator_->AppendText(text);
         break;
       }

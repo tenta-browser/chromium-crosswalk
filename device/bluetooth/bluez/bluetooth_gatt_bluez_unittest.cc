@@ -238,10 +238,8 @@ class BluetoothGattBlueZTest : public testing::Test {
 
   void AdapterCallback(scoped_refptr<BluetoothAdapter> adapter) {
     adapter_ = adapter;
-    if (base::MessageLoop::current() &&
-        base::MessageLoop::current()->is_running()) {
-      base::MessageLoop::current()->QuitWhenIdle();
-    }
+    if (base::RunLoop::IsRunningOnCurrentThread())
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   void SuccessCallback() { ++success_callback_count_; }
@@ -281,9 +279,8 @@ class BluetoothGattBlueZTest : public testing::Test {
 
  protected:
   void QuitMessageLoop() {
-    if (base::MessageLoop::current() &&
-        base::MessageLoop::current()->is_running())
-      base::MessageLoop::current()->QuitWhenIdle();
+    if (base::RunLoop::IsRunningOnCurrentThread())
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   base::MessageLoop message_loop_;

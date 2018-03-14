@@ -20,6 +20,7 @@
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_save_info.h"
 #include "content/public/browser/download_url_parameters.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace content {
 
@@ -51,7 +52,7 @@ class DragDownloadFile::DragDownloadFileUI : public DownloadItem::Observer {
         referrer_(referrer),
         referrer_encoding_(referrer_encoding),
         web_contents_(web_contents),
-        download_item_(NULL),
+        download_item_(nullptr),
         weak_ptr_factory_(this) {
     DCHECK(on_completed_task_runner_);
     DCHECK(!on_completed_.is_null());
@@ -63,22 +64,44 @@ class DragDownloadFile::DragDownloadFileUI : public DownloadItem::Observer {
   void InitiateDownload(base::File file,
                         const base::FilePath& file_path) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    DownloadManager* download_manager =
-        BrowserContext::GetDownloadManager(web_contents_->GetBrowserContext());
 
     RecordDownloadSource(INITIATED_BY_DRAG_N_DROP);
     // TODO(https://crbug.com/614134) This should use the frame actually
     // containing the link being dragged rather than the main frame of the tab.
+    net::NetworkTrafficAnnotationTag traffic_annotation =
+        net::DefineNetworkTrafficAnnotation("drag_download_file", R"(
+        semantics {
+          sender: "Drag To Download"
+          description:
+            "Users can download files by dragging them out of browser and into "
+            "a disk related area."
+          trigger: "When user drags a file from the browser."
+          data: "None."
+          destination: WEBSITE
+        }
+        policy {
+          cookies_allowed: YES
+          cookies_store: "user"
+          setting:
+            "This feature cannot be disabled in settings, but it is only "
+            "activated by direct user action."
+          chrome_policy {
+            DownloadRestrictions {
+              DownloadRestrictions: 3
+            }
+          }
+        })");
     std::unique_ptr<content::DownloadUrlParameters> params(
         DownloadUrlParameters::CreateForWebContentsMainFrame(
-            web_contents_, url_));
+            web_contents_, url_, traffic_annotation));
     params->set_referrer(referrer_);
     params->set_referrer_encoding(referrer_encoding_);
     params->set_callback(base::Bind(&DragDownloadFileUI::OnDownloadStarted,
                                     weak_ptr_factory_.GetWeakPtr()));
     params->set_file_path(file_path);
     params->set_file(std::move(file));  // Nulls file.
-    download_manager->DownloadUrl(std::move(params));
+    BrowserContext::GetDownloadManager(web_contents_->GetBrowserContext())
+        ->DownloadUrl(std::move(params));
   }
 
   void Cancel() {
@@ -105,7 +128,7 @@ class DragDownloadFile::DragDownloadFileUI : public DownloadItem::Observer {
     if (!item || item->GetState() != DownloadItem::IN_PROGRESS) {
       DCHECK(!item || item->GetLastReason() != DOWNLOAD_INTERRUPT_REASON_NONE);
       on_completed_task_runner_->PostTask(FROM_HERE,
-                                          base::Bind(on_completed_, false));
+                                          base::BindOnce(on_completed_, false));
       return;
     }
     DCHECK_EQ(DOWNLOAD_INTERRUPT_REASON_NONE, interrupt_reason);
@@ -124,11 +147,11 @@ class DragDownloadFile::DragDownloadFileUI : public DownloadItem::Observer {
       if (!on_completed_.is_null()) {
         on_completed_task_runner_->PostTask(
             FROM_HERE,
-            base::Bind(on_completed_, state == DownloadItem::COMPLETE));
+            base::BindOnce(on_completed_, state == DownloadItem::COMPLETE));
         on_completed_.Reset();
       }
       download_item_->RemoveObserver(this);
-      download_item_ = NULL;
+      download_item_ = nullptr;
     }
     // Ignore other states.
   }
@@ -140,11 +163,11 @@ class DragDownloadFile::DragDownloadFileUI : public DownloadItem::Observer {
       const bool is_complete =
           download_item_->GetState() == DownloadItem::COMPLETE;
       on_completed_task_runner_->PostTask(
-          FROM_HERE, base::Bind(on_completed_, is_complete));
+          FROM_HERE, base::BindOnce(on_completed_, is_complete));
       on_completed_.Reset();
     }
     download_item_->RemoveObserver(this);
-    download_item_ = NULL;
+    download_item_ = nullptr;
   }
 
   scoped_refptr<base::SingleThreadTaskRunner> const on_completed_task_runner_;
@@ -171,7 +194,7 @@ DragDownloadFile::DragDownloadFile(const base::FilePath& file_path,
       file_(std::move(file)),
       drag_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       state_(INITIALIZED),
-      drag_ui_(NULL),
+      drag_ui_(nullptr),
       weak_ptr_factory_(this) {
   drag_ui_ = new DragDownloadFileUI(
       url, referrer, referrer_encoding, web_contents, drag_task_runner_,
@@ -187,9 +210,10 @@ DragDownloadFile::~DragDownloadFile() {
   // the UI thread so that it calls RemoveObserver on the right thread, and so
   // that this task will run after the InitiateDownload task runs on the UI
   // thread.
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, base::Bind(
-      &DragDownloadFileUI::Delete, base::Unretained(drag_ui_)));
-  drag_ui_ = NULL;
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&DragDownloadFileUI::Delete, base::Unretained(drag_ui_)));
+  drag_ui_ = nullptr;
 }
 
 void DragDownloadFile::Start(ui::DownloadFileObserver* observer) {
@@ -203,9 +227,10 @@ void DragDownloadFile::Start(ui::DownloadFileObserver* observer) {
   observer_ = observer;
   DCHECK(observer_.get());
 
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, base::Bind(
-      &DragDownloadFileUI::InitiateDownload, base::Unretained(drag_ui_),
-      base::Passed(&file_), file_path_));
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::BindOnce(&DragDownloadFileUI::InitiateDownload,
+                                         base::Unretained(drag_ui_),
+                                         base::Passed(&file_), file_path_));
 }
 
 bool DragDownloadFile::Wait() {
@@ -218,8 +243,9 @@ bool DragDownloadFile::Wait() {
 void DragDownloadFile::Stop() {
   CheckThread();
   if (drag_ui_) {
-    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, base::Bind(
-        &DragDownloadFileUI::Cancel, base::Unretained(drag_ui_)));
+    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                            base::BindOnce(&DragDownloadFileUI::Cancel,
+                                           base::Unretained(drag_ui_)));
   }
 }
 
@@ -234,7 +260,7 @@ void DragDownloadFile::DownloadCompleted(bool is_successful) {
     observer_->OnDownloadAborted();
 
   // Release the observer since we do not need it any more.
-  observer_ = NULL;
+  observer_ = nullptr;
 
   if (nested_loop_.running())
     nested_loop_.Quit();

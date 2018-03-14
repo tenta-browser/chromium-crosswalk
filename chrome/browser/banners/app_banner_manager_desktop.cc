@@ -5,28 +5,37 @@
 #include "chrome/browser/banners/app_banner_manager_desktop.h"
 
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/banners/app_banner_infobar_delegate_desktop.h"
 #include "chrome/browser/banners/app_banner_metrics.h"
 #include "chrome/browser/banners/app_banner_settings_helper.h"
 #include "chrome/browser/extensions/bookmark_app_helper.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/chrome_switches.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/web_application_info.h"
 #include "extensions/common/constants.h"
 
 DEFINE_WEB_CONTENTS_USER_DATA_KEY(banners::AppBannerManagerDesktop);
 
+namespace {
+
+bool gDisableTriggeringForTesting = false;
+
+}  // namespace
+
 namespace banners {
 
 bool AppBannerManagerDesktop::IsEnabled() {
-#if defined(OS_CHROMEOS)
-  return !base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kDisableAddToShelf);
-#else
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnableAddToShelf);
-#endif
+  if (gDisableTriggeringForTesting)
+    return false;
+
+  return base::FeatureList::IsEnabled(features::kAppBanners) ||
+         IsExperimentalAppBannersEnabled();
+}
+
+void AppBannerManagerDesktop::DisableTriggeringForTesting() {
+  gDisableTriggeringForTesting = true;
 }
 
 AppBannerManagerDesktop::AppBannerManagerDesktop(
@@ -39,30 +48,41 @@ void AppBannerManagerDesktop::DidFinishCreatingBookmarkApp(
     const extensions::Extension* extension,
     const WebApplicationInfo& web_app_info) {
   content::WebContents* contents = web_contents();
-  if (contents) {
-    // A null extension pointer indicates that the bookmark app install was
-    // not successful. Call Stop() to terminate the flow. Don't record a dismiss
-    // metric here because the banner isn't necessarily dismissed.
-    if (extension == nullptr) {
-      Stop();
-    } else {
-      SendBannerAccepted(event_request_id());
+  if (!contents)
+    return;
 
-      AppBannerSettingsHelper::RecordBannerInstallEvent(
-          contents, GetAppIdentifier(), AppBannerSettingsHelper::WEB);
-    }
+  if (extension) {
+    SendBannerAccepted();
+    AppBannerSettingsHelper::RecordBannerInstallEvent(
+        contents, GetAppIdentifier(), AppBannerSettingsHelper::WEB);
+    return;
   }
+
+  // |extension| is null, so we assume that the confirmation dialog was
+  // cancelled. Alternatively, the extension installation may have failed, but
+  // we can't tell the difference here.
+  // TODO(crbug.com/789381): plumb through enough information to be able to
+  // distinguish between extension install failures and user-cancellations of
+  // the app install dialog.
+  if (IsExperimentalAppBannersEnabled()) {
+    SendBannerPromptRequest();  // Reprompt.
+    return;
+  }
+  // Call Terminate() to terminate the flow but don't record a dismiss metric
+  // here because the banner isn't necessarily dismissed.
+  Terminate();
 }
 
-bool AppBannerManagerDesktop::IsWebAppInstalled(
-    content::BrowserContext* browser_context,
+bool AppBannerManagerDesktop::IsWebAppConsideredInstalled(
+    content::WebContents* web_contents,
+    const GURL& validated_url,
     const GURL& start_url,
     const GURL& manifest_url) {
   return extensions::BookmarkAppHelper::BookmarkOrHostedAppInstalled(
-      browser_context, start_url);
+      web_contents->GetBrowserContext(), start_url);
 }
 
-void AppBannerManagerDesktop::ShowBanner() {
+void AppBannerManagerDesktop::ShowBannerUi() {
   content::WebContents* contents = web_contents();
   DCHECK(contents && !manifest_.IsEmpty());
 
@@ -72,28 +92,35 @@ void AppBannerManagerDesktop::ShowBanner() {
   bookmark_app_helper_.reset(
       new extensions::BookmarkAppHelper(profile, web_app_info, contents));
 
+  if (IsExperimentalAppBannersEnabled()) {
+    RecordDidShowBanner("AppBanner.WebApp.Shown");
+    TrackDisplayEvent(DISPLAY_EVENT_WEB_APP_BANNER_CREATED);
+    TrackUserResponse(USER_RESPONSE_WEB_APP_ACCEPTED);
+    ReportStatus(SHOWING_APP_INSTALLATION_DIALOG);
+    bookmark_app_helper_->Create(base::Bind(
+        &AppBannerManager::DidFinishCreatingBookmarkApp, GetWeakPtr()));
+    return;
+  }
+
   // This differs from Android, where there is a concrete
   // AppBannerInfoBarAndroid class to interface with Java, and the manager calls
   // the InfoBarService to show the banner. On desktop, an InfoBar class
   // is not required, and the delegate calls the InfoBarService.
   infobars::InfoBar* infobar = AppBannerInfoBarDelegateDesktop::Create(
-      contents, GetWeakPtr(), bookmark_app_helper_.get(), manifest_,
-      event_request_id());
+      contents, GetWeakPtr(), bookmark_app_helper_.get(), manifest_);
   if (infobar) {
     RecordDidShowBanner("AppBanner.WebApp.Shown");
     TrackDisplayEvent(DISPLAY_EVENT_WEB_APP_BANNER_CREATED);
-    ReportStatus(contents, SHOWING_WEB_APP_BANNER);
+    ReportStatus(SHOWING_WEB_APP_BANNER);
   } else {
-    ReportStatus(contents, FAILED_TO_CREATE_BANNER);
+    ReportStatus(FAILED_TO_CREATE_BANNER);
   }
 }
 
 void AppBannerManagerDesktop::DidFinishLoad(
     content::RenderFrameHost* render_frame_host,
     const GURL& validated_url) {
-  // Explicitly forbid banners from triggering on navigation unless this is
-  // enabled.
-  if (!IsEnabled())
+  if (gDisableTriggeringForTesting)
     return;
 
   AppBannerManager::DidFinishLoad(render_frame_host, validated_url);
@@ -103,9 +130,7 @@ void AppBannerManagerDesktop::OnEngagementIncreased(
     content::WebContents* web_contents,
     const GURL& url,
     double score) {
-  // Explicitly forbid banners from triggering on navigation unless this is
-  // enabled.
-  if (!IsEnabled())
+  if (gDisableTriggeringForTesting)
     return;
 
   AppBannerManager::OnEngagementIncreased(web_contents, url, score);

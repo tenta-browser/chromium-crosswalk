@@ -17,8 +17,11 @@
                 "domain": "ApplicationCache"
             },
             {
+                "domain": "Audits"
+            },
+            {
                 "domain": "CacheStorage",
-                "async": ["requestCacheNames", "requestEntries", "deleteCache", "deleteEntry"]
+                "async": ["requestCacheNames", "requestEntries", "deleteCache", "deleteEntry", "requestCachedResponse"]
             },
             {
                 "domain": "CSS",
@@ -38,6 +41,9 @@
                 "domain": "DOMDebugger"
             },
             {
+                "domain": "DOMSnapshot"
+            },
+            {
                 "domain": "DOMStorage"
             },
             {
@@ -51,15 +57,11 @@
                 "domain": "Log"
             },
             {
-                "domain": "Rendering"
-            },
-            {
-                "domain": "Input",
-                "include": ["dispatchTouchEvent"]
+                "domain": "Overlay"
             },
             {
                 "domain": "IO",
-                "include": []
+                "include": ["resolveBlob"]
             },
             {
                 "domain": "Security",
@@ -67,7 +69,8 @@
             },
             {
                 "domain": "Memory",
-                "include": "getDOMCounters"
+                "include": ["getDOMCounters", "prepareForLeakDetection"],
+                "async": ["prepareForLeakDetection"]
             },
             {
                 "domain": "Tracing",
@@ -77,24 +80,28 @@
             {
                 "domain": "Page",
                 "exclude": ["getNavigationHistory", "navigateToHistoryEntry", "captureScreenshot", "screencastFrameAck", "handleJavaScriptDialog", "setColorPickerEnabled",
-                            "getAppManifest", "requestAppBanner", "setControlNavigations", "processNavigation", "printToPDF"],
+                            "getAppManifest", "requestAppBanner", "setControlNavigations", "processNavigation", "printToPDF", "bringToFront", "setDownloadBehavior"],
                 "async": ["getResourceContent", "searchInResource"],
-                "exclude_events": ["screencastFrame", "screencastVisibilityChanged", "colorPicked", "interstitialShown", "interstitialHidden", "navigationRequested"]
+                "exclude_events": ["screencastFrame", "screencastVisibilityChanged", "colorPicked", "interstitialShown", "interstitialHidden", "javascriptDialogOpening", "javascriptDialogClosed", "navigationRequested"]
+            },
+            {
+                "domain": "Performance"
             },
             {
                 "domain": "Emulation",
                 "include": ["forceViewport", "resetViewport", "resetPageScaleFactor", "setPageScaleFactor", "setScriptExecutionDisabled", "setTouchEmulationEnabled",
-                            "setEmulatedMedia", "setCPUThrottlingRate", "setVirtualTimePolicy", "setDefaultBackgroundColorOverride"],
-                "include_events": ["virtualTimeBudgetExpired"]
+                            "setEmulatedMedia", "setCPUThrottlingRate", "setVirtualTimePolicy", "setNavigatorOverrides", "setDefaultBackgroundColorOverride", "setDeviceMetricsOverride", "clearDeviceMetricsOverride"],
+                "include_events": ["virtualTimeBudgetExpired", "virtualTimeAdvanced", "virtualTimePaused"]
             },
             {
                 "domain": "Network",
-                "exclude": ["clearBrowserCache", "clearBrowserCookies", "getCookies", "getAllCookies", "deleteCookie", "setCookie", "canEmulateNetworkConditions"],
+                "exclude": ["clearBrowserCache", "clearBrowserCookies", "getCookies", "getAllCookies", "deleteCookies", "setCookie", "setCookies", "canEmulateNetworkConditions",
+                            "setRequestInterception", "continueInterceptedRequest", "getResponseBodyForInterception"],
                 "async": ["getResponseBody"]
             },
             {
                 "domain": "Target",
-                "include": ["setAutoAttach", "sendMessageToTarget"],
+                "include": ["setAutoAttach", "sendMessageToTarget", "setAttachToFrames"],
                 "include_events": ["attachedToTarget", "detachedFromTarget", "receivedMessageFromTarget"]
             }
         ]

@@ -14,12 +14,14 @@
    (static_cast<uint32_t>(c) << 16) | (static_cast<uint32_t>(d) << 24))
 
 #define DRM_FORMAT_R8 FOURCC('R', '8', ' ', ' ')
+#define DRM_FORMAT_R16 FOURCC('R', '1', '6', ' ')
 #define DRM_FORMAT_GR88 FOURCC('G', 'R', '8', '8')
 #define DRM_FORMAT_RGB565 FOURCC('R', 'G', '1', '6')
 #define DRM_FORMAT_ARGB8888 FOURCC('A', 'R', '2', '4')
 #define DRM_FORMAT_ABGR8888 FOURCC('A', 'B', '2', '4')
 #define DRM_FORMAT_XRGB8888 FOURCC('X', 'R', '2', '4')
 #define DRM_FORMAT_XBGR8888 FOURCC('X', 'B', '2', '4')
+#define DRM_FORMAT_XRGB2101010 FOURCC('X', 'R', '3', '0')
 #define DRM_FORMAT_YVU420 FOURCC('Y', 'V', '1', '2')
 #define DRM_FORMAT_NV12 FOURCC('N', 'V', '1', '2')
 
@@ -31,7 +33,8 @@ bool ValidInternalFormat(unsigned internalformat, gfx::BufferFormat format) {
     case GL_RGB:
       return format == gfx::BufferFormat::BGR_565 ||
              format == gfx::BufferFormat::RGBX_8888 ||
-             format == gfx::BufferFormat::BGRX_8888;
+             format == gfx::BufferFormat::BGRX_8888 ||
+             format == gfx::BufferFormat::BGRX_1010102;
     case GL_RGB_YCRCB_420_CHROMIUM:
       return format == gfx::BufferFormat::YVU_420;
     case GL_RGB_YCBCR_420V_CHROMIUM:
@@ -42,6 +45,8 @@ bool ValidInternalFormat(unsigned internalformat, gfx::BufferFormat format) {
       return format == gfx::BufferFormat::BGRA_8888;
     case GL_RED_EXT:
       return format == gfx::BufferFormat::R_8;
+    case GL_R16_EXT:
+      return format == gfx::BufferFormat::R_16;
     case GL_RG_EXT:
       return format == gfx::BufferFormat::RG_88;
     default:
@@ -52,12 +57,14 @@ bool ValidInternalFormat(unsigned internalformat, gfx::BufferFormat format) {
 bool ValidFormat(gfx::BufferFormat format) {
   switch (format) {
     case gfx::BufferFormat::R_8:
+    case gfx::BufferFormat::R_16:
     case gfx::BufferFormat::RG_88:
     case gfx::BufferFormat::BGR_565:
     case gfx::BufferFormat::RGBA_8888:
     case gfx::BufferFormat::RGBX_8888:
     case gfx::BufferFormat::BGRA_8888:
     case gfx::BufferFormat::BGRX_8888:
+    case gfx::BufferFormat::BGRX_1010102:
     case gfx::BufferFormat::YVU_420:
     case gfx::BufferFormat::YUV_420_BIPLANAR:
       return true;
@@ -80,6 +87,8 @@ EGLint FourCC(gfx::BufferFormat format) {
   switch (format) {
     case gfx::BufferFormat::R_8:
       return DRM_FORMAT_R8;
+    case gfx::BufferFormat::R_16:
+      return DRM_FORMAT_R16;
     case gfx::BufferFormat::RG_88:
       return DRM_FORMAT_GR88;
     case gfx::BufferFormat::BGR_565:
@@ -92,6 +101,8 @@ EGLint FourCC(gfx::BufferFormat format) {
       return DRM_FORMAT_ARGB8888;
     case gfx::BufferFormat::BGRX_8888:
       return DRM_FORMAT_XRGB8888;
+    case gfx::BufferFormat::BGRX_1010102:
+      return DRM_FORMAT_XRGB2101010;
     case gfx::BufferFormat::YVU_420:
       return DRM_FORMAT_YVU420;
     case gfx::BufferFormat::YUV_420_BIPLANAR:
@@ -209,7 +220,13 @@ bool GLImageNativePixmap::CopyTexImage(unsigned target) {
                  GL_UNSIGNED_BYTE, data.data());
     return true;
   }
-  return GLImageEGL::CopyTexImage(target);
+  return false;
+}
+
+bool GLImageNativePixmap::CopyTexSubImage(unsigned target,
+                                          const gfx::Point& offset,
+                                          const gfx::Rect& rect) {
+  return false;
 }
 
 bool GLImageNativePixmap::ScheduleOverlayPlane(gfx::AcceleratedWidget widget,
@@ -231,7 +248,9 @@ void GLImageNativePixmap::Flush() {
       EGL_NONE,
   };
   if (!eglImageFlushExternalEXT(display, egl_image_, attribs)) {
-    LOG(ERROR) << "Failed to flush rendering";
+    // TODO(reveman): Investigate why we're hitting the following log
+    // statement on ARM devices. b/63364517
+    DLOG(WARNING) << "Failed to flush rendering";
     return;
   }
 }
@@ -250,11 +269,14 @@ unsigned GLImageNativePixmap::GetInternalFormatForTesting(
   switch (format) {
     case gfx::BufferFormat::R_8:
       return GL_RED_EXT;
+    case gfx::BufferFormat::R_16:
+      return GL_R16_EXT;
     case gfx::BufferFormat::RG_88:
       return GL_RG_EXT;
     case gfx::BufferFormat::BGR_565:
     case gfx::BufferFormat::RGBX_8888:
     case gfx::BufferFormat::BGRX_8888:
+    case gfx::BufferFormat::BGRX_1010102:
       return GL_RGB;
     case gfx::BufferFormat::RGBA_8888:
       return GL_RGBA;

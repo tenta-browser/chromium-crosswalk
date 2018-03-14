@@ -31,6 +31,7 @@ public class NotificationConstants {
      */
     public static final String EXTRA_NOTIFICATION_ID = "notification_id";
     static final String EXTRA_NOTIFICATION_INFO_ORIGIN = "notification_info_origin";
+    static final String EXTRA_NOTIFICATION_INFO_SCOPE = "notification_info_scope";
     static final String EXTRA_NOTIFICATION_INFO_PROFILE_ID = "notification_info_profile_id";
     static final String EXTRA_NOTIFICATION_INFO_PROFILE_INCOGNITO =
             "notification_info_profile_incognito";
@@ -39,6 +40,9 @@ public class NotificationConstants {
     static final String EXTRA_NOTIFICATION_INFO_WEBAPK_PACKAGE = "notification_info_webapk_package";
     static final String EXTRA_NOTIFICATION_REPLY = "notification_reply";
     static final String EXTRA_NOTIFICATION_ACTION = "notification_action";
+
+    static final String EXTRA_JOB_SCHEDULED_TIME_MS = "notification_job_scheduled_time_ms";
+    static final String EXTRA_JOB_STARTED_TIME_MS = "notification_job_started_time_ms";
 
     /**
      * Unique identifier for a single sync notification. Since the notification ID is reused,
@@ -54,6 +58,16 @@ public class NotificationConstants {
      * Unique identifier for the Physical Web notification.
      */
     public static final int NOTIFICATION_ID_PHYSICAL_WEB = 3;
+
+    /**
+     * Unique identifier for Browser Actions notification.
+     */
+    public static final int NOTIFICATION_ID_BROWSER_ACTIONS = 4;
+
+    /**
+     * Unique identifier for standalone Web App actions notification.
+     */
+    public static final int NOTIFICATION_ID_WEBAPP_ACTIONS = 5;
 
     /**
      * Unique identifier for the summary notification for downloads.  Using the ID this summary was
@@ -81,9 +95,12 @@ public class NotificationConstants {
     public static final String GROUP_MEDIA_PRESENTATION = "MediaPresentation";
     public static final String GROUP_MEDIA_REMOTE = "MediaRemote";
     public static final String GROUP_SYNC = "Sync";
+    public static final String GROUP_WEBAPK = "WebApk";
 
     // Web notification group names are set dynamically as this prefix + notification origin.
     // For example, 'Web:chromium.org' for a notification from chromium.org.
     static final String GROUP_WEB_PREFIX = "Web:";
 
+    // Default notificationId until it has been set.
+    public static final int DEFAULT_NOTIFICATION_ID = -1;
 }

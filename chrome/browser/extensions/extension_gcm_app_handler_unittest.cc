@@ -21,7 +21,8 @@
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/sequenced_task_runner.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -98,9 +99,8 @@ class Waiter {
   // Runs until IO loop becomes idle.
   void PumpIOLoop() {
     content::BrowserThread::PostTask(
-        content::BrowserThread::IO,
-        FROM_HERE,
-        base::Bind(&Waiter::OnIOLoopPump, base::Unretained(this)));
+        content::BrowserThread::IO, FROM_HERE,
+        base::BindOnce(&Waiter::OnIOLoopPump, base::Unretained(this)));
 
     WaitUntilCompleted();
   }
@@ -116,18 +116,16 @@ class Waiter {
     DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
 
     content::BrowserThread::PostTask(
-        content::BrowserThread::IO,
-        FROM_HERE,
-        base::Bind(&Waiter::OnIOLoopPumpCompleted, base::Unretained(this)));
+        content::BrowserThread::IO, FROM_HERE,
+        base::BindOnce(&Waiter::OnIOLoopPumpCompleted, base::Unretained(this)));
   }
 
   void OnIOLoopPumpCompleted() {
     DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
 
     content::BrowserThread::PostTask(
-        content::BrowserThread::UI,
-        FROM_HERE,
-        base::Bind(&Waiter::PumpIOLoopCompleted, base::Unretained(this)));
+        content::BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&Waiter::PumpIOLoopCompleted, base::Unretained(this)));
   }
 
   std::unique_ptr<base::RunLoop> run_loop_;
@@ -205,12 +203,9 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
     scoped_refptr<base::SequencedTaskRunner> io_thread =
         content::BrowserThread::GetTaskRunnerForThread(
             content::BrowserThread::IO);
-    base::SequencedWorkerPool* worker_pool =
-        content::BrowserThread::GetBlockingPool();
     scoped_refptr<base::SequencedTaskRunner> blocking_task_runner(
-        worker_pool->GetSequencedTaskRunnerWithShutdownBehavior(
-            worker_pool->GetSequenceToken(),
-            base::SequencedWorkerPool::SKIP_ON_SHUTDOWN));
+        base::CreateSequencedTaskRunnerWithTraits(
+            {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}));
     return base::MakeUnique<gcm::GCMProfileService>(
         profile->GetPrefs(), profile->GetPath(), profile->GetRequestContext(),
         chrome::GetChannel(),
@@ -225,20 +220,16 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
   }
 
   ExtensionGCMAppHandlerTest()
-      : extension_service_(NULL),
+      : thread_bundle_(content::TestBrowserThreadBundle::REAL_IO_THREAD),
+        extension_service_(NULL),
         registration_result_(gcm::GCMClient::UNKNOWN_ERROR),
-        unregistration_result_(gcm::GCMClient::UNKNOWN_ERROR) {
-  }
+        unregistration_result_(gcm::GCMClient::UNKNOWN_ERROR) {}
 
   ~ExtensionGCMAppHandlerTest() override {}
 
   // Overridden from test::Test:
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-
-    // Make BrowserThread work in unittest.
-    thread_bundle_.reset(new content::TestBrowserThreadBundle(
-        content::TestBrowserThreadBundle::REAL_IO_THREAD));
 
     // Allow extension update to unpack crx in process.
     in_process_utility_thread_helper_.reset(
@@ -340,8 +331,8 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
   }
 
   void DisableExtension(const Extension* extension) {
-    extension_service_->DisableExtension(
-        extension->id(), Extension::DISABLE_USER_ACTION);
+    extension_service_->DisableExtension(extension->id(),
+                                         disable_reason::DISABLE_USER_ACTION);
   }
 
   void EnableExtension(const Extension* extension) {
@@ -352,7 +343,6 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
     extension_service_->UninstallExtension(
         extension->id(),
         extensions::UNINSTALL_REASON_FOR_TESTING,
-        base::Bind(&base::DoNothing),
         NULL);
   }
 
@@ -392,7 +382,7 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
   }
 
  private:
-  std::unique_ptr<content::TestBrowserThreadBundle> thread_bundle_;
+  content::TestBrowserThreadBundle thread_bundle_;
   std::unique_ptr<content::InProcessUtilityThreadHelper>
       in_process_utility_thread_helper_;
   std::unique_ptr<TestingProfile> profile_;

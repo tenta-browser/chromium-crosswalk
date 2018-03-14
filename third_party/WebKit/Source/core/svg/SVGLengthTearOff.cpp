@@ -244,8 +244,9 @@ SVGLengthTearOff::SVGLengthTearOff(SVGLength* target,
                                     property_is_anim_val,
                                     attribute_name) {}
 
-DEFINE_TRACE_WRAPPERS(SVGLengthTearOff) {
-  visitor->TraceWrappers(contextElement());
+SVGLengthTearOff* SVGLengthTearOff::CreateDetached() {
+  return Create(SVGLength::Create(), nullptr, kPropertyIsNotAnimVal,
+                QualifiedName::Null());
 }
 
 }  // namespace blink

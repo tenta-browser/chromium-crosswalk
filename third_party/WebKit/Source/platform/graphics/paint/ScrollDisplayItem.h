@@ -23,14 +23,14 @@ class PLATFORM_EXPORT BeginScrollDisplayItem final
   }
 
   void Replay(GraphicsContext&) const override;
-  void AppendToWebDisplayItemList(const IntRect&,
+  void AppendToWebDisplayItemList(const LayoutSize&,
                                   WebDisplayItemList*) const override;
 
   const IntSize& CurrentOffset() const { return current_offset_; }
 
  private:
-#ifndef NDEBUG
-  void DumpPropertiesAsDebugString(WTF::StringBuilder&) const final;
+#if DCHECK_IS_ON()
+  void PropertiesAsJSON(JSONObject&) const final;
 #endif
   bool Equals(const DisplayItem& other) const final {
     return DisplayItem::Equals(other) &&
@@ -49,7 +49,7 @@ class PLATFORM_EXPORT EndScrollDisplayItem final : public PairedEndDisplayItem {
   }
 
   void Replay(GraphicsContext&) const override;
-  void AppendToWebDisplayItemList(const IntRect&,
+  void AppendToWebDisplayItemList(const LayoutSize&,
                                   WebDisplayItemList*) const override;
 
  private:

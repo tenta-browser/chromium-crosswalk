@@ -61,7 +61,7 @@ class WebAudioSourceProviderImpl::TeeFilter
     : public AudioRendererSink::RenderCallback {
  public:
   TeeFilter() : renderer_(nullptr), channels_(0), sample_rate_(0) {}
-  ~TeeFilter() override {}
+  ~TeeFilter() override = default;
 
   void Initialize(AudioRendererSink::RenderCallback* renderer,
                   int channels,
@@ -100,17 +100,16 @@ class WebAudioSourceProviderImpl::TeeFilter
 
 WebAudioSourceProviderImpl::WebAudioSourceProviderImpl(
     scoped_refptr<SwitchableAudioRendererSink> sink,
-    scoped_refptr<MediaLog> media_log)
+    MediaLog* media_log)
     : volume_(1.0),
       state_(kStopped),
       client_(nullptr),
       sink_(std::move(sink)),
       tee_filter_(new TeeFilter()),
-      media_log_(std::move(media_log)),
+      media_log_(media_log),
       weak_factory_(this) {}
 
-WebAudioSourceProviderImpl::~WebAudioSourceProviderImpl() {
-}
+WebAudioSourceProviderImpl::~WebAudioSourceProviderImpl() = default;
 
 void WebAudioSourceProviderImpl::SetClient(
     blink::WebAudioSourceProviderClient* client) {
@@ -256,6 +255,11 @@ OutputDeviceInfo WebAudioSourceProviderImpl::GetOutputDeviceInfo() {
   base::AutoLock auto_lock(sink_lock_);
   return sink_ ? sink_->GetOutputDeviceInfo()
                : OutputDeviceInfo(OUTPUT_DEVICE_STATUS_ERROR_NOT_FOUND);
+}
+
+bool WebAudioSourceProviderImpl::IsOptimizedForHardwareParameters() {
+  base::AutoLock auto_lock(sink_lock_);
+  return client_ ? false : true;
 }
 
 bool WebAudioSourceProviderImpl::CurrentThreadIsRenderingThread() {

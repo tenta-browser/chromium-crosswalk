@@ -81,10 +81,6 @@ extern const char kHungRendererOutstandingEventType[];
 extern const char kHungRendererLastEventType[];
 extern const char kHungRendererReason[];
 
-// Third-party module crash keys are sent only on Windows.
-extern const char kThirdPartyModulesLoaded[];
-extern const char kThirdPartyModulesNotLoaded[];
-
 // Whether the machine is enterprise managed (only sent on Windows).
 extern const char kIsEnterpriseManaged[];
 
@@ -107,10 +103,6 @@ extern const char kPrinterInfo[];
 #if defined(OS_CHROMEOS)
 // The number of simultaneous users in multi profile sessions.
 extern const char kNumberOfUsers[];
-
-// The stack trace of the last good close of a fd that just fails a close.
-// Temporary for https://crbug.com/660960
-extern const char kLastGoodCloseStack[];
 #endif
 
 #if defined(OS_MACOSX)
@@ -145,9 +137,10 @@ extern const char kToolbarNibInfo[];
 // Numbers of active views.
 extern const char kViewCount[];
 
-// TEMPORARY: The encoder/frame details at the time a zero-length encoded frame
-// was encountered.  http://crbug.com/519022
-extern const char kZeroEncodeDetails[];
+// TEMPORARY: Stack trace for the previous call of the
+// UserCloudPolicyManager::Connect() method. The value is set when we trigger a
+// browser crash due to an attempt to connect twice.  https://crbug.com/685996.
+extern const char kUserCloudPolicyManagerConnectTrace[];
 
 }  // namespace crash_keys
 

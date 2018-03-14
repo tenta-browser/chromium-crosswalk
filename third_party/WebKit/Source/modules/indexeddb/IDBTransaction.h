@@ -26,16 +26,19 @@
 #ifndef IDBTransaction_h
 #define IDBTransaction_h
 
+#include <memory>
+
 #include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "core/dom/ContextLifecycleObserver.h"
 #include "core/dom/DOMStringList.h"
-#include "core/events/EventListener.h"
+#include "core/dom/events/EventListener.h"
 #include "modules/EventModules.h"
 #include "modules/EventTargetModules.h"
 #include "modules/ModulesExport.h"
 #include "modules/indexeddb/IDBMetadata.h"
 #include "modules/indexeddb/IndexedDB.h"
 #include "platform/heap/Handle.h"
+#include "platform/wtf/Deque.h"
 #include "platform/wtf/HashSet.h"
 #include "platform/wtf/Vector.h"
 #include "public/platform/modules/indexeddb/WebIDBDatabase.h"
@@ -51,6 +54,7 @@ class IDBIndex;
 class IDBObjectStore;
 class IDBOpenDBRequest;
 class IDBRequest;
+class IDBRequestQueueItem;
 class ScriptState;
 
 class MODULES_EXPORT IDBTransaction final
@@ -78,7 +82,7 @@ class MODULES_EXPORT IDBTransaction final
       IDBOpenDBRequest*,
       const IDBDatabaseMetadata& old_metadata);
   ~IDBTransaction() override;
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   static WebIDBTransactionMode StringToMode(const String&);
 
@@ -104,6 +108,15 @@ class MODULES_EXPORT IDBTransaction final
 
   void RegisterRequest(IDBRequest*);
   void UnregisterRequest(IDBRequest*);
+
+  // True if this transaction has at least one request whose result is being
+  // post-processed.
+  //
+  // While this is true, new results must be queued using EnqueueResult().
+  inline bool HasQueuedResults() const { return !result_queue_.empty(); }
+  void EnqueueResult(std::unique_ptr<IDBRequestQueueItem> result);
+  // Called when a result's post-processing has completed.
+  void OnResultReady();
 
   // The methods below are called right before the changes are applied to the
   // database's metadata. We use this unusual sequencing because some of the
@@ -212,6 +225,15 @@ class MODULES_EXPORT IDBTransaction final
 
   HeapListHashSet<Member<IDBRequest>> request_list_;
 
+  // The IDBRequest results whose events have not been enqueued yet.
+  //
+  // When a result requires post-processing, such as large value unwrapping, it
+  // is queued up until post-processing completes. All the results that arrive
+  // during the post-processing phase are also queued up, so their result events
+  // are fired in the order in which the requests were performed, as prescribed
+  // by the IndexedDB specification.
+  Deque<std::unique_ptr<IDBRequestQueueItem>> result_queue_;
+
 #if DCHECK_IS_ON()
   bool finish_called_ = false;
 #endif  // DCHECK_IS_ON()
@@ -229,13 +251,13 @@ class MODULES_EXPORT IDBTransaction final
   // The metadata of object stores when they are opened by this transaction.
   //
   // Only valid for versionchange transactions.
-  HeapHashMap<Member<IDBObjectStore>, RefPtr<IDBObjectStoreMetadata>>
+  HeapHashMap<Member<IDBObjectStore>, scoped_refptr<IDBObjectStoreMetadata>>
       old_store_metadata_;
 
   // The metadata of deleted object stores without IDBObjectStore instances.
   //
   // Only valid for versionchange transactions.
-  Vector<RefPtr<IDBObjectStoreMetadata>> deleted_object_stores_;
+  Vector<scoped_refptr<IDBObjectStoreMetadata>> deleted_object_stores_;
 
   // Tracks the indexes deleted by this transaction.
   //

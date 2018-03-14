@@ -7,12 +7,7 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/json/json_reader.h"
-#include "base/memory/ref_counted_memory.h"
-#include "base/strings/stringprintf.h"
-#include "base/test/scoped_feature_list.h"
-#include "base/test/trace_event_analyzer.h"
 #include "base/threading/thread_restrictions.h"
-#include "base/trace_event/trace_event_impl.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "content/browser/browser_main_loop.h"
@@ -20,32 +15,28 @@
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/webrtc/webrtc_content_browsertest_base.h"
 #include "content/browser/webrtc/webrtc_internals.h"
-#include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "media/audio/audio_manager.h"
+#include "media/audio/fake_audio_input_stream.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
-#include "testing/perf/perf_test.h"
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
 #endif
 
-using trace_analyzer::TraceAnalyzer;
-using trace_analyzer::Query;
-using trace_analyzer::TraceEventVector;
-
 namespace {
 
 static const char kGetUserMediaAndStop[] = "getUserMediaAndStop";
-static const char kGetUserMediaAndGetStreamUp[] = "getUserMediaAndGetStreamUp";
 static const char kGetUserMediaAndAnalyseAndStop[] =
     "getUserMediaAndAnalyseAndStop";
 static const char kGetUserMediaAndExpectFailure[] =
     "getUserMediaAndExpectFailure";
+static const char kGetUserMediaForAudioMutingTest[] =
+    "getUserMediaForAudioMutingTest";
 static const char kRenderSameTrackMediastreamAndStop[] =
     "renderSameTrackMediastreamAndStop";
 static const char kRenderClonedMediastreamAndStop[] =
@@ -105,108 +96,11 @@ namespace content {
 
 class WebRtcGetUserMediaBrowserTest : public WebRtcContentBrowserTestBase {
  public:
-  WebRtcGetUserMediaBrowserTest() : trace_log_(NULL) {
-    scoped_feature_list_.InitAndDisableFeature(
-        features::kMediaStreamOldVideoConstraints);
+  WebRtcGetUserMediaBrowserTest() {
     // Automatically grant device permission.
     AppendUseFakeUIForMediaStreamFlag();
   }
   ~WebRtcGetUserMediaBrowserTest() override {}
-
-  void StartTracing() {
-    CHECK(trace_log_ == NULL) << "Can only can start tracing once";
-    trace_log_ = base::trace_event::TraceLog::GetInstance();
-    base::trace_event::TraceConfig trace_config(
-        "video", base::trace_event::RECORD_UNTIL_FULL);
-    trace_log_->SetEnabled(trace_config,
-                           base::trace_event::TraceLog::RECORDING_MODE);
-    // Check that we are indeed recording.
-    EXPECT_EQ(trace_log_->GetNumTracesRecorded(), 1);
-  }
-
-  void StopTracing() {
-    CHECK(message_loop_runner_.get() == NULL)
-        << "Calling StopTracing more than once";
-
-    {
-      base::ThreadRestrictions::ScopedAllowIO allow_thread_join_caused_by_test;
-      trace_log_->SetDisabled();
-    }
-
-    message_loop_runner_ = new MessageLoopRunner;
-    trace_log_->Flush(base::Bind(
-        &WebRtcGetUserMediaBrowserTest::OnTraceDataCollected,
-        base::Unretained(this)));
-    message_loop_runner_->Run();
-  }
-
-  void OnTraceDataCollected(
-      const scoped_refptr<base::RefCountedString>& events_str_ptr,
-      bool has_more_events) {
-    CHECK(!has_more_events);
-    recorded_trace_data_ = events_str_ptr;
-    message_loop_runner_->Quit();
-  }
-
-  TraceAnalyzer* CreateTraceAnalyzer() {
-    return TraceAnalyzer::Create("[" + recorded_trace_data_->data() + "]");
-  }
-
-  void RunGetUserMediaAndCollectMeasures(const int time_to_sample_secs,
-                                         const std::string& measure_filter,
-                                         const std::string& graph_name) {
-    ASSERT_TRUE(embedded_test_server()->Start());
-
-    GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-    NavigateToURL(shell(), url);
-
-    // Put getUserMedia to work and let it run for a couple of seconds.
-    DCHECK(time_to_sample_secs);
-    ExecuteJavascriptAndWaitForOk(
-        base::StringPrintf("%s({video: true}, 'myStreamName');",
-                           kGetUserMediaAndGetStreamUp));
-
-    // Now the stream is up and running, start collecting traces.
-    StartTracing();
-
-    ExecuteJavascriptAndWaitForOk(
-        base::StringPrintf("waitAndStopVideoTrack(window['myStreamName'], %d);",
-                           time_to_sample_secs));
-
-    // Wait until the page title changes to "OK". Do not sleep() here since that
-    // would stop both this code and the browser underneath.
-    StopTracing();
-
-    std::unique_ptr<TraceAnalyzer> analyzer(CreateTraceAnalyzer());
-    analyzer->AssociateBeginEndEvents();
-    trace_analyzer::TraceEventVector events;
-    DCHECK(measure_filter.size());
-    analyzer->FindEvents(
-        Query::EventNameIs(measure_filter),
-        &events);
-    ASSERT_GT(events.size(), 0u)
-        << "Could not collect any samples during test, this is bad";
-
-    std::string duration_us;
-    std::string interarrival_us;
-    for (size_t i = 0; i != events.size(); ++i) {
-      duration_us.append(
-          base::StringPrintf("%d,", static_cast<int>(events[i]->duration)));
-    }
-
-    for (size_t i = 1; i < events.size(); ++i) {
-      // The event |timestamp| comes in ns, divide to get us like |duration|.
-      interarrival_us.append(base::StringPrintf("%d,",
-          static_cast<int>((events[i]->timestamp - events[i - 1]->timestamp) /
-                           base::Time::kNanosecondsPerMicrosecond)));
-    }
-
-    perf_test::PrintResultList(
-        graph_name, "", "sample_duration", duration_us, "us", true);
-
-    perf_test::PrintResultList(
-        graph_name, "", "interarrival_time", interarrival_us, "us", true);
-  }
 
   // Runs the JavaScript twoGetUserMedia with |constraints1| and |constraint2|.
   void RunTwoGetTwoGetUserMediaWithDifferentContraints(
@@ -239,8 +133,8 @@ class WebRtcGetUserMediaBrowserTest : public WebRtcContentBrowserTestBase {
         devices_as_json, base::JSON_ALLOW_TRAILING_COMMAS, &error_code,
         &error_message);
 
-    ASSERT_TRUE(value.get() != NULL) << error_message;
-    EXPECT_EQ(value->GetType(), base::Value::Type::LIST);
+    ASSERT_TRUE(value.get() != nullptr) << error_message;
+    EXPECT_EQ(value->type(), base::Value::Type::LIST);
 
     base::ListValue* values;
     ASSERT_TRUE(value->GetAsList(&values));
@@ -264,12 +158,6 @@ class WebRtcGetUserMediaBrowserTest : public WebRtcContentBrowserTestBase {
     ASSERT_FALSE(audio_ids->empty());
     ASSERT_FALSE(video_ids->empty());
   }
-
- private:
-  base::trace_event::TraceLog* trace_log_;
-  scoped_refptr<base::RefCountedString> recorded_trace_data_;
-  scoped_refptr<MessageLoopRunner> message_loop_runner_;
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // These tests will all make a getUserMedia call with different constraints and
@@ -384,8 +272,16 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
   ExecuteJavascriptAndWaitForOk("getUserMediaAndRenderInSeveralVideoTags();");
 }
 
+// TODO(crbug.com/571389): Flaky on TSAN bots.
+#if defined(OS_LINUX)
+#define MAYBE_GetUserMediaWithMandatorySourceID \
+  DISABLED_GetUserMediaWithMandatorySourceID
+#else
+#define MAYBE_GetUserMediaWithMandatorySourceID \
+  GetUserMediaWithMandatorySourceID
+#endif
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
-                       GetUserMediaWithMandatorySourceID) {
+                       MAYBE_GetUserMediaWithMandatorySourceID) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   std::vector<std::string> audio_ids;
@@ -408,6 +304,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
     }
   }
 }
+#undef MAYBE_GetUserMediaWithMandatorySourceID
 
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
                        GetUserMediaWithInvalidMandatorySourceID) {
@@ -420,30 +317,25 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
 
   // Test with invalid mandatory audio sourceID.
-  // TODO(guidou): Update error string when spec-compliant constraint resolution
-  // for audio is implemented. See http://crbug.com/657733.
   NavigateToURL(shell(), url);
-  EXPECT_EQ("DevicesNotFoundError", ExecuteJavascriptAndReturnResult(
-      GenerateGetUserMediaWithMandatorySourceID(
-          kGetUserMediaAndExpectFailure,
-          "something invalid",
-          video_ids[0])));
+  EXPECT_EQ("OverconstrainedError",
+            ExecuteJavascriptAndReturnResult(
+                GenerateGetUserMediaWithMandatorySourceID(
+                    kGetUserMediaAndExpectFailure, "something invalid",
+                    video_ids[0])));
 
   // Test with invalid mandatory video sourceID.
-  EXPECT_EQ("ConstraintNotSatisfiedError",
+  EXPECT_EQ("OverconstrainedError",
             ExecuteJavascriptAndReturnResult(
                 GenerateGetUserMediaWithMandatorySourceID(
                     kGetUserMediaAndExpectFailure, audio_ids[0],
                     "something invalid")));
 
   // Test with empty mandatory audio sourceID.
-  // TODO(guidou): Update error string when spec-compliant constraint resolution
-  // for audio is implemented. See http://crbug.com/657733.
-  EXPECT_EQ("DevicesNotFoundError", ExecuteJavascriptAndReturnResult(
-      GenerateGetUserMediaWithMandatorySourceID(
-          kGetUserMediaAndExpectFailure,
-          "",
-          video_ids[0])));
+  EXPECT_EQ("OverconstrainedError",
+            ExecuteJavascriptAndReturnResult(
+                GenerateGetUserMediaWithMandatorySourceID(
+                    kGetUserMediaAndExpectFailure, "", video_ids[0])));
 }
 
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
@@ -543,16 +435,10 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
                                                   expected_result);
 }
 
-// Test fails under MSan, http://crbug.com/445745
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_TwoGetUserMediaAndVerifyFrameRate \
-  DISABLED_TwoGetUserMediaAndVerifyFrameRate
-#else
-#define MAYBE_TwoGetUserMediaAndVerifyFrameRate \
-  TwoGetUserMediaAndVerifyFrameRate
-#endif
+// Test fails under MSan, http://crbug.com/445745.
+// Flaky everywhere: https://crbug.com/789121.
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
-                       MAYBE_TwoGetUserMediaAndVerifyFrameRate) {
+                       DISABLED_TwoGetUserMediaAndVerifyFrameRate) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
@@ -586,8 +472,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
                                               large_value);
   NavigateToURL(shell(), url);
 
-  EXPECT_EQ("ConstraintNotSatisfiedError",
-            ExecuteJavascriptAndReturnResult(call));
+  EXPECT_EQ("OverconstrainedError", ExecuteJavascriptAndReturnResult(call));
 }
 
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
@@ -603,8 +488,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
 
   const std::string call = base::StringPrintf(
       "%s({video: false, audio: true});", kGetUserMediaAndExpectFailure);
-  EXPECT_EQ("TrackStartError",
-            ExecuteJavascriptAndReturnResult(call));
+  EXPECT_EQ("NotReadableError", ExecuteJavascriptAndReturnResult(call));
 }
 
 // This test makes two getUserMedia requests, one with impossible constraints
@@ -630,7 +514,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
     GenerateGetUserMediaCall(kGetUserMediaAndAnalyseAndStop,
                              640, 640, 480, 480, 10, 30);
 
-  ASSERT_EQ("ConstraintNotSatisfiedError",
+  ASSERT_EQ("OverconstrainedError",
             ExecuteJavascriptAndReturnResult(gum_with_impossible_constraints));
 
   ASSERT_EQ("w=640:h=480",
@@ -644,19 +528,6 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
 #define MAYBE_TraceVideoCaptureControllerPerformanceDuringGetUserMedia \
   TraceVideoCaptureControllerPerformanceDuringGetUserMedia
 #endif
-
-// This test will make a simple getUserMedia page, verify that video is playing
-// in a simple local <video>, and for a couple of seconds, collect some
-// performance traces from VideoCaptureController colorspace conversion and
-// potential resizing.
-IN_PROC_BROWSER_TEST_F(
-    WebRtcGetUserMediaBrowserTest,
-    MAYBE_TraceVideoCaptureControllerPerformanceDuringGetUserMedia) {
-  RunGetUserMediaAndCollectMeasures(
-      10,
-      "VideoCaptureDeviceClient::OnIncomingCapturedData",
-      "VideoCaptureDeviceClient");
-}
 
 // This test calls getUserMedia and checks for aspect ratio behavior.
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
@@ -705,8 +576,9 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
 
 // This test calls getUserMedia in an iframe and immediately close the iframe
 // in the scope of the success callback.
+// Flaky: crbug.com/727601.
 IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
-                       AudioInIFrameAndCloseInSuccessCb) {
+                       DISABLED_AudioInIFrameAndCloseInSuccessCb) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
@@ -793,661 +665,151 @@ IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
       MediaStreamManager::GenerateStreamTestCallback());
 }
 
-// TODO(guidou): Remove this test. http://crbug.com/706408
-class WebRtcGetUserMediaOldConstraintsBrowserTest
-    : public WebRtcContentBrowserTestBase {
- public:
-  WebRtcGetUserMediaOldConstraintsBrowserTest() : trace_log_(NULL) {
-    scoped_feature_list_.InitAndEnableFeature(
-        features::kMediaStreamOldVideoConstraints);
-    // Automatically grant device permission.
-    AppendUseFakeUIForMediaStreamFlag();
-  }
-  ~WebRtcGetUserMediaOldConstraintsBrowserTest() override {}
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest, GetAudioSettingsDefault) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
+  NavigateToURL(shell(), url);
+  ExecuteJavascriptAndWaitForOk("getAudioSettingsDefault()");
+}
 
-  void StartTracing() {
-    CHECK(trace_log_ == NULL) << "Can only can start tracing once";
-    trace_log_ = base::trace_event::TraceLog::GetInstance();
-    base::trace_event::TraceConfig trace_config(
-        "video", base::trace_event::RECORD_UNTIL_FULL);
-    trace_log_->SetEnabled(trace_config,
-                           base::trace_event::TraceLog::RECORDING_MODE);
-    // Check that we are indeed recording.
-    EXPECT_EQ(trace_log_->GetNumTracesRecorded(), 1);
-  }
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
+                       GetAudioSettingsNoEchoCancellation) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
+  NavigateToURL(shell(), url);
+  ExecuteJavascriptAndWaitForOk("getAudioSettingsNoEchoCancellation()");
+}
 
-  void StopTracing() {
-    CHECK(message_loop_runner_.get() == NULL)
-        << "Calling StopTracing more than once";
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
+                       GetAudioSettingsDeviceId) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
+  NavigateToURL(shell(), url);
+  ExecuteJavascriptAndWaitForOk("getAudioSettingsDeviceId()");
+}
 
-    {
-      base::ThreadRestrictions::ScopedAllowIO allow_thread_join_caused_by_test;
-      trace_log_->SetDisabled();
-    }
 
-    message_loop_runner_ = new MessageLoopRunner;
-    trace_log_->Flush(base::Bind(
-        &WebRtcGetUserMediaOldConstraintsBrowserTest::OnTraceDataCollected,
-        base::Unretained(this)));
-    message_loop_runner_->Run();
-  }
-
-  void OnTraceDataCollected(
-      const scoped_refptr<base::RefCountedString>& events_str_ptr,
-      bool has_more_events) {
-    CHECK(!has_more_events);
-    recorded_trace_data_ = events_str_ptr;
-    message_loop_runner_->Quit();
-  }
-
-  TraceAnalyzer* CreateTraceAnalyzer() {
-    return TraceAnalyzer::Create("[" + recorded_trace_data_->data() + "]");
-  }
-
-  void RunGetUserMediaAndCollectMeasures(const int time_to_sample_secs,
-                                         const std::string& measure_filter,
-                                         const std::string& graph_name) {
-    ASSERT_TRUE(embedded_test_server()->Start());
-
-    GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-    NavigateToURL(shell(), url);
-
-    // Put getUserMedia to work and let it run for a couple of seconds.
-    DCHECK(time_to_sample_secs);
-    ExecuteJavascriptAndWaitForOk(base::StringPrintf(
-        "%s({video: true}, 'myStreamName');", kGetUserMediaAndGetStreamUp));
-
-    // Now the stream is up and running, start collecting traces.
-    StartTracing();
-
-    ExecuteJavascriptAndWaitForOk(
-        base::StringPrintf("waitAndStopVideoTrack(window['myStreamName'], %d);",
-                           time_to_sample_secs));
-
-    // Wait until the page title changes to "OK". Do not sleep() here since that
-    // would stop both this code and the browser underneath.
-    StopTracing();
-
-    std::unique_ptr<TraceAnalyzer> analyzer(CreateTraceAnalyzer());
-    analyzer->AssociateBeginEndEvents();
-    trace_analyzer::TraceEventVector events;
-    DCHECK(measure_filter.size());
-    analyzer->FindEvents(Query::EventNameIs(measure_filter), &events);
-    ASSERT_GT(events.size(), 0u)
-        << "Could not collect any samples during test, this is bad";
-
-    std::string duration_us;
-    std::string interarrival_us;
-    for (size_t i = 0; i != events.size(); ++i) {
-      duration_us.append(
-          base::StringPrintf("%d,", static_cast<int>(events[i]->duration)));
-    }
-
-    for (size_t i = 1; i < events.size(); ++i) {
-      // The event |timestamp| comes in ns, divide to get us like |duration|.
-      interarrival_us.append(base::StringPrintf(
-          "%d,",
-          static_cast<int>((events[i]->timestamp - events[i - 1]->timestamp) /
-                           base::Time::kNanosecondsPerMicrosecond)));
-    }
-
-    perf_test::PrintResultList(graph_name, "", "sample_duration", duration_us,
-                               "us", true);
-
-    perf_test::PrintResultList(graph_name, "", "interarrival_time",
-                               interarrival_us, "us", true);
-  }
-
-  // Runs the JavaScript twoGetUserMedia with |constraints1| and |constraint2|.
-  void RunTwoGetTwoGetUserMediaWithDifferentContraints(
-      const std::string& constraints1,
-      const std::string& constraints2,
-      const std::string& expected_result) {
-    ASSERT_TRUE(embedded_test_server()->Start());
-
-    GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-    NavigateToURL(shell(), url);
-
-    std::string command =
-        "twoGetUserMedia(" + constraints1 + ',' + constraints2 + ')';
-
-    EXPECT_EQ(expected_result, ExecuteJavascriptAndReturnResult(command));
-  }
-
-  void GetInputDevices(std::vector<std::string>* audio_ids,
-                       std::vector<std::string>* video_ids) {
-    GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-    NavigateToURL(shell(), url);
-
-    std::string devices_as_json =
-        ExecuteJavascriptAndReturnResult("getSources()");
-    EXPECT_FALSE(devices_as_json.empty());
-
-    int error_code;
-    std::string error_message;
-    std::unique_ptr<base::Value> value = base::JSONReader::ReadAndReturnError(
-        devices_as_json, base::JSON_ALLOW_TRAILING_COMMAS, &error_code,
-        &error_message);
-
-    ASSERT_TRUE(value.get() != NULL) << error_message;
-    EXPECT_EQ(value->GetType(), base::Value::Type::LIST);
-
-    base::ListValue* values;
-    ASSERT_TRUE(value->GetAsList(&values));
-
-    for (base::ListValue::iterator it = values->begin(); it != values->end();
-         ++it) {
-      const base::DictionaryValue* dict;
-      std::string kind;
-      std::string device_id;
-      ASSERT_TRUE(it->GetAsDictionary(&dict));
-      ASSERT_TRUE(dict->GetString("kind", &kind));
-      ASSERT_TRUE(dict->GetString("id", &device_id));
-      ASSERT_FALSE(device_id.empty());
-      EXPECT_TRUE(kind == "audio" || kind == "video");
-      if (kind == "audio") {
-        audio_ids->push_back(device_id);
-      } else if (kind == "video") {
-        video_ids->push_back(device_id);
-      }
-    }
-    ASSERT_FALSE(audio_ids->empty());
-    ASSERT_FALSE(video_ids->empty());
-  }
-
- private:
-  base::trace_event::TraceLog* trace_log_;
-  scoped_refptr<base::RefCountedString> recorded_trace_data_;
-  scoped_refptr<MessageLoopRunner> message_loop_runner_;
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-// These tests will all make a getUserMedia call with different constraints and
-// see that the success callback is called. If the error callback is called or
-// none of the callbacks are called the tests will simply time out and fail.
-
-// Test fails under MSan, http://crbug.com/445745
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_GetVideoStreamAndStop DISABLED_GetVideoStreamAndStop
-#else
-#define MAYBE_GetVideoStreamAndStop GetVideoStreamAndStop
-#endif
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       MAYBE_GetVideoStreamAndStop) {
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
+                       GetAudioStreamAndCheckMutingInitiallyUnmuted) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
   NavigateToURL(shell(), url);
 
+  // Expect stream to initially not be muted
+  media::FakeAudioInputStream::SetGlobalMutedState(false);
   ExecuteJavascriptAndWaitForOk(
-      base::StringPrintf("%s({video: true});", kGetUserMediaAndStop));
-}
+      base::StringPrintf("%s(false);", kGetUserMediaForAudioMutingTest));
 
-// Test fails under MSan, http://crbug.com/445745
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_RenderSameTrackMediastreamAndStop \
-  DISABLED_RenderSameTrackMediastreamAndStop
-#else
-#define MAYBE_RenderSameTrackMediastreamAndStop \
-  RenderSameTrackMediastreamAndStop
-#endif
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       MAYBE_RenderSameTrackMediastreamAndStop) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-  NavigateToURL(shell(), url);
-
-  ExecuteJavascriptAndWaitForOk(base::StringPrintf(
-      "%s({video: true});", kRenderSameTrackMediastreamAndStop));
-}
-
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       RenderClonedMediastreamAndStop) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-  NavigateToURL(shell(), url);
-
-  ExecuteJavascriptAndWaitForOk(base::StringPrintf(
-      "%s({video: true});", kRenderClonedMediastreamAndStop));
-}
-
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       kRenderClonedTrackMediastreamAndStop) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-  NavigateToURL(shell(), url);
-
-  ExecuteJavascriptAndWaitForOk(base::StringPrintf(
-      "%s({video: true});", kRenderClonedTrackMediastreamAndStop));
-}
-
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       kRenderDuplicatedMediastreamAndStop) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-  NavigateToURL(shell(), url);
-
-  ExecuteJavascriptAndWaitForOk(base::StringPrintf(
-      "%s({video: true});", kRenderDuplicatedMediastreamAndStop));
-}
-
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       GetAudioAndVideoStreamAndStop) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-  NavigateToURL(shell(), url);
-
-  ExecuteJavascriptAndWaitForOk(base::StringPrintf(
-      "%s({video: true, audio: true});", kGetUserMediaAndStop));
-}
-
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       GetAudioAndVideoStreamAndClone) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-  NavigateToURL(shell(), url);
-
-  ExecuteJavascriptAndWaitForOk("getUserMediaAndClone();");
-}
-
-// Test fails under Android, http://crbug.com/524388
-// Test fails under MSan
-// Flaky everywhere else: http://crbug.com/523152
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       RenderVideoTrackInMultipleTagsAndPause) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-  NavigateToURL(shell(), url);
-
-  ExecuteJavascriptAndWaitForOk("getUserMediaAndRenderInSeveralVideoTags();");
-}
-
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       GetUserMediaWithMandatorySourceID) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  std::vector<std::string> audio_ids;
-  std::vector<std::string> video_ids;
-  GetInputDevices(&audio_ids, &video_ids);
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-  NavigateToURL(shell(), url);
-
-  // Test all combinations of mandatory sourceID;
-  for (std::vector<std::string>::const_iterator video_it = video_ids.begin();
-       video_it != video_ids.end(); ++video_it) {
-    for (std::vector<std::string>::const_iterator audio_it = audio_ids.begin();
-         audio_it != audio_ids.end(); ++audio_it) {
-      EXPECT_EQ(kOK, ExecuteJavascriptAndReturnResult(
-                         GenerateGetUserMediaWithMandatorySourceID(
-                             kGetUserMediaAndStop, *audio_it, *video_it)));
-    }
-  }
-}
-
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       GetUserMediaWithInvalidMandatorySourceID) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  std::vector<std::string> audio_ids;
-  std::vector<std::string> video_ids;
-  GetInputDevices(&audio_ids, &video_ids);
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-
-  // Test with invalid mandatory audio sourceID.
-  // TODO(guidou): Update error string when spec-compliant constraint resolution
-  // for audio is implemented. See http://crbug.com/657733.
-  NavigateToURL(shell(), url);
-  EXPECT_EQ("DevicesNotFoundError",
+  // Mute
+  media::FakeAudioInputStream::SetGlobalMutedState(true);
+  EXPECT_EQ("onmute: muted=true, readyState=live",
             ExecuteJavascriptAndReturnResult(
-                GenerateGetUserMediaWithMandatorySourceID(
-                    kGetUserMediaAndExpectFailure, "something invalid",
-                    video_ids[0])));
-
-  // Test with invalid mandatory video sourceID.
-  EXPECT_EQ("ConstraintNotSatisfiedError",
+                "failTestAfterTimeout('Got no mute event', 1500);"));
+  // Unmute
+  media::FakeAudioInputStream::SetGlobalMutedState(false);
+  EXPECT_EQ("onunmute: muted=false, readyState=live",
             ExecuteJavascriptAndReturnResult(
-                GenerateGetUserMediaWithMandatorySourceID(
-                    kGetUserMediaAndExpectFailure, audio_ids[0],
-                    "something invalid")));
-
-  // Test with empty mandatory audio sourceID.
-  // TODO(guidou): Update error string when spec-compliant constraint resolution
-  // for audio is implemented. See http://crbug.com/657733.
-  EXPECT_EQ("DevicesNotFoundError",
-            ExecuteJavascriptAndReturnResult(
-                GenerateGetUserMediaWithMandatorySourceID(
-                    kGetUserMediaAndExpectFailure, "", video_ids[0])));
+                "failTestAfterTimeout('Got no unmute event', 1500);"));
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       GetUserMediaWithInvalidOptionalSourceID) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  std::vector<std::string> audio_ids;
-  std::vector<std::string> video_ids;
-  GetInputDevices(&audio_ids, &video_ids);
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-
-  // Test with invalid optional audio sourceID.
-  NavigateToURL(shell(), url);
-  EXPECT_EQ(
-      kOK,
-      ExecuteJavascriptAndReturnResult(GenerateGetUserMediaWithOptionalSourceID(
-          kGetUserMediaAndStop, "something invalid", video_ids[0])));
-
-  // Test with invalid optional video sourceID.
-  EXPECT_EQ(
-      kOK,
-      ExecuteJavascriptAndReturnResult(GenerateGetUserMediaWithOptionalSourceID(
-          kGetUserMediaAndStop, audio_ids[0], "something invalid")));
-
-  // Test with empty optional audio sourceID.
-  EXPECT_EQ(kOK, ExecuteJavascriptAndReturnResult(
-                     GenerateGetUserMediaWithOptionalSourceID(
-                         kGetUserMediaAndStop, "", video_ids[0])));
-}
-
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       TwoGetUserMediaAndStop) {
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
+                       GetAudioStreamAndCheckMutingInitiallyMuted) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
   NavigateToURL(shell(), url);
 
+  // Expect stream to initially be muted
+  media::FakeAudioInputStream::SetGlobalMutedState(true);
   ExecuteJavascriptAndWaitForOk(
-      "twoGetUserMediaAndStop({video: true, audio: true});");
+      base::StringPrintf("%s(true);", kGetUserMediaForAudioMutingTest));
+
+  // Unmute
+  media::FakeAudioInputStream::SetGlobalMutedState(false);
+  EXPECT_EQ("onunmute: muted=false, readyState=live",
+            ExecuteJavascriptAndReturnResult(
+                "failTestAfterTimeout('Got no unmute event', 1500);"));
+
+  // Mute
+  media::FakeAudioInputStream::SetGlobalMutedState(true);
+  EXPECT_EQ("onmute: muted=true, readyState=live",
+            ExecuteJavascriptAndReturnResult(
+                "failTestAfterTimeout('Got no mute event', 1500);"));
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       TwoGetUserMediaWithEqualConstraints) {
-  std::string constraints1 = "{video: true, audio: true}";
-  const std::string& constraints2 = constraints1;
-  std::string expected_result = "w=640:h=480-w=640:h=480";
-
-  RunTwoGetTwoGetUserMediaWithDifferentContraints(constraints1, constraints2,
-                                                  expected_result);
-}
-
-// TODO(guidou): Remove this test. http://crbug.com/706408
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       TwoGetUserMediaWithSecondVideoCropped) {
-  std::string constraints1 = "{video: true}";
-  std::string constraints2 = "{video: {mandatory: {maxHeight: 360}}}";
-  std::string expected_result = "w=640:h=480-w=640:h=360";
-  RunTwoGetTwoGetUserMediaWithDifferentContraints(constraints1, constraints2,
-                                                  expected_result);
-}
-
-// Test fails under MSan, http://crbug.com/445745
-// TODO(guidou): Remove this test. http://crbug.com/706408
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_TwoGetUserMediaWithFirstHdSecondVga \
-  DISABLED_TwoGetUserMediaWithFirstHdSecondVga
-#else
-#define MAYBE_TwoGetUserMediaWithFirstHdSecondVga \
-  TwoGetUserMediaWithFirstHdSecondVga
-#endif
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       MAYBE_TwoGetUserMediaWithFirstHdSecondVga) {
-  std::string constraints1 =
-      "{video: {mandatory: {maxWidth:1280 , minWidth:1280 , maxHeight: 720, "
-      "minHeight: 720}}}";
-  std::string constraints2 =
-      "{video: {mandatory: {maxWidth:640 , maxHeight: 480}}}";
-  std::string expected_result = "w=1280:h=720-w=640:h=480";
-  RunTwoGetTwoGetUserMediaWithDifferentContraints(constraints1, constraints2,
-                                                  expected_result);
-}
-
-// Timing out on Windows 7 bot: http://crbug.com/443294
-// Flaky: http://crbug.com/660656; possible the test is too perf sensitive.
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       DISABLED_TwoGetUserMediaWithFirst1080pSecondVga) {
-  std::string constraints1 =
-      "{video: {mandatory: {maxWidth:1920 , minWidth:1920 , maxHeight: 1080, "
-      "minHeight: 1080}}}";
-  std::string constraints2 =
-      "{video: {mandatory: {maxWidth:640 , maxHeight: 480}}}";
-  std::string expected_result = "w=1920:h=1080-w=640:h=480";
-  RunTwoGetTwoGetUserMediaWithDifferentContraints(constraints1, constraints2,
-                                                  expected_result);
-}
-
-// Test fails under MSan, http://crbug.com/445745
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_TwoGetUserMediaAndVerifyFrameRate \
-  DISABLED_TwoGetUserMediaAndVerifyFrameRate
-#else
-#define MAYBE_TwoGetUserMediaAndVerifyFrameRate \
-  TwoGetUserMediaAndVerifyFrameRate
-#endif
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       MAYBE_TwoGetUserMediaAndVerifyFrameRate) {
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest, SrcObjectAddVideoTrack) {
   ASSERT_TRUE(embedded_test_server()->Start());
-
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
   NavigateToURL(shell(), url);
-
-  std::string constraints1 =
-      "{video: {mandatory: {minWidth:640 , minHeight: 480, "
-      "minFrameRate : 15, maxFrameRate : 15}}}";
-  std::string constraints2 =
-      "{video: {mandatory: {maxWidth:320 , maxHeight: 240,"
-      "minFrameRate : 7, maxFrameRate : 7}}}";
-
-  std::string command = "twoGetUserMediaAndVerifyFrameRate(" + constraints1 +
-                        ',' + constraints2 + ", 15, 7)";
-  ExecuteJavascriptAndWaitForOk(command);
+  ExecuteJavascriptAndWaitForOk("srcObjectAddVideoTrack()");
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       GetUserMediaWithTooHighVideoConstraintsValues) {
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
+                       SrcObjectRemoveVideoTrack) {
   ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-
-  int large_value = 99999;
-  std::string call = GenerateGetUserMediaCall(
-      kGetUserMediaAndExpectFailure, large_value, large_value, large_value,
-      large_value, large_value, large_value);
-  NavigateToURL(shell(), url);
-
-  EXPECT_EQ("ConstraintNotSatisfiedError",
-            ExecuteJavascriptAndReturnResult(call));
-}
-
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       GetUserMediaFailToAccessAudioDevice) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
   NavigateToURL(shell(), url);
-
-  // Set the maximum allowed input and output streams to 0
-  // so that the call to create a new audio input stream will fail.
-  media::AudioManager::Get()->SetMaxStreamCountForTesting(0, 0);
-
-  const std::string call = base::StringPrintf(
-      "%s({video: false, audio: true});", kGetUserMediaAndExpectFailure);
-  EXPECT_EQ("TrackStartError", ExecuteJavascriptAndReturnResult(call));
+  ExecuteJavascriptAndWaitForOk("srcObjectRemoveVideoTrack()");
 }
 
-// This test makes two getUserMedia requests, one with impossible constraints
-// that should trigger an error, and one with valid constraints. The test
-// verifies getUserMedia can succeed after being given impossible constraints.
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       TwoGetUserMediaAndCheckCallbackAfterFailure) {
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
+                       SrcObjectRemoveFirstOfTwoVideoTracks) {
   ASSERT_TRUE(embedded_test_server()->Start());
-
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
   NavigateToURL(shell(), url);
-
-  int large_value = 99999;
-  const std::string gum_with_impossible_constraints = GenerateGetUserMediaCall(
-      kGetUserMediaAndExpectFailure, large_value, large_value, large_value,
-      large_value, large_value, large_value);
-  const std::string gum_with_vga_constraints = GenerateGetUserMediaCall(
-      kGetUserMediaAndAnalyseAndStop, 640, 640, 480, 480, 10, 30);
-
-  ASSERT_EQ("ConstraintNotSatisfiedError",
-            ExecuteJavascriptAndReturnResult(gum_with_impossible_constraints));
-
-  ASSERT_EQ("w=640:h=480",
-            ExecuteJavascriptAndReturnResult(gum_with_vga_constraints));
+  ExecuteJavascriptAndWaitForOk("srcObjectRemoveFirstOfTwoVideoTracks()");
 }
 
-#if defined(OS_ANDROID) && defined(NDEBUG)
-#define MAYBE_TraceVideoCaptureControllerPerformanceDuringGetUserMedia \
-  DISABLED_TraceVideoCaptureControllerPerformanceDuringGetUserMedia
-#else
-#define MAYBE_TraceVideoCaptureControllerPerformanceDuringGetUserMedia \
-  TraceVideoCaptureControllerPerformanceDuringGetUserMedia
-#endif
+// TODO(guidou): Add SrcObjectAddAudioTrack and SrcObjectRemoveAudioTrack tests
+// when a straightforward mechanism to detect the presence/absence of audio in a
+// media element with an assigned MediaStream becomes available.
 
-// This test will make a simple getUserMedia page, verify that video is playing
-// in a simple local <video>, and for a couple of seconds, collect some
-// performance traces from VideoCaptureController colorspace conversion and
-// potential resizing.
-IN_PROC_BROWSER_TEST_F(
-    WebRtcGetUserMediaOldConstraintsBrowserTest,
-    MAYBE_TraceVideoCaptureControllerPerformanceDuringGetUserMedia) {
-  RunGetUserMediaAndCollectMeasures(
-      10, "VideoCaptureDeviceClient::OnIncomingCapturedData",
-      "VideoCaptureDeviceClient");
-}
-
-// This test calls getUserMedia and checks for aspect ratio behavior.
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       TestGetUserMediaAspectRatio4To3) {
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
+                       SrcObjectReassignSameObject) {
   ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-
-  std::string constraints_4_3 = GenerateGetUserMediaCall(
-      kGetUserMediaAndAnalyseAndStop, 640, 640, 480, 480, 10, 30);
-
-  NavigateToURL(shell(), url);
-  ASSERT_EQ("w=640:h=480", ExecuteJavascriptAndReturnResult(constraints_4_3));
-}
-
-// This test calls getUserMedia and checks for aspect ratio behavior.
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       TestGetUserMediaAspectRatio16To9) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-
-  std::string constraints_16_9 = GenerateGetUserMediaCall(
-      kGetUserMediaAndAnalyseAndStop, 640, 640, 360, 360, 10, 30);
-
-  NavigateToURL(shell(), url);
-  ASSERT_EQ("w=640:h=360", ExecuteJavascriptAndReturnResult(constraints_16_9));
-}
-
-// This test calls getUserMedia and checks for aspect ratio behavior.
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       TestGetUserMediaAspectRatio1To1) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-
-  std::string constraints_1_1 = GenerateGetUserMediaCall(
-      kGetUserMediaAndAnalyseAndStop, 320, 320, 320, 320, 10, 30);
-
-  NavigateToURL(shell(), url);
-  ASSERT_EQ("w=320:h=320", ExecuteJavascriptAndReturnResult(constraints_1_1));
-}
-
-// This test calls getUserMedia in an iframe and immediately close the iframe
-// in the scope of the success callback.
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       AudioInIFrameAndCloseInSuccessCb) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
   NavigateToURL(shell(), url);
-
-  std::string call = "getUserMediaInIframeAndCloseInSuccessCb({audio: true});";
-  ExecuteJavascriptAndWaitForOk(call);
+  ExecuteJavascriptAndWaitForOk("srcObjectReassignSameObject()");
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       VideoInIFrameAndCloseInSuccessCb) {
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest, ApplyConstraintsVideo) {
   ASSERT_TRUE(embedded_test_server()->Start());
-
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
   NavigateToURL(shell(), url);
-
-  std::string call = "getUserMediaInIframeAndCloseInSuccessCb({video: true});";
-  ExecuteJavascriptAndWaitForOk(call);
+  ExecuteJavascriptAndWaitForOk("applyConstraintsVideo()");
 }
 
-// This test calls getUserMedia in an iframe and immediately close the iframe
-// in the scope of the failure callback.
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       VideoWithBadConstraintsInIFrameAndCloseInFailureCb) {
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
+                       ApplyConstraintsVideoTwoStreams) {
   ASSERT_TRUE(embedded_test_server()->Start());
-
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-
-  int large_value = 99999;
-  std::string call = GenerateGetUserMediaCall(
-      "getUserMediaInIframeAndCloseInFailureCb", large_value, large_value,
-      large_value, large_value, large_value, large_value);
   NavigateToURL(shell(), url);
-
-  ExecuteJavascriptAndWaitForOk(call);
+  ExecuteJavascriptAndWaitForOk("applyConstraintsVideoTwoStreams()");
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       InvalidSourceIdInIFrameAndCloseInFailureCb) {
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
+                       ApplyConstraintsVideoOverconstrained) {
   ASSERT_TRUE(embedded_test_server()->Start());
-
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
-
-  std::string call = GenerateGetUserMediaWithMandatorySourceID(
-      "getUserMediaInIframeAndCloseInFailureCb", "invalid", "invalid");
   NavigateToURL(shell(), url);
-
-  ExecuteJavascriptAndWaitForOk(call);
+  ExecuteJavascriptAndWaitForOk("applyConstraintsVideoOverconstrained()");
 }
 
-IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaOldConstraintsBrowserTest,
-                       DisableLocalEchoParameter) {
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kEnableExperimentalWebPlatformFeatures);
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
+                       ApplyConstraintsNonDevice) {
   ASSERT_TRUE(embedded_test_server()->Start());
-
   GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
   NavigateToURL(shell(), url);
+  ExecuteJavascriptAndWaitForOk("applyConstraintsNonDevice()");
+}
 
-  MediaStreamManager* manager =
-      BrowserMainLoop::GetInstance()->media_stream_manager();
-
-  manager->SetGenerateStreamCallbackForTesting(
-      base::Bind(&VerifyDisableLocalEcho, false));
-  std::string call = GenerateGetUserMediaWithDisableLocalEcho(
-      "getUserMediaAndExpectSuccess", "false");
-  ExecuteJavascriptAndWaitForOk(call);
-
-  manager->SetGenerateStreamCallbackForTesting(
-      base::Bind(&VerifyDisableLocalEcho, true));
-  call = GenerateGetUserMediaWithDisableLocalEcho(
-      "getUserMediaAndExpectSuccess", "true");
-  ExecuteJavascriptAndWaitForOk(call);
-
-  manager->SetGenerateStreamCallbackForTesting(
-      MediaStreamManager::GenerateStreamTestCallback());
+IN_PROC_BROWSER_TEST_F(WebRtcGetUserMediaBrowserTest,
+                       ConcurrentGetUserMediaStop) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL url(embedded_test_server()->GetURL("/media/getusermedia.html"));
+  NavigateToURL(shell(), url);
+  ExecuteJavascriptAndWaitForOk("concurrentGetUserMediaStop()");
 }
 
 }  // namespace content

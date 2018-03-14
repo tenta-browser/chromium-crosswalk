@@ -4,8 +4,8 @@
 
 #include "core/frame/FrameViewAutoSizeInfo.h"
 
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/layout/LayoutBox.h"
 #include "core/layout/LayoutView.h"
 #include "core/layout/api/LayoutViewItem.h"
@@ -13,20 +13,20 @@
 
 namespace blink {
 
-FrameViewAutoSizeInfo::FrameViewAutoSizeInfo(FrameView* view)
+FrameViewAutoSizeInfo::FrameViewAutoSizeInfo(LocalFrameView* view)
     : frame_view_(view), in_auto_size_(false), did_run_autosize_(false) {
-  ASSERT(frame_view_);
+  DCHECK(frame_view_);
 }
 
-DEFINE_TRACE(FrameViewAutoSizeInfo) {
+void FrameViewAutoSizeInfo::Trace(blink::Visitor* visitor) {
   visitor->Trace(frame_view_);
 }
 
 void FrameViewAutoSizeInfo::ConfigureAutoSizeMode(const IntSize& min_size,
                                                   const IntSize& max_size) {
-  ASSERT(!min_size.IsEmpty());
-  ASSERT(min_size.Width() <= max_size.Width());
-  ASSERT(min_size.Height() <= max_size.Height());
+  DCHECK(!min_size.IsEmpty());
+  DCHECK_LE(min_size.Width(), max_size.Width());
+  DCHECK_LE(min_size.Height(), max_size.Height());
 
   if (min_auto_size_ == min_size && max_auto_size_ == max_size)
     return;

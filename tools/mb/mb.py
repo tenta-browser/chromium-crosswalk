@@ -52,6 +52,7 @@ class MetaBuildWrapper(object):
     self.sep = os.sep
     self.args = argparse.Namespace()
     self.configs = {}
+    self.luci_tryservers = {}
     self.masters = {}
     self.mixins = {}
 
@@ -231,6 +232,14 @@ class MetaBuildWrapper(object):
                            ' do compiles')
     subp.set_defaults(func=self.CmdAudit)
 
+    subp = subps.add_parser('gerrit-buildbucket-config',
+                            help='Print buildbucket.config for gerrit '
+                            '(see MB user guide)')
+    subp.add_argument('-f', '--config-file', metavar='PATH',
+                      default=self.default_config,
+                      help='path to config file (default is %(default)s)')
+    subp.set_defaults(func=self.CmdBuildbucket)
+
     subp = subps.add_parser('help',
                             help='Get help on a subcommand.')
     subp.add_argument(nargs='?', action='store', dest='subcommand',
@@ -363,6 +372,25 @@ class MetaBuildWrapper(object):
     ret, _, _ = self.Run(cmd, force_verbose=False, buffer_output=False)
 
     return ret
+
+  def CmdBuildbucket(self):
+    self.ReadConfigFile()
+
+    self.Print('# This file was generated using '
+               '"tools/mb/mb.py gerrit-buildbucket-config".')
+
+    for luci_tryserver in sorted(self.luci_tryservers):
+      self.Print('[bucket "luci.%s"]' % luci_tryserver)
+      for bot in sorted(self.luci_tryservers[luci_tryserver]):
+        self.Print('\tbuilder = %s' % bot)
+
+    for master in sorted(self.masters):
+      if master.startswith('tryserver.'):
+        self.Print('[bucket "master.%s"]' % master)
+        for bot in sorted(self.masters[master]):
+          self.Print('\tbuilder = %s' % bot)
+
+    return 0
 
   def CmdValidate(self, print_ok=True):
     errs = []
@@ -670,6 +698,7 @@ class MetaBuildWrapper(object):
                  (self.args.config_file, e))
 
     self.configs = contents['configs']
+    self.luci_tryservers = contents.get('luci_tryservers', {})
     self.masters = contents['masters']
     self.mixins = contents['mixins']
 
@@ -802,11 +831,13 @@ class MetaBuildWrapper(object):
     self.MaybeMakeDirectory(build_dir)
     self.WriteFile(mb_type_path, new_mb_type)
 
-  def RunGNGen(self, vals):
+  def RunGNGen(self, vals, compute_grit_inputs_for_analyze=False):
     build_dir = self.args.path[0]
 
     cmd = self.GNCmd('gen', build_dir, '--check')
     gn_args = self.GNArgs(vals)
+    if compute_grit_inputs_for_analyze:
+      gn_args += ' compute_grit_inputs_for_analyze=true'
 
     # Since GN hasn't run yet, the build directory may not even exist.
     self.MaybeMakeDirectory(self.ToAbsPath(build_dir))
@@ -853,11 +884,6 @@ class MetaBuildWrapper(object):
         runtime_deps_targets = [
             target + '.runtime_deps',
             'obj/%s.stamp.runtime_deps' % label.replace(':', '/')]
-      elif isolate_map[target]['type'] == 'gpu_browser_test':
-        if self.platform == 'win32':
-          runtime_deps_targets = ['browser_tests.exe.runtime_deps']
-        else:
-          runtime_deps_targets = ['browser_tests.runtime_deps']
       elif (isolate_map[target]['type'] == 'script' or
             isolate_map[target].get('label_type') == 'group'):
         # For script targets, the build target is usually a group,
@@ -957,12 +983,6 @@ class MetaBuildWrapper(object):
     labels = []
     err = ''
 
-    def StripTestSuffixes(target):
-      for suffix in ('_apk_run', '_apk', '_run'):
-        if target.endswith(suffix):
-          return target[:-len(suffix)], suffix
-      return None, None
-
     for target in targets:
       if target == 'all':
         labels.append(target)
@@ -970,14 +990,10 @@ class MetaBuildWrapper(object):
         labels.append(target)
       else:
         if target in isolate_map:
-          stripped_target, suffix = target, ''
-        else:
-          stripped_target, suffix = StripTestSuffixes(target)
-        if stripped_target in isolate_map:
-          if isolate_map[stripped_target]['type'] == 'unknown':
+          if isolate_map[target]['type'] == 'unknown':
             err += ('test target "%s" type is unknown\n' % target)
           else:
-            labels.append(isolate_map[stripped_target]['label'] + suffix)
+            labels.append(isolate_map[target]['label'])
         else:
           err += ('target "%s" not found in '
                   '//testing/buildbot/gn_isolate_map.pyl\n' % target)
@@ -1063,7 +1079,8 @@ class MetaBuildWrapper(object):
   def GetIsolateCommand(self, target, vals):
     isolate_map = self.ReadIsolateMap()
 
-    android = 'target_os="android"' in vals['gn_args']
+    is_android = 'target_os="android"' in vals['gn_args']
+    is_fuchsia = 'target_os="fuchsia"' in vals['gn_args']
 
     # This should be true if tests with type='windowed_test_launcher' are
     # expected to run using xvfb. For example, Linux Desktop, X11 CrOS and
@@ -1072,12 +1089,12 @@ class MetaBuildWrapper(object):
     # and both can run under Xvfb.
     # TODO(tonikitoo,msisov,fwang): Find a way to run tests for the Wayland
     # backend.
-    use_xvfb = (self.platform == 'linux2' and
-                       not android)
+    use_xvfb = self.platform == 'linux2' and not is_android and not is_fuchsia
 
     asan = 'is_asan=true' in vals['gn_args']
     msan = 'is_msan=true' in vals['gn_args']
     tsan = 'is_tsan=true' in vals['gn_args']
+    cfi_diag = 'use_cfi_diag=true' in vals['gn_args']
 
     test_type = isolate_map[target]['type']
 
@@ -1091,13 +1108,14 @@ class MetaBuildWrapper(object):
       self.WriteFailureAndRaise('We should not be isolating %s.' % target,
                                 output_path=None)
 
-    if android and test_type != "script":
+    if is_android and test_type != "script":
       cmdline = [
           '../../build/android/test_wrapper/logdog_wrapper.py',
           '--target', target,
-          '--target-devices-file', '${SWARMING_BOT_FILE}',
           '--logdog-bin-cmd', '../../bin/logdog_butler',
-          '--logcat-output-file', '${ISOLATED_OUTDIR}/logcats']
+          '--store-tombstones']
+    elif is_fuchsia and test_type != 'script':
+      cmdline = [os.path.join('bin', 'run_%s' % target)]
     elif use_xvfb and test_type == 'windowed_test_launcher':
       extra_files = [
           '../../testing/test_env.py',
@@ -1111,6 +1129,7 @@ class MetaBuildWrapper(object):
         '--asan=%d' % asan,
         '--msan=%d' % msan,
         '--tsan=%d' % tsan,
+        '--cfi-diag=%d' % cfi_diag,
       ]
     elif test_type in ('windowed_test_launcher', 'console_test_launcher'):
       extra_files = [
@@ -1124,19 +1143,7 @@ class MetaBuildWrapper(object):
           '--asan=%d' % asan,
           '--msan=%d' % msan,
           '--tsan=%d' % tsan,
-      ]
-    elif test_type == 'gpu_browser_test':
-      extra_files = [
-          '../../testing/test_env.py'
-      ]
-      gtest_filter = isolate_map[target]['gtest_filter']
-      cmdline = [
-          '../../testing/test_env.py',
-          './browser_tests' + executable_suffix,
-          '--test-launcher-bot-mode',
-          '--enable-gpu',
-          '--test-launcher-jobs=1',
-          '--gtest_filter=%s' % gtest_filter,
+          '--cfi-diag=%d' % cfi_diag,
       ]
     elif test_type == 'script':
       extra_files = [
@@ -1254,7 +1261,7 @@ class MetaBuildWrapper(object):
   def RunGNAnalyze(self, vals):
     # Analyze runs before 'gn gen' now, so we need to run gn gen
     # in order to ensure that we have a build directory.
-    ret = self.RunGNGen(vals)
+    ret = self.RunGNGen(vals, compute_grit_inputs_for_analyze=True)
     if ret:
       return ret
 
@@ -1325,11 +1332,46 @@ class MetaBuildWrapper(object):
       if 'invalid_targets' in gn_outp:
         outp['invalid_targets'] = gn_outp['invalid_targets']
       if 'compile_targets' in gn_outp:
+        all_input_compile_targets = sorted(
+            set(inp['test_targets'] + inp['additional_compile_targets']))
+
+        # If we're building 'all', we can throw away the rest of the targets
+        # since they're redundant.
         if 'all' in gn_outp['compile_targets']:
           outp['compile_targets'] = ['all']
         else:
+          outp['compile_targets'] = gn_outp['compile_targets']
+
+        # crbug.com/736215: When GN returns targets back, for targets in
+        # the default toolchain, GN will have generated a phony ninja
+        # target matching the label, and so we can safely (and easily)
+        # transform any GN label into the matching ninja target. For
+        # targets in other toolchains, though, GN doesn't generate the
+        # phony targets, and we don't know how to turn the labels into
+        # compile targets. In this case, we also conservatively give up
+        # and build everything. Probably the right thing to do here is
+        # to have GN return the compile targets directly.
+        if any("(" in target for target in outp['compile_targets']):
+          self.Print('WARNING: targets with non-default toolchains were '
+                     'found, building everything instead.')
+          outp['compile_targets'] = all_input_compile_targets
+        else:
           outp['compile_targets'] = [
-              label.replace('//', '') for label in gn_outp['compile_targets']]
+              label.replace('//', '') for label in outp['compile_targets']]
+
+        # Windows has a maximum command line length of 8k; even Linux
+        # maxes out at 128k; if analyze returns a *really long* list of
+        # targets, we just give up and conservatively build everything instead.
+        # Probably the right thing here is for ninja to support response
+        # files as input on the command line
+        # (see https://github.com/ninja-build/ninja/issues/1355).
+        if len(' '.join(outp['compile_targets'])) > 7*1024:
+          self.Print('WARNING: Too many compile targets were affected.')
+          self.Print('WARNING: Building everything instead to avoid '
+                     'command-line length issues.')
+          outp['compile_targets'] = all_input_compile_targets
+
+
       if 'test_targets' in gn_outp:
         outp['test_targets'] = [
           labels_to_targets[label] for label in gn_outp['test_targets']]

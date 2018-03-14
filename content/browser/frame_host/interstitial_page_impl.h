@@ -42,13 +42,12 @@ enum ResourceRequestAction {
   CANCEL
 };
 
-class CONTENT_EXPORT InterstitialPageImpl
-    : public NON_EXPORTED_BASE(InterstitialPage),
-      public NotificationObserver,
-      public NON_EXPORTED_BASE(RenderFrameHostDelegate),
-      public RenderViewHostDelegate,
-      public RenderWidgetHostDelegate,
-      public NON_EXPORTED_BASE(NavigatorDelegate) {
+class CONTENT_EXPORT InterstitialPageImpl : public InterstitialPage,
+                                            public NotificationObserver,
+                                            public RenderFrameHostDelegate,
+                                            public RenderViewHostDelegate,
+                                            public RenderWidgetHostDelegate,
+                                            public NavigatorDelegate {
  public:
   // The different state of actions the user can take in an interstitial.
   enum ActionState {
@@ -98,6 +97,7 @@ class CONTENT_EXPORT InterstitialPageImpl
   // NavigatorDelegate implementation.
   WebContents* OpenURL(const OpenURLParams& params) override;
   const std::string& GetUserAgentOverride() const override;
+  bool ShowingInterstitialPage() const override;
 
  protected:
   // NotificationObserver method:
@@ -113,13 +113,15 @@ class CONTENT_EXPORT InterstitialPageImpl
                    const base::string16& title,
                    base::i18n::TextDirection title_direction) override;
   InterstitialPage* GetAsInterstitialPage() override;
-  AccessibilityMode GetAccessibilityMode() const override;
+  ui::AXMode GetAccessibilityMode() const override;
+  void ExecuteEditCommand(const std::string& command,
+                          const base::Optional<base::string16>& value) override;
   void Cut() override;
   void Copy() override;
   void Paste() override;
   void SelectAll() override;
   void CreateNewWindow(
-      SiteInstance* source_site_instance,
+      RenderFrameHost* opener,
       int32_t render_view_route_id,
       int32_t main_frame_route_id,
       int32_t main_frame_widget_route_id,
@@ -144,9 +146,11 @@ class CONTENT_EXPORT InterstitialPageImpl
       BrowserContext* browser_context) const override;
   void CreateNewWidget(int32_t render_process_id,
                        int32_t route_id,
+                       mojom::WidgetPtr widget,
                        blink::WebPopupType popup_type) override;
   void CreateNewFullscreenWidget(int32_t render_process_id,
-                                 int32_t route_id) override;
+                                 int32_t route_id,
+                                 mojom::WidgetPtr widget) override;
   void ShowCreatedWidget(int process_id,
                          int route_id,
                          const gfx::Rect& initial_rect) override;
@@ -164,7 +168,6 @@ class CONTENT_EXPORT InterstitialPageImpl
   void HandleKeyboardEvent(const NativeWebKeyboardEvent& event) override;
   TextInputManager* GetTextInputManager() override;
   void GetScreenInfo(content::ScreenInfo* screen_info) override;
-  void UpdateDeviceScaleFactor(double device_scale_factor) override;
   RenderWidgetHostInputEventRouter* GetInputEventRouter() override;
 
   bool enabled() const { return enabled_; }
@@ -265,7 +268,7 @@ class CONTENT_EXPORT InterstitialPageImpl
   RenderViewHostImpl* render_view_host_;
 
   // The frame tree structure of the current page.
-  FrameTree frame_tree_;
+  std::unique_ptr<FrameTree> frame_tree_;
 
   // The IDs for the Render[View|Process]Host hidden by this interstitial.
   int original_child_id_;

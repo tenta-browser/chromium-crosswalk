@@ -17,7 +17,6 @@
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/tabs/tab_model_list.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
-#include "ios/web/public/web_thread.h"
 #include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -36,7 +35,7 @@ sessions::LiveTabContext* FindLiveTabContextWithCondition(
     DCHECK(!browser_state->IsOffTheRecord());
     NSArray<TabModel*>* tab_models;
 
-    tab_models = GetTabModelsForChromeBrowserState(browser_state);
+    tab_models = TabModelList::GetTabModelsForChromeBrowserState(browser_state);
     for (TabModel* tab_model : tab_models) {
       if (condition.Run(tab_model)) {
         return TabRestoreServiceDelegateImplIOSFactory::GetForBrowserState(
@@ -50,7 +49,8 @@ sessions::LiveTabContext* FindLiveTabContextWithCondition(
     ios::ChromeBrowserState* otr_browser_state =
         browser_state->GetOffTheRecordChromeBrowserState();
 
-    tab_models = GetTabModelsForChromeBrowserState(otr_browser_state);
+    tab_models =
+        TabModelList::GetTabModelsForChromeBrowserState(otr_browser_state);
     for (TabModel* tab_model : tab_models) {
       if (condition.Run(tab_model)) {
         return TabRestoreServiceDelegateImplIOSFactory::GetForBrowserState(
@@ -71,7 +71,10 @@ IOSChromeTabRestoreServiceClient::~IOSChromeTabRestoreServiceClient() {}
 
 sessions::LiveTabContext*
 IOSChromeTabRestoreServiceClient::CreateLiveTabContext(
-    const std::string& app_name) {
+    const std::string& /* app_name */,
+    const gfx::Rect& /* bounds */,
+    ui::WindowShowState /* show_state */,
+    const std::string& /* workspace */) {
   return TabRestoreServiceDelegateImplIOSFactory::GetForBrowserState(
       browser_state_);
 }
@@ -116,11 +119,6 @@ bool IOSChromeTabRestoreServiceClient::ShouldTrackURLForRestore(
 std::string IOSChromeTabRestoreServiceClient::GetExtensionAppIDForTab(
     sessions::LiveTab* tab) {
   return std::string();
-}
-
-base::SequencedWorkerPool* IOSChromeTabRestoreServiceClient::GetBlockingPool() {
-  DCHECK_CURRENTLY_ON(web::WebThread::UI);
-  return web::WebThread::GetBlockingPool();
 }
 
 base::FilePath IOSChromeTabRestoreServiceClient::GetPathToSaveTo() {

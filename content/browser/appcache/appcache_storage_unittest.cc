@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/message_loop/message_loop.h"
+#include "content/browser/appcache/appcache_storage.h"
+
+#include "base/test/scoped_task_environment.h"
 #include "content/browser/appcache/appcache.h"
 #include "content/browser/appcache/appcache_group.h"
 #include "content/browser/appcache/appcache_response.h"
-#include "content/browser/appcache/appcache_storage.h"
 #include "content/browser/appcache/mock_appcache_service.h"
-#include "content/browser/quota/mock_quota_manager_proxy.h"
+#include "storage/browser/test/mock_quota_manager_proxy.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
@@ -22,6 +23,9 @@ class AppCacheStorageTest : public testing::Test {
   class MockStorageDelegate : public AppCacheStorage::Delegate {
    public:
   };
+
+ private:
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 TEST_F(AppCacheStorageTest, AddRemoveCache) {
@@ -94,7 +98,7 @@ TEST_F(AppCacheStorageTest, DelegateReferences) {
             service.storage()->GetDelegateReference(&delegate)->delegate);
   EXPECT_EQ(service.storage()->GetDelegateReference(&delegate),
             service.storage()->GetOrCreateDelegateReference(&delegate));
-  delegate_reference1 = NULL;
+  delegate_reference1 = nullptr;
   EXPECT_FALSE(service.storage()->GetDelegateReference(&delegate));
 
   delegate_reference1 =
@@ -119,7 +123,7 @@ TEST_F(AppCacheStorageTest, UsageMap) {
 
   MockAppCacheService service;
   scoped_refptr<MockQuotaManagerProxy> mock_proxy(
-      new MockQuotaManagerProxy(NULL, NULL));
+      new MockQuotaManagerProxy(nullptr, nullptr));
   service.set_quota_manager_proxy(mock_proxy.get());
 
   service.storage()->UpdateUsageMapAndNotify(kOrigin, 0);

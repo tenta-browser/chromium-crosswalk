@@ -9,7 +9,6 @@
 #include "base/macros.h"
 
 const char kChromeUIScheme[] = "chrome";
-const char kDummyExtensionScheme[] = ":no-extension-scheme:";
 
 const char kChromeUIBookmarksURL[] = "chrome://bookmarks/";
 const char kChromeUIChromeURLsURL[] = "chrome://chrome-urls/";
@@ -20,15 +19,14 @@ const char kChromeUINewTabURL[] = "chrome://newtab/";
 const char kChromeUINTPTilesInternalsURL[] = "chrome://ntp-tiles-internals/";
 const char kChromeUIOfflineURL[] = "chrome://offline/";
 const char kChromeUIPhysicalWebURL[] = "chrome://physical-web/";
-const char kChromeUIPopularSitesInternalsURL[] =
-    "chrome://popular-sites-internals/";
 const char kChromeUISettingsURL[] = "chrome://settings/";
+const char kChromeUISuggestionsURL[] = "chrome://suggestions/";
 const char kChromeUITermsURL[] = "chrome://terms/";
 const char kChromeUIVersionURL[] = "chrome://version/";
 
-const char kChromeUIAppleFlagsHost[] = "ui-alternatives";
 const char kChromeUIBookmarksHost[] = "bookmarks";
 const char kChromeUIBrowserCrashHost[] = "inducebrowsercrashforrealz";
+const char kChromeUICrashHost[] = "crash";
 const char kChromeUIChromeURLsHost[] = "chrome-urls";
 const char kChromeUICrashesHost[] = "crashes";
 const char kChromeUICreditsHost[] = "credits";
@@ -36,17 +34,18 @@ const char kChromeUIExternalFileHost[] = "external-file";
 const char kChromeUIFlagsHost[] = "flags";
 const char kChromeUIGCMInternalsHost[] = "gcm-internals";
 const char kChromeUIHistogramHost[] = "histograms";
-const char kChromeUIHistoryFrameHost[] = "history-frame";
 const char kChromeUIHistoryHost[] = "history";
 const char kChromeUINetExportHost[] = "net-export";
 const char kChromeUINewTabHost[] = "newtab";
 const char kChromeUINTPTilesInternalsHost[] = "ntp-tiles-internals";
 const char kChromeUIOfflineHost[] = "offline";
 const char kChromeUIOmahaHost[] = "omaha";
+const char kChromeUIPasswordManagerInternalsHost[] =
+    "password-manager-internals";
 const char kChromeUIPhysicalWebHost[] = "physical-web";
-const char kChromeUIPopularSitesInternalsHost[] = "popular-sites-internals";
 const char kChromeUIPolicyHost[] = "policy";
 const char kChromeUISignInInternalsHost[] = "signin-internals";
+const char kChromeUISuggestionsHost[] = "suggestions";
 const char kChromeUISyncInternalsHost[] = "sync-internals";
 const char kChromeUITermsHost[] = "terms";
 const char kChromeUIVersionHost[] = "version";
@@ -55,13 +54,21 @@ const char kChromeUIVersionHost[] = "version";
 // These hosts will also be suggested by BuiltinProvider.
 // 'histograms' is chrome WebUI on iOS, content WebUI on other platforms.
 const char* const kChromeHostURLs[] = {
-    kChromeUIBookmarksHost,       kChromeUIChromeURLsHost,
-    kChromeUICreditsHost,         kChromeUIFlagsHost,
-    kChromeUIHistogramHost,       kChromeUINetExportHost,
-    kChromeUINewTabHost,          kChromeUINTPTilesInternalsHost,
-    kChromeUISignInInternalsHost, kChromeUISyncInternalsHost,
-    kChromeUIPhysicalWebHost,     kChromeUIPopularSitesInternalsHost,
-    kChromeUITermsHost,           kChromeUIVersionHost,
+    kChromeUIBookmarksHost,
+    kChromeUIChromeURLsHost,
+    kChromeUICreditsHost,
+    kChromeUIFlagsHost,
+    kChromeUIHistogramHost,
+    kChromeUINetExportHost,
+    kChromeUINewTabHost,
+    kChromeUINTPTilesInternalsHost,
+    kChromeUIPasswordManagerInternalsHost,
+    kChromeUISignInInternalsHost,
+    kChromeUISuggestionsHost,
+    kChromeUISyncInternalsHost,
+    kChromeUIPhysicalWebHost,
+    kChromeUITermsHost,
+    kChromeUIVersionHost,
 };
 const size_t kNumberOfChromeHostURLs = arraysize(kChromeHostURLs);
 
@@ -101,3 +108,9 @@ const char kGoogleHistoryURL[] = "https://history.google.com";
 
 const char kGoogleMyAccountURL[] =
     "https://myaccount.google.com/privacy#activitycontrols";
+
+const char kNewTabPageReferrerURL[] =
+    "chrome://do_not_consider_for_most_visited/new_tab_page";
+
+const char kReadingListReferrerURL[] =
+    "chrome://do_not_consider_for_most_visited/reading_list";

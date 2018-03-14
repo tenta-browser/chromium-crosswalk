@@ -49,7 +49,7 @@ class GFX_EXPORT RenderTextMac : public RenderText {
   SelectionModel AdjacentWordSelectionModel(
       const SelectionModel& selection,
       VisualCursorDirection direction) override;
-  Range GetGlyphBounds(size_t index) override;
+  Range GetCursorSpan(const Range& text_range) override;
   std::vector<Rect> GetSubstringBounds(const Range& range) override;
   size_t TextIndexToDisplayIndex(size_t index) override;
   size_t DisplayIndexToTextIndex(size_t index) override;
@@ -74,7 +74,6 @@ class GFX_EXPORT RenderTextMac : public RenderText {
     SkColor foreground;
     bool underline;
     bool strike;
-    bool diagonal_strike;
 
     TextRun();
     TextRun(const TextRun& other) = delete;

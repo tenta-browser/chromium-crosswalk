@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/command_line.h"
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/mach_logging.h"
@@ -14,6 +15,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/gfx/buffer_format_util.h"
+#include "ui/gfx/icc_profile.h"
 
 namespace gfx {
 
@@ -44,6 +46,7 @@ int32_t BytesPerElement(gfx::BufferFormat format, int plane) {
       static int32_t bytes_per_element[] = {1, 2};
       DCHECK_LT(static_cast<size_t>(plane), arraysize(bytes_per_element));
       return bytes_per_element[plane];
+    case gfx::BufferFormat::R_16:
     case gfx::BufferFormat::RG_88:
     case gfx::BufferFormat::UYVY_422:
       DCHECK_EQ(plane, 0);
@@ -56,6 +59,7 @@ int32_t BytesPerElement(gfx::BufferFormat format, int plane) {
     case gfx::BufferFormat::BGR_565:
     case gfx::BufferFormat::RGBA_4444:
     case gfx::BufferFormat::RGBX_8888:
+    case gfx::BufferFormat::BGRX_1010102:
     case gfx::BufferFormat::YVU_420:
       NOTREACHED();
       return 0;
@@ -79,6 +83,7 @@ int32_t PixelFormat(gfx::BufferFormat format) {
       return '420v';
     case gfx::BufferFormat::UYVY_422:
       return '2vuy';
+    case gfx::BufferFormat::R_16:
     case gfx::BufferFormat::RG_88:
     case gfx::BufferFormat::ATC:
     case gfx::BufferFormat::ATCIA:
@@ -88,6 +93,7 @@ int32_t PixelFormat(gfx::BufferFormat format) {
     case gfx::BufferFormat::BGR_565:
     case gfx::BufferFormat::RGBA_4444:
     case gfx::BufferFormat::RGBX_8888:
+    case gfx::BufferFormat::BGRX_1010102:
     case gfx::BufferFormat::YVU_420:
       NOTREACHED();
       return 0;
@@ -164,6 +170,11 @@ IOSurfaceRef CreateIOSurface(const gfx::Size& size, gfx::BufferFormat format) {
   }
 
   IOSurfaceRef surface = IOSurfaceCreate(properties);
+  if (!surface) {
+    LOG(ERROR) << "Failed to allocate IOSurface of size " << size.ToString()
+               << ".";
+    return nullptr;
+  }
 
   // For unknown reasons, triggering this lock on OS X 10.9, on certain GPUs,
   // causes PDFs to render incorrectly. Hopefully this check can be removed once
@@ -182,16 +193,14 @@ IOSurfaceRef CreateIOSurface(const gfx::Size& size, gfx::BufferFormat format) {
     DCHECK_EQ(kIOReturnSuccess, r);
   }
 
-  bool force_system_color_space = false;
+  bool force_color_space = false;
 
   // Displaying an IOSurface that does not have a color space using an
-  // AVSampleBufferDisplayLayer can result in a black screen. Specify the
-  // main display's color profile by default, which will result in no color
-  // correction being done for the main monitor (which is the behavior of not
-  // specifying a color space).
+  // AVSampleBufferDisplayLayer can result in a black screen. Ensure that
+  // a color space always be specified.
   // https://crbug.com/608879
   if (format == gfx::BufferFormat::YUV_420_BIPLANAR)
-    force_system_color_space = true;
+    force_color_space = true;
 
   // On Sierra, all IOSurfaces are color corrected as though they are in sRGB
   // color space by default. Prior to Sierra, IOSurfaces were not color
@@ -200,19 +209,44 @@ IOSurfaceRef CreateIOSurface(const gfx::Size& size, gfx::BufferFormat format) {
   // color space.
   // https://crbug.com/654488
   if (base::mac::IsAtLeastOS10_12())
-    force_system_color_space = true;
+    force_color_space = true;
 
-  if (force_system_color_space) {
-    CGColorSpaceRef color_space = base::mac::GetSystemColorSpace();
-    base::ScopedCFTypeRef<CFDataRef> color_space_icc(
-        CGColorSpaceCopyICCProfile(color_space));
-    // Note that nullptr is an acceptable input to IOSurfaceSetValue.
-    IOSurfaceSetValue(surface, CFSTR("IOSurfaceColorSpace"), color_space_icc);
-  }
+  // Ensure that all IOSurfaces start as sRGB.
+  CGColorSpaceRef color_space = base::mac::GetSRGBColorSpace();
+  base::ScopedCFTypeRef<CFDataRef> color_space_icc(
+      CGColorSpaceCopyICCProfile(color_space));
+  IOSurfaceSetValue(surface, CFSTR("IOSurfaceColorSpace"), color_space_icc);
 
   UMA_HISTOGRAM_TIMES("GPU.IOSurface.CreateTime",
                       base::TimeTicks::Now() - start_time);
   return surface;
+}
+
+void IOSurfaceSetColorSpace(IOSurfaceRef io_surface,
+                            const gfx::ColorSpace& color_space) {
+  // Retrieve the ICC profile data that created this profile, if it exists.
+  ICCProfile icc_profile = ICCProfile::FromCacheMac(color_space);
+
+  // If that fails, generate parametric data.
+  if (!icc_profile.IsValid()) {
+    icc_profile =
+        ICCProfile::FromParametricColorSpace(color_space.GetAsFullRangeRGB());
+  }
+
+  // If that fails, we can't use this color space.
+  if (!icc_profile.IsValid()) {
+    DLOG(ERROR) << "Failed to set color space for IOSurface: no ICC profile: "
+                << color_space.ToString();
+    return;
+  }
+  std::vector<char> icc_profile_data = icc_profile.GetData();
+
+  // Package it as a CFDataRef and send it to the IOSurface.
+  base::ScopedCFTypeRef<CFDataRef> cf_data_icc_profile(CFDataCreate(
+      nullptr, reinterpret_cast<const UInt8*>(icc_profile_data.data()),
+      icc_profile_data.size()));
+  IOSurfaceSetValue(io_surface, CFSTR("IOSurfaceColorSpace"),
+                    cf_data_icc_profile);
 }
 
 }  // namespace gfx

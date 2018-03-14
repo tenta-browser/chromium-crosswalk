@@ -5,11 +5,14 @@
 #ifndef DEVICE_U2F_U2F_DEVICE_H_
 #define DEVICE_U2F_U2F_DEVICE_H_
 
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/memory/weak_ptr.h"
-#include "u2f_apdu_response.h"
+#include "device/u2f/u2f_apdu_response.h"
+#include "device/u2f/u2f_return_code.h"
 
 namespace device {
 
@@ -23,36 +26,32 @@ class U2fDevice {
     U2F_V2,
     UNKNOWN,
   };
-  enum class ReturnCode : uint8_t {
-    SUCCESS,
-    FAILURE,
-    INVALID_PARAMS,
-    CONDITIONS_NOT_SATISFIED,
-  };
 
   using MessageCallback =
-      base::Callback<void(ReturnCode, std::vector<uint8_t>)>;
+      base::OnceCallback<void(U2fReturnCode, const std::vector<uint8_t>&)>;
   using VersionCallback =
-      base::Callback<void(bool success, ProtocolVersion version)>;
+      base::OnceCallback<void(bool success, ProtocolVersion version)>;
   using DeviceCallback =
-      base::Callback<void(bool success,
-                          std::unique_ptr<U2fApduResponse> response)>;
-  using WinkCallback = base::Callback<void()>;
+      base::OnceCallback<void(bool success,
+                              std::unique_ptr<U2fApduResponse> response)>;
+  using WinkCallback = base::OnceCallback<void()>;
 
-  ~U2fDevice();
+  virtual ~U2fDevice();
 
   // Raw messages parameters are defined by the specification at
   // https://fidoalliance.org/specs/fido-u2f-v1.0-nfc-bt-amendment-20150514/fido-u2f-raw-message-formats.html
   void Register(const std::vector<uint8_t>& appid_digest,
                 const std::vector<uint8_t>& challenge_digest,
-                const MessageCallback& callback);
-  void Version(const VersionCallback& callback);
+                MessageCallback callback);
+  void Version(VersionCallback callback);
   void Sign(const std::vector<uint8_t>& appid_digest,
             const std::vector<uint8_t>& challenge_digest,
             const std::vector<uint8_t>& key_handle,
-            const MessageCallback& callback);
-  virtual void TryWink(const WinkCallback& callback) = 0;
-  virtual std::string GetId() = 0;
+            MessageCallback callback,
+            bool check_only = false);
+
+  virtual void TryWink(WinkCallback callback) = 0;
+  virtual std::string GetId() const = 0;
 
  protected:
   static constexpr uint8_t kWinkCapability = 0x01;
@@ -64,30 +63,22 @@ class U2fDevice {
   // Pure virtual function defined by each device type, implementing
   // the device communication transaction.
   virtual void DeviceTransact(std::unique_ptr<U2fApduCommand> command,
-                              const DeviceCallback& callback) = 0;
+                              DeviceCallback callback) = 0;
+  virtual base::WeakPtr<U2fDevice> GetWeakPtr() = 0;
 
   uint32_t channel_id_;
   uint8_t capabilities_;
 
  private:
-  void OnRegisterComplete(const MessageCallback& callback,
+  void OnRegisterComplete(MessageCallback callback,
                           bool success,
                           std::unique_ptr<U2fApduResponse> register_response);
-  void OnSignComplete(const MessageCallback& callback,
+  void OnSignComplete(MessageCallback callback,
                       bool success,
                       std::unique_ptr<U2fApduResponse> sign_response);
-  void OnVersionComplete(const VersionCallback& callback,
+  void OnVersionComplete(VersionCallback callback,
                          bool success,
                          std::unique_ptr<U2fApduResponse> version_response);
-  void OnLegacyVersionComplete(
-      const VersionCallback& callback,
-      bool success,
-      std::unique_ptr<U2fApduResponse> legacy_version_response);
-  void OnWink(const WinkCallback& callback,
-              bool success,
-              std::unique_ptr<U2fApduResponse> response);
-
-  base::WeakPtrFactory<U2fDevice> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(U2fDevice);
 };

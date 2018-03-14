@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "content/app/android/content_main.h"
-
 #include <memory>
 
 #include "base/lazy_instance.h"
@@ -30,18 +28,14 @@ LazyInstance<std::unique_ptr<ContentMainDelegate>>::DestructorAtExit
 
 }  // namespace
 
-static jint Start(JNIEnv* env, const JavaParamRef<jclass>& clazz) {
+static jint JNI_ContentMain_Start(JNIEnv* env,
+                                  const JavaParamRef<jclass>& clazz) {
   TRACE_EVENT0("startup", "content::Start");
 
-  // On Android we can have multiple requests to start the browser in process
-  // simultaneously. If we get an asynchonous request followed by a synchronous
-  // request then we have to call this a second time to finish starting the
-  // browser synchronously.
-  if (!g_service_manager_main_delegate.Get()) {
-    g_service_manager_main_delegate.Get() =
-        base::MakeUnique<ContentServiceManagerMainDelegate>(
-            ContentMainParams(g_content_main_delegate.Get().get()));
-  }
+  DCHECK(!g_service_manager_main_delegate.Get());
+  g_service_manager_main_delegate.Get() =
+      std::make_unique<ContentServiceManagerMainDelegate>(
+          ContentMainParams(g_content_main_delegate.Get().get()));
 
   service_manager::MainParams main_params(
       g_service_manager_main_delegate.Get().get());
@@ -51,10 +45,6 @@ static jint Start(JNIEnv* env, const JavaParamRef<jclass>& clazz) {
 void SetContentMainDelegate(ContentMainDelegate* delegate) {
   DCHECK(!g_content_main_delegate.Get().get());
   g_content_main_delegate.Get().reset(delegate);
-}
-
-bool RegisterContentMain(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace content

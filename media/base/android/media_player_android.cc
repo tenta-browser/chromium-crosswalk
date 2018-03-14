@@ -6,7 +6,6 @@
 
 #include <algorithm>
 
-#include "base/android/context_utils.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
@@ -71,7 +70,7 @@ GURL MediaPlayerAndroid::GetUrl() {
   return GURL();
 }
 
-GURL MediaPlayerAndroid::GetFirstPartyForCookies() {
+GURL MediaPlayerAndroid::GetSiteForCookies() {
   return GURL();
 }
 
@@ -110,8 +109,7 @@ void MediaPlayerAndroid::OnMediaPrepared() {}
 
 void MediaPlayerAndroid::AttachListener(
     const JavaRef<jobject>& j_media_player) {
-  listener_->CreateMediaPlayerListener(base::android::GetApplicationContext(),
-                                       j_media_player);
+  listener_->CreateMediaPlayerListener(j_media_player);
 }
 
 void MediaPlayerAndroid::DetachListener() {

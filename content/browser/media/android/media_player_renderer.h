@@ -21,6 +21,9 @@
 
 namespace content {
 
+class WebContents;
+class MediaPlayerRendererWebContentsObserver;
+
 // MediaPlayerRenderer bridges the media::Renderer and Android MediaPlayer
 // interfaces. It owns a MediaPlayerBridge, which exposes c++ methods to call
 // into a native Android MediaPlayer.
@@ -42,7 +45,9 @@ class CONTENT_EXPORT MediaPlayerRenderer : public media::Renderer,
   static void RegisterMediaUrlInterceptor(
       media::MediaUrlInterceptor* media_url_interceptor);
 
-  explicit MediaPlayerRenderer(content::RenderFrameHost* render_frame_host);
+  MediaPlayerRenderer(int process_id,
+                      int routing_id,
+                      WebContents* web_contents);
 
   ~MediaPlayerRenderer() override;
 
@@ -87,6 +92,9 @@ class CONTENT_EXPORT MediaPlayerRenderer : public media::Renderer,
                    base::TimeDelta duration,
                    bool has_audio) override;
 
+  void OnUpdateAudioMutingState(bool muted);
+  void OnWebContentsDestroyed();
+
   // Registers a request in the content::ScopedSurfaceRequestManager, and
   // returns the token associated to the request. The token can then be used to
   // complete the request via the gpu::ScopedSurfaceRequestConduit.
@@ -108,7 +116,14 @@ class CONTENT_EXPORT MediaPlayerRenderer : public media::Renderer,
   // it exists. No-ops otherwise.
   void CancelScopedSurfaceRequest();
 
-  RenderFrameHost* render_frame_host_;
+  void UpdateVolume();
+
+  // Identifiers to find the RenderFrameHost that created |this|.
+  // NOTE: We store these IDs rather than a RenderFrameHost* because we do not
+  // know when the RenderFrameHost is destroyed.
+  int render_process_id_;
+  int routing_id_;
+
   media::RendererClient* renderer_client_;
 
   std::unique_ptr<media::MediaPlayerBridge> media_player_;
@@ -124,6 +139,10 @@ class CONTENT_EXPORT MediaPlayerRenderer : public media::Renderer,
   base::UnguessableToken surface_request_token_;
 
   std::unique_ptr<media::MediaResourceGetter> media_resource_getter_;
+
+  bool web_contents_muted_;
+  MediaPlayerRendererWebContentsObserver* web_contents_observer_;
+  float volume_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
   base::WeakPtrFactory<MediaPlayerRenderer> weak_factory_;

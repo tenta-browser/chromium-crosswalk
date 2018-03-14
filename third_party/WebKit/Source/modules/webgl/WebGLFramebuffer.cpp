@@ -39,8 +39,8 @@ class WebGLRenderbufferAttachment final
  public:
   static WebGLFramebuffer::WebGLAttachment* Create(WebGLRenderbuffer*);
 
-  DECLARE_VIRTUAL_TRACE();
-  DEFINE_INLINE_VIRTUAL_TRACE_WRAPPERS() {
+  virtual void Trace(blink::Visitor*);
+  virtual void TraceWrappers(const ScriptWrappableVisitor* visitor) const {
     visitor->TraceWrappers(renderbuffer_);
   }
 
@@ -66,17 +66,17 @@ WebGLFramebuffer::WebGLAttachment* WebGLRenderbufferAttachment::Create(
   return new WebGLRenderbufferAttachment(renderbuffer);
 }
 
-DEFINE_TRACE(WebGLRenderbufferAttachment) {
+void WebGLRenderbufferAttachment::Trace(blink::Visitor* visitor) {
   visitor->Trace(renderbuffer_);
   WebGLFramebuffer::WebGLAttachment::Trace(visitor);
 }
 
 WebGLRenderbufferAttachment::WebGLRenderbufferAttachment(
     WebGLRenderbuffer* renderbuffer)
-    : renderbuffer_(this, renderbuffer) {}
+    : renderbuffer_(renderbuffer) {}
 
 WebGLSharedObject* WebGLRenderbufferAttachment::Object() const {
-  return renderbuffer_->Object() ? renderbuffer_.Get() : 0;
+  return renderbuffer_->Object() ? renderbuffer_.Get() : nullptr;
 }
 
 bool WebGLRenderbufferAttachment::IsSharedObject(
@@ -112,8 +112,10 @@ class WebGLTextureAttachment final : public WebGLFramebuffer::WebGLAttachment {
                                                    GLint level,
                                                    GLint layer);
 
-  DECLARE_VIRTUAL_TRACE();
-  DEFINE_INLINE_VIRTUAL_TRACE_WRAPPERS() { visitor->TraceWrappers(texture_); }
+  virtual void Trace(blink::Visitor*);
+  virtual void TraceWrappers(const ScriptWrappableVisitor* visitor) const {
+    visitor->TraceWrappers(texture_);
+  }
 
  private:
   WebGLTextureAttachment(WebGLTexture*,
@@ -146,7 +148,7 @@ WebGLFramebuffer::WebGLAttachment* WebGLTextureAttachment::Create(
   return new WebGLTextureAttachment(texture, target, level, layer);
 }
 
-DEFINE_TRACE(WebGLTextureAttachment) {
+void WebGLTextureAttachment::Trace(blink::Visitor* visitor) {
   visitor->Trace(texture_);
   WebGLFramebuffer::WebGLAttachment::Trace(visitor);
 }
@@ -155,10 +157,10 @@ WebGLTextureAttachment::WebGLTextureAttachment(WebGLTexture* texture,
                                                GLenum target,
                                                GLint level,
                                                GLint layer)
-    : texture_(this, texture), target_(target), level_(level), layer_(layer) {}
+    : texture_(texture), target_(target), level_(level), layer_(layer) {}
 
 WebGLSharedObject* WebGLTextureAttachment::Object() const {
-  return texture_->Object() ? texture_.Get() : 0;
+  return texture_->Object() ? texture_.Get() : nullptr;
 }
 
 bool WebGLTextureAttachment::IsSharedObject(WebGLSharedObject* object) const {
@@ -200,14 +202,20 @@ void WebGLTextureAttachment::Unattach(gpu::gles2::GLES2Interface* gl,
 WebGLFramebuffer::WebGLAttachment::WebGLAttachment() {}
 
 WebGLFramebuffer* WebGLFramebuffer::Create(WebGLRenderingContextBase* ctx) {
-  return new WebGLFramebuffer(ctx);
+  return new WebGLFramebuffer(ctx, false);
 }
 
-WebGLFramebuffer::WebGLFramebuffer(WebGLRenderingContextBase* ctx)
+WebGLFramebuffer* WebGLFramebuffer::CreateOpaque(
+    WebGLRenderingContextBase* ctx) {
+  return new WebGLFramebuffer(ctx, true);
+}
+
+WebGLFramebuffer::WebGLFramebuffer(WebGLRenderingContextBase* ctx, bool opaque)
     : WebGLContextObject(ctx),
       object_(0),
       has_ever_been_bound_(false),
       web_gl1_depth_stencil_consistent_(true),
+      opaque_(opaque),
       read_buffer_(GL_COLOR_ATTACHMENT0) {
   ctx->ContextGL()->GenFramebuffers(1, &object_);
 }
@@ -309,14 +317,14 @@ WebGLSharedObject* WebGLFramebuffer::GetAttachmentObject(
 
 WebGLFramebuffer::WebGLAttachment* WebGLFramebuffer::GetAttachment(
     GLenum attachment) const {
-  const AttachmentMap::const_iterator it = attachments_.Find(attachment);
-  return (it != attachments_.end()) ? it->value.Get() : 0;
+  const AttachmentMap::const_iterator it = attachments_.find(attachment);
+  return (it != attachments_.end()) ? it->value.Get() : nullptr;
 }
 
 void WebGLFramebuffer::RemoveAttachmentFromBoundFramebuffer(
     GLenum target,
     WebGLSharedObject* attachment) {
-  ASSERT(IsBound(target));
+  DCHECK(IsBound(target));
   if (!object_)
     return;
   if (!attachment)
@@ -358,6 +366,14 @@ void WebGLFramebuffer::RemoveAttachmentFromBoundFramebuffer(
 }
 
 GLenum WebGLFramebuffer::CheckDepthStencilStatus(const char** reason) const {
+  // This function is called any time framebuffer completeness is checked, which
+  // makes it the most convenient place to add this check.
+  if (opaque_) {
+    if (opaque_complete_)
+      return GL_FRAMEBUFFER_COMPLETE;
+    *reason = "cannot render to a WebVR layer outside of a frame callback";
+    return GL_FRAMEBUFFER_UNSUPPORTED;
+  }
   if (Context()->IsWebGL2OrHigher() || web_gl1_depth_stencil_consistent_)
     return GL_FRAMEBUFFER_COMPLETE;
   *reason = "conflicting DEPTH/STENCIL/DEPTH_STENCIL attachments";
@@ -392,7 +408,7 @@ bool WebGLFramebuffer::IsBound(GLenum target) const {
 
 void WebGLFramebuffer::DrawBuffers(const Vector<GLenum>& bufs) {
   draw_buffers_ = bufs;
-  filtered_draw_buffers_.Resize(draw_buffers_.size());
+  filtered_draw_buffers_.resize(draw_buffers_.size());
   for (size_t i = 0; i < filtered_draw_buffers_.size(); ++i)
     filtered_draw_buffers_[i] = GL_NONE;
   DrawBuffersIfNecessary(true);
@@ -418,7 +434,7 @@ void WebGLFramebuffer::DrawBuffersIfNecessary(bool force) {
     }
     if (reset) {
       Context()->ContextGL()->DrawBuffersEXT(filtered_draw_buffers_.size(),
-                                             filtered_draw_buffers_.Data());
+                                             filtered_draw_buffers_.data());
     }
   }
 }
@@ -433,10 +449,8 @@ void WebGLFramebuffer::SetAttachmentInternal(GLenum target,
   DCHECK(object_);
   RemoveAttachmentInternal(target, attachment);
   if (texture && texture->Object()) {
-    attachments_.insert(attachment,
-                        TraceWrapperMember<WebGLAttachment>(
-                            this, WebGLTextureAttachment::Create(
-                                      texture, tex_target, level, layer)));
+    attachments_.insert(attachment, WebGLTextureAttachment::Create(
+                                        texture, tex_target, level, layer));
     DrawBuffersIfNecessary(false);
     texture->OnAttached();
   }
@@ -449,10 +463,8 @@ void WebGLFramebuffer::SetAttachmentInternal(GLenum target,
   DCHECK(object_);
   RemoveAttachmentInternal(target, attachment);
   if (renderbuffer && renderbuffer->Object()) {
-    attachments_.insert(
-        attachment,
-        TraceWrapperMember<WebGLAttachment>(
-            this, WebGLRenderbufferAttachment::Create(renderbuffer)));
+    attachments_.insert(attachment,
+                        WebGLRenderbufferAttachment::Create(renderbuffer));
     DrawBuffersIfNecessary(false);
     renderbuffer->OnAttached();
   }
@@ -533,7 +545,7 @@ void WebGLFramebuffer::CommitWebGL1DepthStencilIfConsistent(GLenum target) {
 
 GLenum WebGLFramebuffer::GetDrawBuffer(GLenum draw_buffer) {
   int index = static_cast<int>(draw_buffer - GL_DRAW_BUFFER0_EXT);
-  ASSERT(index >= 0);
+  DCHECK_GE(index, 0);
   if (index < static_cast<int>(draw_buffers_.size()))
     return draw_buffers_[index];
   if (draw_buffer == GL_DRAW_BUFFER0_EXT)
@@ -541,12 +553,13 @@ GLenum WebGLFramebuffer::GetDrawBuffer(GLenum draw_buffer) {
   return GL_NONE;
 }
 
-DEFINE_TRACE(WebGLFramebuffer) {
+void WebGLFramebuffer::Trace(blink::Visitor* visitor) {
   visitor->Trace(attachments_);
   WebGLContextObject::Trace(visitor);
 }
 
-DEFINE_TRACE_WRAPPERS(WebGLFramebuffer) {
+void WebGLFramebuffer::TraceWrappers(
+    const ScriptWrappableVisitor* visitor) const {
   for (const auto& attachment : attachments_) {
     visitor->TraceWrappers(attachment.value);
   }

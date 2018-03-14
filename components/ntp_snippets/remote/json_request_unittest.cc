@@ -52,7 +52,7 @@ MATCHER_P(EqualsJSON, json, "equals JSON") {
                      << "parse error: " << err_msg;
     return false;
   }
-  return base::Value::Equals(actual.get(), expected.get());
+  return *expected == *actual;
 }
 
 }  // namespace
@@ -69,20 +69,21 @@ class JsonRequestTest : public testing::Test {
         clock_(mock_task_runner_->GetMockClock()),
         request_context_getter_(
             new net::TestURLRequestContextGetter(mock_task_runner_.get())) {
-    translate::LanguageModel::RegisterProfilePrefs(pref_service_->registry());
+    language::UrlLanguageHistogram::RegisterProfilePrefs(
+        pref_service_->registry());
   }
 
-  std::unique_ptr<translate::LanguageModel> MakeLanguageModel(
+  std::unique_ptr<language::UrlLanguageHistogram> MakeLanguageHistogram(
       const std::set<std::string>& codes) {
-    std::unique_ptr<translate::LanguageModel> language_model =
-        base::MakeUnique<translate::LanguageModel>(pref_service_.get());
+    std::unique_ptr<language::UrlLanguageHistogram> language_histogram =
+        base::MakeUnique<language::UrlLanguageHistogram>(pref_service_.get());
     // There must be at least 10 visits before the top languages are defined.
     for (int i = 0; i < 10; i++) {
       for (const std::string& code : codes) {
-        language_model->OnPageVisited(code);
+        language_histogram->OnPageVisited(code);
       }
     }
-    return language_model;
+    return language_histogram;
   }
 
   JsonRequest::Builder CreateMinimalBuilder() {
@@ -148,7 +149,7 @@ TEST_F(JsonRequestTest, BuildRequestUnauthenticated) {
                          "}"));
 }
 
-TEST_F(JsonRequestTest, BuildRequestExcludedIds) {
+TEST_F(JsonRequestTest, ShouldNotTruncateExcludedIdsList) {
   JsonRequest::Builder builder;
   RequestParams params;
   params.interactive_request = false;
@@ -180,9 +181,27 @@ TEST_F(JsonRequestTest, BuildRequestExcludedIds) {
                          "    \"080\", \"081\", \"082\", \"083\", \"084\","
                          "    \"085\", \"086\", \"087\", \"088\", \"089\","
                          "    \"090\", \"091\", \"092\", \"093\", \"094\","
-                         "    \"095\", \"096\", \"097\", \"098\", \"099\""
-                         // Truncated to 100 entries. Currently, they happen to
-                         // be those lexically first.
+                         "    \"095\", \"096\", \"097\", \"098\", \"099\","
+                         "    \"100\", \"101\", \"102\", \"103\", \"104\","
+                         "    \"105\", \"106\", \"107\", \"108\", \"109\","
+                         "    \"110\", \"111\", \"112\", \"113\", \"114\","
+                         "    \"115\", \"116\", \"117\", \"118\", \"119\","
+                         "    \"120\", \"121\", \"122\", \"123\", \"124\","
+                         "    \"125\", \"126\", \"127\", \"128\", \"129\","
+                         "    \"130\", \"131\", \"132\", \"133\", \"134\","
+                         "    \"135\", \"136\", \"137\", \"138\", \"139\","
+                         "    \"140\", \"141\", \"142\", \"143\", \"144\","
+                         "    \"145\", \"146\", \"147\", \"148\", \"149\","
+                         "    \"150\", \"151\", \"152\", \"153\", \"154\","
+                         "    \"155\", \"156\", \"157\", \"158\", \"159\","
+                         "    \"160\", \"161\", \"162\", \"163\", \"164\","
+                         "    \"165\", \"166\", \"167\", \"168\", \"169\","
+                         "    \"170\", \"171\", \"172\", \"173\", \"174\","
+                         "    \"175\", \"176\", \"177\", \"178\", \"179\","
+                         "    \"180\", \"181\", \"182\", \"183\", \"184\","
+                         "    \"185\", \"186\", \"187\", \"188\", \"189\","
+                         "    \"190\", \"191\", \"192\", \"193\", \"194\","
+                         "    \"195\", \"196\", \"197\", \"198\", \"199\""
                          "  ],"
                          "  \"userActivenessClass\": \"ACTIVE_NTP_USER\""
                          "}"));
@@ -203,12 +222,12 @@ TEST_F(JsonRequestTest, BuildRequestNoUserClass) {
 
 TEST_F(JsonRequestTest, BuildRequestWithTwoLanguages) {
   JsonRequest::Builder builder;
-  std::unique_ptr<translate::LanguageModel> language_model =
-      MakeLanguageModel({"de", "en"});
+  std::unique_ptr<language::UrlLanguageHistogram> language_histogram =
+      MakeLanguageHistogram({"de", "en"});
   RequestParams params;
   params.interactive_request = true;
   params.language_code = "en";
-  builder.SetParams(params).SetLanguageModel(language_model.get());
+  builder.SetParams(params).SetLanguageHistogram(language_histogram.get());
 
   EXPECT_THAT(builder.PreviewRequestBodyForTesting(),
               EqualsJSON("{"
@@ -230,12 +249,12 @@ TEST_F(JsonRequestTest, BuildRequestWithTwoLanguages) {
 
 TEST_F(JsonRequestTest, BuildRequestWithUILanguageOnly) {
   JsonRequest::Builder builder;
-  std::unique_ptr<translate::LanguageModel> language_model =
-      MakeLanguageModel({"en"});
+  std::unique_ptr<language::UrlLanguageHistogram> language_histogram =
+      MakeLanguageHistogram({"en"});
   RequestParams params;
   params.interactive_request = true;
   params.language_code = "en";
-  builder.SetParams(params).SetLanguageModel(language_model.get());
+  builder.SetParams(params).SetLanguageHistogram(language_histogram.get());
 
   EXPECT_THAT(builder.PreviewRequestBodyForTesting(),
               EqualsJSON("{"
@@ -247,6 +266,50 @@ TEST_F(JsonRequestTest, BuildRequestWithUILanguageOnly) {
                          "    \"frequency\" : 1.0"
                          "  }]"
                          "}"));
+}
+
+TEST_F(JsonRequestTest,
+       ShouldPropagateCountToFetchWhenExclusiveCategoryPresent) {
+  JsonRequest::Builder builder;
+  RequestParams params;
+  params.interactive_request = true;
+  params.language_code = "en";
+  params.exclusive_category =
+      Category::FromKnownCategory(KnownCategories::ARTICLES);
+  params.count_to_fetch = 25;
+  builder.SetParams(params);
+
+  EXPECT_THAT(builder.PreviewRequestBodyForTesting(), EqualsJSON(R"(
+                              {
+                                "priority": "USER_ACTION",
+                                "uiLanguage": "en",
+                                "excludedSuggestionIds": [],
+                                "categoryParameters": [{
+                                  "id": 1,
+                                  "numSuggestions": 25
+                                }]
+                              }
+                            )"));
+}
+
+// TODO(vitaliii): Propagate count to fetch in this case as well and delete this
+// test. Currently the server does not support this.
+TEST_F(JsonRequestTest,
+       ShouldNotPropagateCountToFetchWhenExclusiveCategoryNotPresent) {
+  JsonRequest::Builder builder;
+  RequestParams params;
+  params.interactive_request = true;
+  params.language_code = "en";
+  params.count_to_fetch = 10;
+  builder.SetParams(params);
+
+  EXPECT_THAT(builder.PreviewRequestBodyForTesting(), EqualsJSON(R"(
+                              {
+                                "priority": "USER_ACTION",
+                                "uiLanguage": "en",
+                                "excludedSuggestionIds": []
+                              }
+                            )"));
 }
 
 }  // namespace internal

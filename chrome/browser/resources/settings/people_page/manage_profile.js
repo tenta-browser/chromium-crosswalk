@@ -14,9 +14,15 @@ Polymer({
 
   properties: {
     /**
-     * The currently selected profile icon URL. May be a data URL.
+     * The newly selected avatar. Populated only if the user manually changes
+     * the avatar selection. The observer ensures that the changes are
+     * propagated to the C++.
+     * @private
      */
-    profileIconUrl: String,
+    profileAvatar_: {
+      type: Object,
+      observer: 'profileAvatarChanged_',
+    },
 
     /**
      * The current profile name.
@@ -46,26 +52,24 @@ Polymer({
     syncStatus: Object,
 
     /**
-     * @private {!settings.ManageProfileBrowserProxy}
-     */
-    browserProxy_: {
-      type: Object,
-      value: function() {
-        return settings.ManageProfileBrowserProxyImpl.getInstance();
-      },
-    },
-
-    /**
      * True if the profile shortcuts feature is enabled.
      */
     isProfileShortcutSettingVisible_: Boolean,
   },
 
+  /** @private {?settings.ManageProfileBrowserProxy} */
+  browserProxy_: null,
+
+  /** @override */
+  created: function() {
+    this.browserProxy_ = settings.ManageProfileBrowserProxyImpl.getInstance();
+  },
+
   /** @override */
   attached: function() {
-    var setIcons = function(icons) {
+    var setIcons = icons => {
       this.availableIcons = icons;
-    }.bind(this);
+    };
 
     this.addWebUIListener('available-icons-changed', setIcons);
     this.browserProxy_.getAvailableIcons().then(setIcons);
@@ -73,11 +77,11 @@ Polymer({
 
   /** @protected */
   currentRouteChanged: function() {
-    if (settings.getCurrentRoute() == settings.Route.MANAGE_PROFILE) {
+    if (settings.getCurrentRoute() == settings.routes.MANAGE_PROFILE) {
       this.$.name.value = this.profileName;
 
       if (loadTimeData.getBoolean('profileShortcutsEnabled')) {
-        this.browserProxy_.getProfileShortcutStatus().then(function(status) {
+        this.browserProxy_.getProfileShortcutStatus().then(status => {
           if (status == ProfileShortcutStatus.PROFILE_SHORTCUT_SETTING_HIDDEN) {
             this.isProfileShortcutSettingVisible_ = false;
             return;
@@ -86,7 +90,7 @@ Polymer({
           this.isProfileShortcutSettingVisible_ = true;
           this.hasProfileShortcut_ =
               status == ProfileShortcutStatus.PROFILE_SHORTCUT_FOUND;
-        }.bind(this));
+        });
       }
     }
   },
@@ -116,20 +120,14 @@ Polymer({
   },
 
   /**
-   * Handler for when an avatar is activated.
-   * @param {!Event} event
+   * Handler for when the profile avatar is changed by the user.
    * @private
    */
-  onIconActivate_: function(event) {
-    // Explicitly test against undefined, because even when an element has the
-    // data-is-gaia-avatar attribute, dataset.isGaiaAvatar returns an empty
-    // string, which is falsy.
-    var isGaiaAvatar = event.detail.item.dataset.isGaiaAvatar !== undefined;
-
-    if (isGaiaAvatar)
+  profileAvatarChanged_: function() {
+    if (this.profileAvatar_.isGaiaAvatar)
       this.browserProxy_.setProfileIconToGaiaAvatar();
     else
-      this.browserProxy_.setProfileIconToDefaultAvatar(event.detail.selected);
+      this.browserProxy_.setProfileIconToDefaultAvatar(this.profileAvatar_.url);
   },
 
   /**

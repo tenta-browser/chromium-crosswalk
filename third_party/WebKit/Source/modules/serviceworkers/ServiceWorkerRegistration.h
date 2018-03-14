@@ -9,7 +9,7 @@
 #include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
 #include "core/dom/ContextLifecycleObserver.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "modules/serviceworkers/NavigationPreloadManager.h"
 #include "modules/serviceworkers/ServiceWorker.h"
 #include "modules/serviceworkers/ServiceWorkerRegistration.h"
@@ -70,6 +70,7 @@ class ServiceWorkerRegistration final
   NavigationPreloadManager* navigationPreload();
 
   String scope() const;
+  String updateViaCache() const;
 
   WebServiceWorkerRegistration* WebRegistration() {
     return handle_->Registration();
@@ -82,7 +83,7 @@ class ServiceWorkerRegistration final
 
   ~ServiceWorkerRegistration() override;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   ServiceWorkerRegistration(

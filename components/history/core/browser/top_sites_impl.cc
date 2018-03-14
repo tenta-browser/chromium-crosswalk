@@ -27,20 +27,19 @@
 #include "components/history/core/browser/history_backend.h"
 #include "components/history/core/browser/history_constants.h"
 #include "components/history/core/browser/history_db_task.h"
+#include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/page_usage_data.h"
 #include "components/history/core/browser/top_sites_cache.h"
 #include "components/history/core/browser/top_sites_observer.h"
+#include "components/history/core/browser/top_sites_provider.h"
 #include "components/history/core/browser/url_utils.h"
 #include "components/history/core/common/thumbnail_score.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
-#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/layout.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image_util.h"
-
-using base::DictionaryValue;
 
 namespace history {
 namespace {
@@ -51,12 +50,12 @@ void RunOrPostGetMostVisitedURLsCallback(
     const TopSitesImpl::GetMostVisitedURLsCallback& callback,
     const MostVisitedURLList& all_urls,
     const MostVisitedURLList& nonforced_urls) {
-  const MostVisitedURLList* urls =
-      include_forced_urls ? &all_urls : &nonforced_urls;
-  if (task_runner->RunsTasksOnCurrentThread())
-    callback.Run(*urls);
+  const MostVisitedURLList& urls =
+      include_forced_urls ? all_urls : nonforced_urls;
+  if (task_runner->RunsTasksInCurrentSequence())
+    callback.Run(urls);
   else
-    task_runner->PostTask(FROM_HERE, base::Bind(callback, *urls));
+    task_runner->PostTask(FROM_HERE, base::Bind(callback, urls));
 }
 
 // Compares two MostVisitedURL having a non-null |last_forced_time|.
@@ -67,28 +66,37 @@ bool ForcedURLComparator(const MostVisitedURL& first,
   return first.last_forced_time < second.last_forced_time;
 }
 
-// How many non-forced top sites to store in the cache.
-const size_t kNonForcedTopSitesNumber = 20;
+// Checks if the titles stored in |old_list| and |new_list| have changes.
+bool DoTitlesDiffer(const MostVisitedURLList& old_list,
+                    const MostVisitedURLList& new_list) {
+  // If the two lists have different sizes, the most visited titles are
+  // considered to have changes.
+  if (old_list.size() != new_list.size())
+    return true;
 
-// How many forced top sites to store in the cache.
-const size_t kForcedTopSitesNumber = 20;
+  return !std::equal(std::begin(old_list), std::end(old_list),
+                     std::begin(new_list),
+                     [](const auto& old_item_ptr, const auto& new_item_ptr) {
+                       return old_item_ptr.title == new_item_ptr.title;
+                     });
+}
 
 // Max number of temporary images we'll cache. See comment above
 // temp_images_ for details.
 const size_t kMaxTempTopImages = 8;
 
-const int kDaysOfHistory = 90;
-// Time from startup to first HistoryService query.
-const int64_t kUpdateIntervalSecs = 15;
-// Intervals between requests to HistoryService.
-const int64_t kMinUpdateIntervalMinutes = 1;
+// The delay for the first HistoryService query at startup.
+constexpr base::TimeDelta kFirstDelayAtStartup =
+    base::TimeDelta::FromSeconds(15);
+
+// The delay for the all HistoryService queries other than the first one.
 #if defined(OS_IOS) || defined(OS_ANDROID)
 // On mobile, having the max at 60 minutes results in the topsites database
 // being not updated often enough since the app isn't usually running for long
 // stretches of time.
-const int64_t kMaxUpdateIntervalMinutes = 5;
+constexpr base::TimeDelta kDelayForUpdates = base::TimeDelta::FromMinutes(5);
 #else
-const int64_t kMaxUpdateIntervalMinutes = 60;
+constexpr base::TimeDelta kDelayForUpdates = base::TimeDelta::FromMinutes(60);
 #endif  // defined(OS_IOS) || defined(OS_ANDROID)
 
 // Use 100 quality (highest quality) because we're very sensitive to
@@ -106,28 +114,28 @@ bool TopSitesImpl::histogram_recorded_ = false;
 
 TopSitesImpl::TopSitesImpl(PrefService* pref_service,
                            HistoryService* history_service,
+                           std::unique_ptr<TopSitesProvider> provider,
                            const PrepopulatedPageList& prepopulated_pages,
                            const CanAddURLToHistoryFn& can_add_url_to_history)
     : backend_(nullptr),
-      cache_(new TopSitesCache()),
-      thread_safe_cache_(new TopSitesCache()),
-      last_num_urls_changed_(0),
+      cache_(base::MakeUnique<TopSitesCache>()),
+      thread_safe_cache_(base::MakeUnique<TopSitesCache>()),
       prepopulated_pages_(prepopulated_pages),
       pref_service_(pref_service),
       history_service_(history_service),
+      provider_(std::move(provider)),
       can_add_url_to_history_(can_add_url_to_history),
       loaded_(false),
       history_service_observer_(this) {
   DCHECK(pref_service_);
   DCHECK(!can_add_url_to_history_.is_null());
+  DCHECK(provider_);
 }
 
-void TopSitesImpl::Init(
-    const base::FilePath& db_name,
-    const scoped_refptr<base::SingleThreadTaskRunner>& db_task_runner) {
+void TopSitesImpl::Init(const base::FilePath& db_name) {
   // Create the backend here, rather than in the constructor, so that
   // unit tests that do not need the backend can run without a problem.
-  backend_ = new TopSitesBackend(db_task_runner);
+  backend_ = new TopSitesBackend();
   backend_->Init(db_name);
   backend_->GetMostVisitedThumbnails(
       base::Bind(&TopSitesImpl::OnGotMostVisitedThumbnails,
@@ -138,39 +146,25 @@ void TopSitesImpl::Init(
 bool TopSitesImpl::SetPageThumbnail(const GURL& url,
                                     const gfx::Image& thumbnail,
                                     const ThumbnailScore& score) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  ThumbnailEvent result = SetPageThumbnailImpl(url, thumbnail, score);
 
-  if (!loaded_) {
-    // TODO(sky): I need to cache these and apply them after the load
-    // completes.
-    return false;
+  UMA_HISTOGRAM_ENUMERATION("Thumbnails.AddedToTopSites", result,
+                            THUMBNAIL_EVENT_COUNT);
+
+  switch (result) {
+    case THUMBNAIL_FAILURE:
+    case THUMBNAIL_TOPSITES_FULL:
+    case THUMBNAIL_KEPT_EXISTING:
+      return false;
+    case THUMBNAIL_ADDED_TEMP:
+    case THUMBNAIL_ADDED_REGULAR:
+      return true;
+    case THUMBNAIL_PROMOTED_TEMP_TO_REGULAR:
+    case THUMBNAIL_EVENT_COUNT:
+      NOTREACHED();
   }
 
-  bool add_temp_thumbnail = false;
-  if (!IsKnownURL(url)) {
-    if (!IsNonForcedFull()) {
-      add_temp_thumbnail = true;
-    } else {
-      return false;  // This URL is not known to us.
-    }
-  }
-
-  if (!can_add_url_to_history_.Run(url))
-    return false;  // It's not a real webpage.
-
-  scoped_refptr<base::RefCountedBytes> thumbnail_data;
-  if (!EncodeBitmap(thumbnail, &thumbnail_data))
-    return false;
-
-  if (add_temp_thumbnail) {
-    // Always remove the existing entry and then add it back. That way if we end
-    // up with too many temp thumbnails we'll prune the oldest first.
-    RemoveTemporaryThumbnailByURL(url);
-    AddTemporaryThumbnail(url, thumbnail_data.get(), score);
-    return true;
-  }
-
-  return SetPageThumbnailEncoded(url, thumbnail_data.get(), score);
+  return false;
 }
 
 // WARNING: this function may be invoked on any thread.
@@ -216,7 +210,7 @@ bool TopSitesImpl::GetPageThumbnail(
   for (const auto& prepopulated_page : prepopulated_pages_) {
     if (url == prepopulated_page.most_visited.url) {
       *bytes =
-          ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
+          ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
               prepopulated_page.thumbnail_id, ui::SCALE_FACTOR_100P);
       return true;
     }
@@ -229,13 +223,11 @@ bool TopSitesImpl::GetPageThumbnail(
     if (url.SchemeIsHTTPOrHTTPS())
       url_list.push_back(ToggleHTTPAndHTTPS(url));
 
-    for (std::vector<GURL>::iterator it = url_list.begin();
-         it != url_list.end(); ++it) {
+    for (const GURL& url : url_list) {
       base::AutoLock lock(lock_);
 
-      GURL canonical_url;
       // Test whether any stored URL is a prefix of |url|.
-      canonical_url = thread_safe_cache_->GetGeneralizedCanonicalURL(*it);
+      GURL canonical_url = thread_safe_cache_->GetGeneralizedCanonicalURL(url);
       if (!canonical_url.is_empty() &&
           thread_safe_cache_->GetPageThumbnail(canonical_url, bytes)) {
         return true;
@@ -255,10 +247,9 @@ bool TopSitesImpl::GetPageThumbnailScore(const GURL& url,
 
 bool TopSitesImpl::GetTemporaryPageThumbnailScore(const GURL& url,
                                                   ThumbnailScore* score) {
-  for (TempImages::iterator i = temp_images_.begin(); i != temp_images_.end();
-       ++i) {
-    if (i->first == url) {
-      *score = i->second.thumbnail_score;
+  for (const TempImage& temp_image : temp_images_) {
+    if (temp_image.first == url) {
+      *score = temp_image.second.thumbnail_score;
       return true;
     }
   }
@@ -277,10 +268,8 @@ static int IndexOf(const MostVisitedURLList& urls, const GURL& url) {
 
 void TopSitesImpl::SyncWithHistory() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (loaded_) {
-    timer_.Stop();
+  if (loaded_)
     StartQueryForMostVisited();
-  }
 }
 
 bool TopSitesImpl::HasBlacklistedItems() const {
@@ -386,8 +375,7 @@ bool TopSitesImpl::AddForcedURL(const GURL& url, const base::Time& time) {
   // since this is almost always where it needs to go, unless the user's local
   // clock is fiddled with.
   MostVisitedURLList::iterator mid = new_list.begin() + num_forced;
-  new_list.insert(mid, new_url);
-  mid = new_list.begin() + num_forced;  // Mid was invalidated.
+  mid = new_list.insert(mid, new_url);
   std::inplace_merge(new_list.begin(), mid, mid + 1, ForcedURLComparator);
   SetTopSites(new_list, CALL_LOCATION_FROM_FORCED_URLS);
   return true;
@@ -395,14 +383,11 @@ bool TopSitesImpl::AddForcedURL(const GURL& url, const base::Time& time) {
 
 void TopSitesImpl::OnNavigationCommitted(const GURL& url) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!loaded_ || IsNonForcedFull())
+  if (!loaded_)
     return;
 
-  if (!cache_->IsKnownURL(url) && can_add_url_to_history_.Run(url)) {
-    // To avoid slamming history we throttle requests when the url updates. To
-    // do otherwise negatively impacts perf tests.
-    RestartQueryForTopSitesTimer(GetUpdateDelay());
-  }
+  if (can_add_url_to_history_.Run(url))
+    ScheduleUpdateTimer();
 }
 
 void TopSitesImpl::ShutdownOnUIThread() {
@@ -425,11 +410,13 @@ TopSitesImpl::~TopSitesImpl() = default;
 
 void TopSitesImpl::StartQueryForMostVisited() {
   DCHECK(loaded_);
+  timer_.Stop();
+
   if (!history_service_)
     return;
 
-  history_service_->QueryMostVisitedURLs(
-      num_results_to_request_from_history(), kDaysOfHistory,
+  provider_->ProvideTopSites(
+      num_results_to_request_from_history(),
       base::Bind(&TopSitesImpl::OnTopSitesAvailableFromHistory,
                  base::Unretained(this)),
       &cancelable_task_tracker_);
@@ -490,18 +477,57 @@ void TopSitesImpl::DiffMostVisited(const MostVisitedURLList& old_list,
 
   // Any member without the special marker in the all_old_urls list means that
   // there wasn't a "new" URL that mapped to it, so it was deleted.
-  for (std::map<GURL, size_t>::const_iterator i = all_old_urls.begin();
-       i != all_old_urls.end(); ++i) {
-    if (i->second != kAlreadyFoundMarker)
-      delta->deleted.push_back(old_list[i->second]);
+  for (const std::pair<GURL, size_t>& old_url : all_old_urls) {
+    if (old_url.second != kAlreadyFoundMarker)
+      delta->deleted.push_back(old_list[old_url.second]);
   }
 }
 
-bool TopSitesImpl::SetPageThumbnailNoDB(
+TopSitesImpl::ThumbnailEvent TopSitesImpl::SetPageThumbnailImpl(
+    const GURL& url,
+    const gfx::Image& thumbnail,
+    const ThumbnailScore& score) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  if (!loaded_) {
+    // TODO(sky): I need to cache these and apply them after the load
+    // completes.
+    return THUMBNAIL_FAILURE;
+  }
+
+  bool add_temp_thumbnail = false;
+  if (!IsKnownURL(url)) {
+    if (IsNonForcedFull()) {
+      // We're full, and this URL is not known to us.
+      return THUMBNAIL_TOPSITES_FULL;
+    }
+
+    add_temp_thumbnail = true;
+  }
+
+  if (!can_add_url_to_history_.Run(url))
+    return THUMBNAIL_FAILURE;  // It's not a real webpage.
+
+  scoped_refptr<base::RefCountedBytes> thumbnail_data;
+  if (!EncodeBitmap(thumbnail, &thumbnail_data))
+    return THUMBNAIL_FAILURE;
+
+  if (add_temp_thumbnail) {
+    // Always remove the existing entry and then add it back. That way if we end
+    // up with too many temp thumbnails we'll prune the oldest first.
+    RemoveTemporaryThumbnailByURL(url);
+    AddTemporaryThumbnail(url, thumbnail_data.get(), score);
+    return THUMBNAIL_ADDED_TEMP;
+  }
+
+  bool success = SetPageThumbnailEncoded(url, thumbnail_data.get(), score);
+  return success ? THUMBNAIL_ADDED_REGULAR : THUMBNAIL_KEPT_EXISTING;
+}
+
+bool TopSitesImpl::SetPageThumbnailInCache(
     const GURL& url,
     const base::RefCountedMemory* thumbnail_data,
     const ThumbnailScore& score) {
-  // This should only be invoked when we know about the url.
   DCHECK(cache_->IsKnownURL(url));
 
   const MostVisitedURL& most_visited =
@@ -515,10 +541,11 @@ bool TopSitesImpl::SetPageThumbnailNoDB(
   new_score_with_redirects.redirect_hops_from_dest =
       GetRedirectDistanceForURL(most_visited, url);
 
-  if (!ShouldReplaceThumbnailWith(image->thumbnail_score,
-                                  new_score_with_redirects) &&
-      image->thumbnail.get())
+  if (image->thumbnail.get() &&
+      !ShouldReplaceThumbnailWith(image->thumbnail_score,
+                                  new_score_with_redirects)) {
     return false;  // The one we already have is better.
+  }
 
   image->thumbnail = const_cast<base::RefCountedMemory*>(thumbnail_data);
   image->thumbnail_score = new_score_with_redirects;
@@ -531,13 +558,12 @@ bool TopSitesImpl::SetPageThumbnailEncoded(
     const GURL& url,
     const base::RefCountedMemory* thumbnail,
     const ThumbnailScore& score) {
-  if (!SetPageThumbnailNoDB(url, thumbnail, score))
+  DCHECK(cache_->IsKnownURL(url));
+
+  if (!SetPageThumbnailInCache(url, thumbnail, score))
     return false;
 
   // Update the database.
-  if (!cache_->IsKnownURL(url))
-    return false;
-
   size_t index = cache_->GetURLIndex(url);
   int url_rank = index - cache_->GetNumForcedURLs();
   const MostVisitedURL& most_visited = cache_->top_sites()[index];
@@ -553,14 +579,14 @@ bool TopSitesImpl::EncodeBitmap(const gfx::Image& bitmap,
   if (bitmap.IsEmpty())
     return false;
   *bytes = new base::RefCountedBytes();
-  std::vector<unsigned char> data;
-  if (!gfx::JPEG1xEncodedDataFromImage(bitmap, kTopSitesImageQuality, &data))
+  if (!gfx::JPEG1xEncodedDataFromImage(bitmap, kTopSitesImageQuality,
+                                       &(*bytes)->data())) {
     return false;
+  }
 
   // As we're going to cache this data, make sure the vector is only as big as
   // it needs to be, as JPEGCodec::Encode() over-allocates data.capacity().
-  // (In a C++0x future, we can just call shrink_to_fit() in Encode())
-  (*bytes)->data() = data;
+  (*bytes)->data().shrink_to_fit();
   return true;
 }
 
@@ -574,22 +600,17 @@ void TopSitesImpl::RemoveTemporaryThumbnailByURL(const GURL& url) {
   }
 }
 
-void TopSitesImpl::AddTemporaryThumbnail(
-    const GURL& url,
-    const base::RefCountedMemory* thumbnail,
-    const ThumbnailScore& score) {
+void TopSitesImpl::AddTemporaryThumbnail(const GURL& url,
+                                         base::RefCountedMemory* thumbnail,
+                                         const ThumbnailScore& score) {
   if (temp_images_.size() == kMaxTempTopImages)
-    temp_images_.erase(temp_images_.begin());
+    temp_images_.pop_front();
 
   TempImage image;
   image.first = url;
-  image.second.thumbnail = const_cast<base::RefCountedMemory*>(thumbnail);
+  image.second.thumbnail = thumbnail;
   image.second.thumbnail_score = score;
   temp_images_.push_back(image);
-}
-
-void TopSitesImpl::TimerFired() {
-  StartQueryForMostVisited();
 }
 
 // static
@@ -604,7 +625,7 @@ int TopSitesImpl::GetRedirectDistanceForURL(const MostVisitedURL& most_visited,
 }
 
 bool TopSitesImpl::AddPrepopulatedPages(MostVisitedURLList* urls,
-                                        size_t num_forced_urls) {
+                                        size_t num_forced_urls) const {
   bool added = false;
   for (const auto& prepopulated_page : prepopulated_pages_) {
     if (urls->size() - num_forced_urls < kNonForcedTopSitesNumber &&
@@ -616,16 +637,16 @@ bool TopSitesImpl::AddPrepopulatedPages(MostVisitedURLList* urls,
   return added;
 }
 
-size_t TopSitesImpl::MergeCachedForcedURLs(MostVisitedURLList* new_list) {
+size_t TopSitesImpl::MergeCachedForcedURLs(MostVisitedURLList* new_list) const {
   DCHECK(thread_checker_.CalledOnValidThread());
   // Add all the new URLs for quick lookup. Take that opportunity to count the
   // number of forced URLs in |new_list|.
   std::set<GURL> all_new_urls;
   size_t num_forced = 0;
   for (size_t i = 0; i < new_list->size(); ++i) {
-    for (size_t j = 0; j < (*new_list)[i].redirects.size(); j++) {
+    for (size_t j = 0; j < (*new_list)[i].redirects.size(); j++)
       all_new_urls.insert((*new_list)[i].redirects[j]);
-    }
+
     if (!(*new_list)[i].last_forced_time.is_null())
       ++num_forced;
   }
@@ -685,20 +706,11 @@ void TopSitesImpl::ApplyBlacklist(const MostVisitedURLList& urls,
   }
 }
 
+// static
 std::string TopSitesImpl::GetURLHash(const GURL& url) {
   // We don't use canonical URLs here to be able to blacklist only one of
   // the two 'duplicate' sites, e.g. 'gmail.com' and 'mail.google.com'.
   return base::MD5String(url.spec());
-}
-
-base::TimeDelta TopSitesImpl::GetUpdateDelay() {
-  if (cache_->top_sites().size() <= prepopulated_pages_.size())
-    return base::TimeDelta::FromSeconds(30);
-
-  int64_t range = kMaxUpdateIntervalMinutes - kMinUpdateIntervalMinutes;
-  int64_t minutes = kMaxUpdateIntervalMinutes -
-                    last_num_urls_changed_ * range / cache_->top_sites().size();
-  return base::TimeDelta::FromMinutes(minutes);
 }
 
 void TopSitesImpl::SetTopSites(const MostVisitedURLList& new_top_sites,
@@ -729,29 +741,43 @@ void TopSitesImpl::SetTopSites(const MostVisitedURLList& new_top_sites,
     histogram_recorded_ = true;
   }
 
+  bool should_notify_observers = false;
+  // If there is a change in urls, update the db and notify observers.
   if (!delta.deleted.empty() || !delta.added.empty() || !delta.moved.empty()) {
     backend_->UpdateTopSites(delta, record_or_not);
+    should_notify_observers = true;
   }
-
-  last_num_urls_changed_ = delta.added.size() + delta.moved.size();
+  // If there is no url change in top sites, check if the titles have changes.
+  // Notify observers if there's a change in titles.
+  if (!should_notify_observers)
+    should_notify_observers = DoTitlesDiffer(cache_->top_sites(), top_sites);
 
   // We always do the following steps (setting top sites in cache, and resetting
   // thread safe cache ...) as this method is invoked during startup at which
   // point the caches haven't been updated yet.
   cache_->SetTopSites(top_sites);
+  cache_->ClearUnreferencedThumbnails();
 
-  // See if we have any tmp thumbnails for the new sites.
+  // See if we have any temp thumbnails for the new sites, and promote them to
+  // proper thumbnails.
   if (!temp_images_.empty()) {
-    for (size_t i = 0; i < top_sites.size(); ++i) {
-      const MostVisitedURL& mv = top_sites[i];
-      GURL canonical_url = cache_->GetCanonicalURL(mv.url);
+    for (const MostVisitedURL& mv : top_sites) {
+      const GURL& canonical_url = cache_->GetCanonicalURL(mv.url);
       // At the time we get the thumbnail redirects aren't known, so we have to
       // iterate through all the images.
       for (TempImages::iterator it = temp_images_.begin();
            it != temp_images_.end(); ++it) {
         if (canonical_url == cache_->GetCanonicalURL(it->first)) {
-          SetPageThumbnailEncoded(
+          bool success = SetPageThumbnailEncoded(
               mv.url, it->second.thumbnail.get(), it->second.thumbnail_score);
+          // TODO(treib): We shouldn't have a non-temp thumbnail yet at this
+          // point, so this should always succeed, but it doesn't - see
+          // crbug.com/735395.
+          if (success) {
+            UMA_HISTOGRAM_ENUMERATION("Thumbnails.AddedToTopSites",
+                                      THUMBNAIL_PROMOTED_TEMP_TO_REGULAR,
+                                      THUMBNAIL_EVENT_COUNT);
+          }
           temp_images_.erase(it);
           break;
         }
@@ -764,14 +790,14 @@ void TopSitesImpl::SetTopSites(const MostVisitedURLList& new_top_sites,
 
   ResetThreadSafeCache();
   ResetThreadSafeImageCache();
-  if (location == CALL_LOCATION_FROM_FORCED_URLS)
-    NotifyTopSitesChanged(TopSitesObserver::ChangeReason::FORCED_URL);
-  else
-    NotifyTopSitesChanged(TopSitesObserver::ChangeReason::MOST_VISITED);
 
-  // Restart the timer that queries history for top sites. This is done to
-  // ensure we stay in sync with history.
-  RestartQueryForTopSitesTimer(GetUpdateDelay());
+  if (should_notify_observers) {
+    if (location == CALL_LOCATION_FROM_FORCED_URLS)
+      NotifyTopSitesChanged(TopSitesObserver::ChangeReason::FORCED_URL);
+    else
+      NotifyTopSitesChanged(TopSitesObserver::ChangeReason::MOST_VISITED);
+  }
+
 }
 
 int TopSitesImpl::num_results_to_request_from_history() const {
@@ -829,15 +855,12 @@ void TopSitesImpl::ResetThreadSafeImageCache() {
   thread_safe_cache_->SetThumbnails(cache_->images());
 }
 
-void TopSitesImpl::RestartQueryForTopSitesTimer(base::TimeDelta delta) {
-  if (timer_.IsRunning() && ((timer_start_time_ + timer_.GetCurrentDelay()) <
-                             (base::TimeTicks::Now() + delta))) {
+void TopSitesImpl::ScheduleUpdateTimer() {
+  if (timer_.IsRunning())
     return;
-  }
 
-  timer_start_time_ = base::TimeTicks::Now();
-  timer_.Stop();
-  timer_.Start(FROM_HERE, delta, this, &TopSitesImpl::TimerFired);
+  timer_.Start(FROM_HERE, kDelayForUpdates, this,
+               &TopSitesImpl::StartQueryForMostVisited);
 }
 
 void TopSitesImpl::OnGotMostVisitedThumbnails(
@@ -856,8 +879,8 @@ void TopSitesImpl::OnGotMostVisitedThumbnails(
   MoveStateToLoaded();
 
   // Start a timer that refreshes top sites from history.
-  RestartQueryForTopSitesTimer(
-      base::TimeDelta::FromSeconds(kUpdateIntervalSecs));
+  timer_.Start(FROM_HERE, kFirstDelayAtStartup, this,
+               &TopSitesImpl::StartQueryForMostVisited);
 }
 
 void TopSitesImpl::OnTopSitesAvailableFromHistory(

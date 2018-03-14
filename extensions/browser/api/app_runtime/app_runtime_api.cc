@@ -36,10 +36,9 @@ void DispatchOnEmbedRequestedEventImpl(
     content::BrowserContext* context) {
   std::unique_ptr<base::ListValue> args(new base::ListValue());
   args->Append(std::move(app_embedding_request_data));
-  std::unique_ptr<Event> event(
-      new Event(events::APP_RUNTIME_ON_EMBED_REQUESTED,
-                app_runtime::OnEmbedRequested::kEventName, std::move(args)));
-  event->restrict_to_browser_context = context;
+  auto event = std::make_unique<Event>(
+      events::APP_RUNTIME_ON_EMBED_REQUESTED,
+      app_runtime::OnEmbedRequested::kEventName, std::move(args), context);
   EventRouter::Get(context)
       ->DispatchEventWithLazyListener(extension_id, std::move(event));
 
@@ -66,10 +65,9 @@ void DispatchOnLaunchedEventImpl(
 
   std::unique_ptr<base::ListValue> args(new base::ListValue());
   args->Append(std::move(launch_data));
-  std::unique_ptr<Event> event(new Event(events::APP_RUNTIME_ON_LAUNCHED,
-                                         app_runtime::OnLaunched::kEventName,
-                                         std::move(args)));
-  event->restrict_to_browser_context = context;
+  auto event = std::make_unique<Event>(events::APP_RUNTIME_ON_LAUNCHED,
+                                       app_runtime::OnLaunched::kEventName,
+                                       std::move(args), context);
   EventRouter::Get(context)
       ->DispatchEventWithLazyListener(extension_id, std::move(event));
   ExtensionPrefs::Get(context)
@@ -107,6 +105,7 @@ app_runtime::LaunchSource GetLaunchSourceEnum(
   ASSERT_ENUM_EQUAL(SOURCE_CHROME_INTERNAL);
   ASSERT_ENUM_EQUAL(SOURCE_TEST);
   ASSERT_ENUM_EQUAL(SOURCE_INSTALLED_NOTIFICATION);
+  ASSERT_ENUM_EQUAL(SOURCE_CONTEXT_MENU);
   static_assert(extensions::NUM_APP_LAUNCH_SOURCES ==
                     app_runtime::LaunchSource::LAUNCH_SOURCE_LAST + 1,
                 "");
@@ -132,7 +131,7 @@ void AppRuntimeEventRouter::DispatchOnLaunchedEvent(
     extensions::AppLaunchSource source,
     std::unique_ptr<app_runtime::LaunchData> launch_data) {
   if (!launch_data)
-    launch_data = base::MakeUnique<app_runtime::LaunchData>();
+    launch_data = std::make_unique<app_runtime::LaunchData>();
   app_runtime::LaunchSource source_enum = GetLaunchSourceEnum(source);
   if (extensions::FeatureSwitch::trace_app_source()->IsEnabled()) {
     launch_data->source = source_enum;
@@ -147,10 +146,9 @@ void AppRuntimeEventRouter::DispatchOnRestartedEvent(
     BrowserContext* context,
     const Extension* extension) {
   std::unique_ptr<base::ListValue> arguments(new base::ListValue());
-  std::unique_ptr<Event> event(new Event(events::APP_RUNTIME_ON_RESTARTED,
-                                         app_runtime::OnRestarted::kEventName,
-                                         std::move(arguments)));
-  event->restrict_to_browser_context = context;
+  auto event = std::make_unique<Event>(events::APP_RUNTIME_ON_RESTARTED,
+                                       app_runtime::OnRestarted::kEventName,
+                                       std::move(arguments), context);
   EventRouter::Get(context)
       ->DispatchEventToExtension(extension->id(), std::move(event));
 }
@@ -194,7 +192,7 @@ void AppRuntimeEventRouter::DispatchOnLaunchedEventWithFileEntries(
     launch_item->SetBoolean("isDirectory", entries[i].is_directory);
     items->Append(std::move(launch_item));
   }
-  launch_data->Set("items", items.release());
+  launch_data->Set("items", std::move(items));
   DispatchOnLaunchedEventImpl(extension->id(), source_enum,
                               std::move(launch_data), context);
 }

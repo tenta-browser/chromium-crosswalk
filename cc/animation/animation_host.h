@@ -43,8 +43,8 @@ enum class ThreadInstance { MAIN, IMPL };
 // (PushPropertiesTo).
 // An AnimationHost talks to its correspondent LayerTreeHost via
 // MutatorHostClient interface.
-class CC_ANIMATION_EXPORT AnimationHost
-    : public NON_EXPORTED_BASE(MutatorHost) {
+class CC_ANIMATION_EXPORT AnimationHost : public MutatorHost,
+                                          public LayerTreeMutatorClient {
  public:
   using ElementToAnimationsMap =
       std::unordered_map<ElementId,
@@ -92,13 +92,18 @@ class CC_ANIMATION_EXPORT AnimationHost
 
   void SetMutatorHostClient(MutatorHostClient* client) override;
 
+  void SetLayerTreeMutator(std::unique_ptr<LayerTreeMutator> mutator) override;
+
   void PushPropertiesTo(MutatorHost* host_impl) override;
 
   void SetSupportsScrollAnimations(bool supports_scroll_animations) override;
   bool NeedsTickAnimations() const override;
 
   bool ActivateAnimations() override;
-  bool TickAnimations(base::TimeTicks monotonic_time) override;
+  bool TickAnimations(base::TimeTicks monotonic_time,
+                      const ScrollTree& scroll_tree) override;
+  void TickScrollAnimations(base::TimeTicks monotonic_time,
+                            const ScrollTree& scroll_tree) override;
   bool UpdateAnimationState(bool start_ready_animations,
                             MutatorEvents* events) override;
 
@@ -128,19 +133,6 @@ class CC_ANIMATION_EXPORT AnimationHost
       ElementId element_id,
       TargetProperty::Type property) const override;
 
-  bool HasFilterAnimationThatInflatesBounds(
-      ElementId element_id) const override;
-  bool HasTransformAnimationThatInflatesBounds(
-      ElementId element_id) const override;
-  bool HasAnimationThatInflatesBounds(ElementId element_id) const override;
-
-  bool FilterAnimationBoundsForBox(ElementId element_id,
-                                   const gfx::BoxF& box,
-                                   gfx::BoxF* bounds) const override;
-  bool TransformAnimationBoundsForBox(ElementId element_id,
-                                      const gfx::BoxF& box,
-                                      gfx::BoxF* bounds) const override;
-
   bool HasOnlyTranslationTransforms(ElementId element_id,
                                     ElementListType list_type) const override;
   bool AnimationsPreserveAxisAlignment(ElementId element_id) const override;
@@ -155,10 +147,12 @@ class CC_ANIMATION_EXPORT AnimationHost
   bool HasAnyAnimation(ElementId element_id) const override;
   bool HasTickingAnimationForTesting(ElementId element_id) const override;
 
-  void ImplOnlyScrollAnimationCreate(ElementId element_id,
-                                     const gfx::ScrollOffset& target_offset,
-                                     const gfx::ScrollOffset& current_offset,
-                                     base::TimeDelta delayed_by) override;
+  void ImplOnlyScrollAnimationCreate(
+      ElementId element_id,
+      const gfx::ScrollOffset& target_offset,
+      const gfx::ScrollOffset& current_offset,
+      base::TimeDelta delayed_by,
+      base::TimeDelta animation_start_offset) override;
   bool ImplOnlyScrollAnimationUpdateTarget(
       ElementId element_id,
       const gfx::Vector2dF& scroll_delta,
@@ -182,6 +176,16 @@ class CC_ANIMATION_EXPORT AnimationHost
   const PlayersList& ticking_players_for_testing() const;
   const ElementToAnimationsMap& element_animations_for_testing() const;
 
+  // LayerTreeMutatorClient.
+  void SetMutationUpdate(
+      std::unique_ptr<MutatorOutputState> output_state) override;
+
+  size_t CompositedAnimationsCount() const override;
+  size_t MainThreadAnimationsCount() const override;
+  size_t MainThreadCompositableAnimationsCount() const override;
+  void SetAnimationCounts(size_t total_animations_count,
+                          size_t main_thread_compositable_animations_count);
+
  private:
   explicit AnimationHost(ThreadInstance thread_instance);
 
@@ -190,6 +194,14 @@ class CC_ANIMATION_EXPORT AnimationHost
   void PushPropertiesToImplThread(AnimationHost* host_impl);
 
   void EraseTimeline(scoped_refptr<AnimationTimeline> timeline);
+
+  bool NeedsTickAnimationPlayers() const;
+  bool NeedsTickMutator() const;
+
+  // Return the animator state representing all ticking worklet animations.
+  std::unique_ptr<MutatorInputState> CollectAnimatorsState(
+      base::TimeTicks timeline_time,
+      const ScrollTree& scroll_tree);
 
   ElementToAnimationsMap element_to_animations_map_;
   PlayersList ticking_players_;
@@ -208,6 +220,11 @@ class CC_ANIMATION_EXPORT AnimationHost
 
   bool supports_scroll_animations_;
   bool needs_push_properties_;
+
+  std::unique_ptr<LayerTreeMutator> mutator_;
+
+  size_t main_thread_animations_count_ = 0;
+  size_t main_thread_compositable_animations_count_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(AnimationHost);
 };

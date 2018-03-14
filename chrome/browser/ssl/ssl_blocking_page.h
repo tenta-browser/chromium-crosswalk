@@ -41,7 +41,7 @@ class SSLBlockingPage
     : public security_interstitials::SecurityInterstitialPage {
  public:
   // Interstitial type, used in tests.
-  static InterstitialPageDelegate::TypeID kTypeForTesting;
+  static const InterstitialPageDelegate::TypeID kTypeForTesting;
 
   ~SSLBlockingPage() override;
 
@@ -59,6 +59,7 @@ class SSLBlockingPage
       int options_mask,
       const base::Time& time_triggered,
       std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
+      bool is_superfish,
       const base::Callback<void(content::CertificateRequestResultType)>&
           callback);
 
@@ -67,7 +68,7 @@ class SSLBlockingPage
 
   // Returns true if |options_mask| refers to a soft-overridable SSL error and
   // if SSL error overriding is allowed by policy.
-  static bool IsOverridable(int options_mask, const Profile* const profile);
+  static bool IsOverridable(int options_mask);
 
   void SetSSLCertReporterForTesting(
       std::unique_ptr<SSLCertReporter> ssl_cert_reporter);
@@ -75,6 +76,20 @@ class SSLBlockingPage
  protected:
   friend class policy::PolicyTest_SSLErrorOverridingDisallowed_Test;
   friend class SSLUITest;
+
+  SSLBlockingPage(
+      content::WebContents* web_contents,
+      int cert_error,
+      const net::SSLInfo& ssl_info,
+      const GURL& request_url,
+      int options_mask,
+      const base::Time& time_triggered,
+      std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
+      bool overrideable,
+      std::unique_ptr<ChromeMetricsHelper> metrics_helper,
+      bool is_superfish,
+      const base::Callback<void(content::CertificateRequestResultType)>&
+          callback);
 
   // InterstitialPageDelegate implementation.
   void CommandReceived(const std::string& command) override;
@@ -89,19 +104,6 @@ class SSLBlockingPage
       base::DictionaryValue* load_time_data) override;
 
  private:
-  SSLBlockingPage(
-      content::WebContents* web_contents,
-      int cert_error,
-      const net::SSLInfo& ssl_info,
-      const GURL& request_url,
-      int options_mask,
-      const base::Time& time_triggered,
-      std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
-      bool overrideable,
-      std::unique_ptr<ChromeMetricsHelper> metrics_helper,
-      const base::Callback<void(content::CertificateRequestResultType)>&
-          callback);
-
   void NotifyDenyCertificate();
 
   base::Callback<void(content::CertificateRequestResultType)> callback_;

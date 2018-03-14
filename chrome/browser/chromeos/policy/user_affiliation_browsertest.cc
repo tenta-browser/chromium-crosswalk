@@ -12,6 +12,7 @@
 #include "chromeos/dbus/fake_session_manager_client.h"
 #include "chromeos/dbus/session_manager_client.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
+#include "components/signin/core/account_id/account_id.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/test/test_utils.h"
@@ -21,9 +22,11 @@ namespace policy {
 
 namespace {
 
-const char kAffiliatedUser[] = "affiliated-user@example.com";
-const char kAffiliationID[] = "some-affiliation-id";
-const char kAnotherAffiliationID[] = "another-affiliation-id";
+constexpr char kAffiliatedUser[] = "affiliated-user@example.com";
+constexpr char kAffiliatedUserGaiaId[] = "1234567890";
+constexpr char kAffiliationID[] = "some-affiliation-id";
+constexpr char kAnotherAffiliationID[] = "another-affiliation-id";
+
 struct Params {
   explicit Params(bool affiliated) : affiliated_(affiliated) {}
   bool affiliated_;
@@ -35,20 +38,21 @@ class UserAffiliationBrowserTest
     : public InProcessBrowserTest,
       public ::testing::WithParamInterface<Params> {
  public:
-  UserAffiliationBrowserTest() { set_exit_when_last_browser_closes(false); }
+  UserAffiliationBrowserTest()
+      : account_id_(AccountId::FromUserEmailGaiaId(kAffiliatedUser,
+                                                   kAffiliatedUserGaiaId)) {
+    set_exit_when_last_browser_closes(false);
+  }
 
  protected:
   // InProcessBrowserTest
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    InProcessBrowserTest::SetUpCommandLine(command_line);
     affiliation_test_helper::AppendCommandLineSwitchesForLoginManager(
         command_line);
   }
 
   // InProcessBrowserTest
   void SetUpInProcessBrowserTestFixture() override {
-    InProcessBrowserTest::SetUpInProcessBrowserTestFixture();
-
     chromeos::FakeSessionManagerClient* fake_session_manager_client =
         new chromeos::FakeSessionManagerClient;
     chromeos::DBusThreadManager::GetSetterForTesting()->SetSessionManagerClient(
@@ -70,27 +74,28 @@ class UserAffiliationBrowserTest
       user_affiliation_ids.insert(kAnotherAffiliationID);
     }
     affiliation_test_helper::SetUserAffiliationIDs(
-        &user_policy, fake_session_manager_client, kAffiliatedUser,
+        &user_policy, fake_session_manager_client, account_id_.GetUserEmail(),
         user_affiliation_ids);
 
     // Set retry delay to prevent timeouts.
     policy::DeviceManagementService::SetRetryDelayForTesting(0);
   }
 
+  const AccountId account_id_;
+
  private:
   DISALLOW_COPY_AND_ASSIGN(UserAffiliationBrowserTest);
 };
 
 IN_PROC_BROWSER_TEST_P(UserAffiliationBrowserTest, PRE_Affiliated) {
-  affiliation_test_helper::PreLoginUser(kAffiliatedUser);
+  affiliation_test_helper::PreLoginUser(account_id_);
 }
 
 IN_PROC_BROWSER_TEST_P(UserAffiliationBrowserTest, Affiliated) {
-  affiliation_test_helper::LoginUser(kAffiliatedUser);
-  EXPECT_EQ(GetParam().affiliated_,
-            user_manager::UserManager::Get()
-                ->FindUser(AccountId::FromUserEmail(kAffiliatedUser))
-                ->IsAffiliated());
+  affiliation_test_helper::LoginUser(account_id_);
+  EXPECT_EQ(
+      GetParam().affiliated_,
+      user_manager::UserManager::Get()->FindUser(account_id_)->IsAffiliated());
 }
 
 INSTANTIATE_TEST_CASE_P(AffiliationCheck,

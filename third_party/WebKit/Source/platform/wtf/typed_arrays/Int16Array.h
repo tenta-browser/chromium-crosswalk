@@ -34,12 +34,12 @@ class ArrayBuffer;
 
 class Int16Array final : public IntegralTypedArrayBase<short> {
  public:
-  static inline PassRefPtr<Int16Array> Create(unsigned length);
-  static inline PassRefPtr<Int16Array> Create(const short* array,
-                                              unsigned length);
-  static inline PassRefPtr<Int16Array> Create(PassRefPtr<ArrayBuffer>,
-                                              unsigned byte_offset,
-                                              unsigned length);
+  static inline scoped_refptr<Int16Array> Create(unsigned length);
+  static inline scoped_refptr<Int16Array> Create(const short* array,
+                                                 unsigned length);
+  static inline scoped_refptr<Int16Array> Create(scoped_refptr<ArrayBuffer>,
+                                                 unsigned byte_offset,
+                                                 unsigned length);
 
   using TypedArrayBase<short>::Set;
   using IntegralTypedArrayBase<short>::Set;
@@ -47,29 +47,30 @@ class Int16Array final : public IntegralTypedArrayBase<short> {
   ViewType GetType() const override { return kTypeInt16; }
 
  private:
-  inline Int16Array(PassRefPtr<ArrayBuffer>,
+  inline Int16Array(scoped_refptr<ArrayBuffer>,
                     unsigned byte_offset,
                     unsigned length);
   // Make constructor visible to superclass.
   friend class TypedArrayBase<short>;
 };
 
-PassRefPtr<Int16Array> Int16Array::Create(unsigned length) {
+scoped_refptr<Int16Array> Int16Array::Create(unsigned length) {
   return TypedArrayBase<short>::Create<Int16Array>(length);
 }
 
-PassRefPtr<Int16Array> Int16Array::Create(const short* array, unsigned length) {
+scoped_refptr<Int16Array> Int16Array::Create(const short* array,
+                                             unsigned length) {
   return TypedArrayBase<short>::Create<Int16Array>(array, length);
 }
 
-PassRefPtr<Int16Array> Int16Array::Create(PassRefPtr<ArrayBuffer> buffer,
-                                          unsigned byte_offset,
-                                          unsigned length) {
+scoped_refptr<Int16Array> Int16Array::Create(scoped_refptr<ArrayBuffer> buffer,
+                                             unsigned byte_offset,
+                                             unsigned length) {
   return TypedArrayBase<short>::Create<Int16Array>(std::move(buffer),
                                                    byte_offset, length);
 }
 
-Int16Array::Int16Array(PassRefPtr<ArrayBuffer> buffer,
+Int16Array::Int16Array(scoped_refptr<ArrayBuffer> buffer,
                        unsigned byte_offset,
                        unsigned length)
     : IntegralTypedArrayBase<short>(std::move(buffer), byte_offset, length) {}

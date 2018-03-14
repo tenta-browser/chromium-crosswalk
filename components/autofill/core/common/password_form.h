@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/time/time.h"
@@ -84,6 +85,24 @@ struct PasswordForm {
     LAYOUT_LAST = LAYOUT_LOGIN_AND_SIGNUP
   };
 
+  // Events observed by the Password Manager that indicate either that a form is
+  // potentially being submitted, or that a form has already been successfully
+  // submitted. Recorded into a UMA histogram, so order of enumerators should
+  // not be changed.
+  enum class SubmissionIndicatorEvent {
+    NONE,
+    HTML_FORM_SUBMISSION,
+    SAME_DOCUMENT_NAVIGATION,
+    XHR_SUCCEEDED,
+    FRAME_DETACHED,
+    MANUAL_SAVE,
+    DOM_MUTATION_AFTER_XHR,
+    PROVISIONALLY_SAVED_FORM_ON_START_PROVISIONAL_LOAD,
+    FILLED_FORM_ON_START_PROVISIONAL_LOAD,
+    FILLED_INPUT_ELEMENTS_ON_START_PROVISIONAL_LOAD,
+    SUBMISSION_INDICATOR_EVENT_COUNT
+  };
+
   // The "Realm" for the sign-on. This is scheme, host, port for SCHEME_HTML.
   // Dialog based forms also contain the HTTP realm. Android based forms will
   // contain a string of the form "android://<hash of cert>@<package name>"
@@ -115,10 +134,25 @@ struct PasswordForm {
 
   // The web realm affiliated with the Android application, if the form is an
   // Android credential. Otherwise, the string is empty. If there are several
-  // realms affiliated with the application, an arbitrary realm is chosen.
-  // The field is filled out in PasswordStore's InjectAffiliatedWebRealms.
-  // If there was no call of InjectAffiliatedWebRealms, the string is empty.
+  // realms affiliated with the application, an arbitrary realm is chosen. The
+  // field is filled out when the PasswordStore injects affiliation and branding
+  // information, i.e. in InjectAffiliationAndBrandingInformation. If there was
+  // no prior call to this method, the string is empty.
   std::string affiliated_web_realm;
+
+  // The display name (e.g. Play Store name) of the Android application if the
+  // form is an Android credential. Otherwise, the string is empty. The field is
+  // filled out when the PasswordStore injects affiliation and branding
+  // information, i.e. in InjectAffiliationAndBrandingInformation. If there was
+  // no prior call to this method, the string is empty.
+  std::string app_display_name;
+
+  // The icon URL (e.g. Play Store icon URL) of the Android application if the
+  // form is an Android credential. Otherwise, the URL is empty. The field is
+  // filled out when the PasswordStore injects affiliation and branding
+  // information, i.e. in InjectAffiliationAndBrandingInformation. If there was
+  // no prior call to this method, the URL is empty.
+  GURL app_icon_url;
 
   // The name of the submit button used. Optional; only used in scoring
   // of PasswordForm results from the database to make matches as tight as
@@ -148,6 +182,14 @@ struct PasswordForm {
   //
   // When parsing an HTML form, this is typically empty.
   PossibleUsernamesVector other_possible_usernames;
+
+  // This member is populated in cases where we there are multiple possible
+  // password values. Used in pending password state, to populate a dropdown
+  // for possible passwords. Contains all possible passwords. Optional.
+  std::vector<base::string16> all_possible_passwords;
+
+  // True if |all_possible_passwords| have autofilled value or its part.
+  bool form_has_autofilled_value;
 
   // The name of the input element corresponding to the current password.
   // Optional (improves scoring).
@@ -278,6 +320,15 @@ struct PasswordForm {
   // If true, this form looks like SignUp form according to local heuristics.
   bool does_look_like_signup_form;
 
+  // The type of the event that was taken as an indication that this form is
+  // being or has already been submitted. This field is not persisted and filled
+  // out only for submitted forms.
+  SubmissionIndicatorEvent submission_event;
+
+  // True iff heuristics declined this form for saving (e.g. only credit card
+  // fields were found). But this form can be saved only with the fallback.
+  bool only_for_fallback_saving;
+
   // Return true if we consider this form to be a change password form.
   // We use only client heuristics, so it could include signup forms.
   bool IsPossibleChangePasswordForm() const;
@@ -293,7 +344,11 @@ struct PasswordForm {
 
   PasswordForm();
   PasswordForm(const PasswordForm& other);
+  PasswordForm(PasswordForm&& other);
   ~PasswordForm();
+
+  PasswordForm& operator=(const PasswordForm& form);
+  PasswordForm& operator=(PasswordForm&& form);
 };
 
 // True if the unique keys for the forms are the same. The unique key is
@@ -311,10 +366,17 @@ struct LessThanUniqueKey {
 base::string16 OtherPossibleUsernamesToString(
     const PossibleUsernamesVector& possible_usernames);
 
+// Converts a vector of possible passwords to string.
+base::string16 AllPossiblePasswordsToString(
+    const std::vector<base::string16>& possible_passwords);
+
 // For testing.
 std::ostream& operator<<(std::ostream& os, PasswordForm::Layout layout);
 std::ostream& operator<<(std::ostream& os, const PasswordForm& form);
 std::ostream& operator<<(std::ostream& os, PasswordForm* form);
+std::ostream& operator<<(
+    std::ostream& os,
+    PasswordForm::SubmissionIndicatorEvent submission_event);
 
 }  // namespace autofill
 

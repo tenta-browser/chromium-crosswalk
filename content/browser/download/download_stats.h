@@ -103,10 +103,28 @@ enum DownloadCountTypes {
   // Downloads that are actually completed in normal profile.
   COMPLETED_COUNT_NORMAL_PROFILE,
 
+  // Downloads that are completed with a content length mismatch error.
+  COMPLETED_WITH_CONTENT_LENGTH_MISMATCH_COUNT,
+
+  // After a download is interrupted with a content length mismatch error, more
+  // bytes are received when resuming the download.
+  MORE_BYTES_RECEIVED_AFTER_CONTENT_LENGTH_MISMATCH_COUNT,
+
+  // After a download is interrupted with a content length mismatch error, no
+  // bytes are received when resuming the download.
+  NO_BYTES_RECEIVED_AFTER_CONTENT_LENGTH_MISMATCH_COUNT,
+
+  // Count of downloads that requested target determination.
+  DETERMINE_DOWNLOAD_TARGET_COUNT,
+
+  // Count of downloads that has target determination completed.
+  DOWNLOAD_TARGET_DETERMINED_COUNT,
+
   DOWNLOAD_COUNT_TYPES_LAST_ENTRY
 };
 
-enum DownloadSource {
+// TODO(xingliu): Deprecate this enum.
+enum DownloadTriggerSource {
   // The download was initiated when the SavePackage system rejected
   // a Save Page As ... by returning false from
   // SavePackage::IsSaveableContents().
@@ -177,6 +195,9 @@ enum class ParallelDownloadCreationEvent {
   // The remaining time does not meet the requirement.
   FALLBACK_REASON_REMAINING_TIME,
 
+  // The http method or url scheme does not meet the requirement.
+  FALLBACK_REASON_HTTP_METHOD,
+
   // Last entry of the enum.
   COUNT,
 };
@@ -185,11 +206,12 @@ enum class ParallelDownloadCreationEvent {
 void RecordDownloadCount(DownloadCountTypes type);
 
 // Record initiation of a download from a specific source.
-void RecordDownloadSource(DownloadSource source);
+void RecordDownloadSource(DownloadTriggerSource source);
 
 // Record COMPLETED_COUNT and how long the download took.
 void RecordDownloadCompleted(const base::TimeTicks& start,
-                             int64_t download_len);
+                             int64_t download_len,
+                             bool is_parallelizable);
 
 // Record INTERRUPTED_COUNT, |reason|, |received| and |total| bytes.
 void RecordDownloadInterrupted(DownloadInterruptReason reason,
@@ -254,6 +276,9 @@ void RecordNetworkBlockage(base::TimeDelta resource_handler_lifetime,
 void RecordFileBandwidth(size_t length,
                          base::TimeDelta disk_write_time,
                          base::TimeDelta elapsed_time);
+
+// Records the size of the download from content-length header.
+void RecordParallelizableContentLength(int64_t content_length);
 
 // Increment one of the count for parallelizable download.
 void RecordParallelizableDownloadCount(DownloadCountTypes type,
@@ -323,7 +348,7 @@ enum OriginStateOnResumption {
 // request. |state| is a combination of values from OriginStateOnResumption
 // enum.
 void RecordOriginStateOnResumption(bool is_partial,
-                                   int state);
+                                   OriginStateOnResumption state);
 
 void RecordDownloadConnectionSecurity(const GURL& download_url,
                                       const std::vector<GURL>& url_chain);

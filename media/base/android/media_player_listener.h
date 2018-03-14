@@ -59,12 +59,8 @@ class MediaPlayerListener {
   // related events from system and |media_player|. If |media_player| is NULL,
   // this class only listens to system events.
   void CreateMediaPlayerListener(
-      const base::android::JavaRef<jobject>& context,
       const base::android::JavaRef<jobject>& media_player);
   void ReleaseMediaPlayerListenerResources();
-
-  // Register MediaPlayerListener in the system library loader.
-  static bool RegisterMediaPlayerListener(JNIEnv* env);
 
  private:
   // The message loop where |media_player_| lives.

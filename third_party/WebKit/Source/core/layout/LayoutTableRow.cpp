@@ -26,7 +26,7 @@
 
 #include "core/layout/LayoutTableRow.h"
 
-#include "core/HTMLNames.h"
+#include "core/html_names.h"
 #include "core/layout/HitTestResult.h"
 #include "core/layout/LayoutAnalyzer.h"
 #include "core/layout/LayoutState.h"
@@ -34,7 +34,6 @@
 #include "core/layout/LayoutView.h"
 #include "core/layout/SubtreeLayoutScope.h"
 #include "core/paint/TableRowPainter.h"
-#include "core/style/StyleInheritedData.h"
 
 namespace blink {
 
@@ -67,13 +66,12 @@ void LayoutTableRow::StyleDidChange(StyleDifference diff,
 
   if (!Parent())
     return;
-  LayoutTable* table = this->Table();
+  LayoutTable* table = Table();
   if (!table)
     return;
 
-  if (!table->SelfNeedsLayout() && !table->NormalChildNeedsLayout() &&
-      old_style->Border() != Style()->Border())
-    table->InvalidateCollapsedBorders();
+  LayoutTableBoxComponent::InvalidateCollapsedBordersOnStyleChange(
+      *this, *table, diff, *old_style);
 
   if (LayoutTableBoxComponent::DoCellsHaveDirtyWidth(*this, *table, diff,
                                                      *old_style)) {
@@ -98,26 +96,25 @@ void LayoutTableRow::StyleDidChange(StyleDifference diff,
     // TODO(dgrogan): Make LayoutTableSection clear its dirty bit.
     table->SetPreferredLogicalWidthsDirty();
   }
-}
 
-const BorderValue& LayoutTableRow::BorderAdjoiningStartCell(
-    const LayoutTableCell* cell) const {
-#if DCHECK_IS_ON()
-  DCHECK(cell->IsFirstOrLastCellInRow());
-#endif
-  // FIXME: https://webkit.org/b/79272 - Add support for mixed directionality at
-  // the cell level.
-  return Style()->BorderStart();
-}
-
-const BorderValue& LayoutTableRow::BorderAdjoiningEndCell(
-    const LayoutTableCell* cell) const {
-#if DCHECK_IS_ON()
-  DCHECK(cell->IsFirstOrLastCellInRow());
-#endif
-  // FIXME: https://webkit.org/b/79272 - Add support for mixed directionality at
-  // the cell level.
-  return Style()->BorderEnd();
+  // When a row gets collapsed or uncollapsed, it's necessary to check all the
+  // rows to find any cell that may span the current row.
+  if ((old_style->Visibility() == EVisibility::kCollapse) !=
+      (Style()->Visibility() == EVisibility::kCollapse)) {
+    for (LayoutTableRow* row = Section()->FirstRow(); row;
+         row = row->NextRow()) {
+      for (LayoutTableCell* cell = row->FirstCell(); cell;
+           cell = cell->NextCell()) {
+        if (!cell->IsSpanningCollapsedRow())
+          continue;
+        unsigned rowIndex = RowIndex();
+        unsigned spanStart = cell->RowIndex();
+        unsigned spanEnd = spanStart + cell->RowSpan();
+        if (spanStart <= rowIndex && rowIndex <= spanEnd)
+          cell->SetCellChildrenNeedLayout();
+      }
+    }
+  }
 }
 
 void LayoutTableRow::AddChild(LayoutObject* child, LayoutObject* before_child) {
@@ -172,7 +169,8 @@ void LayoutTableRow::AddChild(LayoutObject* child, LayoutObject* before_child) {
     // When borders collapse, adding a cell can affect the the width of
     // neighboring cells.
     LayoutTable* enclosing_table = Table();
-    if (enclosing_table && enclosing_table->CollapseBorders()) {
+    if (enclosing_table && enclosing_table->ShouldCollapseBorders()) {
+      enclosing_table->InvalidateCollapsedBorders();
       if (LayoutTableCell* previous_cell = cell->PreviousCell())
         previous_cell->SetNeedsLayoutAndPrefWidthsRecalc(
             LayoutInvalidationReason::kTableChanged);
@@ -196,8 +194,13 @@ void LayoutTableRow::UpdateLayout() {
     cell->SetLogicalTop(LogicalTop());
     if (!cell->NeedsLayout())
       Section()->MarkChildForPaginationRelayoutIfNeeded(*cell, layouter);
-    if (cell->NeedsLayout())
+    if (cell->NeedsLayout()) {
+      // If we are laying out the cell's children clear its intrinsic
+      // padding so it doesn't skew the position of the content.
+      if (cell->CellChildrenNeedLayout())
+        cell->ClearIntrinsicPadding();
       cell->UpdateLayout();
+    }
     if (paginated)
       Section()->UpdateFragmentationInfoForChild(*cell);
   }
@@ -278,7 +281,7 @@ LayoutTableRow* LayoutTableRow::CreateAnonymousWithParent(
     const LayoutObject* parent) {
   LayoutTableRow* new_row =
       LayoutTableRow::CreateAnonymous(&parent->GetDocument());
-  RefPtr<ComputedStyle> new_style =
+  scoped_refptr<ComputedStyle> new_style =
       ComputedStyle::CreateAnonymousStyleWithDisplay(parent->StyleRef(),
                                                      EDisplay::kTableRow);
   new_row->SetStyle(std::move(new_style));
@@ -303,39 +306,42 @@ void LayoutTableRow::AddOverflowFromCell(const LayoutTableCell* cell) {
     AddSelfVisualOverflow(cell_background_rect);
   }
 
-  // Should propagate cell's overflow to row if the cell has row span or has
-  // overflow.
-  if (cell->RowSpan() == 1 && !cell->HasOverflowModel())
-    return;
-
   // The cell and the row share the section's coordinate system. However
   // the visual overflow should be determined in the coordinate system of
   // the row, that's why we shift the rects by cell_row_offset below.
   LayoutSize cell_row_offset = cell->Location() - Location();
 
+  // Let the row's self visual overflow cover the cell's whole collapsed
+  // borders. This ensures correct raster invalidation on row border style
+  // change.
+  if (const auto* collapsed_borders = cell->GetCollapsedBorderValues()) {
+    LayoutRect collapsed_border_rect =
+        cell->RectForOverflowPropagation(collapsed_borders->LocalVisualRect());
+    collapsed_border_rect.Move(cell_row_offset);
+    AddSelfVisualOverflow(collapsed_border_rect);
+  }
+
+  // Should propagate cell's overflow to row if the cell has row span or has
+  // overflow.
+  if (cell->RowSpan() == 1 && !cell->HasOverflowModel())
+    return;
+
   LayoutRect cell_visual_overflow_rect =
-      cell->VisualOverflowRectForPropagation(StyleRef());
+      cell->VisualOverflowRectForPropagation();
   cell_visual_overflow_rect.Move(cell_row_offset);
   AddContentsVisualOverflow(cell_visual_overflow_rect);
 
   LayoutRect cell_layout_overflow_rect =
-      cell->LayoutOverflowRectForPropagation(StyleRef());
+      cell->LayoutOverflowRectForPropagation(this);
   cell_layout_overflow_rect.Move(cell_row_offset);
   AddLayoutOverflow(cell_layout_overflow_rect);
 }
 
-bool LayoutTableRow::IsFirstRowInSectionAfterHeader() const {
-  // If there isn't room on the page for at least one content row after the
-  // header group, then we won't repeat the header on each page.
-  // https://drafts.csswg.org/css-tables-3/#repeated-headers reads like
-  // it wants us to drop headers on only the pages that a single row
-  // won't fit but we avoid the complexity of that reading until it
-  // is clarified. Tracked by crbug.com/675904
-  if (RowIndex())
-    return false;
-  LayoutTableSection* header = Table()->Header();
-  return header && Table()->SectionAbove(Section()) == header &&
-         header->GetPaginationBreakability() != kAllowAnyBreaks;
+bool LayoutTableRow::PaintedOutputOfObjectHasNoEffectRegardlessOfSize() const {
+  return LayoutTableBoxComponent::
+             PaintedOutputOfObjectHasNoEffectRegardlessOfSize() &&
+         // Row paints collapsed borders.
+         !Table()->HasCollapsedBorders();
 }
 
 }  // namespace blink

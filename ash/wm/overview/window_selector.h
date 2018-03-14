@@ -13,6 +13,8 @@
 #include <vector>
 
 #include "ash/ash_export.h"
+#include "ash/wm/overview/scoped_hide_overview_windows.h"
+#include "ash/wm/splitview/split_view_controller.h"
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "ui/aura/window_observer.h"
@@ -21,37 +23,46 @@
 #include "ui/views/controls/textfield/textfield_controller.h"
 #include "ui/wm/public/activation_change_observer.h"
 
+namespace gfx {
+class Point;
+class Rect;
+}  // namespace gfx
+
 namespace views {
 class Textfield;
 class Widget;
 }
 
 namespace ash {
+class OverviewWindowDragController;
+class SplitViewOverviewOverlay;
+class WindowGrid;
 class WindowSelectorDelegate;
 class WindowSelectorItem;
 class WindowSelectorTest;
-class WindowGrid;
-class WmWindow;
+
+enum class IndicatorType;
 
 // The WindowSelector shows a grid of all of your windows, allowing to select
 // one by clicking or tapping on it.
 class ASH_EXPORT WindowSelector : public display::DisplayObserver,
                                   public aura::WindowObserver,
-                                  public aura::client::ActivationChangeObserver,
-                                  public views::TextfieldController {
+                                  public ::wm::ActivationChangeObserver,
+                                  public views::TextfieldController,
+                                  public SplitViewController::Observer {
  public:
   // Returns true if the window can be selected in overview mode.
-  static bool IsSelectable(WmWindow* window);
+  static bool IsSelectable(aura::Window* window);
 
   enum Direction { LEFT, UP, RIGHT, DOWN };
 
-  using WindowList = std::vector<WmWindow*>;
+  using WindowList = std::vector<aura::Window*>;
 
   explicit WindowSelector(WindowSelectorDelegate* delegate);
   ~WindowSelector() override;
 
   // Initialize with the windows that can be selected.
-  void Init(const WindowList& windows);
+  void Init(const WindowList& windows, const WindowList& hide_windows);
 
   // Perform cleanup that cannot be done in the destructor.
   void Shutdown();
@@ -76,6 +87,36 @@ class ASH_EXPORT WindowSelector : public display::DisplayObserver,
   // Called when |window| is about to get closed.
   void WindowClosing(WindowSelectorItem* window);
 
+  // Called to set bounds for window grids. Used for split view.
+  void SetBoundsForWindowGridsInScreen(const gfx::Rect& bounds);
+  void SetBoundsForWindowGridsInScreenIgnoringWindow(
+      const gfx::Rect& bounds,
+      WindowSelectorItem* ignored_item);
+
+  // Called to show or hide the split view overview overlay. This will do
+  // nothing if split view is not enabled. |event_location| is used to reparent
+  // |split_view_overview_overlays_|'s widget, if necessary.
+  void SetSplitViewOverviewOverlayIndicatorType(
+      IndicatorType indicator_type,
+      const gfx::Point& event_location);
+  // Retrieves the window grid whose root window matches |root_window|. Returns
+  // nullptr if the window grid is not found.
+  WindowGrid* GetGridWithRootWindow(aura::Window* root_window);
+
+  // Removes the window selector item from the overview window grid.
+  void RemoveWindowSelectorItem(WindowSelectorItem* item);
+
+  void InitiateDrag(WindowSelectorItem* item,
+                    const gfx::Point& location_in_screen);
+  void Drag(WindowSelectorItem* item, const gfx::Point& location_in_screen);
+  void CompleteDrag(WindowSelectorItem* item,
+                    const gfx::Point& location_in_screen);
+  void ActivateDraggedWindow();
+  void ResetDraggedWindowGesture();
+
+  // Positions all of the windows in the overview.
+  void PositionWindows(bool animate);
+
   WindowSelectorDelegate* delegate() { return delegate_; }
 
   bool restoring_minimized_windows() const {
@@ -85,6 +126,19 @@ class ASH_EXPORT WindowSelector : public display::DisplayObserver,
   int text_filter_bottom() const { return text_filter_bottom_; }
 
   bool is_shut_down() const { return is_shut_down_; }
+
+  const std::vector<std::unique_ptr<WindowGrid>>& grid_list_for_testing()
+      const {
+    return grid_list_;
+  }
+
+  SplitViewOverviewOverlay* split_view_overview_overlay() {
+    return split_view_overview_overlay_.get();
+  }
+
+  OverviewWindowDragController* window_drag_controller() {
+    return window_drag_controller_.get();
+  }
 
   // display::DisplayObserver:
   void OnDisplayAdded(const display::Display& display) override;
@@ -96,7 +150,7 @@ class ASH_EXPORT WindowSelector : public display::DisplayObserver,
   void OnWindowHierarchyChanged(const HierarchyChangeParams& params) override;
   void OnWindowDestroying(aura::Window* window) override;
 
-  // aura::client::ActivationChangeObserver:
+  // wm::ActivationChangeObserver:
   void OnWindowActivated(ActivationReason reason,
                          aura::Window* gained_active,
                          aura::Window* lost_active) override;
@@ -109,14 +163,16 @@ class ASH_EXPORT WindowSelector : public display::DisplayObserver,
   bool HandleKeyEvent(views::Textfield* sender,
                       const ui::KeyEvent& key_event) override;
 
+  // SplitViewController::Observer:
+  void OnSplitViewStateChanged(SplitViewController::State previous_state,
+                               SplitViewController::State state) override;
+  void OnSplitViewDividerPositionChanged() override;
+
  private:
   friend class WindowSelectorTest;
 
-  // Returns the WmWindow for |text_filter_widget_|.
-  WmWindow* GetTextFilterWidgetWindow();
-
-  // Position all of the windows in the overview.
-  void PositionWindows(bool animate);
+  // Returns the aura::Window for |text_filter_widget_|.
+  aura::Window* GetTextFilterWidgetWindow();
 
   // Repositions and resizes |text_filter_widget_| on
   // DisplayMetricsChanged event.
@@ -133,8 +189,11 @@ class ASH_EXPORT WindowSelector : public display::DisplayObserver,
   // initialization.
   void RemoveAllObservers();
 
+  // Called when the display area for the overview window grids changed.
+  void OnDisplayBoundsChanged();
+
   // Tracks observed windows.
-  std::set<WmWindow*> observed_windows_;
+  std::set<aura::Window*> observed_windows_;
 
   // Weak pointer to the selector delegate which will be called when a
   // selection is made.
@@ -143,7 +202,7 @@ class ASH_EXPORT WindowSelector : public display::DisplayObserver,
   // A weak pointer to the window which was focused on beginning window
   // selection. If window selection is canceled the focus should be restored to
   // this window.
-  WmWindow* restore_focus_window_;
+  aura::Window* restore_focus_window_;
 
   // True when performing operations that may cause window activations. This is
   // used to prevent handling the resulting expected activation.
@@ -151,6 +210,10 @@ class ASH_EXPORT WindowSelector : public display::DisplayObserver,
 
   // List of all the window overview grids, one for each root window.
   std::vector<std::unique_ptr<WindowGrid>> grid_list_;
+
+  // The owner of the widget which displays splitview related information in
+  // overview mode. This will be nullptr if split view is not enabled.
+  std::unique_ptr<SplitViewOverviewOverlay> split_view_overview_overlay_;
 
   // Tracks the index of the root window the selection widget is in.
   size_t selected_grid_index_;
@@ -193,6 +256,11 @@ class ASH_EXPORT WindowSelector : public display::DisplayObserver,
   int text_filter_bottom_;
 
   bool is_shut_down_ = false;
+
+  // The drag controller for a window in the overview mode.
+  std::unique_ptr<OverviewWindowDragController> window_drag_controller_;
+
+  std::unique_ptr<ScopedHideOverviewWindows> hide_overview_windows_;
 
   DISALLOW_COPY_AND_ASSIGN(WindowSelector);
 };

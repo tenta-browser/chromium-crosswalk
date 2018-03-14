@@ -31,9 +31,18 @@ interface IndirectTestDriver {
 
 interface Reflector {
   Ping(string value) => (string value);
+  [Sync]
+  SyncPing(string value) => (string response);
   Quit();
 };
 
 interface AssociatedInterfaceVendor {
   GetTestInterface(associated SimpleTestDriver& interface_reqest);
+};
+
+interface InterfacePassingTestDriver {
+  Init() => ();
+  GetPingReceiver(array<PingReceiver&> request) => ();
+  GetAssociatedPingReceiver(array<associated PingReceiver&> request) => ();
+  Quit();
 };

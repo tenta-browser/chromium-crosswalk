@@ -42,8 +42,8 @@ const SquashingDisallowedReasonStringMap kSquashingDisallowedReasonStringMap[] =
          "squashedLayerClipsCompositingDescendants",
          "Squashing a layer that clips composited descendants is not "
          "supported."},
-        {kSquashingDisallowedReasonSquashingLayoutPartIsDisallowed,
-         "squashingLayoutPartIsDisallowed",
+        {kSquashingDisallowedReasonSquashingLayoutEmbeddedContentIsDisallowed,
+         "squashingLayoutEmbeddedContentIsDisallowed",
          "Squashing a frame, iframe or plugin is not supported."},
         {kSquashingDisallowedReasonSquashingBlendingIsDisallowed,
          "squashingBlendingDisallowed",
@@ -62,13 +62,12 @@ const SquashingDisallowedReasonStringMap kSquashingDisallowedReasonStringMap[] =
         {kSquashingDisallowedReasonRenderingContextMismatch,
          "squashingLayerRenderingContextMismatch",
          "Cannot squash layers with different 3D contexts."},
-        {kSquashingDisallowedReasonNonTranslationTransform,
-         "SquashingDisallowedReasonNonTranslationTransform",
-         "Cannot squash layers with transforms that are not identity or "
-         "translation."},
         {kSquashingDisallowedReasonFragmentedContent,
          "SquashingDisallowedReasonFragmentedContent",
          "Cannot squash layers that are inside fragmentation contexts."},
+        {kSquashingDisallowedReasonPrecedingLayerPrecludesSquashing,
+         "SquashingDisallowedReasonPrecedingLayerPrecludesSquashing",
+         "A preceding layer in paint order prevented subsequent squashing."},
 };
 
 const size_t kNumberOfSquashingDisallowedReasons =

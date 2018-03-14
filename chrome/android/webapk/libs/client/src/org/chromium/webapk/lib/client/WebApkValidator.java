@@ -5,6 +5,7 @@
 package org.chromium.webapk.lib.client;
 
 import static org.chromium.webapk.lib.common.WebApkConstants.WEBAPK_PACKAGE_PREFIX;
+import static org.chromium.webapk.lib.common.WebApkMetaDataKeys.SCOPE;
 import static org.chromium.webapk.lib.common.WebApkMetaDataKeys.START_URL;
 
 import android.content.Context;
@@ -15,10 +16,9 @@ import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.ResolveInfo;
 import android.content.pm.Signature;
 import android.os.StrictMode;
+import android.support.annotation.Nullable;
 import android.text.TextUtils;
 import android.util.Log;
-
-import org.chromium.base.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -38,11 +38,14 @@ import java.util.List;
 public class WebApkValidator {
     private static final String TAG = "WebApkValidator";
     private static final String KEY_FACTORY = "EC"; // aka "ECDSA"
+    private static final String MAPSLITE_PACKAGE_NAME = "com.google.android.apps.mapslite";
+    private static final String MAPSLITE_URL_PREFIX =
+            "https://www.google.com/maps"; // Matches scope.
 
-    private static boolean sAllWebApkPackageNames;
     private static byte[] sExpectedSignature;
     private static byte[] sCommentSignedPublicKeyBytes;
     private static PublicKey sCommentSignedPublicKey;
+    private static boolean sOverrideValidationForTesting;
 
     /**
      * Queries the PackageManager to determine whether a WebAPK can handle the URL. Ignores whether
@@ -57,7 +60,8 @@ public class WebApkValidator {
      * handled by a WebAPK.
      */
     public static String queryWebApkPackage(Context context, String url) {
-        return findWebApkPackage(context, resolveInfosForUrl(context, url));
+        return findWebApkPackage(
+                context, resolveInfosForUrlAndOptionalPackage(context, url, null /* package*/));
     }
 
     /**
@@ -73,33 +77,8 @@ public class WebApkValidator {
      *     handled by a WebAPK.
      */
     public static ResolveInfo queryResolveInfo(Context context, String url) {
-        return findResolveInfo(context, resolveInfosForUrl(context, url));
-    }
-
-    /**
-     * Fetches the list of resolve infos from the PackageManager that can handle the URL.
-     *
-     * @param context The application context.
-     * @param url The url to check.
-     * @return The list of resolve infos found that can handle the URL.
-     */
-    private static List<ResolveInfo> resolveInfosForUrl(Context context, String url) {
-        Intent intent;
-        try {
-            intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
-        } catch (Exception e) {
-            return new LinkedList<>();
-        }
-
-        intent.addCategory(Intent.CATEGORY_BROWSABLE);
-        intent.setComponent(null);
-        Intent selector = intent.getSelector();
-        if (selector != null) {
-            selector.addCategory(Intent.CATEGORY_BROWSABLE);
-            selector.setComponent(null);
-        }
-        return context.getPackageManager().queryIntentActivities(
-                intent, PackageManager.GET_RESOLVED_FILTER);
+        return findResolveInfo(
+                context, resolveInfosForUrlAndOptionalPackage(context, url, null /* package */));
     }
 
     /**
@@ -114,6 +93,49 @@ public class WebApkValidator {
             return resolveInfo.activityInfo.packageName;
         }
         return null;
+    }
+
+    public static boolean canWebApkHandleUrl(Context context, String webApkPackage, String url) {
+        List<ResolveInfo> infos = resolveInfosForUrlAndOptionalPackage(context, url, webApkPackage);
+        for (ResolveInfo info : infos) {
+            if (info.activityInfo != null
+                    && isValidWebApk(context, info.activityInfo.packageName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Fetches the list of resolve infos from the PackageManager that can handle the URL.
+     *
+     * @param context The application context.
+     * @param url The url to check.
+     * @param applicationPackage The optional package name to set for intent resolution.
+     * @return The list of resolve infos found that can handle the URL.
+     */
+    private static List<ResolveInfo> resolveInfosForUrlAndOptionalPackage(
+            Context context, String url, @Nullable String applicationPackage) {
+        Intent intent;
+        try {
+            intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+        } catch (Exception e) {
+            return new LinkedList<>();
+        }
+
+        intent.addCategory(Intent.CATEGORY_BROWSABLE);
+        if (applicationPackage != null) {
+            intent.setPackage(applicationPackage);
+        } else {
+            intent.setComponent(null);
+        }
+        Intent selector = intent.getSelector();
+        if (selector != null) {
+            selector.addCategory(Intent.CATEGORY_BROWSABLE);
+            selector.setComponent(null);
+        }
+        return context.getPackageManager().queryIntentActivities(
+                intent, PackageManager.GET_RESOLVED_FILTER);
     }
 
     /**
@@ -157,10 +179,17 @@ public class WebApkValidator {
         if (isNotWebApkQuick(packageInfo)) {
             return false;
         }
+        if (sOverrideValidationForTesting) {
+            Log.d(TAG, "Ok! Looks like a WebApk (has start url) and validation is disabled.");
+            return true;
+        }
         if (verifyV1WebApk(packageInfo, webappPackageName)) {
             return true;
         }
-
+        if (verifyMapsLite(packageInfo, webappPackageName)) {
+            Log.d(TAG, "Matches Maps Lite");
+            return true;
+        }
         return verifyCommentSignedWebApk(packageInfo, webappPackageName);
     }
 
@@ -189,13 +218,27 @@ public class WebApkValidator {
         return false;
     }
 
+    private static boolean verifyMapsLite(PackageInfo packageInfo, String webappPackageName) {
+        if (packageInfo.signatures == null || webappPackageName == null
+                || !webappPackageName.equals(MAPSLITE_PACKAGE_NAME)) {
+            return false;
+        }
+        String startUrl = packageInfo.applicationInfo.metaData.getString(START_URL);
+        if (startUrl == null || !startUrl.startsWith(MAPSLITE_URL_PREFIX)) {
+            Log.d(TAG, "mapslite invalid startUrl prefix");
+            return false;
+        }
+        String scope = packageInfo.applicationInfo.metaData.getString(SCOPE);
+        if (scope == null || !scope.equals(MAPSLITE_URL_PREFIX)) {
+            Log.d(TAG, "mapslite invalid scope prefix");
+            return false;
+        }
+        return true;
+    }
+
     /** Verify that the comment signed webapk matches the public key. */
     private static boolean verifyCommentSignedWebApk(
             PackageInfo packageInfo, String webappPackageName) {
-        if (!sAllWebApkPackageNames && !webappPackageName.startsWith(WEBAPK_PACKAGE_PREFIX)) {
-            return false;
-        }
-
         PublicKey commentSignedPublicKey;
         try {
             commentSignedPublicKey = getCommentSignedPublicKey();
@@ -258,20 +301,24 @@ public class WebApkValidator {
 
     /**
      * Initializes the WebApkValidator.
-     * @param allWebApkPackageNames Whether we permit any package names for comment signed WebAPKs.
      * @param expectedSignature V1 WebAPK RSA signature.
      * @param v2PublicKeyBytes New comment signed public key bytes as x509 encoded public key.
      */
-    @SuppressFBWarnings("EI_EXPOSE_STATIC_REP2")
-    public static void init(
-            boolean allWebApkPackageNames, byte[] expectedSignature, byte[] v2PublicKeyBytes) {
-        sAllWebApkPackageNames = allWebApkPackageNames;
+    public static void init(byte[] expectedSignature, byte[] v2PublicKeyBytes) {
         if (sExpectedSignature == null) {
             sExpectedSignature = expectedSignature;
         }
         if (sCommentSignedPublicKeyBytes == null) {
             sCommentSignedPublicKeyBytes = v2PublicKeyBytes;
         }
+    }
+
+    /**
+     * Disables all verification performed by this class. This is meant only for development with
+     * unsigned WebApks and should never be enabled in a real build.
+     */
+    public static void disableValidationForTesting() {
+        sOverrideValidationForTesting = true;
     }
 
     /**

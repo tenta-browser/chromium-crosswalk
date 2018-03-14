@@ -4,7 +4,7 @@
 
 #include "chrome/browser/ui/login/login_interstitial_delegate.h"
 
-content::InterstitialPageDelegate::TypeID
+const content::InterstitialPageDelegate::TypeID
     LoginInterstitialDelegate::kTypeForTesting =
         &LoginInterstitialDelegate::kTypeForTesting;
 
@@ -55,7 +55,6 @@ std::string LoginInterstitialDelegate::GetHTMLContents() {
   return std::string(
       "<!DOCTYPE html>"
       "<html><body><script>"
-      "window.domAutomationController.setAutomationId(1);"
       "window.domAutomationController.send('1');"
       "</script></body></html>");
 }

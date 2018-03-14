@@ -30,9 +30,10 @@
 
 #include "core/probe/CoreProbes.h"
 
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/CoreProbeSink.h"
-#include "core/events/Event.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/Event.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/inspector/InspectorCSSAgent.h"
 #include "core/inspector/InspectorDOMDebuggerAgent.h"
 #include "core/inspector/InspectorNetworkAgent.h"
@@ -41,23 +42,29 @@
 #include "core/inspector/InspectorTraceEvents.h"
 #include "core/inspector/MainThreadDebugger.h"
 #include "core/inspector/ThreadDebugger.h"
-#include "core/inspector/WorkerInspectorController.h"
 #include "core/page/Page.h"
-#include "core/workers/MainThreadWorkletGlobalScope.h"
 #include "core/workers/WorkerGlobalScope.h"
-#include "core/workers/WorkerThread.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 #include "platform/loader/fetch/FetchInitiatorInfo.h"
 
 namespace blink {
 namespace probe {
 
+namespace {
+void* AsyncId(void* task) {
+  // Blink uses odd ids for network requests and even ids for everything else.
+  // We should make all of them even before reporting to V8 to avoid collisions
+  // with internal V8 async events.
+  return reinterpret_cast<void*>(reinterpret_cast<intptr_t>(task) << 1);
+}
+}  // namespace
+
 AsyncTask::AsyncTask(ExecutionContext* context,
                      void* task,
                      const char* step,
                      bool enabled)
     : debugger_(enabled ? ThreadDebugger::From(ToIsolate(context)) : nullptr),
-      task_(task),
+      task_(AsyncId(task)),
       recurring_(step) {
   if (recurring_) {
     TRACE_EVENT_FLOW_STEP0("devtools.timeline.async", "AsyncTask",
@@ -86,7 +93,7 @@ void AsyncTaskScheduled(ExecutionContext* context,
                           TRACE_ID_LOCAL(reinterpret_cast<uintptr_t>(task)),
                           "data", InspectorAsyncTask::Data(name));
   if (ThreadDebugger* debugger = ThreadDebugger::From(ToIsolate(context)))
-    debugger->AsyncTaskScheduled(name, task, true);
+    debugger->AsyncTaskScheduled(name, AsyncId(task), true);
 }
 
 void AsyncTaskScheduledBreakable(ExecutionContext* context,
@@ -98,7 +105,7 @@ void AsyncTaskScheduledBreakable(ExecutionContext* context,
 
 void AsyncTaskCanceled(ExecutionContext* context, void* task) {
   if (ThreadDebugger* debugger = ThreadDebugger::From(ToIsolate(context)))
-    debugger->AsyncTaskCanceled(task);
+    debugger->AsyncTaskCanceled(AsyncId(task));
   TRACE_EVENT_FLOW_END0("devtools.timeline.async", "AsyncTask",
                         TRACE_ID_LOCAL(reinterpret_cast<uintptr_t>(task)));
 }
@@ -120,7 +127,8 @@ void DidReceiveResourceResponseButCanceled(LocalFrame* frame,
                                            unsigned long identifier,
                                            const ResourceResponse& r,
                                            Resource* resource) {
-  didReceiveResourceResponse(frame, identifier, loader, r, resource);
+  didReceiveResourceResponse(frame->GetDocument(), identifier, loader, r,
+                             resource);
 }
 
 void CanceledAfterReceivedResourceResponse(LocalFrame* frame,
@@ -137,23 +145,6 @@ void ContinueWithPolicyIgnore(LocalFrame* frame,
                               const ResourceResponse& r,
                               Resource* resource) {
   DidReceiveResourceResponseButCanceled(frame, loader, identifier, r, resource);
-}
-
-CoreProbeSink* ToCoreProbeSink(WorkerGlobalScope* worker_global_scope) {
-  if (!worker_global_scope)
-    return nullptr;
-  if (WorkerInspectorController* controller =
-          worker_global_scope->GetThread()->GetWorkerInspectorController())
-    return controller->InstrumentingAgents();
-  return nullptr;
-}
-
-CoreProbeSink* ToCoreProbeSinkForNonDocumentContext(ExecutionContext* context) {
-  if (context->IsWorkerGlobalScope())
-    return ToCoreProbeSink(ToWorkerGlobalScope(context));
-  if (context->IsMainThreadWorkletGlobalScope())
-    return ToCoreProbeSink(ToMainThreadWorkletGlobalScope(context)->GetFrame());
-  return nullptr;
 }
 
 }  // namespace probe

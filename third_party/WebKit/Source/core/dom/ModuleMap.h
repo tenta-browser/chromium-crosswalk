@@ -5,9 +5,10 @@
 #ifndef ModuleMap_h
 #define ModuleMap_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/core/v8/TraceWrapperMember.h"
+#include "base/macros.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/KURLHash.h"
@@ -25,15 +26,14 @@ enum class ModuleGraphLevel;
 // https://html.spec.whatwg.org/#module-map
 class CORE_EXPORT ModuleMap final : public GarbageCollected<ModuleMap>,
                                     public TraceWrapperBase {
-  WTF_MAKE_NONCOPYABLE(ModuleMap);
   class Entry;
 
  public:
   static ModuleMap* Create(Modulator* modulator) {
     return new ModuleMap(modulator);
   }
-  DECLARE_TRACE();
-  DECLARE_TRACE_WRAPPERS();
+  void Trace(blink::Visitor*);
+  void TraceWrappers(const ScriptWrappableVisitor*) const;
 
   // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script
   void FetchSingleModuleScript(const ModuleScriptFetchRequest&,
@@ -41,8 +41,8 @@ class CORE_EXPORT ModuleMap final : public GarbageCollected<ModuleMap>,
                                SingleModuleClient*);
 
   // Synchronously get the ModuleScript for a given URL.
-  // Note: fetchSingleModuleScript of the ModuleScript must be complete before
-  // calling this.
+  // If the URL wasn't fetched, or is currently being fetched, this returns a
+  // nullptr.
   ModuleScript* GetFetchedModuleScript(const KURL&) const;
 
   Modulator* GetModulator() { return modulator_; }
@@ -56,6 +56,7 @@ class CORE_EXPORT ModuleMap final : public GarbageCollected<ModuleMap>,
   MapImpl map_;
 
   Member<Modulator> modulator_;
+  DISALLOW_COPY_AND_ASSIGN(ModuleMap);
 };
 
 }  // namespace blink

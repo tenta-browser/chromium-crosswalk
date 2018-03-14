@@ -12,6 +12,10 @@
 #import "ios/chrome/browser/tabs/tab_model_list.h"
 #import "ios/chrome/browser/tabs/tab_model_synced_window_delegate.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 TabModelSyncedWindowDelegatesGetter::TabModelSyncedWindowDelegatesGetter() {}
 
 TabModelSyncedWindowDelegatesGetter::~TabModelSyncedWindowDelegatesGetter() {}
@@ -28,7 +32,7 @@ TabModelSyncedWindowDelegatesGetter::GetSyncedWindowDelegates() {
   for (auto* browser_state : browser_states) {
     DCHECK(!browser_state->IsOffTheRecord());
     NSArray<TabModel*>* tabModels =
-        GetTabModelsForChromeBrowserState(browser_state);
+        TabModelList::GetTabModelsForChromeBrowserState(browser_state);
     for (TabModel* tabModel in tabModels) {
       if (tabModel.currentTab) {
         sync_sessions::SyncedWindowDelegate* synced_window_delegate =

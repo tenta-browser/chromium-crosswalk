@@ -58,8 +58,6 @@ static bool MakeDecoderContextCurrent(
   return true;
 }
 
-#if (defined(OS_CHROMEOS) && defined(ARCH_CPU_X86_FAMILY)) || \
-    defined(OS_MACOSX) || defined(OS_WIN)
 static bool BindImage(const base::WeakPtr<gpu::GpuCommandBufferStub>& stub,
                       uint32_t client_texture_id,
                       uint32_t texture_target,
@@ -71,19 +69,10 @@ static bool BindImage(const base::WeakPtr<gpu::GpuCommandBufferStub>& stub,
   }
 
   gpu::gles2::GLES2Decoder* command_decoder = stub->decoder();
-  gpu::gles2::TextureManager* texture_manager =
-      command_decoder->GetContextGroup()->texture_manager();
-  gpu::gles2::TextureRef* ref = texture_manager->GetTexture(client_texture_id);
-  if (ref) {
-    texture_manager->SetLevelImage(ref, texture_target, 0, image.get(),
-                                   can_bind_to_sampler
-                                       ? gpu::gles2::Texture::BOUND
-                                       : gpu::gles2::Texture::UNBOUND);
-  }
-
+  command_decoder->BindImage(client_texture_id, texture_target, image.get(),
+                             can_bind_to_sampler);
   return true;
 }
-#endif
 
 static base::WeakPtr<gpu::gles2::GLES2Decoder> GetGLES2Decoder(
     const base::WeakPtr<gpu::GpuCommandBufferStub>& stub) {
@@ -145,7 +134,7 @@ class GpuVideoDecodeAccelerator::MessageFilter : public IPC::MessageFilter {
   }
 
  protected:
-  ~MessageFilter() override {}
+  ~MessageFilter() override = default;
 
  private:
   GpuVideoDecodeAccelerator* const owner_;
@@ -157,25 +146,25 @@ class GpuVideoDecodeAccelerator::MessageFilter : public IPC::MessageFilter {
 GpuVideoDecodeAccelerator::GpuVideoDecodeAccelerator(
     int32_t host_route_id,
     gpu::GpuCommandBufferStub* stub,
-    const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner)
+    const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
+    const AndroidOverlayMojoFactoryCB& overlay_factory_cb)
     : host_route_id_(host_route_id),
       stub_(stub),
       texture_target_(0),
+      pixel_format_(PIXEL_FORMAT_UNKNOWN),
       textures_per_buffer_(0),
       filter_removed_(base::WaitableEvent::ResetPolicy::MANUAL,
                       base::WaitableEvent::InitialState::NOT_SIGNALED),
       child_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       io_task_runner_(io_task_runner),
+      overlay_factory_cb_(overlay_factory_cb),
       weak_factory_for_io_(this) {
   DCHECK(stub_);
   stub_->AddDestructionObserver(this);
   get_gl_context_cb_ = base::Bind(&GetGLContext, stub_->AsWeakPtr());
   make_context_current_cb_ =
       base::Bind(&MakeDecoderContextCurrent, stub_->AsWeakPtr());
-#if (defined(OS_CHROMEOS) && defined(ARCH_CPU_X86_FAMILY)) || \
-    defined(OS_MACOSX) || defined(OS_WIN)
   bind_image_cb_ = base::Bind(&BindImage, stub_->AsWeakPtr());
-#endif
   get_gles2_decoder_cb_ = base::Bind(&GetGLES2Decoder, stub_->AsWeakPtr());
 }
 
@@ -207,7 +196,8 @@ bool GpuVideoDecodeAccelerator::OnMessageReceived(const IPC::Message& msg) {
                         OnReusePictureBuffer)
     IPC_MESSAGE_HANDLER(AcceleratedVideoDecoderMsg_Flush, OnFlush)
     IPC_MESSAGE_HANDLER(AcceleratedVideoDecoderMsg_Reset, OnReset)
-    IPC_MESSAGE_HANDLER(AcceleratedVideoDecoderMsg_SetSurface, OnSetSurface)
+    IPC_MESSAGE_HANDLER(AcceleratedVideoDecoderMsg_SetOverlayInfo,
+                        OnSetOverlayInfo)
     IPC_MESSAGE_HANDLER(AcceleratedVideoDecoderMsg_Destroy, OnDestroy)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
@@ -242,6 +232,7 @@ void GpuVideoDecodeAccelerator::ProvidePictureBuffers(
   texture_dimensions_ = dimensions;
   textures_per_buffer_ = textures_per_buffer;
   texture_target_ = texture_target;
+  pixel_format_ = format;
 }
 
 void GpuVideoDecodeAccelerator::DismissPictureBuffer(
@@ -359,7 +350,7 @@ bool GpuVideoDecodeAccelerator::Initialize(
   std::unique_ptr<GpuVideoDecodeAcceleratorFactory> vda_factory =
       GpuVideoDecodeAcceleratorFactory::CreateWithGLES2Decoder(
           get_gl_context_cb_, make_context_current_cb_, bind_image_cb_,
-          get_gles2_decoder_cb_);
+          get_gles2_decoder_cb_, overlay_factory_cb_);
 
   if (!vda_factory) {
     LOG(ERROR) << "Failed creating the VDA factory";
@@ -429,57 +420,64 @@ void GpuVideoDecodeAccelerator::OnAssignPictureBuffers(
       return;
     }
     for (size_t j = 0; j < textures_per_buffer_; j++) {
-      gpu::gles2::TextureRef* texture_ref =
-          texture_manager->GetTexture(buffer_texture_ids[j]);
-      if (!texture_ref) {
+      gpu::gles2::TextureBase* texture_base =
+          command_decoder->GetTextureBase(buffer_texture_ids[j]);
+      if (!texture_base) {
         DLOG(ERROR) << "Failed to find texture id " << buffer_texture_ids[j];
         NotifyError(VideoDecodeAccelerator::INVALID_ARGUMENT);
         return;
       }
-      gpu::gles2::Texture* info = texture_ref->texture();
-      if (info->target() != texture_target_) {
+
+      if (texture_base->target() != texture_target_) {
         DLOG(ERROR) << "Texture target mismatch for texture id "
                     << buffer_texture_ids[j];
         NotifyError(VideoDecodeAccelerator::INVALID_ARGUMENT);
         return;
       }
-      if (texture_target_ == GL_TEXTURE_EXTERNAL_OES ||
-          texture_target_ == GL_TEXTURE_RECTANGLE_ARB) {
-        // These textures have their dimensions defined by the underlying
-        // storage.
-        // Use |texture_dimensions_| for this size.
-        texture_manager->SetLevelInfo(texture_ref, texture_target_, 0, GL_RGBA,
-                                      texture_dimensions_.width(),
-                                      texture_dimensions_.height(), 1, 0,
-                                      GL_RGBA, GL_UNSIGNED_BYTE, gfx::Rect());
-      } else {
-        // For other targets, texture dimensions should already be defined.
-        GLsizei width = 0, height = 0;
-        info->GetLevelSize(texture_target_, 0, &width, &height, nullptr);
-        if (width != texture_dimensions_.width() ||
-            height != texture_dimensions_.height()) {
-          DLOG(ERROR) << "Size mismatch for texture id "
-                      << buffer_texture_ids[j];
-          NotifyError(VideoDecodeAccelerator::INVALID_ARGUMENT);
-          return;
-        }
 
-        // TODO(dshwang): after moving to D3D11, remove this. crbug.com/438691
-        GLenum format =
-            video_decode_accelerator_.get()->GetSurfaceInternalFormat();
-        if (format != GL_RGBA) {
-          DCHECK(format == GL_BGRA_EXT);
-          texture_manager->SetLevelInfo(texture_ref, texture_target_, 0, format,
-                                        width, height, 1, 0, format,
-                                        GL_UNSIGNED_BYTE, gfx::Rect());
+      gpu::gles2::TextureRef* texture_ref =
+          texture_manager->GetTexture(buffer_texture_ids[j]);
+      if (texture_ref) {
+        gpu::gles2::Texture* info = texture_ref->texture();
+        if (texture_target_ == GL_TEXTURE_EXTERNAL_OES ||
+            texture_target_ == GL_TEXTURE_RECTANGLE_ARB) {
+          // These textures have their dimensions defined by the underlying
+          // storage.
+          // Use |texture_dimensions_| for this size.
+          texture_manager->SetLevelInfo(texture_ref, texture_target_, 0,
+                                        GL_RGBA, texture_dimensions_.width(),
+                                        texture_dimensions_.height(), 1, 0,
+                                        GL_RGBA, GL_UNSIGNED_BYTE, gfx::Rect());
+        } else {
+          // For other targets, texture dimensions should already be defined.
+          GLsizei width = 0, height = 0;
+          info->GetLevelSize(texture_target_, 0, &width, &height, nullptr);
+          if (width != texture_dimensions_.width() ||
+              height != texture_dimensions_.height()) {
+            DLOG(ERROR) << "Size mismatch for texture id "
+                        << buffer_texture_ids[j];
+            NotifyError(VideoDecodeAccelerator::INVALID_ARGUMENT);
+            return;
+          }
+
+          // TODO(dshwang): after moving to D3D11, remove this. crbug.com/438691
+          GLenum format =
+              video_decode_accelerator_.get()->GetSurfaceInternalFormat();
+          if (format != GL_RGBA) {
+            DCHECK(format == GL_BGRA_EXT);
+            texture_manager->SetLevelInfo(texture_ref, texture_target_, 0,
+                                          format, width, height, 1, 0, format,
+                                          GL_UNSIGNED_BYTE, gfx::Rect());
+          }
         }
+        current_textures.push_back(texture_ref);
       }
-      service_ids.push_back(texture_ref->service_id());
-      current_textures.push_back(texture_ref);
+      service_ids.push_back(texture_base->service_id());
     }
     textures.push_back(current_textures);
     buffers.push_back(PictureBuffer(buffer_ids[i], texture_dimensions_,
-                                    buffer_texture_ids, service_ids));
+                                    buffer_texture_ids, service_ids,
+                                    texture_target_, pixel_format_));
   }
   {
     DebugAutoLock auto_lock(debug_uncleared_textures_lock_);
@@ -505,9 +503,10 @@ void GpuVideoDecodeAccelerator::OnReset() {
   video_decode_accelerator_->Reset();
 }
 
-void GpuVideoDecodeAccelerator::OnSetSurface(int32_t surface_id) {
+void GpuVideoDecodeAccelerator::OnSetOverlayInfo(
+    const OverlayInfo& overlay_info) {
   DCHECK(video_decode_accelerator_);
-  video_decode_accelerator_->SetSurface(surface_id);
+  video_decode_accelerator_->SetOverlayInfo(overlay_info);
 }
 
 void GpuVideoDecodeAccelerator::OnDestroy() {

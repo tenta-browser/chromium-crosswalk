@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include "ash/shell.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -42,6 +43,10 @@ const char kInsetsRightKey[] = "insets_right";
 const char kTouchCalibrationWidth[] = "touch_calibration_width";
 const char kTouchCalibrationHeight[] = "touch_calibration_height";
 const char kTouchCalibrationPointPairs[] = "touch_calibration_point_pairs";
+
+constexpr char kTouchAssociationTimestamp[] = "touch_association_timestamp";
+constexpr char kTouchAssociationCalibrationData[] =
+    "touch_association_calibration_data";
 
 // This kind of boilerplates should be done by base::JSONValueConverter but it
 // doesn't support classes like gfx::Insets for now.
@@ -151,37 +156,6 @@ void TouchDataToValue(
                     touch_calibration_data.bounds.height());
 }
 
-std::string ColorProfileToString(display::ColorCalibrationProfile profile) {
-  switch (profile) {
-    case display::COLOR_PROFILE_STANDARD:
-      return "standard";
-    case display::COLOR_PROFILE_DYNAMIC:
-      return "dynamic";
-    case display::COLOR_PROFILE_MOVIE:
-      return "movie";
-    case display::COLOR_PROFILE_READING:
-      return "reading";
-    case display::NUM_COLOR_PROFILES:
-      break;
-  }
-  NOTREACHED();
-  return "";
-}
-
-display::ColorCalibrationProfile StringToColorProfile(
-    const std::string& value) {
-  if (value == "standard")
-    return display::COLOR_PROFILE_STANDARD;
-  else if (value == "dynamic")
-    return display::COLOR_PROFILE_DYNAMIC;
-  else if (value == "movie")
-    return display::COLOR_PROFILE_MOVIE;
-  else if (value == "reading")
-    return display::COLOR_PROFILE_READING;
-  NOTREACHED();
-  return display::COLOR_PROFILE_STANDARD;
-}
-
 display::DisplayManager* GetDisplayManager() {
   return ash::Shell::Get()->display_manager();
 }
@@ -267,20 +241,9 @@ void LoadDisplayProperties() {
     gfx::Insets insets;
     if (ValueToInsets(*dict_value, &insets))
       insets_to_set = &insets;
-
-    display::TouchCalibrationData calibration_data;
-    display::TouchCalibrationData* calibration_data_to_set = nullptr;
-    if (ValueToTouchData(*dict_value, &calibration_data))
-      calibration_data_to_set = &calibration_data;
-
-    display::ColorCalibrationProfile color_profile =
-        display::COLOR_PROFILE_STANDARD;
-    std::string color_profile_name;
-    if (dict_value->GetString("color_profile_name", &color_profile_name))
-      color_profile = StringToColorProfile(color_profile_name);
     GetDisplayManager()->RegisterDisplayProperty(
         id, rotation, ui_scale, insets_to_set, resolution_in_pixels,
-        device_scale_factor, color_profile, calibration_data_to_set);
+        device_scale_factor);
   }
 }
 
@@ -301,8 +264,83 @@ void LoadDisplayRotationState() {
       rotation_lock, static_cast<display::Display::Rotation>(rotation));
 }
 
+void LoadDisplayTouchAssociations() {
+  PrefService* local_state = g_browser_process->local_state();
+  const base::DictionaryValue* properties =
+      local_state->GetDictionary(prefs::kDisplayTouchAssociations);
+
+  display::TouchDeviceManager::TouchAssociationMap touch_associations;
+  for (const auto& item : properties->DictItems()) {
+    uint32_t identifier_raw;
+    if (!base::StringToUint(item.first, &identifier_raw))
+      continue;
+    display::TouchDeviceIdentifier identifier(identifier_raw);
+    touch_associations.emplace(
+        identifier, display::TouchDeviceManager::AssociationInfoMap());
+    if (!item.second.is_dict())
+      continue;
+    for (const auto& association_info_item : item.second.DictItems()) {
+      display::TouchDeviceManager::TouchAssociationInfo info;
+      int64_t display_id;
+      if (!base::StringToInt64(association_info_item.first, &display_id))
+        continue;
+      auto* value =
+          association_info_item.second.FindKey(kTouchAssociationTimestamp);
+      if (!value->is_double())
+        continue;
+      info.timestamp = base::Time().FromDoubleT(value->GetDouble());
+
+      value = association_info_item.second.FindKey(
+          kTouchAssociationCalibrationData);
+      if (!value->is_dict())
+        continue;
+      const base::DictionaryValue* calibration_data_dict = nullptr;
+      if (!value->GetAsDictionary(&calibration_data_dict))
+        continue;
+      ValueToTouchData(*calibration_data_dict, &info.calibration_data);
+      touch_associations.at(identifier).emplace(display_id, info);
+    }
+  }
+
+  // Retrieve all the legacy format identifiers. This should be removed after
+  // a couple of milestones when everything is stable.
+  const display::TouchDeviceIdentifier& fallback_identifier =
+      display::TouchDeviceIdentifier::GetFallbackTouchDeviceIdentifier();
+  local_state = g_browser_process->local_state();
+  properties = local_state->GetDictionary(prefs::kDisplayProperties);
+  for (base::DictionaryValue::Iterator it(*properties); !it.IsAtEnd();
+       it.Advance()) {
+    const base::DictionaryValue* dict_value = nullptr;
+    if (!it.value().GetAsDictionary(&dict_value) || dict_value == nullptr)
+      continue;
+    int64_t id = display::kInvalidDisplayId;
+    if (!base::StringToInt64(it.key(), &id) ||
+        id == display::kInvalidDisplayId) {
+      continue;
+    }
+    display::TouchCalibrationData calibration_data;
+    display::TouchCalibrationData* calibration_data_to_set = nullptr;
+    if (ValueToTouchData(*dict_value, &calibration_data))
+      calibration_data_to_set = &calibration_data;
+
+    if (calibration_data_to_set) {
+      if (!base::ContainsKey(touch_associations, fallback_identifier)) {
+        touch_associations.emplace(
+            fallback_identifier,
+            display::TouchDeviceManager::AssociationInfoMap());
+      }
+      display::TouchDeviceManager::TouchAssociationInfo info;
+      info.calibration_data = *calibration_data_to_set;
+      touch_associations.at(fallback_identifier).emplace(id, info);
+    }
+  }
+  GetDisplayManager()->touch_device_manager()->RegisterTouchAssociations(
+      touch_associations);
+}
+
 void StoreDisplayLayoutPref(const display::DisplayIdList& list,
                             const display::DisplayLayout& display_layout) {
+  DCHECK(display::DisplayLayout::Validate(list, display_layout));
   std::string name = display::DisplayIdListToString(list);
 
   PrefService* local_state = g_browser_process->local_state();
@@ -328,6 +366,15 @@ void StoreCurrentDisplayLayoutPrefs() {
   display::DisplayIdList list = display_manager->GetCurrentDisplayIdList();
   const display::DisplayLayout& display_layout =
       display_manager->layout_store()->GetRegisteredDisplayLayout(list);
+
+  if (!display::DisplayLayout::Validate(list, display_layout)) {
+    // We should never apply an invalid layout, if we do, it persists and the
+    // user has no way of fixing it except by deleting the local state.
+    LOG(ERROR) << "Attempting to store an invalid display layout in the local"
+               << " state. Skipping.";
+    return;
+  }
+
   StoreDisplayLayoutPref(list, display_layout);
 }
 
@@ -337,6 +384,18 @@ void StoreCurrentDisplayProperties() {
 
   DictionaryPrefUpdate update(local_state, prefs::kDisplayProperties);
   base::DictionaryValue* pref_data = update.Get();
+
+  // Pre-process data related to legacy touch calibration to opitmize lookup.
+  const display::TouchDeviceIdentifier& fallback_identifier =
+      display::TouchDeviceIdentifier::GetFallbackTouchDeviceIdentifier();
+  display::TouchDeviceManager::AssociationInfoMap legacy_data_map;
+  if (base::ContainsKey(
+          display_manager->touch_device_manager()->touch_associations(),
+          fallback_identifier)) {
+    legacy_data_map =
+        display_manager->touch_device_manager()->touch_associations().at(
+            fallback_identifier);
+  }
 
   size_t num = display_manager->GetNumDisplays();
   for (size_t i = 0; i < num; ++i) {
@@ -356,23 +415,25 @@ void StoreCurrentDisplayProperties() {
     property_value->SetInteger(
         "ui-scale", static_cast<int>(info.configured_ui_scale() * 1000));
 
-    scoped_refptr<display::ManagedDisplayMode> mode =
-        display_manager->GetSelectedModeForDisplayId(id);
-    if (!display.IsInternal() && mode && !mode->native()) {
-      property_value->SetInteger("width", mode->size().width());
-      property_value->SetInteger("height", mode->size().height());
+    display::ManagedDisplayMode mode;
+    if (!display.IsInternal() &&
+        display_manager->GetSelectedModeForDisplayId(id, &mode) &&
+        !mode.native()) {
+      property_value->SetInteger("width", mode.size().width());
+      property_value->SetInteger("height", mode.size().height());
       property_value->SetInteger(
           "device-scale-factor",
-          static_cast<int>(mode->device_scale_factor() * 1000));
+          static_cast<int>(mode.device_scale_factor() * 1000));
     }
     if (!info.overscan_insets_in_dip().IsEmpty())
       InsetsToValue(info.overscan_insets_in_dip(), property_value.get());
-    if (info.color_profile() != display::COLOR_PROFILE_STANDARD) {
-      property_value->SetString(
-          "color_profile_name", ColorProfileToString(info.color_profile()));
+
+    // Store the legacy format touch calibration data. This can be removed after
+    // a couple of milestones when every device has migrated to the new format.
+    if (legacy_data_map.size() && base::ContainsKey(legacy_data_map, id)) {
+      TouchDataToValue(legacy_data_map.at(id).calibration_data,
+                       property_value.get());
     }
-    if (info.has_touch_calibration_data())
-      TouchDataToValue(info.GetTouchCalibrationData(), property_value.get());
     pref_data->Set(base::Int64ToString(id), std::move(property_value));
   }
 }
@@ -420,6 +481,59 @@ void StoreCurrentDisplayRotationLockPrefs() {
   StoreDisplayRotationPrefs(rotation_lock);
 }
 
+void StoreDisplayTouchAssociations() {
+  display::TouchDeviceManager* touch_device_manager =
+      GetDisplayManager()->touch_device_manager();
+
+  PrefService* local_state = g_browser_process->local_state();
+
+  DictionaryPrefUpdate update(local_state, prefs::kDisplayTouchAssociations);
+  base::DictionaryValue* pref_data = update.Get();
+  const display::TouchDeviceManager::TouchAssociationMap& touch_associations =
+      touch_device_manager->touch_associations();
+
+  for (const auto& association : touch_associations) {
+    base::DictionaryValue association_info_map_value;
+    for (const auto& association_info : association.second) {
+      // Iteration for each pair of <Display ID, TouchAssociationInfo>.
+      std::unique_ptr<base::DictionaryValue> association_info_value(
+          new base::DictionaryValue());
+
+      // Parsing each member of TouchAssociationInfo and storing them in
+      // |association_info_value|.
+
+      // Serialie timestamp.
+      association_info_value->SetKey(
+          kTouchAssociationTimestamp,
+          base::Value(association_info.second.timestamp.ToDoubleT()));
+
+      // Serialize TouchCalibrationData.
+      base::DictionaryValue calibration_data_value;
+      TouchDataToValue(association_info.second.calibration_data,
+                       &calibration_data_value);
+      association_info_value->SetKey(kTouchAssociationCalibrationData,
+                                     calibration_data_value.Clone());
+
+      // Move the searialzed TouchAssociationInfo stored in
+      // |association_info_value| to |association_info_map_value| against the
+      // display id as key. This is a 1 to 1 mapping of a single entry from
+      // AssociationInfoMap to its serialized form.
+      association_info_map_value.SetKey(
+          base::Int64ToString(association_info.first),
+          association_info_value->Clone());
+    }
+    if (association_info_map_value.empty())
+      continue;
+
+    // Move the already serialized entry of AssociationInfoMap from
+    // |association_info_map_value| to |pref_data| against the
+    // TouchDeviceIdentifier as key. This is a 1 to 1 mapping of a single entry
+    // from TouchAssociationMap to its serialized form.
+    pref_data->SetKey(association.first.ToString(),
+                      association_info_map_value.Clone());
+  }
+}
+
 }  // namespace
 
 void RegisterDisplayLocalStatePrefs(PrefRegistrySimple* registry) {
@@ -430,6 +544,7 @@ void RegisterDisplayLocalStatePrefs(PrefRegistrySimple* registry) {
       GetDisplayPowerStateToStringMap()->find(chromeos::DISPLAY_POWER_ALL_ON);
   registry->RegisterStringPref(prefs::kDisplayPowerState, iter->second);
   registry->RegisterDictionaryPref(prefs::kDisplayRotationLock);
+  registry->RegisterDictionaryPref(prefs::kDisplayTouchAssociations);
 }
 
 void StoreDisplayPrefs() {
@@ -447,6 +562,7 @@ void StoreDisplayPrefs() {
 
   StoreCurrentDisplayLayoutPrefs();
   StoreCurrentDisplayProperties();
+  StoreDisplayTouchAssociations();
 }
 
 void StoreDisplayRotationPrefs(bool rotation_lock) {
@@ -468,6 +584,7 @@ void LoadDisplayPreferences(bool first_run_after_boot) {
   LoadDisplayLayouts();
   LoadDisplayProperties();
   LoadDisplayRotationState();
+  LoadDisplayTouchAssociations();
   if (!first_run_after_boot) {
     PrefService* local_state = g_browser_process->local_state();
     // Restore DisplayPowerState:
@@ -489,6 +606,22 @@ void StoreDisplayLayoutPrefForTest(const display::DisplayIdList& list,
 // Stores the given |power_state|.
 void StoreDisplayPowerStateForTest(DisplayPowerState power_state) {
   StoreDisplayPowerState(power_state);
+}
+
+void LoadTouchAssociationPreferenceForTest() {
+  LoadDisplayTouchAssociations();
+}
+
+void StoreLegacyTouchDataForTest(int64_t display_id,
+                                 const display::TouchCalibrationData& data) {
+  PrefService* local_state = g_browser_process->local_state();
+
+  DictionaryPrefUpdate update(local_state, prefs::kDisplayProperties);
+  base::DictionaryValue* pref_data = update.Get();
+  std::unique_ptr<base::DictionaryValue> property_value =
+      std::make_unique<base::DictionaryValue>();
+  TouchDataToValue(data, property_value.get());
+  pref_data->Set(base::Int64ToString(display_id), std::move(property_value));
 }
 
 bool ParseTouchCalibrationStringForTest(

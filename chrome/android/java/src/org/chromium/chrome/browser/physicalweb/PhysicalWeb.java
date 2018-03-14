@@ -14,6 +14,7 @@ import android.os.AsyncTask;
 import android.os.Build;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.base.SysUtils;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.UrlConstants;
@@ -97,7 +98,9 @@ public class PhysicalWeb {
         // In the case that the user has disabled our flag and restarted, this is a minimal code
         // path to disable our subscription to Nearby.
         if (!featureIsEnabled()) {
-            new NearbyBackgroundSubscription(NearbySubscription.UNSUBSCRIBE).run();
+            if (!SysUtils.isLowEndDevice()) {
+                new NearbyBackgroundSubscription(NearbySubscription.UNSUBSCRIBE).run();
+            }
             return;
         }
 
@@ -128,7 +131,9 @@ public class PhysicalWeb {
      */
     private static boolean shouldAutoEnablePhysicalWeb() {
         LocationUtils locationUtils = LocationUtils.getInstance();
-        return locationUtils.isSystemLocationSettingEnabled()
+        // LowEndDevice check must come first in order to short circuit more intensive routines
+        // potentially run by LocationUtils.
+        return !SysUtils.isLowEndDevice() && locationUtils.isSystemLocationSettingEnabled()
                 && locationUtils.hasAndroidLocationPermission()
                 && TemplateUrlService.getInstance().isDefaultSearchEngineGoogle()
                 && !Profile.getLastUsedProfile().isOffTheRecord();
@@ -171,6 +176,8 @@ public class PhysicalWeb {
      * Examines the environment in order to decide whether we should begin or end a scan.
      */
     public static void updateScans() {
+        if (SysUtils.isLowEndDevice()) return;
+
         LocationUtils locationUtils = LocationUtils.getInstance();
         if (!locationUtils.hasAndroidLocationPermission()
                 || !locationUtils.isSystemLocationSettingEnabled()

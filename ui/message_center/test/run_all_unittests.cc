@@ -20,7 +20,7 @@
 #include "ui/gl/test/gl_surface_test_support.h"
 #endif
 
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
+#if defined(OS_CHROMEOS)
 #include "mojo/edk/embedder/embedder.h"  // nogncheck
 #endif
 
@@ -64,7 +64,7 @@ class MessageCenterTestSuite : public base::TestSuite {
 int main(int argc, char** argv) {
   MessageCenterTestSuite test_suite(argc, argv);
 
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
+#if defined(OS_CHROMEOS)
   mojo::edk::Init();
 #endif
 

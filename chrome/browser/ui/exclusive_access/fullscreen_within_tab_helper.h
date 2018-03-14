@@ -22,12 +22,12 @@
 class FullscreenWithinTabHelper
     : public content::WebContentsUserData<FullscreenWithinTabHelper> {
  public:
-  bool is_fullscreen_for_captured_tab() const {
-    return is_fullscreen_for_captured_tab_;
-  }
+  ~FullscreenWithinTabHelper() override;
 
-  void SetIsFullscreenForCapturedTab(bool is_fullscreen) {
-    is_fullscreen_for_captured_tab_ = is_fullscreen;
+  bool is_fullscreen_within_tab() const { return is_fullscreen_within_tab_; }
+
+  void SetIsFullscreenWithinTab(bool is_fullscreen) {
+    is_fullscreen_within_tab_ = is_fullscreen;
   }
 
   // Immediately remove and destroy the FullscreenWithinTabHelper instance
@@ -37,9 +37,8 @@ class FullscreenWithinTabHelper
  private:
   friend class content::WebContentsUserData<FullscreenWithinTabHelper>;
   explicit FullscreenWithinTabHelper(content::WebContents* ignored);
-  ~FullscreenWithinTabHelper() override;
 
-  bool is_fullscreen_for_captured_tab_;
+  bool is_fullscreen_within_tab_;
 
   DISALLOW_COPY_AND_ASSIGN(FullscreenWithinTabHelper);
 };

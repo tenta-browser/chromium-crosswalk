@@ -74,7 +74,7 @@ void ConditionalCacheCountingHelper::Finished() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!is_finished_);
   is_finished_ = true;
-  result_callback_.Run(calculation_result_, is_upper_limit_);
+  result_callback_.Run(is_upper_limit_, calculation_result_);
   base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 
@@ -153,12 +153,12 @@ void ConditionalCacheCountingHelper::DoCountCache(int rv) {
                              base::Unretained(this)));
             }
           }
-          cache_ = NULL;
+          cache_ = nullptr;
         }
         break;
       }
       case CacheState::DONE: {
-        cache_ = NULL;
+        cache_ = nullptr;
         next_cache_state_ = CacheState::NONE;
         // Notify the UI thread that we are done.
         BrowserThread::PostTask(

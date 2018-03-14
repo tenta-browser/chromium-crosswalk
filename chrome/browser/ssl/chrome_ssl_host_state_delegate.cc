@@ -16,6 +16,7 @@
 #include "base/command_line.h"
 #include "base/guid.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/clock.h"
@@ -88,9 +89,7 @@ bool ExpireAtSessionEnd() {
 std::string GetKey(const net::X509Certificate& cert, net::CertStatus error) {
   // Since a security decision will be made based on the fingerprint, Chrome
   // should use the SHA-256 fingerprint for the certificate.
-  net::SHA256HashValue fingerprint =
-      net::X509Certificate::CalculateChainFingerprint256(
-          cert.os_cert_handle(), cert.GetIntermediateCertificates());
+  net::SHA256HashValue fingerprint = cert.CalculateChainFingerprint256();
   std::string base64_fingerprint;
   base::Base64Encode(
       base::StringPiece(reinterpret_cast<const char*>(fingerprint.data),
@@ -263,9 +262,9 @@ base::DictionaryValue* ChromeSSLHostStateDelegate::GetValidCertDecisionsDict(
     if (create_entries == DO_NOT_CREATE_DICTIONARY_ENTRIES)
       return NULL;
 
-    cert_error_dict = new base::DictionaryValue();
-    // dict takes ownership of cert_error_dict
-    dict->Set(kSSLCertDecisionCertErrorMapKey, cert_error_dict);
+    cert_error_dict =
+        dict->SetDictionary(kSSLCertDecisionCertErrorMapKey,
+                            base::MakeUnique<base::DictionaryValue>());
   }
 
   return cert_error_dict;
@@ -301,7 +300,7 @@ void ChromeSSLHostStateDelegate::AllowCert(const std::string& host,
   std::unique_ptr<base::Value> value(map->GetWebsiteSetting(
       url, url, CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS, std::string(), NULL));
 
-  if (!value.get() || !value->IsType(base::Value::Type::DICTIONARY))
+  if (!value.get() || !value->is_dict())
     value.reset(new base::DictionaryValue());
 
   base::DictionaryValue* dict;
@@ -317,9 +316,9 @@ void ChromeSSLHostStateDelegate::AllowCert(const std::string& host,
   if (!cert_dict)
     return;
 
-  dict->SetIntegerWithoutPathExpansion(kSSLCertDecisionVersionKey,
-                                       kDefaultSSLCertDecisionVersion);
-  cert_dict->SetIntegerWithoutPathExpansion(GetKey(cert, error), ALLOWED);
+  dict->SetKey(kSSLCertDecisionVersionKey,
+               base::Value(kDefaultSSLCertDecisionVersion));
+  cert_dict->SetKey(GetKey(cert, error), base::Value(ALLOWED));
 
   // The map takes ownership of the value, so it is released in the call to
   // SetWebsiteSettingDefaultScope.
@@ -333,9 +332,7 @@ void ChromeSSLHostStateDelegate::Clear(
   // Convert host matching to content settings pattern matching. Content
   // settings deletion is done synchronously on the UI thread, so we can use
   // |host_filter| by reference.
-  base::Callback<bool(const ContentSettingsPattern& primary_pattern,
-                      const ContentSettingsPattern& secondary_pattern)>
-      pattern_filter;
+  HostContentSettingsMap::PatternSourcePredicate pattern_filter;
   if (!host_filter.is_null()) {
     pattern_filter =
         base::Bind(&HostFilterToPatternFilter, base::ConstRef(host_filter));
@@ -343,7 +340,8 @@ void ChromeSSLHostStateDelegate::Clear(
 
   HostContentSettingsMapFactory::GetForProfile(profile_)
       ->ClearSettingsForOneTypeWithPredicate(
-          CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS, pattern_filter);
+          CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS, base::Time(),
+          pattern_filter);
 }
 
 content::SSLHostStateDelegate::CertJudgment
@@ -369,7 +367,7 @@ ChromeSSLHostStateDelegate::QueryPolicy(const std::string& host,
   if (allow_localhost && net::IsLocalhost(url.host()))
     return ALLOWED;
 
-  if (!value.get() || !value->IsType(base::Value::Type::DICTIONARY))
+  if (!value.get() || !value->is_dict())
     return DENIED;
 
   base::DictionaryValue* dict;  // Owned by value
@@ -431,7 +429,7 @@ void ChromeSSLHostStateDelegate::RevokeUserAllowExceptionsHard(
   scoped_refptr<net::URLRequestContextGetter> getter(
       profile_->GetRequestContext());
   getter->GetNetworkTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(&CloseIdleConnections, getter));
+      FROM_HERE, base::BindOnce(&CloseIdleConnections, getter));
 }
 
 bool ChromeSSLHostStateDelegate::HasAllowException(
@@ -445,7 +443,7 @@ bool ChromeSSLHostStateDelegate::HasAllowException(
   std::unique_ptr<base::Value> value(map->GetWebsiteSetting(
       url, url, CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS, std::string(), NULL));
 
-  if (!value.get() || !value->IsType(base::Value::Type::DICTIONARY))
+  if (!value.get() || !value->is_dict())
     return false;
 
   base::DictionaryValue* dict;  // Owned by value

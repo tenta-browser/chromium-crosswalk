@@ -29,8 +29,8 @@
 #include "ui/views/win/hwnd_util.h"
 #endif
 
-#if defined(USE_ASH)
-#include "ash/shell.h"  // nogncheck
+#if defined(OS_CHROMEOS)
+#include "ash/shell.h"
 #endif
 
 namespace {
@@ -90,7 +90,7 @@ class ScreenCaptureNotificationUIViews
   gfx::NativeViewId OnStarted(const base::Closure& stop_callback) override;
 
   // views::View overrides.
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
 
   // views::WidgetDelegateView overrides.
@@ -180,7 +180,7 @@ gfx::NativeViewId ScreenCaptureNotificationUIViews::OnStarted(
   params.remove_standard_frame = true;
   params.keep_on_top = true;
 
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
   // TODO(sergeyu): The notification bar must be shown on the monitor that's
   // being captured. Make sure it's always the case. Currently we always capture
   // the primary monitor.
@@ -192,8 +192,8 @@ gfx::NativeViewId ScreenCaptureNotificationUIViews::OnStarted(
   widget->Init(params);
   widget->SetAlwaysOnTop(true);
 
-  set_background(views::Background::CreateSolidBackground(GetNativeTheme()->
-      GetSystemColor(ui::NativeTheme::kColorId_DialogBackground)));
+  SetBackground(views::CreateSolidBackground(GetNativeTheme()->GetSystemColor(
+      ui::NativeTheme::kColorId_DialogBackground)));
 
   display::Screen* screen = display::Screen::GetScreen();
   // TODO(sergeyu): Move the notification to the display being captured when
@@ -219,7 +219,7 @@ gfx::NativeViewId ScreenCaptureNotificationUIViews::OnStarted(
 #endif
 }
 
-gfx::Size ScreenCaptureNotificationUIViews::GetPreferredSize() const {
+gfx::Size ScreenCaptureNotificationUIViews::CalculatePreferredSize() const {
   gfx::Size grip_size = gripper_->GetPreferredSize();
   gfx::Size label_size = label_->GetPreferredSize();
   gfx::Size stop_button_size = stop_button_->GetPreferredSize();

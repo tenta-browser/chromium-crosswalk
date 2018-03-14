@@ -14,8 +14,12 @@
 #include "cc/trees/mutator_host_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/scroll_offset.h"
+#include "ui/gfx/transform.h"
 
 namespace cc {
+
+class AnimationPlayer;
+class AnimationTicker;
 
 class TestLayer {
  public:
@@ -192,17 +196,17 @@ class TestAnimationDelegate : public AnimationDelegate {
   TestAnimationDelegate();
 
   void NotifyAnimationStarted(base::TimeTicks monotonic_time,
-                              TargetProperty::Type target_property,
+                              int target_property,
                               int group) override;
   void NotifyAnimationFinished(base::TimeTicks monotonic_time,
-                               TargetProperty::Type target_property,
+                               int target_property,
                                int group) override;
   void NotifyAnimationAborted(base::TimeTicks monotonic_time,
-                              TargetProperty::Type target_property,
+                              int target_property,
                               int group) override;
   void NotifyAnimationTakeover(base::TimeTicks monotonic_time,
-                               TargetProperty::Type target_property,
-                               double animation_start_time,
+                               int target_property,
+                               base::TimeTicks animation_start_time,
                                std::unique_ptr<AnimationCurve> curve) override;
 
   bool started() { return started_; }
@@ -237,7 +241,7 @@ class AnimationTimelinesTest : public testing::Test {
   void CreateTestLayer(bool needs_active_value_observations,
                        bool needs_pending_value_observations);
   void AttachTimelinePlayerLayer();
-  void CreateImplTimelineAndPlayer();
+  virtual void CreateImplTimelineAndPlayer();
 
   void CreateTestMainLayer();
   void DestroyTestMainLayer();
@@ -248,12 +252,12 @@ class AnimationTimelinesTest : public testing::Test {
   void TickAnimationsTransferEvents(base::TimeTicks time,
                                     unsigned expect_events);
 
-  AnimationPlayer* GetPlayerForElementId(ElementId element_id);
-  AnimationPlayer* GetImplPlayerForLayerId(ElementId element_id);
+  AnimationTicker* GetTickerForElementId(ElementId element_id);
+  AnimationTicker* GetImplTickerForLayerId(ElementId element_id);
 
   int NextTestLayerId();
 
-  bool CheckPlayerTimelineNeedsPushProperties(bool needs_push_properties) const;
+  bool CheckTickerTimelineNeedsPushProperties(bool needs_push_properties) const;
 
   void PushProperties();
 

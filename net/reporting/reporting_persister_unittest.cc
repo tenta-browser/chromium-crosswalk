@@ -5,12 +5,12 @@
 #include "net/reporting/reporting_persister.h"
 
 #include "base/json/json_writer.h"
-#include "base/memory/ptr_util.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/time/time.h"
 #include "base/timer/mock_timer.h"
 #include "base/values.h"
+#include "net/base/test_completion_callback.h"
 #include "net/reporting/reporting_cache.h"
 #include "net/reporting/reporting_client.h"
 #include "net/reporting/reporting_policy.h"
@@ -24,13 +24,14 @@ namespace {
 class ReportingPersisterTest : public ReportingTestBase {
  protected:
   const GURL kUrl_ = GURL("https://origin/path");
-  const url::Origin kOrigin_ = url::Origin(kUrl_);
+  const url::Origin kOrigin_ = url::Origin::Create(kUrl_);
   const GURL kEndpoint_ = GURL("https://endpoint/");
   const std::string kGroup_ = "group";
   const std::string kType_ = "default";
 };
 
-TEST_F(ReportingPersisterTest, Test) {
+// Disabled because the Persister has no persistence layer to use yet.
+TEST_F(ReportingPersisterTest, DISABLED_Test) {
   ReportingPolicy policy;
   policy.persist_reports_across_restarts = true;
   policy.persist_clients_across_restarts = true;
@@ -49,11 +50,12 @@ TEST_F(ReportingPersisterTest, Test) {
                      kGroup_,
                      tick_clock()->NowTicks() + base::TimeDelta::FromDays(1));
 
-  EXPECT_TRUE(persistence_timer()->IsRunning());
-  persistence_timer()->Fire();
+  // TODO: Actually save data, once it's possible.
 
   SimulateRestart(/* delta= */ base::TimeDelta::FromHours(1),
                   /* delta_ticks= */ base::TimeDelta::FromHours(-3));
+
+  // TODO: Actually load data, once it's possible.
 
   std::vector<const ReportingReport*> reports;
   cache()->GetReports(&reports);
@@ -61,7 +63,7 @@ TEST_F(ReportingPersisterTest, Test) {
   EXPECT_EQ(kUrl_, reports[0]->url);
   EXPECT_EQ(kGroup_, reports[0]->group);
   EXPECT_EQ(kType_, reports[0]->type);
-  EXPECT_TRUE(base::Value::Equals(&body, reports[0]->body.get()));
+  EXPECT_EQ(body, *reports[0]->body);
   EXPECT_EQ(tick_clock()->NowTicks() - base::TimeDelta::FromHours(1),
             reports[0]->queued);
   EXPECT_EQ(kAttempts, reports[0]->attempts);
@@ -75,6 +77,8 @@ TEST_F(ReportingPersisterTest, Test) {
                 base::TimeDelta::FromHours(1),
             client->expires);
 }
+
+// TODO(juliatuttle): Test asynchronous behavior.
 
 }  // namespace
 }  // namespace net

@@ -19,6 +19,7 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -41,7 +42,11 @@
 #include "services/service_manager/public/cpp/service_context.h"
 
 #if defined(OS_LINUX)
-#include "content/public/child/child_process_sandbox_support_linux.h"
+#include "content/public/common/common_sandbox_support_linux.h"
+#endif
+
+#if defined(OS_POSIX)
+#include "base/posix/eintr_wrapper.h"
 #endif
 
 #if defined(OS_WIN)
@@ -181,10 +186,9 @@ bool NaClListener::Send(IPC::Message* msg) {
   if (main_task_runner_->BelongsToCurrentThread()) {
     // This thread owns the channel.
     return channel_->Send(msg);
-  } else {
-    // This thread does not own the channel.
-    return filter_->Send(msg);
   }
+  // This thread does not own the channel.
+  return filter_->Send(msg);
 }
 
 // The NaClProcessMsg_ResolveFileTokenAsyncReply message must be
@@ -217,6 +221,7 @@ class FileTokenMessageFilter : public IPC::MessageFilter {
 
 void NaClListener::Listen() {
   channel_ = IPC::SyncChannel::Create(this, io_thread_.task_runner().get(),
+                                      base::ThreadTaskRunnerHandle::Get(),
                                       &shutdown_event_);
   filter_ = channel_->CreateSyncMessageFilter();
   channel_->AddFilter(new FileTokenMessageFilter());
@@ -284,7 +289,7 @@ void NaClListener::OnAddPrefetchedResource(
 void NaClListener::OnStart(const nacl::NaClStartParams& params) {
   is_started_ = true;
 #if defined(OS_LINUX) || defined(OS_MACOSX)
-  int urandom_fd = dup(base::GetUrandomFD());
+  int urandom_fd = HANDLE_EINTR(dup(base::GetUrandomFD()));
   if (urandom_fd < 0) {
     LOG(FATAL) << "Failed to dup() the urandom FD";
   }

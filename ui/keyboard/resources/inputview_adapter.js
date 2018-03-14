@@ -144,6 +144,15 @@ function overrideGetSpatialData() {
   Controller.prototype.getSpatialData_ = function() {};
 }
 
+/**
+ * Return the most recently used US layout. By default, this will return the
+ * compact layout.
+ */
+function getDefaultUsLayout() {
+  return window.localStorage['vkDefaultLayoutIsFull']
+      ? 'us' : 'us.compact.qwerty';
+}
+
 // Plug in for API calls.
 function registerInputviewApi() {
 
@@ -231,7 +240,6 @@ function registerInputviewApi() {
   function getDisplayInInches_(callback) {
     callback(0);
   }
-
 
   /**
    * Retrieve the current input method configuration.
@@ -349,6 +357,9 @@ function registerInputviewApi() {
       defaultSendMessage(message);
   });
 
+  registerFunction('chrome.runtime.setContainerMode', function(mode, callback) {
+    chrome.virtualKeyboardPrivate.setMode(mode, callback);
+  });
 }
 
 
@@ -380,7 +391,7 @@ window.onload = function() {
     });
   }
 
-  var keyset = params['id'] || 'us.compact.qwerty';
+  var keyset = params['id'] || getDefaultUsLayout();
   var languageCode = params['language'] || 'en';
   var passwordLayout = params['passwordLayout'] || 'us';
   var name = params['name'] || 'English';

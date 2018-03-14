@@ -35,18 +35,18 @@
 #include "bindings/core/v8/V8ObjectBuilder.h"
 #include "core/dom/Document.h"
 #include "core/dom/QualifiedName.h"
-#include "core/dom/TaskRunnerHelper.h"
-#include "core/frame/DOMWindow.h"
+#include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLFrameOwnerElement.h"
 #include "core/loader/DocumentLoader.h"
-#include "core/origin_trials/OriginTrials.h"
+#include "core/origin_trials/origin_trials.h"
 #include "core/timing/PerformanceTiming.h"
 #include "platform/loader/fetch/ResourceTimingInfo.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "platform/runtime_enabled_features.h"
+#include "public/platform/TaskType.h"
 
-static const double kLongTaskThreshold = 0.05;
+static const double kLongTaskObserverThreshold = 0.05;
 
 static const char kUnknownAttribution[] = "unknown";
 static const char kAmbiguousAttribution[] = "multiple-contexts";
@@ -85,13 +85,17 @@ const char* SameOriginAttribution(Frame* observer_frame, Frame* culprit_frame) {
   return kSameOriginAttribution;
 }
 
+bool IsSameOrigin(String key) {
+  return key == kSameOriginAttribution ||
+         key == kSameOriginDescendantAttribution ||
+         key == kSameOriginAncestorAttribution ||
+         key == kSameOriginSelfAttribution;
+}
+
 }  // namespace
 
-static double ToTimeOrigin(LocalFrame* frame) {
-  if (!frame)
-    return 0.0;
-
-  Document* document = frame->GetDocument();
+static double ToTimeOrigin(LocalDOMWindow* window) {
+  Document* document = window->document();
   if (!document)
     return 0.0;
 
@@ -102,11 +106,11 @@ static double ToTimeOrigin(LocalFrame* frame) {
   return loader->GetTiming().ReferenceMonotonicTime();
 }
 
-Performance::Performance(LocalFrame* frame)
+Performance::Performance(LocalDOMWindow* window)
     : PerformanceBase(
-          ToTimeOrigin(frame),
-          TaskRunnerHelper::Get(TaskType::kPerformanceTimeline, frame)),
-      DOMWindowClient(frame) {}
+          ToTimeOrigin(window),
+          window->document()->GetTaskRunner(TaskType::kPerformanceTimeline)),
+      DOMWindowClient(window) {}
 
 Performance::~Performance() {
 }
@@ -136,7 +140,7 @@ PerformanceTiming* Performance::timing() const {
 }
 
 PerformanceNavigationTiming* Performance::CreateNavigationTimingInstance() {
-  if (!RuntimeEnabledFeatures::performanceNavigationTiming2Enabled())
+  if (!RuntimeEnabledFeatures::PerformanceNavigationTiming2Enabled())
     return nullptr;
   if (!GetFrame())
     return nullptr;
@@ -146,7 +150,14 @@ PerformanceNavigationTiming* Performance::CreateNavigationTimingInstance() {
   ResourceTimingInfo* info = document_loader->GetNavigationTimingInfo();
   if (!info)
     return nullptr;
-  return new PerformanceNavigationTiming(GetFrame(), info, TimeOrigin());
+  PerformanceServerTimingVector serverTiming =
+      PerformanceServerTiming::ParseServerTiming(
+          *info, PerformanceServerTiming::ShouldAllowTimingDetails::Yes);
+  if (serverTiming.size()) {
+    UseCounter::Count(GetFrame(), WebFeature::kPerformanceServerTiming);
+  }
+  return new PerformanceNavigationTiming(GetFrame(), info, GetTimeOrigin(),
+                                         serverTiming);
 }
 
 void Performance::UpdateLongTaskInstrumentation() {
@@ -155,10 +166,10 @@ void Performance::UpdateLongTaskInstrumentation() {
     return;
 
   if (HasObserverFor(PerformanceEntry::kLongTask)) {
-    UseCounter::Count(GetFrame()->LocalFrameRoot(),
-                      UseCounter::kLongTaskObserver);
+    UseCounter::Count(&GetFrame()->LocalFrameRoot(),
+                      WebFeature::kLongTaskObserver);
     GetFrame()->GetPerformanceMonitor()->Subscribe(
-        PerformanceMonitor::kLongTask, kLongTaskThreshold, this);
+        PerformanceMonitor::kLongTask, kLongTaskObserverThreshold, this);
   } else {
     GetFrame()->GetPerformanceMonitor()->UnsubscribeAll(this);
   }
@@ -171,7 +182,7 @@ ScriptValue Performance::toJSONForBinding(ScriptState* script_state) const {
   return result.GetScriptValue();
 }
 
-DEFINE_TRACE(Performance) {
+void Performance::Trace(blink::Visitor* visitor) {
   visitor->Trace(navigation_);
   visitor->Trace(timing_);
   PerformanceBase::Trace(visitor);
@@ -239,19 +250,24 @@ std::pair<String, DOMWindow*> Performance::SanitizedAttribution(
   return std::make_pair(kCrossOriginAttribution, nullptr);
 }
 
-void Performance::ReportLongTask(double start_time,
-                                 double end_time,
-                                 ExecutionContext* task_context,
-                                 bool has_multiple_contexts) {
+void Performance::ReportLongTask(
+    double start_time,
+    double end_time,
+    ExecutionContext* task_context,
+    bool has_multiple_contexts,
+    const SubTaskAttribution::EntriesVector& sub_task_attributions) {
   if (!GetFrame())
     return;
   std::pair<String, DOMWindow*> attribution = Performance::SanitizedAttribution(
       task_context, has_multiple_contexts, GetFrame());
   DOMWindow* culprit_dom_window = attribution.second;
+  SubTaskAttribution::EntriesVector empty_vector;
   if (!culprit_dom_window || !culprit_dom_window->GetFrame() ||
       !culprit_dom_window->GetFrame()->DeprecatedLocalOwner()) {
-    AddLongTaskTiming(start_time, end_time, attribution.first, g_empty_string,
-                      g_empty_string, g_empty_string);
+    AddLongTaskTiming(
+        start_time, end_time, attribution.first, g_empty_string, g_empty_string,
+        g_empty_string,
+        IsSameOrigin(attribution.first) ? sub_task_attributions : empty_vector);
   } else {
     HTMLFrameOwnerElement* frame_owner =
         culprit_dom_window->GetFrame()->DeprecatedLocalOwner();
@@ -259,7 +275,8 @@ void Performance::ReportLongTask(double start_time,
         start_time, end_time, attribution.first,
         GetFrameAttribute(frame_owner, HTMLNames::srcAttr, false),
         GetFrameAttribute(frame_owner, HTMLNames::idAttr, false),
-        GetFrameAttribute(frame_owner, HTMLNames::nameAttr, true));
+        GetFrameAttribute(frame_owner, HTMLNames::nameAttr, true),
+        IsSameOrigin(attribution.first) ? sub_task_attributions : empty_vector);
   }
 }
 

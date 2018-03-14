@@ -22,39 +22,38 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "SkImageFilter.h"
 #include "platform/graphics/filters/FEBlend.h"
 #include "platform/graphics/filters/FEGaussianBlur.h"
 #include "platform/graphics/filters/FEMerge.h"
 #include "platform/graphics/filters/Filter.h"
-#include "platform/graphics/filters/SkiaImageFilterBuilder.h"
+#include "platform/graphics/filters/PaintFilterBuilder.h"
 #include "platform/graphics/filters/SourceGraphic.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using testing::Test;
+using ::testing::Test;
 
 namespace blink {
 
 class ImageFilterBuilderTest : public Test {
  protected:
-  void ColorSpaceTest() {
+  void InterpolationSpaceTest() {
     // Build filter tree
     Filter* reference_filter = Filter::Create(1.0f);
 
     // Add a dummy source graphic input
     FilterEffect* source_effect = reference_filter->GetSourceGraphic();
-    source_effect->SetOperatingColorSpace(kColorSpaceDeviceRGB);
+    source_effect->SetOperatingInterpolationSpace(kInterpolationSpaceSRGB);
 
     // Add a blur effect (with input : source)
     FilterEffect* blur_effect =
         FEGaussianBlur::Create(reference_filter, 3.0f, 3.0f);
-    blur_effect->SetOperatingColorSpace(kColorSpaceLinearRGB);
+    blur_effect->SetOperatingInterpolationSpace(kInterpolationSpaceLinear);
     blur_effect->InputEffects().push_back(source_effect);
 
     // Add a blend effect (with inputs : blur, source)
     FilterEffect* blend_effect =
-        FEBlend::Create(reference_filter, kWebBlendModeNormal);
-    blend_effect->SetOperatingColorSpace(kColorSpaceDeviceRGB);
+        FEBlend::Create(reference_filter, WebBlendMode::kNormal);
+    blend_effect->SetOperatingInterpolationSpace(kInterpolationSpaceSRGB);
     FilterEffectVector& blend_inputs = blend_effect->InputEffects();
     blend_inputs.ReserveCapacity(2);
     blend_inputs.push_back(source_effect);
@@ -62,19 +61,19 @@ class ImageFilterBuilderTest : public Test {
 
     // Add a merge effect (with inputs : blur, blend)
     FilterEffect* merge_effect = FEMerge::Create(reference_filter);
-    merge_effect->SetOperatingColorSpace(kColorSpaceLinearRGB);
+    merge_effect->SetOperatingInterpolationSpace(kInterpolationSpaceLinear);
     FilterEffectVector& merge_inputs = merge_effect->InputEffects();
     merge_inputs.ReserveCapacity(2);
     merge_inputs.push_back(blur_effect);
     merge_inputs.push_back(blend_effect);
     reference_filter->SetLastEffect(merge_effect);
 
-    // Get SkImageFilter resulting tree
-    sk_sp<SkImageFilter> filter = SkiaImageFilterBuilder::Build(
-        reference_filter->LastEffect(), kColorSpaceDeviceRGB);
+    // Get PaintFilter resulting tree
+    sk_sp<PaintFilter> filter = PaintFilterBuilder::Build(
+        reference_filter->LastEffect(), kInterpolationSpaceSRGB);
 
     // Let's check that the resulting tree looks like this :
-    //      ColorSpace (Linear->Device) : CS (L->D)
+    //      InterpolationSpace (Linear->Device) : CS (L->D)
     //                |
     //             Merge (L)
     //              |     |
@@ -90,30 +89,53 @@ class ImageFilterBuilderTest : public Test {
     //                   \       |
     //                 Source Graphic (D)
 
-    EXPECT_EQ(filter->countInputs(), 1);         // Should be CS (L->D)
-    SkImageFilter* child = filter->getInput(0);  // Should be Merge
-    EXPECT_EQ(child->asColorFilter(0), false);
-    EXPECT_EQ(child->countInputs(), 2);
-    child = child->getInput(1);  // Should be CS (D->L)
-    EXPECT_EQ(child->asColorFilter(0), true);
-    EXPECT_EQ(child->countInputs(), 1);
-    child = child->getInput(0);  // Should be Blend
-    EXPECT_EQ(child->asColorFilter(0), false);
-    EXPECT_EQ(child->countInputs(), 2);
-    child = child->getInput(0);  // Should be CS (L->D)
-    EXPECT_EQ(child->asColorFilter(0), true);
-    EXPECT_EQ(child->countInputs(), 1);
-    child = child->getInput(0);  // Should be Blur
-    EXPECT_EQ(child->asColorFilter(0), false);
-    EXPECT_EQ(child->countInputs(), 1);
-    child = child->getInput(0);  // Should be CS (D->L)
-    EXPECT_EQ(child->asColorFilter(0), true);
-    EXPECT_EQ(child->countInputs(), 1);
+    // Should be CS : InterpolationSpace (Linear->Device)
+    EXPECT_EQ(filter->type(), PaintFilter::Type::kColorFilter);
+
+    // Should be Merge.
+    const auto* merge_effect_pf =
+        static_cast<const ColorFilterPaintFilter*>(filter.get())->input().get();
+    ASSERT_EQ(merge_effect_pf->type(), PaintFilter::Type::kMerge);
+    const auto* merge = static_cast<const MergePaintFilter*>(merge_effect_pf);
+    EXPECT_EQ(merge->input_count(), 2u);
+
+    // Should be CS (D->L)
+    const auto* color_filter_pf = merge->input_at(1u);
+    ASSERT_EQ(color_filter_pf->type(), PaintFilter::Type::kColorFilter);
+
+    // Should be Blend
+    const auto* xfermode_filter_pf =
+        static_cast<const ColorFilterPaintFilter*>(color_filter_pf)
+            ->input()
+            .get();
+    ASSERT_TRUE(xfermode_filter_pf);
+    EXPECT_EQ(xfermode_filter_pf->type(), PaintFilter::Type::kXfermode);
+    const auto* xfermode =
+        static_cast<const XfermodePaintFilter*>(xfermode_filter_pf);
+    ASSERT_TRUE(xfermode->background());
+
+    // Should be CS (L->D)
+    color_filter_pf = xfermode->background().get();
+    ASSERT_EQ(color_filter_pf->type(), PaintFilter::Type::kColorFilter);
+
+    // Should be Blur
+    const auto* blur_filter_pf =
+        static_cast<const ColorFilterPaintFilter*>(color_filter_pf)
+            ->input()
+            .get();
+    ASSERT_TRUE(blur_filter_pf);
+    EXPECT_EQ(blur_filter_pf->type(), PaintFilter::Type::kBlur);
+
+    // Should be CS (D->L)
+    color_filter_pf =
+        static_cast<const BlurPaintFilter*>(blur_filter_pf)->input().get();
+    ASSERT_TRUE(color_filter_pf);
+    EXPECT_EQ(color_filter_pf->type(), PaintFilter::Type::kColorFilter);
   }
 };
 
-TEST_F(ImageFilterBuilderTest, testColorSpace) {
-  ColorSpaceTest();
+TEST_F(ImageFilterBuilderTest, testInterpolationSpace) {
+  InterpolationSpaceTest();
 }
 
 }  // namespace blink

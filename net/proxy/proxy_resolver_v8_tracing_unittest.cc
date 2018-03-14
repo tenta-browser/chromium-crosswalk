@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/files/file_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -95,7 +94,7 @@ class MockBindings {
   }
 
   std::unique_ptr<ProxyResolverV8Tracing::Bindings> CreateBindings() {
-    return base::MakeUnique<ForwardingBindings>(this);
+    return std::make_unique<ForwardingBindings>(this);
   }
 
  private:
@@ -707,7 +706,7 @@ class BlockableHostResolver : public HostResolver {
 
     // Indicate to the caller that a request was received.
     EXPECT_TRUE(waiting_for_resolve_);
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 
     // This line is intentionally after action_.Run(), since one of the
     // tests does a cancellation inside of Resolve(), and it is more

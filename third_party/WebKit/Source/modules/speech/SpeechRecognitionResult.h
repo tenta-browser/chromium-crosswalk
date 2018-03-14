@@ -26,16 +26,14 @@
 #ifndef SpeechRecognitionResult_h
 #define SpeechRecognitionResult_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/ModulesExport.h"
 #include "modules/speech/SpeechRecognitionAlternative.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
-class MODULES_EXPORT SpeechRecognitionResult final
-    : public GarbageCollected<SpeechRecognitionResult>,
-      public ScriptWrappable {
+class MODULES_EXPORT SpeechRecognitionResult final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -47,7 +45,7 @@ class MODULES_EXPORT SpeechRecognitionResult final
   SpeechRecognitionAlternative* item(unsigned index);
   bool isFinal() { return final_; }
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   SpeechRecognitionResult(

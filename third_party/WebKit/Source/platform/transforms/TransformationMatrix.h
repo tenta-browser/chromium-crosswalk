@@ -29,12 +29,11 @@
 #include <string.h>  // for memcpy
 #include <memory>
 #include "SkMatrix44.h"
+#include "build/build_config.h"
 #include "platform/geometry/FloatPoint.h"
 #include "platform/geometry/FloatPoint3D.h"
 #include "platform/wtf/Alignment.h"
 #include "platform/wtf/Allocator.h"
-#include "platform/wtf/CPU.h"
-#include "platform/wtf/Compiler.h"
 #include "platform/wtf/PtrUtil.h"
 
 namespace blink {
@@ -46,7 +45,7 @@ class FloatRect;
 class FloatQuad;
 class FloatBox;
 struct Rotation;
-#if CPU(X86_64)
+#if defined(ARCH_CPU_X86_64)
 #define TRANSFORMATION_MATRIX_USE_X86_64_SSE2
 #endif
 
@@ -77,11 +76,11 @@ class PLATFORM_EXPORT TransformationMatrix {
 #endif
 
   static std::unique_ptr<TransformationMatrix> Create() {
-    return WTF::MakeUnique<TransformationMatrix>();
+    return std::make_unique<TransformationMatrix>();
   }
   static std::unique_ptr<TransformationMatrix> Create(
       const TransformationMatrix& t) {
-    return WTF::MakeUnique<TransformationMatrix>(t);
+    return std::make_unique<TransformationMatrix>(t);
   }
   static std::unique_ptr<TransformationMatrix> Create(double a,
                                                       double b,
@@ -89,7 +88,7 @@ class PLATFORM_EXPORT TransformationMatrix {
                                                       double d,
                                                       double e,
                                                       double f) {
-    return WTF::MakeUnique<TransformationMatrix>(a, b, c, d, e, f);
+    return std::make_unique<TransformationMatrix>(a, b, c, d, e, f);
   }
   static std::unique_ptr<TransformationMatrix> Create(double m11,
                                                       double m12,
@@ -151,6 +150,7 @@ class PLATFORM_EXPORT TransformationMatrix {
               m42, m43, m44);
   }
   TransformationMatrix(const SkMatrix44& matrix) {
+    CheckAlignment();
     SetMatrix(
         matrix.get(0, 0), matrix.get(1, 0), matrix.get(2, 0), matrix.get(3, 0),
         matrix.get(0, 1), matrix.get(1, 1), matrix.get(2, 1), matrix.get(3, 1),
@@ -256,9 +256,9 @@ class PLATFORM_EXPORT TransformationMatrix {
   // a ray perpendicular to the source plane and computing
   // the local x,y position of the point where that ray intersects
   // with the destination plane.
-  FloatPoint ProjectPoint(const FloatPoint&, bool* clamped = 0) const;
+  FloatPoint ProjectPoint(const FloatPoint&, bool* clamped = nullptr) const;
   // Projects the four corners of the quad
-  FloatQuad ProjectQuad(const FloatQuad&, bool* clamped = 0) const;
+  FloatQuad ProjectQuad(const FloatQuad&, bool* clamped = nullptr) const;
   // Projects the four corners of the quad and takes a bounding box,
   // while sanitizing values created when the w component is negative.
   LayoutRect ClampedBoundsOfProjectedQuad(const FloatQuad&) const;
@@ -439,6 +439,12 @@ class PLATFORM_EXPORT TransformationMatrix {
     return result;
   }
 
+  bool IsFlat() const {
+    return matrix_[0][2] == 0.f && matrix_[1][2] == 0.f &&
+           matrix_[2][0] == 0.f && matrix_[2][1] == 0.f &&
+           matrix_[2][2] == 1.f && matrix_[2][3] == 0.f && matrix_[3][2] == 0.f;
+  }
+
   bool IsIdentityOrTranslation() const {
     return matrix_[0][0] == 1 && matrix_[0][1] == 0 && matrix_[0][2] == 0 &&
            matrix_[0][3] == 0 && matrix_[1][0] == 0 && matrix_[1][1] == 1 &&
@@ -504,8 +510,9 @@ class PLATFORM_EXPORT TransformationMatrix {
 #if defined(TRANSFORMATION_MATRIX_USE_X86_64_SSE2)
     // m_matrix can cause this class to require higher than usual alignment.
     // Make sure the allocator handles this.
-    ASSERT((reinterpret_cast<uintptr_t>(this) &
-            (WTF_ALIGN_OF(TransformationMatrix) - 1)) == 0);
+    DCHECK_EQ((reinterpret_cast<uintptr_t>(this) &
+               (WTF_ALIGN_OF(TransformationMatrix) - 1)),
+              0UL);
 #endif
   }
 

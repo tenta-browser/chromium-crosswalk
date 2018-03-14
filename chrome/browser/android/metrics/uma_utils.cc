@@ -25,24 +25,21 @@ base::Time GetMainEntryPointTime() {
          base::TimeDelta::FromMilliseconds(startTimeUnixMs);
 }
 
-static jboolean IsClientInMetricsReportingSample(
+static jboolean JNI_UmaUtils_IsClientInMetricsReportingSample(
     JNIEnv* env,
     const JavaParamRef<jclass>& obj) {
   return ChromeMetricsServicesManagerClient::IsClientInSample();
 }
 
-static void RecordMetricsReportingDefaultOptIn(JNIEnv* env,
-                                               const JavaParamRef<jclass>& obj,
-                                               jboolean opt_in) {
+static void JNI_UmaUtils_RecordMetricsReportingDefaultOptIn(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& obj,
+    jboolean opt_in) {
   DCHECK(g_browser_process);
   PrefService* local_state = g_browser_process->local_state();
   metrics::RecordMetricsReportingDefaultState(
       local_state, opt_in ? metrics::EnableMetricsDefault::OPT_IN
                           : metrics::EnableMetricsDefault::OPT_OUT);
-}
-
-bool RegisterStartupMetricUtils(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace android

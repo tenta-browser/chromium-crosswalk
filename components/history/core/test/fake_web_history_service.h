@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef COMPONENTS_HISTORY_CORE_BROWSER_FAKE_WEB_HISTORY_SERVICE_H_
-#define COMPONENTS_HISTORY_CORE_BROWSER_FAKE_WEB_HISTORY_SERVICE_H_
+#ifndef COMPONENTS_HISTORY_CORE_TEST_FAKE_WEB_HISTORY_SERVICE_H_
+#define COMPONENTS_HISTORY_CORE_TEST_FAKE_WEB_HISTORY_SERVICE_H_
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/macros.h"
@@ -29,7 +30,7 @@ namespace history {
 // responses for other queries.
 //
 // TODO(msramek): This class might need its own set of tests.
-class FakeWebHistoryService : public history::WebHistoryService {
+class FakeWebHistoryService : public WebHistoryService {
  public:
   FakeWebHistoryService(
       OAuth2TokenService* token_service,
@@ -48,9 +49,6 @@ class FakeWebHistoryService : public history::WebHistoryService {
   // Clears all fake visits.
   void ClearSyncedVisits();
 
-  // Counts the number of visits within a certain time range.
-  int GetNumberOfVisitsBetween(const base::Time& begin, const base::Time& end);
-
   // Get and set the fake state of web and app activity.
   bool IsWebAndAppActivityEnabled();
   void SetWebAndAppActivityEnabled(bool enabled);
@@ -59,12 +57,31 @@ class FakeWebHistoryService : public history::WebHistoryService {
   bool AreOtherFormsOfBrowsingHistoryPresent();
   void SetOtherFormsOfBrowsingHistoryPresent(bool present);
 
+ protected:
+  typedef std::pair<std::string, base::Time> Visit;
+
+  // Returns up to |count| results from |visits_| between |begin| and |end.
+  // Results are sorted from most recent to least recent, prioritizing more
+  // recent results when some need to be omitted. |more_results_left| will be
+  // set to true only if there are results from |visits_| that were not included
+  // because of |count| limitations, but were also within time range. Virtual to
+  // allow subclasses to modify.
+  virtual std::vector<FakeWebHistoryService::Visit> GetVisitsBetween(
+      base::Time begin,
+      base::Time end,
+      size_t count,
+      bool* more_results_left);
+
  private:
+  class FakeRequest;
+
   base::Time GetTimeForKeyInQuery(const GURL& url, const std::string& key);
 
-  // WebHistoryService:
+  // WebHistoryService implementation.
   Request* CreateRequest(const GURL& url,
-                         const CompletionCallback& callback) override;
+                         const CompletionCallback& callback,
+                         const net::PartialNetworkTrafficAnnotationTag&
+                             partial_traffic_annotation) override;
 
   // Parameters for the fake request.
   bool emulate_success_;
@@ -75,7 +92,6 @@ class FakeWebHistoryService : public history::WebHistoryService {
   bool other_forms_of_browsing_history_present_;
 
   // Fake visits storage.
-  typedef std::pair<std::string, base::Time> Visit;
   std::vector<Visit> visits_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeWebHistoryService);
@@ -83,4 +99,4 @@ class FakeWebHistoryService : public history::WebHistoryService {
 
 }  // namespace history
 
-#endif  // COMPONENTS_HISTORY_CORE_BROWSER_FAKE_WEB_HISTORY_SERVICE_H_
+#endif  // COMPONENTS_HISTORY_CORE_TEST_FAKE_WEB_HISTORY_SERVICE_H_

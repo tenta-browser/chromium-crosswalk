@@ -57,7 +57,7 @@ void MediaDrmCredentialManager::ResetCredentials(
 }
 
 // static
-void ResetCredentials(
+void JNI_MediaDrmCredentialManager_ResetCredentials(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& j_media_drm_credential_manager_callback) {
@@ -99,7 +99,8 @@ void MediaDrmCredentialManager::ResetCredentialsInternal(
                  base::Unretained(this), security_level);
 
   media_drm_bridge_ = media::MediaDrmBridge::CreateWithoutSessionSupport(
-      kWidevineKeySystem, security_level, create_fetcher_cb);
+      kWidevineKeySystem, "" /* origin_id */, security_level,
+      create_fetcher_cb);
 
   // No need to reset credentials for unsupported |security_level|.
   if (!media_drm_bridge_) {
@@ -109,9 +110,4 @@ void MediaDrmCredentialManager::ResetCredentialsInternal(
   }
 
   media_drm_bridge_->ResetDeviceCredentials(reset_credentials_cb);
-}
-
-// static
-bool MediaDrmCredentialManager::RegisterMediaDrmCredentialManager(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }

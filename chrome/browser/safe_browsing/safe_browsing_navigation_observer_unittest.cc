@@ -10,6 +10,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "content/public/common/browser_side_navigation_policy.h"
+#include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -176,18 +177,12 @@ TEST_F(SBNavigationObserverTest, BasicNavigationAndCommit) {
 }
 
 TEST_F(SBNavigationObserverTest, ServerRedirect) {
-  if (content::IsBrowserSideNavigationEnabled() &&
-      content::AreAllSitesIsolatedForTesting()) {
-    // http://crbug.com/674734 Fix this test with PlzNavigate and Site Isolation
-    return;
-  }
-  content::RenderFrameHostTester* rfh_tester =
-      content::RenderFrameHostTester::For(
-          browser()->tab_strip_model()->GetActiveWebContents()->GetMainFrame());
-  rfh_tester->SimulateNavigationStart(GURL("http://foo/3"));
-  GURL redirect("http://redirect/1");
-  rfh_tester->SimulateRedirect(redirect);
-  rfh_tester->SimulateNavigationCommit(redirect);
+  auto navigation = content::NavigationSimulator::CreateRendererInitiated(
+      GURL("http://foo/3"),
+      browser()->tab_strip_model()->GetActiveWebContents()->GetMainFrame());
+  navigation->Start();
+  navigation->Redirect(GURL("http://redirect/1"));
+  navigation->Commit();
   int tab_id = SessionTabHelper::IdForTab(
       browser()->tab_strip_model()->GetWebContentsAt(0));
   auto* nav_list = navigation_event_list();
@@ -249,8 +244,8 @@ TEST_F(SBNavigationObserverTest, TestCleanUpStaleUserGestures) {
   // Sets up user_gesture_map() such that it includes fresh, stale and invalid
   // user gestures.
   base::Time now = base::Time::Now();  // Fresh
-  base::Time one_minute_ago =
-      base::Time::FromDoubleT(now.ToDoubleT() - 60.0);  // Stale
+  base::Time three_minutes_ago =
+      base::Time::FromDoubleT(now.ToDoubleT() - 60.0 * 3);  // Stale
   base::Time in_an_hour =
       base::Time::FromDoubleT(now.ToDoubleT() + 60.0 * 60.0);  // Invalid
   AddTab(browser(), GURL("http://foo/1"));
@@ -262,7 +257,7 @@ TEST_F(SBNavigationObserverTest, TestCleanUpStaleUserGestures) {
   content::WebContents* content2 =
       browser()->tab_strip_model()->GetWebContentsAt(2);
   user_gesture_map()->insert(std::make_pair(content0, now));
-  user_gesture_map()->insert(std::make_pair(content1, one_minute_ago));
+  user_gesture_map()->insert(std::make_pair(content1, three_minutes_ago));
   user_gesture_map()->insert(std::make_pair(content2, in_an_hour));
   ASSERT_EQ(3U, user_gesture_map()->size());
 
@@ -345,6 +340,35 @@ TEST_F(SBNavigationObserverTest, TestRecordHostToIpMapping) {
   EXPECT_EQ(3U, host_to_ip_map()->at(host_0).size());
   EXPECT_EQ(1U, host_to_ip_map()->at(host_1).size());
   EXPECT_EQ("9.9.9.9", host_to_ip_map()->at(host_1).at(0).ip);
+}
+
+TEST_F(SBNavigationObserverTest, TestContentSettingChange) {
+  user_gesture_map()->clear();
+  ASSERT_EQ(0U, user_gesture_map()->size());
+
+  content::WebContents* web_content =
+      browser()->tab_strip_model()->GetWebContentsAt(0);
+
+  // Simulate content setting change via page info UI.
+  navigation_observer_->OnContentSettingChanged(
+      ContentSettingsPattern::FromURL(web_content->GetLastCommittedURL()),
+      ContentSettingsPattern::Wildcard(), CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
+      std::string());
+
+  // A user gesture should be recorded.
+  ASSERT_EQ(1U, user_gesture_map()->size());
+  EXPECT_NE(user_gesture_map()->end(), user_gesture_map()->find(web_content));
+
+  user_gesture_map()->clear();
+  ASSERT_EQ(0U, user_gesture_map()->size());
+
+  // Simulate content setting change that cannot be changed via page info UI.
+  navigation_observer_->OnContentSettingChanged(
+      ContentSettingsPattern::FromURL(web_content->GetLastCommittedURL()),
+      ContentSettingsPattern::Wildcard(), CONTENT_SETTINGS_TYPE_SITE_ENGAGEMENT,
+      std::string());
+  // No user gesture should be recorded.
+  EXPECT_EQ(0U, user_gesture_map()->size());
 }
 
 }  // namespace safe_browsing

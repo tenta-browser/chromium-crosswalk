@@ -67,9 +67,9 @@ std::unique_ptr<PrintingContext> PrintingContext::Create(Delegate* delegate) {
 }
 
 // static
-void PrintingContextAndroid::PdfWritingDone(int fd, bool success) {
+void PrintingContextAndroid::PdfWritingDone(int fd, int page_count) {
   JNIEnv* env = base::android::AttachCurrentThread();
-  Java_PrintingContext_pdfWritingDone(env, fd, success);
+  Java_PrintingContext_pdfWritingDone(env, fd, page_count);
 }
 
 PrintingContextAndroid::PrintingContextAndroid(Delegate* delegate)
@@ -98,8 +98,8 @@ void PrintingContextAndroid::AskUserForSettings(
   if (is_scripted) {
     Java_PrintingContext_showPrintDialog(env, j_printing_context_);
   } else {
-    Java_PrintingContext_pageCountEstimationDone(env, j_printing_context_,
-                                                 max_pages);
+    Java_PrintingContext_askUserForSettings(env, j_printing_context_,
+                                            max_pages);
   }
 }
 
@@ -239,14 +239,9 @@ void PrintingContextAndroid::ReleaseContext() {
   // Intentional No-op.
 }
 
-skia::NativeDrawingContext PrintingContextAndroid::context() const {
+printing::NativeDrawingContext PrintingContextAndroid::context() const {
   // Intentional No-op.
   return nullptr;
-}
-
-// static
-bool PrintingContextAndroid::RegisterPrintingContext(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace printing

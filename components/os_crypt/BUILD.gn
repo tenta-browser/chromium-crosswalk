@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/chromecast_build.gni")
 import("//build/config/features.gni")
 import("//build/config/ui.gni")
 import("//build/config/linux/pkg_config.gni")
@@ -69,9 +70,11 @@ static_library("os_crypt") {
     libs = [ "crypt32.lib" ]
   }
 
-  if (is_desktop_linux) {
+  if (is_desktop_linux && !is_chromecast) {
     sources -= [ "os_crypt_posix.cc" ]
     sources += [
+      "key_storage_config_linux.cc",
+      "key_storage_config_linux.h",
       "key_storage_linux.cc",
       "key_storage_linux.h",
       "key_storage_util_linux.cc",
@@ -160,7 +163,10 @@ source_set("unit_tests") {
   ]
 
   if (is_desktop_linux) {
-    sources += [ "os_crypt_linux_unittest.cc" ]
+    sources += [
+      "key_storage_util_linux_unittest.cc",
+      "os_crypt_linux_unittest.cc",
+    ]
     defines = []
 
     if (use_gnome_keyring) {

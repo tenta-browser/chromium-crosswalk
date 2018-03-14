@@ -4,24 +4,15 @@
 
 suite('toolbar tests', function() {
   /** @type {!downloads.Toolbar} */
-  var toolbar;
+  let toolbar;
 
   setup(function() {
-    /**
-     * @constructor
-     * @extends {downloads.ActionService}
-     */
-    function TestActionService() {
-      downloads.ActionService.call(this);
+    class TestSearchService extends downloads.SearchService {
+      loadMore() { /* Prevent chrome.send(). */ }
     }
 
-    TestActionService.prototype = {
-      __proto__: downloads.ActionService.prototype,
-      loadMore: function() { /* Prevent chrome.send(). */ },
-    };
-
     toolbar = document.createElement('downloads-toolbar');
-    downloads.ActionService.instance_ = new TestActionService;
+    downloads.SearchService.instance_ = new TestSearchService;
     document.body.appendChild(toolbar);
   });
 

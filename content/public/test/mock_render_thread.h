@@ -10,6 +10,7 @@
 
 #include "base/memory/shared_memory.h"
 #include "base/observer_list.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "cc/test/test_shared_bitmap_manager.h"
@@ -17,7 +18,6 @@
 #include "ipc/ipc_test_sink.h"
 #include "ipc/message_filter.h"
 #include "services/service_manager/public/interfaces/connector.mojom.h"
-#include "services/service_manager/public/interfaces/interface_provider.mojom.h"
 #include "third_party/WebKit/public/web/WebPopupType.h"
 
 struct FrameHostMsg_CreateChildFrame_Params;
@@ -71,7 +71,7 @@ class MockRenderThread : public RenderThread {
   void RecordComputedAction(const std::string& action) override;
   std::unique_ptr<base::SharedMemory> HostAllocateSharedMemoryBuffer(
       size_t buffer_size) override;
-  cc::SharedBitmapManager* GetSharedBitmapManager() override;
+  viz::SharedBitmapManager* GetSharedBitmapManager() override;
   void RegisterExtension(v8::Extension* extension) override;
   void ScheduleIdleHandler(int64_t initial_delay_ms) override;
   void IdleHandler() override;
@@ -82,14 +82,13 @@ class MockRenderThread : public RenderThread {
   bool ResolveProxy(const GURL& url, std::string* proxy_list) override;
   base::WaitableEvent* GetShutdownEvent() override;
   int32_t GetClientId() override;
-  scoped_refptr<base::SingleThreadTaskRunner> GetTimerTaskRunner() override;
-  scoped_refptr<base::SingleThreadTaskRunner> GetLoadingTaskRunner() override;
+  void SetRendererProcessType(
+      blink::scheduler::RendererProcessType type) override;
 #if defined(OS_WIN)
   void PreCacheFont(const LOGFONT& log_font) override;
   void ReleaseCachedFonts() override;
 #endif
   ServiceManagerConnection* GetServiceManagerConnection() override;
-  service_manager::InterfaceRegistry* GetInterfaceRegistry() override;
   service_manager::Connector* GetConnector() override;
   void SetFieldTrialGroup(const std::string& trial_name,
                           const std::string& group_name) override;
@@ -136,7 +135,9 @@ class MockRenderThread : public RenderThread {
 
   // The Frame expects to be returned a valid route_id different from its own.
   void OnCreateChildFrame(const FrameHostMsg_CreateChildFrame_Params& params,
-                          int* new_render_frame_id);
+                          int* new_render_frame_id,
+                          mojo::MessagePipeHandle* new_interface_provider,
+                          base::UnguessableToken* devtools_frame_token);
 
 #if defined(OS_WIN)
   void OnDuplicateSection(base::SharedMemoryHandle renderer_handle,
@@ -167,7 +168,6 @@ class MockRenderThread : public RenderThread {
   base::ObserverList<RenderThreadObserver> observers_;
 
   cc::TestSharedBitmapManager shared_bitmap_manager_;
-  std::unique_ptr<service_manager::InterfaceRegistry> interface_registry_;
   std::unique_ptr<service_manager::Connector> connector_;
   service_manager::mojom::ConnectorRequest pending_connector_request_;
 

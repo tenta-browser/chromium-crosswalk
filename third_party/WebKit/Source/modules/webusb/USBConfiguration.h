@@ -5,8 +5,8 @@
 #ifndef USBConfiguration_h
 #define USBConfiguration_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "device/usb/public/interfaces/device.mojom-blink.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -15,8 +15,7 @@ class ExceptionState;
 class USBDevice;
 class USBInterface;
 
-class USBConfiguration : public GarbageCollected<USBConfiguration>,
-                         public ScriptWrappable {
+class USBConfiguration : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -29,13 +28,13 @@ class USBConfiguration : public GarbageCollected<USBConfiguration>,
 
   const USBDevice* Device() const;
   size_t Index() const;
-  const device::usb::blink::ConfigurationInfo& Info() const;
+  const device::mojom::blink::UsbConfigurationInfo& Info() const;
 
   uint8_t configurationValue() const { return Info().configuration_value; }
   String configurationName() const { return Info().configuration_name; }
   HeapVector<Member<USBInterface>> interfaces() const;
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   Member<const USBDevice> device_;

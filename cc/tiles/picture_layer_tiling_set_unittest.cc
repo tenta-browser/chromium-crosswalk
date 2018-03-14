@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/memory/ptr_util.h"
+#include "cc/resources/layer_tree_resource_provider.h"
 #include "cc/resources/resource_provider.h"
 #include "cc/test/fake_output_surface.h"
 #include "cc/test/fake_output_surface_client.h"
@@ -46,7 +47,7 @@ class TestablePictureLayerTilingSet : public PictureLayerTilingSet {
 std::unique_ptr<TestablePictureLayerTilingSet> CreateTilingSetWithSettings(
     PictureLayerTilingClient* client,
     const LayerTreeSettings& settings) {
-  return base::MakeUnique<TestablePictureLayerTilingSet>(
+  return std::make_unique<TestablePictureLayerTilingSet>(
       ACTIVE_TREE, client, settings.tiling_interest_area_padding,
       settings.skewport_target_time_in_seconds,
       settings.skewport_extrapolation_limit_in_screen_pixels,
@@ -246,11 +247,12 @@ class PictureLayerTilingSetTestWithResources : public testing::Test {
                float expected_scale) {
     scoped_refptr<TestContextProvider> context_provider =
         TestContextProvider::Create();
-    ASSERT_TRUE(context_provider->BindToCurrentThread());
-    auto shared_bitmap_manager = base::MakeUnique<TestSharedBitmapManager>();
+    ASSERT_EQ(context_provider->BindToCurrentThread(),
+              gpu::ContextResult::kSuccess);
+    auto shared_bitmap_manager = std::make_unique<TestSharedBitmapManager>();
     std::unique_ptr<ResourceProvider> resource_provider =
-        FakeResourceProvider::Create(context_provider.get(),
-                                     shared_bitmap_manager.get());
+        FakeResourceProvider::CreateLayerTreeResourceProvider(
+            context_provider.get(), shared_bitmap_manager.get());
 
     FakePictureLayerTilingClient client(resource_provider.get());
     client.SetTileSize(gfx::Size(256, 256));
@@ -992,7 +994,7 @@ TEST(PictureLayerTilingTest, InvalidateAfterComputeTilePriorityRects) {
       tiling_set->UpdateTilePriorities(viewport, 1.f, time, Occlusion(), true));
 
   // This will invalidate tilings.
-  tiling_set->UpdateRasterSourceDueToLCDChange(raster_source, Region());
+  tiling_set->Invalidate(Region());
 
   EXPECT_TRUE(
       tiling_set->UpdateTilePriorities(viewport, 1.f, time, Occlusion(), true));

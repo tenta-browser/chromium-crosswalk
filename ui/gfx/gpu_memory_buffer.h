@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "base/memory/shared_memory.h"
+#include "base/trace_event/memory_allocator_dump_guid.h"
 #include "build/build_config.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/generic_shared_memory_id.h"
@@ -32,7 +33,9 @@ enum GpuMemoryBufferType {
   SHARED_MEMORY_BUFFER,
   IO_SURFACE_BUFFER,
   NATIVE_PIXMAP,
-  GPU_MEMORY_BUFFER_TYPE_LAST = NATIVE_PIXMAP
+  DXGI_SHARED_HANDLE,
+  ANDROID_HARDWARE_BUFFER,
+  GPU_MEMORY_BUFFER_TYPE_LAST = ANDROID_HARDWARE_BUFFER
 };
 
 using GpuMemoryBufferId = GenericSharedMemoryId;
@@ -86,8 +89,8 @@ class GFX_EXPORT GpuMemoryBuffer {
   virtual int stride(size_t plane) const = 0;
 
   // Set the color space in which this buffer should be interpreted when used
-  // for scanout. Note that this will not impact texturing from the buffer.
-  virtual void SetColorSpaceForScanout(const gfx::ColorSpace& color_space);
+  // as an overlay. Note that this will not impact texturing from the buffer.
+  virtual void SetColorSpace(const gfx::ColorSpace& color_space);
 
   // Returns a unique identifier associated with buffer.
   virtual GpuMemoryBufferId GetId() const = 0;
@@ -97,6 +100,10 @@ class GFX_EXPORT GpuMemoryBuffer {
 
   // Type-checking downcast routine.
   virtual ClientBuffer AsClientBuffer() = 0;
+
+  // Returns the GUID for tracing.
+  virtual base::trace_event::MemoryAllocatorDumpGuid GetGUIDForTracing(
+      uint64_t tracing_process_id) const;
 };
 
 // Returns an instance of |handle| which can be sent over IPC. This duplicates

@@ -113,7 +113,7 @@ void TrackAudioRenderer::OnSetFormat(const media::AudioParameters& params) {
   // new format.
   task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&TrackAudioRenderer::ReconfigureSink, this, params));
+      base::BindOnce(&TrackAudioRenderer::ReconfigureSink, this, params));
 }
 
 TrackAudioRenderer::TrackAudioRenderer(
@@ -171,7 +171,7 @@ void TrackAudioRenderer::Stop() {
   // when the |sink_| is never started.
   if (sink_) {
     sink_->Stop();
-    sink_ = NULL;
+    sink_ = nullptr;
   }
 
   if (!sink_started_ && IsLocalRenderer()) {

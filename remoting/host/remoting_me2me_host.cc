@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/callback.h"
@@ -34,6 +35,7 @@
 #include "ipc/ipc_listener.h"
 #include "jingle/glue/thread_wrapper.h"
 #include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/incoming_broker_client_invitation.h"
 #include "mojo/edk/embedder/platform_channel_pair.h"
 #include "mojo/edk/embedder/scoped_ipc_support.h"
 #include "net/base/network_change_notifier.h"
@@ -82,6 +84,7 @@
 #include "remoting/host/signaling_connector.h"
 #include "remoting/host/single_window_desktop_environment.h"
 #include "remoting/host/switches.h"
+#include "remoting/host/test_echo_extension.h"
 #include "remoting/host/third_party_auth_config.h"
 #include "remoting/host/token_validator_factory_impl.h"
 #include "remoting/host/usage_stats_consent.h"
@@ -98,7 +101,7 @@
 #include "remoting/protocol/transport_context.h"
 #include "remoting/signaling/push_notification_subscriber.h"
 #include "remoting/signaling/xmpp_signal_strategy.h"
-#include "third_party/webrtc/base/scoped_ref_ptr.h"
+#include "third_party/webrtc/rtc_base/scoped_ref_ptr.h"
 
 #if defined(OS_POSIX)
 #include <signal.h>
@@ -174,7 +177,13 @@ const char kSignalParentSwitchName[] = "signal-parent";
 // Command line switch used to enable VP9 encoding.
 const char kEnableVp9SwitchName[] = "enable-vp9";
 
+// Command line switch used to enable hardware H264 encoding.
+const char kEnableH264SwitchName[] = "enable-h264";
+
 const char kWindowIdSwitchName[] = "window-id";
+
+// Command line switch used to send a custom offline reason and exit.
+const char kReportOfflineReasonSwitchName[] = "report-offline-reason";
 
 // Maximum time to wait for clean shutdown to occur, before forcing termination
 // of the process.
@@ -294,10 +303,10 @@ class HostProcess : public ConfigWatcher::Delegate,
   void OnPolicyUpdate(std::unique_ptr<base::DictionaryValue> policies);
   void OnPolicyError();
   void ReportPolicyErrorAndRestartHost();
-  void ApplyHostDomainPolicy();
+  void ApplyHostDomainListPolicy();
   void ApplyUsernamePolicy();
-  bool OnClientDomainPolicyUpdate(base::DictionaryValue* policies);
-  bool OnHostDomainPolicyUpdate(base::DictionaryValue* policies);
+  bool OnClientDomainListPolicyUpdate(base::DictionaryValue* policies);
+  bool OnHostDomainListPolicyUpdate(base::DictionaryValue* policies);
   bool OnUsernamePolicyUpdate(base::DictionaryValue* policies);
   bool OnNatPolicyUpdate(base::DictionaryValue* policies);
   bool OnRelayPolicyUpdate(base::DictionaryValue* policies);
@@ -372,11 +381,12 @@ class HostProcess : public ConfigWatcher::Delegate,
   std::string host_owner_email_;
   bool use_service_account_ = false;
   bool enable_vp9_ = false;
+  bool enable_h264_ = false;
 
   std::unique_ptr<PolicyWatcher> policy_watcher_;
   PolicyState policy_state_ = POLICY_INITIALIZING;
-  std::string client_domain_;
-  std::string host_domain_;
+  std::vector<std::string> client_domain_list_;
+  std::vector<std::string> host_domain_list_;
   bool host_username_match_required_ = false;
   bool allow_nat_traversal_ = true;
   bool allow_relay_ = true;
@@ -433,6 +443,7 @@ class HostProcess : public ConfigWatcher::Delegate,
 
   int* exit_code_out_;
   bool signal_parent_ = false;
+  std::string report_offline_reason_;
 
   scoped_refptr<PairingRegistry> pairing_registry_;
 
@@ -453,6 +464,13 @@ HostProcess::HostProcess(std::unique_ptr<ChromotingHostContext> context,
   // desktop_environment_options_.desktop_capture_options()
   //     ->set_use_update_notifications(true);
   // And remove the same line from me2me_desktop_environment.cc.
+
+
+  // TODO(jarhar): Replace this ifdef with a chrome policy.
+#ifdef CHROME_REMOTE_DESKTOP_FILE_TRANSFER_ENABLED
+  desktop_environment_options_.set_enable_file_transfer(true);
+#endif
+
   StartOnUiThread();
 }
 
@@ -479,16 +497,18 @@ bool HostProcess::InitWithCommandLine(const base::CommandLine* cmd_line) {
   ipc_support_ = base::MakeUnique<mojo::edk::ScopedIPCSupport>(
       context_->network_task_runner()->task_runner(),
       mojo::edk::ScopedIPCSupport::ShutdownPolicy::FAST);
-  mojo::edk::SetParentPipeHandle(
-      mojo::edk::PlatformChannelPair::PassClientHandleFromParentProcess(
-          *cmd_line));
+
+  auto invitation =
+      mojo::edk::IncomingBrokerClientInvitation::AcceptFromCommandLine(
+          mojo::edk::TransportProtocol::kLegacy);
 
   // Connect to the daemon process.
   daemon_channel_ = IPC::ChannelProxy::Create(
-      mojo::edk::CreateChildMessagePipe(
-          cmd_line->GetSwitchValueASCII(kMojoPipeToken))
+      invitation
+          ->ExtractMessagePipe(cmd_line->GetSwitchValueASCII(kMojoPipeToken))
           .release(),
-      IPC::Channel::MODE_CLIENT, this, context_->network_task_runner());
+      IPC::Channel::MODE_CLIENT, this, context_->network_task_runner(),
+      base::ThreadTaskRunnerHandle::Get());
 
 #else  // !defined(REMOTING_MULTI_PROCESS)
   if (cmd_line->HasSwitch(kHostConfigSwitchName)) {
@@ -533,6 +553,16 @@ bool HostProcess::InitWithCommandLine(const base::CommandLine* cmd_line) {
   directory_bot_jid_ = service_urls->directory_bot_jid();
 
   signal_parent_ = cmd_line->HasSwitch(kSignalParentSwitchName);
+
+  if (cmd_line->HasSwitch(kReportOfflineReasonSwitchName)) {
+    report_offline_reason_ =
+        cmd_line->GetSwitchValueASCII(kReportOfflineReasonSwitchName);
+    if (report_offline_reason_.empty()) {
+      LOG(ERROR) << "--" << kReportOfflineReasonSwitchName
+                 << " requires an argument.";
+      return false;
+    }
+  }
 
   enable_window_capture_ = cmd_line->HasSwitch(kWindowIdSwitchName);
   if (enable_window_capture_) {
@@ -591,7 +621,7 @@ void HostProcess::OnConfigUpdated(
   } else if (state_ == HOST_STARTED) {
     // Reapply policies that could be affected by a new config.
     DCHECK_EQ(policy_state_, POLICY_LOADED);
-    ApplyHostDomainPolicy();
+    ApplyHostDomainListPolicy();
     ApplyUsernamePolicy();
 
     // TODO(sergeyu): Here we assume that PIN is the only part of the config
@@ -724,7 +754,7 @@ void HostProcess::CreateAuthenticatorFactory() {
 
     factory = protocol::Me2MeHostAuthenticatorFactory::CreateWithPin(
         use_service_account_, host_owner_, local_certificate, key_pair_,
-        client_domain_, pin_hash_, pairing_registry);
+        client_domain_list_, pin_hash_, pairing_registry);
 
     host_->set_pairing_registry(pairing_registry);
   } else {
@@ -740,7 +770,7 @@ void HostProcess::CreateAuthenticatorFactory() {
           context_->file_task_runner()));
       cert_watcher_->Start();
     }
-    cert_watcher_->SetMonitor(host_->AsWeakPtr());
+    cert_watcher_->SetMonitor(host_->status_monitor());
 #endif
 
     scoped_refptr<protocol::TokenValidatorFactory> token_validator_factory =
@@ -748,7 +778,7 @@ void HostProcess::CreateAuthenticatorFactory() {
                                       context_->url_request_context_getter());
     factory = protocol::Me2MeHostAuthenticatorFactory::CreateWithThirdPartyAuth(
         use_service_account_, host_owner_, local_certificate, key_pair_,
-        client_domain_, token_validator_factory);
+        client_domain_list_, token_validator_factory);
   }
 
 #if defined(OS_POSIX)
@@ -806,8 +836,15 @@ void HostProcess::StartOnUiThread() {
     return;
   }
 
+  if (!report_offline_reason_.empty()) {
+    // Don't need to do any UI initialization.
+    context_->network_task_runner()->PostTask(
+        FROM_HERE, base::Bind(&HostProcess::StartOnNetworkThread, this));
+    return;
+  }
+
   policy_watcher_ =
-      PolicyWatcher::Create(nullptr, context_->file_task_runner());
+      PolicyWatcher::CreateWithTaskRunner(context_->file_task_runner());
   policy_watcher_->StartWatching(
       base::Bind(&HostProcess::OnPolicyUpdate, base::Unretained(this)),
       base::Bind(&HostProcess::OnPolicyError, base::Unretained(this)));
@@ -848,11 +885,13 @@ void HostProcess::StartOnUiThread() {
   if (enable_window_capture_) {
     desktop_environment_factory = new SingleWindowDesktopEnvironmentFactory(
         context_->network_task_runner(), context_->video_capture_task_runner(),
-        context_->input_task_runner(), context_->ui_task_runner(), window_id_);
+        context_->input_task_runner(), context_->ui_task_runner(),
+        context_->system_input_injector_factory(), window_id_);
   } else {
     desktop_environment_factory = new Me2MeDesktopEnvironmentFactory(
         context_->network_task_runner(), context_->video_capture_task_runner(),
-        context_->input_task_runner(), context_->ui_task_runner());
+        context_->input_task_runner(), context_->ui_task_runner(),
+        context_->system_input_injector_factory());
   }
 #endif  // !defined(REMOTING_MULTI_PROCESS)
 
@@ -892,6 +931,9 @@ void HostProcess::OnUnknownHostIdError() {
 }
 
 void HostProcess::OnHeartbeatSuccessful() {
+  if (state_ != HOST_STARTED) {
+    return;
+  }
   HOST_LOG << "Host ready to receive connections.";
 #if defined(OS_POSIX)
   if (signal_parent_) {
@@ -1006,6 +1048,15 @@ bool HostProcess::ApplyConfig(const base::DictionaryValue& config) {
     config.GetBoolean(kEnableVp9ConfigPath, &enable_vp9_);
   }
 
+  // Allow offering of hardware H264 encoding to be overridden by the command
+  // line.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          kEnableH264SwitchName)) {
+    enable_h264_ = true;
+  } else {
+    config.GetBoolean(kEnableH264ConfigPath, &enable_h264_);
+  }
+
   return true;
 }
 
@@ -1019,8 +1070,8 @@ void HostProcess::OnPolicyUpdate(
   }
 
   bool restart_required = false;
-  restart_required |= OnClientDomainPolicyUpdate(policies.get());
-  restart_required |= OnHostDomainPolicyUpdate(policies.get());
+  restart_required |= OnClientDomainListPolicyUpdate(policies.get());
+  restart_required |= OnHostDomainListPolicyUpdate(policies.get());
   restart_required |= OnCurtainPolicyUpdate(policies.get());
   // Note: UsernamePolicyUpdate must run after OnCurtainPolicyUpdate.
   restart_required |= OnUsernamePolicyUpdate(policies.get());
@@ -1069,13 +1120,14 @@ void HostProcess::ReportPolicyErrorAndRestartHost() {
   RestartHost(kHostOfflineReasonPolicyReadError);
 }
 
-void HostProcess::ApplyHostDomainPolicy() {
+void HostProcess::ApplyHostDomainListPolicy() {
   if (state_ != HOST_STARTED)
     return;
 
-  HOST_LOG << "Policy sets host domain: " << host_domain_;
+  HOST_LOG << "Policy sets host domains: "
+           << base::JoinString(host_domain_list_, ", ");
 
-  if (!host_domain_.empty()) {
+  if (!host_domain_list_.empty()) {
     // If the user does not have a Google email, their client JID will not be
     // based on their email. In that case, the username/host domain policies
     // would be meaningless, since there is no way to check that the JID
@@ -1086,32 +1138,55 @@ void HostProcess::ApplyHostDomainPolicy() {
       ShutdownHost(kInvalidHostDomainExitCode);
     }
 
-    if (!base::EndsWith(host_owner_, std::string("@") + host_domain_,
-                        base::CompareCase::INSENSITIVE_ASCII)) {
+    bool matched = false;
+    for (const std::string& domain : host_domain_list_) {
+      if (base::EndsWith(host_owner_, std::string("@") + domain,
+                         base::CompareCase::INSENSITIVE_ASCII)) {
+        matched = true;
+      }
+    }
+    if (!matched) {
       LOG(ERROR) << "The host domain does not match the policy.";
       ShutdownHost(kInvalidHostDomainExitCode);
     }
   }
 }
 
-bool HostProcess::OnHostDomainPolicyUpdate(base::DictionaryValue* policies) {
+bool HostProcess::OnHostDomainListPolicyUpdate(
+    base::DictionaryValue* policies) {
   // Returns true if the host has to be restarted after this policy update.
   DCHECK(context_->network_task_runner()->BelongsToCurrentThread());
 
-  if (!policies->GetString(policy::key::kRemoteAccessHostDomain,
-                           &host_domain_)) {
+  const base::ListValue* list;
+  if (!policies->GetList(policy::key::kRemoteAccessHostDomainList, &list)) {
     return false;
   }
 
-  ApplyHostDomainPolicy();
+  host_domain_list_.clear();
+  for (const auto& value : *list) {
+    host_domain_list_.push_back(value.GetString());
+  }
+
+  ApplyHostDomainListPolicy();
   return false;
 }
 
-bool HostProcess::OnClientDomainPolicyUpdate(base::DictionaryValue* policies) {
+bool HostProcess::OnClientDomainListPolicyUpdate(
+    base::DictionaryValue* policies) {
   // Returns true if the host has to be restarted after this policy update.
   DCHECK(context_->network_task_runner()->BelongsToCurrentThread());
-  return policies->GetString(policy::key::kRemoteAccessHostClientDomain,
-                             &client_domain_);
+  const base::ListValue* list;
+  if (!policies->GetList(policy::key::kRemoteAccessHostClientDomainList,
+                         &list)) {
+    return false;
+  }
+
+  client_domain_list_.clear();
+  for (const auto& value : *list) {
+    client_domain_list_.push_back(value.GetString());
+  }
+
+  return true;
 }
 
 void HostProcess::ApplyUsernamePolicy() {
@@ -1121,7 +1196,7 @@ void HostProcess::ApplyUsernamePolicy() {
   if (host_username_match_required_) {
     HOST_LOG << "Policy requires host username match.";
 
-    // See comment in ApplyHostDomainPolicy.
+    // See comment in ApplyHostDomainListPolicy.
     if (host_owner_ != host_owner_email_) {
       LOG(ERROR) << "The username and host domain policies cannot be enabled "
                  << "for accounts with a non-Google email.";
@@ -1397,7 +1472,10 @@ void HostProcess::StartHostIfReady() {
 
   // Start the host if both the config and the policies are loaded.
   if (!serialized_config_.empty()) {
-    if (policy_state_ == POLICY_LOADED) {
+    if (!report_offline_reason_.empty()) {
+      SetState(HOST_GOING_OFFLINE_TO_STOP);
+      GoOffline(report_offline_reason_);
+    } else if (policy_state_ == POLICY_LOADED) {
       StartHost();
     } else if (policy_state_ == POLICY_ERROR_REPORT_PENDING) {
       ReportPolicyErrorAndRestartHost();
@@ -1441,8 +1519,7 @@ void HostProcess::StartHost() {
               context_->url_request_context_getter()),
           network_settings, protocol::TransportRole::SERVER);
   transport_context->set_ice_config_url(
-      ServiceUrls::GetInstance()->ice_config_url());
-
+      ServiceUrls::GetInstance()->ice_config_url(), oauth_token_getter_.get());
   std::unique_ptr<protocol::SessionManager> session_manager(
       new protocol::JingleSessionManager(signal_strategy_.get()));
 
@@ -1452,6 +1529,8 @@ void HostProcess::StartHost() {
     protocol_config->DisableAudioChannel();
   if (enable_vp9_)
     protocol_config->set_vp9_experiment_enabled(true);
+  if (enable_h264_)
+    protocol_config->set_h264_experiment_enabled(true);
   protocol_config->set_webrtc_supported(true);
   session_manager->set_protocol_config(std::move(protocol_config));
 
@@ -1466,6 +1545,8 @@ void HostProcess::StartHost() {
         base::MakeUnique<SecurityKeyExtension>(context_->file_task_runner()));
   }
 
+  host_->AddExtension(base::MakeUnique<TestEchoExtension>());
+
   // TODO(simonmorris): Get the maximum session duration from a policy.
 #if defined(OS_LINUX)
   host_->SetMaximumSessionDuration(base::TimeDelta::FromHours(20));
@@ -1474,29 +1555,28 @@ void HostProcess::StartHost() {
   host_change_notification_listener_.reset(new HostChangeNotificationListener(
       this, host_id_, signal_strategy_.get(), directory_bot_jid_));
 
-  host_status_logger_.reset(new HostStatusLogger(
-      host_->AsWeakPtr(), ServerLogEntry::ME2ME,
-      signal_strategy_.get(), directory_bot_jid_));
+  host_status_logger_.reset(
+      new HostStatusLogger(host_->status_monitor(), ServerLogEntry::ME2ME,
+                           signal_strategy_.get(), directory_bot_jid_));
 
   power_save_blocker_.reset(new HostPowerSaveBlocker(
-      host_->AsWeakPtr(),
-      context_->ui_task_runner(),
+      host_->status_monitor(), context_->ui_task_runner(),
       context_->file_task_runner()));
 
   // Set up reporting the host status notifications.
 #if defined(REMOTING_MULTI_PROCESS)
   host_event_logger_.reset(
-      new IpcHostEventLogger(host_->AsWeakPtr(), daemon_channel_.get()));
+      new IpcHostEventLogger(host_->status_monitor(), daemon_channel_.get()));
 #else  // !defined(REMOTING_MULTI_PROCESS)
   host_event_logger_ =
-      HostEventLogger::Create(host_->AsWeakPtr(), kApplicationName);
+      HostEventLogger::Create(host_->status_monitor(), kApplicationName);
 #endif  // !defined(REMOTING_MULTI_PROCESS)
 
   host_->Start(host_owner_email_);
 
   CreateAuthenticatorFactory();
 
-  ApplyHostDomainPolicy();
+  ApplyHostDomainListPolicy();
   ApplyUsernamePolicy();
 }
 
@@ -1628,20 +1708,23 @@ int HostProcessMain() {
   HOST_LOG << "Starting host process: version " << STRINGIZE(VERSION);
 
 #if defined(OS_LINUX)
-  // Required in order for us to run multiple X11 threads.
-  XInitThreads();
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          kReportOfflineReasonSwitchName)) {
+    // Required in order for us to run multiple X11 threads.
+    XInitThreads();
 
-  // Required for any calls into GTK functions, such as the Disconnect and
-  // Continue windows, though these should not be used for the Me2Me case
-  // (crbug.com/104377).
-  gtk_init(nullptr, nullptr);
+    // Required for any calls into GTK functions, such as the Disconnect and
+    // Continue windows, though these should not be used for the Me2Me case
+    // (crbug.com/104377).
+    gtk_init(nullptr, nullptr);
+  }
 
   // Need to prime the host OS version value for linux to prevent IO on the
   // network thread. base::GetLinuxDistro() caches the result.
   base::GetLinuxDistro();
 #endif
 
-  base::TaskScheduler::CreateAndSetSimpleTaskScheduler("Me2Me");
+  base::TaskScheduler::CreateAndStartWithDefaultParams("Me2Me");
 
   // Create the main message loop and start helper threads.
   base::MessageLoopForUI message_loop;

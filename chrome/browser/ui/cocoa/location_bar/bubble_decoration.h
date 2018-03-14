@@ -33,13 +33,10 @@ class BubbleDecoration : public LocationBarDecoration {
   CGFloat GetWidthForSpace(CGFloat width) override;
   NSRect GetBackgroundFrame(NSRect frame) override;
   void DrawInFrame(NSRect frame, NSView* control_view) override;
+  NSRect GetTrackingFrame(NSRect frame) override;
   NSFont* GetFont() const override;
 
  protected:
-  // Returns the amount of padding between the divider and the omnibox text.
-  // Returns 0 in non-MD since there's no divider.
-  CGFloat DividerPadding() const;
-
   // Helper returning bubble width for the given |image| and |label|
   // assuming |font_| (for sizing text).  Arguments can be nil.
   CGFloat GetWidthForImageAndLabel(NSImage* image, NSString* label);
@@ -50,6 +47,9 @@ class BubbleDecoration : public LocationBarDecoration {
 
   // Returns the text color when the theme is dark.
   virtual NSColor* GetDarkModeTextColor();
+
+  // Returns false if the |label_| is nil or empty.
+  bool HasLabel() const;
 
   // Image drawn in the left side of the bubble.
   base::scoped_nsobject<NSImage> image_;

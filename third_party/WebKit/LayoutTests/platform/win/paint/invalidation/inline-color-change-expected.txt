@@ -4,10 +4,15 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutInline SPAN id='target'",
+          "rect": [8, 72, 37, 19],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutText #text",
           "rect": [8, 72, 37, 19],
           "reason": "style change"
         }

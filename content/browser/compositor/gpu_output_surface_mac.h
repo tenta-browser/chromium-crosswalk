@@ -19,19 +19,18 @@ class GpuOutputSurfaceMac
       scoped_refptr<ui::ContextProviderCommandBuffer> context,
       gpu::SurfaceHandle surface_handle,
       const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
-      std::unique_ptr<display_compositor::CompositorOverlayCandidateValidator>
+      std::unique_ptr<viz::CompositorOverlayCandidateValidator>
           overlay_candidate_validator,
       gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager);
   ~GpuOutputSurfaceMac() override;
 
-  // cc::OutputSurface implementation.
-  void SwapBuffers(cc::OutputSurfaceFrame frame) override;
+  // viz::OutputSurface implementation.
+  void SwapBuffers(viz::OutputSurfaceFrame frame) override;
   bool SurfaceIsSuspendForRecycle() const override;
 
   // BrowserCompositorOutputSurface implementation.
   void OnGpuSwapBuffersCompleted(
-      const std::vector<ui::LatencyInfo>& latency_info,
-      gfx::SwapResult result,
+      const gfx::SwapResponse& response,
       const gpu::GpuProcessHostedCALayerTreeParamsMac* params_mac) override;
   void SetSurfaceSuspendedForRecycle(bool suspended) override;
 

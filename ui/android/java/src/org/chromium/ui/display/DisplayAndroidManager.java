@@ -19,7 +19,6 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.SuppressFBWarnings;
 
 /**
  * DisplayAndroidManager is a class that informs its observers Display changes.
@@ -170,8 +169,11 @@ public class DisplayAndroidManager {
         public void onDisplayChanged(int sdkDisplayId) {
             PhysicalDisplayAndroid displayAndroid =
                     (PhysicalDisplayAndroid) mIdMap.get(sdkDisplayId);
-            if (displayAndroid != null) {
-                displayAndroid.updateFromDisplay(getDisplayManager().getDisplay(sdkDisplayId));
+            Display display = getDisplayManager().getDisplay(sdkDisplayId);
+            // Note display null check here is needed because there appear to be an edge case in
+            // android display code, similar to onDisplayAdded.
+            if (displayAndroid != null && display != null) {
+                displayAndroid.updateFromDisplay(display);
             }
         }
     }
@@ -190,7 +192,6 @@ public class DisplayAndroidManager {
     private DisplayListenerBackend mBackend;
     private int mNextVirtualDisplayId = VIRTUAL_DISPLAY_ID_BEGIN;
 
-    @SuppressFBWarnings("LI_LAZY_INIT_UPDATE_STATIC")
     /* package */ static DisplayAndroidManager getInstance() {
         if (sDisplayAndroidManager == null) {
             // Split between creation and initialization to allow for calls
@@ -309,15 +310,15 @@ public class DisplayAndroidManager {
     /* package */ void updateDisplayOnNativeSide(DisplayAndroid displayAndroid) {
         if (mNativePointer == 0) return;
         nativeUpdateDisplay(mNativePointer, displayAndroid.getDisplayId(),
-                displayAndroid.getPhysicalDisplayWidth(), displayAndroid.getPhysicalDisplayHeight(),
                 displayAndroid.getDisplayWidth(), displayAndroid.getDisplayHeight(),
                 displayAndroid.getDipScale(), displayAndroid.getRotationDegrees(),
-                displayAndroid.getBitsPerPixel(), displayAndroid.getBitsPerComponent());
+                displayAndroid.getBitsPerPixel(), displayAndroid.getBitsPerComponent(),
+                displayAndroid.getIsWideColorGamut());
     }
 
     private native void nativeUpdateDisplay(long nativeDisplayAndroidManager, int sdkDisplayId,
-            int physicalWidth, int physicalHeight, int width, int height, float dipScale,
-            int rotationDegrees, int bitsPerPixel, int bitsPerComponent);
+            int width, int height, float dipScale, int rotationDegrees, int bitsPerPixel,
+            int bitsPerComponent, boolean isWideColorGamut);
     private native void nativeRemoveDisplay(long nativeDisplayAndroidManager, int sdkDisplayId);
     private native void nativeSetPrimaryDisplayId(
             long nativeDisplayAndroidManager, int sdkDisplayId);

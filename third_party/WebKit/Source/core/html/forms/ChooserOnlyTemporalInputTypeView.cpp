@@ -27,12 +27,11 @@
 
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/dom/Document.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/html/HTMLDivElement.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/html/forms/HTMLInputElement.h"
 #include "core/page/ChromeClient.h"
 #include "core/page/Page.h"
-#include "platform/UserGestureIndicator.h"
 
 namespace blink {
 
@@ -51,7 +50,7 @@ ChooserOnlyTemporalInputTypeView::~ChooserOnlyTemporalInputTypeView() {
   DCHECK(!date_time_chooser_);
 }
 
-DEFINE_TRACE(ChooserOnlyTemporalInputTypeView) {
+void ChooserOnlyTemporalInputTypeView::Trace(blink::Visitor* visitor) {
   visitor->Trace(input_type_);
   visitor->Trace(date_time_chooser_);
   InputTypeView::Trace(visitor);
@@ -60,8 +59,9 @@ DEFINE_TRACE(ChooserOnlyTemporalInputTypeView) {
 
 void ChooserOnlyTemporalInputTypeView::HandleDOMActivateEvent(Event*) {
   if (GetElement().IsDisabledOrReadOnly() || !GetElement().GetLayoutObject() ||
-      !UserGestureIndicator::ProcessingUserGesture() ||
-      GetElement().openShadowRoot())
+      !Frame::HasTransientUserActivation(
+          GetElement().GetDocument().GetFrame()) ||
+      GetElement().OpenShadowRoot())
     return;
 
   if (date_time_chooser_)
@@ -90,7 +90,7 @@ void ChooserOnlyTemporalInputTypeView::CreateShadowSubtree() {
 }
 
 void ChooserOnlyTemporalInputTypeView::UpdateView() {
-  Node* node = GetElement().UserAgentShadowRoot()->FirstChild();
+  Node* node = GetElement().UserAgentShadowRoot()->firstChild();
   if (!node || !node->IsHTMLElement())
     return;
   String display_value;

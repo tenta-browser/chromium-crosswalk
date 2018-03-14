@@ -6,12 +6,9 @@
 
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/V8IteratorResultValue.h"
-#include "bindings/modules/v8/ByteStringSequenceSequenceOrByteStringByteStringRecordOrHeaders.h"
+#include "bindings/modules/v8/byte_string_sequence_sequence_or_byte_string_byte_string_record.h"
 #include "core/dom/Iterator.h"
 #include "platform/loader/fetch/FetchUtils.h"
-#include "platform/wtf/NotFound.h"
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
@@ -22,9 +19,7 @@ class HeadersIterationSource final
     : public PairIterable<String, String>::IterationSource {
  public:
   explicit HeadersIterationSource(const FetchHeaderList* headers)
-      : headers_(headers->Clone()), current_(0) {
-    headers_->SortAndCombine();
-  }
+      : headers_(headers->SortAndCombine()), current_(0) {}
 
   bool Next(ScriptState* script_state,
             String& key,
@@ -33,22 +28,17 @@ class HeadersIterationSource final
     // This simply advances an index and returns the next value if any; the
     // iterated list is not exposed to script so it will never be mutated
     // during iteration.
-    if (current_ >= headers_->size())
+    if (current_ >= headers_.size())
       return false;
 
-    const FetchHeaderList::Header& header = headers_->Entry(current_++);
+    const FetchHeaderList::Header& header = headers_.at(current_++);
     key = header.first;
     value = header.second;
     return true;
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
-    visitor->Trace(headers_);
-    PairIterable<String, String>::IterationSource::Trace(visitor);
-  }
-
  private:
-  const Member<FetchHeaderList> headers_;
+  Vector<std::pair<String, String>> headers_;
   size_t current_;
 };
 
@@ -58,23 +48,13 @@ Headers* Headers::Create(ExceptionState&) {
   return new Headers;
 }
 
-Headers* Headers::Create(
-    const ByteStringSequenceSequenceOrByteStringByteStringRecordOrHeaders& init,
-    ExceptionState& exception_state) {
+Headers* Headers::Create(const HeadersInit& init,
+                         ExceptionState& exception_state) {
   // "The Headers(|init|) constructor, when invoked, must run these steps:"
   // "1. Let |headers| be a new Headers object whose guard is "none".
   Headers* headers = Create(exception_state);
   // "2. If |init| is given, fill headers with |init|. Rethrow any exception."
-  if (init.isByteStringSequenceSequence()) {
-    headers->FillWith(init.getAsByteStringSequenceSequence(), exception_state);
-  } else if (init.isByteStringByteStringRecord()) {
-    headers->FillWith(init.getAsByteStringByteStringRecord(), exception_state);
-  } else if (init.isHeaders()) {
-    // This branch will not be necessary once http://crbug.com/690428 is fixed.
-    headers->FillWith(init.getAsHeaders(), exception_state);
-  } else {
-    NOTREACHED();
-  }
+  headers->FillWith(init, exception_state);
   // "3. Return |headers|."
   return headers;
 }
@@ -95,37 +75,40 @@ void Headers::append(const String& name,
                      ExceptionState& exception_state) {
   // "To append a name/value (|name|/|value|) pair to a Headers object
   // (|headers|), run these steps:"
-  // "1. If |name| is not a name or |value| is not a value, throw a
+  // "1. Normalize |value|."
+  const String normalized_value = FetchUtils::NormalizeHeaderValue(value);
+  // "2. If |name| is not a name or |value| is not a value, throw a
   //     TypeError."
   if (!FetchHeaderList::IsValidHeaderName(name)) {
     exception_state.ThrowTypeError("Invalid name");
     return;
   }
-  if (!FetchHeaderList::IsValidHeaderValue(value)) {
+  if (!FetchHeaderList::IsValidHeaderValue(normalized_value)) {
     exception_state.ThrowTypeError("Invalid value");
     return;
   }
-  // "2. If guard is |request|, throw a TypeError."
+  // "3. If guard is |immutable|, throw a TypeError."
   if (guard_ == kImmutableGuard) {
     exception_state.ThrowTypeError("Headers are immutable");
     return;
   }
-  // "3. Otherwise, if guard is |request| and |name| is a forbidden header
+  // "4. Otherwise, if guard is |request| and |name| is a forbidden header
   //     name, return."
   if (guard_ == kRequestGuard && FetchUtils::IsForbiddenHeaderName(name))
     return;
-  // "4. Otherwise, if guard is |request-no-CORS| and |name|/|value| is not a
-  //     simple header, return."
+  // "5. Otherwise, if guard is |request-no-CORS| and |name|/|value| is not a
+  //     CORS-safelisted header, return."
   if (guard_ == kRequestNoCORSGuard &&
-      !FetchUtils::IsSimpleHeader(AtomicString(name), AtomicString(value)))
+      !FetchUtils::IsCORSSafelistedHeader(AtomicString(name),
+                                          AtomicString(normalized_value)))
     return;
-  // "5. Otherwise, if guard is |response| and |name| is a forbidden response
+  // "6. Otherwise, if guard is |response| and |name| is a forbidden response
   //     header name, return."
   if (guard_ == kResponseGuard &&
       FetchUtils::IsForbiddenResponseHeaderName(name))
     return;
-  // "6. Append |name|/|value| to header list."
-  header_list_->Append(name, value);
+  // "7. Append |name|/|value| to header list."
+  header_list_->Append(name, normalized_value);
 }
 
 void Headers::remove(const String& name, ExceptionState& exception_state) {
@@ -145,9 +128,9 @@ void Headers::remove(const String& name, ExceptionState& exception_state) {
   if (guard_ == kRequestGuard && FetchUtils::IsForbiddenHeaderName(name))
     return;
   // "4. Otherwise, if guard is |request-no-CORS| and |name|/`invalid` is not
-  //     a simple header, return."
+  //     a CORS-safelisted header, return."
   if (guard_ == kRequestNoCORSGuard &&
-      !FetchUtils::IsSimpleHeader(AtomicString(name), "invalid"))
+      !FetchUtils::IsCORSSafelistedHeader(AtomicString(name), "invalid"))
     return;
   // "5. Otherwise, if guard is |response| and |name| is a forbidden response
   //     header name, return."
@@ -173,21 +156,6 @@ String Headers::get(const String& name, ExceptionState& exception_state) {
   return result;
 }
 
-Vector<String> Headers::getAll(const String& name,
-                               ExceptionState& exception_state) {
-  // "The getAll(|name|) method, when invoked, must run these steps:"
-  // "1. If |name| is not a name, throw a TypeError."
-  if (!FetchHeaderList::IsValidHeaderName(name)) {
-    exception_state.ThrowTypeError("Invalid name");
-    return Vector<String>();
-  }
-  // "2. Return the values of all headers in header list whose name is |name|,
-  //     in list order, and the empty sequence otherwise."
-  Vector<String> result;
-  header_list_->GetAll(name, result);
-  return result;
-}
-
 bool Headers::has(const String& name, ExceptionState& exception_state) {
   // "The has(|name|) method, when invoked, must run these steps:"
   // "1. If |name| is not a name, throw a TypeError."
@@ -204,55 +172,69 @@ void Headers::set(const String& name,
                   const String& value,
                   ExceptionState& exception_state) {
   // "The set(|name|, |value|) method, when invoked, must run these steps:"
-  // "1. If |name| is not a name or |value| is not a value, throw a
+  // "1. Normalize |value|."
+  const String normalized_value = FetchUtils::NormalizeHeaderValue(value);
+  // "2. If |name| is not a name or |value| is not a value, throw a
   //     TypeError."
   if (!FetchHeaderList::IsValidHeaderName(name)) {
     exception_state.ThrowTypeError("Invalid name");
     return;
   }
-  if (!FetchHeaderList::IsValidHeaderValue(value)) {
+  if (!FetchHeaderList::IsValidHeaderValue(normalized_value)) {
     exception_state.ThrowTypeError("Invalid value");
     return;
   }
-  // "2. If guard is |immutable|, throw a TypeError."
+  // "3. If guard is |immutable|, throw a TypeError."
   if (guard_ == kImmutableGuard) {
     exception_state.ThrowTypeError("Headers are immutable");
     return;
   }
-  // "3. Otherwise, if guard is |request| and |name| is a forbidden header
+  // "4. Otherwise, if guard is |request| and |name| is a forbidden header
   //     name, return."
   if (guard_ == kRequestGuard && FetchUtils::IsForbiddenHeaderName(name))
     return;
-  // "4. Otherwise, if guard is |request-no-CORS| and |name|/|value| is not a
-  //     simple header, return."
+  // "5. Otherwise, if guard is |request-no-CORS| and |name|/|value| is not a
+  //     CORS-safelisted header, return."
   if (guard_ == kRequestNoCORSGuard &&
-      !FetchUtils::IsSimpleHeader(AtomicString(name), AtomicString(value)))
+      !FetchUtils::IsCORSSafelistedHeader(AtomicString(name),
+                                          AtomicString(normalized_value)))
     return;
-  // "5. Otherwise, if guard is |response| and |name| is a forbidden response
+  // "6. Otherwise, if guard is |response| and |name| is a forbidden response
   //     header name, return."
   if (guard_ == kResponseGuard &&
       FetchUtils::IsForbiddenResponseHeaderName(name))
     return;
-  // "6. Set |name|/|value| in header list."
-  header_list_->Set(name, value);
+  // "7. Set |name|/|value| in header list."
+  header_list_->Set(name, normalized_value);
 }
 
+// This overload is not called directly by Web APIs, but rather by other C++
+// classes. For example, when initializing a Request object it is possible that
+// a Request's Headers must be filled with an existing Headers object.
 void Headers::FillWith(const Headers* object, ExceptionState& exception_state) {
-  ASSERT(header_list_->size() == 0);
-  // There used to be specific steps describing filling a Headers object with
-  // another Headers object, but it has since been removed because it should be
-  // handled like a sequence (http://crbug.com/690428).
-  for (size_t i = 0; i < object->header_list_->List().size(); ++i) {
-    append(object->header_list_->List()[i]->first,
-           object->header_list_->List()[i]->second, exception_state);
+  DCHECK(header_list_->size() == 0);
+  for (const auto& header : object->header_list_->List()) {
+    append(header.first, header.second, exception_state);
     if (exception_state.HadException())
       return;
   }
 }
 
+void Headers::FillWith(const HeadersInit& init,
+                       ExceptionState& exception_state) {
+  DCHECK_EQ(header_list_->size(), 0U);
+  if (init.IsByteStringSequenceSequence()) {
+    FillWith(init.GetAsByteStringSequenceSequence(), exception_state);
+  } else if (init.IsByteStringByteStringRecord()) {
+    FillWith(init.GetAsByteStringByteStringRecord(), exception_state);
+  } else {
+    NOTREACHED();
+  }
+}
+
 void Headers::FillWith(const Vector<Vector<String>>& object,
                        ExceptionState& exception_state) {
-  ASSERT(!header_list_->size());
+  DCHECK(!header_list_->size());
   // "1. If |object| is a sequence, then for each |header| in |object|, run
   //     these substeps:
   //     1. If |header| does not contain exactly two items, then throw a
@@ -272,7 +254,7 @@ void Headers::FillWith(const Vector<Vector<String>>& object,
 
 void Headers::FillWith(const Vector<std::pair<String, String>>& object,
                        ExceptionState& exception_state) {
-  ASSERT(!header_list_->size());
+  DCHECK(!header_list_->size());
 
   for (const auto& item : object) {
     append(item.first, item.second, exception_state);
@@ -287,8 +269,9 @@ Headers::Headers()
 Headers::Headers(FetchHeaderList* header_list)
     : header_list_(header_list), guard_(kNoneGuard) {}
 
-DEFINE_TRACE(Headers) {
+void Headers::Trace(blink::Visitor* visitor) {
   visitor->Trace(header_list_);
+  ScriptWrappable::Trace(visitor);
 }
 
 PairIterable<String, String>::IterationSource* Headers::StartIteration(

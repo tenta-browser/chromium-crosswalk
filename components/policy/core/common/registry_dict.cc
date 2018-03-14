@@ -42,7 +42,7 @@ std::unique_ptr<base::Value> ConvertValue(const base::Value& value,
     return value.CreateDeepCopy();
 
   // If the type is good already, go with it.
-  if (value.IsType(schema.type())) {
+  if (value.type() == schema.type()) {
     // Recurse for complex types.
     const base::DictionaryValue* dict = nullptr;
     const base::ListValue* list = nullptr;
@@ -54,7 +54,7 @@ std::unique_ptr<base::Value> ConvertValue(const base::Value& value,
         std::unique_ptr<base::Value> converted =
             ConvertValue(entry.value(), schema.GetProperty(entry.key()));
         if (converted)
-          result->SetWithoutPathExpansion(entry.key(), converted.release());
+          result->SetWithoutPathExpansion(entry.key(), std::move(converted));
       }
       return std::move(result);
     } else if (value.GetAsList(&list)) {
@@ -129,7 +129,7 @@ std::unique_ptr<base::Value> ConvertValue(const base::Value& value,
       if (value.GetAsString(&string_value)) {
         std::unique_ptr<base::Value> result =
             base::JSONReader::Read(string_value);
-        if (result && result->IsType(schema.type()))
+        if (result && result->type() == schema.type())
           return result;
       }
       break;
@@ -140,8 +140,8 @@ std::unique_ptr<base::Value> ConvertValue(const base::Value& value,
       break;
   }
 
-  LOG(WARNING) << "Failed to convert " << value.GetType()
-               << " to " << schema.type();
+  LOG(WARNING) << "Failed to convert " << value.type() << " to "
+               << schema.type();
   return nullptr;
 }
 #endif  // #if defined(OS_WIN)
@@ -315,7 +315,7 @@ std::unique_ptr<base::Value> RegistryDict::ConvertToJSON(
         std::unique_ptr<base::Value> converted =
             ConvertValue(*entry->second, subschema);
         if (converted)
-          result->SetWithoutPathExpansion(entry->first, converted.release());
+          result->SetWithoutPathExpansion(entry->first, std::move(converted));
       }
       for (RegistryDict::KeyMap::const_iterator entry(keys_.begin());
            entry != keys_.end(); ++entry) {
@@ -324,7 +324,7 @@ std::unique_ptr<base::Value> RegistryDict::ConvertToJSON(
         std::unique_ptr<base::Value> converted =
             entry->second->ConvertToJSON(subschema);
         if (converted)
-          result->SetWithoutPathExpansion(entry->first, converted.release());
+          result->SetWithoutPathExpansion(entry->first, std::move(converted));
       }
       return std::move(result);
     }

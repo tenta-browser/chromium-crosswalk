@@ -26,10 +26,10 @@
 #ifndef Attr_h
 #define Attr_h
 
-#include "bindings/core/v8/TraceWrapperMember.h"
 #include "core/CoreExport.h"
 #include "core/dom/Node.h"
 #include "core/dom/QualifiedName.h"
+#include "platform/bindings/TraceWrapperMember.h"
 
 namespace blink {
 
@@ -59,8 +59,8 @@ class CORE_EXPORT Attr final : public Node {
   const AtomicString& namespaceURI() const { return name_.NamespaceURI(); }
   const AtomicString& prefix() const { return name_.Prefix(); }
 
-  DECLARE_VIRTUAL_TRACE();
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+  virtual void Trace(blink::Visitor*);
+  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
 
  private:
   Attr(Element&, const QualifiedName&);

@@ -21,6 +21,7 @@
 #include "base/win/scoped_gdi_object.h"
 #include "base/win/win_util.h"
 #include "ui/accessibility/ax_enums.h"
+#include "ui/base/ime/input_method_observer.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/base/win/window_event_target.h"
 #include "ui/events/event.h"
@@ -28,6 +29,7 @@
 #include "ui/gfx/sequential_id_generator.h"
 #include "ui/gfx/win/window_impl.h"
 #include "ui/views/views_export.h"
+#include "ui/views/win/pen_event_processor.h"
 
 namespace gfx {
 class ImageSkia;
@@ -38,6 +40,9 @@ class DirectManipulationHelper;
 }  // namespace gfx
 
 namespace ui  {
+class AXSystemCaretWin;
+class InputMethod;
+class TextInputClient;
 class ViewProp;
 }
 
@@ -117,9 +122,9 @@ const int WM_WINDOWSIZINGFINISHED = WM_USER;
 // used by both a views::NativeWidget and an aura::WindowTreeHost
 // implementation.
 // TODO(beng): This object should eventually *become* the WindowImpl.
-class VIEWS_EXPORT HWNDMessageHandler :
-    public gfx::WindowImpl,
-    public ui::WindowEventTarget {
+class VIEWS_EXPORT HWNDMessageHandler : public gfx::WindowImpl,
+                                        public ui::InputMethodObserver,
+                                        public ui::WindowEventTarget {
  public:
   explicit HWNDMessageHandler(HWNDMessageHandlerDelegate* delegate);
   ~HWNDMessageHandler() override;
@@ -226,6 +231,14 @@ class VIEWS_EXPORT HWNDMessageHandler :
   HICON GetDefaultWindowIcon() const override;
   HICON GetSmallWindowIcon() const override;
   LRESULT OnWndProc(UINT message, WPARAM w_param, LPARAM l_param) override;
+
+  // Overridden from InputMethodObserver
+  void OnFocus() override;
+  void OnBlur() override;
+  void OnCaretBoundsChanged(const ui::TextInputClient* client) override;
+  void OnTextInputStateChanged(const ui::TextInputClient* client) override;
+  void OnInputMethodDestroyed(const ui::InputMethod* input_method) override;
+  void OnShowImeIfNeeded() override;
 
   // Overridden from WindowEventTarget
   LRESULT HandleMouseMessage(unsigned int message,
@@ -523,6 +536,27 @@ class VIEWS_EXPORT HWNDMessageHandler :
                                    LPARAM l_param,
                                    bool track_mouse);
 
+  LRESULT HandlePointerEventTypeTouch(UINT message,
+                                      WPARAM w_param,
+                                      LPARAM l_param);
+
+  LRESULT HandlePointerEventTypePen(UINT message,
+                                    WPARAM w_param,
+                                    LPARAM l_param);
+
+  LRESULT GenerateMouseEventFromPointerEvent(
+      UINT message,
+      UINT32 pointer_id,
+      const POINTER_INFO& pointer_info,
+      const gfx::Point& point,
+      const ui::PointerDetails& pointer_details);
+  LRESULT GenerateTouchEventFromPointerEvent(
+      UINT message,
+      UINT32 pointer_id,
+      const POINTER_INFO& pointer_info,
+      const gfx::Point& point,
+      const ui::PointerDetails& pointer_details);
+
   // Returns true if the mouse message passed in is an OS synthesized mouse
   // message.
   // |message| identifies the mouse message.
@@ -565,6 +599,11 @@ class VIEWS_EXPORT HWNDMessageHandler :
   // Provides functionality to reduce the bounds of the fullscreen window by 1
   // px on activation loss to a window on the same monitor.
   void OnBackgroundFullscreen();
+
+  // Deletes the system caret used for accessibility. This will result in any
+  // clients that are still holding onto its |IAccessible| to get a failure code
+  // if they request its location.
+  void DestroyAXSystemCaret();
 
   HWNDMessageHandlerDelegate* delegate_;
 
@@ -646,6 +685,8 @@ class VIEWS_EXPORT HWNDMessageHandler :
   // Generates touch-ids for touch-events.
   ui::SequentialIDGenerator id_generator_;
 
+  PenEventProcessor pen_processor_;
+
   // Set to true if we are in the context of a sizing operation.
   bool in_size_loop_;
 
@@ -660,11 +701,11 @@ class VIEWS_EXPORT HWNDMessageHandler :
   // native SetFocus calls invoked in the views code.
   int touch_down_contexts_;
 
-  // Time the last touch message was received. Used to flag mouse messages
-  // synthesized by Windows for touch which are not flagged by the OS as
-  // synthesized mouse messages. For more information please refer to
-  // the IsMouseEventFromTouch function.
-  static long last_touch_message_time_;
+  // Time the last touch or pen message was received. Used to flag mouse
+  // messages synthesized by Windows for touch which are not flagged by the OS
+  // as synthesized mouse messages. For more information please refer to the
+  // IsMouseEventFromTouch function.
+  static long last_touch_or_pen_message_time_;
 
   // Time the last WM_MOUSEHWHEEL message is received. Please refer to the
   // HandleMouseEventInternal function as to why this is needed.
@@ -689,6 +730,9 @@ class VIEWS_EXPORT HWNDMessageHandler :
   // Manages observation of Windows Session Change messages.
   std::unique_ptr<WindowsSessionChangeObserver>
       windows_session_change_observer_;
+
+  // Some assistive software need to track the location of the caret.
+  std::unique_ptr<ui::AXSystemCaretWin> ax_system_caret_;
 
   // This class provides functionality to register the legacy window as a
   // Direct Manipulation consumer. This allows us to support smooth scroll

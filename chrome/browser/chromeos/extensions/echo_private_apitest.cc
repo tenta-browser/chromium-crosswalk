@@ -55,7 +55,7 @@ class ExtensionEchoPrivateApiTest : public ExtensionApiTest {
         browser()));
 
     ASSERT_TRUE(result.get());
-    ASSERT_EQ(base::Value::Type::BOOLEAN, result->GetType());
+    ASSERT_EQ(base::Value::Type::BOOLEAN, result->type());
 
     bool result_as_boolean = false;
     ASSERT_TRUE(result->GetAsBoolean(&result_as_boolean));
@@ -84,13 +84,13 @@ class ExtensionEchoPrivateApiTest : public ExtensionApiTest {
     if (dialog_action == DIALOG_TEST_ACTION_ACCEPT) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE,
-          base::Bind(base::IgnoreResult(&chromeos::EchoDialogView::Accept),
-                     base::Unretained(dialog)));
+          base::BindOnce(base::IgnoreResult(&chromeos::EchoDialogView::Accept),
+                         base::Unretained(dialog)));
     } else if (dialog_action == DIALOG_TEST_ACTION_CANCEL) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE,
-          base::Bind(base::IgnoreResult(&chromeos::EchoDialogView::Cancel),
-                     base::Unretained(dialog)));
+          base::BindOnce(base::IgnoreResult(&chromeos::EchoDialogView::Cancel),
+                         base::Unretained(dialog)));
     }
   }
 

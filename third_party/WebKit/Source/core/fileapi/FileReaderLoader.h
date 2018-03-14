@@ -31,17 +31,16 @@
 #ifndef FileReaderLoader_h
 #define FileReaderLoader_h
 
+#include <memory>
 #include "core/CoreExport.h"
 #include "core/fileapi/FileError.h"
-#include "core/loader/ThreadableLoaderClient.h"
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
-#include "wtf/Forward.h"
-#include "wtf/PtrUtil.h"
-#include "wtf/text/TextEncoding.h"
-#include "wtf/text/WTFString.h"
-#include "wtf/typed_arrays/ArrayBufferBuilder.h"
-#include <memory>
+#include "platform/wtf/Forward.h"
+#include "platform/wtf/PtrUtil.h"
+#include "platform/wtf/text/TextEncoding.h"
+#include "platform/wtf/text/WTFString.h"
+#include "platform/wtf/typed_arrays/ArrayBufferBuilder.h"
 
 namespace blink {
 
@@ -50,9 +49,17 @@ class DOMArrayBuffer;
 class ExecutionContext;
 class FileReaderLoaderClient;
 class TextResourceDecoder;
-class ThreadableLoader;
 
-class CORE_EXPORT FileReaderLoader final : public ThreadableLoaderClient {
+// Reads a Blob's content into memory.
+//
+// Blobs are typically stored on disk, and should be read asynchronously
+// whenever possible. Synchronous loading is implemented to support Web Platform
+// features that we cannot (yet) remove, such as FileReaderSync and synchronous
+// XMLHttpRequest.
+//
+// Each FileReaderLoader instance is only good for reading one Blob, and will
+// leak resources if used multiple times.
+class CORE_EXPORT FileReaderLoader {
   USING_FAST_MALLOC(FileReaderLoader);
 
  public:
@@ -66,24 +73,13 @@ class CORE_EXPORT FileReaderLoader final : public ThreadableLoaderClient {
 
   // If client is given, do the loading asynchronously. Otherwise, load
   // synchronously.
-  static std::unique_ptr<FileReaderLoader> Create(
-      ReadType read_type,
-      FileReaderLoaderClient* client) {
-    return WTF::WrapUnique(new FileReaderLoader(read_type, client));
-  }
+  static std::unique_ptr<FileReaderLoader> Create(ReadType,
+                                                  FileReaderLoaderClient*);
 
-  ~FileReaderLoader() override;
+  virtual ~FileReaderLoader();
 
-  void Start(ExecutionContext*, PassRefPtr<BlobDataHandle>);
+  virtual void Start(ExecutionContext*, scoped_refptr<BlobDataHandle>) = 0;
   void Cancel();
-
-  // ThreadableLoaderClient
-  void DidReceiveResponse(unsigned long,
-                          const ResourceResponse&,
-                          std::unique_ptr<WebDataConsumerHandle>) override;
-  void DidReceiveData(const char*, unsigned) override;
-  void DidFinishLoading(unsigned long, double) override;
-  void DidFail(const ResourceError&) override;
 
   DOMArrayBuffer* ArrayBufferResult();
   String StringResult();
@@ -108,27 +104,39 @@ class CORE_EXPORT FileReaderLoader final : public ThreadableLoaderClient {
   void SetEncoding(const String&);
   void SetDataType(const String& data_type) { data_type_ = data_type; }
 
- private:
+  bool HasFinishedLoading() const { return finished_loading_; }
+
+ protected:
   FileReaderLoader(ReadType, FileReaderLoaderClient*);
 
-  void Cleanup();
-
+  virtual void Cleanup();
   void Failed(FileError::ErrorCode);
-  void ConvertToText();
-  void ConvertToDataURL();
 
-  static FileError::ErrorCode HttpStatusCodeToErrorCode(int);
+  void OnStartLoading(long long total_bytes);
+  void OnReceivedData(const char* data, unsigned data_length);
+  void OnFinishLoading();
+
+  bool IsSyncLoad() const { return !client_; }
+
+#if DCHECK_IS_ON()
+  bool started_loading_ = false;
+#endif  // DCHECK_IS_ON()
+
+ private:
+  void AdjustReportedMemoryUsageToV8(int64_t usage);
+  void UnadjustReportedMemoryUsageToV8();
+
+  String ConvertToText();
+  String ConvertToDataURL();
+  void SetStringResult(const String&);
 
   ReadType read_type_;
   FileReaderLoaderClient* client_;
   WTF::TextEncoding encoding_;
   String data_type_;
 
-  KURL url_for_reading_;
-  Persistent<ThreadableLoader> loader_;
-
   std::unique_ptr<ArrayBufferBuilder> raw_data_;
-  bool is_raw_data_converted_;
+  bool is_raw_data_converted_ = false;
 
   Persistent<DOMArrayBuffer> array_buffer_result_;
   String string_result_;
@@ -136,20 +144,17 @@ class CORE_EXPORT FileReaderLoader final : public ThreadableLoaderClient {
   // The decoder used to decode the text data.
   std::unique_ptr<TextResourceDecoder> decoder_;
 
-  bool finished_loading_;
-  long long bytes_loaded_;
+  bool finished_loading_ = false;
+  long long bytes_loaded_ = 0;
   // If the total size of the resource is unknown, m_totalBytes is set to -1
   // until completion of loading, and the buffer for receiving data is set to
   // dynamically grow. Otherwise, m_totalBytes is set to the total size and
   // the buffer for receiving data of m_totalBytes is allocated and never grow
   // even when extra data is appeneded.
-  long long total_bytes_;
+  long long total_bytes_ = -1;
+  int64_t memory_usage_reported_to_v8_ = 0;
 
-  bool has_range_;
-  unsigned range_start_;
-  unsigned range_end_;
-
-  FileError::ErrorCode error_code_;
+  FileError::ErrorCode error_code_ = FileError::kOK;
 };
 
 }  // namespace blink

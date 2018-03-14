@@ -14,8 +14,8 @@
 
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
+#include "base/sequence_checker.h"
 #include "base/synchronization/lock.h"
-#include "base/threading/non_thread_safe.h"
 #include "build/build_config.h"
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_channel_handle.h"
@@ -72,7 +72,7 @@ class MessageFilterRouter;
 // |channel_lifetime_lock_| is used to protect it. The locking overhead is only
 // paid if the underlying channel supports thread-safe |Send|.
 //
-class IPC_EXPORT ChannelProxy : public Sender, public base::NonThreadSafe {
+class IPC_EXPORT ChannelProxy : public Sender {
  public:
 #if defined(ENABLE_IPC_FUZZER)
   // Interface for a filter to be imposed on outgoing messages which can
@@ -95,17 +95,20 @@ class IPC_EXPORT ChannelProxy : public Sender, public base::NonThreadSafe {
       const IPC::ChannelHandle& channel_handle,
       Channel::Mode mode,
       Listener* listener,
-      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner);
+      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
+      const scoped_refptr<base::SingleThreadTaskRunner>& listener_task_runner);
 
   static std::unique_ptr<ChannelProxy> Create(
       std::unique_ptr<ChannelFactory> factory,
       Listener* listener,
-      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner);
+      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
+      const scoped_refptr<base::SingleThreadTaskRunner>& listener_task_runner);
 
   // Constructs a ChannelProxy without initializing it.
   ChannelProxy(
       Listener* listener,
-      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner);
+      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
+      const scoped_refptr<base::SingleThreadTaskRunner>& listener_task_runner);
 
   ~ChannelProxy() override;
 
@@ -244,7 +247,9 @@ class IPC_EXPORT ChannelProxy : public Sender, public base::NonThreadSafe {
                   public Listener {
    public:
     Context(Listener* listener,
-            const scoped_refptr<base::SingleThreadTaskRunner>& ipc_thread);
+            const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
+            const scoped_refptr<base::SingleThreadTaskRunner>&
+                listener_task_runner);
     void ClearIPCTaskRunner();
     base::SingleThreadTaskRunner* ipc_task_runner() const {
       return ipc_task_runner_.get();
@@ -377,8 +382,10 @@ class IPC_EXPORT ChannelProxy : public Sender, public base::NonThreadSafe {
   }
 #endif
 
- protected:
   bool did_init() const { return did_init_; }
+
+  // A Send() which doesn't DCHECK if the message is synchronous.
+  void SendInternal(Message* message);
 
  private:
   friend class IpcSecurityTestUtil;
@@ -387,9 +394,7 @@ class IPC_EXPORT ChannelProxy : public Sender, public base::NonThreadSafe {
   static void BindAssociatedInterfaceRequest(
       const AssociatedInterfaceFactory<Interface>& factory,
       mojo::ScopedInterfaceEndpointHandle handle) {
-    mojo::AssociatedInterfaceRequest<Interface> request;
-    request.Bind(std::move(handle));
-    factory.Run(std::move(request));
+    factory.Run(mojo::AssociatedInterfaceRequest<Interface>(std::move(handle)));
   }
 
   // Always called once immediately after Init.
@@ -406,6 +411,8 @@ class IPC_EXPORT ChannelProxy : public Sender, public base::NonThreadSafe {
 #if defined(ENABLE_IPC_FUZZER)
   OutgoingMessageFilter* outgoing_message_filter_;
 #endif
+
+  SEQUENCE_CHECKER(sequence_checker_);
 };
 
 }  // namespace IPC

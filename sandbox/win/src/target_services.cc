@@ -12,6 +12,7 @@
 #include "base/win/windows_version.h"
 #include "sandbox/win/src/crosscall_client.h"
 #include "sandbox/win/src/handle_closer_agent.h"
+#include "sandbox/win/src/heap_helper.h"
 #include "sandbox/win/src/ipc_tags.h"
 #include "sandbox/win/src/process_mitigations.h"
 #include "sandbox/win/src/restricted_token_utils.h"
@@ -20,6 +21,7 @@
 #include "sandbox/win/src/sandbox_types.h"
 #include "sandbox/win/src/sharedmem_ipc_client.h"
 
+namespace sandbox {
 namespace {
 
 // Flushing a cached key is triggered by just opening the key and closing the
@@ -27,7 +29,8 @@ namespace {
 // HKCU so do not use it with this function.
 bool FlushRegKey(HKEY root) {
   HKEY key;
-  if (ERROR_SUCCESS == ::RegOpenKeyExW(root, NULL, 0, MAXIMUM_ALLOWED, &key)) {
+  if (ERROR_SUCCESS ==
+      ::RegOpenKeyExW(root, nullptr, 0, MAXIMUM_ALLOWED, &key)) {
     if (ERROR_SUCCESS != ::RegCloseKey(key))
       return false;
   }
@@ -40,21 +43,39 @@ bool FlushRegKey(HKEY root) {
 // although this behavior is undocumented and there is no guarantee that in
 // fact this will happen in future versions of windows.
 bool FlushCachedRegHandles() {
-  return (FlushRegKey(HKEY_LOCAL_MACHINE) &&
-          FlushRegKey(HKEY_CLASSES_ROOT) &&
+  return (FlushRegKey(HKEY_LOCAL_MACHINE) && FlushRegKey(HKEY_CLASSES_ROOT) &&
           FlushRegKey(HKEY_USERS));
+}
+
+// Cleans up this process if CSRSS will be disconnected, as this disconnection
+// is not supported Windows behavior.
+// Currently, this step requires closing a heap that this shared with csrss.exe.
+// Closing the ALPC Port handle to csrss.exe leaves this heap in an invalid
+// state. This causes problems if anyone enumerates the heap.
+bool CsrssDisconnectCleanup() {
+  HANDLE csr_port_heap = FindCsrPortHeap();
+  if (!csr_port_heap) {
+    DLOG(ERROR) << "Failed to find CSR Port heap handle";
+    return false;
+  }
+  HeapDestroy(csr_port_heap);
+  return true;
 }
 
 // Checks if we have handle entries pending and runs the closer.
 // Updates is_csrss_connected based on which handle types are closed.
 bool CloseOpenHandles(bool* is_csrss_connected) {
-  if (sandbox::HandleCloserAgent::NeedsHandlesClosed()) {
-    sandbox::HandleCloserAgent handle_closer;
+  if (HandleCloserAgent::NeedsHandlesClosed()) {
+    HandleCloserAgent handle_closer;
     handle_closer.InitializeHandlesToClose(is_csrss_connected);
+    if (!*is_csrss_connected) {
+      if (!CsrssDisconnectCleanup()) {
+        return false;
+      }
+    }
     if (!handle_closer.CloseHandles())
       return false;
   }
-
   return true;
 }
 
@@ -76,7 +97,7 @@ bool WarmupWindowsLocales() {
   ::GetUserDefaultLangID();
   ::GetUserDefaultLCID();
   static GetUserDefaultLocaleNameFunction GetUserDefaultLocaleName_func =
-      NULL;
+      nullptr;
   if (!GetUserDefaultLocaleName_func) {
     HMODULE kernel32_dll = ::GetModuleHandle(kKernel32DllName);
     if (!kernel32_dll) {
@@ -91,26 +112,23 @@ bool WarmupWindowsLocales() {
   }
   wchar_t localeName[LOCALE_NAME_MAX_LENGTH] = {0};
   return (0 != GetUserDefaultLocaleName_func(
-                    localeName, LOCALE_NAME_MAX_LENGTH * sizeof(wchar_t)));
+                   localeName, LOCALE_NAME_MAX_LENGTH * sizeof(wchar_t)));
 }
 
 // Used as storage for g_target_services, because other allocation facilities
 // are not available early. We can't use a regular function static because on
 // VS2015, because the CRT tries to acquire a lock to guard initialization, but
 // this code runs before the CRT is initialized.
-char g_target_services_memory[sizeof(sandbox::TargetServicesBase)];
-sandbox::TargetServicesBase* g_target_services = nullptr;
+char g_target_services_memory[sizeof(TargetServicesBase)];
+TargetServicesBase* g_target_services = nullptr;
 
 }  // namespace
-
-namespace sandbox {
 
 SANDBOX_INTERCEPT IntegrityLevel g_shared_delayed_integrity_level =
     INTEGRITY_LEVEL_LAST;
 SANDBOX_INTERCEPT MitigationFlags g_shared_delayed_mitigations = 0;
 
-TargetServicesBase::TargetServicesBase() {
-}
+TargetServicesBase::TargetServicesBase() {}
 
 ResultCode TargetServicesBase::Init() {
   process_state_.SetInitCalled();
@@ -157,9 +175,8 @@ TargetServicesBase* TargetServicesBase::GetInstance() {
 // The broker services a 'test' IPC service with the IPC_PING_TAG tag.
 bool TargetServicesBase::TestIPCPing(int version) {
   void* memory = GetGlobalIPCMemory();
-  if (NULL == memory) {
+  if (!memory)
     return false;
-  }
   SharedMemIPCClient ipc(memory);
   CrossCallReturn answer = {0};
 
@@ -206,8 +223,7 @@ bool TargetServicesBase::TestIPCPing(int version) {
   return true;
 }
 
-ProcessState::ProcessState() : process_state_(0), csrss_connected_(true) {
-}
+ProcessState::ProcessState() : process_state_(0), csrss_connected_(true) {}
 
 bool ProcessState::IsKernel32Loaded() const {
   return process_state_ != 0;

@@ -5,22 +5,26 @@
 #import "ios/chrome/app/chrome_overlay_window.h"
 
 #include "base/logging.h"
-#import "base/mac/scoped_nsobject.h"
 #import "ios/chrome/browser/crash_report/breakpad_helper.h"
+#import "ios/chrome/browser/metrics/drag_and_drop_recorder.h"
 #import "ios/chrome/browser/metrics/size_class_recorder.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/ui/ui_util.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 @interface ChromeOverlayWindow () {
-  base::scoped_nsobject<SizeClassRecorder> _recorder;
+  SizeClassRecorder* _sizeClassRecorder;
+  DragAndDropRecorder* _dragAndDropRecorder;
 }
 
-// Initializes the size class recorder. On iPad iOS 9+, it starts tracking
-// horizontal size class changes. Otherwise, it is a no-op.
-- (void)initializeRecorderIfNeeded;
+// Initializes the size class recorder. On iPad It starts tracking horizontal
+// size class changes.
+- (void)initializeSizeClassRecorder;
 
-// Updates the Breakpad report with the current size class on iOS 8+. Otherwise,
-// it's a no-op since size class doesn't exist.
+// Updates the Breakpad report with the current size class.
 - (void)updateBreakpad;
 
 @end
@@ -30,9 +34,10 @@
 - (instancetype)initWithFrame:(CGRect)frame {
   self = [super initWithFrame:frame];
   if (self) {
-    // When not created via a nib, create the recorder immediately.
-    [self initializeRecorderIfNeeded];
+    // When not created via a nib, create the recorders immediately.
+    [self initializeSizeClassRecorder];
     [self updateBreakpad];
+    _dragAndDropRecorder = [[DragAndDropRecorder alloc] initWithView:self];
   }
   return self;
 }
@@ -41,15 +46,15 @@
   [super awakeFromNib];
   // When creating via a nib, wait to be awoken, as the size class is not
   // reliable before.
-  [self initializeRecorderIfNeeded];
+  [self initializeSizeClassRecorder];
   [self updateBreakpad];
 }
 
-- (void)initializeRecorderIfNeeded {
-  DCHECK(!_recorder);
+- (void)initializeSizeClassRecorder {
+  DCHECK(!_sizeClassRecorder);
   if (IsIPadIdiom()) {
-    _recorder.reset([[SizeClassRecorder alloc]
-        initWithHorizontalSizeClass:self.traitCollection.horizontalSizeClass]);
+    _sizeClassRecorder = [[SizeClassRecorder alloc]
+        initWithHorizontalSizeClass:self.traitCollection.horizontalSizeClass];
     [[NSNotificationCenter defaultCenter]
         addObserver:self
            selector:@selector(pageLoaded:)
@@ -65,7 +70,6 @@
 
 - (void)dealloc {
   [[NSNotificationCenter defaultCenter] removeObserver:self];
-  [super dealloc];
 }
 
 #pragma mark - UITraitEnvironment
@@ -74,7 +78,7 @@
   [super traitCollectionDidChange:previousTraitCollection];
   if (previousTraitCollection.horizontalSizeClass !=
       self.traitCollection.horizontalSizeClass) {
-    [_recorder
+    [_sizeClassRecorder
         horizontalSizeClassDidChange:self.traitCollection.horizontalSizeClass];
     [self updateBreakpad];
   }
@@ -83,14 +87,15 @@
 #pragma mark - Notification handler
 
 - (void)pageLoaded:(NSNotification*)notification {
-  [_recorder pageLoadedWithHorizontalSizeClass:self.traitCollection
-                                                   .horizontalSizeClass];
+  [_sizeClassRecorder
+      pageLoadedWithHorizontalSizeClass:self.traitCollection
+                                            .horizontalSizeClass];
 }
 
 #pragma mark - Testing methods
 
 - (void)unsetSizeClassRecorder {
-  _recorder.reset();
+  _sizeClassRecorder = nil;
 }
 
 @end

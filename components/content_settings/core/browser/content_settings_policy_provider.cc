@@ -13,6 +13,8 @@
 #include "base/json/json_reader.h"
 #include "base/macros.h"
 #include "base/values.h"
+#include "components/content_settings/core/browser/content_settings_info.h"
+#include "components/content_settings/core/browser/content_settings_registry.h"
 #include "components/content_settings/core/browser/content_settings_rule.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
@@ -198,7 +200,7 @@ void PolicyProvider::GetContentSettingsFromPreferences(
 
     const PrefService::Preference* pref = prefs_->FindPreference(pref_name);
     DCHECK(pref);
-    DCHECK(pref->IsManaged());
+    DCHECK(!pref->HasUserSetting() && !pref->HasExtensionSetting());
 
     const base::ListValue* pattern_str_list = nullptr;
     if (!pref->GetValue()->GetAsList(&pattern_str_list)) {
@@ -235,9 +237,10 @@ void PolicyProvider::GetContentSettingsFromPreferences(
       VLOG_IF(2, !pattern_pair.second.IsValid())
           << "Replacing invalid secondary pattern '"
           << pattern_pair.second.ToString() << "' with wildcard";
+      // Don't set a timestamp for policy settings.
       value_map->SetValue(
           pattern_pair.first, secondary_pattern, content_type,
-          ResourceIdentifier(),
+          ResourceIdentifier(), base::Time(),
           new base::Value(kPrefsForManagedContentSettingsMap[i].setting));
     }
   }
@@ -254,7 +257,7 @@ void PolicyProvider::GetAutoSelectCertificateSettingsFromPreferences(
 
   const PrefService::Preference* pref = prefs_->FindPreference(pref_name);
   DCHECK(pref);
-  DCHECK(pref->IsManaged());
+  DCHECK(!pref->HasUserSetting() && !pref->HasExtensionSetting());
 
   const base::ListValue* pattern_filter_str_list = nullptr;
   if (!pref->GetValue()->GetAsList(&pattern_filter_str_list)) {
@@ -288,7 +291,7 @@ void PolicyProvider::GetAutoSelectCertificateSettingsFromPreferences(
 
     std::unique_ptr<base::Value> value = base::JSONReader::Read(
         pattern_filter_json, base::JSON_ALLOW_TRAILING_COMMAS);
-    if (!value || !value->IsType(base::Value::Type::DICTIONARY)) {
+    if (!value || !value->is_dict()) {
       VLOG(1) << "Ignoring invalid certificate auto select setting. Reason:"
                  " Invalid JSON object: " << pattern_filter_json;
       continue;
@@ -319,11 +322,10 @@ void PolicyProvider::GetAutoSelectCertificateSettingsFromPreferences(
 
     // Don't pass removed values from |value|, because base::Values read with
     // JSONReader use a shared string buffer. Instead, DeepCopy here.
-    value_map->SetValue(pattern,
-                        ContentSettingsPattern::Wildcard(),
+    // Don't set a timestamp for policy settings.
+    value_map->SetValue(pattern, ContentSettingsPattern::Wildcard(),
                         CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE,
-                        std::string(),
-                        cert_filter->DeepCopy());
+                        std::string(), base::Time(), cert_filter->DeepCopy());
   }
 }
 
@@ -334,6 +336,13 @@ void PolicyProvider::ReadManagedDefaultSettings() {
 
 void PolicyProvider::UpdateManagedDefaultSetting(
     const PrefsForManagedDefaultMapEntry& entry) {
+  // Not all managed default types are registered on every platform. If they're
+  // not registered, don't update them.
+  const ContentSettingsInfo* info =
+      ContentSettingsRegistry::GetInstance()->Get(entry.content_type);
+  if (!info)
+    return;
+
   // If a pref to manage a default-content-setting was not set (NOTICE:
   // "HasPrefPath" returns false if no value was set for a registered pref) then
   // the default value of the preference is used. The default value of a
@@ -355,10 +364,11 @@ void PolicyProvider::UpdateManagedDefaultSetting(
     value_map_.DeleteValue(ContentSettingsPattern::Wildcard(),
                            ContentSettingsPattern::Wildcard(),
                            entry.content_type, std::string());
-  } else {
+  } else if (info->IsSettingValid(IntToContentSetting(setting))) {
+    // Don't set a timestamp for policy settings.
     value_map_.SetValue(ContentSettingsPattern::Wildcard(),
                         ContentSettingsPattern::Wildcard(), entry.content_type,
-                        std::string(), new base::Value(setting));
+                        std::string(), base::Time(), new base::Value(setting));
   }
 }
 

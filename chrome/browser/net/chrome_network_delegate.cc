@@ -20,7 +20,6 @@
 #include "base/metrics/sparse_histogram.h"
 #include "base/metrics/user_metrics.h"
 #include "base/path_service.h"
-#include "base/profiler/scoped_tracker.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
@@ -30,7 +29,6 @@
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry.h"
 #include "chrome/browser/net/chrome_extensions_network_delegate.h"
-#include "chrome/browser/net/request_source_bandwidth_histograms.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/task_manager/task_manager_interface.h"
 #include "chrome/common/features.h"
@@ -64,7 +62,6 @@
 
 #if defined(OS_ANDROID)
 #include "chrome/browser/io_thread.h"
-#include "chrome/browser/precache/precache_util.h"
 #endif
 
 #if defined(OS_CHROMEOS)
@@ -81,6 +78,8 @@ using content::RenderViewHost;
 using content::ResourceRequestInfo;
 
 namespace {
+
+bool g_access_to_all_files_enabled = false;
 
 const char kDNTHeader[] = "DNT";
 
@@ -111,7 +110,7 @@ void ReportInvalidReferrerSend(const GURL& target_url,
   if (!target_url.SchemeIsHTTPOrHTTPS())
     return;
   BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::Bind(&ReportInvalidReferrerSendOnUI));
+                          base::BindOnce(&ReportInvalidReferrerSendOnUI));
   base::debug::DumpWithoutCrashing();
   NOTREACHED();
 }
@@ -129,6 +128,70 @@ void RecordNetworkErrorHistograms(const net::URLRequest* request,
           "Net.HttpRequestCompletionErrorCodes.MainFrame", std::abs(net_error));
     }
   }
+}
+
+bool IsAccessAllowedInternal(const base::FilePath& path,
+                             const base::FilePath& profile_path) {
+#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
+  return true;
+#else
+
+  std::vector<base::FilePath> whitelist;
+#if defined(OS_CHROMEOS)
+  // Use a whitelist to only allow access to files residing in the list of
+  // directories below.
+  static const base::FilePath::CharType* const kLocalAccessWhiteList[] = {
+      "/home/chronos/user/Downloads",
+      "/home/chronos/user/log",
+      "/home/chronos/user/WebRTC Logs",
+      "/media",
+      "/opt/oem",
+      "/usr/share/chromeos-assets",
+      "/var/log",
+  };
+
+  base::FilePath temp_dir;
+  if (PathService::Get(base::DIR_TEMP, &temp_dir))
+    whitelist.push_back(temp_dir);
+
+  // The actual location of "/home/chronos/user/Xyz" is the Xyz directory under
+  // the profile path ("/home/chronos/user' is a hard link to current primary
+  // logged in profile.) For the support of multi-profile sessions, we are
+  // switching to use explicit "$PROFILE_PATH/Xyz" path and here whitelist such
+  // access.
+  if (!profile_path.empty()) {
+    const base::FilePath downloads = profile_path.AppendASCII("Downloads");
+    whitelist.push_back(downloads);
+    const base::FilePath webrtc_logs = profile_path.AppendASCII("WebRTC Logs");
+    whitelist.push_back(webrtc_logs);
+  }
+#elif defined(OS_ANDROID)
+  // Access to files in external storage is allowed.
+  base::FilePath external_storage_path;
+  PathService::Get(base::DIR_ANDROID_EXTERNAL_STORAGE, &external_storage_path);
+  if (external_storage_path.IsParent(path))
+    return true;
+
+  // Whitelist of other allowed directories.
+  static const base::FilePath::CharType* const kLocalAccessWhiteList[] = {
+      "/sdcard", "/mnt/sdcard",
+  };
+#endif
+
+  for (const auto* whitelisted_path : kLocalAccessWhiteList)
+    whitelist.push_back(base::FilePath(whitelisted_path));
+
+  for (const auto& whitelisted_path : whitelist) {
+    // base::FilePath::operator== should probably handle trailing separators.
+    if (whitelisted_path == path.StripTrailingSeparators() ||
+        whitelisted_path.IsParent(path)) {
+      return true;
+    }
+  }
+
+  DVLOG(1) << "File access denied - " << path.value().c_str();
+  return false;
+#endif  // !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
 }
 
 }  // namespace
@@ -215,11 +278,6 @@ int ChromeNetworkDelegate::OnBeforeURLRequest(
     net::URLRequest* request,
     const net::CompletionCallback& callback,
     GURL* new_url) {
-  // TODO(mmenke): Remove ScopedTracker below once crbug.com/456327 is fixed.
-  tracked_objects::ScopedTracker tracking_profile1(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "456327 URLRequest::ChromeNetworkDelegate::OnBeforeURLRequest"));
-
   // TODO(joaodasilva): This prevents extensions from seeing URLs that are
   // blocked. However, an extension might redirect the request to another URL,
   // which is not blocked.
@@ -238,22 +296,12 @@ int ChromeNetworkDelegate::OnBeforeURLRequest(
     return error;
   }
 
-  // TODO(mmenke): Remove ScopedTracker below once crbug.com/456327 is fixed.
-  tracked_objects::ScopedTracker tracking_profile2(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "456327 URLRequest::ChromeNetworkDelegate::OnBeforeURLRequest 2"));
-
   extensions_delegate_->ForwardStartRequestStatus(request);
 
   if (!enable_referrers_->GetValue())
     request->SetReferrer(std::string());
   if (enable_do_not_track_ && enable_do_not_track_->GetValue())
     request->SetExtraRequestHeaderByName(kDNTHeader, "1", true /* override */);
-
-  // TODO(mmenke): Remove ScopedTracker below once crbug.com/456327 is fixed.
-  tracked_objects::ScopedTracker tracking_profile3(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "456327 URLRequest::ChromeNetworkDelegate::OnBeforeURLRequest 3"));
 
   bool force_safe_search =
       (force_google_safe_search_ && force_google_safe_search_->GetValue());
@@ -269,18 +317,8 @@ int ChromeNetworkDelegate::OnBeforeURLRequest(
   int rv = extensions_delegate_->OnBeforeURLRequest(
       request, wrapped_callback, new_url);
 
-  // TODO(mmenke): Remove ScopedTracker below once crbug.com/456327 is fixed.
-  tracked_objects::ScopedTracker tracking_profile4(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "456327 URLRequest::ChromeNetworkDelegate::OnBeforeURLRequest 4"));
-
   if (force_safe_search && rv == net::OK && new_url->is_empty())
     safe_search_util::ForceGoogleSafeSearch(request, new_url);
-
-  // TODO(mmenke): Remove ScopedTracker below once crbug.com/456327 is fixed.
-  tracked_objects::ScopedTracker tracking_profile5(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "456327 URLRequest::ChromeNetworkDelegate::OnBeforeURLRequest 5"));
 
   if (allowed_domains_for_apps_ &&
       !allowed_domains_for_apps_->GetValue().empty() &&
@@ -357,6 +395,12 @@ void ChromeNetworkDelegate::OnNetworkBytesReceived(net::URLRequest* request,
 
 void ChromeNetworkDelegate::OnNetworkBytesSent(net::URLRequest* request,
                                                int64_t bytes_sent) {
+#if !defined(OS_ANDROID)
+  // Note: Currently, OnNetworkBytesSent is only implemented for HTTP jobs,
+  // not FTP or other types, so those kinds of bytes will not be reported here.
+  task_manager::TaskManagerInterface::OnRawBytesSent(*request, bytes_sent);
+#endif  // !defined(OS_ANDROID)
+
   ReportDataUsageStats(request, bytes_sent, 0 /* rx_bytes */);
 }
 
@@ -369,16 +413,9 @@ void ChromeNetworkDelegate::OnCompleted(net::URLRequest* request,
   // of redirected requests.
   RecordNetworkErrorHistograms(request, net_error);
 
-  if (net_error == net::OK) {
-#if defined(OS_ANDROID)
-    precache::UpdatePrecacheMetricsAndState(request, profile_);
-#endif  // defined(OS_ANDROID)
-  }
-
   extensions_delegate_->OnCompleted(request, started, net_error);
   if (domain_reliability_monitor_)
     domain_reliability_monitor_->OnCompleted(request, started);
-  RecordRequestSourceBandwidth(request, started);
   extensions_delegate_->ForwardProxyErrors(request, net_error);
   extensions_delegate_->ForwardDoneRequestStatus(request);
 }
@@ -410,131 +447,86 @@ bool ChromeNetworkDelegate::OnCanGetCookies(
     return true;
 
   bool allow = cookie_settings_->IsCookieAccessAllowed(
-      request.url(), request.first_party_for_cookies());
+      request.url(), request.site_for_cookies());
 
   const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(&request);
   if (info) {
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(&TabSpecificContentSettings::CookiesRead,
-                   info->GetWebContentsGetterForRequest(),
-                   request.url(), request.first_party_for_cookies(),
-                   cookie_list, !allow));
+        base::BindOnce(&TabSpecificContentSettings::CookiesRead,
+                       info->GetWebContentsGetterForRequest(), request.url(),
+                       request.site_for_cookies(), cookie_list, !allow));
   }
 
   return allow;
 }
 
 bool ChromeNetworkDelegate::OnCanSetCookie(const net::URLRequest& request,
-                                           const std::string& cookie_line,
+                                           const net::CanonicalCookie& cookie,
                                            net::CookieOptions* options) {
   // nullptr during tests, or when we're running in the system context.
   if (!cookie_settings_.get())
     return true;
 
   bool allow = cookie_settings_->IsCookieAccessAllowed(
-      request.url(), request.first_party_for_cookies());
+      request.url(), request.site_for_cookies());
 
   const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(&request);
   if (info) {
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(&TabSpecificContentSettings::CookieChanged,
-                   info->GetWebContentsGetterForRequest(),
-                   request.url(), request.first_party_for_cookies(),
-                   cookie_line, *options, !allow));
+        base::BindOnce(&TabSpecificContentSettings::CookieChanged,
+                       info->GetWebContentsGetterForRequest(), request.url(),
+                       request.site_for_cookies(), cookie, *options, !allow));
   }
 
   return allow;
 }
 
-bool ChromeNetworkDelegate::OnCanAccessFile(const net::URLRequest& request,
-                                            const base::FilePath& path) const {
-#if defined(OS_CHROMEOS)
-  // If we're running Chrome for ChromeOS on Linux, we want to allow file
-  // access. This is checked here to make IsAccessAllowed() unit-testable.
-  if (!base::SysInfo::IsRunningOnChromeOS() ||
-      base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kTestType)) {
+bool ChromeNetworkDelegate::OnCanAccessFile(
+    const net::URLRequest& request,
+    const base::FilePath& original_path,
+    const base::FilePath& absolute_path) const {
+  if (g_access_to_all_files_enabled)
     return true;
-  }
-#endif
-
-  return IsAccessAllowed(path, profile_path_);
+  return IsAccessAllowed(original_path, absolute_path, profile_path_);
 }
 
 // static
 bool ChromeNetworkDelegate::IsAccessAllowed(
     const base::FilePath& path,
     const base::FilePath& profile_path) {
-#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
-  return true;
+  return IsAccessAllowedInternal(path, profile_path);
+}
+
+// static
+bool ChromeNetworkDelegate::IsAccessAllowed(
+    const base::FilePath& path,
+    const base::FilePath& absolute_path,
+    const base::FilePath& profile_path) {
+#if defined(OS_ANDROID)
+  // Android's whitelist relies on symbolic links (ex. /sdcard is whitelisted
+  // and commonly a symbolic link), thus do not check absolute paths.
+  return IsAccessAllowedInternal(path, profile_path);
 #else
-
-#if defined(OS_CHROMEOS)
-  // Use a whitelist to only allow access to files residing in the list of
-  // directories below.
-  static const char* const kLocalAccessWhiteList[] = {
-      "/home/chronos/user/Downloads",
-      "/home/chronos/user/log",
-      "/home/chronos/user/WebRTC Logs",
-      "/media",
-      "/opt/oem",
-      "/usr/share/chromeos-assets",
-      "/tmp",
-      "/var/log",
-  };
-
-  // The actual location of "/home/chronos/user/Xyz" is the Xyz directory under
-  // the profile path ("/home/chronos/user' is a hard link to current primary
-  // logged in profile.) For the support of multi-profile sessions, we are
-  // switching to use explicit "$PROFILE_PATH/Xyz" path and here whitelist such
-  // access.
-  if (!profile_path.empty()) {
-    const base::FilePath downloads = profile_path.AppendASCII("Downloads");
-    if (downloads == path.StripTrailingSeparators() || downloads.IsParent(path))
-      return true;
-    const base::FilePath webrtc_logs = profile_path.AppendASCII("WebRTC Logs");
-    if (webrtc_logs == path.StripTrailingSeparators() ||
-        webrtc_logs.IsParent(path)) {
-      return true;
-    }
-  }
-#elif defined(OS_ANDROID)
-  // Access to files in external storage is allowed.
-  base::FilePath external_storage_path;
-  PathService::Get(base::DIR_ANDROID_EXTERNAL_STORAGE, &external_storage_path);
-  if (external_storage_path.IsParent(path))
-    return true;
-
-  // Whitelist of other allowed directories.
-  static const char* const kLocalAccessWhiteList[] = {
-      "/sdcard",
-      "/mnt/sdcard",
-  };
+  return (IsAccessAllowedInternal(path, profile_path) &&
+          IsAccessAllowedInternal(absolute_path, profile_path));
 #endif
+}
 
-  for (size_t i = 0; i < arraysize(kLocalAccessWhiteList); ++i) {
-    const base::FilePath white_listed_path(kLocalAccessWhiteList[i]);
-    // base::FilePath::operator== should probably handle trailing separators.
-    if (white_listed_path == path.StripTrailingSeparators() ||
-        white_listed_path.IsParent(path)) {
-      return true;
-    }
-  }
-
-  DVLOG(1) << "File access denied - " << path.value().c_str();
-  return false;
-#endif  // !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
+// static
+void ChromeNetworkDelegate::EnableAccessToAllFilesForTesting(bool enabled) {
+  g_access_to_all_files_enabled = enabled;
 }
 
 bool ChromeNetworkDelegate::OnCanEnablePrivacyMode(
     const GURL& url,
-    const GURL& first_party_for_cookies) const {
+    const GURL& site_for_cookies) const {
   // nullptr during tests, or when we're running in the system context.
   if (!cookie_settings_.get())
     return false;
 
-  return !cookie_settings_->IsCookieAccessAllowed(url, first_party_for_cookies);
+  return !cookie_settings_->IsCookieAccessAllowed(url, site_for_cookies);
 }
 
 bool ChromeNetworkDelegate::OnAreExperimentalCookieFeaturesEnabled() const {
@@ -547,6 +539,42 @@ bool ChromeNetworkDelegate::OnCancelURLRequestWithPolicyViolatingReferrerHeader(
     const GURL& referrer_url) const {
   ReportInvalidReferrerSend(target_url, referrer_url);
   return true;
+}
+
+bool ChromeNetworkDelegate::OnCanQueueReportingReport(
+    const url::Origin& origin) const {
+  if (!cookie_settings_)
+    return true;
+
+  return cookie_settings_->IsCookieAccessAllowed(origin.GetURL(),
+                                                 origin.GetURL());
+}
+
+bool ChromeNetworkDelegate::OnCanSendReportingReport(
+    const url::Origin& origin) const {
+  if (!cookie_settings_)
+    return true;
+
+  return cookie_settings_->IsCookieAccessAllowed(origin.GetURL(),
+                                                 origin.GetURL());
+}
+
+bool ChromeNetworkDelegate::OnCanSetReportingClient(
+    const url::Origin& origin,
+    const GURL& endpoint) const {
+  if (!cookie_settings_)
+    return true;
+
+  return cookie_settings_->IsCookieAccessAllowed(endpoint, origin.GetURL());
+}
+
+bool ChromeNetworkDelegate::OnCanUseReportingClient(
+    const url::Origin& origin,
+    const GURL& endpoint) const {
+  if (!cookie_settings_)
+    return true;
+
+  return cookie_settings_->IsCookieAccessAllowed(endpoint, origin.GetURL());
 }
 
 void ChromeNetworkDelegate::ReportDataUsageStats(net::URLRequest* request,

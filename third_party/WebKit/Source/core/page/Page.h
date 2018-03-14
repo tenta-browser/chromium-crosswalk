@@ -32,6 +32,7 @@
 #include "core/frame/UseCounter.h"
 #include "core/page/Page.h"
 #include "core/page/PageAnimator.h"
+#include "core/page/PageLifecycleState.h"
 #include "core/page/PageVisibilityNotifier.h"
 #include "core/page/PageVisibilityObserver.h"
 #include "core/page/PageVisibilityState.h"
@@ -43,16 +44,17 @@
 #include "platform/wtf/HashSet.h"
 #include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/text/WTFString.h"
+#include "public/web/WebWindowFeatures.h"
 
 namespace blink {
 
 class AutoscrollController;
 class BrowserControls;
 class ChromeClient;
-class ClientRectList;
 class ContextMenuClient;
 class ContextMenuController;
 class Document;
+class DOMRectList;
 class DragCaret;
 class DragController;
 class EditorClient;
@@ -63,12 +65,14 @@ class OverscrollController;
 struct PageScaleConstraints;
 class PageScaleConstraintsSet;
 class PluginData;
+class PluginsChangedObserver;
 class PointerLockController;
-class ScopedPageSuspender;
+class ScopedPagePauser;
 class ScrollingCoordinator;
+class ScrollbarTheme;
+class SmoothScrollSequencer;
 class Settings;
 class ConsoleMessageStorage;
-class SpellCheckerClient;
 class TopDocumentRootScrollerController;
 class ValidationMessageClient;
 class VisualViewport;
@@ -100,7 +104,6 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
     Member<ChromeClient> chrome_client;
     ContextMenuClient* context_menu_client;
     EditorClient* editor_client;
-    SpellCheckerClient* spell_checker_client;
   };
 
   static Page* Create(PageClients& page_clients) {
@@ -131,13 +134,25 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
 
   ViewportDescription GetViewportDescription() const;
 
+  // Returns the plugin data associated with |main_frame_origin|.
+  PluginData* GetPluginData(SecurityOrigin* main_frame_origin);
+
+  // Refreshes the browser-side plugin cache.
   static void RefreshPlugins();
-  PluginData* GetPluginData(SecurityOrigin* main_frame_origin) const;
+
+  // Resets the plugin data for all pages in the renderer process and notifies
+  // PluginsChangedObservers.
+  static void ResetPluginData();
 
   EditorClient& GetEditorClient() const { return *editor_client_; }
-  SpellCheckerClient& GetSpellCheckerClient() const {
-    return *spell_checker_client_;
+
+  // This flag controls whether spell check for this page is manually
+  // turned on/off. The default setting is kAutomatic.
+  enum class SpellCheckStatus { kAutomatic, kForcedOn, kForcedOff };
+  void SetSpellCheckStatus(SpellCheckStatus status) {
+    spell_check_status_ = status;
   }
+  SpellCheckStatus GetSpellCheckStatus() { return spell_check_status_; }
 
   void SetMainFrame(Frame*);
   Frame* MainFrame() const { return main_frame_; }
@@ -150,14 +165,16 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
     return ToLocalFrame(main_frame_);
   }
 
-  void WillUnloadDocument(const Document&);
   void DocumentDetached(Document*);
 
   bool OpenedByDOM() const;
   void SetOpenedByDOM();
 
   PageAnimator& Animator() { return *animator_; }
-  ChromeClient& GetChromeClient() const { return *chrome_client_; }
+  ChromeClient& GetChromeClient() const {
+    DCHECK(chrome_client_) << "No chrome client";
+    return *chrome_client_;
+  }
   AutoscrollController& GetAutoscrollController() const {
     return *autoscroll_controller_;
   }
@@ -177,13 +194,22 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
 
   ScrollingCoordinator* GetScrollingCoordinator();
 
-  ClientRectList* NonFastScrollableRects(const LocalFrame*);
+  SmoothScrollSequencer* GetSmoothScrollSequencer();
+
+  DOMRectList* NonFastScrollableRects(const LocalFrame*);
 
   Settings& GetSettings() const { return *settings_; }
 
   UseCounter& GetUseCounter() { return use_counter_; }
   Deprecation& GetDeprecation() { return deprecation_; }
   HostsUsingFeatures& GetHostsUsingFeatures() { return hosts_using_features_; }
+
+  void SetWindowFeatures(const WebWindowFeatures& features) {
+    window_features_ = features;
+  }
+  const WebWindowFeatures& GetWindowFeatures() const {
+    return window_features_;
+  }
 
   PageScaleConstraintsSet& GetPageScaleConstraintsSet();
   const PageScaleConstraintsSet& GetPageScaleConstraintsSet() const;
@@ -212,14 +238,14 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
     return tab_key_cycles_through_elements_;
   }
 
-  // Suspension is used to implement the "Optionally, pause while waiting for
+  // Pausing is used to implement the "Optionally, pause while waiting for
   // the user to acknowledge the message" step of simple dialog processing:
   // https://html.spec.whatwg.org/multipage/webappapis.html#simple-dialogs
   //
   // Per https://html.spec.whatwg.org/multipage/webappapis.html#pause, no loads
   // are allowed to start/continue in this state, and all background processing
-  // is also suspended.
-  bool Suspended() const { return suspended_; }
+  // is also paused.
+  bool Paused() const { return paused_; }
 
   void SetPageScaleFactor(float);
   float PageScaleFactor() const;
@@ -240,9 +266,12 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
   static void AllVisitedStateChanged(bool invalidate_visited_link_hashes);
   static void VisitedStateChanged(LinkHash visited_hash);
 
-  void SetVisibilityState(PageVisibilityState, bool);
-  PageVisibilityState VisibilityState() const;
+  void SetVisibilityState(mojom::PageVisibilityState, bool);
+  mojom::PageVisibilityState VisibilityState() const;
   bool IsPageVisible() const;
+
+  void SetLifecycleState(PageLifecycleState);
+  PageLifecycleState LifecycleState() const;
 
   bool IsCursorVisible() const;
   void SetIsCursorVisible(bool is_visible) { is_cursor_visible_ = is_visible; }
@@ -272,15 +301,19 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
 
   void AcceptLanguagesChanged();
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
-  void LayerTreeViewInitialized(WebLayerTreeView&, FrameView*);
-  void WillCloseLayerTreeView(WebLayerTreeView&, FrameView*);
+  void LayerTreeViewInitialized(WebLayerTreeView&, LocalFrameView*);
+  void WillCloseLayerTreeView(WebLayerTreeView&, LocalFrameView*);
 
   void WillBeDestroyed();
 
+  void RegisterPluginsChangedObserver(PluginsChangedObserver*);
+
+  ScrollbarTheme& GetScrollbarTheme() const;
+
  private:
-  friend class ScopedPageSuspender;
+  friend class ScopedPagePauser;
 
   explicit Page(PageClients&);
 
@@ -289,8 +322,11 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
   // SettingsDelegate overrides.
   void SettingsChanged(SettingsDelegate::ChangeType) override;
 
-  // ScopedPageSuspender helpers.
-  void SetSuspended(bool);
+  // ScopedPagePauser helpers.
+  void SetPaused(bool);
+
+  // Notify |plugins_changed_observers_| that plugins have changed.
+  void NotifyPluginsChanged() const;
 
   Member<PageAnimator> animator_;
   const Member<AutoscrollController> autoscroll_controller_;
@@ -302,6 +338,7 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
   const std::unique_ptr<PageScaleConstraintsSet> page_scale_constraints_set_;
   const Member<PointerLockController> pointer_lock_controller_;
   Member<ScrollingCoordinator> scrolling_coordinator_;
+  Member<SmoothScrollSequencer> smooth_scroll_sequencer_;
   const Member<BrowserControls> browser_controls_;
   const Member<ConsoleMessageStorage> console_message_storage_;
   const Member<EventHandlerRegistry> event_handler_registry_;
@@ -318,21 +355,22 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
   // However, there are several locations (InspectorOverlay, SVGImage, and
   // WebPagePopupImpl) which don't hold a reference to the main frame at all
   // after creating it. These are still safe because they always create a
-  // Frame with a FrameView. FrameView and Frame hold references to each
-  // other, thus keeping each other alive. The call to willBeDestroyed()
+  // Frame with a LocalFrameView. LocalFrameView and Frame hold references to
+  // each other, thus keeping each other alive. The call to willBeDestroyed()
   // breaks this cycle, so the frame is still properly destroyed once no
   // longer needed.
   Member<Frame> main_frame_;
 
-  mutable RefPtr<PluginData> plugin_data_;
+  Member<PluginData> plugin_data_;
 
   EditorClient* const editor_client_;
-  SpellCheckerClient* const spell_checker_client_;
+  SpellCheckStatus spell_check_status_ = SpellCheckStatus::kAutomatic;
   Member<ValidationMessageClient> validation_message_client_;
 
   UseCounter use_counter_;
   Deprecation deprecation_;
   HostsUsingFeatures hosts_using_features_;
+  WebWindowFeatures window_features_;
 
   bool opened_by_dom_;
   // Set to true when window.close() has been called and the Page will be
@@ -343,11 +381,13 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
   bool is_closing_;
 
   bool tab_key_cycles_through_elements_;
-  bool suspended_;
+  bool paused_;
 
   float device_scale_factor_;
 
-  PageVisibilityState visibility_state_;
+  mojom::PageVisibilityState visibility_state_;
+
+  PageLifecycleState page_lifecycle_state_;
 
   bool is_cursor_visible_;
 
@@ -356,6 +396,8 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
 #endif
 
   int subframe_count_;
+
+  HeapHashSet<WeakMember<PluginsChangedObserver>> plugins_changed_observers_;
 };
 
 extern template class CORE_EXTERN_TEMPLATE_EXPORT Supplement<Page>;

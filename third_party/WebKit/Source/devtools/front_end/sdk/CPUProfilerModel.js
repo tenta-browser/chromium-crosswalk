@@ -113,41 +113,38 @@ SDK.CPUProfilerModel = class extends SDK.SDKModel {
     return this._isRecording;
   }
 
+  /**
+   * @return {!Promise}
+   */
   startRecording() {
     this._isRecording = true;
     var intervalUs = Common.moduleSetting('highResolutionCpuProfiling').get() ? 100 : 1000;
     this._profilerAgent.setSamplingInterval(intervalUs);
-    this._profilerAgent.start();
+    return this._profilerAgent.start();
   }
 
   /**
-   * @return {!Promise.<?Protocol.Profiler.Profile>}
+   * @return {!Promise<?Protocol.Profiler.Profile>}
    */
   stopRecording() {
-    /**
-     * @param {?Protocol.Error} error
-     * @param {?Protocol.Profiler.Profile} profile
-     * @return {?Protocol.Profiler.Profile}
-     */
-    function extractProfile(error, profile) {
-      return !error && profile ? profile : null;
-    }
     this._isRecording = false;
-    return this._profilerAgent.stop(extractProfile);
+    return this._profilerAgent.stop();
   }
 
   /**
    * @return {!Promise}
    */
   startPreciseCoverage() {
-    return this._profilerAgent.startPreciseCoverage();
+    var callCount = false;
+    var detailed = true;
+    return this._profilerAgent.startPreciseCoverage(callCount, detailed);
   }
 
   /**
    * @return {!Promise<!Array<!Protocol.Profiler.ScriptCoverage>>}
    */
   takePreciseCoverage() {
-    return this._profilerAgent.takePreciseCoverage((error, coverage) => error ? [] : coverage);
+    return this._profilerAgent.takePreciseCoverage().then(result => result || []);
   }
 
   /**
@@ -155,6 +152,13 @@ SDK.CPUProfilerModel = class extends SDK.SDKModel {
    */
   stopPreciseCoverage() {
     return this._profilerAgent.stopPreciseCoverage();
+  }
+
+  /**
+   * @return {!Promise<!Array<!Protocol.Profiler.ScriptCoverage>>}
+   */
+  bestEffortCoverage() {
+    return this._profilerAgent.getBestEffortCoverage().then(result => result || []);
   }
 };
 

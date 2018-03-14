@@ -135,6 +135,10 @@ class TestDataReductionProxyConfigServiceClient
   void TriggerApplicationStatusToForeground();
 #endif
 
+  void SetRemoteConfigApplied(bool remote_config_applied);
+
+  bool RemoteConfigApplied() const override;
+
  protected:
   // Overrides of DataReductionProxyConfigServiceClient
   base::Time Now() override;
@@ -165,6 +169,10 @@ class TestDataReductionProxyConfigServiceClient
 
   TestTickClock tick_clock_;
   net::BackoffEntry test_backoff_entry_;
+
+  base::Optional<bool> remote_config_applied_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestDataReductionProxyConfigServiceClient);
 };
 
 // Test version of |DataReductionProxyService|, which permits mocking of various
@@ -282,12 +290,6 @@ class DataReductionProxyTestContext {
 
     ~Builder();
 
-    // |DataReductionProxyParams| flags to use.
-    Builder& WithParamsFlags(int params_flags);
-
-    // |TestDataReductionProxyParams| flags to use.
-    Builder& WithParamsDefinitions(unsigned int params_definitions);
-
     // The |Client| enum to use for |DataReductionProxyRequestOptions|.
     Builder& WithClient(Client client);
 
@@ -334,8 +336,6 @@ class DataReductionProxyTestContext {
     std::unique_ptr<DataReductionProxyTestContext> Build();
 
    private:
-    int params_flags_;
-    unsigned int params_definitions_;
     Client client_;
     net::URLRequestContext* request_context_;
     net::MockClientSocketFactory* mock_socket_factory_;
@@ -391,6 +391,10 @@ class DataReductionProxyTestContext {
   // |settings_| has been initialized, and |this| was built with a
   // |net::MockClientSocketFactory| specified.
   void EnableDataReductionProxyWithSecureProxyCheckSuccess();
+
+  // Disables the fetch of the warmup URL. Useful for testing to avoid setting
+  // up the network mock sockets.
+  void DisableWarmupURLFetch();
 
   // Returns the underlying |MockDataReductionProxyConfig|. This can only be
   // called if built with WithMockConfig.
@@ -462,28 +466,13 @@ class DataReductionProxyTestContext {
     return params_;
   }
 
+  void InitSettingsWithoutCheck();
+
   // Returns the proxies that are currently configured for "http://" requests,
   // excluding any that are invalid or direct.
   std::vector<net::ProxyServer> GetConfiguredProxiesForHttp() const;
 
  private:
-  enum TestContextOptions {
-    // Permits mocking of the underlying |DataReductionProxyConfig|.
-    USE_MOCK_CONFIG = 0x1,
-    // Construct, but do not initialize the |DataReductionProxySettings| object.
-    // Primarily used for testing of the |DataReductionProxySettings| object
-    // itself.
-    SKIP_SETTINGS_INITIALIZATION = 0x2,
-    // Permits mocking of the underlying |DataReductionProxyService|.
-    USE_MOCK_SERVICE = 0x4,
-    // Permits mocking of the underlying |DataReductionProxyRequestOptions|.
-    USE_MOCK_REQUEST_OPTIONS = 0x8,
-    // Specifies the use of the |DataReductionProxyConfigServiceClient|.
-    USE_CONFIG_CLIENT = 0x10,
-    // Specifies the use of the |TESTDataReductionProxyConfigServiceClient|.
-    USE_TEST_CONFIG_CLIENT = 0x20,
-  };
-
   // Used to storage a serialized Data Reduction Proxy config.
   class TestConfigStorer {
    public:
@@ -510,8 +499,6 @@ class DataReductionProxyTestContext {
       std::unique_ptr<TestConfigStorer> config_storer,
       TestDataReductionProxyParams* params,
       unsigned int test_context_flags);
-
-  void InitSettingsWithoutCheck();
 
   std::unique_ptr<DataReductionProxyService>
   CreateDataReductionProxyServiceInternal(DataReductionProxySettings* settings);

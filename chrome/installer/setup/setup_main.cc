@@ -41,11 +41,11 @@
 #include "base/win/scoped_com_initializer.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/win_util.h"
-#include "base/win/windows_version.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/install_static/install_details.h"
+#include "chrome/install_static/install_util.h"
 #include "chrome/installer/setup/archive_patch_helper.h"
 #include "chrome/installer/setup/install.h"
 #include "chrome/installer/setup/install_worker.h"
@@ -57,6 +57,7 @@
 #include "chrome/installer/setup/setup_singleton.h"
 #include "chrome/installer/setup/setup_util.h"
 #include "chrome/installer/setup/uninstall.h"
+#include "chrome/installer/setup/user_experiment.h"
 #include "chrome/installer/util/browser_distribution.h"
 #include "chrome/installer/util/delete_after_reboot_helper.h"
 #include "chrome/installer/util/delete_old_versions.h"
@@ -76,7 +77,6 @@
 #include "chrome/installer/util/master_preferences_constants.h"
 #include "chrome/installer/util/self_cleaning_temp_dir.h"
 #include "chrome/installer/util/shell_util.h"
-#include "chrome/installer/util/user_experiment.h"
 #include "chrome/installer/util/util_constants.h"
 #include "components/crash/content/app/crash_switches.h"
 #include "components/crash/content/app/run_as_crashpad_handler_win.h"
@@ -316,7 +316,7 @@ bool UncompressAndPatchChromeArchive(
   // up to an hour.
   start_time = base::TimeTicks::Now();
   installer_state.SetStage(installer::PATCHING);
-  if (!archive_helper->EnsemblePatch()) {
+  if (!archive_helper->CourgetteEnsemblePatch()) {
     if (!archive_helper->BinaryPatch()) {
       *install_status = installer::APPLY_DIFF_PATCH_FAILED;
       installer_state.WriteInstallerResult(
@@ -628,10 +628,13 @@ installer::InstallStatus UninstallProducts(
   if (!system_level_cmd.GetProgram().empty())
     base::LaunchProcess(system_level_cmd, base::LaunchOptions());
 
-  // Tell Google Update that an uninstall has taken place.
-  // Ignore the return value: success or failure of Google Update
-  // has no bearing on the success or failure of Chrome's uninstallation.
-  google_update::UninstallGoogleUpdate(installer_state.system_install());
+  // Tell Google Update that an uninstall has taken place if this install did
+  // not originate from the MSI. Google Update has its own logic relating to
+  // MSI-driven uninstalls that conflicts with this. Ignore the return value:
+  // success or failure of Google Update has no bearing on the success or
+  // failure of Chrome's uninstallation.
+  if (!installer_state.is_msi())
+    google_update::UninstallGoogleUpdate(installer_state.system_install());
 
   return install_status;
 }
@@ -868,13 +871,11 @@ bool HandleNonInstallCmdLineOptions(const base::FilePath& setup_exe,
     // NOTE: Should the work done here, on kConfigureUserSettings, change:
     // kActiveSetupVersion in install_worker.cc needs to be increased for Active
     // Setup to invoke this again for all users of this install.
-    const Product& chrome_install = installer_state->product();
     installer::InstallStatus status = installer::INVALID_STATE_FOR_OPTION;
     if (installer_state->system_install()) {
       bool force =
           cmd_line.HasSwitch(installer::switches::kForceConfigureUserSettings);
-      installer::HandleActiveSetupForBrowser(installer_state->target_path(),
-                                             chrome_install, force);
+      installer::HandleActiveSetupForBrowser(*installer_state, force);
       status = installer::INSTALL_REPAIRED;
     } else {
       LOG(DFATAL)
@@ -976,37 +977,11 @@ bool HandleNonInstallCmdLineOptions(const base::FilePath& setup_exe,
                   << setup_exe.value();
     }
     *exit_code = InstallUtil::GetInstallReturnCode(status);
-  } else if (cmd_line.HasSwitch(installer::switches::kInactiveUserToast)) {
-    // Launch the inactive user toast experiment.
-    int flavor = -1;
-    base::StringToInt(cmd_line.GetSwitchValueNative(
-        installer::switches::kInactiveUserToast), &flavor);
-    std::string experiment_group =
-        cmd_line.GetSwitchValueASCII(installer::switches::kExperimentGroup);
-    DCHECK_NE(-1, flavor);
-    if (flavor == -1) {
-      *exit_code = installer::UNKNOWN_STATUS;
-    } else {
-      // This code is called (via setup.exe relaunch) only if a product is known
-      // to run user experiments, so no check is required.
-      installer::InactiveUserToastExperiment(
-          flavor, base::ASCIIToUTF16(experiment_group),
-          installer_state->product(), installer_state->target_path());
-    }
-  } else if (cmd_line.HasSwitch(installer::switches::kSystemLevelToast)) {
-    const Product& product = installer_state->product();
-    BrowserDistribution* browser_dist = product.distribution();
-    // We started as system-level and have been re-launched as user level
-    // to continue with the toast experiment.
-    base::Version installed_version;
-    InstallUtil::GetChromeVersion(browser_dist, true, &installed_version);
-    if (!installed_version.IsValid()) {
-      LOG(ERROR) << "No installation of " << browser_dist->GetDisplayName()
-                 << " found for system-level toast.";
-    } else {
-      product.LaunchUserExperiment(setup_exe, installer::REENTRY_SYS_UPDATE,
-                                   true);
-    }
+  } else if (cmd_line.HasSwitch(installer::switches::kUserExperiment)) {
+    installer::RunUserExperiment(cmd_line,
+                                 MasterPreferences::ForCurrentProcess(),
+                                 original_state, installer_state);
+    exit_code = 0;
   } else if (cmd_line.HasSwitch(installer::switches::kPatch)) {
     const std::string patch_type_str(
         cmd_line.GetSwitchValueASCII(installer::switches::kPatch));
@@ -1242,25 +1217,6 @@ InstallStatus InstallProductsHelper(const InstallationState& original_state,
     }
   }
 
-  // There might be an experiment (for upgrade usually) that needs to happen.
-  // An experiment's outcome can include chrome's uninstallation. If that is
-  // the case we would not do that directly at this point but in another
-  // instance of setup.exe
-  //
-  // There is another way to reach this same function if this is a system
-  // level install. See HandleNonInstallCmdLineOptions().
-  {
-    // If installation failed, use the path to the currently running setup.
-    // If installation succeeded, use the path to setup in the installer dir.
-    base::FilePath setup_path(setup_exe);
-    if (InstallUtil::GetInstallReturnCode(install_status) == 0) {
-      setup_path = installer_state.GetInstallerDirectory(*installer_version)
-          .Append(setup_path.BaseName());
-    }
-    installer_state.product().LaunchUserExperiment(setup_path, install_status,
-                                                   system_install);
-  }
-
   // If the installation completed successfully...
   if (InstallUtil::GetInstallReturnCode(install_status) == 0) {
     // Update the DisplayVersion created by an MSI-based install.
@@ -1329,7 +1285,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prev_instance,
 
   if (process_type == crash_reporter::switches::kCrashpadHandler) {
     return crash_reporter::RunAsCrashpadHandler(
-        *base::CommandLine::ForCurrentProcess(), switches::kProcessType);
+        *base::CommandLine::ForCurrentProcess(), base::FilePath(),
+        switches::kProcessType, switches::kUserDataDir);
   }
 
   // install_util uses chrome paths.
@@ -1383,28 +1340,32 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prev_instance,
 
   // Initialize COM for use later.
   base::win::ScopedCOMInitializer com_initializer;
-  if (!com_initializer.succeeded()) {
+  if (!com_initializer.Succeeded()) {
     installer_state.WriteInstallerResult(
         installer::OS_ERROR, IDS_INSTALL_OS_ERROR_BASE, NULL);
     return installer::OS_ERROR;
   }
 
-  const install_static::InstallDetails& install_details =
-      install_static::InstallDetails::Get();
   // Make sure system_level is supported if requested. For historical reasons,
   // system-level installs have never been supported for Chrome canary (SxS).
   // This is a brand-specific policy for this particular mode. In general,
   // system-level installation of secondary install modes is fully supported.
-  if (system_install && !install_details.supports_system_level())
+  if (!install_static::InstallDetails::Get().supports_system_level() &&
+      (system_install ||
+       cmd_line.HasSwitch(installer::switches::kSelfDestruct) ||
+       cmd_line.HasSwitch(installer::switches::kRemoveChromeRegistration))) {
     return installer::SXS_OPTION_NOT_SUPPORTED;
-  // Some command line options don't work with secondary installs.
-  if (!install_details.is_primary_mode() &&
-      (cmd_line.HasSwitch(installer::switches::kSelfDestruct) ||
-       cmd_line.HasSwitch(installer::switches::kMakeChromeDefault) ||
-       cmd_line.HasSwitch(installer::switches::kRegisterChromeBrowser) ||
-       cmd_line.HasSwitch(installer::switches::kRemoveChromeRegistration) ||
-       cmd_line.HasSwitch(installer::switches::kInactiveUserToast) ||
-       cmd_line.HasSwitch(installer::switches::kSystemLevelToast))) {
+  }
+  // Some switches only apply for modes that can be made the user's default
+  // browser.
+  if (!install_static::SupportsSetAsDefaultBrowser() &&
+      (cmd_line.HasSwitch(installer::switches::kMakeChromeDefault) ||
+       cmd_line.HasSwitch(installer::switches::kRegisterChromeBrowser))) {
+    return installer::SXS_OPTION_NOT_SUPPORTED;
+  }
+  // Some switches only apply for modes that support retention experiments.
+  if (!install_static::SupportsRetentionExperiments() &&
+      cmd_line.HasSwitch(installer::switches::kUserExperiment)) {
     return installer::SXS_OPTION_NOT_SUPPORTED;
   }
 
@@ -1430,8 +1391,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prev_instance,
   }
 
   if (system_install && !IsUserAnAdmin()) {
-    if (base::win::GetVersion() >= base::win::VERSION_VISTA &&
-        !cmd_line.HasSwitch(installer::switches::kRunAsAdmin)) {
+    if (!cmd_line.HasSwitch(installer::switches::kRunAsAdmin)) {
       base::CommandLine new_cmd(base::CommandLine::NO_PROGRAM);
       new_cmd.AppendArguments(cmd_line, true);
       // Append --run-as-admin flag to let the new instance of setup.exe know
@@ -1476,6 +1436,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prev_instance,
         InstallProducts(original_state, setup_exe, cmd_line, prefs,
                         &installer_state, &installer_directory);
     DoLegacyCleanups(installer_state, install_status);
+
+    // It may be time to kick off an experiment if this was a successful update
+    // and Chrome was not in use (since the experiment only applies to inactive
+    // installs).
+    if (install_status == installer::NEW_VERSION_UPDATED &&
+        installer::ShouldRunUserExperiment(installer_state)) {
+      installer::BeginUserExperiment(
+          installer_state, installer_directory.Append(setup_exe.BaseName()),
+          !system_install);
+    }
   }
 
   UMA_HISTOGRAM_ENUMERATION("Setup.Install.Result", install_status,

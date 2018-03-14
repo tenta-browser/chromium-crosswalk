@@ -38,6 +38,7 @@ InspectorFrontendHostAPI.Events = {
   DispatchMessageChunk: Symbol('dispatchMessageChunk'),
   EnterInspectElementMode: Symbol('enterInspectElementMode'),
   EvaluateForTestInFrontend: Symbol('evaluateForTestInFrontend'),
+  EyeDropperPickedColor: Symbol('eyeDropperPickedColor'),
   FileSystemsLoaded: Symbol('fileSystemsLoaded'),
   FileSystemRemoved: Symbol('fileSystemRemoved'),
   FileSystemAdded: Symbol('fileSystemAdded'),
@@ -62,10 +63,7 @@ InspectorFrontendHostAPI.EventDescriptors = [
   [InspectorFrontendHostAPI.Events.ContextMenuCleared, 'contextMenuCleared', []],
   [InspectorFrontendHostAPI.Events.ContextMenuItemSelected, 'contextMenuItemSelected', ['id']],
   [InspectorFrontendHostAPI.Events.DeviceCountUpdated, 'deviceCountUpdated', ['count']],
-  [
-    InspectorFrontendHostAPI.Events.DevicesDiscoveryConfigChanged, 'devicesDiscoveryConfigChanged',
-    ['discoverUsbDevices', 'portForwardingEnabled', 'portForwardingConfig']
-  ],
+  [InspectorFrontendHostAPI.Events.DevicesDiscoveryConfigChanged, 'devicesDiscoveryConfigChanged', ['config']],
   [
     InspectorFrontendHostAPI.Events.DevicesPortForwardingStatusChanged, 'devicesPortForwardingStatusChanged', ['status']
   ],
@@ -74,6 +72,7 @@ InspectorFrontendHostAPI.EventDescriptors = [
   [InspectorFrontendHostAPI.Events.DispatchMessageChunk, 'dispatchMessageChunk', ['messageChunk', 'messageSize']],
   [InspectorFrontendHostAPI.Events.EnterInspectElementMode, 'enterInspectElementMode', []],
   [InspectorFrontendHostAPI.Events.EvaluateForTestInFrontend, 'evaluateForTestInFrontend', ['callId', 'script']],
+  [InspectorFrontendHostAPI.Events.EyeDropperPickedColor, 'eyeDropperPickedColor', ['color']],
   [InspectorFrontendHostAPI.Events.FileSystemsLoaded, 'fileSystemsLoaded', ['fileSystems']],
   [InspectorFrontendHostAPI.Events.FileSystemRemoved, 'fileSystemRemoved', ['fileSystemPath']],
   [InspectorFrontendHostAPI.Events.FileSystemAdded, 'fileSystemAdded', ['errorMessage', 'fileSystem']],
@@ -90,7 +89,7 @@ InspectorFrontendHostAPI.EventDescriptors = [
   [InspectorFrontendHostAPI.Events.KeyEventUnhandled, 'keyEventUnhandled', ['event']],
   [InspectorFrontendHostAPI.Events.ReloadInspectedPage, 'reloadInspectedPage', ['hard']],
   [InspectorFrontendHostAPI.Events.RevealSourceLine, 'revealSourceLine', ['url', 'lineNumber', 'columnNumber']],
-  [InspectorFrontendHostAPI.Events.SavedURL, 'savedURL', ['url']],
+  [InspectorFrontendHostAPI.Events.SavedURL, 'savedURL', ['url', 'fileSystemPath']],
   [InspectorFrontendHostAPI.Events.SearchCompleted, 'searchCompleted', ['requestId', 'fileSystemPath', 'files']],
   [InspectorFrontendHostAPI.Events.SetInspectedTabId, 'setInspectedTabId', ['tabId']],
   [InspectorFrontendHostAPI.Events.SetUseSoftMenu, 'setUseSoftMenu', ['useSoftMenu']],
@@ -99,9 +98,9 @@ InspectorFrontendHostAPI.EventDescriptors = [
 
 InspectorFrontendHostAPI.prototype = {
   /**
-   * @param {string=} fileSystemPath
+   * @param {string=} type
    */
-  addFileSystem(fileSystemPath) {},
+  addFileSystem(type) {},
 
   /**
    * @param {string} url
@@ -142,6 +141,11 @@ InspectorFrontendHostAPI.prototype = {
    * @param {string} shortcuts
    */
   setWhitelistedShortcuts(shortcuts) {},
+
+  /**
+   * @param {boolean} active
+   */
+  setEyeDropperActive(active) {},
 
   inspectElementCompleted() {},
 
@@ -243,11 +247,9 @@ InspectorFrontendHostAPI.prototype = {
   sendMessageToBackend(message) {},
 
   /**
-   * @param {boolean} discoverUsbDevices
-   * @param {boolean} portForwardingEnabled
-   * @param {!Adb.PortForwardingConfig} portForwardingConfig
+   * @param {!Adb.Config} config
    */
-  setDevicesDiscoveryConfig(discoverUsbDevices, portForwardingEnabled, portForwardingConfig) {},
+  setDevicesDiscoveryConfig(config) {},
 
   /**
    * @param {boolean} enabled

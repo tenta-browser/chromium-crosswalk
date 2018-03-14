@@ -34,14 +34,14 @@
 #include "core/CoreExport.h"
 #include "platform/Supplementable.h"
 #include "platform/wtf/Forward.h"
+#include "platform/wtf/Noncopyable.h"
 
 namespace blink {
 
-class WorkerClients;
-
 // This is created on the main thread, passed to the worker thread and
-// attached to WorkerGlobalScope when it is created.
-// This class can be used to provide "client" implementations to Workers.
+// attached to WorkerOrWorkletGlobalScope when it is created.
+// This class can be used to provide "client" implementations to workers or
+// worklets.
 class CORE_EXPORT WorkerClients final : public GarbageCollected<WorkerClients>,
                                         public Supplementable<WorkerClients> {
   USING_GARBAGE_COLLECTED_MIXIN(WorkerClients);
@@ -50,7 +50,7 @@ class CORE_EXPORT WorkerClients final : public GarbageCollected<WorkerClients>,
  public:
   static WorkerClients* Create() { return new WorkerClients; }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  void Trace(blink::Visitor* visitor) override {
     Supplementable<WorkerClients>::Trace(visitor);
   }
 

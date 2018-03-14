@@ -7,6 +7,7 @@
 
 #include "platform/credentialmanager/PlatformCredential.h"
 #include "platform/heap/Handle.h"
+#include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "platform/wtf/text/WTFString.h"
 
@@ -19,22 +20,25 @@ class PLATFORM_EXPORT PlatformFederatedCredential final
  public:
   static PlatformFederatedCredential* Create(
       const String& id,
-      PassRefPtr<SecurityOrigin> provider,
+      scoped_refptr<SecurityOrigin> provider,
       const String& name,
       const KURL& icon_url);
   ~PlatformFederatedCredential() override;
 
-  PassRefPtr<SecurityOrigin> Provider() const { return provider_; }
+  scoped_refptr<SecurityOrigin> Provider() const { return provider_; }
 
   bool IsFederated() override { return true; }
+  const String& Name() const { return name_; }
+  const KURL& IconURL() const { return icon_url_; }
 
  private:
   PlatformFederatedCredential(const String& id,
-                              PassRefPtr<SecurityOrigin> provider,
+                              scoped_refptr<SecurityOrigin> provider,
                               const String& name,
                               const KURL& icon_url);
-
-  RefPtr<SecurityOrigin> provider_;
+  String name_;
+  KURL icon_url_;
+  scoped_refptr<SecurityOrigin> provider_;
 };
 
 }  // namespace blink

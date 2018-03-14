@@ -16,8 +16,9 @@ std::string BuildHtmlFromWebRestrictionsResult(
     const std::string app_locale) {
   // Check if Webview has the resources it needs to build the error page.
   // It only will have it is built as Monochrome.
-  if (ResourceBundle::GetSharedInstance().GetRawDataResource(
-      IDR_SUPERVISED_USER_BLOCK_INTERSTITIAL_HTML).empty()) {
+  if (ui::ResourceBundle::GetSharedInstance()
+          .GetRawDataResource(IDR_SUPERVISED_USER_BLOCK_INTERSTITIAL_HTML)
+          .empty()) {
     return std::string();
   }
   return BuildHtml(
@@ -29,6 +30,7 @@ std::string BuildHtmlFromWebRestrictionsResult(
       result->stringParams["Second custodian"],
       result->stringParams["Second custodian email"],
       result->intParams["Is child account"],
+      /* is_deprecated = */ false,
       static_cast<FilteringBehaviorReason>(result->intParams["Reason"]),
       app_locale);
 }

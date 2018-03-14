@@ -18,6 +18,7 @@
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_restrictions.h"
 #include "device/usb/mock_usb_device.h"
 #include "device/usb/mock_usb_service.h"
 #include "extensions/browser/api/printer_provider/printer_provider_api.h"
@@ -55,15 +56,16 @@ void AppendPrintersAndRunCallbackIfDone(base::ListValue* printers_out,
 }
 
 // Callback for PrinterProviderAPI::DispatchPrintRequested calls.
-// It copies |value| to |*result| and runs |callback|.
+// It fills the out params based on |status| and runs |callback|.
 void RecordPrintResultAndRunCallback(bool* result_success,
                                      std::string* result_status,
                                      const base::Closure& callback,
-                                     bool success,
-                                     const std::string& status) {
+                                     const base::Value& status) {
+  bool success = status.is_none();
+  std::string status_str = success ? "OK" : status.GetString();
   *result_success = success;
-  *result_status = status;
-  if (!callback.is_null())
+  *result_status = status_str;
+  if (callback)
     callback.Run();
 }
 
@@ -99,7 +101,10 @@ class PrinterProviderApiTest : public ShellApiTest {
   };
 
   PrinterProviderApiTest() {}
-  ~PrinterProviderApiTest() override {}
+  ~PrinterProviderApiTest() override {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    ignore_result(data_dir_.Delete());
+  }
 
   void StartGetPrintersRequest(
       const PrinterProviderAPI::GetPrintersCallback& callback) {
@@ -111,15 +116,15 @@ class PrinterProviderApiTest : public ShellApiTest {
   void StartGetUsbPrinterInfoRequest(
       const std::string& extension_id,
       scoped_refptr<device::UsbDevice> device,
-      const PrinterProviderAPI::GetPrinterInfoCallback& callback) {
+      PrinterProviderAPI::GetPrinterInfoCallback callback) {
     PrinterProviderAPIFactory::GetInstance()
         ->GetForBrowserContext(browser_context())
-        ->DispatchGetUsbPrinterInfoRequested(extension_id, device, callback);
+        ->DispatchGetUsbPrinterInfoRequested(extension_id, device,
+                                             std::move(callback));
   }
 
-  void StartPrintRequestWithNoData(
-      const std::string& extension_id,
-      const PrinterProviderAPI::PrintCallback& callback) {
+  void StartPrintRequestWithNoData(const std::string& extension_id,
+                                   PrinterProviderAPI::PrintCallback callback) {
     PrinterProviderPrintJob job;
     job.printer_id = extension_id + ":printer_id";
     job.ticket_json = "{}";
@@ -127,12 +132,12 @@ class PrinterProviderApiTest : public ShellApiTest {
 
     PrinterProviderAPIFactory::GetInstance()
         ->GetForBrowserContext(browser_context())
-        ->DispatchPrintRequested(job, callback);
+        ->DispatchPrintRequested(job, std::move(callback));
   }
 
   void StartPrintRequestUsingDocumentBytes(
       const std::string& extension_id,
-      const PrinterProviderAPI::PrintCallback& callback) {
+      PrinterProviderAPI::PrintCallback callback) {
     PrinterProviderPrintJob job;
     job.printer_id = extension_id + ":printer_id";
     job.job_title = base::ASCIIToUTF16("Print job");
@@ -144,12 +149,12 @@ class PrinterProviderApiTest : public ShellApiTest {
 
     PrinterProviderAPIFactory::GetInstance()
         ->GetForBrowserContext(browser_context())
-        ->DispatchPrintRequested(job, callback);
+        ->DispatchPrintRequested(job, std::move(callback));
   }
 
   bool StartPrintRequestUsingFileInfo(
       const std::string& extension_id,
-      const PrinterProviderAPI::PrintCallback& callback) {
+      PrinterProviderAPI::PrintCallback callback) {
     PrinterProviderPrintJob job;
 
     const char kBytes[] = {'b', 'y', 't', 'e', 's'};
@@ -166,17 +171,17 @@ class PrinterProviderApiTest : public ShellApiTest {
 
     PrinterProviderAPIFactory::GetInstance()
         ->GetForBrowserContext(browser_context())
-        ->DispatchPrintRequested(job, callback);
+        ->DispatchPrintRequested(job, std::move(callback));
     return true;
   }
 
   void StartCapabilityRequest(
       const std::string& extension_id,
-      const PrinterProviderAPI::GetCapabilityCallback& callback) {
+      PrinterProviderAPI::GetCapabilityCallback callback) {
     PrinterProviderAPIFactory::GetInstance()
         ->GetForBrowserContext(browser_context())
         ->DispatchGetCapabilityRequested(extension_id + ":printer_id",
-                                         callback);
+                                         std::move(callback));
   }
 
   // Loads chrome.printerProvider test app and initializes is for test
@@ -233,17 +238,21 @@ class PrinterProviderApiTest : public ShellApiTest {
 
     switch (data_type) {
       case PRINT_REQUEST_DATA_TYPE_NOT_SET:
-        StartPrintRequestWithNoData(extension_id, callback);
+        StartPrintRequestWithNoData(extension_id, std::move(callback));
         break;
       case PRINT_REQUEST_DATA_TYPE_FILE:
-        ASSERT_TRUE(StartPrintRequestUsingFileInfo(extension_id, callback));
+        ASSERT_TRUE(
+            StartPrintRequestUsingFileInfo(extension_id, std::move(callback)));
         break;
-      case PRINT_REQUEST_DATA_TYPE_FILE_DELETED:
-        ASSERT_TRUE(StartPrintRequestUsingFileInfo(extension_id, callback));
+      case PRINT_REQUEST_DATA_TYPE_FILE_DELETED: {
+        ASSERT_TRUE(
+            StartPrintRequestUsingFileInfo(extension_id, std::move(callback)));
+        base::ScopedAllowBlockingForTesting allow_blocking;
         ASSERT_TRUE(data_dir_.Delete());
         break;
+      }
       case PRINT_REQUEST_DATA_TYPE_BYTES:
-        StartPrintRequestUsingDocumentBytes(extension_id, callback);
+        StartPrintRequestUsingDocumentBytes(extension_id, std::move(callback));
         break;
     }
 
@@ -319,8 +328,8 @@ class PrinterProviderApiTest : public ShellApiTest {
       return false;
 
     extension_registry->RemoveEnabled(extension_id);
-    extension_registry->TriggerOnUnloaded(
-        extension, UnloadedExtensionInfo::REASON_TERMINATE);
+    extension_registry->TriggerOnUnloaded(extension,
+                                          UnloadedExtensionReason::TERMINATE);
     return true;
   }
 
@@ -349,6 +358,7 @@ class PrinterProviderApiTest : public ShellApiTest {
                                   int size,
                                   base::FilePath* path,
                                   base::File::Info* file_info) {
+    base::ScopedAllowBlockingForTesting allow_blocking;
     if (!data_dir_.IsValid() && !data_dir_.CreateUniqueTempDir())
       return false;
 

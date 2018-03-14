@@ -5,10 +5,10 @@
 #ifndef HTMLMediaElementEncryptedMedia_h
 #define HTMLMediaElementEncryptedMedia_h
 
-#include "core/EventTypeNames.h"
-#include "core/dom/DOMTypedArray.h"
-#include "core/events/EventTarget.h"
-#include "core/html/HTMLMediaElement.h"
+#include "core/dom/events/EventTarget.h"
+#include "core/event_type_names.h"
+#include "core/html/media/HTMLMediaElement.h"
+#include "core/typed_arrays/DOMTypedArray.h"
 #include "modules/ModulesExport.h"
 #include "platform/Supplementable.h"
 #include "platform/heap/Handle.h"
@@ -50,7 +50,7 @@ class MODULES_EXPORT HTMLMediaElementEncryptedMedia final
 
   ~HTMLMediaElementEncryptedMedia();
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   friend class SetMediaKeysHandler;

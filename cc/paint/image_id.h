@@ -9,11 +9,11 @@
 #include <unordered_set>
 
 #include "base/containers/flat_set.h"
+#include "cc/paint/paint_image.h"
 
 namespace cc {
 
-using ImageId = uint32_t;
-using ImageIdFlatSet = base::flat_set<ImageId>;
+using PaintImageIdFlatSet = base::flat_set<PaintImage::Id>;
 
 }  // namespace cc
 

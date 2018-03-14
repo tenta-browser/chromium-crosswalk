@@ -7,13 +7,11 @@
 #include "base/bind.h"
 #include "platform/scheduler/base/task_queue_impl.h"
 #include "platform/scheduler/base/task_queue_manager.h"
-#include "platform/scheduler/base/task_queue_manager_delegate.h"
 
 namespace blink {
 namespace scheduler {
 
-RealTimeDomain::RealTimeDomain(const char* tracing_category)
-    : tracing_category_(tracing_category), task_queue_manager_(nullptr) {}
+RealTimeDomain::RealTimeDomain() : task_queue_manager_(nullptr) {}
 
 RealTimeDomain::~RealTimeDomain() {}
 
@@ -28,7 +26,7 @@ LazyNow RealTimeDomain::CreateLazyNow() const {
 }
 
 base::TimeTicks RealTimeDomain::Now() const {
-  return task_queue_manager_->Delegate()->NowTicks();
+  return task_queue_manager_->NowTicks();
 }
 
 void RealTimeDomain::RequestWakeUpAt(base::TimeTicks now,
@@ -54,7 +52,7 @@ base::Optional<base::TimeDelta> RealTimeDomain::DelayTillNextTask(
     return base::TimeDelta();  // Makes DoWork post an immediate continuation.
 
   base::TimeDelta delay = next_run_time - now;
-  TRACE_EVENT1(tracing_category_, "RealTimeDomain::DelayTillNextTask",
+  TRACE_EVENT1("renderer.scheduler", "RealTimeDomain::DelayTillNextTask",
                "delay_ms", delay.InMillisecondsF());
 
   // The next task is sometime in the future. DoWork will make sure it gets

@@ -40,10 +40,9 @@
 #include "platform/image-decoders/ImageDecoder.h"
 #include "platform/image-decoders/ImageFrame.h"
 #include "platform/image-decoders/SegmentReader.h"
-#include "platform/image-encoders/PNGImageEncoder.h"
-#include "platform/wtf/CurrentTime.h"
+#include "platform/image-encoders/ImageEncoder.h"
 #include "platform/wtf/HexNumber.h"
-#include "platform/wtf/PtrUtil.h"
+#include "platform/wtf/Time.h"
 #include "platform/wtf/text/Base64.h"
 #include "platform/wtf/text/TextEncoding.h"
 #include "third_party/skia/include/core/SkData.h"
@@ -63,7 +62,7 @@ class SkiaImageDecoder final : public SkImageDeserializer {
                                 size_t length,
                                 const SkIRect* subset) override {
     // No need to copy the data; this decodes immediately.
-    RefPtr<SegmentReader> segment_reader =
+    scoped_refptr<SegmentReader> segment_reader =
         SegmentReader::CreateFromSkData(SkData::MakeWithoutCopy(data, length));
     std::unique_ptr<ImageDecoder> image_decoder = ImageDecoder::Create(
         std::move(segment_reader), true, ImageDecoder::kAlphaPremultiplied,
@@ -71,7 +70,7 @@ class SkiaImageDecoder final : public SkImageDeserializer {
     if (!image_decoder)
       return nullptr;
 
-    ImageFrame* frame = image_decoder->FrameBufferAtIndex(0);
+    ImageFrame* frame = image_decoder->DecodeFrameBufferAtIndex(0);
     return (frame && !image_decoder->Failed())
                ? frame->FinalizePixelsAndGetImage()
                : nullptr;
@@ -81,8 +80,8 @@ class SkiaImageDecoder final : public SkImageDeserializer {
   }
 };
 
-PassRefPtr<PictureSnapshot> PictureSnapshot::Load(
-    const Vector<RefPtr<TilePictureStream>>& tiles) {
+scoped_refptr<PictureSnapshot> PictureSnapshot::Load(
+    const Vector<scoped_refptr<TilePictureStream>>& tiles) {
   DCHECK(!tiles.IsEmpty());
   Vector<sk_sp<SkPicture>> pictures;
   pictures.ReserveCapacity(tiles.size());
@@ -99,18 +98,19 @@ PassRefPtr<PictureSnapshot> PictureSnapshot::Load(
     pictures.push_back(std::move(picture));
   }
   if (tiles.size() == 1)
-    return AdoptRef(new PictureSnapshot(std::move(pictures[0])));
+    return base::AdoptRef(new PictureSnapshot(std::move(pictures[0])));
   SkPictureRecorder recorder;
-  SkCanvas* canvas =
-      recorder.beginRecording(union_rect.Width(), union_rect.Height(), 0, 0);
+  SkCanvas* canvas = recorder.beginRecording(union_rect.Width(),
+                                             union_rect.Height(), nullptr, 0);
   for (size_t i = 0; i < pictures.size(); ++i) {
     canvas->save();
     canvas->translate(tiles[i]->layer_offset.X() - union_rect.X(),
                       tiles[i]->layer_offset.Y() - union_rect.Y());
-    pictures[i]->playback(canvas, 0);
+    pictures[i]->playback(canvas, nullptr);
     canvas->restore();
   }
-  return AdoptRef(new PictureSnapshot(recorder.finishRecordingAsPicture()));
+  return base::AdoptRef(
+      new PictureSnapshot(recorder.finishRecordingAsPicture()));
 }
 
 bool PictureSnapshot::IsEmpty() const {
@@ -142,21 +142,22 @@ std::unique_ptr<Vector<char>> PictureSnapshot::Replay(unsigned from_step,
     canvas.ResetStepCount();
     picture_->playback(&canvas, &canvas);
   }
-  std::unique_ptr<Vector<char>> base64_data = WTF::MakeUnique<Vector<char>>();
+  std::unique_ptr<Vector<char>> base64_data = std::make_unique<Vector<char>>();
   Vector<char> encoded_image;
 
-  sk_sp<SkImage> image = SkImage::MakeFromBitmap(bitmap);
-  if (!image)
-    return nullptr;
+  SkPixmap src;
+  bool peekResult = bitmap.peekPixels(&src);
+  DCHECK(peekResult);
 
-  ImagePixelLocker pixel_locker(image, kUnpremul_SkAlphaType,
-                                kRGBA_8888_SkColorType);
-  ImageDataBuffer image_data(
-      IntSize(image->width(), image->height()),
-      static_cast<const unsigned char*>(pixel_locker.Pixels()));
-  if (!PNGImageEncoder::Encode(
-          image_data, reinterpret_cast<Vector<unsigned char>*>(&encoded_image)))
+  SkPngEncoder::Options options;
+  options.fFilterFlags = SkPngEncoder::FilterFlag::kSub;
+  options.fZLibLevel = 3;
+  options.fUnpremulBehavior = SkTransferFunctionBehavior::kIgnore;
+  if (!ImageEncoder::Encode(
+          reinterpret_cast<Vector<unsigned char>*>(&encoded_image), src,
+          options)) {
     return nullptr;
+  }
 
   Base64Encode(encoded_image, *base64_data);
   return base64_data;
@@ -167,7 +168,7 @@ std::unique_ptr<PictureSnapshot::Timings> PictureSnapshot::Profile(
     double min_duration,
     const FloatRect* clip_rect) const {
   std::unique_ptr<PictureSnapshot::Timings> timings =
-      WTF::MakeUnique<PictureSnapshot::Timings>();
+      std::make_unique<PictureSnapshot::Timings>();
   timings->ReserveCapacity(min_repeat_count);
   const SkIRect bounds = picture_->cullRect().roundOut();
   SkBitmap bitmap;
@@ -197,8 +198,7 @@ std::unique_ptr<PictureSnapshot::Timings> PictureSnapshot::Profile(
 }
 
 std::unique_ptr<JSONArray> PictureSnapshot::SnapshotCommandLog() const {
-  const SkIRect bounds = picture_->cullRect().roundOut();
-  LoggingCanvas canvas(bounds.width(), bounds.height());
+  LoggingCanvas canvas;
   picture_->playback(&canvas);
   return canvas.Log();
 }

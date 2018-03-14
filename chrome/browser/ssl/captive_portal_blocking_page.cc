@@ -15,17 +15,18 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/captive_portal/captive_portal_tab_helper.h"
-#include "chrome/browser/interstitials/chrome_controller_client.h"
 #include "chrome/browser/interstitials/chrome_metrics_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ssl/cert_report_helper.h"
 #include "chrome/browser/ssl/ssl_cert_reporter.h"
-#include "chrome/grit/generated_resources.h"
+#include "chrome/browser/ssl/ssl_error_controller_client.h"
 #include "components/captive_portal/captive_portal_detector.h"
+#include "components/captive_portal/captive_portal_metrics.h"
 #include "components/certificate_reporting/error_reporter.h"
-#include "components/safe_browsing_db/safe_browsing_prefs.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/security_interstitials/core/controller_client.h"
 #include "components/security_interstitials/core/metrics_helper.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/url_formatter.h"
 #include "components/wifi/wifi_service.h"
 #include "content/public/browser/navigation_entry.h"
@@ -36,21 +37,17 @@
 #include "net/ssl/ssl_info.h"
 #include "ui/base/l10n/l10n_util.h"
 
+#if defined(OS_ANDROID)
+#include "base/android/jni_android.h"
+#include "chrome/browser/ssl/captive_portal_helper_android.h"
+#include "content/public/common/referrer.h"
+#include "net/android/network_library.h"
+#include "ui/base/window_open_disposition.h"
+#endif
+
 namespace {
 
 const char kMetricsName[] = "captive_portal";
-
-// Events for UMA.
-enum CaptivePortalBlockingPageEvent {
-  SHOW_ALL,
-  OPEN_LOGIN_PAGE,
-  CAPTIVE_PORTAL_BLOCKING_PAGE_EVENT_COUNT
-};
-
-void RecordUMA(CaptivePortalBlockingPageEvent event) {
-  UMA_HISTOGRAM_ENUMERATION("interstitial.captive_portal", event,
-                            CAPTIVE_PORTAL_BLOCKING_PAGE_EVENT_COUNT);
-}
 
 std::unique_ptr<ChromeMetricsHelper> CreateMetricsHelper(
     content::WebContents* web_contents,
@@ -80,14 +77,14 @@ CaptivePortalBlockingPage::CaptivePortalBlockingPage(
     : SecurityInterstitialPage(
           web_contents,
           request_url,
-          base::MakeUnique<ChromeControllerClient>(
+          base::MakeUnique<SSLErrorControllerClient>(
               web_contents,
+              ssl_info,
+              request_url,
               CreateMetricsHelper(web_contents, request_url))),
       login_url_(login_url),
       ssl_info_(ssl_info),
       callback_(callback) {
-  DCHECK(login_url_.is_valid());
-
   if (ssl_cert_reporter) {
     cert_report_helper_.reset(new CertReportHelper(
         std::move(ssl_cert_reporter), web_contents, request_url, ssl_info,
@@ -95,7 +92,8 @@ CaptivePortalBlockingPage::CaptivePortalBlockingPage(
         base::Time::Now(), nullptr));
   }
 
-  RecordUMA(SHOW_ALL);
+  captive_portal::CaptivePortalMetrics::LogCaptivePortalBlockingPageEvent(
+      captive_portal::CaptivePortalMetrics::SHOW_ALL);
 }
 
 CaptivePortalBlockingPage::~CaptivePortalBlockingPage() {
@@ -128,6 +126,8 @@ std::string CaptivePortalBlockingPage::GetWiFiSSID() const {
     return std::string();
 #elif defined(OS_LINUX)
   ssid = net::GetWifiSSID();
+#elif defined(OS_ANDROID)
+  ssid = net::android::GetWifiSSID();
 #endif
   // TODO(meacer): Handle non UTF8 SSIDs.
   if (!base::IsStringUTF8(ssid))
@@ -147,6 +147,7 @@ void CaptivePortalBlockingPage::PopulateInterstitialStrings(
   load_time_data->SetString("iconClass", "icon-offline");
   load_time_data->SetString("type", "CAPTIVE_PORTAL");
   load_time_data->SetBoolean("overridable", false);
+  load_time_data->SetBoolean("hide_primary_button", false);
 
   // |IsWifiConnection| isn't accurate on some platforms, so always try to get
   // the Wi-Fi SSID even if |IsWifiConnection| is false.
@@ -164,10 +165,15 @@ void CaptivePortalBlockingPage::PopulateInterstitialStrings(
   load_time_data->SetString("heading", tab_title);
 
   base::string16 paragraph;
-  if (login_url_.spec() == captive_portal::CaptivePortalDetector::kDefaultURL) {
-    // Captive portal may intercept requests without HTTP redirects, in which
-    // case the login url would be the same as the captive portal detection url.
-    // Don't show the login url in that case.
+  if (login_url_.is_empty() ||
+      login_url_.spec() == captive_portal::CaptivePortalDetector::kDefaultURL) {
+    // Don't show the login url when it's empty or is the portal detection URL.
+    // login_url_ can be empty when:
+    // - The captive portal intercepted requests without HTTP redirects, in
+    // which case the login url would be the same as the captive portal
+    // detection url.
+    // - The captive portal was detected via Captive portal certificate list.
+    // - The captive portal was reported by the OS.
     if (wifi_ssid.empty()) {
       paragraph = l10n_util::GetStringUTF16(
           is_wifi ? IDS_CAPTIVE_PORTAL_PRIMARY_PARAGRAPH_NO_LOGIN_URL_WIFI
@@ -218,13 +224,28 @@ void CaptivePortalBlockingPage::CommandReceived(const std::string& command) {
   int command_num = 0;
   bool command_is_num = base::StringToInt(command, &command_num);
   DCHECK(command_is_num) << command;
-  security_interstitials::SecurityInterstitialCommands cmd =
-      static_cast<security_interstitials::SecurityInterstitialCommands>(
+  security_interstitials::SecurityInterstitialCommand cmd =
+      static_cast<security_interstitials::SecurityInterstitialCommand>(
           command_num);
   switch (cmd) {
     case security_interstitials::CMD_OPEN_LOGIN:
-      RecordUMA(OPEN_LOGIN_PAGE);
+      captive_portal::CaptivePortalMetrics::LogCaptivePortalBlockingPageEvent(
+          captive_portal::CaptivePortalMetrics::OPEN_LOGIN_PAGE);
+#if defined(OS_ANDROID)
+      {
+        // CaptivePortalTabHelper is not available on Android. Simply open the
+        // login URL in a new tab. login_url_ is also always empty on Android,
+        // use the platform's portal detection URL.
+        const std::string url = chrome::android::GetCaptivePortalServerUrl(
+            base::android::AttachCurrentThread());
+        content::OpenURLParams params(GURL(url), content::Referrer(),
+                                      WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                                      ui::PAGE_TRANSITION_LINK, false);
+        web_contents()->OpenURL(params);
+      }
+#else
       CaptivePortalTabHelper::OpenLoginTabForWebContents(web_contents(), true);
+#endif
       break;
     case security_interstitials::CMD_DO_REPORT:
       controller()->SetReportingPreference(true);
@@ -239,10 +260,10 @@ void CaptivePortalBlockingPage::CommandReceived(const std::string& command) {
           safe_browsing::SBER_OPTIN_SITE_SECURITY_INTERSTITIAL);
       break;
     case security_interstitials::CMD_OPEN_REPORTING_PRIVACY:
-      controller()->OpenExtendedReportingPrivacyPolicy();
+      controller()->OpenExtendedReportingPrivacyPolicy(true);
       break;
     case security_interstitials::CMD_OPEN_WHITEPAPER:
-      controller()->OpenExtendedReportingWhitepaper();
+      controller()->OpenExtendedReportingWhitepaper(true);
       break;
     case security_interstitials::CMD_ERROR:
     case security_interstitials::CMD_TEXT_FOUND:

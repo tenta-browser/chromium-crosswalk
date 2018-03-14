@@ -23,18 +23,19 @@
 #include <memory>
 #include "core/css/CSSStyleSheet.h"
 #include "core/css/MediaList.h"
+#include "core/css/StyleEngine.h"
 #include "core/css/StyleSheetContents.h"
 #include "core/dom/Document.h"
 #include "core/dom/IncrementLoadEventDelayCount.h"
-#include "core/dom/StyleEngine.h"
 #include "core/loader/resource/CSSStyleSheetResource.h"
 #include "core/loader/resource/XSLStyleSheetResource.h"
 #include "core/xml/DocumentXSLT.h"
 #include "core/xml/XSLStyleSheet.h"
 #include "core/xml/parser/XMLDocumentParser.h"  // for parseAttributes()
-#include "platform/loader/fetch/FetchInitiatorTypeNames.h"
 #include "platform/loader/fetch/FetchParameters.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
+#include "platform/loader/fetch/fetch_initiator_type_names.h"
 
 namespace blink {
 
@@ -59,7 +60,7 @@ ProcessingInstruction::~ProcessingInstruction() {}
 
 EventListener* ProcessingInstruction::EventListenerForXSLT() {
   if (!listener_for_xslt_)
-    return 0;
+    return nullptr;
 
   return listener_for_xslt_->ToEventListener();
 }
@@ -108,7 +109,7 @@ bool ProcessingInstruction::CheckStyleSheet(String& href, String& charset) {
   const HashMap<String, String> attrs = ParseAttributes(data_, attrs_ok);
   if (!attrs_ok)
     return false;
-  HashMap<String, String>::const_iterator i = attrs.Find("type");
+  HashMap<String, String>::const_iterator i = attrs.find("type");
   String type;
   if (i != attrs.end())
     type = i->value;
@@ -136,8 +137,8 @@ void ProcessingInstruction::Process(const String& href, const String& charset) {
     // We need to make a synthetic XSLStyleSheet that is embedded.
     // It needs to be able to kick off import/include loads that
     // can hang off some parent sheet.
-    if (is_xsl_ && RuntimeEnabledFeatures::xsltEnabled()) {
-      KURL final_url(kParsedURLString, local_href_);
+    if (is_xsl_ && RuntimeEnabledFeatures::XSLTEnabled()) {
+      KURL final_url(local_href_);
       sheet_ = XSLStyleSheet::CreateEmbedded(this, final_url);
       loading_ = false;
     }
@@ -149,14 +150,16 @@ void ProcessingInstruction::Process(const String& href, const String& charset) {
   String url = GetDocument().CompleteURL(href).GetString();
 
   StyleSheetResource* resource = nullptr;
+  ResourceLoaderOptions options;
+  options.initiator_info.name = FetchInitiatorTypeNames::processinginstruction;
   FetchParameters params(ResourceRequest(GetDocument().CompleteURL(href)),
-                         FetchInitiatorTypeNames::processinginstruction);
+                         options);
   if (is_xsl_) {
-    if (RuntimeEnabledFeatures::xsltEnabled())
+    if (RuntimeEnabledFeatures::XSLTEnabled())
       resource = XSLStyleSheetResource::Fetch(params, GetDocument().Fetcher());
   } else {
-    params.SetCharset(charset.IsEmpty() ? GetDocument().characterSet()
-                                        : charset);
+    params.SetCharset(charset.IsEmpty() ? GetDocument().Encoding()
+                                        : WTF::TextEncoding(charset));
     resource = CSSStyleSheetResource::Fetch(params, GetDocument().Fetcher());
   }
 
@@ -190,7 +193,7 @@ void ProcessingInstruction::SetCSSStyleSheet(
     const String& href,
     const KURL& base_url,
     ReferrerPolicy referrer_policy,
-    const String& charset,
+    const WTF::TextEncoding& charset,
     const CSSStyleSheetResource* sheet) {
   if (!isConnected()) {
     DCHECK(!sheet_);
@@ -217,7 +220,7 @@ void ProcessingInstruction::SetCSSStyleSheet(
   // We don't need the cross-origin security check here because we are
   // getting the sheet text in "strict" mode. This enforces a valid CSS MIME
   // type.
-  ParseStyleSheet(sheet->SheetText());
+  ParseStyleSheet(sheet->SheetText(parser_context));
 }
 
 void ProcessingInstruction::SetXSLStyleSheet(const String& href,
@@ -296,7 +299,7 @@ void ProcessingInstruction::ClearSheet() {
   sheet_.Release()->ClearOwnerNode();
 }
 
-DEFINE_TRACE(ProcessingInstruction) {
+void ProcessingInstruction::Trace(blink::Visitor* visitor) {
   visitor->Trace(sheet_);
   visitor->Trace(listener_for_xslt_);
   CharacterData::Trace(visitor);

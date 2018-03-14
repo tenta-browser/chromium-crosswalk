@@ -7,7 +7,7 @@
 
 #include "modules/ModulesExport.h"
 #include "modules/serviceworkers/RespondWithObserver.h"
-#include "public/platform/modules/serviceworker/WebServiceWorkerResponseError.h"
+#include "public/platform/modules/serviceworker/service_worker_error_type.mojom-shared.h"
 
 namespace blink {
 
@@ -15,22 +15,23 @@ class ExecutionContext;
 class ScriptValue;
 class WaitUntilObserver;
 
-// This class observes the service worker's handling of a PaymentRequestEvent
-// and notifies the client.
+// Implementation for PaymentRequestEvent.respondWith(), which is used by the
+// payment handler to provide a payment response when the payment successfully
+// completes.
 class MODULES_EXPORT PaymentRequestRespondWithObserver final
     : public RespondWithObserver {
  public:
-  virtual ~PaymentRequestRespondWithObserver();
+  ~PaymentRequestRespondWithObserver() override = default;
 
   static PaymentRequestRespondWithObserver* Create(ExecutionContext*,
                                                    int event_id,
                                                    WaitUntilObserver*);
 
-  void OnResponseRejected(WebServiceWorkerResponseError) override;
+  void OnResponseRejected(mojom::ServiceWorkerResponseError) override;
   void OnResponseFulfilled(const ScriptValue&) override;
   void OnNoResponse() override;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   PaymentRequestRespondWithObserver(ExecutionContext*,

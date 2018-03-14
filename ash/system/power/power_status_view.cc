@@ -6,7 +6,6 @@
 
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/power/tray_power.h"
-#include "ash/system/tray/fixed_sized_image_view.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_popup_item_style.h"
 #include "ash/system/tray/tray_popup_utils.h"
@@ -15,6 +14,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
@@ -27,14 +27,15 @@ PowerStatusView::PowerStatusView()
     : percentage_label_(new views::Label),
       separator_label_(new views::Label),
       time_status_label_(new views::Label) {
-  SetFocusBehavior(FocusBehavior::ALWAYS);
+  SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
 
   percentage_label_->SetEnabledColor(kHeaderTextColorNormal);
   separator_label_->SetEnabledColor(kHeaderTextColorNormal);
   separator_label_->SetText(base::ASCIIToUTF16(" - "));
 
-  views::BoxLayout* layout = new views::BoxLayout(
-      views::BoxLayout::kHorizontal, 12, 0, kTrayPopupPaddingBetweenItems);
+  views::BoxLayout* layout =
+      new views::BoxLayout(views::BoxLayout::kHorizontal, gfx::Insets(0, 12),
+                           kTrayPopupPaddingBetweenItems);
   SetLayoutManager(layout);
 
   AddChildView(percentage_label_);
@@ -78,7 +79,7 @@ void PowerStatusView::UpdateText() {
         base::string16 duration;
         if (!base::TimeDurationFormat(time, base::DURATION_WIDTH_NUMERIC,
                                       &duration))
-          LOG(ERROR) << "Failed to format duration " << time.ToInternalValue();
+          LOG(ERROR) << "Failed to format duration " << time;
         battery_time_status = l10n_util::GetStringFUTF16(
             status.IsBatteryCharging()
                 ? IDS_ASH_STATUS_TRAY_BATTERY_TIME_UNTIL_FULL_SHORT

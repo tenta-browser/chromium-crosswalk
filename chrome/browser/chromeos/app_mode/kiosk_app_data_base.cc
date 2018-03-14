@@ -9,7 +9,8 @@
 #include "base/files/file_util.h"
 #include "base/memory/ptr_util.h"
 #include "base/task_scheduler/post_task.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task_scheduler/task_traits.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/browser/browser_process.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
@@ -32,8 +33,7 @@ constexpr char kIconFileExtension[] = ".png";
 // Save |raw_icon| for given |app_id|.
 void SaveIconToLocalOnBlockingPool(const base::FilePath& icon_path,
                                    std::vector<unsigned char> image_data) {
-  DCHECK(BrowserThread::GetBlockingPool()->RunsTasksOnCurrentThread());
-
+  base::AssertBlockingAllowed();
   const base::FilePath dir = icon_path.DirName();
   if (!base::PathExists(dir) && !base::CreateDirectory(dir)) {
     LOG(ERROR) << "Failed to create directory to store kiosk icons";
@@ -101,9 +101,10 @@ void KioskAppDataBase::SaveIcon(const SkBitmap& icon,
 
   const base::FilePath icon_path =
       cache_dir.AppendASCII(app_id_).AddExtension(kIconFileExtension);
-  BrowserThread::GetBlockingPool()->PostTask(
-      FROM_HERE, base::Bind(&SaveIconToLocalOnBlockingPool, icon_path,
-                            base::Passed(std::move(image_data))));
+  base::PostTaskWithTraits(
+      FROM_HERE, {base::MayBlock()},
+      base::BindOnce(&SaveIconToLocalOnBlockingPool, icon_path,
+                     base::Passed(std::move(image_data))));
 
   icon_path_ = icon_path;
 }
@@ -120,10 +121,9 @@ void KioskAppDataBase::ClearCache() {
 
   if (!icon_path_.empty()) {
     base::PostTaskWithTraits(
-        FROM_HERE,
-        base::TaskTraits().MayBlock().WithPriority(
-            base::TaskPriority::BACKGROUND),
-        base::Bind(base::IgnoreResult(&base::DeleteFile), icon_path_, false));
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        base::BindOnce(base::IgnoreResult(&base::DeleteFile), icon_path_,
+                       false));
   }
 }
 

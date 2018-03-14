@@ -10,7 +10,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
-#include "gpu/command_buffer/service/cmd_buffer_engine.h"
 #include "gpu/command_buffer/service/context_group.h"
 #include "gpu/command_buffer/service/context_state.h"
 #include "gpu/command_buffer/service/gl_surface_mock.h"
@@ -42,7 +41,7 @@ using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::SaveArg;
 using ::testing::SetArrayArgument;
-using ::testing::SetArgumentPointee;
+using ::testing::SetArgPointee;
 using ::testing::SetArgPointee;
 using ::testing::StrEq;
 using ::testing::StrictMock;
@@ -51,6 +50,54 @@ namespace gpu {
 namespace gles2 {
 
 using namespace cmds;
+
+TEST_P(GLES2DecoderTest, DisableVertexAttribArrayValidArgs) {
+  SetDriverVertexAttribEnabled(1, false);
+  SpecializedSetup<cmds::DisableVertexAttribArray, 0>(true);
+  cmds::DisableVertexAttribArray cmd;
+  cmd.Init(1);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
+TEST_P(GLES2DecoderTest, EnableVertexAttribArrayValidArgs) {
+  SetDriverVertexAttribEnabled(1, true);
+  SpecializedSetup<cmds::EnableVertexAttribArray, 0>(true);
+  cmds::EnableVertexAttribArray cmd;
+  cmd.Init(1);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
+TEST_P(GLES2DecoderWithShaderTest, EnabledVertexAttribArrayIsDisabledIfUnused) {
+  SetupExpectationsForApplyingDefaultDirtyState();
+
+  // Set up and enable attribs 0, 1, 2
+  SetupAllNeededVertexBuffers();
+  // Enable attrib 3, and verify it's called in the driver
+  {
+    EXPECT_CALL(*gl_, EnableVertexAttribArray(3))
+        .Times(1)
+        .RetiresOnSaturation();
+    cmds::EnableVertexAttribArray cmd;
+    cmd.Init(3);
+    EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  }
+  DoVertexAttribPointer(3, 2, GL_FLOAT, 0, 0);
+
+  // Expect the draw call below causes attrib 3 to be disabled in the driver
+  EXPECT_CALL(*gl_, DisableVertexAttribArray(3)).Times(1).RetiresOnSaturation();
+  // Perform a draw which uses only attributes 0, 1, 2 - not attrib 3
+  {
+    EXPECT_CALL(*gl_, DrawArrays(GL_TRIANGLES, 0, kNumVertices))
+        .Times(1)
+        .RetiresOnSaturation();
+    DrawArrays cmd;
+    cmd.Init(GL_TRIANGLES, 0, kNumVertices);
+    EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+    EXPECT_EQ(GL_NO_ERROR, GetGLError());
+  }
+}
 
 TEST_P(GLES2DecoderWithShaderTest, GetVertexAttribPointervSucceeds) {
   const GLuint kOffsetToTestFor = sizeof(float) * 4;

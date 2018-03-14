@@ -31,10 +31,6 @@ interface AnimationEvent : Event
     getter animationName
     getter elapsedTime
     method constructor
-interface AppBannerPromptResult
-    getter outcome
-    getter platform
-    method constructor
 interface ApplicationCache : EventTarget
     attribute CHECKING
     attribute DOWNLOADING
@@ -282,8 +278,6 @@ interface CSSRule
     attribute PAGE_RULE
     attribute STYLE_RULE
     attribute SUPPORTS_RULE
-    attribute WEBKIT_KEYFRAMES_RULE
-    attribute WEBKIT_KEYFRAME_RULE
     getter cssText
     getter parentRule
     getter parentStyleSheet
@@ -735,6 +729,7 @@ interface Document : Node
     getter origin
     getter plugins
     getter pointerLockElement
+    getter policy
     getter preferredStylesheetSet
     getter readyState
     getter referrer
@@ -957,6 +952,7 @@ interface Element : Node
     method createShadowRoot
     method getAttribute
     method getAttributeNS
+    method getAttributeNames
     method getAttributeNode
     method getAttributeNodeNS
     method getBoundingClientRect
@@ -1359,6 +1355,10 @@ interface HTMLDListElement : HTMLElement
     getter compact
     method constructor
     setter compact
+interface HTMLDataElement : HTMLElement
+    getter value
+    method constructor
+    setter value
 interface HTMLDataListElement : HTMLElement
     getter options
     method constructor
@@ -2480,6 +2480,11 @@ interface HTMLTextAreaElement : HTMLElement
     setter selectionStart
     setter value
     setter wrap
+interface HTMLTimeElement : HTMLElement
+    attribute @@toStringTag
+    getter dateTime
+    method constructor
+    setter dateTime
 interface HTMLTitleElement : HTMLElement
     getter text
     method constructor
@@ -2539,7 +2544,6 @@ interface Headers
     method entries
     method forEach
     method get
-    method getAll
     method has
     method keys
     method set
@@ -3006,6 +3010,7 @@ interface Navigator
     getter bluetooth
     getter connection
     getter cookieEnabled
+    getter deviceMemory
     getter doNotTrack
     getter geolocation
     getter hardwareConcurrency
@@ -3165,6 +3170,7 @@ interface Performance : EventTarget
     getter memory
     getter navigation
     getter onresourcetimingbufferfull
+    getter timeOrigin
     getter timing
     method clearMarks
     method clearMeasures
@@ -3350,6 +3356,7 @@ interface Request
     method blob
     method clone
     method constructor
+    method formData
     method json
     method text
 interface Response
@@ -3367,6 +3374,7 @@ interface Response
     method blob
     method clone
     method constructor
+    method formData
     method json
     method text
 interface SVGAElement : SVGGraphicsElement
@@ -4069,7 +4077,6 @@ interface SVGNumberList
     method replaceItem
 interface SVGPathElement : SVGGeometryElement
     method constructor
-    method getPathSegAtLength
 interface SVGPatternElement : SVGElement
     getter height
     getter href
@@ -4422,7 +4429,6 @@ interface ShadowRoot : DocumentFragment
     getter activeElement
     getter host
     getter innerHTML
-    getter olderShadowRoot
     getter styleSheets
     method cloneNode
     method constructor
@@ -5166,7 +5172,8 @@ interface WebKitAnimationEvent : Event
     getter animationName
     getter elapsedTime
     method constructor
-interface WebKitCSSMatrix
+interface WebKitCSSMatrix : DOMMatrixReadOnly
+    attribute @@toStringTag
     getter a
     getter b
     getter c
@@ -5190,16 +5197,18 @@ interface WebKitCSSMatrix
     getter m43
     getter m44
     method constructor
-    method inverse
-    method multiply
-    method rotate
-    method rotateAxisAngle
-    method scale
+    method invertSelf
+    method multiplySelf
+    method preMultiplySelf
+    method rotateAxisAngleSelf
+    method rotateFromVectorSelf
+    method rotateSelf
+    method scale3dSelf
+    method scaleSelf
     method setMatrixValue
-    method skewX
-    method skewY
-    method toString
-    method translate
+    method skewXSelf
+    method skewYSelf
+    method translateSelf
     setter a
     setter b
     setter c
@@ -5560,7 +5569,6 @@ interface webkitRTCPeerConnection : EventTarget
     method getLocalStreams
     method getRemoteStreams
     method getStats
-    method getStreamById
     method removeStream
     method setLocalDescription
     method setRemoteDescription

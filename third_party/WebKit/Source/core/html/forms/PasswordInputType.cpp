@@ -31,15 +31,16 @@
 
 #include "core/html/forms/PasswordInputType.h"
 
-#include "core/InputTypeNames.h"
+#include "base/memory/scoped_refptr.h"
 #include "core/dom/Document.h"
 #include "core/editing/FrameSelection.h"
 #include "core/frame/LocalFrame.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/frame/WebFeature.h"
 #include "core/html/forms/FormController.h"
+#include "core/html/forms/HTMLInputElement.h"
+#include "core/input_type_names.h"
 #include "core/layout/LayoutTextControlSingleLine.h"
 #include "platform/wtf/Assertions.h"
-#include "platform/wtf/PassRefPtr.h"
 
 namespace blink {
 
@@ -48,9 +49,9 @@ InputType* PasswordInputType::Create(HTMLInputElement& element) {
 }
 
 void PasswordInputType::CountUsage() {
-  CountUsageIfVisible(UseCounter::kInputTypePassword);
+  CountUsageIfVisible(WebFeature::kInputTypePassword);
   if (GetElement().FastHasAttribute(HTMLNames::maxlengthAttr))
-    CountUsageIfVisible(UseCounter::kInputTypePasswordMaxLength);
+    CountUsageIfVisible(WebFeature::kInputTypePasswordMaxLength);
 }
 
 const AtomicString& PasswordInputType::FormControlType() const {

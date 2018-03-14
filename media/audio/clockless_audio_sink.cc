@@ -84,9 +84,10 @@ ClocklessAudioSink::ClocklessAudioSink(const OutputDeviceInfo& device_info)
     : device_info_(device_info),
       initialized_(false),
       playing_(false),
-      hashing_(false) {}
+      hashing_(false),
+      is_optimized_for_hw_params_(true) {}
 
-ClocklessAudioSink::~ClocklessAudioSink() {}
+ClocklessAudioSink::~ClocklessAudioSink() = default;
 
 void ClocklessAudioSink::Initialize(const AudioParameters& params,
                                     RenderCallback* callback) {
@@ -134,6 +135,10 @@ OutputDeviceInfo ClocklessAudioSink::GetOutputDeviceInfo() {
   return device_info_;
 }
 
+bool ClocklessAudioSink::IsOptimizedForHardwareParameters() {
+  return is_optimized_for_hw_params_;
+}
+
 bool ClocklessAudioSink::CurrentThreadIsRenderingThread() {
   NOTIMPLEMENTED();
   return false;
@@ -146,6 +151,11 @@ void ClocklessAudioSink::StartAudioHashForTesting() {
 
 std::string ClocklessAudioSink::GetAudioHashForTesting() {
   return thread_ && hashing_ ? thread_->GetAudioHash() : std::string();
+}
+
+void ClocklessAudioSink::SetIsOptimizedForHardwareParametersForTesting(
+    bool value) {
+  is_optimized_for_hw_params_ = value;
 }
 
 }  // namespace media

@@ -20,6 +20,7 @@
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/enrollment_status_chromeos.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/lifetime/application_lifetime.h"
 #include "chromeos/dbus/cryptohome_client.h"
 #include "chromeos/dbus/dbus_method_call_status.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -31,24 +32,26 @@ using namespace pairing_chromeos;
 using policy::EnrollmentConfig;
 
 // Do not change the UMA histogram parameters without renaming the histograms!
-#define UMA_ENROLLMENT_TIME(histogram_name, elapsed_timer) \
-  do {                                                     \
-    UMA_HISTOGRAM_CUSTOM_TIMES(                            \
-      (histogram_name),                                    \
-      (elapsed_timer)->Elapsed(),                          \
-      base::TimeDelta::FromMilliseconds(100) /* min */,    \
-      base::TimeDelta::FromMinutes(15) /* max */,          \
-      100 /* bucket_count */);                             \
+#define UMA_ENROLLMENT_TIME(histogram_name, elapsed_timer)                   \
+  do {                                                                       \
+    UMA_HISTOGRAM_CUSTOM_TIMES(                                              \
+        (histogram_name), (elapsed_timer)->Elapsed(),                        \
+        base::TimeDelta::FromMilliseconds(100) /* min */,                    \
+        base::TimeDelta::FromMinutes(15) /* max */, 100 /* bucket_count */); \
   } while (0)
 
 namespace {
 
-const char * const kMetricEnrollmentTimeCancel =
+const char* const kMetricEnrollmentTimeCancel =
     "Enterprise.EnrollmentTime.Cancel";
-const char * const kMetricEnrollmentTimeFailure =
+const char* const kMetricEnrollmentTimeFailure =
     "Enterprise.EnrollmentTime.Failure";
-const char * const kMetricEnrollmentTimeSuccess =
+const char* const kMetricEnrollmentTimeSuccess =
     "Enterprise.EnrollmentTime.Success";
+
+const char* const kLicenseTypePerpetual = "perpetual";
+const char* const kLicenseTypeAnnual = "annual";
+const char* const kLicenseTypeKiosk = "kiosk";
 
 // Retry policy constants.
 constexpr int kInitialDelayMS = 4 * 1000;  // 4 seconds
@@ -56,11 +59,28 @@ constexpr double kMultiplyFactor = 1.5;
 constexpr double kJitterFactor = 0.1;           // +/- 10% jitter
 constexpr int64_t kMaxDelayMS = 8 * 60 * 1000;  // 8 minutes
 
-// Helper function. Returns true if we are using Hands Off Enrollment.
-bool UsingHandsOffEnrollment() {
-  return policy::DeviceCloudPolicyManagerChromeOS::
-             GetZeroTouchEnrollmentMode() ==
-         policy::ZeroTouchEnrollmentMode::HANDS_OFF;
+::policy::LicenseType GetLicenseTypeById(const std::string& id) {
+  if (id == kLicenseTypePerpetual)
+    return ::policy::LicenseType::PERPETUAL;
+  if (id == kLicenseTypeAnnual)
+    return ::policy::LicenseType::ANNUAL;
+  if (id == kLicenseTypeKiosk)
+    return ::policy::LicenseType::KIOSK;
+  return ::policy::LicenseType::UNKNOWN;
+}
+
+std::string GetLicenseIdByType(::policy::LicenseType type) {
+  switch (type) {
+    case ::policy::LicenseType::PERPETUAL:
+      return kLicenseTypePerpetual;
+    case ::policy::LicenseType::ANNUAL:
+      return kLicenseTypeAnnual;
+    case ::policy::LicenseType::KIOSK:
+      return kLicenseTypeKiosk;
+    default:
+      NOTREACHED();
+      return std::string();
+  }
 }
 
 }  // namespace
@@ -122,8 +142,9 @@ void EnrollmentScreen::SetParameters(
 void EnrollmentScreen::SetConfig() {
   config_ = enrollment_config_;
   if (current_auth_ == AUTH_ATTESTATION) {
+    // TODO(crbugs.com/778535): Don't lose server forced attestation.
     config_.mode = enrollment_config_.is_attestation_forced()
-                       ? policy::EnrollmentConfig::MODE_ATTESTATION_FORCED
+                       ? policy::EnrollmentConfig::MODE_ATTESTATION_LOCAL_FORCED
                        : policy::EnrollmentConfig::MODE_ATTESTATION;
   }
   view_->SetParameters(this, config_);
@@ -208,6 +229,14 @@ void EnrollmentScreen::OnLoginDone(const std::string& user,
       auth_code, shark_controller_ != nullptr /* fetch_additional_token */);
 }
 
+void EnrollmentScreen::OnLicenseTypeSelected(const std::string& license_type) {
+  view_->ShowEnrollmentSpinnerScreen();
+  const ::policy::LicenseType license = GetLicenseTypeById(license_type);
+  CHECK(license != ::policy::LicenseType::UNKNOWN)
+      << "license_type = " << license_type;
+  enrollment_helper_->UseLicenseType(license);
+}
+
 void EnrollmentScreen::OnRetry() {
   retry_task_.Cancel();
   ProcessRetry();
@@ -224,7 +253,8 @@ void EnrollmentScreen::AutomaticRetry() {
 
 void EnrollmentScreen::ProcessRetry() {
   ++num_retries_;
-  LOG(WARNING) << "Enrollment retry " << num_retries_;
+  LOG(WARNING) << "Enrollment retries: " << num_retries_
+               << ", current_auth_: " << current_auth_;
   Show();
 }
 
@@ -248,6 +278,16 @@ void EnrollmentScreen::OnCancel() {
 void EnrollmentScreen::OnConfirmationClosed() {
   ClearAuth(base::Bind(&EnrollmentScreen::Finish, base::Unretained(this),
                        ScreenExitCode::ENTERPRISE_ENROLLMENT_COMPLETED));
+  // Restart browser to switch from DeviceCloudPolicyManagerChromeOS to
+  // DeviceActiveDirectoryPolicyManager.
+  if (g_browser_process->platform_part()
+          ->browser_policy_connector_chromeos()
+          ->IsActiveDirectoryManaged()) {
+    // TODO(tnagel): Refactor BrowserPolicyConnectorChromeOS so that device
+    // policy providers are only registered after enrollment has finished and
+    // thus the correct one can be picked without restarting the browser.
+    chrome::AttemptRestart();
+  }
 }
 
 void EnrollmentScreen::OnAdJoined(const std::string& realm) {
@@ -259,11 +299,15 @@ void EnrollmentScreen::OnAuthError(const GoogleServiceAuthError& error) {
   view_->ShowAuthError(error);
 }
 
+void EnrollmentScreen::OnMultipleLicensesAvailable(
+    const EnrollmentLicenseMap& licenses) {
+  base::DictionaryValue license_dict;
+  for (const auto& it : licenses)
+    license_dict.SetInteger(GetLicenseIdByType(it.first), it.second);
+  view_->ShowLicenseTypeSelectionScreen(license_dict);
+}
+
 void EnrollmentScreen::OnEnrollmentError(policy::EnrollmentStatus status) {
-  // TODO(pbond): remove this LOG once http://crbug.com/586961 is fixed.
-  LOG(WARNING) << "Enrollment error occured: status=" << status.status()
-               << " http status=" << status.http_status()
-               << " DM status=" << status.client_status();
   RecordEnrollmentErrorMetrics();
   // If the DM server does not have a device pre-provisioned for attestation-
   // based enrollment and we have a fallback authentication, show it.
@@ -273,7 +317,7 @@ void EnrollmentScreen::OnEnrollmentError(policy::EnrollmentStatus status) {
     Show();
   } else {
     view_->ShowEnrollmentStatus(status);
-    if (UsingHandsOffEnrollment())
+    if (WizardController::UsingHandsOffEnrollment())
       AutomaticRetry();
   }
 }
@@ -282,13 +326,11 @@ void EnrollmentScreen::OnOtherError(
     EnterpriseEnrollmentHelper::OtherError error) {
   RecordEnrollmentErrorMetrics();
   view_->ShowOtherError(error);
-  if (UsingHandsOffEnrollment())
+  if (WizardController::UsingHandsOffEnrollment())
     AutomaticRetry();
 }
 
 void EnrollmentScreen::OnDeviceEnrolled(const std::string& additional_token) {
-  // TODO(pbond): remove this LOG once http://crbug.com/586961 is fixed.
-  LOG(WARNING) << "Device is successfully enrolled.";
   if (!additional_token.empty())
     SendEnrollmentAuthToken(additional_token);
 
@@ -303,20 +345,15 @@ void EnrollmentScreen::OnDeviceAttributeProvided(const std::string& asset_id,
 void EnrollmentScreen::OnDeviceAttributeUpdatePermission(bool granted) {
   // If user is permitted to update device attributes
   // Show attribute prompt screen
-  if (granted) {
-    // TODO(pbond): remove this LOG once http://crbug.com/586961 is fixed.
-    LOG(WARNING) << "Show device attribute prompt screen";
+  if (granted && !WizardController::skip_enrollment_prompts()) {
     StartupUtils::MarkDeviceRegistered(
-        base::Bind(&EnrollmentScreen::ShowAttributePromptScreen,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&EnrollmentScreen::ShowAttributePromptScreen,
+                       weak_ptr_factory_.GetWeakPtr()));
   } else {
-    // TODO(pbond): remove this LOG once http://crbug.com/586961 is fixed.
-    LOG(WARNING) << "The device attribute update is not permitted";
     StartupUtils::MarkDeviceRegistered(
-        base::Bind(&EnrollmentScreen::ShowEnrollmentStatusOnSuccess,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&EnrollmentScreen::ShowEnrollmentStatusOnSuccess,
+                       weak_ptr_factory_.GetWeakPtr()));
   }
-
 }
 
 void EnrollmentScreen::OnDeviceAttributeUploadCompleted(bool success) {
@@ -357,7 +394,8 @@ void EnrollmentScreen::ShowEnrollmentStatusOnSuccess() {
   retry_backoff_->InformOfRequest(true);
   if (elapsed_timer_)
     UMA_ENROLLMENT_TIME(kMetricEnrollmentTimeSuccess, elapsed_timer_);
-  if (UsingHandsOffEnrollment()) {
+  if (WizardController::UsingHandsOffEnrollment() ||
+      WizardController::skip_enrollment_prompts()) {
     OnConfirmationClosed();
   } else {
     view_->ShowEnrollmentStatus(

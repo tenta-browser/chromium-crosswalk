@@ -38,7 +38,6 @@ class AppSearchProvider : public SearchProvider {
 
   // SearchProvider overrides:
   void Start(bool is_voice_query, const base::string16& query) override;
-  void Stop() override;
 
   // Refresh indexed app data and update search results. When |force_inline| is
   // set to true, search results is updated before returning from the function.
@@ -50,10 +49,10 @@ class AppSearchProvider : public SearchProvider {
   void RefreshApps();
   void UpdateResults();
 
-  AppListControllerDelegate* list_controller_;
+  AppListControllerDelegate* const list_controller_;
   base::string16 query_;
   Apps apps_;
-  AppListItemList* top_level_item_list_;
+  AppListItemList* const top_level_item_list_;
   std::unique_ptr<base::Clock> clock_;
   std::vector<std::unique_ptr<DataSource>> data_sources_;
   base::WeakPtrFactory<AppSearchProvider> update_results_factory_;

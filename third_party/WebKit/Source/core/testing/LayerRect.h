@@ -31,16 +31,15 @@
 #ifndef LayerRect_h
 #define LayerRect_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "core/dom/ClientRect.h"
 #include "core/dom/Node.h"
+#include "core/geometry/DOMRectReadOnly.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
-class LayerRect final : public GarbageCollectedFinalized<LayerRect>,
-                        public ScriptWrappable {
+class LayerRect final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -48,7 +47,7 @@ class LayerRect final : public GarbageCollectedFinalized<LayerRect>,
                            const String& layer_type,
                            int node_offset_x,
                            int node_offset_y,
-                           ClientRect* rect) {
+                           DOMRectReadOnly* rect) {
     return new LayerRect(node, layer_type, node_offset_x, node_offset_y, rect);
   }
 
@@ -56,11 +55,12 @@ class LayerRect final : public GarbageCollectedFinalized<LayerRect>,
   String layerType() const { return layer_type_; }
   int associatedNodeOffsetX() const { return associated_node_offset_x_; }
   int associatedNodeOffsetY() const { return associated_node_offset_y_; }
-  ClientRect* layerRelativeRect() const { return rect_.Get(); }
+  DOMRectReadOnly* layerRelativeRect() const { return rect_.Get(); }
 
-  DEFINE_INLINE_TRACE() {
+  void Trace(blink::Visitor* visitor) {
     visitor->Trace(layer_associated_node_);
     visitor->Trace(rect_);
+    ScriptWrappable::Trace(visitor);
   }
 
  private:
@@ -68,7 +68,7 @@ class LayerRect final : public GarbageCollectedFinalized<LayerRect>,
             const String& layer_name,
             int node_offset_x,
             int node_offset_y,
-            ClientRect* rect)
+            DOMRectReadOnly* rect)
       : layer_associated_node_(node),
         layer_type_(layer_name),
         associated_node_offset_x_(node_offset_x),
@@ -79,7 +79,7 @@ class LayerRect final : public GarbageCollectedFinalized<LayerRect>,
   String layer_type_;
   int associated_node_offset_x_;
   int associated_node_offset_y_;
-  Member<ClientRect> rect_;
+  Member<DOMRectReadOnly> rect_;
 };
 
 }  // namespace blink

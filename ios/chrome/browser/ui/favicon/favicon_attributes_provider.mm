@@ -13,6 +13,8 @@
 #include "components/favicon/core/large_icon_service.h"
 #include "components/favicon_base/fallback_icon_style.h"
 #include "components/favicon_base/favicon_types.h"
+#include "ios/chrome/browser/favicon/large_icon_cache.h"
+#import "ios/chrome/browser/ui/favicon/favicon_attributes_with_payload.h"
 #include "skia/ext/skia_utils_ios.h"
 #include "url/gurl.h"
 
@@ -31,6 +33,7 @@
 @synthesize largeIconService = _largeIconService;
 @synthesize minSize = _minSize;
 @synthesize faviconSize = _faviconSize;
+@synthesize cache = _cache;
 
 - (instancetype)initWithFaviconSize:(CGFloat)faviconSize
                      minFaviconSize:(CGFloat)minFaviconSize
@@ -52,14 +55,16 @@
   GURL blockURL(URL);
   void (^faviconBlock)(const favicon_base::LargeIconResult&) =
       ^(const favicon_base::LargeIconResult& result) {
-        FaviconAttributes* attributes = nil;
+        FaviconAttributesWithPayload* attributes = nil;
         if (result.bitmap.is_valid()) {
           scoped_refptr<base::RefCountedMemory> data =
               result.bitmap.bitmap_data.get();
           UIImage* favicon =
               [UIImage imageWithData:[NSData dataWithBytes:data->front()
                                                     length:data->size()]];
-          attributes = [FaviconAttributes attributesWithImage:favicon];
+          attributes =
+              [FaviconAttributesWithPayload attributesWithImage:favicon];
+          attributes.iconType = result.bitmap.icon_type;
         } else if (result.fallback_icon_style) {
           UIColor* backgroundColor = skia::UIColorFromSkColor(
               result.fallback_icon_style->background_color);
@@ -67,20 +72,42 @@
               skia::UIColorFromSkColor(result.fallback_icon_style->text_color);
           NSString* monogram =
               base::SysUTF16ToNSString(favicon::GetFallbackIconText(blockURL));
-          attributes =
-              [FaviconAttributes attributesWithMonogram:monogram
-                                              textColor:textColor
-                                        backgroundColor:backgroundColor];
+          attributes = [FaviconAttributesWithPayload
+              attributesWithMonogram:monogram
+                           textColor:textColor
+                     backgroundColor:backgroundColor
+              defaultBackgroundColor:result.fallback_icon_style->
+                                     is_default_background_color];
         }
         DCHECK(attributes);
         completion(attributes);
       };
 
+  __weak FaviconAttributesProvider* weakSelf = self;
+  void (^faviconBlockSaveToCache)(const favicon_base::LargeIconResult&) =
+      ^(const favicon_base::LargeIconResult& result) {
+        faviconBlock(result);
+
+        FaviconAttributesProvider* strongSelf = weakSelf;
+        if (strongSelf.cache &&
+            (result.bitmap.is_valid() || result.fallback_icon_style)) {
+          strongSelf.cache->SetCachedResult(blockURL, result);
+        }
+      };
+
+  if (self.cache) {
+    std::unique_ptr<favicon_base::LargeIconResult> cached_result =
+        self.cache->GetCachedResult(URL);
+    if (cached_result) {
+      faviconBlock(*cached_result);
+    }
+  }
+
   // Always call LargeIconService in case the favicon was updated.
   CGFloat faviconSize = [UIScreen mainScreen].scale * self.faviconSize;
   CGFloat minFaviconSize = [UIScreen mainScreen].scale * self.minSize;
   self.largeIconService->GetLargeIconOrFallbackStyle(
-      URL, minFaviconSize, faviconSize, base::BindBlockArc(faviconBlock),
-      &_faviconTaskTracker);
+      URL, minFaviconSize, faviconSize,
+      base::BindBlockArc(faviconBlockSaveToCache), &_faviconTaskTracker);
 }
 @end

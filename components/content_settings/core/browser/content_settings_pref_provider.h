@@ -12,11 +12,15 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "components/content_settings/core/browser/content_settings_observable_provider.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
+#include "components/content_settings/core/browser/user_modifiable_provider.h"
 #include "components/prefs/pref_change_registrar.h"
 
 class PrefService;
+
+namespace base {
+class Clock;
+}
 
 namespace user_prefs {
 class PrefRegistrySyncable;
@@ -28,32 +32,36 @@ class ContentSettingsPref;
 
 // Content settings provider that provides content settings from the user
 // preference.
-class PrefProvider : public ObservableProvider {
+class PrefProvider : public UserModifiableProvider {
  public:
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
-  PrefProvider(PrefService* prefs, bool incognito);
+  PrefProvider(PrefService* prefs, bool incognito, bool store_last_modified);
   ~PrefProvider() override;
 
-  // ProviderInterface implementations.
+  // UserModifiableProvider implementations.
   std::unique_ptr<RuleIterator> GetRuleIterator(
       ContentSettingsType content_type,
       const ResourceIdentifier& resource_identifier,
       bool incognito) const override;
-
   bool SetWebsiteSetting(const ContentSettingsPattern& primary_pattern,
                          const ContentSettingsPattern& secondary_pattern,
                          ContentSettingsType content_type,
                          const ResourceIdentifier& resource_identifier,
                          base::Value* value) override;
-
   void ClearAllContentSettingsRules(ContentSettingsType content_type) override;
-
   void ShutdownOnUIThread() override;
+  base::Time GetWebsiteSettingLastModified(
+      const ContentSettingsPattern& primary_pattern,
+      const ContentSettingsPattern& secondary_pattern,
+      ContentSettingsType content_type,
+      const ResourceIdentifier& resource_identifier) override;
 
   void ClearPrefs();
 
   ContentSettingsPref* GetPref(ContentSettingsType type) const;
+
+  void SetClockForTesting(base::Clock* clock);
 
  private:
   friend class DeadlockCheckerObserver;  // For testing.
@@ -71,12 +79,16 @@ class PrefProvider : public ObservableProvider {
 
   const bool is_incognito_;
 
+  bool store_last_modified_;
+
   PrefChangeRegistrar pref_change_registrar_;
 
   std::map<ContentSettingsType, std::unique_ptr<ContentSettingsPref>>
       content_settings_prefs_;
 
   base::ThreadChecker thread_checker_;
+
+  base::Clock* clock_;
 
   DISALLOW_COPY_AND_ASSIGN(PrefProvider);
 };

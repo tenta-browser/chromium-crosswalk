@@ -27,6 +27,13 @@ void DisableSetUnhandledExceptionFilter();
 // blacklist interception code, etc.
 // Note: the handler takes a minidump.
 int GenerateCrashDump(EXCEPTION_POINTERS* exception_pointers);
-}
+
+// Generate a crash dump by calling into crashpad.
+void DumpWithoutCrashing();
+
+// Set the metrics client ID in crash keys.
+void SetMetricsClientIdImpl(const char* client_id);
+
+}  // namespace elf_crash
 
 #endif  // CHROME_ELF_CRASH_CRASH_HELPER_H_

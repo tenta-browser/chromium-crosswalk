@@ -23,8 +23,11 @@
 
 #include "core/CoreExport.h"
 #include "core/dom/Document.h"
+#include "core/frame/DOMWindow.h"
+#include "core/frame/EmbeddedContentView.h"
 #include "core/frame/FrameOwner.h"
 #include "core/html/HTMLElement.h"
+#include "platform/feature_policy/FeaturePolicy.h"
 #include "platform/heap/Handle.h"
 #include "platform/scroll/ScrollTypes.h"
 #include "platform/weborigin/SecurityPolicy.h"
@@ -34,8 +37,8 @@ namespace blink {
 
 class ExceptionState;
 class Frame;
-class FrameViewBase;
-class LayoutPart;
+class LayoutEmbeddedContent;
+class PluginView;
 
 class CORE_EXPORT HTMLFrameOwnerElement : public HTMLElement,
                                           public FrameOwner {
@@ -49,29 +52,44 @@ class CORE_EXPORT HTMLFrameOwnerElement : public HTMLElement,
 
   virtual void DisconnectContentFrame();
 
-  // Most subclasses use LayoutPart (either LayoutEmbeddedObject or
+  // Most subclasses use LayoutEmbeddedContent (either LayoutEmbeddedObject or
   // LayoutIFrame) except for HTMLObjectElement and HTMLEmbedElement which may
   // return any LayoutObject when using fallback content.
-  LayoutPart* GetLayoutPart() const;
+  LayoutEmbeddedContent* GetLayoutEmbeddedContent() const;
+
+  // Whether to collapse the frame owner element in the embedder document. That
+  // is, to remove it from the layout as if it did not exist.
+  virtual void SetCollapsed(bool) {}
 
   Document* getSVGDocument(ExceptionState&) const;
 
-  virtual bool LoadedNonEmptyDocument() const { return false; }
-  virtual void DidLoadNonEmptyDocument() {}
+  bool LoadedNonEmptyDocument() const { return did_load_non_empty_document_; }
+  void DidLoadNonEmptyDocument() { did_load_non_empty_document_ = true; }
 
-  void SetWidget(FrameViewBase*);
-  FrameViewBase* ReleaseWidget();
-  FrameViewBase* OwnedWidget() const;
+  void SetEmbeddedContentView(EmbeddedContentView*);
+  EmbeddedContentView* ReleaseEmbeddedContentView();
+  EmbeddedContentView* OwnedEmbeddedContentView() const {
+    return embedded_content_view_;
+  }
 
-  class UpdateSuspendScope {
+  class PluginDisposeSuspendScope {
     STACK_ALLOCATED();
 
    public:
-    UpdateSuspendScope();
-    ~UpdateSuspendScope();
+    PluginDisposeSuspendScope() { suspend_count_ += 2; }
+    ~PluginDisposeSuspendScope() {
+      suspend_count_ -= 2;
+      if (suspend_count_ == 1)
+        PerformDeferredPluginDispose();
+    }
 
    private:
-    void PerformDeferredWidgetTreeOperations();
+    void PerformDeferredPluginDispose();
+
+    // Low bit indicates if there are plugins to dispose.
+    static int suspend_count_;
+
+    friend class HTMLFrameOwnerElement;
   };
 
   // FrameOwner overrides:
@@ -90,11 +108,14 @@ class CORE_EXPORT HTMLFrameOwnerElement : public HTMLElement,
   int MarginHeight() const override { return -1; }
   bool AllowFullscreen() const override { return false; }
   bool AllowPaymentRequest() const override { return false; }
-  bool IsDisplayNone() const override { return !widget_; }
+  bool IsDisplayNone() const override { return !embedded_content_view_; }
   AtomicString Csp() const override { return g_null_atom; }
-  const WebVector<WebFeaturePolicyFeature>& AllowedFeatures() const override;
+  const ParsedFeaturePolicy& ContainerPolicy() const override;
 
-  DECLARE_VIRTUAL_TRACE();
+  // For unit tests, manually trigger the UpdateContainerPolicy method.
+  void UpdateContainerPolicyForTests() { UpdateContainerPolicy(); }
+
+  virtual void Trace(blink::Visitor*);
 
  protected:
   HTMLFrameOwnerElement(const QualifiedName& tag_name, Document&);
@@ -105,8 +126,33 @@ class CORE_EXPORT HTMLFrameOwnerElement : public HTMLElement,
                               bool replace_current_item);
   bool IsKeyboardFocusable() const override;
 
-  void DisposeWidgetSoon(FrameViewBase*);
+  void DisposePluginSoon(PluginView*);
   void FrameOwnerPropertiesChanged();
+
+  // Return the origin which is to be used for feature policy container
+  // policies, as "the origin of the URL in the frame's src attribute" (see
+  // https://wicg.github.io/feature-policy/#iframe-allow-attribute).
+  // This method is intended to be overridden by specific frame classes.
+  virtual scoped_refptr<SecurityOrigin> GetOriginForFeaturePolicy() const {
+    return SecurityOrigin::CreateUnique();
+  }
+
+  // Return a feature policy container policy for this frame, based on the
+  // frame attributes and the effective origin specified in the frame
+  // attributes.
+  // If |old_syntax| (bool*) is not null, it will be set true if the deprecated
+  // space-deparated feature list syntax is detected.
+  // TODO(loonybear): remove the boolean once the space separated feature list
+  // syntax is deprecated.
+  // https://crbug.com/761009.
+  virtual ParsedFeaturePolicy ConstructContainerPolicy(
+      Vector<String>* /*  messages */,
+      bool* /* old_syntax */) const = 0;
+
+  // Update the container policy and notify the frame loader client of any
+  // changes.
+  void UpdateContainerPolicy(Vector<String>* messages = nullptr,
+                             bool* old_syntax = nullptr);
 
  private:
   // Intentionally private to prevent redundant checks when the type is
@@ -121,8 +167,11 @@ class CORE_EXPORT HTMLFrameOwnerElement : public HTMLElement,
   }
 
   Member<Frame> content_frame_;
-  Member<FrameViewBase> widget_;
+  Member<EmbeddedContentView> embedded_content_view_;
   SandboxFlags sandbox_flags_;
+  bool did_load_non_empty_document_;
+
+  ParsedFeaturePolicy container_policy_;
 };
 
 DEFINE_ELEMENT_TYPE_CASTS(HTMLFrameOwnerElement, IsFrameOwnerElement());

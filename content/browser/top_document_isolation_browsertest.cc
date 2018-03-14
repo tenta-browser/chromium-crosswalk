@@ -5,9 +5,10 @@
 #include <string>
 
 #include "base/command_line.h"
+#include "base/test/scoped_feature_list.h"
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/web_contents/web_contents_impl.h"
-#include "content/public/common/content_switches.h"
+#include "content/public/common/content_features.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -30,8 +31,9 @@ class TopDocumentIsolationTest : public ContentBrowserTest {
     return visualizer_.DepictFrameTree(node);
   }
 
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(switches::kTopDocumentIsolation);
+  void SetUp() override {
+    scoped_feature_list_.InitAndEnableFeature(features::kTopDocumentIsolation);
+    ContentBrowserTest::SetUp();
   }
 
   void SetUpOnMainThread() override {
@@ -67,6 +69,9 @@ class TopDocumentIsolationTest : public ContentBrowserTest {
 
  private:
   FrameTreeVisualizer visualizer_;
+  base::test::ScopedFeatureList scoped_feature_list_;
+
+  DISALLOW_COPY_AND_ASSIGN(TopDocumentIsolationTest);
 };
 
 IN_PROC_BROWSER_TEST_F(TopDocumentIsolationTest, SameSiteDeeplyNested) {
@@ -182,11 +187,11 @@ IN_PROC_BROWSER_TEST_F(TopDocumentIsolationTest, NavigateToSubframeSite) {
   NavigateToURL(shell(), ba_url);
 
   EXPECT_EQ(
-      " Site C ------------ proxies for B\n"
-      "   |--Site B ------- proxies for C\n"
-      "   +--Site B ------- proxies for C\n"
-      "Where B = default subframe process\n"
-      "      C = http://b.com/",
+      " Site C ------------ proxies for D\n"
+      "   |--Site D ------- proxies for C\n"
+      "   +--Site D ------- proxies for C\n"
+      "Where C = http://b.com/\n"
+      "      D = default subframe process",
       DepictFrameTree(root()));
 }
 

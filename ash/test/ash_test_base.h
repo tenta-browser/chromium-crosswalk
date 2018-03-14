@@ -10,13 +10,16 @@
 #include <memory>
 #include <string>
 
+#include "ash/public/cpp/shell_window_ids.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/aura/client/window_types.h"
+#include "ui/aura/env_observer.h"
+#include "ui/aura/window_tree_host_observer.h"
 #include "ui/display/display.h"
-#include "ui/wm/public/window_types.h"
 
 namespace aura {
 class Window;
@@ -48,19 +51,17 @@ class WidgetDelegate;
 }
 
 namespace ash {
-class AshTestImplAura;
-class SystemTray;
-class WmShelf;
-
-namespace test {
 
 class AshTestEnvironment;
 class AshTestHelper;
+class Shelf;
+class SystemTray;
 class TestScreenshotDelegate;
 class TestSessionControllerClient;
-class TestSystemTrayDelegate;
 
-class AshTestBase : public testing::Test {
+class AshTestBase : public testing::Test,
+                    public aura::EnvObserver,
+                    public aura::WindowTreeHostObserver {
  public:
   AshTestBase();
   ~AshTestBase() override;
@@ -69,14 +70,14 @@ class AshTestBase : public testing::Test {
   void SetUp() override;
   void TearDown() override;
 
-  // Returns the WmShelf for the primary display.
-  static WmShelf* GetPrimaryShelf();
+  // Returns the Shelf for the primary display.
+  static Shelf* GetPrimaryShelf();
 
   // Returns the system tray on the primary display.
   static SystemTray* GetPrimarySystemTray();
 
   // Update the display configuration as given in |display_specs|.
-  // See ash::test::DisplayManagerTestApi::UpdateDisplay for more details.
+  // See ash::DisplayManagerTestApi::UpdateDisplay for more details.
   void UpdateDisplay(const std::string& display_specs);
 
   // Returns a root Window. Usually this is the active root Window, but that
@@ -87,9 +88,27 @@ class AshTestBase : public testing::Test {
   // Creates and shows a widget. See ash/public/cpp/shell_window_ids.h for
   // values for |container_id|.
   static std::unique_ptr<views::Widget> CreateTestWidget(
-      views::WidgetDelegate* delegate,
-      int container_id,
-      const gfx::Rect& bounds);
+      views::WidgetDelegate* delegate = nullptr,
+      int container_id = kShellWindowId_DefaultContainer,
+      const gfx::Rect& bounds = gfx::Rect());
+
+  // Creates a visible window in the appropriate container. If
+  // |bounds_in_screen| is empty the window is added to the primary root
+  // window, otherwise the window is added to the display matching
+  // |bounds_in_screen|. |shell_window_id| is the shell window id to give to
+  // the new window.
+  // TODO(sky): convert existing CreateTestWindow() functions into this one.
+  std::unique_ptr<aura::Window> CreateTestWindow(
+      const gfx::Rect& bounds_in_screen = gfx::Rect(),
+      aura::client::WindowType type = aura::client::WINDOW_TYPE_NORMAL,
+      int shell_window_id = kShellWindowId_Invalid);
+
+  // Creates a visible top-level window. For Config::CLASSIC and Config::MUS
+  // this creates a Window with a delegate. For Config::MASH this creates a
+  // window as if the client requested a top-level window.
+  std::unique_ptr<aura::Window> CreateToplevelTestWindow(
+      const gfx::Rect& bounds_in_screen = gfx::Rect(),
+      int shell_window_id = kShellWindowId_Invalid);
 
   // Versions of the functions in aura::test:: that go through our shell
   // StackingController instead of taking a parent.
@@ -98,13 +117,21 @@ class AshTestBase : public testing::Test {
   aura::Window* CreateTestWindowInShell(SkColor color,
                                         int id,
                                         const gfx::Rect& bounds);
+
+  // Creates a visible window parented to |parent| with the specified bounds and
+  // id.
+  std::unique_ptr<aura::Window> CreateChildWindow(
+      aura::Window* parent,
+      const gfx::Rect& bounds = gfx::Rect(),
+      int shell_window_id = kShellWindowId_Invalid);
+
   aura::Window* CreateTestWindowInShellWithDelegate(
       aura::WindowDelegate* delegate,
       int id,
       const gfx::Rect& bounds);
   aura::Window* CreateTestWindowInShellWithDelegateAndType(
       aura::WindowDelegate* delegate,
-      ui::wm::WindowType type,
+      aura::client::WindowType type,
       int id,
       const gfx::Rect& bounds);
 
@@ -140,6 +167,7 @@ class AshTestBase : public testing::Test {
   static display::Display::Rotation GetCurrentInternalDisplayRotation();
 
   void set_start_session(bool start_session) { start_session_ = start_session; }
+  void disable_provide_local_state() { provide_local_state_ = false; }
 
   AshTestHelper* ash_test_helper() { return ash_test_helper_.get(); }
 
@@ -149,14 +177,24 @@ class AshTestBase : public testing::Test {
 
   TestSessionControllerClient* GetSessionControllerClient();
 
-  TestSystemTrayDelegate* GetSystemTrayDelegate();
+  // Emulates an ash session that have |session_count| user sessions running.
+  // Note that existing user sessions will be cleared.
+  void CreateUserSessions(int session_count);
 
-  // Utility methods to emulate user logged in or not, session started or not
-  // and user able to lock screen or not cases.
-  void SetSessionStarted(bool session_started);
-  void SetUserLoggedIn(bool user_logged_in);
+  // Simulates a user sign-in. It creates a new user session, adds it to
+  // existing user sessions and makes it the active user session.
+  void SimulateUserLogin(const std::string& user_email);
+
+  // Clears all user sessions and resets to the primary login screen state.
+  void ClearLogin();
+
+  // Emulates whether the active user can lock screen.
   void SetCanLockScreen(bool can_lock);
+
+  // Emulates whether the screen should be locked automatically.
   void SetShouldLockScreenAutomatically(bool should_lock);
+
+  // Emulates whether the user adding screen is running.
   void SetUserAddingScreenRunning(bool user_adding_screen_running);
 
   // Methods to emulate blocking and unblocking user session with given
@@ -169,15 +207,24 @@ class AshTestBase : public testing::Test {
   // Swap the primary display with the secondary.
   void SwapPrimaryDisplay();
 
+  display::Display GetPrimaryDisplay();
   display::Display GetSecondaryDisplay();
 
  private:
-  friend class ash::AshTestImplAura;
+  // aura::EnvObserver:
+  void OnWindowInitialized(aura::Window* window) override;
+  void OnHostInitialized(aura::WindowTreeHost* host) override;
+
+  // aura::WindowTreeHostObserver:
+  void OnHostResized(aura::WindowTreeHost* host) override;
 
   bool setup_called_;
   bool teardown_called_;
   // |SetUp()| doesn't activate session if this is set to false.
   bool start_session_;
+  // |SetUp()| doesn't inject local-state PrefService into Shell if this is
+  // set to false.
+  bool provide_local_state_ = true;
   std::unique_ptr<AshTestEnvironment> ash_test_environment_;
   std::unique_ptr<AshTestHelper> ash_test_helper_;
   std::unique_ptr<ui::test::EventGenerator> event_generator_;
@@ -194,7 +241,6 @@ class NoSessionAshTestBase : public AshTestBase {
   DISALLOW_COPY_AND_ASSIGN(NoSessionAshTestBase);
 };
 
-}  // namespace test
 }  // namespace ash
 
 #endif  // ASH_TEST_ASH_TEST_BASE_H_

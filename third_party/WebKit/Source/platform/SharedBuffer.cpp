@@ -29,6 +29,7 @@
 #include "platform/instrumentation/tracing/web_process_memory_dump.h"
 #include "platform/wtf/text/UTF8.h"
 #include "platform/wtf/text/Unicode.h"
+#include "third_party/skia/include/core/SkData.h"
 
 namespace blink {
 
@@ -65,11 +66,11 @@ SharedBuffer::~SharedBuffer() {
   Clear();
 }
 
-PassRefPtr<SharedBuffer> SharedBuffer::AdoptVector(Vector<char>& vector) {
-  RefPtr<SharedBuffer> buffer = Create();
-  buffer->buffer_.Swap(vector);
+scoped_refptr<SharedBuffer> SharedBuffer::AdoptVector(Vector<char>& vector) {
+  scoped_refptr<SharedBuffer> buffer = Create();
+  buffer->buffer_.swap(vector);
   buffer->size_ = buffer->buffer_.size();
-  return buffer.Release();
+  return buffer;
 }
 
 size_t SharedBuffer::size() const {
@@ -78,13 +79,13 @@ size_t SharedBuffer::size() const {
 
 const char* SharedBuffer::Data() const {
   MergeSegmentsIntoBuffer();
-  return buffer_.Data();
+  return buffer_.data();
 }
 
-void SharedBuffer::Append(PassRefPtr<SharedBuffer> data) {
+void SharedBuffer::Append(const SharedBuffer& data) {
   const char* segment;
   size_t position = 0;
-  while (size_t length = data->GetSomeDataInternal(segment, position)) {
+  while (size_t length = data.GetSomeDataInternal(segment, position)) {
     Append(segment, length);
     position += length;
   }
@@ -94,7 +95,7 @@ void SharedBuffer::AppendInternal(const char* data, size_t length) {
   if (!length)
     return;
 
-  ASSERT(size_ >= buffer_.size());
+  DCHECK_GE(size_, buffer_.size());
   size_t position_in_segment = OffsetInSegment(size_ - buffer_.size());
   size_ += length;
 
@@ -128,33 +129,30 @@ void SharedBuffer::AppendInternal(const char* data, size_t length) {
 }
 
 void SharedBuffer::Append(const Vector<char>& data) {
-  Append(data.Data(), data.size());
+  Append(data.data(), data.size());
 }
 
 void SharedBuffer::Clear() {
   for (size_t i = 0; i < segments_.size(); ++i)
     FreeSegment(segments_[i]);
 
-  segments_.Clear();
+  segments_.clear();
   size_ = 0;
-  buffer_.Clear();
+  buffer_.clear();
 }
 
-PassRefPtr<SharedBuffer> SharedBuffer::Copy() const {
-  RefPtr<SharedBuffer> clone(AdoptRef(new SharedBuffer));
-  clone->size_ = size_;
-  clone->buffer_.ReserveInitialCapacity(size_);
-  clone->buffer_.Append(buffer_.Data(), buffer_.size());
-  if (!segments_.IsEmpty()) {
-    const char* segment = 0;
-    size_t position = buffer_.size();
-    while (size_t segment_size = GetSomeDataInternal(segment, position)) {
-      clone->buffer_.Append(segment, segment_size);
-      position += segment_size;
-    }
-    ASSERT(position == clone->size());
-  }
-  return clone.Release();
+Vector<char> SharedBuffer::Copy() const {
+  Vector<char> buffer;
+  buffer.ReserveInitialCapacity(size_);
+
+  ForEachSegment([&buffer](const char* segment, size_t segment_size,
+                           size_t segment_offset) -> bool {
+    buffer.Append(segment, segment_size);
+    return true;
+  });
+
+  DCHECK_EQ(buffer.size(), size_);
+  return buffer;
 }
 
 void SharedBuffer::MergeSegmentsIntoBuffer() const {
@@ -168,7 +166,7 @@ void SharedBuffer::MergeSegmentsIntoBuffer() const {
       bytes_left -= bytes_to_copy;
       FreeSegment(segments_[i]);
     }
-    segments_.Clear();
+    segments_.clear();
   }
 }
 
@@ -176,14 +174,14 @@ size_t SharedBuffer::GetSomeDataInternal(const char*& some_data,
                                          size_t position) const {
   size_t total_size = size();
   if (position >= total_size) {
-    some_data = 0;
+    some_data = nullptr;
     return 0;
   }
 
   SECURITY_DCHECK(position < size_);
   size_t consecutive_size = buffer_.size();
   if (position < consecutive_size) {
-    some_data = buffer_.Data() + position;
+    some_data = buffer_.data() + position;
     return consecutive_size - position;
   }
 
@@ -200,17 +198,16 @@ size_t SharedBuffer::GetSomeDataInternal(const char*& some_data,
     return segment == segments - 1 ? segmented_size - position
                                    : kSegmentSize - position_in_segment;
   }
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return 0;
 }
 
-bool SharedBuffer::GetAsBytesInternal(void* dest,
-                                      size_t load_position,
-                                      size_t byte_length) const {
+bool SharedBuffer::GetBytesInternal(void* dest, size_t byte_length) const {
   if (!dest)
     return false;
 
   const char* segment = nullptr;
+  size_t load_position = 0;
   size_t write_position = 0;
   while (byte_length > 0) {
     size_t load_size = GetSomeDataInternal(segment, load_position);
@@ -232,7 +229,7 @@ sk_sp<SkData> SharedBuffer::GetAsSkData() const {
   size_t buffer_length = size();
   sk_sp<SkData> data = SkData::MakeUninitialized(buffer_length);
   char* buffer = static_cast<char*>(data->writable_data());
-  const char* segment = 0;
+  const char* segment = nullptr;
   size_t position = 0;
   while (size_t segment_size = GetSomeDataInternal(segment, position)) {
     memcpy(buffer + position, segment, segment_size);
@@ -240,7 +237,7 @@ sk_sp<SkData> SharedBuffer::GetAsSkData() const {
   }
 
   if (position != buffer_length) {
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
     // Don't return the incomplete SkData.
     return nullptr;
   }
@@ -264,6 +261,28 @@ void SharedBuffer::OnMemoryDump(const String& dump_prefix,
     memory_dump->AddSuballocation(
         dump->Guid(), String(WTF::Partitions::kAllocatedObjectPoolName));
   }
+}
+
+SharedBuffer::DeprecatedFlatData::DeprecatedFlatData(
+    scoped_refptr<const SharedBuffer> buffer)
+    : buffer_(std::move(buffer)) {
+  DCHECK(buffer_);
+
+  if (buffer_->size() <= buffer_->buffer_.size()) {
+    // The SharedBuffer is not segmented - just point to its data.
+    data_ = buffer_->buffer_.data();
+    return;
+  }
+
+  // Merge all segments.
+  flat_buffer_.ReserveInitialCapacity(buffer_->size());
+  buffer_->ForEachSegment([this](const char* segment, size_t segment_size,
+                                 size_t segment_offset) -> bool {
+    flat_buffer_.Append(segment, segment_size);
+    return true;
+  });
+
+  data_ = flat_buffer_.data();
 }
 
 }  // namespace blink

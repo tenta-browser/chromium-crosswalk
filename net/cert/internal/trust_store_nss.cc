@@ -7,11 +7,12 @@
 #include <cert.h>
 #include <certdb.h>
 
-#include "base/memory/ptr_util.h"
 #include "crypto/nss_util.h"
 #include "net/cert/internal/cert_errors.h"
 #include "net/cert/internal/parsed_certificate.h"
+#include "net/cert/scoped_nss_types.h"
 #include "net/cert/x509_util.h"
+#include "net/cert/x509_util_nss.h"
 
 // TODO(mattm): structure so that supporting ChromeOS multi-profile stuff is
 // doable (Have a TrustStoreChromeOS which uses net::NSSProfileFilterChromeOS,
@@ -24,9 +25,8 @@ TrustStoreNSS::TrustStoreNSS(SECTrustType trust_type)
 
 TrustStoreNSS::~TrustStoreNSS() = default;
 
-void TrustStoreNSS::FindTrustAnchorsForCert(
-    const scoped_refptr<ParsedCertificate>& cert,
-    TrustAnchors* out_anchors) const {
+void TrustStoreNSS::SyncGetIssuersOf(const ParsedCertificate* cert,
+                                     ParsedCertificateList* issuers) {
   crypto::EnsureNSSInit();
 
   SECItem name;
@@ -46,31 +46,71 @@ void TrustStoreNSS::FindTrustAnchorsForCert(
 
   for (CERTCertListNode* node = CERT_LIST_HEAD(found_certs);
        !CERT_LIST_END(node, found_certs); node = CERT_LIST_NEXT(node)) {
-    CERTCertTrust trust;
-    if (CERT_GetCertTrust(node->cert, &trust) != SECSuccess)
-      continue;
-
-    // TODO(mattm): handle explicit distrust (blacklisting)?
-    const int ca_trust = CERTDB_TRUSTED_CA;
-    if ((SEC_GET_TRUST_FLAGS(&trust, trust_type_) & ca_trust) != ca_trust)
-      continue;
-
-    CertErrors errors;
-    scoped_refptr<ParsedCertificate> anchor_cert = ParsedCertificate::Create(
+    CertErrors parse_errors;
+    scoped_refptr<ParsedCertificate> cur_cert = ParsedCertificate::Create(
         x509_util::CreateCryptoBuffer(node->cert->derCert.data,
                                       node->cert->derCert.len),
-        {}, &errors);
-    if (!anchor_cert) {
+        {}, &parse_errors);
+
+    if (!cur_cert) {
       // TODO(crbug.com/634443): return errors better.
       LOG(ERROR) << "Error parsing issuer certificate:\n"
-                 << errors.ToDebugString();
+                 << parse_errors.ToDebugString();
       continue;
     }
 
-    out_anchors->push_back(TrustAnchor::CreateFromCertificateNoConstraints(
-        std::move(anchor_cert)));
+    issuers->push_back(std::move(cur_cert));
   }
   CERT_DestroyCertList(found_certs);
+}
+
+void TrustStoreNSS::GetTrust(const scoped_refptr<ParsedCertificate>& cert,
+                             CertificateTrust* out_trust) const {
+  crypto::EnsureNSSInit();
+
+  // TODO(eroman): Inefficient -- path building will convert between
+  // CERTCertificate and ParsedCertificate representations multiple times
+  // (when getting the issuers, and again here).
+
+  // Note that trust records in NSS are keyed on issuer + serial, and there
+  // exist builtin distrust records for which a matching certificate is not
+  // included in the builtin cert list. Therefore, create a temp NSS cert even
+  // if no existing cert matches. (Eg, this uses CERT_NewTempCertificate, not
+  // CERT_FindCertByDERCert.)
+  ScopedCERTCertificate nss_cert(x509_util::CreateCERTCertificateFromBytes(
+      cert->der_cert().UnsafeData(), cert->der_cert().Length()));
+  if (!nss_cert) {
+    *out_trust = CertificateTrust::ForUnspecified();
+    return;
+  }
+
+  // Determine the trustedness of the matched certificate.
+  CERTCertTrust trust;
+  if (CERT_GetCertTrust(nss_cert.get(), &trust) != SECSuccess) {
+    *out_trust = CertificateTrust::ForUnspecified();
+    return;
+  }
+
+  int trust_flags = SEC_GET_TRUST_FLAGS(&trust, trust_type_);
+
+  // Determine if the certificate is distrusted.
+  if ((trust_flags & (CERTDB_TERMINAL_RECORD | CERTDB_TRUSTED_CA |
+                      CERTDB_TRUSTED)) == CERTDB_TERMINAL_RECORD) {
+    *out_trust = CertificateTrust::ForDistrusted();
+    return;
+  }
+
+  // Determine if the certificate is a trust anchor.
+  if ((trust_flags & CERTDB_TRUSTED_CA) == CERTDB_TRUSTED_CA) {
+    *out_trust = CertificateTrust::ForTrustAnchor();
+    return;
+  }
+
+  // TODO(mattm): handle trusted server certs (CERTDB_TERMINAL_RECORD +
+  // CERTDB_TRUSTED)
+
+  *out_trust = CertificateTrust::ForUnspecified();
+  return;
 }
 
 }  // namespace net

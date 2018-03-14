@@ -12,6 +12,8 @@ AuraMusWmTestBase::AuraMusWmTestBase() {}
 AuraMusWmTestBase::~AuraMusWmTestBase() {}
 
 void AuraMusWmTestBase::SetUp() {
+  // Run AuraTestBase::SetUp() first because it puts an InProcessContextFactory
+  // in env.
   EnableMusWithTestWindowTree();
   AuraTestBase::SetUp();
 }
@@ -21,6 +23,8 @@ AuraMusClientTestBase::AuraMusClientTestBase() {}
 AuraMusClientTestBase::~AuraMusClientTestBase() {}
 
 void AuraMusClientTestBase::SetUp() {
+  // Run AuraTestBase::SetUp() first because it puts an InProcessContextFactory
+  // in env.
   EnableMusWithTestWindowTree();
   set_window_manager_delegate(nullptr);
   AuraTestBase::SetUp();

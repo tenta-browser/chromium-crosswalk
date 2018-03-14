@@ -6,6 +6,7 @@
 #define CHROMEOS_DBUS_BIOD_FAKE_BIOD_CLIENT_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
@@ -40,7 +41,8 @@ class CHROMEOS_EXPORT FakeBiodClient : public BiodClient {
   // is true the enroll session is finished, and the record is stored.
   void SendEnrollScanDone(const std::string& fingerprint,
                           biod::ScanResult type_result,
-                          bool is_complete);
+                          bool is_complete,
+                          int percent_complete);
   // Emulates a scan that occurs during a authentication session. |fingerprint|
   // is a string which represents the finger, and will be compared with all the
   // stored fingerprints.
@@ -61,18 +63,16 @@ class CHROMEOS_EXPORT FakeBiodClient : public BiodClient {
                           const ObjectPathCallback& callback) override;
   void GetRecordsForUser(const std::string& user_id,
                          const UserRecordsCallback& callback) override;
-  void DestroyAllRecords(const VoidDBusMethodCallback& callback) override;
+  void DestroyAllRecords(VoidDBusMethodCallback callback) override;
   void StartAuthSession(const ObjectPathCallback& callback) override;
   void RequestType(const BiometricTypeCallback& callback) override;
-  void CancelEnrollSession(const dbus::ObjectPath& enroll_session_path,
-                           const VoidDBusMethodCallback& callback) override;
-  void EndAuthSession(const dbus::ObjectPath& auth_session_path,
-                      const VoidDBusMethodCallback& callback) override;
+  void CancelEnrollSession(VoidDBusMethodCallback callback) override;
+  void EndAuthSession(VoidDBusMethodCallback callback) override;
   void SetRecordLabel(const dbus::ObjectPath& record_path,
                       const std::string& label,
-                      const VoidDBusMethodCallback& callback) override;
+                      VoidDBusMethodCallback callback) override;
   void RemoveRecord(const dbus::ObjectPath& record_path,
-                    const VoidDBusMethodCallback& callback) override;
+                    VoidDBusMethodCallback callback) override;
   void RequestRecordLabel(const dbus::ObjectPath& record_path,
                           const LabelCallback& callback) override;
 

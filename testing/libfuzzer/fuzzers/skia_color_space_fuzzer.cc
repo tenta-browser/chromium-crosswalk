@@ -7,7 +7,6 @@
 #include <random>
 
 #include "base/logging.h"
-#include "base/strings/string_piece.h"
 #include "testing/libfuzzer/fuzzers/color_space_data.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/core/SkColorSpaceXform.h"
@@ -38,10 +37,11 @@ static void ColorTransform(size_t hash, bool input) {
 
   static uint32_t output[kPixels * 4];
 
-  const auto color = SkColorSpaceXform::ColorFormat(hash & 7);
-  const auto alpha = SkAlphaType(hash >> 3 & 3);
+  const auto form1 = SkColorSpaceXform::ColorFormat(hash >> 0 & 7);
+  const auto form2 = SkColorSpaceXform::ColorFormat(hash >> 3 & 7);
+  const auto alpha = SkAlphaType(hash >> 6 & 3);
 
-  transform->apply(color, output, color, pixels, kPixels, alpha);
+  transform->apply(form1, output, form2, pixels, kPixels, alpha);
 }
 
 static sk_sp<SkColorSpace> SelectProfile(size_t hash) {
@@ -63,8 +63,10 @@ static sk_sp<SkColorSpace> SelectProfile(size_t hash) {
   return profiles[hash & 7];
 }
 
-inline size_t Hash(const char* data, size_t size) {
-  return base::StringPieceHash()(base::StringPiece(data, size));
+inline size_t Hash(const char* data, size_t size, size_t hash = ~0) {
+  for (size_t i = 0; i < size; ++i)
+    hash = hash * 131 + *data++;
+  return hash;
 }
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {

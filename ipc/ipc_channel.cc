@@ -17,11 +17,14 @@
 namespace {
 
 // Global atomic used to guarantee channel IDs are unique.
-base::StaticAtomicSequenceNumber g_last_id;
+base::AtomicSequenceNumber g_last_id;
 
 }  // namespace
 
 namespace IPC {
+
+// static
+constexpr size_t Channel::kMaximumMessageSize;
 
 // static
 std::string Channel::GenerateUniqueRandomChannelID() {
@@ -43,16 +46,6 @@ std::string Channel::GenerateUniqueRandomChannelID() {
       process_id,
       g_last_id.GetNext(),
       base::RandInt(0, std::numeric_limits<int32_t>::max()));
-}
-
-Channel::OutputElement::OutputElement(Message* message)
-    : message_(message), buffer_(nullptr), length_(0) {}
-
-Channel::OutputElement::OutputElement(void* buffer, size_t length)
-    : message_(nullptr), buffer_(buffer), length_(length) {}
-
-Channel::OutputElement::~OutputElement() {
-  free(buffer_);
 }
 
 }  // namespace IPC

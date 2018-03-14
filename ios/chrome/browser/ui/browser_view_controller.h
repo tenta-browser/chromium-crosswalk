@@ -10,47 +10,31 @@
 #import <UIKit/UIKit.h>
 
 #import "base/ios/block_types.h"
+#import "ios/chrome/browser/ui/settings/sync_utils/sync_presenter.h"
 #import "ios/chrome/browser/ui/side_swipe/side_swipe_controller.h"
 #import "ios/chrome/browser/ui/toolbar/toolbar_owner.h"
-#import "ios/chrome/browser/ui/toolbar/web_toolbar_controller.h"
+#import "ios/chrome/browser/ui/toolbar/web_toolbar_delegate.h"
 #import "ios/chrome/browser/ui/url_loader.h"
 #import "ios/public/provider/chrome/browser/voice/voice_search_presenter.h"
 
+@protocol ApplicationCommands;
+@protocol BrowserCommands;
 @class BrowserContainerView;
 @class BrowserViewControllerDependencyFactory;
-@class ContextualSearchController;
-@class ContextualSearchPanelView;
-@class FindBarControllerIOS;
 class GURL;
-@class NoTabsController;
-@class PageInfoViewController;
-@class PreloadController;
-@class PrintController;
-@class SideSwipeController;
+@protocol OmniboxFocuser;
+@protocol SnackbarCommands;
 @class Tab;
 @class TabModel;
-@class TabStripController;
-@class ThumbnailHelper;
-@class VoiceSearchBarView;
+@protocol TabStripFoldAnimation;
 
 namespace ios {
 class ChromeBrowserState;
 }
 
-namespace ios_internal {
-// Notification sent when the page info is shown.
-extern NSString* const kPageInfoWillShowNotification;
-// Notification sent when the page info is hidden.
-extern NSString* const kPageInfoWillHideNotification;
-// Notification sent when the location bar becomes first responder.
-extern NSString* const kLocationBarBecomesFirstResponderNotification;
-// Notification sent when the location bar resigns first responder.
-extern NSString* const kLocationBarResignsFirstResponderNotification;
-}  // namespace ios_internal
-
 // The top-level view controller for the browser UI. Manages other controllers
 // which implement the interface.
-@interface BrowserViewController : UIViewController<SideSwipeControllerDelegate,
+@interface BrowserViewController : UIViewController<SyncPresenter,
                                                     ToolbarOwner,
                                                     UrlLoader,
                                                     VoiceSearchPresenter,
@@ -60,16 +44,25 @@ extern NSString* const kLocationBarResignsFirstResponderNotification;
 // webUsageSuspended property for this BVC will be based on |model|, and future
 // changes to |model|'s suspension state should be made through this BVC
 // instead of directly on the model.
-- (instancetype)initWithTabModel:(TabModel*)model
-                    browserState:(ios::ChromeBrowserState*)browserState
-               dependencyFactory:
-                   (BrowserViewControllerDependencyFactory*)factory
+- (instancetype)
+          initWithTabModel:(TabModel*)model
+              browserState:(ios::ChromeBrowserState*)browserState
+         dependencyFactory:(BrowserViewControllerDependencyFactory*)factory
+applicationCommandEndpoint:(id<ApplicationCommands>)applicationCommandEndpoint
     NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)initWithNibName:(NSString*)nibNameOrNil
                          bundle:(NSBundle*)nibBundleOrNil NS_UNAVAILABLE;
 
 - (instancetype)initWithCoder:(NSCoder*)aDecoder NS_UNAVAILABLE;
+
+@property(nonatomic, readonly) id<ApplicationCommands,
+                                  BrowserCommands,
+                                  OmniboxFocuser,
+                                  SnackbarCommands,
+                                  UrlLoader,
+                                  WebToolbarDelegate>
+    dispatcher;
 
 // The top-level browser container view.
 @property(nonatomic, strong) BrowserContainerView* contentArea;
@@ -98,12 +91,14 @@ extern NSString* const kLocationBarResignsFirstResponderNotification;
 // Called when the typing shield is tapped.
 - (void)shieldWasTapped:(id)sender;
 
-// Called when a UI element to create a new tab is triggered.
-- (void)newTab:(id)sender;
+// Called when the user explicitly opens the tab switcher.
+- (void)userEnteredTabSwitcher;
 
-// Makes sure that the view hierarchy has been built. Equivalent to calling
-// -view, but without the annoying compiler warning.
-- (void)ensureViewCreated;
+// Presents either the new tab tip or incognito tab tip in-product help bubbles
+// if the the user is in a valid state to see one of them. At most one bubble
+// will be shown. If the feature engagement tracker determines it is not valid
+// to see one of the bubbles, that bubble will not be shown.
+- (void)presentBubblesIfEligible;
 
 // Called when the browser state provided to this instance is being destroyed.
 // At this point the browser will no longer ever be active, and will likely be
@@ -122,10 +117,14 @@ extern NSString* const kLocationBarResignsFirstResponderNotification;
                       atIndex:(NSUInteger)position
                    transition:(ui::PageTransition)transition;
 
-// This will dismiss the web views on all the tabs and reload the frontmost one
-// if there is one. This is used when a userdefault changes and the web views
-// need to be re-created to pick it up.
-- (void)resetAllWebViews;
+// Add a new tab with the given url, at the given |position|,
+// and makes it the selected tab. The selected tab is returned.
+// If |position| == NSNotFound the tab will be added at the end of the stack.
+// |tabAddedCompletion| is called after the tab is added (if not nil).
+- (Tab*)addSelectedTabWithURL:(const GURL&)url
+                      atIndex:(NSUInteger)position
+                   transition:(ui::PageTransition)transition
+           tabAddedCompletion:(ProceduralBlock)tabAddedCompletion;
 
 // Informs the BVC that a new foreground tab is about to be opened. This is
 // intended to be called before setWebUsageSuspended:NO in cases where a new tab
@@ -133,27 +132,25 @@ extern NSString* const kLocationBarResignsFirstResponderNotification;
 // related to showing the previously selected tab.
 - (void)expectNewForegroundTab;
 
-// Shows the voice search UI.
-- (void)startVoiceSearch;
-
-// Shows the QR scanner UI.
-- (void)showQRScanner;
+// Shows the voice search UI. |originView|'s center is used for the presentation
+// and dismissal animations of the Voice Search UI. |originView| can be nil.
+- (void)startVoiceSearchWithOriginView:(UIView*)originView;
 
 // Focuses the omnibox.
 - (void)focusOmnibox;
 
-// Dismisses all presented views then calls |completion|.
-- (void)clearPresentedStateWithCompletion:(ProceduralBlock)completion;
+// Dismisses all presented views, excluding the omnibox if |dismissOmnibox| is
+// NO, then calls |completion|.
+- (void)clearPresentedStateWithCompletion:(ProceduralBlock)completion
+                           dismissOmnibox:(BOOL)dismissOmnibox;
 
-// Returns a set with the names of the files received from other applications
-// that are bookmarked or referenced by an open or recently closed tab.
-- (NSSet*)referencedExternalFiles;
+// Returns a tab strip placeholder view created from the current state of the
+// tab strip. It is used to animate the transition from the browser view
+// controller to the tab switcher.
+- (UIView<TabStripFoldAnimation>*)tabStripPlaceholderView;
 
-// Removes files received from other applications. If |immediately| is YES,
-// initiates the removal of files immediately. |completionHandler| is called
-// when files have been removed.
-- (void)removeExternalFilesImmediately:(BOOL)immediately
-                     completionHandler:(ProceduralBlock)completionHandler;
+// Called before the instance is deallocated.
+- (void)shutdown;
 
 @end
 

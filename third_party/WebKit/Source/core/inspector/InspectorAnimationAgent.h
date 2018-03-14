@@ -10,13 +10,12 @@
 #include "core/css/CSSKeyframesRule.h"
 #include "core/inspector/InspectorBaseAgent.h"
 #include "core/inspector/protocol/Animation.h"
-#include "wtf/text/WTFString.h"
-
-#include <v8-inspector.h>
+#include "platform/wtf/text/WTFString.h"
+#include "v8/include/v8-inspector.h"
 
 namespace blink {
 
-class AnimationTimeline;
+class DocumentTimeline;
 class InspectedFrames;
 class InspectorCSSAgent;
 
@@ -67,7 +66,7 @@ class CORE_EXPORT InspectorAnimationAgent final
   protocol::Response AssertAnimation(const String& id,
                                      blink::Animation*& result);
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   using AnimationType = protocol::Animation::Animation::TypeEnum;
@@ -80,7 +79,7 @@ class CORE_EXPORT InspectorAnimationAgent final
       std::unique_ptr<protocol::Animation::KeyframesRule> keyframe_rule =
           nullptr);
   double NormalizedStartTime(blink::Animation&);
-  AnimationTimeline& ReferenceTimeline();
+  DocumentTimeline& ReferenceTimeline();
   blink::Animation* AnimationClone(blink::Animation*);
   String CreateCSSId(blink::Animation&);
 

@@ -11,6 +11,7 @@
 #include "base/mac/mac_util.h"
 #include "chrome/browser/ui/cocoa/l10n_util.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_strip_controller.h"
+#include "chrome/common/chrome_features.h"
 
 namespace chrome {
 
@@ -18,18 +19,15 @@ namespace chrome {
 const CGFloat kTabStripHeight = 37;
 
 bool ShouldUseFullSizeContentView() {
-  // Chrome has added a subview above the window's content view, which the
-  // Appkit warns about at runtime. This was done to make sure that window
-  // buttons are always displayed above the content. Presumably, doing so may
-  // break in a future macOS release. Using NSFullSizeContentViewWindowMask
-  // makes window buttons displayed inside the titlebar, so they are not covered
-  // by the content view.
-  // TODO(crbug.com/666415): This should return base::mac::IsAtLeastOS10_11()
-  // once we are satisfied there are no regressions when doing this. The concern
-  // is that by making the browser view hierarchy a child view of NSThemeFrame
-  // rather than a sibling, the views are exposed to autolayout in new ways that
-  // may cause performance regressions and layout glitches.
-  return false;
+  // Chrome historically added a subview to the window's frame view
+  // (window.contentView.superview), which AppKit warns about at runtime. This
+  // stopped the window buttons from being covered by the content view. This
+  // may break in a future macOS release. NSFullSizeContentViewWindowMask is a
+  // new (10.10+), supported way to make the content view the full size of the
+  // window without covering the controls. It's only enabled in 10.12+ due to a
+  // performance regression seen in 10.11 (https://crbug.com/742472).
+  return base::FeatureList::IsEnabled(features::kMacFullSizeContentView) &&
+         base::mac::IsAtLeastOS10_12();
 }
 
 }  // namespace chrome
@@ -45,6 +43,9 @@ const CGFloat kLocBarBottomInset = 1;
 
 // Space between the incognito badge and the right edge of the window.
 const CGFloat kAvatarRightOffset = 4;
+
+// Space between the generic avatar and the right edge of the window.
+const CGFloat kGenericAvatarRightOffset = 5;
 
 // Space between the location bar and the right edge of the window, when there
 // are no extension buttons present.
@@ -132,6 +133,10 @@ const CGFloat kLocationBarRightOffset = 35;
   parameters_.shouldUseNewAvatar = shouldUseNewAvatar;
 }
 
+- (void)setIsGenericAvatar:(BOOL)isGenericAvatar {
+  parameters_.isGenericAvatar = isGenericAvatar;
+}
+
 - (void)setAvatarSize:(NSSize)avatarSize {
   parameters_.avatarSize = avatarSize;
 }
@@ -168,8 +173,8 @@ const CGFloat kLocationBarRightOffset = 35;
   parameters_.infoBarHeight = infoBarHeight;
 }
 
-- (void)setPageInfoBubblePointY:(CGFloat)pageInfoBubblePointY {
-  parameters_.pageInfoBubblePointY = pageInfoBubblePointY;
+- (void)setInfoBarAnchorPointY:(CGFloat)infoBarAnchorPointY {
+  parameters_.infoBarAnchorPointY = infoBarAnchorPointY;
 }
 
 - (void)setHasDownloadShelf:(BOOL)hasDownloadShelf {
@@ -220,7 +225,9 @@ const CGFloat kLocationBarRightOffset = 35;
   // Lay out the icognito/avatar badge because calculating the indentation on
   // the right depends on it.
   if (parameters_.shouldShowAvatar) {
-    CGFloat badgeXOffset = -kAvatarRightOffset;
+    CGFloat badgeXOffset = parameters_.isGenericAvatar
+                               ? -kGenericAvatarRightOffset
+                               : -kAvatarRightOffset;
     CGFloat badgeYOffset = 0;
     CGFloat buttonHeight = parameters_.avatarSize.height;
 
@@ -343,7 +350,7 @@ const CGFloat kLocationBarRightOffset = 35;
     // info bubble icon.
     if (parameters_.hasToolbar) {
       infoBarMaxY =
-          NSMinY(output_.toolbarFrame) + parameters.pageInfoBubblePointY;
+          NSMinY(output_.toolbarFrame) + parameters.infoBarAnchorPointY;
     }
 
     output_.infoBarFrame =

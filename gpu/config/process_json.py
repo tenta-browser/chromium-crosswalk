@@ -26,6 +26,15 @@ _DO_NOT_EDIT_WARNING = """// This file is auto-generated from
 
 """
 
+_OS_TYPE_MAP = {
+    'win': 'kOsWin',
+    'macosx': 'kOsMacosx',
+    'android': 'kOsAndroid',
+    'linux': 'kOsLinux',
+    'chromeos': 'kOsChromeOS',
+    '': 'kOsAny',
+  }
+
 
 def load_software_rendering_list_features(feature_type_filename):
   header_file = open(feature_type_filename, 'rb')
@@ -122,7 +131,8 @@ def write_disabled_extension_list(entry_id, data, data_file, data_helper_file):
   if data:
     var_name = 'kDisabledExtensionsForEntry' + str(entry_id)
     # define the list
-    data_helper_file.write('const char* %s[%d] = {\n' % (var_name, len(data)))
+    data_helper_file.write(
+        'const char* const %s[%d] = {\n' % (var_name, len(data)))
     for item in data:
       write_string(item, data_helper_file)
       data_helper_file.write(',\n')
@@ -253,7 +263,7 @@ def write_machine_model_info(entry_id, is_exception, exception_id,
     model_name_var_name = 'kMachineModelNameForEntry' + str(entry_id)
     if is_exception:
       model_name_var_name += 'Exception' + str(exception_id)
-    data_helper_file.write('const char* %s[%d] = {\n' %
+    data_helper_file.write('const char* const %s[%d] = {\n' %
                            (model_name_var_name, len(machine_model_name)))
     for item in machine_model_name:
       write_string(item, data_helper_file)
@@ -285,16 +295,8 @@ def write_machine_model_info(entry_id, is_exception, exception_id,
 
 
 def write_os_type(os_type, data_file):
-  map = {
-    'win': 'kOsWin',
-    'macosx': 'kOsMacosx',
-    'android': 'kOsAndroid',
-    'linux': 'kOsLinux',
-    'chromeos': 'kOsChromeOS',
-    '': 'kOsAny',
-  }
-  assert map.has_key(os_type)
-  data_file.write('GpuControlList::%s,  // os_type\n' % map[os_type])
+  assert _OS_TYPE_MAP.has_key(os_type)
+  data_file.write('GpuControlList::%s,  // os_type\n' % _OS_TYPE_MAP[os_type])
 
 
 def write_multi_gpu_category(multi_gpu_category, data_file):
@@ -500,7 +502,7 @@ def write_entry_more_data(entry_id, is_exception, exception_id, gl_type,
 
 
 def write_entry(entry, total_feature_set, feature_name_prefix,
-                  data_file, data_helper_file, data_exception_file):
+                data_file, data_helper_file, data_exception_file):
   data_file.write('{\n')
   # ID
   entry_id = entry['id']
@@ -582,7 +584,7 @@ def process_json_file(json_filepath, list_tag,
                       feature_header_filename, total_features, feature_tag,
                       output_header_filepath, output_data_filepath,
                       output_helper_filepath, output_exception_filepath, path,
-                      export_tag, git_format):
+                      export_tag, git_format, os_filter):
   output_header_filename = os.path.basename(output_header_filepath)
   output_helper_filename = os.path.basename(output_helper_filepath)
   output_exception_filename = os.path.basename(output_exception_filepath)
@@ -609,22 +611,28 @@ def process_json_file(json_filepath, list_tag,
                           True)
   data_exception_file.write('namespace gpu {\n')
   data_file.write('namespace gpu {\n\n')
-  data_file.write('const char k%sVersion[] = "%s";\n\n' %
-                  (list_tag, json_data['version']))
-  entry_count = len(json_data['entries'])
-  data_file.write('const size_t k%sEntryCount = %d;\n' %
-                  (list_tag, entry_count))
-  data_file.write('const GpuControlList::Entry k%sEntries[%d] = {\n' %
-                  (list_tag, entry_count))
+  data_file.write('const GpuControlList::Entry k%sEntries[] = {\n' % list_tag)
   ids = []
-  for index in range(entry_count):
+  entry_count = 0
+  for index in range(len(json_data['entries'])):
     entry = json_data['entries'][index]
     entry_id = entry['id']
     assert entry_id not in ids
     ids.append(entry_id)
+    if 'os' in entry:
+      os_type = entry['os']['type']
+      # Check for typos in the .json data
+      if not _OS_TYPE_MAP.has_key(os_type):
+        raise Exception('Unknown OS type "%s" for entry %d' %
+                        (os_type, entry_id))
+      if os_filter != None and os_type != os_filter:
+        continue
+    entry_count += 1
     write_entry(entry, total_features, feature_tag,
                 data_file, data_helper_file, data_exception_file)
   data_file.write('};\n')
+  data_file.write('const size_t k%sEntryCount = %d;\n' %
+                  (list_tag, entry_count))
   data_file.write('}  // namespace gpu\n')
   data_file.close()
   data_helper_file.write('}  // namespace gpu\n')
@@ -643,8 +651,6 @@ def process_json_file(json_filepath, list_tag,
   data_header_file.write('#include "gpu/config/gpu_control_list.h"\n\n')
   data_header_file.write('\n')
   data_header_file.write('namespace gpu {\n')
-  data_header_file.write('%sextern const char k%sVersion[];\n' %
-                         (export_tag, list_tag))
   data_header_file.write('%sextern const size_t k%sEntryCount;\n' %
                          (export_tag, list_tag))
   data_header_file.write(
@@ -658,7 +664,7 @@ def process_json_file(json_filepath, list_tag,
                   output_helper_filepath, output_exception_filepath])
 
 
-def process_software_rendering_list(script_dir, output_dir):
+def process_software_rendering_list(script_dir, output_dir, os_filter):
   total_features = load_software_rendering_list_features(
       os.path.join(script_dir, 'gpu_feature_type.h'))
   process_json_file(
@@ -674,10 +680,11 @@ def process_software_rendering_list(script_dir, output_dir):
       os.path.join(output_dir, 'software_rendering_list_exceptions_autogen.h'),
       'gpu/config',
       'GPU_EXPORT ',
-      False)
+      False,
+      os_filter)
 
 
-def process_gpu_driver_bug_list(script_dir, output_dir):
+def process_gpu_driver_bug_list(script_dir, output_dir, os_filter):
   total_features = load_gpu_driver_bug_workarounds(
       os.path.join(script_dir, 'gpu_driver_bug_workaround_type.h'))
   process_json_file(
@@ -693,7 +700,8 @@ def process_gpu_driver_bug_list(script_dir, output_dir):
       os.path.join(output_dir, 'gpu_driver_bug_list_exceptions_autogen.h'),
       'gpu/config',
       'GPU_EXPORT ',
-      False)
+      False,
+      os_filter)
 
 
 def process_gpu_control_list_testing(script_dir, output_dir):
@@ -711,7 +719,8 @@ def process_gpu_control_list_testing(script_dir, output_dir):
       os.path.join(output_dir, 'gpu_control_list_testing_exceptions_autogen.h'),
       'gpu/config',
       '',
-      True)
+      True,
+      None)
 
 
 def process_gpu_data_manager_testing(script_dir, output_dir):
@@ -730,7 +739,8 @@ def process_gpu_data_manager_testing(script_dir, output_dir):
       os.path.join(output_dir, 'gpu_data_manager_testing_exceptions_autogen.h'),
       'content/browser/gpu',
       '',
-      True)
+      True,
+      None)
 
 
 def write_test_entry_enums(input_json_filepath, output_entry_enums_filepath,
@@ -771,13 +781,17 @@ def main(argv):
   parser.add_option("--skip-testing-data", action="store_false",
                     dest="generate_testing_data", default=True,
                     help="skip testing data generation.")
+  parser.add_option("--os-filter",
+                    help="only output entries applied to the specified os.")
   (options, args) = parser.parse_args(args=argv)
 
   script_dir = os.path.dirname(os.path.realpath(__file__))
 
   if options.output_dir != None:
-    process_software_rendering_list(script_dir, options.output_dir)
-    process_gpu_driver_bug_list(script_dir, options.output_dir)
+    process_software_rendering_list(
+        script_dir, options.output_dir, options.os_filter)
+    process_gpu_driver_bug_list(
+        script_dir, options.output_dir, options.os_filter)
 
   if options.generate_testing_data:
     # Testing data files are generated by calling the script manually.

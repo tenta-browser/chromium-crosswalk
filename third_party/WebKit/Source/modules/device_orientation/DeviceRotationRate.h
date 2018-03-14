@@ -26,14 +26,13 @@
 #ifndef DeviceRotationRate_h
 #define DeviceRotationRate_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/device_orientation/DeviceMotionData.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
-class DeviceRotationRate final : public GarbageCollected<DeviceRotationRate>,
-                                 public ScriptWrappable {
+class DeviceRotationRate final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -41,7 +40,7 @@ class DeviceRotationRate final : public GarbageCollected<DeviceRotationRate>,
       DeviceMotionData::RotationRate* rotation_rate) {
     return new DeviceRotationRate(rotation_rate);
   }
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
   double alpha(bool& is_null) const;
   double beta(bool& is_null) const;

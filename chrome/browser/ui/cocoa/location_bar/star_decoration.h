@@ -22,11 +22,15 @@ class StarDecoration : public ImageDecoration {
   // Sets the image and tooltip based on |starred|.
   void SetStarred(bool starred, bool locationBarIsDark);
 
+  // Returns an anchor for GetBubblePointInFrame which points between the star
+  // icon's legs.
+  static NSPoint GetStarBubblePointInFrame(NSRect draw_frame);
+
   // Returns true if the star is lit.
   bool starred() const { return starred_; }
 
   // Implement |LocationBarDecoration|.
-  bool AcceptsMousePress() override;
+  AcceptsPress AcceptsMousePress() override;
   bool OnMousePressed(NSRect frame, NSPoint location) override;
   NSString* GetToolTip() override;
   NSPoint GetBubblePointInFrame(NSRect frame) override;

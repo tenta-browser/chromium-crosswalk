@@ -93,16 +93,18 @@ class ContentSuggestionsProvider {
   // fails, the callback gets a null image. The callback will not be called
   // synchronously.
   virtual void FetchSuggestionImage(const ContentSuggestion::ID& suggestion_id,
-                                    const ImageFetchedCallback& callback) = 0;
+                                    ImageFetchedCallback callback) = 0;
 
   // Fetches more suggestions for the given category. The new suggestions
   // will not include any suggestion of the |known_suggestion_ids| sets.
-  // The given |callback| is called with these suggestions, along with all
-  // existing suggestions. It has to be invoked exactly once as the front-end
-  // might wait for its completion.
+  // As a result of this call, the provider:
+  //  - should call the |callback| with these additional suggestions (exactly
+  //  once as the front-end might wait for its completion);
+  //  - should *not* notify its Observer by OnNewSuggestions() with these
+  //  additional suggestions.
   virtual void Fetch(const Category& category,
                      const std::set<std::string>& known_suggestion_ids,
-                     const FetchDoneCallback& callback) = 0;
+                     FetchDoneCallback callback) = 0;
 
   // Reloads suggestions from all categories. If the suggestions change, the
   // observer must be notified via OnNewSuggestions();
@@ -121,9 +123,9 @@ class ContentSuggestionsProvider {
       base::Time end,
       const base::Callback<bool(const GURL& url)>& filter) = 0;
 
-  // Clears all caches for the given category, so that the next fetch starts
-  // from scratch.
-  virtual void ClearCachedSuggestions(Category category) = 0;
+  // Clears suggestions for any non-history related reason (e.g., sign-in status
+  // change, etc.) so that the next fetch starts from scratch.
+  virtual void ClearCachedSuggestions() = 0;
 
   // Called when the sign in state has changed. Should be used instead of
   // directly registering with the SignInManager so that the
@@ -138,7 +140,7 @@ class ContentSuggestionsProvider {
   // may be called synchronously.
   virtual void GetDismissedSuggestionsForDebugging(
       Category category,
-      const DismissedSuggestionsCallback& callback) = 0;
+      DismissedSuggestionsCallback callback) = 0;
 
   // Used only for debugging purposes. Clears the cache of dismissed
   // suggestions for the given |category|, if present, so that no suggestions

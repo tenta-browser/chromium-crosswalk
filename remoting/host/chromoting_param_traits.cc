@@ -7,17 +7,11 @@
 #include <stdint.h>
 
 #include "base/strings/stringprintf.h"
+#include "ipc/ipc_message_protobuf_utils.h"
 #include "ipc/ipc_message_utils.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_frame.h"
 
 namespace IPC {
-
-// static
-void ParamTraits<webrtc::DesktopVector>::GetSize(base::PickleSizer* s,
-                                                 const param_type& p) {
-  GetParamSize(s, p.x());
-  GetParamSize(s, p.y());
-}
 
 // static
 void ParamTraits<webrtc::DesktopVector>::Write(base::Pickle* m,
@@ -45,13 +39,6 @@ void ParamTraits<webrtc::DesktopVector>::Log(const webrtc::DesktopVector& p,
 }
 
 // static
-void ParamTraits<webrtc::DesktopSize>::GetSize(base::PickleSizer* s,
-                                               const param_type& p) {
-  GetParamSize(s, p.width());
-  GetParamSize(s, p.height());
-}
-
-// static
 void ParamTraits<webrtc::DesktopSize>::Write(base::Pickle* m,
                                              const webrtc::DesktopSize& p) {
   m->WriteInt(p.width());
@@ -74,15 +61,6 @@ void ParamTraits<webrtc::DesktopSize>::Log(const webrtc::DesktopSize& p,
                                            std::string* l) {
   l->append(base::StringPrintf("webrtc::DesktopSize(%d, %d)",
                                p.width(), p.height()));
-}
-
-// static
-void ParamTraits<webrtc::DesktopRect>::GetSize(base::PickleSizer* s,
-                                               const param_type& p) {
-  GetParamSize(s, p.left());
-  GetParamSize(s, p.top());
-  GetParamSize(s, p.right());
-  GetParamSize(s, p.bottom());
 }
 
 // static
@@ -278,6 +256,70 @@ void ParamTraits<remoting::DesktopEnvironmentOptions>::Log(
     const remoting::DesktopEnvironmentOptions& p,
     std::string* l) {
   l->append("DesktopEnvironmentOptions()");
+}
+
+// static
+void ParamTraits<remoting::protocol::ProcessResourceUsage>::Write(
+    base::Pickle* m,
+    const param_type& p) {
+  m->WriteString(p.process_name());
+  m->WriteDouble(p.processor_usage());
+  m->WriteUInt64(p.working_set_size());
+  m->WriteUInt64(p.pagefile_size());
+}
+
+// static
+bool ParamTraits<remoting::protocol::ProcessResourceUsage>::Read(
+    const base::Pickle* m,
+    base::PickleIterator* iter,
+    param_type* p) {
+  std::string process_name;
+  double processor_usage;
+  uint64_t working_set_size;
+  uint64_t pagefile_size;
+  if (!iter->ReadString(&process_name) ||
+      !iter->ReadDouble(&processor_usage) ||
+      !iter->ReadUInt64(&working_set_size) ||
+      !iter->ReadUInt64(&pagefile_size)) {
+    return false;
+  }
+
+  p->set_process_name(process_name);
+  p->set_processor_usage(processor_usage);
+  p->set_working_set_size(working_set_size);
+  p->set_pagefile_size(pagefile_size);
+  return true;
+}
+
+// static
+void ParamTraits<remoting::protocol::ProcessResourceUsage>::Log(
+    const param_type& p,
+    std::string* l) {
+  l->append("ProcessResourceUsage(").append(p.process_name()).append(")");
+}
+
+// static
+void ParamTraits<remoting::protocol::AggregatedProcessResourceUsage>::Write(
+    base::Pickle* m,
+    const param_type& p) {
+  WriteParam(m, p.usages());
+}
+
+// static
+bool ParamTraits<remoting::protocol::AggregatedProcessResourceUsage>::Read(
+    const base::Pickle* m,
+    base::PickleIterator* iter,
+    param_type* p) {
+  return ReadParam(m, iter, p->mutable_usages());
+}
+
+// static
+void ParamTraits<remoting::protocol::AggregatedProcessResourceUsage>::Log(
+    const param_type& p,
+    std::string* l) {
+  l->append("AggregatedProcessResourceUsage(");
+  LogParam(p.usages(), l);
+  l->append(")");
 }
 
 }  // namespace IPC

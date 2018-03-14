@@ -20,9 +20,9 @@ CustomTabsVisibilityHistogram GetCustomTabsVisibleValue();
 
 bool GetIsInMultiWindowModeValue();
 
+bool GetIsChromeHomeEnabled();
+
 } // namespace android
 } // namespace chrome
-
-bool RegisterFeatureUtilities(JNIEnv* env);
 
 #endif  // CHROME_BROWSER_ANDROID_FEATURE_UTILITIES_H_

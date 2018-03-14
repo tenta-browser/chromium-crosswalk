@@ -8,6 +8,7 @@
 #include "platform/heap/Heap.h"
 #include "platform/wtf/TerminatedArray.h"
 #include "platform/wtf/TerminatedArrayBuilder.h"
+#include "platform/wtf/allocator/Partitions.h"
 
 namespace blink {
 
@@ -20,7 +21,7 @@ class HeapTerminatedArray : public TerminatedArray<T> {
   using TerminatedArray<T>::begin;
   using TerminatedArray<T>::end;
 
-  DEFINE_INLINE_TRACE() {
+  void Trace(blink::Visitor* visitor) {
     for (typename TerminatedArray<T>::iterator it = begin(); it != end(); ++it)
       visitor->Trace(*it);
   }
@@ -38,13 +39,15 @@ class HeapTerminatedArray : public TerminatedArray<T> {
     static PassPtr Create(size_t capacity) {
       return reinterpret_cast<HeapTerminatedArray*>(
           ThreadHeap::Allocate<HeapTerminatedArray>(
-              capacity * sizeof(T), IsEagerlyFinalizedType<T>::value));
+              WTF::Partitions::ComputeAllocationSize(capacity, sizeof(T)),
+              IsEagerlyFinalizedType<T>::value));
     }
 
     static PassPtr Resize(PassPtr ptr, size_t capacity) {
       return reinterpret_cast<HeapTerminatedArray*>(
-          ThreadHeap::Reallocate<HeapTerminatedArray>(ptr,
-                                                      capacity * sizeof(T)));
+          ThreadHeap::Reallocate<HeapTerminatedArray>(
+              ptr,
+              WTF::Partitions::ComputeAllocationSize(capacity, sizeof(T))));
     }
   };
 

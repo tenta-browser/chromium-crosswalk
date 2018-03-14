@@ -30,8 +30,8 @@
 #include "chrome/browser/download/drag_download_item.h"
 #include "chrome/browser/extensions/api/experience_sampling_private/experience_sampling.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/safe_browsing/download_feedback_service.h"
-#include "chrome/browser/safe_browsing/download_protection_service.h"
+#include "chrome/browser/safe_browsing/download_protection/download_feedback_service.h"
+#include "chrome/browser/safe_browsing/download_protection/download_protection_service.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/views/download/download_feedback_dialog_view.h"
@@ -41,7 +41,8 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/prefs/pref_service.h"
-#include "components/safe_browsing_db/safe_browsing_prefs.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
+#include "components/vector_icons/vector_icons.h"
 #include "content/public/browser/download_danger_type.h"
 #include "third_party/icu/source/common/unicode/uchar.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -57,7 +58,6 @@
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/text_elider.h"
 #include "ui/gfx/text_utils.h"
-#include "ui/vector_icons/vector_icons.h"
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop_highlight.h"
 #include "ui/views/animation/ink_drop_impl.h"
@@ -128,7 +128,12 @@ const int kDisabledOnOpenDuration = 3000;
 // The separator is drawn as a border. It's one dp wide.
 class SeparatorBorder : public views::FocusableBorder {
  public:
-  explicit SeparatorBorder(SkColor color) : color_(color) {}
+  explicit SeparatorBorder(SkColor separator_color)
+      : separator_color_(separator_color) {
+    // Set the color used by FocusableBorder::Paint(), which could otherwise
+    // change when FocusableBorder relies on FocusRings instead.
+    SetColorId(ui::NativeTheme::kColorId_FocusedBorderColor);
+  }
   ~SeparatorBorder() override {}
 
   void Paint(const views::View& view, gfx::Canvas* canvas) override {
@@ -138,7 +143,7 @@ class SeparatorBorder : public views::FocusableBorder {
     int end_x = base::i18n::IsRTL() ? 0 : view.width() - 1;
     canvas->DrawLine(gfx::Point(end_x, kTopBottomPadding),
                      gfx::Point(end_x, view.height() - kTopBottomPadding),
-                     color_);
+                     separator_color_);
   }
 
   gfx::Insets GetInsets() const override { return gfx::Insets(0, 0, 0, 1); }
@@ -148,7 +153,7 @@ class SeparatorBorder : public views::FocusableBorder {
   }
 
  private:
-  SkColor color_;
+  SkColor separator_color_;
 
   DISALLOW_COPY_AND_ASSIGN(SeparatorBorder);
 };
@@ -173,13 +178,14 @@ DownloadItemView::DownloadItemView(DownloadItem* download_item,
       creation_time_(base::Time::Now()),
       time_download_warning_shown_(base::Time()),
       weak_ptr_factory_(this) {
-  SetInkDropMode(InkDropMode::ON);
+  SetInkDropMode(InkDropMode::ON_NO_GESTURE_HANDLER);
   DCHECK(download());
   download()->AddObserver(this);
   set_context_menu_controller(this);
 
   dropdown_button_->SetBorder(
       views::CreateEmptyBorder(gfx::Insets(kDropdownBorderWidth)));
+  dropdown_button_->set_has_ink_drop_action_on_click(false);
   AddChildView(dropdown_button_);
 
   LoadIcon();
@@ -244,7 +250,7 @@ void DownloadItemView::OnExtractIconComplete(gfx::Image* icon_bitmap) {
 void DownloadItemView::MaybeSubmitDownloadToFeedbackService(
     DownloadCommands::Command download_command) {
   PrefService* prefs = shelf_->browser()->profile()->GetPrefs();
-  if (model_.MightBeMalicious() && model_.ShouldAllowDownloadFeedback() &&
+  if (model_.ShouldAllowDownloadFeedback() &&
       !shelf_->browser()->profile()->IsOffTheRecord()) {
     if (safe_browsing::ExtendedReportingPrefExists(*prefs)) {
       SubmitDownloadWhenFeedbackServiceEnabled(
@@ -335,7 +341,8 @@ void DownloadItemView::OnDownloadOpened(DownloadItem* download) {
   SetEnabled(false);
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&DownloadItemView::Reenable, weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(&DownloadItemView::Reenable,
+                     weak_ptr_factory_.GetWeakPtr()),
       base::TimeDelta::FromMilliseconds(kDisabledOnOpenDuration));
 
   // Notify our parent.
@@ -379,7 +386,7 @@ void DownloadItemView::UpdateDropdownButton() {
       GetTextColor());
 }
 
-gfx::Size DownloadItemView::GetPreferredSize() const {
+gfx::Size DownloadItemView::CalculatePreferredSize() const {
   int width = 0;
   // We set the height to the height of two rows or text plus margins.
   int child_height = font_list_.GetBaseline() + kVerticalTextPadding +
@@ -433,6 +440,7 @@ bool DownloadItemView::OnMouseDragged(const ui::MouseEvent& event) {
       views::Widget* widget = GetWidget();
       DragDownloadItem(download(), icon,
                        widget ? widget->GetNativeView() : nullptr);
+      RecordDownloadShelfDragEvent(DownloadShelfDragEvent::STARTED);
     }
   } else if (ExceededDragThreshold(event.location() - drag_start_point_)) {
     dragging_ = true;
@@ -486,10 +494,12 @@ bool DownloadItemView::GetTooltipText(const gfx::Point& p,
 void DownloadItemView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   node_data->SetName(accessible_name_);
   node_data->role = ui::AX_ROLE_BUTTON;
-  if (model_.IsDangerous())
-    node_data->AddStateFlag(ui::AX_STATE_DISABLED);
-  else
-    node_data->AddStateFlag(ui::AX_STATE_HASPOPUP);
+  if (model_.IsDangerous()) {
+    node_data->AddIntAttribute(ui::AX_ATTR_RESTRICTION,
+                               ui::AX_RESTRICTION_DISABLED);
+  } else {
+    node_data->AddState(ui::AX_STATE_HASPOPUP);
+  }
 }
 
 void DownloadItemView::OnThemeChanged() {
@@ -528,14 +538,15 @@ std::unique_ptr<views::InkDropRipple> DownloadItemView::CreateInkDropRipple()
 
 std::unique_ptr<views::InkDropHighlight>
 DownloadItemView::CreateInkDropHighlight() const {
-  if (IsShowingWarningDialog())
-    return nullptr;
-
   gfx::Size size = GetPreferredSize();
   return base::MakeUnique<views::InkDropHighlight>(
       size, kInkDropSmallCornerRadius,
       gfx::RectF(gfx::SizeF(size)).CenterPoint(),
       color_utils::DeriveDefaultIconColor(GetTextColor()));
+}
+
+void DownloadItemView::OnInkDropCreated() {
+  ConfigureInkDrop();
 }
 
 void DownloadItemView::OnGestureEvent(ui::GestureEvent* event) {
@@ -591,8 +602,9 @@ void DownloadItemView::ButtonPressed(views::Button* sender,
           ExperienceSamplingEvent::kProceed);
       sampling_event_.reset();
     }
-    // This will change the state and notify us.
-    download()->ValidateDangerousDownload();
+    // This will call ValidateDangerousDownload(), change download state and
+    // notify us.
+    MaybeSubmitDownloadToFeedbackService(DownloadCommands::KEEP);
     return;
   }
 
@@ -836,6 +848,8 @@ void DownloadItemView::ShowContextMenuImpl(const gfx::Rect& rect,
   static_cast<views::internal::RootView*>(GetWidget()->GetRootView())
       ->SetMouseHandler(nullptr);
 
+  AnimateInkDrop(views::InkDropState::HIDDEN, nullptr);
+
   if (!context_menu_.get())
     context_menu_.reset(new DownloadShelfContextMenuView(this));
   context_menu_->Run(GetWidget()->GetTopLevelWidget(), rect, source_type,
@@ -876,7 +890,7 @@ void DownloadItemView::SetDropdownState(State new_state) {
   // Avoid extra SchedulePaint()s if the state is going to be the same and
   // |dropdown_button_| has already been initialized.
   if (dropdown_state_ == new_state &&
-      !dropdown_button_->GetImage(views::CustomButton::STATE_NORMAL).isNull())
+      !dropdown_button_->GetImage(views::Button::STATE_NORMAL).isNull())
     return;
 
   if (new_state != dropdown_state_) {
@@ -888,6 +902,16 @@ void DownloadItemView::SetDropdownState(State new_state) {
   dropdown_state_ = new_state;
   UpdateDropdownButton();
   SchedulePaint();
+}
+
+void DownloadItemView::ConfigureInkDrop() {
+  if (HasInkDrop())
+    GetInkDrop()->SetShowHighlightOnHover(!IsShowingWarningDialog());
+}
+
+void DownloadItemView::SetMode(Mode mode) {
+  mode_ = mode;
+  ConfigureInkDrop();
 }
 
 void DownloadItemView::ToggleWarningDialog() {
@@ -909,7 +933,7 @@ void DownloadItemView::ClearWarningDialog() {
          content::DOWNLOAD_DANGER_TYPE_USER_VALIDATED);
   DCHECK(IsShowingWarningDialog());
 
-  mode_ = NORMAL_MODE;
+  SetMode(NORMAL_MODE);
   dropdown_state_ = NORMAL;
 
   // ExperienceSampling: User proceeded through the warning.
@@ -933,7 +957,7 @@ void DownloadItemView::ClearWarningDialog() {
 }
 
 void DownloadItemView::ShowWarningDialog() {
-  DCHECK(mode_ != DANGEROUS_MODE && mode_ != MALICIOUS_MODE);
+  DCHECK(!IsShowingWarningDialog());
   time_download_warning_shown_ = base::Time::Now();
   content::DownloadDangerType danger_type = download()->GetDangerType();
   RecordDangerousDownloadWarningShown(danger_type);
@@ -943,7 +967,7 @@ void DownloadItemView::ShowWarningDialog() {
         danger_type);
   }
 #endif
-  mode_ = model_.MightBeMalicious() ? MALICIOUS_MODE : DANGEROUS_MODE;
+  SetMode(model_.MightBeMalicious() ? MALICIOUS_MODE : DANGEROUS_MODE);
 
   // ExperienceSampling: Dangerous or malicious download warning is being shown
   // to the user, so we start a new SamplingEvent and track it.
@@ -984,7 +1008,7 @@ gfx::ImageSkia DownloadItemView::GetWarningIcon() {
     case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_HOST:
     case content::DOWNLOAD_DANGER_TYPE_POTENTIALLY_UNWANTED:
     case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE:
-      return gfx::CreateVectorIcon(ui::kWarningIcon, kWarningIconSize,
+      return gfx::CreateVectorIcon(vector_icons::kWarningIcon, kWarningIconSize,
                                    gfx::kGoogleRed700);
 
     case content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS:

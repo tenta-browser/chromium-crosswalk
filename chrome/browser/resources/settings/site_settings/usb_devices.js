@@ -21,12 +21,13 @@ Polymer({
     devices_: Array,
 
     /**
-     * The targetted object for menu operations.
+     * The targeted object for menu operations.
      * @private {?Object}
      */
     actionMenuModel_: Object
   },
 
+  /** @override */
   ready: function() {
     this.fetchUsbDevices_();
   },
@@ -36,9 +37,17 @@ Polymer({
    * @private
    */
   fetchUsbDevices_: function() {
-    this.browserProxy.fetchUsbDevices().then(function(deviceList) {
+    this.browserProxy.fetchUsbDevices().then(deviceList => {
       this.devices_ = deviceList;
-    }.bind(this));
+    });
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  hasDevices_: function() {
+    return !!(this.devices_ && this.devices_.length);
   },
 
   /**
@@ -62,8 +71,8 @@ Polymer({
    */
   showMenu_: function(event) {
     this.actionMenuModel_ = event.model.item;
-    /** @type {!CrActionMenuElement} */ (
-        this.$$('dialog[is=cr-action-menu]')).showAt(
+    /** @type {!CrActionMenuElement} */ (this.$$('dialog[is=cr-action-menu]'))
+        .showAt(
             /** @type {!Element} */ (
                 Polymer.dom(/** @type {!Event} */ (event)).localTarget));
   }

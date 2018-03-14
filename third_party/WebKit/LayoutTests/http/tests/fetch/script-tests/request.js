@@ -113,44 +113,44 @@ test(function() {
     assert_equals(request2.mode, 'cors', 'Request.mode should match');
     assert_equals(request2.credentials, 'omit',
                   'Request.credentials should match');
-    assert_equals(request2.headers.getAll('X-Fetch-Foo')[0], 'foo1',
+    assert_equals(request2.headers.get('X-Fetch-Foo').split(', ')[0], 'foo1',
                   'Request.headers should match');
-    assert_equals(request2.headers.getAll('X-Fetch-Foo')[1], 'foo2',
+    assert_equals(request2.headers.get('X-Fetch-Foo').split(', ')[1], 'foo2',
                   'Request.headers should match');
-    assert_equals(request2.headers.getAll('X-Fetch-Bar')[0], 'bar',
+    assert_equals(request2.headers.get('X-Fetch-Bar').split(', ')[0], 'bar',
                   'Request.headers should match');
     var request3 = new Request(URL,
                                {headers: [['X-Fetch-Foo', 'foo1'],
                                           ['X-Fetch-Foo', 'foo2'],
                                           ['X-Fetch-Bar', 'bar']]});
-    assert_equals(request3.headers.getAll('X-Fetch-Foo')[0], 'foo1',
+    assert_equals(request3.headers.get('X-Fetch-Foo').split(', ')[0], 'foo1',
                   'Request.headers should match');
-    assert_equals(request3.headers.getAll('X-Fetch-Foo')[1], 'foo2',
+    assert_equals(request3.headers.get('X-Fetch-Foo').split(', ')[1], 'foo2',
                   'Request.headers should match');
-    assert_equals(request3.headers.getAll('X-Fetch-Bar')[0], 'bar',
+    assert_equals(request3.headers.get('X-Fetch-Bar').split(', ')[0], 'bar',
                   'Request.headers should match');
     var request4 = new Request(URL,
                                {headers: {'X-Fetch-Foo': 'foo1',
                                           'X-Fetch-Foo': 'foo2',
                                           'X-Fetch-Bar': 'bar'}});
-    assert_equals(request4.headers.getAll('X-Fetch-Foo')[0], 'foo2',
+    assert_equals(request4.headers.get('X-Fetch-Foo').split(', ')[0], 'foo2',
                   'Request.headers should match');
-    assert_equals(request4.headers.getAll('X-Fetch-Bar')[0], 'bar',
+    assert_equals(request4.headers.get('X-Fetch-Bar').split(', ')[0], 'bar',
                   'Request.headers should match');
     // https://github.com/whatwg/fetch/issues/479
     var request5 = new Request(request, {headers: undefined});
-    assert_equals(request5.headers.getAll('X-Fetch-Foo')[0], 'foo1',
+    assert_equals(request5.headers.get('X-Fetch-Foo').split(', ')[0], 'foo1',
                   'Request.headers should match');
-    assert_equals(request5.headers.getAll('X-Fetch-Foo')[1], 'foo2',
+    assert_equals(request5.headers.get('X-Fetch-Foo').split(', ')[1], 'foo2',
                   'Request.headers should match');
-    assert_equals(request5.headers.getAll('X-Fetch-Bar')[0], 'bar',
+    assert_equals(request5.headers.get('X-Fetch-Bar').split(', ')[0], 'bar',
                   'Request.headers should match');
     var request6 = new Request(request, {});
-    assert_equals(request6.headers.getAll('X-Fetch-Foo')[0], 'foo1',
+    assert_equals(request6.headers.get('X-Fetch-Foo').split(', ')[0], 'foo1',
                   'Request.headers should match');
-    assert_equals(request6.headers.getAll('X-Fetch-Foo')[1], 'foo2',
+    assert_equals(request6.headers.get('X-Fetch-Foo').split(', ')[1], 'foo2',
                   'Request.headers should match');
-    assert_equals(request6.headers.getAll('X-Fetch-Bar')[0], 'bar',
+    assert_equals(request6.headers.get('X-Fetch-Bar').split(', ')[0], 'bar',
                   'Request.headers should match');
     assert_throws(new TypeError(),
                   () => { new Request(request, {headers: null}) },
@@ -294,13 +294,6 @@ test(function() {
     request2 = new Request(request1);
     assert_equals(request2.integrity, 'sha256-deadbeef',
                   'Request.integrity should match');
-    init['mode'] = 'no-cors';
-    assert_throws(
-        {name: 'TypeError'},
-        function() {
-            var request = new Request(URL, init);
-        },
-        'new Request with a non-empty integrity and mode of \'no-cors\' should throw');
 }, 'Request integrity test');
 
 test(function() {
@@ -566,6 +559,72 @@ test(() => {
     assert_true(req.bodyUsed);
     assert_throws({name: 'TypeError'}, () => { req.clone(); });
   }, 'Used => clone');
+
+test(() => {
+  // We implement RequestInit manually so we need to test the functionality
+  // here.
+  function undefined_notpresent(property_name) {
+    assert_not_equals(property_name, 'referrer', 'property_name');
+    const request = new Request('/', {referrer: '/'});
+    let init = {};
+    init[property_name] = undefined;
+    assert_equals((new Request(request, init)).referrer, request.url,
+                  property_name);
+  }
+
+  undefined_notpresent('method');
+  undefined_notpresent('headers');
+  undefined_notpresent('body');
+  undefined_notpresent('referrerPolicy');
+  undefined_notpresent('mode');
+  undefined_notpresent('credentials');
+  undefined_notpresent('cache');
+  undefined_notpresent('redirect');
+  undefined_notpresent('integrity');
+  undefined_notpresent('keepalive');
+  undefined_notpresent('signal');
+  undefined_notpresent('window');
+
+  // |undefined_notpresent| uses referrer for testing, so we need to test
+  // the property manually.
+  const request = new Request('/', {referrerPolicy: 'same-origin'});
+  assert_equals(new Request(request, {referrer: undefined}).referrerPolicy,
+                'same-origin', 'referrer');
+}, 'An undefined member should be treated as not-present');
+
+test(() => {
+  // We implement RequestInit manually so we need to test the functionality
+  // here.
+  const e = Error();
+  assert_throws(e, () => {
+    new Request('/', {get method() { throw e; }})}, 'method');
+  assert_throws(e, () => {
+    new Request('/', {get headers() { throw e; }})}, 'headers');
+  assert_throws(e, () => {
+    new Request('/', {get body() { throw e; }})}, 'body');
+  assert_throws(e, () => {
+    new Request('/', {get referrer() { throw e; }})}, 'referrer');
+  assert_throws(e, () => {
+    new Request('/', {get referrerPolicy() { throw e; }})}, 'referrerPolicy');
+  assert_throws(e, () => {
+    new Request('/', {get mode() { throw e; }})}, 'mode');
+  assert_throws(e, () => {
+    new Request('/', {get credentials() { throw e; }})}, 'credentials');
+  assert_throws(e, () => {
+    new Request('/', {get cache() { throw e; }})}, 'cache');
+  assert_throws(e, () => {
+    new Request('/', {get redirect() { throw e; }})}, 'redirect');
+  assert_throws(e, () => {
+    new Request('/', {get integrity() { throw e; }})}, 'integrity');
+  assert_throws(e, () => {
+    new Request('/', {get keepalive() { throw e; }})}, 'keepalive');
+
+  // Not implemented
+  // assert_throws(e, () => {
+  //  new Request('/', {get signal() { throw e; }})}, 'signal');
+  // assert_throws(e, () => {
+  //  new Request('/', {get window() { throw e; }})}, 'window');
+}, 'Getter exceptions should not be silently ignored');
 
 promise_test(function() {
     var headers = new Headers;

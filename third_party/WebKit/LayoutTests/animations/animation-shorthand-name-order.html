@@ -11,27 +11,27 @@
     margin: 5px;
 }
 
-@-webkit-keyframes test {
+@keyframes test {
     from { left: 0px; }
     to { left: 100px; }
 }
 
-@-webkit-keyframes backwards {
+@keyframes backwards {
     from { left: 0px; }
     to { left: 100px; }
 }
 
-@-webkit-keyframes alternate {
+@keyframes alternate {
     from { left: 0px; }
     to { left: 100px; }
 }
 
-@-webkit-keyframes linear {
+@keyframes linear {
     from { left: 0px; }
     to { left: 100px; }
 }
 
-@-webkit-keyframes ease {
+@keyframes ease {
     from { left: 0px; }
     to { left: 100px; }
 }
@@ -39,13 +39,13 @@
 <script>
 
 const PROPERTIES_TO_TEST = [
-    "webkitAnimationName",
-    "webkitAnimationDuration",
-    "webkitAnimationTimingFunction",
-    "webkitAnimationDelay",
-    "webkitAnimationIterationCount",
-    "webkitAnimationDirection",
-    "webkitAnimationFillMode"
+    "animationName",
+    "animationDuration",
+    "animationTimingFunction",
+    "animationDelay",
+    "animationIterationCount",
+    "animationDirection",
+    "animationFillMode"
 ];
 
 const DEFAULT_VALUES = [
@@ -101,31 +101,29 @@ function runIndividualTest(testIndex) {
 
     clearElementAnimationStyle(element);
 
-    // Unfortunately need to force a style recalculation before testing.
-    requestAnimationFrame(function () {
-        element.style.webkitAnimation = TEST_INPUTS[testIndex];
+    element.offsetTop; // force style recalc
 
-        // And another forced style recalculation.
-        requestAnimationFrame(function() {
-            var computedStyle = window.getComputedStyle(element);
+    element.style.animation = TEST_INPUTS[testIndex];
 
-            for (var i=0; i < PROPERTIES_TO_TEST.length; i++) {
-                var value = computedStyle[PROPERTIES_TO_TEST[i]];
-                if (value == EXPECTED_VALUES[testIndex][i])
-                    result.innerHTML += "PASS Test " + (numTestsComplete + 1) + ": " + PROPERTIES_TO_TEST[i] + " was " + value + "<br>";
-                else
-                    result.innerHTML += "FAIL Test " + (numTestsComplete + 1) + ": " + PROPERTIES_TO_TEST[i] + " was " + value + " should be " + EXPECTED_VALUES[testIndex][i] + "<br>";
-            }
+    element.offsetTop; // force another style recalc
 
-            numTestsComplete++;
-            if (numTestsComplete < TEST_INPUTS.length)
-                runIndividualTest(numTestsComplete);
-            else {
-                if (window.testRunner)
-                    testRunner.notifyDone();
-            }
-        });
-    });
+    var computedStyle = window.getComputedStyle(element);
+
+    for (var i=0; i < PROPERTIES_TO_TEST.length; i++) {
+        var value = computedStyle[PROPERTIES_TO_TEST[i]];
+        if (value == EXPECTED_VALUES[testIndex][i])
+            result.innerHTML += "PASS Test " + (numTestsComplete + 1) + ": " + PROPERTIES_TO_TEST[i] + " was " + value + "<br>";
+        else
+            result.innerHTML += "FAIL Test " + (numTestsComplete + 1) + ": " + PROPERTIES_TO_TEST[i] + " was " + value + " should be " + EXPECTED_VALUES[testIndex][i] + "<br>";
+    }
+
+    numTestsComplete++;
+    if (numTestsComplete < TEST_INPUTS.length)
+        runIndividualTest(numTestsComplete);
+    else {
+        if (window.testRunner)
+            testRunner.notifyDone();
+    }
 }
 
 if (window.testRunner) {

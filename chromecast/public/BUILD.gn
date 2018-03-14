@@ -2,11 +2,13 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//chromecast/chromecast.gni")
+
 config("public_config") {
   include_dirs = [ "//chromecast/public" ]
 }
 
-source_set("public") {
+cast_source_set("public") {
   sources = [
     "avsettings.h",
     "cast_egl_platform.h",
@@ -27,4 +29,27 @@ source_set("public") {
   ]
 
   public_configs = [ ":public_config" ]
+}
+
+if (is_android) {
+  import("//build/config/android/rules.gni")
+
+  java_cpp_enum("java_enums") {
+    sources = [
+      "avsettings.h",
+    ]
+  }
+
+  java_cpp_enum("java_enums_volume_control") {
+    sources = [
+      "volume_control.h",
+    ]
+  }
+
+  android_library("volume_control_enums_java") {
+    srcjar_deps = [ ":java_enums_volume_control" ]
+    deps = [
+      "//third_party/android_tools:android_support_annotations_java",
+    ]
+  }
 }

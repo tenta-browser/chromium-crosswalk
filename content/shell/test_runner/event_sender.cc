@@ -82,7 +82,7 @@ const char* const kPointerTypeStringEraser = "eraser";
 
 // Assigns |pointerType| from the provided |args|. Returns false if there was
 // any error.
-bool getPointerType(gin::Arguments* args,
+bool GetPointerType(gin::Arguments* args,
                     bool isOnlyMouseAndPenAllowed,
                     WebPointerProperties::PointerType& pointerType) {
   if (args->PeekNext().IsEmpty())
@@ -132,7 +132,7 @@ bool getMousePenPointerProperties(
   tiltY = 0;
 
   // Only allow pen or mouse through this API.
-  if (!getPointerType(args, false, pointerType))
+  if (!GetPointerType(args, false, pointerType))
     return false;
   if (!args->PeekNext().IsEmpty()) {
     if (!args->GetNext(&rawPointerId)) {
@@ -399,12 +399,11 @@ void PopulateCustomItems(const WebVector<WebMenuItemInfo>& customItems,
       strings->push_back(prefixCopy + kSeparatorIdentifier);
     } else if (customItems[i].type == blink::WebMenuItemInfo::kSubMenu) {
       strings->push_back(prefixCopy + customItems[i].label.Utf8() +
-                         customItems[i].icon.Utf8() + kSubMenuIdentifier);
+                         kSubMenuIdentifier);
       PopulateCustomItems(customItems[i].sub_menu_items,
                           prefixCopy + kSubMenuDepthIdentifier, strings);
     } else {
-      strings->push_back(prefixCopy + customItems[i].label.Utf8() +
-                         customItems[i].icon.Utf8());
+      strings->push_back(prefixCopy + customItems[i].label.Utf8());
     }
   }
 }
@@ -426,7 +425,7 @@ std::vector<std::string> MakeMenuItemStringsFor(
   static const char* kNonEditableMenuStrings[] = {
       "Back",        "Reload Page",     "Open in Dashbaord",
       "<separator>", "View Source",     "Save Page As",
-      "Print Page",  "Inspect Element", 0};
+      "Print Page",  "Inspect Element", nullptr};
   static const char* kEditableMenuStrings[] = {"Cut",
                                                "Copy",
                                                "<separator>",
@@ -437,7 +436,7 @@ std::vector<std::string> MakeMenuItemStringsFor(
                                                "Speech",
                                                "Paragraph Direction",
                                                "<separator>",
-                                               0};
+                                               nullptr};
 
   // This is possible because mouse events are cancelleable.
   if (!context_menu)
@@ -590,7 +589,7 @@ class EventSenderBindings : public gin::Wrappable<EventSenderBindings> {
                          float velocity_x,
                          float velocity_y,
                          gin::Arguments* args);
-  bool IsFlinging() const;
+  bool IsFlinging();
   void GestureScrollFirstPoint(int x, int y);
   void TouchStart(gin::Arguments* args);
   void TouchMove(gin::Arguments* args);
@@ -616,7 +615,7 @@ class EventSenderBindings : public gin::Wrappable<EventSenderBindings> {
   void GestureTwoFingerTap(gin::Arguments* args);
   void ContinuousMouseScrollBy(gin::Arguments* args);
   void MouseMoveTo(gin::Arguments* args);
-  void MouseLeave();
+  void MouseLeave(gin::Arguments* args);
   void MouseScrollBy(gin::Arguments* args);
   void ScheduleAsynchronousClick(gin::Arguments* args);
   void ScheduleAsynchronousKeyDown(gin::Arguments* args);
@@ -880,7 +879,7 @@ void EventSenderBindings::GestureFlingStart(float x,
     sender_->GestureFlingStart(x, y, velocity_x, velocity_y, args);
 }
 
-bool EventSenderBindings::IsFlinging() const {
+bool EventSenderBindings::IsFlinging() {
   if (sender_)
     return sender_->IsFlinging();
   return false;
@@ -1015,9 +1014,24 @@ void EventSenderBindings::MouseMoveTo(gin::Arguments* args) {
     sender_->MouseMoveTo(args);
 }
 
-void EventSenderBindings::MouseLeave() {
-  if (sender_)
-    sender_->MouseLeave();
+void EventSenderBindings::MouseLeave(gin::Arguments* args) {
+  if (!sender_)
+    return;
+
+  WebPointerProperties::PointerType pointerType =
+      WebPointerProperties::PointerType::kMouse;
+  int pointerId = kRawMousePointerId;
+
+  // Only allow pen or mouse through this API.
+  if (!GetPointerType(args, false, pointerType))
+    return;
+  if (!args->PeekNext().IsEmpty()) {
+    if (!args->GetNext(&pointerId)) {
+      args->ThrowError();
+      return;
+    }
+  }
+  sender_->MouseLeave(pointerType, pointerId);
 }
 
 void EventSenderBindings::MouseScrollBy(gin::Arguments* args) {
@@ -1358,14 +1372,11 @@ void EventSender::DoDragDrop(const WebDragData& drag_data,
       widget_event.get() ? static_cast<WebMouseEvent*>(widget_event.get())
                          : &raw_event;
 
-  WebPoint client_point(event->PositionInWidget().x,
-                        event->PositionInWidget().y);
-  WebPoint screen_point(event->PositionInScreen().x,
-                        event->PositionInScreen().y);
   current_drag_data_ = drag_data;
   current_drag_effects_allowed_ = mask;
   current_drag_effect_ = mainFrameWidget()->DragTargetDragEnter(
-      drag_data, client_point, screen_point, current_drag_effects_allowed_,
+      drag_data, event->PositionInWidget(), event->PositionInScreen(),
+      current_drag_effects_allowed_,
       modifiersWithButtons(
           current_pointer_state_[kRawMousePointerId].modifiers_,
           current_pointer_state_[kRawMousePointerId].current_buttons_));
@@ -1860,8 +1871,8 @@ void EventSender::UpdateTouchPoint(unsigned index,
 
   WebTouchPoint* touch_point = &touch_points_[index];
   touch_point->state = WebTouchPoint::kStateMoved;
-  touch_point->position = WebFloatPoint(x, y);
-  touch_point->screen_position = touch_point->position;
+  touch_point->SetPositionInWidget(x, y);
+  touch_point->SetPositionInScreen(x, y);
 
   InitPointerProperties(args, touch_point, &touch_point->radius_x,
                         &touch_point->radius_y);
@@ -1975,8 +1986,8 @@ void EventSender::GestureFlingStart(float x,
   HandleInputEventOnViewOrPopup(event);
 }
 
-bool EventSender::IsFlinging() const {
-  return view()->IsFlinging();
+bool EventSender::IsFlinging() {
+  return mainFrameWidget()->IsFlinging();
 }
 
 void EventSender::GestureScrollFirstPoint(int x, int y) {
@@ -2045,7 +2056,7 @@ void EventSender::BeginDragWithFiles(const std::vector<std::string>& files) {
   const WebPoint& last_pos =
       current_pointer_state_[kRawMousePointerId].last_pos_;
   float scale = delegate()->GetWindowToViewportScale();
-  WebPoint scaled_last_pos(last_pos.x * scale, last_pos.y * scale);
+  WebFloatPoint scaled_last_pos(last_pos.x * scale, last_pos.y * scale);
 
   // Provide a drag source.
   mainFrameWidget()->DragTargetDragEnter(current_drag_data_, scaled_last_pos,
@@ -2064,11 +2075,15 @@ void EventSender::BeginDragWithFiles(const std::vector<std::string>& files) {
 }
 
 void EventSender::AddTouchPoint(float x, float y, gin::Arguments* args) {
+  if (touch_points_.size() == WebTouchEvent::kTouchesLengthCap) {
+    args->ThrowError();
+    return;
+  }
   WebTouchPoint touch_point;
   touch_point.pointer_type = WebPointerProperties::PointerType::kTouch;
   touch_point.state = WebTouchPoint::kStatePressed;
-  touch_point.position = WebFloatPoint(x, y);
-  touch_point.screen_position = touch_point.position;
+  touch_point.SetPositionInWidget(x, y);
+  touch_point.SetPositionInScreen(x, y);
 
   int highest_id = -1;
   for (size_t i = 0; i < touch_points_.size(); i++) {
@@ -2211,16 +2226,18 @@ void EventSender::MouseMoveTo(gin::Arguments* args) {
   }
 }
 
-void EventSender::MouseLeave() {
+void EventSender::MouseLeave(
+    blink::WebPointerProperties::PointerType pointerType,
+    int pointerId) {
   if (force_layout_on_events_)
     widget()->UpdateAllLifecyclePhases();
 
   WebMouseEvent event(WebInputEvent::kMouseLeave,
-                      ModifiersForPointer(kRawMousePointerId),
-                      GetCurrentEventTimeSec());
-  InitMouseEvent(WebMouseEvent::Button::kNoButton, 0,
-                 current_pointer_state_[kRawMousePointerId].last_pos_,
-                 click_count_, &event);
+                      ModifiersForPointer(pointerId), GetCurrentEventTimeSec());
+  InitMouseEventGeneric(WebMouseEvent::Button::kNoButton, 0,
+                        current_pointer_state_[kRawMousePointerId].last_pos_,
+                        click_count_, pointerType, pointerId, 0.0, 0, 0,
+                        &event);
   HandleInputEventOnViewOrPopup(event);
 }
 
@@ -2262,8 +2279,8 @@ void EventSender::SendCurrentTouchEvent(WebInputEvent::Type type,
                                         gin::Arguments* args) {
   uint32_t unique_touch_event_id = GetUniqueTouchEventId(args);
 
-  DCHECK_GT(static_cast<unsigned>(WebTouchEvent::kTouchesLengthCap),
-            touch_points_.size());
+  DCHECK_LE(touch_points_.size(),
+            static_cast<unsigned>(WebTouchEvent::kTouchesLengthCap));
   if (force_layout_on_events_)
     widget()->UpdateAllLifecyclePhases();
 
@@ -2323,19 +2340,11 @@ void EventSender::GestureEvent(WebInputEvent::Type type, gin::Arguments* args) {
 
   switch (type) {
     case WebInputEvent::kGestureScrollUpdate: {
-      bool preventPropagation = false;
-      if (!args->PeekNext().IsEmpty()) {
-        if (!args->GetNext(&preventPropagation)) {
-          args->ThrowError();
-          return;
-        }
-      }
       if (!GetScrollUnits(args, &event.data.scroll_update.delta_units))
         return;
 
       event.data.scroll_update.delta_x = static_cast<float>(x);
       event.data.scroll_update.delta_y = static_cast<float>(y);
-      event.data.scroll_update.prevent_propagation = preventPropagation;
       event.x = current_gesture_location_.x;
       event.y = current_gesture_location_.y;
       current_gesture_location_.x =
@@ -2509,6 +2518,8 @@ void EventSender::GestureEvent(WebInputEvent::Type type, gin::Arguments* args) {
   }
 
   event.unique_touch_event_id = GetUniqueTouchEventId(args);
+  if (!GetPointerType(args, false, event.primary_pointer_type))
+    return;
 
   event.global_x = event.x;
   event.global_y = event.y;
@@ -2658,7 +2669,7 @@ void EventSender::InitPointerProperties(gin::Arguments* args,
     e->tilt_y = tiltY;
   }
 
-  if (!getPointerType(args, false, e->pointer_type))
+  if (!GetPointerType(args, false, e->pointer_type))
     return;
 }
 
@@ -2670,22 +2681,20 @@ void EventSender::FinishDragAndDrop(const WebMouseEvent& raw_event,
       widget_event.get() ? static_cast<WebMouseEvent*>(widget_event.get())
                          : &raw_event;
 
-  WebPoint client_point(event->PositionInWidget().x,
-                        event->PositionInWidget().y);
-  WebPoint screen_point(event->PositionInScreen().x,
-                        event->PositionInScreen().y);
   current_drag_effect_ = drag_effect;
   if (current_drag_effect_) {
     // Specifically pass any keyboard modifiers to the drop method. This allows
     // tests to control the drop type (i.e. copy or move).
-    mainFrameWidget()->DragTargetDrop(current_drag_data_, client_point,
-                                      screen_point, event->GetModifiers());
+    mainFrameWidget()->DragTargetDrop(
+        current_drag_data_, event->PositionInWidget(),
+        event->PositionInScreen(), event->GetModifiers());
   } else {
-    mainFrameWidget()->DragTargetDragLeave(blink::WebPoint(),
-                                           blink::WebPoint());
+    mainFrameWidget()->DragTargetDragLeave(blink::WebFloatPoint(),
+                                           blink::WebFloatPoint());
   }
   current_drag_data_.Reset();
-  mainFrameWidget()->DragSourceEndedAt(client_point, screen_point,
+  mainFrameWidget()->DragSourceEndedAt(event->PositionInWidget(),
+                                       event->PositionInScreen(),
                                        current_drag_effect_);
   mainFrameWidget()->DragSourceSystemDragEnded();
 }
@@ -2704,13 +2713,9 @@ void EventSender::DoDragAfterMouseUp(const WebMouseEvent& raw_event) {
   if (current_drag_data_.IsNull())
     return;
 
-  WebPoint client_point(event->PositionInWidget().x,
-                        event->PositionInWidget().y);
-  WebPoint screen_point(event->PositionInScreen().x,
-                        event->PositionInScreen().y);
   blink::WebDragOperation drag_effect = mainFrameWidget()->DragTargetDragOver(
-      client_point, screen_point, current_drag_effects_allowed_,
-      event->GetModifiers());
+      event->PositionInWidget(), event->PositionInScreen(),
+      current_drag_effects_allowed_, event->GetModifiers());
 
   // Bail if dragover caused cancellation.
   if (current_drag_data_.IsNull())
@@ -2732,13 +2737,9 @@ void EventSender::DoDragAfterMouseMove(const WebMouseEvent& raw_event) {
       widget_event.get() ? static_cast<WebMouseEvent*>(widget_event.get())
                          : &raw_event;
 
-  WebPoint client_point(event->PositionInWidget().x,
-                        event->PositionInWidget().y);
-  WebPoint screen_point(event->PositionInScreen().x,
-                        event->PositionInScreen().y);
   current_drag_effect_ = mainFrameWidget()->DragTargetDragOver(
-      client_point, screen_point, current_drag_effects_allowed_,
-      event->GetModifiers());
+      event->PositionInWidget(), event->PositionInScreen(),
+      current_drag_effects_allowed_, event->GetModifiers());
 }
 
 void EventSender::ReplaySavedEvents() {

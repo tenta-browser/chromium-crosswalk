@@ -23,10 +23,8 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/sys_info.h"
-#include "base/test/simple_test_clock.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "base/time/default_clock.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
@@ -58,7 +56,6 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
-#include "content/public/browser/resource_request_details.h"
 #include "content/public/browser/session_storage_namespace.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
@@ -104,8 +101,7 @@ bool AreExtraHeadersCompatibleWithPrerenderContents(
 // Returns true if prerendering is forced, because it is needed as a feature, as
 // opposed to a performance optimization.
 bool IsPrerenderingForced(Origin origin) {
-  return origin == ORIGIN_OFFLINE ||
-         origin == ORIGIN_EXTERNAL_REQUEST_FORCED_PRERENDER;
+  return origin == ORIGIN_EXTERNAL_REQUEST_FORCED_PRERENDER;
 }
 
 }  // namespace
@@ -121,8 +117,9 @@ class PrerenderManager::OnCloseWebContentsDeleter
     tab_->SetDelegate(this);
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&OnCloseWebContentsDeleter::ScheduleWebContentsForDeletion,
-                   AsWeakPtr(), true),
+        base::BindOnce(
+            &OnCloseWebContentsDeleter::ScheduleWebContentsForDeletion,
+            AsWeakPtr(), true),
         base::TimeDelta::FromSeconds(kDeleteWithExtremePrejudiceSeconds));
   }
 
@@ -161,15 +158,10 @@ class PrerenderManager::OnCloseWebContentsDeleter
 PrerenderManagerObserver::~PrerenderManagerObserver() {}
 
 // static
-int PrerenderManager::prerenders_per_session_count_ = 0;
-
-// static
 PrerenderManager::PrerenderManagerMode PrerenderManager::mode_ =
-    PRERENDER_MODE_ENABLED;
-PrerenderManager::PrerenderManagerMode PrerenderManager::instant_mode_ =
-    PRERENDER_MODE_ENABLED;
+    PRERENDER_MODE_SIMPLE_LOAD_EXPERIMENT;
 PrerenderManager::PrerenderManagerMode PrerenderManager::omnibox_mode_ =
-    PRERENDER_MODE_ENABLED;
+    PRERENDER_MODE_SIMPLE_LOAD_EXPERIMENT;
 
 struct PrerenderManager::NavigationRecord {
   NavigationRecord(const GURL& url, base::TimeTicks time, Origin origin)
@@ -187,7 +179,6 @@ PrerenderManager::PrerenderManager(Profile* profile)
       histograms_(new PrerenderHistograms()),
       profile_network_bytes_(0),
       last_recorded_profile_network_bytes_(0),
-      clock_(new base::DefaultClock()),
       tick_clock_(new base::DefaultTickClock()),
       page_load_metric_observer_disabled_(false),
       weak_factory_(this) {
@@ -288,22 +279,6 @@ PrerenderManager::AddForcedPrerenderFromExternalRequest(
     const gfx::Rect& bounds) {
   return AddPrerender(ORIGIN_EXTERNAL_REQUEST_FORCED_PRERENDER, url, referrer,
                       bounds, session_storage_namespace);
-}
-
-std::unique_ptr<PrerenderHandle> PrerenderManager::AddPrerenderForInstant(
-    const GURL& url,
-    content::SessionStorageNamespace* session_storage_namespace,
-    const gfx::Size& size) {
-  return AddPrerender(ORIGIN_INSTANT, url, content::Referrer(), gfx::Rect(size),
-                      session_storage_namespace);
-}
-
-std::unique_ptr<PrerenderHandle> PrerenderManager::AddPrerenderForOffline(
-    const GURL& url,
-    content::SessionStorageNamespace* session_storage_namespace,
-    const gfx::Size& size) {
-  return AddPrerender(ORIGIN_OFFLINE, url, content::Referrer(), gfx::Rect(size),
-                      session_storage_namespace);
 }
 
 void PrerenderManager::CancelAllPrerenders() {
@@ -443,20 +418,6 @@ std::unique_ptr<WebContents> PrerenderManager::SwapInternal(
       prerender_data->contents()->GetRenderViewHost()->GetProcess();
   process_host->RemoveObserver(this);
   prerender_process_hosts_.erase(process_host);
-  if (!prerender_data->contents()->load_start_time().is_null()) {
-    histograms_->RecordTimeUntilUsed(
-        prerender_data->contents()->origin(),
-        GetCurrentTimeTicks() - prerender_data->contents()->load_start_time());
-  }
-  histograms_->RecordAbandonTimeUntilUsed(
-      prerender_data->contents()->origin(),
-      prerender_data->abandon_time().is_null() ?
-          base::TimeDelta() :
-          GetCurrentTimeTicks() - prerender_data->abandon_time());
-
-  histograms_->RecordPerSessionCount(prerender_data->contents()->origin(),
-                                     ++prerenders_per_session_count_);
-  histograms_->RecordUsedPrerender(prerender_data->contents()->origin());
 
   PrerenderDataVector::iterator to_erase =
       FindIteratorForPrerenderContents(prerender_data->contents());
@@ -596,8 +557,6 @@ void PrerenderManager::RecordPrerenderFirstContentfulPaint(
 PrerenderManager::PrerenderManagerMode PrerenderManager::GetMode(
     Origin origin) {
   switch (origin) {
-    case ORIGIN_INSTANT:
-      return instant_mode_;
     case ORIGIN_OMNIBOX:
       return omnibox_mode_;
     default:
@@ -611,11 +570,6 @@ void PrerenderManager::SetMode(PrerenderManagerMode mode) {
 }
 
 // static
-void PrerenderManager::SetInstantMode(PrerenderManagerMode mode) {
-  instant_mode_ = mode;
-}
-
-// static
 void PrerenderManager::SetOmniboxMode(PrerenderManagerMode mode) {
   omnibox_mode_ = mode;
 }
@@ -623,7 +577,6 @@ void PrerenderManager::SetOmniboxMode(PrerenderManagerMode mode) {
 // static
 bool PrerenderManager::IsAnyPrerenderingPossible() {
   return mode_ != PRERENDER_MODE_DISABLED ||
-         instant_mode_ != PRERENDER_MODE_DISABLED ||
          omnibox_mode_ != PRERENDER_MODE_DISABLED;
 }
 
@@ -746,11 +699,8 @@ bool PrerenderManager::HasRecentlyBeenNavigatedTo(Origin origin,
   CleanUpOldNavigations(&navigations_, base::TimeDelta::FromMilliseconds(
                                            kNavigationRecordWindowMs));
   for (auto it = navigations_.rbegin(); it != navigations_.rend(); ++it) {
-    if (it->url == url) {
-      base::TimeDelta delta = GetCurrentTimeTicks() - it->time;
-      histograms_->RecordTimeSinceLastRecentVisit(origin, delta);
+    if (it->url == url)
       return true;
-    }
   }
 
   return false;
@@ -768,11 +718,11 @@ bool PrerenderManager::DoesSubresourceURLHaveValidScheme(const GURL& url) {
   return DoesURLHaveValidScheme(url) || url == url::kAboutBlankURL;
 }
 
-std::unique_ptr<base::DictionaryValue> PrerenderManager::GetAsValue() const {
+std::unique_ptr<base::DictionaryValue> PrerenderManager::CopyAsValue() const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   auto dict_value = base::MakeUnique<base::DictionaryValue>();
-  dict_value->Set("history", prerender_history_->GetEntriesAsValue());
+  dict_value->Set("history", prerender_history_->CopyEntriesAsValue());
   dict_value->Set("active", GetActivePrerendersAsValue());
   dict_value->SetBoolean("enabled",
       GetPredictionStatus() == NetworkPredictionStatus::ENABLED);
@@ -893,9 +843,8 @@ std::unique_ptr<PrerenderHandle> PrerenderManager::AddPrerender(
     SessionStorageNamespace* session_storage_namespace) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  // Allow only Requests for offlining on low end devices, the lifetime of
-  // those prerenders is managed by the offliner.
-  if (IsLowEndDevice() && origin != ORIGIN_OFFLINE) {
+  // Disallow prerendering on low end devices.
+  if (IsLowEndDevice()) {
     RecordFinalStatusWithoutCreatingPrerenderContents(
         url_arg, origin, FINAL_STATUS_LOW_END_DEVICE);
     return nullptr;
@@ -907,14 +856,10 @@ std::unique_ptr<PrerenderHandle> PrerenderManager::AddPrerender(
     origin = ORIGIN_GWS_PRERENDER;
   }
 
-  if (IsPrerenderSilenceExperiment(origin))
-    return nullptr;
-
   GURL url = url_arg;
   GURL alias_url;
 
-  if (profile_->GetPrefs()->GetBoolean(prefs::kBlockThirdPartyCookies) &&
-      origin != ORIGIN_OFFLINE) {
+  if (profile_->GetPrefs()->GetBoolean(prefs::kBlockThirdPartyCookies)) {
     RecordFinalStatusWithoutCreatingPrerenderContents(
         url, origin, FINAL_STATUS_BLOCK_THIRD_PARTY_COOKIES);
     return nullptr;
@@ -1005,7 +950,6 @@ std::unique_ptr<PrerenderHandle> PrerenderManager::AddPrerender(
     return nullptr;
   }
 
-  histograms_->RecordPrerenderStarted(origin);
   DCHECK(!prerender_contents_ptr->prerendering_has_started());
 
   std::unique_ptr<PrerenderHandle> prerender_handle =
@@ -1081,8 +1025,8 @@ void PrerenderManager::PeriodicCleanup() {
 void PrerenderManager::PostCleanupTask() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&PrerenderManager::PeriodicCleanup,
-                            weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&PrerenderManager::PeriodicCleanup,
+                                weak_factory_.GetWeakPtr()));
 }
 
 base::TimeTicks PrerenderManager::GetExpiryTimeForNewPrerender(
@@ -1109,16 +1053,11 @@ void PrerenderManager::DeleteOldEntries() {
 }
 
 base::Time PrerenderManager::GetCurrentTime() const {
-  return clock_->Now();
+  return base::Time::Now();
 }
 
 base::TimeTicks PrerenderManager::GetCurrentTimeTicks() const {
   return tick_clock_->NowTicks();
-}
-
-void PrerenderManager::SetClockForTesting(
-    std::unique_ptr<base::SimpleTestClock> clock) {
-  clock_ = std::move(clock);
 }
 
 void PrerenderManager::SetTickClockForTesting(
@@ -1150,9 +1089,8 @@ PrerenderManager::PrerenderData* PrerenderManager::FindPrerenderData(
     const SessionStorageNamespace* session_storage_namespace) {
   for (const auto& prerender : active_prerenders_) {
     PrerenderContents* contents = prerender->contents();
-    if (contents->Matches(url, session_storage_namespace)) {
-      return contents->origin() != ORIGIN_OFFLINE ? prerender.get() : nullptr;
-    }
+    if (contents->Matches(url, session_storage_namespace))
+      return prerender.get();
   }
   return nullptr;
 }
@@ -1172,12 +1110,6 @@ bool PrerenderManager::DoesRateLimitAllowPrerender(Origin origin) const {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   base::TimeDelta elapsed_time =
       GetCurrentTimeTicks() - last_prerender_start_time_;
-  histograms_->RecordTimeBetweenPrerenderRequests(origin, elapsed_time);
-  // TODO(gabadie,pasko): Re-implement missing tests for
-  // FINAL_STATUS_RATE_LIMIT_EXCEEDED that where removed by:
-  //    http://crrev.com/a2439eeab37f7cb7a118493fb55ec0cb07f93b49.
-  if (origin == ORIGIN_OFFLINE)
-    return true;
   if (!config_.rate_limit_enabled)
     return true;
   return elapsed_time >=
@@ -1314,49 +1246,16 @@ void PrerenderManager::OnCreatingAudioStream(int render_process_id,
   prerender_contents->Destroy(FINAL_STATUS_CREATING_AUDIO_STREAM);
 }
 
-void PrerenderManager::RecordNetworkBytes(Origin origin,
-                                          bool used,
-                                          int64_t prerender_bytes) {
+void PrerenderManager::RecordNetworkBytesConsumed(Origin origin,
+                                                  int64_t prerender_bytes) {
   if (!IsAnyPrerenderingPossible())
     return;
   int64_t recent_profile_bytes =
       profile_network_bytes_ - last_recorded_profile_network_bytes_;
   last_recorded_profile_network_bytes_ = profile_network_bytes_;
   DCHECK_GE(recent_profile_bytes, 0);
-  histograms_->RecordNetworkBytes(
-      origin, used, prerender_bytes, recent_profile_bytes);
-}
-
-bool PrerenderManager::IsPrerenderSilenceExperiment(Origin origin) const {
-  if (origin == ORIGIN_OFFLINE ||
-      origin == ORIGIN_EXTERNAL_REQUEST_FORCED_PRERENDER) {
-    return false;
-  }
-
-  // The group name should contain expiration time formatted as:
-  //   "ExperimentYes_expires_YYYY-MM-DDTHH:MM:SSZ".
-  std::string group_name =
-      base::FieldTrialList::FindFullName("PrerenderSilence");
-  const char kExperimentPrefix[] = "ExperimentYes";
-  if (!base::StartsWith(group_name, kExperimentPrefix,
-                        base::CompareCase::INSENSITIVE_ASCII)) {
-    return false;
-  }
-  const char kExperimentPrefixWithExpiration[] = "ExperimentYes_expires_";
-  if (!base::StartsWith(group_name, kExperimentPrefixWithExpiration,
-                        base::CompareCase::INSENSITIVE_ASCII)) {
-    // Without expiration day in the group name, behave as a normal experiment,
-    // i.e. sticky to the Chrome session.
-    return true;
-  }
-  base::Time expiration_time;
-  if (!base::Time::FromString(
-          group_name.c_str() + (arraysize(kExperimentPrefixWithExpiration) - 1),
-          &expiration_time)) {
-    DLOG(ERROR) << "Could not parse expiration date in group: " << group_name;
-    return false;
-  }
-  return GetCurrentTime() < expiration_time;
+  histograms_->RecordNetworkBytesConsumed(origin, prerender_bytes,
+                                          recent_profile_bytes);
 }
 
 NetworkPredictionStatus PrerenderManager::GetPredictionStatus() const {
@@ -1373,13 +1272,8 @@ NetworkPredictionStatus PrerenderManager::GetPredictionStatusForOrigin(
   // settings and with all possible network types. This would avoid web devs
   // coming up with creative ways to prefetch in cases they are not allowed to
   // do so.
-  //
-  // Offline originated prerenders also ignore the network state and privacy
-  // settings because they are controlled by the offliner logic via
-  // PrerenderHandle.
   if (origin == ORIGIN_LINK_REL_PRERENDER_SAMEDOMAIN ||
-      origin == ORIGIN_LINK_REL_PRERENDER_CROSSDOMAIN ||
-      origin == ORIGIN_OFFLINE) {
+      origin == ORIGIN_LINK_REL_PRERENDER_CROSSDOMAIN) {
     return NetworkPredictionStatus::ENABLED;
   }
 

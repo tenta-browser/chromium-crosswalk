@@ -112,6 +112,7 @@ Polymer({
       if (this.historyData_)
         this.splice('historyData_', 0, this.historyData_.length);
       this.fire('unselect-all');
+      this.scrollTop = 0;
     }
 
     if (this.historyData_) {
@@ -141,9 +142,9 @@ Polymer({
    * Deselect each item in |selectedItems|.
    */
   unselectAllItems: function() {
-    this.selectedItems.forEach(function(index) {
+    this.selectedItems.forEach((index) => {
       this.changeSelection_(index, false);
-    }.bind(this));
+    });
 
     assert(this.selectedItems.size == 0);
   },
@@ -181,7 +182,7 @@ Polymer({
    * @private
    */
   changeSelection_: function(index, selected) {
-    this.set('historyData_.' + index + '.selected', selected);
+    this.set(`historyData_.${index}.selected`, selected);
     if (selected)
       this.selectedItems.add(index);
     else
@@ -196,17 +197,15 @@ Polymer({
    * @private
    */
   deleteSelected_: function() {
-    var toBeRemoved =
-        Array.from(this.selectedItems.values()).map(function(index) {
-          return this.get('historyData_.' + index);
-        }.bind(this));
+    var toBeRemoved = Array.from(this.selectedItems.values())
+                          .map((index) => this.get(`historyData_.${index}`));
 
     md_history.BrowserService.getInstance()
         .deleteItems(toBeRemoved)
-        .then(function(items) {
+        .then((items) => {
           this.removeItemsByIndex_(Array.from(this.selectedItems));
           this.fire('unselect-all');
-        }.bind(this));
+        });
   },
 
   /**
@@ -222,7 +221,7 @@ Polymer({
       // Sort in reverse numerical order.
       return b - a;
     });
-    indices.forEach(function(index) {
+    indices.forEach((index) => {
       var item = this.historyData_.splice(index, 1);
       splices.push({
         index: index,
@@ -231,7 +230,7 @@ Polymer({
         object: this.historyData_,
         type: 'splice'
       });
-    }.bind(this));
+    });
     this.notifySplices('historyData_', splices);
   },
 
@@ -282,7 +281,7 @@ Polymer({
 
     for (var i = 0; i < this.historyData_.length; i++) {
       if (this.historyData_[i].url == url)
-        this.set('historyData_.' + i + '.starred', false);
+        this.set(`historyData_.${i}.starred`, false);
     }
   },
 
@@ -315,7 +314,7 @@ Polymer({
 
     var target = e.detail.target;
     this.actionMenuModel_ = e.detail;
-    var menu = /** @type {CrSharedMenuElement} */ this.$.sharedMenu.get();
+    var menu = /** @type {CrActionMenuElement} */ (this.$.sharedMenu.get());
     menu.showAt(target);
   },
 
@@ -336,7 +335,7 @@ Polymer({
     browserService.recordAction('EntryMenuRemoveFromHistory');
     var menu = assert(this.$.sharedMenu.getIfExists());
     var itemData = this.actionMenuModel_;
-    browserService.deleteItems([itemData.item]).then(function(items) {
+    browserService.deleteItems([itemData.item]).then((items) => {
       // This unselect-all resets the toolbar when deleting a selected item
       // and clears selection state which can be invalid if items move
       // around during deletion.
@@ -358,7 +357,7 @@ Polymer({
             'HistoryPage.RemoveEntryPositionSubset', index,
             UMA_MAX_SUBSET_BUCKET_VALUE);
       }
-    }.bind(this));
+    });
     this.closeMenu_();
   },
 
@@ -384,9 +383,9 @@ Polymer({
 
     var selected = !this.selectedItems.has(index);
 
-    indices.forEach(function(index) {
+    indices.forEach((index) => {
       this.changeSelection_(index, selected);
-    }.bind(this));
+    });
 
     this.lastSelectedIndex = index;
   },
@@ -466,6 +465,16 @@ Polymer({
   noResultsMessage_: function(searchedTerm) {
     var messageId = searchedTerm !== '' ? 'noSearchResults' : 'noResults';
     return loadTimeData.getString(messageId);
+  },
+
+  /**
+   * @param {string} searchedTerm
+   * @param {string} domain
+   * @return {boolean}
+   * @private
+   */
+  canSearchMoreFromSite_: function(searchedTerm, domain) {
+    return searchedTerm === '' || searchedTerm !== domain;
   },
 
   /**

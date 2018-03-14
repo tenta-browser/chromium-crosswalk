@@ -4,6 +4,7 @@
 
 #include "cc/trees/layer_tree_settings.h"
 
+#include "components/viz/common/resources/platform_color.h"
 #include "third_party/khronos/GLES2/gl2.h"
 
 namespace cc {
@@ -17,7 +18,8 @@ LayerTreeSettings::LayerTreeSettings()
                         ManagedMemoryPolicy::kDefaultNumResourcesLimit),
       software_memory_policy(128 * 1024 * 1024,
                              gpu::MemoryAllocation::CUTOFF_ALLOW_NICE_TO_HAVE,
-                             ManagedMemoryPolicy::kDefaultNumResourcesLimit) {}
+                             ManagedMemoryPolicy::kDefaultNumResourcesLimit),
+      preferred_tile_format(viz::PlatformColor::BestTextureFormat()) {}
 
 LayerTreeSettings::LayerTreeSettings(const LayerTreeSettings& other) = default;
 LayerTreeSettings::~LayerTreeSettings() = default;
@@ -33,6 +35,10 @@ SchedulerSettings LayerTreeSettings::ToSchedulerSettings() const {
   scheduler_settings.enable_latency_recovery = enable_latency_recovery;
   scheduler_settings.background_frame_interval =
       base::TimeDelta::FromSecondsD(1.0 / background_animation_rate);
+  scheduler_settings.wait_for_all_pipeline_stages_before_draw =
+      wait_for_all_pipeline_stages_before_draw;
+  scheduler_settings.enable_surface_synchronization =
+      enable_surface_synchronization;
   return scheduler_settings;
 }
 
@@ -40,6 +46,8 @@ TileManagerSettings LayerTreeSettings::ToTileManagerSettings() const {
   TileManagerSettings tile_manager_settings;
   tile_manager_settings.use_partial_raster = use_partial_raster;
   tile_manager_settings.enable_checker_imaging = enable_checker_imaging;
+  tile_manager_settings.min_image_bytes_to_checker = min_image_bytes_to_checker;
+  tile_manager_settings.enable_image_animations = enable_image_animations;
   return tile_manager_settings;
 }
 

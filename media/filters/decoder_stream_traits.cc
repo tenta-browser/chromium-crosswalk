@@ -43,7 +43,7 @@ DecoderStreamTraits<DemuxerStream::AUDIO>::GetDecoderConfig(
 }
 
 DecoderStreamTraits<DemuxerStream::AUDIO>::DecoderStreamTraits(
-    const scoped_refptr<MediaLog>& media_log)
+    MediaLog* media_log)
     : media_log_(media_log) {}
 
 void DecoderStreamTraits<DemuxerStream::AUDIO>::ReportStatistics(
@@ -79,9 +79,17 @@ void DecoderStreamTraits<DemuxerStream::AUDIO>::OnDecode(
   audio_ts_validator_->CheckForTimestampGap(buffer);
 }
 
-void DecoderStreamTraits<DemuxerStream::AUDIO>::OnDecodeDone(
+PostDecodeAction DecoderStreamTraits<DemuxerStream::AUDIO>::OnDecodeDone(
     const scoped_refptr<OutputType>& buffer) {
   audio_ts_validator_->RecordOutputDuration(buffer);
+  return PostDecodeAction::DELIVER;
+}
+
+void DecoderStreamTraits<DemuxerStream::AUDIO>::OnConfigChanged(
+    const DecoderConfigType& config) {
+  // Reset validator with the latest config. Also ensures that we do not attempt
+  // to match timestamps across config boundaries.
+  audio_ts_validator_.reset(new AudioTimestampValidator(config, media_log_));
 }
 
 // Video decoder stream traits implementation.
@@ -111,7 +119,7 @@ DecoderStreamTraits<DemuxerStream::VIDEO>::GetDecoderConfig(
 }
 
 DecoderStreamTraits<DemuxerStream::VIDEO>::DecoderStreamTraits(
-    const scoped_refptr<MediaLog>& media_log)
+    MediaLog* media_log)
     // Randomly selected number of samples to keep.
     : keyframe_distance_average_(16) {}
 
@@ -148,6 +156,7 @@ void DecoderStreamTraits<DemuxerStream::VIDEO>::OnStreamReset(
     DemuxerStream* stream) {
   DCHECK(stream);
   last_keyframe_timestamp_ = base::TimeDelta();
+  frames_to_drop_.clear();
 }
 
 void DecoderStreamTraits<DemuxerStream::VIDEO>::OnDecode(
@@ -159,6 +168,9 @@ void DecoderStreamTraits<DemuxerStream::VIDEO>::OnDecode(
     last_keyframe_timestamp_ = base::TimeDelta();
     return;
   }
+
+  if (buffer->discard_padding().first == kInfiniteDuration)
+    frames_to_drop_.insert(buffer->timestamp());
 
   if (!buffer->is_key_frame())
     return;
@@ -174,6 +186,21 @@ void DecoderStreamTraits<DemuxerStream::VIDEO>::OnDecode(
   UMA_HISTOGRAM_MEDIUM_TIMES("Media.Video.KeyFrameDistance", frame_distance);
   last_keyframe_timestamp_ = current_frame_timestamp;
   keyframe_distance_average_.AddSample(frame_distance);
+}
+
+PostDecodeAction DecoderStreamTraits<DemuxerStream::VIDEO>::OnDecodeDone(
+    const scoped_refptr<OutputType>& buffer) {
+  auto it = frames_to_drop_.find(buffer->timestamp());
+  if (it != frames_to_drop_.end()) {
+    // We erase from the beginning onward to our target frame since frames
+    // should be returned in presentation order. It's possible to accumulate
+    // entries in this queue if playback begins at a non-keyframe; those frames
+    // may never be returned from the decoder.
+    frames_to_drop_.erase(frames_to_drop_.begin(), it + 1);
+    return PostDecodeAction::DROP;
+  }
+
+  return PostDecodeAction::DELIVER;
 }
 
 }  // namespace media

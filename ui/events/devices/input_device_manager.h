@@ -15,8 +15,8 @@
 
 namespace ui {
 
-// Interface to query available input devices. Holds a static pointer to an
-// implementation that provides this service. The implementation could be
+// Interface to query available input devices. Holds a thread-local pointer to
+// an implementation that provides this service. The implementation could be
 // DeviceDataManager or something that mirrors the necessary state if
 // DeviceDataManager is in a different process.
 class EVENTS_DEVICES_EXPORT InputDeviceManager {
@@ -35,11 +35,20 @@ class EVENTS_DEVICES_EXPORT InputDeviceManager {
   virtual bool AreDeviceListsComplete() const = 0;
   virtual bool AreTouchscreensEnabled() const = 0;
 
+  // Returns true if the |target_display_id| of the TouchscreenDevices returned
+  // from GetTouchscreenDevices() is valid.
+  virtual bool AreTouchscreenTargetDisplaysValid() const = 0;
+
   virtual void AddObserver(InputDeviceEventObserver* observer) = 0;
   virtual void RemoveObserver(InputDeviceEventObserver* observer) = 0;
 
+  virtual void SetKeyboardDevicesForTesting(
+      const std::vector<InputDevice>& devices) = 0;
+  virtual void SetTouchscreenDevicesForTesting(
+      const std::vector<TouchscreenDevice>& devices) = 0;
+
  protected:
-  // Sets the instance. This should only be set once per process.
+  // Sets the instance. This should only be set once per thread.
   static void SetInstance(InputDeviceManager* instance);
 
   // Clears the instance. InputDeviceManager doesn't own the instance and won't

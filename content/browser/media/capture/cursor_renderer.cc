@@ -29,7 +29,7 @@ CursorRenderer::CursorRenderer(gfx::NativeView view,
                                CursorDisplaySetting cursor_display_setting)
     : captured_view_(view),
       cursor_display_setting_(cursor_display_setting),
-      tick_clock_(&default_tick_clock_),
+      tick_clock_(base::DefaultTickClock::GetInstance()),
       weak_factory_(this) {
   Clear();
 }
@@ -146,7 +146,6 @@ void CursorRenderer::RenderOnVideoFrame(media::VideoFrame* target) const {
                         cursor_position_in_frame_.y()),
       target->visible_rect());
 
-  scaled_cursor_bitmap_.lockPixels();
   for (int y = rect.y(); y < rect.bottom(); ++y) {
     int cursor_y = y - cursor_position_in_frame_.y();
     uint8_t* yplane = target->data(media::VideoFrame::kYPlane) +
@@ -177,7 +176,6 @@ void CursorRenderer::RenderOnVideoFrame(media::VideoFrame* target) const {
       }
     }
   }
-  scaled_cursor_bitmap_.unlockPixels();
 }
 
 void CursorRenderer::OnMouseMoved(const gfx::Point& location,

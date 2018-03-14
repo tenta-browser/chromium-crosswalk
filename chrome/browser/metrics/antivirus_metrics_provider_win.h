@@ -18,9 +18,8 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/sequenced_task_runner.h"
-#include "base/threading/thread_checker.h"
-#include "components/metrics/proto/system_profile.pb.h"
+#include "base/sequence_checker.h"
+#include "third_party/metrics_proto/system_profile.pb.h"
 
 // AntiVirusMetricsProvider is responsible for adding antivirus information to
 // the UMA system profile proto.
@@ -29,19 +28,14 @@ class AntiVirusMetricsProvider : public metrics::MetricsProvider {
   static constexpr base::Feature kReportNamesFeature = {
       "ReportFullAVProductDetails", base::FEATURE_DISABLED_BY_DEFAULT};
 
-  explicit AntiVirusMetricsProvider(
-      scoped_refptr<base::TaskRunner> task_runner);
+  AntiVirusMetricsProvider();
 
   ~AntiVirusMetricsProvider() override;
 
   // metrics::MetricsDataProvider:
+  void AsyncInit(const base::Closure& done_callback) override;
   void ProvideSystemProfileMetrics(
       metrics::SystemProfileProto* system_profile_proto) override;
-
-  // Fetches AntiVirus data asynchronously and calls |done_callback| when
-  // done. Should be called before ProvideSystemProfileMetrics to ensure that
-  // data is ready to be collected.
-  void GetAntiVirusMetrics(const base::Closure& done_callback);
 
  private:
   // This enum is reported via a histogram so new values should always be added
@@ -83,7 +77,7 @@ class AntiVirusMetricsProvider : public metrics::MetricsProvider {
   static void MaybeAddUnregisteredAntiVirusProducts(
       std::vector<AvProduct>* products);
 
-  static std::vector<AvProduct> GetAntiVirusProductsOnFileThread();
+  static std::vector<AvProduct> GetAntiVirusProductsOnCOMSTAThread();
 
   // Removes anything extraneous from the end of the product name such as
   // versions, years, or anything containing numbers to make it more constant.
@@ -95,14 +89,10 @@ class AntiVirusMetricsProvider : public metrics::MetricsProvider {
   void GotAntiVirusProducts(const base::Closure& done_callback,
                             const std::vector<AvProduct>& av_products);
 
-  // The TaskRunner on which file operations are performed (supplied by the
-  // embedder).
-  scoped_refptr<base::TaskRunner> task_runner_;
-
   // Information on installed AntiVirus gathered.
   std::vector<AvProduct> av_products_;
 
-  base::ThreadChecker thread_checker_;
+  SEQUENCE_CHECKER(sequence_checker_);
   base::WeakPtrFactory<AntiVirusMetricsProvider> weak_ptr_factory_;
 
   FRIEND_TEST_ALL_PREFIXES(AntiVirusMetricsProviderTest, GetMetricsFullName);

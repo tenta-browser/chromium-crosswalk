@@ -9,6 +9,9 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/sys_info.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/threading/thread_restrictions.h"
+#include "build/build_config.h"
 
 #define UMA_HISTOGRAM_MBYTES(name, sample)                                     \
   UMA_HISTOGRAM_CUSTOM_COUNTS((name), static_cast<int>((sample) / kMBytes), 1, \
@@ -24,11 +27,10 @@ int64_t RandomizeByPercent(int64_t value, int percent) {
   return value + (value * (random_percent / 100.0));
 }
 
-}  // anonymous namespace
-
 base::Optional<storage::QuotaSettings> CalculateNominalDynamicSettings(
     const base::FilePath& partition_path,
     bool is_incognito) {
+  base::AssertBlockingAllowed();
   const int64_t kMBytes = 1024 * 1024;
   const int kRandomizedPercentage = 10;
 
@@ -78,6 +80,8 @@ base::Optional<storage::QuotaSettings> CalculateNominalDynamicSettings(
       1000 * kMBytes;
 #elif defined(OS_CHROMEOS)
       1000 * kMBytes;
+#elif defined(OS_FUCHSIA)
+      1000 * kMBytes;
 #elif defined(OS_WIN) || defined(OS_LINUX) || defined(OS_MACOSX)
       10000 * kMBytes;
 #else
@@ -115,3 +119,17 @@ base::Optional<storage::QuotaSettings> CalculateNominalDynamicSettings(
 }
 
 }  // namespace
+
+void GetNominalDynamicSettings(const base::FilePath& partition_path,
+                               bool is_incognito,
+                               OptionalQuotaSettingsCallback callback) {
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::BindOnce(&CalculateNominalDynamicSettings, partition_path,
+                     is_incognito),
+      std::move(callback));
+}
+
+}  // namespace storage

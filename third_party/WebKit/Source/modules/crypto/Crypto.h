@@ -29,8 +29,8 @@
 #ifndef Crypto_h
 #define Crypto_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/crypto/SubtleCrypto.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -38,7 +38,7 @@ namespace blink {
 class DOMArrayBufferView;
 class ExceptionState;
 
-class Crypto final : public GarbageCollected<Crypto>, public ScriptWrappable {
+class Crypto final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -49,7 +49,7 @@ class Crypto final : public GarbageCollected<Crypto>, public ScriptWrappable {
 
   SubtleCrypto* subtle();
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   Crypto() {}

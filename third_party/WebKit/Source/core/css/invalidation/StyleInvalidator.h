@@ -6,6 +6,8 @@
 #define StyleInvalidator_h
 
 #include <memory>
+
+#include "base/macros.h"
 #include "core/css/invalidation/PendingInvalidations.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Noncopyable.h"
@@ -18,9 +20,49 @@ class Element;
 class HTMLSlotElement;
 class InvalidationSet;
 
+// Performs deferred style invalidation for DOM subtrees.
+//
+// Suppose we have a large DOM tree with the style rules
+// .a .b { ... }
+// ...
+// and user script adds or removes class 'a' from an element.
+//
+// The cached computed styles for any of the element's
+// descendants that have class b are now outdated.
+//
+// The user script might subsequently make many more DOM
+// changes, so we don't immediately traverse the element's
+// descendants for class b.
+//
+// Instead, we record the need for this traversal by
+// calling ScheduleInvalidationSetsForNode with
+// InvalidationLists obtained from RuleFeatureSet.
+//
+// When we next read computed styles, for example from
+// user script or to render a frame, Invalidate(Document&)
+// is called to traverse the DOM and perform all
+// the pending style invalidations.
+//
+// If an element is removed from the DOM tree, we call
+// ClearInvalidation(ContainerNode&).
+//
+// When there are sibling rules and elements are added
+// or removed from the tree, we call
+// ScheduleSiblingInvalidationsAsDescendants for the
+// potentially affected siblings.
+//
+// When there are pending invalidations for an element's
+// siblings, and the element is being removed, we call
+// RescheduleSiblingInvalidationsAsDescendants to
+// reshedule the invalidations as descendant invalidations
+// on the element's parent.
+//
+// See https://goo.gl/3ane6s and https://goo.gl/z0Z9gn
+// for more detailed overviews of style invalidation.
+// TODO: unify these documents into an .md file in the repo.
+
 class CORE_EXPORT StyleInvalidator {
   DISALLOW_NEW();
-  WTF_MAKE_NONCOPYABLE(StyleInvalidator);
 
  public:
   StyleInvalidator();
@@ -34,7 +76,9 @@ class CORE_EXPORT StyleInvalidator {
   void RescheduleSiblingInvalidationsAsDescendants(Element&);
   void ClearInvalidation(ContainerNode&);
 
-  DEFINE_INLINE_TRACE() { visitor->Trace(pending_invalidation_map_); }
+  void Trace(blink::Visitor* visitor) {
+    visitor->Trace(pending_invalidation_map_);
+  }
 
  private:
   struct RecursionData {
@@ -120,7 +164,7 @@ class CORE_EXPORT StyleInvalidator {
           invalidates_slotted_(data->invalidates_slotted_),
           data_(data) {}
     ~RecursionCheckpoint() {
-      data_->invalidation_sets_.erase(
+      data_->invalidation_sets_.EraseAt(
           prev_invalidation_sets_size_,
           data_->invalidation_sets_.size() - prev_invalidation_sets_size_);
       data_->invalidate_custom_pseudo_ = prev_invalidate_custom_pseudo_;
@@ -146,6 +190,7 @@ class CORE_EXPORT StyleInvalidator {
   PendingInvalidations& EnsurePendingInvalidations(ContainerNode&);
 
   PendingInvalidationMap pending_invalidation_map_;
+  DISALLOW_COPY_AND_ASSIGN(StyleInvalidator);
 };
 
 }  // namespace blink

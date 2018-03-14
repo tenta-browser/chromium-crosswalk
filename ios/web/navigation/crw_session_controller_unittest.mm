@@ -9,19 +9,24 @@
 #include <utility>
 
 #include "base/logging.h"
-#import "base/mac/scoped_nsobject.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #import "ios/web/navigation/crw_session_controller+private_constructors.h"
+#import "ios/web/navigation/legacy_navigation_manager_impl.h"
 #import "ios/web/navigation/navigation_item_impl.h"
 #import "ios/web/navigation/navigation_manager_impl.h"
 #include "ios/web/public/referrer.h"
 #include "ios/web/public/test/fakes/test_browser_state.h"
 #include "ios/web/public/test/test_web_thread_bundle.h"
+#include "ios/web/test/fakes/fake_navigation_manager_delegate.h"
 #import "net/base/mac/url_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 using UserAgentOverrideOption = web::NavigationManager::UserAgentOverrideOption;
 
@@ -47,8 +52,24 @@ namespace {
 class CRWSessionControllerTest : public PlatformTest {
  protected:
   void SetUp() override {
-    session_controller_.reset(
-        [[CRWSessionController alloc] initWithBrowserState:&browser_state_]);
+    session_controller_ =
+        [[CRWSessionController alloc] initWithBrowserState:&browser_state_];
+    CreateNavigationManagerForSessionController(session_controller_);
+  }
+
+  // Creates a new LegacyNavigationManagerImpl object and links it with
+  // session_controller. This method should be called for each newly created
+  // CRWSessionController because they rely on a non-null NavigationManagerImpl
+  // to create NavigationItemImpl objects. The life time of the created
+  // navigation managers are managed by the test fixture class.
+  void CreateNavigationManagerForSessionController(
+      CRWSessionController* session_controller) {
+    auto navigation_manager =
+        base::MakeUnique<web::LegacyNavigationManagerImpl>();
+    navigation_manager->SetBrowserState(&browser_state_);
+    navigation_manager->SetDelegate(&delegate_);
+    navigation_manager->SetSessionController(session_controller);
+    navigation_managers_.push_back(std::move(navigation_manager));
   }
 
   web::Referrer MakeReferrer(const std::string& url) {
@@ -57,7 +78,12 @@ class CRWSessionControllerTest : public PlatformTest {
 
   web::TestWebThreadBundle thread_bundle_;
   web::TestBrowserState browser_state_;
-  base::scoped_nsobject<CRWSessionController> session_controller_;
+  web::FakeNavigationManagerDelegate delegate_;
+  CRWSessionController* session_controller_;
+  // Implements RAII pattern for navigation manager objects created by
+  // CreateNavigationManagerForSessionController.
+  std::vector<std::unique_ptr<web::LegacyNavigationManagerImpl>>
+      navigation_managers_;
 };
 
 TEST_F(CRWSessionControllerTest, Init) {
@@ -462,47 +488,6 @@ TEST_F(CRWSessionControllerTest,
             [session_controller_ currentItem]);
 }
 
-TEST_F(CRWSessionControllerTest, updatePendingItemWithoutPendingItem) {
-  [session_controller_ updatePendingItem:GURL("http://www.another.url.com")];
-  [session_controller_ commitPendingItem];
-
-  EXPECT_TRUE([session_controller_ items].empty());
-  EXPECT_FALSE([session_controller_ currentItem]);
-}
-
-TEST_F(CRWSessionControllerTest, updatePendingItemWithPendingItem) {
-  [session_controller_
-               addPendingItem:GURL("http://www.url.com")
-                     referrer:MakeReferrer("http://www.referer.com")
-                   transition:ui::PAGE_TRANSITION_TYPED
-               initiationType:web::NavigationInitiationType::USER_INITIATED
-      userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
-  [session_controller_ updatePendingItem:GURL("http://www.another.url.com")];
-
-  EXPECT_EQ(
-      GURL("http://www.another.url.com/"),
-      [session_controller_ currentURL]);
-}
-
-TEST_F(CRWSessionControllerTest,
-       updatePendingItemWithPendingItemAlreadyCommited) {
-  [session_controller_
-               addPendingItem:GURL("http://www.url.com")
-                     referrer:MakeReferrer("http://www.referer.com")
-                   transition:ui::PAGE_TRANSITION_TYPED
-               initiationType:web::NavigationInitiationType::USER_INITIATED
-      userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
-  [session_controller_ commitPendingItem];
-  [session_controller_ updatePendingItem:GURL("http://www.another.url.com")];
-  [session_controller_ commitPendingItem];
-
-  EXPECT_EQ(1U, [session_controller_ items].size());
-  EXPECT_EQ(GURL("http://www.url.com/"),
-            [session_controller_ URLForItemAtIndex:0U]);
-  EXPECT_EQ([session_controller_ items].front().get(),
-            [session_controller_ currentItem]);
-}
-
 // Tests inserting session controller state.
 TEST_F(CRWSessionControllerTest, CopyState) {
   // Add 1 committed and 1 pending item to target controller.
@@ -521,8 +506,9 @@ TEST_F(CRWSessionControllerTest, CopyState) {
       userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
 
   // Create source session controller with 1 committed item.
-  base::scoped_nsobject<CRWSessionController> other_session_controller(
-      [[CRWSessionController alloc] initWithBrowserState:&browser_state_]);
+  CRWSessionController* other_session_controller =
+      [[CRWSessionController alloc] initWithBrowserState:&browser_state_];
+  CreateNavigationManagerForSessionController(other_session_controller);
   [other_session_controller
                addPendingItem:GURL("http://www.url.com/0")
                      referrer:web::Referrer()
@@ -540,7 +526,7 @@ TEST_F(CRWSessionControllerTest, CopyState) {
   // Insert and verify the state of target session controller.
   EXPECT_TRUE([session_controller_ canPruneAllButLastCommittedItem]);
   [session_controller_
-      copyStateFromSessionControllerAndPrune:other_session_controller.get()];
+      copyStateFromSessionControllerAndPrune:other_session_controller];
 
   EXPECT_EQ(2U, [session_controller_ items].size());
   EXPECT_EQ(1, [session_controller_ lastCommittedItemIndex]);
@@ -574,13 +560,14 @@ TEST_F(CRWSessionControllerTest, CopyStateFromEmptySessionController) {
   [session_controller_ commitPendingItem];
 
   // Create empty source session controller.
-  base::scoped_nsobject<CRWSessionController> other_session_controller(
-      [[CRWSessionController alloc] initWithBrowserState:&browser_state_]);
+  CRWSessionController* other_session_controller =
+      [[CRWSessionController alloc] initWithBrowserState:&browser_state_];
+  CreateNavigationManagerForSessionController(other_session_controller);
 
   // Insert and verify the state of target session controller.
   EXPECT_TRUE([session_controller_ canPruneAllButLastCommittedItem]);
   [session_controller_
-      copyStateFromSessionControllerAndPrune:other_session_controller.get()];
+      copyStateFromSessionControllerAndPrune:other_session_controller];
   EXPECT_EQ(2U, [session_controller_ items].size());
   EXPECT_EQ(1, [session_controller_ lastCommittedItemIndex]);
   EXPECT_EQ(0, [session_controller_ previousItemIndex]);
@@ -598,8 +585,9 @@ TEST_F(CRWSessionControllerTest, CopyStateToEmptySessionController) {
   EXPECT_FALSE([session_controller_ canPruneAllButLastCommittedItem]);
 
   // Create source session controller with 1 committed item.
-  base::scoped_nsobject<CRWSessionController> other_session_controller(
-      [[CRWSessionController alloc] initWithBrowserState:&browser_state_]);
+  CRWSessionController* other_session_controller =
+      [[CRWSessionController alloc] initWithBrowserState:&browser_state_];
+  CreateNavigationManagerForSessionController(other_session_controller);
   [other_session_controller
                addPendingItem:GURL("http://www.url.com/0")
                      referrer:web::Referrer()
@@ -646,8 +634,9 @@ TEST_F(CRWSessionControllerTest, CopyStateDuringPendingHistoryNavigation) {
   [session_controller_ commitPendingItem];
 
   // Create source session controller with 1 committed item.
-  base::scoped_nsobject<CRWSessionController> other_session_controller(
-      [[CRWSessionController alloc] initWithBrowserState:&browser_state_]);
+  CRWSessionController* other_session_controller =
+      [[CRWSessionController alloc] initWithBrowserState:&browser_state_];
+  CreateNavigationManagerForSessionController(other_session_controller);
   [other_session_controller
                addPendingItem:GURL("http://www.url.com/0")
                      referrer:web::Referrer()
@@ -700,8 +689,9 @@ TEST_F(CRWSessionControllerTest, CopyStateWithTransientItem) {
   [session_controller_ addTransientItemWithURL:second_url];
 
   // Create source session controller with 1 committed item.
-  base::scoped_nsobject<CRWSessionController> other_session_controller(
-      [[CRWSessionController alloc] initWithBrowserState:&browser_state_]);
+  CRWSessionController* other_session_controller =
+      [[CRWSessionController alloc] initWithBrowserState:&browser_state_];
+  CreateNavigationManagerForSessionController(other_session_controller);
   [other_session_controller
                addPendingItem:GURL("http://www.url.com/0")
                      referrer:web::Referrer()
@@ -764,14 +754,15 @@ std::unique_ptr<web::NavigationItem> CreateNavigationItem(
 
 TEST_F(CRWSessionControllerTest, CreateWithEmptyNavigations) {
   std::vector<std::unique_ptr<web::NavigationItem>> items;
-  base::scoped_nsobject<CRWSessionController> controller(
+  CRWSessionController* controller =
       [[CRWSessionController alloc] initWithBrowserState:&browser_state_
                                          navigationItems:std::move(items)
-                                  lastCommittedItemIndex:0]);
-  EXPECT_TRUE(controller.get().items.empty());
-  EXPECT_EQ(controller.get().lastCommittedItemIndex, -1);
-  EXPECT_EQ(controller.get().previousItemIndex, -1);
-  EXPECT_FALSE(controller.get().currentItem);
+                                  lastCommittedItemIndex:0];
+  CreateNavigationManagerForSessionController(controller);
+  EXPECT_TRUE(controller.items.empty());
+  EXPECT_EQ(controller.lastCommittedItemIndex, -1);
+  EXPECT_EQ(controller.previousItemIndex, -1);
+  EXPECT_FALSE(controller.currentItem);
 }
 
 TEST_F(CRWSessionControllerTest, CreateWithNavList) {
@@ -782,14 +773,15 @@ TEST_F(CRWSessionControllerTest, CreateWithNavList) {
                                        "http://www.google.com", @"Yahoo"));
   items.push_back(CreateNavigationItem("http://www.espn.com",
                                        "http://www.nothing.com", @"ESPN"));
-  base::scoped_nsobject<CRWSessionController> controller(
+  CRWSessionController* controller =
       [[CRWSessionController alloc] initWithBrowserState:&browser_state_
                                          navigationItems:std::move(items)
-                                  lastCommittedItemIndex:1]);
+                                  lastCommittedItemIndex:1];
+  CreateNavigationManagerForSessionController(controller);
 
-  EXPECT_EQ(controller.get().items.size(), 3U);
-  EXPECT_EQ(controller.get().lastCommittedItemIndex, 1);
-  EXPECT_EQ(controller.get().previousItemIndex, -1);
+  EXPECT_EQ(controller.items.size(), 3U);
+  EXPECT_EQ(controller.lastCommittedItemIndex, 1);
+  EXPECT_EQ(controller.previousItemIndex, -1);
   // Sanity check the current item, the NavigationItem unit test will ensure
   // the entire object is created properly.
   EXPECT_EQ([controller currentItem]->GetURL(), GURL("http://www.yahoo.com"));
@@ -797,7 +789,7 @@ TEST_F(CRWSessionControllerTest, CreateWithNavList) {
 
 // Tests index of previous navigation item.
 TEST_F(CRWSessionControllerTest, PreviousNavigationItem) {
-  EXPECT_EQ(session_controller_.get().previousItemIndex, -1);
+  EXPECT_EQ(session_controller_.previousItemIndex, -1);
   [session_controller_
                addPendingItem:GURL("http://www.url.com")
                      referrer:MakeReferrer("http://www.referer.com")
@@ -805,7 +797,7 @@ TEST_F(CRWSessionControllerTest, PreviousNavigationItem) {
                initiationType:web::NavigationInitiationType::USER_INITIATED
       userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
   [session_controller_ commitPendingItem];
-  EXPECT_EQ(session_controller_.get().previousItemIndex, -1);
+  EXPECT_EQ(session_controller_.previousItemIndex, -1);
   [session_controller_
                addPendingItem:GURL("http://www.url1.com")
                      referrer:MakeReferrer("http://www.referer.com")
@@ -813,7 +805,7 @@ TEST_F(CRWSessionControllerTest, PreviousNavigationItem) {
                initiationType:web::NavigationInitiationType::USER_INITIATED
       userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
   [session_controller_ commitPendingItem];
-  EXPECT_EQ(session_controller_.get().previousItemIndex, 0);
+  EXPECT_EQ(session_controller_.previousItemIndex, 0);
   [session_controller_
                addPendingItem:GURL("http://www.url2.com")
                      referrer:MakeReferrer("http://www.referer.com")
@@ -822,19 +814,19 @@ TEST_F(CRWSessionControllerTest, PreviousNavigationItem) {
       userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
   [session_controller_ commitPendingItem];
 
-  EXPECT_EQ(session_controller_.get().previousItemIndex, 1);
+  EXPECT_EQ(session_controller_.previousItemIndex, 1);
 
   [session_controller_ goToItemAtIndex:1 discardNonCommittedItems:NO];
-  EXPECT_EQ(session_controller_.get().previousItemIndex, 2);
+  EXPECT_EQ(session_controller_.previousItemIndex, 2);
 
   [session_controller_ goToItemAtIndex:0 discardNonCommittedItems:NO];
-  EXPECT_EQ(session_controller_.get().previousItemIndex, 1);
+  EXPECT_EQ(session_controller_.previousItemIndex, 1);
 
   [session_controller_ goToItemAtIndex:1 discardNonCommittedItems:NO];
-  EXPECT_EQ(session_controller_.get().previousItemIndex, 0);
+  EXPECT_EQ(session_controller_.previousItemIndex, 0);
 
   [session_controller_ goToItemAtIndex:2 discardNonCommittedItems:NO];
-  EXPECT_EQ(session_controller_.get().previousItemIndex, 1);
+  EXPECT_EQ(session_controller_.previousItemIndex, 1);
 }
 
 TEST_F(CRWSessionControllerTest, PushNewItem) {
@@ -845,10 +837,11 @@ TEST_F(CRWSessionControllerTest, PushNewItem) {
                                        "http://www.firstpage.com", @"Second"));
   items.push_back(CreateNavigationItem("http://www.thirdpage.com",
                                        "http://www.secondpage.com", @"Third"));
-  base::scoped_nsobject<CRWSessionController> controller(
+  CRWSessionController* controller =
       [[CRWSessionController alloc] initWithBrowserState:&browser_state_
                                          navigationItems:std::move(items)
-                                  lastCommittedItemIndex:0]);
+                                  lastCommittedItemIndex:0];
+  CreateNavigationManagerForSessionController(controller);
 
   GURL pushPageGurl1("http://www.firstpage.com/#push1");
   NSString* stateObject1 = @"{'foo': 1}";
@@ -857,7 +850,7 @@ TEST_F(CRWSessionControllerTest, PushNewItem) {
                       transition:ui::PAGE_TRANSITION_LINK];
   web::NavigationItemImpl* pushedItem = [controller currentItem];
   NSUInteger expectedCount = 2;
-  EXPECT_EQ(expectedCount, controller.get().items.size());
+  EXPECT_EQ(expectedCount, controller.items.size());
   EXPECT_EQ(pushPageGurl1, pushedItem->GetURL());
   EXPECT_TRUE(pushedItem->IsCreatedFromPushState());
   EXPECT_NSEQ(stateObject1, pushedItem->GetSerializedStateObject());
@@ -870,7 +863,7 @@ TEST_F(CRWSessionControllerTest, PushNewItem) {
                       transition:ui::PAGE_TRANSITION_LINK];
   pushedItem = [controller currentItem];
   expectedCount = 3;
-  EXPECT_EQ(expectedCount, controller.get().items.size());
+  EXPECT_EQ(expectedCount, controller.items.size());
   EXPECT_EQ(pushPageGurl2, pushedItem->GetURL());
   EXPECT_TRUE(pushedItem->IsCreatedFromPushState());
   EXPECT_EQ(nil, pushedItem->GetSerializedStateObject());
@@ -894,10 +887,11 @@ TEST_F(CRWSessionControllerTest, IsSameDocumentNavigation) {
   // Push state navigation.
   items.push_back(CreateNavigationItem("http://foo.com/bar#bar",
                                        "http://foo.com/bar", @"Sixth"));
-  base::scoped_nsobject<CRWSessionController> controller(
+  CRWSessionController* controller =
       [[CRWSessionController alloc] initWithBrowserState:&browser_state_
                                          navigationItems:std::move(items)
-                                  lastCommittedItemIndex:0]);
+                                  lastCommittedItemIndex:0];
+  CreateNavigationManagerForSessionController(controller);
   web::NavigationItemImpl* item0 = [controller items][0].get();
   web::NavigationItemImpl* item1 = [controller items][1].get();
   web::NavigationItemImpl* item2 = [controller items][2].get();
@@ -922,45 +916,6 @@ TEST_F(CRWSessionControllerTest, IsSameDocumentNavigation) {
       [controller isSameDocumentNavigationBetweenItem:item0 andItem:item5]);
   EXPECT_FALSE(
       [controller isSameDocumentNavigationBetweenItem:item2 andItem:item4]);
-}
-
-TEST_F(CRWSessionControllerTest, UpdateCurrentItem) {
-  std::vector<std::unique_ptr<web::NavigationItem>> items;
-  items.push_back(CreateNavigationItem("http://www.firstpage.com",
-                                       "http://www.starturl.com", @"First"));
-  items.push_back(CreateNavigationItem("http://www.secondpage.com",
-                                       "http://www.firstpage.com", @"Second"));
-  items.push_back(CreateNavigationItem("http://www.thirdpage.com",
-                                       "http://www.secondpage.com", @"Third"));
-  base::scoped_nsobject<CRWSessionController> controller(
-      [[CRWSessionController alloc] initWithBrowserState:&browser_state_
-                                         navigationItems:std::move(items)
-                                  lastCommittedItemIndex:0]);
-
-  GURL replacePageGurl1("http://www.firstpage.com/#replace1");
-  NSString* stateObject1 = @"{'foo': 1}";
-
-  // Replace current item and check the size of history and fields of the
-  // modified item.
-  [controller updateCurrentItemWithURL:replacePageGurl1
-                           stateObject:stateObject1];
-  web::NavigationItemImpl* replacedItem = [controller currentItem];
-  NSUInteger expectedCount = 3;
-  EXPECT_EQ(expectedCount, controller.get().items.size());
-  EXPECT_EQ(replacePageGurl1, replacedItem->GetURL());
-  EXPECT_FALSE(replacedItem->IsCreatedFromPushState());
-  EXPECT_NSEQ(stateObject1, replacedItem->GetSerializedStateObject());
-  EXPECT_EQ(GURL("http://www.starturl.com/"), replacedItem->GetReferrer().url);
-
-  // Replace current item and check size and fields again.
-  GURL replacePageGurl2("http://www.firstpage.com/#replace2");
-  [controller.get() updateCurrentItemWithURL:replacePageGurl2 stateObject:nil];
-  replacedItem = [controller currentItem];
-  EXPECT_EQ(expectedCount, controller.get().items.size());
-  EXPECT_EQ(replacePageGurl2, replacedItem->GetURL());
-  EXPECT_FALSE(replacedItem->IsCreatedFromPushState());
-  EXPECT_NSEQ(nil, replacedItem->GetSerializedStateObject());
-  EXPECT_EQ(GURL("http://www.starturl.com/"), replacedItem->GetReferrer().url);
 }
 
 TEST_F(CRWSessionControllerTest, TestBackwardForwardItems) {
@@ -993,11 +948,11 @@ TEST_F(CRWSessionControllerTest, TestBackwardForwardItems) {
       userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
   [session_controller_ commitPendingItem];
 
-  EXPECT_EQ(3, session_controller_.get().lastCommittedItemIndex);
-  web::NavigationItemList backItems = [session_controller_ backwardItems];
-  EXPECT_EQ(2U, backItems.size());
+  EXPECT_EQ(3, session_controller_.lastCommittedItemIndex);
+  web::NavigationItemList back_items = [session_controller_ backwardItems];
+  EXPECT_EQ(2U, back_items.size());
   EXPECT_TRUE([session_controller_ forwardItems].empty());
-  EXPECT_EQ("http://www.example.com/redirect", backItems[0]->GetURL().spec());
+  EXPECT_EQ("http://www.example.com/redirect", back_items[0]->GetURL().spec());
 
   [session_controller_ goToItemAtIndex:1 discardNonCommittedItems:NO];
   EXPECT_EQ(1U, [session_controller_ backwardItems].size());
@@ -1047,51 +1002,51 @@ TEST_F(CRWSessionControllerTest, GoToItemAtIndex) {
                initiationType:web::NavigationInitiationType::USER_INITIATED
       userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
   [session_controller_ addTransientItemWithURL:GURL("http://www.example.com")];
-  EXPECT_EQ(3, session_controller_.get().lastCommittedItemIndex);
-  EXPECT_EQ(2, session_controller_.get().previousItemIndex);
+  EXPECT_EQ(3, session_controller_.lastCommittedItemIndex);
+  EXPECT_EQ(2, session_controller_.previousItemIndex);
   EXPECT_TRUE([session_controller_ pendingItem]);
   EXPECT_TRUE([session_controller_ transientItem]);
 
   // Going back and forth without discaring transient and pending items.
   [session_controller_ goToItemAtIndex:1 discardNonCommittedItems:NO];
-  EXPECT_EQ(1, session_controller_.get().lastCommittedItemIndex);
-  EXPECT_EQ(3, session_controller_.get().previousItemIndex);
-  EXPECT_TRUE(session_controller_.get().pendingItem);
-  EXPECT_TRUE(session_controller_.get().transientItem);
+  EXPECT_EQ(1, session_controller_.lastCommittedItemIndex);
+  EXPECT_EQ(3, session_controller_.previousItemIndex);
+  EXPECT_TRUE(session_controller_.pendingItem);
+  EXPECT_TRUE(session_controller_.transientItem);
   [session_controller_ goToItemAtIndex:3 discardNonCommittedItems:NO];
-  EXPECT_EQ(3, session_controller_.get().lastCommittedItemIndex);
-  EXPECT_EQ(1, session_controller_.get().previousItemIndex);
-  EXPECT_TRUE(session_controller_.get().pendingItem);
-  EXPECT_TRUE(session_controller_.get().transientItem);
+  EXPECT_EQ(3, session_controller_.lastCommittedItemIndex);
+  EXPECT_EQ(1, session_controller_.previousItemIndex);
+  EXPECT_TRUE(session_controller_.pendingItem);
+  EXPECT_TRUE(session_controller_.transientItem);
 
   // Going back should discard transient and pending items.
   [session_controller_ goToItemAtIndex:1 discardNonCommittedItems:YES];
-  EXPECT_EQ(1, session_controller_.get().lastCommittedItemIndex);
-  EXPECT_EQ(3, session_controller_.get().previousItemIndex);
-  EXPECT_FALSE(session_controller_.get().pendingItem);
-  EXPECT_FALSE(session_controller_.get().transientItem);
+  EXPECT_EQ(1, session_controller_.lastCommittedItemIndex);
+  EXPECT_EQ(3, session_controller_.previousItemIndex);
+  EXPECT_FALSE(session_controller_.pendingItem);
+  EXPECT_FALSE(session_controller_.transientItem);
 
   // Going forward should discard transient item.
   [session_controller_ addTransientItemWithURL:GURL("http://www.example.com")];
-  EXPECT_TRUE(session_controller_.get().transientItem);
+  EXPECT_TRUE(session_controller_.transientItem);
   [session_controller_ goToItemAtIndex:2 discardNonCommittedItems:YES];
-  EXPECT_EQ(2, session_controller_.get().lastCommittedItemIndex);
-  EXPECT_EQ(1, session_controller_.get().previousItemIndex);
-  EXPECT_FALSE(session_controller_.get().transientItem);
+  EXPECT_EQ(2, session_controller_.lastCommittedItemIndex);
+  EXPECT_EQ(1, session_controller_.previousItemIndex);
+  EXPECT_FALSE(session_controller_.transientItem);
 
   // Out of bounds navigations should be no-op.
   [session_controller_ goToItemAtIndex:-1 discardNonCommittedItems:NO];
-  EXPECT_EQ(2, session_controller_.get().lastCommittedItemIndex);
-  EXPECT_EQ(1, session_controller_.get().previousItemIndex);
+  EXPECT_EQ(2, session_controller_.lastCommittedItemIndex);
+  EXPECT_EQ(1, session_controller_.previousItemIndex);
   [session_controller_ goToItemAtIndex:NSIntegerMax
               discardNonCommittedItems:NO];
-  EXPECT_EQ(2, session_controller_.get().lastCommittedItemIndex);
-  EXPECT_EQ(1, session_controller_.get().previousItemIndex);
+  EXPECT_EQ(2, session_controller_.lastCommittedItemIndex);
+  EXPECT_EQ(1, session_controller_.previousItemIndex);
 
   // Going to current index should not change the previous index.
   [session_controller_ goToItemAtIndex:2 discardNonCommittedItems:NO];
-  EXPECT_EQ(2, session_controller_.get().lastCommittedItemIndex);
-  EXPECT_EQ(1, session_controller_.get().previousItemIndex);
+  EXPECT_EQ(2, session_controller_.lastCommittedItemIndex);
+  EXPECT_EQ(1, session_controller_.previousItemIndex);
 }
 
 // Tests that visible URL is the same as transient URL if there are no committed
@@ -1234,6 +1189,79 @@ TEST_F(CRWSessionControllerTest, BackwardItemsForAllRedirects) {
       userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
   [session_controller_ commitPendingItem];
   EXPECT_EQ(0U, [session_controller_ backwardItems].size());
+}
+
+// Tests that |-pendingItem| is not considered part of session history so that
+// |-backwardItems| returns the second last committed item even if there is a
+// pendign item.
+TEST_F(CRWSessionControllerTest, NewPendingItemIsHiddenFromHistory) {
+  [session_controller_
+               addPendingItem:GURL("http://www.example.com/0")
+                     referrer:MakeReferrer("http://www.example.com/a")
+                   transition:ui::PAGE_TRANSITION_LINK
+               initiationType:web::NavigationInitiationType::USER_INITIATED
+      userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
+  [session_controller_ commitPendingItem];
+  [session_controller_
+               addPendingItem:GURL("http://www.example.com/1")
+                     referrer:MakeReferrer("http://www.example.com/b")
+                   transition:ui::PAGE_TRANSITION_LINK
+               initiationType:web::NavigationInitiationType::USER_INITIATED
+      userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
+  [session_controller_ commitPendingItem];
+  [session_controller_
+               addPendingItem:GURL("http://www.example.com/2")
+                     referrer:MakeReferrer("http://www.example.com/c")
+                   transition:ui::PAGE_TRANSITION_LINK
+               initiationType:web::NavigationInitiationType::USER_INITIATED
+      userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
+
+  EXPECT_EQ(1, session_controller_.lastCommittedItemIndex);
+  EXPECT_TRUE([session_controller_ pendingItem]);
+  EXPECT_EQ(-1, [session_controller_ pendingItemIndex]);
+  EXPECT_EQ(GURL("http://www.example.com/2"), [session_controller_ currentURL]);
+
+  web::NavigationItemList back_items = [session_controller_ backwardItems];
+  ASSERT_EQ(1U, back_items.size());
+  EXPECT_EQ("http://www.example.com/0", back_items[0]->GetURL().spec());
+}
+
+// Tests that |-backwardItems| returns all committed items if there is a
+// transient item. This can happen if an interstitial was loaded for SSL error.
+// See crbug.com/691311.
+TEST_F(CRWSessionControllerTest,
+       BackwardItemsShouldContainAllCommittedIfCurrentIsTransient) {
+  [session_controller_
+               addPendingItem:GURL("http://www.example.com/0")
+                     referrer:MakeReferrer("http://www.example.com/a")
+                   transition:ui::PAGE_TRANSITION_LINK
+               initiationType:web::NavigationInitiationType::USER_INITIATED
+      userAgentOverrideOption:UserAgentOverrideOption::INHERIT];
+  [session_controller_ commitPendingItem];
+  [session_controller_
+      addTransientItemWithURL:GURL("http://www.example.com/1")];
+
+  EXPECT_EQ(0, session_controller_.lastCommittedItemIndex);
+  EXPECT_TRUE([session_controller_ transientItem]);
+  EXPECT_EQ(GURL("http://www.example.com/1"), [session_controller_ currentURL]);
+
+  web::NavigationItemList back_items = [session_controller_ backwardItems];
+  ASSERT_EQ(1U, back_items.size());
+  EXPECT_EQ("http://www.example.com/0", back_items[0]->GetURL().spec());
+}
+
+// Tests that |-backwardItems| works as expected when the transient item is the
+// only item in history.
+TEST_F(CRWSessionControllerTest, BackwardItemsShouldBeEmptyIfFirstIsTransient) {
+  [session_controller_
+      addTransientItemWithURL:GURL("http://www.example.com/1")];
+
+  EXPECT_EQ(-1, session_controller_.lastCommittedItemIndex);
+  EXPECT_TRUE([session_controller_ transientItem]);
+  EXPECT_EQ(GURL("http://www.example.com/1"), [session_controller_ currentURL]);
+
+  web::NavigationItemList back_items = [session_controller_ backwardItems];
+  EXPECT_TRUE(back_items.empty());
 }
 
 }  // anonymous namespace

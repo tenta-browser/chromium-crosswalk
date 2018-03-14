@@ -7,46 +7,59 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "components/safe_browsing/password_protection/password_protection_service.h"
+#include "content/public/browser/browser_thread.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_status.h"
+
+#include <vector>
 
 class GURL;
 
 namespace safe_browsing {
 
+class PasswordProtectionNavigationThrottle;
+
+// UMA metrics
+extern const char kPasswordOnFocusVerdictHistogram[];
+extern const char kAnyPasswordEntryVerdictHistogram[];
+extern const char kSyncPasswordEntryVerdictHistogram[];
+extern const char kProtectedPasswordEntryVerdictHistogram[];
+
 // A request for checking if an unfamiliar login form or a password reuse event
 // is safe. PasswordProtectionRequest objects are owned by
 // PasswordProtectionService indicated by |password_protection_service_|.
-class PasswordProtectionRequest : public net::URLFetcherDelegate {
+// PasswordProtectionService is RefCountedThreadSafe such that it can post task
+// safely between IO and UI threads. It can only be destroyed on UI thread.
+//
+// PasswordProtectionRequest flow:
+// Step| Thread |                    Task
+// (1) |   UI   | If incognito or !SBER, quit request.
+// (2) |   UI   | Add task to IO thread for whitelist checking.
+// (3) |   IO   | Check whitelist and return the result back to UI thread.
+// (4) |   UI   | If whitelisted, check verdict cache; else quit request.
+// (5) |   UI   | If verdict cached, quit request; else prepare request proto.
+// (6) |   UI   | Start a timeout task, and send network request.
+// (7) |   UI   | On receiving response, handle response and finish.
+//     |        | On request timeout, cancel request.
+//     |        | On deletion of |password_protection_service_|, cancel request.
+class PasswordProtectionRequest : public base::RefCountedThreadSafe<
+                                      PasswordProtectionRequest,
+                                      content::BrowserThread::DeleteOnUIThread>,
+                                  public net::URLFetcherDelegate {
  public:
-  // The outcome of the request. These values are used for UMA.
-  // DO NOT CHANGE THE ORDERING OF THESE VALUES.
-  enum RequestOutcome {
-    UNKNOWN = 0,
-    SUCCEEDED = 1,
-    CANCELED = 2,
-    TIMEDOUT = 3,
-    MATCHED_WHITELIST = 4,
-    RESPONSE_ALREADY_CACHED = 5,
-    NO_EXTENDED_REPORTING = 6,
-    INCOGNITO = 7,
-    REQUEST_MALFORMED = 8,
-    FETCH_FAILED = 9,
-    RESPONSE_MALFORMED = 10,
-    SERVICE_DESTROYED = 11,
-    MAX_OUTCOME
-  };
-
-  PasswordProtectionRequest(const GURL& main_frame_url,
+  PasswordProtectionRequest(content::WebContents* web_contents,
+                            const GURL& main_frame_url,
+                            const GURL& password_form_action,
+                            const GURL& password_form_frame_url,
+                            bool matches_sync_password,
+                            const std::vector<std::string>& matching_origins,
                             LoginReputationClientRequest::TriggerType type,
-                            bool is_extended_reporting,
-                            bool is_incognito,
-                            base::WeakPtr<PasswordProtectionService> pps,
+                            bool password_field_exists,
+                            PasswordProtectionService* pps,
                             int request_timeout_in_ms);
-
-  ~PasswordProtectionRequest() override;
 
   base::WeakPtr<PasswordProtectionRequest> GetWeakPtr() {
     return weakptr_factory_.GetWeakPtr();
@@ -66,9 +79,53 @@ class PasswordProtectionRequest : public net::URLFetcherDelegate {
 
   GURL main_frame_url() const { return main_frame_url_; }
 
-  bool is_incognito() const { return is_incognito_; }
+  const LoginReputationClientRequest* request_proto() const {
+    return request_proto_.get();
+  }
+
+  content::WebContents* web_contents() const { return web_contents_; }
+
+  LoginReputationClientRequest::TriggerType trigger_type() const {
+    return trigger_type_;
+  }
+
+  bool matches_sync_password() { return matches_sync_password_; }
+
+  bool is_modal_warning_showing() const { return is_modal_warning_showing_; }
+
+  void set_is_modal_warning_showing(bool is_warning_showing) {
+    is_modal_warning_showing_ = is_warning_showing;
+  }
+
+  // Keeps track of created navigation throttle.
+  void AddThrottle(PasswordProtectionNavigationThrottle* throttle) {
+    throttles_.insert(throttle);
+  }
+
+  void RemoveThrottle(PasswordProtectionNavigationThrottle* throttle) {
+    throttles_.erase(throttle);
+  }
+
+  // Cancels navigation if there is modal warning showing, resumes it otherwise.
+  void HandleDeferredNavigations();
+
+ protected:
+  friend class base::RefCountedThreadSafe<PasswordProtectionRequest>;
 
  private:
+  friend struct content::BrowserThread::DeleteOnThread<
+      content::BrowserThread::UI>;
+  friend class base::DeleteHelper<PasswordProtectionRequest>;
+  friend class ChromePasswordProtectionServiceTest;
+  ~PasswordProtectionRequest() override;
+
+  // Start checking the whitelist.
+  void CheckWhitelist();
+
+  static void OnWhitelistCheckDoneOnIO(
+      base::WeakPtr<PasswordProtectionRequest> weak_request,
+      bool match_whitelist);
+
   // If |main_frame_url_| matches whitelist, call Finish() immediately;
   // otherwise call CheckCachedVerdicts().
   void OnWhitelistCheckDone(bool match_whitelist);
@@ -87,22 +144,34 @@ class PasswordProtectionRequest : public net::URLFetcherDelegate {
   void StartTimeout();
 
   // |this| will be destroyed after calling this function.
-  void Finish(RequestOutcome outcome,
+  void Finish(PasswordProtectionService::RequestOutcome outcome,
               std::unique_ptr<LoginReputationClientResponse> response);
 
-  void CheckWhitelistsOnUIThread();
+  // WebContents of the password protection event.
+  content::WebContents* web_contents_;
 
   // Main frame URL of the login form.
-  GURL main_frame_url_;
+  const GURL main_frame_url_;
+
+  // The action URL of the password form.
+  const GURL password_form_action_;
+
+  // Frame url of the detected password form.
+  const GURL password_form_frame_url_;
+
+  // True if the password is the sync/Google password.
+  const bool matches_sync_password_;
+
+  // Domains from the Password Manager that match this password.
+  // Should be non-empty if |matches_sync_password_| == false. Otherwise,
+  // may or may not be empty.
+  const std::vector<std::string> matching_domains_;
 
   // If this request is for unfamiliar login page or for a password reuse event.
-  const LoginReputationClientRequest::TriggerType request_type_;
+  const LoginReputationClientRequest::TriggerType trigger_type_;
 
-  // If user is opted-in Safe Browsing Extended Reporting.
-  const bool is_extended_reporting_;
-
-  // If current session is in incognito mode.
-  const bool is_incognito_;
+  // If there is a password field on the page.
+  const bool password_field_exists_;
 
   // When request is sent.
   base::TimeTicks request_start_time_;
@@ -111,13 +180,25 @@ class PasswordProtectionRequest : public net::URLFetcherDelegate {
   std::unique_ptr<net::URLFetcher> fetcher_;
 
   // The PasswordProtectionService instance owns |this|.
-  base::WeakPtr<PasswordProtectionService> password_protection_service_;
+  // Can only be accessed on UI thread.
+  PasswordProtectionService* password_protection_service_;
 
   // If we haven't receive response after this period of time, we cancel this
   // request.
   const int request_timeout_in_ms_;
 
   std::unique_ptr<LoginReputationClientRequest> request_proto_;
+
+  // Needed for canceling tasks posted to different threads.
+  base::CancelableTaskTracker tracker_;
+
+  // Navigation throttles created for this |web_contents_| during |this|'s
+  // lifetime. These throttles are owned by their corresponding
+  // NavigationHandler instances.
+  std::set<PasswordProtectionNavigationThrottle*> throttles_;
+
+  // Whether there is a modal warning triggered by this request.
+  bool is_modal_warning_showing_;
 
   base::WeakPtrFactory<PasswordProtectionRequest> weakptr_factory_;
   DISALLOW_COPY_AND_ASSIGN(PasswordProtectionRequest);

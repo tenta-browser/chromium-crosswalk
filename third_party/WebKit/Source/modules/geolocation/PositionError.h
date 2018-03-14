@@ -26,14 +26,13 @@
 #ifndef PositionError_h
 #define PositionError_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
-class PositionError final : public GarbageCollectedFinalized<PositionError>,
-                            public ScriptWrappable {
+class PositionError final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -46,7 +45,6 @@ class PositionError final : public GarbageCollectedFinalized<PositionError>,
   static PositionError* Create(ErrorCode code, const String& message) {
     return new PositionError(code, message);
   }
-  DEFINE_INLINE_TRACE() {}
 
   ErrorCode code() const { return code_; }
   const String& message() const { return message_; }

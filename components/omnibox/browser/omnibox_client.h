@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_OMNIBOX_BROWSER_OMNIBOX_CLIENT_H_
 #define COMPONENTS_OMNIBOX_BROWSER_OMNIBOX_CLIENT_H_
 
+#include <memory>
+
 #include "components/omnibox/browser/autocomplete_provider_client.h"
 #include "components/omnibox/browser/omnibox_navigation_observer.h"
 #include "components/omnibox/common/omnibox_focus_state.h"
@@ -18,6 +20,10 @@ class TemplateURLService;
 struct AutocompleteMatch;
 struct OmniboxLog;
 
+namespace base {
+class CancelableTaskTracker;
+}
+
 namespace bookmarks {
 class BookmarkModel;
 }
@@ -27,6 +33,7 @@ class Image;
 }
 
 typedef base::Callback<void(const SkBitmap& bitmap)> BitmapFetchedCallback;
+typedef base::Callback<void(const gfx::Image& favicon)> FaviconFetchedCallback;
 
 // Interface that allows the omnibox component to interact with its embedder
 // (e.g., getting information about the current page, retrieving objects
@@ -73,10 +80,10 @@ class OmniboxClient {
   virtual bool IsPasteAndGoEnabled() const;
 
   // Returns whether |url| corresponds to the new tab page.
-  virtual bool IsNewTabPage(const std::string& url) const;
+  virtual bool IsNewTabPage(const GURL& url) const;
 
   // Returns whether |url| corresponds to the user's home page.
-  virtual bool IsHomePage(const std::string& url) const;
+  virtual bool IsHomePage(const GURL& url) const;
 
   // Returns the session ID of the current page.
   virtual const SessionID& GetSessionID() const = 0;
@@ -97,7 +104,7 @@ class OmniboxClient {
   // that was created by CreateOmniboxNavigationObserver() for |match|; in some
   // embedding contexts, processing an extension keyword involves invoking
   // action on this observer.
-  virtual bool ProcessExtensionKeyword(TemplateURL* template_url,
+  virtual bool ProcessExtensionKeyword(const TemplateURL* template_url,
                                        const AutocompleteMatch& match,
                                        WindowOpenDisposition disposition,
                                        OmniboxNavigationObserver* observer);
@@ -117,13 +124,21 @@ class OmniboxClient {
                                const BitmapFetchedCallback& on_bitmap_fetched) {
   }
 
+  // Fetchs the favicon for |page_url|. If the embedder supports fetching
+  // favicons (not all embedders do), |on_favicon_fetched| will be be called
+  // once the favicon has been fetched.
+  virtual void GetFaviconForPageUrl(
+      base::CancelableTaskTracker* tracker,
+      const GURL& page_url,
+      const FaviconFetchedCallback& on_favicon_fetched) {}
+
   // Called when the current autocomplete match has changed.
   virtual void OnCurrentMatchChanged(const AutocompleteMatch& match) {}
 
   // Called when the text may have changed in the edit.
   virtual void OnTextChanged(const AutocompleteMatch& current_match,
                              bool user_input_in_progress,
-                             base::string16& user_text,
+                             const base::string16& user_text,
                              const AutocompleteResult& result,
                              bool is_popup_open,
                              bool has_focus) {}

@@ -20,13 +20,12 @@
 #include "components/navigation_interception/intercept_navigation_delegate.h"
 #include "components/variations/variations_associated_data.h"
 #include "components/web_contents_delegate_android/web_contents_delegate_android.h"
-#include "content/public/browser/android/content_view_core.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/OverlayPanelContent_jni.h"
 #include "net/url_request/url_fetcher_impl.h"
+#include "ui/android/view_android.h"
 
 using base::android::JavaParamRef;
-using content::ContentViewCore;
 
 namespace {
 
@@ -52,6 +51,19 @@ OverlayPanelContent::~OverlayPanelContent() {
 void OverlayPanelContent::Destroy(JNIEnv* env,
                                   const JavaParamRef<jobject>& obj) {
   delete this;
+}
+
+void OverlayPanelContent::OnPhysicalBackingSizeChanged(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    const JavaParamRef<jobject>& jweb_contents,
+    jint width,
+    jint height) {
+  content::WebContents* web_contents =
+      content::WebContents::FromJavaWebContents(jweb_contents);
+  gfx::Size size(width, height);
+  web_contents->GetNativeView()->OnPhysicalBackingSizeChanged(size);
+  web_contents->GetNativeView()->OnSizeChanged(width, height);
 }
 
 void OverlayPanelContent::RemoveLastHistoryEntry(
@@ -136,11 +148,8 @@ void OverlayPanelContent::SetInterceptNavigationDelegate(
           env, delegate));
 }
 
-bool RegisterOverlayPanelContent(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
-jlong Init(JNIEnv* env, const JavaParamRef<jobject>& obj) {
+jlong JNI_OverlayPanelContent_Init(JNIEnv* env,
+                                   const JavaParamRef<jobject>& obj) {
   OverlayPanelContent* content = new OverlayPanelContent(env, obj);
   return reinterpret_cast<intptr_t>(content);
 }

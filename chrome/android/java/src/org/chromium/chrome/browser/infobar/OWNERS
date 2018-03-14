@@ -1,7 +1,7 @@
 set noparent
-dfalcantara@chromium.org
-miguelg@chromium.org
+mdjones@chromium.org
 
+per-file AppBannerInfoBar*=dominickn@chromium.org
 per-file GeneratedPasswordSavedInfoBar*=rouslan@chromium.org
 
 # COMPONENT: UI>Browser>Infobars

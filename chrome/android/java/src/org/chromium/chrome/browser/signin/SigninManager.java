@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.signin;
 
 import android.accounts.Account;
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.os.Handler;
@@ -24,7 +25,8 @@ import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.browser.externalauth.ExternalAuthUtils;
 import org.chromium.chrome.browser.externalauth.UserRecoverableErrorHandler;
 import org.chromium.chrome.browser.sync.SyncUserDataWiper;
-import org.chromium.components.signin.AccountManagerHelper;
+import org.chromium.components.signin.AccountIdProvider;
+import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.components.sync.AndroidSyncSettings;
 
@@ -43,6 +45,7 @@ import javax.annotation.Nullable;
 public class SigninManager implements AccountTrackerService.OnSystemAccountsSeededListener {
     private static final String TAG = "SigninManager";
 
+    @SuppressLint("StaticFieldLeak")
     private static SigninManager sSigninManager;
     private static int sSignInAccessPoint = SigninAccessPoint.UNKNOWN;
 
@@ -56,11 +59,10 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
      */
     private boolean mFirstRunCheckIsPending = true;
 
-    private final ObserverList<SignInStateObserver> mSignInStateObservers =
-            new ObserverList<SignInStateObserver>();
+    private final ObserverList<SignInStateObserver> mSignInStateObservers = new ObserverList<>();
 
     private final ObserverList<SignInAllowedObserver> mSignInAllowedObservers =
-            new ObserverList<SignInAllowedObserver>();
+            new ObserverList<>();
 
     /**
     * Will be set during the sign in process, and nulled out when there is not a pending sign in.
@@ -122,12 +124,12 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
         /**
          * Called before data is wiped.
          */
-        public void preWipeData();
+        void preWipeData();
 
         /**
          * Called after data is wiped.
          */
-        public void postWipeData();
+        void postWipeData();
     }
 
     /**
@@ -285,12 +287,9 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
     }
 
     private void notifySignInAllowedChanged() {
-        new Handler().post(new Runnable() {
-            @Override
-            public void run() {
-                for (SignInAllowedObserver observer : mSignInAllowedObservers) {
-                    observer.onSignInAllowedChanged();
-                }
+        new Handler().post(() -> {
+            for (SignInAllowedObserver observer : mSignInAllowedObservers) {
+                observer.onSignInAllowedChanged();
             }
         });
     }
@@ -366,12 +365,8 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
      */
     public void signIn(String accountName, @Nullable final Activity activity,
             @Nullable final SignInCallback callback) {
-        AccountManagerHelper.get().getAccountFromName(accountName, new Callback<Account>() {
-            @Override
-            public void onResult(Account account) {
-                signIn(account, activity, callback);
-            }
-        });
+        AccountManagerFacade.get().getAccountFromName(
+                accountName, account -> signIn(account, activity, callback));
     }
 
     private void progressSignInFlowSeedSystemAccounts() {
@@ -384,7 +379,7 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
             UserRecoverableErrorHandler errorHandler = activity != null
                     ? new UserRecoverableErrorHandler.ModalDialog(activity, !isForceSigninEnabled())
                     : new UserRecoverableErrorHandler.SystemNotification();
-            ExternalAuthUtils.getInstance().canUseGooglePlayServices(mContext, errorHandler);
+            ExternalAuthUtils.getInstance().canUseGooglePlayServices(errorHandler);
             Log.w(TAG, "Cancelling the sign-in process as Google Play services is unavailable");
             abortSignIn();
         }
@@ -454,6 +449,7 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
         // sync tries to start without being signed in natively and crashes.
         ChromeSigninController.get().setSignedInAccountName(mSignInState.account.name);
         AndroidSyncSettings.updateAccount(mContext, mSignInState.account);
+        AndroidSyncSettings.enableChromeSync(mContext);
 
         if (mSignInState.callback != null) {
             mSignInState.callback.onSignInComplete();
@@ -487,14 +483,8 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
      * fulfills the returned {@link Promise}.
      */
     public Promise<Void> signOutPromise() {
-        final Promise<Void> promise = new Promise<Void>();
-
-        signOut(new Runnable(){
-            @Override
-            public void run() {
-                promise.fulfill(null);
-            }
-        });
+        final Promise<Void> promise = new Promise<>();
+        signOut(() -> promise.fulfill(null));
 
         return promise;
     }
@@ -538,7 +528,7 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
         if (wipeData) {
             wipeProfileData(wipeDataHooks);
         } else {
-            onSignOutDone();
+            wipeGoogleServiceWorkerCaches(wipeDataHooks);
         }
 
         AccountTrackerService.get().invalidateAccountSeedStatus(true);
@@ -588,6 +578,12 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
         if (hooks != null) hooks.preWipeData();
         // This will call back to onProfileDataWiped().
         nativeWipeProfileData(mNativeSigninManagerAndroid, hooks);
+    }
+
+    private void wipeGoogleServiceWorkerCaches(WipeDataHooks hooks) {
+        if (hooks != null) hooks.preWipeData();
+        // This will call back to onProfileDataWiped().
+        nativeWipeGoogleServiceWorkerCaches(mNativeSigninManagerAndroid, hooks);
     }
 
     /**
@@ -677,6 +673,8 @@ public class SigninManager implements AccountTrackerService.OnSystemAccountsSeed
     private native void nativeSignOut(long nativeSigninManagerAndroid);
     private native String nativeGetManagementDomain(long nativeSigninManagerAndroid);
     private native void nativeWipeProfileData(long nativeSigninManagerAndroid, WipeDataHooks hooks);
+    private native void nativeWipeGoogleServiceWorkerCaches(
+            long nativeSigninManagerAndroid, WipeDataHooks hooks);
     private native void nativeClearLastSignedInUser(long nativeSigninManagerAndroid);
     private native void nativeLogInSignedInUser(long nativeSigninManagerAndroid);
     private native boolean nativeIsSignedInOnNative(long nativeSigninManagerAndroid);

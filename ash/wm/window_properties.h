@@ -5,13 +5,13 @@
 #ifndef ASH_WM_WINDOW_PROPERTIES_H_
 #define ASH_WM_WINDOW_PROPERTIES_H_
 
-#include <stdint.h>
-
 #include "ash/ash_export.h"
-#include "ash/public/cpp/shelf_types.h"
 #include "ui/base/class_property.h"
 #include "ui/base/ui_base_types.h"
-#include "ui/gfx/geometry/rect.h"
+
+namespace gfx {
+class Rect;
+}
 
 namespace aura {
 template <typename T>
@@ -47,20 +47,21 @@ enum class WidgetCreationType {
 // bounds outside of its root window is set.
 ASH_EXPORT extern const aura::WindowProperty<bool>* const kLockedToRootKey;
 
+// Maps to ui::mojom::WindowManager::kRenderParentTitleArea_Property.
+ASH_EXPORT extern const aura::WindowProperty<bool>* const
+    kRenderTitleAreaProperty;
+
 // A property key which stores the bounds to restore a window to. These take
 // preference over the current bounds/state. This is used by e.g. the always
-// maximized mode window manager.
+// tablet mode window manager.
 ASH_EXPORT extern const aura::WindowProperty<gfx::Rect*>* const
     kRestoreBoundsOverrideKey;
 
 // A property key which stores the bounds to restore a window to. These take
 // preference over the current bounds/state if |kRestoreBoundsOverrideKey| is
-// set. This is used by e.g. the always maximized mode window manager.
+// set. This is used by e.g. the always tablet mode window manager.
 ASH_EXPORT extern const aura::WindowProperty<ui::WindowShowState>* const
     kRestoreShowStateOverrideKey;
-
-// A property key to store the id for a window's shelf item.
-ASH_EXPORT extern const aura::WindowProperty<ShelfID>* const kShelfIDKey;
 
 // Containers with this property (true) are aligned with physical pixel
 // boundary.
@@ -71,6 +72,10 @@ extern const aura::WindowProperty<bool>* const kUsesScreenCoordinatesKey;
 
 ASH_EXPORT extern const aura::WindowProperty<WidgetCreationType>* const
     kWidgetCreationTypeKey;
+
+// Set to true if the window server tells us the window is janky (see
+// WindowManagerDelegate::OnWmClientJankinessChanged()).
+ASH_EXPORT extern const aura::WindowProperty<bool>* const kWindowIsJanky;
 
 // A property key to store WindowState in the window. The window state
 // is owned by the window.

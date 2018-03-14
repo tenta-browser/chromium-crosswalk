@@ -31,7 +31,6 @@
 #ifndef DirectoryReader_h
 #define DirectoryReader_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/filesystem/DOMFileSystem.h"
 #include "modules/filesystem/DirectoryReaderBase.h"
 #include "modules/filesystem/EntriesCallback.h"
@@ -42,7 +41,7 @@ namespace blink {
 
 class ErrorCallback;
 
-class DirectoryReader : public DirectoryReaderBase, public ScriptWrappable {
+class DirectoryReader : public DirectoryReaderBase {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -59,7 +58,7 @@ class DirectoryReader : public DirectoryReaderBase, public ScriptWrappable {
     return static_cast<DOMFileSystem*>(file_system_.Get());
   }
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   class EntriesCallbackHelper;

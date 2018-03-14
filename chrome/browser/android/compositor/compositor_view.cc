@@ -14,7 +14,7 @@
 #include "base/android/jni_android.h"
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/id_map.h"
+#include "base/containers/id_map.h"
 #include "base/rand_util.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/layers/layer.h"
@@ -26,7 +26,6 @@
 #include "chrome/browser/android/compositor/scene_layer/scene_layer.h"
 #include "chrome/browser/android/compositor/tab_content_manager.h"
 #include "content/public/browser/android/compositor.h"
-#include "content/public/browser/android/content_view_core.h"
 #include "content/public/browser/child_process_data.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/process_type.h"
@@ -41,12 +40,13 @@ using base::android::JavaParamRef;
 
 namespace android {
 
-jlong Init(JNIEnv* env,
-           const JavaParamRef<jobject>& obj,
-           jboolean low_mem_device,
-           jlong native_window_android,
-           const JavaParamRef<jobject>& jlayer_title_cache,
-           const JavaParamRef<jobject>& jtab_content_manager) {
+jlong JNI_CompositorView_Init(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    jboolean low_mem_device,
+    jlong native_window_android,
+    const JavaParamRef<jobject>& jlayer_title_cache,
+    const JavaParamRef<jobject>& jtab_content_manager) {
   CompositorView* view;
   ui::WindowAndroid* window_android =
       reinterpret_cast<ui::WindowAndroid*>(native_window_android);
@@ -167,14 +167,25 @@ void CompositorView::SurfaceChanged(JNIEnv* env,
   root_layer_->SetBounds(gfx::Size(content_width_, content_height_));
 }
 
+void CompositorView::OnPhysicalBackingSizeChanged(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    const JavaParamRef<jobject>& jweb_contents,
+    jint width,
+    jint height) {
+  content::WebContents* web_contents =
+      content::WebContents::FromJavaWebContents(jweb_contents);
+  gfx::Size size(width, height);
+  web_contents->GetNativeView()->OnPhysicalBackingSizeChanged(size);
+}
+
 void CompositorView::SetLayoutBounds(JNIEnv* env,
                                      const JavaParamRef<jobject>& object) {
   root_layer_->SetBounds(gfx::Size(content_width_, content_height_));
 }
 
 void CompositorView::SetBackground(bool visible, SkColor color) {
-  if (overlay_video_mode_)
-    visible = false;
+  // TODO(crbug.com/770911): Set the background color on the compositor.
   root_layer_->SetBackgroundColor(color);
   root_layer_->SetIsDrawable(visible);
 }
@@ -185,7 +196,7 @@ void CompositorView::SetOverlayVideoMode(JNIEnv* env,
   if (overlay_video_mode_ == enabled)
     return;
   overlay_video_mode_ = enabled;
-  compositor_->SetHasTransparentBackground(enabled);
+  compositor_->SetRequiresAlphaChannel(enabled);
   SetNeedsComposite(env, object);
 }
 
@@ -257,11 +268,6 @@ void CompositorView::BrowserChildProcessCrashed(
     int exit_code) {
   // The Android TERMINATION_STATUS_OOM_PROTECTED hack causes us to never go
   // through here but through BrowserChildProcessHostDisconnected() instead.
-}
-
-// Register native methods
-bool RegisterCompositorView(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace android

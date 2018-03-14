@@ -36,8 +36,15 @@
 
 namespace network_time {
 
+// Network time queries are enabled on all desktop platforms except ChromeOS,
+// which uses tlsdated to set the system time.
+#if defined(OS_ANDROID) || defined(OS_CHROMEOS) || defined(OS_IOS)
 const base::Feature kNetworkTimeServiceQuerying{
     "NetworkTimeServiceQuerying", base::FEATURE_DISABLED_BY_DEFAULT};
+#else
+const base::Feature kNetworkTimeServiceQuerying{
+    "NetworkTimeServiceQuerying", base::FEATURE_ENABLED_BY_DEFAULT};
+#endif
 
 namespace {
 
@@ -111,7 +118,7 @@ const char kVariationsServiceRandomQueryProbability[] =
 //   not be issued (i.e. StartTimeFetch() will not start time queries.)
 //
 // - "on-demand-only": Time queries will not be issued except when
-//   StartTimeFetch() is called.
+//   StartTimeFetch() is called. This is the default value.
 //
 // - "background-and-on-demand": Time queries will be issued both in the
 //   background as needed and also on-demand.
@@ -191,6 +198,7 @@ void RecordFetchValidHistogram(bool valid) {
 void NetworkTimeTracker::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterDictionaryPref(prefs::kNetworkTimeMapping,
                                    base::MakeUnique<base::DictionaryValue>());
+  registry->RegisterBooleanPref(prefs::kNetworkTimeQueriesEnabled, true);
 }
 
 NetworkTimeTracker::NetworkTimeTracker(
@@ -298,14 +306,13 @@ bool NetworkTimeTracker::AreTimeFetchesEnabled() const {
 NetworkTimeTracker::FetchBehavior NetworkTimeTracker::GetFetchBehavior() const {
   const std::string param = variations::GetVariationParamValueByFeature(
       kNetworkTimeServiceQuerying, kVariationsServiceFetchBehavior);
-  if (param == "background-only") {
+  if (param == "background-only")
     return FETCHES_IN_BACKGROUND_ONLY;
-  } else if (param == "on-demand-only") {
+  if (param == "on-demand-only")
     return FETCHES_ON_DEMAND_ONLY;
-  } else if (param == "background-and-on-demand") {
+  if (param == "background-and-on-demand")
     return FETCHES_IN_BACKGROUND_AND_ON_DEMAND;
-  }
-  return FETCH_BEHAVIOR_UNKNOWN;
+  return FETCHES_ON_DEMAND_ONLY;
 }
 
 void NetworkTimeTracker::SetTimeServerURLForTesting(const GURL& url) {
@@ -476,9 +483,13 @@ void NetworkTimeTracker::CheckTime() {
           destination: GOOGLE_OWNED_SERVICE
         }
         policy {
-          cookies_allowed: false
+          cookies_allowed: NO
           setting: "This feature cannot be disabled by settings."
-          policy_exception_justification: "Not implemented."
+          chrome_policy {
+            BrowserNetworkTimeQueriesEnabled {
+                BrowserNetworkTimeQueriesEnabled: false
+            }
+          }
         })");
   // This cancels any outstanding fetch.
   time_fetcher_ = net::URLFetcher::Create(url, net::URLFetcher::GET, this,
@@ -618,6 +629,11 @@ void NetworkTimeTracker::QueueCheckTime(base::TimeDelta delay) {
 bool NetworkTimeTracker::ShouldIssueTimeQuery() {
   // Do not query the time service if not enabled via Variations Service.
   if (!AreTimeFetchesEnabled()) {
+    return false;
+  }
+
+  // Do not query the time service if queries are disabled by policy.
+  if (!pref_service_->GetBoolean(prefs::kNetworkTimeQueriesEnabled)) {
     return false;
   }
 

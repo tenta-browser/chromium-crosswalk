@@ -14,15 +14,16 @@
 
 namespace blink {
 
-PaintInvalidationReason TablePaintInvalidator::InvalidatePaintIfNeeded() {
+PaintInvalidationReason TablePaintInvalidator::InvalidatePaint() {
   PaintInvalidationReason reason =
-      BoxPaintInvalidator(table_, context_).InvalidatePaintIfNeeded();
+      BoxPaintInvalidator(table_, context_).InvalidatePaint();
 
   // If any col changed background, we need to invalidate all sections because
   // col background paints into section's background display item.
   bool has_col_changed_background = false;
   if (table_.HasColElements()) {
-    bool visual_rect_changed = context_.old_visual_rect != table_.VisualRect();
+    bool visual_rect_changed =
+        context_.old_visual_rect != context_.fragment_data->VisualRect();
     for (LayoutTableCol* col = table_.FirstColumn(); col;
          col = col->NextColumn()) {
       // LayoutTableCol uses the table's localVisualRect(). Should check column
@@ -48,7 +49,7 @@ PaintInvalidationReason TablePaintInvalidator::InvalidatePaintIfNeeded() {
       section->EnsureIsReadyForPaintInvalidation();
       ObjectPaintInvalidator(*section)
           .SlowSetPaintingLayerNeedsRepaintAndInvalidateDisplayItemClient(
-              *section, kPaintInvalidationStyleChange);
+              *section, PaintInvalidationReason::kStyle);
     }
   }
 

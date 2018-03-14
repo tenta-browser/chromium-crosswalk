@@ -6,6 +6,7 @@
 
 #include "ash/ash_view_ids.h"
 #include "ash/strings/grit/ash_strings.h"
+#include "ash/system/tray/hover_highlight_view.h"
 #include "ash/system/tray/system_menu_button.h"
 #include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/system_tray_item.h"
@@ -14,20 +15,27 @@
 #include "ash/system/tray/tray_popup_utils.h"
 #include "ash/system/tray/tri_view.h"
 #include "base/containers/adapters.h"
-#include "base/memory/ptr_util.h"
 #include "third_party/skia/include/core/SkDrawLooper.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/compositor/paint_context.h"
 #include "ui/compositor/paint_recorder.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/geometry/insets.h"
+#include "ui/gfx/image/image_skia.h"
+#include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/skia_paint_util.h"
+#include "ui/gfx/vector_icon_types.h"
+#include "ui/native_theme/native_theme.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
+#include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/progress_bar.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/separator.h"
 #include "ui/views/layout/box_layout.h"
+#include "ui/views/layout/fill_layout.h"
 #include "ui/views/view_targeter.h"
 #include "ui/views/view_targeter_delegate.h"
 
@@ -45,11 +53,10 @@ const int kTitleRowSeparatorIndex = 1;
 class ScrollContentsView : public views::View {
  public:
   ScrollContentsView()
-      : box_layout_(
-            new views::BoxLayout(views::BoxLayout::kVertical, 0, 0, 0)) {
+      : box_layout_(new views::BoxLayout(views::BoxLayout::kVertical)) {
     SetLayoutManager(box_layout_);
   }
-  ~ScrollContentsView() override {}
+  ~ScrollContentsView() override = default;
 
  protected:
   // views::View:
@@ -57,19 +64,21 @@ class ScrollContentsView : public views::View {
     PositionHeaderRows();
   }
 
-  void PaintChildren(const ui::PaintContext& context) override {
-    views::View::PaintChildren(context);
+  void PaintChildren(const views::PaintInfo& paint_info) override {
+    views::View::PaintChildren(paint_info);
     bool did_draw_shadow = false;
     // Paint header row separators.
     for (auto& header : headers_)
-      did_draw_shadow = PaintDelineation(header, context) || did_draw_shadow;
+      did_draw_shadow =
+          PaintDelineation(header, paint_info.context()) || did_draw_shadow;
 
     // Draw a shadow at the top of the viewport when scrolled, but only if a
     // header didn't already draw one. Overlap the shadow with the separator
     // that's below the header view so we don't get both a separator and a full
     // shadow.
     if (y() != 0 && !did_draw_shadow)
-      DrawShadow(context, gfx::Rect(0, 0, width(), -y() - kSeparatorWidth));
+      DrawShadow(paint_info.context(),
+                 gfx::Rect(0, 0, width(), -y() - kSeparatorWidth));
   }
 
   void Layout() override {
@@ -229,19 +238,24 @@ const int kTitleRowPaddingBottom =
 
 }  // namespace
 
+
+////////////////////////////////////////////////////////////////////////////////
+// TrayDetailsView:
+
 TrayDetailsView::TrayDetailsView(SystemTrayItem* owner)
     : owner_(owner),
-      box_layout_(new views::BoxLayout(views::BoxLayout::kVertical, 0, 0, 0)),
+      box_layout_(new views::BoxLayout(views::BoxLayout::kVertical)),
       scroller_(nullptr),
       scroll_content_(nullptr),
       progress_bar_(nullptr),
       tri_view_(nullptr),
       back_button_(nullptr) {
   SetLayoutManager(box_layout_);
-  set_background(views::Background::CreateSolidBackground(kBackgroundColor));
+  SetBackground(views::CreateThemedSolidBackground(
+      this, ui::NativeTheme::kColorId_BubbleBackground));
 }
 
-TrayDetailsView::~TrayDetailsView() {}
+TrayDetailsView::~TrayDetailsView() = default;
 
 void TrayDetailsView::OnViewClicked(views::View* sender) {
   HandleViewClicked(sender);
@@ -292,15 +306,83 @@ void TrayDetailsView::CreateScrollableList() {
   scroll_content_ = new ScrollContentsView();
   scroller_ = new views::ScrollView;
   scroller_->SetContents(scroll_content_);
-  // Make the |scroller_| have a layer to clip |scroll_content_|'s children.
   // TODO(varkha): Make the sticky rows work with EnableViewPortLayer().
-  scroller_->SetPaintToLayer();
-  scroller_->set_background(
-      views::Background::CreateSolidBackground(kBackgroundColor));
-  scroller_->layer()->SetMasksToBounds(true);
+  scroller_->SetBackgroundThemeColorId(
+      ui::NativeTheme::kColorId_BubbleBackground);
 
   AddChildView(scroller_);
   box_layout_->SetFlexForView(scroller_, 1);
+}
+
+HoverHighlightView* TrayDetailsView::AddScrollListItem(
+    const gfx::VectorIcon& icon,
+    const base::string16& text) {
+  HoverHighlightView* item = new HoverHighlightView(this);
+  if (icon.is_empty())
+    item->AddLabelRow(text);
+  else
+    item->AddIconAndLabel(gfx::CreateVectorIcon(icon, kMenuIconColor), text);
+  scroll_content_->AddChildView(item);
+  return item;
+}
+
+HoverHighlightView* TrayDetailsView::AddScrollListCheckableItem(
+    const gfx::VectorIcon& icon,
+    const base::string16& text,
+    bool checked) {
+  HoverHighlightView* item = AddScrollListItem(icon, text);
+  TrayPopupUtils::InitializeAsCheckableRow(item, checked);
+  return item;
+}
+
+HoverHighlightView* TrayDetailsView::AddScrollListCheckableItem(
+    const base::string16& text,
+    bool checked) {
+  return AddScrollListCheckableItem(gfx::kNoneIcon, text, checked);
+}
+
+void TrayDetailsView::SetupConnectedScrollListItem(HoverHighlightView* view) {
+  DCHECK(view->is_populated());
+
+  view->SetSubText(
+      l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_NETWORK_STATUS_CONNECTED));
+  TrayPopupItemStyle style(TrayPopupItemStyle::FontStyle::CAPTION);
+  style.set_color_style(TrayPopupItemStyle::ColorStyle::CONNECTED);
+  style.SetupLabel(view->sub_text_label());
+}
+
+void TrayDetailsView::SetupConnectingScrollListItem(HoverHighlightView* view) {
+  DCHECK(view->is_populated());
+
+  view->SetSubText(
+      l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_NETWORK_STATUS_CONNECTING));
+}
+
+TriView* TrayDetailsView::AddScrollListSubHeader(const gfx::VectorIcon& icon,
+                                                 int text_id) {
+  TriView* header = TrayPopupUtils::CreateSubHeaderRowView(!icon.is_empty());
+  TrayPopupUtils::ConfigureAsStickyHeader(header);
+
+  views::Label* label = TrayPopupUtils::CreateDefaultLabel();
+  label->SetText(l10n_util::GetStringUTF16(text_id));
+  TrayPopupItemStyle style(TrayPopupItemStyle::FontStyle::SUB_HEADER);
+  style.SetupLabel(label);
+  header->AddView(TriView::Container::CENTER, label);
+
+  if (!icon.is_empty()) {
+    views::ImageView* image_view = TrayPopupUtils::CreateMainImageView();
+    image_view->SetImage(gfx::CreateVectorIcon(
+        icon, GetNativeTheme()->GetSystemColor(
+                  ui::NativeTheme::kColorId_ProminentButtonColor)));
+    header->AddView(TriView::Container::START, image_view);
+  }
+
+  scroll_content_->AddChildView(header);
+  return header;
+}
+
+TriView* TrayDetailsView::AddScrollListSubHeader(int text_id) {
+  return AddScrollListSubHeader(gfx::kNoneIcon, text_id);
 }
 
 void TrayDetailsView::Reset() {
@@ -325,22 +407,22 @@ void TrayDetailsView::ShowProgress(double value, bool visible) {
   child_at(kTitleRowSeparatorIndex)->SetVisible(!visible);
 }
 
-views::CustomButton* TrayDetailsView::CreateSettingsButton(
-    LoginStatus status,
+views::Button* TrayDetailsView::CreateSettingsButton(
     int setting_accessible_name_id) {
   SystemMenuButton* button =
       new SystemMenuButton(this, TrayPopupInkDropStyle::HOST_CENTERED,
                            kSystemMenuSettingsIcon, setting_accessible_name_id);
-  if (!TrayPopupUtils::CanOpenWebUISettings(status))
+  if (!TrayPopupUtils::CanOpenWebUISettings())
     button->SetEnabled(false);
   return button;
 }
 
-views::CustomButton* TrayDetailsView::CreateHelpButton(LoginStatus status) {
+views::Button* TrayDetailsView::CreateHelpButton() {
   SystemMenuButton* button =
       new SystemMenuButton(this, TrayPopupInkDropStyle::HOST_CENTERED,
                            kSystemMenuHelpIcon, IDS_ASH_STATUS_TRAY_HELP);
-  if (!TrayPopupUtils::CanOpenWebUISettings(status))
+  // Help opens a web page, so treat it like Web UI settings.
+  if (!TrayPopupUtils::CanOpenWebUISettings())
     button->SetEnabled(false);
   return button;
 }
@@ -370,7 +452,8 @@ void TrayDetailsView::DoTransitionToDefaultView() {
   // Cache pointer to owner in this function scope. TrayDetailsView will be
   // deleted after called ShowDefaultView.
   SystemTrayItem* owner = owner_;
-  owner->system_tray()->ShowDefaultView(BUBBLE_USE_EXISTING);
+  owner->system_tray()->ShowDefaultView(BUBBLE_USE_EXISTING,
+                                        false /* show_by_click */);
   owner->set_restore_focus(false);
 }
 

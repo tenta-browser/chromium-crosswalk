@@ -23,7 +23,6 @@
 namespace device {
 
 class UsbDeviceHandle;
-struct WebUsbAllowedOrigins;
 
 // A UsbDevice object represents a detected USB device, providing basic
 // information about it. Methods other than simple property accessors must be
@@ -32,8 +31,8 @@ struct WebUsbAllowedOrigins;
 // method.
 class UsbDevice : public base::RefCountedThreadSafe<UsbDevice> {
  public:
-  using OpenCallback = base::Callback<void(scoped_refptr<UsbDeviceHandle>)>;
-  using ResultCallback = base::Callback<void(bool success)>;
+  using OpenCallback = base::OnceCallback<void(scoped_refptr<UsbDeviceHandle>)>;
+  using ResultCallback = base::OnceCallback<void(bool success)>;
 
   // This observer interface should be used by objects that need only be
   // notified about the removal of a particular device as it is more efficient
@@ -64,9 +63,6 @@ class UsbDevice : public base::RefCountedThreadSafe<UsbDevice> {
   }
   const base::string16& product_string() const { return product_string_; }
   const base::string16& serial_number() const { return serial_number_; }
-  const WebUsbAllowedOrigins* webusb_allowed_origins() const {
-    return webusb_allowed_origins_.get();
-  }
   const GURL& webusb_landing_page() const { return webusb_landing_page_; }
   const std::vector<UsbConfigDescriptor>& configurations() const {
     return descriptor_.configurations;
@@ -78,17 +74,17 @@ class UsbDevice : public base::RefCountedThreadSafe<UsbDevice> {
   // On ChromeOS the permission_broker service must be used to open USB devices.
   // This function asks it to check whether a future Open call will be allowed.
   // On all other platforms this is a no-op and always returns true.
-  virtual void CheckUsbAccess(const ResultCallback& callback);
+  virtual void CheckUsbAccess(ResultCallback callback);
 
   // On Android applications must request permission from the user to access a
   // USB device before it can be opened. After permission is granted the device
   // properties may contain information not previously available. On all other
   // platforms this is a no-op and always returns true.
-  virtual void RequestPermission(const ResultCallback& callback);
+  virtual void RequestPermission(ResultCallback callback);
   virtual bool permission_granted() const;
 
   // Creates a UsbDeviceHandle for further manipulation.
-  virtual void Open(const OpenCallback& callback) = 0;
+  virtual void Open(OpenCallback callback) = 0;
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
@@ -125,7 +121,6 @@ class UsbDevice : public base::RefCountedThreadSafe<UsbDevice> {
   base::string16 manufacturer_string_;
   base::string16 product_string_;
   base::string16 serial_number_;
-  std::unique_ptr<WebUsbAllowedOrigins> webusb_allowed_origins_;
   GURL webusb_landing_page_;
 
  private:

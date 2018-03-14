@@ -39,19 +39,18 @@
 
 namespace blink {
 
+class DedicatedWorkerObjectProxy;
 class DedicatedWorkerThread;
-class InProcessWorkerObjectProxy;
 class ScriptState;
-class WorkerThreadStartupData;
+struct GlobalScopeCreationParams;
 
 class CORE_EXPORT DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static DedicatedWorkerGlobalScope* Create(
-      DedicatedWorkerThread*,
-      std::unique_ptr<WorkerThreadStartupData>,
-      double time_origin);
+  DedicatedWorkerGlobalScope(std::unique_ptr<GlobalScopeCreationParams>,
+                             DedicatedWorkerThread*,
+                             double time_origin);
   ~DedicatedWorkerGlobalScope() override;
 
   bool IsDedicatedWorkerGlobalScope() const override { return true; }
@@ -60,27 +59,19 @@ class CORE_EXPORT DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
   const AtomicString& InterfaceName() const override;
 
   void postMessage(ScriptState*,
-                   PassRefPtr<SerializedScriptValue>,
+                   scoped_refptr<SerializedScriptValue>,
                    const MessagePortArray&,
                    ExceptionState&);
 
   static bool CanTransferArrayBuffersAndImageBitmaps() { return true; }
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(message);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(messageerror);
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
-  friend class DedicatedWorkerThreadForTest;
-
-  DedicatedWorkerGlobalScope(const KURL&,
-                             const String& user_agent,
-                             DedicatedWorkerThread*,
-                             double time_origin,
-                             std::unique_ptr<SecurityOrigin::PrivilegeData>,
-                             WorkerClients*);
-
-  InProcessWorkerObjectProxy& WorkerObjectProxy() const;
+  DedicatedWorkerObjectProxy& WorkerObjectProxy() const;
 };
 
 }  // namespace blink

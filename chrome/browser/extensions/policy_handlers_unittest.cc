@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "base/json/json_reader.h"
+#include "base/strings/stringprintf.h"
 #include "chrome/browser/extensions/external_policy_loader.h"
 #include "chrome/browser/extensions/policy_handlers.h"
 #include "components/policy/core/browser/policy_error_map.h"
@@ -34,6 +35,18 @@ const char kTestManagementPolicy2[] =
     "  \"*\": {"
     "    \"installation_mode\": \"blocked\","
     "  },"
+    "}";
+const char kTestManagementPolicy3[] =
+    "{"
+    "  \"*\": {"
+    "    \"runtime_blocked_hosts\": [\"%s\"]"
+    "  }"
+    "}";
+const char kTestManagementPolicy4[] =
+    "{"
+    "  \"*\": {"
+    "    \"runtime_allowed_hosts\": [\"%s\"]"
+    "  }"
     "}";
 
 TEST(ExtensionListPolicyHandlerTest, CheckPolicySettings) {
@@ -77,6 +90,54 @@ TEST(ExtensionListPolicyHandlerTest, CheckPolicySettings) {
       errors.GetErrors(policy::key::kExtensionInstallBlacklist).empty());
 }
 
+TEST(ExtensionSettingsPolicyHandlerTest, CheckPolicySettingsURL) {
+  std::vector<std::string> good_urls = {
+      "*://*.example.com", "*://example.com", "http://cat.example.com",
+      "https://example.*", "*://*.example.*", "<all_urls>"};
+
+  // Invalid URLPattern or with a non-standard path
+  std::vector<std::string> bad_urls = {
+      "://*.example.com",       "*://example.com/cat*",  "*://example.com/",
+      "*://*.example.com/*cat", "*://example.com/cat/*", "bad",
+      "*://example.com/*"};
+
+  // Crafts and parses a ExtensionSettings policy to test URL parsing.
+  auto url_parses_successfully = [](const char* policy_template,
+                                    const std::string& url) {
+    std::string policy = base::StringPrintf(policy_template, url.c_str());
+    std::string error;
+    std::unique_ptr<base::Value> policy_value =
+        base::JSONReader::ReadAndReturnError(
+            policy, base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS,
+            nullptr, &error);
+    if (!policy_value)
+      return false;
+
+    policy::Schema chrome_schema =
+        policy::Schema::Wrap(policy::GetChromeSchemaData());
+    policy::PolicyMap policy_map;
+    ExtensionSettingsPolicyHandler handler(chrome_schema);
+
+    policy_map.Set(policy::key::kExtensionSettings,
+                   policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                   policy::POLICY_SOURCE_CLOUD, std::move(policy_value),
+                   nullptr);
+
+    policy::PolicyErrorMap errors;
+    return handler.CheckPolicySettings(policy_map, &errors) && errors.empty();
+  };
+
+  for (const std::string& url : good_urls) {
+    EXPECT_TRUE(url_parses_successfully(kTestManagementPolicy3, url)) << url;
+    EXPECT_TRUE(url_parses_successfully(kTestManagementPolicy4, url)) << url;
+  }
+
+  for (const std::string& url : bad_urls) {
+    EXPECT_FALSE(url_parses_successfully(kTestManagementPolicy3, url)) << url;
+    EXPECT_FALSE(url_parses_successfully(kTestManagementPolicy4, url)) << url;
+  }
+}
+
 TEST(ExtensionListPolicyHandlerTest, ApplyPolicySettings) {
   base::ListValue policy;
   base::ListValue expected;
@@ -94,7 +155,7 @@ TEST(ExtensionListPolicyHandlerTest, ApplyPolicySettings) {
                  policy::POLICY_SOURCE_CLOUD, policy.CreateDeepCopy(), nullptr);
   handler.ApplyPolicySettings(policy_map, &prefs);
   EXPECT_TRUE(prefs.GetValue(kTestPref, &value));
-  EXPECT_TRUE(base::Value::Equals(&expected, value));
+  EXPECT_EQ(expected, *value);
 
   policy.AppendString("invalid");
   policy_map.Set(policy::key::kExtensionInstallBlacklist,
@@ -102,7 +163,7 @@ TEST(ExtensionListPolicyHandlerTest, ApplyPolicySettings) {
                  policy::POLICY_SOURCE_CLOUD, policy.CreateDeepCopy(), nullptr);
   handler.ApplyPolicySettings(policy_map, &prefs);
   EXPECT_TRUE(prefs.GetValue(kTestPref, &value));
-  EXPECT_TRUE(base::Value::Equals(&expected, value));
+  EXPECT_EQ(expected, *value);
 }
 
 TEST(ExtensionInstallForcelistPolicyHandlerTest, CheckPolicySettings) {
@@ -172,7 +233,7 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, ApplyPolicySettings) {
                  policy::POLICY_SOURCE_CLOUD, policy.CreateDeepCopy(), nullptr);
   handler.ApplyPolicySettings(policy_map, &prefs);
   EXPECT_TRUE(prefs.GetValue(pref_names::kInstallForceList, &value));
-  EXPECT_TRUE(base::Value::Equals(&expected, value));
+  EXPECT_EQ(expected, *value);
 
   policy.AppendString("abcdefghijklmnopabcdefghijklmnop;http://example.com");
   extensions::ExternalPolicyLoader::AddExtension(
@@ -182,7 +243,7 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, ApplyPolicySettings) {
                  policy::POLICY_SOURCE_CLOUD, policy.CreateDeepCopy(), nullptr);
   handler.ApplyPolicySettings(policy_map, &prefs);
   EXPECT_TRUE(prefs.GetValue(pref_names::kInstallForceList, &value));
-  EXPECT_TRUE(base::Value::Equals(&expected, value));
+  EXPECT_EQ(expected, *value);
 
   policy.AppendString("invalid");
   policy_map.Set(policy::key::kExtensionInstallForcelist,
@@ -190,7 +251,7 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, ApplyPolicySettings) {
                  policy::POLICY_SOURCE_CLOUD, policy.CreateDeepCopy(), nullptr);
   handler.ApplyPolicySettings(policy_map, &prefs);
   EXPECT_TRUE(prefs.GetValue(pref_names::kInstallForceList, &value));
-  EXPECT_TRUE(base::Value::Equals(&expected, value));
+  EXPECT_EQ(expected, *value);
 }
 
 TEST(ExtensionURLPatternListPolicyHandlerTest, CheckPolicySettings) {
@@ -258,7 +319,7 @@ TEST(ExtensionURLPatternListPolicyHandlerTest, ApplyPolicySettings) {
                  policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   handler.ApplyPolicySettings(policy_map, &prefs);
   ASSERT_TRUE(prefs.GetValue(kTestPref, &value));
-  EXPECT_TRUE(base::Value::Equals(&list, value));
+  EXPECT_EQ(list, *value);
 }
 
 TEST(ExtensionSettingsPolicyHandlerTest, CheckPolicySettings) {
@@ -306,7 +367,7 @@ TEST(ExtensionSettingsPolicyHandlerTest, ApplyPolicySettings) {
   handler.ApplyPolicySettings(policy_map, &prefs);
   base::Value* value = NULL;
   ASSERT_TRUE(prefs.GetValue(pref_names::kExtensionManagement, &value));
-  EXPECT_TRUE(base::Value::Equals(policy_value.get(), value));
+  EXPECT_EQ(*policy_value, *value);
 }
 
 }  // namespace extensions

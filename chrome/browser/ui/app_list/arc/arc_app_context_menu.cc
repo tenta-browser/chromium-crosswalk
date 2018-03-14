@@ -79,10 +79,6 @@ void ArcAppContextMenu::ExecuteCommand(int command_id, int event_flags) {
     case LAUNCH_NEW:
       delegate()->ExecuteLaunchCommand(event_flags);
       break;
-    case TOGGLE_PIN:
-      TogglePin(
-          ArcAppWindowLauncherController::GetShelfAppIdFromArcAppId(app_id()));
-      break;
     case UNINSTALL:
       arc::ShowArcAppUninstallDialog(profile(), controller(), app_id());
       break;
@@ -104,6 +100,9 @@ void ArcAppContextMenu::ShowPackageInfo() {
             << app_id() << ".";
     return;
   }
-  if (arc::ShowPackageInfo(app_info->package_name))
+  if (arc::ShowPackageInfo(app_info->package_name,
+                           arc::mojom::ShowPackageInfoPage::MAIN,
+                           controller()->GetAppListDisplayId())) {
     controller()->DismissView();
+  }
 }

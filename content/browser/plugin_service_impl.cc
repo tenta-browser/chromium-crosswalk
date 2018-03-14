@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
@@ -13,13 +15,12 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task_runner_util.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "content/browser/ppapi_plugin_process_host.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
@@ -31,11 +32,14 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/plugin_service_filter.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/resource_context.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/process_type.h"
 #include "content/public/common/webplugininfo.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
 
 namespace content {
 namespace {
@@ -54,6 +58,17 @@ enum FlashUsage {
 // correct thread.
 void WillLoadPluginsCallback(base::SequenceChecker* sequence_checker) {
   DCHECK(sequence_checker->CalledOnValidSequence());
+}
+
+void RecordBrokerUsage(int render_process_id, int render_frame_id) {
+  ukm::UkmRecorder* recorder = ukm::UkmRecorder::Get();
+  ukm::SourceId source_id = ukm::UkmRecorder::GetNewSourceID();
+  WebContents* web_contents = WebContents::FromRenderFrameHost(
+      RenderFrameHost::FromID(render_process_id, render_frame_id));
+  if (web_contents) {
+    recorder->UpdateSourceURL(source_id, web_contents->GetLastCommittedURL());
+    ukm::builders::Pepper_Broker(source_id).Record(recorder);
+  }
 }
 
 }  // namespace
@@ -78,8 +93,7 @@ PluginServiceImpl* PluginServiceImpl::GetInstance() {
   return base::Singleton<PluginServiceImpl>::get();
 }
 
-PluginServiceImpl::PluginServiceImpl()
-    : filter_(NULL) {
+PluginServiceImpl::PluginServiceImpl() : filter_(nullptr) {
   plugin_list_sequence_checker_.DetachFromSequence();
 
   // Collect the total number of browser processes (which create
@@ -97,11 +111,9 @@ PluginServiceImpl::~PluginServiceImpl() {
 }
 
 void PluginServiceImpl::Init() {
-  plugin_list_task_runner_ =
-      BrowserThread::GetBlockingPool()
-          ->GetSequencedTaskRunnerWithShutdownBehavior(
-              base::SequencedWorkerPool::GetSequenceToken(),
-              base::SequencedWorkerPool::SKIP_ON_SHUTDOWN);
+  plugin_list_task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
+      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
   PluginList::Singleton()->set_will_load_plugins_callback(
       base::Bind(&WillLoadPluginsCallback, &plugin_list_sequence_checker_));
 
@@ -117,7 +129,7 @@ PpapiPluginProcessHost* PluginServiceImpl::FindPpapiPluginProcess(
       return *iter;
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 PpapiPluginProcessHost* PluginServiceImpl::FindPpapiBrokerProcess(
@@ -127,7 +139,7 @@ PpapiPluginProcessHost* PluginServiceImpl::FindPpapiBrokerProcess(
       return *iter;
   }
 
-  return NULL;
+  return nullptr;
 }
 
 PpapiPluginProcessHost* PluginServiceImpl::FindOrStartPpapiPluginProcess(
@@ -138,7 +150,7 @@ PpapiPluginProcessHost* PluginServiceImpl::FindOrStartPpapiPluginProcess(
 
   if (filter_ && !filter_->CanLoadPlugin(render_process_id, plugin_path)) {
     VLOG(1) << "Unable to load ppapi plugin: " << plugin_path.MaybeAsASCII();
-    return NULL;
+    return nullptr;
   }
 
   PpapiPluginProcessHost* plugin_host =
@@ -151,7 +163,7 @@ PpapiPluginProcessHost* PluginServiceImpl::FindOrStartPpapiPluginProcess(
   if (!info) {
     VLOG(1) << "Unable to find ppapi plugin registration for: "
             << plugin_path.MaybeAsASCII();
-    return NULL;
+    return nullptr;
   }
 
   // Record when PPAPI Flash process is started for the first time.
@@ -180,7 +192,7 @@ PpapiPluginProcessHost* PluginServiceImpl::FindOrStartPpapiBrokerProcess(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   if (filter_ && !filter_->CanLoadPlugin(render_process_id, plugin_path))
-    return NULL;
+    return nullptr;
 
   PpapiPluginProcessHost* plugin_host = FindPpapiBrokerProcess(plugin_path);
   if (plugin_host)
@@ -189,7 +201,7 @@ PpapiPluginProcessHost* PluginServiceImpl::FindOrStartPpapiBrokerProcess(
   // Validate that the plugin is actually registered.
   PepperPluginInfo* info = GetRegisteredPpapiPluginInfo(plugin_path);
   if (!info)
-    return NULL;
+    return nullptr;
 
   // TODO(ddorwin): Uncomment once out of process is supported.
   // DCHECK(info->is_out_of_process);
@@ -215,8 +227,13 @@ void PluginServiceImpl::OpenChannelToPpapiPlugin(
 
 void PluginServiceImpl::OpenChannelToPpapiBroker(
     int render_process_id,
+    int render_frame_id,
     const base::FilePath& path,
     PpapiPluginProcessHost::BrokerClient* client) {
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::Bind(&RecordBrokerUsage, render_process_id, render_frame_id));
+
   PpapiPluginProcessHost* plugin_host = FindOrStartPpapiBrokerProcess(
       render_process_id, path);
   if (plugin_host) {
@@ -305,25 +322,14 @@ base::string16 PluginServiceImpl::GetPluginDisplayNameByPath(
   return plugin_name;
 }
 
-void PluginServiceImpl::GetPlugins(const GetPluginsCallback& callback) {
-  scoped_refptr<base::SingleThreadTaskRunner> target_task_runner(
-      base::ThreadTaskRunnerHandle::Get());
-
-  plugin_list_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&PluginServiceImpl::GetPluginsInternal, base::Unretained(this),
-                 base::RetainedRef(target_task_runner), callback));
-}
-
-void PluginServiceImpl::GetPluginsInternal(
-    base::SingleThreadTaskRunner* target_task_runner,
-    const PluginService::GetPluginsCallback& callback) {
-  DCHECK(plugin_list_sequence_checker_.CalledOnValidSequence());
-
-  std::vector<WebPluginInfo> plugins;
-  PluginList::Singleton()->GetPlugins(&plugins);
-
-  target_task_runner->PostTask(FROM_HERE, base::Bind(callback, plugins));
+void PluginServiceImpl::GetPlugins(GetPluginsCallback callback) {
+  base::PostTaskAndReplyWithResult(
+      plugin_list_task_runner_.get(), FROM_HERE, base::BindOnce([]() {
+        std::vector<WebPluginInfo> plugins;
+        PluginList::Singleton()->GetPlugins(&plugins);
+        return plugins;
+      }),
+      std::move(callback));
 }
 
 void PluginServiceImpl::RegisterPepperPlugins() {

@@ -24,7 +24,7 @@
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/proxy/proxy_info.h"
-#include "net/proxy/proxy_service.h"
+#include "net/proxy/proxy_server.h"
 
 namespace data_reduction_proxy {
 
@@ -72,7 +72,7 @@ void DataReductionProxyDelegate::InitializeOnIOThread(
 void DataReductionProxyDelegate::OnResolveProxy(
     const GURL& url,
     const std::string& method,
-    const net::ProxyService& proxy_service,
+    const net::ProxyRetryInfoMap& proxy_retry_info,
     net::ProxyInfo* result) {
   DCHECK(result);
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -85,7 +85,9 @@ void DataReductionProxyDelegate::OnResolveProxy(
   }
 
   std::vector<DataReductionProxyServer> proxies_for_http =
-      config_->GetProxiesForHttp();
+      params::IsIncludedInHoldbackFieldTrial()
+          ? std::vector<DataReductionProxyServer>()
+          : config_->GetProxiesForHttp();
 
   // Remove the proxies that are unsupported for this request.
   proxies_for_http.erase(
@@ -96,11 +98,11 @@ void DataReductionProxyDelegate::OnResolveProxy(
       proxies_for_http.end());
 
   net::ProxyConfig proxy_config = configurator_->CreateProxyConfig(
-      !config_->secure_proxy_allowed(), proxies_for_http);
+      !config_->secure_proxy_allowed(), !config_->insecure_proxies_allowed(),
+      proxies_for_http);
 
-  OnResolveProxyHandler(url, method, proxy_config,
-                        proxy_service.proxy_retry_info(), *config_, io_data_,
-                        result);
+  OnResolveProxyHandler(url, method, proxy_config, proxy_retry_info, *config_,
+                        io_data_, result);
 
   if (!first_data_saver_request_recorded_ && !result->is_empty() &&
       config_->IsDataReductionProxy(result->proxy_server(), nullptr)) {
@@ -140,12 +142,8 @@ void DataReductionProxyDelegate::OnBeforeTunnelRequest(
 bool DataReductionProxyDelegate::IsTrustedSpdyProxy(
     const net::ProxyServer& proxy_server) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!proxy_server.is_https() ||
-      !params::IsIncludedInTrustedSpdyProxyFieldTrial() ||
-      !proxy_server.is_valid()) {
-    return false;
-  }
-  return config_ && config_->IsDataReductionProxy(proxy_server, nullptr);
+  return proxy_server.is_valid() && proxy_server.is_https() && config_ &&
+         config_->IsDataReductionProxy(proxy_server, nullptr);
 }
 
 void DataReductionProxyDelegate::OnTunnelHeadersReceived(
@@ -175,8 +173,10 @@ void DataReductionProxyDelegate::GetAlternativeProxy(
     return;
   }
 
-  if (!params::IsIncludedInQuicFieldTrial())
+  if (!params::IsIncludedInQuicFieldTrial()) {
+    RecordQuicProxyStatus(QUIC_PROXY_DISABLED_VIA_FIELD_TRIAL);
     return;
+  }
 
   if (!resolved_proxy_server.is_valid() || !resolved_proxy_server.is_https())
     return;
@@ -216,30 +216,6 @@ void DataReductionProxyDelegate::OnAlternativeProxyBroken(
                            1);
 }
 
-net::ProxyServer DataReductionProxyDelegate::GetDefaultAlternativeProxy()
-    const {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  if (!params::IsZeroRttQuicEnabled())
-    return net::ProxyServer();
-
-  if (alternative_proxies_broken_) {
-    RecordGetDefaultAlternativeProxy(DEFAULT_ALTERNATIVE_PROXY_STATUS_BROKEN);
-    return net::ProxyServer();
-  }
-
-  net::ProxyServer proxy_server(
-      net::ProxyServer::SCHEME_QUIC,
-      net::HostPortPair(kDataReductionCoreProxy, 443));
-  if (!config_ || !config_->IsDataReductionProxy(proxy_server, NULL)) {
-    RecordGetDefaultAlternativeProxy(
-        DEFAULT_ALTERNATIVE_PROXY_STATUS_UNAVAILABLE);
-    return net::ProxyServer();
-  }
-
-  RecordGetDefaultAlternativeProxy(DEFAULT_ALTERNATIVE_PROXY_STATUS_AVAILABLE);
-  return proxy_server;
-}
-
 bool DataReductionProxyDelegate::SupportsQUIC(
     const net::ProxyServer& proxy_server) const {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -255,13 +231,6 @@ void DataReductionProxyDelegate::RecordQuicProxyStatus(
   DCHECK(thread_checker_.CalledOnValidThread());
   UMA_HISTOGRAM_ENUMERATION("DataReductionProxy.Quic.ProxyStatus", status,
                             QUIC_PROXY_STATUS_BOUNDARY);
-}
-
-void DataReductionProxyDelegate::RecordGetDefaultAlternativeProxy(
-    DefaultAlternativeProxyStatus status) const {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  UMA_HISTOGRAM_ENUMERATION("DataReductionProxy.Quic.DefaultAlternativeProxy",
-                            status, DEFAULT_ALTERNATIVE_PROXY_STATUS_BOUNDARY);
 }
 
 void DataReductionProxyDelegate::OnIPAddressChanged() {
@@ -280,7 +249,7 @@ void OnResolveProxyHandler(
     net::ProxyInfo* result) {
   DCHECK(result->is_empty() || result->is_direct() ||
          !data_reduction_proxy_config.IsDataReductionProxy(
-             result->proxy_server(), NULL));
+             result->proxy_server(), nullptr));
 
   if (!util::EligibleForDataReductionProxy(*result, url, method))
     return;

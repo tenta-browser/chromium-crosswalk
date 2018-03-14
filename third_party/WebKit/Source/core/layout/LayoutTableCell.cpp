@@ -25,10 +25,11 @@
 
 #include "core/layout/LayoutTableCell.h"
 
-#include "core/HTMLNames.h"
-#include "core/css/StylePropertySet.h"
+#include "core/css/CSSPropertyValueSet.h"
 #include "core/editing/EditingUtilities.h"
 #include "core/html/HTMLTableCellElement.h"
+#include "core/html_names.h"
+#include "core/layout/CollapsedBorderValue.h"
 #include "core/layout/LayoutAnalyzer.h"
 #include "core/layout/LayoutTableCol.h"
 #include "core/layout/SubtreeLayoutScope.h"
@@ -36,7 +37,6 @@
 #include "core/paint/PaintLayer.h"
 #include "core/paint/TableCellPaintInvalidator.h"
 #include "core/paint/TableCellPainter.h"
-#include "core/style/CollapsedBorderValue.h"
 #include "platform/geometry/FloatQuad.h"
 #include "platform/geometry/TransformState.h"
 #include "platform/wtf/PtrUtil.h"
@@ -59,41 +59,17 @@ static_assert(sizeof(CollapsedBorderValue) == 8,
 LayoutTableCell::LayoutTableCell(Element* element)
     : LayoutBlockFlow(element),
       absolute_column_index_(kUnsetColumnIndex),
-      cell_width_changed_(false),
+      cell_children_need_layout_(false),
+      is_spanning_collapsed_row_(false),
+      is_spanning_collapsed_column_(false),
+      collapsed_border_values_valid_(false),
+      collapsed_borders_need_paint_invalidation_(false),
       intrinsic_padding_before_(0),
       intrinsic_padding_after_(0) {
   // We only update the flags when notified of DOM changes in
   // colSpanOrRowSpanChanged() so we need to set their initial values here in
   // case something asks for colSpan()/rowSpan() before then.
   UpdateColAndRowSpanFlags();
-}
-
-LayoutTableCell::CollapsedBorderValues::CollapsedBorderValues(
-    const LayoutTableCell& layout_table_cell,
-    const CollapsedBorderValue& start_border,
-    const CollapsedBorderValue& end_border,
-    const CollapsedBorderValue& before_border,
-    const CollapsedBorderValue& after_border)
-    : layout_table_cell_(layout_table_cell),
-      start_border_(start_border),
-      end_border_(end_border),
-      before_border_(before_border),
-      after_border_(after_border) {}
-
-void LayoutTableCell::CollapsedBorderValues::SetCollapsedBorderValues(
-    const CollapsedBorderValues& other) {
-  start_border_ = other.StartBorder();
-  end_border_ = other.EndBorder();
-  before_border_ = other.BeforeBorder();
-  after_border_ = other.AfterBorder();
-}
-
-String LayoutTableCell::CollapsedBorderValues::DebugName() const {
-  return "CollapsedBorderValues";
-}
-
-LayoutRect LayoutTableCell::CollapsedBorderValues::VisualRect() const {
-  return layout_table_cell_.Table()->VisualRect();
 }
 
 void LayoutTableCell::WillBeRemovedFromTree() {
@@ -105,7 +81,7 @@ void LayoutTableCell::WillBeRemovedFromTree() {
   // neighboring cells.
   LayoutTable* enclosing_table = Table();
   DCHECK(enclosing_table);
-  if (!enclosing_table->CollapseBorders())
+  if (!enclosing_table->ShouldCollapseBorders())
     return;
   if (PreviousCell()) {
     // TODO(dgrogan): Should this be setChildNeedsLayout or setNeedsLayout?
@@ -154,8 +130,11 @@ void LayoutTableCell::ColSpanOrRowSpanChanged() {
 
   SetNeedsLayoutAndPrefWidthsRecalcAndFullPaintInvalidation(
       LayoutInvalidationReason::kAttributeChanged);
-  if (Parent() && Section())
+  if (Parent() && Section()) {
     Section()->SetNeedsCellRecalc();
+    if (Table() && Table()->ShouldCollapseBorders())
+      collapsed_borders_need_paint_invalidation_ = true;
+  }
 }
 
 Length LayoutTableCell::LogicalWidthFromColumns(
@@ -207,7 +186,19 @@ void LayoutTableCell::ComputePreferredLogicalWidths() {
   // grids before the child cells try to use them.
   Table()->RecalcSectionsIfNeeded();
 
+  // We don't want the preferred width from children to be affected by any
+  // notional height on the cell, such as can happen when a percent sized image
+  // scales up its width to match the available height. Setting a zero override
+  // height prevents this from happening.
+  LayoutUnit content_height = HasOverrideLogicalContentHeight()
+                                  ? OverrideLogicalContentHeight()
+                                  : LayoutUnit(-1);
+  if (content_height > -1)
+    SetOverrideLogicalContentHeight(LayoutUnit());
   LayoutBlockFlow::ComputePreferredLogicalWidths();
+  if (content_height > -1)
+    SetOverrideLogicalContentHeight(content_height);
+
   if (GetNode() && Style()->AutoWrap()) {
     // See if nowrap was set.
     Length w = StyleOrColLogicalWidth();
@@ -227,18 +218,22 @@ void LayoutTableCell::AddLayerHitTestRects(
     LayerHitTestRects& layer_rects,
     const PaintLayer* current_layer,
     const LayoutPoint& layer_offset,
-    const LayoutRect& container_rect) const {
+    TouchAction supported_fast_actions,
+    const LayoutRect& container_rect,
+    TouchAction container_whitelisted_touch_action) const {
   LayoutPoint adjusted_layer_offset = layer_offset;
   // LayoutTableCell's location includes the offset of it's containing
   // LayoutTableRow, so we need to subtract that again here (as for
   // LayoutTableCell::offsetFromContainer.
   if (Parent())
     adjusted_layer_offset -= ParentBox()->LocationOffset();
-  LayoutBox::AddLayerHitTestRects(layer_rects, current_layer,
-                                  adjusted_layer_offset, container_rect);
+  LayoutBox::AddLayerHitTestRects(
+      layer_rects, current_layer, adjusted_layer_offset, supported_fast_actions,
+      container_rect, container_whitelisted_touch_action);
 }
 
-void LayoutTableCell::ComputeIntrinsicPadding(int row_height,
+void LayoutTableCell::ComputeIntrinsicPadding(int collapsed_height,
+                                              int row_height,
                                               EVerticalAlign vertical_align,
                                               SubtreeLayoutScope& layouter) {
   int old_intrinsic_padding_before = IntrinsicPaddingBefore();
@@ -255,21 +250,24 @@ void LayoutTableCell::ComputeIntrinsicPadding(int row_height,
     case EVerticalAlign::kTextBottom:
     case EVerticalAlign::kLength:
     case EVerticalAlign::kBaseline: {
-      int baseline = CellBaselinePosition();
-      if (baseline > BorderBefore() + PaddingBefore())
-        intrinsic_padding_before = Section()->RowBaseline(RowIndex()) -
-                                   (baseline - old_intrinsic_padding_before);
+      LayoutUnit baseline = CellBaselinePosition();
+      if (baseline > BorderBefore() + PaddingBefore()) {
+        intrinsic_padding_before = (Section()->RowBaseline(RowIndex()) -
+                                    (baseline - old_intrinsic_padding_before))
+                                       .Round();
+      }
       break;
     }
     case EVerticalAlign::kTop:
       break;
     case EVerticalAlign::kMiddle:
-      intrinsic_padding_before =
-          (row_height - logical_height_without_intrinsic_padding) / 2;
+      intrinsic_padding_before = (row_height + collapsed_height -
+                                  logical_height_without_intrinsic_padding) /
+                                 2;
       break;
     case EVerticalAlign::kBottom:
-      intrinsic_padding_before =
-          row_height - logical_height_without_intrinsic_padding;
+      intrinsic_padding_before = row_height + collapsed_height -
+                                 logical_height_without_intrinsic_padding;
       break;
     case EVerticalAlign::kBaselineMiddle:
       break;
@@ -298,95 +296,52 @@ void LayoutTableCell::SetCellLogicalWidth(int table_layout_logical_width,
   layouter.SetNeedsLayout(this, LayoutInvalidationReason::kSizeChanged);
 
   SetLogicalWidth(LayoutUnit(table_layout_logical_width));
-  SetCellWidthChanged(true);
+  SetCellChildrenNeedLayout(true);
 }
 
 void LayoutTableCell::UpdateLayout() {
   DCHECK(NeedsLayout());
   LayoutAnalyzer::Scope analyzer(*this);
 
-  int old_cell_baseline = CellBaselinePosition();
-  UpdateBlockLayout(CellWidthChanged());
-
-  // If we have replaced content, the intrinsic height of our content may have
-  // changed since the last time we laid out. If that's the case the intrinsic
-  // padding we used for layout (the padding required to push the contents of
-  // the cell down to the row's baseline) is included in our new height and
-  // baseline and makes both of them wrong. So if our content's intrinsic height
-  // has changed push the new content up into the intrinsic padding and relayout
-  // so that the rest of table and row layout can use the correct baseline and
-  // height for this cell.
-  if (IsBaselineAligned() && Section()->RowBaseline(RowIndex()) &&
-      CellBaselinePosition() > Section()->RowBaseline(RowIndex())) {
-    int new_intrinsic_padding_before =
-        std::max(IntrinsicPaddingBefore() -
-                     std::max(CellBaselinePosition() - old_cell_baseline, 0),
-                 0);
-    SetIntrinsicPaddingBefore(new_intrinsic_padding_before);
-    SubtreeLayoutScope layouter(*this);
-    layouter.SetNeedsLayout(this, LayoutInvalidationReason::kTableChanged);
-    UpdateBlockLayout(CellWidthChanged());
-  }
+  UpdateBlockLayout(CellChildrenNeedLayout());
 
   // FIXME: This value isn't the intrinsic content logical height, but we need
   // to update the value as its used by flexbox layout. crbug.com/367324
   SetIntrinsicContentLogicalHeight(ContentLogicalHeight());
 
-  SetCellWidthChanged(false);
+  SetCellChildrenNeedLayout(false);
 }
 
 LayoutUnit LayoutTableCell::PaddingTop() const {
   LayoutUnit result = ComputedCSSPaddingTop();
-  if (IsHorizontalWritingMode())
-    result += (blink::IsHorizontalWritingMode(Style()->GetWritingMode())
-                   ? IntrinsicPaddingBefore()
-                   : IntrinsicPaddingAfter());
-  // TODO(leviw): The floor call should be removed when Table is sub-pixel
-  // aware. crbug.com/377847
-  return LayoutUnit(result.Floor());
+  result += LogicalIntrinsicPaddingToPhysical().Top();
+  // TODO(crbug.com/377847): The ToInt call should be removed when Table is
+  // sub-pixel aware.
+  return LayoutUnit(result.ToInt());
 }
 
 LayoutUnit LayoutTableCell::PaddingBottom() const {
   LayoutUnit result = ComputedCSSPaddingBottom();
-  if (IsHorizontalWritingMode())
-    result += (blink::IsHorizontalWritingMode(Style()->GetWritingMode())
-                   ? IntrinsicPaddingAfter()
-                   : IntrinsicPaddingBefore());
-  // TODO(leviw): The floor call should be removed when Table is sub-pixel
-  // aware. crbug.com/377847
-  return LayoutUnit(result.Floor());
+  result += LogicalIntrinsicPaddingToPhysical().Bottom();
+  // TODO(crbug.com/377847): The ToInt call should be removed when Table is
+  // sub-pixel aware.
+  return LayoutUnit(result.ToInt());
 }
 
 LayoutUnit LayoutTableCell::PaddingLeft() const {
   LayoutUnit result = ComputedCSSPaddingLeft();
-  if (!IsHorizontalWritingMode())
-    result += (IsFlippedLinesWritingMode(Style()->GetWritingMode())
-                   ? IntrinsicPaddingBefore()
-                   : IntrinsicPaddingAfter());
-  // TODO(leviw): The floor call should be removed when Table is sub-pixel
-  // aware. crbug.com/377847
-  return LayoutUnit(result.Floor());
+  result += LogicalIntrinsicPaddingToPhysical().Left();
+  // TODO(crbug.com/377847): The ToInt call should be removed when Table is
+  // sub-pixel aware.
+  return LayoutUnit(result.ToInt());
 }
 
 LayoutUnit LayoutTableCell::PaddingRight() const {
   LayoutUnit result = ComputedCSSPaddingRight();
-  if (!IsHorizontalWritingMode())
-    result += (IsFlippedLinesWritingMode(Style()->GetWritingMode())
-                   ? IntrinsicPaddingAfter()
-                   : IntrinsicPaddingBefore());
-  // TODO(leviw): The floor call should be removed when Table is sub-pixel
-  // aware. crbug.com/377847
-  return LayoutUnit(result.Floor());
-}
-
-LayoutUnit LayoutTableCell::PaddingBefore() const {
-  return LayoutUnit(ComputedCSSPaddingBefore().Floor() +
-                    IntrinsicPaddingBefore());
-}
-
-LayoutUnit LayoutTableCell::PaddingAfter() const {
-  return LayoutUnit(ComputedCSSPaddingAfter().Floor() +
-                    IntrinsicPaddingAfter());
+  result += LogicalIntrinsicPaddingToPhysical().Right();
+  // TODO(crbug.com/377847): The ToInt call should be removed when Table is
+  // sub-pixel aware.
+  return LayoutUnit(result.ToInt());
 }
 
 void LayoutTableCell::SetOverrideLogicalContentHeightFromRowHeight(
@@ -402,72 +357,78 @@ LayoutSize LayoutTableCell::OffsetFromContainer(const LayoutObject* o) const {
 
   LayoutSize offset = LayoutBlockFlow::OffsetFromContainer(o);
   if (Parent())
-    offset -= ParentBox()->LocationOffset();
+    offset -= ParentBox()->PhysicalLocationOffset();
 
   return offset;
 }
 
-LayoutRect LayoutTableCell::LocalVisualRect() const {
-  // If the table grid is dirty, we cannot get reliable information about
-  // adjoining cells, so we ignore outside borders. This should not be a problem
-  // because it means that the table is going to recalculate the grid, relayout
-  // and issue a paint invalidation of its current rect, which includes any
-  // outside borders of this cell.
-  if (!Table()->CollapseBorders() || Table()->NeedsSectionRecalc())
-    return LayoutBlockFlow::LocalVisualRect();
+void LayoutTableCell::ComputeOverflow(LayoutUnit old_client_after_edge,
+                                      bool recompute_floats) {
+  LayoutBlockFlow::ComputeOverflow(old_client_after_edge, recompute_floats);
 
-  bool rtl = !StyleForCellFlow().IsLeftToRightDirection();
-  LayoutUnit outline_outset(Style()->OutlineOutsetExtent());
-  LayoutUnit left(std::max(BorderHalfLeft(true), outline_outset));
-  LayoutUnit right(std::max(BorderHalfRight(true), outline_outset));
-  LayoutUnit top(std::max(BorderHalfTop(true), outline_outset));
-  LayoutUnit bottom(std::max(BorderHalfBottom(true), outline_outset));
+  UpdateCollapsedBorderValues();
+  if (!collapsed_border_values_)
+    return;
+
+  // Calculate local visual rect of collapsed borders.
+  // Our border rect already includes the inner halves of the collapsed borders,
+  // so here we get the outer halves.
+  bool rtl = !TableStyle().IsLeftToRightDirection();
+  unsigned left = CollapsedBorderHalfLeft(true);
+  unsigned right = CollapsedBorderHalfRight(true);
+  unsigned top = CollapsedBorderHalfTop(true);
+  unsigned bottom = CollapsedBorderHalfBottom(true);
+
+  // TODO(wangxianzhu): The following looks incorrect for vertical direction.
+  // This cell's borders may be lengthened to match the widths of orthogonal
+  // borders of adjacent cells. Expand visual overflow to cover the lengthened
+  // parts.
   if ((left && !rtl) || (right && rtl)) {
-    if (LayoutTableCell* before = Table()->CellBefore(this)) {
-      top = std::max(top, before->BorderHalfTop(true));
-      bottom = std::max(bottom, before->BorderHalfBottom(true));
+    if (LayoutTableCell* preceding = Table()->CellPreceding(*this)) {
+      top = std::max(top, preceding->CollapsedBorderHalfTop(true));
+      bottom = std::max(bottom, preceding->CollapsedBorderHalfBottom(true));
     }
   }
   if ((left && rtl) || (right && !rtl)) {
-    if (LayoutTableCell* after = Table()->CellAfter(this)) {
-      top = std::max(top, after->BorderHalfTop(true));
-      bottom = std::max(bottom, after->BorderHalfBottom(true));
+    if (LayoutTableCell* following = Table()->CellFollowing(*this)) {
+      top = std::max(top, following->CollapsedBorderHalfTop(true));
+      bottom = std::max(bottom, following->CollapsedBorderHalfBottom(true));
     }
   }
   if (top) {
-    if (LayoutTableCell* above = Table()->CellAbove(this)) {
-      left = std::max(left, above->BorderHalfLeft(true));
-      right = std::max(right, above->BorderHalfRight(true));
+    if (LayoutTableCell* above = Table()->CellAbove(*this)) {
+      left = std::max(left, above->CollapsedBorderHalfLeft(true));
+      right = std::max(right, above->CollapsedBorderHalfRight(true));
     }
   }
   if (bottom) {
-    if (LayoutTableCell* below = Table()->CellBelow(this)) {
-      left = std::max(left, below->BorderHalfLeft(true));
-      right = std::max(right, below->BorderHalfRight(true));
+    if (LayoutTableCell* below = Table()->CellBelow(*this)) {
+      left = std::max(left, below->CollapsedBorderHalfLeft(true));
+      right = std::max(right, below->CollapsedBorderHalfRight(true));
     }
   }
 
-  LayoutRect self_visual_overflow_rect = this->SelfVisualOverflowRect();
-  LayoutPoint location(
-      std::max(LayoutUnit(left), -self_visual_overflow_rect.X()),
-      std::max(LayoutUnit(top), -self_visual_overflow_rect.Y()));
-  return LayoutRect(-location.X(), -location.Y(),
-                    location.X() + std::max(Size().Width() + right,
-                                            self_visual_overflow_rect.MaxX()),
-                    location.Y() + std::max(Size().Height() + bottom,
-                                            self_visual_overflow_rect.MaxY()));
+  LayoutRect rect = BorderBoxRect();
+  rect.ExpandEdges(LayoutUnit(top), LayoutUnit(right), LayoutUnit(bottom),
+                   LayoutUnit(left));
+  collapsed_border_values_->SetLocalVisualRect(rect);
 }
 
-int LayoutTableCell::CellBaselinePosition() const {
+bool LayoutTableCell::ShouldClipOverflow() const {
+  return IsSpanningCollapsedRow() || IsSpanningCollapsedColumn() ||
+         LayoutBox::ShouldClipOverflow();
+}
+
+LayoutUnit LayoutTableCell::CellBaselinePosition() const {
   // <http://www.w3.org/TR/2007/CR-CSS21-20070719/tables.html#height-layout>:
   // The baseline of a cell is the baseline of the first in-flow line box in the
   // cell, or the first in-flow table-row in the cell, whichever comes first. If
   // there is no such line box or table-row, the baseline is the bottom of
   // content edge of the cell box.
-  int first_line_baseline = FirstLineBoxBaseline();
+  LayoutUnit first_line_baseline = FirstLineBoxBaseline();
   if (first_line_baseline != -1)
     return first_line_baseline;
-  return (BorderBefore() + PaddingBefore() + ContentLogicalHeight()).ToInt();
+  return BorderBefore() + PaddingBefore() + ContentLogicalHeight();
 }
 
 void LayoutTableCell::StyleDidChange(StyleDifference diff,
@@ -477,26 +438,33 @@ void LayoutTableCell::StyleDidChange(StyleDifference diff,
   LayoutBlockFlow::StyleDidChange(diff, old_style);
   SetHasBoxDecorationBackground(true);
 
-  if (Parent() && Section() && old_style &&
-      Style()->Height() != old_style->Height())
+  if (!old_style)
+    return;
+
+  if (Parent() && Section() && Style()->Height() != old_style->Height())
     Section()->RowLogicalHeightChanged(Row());
 
   // Our intrinsic padding pushes us down to align with the baseline of other
   // cells on the row. If our vertical-align has changed then so will the
   // padding needed to align with other cells - clear it so we can recalculate
   // it from scratch.
-  if (old_style && Style()->VerticalAlign() != old_style->VerticalAlign())
+  if (Style()->VerticalAlign() != old_style->VerticalAlign())
     ClearIntrinsicPadding();
 
-  // If border was changed, notify table.
   if (!Parent())
     return;
-  LayoutTable* table = this->Table();
+  LayoutTable* table = Table();
   if (!table)
     return;
-  if (!table->SelfNeedsLayout() && !table->NormalChildNeedsLayout() &&
-      old_style && old_style->Border() != Style()->Border())
+
+  if (old_style->Visibility() != StyleRef().Visibility() &&
+      table->ShouldCollapseBorders()) {
     table->InvalidateCollapsedBorders();
+    collapsed_borders_need_paint_invalidation_ = true;
+  }
+
+  LayoutTableBoxComponent::InvalidateCollapsedBordersOnStyleChange(
+      *this, *table, diff, *old_style);
 
   if (LayoutTableBoxComponent::DoCellsHaveDirtyWidth(*this, *table, diff,
                                                      *old_style)) {
@@ -515,121 +483,54 @@ void LayoutTableCell::StyleDidChange(StyleDifference diff,
   }
 }
 
-// The following rules apply for resolving conflicts and figuring out which
-// border to use.
-// (1) Borders with the 'border-style' of 'hidden' take precedence over all
-//     other conflicting borders. Any border with this value suppresses all
-//     borders at this location.
-// (2) Borders with a style of 'none' have the lowest priority. Only if the
-//     border properties of all the elements meeting at this edge are 'none'
-//     will the border be omitted (but note that 'none' is the default value for
-//     the border style.)
-// (3) If none of the styles are 'hidden' and at least one of them is not
-//     'none', then narrow borders are discarded in favor of wider ones. If
-//      several have the same 'border-width' then styles are preferred in this
-//      order: 'double', 'solid', 'dashed', 'dotted', 'ridge', 'outset',
-//     'groove', and the lowest: 'inset'.
-// (4) If border styles differ only in color, then a style set on a cell wins
-//     over one on a row, which wins over a row group, column, column group and,
-//     lastly, table. It is undefined which color is used when two elements of
-//     the same type disagree.
-static bool CompareBorders(const CollapsedBorderValue& border1,
-                           const CollapsedBorderValue& border2) {
-  // Sanity check the values passed in. The null border have lowest priority.
-  if (!border2.Exists())
-    return false;
-  if (!border1.Exists())
-    return true;
-
-  // Rule #1 above.
-  if (border1.Style() == kBorderStyleHidden)
-    return false;
-  if (border2.Style() == kBorderStyleHidden)
-    return true;
-
-  // Rule #2 above.  A style of 'none' has lowest priority and always loses to
-  // any other border.
-  if (border2.Style() == kBorderStyleNone)
-    return false;
-  if (border1.Style() == kBorderStyleNone)
-    return true;
-
-  // The first part of rule #3 above. Wider borders win.
-  if (border1.Width() != border2.Width())
-    return border1.Width() < border2.Width();
-
-  // The borders have equal width.  Sort by border style.
-  if (border1.Style() != border2.Style())
-    return border1.Style() < border2.Style();
-
-  // The border have the same width and style.  Rely on precedence (cell over
-  // row over row group, etc.)
-  return border1.Precedence() < border2.Precedence();
-}
-
 static CollapsedBorderValue ChooseBorder(const CollapsedBorderValue& border1,
                                          const CollapsedBorderValue& border2) {
-  return CompareBorders(border1, border2) ? border2 : border1;
+  return border1.LessThan(border2) ? border2 : border1;
 }
 
-bool LayoutTableCell::HasStartBorderAdjoiningTable() const {
-  bool is_start_column = !AbsoluteColumnIndex();
-  bool is_end_column = Table()->AbsoluteColumnToEffectiveColumn(
-                           AbsoluteColumnIndex() + ColSpan() - 1) ==
-                       Table()->NumEffectiveColumns() - 1;
-  bool has_same_direction_as_table = HasSameDirectionAs(Table());
-
-  // The table direction determines the row direction. In mixed directionality,
-  // we cannot guarantee that we have a common border with the table (think a
-  // ltr table with rtl start cell).
-  return (is_start_column && has_same_direction_as_table) ||
-         (is_end_column && !has_same_direction_as_table);
+bool LayoutTableCell::IsInEndColumn() const {
+  return Table()->AbsoluteColumnToEffectiveColumn(AbsoluteColumnIndex() +
+                                                  ColSpan() - 1) ==
+         Table()->NumEffectiveColumns() - 1;
 }
 
-bool LayoutTableCell::HasEndBorderAdjoiningTable() const {
-  bool is_start_column = !AbsoluteColumnIndex();
-  bool is_end_column = Table()->AbsoluteColumnToEffectiveColumn(
-                           AbsoluteColumnIndex() + ColSpan() - 1) ==
-                       Table()->NumEffectiveColumns() - 1;
-  bool has_same_direction_as_table = HasSameDirectionAs(Table());
-
-  // The table direction determines the row direction. In mixed directionality,
-  // we cannot guarantee that we have a common border with the table (think a
-  // ltr table with ltr end cell).
-  return (is_start_column && !has_same_direction_as_table) ||
-         (is_end_column && has_same_direction_as_table);
+CSSPropertyID LayoutTableCell::ResolveBorderProperty(
+    const CSSProperty& property) const {
+  return property
+      .ResolveDirectionAwareProperty(TableStyle().Direction(),
+                                     TableStyle().GetWritingMode())
+      .PropertyID();
 }
 
-CollapsedBorderValue LayoutTableCell::ComputeCollapsedStartBorder(
-    IncludeBorderColorOrNot include_color) const {
-  LayoutTable* table = this->Table();
+CollapsedBorderValue LayoutTableCell::ComputeCollapsedStartBorder() const {
+  LayoutTable* table = Table();
+  bool in_start_column = IsInStartColumn();
+  LayoutTableCell* cell_preceding =
+      in_start_column ? nullptr : table->CellPreceding(*this);
+  // We can use the border shared with |cell_before| if it is valid.
+  if (StartsAtSameRow(cell_preceding) &&
+      cell_preceding->collapsed_border_values_valid_) {
+    return cell_preceding->GetCollapsedBorderValues()
+               ? cell_preceding->GetCollapsedBorderValues()->EndBorder()
+               : CollapsedBorderValue();
+  }
 
   // For the start border, we need to check, in order of precedence:
   // (1) Our start border.
-  int start_color_property = include_color
-                                 ? CSSProperty::ResolveDirectionAwareProperty(
-                                       CSSPropertyWebkitBorderStartColor,
-                                       StyleForCellFlow().Direction(),
-                                       StyleForCellFlow().GetWritingMode())
-                                 : 0;
-  int end_color_property =
-      include_color
-          ? CSSProperty::ResolveDirectionAwareProperty(
-                CSSPropertyWebkitBorderEndColor, StyleForCellFlow().Direction(),
-                StyleForCellFlow().GetWritingMode())
-          : 0;
-  CollapsedBorderValue result(
-      Style()->BorderStart(),
-      include_color ? ResolveColor(start_color_property) : Color(),
-      kBorderPrecedenceCell);
+  CSSPropertyID start_color_property =
+      ResolveBorderProperty(GetCSSPropertyWebkitBorderStartColor());
+  CSSPropertyID end_color_property =
+      ResolveBorderProperty(GetCSSPropertyWebkitBorderEndColor());
+  CollapsedBorderValue result(BorderStartInTableDirection(),
+                              ResolveColor(start_color_property),
+                              kBorderPrecedenceCell);
 
   // (2) The end border of the preceding cell.
-  LayoutTableCell* cell_before = table->CellBefore(this);
-  if (cell_before) {
-    CollapsedBorderValue cell_before_adjoining_border = CollapsedBorderValue(
-        cell_before->BorderAdjoiningCellAfter(this),
-        include_color ? cell_before->ResolveColor(end_color_property) : Color(),
-        kBorderPrecedenceCell);
+  if (cell_preceding) {
+    CollapsedBorderValue cell_before_adjoining_border =
+        CollapsedBorderValue(cell_preceding->BorderEndInTableDirection(),
+                             cell_preceding->ResolveColor(end_color_property),
+                             kBorderPrecedenceCell);
     // |result| should be the 2nd argument as |cellBefore| should win in case of
     // equality per CSS 2.1 (Border conflict resolution, point 4).
     result = ChooseBorder(cell_before_adjoining_border, result);
@@ -637,25 +538,22 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedStartBorder(
       return result;
   }
 
-  bool start_border_adjoins_table = HasStartBorderAdjoiningTable();
-  if (start_border_adjoins_table) {
+  if (in_start_column) {
     // (3) Our row's start border.
     result = ChooseBorder(
-        result, CollapsedBorderValue(
-                    Row()->BorderAdjoiningStartCell(this),
-                    include_color ? Parent()->ResolveColor(start_color_property)
-                                  : Color(),
-                    kBorderPrecedenceRow));
+        result,
+        CollapsedBorderValue(Row()->BorderStartInTableDirection(),
+                             Parent()->ResolveColor(start_color_property),
+                             kBorderPrecedenceRow));
     if (!result.Exists())
       return result;
 
     // (4) Our row group's start border.
     result = ChooseBorder(
-        result, CollapsedBorderValue(Section()->BorderAdjoiningStartCell(this),
-                                     include_color ? Section()->ResolveColor(
-                                                         start_color_property)
-                                                   : Color(),
-                                     kBorderPrecedenceRowGroup));
+        result,
+        CollapsedBorderValue(Section()->BorderStartInTableDirection(),
+                             Section()->ResolveColor(start_color_property),
+                             kBorderPrecedenceRowGroup));
     if (!result.Exists())
       return result;
   }
@@ -669,10 +567,8 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedStartBorder(
     result = ChooseBorder(
         result,
         CollapsedBorderValue(
-            col_and_col_group.colgroup->BorderAdjoiningCellStartBorder(this),
-            include_color
-                ? col_and_col_group.colgroup->ResolveColor(start_color_property)
-                : Color(),
+            col_and_col_group.colgroup->BorderStartInTableDirection(),
+            col_and_col_group.colgroup->ResolveColor(start_color_property),
             kBorderPrecedenceColumnGroup));
     if (!result.Exists())
       return result;
@@ -684,17 +580,15 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedStartBorder(
     // its span attribute specifies".
     result = ChooseBorder(
         result, CollapsedBorderValue(
-                    col_and_col_group.col->BorderAdjoiningCellStartBorder(this),
-                    include_color ? col_and_col_group.col->ResolveColor(
-                                        start_color_property)
-                                  : Color(),
+                    col_and_col_group.col->BorderStartInTableDirection(),
+                    col_and_col_group.col->ResolveColor(start_color_property),
                     kBorderPrecedenceColumn));
     if (!result.Exists())
       return result;
   }
 
   // (6) The end border of the preceding column.
-  if (cell_before) {
+  if (cell_preceding) {
     LayoutTable::ColAndColGroup col_and_col_group =
         table->ColElementAtAbsoluteColumn(AbsoluteColumnIndex() - 1);
     // Only apply the colgroup's border if this cell touches the colgroup edge.
@@ -702,10 +596,8 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedStartBorder(
         col_and_col_group.adjoins_end_border_of_col_group) {
       result = ChooseBorder(
           CollapsedBorderValue(
-              col_and_col_group.colgroup->BorderAdjoiningCellEndBorder(this),
-              include_color
-                  ? col_and_col_group.colgroup->ResolveColor(end_color_property)
-                  : Color(),
+              col_and_col_group.colgroup->BorderEndInTableDirection(),
+              col_and_col_group.colgroup->ResolveColor(end_color_property),
               kBorderPrecedenceColumnGroup),
           result);
       if (!result.Exists())
@@ -718,10 +610,8 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedStartBorder(
     if (col_and_col_group.col) {
       result = ChooseBorder(
           CollapsedBorderValue(
-              col_and_col_group.col->BorderAdjoiningCellAfter(this),
-              include_color
-                  ? col_and_col_group.col->ResolveColor(end_color_property)
-                  : Color(),
+              col_and_col_group.col->BorderEndInTableDirection(),
+              col_and_col_group.col->ResolveColor(end_color_property),
               kBorderPrecedenceColumn),
           result);
       if (!result.Exists())
@@ -729,14 +619,12 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedStartBorder(
     }
   }
 
-  if (start_border_adjoins_table) {
+  if (in_start_column) {
     // (7) The table's start border.
     result = ChooseBorder(
-        result,
-        CollapsedBorderValue(
-            table->TableStartBorderAdjoiningCell(this),
-            include_color ? table->ResolveColor(start_color_property) : Color(),
-            kBorderPrecedenceTable));
+        result, CollapsedBorderValue(table->StyleRef().BorderStart(),
+                                     table->ResolveColor(start_color_property),
+                                     kBorderPrecedenceTable));
     if (!result.Exists())
       return result;
   }
@@ -744,68 +632,58 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedStartBorder(
   return result;
 }
 
-CollapsedBorderValue LayoutTableCell::ComputeCollapsedEndBorder(
-    IncludeBorderColorOrNot include_color) const {
-  LayoutTable* table = this->Table();
+CollapsedBorderValue LayoutTableCell::ComputeCollapsedEndBorder() const {
+  LayoutTable* table = Table();
   // Note: We have to use the effective column information instead of whether we
   // have a cell after as a table doesn't have to be regular (any row can have
   // less cells than the total cell count).
-  bool is_end_column = table->AbsoluteColumnToEffectiveColumn(
-                           AbsoluteColumnIndex() + ColSpan() - 1) ==
-                       table->NumEffectiveColumns() - 1;
+  bool in_end_column = IsInEndColumn();
+  LayoutTableCell* cell_following =
+      in_end_column ? nullptr : table->CellFollowing(*this);
+  // We can use the border shared with |cell_after| if it is valid.
+  if (StartsAtSameRow(cell_following) &&
+      cell_following->collapsed_border_values_valid_) {
+    return cell_following->GetCollapsedBorderValues()
+               ? cell_following->GetCollapsedBorderValues()->StartBorder()
+               : CollapsedBorderValue();
+  }
 
   // For end border, we need to check, in order of precedence:
   // (1) Our end border.
-  int start_color_property = include_color
-                                 ? CSSProperty::ResolveDirectionAwareProperty(
-                                       CSSPropertyWebkitBorderStartColor,
-                                       StyleForCellFlow().Direction(),
-                                       StyleForCellFlow().GetWritingMode())
-                                 : 0;
-  int end_color_property =
-      include_color
-          ? CSSProperty::ResolveDirectionAwareProperty(
-                CSSPropertyWebkitBorderEndColor, StyleForCellFlow().Direction(),
-                StyleForCellFlow().GetWritingMode())
-          : 0;
+  CSSPropertyID start_color_property =
+      ResolveBorderProperty(GetCSSPropertyWebkitBorderStartColor());
+  CSSPropertyID end_color_property =
+      ResolveBorderProperty(GetCSSPropertyWebkitBorderEndColor());
   CollapsedBorderValue result = CollapsedBorderValue(
-      Style()->BorderEnd(),
-      include_color ? ResolveColor(end_color_property) : Color(),
+      BorderEndInTableDirection(), ResolveColor(end_color_property),
       kBorderPrecedenceCell);
 
   // (2) The start border of the following cell.
-  if (!is_end_column) {
-    if (LayoutTableCell* cell_after = table->CellAfter(this)) {
-      CollapsedBorderValue cell_after_adjoining_border = CollapsedBorderValue(
-          cell_after->BorderAdjoiningCellBefore(this),
-          include_color ? cell_after->ResolveColor(start_color_property)
-                        : Color(),
-          kBorderPrecedenceCell);
-      result = ChooseBorder(result, cell_after_adjoining_border);
-      if (!result.Exists())
-        return result;
-    }
+  if (cell_following) {
+    CollapsedBorderValue cell_after_adjoining_border =
+        CollapsedBorderValue(cell_following->BorderStartInTableDirection(),
+                             cell_following->ResolveColor(start_color_property),
+                             kBorderPrecedenceCell);
+    result = ChooseBorder(result, cell_after_adjoining_border);
+    if (!result.Exists())
+      return result;
   }
 
-  bool end_border_adjoins_table = HasEndBorderAdjoiningTable();
-  if (end_border_adjoins_table) {
+  if (in_end_column) {
     // (3) Our row's end border.
     result = ChooseBorder(
-        result, CollapsedBorderValue(
-                    Row()->BorderAdjoiningEndCell(this),
-                    include_color ? Parent()->ResolveColor(end_color_property)
-                                  : Color(),
-                    kBorderPrecedenceRow));
+        result, CollapsedBorderValue(Row()->BorderEndInTableDirection(),
+                                     Parent()->ResolveColor(end_color_property),
+                                     kBorderPrecedenceRow));
     if (!result.Exists())
       return result;
 
     // (4) Our row group's end border.
     result = ChooseBorder(
-        result, CollapsedBorderValue(
-                    Section()->BorderAdjoiningEndCell(this),
-                    include_color ? Section()->ResolveColor(end_color_property)
-                                  : Color(),
-                    kBorderPrecedenceRowGroup));
+        result,
+        CollapsedBorderValue(Section()->BorderEndInTableDirection(),
+                             Section()->ResolveColor(end_color_property),
+                             kBorderPrecedenceRowGroup));
     if (!result.Exists())
       return result;
   }
@@ -819,10 +697,8 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedEndBorder(
     result = ChooseBorder(
         result,
         CollapsedBorderValue(
-            col_and_col_group.colgroup->BorderAdjoiningCellEndBorder(this),
-            include_color
-                ? col_and_col_group.colgroup->ResolveColor(end_color_property)
-                : Color(),
+            col_and_col_group.colgroup->BorderEndInTableDirection(),
+            col_and_col_group.colgroup->ResolveColor(end_color_property),
             kBorderPrecedenceColumnGroup));
     if (!result.Exists())
       return result;
@@ -834,17 +710,15 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedEndBorder(
     // its span attribute specifies".
     result = ChooseBorder(
         result, CollapsedBorderValue(
-                    col_and_col_group.col->BorderAdjoiningCellEndBorder(this),
-                    include_color ? col_and_col_group.col->ResolveColor(
-                                        end_color_property)
-                                  : Color(),
+                    col_and_col_group.col->BorderEndInTableDirection(),
+                    col_and_col_group.col->ResolveColor(end_color_property),
                     kBorderPrecedenceColumn));
     if (!result.Exists())
       return result;
   }
 
   // (6) The start border of the next column.
-  if (!is_end_column) {
+  if (!in_end_column) {
     LayoutTable::ColAndColGroup col_and_col_group =
         table->ColElementAtAbsoluteColumn(AbsoluteColumnIndex() + ColSpan());
     if (col_and_col_group.colgroup &&
@@ -854,10 +728,8 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedEndBorder(
       result = ChooseBorder(
           result,
           CollapsedBorderValue(
-              col_and_col_group.colgroup->BorderAdjoiningCellStartBorder(this),
-              include_color ? col_and_col_group.colgroup->ResolveColor(
-                                  start_color_property)
-                            : Color(),
+              col_and_col_group.colgroup->BorderStartInTableDirection(),
+              col_and_col_group.colgroup->ResolveColor(start_color_property),
               kBorderPrecedenceColumnGroup));
       if (!result.Exists())
         return result;
@@ -869,24 +741,20 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedEndBorder(
       // times as its span attribute specifies".
       result = ChooseBorder(
           result, CollapsedBorderValue(
-                      col_and_col_group.col->BorderAdjoiningCellBefore(this),
-                      include_color ? col_and_col_group.col->ResolveColor(
-                                          start_color_property)
-                                    : Color(),
+                      col_and_col_group.col->BorderStartInTableDirection(),
+                      col_and_col_group.col->ResolveColor(start_color_property),
                       kBorderPrecedenceColumn));
       if (!result.Exists())
         return result;
     }
   }
 
-  if (end_border_adjoins_table) {
+  if (in_end_column) {
     // (7) The table's end border.
     result = ChooseBorder(
-        result,
-        CollapsedBorderValue(
-            table->TableEndBorderAdjoiningCell(this),
-            include_color ? table->ResolveColor(end_color_property) : Color(),
-            kBorderPrecedenceTable));
+        result, CollapsedBorderValue(table->StyleRef().BorderEnd(),
+                                     table->ResolveColor(end_color_property),
+                                     kBorderPrecedenceTable));
     if (!result.Exists())
       return result;
   }
@@ -894,37 +762,33 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedEndBorder(
   return result;
 }
 
-CollapsedBorderValue LayoutTableCell::ComputeCollapsedBeforeBorder(
-    IncludeBorderColorOrNot include_color) const {
-  LayoutTable* table = this->Table();
+CollapsedBorderValue LayoutTableCell::ComputeCollapsedBeforeBorder() const {
+  LayoutTable* table = Table();
+  LayoutTableCell* cell_above = table->CellAbove(*this);
+  // We can use the border shared with |cell_above| if it is valid.
+  if (StartsAtSameColumn(cell_above) &&
+      cell_above->collapsed_border_values_valid_) {
+    return cell_above->GetCollapsedBorderValues()
+               ? cell_above->GetCollapsedBorderValues()->AfterBorder()
+               : CollapsedBorderValue();
+  }
 
   // For before border, we need to check, in order of precedence:
   // (1) Our before border.
-  int before_color_property = include_color
-                                  ? CSSProperty::ResolveDirectionAwareProperty(
-                                        CSSPropertyWebkitBorderBeforeColor,
-                                        StyleForCellFlow().Direction(),
-                                        StyleForCellFlow().GetWritingMode())
-                                  : 0;
-  int after_color_property = include_color
-                                 ? CSSProperty::ResolveDirectionAwareProperty(
-                                       CSSPropertyWebkitBorderAfterColor,
-                                       StyleForCellFlow().Direction(),
-                                       StyleForCellFlow().GetWritingMode())
-                                 : 0;
+  CSSPropertyID before_color_property =
+      ResolveBorderProperty(GetCSSPropertyWebkitBorderBeforeColor());
+  CSSPropertyID after_color_property =
+      ResolveBorderProperty(GetCSSPropertyWebkitBorderAfterColor());
   CollapsedBorderValue result = CollapsedBorderValue(
-      Style()->BorderBefore(),
-      include_color ? ResolveColor(before_color_property) : Color(),
-      kBorderPrecedenceCell);
+      Style()->BorderBeforeStyle(), Style()->BorderBeforeWidth(),
+      ResolveColor(before_color_property), kBorderPrecedenceCell);
 
-  LayoutTableCell* prev_cell = table->CellAbove(this);
-  if (prev_cell) {
+  if (cell_above) {
     // (2) A before cell's after border.
     result = ChooseBorder(
-        CollapsedBorderValue(prev_cell->Style()->BorderAfter(),
-                             include_color
-                                 ? prev_cell->ResolveColor(after_color_property)
-                                 : Color(),
+        CollapsedBorderValue(cell_above->Style()->BorderAfterStyle(),
+                             cell_above->Style()->BorderAfterWidth(),
+                             cell_above->ResolveColor(after_color_property),
                              kBorderPrecedenceCell),
         result);
     if (!result.Exists())
@@ -933,29 +797,28 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedBeforeBorder(
 
   // (3) Our row's before border.
   result = ChooseBorder(
-      result, CollapsedBorderValue(
-                  Parent()->Style()->BorderBefore(),
-                  include_color ? Parent()->ResolveColor(before_color_property)
-                                : Color(),
-                  kBorderPrecedenceRow));
+      result,
+      CollapsedBorderValue(Parent()->Style()->BorderBeforeStyle(),
+                           Parent()->Style()->BorderBeforeWidth(),
+                           Parent()->ResolveColor(before_color_property),
+                           kBorderPrecedenceRow));
   if (!result.Exists())
     return result;
 
   // (4) The previous row's after border.
-  if (prev_cell) {
+  if (cell_above) {
     LayoutObject* prev_row = nullptr;
-    if (prev_cell->Section() == Section())
+    if (cell_above->Section() == Section())
       prev_row = Parent()->PreviousSibling();
     else
-      prev_row = prev_cell->Section()->LastRow();
+      prev_row = cell_above->Section()->LastRow();
 
     if (prev_row) {
       result = ChooseBorder(
-          CollapsedBorderValue(
-              prev_row->Style()->BorderAfter(),
-              include_color ? prev_row->ResolveColor(after_color_property)
-                            : Color(),
-              kBorderPrecedenceRow),
+          CollapsedBorderValue(prev_row->Style()->BorderAfterStyle(),
+                               prev_row->Style()->BorderAfterWidth(),
+                               prev_row->ResolveColor(after_color_property),
+                               kBorderPrecedenceRow),
           result);
       if (!result.Exists())
         return result;
@@ -967,11 +830,11 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedBeforeBorder(
   if (!RowIndex()) {
     // (5) Our row group's before border.
     result = ChooseBorder(
-        result, CollapsedBorderValue(curr_section->Style()->BorderBefore(),
-                                     include_color ? curr_section->ResolveColor(
-                                                         before_color_property)
-                                                   : Color(),
-                                     kBorderPrecedenceRowGroup));
+        result,
+        CollapsedBorderValue(curr_section->Style()->BorderBeforeStyle(),
+                             curr_section->Style()->BorderBeforeWidth(),
+                             curr_section->ResolveColor(before_color_property),
+                             kBorderPrecedenceRowGroup));
     if (!result.Exists())
       return result;
 
@@ -979,11 +842,10 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedBeforeBorder(
     curr_section = table->SectionAbove(curr_section, kSkipEmptySections);
     if (curr_section) {
       result = ChooseBorder(
-          CollapsedBorderValue(
-              curr_section->Style()->BorderAfter(),
-              include_color ? curr_section->ResolveColor(after_color_property)
-                            : Color(),
-              kBorderPrecedenceRowGroup),
+          CollapsedBorderValue(curr_section->Style()->BorderAfterStyle(),
+                               curr_section->Style()->BorderAfterWidth(),
+                               curr_section->ResolveColor(after_color_property),
+                               kBorderPrecedenceRowGroup),
           result);
       if (!result.Exists())
         return result;
@@ -998,22 +860,21 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedBeforeBorder(
     if (col_elt) {
       result = ChooseBorder(
           result,
-          CollapsedBorderValue(
-              col_elt->Style()->BorderBefore(),
-              include_color ? col_elt->ResolveColor(before_color_property)
-                            : Color(),
-              kBorderPrecedenceColumn));
+          CollapsedBorderValue(col_elt->Style()->BorderBeforeStyle(),
+                               col_elt->Style()->BorderBeforeWidth(),
+                               col_elt->ResolveColor(before_color_property),
+                               kBorderPrecedenceColumn));
       if (!result.Exists())
         return result;
       if (LayoutTableCol* enclosing_column_group =
               col_elt->EnclosingColumnGroup()) {
         result = ChooseBorder(
-            result, CollapsedBorderValue(
-                        enclosing_column_group->Style()->BorderBefore(),
-                        include_color ? enclosing_column_group->ResolveColor(
-                                            before_color_property)
-                                      : Color(),
-                        kBorderPrecedenceColumnGroup));
+            result,
+            CollapsedBorderValue(
+                enclosing_column_group->Style()->BorderBeforeStyle(),
+                enclosing_column_group->Style()->BorderBeforeWidth(),
+                enclosing_column_group->ResolveColor(before_color_property),
+                kBorderPrecedenceColumnGroup));
         if (!result.Exists())
           return result;
       }
@@ -1021,11 +882,10 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedBeforeBorder(
 
     // (9) The table's before border.
     result = ChooseBorder(
-        result, CollapsedBorderValue(
-                    table->Style()->BorderBefore(),
-                    include_color ? table->ResolveColor(before_color_property)
-                                  : Color(),
-                    kBorderPrecedenceTable));
+        result, CollapsedBorderValue(table->Style()->BorderBeforeStyle(),
+                                     table->Style()->BorderBeforeWidth(),
+                                     table->ResolveColor(before_color_property),
+                                     kBorderPrecedenceTable));
     if (!result.Exists())
       return result;
   }
@@ -1033,61 +893,56 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedBeforeBorder(
   return result;
 }
 
-CollapsedBorderValue LayoutTableCell::ComputeCollapsedAfterBorder(
-    IncludeBorderColorOrNot include_color) const {
-  LayoutTable* table = this->Table();
+CollapsedBorderValue LayoutTableCell::ComputeCollapsedAfterBorder() const {
+  LayoutTable* table = Table();
+  LayoutTableCell* cell_below = table->CellBelow(*this);
+  // We can use the border shared with |cell_below| if it is valid.
+  if (StartsAtSameColumn(cell_below) &&
+      cell_below->collapsed_border_values_valid_) {
+    return cell_below->GetCollapsedBorderValues()
+               ? cell_below->GetCollapsedBorderValues()->BeforeBorder()
+               : CollapsedBorderValue();
+  }
 
   // For after border, we need to check, in order of precedence:
   // (1) Our after border.
-  int before_color_property = include_color
-                                  ? CSSProperty::ResolveDirectionAwareProperty(
-                                        CSSPropertyWebkitBorderBeforeColor,
-                                        StyleForCellFlow().Direction(),
-                                        StyleForCellFlow().GetWritingMode())
-                                  : 0;
-  int after_color_property = include_color
-                                 ? CSSProperty::ResolveDirectionAwareProperty(
-                                       CSSPropertyWebkitBorderAfterColor,
-                                       StyleForCellFlow().Direction(),
-                                       StyleForCellFlow().GetWritingMode())
-                                 : 0;
+  CSSPropertyID before_color_property =
+      ResolveBorderProperty(GetCSSPropertyWebkitBorderBeforeColor());
+  CSSPropertyID after_color_property =
+      ResolveBorderProperty(GetCSSPropertyWebkitBorderAfterColor());
   CollapsedBorderValue result = CollapsedBorderValue(
-      Style()->BorderAfter(),
-      include_color ? ResolveColor(after_color_property) : Color(),
-      kBorderPrecedenceCell);
+      Style()->BorderAfterStyle(), Style()->BorderAfterWidth(),
+      ResolveColor(after_color_property), kBorderPrecedenceCell);
 
-  LayoutTableCell* next_cell = table->CellBelow(this);
-  if (next_cell) {
+  if (cell_below) {
     // (2) An after cell's before border.
     result = ChooseBorder(
-        result, CollapsedBorderValue(next_cell->Style()->BorderBefore(),
-                                     include_color ? next_cell->ResolveColor(
-                                                         before_color_property)
-                                                   : Color(),
-                                     kBorderPrecedenceCell));
+        result,
+        CollapsedBorderValue(cell_below->Style()->BorderBeforeStyle(),
+                             cell_below->Style()->BorderBeforeWidth(),
+                             cell_below->ResolveColor(before_color_property),
+                             kBorderPrecedenceCell));
     if (!result.Exists())
       return result;
   }
 
   // (3) Our row's after border. (FIXME: Deal with rowspan!)
   result = ChooseBorder(
-      result, CollapsedBorderValue(
-                  Parent()->Style()->BorderAfter(),
-                  include_color ? Parent()->ResolveColor(after_color_property)
-                                : Color(),
-                  kBorderPrecedenceRow));
+      result, CollapsedBorderValue(Parent()->Style()->BorderAfterStyle(),
+                                   Parent()->Style()->BorderAfterWidth(),
+                                   Parent()->ResolveColor(after_color_property),
+                                   kBorderPrecedenceRow));
   if (!result.Exists())
     return result;
 
   // (4) The next row's before border.
-  if (next_cell) {
+  if (cell_below) {
     result = ChooseBorder(
-        result,
-        CollapsedBorderValue(next_cell->Parent()->Style()->BorderBefore(),
-                             include_color ? next_cell->Parent()->ResolveColor(
-                                                 before_color_property)
-                                           : Color(),
-                             kBorderPrecedenceRow));
+        result, CollapsedBorderValue(
+                    cell_below->Parent()->Style()->BorderBeforeStyle(),
+                    cell_below->Parent()->Style()->BorderBeforeWidth(),
+                    cell_below->Parent()->ResolveColor(before_color_property),
+                    kBorderPrecedenceRow));
     if (!result.Exists())
       return result;
   }
@@ -1097,11 +952,11 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedAfterBorder(
   if (RowIndex() + RowSpan() >= curr_section->NumRows()) {
     // (5) Our row group's after border.
     result = ChooseBorder(
-        result, CollapsedBorderValue(curr_section->Style()->BorderAfter(),
-                                     include_color ? curr_section->ResolveColor(
-                                                         after_color_property)
-                                                   : Color(),
-                                     kBorderPrecedenceRowGroup));
+        result,
+        CollapsedBorderValue(curr_section->Style()->BorderAfterStyle(),
+                             curr_section->Style()->BorderAfterWidth(),
+                             curr_section->ResolveColor(after_color_property),
+                             kBorderPrecedenceRowGroup));
     if (!result.Exists())
       return result;
 
@@ -1109,12 +964,11 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedAfterBorder(
     curr_section = table->SectionBelow(curr_section, kSkipEmptySections);
     if (curr_section) {
       result = ChooseBorder(
-          result,
-          CollapsedBorderValue(
-              curr_section->Style()->BorderBefore(),
-              include_color ? curr_section->ResolveColor(before_color_property)
-                            : Color(),
-              kBorderPrecedenceRowGroup));
+          result, CollapsedBorderValue(
+                      curr_section->Style()->BorderBeforeStyle(),
+                      curr_section->Style()->BorderBeforeWidth(),
+                      curr_section->ResolveColor(before_color_property),
+                      kBorderPrecedenceRowGroup));
       if (!result.Exists())
         return result;
     }
@@ -1127,22 +981,22 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedAfterBorder(
             .InnermostColOrColGroup();
     if (col_elt) {
       result = ChooseBorder(
-          result, CollapsedBorderValue(col_elt->Style()->BorderAfter(),
-                                       include_color ? col_elt->ResolveColor(
-                                                           after_color_property)
-                                                     : Color(),
-                                       kBorderPrecedenceColumn));
+          result,
+          CollapsedBorderValue(col_elt->Style()->BorderAfterStyle(),
+                               col_elt->Style()->BorderAfterWidth(),
+                               col_elt->ResolveColor(after_color_property),
+                               kBorderPrecedenceColumn));
       if (!result.Exists())
         return result;
       if (LayoutTableCol* enclosing_column_group =
               col_elt->EnclosingColumnGroup()) {
         result = ChooseBorder(
-            result, CollapsedBorderValue(
-                        enclosing_column_group->Style()->BorderAfter(),
-                        include_color ? enclosing_column_group->ResolveColor(
-                                            after_color_property)
-                                      : Color(),
-                        kBorderPrecedenceColumnGroup));
+            result,
+            CollapsedBorderValue(
+                enclosing_column_group->Style()->BorderAfterStyle(),
+                enclosing_column_group->Style()->BorderAfterWidth(),
+                enclosing_column_group->ResolveColor(after_color_property),
+                kBorderPrecedenceColumnGroup));
         if (!result.Exists())
           return result;
       }
@@ -1150,11 +1004,10 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedAfterBorder(
 
     // (9) The table's after border.
     result = ChooseBorder(
-        result,
-        CollapsedBorderValue(
-            table->Style()->BorderAfter(),
-            include_color ? table->ResolveColor(after_color_property) : Color(),
-            kBorderPrecedenceTable));
+        result, CollapsedBorderValue(table->Style()->BorderAfterStyle(),
+                                     table->Style()->BorderAfterWidth(),
+                                     table->ResolveColor(after_color_property),
+                                     kBorderPrecedenceTable));
     if (!result.Exists())
       return result;
   }
@@ -1163,135 +1016,35 @@ CollapsedBorderValue LayoutTableCell::ComputeCollapsedAfterBorder(
 }
 
 LayoutUnit LayoutTableCell::BorderLeft() const {
-  return Table()->CollapseBorders() ? BorderHalfLeft(false)
-                                    : LayoutBlockFlow::BorderLeft();
+  return Table()->ShouldCollapseBorders()
+             ? LayoutUnit(CollapsedBorderHalfLeft(false))
+             : LayoutBlockFlow::BorderLeft();
 }
 
 LayoutUnit LayoutTableCell::BorderRight() const {
-  return Table()->CollapseBorders() ? BorderHalfRight(false)
-                                    : LayoutBlockFlow::BorderRight();
+  return Table()->ShouldCollapseBorders()
+             ? LayoutUnit(CollapsedBorderHalfRight(false))
+             : LayoutBlockFlow::BorderRight();
 }
 
 LayoutUnit LayoutTableCell::BorderTop() const {
-  return Table()->CollapseBorders() ? BorderHalfTop(false)
-                                    : LayoutBlockFlow::BorderTop();
+  return Table()->ShouldCollapseBorders()
+             ? LayoutUnit(CollapsedBorderHalfTop(false))
+             : LayoutBlockFlow::BorderTop();
 }
 
 LayoutUnit LayoutTableCell::BorderBottom() const {
-  return Table()->CollapseBorders() ? BorderHalfBottom(false)
-                                    : LayoutBlockFlow::BorderBottom();
+  return Table()->ShouldCollapseBorders()
+             ? LayoutUnit(CollapsedBorderHalfBottom(false))
+             : LayoutBlockFlow::BorderBottom();
 }
 
-// FIXME: https://bugs.webkit.org/show_bug.cgi?id=46191, make the collapsed
-// border drawing work with different block flow values instead of being
-// hard-coded to top-to-bottom.
-LayoutUnit LayoutTableCell::BorderStart() const {
-  return Table()->CollapseBorders() ? BorderHalfStart(false)
-                                    : LayoutBlockFlow::BorderStart();
-}
-
-LayoutUnit LayoutTableCell::BorderEnd() const {
-  return Table()->CollapseBorders() ? BorderHalfEnd(false)
-                                    : LayoutBlockFlow::BorderEnd();
-}
-
-LayoutUnit LayoutTableCell::BorderBefore() const {
-  return Table()->CollapseBorders() ? BorderHalfBefore(false)
-                                    : LayoutBlockFlow::BorderBefore();
-}
-
-LayoutUnit LayoutTableCell::BorderAfter() const {
-  return Table()->CollapseBorders() ? BorderHalfAfter(false)
-                                    : LayoutBlockFlow::BorderAfter();
-}
-
-LayoutUnit LayoutTableCell::BorderHalfLeft(bool outer) const {
-  const ComputedStyle& style_for_cell_flow = this->StyleForCellFlow();
-  if (style_for_cell_flow.IsHorizontalWritingMode())
-    return style_for_cell_flow.IsLeftToRightDirection() ? BorderHalfStart(outer)
-                                                        : BorderHalfEnd(outer);
-  return style_for_cell_flow.IsFlippedBlocksWritingMode()
-             ? BorderHalfAfter(outer)
-             : BorderHalfBefore(outer);
-}
-
-LayoutUnit LayoutTableCell::BorderHalfRight(bool outer) const {
-  const ComputedStyle& style_for_cell_flow = this->StyleForCellFlow();
-  if (style_for_cell_flow.IsHorizontalWritingMode())
-    return style_for_cell_flow.IsLeftToRightDirection()
-               ? BorderHalfEnd(outer)
-               : BorderHalfStart(outer);
-  return style_for_cell_flow.IsFlippedBlocksWritingMode()
-             ? BorderHalfBefore(outer)
-             : BorderHalfAfter(outer);
-}
-
-LayoutUnit LayoutTableCell::BorderHalfTop(bool outer) const {
-  const ComputedStyle& style_for_cell_flow = this->StyleForCellFlow();
-  if (style_for_cell_flow.IsHorizontalWritingMode())
-    return style_for_cell_flow.IsFlippedBlocksWritingMode()
-               ? BorderHalfAfter(outer)
-               : BorderHalfBefore(outer);
-  return style_for_cell_flow.IsLeftToRightDirection() ? BorderHalfStart(outer)
-                                                      : BorderHalfEnd(outer);
-}
-
-LayoutUnit LayoutTableCell::BorderHalfBottom(bool outer) const {
-  const ComputedStyle& style_for_cell_flow = this->StyleForCellFlow();
-  if (style_for_cell_flow.IsHorizontalWritingMode())
-    return style_for_cell_flow.IsFlippedBlocksWritingMode()
-               ? BorderHalfBefore(outer)
-               : BorderHalfAfter(outer);
-  return style_for_cell_flow.IsLeftToRightDirection() ? BorderHalfEnd(outer)
-                                                      : BorderHalfStart(outer);
-}
-
-LayoutUnit LayoutTableCell::BorderHalfStart(bool outer) const {
-  CollapsedBorderValue border =
-      ComputeCollapsedStartBorder(kDoNotIncludeBorderColor);
-  if (border.Exists()) {
-    return LayoutUnit(
-        (border.Width() +
-         ((StyleForCellFlow().IsLeftToRightDirection() ^ outer) ? 1 : 0)) /
-        2);  // Give the extra pixel to top and left.
-  }
-  return LayoutUnit();
-}
-
-LayoutUnit LayoutTableCell::BorderHalfEnd(bool outer) const {
-  CollapsedBorderValue border =
-      ComputeCollapsedEndBorder(kDoNotIncludeBorderColor);
-  if (border.Exists()) {
-    return LayoutUnit(
-        (border.Width() +
-         ((StyleForCellFlow().IsLeftToRightDirection() ^ outer) ? 0 : 1)) /
-        2);
-  }
-  return LayoutUnit();
-}
-
-LayoutUnit LayoutTableCell::BorderHalfBefore(bool outer) const {
-  CollapsedBorderValue border =
-      ComputeCollapsedBeforeBorder(kDoNotIncludeBorderColor);
-  if (border.Exists()) {
-    return LayoutUnit(
-        (border.Width() +
-         ((StyleForCellFlow().IsFlippedBlocksWritingMode() ^ outer) ? 0 : 1)) /
-        2);  // Give the extra pixel to top and left.
-  }
-  return LayoutUnit();
-}
-
-LayoutUnit LayoutTableCell::BorderHalfAfter(bool outer) const {
-  CollapsedBorderValue border =
-      ComputeCollapsedAfterBorder(kDoNotIncludeBorderColor);
-  if (border.Exists()) {
-    return LayoutUnit(
-        (border.Width() +
-         ((StyleForCellFlow().IsFlippedBlocksWritingMode() ^ outer) ? 1 : 0)) /
-        2);
-  }
-  return LayoutUnit();
+bool LayoutTableCell::IsFirstColumnCollapsed() const {
+  if (!RuntimeEnabledFeatures::VisibilityCollapseColumnEnabled())
+    return false;
+  if (!HasSetAbsoluteColumnIndex())
+    return false;
+  return Table()->IsAbsoluteColumnCollapsed(AbsoluteColumnIndex());
 }
 
 void LayoutTableCell::Paint(const PaintInfo& paint_info,
@@ -1299,70 +1052,49 @@ void LayoutTableCell::Paint(const PaintInfo& paint_info,
   TableCellPainter(*this).Paint(paint_info, paint_offset);
 }
 
-static void AddBorderStyle(LayoutTable::CollapsedBorderValues& border_values,
-                           CollapsedBorderValue border_value) {
-  if (!border_value.IsVisible())
-    return;
-  size_t count = border_values.size();
-  for (size_t i = 0; i < count; ++i) {
-    if (border_values[i].IsSameIgnoringColor(border_value))
-      return;
-  }
-  border_values.push_back(border_value);
-}
-
-void LayoutTableCell::CollectBorderValues(
-    LayoutTable::CollapsedBorderValues& border_values) {
-  CollapsedBorderValues new_values(
-      *this, ComputeCollapsedStartBorder(), ComputeCollapsedEndBorder(),
-      ComputeCollapsedBeforeBorder(), ComputeCollapsedAfterBorder());
-
+void LayoutTableCell::UpdateCollapsedBorderValues() const {
   bool changed = false;
-  if (!new_values.StartBorder().IsVisible() &&
-      !new_values.EndBorder().IsVisible() &&
-      !new_values.BeforeBorder().IsVisible() &&
-      !new_values.AfterBorder().IsVisible()) {
-    changed = !!collapsed_border_values_;
-    collapsed_border_values_ = nullptr;
-  } else if (!collapsed_border_values_) {
-    changed = true;
-    collapsed_border_values_ = WTF::WrapUnique(new CollapsedBorderValues(
-        *this, new_values.StartBorder(), new_values.EndBorder(),
-        new_values.BeforeBorder(), new_values.AfterBorder()));
+
+  if (!Table()->ShouldCollapseBorders()) {
+    if (collapsed_border_values_) {
+      changed = true;
+      collapsed_border_values_ = nullptr;
+    }
   } else {
-    // We check visuallyEquals so that the table cell is invalidated only if a
-    // changed collapsed border is visible in the first place.
-    changed = !collapsed_border_values_->StartBorder().VisuallyEquals(
-                  new_values.StartBorder()) ||
-              !collapsed_border_values_->EndBorder().VisuallyEquals(
-                  new_values.EndBorder()) ||
-              !collapsed_border_values_->BeforeBorder().VisuallyEquals(
-                  new_values.BeforeBorder()) ||
-              !collapsed_border_values_->AfterBorder().VisuallyEquals(
-                  new_values.AfterBorder());
-    if (changed)
-      collapsed_border_values_->SetCollapsedBorderValues(new_values);
+    Table()->InvalidateCollapsedBordersForAllCellsIfNeeded();
+    if (collapsed_border_values_valid_)
+      return;
+
+    collapsed_border_values_valid_ = true;
+
+    auto new_values = std::make_unique<CollapsedBorderValues>(
+        ComputeCollapsedStartBorder(), ComputeCollapsedEndBorder(),
+        ComputeCollapsedBeforeBorder(), ComputeCollapsedAfterBorder());
+
+    // We need to save collapsed border if has a non-zero width even if it's
+    // invisible because the width affects table layout.
+    if (!new_values->HasNonZeroWidthBorder()) {
+      if (collapsed_border_values_) {
+        changed = true;
+        collapsed_border_values_ = nullptr;
+      }
+    } else if (!collapsed_border_values_ ||
+               !collapsed_border_values_->VisuallyEquals(*new_values)) {
+      changed = true;
+      collapsed_border_values_ = std::move(new_values);
+    }
   }
 
-  // If collapsed borders changed, invalidate the cell's display item client on
-  // the table's backing.
-  // TODO(crbug.com/451090#c5): Need a way to invalidate/repaint the borders
-  // only.
-  if (changed) {
-    ObjectPaintInvalidator(*Table())
-        .SlowSetPaintingLayerNeedsRepaintAndInvalidateDisplayItemClient(
-            *this, kPaintInvalidationStyleChange);
+  if (!changed && !collapsed_borders_need_paint_invalidation_)
+    return;
+
+  // Invalidate the rows which will paint the collapsed borders.
+  auto row_span = RowSpan();
+  for (auto r = RowIndex(); r < RowIndex() + row_span; ++r) {
+    if (auto* row = Section()->RowLayoutObjectAt(r))
+      row->SetShouldDoFullPaintInvalidation(PaintInvalidationReason::kStyle);
   }
-
-  AddBorderStyle(border_values, new_values.StartBorder());
-  AddBorderStyle(border_values, new_values.EndBorder());
-  AddBorderStyle(border_values, new_values.BeforeBorder());
-  AddBorderStyle(border_values, new_values.AfterBorder());
-}
-
-void LayoutTableCell::SortBorderValues(
-    LayoutTable::CollapsedBorderValues& border_values) {
-  std::sort(border_values.begin(), border_values.end(), CompareBorders);
+  collapsed_borders_need_paint_invalidation_ = false;
 }
 
 void LayoutTableCell::PaintBoxDecorationBackground(
@@ -1424,7 +1156,7 @@ LayoutTableCell* LayoutTableCell::CreateAnonymousWithParent(
     const LayoutObject* parent) {
   LayoutTableCell* new_cell =
       LayoutTableCell::CreateAnonymous(&parent->GetDocument());
-  RefPtr<ComputedStyle> new_style =
+  scoped_refptr<ComputedStyle> new_style =
       ComputedStyle::CreateAnonymousStyleWithDisplay(parent->StyleRef(),
                                                      EDisplay::kTableCell);
   new_cell->SetStyle(std::move(new_style));
@@ -1436,32 +1168,12 @@ bool LayoutTableCell::BackgroundIsKnownToBeOpaqueInRect(
   // If this object has layer, the area of collapsed borders should be
   // transparent to expose the collapsed borders painted on the underlying
   // layer.
-  if (HasLayer() && Table()->CollapseBorders())
+  if (HasLayer() && Table()->ShouldCollapseBorders())
     return false;
   return LayoutBlockFlow::BackgroundIsKnownToBeOpaqueInRect(local_rect);
 }
 
-bool LayoutTableCell::UsesCompositedCellDisplayItemClients() const {
-  // In certain cases such as collapsed borders for composited table cells we
-  // paint content for the cell into the table graphics layer backing and so
-  // must use the table's visual rect.
-  return (HasLayer() && Layer()->GetCompositingState() != kNotComposited) ||
-         RuntimeEnabledFeatures::slimmingPaintV2Enabled();
-}
-
-void LayoutTableCell::InvalidateDisplayItemClients(
-    PaintInvalidationReason reason) const {
-  LayoutBlockFlow::InvalidateDisplayItemClients(reason);
-
-  if (!UsesCompositedCellDisplayItemClients())
-    return;
-
-  ObjectPaintInvalidator invalidator(*this);
-  if (collapsed_border_values_)
-    invalidator.InvalidateDisplayItemClient(*collapsed_border_values_, reason);
-}
-
-// TODO(lunalu): Deliberately dump the "inner" box of table cells, since that
+// TODO(loonybear): Deliberately dump the "inner" box of table cells, since that
 // is what current results reflect.  We'd like to clean up the results to dump
 // both the outer box and the intrinsic padding so that both bits of information
 // are captured by the results.
@@ -1488,14 +1200,9 @@ bool LayoutTableCell::HasLineIfEmpty() const {
   return LayoutBlock::HasLineIfEmpty();
 }
 
-PaintInvalidationReason LayoutTableCell::InvalidatePaintIfNeeded(
+PaintInvalidationReason LayoutTableCell::InvalidatePaint(
     const PaintInvalidatorContext& context) const {
   return TableCellPaintInvalidator(*this, context).InvalidatePaint();
-}
-
-PaintInvalidationReason LayoutTableCell::InvalidatePaintIfNeeded(
-    const PaintInvalidationState& state) {
-  return LayoutBlockFlow::InvalidatePaintIfNeeded(state);
 }
 
 }  // namespace blink

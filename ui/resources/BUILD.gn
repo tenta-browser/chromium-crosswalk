@@ -35,11 +35,19 @@ grit("ui_unscaled_resources_grd") {
 
 grit("webui_resources_grd") {
   source = "../webui/resources/webui_resources.grd"
+
+  # The .grd contains references to generated files.
+  source_is_generated = true
+
   outputs = [
     "grit/webui_resources.h",
     "grit/webui_resources_map.cc",
     "grit/webui_resources_map.h",
     "webui_resources.pak",
+  ]
+  grit_flags = [
+    "-E",
+    "root_gen_dir=" + rebase_path(root_gen_dir, root_build_dir),
   ]
 }
 
@@ -157,6 +165,7 @@ repack("repack_ui_test_pak_100_percent") {
   ]
 
   sources = [
+    "$root_gen_dir/mojo/public/js/mojo_bindings_resources.pak",
     "$root_gen_dir/ui/resources/ui_resources_100_percent.pak",
     "$root_gen_dir/ui/resources/webui_resources.pak",
     "$root_gen_dir/ui/strings/app_locale_settings_en-US.pak",
@@ -173,6 +182,7 @@ repack("repack_ui_test_pak_100_percent") {
   output = "$root_out_dir/ui_test.pak"
 
   deps = [
+    "//mojo/public/js:resources",
     "//ui/resources",
     "//ui/strings",
   ]
@@ -227,7 +237,7 @@ repack("repack_ui_test_pak_200_percent") {
 }
 
 # Repack just the strings for the framework locales on Mac and iOS. This
-# emulates repack_locales.py, but just for en-US. Note ui_test.pak is not simply
+# emulates repack_locales(), but just for en-US. Note ui_test.pak is not simply
 # copied, because it causes leaks from allocations within system libraries when
 # trying to load non-string resources. http://crbug.com/413034.
 repack("repack_ui_test_mac_locale_pack") {

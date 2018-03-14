@@ -285,40 +285,6 @@ var Runtime = class {
   }
 
   /**
-   * @param {string} appName
-   */
-  static startSharedWorker(appName) {
-    var startPromise = Runtime.startApplication(appName);
-
-    /**
-     * @param {!MessageEvent} event
-     */
-    self.onconnect = function(event) {
-      var newPort = /** @type {!MessagePort} */ (event.ports[0]);
-      startPromise.then(sendWorkerReadyAndContinue);
-
-      function sendWorkerReadyAndContinue() {
-        newPort.postMessage('workerReady');
-        if (Runtime._sharedWorkerNewPortCallback)
-          Runtime._sharedWorkerNewPortCallback.call(null, newPort);
-        else
-          Runtime._sharedWorkerConnectedPorts.push(newPort);
-      }
-    };
-  }
-
-  /**
-   * @param {function(!MessagePort)} callback
-   */
-  static setSharedWorkerNewPortCallback(callback) {
-    Runtime._sharedWorkerNewPortCallback = callback;
-    while (Runtime._sharedWorkerConnectedPorts.length) {
-      var port = Runtime._sharedWorkerConnectedPorts.shift();
-      callback.call(null, port);
-    }
-  }
-
-  /**
    * @param {string} name
    * @return {?string}
    */
@@ -574,10 +540,7 @@ var Runtime = class {
     constructorFunction[Runtime._instanceSymbol] = instance;
     return instance;
   }
-}
-
-;
-
+};
 
 /**
  * @type {!Object.<string, string>}
@@ -587,7 +550,6 @@ Runtime._queryParamsObject = {
 };
 
 Runtime._instanceSymbol = Symbol('instance');
-Runtime._extensionSymbol = Symbol('extension');
 
 /**
  * @type {!Object.<string, string>}
@@ -595,12 +557,6 @@ Runtime._extensionSymbol = Symbol('extension');
 Runtime.cachedResources = {
   __proto__: null
 };
-
-
-/** @type {?function(!MessagePort)} */
-Runtime._sharedWorkerNewPortCallback = null;
-/** @type {!Array<!MessagePort>} */
-Runtime._sharedWorkerConnectedPorts = [];
 
 
 Runtime._console = console;
@@ -781,6 +737,10 @@ Runtime.Module = class {
       'ui': 'UI',
       'object_ui': 'ObjectUI',
       'perf_ui': 'PerfUI',
+      'har_importer': 'HARImporter',
+      'sass_test_runner': 'SASSTestRunner',
+      'sdk_test_runner': 'SDKTestRunner',
+      'cpu_profiler_test_runner': 'CPUProfilerTestRunner'
     };
     var namespace = specialCases[this._name] || this._name.split('_').map(a => a.substring(0, 1).toUpperCase() + a.substring(1)).join('');
     self[namespace] = self[namespace] || {};
@@ -1095,14 +1055,14 @@ Runtime.experiments = new Runtime.ExperimentsSupport();
 /**
  * @type {?string}
  */
-Runtime._remoteBase = Runtime.queryParam('remoteBase');
-{
-  (function validateRemoteBase() {
-    var remoteBaseRegexp = /^https:\/\/chrome-devtools-frontend\.appspot\.com\/serve_file\/@[0-9a-zA-Z]+\/?$/;
-    if (Runtime._remoteBase && !remoteBaseRegexp.test(Runtime._remoteBase))
-      Runtime._remoteBase = null;
-  })();
-}
+Runtime._remoteBase;
+(function validateRemoteBase() {
+  if (location.href.startsWith('chrome-devtools://devtools/bundled/') && Runtime.queryParam('remoteBase')) {
+    var versionMatch = /\/serve_file\/(@[0-9a-zA-Z]+)\/?$/.exec(Runtime.queryParam('remoteBase'));
+    if (versionMatch)
+      Runtime._remoteBase = `${location.origin}/remote/serve_file/${versionMatch[1]}/`;
+  }
+})();
 
 
 /**

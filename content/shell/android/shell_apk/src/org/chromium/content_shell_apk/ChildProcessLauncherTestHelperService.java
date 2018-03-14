@@ -5,7 +5,6 @@
 package org.chromium.content_shell_apk;
 
 import android.app.Service;
-import android.content.Context;
 import android.content.Intent;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -19,15 +18,10 @@ import org.chromium.base.CommandLine;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.library_loader.ProcessInitException;
-import org.chromium.base.process_launcher.ChildProcessCreationParams;
+import org.chromium.base.process_launcher.ChildProcessConnection;
 import org.chromium.base.process_launcher.FileDescriptorInfo;
-import org.chromium.content.browser.ChildProcessConnection;
-import org.chromium.content.browser.ChildProcessLauncher;
-import org.chromium.content.browser.LauncherThread;
-
-import java.util.concurrent.Callable;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.Semaphore;
+import org.chromium.content.browser.ChildProcessCreationParams;
+import org.chromium.content.browser.ChildProcessLauncherHelper;
 
 /**
  * A Service that assists the ChildProcessLauncherTest that responds to one message, which
@@ -38,6 +32,8 @@ import java.util.concurrent.Semaphore;
 public class ChildProcessLauncherTestHelperService extends Service {
     public static final int MSG_BIND_SERVICE = IBinder.FIRST_CALL_TRANSACTION + 1;
     public static final int MSG_BIND_SERVICE_REPLY = MSG_BIND_SERVICE + 1;
+    public static final int MSG_UNBIND_SERVICE = MSG_BIND_SERVICE_REPLY + 1;
+    public static final int MSG_UNBIND_SERVICE_REPLY = MSG_UNBIND_SERVICE + 1;
 
     private final Handler.Callback mHandlerCallback = new Handler.Callback() {
         @Override
@@ -46,6 +42,10 @@ public class ChildProcessLauncherTestHelperService extends Service {
                 case MSG_BIND_SERVICE:
                     doBindService(msg);
                     return true;
+                case MSG_UNBIND_SERVICE:
+                    unbindService(msg);
+                    System.exit(0);
+                    return true;
             }
             return false;
         }
@@ -53,52 +53,7 @@ public class ChildProcessLauncherTestHelperService extends Service {
 
     private final HandlerThread mHandlerThread = new HandlerThread("Helper Service Handler");
 
-    public static void runOnLauncherThreadBlocking(final Runnable runnable) {
-        if (LauncherThread.runningOnLauncherThread()) {
-            runnable.run();
-            return;
-        }
-        final Semaphore done = new Semaphore(0);
-        LauncherThread.post(new Runnable() {
-            @Override
-            public void run() {
-                runnable.run();
-                done.release();
-            }
-        });
-        done.acquireUninterruptibly();
-    }
-
-    public static <R> R runOnLauncherAndGetResult(Callable<R> callable) {
-        if (LauncherThread.runningOnLauncherThread()) {
-            try {
-                return callable.call();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        }
-        try {
-            FutureTask<R> task = new FutureTask<R>(callable);
-            LauncherThread.post(task);
-            return task.get();
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    public static ChildProcessConnection startInternalForTesting(final Context context,
-            final String[] commandLine, final FileDescriptorInfo[] filesToMap,
-            final ChildProcessCreationParams params) {
-        return runOnLauncherAndGetResult(new Callable<ChildProcessConnection>() {
-            @Override
-            public ChildProcessConnection call() {
-                return ChildProcessLauncher.startInternal(context, commandLine,
-                        0 /* childProcessId */, filesToMap, null /* launchCallback */,
-                        null /* childProcessCallback */, true /* inSandbox */,
-                        false /* alwaysInForeground */, params);
-            }
-        });
-    }
+    private ChildProcessLauncherHelper mProcessLauncher;
 
     @Override
     public void onCreate() {
@@ -122,32 +77,50 @@ public class ChildProcessLauncherTestHelperService extends Service {
     private void doBindService(final Message msg) {
         String[] commandLine = { "_", "--" + BaseSwitches.RENDERER_WAIT_FOR_JAVA_DEBUGGER };
         final boolean bindToCaller = true;
-        ChildProcessCreationParams params = new ChildProcessCreationParams(
-                getPackageName(), false, LibraryProcessType.PROCESS_CHILD, bindToCaller);
-        final ChildProcessConnection conn =
-                startInternalForTesting(this, commandLine, new FileDescriptorInfo[0], params);
+        ChildProcessCreationParams params = new ChildProcessCreationParams(getPackageName(), false,
+                LibraryProcessType.PROCESS_CHILD, bindToCaller,
+                false /* ignoreVisibilityForImportance */);
+        mProcessLauncher = ChildProcessLauncherTestUtils.startForTesting(true /* sandboxed */,
+                commandLine, new FileDescriptorInfo[0], params, true /* doSetupConnection */);
 
-        // Poll the connection until it is set up. The main test in ChildProcessLauncherTest, which
-        // has bound the connection to this service, manages the timeout via the lifetime of this
-        // service.
+        // Poll the launcher until the connection is set up. The main test in
+        // ChildProcessLauncherTest, which has bound the connection to this service, manages the
+        // timeout via the lifetime of this service.
         final Handler handler = new Handler();
         final Runnable task = new Runnable() {
             final Messenger mReplyTo = msg.replyTo;
 
             @Override
             public void run() {
-                if (conn.getPid() != 0) {
-                    try {
-                        mReplyTo.send(Message.obtain(null, MSG_BIND_SERVICE_REPLY, conn.getPid(),
-                                    conn.getServiceNumber()));
-                    } catch (RemoteException ex) {
-                        throw new RuntimeException(ex);
-                    }
-                } else {
+                int pid = 0;
+                ChildProcessConnection conn = mProcessLauncher.getChildProcessConnection();
+                if (conn != null) {
+                    pid = ChildProcessLauncherTestUtils.getConnectionPid(conn);
+                }
+                if (pid == 0) {
                     handler.postDelayed(this, 10 /* milliseconds */);
+                    return;
+                }
+
+                try {
+                    mReplyTo.send(Message.obtain(null, MSG_BIND_SERVICE_REPLY, pid,
+                            ChildProcessLauncherTestUtils.getConnectionServiceNumber(conn)));
+                } catch (RemoteException ex) {
+                    throw new RuntimeException(ex);
                 }
             }
         };
         handler.postDelayed(task, 10);
+    }
+
+    private void unbindService(Message msg) {
+        // Crash the service instead of unbinding so we are guaranteed the service process dies
+        // (if we were to unbind, the service process would stay around and may be reused).
+        try {
+            mProcessLauncher.getChildProcessConnection().crashServiceForTesting();
+            msg.replyTo.send(Message.obtain(null, MSG_UNBIND_SERVICE_REPLY));
+        } catch (RemoteException ex) {
+            throw new RuntimeException(ex);
+        }
     }
 }

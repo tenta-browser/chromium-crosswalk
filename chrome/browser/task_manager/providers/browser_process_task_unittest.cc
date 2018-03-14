@@ -54,9 +54,9 @@ TEST_F(BrowserProcessTaskProviderTest, GetTaskOfUrlRequest) {
   provider.SetObserver(this);
   EXPECT_NE(nullptr, provided_task_);
 
-  Task* result = provider.GetTaskOfUrlRequest(1, 0, 0);
+  Task* result = provider.GetTaskOfUrlRequest(2, 0);
   EXPECT_EQ(nullptr, result);
-  result = provider.GetTaskOfUrlRequest(0, -1, 0);
+  result = provider.GetTaskOfUrlRequest(-1, 0);
   EXPECT_EQ(provided_task_, result);
 }
 
@@ -75,14 +75,12 @@ TEST_F(BrowserProcessTaskProviderTest, TestProvidedTask) {
   EXPECT_EQ(Task::BROWSER, provided_task_->GetType());
   EXPECT_EQ(0, provided_task_->GetChildProcessUniqueID());
   const int received_bytes = 1024;
-  EXPECT_FALSE(provided_task_->ReportsNetworkUsage());
-  EXPECT_EQ(-1, provided_task_->network_usage());
+  EXPECT_EQ(0, provided_task_->network_usage_rate());
   provided_task_->OnNetworkBytesRead(received_bytes);
   // Do a refresh with a 1-second update time.
   provided_task_->Refresh(base::TimeDelta::FromSeconds(1),
                           REFRESH_TYPE_NETWORK_USAGE);
-  EXPECT_TRUE(provided_task_->ReportsNetworkUsage());
-  EXPECT_EQ(received_bytes, provided_task_->network_usage());
+  EXPECT_EQ(received_bytes, provided_task_->network_usage_rate());
 }
 
 }  // namespace task_manager

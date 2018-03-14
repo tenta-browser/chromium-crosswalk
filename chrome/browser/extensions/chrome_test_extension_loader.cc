@@ -8,6 +8,7 @@
 
 #include "base/files/file_util.h"
 #include "base/run_loop.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/browser/extensions/chrome_extension_test_notification_observer.h"
 #include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/extension_creator.h"
@@ -22,6 +23,7 @@
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/notification_types.h"
 #include "extensions/browser/test_extension_registry_observer.h"
+#include "extensions/test/extension_test_notification_observer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace extensions {
@@ -33,7 +35,13 @@ ChromeTestExtensionLoader::ChromeTestExtensionLoader(
       extension_service_(extension_system_->extension_service()),
       extension_registry_(ExtensionRegistry::Get(browser_context)) {}
 
-ChromeTestExtensionLoader::~ChromeTestExtensionLoader() {}
+ChromeTestExtensionLoader::~ChromeTestExtensionLoader() {
+  // If there was a temporary directory created for a CRX, we need to clean it
+  // up before the member is destroyed so we can explicitly allow IO.
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  if (temp_dir_.IsValid())
+    EXPECT_TRUE(temp_dir_.Delete());
+}
 
 scoped_refptr<const Extension> ChromeTestExtensionLoader::LoadExtension(
     const base::FilePath& path) {
@@ -50,9 +58,9 @@ scoped_refptr<const Extension> ChromeTestExtensionLoader::LoadExtension(
   }
 
   if (should_fail_ && extension)
-    ADD_FAILURE() << "Expected extension installation failure, but succeeded";
+    ADD_FAILURE() << "Expected extension load failure, but succeeded";
   else if (!should_fail_ && !extension)
-    ADD_FAILURE() << "Failed to install extension";
+    ADD_FAILURE() << "Failed to load extension";
 
   if (!extension)
     return nullptr;
@@ -63,8 +71,10 @@ scoped_refptr<const Extension> ChromeTestExtensionLoader::LoadExtension(
   // non-shared modules.
   // TODO(devlin): That's not good; we shouldn't be crashing.
   if (!SharedModuleInfo::IsSharedModule(extension.get())) {
+    CheckPermissions(extension.get());
+    // Make |extension| null since it may have been reloaded invalidating
+    // pointers to it.
     extension = nullptr;
-    CheckPermissions(extension_id_);
   }
 
   if (!install_param_.empty()) {
@@ -81,7 +91,7 @@ scoped_refptr<const Extension> ChromeTestExtensionLoader::LoadExtension(
   extension = extension_registry_->enabled_extensions().GetByID(extension_id_);
   if (!extension)
     return nullptr;
-  if (!CheckErrors(*extension))
+  if (!CheckInstallWarnings(*extension))
     return nullptr;
 
   base::RunLoop().RunUntilIdle();
@@ -99,11 +109,16 @@ bool ChromeTestExtensionLoader::WaitForExtensionReady() {
 
 base::FilePath ChromeTestExtensionLoader::PackExtension(
     const base::FilePath& unpacked_path) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   if (!base::PathExists(unpacked_path)) {
     ADD_FAILURE() << "Unpacked path does not exist: " << unpacked_path.value();
     return base::FilePath();
   }
 
+  if (!temp_dir_.CreateUniqueTempDir()) {
+    ADD_FAILURE() << "Could not create unique temp dir.";
+    return base::FilePath();
+  }
   base::FilePath crx_path = temp_dir_.GetPath().AppendASCII("temp.crx");
   if (base::PathExists(crx_path)) {
     ADD_FAILURE() << "Crx path exists: " << crx_path.value()
@@ -118,7 +133,8 @@ base::FilePath ChromeTestExtensionLoader::PackExtension(
     return base::FilePath();
   }
 
-  base::FilePath* pem_path_to_use = &fallback_pem_path;
+  base::FilePath empty_path;
+  base::FilePath* pem_path_to_use = &empty_path;
   if (!pem_path_.empty()) {
     pem_path_to_use = &pem_path_;
     if (!base::PathExists(pem_path_)) {
@@ -177,15 +193,25 @@ scoped_refptr<const Extension> ChromeTestExtensionLoader::LoadCrx(
   return extension;
 }
 
-void ChromeTestExtensionLoader::CheckPermissions(
-    const std::string& extension_id) {
-  std::string id = extension_id;
+void ChromeTestExtensionLoader::CheckPermissions(const Extension* extension) {
+  std::string id = extension->id();
+
+  // If the client explicitly set |allow_file_access_|, use that value. Else
+  // use the default as per the extensions manifest location.
+  if (!allow_file_access_) {
+    allow_file_access_ =
+        Manifest::ShouldAlwaysAllowFileAccess(extension->location());
+  }
+
+  // |extension| may be reloaded subsequently, invalidating the pointer. Hence
+  // make it null.
+  extension = nullptr;
 
   // Toggling incognito or file access will reload the extension, so wait for
   // the reload.
-  if (allow_file_access_ != util::AllowFileAccess(id, browser_context_)) {
+  if (*allow_file_access_ != util::AllowFileAccess(id, browser_context_)) {
     TestExtensionRegistryObserver registry_observer(extension_registry_, id);
-    util::SetAllowFileAccess(id, browser_context_, allow_file_access_);
+    util::SetAllowFileAccess(id, browser_context_, *allow_file_access_);
     registry_observer.WaitForExtensionLoaded();
   }
 
@@ -203,16 +229,22 @@ scoped_refptr<const Extension> ChromeTestExtensionLoader::LoadUnpacked(
   TestExtensionRegistryObserver registry_observer(extension_registry_);
   scoped_refptr<UnpackedInstaller> installer =
       UnpackedInstaller::Create(extension_service_);
-  installer->set_prompt_for_plugins(false);
   installer->set_require_modern_manifest_version(
       require_modern_manifest_version_);
   installer->Load(file_path);
-  extension = registry_observer.WaitForExtensionLoaded();
+  if (!should_fail_) {
+    extension = registry_observer.WaitForExtensionLoaded();
+  } else {
+    EXPECT_TRUE(ExtensionTestNotificationObserver(browser_context_)
+                    .WaitForExtensionLoadError())
+        << "No load error observed";
+  }
 
   return extension;
 }
 
-bool ChromeTestExtensionLoader::CheckErrors(const Extension& extension) {
+bool ChromeTestExtensionLoader::CheckInstallWarnings(
+    const Extension& extension) {
   if (ignore_manifest_warnings_)
     return true;
   const std::vector<InstallWarning>& install_warnings =

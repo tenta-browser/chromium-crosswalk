@@ -13,6 +13,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -22,10 +23,10 @@
 #include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/infobars/infobar_service.h"
-#include "chrome/browser/lifetime/keep_alive_types.h"
-#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_impl.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sessions/session_restore.h"
@@ -38,6 +39,7 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/startup/startup_browser_creator_impl.h"
+#include "chrome/browser/ui/startup/startup_tab_provider.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
@@ -46,13 +48,20 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/keep_alive_registry/keep_alive_types.h"
+#include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "components/metrics/metrics_pref_names.h"
+#include "components/policy/core/browser/browser_policy_connector.h"
+#include "components/policy/core/common/mock_configuration_policy_provider.h"
+#include "components/policy/policy_constants.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/extension_system.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -60,15 +69,10 @@
 #include "base/callback.h"
 #include "base/run_loop.h"
 #include "base/values.h"
-#include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/external_data_fetcher.h"
-#include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
-#include "components/policy/policy_constants.h"
-#include "testing/gmock/include/gmock/gmock.h"
 
-using testing::_;
 using testing::Return;
 #endif  // !defined(OS_CHROMEOS)
 
@@ -82,6 +86,7 @@ using testing::Return;
 #include "base/win/windows_version.h"
 #endif
 
+using testing::_;
 using extensions::Extension;
 
 namespace {
@@ -137,6 +142,8 @@ Browser* CloseBrowserAndOpenNew(Browser* browser, Profile* profile) {
 }
 
 #endif  // !defined(OS_CHROMEOS)
+
+typedef base::Optional<policy::PolicyLevel> PolicyVariant;
 
 }  // namespace
 
@@ -323,6 +330,44 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
             tab_strip->GetWebContentsAt(0)->GetURL().possibly_invalid_spec());
 }
 
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, OpenAppUrlShortcut) {
+  // Add --app=<url> to the command line. Tests launching legacy apps which may
+  // have been created by "Add to Desktop" in old versions of Chrome.
+  // TODO(mgiuca): Delete this feature (https://crbug.com/751029). We are
+  // keeping it for now to avoid disrupting existing workflows.
+  base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
+  GURL url = ui_test_utils::GetTestUrl(
+      base::FilePath(base::FilePath::kCurrentDirectory),
+      base::FilePath(FILE_PATH_LITERAL("title2.html")));
+  command_line.AppendSwitchASCII(switches::kApp, url.spec());
+
+  chrome::startup::IsFirstRun first_run =
+      first_run::IsChromeFirstRun() ? chrome::startup::IS_FIRST_RUN
+                                    : chrome::startup::IS_NOT_FIRST_RUN;
+  StartupBrowserCreatorImpl launch(base::FilePath(), command_line, first_run);
+  ASSERT_TRUE(launch.Launch(browser()->profile(), std::vector<GURL>(), false));
+
+  Browser* new_browser = FindOneOtherBrowser(browser());
+  ASSERT_TRUE(new_browser);
+
+  // The new window should be an app window.
+  EXPECT_TRUE(new_browser->is_app());
+
+  TabStripModel* tab_strip = new_browser->tab_strip_model();
+  ASSERT_EQ(1, tab_strip->count());
+  content::WebContents* web_contents = tab_strip->GetWebContentsAt(0);
+  // At this stage, the web contents' URL should be the one passed in to --app
+  // (but it will not yet be committed into the navigation controller).
+  EXPECT_EQ("title2.html", web_contents->GetVisibleURL().ExtractFileName());
+
+  // Wait until the navigation is complete. Then the URL will be committed to
+  // the navigation controller.
+  content::TestNavigationObserver observer(web_contents, 1);
+  observer.Wait();
+  EXPECT_EQ("title2.html",
+            web_contents->GetLastCommittedURL().ExtractFileName());
+}
+
 // App shortcuts are not implemented on mac os.
 #if !defined(OS_MACOSX)
 IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, OpenAppShortcutNoPref) {
@@ -449,7 +494,11 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, StartupURLsForTwoProfiles) {
   base::FilePath dest_path = profile_manager->user_data_dir();
   dest_path = dest_path.Append(FILE_PATH_LITERAL("New Profile 1"));
 
-  Profile* other_profile = profile_manager->GetProfile(dest_path);
+  Profile* other_profile = nullptr;
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    other_profile = profile_manager->GetProfile(dest_path);
+  }
   ASSERT_TRUE(other_profile);
 
   // Use a couple arbitrary URLs.
@@ -635,6 +684,7 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
   base::FilePath dest_path4 = profile_manager->user_data_dir().Append(
       FILE_PATH_LITERAL("New Profile 4"));
 
+  base::ScopedAllowBlockingForTesting allow_blocking;
   Profile* profile_home1 = profile_manager->GetProfile(dest_path1);
   ASSERT_TRUE(profile_home1);
   Profile* profile_home2 = profile_manager->GetProfile(dest_path2);
@@ -743,12 +793,18 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, ProfilesLaunchedAfterCrash) {
   base::FilePath dest_path3 = profile_manager->user_data_dir().Append(
       FILE_PATH_LITERAL("New Profile 3"));
 
-  Profile* profile_home = profile_manager->GetProfile(dest_path1);
-  ASSERT_TRUE(profile_home);
-  Profile* profile_last = profile_manager->GetProfile(dest_path2);
-  ASSERT_TRUE(profile_last);
-  Profile* profile_urls = profile_manager->GetProfile(dest_path3);
-  ASSERT_TRUE(profile_urls);
+  Profile* profile_home = nullptr;
+  Profile* profile_last = nullptr;
+  Profile* profile_urls = nullptr;
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    profile_home = profile_manager->GetProfile(dest_path1);
+    ASSERT_TRUE(profile_home);
+    profile_last = profile_manager->GetProfile(dest_path2);
+    ASSERT_TRUE(profile_last);
+    profile_urls = profile_manager->GetProfile(dest_path3);
+    ASSERT_TRUE(profile_urls);
+  }
 
   // Set the profiles to open the home page, last visited pages or URLs.
   SessionStartupPref pref_home(SessionStartupPref::DEFAULT);
@@ -846,10 +902,49 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, ProfilesLaunchedAfterCrash) {
 #endif  // !defined(OS_MACOSX) && !defined(GOOGLE_CHROME_BUILD)
 }
 
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
+                       LaunchMultipleLockedProfiles) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+  base::FilePath user_data_dir = profile_manager->user_data_dir();
+  Profile* profile1 = nullptr;
+  Profile* profile2 = nullptr;
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    profile1 = profile_manager->GetProfile(
+        user_data_dir.Append(FILE_PATH_LITERAL("New Profile 1")));
+    profile2 = profile_manager->GetProfile(
+        user_data_dir.Append(FILE_PATH_LITERAL("New Profile 2")));
+  }
+  ASSERT_TRUE(profile1);
+  ASSERT_TRUE(profile2);
+
+  base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
+  StartupBrowserCreator browser_creator;
+  std::vector<GURL> urls;
+  urls.push_back(embedded_test_server()->GetURL("/title1.html"));
+  std::vector<Profile*> last_opened_profiles;
+  last_opened_profiles.push_back(profile1);
+  last_opened_profiles.push_back(profile2);
+  SessionStartupPref pref(SessionStartupPref::URLS);
+  pref.urls = urls;
+  SessionStartupPref::SetStartupPref(profile2, pref);
+  ProfileAttributesEntry* entry = nullptr;
+  ASSERT_TRUE(profile_manager->GetProfileAttributesStorage()
+                  .GetProfileAttributesWithPath(profile1->GetPath(), &entry));
+  entry->SetIsSigninRequired(true);
+
+  browser_creator.Start(command_line, profile_manager->user_data_dir(),
+                        profile1, last_opened_profiles);
+
+  ASSERT_EQ(0u, chrome::GetBrowserCount(profile1));
+  ASSERT_EQ(1u, chrome::GetBrowserCount(profile2));
+}
+
 class SupervisedUserBrowserCreatorTest : public InProcessBrowserTest {
  protected:
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    InProcessBrowserTest::SetUpCommandLine(command_line);
     command_line->AppendSwitchASCII(switches::kSupervisedUserId, "asdf");
   }
 };
@@ -1067,9 +1162,13 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorFirstRunTest, MAYBE_WelcomePages) {
   // Open the two profiles.
   base::FilePath dest_path = profile_manager->user_data_dir();
 
-  Profile* profile1 = Profile::CreateProfile(
-      dest_path.Append(FILE_PATH_LITERAL("New Profile 1")), nullptr,
-      Profile::CreateMode::CREATE_MODE_SYNCHRONOUS);
+  Profile* profile1 = nullptr;
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    profile1 = Profile::CreateProfile(
+        dest_path.Append(FILE_PATH_LITERAL("New Profile 1")), nullptr,
+        Profile::CreateMode::CREATE_MODE_SYNCHRONOUS);
+  }
   ASSERT_TRUE(profile1);
   profile_manager->RegisterTestingProfile(profile1, true, false);
 
@@ -1106,4 +1205,193 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorFirstRunTest, MAYBE_WelcomePages) {
             tab_strip->GetWebContentsAt(0)->GetURL().possibly_invalid_spec());
 }
 
+// http://crbug.com/691707
+#if defined(OS_MACOSX)
+#define MAYBE_WelcomePagesWithPolicy DISABLED_WelcomePagesWithPolicy
+#else
+#define MAYBE_WelcomePagesWithPolicy WelcomePagesWithPolicy
+#endif
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorFirstRunTest,
+                       MAYBE_WelcomePagesWithPolicy) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  // Set the following user policies:
+  // * RestoreOnStartup = RestoreOnStartupIsURLs
+  // * RestoreOnStartupURLs = [ "/title1.html" ]
+  policy_map_.Set(policy::key::kRestoreOnStartup,
+                  policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_MACHINE,
+                  policy::POLICY_SOURCE_CLOUD, base::MakeUnique<base::Value>(4),
+                  nullptr);
+  auto url_list = base::MakeUnique<base::Value>(base::Value::Type::LIST);
+  url_list->GetList().push_back(
+      base::Value(embedded_test_server()->GetURL("/title1.html").spec()));
+  policy_map_.Set(policy::key::kRestoreOnStartupURLs,
+                  policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_MACHINE,
+                  policy::POLICY_SOURCE_CLOUD, std::move(url_list), nullptr);
+  provider_.UpdateChromePolicy(policy_map_);
+  base::RunLoop().RunUntilIdle();
+
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+
+  // Open the two profiles.
+  base::FilePath dest_path = profile_manager->user_data_dir();
+
+  Profile* profile1 = nullptr;
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    profile1 = Profile::CreateProfile(
+        dest_path.Append(FILE_PATH_LITERAL("New Profile 1")), nullptr,
+        Profile::CreateMode::CREATE_MODE_SYNCHRONOUS);
+  }
+  ASSERT_TRUE(profile1);
+  profile_manager->RegisterTestingProfile(profile1, true, false);
+
+  Browser* browser = OpenNewBrowser(profile1);
+  ASSERT_TRUE(browser);
+
+  TabStripModel* tab_strip = browser->tab_strip_model();
+
+  // Windows 10 has its own Welcome page but even that should not show up when
+  // the policy is set.
+  if (IsWindows10OrNewer()) {
+    ASSERT_EQ(1, tab_strip->count());
+    EXPECT_EQ("title1.html",
+              tab_strip->GetWebContentsAt(0)->GetURL().ExtractFileName());
+
+    browser = CloseBrowserAndOpenNew(browser, profile1);
+    ASSERT_TRUE(browser);
+    tab_strip = browser->tab_strip_model();
+  }
+
+  // Ensure that the policy page page appears on second run on Win 10, and
+  // on first run on all other platforms.
+  ASSERT_EQ(1, tab_strip->count());
+  EXPECT_EQ("title1.html",
+            tab_strip->GetWebContentsAt(0)->GetURL().ExtractFileName());
+
+  browser = CloseBrowserAndOpenNew(browser, profile1);
+  ASSERT_TRUE(browser);
+  tab_strip = browser->tab_strip_model();
+
+  // Ensure that the policy page page appears on subsequent runs.
+  ASSERT_EQ(1, tab_strip->count());
+  EXPECT_EQ("title1.html",
+            tab_strip->GetWebContentsAt(0)->GetURL().ExtractFileName());
+}
+
 #endif  // !defined(OS_CHROMEOS)
+
+class StartupBrowserCreatorWelcomeBackTest : public InProcessBrowserTest {
+ protected:
+  StartupBrowserCreatorWelcomeBackTest() = default;
+
+  void SetUpInProcessBrowserTestFixture() override {
+    EXPECT_CALL(provider_, IsInitializationComplete(testing::_))
+        .WillRepeatedly(testing::Return(true));
+
+    policy::BrowserPolicyConnector::SetPolicyProviderForTesting(&provider_);
+  }
+
+  void SetUpOnMainThread() override {
+    profile_ = browser()->profile();
+
+    // Keep the browser process running when all browsers are closed.
+    scoped_keep_alive_ = base::MakeUnique<ScopedKeepAlive>(
+        KeepAliveOrigin::BROWSER, KeepAliveRestartOption::DISABLED);
+
+    // Close the browser opened by InProcessBrowserTest.
+    CloseBrowserSynchronously(browser());
+    ASSERT_EQ(0U, BrowserList::GetInstance()->size());
+  }
+
+  void StartBrowser(StartupBrowserCreator::WelcomeBackPage welcome_back_page,
+                    PolicyVariant variant) {
+    browser_creator_.set_welcome_back_page(welcome_back_page);
+
+    if (variant) {
+      policy::PolicyMap values;
+      values.Set(policy::key::kRestoreOnStartup, variant.value(),
+                 policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_CLOUD,
+                 base::MakeUnique<base::Value>(4), nullptr);
+      auto url_list = base::MakeUnique<base::Value>(base::Value::Type::LIST);
+      url_list->GetList().push_back(base::Value("http://managed.site.com/"));
+      values.Set(policy::key::kRestoreOnStartupURLs, variant.value(),
+                 policy::POLICY_SCOPE_MACHINE, policy::POLICY_SOURCE_CLOUD,
+                 std::move(url_list), nullptr);
+      provider_.UpdateChromePolicy(values);
+    }
+
+    ASSERT_TRUE(browser_creator_.Start(
+        base::CommandLine(base::CommandLine::NO_PROGRAM), base::FilePath(),
+        profile_,
+        g_browser_process->profile_manager()->GetLastOpenedProfiles()));
+    ASSERT_EQ(1U, BrowserList::GetInstance()->size());
+  }
+
+  void ExpectUrlInBrowserAtPosition(const GURL& url, int tab_index) {
+    Browser* browser = BrowserList::GetInstance()->get(0);
+    TabStripModel* tab_strip = browser->tab_strip_model();
+    EXPECT_EQ(url, tab_strip->GetWebContentsAt(tab_index)->GetURL());
+  }
+
+  void TearDownOnMainThread() override { scoped_keep_alive_.reset(); }
+
+ private:
+  Profile* profile_ = nullptr;
+  std::unique_ptr<ScopedKeepAlive> scoped_keep_alive_;
+  StartupBrowserCreator browser_creator_;
+  policy::MockConfigurationPolicyProvider provider_;
+
+  DISALLOW_COPY_AND_ASSIGN(StartupBrowserCreatorWelcomeBackTest);
+};
+
+#if defined(OS_WIN)
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorWelcomeBackTest,
+                       WelcomeBackWin10NoPolicy) {
+  ASSERT_NO_FATAL_FAILURE(StartBrowser(
+      StartupBrowserCreator::WelcomeBackPage::kWelcomeWin10, PolicyVariant()));
+  ExpectUrlInBrowserAtPosition(
+      StartupTabProviderImpl::GetWin10WelcomePageUrl(false), 0);
+}
+
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorWelcomeBackTest,
+                       WelcomeBackWin10MandatoryPolicy) {
+  ASSERT_NO_FATAL_FAILURE(
+      StartBrowser(StartupBrowserCreator::WelcomeBackPage::kWelcomeWin10,
+                   PolicyVariant(policy::POLICY_LEVEL_MANDATORY)));
+  ExpectUrlInBrowserAtPosition(GURL("http://managed.site.com/"), 0);
+}
+
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorWelcomeBackTest,
+                       WelcomeBackWin10RecommendedPolicy) {
+  ASSERT_NO_FATAL_FAILURE(
+      StartBrowser(StartupBrowserCreator::WelcomeBackPage::kWelcomeWin10,
+                   PolicyVariant(policy::POLICY_LEVEL_RECOMMENDED)));
+  ExpectUrlInBrowserAtPosition(GURL("http://managed.site.com/"), 0);
+}
+#endif  // defined(OS_WIN)
+
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorWelcomeBackTest,
+                       WelcomeBackStandardNoPolicy) {
+  ASSERT_NO_FATAL_FAILURE(
+      StartBrowser(StartupBrowserCreator::WelcomeBackPage::kWelcomeStandard,
+                   PolicyVariant()));
+  ExpectUrlInBrowserAtPosition(StartupTabProviderImpl::GetWelcomePageUrl(false),
+                               0);
+}
+
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorWelcomeBackTest,
+                       WelcomeBackStandardMandatoryPolicy) {
+  ASSERT_NO_FATAL_FAILURE(
+      StartBrowser(StartupBrowserCreator::WelcomeBackPage::kWelcomeStandard,
+                   PolicyVariant(policy::POLICY_LEVEL_MANDATORY)));
+  ExpectUrlInBrowserAtPosition(GURL("http://managed.site.com/"), 0);
+}
+
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorWelcomeBackTest,
+                       WelcomeBackStandardRecommendedPolicy) {
+  ASSERT_NO_FATAL_FAILURE(
+      StartBrowser(StartupBrowserCreator::WelcomeBackPage::kWelcomeStandard,
+                   PolicyVariant(policy::POLICY_LEVEL_RECOMMENDED)));
+  ExpectUrlInBrowserAtPosition(GURL("http://managed.site.com/"), 0);
+}

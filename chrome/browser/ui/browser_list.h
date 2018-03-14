@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/containers/flat_set.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
@@ -28,6 +29,7 @@ class BrowserListObserver;
 // Maintains a list of Browser objects.
 class BrowserList {
  public:
+  using BrowserSet = base::flat_set<Browser*>;
   using BrowserVector = std::vector<Browser*>;
   using CloseCallback = base::Callback<void(const base::FilePath&)>;
   using const_iterator = BrowserVector::const_iterator;
@@ -57,6 +59,11 @@ class BrowserList {
     return last_active_browsers_.rend();
   }
 
+  // Returns the set of browsers that are currently in the closing state.
+  const BrowserSet& currently_closing_browsers() const {
+    return currently_closing_browsers_;
+  }
+
   static BrowserList* GetInstance();
 
   // Adds or removes |browser| from the list it is associated with. The browser
@@ -82,19 +89,24 @@ class BrowserList {
   // Notifies the observers when the current active browser becomes not active.
   static void NotifyBrowserNoLongerActive(Browser* browser);
 
+  // Notifies the observers when browser close was started. This may be called
+  // more than once for a particular browser.
+  static void NotifyBrowserCloseStarted(Browser* browser);
+
   // Closes all browsers for |profile| across all desktops.
   // TODO(mlerman): Move the Profile Deletion flow to use the overloaded
   // version of this method with a callback, then remove this method.
   static void CloseAllBrowsersWithProfile(Profile* profile);
 
   // Closes all browsers for |profile| across all desktops. Uses
-  // TryToCloseBrowserList() to do the actual closing. Trigger any
-  // OnBeforeUnload events if |if_force| is false. If all OnBeforeUnload events
-  // are confirmed or |skip_beforeunload| is true, |on_close_success| is called,
-  // otherwise |on_close_aborted| is called.
-  // Note that if there is any browser window has been used before, user
-  // should always has a chance to save his or her work before closing windows
-  // without trigger beforeunload event.
+  // TryToCloseBrowserList() to do the actual closing. Triggers any
+  // OnBeforeUnload events unless |skip_beforeunload| is true. If all
+  // OnBeforeUnload events are confirmed or |skip_beforeunload| is true,
+  // |on_close_success| is called, otherwise |on_close_aborted| is called. Both
+  // callbacks may be null.
+  // Note that if there is any browser window that has been used before, the
+  // user should always have a chance to save their work before closing windows
+  // without triggering beforeunload events.
   static void CloseAllBrowsersWithProfile(Profile* profile,
                                           const CloseCallback& on_close_success,
                                           const CloseCallback& on_close_aborted,
@@ -148,6 +160,8 @@ class BrowserList {
   // A vector of the browsers in this list that have been activated, in the
   // reverse order in which they were last activated.
   BrowserVector last_active_browsers_;
+  // A vector of the browsers that are currently in the closing state.
+  BrowserSet currently_closing_browsers_;
 
   // A list of observers which will be notified of every browser addition and
   // removal across all BrowserLists.

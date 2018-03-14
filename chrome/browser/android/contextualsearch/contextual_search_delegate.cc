@@ -17,12 +17,14 @@
 #include "chrome/browser/android/contextualsearch/contextual_search_field_trial.h"
 #include "chrome/browser/android/contextualsearch/resolved_search_term.h"
 #include "chrome/browser/android/proto/client_discourse_context.pb.h"
+#include "chrome/browser/language/language_model_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/translate/translate_service.h"
 #include "chrome/common/pref_names.h"
 #include "components/browser_sync/profile_sync_service.h"
+#include "components/language/core/browser/language_model.h"
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/variations/net/variations_http_headers.h"
@@ -34,7 +36,6 @@
 #include "net/url_request/url_fetcher.h"
 #include "url/gurl.h"
 
-using content::ContentViewCore;
 using content::RenderFrameHost;
 
 namespace {
@@ -65,12 +66,7 @@ const char kXssiEscape[] = ")]}'\n";
 const char kDiscourseContextHeaderPrefix[] = "X-Additional-Discourse-Context: ";
 const char kDoPreventPreloadValue[] = "1";
 
-// The number of characters that should be shown after the selected expression.
-const int kSurroundingSizeForUI = 60;
-
 // The version of the Contextual Cards API that we want to invoke.
-const int kContextualCardsBarIntegration = 1;
-const int kContextualCardsSingleAction = 2;
 const int kContextualCardsUrlActions = 3;
 
 }  // namespace
@@ -85,13 +81,11 @@ ContextualSearchDelegate::ContextualSearchDelegate(
     const ContextualSearchDelegate::SearchTermResolutionCallback&
         search_term_callback,
     const ContextualSearchDelegate::SurroundingTextCallback&
-        surrounding_callback,
-    const ContextualSearchDelegate::IcingCallback& icing_callback)
+        surrounding_text_callback)
     : url_request_context_(url_request_context),
       template_url_service_(template_url_service),
       search_term_callback_(search_term_callback),
-      surrounding_callback_(surrounding_callback),
-      icing_callback_(icing_callback) {
+      surrounding_text_callback_(surrounding_text_callback) {
   field_trial_.reset(new ContextualSearchFieldTrial());
 }
 
@@ -111,8 +105,8 @@ void ContextualSearchDelegate::GatherAndSaveSurroundingText(
 
   context_->SetBasePageEncoding(web_contents->GetEncoding());
   int surroundingTextSize = context_->CanResolve()
-                                ? field_trial_->GetSurroundingSize()
-                                : field_trial_->GetIcingSurroundingSize();
+                                ? field_trial_->GetResolveSurroundingSize()
+                                : field_trial_->GetSampleSurroundingSize();
   RenderFrameHost* focused_frame = web_contents->GetFocusedFrame();
   if (focused_frame) {
     focused_frame->RequestTextSurroundingSelection(callback,
@@ -250,21 +244,13 @@ std::string ContextualSearchDelegate::BuildRequestUrl(
     return std::string();
   }
 
-  TemplateURL* template_url = template_url_service_->GetDefaultSearchProvider();
+  const TemplateURL* template_url =
+      template_url_service_->GetDefaultSearchProvider();
 
   TemplateURLRef::SearchTermsArgs search_terms_args =
       TemplateURLRef::SearchTermsArgs(base::string16());
 
-  int contextual_cards_version = kContextualCardsBarIntegration;
-  if (base::FeatureList::IsEnabled(
-          chrome::android::kContextualSearchSingleActions)) {
-    contextual_cards_version = kContextualCardsSingleAction;
-  }
-  if (base::FeatureList::IsEnabled(
-          chrome::android::kContextualSearchUrlActions)) {
-    contextual_cards_version = kContextualCardsUrlActions;
-  }
-
+  int contextual_cards_version = kContextualCardsUrlActions;
   if (field_trial_->GetContextualCardsVersion() != 0) {
     contextual_cards_version = field_trial_->GetContextualCardsVersion();
   }
@@ -301,64 +287,36 @@ void ContextualSearchDelegate::OnTextSurroundingSelectionAvailable(
   if (context_ == nullptr)
     return;
 
-  SaveSurroundingText(surrounding_text, start_offset, end_offset);
-  if (context_->CanResolve())
-    SendSurroundingText(kSurroundingSizeForUI);
-}
-
-void ContextualSearchDelegate::SaveSurroundingText(
-    const base::string16& surrounding_text,
-    int start_offset,
-    int end_offset) {
-  DCHECK(context_ != nullptr);
-  // Sometimes the surroundings are 0, 0, '', so fall back on the selection.
-  // See crbug.com/393100.
-  bool use_selection = false;
+  // Sometimes the surroundings are 0, 0, '', so run the callback with empty
+  // data in that case. See crbug.com/393100.
   if (start_offset == 0 && end_offset == 0 && surrounding_text.length() == 0) {
-    use_selection = true;
-    end_offset = context_->GetOriginalSelectedText().length();
+    surrounding_text_callback_.Run(std::string(), base::string16(), 0, 0);
+    return;
   }
-  const base::string16& surrounding_text_or_selection(
-      use_selection ? base::UTF8ToUTF16(context_->GetOriginalSelectedText())
-                    : surrounding_text);
 
   // Pin the start and end offsets to ensure they point within the string.
-  int surrounding_length = surrounding_text_or_selection.length();
+  int surrounding_length = surrounding_text.length();
   start_offset = std::min(surrounding_length, std::max(0, start_offset));
   end_offset = std::min(surrounding_length, std::max(0, end_offset));
 
   context_->SetSelectionSurroundings(start_offset, end_offset,
-                                     surrounding_text_or_selection);
+                                     surrounding_text);
 
-  // Call the Icing callback with a shortened copy of the surroundings.
-  int icing_surrounding_size = field_trial_->GetIcingSurroundingSize();
+  // Call the Java surrounding callback with a shortened copy of the
+  // surroundings to use as a sample of the surrounding text.
+  int sample_surrounding_size = field_trial_->GetSampleSurroundingSize();
+  DCHECK(sample_surrounding_size >= 0);
+  DCHECK(start_offset <= end_offset);
   size_t selection_start = start_offset;
   size_t selection_end = end_offset;
-  if (icing_surrounding_size >= 0 && selection_start <= selection_end) {
-    int icing_padding_each_side = icing_surrounding_size / 2;
-    base::string16 icing_surrounding_text = SurroundingTextForIcing(
-        surrounding_text_or_selection, icing_padding_each_side,
-        &selection_start, &selection_end);
-    if (selection_start <= selection_end)
-      icing_callback_.Run(context_->GetBasePageEncoding(),
-                          icing_surrounding_text, selection_start,
-                          selection_end);
-  }
-}
-
-void ContextualSearchDelegate::SendSurroundingText(int max_surrounding_chars) {
-  DCHECK(context_ != nullptr);
-  const base::string16& surrounding = context_->GetSurroundingText();
-
-  // Determine the text after the selection.
-  int surrounding_length = surrounding.length();  // Cast to int.
-  int num_after_characters = std::min(
-      surrounding_length - context_->GetEndOffset(), max_surrounding_chars);
-  base::string16 after_text =
-      surrounding.substr(context_->GetEndOffset(), num_after_characters);
-
-  base::TrimWhitespace(after_text, base::TRIM_ALL, &after_text);
-  surrounding_callback_.Run(UTF16ToUTF8(after_text));
+  int sample_padding_each_side = sample_surrounding_size / 2;
+  base::string16 sample_surrounding_text =
+      SampleSurroundingText(surrounding_text, sample_padding_each_side,
+                            &selection_start, &selection_end);
+  DCHECK(selection_start <= selection_end);
+  surrounding_text_callback_.Run(context_->GetBasePageEncoding(),
+                                 sample_surrounding_text, selection_start,
+                                 selection_end);
 }
 
 void ContextualSearchDelegate::SetDiscourseContextAndAddToHeader(
@@ -376,7 +334,7 @@ std::string ContextualSearchDelegate::GetDiscourseContext(
   media->set_mime_type(context.GetBasePageEncoding());
 
   discourse_context::Selection* selection = display->mutable_selection();
-  selection->set_content(UTF16ToUTF8(context.GetSurroundingText()));
+  selection->set_content(base::UTF16ToUTF8(context.GetSurroundingText()));
   selection->set_start(context.GetStartOffset());
   selection->set_end(context.GetEndOffset());
   selection->set_is_uri_encoded(false);
@@ -402,7 +360,7 @@ bool ContextualSearchDelegate::CanSendPageURL(
     return false;
 
   // Ensure that the default search provider is Google.
-  TemplateURL* default_search_provider =
+  const TemplateURL* default_search_provider =
       template_url_service->GetDefaultSearchProvider();
   bool is_default_search_provider_google =
       default_search_provider &&
@@ -435,7 +393,10 @@ bool ContextualSearchDelegate::CanSendPageURL(
 std::string ContextualSearchDelegate::GetTargetLanguage() {
   Profile* profile = ProfileManager::GetActiveUserProfile();
   PrefService* pref_service = profile->GetPrefs();
-  std::string result = TranslateService::GetTargetLanguage(pref_service);
+  language::LanguageModel* language_model =
+      LanguageModelFactory::GetForBrowserContext(profile);
+  std::string result =
+      TranslateService::GetTargetLanguage(pref_service, language_model);
   DCHECK(!result.empty());
   return result;
 }
@@ -515,25 +476,22 @@ void ContextualSearchDelegate::DecodeSearchTermFromJsonResponse(
   dict->GetString(kContextualSearchCaption, caption);
   dict->GetString(kContextualSearchThumbnail, thumbnail_url);
 
-  if (base::FeatureList::IsEnabled(
-          chrome::android::kContextualSearchSingleActions)) {
-    // Contextual Cards V2 Integration.
-    // Get the Single Action data.
-    dict->GetString(kContextualSearchAction, quick_action_uri);
-    std::string quick_action_category_string;
-    dict->GetString(kContextualSearchCategory, &quick_action_category_string);
-    if (!quick_action_category_string.empty()) {
-      if (quick_action_category_string == kActionCategoryAddress) {
-        *quick_action_category = QUICK_ACTION_CATEGORY_ADDRESS;
-      } else if (quick_action_category_string == kActionCategoryEmail) {
-        *quick_action_category = QUICK_ACTION_CATEGORY_EMAIL;
-      } else if (quick_action_category_string == kActionCategoryEvent) {
-        *quick_action_category = QUICK_ACTION_CATEGORY_EVENT;
-      } else if (quick_action_category_string == kActionCategoryPhone) {
-        *quick_action_category = QUICK_ACTION_CATEGORY_PHONE;
-      } else if (quick_action_category_string == kActionCategoryWebsite) {
-        *quick_action_category = QUICK_ACTION_CATEGORY_WEBSITE;
-      }
+  // Contextual Cards V2 Integration.
+  // Get the Single Action data.
+  dict->GetString(kContextualSearchAction, quick_action_uri);
+  std::string quick_action_category_string;
+  dict->GetString(kContextualSearchCategory, &quick_action_category_string);
+  if (!quick_action_category_string.empty()) {
+    if (quick_action_category_string == kActionCategoryAddress) {
+      *quick_action_category = QUICK_ACTION_CATEGORY_ADDRESS;
+    } else if (quick_action_category_string == kActionCategoryEmail) {
+      *quick_action_category = QUICK_ACTION_CATEGORY_EMAIL;
+    } else if (quick_action_category_string == kActionCategoryEvent) {
+      *quick_action_category = QUICK_ACTION_CATEGORY_EVENT;
+    } else if (quick_action_category_string == kActionCategoryPhone) {
+      *quick_action_category = QUICK_ACTION_CATEGORY_PHONE;
+    } else if (quick_action_category_string == kActionCategoryWebsite) {
+      *quick_action_category = QUICK_ACTION_CATEGORY_WEBSITE;
     }
   }
 
@@ -564,7 +522,7 @@ void ContextualSearchDelegate::ExtractMentionsStartEnd(
     *endResult = std::max(0, int_value);
 }
 
-base::string16 ContextualSearchDelegate::SurroundingTextForIcing(
+base::string16 ContextualSearchDelegate::SampleSurroundingText(
     const base::string16& surrounding_text,
     int padding_each_side,
     size_t* start,

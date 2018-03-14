@@ -41,7 +41,7 @@ class RenderFrameImpl;
 // on-screen keyboard should be shown.
 //
 // An instance of this class belongs to RenderFrameImpl. Accessibility is
-// initialized based on the AccessibilityMode of RenderFrameImpl; it lazily
+// initialized based on the ui::AXMode of RenderFrameImpl; it lazily
 // starts as Off or EditableTextOnly depending on the operating system, and
 // switches to Complete if assistive technology is detected or a flag is set.
 //
@@ -65,8 +65,7 @@ class CONTENT_EXPORT RenderAccessibilityImpl
       RenderFrameImpl* render_frame,
       AXContentTreeUpdate* response);
 
-  RenderAccessibilityImpl(RenderFrameImpl* render_frame,
-                          AccessibilityMode mode);
+  RenderAccessibilityImpl(RenderFrameImpl* render_frame, ui::AXMode mode);
   ~RenderAccessibilityImpl() override;
 
   // RenderAccessibility implementation.
@@ -113,9 +112,6 @@ class CONTENT_EXPORT RenderAccessibilityImpl
   // versions. If any have moved, send an IPC with the new locations.
   void SendLocationChanges();
 
-  // The RenderFrameImpl that owns us.
-  RenderFrameImpl* render_frame_;
-
  private:
   // RenderFrameObserver implementation.
   void OnDestruct() override;
@@ -127,10 +123,13 @@ class CONTENT_EXPORT RenderAccessibilityImpl
   void OnReset(int reset_token);
 
   void OnHitTest(const gfx::Point& point, ui::AXEvent event_to_fire);
-  void OnSetAccessibilityFocus(const blink::WebAXObject& obj);
+  void OnLoadInlineTextBoxes(const blink::WebAXObject& obj);
   void OnGetImageData(const blink::WebAXObject& obj, const gfx::Size& max_size);
   void AddPluginTreeToUpdate(AXContentTreeUpdate* update);
   void ScrollPlugin(int id_to_make_visible);
+
+  // The RenderFrameImpl that owns us.
+  RenderFrameImpl* render_frame_;
 
   // Events from Blink are collected until they are ready to be
   // sent to the browser.

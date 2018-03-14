@@ -6,6 +6,10 @@
 
 #include "base/memory/ptr_util.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace web {
 
 TestOpenURLRequest::TestOpenURLRequest()
@@ -57,7 +61,6 @@ WebState* TestWebStateDelegate::CreateNewWebState(WebState* source,
   web::WebState::CreateParams params(source->GetBrowserState());
   params.created_with_opener = true;
   std::unique_ptr<web::WebState> child = web::WebState::Create(params);
-  child->SetWebUsageEnabled(true);
 
   child_windows_.push_back(std::move(child));
   return child_windows_.back().get();
@@ -92,10 +95,9 @@ JavaScriptDialogPresenter* TestWebStateDelegate::GetJavaScriptDialogPresenter(
   return &java_script_dialog_presenter_;
 }
 
-bool TestWebStateDelegate::HandleContextMenu(WebState*,
+void TestWebStateDelegate::HandleContextMenu(WebState*,
                                              const ContextMenuParams&) {
   handle_context_menu_called_ = true;
-  return NO;
 }
 
 void TestWebStateDelegate::ShowRepostFormWarningDialog(
@@ -118,10 +120,28 @@ void TestWebStateDelegate::OnAuthRequired(
     const AuthCallback& callback) {
   last_authentication_request_ = base::MakeUnique<TestAuthenticationRequest>();
   last_authentication_request_->web_state = source;
-  last_authentication_request_->protection_space.reset(
-      [protection_space retain]);
-  last_authentication_request_->credential.reset([credential retain]);
+  last_authentication_request_->protection_space = protection_space;
+  last_authentication_request_->credential = credential;
   last_authentication_request_->auth_callback = callback;
+}
+
+bool TestWebStateDelegate::ShouldPreviewLink(WebState* source,
+                                             const GURL& link_url) {
+  last_link_url_ = link_url;
+  return should_preview_link_;
+}
+
+UIViewController* TestWebStateDelegate::GetPreviewingViewController(
+    WebState* source,
+    const GURL& link_url) {
+  last_link_url_ = link_url;
+  return previewing_view_controller_;
+}
+
+void TestWebStateDelegate::CommitPreviewingViewController(
+    WebState* source,
+    UIViewController* previewing_view_controller) {
+  last_previewing_view_controller_ = previewing_view_controller;
 }
 
 }  // namespace web

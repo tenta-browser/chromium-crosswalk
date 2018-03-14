@@ -27,6 +27,8 @@
 
 #include "core/style/SVGComputedStyle.h"
 
+#include "core/style/StyleDifference.h"
+
 namespace blink {
 
 static const int kPaintOrderBitwidth = 2;
@@ -109,7 +111,7 @@ void SVGComputedStyle::CopyNonInheritedFromCached(
   resources = other->resources;
 }
 
-PassRefPtr<SVGDashArray> SVGComputedStyle::InitialStrokeDashArray() {
+scoped_refptr<SVGDashArray> SVGComputedStyle::InitialStrokeDashArray() {
   DEFINE_STATIC_REF(SVGDashArray, initial_dash_array, SVGDashArray::Create());
   return initial_dash_array;
 }

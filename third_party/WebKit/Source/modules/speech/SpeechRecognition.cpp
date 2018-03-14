@@ -29,7 +29,6 @@
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/page/Page.h"
-#include "modules/mediastream/MediaStreamTrack.h"
 #include "modules/speech/SpeechRecognitionController.h"
 #include "modules/speech/SpeechRecognitionError.h"
 #include "modules/speech/SpeechRecognitionEvent.h"
@@ -37,9 +36,10 @@
 namespace blink {
 
 SpeechRecognition* SpeechRecognition::Create(ExecutionContext* context) {
-  ASSERT(context && context->IsDocument());
+  DCHECK(context);
+  DCHECK(context->IsDocument());
   Document* document = ToDocument(context);
-  ASSERT(document);
+  DCHECK(document);
   return new SpeechRecognition(document->GetPage(), context);
 }
 
@@ -53,9 +53,9 @@ void SpeechRecognition::start(ExceptionState& exception_state) {
     return;
   }
 
-  final_results_.Clear();
+  final_results_.clear();
   controller_->Start(this, grammars_, lang_, continuous_, interim_results_,
-                     max_alternatives_, audio_track_);
+                     max_alternatives_);
   started_ = true;
 }
 
@@ -164,7 +164,6 @@ SpeechRecognition::SpeechRecognition(Page* page, ExecutionContext* context)
       grammars_(SpeechGrammarList::Create()),  // FIXME: The spec is not clear
                                                // on the default value for the
                                                // grammars attribute.
-      audio_track_(nullptr),
       continuous_(false),
       interim_results_(false),
       max_alternatives_(1),
@@ -177,9 +176,8 @@ SpeechRecognition::SpeechRecognition(Page* page, ExecutionContext* context)
 
 SpeechRecognition::~SpeechRecognition() {}
 
-DEFINE_TRACE(SpeechRecognition) {
+void SpeechRecognition::Trace(blink::Visitor* visitor) {
   visitor->Trace(grammars_);
-  visitor->Trace(audio_track_);
   visitor->Trace(controller_);
   visitor->Trace(final_results_);
   EventTargetWithInlineData::Trace(visitor);

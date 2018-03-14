@@ -9,13 +9,10 @@ import android.content.Context;
 import android.content.Intent;
 
 import org.chromium.base.ContextUtils;
-import org.chromium.base.Log;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.chrome.browser.preferences.autofill.AutofillAndPaymentsPreferences;
 import org.chromium.chrome.browser.preferences.password.SavePasswordsPreferences;
-import org.chromium.chrome.browser.preferences.privacy.ClearBrowsingDataPreferences;
 import org.chromium.chrome.browser.preferences.privacy.ClearBrowsingDataTabsFragment;
-import org.chromium.chrome.browser.tab.Tab;
 
 /**
  * A utility class for launching Chrome Settings.
@@ -61,10 +58,7 @@ public class PreferencesLauncher {
      * @param context The current Activity, or an application context if no Activity is available.
      */
     public static Intent createIntentForClearBrowsingDataPage(Context context) {
-        String fragmentName = ClearBrowsingDataTabsFragment.isFeatureEnabled()
-                ? ClearBrowsingDataTabsFragment.class.getName()
-                : ClearBrowsingDataPreferences.class.getName();
-        return createIntentForSettingsPage(context, fragmentName);
+        return createIntentForSettingsPage(context, ClearBrowsingDataTabsFragment.class.getName());
     }
 
     @CalledByNative
@@ -77,21 +71,5 @@ public class PreferencesLauncher {
     private static void showPasswordSettings() {
         launchSettingsPage(
                 ContextUtils.getApplicationContext(), SavePasswordsPreferences.class.getName());
-    }
-
-    /**
-     * Opens the UI to clear browsing data.
-     * @param tab The tab that triggered the request.
-     */
-    @CalledByNative
-    private static void openClearBrowsingData(Tab tab) {
-        Activity activity = tab.getWindowAndroid().getActivity().get();
-        if (activity == null) {
-            Log.e(TAG, "Attempting to open clear browsing data for a tab without a valid activity");
-            return;
-        }
-
-        Intent intent = createIntentForClearBrowsingDataPage(activity);
-        activity.startActivity(intent);
     }
 }

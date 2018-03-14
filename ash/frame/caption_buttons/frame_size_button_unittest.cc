@@ -7,12 +7,10 @@
 #include "ash/ash_layout_constants.h"
 #include "ash/frame/caption_buttons/frame_caption_button.h"
 #include "ash/frame/caption_buttons/frame_caption_button_container_view.h"
-#include "ash/resources/grit/ash_resources.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm/window_state_aura.h"
 #include "base/i18n/rtl.h"
 #include "ui/aura/window.h"
 #include "ui/display/display.h"
@@ -23,14 +21,13 @@
 #include "ui/views/widget/widget_delegate.h"
 
 namespace ash {
-namespace test {
 
 namespace {
 
 class TestWidgetDelegate : public views::WidgetDelegateView {
  public:
-  TestWidgetDelegate() {}
-  ~TestWidgetDelegate() override {}
+  TestWidgetDelegate() = default;
+  ~TestWidgetDelegate() override = default;
 
   // Overridden from views::WidgetDelegate:
   bool CanResize() const override { return true; }
@@ -82,8 +79,8 @@ class TestWidgetDelegate : public views::WidgetDelegateView {
 
 class FrameSizeButtonTest : public AshTestBase {
  public:
-  FrameSizeButtonTest() {}
-  ~FrameSizeButtonTest() override {}
+  FrameSizeButtonTest() = default;
+  ~FrameSizeButtonTest() override = default;
 
   // Returns the center point of |view| in screen coordinates.
   gfx::Point CenterPointInScreen(views::View* view) {
@@ -91,7 +88,7 @@ class FrameSizeButtonTest : public AshTestBase {
   }
 
   // Returns true if the window has |state_type|.
-  bool HasStateType(wm::WindowStateType state_type) const {
+  bool HasStateType(mojom::WindowStateType state_type) const {
     return window_state()->GetStateType() == state_type;
   }
 
@@ -208,7 +205,7 @@ TEST_F(FrameSizeButtonTest, ButtonDrag) {
   generator.MoveMouseTo(CenterPointInScreen(close_button()));
   generator.ReleaseLeftButton();
   RunAllPendingInMessageLoop();
-  EXPECT_TRUE(HasStateType(wm::WINDOW_STATE_TYPE_RIGHT_SNAPPED));
+  EXPECT_TRUE(HasStateType(mojom::WindowStateType::RIGHT_SNAPPED));
 
   // Snap left.
   generator.MoveMouseTo(CenterPointInScreen(size_button()));
@@ -216,7 +213,7 @@ TEST_F(FrameSizeButtonTest, ButtonDrag) {
   generator.MoveMouseTo(CenterPointInScreen(minimize_button()));
   generator.ReleaseLeftButton();
   RunAllPendingInMessageLoop();
-  EXPECT_TRUE(HasStateType(wm::WINDOW_STATE_TYPE_LEFT_SNAPPED));
+  EXPECT_TRUE(HasStateType(mojom::WindowStateType::LEFT_SNAPPED));
 
   // 2) Test with scroll gestures.
   // Snap right.
@@ -224,14 +221,14 @@ TEST_F(FrameSizeButtonTest, ButtonDrag) {
                                   CenterPointInScreen(close_button()),
                                   base::TimeDelta::FromMilliseconds(100), 3);
   RunAllPendingInMessageLoop();
-  EXPECT_TRUE(HasStateType(wm::WINDOW_STATE_TYPE_RIGHT_SNAPPED));
+  EXPECT_TRUE(HasStateType(mojom::WindowStateType::RIGHT_SNAPPED));
 
   // Snap left.
   generator.GestureScrollSequence(CenterPointInScreen(size_button()),
                                   CenterPointInScreen(minimize_button()),
                                   base::TimeDelta::FromMilliseconds(100), 3);
   RunAllPendingInMessageLoop();
-  EXPECT_TRUE(HasStateType(wm::WINDOW_STATE_TYPE_LEFT_SNAPPED));
+  EXPECT_TRUE(HasStateType(mojom::WindowStateType::LEFT_SNAPPED));
 
   // 3) Test with tap gestures.
   const float touch_default_radius =
@@ -241,12 +238,12 @@ TEST_F(FrameSizeButtonTest, ButtonDrag) {
   generator.MoveMouseTo(CenterPointInScreen(size_button()));
   generator.PressMoveAndReleaseTouchTo(CenterPointInScreen(close_button()));
   RunAllPendingInMessageLoop();
-  EXPECT_TRUE(HasStateType(wm::WINDOW_STATE_TYPE_RIGHT_SNAPPED));
+  EXPECT_TRUE(HasStateType(mojom::WindowStateType::RIGHT_SNAPPED));
   // Snap left.
   generator.MoveMouseTo(CenterPointInScreen(size_button()));
   generator.PressMoveAndReleaseTouchTo(CenterPointInScreen(minimize_button()));
   RunAllPendingInMessageLoop();
-  EXPECT_TRUE(HasStateType(wm::WINDOW_STATE_TYPE_LEFT_SNAPPED));
+  EXPECT_TRUE(HasStateType(mojom::WindowStateType::LEFT_SNAPPED));
   ui::GestureConfiguration::GetInstance()->set_default_radius(
       touch_default_radius);
 }
@@ -266,7 +263,7 @@ TEST_F(FrameSizeButtonTest, SnapLeftOvershootMinimize) {
   generator.MoveMouseBy(-minimize_button()->width(), 0);
   generator.ReleaseLeftButton();
   RunAllPendingInMessageLoop();
-  EXPECT_TRUE(HasStateType(wm::WINDOW_STATE_TYPE_LEFT_SNAPPED));
+  EXPECT_TRUE(HasStateType(mojom::WindowStateType::LEFT_SNAPPED));
 }
 
 // Test that right clicking the size button has no effect.
@@ -313,7 +310,7 @@ TEST_F(FrameSizeButtonTest, ResetButtonsAfterClick) {
   // Release the mouse, snapping the window left.
   generator.ReleaseLeftButton();
   RunAllPendingInMessageLoop();
-  EXPECT_TRUE(HasStateType(wm::WINDOW_STATE_TYPE_LEFT_SNAPPED));
+  EXPECT_TRUE(HasStateType(mojom::WindowStateType::LEFT_SNAPPED));
 
   // None of the buttons should stay pressed and the buttons should have their
   // regular icons.
@@ -345,7 +342,7 @@ TEST_F(FrameSizeButtonTest, ResetButtonsAfterClick) {
   // Release the mouse. The window should stay snapped left.
   generator.ReleaseLeftButton();
   RunAllPendingInMessageLoop();
-  EXPECT_TRUE(HasStateType(wm::WINDOW_STATE_TYPE_LEFT_SNAPPED));
+  EXPECT_TRUE(HasStateType(mojom::WindowStateType::LEFT_SNAPPED));
 
   // The buttons should stay unpressed and the buttons should now have their
   // regular icons.
@@ -394,8 +391,8 @@ TEST_F(FrameSizeButtonTest, SizeButtonPressedWhenSnapButtonHovered) {
 
 class FrameSizeButtonTestRTL : public FrameSizeButtonTest {
  public:
-  FrameSizeButtonTestRTL() {}
-  ~FrameSizeButtonTestRTL() override {}
+  FrameSizeButtonTestRTL() = default;
+  ~FrameSizeButtonTestRTL() override = default;
 
   void SetUp() override {
     original_locale_ = base::i18n::GetConfiguredLocale();
@@ -451,7 +448,7 @@ TEST_F(FrameSizeButtonTestRTL, ButtonDrag) {
   // Releasing should snap the window right.
   generator.ReleaseLeftButton();
   RunAllPendingInMessageLoop();
-  EXPECT_TRUE(HasStateType(wm::WINDOW_STATE_TYPE_RIGHT_SNAPPED));
+  EXPECT_TRUE(HasStateType(mojom::WindowStateType::RIGHT_SNAPPED));
 
   // None of the buttons should stay pressed and the buttons should have their
   // regular icons.
@@ -460,5 +457,4 @@ TEST_F(FrameSizeButtonTestRTL, ButtonDrag) {
   EXPECT_EQ(CAPTION_BUTTON_ICON_CLOSE, close_button()->icon());
 }
 
-}  // namespace test
 }  // namespace ash

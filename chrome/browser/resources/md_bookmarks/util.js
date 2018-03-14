@@ -14,18 +14,18 @@ cr.define('bookmarks.util', function() {
    * @return {!Array<string>}
    */
   function getDisplayedList(state) {
-    if (!isShowingSearch(state))
-      return assert(state.nodes[state.selectedFolder].children);
+    if (isShowingSearch(state))
+      return assert(state.search.results);
 
-    return state.search.results;
+    return assert(state.nodes[state.selectedFolder].children);
   }
 
   /**
    * @param {BookmarkTreeNode} treeNode
-   * @return {BookmarkNode}
+   * @return {!BookmarkNode}
    */
   function normalizeNode(treeNode) {
-    var node = Object.assign({}, treeNode);
+    const node = Object.assign({}, treeNode);
     // Node index is not necessary and not kept up-to-date. Remove it from the
     // data structure so we don't accidentally depend on the incorrect
     // information.
@@ -42,17 +42,17 @@ cr.define('bookmarks.util', function() {
 
   /**
    * @param {BookmarkTreeNode} rootNode
-   * @return {NodeList}
+   * @return {NodeMap}
    */
   function normalizeNodes(rootNode) {
-    /** @type {NodeList} */
-    var nodeList = {};
-    var stack = [];
+    /** @type {NodeMap} */
+    const nodeMap = {};
+    const stack = [];
     stack.push(rootNode);
 
     while (stack.length > 0) {
-      var node = stack.pop();
-      nodeList[node.id] = normalizeNode(node);
+      const node = stack.pop();
+      nodeMap[node.id] = normalizeNode(node);
       if (!node.children)
         continue;
 
@@ -61,19 +61,23 @@ cr.define('bookmarks.util', function() {
       });
     }
 
-    return nodeList;
+    return nodeMap;
   }
 
   /** @return {!BookmarksPageState} */
   function createEmptyState() {
     return {
       nodes: {},
-      selectedFolder: '0',
-      closedFolders: new Set(),
+      selectedFolder: BOOKMARKS_BAR_ID,
+      folderOpenState: new Map(),
+      prefs: {
+        canEdit: true,
+        incognitoAvailability: IncognitoAvailability.ENABLED,
+      },
       search: {
         term: '',
         inProgress: false,
-        results: [],
+        results: null,
       },
       selection: {
         items: new Set(),
@@ -87,17 +91,44 @@ cr.define('bookmarks.util', function() {
    * @return {boolean}
    */
   function isShowingSearch(state) {
-    return !!state.search.term && !state.search.inProgress;
+    return state.search.results != null;
+  }
+
+  /**
+   * Returns true if the node with ID |itemId| is modifiable, allowing
+   * the node to be renamed, moved or deleted. Note that if a node is
+   * uneditable, it may still have editable children (for example, the top-level
+   * folders).
+   * @param {BookmarksPageState} state
+   * @param {string} itemId
+   * @return {boolean}
+   */
+  function canEditNode(state, itemId) {
+    return itemId != ROOT_NODE_ID &&
+        state.nodes[itemId].parentId != ROOT_NODE_ID &&
+        !state.nodes[itemId].unmodifiable && state.prefs.canEdit;
+  }
+
+  /**
+   * Returns true if it is possible to modify the children list of the node with
+   * ID |itemId|. This includes rearranging the children or adding new ones.
+   * @param {BookmarksPageState} state
+   * @param {string} itemId
+   * @return {boolean}
+   */
+  function canReorderChildren(state, itemId) {
+    return itemId != ROOT_NODE_ID && !state.nodes[itemId].unmodifiable &&
+        state.prefs.canEdit;
   }
 
   /**
    * @param {string} id
-   * @param {NodeList} nodes
+   * @param {NodeMap} nodes
    * @return {boolean}
    */
   function hasChildFolders(id, nodes) {
-    var children = nodes[id].children;
-    for (var i = 0; i < children.length; i++) {
+    const children = nodes[id].children;
+    for (let i = 0; i < children.length; i++) {
       if (nodes[children[i]].children)
         return true;
     }
@@ -106,18 +137,18 @@ cr.define('bookmarks.util', function() {
 
   /**
    * Get all descendants of a node, including the node itself.
-   * @param {NodeList} nodes
+   * @param {NodeMap} nodes
    * @param {string} baseId
    * @return {!Set<string>}
    */
   function getDescendants(nodes, baseId) {
-    var descendants = new Set();
-    var stack = [];
+    const descendants = new Set();
+    const stack = [];
     stack.push(baseId);
 
     while (stack.length > 0) {
-      var id = stack.pop();
-      var node = nodes[id];
+      const id = stack.pop();
+      const node = nodes[id];
 
       if (!node)
         continue;
@@ -136,15 +167,39 @@ cr.define('bookmarks.util', function() {
   }
 
   /**
+   * @param {string} name
+   * @param {number} value
+   * @param {number} maxValue
+   */
+  function recordEnumHistogram(name, value, maxValue) {
+    chrome.send('metricsHandler:recordInHistogram', [name, value, maxValue]);
+  }
+
+  /**
    * @param {!Object<string, T>} map
    * @param {!Set<string>} ids
    * @return {!Object<string, T>}
    * @template T
    */
-  function removeIdsFromMap(map, ids) {
-    var newMap = Object.assign({}, map);
+  function removeIdsFromObject(map, ids) {
+    const newObject = Object.assign({}, map);
     ids.forEach(function(id) {
-      delete newMap[id];
+      delete newObject[id];
+    });
+    return newObject;
+  }
+
+
+  /**
+   * @param {!Map<string, T>} map
+   * @param {!Set<string>} ids
+   * @return {!Map<string, T>}
+   * @template T
+   */
+  function removeIdsFromMap(map, ids) {
+    const newMap = new Map(map);
+    ids.forEach(function(id) {
+      newMap.delete(id);
     });
     return newMap;
   }
@@ -155,7 +210,7 @@ cr.define('bookmarks.util', function() {
    * @return {!Set<string>}
    */
   function removeIdsFromSet(set, ids) {
-    var difference = new Set(set);
+    const difference = new Set(set);
     ids.forEach(function(id) {
       difference.delete(id);
     });
@@ -163,6 +218,8 @@ cr.define('bookmarks.util', function() {
   }
 
   return {
+    canEditNode: canEditNode,
+    canReorderChildren: canReorderChildren,
     createEmptyState: createEmptyState,
     getDescendants: getDescendants,
     getDisplayedList: getDisplayedList,
@@ -170,7 +227,9 @@ cr.define('bookmarks.util', function() {
     isShowingSearch: isShowingSearch,
     normalizeNode: normalizeNode,
     normalizeNodes: normalizeNodes,
+    recordEnumHistogram: recordEnumHistogram,
     removeIdsFromMap: removeIdsFromMap,
+    removeIdsFromObject: removeIdsFromObject,
     removeIdsFromSet: removeIdsFromSet,
   };
 });

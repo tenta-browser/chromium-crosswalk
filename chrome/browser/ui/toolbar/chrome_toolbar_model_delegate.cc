@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/toolbar/chrome_toolbar_model_delegate.h"
 
 #include "base/logging.h"
+#include "build/build_config.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/search.h"
@@ -12,6 +13,7 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "components/google/core/browser/google_util.h"
+#include "components/offline_pages/features/features.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/prefs/pref_service.h"
 #include "components/security_state/core/security_state.h"
@@ -25,11 +27,21 @@
 #if !defined(OS_ANDROID)
 #include "components/omnibox/browser/vector_icons.h" // nogncheck
 #include "components/toolbar/vector_icons.h"  // nogncheck
-#endif
+#endif  // !defined(OS_ANDROID)
+
+#if BUILDFLAG(ENABLE_OFFLINE_PAGES)
+#include "chrome/browser/offline_pages/offline_page_utils.h"
+#endif  // BUILDFLAG(ENABLE_OFFLINE_PAGES)
 
 ChromeToolbarModelDelegate::ChromeToolbarModelDelegate() {}
 
 ChromeToolbarModelDelegate::~ChromeToolbarModelDelegate() {}
+
+content::NavigationEntry* ChromeToolbarModelDelegate::GetNavigationEntry()
+    const {
+  content::NavigationController* controller = GetNavigationController();
+  return controller ? controller->GetVisibleEntry() : nullptr;
+}
 
 base::string16 ChromeToolbarModelDelegate::FormattedStringWithEquivalentMeaning(
     const GURL& url,
@@ -126,6 +138,17 @@ const gfx::VectorIcon* ChromeToolbarModelDelegate::GetVectorIconOverride()
   return nullptr;
 }
 
+bool ChromeToolbarModelDelegate::IsOfflinePage() const {
+#if BUILDFLAG(ENABLE_OFFLINE_PAGES)
+  content::WebContents* web_contents = GetActiveWebContents();
+  return web_contents &&
+         offline_pages::OfflinePageUtils::GetOfflinePageFromWebContents(
+             web_contents);
+#else
+  return false;
+#endif
+}
+
 content::NavigationController*
 ChromeToolbarModelDelegate::GetNavigationController() const {
   // This |current_tab| can be null during the initialization of the toolbar
@@ -133,12 +156,6 @@ ChromeToolbarModelDelegate::GetNavigationController() const {
   // window).
   content::WebContents* current_tab = GetActiveWebContents();
   return current_tab ? &current_tab->GetController() : nullptr;
-}
-
-content::NavigationEntry* ChromeToolbarModelDelegate::GetNavigationEntry()
-    const {
-  content::NavigationController* controller = GetNavigationController();
-  return controller ? controller->GetVisibleEntry() : nullptr;
 }
 
 Profile* ChromeToolbarModelDelegate::GetProfile() const {

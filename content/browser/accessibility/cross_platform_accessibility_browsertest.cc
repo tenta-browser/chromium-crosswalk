@@ -45,7 +45,7 @@ class CrossPlatformAccessibilityBrowserTest : public ContentBrowserTest {
   // Tell the renderer to send an accessibility tree, then wait for the
   // notification that it's been received.
   const ui::AXTree& GetAXTree(
-      AccessibilityMode accessibility_mode = kAccessibilityModeComplete) {
+      ui::AXMode accessibility_mode = ui::kAXModeComplete) {
     AccessibilityNotificationWaiter waiter(
         shell()->web_contents(),
         accessibility_mode,
@@ -64,8 +64,8 @@ class CrossPlatformAccessibilityBrowserTest : public ContentBrowserTest {
   }
 
   // ContentBrowserTest
-  void SetUpInProcessBrowserTestFixture() override;
-  void TearDownInProcessBrowserTestFixture() override;
+  void SetUpOnMainThread() override;
+  void TearDownOnMainThread() override;
 
  protected:
   std::string GetAttr(const ui::AXNode* node,
@@ -83,15 +83,14 @@ class CrossPlatformAccessibilityBrowserTest : public ContentBrowserTest {
   DISALLOW_COPY_AND_ASSIGN(CrossPlatformAccessibilityBrowserTest);
 };
 
-void CrossPlatformAccessibilityBrowserTest::SetUpInProcessBrowserTestFixture() {
+void CrossPlatformAccessibilityBrowserTest::SetUpOnMainThread() {
 #if defined(OS_WIN)
   ui::win::CreateATLModuleIfNeeded();
   com_initializer_.reset(new base::win::ScopedCOMInitializer());
 #endif
 }
 
-void
-CrossPlatformAccessibilityBrowserTest::TearDownInProcessBrowserTestFixture() {
+void CrossPlatformAccessibilityBrowserTest::TearDownOnMainThread() {
 #if defined(OS_WIN)
   com_initializer_.reset();
 #endif
@@ -365,11 +364,7 @@ IN_PROC_BROWSER_TEST_F(CrossPlatformAccessibilityBrowserTest,
                GetAttr(iframe, ui::AX_ATTR_HTML_TAG).c_str());
   ASSERT_EQ(1, iframe->child_count());
 
-  const ui::AXNode* scroll_area = iframe->ChildAtIndex(0);
-  EXPECT_EQ(ui::AX_ROLE_SCROLL_AREA, scroll_area->data().role);
-  ASSERT_EQ(1, scroll_area->child_count());
-
-  const ui::AXNode* sub_document = scroll_area->ChildAtIndex(0);
+  const ui::AXNode* sub_document = iframe->ChildAtIndex(0);
   EXPECT_EQ(ui::AX_ROLE_WEB_AREA, sub_document->data().role);
   ASSERT_EQ(1, sub_document->child_count());
 
@@ -494,7 +489,7 @@ IN_PROC_BROWSER_TEST_F(CrossPlatformAccessibilityBrowserTest,
   const ui::AXNode* root = tree.root();
   ASSERT_EQ(1, root->child_count());
   const ui::AXNode* textbox = root->ChildAtIndex(0);
-  EXPECT_EQ(true, GetBoolAttr(textbox, ui::AX_ATTR_CAN_SET_VALUE));
+  EXPECT_TRUE(textbox->data().HasAction(ui::AX_ACTION_SET_VALUE));
 }
 
 }  // namespace content

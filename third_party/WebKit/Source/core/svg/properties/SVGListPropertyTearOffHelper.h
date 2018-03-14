@@ -182,6 +182,10 @@ class SVGListPropertyTearOffHelper : public SVGPropertyTearOff<ListProperty> {
     return CreateItemTearOff(value);
   }
 
+  virtual void TraceWrappers(const ScriptWrappableVisitor* visitor) const {
+    SVGPropertyTearOff<ListProperty>::TraceWrappers(visitor);
+  }
+
  protected:
   SVGListPropertyTearOffHelper(
       ListPropertyType* target,
@@ -207,7 +211,7 @@ class SVGListPropertyTearOffHelper : public SVGPropertyTearOff<ListProperty> {
                                        ToDerived()->PropertyIsAnimVal(),
                                        ToDerived()->AttributeName());
 
-    return ItemTraits::CreateTearOff(value, 0, kPropertyIsNotAnimVal,
+    return ItemTraits::CreateTearOff(value, nullptr, kPropertyIsNotAnimVal,
                                      QualifiedName::Null());
   }
 

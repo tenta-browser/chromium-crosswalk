@@ -9,9 +9,11 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/containers/flat_map.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/sequenced_task_runner.h"
 #include "base/threading/simple_thread.h"
 #include "cc/base/unique_notifier.h"
 #include "cc/cc_export.h"
@@ -35,7 +37,8 @@ class CC_EXPORT ImageController {
 
   void SetImageDecodeCache(ImageDecodeCache* cache);
   void GetTasksForImagesAndRef(
-      std::vector<DrawImage>* images,
+      std::vector<DrawImage>* sync_decoded_images,
+      std::vector<DrawImage>* at_raster_images,
       std::vector<scoped_refptr<TileTask>>* tasks,
       const ImageDecodeCache::TracingInfo& tracing_info);
   void UnrefImages(const std::vector<DrawImage>& images);
@@ -53,8 +56,17 @@ class CC_EXPORT ImageController {
   // unlocked using UnlockImageDecode.
   // Virtual for testing.
   virtual ImageDecodeRequestId QueueImageDecode(
-      sk_sp<const SkImage> image,
+      const DrawImage& draw_image,
       const ImageDecodedCallback& callback);
+  size_t image_cache_max_limit_bytes() const {
+    return image_cache_max_limit_bytes_;
+  }
+
+  void SetMaxImageCacheLimitBytesForTesting(size_t bytes) {
+    image_cache_max_limit_bytes_ = bytes;
+  }
+
+  ImageDecodeCache* cache() const { return cache_; }
 
  protected:
   scoped_refptr<base::SequencedTaskRunner> worker_task_runner_;
@@ -89,13 +101,16 @@ class CC_EXPORT ImageController {
   void ImageDecodeCompleted(ImageDecodeRequestId id);
   void GenerateTasksForOrphanedRequests();
 
+  base::WeakPtr<ImageController> weak_ptr_;
+
   ImageDecodeCache* cache_ = nullptr;
   std::vector<DrawImage> predecode_locked_images_;
 
   static ImageDecodeRequestId s_next_image_decode_queue_id_;
-  std::unordered_map<ImageDecodeRequestId, DrawImage> requested_locked_images_;
+  base::flat_map<ImageDecodeRequestId, DrawImage> requested_locked_images_;
 
   base::SequencedTaskRunner* origin_task_runner_ = nullptr;
+  size_t image_cache_max_limit_bytes_ = 0u;
 
   // The variables defined below this lock (aside from weak_ptr_factory_) can
   // only be accessed when the lock is acquired.

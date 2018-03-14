@@ -11,6 +11,7 @@
 #include "base/time/time.h"
 #include "content/common/input/input_event_ack.h"
 #include "content/common/input/input_event_dispatch_type.h"
+#include "content/renderer/input/main_thread_event_queue.h"
 #include "third_party/WebKit/public/platform/WebCoalescedInputEvent.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/events/blink/did_overscroll_params.h"
@@ -18,6 +19,7 @@
 namespace blink {
 struct WebFloatPoint;
 struct WebFloatSize;
+struct WebOverscrollBehavior;
 }
 
 namespace ui {
@@ -37,34 +39,31 @@ class CONTENT_EXPORT RenderWidgetInputHandler {
                            RenderWidget* widget);
   virtual ~RenderWidgetInputHandler();
 
+  // Hit test the given point to find out the frame underneath and
+  // return the routing id for that frame.
+  int GetWidgetRoutingIdAtPoint(const gfx::Point& point);
+
   // Handle input events from the input event provider.
   virtual void HandleInputEvent(
       const blink::WebCoalescedInputEvent& coalesced_event,
       const ui::LatencyInfo& latency_info,
-      InputEventDispatchType dispatch_type);
+      HandledEventCallback callback);
 
   // Handle overscroll from Blink.
-  void DidOverscrollFromBlink(
-      const blink::WebFloatSize& overscrollDelta,
-      const blink::WebFloatSize& accumulatedOverscroll,
-      const blink::WebFloatPoint& position,
-      const blink::WebFloatSize& velocity);
+  void DidOverscrollFromBlink(const blink::WebFloatSize& overscrollDelta,
+                              const blink::WebFloatSize& accumulatedOverscroll,
+                              const blink::WebFloatPoint& position,
+                              const blink::WebFloatSize& velocity,
+                              const blink::WebOverscrollBehavior& behavior);
 
   bool handling_input_event() const { return handling_input_event_; }
   void set_handling_input_event(bool handling_input_event) {
     handling_input_event_ = handling_input_event;
   }
 
-  blink::WebInputEvent::Type handling_event_type() const {
-    return handling_event_type_;
-  }
-
-  ui::MenuSourceType context_menu_source_type() const {
-    return context_menu_source_type_;
-  }
-  void set_context_menu_source_type(ui::MenuSourceType source_type) {
-    context_menu_source_type_ = source_type;
-  }
+  // Process the touch action, returning whether the action should be relayed
+  // to the browser.
+  bool ProcessTouchAction(cc::TouchAction touch_action);
 
  private:
   RenderWidgetInputHandlerDelegate* const delegate_;
@@ -80,10 +79,10 @@ class CONTENT_EXPORT RenderWidgetInputHandler {
   // supporting overscroll IPC notifications due to fling animation updates.
   std::unique_ptr<ui::DidOverscrollParams>* handling_event_overscroll_;
 
+  base::Optional<cc::TouchAction> handling_touch_action_;
+
   // Type of the input event we are currently handling.
   blink::WebInputEvent::Type handling_event_type_;
-
-  ui::MenuSourceType context_menu_source_type_;
 
   // Indicates if the next sequence of Char events should be suppressed or not.
   bool suppress_next_char_events_;

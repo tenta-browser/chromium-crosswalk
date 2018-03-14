@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//base/android/jni_generator/jni_exception_list.gni")
 import("//build/config/android/config.gni")
 import("//build/config/android/rules.gni")
 import("//remoting/android/client_java_tmpl.gni")
@@ -15,9 +16,16 @@ generate_jni("jni_headers") {
     "java/src/org/chromium/chromoting/jni/Client.java",
     "java/src/org/chromium/chromoting/jni/GlDisplay.java",
     "java/src/org/chromium/chromoting/jni/JniInterface.java",
+    "java/src/org/chromium/chromoting/jni/JniOAuthTokenGetter.java",
     "java/src/org/chromium/chromoting/jni/TouchEventData.java",
   ]
   jni_package = "remoting"
+}
+
+generate_jni_registration("remoting_jni_registration") {
+  target = ":remoting_apk"
+  output = "$root_gen_dir/remoting/client/${target_name}.h"
+  exception_files = jni_exception_files
 }
 
 _raw_resources_base_dir = "$target_gen_dir/credits_resources_raw/res"
@@ -52,7 +60,7 @@ android_resources("remoting_android_client_java_resources") {
 }
 
 remoting_android_client_java_tmpl("remoting_android_client_java") {
-  remoting_google_play_services_library = google_play_services_library
+  play_services_package = "//third_party/android_tools"
 }
 
 remoting_apk_tmpl("remoting_apk") {
@@ -94,5 +102,6 @@ instrumentation_test_apk("remoting_test_apk") {
     "//base:base_java",
     "//base:base_java_test_support",
     "//third_party/android_support_test_runner:runner_java",
+    "//third_party/junit:junit",
   ]
 }

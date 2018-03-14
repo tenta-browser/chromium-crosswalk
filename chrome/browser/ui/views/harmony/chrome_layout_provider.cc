@@ -4,15 +4,34 @@
 
 #include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 
+#include <algorithm>
+
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "chrome/browser/ui/views/harmony/chrome_typography.h"
 #include "chrome/browser/ui/views/harmony/harmony_layout_provider.h"
 #include "ui/base/material_design/material_design_controller.h"
-#include "ui/views/layout/layout_constants.h"
+
+namespace {
+
+ChromeLayoutProvider* g_chrome_layout_provider = nullptr;
+
+}  // namespace
+
+ChromeLayoutProvider::ChromeLayoutProvider() {
+  DCHECK_EQ(nullptr, g_chrome_layout_provider);
+  g_chrome_layout_provider = this;
+}
+
+ChromeLayoutProvider::~ChromeLayoutProvider() {
+  DCHECK_EQ(this, g_chrome_layout_provider);
+  g_chrome_layout_provider = nullptr;
+}
 
 // static
 ChromeLayoutProvider* ChromeLayoutProvider::Get() {
+  // Check to avoid downcasting a base LayoutProvider.
+  DCHECK_EQ(g_chrome_layout_provider, views::LayoutProvider::Get());
   return static_cast<ChromeLayoutProvider*>(views::LayoutProvider::Get());
 }
 
@@ -24,34 +43,47 @@ ChromeLayoutProvider::CreateLayoutProvider() {
              : base::MakeUnique<ChromeLayoutProvider>();
 }
 
+gfx::Insets ChromeLayoutProvider::GetInsetsMetric(int metric) const {
+  switch (metric) {
+    case ChromeInsetsMetric::INSETS_OMNIBOX:
+      return gfx::Insets(3);
+    case ChromeInsetsMetric::INSETS_TOAST:
+      return gfx::Insets(0, 8);
+    default:
+      return views::LayoutProvider::GetInsetsMetric(metric);
+  }
+}
+
 int ChromeLayoutProvider::GetDistanceMetric(int metric) const {
   switch (metric) {
-    case DISTANCE_BUTTON_MAX_LINKABLE_WIDTH:
-      return 0;
     case DISTANCE_BUTTON_MINIMUM_WIDTH:
-      return views::kMinimumButtonWidth;
-    case DISTANCE_DIALOG_BUTTON_MARGIN:
-      return views::kButtonHEdgeMarginNew;
-    case DISTANCE_DIALOG_BUTTON_TOP:
-      return 0;
+      return 48;
+    case DISTANCE_CONTENT_LIST_VERTICAL_SINGLE:
+      return 4;
+    case DISTANCE_CONTENT_LIST_VERTICAL_MULTI:
+      return 8;
+    case DISTANCE_CONTROL_LIST_VERTICAL:
+      return GetDistanceMetric(views::DISTANCE_RELATED_CONTROL_VERTICAL);
     case DISTANCE_RELATED_CONTROL_HORIZONTAL_SMALL:
-      return views::kRelatedControlSmallHorizontalSpacing;
+      return 8;
     case DISTANCE_RELATED_CONTROL_VERTICAL_SMALL:
-      return views::kRelatedControlSmallVerticalSpacing;
-    case DISTANCE_RELATED_LABEL_HORIZONTAL:
-      return views::kItemLabelSpacing;
+      return 4;
+    case DISTANCE_RELATED_LABEL_HORIZONTAL_LIST:
+      return 8;
     case DISTANCE_SUBSECTION_HORIZONTAL_INDENT:
-      return views::kCheckboxIndent;
-    case DISTANCE_PANEL_CONTENT_MARGIN:
-      return views::kPanelHorizMargin;
+      return 10;
     case DISTANCE_UNRELATED_CONTROL_HORIZONTAL:
-      return views::kUnrelatedControlHorizontalSpacing;
+      return 12;
     case DISTANCE_UNRELATED_CONTROL_HORIZONTAL_LARGE:
-      return views::kUnrelatedControlLargeHorizontalSpacing;
-    case DISTANCE_UNRELATED_CONTROL_VERTICAL:
-      return views::kUnrelatedControlVerticalSpacing;
+      return 20;
     case DISTANCE_UNRELATED_CONTROL_VERTICAL_LARGE:
-      return views::kUnrelatedControlLargeVerticalSpacing;
+      return 30;
+    case DISTANCE_TOAST_CONTROL_VERTICAL:
+      return 8;
+    case DISTANCE_TOAST_LABEL_VERTICAL:
+      return 12;
+    case DISTANCE_MODAL_DIALOG_WIDTH_CONTAINING_MULTILINE_TEXT:
+      return 400;
     default:
       return views::LayoutProvider::GetDistanceMetric(metric);
   }
@@ -80,8 +112,4 @@ bool ChromeLayoutProvider::ShouldShowWindowIcon() const {
 
 bool ChromeLayoutProvider::IsHarmonyMode() const {
   return false;
-}
-
-int ChromeLayoutProvider::GetDialogPreferredWidth(DialogWidth width) const {
-  return 0;
 }

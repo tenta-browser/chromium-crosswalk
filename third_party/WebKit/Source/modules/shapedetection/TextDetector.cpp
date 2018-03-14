@@ -5,30 +5,32 @@
 #include "modules/shapedetection/TextDetector.h"
 
 #include "core/dom/DOMException.h"
+#include "core/frame/LocalFrame.h"
 #include "core/geometry/DOMRect.h"
 #include "core/html/canvas/CanvasImageSource.h"
+#include "core/workers/WorkerThread.h"
+#include "modules/imagecapture/Point2D.h"
 #include "modules/shapedetection/DetectedText.h"
-#include "public/platform/InterfaceProvider.h"
-#include "public/platform/Platform.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 
 namespace blink {
 
-TextDetector* TextDetector::Create() {
-  return new TextDetector();
+TextDetector* TextDetector::Create(ExecutionContext* context) {
+  return new TextDetector(context);
 }
 
-TextDetector::TextDetector() : ShapeDetector() {
-  Platform::Current()->GetInterfaceProvider()->GetInterface(
-      mojo::MakeRequest(&text_service_));
+TextDetector::TextDetector(ExecutionContext* context) : ShapeDetector() {
+  auto request = mojo::MakeRequest(&text_service_);
+  if (auto* interface_provider = context->GetInterfaceProvider()) {
+    interface_provider->GetInterface(std::move(request));
+  }
+
   text_service_.set_connection_error_handler(ConvertToBaseCallback(WTF::Bind(
       &TextDetector::OnTextServiceConnectionError, WrapWeakPersistent(this))));
 }
 
-ScriptPromise TextDetector::DoDetect(
-    ScriptPromiseResolver* resolver,
-    mojo::ScopedSharedBufferHandle shared_buffer_handle,
-    int image_width,
-    int image_height) {
+ScriptPromise TextDetector::DoDetect(ScriptPromiseResolver* resolver,
+                                     skia::mojom::blink::BitmapPtr bitmap) {
   ScriptPromise promise = resolver->Promise();
   if (!text_service_) {
     resolver->Reject(DOMException::Create(
@@ -36,8 +38,7 @@ ScriptPromise TextDetector::DoDetect(
     return promise;
   }
   text_service_requests_.insert(resolver);
-  text_service_->Detect(std::move(shared_buffer_handle), image_width,
-                        image_height,
+  text_service_->Detect(std::move(bitmap),
                         ConvertToBaseCallback(WTF::Bind(
                             &TextDetector::OnDetectText, WrapPersistent(this),
                             WrapPersistent(resolver))));
@@ -53,11 +54,18 @@ void TextDetector::OnDetectText(
 
   HeapVector<Member<DetectedText>> detected_text;
   for (const auto& text : text_detection_results) {
+    HeapVector<Point2D> corner_points;
+    for (const auto& corner_point : text->corner_points) {
+      Point2D point;
+      point.setX(corner_point.x);
+      point.setY(corner_point.y);
+      corner_points.push_back(point);
+    }
     detected_text.push_back(DetectedText::Create(
         text->raw_value,
-        DOMRect::Create(text->bounding_box->x, text->bounding_box->y,
-                        text->bounding_box->width,
-                        text->bounding_box->height)));
+        DOMRect::Create(text->bounding_box.x, text->bounding_box.y,
+                        text->bounding_box.width, text->bounding_box.height),
+        corner_points));
   }
 
   resolver->Resolve(detected_text);
@@ -68,11 +76,11 @@ void TextDetector::OnTextServiceConnectionError() {
     request->Reject(DOMException::Create(kNotSupportedError,
                                          "Text Detection not implemented."));
   }
-  text_service_requests_.Clear();
+  text_service_requests_.clear();
   text_service_.reset();
 }
 
-DEFINE_TRACE(TextDetector) {
+void TextDetector::Trace(blink::Visitor* visitor) {
   ShapeDetector::Trace(visitor);
   visitor->Trace(text_service_requests_);
 }

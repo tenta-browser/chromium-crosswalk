@@ -11,6 +11,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -43,6 +44,13 @@ class GL_EXPORT GLImage : public base::RefCounted<GLImage> {
   // It is valid for an implementation to always return false.
   virtual bool BindTexImage(unsigned target) = 0;
 
+  // Bind image to texture currently bound to |target|, forcing the texture's
+  // internal format to the specified one. This is a feature not available on
+  // all platforms. Returns true on success.  It is valid for an implementation
+  // to always return false.
+  virtual bool BindTexImageWithInternalformat(unsigned target,
+                                              unsigned internalformat);
+
   // Release image from texture currently bound to |target|.
   virtual void ReleaseTexImage(unsigned target) = 0;
 
@@ -65,6 +73,9 @@ class GL_EXPORT GLImage : public base::RefCounted<GLImage> {
                                     const gfx::Rect& bounds_rect,
                                     const gfx::RectF& crop_rect) = 0;
 
+  // Set the color space when image is used as an overlay.
+  virtual void SetColorSpace(const gfx::ColorSpace& color_space) = 0;
+
   // Flush any preceding rendering for the image.
   virtual void Flush() = 0;
 
@@ -86,7 +97,7 @@ class GL_EXPORT GLImage : public base::RefCounted<GLImage> {
   virtual bool EmulatingRGB() const;
 
   // An identifier for subclasses. Necessary for safe downcasting.
-  enum class Type { NONE, IOSURFACE, DXGI_IMAGE };
+  enum class Type { NONE, MEMORY, IOSURFACE, DXGI_IMAGE };
   virtual Type GetType() const;
 
  protected:

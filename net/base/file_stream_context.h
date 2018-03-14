@@ -97,6 +97,9 @@ class FileStream::Context {
   // Seeks |offset| bytes from the start of the file.
   void Seek(int64_t offset, const Int64CompletionCallback& callback);
 
+  void GetFileInfo(base::File::Info* file_info,
+                   const CompletionCallback& callback);
+
   void Flush(const CompletionCallback& callback);
 
   bool IsOpen() const;
@@ -125,7 +128,7 @@ class FileStream::Context {
     DISALLOW_COPY_AND_ASSIGN(OpenResult);
   };
 
-  // TODO(xunjieli): Remove after crbug.com/487732 is fixed.
+  // TODO(xunjieli): Remove after crbug.com/732321 is fixed.
   enum LastOperation {
     // FileStream has a pending Open().
     OPEN,
@@ -143,7 +146,7 @@ class FileStream::Context {
     NONE
   };
 
-  // TODO(xunjieli): Remove after crbug.com/487732 is fixed.
+  // TODO(xunjieli): Remove after crbug.com/732321 is fixed.
   void CheckNoAsyncInProgress() const;
 
   ////////////////////////////////////////////////////////////////////////////
@@ -151,6 +154,8 @@ class FileStream::Context {
   ////////////////////////////////////////////////////////////////////////////
 
   OpenResult OpenFileImpl(const base::FilePath& path, int open_flags);
+
+  IOResult GetFileInfoImpl(base::File::Info* file_info);
 
   IOResult CloseFileImpl();
 
@@ -239,7 +244,7 @@ class FileStream::Context {
   base::File file_;
   bool async_in_progress_;
 
-  // TODO(xunjieli): Remove after crbug.com/487732 is fixed.
+  // TODO(xunjieli): Remove after crbug.com/732321 is fixed.
   LastOperation last_operation_;
 
   bool orphaned_;

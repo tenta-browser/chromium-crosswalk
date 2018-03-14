@@ -31,10 +31,11 @@
 #ifndef WebHistoryItem_h
 #define WebHistoryItem_h
 
-#include "../platform/WebCommon.h"
-#include "../platform/WebHistoryScrollRestorationType.h"
-#include "../platform/WebPrivatePtr.h"
-#include "../platform/WebReferrerPolicy.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebHistoryScrollRestorationType.h"
+#include "public/platform/WebPrivatePtr.h"
+#include "public/platform/WebReferrerPolicy.h"
+#include "public/platform/WebScrollAnchorData.h"
 #include "public/platform/WebString.h"
 
 namespace blink {
@@ -118,9 +119,11 @@ class WebHistoryItem {
   BLINK_EXPORT WebVector<WebString> GetReferencedFilePaths() const;
 
   BLINK_EXPORT bool DidSaveScrollOrScaleState() const;
-  BLINK_EXPORT void SetDidSaveScrollOrScaleState(bool);
 
-#if BLINK_IMPLEMENTATION
+  BLINK_EXPORT ScrollAnchorData GetScrollAnchorData() const;
+  BLINK_EXPORT void SetScrollAnchorData(const ScrollAnchorData&);
+
+#if INSIDE_BLINK
   BLINK_EXPORT WebHistoryItem(HistoryItem*);
   BLINK_EXPORT WebHistoryItem& operator=(HistoryItem*);
   BLINK_EXPORT operator HistoryItem*() const;

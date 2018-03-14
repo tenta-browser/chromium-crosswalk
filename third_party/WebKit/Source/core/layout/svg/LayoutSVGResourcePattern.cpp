@@ -42,7 +42,7 @@ struct PatternData {
   USING_FAST_MALLOC(PatternData);
 
  public:
-  RefPtr<Pattern> pattern;
+  scoped_refptr<Pattern> pattern;
   AffineTransform transform;
 };
 
@@ -53,7 +53,7 @@ LayoutSVGResourcePattern::LayoutSVGResourcePattern(SVGPatternElement* node)
 
 void LayoutSVGResourcePattern::RemoveAllClientsFromCache(
     bool mark_for_invalidation) {
-  pattern_map_.Clear();
+  pattern_map_.clear();
   should_collect_pattern_attributes_ = true;
   MarkAllClientsForInvalidation(
       mark_for_invalidation ? kPaintInvalidation : kParentOnlyInvalidation);
@@ -87,7 +87,7 @@ PatternData* LayoutSVGResourcePattern::PatternForLayoutObject(
 std::unique_ptr<PatternData> LayoutSVGResourcePattern::BuildPatternData(
     const LayoutObject& object) {
   // If we couldn't determine the pattern content element root, stop here.
-  const PatternAttributes& attributes = this->Attributes();
+  const PatternAttributes& attributes = Attributes();
   if (!attributes.PatternContentElement())
     return nullptr;
 
@@ -122,7 +122,8 @@ std::unique_ptr<PatternData> LayoutSVGResourcePattern::BuildPatternData(
 
   std::unique_ptr<PatternData> pattern_data = WTF::WrapUnique(new PatternData);
   pattern_data->pattern = Pattern::CreatePaintRecordPattern(
-      AsPaintRecord(tile_bounds, tile_transform));
+      AsPaintRecord(tile_bounds.Size(), tile_transform),
+      FloatRect(FloatPoint(), tile_bounds.Size()));
 
   // Compute pattern space transformation.
   pattern_data->transform.Translate(tile_bounds.X(), tile_bounds.Y());
@@ -135,7 +136,7 @@ SVGPaintServer LayoutSVGResourcePattern::PreparePaintServer(
     const LayoutObject& object) {
   ClearInvalidationMask();
 
-  SVGPatternElement* pattern_element = toSVGPatternElement(GetElement());
+  SVGPatternElement* pattern_element = ToSVGPatternElement(GetElement());
   if (!pattern_element)
     return SVGPaintServer::Invalid();
 
@@ -196,7 +197,7 @@ LayoutSVGResourcePattern::ResolveContentElement() const {
 }
 
 sk_sp<PaintRecord> LayoutSVGResourcePattern::AsPaintRecord(
-    const FloatRect& tile_bounds,
+    const FloatSize& size,
     const AffineTransform& tile_transform) const {
   DCHECK(!should_collect_pattern_attributes_);
 
@@ -205,7 +206,7 @@ sk_sp<PaintRecord> LayoutSVGResourcePattern::AsPaintRecord(
       SVGUnitTypes::kSvgUnitTypeObjectboundingbox)
     content_transform = tile_transform;
 
-  FloatRect bounds(FloatPoint(), tile_bounds.Size());
+  FloatRect bounds(FloatPoint(), size);
   const LayoutSVGResourceContainer* pattern_layout_object =
       ResolveContentElement();
   DCHECK(pattern_layout_object);
@@ -213,7 +214,7 @@ sk_sp<PaintRecord> LayoutSVGResourcePattern::AsPaintRecord(
 
   SubtreeContentTransformScope content_transform_scope(content_transform);
 
-  PaintRecordBuilder builder(bounds);
+  PaintRecordBuilder builder;
   for (LayoutObject* child = pattern_layout_object->FirstChild(); child;
        child = child->NextSibling())
     SVGPaintContext::PaintResourceSubtree(builder.Context(), child);

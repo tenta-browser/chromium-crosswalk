@@ -14,11 +14,16 @@
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/ssl/ios_security_state_tab_helper.h"
+#import "ios/chrome/browser/ui/ntp/modal_ntp.h"
 #include "ios/chrome/browser/web_state_list/web_state_list.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/navigation_manager.h"
 #import "ios/web/public/ssl_status.h"
 #import "ios/web/public/web_state/web_state.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 ToolbarModelDelegateIOS::ToolbarModelDelegateIOS(WebStateList* web_state_list)
     : web_state_list_(web_state_list) {}
@@ -61,8 +66,10 @@ bool ToolbarModelDelegateIOS::ShouldDisplayURL() const {
         virtual_url.SchemeIs(kChromeUIScheme)) {
       if (!url.SchemeIs(kChromeUIScheme))
         url = virtual_url;
-      const std::string host = url.host();
-      return host != kChromeUIBookmarksHost && host != kChromeUINewTabHost;
+      base::StringPiece host = url.host_piece();
+      // Checking for Bookmarks Host is skipped if it is not enabled.
+      return (!IsBookmarksHostEnabled() || host != kChromeUIBookmarksHost) &&
+             host != kChromeUINewTabHost;
     }
   }
   return true;
@@ -104,4 +111,8 @@ bool ToolbarModelDelegateIOS::FailsMalwareCheck() const {
 
 const gfx::VectorIcon* ToolbarModelDelegateIOS::GetVectorIconOverride() const {
   return nullptr;
+}
+
+bool ToolbarModelDelegateIOS::IsOfflinePage() const {
+  return false;
 }

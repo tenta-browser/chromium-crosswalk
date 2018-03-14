@@ -11,6 +11,7 @@
 #include "ipc/ipc_message.h"
 #include "ui/gfx/native_widget_types.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
 
@@ -33,7 +34,7 @@ bool RenderFrameHostDelegate::DidAddMessageToConsole(
 }
 
 WebContents* RenderFrameHostDelegate::GetAsWebContents() {
-  return NULL;
+  return nullptr;
 }
 
 InterstitialPage* RenderFrameHostDelegate::GetAsInterstitialPage() {
@@ -50,7 +51,7 @@ void RenderFrameHostDelegate::RequestMediaAccessPermission(
 }
 
 bool RenderFrameHostDelegate::CheckMediaAccessPermission(
-    const GURL& security_origin,
+    const url::Origin& security_origin,
     MediaStreamType type) {
   LOG(ERROR) << "RenderFrameHostDelegate::CheckMediaAccessPermission: "
              << "Not supported.";
@@ -62,30 +63,38 @@ std::string RenderFrameHostDelegate::GetDefaultMediaDeviceID(
   return std::string();
 }
 
-AccessibilityMode RenderFrameHostDelegate::GetAccessibilityMode() const {
-  return AccessibilityMode();
+ui::AXMode RenderFrameHostDelegate::GetAccessibilityMode() const {
+  return ui::AXMode();
 }
 
 RenderFrameHost* RenderFrameHostDelegate::GetGuestByInstanceID(
     RenderFrameHost* render_frame_host,
     int browser_plugin_instance_id) {
-  return NULL;
-}
-
-device::GeolocationServiceContext*
-RenderFrameHostDelegate::GetGeolocationServiceContext() {
   return nullptr;
 }
 
-device::mojom::WakeLockContext*
-RenderFrameHostDelegate::GetWakeLockServiceContext() {
+device::mojom::GeolocationContext*
+RenderFrameHostDelegate::GetGeolocationContext() {
   return nullptr;
 }
+
+device::mojom::WakeLock* RenderFrameHostDelegate::GetRendererWakeLock() {
+  return nullptr;
+}
+
+#if defined(OS_ANDROID)
+void RenderFrameHostDelegate::GetNFC(device::mojom::NFCRequest request) {}
+#endif
 
 bool RenderFrameHostDelegate::ShouldRouteMessageEvent(
     RenderFrameHost* target_rfh,
     SiteInstance* source_site_instance) const {
   return false;
+}
+
+RenderFrameHost*
+RenderFrameHostDelegate::GetFocusedFrameIncludingInnerWebContents() {
+  return nullptr;
 }
 
 std::unique_ptr<WebUIImpl>
@@ -107,5 +116,9 @@ RenderFrameHostDelegate::GetJavaRenderFrameHostDelegate() {
   return nullptr;
 }
 #endif
+
+bool RenderFrameHostDelegate::IsBeingDestroyed() const {
+  return false;
+}
 
 }  // namespace content

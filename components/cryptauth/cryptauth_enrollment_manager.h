@@ -62,7 +62,7 @@ class CryptAuthEnrollmentManager : public SyncScheduler::Delegate,
   // |pref_service|: Contains preferences across browser restarts, and should
   //                 have been registered through RegisterPrefs().
   CryptAuthEnrollmentManager(
-      std::unique_ptr<base::Clock> clock,
+      base::Clock* clock,
       std::unique_ptr<CryptAuthEnrollerFactory> enroller_factory,
       std::unique_ptr<SecureMessageDelegate> secure_message_delegate,
       const GcmDeviceInfo& device_info,
@@ -116,8 +116,7 @@ class CryptAuthEnrollmentManager : public SyncScheduler::Delegate,
   virtual std::string GetUserPrivateKey() const;
 
  protected:
-  // Creates a new SyncScheduler instance. Exposed for testing.
-  virtual std::unique_ptr<SyncScheduler> CreateSyncScheduler();
+  void SetSyncSchedulerForTest(std::unique_ptr<SyncScheduler> sync_scheduler);
 
  private:
   // CryptAuthGCMManager::Observer:
@@ -144,7 +143,7 @@ class CryptAuthEnrollmentManager : public SyncScheduler::Delegate,
   void OnEnrollmentFinished(bool success);
 
   // Used to determine the time.
-  std::unique_ptr<base::Clock> clock_;
+  base::Clock* clock_;
 
   // Creates CryptAuthEnroller instances for each enrollment attempt.
   std::unique_ptr<CryptAuthEnrollerFactory> enroller_factory_;

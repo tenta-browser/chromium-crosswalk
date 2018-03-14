@@ -4,13 +4,14 @@
 
 package org.chromium.base;
 
+import android.annotation.SuppressLint;
+import android.os.Build;
 import android.os.Process;
 import android.os.StrictMode;
 import android.os.SystemClock;
 
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.base.annotations.MainDex;
-import org.chromium.base.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -45,18 +46,33 @@ public class EarlyTraceEvent {
     static final class Event {
         final String mName;
         final int mThreadId;
-        final long mBeginTimeMs;
-        long mEndTimeMs;
+        final long mBeginTimeNanos;
+        final long mBeginThreadTimeMillis;
+        long mEndTimeNanos;
+        long mEndThreadTimeMillis;
 
         Event(String name) {
             mName = name;
             mThreadId = Process.myTid();
-            mBeginTimeMs = SystemClock.elapsedRealtime();
+            mBeginTimeNanos = elapsedRealtimeNanos();
+            mBeginThreadTimeMillis = SystemClock.currentThreadTimeMillis();
         }
 
         void end() {
-            assert mEndTimeMs == 0;
-            mEndTimeMs = SystemClock.elapsedRealtime();
+            assert mEndTimeNanos == 0;
+            assert mEndThreadTimeMillis == 0;
+            mEndTimeNanos = elapsedRealtimeNanos();
+            mEndThreadTimeMillis = SystemClock.currentThreadTimeMillis();
+        }
+
+        @VisibleForTesting
+        @SuppressLint("NewApi")
+        static long elapsedRealtimeNanos() {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+                return SystemClock.elapsedRealtimeNanos();
+            } else {
+                return SystemClock.elapsedRealtime() * 1000000;
+            }
         }
     }
 
@@ -79,8 +95,8 @@ public class EarlyTraceEvent {
 
     /** @see TraceEvent#MaybeEnableEarlyTracing().
      */
-    @SuppressFBWarnings("DMI_HARDCODED_ABSOLUTE_FILENAME")
     static void maybeEnable() {
+        ThreadUtils.assertOnUiThread();
         boolean shouldEnable = false;
         // Checking for the trace config filename touches the disk.
         StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
@@ -120,21 +136,35 @@ public class EarlyTraceEvent {
      */
     static void disable() {
         synchronized (sLock) {
-            if (sState != STATE_ENABLED) return;
+            if (!enabled()) return;
             sState = STATE_FINISHING;
             maybeFinishLocked();
         }
+    }
+
+    /**
+     * Returns whether early tracing is currently active.
+     *
+     * Active means that Early Tracing is either enabled or waiting to complete pending events.
+     */
+    static boolean isActive() {
+        int state = sState;
+        return (state == STATE_ENABLED || state == STATE_FINISHING);
+    }
+
+    static boolean enabled() {
+        return sState == STATE_ENABLED;
     }
 
     /** @see {@link TraceEvent#begin()}. */
     public static void begin(String name) {
         // begin() and end() are going to be called once per TraceEvent, this avoids entering a
         // synchronized block at each and every call.
-        if (sState != STATE_ENABLED) return;
+        if (!enabled()) return;
         Event event = new Event(name);
         Event conflictingEvent;
         synchronized (sLock) {
-            if (sState != STATE_ENABLED) return;
+            if (!enabled()) return;
             conflictingEvent = sPendingEvents.put(name, event);
         }
         if (conflictingEvent != null) {
@@ -145,10 +175,9 @@ public class EarlyTraceEvent {
 
     /** @see {@link TraceEvent#end()}. */
     public static void end(String name) {
-        int state = sState;
-        if (state != STATE_ENABLED && state != STATE_FINISHING) return;
+        if (!isActive()) return;
         synchronized (sLock) {
-            if (sState != STATE_ENABLED && sState != STATE_FINISHING) return;
+            if (!isActive()) return;
             Event event = sPendingEvents.remove(name);
             if (event == null) return;
             event.end();
@@ -157,24 +186,36 @@ public class EarlyTraceEvent {
         }
     }
 
-    private static void maybeFinishLocked() {
-        if (!sPendingEvents.isEmpty()) return;
-        sState = STATE_FINISHED;
-        dumpEvents(sCompletedEvents);
+    @VisibleForTesting
+    static void resetForTesting() {
+        sState = EarlyTraceEvent.STATE_DISABLED;
         sCompletedEvents = null;
         sPendingEvents = null;
     }
 
-    private static void dumpEvents(List<Event> events) {
-        long nativeNowUs = TimeUtils.nativeGetTimeTicksNowUs();
-        long javaNowUs = SystemClock.elapsedRealtime() * 1000;
-        long offsetMs = (nativeNowUs - javaNowUs) / 1000;
-        for (Event event : events) {
-            nativeRecordEarlyEvent(event.mName, event.mBeginTimeMs + offsetMs,
-                    event.mEndTimeMs + offsetMs, event.mThreadId);
+    private static void maybeFinishLocked() {
+        if (!sCompletedEvents.isEmpty()) {
+            dumpEvents(sCompletedEvents);
+            sCompletedEvents.clear();
+        }
+        if (sPendingEvents.isEmpty()) {
+            sState = STATE_FINISHED;
+            sPendingEvents = null;
+            sCompletedEvents = null;
         }
     }
 
-    private static native void nativeRecordEarlyEvent(
-            String name, long beginTimeMs, long endTimeMs, int threadId);
+    private static void dumpEvents(List<Event> events) {
+        long nativeNowNanos = TimeUtils.nativeGetTimeTicksNowUs() * 1000;
+        long javaNowNanos = Event.elapsedRealtimeNanos();
+        long offsetNanos = nativeNowNanos - javaNowNanos;
+        for (Event e : events) {
+            nativeRecordEarlyEvent(e.mName, e.mBeginTimeNanos + offsetNanos,
+                    e.mEndTimeNanos + offsetNanos, e.mThreadId,
+                    e.mEndThreadTimeMillis - e.mBeginThreadTimeMillis);
+        }
+    }
+
+    private static native void nativeRecordEarlyEvent(String name, long beginTimNanos,
+            long endTimeNanos, int threadId, long threadDurationMillis);
 }

@@ -85,8 +85,8 @@ void ForwardRequestStatus(
   if (info->GetAssociatedRenderFrame(&process_id, &render_frame_id)) {
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(&NotifyEPMRequestStatus, status, profile_id,
-                   request->identifier(), process_id, render_frame_id));
+        base::BindOnce(&NotifyEPMRequestStatus, status, profile_id,
+                       request->identifier(), process_id, render_frame_id));
   }
 }
 
@@ -190,7 +190,7 @@ int ChromeExtensionsNetworkDelegateImpl::OnBeforeURLRequest(
       info && content::IsResourceTypeFrame(info->GetResourceType());
   if (is_nested_url && is_navigation && info->IsMainFrame()) {
     // Nested conditional so we don't always pay the GURL -> Origin conversion.
-    url::Origin origin = url::Origin(url);
+    url::Origin origin = url::Origin::Create(url);
     if (origin.scheme() == extensions::kExtensionScheme &&
         !extension_info_map_->process_map().Contains(info->GetChildID()) &&
         !content::IsBrowserSideNavigationEnabled()) {

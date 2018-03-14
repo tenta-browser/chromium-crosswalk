@@ -32,6 +32,7 @@
 #define FrameSerializer_h
 
 #include "core/CoreExport.h"
+#include "core/dom/Attribute.h"
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/KURLHash.h"
@@ -42,7 +43,6 @@
 
 namespace blink {
 
-class Attribute;
 class CSSRule;
 class CSSStyleSheet;
 class CSSValue;
@@ -52,7 +52,7 @@ class FontResource;
 class ImageResourceContent;
 class LocalFrame;
 class SharedBuffer;
-class StylePropertySet;
+class CSSPropertyValueSet;
 
 struct SerializedResource;
 
@@ -70,6 +70,8 @@ class CORE_EXPORT FrameSerializer final {
 
   class Delegate {
    public:
+    virtual ~Delegate() {}
+
     // Controls whether HTML serialization should skip the given element.
     virtual bool ShouldIgnoreElement(const Element&) { return false; }
 
@@ -105,6 +107,15 @@ class CORE_EXPORT FrameSerializer final {
     virtual Vector<Attribute> GetCustomAttributes(const Element&) {
       return Vector<Attribute>();
     }
+
+    // Returns an auxiliary DOM tree, i.e. shadow tree, that needs to be
+    // serialized.
+    virtual std::pair<Node*, Element*> GetAuxiliaryDOMTree(
+        const Element&) const {
+      return std::pair<Node*, Element*>();
+    }
+
+    virtual bool ShouldCollectProblemMetric() { return false; }
   };
 
   // Constructs a serializer that will write output to the given deque of
@@ -135,20 +146,28 @@ class CORE_EXPORT FrameSerializer final {
 
   void AddToResources(const String& mime_type,
                       ResourceHasCacheControlNoStoreHeader,
-                      PassRefPtr<const SharedBuffer>,
+                      scoped_refptr<const SharedBuffer>,
                       const KURL&);
   void AddImageToResources(ImageResourceContent*, const KURL&);
   void AddFontToResources(FontResource*);
 
-  void RetrieveResourcesForProperties(const StylePropertySet*, Document&);
+  void RetrieveResourcesForProperties(const CSSPropertyValueSet*, Document&);
   void RetrieveResourcesForCSSValue(const CSSValue&, Document&);
 
   Deque<SerializedResource>* resources_;
+  // This hashset is only used for de-duplicating resources to be serialized.
   HashSet<KURL> resource_urls_;
 
   bool is_serializing_css_;
 
   Delegate& delegate_;
+
+  // Variables for problem detection during serialization.
+  int total_image_count_;
+  int loaded_image_count_;
+  int total_css_count_;
+  int loaded_css_count_;
+  bool should_collect_problem_metric_;
 };
 
 }  // namespace blink

@@ -11,7 +11,9 @@
 #include "services/ui/ws/display.h"
 #include "services/ui/ws/display_manager.h"
 #include "services/ui/ws/server_window.h"
+#include "services/ui/ws/window_manager_state.h"
 #include "services/ui/ws/window_server.h"
+#include "services/ui/ws/window_tree.h"
 
 namespace ui {
 namespace ws {
@@ -23,9 +25,10 @@ WindowManagerDisplayRoot::WindowManagerDisplayRoot(Display* display)
   properties[mojom::WindowManager::kName_Property] =
       std::vector<uint8_t>(name.begin(), name.end());
 
-  root_.reset(window_server()->CreateServerWindow(
-      window_server()->display_manager()->GetAndAdvanceNextRootId(),
-      properties));
+  WindowId id = window_server()->display_manager()->GetAndAdvanceNextRootId();
+  ClientWindowId client_window_id(id.client_id, id.window_id);
+  root_.reset(
+      window_server()->CreateServerWindow(id, client_window_id, properties));
   root_->set_event_targeting_policy(
       mojom::EventTargetingPolicy::DESCENDANTS_ONLY);
   // Our root is always a child of the Display's root. Do this
@@ -38,6 +41,15 @@ WindowManagerDisplayRoot::WindowManagerDisplayRoot(Display* display)
 }
 
 WindowManagerDisplayRoot::~WindowManagerDisplayRoot() {}
+
+const ServerWindow* WindowManagerDisplayRoot::GetClientVisibleRoot() const {
+  if (window_manager_state_->window_tree()
+          ->automatically_create_display_roots()) {
+    return root_.get();
+  }
+
+  return root_->children().empty() ? nullptr : root_->children()[0];
+}
 
 WindowServer* WindowManagerDisplayRoot::window_server() {
   return display_->window_server();

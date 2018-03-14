@@ -12,12 +12,20 @@ the promise of working across browsers and devices without needing extra
 layers of abstraction to paper over the gaps left by specification
 editors and implementors.
 
+Setting Up the Repo
+===================
+
+Clone or otherwise get https://github.com/w3c/web-platform-tests.
+
+Note: because of the frequent creation and deletion of branches in this
+repo, it is recommended to "prune" stale branches when fetching updates,
+i.e. use `git pull --prune` (or `git fetch -p && git merge`).
+
 Running the Tests
 =================
 
 The tests are designed to be run from your local computer. The test
 environment requires [Python 2.7+](http://www.python.org/downloads) (but not Python 3.x).
-You will also need a copy of OpenSSL.
 
 On Windows, be sure to add the Python directory (`c:\python2x`, by default) to
 your `%Path%` [Environment Variable](http://www.computerhope.com/issues/ch000549.htm),
@@ -40,16 +48,13 @@ following entries are required:
 If you are behind a proxy, you also need to make sure the domains above are
 excluded from your proxy lookups.
 
-Because web-platform-tests uses git submodules, you must ensure that
-these are up to date. In the root of your checkout, run:
 
-```
-git submodule update --init --recursive
-```
+Running Tests Manually
+======================
 
-The test environment can then be started using
+The test server can be started using
 
-    ./serve
+    ./wpt serve
 
 This will start HTTP servers on two ports and a websockets server on
 one port. By default one web server starts on port 8000 and the other
@@ -68,6 +73,142 @@ to some port of your choice e.g.
 "http": [1234, "auto"]
 ```
 
+Running Tests Automatically
+---------------------------
+
+Tests can be run automatically in a browser using the `run` command of
+the `wpt` script in the root of the checkout. This requires the hosts
+file setup documented above, but you must *not* have the
+test server already running when calling `wpt run`. The basic command
+line syntax is:
+
+```
+./wpt run product [tests]
+```
+
+**On Windows**: You will need to preceed the prior command with
+`python` or the path to the python binary.
+
+where `product` is currently `firefox` or `chrome` and `[tests]` is a
+list of paths to tests. This will attempt to automatically locate a
+browser instance and install required dependencies. The command is
+very configurable; for examaple to specify a particular binary use
+`wpt run --binary=path product`. The full range of options can be see
+with `wpt run --help` and `wpt run --wptrunner-help`.
+
+Not all dependencies can be automatically installed; in particular the
+`certutil` tool required to run https tests with Firefox must be
+installed using a system package manager or similar.
+
+On Debian/Ubuntu certutil may be installed using:
+
+```
+sudo apt install libnss3-tools
+```
+
+And on macOS with homebrew using:
+
+```
+brew install nss
+```
+
+On other platforms, download the firefox archive and common.tests.zip
+archive for your platform from
+[https://archive.mozilla.org/pub/firefox/nightly/latest-mozilla-central/](Mozilla CI)
+
+Then extract `certutil[.exe]` from the tests.zip package and
+`libnss3[.so|.dll|.dynlib]` and put the former on your path and the latter on
+your library path.
+
+
+Command Line Tools
+==================
+
+The `wpt` command provides a frontend to a variety of tools for
+working with and running web-platform-tests. Some of the most useful
+commands are:
+
+* `wpt serve` - For starting the wpt http server
+* `wpt run` - For running tests in a browser
+* `wpt lint` - For running the lint against all tests
+* `wpt manifest` - For updating or generating a `MANIFEST.json` test manifest
+* `wpt install` - For installing the latest release of a browser or
+  webdriver server on the local machine.
+
+<span id="submodules">Submodules</span>
+=======================================
+
+Some optional components of web-platform-tests (test components from
+third party software and pieces of the CSS build system) are included
+as submodules. To obtain these components run the following in the
+root of your checkout:
+
+```
+git submodule update --init --recursive
+```
+
+Prior to commit `39d07eb01fab607ab1ffd092051cded1bdd64d78` submodules
+were requried for basic functionality. If you are working with an
+older checkout, the above command is required in all cases.
+
+When moving between a commit prior to `39d07eb` and one after it git
+may complain
+
+```
+$ git checkout master
+error: The following untracked working tree files would be overwritten by checkout:
+[…]
+```
+
+followed by a long list of files. To avoid this error remove
+the `resources` and `tools` directories before switching branches:
+
+```
+$ rm -r resources/ tools/
+$ git checkout master
+Switched to branch 'master'
+Your branch is up-to-date with 'origin/master'
+```
+
+When moving in the opposite direction, i.e. to a commit that does have
+submodules, you will need to `git submodule update`, as above. If git
+throws an error like:
+
+```
+fatal: No url found for submodule path 'resources/webidl2/test/widlproc' in .gitmodules
+Failed to recurse into submodule path 'resources/webidl2'
+fatal: No url found for submodule path 'tools/html5lib' in .gitmodules
+Failed to recurse into submodule path 'resources'
+Failed to recurse into submodule path 'tools'
+```
+
+then remove the `tools` and `resources` directories, as above.
+
+<span id="windows-notes">Windows Notes</span>
+=============================================
+
+On Windows `wpt` commands mut bre prefixed with `python` or the path
+to the python binary (if `python` is not in your `%PATH%`).
+
+Alternatively, you may also use
+[Bash on Ubuntu on Windows](https://msdn.microsoft.com/en-us/commandline/wsl/about)
+in the Windows 10 Anniversary Update build, then access your windows
+partition from there to launch `wpt` commands.
+
+Please make sure git and your text editor do not automatically convert
+line endings, as it will cause lint errors. For git, please set
+`git config core.autocrlf false` in your working tree.
+
+Certificates
+============
+
+By default pregenerated certificates for the web-platform.test domain
+are provided in the repository. If you wish to generate new
+certificates for any reason it's possible to use OpenSSL when starting
+the server, or starting a test run, by providing the
+`--ssl-type=openssl` argument to the `wpt serve` or `wpt run`
+commands.
+
 If you installed OpenSSL in such a way that running `openssl` at a
 command line doesn't work, you also need to adjust the path to the
 OpenSSL binary. This can be done by adding a section to `config.json`
@@ -77,11 +218,7 @@ like:
 "ssl": {"openssl": {"binary": "/path/to/openssl"}}
 ```
 
-<span id="windows-notes">Windows Notes</span>
-=============================================
-
-Running wptserve with SSL enabled on Windows typically requires
-installing an OpenSSL distribution.
+On Windows using OpenSSL typically requires installing an OpenSSL distribution.
 [Shining Light](https://slproweb.com/products/Win32OpenSSL.html)
 provide a convenient installer that is known to work, but requires a
 little extra setup, i.e.:
@@ -103,10 +240,6 @@ Then edit the JSON so that the key `ssl/openssl/base_conf_path` has a
 value that is the path to the OpenSSL config file (typically this
 will be `C:\\OpenSSL-Win32\\bin\\openssl.cfg`).
 
-Alternatively, you may also use
-[Bash on Ubuntu on Windows](https://msdn.microsoft.com/en-us/commandline/wsl/about)
-in the Windows 10 Anniversary Update build, then access your windows
-partition from there to launch wptserve.
 
 Publication
 ===========
@@ -181,21 +314,21 @@ can run it manually by starting the `lint` executable from the root of
 your local web-platform-tests working directory like this:
 
 ```
-./lint
+./wpt lint
 ```
 
 The lint tool is also run automatically for every submitted pull
 request, and reviewers will not merge branches with tests that have
-lint errors, so you must fix any errors the lint tool reports. For
-details on doing that, see the [lint-tool documentation][lint-tool].
+lint errors, so you must fix any errors the lint tool reports.
 
-But in the unusual case of error reports for things essential to a
+In the unusual case of error reports for things essential to a
 certain test or that for other exceptional reasons shouldn't prevent
 a merge of a test, update and commit the `lint.whitelist` file in the
-web-platform-tests root directory to suppress the error reports. For
-details on doing that, see the [lint-tool documentation][lint-tool].
+web-platform-tests root directory to suppress the error reports.
 
-[lint-tool]: https://github.com/w3c/web-platform-tests/blob/master/docs/lint-tool.md
+For more details, see the [lint-tool documentation][lint-tool].
+
+[lint-tool]: http://web-platform-tests.org/writing-tests/lint-tool.html
 
 Adding command-line scripts ("tools" subdirs)
 ---------------------------------------------
@@ -257,11 +390,11 @@ is [archived][ircarchive].
 
 [contributing]: https://github.com/w3c/web-platform-tests/blob/master/CONTRIBUTING.md
 [ircw3org]: https://www.w3.org/wiki/IRC
-[ircarchive]: http://krijnhoetmer.nl/irc-logs/testing/
-[mailarchive]: http://lists.w3.org/Archives/Public/public-test-infra/
+[ircarchive]: http://logs.glob.uno/?c=w3%23testing
+[mailarchive]: https://lists.w3.org/Archives/Public/public-test-infra/
 
 Documentation
 =============
 
-* [How to write and review tests](http://testthewebforward.org/docs/)
+* [How to write and review tests](http://web-platform-tests.org/)
 * [Documentation for the wptserve server](http://wptserve.readthedocs.org/en/latest/)

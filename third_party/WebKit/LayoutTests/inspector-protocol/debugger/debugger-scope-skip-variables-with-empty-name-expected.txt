@@ -1,3 +1,4 @@
+Tests that we do not report scope variables with empty names.
 {
     result : [
         [0] : {
@@ -6,7 +7,6 @@
             isOwn : true
             name : a
             value : {
-                description : 2
                 type : number
                 value : 2
             }

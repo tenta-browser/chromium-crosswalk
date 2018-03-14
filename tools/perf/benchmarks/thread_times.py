@@ -8,6 +8,7 @@ from benchmarks import silk_flags
 from measurements import thread_times
 import page_sets
 from telemetry import benchmark
+from telemetry import story
 
 
 class _ThreadTimes(perf_benchmark.PerfBenchmark):
@@ -33,52 +34,103 @@ class _ThreadTimes(perf_benchmark.PerfBenchmark):
     return thread_times.ThreadTimes(options.report_silk_details)
 
 
-@benchmark.Enabled('android')
 @benchmark.Owner(emails=['vmiura@chromium.org'])
 class ThreadTimesKeySilkCases(_ThreadTimes):
   """Measures timeline metrics while performing smoothness action on key silk
   cases."""
   page_set = page_sets.KeySilkCasesPageSet
+  SUPPORTED_PLATFORMS = [story.expectations.ALL_MOBILE]
 
   @classmethod
   def Name(cls):
     return 'thread_times.key_silk_cases'
 
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        self.DisableStory('https://polymer-topeka.appspot.com/',
+                          [story.expectations.ALL], 'crbug.com/507865')
+        self.DisableStory('http://plus.google.com/app/basic/stream',
+                          [story.expectations.ALL], 'crbug.com/338838')
+        self.DisableStory('inbox_app.html?slide_drawer',
+                          [story.expectations.ALL], 'crbug.com/446332')
+        self.DisableStory('http://s.codepen.io/befamous/fullpage/pFsqb?scroll',
+                          [story.expectations.ALL], 'crbug.com/764825')
+        self.DisableStory('inbox_app.html?swipe_to_dismiss',
+                          [story.expectations.ALL], 'crbug.com/764825')
+        self.DisableStory('masonry.html',
+                          [story.expectations.ALL], 'crbug.com/764825')
+    return StoryExpectations()
 
-@benchmark.Enabled('android', 'linux')
+
 class ThreadTimesKeyHitTestCases(_ThreadTimes):
   """Measure timeline metrics while performing smoothness action on key hit
   testing cases."""
   page_set = page_sets.KeyHitTestCasesPageSet
+  SUPPORTED_PLATFORMS = [
+      story.expectations.ALL_ANDROID, story.expectations.ALL_LINUX
+  ]
 
   @classmethod
   def Name(cls):
     return 'thread_times.key_hit_test_cases'
 
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        self.DisableBenchmark(
+            [story.expectations.ALL],
+            'Disabled on all platforms due to use of deprecated web platform '
+            'features. Crbug.com/750876.')
+    return StoryExpectations()
 
-@benchmark.Enabled('android')
-class ThreadTimesFastPathMobileSites(_ThreadTimes):
+
+@benchmark.Owner(emails=['vmiura@chromium.org'])
+class ThreadTimesKeyMobileSitesSmooth(_ThreadTimes):
   """Measures timeline metrics while performing smoothness action on
   key mobile sites labeled with fast-path tag.
   http://www.chromium.org/developers/design-documents/rendering-benchmarks"""
   page_set = page_sets.KeyMobileSitesSmoothPageSet
   options = {'story_tag_filter': 'fastpath'}
+  SUPPORTED_PLATFORMS = [story.expectations.ALL_MOBILE]
 
   @classmethod
   def Name(cls):
     return 'thread_times.key_mobile_sites_smooth'
 
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        pass
+        # TODO(rnephew): Uncomment when these stories is rerecorded.
+        # self.DisableStory(
+        #     'http://forecast.io', [story.expectations.ALL],
+        #     'crbug.com/249736')
+        # self.DisableStory(
+        #    'Twitter', [story.expectations.ALL],
+        #    'Forbidden (Rate Limit Exceeded)')
+        # self.DisableStory('ESPN', [story.expectations.ALL],
+        #                   'crbug.com/249722')
+    return StoryExpectations()
 
-@benchmark.Enabled('android')
+
 @benchmark.Owner(emails=['vmiura@chromium.org'])
 class ThreadTimesSimpleMobileSites(_ThreadTimes):
   """Measures timeline metric using smoothness action on simple mobile sites
   http://www.chromium.org/developers/design-documents/rendering-benchmarks"""
   page_set = page_sets.SimpleMobileSitesPageSet
+  SUPPORTED_PLATFORMS = [story.expectations.ALL_MOBILE]
 
   @classmethod
   def Name(cls):
     return 'thread_times.simple_mobile_sites'
+
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        self.DisableStory('https://www.flickr.com/', [story.expectations.ALL],
+                          'crbug.com/752228')
+    return StoryExpectations()
 
 
 @benchmark.Owner(emails=['vmiura@chromium.org'])
@@ -97,25 +149,19 @@ class ThreadTimesCompositorCases(_ThreadTimes):
   def Name(cls):
     return 'thread_times.tough_compositor_cases'
 
-
-@benchmark.Enabled('android')
-@benchmark.Owner(emails=['ykyyip@chromium.org'])
-class ThreadTimesPolymer(_ThreadTimes):
-  """Measures timeline metrics while performing smoothness action on
-  Polymer cases."""
-  page_set = page_sets.PolymerPageSet
-
-  @classmethod
-  def Name(cls):
-    return 'thread_times.polymer'
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        pass # Nothing disabled.
+    return StoryExpectations()
 
 
-@benchmark.Enabled('android')
 @benchmark.Owner(emails=['skyostil@chromium.org'])
 class ThreadTimesKeyIdlePowerCases(_ThreadTimes):
   """Measures timeline metrics for sites that should be idle in foreground
   and background scenarios. The metrics are per-second rather than per-frame."""
   page_set = page_sets.KeyIdlePowerCasesPageSet
+  SUPPORTED_PLATFORMS = [story.expectations.ALL_MOBILE]
 
   @classmethod
   def Name(cls):
@@ -126,12 +172,18 @@ class ThreadTimesKeyIdlePowerCases(_ThreadTimes):
     # Only report per-second metrics.
     return 'per_frame' not in value.name and 'mean_frame' not in value.name
 
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        pass
+    return StoryExpectations()
 
-@benchmark.Enabled('android')
+
 class ThreadTimesKeyNoOpCases(_ThreadTimes):
   """Measures timeline metrics for common interactions and behaviors that should
   have minimal cost. The metrics are per-second rather than per-frame."""
   page_set = page_sets.KeyNoOpCasesPageSet
+  SUPPORTED_PLATFORMS = [story.expectations.ALL_MOBILE]
 
   @classmethod
   def Name(cls):
@@ -141,6 +193,12 @@ class ThreadTimesKeyNoOpCases(_ThreadTimes):
   def ValueCanBeAddedPredicate(cls, value, _):
     # Only report per-second metrics.
     return 'per_frame' not in value.name and 'mean_frame' not in value.name
+
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        pass
+    return StoryExpectations()
 
 
 @benchmark.Owner(emails=['tdresser@chromium.org'])
@@ -152,3 +210,38 @@ class ThreadTimesToughScrollingCases(_ThreadTimes):
   @classmethod
   def Name(cls):
     return 'thread_times.tough_scrolling_cases'
+
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        self.DisableStory('canvas_05000_pixels_per_second',
+                          [story.expectations.ANDROID_WEBVIEW],
+                          'crbug.com/783362')
+        self.DisableStory('canvas_10000_pixels_per_second',
+                          [story.expectations.ANDROID_WEBVIEW],
+                          'crbug.com/783362')
+        self.DisableStory('canvas_15000_pixels_per_second',
+                          [story.expectations.ANDROID_WEBVIEW],
+                          'crbug.com/783362')
+        self.DisableStory('canvas_20000_pixels_per_second',
+                          [story.expectations.ANDROID_WEBVIEW],
+                          'crbug.com/783362')
+        self.DisableStory('canvas_30000_pixels_per_second',
+                          [story.expectations.ANDROID_WEBVIEW],
+                          'crbug.com/783362')
+        self.DisableStory('canvas_40000_pixels_per_second',
+                          [story.expectations.ANDROID_WEBVIEW],
+                          'crbug.com/783362')
+        self.DisableStory('canvas_50000_pixels_per_second',
+                          [story.expectations.ANDROID_WEBVIEW],
+                          'crbug.com/783362')
+        self.DisableStory('canvas_60000_pixels_per_second',
+                          [story.expectations.ANDROID_WEBVIEW],
+                          'crbug.com/783362')
+        self.DisableStory('canvas_75000_pixels_per_second',
+                          [story.expectations.ANDROID_WEBVIEW],
+                          'crbug.com/783362')
+        self.DisableStory('canvas_90000_pixels_per_second',
+                          [story.expectations.ANDROID_WEBVIEW],
+                          'crbug.com/783362')
+    return StoryExpectations()

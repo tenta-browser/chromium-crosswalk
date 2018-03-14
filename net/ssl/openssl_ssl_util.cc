@@ -12,12 +12,13 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "crypto/openssl_util.h"
 #include "net/base/net_errors.h"
+#include "net/cert/x509_util.h"
 #include "net/ssl/ssl_connection_status_flags.h"
 #include "third_party/boringssl/src/include/openssl/err.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
-#include "third_party/boringssl/src/include/openssl/x509.h"
 
 namespace net {
 
@@ -141,7 +142,7 @@ std::unique_ptr<base::Value> NetLogOpenSSLErrorCallback(
 
 }  // namespace
 
-void OpenSSLPutNetError(const tracked_objects::Location& location, int err) {
+void OpenSSLPutNetError(const base::Location& location, int err) {
   // Net error codes are negative. Encode them as positive numbers.
   err = -err;
   if (err < 0 || err > 0xfff) {
@@ -174,26 +175,26 @@ int MapOpenSSLErrorWithDetails(int err,
       return ERR_FAILED;
     case SSL_ERROR_SSL:
       // Walk down the error stack to find an SSL or net error.
-      uint32_t error_code;
-      const char* file;
-      int line;
-      do {
-        error_code = ERR_get_error_line(&file, &line);
-        if (ERR_GET_LIB(error_code) == ERR_LIB_SSL) {
-          out_error_info->error_code = error_code;
-          out_error_info->file = file;
-          out_error_info->line = line;
-          return MapOpenSSLErrorSSL(error_code);
-        } else if (ERR_GET_LIB(error_code) == OpenSSLNetErrorLib()) {
-          out_error_info->error_code = error_code;
-          out_error_info->file = file;
-          out_error_info->line = line;
+      while (true) {
+        OpenSSLErrorInfo error_info;
+        error_info.error_code =
+            ERR_get_error_line(&error_info.file, &error_info.line);
+        if (error_info.error_code == 0) {
+          // Map errors to ERR_SSL_PROTOCOL_ERROR by default, reporting the most
+          // recent error in |*out_error_info|.
+          return ERR_SSL_PROTOCOL_ERROR;
+        }
+
+        *out_error_info = error_info;
+        if (ERR_GET_LIB(error_info.error_code) == ERR_LIB_SSL) {
+          return MapOpenSSLErrorSSL(error_info.error_code);
+        }
+        if (ERR_GET_LIB(error_info.error_code) == OpenSSLNetErrorLib()) {
           // Net error codes are negative but encoded in OpenSSL as positive
           // numbers.
-          return -ERR_GET_REASON(error_code);
+          return -ERR_GET_REASON(error_info.error_code);
         }
-      } while (error_code != 0);
-      return ERR_FAILED;
+      }
     default:
       // TODO(joth): Implement full mapping.
       LOG(WARNING) << "Unknown OpenSSL error " << err;
@@ -225,31 +226,24 @@ int GetNetSSLVersion(SSL* ssl) {
   }
 }
 
-bssl::UniquePtr<X509> OSCertHandleToOpenSSL(
-    X509Certificate::OSCertHandle os_handle) {
-#if BUILDFLAG(USE_BYTE_CERTS)
-  return bssl::UniquePtr<X509>(X509_parse_from_buffer(os_handle));
-#elif defined(USE_OPENSSL_CERTS)
-  return bssl::UniquePtr<X509>(X509Certificate::DupOSCertHandle(os_handle));
-#else   // !defined(USE_OPENSSL_CERTS) && !BUILDFLAG(USE_BYTE_CERTS)
-  std::string der_encoded;
-  if (!X509Certificate::GetDEREncoded(os_handle, &der_encoded))
-    return bssl::UniquePtr<X509>();
-  const uint8_t* bytes = reinterpret_cast<const uint8_t*>(der_encoded.data());
-  return bssl::UniquePtr<X509>(d2i_X509(NULL, &bytes, der_encoded.size()));
-#endif  // defined(USE_OPENSSL_CERTS) && BUILDFLAG(USE_BYTE_CERTS)
-}
-
-bssl::UniquePtr<STACK_OF(X509)> OSCertHandlesToOpenSSL(
-    const X509Certificate::OSCertHandles& os_handles) {
-  bssl::UniquePtr<STACK_OF(X509)> stack(sk_X509_new_null());
-  for (size_t i = 0; i < os_handles.size(); i++) {
-    bssl::UniquePtr<X509> x509 = OSCertHandleToOpenSSL(os_handles[i]);
-    if (!x509)
-      return nullptr;
-    sk_X509_push(stack.get(), x509.release());
+bool SetSSLChainAndKey(SSL* ssl,
+                       X509Certificate* cert,
+                       EVP_PKEY* pkey,
+                       const SSL_PRIVATE_KEY_METHOD* custom_key) {
+  std::vector<CRYPTO_BUFFER*> chain_raw;
+  chain_raw.push_back(cert->os_cert_handle());
+  for (X509Certificate::OSCertHandle handle :
+       cert->GetIntermediateCertificates()) {
+    chain_raw.push_back(handle);
   }
-  return stack;
+
+  if (!SSL_set_chain_and_key(ssl, chain_raw.data(), chain_raw.size(), pkey,
+                             custom_key)) {
+    LOG(WARNING) << "Failed to set client certificate";
+    return false;
+  }
+
+  return true;
 }
 
 }  // namespace net

@@ -4,7 +4,6 @@
 
 #import "ios/chrome/browser/ui/promos/signin_promo_view_controller.h"
 
-#include "base/mac/scoped_nsobject.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/sys_string_conversions.h"
@@ -15,15 +14,27 @@
 #import "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/signin/authentication_service.h"
 #include "ios/chrome/browser/signin/authentication_service_factory.h"
-#import "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
+#import "ios/chrome/browser/ui/commands/application_commands.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
+#import "ios/public/provider/chrome/browser/signin/chrome_identity.h"
 #import "ios/public/provider/chrome/browser/signin/chrome_identity_service.h"
 #include "net/base/network_change_notifier.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 // Key in the UserDefaults to record the version of the application when the
 // SSO Recall promo has been displayed.
 NSString* kDisplayedSSORecallForMajorVersionKey =
     @"DisplayedSSORecallForMajorVersionKey";
+// Key in the UserDefaults to record the GAIA id list when the sign-in promo
+// was shown.
+NSString* kLastShownAccountGaiaIdVersionKey =
+    @"LastShownAccountGaiaIdVersionKey";
+// Key in the UserDefaults to record the number of time the sign-in promo has
+// been shown.
+NSString* kSigninPromoViewDisplayCountKey = @"SigninPromoViewDisplayCountKey";
 
 namespace {
 
@@ -34,8 +45,8 @@ NSString* kDisplayedSSORecallPromoCountKey = @"DisplayedSSORecallPromoCount";
 // Name of the UMA SSO Recall histogram.
 const char* const kUMASSORecallPromoAction = "SSORecallPromo.PromoAction";
 
-// Name of the histogram recording how many accounts were avilable on the device
-// when the promo was shown.
+// Name of the histogram recording how many accounts were available on the
+// device when the promo was shown.
 const char* const kUMASSORecallAccountsAvailable =
     "SSORecallPromo.AccountsAvailable";
 
@@ -50,6 +61,13 @@ enum PromoAction {
   PROMO_ACTION_COUNT
 };
 
+NSSet* GaiaIdSetWithIdentities(NSArray* identities) {
+  NSMutableSet* gaiaIdSet = [NSMutableSet set];
+  for (ChromeIdentity* identity in identities) {
+    [gaiaIdSet addObject:identity.gaiaID];
+  }
+  return [gaiaIdSet copy];
+}
 }  // namespace
 
 @interface SigninPromoViewController ()<ChromeSigninViewControllerDelegate>
@@ -59,12 +77,15 @@ enum PromoAction {
   BOOL _addAccountOperation;
 }
 
-- (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState {
+- (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState
+                          dispatcher:(id<ApplicationCommands>)dispatcher {
   self = [super initWithBrowserState:browserState
-               isPresentedOnSettings:NO
-                   signInAccessPoint:signin_metrics::AccessPoint::
+                         accessPoint:signin_metrics::AccessPoint::
                                          ACCESS_POINT_SIGNIN_PROMO
-                      signInIdentity:nil];
+                         promoAction:signin_metrics::PromoAction::
+                                         PROMO_ACTION_NO_SIGNIN_PROMO
+                      signInIdentity:nil
+                          dispatcher:dispatcher];
   if (self) {
     super.delegate = self;
   }
@@ -85,15 +106,18 @@ enum PromoAction {
 }
 
 - (void)dismissWithSignedIn:(BOOL)signedIn
-             executeCommand:(GenericChromeCommand*)command {
+       showAccountsSettings:(BOOL)showAccountsSettings {
   DCHECK(self.presentingViewController);
-  UIViewController* presentingViewController = self.presentingViewController;
+  __weak UIViewController* presentingViewController =
+      self.presentingViewController;
+  __weak id<ApplicationCommands> weakDispatcher = self.dispatcher;
   [presentingViewController
       dismissViewControllerAnimated:YES
                          completion:^{
-                           if (command) {
-                             [presentingViewController
-                                 chromeExecuteCommand:command];
+                           if (showAccountsSettings) {
+                             [weakDispatcher
+                                 showAccountsSettingsFromViewController:
+                                     presentingViewController];
                            }
                          }];
 }
@@ -116,15 +140,23 @@ enum PromoAction {
   UMA_HISTOGRAM_COUNTS_100(kUMASSORecallPromoSeenCount, promoSeenCount);
 }
 
-// Called to obtain the current version of the application to compare against
-// the version the last time the promo was seen.
-// Separated out into a discrete function to allow overriding when testing.
 + (void)recordVersionSeen {
   base::Version currentVersion = [self currentVersion];
   NSUserDefaults* standardDefaults = [NSUserDefaults standardUserDefaults];
   [standardDefaults
       setObject:base::SysUTF8ToNSString(currentVersion.GetString())
          forKey:kDisplayedSSORecallForMajorVersionKey];
+  NSArray* identities = ios::GetChromeBrowserProvider()
+                            ->GetChromeIdentityService()
+                            ->GetAllIdentitiesSortedForDisplay();
+  NSArray* gaiaIdList = GaiaIdSetWithIdentities(identities).allObjects;
+  [standardDefaults setObject:gaiaIdList
+                       forKey:kLastShownAccountGaiaIdVersionKey];
+  NSInteger displayCount =
+      [standardDefaults integerForKey:kSigninPromoViewDisplayCountKey];
+  ++displayCount;
+  [standardDefaults setInteger:displayCount
+                        forKey:kSigninPromoViewDisplayCountKey];
 }
 
 + (base::Version)currentVersion {
@@ -164,19 +196,28 @@ enum PromoAction {
     if (currentVersion.components()[0] - seenVersion.components()[0] < 2)
       return NO;
   }
-
+  // Don't show the promo if there is no identities.
   NSArray* identities = ios::GetChromeBrowserProvider()
                             ->GetChromeIdentityService()
                             ->GetAllIdentitiesSortedForDisplay();
-  return [identities count] > 0;
+  if ([identities count] == 0)
+    return NO;
+  // The sign-in promo should be shown twice, even if no account has been added.
+  NSInteger displayCount =
+      [standardDefaults integerForKey:kSigninPromoViewDisplayCountKey];
+  if (displayCount <= 1)
+    return YES;
+  // Otherwise, it can be shown only if a new account has been added.
+  NSArray* lastKnownGaiaIdList =
+      [standardDefaults arrayForKey:kLastShownAccountGaiaIdVersionKey];
+  NSSet* lastKnownGaiaIdSet = lastKnownGaiaIdList
+                                  ? [NSSet setWithArray:lastKnownGaiaIdList]
+                                  : [NSSet set];
+  NSSet* currentGaiaIdSet = GaiaIdSetWithIdentities(identities);
+  return [lastKnownGaiaIdSet isSubsetOfSet:currentGaiaIdSet] &&
+         ![lastKnownGaiaIdSet isEqualToSet:currentGaiaIdSet];
 }
 
-+ (UIViewController*)controllerToPresentForBrowserState:
-    (ios::ChromeBrowserState*)browserState {
-  base::scoped_nsobject<UIViewController> controller(
-      [[SigninPromoViewController alloc] initWithBrowserState:browserState]);
-  return controller.autorelease();
-}
 
 #pragma mark - ChromeSigninViewControllerDelegate
 
@@ -194,12 +235,12 @@ enum PromoAction {
   DCHECK_EQ(self, controller);
   UMA_HISTOGRAM_ENUMERATION(kUMASSORecallPromoAction, ACTION_DISMISSED,
                             PROMO_ACTION_COUNT);
-  [self dismissWithSignedIn:NO executeCommand:nil];
+  [self dismissWithSignedIn:NO showAccountsSettings:NO];
 }
 
 - (void)didFailSignIn:(ChromeSigninViewController*)controller {
   DCHECK_EQ(self, controller);
-  [self dismissWithSignedIn:NO executeCommand:nil];
+  [self dismissWithSignedIn:NO showAccountsSettings:NO];
 }
 
 - (void)didSignIn:(ChromeSigninViewController*)controller {
@@ -213,14 +254,14 @@ enum PromoAction {
 }
 
 - (void)didAcceptSignIn:(ChromeSigninViewController*)controller
-         executeCommand:(GenericChromeCommand*)command {
+    showAccountsSettings:(BOOL)showAccountsSettings {
   DCHECK_EQ(self, controller);
   PromoAction promoAction = _addAccountOperation ? ACTION_ADDED_ANOTHER_ACCOUNT
                                                  : ACTION_ENABLED_SSO_ACCOUNT;
   UMA_HISTOGRAM_ENUMERATION(kUMASSORecallPromoAction, promoAction,
                             PROMO_ACTION_COUNT);
 
-  [self dismissWithSignedIn:YES executeCommand:command];
+  [self dismissWithSignedIn:YES showAccountsSettings:showAccountsSettings];
 }
 
 @end

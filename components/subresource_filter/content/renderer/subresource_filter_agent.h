@@ -11,6 +11,7 @@
 #include "base/memory/weak_ptr.h"
 #include "components/subresource_filter/core/common/activation_state.h"
 #include "content/public/renderer/render_frame_observer.h"
+#include "content/public/renderer/render_frame_observer_tracker.h"
 #include "url/gurl.h"
 
 namespace blink {
@@ -23,12 +24,13 @@ struct DocumentLoadStatistics;
 class UnverifiedRulesetDealer;
 class WebDocumentSubresourceFilterImpl;
 
-// The renderer-side agent of ContentSubresourceFilterDriverFactory. There is
+// The renderer-side agent of ContentSubresourceFilterThrottleManager. There is
 // one instance per RenderFrame, responsible for setting up the subresource
 // filter for the ongoing provisional document load in the frame when instructed
-// to do so by the driver.
+// to do so by the manager.
 class SubresourceFilterAgent
     : public content::RenderFrameObserver,
+      public content::RenderFrameObserverTracker<SubresourceFilterAgent>,
       public base::SupportsWeakPtr<SubresourceFilterAgent> {
  public:
   // The |ruleset_dealer| must not be null and must outlive this instance. The
@@ -42,6 +44,8 @@ class SubresourceFilterAgent
 
   // Returns the URL of the currently committed document.
   virtual GURL GetDocumentURL();
+
+  virtual bool IsMainFrame();
 
   // Injects the provided subresource |filter| into the DocumentLoader
   // orchestrating the most recently committed load.
@@ -57,8 +61,13 @@ class SubresourceFilterAgent
       const DocumentLoadStatistics& statistics);
 
  private:
-  void OnActivateForNextCommittedLoad(ActivationState activation_state);
-  void RecordHistogramsOnLoadCommitted();
+  // Assumes that the parent will be in a local frame relative to this one, upon
+  // construction.
+  static ActivationState GetParentActivationState(
+      content::RenderFrame* render_frame);
+
+  void OnActivateForNextCommittedLoad(const ActivationState& activation_state);
+  void RecordHistogramsOnLoadCommitted(const ActivationState& activation_state);
   void RecordHistogramsOnLoadFinished();
   void ResetActivatonStateForNextCommit();
 
@@ -69,6 +78,7 @@ class SubresourceFilterAgent
   void DidFailProvisionalLoad(const blink::WebURLError& error) override;
   void DidFinishLoad() override;
   bool OnMessageReceived(const IPC::Message& message) override;
+  void WillCreateWorkerFetchContext(blink::WebWorkerFetchContext*) override;
 
   // Owned by the ChromeContentRendererClient and outlives us.
   UnverifiedRulesetDealer* ruleset_dealer_;

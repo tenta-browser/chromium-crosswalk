@@ -66,11 +66,11 @@ FakeCrosDisksClient::FakeCrosDisksClient()
     : unmount_call_count_(0),
       unmount_success_(true),
       format_call_count_(0),
-      format_success_(true) {
-}
+      format_success_(true),
+      rename_call_count_(0),
+      rename_success_(true) {}
 
-FakeCrosDisksClient::~FakeCrosDisksClient() {
-}
+FakeCrosDisksClient::~FakeCrosDisksClient() = default;
 
 void FakeCrosDisksClient::Init(dbus::Bus* bus) {
 }
@@ -104,10 +104,8 @@ void FakeCrosDisksClient::Mount(const std::string& source_path,
   mounted_paths_.insert(mounted_path);
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::TaskTraits()
-                     .WithShutdownBehavior(
-                         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-                     .MayBlock(),
+      FROM_HERE,
+      {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::Bind(&PerformFakeMount, source_path, mounted_path),
       base::Bind(&DidMount, mount_completed_handler_, source_path, type,
                  callback, mounted_path));
@@ -124,11 +122,9 @@ void FakeCrosDisksClient::Unmount(const std::string& device_path,
   if (mounted_paths_.count(base::FilePath::FromUTF8Unsafe(device_path)) > 0) {
     mounted_paths_.erase(base::FilePath::FromUTF8Unsafe(device_path));
     base::PostTaskWithTraitsAndReply(
-        FROM_HERE, base::TaskTraits()
-                       .WithShutdownBehavior(
-                           base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-                       .WithPriority(base::TaskPriority::BACKGROUND)
-                       .MayBlock(),
+        FROM_HERE,
+        {base::MayBlock(), base::TaskPriority::BACKGROUND,
+         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
         base::Bind(base::IgnoreResult(&base::DeleteFile),
                    base::FilePath::FromUTF8Unsafe(device_path),
                    true /* recursive */),
@@ -171,6 +167,23 @@ void FakeCrosDisksClient::Format(const std::string& device_path,
   }
 }
 
+void FakeCrosDisksClient::Rename(const std::string& device_path,
+                                 const std::string& volume_name,
+                                 const base::Closure& callback,
+                                 const base::Closure& error_callback) {
+  DCHECK(!callback.is_null());
+  DCHECK(!error_callback.is_null());
+
+  rename_call_count_++;
+  last_rename_device_path_ = device_path;
+  last_rename_volume_name_ = volume_name;
+  if (rename_success_) {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback);
+  } else {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, error_callback);
+  }
+}
+
 void FakeCrosDisksClient::GetDeviceProperties(
     const std::string& device_path,
     const GetDevicePropertiesCallback& callback,
@@ -190,6 +203,11 @@ void FakeCrosDisksClient::SetMountCompletedHandler(
 void FakeCrosDisksClient::SetFormatCompletedHandler(
     const FormatCompletedHandler& format_completed_handler) {
   format_completed_handler_ = format_completed_handler;
+}
+
+void FakeCrosDisksClient::SetRenameCompletedHandler(
+    const RenameCompletedHandler& rename_completed_handler) {
+  rename_completed_handler_ = rename_completed_handler;
 }
 
 bool FakeCrosDisksClient::SendMountEvent(MountEventType event,
@@ -218,6 +236,15 @@ bool FakeCrosDisksClient::SendFormatCompletedEvent(
   if (format_completed_handler_.is_null())
     return false;
   format_completed_handler_.Run(error_code, device_path);
+  return true;
+}
+
+bool FakeCrosDisksClient::SendRenameCompletedEvent(
+    RenameError error_code,
+    const std::string& device_path) {
+  if (rename_completed_handler_.is_null())
+    return false;
+  rename_completed_handler_.Run(error_code, device_path);
   return true;
 }
 

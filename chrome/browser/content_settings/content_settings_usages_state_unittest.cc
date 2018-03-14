@@ -6,30 +6,18 @@
 
 #include <string>
 
-#include "base/message_loop/message_loop.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
-#include "content/public/test/test_browser_thread.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-using content::BrowserThread;
 
 namespace {
 
-ContentSettingsUsagesState::CommittedDetails CreateDetailsWithURL(
-    const GURL& url) {
-  ContentSettingsUsagesState::CommittedDetails details;
-  details.current_url = url;
-  return details;
-}
-
 class ContentSettingsUsagesStateTests : public testing::Test {
  public:
-  ContentSettingsUsagesStateTests()
-      : ui_thread_(BrowserThread::UI, &message_loop_) {
-  }
+  ContentSettingsUsagesStateTests() = default;
 
  protected:
   void ClearOnNewOrigin(ContentSettingsType type) {
@@ -38,9 +26,7 @@ class ContentSettingsUsagesStateTests : public testing::Test {
         HostContentSettingsMapFactory::GetForProfile(&profile), type);
     GURL url_0("http://www.example.com");
 
-    ContentSettingsUsagesState::CommittedDetails details =
-        CreateDetailsWithURL(url_0);
-    state.DidNavigate(details);
+    state.DidNavigate(url_0, GURL());
 
     HostContentSettingsMapFactory::GetForProfile(&profile)
         ->SetContentSettingDefaultScope(url_0, url_0, type, std::string(),
@@ -110,15 +96,13 @@ class ContentSettingsUsagesStateTests : public testing::Test {
 
     state.OnPermissionSet(url_0, true);
 
-    details.previous_url = url_0;
-    state.DidNavigate(details);
+    state.DidNavigate(url_0, url_0);
 
     ContentSettingsUsagesState::StateMap new_state_map =
         state.state_map();
     EXPECT_EQ(state_map.size(), new_state_map.size());
 
-    details.current_url = GURL("http://foo.com");
-    state.DidNavigate(details);
+    state.DidNavigate(GURL("http://foo.com/"), url_0);
 
     EXPECT_TRUE(state.state_map().empty());
 
@@ -135,9 +119,7 @@ class ContentSettingsUsagesStateTests : public testing::Test {
         HostContentSettingsMapFactory::GetForProfile(&profile), type);
     GURL url_0("http://www.example.com");
 
-    ContentSettingsUsagesState::CommittedDetails details =
-        CreateDetailsWithURL(url_0);
-    state.DidNavigate(details);
+    state.DidNavigate(url_0, GURL());
 
     HostContentSettingsMapFactory::GetForProfile(&profile)
         ->SetContentSettingDefaultScope(url_0, url_0, type, std::string(),
@@ -194,8 +176,7 @@ class ContentSettingsUsagesStateTests : public testing::Test {
   }
 
  protected:
-  base::MessageLoop message_loop_;
-  content::TestBrowserThread ui_thread_;
+  content::TestBrowserThreadBundle test_browser_thread_bundle_;
 };
 
 TEST_F(ContentSettingsUsagesStateTests, ClearOnNewOriginForGeolocation) {

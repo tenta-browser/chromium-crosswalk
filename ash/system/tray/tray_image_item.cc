@@ -5,7 +5,6 @@
 #include "ash/system/tray/tray_image_item.h"
 
 #include "ash/resources/vector_icons/vector_icons.h"
-#include "ash/shelf/wm_shelf_util.h"
 #include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_item_view.h"
@@ -25,7 +24,7 @@ TrayImageItem::TrayImageItem(SystemTray* system_tray,
       icon_color_(kTrayIconColor),
       tray_view_(nullptr) {}
 
-TrayImageItem::~TrayImageItem() {}
+TrayImageItem::~TrayImageItem() = default;
 
 views::View* TrayImageItem::tray_view() {
   return tray_view_;
@@ -40,7 +39,7 @@ views::View* TrayImageItem::CreateTrayView(LoginStatus status) {
   return tray_view_;
 }
 
-void TrayImageItem::DestroyTrayView() {
+void TrayImageItem::OnTrayViewDestroyed() {
   tray_view_ = nullptr;
 }
 

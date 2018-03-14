@@ -9,7 +9,6 @@
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/io_thread.h"
@@ -33,6 +32,7 @@
 #include "content/public/test/test_navigation_observer.h"
 #include "net/base/net_errors.h"
 #include "net/dns/dns_test_util.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/url_request/url_request_failed_job.h"
 #include "net/test/url_request/url_request_mock_http_job.h"
 #include "net/url_request/url_request_filter.h"
@@ -40,11 +40,11 @@
 #include "net/url_request/url_request_job.h"
 
 using base::Bind;
+using base::BindOnce;
 using base::Callback;
 using base::Closure;
 using base::ConstRef;
 using base::FilePath;
-using base::MessageLoop;
 using base::Unretained;
 using content::BrowserThread;
 using content::WebContents;
@@ -180,12 +180,7 @@ class DelayableURLRequestMockHTTPJob : public URLRequestMockHTTPJob,
       const base::FilePath& file_path,
       bool should_delay,
       const DestructionCallback& destruction_callback)
-      : URLRequestMockHTTPJob(
-            request,
-            network_delegate,
-            file_path,
-            BrowserThread::GetBlockingPool()->GetTaskRunnerWithShutdownBehavior(
-                base::SequencedWorkerPool::SKIP_ON_SHUTDOWN)),
+      : URLRequestMockHTTPJob(request, network_delegate, file_path),
         should_delay_(should_delay),
         start_delayed_(false),
         destruction_callback_(destruction_callback) {}
@@ -507,9 +502,8 @@ void DnsProbeBrowserTest::SetUpOnMainThread() {
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      Bind(&DnsProbeBrowserTestIOThreadHelper::SetUpOnIOThread,
-           Unretained(helper_),
-           g_browser_process->io_thread()));
+      BindOnce(&DnsProbeBrowserTestIOThreadHelper::SetUpOnIOThread,
+               Unretained(helper_), g_browser_process->io_thread()));
 
   SetActiveBrowser(browser());
 }
@@ -517,8 +511,9 @@ void DnsProbeBrowserTest::SetUpOnMainThread() {
 void DnsProbeBrowserTest::TearDownOnMainThread() {
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      Bind(&DnsProbeBrowserTestIOThreadHelper::CleanUpOnIOThreadAndDeleteHelper,
-           Unretained(helper_)));
+      BindOnce(
+          &DnsProbeBrowserTestIOThreadHelper::CleanUpOnIOThreadAndDeleteHelper,
+          Unretained(helper_)));
 
   NetErrorTabHelper::set_state_for_testing(
       NetErrorTabHelper::TESTING_DEFAULT);
@@ -543,29 +538,27 @@ void DnsProbeBrowserTest::SetCorrectionServiceBroken(bool broken) {
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      Bind(&DnsProbeBrowserTestIOThreadHelper::SetCorrectionServiceNetError,
-           Unretained(helper_),
-           net_error));
+      BindOnce(&DnsProbeBrowserTestIOThreadHelper::SetCorrectionServiceNetError,
+               Unretained(helper_), net_error));
 }
 
 void DnsProbeBrowserTest::SetCorrectionServiceDelayRequests(
     bool delay_requests) {
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      Bind(&DnsProbeBrowserTestIOThreadHelper::
-               SetCorrectionServiceDelayRequests,
-           Unretained(helper_),
-           delay_requests));
+      BindOnce(
+          &DnsProbeBrowserTestIOThreadHelper::SetCorrectionServiceDelayRequests,
+          Unretained(helper_), delay_requests));
 }
 
 void DnsProbeBrowserTest::WaitForDelayedRequestDestruction() {
   base::RunLoop run_loop;
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      Bind(&DnsProbeBrowserTestIOThreadHelper::SetRequestDestructionCallback,
-           Unretained(helper_),
-           base::Bind(&RunClosureOnUIThread,
-                      run_loop.QuitClosure())));
+      BindOnce(
+          &DnsProbeBrowserTestIOThreadHelper::SetRequestDestructionCallback,
+          Unretained(helper_),
+          base::Bind(&RunClosureOnUIThread, run_loop.QuitClosure())));
   run_loop.Run();
 }
 
@@ -588,19 +581,16 @@ void DnsProbeBrowserTest::SetMockDnsClientRules(
     MockDnsClientRule::ResultType public_result) {
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      Bind(&DnsProbeBrowserTestIOThreadHelper::SetMockDnsClientRules,
-           Unretained(helper_),
-           system_result,
-           public_result));
+      BindOnce(&DnsProbeBrowserTestIOThreadHelper::SetMockDnsClientRules,
+               Unretained(helper_), system_result, public_result));
 }
 
 void DnsProbeBrowserTest::StartDelayedProbes(
     int expected_delayed_probe_count) {
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      Bind(&DnsProbeBrowserTestIOThreadHelper::StartDelayedProbes,
-           Unretained(helper_),
-           expected_delayed_probe_count));
+      BindOnce(&DnsProbeBrowserTestIOThreadHelper::StartDelayedProbes,
+               Unretained(helper_), expected_delayed_probe_count));
 }
 
 DnsProbeStatus DnsProbeBrowserTest::WaitForSentStatus() {
@@ -666,7 +656,7 @@ void DnsProbeBrowserTest::OnDnsProbeStatusSent(
     DnsProbeStatus dns_probe_status) {
   dns_probe_status_queue_.push_back(dns_probe_status);
   if (awaiting_dns_probe_status_)
-    MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 // Make sure probes don't break non-DNS error pages when corrections load.
@@ -898,8 +888,10 @@ IN_PROC_BROWSER_TEST_F(DnsProbeBrowserTest, CorrectionsLoadStoppedSlowProbe) {
 IN_PROC_BROWSER_TEST_F(DnsProbeBrowserTest, NoProbeInSubframe) {
   SetCorrectionServiceBroken(false);
 
+  ASSERT_TRUE(embedded_test_server()->Start());
+
   NavigateToURL(browser(),
-                URLRequestMockHTTPJob::GetMockUrl("iframe_dns_error.html"));
+                embedded_test_server()->GetURL("/iframe_dns_error.html"));
 
   // By the time NavigateToURL returns, the browser will have seen the failed
   // provisional load.  If a probe was started (or considered but not run),

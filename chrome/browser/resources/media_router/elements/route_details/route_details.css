@@ -2,12 +2,6 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file. */
 
-#custom-controller {
-  display: inline-block;
-  height: 142px;
-  width: 100%;
-}
-
 #route-action-buttons {
   @apply(--layout-horizontal);
   @apply(--layout-end-justified);
@@ -23,12 +17,10 @@
   text-align: end;
 }
 
-#route-information {
+#route-description {
   -webkit-padding-end: var(--dialog-padding-end);
   -webkit-padding-start: 44px;
-  background-color: white;
   font-size: 1.2em;
   line-height: 1.5em;
   margin-top: 16px;
-  overflow: hidden;
 }

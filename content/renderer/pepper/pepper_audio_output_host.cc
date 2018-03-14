@@ -36,7 +36,7 @@ PepperAudioOutputHost::PepperAudioOutputHost(RendererPpapiHostImpl* host,
                                              PP_Resource resource)
     : ResourceHost(host->GetPpapiHost(), instance, resource),
       renderer_ppapi_host_(host),
-      audio_output_(NULL),
+      audio_output_(nullptr),
       playback_throttled_(false),
       enumeration_helper_(this,
                           PepperMediaDeviceManager::GetForRenderFrame(
@@ -86,7 +86,7 @@ void PepperAudioOutputHost::StreamCreated(
 }
 
 void PepperAudioOutputHost::StreamCreationFailed() {
-  OnOpenComplete(PP_ERROR_FAILED, base::SharedMemory::NULLHandle(), 0,
+  OnOpenComplete(PP_ERROR_FAILED, base::SharedMemoryHandle(), 0,
                  base::SyncSocket::kInvalidHandle);
 }
 
@@ -182,7 +182,7 @@ void PepperAudioOutputHost::OnOpenComplete(
   if (result == PP_OK) {
     IPC::PlatformFileForTransit temp_socket =
         IPC::InvalidPlatformFileForTransit();
-    base::SharedMemoryHandle temp_shmem = base::SharedMemory::NULLHandle();
+    base::SharedMemoryHandle temp_shmem;
     result = GetRemoteHandles(scoped_socket, scoped_shared_memory, &temp_socket,
                               &temp_shmem);
 
@@ -224,7 +224,7 @@ void PepperAudioOutputHost::Close() {
     return;
 
   audio_output_->ShutDown();
-  audio_output_ = NULL;
+  audio_output_ = nullptr;
 
   if (open_context_.is_valid())
     SendOpenReply(PP_ERROR_ABORTED);

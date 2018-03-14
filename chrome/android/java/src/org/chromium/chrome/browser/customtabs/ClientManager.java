@@ -10,31 +10,42 @@ import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.os.SystemClock;
+import android.support.annotation.NonNull;
 import android.support.customtabs.CustomTabsCallback;
 import android.support.customtabs.CustomTabsService;
+import android.support.customtabs.CustomTabsService.Relation;
 import android.support.customtabs.CustomTabsSessionToken;
 import android.text.TextUtils;
 import android.util.SparseBooleanArray;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.ChromeVersionInfo;
 import org.chromium.chrome.browser.IntentHandler;
+import org.chromium.chrome.browser.browserservices.OriginVerifier;
+import org.chromium.chrome.browser.browserservices.OriginVerifier.OriginVerificationListener;
+import org.chromium.chrome.browser.browserservices.PostMessageHandler;
+import org.chromium.chrome.browser.installedapp.InstalledAppProviderImpl;
 import org.chromium.chrome.browser.util.UrlUtilities;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.common.Referrer;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /** Manages the clients' state for Custom Tabs. This class is threadsafe. */
-@SuppressFBWarnings("CHROMIUM_SYNCHRONIZED_METHOD")
 class ClientManager {
     // Values for the "CustomTabs.MayLaunchUrlType" UMA histogram. Append-only.
     @VisibleForTesting static final int NO_MAY_LAUNCH_URL = 0;
@@ -120,14 +131,17 @@ class ClientManager {
     private static class SessionParams {
         public final int uid;
         public final DisconnectCallback disconnectCallback;
-        public final String packageName;
         public final PostMessageHandler postMessageHandler;
+        public final Set<Uri> mLinkedUrls = new HashSet<>();
+        public OriginVerifier originVerifier;
         public boolean mIgnoreFragments;
         public boolean lowConfidencePrediction;
         public boolean highConfidencePrediction;
+        private String mPackageName;
         private boolean mShouldHideDomain;
         private boolean mShouldPrerenderOnCellular;
         private boolean mShouldSendNavigationInfo;
+        private boolean mShouldSendBottomBarScrollState;
         private KeepAliveServiceConnection mKeepAliveConnection;
         private String mPredictedUrl;
         private long mLastMayLaunchUrlTimestamp;
@@ -136,10 +150,25 @@ class ClientManager {
         public SessionParams(Context context, int uid, DisconnectCallback callback,
                 PostMessageHandler postMessageHandler) {
             this.uid = uid;
-            packageName = getPackageName(context, uid);
+            mPackageName = getPackageName(context, uid);
             disconnectCallback = callback;
             this.postMessageHandler = postMessageHandler;
+            if (postMessageHandler != null) this.postMessageHandler.setPackageName(mPackageName);
             this.mSpeculationMode = CustomTabsConnection.SpeculationParams.PRERENDER;
+        }
+
+        /**
+         * Overrides package name with given String. TO be used for testing only.
+         */
+        void overridePackageNameForTesting(String newPackageName) {
+            mPackageName = newPackageName;
+        }
+
+        /**
+         * @return The package name for this session.
+         */
+        public String getPackageName() {
+            return mPackageName;
         }
 
         private static String getPackageName(Context context, int uid) {
@@ -211,7 +240,7 @@ class ClientManager {
      * @return true for success.
      */
     public boolean newSession(CustomTabsSessionToken session, int uid,
-            DisconnectCallback onDisconnect, PostMessageHandler postMessageHandler) {
+            DisconnectCallback onDisconnect, @NonNull PostMessageHandler postMessageHandler) {
         if (session == null) return false;
         SessionParams params = new SessionParams(mContext, uid, onDisconnect, postMessageHandler);
         synchronized (this) {
@@ -326,8 +355,7 @@ class ClientManager {
     public synchronized boolean bindToPostMessageServiceForSession(CustomTabsSessionToken session) {
         SessionParams params = mSessionParams.get(session);
         if (params == null) return false;
-        return params.postMessageHandler.bindSessionToPostMessageService(
-                mContext, params.packageName);
+        return params.postMessageHandler.bindSessionToPostMessageService();
     }
 
     /**
@@ -338,6 +366,82 @@ class ClientManager {
         SessionParams params = mSessionParams.get(session);
         if (params == null) return;
         params.postMessageHandler.initializeWithOrigin(origin);
+    }
+
+    public synchronized boolean validateRelationship(
+            CustomTabsSessionToken session, int relation, Uri origin, Bundle extras) {
+        return validateRelationshipInternal(session, relation, origin, false);
+    }
+
+    /**
+     * See {@link PostMessageHandler#verifyAndInitializeWithOrigin(Uri, int)}.
+     */
+    public synchronized void verifyAndInitializeWithPostMessageOriginForSession(
+            CustomTabsSessionToken session, Uri origin, @Relation int relation) {
+        validateRelationshipInternal(session, relation, origin, true);
+    }
+
+    /**
+     * Can't be called on UI Thread.
+     */
+    private synchronized boolean validateRelationshipInternal(CustomTabsSessionToken session,
+            int relation, Uri origin, boolean initializePostMessageChannel) {
+        SessionParams params = mSessionParams.get(session);
+        if (params == null || TextUtils.isEmpty(params.getPackageName())) return false;
+        OriginVerificationListener listener = null;
+        if (initializePostMessageChannel) listener = params.postMessageHandler;
+        params.originVerifier = new OriginVerifier(listener, params.getPackageName(), relation);
+        ThreadUtils.runOnUiThread(() -> { params.originVerifier.start(origin); });
+        if (relation == CustomTabsService.RELATION_HANDLE_ALL_URLS
+                && InstalledAppProviderImpl.isAppInstalledAndAssociatedWithOrigin(
+                           params.getPackageName(), URI.create(origin.toString()),
+                           mContext.getPackageManager())) {
+            params.mLinkedUrls.add(origin);
+        }
+        return true;
+    }
+
+    /**
+     * Whether we can verify that the app has declared a
+     * {@link CustomTabsService#RELATION_HANDLE_ALL_URLS} with the given origin. This is the initial
+     * requirement for launch. We also need the web->app verification which will be checked after
+     * the Activity has launched async.
+     * @param session The session attempting to launch the TrustedWebActivity.
+     * @param origin The origin that will load on the TrustedWebActivity.
+     * @return Whether the client for the session passes the initial requirements to launch a
+     *         TrustedWebActivity in the given origin.
+     */
+    public synchronized boolean canSessionLaunchInTrustedWebActivity(
+            CustomTabsSessionToken session, Uri origin) {
+        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.TRUSTED_WEB_ACTIVITY)) return false;
+        if (ChromeVersionInfo.isBetaBuild() || ChromeVersionInfo.isStableBuild()) return false;
+
+        SessionParams params = mSessionParams.get(session);
+        if (params == null) return false;
+        String packageName = params.getPackageName();
+        if (TextUtils.isEmpty(packageName)) return false;
+        boolean isAppAssociatedWithOrigin = params.mLinkedUrls.contains(origin);
+        if (!isAppAssociatedWithOrigin) return false;
+        if (OriginVerifier.isValidOrigin(
+                    packageName, origin, CustomTabsService.RELATION_HANDLE_ALL_URLS)) {
+            return true;
+        }
+        // This is an optimization to start the verification early. The launching Activity should
+        // run and listen on this verification as well.
+        params.originVerifier =
+                new OriginVerifier(null, packageName, CustomTabsService.RELATION_HANDLE_ALL_URLS);
+        params.originVerifier.start(origin);
+        return true;
+    }
+
+    /**
+     * @return The postMessage origin for the given session.
+     */
+    @VisibleForTesting
+    synchronized Uri getPostMessageOriginForSessionForTesting(CustomTabsSessionToken session) {
+        SessionParams params = mSessionParams.get(session);
+        if (params == null) return null;
+        return params.postMessageHandler.getOriginForTesting();
     }
 
     /**
@@ -354,10 +458,8 @@ class ClientManager {
      * @return The referrer that is associated with the client owning given session.
      */
     public synchronized Referrer getReferrerForSession(CustomTabsSessionToken session) {
-        SessionParams params = mSessionParams.get(session);
-        if (params == null) return null;
-        final String packageName = params.packageName;
-        return IntentHandler.constructValidReferrerForAuthority(packageName);
+        return IntentHandler.constructValidReferrerForAuthority(
+                getClientPackageNameForSession(session));
     }
 
     /**
@@ -365,7 +467,17 @@ class ClientManager {
      */
     public synchronized String getClientPackageNameForSession(CustomTabsSessionToken session) {
         SessionParams params = mSessionParams.get(session);
-        return params == null ? null : params.packageName;
+        return params == null ? null : params.getPackageName();
+    }
+
+    /**
+     * Overrides the package name for the given session to be the given package name. To be used
+     * for testing only.
+     */
+    public synchronized void overridePackageNameForSession(
+            CustomTabsSessionToken session, String packageName) {
+        SessionParams params = mSessionParams.get(session);
+        if (params != null) params.overridePackageNameForTesting(packageName);
     }
 
     /**
@@ -390,6 +502,24 @@ class ClientManager {
     public synchronized void setHideDomainForSession(CustomTabsSessionToken session, boolean hide) {
         SessionParams params = mSessionParams.get(session);
         if (params != null) params.mShouldHideDomain = hide;
+    }
+
+    /**
+     * @return Whether bottom bar scrolling state should be recorded and shared for the session.
+     */
+    public synchronized boolean shouldSendBottomBarScrollStateForSession(
+            CustomTabsSessionToken session) {
+        SessionParams params = mSessionParams.get(session);
+        return params != null ? params.mShouldSendBottomBarScrollState : false;
+    }
+
+    /**
+     * Sets whether bottom bar scrolling state should be recorded and shared for the session.
+     */
+    public synchronized void setSendBottomBarScrollingStateForSessionn(
+            CustomTabsSessionToken session, boolean send) {
+        SessionParams params = mSessionParams.get(session);
+        if (params != null) params.mShouldSendBottomBarScrollState = send;
     }
 
     /**
@@ -471,6 +601,20 @@ class ClientManager {
                               : params.mSpeculationMode;
     }
 
+    /**
+     * Returns whether an origin is first-party with respect to a session, that is if the
+     * application linked to the session has a relation with the provided origin. This does not
+     * calls OriginVerifier, but only checks the cached relations.
+     *
+     * @param session The session.
+     * @param origin Origin to verify
+     */
+    public synchronized boolean isFirstPartyOriginForSession(
+            CustomTabsSessionToken session, Uri origin) {
+        return OriginVerifier.isValidOrigin(getClientPackageNameForSession(session), origin,
+                CustomTabsService.RELATION_USE_AS_ORIGIN);
+    }
+
     /** Tries to bind to a client to keep it alive, and returns true for success. */
     public synchronized boolean keepAliveForSession(CustomTabsSessionToken session, Intent intent) {
         // When an application is bound to a service, its priority is raised to
@@ -542,9 +686,8 @@ class ClientManager {
         SessionParams params = mSessionParams.get(session);
         if (params == null) return;
         mSessionParams.remove(session);
-        if (params.postMessageHandler != null) {
-            params.postMessageHandler.unbindFromContext(mContext);
-        }
+        if (params.postMessageHandler != null) params.postMessageHandler.cleanup(mContext);
+        if (params.originVerifier != null) params.originVerifier.cleanUp();
         if (params.disconnectCallback != null) params.disconnectCallback.run(session);
         mUidHasCalledWarmup.delete(params.uid);
     }

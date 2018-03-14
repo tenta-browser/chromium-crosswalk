@@ -5,8 +5,8 @@
 #ifndef DOMPointReadOnly_h
 #define DOMPointReadOnly_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -18,8 +18,7 @@ class ExceptionState;
 class ScriptState;
 class ScriptValue;
 
-class CORE_EXPORT DOMPointReadOnly : public GarbageCollected<DOMPointReadOnly>,
-                                     public ScriptWrappable {
+class CORE_EXPORT DOMPointReadOnly : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -30,8 +29,6 @@ class CORE_EXPORT DOMPointReadOnly : public GarbageCollected<DOMPointReadOnly>,
   double y() const { return y_; }
   double z() const { return z_; }
   double w() const { return w_; }
-
-  DEFINE_INLINE_TRACE() {}
 
   ScriptValue toJSONForBinding(ScriptState*) const;
   DOMPoint* matrixTransform(DOMMatrixInit&, ExceptionState&);

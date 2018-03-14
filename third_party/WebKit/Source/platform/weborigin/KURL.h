@@ -31,20 +31,41 @@
 #include "platform/PlatformExport.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Forward.h"
-#include "platform/wtf/HashTableDeletedValueType.h"
 #include "platform/wtf/text/WTFString.h"
 #include "url/third_party/mozilla/url_parse.h"
 #include "url/url_canon.h"
 
+// KURL is Blink's main URL class, and is the analog to GURL in other Chromium
+// code. It is not thread safe but is generally cheap to copy and compare KURLs
+// to each other.
+//
+// KURL and GURL both share the same underlying URL parser, whose code is
+// located in //url, but KURL is backed by Blink specific WTF::Strings. This
+// means that KURLs are usually cheap to copy due to WTF::Strings being
+// internally ref-counted. However, please don't copy KURLs if you can use a
+// const ref, since the size of the parsed structure and related metadata is
+// non-trivial.
+//
+// In fact, for the majority of KURLs (i.e. those not copied across threads),
+// the backing string is an AtomicString, meaning that it is stored in the
+// thread-local AtomicString table, allowing optimizations like fast comparison.
+// See platform/wtf/text/AtomicString.h for information on the performance
+// characteristics of AtomicStrings.
+//
+// KURL also has a few other optimizations, including:
+//  - Cached bit for whether the KURL is http/https
+//  - Internal reference to the URL protocol (scheme) to avoid String allocation
+//    for the callers that require it. Common protocols like http and https are
+//    stored as static strings which can be shared across threads.
 namespace WTF {
 class TextEncoding;
 }
 
+class GURL;
+
 namespace blink {
 
 struct KURLHash;
-
-enum ParsedURLStringTag { kParsedURLString };
 
 class PLATFORM_EXPORT KURL {
   USING_FAST_MALLOC(KURL);
@@ -59,18 +80,15 @@ class PLATFORM_EXPORT KURL {
   KURL& operator=(const KURL&);
 
   // The argument is an absolute URL string. The string is assumed to be
-  // output of KURL::string() called on a valid KURL object, or indiscernible
-  // from such. It is usually best to avoid repeatedly parsing a string,
-  // unless memory saving outweigh the possible slow-downs.
-  KURL(ParsedURLStringTag, const String&);
-  explicit KURL(WTF::HashTableDeletedValueType);
+  // output of KURL::GetString() called on a valid KURL object, or
+  // indiscernible from such.
+  //
+  // It is usually best to avoid repeatedly parsing a String, unless memory
+  // saving outweigh the possible slow-downs.
+  explicit KURL(const String&);
 
   // Creates an isolated URL object suitable for sending to another thread.
-  static KURL CreateIsolated(ParsedURLStringTag, const String&);
-
-  bool IsHashTableDeletedValue() const {
-    return GetString().IsHashTableDeletedValue();
-  }
+  static KURL CreateIsolated(const String&);
 
   // Resolves the relative URL with the given base URL. If provided, the
   // TextEncoding is used to encode non-ASCII characers. The base URL can be
@@ -192,9 +210,18 @@ class PLATFORM_EXPORT KURL {
 
   bool IsSafeToSendToAnotherThread() const;
 
-  bool WhitespaceRemoved() const { return parsed_.whitespace_removed; }
+  bool PotentiallyDanglingMarkup() const {
+    return parsed_.potentially_dangling_markup;
+  }
+
+  // Returns a GURL with the same properties. This can be used in platform/ and
+  // web/. However, in core/ and modules/, this should only be used to pass
+  // a GURL to a layer that is expecting one instead of a KURL or a WebURL.
+  operator GURL() const;
 
  private:
+  friend struct WTF::HashTraits<blink::KURL>;
+
   void Init(const KURL& base,
             const String& relative,
             const WTF::TextEncoding* query_encoding);
@@ -233,6 +260,7 @@ PLATFORM_EXPORT bool EqualIgnoringFragmentIdentifier(const KURL&, const KURL&);
 
 PLATFORM_EXPORT const KURL& BlankURL();
 PLATFORM_EXPORT const KURL& SrcdocURL();
+PLATFORM_EXPORT const KURL& NullURL();
 
 // Functions to do URL operations on strings.
 // These are operations that aren't faster on a parsed URL.

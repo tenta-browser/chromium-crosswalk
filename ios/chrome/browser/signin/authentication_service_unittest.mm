@@ -8,17 +8,20 @@
 #include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/browser_sync/profile_sync_service_mock.h"
+#include "components/keyed_service/core/service_access_type.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/signin/core/browser/fake_profile_oauth2_token_service.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/signin/core/common/signin_pref_names.h"
+#include "components/signin/core/browser/signin_pref_names.h"
 #include "components/signin/ios/browser/profile_oauth2_token_service_ios_delegate.h"
 #include "components/sync_preferences/pref_service_mock_factory.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state_manager.h"
+#include "ios/chrome/browser/content_settings/cookie_settings_factory.h"
+#include "ios/chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/prefs/browser_prefs.h"
@@ -27,15 +30,16 @@
 #import "ios/chrome/browser/signin/authentication_service_factory.h"
 #include "ios/chrome/browser/signin/fake_oauth2_token_service_builder.h"
 #include "ios/chrome/browser/signin/fake_signin_manager_builder.h"
+#include "ios/chrome/browser/signin/ios_chrome_signin_client.h"
 #include "ios/chrome/browser/signin/oauth2_token_service_factory.h"
 #include "ios/chrome/browser/signin/signin_client_factory.h"
-#include "ios/chrome/browser/signin/signin_client_impl.h"
 #include "ios/chrome/browser/signin/signin_error_controller_factory.h"
 #include "ios/chrome/browser/signin/signin_manager_factory.h"
 #include "ios/chrome/browser/sync/ios_chrome_profile_sync_service_factory.h"
 #include "ios/chrome/browser/sync/ios_chrome_profile_sync_test_util.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
 #include "ios/chrome/browser/sync/sync_setup_service_mock.h"
+#include "ios/chrome/browser/web_data_service_factory.h"
 #include "ios/chrome/test/ios_chrome_scoped_testing_chrome_browser_state_manager.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #import "ios/public/provider/chrome/browser/signin/chrome_identity.h"
@@ -46,18 +50,29 @@
 #include "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 using testing::_;
 using testing::Invoke;
 using testing::Return;
 
 namespace {
 
-class FakeSigninClient : public SigninClientImpl {
+class FakeSigninClient : public IOSChromeSigninClient {
  public:
-  explicit FakeSigninClient(ios::ChromeBrowserState* browser_state)
-      : SigninClientImpl(browser_state,
-                         ios::SigninErrorControllerFactory::GetForBrowserState(
-                             browser_state)) {}
+  explicit FakeSigninClient(
+      ios::ChromeBrowserState* browser_state,
+      SigninErrorController* signin_error_controller,
+      scoped_refptr<content_settings::CookieSettings> cookie_settings,
+      scoped_refptr<HostContentSettingsMap> host_content_settings_map,
+      scoped_refptr<TokenWebData> token_web_data)
+      : IOSChromeSigninClient(browser_state,
+                              signin_error_controller,
+                              cookie_settings,
+                              host_content_settings_map,
+                              token_web_data) {}
   ~FakeSigninClient() override {}
 
   base::Time GetInstallDate() override { return base::Time::Now(); }
@@ -65,8 +80,17 @@ class FakeSigninClient : public SigninClientImpl {
 
 std::unique_ptr<KeyedService> BuildFakeTestSigninClient(
     web::BrowserState* context) {
-  return base::MakeUnique<FakeSigninClient>(
-      ios::ChromeBrowserState::FromBrowserState(context));
+  ios::ChromeBrowserState* chrome_browser_state =
+      ios::ChromeBrowserState::FromBrowserState(context);
+  return std::make_unique<FakeSigninClient>(
+      chrome_browser_state,
+      ios::SigninErrorControllerFactory::GetForBrowserState(
+          chrome_browser_state),
+      ios::CookieSettingsFactory::GetForBrowserState(chrome_browser_state),
+      ios::HostContentSettingsMapFactory::GetForBrowserState(
+          chrome_browser_state),
+      ios::WebDataServiceFactory::GetTokenWebDataForBrowserState(
+          chrome_browser_state, ServiceAccessType::EXPLICIT_ACCESS));
 }
 
 std::unique_ptr<KeyedService> BuildMockSyncSetupService(
@@ -197,7 +221,7 @@ class AuthenticationServiceTest : public PlatformTest,
   void SetCachedMDMInfo(ChromeIdentity* identity, NSDictionary* user_info) {
     authentication_service_
         ->cached_mdm_infos_[base::SysNSStringToUTF8([identity gaiaID])]
-        .reset([user_info retain]);
+        .reset(user_info);
   }
 
   bool HasCachedMDMInfo(ChromeIdentity* identity) {
@@ -559,9 +583,6 @@ TEST_F(AuthenticationServiceTest, MigrateAccountsStoredInPref) {
 // Tests that MDM errors are correctly cleared on foregrounding, sending
 // refresh token available notifications.
 TEST_F(AuthenticationServiceTest, MDMErrorsClearedOnForeground) {
-  if (!experimental_flags::IsMDMIntegrationEnabled()) {
-    return;
-  }
   SetExpectationsForSignIn();
   authentication_service_->SignIn(identity_, std::string());
   EXPECT_EQ(2, refresh_token_available_count_);
@@ -590,10 +611,6 @@ TEST_F(AuthenticationServiceTest, MDMErrorsClearedOnForeground) {
 // Tests that MDM errors are correctly cleared when signing out, without sending
 // refresh token available notifications.
 TEST_F(AuthenticationServiceTest, MDMErrorsClearedOnSignout) {
-  if (!experimental_flags::IsMDMIntegrationEnabled()) {
-    return;
-  }
-
   SetExpectationsForSignIn();
   authentication_service_->SignIn(identity_, std::string());
 
@@ -611,9 +628,6 @@ TEST_F(AuthenticationServiceTest, MDMErrorsClearedOnSignout) {
 // Tests that potential MDM notifications are correctly handled and dispatched
 // to MDM service when necessary.
 TEST_F(AuthenticationServiceTest, HandleMDMNotification) {
-  if (!experimental_flags::IsMDMIntegrationEnabled()) {
-    return;
-  }
   SetExpectationsForSignIn();
   authentication_service_->SignIn(identity_, std::string());
   GoogleServiceAuthError error(
@@ -651,9 +665,6 @@ TEST_F(AuthenticationServiceTest, HandleMDMNotification) {
 // Tests that MDM blocked notifications are correctly signing out the user if
 // the primary account is blocked.
 TEST_F(AuthenticationServiceTest, HandleMDMBlockedNotification) {
-  if (!experimental_flags::IsMDMIntegrationEnabled()) {
-    return;
-  }
   SetExpectationsForSignIn();
   authentication_service_->SignIn(identity_, std::string());
   GoogleServiceAuthError error(
@@ -689,10 +700,6 @@ TEST_F(AuthenticationServiceTest, HandleMDMBlockedNotification) {
 
 // Tests that MDM dialog isn't shown when there is no cached MDM error.
 TEST_F(AuthenticationServiceTest, ShowMDMErrorDialogNoCachedError) {
-  if (!experimental_flags::IsMDMIntegrationEnabled()) {
-    return;
-  }
-
   EXPECT_CALL(*identity_service_, HandleMDMNotification(identity_, _, _))
       .Times(0);
 
@@ -703,10 +710,6 @@ TEST_F(AuthenticationServiceTest, ShowMDMErrorDialogNoCachedError) {
 // Tests that MDM dialog isn't shown when there is a cached MDM error but no
 // corresponding error for the account.
 TEST_F(AuthenticationServiceTest, ShowMDMErrorDialogInvalidCachedError) {
-  if (!experimental_flags::IsMDMIntegrationEnabled()) {
-    return;
-  }
-
   NSDictionary* user_info = [NSDictionary dictionary];
   SetCachedMDMInfo(identity_, user_info);
 
@@ -721,9 +724,6 @@ TEST_F(AuthenticationServiceTest, ShowMDMErrorDialogInvalidCachedError) {
 // Tests that MDM dialog is shown when there is a cached error and a
 // corresponding error for the account.
 TEST_F(AuthenticationServiceTest, ShowMDMErrorDialog) {
-  if (!experimental_flags::IsMDMIntegrationEnabled()) {
-    return;
-  }
   SetExpectationsForSignIn();
   authentication_service_->SignIn(identity_, std::string());
   GoogleServiceAuthError error(

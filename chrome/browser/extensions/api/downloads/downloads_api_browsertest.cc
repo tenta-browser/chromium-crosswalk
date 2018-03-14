@@ -10,6 +10,7 @@
 
 #include <algorithm>
 
+#include "base/containers/circular_deque.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/guid.h"
@@ -19,10 +20,11 @@
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
+#include "chrome/browser/download/download_core_service.h"
+#include "chrome/browser/download/download_core_service_factory.h"
 #include "chrome/browser/download/download_file_icon_extractor.h"
-#include "chrome/browser/download/download_service.h"
-#include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/download/download_test_file_activity_observer.h"
 #include "chrome/browser/extensions/api/downloads/downloads_api.h"
 #include "chrome/browser/extensions/browser_action_test_util.h"
@@ -42,11 +44,13 @@
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/notification_service.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/download_test_observer.h"
 #include "content/public/test/test_download_request_handler.h"
+#include "content/public/test/test_utils.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/notification_types.h"
 #include "net/base/data_url.h"
@@ -190,7 +194,7 @@ class DownloadsEventsListener : public content::NotificationObserver {
               waiting_for_.get() &&
               new_event->Satisfies(*waiting_for_)) {
             waiting_ = false;
-            base::MessageLoopForUI::current()->QuitWhenIdle();
+            base::RunLoop::QuitCurrentWhenIdleDeprecated();
           }
           break;
         }
@@ -235,7 +239,7 @@ class DownloadsEventsListener : public content::NotificationObserver {
   base::Time last_wait_;
   std::unique_ptr<Event> waiting_for_;
   content::NotificationRegistrar registrar_;
-  std::deque<std::unique_ptr<Event>> events_;
+  base::circular_deque<std::unique_ptr<Event>> events_;
 
   DISALLOW_COPY_AND_ASSIGN(DownloadsEventsListener);
 };
@@ -276,16 +280,13 @@ class DownloadExtensionTest : public ExtensionApiTest {
         ui::PAGE_TRANSITION_LINK);
     EventRouter::Get(current_browser()->profile())
         ->AddEventListener(downloads::OnCreated::kEventName,
-                           tab->GetRenderProcessHost(),
-                           GetExtensionId());
+                           tab->GetMainFrame()->GetProcess(), GetExtensionId());
     EventRouter::Get(current_browser()->profile())
         ->AddEventListener(downloads::OnChanged::kEventName,
-                           tab->GetRenderProcessHost(),
-                           GetExtensionId());
+                           tab->GetMainFrame()->GetProcess(), GetExtensionId());
     EventRouter::Get(current_browser()->profile())
         ->AddEventListener(downloads::OnErased::kEventName,
-                           tab->GetRenderProcessHost(),
-                           GetExtensionId());
+                           tab->GetMainFrame()->GetProcess(), GetExtensionId());
   }
 
   content::RenderProcessHost* AddFilenameDeterminer() {
@@ -297,9 +298,8 @@ class DownloadExtensionTest : public ExtensionApiTest {
         ui::PAGE_TRANSITION_LINK);
     EventRouter::Get(current_browser()->profile())
         ->AddEventListener(downloads::OnDeterminingFilename::kEventName,
-                           tab->GetRenderProcessHost(),
-                           GetExtensionId());
-    return tab->GetRenderProcessHost();
+                           tab->GetMainFrame()->GetProcess(), GetExtensionId());
+    return tab->GetMainFrame()->GetProcess();
   }
 
   void RemoveFilenameDeterminer(content::RenderProcessHost* host) {
@@ -314,8 +314,7 @@ class DownloadExtensionTest : public ExtensionApiTest {
     ExtensionApiTest::SetUpOnMainThread();
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&chrome_browser_net::SetUrlRequestMocksEnabled, true));
-    InProcessBrowserTest::SetUpOnMainThread();
+        base::BindOnce(&chrome_browser_net::SetUrlRequestMocksEnabled, true));
     GoOnTheRecord();
     CreateAndSetDownloadsDirectory();
     current_browser()->profile()->GetPrefs()->SetBoolean(
@@ -622,8 +621,8 @@ class MockIconExtractorImpl : public DownloadFileIconExtractor {
       callback_ = callback;
       BrowserThread::PostTask(
           BrowserThread::UI, FROM_HERE,
-          base::Bind(&MockIconExtractorImpl::RunCallback,
-                     base::Unretained(this)));
+          base::BindOnce(&MockIconExtractorImpl::RunCallback,
+                         base::Unretained(this)));
       return true;
     } else {
       return false;
@@ -695,6 +694,7 @@ class HTML5FileWriter {
                                    const storage::FileSystemURL& path,
                                    const char* data,
                                    int length) {
+    base::ScopedAllowBlockingForTesting allow_blocking;
     // Create a temp file.
     base::FilePath temp_file;
     if (!base::CreateTemporaryFile(&temp_file) ||
@@ -706,9 +706,9 @@ class HTML5FileWriter {
     base::RunLoop run_loop;
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&CreateFileForTestingOnIOThread, base::Unretained(context),
-                   path, temp_file, base::Unretained(&result),
-                   run_loop.QuitClosure()));
+        base::BindOnce(&CreateFileForTestingOnIOThread,
+                       base::Unretained(context), path, temp_file,
+                       base::Unretained(&result), run_loop.QuitClosure()));
     // Wait for that to finish.
     run_loop.Run();
     base::DeleteFile(temp_file, false);
@@ -945,7 +945,7 @@ scoped_refptr<UIThreadExtensionFunction> MockedGetFileIconFunction(
 }
 
 // https://crbug.com/678967
-#if defined(OS_WIN)
+#if defined(OS_WIN) || defined(OS_LINUX)
 #define MAYBE_DownloadExtensionTest_FileIcon_Active DISABLED_DownloadExtensionTest_FileIcon_Active
 #else
 #define MAYBE_DownloadExtensionTest_FileIcon_Active DownloadExtensionTest_FileIcon_Active
@@ -1001,8 +1001,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   // be able to query the file icon.
   download_item->Cancel(true);
   ASSERT_FALSE(download_item->GetTargetFilePath().empty());
-  // Let cleanup complete on the FILE thread.
-  content::RunAllPendingInMessageLoop(BrowserThread::FILE);
+  // Let cleanup complete on blocking threads.
+  content::RunAllTasksUntilIdle();
   // Check the path passed to the icon extractor post-cancellation.
   EXPECT_TRUE(RunFunctionAndReturnString(MockedGetFileIconFunction(
           download_item->GetTargetFilePath(), IconLoader::NORMAL, "foo"),
@@ -1050,9 +1050,12 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   base::FilePath real_path = all_downloads[0]->GetTargetFilePath();
   base::FilePath fake_path = all_downloads[1]->GetTargetFilePath();
 
-  EXPECT_EQ(0, base::WriteFile(real_path, "", 0));
-  ASSERT_TRUE(base::PathExists(real_path));
-  ASSERT_FALSE(base::PathExists(fake_path));
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    EXPECT_EQ(0, base::WriteFile(real_path, "", 0));
+    ASSERT_TRUE(base::PathExists(real_path));
+    ASSERT_FALSE(base::PathExists(fake_path));
+  }
 
   for (DownloadManager::DownloadVector::iterator iter = all_downloads.begin();
        iter != all_downloads.end();
@@ -1254,9 +1257,9 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
             items[1]->GetTargetFilePath().value());
   // The order of results when orderBy is empty is unspecified. When there are
   // no sorters, DownloadQuery does not call sort(), so the order of the results
-  // depends on the order of the items in base::hash_map<uint32_t,...>
-  // DownloadManagerImpl::downloads_, which is unspecified and differs between
-  // libc++ and libstdc++. http://crbug.com/365334
+  // depends on the order of the items in DownloadManagerImpl::downloads_,
+  // which is unspecified and differs between libc++ and libstdc++.
+  // http://crbug.com/365334
 }
 
 // Test the |danger| option for search().
@@ -2582,6 +2585,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                           "    \"previous\": \"in_progress\","
                           "    \"current\": \"complete\"}}]",
                           result_id)));
+  base::ScopedAllowBlockingForTesting allow_blocking;
   std::string disk_data;
   EXPECT_TRUE(base::ReadFileToString(item->GetTargetFilePath(), &disk_data));
   EXPECT_STREQ(kPayloadData, disk_data.c_str());
@@ -4139,11 +4143,13 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_SetShelfEnabled) {
   LoadExtension("downloads_split");
   EXPECT_TRUE(RunFunction(new DownloadsSetShelfEnabledFunction(), "[false]"));
-  EXPECT_FALSE(DownloadServiceFactory::GetForBrowserContext(
-      browser()->profile())->IsShelfEnabled());
+  EXPECT_FALSE(
+      DownloadCoreServiceFactory::GetForBrowserContext(browser()->profile())
+          ->IsShelfEnabled());
   EXPECT_TRUE(RunFunction(new DownloadsSetShelfEnabledFunction(), "[true]"));
-  EXPECT_TRUE(DownloadServiceFactory::GetForBrowserContext(
-      browser()->profile())->IsShelfEnabled());
+  EXPECT_TRUE(
+      DownloadCoreServiceFactory::GetForBrowserContext(browser()->profile())
+          ->IsShelfEnabled());
   // TODO(benjhayden) Test that existing shelves are hidden.
   // TODO(benjhayden) Test multiple extensions.
   // TODO(benjhayden) Test disabling extensions.

@@ -11,6 +11,8 @@
 #include "core/css/CSSVariableReferenceValue.h"
 #include "core/css/PropertyDescriptor.h"
 #include "core/css/PropertyRegistry.h"
+#include "core/css/StyleChangeReason.h"
+#include "core/css/StyleEngine.h"
 #include "core/css/StyleSheetContents.h"
 #include "core/css/parser/CSSParserContext.h"
 #include "core/css/parser/CSSTokenizer.h"
@@ -18,34 +20,24 @@
 #include "core/css/resolver/StyleBuilderConverter.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
-#include "core/dom/StyleChangeReason.h"
 
 namespace blink {
 
-static InterpolationTypes SetRegistrationOnCSSInterpolationTypes(
-    CSSInterpolationTypes css_interpolation_types,
-    const PropertyRegistration& registration) {
-  InterpolationTypes result;
-  for (auto& css_interpolation_type : css_interpolation_types) {
-    css_interpolation_type->SetCustomPropertyRegistration(registration);
-    result.push_back(std::move(css_interpolation_type));
-  }
-  return result;
-}
-
 PropertyRegistration::PropertyRegistration(
+    const AtomicString& name,
     const CSSSyntaxDescriptor& syntax,
     bool inherits,
     const CSSValue* initial,
-    PassRefPtr<CSSVariableData> initial_variable_data,
-    CSSInterpolationTypes css_interpolation_types)
+    scoped_refptr<CSSVariableData> initial_variable_data)
     : syntax_(syntax),
       inherits_(inherits),
       initial_(initial),
-      initial_variable_data_(initial_variable_data),
-      interpolation_types_(SetRegistrationOnCSSInterpolationTypes(
-          std::move(css_interpolation_types),
-          *this)) {}
+      initial_variable_data_(std::move(initial_variable_data)),
+      interpolation_types_(
+          CSSInterpolationTypesMap::CreateInterpolationTypesForCSSSyntax(
+              name,
+              syntax,
+              *this)) {}
 
 static bool ComputationallyIndependent(const CSSValue& value) {
   DCHECK(!value.IsCSSWideKeyword());
@@ -80,8 +72,7 @@ static bool ComputationallyIndependent(const CSSValue& value) {
     return true;
   }
 
-  // TODO(timloh): Images and transform-function values can also contain
-  // lengths.
+  // TODO(timloh): Images values can also contain lengths.
 
   return true;
 }
@@ -119,15 +110,14 @@ void PropertyRegistration::registerProperty(
     return;
   }
 
-  CSSInterpolationTypes css_interpolation_types =
-      CSSInterpolationTypesMap::CreateCSSInterpolationTypesForSyntax(
-          atomic_name, syntax_descriptor);
-
+  const CSSValue* initial = nullptr;
+  scoped_refptr<CSSVariableData> initial_variable_data;
   if (descriptor.hasInitialValue()) {
     CSSTokenizer tokenizer(descriptor.initialValue());
+    const auto tokens = tokenizer.TokenizeToEOF();
     bool is_animation_tainted = false;
-    const CSSValue* initial = syntax_descriptor.Parse(
-        tokenizer.TokenRange(),
+    initial = syntax_descriptor.Parse(
+        CSSParserTokenRange(tokens),
         document->ElementSheet().Contents()->ParserContext(),
         is_animation_tainted);
     if (!initial) {
@@ -144,11 +134,8 @@ void PropertyRegistration::registerProperty(
     }
     initial =
         &StyleBuilderConverter::ConvertRegisteredPropertyInitialValue(*initial);
-    RefPtr<CSSVariableData> initial_variable_data = CSSVariableData::Create(
-        tokenizer.TokenRange(), is_animation_tainted, false);
-    registry.RegisterProperty(
-        atomic_name, syntax_descriptor, descriptor.inherits(), initial,
-        std::move(initial_variable_data), std::move(css_interpolation_types));
+    initial_variable_data = CSSVariableData::Create(
+        CSSParserTokenRange(tokens), is_animation_tainted, false);
   } else {
     if (!syntax_descriptor.IsTokenStream()) {
       exception_state.ThrowDOMException(
@@ -156,15 +143,13 @@ void PropertyRegistration::registerProperty(
           "An initial value must be provided if the syntax is not '*'");
       return;
     }
-    registry.RegisterProperty(atomic_name, syntax_descriptor,
-                              descriptor.inherits(), nullptr, nullptr,
-                              std::move(css_interpolation_types));
   }
+  registry.RegisterProperty(
+      atomic_name, *new PropertyRegistration(atomic_name, syntax_descriptor,
+                                             descriptor.inherits(), initial,
+                                             std::move(initial_variable_data)));
 
-  // TODO(timloh): Invalidate only elements with this custom property set
-  document->SetNeedsStyleRecalc(kSubtreeStyleChange,
-                                StyleChangeReasonForTracing::Create(
-                                    StyleChangeReason::kPropertyRegistration));
+  document->GetStyleEngine().CustomPropertyRegistered();
 }
 
 }  // namespace blink

@@ -14,6 +14,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
+#include "base/unguessable_token.h"
 #include "extensions/common/features/feature.h"
 #include "extensions/common/permissions/api_permission_set.h"
 #include "extensions/renderer/module_system.h"
@@ -25,7 +26,6 @@
 #include "v8/include/v8.h"
 
 namespace blink {
-class WebFrame;
 class WebLocalFrame;
 }
 
@@ -62,7 +62,7 @@ class ScriptContext : public RequestSender::Source {
   // See comment in HasAccessOrThrowError.
   static bool IsSandboxedPage(const GURL& url);
 
-  // Clears the WebFrame for this contexts and invalidates the associated
+  // Clears the WebLocalFrame for this contexts and invalidates the associated
   // ModuleSystem.
   void Invalidate();
 
@@ -92,6 +92,8 @@ class ScriptContext : public RequestSender::Source {
     return effective_context_type_;
   }
 
+  const base::UnguessableToken& context_id() const { return context_id_; }
+
   void set_module_system(std::unique_ptr<ModuleSystem> module_system) {
     module_system_ = std::move(module_system);
   }
@@ -110,16 +112,10 @@ class ScriptContext : public RequestSender::Source {
   // the context is in the process of being destroyed.
   content::RenderFrame* GetRenderFrame() const;
 
-  // DEPRECATED.
-  v8::Local<v8::Value> CallFunction(const v8::Local<v8::Function>& function,
-                                    int argc,
-                                    v8::Local<v8::Value> argv[]) const;
-
   // Safely calls the v8::Function, respecting the page load deferrer and
   // possibly executing asynchronously.
   // Doesn't catch exceptions; callers must do that if they want.
   // USE THESE METHODS RATHER THAN v8::Function::Call WHEREVER POSSIBLE.
-  // TODO(devlin): Remove the above variants in favor of this.
   void SafeCallFunction(const v8::Local<v8::Function>& function,
                         int argc,
                         v8::Local<v8::Value> argv[]);
@@ -156,11 +152,16 @@ class ScriptContext : public RequestSender::Source {
   //  - It might let us remove the about:blank resolving?
   const GURL& url() const { return url_; }
 
+  const GURL& service_worker_scope() const;
+
   // Sets the URL of this ScriptContext. Usually this will automatically be set
   // on construction, unless this isn't constructed with enough information to
   // determine the URL (e.g. frame was null).
   // TODO(kalman): Make this a constructor parameter (as an origin).
   void set_url(const GURL& url) { url_ = url; }
+  void set_service_worker_scope(const GURL& scope) {
+    service_worker_scope_ = scope;
+  }
 
   // Returns whether the API |api| or any part of the API could be available in
   // this context without taking into account the context's extension.
@@ -172,19 +173,19 @@ class ScriptContext : public RequestSender::Source {
   // Utility to get the URL we will match against for a frame. If the frame has
   // committed, this is the commited URL. Otherwise it is the provisional URL.
   // The returned URL may be invalid.
-  static GURL GetDataSourceURLForFrame(const blink::WebFrame* frame);
+  static GURL GetDocumentLoaderURLForFrame(const blink::WebLocalFrame* frame);
 
-  // Similar to GetDataSourceURLForFrame, but only returns the data source URL
-  // if the frame's document url is empty and the frame has a security origin
-  // that allows access to the data source url.
+  // Similar to GetDocumentLoaderURLForFrame, but only returns the data source
+  // URL if the frame's document url is empty and the frame has a security
+  // origin that allows access to the data source url.
   // TODO(asargent/devlin) - there may be places that should switch to using
-  // this instead of GetDataSourceURLForFrame.
-  static GURL GetAccessCheckedFrameURL(const blink::WebFrame* frame);
+  // this instead of GetDocumentLoaderURLForFrame.
+  static GURL GetAccessCheckedFrameURL(const blink::WebLocalFrame* frame);
 
   // Returns the first non-about:-URL in the document hierarchy above and
   // including |frame|. The document hierarchy is only traversed if
   // |document_url| is an about:-URL and if |match_about_blank| is true.
-  static GURL GetEffectiveDocumentURL(const blink::WebFrame* frame,
+  static GURL GetEffectiveDocumentURL(blink::WebLocalFrame* frame,
                                       const GURL& document_url,
                                       bool match_about_blank);
 
@@ -224,9 +225,16 @@ class ScriptContext : public RequestSender::Source {
   v8::Local<v8::Value> RunScript(
       v8::Local<v8::String> name,
       v8::Local<v8::String> code,
-      const RunScriptExceptionHandler& exception_handler);
+      const RunScriptExceptionHandler& exception_handler,
+      v8::ScriptCompiler::NoCacheReason no_cache_reason =
+          v8::ScriptCompiler::NoCacheReason::kNoCacheNoReason);
 
  private:
+  // DEPRECATED.
+  v8::Local<v8::Value> CallFunction(const v8::Local<v8::Function>& function,
+                                    int argc,
+                                    v8::Local<v8::Value> argv[]) const;
+
   class Runner;
 
   // Whether this context is valid.
@@ -254,6 +262,9 @@ class ScriptContext : public RequestSender::Source {
   // The type of context.
   Feature::Context effective_context_type_;
 
+  // A globally-unique ID for the script context.
+  base::UnguessableToken context_id_;
+
   // Owns and structures the JS that is injected to set up extension bindings.
   std::unique_ptr<ModuleSystem> module_system_;
 
@@ -270,6 +281,8 @@ class ScriptContext : public RequestSender::Source {
   v8::Isolate* isolate_;
 
   GURL url_;
+
+  GURL service_worker_scope_;
 
   std::unique_ptr<Runner> runner_;
 

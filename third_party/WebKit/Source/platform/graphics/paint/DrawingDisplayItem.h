@@ -7,53 +7,68 @@
 
 #include "base/compiler_specific.h"
 #include "platform/PlatformExport.h"
-#include "platform/RuntimeEnabledFeatures.h"
-#include "platform/geometry/FloatPoint.h"
 #include "platform/graphics/paint/DisplayItem.h"
 #include "platform/graphics/paint/PaintRecord.h"
+#include "platform/runtime_enabled_features.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 
 namespace blink {
 
+// DrawingDisplayItem contains recorded painting operations which can be
+// replayed to produce a rastered output.
+//
+// This class has two notions of the bounds around the content that was recorded
+// and will be produced by the item. The first is the |record_bounds| which
+// describes the bounds of all content in the |record| in the space of the
+// record. The second is the |visual_rect| which should describe the same thing,
+// but takes into account transforms and clips that would apply to the
+// PaintRecord, and is in the space of the DisplayItemList. This allows the
+// visual_rect to be compared between DrawingDisplayItems, and to give bounds
+// around what the user can actually see from the PaintRecord.
 class PLATFORM_EXPORT DrawingDisplayItem final : public DisplayItem {
  public:
   DISABLE_CFI_PERF
   DrawingDisplayItem(const DisplayItemClient& client,
                      Type type,
                      sk_sp<const PaintRecord> record,
-                     bool known_to_be_opaque = false)
-      : DisplayItem(client, type, sizeof(*this)),
-        record_(record && record->approximateOpCount() ? std::move(record)
-                                                       : nullptr),
-        known_to_be_opaque_(known_to_be_opaque) {
-    DCHECK(IsDrawingType(type));
-  }
+                     bool known_to_be_opaque);
 
   void Replay(GraphicsContext&) const override;
-  void AppendToWebDisplayItemList(const IntRect&,
+  void AppendToWebDisplayItemList(const LayoutSize& visual_rect_offset,
                                   WebDisplayItemList*) const override;
   bool DrawsContent() const override;
 
   const sk_sp<const PaintRecord>& GetPaintRecord() const { return record_; }
 
   bool KnownToBeOpaque() const {
-    DCHECK(RuntimeEnabledFeatures::slimmingPaintV2Enabled());
+    DCHECK(RuntimeEnabledFeatures::SlimmingPaintV2Enabled());
     return known_to_be_opaque_;
   }
 
-  void AnalyzeForGpuRasterization(SkPictureGpuAnalyzer&) const override;
+  bool Equals(const DisplayItem& other) const final;
 
  private:
-#ifndef NDEBUG
-  void DumpPropertiesAsDebugString(WTF::StringBuilder&) const override;
+#if DCHECK_IS_ON()
+  void PropertiesAsJSON(JSONObject&) const override;
 #endif
-  bool Equals(const DisplayItem& other) const final;
 
   sk_sp<const PaintRecord> record_;
 
   // True if there are no transparent areas. Only used for SlimmingPaintV2.
   const bool known_to_be_opaque_;
 };
+
+// TODO(dcheng): Move this ctor back inline once the clang plugin is fixed.
+DISABLE_CFI_PERF
+inline DrawingDisplayItem::DrawingDisplayItem(const DisplayItemClient& client,
+                                              Type type,
+                                              sk_sp<const PaintRecord> record,
+                                              bool known_to_be_opaque = false)
+    : DisplayItem(client, type, sizeof(*this)),
+      record_(record && record->size() ? std::move(record) : nullptr),
+      known_to_be_opaque_(known_to_be_opaque) {
+  DCHECK(IsDrawingType(type));
+}
 
 }  // namespace blink
 

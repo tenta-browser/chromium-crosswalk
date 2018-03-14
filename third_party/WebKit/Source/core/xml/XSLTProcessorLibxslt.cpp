@@ -38,13 +38,14 @@
 #include "core/xml/XSLTUnicodeSort.h"
 #include "core/xml/parser/XMLDocumentParser.h"
 #include "platform/SharedBuffer.h"
-#include "platform/loader/fetch/FetchInitiatorTypeNames.h"
 #include "platform/loader/fetch/RawResource.h"
 #include "platform/loader/fetch/Resource.h"
 #include "platform/loader/fetch/ResourceError.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
 #include "platform/loader/fetch/ResourceRequest.h"
 #include "platform/loader/fetch/ResourceResponse.h"
+#include "platform/loader/fetch/fetch_initiator_type_names.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/allocator/Partitions.h"
@@ -100,18 +101,20 @@ static xmlDocPtr DocLoaderFunc(const xmlChar* uri,
     case XSLT_LOAD_DOCUMENT: {
       xsltTransformContextPtr context = (xsltTransformContextPtr)ctxt;
       xmlChar* base = xmlNodeGetBase(context->document->doc, context->node);
-      KURL url(KURL(kParsedURLString, reinterpret_cast<const char*>(base)),
+      KURL url(KURL(reinterpret_cast<const char*>(base)),
                reinterpret_cast<const char*>(uri));
       xmlFree(base);
 
-      ResourceLoaderOptions fetch_options(
-          ResourceFetcher::DefaultResourceOptions());
-      FetchParameters params(ResourceRequest(url), FetchInitiatorTypeNames::xml,
-                             fetch_options);
+      ResourceLoaderOptions fetch_options;
+      fetch_options.initiator_info.name = FetchInitiatorTypeNames::xml;
+      FetchParameters params(ResourceRequest(url), fetch_options);
       params.SetOriginRestriction(FetchParameters::kRestrictToSameOrigin);
       Resource* resource =
           RawResource::FetchSynchronously(params, g_global_resource_fetcher);
       if (!resource || !g_global_processor)
+        return nullptr;
+      scoped_refptr<const SharedBuffer> data = resource->ResourceBuffer();
+      if (!data)
         return nullptr;
 
       FrameConsole* console = nullptr;
@@ -122,15 +125,27 @@ static xmlDocPtr DocLoaderFunc(const xmlChar* uri,
       xmlSetStructuredErrorFunc(console, XSLTProcessor::ParseErrorFunc);
       xmlSetGenericErrorFunc(console, XSLTProcessor::GenericErrorFunc);
 
+      xmlDocPtr doc = nullptr;
+
       // We don't specify an encoding here. Neither Gecko nor WinIE respects
       // the encoding specified in the HTTP headers.
-      RefPtr<const SharedBuffer> data = resource->ResourceBuffer();
-      xmlDocPtr doc = data ? xmlReadMemory(data->Data(), data->size(),
-                                           (const char*)uri, 0, options)
-                           : nullptr;
+      xmlParserCtxtPtr ctx = xmlCreatePushParserCtxt(
+          nullptr, nullptr, nullptr, 0, reinterpret_cast<const char*>(uri));
+      if (ctx && !xmlCtxtUseOptions(ctx, options)) {
+        data->ForEachSegment([&data, &ctx](const char* segment,
+                                           size_t segment_size,
+                                           size_t segment_offset) -> bool {
+          bool final_chunk = segment_offset + segment_size == data->size();
+          return !xmlParseChunk(ctx, segment, segment_size, final_chunk);
+        });
 
-      xmlSetStructuredErrorFunc(0, 0);
-      xmlSetGenericErrorFunc(0, 0);
+        if (ctx->wellFormed)
+          doc = ctx->myDoc;
+      }
+
+      xmlFreeParserCtxt(ctx);
+      xmlSetStructuredErrorFunc(nullptr, nullptr);
+      xmlSetGenericErrorFunc(nullptr, nullptr);
 
       return doc;
     }
@@ -179,7 +194,7 @@ static int WriteToStringBuilder(void* context, const char* buffer, int len) {
 static bool SaveResultToString(xmlDocPtr result_doc,
                                xsltStylesheetPtr sheet,
                                String& result_string) {
-  xmlOutputBufferPtr output_buf = xmlAllocOutputBuffer(0);
+  xmlOutputBufferPtr output_buf = xmlAllocOutputBuffer(nullptr);
   if (!output_buf)
     return false;
 
@@ -216,18 +231,22 @@ static const char** XsltParamArrayFromParameterMap(
   if (parameters.IsEmpty())
     return nullptr;
 
-  const char** parameter_array = static_cast<const char**>(
-      WTF::Partitions::FastMalloc(((parameters.size() * 2) + 1) * sizeof(char*),
-                                  WTF_HEAP_PROFILER_TYPE_NAME(XSLTProcessor)));
+  WTF::CheckedSizeT size = parameters.size();
+  size *= 2;
+  ++size;
+  size *= sizeof(char*);
+  const char** parameter_array =
+      static_cast<const char**>(WTF::Partitions::FastMalloc(
+          size.ValueOrDie(), WTF_HEAP_PROFILER_TYPE_NAME(XSLTProcessor)));
 
   unsigned index = 0;
   for (auto& parameter : parameters) {
     parameter_array[index++] =
-        AllocateParameterArray(parameter.key.Utf8().Data());
+        AllocateParameterArray(parameter.key.Utf8().data());
     parameter_array[index++] =
-        AllocateParameterArray(parameter.value.Utf8().Data());
+        AllocateParameterArray(parameter.value.Utf8().data());
   }
-  parameter_array[index] = 0;
+  parameter_array[index] = nullptr;
 
   return parameter_array;
 }
@@ -319,7 +338,7 @@ bool XSLTProcessor::TransformToString(Node* source_node,
   xsltStylesheetPtr sheet = XsltStylesheetPointer(document_.Get(), stylesheet_,
                                                   stylesheet_root_node_.Get());
   if (!sheet) {
-    SetXSLTLoadCallBack(0, 0, 0);
+    SetXSLTLoadCallBack(nullptr, nullptr, nullptr);
     stylesheet_ = nullptr;
     return false;
   }
@@ -344,17 +363,14 @@ bool XSLTProcessor::TransformToString(Node* source_node,
 
     xsltSecurityPrefsPtr security_prefs = xsltNewSecurityPrefs();
     // Read permissions are checked by docLoaderFunc.
-    if (0 != xsltSetSecurityPrefs(security_prefs, XSLT_SECPREF_WRITE_FILE,
-                                  xsltSecurityForbid))
-      CRASH();
-    if (0 != xsltSetSecurityPrefs(security_prefs, XSLT_SECPREF_CREATE_DIRECTORY,
-                                  xsltSecurityForbid))
-      CRASH();
-    if (0 != xsltSetSecurityPrefs(security_prefs, XSLT_SECPREF_WRITE_NETWORK,
-                                  xsltSecurityForbid))
-      CRASH();
-    if (0 != xsltSetCtxtSecurityPrefs(security_prefs, transform_context))
-      CRASH();
+    CHECK_EQ(0, xsltSetSecurityPrefs(security_prefs, XSLT_SECPREF_WRITE_FILE,
+                                     xsltSecurityForbid));
+    CHECK_EQ(0,
+             xsltSetSecurityPrefs(security_prefs, XSLT_SECPREF_CREATE_DIRECTORY,
+                                  xsltSecurityForbid));
+    CHECK_EQ(0, xsltSetSecurityPrefs(security_prefs, XSLT_SECPREF_WRITE_NETWORK,
+                                     xsltSecurityForbid));
+    CHECK_EQ(0, xsltSetCtxtSecurityPrefs(security_prefs, transform_context));
 
     // <http://bugs.webkit.org/show_bug.cgi?id=16077>: XSLT processor
     // <xsl:sort> algorithm only compares by code point.
@@ -368,8 +384,8 @@ bool XSLTProcessor::TransformToString(Node* source_node,
 
     const char** params = XsltParamArrayFromParameterMap(parameters_);
     xsltQuoteUserParams(transform_context, params);
-    xmlDocPtr result_doc =
-        xsltApplyStylesheetUser(sheet, source_doc, 0, 0, 0, transform_context);
+    xmlDocPtr result_doc = xsltApplyStylesheetUser(
+        sheet, source_doc, nullptr, nullptr, nullptr, transform_context);
 
     xsltFreeTransformContext(transform_context);
     xsltFreeSecurityPrefs(security_prefs);
@@ -387,7 +403,7 @@ bool XSLTProcessor::TransformToString(Node* source_node,
   }
 
   sheet->method = orig_method;
-  SetXSLTLoadCallBack(0, 0, 0);
+  SetXSLTLoadCallBack(nullptr, nullptr, nullptr);
   xsltFreeStylesheet(sheet);
   stylesheet_ = nullptr;
 

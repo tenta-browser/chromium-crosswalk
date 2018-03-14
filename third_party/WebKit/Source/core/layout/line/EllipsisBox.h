@@ -45,12 +45,12 @@ class EllipsisBox final : public InlineBox {
                   false,
                   false,
                   is_vertical,
-                  0,
-                  0,
+                  nullptr,
+                  nullptr,
                   parent),
         height_(height),
         str_(ellipsis_str),
-        selection_state_(SelectionNone) {
+        selection_state_(SelectionState::kNone) {
     SetHasVirtualLogicalHeight();
   }
 

@@ -15,10 +15,8 @@
 #include "ui/gfx/animation/slide_animation.h"
 #include "ui/views/painter.h"
 #include "ui/views/view.h"
-#include "ui/views/widget/widget_observer.h"
 
 class ContentSettingImageModel;
-class LocationBarView;
 
 namespace content {
 class WebContents;
@@ -35,17 +33,34 @@ class BubbleDialogDelegateView;
 // The ContentSettingImageView displays an icon and optional text label for
 // various content settings affordances in the location bar (i.e. plugin
 // blocking, geolocation).
-class ContentSettingImageView : public IconLabelBubbleView,
-                                public gfx::AnimationDelegate,
-                                public views::WidgetObserver {
+class ContentSettingImageView : public IconLabelBubbleView {
  public:
+  class Delegate {
+   public:
+    // Gets the web contents the ContentSettingImageView is for.
+    virtual content::WebContents* GetContentSettingWebContents() = 0;
+
+    // Gets the ContentSettingBubbleModelDelegate for this
+    // ContentSettingImageView.
+    virtual ContentSettingBubbleModelDelegate*
+    GetContentSettingBubbleModelDelegate() = 0;
+
+   protected:
+    virtual ~Delegate() {}
+  };
+
   ContentSettingImageView(std::unique_ptr<ContentSettingImageModel> image_model,
-                          LocationBarView* parent,
+                          Delegate* delegate,
                           const gfx::FontList& font_list);
   ~ContentSettingImageView() override;
 
   // Updates the decoration from the shown WebContents.
-  void Update(content::WebContents* web_contents);
+  void Update();
+
+  // Set the color of the button icon. Based on the text color by default.
+  void SetIconColor(SkColor color);
+
+  void disable_animation() { can_animate_ = false; }
 
  private:
   // The total animation time, including open and close as well as an
@@ -55,18 +70,16 @@ class ContentSettingImageView : public IconLabelBubbleView,
   // IconLabelBubbleView:
   const char* GetClassName() const override;
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
-  bool OnMousePressed(const ui::MouseEvent& event) override;
-  void OnMouseReleased(const ui::MouseEvent& event) override;
-  void OnGestureEvent(ui::GestureEvent* event) override;
   bool GetTooltipText(const gfx::Point& p,
                       base::string16* tooltip) const override;
   void OnNativeThemeChanged(const ui::NativeTheme* native_theme) override;
-  std::unique_ptr<views::InkDrop> CreateInkDrop() override;
+  SkColor GetInkDropBaseColor() const override;
   SkColor GetTextColor() const override;
   bool ShouldShowLabel() const override;
   double WidthMultiplier() const override;
   bool IsShrinking() const override;
-  bool OnActivate(const ui::Event& event) override;
+  bool ShowBubble(const ui::Event& event) override;
+  bool IsBubbleShowing() const override;
 
   // gfx::AnimationDelegate:
   void AnimationEnded(const gfx::Animation* animation) override;
@@ -80,17 +93,21 @@ class ContentSettingImageView : public IconLabelBubbleView,
   // Updates the image and tooltip to match the current model state.
   void UpdateImage();
 
-  LocationBarView* parent_;  // Weak, owns us.
+  // Animates the view in and disables highlighting for hover and focus.
+  // TODO(bruthig): See crbug.com/669253. Since the ink drop highlight currently
+  // cannot handle host resizes, the highlight needs to be disabled when the
+  // animation is running.
+  void AnimateIn();
+
+  Delegate* delegate_;  // Weak.
   std::unique_ptr<ContentSettingImageModel> content_setting_image_model_;
   gfx::SlideAnimation slide_animator_;
   bool pause_animation_;
   double pause_animation_state_;
   views::BubbleDialogDelegateView* bubble_view_;
+  base::Optional<SkColor> icon_color_;
 
-  // This is used to check if the bubble was showing during the mouse pressed
-  // event. If this is true then the mouse released event is ignored to prevent
-  // the bubble from reshowing.
-  bool suppress_mouse_released_action_;
+  bool can_animate_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(ContentSettingImageView);
 };

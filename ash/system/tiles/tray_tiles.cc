@@ -5,7 +5,6 @@
 #include "ash/system/tiles/tray_tiles.h"
 
 #include "ash/metrics/user_metrics_action.h"
-#include "ash/session/session_state_delegate.h"
 #include "ash/system/tiles/tiles_default_view.h"
 
 namespace ash {
@@ -13,7 +12,7 @@ namespace ash {
 TrayTiles::TrayTiles(SystemTray* system_tray)
     : SystemTrayItem(system_tray, UMA_NOT_RECORDED), default_view_(nullptr) {}
 
-TrayTiles::~TrayTiles() {}
+TrayTiles::~TrayTiles() = default;
 
 views::View* TrayTiles::GetHelpButtonView() const {
   if (!default_view_)
@@ -25,18 +24,19 @@ TilesDefaultView* TrayTiles::GetDefaultViewForTesting() const {
   return default_view_;
 }
 
-views::View* TrayTiles::CreateDefaultViewForTesting(LoginStatus status) {
-  return CreateDefaultView(status);
+views::View* TrayTiles::CreateDefaultViewForTesting() {
+  // Login status is unused.
+  return CreateDefaultView(LoginStatus::USER);
 }
 
 views::View* TrayTiles::CreateDefaultView(LoginStatus status) {
   CHECK(default_view_ == nullptr);
-  default_view_ = new TilesDefaultView(this, status);
+  default_view_ = new TilesDefaultView(this);
   default_view_->Init();
   return default_view_;
 }
 
-void TrayTiles::DestroyDefaultView() {
+void TrayTiles::OnDefaultViewDestroyed() {
   default_view_ = nullptr;
 }
 

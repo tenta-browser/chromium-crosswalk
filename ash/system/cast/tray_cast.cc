@@ -9,10 +9,10 @@
 #include <utility>
 #include <vector>
 
+#include "ash/metrics/user_metrics_recorder.h"
 #include "ash/public/interfaces/cast_config.mojom.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/screen_security/screen_tray_item.h"
 #include "ash/system/tray/hover_highlight_view.h"
@@ -27,6 +27,7 @@
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/text_elider.h"
+#include "ui/gfx/vector_icon_types.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
@@ -48,6 +49,39 @@ base::string16 ElideString(const base::string16& text) {
   base::string16 elided;
   gfx::ElideString(text, kMaximumStatusStringLength, &elided);
   return elided;
+}
+
+// Returns the correct vector icon for |icon_type|. Some types may be different
+// for branded builds.
+const gfx::VectorIcon& SinkIconTypeToIcon(mojom::SinkIconType icon_type) {
+  switch (icon_type) {
+#if defined(GOOGLE_CHROME_BUILD)
+    case mojom::SinkIconType::CAST:
+      return kSystemMenuCastDeviceIcon;
+    case mojom::SinkIconType::EDUCATION:
+      return kSystemMenuCastEducationIcon;
+    case mojom::SinkIconType::HANGOUT:
+      return kSystemMenuCastHangoutIcon;
+    case mojom::SinkIconType::MEETING:
+      return kSystemMenuCastMeetingIcon;
+#else
+    case mojom::SinkIconType::CAST:
+    case mojom::SinkIconType::EDUCATION:
+      return kSystemMenuCastGenericIcon;
+    case mojom::SinkIconType::HANGOUT:
+    case mojom::SinkIconType::MEETING:
+      return kSystemMenuCastMessageIcon;
+#endif
+    case mojom::SinkIconType::GENERIC:
+      return kSystemMenuCastGenericIcon;
+    case mojom::SinkIconType::CAST_AUDIO_GROUP:
+      return kSystemMenuCastAudioGroupIcon;
+    case mojom::SinkIconType::CAST_AUDIO:
+      return kSystemMenuCastAudioIcon;
+  }
+
+  NOTREACHED();
+  return kSystemMenuCastGenericIcon;
 }
 
 }  // namespace
@@ -80,7 +114,7 @@ CastSelectDefaultView::CastSelectDefaultView(SystemTrayItem* owner)
   SetAccessibleName(label);
 }
 
-CastSelectDefaultView::~CastSelectDefaultView() {}
+CastSelectDefaultView::~CastSelectDefaultView() = default;
 
 void CastSelectDefaultView::UpdateStyle() {
   TrayItemMore::UpdateStyle();
@@ -125,11 +159,12 @@ CastCastView::CastCastView()
       gfx::CreateVectorIcon(kSystemMenuCastEnabledIcon, kMenuIconColor));
 }
 
-CastCastView::~CastCastView() {}
+CastCastView::~CastCastView() = default;
 
 void CastCastView::StopCasting() {
   Shell::Get()->cast_config()->StopCasting(displayed_route_.Clone());
-  ShellPort::Get()->RecordUserMetricsAction(UMA_STATUS_AREA_CAST_STOP_CAST);
+  Shell::Get()->metrics()->RecordUserMetricsAction(
+      UMA_STATUS_AREA_CAST_STOP_CAST);
 }
 
 void CastCastView::UpdateLabel(
@@ -292,7 +327,7 @@ CastTrayView::CastTrayView(SystemTrayItem* tray_item)
       gfx::CreateVectorIcon(kSystemTrayCastIcon, kTrayIconColor));
 }
 
-CastTrayView::~CastTrayView() {}
+CastTrayView::~CastTrayView() = default;
 
 // This view displays a list of cast receivers that can be clicked on and casted
 // to. It is activated by clicking on the chevron inside of
@@ -315,7 +350,6 @@ class CastDetailedView : public TrayDetailsView {
   void CreateItems();
 
   void UpdateReceiverListFromCachedData();
-  views::View* AddToReceiverList(const mojom::SinkAndRoutePtr& sink_route);
 
   // TrayDetailsView:
   void HandleViewClicked(views::View* view) override;
@@ -336,7 +370,7 @@ CastDetailedView::CastDetailedView(
   UpdateReceiverList(sinks_routes);
 }
 
-CastDetailedView::~CastDetailedView() {}
+CastDetailedView::~CastDetailedView() = default;
 
 void CastDetailedView::SimulateViewClickedForTest(
     const std::string& receiver_id) {
@@ -388,7 +422,9 @@ void CastDetailedView::UpdateReceiverListFromCachedData() {
   // Add a view for each receiver.
   for (auto& it : sinks_and_routes_) {
     const ash::mojom::SinkAndRoutePtr& sink_route = it.second;
-    views::View* container = AddToReceiverList(sink_route);
+    const base::string16 name = base::UTF8ToUTF16(sink_route->sink->name);
+    views::View* container = AddScrollListItem(
+        SinkIconTypeToIcon(sink_route->sink->sink_icon_type), name);
     view_to_sink_map_[container] = sink_route->sink.Clone();
   }
 
@@ -396,24 +432,12 @@ void CastDetailedView::UpdateReceiverListFromCachedData() {
   scroller()->Layout();
 }
 
-views::View* CastDetailedView::AddToReceiverList(
-    const ash::mojom::SinkAndRoutePtr& sink_route) {
-  const gfx::ImageSkia image =
-      gfx::CreateVectorIcon(kSystemMenuCastDeviceIcon, kMenuIconColor);
-
-  HoverHighlightView* container = new HoverHighlightView(this);
-  container->AddIconAndLabel(image, base::UTF8ToUTF16(sink_route->sink->name));
-
-  scroll_content()->AddChildView(container);
-  return container;
-}
-
 void CastDetailedView::HandleViewClicked(views::View* view) {
   // Find the receiver we are going to cast to.
   auto it = view_to_sink_map_.find(view);
   if (it != view_to_sink_map_.end()) {
     Shell::Get()->cast_config()->CastToSink(it->second.Clone());
-    ShellPort::Get()->RecordUserMetricsAction(
+    Shell::Get()->metrics()->RecordUserMetricsAction(
         UMA_STATUS_AREA_DETAILED_CAST_VIEW_LAUNCH_CAST);
   }
 }
@@ -470,21 +494,22 @@ views::View* TrayCast::CreateDefaultView(LoginStatus status) {
 }
 
 views::View* TrayCast::CreateDetailedView(LoginStatus status) {
-  ShellPort::Get()->RecordUserMetricsAction(UMA_STATUS_AREA_DETAILED_CAST_VIEW);
+  Shell::Get()->metrics()->RecordUserMetricsAction(
+      UMA_STATUS_AREA_DETAILED_CAST_VIEW);
   CHECK(detailed_ == nullptr);
   detailed_ = new tray::CastDetailedView(this, sinks_and_routes_);
   return detailed_;
 }
 
-void TrayCast::DestroyTrayView() {
+void TrayCast::OnTrayViewDestroyed() {
   tray_ = nullptr;
 }
 
-void TrayCast::DestroyDefaultView() {
+void TrayCast::OnDefaultViewDestroyed() {
   default_ = nullptr;
 }
 
-void TrayCast::DestroyDetailedView() {
+void TrayCast::OnDetailedViewDestroyed() {
   detailed_ = nullptr;
 }
 

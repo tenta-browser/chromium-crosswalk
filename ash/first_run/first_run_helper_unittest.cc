@@ -14,14 +14,13 @@
 #include "ui/views/window/dialog_delegate.h"
 
 namespace ash {
-namespace test {
 
 namespace {
 
 class TestModalDialogDelegate : public views::DialogDelegateView {
  public:
-  TestModalDialogDelegate() {}
-  ~TestModalDialogDelegate() override {}
+  TestModalDialogDelegate() = default;
+  ~TestModalDialogDelegate() override = default;
 
   // Overridden from views::WidgetDelegate:
   ui::ModalType GetModalType() const override { return ui::MODAL_TYPE_SYSTEM; }
@@ -39,7 +38,7 @@ class CountingEventHandler : public ui::EventHandler {
     *mouse_events_registered = 0;
   }
 
-  ~CountingEventHandler() override {}
+  ~CountingEventHandler() override = default;
 
  private:
   // ui::EventHandler overrides.
@@ -58,7 +57,7 @@ class FirstRunHelperTest : public AshTestBase, public FirstRunHelper::Observer {
  public:
   FirstRunHelperTest() : cancelled_times_(0) {}
 
-  ~FirstRunHelperTest() override {}
+  ~FirstRunHelperTest() override = default;
 
   void SetUp() override {
     AshTestBase::SetUp();
@@ -141,5 +140,4 @@ TEST_F(FirstRunHelperTest, ModalWindowDoesNotBlock) {
   overlay_window->RemovePreTargetHandler(&handler);
 }
 
-}  // namespace test
 }  // namespace ash

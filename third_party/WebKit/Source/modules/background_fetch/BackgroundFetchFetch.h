@@ -5,7 +5,7 @@
 #ifndef BackgroundFetchFetch_h
 #define BackgroundFetchFetch_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -14,15 +14,14 @@ class Request;
 
 // Base interface for providing developers with access to the fetch
 // information associated with a background fetch.
-class BackgroundFetchFetch : public GarbageCollected<BackgroundFetchFetch>,
-                             public ScriptWrappable {
+class BackgroundFetchFetch : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   // Web Exposed attribute defined in the IDL file.
   Request* request() const;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  protected:
   explicit BackgroundFetchFetch(Request*);

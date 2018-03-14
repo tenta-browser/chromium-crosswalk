@@ -31,15 +31,19 @@
 #include "platform/text/PlatformLocale.h"
 
 #include <memory>
+
+#include "base/macros.h"
 #include "platform/text/DateTimeFormat.h"
 #include "platform/wtf/text/StringBuilder.h"
 #include "public/platform/Platform.h"
 
 namespace blink {
 
-class DateTimeStringBuilder : private DateTimeFormat::TokenHandler {
-  WTF_MAKE_NONCOPYABLE(DateTimeStringBuilder);
+namespace {
+Locale* g_default_locale;
+}
 
+class DateTimeStringBuilder : private DateTimeFormat::TokenHandler {
  public:
   // The argument objects must be alive until this object dies.
   DateTimeStringBuilder(Locale&, const DateComponents&);
@@ -58,6 +62,8 @@ class DateTimeStringBuilder : private DateTimeFormat::TokenHandler {
   StringBuilder builder_;
   Locale& localizer_;
   const DateComponents& date_;
+
+  DISALLOW_COPY_AND_ASSIGN(DateTimeStringBuilder);
 };
 
 DateTimeStringBuilder::DateTimeStringBuilder(Locale& localizer,
@@ -176,9 +182,17 @@ String DateTimeStringBuilder::ToString() {
 }
 
 Locale& Locale::DefaultLocale() {
-  static Locale* locale = Locale::Create(DefaultLanguage()).release();
   DCHECK(IsMainThread());
-  return *locale;
+  if (!g_default_locale)
+    g_default_locale = Locale::Create(DefaultLanguage()).release();
+  return *g_default_locale;
+}
+
+void Locale::ResetDefaultLocale() {
+  // This is safe because no one owns a Locale object returned by
+  // DefaultLocale().
+  delete g_default_locale;
+  g_default_locale = nullptr;
 }
 
 Locale::~Locale() {}
@@ -424,9 +438,9 @@ String Locale::StripInvalidNumberCharacters(const String& input,
   builder.ReserveCapacity(input.length());
   for (unsigned i = 0; i < input.length(); ++i) {
     UChar ch = input[i];
-    if (standard_chars.Find(ch) != kNotFound)
+    if (standard_chars.find(ch) != kNotFound)
       builder.Append(ch);
-    else if (acceptable_number_characters_.Find(ch) != kNotFound)
+    else if (acceptable_number_characters_.find(ch) != kNotFound)
       builder.Append(ch);
   }
   return builder.ToString();

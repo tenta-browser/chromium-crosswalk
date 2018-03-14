@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "ash/app_list/model/search_box_model.h"
+#include "ash/app_list/model/search_result.h"
 #include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
@@ -16,15 +18,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "ui/app_list/app_list_constants.h"
 #include "ui/app_list/search/history.h"
-#include "ui/app_list/search_box_model.h"
 #include "ui/app_list/search_provider.h"
-#include "ui/app_list/search_result.h"
-
-namespace {
-
-// Maximum time (in milliseconds) to wait to the search providers to finish.
-constexpr int kStopTimeMS = 1500;
-}
 
 namespace app_list {
 
@@ -36,34 +30,20 @@ SearchController::SearchController(SearchBoxModel* search_box,
 SearchController::~SearchController() {
 }
 
-void SearchController::Start(bool is_voice_query) {
-  Stop();
-
+void SearchController::Start() {
   base::string16 query;
   base::TrimWhitespace(search_box_->text(), base::TRIM_ALL, &query);
 
+  is_voice_query_ = search_box_->is_voice_query();
+
   dispatching_query_ = true;
   for (const auto& provider : providers_)
-    provider->Start(is_voice_query, query);
+    provider->Start(is_voice_query_, query);
 
   dispatching_query_ = false;
-  query_for_recommendation_ = query.empty() ? true : false;
-
-  is_voice_query_ = is_voice_query;
+  query_for_recommendation_ = query.empty();
 
   OnResultsChanged();
-
-  stop_timer_.Start(FROM_HERE,
-                    base::TimeDelta::FromMilliseconds(kStopTimeMS),
-                    base::Bind(&SearchController::Stop,
-                               base::Unretained(this)));
-}
-
-void SearchController::Stop() {
-  stop_timer_.Stop();
-
-  for (const auto& provider : providers_)
-    provider->Stop();
 }
 
 void SearchController::OpenResult(SearchResult* result, int event_flags) {
@@ -72,14 +52,15 @@ void SearchController::OpenResult(SearchResult* result, int event_flags) {
   if (!result)
     return;
 
-  // Count AppList.Search here because it is composed of search + action.
-  base::RecordAction(base::UserMetricsAction("AppList_Search"));
-
   UMA_HISTOGRAM_ENUMERATION(kSearchResultOpenDisplayTypeHistogram,
                             result->display_type(),
                             SearchResult::DISPLAY_TYPE_LAST);
 
+  // Record the search metric if the SearchResult is not a suggested app.
   if (result->display_type() != SearchResult::DISPLAY_RECOMMENDATION) {
+    // Count AppList.Search here because it is composed of search + action.
+    base::RecordAction(base::UserMetricsAction("AppList_Search"));
+
     UMA_HISTOGRAM_COUNTS_100(kSearchQueryLength, search_box_->text().size());
 
     if (result->distance_from_origin() >= 0) {
@@ -103,8 +84,10 @@ void SearchController::InvokeResultAction(SearchResult* result,
   result->InvokeAction(action_index, event_flags);
 }
 
-size_t SearchController::AddGroup(size_t max_results, double multiplier) {
-  return mixer_->AddGroup(max_results, multiplier);
+size_t SearchController::AddGroup(size_t max_results,
+                                  double multiplier,
+                                  double boost) {
+  return mixer_->AddGroup(max_results, multiplier, boost);
 }
 
 void SearchController::AddProvider(size_t group_id,

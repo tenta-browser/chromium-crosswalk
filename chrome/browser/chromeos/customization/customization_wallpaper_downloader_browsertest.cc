@@ -71,7 +71,7 @@ class TestWallpaperObserver : public WallpaperManager::Observer {
 
   void OnWallpaperAnimationFinished(const AccountId&) override {
     finished_ = true;
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   void WaitForWallpaperAnimationFinished() {
@@ -247,7 +247,8 @@ class CustomizationWallpaperDownloaderBrowserTest
 IN_PROC_BROWSER_TEST_F(CustomizationWallpaperDownloaderBrowserTest,
                        OEMWallpaperIsPresent) {
   CreateCmdlineWallpapers();
-  WallpaperManager::Get()->SetDefaultWallpaperNow(EmptyAccountId());
+  WallpaperManager::Get()->SetDefaultWallpaper(EmptyAccountId(),
+                                               true /* update_wallpaper */);
   wallpaper_manager_test_utils::WaitAsyncWallpaperLoadFinished();
   EXPECT_TRUE(wallpaper_manager_test_utils::ImageIsNearColor(
       ash::Shell::Get()->wallpaper_controller()->GetWallpaper(),
@@ -276,7 +277,8 @@ IN_PROC_BROWSER_TEST_F(CustomizationWallpaperDownloaderBrowserTest,
 IN_PROC_BROWSER_TEST_F(CustomizationWallpaperDownloaderBrowserTest,
                        OEMWallpaperRetryFetch) {
   CreateCmdlineWallpapers();
-  WallpaperManager::Get()->SetDefaultWallpaperNow(EmptyAccountId());
+  WallpaperManager::Get()->SetDefaultWallpaper(EmptyAccountId(),
+                                               true /* update_wallpaper */);
   wallpaper_manager_test_utils::WaitAsyncWallpaperLoadFinished();
   EXPECT_TRUE(wallpaper_manager_test_utils::ImageIsNearColor(
       ash::Shell::Get()->wallpaper_controller()->GetWallpaper(),

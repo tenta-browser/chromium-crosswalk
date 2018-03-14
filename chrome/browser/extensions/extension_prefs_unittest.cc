@@ -11,6 +11,7 @@
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/common/chrome_paths.h"
@@ -34,7 +35,6 @@
 
 using base::Time;
 using base::TimeDelta;
-using content::BrowserThread;
 
 namespace extensions {
 
@@ -44,9 +44,7 @@ static void AddPattern(URLPatternSet* extent, const std::string& pattern) {
 }
 
 ExtensionPrefsTest::ExtensionPrefsTest()
-    : ui_thread_(BrowserThread::UI, &message_loop_),
-      prefs_(message_loop_.task_runner().get()) {
-}
+    : prefs_(base::ThreadTaskRunnerHandle::Get()) {}
 
 ExtensionPrefsTest::~ExtensionPrefsTest() {
 }
@@ -129,7 +127,7 @@ class ExtensionPrefsExtensionState : public ExtensionPrefsTest {
   void Initialize() override {
     extension = prefs_.AddExtension("test");
     prefs()->SetExtensionDisabled(extension->id(),
-                                  Extension::DISABLE_USER_ACTION);
+                                  disable_reason::DISABLE_USER_ACTION);
   }
 
   void Verify() override {
@@ -146,7 +144,7 @@ class ExtensionPrefsEscalatePermissions : public ExtensionPrefsTest {
   void Initialize() override {
     extension = prefs_.AddExtension("test");
     prefs()->SetExtensionDisabled(extension->id(),
-                                  Extension::DISABLE_PERMISSIONS_INCREASE);
+                                  disable_reason::DISABLE_PERMISSIONS_INCREASE);
   }
 
   void Verify() override {
@@ -225,7 +223,6 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
       EXPECT_FALSE(granted_permissions->IsEmpty());
       EXPECT_EQ(expected_apis, granted_permissions->apis());
       EXPECT_TRUE(granted_permissions->effective_hosts().is_empty());
-      EXPECT_FALSE(granted_permissions->HasEffectiveFullAccess());
     }
 
     {
@@ -236,7 +233,6 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
       std::unique_ptr<const PermissionSet> granted_permissions =
           prefs()->GetGrantedPermissions(extension_id_);
       EXPECT_FALSE(granted_permissions->IsEmpty());
-      EXPECT_FALSE(granted_permissions->HasEffectiveFullAccess());
       EXPECT_EQ(expected_apis, granted_permissions->apis());
       EXPECT_EQ(ehost_perm_set1_, granted_permissions->explicit_hosts());
       EXPECT_EQ(ehost_perm_set1_, granted_permissions->effective_hosts());
@@ -250,7 +246,6 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
       std::unique_ptr<const PermissionSet> granted_permissions =
           prefs()->GetGrantedPermissions(extension_id_);
       EXPECT_FALSE(granted_permissions->IsEmpty());
-      EXPECT_FALSE(granted_permissions->HasEffectiveFullAccess());
       EXPECT_EQ(expected_apis, granted_permissions->apis());
       EXPECT_EQ(ehost_perm_set1_, granted_permissions->explicit_hosts());
       EXPECT_EQ(shost_perm_set1_, granted_permissions->scriptable_hosts());
@@ -285,7 +280,6 @@ class ExtensionPrefsGrantedPermissions : public ExtensionPrefsTest {
     std::unique_ptr<const PermissionSet> permissions =
         prefs()->GetGrantedPermissions(extension_id_);
     EXPECT_TRUE(permissions.get());
-    EXPECT_FALSE(permissions->HasEffectiveFullAccess());
     EXPECT_EQ(api_permissions_, permissions->apis());
     EXPECT_EQ(ehost_permissions_,
               permissions->explicit_hosts());

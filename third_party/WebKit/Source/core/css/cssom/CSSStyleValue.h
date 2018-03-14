@@ -5,62 +5,83 @@
 #ifndef CSSStyleValue_h
 #define CSSStyleValue_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "base/macros.h"
+#include "bindings/core/v8/Nullable.h"
 #include "core/CSSPropertyNames.h"
 #include "core/CoreExport.h"
 #include "core/css/CSSValue.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
 class ExceptionState;
-class ScriptState;
-class ScriptValue;
+class ExecutionContext;
+enum class SecureContextMode;
 
-class CORE_EXPORT CSSStyleValue
-    : public GarbageCollectedFinalized<CSSStyleValue>,
-      public ScriptWrappable {
-  WTF_MAKE_NONCOPYABLE(CSSStyleValue);
+class CSSStyleValue;
+using CSSStyleValueVector = HeapVector<Member<CSSStyleValue>>;
+
+// The base class for all CSS values returned by the Typed OM.
+// See CSSStyleValue.idl for additional documentation about this class.
+class CORE_EXPORT CSSStyleValue : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   enum StyleValueType {
-    // This list corresponds to each non-abstract subclass.
-    kUnknown,
+    kUnknownType,
     kAngleType,
-    kCalcLengthType,
+    kFlexType,
+    kFrequencyType,
+    kInvertType,
     kKeywordType,
+    kLengthType,
+    kMaxType,
+    kMinType,
+    kNegateType,
     kNumberType,
+    kPercentType,
     kPositionType,
-    kSimpleLengthType,
+    kProductType,
+    kResolutionType,
+    kSumType,
+    kTimeType,
     kTransformType,
-    kUnitType,
     kUnparsedType,
     kURLImageType,
+    kInvalidType,
   };
 
-  virtual ~CSSStyleValue() {}
+  static CSSStyleValue* parse(const ExecutionContext*,
+                              const String& property_name,
+                              const String& value,
+                              ExceptionState&);
+  static Nullable<CSSStyleValueVector> parseAll(const ExecutionContext*,
+                                                const String& property_name,
+                                                const String& value,
+                                                ExceptionState&);
+
+  virtual ~CSSStyleValue() = default;
 
   virtual StyleValueType GetType() const = 0;
+  virtual bool ContainsPercent() const { return false; }
 
-  static ScriptValue parse(ScriptState*,
-                           const String& property_name,
-                           const String& value,
-                           ExceptionState&);
-
-  virtual const CSSValue* ToCSSValue() const = 0;
-  virtual const CSSValue* ToCSSValueWithProperty(CSSPropertyID) const {
-    return ToCSSValue();
+  virtual const CSSValue* ToCSSValue(SecureContextMode) const = 0;
+  virtual const CSSValue* ToCSSValueWithProperty(
+      CSSPropertyID,
+      SecureContextMode secure_context_mode) const {
+    return ToCSSValue(secure_context_mode);
   }
-  virtual String cssText() const { return ToCSSValue()->CssText(); }
-
-  DEFINE_INLINE_VIRTUAL_TRACE() {}
+  virtual String toString(const ExecutionContext*) const;
 
  protected:
-  CSSStyleValue() {}
-};
+  static String StyleValueTypeToString(StyleValueType);
 
-typedef HeapVector<Member<CSSStyleValue>> CSSStyleValueVector;
+  CSSStyleValue() = default;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(CSSStyleValue);
+};
 
 }  // namespace blink
 

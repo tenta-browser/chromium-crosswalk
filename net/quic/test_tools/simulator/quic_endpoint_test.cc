@@ -5,17 +5,15 @@
 #include "net/quic/test_tools/simulator/quic_endpoint.h"
 
 #include "net/quic/platform/api/quic_ptr_util.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/quic/test_tools/quic_connection_peer.h"
 #include "net/quic/test_tools/quic_test_utils.h"
 #include "net/quic/test_tools/simulator/simulator.h"
 #include "net/quic/test_tools/simulator/switch.h"
 
-#include "testing/gmock/include/gmock/gmock.h"
-#include "testing/gtest/include/gtest/gtest.h"
-
-using ::testing::_;
 using ::testing::NiceMock;
 using ::testing::Return;
+using ::testing::_;
 
 namespace net {
 namespace simulator {
@@ -28,7 +26,7 @@ const QuicByteCount kDefaultBdp = kDefaultBandwidth * kDefaultPropagationDelay;
 
 // A simple test harness where all hosts are connected to a switch with
 // identical links.
-class QuicEndpointTest : public ::testing::Test {
+class QuicEndpointTest : public QuicTest {
  public:
   QuicEndpointTest()
       : simulator_(), switch_(&simulator_, "Switch", 8, kDefaultBdp * 2) {}
@@ -40,6 +38,15 @@ class QuicEndpointTest : public ::testing::Test {
   std::unique_ptr<SymmetricLink> Link(Endpoint* a, Endpoint* b) {
     return QuicMakeUnique<SymmetricLink>(a, b, kDefaultBandwidth,
                                          kDefaultPropagationDelay);
+  }
+
+  std::unique_ptr<SymmetricLink> CustomLink(Endpoint* a,
+                                            Endpoint* b,
+                                            uint64_t extra_rtt_ms) {
+    return QuicMakeUnique<SymmetricLink>(
+        a, b, kDefaultBandwidth,
+        kDefaultPropagationDelay +
+            QuicTime::Delta::FromMilliseconds(extra_rtt_ms));
   }
 };
 
@@ -89,8 +96,7 @@ TEST_F(QuicEndpointTest, WriteBlocked) {
 
   // Will be owned by the sent packet manager.
   auto* sender = new NiceMock<test::MockSendAlgorithm>();
-  EXPECT_CALL(*sender, TimeUntilSend(_, _))
-      .WillRepeatedly(Return(QuicTime::Delta::Zero()));
+  EXPECT_CALL(*sender, CanSend(_)).WillRepeatedly(Return(true));
   EXPECT_CALL(*sender, PacingRate(_))
       .WillRepeatedly(Return(10 * kDefaultBandwidth));
   EXPECT_CALL(*sender, BandwidthEstimate())
@@ -144,8 +150,6 @@ TEST_F(QuicEndpointTest, TwoWayTransmission) {
 
 // Simulate three hosts trying to send data to a fourth one simultaneously.
 TEST_F(QuicEndpointTest, Competition) {
-  simulator_.set_enable_random_delays(true);
-
   auto endpoint_a = QuicMakeUnique<QuicEndpoint>(
       &simulator_, "Endpoint A", "Endpoint D (A)", Perspective::IS_CLIENT, 42);
   auto endpoint_b = QuicMakeUnique<QuicEndpoint>(
@@ -162,9 +166,11 @@ TEST_F(QuicEndpointTest, Competition) {
       "Endpoint D",
       {endpoint_d_a.get(), endpoint_d_b.get(), endpoint_d_c.get()});
 
-  auto link_a = Link(endpoint_a.get(), switch_.port(1));
-  auto link_b = Link(endpoint_b.get(), switch_.port(2));
-  auto link_c = Link(endpoint_c.get(), switch_.port(3));
+  // Create links with slightly different RTTs in order to avoid pathological
+  // side-effects of packets entering the queue at the exactly same time.
+  auto link_a = CustomLink(endpoint_a.get(), switch_.port(1), 0);
+  auto link_b = CustomLink(endpoint_b.get(), switch_.port(2), 1);
+  auto link_c = CustomLink(endpoint_c.get(), switch_.port(3), 2);
   auto link_d = Link(&endpoint_d, switch_.port(4));
 
   endpoint_a->AddBytesToTransfer(2 * 1024 * 1024);

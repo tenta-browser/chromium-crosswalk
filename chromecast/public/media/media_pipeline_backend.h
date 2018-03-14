@@ -106,7 +106,7 @@ class MediaPipelineBackend {
     // delay measurement was taken. Both times in microseconds.
     struct RenderingDelay {
       RenderingDelay()
-          : delay_microseconds(INT64_MIN), timestamp_microseconds(INT64_MIN) {}
+          : delay_microseconds(0), timestamp_microseconds(INT64_MIN) {}
       RenderingDelay(int64_t delay_microseconds_in,
                      int64_t timestamp_microseconds_in)
           : delay_microseconds(delay_microseconds_in),
@@ -136,13 +136,20 @@ class MediaPipelineBackend {
 
     // Returns the pipeline latency: i.e. the amount of data
     // in the pipeline that have not been rendered yet, in microseconds.
-    // Returns delay = INT64_MIN if the latency is not available.
+    // Returns a RenderingDelay.timestamp = INT64_MIN if the latency is not
+    // available.
     // Only called when the backend is playing.
     virtual RenderingDelay GetRenderingDelay() = 0;
 
     // Returns the playback statistics since last call to backend Start.  Only
     // called when playing or paused.
     virtual void GetStatistics(Statistics* statistics) = 0;
+
+    // Returns the minimum amount of audio data buffered (in microseconds)
+    // necessary to prevent underrun for the given |config|; ie, if the
+    // rendering delay falls below this value, then underrun may occur.
+    static int64_t GetMinimumBufferedTime(const AudioConfig& config)
+        __attribute__((__weak__));
 
    protected:
     ~AudioDecoder() override {}
@@ -158,8 +165,12 @@ class MediaPipelineBackend {
       uint64_t dropped_frames;  // Reported as webkitDroppedFrames.
     };
 
-    // Provides the video configuration.  Called once before the backend is
-    // initialized, and again any time the configuration changes (in any state).
+    // Provides the video configuration. Called once with the configuration for
+    // the primary stream before the backend is initialized, and the
+    // configuration may contain a pointer to additional configuration for a
+    // secondary stream. Called again with the configuration for either the
+    // primary or secondary stream when either changes after the backend is
+    // initialized.
     // Note that SetConfig() may be called before SetDelegate() is called.
     // Returns true if the configuration is a supported configuration.
     virtual bool SetConfig(const VideoConfig& config) = 0;

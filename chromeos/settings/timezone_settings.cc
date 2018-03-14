@@ -51,6 +51,7 @@ const char kFallbackTimeZoneId[] = "America/Los_Angeles";
 // identity is likely to cut down the number to < 100. Until we
 // come up with a better list, we hard-code the following list. It came from
 // from Android initially, but more entries have been added.
+// Note that the list is sorted in terms of timezone offset from UTC.
 static const char* kTimeZones[] = {
     "Pacific/Midway",
     "Pacific/Honolulu",
@@ -67,6 +68,7 @@ static const char* kTimeZones[] = {
     "America/Costa_Rica",
     "America/Chicago",
     "America/Mexico_City",
+    "America/Tegucigalpa",
     "America/Winnipeg",
     "Pacific/Easter",
     "America/Bogota",
@@ -82,8 +84,9 @@ static const char* kTimeZones[] = {
     "America/Araguaina",
     "America/Argentina/Buenos_Aires",
     "America/Argentina/San_Luis",
-    "America/Sao_Paulo",
     "America/Montevideo",
+    "America/Santiago",
+    "America/Sao_Paulo",
     "America/Godthab",
     "Atlantic/South_Georgia",
     "Atlantic/Cape_Verde",
@@ -336,8 +339,7 @@ class TimezoneSettingsStubImpl : public TimezoneSettingsBaseImpl {
   DISALLOW_COPY_AND_ASSIGN(TimezoneSettingsStubImpl);
 };
 
-TimezoneSettingsBaseImpl::~TimezoneSettingsBaseImpl() {
-}
+TimezoneSettingsBaseImpl::~TimezoneSettingsBaseImpl() = default;
 
 const icu::TimeZone& TimezoneSettingsBaseImpl::GetTimezone() {
   return *timezone_.get();
@@ -391,13 +393,10 @@ void TimezoneSettingsImpl::SetTimezone(const icu::TimeZone& timezone) {
   VLOG(1) << "Setting timezone to " << id;
   // It's safe to change the timezone config files in the background as the
   // following operations don't depend on the completion of the config change.
-  base::PostTaskWithTraits(
-      FROM_HERE, base::TaskTraits()
-                     .WithShutdownBehavior(
-                         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-                     .WithPriority(base::TaskPriority::BACKGROUND)
-                     .MayBlock(),
-      base::Bind(&SetTimezoneIDFromString, id));
+  base::PostTaskWithTraits(FROM_HERE,
+                           {base::MayBlock(), base::TaskPriority::BACKGROUND,
+                            base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+                           base::Bind(&SetTimezoneIDFromString, id));
   icu::TimeZone::setDefault(*known_timezone);
   for (auto& observer : observers_)
     observer.TimezoneChanged(*known_timezone);
@@ -470,7 +469,7 @@ TimezoneSettingsStubImpl::TimezoneSettingsStubImpl() {
 namespace chromeos {
 namespace system {
 
-TimezoneSettings::Observer::~Observer() {}
+TimezoneSettings::Observer::~Observer() = default;
 
 // static
 TimezoneSettings* TimezoneSettings::GetInstance() {

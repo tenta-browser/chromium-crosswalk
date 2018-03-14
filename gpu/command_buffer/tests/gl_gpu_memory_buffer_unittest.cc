@@ -139,8 +139,10 @@ void SetRow(gfx::BufferFormat format,
     case gfx::BufferFormat::DXT1:
     case gfx::BufferFormat::DXT5:
     case gfx::BufferFormat::ETC1:
+    case gfx::BufferFormat::R_16:
     case gfx::BufferFormat::RG_88:
     case gfx::BufferFormat::RGBX_8888:
+    case gfx::BufferFormat::BGRX_1010102:
     case gfx::BufferFormat::UYVY_422:
     case gfx::BufferFormat::YVU_420:
     case gfx::BufferFormat::YUV_420_BIPLANAR:
@@ -155,9 +157,12 @@ GLenum InternalFormat(gfx::BufferFormat format) {
   switch (format) {
     case gfx::BufferFormat::R_8:
       return GL_RED;
+    case gfx::BufferFormat::R_16:
+      return GL_R16_EXT;
     case gfx::BufferFormat::RG_88:
       return GL_RG;
     case gfx::BufferFormat::BGR_565:
+    case gfx::BufferFormat::BGRX_1010102:
       return GL_RGB;
     case gfx::BufferFormat::RGBA_4444:
     case gfx::BufferFormat::RGBA_8888:
@@ -227,7 +232,8 @@ TEST_P(GpuMemoryBufferTest, Lifecycle) {
       glCreateImageCHROMIUM(buffer->AsClientBuffer(), kImageWidth, kImageHeight,
                             InternalFormat(GetParam()));
   ASSERT_NE(0u, image_id);
-  ASSERT_TRUE(gl_.decoder()->GetImageManager()->LookupImage(image_id) != NULL);
+  ASSERT_TRUE(gl_.decoder()->GetImageManagerForTest()->LookupImage(image_id) !=
+              NULL);
 
   // Bind the image.
   glBindTexImage2DCHROMIUM(GL_TEXTURE_2D, image_id);

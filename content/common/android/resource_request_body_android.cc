@@ -22,8 +22,9 @@ namespace content {
 namespace {
 
 base::android::ScopedJavaLocalRef<jbyteArray>
-ConvertResourceRequestBodyToJavaArray(JNIEnv* env,
-                                      const ResourceRequestBodyImpl& body) {
+JNI_ResourceRequestBody_ConvertResourceRequestBodyToJavaArray(
+    JNIEnv* env,
+    const ResourceRequestBody& body) {
   std::string encoded = EncodeResourceRequestBody(body);
   return base::android::ToJavaByteArray(
       env, reinterpret_cast<const uint8_t*>(encoded.data()), encoded.size());
@@ -31,12 +32,8 @@ ConvertResourceRequestBodyToJavaArray(JNIEnv* env,
 
 }  // namespace
 
-bool RegisterResourceRequestBody(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
 base::android::ScopedJavaLocalRef<jbyteArray>
-CreateResourceRequestBodyFromBytes(
+JNI_ResourceRequestBody_CreateResourceRequestBodyFromBytes(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jbyteArray>& j_post_data) {
@@ -50,26 +47,26 @@ CreateResourceRequestBodyFromBytes(
       ResourceRequestBody::CreateFromBytes(
           reinterpret_cast<const char*>(post_data.data()), post_data.size());
 
-  return ConvertResourceRequestBodyToJavaArray(
-      env, static_cast<const ResourceRequestBodyImpl&>(*body));
+  return JNI_ResourceRequestBody_ConvertResourceRequestBodyToJavaArray(
+      env, static_cast<const ResourceRequestBody&>(*body));
 }
 
 base::android::ScopedJavaLocalRef<jobject>
 ConvertResourceRequestBodyToJavaObject(
     JNIEnv* env,
-    const scoped_refptr<ResourceRequestBodyImpl>& body) {
+    const scoped_refptr<ResourceRequestBody>& body) {
   if (!body)
     return base::android::ScopedJavaLocalRef<jobject>();
 
   // TODO(lukasza): Avoid repeatedly copying the bytes.
   // See also https://goo.gl/ITiLGI.
   base::android::ScopedJavaLocalRef<jbyteArray> j_encoded =
-      ConvertResourceRequestBodyToJavaArray(env, *body);
+      JNI_ResourceRequestBody_ConvertResourceRequestBodyToJavaArray(env, *body);
 
   return Java_ResourceRequestBody_createFromEncodedNativeForm(env, j_encoded);
 }
 
-scoped_refptr<ResourceRequestBodyImpl> ExtractResourceRequestBodyFromJavaObject(
+scoped_refptr<ResourceRequestBody> ExtractResourceRequestBodyFromJavaObject(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& j_body) {
   if (!j_body)

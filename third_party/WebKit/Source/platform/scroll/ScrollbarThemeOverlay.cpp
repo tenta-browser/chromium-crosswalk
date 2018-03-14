@@ -69,10 +69,6 @@ ScrollbarPart ScrollbarThemeOverlay::InvalidateOnThumbPositionChange(
   return kNoPart;
 }
 
-ScrollbarPart ScrollbarThemeOverlay::InvalidateOnEnabledChange() const {
-  return kNoPart;
-}
-
 int ScrollbarThemeOverlay::ScrollbarThickness(
     ScrollbarControlSize control_size) {
   return thumb_thickness_ + scrollbar_margin_;
@@ -105,17 +101,6 @@ double ScrollbarThemeOverlay::OverlayScrollbarFadeOutDurationSeconds() const {
   WebThemeEngine::ScrollbarStyle style;
   Platform::Current()->ThemeEngine()->GetOverlayScrollbarStyle(&style);
   return style.fade_out_duration_seconds;
-}
-
-int ScrollbarThemeOverlay::ThumbPosition(const ScrollbarThemeClient& scrollbar,
-                                         float scroll_position) {
-  if (!scrollbar.TotalSize())
-    return 0;
-
-  int track_len = TrackLength(scrollbar);
-  float proportion =
-      static_cast<float>(scroll_position) / scrollbar.TotalSize();
-  return round(proportion * track_len);
 }
 
 int ScrollbarThemeOverlay::ThumbLength(const ScrollbarThemeClient& scrollbar) {
@@ -169,8 +154,7 @@ void ScrollbarThemeOverlay::PaintThumb(GraphicsContext& context,
                                                   DisplayItem::kScrollbarThumb))
     return;
 
-  DrawingRecorder recorder(context, scrollbar, DisplayItem::kScrollbarThumb,
-                           rect);
+  DrawingRecorder recorder(context, scrollbar, DisplayItem::kScrollbarThumb);
 
   IntRect thumb_rect = rect;
   if (scrollbar.Orientation() == kHorizontalScrollbar) {
@@ -209,7 +193,7 @@ void ScrollbarThemeOverlay::PaintThumb(GraphicsContext& context,
   // Horizontally flip the canvas if it is left vertical scrollbar.
   if (scrollbar.IsLeftSideVerticalScrollbar()) {
     canvas->save();
-    canvas->translate(canvas->getBaseLayerSize().width(), 0);
+    canvas->translate(rect.Width(), 0);
     canvas->scale(-1, 1);
   }
 
@@ -233,6 +217,7 @@ ScrollbarPart ScrollbarThemeOverlay::HitTest(
   return kThumbPart;
 }
 
+// static
 ScrollbarThemeOverlay& ScrollbarThemeOverlay::MobileTheme() {
   static ScrollbarThemeOverlay* theme;
   if (!theme) {
@@ -243,8 +228,13 @@ ScrollbarThemeOverlay& ScrollbarThemeOverlay::MobileTheme() {
     theme = new ScrollbarThemeOverlay(
         style.thumb_thickness, style.scrollbar_margin,
         ScrollbarThemeOverlay::kDisallowHitTest, Color(style.color));
+    theme->is_mobile_theme_ = true;
   }
   return *theme;
+}
+
+bool ScrollbarThemeOverlay::IsMobileTheme() const {
+  return is_mobile_theme_;
 }
 
 bool ScrollbarThemeOverlay::UsesNinePatchThumbResource() const {

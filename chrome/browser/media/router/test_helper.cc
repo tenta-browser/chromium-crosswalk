@@ -4,12 +4,32 @@
 
 #include "chrome/browser/media/router/test_helper.h"
 
-#include "chrome/browser/media/router/media_source.h"
+#include "base/base64.h"
+#include "base/json/string_escape.h"
+#include "chrome/common/media_router/media_source.h"
 
 namespace media_router {
 
-MockIssuesObserver::MockIssuesObserver(MediaRouter* router)
-    : IssuesObserver(router) {}
+std::string PresentationConnectionMessageToString(
+    const content::PresentationConnectionMessage& message) {
+  if (!message.message && !message.data)
+    return "null";
+  std::string result;
+  if (message.message) {
+    result = "text=";
+    base::EscapeJSONString(*message.message, true, &result);
+  } else {
+    const base::StringPiece src(
+        reinterpret_cast<const char*>(message.data->data()),
+        message.data->size());
+    base::Base64Encode(src, &result);
+    result = "binary=" + result;
+  }
+  return result;
+}
+
+MockIssuesObserver::MockIssuesObserver(IssueManager* issue_manager)
+    : IssuesObserver(issue_manager) {}
 MockIssuesObserver::~MockIssuesObserver() {}
 
 MockMediaSinksObserver::MockMediaSinksObserver(MediaRouter* router,
@@ -25,5 +45,8 @@ MockMediaRoutesObserver::MockMediaRoutesObserver(MediaRouter* router,
 }
 MockMediaRoutesObserver::~MockMediaRoutesObserver() {
 }
+
+MockPresentationConnectionProxy::MockPresentationConnectionProxy() {}
+MockPresentationConnectionProxy::~MockPresentationConnectionProxy() {}
 
 }  // namespace media_router

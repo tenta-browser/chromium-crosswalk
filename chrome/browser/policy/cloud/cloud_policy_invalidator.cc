@@ -266,10 +266,9 @@ void CloudPolicyInvalidator::HandleInvalidation(
   // Schedule the policy to be refreshed.
   task_runner_->PostDelayedTask(
       FROM_HERE,
-      base::Bind(
-          &CloudPolicyInvalidator::RefreshPolicy,
-          weak_factory_.GetWeakPtr(),
-          payload.empty() /* is_missing_payload */),
+      base::BindOnce(&CloudPolicyInvalidator::RefreshPolicy,
+                     weak_factory_.GetWeakPtr(),
+                     payload.empty() /* is_missing_payload */),
       delay);
 }
 
@@ -391,8 +390,8 @@ bool CloudPolicyInvalidator::IsPolicyChanged(
 }
 
 bool CloudPolicyInvalidator::IsInvalidationExpired(int64_t version) {
-  base::Time last_fetch_time = base::Time::UnixEpoch() +
-      base::TimeDelta::FromMilliseconds(core_->store()->policy()->timestamp());
+  base::Time last_fetch_time =
+      base::Time::FromJavaTime(core_->store()->policy()->timestamp());
 
   // If the version is unknown, consider the invalidation invalid if the
   // policy was fetched very recently.
@@ -411,7 +410,8 @@ bool CloudPolicyInvalidator::IsInvalidationExpired(int64_t version) {
   return invalidation_time < last_fetch_time;
 }
 
-int CloudPolicyInvalidator::GetPolicyRefreshMetric(bool policy_changed) {
+MetricPolicyRefresh CloudPolicyInvalidator::GetPolicyRefreshMetric(
+    bool policy_changed) {
   if (policy_changed) {
     if (invalid_)
       return METRIC_POLICY_REFRESH_INVALIDATED_CHANGED;
@@ -424,8 +424,9 @@ int CloudPolicyInvalidator::GetPolicyRefreshMetric(bool policy_changed) {
   return METRIC_POLICY_REFRESH_UNCHANGED;
 }
 
-int CloudPolicyInvalidator::GetInvalidationMetric(bool is_missing_payload,
-                                                  bool is_expired) {
+PolicyInvalidationType CloudPolicyInvalidator::GetInvalidationMetric(
+    bool is_missing_payload,
+    bool is_expired) {
   if (is_expired) {
     if (is_missing_payload)
       return POLICY_INVALIDATION_TYPE_NO_PAYLOAD_EXPIRED;

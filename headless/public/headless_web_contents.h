@@ -41,6 +41,14 @@ class HEADLESS_EXPORT HeadlessWebContents {
     // TODO(altimin): Support this event for pages that aren't created by us.
     virtual void DevToolsTargetReady() {}
 
+    // Indicates that a DevTools client attached to this HeadlessWebContents
+    // instance.
+    virtual void DevToolsClientAttached() {}
+
+    // Indicates that a DevTools client detached from this HeadlessWebContents
+    // instance.
+    virtual void DevToolsClientDetached() {}
+
     // This method is invoked when the process of the observed RenderProcessHost
     // exits (either normally or with a crash). To determine if the process
     // closed normally or crashed, examine the |status| parameter.
@@ -72,11 +80,17 @@ class HEADLESS_EXPORT HeadlessWebContents {
   // Close this page. |HeadlessWebContents| object will be destroyed.
   virtual void Close() = 0;
 
-  // Returns the headless tab socket for JS -> C++ if one was created.
+  // Returns the headless tab socket interface for C++ <---> JS, or null if tab
+  // sockets are not allowed.
   virtual HeadlessTabSocket* GetHeadlessTabSocket() const = 0;
 
- private:
-  friend class HeadlessWebContentsImpl;
+  virtual int GetMainFrameRenderProcessId() const = 0;
+
+  virtual int GetMainFrameTreeNodeId() const = 0;
+
+  virtual std::string GetMainFrameDevToolsId() const = 0;
+
+ protected:
   HeadlessWebContents() {}
 
   DISALLOW_COPY_AND_ASSIGN(HeadlessWebContents);
@@ -96,26 +110,11 @@ class HEADLESS_EXPORT HeadlessWebContents::Builder {
   // Specify the initial window size (default is configured in browser options).
   Builder& SetWindowSize(const gfx::Size& size);
 
-  // DEPRECATED. Specify an embedder provided Mojo service to be installed.  The
-  // |service_factory| callback is called on demand by Mojo to instantiate the
-  // service if a client asks for it.
-  // TODO(alexclarke): Remove AddMojoService.
-  template <typename Interface>
-  Builder& AddMojoService(
-      const base::Callback<void(mojo::InterfaceRequest<Interface>)>&
-          service_factory) {
-    return AddMojoService(
-        Interface::Name_,
-        base::Bind(&Builder::ForwardToServiceFactory<Interface>,
-                   service_factory));
-  }
-  Builder& AddMojoService(const std::string& service_name,
-                          const base::Callback<void(
-                              mojo::ScopedMessagePipeHandle)>& service_factory);
+  // Specify whether or not TabSockets are allowed.
+  Builder& SetAllowTabSockets(bool tab_sockets_allowed);
 
-  // Whether or not a headless tab socket should be created, to allow JS -> C++
-  // embedder communications.
-  Builder& CreateTabSocket(bool create_tab_socket);
+  // Specify whether BeginFrames should be controlled via DevTools commands.
+  Builder& SetEnableBeginFrameControl(bool enable_begin_frame_control);
 
   // The returned object is owned by HeadlessBrowser. Call
   // HeadlessWebContents::Close() to dispose it.
@@ -128,26 +127,19 @@ class HEADLESS_EXPORT HeadlessWebContents::Builder {
 
   explicit Builder(HeadlessBrowserContextImpl* browser_context);
 
-  template <typename Interface>
-  static void ForwardToServiceFactory(
-      const base::Callback<void(mojo::InterfaceRequest<Interface>)>&
-          service_factory,
-      mojo::ScopedMessagePipeHandle handle) {
-    service_factory.Run(mojo::MakeRequest<Interface>(std::move(handle)));
-  }
-
   struct MojoService {
+    using ServiceFactoryCallback =
+        base::Callback<void(HeadlessWebContents*,
+                            mojo::ScopedMessagePipeHandle)>;
+
     MojoService();
+    MojoService(const MojoService& other);
     MojoService(const std::string& service_name,
-                const base::Callback<void(mojo::ScopedMessagePipeHandle)>&
-                    service_factory);
+                const ServiceFactoryCallback& service_factory);
     ~MojoService();
 
     std::string service_name;
-    base::Callback<void(mojo::ScopedMessagePipeHandle)> service_factory;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(MojoService);
+    ServiceFactoryCallback service_factory;
   };
 
   HeadlessBrowserContextImpl* browser_context_;
@@ -155,7 +147,8 @@ class HEADLESS_EXPORT HeadlessWebContents::Builder {
   GURL initial_url_ = GURL("about:blank");
   gfx::Size window_size_;
   std::list<MojoService> mojo_services_;
-  bool create_tab_socket_ = false;
+  bool tab_sockets_allowed_ = false;
+  bool enable_begin_frame_control_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(Builder);
 };

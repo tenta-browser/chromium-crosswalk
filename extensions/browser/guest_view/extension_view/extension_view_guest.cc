@@ -4,12 +4,15 @@
 
 #include "extensions/browser/guest_view/extension_view/extension_view_guest.h"
 
+#include <memory>
+#include <string>
 #include <utility>
 
 #include "base/memory/ptr_util.h"
 #include "components/crx_file/id_util.h"
 #include "components/guest_view/browser/guest_view_event.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/result_codes.h"
 #include "extensions/browser/api/extensions_api_client.h"
@@ -56,7 +59,7 @@ bool ExtensionViewGuest::NavigateGuest(const std::string& src,
   if (!force_navigation && (url_ == url))
     return false;
 
-  web_contents()->GetRenderProcessHost()->FilterURL(false, &url);
+  web_contents()->GetMainFrame()->GetProcess()->FilterURL(false, &url);
   web_contents()->GetController().LoadURL(url, content::Referrer(),
                                           ui::PAGE_TRANSITION_AUTO_TOPLEVEL,
                                           std::string());
@@ -66,10 +69,6 @@ bool ExtensionViewGuest::NavigateGuest(const std::string& src,
 }
 
 // GuestViewBase implementation.
-bool ExtensionViewGuest::CanRunInDetachedState() const {
-  return true;
-}
-
 void ExtensionViewGuest::CreateWebContents(
     const base::DictionaryValue& create_params,
     const WebContentsCreatedCallback& callback) {
@@ -127,7 +126,7 @@ void ExtensionViewGuest::DidFinishNavigation(
 
   std::unique_ptr<base::DictionaryValue> args(new base::DictionaryValue());
   args->SetString(guest_view::kUrl, url_.spec());
-  DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+  DispatchEventToView(std::make_unique<GuestViewEvent>(
       extensionview::kEventLoadCommit, std::move(args)));
 }
 

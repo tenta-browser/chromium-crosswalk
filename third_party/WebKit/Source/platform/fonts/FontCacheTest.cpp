@@ -4,6 +4,7 @@
 
 #include "platform/fonts/FontCache.h"
 
+#include "build/build_config.h"
 #include "platform/fonts/FontDescription.h"
 #include "platform/fonts/SimpleFontData.h"
 #include "platform/testing/TestingPlatformSupport.h"
@@ -18,13 +19,28 @@ TEST(FontCache, getLastResortFallbackFont) {
 
   FontDescription font_description;
   font_description.SetGenericFamily(FontDescription::kStandardFamily);
-  RefPtr<SimpleFontData> font_data =
+  scoped_refptr<SimpleFontData> font_data =
       font_cache->GetLastResortFallbackFont(font_description, kRetain);
   EXPECT_TRUE(font_data);
 
   font_description.SetGenericFamily(FontDescription::kSansSerifFamily);
   font_data = font_cache->GetLastResortFallbackFont(font_description, kRetain);
   EXPECT_TRUE(font_data);
+}
+
+TEST(FontCache, NoFallbackForPrivateUseArea) {
+  FontCache* font_cache = FontCache::GetFontCache();
+  ASSERT_TRUE(font_cache);
+
+  FontDescription font_description;
+  font_description.SetGenericFamily(FontDescription::kStandardFamily);
+  for (UChar32 character : {0xE000, 0xE401, 0xE402, 0xE403, 0xF8FF, 0xF0000,
+                            0xFAAAA, 0xFFFFF, 0x100000, 0x10AAAA, 0x10FFFF}) {
+    scoped_refptr<SimpleFontData> font_data =
+        font_cache->FallbackFontForCharacter(font_description, character,
+                                             nullptr);
+    EXPECT_EQ(font_data.get(), nullptr);
+  }
 }
 
 TEST(FontCache, firstAvailableOrFirst) {
@@ -47,7 +63,7 @@ TEST(FontCache, firstAvailableOrFirst) {
             FontCache::FirstAvailableOrFirst(", not exist, not exist"));
 }
 
-#if !OS(MACOSX)
+#if !defined(OS_MACOSX)
 TEST(FontCache, systemFont) {
   FontCache::SystemFontFamily();
   // Test the function does not crash. Return value varies by system and config.

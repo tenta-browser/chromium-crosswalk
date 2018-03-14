@@ -21,9 +21,9 @@ class StereoPannerOptions;
 // specifically designed for equal-power stereo panning.
 class StereoPannerHandler final : public AudioHandler {
  public:
-  static PassRefPtr<StereoPannerHandler> Create(AudioNode&,
-                                                float sample_rate,
-                                                AudioParamHandler& pan);
+  static scoped_refptr<StereoPannerHandler> Create(AudioNode&,
+                                                   float sample_rate,
+                                                   AudioParamHandler& pan);
   ~StereoPannerHandler() override;
 
   void Process(size_t frames_to_process) override;
@@ -33,11 +33,15 @@ class StereoPannerHandler final : public AudioHandler {
   void SetChannelCount(unsigned long, ExceptionState&) final;
   void SetChannelCountMode(const String&, ExceptionState&) final;
 
+  // AudioNode
+  double TailTime() const override { return 0; }
+  double LatencyTime() const override { return 0; }
+
  private:
   StereoPannerHandler(AudioNode&, float sample_rate, AudioParamHandler& pan);
 
   std::unique_ptr<StereoPanner> stereo_panner_;
-  RefPtr<AudioParamHandler> pan_;
+  scoped_refptr<AudioParamHandler> pan_;
 
   AudioFloatArray sample_accurate_pan_values_;
 
@@ -52,7 +56,7 @@ class StereoPannerNode final : public AudioNode {
   static StereoPannerNode* Create(BaseAudioContext*,
                                   const StereoPannerOptions&,
                                   ExceptionState&);
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   AudioParam* pan() const;
 

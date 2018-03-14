@@ -81,6 +81,8 @@ void SetEntrySpecifics(const Entry& meta_entry,
   sync_entry->mutable_specifics()->CopyFrom(meta_entry.GetSpecifics());
   sync_entry->set_folder(meta_entry.GetIsDir());
 
+  // Purposefully crash if we have client only data, as this could result in
+  // sending password in plain text.
   CHECK(!sync_entry->specifics().password().has_client_only_encrypted_data());
   DCHECK_EQ(meta_entry.GetModelType(), GetModelType(*sync_entry));
 }
@@ -102,7 +104,7 @@ void BuildCommitItem(const syncable::Entry& meta_entry,
   sync_entry->set_id_string(SyncableIdToProto(id));
 
   string name = meta_entry.GetNonUniqueName();
-  CHECK(!name.empty());  // Make sure this isn't an update.
+  DCHECK(!name.empty());  // Make sure this isn't an update.
   // Note: Truncation is also performed in WriteNode::SetTitle(..). But this
   // call is still necessary to handle any title changes that might originate
   // elsewhere, or already be persisted in the directory.
@@ -166,12 +168,8 @@ void BuildCommitItem(const syncable::Entry& meta_entry,
     if (meta_entry.GetIsDel()) {
       sync_entry->set_deleted(true);
     } else {
-      // Both insert_after_item_id and position_in_parent fields are set only
-      // for legacy reasons.  See comments in sync.proto for more information.
-      const Id& prev_id = meta_entry.GetPredecessorId();
-      string prev_id_string =
-          prev_id.IsNull() ? string() : prev_id.GetServerId();
-      sync_entry->set_insert_after_item_id(prev_id_string);
+      // position_in_parent field is set only for legacy reasons.  See comments
+      // in sync.proto for more information.
       sync_entry->set_position_in_parent(
           meta_entry.GetUniquePosition().ToInt64());
       meta_entry.GetUniquePosition().ToProto(
@@ -382,7 +380,7 @@ sync_pb::CommitResponse::ResponseType ProcessSingleCommitResponse(
     set<syncable::Id>* deleted_folders) {
   syncable::ModelNeutralMutableEntry local_entry(trans, syncable::GET_BY_HANDLE,
                                                  metahandle);
-  CHECK(local_entry.good());
+  DCHECK(local_entry.good());
   bool dirty_sync_was_set = local_entry.GetDirtySync();
   local_entry.PutDirtySync(false);
   local_entry.PutSyncing(false);
@@ -399,7 +397,7 @@ sync_pb::CommitResponse::ResponseType ProcessSingleCommitResponse(
     return sync_pb::CommitResponse::TRANSIENT_ERROR;
   }
   if (sync_pb::CommitResponse::INVALID_MESSAGE == response) {
-    LOG(ERROR) << "Error Commiting: " << local_entry;
+    LOG(ERROR) << "Error Committing: " << local_entry;
     LogServerError(server_entry);
     return response;
   }
@@ -429,7 +427,7 @@ sync_pb::CommitResponse::ResponseType ProcessSingleCommitResponse(
   if (local_entry.GetId() != server_entry_id) {
     Entry e(trans, syncable::GET_BY_ID, server_entry_id);
     if (e.good()) {
-      LOG(ERROR) << "Got duplicate id when commiting id: "
+      LOG(ERROR) << "Got duplicate id when committing id: "
                  << local_entry.GetId() << ". Treating as an error return";
       return sync_pb::CommitResponse::INVALID_MESSAGE;
     }

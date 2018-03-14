@@ -1,7 +1,12 @@
 include_rules = [
-  "+cc/surfaces/surface_id.h",
-  "+cc/surfaces/surface_sequence.h",
-  "+cc/surfaces/frame_sink_id.h",
+  "+cc/base",
+  # TODO(danakj): This should not use LayerTreeFrameSink, which is part of the
+  # layer compositor. It should use CompositorFrameSink instead.
+  "+cc/trees/layer_tree_frame_sink.h",
+  "+cc/trees/layer_tree_frame_sink_client.h",
+  "+components/viz/client",
+  "+components/viz/common",
+  "+components/viz/host",
   "+mojo/common",
   "+mojo/public/cpp/bindings",
   "+net/base/filename_util.h",
@@ -19,6 +24,4 @@ include_rules = [
                        #             to ui/metro_viewer.
   "+ui/ozone/public",
   "+ui/platform_window",
-  "+ui/wm/public",
 ]
-

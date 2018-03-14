@@ -29,6 +29,8 @@
  */
 
 #include "platform/mediastream/MediaStreamSource.h"
+#include "platform/wtf/Assertions.h"
+#include "public/platform/WebMediaStreamSource.h"
 
 namespace blink {
 
@@ -90,16 +92,16 @@ void MediaStreamSource::AddObserver(MediaStreamSource::Observer* observer) {
 }
 
 void MediaStreamSource::AddAudioConsumer(AudioDestinationConsumer* consumer) {
-  ASSERT(requires_consumer_);
+  DCHECK(requires_consumer_);
   MutexLocker locker(audio_consumers_lock_);
   audio_consumers_.insert(consumer);
 }
 
 bool MediaStreamSource::RemoveAudioConsumer(
     AudioDestinationConsumer* consumer) {
-  ASSERT(requires_consumer_);
+  DCHECK(requires_consumer_);
   MutexLocker locker(audio_consumers_lock_);
-  auto it = audio_consumers_.Find(consumer);
+  auto it = audio_consumers_.find(consumer);
   if (it == audio_consumers_.end())
     return false;
   audio_consumers_.erase(it);
@@ -108,25 +110,39 @@ bool MediaStreamSource::RemoveAudioConsumer(
 
 void MediaStreamSource::GetSettings(WebMediaStreamTrack::Settings& settings) {
   settings.device_id = Id();
+
+  if (echo_cancellation_.has_value())
+    settings.echo_cancellation = *echo_cancellation_;
 }
 
 void MediaStreamSource::SetAudioFormat(size_t number_of_channels,
                                        float sample_rate) {
-  ASSERT(requires_consumer_);
+  DCHECK(requires_consumer_);
   MutexLocker locker(audio_consumers_lock_);
   for (AudioDestinationConsumer* consumer : audio_consumers_)
     consumer->SetFormat(number_of_channels, sample_rate);
 }
 
 void MediaStreamSource::ConsumeAudio(AudioBus* bus, size_t number_of_frames) {
-  ASSERT(requires_consumer_);
+  DCHECK(requires_consumer_);
   MutexLocker locker(audio_consumers_lock_);
   for (AudioDestinationConsumer* consumer : audio_consumers_)
     consumer->ConsumeAudio(bus, number_of_frames);
 }
 
-DEFINE_TRACE(MediaStreamSource) {
+void MediaStreamSource::Trace(blink::Visitor* visitor) {
   visitor->Trace(observers_);
 }
+
+STATIC_ASSERT_ENUM(WebMediaStreamSource::kTypeAudio,
+                   MediaStreamSource::kTypeAudio);
+STATIC_ASSERT_ENUM(WebMediaStreamSource::kTypeVideo,
+                   MediaStreamSource::kTypeVideo);
+STATIC_ASSERT_ENUM(WebMediaStreamSource::kReadyStateLive,
+                   MediaStreamSource::kReadyStateLive);
+STATIC_ASSERT_ENUM(WebMediaStreamSource::kReadyStateMuted,
+                   MediaStreamSource::kReadyStateMuted);
+STATIC_ASSERT_ENUM(WebMediaStreamSource::kReadyStateEnded,
+                   MediaStreamSource::kReadyStateEnded);
 
 }  // namespace blink

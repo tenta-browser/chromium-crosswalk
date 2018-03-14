@@ -5,51 +5,43 @@
 #include "chrome/browser/permissions/permission_prompt_android.h"
 
 #include "base/memory/ptr_util.h"
+#include "chrome/browser/android/android_theme_resources.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/permissions/grouped_permission_infobar_delegate_android.h"
+#include "chrome/browser/permissions/permission_dialog_delegate.h"
 #include "chrome/browser/permissions/permission_request.h"
+#include "chrome/common/url_constants.h"
+#include "chrome/grit/generated_resources.h"
+#include "components/strings/grit/components_strings.h"
+#include "components/url_formatter/elide_url.h"
+#include "ui/base/l10n/l10n_util.h"
 
 PermissionPromptAndroid::PermissionPromptAndroid(
-    content::WebContents* web_contents)
-    : web_contents_(web_contents), delegate_(nullptr) {
+    content::WebContents* web_contents,
+    Delegate* delegate)
+    : web_contents_(web_contents),
+      delegate_(delegate),
+      weak_factory_(this) {
   DCHECK(web_contents);
-}
 
-PermissionPromptAndroid::~PermissionPromptAndroid() {}
+  if (PermissionDialogDelegate::ShouldShowDialog()) {
+    PermissionDialogDelegate::Create(web_contents_, this);
+    return;
+  }
 
-void PermissionPromptAndroid::SetDelegate(Delegate* delegate) {
-  delegate_ = delegate;
-}
-
-void PermissionPromptAndroid::Show(
-    const std::vector<PermissionRequest*>& requests,
-    const std::vector<bool>& values) {
   InfoBarService* infobar_service =
       InfoBarService::FromWebContents(web_contents_);
   if (!infobar_service)
     return;
 
-  requests_ = requests;
-  GroupedPermissionInfoBarDelegate::Create(this, infobar_service,
-                                           requests[0]->GetOrigin());
+  GroupedPermissionInfoBarDelegate::Create(weak_factory_.GetWeakPtr(),
+                                           infobar_service);
 }
+
+PermissionPromptAndroid::~PermissionPromptAndroid() {}
 
 bool PermissionPromptAndroid::CanAcceptRequestUpdate() {
   return false;
-}
-
-bool PermissionPromptAndroid::HidesAutomatically() {
-  return true;
-}
-
-void PermissionPromptAndroid::Hide() {
-  // Hide() is only called if HidesAutomatically() returns false or
-  // CanAcceptRequestUpdate() return true.
-  NOTREACHED();
-}
-
-bool PermissionPromptAndroid::IsVisible() {
-  return !requests_.empty();
 }
 
 void PermissionPromptAndroid::UpdateAnchorPosition() {
@@ -62,47 +54,66 @@ gfx::NativeWindow PermissionPromptAndroid::GetNativeWindow() {
 }
 
 void PermissionPromptAndroid::Closing() {
-  requests_.clear();
-  if (delegate_)
-    delegate_->Closing();
-}
-
-void PermissionPromptAndroid::ToggleAccept(int index, bool value) {
-  if (delegate_)
-    delegate_->ToggleAccept(index, value);
+  delegate_->Closing();
 }
 
 void PermissionPromptAndroid::Accept() {
-  requests_.clear();
-  if (delegate_)
-    delegate_->Accept();
+  delegate_->Accept();
 }
 
 void PermissionPromptAndroid::Deny() {
-  requests_.clear();
-  if (delegate_)
-    delegate_->Deny();
+  delegate_->Deny();
+}
+
+size_t PermissionPromptAndroid::PermissionCount() const {
+  return delegate_->Requests().size();
 }
 
 ContentSettingsType PermissionPromptAndroid::GetContentSettingType(
     size_t position) const {
-  DCHECK_LT(position, requests_.size());
-  return requests_[position]->GetContentSettingsType();
+  const std::vector<PermissionRequest*>& requests = delegate_->Requests();
+  DCHECK_LT(position, requests.size());
+  return requests[position]->GetContentSettingsType();
 }
 
-int PermissionPromptAndroid::GetIconIdForPermission(size_t position) const {
-  DCHECK_LT(position, requests_.size());
-  return requests_[position]->GetIconId();
+// Grouped permission requests can only be Mic+Camera or Camera+Mic
+static void CheckValidRequestGroup(
+    const std::vector<PermissionRequest*>& requests) {
+  DCHECK_EQ(static_cast<size_t>(2), requests.size());
+  DCHECK_EQ(requests[0]->GetOrigin(), requests[1]->GetOrigin());
+  DCHECK((requests[0]->GetPermissionRequestType() ==
+              PermissionRequestType::PERMISSION_MEDIASTREAM_MIC &&
+          requests[1]->GetPermissionRequestType() ==
+              PermissionRequestType::PERMISSION_MEDIASTREAM_CAMERA) ||
+         (requests[0]->GetPermissionRequestType() ==
+              PermissionRequestType::PERMISSION_MEDIASTREAM_CAMERA &&
+          requests[1]->GetPermissionRequestType() ==
+              PermissionRequestType::PERMISSION_MEDIASTREAM_MIC));
 }
 
-base::string16 PermissionPromptAndroid::GetMessageTextFragment(
-    size_t position) const {
-  DCHECK_LT(position, requests_.size());
-  return requests_[position]->GetMessageTextFragment();
+int PermissionPromptAndroid::GetIconId() const {
+  const std::vector<PermissionRequest*>& requests = delegate_->Requests();
+  if (requests.size() == 1)
+    return requests[0]->GetIconId();
+  CheckValidRequestGroup(requests);
+  return IDR_ANDROID_INFOBAR_MEDIA_STREAM_CAMERA;
+}
+
+base::string16 PermissionPromptAndroid::GetMessageText() const {
+  const std::vector<PermissionRequest*>& requests = delegate_->Requests();
+  if (requests.size() == 1)
+    return requests[0]->GetMessageText();
+  CheckValidRequestGroup(requests);
+  return l10n_util::GetStringFUTF16(
+      IDS_MEDIA_CAPTURE_AUDIO_AND_VIDEO,
+      url_formatter::FormatUrlForSecurityDisplay(
+          requests[0]->GetOrigin(),
+          url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC));
 }
 
 // static
 std::unique_ptr<PermissionPrompt> PermissionPrompt::Create(
-    content::WebContents* web_contents) {
-  return base::MakeUnique<PermissionPromptAndroid>(web_contents);
+    content::WebContents* web_contents,
+    Delegate* delegate) {
+  return base::MakeUnique<PermissionPromptAndroid>(web_contents, delegate);
 }

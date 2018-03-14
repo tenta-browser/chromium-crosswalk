@@ -16,10 +16,10 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#include <deque>
 #include <memory>
 
 #include "base/callback.h"
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "media/base/media_export.h"
@@ -403,10 +403,24 @@ class MEDIA_EXPORT Vp9Parser {
     off_t size = 0;
   };
 
-  std::deque<FrameInfo> ParseSuperframe();
+  base::circular_deque<FrameInfo> ParseSuperframe();
+
+  // Returns true and populates |result| with the parsing result if parsing of
+  // current frame is finished (possibly unsuccessfully). |fhdr| will only be
+  // populated and valid if |result| is kOk. Otherwise return false, indicating
+  // that the compressed header must be parsed next.
+  bool ParseUncompressedHeader(const FrameInfo& frame_info,
+                               Vp9FrameHeader* fhdr,
+                               Result* result);
+
+  // Returns true if parsing of current frame is finished and |result| will be
+  // populated with value of parsing result. Otherwise, needs to continue setup
+  // current frame.
+  bool ParseCompressedHeader(const FrameInfo& frame_info, Result* result);
 
   size_t GetQIndex(const Vp9QuantizationParams& quant, size_t segid) const;
-  void SetupSegmentationDequant();
+  // Returns true if the setup succeeded.
+  bool SetupSegmentationDequant();
   void SetupLoopFilter();
   void UpdateSlots();
 
@@ -416,10 +430,10 @@ class MEDIA_EXPORT Vp9Parser {
   // Remaining bytes in stream_.
   off_t bytes_left_;
 
-  bool parsing_compressed_header_;
+  const bool parsing_compressed_header_;
 
   // FrameInfo for the remaining frames in the current superframe to be parsed.
-  std::deque<FrameInfo> frames_;
+  base::circular_deque<FrameInfo> frames_;
 
   Context context_;
 

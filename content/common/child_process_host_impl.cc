@@ -22,7 +22,7 @@
 #include "base/third_party/dynamic_annotations/dynamic_annotations.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "content/common/child_process_messages.h"
+#include "content/public/common/bind_interface_helpers.h"
 #include "content/public/common/child_process_host_delegate.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
@@ -31,26 +31,21 @@
 #include "ipc/ipc_channel_mojo.h"
 #include "ipc/ipc_logging.h"
 #include "ipc/message_filter.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "services/resource_coordinator/public/interfaces/memory/constants.mojom.h"
+#include "services/resource_coordinator/public/interfaces/memory_instrumentation/constants.mojom.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 
 #if defined(OS_LINUX)
 #include "base/linux_util.h"
-#elif defined(OS_WIN)
-#include "content/common/font_cache_dispatcher_win.h"
 #endif  // OS_LINUX
 
 namespace {
 
 // Global atomic to generate child process unique IDs.
-base::StaticAtomicSequenceNumber g_unique_id;
+base::AtomicSequenceNumber g_unique_id;
 
 }  // namespace
 
 namespace content {
-
-int ChildProcessHost::kInvalidUniqueID = -1;
 
 // static
 ChildProcessHost* ChildProcessHost::Create(ChildProcessHostDelegate* delegate) {
@@ -82,12 +77,7 @@ base::FilePath ChildProcessHost::GetChildPath(int flags) {
 }
 
 ChildProcessHostImpl::ChildProcessHostImpl(ChildProcessHostDelegate* delegate)
-    : delegate_(delegate),
-      opening_channel_(false) {
-#if defined(OS_WIN)
-  AddFilter(new FontCacheDispatcher());
-#endif
-}
+    : delegate_(delegate), opening_channel_(false) {}
 
 ChildProcessHostImpl::~ChildProcessHostImpl() {
   // If a channel was never created than it wasn't registered and the filters
@@ -116,31 +106,15 @@ void ChildProcessHostImpl::BindInterface(
 }
 
 void ChildProcessHostImpl::ForceShutdown() {
-  Send(new ChildProcessMsg_Shutdown());
-}
-
-std::string ChildProcessHostImpl::CreateChannelMojo(
-    mojo::edk::PendingProcessConnection* connection) {
-  DCHECK(channel_id_.empty());
-  channel_ =
-      IPC::ChannelMojo::Create(connection->CreateMessagePipe(&channel_id_),
-                               IPC::Channel::MODE_SERVER, this);
-  if (!channel_ || !InitChannel())
-    return std::string();
-  return channel_id_;
+  child_control_->ProcessShutdown();
 }
 
 void ChildProcessHostImpl::CreateChannelMojo() {
-  // TODO(rockot): Remove |channel_id_| once this is the only code path by which
-  // the Channel is created. For now it serves to at least mutually exclude
-  // different CreateChannel* calls.
-  DCHECK(channel_id_.empty());
-  channel_id_ = "ChannelMojo";
-
   mojo::MessagePipe pipe;
   BindInterface(IPC::mojom::ChannelBootstrap::Name_, std::move(pipe.handle1));
-  channel_ = IPC::ChannelMojo::Create(std::move(pipe.handle0),
-                                      IPC::Channel::MODE_SERVER, this);
+  channel_ = IPC::ChannelMojo::Create(
+      std::move(pipe.handle0), IPC::Channel::MODE_SERVER, this,
+      base::ThreadTaskRunnerHandle::Get(), base::ThreadTaskRunnerHandle::Get());
   DCHECK(channel_);
 
   bool initialized = InitChannel();
@@ -153,12 +127,20 @@ bool ChildProcessHostImpl::InitChannel() {
 
   for (size_t i = 0; i < filters_.size(); ++i)
     filters_[i]->OnFilterAdded(channel_.get());
+
   delegate_->OnChannelInitialized(channel_.get());
 
+  // We want to bind this interface as early as possible, but the constructor is
+  // too early. |delegate_| may not be fully initialized at that point and thus
+  // may be unable to properly fulfill the BindInterface() call. Instead we bind
+  // here since the |delegate_| has already been initialized and this is the
+  // first potential use of the interface.
+  content::BindInterface(this, &child_control_);
+
   // Make sure these messages get sent first.
-#if defined(IPC_MESSAGE_LOG_ENABLED)
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   bool enabled = IPC::Logging::GetInstance()->Enabled();
-  Send(new ChildProcessMsg_SetIPCLoggingEnabled(enabled));
+  child_control_->SetIPCLoggingEnabled(enabled);
 #endif
 
   opening_channel_ = true;
@@ -206,13 +188,12 @@ uint64_t ChildProcessHostImpl::ChildProcessUniqueIdToTracingProcessId(
   // The hash value is incremented so that the tracing id is never equal to
   // MemoryDumpManager::kInvalidTracingProcessId.
   return static_cast<uint64_t>(
-             base::Hash(reinterpret_cast<const char*>(&child_process_id),
-                        sizeof(child_process_id))) +
+             base::Hash(&child_process_id, sizeof(child_process_id))) +
          1;
 }
 
 bool ChildProcessHostImpl::OnMessageReceived(const IPC::Message& msg) {
-#ifdef IPC_MESSAGE_LOG_ENABLED
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   IPC::Logging* logger = IPC::Logging::GetInstance();
   if (msg.type() == IPC_LOGGING_ID) {
     logger->OnReceivedLoggingMessage(msg);
@@ -232,18 +213,10 @@ bool ChildProcessHostImpl::OnMessageReceived(const IPC::Message& msg) {
   }
 
   if (!handled) {
-    handled = true;
-    IPC_BEGIN_MESSAGE_MAP(ChildProcessHostImpl, msg)
-      IPC_MESSAGE_HANDLER(ChildProcessHostMsg_ShutdownRequest,
-                          OnShutdownRequest)
-      IPC_MESSAGE_UNHANDLED(handled = false)
-    IPC_END_MESSAGE_MAP()
-
-    if (!handled)
       handled = delegate_->OnMessageReceived(msg);
   }
 
-#ifdef IPC_MESSAGE_LOG_ENABLED
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   if (logger->Enabled())
     logger->OnPostDispatchMessage(msg);
 #endif
@@ -276,11 +249,6 @@ void ChildProcessHostImpl::OnChannelError() {
 
 void ChildProcessHostImpl::OnBadMessageReceived(const IPC::Message& message) {
   delegate_->OnBadMessageReceived(message);
-}
-
-void ChildProcessHostImpl::OnShutdownRequest() {
-  if (delegate_->CanShutdown())
-    Send(new ChildProcessMsg_Shutdown());
 }
 
 }  // namespace content

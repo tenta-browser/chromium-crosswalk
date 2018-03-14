@@ -13,11 +13,14 @@
 
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
+#include "base/mac/scoped_cftyperef.h"
+#include "base/mac/scoped_nsobject.h"
 #include "base/mac/sdk_forward_declarations.h"
 #include "base/macros.h"
 #include "base/timer/timer.h"
 #include "ui/display/display.h"
 #include "ui/display/display_change_notifier.h"
+#include "ui/gfx/icc_profile.h"
 #include "ui/gfx/mac/coordinate_conversion.h"
 
 extern "C" {
@@ -70,21 +73,37 @@ Display BuildDisplayForScreen(NSScreen* screen) {
     display.set_bounds(gfx::ScreenRectFromNSRect(frame));
     display.set_work_area(gfx::ScreenRectFromNSRect(visible_frame));
   }
-  CGFloat scale = [screen backingScaleFactor];
 
+  // Compute device scale factor
+  CGFloat scale = [screen backingScaleFactor];
   if (Display::HasForceDeviceScaleFactor())
     scale = Display::GetForcedDeviceScaleFactor();
-
   display.set_device_scale_factor(scale);
 
-  // On Sierra, we need to operate in a single screen's color space because
-  // IOSurfaces do not opt-out of color correction.
-  // https://crbug.com/654488
-  CGColorSpaceRef color_space = [[screen colorSpace] CGColorSpace];
-  if (base::mac::IsAtLeastOS10_12())
-    color_space = base::mac::GetSystemColorSpace();
+  // Compute the color profile.
+  gfx::ICCProfile icc_profile;
+  CGColorSpaceRef cg_color_space = [[screen colorSpace] CGColorSpace];
+  if (cg_color_space) {
+    base::ScopedCFTypeRef<CFDataRef> cf_icc_profile(
+        CGColorSpaceCopyICCProfile(cg_color_space));
+    if (cf_icc_profile) {
+      icc_profile = gfx::ICCProfile::FromData(CFDataGetBytePtr(cf_icc_profile),
+                                              CFDataGetLength(cf_icc_profile));
+    }
+  }
+  icc_profile.HistogramDisplay(display.id());
+  gfx::ColorSpace screen_color_space = icc_profile.GetColorSpace();
+  if (Display::HasForceColorProfile()) {
+    if (Display::HasEnsureForcedColorProfile()) {
+      CHECK_EQ(screen_color_space, display.color_space())
+          << "The display's color space does not match the color space that "
+             "was forced by the command line. This will cause pixel tests to "
+             "fail.";
+    }
+  } else {
+    display.set_color_space(screen_color_space);
+  }
 
-  display.set_icc_profile(gfx::ICCProfile::FromCGColorSpace(color_space));
   display.set_color_depth(NSBitsPerPixelFromDepth([screen depth]));
   display.set_depth_per_component(NSBitsPerSampleFromDepth([screen depth]));
   display.set_is_monochrome(CGDisplayUsesForceToGray());
@@ -125,9 +144,22 @@ class ScreenMac : public Screen {
     old_displays_ = displays_ = BuildDisplaysFromQuartz();
     CGDisplayRegisterReconfigurationCallback(
         ScreenMac::DisplayReconfigurationCallBack, this);
+
+    NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+    screen_color_change_observer_.reset(
+        [[center addObserverForName:NSScreenColorSpaceDidChangeNotification
+                             object:nil
+                              queue:nil
+                         usingBlock:^(NSNotification* notification) {
+                           configure_timer_.Reset();
+                           displays_require_update_ = true;
+                         }] retain]);
   }
 
   ~ScreenMac() override {
+    NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+    [center removeObserver:screen_color_change_observer_];
+
     CGDisplayRemoveReconfigurationCallback(
         ScreenMac::DisplayReconfigurationCallBack, this);
   }
@@ -169,6 +201,13 @@ class ScreenMac : public Screen {
     if (!match_screen)
       return GetPrimaryDisplay();
     return GetCachedDisplayForScreen(match_screen);
+  }
+
+  Display GetDisplayNearestView(gfx::NativeView view) const override {
+    NSWindow* window = [view window];
+    if (!window)
+      window = [NSApp keyWindow];
+    return GetDisplayNearestWindow(window);
   }
 
   Display GetDisplayNearestPoint(const gfx::Point& point) const override {
@@ -316,6 +355,9 @@ class ScreenMac : public Screen {
 
   // The timer to delay configuring outputs and notifying observers.
   base::Timer configure_timer_;
+
+  // The observer notified by NSScreenColorSpaceDidChangeNotification.
+  base::scoped_nsobject<id> screen_color_change_observer_;
 
   DisplayChangeNotifier change_notifier_;
 

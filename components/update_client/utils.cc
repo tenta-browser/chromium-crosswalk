@@ -5,7 +5,6 @@
 #include "components/update_client/utils.h"
 
 #include <stddef.h>
-#include <stdint.h>
 
 #include <algorithm>
 #include <cmath>
@@ -17,179 +16,63 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/memory_mapped_file.h"
-#include "base/guid.h"
+#include "base/json/json_file_value_serializer.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
-#include "base/sys_info.h"
-#include "build/build_config.h"
+#include "base/values.h"
 #include "components/crx_file/id_util.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
+#include "components/update_client/component.h"
 #include "components/update_client/configurator.h"
-#include "components/update_client/crx_update_item.h"
 #include "components/update_client/update_client.h"
 #include "components/update_client/update_client_errors.h"
-#include "components/update_client/update_query_params.h"
-#include "components/update_client/updater_state.h"
 #include "crypto/secure_hash.h"
 #include "crypto/sha2.h"
 #include "net/base/load_flags.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_status.h"
 #include "url/gurl.h"
 
-#if defined(OS_WIN)
-#include "base/win/windows_version.h"
-#endif
-
 namespace update_client {
-
-namespace {
-
-// Returns the amount of physical memory in GB, rounded to the nearest GB.
-int GetPhysicalMemoryGB() {
-  const double kOneGB = 1024 * 1024 * 1024;
-  const int64_t phys_mem = base::SysInfo::AmountOfPhysicalMemory();
-  return static_cast<int>(std::floor(0.5 + phys_mem / kOneGB));
-}
-
-// Produces an extension-like friendly id.
-std::string HexStringToID(const std::string& hexstr) {
-  std::string id;
-  for (size_t i = 0; i < hexstr.size(); ++i) {
-    int val = 0;
-    if (base::HexStringToInt(
-            base::StringPiece(hexstr.begin() + i, hexstr.begin() + i + 1),
-            &val)) {
-      id.append(1, val + 'a');
-    } else {
-      id.append(1, 'a');
-    }
-  }
-
-  DCHECK(crx_file::id_util::IdIsValid(id));
-
-  return id;
-}
-
-std::string GetOSVersion() {
-#if defined(OS_WIN)
-  const auto ver = base::win::OSInfo::GetInstance()->version_number();
-  return base::StringPrintf("%d.%d.%d.%d", ver.major, ver.minor, ver.build,
-                            ver.patch);
-#else
-  return base::SysInfo().OperatingSystemVersion();
-#endif
-}
-
-std::string GetServicePack() {
-#if defined(OS_WIN)
-  return base::win::OSInfo::GetInstance()->service_pack_str();
-#else
-  return std::string();
-#endif
-}
-
-}  // namespace
-
-std::string BuildProtocolRequest(
-    const std::string& prod_id,
-    const std::string& browser_version,
-    const std::string& channel,
-    const std::string& lang,
-    const std::string& os_long_name,
-    const std::string& download_preference,
-    const std::string& request_body,
-    const std::string& additional_attributes,
-    const std::unique_ptr<UpdaterState::Attributes>& updater_state_attributes) {
-  std::string request(
-      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
-      "<request protocol=\"3.0\" ");
-
-  if (!additional_attributes.empty())
-    base::StringAppendF(&request, "%s ", additional_attributes.c_str());
-
-  // Chrome version and platform information.
-  base::StringAppendF(
-      &request,
-      "version=\"%s-%s\" prodversion=\"%s\" "
-      "requestid=\"{%s}\" lang=\"%s\" updaterchannel=\"%s\" prodchannel=\"%s\" "
-      "os=\"%s\" arch=\"%s\" nacl_arch=\"%s\"",
-      prod_id.c_str(),                    // "version" is prefixed by prod_id.
-      browser_version.c_str(),
-      browser_version.c_str(),            // "prodversion"
-      base::GenerateGUID().c_str(),       // "requestid"
-      lang.c_str(),                       // "lang"
-      channel.c_str(),                    // "updaterchannel"
-      channel.c_str(),                    // "prodchannel"
-      UpdateQueryParams::GetOS(),         // "os"
-      UpdateQueryParams::GetArch(),       // "arch"
-      UpdateQueryParams::GetNaclArch());  // "nacl_arch"
-#if defined(OS_WIN)
-  const bool is_wow64(base::win::OSInfo::GetInstance()->wow64_status() ==
-                      base::win::OSInfo::WOW64_ENABLED);
-  if (is_wow64)
-    base::StringAppendF(&request, " wow64=\"1\"");
-#endif
-  if (!download_preference.empty())
-    base::StringAppendF(&request, " dlpref=\"%s\"",
-                        download_preference.c_str());
-  if (updater_state_attributes &&
-      updater_state_attributes->count(UpdaterState::kIsEnterpriseManaged)) {
-    base::StringAppendF(
-        &request, " %s=\"%s\"",  // domainjoined
-        UpdaterState::kIsEnterpriseManaged,
-        (*updater_state_attributes)[UpdaterState::kIsEnterpriseManaged]
-            .c_str());
-  }
-  base::StringAppendF(&request, ">");
-
-  // HW platform information.
-  base::StringAppendF(&request, "<hw physmemory=\"%d\"/>",
-                      GetPhysicalMemoryGB());  // "physmem" in GB.
-
-  // OS version and platform information.
-  const std::string os_version = GetOSVersion();
-  const std::string os_sp = GetServicePack();
-  base::StringAppendF(
-      &request, "<os platform=\"%s\" arch=\"%s\"",
-      os_long_name.c_str(),                                    // "platform"
-      base::SysInfo().OperatingSystemArchitecture().c_str());  // "arch"
-  if (!os_version.empty())
-    base::StringAppendF(&request, " version=\"%s\"", os_version.c_str());
-  if (!os_sp.empty())
-    base::StringAppendF(&request, " sp=\"%s\"", os_sp.c_str());
-  base::StringAppendF(&request, "/>");
-
-#if defined(GOOGLE_CHROME_BUILD)
-  // Updater state.
-  if (updater_state_attributes) {
-    base::StringAppendF(&request, "<updater");
-    for (const auto& attr : *updater_state_attributes) {
-      if (attr.first != UpdaterState::kIsEnterpriseManaged) {
-        base::StringAppendF(&request, " %s=\"%s\"", attr.first.c_str(),
-                          attr.second.c_str());
-      }
-    }
-    base::StringAppendF(&request, "/>");
-  }
-#endif  // GOOGLE_CHROME_BUILD
-
-  // The actual payload of the request.
-  base::StringAppendF(&request, "%s</request>", request_body.c_str());
-
-  return request;
-}
 
 std::unique_ptr<net::URLFetcher> SendProtocolRequest(
     const GURL& url,
     const std::string& protocol_request,
     net::URLFetcherDelegate* url_fetcher_delegate,
     net::URLRequestContextGetter* url_request_context_getter) {
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("component_updater_utils", R"(
+        semantics {
+          sender: "Component Updater"
+          description:
+            "The component updater in Chrome is responsible for updating code "
+            "and data modules such as Flash, CrlSet, Origin Trials, etc. These "
+            "modules are updated on cycles independent of the Chrome release "
+            "tracks. It runs in the browser process and communicates with a "
+            "set of servers using the Omaha protocol to find the latest "
+            "versions of components, download them, and register them with the "
+            "rest of Chrome."
+          trigger: "Manual or automatic software updates."
+          data:
+            "Various OS and Chrome parameters such as version, bitness, "
+            "release tracks, etc."
+          destination: GOOGLE_OWNED_SERVICE
+        }
+        policy {
+          cookies_allowed: NO
+          setting: "This feature cannot be disabled."
+          chrome_policy {
+            ComponentUpdatesEnabled {
+              policy_options {mode: MANDATORY}
+              ComponentUpdatesEnabled: false
+            }
+          }
+        })");
   std::unique_ptr<net::URLFetcher> url_fetcher = net::URLFetcher::Create(
-      0, url, net::URLFetcher::POST, url_fetcher_delegate);
+      0, url, net::URLFetcher::POST, url_fetcher_delegate, traffic_annotation);
   if (!url_fetcher.get())
     return url_fetcher;
 
@@ -238,8 +121,8 @@ int GetFetchError(const net::URLFetcher& fetcher) {
   }
 }
 
-bool HasDiffUpdate(const CrxUpdateItem* update_item) {
-  return !update_item->crx_diffurls.empty();
+bool HasDiffUpdate(const Component& component) {
+  return !component.crx_diffurls().empty();
 }
 
 bool IsHttpServerError(int status_code) {
@@ -258,10 +141,10 @@ bool DeleteFileAndEmptyParentDirectory(const base::FilePath& filepath) {
 }
 
 std::string GetCrxComponentID(const CrxComponent& component) {
-  const size_t kCrxIdSize = 16;
-  CHECK_GE(component.pk_hash.size(), kCrxIdSize);
-  return HexStringToID(base::ToLowerASCII(
-      base::HexEncode(&component.pk_hash[0], kCrxIdSize)));
+  const std::string result = crx_file::id_util::GenerateIdFromHash(
+      &component.pk_hash[0], component.pk_hash.size());
+  DCHECK(crx_file::id_util::IdIsValid(result));
+  return result;
 }
 
 bool VerifyFileHash256(const base::FilePath& filepath,
@@ -341,9 +224,31 @@ void RemoveUnsecureUrls(std::vector<GURL>* urls) {
               urls->end());
 }
 
-CrxInstaller::Result InstallFunctionWrapper(base::Callback<bool()> callback) {
-  return CrxInstaller::Result(callback.Run() ? InstallError::NONE
-                                             : InstallError::GENERIC_ERROR);
+CrxInstaller::Result InstallFunctionWrapper(
+    base::OnceCallback<bool()> callback) {
+  return CrxInstaller::Result(std::move(callback).Run()
+                                  ? InstallError::NONE
+                                  : InstallError::GENERIC_ERROR);
+}
+
+// TODO(cpu): add a specific attribute check to a component json that the
+// extension unpacker will reject, so that a component cannot be installed
+// as an extension.
+std::unique_ptr<base::DictionaryValue> ReadManifest(
+    const base::FilePath& unpack_path) {
+  base::FilePath manifest =
+      unpack_path.Append(FILE_PATH_LITERAL("manifest.json"));
+  if (!base::PathExists(manifest))
+    return std::unique_ptr<base::DictionaryValue>();
+  JSONFileValueDeserializer deserializer(manifest);
+  std::string error;
+  std::unique_ptr<base::Value> root = deserializer.Deserialize(nullptr, &error);
+  if (!root.get())
+    return std::unique_ptr<base::DictionaryValue>();
+  if (!root->is_dict())
+    return std::unique_ptr<base::DictionaryValue>();
+  return std::unique_ptr<base::DictionaryValue>(
+      static_cast<base::DictionaryValue*>(root.release()));
 }
 
 }  // namespace update_client

@@ -37,6 +37,7 @@ class PRINTING_EXPORT PrintSettings {
 #if defined(OS_WIN)
   enum PrinterType {
     TYPE_NONE = 0,
+    TYPE_TEXTONLY,
     TYPE_XPS,
     TYPE_POSTSCRIPT_LEVEL2,
     TYPE_POSTSCRIPT_LEVEL3
@@ -87,6 +88,7 @@ class PRINTING_EXPORT PrintSettings {
   // Set printer printable area in in device units.
   // Some platforms already provide flipped area. Set |landscape_needs_flip|
   // to false on those platforms to avoid double flipping.
+  // This method assumes correct DPI is already set.
   void SetPrinterPrintableArea(const gfx::Size& physical_size_device_units,
                                const gfx::Rect& printable_area_device_units,
                                bool landscape_needs_flip);
@@ -107,7 +109,7 @@ class PRINTING_EXPORT PrintSettings {
     dpi_[0] = dpi_horizontal;
     dpi_[1] = dpi_vertical;
   }
-  int dpi() const { return std::min(dpi_[0], dpi_[1]); }
+  int dpi() const { return std::max(dpi_[0], dpi_[1]); }
   int dpi_horizontal() const { return dpi_[0]; }
   int dpi_vertical() const { return dpi_[1]; }
 
@@ -171,6 +173,9 @@ class PRINTING_EXPORT PrintSettings {
   bool print_text_with_gdi() const { return print_text_with_gdi_; }
 
   void set_printer_type(PrinterType type) { printer_type_ = type; }
+  bool printer_is_textonly() const {
+    return printer_type_ == PrinterType::TYPE_TEXTONLY;
+  }
   bool printer_is_xps() const { return printer_type_ == PrinterType::TYPE_XPS;}
   bool printer_is_ps2() const {
     return printer_type_ == PrinterType::TYPE_POSTSCRIPT_LEVEL2;
@@ -179,6 +184,9 @@ class PRINTING_EXPORT PrintSettings {
     return printer_type_ == PrinterType::TYPE_POSTSCRIPT_LEVEL3;
   }
 #endif
+
+  void set_is_modifiable(bool is_modifiable) { is_modifiable_ = is_modifiable; }
+  bool is_modifiable() const { return is_modifiable_; }
 
   // Cookie generator. It is used to initialize PrintedDocument with its
   // associated PrintSettings, to be sure that each generated PrintedPage is
@@ -250,6 +258,8 @@ class PRINTING_EXPORT PrintSettings {
 
   PrinterType printer_type_;
 #endif
+
+  bool is_modifiable_;
 
   // If margin type is custom, this is what was requested.
   PageMargins requested_custom_margins_in_points_;

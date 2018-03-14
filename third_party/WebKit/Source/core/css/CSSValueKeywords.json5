@@ -77,6 +77,19 @@
     "unicase",
     "titling-caps",
 
+    // font-variant-caps:
+    //
+    // normal
+    "jis78",
+    "jis83",
+    "jis90",
+    "jis04",
+    "simplified",
+    "traditional",
+    "full-width",
+    "proportional-width",
+    "ruby",
+
     // font-variant-numeric
     // normal
     "lining-nums",
@@ -95,15 +108,6 @@
     "bold",
     "bolder",
     "lighter",
-    "100",
-    "200",
-    "300",
-    "400",
-    "500",
-    "600",
-    "700",
-    "800",
-    "900",
 
     //
     // font-stretch
@@ -594,10 +598,10 @@
     "ellipsis",
 
     //
-    // text-decoration-skip
+    // text-decoration-skip-ink
     //
-    "objects",
-    "ink",
+    // auto
+    // none
 
     //
     // -webkit-margin-collapse
@@ -669,6 +673,7 @@
     "-internal-media-overflow-button",
     "-internal-media-download-button",
     "-internal-media-remoting-cast-icon",
+    "-internal-media-control",
     "menulist",
     "menulist-button",
     "menulist-text",
@@ -772,6 +777,7 @@
     "step-middle",
     "step-end",
     "steps",
+    "frames",
     "cubic-bezier",
 
     //
@@ -846,6 +852,8 @@
     // -webkit-text-emphasis-position
     "over",
     "under",
+    //right
+    //left
 
     // -webkit-text-emphasis-style
     "filled",
@@ -883,6 +891,9 @@
     "optimizeQuality",
     "pixelated",
     "-webkit-optimize-contrast",
+
+    // image-orientation
+    "from-image",
 
     // shape-outside
     "nonzero",
@@ -1099,17 +1110,34 @@
     "translateZ",
     "translate3d",
 
-    // motion path
+    // offset-path
     "path",
+    "ray",
+    "sides",
 
     "calc",
     "-webkit-calc",
 
     // scroll-snap-type
     // none
+    "x",
+    "y",
+    // block
+    // inline
+    // both
     "mandatory",
     "proximity",
-    "from-image",
+
+    // scroll-snap-align
+    // none
+    // start
+    // end
+    // center
+
+    // scroll-snap-stop
+    // normal
+    // always
+
 
     // containment
     // paint
@@ -1139,5 +1167,10 @@
     // srgb
     "p3",
     "rec2020",
+
+    // overscroll-behavior
+    // auto,
+    // contain
+    // none
   ],
 }

@@ -6,8 +6,11 @@
 
 #include <stddef.h>
 
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -24,6 +27,7 @@
 #include "extensions/common/constants.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/extension_features.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/feature_switch.h"
 #include "extensions/common/manifest_constants.h"
@@ -163,7 +167,7 @@ class ErrorConsoleBrowserTest : public ExtensionBrowserTest {
       ++errors_observed_;
       if (errors_observed_ >= errors_expected_) {
         if (waiting_)
-          base::MessageLoopForUI::current()->QuitWhenIdle();
+          base::RunLoop::QuitCurrentWhenIdleDeprecated();
       }
     }
 
@@ -378,7 +382,8 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest,
       ACTION_NAVIGATE,
       &extension);
 
-  std::string script_url = extension->url().Resolve("content_script.js").spec();
+  std::string script_url =
+      extension->GetResourceURL("content_script.js").spec();
 
   const ErrorList& errors =
       error_console()->GetErrorsForExtension(extension->id());
@@ -423,13 +428,7 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest,
 
 // Catch an error from a BrowserAction; this is more complex than a content
 // script error, since browser actions are routed through our own code.
-#if defined(OS_WIN)  // Flakes on XP. http://crbug.com/517029
-#define MAYBE_BrowserActionRuntimeError DISABLED_BrowserActionRuntimeError
-#else
-#define MAYBE_BrowserActionRuntimeError BrowserActionRuntimeError
-#endif
-IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest,
-                       MAYBE_BrowserActionRuntimeError) {
+IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, BrowserActionRuntimeError) {
   const Extension* extension = NULL;
   LoadExtensionAndCheckErrors(
       "browser_action_runtime_error",
@@ -438,24 +437,32 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest,
       ACTION_BROWSER_ACTION,
       &extension);
 
-  std::string script_url = extension->url().Resolve("browser_action.js").spec();
+  std::string script_url =
+      extension->GetResourceURL("browser_action.js").spec();
 
   const ErrorList& errors =
       error_console()->GetErrorsForExtension(extension->id());
 
-  std::string event_bindings_str =
-      base::StringPrintf("extensions::%s", kEventBindings);
+  std::string message;
+  bool use_native_bindings =
+      base::FeatureList::IsEnabled(features::kNativeCrxBindings);
+  if (use_native_bindings) {
+    // TODO(devlin): The specific event name (here, 'browserAction.onClicked')
+    // may or may not be worth preserving. In most cases, it's unnecessary with
+    // the line number, but it could be useful in some cases.
+    message =
+        "Error in event handler: ReferenceError: "
+        "baz is not defined";
+  } else {
+    message =
+        "Error in event handler for browserAction.onClicked: "
+        "ReferenceError: baz is not defined";
+  }
 
-  std::string event_dispatch_to_listener_str =
-      base::StringPrintf("Event.publicClass.%s [as dispatchToListener]",
-                         kAnonymousFunction);
-
-  CheckRuntimeError(
-      errors[0].get(), extension->id(), script_url,
-      false,  // not incognito
-      "Error in event handler for browserAction.onClicked: ReferenceError: "
-      "baz is not defined",
-      logging::LOG_ERROR, extension->url().Resolve(kBackgroundPageName), 1u);
+  CheckRuntimeError(errors[0].get(), extension->id(), script_url,
+                    false,  // not incognito
+                    message, logging::LOG_ERROR,
+                    extension->GetResourceURL(kBackgroundPageName), 1u);
 
   const StackTrace& stack_trace = GetStackTraceFromError(errors[0].get());
   // Note: This test used to have a stack trace of length 6 that contains stack
@@ -478,23 +485,34 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, BadAPIArgumentsRuntimeError) {
   const ErrorList& errors =
       error_console()->GetErrorsForExtension(extension->id());
 
-  std::string schema_utils_str =
-      base::StringPrintf("extensions::%s", kSchemaUtils);
+  std::string source;
+  std::string message;
+  bool use_native_bindings =
+      base::FeatureList::IsEnabled(features::kNativeCrxBindings);
+  if (use_native_bindings) {
+    source = extension->GetResourceURL("background.js").spec();
+    message =
+        "Uncaught TypeError: Error in invocation of "
+        "tabs.get(integer tabId, function callback): "
+        "Error at parameter 'tabId': Invalid type: "
+        "expected integer, found string.";
+  } else {
+    // API calls are checked in schemaUtils.js with JS bindings.
+    source = "extensions::" + std::string(kSchemaUtils);
+    message =
+        "Uncaught Error: Invocation of form "
+        "tabs.get(string, function) doesn't match definition "
+        "tabs.get(integer tabId, function callback)";
+  }
 
-  CheckRuntimeError(
-      errors[0].get(), extension->id(),
-      schema_utils_str,  // API calls are checked in schemaUtils.js.
-      false,             // not incognito
-      "Uncaught Error: Invocation of form "
-      "tabs.get(string, function) doesn't match definition "
-      "tabs.get(integer tabId, function callback)",
-      logging::LOG_ERROR, extension->url().Resolve(kBackgroundPageName), 1u);
+  CheckRuntimeError(errors[0].get(), extension->id(), source,
+                    false,  // not incognito
+                    message, logging::LOG_ERROR,
+                    extension->GetResourceURL(kBackgroundPageName), 1u);
 
   const StackTrace& stack_trace = GetStackTraceFromError(errors[0].get());
   ASSERT_EQ(1u, stack_trace.size());
-  CheckStackFrame(stack_trace[0],
-                  schema_utils_str,
-                  kAnonymousFunction);
+  CheckStackFrame(stack_trace[0], source, kAnonymousFunction);
 }
 
 // Test that we catch an error when we try to call an API method without
@@ -509,7 +527,7 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, BadAPIPermissionsRuntimeError) {
       ACTION_NONE,
       &extension);
 
-  std::string script_url = extension->url().Resolve("background.js").spec();
+  std::string script_url = extension->GetResourceURL("background.js").spec();
 
   const ErrorList& errors =
       error_console()->GetErrorsForExtension(extension->id());
@@ -518,7 +536,7 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, BadAPIPermissionsRuntimeError) {
       errors[0].get(), extension->id(), script_url,
       false,  // not incognito
       "Uncaught TypeError: Cannot read property 'addUrl' of undefined",
-      logging::LOG_ERROR, extension->url().Resolve(kBackgroundPageName), 1u);
+      logging::LOG_ERROR, extension->GetResourceURL(kBackgroundPageName), 1u);
 
   const StackTrace& stack_trace = GetStackTraceFromError(errors[0].get());
   ASSERT_EQ(1u, stack_trace.size());
@@ -556,21 +574,42 @@ IN_PROC_BROWSER_TEST_F(ErrorConsoleBrowserTest, CatchesLastError) {
       error_console()->GetErrorsForExtension(extension->id());
   ASSERT_EQ(1u, errors.size());
 
-  std::string script_url = extension->url().Resolve("background.js").spec();
+  std::string source;
+  std::string message;
+  size_t line_number = 0;
+  size_t column_number = 0;
+  if (base::FeatureList::IsEnabled(features::kNativeCrxBindings)) {
+    // TODO(devlin): This is unfortunate. We lose a lot of context by using
+    // RenderFrame::AddMessageToConsole() instead of console.error(). This could
+    // be expanded; blink::SourceLocation knows how to capture an inspector
+    // stack trace.
+    source = extension->GetResourceURL(kGeneratedBackgroundPageFilename).spec();
+    // Line number '0' comes from errors that are logged to the render frame
+    // directly (e.g. background_age.html (0)).
+    line_number = 0;
+    // Column number remains at the default specified in StackFrame (1).
+    column_number = 1;
+    message =
+        "Unchecked runtime.lastError: "
+        "'foobar' is not a recognized permission.";
+  } else {
+    source = extension->GetResourceURL("background.js").spec();
+    line_number = 12;
+    column_number = 20;
+    message =
+        "Unchecked runtime.lastError while running permissions.remove: "
+        "'foobar' is not a recognized permission.";
+  }
 
-  CheckRuntimeError(
-      errors[0].get(), extension->id(), script_url,
-      false,  // not incognito
-      "Unchecked runtime.lastError while running permissions.remove: "
-      "'foobar' is not a recognized permission.",
-      logging::LOG_ERROR, extension->url().Resolve(kBackgroundPageName), 1u);
+  CheckRuntimeError(errors[0].get(), extension->id(), source,
+                    false,  // not incognito
+                    message, logging::LOG_ERROR,
+                    extension->GetResourceURL(kBackgroundPageName), 1u);
 
   const StackTrace& stack_trace = GetStackTraceFromError(errors[0].get());
   ASSERT_EQ(1u, stack_trace.size());
-  CheckStackFrame(stack_trace[0],
-                  script_url,
-                  kAnonymousFunction,
-                  12u, 20u);
+  CheckStackFrame(stack_trace[0], source, kAnonymousFunction, line_number,
+                  column_number);
 }
 
 }  // namespace extensions

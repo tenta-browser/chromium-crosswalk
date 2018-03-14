@@ -28,7 +28,6 @@ using views::corewm::test::TooltipControllerTestHelper;
 // to be installed.
 
 namespace ash {
-namespace test {
 
 namespace {
 
@@ -68,15 +67,15 @@ void AddViewToWidgetAndResize(views::Widget* widget, views::View* view) {
 
 TooltipController* GetController() {
   return static_cast<TooltipController*>(
-      aura::client::GetTooltipClient(Shell::GetPrimaryRootWindow()));
+      ::wm::GetTooltipClient(Shell::GetPrimaryRootWindow()));
 }
 
 }  // namespace
 
 class TooltipControllerTest : public AshTestBase {
  public:
-  TooltipControllerTest() {}
-  ~TooltipControllerTest() override {}
+  TooltipControllerTest() = default;
+  ~TooltipControllerTest() override = default;
 
   void SetUp() override {
     AshTestBase::SetUp();
@@ -91,8 +90,7 @@ class TooltipControllerTest : public AshTestBase {
 };
 
 TEST_F(TooltipControllerTest, NonNullTooltipClient) {
-  EXPECT_TRUE(aura::client::GetTooltipClient(Shell::GetPrimaryRootWindow()) !=
-              NULL);
+  EXPECT_TRUE(::wm::GetTooltipClient(Shell::GetPrimaryRootWindow()) != NULL);
   EXPECT_EQ(base::string16(), helper_->GetTooltipText());
   EXPECT_EQ(NULL, helper_->GetTooltipWindow());
   EXPECT_FALSE(helper_->IsTooltipVisible());
@@ -170,5 +168,4 @@ TEST_F(TooltipControllerTest, TooltipsOnMultiDisplayShouldNotCrash) {
   EXPECT_TRUE(helper_->IsTooltipVisible());
 }
 
-}  // namespace test
 }  // namespace ash

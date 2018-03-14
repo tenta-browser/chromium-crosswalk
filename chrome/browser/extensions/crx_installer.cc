@@ -41,6 +41,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/resource_dispatcher_host.h"
+#include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
@@ -132,9 +133,9 @@ CrxInstaller::CrxInstaller(base::WeakPtr<ExtensionService> service_weak,
       off_store_install_allow_reason_(OffStoreInstallDisallowed),
       did_handle_successfully_(true),
       error_on_unsupported_requirements_(false),
+      installer_task_runner_(GetExtensionFileTaskRunner()),
       update_from_settings_page_(false),
       install_flags_(kInstallFlagNone) {
-  installer_task_runner_ = service_weak->GetFileTaskRunner();
   if (!approval)
     return;
 
@@ -162,6 +163,8 @@ CrxInstaller::CrxInstaller(base::WeakPtr<ExtensionService> service_weak,
 }
 
 CrxInstaller::~CrxInstaller() {
+  DCHECK(!service_weak_ || service_weak_->browser_terminating() ||
+         installer_callback_.is_null());
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   // Ensure |client_| and |install_checker_| data members are destroyed on the
   // UI thread. The |client_| dialog has a weak reference as |this| is its
@@ -182,13 +185,36 @@ void CrxInstaller::InstallCrxFile(const CRXFileInfo& source_file) {
 
   source_file_ = source_file.path;
 
-  scoped_refptr<SandboxedUnpacker> unpacker(new SandboxedUnpacker(
+  auto unpacker = base::MakeRefCounted<SandboxedUnpacker>(
       install_source_, creation_flags_, install_directory_,
-      installer_task_runner_.get(), this));
+      installer_task_runner_.get(), this);
 
   if (!installer_task_runner_->PostTask(
-          FROM_HERE, base::Bind(&SandboxedUnpacker::StartWithCrx,
-                                unpacker, source_file))) {
+          FROM_HERE, base::BindOnce(&SandboxedUnpacker::StartWithCrx, unpacker,
+                                    source_file))) {
+    NOTREACHED();
+  }
+}
+
+void CrxInstaller::InstallUnpackedCrx(const std::string& extension_id,
+                                      const std::string& public_key,
+                                      const base::FilePath& unpacked_dir) {
+  ExtensionService* service = service_weak_.get();
+  if (!service || service->browser_terminating())
+    return;
+
+  NotifyCrxInstallBegin();
+
+  source_file_ = unpacked_dir;
+
+  auto unpacker = base::MakeRefCounted<SandboxedUnpacker>(
+      install_source_, creation_flags_, install_directory_,
+      installer_task_runner_.get(), this);
+
+  if (!installer_task_runner_->PostTask(
+          FROM_HERE,
+          base::BindOnce(&SandboxedUnpacker::StartWithDirectory, unpacker,
+                         extension_id, public_key, unpacked_dir))) {
     NOTREACHED();
   }
 }
@@ -204,7 +230,7 @@ void CrxInstaller::InstallUserScript(const base::FilePath& source_file,
 
   if (!installer_task_runner_->PostTask(
           FROM_HERE,
-          base::Bind(&CrxInstaller::ConvertUserScriptOnFileThread, this)))
+          base::BindOnce(&CrxInstaller::ConvertUserScriptOnFileThread, this)))
     NOTREACHED();
 }
 
@@ -218,15 +244,15 @@ void CrxInstaller::ConvertUserScriptOnFileThread() {
   }
 
   OnUnpackSuccess(extension->path(), extension->path(), nullptr,
-                  extension.get(), SkBitmap());
+                  extension.get(), SkBitmap(), base::nullopt);
 }
 
 void CrxInstaller::InstallWebApp(const WebApplicationInfo& web_app) {
   NotifyCrxInstallBegin();
 
   if (!installer_task_runner_->PostTask(
-          FROM_HERE,
-          base::Bind(&CrxInstaller::ConvertWebAppOnFileThread, this, web_app)))
+          FROM_HERE, base::BindOnce(&CrxInstaller::ConvertWebAppOnFileThread,
+                                    this, web_app)))
     NOTREACHED();
 }
 
@@ -243,11 +269,11 @@ void CrxInstaller::ConvertWebAppOnFileThread(
   // TODO(aa): conversion data gets lost here :(
 
   OnUnpackSuccess(extension->path(), extension->path(), nullptr,
-                  extension.get(), SkBitmap());
+                  extension.get(), SkBitmap(), base::nullopt);
 }
 
 CrxInstallError CrxInstaller::AllowInstall(const Extension* extension) {
-  DCHECK(installer_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(installer_task_runner_->RunsTasksInCurrentSequence());
 
   // Make sure the expected ID matches if one was supplied or if we want to
   // bypass the prompt.
@@ -405,7 +431,7 @@ CrxInstallError CrxInstaller::AllowInstall(const Extension* extension) {
 }
 
 void CrxInstaller::OnUnpackFailure(const CrxInstallError& error) {
-  DCHECK(installer_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(installer_task_runner_->RunsTasksInCurrentSequence());
 
   UMA_HISTOGRAM_ENUMERATION("Extensions.UnpackFailureInstallSource",
                             install_source(), Manifest::NUM_LOCATIONS);
@@ -422,8 +448,9 @@ void CrxInstaller::OnUnpackSuccess(
     const base::FilePath& extension_dir,
     std::unique_ptr<base::DictionaryValue> original_manifest,
     const Extension* extension,
-    const SkBitmap& install_icon) {
-  DCHECK(installer_task_runner_->RunsTasksOnCurrentThread());
+    const SkBitmap& install_icon,
+    const base::Optional<int>& dnr_ruleset_checksum) {
+  DCHECK(installer_task_runner_->RunsTasksInCurrentSequence());
 
   UMA_HISTOGRAM_ENUMERATION("Extensions.UnpackSuccessInstallSource",
                             install_source(), Manifest::NUM_LOCATIONS);
@@ -435,12 +462,14 @@ void CrxInstaller::OnUnpackSuccess(
 
   extension_ = extension;
   temp_dir_ = temp_dir;
+  dnr_ruleset_checksum_ = dnr_ruleset_checksum;
+
   if (!install_icon.empty())
-    install_icon_.reset(new SkBitmap(install_icon));
+    install_icon_ = std::make_unique<SkBitmap>(install_icon);
 
   if (original_manifest) {
-    original_manifest_.reset(
-        new Manifest(Manifest::INVALID_LOCATION, std::move(original_manifest)));
+    original_manifest_ = std::make_unique<Manifest>(
+        Manifest::INVALID_LOCATION, std::move(original_manifest));
   }
 
   // We don't have to delete the unpack dir explicity since it is a child of
@@ -453,9 +482,9 @@ void CrxInstaller::OnUnpackSuccess(
     return;
   }
 
-  if (!BrowserThread::PostTask(BrowserThread::UI,
-                               FROM_HERE,
-                               base::Bind(&CrxInstaller::CheckInstall, this)))
+  if (!BrowserThread::PostTask(
+          BrowserThread::UI, FROM_HERE,
+          base::BindOnce(&CrxInstaller::CheckInstall, this)))
     NOTREACHED();
 }
 
@@ -531,7 +560,7 @@ void CrxInstaller::CheckInstall() {
       base::BindOnce(&CrxInstaller::OnInstallChecksComplete, this));
 }
 
-void CrxInstaller::OnInstallChecksComplete(PreloadCheck::Errors errors) {
+void CrxInstaller::OnInstallChecksComplete(const PreloadCheck::Errors& errors) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!service_weak_)
     return;
@@ -682,13 +711,13 @@ void CrxInstaller::UpdateCreationFlagsAndCompleteInstall() {
     creation_flags_ |= Extension::ALLOW_FILE_ACCESS;
 
   if (!installer_task_runner_->PostTask(
-          FROM_HERE, base::Bind(&CrxInstaller::CompleteInstall, this))) {
+          FROM_HERE, base::BindOnce(&CrxInstaller::CompleteInstall, this))) {
     NOTREACHED();
   }
 }
 
 void CrxInstaller::CompleteInstall() {
-  DCHECK(installer_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(installer_task_runner_->RunsTasksInCurrentSequence());
 
   if (current_version_.IsValid() &&
       current_version_.CompareTo(*(extension()->version())) > 0) {
@@ -719,7 +748,7 @@ void CrxInstaller::CompleteInstall() {
 
 void CrxInstaller::ReloadExtensionAfterInstall(
     const base::FilePath& version_dir) {
-  DCHECK(installer_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(installer_task_runner_->RunsTasksInCurrentSequence());
 
   if (version_dir.empty()) {
     ReportFailureFromFileThread(CrxInstallError(l10n_util::GetStringUTF16(
@@ -750,10 +779,11 @@ void CrxInstaller::ReloadExtensionAfterInstall(
 }
 
 void CrxInstaller::ReportFailureFromFileThread(const CrxInstallError& error) {
-  DCHECK(installer_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(installer_task_runner_->RunsTasksInCurrentSequence());
   if (!BrowserThread::PostTask(
           BrowserThread::UI, FROM_HERE,
-          base::Bind(&CrxInstaller::ReportFailureFromUIThread, this, error))) {
+          base::BindOnce(&CrxInstaller::ReportFailureFromUIThread, this,
+                         error))) {
     NOTREACHED();
   }
 }
@@ -789,7 +819,7 @@ void CrxInstaller::ReportFailureFromUIThread(const CrxInstallError& error) {
 }
 
 void CrxInstaller::ReportSuccessFromFileThread() {
-  DCHECK(installer_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(installer_task_runner_->RunsTasksInCurrentSequence());
 
   // Tracking number of extensions installed by users
   if (install_cause() == extension_misc::INSTALL_CAUSE_USER_DOWNLOAD)
@@ -797,7 +827,7 @@ void CrxInstaller::ReportSuccessFromFileThread() {
 
   if (!BrowserThread::PostTask(
           BrowserThread::UI, FROM_HERE,
-          base::Bind(&CrxInstaller::ReportSuccessFromUIThread, this)))
+          base::BindOnce(&CrxInstaller::ReportSuccessFromUIThread, this)))
     NOTREACHED();
 
   // Delete temporary files.
@@ -830,8 +860,8 @@ void CrxInstaller::ReportSuccessFromUIThread() {
     }
   }
 
-  service_weak_->OnExtensionInstalled(
-      extension(), page_ordinal_, install_flags_);
+  service_weak_->OnExtensionInstalled(extension(), page_ordinal_,
+                                      install_flags_, dnr_ruleset_checksum_);
   NotifyCrxInstallComplete(true);
 }
 
@@ -855,13 +885,19 @@ void CrxInstaller::NotifyCrxInstallComplete(bool success) {
 
   if (success)
     ConfirmReEnable();
+
+  if (!installer_callback_.is_null() &&
+      !BrowserThread::GetTaskRunnerForThread(BrowserThread::UI)
+           ->PostTask(FROM_HERE, base::BindOnce(std::move(installer_callback_),
+                                                success))) {
+    NOTREACHED();
+  }
 }
 
 void CrxInstaller::CleanupTempFiles() {
-  if (!installer_task_runner_->RunsTasksOnCurrentThread()) {
+  if (!installer_task_runner_->RunsTasksInCurrentSequence()) {
     if (!installer_task_runner_->PostTask(
-            FROM_HERE,
-            base::Bind(&CrxInstaller::CleanupTempFiles, this))) {
+            FROM_HERE, base::BindOnce(&CrxInstaller::CleanupTempFiles, this))) {
       NOTREACHED();
     }
     return;

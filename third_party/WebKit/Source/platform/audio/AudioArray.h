@@ -31,9 +31,8 @@
 
 #include <string.h>
 #include "platform/wtf/Allocator.h"
-#include "platform/wtf/Vector.h"
+#include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/allocator/Partitions.h"
-#include "platform/wtf/build_config.h"
 
 namespace blink {
 
@@ -62,7 +61,7 @@ class AudioArray {
 
     unsigned initial_size = sizeof(T) * n;
 
-#if USE(WEBAUDIO_FFMPEG) || USE(WEBAUDIO_OPENMAX_DL_FFT)
+#if defined(WTF_USE_WEBAUDIO_FFMPEG) || defined(WTF_USE_WEBAUDIO_OPENMAX_DL_FFT)
     const size_t kAlignment = 32;
 #else
     const size_t kAlignment = 16;

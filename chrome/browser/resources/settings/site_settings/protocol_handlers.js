@@ -59,17 +59,50 @@ Polymer({
     /* Labels for the toggle on/off positions. */
     toggleOffLabel: String,
     toggleOnLabel: String,
+
+    // <if expr="chromeos">
+    /** @private */
+    settingsAppAvailable_: {
+      type: Boolean,
+      value: false,
+    },
+    // </if>
   },
 
+  /** @override */
   ready: function() {
-    this.addWebUIListener('setHandlersEnabled',
-        this.setHandlersEnabled_.bind(this));
-    this.addWebUIListener('setProtocolHandlers',
-        this.setProtocolHandlers_.bind(this));
-    this.addWebUIListener('setIgnoredProtocolHandlers',
+    this.addWebUIListener(
+        'setHandlersEnabled', this.setHandlersEnabled_.bind(this));
+    this.addWebUIListener(
+        'setProtocolHandlers', this.setProtocolHandlers_.bind(this));
+    this.addWebUIListener(
+        'setIgnoredProtocolHandlers',
         this.setIgnoredProtocolHandlers_.bind(this));
     this.browserProxy.observeProtocolHandlers();
   },
+
+  // <if expr="chromeos">
+  /** @override */
+  attached: function() {
+    if (settings.AndroidAppsBrowserProxyImpl) {
+      cr.addWebUIListener(
+          'android-apps-info-update', this.androidAppsInfoUpdate_.bind(this));
+      settings.AndroidAppsBrowserProxyImpl.getInstance()
+          .requestAndroidAppsInfo();
+    }
+  },
+  // </if>
+
+  // <if expr="chromeos">
+  /**
+   * Receives updates on whether or not ARC settings app is available.
+   * @param {AndroidAppsInfo} info
+   * @private
+   */
+  androidAppsInfoUpdate_: function(info) {
+    this.settingsAppAvailable_ = info.settingsAppAvailable;
+  },
+  // </if>
 
   /**
    * Obtains the description for the main toggle.
@@ -158,8 +191,9 @@ Polymer({
    * @return {boolean} if actionMenuModel_ is default handler of its protocol.
    */
   isModelDefault_: function() {
-    return !!this.actionMenuModel_ && (this.actionMenuModel_.index ==
-        this.actionMenuModel_.protocol.default_handler);
+    return !!this.actionMenuModel_ &&
+        (this.actionMenuModel_.index ==
+         this.actionMenuModel_.protocol.default_handler);
   },
 
   /**
@@ -170,9 +204,19 @@ Polymer({
    */
   showMenu_: function(event) {
     this.actionMenuModel_ = event.model;
-    /** @type {!CrActionMenuElement} */ (
-        this.$$('dialog[is=cr-action-menu]')).showAt(
+    /** @type {!CrActionMenuElement} */ (this.$$('dialog[is=cr-action-menu]'))
+        .showAt(
             /** @type {!Element} */ (
                 Polymer.dom(/** @type {!Event} */ (event)).localTarget));
-  }
+  },
+
+  // <if expr="chromeos">
+  /**
+   * Opens an activity to handle App links (preferred apps).
+   * @private
+   */
+  onManageAndroidAppsTap_: function() {
+    this.browserProxy.showAndroidManageAppLinks();
+  },
+  // </if>
 });

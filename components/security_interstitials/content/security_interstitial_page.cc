@@ -11,10 +11,9 @@
 #include "base/values.h"
 #include "components/grit/components_resources.h"
 #include "components/prefs/pref_service.h"
-#include "components/safe_browsing_db/safe_browsing_prefs.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/security_interstitials/content/security_interstitial_controller_client.h"
 #include "components/security_interstitials/core/common_string_util.h"
-#include "components/security_interstitials/core/metrics_helper.h"
 #include "content/public/browser/interstitial_page.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/web_contents.h"
@@ -30,7 +29,7 @@ SecurityInterstitialPage::SecurityInterstitialPage(
     std::unique_ptr<SecurityInterstitialControllerClient> controller)
     : web_contents_(web_contents),
       request_url_(request_url),
-      interstitial_page_(NULL),
+      interstitial_page_(nullptr),
       create_view_(true),
       on_show_extended_reporting_pref_exists_(false),
       on_show_extended_reporting_pref_value_(false),
@@ -66,6 +65,18 @@ void SecurityInterstitialPage::DontCreateViewForTesting() {
   create_view_ = false;
 }
 
+std::string SecurityInterstitialPage::GetHTMLContents() {
+  base::DictionaryValue load_time_data;
+  PopulateInterstitialStrings(&load_time_data);
+  webui::SetLoadTimeDataDefaults(controller()->GetApplicationLocale(),
+                                 &load_time_data);
+  std::string html = ui::ResourceBundle::GetSharedInstance()
+                         .GetRawDataResource(GetHTMLTemplateId())
+                         .as_string();
+  webui::AppendWebUiCssTextDefaults(&html);
+  return webui::GetI18nTemplateHtml(html, &load_time_data);
+}
+
 void SecurityInterstitialPage::Show() {
   DCHECK(!interstitial_page_);
   interstitial_page_ = content::InterstitialPage::Create(
@@ -89,13 +100,9 @@ void SecurityInterstitialPage::Show() {
   AfterShow();
 }
 
-SecurityInterstitialControllerClient* SecurityInterstitialPage::controller() {
+SecurityInterstitialControllerClient* SecurityInterstitialPage::controller()
+    const {
   return controller_.get();
-}
-
-security_interstitials::MetricsHelper*
-SecurityInterstitialPage::metrics_helper() {
-  return controller_->metrics_helper();
 }
 
 void SecurityInterstitialPage::UpdateMetricsAfterSecurityInterstitial() {
@@ -111,16 +118,8 @@ base::string16 SecurityInterstitialPage::GetFormattedHostName() const {
       request_url_);
 }
 
-std::string SecurityInterstitialPage::GetHTMLContents() {
-  base::DictionaryValue load_time_data;
-  PopulateInterstitialStrings(&load_time_data);
-  webui::SetLoadTimeDataDefaults(
-      controller()->GetApplicationLocale(), &load_time_data);
-  std::string html = ResourceBundle::GetSharedInstance()
-                         .GetRawDataResource(IDR_SECURITY_INTERSTITIAL_HTML)
-                         .as_string();
-  webui::AppendWebUiCssTextDefaults(&html);
-  return webui::GetI18nTemplateHtml(html, &load_time_data);
+int SecurityInterstitialPage::GetHTMLTemplateId() {
+  return IDR_SECURITY_INTERSTITIAL_HTML;
 }
 
 }  // security_interstitials

@@ -61,7 +61,7 @@ WebSocketTransportConnectJob::WebSocketTransportConnectJob(
       had_ipv4_(false),
       had_ipv6_(false) {}
 
-WebSocketTransportConnectJob::~WebSocketTransportConnectJob() {}
+WebSocketTransportConnectJob::~WebSocketTransportConnectJob() = default;
 
 LoadState WebSocketTransportConnectJob::GetLoadState() const {
   LoadState load_state = LOAD_STATE_RESOLVING_HOST;
@@ -342,10 +342,8 @@ int WebSocketTransportClientSocketPool::RequestSocket(
   if (ReachedMaxSocketsLimit() &&
       respect_limits == ClientSocketPool::RespectLimits::ENABLED) {
     request_net_log.AddEvent(NetLogEventType::SOCKET_POOL_STALLED_MAX_SOCKETS);
-    // TODO(ricea): Use emplace_back when C++11 becomes allowed.
-    StalledRequest request(
-        casted_params, priority, handle, callback, request_net_log);
-    stalled_request_queue_.push_back(request);
+    stalled_request_queue_.emplace_back(casted_params, priority, handle,
+                                        callback, request_net_log);
     StalledRequestQueue::iterator iterator = stalled_request_queue_.end();
     --iterator;
     DCHECK_EQ(handle, iterator->handle);
@@ -388,7 +386,8 @@ void WebSocketTransportClientSocketPool::RequestSockets(
     const std::string& group_name,
     const void* params,
     int num_sockets,
-    const NetLogWithSource& net_log) {
+    const NetLogWithSource& net_log,
+    HttpRequestInfo::RequestMotivation motivation) {
   NOTIMPLEMENTED();
 }
 
@@ -694,7 +693,8 @@ WebSocketTransportClientSocketPool::ConnectJobDelegate::ConnectJobDelegate(
     WebSocketTransportClientSocketPool* owner)
     : owner_(owner) {}
 
-WebSocketTransportClientSocketPool::ConnectJobDelegate::~ConnectJobDelegate() {}
+WebSocketTransportClientSocketPool::ConnectJobDelegate::~ConnectJobDelegate() =
+    default;
 
 void
 WebSocketTransportClientSocketPool::ConnectJobDelegate::OnConnectJobComplete(
@@ -719,6 +719,6 @@ WebSocketTransportClientSocketPool::StalledRequest::StalledRequest(
 WebSocketTransportClientSocketPool::StalledRequest::StalledRequest(
     const StalledRequest& other) = default;
 
-WebSocketTransportClientSocketPool::StalledRequest::~StalledRequest() {}
+WebSocketTransportClientSocketPool::StalledRequest::~StalledRequest() = default;
 
 }  // namespace net

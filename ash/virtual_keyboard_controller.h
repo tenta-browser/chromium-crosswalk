@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #include "ash/ash_export.h"
-#include "ash/shell_observer.h"
+#include "ash/wm/tablet_mode/tablet_mode_observer.h"
 #include "base/macros.h"
 #include "ui/events/devices/input_device_event_observer.h"
 #include "ui/keyboard/keyboard_layout_delegate.h"
@@ -17,23 +17,23 @@ namespace ash {
 
 // This class observes input device changes for the virtual keyboard.
 class ASH_EXPORT VirtualKeyboardController
-    : public ShellObserver,
+    : public TabletModeObserver,
       public ui::InputDeviceEventObserver,
       public keyboard::KeyboardLayoutDelegate {
  public:
   VirtualKeyboardController();
   ~VirtualKeyboardController() override;
 
-  // ShellObserver:
+  // TabletModeObserver:
   // TODO(rsadam@): Remove when autovirtual keyboard flag is on by default.
-  void OnMaximizeModeStarted() override;
-  void OnMaximizeModeEnded() override;
+  void OnTabletModeStarted() override;
+  void OnTabletModeEnded() override;
 
   // ui::InputDeviceObserver:
   void OnTouchscreenDeviceConfigurationChanged() override;
   void OnKeyboardDeviceConfigurationChanged() override;
 
-  // Toggles whether the presense of an external keyboard should be ignored
+  // Toggles whether the presence of an external keyboard should be ignored
   // when determining whether or not to show the on-screen keyboard.
   void ToggleIgnoreExternalKeyboard();
 
@@ -57,7 +57,7 @@ class ASH_EXPORT VirtualKeyboardController
   bool has_internal_keyboard_;
   // True if a touchscreen is connected.
   bool has_touchscreen_;
-  // True if the presense of an external keyboard should be ignored.
+  // True if the presence of an external keyboard should be ignored.
   bool ignore_external_keyboard_;
 
   DISALLOW_COPY_AND_ASSIGN(VirtualKeyboardController);

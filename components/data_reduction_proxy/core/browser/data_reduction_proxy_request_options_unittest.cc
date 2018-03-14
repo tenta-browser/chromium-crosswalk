@@ -11,6 +11,7 @@
 
 #include "base/command_line.h"
 #include "base/md5.h"
+#include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
@@ -143,8 +144,6 @@ class DataReductionProxyRequestOptionsTest : public testing::Test {
   DataReductionProxyRequestOptionsTest() {
     test_context_ =
         DataReductionProxyTestContext::Builder()
-            .WithParamsFlags(0)
-            .WithParamsDefinitions(TestDataReductionProxyParams::HAS_EVERYTHING)
             .Build();
   }
 
@@ -303,7 +302,7 @@ TEST_F(DataReductionProxyRequestOptionsTest, ParseExperimentsFromFieldTrial) {
   for (const auto& test : tests) {
     std::vector<std::string> expected_experiments;
 
-    base::CommandLine::ForCurrentProcess()->InitFromArgv(0, NULL);
+    base::CommandLine::ForCurrentProcess()->InitFromArgv(0, nullptr);
 
     base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
         data_reduction_proxy::switches::kDataReductionProxyExperiment,
@@ -328,6 +327,84 @@ TEST_F(DataReductionProxyRequestOptionsTest, ParseExperimentsFromFieldTrial) {
     CreateRequestOptions(kVersion);
     VerifyExpectedHeader(expected_header, kPageIdValue);
   }
+}
+
+TEST_F(DataReductionProxyRequestOptionsTest, TestExperimentPrecedence) {
+  // Tests that combinations of configurations that trigger "exp=" directive in
+  // the Chrome-Proxy header have the right precendence, and only append a value
+  // for the highest priority value.
+
+  // Field trial has the lowest priority.
+  std::map<std::string, std::string> server_experiment;
+  server_experiment["exp"] = "foo";
+  ASSERT_TRUE(variations::AssociateVariationParams(
+      params::GetServerExperimentsFieldTrialName(), "enabled",
+      server_experiment));
+
+  base::FieldTrialList field_trial_list(nullptr);
+  base::FieldTrialList::CreateFieldTrial(
+      params::GetServerExperimentsFieldTrialName(), "enabled");
+  std::vector<std::string> expected_experiments;
+  expected_experiments.push_back("foo");
+  std::string expected_header;
+  SetHeaderExpectations(kExpectedSession, kExpectedCredentials, std::string(),
+                        kClientStr, kExpectedBuild, kExpectedPatch, kPageId,
+                        expected_experiments, &expected_header);
+  CreateRequestOptions(kVersion);
+  VerifyExpectedHeader(expected_header, kPageIdValue);
+
+  // "force_lite_page" has the next lowest priority.
+  base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
+      switches::kDataReductionProxyLoFi,
+      switches::kDataReductionProxyLoFiValueAlwaysOn);
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kEnableDataReductionProxyLitePage);
+  expected_experiments.clear();
+  expected_experiments.push_back(chrome_proxy_experiment_force_lite_page());
+  SetHeaderExpectations(kExpectedSession, kExpectedCredentials, std::string(),
+                        kClientStr, kExpectedBuild, kExpectedPatch, kPageId,
+                        expected_experiments, &expected_header);
+  CreateRequestOptions(kVersion);
+  VerifyExpectedHeader(expected_header, kPageIdValue);
+
+  // Setting the experiment explicitly has the highest priority.
+  base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
+      data_reduction_proxy::switches::kDataReductionProxyExperiment, "bar");
+  expected_experiments.clear();
+  expected_experiments.push_back("bar");
+  SetHeaderExpectations(kExpectedSession, kExpectedCredentials, std::string(),
+                        kClientStr, kExpectedBuild, kExpectedPatch, kPageId,
+                        expected_experiments, &expected_header);
+  CreateRequestOptions(kVersion);
+  VerifyExpectedHeader(expected_header, kPageIdValue);
+}
+
+TEST_F(DataReductionProxyRequestOptionsTest, TestExperimentOtherLoFiFlags) {
+  std::string expected_header;
+  std::vector<std::string> expected_experiments;
+
+  // No "exp=force_*" is set for SlowConnectionOnly flag.
+  base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
+      switches::kDataReductionProxyLoFi,
+      switches::kDataReductionProxyLoFiValueSlowConnectionsOnly);
+  expected_experiments.clear();
+  SetHeaderExpectations(kExpectedSession, kExpectedCredentials, std::string(),
+                        kClientStr, kExpectedBuild, kExpectedPatch, kPageId,
+                        expected_experiments, &expected_header);
+  CreateRequestOptions(kVersion);
+  VerifyExpectedHeader(expected_header, kPageIdValue);
+
+  // "exp=force_empty_image" is set for CellularOnly flag.
+  base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
+      switches::kDataReductionProxyLoFi,
+      switches::kDataReductionProxyLoFiValueAlwaysOn);
+  expected_experiments.clear();
+  expected_experiments.push_back(chrome_proxy_experiment_force_empty_image());
+  SetHeaderExpectations(kExpectedSession, kExpectedCredentials, std::string(),
+                        kClientStr, kExpectedBuild, kExpectedPatch, kPageId,
+                        expected_experiments, &expected_header);
+  CreateRequestOptions(kVersion);
+  VerifyExpectedHeader(expected_header, kPageIdValue);
 }
 
 TEST_F(DataReductionProxyRequestOptionsTest, GetSessionKeyFromRequestHeaders) {
@@ -368,15 +445,17 @@ TEST_F(DataReductionProxyRequestOptionsTest, GetSessionKeyFromRequestHeaders) {
 
 TEST_F(DataReductionProxyRequestOptionsTest, PageIdIncrementing) {
   CreateRequestOptions(kVersion);
-  DCHECK_EQ(1u, request_options()->GeneratePageId());
-  DCHECK_EQ(2u, request_options()->GeneratePageId());
-  DCHECK_EQ(3u, request_options()->GeneratePageId());
+  uint64_t page_id = request_options()->GeneratePageId();
+  DCHECK_EQ(++page_id, request_options()->GeneratePageId());
+  DCHECK_EQ(++page_id, request_options()->GeneratePageId());
+  DCHECK_EQ(++page_id, request_options()->GeneratePageId());
 
   request_options()->SetSecureSession("blah");
 
-  DCHECK_EQ(1u, request_options()->GeneratePageId());
-  DCHECK_EQ(2u, request_options()->GeneratePageId());
-  DCHECK_EQ(3u, request_options()->GeneratePageId());
+  page_id = request_options()->GeneratePageId();
+  DCHECK_EQ(++page_id, request_options()->GeneratePageId());
+  DCHECK_EQ(++page_id, request_options()->GeneratePageId());
+  DCHECK_EQ(++page_id, request_options()->GeneratePageId());
 }
 
 }  // namespace data_reduction_proxy

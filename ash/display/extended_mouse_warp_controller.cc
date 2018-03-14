@@ -5,13 +5,13 @@
 #include "ash/display/extended_mouse_warp_controller.h"
 
 #include <cmath>
+#include <memory>
 
 #include "ash/display/display_util.h"
 #include "ash/display/shared_display_edge_indicator.h"
 #include "ash/display/window_tree_host_manager.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
-#include "base/memory/ptr_util.h"
 #include "ui/aura/window.h"
 #include "ui/display/display_layout.h"
 #include "ui/display/manager/display_manager.h"
@@ -33,12 +33,6 @@ const int kMaximumSnapHeight = 16;
 // dragging a window.  If two displays shares the edge smaller than
 // this, entire edge will be used as a draggable space.
 const int kMinimumIndicatorHeight = 200;
-
-// Helper method that maps a display::Display to an aura::Window.
-aura::Window* GetRootWindowForDisplayId(int64_t display_id) {
-  return Shell::Get()->window_tree_host_manager()->GetRootWindowForDisplayId(
-      display_id);
-}
 
 // Helper method that maps an aura::Window to display id;
 int64_t GetDisplayIdFromWindow(aura::Window* window) {
@@ -74,11 +68,13 @@ ExtendedMouseWarpController::WarpRegion::WarpRegion(
       b_indicator_bounds_(b_indicator_bounds),
       shared_display_edge_indicator_(nullptr) {
   // Initialize edge bounds from indicator bounds.
-  aura::Window* a_window = GetRootWindowForDisplayId(a_display_id);
-  aura::Window* b_window = GetRootWindowForDisplayId(b_display_id);
+  aura::Window* a_window = Shell::GetRootWindowForDisplayId(a_display_id);
+  aura::Window* b_window = Shell::GetRootWindowForDisplayId(b_display_id);
 
-  AshWindowTreeHost* a_ash_host = GetRootWindowController(a_window)->ash_host();
-  AshWindowTreeHost* b_ash_host = GetRootWindowController(b_window)->ash_host();
+  AshWindowTreeHost* a_ash_host =
+      RootWindowController::ForWindow(a_window)->ash_host();
+  AshWindowTreeHost* b_ash_host =
+      RootWindowController::ForWindow(b_window)->ash_host();
 
   a_edge_bounds_in_native_ =
       GetNativeEdgeBounds(a_ash_host, a_indicator_bounds);
@@ -86,7 +82,7 @@ ExtendedMouseWarpController::WarpRegion::WarpRegion(
       GetNativeEdgeBounds(b_ash_host, b_indicator_bounds);
 }
 
-ExtendedMouseWarpController::WarpRegion::~WarpRegion() {}
+ExtendedMouseWarpController::WarpRegion::~WarpRegion() = default;
 
 const gfx::Rect&
 ExtendedMouseWarpController::WarpRegion::GetIndicatorBoundsForTest(
@@ -120,7 +116,7 @@ ExtendedMouseWarpController::ExtendedMouseWarpController(
   }
 }
 
-ExtendedMouseWarpController::~ExtendedMouseWarpController() {}
+ExtendedMouseWarpController::~ExtendedMouseWarpController() = default;
 
 bool ExtendedMouseWarpController::WarpMouseCursor(ui::MouseEvent* event) {
   if (display::Screen::GetScreen()->GetNumDisplays() <= 1 || !enabled_)
@@ -146,14 +142,12 @@ bool ExtendedMouseWarpController::WarpMouseCursor(ui::MouseEvent* event) {
   gfx::Point point_in_native =
       ui::EventSystemLocationFromNative(event->native_event());
 
-#if defined(USE_OZONE)
   // TODO(dnicoara): crbug.com/415680 Move cursor warping into Ozone once Ozone
   // has access to the logical display layout.
   // Native events in Ozone are in the native window coordinate system. We need
   // to translate them to get the global position.
   point_in_native.Offset(target->GetHost()->GetBoundsInPixels().x(),
                          target->GetHost()->GetBoundsInPixels().y());
-#endif
 
   return WarpMouseCursorInNativeCoords(point_in_native, point_in_screen, false);
 }
@@ -186,10 +180,10 @@ bool ExtendedMouseWarpController::WarpMouseCursorInNativeCoords(
       continue;
 
     // The mouse must move.
-    aura::Window* dst_window = GetRootWindowForDisplayId(
+    aura::Window* dst_window = Shell::GetRootWindowForDisplayId(
         in_a_edge ? warp->b_display_id_ : warp->a_display_id_);
     AshWindowTreeHost* target_ash_host =
-        GetRootWindowController(dst_window)->ash_host();
+        RootWindowController::ForWindow(dst_window)->ash_host();
 
     MoveCursorTo(target_ash_host, point_in_screen, update_mouse_location_now);
     return true;
@@ -218,7 +212,7 @@ ExtendedMouseWarpController::CreateWarpRegion(const display::Display& a,
       AdjustSourceEdgeBounds(b.bounds(), snap_barrier, &b_edge);
   }
 
-  return base::MakeUnique<WarpRegion>(a.id(), b.id(), a_edge, b_edge);
+  return std::make_unique<WarpRegion>(a.id(), b.id(), a_edge, b_edge);
 }
 
 }  // namespace ash

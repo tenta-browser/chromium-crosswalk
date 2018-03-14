@@ -10,18 +10,23 @@
 #include "ash/shell_observer.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "chrome/browser/ui/ash/tablet_mode_client_observer.h"
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
 #include "chrome/browser/ui/views/tab_icon_view_model.h"
 
+class HostedAppButtonContainer;
 class TabIconView;
 
 namespace ash {
+class FrameCaptionButton;
 class FrameCaptionButtonContainerView;
-class HeaderPainter;
+class FrameHeader;
 }
 
+// Provides the BrowserNonClientFrameView for Chrome OS.
 class BrowserNonClientFrameViewAsh : public BrowserNonClientFrameView,
                                      public ash::ShellObserver,
+                                     public TabletModeClientObserver,
                                      public TabIconViewModel {
  public:
   BrowserNonClientFrameViewAsh(BrowserFrame* frame, BrowserView* browser_view);
@@ -34,6 +39,7 @@ class BrowserNonClientFrameViewAsh : public BrowserNonClientFrameView,
   int GetTopInset(bool restored) const override;
   int GetThemeBackgroundXInset() const override;
   void UpdateThrobber(bool running) override;
+  void UpdateMinimumSize() override;
 
   // views::NonClientFrameView:
   gfx::Rect GetBoundsForClientView() const override;
@@ -57,8 +63,9 @@ class BrowserNonClientFrameViewAsh : public BrowserNonClientFrameView,
   // ash::ShellObserver:
   void OnOverviewModeStarting() override;
   void OnOverviewModeEnded() override;
-  void OnMaximizeModeStarted() override;
-  void OnMaximizeModeEnded() override;
+
+  // TabletModeClientObserver:
+  void OnTabletModeToggled(bool enabled) override;
 
   // TabIconViewModel:
   bool ShouldTabIconViewAnimate() const override;
@@ -75,10 +82,16 @@ class BrowserNonClientFrameViewAsh : public BrowserNonClientFrameView,
   FRIEND_TEST_ALL_PREFIXES(BrowserNonClientFrameViewAshTest,
                            ImmersiveFullscreen);
   FRIEND_TEST_ALL_PREFIXES(BrowserNonClientFrameViewAshTest,
-                           ToggleMaximizeModeRelayout);
+                           ToggleTabletModeRelayout);
   FRIEND_TEST_ALL_PREFIXES(BrowserNonClientFrameViewAshTest,
                            AvatarDisplayOnTeleportedWindow);
-  friend class BrowserHeaderPainterAsh;
+  FRIEND_TEST_ALL_PREFIXES(HostedAppNonClientFrameViewAshTest, HostedAppFrame);
+  FRIEND_TEST_ALL_PREFIXES(BrowserNonClientFrameViewAshBackButtonTest,
+                           V1BackButton);
+  FRIEND_TEST_ALL_PREFIXES(ImmersiveModeControllerAshHostedAppBrowserTest,
+                           FrameLayout);
+
+  friend class BrowserFrameHeaderAsh;
 
   // Distance between the left edge of the NonClientFrameView and the tab strip.
   int GetTabStripLeftInset() const;
@@ -98,16 +111,33 @@ class BrowserNonClientFrameViewAsh : public BrowserNonClientFrameView,
   // need their frames painted.
   bool ShouldPaint() const;
 
-  void PaintToolbarBackground(gfx::Canvas* canvas);
+  // Helps to hide or show the header as needed when overview mode starts or
+  // ends.
+  void OnOverviewModeChanged(bool in_overview);
+
+  // Creates the frame header for the browser window.
+  std::unique_ptr<ash::FrameHeader> CreateFrameHeader();
 
   // View which contains the window controls.
   ash::FrameCaptionButtonContainerView* caption_button_container_;
+
+  ash::FrameCaptionButton* back_button_;
 
   // For popups, the window icon.
   TabIconView* window_icon_;
 
   // Helper class for painting the header.
-  std::unique_ptr<ash::HeaderPainter> header_painter_;
+  std::unique_ptr<ash::FrameHeader> frame_header_;
+
+  // Container for extra frame buttons shown for hosted app windows.
+  // Owned by views hierarchy.
+  HostedAppButtonContainer* hosted_app_button_container_;
+
+  // Indicates whether overview mode is active. Hide the header for V1 apps in
+  // overview mode because a fake header is added for better UX. If also in
+  // immersive mode before entering overview mode, the flag will be ignored
+  // because the reveal lock will determine the show/hide header.
+  bool in_overview_mode_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserNonClientFrameViewAsh);
 };

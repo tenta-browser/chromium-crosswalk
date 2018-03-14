@@ -10,10 +10,6 @@
 #include "content/browser/devtools/protocol/devtools_domain_handler.h"
 #include "content/browser/devtools/protocol/io.h"
 
-namespace base {
-class RefCountedString;
-}
-
 namespace content {
 class DevToolsIOContext;
 
@@ -26,6 +22,8 @@ class IOHandler : public DevToolsDomainHandler,
   ~IOHandler() override;
 
   void Wire(UberDispatcher* dispatcher) override;
+  void SetRenderer(RenderProcessHost* process_host,
+                   RenderFrameHostImpl* frame_host) override;
 
   // Protocol methods.
   void Read(
@@ -37,10 +35,13 @@ class IOHandler : public DevToolsDomainHandler,
 
  private:
   void ReadComplete(std::unique_ptr<ReadCallback> callback,
-      const scoped_refptr<base::RefCountedString>& data, int status);
+                    std::unique_ptr<std::string> data,
+                    bool base64_encoded,
+                    int status);
 
   std::unique_ptr<IO::Frontend> frontend_;
   DevToolsIOContext* io_context_;
+  RenderProcessHost* process_host_;
   base::WeakPtrFactory<IOHandler> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(IOHandler);
@@ -49,4 +50,4 @@ class IOHandler : public DevToolsDomainHandler,
 }  // namespace protocol
 }  // namespace content
 
-#endif  // CONTENT_BROWSER_DEVTOOLS_PROTOCOL_TRACING_HANDLER_H_
+#endif  // CONTENT_BROWSER_DEVTOOLS_PROTOCOL_IO_HANDLER_H_

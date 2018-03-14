@@ -465,6 +465,28 @@ function testChromeExtensionURL() {
   document.body.appendChild(webview);
 }
 
+// This test verifies that guests are blocked from navigating the webview to a
+// data URL.
+function testContentInitiatedNavigationToDataUrlBlocked() {
+  var navUrl = "data:text/html,foo";
+  var webview = document.createElement('webview');
+  webview.addEventListener('consolemessage', function(e) {
+    if (e.message.startsWith(
+        'Not allowed to navigate top frame to data URL:')) {
+      embedder.test.succeed();
+    }
+  });
+  webview.addEventListener('loadstop', function(e) {
+    if (webview.getAttribute('src') == navUrl) {
+      embedder.test.fail();
+    }
+  });
+  webview.setAttribute('src',
+      'data:text/html,<script>window.location.href = "' + navUrl +
+      '";</scr' + 'ipt>');
+  document.body.appendChild(webview);
+}
+
 // This test verifies that the load event fires when the a new page is
 // loaded.
 // TODO(fsamuel): Add a test to verify that subframe loads within a guest
@@ -1031,6 +1053,23 @@ function testLoadAbortInvalidNavigation() {
   document.body.appendChild(webview);
 }
 
+// This test verifies that canGoBack is true for failed navigations.
+function testCanGoBack() {
+  var testPage = 'data:text/html,test page';
+  var badUrl = 'http://foo.bar/';
+  var webview = document.createElement('webview');
+  webview.addEventListener('loadcommit', function(evt) {
+    if (evt.url == testPage) {
+      webview.src = badUrl;
+    } else if (evt.url == badUrl) {
+      embedder.test.assertTrue(webview.canGoBack());
+      embedder.test.succeed();
+    }
+  });
+  webview.src = testPage;
+  document.body.appendChild(webview);
+}
+
 // Verifies that navigation to a URL that is valid but not web-safe or
 // pseudo-scheme fires loadabort and doesn't cause a crash.
 function testLoadAbortNonWebSafeScheme() {
@@ -1229,6 +1268,12 @@ function testNavOnSrcAttributeChange() {
 }
 
 // This test verifies that new window attachment functions as expected.
+//
+// TODO(crbug.com/594215) Test that opening a new window with a data URL is
+// blocked. There is currently no way to test this, as the block message is
+// printed on the new window which never gets created, so the message is lost.
+// Also test that opening a new window with a data URL when the webview is
+// already on a data URL is allowed.
 function testNewWindow() {
   var webview = document.createElement('webview');
   webview.addEventListener('newwindow', function(e) {
@@ -1652,10 +1697,9 @@ function testWebRequestAPIWithHeaders() {
 }
 
 function testWebRequestAPIExistence() {
-  var apiPropertiesToCheck = [
+  var regularEventsToCheck = [
     // Declarative WebRequest API.
     'onMessage',
-    'onRequest',
     // WebRequest API.
     'onBeforeRequest',
     'onBeforeSendHeaders',
@@ -1667,24 +1711,24 @@ function testWebRequestAPIExistence() {
     'onCompleted',
     'onErrorOccurred'
   ];
+  var declarativeEventsToCheck = [
+    'onRequest',
+  ];
   var webview = document.createElement('webview');
   webview.setAttribute('partition', arguments.callee.name);
   webview.addEventListener('loadstop', function(e) {
-    for (var i = 0; i < apiPropertiesToCheck.length; ++i) {
-      embedder.test.assertEq('object',
-                             typeof webview.request[apiPropertiesToCheck[i]]);
-      embedder.test.assertEq(
-          'function',
-          typeof webview.request[apiPropertiesToCheck[i]].addListener);
-      embedder.test.assertEq(
-          'function',
-          typeof webview.request[apiPropertiesToCheck[i]].addRules);
-      embedder.test.assertEq(
-          'function',
-          typeof webview.request[apiPropertiesToCheck[i]].getRules);
-      embedder.test.assertEq(
-          'function',
-          typeof webview.request[apiPropertiesToCheck[i]].removeRules);
+    for (var i = 0; i < regularEventsToCheck.length; ++i) {
+      var eventName = regularEventsToCheck[i];
+      var event = webview.request[eventName];
+      embedder.test.assertEq('object', typeof event);
+      embedder.test.assertEq('function', typeof event.addListener);
+    }
+    for (var i = 0; i < declarativeEventsToCheck.length; ++i) {
+      var eventName = declarativeEventsToCheck[i];
+      var event = webview.request[eventName];
+      embedder.test.assertEq('function', typeof event.addRules);
+      embedder.test.assertEq('function', typeof event.getRules);
+      embedder.test.assertEq('function', typeof event.removeRules);
     }
 
     // Try to overwrite webview.request, shall not succeed.
@@ -1750,9 +1794,12 @@ embedder.test.testList = {
   'testAutosizeHeight': testAutosizeHeight,
   'testAutosizeRemoveAttributes': testAutosizeRemoveAttributes,
   'testAutosizeWithPartialAttributes': testAutosizeWithPartialAttributes,
+  'testCanGoBack': testCanGoBack,
   'testCannotMutateEventName': testCannotMutateEventName,
   'testChromeExtensionRelativePath': testChromeExtensionRelativePath,
   'testChromeExtensionURL': testChromeExtensionURL,
+  'testContentInitiatedNavigationToDataUrlBlocked':
+      testContentInitiatedNavigationToDataUrlBlocked,
   'testContentLoadEvent': testContentLoadEvent,
   'testDeclarativeWebRequestAPI': testDeclarativeWebRequestAPI,
   'testDeclarativeWebRequestAPISendMessage':

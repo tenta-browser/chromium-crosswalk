@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/payments/content/android/payment_details_validation_android.h"
-
 #include <stdint.h>
 
 #include <cstring>
@@ -12,13 +10,15 @@
 #include <vector>
 
 #include "base/android/jni_android.h"
-#include "components/payments/content/payment_details_validation.h"
-#include "components/payments/content/payment_request.mojom.h"
+#include "components/payments/content/payment_request_converter.h"
+#include "components/payments/core/payment_details.h"
+#include "components/payments/core/payment_details_validation.h"
 #include "jni/PaymentValidator_jni.h"
+#include "third_party/WebKit/public/platform/modules/payments/payment_request.mojom.h"
 
 namespace payments {
 
-jboolean ValidatePaymentDetails(
+jboolean JNI_PaymentValidator_ValidatePaymentDetailsAndroid(
     JNIEnv* env,
     const base::android::JavaParamRef<jclass>& jcaller,
     const base::android::JavaParamRef<jobject>& buffer) {
@@ -30,11 +30,8 @@ jboolean ValidatePaymentDetails(
   if (!mojom::PaymentDetails::Deserialize(std::move(mojo_buffer), &details))
     return false;
   std::string unused_error_message;
-  return validatePaymentDetails(details, &unused_error_message);
-}
-
-bool RegisterPaymentValidator(JNIEnv* env) {
-  return RegisterNativesImpl(env);
+  return ValidatePaymentDetails(ConvertPaymentDetails(details),
+                                &unused_error_message);
 }
 
 }  // namespace payments

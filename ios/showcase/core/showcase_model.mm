@@ -22,16 +22,6 @@
       showcase::kUseCaseKey : @"Content Suggestions UI",
     },
     @{
-      showcase::kClassForDisplayKey : @"MenuViewController",
-      showcase::kClassForInstantiationKey : @"MenuViewController",
-      showcase::kUseCaseKey : @"Tools menu",
-    },
-    @{
-      showcase::kClassForDisplayKey : @"NTPViewController",
-      showcase::kClassForInstantiationKey : @"SCNTPCoordinator",
-      showcase::kUseCaseKey : @"NTP",
-    },
-    @{
       showcase::kClassForDisplayKey : @"PaymentRequestEditViewController",
       showcase::kClassForInstantiationKey : @"SCPaymentsEditorCoordinator",
       showcase::kUseCaseKey : @"Generic payment request editor",
@@ -42,9 +32,9 @@
       showcase::kUseCaseKey : @"Payment request picker view",
     },
     @{
-      showcase::kClassForDisplayKey : @"RootContainerViewController",
-      showcase::kClassForInstantiationKey : @"SCRootCoordinator",
-      showcase::kUseCaseKey : @"Root container",
+      showcase::kClassForDisplayKey : @"PaymentRequestSelectorViewController",
+      showcase::kClassForInstantiationKey : @"SCPaymentsSelectorCoordinator",
+      showcase::kUseCaseKey : @"Payment request selector view",
     },
     @{
       showcase::kClassForDisplayKey : @"SettingsViewController",
@@ -52,29 +42,29 @@
       showcase::kUseCaseKey : @"Main settings screen",
     },
     @{
-      showcase::kClassForDisplayKey : @"TabGridViewController",
-      showcase::kClassForInstantiationKey : @"SCTabGridCoordinator",
-      showcase::kUseCaseKey : @"Tab grid",
-    },
-    @{
-      showcase::kClassForDisplayKey : @"TopToolbarTabViewController",
-      showcase::kClassForInstantiationKey : @"SCTopToolbarTabCoordinator",
-      showcase::kUseCaseKey : @"Top toolbar tab",
-    },
-    @{
-      showcase::kClassForDisplayKey : @"BottomToolbarTabViewController",
-      showcase::kClassForInstantiationKey : @"SCBottomToolbarTabCoordinator",
-      showcase::kUseCaseKey : @"Bottom toolbar tab",
-    },
-    @{
-      showcase::kClassForDisplayKey : @"ToolbarViewController",
-      showcase::kClassForInstantiationKey : @"SCToolbarCoordinator",
-      showcase::kUseCaseKey : @"Toolbar",
-    },
-    @{
       showcase::kClassForDisplayKey : @"UITableViewCell",
       showcase::kClassForInstantiationKey : @"UIKitTableViewCellViewController",
       showcase::kUseCaseKey : @"UIKit Table Cells",
+    },
+    @{
+      showcase::kClassForDisplayKey : @"SearchWidgetViewController",
+      showcase::kClassForInstantiationKey : @"SCSearchWidgetCoordinator",
+      showcase::kUseCaseKey : @"Search Widget",
+    },
+    @{
+      showcase::kClassForDisplayKey : @"ContentWidgetViewController",
+      showcase::kClassForInstantiationKey : @"SCContentWidgetCoordinator",
+      showcase::kUseCaseKey : @"Content Widget",
+    },
+    @{
+      showcase::kClassForDisplayKey : @"TextBadgeView",
+      showcase::kClassForInstantiationKey : @"SCTextBadgeViewController",
+      showcase::kUseCaseKey : @"Text badge",
+    },
+    @{
+      showcase::kClassForDisplayKey : @"BubbleViewController",
+      showcase::kClassForInstantiationKey : @"SCBubbleCoordinator",
+      showcase::kUseCaseKey : @"Bubble",
     },
   ];
 }

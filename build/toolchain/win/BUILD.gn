@@ -23,9 +23,19 @@ assert(is_win)
 tool_wrapper_path = rebase_path("tool_wrapper.py", root_build_dir)
 
 if (use_goma) {
-  goma_prefix = "$goma_dir/gomacc.exe "
+  if (host_os == "win") {
+    goma_prefix = "$goma_dir/gomacc.exe "
+  } else {
+    goma_prefix = "$goma_dir/gomacc "
+  }
 } else {
   goma_prefix = ""
+}
+
+if (disable_goma) {
+  goma_disabled = "true"
+} else {
+  goma_disabled = "false"
 }
 
 # Copy the VS runtime DLL for the default toolchain to the root build directory
@@ -116,6 +126,10 @@ template("msvc_toolchain") {
       # archives and understands bitcode (for lto builds).
       lib = "$prefix/$lld_link /lib /llvmlibthin"
       link = "$prefix/$lld_link"
+      if (host_os != "win") {
+        # See comment adding --rsp-quoting to $cl above for more information.
+        link = "$link --rsp-quoting=posix"
+      }
     } else {
       lib = "lib.exe"
       link = "link.exe"
@@ -126,13 +140,26 @@ template("msvc_toolchain") {
     # %PATH%) -- e.g. 32-bit MSVS builds require %PATH% to be set and just
     # passing in a list of include directories isn't enough.
     if (defined(invoker.sys_include_flags)) {
-      env_wrapper = ""
+      if (disable_goma) {
+        # If disable_goma = true, need to pass GOMA_DISABLED env to
+        # gomacc.exe via environment.{x86,x64}.
+        env_wrapper = "ninja -t msvc -e $env -- "  # Note trailing space.
+      } else {
+        env_wrapper = ""
+      }
       sys_include_flags = "${invoker.sys_include_flags} "  # Note trailing space.
     } else {
       # clang-cl doesn't need this env hoop, so omit it there.
       assert(!toolchain_uses_clang)
       env_wrapper = "ninja -t msvc -e $env -- "  # Note trailing space.
       sys_include_flags = ""
+    }
+
+    clflags = ""
+
+    # Pass /FC flag to the compiler if needed.
+    if (msvc_use_absolute_paths) {
+      clflags += "/FC "
     }
 
     tool("cc") {
@@ -143,7 +170,7 @@ template("msvc_toolchain") {
       # Label names may have spaces in them so the pdbname must be quoted. The
       # source and output don't need to be quoted because GN knows they're a
       # full file name and will quote automatically when necessary.
-      command = "$env_wrapper$cl /nologo /showIncludes /FC @$rspfile /c {{source}} /Fo{{output}} /Fd\"$pdbname\""
+      command = "$env_wrapper$cl /nologo /showIncludes ${clflags} @$rspfile /c {{source}} /Fo{{output}} /Fd\"$pdbname\""
       depsformat = "msvc"
       description = "CC {{output}}"
       outputs = [
@@ -160,7 +187,7 @@ template("msvc_toolchain") {
       pdbname = "{{target_out_dir}}/{{label_name}}_cc.pdb"
 
       # See comment in CC tool about quoting.
-      command = "$env_wrapper$cl /nologo /showIncludes /FC @$rspfile /c {{source}} /Fo{{output}} /Fd\"$pdbname\""
+      command = "$env_wrapper$cl /nologo /showIncludes ${clflags} @$rspfile /c {{source}} /Fo{{output}} /Fd\"$pdbname\""
       depsformat = "msvc"
       description = "CXX {{output}}"
       outputs = [
@@ -171,6 +198,7 @@ template("msvc_toolchain") {
 
     tool("rc") {
       command = "$python_path $tool_wrapper_path rc-wrapper $env rc.exe {{defines}} {{include_dirs}} /fo{{output}} {{source}}"
+      depsformat = "msvc"
       outputs = [
         "$object_subdir/{{source_name_part}}.res",
       ]
@@ -337,6 +365,7 @@ if (target_cpu == "x86") {
                                      windows_sdk_path,
                                      visual_studio_runtime_dirs,
                                      "x86",
+                                     goma_disabled,
                                    ],
                                    "scope")
 
@@ -349,7 +378,7 @@ if (target_cpu == "x86") {
     }
   }
 
-  msvc_toolchain("clang_x86") {
+  msvc_toolchain("win_clang_x86") {
     environment = "environment.x86"
     prefix = rebase_path("$clang_base_path/bin", root_build_dir)
     cl = "${goma_prefix}$prefix/${clang_cl}"
@@ -369,6 +398,7 @@ x64_toolchain_data = exec_script("setup_toolchain.py",
                                    windows_sdk_path,
                                    visual_studio_runtime_dirs,
                                    "x64",
+                                   goma_disabled,
                                  ],
                                  "scope")
 
@@ -386,7 +416,7 @@ template("win_x64_toolchains") {
     }
   }
 
-  msvc_toolchain("clang_" + target_name) {
+  msvc_toolchain("win_clang_" + target_name) {
     environment = "environment.x64"
     prefix = rebase_path("$clang_base_path/bin", root_build_dir)
     cl = "${goma_prefix}$prefix/${clang_cl}"

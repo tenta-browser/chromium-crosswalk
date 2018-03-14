@@ -42,10 +42,9 @@ namespace {
 
 class TabIdAnnotatorTest : public ChromeRenderViewHostTestHarness {
  public:
-  TabIdAnnotatorTest() {
-    // Cannot use IO_MAIN_LOOP with RenderViewHostTestHarness.
-    SetThreadBundleOptions(content::TestBrowserThreadBundle::REAL_IO_THREAD);
-  }
+  TabIdAnnotatorTest()
+      : ChromeRenderViewHostTestHarness(
+            content::TestBrowserThreadBundle::REAL_IO_THREAD) {}
 
   ~TabIdAnnotatorTest() override {}
 
@@ -54,10 +53,11 @@ class TabIdAnnotatorTest : public ChromeRenderViewHostTestHarness {
 };
 
 // Synthesizes a DataUse object with the given |tab_id|.
-std::unique_ptr<DataUse> CreateDataUse(int32_t tab_id) {
-  return std::unique_ptr<DataUse>(new DataUse(
+std::unique_ptr<DataUse> CreateDataUse(int32_t tab_id, int render_process_id) {
+  auto data_use = std::unique_ptr<DataUse>(new DataUse(
       GURL("http://foo.com"), base::TimeTicks(), GURL(), tab_id,
       net::NetworkChangeNotifier::CONNECTION_UNKNOWN, std::string(), 100, 100));
+  return data_use;
 }
 
 // Expects that |expected| and |actual| are equal.
@@ -80,7 +80,7 @@ void ExpectDataUseAndQuit(base::RunLoop* ui_run_loop,
   // aren't thread safe.
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&base::RunLoop::Quit, base::Unretained(ui_run_loop)));
+      base::BindOnce(&base::RunLoop::Quit, base::Unretained(ui_run_loop)));
 }
 
 // Tests that for a sample URLRequest, associated with the given
@@ -109,8 +109,8 @@ void TestAnnotateOnIOThread(base::RunLoop* ui_run_loop,
     // values are used for all the other args.
     content::ResourceRequestInfo::AllocateForTesting(
         request.get(), content::RESOURCE_TYPE_MAIN_FRAME, nullptr,
-        render_process_id, -1, render_frame_id, true, false, true, true,
-        content::PREVIEWS_OFF);
+        render_process_id, -1, render_frame_id, true, true, true,
+        content::PREVIEWS_OFF, nullptr);
   }
 
   // An invalid tab ID to check that the annotator always sets the tab ID. -2 is
@@ -120,15 +120,16 @@ void TestAnnotateOnIOThread(base::RunLoop* ui_run_loop,
   // Annotate two separate DataUse objects to ensure that repeated annotations
   // for the same URLRequest work properly.
   std::unique_ptr<DataUse> first_expected_data_use =
-      CreateDataUse(expected_tab_id);
+      CreateDataUse(expected_tab_id, render_process_id);
   annotator.Annotate(
-      request.get(), CreateDataUse(kInvalidTabId),
+      request.get(), CreateDataUse(kInvalidTabId, render_process_id),
       base::Bind(&ExpectDataUse, base::Passed(&first_expected_data_use)));
 
   // Quit the |ui_run_loop| after the second annotation.
   std::unique_ptr<DataUse> second_expected_data_use =
-      CreateDataUse(expected_tab_id);
-  annotator.Annotate(request.get(), CreateDataUse(kInvalidTabId),
+      CreateDataUse(expected_tab_id, render_process_id);
+  annotator.Annotate(request.get(),
+                     CreateDataUse(kInvalidTabId, render_process_id),
                      base::Bind(&ExpectDataUseAndQuit, ui_run_loop,
                                 base::Passed(&second_expected_data_use)));
 }
@@ -137,9 +138,9 @@ TEST_F(TabIdAnnotatorTest, AnnotateWithNoRenderFrame) {
   base::RunLoop ui_run_loop;
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&TestAnnotateOnIOThread, &ui_run_loop,
-                 -1 /* render_process_id */, -1 /* render_frame_id */,
-                 -1 /* expected_tab_id */));
+      base::BindOnce(&TestAnnotateOnIOThread, &ui_run_loop,
+                     -1 /* render_process_id */, -1 /* render_frame_id */,
+                     -1 /* expected_tab_id */));
   ui_run_loop.Run();
 }
 
@@ -150,10 +151,10 @@ TEST_F(TabIdAnnotatorTest, AnnotateWithRenderFrameAndNoTab) {
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&TestAnnotateOnIOThread, &ui_run_loop,
-                 web_contents()->GetMainFrame()->GetProcess()->GetID(),
-                 web_contents()->GetMainFrame()->GetRoutingID(),
-                 -1 /* expected_tab_id */));
+      base::BindOnce(&TestAnnotateOnIOThread, &ui_run_loop,
+                     web_contents()->GetMainFrame()->GetProcess()->GetID(),
+                     web_contents()->GetMainFrame()->GetRoutingID(),
+                     -1 /* expected_tab_id */));
   ui_run_loop.Run();
 }
 
@@ -167,10 +168,10 @@ TEST_F(TabIdAnnotatorTest, AnnotateWithRenderFrameAndTab) {
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&TestAnnotateOnIOThread, &ui_run_loop,
-                 web_contents()->GetMainFrame()->GetProcess()->GetID(),
-                 web_contents()->GetMainFrame()->GetRoutingID(),
-                 expected_tab_id));
+      base::BindOnce(&TestAnnotateOnIOThread, &ui_run_loop,
+                     web_contents()->GetMainFrame()->GetProcess()->GetID(),
+                     web_contents()->GetMainFrame()->GetRoutingID(),
+                     expected_tab_id));
   ui_run_loop.Run();
 }
 

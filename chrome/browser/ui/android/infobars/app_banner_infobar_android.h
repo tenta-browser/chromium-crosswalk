@@ -25,8 +25,7 @@ class AppBannerInfoBarAndroid : public ConfirmInfoBar {
   // Constructs an AppBannerInfoBarAndroid promoting a web app.
   AppBannerInfoBarAndroid(
       std::unique_ptr<banners::AppBannerInfoBarDelegateAndroid> delegate,
-      const GURL& app_url,
-      bool is_webapk);
+      const GURL& app_url);
 
   ~AppBannerInfoBarAndroid() override;
 
@@ -36,6 +35,8 @@ class AppBannerInfoBarAndroid : public ConfirmInfoBar {
   void OnInstallStateChanged(int new_state);
 
  private:
+  banners::AppBannerInfoBarDelegateAndroid* GetDelegate();
+
   // InfoBarAndroid overrides.
   base::android::ScopedJavaLocalRef<jobject> CreateRenderInfoBar(
       JNIEnv* env) override;
@@ -45,9 +46,6 @@ class AppBannerInfoBarAndroid : public ConfirmInfoBar {
 
   // Web app: URL for the app.
   GURL app_url_;
-
-  // Indicates whether the info bar is for installing a WebAPK.
-  bool is_webapk_;
 
   base::android::ScopedJavaGlobalRef<jobject> java_infobar_;
 

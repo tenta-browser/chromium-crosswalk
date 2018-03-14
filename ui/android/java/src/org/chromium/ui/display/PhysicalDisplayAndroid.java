@@ -14,6 +14,7 @@ import android.view.Display;
 import org.chromium.base.CommandLine;
 import org.chromium.base.Log;
 
+
 /**
  * A DisplayAndroid implementation tied to a physical Display.
  */
@@ -51,8 +52,42 @@ import org.chromium.base.Log;
         return sForcedDIPScale.floatValue() > 0;
     }
 
+    /**
+     * This method returns the bitsPerPixel without the alpha channel, as this is the value expected
+     * by Chrome and the CSS media queries.
+     */
     @SuppressWarnings("deprecation")
-    private int bitsPerComponent(int pixelFormatId) {
+    private static int bitsPerPixel(int pixelFormatId) {
+        // For JB-MR1 and above, this is the only value, so we can hard-code the result.
+        if (pixelFormatId == PixelFormat.RGBA_8888) return 24;
+
+        PixelFormat pixelFormat = new PixelFormat();
+        PixelFormat.getPixelFormatInfo(pixelFormatId, pixelFormat);
+        if (!PixelFormat.formatHasAlpha(pixelFormatId)) return pixelFormat.bitsPerPixel;
+
+        switch (pixelFormatId) {
+            case PixelFormat.RGBA_1010102:
+                return 30;
+
+            case PixelFormat.RGBA_4444:
+                return 12;
+
+            case PixelFormat.RGBA_5551:
+                return 15;
+
+            case PixelFormat.RGBA_8888:
+                assert false;
+            // fall through
+            // RGBX_8888 does not have an alpha channel even if it has 8 reserved bits at the end.
+            case PixelFormat.RGBX_8888:
+            case PixelFormat.RGB_888:
+            default:
+                return 24;
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private static int bitsPerComponent(int pixelFormatId) {
         switch (pixelFormatId) {
             case PixelFormat.RGBA_4444:
                 return 4;
@@ -91,23 +126,25 @@ import org.chromium.base.Log;
     @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
     /* package */ void updateFromDisplay(Display display) {
         Point size = new Point();
-        Point physicalSize = new Point();
         DisplayMetrics displayMetrics = new DisplayMetrics();
-        PixelFormat pixelFormat = new PixelFormat();
-        display.getSize(size);
-        display.getMetrics(displayMetrics);
-        if (hasForcedDIPScale()) displayMetrics.density = sForcedDIPScale.floatValue();
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-            display.getRealSize(physicalSize);
+            display.getRealSize(size);
+            display.getRealMetrics(displayMetrics);
+        } else {
+            display.getSize(size);
+            display.getMetrics(displayMetrics);
+        }
+        if (hasForcedDIPScale()) displayMetrics.density = sForcedDIPScale.floatValue();
+        boolean isWideColorGamut = false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            isWideColorGamut = display.isWideColorGamut();
         }
 
         // JellyBean MR1 and later always uses RGBA_8888.
         int pixelFormatId = (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1)
                 ? display.getPixelFormat()
                 : PixelFormat.RGBA_8888;
-        PixelFormat.getPixelFormatInfo(pixelFormatId, pixelFormat);
-        super.update(size, physicalSize, displayMetrics.density, pixelFormat.bitsPerPixel,
-                bitsPerComponent(pixelFormatId), display.getRotation());
+        super.update(size, displayMetrics.density, bitsPerPixel(pixelFormatId),
+                bitsPerComponent(pixelFormatId), display.getRotation(), isWideColorGamut, null);
     }
 }

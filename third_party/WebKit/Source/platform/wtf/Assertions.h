@@ -27,128 +27,21 @@
 #ifndef WTF_Assertions_h
 #define WTF_Assertions_h
 
-// This file uses some GCC extensions, but it should be compatible with C++ and
-// Objective C++.
-//
-// For non-debug builds, everything is disabled by default, except for the
-// RELEASE_ASSERT family of macros.
-
 #include <stdarg.h>
-#include "base/allocator/partition_allocator/oom.h"
-#include "base/gtest_prod_util.h"
+
+#include "base/compiler_specific.h"
 #include "base/logging.h"
-#include "platform/wtf/Compiler.h"
-#include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/WTFExport.h"
-#include "platform/wtf/build_config.h"
 
-#if OS(WIN)
-#include <windows.h>
-#endif
-
-#ifndef LOG_DISABLED
-#define LOG_DISABLED !DCHECK_IS_ON()
-#endif
-
-// WTFLogAlways() is deprecated. crbug.com/638849
-WTF_EXPORT PRINTF_FORMAT(1, 2)  // NOLINT
-    void WTFLogAlways(const char* format, ...);
-
-namespace WTF {
-
-#if LOG_DISABLED
-
-#define WTF_CREATE_SCOPED_LOGGER(...) ((void)0)
-#define WTF_CREATE_SCOPED_LOGGER_IF(...) ((void)0)
-#define WTF_APPEND_SCOPED_LOGGER(...) ((void)0)
-
-#else
-
-// ScopedLogger wraps log messages in parentheses, with indentation proportional
-// to the number of instances. This makes it easy to see the flow of control in
-// the output, particularly when instrumenting recursive functions.
-//
-// NOTE: This class is a debugging tool, not intended for use by checked-in
-// code. Please do not remove it.
-//
-class WTF_EXPORT ScopedLogger {
-  WTF_MAKE_NONCOPYABLE(ScopedLogger);
-
- public:
-  // The first message is passed to the constructor.  Additional messages for
-  // the same scope can be added with log(). If condition is false, produce no
-  // output and do not create a scope.
-  PRINTF_FORMAT(3, 4) ScopedLogger(bool condition, const char* format, ...);
-  ~ScopedLogger();
-  PRINTF_FORMAT(2, 3) void Log(const char* format, ...);
-
- private:
-  FRIEND_TEST_ALL_PREFIXES(AssertionsTest, ScopedLogger);
-  using PrintFunctionPtr = void (*)(const char* format, va_list args);
-
-  // Note: not thread safe.
-  static void SetPrintFuncForTests(PrintFunctionPtr);
-
-  void Init(const char* format, va_list args);
-  void WriteNewlineIfNeeded();
-  void Indent();
-  void Print(const char* format, ...);
-  void PrintIndent();
-  static ScopedLogger*& Current();
-
-  ScopedLogger* const parent_;
-  bool multiline_;  // The ')' will go on the same line if there is only one
-                    // entry.
-  static PrintFunctionPtr print_func_;
-};
-
-#define WTF_CREATE_SCOPED_LOGGER(name, ...) \
-  WTF::ScopedLogger name(true, __VA_ARGS__)
-#define WTF_CREATE_SCOPED_LOGGER_IF(name, condition, ...) \
-  WTF::ScopedLogger name(condition, __VA_ARGS__)
-#define WTF_APPEND_SCOPED_LOGGER(name, ...) (name.Log(__VA_ARGS__))
-
-#endif  // LOG_DISABLED
-
-}  // namespace WTF
-
-// CRASH() - Raises a fatal error resulting in program termination and
-// triggering either the debugger or the crash reporter.
-//
-// Use CRASH() in response to known, unrecoverable errors like out-of-memory.
-// Macro is enabled in both debug and release mode.
-// To test for unknown errors and verify assumptions, use ASSERT instead, to
-// avoid impacting performance in release builds.
-#ifndef CRASH
-#define CRASH() IMMEDIATE_CRASH()
-#endif
-
-// ASSERT and ASSERT_NOT_REACHED
-//  These macros are compiled out of release builds.
-//  Expressions inside them are evaluated in debug builds only.
-//  They are deprecated. We should use:
-//    - DCHECK() for ASSERT()
-//    - NOTREACHED() for ASSERT_NOT_REACHED()
-#if OS(WIN)
-// FIXME: Change to use something other than ASSERT to avoid this conflict with
-// the underlying platform.
-#undef ASSERT
-#endif
+// New code shouldn't use this function. This function will be deprecated.
+void vprintf_stderr_common(const char* format, va_list args);
 
 #define DCHECK_AT(assertion, file, line)                            \
   LAZY_STREAM(logging::LogMessage(file, line, #assertion).stream(), \
               DCHECK_IS_ON() ? !(assertion) : false)
 
-#if DCHECK_IS_ON()
-#define ASSERT(assertion) DCHECK(assertion)
-#define ASSERT_NOT_REACHED() NOTREACHED()
-#else
-#define ASSERT(assertion) ((void)0)
-#define ASSERT_NOT_REACHED() ((void)0)
-#endif
-
-// Users must test "#if ENABLE(SECURITY_ASSERT)", which helps ensure
-// that code testing this macro has included this header.
+// Users must test "#if ENABLE_SECURITY_ASSERT", which helps ensure that code
+// testing this macro has included this header.
 #if defined(ADDRESS_SANITIZER) || DCHECK_IS_ON()
 #define ENABLE_SECURITY_ASSERT 1
 #else
@@ -163,7 +56,7 @@ class WTF_EXPORT ScopedLogger {
 //    https://bugs.chromium.org/p/chromium/issues/entry?template=Security%20Bug
 #if ENABLE_SECURITY_ASSERT
 #define SECURITY_DCHECK(condition) \
-  LOG_IF(FATAL, !(condition)) << "Security DCHECK failed: " #condition ". "
+  LOG_IF(DCHECK, !(condition)) << "Security DCHECK failed: " #condition ". "
 // A SECURITY_CHECK failure is actually not vulnerable.
 #define SECURITY_CHECK(condition) \
   LOG_IF(FATAL, !(condition)) << "Security CHECK failed: " #condition ". "
@@ -172,88 +65,98 @@ class WTF_EXPORT ScopedLogger {
 #define SECURITY_CHECK(condition) CHECK(condition)
 #endif
 
-// RELEASE_ASSERT
-// Use in places where failure of an assertion indicates a definite security
-// vulnerability from which execution must not continue even in a release build.
-// Please sure to file bugs for these failures using the security template:
-//    http://code.google.com/p/chromium/issues/entry?template=Security%20Bug
-#if defined(ADDRESS_SANITIZER)
-#define RELEASE_ASSERT(condition) SECURITY_CHECK(condition)
-#else
-#define RELEASE_ASSERT(condition) CHECK(condition)
-#endif
-
 // DEFINE_COMPARISON_OPERATORS_WITH_REFERENCES
 // Allow equality comparisons of Objects by reference or pointer,
 // interchangeably.  This can be only used on types whose equality makes no
 // other sense than pointer equality.
-#define DEFINE_COMPARISON_OPERATORS_WITH_REFERENCES(thisType)    \
-  inline bool operator==(const thisType& a, const thisType& b) { \
-    return &a == &b;                                             \
-  }                                                              \
-  inline bool operator==(const thisType& a, const thisType* b) { \
-    return &a == b;                                              \
-  }                                                              \
-  inline bool operator==(const thisType* a, const thisType& b) { \
-    return a == &b;                                              \
-  }                                                              \
-  inline bool operator!=(const thisType& a, const thisType& b) { \
-    return !(a == b);                                            \
-  }                                                              \
-  inline bool operator!=(const thisType& a, const thisType* b) { \
-    return !(a == b);                                            \
-  }                                                              \
-  inline bool operator!=(const thisType* a, const thisType& b) { \
-    return !(a == b);                                            \
-  }
+#define DEFINE_COMPARISON_OPERATORS_WITH_REFERENCES(Type)                    \
+  inline bool operator==(const Type& a, const Type& b) { return &a == &b; }  \
+  inline bool operator==(const Type& a, const Type* b) { return &a == b; }   \
+  inline bool operator==(const Type* a, const Type& b) { return a == &b; }   \
+  inline bool operator!=(const Type& a, const Type& b) { return !(a == b); } \
+  inline bool operator!=(const Type& a, const Type* b) { return !(a == b); } \
+  inline bool operator!=(const Type* a, const Type& b) { return !(a == b); }
 
 // DEFINE_TYPE_CASTS
 //
-// toType() functions are static_cast<> wrappers with SECURITY_DCHECK. It's
+// ToType() functions are static_cast<> wrappers with SECURITY_DCHECK. It's
 // helpful to find bad casts.
 //
-// toTypeOrDie() has a runtime type check, and it crashes if the specified
+// ToTypeOrNull() functions are similar to dynamic_cast<>. They return
+// type-casted values if the specified predicate is true, and return
+// nullptr otherwise.
+//
+// ToTypeOrDie() has a runtime type check, and it crashes if the specified
 // object is not an instance of the destination type. It is used if
 // * it's hard to prevent from passing unexpected objects,
 // * proceeding with the following code doesn't make sense, and
 // * cost of runtime type check is acceptable.
-#define DEFINE_TYPE_CASTS(thisType, argumentType, argument, pointerPredicate, \
-                          referencePredicate)                                 \
-  inline thisType* To##thisType(argumentType* argument) {                     \
-    SECURITY_DCHECK(!argument || (pointerPredicate));                         \
-    return static_cast<thisType*>(argument);                                  \
-  }                                                                           \
-  inline const thisType* To##thisType(const argumentType* argument) {         \
-    SECURITY_DCHECK(!argument || (pointerPredicate));                         \
-    return static_cast<const thisType*>(argument);                            \
-  }                                                                           \
-  inline thisType& To##thisType(argumentType& argument) {                     \
-    SECURITY_DCHECK(referencePredicate);                                      \
-    return static_cast<thisType&>(argument);                                  \
-  }                                                                           \
-  inline const thisType& To##thisType(const argumentType& argument) {         \
-    SECURITY_DCHECK(referencePredicate);                                      \
-    return static_cast<const thisType&>(argument);                            \
-  }                                                                           \
-  void To##thisType(const thisType*);                                         \
-  void To##thisType(const thisType&);                                         \
-  inline thisType* To##thisType##OrDie(argumentType* argument) {              \
-    CHECK(!argument || (pointerPredicate));                                   \
-    return static_cast<thisType*>(argument);                                  \
-  }                                                                           \
-  inline const thisType* To##thisType##OrDie(const argumentType* argument) {  \
-    CHECK(!argument || (pointerPredicate));                                   \
-    return static_cast<const thisType*>(argument);                            \
-  }                                                                           \
-  inline thisType& To##thisType##OrDie(argumentType& argument) {              \
-    CHECK(referencePredicate);                                                \
-    return static_cast<thisType&>(argument);                                  \
-  }                                                                           \
-  inline const thisType& To##thisType##OrDie(const argumentType& argument) {  \
-    CHECK(referencePredicate);                                                \
-    return static_cast<const thisType&>(argument);                            \
-  }                                                                           \
-  void To##thisType##OrDie(const thisType*);                                  \
-  void To##thisType##OrDie(const thisType&)
+#define DEFINE_TYPE_CASTS(Type, ArgType, argument, pointerPredicate, \
+                          referencePredicate)                        \
+  inline Type* To##Type(ArgType* argument) {                         \
+    SECURITY_DCHECK(!argument || (pointerPredicate));                \
+    return static_cast<Type*>(argument);                             \
+  }                                                                  \
+  inline const Type* To##Type(const ArgType* argument) {             \
+    SECURITY_DCHECK(!argument || (pointerPredicate));                \
+    return static_cast<const Type*>(argument);                       \
+  }                                                                  \
+  inline Type& To##Type(ArgType& argument) {                         \
+    SECURITY_DCHECK(referencePredicate);                             \
+    return static_cast<Type&>(argument);                             \
+  }                                                                  \
+  inline const Type& To##Type(const ArgType& argument) {             \
+    SECURITY_DCHECK(referencePredicate);                             \
+    return static_cast<const Type&>(argument);                       \
+  }                                                                  \
+  void To##Type(const Type*);                                        \
+  void To##Type(const Type&);                                        \
+                                                                     \
+  inline Type* To##Type##OrNull(ArgType* argument) {                 \
+    if (!(argument) || !(pointerPredicate))                          \
+      return nullptr;                                                \
+    return static_cast<Type*>(argument);                             \
+  }                                                                  \
+  inline const Type* To##Type##OrNull(const ArgType* argument) {     \
+    if (!(argument) || !(pointerPredicate))                          \
+      return nullptr;                                                \
+    return static_cast<const Type*>(argument);                       \
+  }                                                                  \
+  inline Type* To##Type##OrNull(ArgType& argument) {                 \
+    if (!(referencePredicate))                                       \
+      return nullptr;                                                \
+    return static_cast<Type*>(&argument);                            \
+  }                                                                  \
+  inline const Type* To##Type##OrNull(const ArgType& argument) {     \
+    if (!(referencePredicate))                                       \
+      return nullptr;                                                \
+    return static_cast<const Type*>(&argument);                      \
+  }                                                                  \
+  void To##Type##OrNull(const Type*);                                \
+  void To##Type##OrNull(const Type&);                                \
+                                                                     \
+  inline Type* To##Type##OrDie(ArgType* argument) {                  \
+    CHECK(!argument || (pointerPredicate));                          \
+    return static_cast<Type*>(argument);                             \
+  }                                                                  \
+  inline const Type* To##Type##OrDie(const ArgType* argument) {      \
+    CHECK(!argument || (pointerPredicate));                          \
+    return static_cast<const Type*>(argument);                       \
+  }                                                                  \
+  inline Type& To##Type##OrDie(ArgType& argument) {                  \
+    CHECK(referencePredicate);                                       \
+    return static_cast<Type&>(argument);                             \
+  }                                                                  \
+  inline const Type& To##Type##OrDie(const ArgType& argument) {      \
+    CHECK(referencePredicate);                                       \
+    return static_cast<const Type&>(argument);                       \
+  }                                                                  \
+  void To##Type##OrDie(const Type*);                                 \
+  void To##Type##OrDie(const Type&)
+
+// Check at compile time that related enums stay in sync.
+#define STATIC_ASSERT_ENUM(a, b)                            \
+  static_assert(static_cast<int>(a) == static_cast<int>(b), \
+                "mismatching enum: " #a)
 
 #endif  // WTF_Assertions_h

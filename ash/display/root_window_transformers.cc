@@ -6,93 +6,37 @@
 
 #include <cmath>
 
-#include "ash/ash_switches.h"
 #include "ash/host/root_window_transformer.h"
 #include "ash/magnifier/magnification_controller.h"
+#include "ash/public/cpp/ash_switches.h"
 #include "ash/shell.h"
+#include "ash/utility/transformer_util.h"
 #include "base/command_line.h"
-#include "third_party/skia/include/core/SkMatrix44.h"
-#include "ui/aura/window_event_dispatcher.h"
-#include "ui/base/class_property.h"
 #include "ui/compositor/dip_util.h"
 #include "ui/display/display.h"
 #include "ui/display/manager/display_manager.h"
-#include "ui/display/manager/managed_display_info.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/transform.h"
-#include "ui/gfx/transform.h"
-
-DECLARE_UI_CLASS_PROPERTY_TYPE(display::Display::Rotation);
 
 namespace ash {
 namespace {
-
-#if defined(OS_WIN)
-DEFINE_UI_CLASS_PROPERTY_KEY(display::Display::Rotation,
-                             kRotationPropertyKey,
-                             display::Display::ROTATE_0);
-#endif
-
-// Round near zero value to zero.
-void RoundNearZero(gfx::Transform* transform) {
-  const float kEpsilon = 0.001f;
-  SkMatrix44& matrix = transform->matrix();
-  for (int x = 0; x < 4; ++x) {
-    for (int y = 0; y < 4; ++y) {
-      if (std::abs(SkMScalarToFloat(matrix.get(x, y))) < kEpsilon)
-        matrix.set(x, y, SkFloatToMScalar(0.0f));
-    }
-  }
-}
 
 // TODO(oshima): Transformers should be able to adjust itself
 // when the device scale factor is changed, instead of
 // precalculating the transform using fixed value.
 
-gfx::Transform CreateRotationTransform(aura::Window* root_window,
-                                       const display::Display& display) {
+// Creates rotation transform for |root_window| to |new_rotation|. This will
+// call |CreateRotationTransform()|, the |old_rotation| will implicitly be
+// |display::Display::ROTATE_0|.
+gfx::Transform CreateRootWindowRotationTransform(
+    aura::Window* root_window,
+    const display::Display& display) {
   display::ManagedDisplayInfo info =
       Shell::Get()->display_manager()->GetDisplayInfo(display.id());
-
-// TODO(oshima): Add animation. (crossfade+rotation, or just cross-fade)
-#if defined(OS_WIN)
-  // Windows 8 bots refused to resize the host window, and
-  // updating the transform results in incorrectly resizing
-  // the root window. Don't apply the transform unless
-  // necessary so that unit tests pass on win8 bots.
-  if (info.GetActiveRotation() ==
-      root_window->GetProperty(kRotationPropertyKey)) {
-    return gfx::Transform();
-  }
-  root_window->SetProperty(kRotationPropertyKey, info.GetActiveRotation());
-#endif
-
-  gfx::Transform rotate;
-  // The origin is (0, 0), so the translate width/height must be reduced by
-  // 1 pixel.
-  float one_pixel = 1.0f / display.device_scale_factor();
-  switch (info.GetActiveRotation()) {
-    case display::Display::ROTATE_0:
-      break;
-    case display::Display::ROTATE_90:
-      rotate.Translate(display.bounds().height() - one_pixel, 0);
-      rotate.Rotate(90);
-      break;
-    case display::Display::ROTATE_270:
-      rotate.Translate(0, display.bounds().width() - one_pixel);
-      rotate.Rotate(270);
-      break;
-    case display::Display::ROTATE_180:
-      rotate.Translate(display.bounds().width() - one_pixel,
-                       display.bounds().height() - one_pixel);
-      rotate.Rotate(180);
-      break;
-  }
-
-  RoundNearZero(&rotate);
-  return rotate;
+  return CreateRotationTransform(display::Display::ROTATE_0,
+                                 info.GetActiveRotation(), display);
 }
 
 gfx::Transform CreateMagnifierTransform(aura::Window* root_window) {
@@ -146,10 +90,10 @@ class AshRootWindowTransformer : public RootWindowTransformer {
         CreateInsetsAndScaleTransform(host_insets_,
                                       display.device_scale_factor(),
                                       root_window_ui_scale_) *
-        CreateRotationTransform(root, display);
+        CreateRootWindowRotationTransform(root, display);
     if (base::CommandLine::ForCurrentProcess()->HasSwitch(
             switches::kAshEnableMirroredScreen)) {
-      // Apply the tranform that flips the screen image horizontally so that
+      // Apply the transform that flips the screen image horizontally so that
       // the screen looks normal when reflected on a mirror.
       root_window_bounds_transform_ =
           root_window_bounds_transform_ * CreateMirrorTransform(display);
@@ -186,7 +130,7 @@ class AshRootWindowTransformer : public RootWindowTransformer {
   gfx::Insets GetHostInsets() const override { return host_insets_; }
 
  private:
-  ~AshRootWindowTransformer() override {}
+  ~AshRootWindowTransformer() override = default;
 
   aura::Window* root_window_;
   gfx::Transform transform_;
@@ -264,7 +208,7 @@ class MirrorRootWindowTransformer : public RootWindowTransformer {
   gfx::Insets GetHostInsets() const override { return insets_; }
 
  private:
-  ~MirrorRootWindowTransformer() override {}
+  ~MirrorRootWindowTransformer() override = default;
 
   gfx::Transform transform_;
   gfx::Rect root_bounds_;
@@ -277,14 +221,33 @@ class PartialBoundsRootWindowTransformer : public RootWindowTransformer {
  public:
   PartialBoundsRootWindowTransformer(const gfx::Rect& screen_bounds,
                                      const display::Display& display) {
+    const display::DisplayManager* display_manager =
+        Shell::Get()->display_manager();
+    display::ManagedDisplayInfo display_info =
+        display_manager->GetDisplayInfo(display.id());
+    // Physical root bounds.
+    root_bounds_ = gfx::Rect(display_info.bounds_in_native().size());
+
+    // |screen_bounds| is the unified desktop logical bounds.
+    // Calculate the unified height scale value, and apply the same scale on the
+    // row physical height to get the row logical height.
     display::Display unified_display =
         display::Screen::GetScreen()->GetPrimaryDisplay();
-    display::ManagedDisplayInfo display_info =
-        Shell::Get()->display_manager()->GetDisplayInfo(display.id());
-    root_bounds_ = gfx::Rect(display_info.bounds_in_native().size());
-    float scale = root_bounds_.height() /
-                  static_cast<float>(screen_bounds.height()) /
-                  unified_display.device_scale_factor();
+    const int unified_physical_height =
+        unified_display.GetSizeInPixel().height();
+    const int unified_logical_height = screen_bounds.height();
+    const float unified_height_scale =
+        static_cast<float>(unified_logical_height) / unified_physical_height;
+
+    const int row_index =
+        display_manager->GetMirroringDisplayRowIndexInUnifiedMatrix(
+            display.id());
+    const int row_physical_height =
+        display_manager->GetUnifiedDesktopRowMaxHeight(row_index);
+    const int row_logical_height = row_physical_height * unified_height_scale;
+    const float dsf = unified_display.device_scale_factor();
+    const float scale = root_bounds_.height() / (dsf * row_logical_height);
+
     transform_.Scale(scale, scale);
     transform_.Translate(-SkIntToMScalar(display.bounds().x()),
                          -SkIntToMScalar(display.bounds().y()));

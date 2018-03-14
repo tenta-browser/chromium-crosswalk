@@ -5,6 +5,7 @@
 #include "services/ui/ws/window_server_test_base.h"
 
 #include "base/bind.h"
+#include "base/command_line.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
@@ -15,6 +16,7 @@
 #include "ui/aura/env.h"
 #include "ui/aura/mus/window_tree_client.h"
 #include "ui/aura/mus/window_tree_host_mus.h"
+#include "ui/base/ui_base_switches.h"
 #include "ui/display/display.h"
 #include "ui/display/display_list.h"
 #include "ui/wm/core/capture_controller.h"
@@ -33,7 +35,9 @@ void TimeoutRunLoop(const base::Closure& timeout_task, bool* timeout) {
 }  // namespace
 
 WindowServerTestBase::WindowServerTestBase() {
-  registry_.AddInterface<mojom::WindowTreeClient>(this);
+  registry_.AddInterface<mojom::WindowTreeClient>(
+      base::Bind(&WindowServerTestBase::BindWindowTreeClientRequest,
+                 base::Unretained(this)));
 }
 
 WindowServerTestBase::~WindowServerTestBase() {}
@@ -89,12 +93,14 @@ WindowServerTestBase::ReleaseMostRecentClient() {
 }
 
 void WindowServerTestBase::SetUp() {
+  base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
+      switches::kMus, switches::kMusHostVizValue);
   WindowServerServiceTestBase::SetUp();
 
   env_ = aura::Env::CreateInstance(aura::Env::Mode::MUS);
   display::Screen::SetScreenInstance(&screen_);
   std::unique_ptr<aura::WindowTreeClient> window_manager_window_tree_client =
-      base::MakeUnique<aura::WindowTreeClient>(connector(), this, this);
+      std::make_unique<aura::WindowTreeClient>(connector(), this, this);
   window_manager_window_tree_client->ConnectAsWindowManager();
   window_manager_ = window_manager_window_tree_client.get();
   window_tree_clients_.push_back(std::move(window_manager_window_tree_client));
@@ -116,11 +122,10 @@ void WindowServerTestBase::TearDown() {
 }
 
 void WindowServerTestBase::OnBindInterface(
-    const service_manager::ServiceInfo& source_info,
+    const service_manager::BindSourceInfo& source_info,
     const std::string& interface_name,
     mojo::ScopedMessagePipeHandle interface_pipe) {
-  registry_.BindInterface(source_info.identity, interface_name,
-                          std::move(interface_pipe));
+  registry_.BindInterface(interface_name, std::move(interface_pipe));
 }
 
 void WindowServerTestBase::OnEmbed(
@@ -153,6 +158,8 @@ void WindowServerTestBase::SetWindowManagerClient(
     aura::WindowManagerClient* client) {
   window_manager_client_ = client;
 }
+
+void WindowServerTestBase::OnWmConnected() {}
 
 void WindowServerTestBase::OnWmSetBounds(aura::Window* window,
                                          const gfx::Rect& bounds) {
@@ -240,6 +247,11 @@ ui::mojom::EventResult WindowServerTestBase::OnAccelerator(
                                   : ui::mojom::EventResult::UNHANDLED;
 }
 
+void WindowServerTestBase::OnCursorTouchVisibleChanged(bool enabled) {
+  if (window_manager_delegate_)
+    window_manager_delegate_->OnCursorTouchVisibleChanged(enabled);
+}
+
 void WindowServerTestBase::OnWmPerformMoveLoop(
     aura::Window* window,
     ui::mojom::MoveLoopSource source,
@@ -277,11 +289,10 @@ void WindowServerTestBase::OnWmDeactivateWindow(aura::Window* window) {
     window_manager_delegate_->OnWmDeactivateWindow(window);
 }
 
-void WindowServerTestBase::Create(
-    const service_manager::Identity& remote_identity,
+void WindowServerTestBase::BindWindowTreeClientRequest(
     mojom::WindowTreeClientRequest request) {
   const bool create_discardable_memory = false;
-  window_tree_clients_.push_back(base::MakeUnique<aura::WindowTreeClient>(
+  window_tree_clients_.push_back(std::make_unique<aura::WindowTreeClient>(
       connector(), this, nullptr, std::move(request), nullptr,
       create_discardable_memory));
 }

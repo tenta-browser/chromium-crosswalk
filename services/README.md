@@ -14,6 +14,15 @@ Roughly each subdirectory here corresponds to a service that:
   * could logically run a standalone process for security/performance isolation
     benefits depending on the constraints of the host OS.
 
+## API Standards
+
+As illustrated above, the individual services in //services are intended for
+graceful reusability across a broad variety of use cases. To enable this goal,
+we have rigorous [standards](/services/api_standards.md) on services'
+public APIs. Before doing significant work in //services (and especially before
+becoming an owner of a service), please internalize these standards -- you are
+responsible for upholding them.
+
 ## Service Directory Structure
 
 Individual services are structured like so:
@@ -46,6 +55,8 @@ differently, e.g. by combining them into a single package.
 
 [Servicification Homepage](https://sites.google.com/a/chromium.org/dev/servicification)
 
+[Servicification Strategies](/docs/servicification.md)
+
 ## Relationship To Other Top-Level Directories
 
 Services can be thought of as integrators of library code from across the
@@ -67,3 +78,7 @@ and from other services.
 
 Please start a thread on [services-dev@chromium.org](https://groups.google.com/a/chromium.org/forum/#!forum/services-dev)
 if you want to introduce a new service.
+
+If you are servicifying existing Chromium code: Please first read the
+[servicification strategies documentation](/docs/servicification.md), which
+contains information that will hopefully make your task easier.

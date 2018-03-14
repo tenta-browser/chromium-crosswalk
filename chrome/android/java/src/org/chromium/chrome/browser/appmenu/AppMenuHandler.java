@@ -18,6 +18,7 @@ import android.widget.PopupMenu;
 
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeActivity;
 
 import java.util.ArrayList;
 
@@ -139,8 +140,10 @@ public class AppMenuHandler {
             Drawable itemDivider = a.getDrawable(1);
             int itemDividerHeight = itemDivider != null ? itemDivider.getIntrinsicHeight() : 0;
             a.recycle();
+            boolean translateMenuItemsOnShow = !(mActivity instanceof ChromeActivity)
+                    || ((ChromeActivity) mActivity).getBottomSheet() == null;
             mAppMenu = new AppMenu(mMenu, itemRowHeight, itemDividerHeight, this,
-                    mActivity.getResources());
+                    mActivity.getResources(), translateMenuItemsOnShow);
             mAppMenuDragHelper = new AppMenuDragHelper(mActivity, mAppMenu, itemRowHeight);
         }
 
@@ -162,9 +165,14 @@ public class AppMenuHandler {
         if (mDelegate.shouldShowFooter(appRect.height())) {
             footerResourceId = mDelegate.getFooterResourceId();
         }
+        View headerView = null;
+        if (mDelegate.shouldShowHeader(appRect.height())) {
+            headerView = mDelegate.getHeaderView();
+        }
         mAppMenu.show(wrapper, anchorView, isByPermanentButton, rotation, appRect, pt.y,
-                footerResourceId, mHighlightMenuId);
+                footerResourceId, headerView, mHighlightMenuId);
         mAppMenuDragHelper.onShow(startDragging);
+        mDelegate.onShow(mAppMenu);
         setMenuHighlight(null);
         RecordUserAction.record("MobileMenuShow");
         return true;

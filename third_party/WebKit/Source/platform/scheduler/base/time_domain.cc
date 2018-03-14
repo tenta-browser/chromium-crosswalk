@@ -7,7 +7,6 @@
 #include <set>
 
 #include "platform/scheduler/base/task_queue_impl.h"
-#include "platform/scheduler/base/task_queue_manager_delegate.h"
 #include "platform/scheduler/base/work_queue.h"
 
 namespace blink {
@@ -41,7 +40,7 @@ void TimeDomain::ScheduleDelayedWork(
   // We only want to store a single wake-up per queue, so we need to remove any
   // previously registered wake up for |queue|.
   if (queue->heap_handle().IsValid()) {
-    DCHECK_NE(queue->scheduled_time_domain_wake_up(), base::TimeTicks());
+    DCHECK(queue->scheduled_time_domain_wake_up());
 
     // O(log n)
     delayed_wake_up_queue_.ChangeKey(queue->heap_handle(), {wake_up, queue});
@@ -50,7 +49,7 @@ void TimeDomain::ScheduleDelayedWork(
     delayed_wake_up_queue_.insert({wake_up, queue});
   }
 
-  queue->set_scheduled_time_domain_wake_up(wake_up.time);
+  queue->SetScheduledTimeDomainWakeUp(wake_up.time);
 
   // If |queue| is the first wake-up then request the wake-up.
   if (delayed_wake_up_queue_.Min().queue == queue)
@@ -65,7 +64,7 @@ void TimeDomain::CancelDelayedWork(internal::TaskQueueImpl* queue) {
   if (!queue->heap_handle().IsValid())
     return;
 
-  DCHECK_NE(queue->scheduled_time_domain_wake_up(), base::TimeTicks());
+  DCHECK(queue->scheduled_time_domain_wake_up());
   DCHECK(!delayed_wake_up_queue_.empty());
   base::TimeTicks prev_first_wake_up =
       delayed_wake_up_queue_.Min().wake_up.time;
@@ -95,11 +94,11 @@ void TimeDomain::WakeUpReadyDelayedQueues(LazyNow* lazy_now) {
     if (next_wake_up) {
       // O(log n)
       delayed_wake_up_queue_.ReplaceMin({*next_wake_up, queue});
-      queue->set_scheduled_time_domain_wake_up(next_wake_up->time);
+      queue->SetScheduledTimeDomainWakeUp(next_wake_up->time);
     } else {
       // O(log n)
       delayed_wake_up_queue_.Pop();
-      DCHECK_EQ(queue->scheduled_time_domain_wake_up(), base::TimeTicks());
+      DCHECK(!queue->scheduled_time_domain_wake_up());
     }
   }
 }
@@ -113,7 +112,8 @@ bool TimeDomain::NextScheduledRunTime(base::TimeTicks* out_time) const {
   return true;
 }
 
-bool TimeDomain::NextScheduledTaskQueue(TaskQueue** out_task_queue) const {
+bool TimeDomain::NextScheduledTaskQueue(
+    internal::TaskQueueImpl** out_task_queue) const {
   DCHECK(main_thread_checker_.CalledOnValidThread());
   if (delayed_wake_up_queue_.empty())
     return false;

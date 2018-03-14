@@ -225,12 +225,6 @@ DevToolsHost.ContextMenuDescriptor;
 DevToolsHost.zoomFactor = function() {};
 
 /**
- * @param {string} origin
- * @param {string} script
- */
-DevToolsHost.setInjectedScriptForOrigin = function(origin, script) {};
-
-/**
  * @param {string} text
  */
 DevToolsHost.copyText = function(text) {};
@@ -344,6 +338,21 @@ Adb.PortForwardingRule;
 Adb.DevicePortForwardingStatus;
 /** @typedef {!Object<string, !Adb.DevicePortForwardingStatus>} */
 Adb.PortForwardingStatus;
+/** @typedef {!Array<string>} */
+Adb.NetworkDiscoveryConfig;
+/**
+ * @typedef {!{
+ *   discoverUsbDevices: boolean,
+ *   portForwardingEnabled: boolean,
+ *   portForwardingConfig: !Adb.PortForwardingConfig,
+ *   networkDiscoveryEnabled: boolean,
+ *   networkDiscoveryConfig: !Adb.NetworkDiscoveryConfig
+ * }}
+ */
+Adb.Config;
+
+/** @const */
+var module = {};
 
 /**
  * @constructor
@@ -522,7 +531,7 @@ CodeMirror.prototype = {
   undo: function() {},
   unlinkDoc: function(other) {}
 };
-/** @type {!{cursorDiv: Element}} */
+/** @type {!{cursorDiv: Element, lineSpace: Element}} */
 CodeMirror.prototype.display;
 /** @type {!{mode: string}} */
 CodeMirror.prototype.options;
@@ -756,42 +765,6 @@ ESTree.TemplateLiteralNode = function() {
   /** @type {!Array.<!ESTree.Node>} */
   this.expressions;
 };
-/** @type {!Object} */
-var Gonzales = {};
-var gonzales = {
-  /**
-   * @param {string} text
-   * @param {!Object=} options
-   * @return {!Gonzales.Node}
-   */
-  parse: function(text, options) {},
-};
-
-/**
- * @constructor
- */
-Gonzales.Location = function() {
-  /** @type {number} */
-  this.line;
-  /** @type {number} */
-  this.column;
-};
-
-/**
- * @constructor
- */
-Gonzales.Node = function() {
-  /** @type {string} */
-  this.type;
-  /** @type {string} */
-  this.syntax;
-  /** @type {!Gonzales.Location} */
-  this.start;
-  /** @type {!Gonzales.Location} */
-  this.end;
-  /** @type {(string|!Array<!Gonzales.Node>)} */
-  this.content;
-};
 
 /**
  * @type {string}
@@ -816,3 +789,9 @@ Terminal.prototype = {
   /** @param {string} eventName * @param {!Function} handler */
   on: function(eventName, handler) {}
 };
+
+/**
+ * @param {string} context
+ * @return {!Console}
+ */
+Console.prototype.context = function(context) {};

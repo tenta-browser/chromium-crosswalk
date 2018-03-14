@@ -11,13 +11,12 @@
 namespace blink {
 
 class WorkerThread;
+struct GlobalScopeCreationParams;
 
 class CORE_EXPORT ThreadedWorkletGlobalScope : public WorkletGlobalScope {
  public:
   ~ThreadedWorkletGlobalScope() override;
   void Dispose() override;
-  void CountFeature(UseCounter::Feature) final;
-  void CountDeprecation(UseCounter::Feature) final;
 
   // ExecutionContext
   bool IsThreadedWorkletGlobalScope() const final { return true; }
@@ -25,12 +24,10 @@ class CORE_EXPORT ThreadedWorkletGlobalScope : public WorkletGlobalScope {
   void AddConsoleMessage(ConsoleMessage*) final;
   void ExceptionThrown(ErrorEvent*) final;
 
-  WorkerThread* GetThread() const { return thread_; }
+  WorkerThread* GetThread() const override { return thread_; }
 
  protected:
-  ThreadedWorkletGlobalScope(const KURL&,
-                             const String& user_agent,
-                             PassRefPtr<SecurityOrigin>,
+  ThreadedWorkletGlobalScope(std::unique_ptr<GlobalScopeCreationParams>,
                              v8::Isolate*,
                              WorkerThread*);
 

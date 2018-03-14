@@ -9,6 +9,7 @@
 
 #include "ash/ash_export.h"
 #include "ash/public/interfaces/window_style.mojom.h"
+#include "ash/shell_observer.h"
 #include "base/macros.h"
 #include "base/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -25,13 +26,20 @@ class HeaderView;
 class ImmersiveFullscreenController;
 class ImmersiveFullscreenControllerDelegate;
 
+enum class FrameBackButtonState {
+  kInvisible,
+  kVisibleEnabled,
+  kVisibleDisabled,
+};
+
 // A NonClientFrameView used for packaged apps, dialogs and other non-browser
 // windows. It supports immersive fullscreen. When in immersive fullscreen, the
 // client view takes up the entire widget and the window header is an overlay.
 // The window header overlay slides onscreen when the user hovers the mouse at
 // the top of the screen. See also views::CustomFrameView and
 // BrowserNonClientFrameViewAsh.
-class ASH_EXPORT CustomFrameViewAsh : public views::NonClientFrameView {
+class ASH_EXPORT CustomFrameViewAsh : public views::NonClientFrameView,
+                                      public ash::ShellObserver {
  public:
   // Internal class name.
   static const char kViewClassName[];
@@ -60,11 +68,16 @@ class ASH_EXPORT CustomFrameViewAsh : public views::NonClientFrameView {
   // will have some transparency added when the frame is drawn.
   void SetFrameColors(SkColor active_frame_color, SkColor inactive_frame_color);
 
+  // Set the back buttons status. If |show| is true, the button becomes visible.
+  // |enabled| controls the enabled/disabled state of the back button.
+  void SetBackButtonState(FrameBackButtonState state);
+
   // Sets the height of the header. If |height| has no value (the default), the
   // preferred height is used.
   void SetHeaderHeight(base::Optional<int> height);
 
-  views::View* header_view();
+  // Get the view of the header.
+  views::View* GetHeaderView();
 
   // views::NonClientFrameView:
   gfx::Rect GetBoundsForClientView() const override;
@@ -79,21 +92,30 @@ class ASH_EXPORT CustomFrameViewAsh : public views::NonClientFrameView {
   void ActivationChanged(bool active) override;
 
   // views::View:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   const char* GetClassName() const override;
   gfx::Size GetMinimumSize() const override;
   gfx::Size GetMaximumSize() const override;
   void SchedulePaintInRect(const gfx::Rect& r) override;
-  void VisibilityChanged(views::View* starting_from, bool is_visible) override;
+  void SetVisible(bool visible) override;
 
-  // Get the view of the header.
-  views::View* GetHeaderView();
+  // If |paint| is false, we should not paint the header. Used for overview mode
+  // with OnOverviewModeStarting() and OnOverviewModeEnded() to hide/show the
+  // header of v2 and ARC apps.
+  virtual void SetShouldPaintHeader(bool paint);
+
+  // ash::ShellObserver:
+  void OnOverviewModeStarting() override;
+  void OnOverviewModeEnded() override;
 
   const views::View* GetAvatarIconViewForTest() const;
 
  private:
+  class AvatarObserver;
   class OverlayView;
+  friend class CustomFrameViewAshSizeLock;
+  friend class CustomFrameTestWidgetDelegate;
   friend class TestWidgetConstraintsDelegate;
 
   // views::NonClientFrameView:
@@ -116,6 +138,11 @@ class ASH_EXPORT CustomFrameViewAsh : public views::NonClientFrameView {
   OverlayView* overlay_view_;
 
   ImmersiveFullscreenControllerDelegate* immersive_delegate_;
+
+  // Observes avatar icon change and updates |header_view_|.
+  std::unique_ptr<AvatarObserver> avatar_observer_;
+
+  static bool use_empty_minimum_size_for_test_;
 
   DISALLOW_COPY_AND_ASSIGN(CustomFrameViewAsh);
 };

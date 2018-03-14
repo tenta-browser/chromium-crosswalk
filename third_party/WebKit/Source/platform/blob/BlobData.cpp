@@ -31,17 +31,41 @@
 #include "platform/blob/BlobData.h"
 
 #include <memory>
+#include "base/memory/scoped_refptr.h"
+#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "platform/CrossThreadFunctional.h"
+#include "platform/Histogram.h"
 #include "platform/UUID.h"
+#include "platform/WebTaskRunner.h"
+#include "platform/blob/BlobBytesProvider.h"
 #include "platform/blob/BlobRegistry.h"
+#include "platform/instrumentation/tracing/TraceEvent.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/text/LineEnding.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/PtrUtil.h"
-#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/CString.h"
 #include "platform/wtf/text/TextEncoding.h"
+#include "public/platform/FilePathConversion.h"
+#include "public/platform/InterfaceProvider.h"
+#include "public/platform/Platform.h"
+#include "third_party/WebKit/common/blob/blob_registry.mojom-blink.h"
 
 namespace blink {
+
+using mojom::blink::BlobPtr;
+using mojom::blink::BlobPtrInfo;
+using mojom::blink::BlobRegistryPtr;
+using mojom::blink::BytesProviderPtr;
+using mojom::blink::BytesProviderPtrInfo;
+using mojom::blink::BytesProviderRequest;
+using mojom::blink::DataElement;
+using mojom::blink::DataElementBlob;
+using mojom::blink::DataElementPtr;
+using mojom::blink::DataElementBytes;
+using mojom::blink::DataElementBytesPtr;
+using mojom::blink::DataElementFile;
+using mojom::blink::DataElementFilesystemURL;
 
 namespace {
 
@@ -59,16 +83,36 @@ bool IsValidBlobType(const String& type) {
   return true;
 }
 
+void BindBytesProvider(std::unique_ptr<BlobBytesProvider> provider,
+                       BytesProviderRequest request) {
+  mojo::MakeStrongBinding(std::move(provider), std::move(request));
+}
+
+mojom::blink::BlobRegistry* g_blob_registry_for_testing = nullptr;
+
+mojom::blink::BlobRegistry* GetThreadSpecificRegistry() {
+  if (UNLIKELY(g_blob_registry_for_testing))
+    return g_blob_registry_for_testing;
+
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(ThreadSpecific<BlobRegistryPtr>, registry,
+                                  ());
+  if (UNLIKELY(!registry.IsSet())) {
+    // TODO(mek): Going through InterfaceProvider to get a BlobRegistryPtr
+    // ends up going through the main thread. Ideally workers wouldn't need
+    // to do that.
+    Platform::Current()->GetInterfaceProvider()->GetInterface(
+        MakeRequest(&*registry));
+  }
+  return registry->get();
+}
+
 }  // namespace
 
 const long long BlobDataItem::kToEndOfFile = -1;
 
 RawData::RawData() {}
 
-void RawData::DetachFromCurrentThread() {}
-
 void BlobDataItem::DetachFromCurrentThread() {
-  data->DetachFromCurrentThread();
   path = path.IsolatedCopy();
   file_system_url = file_system_url.Copy();
 }
@@ -120,7 +164,7 @@ void BlobData::SetContentType(const String& content_type) {
     content_type_ = "";
 }
 
-void BlobData::AppendData(PassRefPtr<RawData> data,
+void BlobData::AppendData(scoped_refptr<RawData> data,
                           long long offset,
                           long long length) {
   DCHECK_EQ(file_composition_, FileCompositionStatus::NO_UNKNOWN_SIZE_FILES)
@@ -143,7 +187,7 @@ void BlobData::AppendFile(const String& path,
       BlobDataItem(path, offset, length, expected_modification_time));
 }
 
-void BlobData::AppendBlob(PassRefPtr<BlobDataHandle> data_handle,
+void BlobData::AppendBlob(scoped_refptr<BlobDataHandle> data_handle,
                           long long offset,
                           long long length) {
   DCHECK_EQ(file_composition_, FileCompositionStatus::NO_UNKNOWN_SIZE_FILES)
@@ -169,7 +213,7 @@ void BlobData::AppendText(const String& text,
       << "Blobs with a unknown-size file cannot have other items.";
   CString utf8_text =
       UTF8Encoding().Encode(text, WTF::kEntitiesForUnencodables);
-  RefPtr<RawData> data = nullptr;
+  scoped_refptr<RawData> data = nullptr;
   Vector<char>* buffer;
   if (CanConsolidateData(text.length())) {
     buffer = items_.back().data->MutableData();
@@ -181,7 +225,7 @@ void BlobData::AppendText(const String& text,
   if (do_normalize_line_endings_to_native) {
     NormalizeLineEndingsToNative(utf8_text, *buffer);
   } else {
-    buffer->Append(utf8_text.Data(), utf8_text.length());
+    buffer->Append(utf8_text.data(), utf8_text.length());
   }
 
   if (data)
@@ -196,7 +240,7 @@ void BlobData::AppendBytes(const void* bytes, size_t length) {
                                               length);
     return;
   }
-  RefPtr<RawData> data = RawData::Create();
+  scoped_refptr<RawData> data = RawData::Create();
   Vector<char>* buffer = data->MutableData();
   buffer->Append(static_cast<const char*>(bytes), length);
   items_.push_back(BlobDataItem(std::move(data)));
@@ -209,7 +253,7 @@ long long BlobData::length() const {
        it != items_.end(); ++it) {
     const BlobDataItem& item = *it;
     if (item.length != BlobDataItem::kToEndOfFile) {
-      ASSERT(item.length >= 0);
+      DCHECK_GE(item.length, 0);
       length += item.length;
       continue;
     }
@@ -242,7 +286,12 @@ BlobDataHandle::BlobDataHandle()
     : uuid_(CreateCanonicalUUIDString()),
       size_(0),
       is_single_unknown_size_file_(false) {
-  BlobRegistry::RegisterBlobData(uuid_, BlobData::Create());
+  if (RuntimeEnabledFeatures::MojoBlobsEnabled()) {
+    GetThreadSpecificRegistry()->Register(MakeRequest(&blob_info_), uuid_, "",
+                                          "", {});
+  } else {
+    BlobRegistry::RegisterBlobData(uuid_, BlobData::Create());
+  }
 }
 
 BlobDataHandle::BlobDataHandle(std::unique_ptr<BlobData> data, long long size)
@@ -250,7 +299,109 @@ BlobDataHandle::BlobDataHandle(std::unique_ptr<BlobData> data, long long size)
       type_(data->ContentType().IsolatedCopy()),
       size_(size),
       is_single_unknown_size_file_(data->IsSingleUnknownSizeFile()) {
-  BlobRegistry::RegisterBlobData(uuid_, std::move(data));
+  if (RuntimeEnabledFeatures::MojoBlobsEnabled()) {
+    TRACE_EVENT0("Blob", "Registry::RegisterBlob");
+
+    size_t current_memory_population = 0;
+    Vector<DataElementPtr> elements;
+    const DataElementPtr null_element = nullptr;
+    BlobBytesProvider* last_bytes_provider = nullptr;
+    scoped_refptr<WebTaskRunner> file_runner =
+        Platform::Current()->FileTaskRunner();
+
+    // TODO(mek): When the mojo code path is the default BlobData should
+    // directly create mojom::DataElements rather than BlobDataItems,
+    // eliminating the need for this loop.
+    for (const auto& item : data->Items()) {
+      // Skip zero-byte elements, as they don't matter for the contents of
+      // the blob.
+      if (item.length == 0)
+        continue;
+      switch (item.type) {
+        case BlobDataItem::kData: {
+          // kData elements don't set item.length, so separately check for zero
+          // byte kData elements.
+          if (item.data->length() == 0)
+            continue;
+          // Since blobs are often constructed with arrays with single bytes,
+          // consolidate all adjacent memory blob items into one. This should
+          // massively reduce the overhead of describing all these byte
+          // elements.
+          const DataElementPtr& last_element =
+              elements.IsEmpty() ? null_element : elements.back();
+          bool should_embed_bytes =
+              current_memory_population + item.data->length() <=
+              DataElementBytes::kMaximumEmbeddedDataSize;
+          bool last_element_is_bytes = last_element && last_element->is_bytes();
+          if (last_element_is_bytes) {
+            // Append bytes to previous element.
+            DCHECK(last_bytes_provider);
+            const auto& bytes_element = last_element->get_bytes();
+            bytes_element->length += item.data->length();
+            if (should_embed_bytes && bytes_element->embedded_data) {
+              bytes_element->embedded_data->Append(item.data->data(),
+                                                   item.data->length());
+              current_memory_population += item.data->length();
+            } else if (bytes_element->embedded_data) {
+              current_memory_population -= bytes_element->embedded_data->size();
+              bytes_element->embedded_data = WTF::nullopt;
+            }
+            last_bytes_provider->AppendData(item.data);
+          } else {
+            BytesProviderPtrInfo bytes_provider_info;
+            auto provider = std::make_unique<BlobBytesProvider>(item.data);
+            last_bytes_provider = provider.get();
+            if (file_runner) {
+              // TODO(mek): Considering binding BytesProvider on the IO thread
+              // instead, only using the File thread for actual file operations.
+              file_runner->PostTask(
+                  FROM_HERE,
+                  CrossThreadBind(
+                      &BindBytesProvider, WTF::Passed(std::move(provider)),
+                      WTF::Passed(MakeRequest(&bytes_provider_info))));
+            } else {
+              BindBytesProvider(std::move(provider),
+                                MakeRequest(&bytes_provider_info));
+            }
+            DataElementBytesPtr bytes_element =
+                DataElementBytes::New(item.data->length(), WTF::nullopt,
+                                      std::move(bytes_provider_info));
+            if (should_embed_bytes) {
+              bytes_element->embedded_data = Vector<uint8_t>();
+              bytes_element->embedded_data->Append(item.data->data(),
+                                                   item.data->length());
+              current_memory_population += item.data->length();
+            }
+            elements.push_back(DataElement::NewBytes(std::move(bytes_element)));
+          }
+          break;
+        }
+        case BlobDataItem::kFile:
+          elements.push_back(DataElement::NewFile(DataElementFile::New(
+              WebStringToFilePath(item.path), item.offset, item.length,
+              WTF::Time::FromDoubleT(item.expected_modification_time))));
+          break;
+        case BlobDataItem::kFileSystemURL:
+          elements.push_back(
+              DataElement::NewFileFilesystem(DataElementFilesystemURL::New(
+                  item.file_system_url, item.offset, item.length,
+                  WTF::Time::FromDoubleT(item.expected_modification_time))));
+          break;
+        case BlobDataItem::kBlob: {
+          elements.push_back(DataElement::NewBlob(DataElementBlob::New(
+              item.blob_data_handle->CloneBlobPtr().PassInterface(),
+              item.offset, item.length)));
+          break;
+        }
+      }
+    }
+
+    GetThreadSpecificRegistry()->Register(MakeRequest(&blob_info_), uuid_,
+                                          type_.IsNull() ? "" : type_, "",
+                                          std::move(elements));
+  } else {
+    BlobRegistry::RegisterBlobData(uuid_, std::move(data));
+  }
 }
 
 BlobDataHandle::BlobDataHandle(const String& uuid,
@@ -260,11 +411,69 @@ BlobDataHandle::BlobDataHandle(const String& uuid,
       type_(IsValidBlobType(type) ? type.IsolatedCopy() : ""),
       size_(size),
       is_single_unknown_size_file_(false) {
-  BlobRegistry::AddBlobDataRef(uuid_);
+  if (RuntimeEnabledFeatures::MojoBlobsEnabled()) {
+    SCOPED_BLINK_UMA_HISTOGRAM_TIMER_THREAD_SAFE(
+        "Storage.Blob.GetBlobFromUUIDTime");
+    GetThreadSpecificRegistry()->GetBlobFromUUID(MakeRequest(&blob_info_),
+                                                 uuid_);
+  } else {
+    BlobRegistry::AddBlobDataRef(uuid_);
+  }
+}
+
+BlobDataHandle::BlobDataHandle(const String& uuid,
+                               const String& type,
+                               long long size,
+                               BlobPtrInfo blob_info)
+    : uuid_(uuid.IsolatedCopy()),
+      type_(IsValidBlobType(type) ? type.IsolatedCopy() : ""),
+      size_(size),
+      is_single_unknown_size_file_(false),
+      blob_info_(std::move(blob_info)) {
+  DCHECK(RuntimeEnabledFeatures::MojoBlobsEnabled());
+  DCHECK(blob_info_.is_valid());
 }
 
 BlobDataHandle::~BlobDataHandle() {
-  BlobRegistry::RemoveBlobDataRef(uuid_);
+  if (!RuntimeEnabledFeatures::MojoBlobsEnabled())
+    BlobRegistry::RemoveBlobDataRef(uuid_);
+}
+
+BlobPtr BlobDataHandle::CloneBlobPtr() {
+  MutexLocker locker(blob_info_mutex_);
+  if (!blob_info_.is_valid())
+    return nullptr;
+  BlobPtr blob, blob_clone;
+  blob.Bind(std::move(blob_info_));
+  blob->Clone(MakeRequest(&blob_clone));
+  blob_info_ = blob.PassInterface();
+  return blob_clone;
+}
+
+// static
+void BlobDataHandle::SetBlobRegistryForTesting(
+    mojom::blink::BlobRegistry* registry) {
+  g_blob_registry_for_testing = registry;
+}
+
+void BlobDataHandle::ReadAll(mojo::ScopedDataPipeProducerHandle pipe,
+                             mojom::blink::BlobReaderClientPtr client) {
+  MutexLocker locker(blob_info_mutex_);
+  BlobPtr blob;
+  blob.Bind(std::move(blob_info_));
+  blob->ReadAll(std::move(pipe), std::move(client));
+  blob_info_ = blob.PassInterface();
+}
+
+void BlobDataHandle::ReadRange(uint64_t offset,
+                               uint64_t length,
+                               mojo::ScopedDataPipeProducerHandle pipe,
+                               mojom::blink::BlobReaderClientPtr client) {
+  MutexLocker locker(blob_info_mutex_);
+  BlobPtr blob;
+  blob.Bind(std::move(blob_info_));
+  blob->ReadRange(offset, length, std::move(pipe), std::move(client));
+  blob_info_ = blob.PassInterface();
 }
 
 }  // namespace blink

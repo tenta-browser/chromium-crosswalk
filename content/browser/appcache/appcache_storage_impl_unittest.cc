@@ -7,21 +7,23 @@
 #include <stdint.h>
 
 #include <memory>
-#include <stack>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
+#include "base/containers/stack.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/test/scoped_task_environment.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/appcache/appcache.h"
 #include "content/browser/appcache/appcache_backend_impl.h"
 #include "content/browser/appcache/appcache_database.h"
@@ -34,6 +36,7 @@
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_response_headers.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_error_job.h"
 #include "net/url_request/url_request_job_factory_impl.h"
 #include "net/url_request/url_request_test_job.h"
@@ -168,8 +171,8 @@ class IOThread : public base::Thread {
     std::unique_ptr<net::URLRequestJobFactoryImpl> factory(
         new net::URLRequestJobFactoryImpl());
     factory->SetProtocolHandler("http",
-                                base::MakeUnique<MockHttpServerJobFactory>(
-                                    base::MakeUnique<AppCacheInterceptor>()));
+                                std::make_unique<MockHttpServerJobFactory>(
+                                    std::make_unique<AppCacheInterceptor>()));
     job_factory_ = std::move(factory);
     request_context_.reset(new net::TestURLRequestContext());
     request_context_->set_job_factory(job_factory_.get());
@@ -185,8 +188,9 @@ class IOThread : public base::Thread {
   std::unique_ptr<net::URLRequestContext> request_context_;
 };
 
+std::unique_ptr<base::test::ScopedTaskEnvironment> scoped_task_environment;
 std::unique_ptr<IOThread> io_thread;
-std::unique_ptr<base::Thread> db_thread;
+std::unique_ptr<base::Thread> background_thread;
 
 }  // namespace
 
@@ -210,8 +214,8 @@ class AppCacheStorageImplTest : public testing::Test {
                        const GURL& manifest_url) override {
       loaded_group_ = group;
       loaded_manifest_url_ = manifest_url;
-      loaded_groups_newest_cache_ = group ? group->newest_complete_cache()
-                                          : NULL;
+      loaded_groups_newest_cache_ =
+          group ? group->newest_complete_cache() : nullptr;
       test_->ScheduleNextTask();
     }
 
@@ -276,7 +280,6 @@ class AppCacheStorageImplTest : public testing::Test {
         : QuotaManager(true /* is_incognito */,
                        base::FilePath(),
                        io_thread->task_runner().get(),
-                       db_thread->task_runner().get(),
                        nullptr,
                        storage::GetQuotaSettingsFunc()),
           async_(false) {}
@@ -286,9 +289,9 @@ class AppCacheStorageImplTest : public testing::Test {
                           const UsageAndQuotaCallback& callback) override {
       EXPECT_EQ(storage::kStorageTypeTemporary, type);
       if (async_) {
-        base::ThreadTaskRunnerHandle::Get()->PostTask(
-            FROM_HERE, base::Bind(&MockQuotaManager::CallCallback,
-                                  base::Unretained(this), callback));
+        base::SequencedTaskRunnerHandle::Get()->PostTask(
+            FROM_HERE, base::BindOnce(&MockQuotaManager::CallCallback,
+                                      base::Unretained(this), callback));
         return;
       }
       CallCallback(callback);
@@ -307,7 +310,7 @@ class AppCacheStorageImplTest : public testing::Test {
   class MockQuotaManagerProxy : public storage::QuotaManagerProxy {
    public:
     MockQuotaManagerProxy()
-        : QuotaManagerProxy(NULL, NULL),
+        : QuotaManagerProxy(nullptr, nullptr),
           notify_storage_accessed_count_(0),
           notify_storage_modified_count_(0),
           last_delta_(0),
@@ -370,29 +373,32 @@ class AppCacheStorageImplTest : public testing::Test {
     SetUpTest();
 
     // Ensure InitTask execution prior to conducting a test.
-    FlushDbThreadTasks();
+    FlushAllTasks();
 
     // We also have to wait for InitTask completion call to be performed
     // on the IO thread prior to running the test. Its guaranteed to be
     // queued by this time.
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&AppCacheStorageImplTest::RunMethod<Method>,
-                              base::Unretained(this), method));
+    base::SequencedTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(&AppCacheStorageImplTest::RunMethod<Method>,
+                                  base::Unretained(this), method));
   }
 
   static void SetUpTestCase() {
+    scoped_task_environment.reset(new base::test::ScopedTaskEnvironment());
+
     // We start both threads as TYPE_IO because we also use the db_thead
     // for the disk_cache which needs to be of TYPE_IO.
     base::Thread::Options options(base::MessageLoop::TYPE_IO, 0);
     io_thread.reset(new IOThread("AppCacheTest.IOThread"));
     ASSERT_TRUE(io_thread->StartWithOptions(options));
-    db_thread.reset(new base::Thread("AppCacheTest::DBThread"));
-    ASSERT_TRUE(db_thread->StartWithOptions(options));
+    background_thread.reset(new base::Thread("AppCacheTest::BackgroundThread"));
+    ASSERT_TRUE(background_thread->StartWithOptions(options));
   }
 
   static void TearDownTestCase() {
-    io_thread.reset(NULL);
-    db_thread.reset(NULL);
+    io_thread.reset();
+    background_thread.reset();
+    scoped_task_environment.reset();
   }
 
   // Test harness --------------------------------------------------
@@ -405,15 +411,16 @@ class AppCacheStorageImplTest : public testing::Test {
         base::WaitableEvent::ResetPolicy::AUTOMATIC,
         base::WaitableEvent::InitialState::NOT_SIGNALED));
     io_thread->task_runner()->PostTask(
-        FROM_HERE, base::Bind(&AppCacheStorageImplTest::MethodWrapper<Method>,
-                              base::Unretained(this), method));
+        FROM_HERE,
+        base::BindOnce(&AppCacheStorageImplTest::MethodWrapper<Method>,
+                       base::Unretained(this), method));
     test_finished_event_->Wait();
   }
 
   void SetUpTest() {
     DCHECK(io_thread->task_runner()->BelongsToCurrentThread());
-    service_.reset(new AppCacheServiceImpl(NULL));
-    service_->Initialize(base::FilePath(), db_thread->task_runner(), NULL);
+    service_.reset(new AppCacheServiceImpl(nullptr));
+    service_->Initialize(base::FilePath());
     mock_quota_manager_proxy_ = new MockQuotaManagerProxy();
     service_->quota_manager_proxy_ = mock_quota_manager_proxy_;
     delegate_.reset(new MockStorageDelegate(this));
@@ -421,23 +428,27 @@ class AppCacheStorageImplTest : public testing::Test {
 
   void TearDownTest() {
     DCHECK(io_thread->task_runner()->BelongsToCurrentThread());
+    scoped_refptr<base::SequencedTaskRunner> db_runner =
+        storage()->db_task_runner_;
     storage()->CancelDelegateCallbacks(delegate());
-    group_ = NULL;
-    cache_ = NULL;
-    cache2_ = NULL;
-    mock_quota_manager_proxy_ = NULL;
+    group_ = nullptr;
+    cache_ = nullptr;
+    cache2_ = nullptr;
+    mock_quota_manager_proxy_ = nullptr;
     delegate_.reset();
     service_.reset();
-    FlushDbThreadTasks();
+    FlushTasks(db_runner.get());
+    FlushTasks(background_thread->task_runner().get());
+    FlushTasks(db_runner.get());
   }
 
   void TestFinished() {
     // We unwind the stack prior to finishing up to let stack
     // based objects get deleted.
     DCHECK(io_thread->task_runner()->BelongsToCurrentThread());
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&AppCacheStorageImplTest::TestFinishedUnwound,
-                              base::Unretained(this)));
+    base::SequencedTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(&AppCacheStorageImplTest::TestFinishedUnwound,
+                                  base::Unretained(this)));
   }
 
   void TestFinishedUnwound() {
@@ -445,8 +456,8 @@ class AppCacheStorageImplTest : public testing::Test {
     test_finished_event_->Signal();
   }
 
-  void PushNextTask(const base::Closure& task) {
-    task_stack_.push(task);
+  void PushNextTask(base::OnceClosure task) {
+    task_stack_.push(std::move(task));
   }
 
   void ScheduleNextTask() {
@@ -454,7 +465,8 @@ class AppCacheStorageImplTest : public testing::Test {
     if (task_stack_.empty()) {
       return;
     }
-    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, task_stack_.top());
+    base::SequencedTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, std::move(task_stack_.top()));
     task_stack_.pop();
   }
 
@@ -462,13 +474,20 @@ class AppCacheStorageImplTest : public testing::Test {
     event->Signal();
   }
 
-  void FlushDbThreadTasks() {
+  void FlushAllTasks() {
+    FlushTasks(storage()->db_task_runner_.get());
+    FlushTasks(background_thread->task_runner().get());
+    FlushTasks(storage()->db_task_runner_.get());
+  }
+
+  void FlushTasks(base::SequencedTaskRunner* runner) {
     // We pump a task thru the db thread to ensure any tasks previously
     // scheduled on that thread have been performed prior to return.
     base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                               base::WaitableEvent::InitialState::NOT_SIGNALED);
-    db_thread->task_runner()->PostTask(
-        FROM_HERE, base::Bind(&AppCacheStorageImplTest::SignalEvent, &event));
+    runner->PostTask(
+        FROM_HERE,
+        base::BindOnce(&AppCacheStorageImplTest::SignalEvent, &event));
     event.Wait();
   }
 
@@ -477,8 +496,8 @@ class AppCacheStorageImplTest : public testing::Test {
   void LoadCache_Miss() {
     // Attempt to load a cache that doesn't exist. Should
     // complete asynchronously.
-    PushNextTask(base::Bind(&AppCacheStorageImplTest::Verify_LoadCache_Miss,
-                            base::Unretained(this)));
+    PushNextTask(base::BindOnce(&AppCacheStorageImplTest::Verify_LoadCache_Miss,
+                                base::Unretained(this)));
 
     storage()->LoadCache(111, delegate());
     EXPECT_NE(111, delegate()->loaded_cache_id_);
@@ -528,8 +547,8 @@ class AppCacheStorageImplTest : public testing::Test {
   void CreateGroupInPopulatedOrigin() {
     // Attempt to load a group that doesn't exist, one should
     // be created for us, but not stored.
-    PushNextTask(base::Bind(&AppCacheStorageImplTest::Verify_CreateGroup,
-                            base::Unretained(this)));
+    PushNextTask(base::BindOnce(&AppCacheStorageImplTest::Verify_CreateGroup,
+                                base::Unretained(this)));
 
     // Since the origin has groups, storage class will have to
     // consult the database and completion will be async.
@@ -562,14 +581,15 @@ class AppCacheStorageImplTest : public testing::Test {
     // Attempt to load a cache that is not currently in use
     // and does require loading from disk. This
     // load should complete asynchronously.
-    PushNextTask(base::Bind(&AppCacheStorageImplTest::Verify_LoadCache_Far_Hit,
-                            base::Unretained(this)));
+    PushNextTask(
+        base::BindOnce(&AppCacheStorageImplTest::Verify_LoadCache_Far_Hit,
+                       base::Unretained(this)));
 
     // Setup some preconditions. Create a group and newest cache that
     // appear to be "stored" and "not currently in use".
     MakeCacheAndGroup(kManifestUrl, 1, 1, true);
-    group_ = NULL;
-    cache_ = NULL;
+    group_ = nullptr;
+    cache_ = nullptr;
 
     // Conduct the cache load test, completes async
     storage()->LoadCache(1, delegate());
@@ -589,12 +609,13 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_EQ(0, mock_quota_manager_proxy_->notify_storage_modified_count_);
 
     // Drop things from the working set.
-    delegate()->loaded_cache_ = NULL;
+    delegate()->loaded_cache_ = nullptr;
     EXPECT_FALSE(delegate()->loaded_group_.get());
 
     // Conduct the group load test, also complete asynchronously.
-    PushNextTask(base::Bind(&AppCacheStorageImplTest::Verify_LoadGroup_Far_Hit,
-                            base::Unretained(this)));
+    PushNextTask(
+        base::BindOnce(&AppCacheStorageImplTest::Verify_LoadGroup_Far_Hit,
+                       base::Unretained(this)));
 
     storage()->LoadOrCreateGroup(kManifestUrl, delegate());
   }
@@ -603,7 +624,7 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_TRUE(delegate()->loaded_group_.get());
     EXPECT_EQ(kManifestUrl, delegate()->loaded_manifest_url_);
     EXPECT_TRUE(delegate()->loaded_group_->newest_complete_cache());
-    delegate()->loaded_groups_newest_cache_ = NULL;
+    delegate()->loaded_groups_newest_cache_ = nullptr;
     EXPECT_TRUE(delegate()->loaded_group_->HasOneRef());
     EXPECT_EQ(2, mock_quota_manager_proxy_->notify_storage_accessed_count_);
     EXPECT_EQ(0, mock_quota_manager_proxy_->notify_storage_modified_count_);
@@ -614,8 +635,8 @@ class AppCacheStorageImplTest : public testing::Test {
 
   void StoreNewGroup() {
     // Store a group and its newest cache. Should complete asynchronously.
-    PushNextTask(base::Bind(&AppCacheStorageImplTest::Verify_StoreNewGroup,
-                            base::Unretained(this)));
+    PushNextTask(base::BindOnce(&AppCacheStorageImplTest::Verify_StoreNewGroup,
+                                base::Unretained(this)));
 
     // Setup some preconditions. Create a group and newest cache that
     // appear to be "unstored".
@@ -660,8 +681,9 @@ class AppCacheStorageImplTest : public testing::Test {
 
   void StoreExistingGroup() {
     // Store a group and its newest cache. Should complete asynchronously.
-    PushNextTask(base::Bind(&AppCacheStorageImplTest::Verify_StoreExistingGroup,
-                            base::Unretained(this)));
+    PushNextTask(
+        base::BindOnce(&AppCacheStorageImplTest::Verify_StoreExistingGroup,
+                       base::Unretained(this)));
 
     // Setup some preconditions. Create a group and old complete cache
     // that appear to be "stored"
@@ -720,7 +742,7 @@ class AppCacheStorageImplTest : public testing::Test {
     cache_->AddEntry(kEntryUrl, AppCacheEntry(AppCacheEntry::MASTER, 1, 100));
     cache_->set_update_time(now);
 
-    PushNextTask(base::Bind(
+    PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_StoreExistingGroupExistingCache,
         base::Unretained(this), now));
 
@@ -767,8 +789,8 @@ class AppCacheStorageImplTest : public testing::Test {
 
   void FailStoreGroup() {
     // Store a group and its newest cache. Should complete asynchronously.
-    PushNextTask(base::Bind(&AppCacheStorageImplTest::Verify_FailStoreGroup,
-                            base::Unretained(this)));
+    PushNextTask(base::BindOnce(&AppCacheStorageImplTest::Verify_FailStoreGroup,
+                                base::Unretained(this)));
 
     // Setup some preconditions. Create a group and newest cache that
     // appear to be "unstored" and big enough to exceed the 5M limit.
@@ -806,8 +828,9 @@ class AppCacheStorageImplTest : public testing::Test {
 
   void MakeGroupObsolete() {
     // Make a group obsolete, should complete asynchronously.
-    PushNextTask(base::Bind(&AppCacheStorageImplTest::Verify_MakeGroupObsolete,
-                            base::Unretained(this)));
+    PushNextTask(
+        base::BindOnce(&AppCacheStorageImplTest::Verify_MakeGroupObsolete,
+                       base::Unretained(this)));
 
     // Setup some preconditions. Create a group and newest cache that
     // appears to be "stored" and "currently in use".
@@ -897,7 +920,7 @@ class AppCacheStorageImplTest : public testing::Test {
 
     // And the entry in storage should also be updated, but that
     // happens asynchronously on the db thread.
-    FlushDbThreadTasks();
+    FlushAllTasks();
     AppCacheDatabase::EntryRecord entry_record2;
     EXPECT_TRUE(database()->FindEntry(1, kEntryUrl, &entry_record2));
     EXPECT_EQ(AppCacheEntry::EXPLICIT | AppCacheEntry::FOREIGN,
@@ -908,9 +931,9 @@ class AppCacheStorageImplTest : public testing::Test {
   // MarkEntryAsForeignWithLoadInProgress  -------------------------------
 
   void MarkEntryAsForeignWithLoadInProgress() {
-    PushNextTask(base::Bind(
-       &AppCacheStorageImplTest::Verify_MarkEntryAsForeignWithLoadInProgress,
-       base::Unretained(this)));
+    PushNextTask(base::BindOnce(
+        &AppCacheStorageImplTest::Verify_MarkEntryAsForeignWithLoadInProgress,
+        base::Unretained(this)));
 
     // Setup some preconditions. Create a cache with an entry
     // in storage, but not in the working set.
@@ -924,8 +947,8 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_TRUE(database()->InsertEntry(&entry_record));
     EXPECT_FALSE(cache_->GetEntry(kEntryUrl)->IsForeign());
     EXPECT_TRUE(cache_->HasOneRef());
-    cache_ = NULL;
-    group_ = NULL;
+    cache_ = nullptr;
+    group_ = nullptr;
 
     // Conduct the test, start a cache load, and prior to completion
     // of that load, mark the entry as foreign.
@@ -942,7 +965,7 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_TRUE(delegate()->loaded_cache_->GetEntry(kEntryUrl)->IsExplicit());
 
     // And the entry in storage should also be updated.
-    FlushDbThreadTasks();
+    FlushAllTasks();
     AppCacheDatabase::EntryRecord entry_record;
     EXPECT_TRUE(database()->FindEntry(1, kEntryUrl, &entry_record));
     EXPECT_EQ(AppCacheEntry::EXPLICIT | AppCacheEntry::FOREIGN,
@@ -953,8 +976,9 @@ class AppCacheStorageImplTest : public testing::Test {
   // FindNoMainResponse  -------------------------------
 
   void FindNoMainResponse() {
-    PushNextTask(base::Bind(&AppCacheStorageImplTest::Verify_FindNoMainResponse,
-                            base::Unretained(this)));
+    PushNextTask(
+        base::BindOnce(&AppCacheStorageImplTest::Verify_FindNoMainResponse,
+                       base::Unretained(this)));
 
     // Conduct the test.
     storage()->FindResponseForMainRequest(kEntryUrl, GURL(), delegate());
@@ -985,9 +1009,9 @@ class AppCacheStorageImplTest : public testing::Test {
   }
 
   void BasicFindMainResponse(bool drop_from_working_set) {
-    PushNextTask(base::Bind(
-        &AppCacheStorageImplTest::Verify_BasicFindMainResponse,
-        base::Unretained(this)));
+    PushNextTask(
+        base::BindOnce(&AppCacheStorageImplTest::Verify_BasicFindMainResponse,
+                       base::Unretained(this)));
 
     // Setup some preconditions. Create a complete cache with an entry
     // in storage.
@@ -1003,9 +1027,9 @@ class AppCacheStorageImplTest : public testing::Test {
     // Optionally drop the cache/group pair from the working set.
     if (drop_from_working_set) {
       EXPECT_TRUE(cache_->HasOneRef());
-      cache_ = NULL;
+      cache_ = nullptr;
       EXPECT_TRUE(group_->HasOneRef());
-      group_ = NULL;
+      group_ = nullptr;
     }
 
     // Conduct the test.
@@ -1035,7 +1059,7 @@ class AppCacheStorageImplTest : public testing::Test {
   }
 
   void BasicFindMainFallbackResponse(bool drop_from_working_set) {
-    PushNextTask(base::Bind(
+    PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_BasicFindMainFallbackResponse,
         base::Unretained(this)));
 
@@ -1079,9 +1103,9 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_TRUE(database()->InsertOnlineWhiteListRecords(whitelists));
     if (drop_from_working_set) {
       EXPECT_TRUE(cache_->HasOneRef());
-      cache_ = NULL;
+      cache_ = nullptr;
       EXPECT_TRUE(group_->HasOneRef());
-      group_ = NULL;
+      group_ = nullptr;
     }
 
     // Conduct the test. The test url is in both fallback namespace urls,
@@ -1113,7 +1137,7 @@ class AppCacheStorageImplTest : public testing::Test {
   }
 
   void BasicFindMainInterceptResponse(bool drop_from_working_set) {
-    PushNextTask(base::Bind(
+    PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_BasicFindMainInterceptResponse,
         base::Unretained(this)));
 
@@ -1153,9 +1177,9 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_TRUE(database()->InsertOnlineWhiteListRecords(whitelists));
     if (drop_from_working_set) {
       EXPECT_TRUE(cache_->HasOneRef());
-      cache_ = NULL;
+      cache_ = nullptr;
       EXPECT_TRUE(group_->HasOneRef());
-      group_ = NULL;
+      group_ = nullptr;
     }
 
     // Conduct the test. The test url is in both intercept namespaces,
@@ -1219,13 +1243,13 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_TRUE(database()->InsertNamespaceRecords(intercepts));
     if (drop_from_working_set) {
       EXPECT_TRUE(cache_->HasOneRef());
-      cache_ = NULL;
+      cache_ = nullptr;
       EXPECT_TRUE(group_->HasOneRef());
-      group_ = NULL;
+      group_ = nullptr;
     }
 
     // First test something that does not match the pattern.
-    PushNextTask(base::Bind(
+    PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindInterceptPatternMatchNegative,
         base::Unretained(this)));
     storage()->FindResponseForMainRequest(
@@ -1245,7 +1269,7 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_EQ(0, delegate()->found_fallback_entry_.types());
 
     // Then test something that matches.
-    PushNextTask(base::Bind(
+    PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindInterceptPatternMatchPositive,
         base::Unretained(this)));
     storage()->FindResponseForMainRequest(
@@ -1306,13 +1330,13 @@ class AppCacheStorageImplTest : public testing::Test {
     EXPECT_TRUE(database()->InsertNamespaceRecords(fallbacks));
     if (drop_from_working_set) {
       EXPECT_TRUE(cache_->HasOneRef());
-      cache_ = NULL;
+      cache_ = nullptr;
       EXPECT_TRUE(group_->HasOneRef());
-      group_ = NULL;
+      group_ = nullptr;
     }
 
     // First test something that does not match the pattern.
-    PushNextTask(base::Bind(
+    PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindFallbackPatternMatchNegative,
         base::Unretained(this)));
     storage()->FindResponseForMainRequest(
@@ -1332,7 +1356,7 @@ class AppCacheStorageImplTest : public testing::Test {
       EXPECT_EQ(0, delegate()->found_fallback_entry_.types());
 
       // Then test something that matches.
-      PushNextTask(base::Bind(
+      PushNextTask(base::BindOnce(
           &AppCacheStorageImplTest::Verify_FindFallbackPatternMatchPositive,
           base::Unretained(this)));
       storage()->FindResponseForMainRequest(
@@ -1354,7 +1378,7 @@ class AppCacheStorageImplTest : public testing::Test {
   // FindMainResponseWithMultipleHits  -------------------------------
 
   void FindMainResponseWithMultipleHits() {
-    PushNextTask(base::Bind(
+    PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindMainResponseWithMultipleHits,
         base::Unretained(this)));
 
@@ -1428,7 +1452,7 @@ class AppCacheStorageImplTest : public testing::Test {
 
     // Conduct another test preferring kManifestUrl
     delegate_.reset(new MockStorageDelegate(this));
-    PushNextTask(base::Bind(
+    PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindMainResponseWithMultipleHits2,
         base::Unretained(this)));
     storage()->FindResponseForMainRequest(kEntryUrl, kManifestUrl, delegate());
@@ -1446,7 +1470,7 @@ class AppCacheStorageImplTest : public testing::Test {
 
     // Conduct the another test preferring kManifestUrl2
     delegate_.reset(new MockStorageDelegate(this));
-    PushNextTask(base::Bind(
+    PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindMainResponseWithMultipleHits3,
         base::Unretained(this)));
     storage()->FindResponseForMainRequest(kEntryUrl, kManifestUrl2, delegate());
@@ -1464,7 +1488,7 @@ class AppCacheStorageImplTest : public testing::Test {
 
     // Conduct another test with no preferred manifest that hits the fallback.
     delegate_.reset(new MockStorageDelegate(this));
-    PushNextTask(base::Bind(
+    PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindMainResponseWithMultipleHits4,
         base::Unretained(this)));
     storage()->FindResponseForMainRequest(
@@ -1485,7 +1509,7 @@ class AppCacheStorageImplTest : public testing::Test {
 
     // Conduct another test preferring kManifestUrl2 that hits the fallback.
     delegate_.reset(new MockStorageDelegate(this));
-    PushNextTask(base::Bind(
+    PushNextTask(base::BindOnce(
         &AppCacheStorageImplTest::Verify_FindMainResponseWithMultipleHits5,
         base::Unretained(this)));
     storage()->FindResponseForMainRequest(
@@ -1557,13 +1581,14 @@ class AppCacheStorageImplTest : public testing::Test {
     whitelist_record.namespace_url = kOnlineNamespaceWithinFallback;
     EXPECT_TRUE(database()->InsertOnlineWhiteList(&whitelist_record));
     if (drop_from_working_set) {
-      cache_ = NULL;
-      group_ = NULL;
+      cache_ = nullptr;
+      group_ = nullptr;
     }
 
     // We should not find anything for the foreign entry.
-    PushNextTask(base::Bind(&AppCacheStorageImplTest::Verify_ExclusionNotFound,
-                            base::Unretained(this), kEntryUrl, 1));
+    PushNextTask(
+        base::BindOnce(&AppCacheStorageImplTest::Verify_ExclusionNotFound,
+                       base::Unretained(this), kEntryUrl, 1));
     storage()->FindResponseForMainRequest(kEntryUrl, GURL(), delegate());
   }
 
@@ -1591,7 +1616,7 @@ class AppCacheStorageImplTest : public testing::Test {
     if (phase == 2) {
       // We should not find anything for the online namespace nested within
       // the fallback namespace.
-      PushNextTask(base::Bind(
+      PushNextTask(base::BindOnce(
           &AppCacheStorageImplTest::Verify_ExclusionNotFound,
           base::Unretained(this), kOnlineNamespaceWithinFallback, 3));
       storage()->FindResponseForMainRequest(
@@ -1644,6 +1669,9 @@ class AppCacheStorageImplTest : public testing::Test {
                       AppCacheLogLevel log_level,
                       const std::string& message) override {}
     void OnContentBlocked(int host_id, const GURL& manifest_url) override {}
+    void OnSetSubresourceFactory(
+        int host_id,
+        mojo::MessagePipeHandle loader_factory_pipe_handle) override {}
 
     bool error_event_was_raised_;
   };
@@ -1720,10 +1748,9 @@ class AppCacheStorageImplTest : public testing::Test {
     }
 
     // Recreate the service to point at the db and corruption on disk.
-    service_.reset(new AppCacheServiceImpl(NULL));
+    service_.reset(new AppCacheServiceImpl(nullptr));
     service_->set_request_context(io_thread->request_context());
-    service_->Initialize(temp_directory_.GetPath(), db_thread->task_runner(),
-                         db_thread->task_runner());
+    service_->Initialize(temp_directory_.GetPath());
     mock_quota_manager_proxy_ = new MockQuotaManagerProxy();
     service_->quota_manager_proxy_ = mock_quota_manager_proxy_;
     delegate_.reset(new MockStorageDelegate(this));
@@ -1734,10 +1761,11 @@ class AppCacheStorageImplTest : public testing::Test {
 
     // We continue after the init task is complete including the callback
     // on the current thread.
-    FlushDbThreadTasks();
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&AppCacheStorageImplTest::Continue_Reinitialize,
-                              base::Unretained(this), test_case));
+    FlushAllTasks();
+    base::SequencedTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&AppCacheStorageImplTest::Continue_Reinitialize,
+                       base::Unretained(this), test_case));
   }
 
   void Continue_Reinitialize(ReinitTestCase test_case) {
@@ -1772,17 +1800,16 @@ class AppCacheStorageImplTest : public testing::Test {
       AppCacheHost* host2 = backend_->GetHost(2);
       GURL manifest_url = MockHttpServer::GetMockUrl("manifest");
       request_ = service()->request_context()->CreateRequest(
-          manifest_url, net::DEFAULT_PRIORITY, &request_delegate_);
+          manifest_url, net::DEFAULT_PRIORITY, &request_delegate_,
+          TRAFFIC_ANNOTATION_FOR_TESTS);
       AppCacheInterceptor::SetExtraRequestInfo(
           request_.get(), service_.get(), backend_->process_id(),
           host2->host_id(), RESOURCE_TYPE_MAIN_FRAME, false);
       request_->Start();
     }
 
-    PushNextTask(base::Bind(
-        &AppCacheStorageImplTest::Verify_Reinitialized,
-        base::Unretained(this),
-        test_case));
+    PushNextTask(base::BindOnce(&AppCacheStorageImplTest::Verify_Reinitialized,
+                                base::Unretained(this), test_case));
   }
 
   void Verify_Reinitialized(ReinitTestCase test_case) {
@@ -1811,7 +1838,6 @@ class AppCacheStorageImplTest : public testing::Test {
     } else {
       ASSERT_EQ(CORRUPT_CACHE_ON_LOAD_EXISTING, test_case);
       AppCacheHost* host2 = backend_->GetHost(2);
-      EXPECT_EQ(1, host2->main_resource_cache_->cache_id());
       EXPECT_TRUE(host2->disabled_storage_reference_.get());
     }
 
@@ -1882,7 +1908,7 @@ class AppCacheStorageImplTest : public testing::Test {
   // Data members --------------------------------------------------
 
   std::unique_ptr<base::WaitableEvent> test_finished_event_;
-  std::stack<base::Closure> task_stack_;
+  base::stack<base::OnceClosure> task_stack_;
   std::unique_ptr<AppCacheServiceImpl> service_;
   std::unique_ptr<MockStorageDelegate> delegate_;
   scoped_refptr<MockQuotaManagerProxy> mock_quota_manager_proxy_;

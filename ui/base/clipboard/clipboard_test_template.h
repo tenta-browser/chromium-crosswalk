@@ -17,11 +17,11 @@
 #include <memory>
 #include <string>
 
-#include "base/message_loop/message_loop.h"
 #include "base/pickle.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_task_environment.h"
 #include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -56,10 +56,15 @@ class ClipboardTest : public PlatformTest {
  public:
 #if defined(USE_AURA)
   ClipboardTest()
-      : event_source_(ClipboardTraits::GetEventSource()),
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI),
+        event_source_(ClipboardTraits::GetEventSource()),
         clipboard_(ClipboardTraits::Create()) {}
 #else
-  ClipboardTest() : clipboard_(ClipboardTraits::Create()) {}
+  ClipboardTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI),
+        clipboard_(ClipboardTraits::Create()) {}
 #endif
 
   ~ClipboardTest() override { ClipboardTraits::Destroy(clipboard_); }
@@ -77,7 +82,7 @@ class ClipboardTest : public PlatformTest {
   }
 
  private:
-  base::MessageLoopForUI message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 #if defined(USE_AURA)
   std::unique_ptr<PlatformEventSource> event_source_;
 #endif
@@ -349,7 +354,7 @@ TYPED_TEST(ClipboardTest, URLTest) {
 
   {
     ScopedClipboardWriter clipboard_writer(CLIPBOARD_TYPE_COPY_PASTE);
-    clipboard_writer.WriteURL(url);
+    clipboard_writer.WriteText(url);
   }
 
   EXPECT_THAT(this->GetAvailableTypes(CLIPBOARD_TYPE_COPY_PASTE),
@@ -394,7 +399,6 @@ static void TestBitmapWrite(Clipboard* clipboard,
                                            CLIPBOARD_TYPE_COPY_PASTE));
   const SkBitmap& image = clipboard->ReadImage(CLIPBOARD_TYPE_COPY_PASTE);
   EXPECT_EQ(size, gfx::Size(image.width(), image.height()));
-  SkAutoLockPixels image_lock(image);
   for (int j = 0; j < image.height(); ++j) {
     const uint32_t* row_address = image.getAddr32(0, j);
     for (int i = 0; i < image.width(); ++i) {
@@ -600,7 +604,6 @@ TYPED_TEST(ClipboardTest, WriteEverything) {
   {
     ScopedClipboardWriter writer(CLIPBOARD_TYPE_COPY_PASTE);
     writer.WriteText(UTF8ToUTF16("foo"));
-    writer.WriteURL(UTF8ToUTF16("foo"));
     writer.WriteHTML(UTF8ToUTF16("foo"), "bar");
     writer.WriteBookmark(UTF8ToUTF16("foo"), "bar");
     writer.WriteHyperlink(ASCIIToUTF16("foo"), "bar");
@@ -644,11 +647,6 @@ TYPED_TEST(ClipboardTest, GetSequenceNumber) {
 TYPED_TEST(ClipboardTest, WriteTextEmptyParams) {
   ScopedClipboardWriter scw(CLIPBOARD_TYPE_COPY_PASTE);
   scw.WriteText(base::string16());
-}
-
-TYPED_TEST(ClipboardTest, WriteURLEmptyParams) {
-  ScopedClipboardWriter scw(CLIPBOARD_TYPE_COPY_PASTE);
-  scw.WriteURL(base::string16());
 }
 
 TYPED_TEST(ClipboardTest, WriteHTMLEmptyParams) {

@@ -19,14 +19,21 @@
 #include "components/strings/grit/components_strings.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/crash_report/breakpad_helper.h"
+#include "ios/chrome/browser/infobars/infobar_manager_impl.h"
 #include "ios/chrome/browser/sessions/ios_chrome_tab_restore_service_factory.h"
+#import "ios/chrome/browser/sessions/session_ios.h"
 #import "ios/chrome/browser/sessions/session_service_ios.h"
 #import "ios/chrome/browser/sessions/session_window_ios.h"
 #import "ios/chrome/browser/tabs/tab.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
+#include "ios/chrome/browser/web_state_list/web_state_list.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 @protocol InfoBarManagerObserverBridgeProtocol
 - (void)infoBarRemoved:(infobars::InfoBar*)infobar;
@@ -109,16 +116,14 @@ class SessionCrashedInfoBarDelegate : public ConfirmInfoBarDelegate {
   int GetIconId() const override;
 
   // The CrashRestoreHelper to restore sessions.
-  base::scoped_nsobject<CrashRestoreHelper> crash_restore_helper_;
-  // The TabModel to restore sessions to.
-  base::scoped_nsobject<TabModel> tab_model_;
+  CrashRestoreHelper* crash_restore_helper_;
 
   DISALLOW_COPY_AND_ASSIGN(SessionCrashedInfoBarDelegate);
 };
 
 SessionCrashedInfoBarDelegate::SessionCrashedInfoBarDelegate(
     CrashRestoreHelper* crash_restore_helper)
-    : crash_restore_helper_([crash_restore_helper retain]) {}
+    : crash_restore_helper_(crash_restore_helper) {}
 
 SessionCrashedInfoBarDelegate::~SessionCrashedInfoBarDelegate() {}
 
@@ -170,7 +175,7 @@ int SessionCrashedInfoBarDelegate::GetIconId() const {
   BOOL _needRestoration;
   std::unique_ptr<InfoBarManagerObserverBridge> _infoBarBridge;
   // The TabModel to restore sessions to.
-  base::scoped_nsobject<TabModel> _tabModel;
+  TabModel* _tabModel;
 
   // Indicate that the session has been restored to tabs or to recently closed
   // and should not be rerestored.
@@ -191,10 +196,12 @@ int SessionCrashedInfoBarDelegate::GetIconId() const {
   // The last session didn't exit cleanly. Show an infobar to the user so
   // that they can restore if they want. The delegate deletes itself when
   // it is closed.
-  DCHECK([tabModel currentTab]);
+  DCHECK(tabModel);
+  web::WebState* webState = tabModel.webStateList->GetActiveWebState();
+  DCHECK(webState);
   infobars::InfoBarManager* infoBarManager =
-      [[tabModel currentTab] infoBarManager];
-  _tabModel.reset([tabModel retain]);
+      InfoBarManagerImpl::FromWebState(webState);
+  _tabModel = tabModel;
   SessionCrashedInfoBarDelegate::Create(infoBarManager, self);
   _infoBarBridge.reset(new InfoBarManagerObserverBridge(infoBarManager, self));
 }
@@ -259,13 +266,15 @@ int SessionCrashedInfoBarDelegate::GetIconId() const {
   DCHECK(!_sessionRestored);
   _sessionRestored = YES;
   _infoBarBridge.reset();
-  SessionWindowIOS* sessionWindow = [[SessionServiceIOS sharedService]
-      loadSessionWindowFromPath:[self sessionBackupPath]];
-  if (sessionWindow) {
-    breakpad_helper::WillStartCrashRestoration();
-    return [_tabModel restoreSessionWindow:sessionWindow];
-  }
-  return NO;
+
+  SessionIOS* session = [[SessionServiceIOS sharedService]
+      loadSessionFromPath:[self sessionBackupPath]];
+  if (!session)
+    return NO;
+
+  DCHECK_EQ(session.sessionWindows.count, 1u);
+  breakpad_helper::WillStartCrashRestoration();
+  return [_tabModel restoreSessionWindow:session.sessionWindows[0]];
 }
 
 - (void)infoBarRemoved:(infobars::InfoBar*)infobar {
@@ -281,12 +290,14 @@ int SessionCrashedInfoBarDelegate::GetIconId() const {
   // the recently closed tabs.
   _sessionRestored = YES;
 
-  SessionWindowIOS* window = [[SessionServiceIOS sharedService]
-      loadSessionWindowFromPath:[self sessionBackupPath]];
-  DCHECK(window);
-  NSArray* sessions = window.sessions;
+  SessionIOS* session = [[SessionServiceIOS sharedService]
+      loadSessionFromPath:[self sessionBackupPath]];
+  DCHECK_EQ(session.sessionWindows.count, 1u);
+
+  NSArray<CRWSessionStorage*>* sessions = session.sessionWindows[0].sessions;
   if (!sessions.count)
     return;
+
   sessions::TabRestoreService* const tabRestoreService =
       IOSChromeTabRestoreServiceFactory::GetForBrowserState(_browserState);
   tabRestoreService->LoadTabsFromLastSession();

@@ -16,8 +16,7 @@ You can propose changes to this style guide by sending an email to
 request review for a change to this file. If there's no consensus,
 `src/styleguide/c++/OWNERS` get to decide.
 
-Blink code in `third_party/WebKit` uses [Blink
-style](https://sites.google.com/a/chromium.org/dev/blink/coding-style).
+Blink code in `third_party/WebKit` uses [Blink style](blink-c++.md).
 
 ## C++11 features
 
@@ -163,7 +162,7 @@ Place platform-specific #includes in their own section below the "normal"
 
   #if defined(OS_WIN)
   #include <windows.h>
-  #include "base/win/scoped_comptr.h"
+  #include "base/win/com_init_util.h"
   #elif defined(OS_POSIX)
   #include "base/posix/global_descriptors.h"
   #endif
@@ -224,7 +223,7 @@ following conventions. Here we refer to the parameter type as `T` and name as
   * If the function does not modify `t`'s ownership, declare the param as `T*`. The
     caller is expected to ensure `t` stays alive as long as necessary, generally
     through the duration of the call. Exception: In rare cases (e.g. using
-    lambdas with STL algorithms over containers of `uniuqe_ptr<>`s), you may be
+    lambdas with STL algorithms over containers of `unique_ptr<>`s), you may be
     forced to declare the param as `const std::unique_ptr<T>&`. Do this only when
     required.
 

@@ -68,7 +68,7 @@ void StorageInfoProvider::InitializeProvider(
 }
 
 bool StorageInfoProvider::QueryInfo() {
-  DCHECK(BrowserThread::GetBlockingPool()->RunsTasksOnCurrentThread());
+  base::AssertBlockingAllowed();
   // No info to query since we get all available storage devices' info in
   // |PrepareQueryOnUIThread()|.
   return true;
@@ -88,9 +88,8 @@ void StorageInfoProvider::GetAllStoragesIntoInfoList() {
   }
 }
 
-double StorageInfoProvider::GetStorageFreeSpaceFromTransientIdOnFileThread(
+double StorageInfoProvider::GetStorageFreeSpaceFromTransientIdAsync(
     const std::string& transient_id) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
   std::vector<StorageInfo> storage_list =
       StorageMonitor::GetInstance()->GetAllAvailableStorages();
 

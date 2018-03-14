@@ -4,108 +4,344 @@
 
 package org.chromium.chrome.browser.payments;
 
+import android.graphics.drawable.ColorDrawable;
 import android.support.test.filters.MediumTest;
 
-import org.chromium.base.test.util.Feature;
-import org.chromium.content_public.browser.WebContents;
+import org.junit.Assert;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
 
-import java.util.Arrays;
-import java.util.Set;
+import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.Feature;
+import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.ChromeSwitches;
+import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.payments.mojom.BasicCardNetwork;
+import org.chromium.payments.mojom.BasicCardType;
+
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /**
  * A payment integration test for service worker based payment apps.
  */
-public class PaymentRequestServiceWorkerPaymentAppTest extends PaymentRequestTestBase {
-    /** Flag for installing a service worker payment app without any payment options. */
-    private static final int NO_OPTIONS = 0;
-
-    /** Flag for installing a service worker payment app with one payment option. */
-    private static final int ONE_OPTION = 1;
-
-    /** Flag for installing a service worker payment app with two options. */
-    private static final int TWO_OPTIONS = 2;
-
-    public PaymentRequestServiceWorkerPaymentAppTest() {
-        super("payment_request_bobpay_test.html");
-    }
+@RunWith(ChromeJUnit4ClassRunner.class)
+@CommandLineFlags.Add({
+        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
+        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
+        // For all the tests in this file, we expect abort exception when there is no supported
+        // payment instruments instead of showing payment request UI.
+        "enable-features=" + ChromeFeatureList.NO_CREDIT_CARD_ABORT,
+})
+public class PaymentRequestServiceWorkerPaymentAppTest {
+    @Rule
+    public PaymentRequestTestRule mPaymentRequestTestRule = new PaymentRequestTestRule(
+            "payment_request_bobpay_and_basic_card_with_modifier_optional_data_test.html");
 
     /**
      * Installs a mock service worker based payment app for testing.
      *
-     * @param instrumentPresence Whether the manifest has any payment options. Either NO_OPTIONS
-     *                           ONE_OPTION or TWO_OPTIONS
+     * @param supportedMethodNames The supported payment methods of the mock payment app.
+     * @param capabilities         The capabilities of the mocked payment app.
      */
-    private void installMockServiceWorkerPaymentApp(final int instrumentPresence) {
-        PaymentAppFactory.getInstance().addAdditionalFactory(
-                new PaymentAppFactory.PaymentAppFactoryAddition() {
-                    @Override
-                    public void create(WebContents webContents, Set<String> methodNames,
-                            PaymentAppFactory.PaymentAppCreatedCallback callback) {
-                        ServiceWorkerPaymentAppBridge.Manifest testManifest =
-                                new ServiceWorkerPaymentAppBridge.Manifest();
-                        testManifest.registrationId = 0;
-                        testManifest.label = "BobPay";
-
-                        if (instrumentPresence != NO_OPTIONS) {
-                            ServiceWorkerPaymentAppBridge.Option testOption =
-                                    new ServiceWorkerPaymentAppBridge.Option();
-                            testOption.id = "new";
-                            testOption.label = "Create BobPay account";
-                            testOption.enabledMethods =
-                                Arrays.asList("https://bobpay.com", "basic-card");
-                            testManifest.options.add(testOption);
-                        }
-
-                        if (instrumentPresence == TWO_OPTIONS) {
-                            ServiceWorkerPaymentAppBridge.Option testOption =
-                                    new ServiceWorkerPaymentAppBridge.Option();
-                            testOption.id = "existing";
-                            testOption.label = "Existing BobPay account";
-                            testOption.enabledMethods =
-                                Arrays.asList("https://bobpay.com", "basic-card");
-                            testManifest.options.add(testOption);
-                        }
-
-                        callback.onPaymentAppCreated(
-                                new ServiceWorkerPaymentApp(webContents, testManifest));
-                        callback.onAllPaymentAppsCreated();
-                    }
-                });
+    private void installMockServiceWorkerPaymentApp(final String[] supportedMethodNames,
+            final ServiceWorkerPaymentApp.Capabilities[] capabilities) {
+        PaymentAppFactory.getInstance().addAdditionalFactory((webContents, methodNames,
+                                                                     callback) -> {
+            callback.onPaymentAppCreated(new ServiceWorkerPaymentApp(webContents,
+                    0 /* registrationId */,
+                    UriUtils.parseUriFromString("https://bobpay.com") /* scope */,
+                    "BobPay" /* label */, "test@bobpay.com" /* sublabel*/,
+                    "https://bobpay.com" /* tertiarylabel */, new ColorDrawable() /* icon */,
+                    supportedMethodNames /* methodNames */, capabilities /* capabilities */,
+                    new String[0] /* preferredRelatedApplicationIds */));
+            callback.onAllPaymentAppsCreated();
+        });
     }
 
-    @Override
-    public void onMainActivityStarted() throws InterruptedException, ExecutionException,
-            TimeoutException {}
-
+    @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testNoOptions() throws InterruptedException, ExecutionException,
-            TimeoutException {
-        installMockServiceWorkerPaymentApp(NO_OPTIONS);
-        openPageAndClickBuyAndWait(mShowFailed);
-        expectResultContains(
-                new String[]{"show() rejected", "The payment method is not supported"});
+    public void testNoSupportedPaymentMethods()
+            throws InterruptedException, ExecutionException, TimeoutException {
+        installMockServiceWorkerPaymentApp(
+                new String[0], new ServiceWorkerPaymentApp.Capabilities[0]);
+
+        ServiceWorkerPaymentAppBridge.setCanMakePaymentForTesting(true);
+
+        mPaymentRequestTestRule.openPageAndClickBuyAndWait(mPaymentRequestTestRule.getShowFailed());
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"show() rejected", "The payment method", "not supported"});
     }
 
+    @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testOneOption() throws InterruptedException, ExecutionException,
-            TimeoutException {
-        installMockServiceWorkerPaymentApp(ONE_OPTION);
-        triggerUIAndWait(mReadyForInput);
-        // TODO(tommyt): crbug.com/669876. Expand this test as we implement more
-        // service worker based payment app functionality.
+    public void testHasSupportedPaymentMethods()
+            throws InterruptedException, ExecutionException, TimeoutException {
+        String[] supportedMethodNames = {"https://bobpay.com"};
+        installMockServiceWorkerPaymentApp(
+                supportedMethodNames, new ServiceWorkerPaymentApp.Capabilities[0]);
+
+        ServiceWorkerPaymentAppBridge.setCanMakePaymentForTesting(true);
+
+        mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
     }
 
+    @Test
     @MediumTest
     @Feature({"Payments"})
-    public void testTwoOptions() throws InterruptedException, ExecutionException,
-            TimeoutException {
-        installMockServiceWorkerPaymentApp(TWO_OPTIONS);
-        triggerUIAndWait(mReadyForInput);
-        // TODO(tommyt): crbug.com/669876. Expand this test as we implement more
-        // service worker based payment app functionality.
+    public void testNoCapabilities()
+            throws InterruptedException, ExecutionException, TimeoutException {
+        String[] supportedMethodNames = {"https://bobpay.com", "basic-card"};
+        ServiceWorkerPaymentApp.Capabilities[] capabilities = {};
+        installMockServiceWorkerPaymentApp(supportedMethodNames, capabilities);
+
+        ServiceWorkerPaymentAppBridge.setCanMakePaymentForTesting(true);
+
+        mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The Bob Pay modifier should apply.
+        Assert.assertEquals("USD $4.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_all_cards_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should apply.
+        Assert.assertEquals("USD $4.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_visa_credit_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should not apply.
+        Assert.assertEquals("USD $5.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_visa_debit_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should not apply.
+        Assert.assertEquals("USD $5.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_credit_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should not apply.
+        Assert.assertEquals("USD $5.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_visa_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should not apply.
+        Assert.assertEquals("USD $5.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"Payments"})
+    public void testHasVisaCreditCapabilities()
+            throws InterruptedException, ExecutionException, TimeoutException {
+        String[] supportedMethodNames = {"https://bobpay.com", "basic-card"};
+        int[] networks = {BasicCardNetwork.VISA};
+        int[] types = {BasicCardType.CREDIT};
+        ServiceWorkerPaymentApp.Capabilities[] capabilities = {
+                new ServiceWorkerPaymentApp.Capabilities(networks, types)};
+        installMockServiceWorkerPaymentApp(supportedMethodNames, capabilities);
+
+        ServiceWorkerPaymentAppBridge.setCanMakePaymentForTesting(true);
+
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_all_cards_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        Assert.assertEquals("USD $4.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_visa_credit_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should apply.
+        Assert.assertEquals("USD $4.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_visa_debit_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should not apply.
+        Assert.assertEquals("USD $5.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_credit_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should apply.
+        Assert.assertEquals("USD $4.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_visa_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should apply.
+        Assert.assertEquals("USD $4.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"Payments"})
+    public void testHasMastercardCreditCapabilities()
+            throws InterruptedException, ExecutionException, TimeoutException {
+        String[] supportedMethodNames = {"https://bobpay.com", "basic-card"};
+        int[] networks = {BasicCardNetwork.MASTERCARD};
+        int[] types = {BasicCardType.CREDIT};
+        ServiceWorkerPaymentApp.Capabilities[] capabilities = {
+                new ServiceWorkerPaymentApp.Capabilities(networks, types)};
+        installMockServiceWorkerPaymentApp(supportedMethodNames, capabilities);
+
+        ServiceWorkerPaymentAppBridge.setCanMakePaymentForTesting(true);
+
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_all_cards_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should apply.
+        Assert.assertEquals("USD $4.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_visa_credit_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should not apply.
+        Assert.assertEquals("USD $5.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_visa_debit_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should not apply.
+        Assert.assertEquals("USD $5.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_credit_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should apply.
+        Assert.assertEquals("USD $4.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_visa_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should not apply.
+        Assert.assertEquals("USD $5.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"Payments"})
+    public void testHasVisaCreditAndDebitCapabilities()
+            throws InterruptedException, ExecutionException, TimeoutException {
+        String[] supportedMethodNames = {"https://bobpay.com", "basic-card"};
+        int[] networks = {BasicCardNetwork.VISA};
+        int[] types = {BasicCardType.CREDIT, BasicCardType.DEBIT};
+        ServiceWorkerPaymentApp.Capabilities[] capabilities = {
+                new ServiceWorkerPaymentApp.Capabilities(networks, types)};
+        installMockServiceWorkerPaymentApp(supportedMethodNames, capabilities);
+
+        ServiceWorkerPaymentAppBridge.setCanMakePaymentForTesting(true);
+
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_all_cards_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should apply.
+        Assert.assertEquals("USD $4.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_visa_credit_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should apply.
+        Assert.assertEquals("USD $4.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_visa_debit_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should apply.
+        Assert.assertEquals("USD $4.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_credit_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should apply.
+        Assert.assertEquals("USD $4.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+
+        mPaymentRequestTestRule.clickAndWait(
+                R.id.close_button, mPaymentRequestTestRule.getDismissed());
+        mPaymentRequestTestRule.triggerUIAndWait(
+                "buy_with_visa_modifier", mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+        // The modifier should apply.
+        Assert.assertEquals("USD $4.00", mPaymentRequestTestRule.getOrderSummaryTotal());
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"Payments"})
+    public void testDoNotCallCanMakePayment()
+            throws InterruptedException, ExecutionException, TimeoutException {
+        String[] supportedMethodNames = {"basic-card"};
+        installMockServiceWorkerPaymentApp(
+                supportedMethodNames, new ServiceWorkerPaymentApp.Capabilities[0]);
+
+        // Sets setCanMakePaymentForTesting(false) to return false for CanMakePayment since there is
+        // no real sw payment app, so if CanMakePayment is called then no payment instruments will
+        // be available, otherwise CanMakePayment is not called.
+        ServiceWorkerPaymentAppBridge.setCanMakePaymentForTesting(false);
+
+        mPaymentRequestTestRule.triggerUIAndWait(mPaymentRequestTestRule.getReadyForInput());
+        Assert.assertEquals(1, mPaymentRequestTestRule.getNumberOfPaymentInstruments());
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"Payments"})
+    public void testCallCanMakePayment()
+            throws InterruptedException, ExecutionException, TimeoutException {
+        String[] supportedMethodNames = {"https://bobpay.com", "basic-card"};
+        installMockServiceWorkerPaymentApp(
+                supportedMethodNames, new ServiceWorkerPaymentApp.Capabilities[0]);
+
+        // Sets setCanMakePaymentForTesting(false) to return false for CanMakePayment since there is
+        // no real sw payment app, so if CanMakePayment is called then no payment instruments will
+        // be available, otherwise CanMakePayment is not called.
+        ServiceWorkerPaymentAppBridge.setCanMakePaymentForTesting(false);
+
+        mPaymentRequestTestRule.openPageAndClickBuyAndWait(mPaymentRequestTestRule.getShowFailed());
+        mPaymentRequestTestRule.expectResultContains(
+                new String[] {"show() rejected", "The payment method", "not supported"});
     }
 }

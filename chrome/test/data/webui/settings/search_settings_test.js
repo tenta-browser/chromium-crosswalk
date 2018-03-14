@@ -10,8 +10,7 @@ cr.define('settings_test', function() {
     // Don't import script if already imported (happens in Vulcanized mode).
     suiteSetup(function() {
       if (!window.settings || !settings.getSearchManager) {
-        return PolymerTest.loadScript(
-            'chrome://md-settings/search_settings.js');
+        return PolymerTest.loadScript('chrome://settings/search_settings.js');
       }
     });
 
@@ -140,18 +139,15 @@ cr.define('settings_test', function() {
       var sections = Array.prototype.slice.call(
           document.querySelectorAll('settings-section'));
 
-      return Promise.all(
-        sections.map(function(section) {
-          return searchManager.search('there', section);
-        }),
-      ).then(function(requests) {
-        assertTrue(requests[0].didFindMatches());
-        assertFalse(sections[0].hiddenBySearch);
-        assertTrue(requests[1].didFindMatches());
-        assertFalse(sections[1].hiddenBySearch);
-        assertFalse(requests[2].didFindMatches());
-        assertTrue(sections[2].hiddenBySearch);
-      });
+      return Promise.all(sections.map(s => searchManager.search('there', s)))
+          .then(function(requests) {
+            assertTrue(requests[0].didFindMatches());
+            assertFalse(sections[0].hiddenBySearch);
+            assertTrue(requests[1].didFindMatches());
+            assertFalse(sections[1].hiddenBySearch);
+            assertFalse(requests[2].didFindMatches());
+            assertTrue(sections[2].hiddenBySearch);
+          });
     });
   });
 });

@@ -56,8 +56,8 @@ NSPoint ManagePasswordsDecoration::GetBubblePointInFrame(NSRect frame) {
   return NSMakePoint(NSMidX(draw_frame), NSMaxY(draw_frame));
 }
 
-bool ManagePasswordsDecoration::AcceptsMousePress() {
-  return true;
+AcceptsPress ManagePasswordsDecoration::AcceptsMousePress() {
+  return AcceptsPress::ALWAYS;
 }
 
 bool ManagePasswordsDecoration::OnMousePressed(NSRect frame, NSPoint location) {
@@ -108,5 +108,5 @@ const gfx::VectorIcon* ManagePasswordsDecoration::GetMaterialVectorIcon()
     const {
   // Note: update unit tests if this vector icon ever changes (it's hard-coded
   // there).
-  return &kAutologinIcon;
+  return &kKeyIcon;
 }

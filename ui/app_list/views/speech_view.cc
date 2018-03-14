@@ -8,11 +8,11 @@
 
 #include <limits>
 
+#include "ash/app_list/model/app_list_model.h"
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "ui/app_list/app_list_constants.h"
-#include "ui/app_list/app_list_model.h"
 #include "ui/app_list/app_list_view_delegate.h"
 #include "ui/app_list/resources/grit/app_list_resources.h"
 #include "ui/app_list/speech_ui_model.h"
@@ -121,8 +121,7 @@ SpeechView::SpeechView(AppListViewDelegate* delegate)
   // actually has a single child of 'container' which has white background and
   // contains all components.
   views::View* container = new views::View();
-  container->set_background(
-      views::Background::CreateSolidBackground(SK_ColorWHITE));
+  container->SetBackground(views::CreateSolidBackground(SK_ColorWHITE));
 
   const gfx::ImageSkia& logo_image = delegate_->GetSpeechUI()->logo();
   if (!logo_image.isNull()) {
@@ -197,7 +196,7 @@ void SpeechView::Layout() {
       speech_height);
 }
 
-gfx::Size SpeechView::GetPreferredSize() const {
+gfx::Size SpeechView::CalculatePreferredSize() const {
   return gfx::Size(0, kSpeechViewMaxHeight);
 }
 

@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/android/signin/account_tracker_service_android.h"
-
 #include <stddef.h>
 
 #include "base/android/jni_array.h"
@@ -17,10 +15,11 @@ using base::android::JavaParamRef;
 namespace signin {
 namespace android {
 
-void SeedAccountsInfo(JNIEnv* env,
-                      const JavaParamRef<jclass>& jcaller,
-                      const JavaParamRef<jobjectArray>& gaiaIds,
-                      const JavaParamRef<jobjectArray>& accountNames) {
+void JNI_AccountTrackerService_SeedAccountsInfo(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& jcaller,
+    const JavaParamRef<jobjectArray>& gaiaIds,
+    const JavaParamRef<jobjectArray>& accountNames) {
   std::vector<std::string> gaia_ids;
   std::vector<std::string> account_names;
   base::android::AppendJavaStringArrayToStringVector(env, gaiaIds, &gaia_ids);
@@ -39,9 +38,10 @@ void SeedAccountsInfo(JNIEnv* env,
   }
 }
 
-jboolean AreAccountsSeeded(JNIEnv* env,
-                           const JavaParamRef<jclass>& jcaller,
-                           const JavaParamRef<jobjectArray>& accountNames) {
+jboolean JNI_AccountTrackerService_AreAccountsSeeded(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& jcaller,
+    const JavaParamRef<jobjectArray>& accountNames) {
   std::vector<std::string> account_names;
   base::android::AppendJavaStringArrayToStringVector(env, accountNames,
                                                      &account_names);
@@ -66,10 +66,6 @@ jboolean AreAccountsSeeded(JNIEnv* env,
     }
   }
   return true;
-}
-
-bool RegisterAccountTrackerService(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace android

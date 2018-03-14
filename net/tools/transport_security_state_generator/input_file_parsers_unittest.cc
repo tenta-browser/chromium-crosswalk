@@ -28,47 +28,49 @@ TEST(InputFileParsersTest, ParseJSON) {
       "  \"entries\": ["
       "    {"
       "      \"name\": \"hsts.example.com\","
+      "      \"policy\": \"test\","
       "      \"mode\": \"force-https\", "
       "      \"include_subdomains\": true"
       "    }, {"
       "      \"name\": \"hsts-no-subdomains.example.com\","
+      "      \"policy\": \"test\","
       "      \"mode\": \"force-https\", "
       "      \"include_subdomains\": false"
       "    }, {"
       "      \"name\": \"hpkp.example.com\","
+      "      \"policy\": \"test\","
       "      \"pins\": \"thepinset\","
       "      \"include_subdomains_for_pinning\": true"
       "    }, {"
       "      \"name\": \"hpkp-no-subdomains.example.com\","
+      "      \"policy\": \"test\","
       "      \"pins\": \"thepinset2\", "
       "      \"include_subdomains_for_pinning\": false"
       "    }, {"
       "      \"name\": \"expect-ct.example.com\","
+      "      \"policy\": \"test\","
       "      \"expect_ct\": true,"
       "      \"expect_ct_report_uri\": \"https://expect-ct-log.example.com\""
       "    }, {"
       "      \"name\": \"expect-staple.example.com\","
+      "      \"policy\": \"test\","
       "      \"expect_staple\": true,"
       "      \"expect_staple_report_uri\": "
       "\"https://expect-staple-log.example.com\","
       "      \"include_subdomains_for_expect_staple\": true"
       "    }, {"
       "      \"name\": \"expect-staple-no-subdomains.example.com\","
+      "      \"policy\": \"test\","
       "      \"expect_staple\": true,"
       "      \"include_subdomains_for_expect_staple\": false"
       "    }"
-      "  ],"
-      "  \"domain_ids\": ["
-      "    \"NOT_PINNED\","
-      "    \"EXAMPLE_COM\""
       "  ]"
       "}";
 
   TransportSecurityStateEntries entries;
   Pinsets pinsets;
-  DomainIDList domain_ids;
 
-  EXPECT_TRUE(ParseJSON(valid, &entries, &pinsets, &domain_ids));
+  EXPECT_TRUE(ParseJSON(valid, &entries, &pinsets));
 
   ASSERT_EQ(1U, pinsets.size());
   PinsetMap::const_iterator pinset = pinsets.pinsets().find("test");
@@ -167,61 +169,58 @@ TEST(InputFileParsersTest, ParseJSON) {
   EXPECT_TRUE(entry->expect_staple);
   EXPECT_FALSE(entry->expect_staple_include_subdomains);
   EXPECT_EQ("", entry->expect_staple_report_uri);
-
-  ASSERT_EQ(2U, domain_ids.size());
-  EXPECT_EQ("NOT_PINNED", domain_ids[0]);
-  EXPECT_EQ("EXAMPLE_COM", domain_ids[1]);
 }
 
 // Test that parsing valid JSON with missing keys fails.
 TEST(InputFileParsersTest, ParseJSONInvalid) {
   TransportSecurityStateEntries entries;
   Pinsets pinsets;
-  DomainIDList domain_ids;
 
   std::string no_pinsets =
       "{"
-      "  \"entries\": [],"
-      "  \"domain_ids\": []"
+      "  \"entries\": []"
       "}";
 
-  EXPECT_FALSE(ParseJSON(no_pinsets, &entries, &pinsets, &domain_ids));
+  EXPECT_FALSE(ParseJSON(no_pinsets, &entries, &pinsets));
 
   std::string no_entries =
       "{"
-      "  \"pinsets\": [],"
-      "  \"domain_ids\": []"
+      "  \"pinsets\": []"
       "}";
 
-  EXPECT_FALSE(ParseJSON(no_entries, &entries, &pinsets, &domain_ids));
-
-  std::string no_domain_ids =
-      "{"
-      "  \"pinsets\": [],"
-      "  \"entries\": []"
-      "}\n";
-
-  EXPECT_FALSE(ParseJSON(no_domain_ids, &entries, &pinsets, &domain_ids));
+  EXPECT_FALSE(ParseJSON(no_entries, &entries, &pinsets));
 
   std::string missing_hostname =
       "{"
       "  \"pinsets\": [],"
       "  \"entries\": ["
       "    {"
+      "      \"policy\": \"test\","
       "      \"mode\": \"force-https\""
       "    }"
-      "  ],"
-      "  \"domain_ids\": []"
+      "  ]"
       "}";
 
-  EXPECT_FALSE(ParseJSON(missing_hostname, &entries, &pinsets, &domain_ids));
+  EXPECT_FALSE(ParseJSON(missing_hostname, &entries, &pinsets));
+
+  std::string missing_policy =
+      "{"
+      "  \"pinsets\": [],"
+      "  \"entries\": ["
+      "    {"
+      "      \"name\": \"example.test\","
+      "      \"mode\": \"force-https\""
+      "    }"
+      "  ]"
+      "}";
+
+  EXPECT_FALSE(ParseJSON(missing_policy, &entries, &pinsets));
 }
 
 // Test that parsing valid JSON with an invalid (HPKP) pinset fails.
 TEST(InputFileParsersTest, ParseJSONInvalidPinset) {
   TransportSecurityStateEntries entries;
   Pinsets pinsets;
-  DomainIDList domain_ids;
 
   std::string missing_pinset_name =
       "{"
@@ -230,11 +229,70 @@ TEST(InputFileParsersTest, ParseJSONInvalidPinset) {
       "      \"bad_static_spki_hashes\": [\"BadTestSPKI\"],"
       "      \"report_uri\": \"https://hpkp-log.example.com\""
       "  }],"
-      "  \"entries\": [],"
-      "  \"domain_ids\": []"
+      "  \"entries\": []"
       "}";
 
-  EXPECT_FALSE(ParseJSON(missing_pinset_name, &entries, &pinsets, &domain_ids));
+  EXPECT_FALSE(ParseJSON(missing_pinset_name, &entries, &pinsets));
+}
+
+// Test that parsing valid JSON containing an entry with an invalid mode fails.
+TEST(InputFileParsersTest, ParseJSONInvalidMode) {
+  TransportSecurityStateEntries entries;
+  Pinsets pinsets;
+
+  std::string invalid_mode =
+      "{"
+      "  \"pinsets\": [],"
+      "  \"entries\": ["
+      "    {"
+      "      \"name\": \"preloaded.test\","
+      "      \"policy\": \"test\","
+      "      \"mode\": \"something-invalid\""
+      "    }"
+      "  ]"
+      "}";
+
+  EXPECT_FALSE(ParseJSON(invalid_mode, &entries, &pinsets));
+}
+
+// Test that parsing valid JSON containing an entry with an unknown field fails.
+TEST(InputFileParsersTest, ParseJSONUnkownField) {
+  TransportSecurityStateEntries entries;
+  Pinsets pinsets;
+
+  std::string unknown_field =
+      "{"
+      "  \"pinsets\": [],"
+      "  \"entries\": ["
+      "    {"
+      "      \"name\": \"preloaded.test\","
+      "      \"policy\": \"test\","
+      "      \"unknown_key\": \"value\""
+      "    }"
+      "  ]"
+      "}";
+
+  EXPECT_FALSE(ParseJSON(unknown_field, &entries, &pinsets));
+}
+
+// Test that parsing valid JSON containing an entry with an unknown policy
+// fails.
+TEST(InputFileParsersTest, ParseJSONUnkownPolicy) {
+  TransportSecurityStateEntries entries;
+  Pinsets pinsets;
+
+  std::string unknown_policy =
+      "{"
+      "  \"pinsets\": [],"
+      "  \"entries\": ["
+      "    {"
+      "      \"name\": \"preloaded.test\","
+      "      \"policy\": \"invalid\""
+      "    }"
+      "  ]"
+      "}";
+
+  EXPECT_FALSE(ParseJSON(unknown_policy, &entries, &pinsets));
 }
 
 // Test parsing of all 3 SPKI formats.

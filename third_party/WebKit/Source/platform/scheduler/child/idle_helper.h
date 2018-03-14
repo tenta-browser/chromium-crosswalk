@@ -7,14 +7,18 @@
 
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
-#include "platform/scheduler/base/cancelable_closure_holder.h"
+#include "platform/PlatformExport.h"
 #include "platform/scheduler/base/task_queue_selector.h"
+#include "platform/scheduler/child/cancelable_closure_holder.h"
 #include "platform/scheduler/child/scheduler_helper.h"
 #include "public/platform/scheduler/child/single_thread_idle_task_runner.h"
-#include "public/platform/WebCommon.h"
 
 namespace blink {
 namespace scheduler {
+namespace idle_helper_unittest {
+class BaseIdleHelperTest;
+class IdleHelperTest;
+}  // namespace idle_helper_unittest
 
 class SchedulerHelper;
 
@@ -37,12 +41,11 @@ class SchedulerHelper;
 //
 // Idle tasks are supplied a deadline, and should endeavor to finished before it
 // ends to avoid jank.
-class BLINK_PLATFORM_EXPORT IdleHelper
-    : public base::MessageLoop::TaskObserver,
-      public SingleThreadIdleTaskRunner::Delegate {
+class PLATFORM_EXPORT IdleHelper : public base::MessageLoop::TaskObserver,
+                                   public SingleThreadIdleTaskRunner::Delegate {
  public:
   // Used to by scheduler implementations to customize idle behaviour.
-  class BLINK_PLATFORM_EXPORT Delegate {
+  class PLATFORM_EXPORT Delegate {
    public:
     Delegate();
     virtual ~Delegate();
@@ -64,20 +67,23 @@ class BLINK_PLATFORM_EXPORT IdleHelper
     // Signals that we have finished an Idle Period.
     virtual void OnIdlePeriodEnded() = 0;
 
+    // Signals that the task list has changed.
+    virtual void OnPendingTasksChanged(bool has_tasks) = 0;
+
    private:
     DISALLOW_COPY_AND_ASSIGN(Delegate);
   };
 
   // Keep IdleHelper::IdlePeriodStateToString in sync with this enum.
   enum class IdlePeriodState {
-    NOT_IN_IDLE_PERIOD,
-    IN_SHORT_IDLE_PERIOD,
-    IN_LONG_IDLE_PERIOD,
-    IN_LONG_IDLE_PERIOD_WITH_MAX_DEADLINE,
-    IN_LONG_IDLE_PERIOD_PAUSED,
+    kNotInIdlePeriod,
+    kInShortIdlePeriod,
+    kInLongIdlePeriod,
+    kInLongIdlePeriodWithMaxDeadline,
+    kInLongIdlePeriodPaused,
     // Must be the last entry.
-    IDLE_PERIOD_STATE_COUNT,
-    FIRST_IDLE_PERIOD_STATE = NOT_IN_IDLE_PERIOD,
+    kIdlePeriodStateCount,
+    kFirstIdlePeriodState = kNotInIdlePeriod,
   };
 
   // The maximum length of an idle period.
@@ -88,10 +94,9 @@ class BLINK_PLATFORM_EXPORT IdleHelper
   IdleHelper(
       SchedulerHelper* helper,
       Delegate* delegate,
-      const char* tracing_category,
-      const char* disabled_by_default_tracing_category,
       const char* idle_period_tracing_name,
-      base::TimeDelta required_quiescence_duration_before_long_idle_period);
+      base::TimeDelta required_quiescence_duration_before_long_idle_period,
+      scoped_refptr<TaskQueue> idle_queue);
   ~IdleHelper() override;
 
   // Prevents any further idle tasks from running.
@@ -148,8 +153,8 @@ class BLINK_PLATFORM_EXPORT IdleHelper
   static const char* IdlePeriodStateToString(IdlePeriodState state);
 
  private:
-  friend class BaseIdleHelperTest;
-  friend class IdleHelperTest;
+  friend class idle_helper_unittest::BaseIdleHelperTest;
+  friend class idle_helper_unittest::IdleHelperTest;
 
   const scoped_refptr<TaskQueue>& idle_queue() const { return idle_queue_; }
 
@@ -157,8 +162,6 @@ class BLINK_PLATFORM_EXPORT IdleHelper
    public:
     State(SchedulerHelper* helper,
           Delegate* delegate,
-          const char* tracing_category,
-          const char* disabled_by_default_tracing_category,
           const char* idle_period_tracing_name);
     virtual ~State();
 
@@ -188,8 +191,6 @@ class BLINK_PLATFORM_EXPORT IdleHelper
     base::TimeTicks last_idle_task_trace_time_;
     bool idle_period_trace_event_started_;
     bool running_idle_task_for_tracing_;
-    const char* tracing_category_;
-    const char* disabled_by_default_tracing_category_;
     const char* idle_period_tracing_name_;
 
     DISALLOW_COPY_AND_ASSIGN(State);
@@ -232,8 +233,6 @@ class BLINK_PLATFORM_EXPORT IdleHelper
   State state_;
 
   base::TimeDelta required_quiescence_duration_before_long_idle_period_;
-
-  const char* disabled_by_default_tracing_category_;
 
   bool is_shutdown_;
 

@@ -5,9 +5,9 @@
 #include "core/streams/UnderlyingSourceBase.h"
 
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/ScriptValue.h"
-#include "core/streams/ReadableStreamController.h"
+#include "core/streams/ReadableStreamDefaultControllerWrapper.h"
+#include "platform/bindings/ScriptState.h"
 #include "v8/include/v8.h"
 
 namespace blink {
@@ -16,9 +16,9 @@ ScriptPromise UnderlyingSourceBase::startWrapper(ScriptState* script_state,
                                                  ScriptValue js_controller) {
   // Cannot call start twice (e.g., cannot use the same UnderlyingSourceBase to
   // construct multiple streams).
-  ASSERT(!controller_);
+  DCHECK(!controller_);
 
-  controller_ = new ReadableStreamController(js_controller);
+  controller_ = new ReadableStreamDefaultControllerWrapper(js_controller);
 
   return Start(script_state);
 }
@@ -33,7 +33,8 @@ ScriptPromise UnderlyingSourceBase::pull(ScriptState* script_state) {
 
 ScriptPromise UnderlyingSourceBase::cancelWrapper(ScriptState* script_state,
                                                   ScriptValue reason) {
-  controller_->NoteHasBeenCanceled();
+  if (controller_)
+    controller_->NoteHasBeenCanceled();
   return Cancel(script_state, reason);
 }
 
@@ -65,9 +66,10 @@ void UnderlyingSourceBase::ContextDestroyed(ExecutionContext*) {
   }
 }
 
-DEFINE_TRACE(UnderlyingSourceBase) {
-  ContextLifecycleObserver::Trace(visitor);
+void UnderlyingSourceBase::Trace(blink::Visitor* visitor) {
   visitor->Trace(controller_);
+  ScriptWrappable::Trace(visitor);
+  ContextLifecycleObserver::Trace(visitor);
 }
 
 }  // namespace blink

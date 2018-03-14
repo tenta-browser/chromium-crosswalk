@@ -70,7 +70,11 @@ public class MediaDrmBridge {
     // See details: https://github.com/w3c/encrypted-media/issues/32
     private static final byte[] DUMMY_KEY_ID = new byte[] {0};
 
+    // Special provision response to remove the cert.
+    private static final byte[] UNPROVISION = "unprovision".getBytes();
+
     private MediaDrm mMediaDrm;
+    private MediaCrypto mMediaCrypto;
     private long mNativeMediaDrmBridge;
     private UUID mSchemeUUID;
 
@@ -303,9 +307,9 @@ public class MediaDrmBridge {
         // Create MediaCrypto object.
         try {
             if (MediaCrypto.isCryptoSchemeSupported(mSchemeUUID)) {
-                MediaCrypto mediaCrypto = new MediaCrypto(mSchemeUUID, mMediaCryptoSession.drmId());
+                mMediaCrypto = new MediaCrypto(mSchemeUUID, mMediaCryptoSession.drmId());
                 Log.d(TAG, "MediaCrypto successfully created!");
-                onMediaCryptoReady(mediaCrypto);
+                onMediaCryptoReady(mMediaCrypto);
                 return true;
             } else {
                 Log.e(TAG, "Cannot create MediaCrypto for unsupported scheme.");
@@ -522,6 +526,23 @@ public class MediaDrmBridge {
     }
 
     /**
+     * Unprovision the current origin, a.k.a removing the cert for current origin.
+     */
+    @CalledByNative
+    private void unprovision() {
+        if (mMediaDrm == null) {
+            return;
+        }
+
+        // Unprovision only works for origin isolated storage.
+        if (!mOriginSet) {
+            return;
+        }
+
+        provideProvisionResponse(UNPROVISION);
+    }
+
+    /**
      * Destroy the MediaDrmBridge object.
      */
     @CalledByNative
@@ -580,6 +601,11 @@ public class MediaDrmBridge {
         if (mMediaDrm != null) {
             mMediaDrm.release();
             mMediaDrm = null;
+        }
+
+        if (mMediaCrypto != null) {
+            mMediaCrypto.release();
+            mMediaCrypto = null;
         }
     }
 
@@ -1041,7 +1067,7 @@ public class MediaDrmBridge {
     private String getSecurityLevel() {
         if (mMediaDrm == null || !isWidevine()) {
             Log.e(TAG, "getSecurityLevel(): MediaDrm is null or security level is not supported.");
-            return null;
+            return "";
         }
         return mMediaDrm.getPropertyString("securityLevel");
     }
@@ -1343,7 +1369,7 @@ public class MediaDrmBridge {
     }
 
     @MainDex
-    private class KeyUpdatedCallback extends Callback<Boolean> {
+    private class KeyUpdatedCallback implements Callback<Boolean> {
         private final SessionId mSessionId;
         private final long mPromiseId;
         private final boolean mIsKeyRelease;

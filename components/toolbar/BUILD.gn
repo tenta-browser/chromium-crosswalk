@@ -2,13 +2,21 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/buildflag_header.gni")
 import("//build/config/ui.gni")
-import("//ui/vector_icons/vector_icons.gni")
+import("//device/vr/features/features.gni")
+import("//components/vector_icons/vector_icons.gni")
+
+buildflag_header("build_features") {
+  header = "features.h"
+  flags = [ "ENABLE_VR=$enable_vr" ]
+}
 
 aggregate_vector_icons("toolbar_vector_icons") {
   icon_directory = "vector_icons"
 
   icons = [
+    "find_in_page.icon",
     "http.1x.icon",
     "http.icon",
     "https_invalid.1x.icon",
@@ -17,6 +25,8 @@ aggregate_vector_icons("toolbar_vector_icons") {
     "https_valid.icon",
     "https_valid_in_chip.1x.icon",
     "https_valid_in_chip.icon",
+    "offline_pin.icon",
+    "open_in_new.icon",
     "product.1x.icon",
     "product.icon",
     "star_active.icon",
@@ -24,8 +34,19 @@ aggregate_vector_icons("toolbar_vector_icons") {
   ]
 }
 
+static_library("vector_icons") {
+  sources = get_target_outputs(":toolbar_vector_icons")
+  deps = [
+    ":toolbar_vector_icons",
+    "//components/vector_icons",
+    "//skia",
+    "//ui/gfx",
+  ]
+}
+
 static_library("toolbar") {
   sources = [
+    "features.h",
     "toolbar_model.h",
     "toolbar_model_delegate.h",
     "toolbar_model_impl.cc",
@@ -39,6 +60,7 @@ static_library("toolbar") {
   ]
 
   deps = [
+    ":build_features",
     "//components/google/core/browser",
     "//components/prefs",
     "//components/resources",
@@ -49,12 +71,8 @@ static_library("toolbar") {
     "//ui/gfx",
   ]
 
-  if (!is_android && !is_ios) {
-    sources += get_target_outputs(":toolbar_vector_icons")
-    deps += [
-      ":toolbar_vector_icons",
-      "//ui/vector_icons",
-    ]
+  if ((!is_android || enable_vr) && !is_ios) {
+    deps += [ ":vector_icons" ]
   }
 }
 
@@ -66,9 +84,12 @@ static_library("test_support") {
     "test_toolbar_model.h",
   ]
 
-  deps = [
+  public_deps = [
     ":toolbar",
     "//base",
+  ]
+
+  deps = [
     "//components/resources",
     "//ui/gfx",
   ]

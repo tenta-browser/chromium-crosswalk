@@ -4,10 +4,12 @@
 
 #include "ash/touch_hud/mus/touch_hud_application.h"
 
+#include <utility>
+
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/touch_hud/touch_hud_renderer.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/service_context.h"
@@ -51,7 +53,7 @@ class TouchHudUI : public views::WidgetDelegateView,
   // Overridden from views::PointerWatcher:
   void OnPointerEventObserved(const ui::PointerEvent& event,
                               const gfx::Point& location_in_screen,
-                              views::Widget* target) override {
+                              gfx::NativeView target) override {
     if (event.IsTouchPointerEvent())
       touch_hud_renderer_->HandleTouchEvent(event);
   }
@@ -62,22 +64,26 @@ class TouchHudUI : public views::WidgetDelegateView,
 };
 
 TouchHudApplication::TouchHudApplication() : binding_(this) {
-  registry_.AddInterface<mash::mojom::Launchable>(this);
+  registry_.AddInterface<mash::mojom::Launchable>(
+      base::Bind(&TouchHudApplication::Create, base::Unretained(this)));
 }
-TouchHudApplication::~TouchHudApplication() {}
+TouchHudApplication::~TouchHudApplication() = default;
 
 void TouchHudApplication::OnStart() {
-  aura_init_ = base::MakeUnique<views::AuraInit>(
+  const bool register_path_provider = running_standalone_;
+  aura_init_ = views::AuraInit::Create(
       context()->connector(), context()->identity(), "views_mus_resources.pak",
-      std::string(), nullptr, views::AuraInit::Mode::AURA_MUS);
+      std::string(), nullptr, views::AuraInit::Mode::AURA_MUS,
+      register_path_provider);
+  if (!aura_init_)
+    context()->QuitNow();
 }
 
 void TouchHudApplication::OnBindInterface(
-    const service_manager::ServiceInfo& source_info,
+    const service_manager::BindSourceInfo& source_info,
     const std::string& interface_name,
     mojo::ScopedMessagePipeHandle interface_pipe) {
-  registry_.BindInterface(source_info.identity, interface_name,
-                          std::move(interface_pipe));
+  registry_.BindInterface(interface_name, std::move(interface_pipe));
 }
 
 void TouchHudApplication::Launch(uint32_t what, mash::mojom::LaunchMode how) {
@@ -91,18 +97,17 @@ void TouchHudApplication::Launch(uint32_t what, mash::mojom::LaunchMode how) {
     params.delegate = new TouchHudUI(widget_);
     params.mus_properties[ui::mojom::WindowManager::kContainerId_InitProperty] =
         mojo::ConvertTo<std::vector<uint8_t>>(
-            ash::kShellWindowId_OverlayContainer);
+            static_cast<int32_t>(ash::kShellWindowId_OverlayContainer));
     params.show_state = ui::SHOW_STATE_FULLSCREEN;
     widget_->Init(params);
     widget_->Show();
   } else {
     widget_->Close();
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 }
 
 void TouchHudApplication::Create(
-    const service_manager::Identity& remote_identity,
     mash::mojom::LaunchableRequest request) {
   binding_.Close();
   binding_.Bind(std::move(request));

@@ -27,6 +27,8 @@
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
+#include "content/browser/service_worker/service_worker_dispatcher_host.h"
+#include "content/browser/service_worker/service_worker_registration_object_host.h"
 #include "content/browser/service_worker/service_worker_storage.h"
 #include "content/browser/storage_partition_impl.h"
 #include "content/public/browser/background_sync_parameters.h"
@@ -34,6 +36,7 @@
 #include "content/public/test/background_sync_test_util.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/test_utils.h"
 #include "content/test/mock_background_sync_controller.h"
 #include "content/test/mock_permission_manager.h"
 #include "content/test/test_background_sync_manager.h"
@@ -41,6 +44,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/modules/permissions/permission_status.mojom.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
 
 namespace content {
 
@@ -76,31 +80,6 @@ void UnregisterServiceWorkerCallback(bool* called,
                                      ServiceWorkerStatusCode code) {
   EXPECT_EQ(SERVICE_WORKER_OK, code);
   *called = true;
-}
-
-void DispatchSyncSuccessfulCallback(
-    int* count,
-    const scoped_refptr<ServiceWorkerVersion>& active_version,
-    const ServiceWorkerVersion::StatusCallback& callback) {
-  *count += 1;
-  callback.Run(SERVICE_WORKER_OK);
-}
-
-void DispatchSyncFailedCallback(
-    int* count,
-    const scoped_refptr<ServiceWorkerVersion>& active_version,
-    const ServiceWorkerVersion::StatusCallback& callback) {
-  *count += 1;
-  callback.Run(SERVICE_WORKER_ERROR_FAILED);
-}
-
-void DispatchSyncDelayedCallback(
-    int* count,
-    ServiceWorkerVersion::StatusCallback* out_callback,
-    const scoped_refptr<ServiceWorkerVersion>& active_version,
-    const ServiceWorkerVersion::StatusCallback& callback) {
-  *count += 1;
-  *out_callback = callback;
 }
 
 }  // namespace
@@ -158,14 +137,20 @@ class BackgroundSyncManagerTest : public testing::Test {
     bool called_1 = false;
     bool called_2 = false;
     helper_->context()->RegisterServiceWorker(
-        GURL(kPattern1), GURL(kScript1), NULL,
-        base::Bind(&RegisterServiceWorkerCallback, &called_1,
-                   &sw_registration_id_1_));
+        GURL(kScript1),
+        blink::mojom::ServiceWorkerRegistrationOptions(GURL(kPattern1)),
+        nullptr,
+        base::AdaptCallbackForRepeating(
+            base::BindOnce(&RegisterServiceWorkerCallback, &called_1,
+                           &sw_registration_id_1_)));
 
     helper_->context()->RegisterServiceWorker(
-        GURL(kPattern2), GURL(kScript2), NULL,
-        base::Bind(&RegisterServiceWorkerCallback, &called_2,
-                   &sw_registration_id_2_));
+        GURL(kScript2),
+        blink::mojom::ServiceWorkerRegistrationOptions(GURL(kPattern2)),
+        nullptr,
+        base::AdaptCallbackForRepeating(
+            base::BindOnce(&RegisterServiceWorkerCallback, &called_2,
+                           &sw_registration_id_2_)));
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(called_1);
     EXPECT_TRUE(called_2);
@@ -174,11 +159,13 @@ class BackgroundSyncManagerTest : public testing::Test {
     // calling BackgroundSyncManager::Register.
     helper_->context_wrapper()->FindReadyRegistrationForId(
         sw_registration_id_1_, GURL(kPattern1).GetOrigin(),
-        base::Bind(FindServiceWorkerRegistrationCallback, &sw_registration_1_));
+        base::AdaptCallbackForRepeating(base::BindOnce(
+            FindServiceWorkerRegistrationCallback, &sw_registration_1_)));
 
     helper_->context_wrapper()->FindReadyRegistrationForId(
         sw_registration_id_2_, GURL(kPattern1).GetOrigin(),
-        base::Bind(FindServiceWorkerRegistrationCallback, &sw_registration_2_));
+        base::AdaptCallbackForRepeating(base::BindOnce(
+            FindServiceWorkerRegistrationCallback, &sw_registration_2_)));
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(sw_registration_1_);
     EXPECT_TRUE(sw_registration_2_);
@@ -208,8 +195,7 @@ class BackgroundSyncManagerTest : public testing::Test {
   void StatusAndRegistrationsCallback(
       bool* was_called,
       BackgroundSyncStatus status,
-      std::unique_ptr<std::vector<std::unique_ptr<BackgroundSyncRegistration>>>
-          registrations) {
+      std::vector<std::unique_ptr<BackgroundSyncRegistration>> registrations) {
     *was_called = true;
     callback_status_ = status;
     callback_registrations_ = std::move(registrations);
@@ -226,8 +212,7 @@ class BackgroundSyncManagerTest : public testing::Test {
         new TestBackgroundSyncManager(helper_->context_wrapper());
     background_sync_manager_.reset(test_background_sync_manager_);
 
-    test_clock_ = new base::SimpleTestClock();
-    background_sync_manager_->set_clock(base::WrapUnique(test_clock_));
+    background_sync_manager_->set_clock(&test_clock_);
 
     // Many tests do not expect the sync event to fire immediately after
     // register (and cleanup up the sync registrations).  Tests can control when
@@ -262,7 +247,6 @@ class BackgroundSyncManagerTest : public testing::Test {
   void DeleteBackgroundSyncManager() {
     background_sync_manager_.reset();
     test_background_sync_manager_ = nullptr;
-    test_clock_ = nullptr;
   }
 
   bool Register(const BackgroundSyncRegistrationOptions& sync_options) {
@@ -275,8 +259,9 @@ class BackgroundSyncManagerTest : public testing::Test {
     bool was_called = false;
     background_sync_manager_->Register(
         sw_registration_id, options,
-        base::Bind(&BackgroundSyncManagerTest::StatusAndRegistrationCallback,
-                   base::Unretained(this), &was_called));
+        base::BindOnce(
+            &BackgroundSyncManagerTest::StatusAndRegistrationCallback,
+            base::Unretained(this), &was_called));
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(was_called);
     return callback_status_ == BACKGROUND_SYNC_STATUS_OK;
@@ -299,19 +284,20 @@ class BackgroundSyncManagerTest : public testing::Test {
     bool was_called = false;
     background_sync_manager_->GetRegistrations(
         sw_registration_id,
-        base::Bind(&BackgroundSyncManagerTest::StatusAndRegistrationsCallback,
-                   base::Unretained(this), &was_called));
+        base::BindOnce(
+            &BackgroundSyncManagerTest::StatusAndRegistrationsCallback,
+            base::Unretained(this), &was_called));
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(was_called);
 
     if (callback_status_ == BACKGROUND_SYNC_STATUS_OK) {
-      for (auto iter = callback_registrations_->begin();
-           iter < callback_registrations_->end(); ++iter) {
+      for (auto iter = callback_registrations_.begin();
+           iter < callback_registrations_.end(); ++iter) {
         if ((*iter)->options()->tag == registration_options.tag) {
           // Transfer the matching registration out of the vector into
           // callback_registration_ for testing.
           callback_registration_ = std::move(*iter);
-          callback_registrations_->erase(iter);
+          callback_registrations_.erase(iter);
           return true;
         }
       }
@@ -327,8 +313,9 @@ class BackgroundSyncManagerTest : public testing::Test {
     bool was_called = false;
     background_sync_manager_->GetRegistrations(
         sw_registration_id,
-        base::Bind(&BackgroundSyncManagerTest::StatusAndRegistrationsCallback,
-                   base::Unretained(this), &was_called));
+        base::BindOnce(
+            &BackgroundSyncManagerTest::StatusAndRegistrationsCallback,
+            base::Unretained(this), &was_called));
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(was_called);
 
@@ -348,7 +335,8 @@ class BackgroundSyncManagerTest : public testing::Test {
     bool called = false;
     helper_->context()->UnregisterServiceWorker(
         PatternForSWId(sw_registration_id),
-        base::Bind(&UnregisterServiceWorkerCallback, &called));
+        base::AdaptCallbackForRepeating(
+            base::BindOnce(&UnregisterServiceWorkerCallback, &called)));
     base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(called);
   }
@@ -365,36 +353,54 @@ class BackgroundSyncManagerTest : public testing::Test {
     SetNetwork(net::NetworkChangeNotifier::CONNECTION_WIFI);
   }
 
+  void DispatchSyncStatusCallback(
+      ServiceWorkerStatusCode status,
+      scoped_refptr<ServiceWorkerVersion> active_version,
+      ServiceWorkerVersion::StatusCallback callback) {
+    sync_events_called_++;
+    std::move(callback).Run(status);
+  }
+
   void InitSyncEventTest() {
-    SetupForSyncEvent(
-        base::Bind(DispatchSyncSuccessfulCallback, &sync_events_called_));
+    SetupForSyncEvent(base::BindRepeating(
+        &BackgroundSyncManagerTest::DispatchSyncStatusCallback,
+        base::Unretained(this), SERVICE_WORKER_OK));
   }
 
   void InitFailedSyncEventTest() {
-    SetupForSyncEvent(
-        base::Bind(DispatchSyncFailedCallback, &sync_events_called_));
+    SetupForSyncEvent(base::BindRepeating(
+        &BackgroundSyncManagerTest::DispatchSyncStatusCallback,
+        base::Unretained(this), SERVICE_WORKER_ERROR_FAILED));
+  }
+
+  void DispatchSyncDelayedCallback(
+      scoped_refptr<ServiceWorkerVersion> active_version,
+      ServiceWorkerVersion::StatusCallback callback) {
+    sync_events_called_++;
+    sync_fired_callback_ = std::move(callback);
   }
 
   void InitDelayedSyncEventTest() {
-    SetupForSyncEvent(base::Bind(DispatchSyncDelayedCallback,
-                                 &sync_events_called_, &sync_fired_callback_));
+    SetupForSyncEvent(base::BindRepeating(
+        &BackgroundSyncManagerTest::DispatchSyncDelayedCallback,
+        base::Unretained(this)));
   }
 
   void RegisterAndVerifySyncEventDelayed(
       const BackgroundSyncRegistrationOptions& sync_options) {
     int sync_events_called = sync_events_called_;
-    EXPECT_TRUE(sync_fired_callback_.is_null());
+    EXPECT_FALSE(sync_fired_callback_);
 
     EXPECT_TRUE(Register(sync_options));
 
     EXPECT_EQ(sync_events_called + 1, sync_events_called_);
     EXPECT_TRUE(GetRegistration(sync_options_1_));
-    EXPECT_FALSE(sync_fired_callback_.is_null());
+    EXPECT_TRUE(sync_fired_callback_);
   }
 
   void DeleteServiceWorkerAndStartOver() {
     helper_->context()->ScheduleDeleteAndStartOver();
-    base::RunLoop().RunUntilIdle();
+    content::RunAllTasksUntilIdle();
   }
 
   int MaxTagLength() const { return BackgroundSyncManager::kMaxTagLength; }
@@ -414,7 +420,7 @@ class BackgroundSyncManagerTest : public testing::Test {
   std::unique_ptr<BackgroundSyncManager> background_sync_manager_;
   std::unique_ptr<StoragePartitionImpl> storage_partition_impl_;
   TestBackgroundSyncManager* test_background_sync_manager_ = nullptr;
-  base::SimpleTestClock* test_clock_ = nullptr;
+  base::SimpleTestClock test_clock_;
 
   int64_t sw_registration_id_1_;
   int64_t sw_registration_id_2_;
@@ -427,7 +433,7 @@ class BackgroundSyncManagerTest : public testing::Test {
   // Callback values.
   BackgroundSyncStatus callback_status_ = BACKGROUND_SYNC_STATUS_OK;
   std::unique_ptr<BackgroundSyncRegistration> callback_registration_;
-  std::unique_ptr<std::vector<std::unique_ptr<BackgroundSyncRegistration>>>
+  std::vector<std::unique_ptr<BackgroundSyncRegistration>>
       callback_registrations_;
   ServiceWorkerStatusCode callback_sw_status_code_ = SERVICE_WORKER_OK;
   int sync_events_called_ = 0;
@@ -446,7 +452,21 @@ TEST_F(BackgroundSyncManagerTest, RegistrationIntact) {
 }
 
 TEST_F(BackgroundSyncManagerTest, RegisterWithoutLiveSWRegistration) {
+  // Get a provider host which is used to install the service worker.
+  ASSERT_TRUE(sw_registration_1_->active_version());
+  ASSERT_FALSE(sw_registration_1_->waiting_version());
+  ASSERT_FALSE(sw_registration_1_->installing_version());
+  ServiceWorkerProviderHost* provider_host =
+      sw_registration_1_->active_version()->provider_host();
+  ASSERT_TRUE(provider_host);
+
+  // Remove the registration object host.
+  provider_host->registration_object_hosts_.clear();
+
+  // Ensure |sw_registration_1_| is the last reference to the registration.
+  ASSERT_TRUE(sw_registration_1_->HasOneRef());
   sw_registration_1_ = nullptr;
+
   EXPECT_FALSE(Register(sync_options_1_));
   EXPECT_EQ(BACKGROUND_SYNC_STATUS_NO_SERVICE_WORKER, callback_status_);
 }
@@ -516,15 +536,15 @@ TEST_F(BackgroundSyncManagerTest, GetRegistrationBadBackend) {
 
 TEST_F(BackgroundSyncManagerTest, GetRegistrationsZero) {
   EXPECT_TRUE(GetRegistrations());
-  EXPECT_EQ(0u, callback_registrations_->size());
+  EXPECT_EQ(0u, callback_registrations_.size());
 }
 
 TEST_F(BackgroundSyncManagerTest, GetRegistrationsOne) {
   EXPECT_TRUE(Register(sync_options_1_));
   EXPECT_TRUE(GetRegistrations());
 
-  EXPECT_EQ(1u, callback_registrations_->size());
-  sync_options_1_.Equals(*(*callback_registrations_)[0]->options());
+  EXPECT_EQ(1u, callback_registrations_.size());
+  sync_options_1_.Equals(*callback_registrations_[0]->options());
 }
 
 TEST_F(BackgroundSyncManagerTest, GetRegistrationsTwo) {
@@ -532,9 +552,9 @@ TEST_F(BackgroundSyncManagerTest, GetRegistrationsTwo) {
   EXPECT_TRUE(Register(sync_options_2_));
   EXPECT_TRUE(GetRegistrations());
 
-  EXPECT_EQ(2u, callback_registrations_->size());
-  sync_options_1_.Equals(*(*callback_registrations_)[0]->options());
-  sync_options_2_.Equals(*(*callback_registrations_)[1]->options());
+  EXPECT_EQ(2u, callback_registrations_.size());
+  sync_options_1_.Equals(*callback_registrations_[0]->options());
+  sync_options_2_.Equals(*callback_registrations_[1]->options());
 }
 
 TEST_F(BackgroundSyncManagerTest, GetRegistrationsBadBackend) {
@@ -634,12 +654,14 @@ TEST_F(BackgroundSyncManagerTest, SequentialOperations) {
   bool get_registrations_called = false;
   test_background_sync_manager_->Register(
       sw_registration_id_1_, sync_options_1_,
-      base::Bind(&BackgroundSyncManagerTest::StatusAndRegistrationCallback,
-                 base::Unretained(this), &register_called));
+      base::AdaptCallbackForRepeating(base::BindOnce(
+          &BackgroundSyncManagerTest::StatusAndRegistrationCallback,
+          base::Unretained(this), &register_called)));
   test_background_sync_manager_->GetRegistrations(
       sw_registration_id_1_,
-      base::Bind(&BackgroundSyncManagerTest::StatusAndRegistrationsCallback,
-                 base::Unretained(this), &get_registrations_called));
+      base::AdaptCallbackForRepeating(base::BindOnce(
+          &BackgroundSyncManagerTest::StatusAndRegistrationsCallback,
+          base::Unretained(this), &get_registrations_called)));
 
   base::RunLoop().RunUntilIdle();
   // Init should be blocked while loading from the backend.
@@ -674,8 +696,9 @@ TEST_F(BackgroundSyncManagerTest,
   bool callback_called = false;
   test_background_sync_manager_->Register(
       sw_registration_id_1_, sync_options_2_,
-      base::Bind(&BackgroundSyncManagerTest::StatusAndRegistrationCallback,
-                 base::Unretained(this), &callback_called));
+      base::AdaptCallbackForRepeating(base::BindOnce(
+          &BackgroundSyncManagerTest::StatusAndRegistrationCallback,
+          base::Unretained(this), &callback_called)));
 
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(callback_called);
@@ -799,12 +822,14 @@ TEST_F(BackgroundSyncManagerTest, ReregisterMidSyncFirstAttemptFails) {
   EXPECT_TRUE(Register(sync_options_1_));
 
   // The first sync attempt fails.
-  sync_fired_callback_.Run(SERVICE_WORKER_ERROR_FAILED);
+  ASSERT_TRUE(sync_fired_callback_);
+  std::move(sync_fired_callback_).Run(SERVICE_WORKER_ERROR_FAILED);
   base::RunLoop().RunUntilIdle();
 
   // It should fire again since it was reregistered mid-sync.
   EXPECT_TRUE(GetRegistration(sync_options_1_));
-  sync_fired_callback_.Run(SERVICE_WORKER_OK);
+  ASSERT_TRUE(sync_fired_callback_);
+  std::move(sync_fired_callback_).Run(SERVICE_WORKER_OK);
   EXPECT_FALSE(GetRegistration(sync_options_1_));
 }
 
@@ -816,12 +841,14 @@ TEST_F(BackgroundSyncManagerTest, ReregisterMidSyncFirstAttemptSucceeds) {
   EXPECT_TRUE(Register(sync_options_1_));
 
   // The first sync event succeeds.
-  sync_fired_callback_.Run(SERVICE_WORKER_OK);
+  ASSERT_TRUE(sync_fired_callback_);
+  std::move(sync_fired_callback_).Run(SERVICE_WORKER_OK);
   base::RunLoop().RunUntilIdle();
 
   // It should fire again since it was reregistered mid-sync.
   EXPECT_TRUE(GetRegistration(sync_options_1_));
-  sync_fired_callback_.Run(SERVICE_WORKER_OK);
+  ASSERT_TRUE(sync_fired_callback_);
+  std::move(sync_fired_callback_).Run(SERVICE_WORKER_OK);
   EXPECT_FALSE(GetRegistration(sync_options_1_));
 }
 
@@ -874,7 +901,8 @@ TEST_F(BackgroundSyncManagerTest, DisableWhileFiring) {
 
   // Successfully complete the firing event. We can't verify that it actually
   // completed but at least we can test that it doesn't crash.
-  sync_fired_callback_.Run(SERVICE_WORKER_OK);
+  ASSERT_TRUE(sync_fired_callback_);
+  std::move(sync_fired_callback_).Run(SERVICE_WORKER_OK);
   base::RunLoop().RunUntilIdle();
 }
 
@@ -962,7 +990,8 @@ TEST_F(BackgroundSyncManagerTest, DelayMidSync) {
   RegisterAndVerifySyncEventDelayed(sync_options_1_);
 
   // Finish firing the event and verify that the registration is removed.
-  sync_fired_callback_.Run(SERVICE_WORKER_OK);
+  ASSERT_TRUE(sync_fired_callback_);
+  std::move(sync_fired_callback_).Run(SERVICE_WORKER_OK);
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1, sync_events_called_);
   EXPECT_FALSE(GetRegistration(sync_options_1_));
@@ -974,7 +1003,8 @@ TEST_F(BackgroundSyncManagerTest, BadBackendMidSync) {
   RegisterAndVerifySyncEventDelayed(sync_options_1_);
 
   test_background_sync_manager_->set_corrupt_backend(true);
-  sync_fired_callback_.Run(SERVICE_WORKER_OK);
+  ASSERT_TRUE(sync_fired_callback_);
+  std::move(sync_fired_callback_).Run(SERVICE_WORKER_OK);
   base::RunLoop().RunUntilIdle();
 
   // The backend should now be disabled because it couldn't unregister the
@@ -990,7 +1020,8 @@ TEST_F(BackgroundSyncManagerTest, UnregisterServiceWorkerMidSync) {
   RegisterAndVerifySyncEventDelayed(sync_options_1_);
   UnregisterServiceWorker(sw_registration_id_1_);
 
-  sync_fired_callback_.Run(SERVICE_WORKER_OK);
+  ASSERT_TRUE(sync_fired_callback_);
+  std::move(sync_fired_callback_).Run(SERVICE_WORKER_OK);
 
   // The backend isn't disabled, but the first service worker registration is
   // gone.
@@ -1128,7 +1159,8 @@ TEST_F(BackgroundSyncManagerTest, WakeBrowserCalled) {
                 GetController()->run_in_background_min_ms()));
 
   // Finish the sync.
-  sync_fired_callback_.Run(SERVICE_WORKER_OK);
+  ASSERT_TRUE(sync_fired_callback_);
+  std::move(sync_fired_callback_).Run(SERVICE_WORKER_OK);
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(GetController()->run_in_background_enabled());
 }
@@ -1149,7 +1181,7 @@ TEST_F(BackgroundSyncManagerTest, TwoAttempts) {
   // The first run will fail but it will setup a timer to try again.
   EXPECT_TRUE(Register(sync_options_1_));
   EXPECT_TRUE(GetRegistration(sync_options_1_));
-  EXPECT_FALSE(test_background_sync_manager_->delayed_task().is_null());
+  EXPECT_TRUE(test_background_sync_manager_->IsDelayedTaskScheduled());
 
   // Make sure the delay is reasonable.
   EXPECT_LT(base::TimeDelta::FromMinutes(1),
@@ -1158,8 +1190,8 @@ TEST_F(BackgroundSyncManagerTest, TwoAttempts) {
             test_background_sync_manager_->delayed_task_delta());
 
   // Fire again and this time it should permanently fail.
-  test_clock_->Advance(test_background_sync_manager_->delayed_task_delta());
-  test_background_sync_manager_->delayed_task().Run();
+  test_clock_.Advance(test_background_sync_manager_->delayed_task_delta());
+  test_background_sync_manager_->RunDelayedTask();
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(GetRegistration(sync_options_1_));
 }
@@ -1171,13 +1203,13 @@ TEST_F(BackgroundSyncManagerTest, ThreeAttempts) {
   // The first run will fail but it will setup a timer to try again.
   EXPECT_TRUE(Register(sync_options_1_));
   EXPECT_TRUE(GetRegistration(sync_options_1_));
-  EXPECT_FALSE(test_background_sync_manager_->delayed_task().is_null());
+  EXPECT_TRUE(test_background_sync_manager_->IsDelayedTaskScheduled());
 
   // The second run will fail but it will setup a timer to try again.
   base::TimeDelta first_delta =
       test_background_sync_manager_->delayed_task_delta();
-  test_clock_->Advance(test_background_sync_manager_->delayed_task_delta());
-  test_background_sync_manager_->delayed_task().Run();
+  test_clock_.Advance(test_background_sync_manager_->delayed_task_delta());
+  test_background_sync_manager_->RunDelayedTask();
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(GetRegistration(sync_options_1_));
 
@@ -1185,8 +1217,8 @@ TEST_F(BackgroundSyncManagerTest, ThreeAttempts) {
   EXPECT_LT(first_delta, test_background_sync_manager_->delayed_task_delta());
 
   // The third run will permanently fail.
-  test_clock_->Advance(test_background_sync_manager_->delayed_task_delta());
-  test_background_sync_manager_->delayed_task().Run();
+  test_clock_.Advance(test_background_sync_manager_->delayed_task_delta());
+  test_background_sync_manager_->RunDelayedTask();
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(GetRegistration(sync_options_1_));
 }
@@ -1198,21 +1230,21 @@ TEST_F(BackgroundSyncManagerTest, WaitsFullDelayTime) {
   // The first run will fail but it will setup a timer to try again.
   EXPECT_TRUE(Register(sync_options_1_));
   EXPECT_TRUE(GetRegistration(sync_options_1_));
-  EXPECT_FALSE(test_background_sync_manager_->delayed_task().is_null());
+  EXPECT_TRUE(test_background_sync_manager_->IsDelayedTaskScheduled());
 
   // Fire again one second before it's ready to retry. Expect it to reschedule
   // the delay timer for one more second.
-  test_clock_->Advance(test_background_sync_manager_->delayed_task_delta() -
-                       base::TimeDelta::FromSeconds(1));
-  test_background_sync_manager_->delayed_task().Run();
+  test_clock_.Advance(test_background_sync_manager_->delayed_task_delta() -
+                      base::TimeDelta::FromSeconds(1));
+  test_background_sync_manager_->RunDelayedTask();
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(GetRegistration(sync_options_1_));
   EXPECT_EQ(base::TimeDelta::FromSeconds(1),
             test_background_sync_manager_->delayed_task_delta());
 
   // Fire one second later and it should fail permanently.
-  test_clock_->Advance(base::TimeDelta::FromSeconds(1));
-  test_background_sync_manager_->delayed_task().Run();
+  test_clock_.Advance(base::TimeDelta::FromSeconds(1));
+  test_background_sync_manager_->RunDelayedTask();
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(GetRegistration(sync_options_1_));
 }
@@ -1229,7 +1261,7 @@ TEST_F(BackgroundSyncManagerTest, RetryOnBrowserRestart) {
   base::TimeDelta delta = test_background_sync_manager_->delayed_task_delta();
   CreateBackgroundSyncManager();
   InitFailedSyncEventTest();
-  test_clock_->Advance(delta);
+  test_clock_.Advance(delta);
   InitBackgroundSyncManager();
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(GetRegistration(sync_options_1_));
@@ -1247,7 +1279,7 @@ TEST_F(BackgroundSyncManagerTest, RescheduleOnBrowserRestart) {
   base::TimeDelta delta = test_background_sync_manager_->delayed_task_delta();
   CreateBackgroundSyncManager();
   InitFailedSyncEventTest();
-  test_clock_->Advance(delta - base::TimeDelta::FromSeconds(1));
+  test_clock_.Advance(delta - base::TimeDelta::FromSeconds(1));
   InitBackgroundSyncManager();
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(GetRegistration(sync_options_1_));
@@ -1266,7 +1298,7 @@ TEST_F(BackgroundSyncManagerTest, RetryIfClosedMidSync) {
   // fire once and then fail permanently.
   CreateBackgroundSyncManager();
   InitFailedSyncEventTest();
-  test_clock_->Advance(delta);
+  test_clock_.Advance(delta);
   InitBackgroundSyncManager();
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(GetRegistration(sync_options_1_));
@@ -1280,8 +1312,8 @@ TEST_F(BackgroundSyncManagerTest, AllTestsEventuallyFire) {
   EXPECT_TRUE(Register(sync_options_1_));
 
   // Run it a second time.
-  test_clock_->Advance(test_background_sync_manager_->delayed_task_delta());
-  test_background_sync_manager_->delayed_task().Run();
+  test_clock_.Advance(test_background_sync_manager_->delayed_task_delta());
+  test_background_sync_manager_->RunDelayedTask();
   base::RunLoop().RunUntilIdle();
 
   base::TimeDelta delay_delta =
@@ -1291,10 +1323,10 @@ TEST_F(BackgroundSyncManagerTest, AllTestsEventuallyFire) {
   EXPECT_TRUE(Register(sync_options_2_));
   EXPECT_GT(delay_delta, test_background_sync_manager_->delayed_task_delta());
 
-  while (!test_background_sync_manager_->delayed_task().is_null()) {
-    test_clock_->Advance(test_background_sync_manager_->delayed_task_delta());
-    test_background_sync_manager_->delayed_task().Run();
-    test_background_sync_manager_->ClearDelayedTask();
+  while (test_background_sync_manager_->IsDelayedTaskScheduled()) {
+    test_clock_.Advance(test_background_sync_manager_->delayed_task_delta());
+    test_background_sync_manager_->RunDelayedTask();
+    EXPECT_FALSE(test_background_sync_manager_->IsDelayedTaskScheduled());
     base::RunLoop().RunUntilIdle();
   }
 
@@ -1312,8 +1344,8 @@ TEST_F(BackgroundSyncManagerTest, LastChance) {
   EXPECT_TRUE(GetRegistration(sync_options_1_));
 
   // Run it again.
-  test_clock_->Advance(test_background_sync_manager_->delayed_task_delta());
-  test_background_sync_manager_->delayed_task().Run();
+  test_clock_.Advance(test_background_sync_manager_->delayed_task_delta());
+  test_background_sync_manager_->RunDelayedTask();
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(GetRegistration(sync_options_1_));
   EXPECT_EQ(blink::mojom::BackgroundSyncEventLastChance::IS_LAST_CHANCE,

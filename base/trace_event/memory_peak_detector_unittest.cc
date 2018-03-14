@@ -101,8 +101,8 @@ class MemoryPeakDetectorTest : public testing::Test {
       evt->Signal();
     };
     bg_thread_->task_runner()->PostTask(
-        FROM_HERE, Bind(get_fn, Unretained(&*peak_detector_), Unretained(&evt),
-                        Unretained(&res)));
+        FROM_HERE, BindOnce(get_fn, Unretained(&*peak_detector_),
+                            Unretained(&evt), Unretained(&res)));
     evt.Wait();
     return res;
   }
@@ -120,8 +120,8 @@ class MemoryPeakDetectorTest : public testing::Test {
     WaitableEvent evt(WaitableEvent::ResetPolicy::MANUAL,
                       WaitableEvent::InitialState::NOT_SIGNALED);
     bg_thread_->task_runner()->PostTask(
-        FROM_HERE, Bind(get_fn, Unretained(&*peak_detector_), Unretained(&evt),
-                        Unretained(&res)));
+        FROM_HERE, BindOnce(get_fn, Unretained(&*peak_detector_),
+                            Unretained(&evt), Unretained(&res)));
     evt.Wait();
     return res;
   }
@@ -177,7 +177,9 @@ class MemoryPeakDetectorTest : public testing::Test {
     MemoryDumpProvider::Options opt;
     opt.is_fast_polling_supported = true;
     scoped_refptr<MemoryDumpProviderInfo> mdp_info(
-        new MemoryDumpProviderInfo(mdp.get(), "Mock MDP", nullptr, opt, false));
+        new MemoryDumpProviderInfo(mdp.get(), "Mock MDP", nullptr, opt,
+                                   false /* whitelisted_for_background_mode */,
+                                   false /* whitelisted_for_summary_mode */));
 
     // The |mdp| instance will be destroyed together with the |mdp_info|.
     mdp_info->owned_dump_provider = std::move(mdp);
@@ -367,12 +369,17 @@ TEST_F(MemoryPeakDetectorTest, StartStopQuickly) {
     peak_detector_->Start(kConfigNoCallbacks);
     peak_detector_->Stop();
   }
+
+  bg_thread_->task_runner()->PostTask(
+      FROM_HERE, base::BindOnce([](uint32_t* polls_done) { *polls_done = 0; },
+                                &polls_done));
+
   peak_detector_->Start(kConfigNoCallbacks);
   EXPECT_EQ(MemoryPeakDetector::RUNNING, GetPeakDetectorState());
   evt.Wait();  // Wait for kNumPolls.
   const double time_ms = (TimeTicks::Now() - tstart).InMillisecondsF();
 
-  EXPECT_GE(time_ms, kNumPolls * kConfigNoCallbacks.polling_interval_ms);
+  EXPECT_GE(time_ms, (kNumPolls - 1) * kConfigNoCallbacks.polling_interval_ms);
   peak_detector_->Stop();
 }
 

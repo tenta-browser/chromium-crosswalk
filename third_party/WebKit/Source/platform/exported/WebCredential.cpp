@@ -4,8 +4,8 @@
 
 #include "public/platform/WebCredential.h"
 
+#include <memory>
 #include "platform/credentialmanager/PlatformCredential.h"
-#include "platform/wtf/PtrUtil.h"
 #include "public/platform/WebFederatedCredential.h"
 #include "public/platform/WebPasswordCredential.h"
 
@@ -14,21 +14,19 @@ namespace blink {
 std::unique_ptr<WebCredential> WebCredential::Create(
     PlatformCredential* credential) {
   if (credential->IsPassword()) {
-    return WTF::MakeUnique<WebPasswordCredential>(credential);
+    return std::make_unique<WebPasswordCredential>(credential);
   }
 
   if (credential->IsFederated()) {
-    return WTF::MakeUnique<WebFederatedCredential>(credential);
+    return std::make_unique<WebFederatedCredential>(credential);
   }
 
   NOTREACHED();
   return nullptr;
 }
 
-WebCredential::WebCredential(const WebString& id,
-                             const WebString& name,
-                             const WebURL& icon_url)
-    : platform_credential_(PlatformCredential::Create(id, name, icon_url)) {}
+WebCredential::WebCredential(const WebString& id)
+    : platform_credential_(PlatformCredential::Create(id)) {}
 
 WebCredential::WebCredential(const WebCredential& other) {
   Assign(other);
@@ -52,14 +50,6 @@ void WebCredential::Reset() {
 
 WebString WebCredential::Id() const {
   return platform_credential_->Id();
-}
-
-WebString WebCredential::GetName() const {
-  return platform_credential_->GetName();
-}
-
-WebURL WebCredential::GetIconURL() const {
-  return platform_credential_->GetIconURL();
 }
 
 WebString WebCredential::GetType() const {

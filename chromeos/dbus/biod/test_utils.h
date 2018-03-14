@@ -30,12 +30,7 @@ void CopyObjectPathArray(std::vector<dbus::ObjectPath>* dest_object_paths,
 void CopyString(std::string* dest_str, const std::string& src_str);
 
 // Copies |src_status| to |dest_status|.
-void CopyDBusMethodCallStatus(DBusMethodCallStatus* dest_status,
-                              DBusMethodCallStatus src_status);
-
-// Copies |src_type| to |dest_type|.
-void CopyBiometricType(biod::BiometricType* dest_type,
-                       biod::BiometricType src_type);
+void CopyDBusMethodCallResult(bool* dest_result, bool src_result);
 
 // Implementation of BiodClient::Observer for testing.
 class TestBiodObserver : public BiodClient::Observer {
@@ -68,7 +63,8 @@ class TestBiodObserver : public BiodClient::Observer {
   // BiodClient::Observer:
   void BiodServiceRestarted() override;
   void BiodEnrollScanDoneReceived(biod::ScanResult scan_result,
-                                  bool is_complete) override;
+                                  bool is_complete,
+                                  int percent_complete) override;
   void BiodAuthScanDoneReceived(biod::ScanResult scan_result,
                                 const AuthScanMatches& matches) override;
   void BiodSessionFailedReceived() override;
@@ -87,6 +83,6 @@ class TestBiodObserver : public BiodClient::Observer {
 };
 
 }  // namespace test_utils
-}  // chromeos
+}  // namespace chromeos
 
 #endif  // CHROMEOS_DBUS_BIOD_TEST_UTILS_H_

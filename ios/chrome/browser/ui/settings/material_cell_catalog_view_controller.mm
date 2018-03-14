@@ -10,12 +10,10 @@
 #include "components/autofill/core/browser/autofill_data_util.h"
 #include "components/autofill/core/browser/credit_card.h"
 #include "components/grit/components_scaled_resources.h"
-#import "ios/chrome/browser/payments/cells/autofill_profile_item.h"
-#import "ios/chrome/browser/payments/cells/payments_text_item.h"
-#import "ios/chrome/browser/payments/cells/price_item.h"
 #import "ios/chrome/browser/ui/authentication/account_control_item.h"
 #import "ios/chrome/browser/ui/authentication/signin_promo_item.h"
 #import "ios/chrome/browser/ui/authentication/signin_promo_view_configurator.h"
+#import "ios/chrome/browser/ui/authentication/signin_promo_view_delegate.h"
 #import "ios/chrome/browser/ui/authentication/signin_promo_view_mediator.h"
 #import "ios/chrome/browser/ui/autofill/cells/autofill_edit_item.h"
 #import "ios/chrome/browser/ui/autofill/cells/cvc_item.h"
@@ -28,12 +26,15 @@
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_switch_item.h"
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_text_item.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
-#import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_article_item.h"
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_footer_item.h"
+#import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_item.h"
 #import "ios/chrome/browser/ui/icons/chrome_icon.h"
+#import "ios/chrome/browser/ui/payments/cells/accepted_payment_methods_item.h"
+#import "ios/chrome/browser/ui/payments/cells/autofill_profile_item.h"
+#import "ios/chrome/browser/ui/payments/cells/payments_text_item.h"
+#import "ios/chrome/browser/ui/payments/cells/price_item.h"
 #import "ios/chrome/browser/ui/settings/cells/account_signin_item.h"
 #import "ios/chrome/browser/ui/settings/cells/autofill_data_item.h"
-#import "ios/chrome/browser/ui/settings/cells/native_app_item.h"
 #import "ios/chrome/browser/ui/settings/cells/sync_switch_item.h"
 #import "ios/chrome/browser/ui/settings/cells/text_and_error_item.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
@@ -56,6 +57,7 @@ typedef NS_ENUM(NSInteger, SectionIdentifier) {
   SectionIdentifierNativeAppCell,
   SectionIdentifierAutofill,
   SectionIdentifierPayments,
+  SectionIdentifierPaymentsNoBackground,
   SectionIdentifierAccountCell,
   SectionIdentifierAccountControlCell,
   SectionIdentifierFooters,
@@ -97,13 +99,20 @@ typedef NS_ENUM(NSInteger, ItemType) {
 // Image fixed horizontal size.
 const CGFloat kHorizontalImageFixedSize = 40;
 
+// Credit Card icon size.
+const CGFloat kCardIssuerNetworkIconDimension = 25.0;
+
 }  // namespace
 
 @implementation MaterialCellCatalogViewController
 
 - (instancetype)init {
-  self = [super initWithStyle:CollectionViewControllerStyleAppBar];
+  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+  self =
+      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
   if (self) {
+    // TODO(crbug.com/764578): -loadModel should not be called from
+    // initializer. A possible fix is to move this call to -viewDidLoad.
     [self loadModel];
   }
   return self;
@@ -212,21 +221,6 @@ const CGFloat kHorizontalImageFixedSize = 40;
   [model addItem:[self syncSwitchItem]
       toSectionWithIdentifier:SectionIdentifierSwitchCell];
 
-  // Native app cells.
-  [model addSectionWithIdentifier:SectionIdentifierNativeAppCell];
-  NativeAppItem* fooApp = [[NativeAppItem alloc] initWithType:ItemTypeApp];
-  fooApp.name = @"App Foo";
-  fooApp.state = NativeAppItemSwitchOff;
-  [model addItem:fooApp toSectionWithIdentifier:SectionIdentifierNativeAppCell];
-  NativeAppItem* barApp = [[NativeAppItem alloc] initWithType:ItemTypeApp];
-  barApp.name = @"App Bar";
-  barApp.state = NativeAppItemSwitchOn;
-  [model addItem:barApp toSectionWithIdentifier:SectionIdentifierNativeAppCell];
-  NativeAppItem* bazApp = [[NativeAppItem alloc] initWithType:ItemTypeApp];
-  bazApp.name = @"App Baz Qux Bla Bug Lorem ipsum dolor sit amet";
-  bazApp.state = NativeAppItemInstall;
-  [model addItem:bazApp toSectionWithIdentifier:SectionIdentifierNativeAppCell];
-
   // Autofill cells.
   [model addSectionWithIdentifier:SectionIdentifierAutofill];
   [model addItem:[self autofillItemWithMainAndTrailingText]
@@ -258,6 +252,7 @@ const CGFloat kHorizontalImageFixedSize = 40;
   [model addSectionWithIdentifier:SectionIdentifierPayments];
   [model addItem:[self paymentsItemWithWrappingTextandOptionalImage]
       toSectionWithIdentifier:SectionIdentifierPayments];
+
   PriceItem* priceItem1 =
       [[PriceItem alloc] initWithType:ItemTypePaymentsSingleLine];
   priceItem1.item = @"Total";
@@ -306,6 +301,11 @@ const CGFloat kHorizontalImageFixedSize = 40;
   [model addItem:profileItem3
       toSectionWithIdentifier:SectionIdentifierPayments];
 
+  // Payments cells with no background.
+  [model addSectionWithIdentifier:SectionIdentifierPaymentsNoBackground];
+  [model addItem:[self acceptedPaymentMethodsItem]
+      toSectionWithIdentifier:SectionIdentifierPaymentsNoBackground];
+
   // Account cells.
   [model addSectionWithIdentifier:SectionIdentifierAccountCell];
   [model addItem:[self accountItemDetailWithError]
@@ -328,7 +328,7 @@ const CGFloat kHorizontalImageFixedSize = 40;
 
   // Content Suggestions cells.
   [model addSectionWithIdentifier:SectionIdentifierContentSuggestionsCell];
-  [model addItem:[self contentSuggestionsArticleItem]
+  [model addItem:[self ContentSuggestionsItem]
       toSectionWithIdentifier:SectionIdentifierContentSuggestionsCell];
   [model addItem:[self contentSuggestionsFooterItem]
       toSectionWithIdentifier:SectionIdentifierContentSuggestionsCell];
@@ -407,6 +407,7 @@ const CGFloat kHorizontalImageFixedSize = 40;
   NSInteger sectionIdentifier =
       [self.collectionViewModel sectionIdentifierForSection:indexPath.section];
   switch (sectionIdentifier) {
+    case SectionIdentifierPaymentsNoBackground:
     case SectionIdentifierFooters:
       // Display the Learn More footer without any background image or
       // shadowing.
@@ -443,7 +444,9 @@ const CGFloat kHorizontalImageFixedSize = 40;
 - (CollectionViewItem*)accountItemDetailWithError {
   CollectionViewAccountItem* accountItemDetail =
       [[CollectionViewAccountItem alloc] initWithType:ItemTypeAccountDetail];
-  accountItemDetail.image = [UIImage imageNamed:@"default_avatar"];
+  // TODO(crbug.com/754032): ios_default_avatar image is from a downstream iOS
+  // internal repository. It should be used through a provider API instead.
+  accountItemDetail.image = [UIImage imageNamed:@"ios_default_avatar"];
   accountItemDetail.text = @"Account User Name";
   accountItemDetail.detailText =
       @"Syncing to AccountUserNameAccount@example.com";
@@ -456,7 +459,9 @@ const CGFloat kHorizontalImageFixedSize = 40;
 - (CollectionViewItem*)accountItemCheckMark {
   CollectionViewAccountItem* accountItemCheckMark =
       [[CollectionViewAccountItem alloc] initWithType:ItemTypeAccountCheckMark];
-  accountItemCheckMark.image = [UIImage imageNamed:@"default_avatar"];
+  // TODO(crbug.com/754032): ios_default_avatar image is from a downstream iOS
+  // internal repository. It should be used through a provider API instead.
+  accountItemCheckMark.image = [UIImage imageNamed:@"ios_default_avatar"];
   accountItemCheckMark.text = @"Lorem ipsum dolor sit amet, consectetur "
                               @"adipiscing elit, sed do eiusmod tempor "
                               @"incididunt ut labore et dolore magna aliqua.";
@@ -484,7 +489,8 @@ const CGFloat kHorizontalImageFixedSize = 40;
   signinPromoItem.configurator =
       [[SigninPromoViewConfigurator alloc] initWithUserEmail:nil
                                                 userFullName:nil
-                                                   userImage:nil];
+                                                   userImage:nil
+                                              hasCloseButton:YES];
   return signinPromoItem;
 }
 
@@ -494,7 +500,8 @@ const CGFloat kHorizontalImageFixedSize = 40;
   signinPromoItem.configurator = [[SigninPromoViewConfigurator alloc]
       initWithUserEmail:@"jonhdoe@example.com"
            userFullName:@"John Doe"
-              userImage:nil];
+              userImage:nil
+         hasCloseButton:NO];
   return signinPromoItem;
 }
 
@@ -553,7 +560,33 @@ const CGFloat kHorizontalImageFixedSize = 40;
       [[PaymentsTextItem alloc] initWithType:ItemTypePaymentsDynamicHeight];
   item.text = @"If you want to display a long text that wraps to the next line "
               @"and may need to feature an image this is the cell to use.";
-  item.image = [UIImage imageNamed:@"app_icon_placeholder"];
+  item.leadingImage = [UIImage imageNamed:@"app_icon_placeholder"];
+  return item;
+}
+
+- (CollectionViewItem*)acceptedPaymentMethodsItem {
+  AcceptedPaymentMethodsItem* item = [[AcceptedPaymentMethodsItem alloc]
+      initWithType:ItemTypePaymentsDynamicHeight];
+  item.message = @"Cards accepted:";
+
+  NSMutableArray* cardTypeIcons = [NSMutableArray array];
+  const char* cardTypes[]{autofill::kVisaCard,
+                          autofill::kMasterCard,
+                          autofill::kAmericanExpressCard,
+                          autofill::kJCBCard,
+                          autofill::kDinersCard,
+                          autofill::kDiscoverCard};
+  for (const std::string& cardType : cardTypes) {
+    autofill::data_util::PaymentRequestData data =
+        autofill::data_util::GetPaymentRequestData(cardType);
+    UIImage* cardTypeIcon =
+        ResizeImage(NativeImage(data.icon_resource_id),
+                    CGSizeMake(kCardIssuerNetworkIconDimension,
+                               kCardIssuerNetworkIconDimension),
+                    ProjectionMode::kAspectFillNoClipping);
+    [cardTypeIcons addObject:cardTypeIcon];
+  }
+  item.methodTypeIcons = cardTypeIcons;
   return item;
 }
 
@@ -604,7 +637,7 @@ const CGFloat kHorizontalImageFixedSize = 40;
   int resourceID =
       autofill::data_util::GetPaymentRequestData(autofill::kVisaCard)
           .icon_resource_id;
-  item.cardTypeIcon =
+  item.identifyingIcon =
       ResizeImage(NativeImage(resourceID), CGSizeMake(30.0, 30.0),
                   ProjectionMode::kAspectFillNoClipping);
   return item;
@@ -686,16 +719,11 @@ const CGFloat kHorizontalImageFixedSize = 40;
   return footerItem;
 }
 
-- (ContentSuggestionsArticleItem*)contentSuggestionsArticleItem {
-  ContentSuggestionsArticleItem* articleItem =
-      [[ContentSuggestionsArticleItem alloc]
-          initWithType:ItemTypeContentSuggestions
-                 title:@"This is an incredible article, you should read it!"
-              subtitle:@"Really, this is the best article I have ever seen, it "
-                       @"is mandatory to read it! It describes how to write "
-                       @"the best article."
-              delegate:nil
-                   url:GURL()];
+- (ContentSuggestionsItem*)ContentSuggestionsItem {
+  ContentSuggestionsItem* articleItem = [[ContentSuggestionsItem alloc]
+      initWithType:ItemTypeContentSuggestions
+             title:@"This is an incredible article, you should read it!"
+               url:GURL()];
   articleItem.publisher = @"Top Publisher.com";
   return articleItem;
 }
@@ -705,7 +733,7 @@ const CGFloat kHorizontalImageFixedSize = 40;
       [[ContentSuggestionsFooterItem alloc]
           initWithType:ItemTypeContentSuggestions
                  title:@"Footer title"
-                 block:nil];
+              callback:nil];
   return footerItem;
 }
 

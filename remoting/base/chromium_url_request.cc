@@ -15,7 +15,8 @@ namespace remoting {
 ChromiumUrlRequest::ChromiumUrlRequest(
     scoped_refptr<net::URLRequestContextGetter> url_context,
     UrlRequest::Type type,
-    const std::string& url) {
+    const std::string& url,
+    const net::NetworkTrafficAnnotationTag& traffic_annotation) {
   net::URLFetcher::RequestType request_type = net::URLFetcher::GET;
   switch (type) {
     case Type::GET:
@@ -25,14 +26,15 @@ ChromiumUrlRequest::ChromiumUrlRequest(
       request_type = net::URLFetcher::POST;
       break;
   }
-  url_fetcher_ = net::URLFetcher::Create(GURL(url), request_type, this);
+  url_fetcher_ = net::URLFetcher::Create(GURL(url), request_type, this,
+                                         traffic_annotation);
   url_fetcher_->SetRequestContext(url_context.get());
   url_fetcher_->SetReferrer("https://chrome.google.com/remotedesktop");
   url_fetcher_->SetLoadFlags(net::LOAD_DO_NOT_SAVE_COOKIES |
                              net::LOAD_DO_NOT_SEND_COOKIES);
 }
 
-ChromiumUrlRequest::~ChromiumUrlRequest() {}
+ChromiumUrlRequest::~ChromiumUrlRequest() = default;
 
 void ChromiumUrlRequest::AddHeader(const std::string& value) {
   url_fetcher_->AddExtraRequestHeader(value);
@@ -70,12 +72,14 @@ void ChromiumUrlRequest::OnURLFetchComplete(
 ChromiumUrlRequestFactory::ChromiumUrlRequestFactory(
     scoped_refptr<net::URLRequestContextGetter> url_context)
     : url_context_(url_context) {}
-ChromiumUrlRequestFactory::~ChromiumUrlRequestFactory() {}
+ChromiumUrlRequestFactory::~ChromiumUrlRequestFactory() = default;
 
 std::unique_ptr<UrlRequest> ChromiumUrlRequestFactory::CreateUrlRequest(
     UrlRequest::Type type,
-    const std::string& url) {
-  return base::MakeUnique<ChromiumUrlRequest>(url_context_, type, url);
+    const std::string& url,
+    const net::NetworkTrafficAnnotationTag& traffic_annotation) {
+  return base::MakeUnique<ChromiumUrlRequest>(url_context_, type, url,
+                                              traffic_annotation);
 }
 
 }  // namespace remoting

@@ -13,10 +13,6 @@
   var numCallsResize = 0;
   var pageScaleFactor = 2;
 
-  function viewport() {
-    return window.visualViewport;
-  }
-
   var t = async_test('verify that the scroll and resize events get fired on window.visualViewport');
 
   window.onload = t.step_func(function() {

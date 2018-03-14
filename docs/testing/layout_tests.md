@@ -153,8 +153,7 @@ to see a full list of options. A few of the most useful options are below:
 | `--nocheck-sys-deps`        | Don't check system dependencies; this allows faster iteration. |
 | `--verbose`                 |	Produce more verbose output, including a list of tests that pass. |
 | `--no-pixel-tests`          | Disable the pixel-to-pixel PNG comparisons and image checksums for tests that don't call `testRunner.dumpAsText()` |
-| `--reset-results`           |	Write all generated results directly into the given directory, overwriting what's there. |
-| `--new-baseline`            |	Write all generated results into the most specific platform directory, overwriting what's there. Equivalent to `--reset-results --add-platform-expectations` |
+| `--reset-results`           |	Overwrite the current baselines (`-expected.{png|txt|wav}` files) with actual results, or create new baselines if there are no existing baselines. |
 | `--renderer-startup-dialog` | Bring up a modal dialog before running the test, useful for attaching a debugger. |
 | `--fully-parallel`          | Run tests in parallel using as many child processes as the system has cores. |
 | `--driver-logging`          | Print C++ logs (LOG(WARNING), etc).  |
@@ -221,7 +220,7 @@ There are two ways to run layout tests with additional command-line arguments:
   ```
 
   This will create new "virtual" tests of the form
-  `virtual/blocking_repaint/fast/repaint/...`` which correspond to the files
+  `virtual/blocking_repaint/fast/repaint/...` which correspond to the files
   under `LayoutTests/fast/repaint` and pass `--blocking-repaint` to
   content_shell when they are run.
 
@@ -358,7 +357,7 @@ To run the server manually to reproduce/debug a failure:
 
 ```bash
 cd src/third_party/WebKit/Tools/Scripts
-run-blink-httpd start
+./run-blink-httpd
 ```
 
 The layout tests will be served from `http://127.0.0.1:8000`. For example, to
@@ -369,8 +368,9 @@ navigate to
 tests will behave differently if you go to 127.0.0.1 vs localhost, so use
 127.0.0.1.
 
-To kill the server, run `run-blink-httpd --server stop`, or just use `taskkill`
-or the Task Manager on Windows, and `killall` or Activity Monitor on MacOS.
+To kill the server, hit any key on the terminal where `run-blink-httpd` is
+running, or just use `taskkill` or the Task Manager on Windows, and `killall` or
+Activity Monitor on MacOS.
 
 The test server sets up an alias to `LayoutTests/resources` directory. In HTTP
 tests, you can access testing framework at e.g.
@@ -399,8 +399,26 @@ machine?
 * If none of that helps, and you have access to the bot itself, you may have to
   log in there and see if you can reproduce the problem manually.
 
-### Debugging Inspector Tests
+### Debugging DevTools Tests
 
+* Add `debug_devtools=true` to args.gn and compile: `ninja -C out/Default devtools_frontend_resources`
+  > Debug DevTools lets you avoid having to recompile after every change to the DevTools front-end.
+* Do one of the following:
+    * Option A) Run from the chromium/src folder:
+      `blink/tools/run_layout_tests.sh
+      --additional-driver-flag='--debug-devtools'
+      --additional-driver-flag='--remote-debugging-port=9222'
+      --time-out-ms=6000000`
+    * Option B) If you need to debug an http/tests/inspector test, start httpd
+      as described above. Then, run content_shell:
+      `out/Default/content_shell --debug-devtools --remote-debugging-port=9222 --run-layout-test
+      http://127.0.0.1:8000/path/to/test.html`
+* Open `http://localhost:9222` in a stable/beta/canary Chrome, click the single
+  link to open the devtools with the test loaded.
+* In the loaded devtools, set any required breakpoints and execute `test()` in
+  the console to actually start the test.
+
+NOTE: If the test is an html file, this means it's a legacy test so you need to add:
 * Add `window.debugTest = true;` to your test code as follows:
 
   ```javascript
@@ -408,59 +426,106 @@ machine?
   function test() {
     /* TEST CODE */
   }
-  ```
+  ```  
 
-* Do one of the following:
-    * Option A) Run from the chromium/src folder:
-      `blink/tools/run_layout_tests.sh
-      --additional_driver_flag='--remote-debugging-port=9222'
-      --time-out-ms=6000000`
-    * Option B) If you need to debug an http/tests/inspector test, start httpd
-      as described above. Then, run content_shell:
-      `out/Default/content_shell --remote-debugging-port=9222 --run-layout-test
-      http://127.0.0.1:8000/path/to/test.html`
-* Open `http://localhost:9222` in a stable/beta/canary Chrome, click the single
-  link to open the devtools with the test loaded.
-* You may need to replace devtools.html with inspector.html in your URL (or you
-  can use local chrome inspection of content_shell from `chrome://inspect`
-  instead)
-* In the loaded devtools, set any required breakpoints and execute `test()` in
-  the console to actually start the test.
+## Bisecting Regressions
+
+You can use [`git bisect`](https://git-scm.com/docs/git-bisect) to find which
+commit broke (or fixed!) a layout test in a fully automated way.  Unlike
+[bisect-builds.py](http://dev.chromium.org/developers/bisect-builds-py), which
+downloads pre-built Chromium binaries, `git bisect` operates on your local
+checkout, so it can run tests with `content_shell`.
+
+Bisecting can take several hours, but since it is fully automated you can leave
+it running overnight and view the results the next day.
+
+To set up an automated bisect of a layout test regression, create a script like
+this:
+
+```
+#!/bin/bash
+
+# Exit code 125 tells git bisect to skip the revision.
+gclient sync || exit 125
+ninja -C out/Debug -j100 blink_tests || exit 125
+
+blink/tools/run_layout_tests.sh -t Debug \
+  --no-show-results --no-retry-failures \
+  path/to/layout/test.html
+```
+
+Modify the `out` directory, ninja args, and test name as appropriate, and save
+the script in `~/checkrev.sh`.  Then run:
+
+```
+chmod u+x ~/checkrev.sh  # mark script as executable
+git bisect start <badrev> <goodrev>
+git bisect run ~/checkrev.sh
+git bisect reset  # quit the bisect session
+```
 
 ## Rebaselining Layout Tests
 
 *** promo
 To automatically re-baseline tests across all Chromium platforms, using the
-buildbot results, see the
-[Rebaselining keywords in TestExpectations](./layout_test_expectations.md)
-and the
-[Rebaselining Tool](https://trac.webkit.org/wiki/Rebaseline).
+buildbot results, see [How to rebaseline](./layout_test_expectations.md#How-to-rebaseline).
 Alternatively, to manually run and test and rebaseline it on your workstation,
 read on.
 ***
 
-By default, text-only tests (ones that call `testRunner.dumpAsText()`) produce
-only text results. Other tests produce both new text results and new image
-results (the image baseline comprises two files, `-expected.png` and
-  `-expected.checksum`). So you'll need either one or three `-expected.\*` files
-in your new baseline, depending on whether you have a text-only test or not. If
-you enable `--no-pixel-tests`, only new text results will be produced, even for
-tests that do image comparisons.
+```bash
+cd src/third_party/WebKit
+Tools/Scripts/run-webkit-tests --reset-results foo/bar/test.html
+```
+
+If there are current expectation files for `LayoutTests/foo/bar/test.html`,
+the above command will overwrite the current baselines at their original
+locations with the actual results. The current baseline means the `-expected.*`
+file used to compare the actual result when the test is run locally, i.e. the
+first file found in the [baseline search path]
+(https://cs.chromium.org/search/?q=port/base.py+baseline_search_path).
+
+If there are no current baselines, the above command will create new baselines
+in the platform-independent directory, e.g.
+`LayoutTests/foo/bar/test-expected.{txt,png}`.
+
+When you rebaseline a test, make sure your commit description explains why the
+test is being re-baselined.
+
+### Rebaselining flag-specific expectations
+
+Though we prefer the Rebaseline Tool to local rebaselining, the Rebaseline Tool
+doesn't support rebaselining flag-specific expectations.
 
 ```bash
 cd src/third_party/WebKit
-Tools/Scripts/run-webkit-tests --new-baseline foo/bar/test.html
+Tools/Script/run-webkit-tests --additional-driver-flag=--enable-flag --reset-results foo/bar/test.html
 ```
 
-The above command will generate a new baseline for
-`LayoutTests/foo/bar/test.html` and put the output files in the right place,
-e.g.
-`LayoutTests/platform/chromium-win/LayoutTests/foo/bar/test-expected.{txt,png,checksum}`.
+New baselines will be created in the flag-specific baselines directory, e.g.
+`LayoutTests/flag-specific/enable-flag/foo/bar/test-expected.{txt,png}`.
 
-When you rebaseline a test, make sure your commit description explains why the
-test is being re-baselined. If this is a special case (i.e., something we've
-decided to be different with upstream), please put a README file next to the new
-expected output explaining the difference.
+Then you can commit the new baselines and upload the patch for review.
+
+However, it's difficult for reviewers to review the patch containing only new
+files. You can follow the steps below for easier review.
+
+1. Copy existing baselines to the flag-specific baselines directory for the
+   tests to be rebaselined:
+   ```bash
+   Tools/Script/run-webkit-tests --additional-driver-flag=--enable-flag --copy-baselines foo/bar/test.html
+   ```
+   Then add the newly created baseline files, commit and upload the patch.
+   Note that the above command won't copy baselines for passing tests.
+
+2. Rebaseline the test locally:
+   ```bash
+   Tools/Script/run-webkit-tests --additional-driver-flag=--enable-flag --reset-results foo/bar/test.html
+   ```
+   Commit the changes and upload the patch.
+
+3. Request review of the CL and tell the reviewer to compare the patch sets that
+   were uploaded in step 1 and step 2 to see the differences of the rebaselines.
 
 ## web-platform-tests
 
@@ -473,9 +538,6 @@ See
 [bugs with the component Blink>Infra](https://bugs.chromium.org/p/chromium/issues/list?can=2&q=component%3ABlink%3EInfra)
 for issues related to Blink tools, include the layout test runner.
 
-* Windows and Linux: Do not copy and paste while the layout tests are running,
-  as it may interfere with the editing/pasteboard and other clipboard-related
-  tests. (Mac tests swizzle NSClipboard to avoid any conflicts).
 * If QuickTime is not installed, the plugin tests
   `fast/dom/object-embed-plugin-scripting.html` and
   `plugins/embed-attributes-setting.html` are expected to fail.

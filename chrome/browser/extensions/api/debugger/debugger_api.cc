@@ -44,7 +44,6 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
@@ -63,7 +62,6 @@
 
 using content::DevToolsAgentHost;
 using content::RenderProcessHost;
-using content::RenderViewHost;
 using content::RenderWidgetHost;
 using content::WebContents;
 
@@ -271,8 +269,7 @@ class ExtensionDevToolsClientHost : public content::DevToolsAgentHostClient,
   void InfoBarDismissed();
 
   // DevToolsAgentHostClient interface.
-  void AgentHostClosed(DevToolsAgentHost* agent_host,
-                       bool replaced_with_another_client) override;
+  void AgentHostClosed(DevToolsAgentHost* agent_host) override;
   void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
                                const std::string& message) override;
 
@@ -290,7 +287,7 @@ class ExtensionDevToolsClientHost : public content::DevToolsAgentHostClient,
   // ExtensionRegistryObserver implementation.
   void OnExtensionUnloaded(content::BrowserContext* browser_context,
                            const Extension* extension,
-                           UnloadedExtensionInfo::Reason reason) override;
+                           UnloadedExtensionReason reason) override;
 
   Profile* profile_;
   scoped_refptr<DevToolsAgentHost> agent_host_;
@@ -368,10 +365,8 @@ ExtensionDevToolsClientHost::~ExtensionDevToolsClientHost() {
 
 // DevToolsAgentHostClient implementation.
 void ExtensionDevToolsClientHost::AgentHostClosed(
-    DevToolsAgentHost* agent_host, bool replaced_with_another_client) {
+    DevToolsAgentHost* agent_host) {
   DCHECK(agent_host == agent_host_.get());
-  if (replaced_with_another_client)
-    detach_reason_ = api::debugger::DETACH_REASON_REPLACED_WITH_DEVTOOLS;
   SendDetachedEvent();
   delete this;
 }
@@ -412,9 +407,9 @@ void ExtensionDevToolsClientHost::SendDetachedEvent() {
 
   std::unique_ptr<base::ListValue> args(
       OnDetach::Create(debuggee_, detach_reason_));
-  std::unique_ptr<Event> event(new Event(
-      events::DEBUGGER_ON_DETACH, OnDetach::kEventName, std::move(args)));
-  event->restrict_to_browser_context = profile_;
+  auto event =
+      base::MakeUnique<Event>(events::DEBUGGER_ON_DETACH, OnDetach::kEventName,
+                              std::move(args), profile_);
   EventRouter::Get(profile_)
       ->DispatchEventToExtension(extension_id_, std::move(event));
 }
@@ -422,7 +417,7 @@ void ExtensionDevToolsClientHost::SendDetachedEvent() {
 void ExtensionDevToolsClientHost::OnExtensionUnloaded(
     content::BrowserContext* browser_context,
     const Extension* extension,
-    UnloadedExtensionInfo::Reason reason) {
+    UnloadedExtensionReason reason) {
   if (extension->id() == extension_id_)
     Close();
 }
@@ -442,7 +437,7 @@ void ExtensionDevToolsClientHost::DispatchProtocolMessage(
     return;
 
   std::unique_ptr<base::Value> result = base::JSONReader::Read(message);
-  if (!result || !result->IsType(base::Value::Type::DICTIONARY))
+  if (!result || !result->is_dict())
     return;
   base::DictionaryValue* dictionary =
       static_cast<base::DictionaryValue*>(result.get());
@@ -460,9 +455,9 @@ void ExtensionDevToolsClientHost::DispatchProtocolMessage(
 
     std::unique_ptr<base::ListValue> args(
         OnEvent::Create(debuggee_, method_name, params));
-    std::unique_ptr<Event> event(new Event(
-        events::DEBUGGER_ON_EVENT, OnEvent::kEventName, std::move(args)));
-    event->restrict_to_browser_context = profile_;
+    auto event =
+        base::MakeUnique<Event>(events::DEBUGGER_ON_EVENT, OnEvent::kEventName,
+                                std::move(args), profile_);
     EventRouter::Get(profile_)
         ->DispatchEventToExtension(extension_id_, std::move(event));
   } else {
@@ -553,6 +548,19 @@ bool DebuggerFunction::InitClientHost() {
   if (!InitAgentHost())
     return false;
 
+  client_host_ = FindClientHost();
+  if (!client_host_) {
+    FormatErrorMessage(keys::kNotAttachedError);
+    return false;
+  }
+
+  return true;
+}
+
+ExtensionDevToolsClientHost* DebuggerFunction::FindClientHost() {
+  if (!agent_host_.get())
+    return nullptr;
+
   const std::string& extension_id = extension()->id();
   DevToolsAgentHost* agent_host = agent_host_.get();
   AttachedClientHosts& hosts = g_attached_client_hosts.Get();
@@ -563,15 +571,8 @@ bool DebuggerFunction::InitClientHost() {
                client_host->extension_id() == extension_id;
       });
 
-  if (it == hosts.end()) {
-    FormatErrorMessage(keys::kNotAttachedError);
-    return false;
-  }
-
-  client_host_ = *it;
-  return true;
+  return it == hosts.end() ? nullptr : *it;
 }
-
 
 // DebuggerAttachFunction -----------------------------------------------------
 
@@ -597,7 +598,7 @@ bool DebuggerAttachFunction::RunAsync() {
     return false;
   }
 
-  if (agent_host_->IsAttached()) {
+  if (FindClientHost()) {
     FormatErrorMessage(keys::kAlreadyAttachedError);
     return false;
   }
@@ -730,9 +731,8 @@ DebuggerGetTargetsFunction::~DebuggerGetTargetsFunction() {
 bool DebuggerGetTargetsFunction::RunAsync() {
   content::DevToolsAgentHost::List list = DevToolsAgentHost::GetOrCreateAll();
   content::BrowserThread::PostTask(
-      content::BrowserThread::UI,
-      FROM_HERE,
-      base::Bind(&DebuggerGetTargetsFunction::SendTargetList, this, list));
+      content::BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&DebuggerGetTargetsFunction::SendTargetList, this, list));
   return true;
 }
 

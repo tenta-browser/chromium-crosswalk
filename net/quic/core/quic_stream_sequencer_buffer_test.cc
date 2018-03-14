@@ -13,13 +13,12 @@
 #include "base/macros.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_str_cat.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/quic/test_tools/mock_clock.h"
 #include "net/quic/test_tools/quic_stream_sequencer_buffer_peer.h"
 #include "net/quic/test_tools/quic_test_utils.h"
 #include "net/test/gtest_util.h"
-#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gmock_mutant.h"
-#include "testing/gtest/include/gtest/gtest.h"
 
 using std::string;
 
@@ -81,9 +80,19 @@ class QuicStreamSequencerBufferTest : public testing::Test {
   MockClock clock_;
   std::unique_ptr<QuicStreamSequencerBuffer> buffer_;
   std::unique_ptr<QuicStreamSequencerBufferPeer> helper_;
-  QuicFlagSaver flag_saver_;
   string error_details_;
 };
+
+TEST_F(QuicStreamSequencerBufferTest, InitializeWithMaxRecvWindowSize) {
+  if (!FLAGS_quic_reloadable_flag_quic_fix_sequencer_buffer_block_count2) {
+    return;
+  }
+  ResetMaxCapacityBytes(16 * 1024 * 1024);  // 16MB
+  EXPECT_EQ(2 * 1024u,                      // 16MB / 8KB = 2K
+            helper_->block_count());
+  EXPECT_EQ(max_capacity_bytes_, helper_->max_buffer_capacity());
+  EXPECT_TRUE(helper_->CheckInitialState());
+}
 
 TEST_F(QuicStreamSequencerBufferTest, InitializationWithDifferentSizes) {
   const size_t kCapacity = 2 * QuicStreamSequencerBuffer::kBlockSizeBytes;
@@ -296,6 +305,21 @@ TEST_F(QuicStreamSequencerBufferTest, OnStreamDataBeyondCapacity) {
 
   EXPECT_EQ(QUIC_INTERNAL_ERROR,
             buffer_->OnStreamData(max_capacity_bytes_ * 1000, source,
+                                  clock_.ApproximateNow(), &written,
+                                  &error_details_));
+  EXPECT_TRUE(helper_->CheckBufferInvariants());
+
+  // Disallow current_gap != gaps_.end()
+  EXPECT_EQ(QUIC_INTERNAL_ERROR,
+            buffer_->OnStreamData(static_cast<QuicStreamOffset>(-1), source,
+                                  clock_.ApproximateNow(), &written,
+                                  &error_details_));
+  EXPECT_TRUE(helper_->CheckBufferInvariants());
+
+  // Disallow offset + size overflow
+  source = "bbb";
+  EXPECT_EQ(QUIC_INTERNAL_ERROR,
+            buffer_->OnStreamData(static_cast<QuicStreamOffset>(-2), source,
                                   clock_.ApproximateNow(), &written,
                                   &error_details_));
   EXPECT_TRUE(helper_->CheckBufferInvariants());

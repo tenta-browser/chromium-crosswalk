@@ -30,32 +30,37 @@ const char kLaunchSourceAppListInfoDialog[] = "chrome-app-launcher-info-dialog";
 namespace extension_misc {
 
 const char kBookmarkManagerId[] = "eemcgdkfndhakfknompkggombfjjjeno";
+const char kCameraAppId[] = "hfhhnacclhffhdffklopdkcgdhifgngh";
+const char kCalculatorAppId[] = "joodangkbfjnajiiifokapkpmhfnpleo";
+const char kCalendarAppId[] = "ejjicmeblgpmajnghnpcppodonldlgfn";
 const char kChromeAppId[] = "mgndgikekgjfcpckkfioiadnlibdjbkf";
+const char kChromeRemoteDesktopAppId[] = "gbchcmhmhahfdphkhkmpfmihenigjmpp";
 const char kCloudPrintAppId[] = "mfehgcgbbipciphmccgaenjidiccnmng";
 const char kDataSaverExtensionId[] = "pfmgfdlgomnbgkofeojodiodmgpgmkac";
 const char kDriveExtensionId[] = "ghbmnnjooekpmoecnnnilnnbdlolhkhi";
 const char kDriveHostedAppId[] = "apdfllckaahabafndbhieahigkjlhalf";
 const char kEasyUnlockAppId[] = "mkaemigholebcgchlkbankmihknojeak";
 const char kEnterpriseWebStoreAppId[] = "afchcafgojfnemjkcbhfekplkmjaldaa";
-const char kFeedbackExtensionId[] = "gfdkimpbcpahaombhbimeihdjnejgicl";
+const char kFilesManagerAppId[] = "hhaomjibdihmijegdhdafkllkbggdgoj";
 const char kGmailAppId[] = "pjkljhegncpnkpknbcohdijeoejaedia";
 const char kGoogleDocAppId[] = "aohghmighlieiainnegkcijnfilokake";
+const char kGoogleKeepAppId[] = "hmjkmjkepdijhoojdojkdfohbdgmmhki";
+const char kGoogleMapsAppId[] = "lneaknkopdijkpnocmklfnjbeapigfbh";
+const char kGooglePhotosAppId[] = "hcglmfcclpfgljeaiahehebeoaiicbko";
+const char kGooglePlayBooksAppId[] = "mmimngoggfoobjdlefbcabngfnmieonb";
+const char kGooglePlayMoviesAppId[] = "gdijeikdkaembjbdobgfkoidjkpbmlkd";
 const char kGooglePlayMusicAppId[] = "icppfcnhkcmnfdhfhphakoifcfokfdhg";
+const char kGooglePlusAppId[] = "dlppkpafhbajpcmmoheippocdidnckmm";
 const char kGoogleSheetsAppId[] = "felcaaldnbdncclmgdcncolpebgiejap";
 const char kGoogleSlidesAppId[] = "aapocclcgogkmnckokdopfmhonfmgoek";
 const char kHTermAppId[] = "pnhechapfaindjhompbnflcldabbghjo";
 const char kHTermDevAppId[] = "okddffdblfhhnmhodogpojmfkjmhinfp";
 const char kIdentityApiUiAppId[] = "ahjaciijnoiaklcomgnblndopackapon";
 const char kCroshBuiltinAppId[] = "nkoccljplnhpfnfiajclkommnmllphnl";
-const char kHotwordAudioVerificationAppId[] =
-    "abjokfonkihficiokmkfboogholifghn";
-const char kHotwordNewExtensionId[] = "nbpagnldghgfoolbancepceaanlmhfmd";
-const char kHotwordSharedModuleId[] = "lccekmodgklaepjeofjdjpbminllajkg";
+const char kTextEditorAppId[] = "mmfbcljfglbokpmkimbfghdkjmjhdgbg";
 const char kYoutubeAppId[] = "blpcfgokakmgnkcojhhkbfbldkacnbeo";
 const char kInAppPaymentsSupportAppId[] = "nmmhkkegccagdldgiimedpiccmgmieda";
-#if defined(ENABLE_MEDIA_ROUTER)
 const char kMediaRouterStableExtensionId[] = "pkedcjkdefgpdelpbcmbmeomcjbeemfm";
-#endif  // defined(ENABLE_MEDIA_ROUTER)
 
 #if defined(OS_CHROMEOS)
 // The extension id for the built-in component extension.
@@ -66,12 +71,6 @@ const char kSelectToSpeakExtensionPath[] = "chromeos/select_to_speak";
 const char kSwitchAccessExtensionId[] = "pmehocpgjmkenlokgjfkaichfjdhpeol";
 const char kSwitchAccessExtensionPath[] = "chromeos/switch_access";
 const char kGuestManifestFilename[] = "manifest_guest.json";
-const char kBrailleImeExtensionId[] =
-    "jddehjeebkoimngcbdkaahpobgicbffp";
-const char kBrailleImeExtensionPath[] =
-    "chromeos/braille_ime";
-const char kBrailleImeEngineId[] =
-    "_comp_ime_jddehjeebkoimngcbdkaahpobgicbffpbraille";
 const char kConnectivityDiagnosticsPath[] =
     "/usr/share/chromeos-assets/connectivity_diagnostics";
 const char kConnectivityDiagnosticsLauncherPath[] =
@@ -84,6 +83,8 @@ const char kSpeechSynthesisExtensionId[] =
 const char kWallpaperManagerId[] = "obklkkbkpaoaejdabbfldmcfplpdgolj";
 const char kWebstoreWidgetAppId[] = "fbjakikfhfdajcamjleinfciajelkpek";
 const char kZIPUnpackerExtensionId[] = "oedeeodfidgoollimchfdnbmhcpnklnd";
+const char kZipArchiverExtensionId[] = "dmboannefpncccogfdikhmhpmdnddgoe";
+const char kZipArchiverExtensionPath[] = "chromeos/zip_archiver";
 #else
 // The extension id for the web store extension.
 const char kChromeVoxExtensionId[] =

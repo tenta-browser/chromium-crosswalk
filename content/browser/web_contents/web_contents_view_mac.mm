@@ -22,13 +22,13 @@
 #import "content/browser/web_contents/web_drag_dest_mac.h"
 #import "content/browser/web_contents/web_drag_source_mac.h"
 #include "content/common/view_messages.h"
+#include "content/public/browser/interstitial_page.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_view_delegate.h"
 #include "content/public/common/content_switches.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "third_party/mozilla/NSPasteboard+Utils.h"
 #include "ui/base/clipboard/custom_data_helper.h"
-#import "ui/base/cocoa/focus_tracker.h"
 #include "ui/base/dragdrop/cocoa_dnd_util.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/image/image_skia_util_mac.h"
@@ -89,7 +89,8 @@ content::ScreenInfo GetNSViewScreenInfo(NSView* view) {
 
   content::ScreenInfo results;
   results.device_scale_factor = static_cast<int>(display.device_scale_factor());
-  results.icc_profile = display.icc_profile();
+  results.color_space = display.color_space();
+  results.icc_profile = gfx::ICCProfile::FromCacheMac(display.color_space());
   results.depth = display.color_depth();
   results.depth_per_component = display.depth_per_component();
   results.is_monochrome = display.is_monochrome();
@@ -221,6 +222,9 @@ gfx::NativeView WebContentsViewMac::GetNativeViewForFocus() const {
 }
 
 void WebContentsViewMac::Focus() {
+  if (delegate())
+    delegate()->ResetStoredFocus();
+
   gfx::NativeView native_view = GetNativeViewForFocus();
   NSWindow* window = [native_view window];
   [window makeFirstResponder:native_view];
@@ -230,6 +234,9 @@ void WebContentsViewMac::Focus() {
 }
 
 void WebContentsViewMac::SetInitialFocus() {
+  if (delegate())
+    delegate()->ResetStoredFocus();
+
   if (web_contents_->FocusLocationBarByDefault())
     web_contents_->SetFocusToLocationBar(false);
   else
@@ -237,28 +244,37 @@ void WebContentsViewMac::SetInitialFocus() {
 }
 
 void WebContentsViewMac::StoreFocus() {
-  gfx::NativeView native_view = GetNativeViewForFocus();
-  // We're explicitly being asked to store focus, so don't worry if there's
-  // already a view saved.
-  focus_tracker_.reset(
-      [[FocusTracker alloc] initWithWindow:[native_view window]]);
+  if (delegate())
+    delegate()->StoreFocus();
 }
 
 void WebContentsViewMac::RestoreFocus() {
-  gfx::NativeView native_view = GetNativeViewForFocus();
-  // TODO(avi): Could we be restoring a view that's no longer in the key view
-  // chain?
-  if (!(focus_tracker_.get() &&
-        [focus_tracker_ restoreFocusInWindow:[native_view window]])) {
-    // Fall back to the default focus behavior if we could not restore focus.
-    // TODO(shess): If location-bar gets focus by default, this will
-    // select-all in the field.  If there was a specific selection in
-    // the field when we navigated away from it, we should restore
-    // that selection.
-    SetInitialFocus();
-  }
+  if (delegate() && delegate()->RestoreFocus())
+    return;
 
-  focus_tracker_.reset(nil);
+  // Fall back to the default focus behavior if we could not restore focus.
+  // TODO(shess): If location-bar gets focus by default, this will
+  // select-all in the field.  If there was a specific selection in
+  // the field when we navigated away from it, we should restore
+  // that selection.
+  SetInitialFocus();
+}
+
+void WebContentsViewMac::FocusThroughTabTraversal(bool reverse) {
+  if (delegate())
+    delegate()->ResetStoredFocus();
+
+  if (web_contents_->ShowingInterstitialPage()) {
+    web_contents_->GetInterstitialPage()->FocusThroughTabTraversal(reverse);
+    return;
+  }
+  content::RenderWidgetHostView* fullscreen_view =
+      web_contents_->GetFullscreenRenderWidgetHostView();
+  if (fullscreen_view) {
+    fullscreen_view->Focus();
+    return;
+  }
+  web_contents_->GetRenderViewHost()->SetInitialFocus(reverse);
 }
 
 DropData* WebContentsViewMac::GetDropData() const {
@@ -269,13 +285,21 @@ void WebContentsViewMac::UpdateDragCursor(WebDragOperation operation) {
   [cocoa_view_ setCurrentDragOperation: operation];
 }
 
-void WebContentsViewMac::GotFocus() {
-  web_contents_->NotifyWebContentsFocused();
+void WebContentsViewMac::GotFocus(RenderWidgetHostImpl* render_widget_host) {
+  web_contents_->NotifyWebContentsFocused(render_widget_host);
 }
 
 // This is called when the renderer asks us to take focus back (i.e., it has
 // iterated past the last focusable element on the page).
 void WebContentsViewMac::TakeFocus(bool reverse) {
+  if (delegate())
+    delegate()->ResetStoredFocus();
+
+  if (web_contents_->GetDelegate() &&
+      web_contents_->GetDelegate()->TakeFocus(web_contents_, reverse))
+    return;
+  if (delegate() && delegate()->TakeFocus(reverse))
+    return;
   if (reverse) {
     [[cocoa_view_ window] selectPreviousKeyView:cocoa_view_.get()];
   } else {
@@ -307,16 +331,20 @@ void WebContentsViewMac::ShowPopupMenu(
     const std::vector<MenuItem>& items,
     bool right_aligned,
     bool allow_multiple_selection) {
-  popup_menu_helper_.reset(new PopupMenuHelper(render_frame_host));
+  popup_menu_helper_.reset(new PopupMenuHelper(this, render_frame_host));
   popup_menu_helper_->ShowPopupMenu(bounds, item_height, item_font_size,
                                     selected_item, items, right_aligned,
                                     allow_multiple_selection);
-  popup_menu_helper_.reset();
+  // Note: |this| may be deleted here.
 }
 
 void WebContentsViewMac::HidePopupMenu() {
   if (popup_menu_helper_)
     popup_menu_helper_->Hide();
+}
+
+void WebContentsViewMac::OnMenuClosed() {
+  popup_menu_helper_.reset();
 }
 
 gfx::Rect WebContentsViewMac::GetViewBounds() const {
@@ -366,9 +394,9 @@ RenderWidgetHostViewBase* WebContentsViewMac::CreateViewForWidget(
                                              is_guest_view_hack)
           : new RenderWidgetHostViewMac(render_widget_host, is_guest_view_hack);
   if (delegate()) {
-    base::scoped_nsobject<NSObject<RenderWidgetHostViewMacDelegate> >
-        rw_delegate(
-            delegate()->CreateRenderWidgetHostViewDelegate(render_widget_host));
+    base::scoped_nsobject<NSObject<RenderWidgetHostViewMacDelegate>>
+        rw_delegate(delegate()->CreateRenderWidgetHostViewDelegate(
+            render_widget_host, false));
 
     view->SetDelegate(rw_delegate.get());
   }
@@ -398,7 +426,15 @@ RenderWidgetHostViewBase* WebContentsViewMac::CreateViewForWidget(
 
 RenderWidgetHostViewBase* WebContentsViewMac::CreateViewForPopupWidget(
     RenderWidgetHost* render_widget_host) {
-  return new RenderWidgetHostViewMac(render_widget_host, false);
+  RenderWidgetHostViewMac* view =
+      new RenderWidgetHostViewMac(render_widget_host, false);
+  if (delegate()) {
+    base::scoped_nsobject<NSObject<RenderWidgetHostViewMacDelegate>>
+        rw_delegate(delegate()->CreateRenderWidgetHostViewDelegate(
+            render_widget_host, true));
+    view->SetDelegate(rw_delegate.get());
+  }
+  return view;
 }
 
 void WebContentsViewMac::SetPageTitle(const base::string16& title) {
@@ -516,10 +552,9 @@ void WebContentsViewMac::CloseTab() {
 - (void)mouseEvent:(NSEvent*)theEvent {
   WebContentsImpl* webContents = [self webContents];
   if (webContents && webContents->GetDelegate()) {
-    NSPoint location = [NSEvent mouseLocation];
     webContents->GetDelegate()->ContentsMouseEvent(
-        webContents, gfx::Point(location.x, location.y),
-        [theEvent type] == NSMouseMoved, [theEvent type] == NSMouseExited);
+        webContents, [theEvent type] == NSMouseMoved,
+        [theEvent type] == NSMouseExited);
   }
 }
 
@@ -535,16 +570,6 @@ void WebContentsViewMac::CloseTab() {
   // saves us the effort of overriding this method in every possible
   // subview.
   return mouseDownCanMoveWindow_;
-}
-
-- (void)setOpaque:(BOOL)opaque {
-  WebContentsImpl* webContents = [self webContents];
-  if (!webContents)
-    return;
-  RenderWidgetHostViewMac* view = static_cast<RenderWidgetHostViewMac*>(
-      webContents->GetRenderWidgetHostView());
-  DCHECK(view);
-  [view->cocoa_view() setOpaque:opaque];
 }
 
 - (void)pasteboard:(NSPasteboard*)sender provideDataForType:(NSString*)type {
@@ -682,6 +707,9 @@ void WebContentsViewMac::CloseTab() {
 
 - (void)setFrameSize:(NSSize)newSize {
   [super setFrameSize:newSize];
+
+  if (webContentsView_ && webContentsView_->delegate())
+    webContentsView_->delegate()->SizeChanged(gfx::Size(newSize));
 
   // Perform manual layout of subviews, e.g., when the window size changes.
   for (NSView* subview in [self subviews])

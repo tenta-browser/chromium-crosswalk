@@ -9,34 +9,34 @@
 #include <vector>
 
 #include "net/quic/core/quic_connection_stats.h"
-#include "testing/gtest/include/gtest/gtest.h"
+#include "net/quic/platform/api/quic_test.h"
 
 namespace net {
 namespace test {
 namespace {
 
 struct TestParams {
-  explicit TestParams(QuicVersion version) : version(version) {}
+  explicit TestParams(QuicTransportVersion version) : version(version) {}
 
   friend std::ostream& operator<<(std::ostream& os, const TestParams& p) {
     os << "{ version: " << QuicVersionToString(p.version) << " }";
     return os;
   }
 
-  QuicVersion version;
+  QuicTransportVersion version;
 };
 
 std::vector<TestParams> GetTestParams() {
   std::vector<TestParams> params;
-  QuicVersionVector all_supported_versions = AllSupportedVersions();
+  QuicTransportVersionVector all_supported_versions =
+      AllSupportedTransportVersions();
   for (size_t i = 0; i < all_supported_versions.size(); ++i) {
     params.push_back(TestParams(all_supported_versions[i]));
   }
   return params;
 }
 
-class QuicReceivedPacketManagerTest
-    : public ::testing::TestWithParam<TestParams> {
+class QuicReceivedPacketManagerTest : public QuicTestWithParam<TestParams> {
  protected:
   QuicReceivedPacketManagerTest() : received_manager_(&stats_) {}
 

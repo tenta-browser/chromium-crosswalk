@@ -183,6 +183,8 @@ DevToolsEmbedderMessageDispatcher::CreateForDevToolsFrontend(
   d->RegisterHandler("searchInPath", &Delegate::SearchInPath, delegate);
   d->RegisterHandler("setWhitelistedShortcuts",
                      &Delegate::SetWhitelistedShortcuts, delegate);
+  d->RegisterHandler("setEyeDropperActive", &Delegate::SetEyeDropperActive,
+                     delegate);
   d->RegisterHandler("showCertificateViewer",
                      &Delegate::ShowCertificateViewer, delegate);
   d->RegisterHandler("zoomIn", &Delegate::ZoomIn, delegate);
@@ -215,5 +217,7 @@ DevToolsEmbedderMessageDispatcher::CreateForDevToolsFrontend(
                                  &Delegate::Reattach, delegate);
   d->RegisterHandler("readyForTest",
                      &Delegate::ReadyForTest, delegate);
+  d->RegisterHandler("registerExtensionsAPI", &Delegate::RegisterExtensionsAPI,
+                     delegate);
   return d;
 }

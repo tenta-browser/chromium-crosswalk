@@ -8,10 +8,9 @@
 #import <XCTest/XCTest.h>
 
 #import "base/ios/block_types.h"
-#include "base/strings/sys_string_conversions.h"
 #import "ios/testing/earl_grey/matchers.h"
-#import "ios/web/public/test/http_server.h"
-#include "ios/web/public/test/http_server_util.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#include "ios/web/public/test/http_server/http_server_util.h"
 #import "ios/web/public/test/web_view_interaction_test_util.h"
 #import "ios/web/shell/test/app/web_shell_test_util.h"
 #include "ios/web/shell/test/app/web_view_interaction_test_util.h"
@@ -24,9 +23,8 @@
 #error "This file requires ARC support."
 #endif
 
-using testing::ContextMenuItemWithText;
+using testing::ButtonWithAccessibilityLabel;
 using testing::ElementToDismissContextMenu;
-using web::WebViewContainingText;
 
 // Context menu test cases for the web shell.
 @interface ContextMenuTestCase : WebShellTestCase
@@ -52,14 +50,12 @@ using web::WebViewContainingText;
 
   web::test::SetUpSimpleHttpServer(responses);
   [ShellEarlGrey loadURL:initialURL];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(linkText)]
-      assertWithMatcher:grey_notNil()];
+  [ShellEarlGrey waitForWebViewContainingText:linkText];
 
   [[EarlGrey selectElementWithMatcher:web::WebView()]
-      performAction:web::LongPressElementForContextMenu(
-                        linkID, true /* menu should appear */)];
+      performAction:web::LongPressElementForContextMenu(linkID)];
 
-  id<GREYMatcher> copyItem = ContextMenuItemWithText(@"Copy Link");
+  id<GREYMatcher> copyItem = ButtonWithAccessibilityLabel(@"Copy Link");
 
   // Context menu should have a "copy link" item.
   [[EarlGrey selectElementWithMatcher:copyItem]
@@ -70,72 +66,6 @@ using web::WebViewContainingText;
       performAction:grey_tap()];
 
   // Context menu should go away after the tap.
-  [[EarlGrey selectElementWithMatcher:copyItem] assertWithMatcher:grey_nil()];
-}
-
-// Tests context menu on element that has WebkitTouchCallout set to none.
-- (void)testContextMenuWebkitTouchCalloutNone {
-  // Create map of canned responses and set up the test HTML server.
-  std::map<GURL, std::string> responses;
-  GURL initialURL =
-      web::test::HttpServer::MakeUrl("http://contextMenuDisabledByWebkit");
-  GURL destinationURL = web::test::HttpServer::MakeUrl("http://destination");
-  // The initial page contains a link to the destination URL that has an
-  // ancestor that disables the context menu via -webkit-touch-callout.
-  std::string linkID = "link";
-  std::string linkText = "no-callout link";
-  responses[initialURL] = "<body><a href='" + destinationURL.spec() +
-                          "' style='-webkit-touch-callout: none' id='" +
-                          linkID + "'>" + linkText +
-                          "</a>"
-                          "</body>";
-
-  web::test::SetUpSimpleHttpServer(responses);
-  [ShellEarlGrey loadURL:initialURL];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(linkText)]
-      assertWithMatcher:grey_notNil()];
-
-  [[EarlGrey selectElementWithMatcher:web::WebView()]
-      performAction:web::LongPressElementForContextMenu(
-                        linkID, false /* menu shouldn't appear */)];
-
-  id<GREYMatcher> copyItem = ContextMenuItemWithText(@"Copy Link");
-
-  // Verify no context menu.
-  [[EarlGrey selectElementWithMatcher:copyItem] assertWithMatcher:grey_nil()];
-}
-
-// Tests context menu on element that has WebkitTouchCallout set to none from an
-// ancestor.
-- (void)testContextMenuWebkitTouchCalloutNoneFromAncestor {
-  // Create map of canned responses and set up the test HTML server.
-  std::map<GURL, std::string> responses;
-  GURL initialURL =
-      web::test::HttpServer::MakeUrl("http://contextMenuDisabledByWebkit");
-  GURL destinationURL = web::test::HttpServer::MakeUrl("http://destination");
-  // The initial page contains a link to the destination URL that has an
-  // ancestor that disables the context menu via -webkit-touch-callout.
-  std::string linkID = "link";
-  std::string linkText = "ancestor no-callout link";
-  responses[initialURL] =
-      "<body style='-webkit-touch-callout: none'>"
-      "<a href='" +
-      destinationURL.spec() + "' id='" + linkID + "'>" + linkText +
-      "</a>"
-      "</body>";
-
-  web::test::SetUpSimpleHttpServer(responses);
-  [ShellEarlGrey loadURL:initialURL];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(linkText)]
-      assertWithMatcher:grey_notNil()];
-
-  [[EarlGrey selectElementWithMatcher:web::WebView()]
-      performAction:web::LongPressElementForContextMenu(
-                        linkID, false /* menu shouldn't appear */)];
-
-  id<GREYMatcher> copyItem = ContextMenuItemWithText(@"Copy Link");
-
-  // Verify no context menu.
   [[EarlGrey selectElementWithMatcher:copyItem] assertWithMatcher:grey_nil()];
 }
 
@@ -161,14 +91,12 @@ using web::WebViewContainingText;
 
   web::test::SetUpSimpleHttpServer(responses);
   [ShellEarlGrey loadURL:initialURL];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(linkText)]
-      assertWithMatcher:grey_notNil()];
+  [ShellEarlGrey waitForWebViewContainingText:linkText];
 
   [[EarlGrey selectElementWithMatcher:web::WebView()]
-      performAction:web::LongPressElementForContextMenu(
-                        linkID, true /* menu should appear */)];
+      performAction:web::LongPressElementForContextMenu(linkID)];
 
-  id<GREYMatcher> copyItem = ContextMenuItemWithText(@"Copy Link");
+  id<GREYMatcher> copyItem = ButtonWithAccessibilityLabel(@"Copy Link");
 
   // Context menu should have a "copy link" item.
   [[EarlGrey selectElementWithMatcher:copyItem]

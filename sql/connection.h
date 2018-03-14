@@ -7,7 +7,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -15,6 +14,7 @@
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/containers/flat_map.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -310,7 +310,7 @@ class SQL_EXPORT Connection {
   // was razed.
   //
   // false is returned if the database is locked by some other
-  // process.  RazeWithTimeout() may be used if appropriate.
+  // process.
   //
   // NOTE(shess): Raze() will DCHECK in the following situations:
   // - database is not open.
@@ -334,7 +334,6 @@ class SQL_EXPORT Connection {
   // TODO(shess): Bake auto_vacuum into Connection's API so it can
   // just pick up the default.
   bool Raze();
-  bool RazeWithTimout(base::TimeDelta timeout);
 
   // Breaks all outstanding transactions (as initiated by
   // BeginTransaction()), closes the SQLite database, and poisons the
@@ -392,8 +391,14 @@ class SQL_EXPORT Connection {
   // handle under |attachment_point|.  |attachment_point| should only
   // contain characters from [a-zA-Z0-9_].
   //
-  // Note that calling attach or detach with an open transaction is an
-  // error.
+  // Attaching a database while a transaction is open will have
+  // platform-dependent results, as explained below.
+  //
+  // On the SQLite version shipped with Chrome (3.21+, Oct 2017), databases can
+  // be attached while a transaction is opened. However, these databases cannot
+  // be detached until the transaction is committed or aborted. On iOS, the
+  // built-in SQLite might not be older than 3.21. In that case, attaching a
+  // database while a transaction is open results in a error.
   bool AttachDatabase(const base::FilePath& other_db_path,
                       const char* attachment_point);
   bool DetachDatabase(const char* attachment_point);
@@ -498,7 +503,7 @@ class SQL_EXPORT Connection {
   // Returns |true| if there is an error expecter (see SetErrorExpecter), and
   // that expecter returns |true| when passed |error|.  Clients which provide an
   // |error_callback| should use IsExpectedSqliteError() to check for unexpected
-  // errors; if one is detected, DLOG(FATAL) is generally appropriate (see
+  // errors; if one is detected, DLOG(DCHECK) is generally appropriate (see
   // OnSqliteError implementation).
   static bool IsExpectedSqliteError(int error);
 
@@ -527,6 +532,7 @@ class SQL_EXPORT Connection {
   FRIEND_TEST_ALL_PREFIXES(SQLConnectionTest, GetAppropriateMmapSizeAltStatus);
   FRIEND_TEST_ALL_PREFIXES(SQLConnectionTest, OnMemoryDump);
   FRIEND_TEST_ALL_PREFIXES(SQLConnectionTest, RegisterIntentToUpload);
+  FRIEND_TEST_ALL_PREFIXES(SQLiteFeaturesTest, WALNoClose);
 
   // Internal initialize function used by both Init and InitInMemory. The file
   // name is always 8 bits since we want to use the 8-bit version of
@@ -549,7 +555,7 @@ class SQL_EXPORT Connection {
   // official build.
   void AssertIOAllowed() const {
     if (!in_memory_)
-      base::ThreadRestrictions::AssertIOAllowed();
+      base::AssertBlockingAllowed();
   }
 
   // Internal helper for Does*Exist() functions.
@@ -755,8 +761,9 @@ class SQL_EXPORT Connection {
   bool restrict_to_user_;
 
   // All cached statements. Keeping a reference to these statements means that
-  // they'll remain active.
-  typedef std::map<StatementID, scoped_refptr<StatementRef> >
+  // they'll remain active. Using flat_map here because number of cached
+  // statements is expected to be small, see //base/containers/README.md.
+  typedef base::flat_map<StatementID, scoped_refptr<StatementRef>>
       CachedStatementMap;
   CachedStatementMap statement_cache_;
 

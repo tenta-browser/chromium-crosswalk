@@ -31,8 +31,9 @@
 #ifndef SurroundingText_h
 #define SurroundingText_h
 
+#include "base/macros.h"
 #include "core/CoreExport.h"
-#include "core/editing/Position.h"
+#include "core/editing/Forward.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
 
@@ -42,11 +43,11 @@ class Range;
 
 class CORE_EXPORT SurroundingText {
   USING_FAST_MALLOC(SurroundingText);
-  WTF_MAKE_NONCOPYABLE(SurroundingText);
 
  public:
-  SurroundingText(const Range&, unsigned max_length);
-  SurroundingText(const Position&, unsigned max_length);
+  // TODO(editing-dev): We should introduce |Create()| function and make
+  // constructor does nothing, since this constructor is too heavy.
+  SurroundingText(const EphemeralRange&, unsigned max_length);
 
   String Content() const;
   unsigned StartOffsetInContent() const;
@@ -58,6 +59,8 @@ class CORE_EXPORT SurroundingText {
   Persistent<Range> content_range_;
   size_t start_offset_in_content_;
   size_t end_offset_in_content_;
+
+  DISALLOW_COPY_AND_ASSIGN(SurroundingText);
 };
 
 }  // namespace blink

@@ -14,6 +14,7 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "base/command_line.h"
 #include "base/debug/crash_logging.h"
@@ -26,6 +27,7 @@
 #include "components/crash/content/app/crashpad.h"
 #include "components/crash/core/common/crash_keys.h"
 #include "components/version_info/channel.h"
+#include "gpu/config/gpu_crash_keys.h"
 
 namespace {
 
@@ -51,12 +53,6 @@ constexpr char kBrowserUnpinTrace[] = "browser-unpin-trace";
 constexpr char kApValue[] = "ap";
 constexpr char kCohortName[] = "cohort-name";
 
-constexpr char kGPUVendorID[] = "gpu-venid";
-constexpr char kGPUDeviceID[] = "gpu-devid";
-constexpr char kGPUDriverVersion[] = "gpu-driver";
-constexpr char kGPUPixelShaderVersion[] = "gpu-psver";
-constexpr char kGPUVertexShaderVersion[] = "gpu-vsver";
-
 constexpr char kHungRendererOutstandingAckCount[] = "hung-outstanding-acks";
 constexpr char kHungRendererOutstandingEventType[] =
     "hung-outstanding-event-type";
@@ -64,9 +60,6 @@ constexpr char kHungRendererLastEventType[] = "hung-last-event-type";
 constexpr char kHungRendererReason[] = "hung-reason";
 constexpr char kInputEventFilterSendFailure[] =
     "input-event-filter-send-failure";
-
-constexpr char kThirdPartyModulesLoaded[] = "third-party-modules-loaded";
-constexpr char kThirdPartyModulesNotLoaded[] = "third-party-modules-not-loaded";
 
 constexpr char kIsEnterpriseManaged[] = "is-enterprise-managed";
 
@@ -108,15 +101,16 @@ size_t RegisterCrashKeysHelper() {
       {kBrowserUnpinTrace, kMediumSize},
       {kApValue, kSmallSize},
       {kCohortName, kSmallSize},
-      {kGPUVendorID, kSmallSize},
-      {kGPUDeviceID, kSmallSize},
-      {kGPUDriverVersion, kSmallSize},
-      {kGPUPixelShaderVersion, kSmallSize},
-      {kGPUVertexShaderVersion, kSmallSize},
+
+      // gpu
+      {gpu::crash_keys::kGPUVendorID, kSmallSize},
+      {gpu::crash_keys::kGPUDeviceID, kSmallSize},
+      {gpu::crash_keys::kGPUDriverVersion, kSmallSize},
+      {gpu::crash_keys::kGPUPixelShaderVersion, kSmallSize},
+      {gpu::crash_keys::kGPUVertexShaderVersion, kSmallSize},
+      {gpu::crash_keys::kGPUGLContextIsVirtual, kSmallSize},
 
       // browser/:
-      {kThirdPartyModulesLoaded, kSmallSize},
-      {kThirdPartyModulesNotLoaded, kSmallSize},
       {kIsEnterpriseManaged, kSmallSize},
 
       // content/:
@@ -128,7 +122,6 @@ size_t RegisterCrashKeysHelper() {
       {"ppapi_path", kMediumSize},
       {"subresource_url", kLargeSize},
       {"total-discardable-memory-allocated", kSmallSize},
-      {kBug464926CrashKey, kSmallSize},
       {kViewCount, kSmallSize},
       {kHungRendererOutstandingAckCount, kSmallSize},
       {kHungRendererOutstandingEventType, kSmallSize},
@@ -139,18 +132,12 @@ size_t RegisterCrashKeysHelper() {
       // media/:
       {kZeroEncodeDetails, kSmallSize},
 
-      // gin/:
-      {"v8-ignition", kSmallSize},
-
-      // Temporary for https://crbug.com/591478.
-      {"initrf_parent_proxy_exists", kSmallSize},
-      {"initrf_render_view_is_live", kSmallSize},
-      {"initrf_parent_is_in_same_site_instance", kSmallSize},
-      {"initrf_parent_process_is_live", kSmallSize},
-      {"initrf_root_is_in_same_site_instance", kSmallSize},
-      {"initrf_root_is_in_same_site_instance_as_parent", kSmallSize},
-      {"initrf_root_process_is_live", kSmallSize},
-      {"initrf_root_proxy_is_live", kSmallSize},
+      // Site isolation.  These keys help debug renderer kills such as
+      // https://crbug.com/773140.
+      {"requested_site_url", kSmallSize},
+      {"requested_origin", kSmallSize},
+      {"killed_process_origin_lock", kSmallSize},
+      {"site_isolation_mode", kSmallSize},
 
       // Temporary for https://crbug.com/626802.
       {"newframe_routing_id", kSmallSize},
@@ -160,34 +147,19 @@ size_t RegisterCrashKeysHelper() {
       {"newframe_widget_id", kSmallSize},
       {"newframe_widget_hidden", kSmallSize},
       {"newframe_replicated_origin", kSmallSize},
-      {"newframe_oopifs_possible", kSmallSize},
 
-      // Temporary for https://crbug.com/630103.
-      {"origin_mismatch_url", crash_keys::kLargeSize},
-      {"origin_mismatch_origin", crash_keys::kMediumSize},
-      {"origin_mismatch_transition", crash_keys::kSmallSize},
-      {"origin_mismatch_redirects", crash_keys::kSmallSize},
-      {"origin_mismatch_same_page", crash_keys::kSmallSize},
+      // Temporary for https://crbug.com/685996.
+      {"user-cloud-policy-manager-connect-trace", kMediumSize},
 
-      // Temporary for https://crbug.com/612711.
-      {"aci_wrong_sp_extension_id", kSmallSize},
+      // TODO(sunnyps): Remove after fixing crbug.com/724999.
+      {"gl-context-set-current-stack-trace", kMediumSize},
 
-      // Temporary for http://crbug.com/621730
-      {"postmessage_src_origin", kMediumSize},
-      {"postmessage_dst_origin", kMediumSize},
-      {"postmessage_dst_url", kLargeSize},
-      {"postmessage_script_info", kLargeSize},
+      // TODO(asvitkine): Remove after fixing https://crbug.com/736675
+      {"bad_histogram", kMediumSize},
 
-      // Temporary for https://crbug.com/668633.
-      {"swdh_set_hosted_version_worker_pid", crash_keys::kSmallSize},
-      {"swdh_set_hosted_version_host_pid", crash_keys::kSmallSize},
-      {"swdh_set_hosted_version_is_new_process", crash_keys::kSmallSize},
-      {"swdh_set_hosted_version_restart_count", crash_keys::kSmallSize},
-
-      // Temporary for https://crbug.com/697745.
-      {"engine_params", crash_keys::kMediumSize},
-      {"engine1_params", crash_keys::kMediumSize},
-      {"engine2_params", crash_keys::kMediumSize},
+      // Accessibility keys. Temporary for http://crbug.com/765490.
+      {"ax_tree_error", kSmallSize},
+      {"ax_tree_update", kMediumSize},
   };
 
   // This dynamic set of keys is used for sets of key value pairs when gathering
@@ -248,8 +220,14 @@ void ChromeCrashReporterClient::InitializeCrashReportingForProcess() {
   if (process_type != install_static::kCrashpadHandler &&
       process_type != install_static::kFallbackHandler) {
     crash_reporter::SetCrashReporterClient(instance);
+
+    std::wstring user_data_dir;
+    if (process_type.empty())
+      install_static::GetUserDataDirectory(&user_data_dir, nullptr);
+
     crash_reporter::InitializeCrashpadWithEmbeddedHandler(
-        process_type.empty(), install_static::UTF16ToUTF8(process_type));
+        process_type.empty(), install_static::UTF16ToUTF8(process_type),
+        install_static::UTF16ToUTF8(user_data_dir));
   }
 }
 #endif  // NACL_WIN64
@@ -357,12 +335,13 @@ bool ChromeCrashReporterClient::GetCrashDumpLocation(
     return true;
 
   *crash_dir = install_static::GetCrashDumpLocation();
-  return true;
+  return !crash_dir->empty();
 }
 
 bool ChromeCrashReporterClient::GetCrashMetricsLocation(
     base::string16* metrics_dir) {
-  return install_static::GetUserDataDirectory(metrics_dir, nullptr);
+  install_static::GetUserDataDirectory(metrics_dir, nullptr);
+  return !metrics_dir->empty();
 }
 
 // TODO(ananta)

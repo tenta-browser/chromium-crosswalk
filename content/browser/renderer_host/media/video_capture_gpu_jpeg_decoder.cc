@@ -10,42 +10,55 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
+#include "base/synchronization/waitable_event.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "content/browser/gpu/browser_gpu_channel_host_factory.h"
+#include "content/browser/browser_main_loop.h"
+#include "content/browser/gpu/gpu_process_host.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_switches.h"
+#include "media/base/bind_to_current_loop.h"
 #include "media/base/media_switches.h"
 #include "media/base/video_frame.h"
-#include "media/gpu/ipc/client/gpu_jpeg_decode_accelerator_host.h"
 #include "mojo/public/cpp/system/platform_handle.h"
+#include "services/ui/public/cpp/gpu/gpu.h"
 
 namespace content {
 
 VideoCaptureGpuJpegDecoder::VideoCaptureGpuJpegDecoder(
-    const DecodeDoneCB& decode_done_cb)
-    : decode_done_cb_(decode_done_cb),
+    DecodeDoneCB decode_done_cb,
+    base::Callback<void(const std::string&)> send_log_message_cb)
+    : decode_done_cb_(std::move(decode_done_cb)),
+      send_log_message_cb_(std::move(send_log_message_cb)),
+      has_received_decoded_frame_(false),
       next_bitstream_buffer_id_(0),
       in_buffer_id_(media::JpegDecodeAccelerator::kInvalidBitstreamBufferId),
-      decoder_status_(INIT_PENDING) {}
+      decoder_status_(INIT_PENDING),
+      weak_ptr_factory_(this) {}
 
 VideoCaptureGpuJpegDecoder::~VideoCaptureGpuJpegDecoder() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  // |decoder_| guarantees no more JpegDecodeAccelerator::Client callbacks
-  // on IO thread after deletion.
-  decoder_.reset();
-
-  // |gpu_channel_host_| should outlive |decoder_|, so |gpu_channel_host_|
-  // must be released after |decoder_| has been destroyed.
-  gpu_channel_host_ = nullptr;
+  // |this| was set as |decoder_|'s client. |decoder_| has to be deleted before
+  // this destructor returns to ensure that it doesn't call back into its
+  // client. Hence, we wait here while we delete |decoder_| on the IO thread.
+  if (decoder_) {
+    base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                              base::WaitableEvent::InitialState::NOT_SIGNALED);
+    // base::Unretained is safe because |this| will be valid until |event|
+    // is signaled.
+    BrowserThread::PostTask(
+        BrowserThread::IO, FROM_HERE,
+        base::Bind(&VideoCaptureGpuJpegDecoder::DestroyDecoderOnIOThread,
+                   base::Unretained(this), &event));
+    event.Wait();
+  }
 }
 
 void VideoCaptureGpuJpegDecoder::Initialize() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   base::AutoLock lock(lock_);
   bool is_platform_supported =
@@ -65,16 +78,15 @@ void VideoCaptureGpuJpegDecoder::Initialize() {
     return;
   }
 
-  const scoped_refptr<base::SingleThreadTaskRunner> current_task_runner(
-      base::ThreadTaskRunnerHandle::Get());
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::Bind(&EstablishGpuChannelOnUIThread,
-                                     current_task_runner, AsWeakPtr()));
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::Bind(&RequestGPUInfoOnIOThread, base::ThreadTaskRunnerHandle::Get(),
+                 weak_ptr_factory_.GetWeakPtr()));
 }
 
 VideoCaptureGpuJpegDecoder::STATUS VideoCaptureGpuJpegDecoder::GetStatus()
     const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   base::AutoLock lock(lock_);
   return decoder_status_;
 }
@@ -86,7 +98,7 @@ void VideoCaptureGpuJpegDecoder::DecodeCapturedData(
     base::TimeTicks reference_time,
     base::TimeDelta timestamp,
     media::VideoCaptureDevice::Client::Buffer out_buffer) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(decoder_);
 
   TRACE_EVENT_ASYNC_BEGIN0("jpeg", "VideoCaptureGpuJpegDecoder decoding",
@@ -148,6 +160,11 @@ void VideoCaptureGpuJpegDecoder::DecodeCapturedData(
     LOG(ERROR) << "DecodeCapturedData: WrapExternalSharedMemory failed";
     return;
   }
+  // Hold onto the buffer access handle for the lifetime of the VideoFrame, to
+  // ensure the data pointers remain valid.
+  out_frame->AddDestructionObserver(base::BindOnce(
+      [](std::unique_ptr<media::VideoCaptureBufferHandle> handle) {},
+      base::Passed(&out_buffer_access)));
   out_frame->metadata()->SetDouble(media::VideoFrameMetadata::FRAME_RATE,
                                    frame_format.frame_rate);
 
@@ -170,12 +187,21 @@ void VideoCaptureGpuJpegDecoder::DecodeCapturedData(
                    base::Passed(&out_buffer.access_permission),
                    base::Passed(&out_frame_info));
   }
-  decoder_->Decode(in_buffer, std::move(out_frame));
+
+  // base::Unretained is safe because |decoder_| is deleted on the IO thread.
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::Bind(&media::JpegDecodeAccelerator::Decode,
+                                     base::Unretained(decoder_.get()),
+                                     in_buffer, std::move(out_frame)));
 }
 
 void VideoCaptureGpuJpegDecoder::VideoFrameReady(int32_t bitstream_buffer_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   TRACE_EVENT0("jpeg", "VideoCaptureGpuJpegDecoder::VideoFrameReady");
+  if (!has_received_decoded_frame_) {
+    send_log_message_cb_.Run("Received decoded frame from Gpu Jpeg decoder");
+    has_received_decoded_frame_ = true;
+  }
   base::AutoLock lock(lock_);
 
   if (!IsDecoding_Locked()) {
@@ -203,61 +229,89 @@ void VideoCaptureGpuJpegDecoder::NotifyError(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   LOG(ERROR) << "Decode error, bitstream_buffer_id=" << bitstream_buffer_id
              << ", error=" << error;
-
+  send_log_message_cb_.Run("Gpu Jpeg decoder failed");
   base::AutoLock lock(lock_);
   decode_done_closure_.Reset();
   decoder_status_ = FAILED;
 }
 
 // static
-void VideoCaptureGpuJpegDecoder::EstablishGpuChannelOnUIThread(
-    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
+void VideoCaptureGpuJpegDecoder::RequestGPUInfoOnIOThread(
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     base::WeakPtr<VideoCaptureGpuJpegDecoder> weak_this) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(BrowserGpuChannelHostFactory::instance());
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  BrowserGpuChannelHostFactory::instance()->EstablishGpuChannel(
-      base::Bind(&VideoCaptureGpuJpegDecoder::GpuChannelEstablishedOnUIThread,
-                 task_runner, weak_this));
+  GpuProcessHost* host =
+      GpuProcessHost::Get(GpuProcessHost::GPU_PROCESS_KIND_SANDBOXED, false);
+  if (host) {
+    host->RequestGPUInfo(
+        base::Bind(&VideoCaptureGpuJpegDecoder::DidReceiveGPUInfoOnIOThread,
+                   task_runner, weak_this));
+  } else {
+    DidReceiveGPUInfoOnIOThread(std::move(task_runner), std::move(weak_this),
+                                gpu::GPUInfo());
+  }
 }
 
 // static
-void VideoCaptureGpuJpegDecoder::GpuChannelEstablishedOnUIThread(
-    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
+void VideoCaptureGpuJpegDecoder::DidReceiveGPUInfoOnIOThread(
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     base::WeakPtr<VideoCaptureGpuJpegDecoder> weak_this,
-    scoped_refptr<gpu::GpuChannelHost> gpu_channel_host) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    const gpu::GPUInfo& gpu_info) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  media::mojom::JpegDecodeAcceleratorPtr remote_decoder;
+
+  if (gpu_info.jpeg_decode_accelerator_supported) {
+    GpuProcessHost* host =
+        GpuProcessHost::Get(GpuProcessHost::GPU_PROCESS_KIND_SANDBOXED, false);
+    if (host) {
+      host->gpu_service()->CreateJpegDecodeAccelerator(
+          mojo::MakeRequest(&remote_decoder));
+    }
+  }
 
   task_runner->PostTask(
-      FROM_HERE, base::Bind(&VideoCaptureGpuJpegDecoder::FinishInitialization,
-                            weak_this, std::move(gpu_channel_host)));
+      FROM_HERE,
+      base::Bind(&VideoCaptureGpuJpegDecoder::FinishInitialization, weak_this,
+                 base::Passed(remote_decoder.PassInterface())));
 }
 
 void VideoCaptureGpuJpegDecoder::FinishInitialization(
-    scoped_refptr<gpu::GpuChannelHost> gpu_channel_host) {
+    media::mojom::JpegDecodeAcceleratorPtrInfo unbound_remote_decoder) {
   TRACE_EVENT0("gpu", "VideoCaptureGpuJpegDecoder::FinishInitialization");
-  DCHECK(CalledOnValidThread());
-  base::AutoLock lock(lock_);
-  if (!gpu_channel_host) {
-    LOG(ERROR) << "Failed to establish GPU channel for JPEG decoder";
-  } else if (gpu_channel_host->gpu_info().jpeg_decode_accelerator_supported) {
-    gpu_channel_host_ = std::move(gpu_channel_host);
-    scoped_refptr<base::SingleThreadTaskRunner> io_task_runner =
-        BrowserGpuChannelHostFactory::instance()->GetIOThreadTaskRunner();
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-    int32_t route_id = gpu_channel_host_->GenerateRouteID();
-    std::unique_ptr<media::GpuJpegDecodeAcceleratorHost> decoder(
-        new media::GpuJpegDecodeAcceleratorHost(gpu_channel_host_.get(),
-                                                route_id, io_task_runner));
-    if (decoder->Initialize(this)) {
-      gpu_channel_host_->AddRouteWithTaskRunner(
-          route_id, decoder->GetReceiver(), io_task_runner);
-      decoder_ = std::move(decoder);
-    } else {
-      DLOG(ERROR) << "Failed to initialize JPEG decoder";
-    }
+  if (unbound_remote_decoder.is_valid()) {
+    base::AutoLock lock(lock_);
+    decoder_ = base::MakeUnique<media::MojoJpegDecodeAccelerator>(
+        BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
+        std::move(unbound_remote_decoder));
+
+    // base::Unretained is safe because |decoder_| is deleted on the IO thread.
+    BrowserThread::PostTask(
+        BrowserThread::IO, FROM_HERE,
+        base::Bind(&media::JpegDecodeAccelerator::InitializeAsync,
+                   base::Unretained(decoder_.get()), this,
+                   media::BindToCurrentLoop(base::Bind(
+                       &VideoCaptureGpuJpegDecoder::OnInitializationDone,
+                       weak_ptr_factory_.GetWeakPtr()))));
+  } else {
+    OnInitializationDone(false);
   }
-  decoder_status_ = decoder_ ? INIT_PASSED : FAILED;
+}
+
+void VideoCaptureGpuJpegDecoder::OnInitializationDone(bool success) {
+  TRACE_EVENT0("gpu", "VideoCaptureGpuJpegDecoder::OnInitializationDone");
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  base::AutoLock lock(lock_);
+  if (!success) {
+    BrowserThread::DeleteSoon(BrowserThread::IO, FROM_HERE, decoder_.release());
+    DLOG(ERROR) << "Failed to initialize JPEG decoder";
+  }
+
+  decoder_status_ = success ? INIT_PASSED : FAILED;
   RecordInitDecodeUMA_Locked();
 }
 
@@ -269,6 +323,13 @@ bool VideoCaptureGpuJpegDecoder::IsDecoding_Locked() const {
 void VideoCaptureGpuJpegDecoder::RecordInitDecodeUMA_Locked() {
   UMA_HISTOGRAM_BOOLEAN("Media.VideoCaptureGpuJpegDecoder.InitDecodeSuccess",
                         decoder_status_ == INIT_PASSED);
+}
+
+void VideoCaptureGpuJpegDecoder::DestroyDecoderOnIOThread(
+    base::WaitableEvent* event) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  decoder_.reset();
+  event->Signal();
 }
 
 }  // namespace content

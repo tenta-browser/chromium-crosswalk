@@ -4,36 +4,28 @@
 
 #include "bindings/core/v8/ScriptCustomElementDefinitionBuilder.h"
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
 #include "bindings/core/v8/ExceptionState.h"
+#include "bindings/core/v8/IDLTypes.h"
+#include "bindings/core/v8/NativeValueTraitsImpl.h"
 #include "bindings/core/v8/ScriptCustomElementDefinition.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/V8Binding.h"
-#include "bindings/core/v8/V8BindingMacros.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/ExceptionCode.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8BindingMacros.h"
 
 namespace blink {
-
-ScriptCustomElementDefinitionBuilder*
-    ScriptCustomElementDefinitionBuilder::stack_ = nullptr;
 
 ScriptCustomElementDefinitionBuilder::ScriptCustomElementDefinitionBuilder(
     ScriptState* script_state,
     CustomElementRegistry* registry,
     const ScriptValue& constructor,
     ExceptionState& exception_state)
-    : prev_(stack_),
-      script_state_(script_state),
+    : script_state_(script_state),
       registry_(registry),
       constructor_value_(constructor.V8Value()),
-      exception_state_(exception_state) {
-  stack_ = this;
-}
-
-ScriptCustomElementDefinitionBuilder::~ScriptCustomElementDefinitionBuilder() {
-  stack_ = prev_;
-}
+      exception_state_(exception_state) {}
 
 bool ScriptCustomElementDefinitionBuilder::CheckConstructorIntrinsics() {
   DCHECK(script_state_->World().IsMainWorld());
@@ -52,46 +44,39 @@ bool ScriptCustomElementDefinitionBuilder::CheckConstructorIntrinsics() {
 }
 
 bool ScriptCustomElementDefinitionBuilder::CheckConstructorNotRegistered() {
-  if (ScriptCustomElementDefinition::ForConstructor(script_state_.Get(),
-                                                    registry_, constructor_)) {
-    // Constructor is already registered.
-    exception_state_.ThrowDOMException(
-        kNotSupportedError,
-        "this constructor has already been used with this registry");
-    return false;
-  }
-  for (auto builder = prev_; builder; builder = builder->prev_) {
-    CHECK(!builder->constructor_.IsEmpty());
-    if (registry_ != builder->registry_ ||
-        constructor_ != builder->constructor_) {
-      continue;
-    }
-    exception_state_.ThrowDOMException(
-        kNotSupportedError,
-        "this constructor is already being defined in this registry");
-    return false;
-  }
-  return true;
+  if (!ScriptCustomElementDefinition::ForConstructor(script_state_.get(),
+                                                     registry_, constructor_))
+    return true;
+
+  // Constructor is already registered.
+  exception_state_.ThrowDOMException(
+      kNotSupportedError,
+      "this constructor has already been used with this registry");
+  return false;
 }
 
 bool ScriptCustomElementDefinitionBuilder::ValueForName(
+    v8::Isolate* isolate,
+    v8::Local<v8::Context>& context,
+    const v8::TryCatch& try_catch,
     const v8::Local<v8::Object>& object,
     const StringView& name,
     v8::Local<v8::Value>& value) const {
-  v8::Isolate* isolate = script_state_->GetIsolate();
-  v8::Local<v8::Context> context = script_state_->GetContext();
   v8::Local<v8::String> name_string = V8AtomicString(isolate, name);
-  v8::TryCatch try_catch(isolate);
-  if (!V8Call(object->Get(context, name_string), value, try_catch)) {
+  if (!object->Get(context, name_string).ToLocal(&value)) {
     exception_state_.RethrowV8Exception(try_catch.Exception());
     return false;
   }
-  return true;
+  return script_state_->ContextIsValid();
 }
 
 bool ScriptCustomElementDefinitionBuilder::CheckPrototype() {
+  v8::Isolate* isolate = script_state_->GetIsolate();
+  v8::Local<v8::Context> context = script_state_->GetContext();
+  v8::TryCatch try_catch(isolate);
   v8::Local<v8::Value> prototype_value;
-  if (!ValueForName(constructor_, "prototype", prototype_value))
+  if (!ValueForName(isolate, context, try_catch, constructor_, "prototype",
+                    prototype_value))
     return false;
   if (!prototype_value->IsObject()) {
     exception_state_.ThrowTypeError("constructor prototype is not an object");
@@ -104,60 +89,74 @@ bool ScriptCustomElementDefinitionBuilder::CheckPrototype() {
 }
 
 bool ScriptCustomElementDefinitionBuilder::CallableForName(
+    v8::Isolate* isolate,
+    v8::Local<v8::Context>& context,
+    const v8::TryCatch& try_catch,
     const StringView& name,
     v8::Local<v8::Function>& callback) const {
   v8::Local<v8::Value> value;
-  if (!ValueForName(prototype_, name, value))
+  if (!ValueForName(isolate, context, try_catch, prototype_, name, value))
     return false;
-  // "undefined" means "omitted", so return true.
+  // "undefined" means "omitted", which is valid.
   if (value->IsUndefined())
     return true;
   if (!value->IsFunction()) {
     exception_state_.ThrowTypeError(String::Format(
-        "\"%s\" is not a callable object", name.ToString().Ascii().Data()));
+        "\"%s\" is not a callable object", name.ToString().Ascii().data()));
     return false;
   }
   callback = value.As<v8::Function>();
   return true;
 }
 
-bool ScriptCustomElementDefinitionBuilder::RetrieveObservedAttributes() {
+bool ScriptCustomElementDefinitionBuilder::RetrieveObservedAttributes(
+    v8::Isolate* isolate,
+    v8::Local<v8::Context>& context,
+    const v8::TryCatch& try_catch) {
   v8::Local<v8::Value> observed_attributes_value;
-  if (!ValueForName(constructor_, "observedAttributes",
-                    observed_attributes_value))
+  if (!ValueForName(isolate, context, try_catch, constructor_,
+                    "observedAttributes", observed_attributes_value))
     return false;
   if (observed_attributes_value->IsUndefined())
     return true;
-  Vector<AtomicString> list = ToImplSequence<Vector<AtomicString>>(
-      script_state_->GetIsolate(), observed_attributes_value, exception_state_);
-  if (exception_state_.HadException())
+  Vector<String> list = NativeValueTraits<IDLSequence<IDLString>>::NativeValue(
+      isolate, observed_attributes_value, exception_state_);
+  if (exception_state_.HadException() || !script_state_->ContextIsValid())
     return false;
   if (list.IsEmpty())
     return true;
   observed_attributes_.ReserveCapacityForSize(list.size());
   for (const auto& attribute : list)
-    observed_attributes_.insert(attribute);
+    observed_attributes_.insert(AtomicString(attribute));
   return true;
 }
 
 bool ScriptCustomElementDefinitionBuilder::RememberOriginalProperties() {
   // Spec requires to use values of these properties at the point
   // CustomElementDefinition is built, even if JS changes them afterwards.
-  return CallableForName("connectedCallback", connected_callback_) &&
-         CallableForName("disconnectedCallback", disconnected_callback_) &&
-         CallableForName("adoptedCallback", adopted_callback_) &&
-         CallableForName("attributeChangedCallback",
+  v8::Isolate* isolate = script_state_->GetIsolate();
+  v8::Local<v8::Context> context = script_state_->GetContext();
+  v8::TryCatch try_catch(isolate);
+  return CallableForName(isolate, context, try_catch, "connectedCallback",
+                         connected_callback_) &&
+         CallableForName(isolate, context, try_catch, "disconnectedCallback",
+                         disconnected_callback_) &&
+         CallableForName(isolate, context, try_catch, "adoptedCallback",
+                         adopted_callback_) &&
+         CallableForName(isolate, context, try_catch,
+                         "attributeChangedCallback",
                          attribute_changed_callback_) &&
          (attribute_changed_callback_.IsEmpty() ||
-          RetrieveObservedAttributes());
+          RetrieveObservedAttributes(isolate, context, try_catch));
 }
 
 CustomElementDefinition* ScriptCustomElementDefinitionBuilder::Build(
-    const CustomElementDescriptor& descriptor) {
+    const CustomElementDescriptor& descriptor,
+    CustomElementDefinition::Id id) {
   return ScriptCustomElementDefinition::Create(
-      script_state_.Get(), registry_, descriptor, constructor_,
+      script_state_.get(), registry_, descriptor, id, constructor_,
       connected_callback_, disconnected_callback_, adopted_callback_,
-      attribute_changed_callback_, observed_attributes_);
+      attribute_changed_callback_, std::move(observed_attributes_));
 }
 
 }  // namespace blink

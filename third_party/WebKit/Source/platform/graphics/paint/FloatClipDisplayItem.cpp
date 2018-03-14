@@ -16,7 +16,7 @@ void FloatClipDisplayItem::Replay(GraphicsContext& context) const {
 }
 
 void FloatClipDisplayItem::AppendToWebDisplayItemList(
-    const IntRect& visual_rect,
+    const LayoutSize&,
     WebDisplayItemList* list) const {
   list->AppendFloatClipItem(clip_rect_);
 }
@@ -26,20 +26,16 @@ void EndFloatClipDisplayItem::Replay(GraphicsContext& context) const {
 }
 
 void EndFloatClipDisplayItem::AppendToWebDisplayItemList(
-    const IntRect& visual_rect,
+    const LayoutSize&,
     WebDisplayItemList* list) const {
   list->AppendEndFloatClipItem();
 }
 
-#ifndef NDEBUG
-void FloatClipDisplayItem::DumpPropertiesAsDebugString(
-    WTF::StringBuilder& string_builder) const {
-  DisplayItem::DumpPropertiesAsDebugString(string_builder);
-  string_builder.Append(WTF::String::Format(
-      ", floatClipRect: [%f,%f,%f,%f]}", clip_rect_.X(), clip_rect_.Y(),
-      clip_rect_.Width(), clip_rect_.Height()));
+#if DCHECK_IS_ON()
+void FloatClipDisplayItem::PropertiesAsJSON(JSONObject& json) const {
+  DisplayItem::PropertiesAsJSON(json);
+  json.SetString("floatClipRect", clip_rect_.ToString());
 }
-
 #endif
 
 }  // namespace blink

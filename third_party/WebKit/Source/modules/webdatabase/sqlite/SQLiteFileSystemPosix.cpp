@@ -28,9 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// Expose chromium_sqlite3_* functions from Chromium's patched SQLite.
-#define CHROMIUM_SQLITE_INTERNALS
-
 #include "modules/webdatabase/sqlite/SQLiteFileSystem.h"
 
 #include "public/platform/Platform.h"
@@ -300,7 +297,7 @@ int ChromiumFullPathname(sqlite3_vfs* vfs,
 
 // Do not allow loading libraries in the renderer.
 void* ChromiumDlOpen(sqlite3_vfs*, const char*) {
-  return 0;
+  return nullptr;
 }
 
 void ChromiumDlError(sqlite3_vfs*, int buf_size, char* error_buffer) {
@@ -308,7 +305,7 @@ void ChromiumDlError(sqlite3_vfs*, int buf_size, char* error_buffer) {
 }
 
 void (*ChromiumDlSym(sqlite3_vfs*, void*, const char*))(void) {
-  return 0;
+  return nullptr;
 }
 
 void ChromiumDlClose(sqlite3_vfs*, void*) {}
@@ -348,7 +345,7 @@ void SQLiteFileSystem::RegisterSQLiteVFS() {
   static sqlite3_vfs chromium_vfs = {1,
                                      sizeof(chromiumVfsFile),
                                      wrapped_vfs->mxPathname,
-                                     0,
+                                     nullptr,
                                      "chromium_vfs",
                                      wrapped_vfs,
                                      ChromiumOpen,

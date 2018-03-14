@@ -18,23 +18,50 @@ bool NGBoxStrut::operator==(const NGBoxStrut& other) const {
          std::tie(inline_start, inline_end, block_start, block_end);
 }
 
+NGPhysicalBoxStrut NGBoxStrut::ConvertToPhysical(
+    WritingMode writing_mode,
+    TextDirection direction) const {
+  LayoutUnit direction_start = inline_start;
+  LayoutUnit direction_end = inline_end;
+  if (direction == TextDirection::kRtl)
+    std::swap(direction_start, direction_end);
+  switch (writing_mode) {
+    case WritingMode::kHorizontalTb:
+      return NGPhysicalBoxStrut(block_start, direction_end, block_end,
+                                direction_start);
+    case WritingMode::kVerticalRl:
+    case WritingMode::kSidewaysRl:
+      return NGPhysicalBoxStrut(direction_start, block_start, direction_end,
+                                block_end);
+    case WritingMode::kVerticalLr:
+      return NGPhysicalBoxStrut(direction_start, block_end, direction_end,
+                                block_start);
+    case WritingMode::kSidewaysLr:
+      return NGPhysicalBoxStrut(direction_end, block_end, direction_start,
+                                block_start);
+    default:
+      NOTREACHED();
+      return NGPhysicalBoxStrut();
+  }
+}
+
 // Converts physical dimensions to logical ones per
 // https://drafts.csswg.org/css-writing-modes-3/#logical-to-physical
-NGBoxStrut NGPhysicalBoxStrut::ConvertToLogical(NGWritingMode writing_mode,
+NGBoxStrut NGPhysicalBoxStrut::ConvertToLogical(WritingMode writing_mode,
                                                 TextDirection direction) const {
   NGBoxStrut strut;
   switch (writing_mode) {
-    case kHorizontalTopBottom:
+    case WritingMode::kHorizontalTb:
       strut = {left, right, top, bottom};
       break;
-    case kVerticalRightLeft:
-    case kSidewaysRightLeft:
+    case WritingMode::kVerticalRl:
+    case WritingMode::kSidewaysRl:
       strut = {top, bottom, right, left};
       break;
-    case kVerticalLeftRight:
+    case WritingMode::kVerticalLr:
       strut = {top, bottom, left, right};
       break;
-    case kSidewaysLeftRight:
+    case WritingMode::kSidewaysLr:
       strut = {bottom, top, left, right};
       break;
   }
@@ -51,6 +78,11 @@ String NGBoxStrut::ToString() const {
 
 std::ostream& operator<<(std::ostream& stream, const NGBoxStrut& value) {
   return stream << value.ToString();
+}
+
+NGPixelSnappedPhysicalBoxStrut NGPhysicalBoxStrut::SnapToDevicePixels() const {
+  return NGPixelSnappedPhysicalBoxStrut(top.Round(), right.Round(),
+                                        bottom.Round(), left.Round());
 }
 
 }  // namespace blink

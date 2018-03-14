@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/stl_util.h"
@@ -19,25 +20,26 @@
 #include "media/base/key_systems.h"
 #include "media/blink/webcontentdecryptionmodule_impl.h"
 #include "media/blink/webcontentdecryptionmodulesession_impl.h"
-#include "url/gurl.h"
+#include "url/origin.h"
 
 namespace media {
 
 namespace {
 const char kMediaEME[] = "Media.EME.";
 const char kDot[] = ".";
+const char kCreateCdmUMAName[] = "CreateCdm";
 const char kTimeToCreateCdmUMAName[] = "CreateCdmTime";
 }  // namespace
 
 CdmSessionAdapter::CdmSessionAdapter()
     : trace_id_(0), weak_ptr_factory_(this) {}
 
-CdmSessionAdapter::~CdmSessionAdapter() {}
+CdmSessionAdapter::~CdmSessionAdapter() = default;
 
 void CdmSessionAdapter::CreateCdm(
     CdmFactory* cdm_factory,
     const std::string& key_system,
-    const GURL& security_origin,
+    const url::Origin& security_origin,
     const CdmConfig& cdm_config,
     std::unique_ptr<blink::WebContentDecryptionModuleResult> result) {
   TRACE_EVENT_ASYNC_BEGIN0("media", "CdmSessionAdapter::CreateCdm",
@@ -69,8 +71,15 @@ void CdmSessionAdapter::SetServerCertificate(
   cdm_->SetServerCertificate(certificate, std::move(promise));
 }
 
-WebContentDecryptionModuleSessionImpl* CdmSessionAdapter::CreateSession() {
-  return new WebContentDecryptionModuleSessionImpl(this);
+void CdmSessionAdapter::GetStatusForPolicy(
+    HdcpVersion min_hdcp_version,
+    std::unique_ptr<KeyStatusCdmPromise> promise) {
+  cdm_->GetStatusForPolicy(min_hdcp_version, std::move(promise));
+}
+
+std::unique_ptr<WebContentDecryptionModuleSessionImpl>
+CdmSessionAdapter::CreateSession() {
+  return base::MakeUnique<WebContentDecryptionModuleSessionImpl>(this);
 }
 
 bool CdmSessionAdapter::RegisterSession(
@@ -154,6 +163,11 @@ void CdmSessionAdapter::OnCdmCreated(
                          "success", (cdm ? "true" : "false"), "error_message",
                          error_message);
 
+  auto key_system_uma_prefix =
+      kMediaEME + GetKeySystemNameForUMA(key_system) + kDot;
+  base::UmaHistogramBoolean(key_system_uma_prefix + kCreateCdmUMAName,
+                            cdm ? true : false);
+
   if (!cdm) {
     cdm_created_result_->CompleteWithError(
         blink::kWebContentDecryptionModuleExceptionNotSupportedError, 0,
@@ -163,8 +177,7 @@ void CdmSessionAdapter::OnCdmCreated(
   }
 
   key_system_ = key_system;
-  key_system_uma_prefix_ =
-      kMediaEME + GetKeySystemNameForUMA(key_system) + kDot;
+  key_system_uma_prefix_ = std::move(key_system_uma_prefix);
 
   // Only report time for successful CDM creation.
   base::UmaHistogramTimes(key_system_uma_prefix_ + kTimeToCreateCdmUMAName,
@@ -177,10 +190,9 @@ void CdmSessionAdapter::OnCdmCreated(
   cdm_created_result_.reset();
 }
 
-void CdmSessionAdapter::OnSessionMessage(
-    const std::string& session_id,
-    ContentDecryptionModule::MessageType message_type,
-    const std::vector<uint8_t>& message) {
+void CdmSessionAdapter::OnSessionMessage(const std::string& session_id,
+                                         CdmMessageType message_type,
+                                         const std::vector<uint8_t>& message) {
   WebContentDecryptionModuleSessionImpl* session = GetSession(session_id);
   DLOG_IF(WARNING, !session) << __func__ << " for unknown session "
                              << session_id;
@@ -199,8 +211,8 @@ void CdmSessionAdapter::OnSessionKeysChange(const std::string& session_id,
   if (session) {
     DVLOG(2) << __func__ << ": session_id = " << session_id;
     DVLOG(2) << "  - has_additional_usable_key = " << has_additional_usable_key;
-    for (const CdmKeyInformation* info : keys_info)
-      DVLOG(2) << "  - " << *info;
+    for (const auto& info : keys_info)
+      DVLOG(2) << "  - " << *(info.get());
 
     session->OnSessionKeysChange(has_additional_usable_key,
                                  std::move(keys_info));

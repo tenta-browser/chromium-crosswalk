@@ -30,10 +30,10 @@
 #define PeriodicWave_h
 
 #include <memory>
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "core/dom/DOMTypedArray.h"
-#include "core/dom/NotShared.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
+#include "core/typed_arrays/DOMTypedArray.h"
 #include "platform/audio/AudioArray.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/Vector.h"
 
@@ -43,8 +43,7 @@ class BaseAudioContext;
 class ExceptionState;
 class PeriodicWaveOptions;
 
-class PeriodicWave final : public GarbageCollectedFinalized<PeriodicWave>,
-                           public ScriptWrappable {
+class PeriodicWave final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -89,8 +88,6 @@ class PeriodicWave final : public GarbageCollectedFinalized<PeriodicWave>,
 
   // The number of ranges needed for the given sampling rate and FFT size.
   unsigned NumberOfRanges() const { return number_of_ranges_; }
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   explicit PeriodicWave(float sample_rate);

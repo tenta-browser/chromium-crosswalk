@@ -16,12 +16,11 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_vector.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/test/scoped_task_scheduler.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -241,7 +240,7 @@ class AudioVideoPipelineDeviceTest : public testing::Test {
 
   void OnPauseCompleted();
 
-  base::test::ScopedTaskScheduler task_scheduler_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   MediaPipelineDeviceParams::MediaSyncType sync_type_;
   MediaPipelineDeviceParams::AudioStreamType audio_type_;
   std::unique_ptr<TaskRunnerImpl> task_runner_;
@@ -773,7 +772,7 @@ void AudioVideoPipelineDeviceTest::OnEndOfStream() {
     for (auto& feeder : effects_feeders_)
       feeder->Stop();
 
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 }
 
@@ -796,12 +795,14 @@ void AudioVideoPipelineDeviceTest::MonitorLoop() {
     if (audio_feeder_ &&
         audio_feeder_->last_pushed_pts() !=
             std::numeric_limits<int64_t>::min()) {
-      EXPECT_LE(pts, audio_feeder_->last_pushed_pts() + 100 * 1000);
+      EXPECT_LE(pts, std::max(kStartPts,
+                              audio_feeder_->last_pushed_pts() + 100 * 1000));
     }
     if (video_feeder_ &&
         video_feeder_->last_pushed_pts() !=
             std::numeric_limits<int64_t>::min()) {
-      EXPECT_LE(pts, video_feeder_->last_pushed_pts() + 100 * 1000);
+      EXPECT_LE(pts, std::max(kStartPts,
+                              video_feeder_->last_pushed_pts() + 100 * 1000));
     }
     // PTS is allowed to move backwards once to allow for updates when the first
     // buffers are pushed.
@@ -913,7 +914,15 @@ void AudioVideoPipelineDeviceTest::EndImmediateEosTest() {
 
   RunStoppedChecks();
 
-  base::MessageLoop::current()->QuitWhenIdle();
+  base::RunLoop::QuitCurrentWhenIdleDeprecated();
+}
+
+TEST_F(AudioVideoPipelineDeviceTest, PcmPlayback) {
+  set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
+  ConfigureForAudioOnly("bear_pcm.wav");
+  PauseBeforeEos();
+  Start();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, Mp3Playback) {

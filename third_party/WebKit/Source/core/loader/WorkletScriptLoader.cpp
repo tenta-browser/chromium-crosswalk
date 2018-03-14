@@ -6,7 +6,8 @@
 
 #include "bindings/core/v8/ScriptSourceCode.h"
 #include "core/loader/FrameFetchContext.h"
-#include "platform/loader/fetch/FetchInitiatorTypeNames.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
+#include "platform/loader/fetch/fetch_initiator_type_names.h"
 #include "platform/wtf/WTF.h"
 
 namespace blink {
@@ -15,14 +16,16 @@ WorkletScriptLoader::WorkletScriptLoader(ResourceFetcher* fetcher,
                                          Client* client)
     : fetcher_(fetcher), client_(client) {}
 
-void WorkletScriptLoader::FetchScript(const String& script_url) {
+void WorkletScriptLoader::FetchScript(const KURL& module_url_record) {
   DCHECK(IsMainThread());
   DCHECK(!GetResource());
   DCHECK(!was_script_load_complete_);
 
-  ResourceRequest resource_request(script_url);
+  ResourceRequest resource_request(module_url_record);
   resource_request.SetRequestContext(WebURLRequest::kRequestContextScript);
-  FetchParameters params(resource_request, FetchInitiatorTypeNames::internal);
+  ResourceLoaderOptions options;
+  options.initiator_info.name = FetchInitiatorTypeNames::internal;
+  FetchParameters params(resource_request, options);
   ScriptResource* resource = ScriptResource::Fetch(params, fetcher_);
   if (!resource) {
     NotifyFinished(nullptr);
@@ -60,10 +63,10 @@ bool WorkletScriptLoader::WasScriptLoadSuccessful() const {
   return was_script_load_successful_;
 }
 
-DEFINE_TRACE(WorkletScriptLoader) {
+void WorkletScriptLoader::Trace(blink::Visitor* visitor) {
   visitor->Trace(fetcher_);
   visitor->Trace(client_);
-  ResourceOwner<ScriptResource, ScriptResourceClient>::Trace(visitor);
+  ResourceOwner<ScriptResource>::Trace(visitor);
 }
 
 }  // namespace blink

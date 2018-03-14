@@ -27,6 +27,7 @@
 
 #include "core/editing/CaretDisplayItemClient.h"
 #include "core/editing/EditingUtilities.h"
+#include "core/editing/VisiblePosition.h"
 #include "core/frame/Settings.h"
 #include "core/layout/api/LayoutViewItem.h"
 #include "core/paint/PaintLayer.h"
@@ -55,10 +56,9 @@ void DragCaret::UpdateStyleAndLayoutIfNeeded() {
                                                      : PositionWithAffinity());
 }
 
-void DragCaret::InvalidatePaintIfNeeded(
-    const LayoutBlock& block,
-    const PaintInvalidatorContext& context) {
-  display_item_client_->InvalidatePaintIfNeeded(block, context);
+void DragCaret::InvalidatePaint(const LayoutBlock& block,
+                                const PaintInvalidatorContext& context) {
+  display_item_client_->InvalidatePaint(block, context);
 }
 
 bool DragCaret::IsContentRichlyEditable() const {
@@ -96,7 +96,7 @@ void DragCaret::NodeWillBeRemoved(Node& node) {
   Clear();
 }
 
-DEFINE_TRACE(DragCaret) {
+void DragCaret::Trace(blink::Visitor* visitor) {
   visitor->Trace(position_);
   SynchronousMutationObserver::Trace(visitor);
 }

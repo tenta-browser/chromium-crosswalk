@@ -37,12 +37,13 @@ namespace web_resource {
 // global instance.
 class ResourceRequestAllowedNotifier
     : public EulaAcceptedNotifier::Observer,
-      public net::NetworkChangeNotifier::ConnectionTypeObserver {
+      public net::NetworkChangeNotifier::NetworkChangeObserver {
  public:
   // Observes resource request allowed state changes.
   class Observer {
    public:
     virtual void OnResourceRequestsAllowed() = 0;
+    virtual ~Observer() = default;
   };
 
   // Specifies the resource request allowed state.
@@ -96,8 +97,8 @@ class ResourceRequestAllowedNotifier
   // EulaAcceptedNotifier::Observer overrides:
   void OnEulaAccepted() override;
 
-  // net::NetworkChangeNotifier::ConnectionTypeObserver overrides:
-  void OnConnectionTypeChanged(
+  // net::NetworkChangeNotifier::NetworkChangeObserver overrides:
+  void OnNetworkChanged(
       net::NetworkChangeNotifier::ConnectionType type) override;
 
   // Name of the command line switch to disable the network activity.

@@ -5,6 +5,7 @@
 #include "chrome/browser/android/download/intercept_download_resource_throttle.h"
 
 #include "base/strings/string_util.h"
+#include "net/cookies/canonical_cookie.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request.h"
@@ -12,6 +13,11 @@
 
 namespace {
 static const char kOMADrmMessageMimeType[] = "application/vnd.oma.drm.message";
+static const char kOMADrmContentMimeType[] = "application/vnd.oma.drm.content";
+static const char kOMADrmRightsMimeType1[] =
+    "application/vnd.oma.drm.rights+xml";
+static const char kOMADrmRightsMimeType2[] =
+    "application/vnd.oma.drm.rights+wbxml";
 }
 
 InterceptDownloadResourceThrottle::InterceptDownloadResourceThrottle(
@@ -42,8 +48,12 @@ void InterceptDownloadResourceThrottle::WillProcessResponse(bool* defer) {
 
   std::string mime_type;
   request_->response_headers()->GetMimeType(&mime_type);
-  if (!base::EqualsCaseInsensitiveASCII(mime_type, kOMADrmMessageMimeType))
+  if (!base::EqualsCaseInsensitiveASCII(mime_type, kOMADrmMessageMimeType) &&
+      !base::EqualsCaseInsensitiveASCII(mime_type, kOMADrmContentMimeType) &&
+      !base::EqualsCaseInsensitiveASCII(mime_type, kOMADrmRightsMimeType1) &&
+      !base::EqualsCaseInsensitiveASCII(mime_type, kOMADrmRightsMimeType2)) {
     return;
+  }
 
   net::CookieStore* cookie_store = request_->context()->cookie_store();
   if (cookie_store) {
@@ -72,7 +82,7 @@ void InterceptDownloadResourceThrottle::CheckCookiePolicy(
   DownloadInfo info(request_);
   if (request_->context()->network_delegate()->CanGetCookies(*request_,
                                                              cookie_list)) {
-    std::string cookie = net::CookieStore::BuildCookieLine(cookie_list);
+    std::string cookie = net::CanonicalCookie::BuildCookieLine(cookie_list);
     if (!cookie.empty())
       info.cookie = cookie;
   }

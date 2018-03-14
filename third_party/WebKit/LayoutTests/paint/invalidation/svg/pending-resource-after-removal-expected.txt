@@ -4,13 +4,8 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
-        {
-          "object": "LayoutSVGRect rect",
-          "rect": [0, 0, 200, 200],
-          "reason": "layoutObject removal"
-        },
         {
           "object": "LayoutSVGRect rect id='shape'",
           "rect": [0, 0, 200, 200],
@@ -26,32 +21,16 @@
   ],
   "objectPaintInvalidations": [
     {
-      "object": "LayoutSVGResourcePattern pattern id='pat'",
-      "reason": "layoutObject insertion"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "layoutObject insertion"
-    },
-    {
       "object": "LayoutSVGRect rect id='shape'",
       "reason": "style change"
     },
     {
       "object": "LayoutSVGRect rect",
-      "reason": "layoutObject removal"
+      "reason": "disappeared"
     },
     {
       "object": "LayoutSVGResourcePattern pattern id='pat'",
-      "reason": "layoutObject removal"
-    },
-    {
-      "object": "LayoutSVGResourcePattern pattern id='pat'",
-      "reason": "layoutObject insertion"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "layoutObject insertion"
+      "reason": "disappeared"
     },
     {
       "object": "LayoutSVGRect rect id='shape'",

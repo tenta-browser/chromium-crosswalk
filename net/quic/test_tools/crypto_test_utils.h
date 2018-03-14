@@ -51,8 +51,6 @@ class TestChannelIDKey : public ChannelIDKey {
 
   std::string SerializeKey() const override;
 
-  const EVP_PKEY* get_evp_pkey() const { return ecdsa_key_.get(); }
-
  private:
   bssl::UniquePtr<EVP_PKEY> ecdsa_key_;
 };
@@ -138,6 +136,12 @@ void SetupCryptoServerConfigForTest(const QuicClock* clock,
                                     QuicRandom* rand,
                                     QuicCryptoServerConfig* crypto_config,
                                     const FakeServerOptions& options);
+
+// Sends the handshake message |message| to stream |stream| with the perspective
+// that the message is coming from |perspective|.
+void SendHandshakeMessageToStream(QuicCryptoStream* stream,
+                                  const CryptoHandshakeMessage& message,
+                                  Perspective perspective);
 
 // CommunicateHandshakeMessages moves messages from |client| to |server| and
 // back until |clients|'s handshake has completed.
@@ -234,7 +238,7 @@ void MovePackets(PacketSavingConnection* source_conn,
 // Return an inchoate CHLO with some basic tag value pairs.
 CryptoHandshakeMessage GenerateDefaultInchoateCHLO(
     const QuicClock* clock,
-    QuicVersion version,
+    QuicTransportVersion version,
     QuicCryptoServerConfig* crypto_config);
 
 // Takes a inchoate CHLO, returns a full CHLO in |out| which can pass
@@ -244,7 +248,7 @@ void GenerateFullCHLO(
     QuicCryptoServerConfig* crypto_config,
     QuicSocketAddress server_addr,
     QuicSocketAddress client_addr,
-    QuicVersion version,
+    QuicTransportVersion version,
     const QuicClock* clock,
     QuicReferenceCountedPointer<QuicSignedServerConfig> signed_config,
     QuicCompressedCertsCache* compressed_certs_cache,

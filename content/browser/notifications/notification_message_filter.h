@@ -7,10 +7,8 @@
 
 #include <stdint.h>
 
-#include <map>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/service_worker/service_worker_status_code.h"
@@ -40,10 +38,6 @@ class NotificationMessageFilter : public BrowserMessageFilter {
       ResourceContext* resource_context,
       const scoped_refptr<ServiceWorkerContextWrapper>& service_worker_context,
       BrowserContext* browser_context);
-
-  // To be called by non-persistent notification delegates when they are closed,
-  // so that the close closure associated with that notification can be removed.
-  void DidCloseNotification(const std::string& notification_id);
 
   // BrowserMessageFilter implementation. Called on the UI thread.
   void OnDestruct() const override;
@@ -126,9 +120,7 @@ class NotificationMessageFilter : public BrowserMessageFilter {
       const GURL& origin) const;
 
   // Verifies that Web Notification permission has been granted for |origin| in
-  // cases where the renderer shouldn't send messages if it weren't the case. If
-  // no permission has been granted, a bad message has been received and the
-  // renderer should be killed accordingly.
+  // cases where the renderer shouldn't send messages if it weren't the case.
   bool VerifyNotificationPermissionGranted(PlatformNotificationService* service,
                                            const GURL& origin);
 
@@ -136,14 +128,11 @@ class NotificationMessageFilter : public BrowserMessageFilter {
   NotificationIdGenerator* GetNotificationIdGenerator() const;
 
   int process_id_;
+  bool non_persistent__notification_shown_;
   scoped_refptr<PlatformNotificationContextImpl> notification_context_;
   ResourceContext* resource_context_;
   scoped_refptr<ServiceWorkerContextWrapper> service_worker_context_;
   BrowserContext* browser_context_;
-
-  // Map mapping notification IDs associated with non-persistent notifications
-  // to the closures that may be used for programmatically closing them.
-  std::unordered_map<std::string, base::Closure> close_closures_;
 
   base::WeakPtrFactory<NotificationMessageFilter> weak_factory_io_;
 

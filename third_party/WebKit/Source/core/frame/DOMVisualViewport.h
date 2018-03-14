@@ -31,9 +31,10 @@
 #ifndef DOMVisualViewport_h
 #define DOMVisualViewport_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "core/CoreExport.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/scroll/ScrollTypes.h"
 
@@ -42,7 +43,7 @@ namespace blink {
 class LocalDOMWindow;
 class ExecutionContext;
 
-class DOMVisualViewport final : public EventTargetWithInlineData {
+class CORE_EXPORT DOMVisualViewport final : public EventTargetWithInlineData {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -52,19 +53,22 @@ class DOMVisualViewport final : public EventTargetWithInlineData {
 
   ~DOMVisualViewport() override;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   // EventTarget overrides:
   const AtomicString& InterfaceName() const override;
   ExecutionContext* GetExecutionContext() const override;
 
-  float scrollLeft();
-  float scrollTop();
-  float pageX();
-  float pageY();
-  double clientWidth();
-  double clientHeight();
-  double scale();
+  float offsetLeft() const;
+  float offsetTop() const;
+  float pageLeft() const;
+  float pageTop() const;
+  double width() const;
+  double height() const;
+  double scale() const;
+
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(resize);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(scroll);
 
  private:
   explicit DOMVisualViewport(LocalDOMWindow*);

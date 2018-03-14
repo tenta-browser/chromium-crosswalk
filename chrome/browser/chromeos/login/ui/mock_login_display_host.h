@@ -29,11 +29,9 @@ class MockLoginDisplayHost : public LoginDisplayHost {
     MockFinalize(&completion_callback);
   }
 
-  MOCK_METHOD0(OnCompleteLogin, void(void));
-  MOCK_METHOD0(OpenProxySettings, void(void));
+  MOCK_METHOD1(OpenInternetDetailDialog, void(const std::string&));
   MOCK_METHOD1(SetStatusAreaVisible, void(bool));
   MOCK_METHOD0(ShowBackground, void(void));
-  MOCK_METHOD0(GetAutoEnrollmentController, AutoEnrollmentController*(void));
   MOCK_METHOD1(StartWizard, void(OobeScreen));
   MOCK_METHOD0(GetWizardController, WizardController*(void));
   MOCK_METHOD0(GetAppLaunchController, AppLaunchController*(void));
@@ -52,6 +50,8 @@ class MockLoginDisplayHost : public LoginDisplayHost {
   MOCK_METHOD3(StartAppLaunch, void(const std::string&, bool, bool));
   MOCK_METHOD0(StartDemoAppLaunch, void(void));
   MOCK_METHOD1(StartArcKiosk, void(const AccountId&));
+  MOCK_METHOD0(StartVoiceInteractionOobe, void(void));
+  MOCK_METHOD0(IsVoiceInteractionOobe, bool(void));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockLoginDisplayHost);

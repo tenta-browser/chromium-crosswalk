@@ -26,7 +26,7 @@ SettingsPasswordSectionBrowserTest.prototype = {
 
   /** @override */
   browsePreload:
-      'chrome://md-settings/passwords_and_forms_page/passwords_section.html',
+      'chrome://settings/passwords_and_forms_page/passwords_section.html',
 
   /** @override */
   extraLibraries: PolymerTest.getLibraries(ROOT_PATH).concat([
@@ -61,13 +61,14 @@ TEST_F('SettingsPasswordSectionBrowserTest', 'uiTests', function() {
       assert(node);
       var passwordInfo = passwordList[0];
       assertEquals(passwordInfo.loginPair.urls.shown,
-          node.querySelector('#originUrl').textContent.trim());
+          node.$$('#originUrl').textContent.trim());
       assertEquals(passwordInfo.loginPair.urls.link,
-          node.querySelector('#originUrl').href);
-      assertEquals(passwordInfo.loginPair.username,
-          node.querySelector('#username').textContent);
+          node.$$('#originUrl').href);
+      assertEquals(
+          passwordInfo.loginPair.username,
+          node.$$('#username').textContent.trim());
       assertEquals(passwordInfo.numCharactersInPassword,
-          node.querySelector('#password').value.length);
+          node.$$('#password').value.length);
     }
   }
 
@@ -84,9 +85,12 @@ TEST_F('SettingsPasswordSectionBrowserTest', 'uiTests', function() {
     for (var index = 0; index < exceptionList.length; ++index) {
       var node = nodes[index];
       var exception = exceptionList[index];
-      assertEquals(exception.urls.shown,
-          node.querySelector('#exception').textContent);
-      assertEquals(exception.urls.link, node.querySelector('#exception').href);
+      assertEquals(
+          exception.urls.shown,
+          node.querySelector('#exception').textContent.trim());
+      assertEquals(
+          exception.urls.link.toLowerCase(),
+          node.querySelector('#exception').href);
     }
   }
 
@@ -133,6 +137,20 @@ TEST_F('SettingsPasswordSectionBrowserTest', 'uiTests', function() {
   }
 
   /**
+   * Helper method used to create a password list item.
+   * @param {!chrome.passwordsPrivate.PasswordUiEntry} passwordItem
+   * @return {!Object}
+   * @private
+   */
+  function createPasswordListItem(passwordItem) {
+    var passwordListItem = document.createElement('password-list-item');
+    passwordListItem.item = {entry: passwordItem, password: ''};
+    document.body.appendChild(passwordListItem);
+    Polymer.dom.flush();
+    return passwordListItem;
+  }
+
+  /**
    * Helper method used to create a password editing dialog.
    * @param {!chrome.passwordsPrivate.PasswordUiEntry} passwordItem
    * @return {!Object}
@@ -140,10 +158,22 @@ TEST_F('SettingsPasswordSectionBrowserTest', 'uiTests', function() {
    */
   function createPasswordDialog(passwordItem) {
     var passwordDialog = document.createElement('password-edit-dialog');
-    passwordDialog.item = passwordItem;
+    passwordDialog.item = {entry: passwordItem, password: ''};
     document.body.appendChild(passwordDialog);
     Polymer.dom.flush();
     return passwordDialog;
+  }
+
+  /**
+   * Helper method used to create an export passwords dialog.
+   * @return {!Object}
+   * @private
+   */
+  function createExportPasswordsDialog() {
+    var dialog = document.createElement('passwords-export-dialog');
+    document.body.appendChild(dialog);
+    Polymer.dom.flush();
+    return dialog;
   }
 
   /**
@@ -220,7 +250,9 @@ TEST_F('SettingsPasswordSectionBrowserTest', 'uiTests', function() {
 
       // Assert that the data is passed into the iron list. If this fails,
       // then other expectations will also fail.
-      assertEquals(passwordList, passwordsSection.$.passwordList.items);
+      assertDeepEquals(
+          passwordList,
+          passwordsSection.$.passwordList.items.map(entry => entry.entry));
 
       validatePasswordList(passwordsSection.$.passwordList, passwordList);
 
@@ -242,10 +274,12 @@ TEST_F('SettingsPasswordSectionBrowserTest', 'uiTests', function() {
       validatePasswordList(passwordsSection.$.passwordList, passwordList);
       // Simulate 'longwebsite.com' being removed from the list.
       passwordsSection.splice('savedPasswords', 1, 1);
+      passwordList.splice(1, 1);
       flushPasswordSection(passwordsSection);
 
-      assertFalse(listContainsUrl(passwordsSection.savedPasswords,
-                                       'longwebsite.com'));
+      assertFalse(listContainsUrl(
+          passwordsSection.savedPasswords.map(entry => entry.entry),
+          'longwebsite.com'));
       assertFalse(listContainsUrl(passwordList, 'longwebsite.com'));
 
       validatePasswordList(passwordsSection.$.passwordList, passwordList);
@@ -271,10 +305,9 @@ TEST_F('SettingsPasswordSectionBrowserTest', 'uiTests', function() {
       assert(firstNode);
       var firstPassword = passwordList[0];
 
-      passwordManager.onRemoveSavedPassword = function(detail) {
+      passwordManager.onRemoveSavedPassword = function(index) {
         // Verify that the event matches the expected value.
-        assertEquals(firstPassword.loginPair.urls.origin, detail.urls.origin);
-        assertEquals(firstPassword.loginPair.username, detail.username);
+        assertEquals(firstPassword.index, index);
 
         // Clean up after self.
         passwordManager.onRemoveSavedPassword = null;
@@ -283,13 +316,13 @@ TEST_F('SettingsPasswordSectionBrowserTest', 'uiTests', function() {
       };
 
       // Click the remove button on the first password.
-      MockInteractions.tap(firstNode.querySelector('#passwordMenu'));
+      MockInteractions.tap(firstNode.$$('#passwordMenu'));
       MockInteractions.tap(passwordsSection.$.menuRemovePassword);
     });
 
     test('verifyFilterPasswords', function() {
       var passwordList = [
-        FakeDataMaker.passwordEntry('one.com', 'show', 5),
+        FakeDataMaker.passwordEntry('one.com', 'SHOW', 5),
         FakeDataMaker.passwordEntry('two.com', 'shower', 3),
         FakeDataMaker.passwordEntry('three.com/show', 'four', 1),
         FakeDataMaker.passwordEntry('four.com', 'three', 2),
@@ -299,11 +332,11 @@ TEST_F('SettingsPasswordSectionBrowserTest', 'uiTests', function() {
 
       var passwordsSection = createPasswordsSection(
           passwordManager, passwordList, []);
-      passwordsSection.filter = 'show';
+      passwordsSection.filter = 'SHow';
       Polymer.dom.flush();
 
       var expectedList = [
-        FakeDataMaker.passwordEntry('one.com', 'show', 5),
+        FakeDataMaker.passwordEntry('one.com', 'SHOW', 5),
         FakeDataMaker.passwordEntry('two.com', 'shower', 3),
         FakeDataMaker.passwordEntry('three.com/show', 'four', 1),
         FakeDataMaker.passwordEntry('six-show.com', 'one', 6),
@@ -314,7 +347,7 @@ TEST_F('SettingsPasswordSectionBrowserTest', 'uiTests', function() {
 
     test('verifyFilterPasswordExceptions', function() {
       var exceptionList = [
-        FakeDataMaker.exceptionEntry('docsshow.google.com'),
+        FakeDataMaker.exceptionEntry('docsshoW.google.com'),
         FakeDataMaker.exceptionEntry('showmail.com'),
         FakeDataMaker.exceptionEntry('google.com'),
         FakeDataMaker.exceptionEntry('inbox.google.com'),
@@ -324,11 +357,11 @@ TEST_F('SettingsPasswordSectionBrowserTest', 'uiTests', function() {
 
       var passwordsSection = createPasswordsSection(
           passwordManager, [], exceptionList);
-      passwordsSection.filter = 'show';
+      passwordsSection.filter = 'shOW';
       Polymer.dom.flush();
 
       var expectedExceptionList = [
-        FakeDataMaker.exceptionEntry('docsshow.google.com'),
+        FakeDataMaker.exceptionEntry('docsshoW.google.com'),
         FakeDataMaker.exceptionEntry('showmail.com'),
         FakeDataMaker.exceptionEntry('mapsshow.google.com'),
         FakeDataMaker.exceptionEntry('plus.google.comshow'),
@@ -418,19 +451,19 @@ TEST_F('SettingsPasswordSectionBrowserTest', 'uiTests', function() {
           getDomRepeatChildren(passwordsSection.$.passwordExceptionsList);
 
       // The index of the button currently being checked.
-      var index = 0;
+      var item = 0;
 
       var clickRemoveButton = function() {
         MockInteractions.tap(
-            exceptions[index].querySelector('#removeExceptionButton'));
+            exceptions[item].querySelector('#removeExceptionButton'));
       };
 
-      passwordManager.onRemoveException = function(detail) {
+      passwordManager.onRemoveException = function(index) {
         // Verify that the event matches the expected value.
-        assertTrue(index < exceptionList.length);
-        assertEquals(exceptionList[index].urls.origin, detail);
+        assertTrue(item < exceptionList.length);
+        assertEquals(index, exceptionList[item].index);
 
-        if (++index < exceptionList.length) {
+        if (++item < exceptionList.length) {
           clickRemoveButton();  // Click 'remove' on all passwords, one by one.
         } else {
           // Clean up after self.
@@ -444,14 +477,29 @@ TEST_F('SettingsPasswordSectionBrowserTest', 'uiTests', function() {
       clickRemoveButton();
     });
 
-    test('showSavedPassword', function() {
+    test('verifyFederatedPassword', function() {
+      var item = FakeDataMaker.passwordEntry('goo.gl', 'bart', 0);
+      item.federationText = 'with chromium.org';
+      var passwordDialog = createPasswordDialog(item);
+
+      Polymer.dom.flush();
+
+      assertEquals(item.federationText,
+                   passwordDialog.$.passwordInput.value);
+      // Text should be readable.
+      assertEquals('text',
+                   passwordDialog.$.passwordInput.type);
+      assertTrue(passwordDialog.$.showPasswordButton.hidden);
+    });
+
+    test('showSavedPasswordEditDialog', function() {
       var PASSWORD = 'bAn@n@5';
       var item = FakeDataMaker.passwordEntry('goo.gl', 'bart', PASSWORD.length);
       var passwordDialog = createPasswordDialog(item);
 
-      passwordDialog.password = PASSWORD;
-      passwordDialog.showPassword = true;
+      assertFalse(passwordDialog.$.showPasswordButton.hidden);
 
+      passwordDialog.set('item.password', PASSWORD);
       Polymer.dom.flush();
 
       assertEquals(PASSWORD,
@@ -459,20 +507,96 @@ TEST_F('SettingsPasswordSectionBrowserTest', 'uiTests', function() {
       // Password should be visible.
       assertEquals('text',
                    passwordDialog.$.passwordInput.type);
+      assertFalse(passwordDialog.$.showPasswordButton.hidden);
+    });
+
+    test('showSavedPasswordListItem', function() {
+      var PASSWORD = 'bAn@n@5';
+      var item = FakeDataMaker.passwordEntry('goo.gl', 'bart', PASSWORD.length);
+      var passwordListItem = createPasswordListItem(item);
+      // Hidden passwords should be disabled.
+      assertTrue(passwordListItem.$$('#password').disabled);
+
+      passwordListItem.set('item.password', PASSWORD);
+      Polymer.dom.flush();
+
+      assertEquals(PASSWORD, passwordListItem.$$('#password').value);
+      // Password should be visible.
+      assertEquals('text', passwordListItem.$$('#password').type);
+      // Visible passwords should not be disabled.
+      assertFalse(passwordListItem.$$('#password').disabled);
+
+      // Hide Password Button should be shown.
+      assertTrue(passwordListItem.$$('#showPasswordButton')
+                     .classList.contains('icon-visibility-off'));
     });
 
     // Test will timeout if event is not received.
-    test('onShowSavedPassword', function(done) {
-      var item = FakeDataMaker.passwordEntry('goo.gl', 'bart', 1);
-      var passwordDialog = createPasswordDialog(item);
+    test('onShowSavedPasswordEditDialog', function(done) {
+      var expectedItem = FakeDataMaker.passwordEntry('goo.gl', 'bart', 1);
+      var passwordDialog = createPasswordDialog(expectedItem);
 
       passwordDialog.addEventListener('show-password', function(event) {
-        assertEquals(item.loginPair.urls.origin, event.detail.urls.origin);
-        assertEquals(item.loginPair.username, event.detail.username);
+        var actualItem = event.detail.item;
+        assertEquals(
+            expectedItem.loginPair.urls.origin,
+            actualItem.entry.loginPair.urls.origin);
+        assertEquals(
+            expectedItem.loginPair.username,
+            actualItem.entry.loginPair.username);
         done();
       });
 
       MockInteractions.tap(passwordDialog.$.showPasswordButton);
+    });
+
+    test('onShowSavedPasswordListItem', function(done) {
+      var expectedItem = FakeDataMaker.passwordEntry('goo.gl', 'bart', 1);
+      var passwordListItem = createPasswordListItem(expectedItem);
+
+      passwordListItem.addEventListener('show-password', function(event) {
+        var actualItem = event.detail.item;
+        assertEquals(
+            expectedItem.loginPair.urls.origin,
+            actualItem.entry.loginPair.urls.origin);
+        assertEquals(
+            expectedItem.loginPair.username,
+            actualItem.entry.loginPair.username);
+        done();
+      });
+
+      MockInteractions.tap(passwordListItem.$$('#showPasswordButton'));
+    });
+
+    // Test that tapping "Export passwords..." notifies the browser accordingly
+    test('startExport', function(done) {
+      var exportDialog = createExportPasswordsDialog();
+
+      passwordManager.exportPasswords = () => {
+        done();
+      };
+
+      MockInteractions.tap(exportDialog.$.exportPasswordsButton);
+    });
+
+    test('closingPasswordsSectionHidesUndoToast', function(done) {
+      var passwordEntry = FakeDataMaker.passwordEntry('goo.gl', 'bart', 1);
+      var passwordsSection =
+          createPasswordsSection(passwordManager, [passwordEntry], []);
+
+      // Click the remove button on the first password and assert that an undo
+      // toast is shown.
+      var firstNode = Polymer.dom(passwordsSection.$.passwordList).children[1];
+      MockInteractions.tap(firstNode.$$('#passwordMenu'));
+      MockInteractions.tap(passwordsSection.$.menuRemovePassword);
+      assertTrue(passwordsSection.$.undoToast.open);
+
+      // Remove the passwords section from the DOM and check that this closes
+      // the undo toast.
+      document.body.removeChild(passwordsSection);
+      assertFalse(passwordsSection.$.undoToast.open);
+
+      done();
     });
   });
 

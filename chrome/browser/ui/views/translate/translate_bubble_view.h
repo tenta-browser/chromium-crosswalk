@@ -10,6 +10,7 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/translate/language_combobox_model.h"
@@ -49,10 +50,12 @@ class TranslateBubbleView : public LocationBarBubbleDelegateView,
                             public content::WebContentsObserver {
  public:
   // Commands shown in the action-style combobox. The value corresponds to the
-  // position in the combobox menu. Gaps will become separators.
+  // position in the combobox menu.
   enum class DenialComboboxIndex {
     DONT_TRANSLATE = 0,
     NEVER_TRANSLATE_LANGUAGE = 1,
+    SEPARATOR = 2,
+    MENU_SIZE_NO_BLACKLIST = SEPARATOR,
     NEVER_TRANSLATE_SITE = 3,
     MENU_SIZE = 4,
   };
@@ -69,6 +72,7 @@ class TranslateBubbleView : public LocationBarBubbleDelegateView,
   // |is_user_gesture| is true when the bubble is shown on the user's deliberate
   // action.
   static views::Widget* ShowBubble(views::View* anchor_view,
+                                   const gfx::Point& anchor_point,
                                    content::WebContents* web_contents,
                                    translate::TranslateStep step,
                                    translate::TranslateErrors::Type error_type,
@@ -83,16 +87,18 @@ class TranslateBubbleView : public LocationBarBubbleDelegateView,
   TranslateBubbleModel* model() { return model_.get(); }
 
   // views::BubbleDialogDelegateView methods.
+  int GetDialogButtons() const override;
   void Init() override;
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
   // views::WidgetDelegate methods.
+  View* GetInitiallyFocusedView() override;
   bool ShouldShowCloseButton() const override;
   void WindowClosing() override;
 
   // views::View methods.
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
 
   // views::ComboboxListener methods.
   void OnPerformAction(views::Combobox* combobox) override;
@@ -151,6 +157,10 @@ class TranslateBubbleView : public LocationBarBubbleDelegateView,
 
   friend class TranslateBubbleViewTest;
   friend void ::translate::test_utils::PressTranslate(::Browser*);
+  friend void ::translate::test_utils::PressRevert(::Browser*);
+  friend void ::translate::test_utils::SelectTargetLanguageByDisplayName(
+      ::Browser*,
+      const ::base::string16&);
   FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewTest, TranslateButton);
   FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewTest, TranslateButtonIn2016Q2UI);
   FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewTest, CloseButtonIn2016Q2UI);
@@ -170,8 +180,12 @@ class TranslateBubbleView : public LocationBarBubbleDelegateView,
   FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewTest,
                            CancelButtonReturningAfterTranslate);
   FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewTest, CancelButtonReturningError);
+  FRIEND_TEST_ALL_PREFIXES(TranslateLanguageBrowserTest, TranslateAndRevert);
+  FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewBrowserTest,
+                           CheckNeverTranslateThisSiteBlacklist);
 
   TranslateBubbleView(views::View* anchor_view,
+                      const gfx::Point& anchor_point,
                       std::unique_ptr<TranslateBubbleModel> model,
                       translate::TranslateErrors::Type error_type,
                       content::WebContents* web_contents);

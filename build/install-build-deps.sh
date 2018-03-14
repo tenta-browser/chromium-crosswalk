@@ -68,7 +68,11 @@ yes_no() {
 # Checks whether a particular package is available in the repos.
 # USAGE: $ package_exists <package name>
 package_exists() {
-  [ ! -z "`apt-cache search --names-only "$1"`" ]
+  # 'apt-cache search' takes a regex string, so eg. the +'s in packages like
+  # "libstdc++" need to be escaped.
+  local escaped="$(echo $1 | sed 's/[\~\+\.\:-]/\\&/g')"
+  [ ! -z "$(apt-cache search --names-only "${escaped}" | \
+            awk '$1 == "'$1'" { print $1; }')" ]
 }
 
 # These default to on because (some) bots need them and it keeps things
@@ -110,15 +114,19 @@ if ! which lsb_release > /dev/null; then
   exit 1;
 fi
 
-lsb_release=$(lsb_release --codename --short)
-supported_releases="(trusty|xenial|yakkety|jessie)"
+distro_codename=$(lsb_release --codename --short)
+distro_id=$(lsb_release --id --short)
+supported_codenames="(trusty|xenial|zesty|artful)"
+supported_ids="(Debian)"
 if [ 0 -eq "${do_unsupported-0}" ] && [ 0 -eq "${do_quick_check-0}" ] ; then
-  if [[ ! $lsb_release =~ $supported_releases ]]; then
+  if [[ ! $distro_codename =~ $supported_codenames &&
+        ! $distro_id =~ $supported_ids ]]; then
     echo -e "ERROR: The only supported distros are\n" \
       "\tUbuntu 14.04 (trusty)\n" \
       "\tUbuntu 16.04 (xenial)\n" \
-      "\tUbuntu 16.10 (yakkety)\n" \
-      "\tDebian 8 (jessie)" >&2
+      "\tUbuntu 17.04 (zesty)\n" \
+      "\tUbuntu 17.10 (artful)\n" \
+      "\tDebian 8 (jessie) or later" >&2
     exit 1
   fi
 
@@ -148,7 +156,6 @@ dev_list="\
   fakeroot
   flex
   fonts-ipafont
-  fonts-thai-tlwg
   g++
   git-core
   git-svn
@@ -161,6 +168,7 @@ dev_list="\
   libcap-dev
   libcups2-dev
   libcurl4-gnutls-dev
+  libdconf-dev
   libdrm-dev
   libelf-dev
   libffi-dev
@@ -186,6 +194,7 @@ dev_list="\
   libxss-dev
   libxt-dev
   libxtst-dev
+  locales
   openbox
   patch
   perl
@@ -202,8 +211,8 @@ dev_list="\
   rpm
   ruby
   subversion
-  ttf-dejavu-core
   wdiff
+  x11-utils
   xcompmgr
   zip
   $chromeos_dev_list
@@ -226,6 +235,7 @@ lib_list="\
   libcairo2
   libcap2
   libcups2
+  libdconf1
   libexpat1
   libffi6
   libfontconfig1
@@ -263,48 +273,88 @@ lib_list="\
 
 # Debugging symbols for all of the run-time libraries
 dbg_list="\
-  libatk1.0-dbg
   libc6-dbg
-  libcairo2-dbg
   libffi6-dbg
-  libfontconfig1-dbg
-  libglib2.0-0-dbg
   libgtk2.0-0-dbg
-  libgtk-3-0-dbg
-  libpango1.0-0-dbg
   libpcre3-dbg
   libpixman-1-0-dbg
   libsqlite3-0-dbg
-  libx11-6-dbg
-  libx11-xcb1-dbg
   libxau6-dbg
   libxcb1-dbg
   libxcomposite1-dbg
-  libxcursor1-dbg
-  libxdamage1-dbg
   libxdmcp6-dbg
   libxext6-dbg
-  libxi6-dbg
   libxinerama1-dbg
-  libxrandr2-dbg
-  libxrender1-dbg
-  libxtst6-dbg
   zlib1g-dbg
 "
 
-if [[ ! $lsb_release =~ "yakkety" ]]; then
-  dbg_list="${dbg_list} libxfixes3-dbg"
-fi
-
-# Find the proper version of libstdc++6-4.x-dbg.
-if [ "x$lsb_release" = "xtrusty" ]; then
-  dbg_list="${dbg_list} libstdc++6-4.8-dbg"
-else
+if package_exists libstdc++6-6-dbg; then
+  dbg_list="${dbg_list} libstdc++6-6-dbg"
+elif package_exists libstdc++6-4.9-dbg; then
   dbg_list="${dbg_list} libstdc++6-4.9-dbg"
+else
+  dbg_list="${dbg_list} libstdc++6-4.8-dbg"
+fi
+if package_exists libgtk-3-0-dbgsym; then
+  lib_list="${lib_list} libgtk-3-0-dbgsym"
+elif package_exists libgtk-3-0-dbg; then
+  lib_list="${lib_list} libgtk-3-0-dbg"
+fi
+if package_exists libatk1.0-0-dbgsym; then
+  lib_list="${lib_list} libatk1.0-0-dbgsym"
+elif package_exists libatk1.0-dbg; then
+  lib_list="${lib_list} libatk1.0-dbg"
+fi
+if package_exists libcairo2-dbgsym; then
+  lib_list="${lib_list} libcairo2-dbgsym"
+elif package_exists libcairo2-dbg; then
+  lib_list="${lib_list} libcairo2-dbg"
+fi
+if package_exists libfontconfig1-dbgsym; then
+  lib_list="${lib_list} libfontconfig1-dbgsym"
+else
+  lib_list="${lib_list} libfontconfig1-dbg"
+fi
+if package_exists libxdamage1-dbgsym; then
+  lib_list="${lib_list} libxdamage1-dbgsym"
+elif package_exists libxdamage1-dbg; then
+  lib_list="${lib_list} libxdamage1-dbg"
+fi
+if package_exists libpango1.0-dev-dbgsym; then
+  lib_list="${lib_list} libpango1.0-dev-dbgsym"
+elif package_exists libpango1.0-0-dbg; then
+  lib_list="${lib_list} libpango1.0-0-dbg"
+fi
+if package_exists libx11-6-dbg; then
+    lib_list="${lib_list} libx11-6-dbg"
+fi
+if package_exists libx11-xcb1-dbg; then
+    lib_list="${lib_list} libx11-xcb1-dbg"
+fi
+if package_exists libxfixes3-dbg; then
+    lib_list="${lib_list} libxfixes3-dbg"
+fi
+if package_exists libxi6-dbg; then
+    lib_list="${lib_list} libxi6-dbg"
+fi
+if package_exists libxrandr2-dbg; then
+    lib_list="${lib_list} libxrandr2-dbg"
+fi
+if package_exists libxrender1-dbg; then
+    lib_list="${lib_list} libxrender1-dbg"
+fi
+if package_exists libxtst6-dbg; then
+    lib_list="${lib_list} libxtst6-dbg"
+fi
+if package_exists libglib2.0-0-dbg; then
+    lib_list="${lib_list} libglib2.0-0-dbg"
+fi
+if package_exists libxcursor1-dbg; then
+    lib_list="${lib_list} libxcursor1-dbg"
 fi
 
 # 32-bit libraries needed e.g. to compile V8 snapshot for Android or armhf
-lib32_list="linux-libc-dev:i386"
+lib32_list="linux-libc-dev:i386 libpci3:i386"
 
 # arm cross toolchain packages needed to build chrome on armhf
 EM_REPO="deb http://emdebian.org/tools/debian/ jessie main"
@@ -316,7 +366,7 @@ EOF
 )
 EM_ARCHIVE_KEY_FINGER="084C6C6F39159EDB67969AA87DE089671804772E"
 GPP_ARM_PACKAGE="g++-arm-linux-gnueabihf"
-case $lsb_release in
+case $distro_codename in
   jessie)
     eval $(apt-config shell APT_SOURCESDIR 'Dir::Etc::sourceparts/d')
     CROSSTOOLS_LIST="${APT_SOURCESDIR}/crosstools.list"
@@ -340,21 +390,22 @@ case $lsb_release in
       fi
     fi
     ;;
+  # All necessary ARM packages are available on the default repos on
+  # Debian 9 and later.
   *)
-    arm_list="binutils-aarch64-linux-gnu
-              libc6-dev-armhf-cross
+    arm_list="libc6-dev-armhf-cross
               linux-libc-dev-armhf-cross
               ${GPP_ARM_PACKAGE}"
     ;;
 esac
 
 # Work around for dependency issue Ubuntu/Trusty: http://crbug.com/435056
-case $lsb_release in
+case $distro_codename in
   trusty)
     arm_list+=" g++-4.8-multilib-arm-linux-gnueabihf
                 gcc-4.8-multilib-arm-linux-gnueabihf"
     ;;
-  xenial|yakkety)
+  xenial|zesty|artful)
     arm_list+=" g++-5-multilib-arm-linux-gnueabihf
                 gcc-5-multilib-arm-linux-gnueabihf
                 gcc-arm-linux-gnueabihf"
@@ -369,6 +420,7 @@ nacl_list="\
   libasound2:i386
   libcap2:i386
   libelf-dev:i386
+  libdconf1:i386
   libfontconfig1:i386
   libgconf-2-4:i386
   libglib2.0-0:i386
@@ -379,7 +431,7 @@ nacl_list="\
   lib32ncurses5-dev
   libnss3:i386
   libpango1.0-0:i386
-  libssl1.0.0:i386
+  libssl-dev:i386
   libtinfo-dev
   libtinfo-dev:i386
   libtool
@@ -394,6 +446,12 @@ nacl_list="\
   xvfb
   ${naclports_list}
 "
+
+if package_exists libssl1.0.0; then
+  nacl_list="${nacl_list} libssl1.0.0:i386"
+else
+  nacl_list="${nacl_list} libssl1.0.2:i386"
+fi
 
 # Find the proper version of packages that depend on mesa. Only one -lts variant
 # of mesa can be installed and everything that depends on it must match.
@@ -457,12 +515,9 @@ fi
 if package_exists xfonts-mathml; then
   dev_list="${dev_list} xfonts-mathml"
 fi
-if package_exists fonts-indic; then
-  dev_list="${dev_list} fonts-indic"
-else
-  dev_list="${dev_list} ttf-indic-fonts"
-fi
-if package_exists php7.0-cgi; then
+if package_exists php7.1-cgi; then
+  dev_list="${dev_list} php7.1-cgi libapache2-mod-php7.1"
+elif package_exists php7.0-cgi; then
   dev_list="${dev_list} php7.0-cgi libapache2-mod-php7.0"
 else
   dev_list="${dev_list} php5-cgi libapache2-mod-php5"
@@ -475,19 +530,25 @@ if package_exists ttf-mscorefonts-installer; then
 elif package_exists msttcorefonts; then
   dev_list="${dev_list} msttcorefonts"
 fi
-# Ubuntu 16.04 has this package deleted.
-if package_exists ttf-kochi-gothic; then
-  dev_list="${dev_list} ttf-kochi-gothic"
-fi
-# Ubuntu 16.04 has this package deleted.
-if package_exists ttf-kochi-mincho; then
-  dev_list="${dev_list} ttf-kochi-mincho"
-fi
 
 # Some packages are only needed if the distribution actually supports
 # installing them.
 if package_exists appmenu-gtk; then
   lib_list="$lib_list appmenu-gtk"
+fi
+
+# Cross-toolchain strip is needed for building the sysroots.
+if package_exists binutils-arm-linux-gnueabihf; then
+  dev_list="${dev_list} binutils-arm-linux-gnueabihf"
+fi
+if package_exists binutils-aarch64-linux-gnu; then
+  dev_list="${dev_list} binutils-aarch64-linux-gnu"
+fi
+if package_exists binutils-mipsel-linux-gnu; then
+  dev_list="${dev_list} binutils-mipsel-linux-gnu"
+fi
+if package_exists binutils-mips64el-linux-gnuabi64; then
+  dev_list="${dev_list} binutils-mips64el-linux-gnuabi64"
 fi
 
 # When cross building for arm/Android on 64-bit systems the host binaries
@@ -581,9 +642,6 @@ fi
 
 if test "$do_inst_lib32" = "1" || test "$do_inst_nacl" = "1"; then
   sudo dpkg --add-architecture i386
-  if [[ $lsb_release = "jessie" ]]; then
-    sudo dpkg --add-architecture armhf
-  fi
 fi
 sudo apt-get update
 
@@ -647,36 +705,6 @@ if test "$do_inst_chromeos_fonts" != "0"; then
   fi
 else
   echo "Skipping installation of Chrome OS fonts."
-fi
-
-# $1 - target name
-# $2 - link name
-create_library_symlink() {
-  target=$1
-  linkname=$2
-  if [ -L $linkname ]; then
-    if [ "$(basename $(readlink $linkname))" != "$(basename $target)" ]; then
-      sudo rm $linkname
-    fi
-  fi
-  if [ ! -r $linkname ]; then
-    echo "Creating link: $linkname"
-    sudo ln -fs $target $linkname
-  fi
-}
-
-if test "$do_inst_nacl" = "1"; then
-  echo "Installing symbolic links for NaCl."
-  # naclports needs to cross build python for i386, but libssl1.0.0:i386
-  # only contains libcrypto.so.1.0.0 and not the symlink needed for
-  # linking (libcrypto.so).
-  create_library_symlink /lib/i386-linux-gnu/libcrypto.so.1.0.0 \
-      /usr/lib/i386-linux-gnu/libcrypto.so
-
-  create_library_symlink /lib/i386-linux-gnu/libssl.so.1.0.0 \
-      /usr/lib/i386-linux-gnu/libssl.so
-else
-  echo "Skipping symbolic links for NaCl."
 fi
 
 echo "Installing locales."

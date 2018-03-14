@@ -6,20 +6,20 @@
 
 namespace arc {
 
-// Controls if ARC should use silent auth code request API.
-const base::Feature kArcUseAuthEndpointFeature {
-    "ArcUseAuthEndpoint", base::FEATURE_ENABLED_BY_DEFAULT
-};
-
 // Controls ACTION_BOOT_COMPLETED broadcast for third party applications on ARC.
 // When disabled, third party apps will not receive this broadcast.
 const base::Feature kBootCompletedBroadcastFeature {
     "ArcBootCompletedBroadcast", base::FEATURE_ENABLED_BY_DEFAULT
 };
 
-// Controls whether we show ARC Files app in Chrome launcher.
-const base::Feature kShowArcFilesAppFeature {
-    "ShowArcFilesApp", base::FEATURE_DISABLED_BY_DEFAULT
+// Controls experimental native bridge feature for ARC.
+const base::Feature kNativeBridgeExperimentFeature {
+    "ArcNativeBridgeExperiment", base::FEATURE_ENABLED_BY_DEFAULT
 };
+
+// Controls ARC VPN integration.
+// When enabled, Chrome traffic will be routed through VPNs connected in
+// Android apps.
+const base::Feature kVpnFeature{"ArcVpn", base::FEATURE_ENABLED_BY_DEFAULT};
 
 }  // namespace arc

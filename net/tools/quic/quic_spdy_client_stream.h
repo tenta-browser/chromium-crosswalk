@@ -13,22 +13,18 @@
 #include "net/quic/core/quic_packets.h"
 #include "net/quic/core/quic_spdy_stream.h"
 #include "net/quic/platform/api/quic_string_piece.h"
-#include "net/spdy/spdy_framer.h"
+#include "net/spdy/core/spdy_framer.h"
 
 namespace net {
 
-class QuicClientSession;
+class QuicSpdyClientSession;
 
 // All this does right now is send an SPDY request, and aggregate the
 // SPDY response.
 class QuicSpdyClientStream : public QuicSpdyStream {
  public:
-  QuicSpdyClientStream(QuicStreamId id, QuicClientSession* session);
+  QuicSpdyClientStream(QuicStreamId id, QuicSpdyClientSession* session);
   ~QuicSpdyClientStream() override;
-
-  // Override the base class to close the write side as soon as we get a
-  // response (if bidirectional streaming is not enabled).
-  void OnStreamFrame(const QuicStreamFrame& frame) override;
 
   // Override the base class to parse and store headers.
   void OnInitialHeadersComplete(bool fin,
@@ -81,7 +77,7 @@ class QuicSpdyClientStream : public QuicSpdyStream {
   size_t header_bytes_read_;
   size_t header_bytes_written_;
 
-  QuicClientSession* session_;
+  QuicSpdyClientSession* session_;
 
   // These preliminary headers are used for the 100 Continue headers
   // that may arrive before the response headers when the request has

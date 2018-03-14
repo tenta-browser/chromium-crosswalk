@@ -9,8 +9,8 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/shill_device_client.h"
@@ -23,8 +23,8 @@ namespace {
 
 class TestObserver : public NetworkSmsHandler::Observer {
  public:
-  TestObserver() {}
-  ~TestObserver() override {}
+  TestObserver() = default;
+  ~TestObserver() override = default;
 
   void MessageReceived(const base::DictionaryValue& message) override {
     std::string text;
@@ -51,8 +51,10 @@ class TestObserver : public NetworkSmsHandler::Observer {
 
 class NetworkSmsHandlerTest : public testing::Test {
  public:
-  NetworkSmsHandlerTest() {}
-  ~NetworkSmsHandlerTest() override {}
+  NetworkSmsHandlerTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI) {}
+  ~NetworkSmsHandlerTest() override = default;
 
   void SetUp() override {
     // Append '--sms-test-messages' to the command line to tell
@@ -88,7 +90,7 @@ class NetworkSmsHandlerTest : public testing::Test {
   }
 
  protected:
-  base::MessageLoopForUI message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<NetworkSmsHandler> network_sms_handler_;
   std::unique_ptr<TestObserver> test_observer_;
 };

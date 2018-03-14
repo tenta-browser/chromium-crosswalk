@@ -9,6 +9,7 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
+#include "media/base/audio_decoder_config.h"
 #include "media/base/buffering_state.h"
 #include "media/base/cdm_context.h"
 #include "media/base/media_export.h"
@@ -17,6 +18,7 @@
 #include "media/base/pipeline_status.h"
 #include "media/base/ranges.h"
 #include "media/base/text_track.h"
+#include "media/base/video_decoder_config.h"
 #include "media/base/video_rotation.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -32,6 +34,7 @@ class MEDIA_EXPORT Pipeline {
     // Executed whenever an error occurs except when the error occurs during
     // Start/Seek/Resume or Suspend. Those errors are reported via |seek_cb|
     // and |suspend_cb| respectively.
+    // NOTE: The client is responsible for calling Pipeline::Stop().
     virtual void OnError(PipelineStatus status) = 0;
 
     // Executed whenever the media reaches the end.
@@ -65,6 +68,11 @@ class MEDIA_EXPORT Pipeline {
 
     // Executed when the average keyframe distance for the video changes.
     virtual void OnVideoAverageKeyframeDistanceUpdate() = 0;
+
+    // Executed whenever DemuxerStream status returns kConfigChange. Initial
+    // configs provided by OnMetadata.
+    virtual void OnAudioConfigChange(const AudioDecoderConfig& config) = 0;
+    virtual void OnVideoConfigChange(const VideoDecoderConfig& config) = 0;
   };
 
   virtual ~Pipeline() {}

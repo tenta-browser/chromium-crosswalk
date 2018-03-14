@@ -27,12 +27,11 @@
 #define ContextMenuController_h
 
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "core/CoreExport.h"
 #include "core/layout/HitTestResult.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Noncopyable.h"
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
@@ -41,8 +40,8 @@ class ContextMenuClient;
 class ContextMenuItem;
 class ContextMenuProvider;
 class Document;
-class Event;
 class LocalFrame;
+class MouseEvent;
 class Page;
 
 class CORE_EXPORT ContextMenuController final
@@ -52,14 +51,14 @@ class CORE_EXPORT ContextMenuController final
  public:
   static ContextMenuController* Create(Page*, ContextMenuClient*);
   ~ContextMenuController();
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
   ContextMenu* GetContextMenu() const { return context_menu_.get(); }
   void ClearContextMenu();
 
   void DocumentDetached(Document*);
 
-  void HandleContextMenuEvent(Event*);
+  void HandleContextMenuEvent(MouseEvent*);
   void ShowContextMenuAtPoint(LocalFrame*,
                               float x,
                               float y,
@@ -72,11 +71,10 @@ class CORE_EXPORT ContextMenuController final
  private:
   ContextMenuController(Page*, ContextMenuClient*);
 
-  std::unique_ptr<ContextMenu> CreateContextMenu(Event*);
+  std::unique_ptr<ContextMenu> CreateContextMenu(MouseEvent*);
   std::unique_ptr<ContextMenu> CreateContextMenu(LocalFrame*,
                                                  const LayoutPoint&);
-  void PopulateCustomContextMenu(const Event&);
-  void ShowContextMenu(Event*);
+  void ShowContextMenu(MouseEvent*);
 
   ContextMenuClient* client_;
   std::unique_ptr<ContextMenu> context_menu_;

@@ -31,9 +31,9 @@
 #ifndef ScheduledAction_h
 #define ScheduledAction_h
 
-#include "bindings/core/v8/ScopedPersistent.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/V8PersistentValueVector.h"
+#include "platform/bindings/ScopedPersistent.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 #include "v8/include/v8.h"
@@ -60,7 +60,7 @@ class ScheduledAction final
   ~ScheduledAction();
   void Dispose();
 
-  DEFINE_INLINE_TRACE() {}
+  void Trace(blink::Visitor* visitor) {}
 
   void Execute(ExecutionContext*);
 

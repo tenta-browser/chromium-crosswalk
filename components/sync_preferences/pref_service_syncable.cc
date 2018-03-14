@@ -11,12 +11,17 @@
 #include "base/value_conversions.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/default_pref_store.h"
+#include "components/prefs/in_memory_pref_store.h"
 #include "components/prefs/overlay_user_pref_store.h"
 #include "components/prefs/pref_notifier_impl.h"
 #include "components/prefs/pref_registry.h"
-#include "components/prefs/pref_value_store.h"
 #include "components/sync_preferences/pref_model_associator.h"
 #include "components/sync_preferences/pref_service_syncable_observer.h"
+#include "services/preferences/public/cpp/in_process_service_factory.h"
+#include "services/preferences/public/cpp/persistent_pref_store_client.h"
+#include "services/preferences/public/cpp/pref_registry_serializer.h"
+#include "services/preferences/public/interfaces/preferences.mojom.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 namespace sync_preferences {
 
@@ -70,28 +75,38 @@ PrefServiceSyncable::~PrefServiceSyncable() {
 
 PrefServiceSyncable* PrefServiceSyncable::CreateIncognitoPrefService(
     PrefStore* incognito_extension_pref_store,
-    const std::vector<const char*>& overlay_pref_names) {
+    const std::vector<const char*>& overlay_pref_names,
+    std::unique_ptr<PrefValueStore::Delegate> delegate) {
   pref_service_forked_ = true;
   PrefNotifierImpl* pref_notifier = new PrefNotifierImpl();
-  OverlayUserPrefStore* incognito_pref_store =
-      new OverlayUserPrefStore(user_pref_store_.get());
-  for (const char* overlay_pref_name : overlay_pref_names)
-    incognito_pref_store->RegisterOverlayPref(overlay_pref_name);
 
   scoped_refptr<user_prefs::PrefRegistrySyncable> forked_registry =
       static_cast<user_prefs::PrefRegistrySyncable*>(pref_registry_.get())
           ->ForkForIncognito();
+
+  auto overlay = base::MakeRefCounted<InMemoryPrefStore>();
+  if (delegate) {
+    delegate->InitIncognitoUserPrefs(overlay, user_pref_store_,
+                                     overlay_pref_names);
+    delegate->InitPrefRegistry(forked_registry.get());
+  }
+  auto incognito_pref_store = base::MakeRefCounted<OverlayUserPrefStore>(
+      overlay.get(), user_pref_store_.get());
+
+  for (const char* overlay_pref_name : overlay_pref_names)
+    incognito_pref_store->RegisterOverlayPref(overlay_pref_name);
+
   PrefServiceSyncable* incognito_service = new PrefServiceSyncable(
       pref_notifier,
-      pref_value_store_->CloneAndSpecialize(NULL,  // managed
-                                            NULL,  // supervised_user
+      pref_value_store_->CloneAndSpecialize(nullptr,  // managed
+                                            nullptr,  // supervised_user
                                             incognito_extension_pref_store,
-                                            NULL,  // command_line_prefs
-                                            incognito_pref_store,
-                                            NULL,  // recommended
+                                            nullptr,  // command_line_prefs
+                                            incognito_pref_store.get(),
+                                            nullptr,  // recommended
                                             forked_registry->defaults().get(),
-                                            pref_notifier),
-      incognito_pref_store, forked_registry.get(),
+                                            pref_notifier, std::move(delegate)),
+      incognito_pref_store.get(), forked_registry.get(),
       pref_sync_associator_.client(), read_error_callback_, false);
   return incognito_service;
 }
@@ -126,7 +141,7 @@ syncer::SyncableService* PrefServiceSyncable::GetSyncableService(
     return &priority_pref_sync_associator_;
   } else {
     NOTREACHED() << "invalid model type: " << type;
-    return NULL;
+    return nullptr;
   }
 }
 

@@ -5,8 +5,9 @@
 // https://drafts.css-houdini.org/worklets/#workletglobalscope
 
 [
+    ActiveScriptWrappable,
     Exposed=Worklet,
     RuntimeEnabled=Worklet,
-    ImmutablePrototype,
+    ImmutablePrototype
 ] interface WorkletGlobalScope {
 };

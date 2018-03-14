@@ -4,21 +4,23 @@
 
 #include "ash/system/ime_menu/ime_list_view.h"
 
-#include "ash/resources/grit/ash_resources.h"
+#include "ash/ime/ime_controller.h"
+#include "ash/ime/ime_switch_type.h"
+#include "ash/public/interfaces/ime_info.mojom.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
 #include "ash/shell_port.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/tray/actionable_view.h"
-#include "ash/system/tray/ime_info.h"
 #include "ash/system/tray/system_menu_button.h"
-#include "ash/system/tray/system_tray_delegate.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_details_view.h"
 #include "ash/system/tray/tray_popup_header_button.h"
 #include "ash/system/tray/tray_popup_item_style.h"
 #include "ash/system/tray/tray_popup_utils.h"
 #include "ash/system/tray/tri_view.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/metrics/user_metrics.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -99,7 +101,7 @@ class ImeListItemView : public ActionableView {
     SetAccessibleName(label_view->text());
   }
 
-  ~ImeListItemView() override {}
+  ~ImeListItemView() override = default;
 
   // ActionableView:
   bool PerformAction(const ui::Event& event) override {
@@ -112,15 +114,16 @@ class ImeListItemView : public ActionableView {
 
   void OnFocus() override {
     ActionableView::OnFocus();
-    if (ime_list_view_ && ime_list_view_->scroll_content())
-      ime_list_view_->scroll_content()->ScrollRectToVisible(bounds());
+    if (ime_list_view_)
+      ime_list_view_->ScrollItemToVisible(this);
   }
 
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
     ActionableView::GetAccessibleNodeData(node_data);
     node_data->role = ui::AX_ROLE_CHECK_BOX;
-    node_data->AddStateFlag(selected_ ? ui::AX_STATE_CHECKED
-                                      : ui::AX_STATE_NONE);
+    const ui::AXCheckedState checked_state =
+        selected_ ? ui::AX_CHECKED_STATE_TRUE : ui::AX_CHECKED_STATE_FALSE;
+    node_data->AddIntAttribute(ui::AX_ATTR_CHECKED_STATE, checked_state);
   }
 
  private:
@@ -135,11 +138,11 @@ class ImeListItemView : public ActionableView {
 // Contains a toggle button to let the user enable/disable whether the
 // on-screen keyboard should be shown when focusing a textfield. This row is
 // shown only under certain conditions, e.g., when an external keyboard is
-// attached and the user is in TouchView mode.
+// attached and the user is in TabletMode mode.
 class KeyboardStatusRow : public views::View {
  public:
-  KeyboardStatusRow() {}
-  ~KeyboardStatusRow() override {}
+  KeyboardStatusRow() = default;
+  ~KeyboardStatusRow() override = default;
 
   views::ToggleButton* toggle() const { return toggle_; }
   bool is_toggled() const { return toggle_->is_on(); }
@@ -186,20 +189,19 @@ ImeListView::ImeListView(SystemTrayItem* owner)
       should_focus_ime_after_selection_with_keyboard_(false),
       current_ime_view_(nullptr) {}
 
-ImeListView::~ImeListView() {}
+ImeListView::~ImeListView() = default;
 
 void ImeListView::Init(bool show_keyboard_toggle,
                        SingleImeBehavior single_ime_behavior) {
-  SystemTrayDelegate* delegate = Shell::Get()->system_tray_delegate();
-  IMEInfoList list;
-  delegate->GetAvailableIMEList(&list);
-  IMEPropertyInfoList property_list;
-  delegate->GetCurrentIMEProperties(&property_list);
-  Update(list, property_list, show_keyboard_toggle, single_ime_behavior);
+  ImeController* ime_controller = Shell::Get()->ime_controller();
+  Update(ime_controller->current_ime().id, ime_controller->available_imes(),
+         ime_controller->current_ime_menu_items(), show_keyboard_toggle,
+         single_ime_behavior);
 }
 
-void ImeListView::Update(const IMEInfoList& list,
-                         const IMEPropertyInfoList& property_list,
+void ImeListView::Update(const std::string& current_ime_id,
+                         const std::vector<mojom::ImeInfo>& list,
+                         const std::vector<mojom::ImeMenuItem>& property_items,
                          bool show_keyboard_toggle,
                          SingleImeBehavior single_ime_behavior) {
   ResetImeListView();
@@ -208,7 +210,7 @@ void ImeListView::Update(const IMEInfoList& list,
   CreateScrollableList();
 
   if (single_ime_behavior == ImeListView::SHOW_SINGLE_IME || list.size() > 1)
-    AppendImeListAndProperties(list, property_list);
+    AppendImeListAndProperties(current_ime_id, list, property_items);
 
   if (show_keyboard_toggle)
     PrependKeyboardStatusRow();
@@ -220,7 +222,7 @@ void ImeListView::Update(const IMEInfoList& list,
       last_item_selected_with_keyboard_) {
     FocusCurrentImeIfNeeded();
   } else if (current_ime_view_) {
-    scroll_content()->ScrollRectToVisible(current_ime_view_->bounds());
+    ScrollItemToVisible(current_ime_view_);
   }
 }
 
@@ -231,6 +233,11 @@ void ImeListView::ResetImeListView() {
   current_ime_view_ = nullptr;
 }
 
+void ImeListView::ScrollItemToVisible(views::View* item_view) {
+  if (scroll_content())
+    scroll_content()->ScrollRectToVisible(item_view->bounds());
+}
+
 void ImeListView::CloseImeListView() {
   last_selected_item_id_.clear();
   current_ime_view_ = nullptr;
@@ -239,21 +246,23 @@ void ImeListView::CloseImeListView() {
 }
 
 void ImeListView::AppendImeListAndProperties(
-    const IMEInfoList& list,
-    const IMEPropertyInfoList& property_list) {
+    const std::string& current_ime_id,
+    const std::vector<mojom::ImeInfo>& list,
+    const std::vector<mojom::ImeMenuItem>& property_list) {
   DCHECK(ime_map_.empty());
   for (size_t i = 0; i < list.size(); i++) {
+    const bool selected = current_ime_id == list[i].id;
     views::View* ime_view =
         new ImeListItemView(owner(), this, list[i].short_name, list[i].name,
-                            list[i].selected, gfx::kGoogleGreen700);
+                            selected, gfx::kGoogleGreen700);
     scroll_content()->AddChildView(ime_view);
     ime_map_[ime_view] = list[i].id;
 
-    if (list[i].selected)
+    if (selected)
       current_ime_view_ = ime_view;
 
     // Add the properties, if any, of the currently-selected IME.
-    if (list[i].selected && !property_list.empty()) {
+    if (selected && !property_list.empty()) {
       // Adds a separator on the top of property items.
       scroll_content()->AddChildView(
           TrayPopupUtils::CreateListItemSeparator(true));
@@ -261,8 +270,8 @@ void ImeListView::AppendImeListAndProperties(
       // Adds the property items.
       for (size_t i = 0; i < property_list.size(); i++) {
         ImeListItemView* property_view = new ImeListItemView(
-            owner(), this, base::string16(), property_list[i].name,
-            property_list[i].selected, kMenuIconColor);
+            owner(), this, base::string16(), property_list[i].label,
+            property_list[i].checked, kMenuIconColor);
         scroll_content()->AddChildView(property_view);
         property_map_[property_view] = property_list[i].key;
       }
@@ -284,13 +293,16 @@ void ImeListView::PrependKeyboardStatusRow() {
 }
 
 void ImeListView::HandleViewClicked(views::View* view) {
-  SystemTrayDelegate* delegate = Shell::Get()->system_tray_delegate();
+  ImeController* ime_controller = Shell::Get()->ime_controller();
   std::map<views::View*, std::string>::const_iterator ime = ime_map_.find(view);
   if (ime != ime_map_.end()) {
-    ShellPort::Get()->RecordUserMetricsAction(UMA_STATUS_AREA_IME_SWITCH_MODE);
+    base::RecordAction(base::UserMetricsAction("StatusArea_IME_SwitchMode"));
     std::string ime_id = ime->second;
     last_selected_item_id_ = ime_id;
-    delegate->SwitchIME(ime_id);
+    ime_controller->SwitchImeById(ime_id, false /* show_message */);
+    UMA_HISTOGRAM_ENUMERATION("InputMethod.ImeSwitch", ImeSwitchType::kTray,
+                              ImeSwitchType::kCount);
+
   } else {
     std::map<views::View*, std::string>::const_iterator property =
         property_map_.find(view);
@@ -298,7 +310,7 @@ void ImeListView::HandleViewClicked(views::View* view) {
       return;
     const std::string key = property->second;
     last_selected_item_id_ = key;
-    delegate->ActivateIMEProperty(key);
+    ime_controller->ActivateImeMenuItem(key);
   }
 
   if (!should_focus_ime_after_selection_with_keyboard_ ||
@@ -323,7 +335,7 @@ void ImeListView::VisibilityChanged(View* starting_from, bool is_visible) {
     return;
   }
 
-  scroll_content()->ScrollRectToVisible(current_ime_view_->bounds());
+  ScrollItemToVisible(current_ime_view_);
 }
 
 void ImeListView::FocusCurrentImeIfNeeded() {
@@ -349,7 +361,7 @@ void ImeListView::FocusCurrentImeIfNeeded() {
 ImeListViewTestApi::ImeListViewTestApi(ImeListView* ime_list_view)
     : ime_list_view_(ime_list_view) {}
 
-ImeListViewTestApi::~ImeListViewTestApi() {}
+ImeListViewTestApi::~ImeListViewTestApi() = default;
 
 views::View* ImeListViewTestApi::GetToggleView() const {
   return ime_list_view_->keyboard_status_row_->toggle();

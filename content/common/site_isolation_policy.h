@@ -5,9 +5,13 @@
 #ifndef CONTENT_COMMON_SITE_ISOLATION_POLICY_H_
 #define CONTENT_COMMON_SITE_ISOLATION_POLICY_H_
 
+#include <vector>
+
+#include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/strings/string_piece_forward.h"
 #include "content/common/content_export.h"
-#include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
 
@@ -15,34 +19,49 @@ namespace content {
 // site isolation, --site-per-process, and related features.
 //
 // This is currently static because all these modes are controlled by command-
-// line flags.
+// line flags or field trials.
 //
 // These methods can be called from any thread.
 class CONTENT_EXPORT SiteIsolationPolicy {
  public:
-  // Returns true if the current process model might allow the use of cross-
-  // process iframes. This should typically used to avoid executing codepaths
-  // that only matter for cross-process iframes, to protect the default
-  // behavior.
-  //
-  // Note: Since cross-process frames will soon be possible by default, usage
-  // should be limited to temporary stop-gaps.
-  //
-  // Instead of calling this method, prefer to examine object state to see
-  // whether a particular frame happens to have a cross-process relationship
-  // with another, or to consult DoesSiteRequireDedicatedProcess() to see if a
-  // particular site merits protection.
-  static bool AreCrossProcessFramesPossible();
-
   // Returns true if every site should be placed in a dedicated process.
   static bool UseDedicatedProcessesForAllSites();
+
+  // Returns whether cross-site document responses can be blocked.
+  enum CrossSiteDocumentBlockingEnabledState {
+    XSDB_ENABLED_UNCONDITIONALLY,
+    XSDB_ENABLED_IF_ISOLATED,
+    XSDB_DISABLED,
+  };
+  static CrossSiteDocumentBlockingEnabledState
+  IsCrossSiteDocumentBlockingEnabled();
 
   // Returns true if third-party subframes of a page should be kept in a
   // different process from the main frame.
   static bool IsTopDocumentIsolationEnabled();
 
+  // Returns true if isolated origins feature is enabled.
+  static bool AreIsolatedOriginsEnabled();
+
+  // Returns the origins to isolate.  See also AreIsolatedOriginsEnabled.
+  // This list applies globally to the whole browser in all profiles.
+  // TODO(lukasza): Make sure this list also includes the origins returned by
+  // ContentBrowserClient::GetOriginsRequiringDedicatedProcess.
+  static std::vector<url::Origin> GetIsolatedOrigins();
+
+  // Records metrics about which site isolation command-line flags are present,
+  // and sets up a timer to keep recording them every 24 hours.  This should be
+  // called once on browser startup.
+  static void StartRecordingSiteIsolationFlagUsage();
+
  private:
   SiteIsolationPolicy();  // Not instantiable.
+
+  FRIEND_TEST_ALL_PREFIXES(SiteIsolationPolicyTest, ParseIsolatedOrigins);
+  static std::vector<url::Origin> ParseIsolatedOrigins(base::StringPiece arg);
+
+  // Records metrics about which site isolation command-line flags are present.
+  static void RecordSiteIsolationFlagUsage();
 
   DISALLOW_COPY_AND_ASSIGN(SiteIsolationPolicy);
 };

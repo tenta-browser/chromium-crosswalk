@@ -12,26 +12,26 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/memory/memory_pressure_listener.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "media/blink/lru.h"
 #include "media/blink/media_blink_export.h"
 #include "media/blink/multibuffer.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
 #include "url/gurl.h"
 
 namespace media {
 
 const int64_t kPositionNotSpecified = -1;
 
+class ResourceFetchContext;
 class UrlData;
 
 // A multibuffer for loading media resources which knows
 // how to create MultiBufferDataProviders to load data
 // into the cache.
-class MEDIA_BLINK_EXPORT ResourceMultiBuffer
-    : NON_EXPORTED_BASE(public MultiBuffer) {
+class MEDIA_BLINK_EXPORT ResourceMultiBuffer : public MultiBuffer {
  public:
   ResourceMultiBuffer(UrlData* url_data_, int block_shift);
   ~ResourceMultiBuffer() override;
@@ -91,8 +91,11 @@ class MEDIA_BLINK_EXPORT UrlData : public base::RefCounted<UrlData> {
   // Returns the number of blocks cached for this resource.
   size_t CachedSize();
 
-  // Returns our url_index, or nullptr if it's been destroyed.
-  UrlIndex* url_index() const { return url_index_.get(); }
+  // Returns true if this resource is fully cached in memory.
+  bool FullyCached();
+
+  // Returns our url_index.
+  UrlIndex* url_index() const { return url_index_; }
 
   // Notifies the url index that this is currently used.
   // The url <-> URLData mapping will be eventually be invalidated if
@@ -131,18 +134,18 @@ class MEDIA_BLINK_EXPORT UrlData : public base::RefCounted<UrlData> {
   // Returns true it is valid to keep using this to access cached data.
   // A single media player instance may choose to ignore this for resources
   // that have already been opened.
-  bool Valid() const;
+  bool Valid();
 
   // Virtual so we can override it for testing.
   virtual ResourceMultiBuffer* multibuffer();
 
-  // Accessor
-  blink::WebFrame* frame() const { return frame_; }
+  void AddBytesRead(int64_t b) { bytes_read_from_cache_ += b; }
+  int64_t BytesReadFromCache() const { return bytes_read_from_cache_; }
+  void AddBytesReadFromNetwork(int64_t b) { bytes_read_from_network_ += b; }
+  int64_t BytesReadFromNetwork() const { return bytes_read_from_network_; }
 
  protected:
-  UrlData(const GURL& url,
-          CORSMode cors_mode,
-          const base::WeakPtr<UrlIndex>& url_index);
+  UrlData(const GURL& url, CORSMode cors_mode, UrlIndex* url_index);
   virtual ~UrlData();
 
  private:
@@ -165,10 +168,16 @@ class MEDIA_BLINK_EXPORT UrlData : public base::RefCounted<UrlData> {
   // Cross-origin access mode.
   const CORSMode cors_mode_;
 
-  base::WeakPtr<UrlIndex> url_index_;
+  UrlIndex* const url_index_;
 
   // Length of resource this url points to. (in bytes)
   int64_t length_;
+
+  // Number of bytes read from this resource.
+  int64_t bytes_read_from_cache_ = 0;
+
+  // Number of bytes read from network into the cache for this resource.
+  int64_t bytes_read_from_network_ = 0;
 
   // Does the server support ranges?
   bool range_supported_;
@@ -197,8 +206,6 @@ class MEDIA_BLINK_EXPORT UrlData : public base::RefCounted<UrlData> {
   ResourceMultiBuffer multibuffer_;
   std::vector<RedirectCB> redirect_callbacks_;
 
-  blink::WebFrame* frame_;
-
   base::ThreadChecker thread_checker_;
   DISALLOW_COPY_AND_ASSIGN(UrlData);
 };
@@ -206,8 +213,8 @@ class MEDIA_BLINK_EXPORT UrlData : public base::RefCounted<UrlData> {
 // The UrlIndex lets you look up UrlData instances by url.
 class MEDIA_BLINK_EXPORT UrlIndex {
  public:
-  explicit UrlIndex(blink::WebFrame*);
-  UrlIndex(blink::WebFrame*, int block_shift);
+  explicit UrlIndex(ResourceFetchContext* fetch_context);
+  UrlIndex(ResourceFetchContext* fetch_context, int block_shift);
   virtual ~UrlIndex();
 
   // Look up an UrlData in the index and return it. If none is found,
@@ -215,6 +222,8 @@ class MEDIA_BLINK_EXPORT UrlIndex {
   // added to the index, instead you must call TryInsert on them after
   // initializing relevant parameters, like whether it support
   // ranges and it's last modified time.
+  // Because the returned UrlData has a raw reference to |this|, it must be
+  // released before |this| is destroyed.
   scoped_refptr<UrlData> GetByUrl(const GURL& gurl,
                                   UrlData::CORSMode cors_mode);
 
@@ -230,31 +239,36 @@ class MEDIA_BLINK_EXPORT UrlIndex {
   //     used or have an Expires: header that says when they stop being valid.
   //   o last_modified: Expired cache entries can be re-used if last_modified
   //     matches.
+  // Because the returned UrlData has a raw reference to |this|, it must be
+  // released before |this| is destroyed.
   // TODO(hubbe): Add etag support.
   scoped_refptr<UrlData> TryInsert(const scoped_refptr<UrlData>& url_data);
 
-  blink::WebFrame* frame() const { return frame_; }
+  ResourceFetchContext* fetch_context() const { return fetch_context_; }
   int block_shift() const { return block_shift_; }
 
  private:
   friend class UrlData;
   friend class ResourceMultiBuffer;
-  void RemoveUrlDataIfEmpty(const scoped_refptr<UrlData>& url_data);
+  void RemoveUrlData(const scoped_refptr<UrlData>& url_data);
 
   // Virtual so we can override it in tests.
   virtual scoped_refptr<UrlData> NewUrlData(const GURL& url,
                                             UrlData::CORSMode cors_mode);
 
-  std::map<UrlData::KeyType, scoped_refptr<UrlData>> by_url_;
-  blink::WebFrame* frame_;
+  void OnMemoryPressure(
+      base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level);
+
+  ResourceFetchContext* fetch_context_;
+  using UrlDataMap = std::map<UrlData::KeyType, scoped_refptr<UrlData>>;
+  UrlDataMap indexed_data_;
   scoped_refptr<MultiBuffer::GlobalLRU> lru_;
 
   // log2 of block size in multibuffer cache. Defaults to kBlockSizeShift.
   // Currently only changed for testing purposes.
   const int block_shift_;
 
- protected:
-  base::WeakPtrFactory<UrlIndex> weak_factory_;
+  base::MemoryPressureListener memory_pressure_listener_;
 };
 
 }  // namespace media

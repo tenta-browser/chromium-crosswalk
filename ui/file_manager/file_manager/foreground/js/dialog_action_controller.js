@@ -125,7 +125,8 @@ function DialogActionController(
       this.fileTypes_, launchParam.includeAllFiles);
   this.onFileTypeFilterChanged_();
 
-  this.newFolderCommand_ = document.getElementById('new-folder');
+  this.newFolderCommand_ =
+      /** @type {cr.ui.Command} */ (document.getElementById('new-folder'));
   this.newFolderCommand_.addEventListener(
       'disabledChange', this.updateNewFolderButton_.bind(this));
 }
@@ -138,7 +139,8 @@ DialogActionController.prototype.processOKActionForSaveDialog_ = function() {
 
   // If OK action is clicked when a directory is selected, open the directory.
   if (selection.directoryCount === 1 && selection.fileCount === 0) {
-    this.directoryModel_.changeDirectoryEntry(selection.entries[0]);
+    this.directoryModel_.changeDirectoryEntry(
+        /** @type {!DirectoryEntry} */ (selection.entries[0]));
     return;
   }
 
@@ -275,6 +277,7 @@ DialogActionController.prototype.updateNewFolderButton_ = function() {
  * @private
  */
 DialogActionController.prototype.selectFilesAndClose_ = function(selection) {
+  var currentRootType = this.directoryModel_.getCurrentRootType();
   var callSelectFilesApiAndClose = function(callback) {
     var onFileSelected = function() {
       callback();
@@ -284,6 +287,13 @@ DialogActionController.prototype.selectFilesAndClose_ = function(selection) {
         setTimeout(window.close.bind(window), 0);
       }
     };
+    // Record the root types of chosen files in OPEN dialog.
+    if (this.dialogType_ == DialogType.SELECT_OPEN_FILE ||
+        this.dialogType_ == DialogType.SELECT_OPEN_MULTI_FILE) {
+      metrics.recordEnum(
+          'OpenFiles.RootType', currentRootType,
+          VolumeManagerCommon.RootTypesForUMA);
+    }
     if (selection.multiple) {
       chrome.fileManagerPrivate.selectFiles(
           selection.urls,
@@ -299,9 +309,6 @@ DialogActionController.prototype.selectFilesAndClose_ = function(selection) {
     }
   }.bind(this);
 
-  var currentRootType = this.directoryModel_.getCurrentRootType();
-  var currentVolumeType = currentRootType !== null ?
-      VolumeManagerCommon.getVolumeTypeFromRootType(currentRootType) : null;
   if (currentRootType !== VolumeManagerCommon.VolumeType.DRIVE ||
       this.dialogType_ === DialogType.SELECT_SAVEAS_FILE) {
     callSelectFilesApiAndClose(function() {});

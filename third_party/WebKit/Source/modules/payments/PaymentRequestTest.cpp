@@ -17,7 +17,7 @@ namespace {
 TEST(PaymentRequestTest, SecureContextRequired) {
   V8TestingScope scope;
   scope.GetDocument().SetSecurityOrigin(
-      SecurityOrigin::Create(KURL(KURL(), "http://www.example.com/")));
+      SecurityOrigin::Create(KURL(NullURL(), "http://www.example.com/")));
 
   PaymentRequest::Create(
       scope.GetExecutionContext(), BuildPaymentMethodDataForTest(),
@@ -43,17 +43,6 @@ TEST(PaymentRequestTest, SupportedMethodListRequired) {
   PaymentRequest::Create(
       scope.GetExecutionContext(), HeapVector<PaymentMethodData>(),
       BuildPaymentDetailsInitForTest(), scope.GetExceptionState());
-
-  EXPECT_TRUE(scope.GetExceptionState().HadException());
-  EXPECT_EQ(kV8TypeError, scope.GetExceptionState().Code());
-}
-
-TEST(PaymentRequestTest, TotalRequired) {
-  V8TestingScope scope;
-  MakePaymentRequestOriginSecure(scope.GetDocument());
-  PaymentRequest::Create(scope.GetExecutionContext(),
-                         BuildPaymentMethodDataForTest(), PaymentDetailsInit(),
-                         scope.GetExceptionState());
 
   EXPECT_TRUE(scope.GetExceptionState().HadException());
   EXPECT_EQ(kV8TypeError, scope.GetExceptionState().Code());
@@ -274,22 +263,6 @@ TEST(PaymentRequestTest, PickupShippingTypeWhenShippingTypeIsPickup) {
   EXPECT_EQ("pickup", request->shippingType());
 }
 
-TEST(PaymentRequestTest, DefaultShippingTypeWhenShippingTypeIsInvalid) {
-  V8TestingScope scope;
-  MakePaymentRequestOriginSecure(scope.GetDocument());
-  PaymentDetailsInit details;
-  details.setTotal(BuildPaymentItemForTest());
-  PaymentOptions options;
-  options.setRequestShipping(true);
-  options.setShippingType("invalid");
-
-  PaymentRequest* request = PaymentRequest::Create(
-      scope.GetExecutionContext(), BuildPaymentMethodDataForTest(), details,
-      options, scope.GetExceptionState());
-
-  EXPECT_EQ("shipping", request->shippingType());
-}
-
 TEST(PaymentRequestTest, RejectShowPromiseOnInvalidShippingAddress) {
   V8TestingScope scope;
   PaymentRequestMockFunctionScope funcs(scope.GetScriptState());
@@ -370,7 +343,7 @@ TEST(PaymentRequestTest, RejectShowPromiseOnErrorPaymentMethodNotSupported) {
       payments::mojom::blink::PaymentErrorReason::NOT_SUPPORTED);
 
   v8::MicrotasksScope::PerformCheckpoint(scope.GetScriptState()->GetIsolate());
-  EXPECT_EQ("NotSupportedError: The payment method is not supported",
+  EXPECT_EQ("NotSupportedError: The payment method \"foo\" is not supported",
             error_message);
 }
 
@@ -591,7 +564,7 @@ TEST(PaymentRequestTest, NoExceptionWithErrorMessageInUpdate) {
 }
 
 TEST(PaymentRequestTest,
-     ShouldResolveWithEmptyShippingOptionsIfIDsOfShippingOptionsAreDuplicated) {
+     ShouldResolveWithExceptionIfIDsOfShippingOptionsAreDuplicated) {
   V8TestingScope scope;
   PaymentRequestMockFunctionScope funcs(scope.GetScriptState());
   MakePaymentRequestOriginSecure(scope.GetDocument());
@@ -606,29 +579,24 @@ TEST(PaymentRequestTest,
   details.setShippingOptions(shipping_options);
   PaymentOptions options;
   options.setRequestShipping(true);
+  PaymentRequest::Create(scope.GetExecutionContext(),
+                         BuildPaymentMethodDataForTest(), details, options,
+                         scope.GetExceptionState());
+  EXPECT_TRUE(scope.GetExceptionState().HadException());
+}
+
+TEST(PaymentRequestTest, DetailsIdIsSet) {
+  V8TestingScope scope;
+  MakePaymentRequestOriginSecure(scope.GetDocument());
+  PaymentDetailsInit details;
+  details.setTotal(BuildPaymentItemForTest());
+  details.setId("my_payment_id");
+
   PaymentRequest* request = PaymentRequest::Create(
       scope.GetExecutionContext(), BuildPaymentMethodDataForTest(), details,
-      options, scope.GetExceptionState());
-  EXPECT_FALSE(scope.GetExceptionState().HadException());
-  EXPECT_TRUE(request->shippingOption().IsNull());
-  request->show(scope.GetScriptState())
-      .Then(funcs.ExpectNoCall(), funcs.ExpectNoCall());
-  String detail_with_shipping_options =
-      "{\"total\": {\"label\": \"Total\", \"amount\": {\"currency\": \"USD\", "
-      "\"value\": \"5.00\"}},"
-      "\"shippingOptions\": [{\"id\": \"standardShippingOption\", \"label\": "
-      "\"Standard shipping\", \"amount\": {\"currency\": \"USD\", \"value\": "
-      "\"5.00\"}, \"selected\": true}, {\"id\": \"standardShippingOption\", "
-      "\"label\": \"Standard shipping\", \"amount\": {\"currency\": \"USD\", "
-      "\"value\": \"5.00\"}, \"selected\": true}]}";
+      scope.GetExceptionState());
 
-  request->OnUpdatePaymentDetails(ScriptValue::From(
-      scope.GetScriptState(),
-      FromJSONString(scope.GetScriptState()->GetIsolate(),
-                     detail_with_shipping_options, scope.GetExceptionState())));
-
-  EXPECT_FALSE(scope.GetExceptionState().HadException());
-  EXPECT_TRUE(request->shippingOption().IsNull());
+  EXPECT_EQ("my_payment_id", request->id());
 }
 
 }  // namespace

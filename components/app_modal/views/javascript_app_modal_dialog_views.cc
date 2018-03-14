@@ -6,7 +6,6 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "components/app_modal/javascript_app_modal_dialog.h"
-#include "components/constrained_window/constrained_window_views.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/events/keycodes/keyboard_codes.h"
@@ -119,7 +118,8 @@ base::string16 JavaScriptAppModalDialogViews::GetDialogButtonLabel(
           parent_->is_reload() ?
           IDS_BEFORERELOAD_MESSAGEBOX_OK_BUTTON_LABEL :
           IDS_BEFOREUNLOAD_MESSAGEBOX_OK_BUTTON_LABEL);
-    } else if (button == ui::DIALOG_BUTTON_CANCEL) {
+    }
+    if (button == ui::DIALOG_BUTTON_CANCEL) {
       return l10n_util::GetStringUTF16(
           parent_->is_reload() ?
           IDS_BEFORERELOAD_MESSAGEBOX_CANCEL_BUTTON_LABEL :
@@ -144,6 +144,10 @@ views::View* JavaScriptAppModalDialogViews::GetInitiallyFocusedView() {
   if (message_box_view_->text_box())
     return message_box_view_->text_box();
   return views::DialogDelegate::GetInitiallyFocusedView();
+}
+
+bool JavaScriptAppModalDialogViews::ShouldShowCloseButton() const {
+  return false;
 }
 
 void JavaScriptAppModalDialogViews::WindowClosing() {

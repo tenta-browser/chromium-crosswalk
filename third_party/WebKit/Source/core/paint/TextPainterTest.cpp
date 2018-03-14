@@ -33,8 +33,8 @@ class TextPainterTest : public RenderingTest {
   PaintInfo CreatePaintInfo(bool uses_text_as_clip, bool is_printing) {
     return PaintInfo(
         context_, IntRect(),
-        uses_text_as_clip ? kPaintPhaseTextClip
-                          : kPaintPhaseSelfBlockBackgroundOnly,
+        uses_text_as_clip ? PaintPhase::kTextClip
+                          : PaintPhase::kSelfBlockBackgroundOnly,
         is_printing ? kGlobalPaintPrinting : kGlobalPaintNormalPhase, 0);
   }
 
@@ -43,7 +43,7 @@ class TextPainterTest : public RenderingTest {
     RenderingTest::SetUp();
     SetBodyInnerHTML("Hello world");
     layout_text_ =
-        ToLayoutText(GetDocument().body()->FirstChild()->GetLayoutObject());
+        ToLayoutText(GetDocument().body()->firstChild()->GetLayoutObject());
     ASSERT_TRUE(layout_text_);
     ASSERT_EQ("Hello world", layout_text_->GetText());
   }
@@ -57,8 +57,8 @@ TEST_F(TextPainterTest, TextPaintingStyle_Simple) {
   GetDocument().body()->SetInlineStyleProperty(CSSPropertyColor, CSSValueBlue);
   GetDocument().View()->UpdateAllLifecyclePhases();
 
-  TextPainter::Style text_style = TextPainter::TextPaintingStyle(
-      GetLineLayoutText(), GetLineLayoutText().StyleRef(),
+  TextPaintStyle text_style = TextPainter::TextPaintingStyle(
+      GetLineLayoutText().GetDocument(), GetLineLayoutText().StyleRef(),
       CreatePaintInfo(false /* usesTextAsClip */, false /* isPrinting */));
   EXPECT_EQ(Color(0, 0, 255), text_style.fill_color);
   EXPECT_EQ(Color(0, 0, 255), text_style.stroke_color);
@@ -81,8 +81,8 @@ TEST_F(TextPainterTest, TextPaintingStyle_AllProperties) {
                                                "1px 2px 3px yellow");
   GetDocument().View()->UpdateAllLifecyclePhases();
 
-  TextPainter::Style text_style = TextPainter::TextPaintingStyle(
-      GetLineLayoutText(), GetLineLayoutText().StyleRef(),
+  TextPaintStyle text_style = TextPainter::TextPaintingStyle(
+      GetLineLayoutText().GetDocument(), GetLineLayoutText().StyleRef(),
       CreatePaintInfo(false /* usesTextAsClip */, false /* isPrinting */));
   EXPECT_EQ(Color(255, 0, 0), text_style.fill_color);
   EXPECT_EQ(Color(0, 255, 0), text_style.stroke_color);
@@ -111,8 +111,8 @@ TEST_F(TextPainterTest, TextPaintingStyle_UsesTextAsClip) {
                                                "1px 2px 3px yellow");
   GetDocument().View()->UpdateAllLifecyclePhases();
 
-  TextPainter::Style text_style = TextPainter::TextPaintingStyle(
-      GetLineLayoutText(), GetLineLayoutText().StyleRef(),
+  TextPaintStyle text_style = TextPainter::TextPaintingStyle(
+      GetLineLayoutText().GetDocument(), GetLineLayoutText().StyleRef(),
       CreatePaintInfo(true /* usesTextAsClip */, false /* isPrinting */));
   EXPECT_EQ(Color::kBlack, text_style.fill_color);
   EXPECT_EQ(Color::kBlack, text_style.stroke_color);
@@ -135,8 +135,8 @@ TEST_F(TextPainterTest,
   GetDocument().SetPrinting(Document::kPrinting);
   GetDocument().View()->UpdateAllLifecyclePhases();
 
-  TextPainter::Style text_style = TextPainter::TextPaintingStyle(
-      GetLineLayoutText(), GetLineLayoutText().StyleRef(),
+  TextPaintStyle text_style = TextPainter::TextPaintingStyle(
+      GetLineLayoutText().GetDocument(), GetLineLayoutText().StyleRef(),
       CreatePaintInfo(false /* usesTextAsClip */, true /* isPrinting */));
   EXPECT_EQ(Color(255, 0, 0), text_style.fill_color);
   EXPECT_EQ(Color(0, 255, 0), text_style.stroke_color);
@@ -156,8 +156,8 @@ TEST_F(TextPainterTest, TextPaintingStyle_ForceBackgroundToWhite_Darkened) {
   GetDocument().SetPrinting(Document::kPrinting);
   GetDocument().View()->UpdateAllLifecyclePhases();
 
-  TextPainter::Style text_style = TextPainter::TextPaintingStyle(
-      GetLineLayoutText(), GetLineLayoutText().StyleRef(),
+  TextPaintStyle text_style = TextPainter::TextPaintingStyle(
+      GetLineLayoutText().GetDocument(), GetLineLayoutText().StyleRef(),
       CreatePaintInfo(false /* usesTextAsClip */, true /* isPrinting */));
   EXPECT_EQ(Color(255, 220, 220).Dark(), text_style.fill_color);
   EXPECT_EQ(Color(220, 255, 220).Dark(), text_style.stroke_color);

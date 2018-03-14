@@ -6,8 +6,10 @@ package org.chromium.chrome.browser.preferences.website;
 
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.Intent;
 import android.content.res.Resources;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.preference.ListPreference;
 import android.preference.Preference;
@@ -15,6 +17,7 @@ import android.preference.Preference.OnPreferenceChangeListener;
 import android.preference.Preference.OnPreferenceClickListener;
 import android.preference.PreferenceFragment;
 import android.preference.PreferenceScreen;
+import android.provider.Settings;
 import android.support.v7.app.AlertDialog;
 import android.text.format.Formatter;
 import android.widget.ListAdapter;
@@ -24,10 +27,10 @@ import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ContentSettingsType;
-import org.chromium.chrome.browser.omnibox.geo.GeolocationHeader;
-import org.chromium.chrome.browser.search_engines.TemplateUrlService;
+import org.chromium.chrome.browser.notifications.channels.SiteChannelsManager;
+import org.chromium.chrome.browser.preferences.PrefServiceBridge;
+import org.chromium.chrome.browser.preferences.PreferenceUtils;
 import org.chromium.components.url_formatter.UrlFormatter;
-import org.chromium.content_public.browser.WebContents;
 
 import java.net.URI;
 import java.util.Arrays;
@@ -39,20 +42,14 @@ import java.util.Set;
  * Shows the permissions and other settings for a particular website.
  */
 public class SingleWebsitePreferences extends PreferenceFragment
-        implements DialogInterface.OnClickListener, OnPreferenceChangeListener,
-                OnPreferenceClickListener {
+        implements OnPreferenceChangeListener, OnPreferenceClickListener {
     // SingleWebsitePreferences expects either EXTRA_SITE (a Website) or
-    // EXTRA_ORIGIN (a WebsiteAddress) to be present (but not both). If
+    // EXTRA_SITE_ADDRESS (a WebsiteAddress) to be present (but not both). If
     // EXTRA_SITE is present, the fragment will display the permissions in that
-    // Website object. If EXTRA_ORIGIN is present, the fragment will find all
-    // permissions for that website address and display those. If EXTRA_LOCATION
-    // is present, the fragment will add a Location toggle, even if the site
-    // specifies no Location permission.
+    // Website object. If EXTRA_SITE_ADDRESS is present, the fragment will find all
+    // permissions for that website address and display those.
     public static final String EXTRA_SITE = "org.chromium.chrome.preferences.site";
-    public static final String EXTRA_ORIGIN = "org.chromium.chrome.preferences.origin";
-    public static final String EXTRA_LOCATION = "org.chromium.chrome.preferences.location";
-
-    public static final String EXTRA_WEB_CONTENTS = "org.chromium.chrome.preferences.web_contents";
+    public static final String EXTRA_SITE_ADDRESS = "org.chromium.chrome.preferences.site_address";
     public static final String EXTRA_USB_INFO = "org.chromium.chrome.preferences.usb_info";
 
     // Preference keys, see single_website_preferences.xml
@@ -64,6 +61,8 @@ public class SingleWebsitePreferences extends PreferenceFragment
     public static final String PREF_OS_PERMISSIONS_WARNING_EXTRA = "os_permissions_warning_extra";
     public static final String PREF_OS_PERMISSIONS_WARNING_DIVIDER =
             "os_permissions_warning_divider";
+    public static final String PREF_INTRUSIVE_ADS_INFO = "intrusive_ads_info";
+    public static final String PREF_INTRUSIVE_ADS_INFO_DIVIDER = "intrusive_ads_info_divider";
     // Actions at the top (if adding new, see hasUsagePreferences below):
     public static final String PREF_CLEAR_DATA = "clear_data";
     // Buttons:
@@ -81,8 +80,8 @@ public class SingleWebsitePreferences extends PreferenceFragment
     public static final String PREF_POPUP_PERMISSION = "popup_permission_list";
     public static final String PREF_PROTECTED_MEDIA_IDENTIFIER_PERMISSION =
             "protected_media_identifier_permission_list";
-    public static final String PREF_SUBRESOURCE_FILTER_PERMISSION =
-            "subresource_filter_permission_list";
+    public static final String PREF_ADS_PERMISSION = "ads_permission_list";
+    public static final String PREF_SOUND_PERMISSION = "sound_permission_list";
 
     // All permissions from the permissions preference category must be listed here.
     // TODO(mvanouwerkerk): Use this array in more places to reduce verbosity.
@@ -98,24 +97,24 @@ public class SingleWebsitePreferences extends PreferenceFragment
             PREF_NOTIFICATIONS_PERMISSION,
             PREF_POPUP_PERMISSION,
             PREF_PROTECTED_MEDIA_IDENTIFIER_PERMISSION,
-            PREF_SUBRESOURCE_FILTER_PERMISSION,
+            PREF_ADS_PERMISSION,
+            PREF_SOUND_PERMISSION,
     };
+
+    private static final int REQUEST_CODE_NOTIFICATION_CHANNEL_SETTINGS = 1;
 
     // The website this page is displaying details about.
     private Website mSite;
-
-    // The address of the site we want to display. Used only if EXTRA_ADDRESS is provided.
-    private WebsiteAddress mSiteAddress;
 
     // The number of USB device permissions displayed.
     private int mUsbPermissionCount;
 
     private class SingleWebsitePermissionsPopulator
             implements WebsitePermissionsFetcher.WebsitePermissionsCallback {
-        private final WebContents mWebContents;
+        private final WebsiteAddress mSiteAddress;
 
-        public SingleWebsitePermissionsPopulator(WebContents webContents) {
-            mWebContents = webContents;
+        public SingleWebsitePermissionsPopulator(WebsiteAddress siteAddress) {
+            mSiteAddress = siteAddress;
         }
 
         @Override
@@ -145,7 +144,7 @@ public class SingleWebsitePreferences extends PreferenceFragment
         // equivalent of the call below, because this is perfectly fine for non-display purposes.
         String origin =
                 UrlFormatter.formatUrlForSecurityDisplay(URI.create(url), true /* showScheme */);
-        fragmentArgs.putString(SingleWebsitePreferences.EXTRA_ORIGIN, origin);
+        fragmentArgs.putSerializable(EXTRA_SITE_ADDRESS, WebsiteAddress.create(origin));
         return fragmentArgs;
     }
 
@@ -156,18 +155,15 @@ public class SingleWebsitePreferences extends PreferenceFragment
         listView.setDivider(null);
 
         Object extraSite = getArguments().getSerializable(EXTRA_SITE);
-        Object extraOrigin = getArguments().getSerializable(EXTRA_ORIGIN);
-        getArguments().setClassLoader(WebContents.class.getClassLoader());
-        Object webContents = getArguments().get(EXTRA_WEB_CONTENTS);
+        Object extraSiteAddress = getArguments().getSerializable(EXTRA_SITE_ADDRESS);
 
-        if (extraSite != null && extraOrigin == null) {
+        if (extraSite != null && extraSiteAddress == null) {
             mSite = (Website) extraSite;
             displaySitePermissions();
-        } else if (extraOrigin != null && extraSite == null) {
-            mSiteAddress = WebsiteAddress.create((String) extraOrigin);
+        } else if (extraSiteAddress != null && extraSite == null) {
             WebsitePermissionsFetcher fetcher;
             fetcher = new WebsitePermissionsFetcher(
-                new SingleWebsitePermissionsPopulator((WebContents) webContents));
+                    new SingleWebsitePermissionsPopulator((WebsiteAddress) extraSiteAddress));
             fetcher.fetchAllPreferences();
         } else {
             assert false : "Exactly one of EXTRA_SITE or EXTRA_SITE_ADDRESS must be provided.";
@@ -195,10 +191,9 @@ public class SingleWebsitePreferences extends PreferenceFragment
         // This loop looks expensive, but the amount of data is likely to be relatively small
         // because most sites have very few permissions.
         for (Website other : websites) {
-            if (merged.getSubresourceFilterException() == null
-                    && other.getSubresourceFilterException() != null
+            if (merged.getAdsException() == null && other.getAdsException() != null
                     && other.compareByAddressTo(merged) == 0) {
-                merged.setSubresourceFilterException(other.getSubresourceFilterException());
+                merged.setAdsException(other.getAdsException());
             }
             if (merged.getGeolocationInfo() == null && other.getGeolocationInfo() != null
                     && permissionInfoIsForTopLevelOrigin(other.getGeolocationInfo(), origin)) {
@@ -245,12 +240,29 @@ public class SingleWebsitePreferences extends PreferenceFragment
                     merged.addUsbInfo(usbInfo);
                 }
             }
+            if (host.equals(other.getAddress().getHost())) {
+                if (merged.getJavaScriptException() == null
+                        && other.getJavaScriptException() != null) {
+                    merged.setJavaScriptException(other.getJavaScriptException());
+                }
+                if (merged.getSoundException() == null && other.getSoundException() != null) {
+                    merged.setSoundException(other.getSoundException());
+                }
+                if (merged.getAutoplayException() == null && other.getAutoplayException() != null) {
+                    merged.setAutoplayException(other.getAutoplayException());
+                }
+                if (merged.getBackgroundSyncException() == null
+                        && other.getBackgroundSyncException() != null) {
+                    merged.setBackgroundSyncException(other.getBackgroundSyncException());
+                }
+                if (merged.getPopupException() == null && other.getPopupException() != null) {
+                    merged.setPopupException(other.getPopupException());
+                }
+            }
 
+            // TODO(crbug.com/763982): Deal with this TODO colony.
             // TODO(mvanouwerkerk): Make the various info types share a common interface that
             // supports reading the origin or host.
-            // TODO(mvanouwerkerk): Merge in PopupExceptionInfo? It uses a pattern, and is never
-            // set on Android.
-            // TODO(mvanouwerkerk): Merge in JavaScriptExceptionInfo? It uses a pattern.
             // TODO(lshang): Merge in CookieException? It will use patterns.
         }
         return merged;
@@ -267,60 +279,173 @@ public class SingleWebsitePreferences extends PreferenceFragment
      * Must only be called once mSite is set.
      */
     private void displaySitePermissions() {
-        addPreferencesFromResource(R.xml.single_website_preferences);
+        PreferenceUtils.addPreferencesFromResource(this, R.xml.single_website_preferences);
 
         Set<String> permissionPreferenceKeys =
                 new HashSet<>(Arrays.asList(PERMISSION_PREFERENCE_KEYS));
         int maxPermissionOrder = 0;
-        ListAdapter preferences = getPreferenceScreen().getRootAdapter();
+        PreferenceScreen preferenceScreen = getPreferenceScreen();
+        ListAdapter preferences = preferenceScreen.getRootAdapter();
         for (int i = 0; i < preferences.getCount(); ++i) {
             Preference preference = (Preference) preferences.getItem(i);
-            if (PREF_SITE_TITLE.equals(preference.getKey())) {
-                preference.setTitle(mSite.getTitle());
-            } else if (PREF_CLEAR_DATA.equals(preference.getKey())) {
-                long usage = mSite.getTotalUsage();
-                if (usage > 0) {
-                    Context context = preference.getContext();
-                    preference.setTitle(String.format(
-                            context.getString(R.string.origin_settings_storage_usage_brief),
-                            Formatter.formatShortFileSize(context, usage)));
-                    ((ClearWebsiteStorage) preference).setConfirmationListener(this);
-                } else {
-                    getPreferenceScreen().removePreference(preference);
-                }
-            } else if (PREF_RESET_SITE.equals(preference.getKey())) {
-                preference.setOnPreferenceClickListener(this);
-            } else if (PREF_AUTOPLAY_PERMISSION.equals(preference.getKey())) {
-                setUpListPreference(preference, mSite.getAutoplayPermission());
-            } else if (PREF_BACKGROUND_SYNC_PERMISSION.equals(preference.getKey())) {
-                setUpListPreference(preference, mSite.getBackgroundSyncPermission());
-            } else if (PREF_CAMERA_CAPTURE_PERMISSION.equals(preference.getKey())) {
-                setUpListPreference(preference, mSite.getCameraPermission());
-            } else if (PREF_COOKIES_PERMISSION.equals(preference.getKey())) {
-                setUpListPreference(preference, mSite.getCookiePermission());
-            } else if (PREF_JAVASCRIPT_PERMISSION.equals(preference.getKey())) {
-                setUpListPreference(preference, mSite.getJavaScriptPermission());
-            } else if (PREF_LOCATION_ACCESS.equals(preference.getKey())) {
-                setUpLocationPreference(preference);
-            } else if (PREF_MIC_CAPTURE_PERMISSION.equals(preference.getKey())) {
-                setUpListPreference(preference, mSite.getMicrophonePermission());
-            } else if (PREF_MIDI_SYSEX_PERMISSION.equals(preference.getKey())) {
-                setUpListPreference(preference, mSite.getMidiPermission());
-            } else if (PREF_NOTIFICATIONS_PERMISSION.equals(preference.getKey())) {
-                setUpListPreference(preference, mSite.getNotificationPermission());
-            } else if (PREF_POPUP_PERMISSION.equals(preference.getKey())) {
-                setUpListPreference(preference, mSite.getPopupPermission());
-            } else if (PREF_PROTECTED_MEDIA_IDENTIFIER_PERMISSION.equals(preference.getKey())) {
-                setUpListPreference(preference, mSite.getProtectedMediaIdentifierPermission());
-            } else if (PREF_SUBRESOURCE_FILTER_PERMISSION.equals(preference.getKey())) {
-                setUpListPreference(preference, mSite.getSubresourceFilterPermission());
-            }
-
+            setUpPreference(preference);
+            // Keep track of the maximum 'order' value of permission preferences, to allow correct
+            // positioning of subsequent permission preferences.
             if (permissionPreferenceKeys.contains(preference.getKey())) {
                 maxPermissionOrder = Math.max(maxPermissionOrder, preference.getOrder());
             }
         }
+        setUpUsbPreferences(maxPermissionOrder);
+        setUpOsWarningPreferences();
 
+        setUpAdsInformationalBanner();
+
+        // Remove categories if no sub-items.
+        if (!hasUsagePreferences()) {
+            Preference heading = preferenceScreen.findPreference(PREF_USAGE);
+            preferenceScreen.removePreference(heading);
+        }
+        if (!hasPermissionsPreferences()) {
+            Preference heading = preferenceScreen.findPreference(PREF_PERMISSIONS);
+            preferenceScreen.removePreference(heading);
+        }
+    }
+
+    private void setUpPreference(Preference preference) {
+        String key = preference.getKey();
+        if (PREF_SITE_TITLE.equals(key)) {
+            preference.setTitle(mSite.getTitle());
+        } else if (PREF_CLEAR_DATA.equals(key)) {
+            setUpClearDataPreference(preference);
+        } else if (PREF_RESET_SITE.equals(key)) {
+            preference.setOnPreferenceClickListener(this);
+        } else if (PREF_ADS_PERMISSION.equals(key)) {
+            setUpAdsPreference(preference);
+        } else if (PREF_AUTOPLAY_PERMISSION.equals(key)) {
+            setUpListPreference(preference, mSite.getAutoplayPermission());
+        } else if (PREF_BACKGROUND_SYNC_PERMISSION.equals(key)) {
+            setUpListPreference(preference, mSite.getBackgroundSyncPermission());
+        } else if (PREF_CAMERA_CAPTURE_PERMISSION.equals(key)) {
+            setUpListPreference(preference, mSite.getCameraPermission());
+        } else if (PREF_COOKIES_PERMISSION.equals(key)) {
+            setUpListPreference(preference, mSite.getCookiePermission());
+        } else if (PREF_JAVASCRIPT_PERMISSION.equals(key)) {
+            setUpListPreference(preference, mSite.getJavaScriptPermission());
+        } else if (PREF_LOCATION_ACCESS.equals(key)) {
+            setUpLocationPreference(preference);
+        } else if (PREF_MIC_CAPTURE_PERMISSION.equals(key)) {
+            setUpListPreference(preference, mSite.getMicrophonePermission());
+        } else if (PREF_MIDI_SYSEX_PERMISSION.equals(key)) {
+            setUpListPreference(preference, mSite.getMidiPermission());
+        } else if (PREF_NOTIFICATIONS_PERMISSION.equals(key)) {
+            setUpNotificationsPreference(preference);
+        } else if (PREF_POPUP_PERMISSION.equals(key)) {
+            setUpListPreference(preference, mSite.getPopupPermission());
+        } else if (PREF_PROTECTED_MEDIA_IDENTIFIER_PERMISSION.equals(key)) {
+            setUpListPreference(preference, mSite.getProtectedMediaIdentifierPermission());
+        } else if (PREF_SOUND_PERMISSION.equals(key)) {
+            setUpListPreference(preference, mSite.getSoundPermission());
+        }
+    }
+
+    private void setUpClearDataPreference(Preference preference) {
+        long usage = mSite.getTotalUsage();
+        if (usage > 0) {
+            Context context = preference.getContext();
+            preference.setTitle(
+                    String.format(context.getString(R.string.origin_settings_storage_usage_brief),
+                            Formatter.formatShortFileSize(context, usage)));
+            ((ClearWebsiteStorage) preference)
+                    .setConfirmationListener(new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialog, int which) {
+                            clearStoredData();
+                        }
+                    });
+        } else {
+            getPreferenceScreen().removePreference(preference);
+        }
+    }
+
+    private void setUpNotificationsPreference(Preference preference) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                && ChromeFeatureList.isEnabled(ChromeFeatureList.SITE_NOTIFICATION_CHANNELS)) {
+            final ContentSetting value = mSite.getNotificationPermission();
+            if (!(value == ContentSetting.ALLOW || value == ContentSetting.BLOCK)) {
+                // TODO(crbug.com/735110): Figure out if this is the correct thing to do, for values
+                // that are non-null, but not ALLOW or BLOCK either. (In setupListPreference we
+                // treat non-ALLOW settings as BLOCK, but here we are simply removing them.)
+                getPreferenceScreen().removePreference(preference);
+                return;
+            }
+            // On Android O this preference is read-only, so we replace the existing pref with a
+            // regular Preference that takes users to OS settings on click.
+            Preference newPreference = new Preference(preference.getContext());
+            newPreference.setKey(preference.getKey());
+            setUpPreferenceCommon(newPreference);
+
+            newPreference.setSummary(
+                    getResources().getString(ContentSettingsResources.getSiteSummary(value)));
+            newPreference.setDefaultValue(value);
+
+            // This preference is read-only so should not attempt to persist to shared prefs.
+            newPreference.setPersistent(false);
+
+            newPreference.setOnPreferenceClickListener(new OnPreferenceClickListener() {
+                @Override
+                public boolean onPreferenceClick(Preference preference) {
+                    // There is no guarantee that a channel has been initialized yet for sites
+                    // that were granted permission before the channel-initialization-on-grant
+                    // code was in place. However, getChannelIdForOrigin will fall back to the
+                    // generic Sites channel if no specific channel has been created for the given
+                    // origin, so it is safe to open the channel settings for whatever channel ID
+                    // it returns.
+                    String channelId = SiteChannelsManager.getInstance().getChannelIdForOrigin(
+                            mSite.getAddress().getOrigin());
+                    launchOsChannelSettings(preference.getContext(), channelId);
+                    return true;
+                }
+            });
+            newPreference.setOrder(preference.getOrder());
+            getPreferenceScreen().removePreference(preference);
+            getPreferenceScreen().addPreference(newPreference);
+        } else {
+            setUpListPreference(preference, mSite.getNotificationPermission());
+        }
+    }
+
+    private void launchOsChannelSettings(Context context, String channelId) {
+        Intent intent = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS);
+        intent.putExtra(Settings.EXTRA_CHANNEL_ID, channelId);
+        intent.putExtra(Settings.EXTRA_APP_PACKAGE, context.getPackageName());
+        startActivityForResult(intent, REQUEST_CODE_NOTIFICATION_CHANNEL_SETTINGS);
+    }
+
+    /**
+     * If we are returning to Site Settings from another activity, the preferences displayed may be
+     * out of date. Here we refresh any we suspect may have changed.
+     */
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        // The preference screen and mSite may be null if this activity was killed in the
+        // background, and the tasks scheduled from onActivityCreated haven't completed yet. Those
+        // tasks will take care of reinitializing everything afresh so there is no work to do here.
+        if (getPreferenceScreen() == null || mSite == null) {
+            return;
+        }
+        if (requestCode == REQUEST_CODE_NOTIFICATION_CHANNEL_SETTINGS) {
+            // User has navigated back from system channel settings on O+. Ensure notification
+            // preference is up to date, since they might have toggled it from channel settings.
+            Preference notificationsPreference =
+                    getPreferenceScreen().findPreference(PREF_NOTIFICATIONS_PERMISSION);
+            if (notificationsPreference != null) {
+                setUpNotificationsPreference(notificationsPreference);
+            }
+        }
+    }
+
+    private void setUpUsbPreferences(int maxPermissionOrder) {
         for (UsbInfo info : mSite.getUsbInfo()) {
             Preference preference = new Preference(getActivity());
             preference.getExtras().putSerializable(EXTRA_USB_INFO, info);
@@ -332,16 +457,18 @@ public class SingleWebsitePreferences extends PreferenceFragment
             getPreferenceScreen().addPreference(preference);
             mUsbPermissionCount++;
         }
+    }
 
-        // Remove the 'permission is off in Android' message if not needed.
+    private void setUpOsWarningPreferences() {
         PreferenceScreen preferenceScreen = getPreferenceScreen();
         SiteSettingsCategory categoryWithWarning = getWarningCategory();
+        // Remove the 'permission is off in Android' message if not needed.
         if (categoryWithWarning == null) {
-            getPreferenceScreen().removePreference(
+            preferenceScreen.removePreference(
                     preferenceScreen.findPreference(PREF_OS_PERMISSIONS_WARNING));
-            getPreferenceScreen().removePreference(
+            preferenceScreen.removePreference(
                     preferenceScreen.findPreference(PREF_OS_PERMISSIONS_WARNING_EXTRA));
-            getPreferenceScreen().removePreference(
+            preferenceScreen.removePreference(
                     preferenceScreen.findPreference(PREF_OS_PERMISSIONS_WARNING_DIVIDER));
         } else {
             Preference osWarning = preferenceScreen.findPreference(PREF_OS_PERMISSIONS_WARNING);
@@ -350,22 +477,30 @@ public class SingleWebsitePreferences extends PreferenceFragment
             categoryWithWarning.configurePermissionIsOffPreferences(
                     osWarning, osWarningExtra, getActivity(), false);
             if (osWarning.getTitle() == null) {
-                getPreferenceScreen().removePreference(
+                preferenceScreen.removePreference(
                         preferenceScreen.findPreference(PREF_OS_PERMISSIONS_WARNING));
             } else if (osWarningExtra.getTitle() == null) {
-                getPreferenceScreen().removePreference(
+                preferenceScreen.removePreference(
                         preferenceScreen.findPreference(PREF_OS_PERMISSIONS_WARNING_EXTRA));
             }
         }
+    }
 
-        // Remove categories if no sub-items.
-        if (!hasUsagePreferences()) {
-            Preference heading = preferenceScreen.findPreference(PREF_USAGE);
-            preferenceScreen.removePreference(heading);
-        }
-        if (!hasPermissionsPreferences()) {
-            Preference heading = preferenceScreen.findPreference(PREF_PERMISSIONS);
-            preferenceScreen.removePreference(heading);
+    private void setUpAdsInformationalBanner() {
+        // Add the informational banner which shows at the top of the UI if ad blocking is
+        // activated on this site.
+        PreferenceScreen preferenceScreen = getPreferenceScreen();
+        boolean adBlockingActivated = SiteSettingsCategory.adsCategoryEnabled()
+                && WebsitePreferenceBridge.getAdBlockingActivated(mSite.getAddress().getOrigin())
+                && preferenceScreen.findPreference(PREF_ADS_PERMISSION) != null;
+
+        if (!adBlockingActivated) {
+            Preference intrusiveAdsInfo = preferenceScreen.findPreference(PREF_INTRUSIVE_ADS_INFO);
+            Preference intrusiveAdsInfoDivider =
+                    preferenceScreen.findPreference(PREF_INTRUSIVE_ADS_INFO_DIVIDER);
+
+            preferenceScreen.removePreference(intrusiveAdsInfo);
+            preferenceScreen.removePreference(intrusiveAdsInfoDivider);
         }
     }
 
@@ -433,10 +568,9 @@ public class SingleWebsitePreferences extends PreferenceFragment
             getPreferenceScreen().removePreference(preference);
             return;
         }
-
+        setUpPreferenceCommon(preference);
         ListPreference listPreference = (ListPreference) preference;
 
-        int contentType = getContentSettingsTypeFromPreferenceKey(preference.getKey());
         CharSequence[] keys = new String[2];
         CharSequence[] descriptions = new String[2];
         keys[0] = ContentSetting.ALLOW.toString();
@@ -447,68 +581,96 @@ public class SingleWebsitePreferences extends PreferenceFragment
                 ContentSettingsResources.getSiteSummary(ContentSetting.BLOCK));
         listPreference.setEntryValues(keys);
         listPreference.setEntries(descriptions);
+        // TODO(crbug.com/735110): Figure out if this is the correct thing to do - here we are
+        // effectively treating non-ALLOW values as BLOCK.
         int index = (value == ContentSetting.ALLOW ? 0 : 1);
         listPreference.setValueIndex(index);
+        listPreference.setOnPreferenceChangeListener(this);
+        listPreference.setSummary("%s");
+    }
+
+    /**
+     * Sets some properties that apply to both regular Preferences and ListPreferences, i.e.
+     * preference title, enabled-state, and icon, based on the preference's key.
+     */
+    private void setUpPreferenceCommon(Preference preference) {
+        int contentType = getContentSettingsTypeFromPreferenceKey(preference.getKey());
         int explanationResourceId = ContentSettingsResources.getExplanation(contentType);
         if (explanationResourceId != 0) {
-            listPreference.setTitle(explanationResourceId);
+            preference.setTitle(explanationResourceId);
         }
-
-        if (listPreference.isEnabled()) {
+        if (preference.isEnabled()) {
             SiteSettingsCategory category =
                     SiteSettingsCategory.fromContentSettingsType(contentType);
             if (category != null && !category.enabledInAndroid(getActivity())) {
-                listPreference.setIcon(category.getDisabledInAndroidIcon(getActivity()));
-                listPreference.setEnabled(false);
+                preference.setIcon(category.getDisabledInAndroidIcon(getActivity()));
+                preference.setEnabled(false);
             } else {
-                listPreference.setIcon(ContentSettingsResources.getIcon(contentType));
+                preference.setIcon(
+                        ContentSettingsResources.getTintedIcon(contentType, getResources()));
             }
         } else {
-            listPreference.setIcon(
+            preference.setIcon(
                     ContentSettingsResources.getDisabledIcon(contentType, getResources()));
         }
-
-        preference.setSummary("%s");
-        listPreference.setOnPreferenceChangeListener(this);
     }
 
     private void setUpLocationPreference(Preference preference) {
         ContentSetting permission = mSite.getGeolocationPermission();
-        Context context = preference.getContext();
-        Object locationAllowed = getArguments().getSerializable(EXTRA_LOCATION);
         if (shouldUseDSEGeolocationSetting()) {
             String origin = mSite.getAddress().getOrigin();
             mSite.setGeolocationInfo(new GeolocationInfo(origin, origin, false));
             setUpListPreference(preference, ContentSetting.ALLOW);
             updateLocationPreferenceForDSESetting(preference);
-        } else if (permission == null && hasXGeoLocationPermission(context)) {
-            String origin = mSite.getAddress().getOrigin();
-            mSite.setGeolocationInfo(new GeolocationInfo(origin, origin, false));
-            setUpListPreference(preference, ContentSetting.ALLOW);
-            updateLocationPreferenceForXGeo(preference);
-        } else if (permission == null && locationAllowed != null) {
-            String origin = mSite.getAddress().getOrigin();
-            mSite.setGeolocationInfo(new GeolocationInfo(origin, origin, false));
-            setUpListPreference(preference, (boolean) locationAllowed
-                    ? ContentSetting.ALLOW : ContentSetting.BLOCK);
         } else {
             setUpListPreference(preference, permission);
         }
     }
 
     /**
-     * Returns true if the current host matches the default search engine host and location for the
-     * default search engine is being granted via x-geo.
-     * @param context The current context.
+     * Updates the ads list preference based on whether the site is a candidate for blocking. This
+     * has some custom behavior.
+     * 1. If the site is a candidate and has activation, the permission should show up even if it
+     *    is set as the default (e.g. |preference| is null).
+     * 2. The BLOCK string is custom.
      */
-    private boolean hasXGeoLocationPermission(Context context) {
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.CONSISTENT_OMNIBOX_GEOLOCATION)) {
-            return false;
+    private void setUpAdsPreference(Preference preference) {
+        // Do not show the setting if the category is not enabled.
+        if (!SiteSettingsCategory.adsCategoryEnabled()) {
+            setUpListPreference(preference, null);
+            return;
+        }
+        // If the ad blocker is activated, then this site will have ads blocked unless there is an
+        // explicit permission disallowing the blocking.
+        boolean activated =
+                WebsitePreferenceBridge.getAdBlockingActivated(mSite.getAddress().getOrigin());
+        ContentSetting permission = mSite.getAdsPermission();
+
+        // If |permission| is null, there is no explicit (non-default) permission set for this site.
+        // If the site is not considered a candidate for blocking, do the standard thing and remove
+        // the preference.
+        if (permission == null && !activated) {
+            setUpListPreference(preference, null);
+            return;
         }
 
-        String searchUrl = TemplateUrlService.getInstance().getUrlForSearchQuery("foo");
-        return mSite.getAddress().matches(searchUrl)
-                && GeolocationHeader.isGeoHeaderEnabledForUrl(searchUrl, false);
+        // However, if the blocking is activated, we still want to show the permission, even if it
+        // is in the default state.
+        if (permission == null) {
+            ContentSetting defaultPermission = PrefServiceBridge.getInstance().adsEnabled()
+                    ? ContentSetting.ALLOW
+                    : ContentSetting.BLOCK;
+            permission = defaultPermission;
+        }
+        setUpListPreference(preference, permission);
+
+        // The subresource filter permission has a custom BLOCK string.
+        ListPreference listPreference = (ListPreference) preference;
+        Resources res = getResources();
+        listPreference.setEntries(
+                new String[] {res.getString(R.string.website_settings_permissions_allow),
+                        res.getString(R.string.website_settings_permissions_ads_block)});
+        listPreference.setValueIndex(permission == ContentSetting.ALLOW ? 0 : 1);
     }
 
     /**
@@ -519,25 +681,6 @@ public class SingleWebsitePreferences extends PreferenceFragment
     private boolean shouldUseDSEGeolocationSetting() {
         return WebsitePreferenceBridge.shouldUseDSEGeolocationSetting(
                 mSite.getAddress().getOrigin(), false);
-    }
-
-    /**
-     * Updates the location preference to indicate that the site has access to location (via X-Geo)
-     * for searches that happen from the omnibox.
-     * @param preference The Location preference to modify.
-     */
-    private void updateLocationPreferenceForXGeo(Preference preference) {
-        ListPreference listPreference = (ListPreference) preference;
-        Resources res = getResources();
-        listPreference.setEntries(new String[] {
-                res.getString(R.string.website_settings_permissions_allow_dse_address_bar),
-                res.getString(ContentSettingsResources.getSiteSummary(ContentSetting.BLOCK)),
-        });
-        listPreference.setEntryValues(new String[] {
-                ContentSetting.DEFAULT.toString(),
-                ContentSetting.BLOCK.toString(),
-        });
-        listPreference.setValueIndex(0);
     }
 
     /**
@@ -558,6 +701,8 @@ public class SingleWebsitePreferences extends PreferenceFragment
 
     private int getContentSettingsTypeFromPreferenceKey(String preferenceKey) {
         switch (preferenceKey) {
+            case PREF_ADS_PERMISSION:
+                return ContentSettingsType.CONTENT_SETTINGS_TYPE_ADS;
             case PREF_AUTOPLAY_PERMISSION:
                 return ContentSettingsType.CONTENT_SETTINGS_TYPE_AUTOPLAY;
             case PREF_BACKGROUND_SYNC_PERMISSION:
@@ -580,16 +725,11 @@ public class SingleWebsitePreferences extends PreferenceFragment
                 return ContentSettingsType.CONTENT_SETTINGS_TYPE_POPUPS;
             case PREF_PROTECTED_MEDIA_IDENTIFIER_PERMISSION:
                 return ContentSettingsType.CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER;
-            case PREF_SUBRESOURCE_FILTER_PERMISSION:
-                return ContentSettingsType.CONTENT_SETTINGS_TYPE_SUBRESOURCE_FILTER;
+            case PREF_SOUND_PERMISSION:
+                return ContentSettingsType.CONTENT_SETTINGS_TYPE_SOUND;
             default:
                 return 0;
         }
-    }
-
-    @Override
-    public void onClick(DialogInterface dialog, int which) {
-        clearStoredData();
     }
 
     private void clearStoredData() {
@@ -620,7 +760,9 @@ public class SingleWebsitePreferences extends PreferenceFragment
     @Override
     public boolean onPreferenceChange(Preference preference, Object newValue) {
         ContentSetting permission = ContentSetting.fromString((String) newValue);
-        if (PREF_AUTOPLAY_PERMISSION.equals(preference.getKey())) {
+        if (PREF_ADS_PERMISSION.equals(preference.getKey())) {
+            mSite.setAdsPermission(permission);
+        } else if (PREF_AUTOPLAY_PERMISSION.equals(preference.getKey())) {
             mSite.setAutoplayPermission(permission);
         } else if (PREF_BACKGROUND_SYNC_PERMISSION.equals(preference.getKey())) {
             mSite.setBackgroundSyncPermission(permission);
@@ -642,8 +784,8 @@ public class SingleWebsitePreferences extends PreferenceFragment
             mSite.setPopupPermission(permission);
         } else if (PREF_PROTECTED_MEDIA_IDENTIFIER_PERMISSION.equals(preference.getKey())) {
             mSite.setProtectedMediaIdentifierPermission(permission);
-        } else if (PREF_SUBRESOURCE_FILTER_PERMISSION.equals(preference.getKey())) {
-            mSite.setSubresourceFilterPermission(permission);
+        } else if (PREF_SOUND_PERMISSION.equals(preference.getKey())) {
+            mSite.setSoundPermission(permission);
         }
 
         return true;
@@ -704,6 +846,7 @@ public class SingleWebsitePreferences extends PreferenceFragment
         WebsitePreferenceBridge.nativeClearBannerData(origin);
 
         // Clear the permissions.
+        mSite.setAdsPermission(ContentSetting.DEFAULT);
         mSite.setAutoplayPermission(ContentSetting.DEFAULT);
         mSite.setBackgroundSyncPermission(ContentSetting.DEFAULT);
         mSite.setCameraPermission(ContentSetting.DEFAULT);
@@ -715,7 +858,7 @@ public class SingleWebsitePreferences extends PreferenceFragment
         mSite.setNotificationPermission(ContentSetting.DEFAULT);
         mSite.setPopupPermission(ContentSetting.DEFAULT);
         mSite.setProtectedMediaIdentifierPermission(ContentSetting.DEFAULT);
-        mSite.setSubresourceFilterPermission(ContentSetting.DEFAULT);
+        mSite.setSoundPermission(ContentSetting.DEFAULT);
 
         for (UsbInfo info : mSite.getUsbInfo()) info.revoke();
 

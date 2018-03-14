@@ -13,6 +13,7 @@
 #include "base/time/clock.h"
 #include "components/ntp_snippets/features.h"
 #include "components/ntp_snippets/pref_names.h"
+#include "components/ntp_snippets/time_serialization.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/variations/variations_associated_data.h"
@@ -41,11 +42,13 @@ const double kMinHours = 0.5;
 const char kMinHoursParam[] = "user_classifier_min_hours";
 
 // Classification constants.
-const double kActiveConsumerClicksAtLeastOncePerHours = 72;
+const double kActiveConsumerClicksAtLeastOncePerHours = 96;
 const char kActiveConsumerClicksAtLeastOncePerHoursParam[] =
     "user_classifier_active_consumer_clicks_at_least_once_per_hours";
 
-const double kRareUserOpensNTPAtMostOncePerHours = 96;
+// The previous value in production was 72, i.e. 3 days. The new value is a
+// cautios shift in the direction we want (having slightly more rare users).
+const double kRareUserOpensNTPAtMostOncePerHours = 66;
 const char kRareUserOpensNTPAtMostOncePerHoursParam[] =
     "user_classifier_rare_user_opens_ntp_at_most_once_per_hours";
 
@@ -73,7 +76,7 @@ const char* kLastTimeKeys[] = {prefs::kUserClassifierLastTimeToOpenNTP,
                                prefs::kUserClassifierLastTimeToUseSuggestions};
 
 // Default lengths of the intervals for new users for the metrics.
-const double kInitialHoursBetweenEvents[] = {24, 48, 96};
+const double kInitialHoursBetweenEvents[] = {24, 48, 120};
 const char* kInitialHoursBetweenEventsParams[] = {
     "user_classifier_default_interval_ntp_opened",
     "user_classifier_default_interval_suggestions_shown",
@@ -355,7 +358,7 @@ double UserClassifier::GetHoursSinceLastTime(Metric metric) const {
   }
 
   base::TimeDelta since_last_time =
-      clock_->Now() - base::Time::FromInternalValue(pref_service_->GetInt64(
+      clock_->Now() - DeserializeTime(pref_service_->GetInt64(
                           kLastTimeKeys[static_cast<int>(metric)]));
   return since_last_time.InSecondsF() / 3600;
 }
@@ -366,7 +369,7 @@ bool UserClassifier::HasLastTime(Metric metric) const {
 
 void UserClassifier::SetLastTimeToNow(Metric metric) {
   pref_service_->SetInt64(kLastTimeKeys[static_cast<int>(metric)],
-                          clock_->Now().ToInternalValue());
+                          SerializeTime(clock_->Now()));
 }
 
 double UserClassifier::GetMetricValue(Metric metric) const {

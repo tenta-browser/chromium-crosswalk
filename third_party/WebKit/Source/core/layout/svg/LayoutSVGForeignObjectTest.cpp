@@ -23,16 +23,17 @@ class LayoutSVGForeignObjectTest : public RenderingTest {
 };
 
 TEST_F(LayoutSVGForeignObjectTest, DivInForeignObject) {
-  SetBodyInnerHTML(
-      "<style>body { margin: 0 }</style>"
-      "<svg id='svg' style='width: 500px; height: 400px'>"
-      "  <foreignObject id='foreign' x='100' y='100' width='300' height='200'>"
-      "    <div id='div' style='margin: 50px; width: 200px; height: 100px'>"
-      "    </div>"
-      "  </foreignObject>"
-      "</svg>");
+  SetBodyInnerHTML(R"HTML(
+    <style>body { margin: 0 }</style>
+    <svg id='svg' style='width: 500px; height: 400px'>
+      <foreignObject id='foreign' x='100' y='100' width='300' height='200'>
+        <div id='div' style='margin: 50px; width: 200px; height: 100px'>
+        </div>
+      </foreignObject>
+    </svg>
+  )HTML");
 
-  const auto& svg = *GetDocument().GetElementById("svg");
+  const auto& svg = *GetDocument().getElementById("svg");
   const auto& foreign_object = *GetLayoutObjectByElementId("foreign");
   const auto& div = *GetLayoutObjectByElementId("div");
 
@@ -75,25 +76,27 @@ TEST_F(LayoutSVGForeignObjectTest, DivInForeignObject) {
 }
 
 TEST_F(LayoutSVGForeignObjectTest, IframeInForeignObject) {
-  SetBodyInnerHTML(
-      "<style>body { margin: 0 }</style>"
-      "<svg id='svg' style='width: 500px; height: 450px'>"
-      "  <foreignObject id='foreign' x='100' y='100' width='300' height='250'>"
-      "    <iframe style='border: none; margin: 30px;"
-      "         width: 240px; height: 190px'></iframe>"
-      "  </foreignObject>"
-      "</svg>");
-  SetChildFrameHTML(
-      "<style>"
-      "  body { margin: 0 }"
-      "  * { background: white; }"
-      "</style>"
-      "<div id='div' style='margin: 70px; width: 100px; height: 50px'></div>");
+  SetBodyInnerHTML(R"HTML(
+    <style>body { margin: 0 }</style>
+    <svg id='svg' style='width: 500px; height: 450px'>
+      <foreignObject id='foreign' x='100' y='100' width='300' height='250'>
+        <iframe style='border: none; margin: 30px;
+             width: 240px; height: 190px'></iframe>
+      </foreignObject>
+    </svg>
+  )HTML");
+  SetChildFrameHTML(R"HTML(
+    <style>
+      body { margin: 0 }
+      * { background: white; }
+    </style>
+    <div id='div' style='margin: 70px; width: 100px; height: 50px'></div>
+  )HTML");
   GetDocument().View()->UpdateAllLifecyclePhases();
 
-  const auto& svg = *GetDocument().GetElementById("svg");
+  const auto& svg = *GetDocument().getElementById("svg");
   const auto& foreign_object = *GetLayoutObjectByElementId("foreign");
-  const auto& div = *ChildDocument().GetElementById("div")->GetLayoutObject();
+  const auto& div = *ChildDocument().getElementById("div")->GetLayoutObject();
 
   EXPECT_EQ(FloatRect(100, 100, 300, 250), foreign_object.ObjectBoundingBox());
   EXPECT_EQ(AffineTransform(), foreign_object.LocalSVGTransform());

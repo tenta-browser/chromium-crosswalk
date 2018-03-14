@@ -47,7 +47,7 @@ DOMFileSystem* DraggedIsolatedFileSystemImpl::GetDOMFileSystem(
   DraggedIsolatedFileSystemImpl* dragged_isolated_file_system = From(host);
   if (!dragged_isolated_file_system)
     return nullptr;
-  auto it = dragged_isolated_file_system->filesystems_.Find(file_system_id);
+  auto it = dragged_isolated_file_system->filesystems_.find(file_system_id);
   if (it != dragged_isolated_file_system->filesystems_.end())
     return it->value;
   return dragged_isolated_file_system->filesystems_
@@ -68,7 +68,7 @@ DraggedIsolatedFileSystemImpl* DraggedIsolatedFileSystemImpl::From(
       Supplement<DataObject>::From(data_object, SupplementName()));
 }
 
-DEFINE_TRACE(DraggedIsolatedFileSystemImpl) {
+void DraggedIsolatedFileSystemImpl::Trace(blink::Visitor* visitor) {
   visitor->Trace(filesystems_);
   Supplement<DataObject>::Trace(visitor);
 }

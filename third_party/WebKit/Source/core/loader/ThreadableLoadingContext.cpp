@@ -5,7 +5,8 @@
 #include "core/loader/ThreadableLoadingContext.h"
 
 #include "core/dom/Document.h"
-#include "core/dom/TaskRunnerHelper.h"
+#include "core/loader/WorkerFetchContext.h"
+#include "core/workers/WorkerGlobalScope.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
 
 namespace blink {
@@ -17,58 +18,70 @@ class DocumentThreadableLoadingContext final : public ThreadableLoadingContext {
 
   ~DocumentThreadableLoadingContext() override = default;
 
-  bool IsContextThread() const override { return document_->IsContextThread(); }
-
   ResourceFetcher* GetResourceFetcher() override {
     DCHECK(IsContextThread());
     return document_->Fetcher();
   }
 
-  SecurityOrigin* GetSecurityOrigin() override {
-    DCHECK(IsContextThread());
-    return document_->GetSecurityOrigin();
-  }
-
-  bool IsSecureContext() const override {
-    DCHECK(IsContextThread());
-    return document_->IsSecureContext();
-  }
-
-  KURL FirstPartyForCookies() const override {
-    DCHECK(IsContextThread());
-    return document_->FirstPartyForCookies();
-  }
-
-  String UserAgent() const override {
-    DCHECK(IsContextThread());
-    return document_->UserAgent();
-  }
-
-  Document* GetLoadingDocument() override {
+  ExecutionContext* GetExecutionContext() override {
     DCHECK(IsContextThread());
     return document_.Get();
   }
 
-  RefPtr<WebTaskRunner> GetTaskRunner(TaskType type) override {
-    return TaskRunnerHelper::Get(type, document_.Get());
-  }
-
-  void RecordUseCount(UseCounter::Feature feature) override {
-    UseCounter::Count(document_.Get(), feature);
-  }
-
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(document_);
     ThreadableLoadingContext::Trace(visitor);
   }
 
  private:
+  bool IsContextThread() const { return document_->IsContextThread(); }
+
   Member<Document> document_;
 };
 
+class WorkerThreadableLoadingContext : public ThreadableLoadingContext {
+ public:
+  explicit WorkerThreadableLoadingContext(
+      WorkerGlobalScope& worker_global_scope)
+      : worker_global_scope_(&worker_global_scope) {}
+
+  ~WorkerThreadableLoadingContext() override = default;
+
+  ResourceFetcher* GetResourceFetcher() override {
+    DCHECK(IsContextThread());
+    return worker_global_scope_->EnsureFetcher();
+  }
+
+  ExecutionContext* GetExecutionContext() override {
+    DCHECK(IsContextThread());
+    return worker_global_scope_.Get();
+  }
+
+  void Trace(blink::Visitor* visitor) override {
+    visitor->Trace(worker_global_scope_);
+    ThreadableLoadingContext::Trace(visitor);
+  }
+
+ private:
+  bool IsContextThread() const {
+    DCHECK(worker_global_scope_);
+    return worker_global_scope_->IsContextThread();
+  }
+
+  Member<WorkerGlobalScope> worker_global_scope_;
+};
+
 ThreadableLoadingContext* ThreadableLoadingContext::Create(Document& document) {
-  // For now this is the only default implementation.
   return new DocumentThreadableLoadingContext(document);
+}
+
+ThreadableLoadingContext* ThreadableLoadingContext::Create(
+    WorkerGlobalScope& worker_global_scope) {
+  return new WorkerThreadableLoadingContext(worker_global_scope);
+}
+
+BaseFetchContext* ThreadableLoadingContext::GetFetchContext() {
+  return static_cast<BaseFetchContext*>(&GetResourceFetcher()->Context());
 }
 
 }  // namespace blink

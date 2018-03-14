@@ -33,37 +33,41 @@
 
 namespace blink {
 
-CSSFontFaceSource::CSSFontFaceSource() : face_(nullptr) {}
+CSSFontFaceSource::~CSSFontFaceSource() = default;
 
-CSSFontFaceSource::~CSSFontFaceSource() {}
-
-PassRefPtr<SimpleFontData> CSSFontFaceSource::GetFontData(
-    const FontDescription& font_description) {
+scoped_refptr<SimpleFontData> CSSFontFaceSource::GetFontData(
+    const FontDescription& font_description,
+    const FontSelectionCapabilities& font_selection_capabilities) {
   // If the font hasn't loaded or an error occurred, then we've got nothing.
   if (!IsValid())
     return nullptr;
 
   if (IsLocal()) {
     // We're local. Just return a SimpleFontData from the normal cache.
-    return CreateFontData(font_description);
+    return CreateFontData(font_description, font_selection_capabilities);
   }
 
-  // See if we have a mapping in our FontData cache.
-  // TODO(drott): Check whether losing traits information here is problematic.
-  // crbug.com/516677
   FontCacheKey key = font_description.CacheKey(FontFaceCreationParams());
 
-  RefPtr<SimpleFontData>& font_data =
+  scoped_refptr<SimpleFontData>& font_data =
       font_data_table_.insert(key, nullptr).stored_value->value;
   if (!font_data)
-    font_data = CreateFontData(font_description);
+    font_data = CreateFontData(font_description, font_selection_capabilities);
   // No release, because fontData is a reference to a RefPtr that is held in the
   // font_data_table_.
   return font_data;
 }
 
-DEFINE_TRACE(CSSFontFaceSource) {
-  visitor->Trace(face_);
+void CSSFontFaceSource::PruneTable() {
+  if (font_data_table_.IsEmpty())
+    return;
+
+  for (const auto& item : font_data_table_) {
+    SimpleFontData* font_data = item.value.get();
+    if (font_data && font_data->GetCustomFontData())
+      font_data->GetCustomFontData()->ClearFontFaceSource();
+  }
+  font_data_table_.clear();
 }
 
 }  // namespace blink

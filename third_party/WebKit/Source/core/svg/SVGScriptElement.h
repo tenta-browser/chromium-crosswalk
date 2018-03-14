@@ -21,10 +21,10 @@
 #ifndef SVGScriptElement_h
 #define SVGScriptElement_h
 
-#include "core/SVGNames.h"
 #include "core/dom/ScriptElementBase.h"
 #include "core/svg/SVGElement.h"
 #include "core/svg/SVGURIReference.h"
+#include "core/svg_names.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -40,7 +40,7 @@ class SVGScriptElement final : public SVGElement,
  public:
   static SVGScriptElement* Create(Document&, bool was_inserted_by_parser);
 
-  ScriptLoader* Loader() const { return loader_.Get(); }
+  ScriptLoader* Loader() const final { return loader_.Get(); }
 
 #if DCHECK_IS_ON()
   bool IsAnimatableAttribute(const QualifiedName&) const override;
@@ -48,7 +48,8 @@ class SVGScriptElement final : public SVGElement,
 
   bool IsScriptElement() const override { return true; }
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
+  void TraceWrappers(const ScriptWrappableVisitor*) const;
 
  private:
   SVGScriptElement(Document&,
@@ -77,18 +78,21 @@ class SVGScriptElement final : public SVGElement,
   String ForAttributeValue() const { return String(); }
   String IntegrityAttributeValue() const { return String(); }
   String LanguageAttributeValue() const { return String(); }
+  bool NomoduleAttributeValue() const { return false; }
   String SourceAttributeValue() const override;
   String TypeAttributeValue() const override;
   String TextFromChildren() override;
-  String TextContent() const override;
   bool HasSourceAttribute() const override;
   bool IsConnected() const override;
   bool HasChildren() const override;
-  bool IsNonceableElement() const;
+  const AtomicString& GetNonceForElement() const override;
+  bool ElementHasDuplicateAttributes() const override {
+    return HasDuplicateAttribute();
+  }
   bool AllowInlineScriptForCSP(const AtomicString& nonce,
                                const WTF::OrdinalNumber&,
-                               const String& script_content) override;
-  AtomicString InitiatorName() const override;
+                               const String& script_content,
+                               ContentSecurityPolicy::InlineType) override;
   Document& GetDocument() const override;
   void DispatchLoadEvent() override;
   void DispatchErrorEvent() override;
@@ -97,6 +101,8 @@ class SVGScriptElement final : public SVGElement,
 
   Element* CloneElementWithoutAttributesAndChildren() override;
   bool LayoutObjectIsNeeded(const ComputedStyle&) override { return false; }
+
+  TraceWrapperMember<ScriptLoader> loader_;
 };
 
 }  // namespace blink

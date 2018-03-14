@@ -6,15 +6,20 @@
 
 #include <stddef.h>
 
+#include <utility>
+
+#include "base/guid.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/json/string_escape.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/storage_partition.h"
@@ -28,6 +33,7 @@
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_response_writer.h"
 
@@ -84,9 +90,9 @@ int ResponseWriter::Write(net::IOBuffer* buffer,
 
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::Bind(&ShellDevToolsBindings::CallClientFunction, devtools_bindings_,
-                 "DevToolsAPI.streamWrite", base::Owned(id),
-                 base::Owned(chunkValue), nullptr));
+      base::BindOnce(&ShellDevToolsBindings::CallClientFunction,
+                     devtools_bindings_, "DevToolsAPI.streamWrite",
+                     base::Owned(id), base::Owned(chunkValue), nullptr));
   return num_bytes;
 }
 
@@ -127,27 +133,30 @@ ShellDevToolsBindings::~ShellDevToolsBindings() {
     agent_host_->DetachClient(this);
 }
 
-void ShellDevToolsBindings::RenderViewCreated(
-    RenderViewHost* render_view_host) {
-  CreateFrontendHost();
-}
-
+void ShellDevToolsBindings::ReadyToCommitNavigation(
+    NavigationHandle* navigation_handle) {
 #if !defined(OS_ANDROID)
-void ShellDevToolsBindings::CreateFrontendHost() {
-  if (!frontend_host_) {
+  content::RenderFrameHost* frame = navigation_handle->GetRenderFrameHost();
+  if (navigation_handle->IsInMainFrame()) {
     frontend_host_.reset(DevToolsFrontendHost::Create(
-        web_contents()->GetMainFrame(),
+        frame,
         base::Bind(&ShellDevToolsBindings::HandleMessageFromDevToolsFrontend,
                    base::Unretained(this))));
+    return;
   }
+  std::string origin = navigation_handle->GetURL().GetOrigin().spec();
+  auto it = extensions_api_.find(origin);
+  if (it == extensions_api_.end())
+    return;
+  std::string script = base::StringPrintf("%s(\"%s\")", it->second.c_str(),
+                                          base::GenerateGUID().c_str());
+  DevToolsFrontendHost::SetupExtensionsAPI(frame, script);
+#endif
 }
-#endif
-
-#if defined(OS_ANDROID)
-void ShellDevToolsBindings::CreateFrontendHost() {}
-#endif
 
 void ShellDevToolsBindings::DocumentAvailableInMainFrame() {
+  if (agent_host_)
+    agent_host_->DetachClient(this);
   agent_host_ = DevToolsAgentHost::GetOrCreateFor(inspected_contents_);
   agent_host_->AttachClient(this);
   if (inspect_element_at_x_ != -1) {
@@ -159,8 +168,10 @@ void ShellDevToolsBindings::DocumentAvailableInMainFrame() {
 }
 
 void ShellDevToolsBindings::WebContentsDestroyed() {
-  if (agent_host_)
+  if (agent_host_) {
     agent_host_->DetachClient(this);
+    agent_host_ = nullptr;
+  }
 }
 
 void ShellDevToolsBindings::SetPreferences(const std::string& json) {
@@ -183,8 +194,8 @@ void ShellDevToolsBindings::HandleMessageFromDevToolsFrontend(
   if (!agent_host_)
     return;
   std::string method;
-  base::ListValue* params = NULL;
-  base::DictionaryValue* dict = NULL;
+  base::ListValue* params = nullptr;
+  base::DictionaryValue* dict = nullptr;
   std::unique_ptr<base::Value> parsed_message = base::JSONReader::Read(message);
   if (!parsed_message || !parsed_message->GetAsDictionary(&dict) ||
       !dict->GetString("method", &method)) {
@@ -195,8 +206,6 @@ void ShellDevToolsBindings::HandleMessageFromDevToolsFrontend(
   dict->GetList("params", &params);
 
   if (method == "dispatchProtocolMessage" && params && params->GetSize() == 1) {
-    if (!agent_host_ || !agent_host_->IsAttached())
-      return;
     std::string protocol_message;
     if (!params->GetString(0, &protocol_message))
       return;
@@ -222,8 +231,35 @@ void ShellDevToolsBindings::HandleMessageFromDevToolsFrontend(
       return;
     }
 
+    net::NetworkTrafficAnnotationTag traffic_annotation =
+        net::DefineNetworkTrafficAnnotation(
+            "devtools_handle_front_end_messages", R"(
+            semantics {
+              sender: "Developer Tools"
+              description:
+                "When user opens Developer Tools, the browser may fetch "
+                "additional resources from the network to enrich the debugging "
+                "experience (e.g. source map resources)."
+              trigger: "User opens Developer Tools to debug a web page."
+              data: "Any resources requested by Developer Tools."
+              destination: OTHER
+            }
+            policy {
+              cookies_allowed: YES
+              cookies_store: "user"
+              setting:
+                "It's not possible to disable this feature from settings."
+              chrome_policy {
+                DeveloperToolsDisabled {
+                  policy_options {mode: MANDATORY}
+                  DeveloperToolsDisabled: true
+                }
+              }
+            })");
     net::URLFetcher* fetcher =
-        net::URLFetcher::Create(gurl, net::URLFetcher::GET, this).release();
+        net::URLFetcher::Create(gurl, net::URLFetcher::GET, this,
+                                traffic_annotation)
+            .release();
     pending_requests_[fetcher] = request_id;
     fetcher->SetRequestContext(BrowserContext::GetDefaultStoragePartition(
                                    web_contents()->GetBrowserContext())
@@ -243,7 +279,7 @@ void ShellDevToolsBindings::HandleMessageFromDevToolsFrontend(
     if (!params->GetString(0, &name) || !params->GetString(1, &value)) {
       return;
     }
-    preferences_.SetStringWithoutPathExpansion(name, value);
+    preferences_.SetKey(name, base::Value(value));
   } else if (method == "removePreference") {
     std::string name;
     if (!params->GetString(0, &name))
@@ -255,6 +291,12 @@ void ShellDevToolsBindings::HandleMessageFromDevToolsFrontend(
   } else if (method == "reattach") {
     agent_host_->DetachClient(this);
     agent_host_->AttachClient(this);
+  } else if (method == "registerExtensionsAPI") {
+    std::string origin;
+    std::string script;
+    if (!params->GetString(0, &origin) || !params->GetString(1, &script))
+      return;
+    extensions_api_[origin + "/"] = script;
   } else {
     return;
   }
@@ -295,16 +337,16 @@ void ShellDevToolsBindings::OnURLFetchComplete(const net::URLFetcher* source) {
   DCHECK(it != pending_requests_.end());
 
   base::DictionaryValue response;
-  base::DictionaryValue* headers = new base::DictionaryValue();
+  auto headers = std::make_unique<base::DictionaryValue>();
   net::HttpResponseHeaders* rh = source->GetResponseHeaders();
   response.SetInteger("statusCode", rh ? rh->response_code() : 200);
-  response.Set("headers", headers);
 
   size_t iterator = 0;
   std::string name;
   std::string value;
   while (rh && rh->EnumerateHeaderLines(&iterator, &name, &value))
     headers->SetString(name, value);
+  response.Set("headers", std::move(headers));
 
   SendMessageAck(it->second, &response);
   pending_requests_.erase(it);
@@ -340,8 +382,7 @@ void ShellDevToolsBindings::SendMessageAck(int request_id,
   CallClientFunction("DevToolsAPI.embedderMessageAck", &id_value, arg, nullptr);
 }
 
-void ShellDevToolsBindings::AgentHostClosed(DevToolsAgentHost* agent_host,
-                                            bool replaced) {
+void ShellDevToolsBindings::AgentHostClosed(DevToolsAgentHost* agent_host) {
   agent_host_ = nullptr;
   if (delegate_)
     delegate_->Close();

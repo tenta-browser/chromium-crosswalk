@@ -15,13 +15,9 @@
 #include "base/threading/thread_checker.h"
 #include "content/common/content_export.h"
 #include "content/common/media/media_devices.h"
-#include "content/common/media/media_devices.mojom.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/public/renderer/render_frame_observer_tracker.h"
-
-namespace url {
-class Origin;
-}
+#include "third_party/WebKit/public/platform/modules/mediastream/media_devices.mojom.h"
 
 namespace content {
 
@@ -52,7 +48,6 @@ class CONTENT_EXPORT MediaDevicesEventDispatcher
   // subscription.
   SubscriptionId SubscribeDeviceChangeNotifications(
       MediaDeviceType type,
-      const url::Origin& security_origin,
       const DevicesChangedCallback& callback);
 
   // Cancels a subscription identified with |subscription_id| to device-change
@@ -66,7 +61,6 @@ class CONTENT_EXPORT MediaDevicesEventDispatcher
   // Returns a list of subscription IDs that can be used to cancel the
   // subscriptions.
   SubscriptionIdList SubscribeDeviceChangeNotifications(
-      const url::Origin& security_origin,
       const DevicesChangedCallback& callback);
 
   // Cancels subscriptions identified by |subscription_ids| to device-change
@@ -86,12 +80,13 @@ class CONTENT_EXPORT MediaDevicesEventDispatcher
   void OnDestruct() override;
 
   void SetMediaDevicesDispatcherForTesting(
-      ::mojom::MediaDevicesDispatcherHostPtr media_devices_dispatcher);
+      blink::mojom::MediaDevicesDispatcherHostPtr media_devices_dispatcher);
 
  private:
   explicit MediaDevicesEventDispatcher(RenderFrame* render_frame);
 
-  const ::mojom::MediaDevicesDispatcherHostPtr& GetMediaDevicesDispatcher();
+  const blink::mojom::MediaDevicesDispatcherHostPtr&
+  GetMediaDevicesDispatcher();
 
   SubscriptionId current_id_;
 
@@ -99,7 +94,7 @@ class CONTENT_EXPORT MediaDevicesEventDispatcher
   using SubscriptionList = std::vector<Subscription>;
   SubscriptionList device_change_subscriptions_[NUM_MEDIA_DEVICE_TYPES];
 
-  ::mojom::MediaDevicesDispatcherHostPtr media_devices_dispatcher_;
+  blink::mojom::MediaDevicesDispatcherHostPtr media_devices_dispatcher_;
 
   base::ThreadChecker thread_checker_;
 

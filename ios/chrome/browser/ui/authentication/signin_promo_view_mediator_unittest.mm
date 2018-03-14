@@ -24,9 +24,24 @@ namespace {
 
 class SigninPromoViewMediatorTest : public PlatformTest {
  protected:
-  void SetUp() override {
+  void TearDown() override {
+    [mediator_ signinPromoViewRemoved];
+    EXPECT_EQ(ios::SigninPromoViewState::Invalid,
+              mediator_.signinPromoViewState);
+    mediator_ = nil;
+    EXPECT_OCMOCK_VERIFY((id)consumer_);
+    EXPECT_OCMOCK_VERIFY((id)signin_promo_view_);
+    EXPECT_OCMOCK_VERIFY((id)primary_button_);
+    EXPECT_OCMOCK_VERIFY((id)secondary_button_);
+    EXPECT_OCMOCK_VERIFY((id)close_button_);
+  }
+
+  void CreateMediator(signin_metrics::AccessPoint accessPoint) {
     consumer_ = OCMStrictProtocolMock(@protocol(SigninPromoViewConsumer));
-    mediator_ = [[SigninPromoViewMediator alloc] init];
+    mediator_ =
+        [[SigninPromoViewMediator alloc] initWithBrowserState:nil
+                                                  accessPoint:accessPoint
+                                                    presenter:nil];
     mediator_.consumer = consumer_;
 
     signin_promo_view_ = OCMStrictClassMock([SigninPromoView class]);
@@ -34,14 +49,8 @@ class SigninPromoViewMediatorTest : public PlatformTest {
     OCMStub([signin_promo_view_ primaryButton]).andReturn(primary_button_);
     secondary_button_ = OCMStrictClassMock([MDCFlatButton class]);
     OCMStub([signin_promo_view_ secondaryButton]).andReturn(secondary_button_);
-  }
-
-  void TearDown() override {
-    mediator_ = nil;
-    EXPECT_OCMOCK_VERIFY((id)consumer_);
-    EXPECT_OCMOCK_VERIFY((id)signin_promo_view_);
-    EXPECT_OCMOCK_VERIFY((id)primary_button_);
-    EXPECT_OCMOCK_VERIFY((id)secondary_button_);
+    close_button_ = OCMStrictClassMock([UIButton class]);
+    OCMStub([signin_promo_view_ closeButton]).andReturn(close_button_);
   }
 
   void TestColdState() {
@@ -59,15 +68,16 @@ class SigninPromoViewMediatorTest : public PlatformTest {
     CheckWarmStateConfigurator([mediator_ createConfigurator]);
   }
 
-  void ExpectConfiguratorNotification(BOOL new_identity) {
+  void ExpectConfiguratorNotification(BOOL identity_changed) {
     configurator_ = nil;
+    SigninPromoViewConfigurator* configurator_arg =
+        [OCMArg checkWithBlock:^BOOL(id value) {
+          configurator_ = value;
+          return YES;
+        }];
     OCMExpect([consumer_
-        configureSigninPromoViewWithNewIdentity:new_identity
-                                   configurator:[OCMArg checkWithBlock:^BOOL(
-                                                            id value) {
-                                     configurator_ = value;
-                                     return YES;
-                                   }]]);
+        configureSigninPromoWithConfigurator:configurator_arg
+                             identityChanged:identity_changed]);
   }
 
   void ExpectColdStateConfiguration() {
@@ -80,6 +90,7 @@ class SigninPromoViewMediatorTest : public PlatformTest {
   void CheckColdStateConfigurator(SigninPromoViewConfigurator* configurator) {
     EXPECT_NE(nil, configurator);
     ExpectColdStateConfiguration();
+    OCMExpect([close_button_ setHidden:YES]);
     [configurator configureSigninPromoView:signin_promo_view_];
     EXPECT_EQ(nil, image_view_profile_image_);
     EXPECT_EQ(nil, primary_button_title_);
@@ -112,9 +123,12 @@ class SigninPromoViewMediatorTest : public PlatformTest {
   void CheckWarmStateConfigurator(SigninPromoViewConfigurator* configurator) {
     EXPECT_NE(nil, configurator);
     ExpectWarmStateConfiguration();
+    OCMExpect([close_button_ setHidden:YES]);
     [configurator configureSigninPromoView:signin_promo_view_];
     EXPECT_NE(nil, image_view_profile_image_);
-    NSString* userFullName = expected_default_dentity_.userFullName;
+    NSString* userFullName = expected_default_dentity_.userFullName.length
+                                 ? expected_default_dentity_.userFullName
+                                 : expected_default_dentity_.userEmail;
     NSRange profileNameRange =
         [primary_button_title_ rangeOfString:userFullName];
     EXPECT_NE(profileNameRange.length, 0u);
@@ -138,6 +152,7 @@ class SigninPromoViewMediatorTest : public PlatformTest {
   SigninPromoView* signin_promo_view_;
   MDCFlatButton* primary_button_;
   MDCFlatButton* secondary_button_;
+  UIButton* close_button_;
 
   // Value set by -[SigninPromoView setProfileImage:].
   UIImage* image_view_profile_image_;
@@ -145,14 +160,39 @@ class SigninPromoViewMediatorTest : public PlatformTest {
   NSString* primary_button_title_;
   // Value set by -[secondary_button_ setTitle: forState:UIControlStateNormal].
   NSString* secondary_button_title_;
+  // Value set by -[close_button_ setHidden:].
+  BOOL close_button_hidden_;
 };
 
+// Cold state with recent tabs.
 TEST_F(SigninPromoViewMediatorTest, ColdStateConfigureSigninPromoView) {
+  CreateMediator(signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS);
+  TestColdState();
+}
+
+// Cold state with tab switcher.
+TEST_F(SigninPromoViewMediatorTest, ColdStateTabSwitcher) {
+  CreateMediator(signin_metrics::AccessPoint::ACCESS_POINT_TAB_SWITCHER);
   TestColdState();
 }
 
 TEST_F(SigninPromoViewMediatorTest,
        WarmStateConfigureSigninPromoViewWithoutImage) {
+  CreateMediator(signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS);
+  ExpectConfiguratorNotification(YES);
+  expected_default_dentity_ =
+      [FakeChromeIdentity identityWithEmail:@"johndoe@example.com"
+                                     gaiaID:@"1"
+                                       name:nil];
+  ios::FakeChromeIdentityService::GetInstanceFromChromeProvider()->AddIdentity(
+      expected_default_dentity_);
+  CheckWarmStateConfigurator([mediator_ createConfigurator]);
+  CheckWarmStateConfigurator(configurator_);
+}
+
+TEST_F(SigninPromoViewMediatorTest,
+       WarmStateConfigureSigninPromoViewWithoutFullName) {
+  CreateMediator(signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS);
   ExpectConfiguratorNotification(YES);
   TestWarmState();
   CheckWarmStateConfigurator(configurator_);
@@ -160,6 +200,7 @@ TEST_F(SigninPromoViewMediatorTest,
 
 TEST_F(SigninPromoViewMediatorTest,
        WarmStateConfigureSigninPromoViewWithImage) {
+  CreateMediator(signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS);
   ExpectConfiguratorNotification(YES);
   TestWarmState();
   ExpectConfiguratorNotification(NO);
@@ -169,6 +210,7 @@ TEST_F(SigninPromoViewMediatorTest,
 
 // Cold state configuration and then warm state configuration.
 TEST_F(SigninPromoViewMediatorTest, ConfigureSigninPromoViewWithColdAndWarm) {
+  CreateMediator(signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS);
   TestColdState();
   ExpectConfiguratorNotification(YES);
   TestWarmState();
@@ -177,6 +219,7 @@ TEST_F(SigninPromoViewMediatorTest, ConfigureSigninPromoViewWithColdAndWarm) {
 
 // Warm state configuration and then cold state configuration.
 TEST_F(SigninPromoViewMediatorTest, ConfigureSigninPromoViewWithWarmAndCold) {
+  CreateMediator(signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS);
   ExpectConfiguratorNotification(YES);
   TestWarmState();
   CheckWarmStateConfigurator(configurator_);
@@ -186,6 +229,40 @@ TEST_F(SigninPromoViewMediatorTest, ConfigureSigninPromoViewWithWarmAndCold) {
   expected_default_dentity_ = nil;
   TestColdState();
   CheckColdStateConfigurator(configurator_);
+}
+
+TEST_F(SigninPromoViewMediatorTest, SigninPromoViewStateVisible) {
+  CreateMediator(signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS);
+  EXPECT_EQ(ios::SigninPromoViewState::NeverVisible,
+            mediator_.signinPromoViewState);
+  [mediator_ signinPromoViewVisible];
+  EXPECT_EQ(ios::SigninPromoViewState::Unused, mediator_.signinPromoViewState);
+}
+
+TEST_F(SigninPromoViewMediatorTest, SigninPromoViewStateSignedin) {
+  CreateMediator(signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS);
+  [mediator_ signinPromoViewVisible];
+  __block ShowSigninCommandCompletionCallback completion;
+  ShowSigninCommandCompletionCallback completion_arg =
+      [OCMArg checkWithBlock:^BOOL(ShowSigninCommandCompletionCallback value) {
+        completion = value;
+        return YES;
+      }];
+  OCMExpect([consumer_ signinPromoViewMediator:mediator_
+                  shouldOpenSigninWithIdentity:nil
+                                   promoAction:signin_metrics::PromoAction::
+                                                   PROMO_ACTION_NEW_ACCOUNT
+                                    completion:completion_arg]);
+  [mediator_ signinPromoViewDidTapSigninWithNewAccount:signin_promo_view_];
+  EXPECT_TRUE(mediator_.isSigninInProgress);
+  EXPECT_EQ(ios::SigninPromoViewState::UsedAtLeastOnce,
+            mediator_.signinPromoViewState);
+  EXPECT_NE(nil, (id)completion);
+  OCMExpect([consumer_ signinDidFinish]);
+  completion(YES);
+  EXPECT_FALSE(mediator_.isSigninInProgress);
+  EXPECT_EQ(ios::SigninPromoViewState::UsedAtLeastOnce,
+            mediator_.signinPromoViewState);
 }
 
 }  // namespace

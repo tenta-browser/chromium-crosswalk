@@ -16,6 +16,7 @@
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
+#include "base/message_loop/message_loop.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -48,7 +49,7 @@ struct TestCase {
 
 class ProcessWatcherExpectations {
  public:
-  ProcessWatcherExpectations() {}
+  ProcessWatcherExpectations() = default;
 
   void SetTestCase(const TestCase& test_case) {
     received_from_out_ = 0;
@@ -100,7 +101,7 @@ class ProcessOutputWatcherTest : public testing::Test {
                                failed_(false) {
   }
 
-  ~ProcessOutputWatcherTest() override {}
+  ~ProcessOutputWatcherTest() override = default;
 
   void TearDown() override {
     if (output_watch_thread_started_)

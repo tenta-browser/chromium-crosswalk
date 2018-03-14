@@ -45,8 +45,7 @@ void ShellAppDelegate::AddNewContents(content::BrowserContext* context,
                                       content::WebContents* new_contents,
                                       WindowOpenDisposition disposition,
                                       const gfx::Rect& initial_rect,
-                                      bool user_gesture,
-                                      bool* was_blocked) {
+                                      bool user_gesture) {
   NOTIMPLEMENTED();
 }
 
@@ -81,7 +80,7 @@ bool ShellAppDelegate::CheckMediaAccessPermission(
   return true;
 }
 
-int ShellAppDelegate::PreferredIconSize() {
+int ShellAppDelegate::PreferredIconSize() const {
   return extension_misc::EXTENSION_ICON_SMALL;
 }
 
@@ -99,6 +98,11 @@ bool ShellAppDelegate::IsWebContentsVisible(
 void ShellAppDelegate::SetTerminatingCallback(const base::Closure& callback) {
   // TODO(jamescook): Should app_shell continue to close the app window
   // manually or should it use a browser termination callback like Chrome?
+}
+
+bool ShellAppDelegate::TakeFocus(content::WebContents* web_contents,
+                                 bool reverse) {
+  return false;
 }
 
 }  // namespace extensions

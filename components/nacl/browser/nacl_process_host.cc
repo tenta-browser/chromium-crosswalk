@@ -159,17 +159,11 @@ bool RunningOnWOW64() {
 
 namespace {
 
-#if defined(OS_POSIX) && !defined(OS_MACOSX)
-content::ZygoteHandle g_nacl_zygote;
-#endif  // defined(OS_POSIX) && !defined(OS_MACOSX)
-
 // NOTE: changes to this class need to be reviewed by the security team.
 class NaClSandboxedProcessLauncherDelegate
     : public content::SandboxedProcessLauncherDelegate {
  public:
   NaClSandboxedProcessLauncherDelegate() {}
-
-  ~NaClSandboxedProcessLauncherDelegate() override {}
 
 #if defined(OS_WIN)
   void PostSpawnTarget(base::ProcessHandle process) override {
@@ -185,10 +179,13 @@ class NaClSandboxedProcessLauncherDelegate
     }
   }
 #elif defined(OS_POSIX) && !defined(OS_MACOSX)
-  content::ZygoteHandle* GetZygote() override {
+  content::ZygoteHandle GetZygote() override {
     return content::GetGenericZygote();
   }
 #endif  // OS_WIN
+  service_manager::SandboxType GetSandboxType() override {
+    return service_manager::SANDBOX_TYPE_PPAPI;
+  }
 };
 
 void CloseFile(base::File file) {
@@ -271,14 +268,16 @@ NaClProcessHost::~NaClProcessHost() {
     // handles.
     base::File file(IPC::PlatformFileForTransitToFile(
         prefetched_resource_files_[i].file));
-    content::BrowserThread::GetBlockingPool()->PostTask(
-        FROM_HERE, base::Bind(&CloseFile, base::Passed(std::move(file))));
+    base::PostTaskWithTraits(
+        FROM_HERE, {base::TaskPriority::BACKGROUND, base::MayBlock()},
+        base::Bind(&CloseFile, base::Passed(std::move(file))));
   }
 #endif
   // Open files need to be closed on the blocking pool.
   if (nexe_file_.IsValid()) {
-    content::BrowserThread::GetBlockingPool()->PostTask(
-        FROM_HERE, base::Bind(&CloseFile, base::Passed(std::move(nexe_file_))));
+    base::PostTaskWithTraits(
+        FROM_HERE, {base::TaskPriority::BACKGROUND, base::MayBlock()},
+        base::Bind(&CloseFile, base::Passed(std::move(nexe_file_))));
   }
 
   if (reply_msg_) {
@@ -332,14 +331,6 @@ void NaClProcessHost::EarlyStartup() {
   }
   NaClBrowser::GetDelegate()->SetDebugPatterns(nacl_debug_mask);
 }
-
-#if defined(OS_POSIX) && !defined(OS_MACOSX)
-// static
-void NaClProcessHost::EarlyZygoteLaunch() {
-  DCHECK(!g_nacl_zygote);
-  g_nacl_zygote = content::CreateZygote();
-}
-#endif  // defined(OS_POSIX) && !defined(OS_MACOSX)
 
 void NaClProcessHost::Launch(
     NaClHostMessageFilter* nacl_host_message_filter,
@@ -563,7 +554,7 @@ bool NaClProcessHost::LaunchSelLdr() {
   if (RunningOnWOW64()) {
     if (!NaClBrokerService::GetInstance()->LaunchLoader(
             weak_factory_.GetWeakPtr(),
-            process_->GetServiceRequestChannelToken())) {
+            process_->TakeInProcessServiceRequest())) {
       SendErrorToRenderer("broker service did not launch process");
       return false;
     }
@@ -630,16 +621,16 @@ void NaClProcessHost::ReplyToRenderer(
   // Hereafter, we always send an IPC message with handles created above
   // which, on Windows, are not closable in this process.
   std::string error_message;
-  base::SharedMemoryHandle crash_info_shmem_renderer_handle;
-  if (!crash_info_shmem_.ShareToProcess(nacl_host_message_filter_->PeerHandle(),
-                                        &crash_info_shmem_renderer_handle)) {
+  base::SharedMemoryHandle crash_info_shmem_renderer_handle =
+      crash_info_shmem_.handle().Duplicate();
+  if (!crash_info_shmem_renderer_handle.IsValid()) {
     // On error, we do not send "IPC::ChannelHandle"s to the renderer process.
     // Note that some other FDs/handles still get sent to the renderer, but
     // will be closed there.
     ppapi_channel_handle.reset();
     trusted_channel_handle.reset();
     manifest_service_channel_handle.reset();
-    error_message = "ShareToProcess() failed";
+    error_message = "handle duplication failed";
   }
 
   const ChildProcessData& data = process_->GetData();
@@ -737,9 +728,8 @@ net::SocketDescriptor NaClProcessHost::GetDebugStubSocketHandle() {
   if (s == net::kInvalidSocket) {
     LOG(ERROR) << "failed to open socket for debug stub";
     return net::kInvalidSocket;
-  } else {
-    LOG(WARNING) << "debug stub on port " << port;
   }
+  LOG(WARNING) << "debug stub on port " << port;
   if (listen(s, 1)) {
     LOG(ERROR) << "listen() failed on debug stub socket";
     if (IGNORE_EINTR(close(s)) < 0)
@@ -797,9 +787,9 @@ bool NaClProcessHost::StartNaClExecution() {
 #endif
   }
 
-  if (!crash_info_shmem_.ShareToProcess(process_->GetData().handle,
-                                        &params.crash_info_shmem_handle)) {
-    DLOG(ERROR) << "Failed to ShareToProcess() a shared memory buffer";
+  params.crash_info_shmem_handle = crash_info_shmem_.handle().Duplicate();
+  if (!params.crash_info_shmem_handle.IsValid()) {
+    DLOG(ERROR) << "Failed to duplicate a shared memory buffer";
     return false;
   }
 
@@ -831,9 +821,7 @@ bool NaClProcessHost::StartNaClExecution() {
       // compromised renderer to pass an arbitrary fd that could get loaded
       // into the plugin process.
       base::PostTaskWithTraitsAndReplyWithResult(
-          FROM_HERE,
-          base::TaskTraits().MayBlock().WithPriority(
-              base::TaskPriority::BACKGROUND),
+          FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
           base::Bind(OpenNaClReadExecImpl, file_path, true /* is_executable */),
           base::Bind(&NaClProcessHost::StartNaClFileResolved,
                      weak_factory_.GetWeakPtr(), params, file_path));
@@ -852,8 +840,9 @@ void NaClProcessHost::StartNaClFileResolved(
   if (checked_nexe_file.IsValid()) {
     // Release the file received from the renderer. This has to be done on a
     // thread where IO is permitted, though.
-    content::BrowserThread::GetBlockingPool()->PostTask(
-        FROM_HERE, base::Bind(&CloseFile, base::Passed(std::move(nexe_file_))));
+    base::PostTaskWithTraits(
+        FROM_HERE, {base::TaskPriority::BACKGROUND, base::MayBlock()},
+        base::Bind(&CloseFile, base::Passed(std::move(nexe_file_))));
     params.nexe_file_path_metadata = file_path;
     params.nexe_file =
         IPC::TakePlatformFileForTransit(std::move(checked_nexe_file));
@@ -910,6 +899,7 @@ bool NaClProcessHost::StartPPAPIProxy(
 
   ipc_proxy_channel_ = IPC::ChannelProxy::Create(
       channel_handle.release(), IPC::Channel::MODE_CLIENT, NULL,
+      base::ThreadTaskRunnerHandle::Get().get(),
       base::ThreadTaskRunnerHandle::Get().get());
   // Create the browser ppapi host and enable PPAPI message dispatching to the
   // browser process.
@@ -984,17 +974,16 @@ void NaClProcessHost::OnPpapiChannelsCreated(
 bool NaClProcessHost::StartWithLaunchedProcess() {
   NaClBrowser* nacl_browser = NaClBrowser::GetInstance();
 
-  if (nacl_browser->IsReady()) {
+  if (nacl_browser->IsReady())
     return StartNaClExecution();
-  } else if (nacl_browser->IsOk()) {
+  if (nacl_browser->IsOk()) {
     nacl_browser->WaitForResources(
         base::Bind(&NaClProcessHost::OnResourcesReady,
                    weak_factory_.GetWeakPtr()));
     return true;
-  } else {
-    SendErrorToRenderer("previously failed to acquire shared resources");
-    return false;
   }
+  SendErrorToRenderer("previously failed to acquire shared resources");
+  return false;
 }
 
 void NaClProcessHost::OnQueryKnownToValidate(const std::string& signature,
@@ -1049,9 +1038,7 @@ void NaClProcessHost::OnResolveFileToken(uint64_t file_token_lo,
 
   // Open the file.
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE,
-      base::TaskTraits().MayBlock().WithPriority(
-          base::TaskPriority::BACKGROUND),
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
       base::Bind(OpenNaClReadExecImpl, file_path, true /* is_executable */),
       base::Bind(&NaClProcessHost::FileResolved, weak_factory_.GetWeakPtr(),
                  file_token_lo, file_token_hi, file_path));
@@ -1137,13 +1124,12 @@ bool NaClProcessHost::AttachDebugExceptionHandler(const std::string& info,
     return NaClBrokerService::GetInstance()->LaunchDebugExceptionHandler(
                weak_factory_.GetWeakPtr(), nacl_pid, process.Handle(),
                info);
-  } else {
-    NaClStartDebugExceptionHandlerThread(
-        std::move(process), info, base::ThreadTaskRunnerHandle::Get(),
-        base::Bind(&NaClProcessHost::OnDebugExceptionHandlerLaunchedByBroker,
-                   weak_factory_.GetWeakPtr()));
-    return true;
   }
+  NaClStartDebugExceptionHandlerThread(
+      std::move(process), info, base::ThreadTaskRunnerHandle::Get(),
+      base::Bind(&NaClProcessHost::OnDebugExceptionHandlerLaunchedByBroker,
+                 weak_factory_.GetWeakPtr()));
+  return true;
 }
 #endif
 

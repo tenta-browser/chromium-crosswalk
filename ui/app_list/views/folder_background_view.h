@@ -30,9 +30,6 @@ class FolderBackgroundView : public views::View,
   // Updates the ink bubble's ShowState.
   void UpdateFolderContainerBubble(ShowState state);
 
-  // Returns the radius of the folder container ink bubble.
-  int GetFolderContainerBubbleRadius() const;
-
   void set_folder_view(AppListFolderView* folder_view) {
     folder_view_ = folder_view;
   }
@@ -44,8 +41,11 @@ class FolderBackgroundView : public views::View,
   // ui::ImplicitAnimationObserver overrides:
   void OnImplicitAnimationsCompleted() override;
 
+  float GetBubbleOpacity() const;
+
   AppListFolderView* folder_view_;
   ShowState show_state_;
+  bool is_fullscreen_app_list_enabled_;
 
   DISALLOW_COPY_AND_ASSIGN(FolderBackgroundView);
 };

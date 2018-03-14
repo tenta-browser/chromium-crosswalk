@@ -4,26 +4,27 @@
 
 #include "ash/wm/immersive_handler_factory_ash.h"
 
-#include "ash/wm/immersive_focus_watcher_aura.h"
-#include "ash/wm/immersive_gesture_handler_aura.h"
-#include "base/memory/ptr_util.h"
+#include <memory>
+
+#include "ash/wm/immersive_focus_watcher_classic.h"
+#include "ash/wm/immersive_gesture_handler_classic.h"
 
 namespace ash {
 
-ImmersiveHandlerFactoryAsh::ImmersiveHandlerFactoryAsh() {}
+ImmersiveHandlerFactoryAsh::ImmersiveHandlerFactoryAsh() = default;
 
-ImmersiveHandlerFactoryAsh::~ImmersiveHandlerFactoryAsh() {}
+ImmersiveHandlerFactoryAsh::~ImmersiveHandlerFactoryAsh() = default;
 
 std::unique_ptr<ImmersiveFocusWatcher>
 ImmersiveHandlerFactoryAsh::CreateFocusWatcher(
     ImmersiveFullscreenController* controller) {
-  return base::MakeUnique<ImmersiveFocusWatcherAura>(controller);
+  return std::make_unique<ImmersiveFocusWatcherClassic>(controller);
 }
 
 std::unique_ptr<ImmersiveGestureHandler>
 ImmersiveHandlerFactoryAsh::CreateGestureHandler(
     ImmersiveFullscreenController* controller) {
-  return base::MakeUnique<ImmersiveGestureHandlerAura>(controller);
+  return std::make_unique<ImmersiveGestureHandlerClassic>(controller);
 }
 
 }  // namespace ash

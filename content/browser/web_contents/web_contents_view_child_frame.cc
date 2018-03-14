@@ -6,7 +6,7 @@
 
 #include "build/build_config.h"
 #include "content/browser/frame_host/render_frame_proxy_host.h"
-#include "content/browser/frame_host/render_widget_host_view_child_frame.h"
+#include "content/browser/renderer_host/render_widget_host_view_child_frame.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/web_contents_view_delegate.h"
 #include "ui/gfx/geometry/rect.h"
@@ -60,10 +60,12 @@ void WebContentsViewChildFrame::GetScreenInfo(ScreenInfo* screen_info) const {
   // to happen in RenderWidgetHostViewChildFrame, but it seems like the right
   // thing to do. We should keep an eye on this in case the else-clause below
   // causes problems.
-  if (web_contents_->GetOuterWebContents())
-    GetOuterView()->GetScreenInfo(screen_info);
-  else
+  RenderWidgetHostView* rwhv = web_contents_->GetRenderWidgetHostView();
+  if (!rwhv) {
     WebContentsView::GetDefaultScreenInfo(screen_info);
+    return;
+  }
+  rwhv->GetScreenInfo(screen_info);
 }
 
 void WebContentsViewChildFrame::GetContainerBounds(gfx::Rect* out) const {
@@ -146,6 +148,10 @@ void WebContentsViewChildFrame::StoreFocus() {
   NOTREACHED();
 }
 
+void WebContentsViewChildFrame::FocusThroughTabTraversal(bool reverse) {
+  NOTREACHED();
+}
+
 DropData* WebContentsViewChildFrame::GetDropData() const {
   NOTREACHED();
   return nullptr;
@@ -156,7 +162,8 @@ void WebContentsViewChildFrame::UpdateDragCursor(WebDragOperation operation) {
     view->UpdateDragCursor(operation);
 }
 
-void WebContentsViewChildFrame::GotFocus() {
+void WebContentsViewChildFrame::GotFocus(
+    RenderWidgetHostImpl* render_widget_host) {
   NOTREACHED();
 }
 

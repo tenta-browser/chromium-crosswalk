@@ -21,6 +21,7 @@
 #include "build/build_config.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/os_crypt/os_crypt_mocker.h"
+#include "components/password_manager/core/browser/password_manager_test_utils.h"
 #include "components/password_manager/core/browser/psl_matching_helper.h"
 #include "sql/connection.h"
 #include "sql/statement.h"
@@ -66,7 +67,8 @@ void GenerateExamplePasswordForm(PasswordForm* form) {
   form->date_synced = base::Time::Now();
   form->display_name = ASCIIToUTF16("Mr. Smith");
   form->icon_url = GURL("https://accounts.google.com/Icon");
-  form->federation_origin = url::Origin(GURL("https://accounts.google.com/"));
+  form->federation_origin =
+      url::Origin::Create(GURL("https://accounts.google.com/"));
   form->skip_zero_click = true;
 }
 
@@ -103,7 +105,7 @@ bool AddZeroClickableLogin(LoginDatabase* db,
   form.signon_realm = form.origin.spec();
   form.display_name = ASCIIToUTF16(unique_string);
   form.icon_url = origin;
-  form.federation_origin = url::Origin(origin);
+  form.federation_origin = url::Origin::Create(origin);
   form.date_created = base::Time::Now();
 
   form.skip_zero_click = false;
@@ -141,7 +143,7 @@ class LoginDatabaseTest : public testing::Test {
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     file_ = temp_dir_.GetPath().AppendASCII("TestMetadataStoreMacDatabase");
-    OSCryptMocker::SetUpWithSingleton();
+    OSCryptMocker::SetUp();
 
     db_.reset(new LoginDatabase(file_));
     ASSERT_TRUE(db_->Init());
@@ -404,7 +406,8 @@ TEST_F(LoginDatabaseTest, TestFederatedMatching) {
   form2.signon_realm = "federation://mobile.foo.com/accounts.google.com";
   form2.username_value = ASCIIToUTF16("test1@gmail.com");
   form2.type = PasswordForm::TYPE_API;
-  form2.federation_origin = url::Origin(GURL("https://accounts.google.com/"));
+  form2.federation_origin =
+      url::Origin::Create(GURL("https://accounts.google.com/"));
 
   // Add it and make sure it is there.
   EXPECT_EQ(AddChangeForForm(form), db().AddLogin(form));
@@ -435,7 +438,8 @@ TEST_F(LoginDatabaseTest, TestFederatedMatchingLocalhost) {
   PasswordForm form;
   form.origin = GURL("http://localhost/");
   form.signon_realm = "federation://localhost/accounts.google.com";
-  form.federation_origin = url::Origin(GURL("https://accounts.google.com/"));
+  form.federation_origin =
+      url::Origin::Create(GURL("https://accounts.google.com/"));
   form.username_value = ASCIIToUTF16("test@gmail.com");
   form.type = PasswordForm::TYPE_API;
   form.scheme = PasswordForm::SCHEME_HTML;
@@ -447,7 +451,7 @@ TEST_F(LoginDatabaseTest, TestFederatedMatchingLocalhost) {
   EXPECT_EQ(AddChangeForForm(form), db().AddLogin(form));
   EXPECT_EQ(AddChangeForForm(form_with_port), db().AddLogin(form_with_port));
 
-  // Match twice.
+  // Match localhost with and without port.
   PasswordStore::FormDigest form_request(PasswordForm::SCHEME_HTML,
                                          "http://localhost/",
                                          GURL("http://localhost/"));
@@ -455,7 +459,6 @@ TEST_F(LoginDatabaseTest, TestFederatedMatchingLocalhost) {
   EXPECT_TRUE(db().GetLogins(form_request, &result));
   EXPECT_THAT(result, UnorderedElementsAre(Pointee(form)));
 
-  // Match against the mobile site.
   form_request.origin = GURL("http://localhost:8080/");
   form_request.signon_realm = "http://localhost:8080/";
   EXPECT_TRUE(db().GetLogins(form_request, &result));
@@ -549,7 +552,8 @@ TEST_F(LoginDatabaseTest, TestFederatedMatchingWithoutPSLMatching) {
   form2.signon_realm = "federation://some.other.google.com/accounts.google.com";
   form2.username_value = ASCIIToUTF16("test1@gmail.com");
   form2.type = PasswordForm::TYPE_API;
-  form2.federation_origin = url::Origin(GURL("https://accounts.google.com/"));
+  form2.federation_origin =
+      url::Origin::Create(GURL("https://accounts.google.com/"));
 
   // Add it and make sure it is there.
   EXPECT_EQ(AddChangeForForm(form), db().AddLogin(form));
@@ -581,7 +585,8 @@ TEST_F(LoginDatabaseTest, TestFederatedPSLMatching) {
   form.signon_realm = "federation://psl.example.com/accounts.google.com";
   form.username_value = ASCIIToUTF16("test1@gmail.com");
   form.type = PasswordForm::TYPE_API;
-  form.federation_origin = url::Origin(GURL("https://accounts.google.com/"));
+  form.federation_origin =
+      url::Origin::Create(GURL("https://accounts.google.com/"));
   form.scheme = PasswordForm::SCHEME_HTML;
   EXPECT_EQ(AddChangeForForm(form), db().AddLogin(form));
 
@@ -790,6 +795,151 @@ TEST_F(LoginDatabaseTest, TestPublicSuffixDomainMatchingRegexp) {
   EXPECT_EQ(0U, result.size());
 }
 
+TEST_F(LoginDatabaseTest,
+       GetLoginsForSameOrganizationName_OnlyWebHTTPFormsAreConsidered) {
+  static constexpr const struct {
+    const PasswordFormData form_data;
+    bool use_federated_login;
+    const char* other_queried_signon_realm;
+    bool expected_matches_itself;
+    bool expected_matches_other_realm;
+  } kTestCases[] = {
+      {{PasswordForm::SCHEME_HTML, "https://example.com/",
+        "https://example.com/origin", "", L"", L"", L"", L"u", L"p", false, 1},
+       false,
+       nullptr,
+       true,
+       true},
+      {{PasswordForm::SCHEME_BASIC, "http://example.com/realm",
+        "http://example.com/", "", L"", L"", L"", L"u", L"p", false, 1},
+       false,
+       nullptr,
+       false,
+       false},
+      {{PasswordForm::SCHEME_OTHER, "ftp://example.com/realm",
+        "ftp://example.com/", "", L"", L"", L"", L"u", L"p", false, 1},
+       false,
+       "http://example.com/realm",
+       false,
+       false},
+      {{PasswordForm::SCHEME_HTML,
+        "federation://example.com/accounts.google.com",
+        "https://example.com/orgin", "", L"", L"", L"", L"u", L"", false, 1},
+       true,
+       "http://example.com/",
+       false,
+       false},
+      {{PasswordForm::SCHEME_HTML, "android://hash@example.com/",
+        "android://hash@example.com/", "", L"", L"", L"", L"u", L"p", false, 1},
+       false,
+       "http://example.com/",
+       false,
+       false},
+  };
+
+  for (const auto& test_case : kTestCases) {
+    SCOPED_TRACE(test_case.form_data.signon_realm);
+
+    std::unique_ptr<PasswordForm> form = FillPasswordFormWithData(
+        test_case.form_data, test_case.use_federated_login);
+    ASSERT_EQ(AddChangeForForm(*form), db().AddLogin(*form));
+
+    std::vector<std::unique_ptr<PasswordForm>> same_organization_forms;
+    EXPECT_TRUE(db().GetLoginsForSameOrganizationName(
+        form->signon_realm, &same_organization_forms));
+    EXPECT_EQ(test_case.expected_matches_itself ? 1u : 0u,
+              same_organization_forms.size());
+
+    if (test_case.other_queried_signon_realm) {
+      same_organization_forms.clear();
+      EXPECT_TRUE(db().GetLoginsForSameOrganizationName(
+          test_case.other_queried_signon_realm, &same_organization_forms));
+      EXPECT_EQ(test_case.expected_matches_other_realm ? 1u : 0u,
+                same_organization_forms.size());
+    }
+
+    ASSERT_TRUE(db().RemoveLogin(*form));
+  }
+}
+
+TEST_F(LoginDatabaseTest, GetLoginsForSameOrganizationName_DetailsOfMatching) {
+  const struct {
+    const char* saved_signon_realm;
+    const char* queried_signon_realm;
+    bool expected_matches;
+  } kTestCases[] = {
+      // PSL matches are also same-organization-name matches.
+      {"http://psl.example.com/", "http://example.com/", true},
+      {"http://example.com/", "http://sub.example.com/", true},
+      {"https://a.b.example.co.uk/", "https://c.d.e.example.co.uk/", true},
+
+      // Non-PSL but same-organization-name matches. Also an illustration why it
+      // would be unsafe to offer these credentials for filling.
+      {"https://example.com/", "https://example.co.uk/", true},
+      {"https://example.co.uk/", "https://example.com/", true},
+      {"https://a.example.appspot.com/", "https://b.example.co.uk/", true},
+
+      // Same-organization-name matches are HTTP/HTTPS-agnostic.
+      {"https://example.com/", "http://example.com/", true},
+      {"http://example.com/", "https://example.com/", true},
+
+      {"http://www.foo-bar.com/", "http://sub.foo-bar.com", true},
+      {"http://www.foo_bar.com/", "http://sub.foo_bar.com", true},
+      {"http://www.foo-bar.com/", "http://sub.foo%2Dbar.com", true},
+      {"http://www.foo%21bar.com/", "http://sub.foo!bar.com", true},
+      {"http://a.xn--sztr-7na0i.co.uk/", "http://xn--sztr-7na0i.com/", true},
+      {"http://a.xn--sztr-7na0i.co.uk/", "http://www.sz\xc3\xb3t\xc3\xa1r.com/",
+       true},
+
+      {"http://www.foo+bar.com/", "http://sub.foo+bar.com", true},
+      {"http://www.foooobar.com/", "http://sub.foo+bar.com", false},
+      {"http://www.fobar.com/", "http://sub.foo?bar.com", false},
+      {"http://www.foozbar.com/", "http://sub.foo.bar.com", false},
+      {"http://www.foozbar.com/", "http://sub.foo[a-z]bar.com", false},
+
+      {"https://notexample.com/", "https://example.com/", false},
+      {"https://a.notexample.com/", "https://example.com/", false},
+      {"https://example.com/", "https://notexample.com/", false},
+      {"https://example.com/", "https://example.bar.com/", false},
+      {"https://example.foo.com/", "https://example.com/", false},
+      {"https://example.foo.com/", "https://example.bar.com/", false},
+
+      // URLs without host portions, hosts without registry controlled domains
+      // or hosts consisting of a registry.
+      {"http://localhost/", "http://localhost/", false},
+      {"https://example/", "https://example/", false},
+      {"https://co.uk/", "https://co.uk/", false},
+      {"https://example/", "https://example.com/", false},
+      {"https://a.example/", "https://example.com/", false},
+      {"https://example.com/", "https://example/", false},
+      {"https://127.0.0.1/", "https://127.0.0.1/", false},
+      {"https:/[3ffe:2a00:100:7031::1]/", "https:/[3ffe:2a00:100:7031::1]/",
+       false},
+
+      // Queried |signon-realms| are invalid URIs.
+      {"https://example.com/", "", false},
+      {"https://example.com/", "bad url", false},
+      {"https://example.com/", "https://", false},
+      {"https://example.com/", "http://www.foo;bar.com", false},
+      {"https://example.com/", "example", false},
+  };
+
+  for (const auto& test_case : kTestCases) {
+    SCOPED_TRACE(test_case.saved_signon_realm);
+    SCOPED_TRACE(test_case.queried_signon_realm);
+
+    std::unique_ptr<PasswordForm> form = FillPasswordFormWithData(
+        {PasswordForm::SCHEME_HTML, test_case.saved_signon_realm,
+         test_case.saved_signon_realm, "", L"", L"", L"", L"u", L"p", true, 1});
+    std::vector<std::unique_ptr<PasswordForm>> result;
+    ASSERT_EQ(AddChangeForForm(*form), db().AddLogin(*form));
+    EXPECT_TRUE(db().GetLoginsForSameOrganizationName(
+        test_case.queried_signon_realm, &result));
+    EXPECT_EQ(test_case.expected_matches ? 1u : 0u, result.size());
+    ASSERT_TRUE(db().RemoveLogin(*form));
+  }
+}
+
 static bool AddTimestampedLogin(LoginDatabase* db,
                                 std::string url,
                                 const std::string& unique_string,
@@ -805,7 +955,8 @@ static bool AddTimestampedLogin(LoginDatabase* db,
   form.signon_realm = url;
   form.display_name = ASCIIToUTF16(unique_string);
   form.icon_url = GURL("https://accounts.google.com/Icon");
-  form.federation_origin = url::Origin(GURL("https://accounts.google.com/"));
+  form.federation_origin =
+      url::Origin::Create(GURL("https://accounts.google.com/"));
   form.skip_zero_click = true;
 
   if (date_is_creation)
@@ -974,7 +1125,8 @@ TEST_F(LoginDatabaseTest, BlacklistedLogins) {
   form.date_synced = base::Time::Now();
   form.display_name = ASCIIToUTF16("Mr. Smith");
   form.icon_url = GURL("https://accounts.google.com/Icon");
-  form.federation_origin = url::Origin(GURL("https://accounts.google.com/"));
+  form.federation_origin =
+      url::Origin::Create(GURL("https://accounts.google.com/"));
   form.skip_zero_click = true;
   EXPECT_EQ(AddChangeForForm(form), db().AddLogin(form));
 
@@ -1197,7 +1349,8 @@ TEST_F(LoginDatabaseTest, UpdateLogin) {
   form.type = PasswordForm::TYPE_GENERATED;
   form.display_name = ASCIIToUTF16("Mr. Smith");
   form.icon_url = GURL("https://accounts.google.com/Icon");
-  form.federation_origin = url::Origin(GURL("https://accounts.google.com/"));
+  form.federation_origin =
+      url::Origin::Create(GURL("https://accounts.google.com/"));
   form.skip_zero_click = true;
   EXPECT_EQ(UpdateChangeForForm(form), db().UpdateLogin(form));
 
@@ -1510,37 +1663,6 @@ TEST_F(LoginDatabaseTest, PasswordReuseMetrics) {
                                    base::Bucket(5, 1)));
 }
 
-TEST_F(LoginDatabaseTest, ClearPasswordValues) {
-  db().set_clear_password_values(true);
-
-  // Add a PasswordForm, the password should be cleared.
-  base::HistogramTester histogram_tester;
-  PasswordForm form;
-  form.origin = GURL("http://accounts.google.com/LoginAuth");
-  form.signon_realm = "http://accounts.google.com/";
-  form.username_value = ASCIIToUTF16("my_username");
-  form.password_value = ASCIIToUTF16("12345");
-  EXPECT_EQ(AddChangeForForm(form), db().AddLogin(form));
-
-  std::vector<std::unique_ptr<PasswordForm>> result;
-  EXPECT_TRUE(db().GetLogins(PasswordStore::FormDigest(form), &result));
-  ASSERT_EQ(1U, result.size());
-  PasswordForm expected_form = form;
-  expected_form.password_value.clear();
-  EXPECT_EQ(expected_form, *result[0]);
-
-  // Update the password, it should stay empty.
-  form.password_value = ASCIIToUTF16("password");
-  EXPECT_EQ(UpdateChangeForForm(form), db().UpdateLogin(form));
-  EXPECT_TRUE(db().GetLogins(PasswordStore::FormDigest(form), &result));
-  ASSERT_EQ(1U, result.size());
-  EXPECT_EQ(expected_form, *result[0]);
-
-  // Encrypting/decrypting shouldn't happen. Thus there should be no keychain
-  // access on Mac.
-  histogram_tester.ExpectTotalCount("OSX.Keychain.Access", 0);
-}
-
 #if defined(OS_POSIX)
 // Only the current user has permission to read the database.
 //
@@ -1588,7 +1710,7 @@ class LoginDatabaseMigrationTest : public testing::TestWithParam<int> {
                                   .AppendASCII("data")
                                   .AppendASCII("password_manager");
     database_path_ = temp_dir_.GetPath().AppendASCII("test.db");
-    OSCryptMocker::SetUpWithSingleton();
+    OSCryptMocker::SetUp();
   }
 
   void TearDown() override { OSCryptMocker::TearDown(); }

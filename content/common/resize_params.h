@@ -5,6 +5,8 @@
 #ifndef CONTENT_COMMON_RESIZE_PARAMS_H_
 #define CONTENT_COMMON_RESIZE_PARAMS_H_
 
+#include "base/optional.h"
+#include "components/viz/common/surfaces/local_surface_id.h"
 #include "content/common/content_export.h"
 #include "content/public/common/screen_info.h"
 #include "third_party/WebKit/public/platform/WebDisplayMode.h"
@@ -30,12 +32,19 @@ struct CONTENT_EXPORT ResizeParams {
   // URL-bar (always false on platforms where URL-bar hiding isn't supported).
   bool browser_controls_shrink_blink_size;
 
+  // Whether or not the focused node should be scrolled into view after the
+  // resize.
+  bool scroll_focused_node_into_view;
+
   // The height of the top controls (always 0 on platforms where URL-bar hiding
   // isn't supported).
   float top_controls_height;
 
   // The height of the bottom controls.
   float bottom_controls_height;
+
+  // The local surface ID to use (if valid).
+  base::Optional<viz::LocalSurfaceId> local_surface_id;
 
   // The size of the visible viewport, which may be smaller than the view if the
   // view is partially occluded (e.g. by a virtual keyboard).  The size is in
@@ -48,8 +57,9 @@ struct CONTENT_EXPORT ResizeParams {
   // The display mode.
   blink::WebDisplayMode display_mode;
 
-  // If set, requests the renderer to reply with a ViewHostMsg_UpdateRect
-  // with the ViewHostMsg_UpdateRect_Flags::IS_RESIZE_ACK bit set in flags.
+  // If set, requests the renderer to reply with a
+  // ViewHostMsg_ResizeOrRepaint_ACK with the
+  // ViewHostMsg_ResizeOrRepaint_ACK_Flags::IS_RESIZE_ACK bit set in flags.
   bool needs_resize_ack;
 };
 

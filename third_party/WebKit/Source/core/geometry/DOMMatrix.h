@@ -6,9 +6,11 @@
 #define DOMMatrix_h
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/dom/NotShared.h"
+#include "bindings/core/v8/string_or_unrestricted_double_sequence.h"
+#include "core/geometry/DOMMatrix2DInit.h"
 #include "core/geometry/DOMMatrixInit.h"
 #include "core/geometry/DOMMatrixReadOnly.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
 
 namespace blink {
 
@@ -16,17 +18,23 @@ class CORE_EXPORT DOMMatrix : public DOMMatrixReadOnly {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static DOMMatrix* Create(ExceptionState&);
+  static DOMMatrix* Create();
+  static DOMMatrix* Create(ExecutionContext*, ExceptionState&);
+  static DOMMatrix* Create(ExecutionContext*,
+                           StringOrUnrestrictedDoubleSequence&,
+                           ExceptionState&);
+  // TODO(fserb): double check those two bellow are needed:
   static DOMMatrix* Create(DOMMatrixReadOnly*,
                            ExceptionState& = ASSERT_NO_EXCEPTION);
   static DOMMatrix* Create(const SkMatrix44&, ExceptionState&);
-  static DOMMatrix* Create(const String&, ExceptionState&);
-  static DOMMatrix* Create(Vector<double>, ExceptionState&);
   static DOMMatrix* fromFloat32Array(NotShared<DOMFloat32Array>,
                                      ExceptionState&);
   static DOMMatrix* fromFloat64Array(NotShared<DOMFloat64Array>,
                                      ExceptionState&);
   static DOMMatrix* fromMatrix(DOMMatrixInit&, ExceptionState&);
+  static DOMMatrix* CreateForSerialization(double[], int size);
+  // Used by Canvas2D, not defined on the IDL.
+  static DOMMatrix* fromMatrix2D(DOMMatrix2DInit&, ExceptionState&);
 
   void setA(double value) { matrix_->SetM11(value); }
   void setB(double value) { matrix_->SetM12(value); }
@@ -65,7 +73,7 @@ class CORE_EXPORT DOMMatrix : public DOMMatrixReadOnly {
   }
   void setM33(double value) {
     matrix_->SetM33(value);
-    SetIs2D(value != 1);
+    SetIs2D(value == 1);
   }
   void setM34(double value) {
     matrix_->SetM34(value);
@@ -79,10 +87,11 @@ class CORE_EXPORT DOMMatrix : public DOMMatrixReadOnly {
   }
   void setM44(double value) {
     matrix_->SetM44(value);
-    SetIs2D(value != 1);
+    SetIs2D(value == 1);
   }
 
   DOMMatrix* multiplySelf(DOMMatrixInit&, ExceptionState&);
+  DOMMatrix* multiplySelf(const DOMMatrix& other_matrix);
   DOMMatrix* preMultiplySelf(DOMMatrixInit&, ExceptionState&);
   DOMMatrix* translateSelf(double tx = 0, double ty = 0, double tz = 0);
   DOMMatrix* scaleSelf(double sx = 1);
@@ -106,9 +115,12 @@ class CORE_EXPORT DOMMatrix : public DOMMatrixReadOnly {
                                  double angle = 0);
   DOMMatrix* skewXSelf(double sx = 0);
   DOMMatrix* skewYSelf(double sy = 0);
+  DOMMatrix* perspectiveSelf(double p);
   DOMMatrix* invertSelf();
 
-  DOMMatrix* setMatrixValue(const String&, ExceptionState&);
+  DOMMatrix* setMatrixValue(const ExecutionContext*,
+                            const String&,
+                            ExceptionState&);
 
  private:
   DOMMatrix(const TransformationMatrix&, bool is2d = true);

@@ -17,11 +17,13 @@
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/string_piece.h"
 #include "base/test/test_message_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "media/audio/audio_device_description.h"
 #include "media/audio/audio_source_diverter.h"
+#include "media/audio/test_audio_thread.h"
 #include "media/base/audio_bus.h"
 #include "media/base/audio_parameters.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -46,12 +48,13 @@ static const float kBufferNonZeroData = 1.0f;
 class MockAudioOutputControllerEventHandler
     : public AudioOutputController::EventHandler {
  public:
-  MockAudioOutputControllerEventHandler() {}
+  MockAudioOutputControllerEventHandler() = default;
 
   MOCK_METHOD0(OnControllerCreated, void());
   MOCK_METHOD0(OnControllerPlaying, void());
   MOCK_METHOD0(OnControllerPaused, void());
   MOCK_METHOD0(OnControllerError, void());
+  MOCK_METHOD1(OnLog, void(base::StringPiece));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockAudioOutputControllerEventHandler);
@@ -60,7 +63,7 @@ class MockAudioOutputControllerEventHandler
 class MockAudioOutputControllerSyncReader
     : public AudioOutputController::SyncReader {
  public:
-  MockAudioOutputControllerSyncReader() {}
+  MockAudioOutputControllerSyncReader() = default;
 
   MOCK_METHOD3(RequestMoreData,
                void(base::TimeDelta delay,
@@ -112,11 +115,12 @@ class AudioOutputControllerTest : public testing::Test {
  public:
   AudioOutputControllerTest()
       : audio_manager_(AudioManager::CreateForTesting(
-            base::ThreadTaskRunnerHandle::Get())) {
+            base::MakeUnique<TestAudioThread>())) {
+    EXPECT_CALL(mock_event_handler_, OnLog(_)).Times(testing::AnyNumber());
     base::RunLoop().RunUntilIdle();
   }
 
-  ~AudioOutputControllerTest() override {}
+  ~AudioOutputControllerTest() override { audio_manager_->Shutdown(); }
 
  protected:
   void Create(int samples_per_packet) {
@@ -168,7 +172,7 @@ class AudioOutputControllerTest : public testing::Test {
     // AudioManager.
     audio_manager_->GetTaskRunner()->PostTask(
         FROM_HERE,
-        base::Bind(&AudioOutputController::OnDeviceChange, controller_));
+        base::BindOnce(&AudioOutputController::OnDeviceChange, controller_));
   }
 
   void Divert(bool was_playing, int num_times_to_be_started) {
@@ -210,7 +214,7 @@ class AudioOutputControllerTest : public testing::Test {
 
   void ReadDuplicatedAudioData(const std::vector<MockAudioPushSink*>& sinks) {
     for (size_t i = 0; i < sinks.size(); i++) {
-      EXPECT_CALL(*sinks[i], OnDataCheck(kBufferNonZeroData));
+      EXPECT_CALL(*sinks[i], OnDataCheck(kBufferNonZeroData)).Times(AtLeast(1));
     }
 
     std::unique_ptr<AudioBus> dest = AudioBus::Create(params_);
@@ -244,28 +248,21 @@ class AudioOutputControllerTest : public testing::Test {
     base::RunLoop().RunUntilIdle();
   }
 
-  void SwitchDevice(bool diverting) {
-    if (!diverting) {
-      // Expect the current stream to close and a new stream to start
-      // playing if not diverting. When diverting, nothing happens
-      // until diverting is stopped.
-      EXPECT_CALL(mock_event_handler_, OnControllerPlaying());
-    }
-
-    controller_->SwitchOutputDevice(
-        AudioDeviceDescription::GetDefaultDeviceName(),
-        base::Bind(&base::DoNothing));
-    base::RunLoop().RunUntilIdle();
-  }
-
   void Close() {
     EXPECT_CALL(mock_sync_reader_, Close());
 
     base::RunLoop run_loop;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&AudioOutputController::Close, controller_,
-                              run_loop.QuitClosure()));
+        FROM_HERE, base::BindOnce(&AudioOutputController::Close, controller_,
+                                  run_loop.QuitClosure()));
     run_loop.Run();
+  }
+
+  void SimulateErrorThenDeviceChange() {
+    audio_manager_->GetTaskRunner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&AudioOutputControllerTest::TriggerErrorThenDeviceChange,
+                       base::Unretained(this)));
   }
 
   // These help make test sequences more readable.
@@ -276,8 +273,20 @@ class AudioOutputControllerTest : public testing::Test {
   void RevertWhilePlaying() { Revert(true); }
 
  private:
+  void TriggerErrorThenDeviceChange() {
+    DCHECK(audio_manager_->GetTaskRunner()->BelongsToCurrentThread());
+
+    // Errors should be deferred; the device change should ensure it's dropped.
+    EXPECT_CALL(mock_event_handler_, OnControllerError()).Times(0);
+    controller_->OnError();
+
+    EXPECT_CALL(mock_event_handler_, OnControllerPlaying());
+    EXPECT_CALL(mock_event_handler_, OnControllerPaused()).Times(0);
+    controller_->OnDeviceChange();
+  }
+
   base::TestMessageLoop message_loop_;
-  ScopedAudioManagerPtr audio_manager_;
+  std::unique_ptr<AudioManager> audio_manager_;
   MockAudioOutputControllerEventHandler mock_event_handler_;
   MockAudioOutputControllerSyncReader mock_sync_reader_;
   MockAudioOutputStream mock_stream_;
@@ -290,10 +299,6 @@ class AudioOutputControllerTest : public testing::Test {
 TEST_F(AudioOutputControllerTest, CreateAndClose) {
   Create(kSamplesPerPacket);
   Close();
-}
-
-TEST_F(AudioOutputControllerTest, HardwareBufferTooLarge) {
-  Create(kSamplesPerPacket * 1000);
 }
 
 TEST_F(AudioOutputControllerTest, PlayAndClose) {
@@ -324,10 +329,10 @@ TEST_F(AudioOutputControllerTest, PlayDeviceChangeClose) {
   Close();
 }
 
-TEST_F(AudioOutputControllerTest, PlaySwitchDeviceClose) {
+TEST_F(AudioOutputControllerTest, PlayDeviceChangeError) {
   Create(kSamplesPerPacket);
   Play();
-  SwitchDevice(false);
+  SimulateErrorThenDeviceChange();
   Close();
 }
 
@@ -335,16 +340,6 @@ TEST_F(AudioOutputControllerTest, PlayDivertRevertClose) {
   Create(kSamplesPerPacket);
   Play();
   DivertWhilePlaying();
-  ReadDivertedAudioData();
-  RevertWhilePlaying();
-  Close();
-}
-
-TEST_F(AudioOutputControllerTest, PlayDivertSwitchDeviceRevertClose) {
-  Create(kSamplesPerPacket);
-  Play();
-  DivertWhilePlaying();
-  SwitchDevice(true);
   ReadDivertedAudioData();
   RevertWhilePlaying();
   Close();
@@ -417,22 +412,6 @@ TEST_F(AudioOutputControllerTest, DuplicateDivertInteract) {
 
   StopDuplicating(&mock_sink);
   RevertWhilePlaying();
-  Close();
-}
-
-TEST_F(AudioOutputControllerTest, DuplicateSwitchDeviceInteract) {
-  Create(kSamplesPerPacket);
-  MockAudioPushSink mock_sink;
-  Play();
-  StartDuplicating(&mock_sink);
-  ReadDuplicatedAudioData({&mock_sink});
-
-  // Switching device would trigger a read, and in turn it would trigger a push
-  // to sink.
-  EXPECT_CALL(mock_sink, OnDataCheck(kBufferNonZeroData));
-  SwitchDevice(false);
-
-  StopDuplicating(&mock_sink);
   Close();
 }
 

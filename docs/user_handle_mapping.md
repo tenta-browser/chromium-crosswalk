@@ -48,12 +48,14 @@ For Chromium contributors that have different nicks on other domains.
 | jeremy            | jeremymos       | playmobil       |
 | jln               | julien\`        | jln             |
 | jochen            | jochen\_\_      | eisinger        |
+| johnchen          |                 | zhanliang       |
 | johnnyg           | johnny\_g       | johnnyg         |
 | joi               | joisig          | joi             |
 | jonross           | jonrossca       | jonross         |
 | jshin             | jshin           | jungshik        |
 | jww               | jww\_\_         | jww             |
 | jyasskin          | jyasskin        | jyasskin        |
+| katie             |                 | katydek         |
 | karen             | kareng          | kareng          |
 | keescook          | kees            | keescook        |
 | koz               |                 | jameskozianski  |
@@ -63,7 +65,6 @@ For Chromium contributors that have different nicks on other domains.
 | littledan         | littledan       | dehrenberg      |
 | luken             | luken_chromium  | luken           |
 | mark              | markmentovai    | mmentovai       |
-| mattm             | mattm\_c, mattm\_g | mattm           |
 | mbarbella         | mbarbella       | mbarbella       |
 | mmeade            | mmeade          | mmeade          |
 | mednik            | mednik          | mednik          |
@@ -109,3 +110,4 @@ For Chromium contributors that have different nicks on other domains.
 | wjmaclean         | seumas, wjmaclean | wjmaclean, wjm, seumas |
 | yoz               | yaws            | yoz             |
 | zmo               | zhenyao         | zmo             |
+| robertma          | Hexcles         | robertma        |

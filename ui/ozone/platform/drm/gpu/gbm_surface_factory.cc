@@ -64,7 +64,9 @@ class GLOzoneEGLGbm : public GLOzoneEGL {
  protected:
   intptr_t GetNativeDisplay() override { return EGL_DEFAULT_DISPLAY; }
 
-  bool LoadGLES2Bindings() override { return LoadDefaultEGLGLES2Bindings(); }
+  bool LoadGLES2Bindings(gl::GLImplementation impl) override {
+    return LoadDefaultEGLGLES2Bindings(impl);
+  }
 
  private:
   GbmSurfaceFactory* surface_factory_;
@@ -77,8 +79,8 @@ class GLOzoneEGLGbm : public GLOzoneEGL {
 
 GbmSurfaceFactory::GbmSurfaceFactory(DrmThreadProxy* drm_thread_proxy)
     : egl_implementation_(
-          base::MakeUnique<GLOzoneEGLGbm>(this, drm_thread_proxy)),
-      osmesa_implementation_(base::MakeUnique<GLOzoneOSMesa>()),
+          std::make_unique<GLOzoneEGLGbm>(this, drm_thread_proxy)),
+      osmesa_implementation_(std::make_unique<GLOzoneOSMesa>()),
       drm_thread_proxy_(drm_thread_proxy) {}
 
 GbmSurfaceFactory::~GbmSurfaceFactory() {
@@ -108,7 +110,8 @@ std::vector<gl::GLImplementation>
 GbmSurfaceFactory::GetAllowedGLImplementations() {
   DCHECK(thread_checker_.CalledOnValidThread());
   return std::vector<gl::GLImplementation>{gl::kGLImplementationEGLGLES2,
-                                           gl::kGLImplementationOSMesaGL};
+                                           gl::kGLImplementationOSMesaGL,
+                                           gl::kGLImplementationSwiftShaderGL};
 }
 
 GLOzone* GbmSurfaceFactory::GetGLOzone(gl::GLImplementation implementation) {
@@ -153,11 +156,11 @@ scoped_refptr<gfx::NativePixmap> GbmSurfaceFactory::CreateNativePixmap(
   if (!buffer.get())
     return nullptr;
 
-  return make_scoped_refptr(new GbmPixmap(this, buffer));
+  return base::MakeRefCounted<GbmPixmap>(this, buffer);
 }
 
 scoped_refptr<gfx::NativePixmap>
-GbmSurfaceFactory::CreateNativePixmapFromHandle(
+GbmSurfaceFactory::CreateNativePixmapFromHandleInternal(
     gfx::AcceleratedWidget widget,
     gfx::Size size,
     gfx::BufferFormat format,
@@ -173,7 +176,6 @@ GbmSurfaceFactory::CreateNativePixmapFromHandle(
   }
 
   std::vector<gfx::NativePixmapPlane> planes;
-
   for (const auto& plane : handle.planes) {
     planes.push_back(plane);
   }
@@ -182,7 +184,44 @@ GbmSurfaceFactory::CreateNativePixmapFromHandle(
       widget, size, format, std::move(scoped_fds), planes);
   if (!buffer)
     return nullptr;
-  return make_scoped_refptr(new GbmPixmap(this, buffer));
+
+  return base::MakeRefCounted<GbmPixmap>(this, buffer);
+}
+
+scoped_refptr<gfx::NativePixmap>
+GbmSurfaceFactory::CreateNativePixmapFromHandle(
+    gfx::AcceleratedWidget widget,
+    gfx::Size size,
+    gfx::BufferFormat format,
+    const gfx::NativePixmapHandle& handle) {
+  // Query the external service (if available), whether it recognizes this
+  // NativePixmapHandle, and whether it can provide a corresponding NativePixmap
+  // backing it. If so, the handle is consumed. Otherwise, the handle remains
+  // valid and can be further importer by standard means.
+  if (!get_protected_native_pixmap_callback_.is_null()) {
+    auto protected_pixmap = get_protected_native_pixmap_callback_.Run(handle);
+    if (protected_pixmap)
+      return protected_pixmap;
+  }
+
+  return CreateNativePixmapFromHandleInternal(widget, size, format, handle);
+}
+
+scoped_refptr<gfx::NativePixmap>
+GbmSurfaceFactory::CreateNativePixmapForProtectedBufferHandle(
+    gfx::AcceleratedWidget widget,
+    gfx::Size size,
+    gfx::BufferFormat format,
+    const gfx::NativePixmapHandle& handle) {
+  // Create a new NativePixmap without querying the external service for any
+  // existing mappings.
+  return CreateNativePixmapFromHandleInternal(widget, size, format, handle);
+}
+
+void GbmSurfaceFactory::SetGetProtectedNativePixmapDelegate(
+    const GetProtectedNativePixmapCallback&
+        get_protected_native_pixmap_callback) {
+  get_protected_native_pixmap_callback_ = get_protected_native_pixmap_callback;
 }
 
 }  // namespace ui

@@ -5,7 +5,8 @@
 #include "ui/compositor/test/test_suite.h"
 
 #include "base/command_line.h"
-#include "base/message_loop/message_loop.h"
+#include "base/memory/ptr_util.h"
+#include "base/test/scoped_task_environment.h"
 #include "build/build_config.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/compositor_switches.h"
@@ -34,7 +35,9 @@ void CompositorTestSuite::Initialize() {
   gl::GLSurfaceTestSupport::InitializeOneOff();
 
 #if defined(USE_OZONE)
-  ui::OzonePlatform::InitializeForUI();
+  OzonePlatform::InitParams params;
+  params.single_process = true;
+  OzonePlatform::InitializeForUI(params);
 #endif
 
   gfx::RegisterPathProvider();
@@ -43,11 +46,13 @@ void CompositorTestSuite::Initialize() {
   display::win::SetDefaultDeviceScaleFactor(1.0f);
 #endif
 
-  message_loop_.reset(new base::MessageLoopForUI);
+  scoped_task_environment_ =
+      std::make_unique<base::test::ScopedTaskEnvironment>(
+          base::test::ScopedTaskEnvironment::MainThreadType::UI);
 }
 
 void CompositorTestSuite::Shutdown() {
-  message_loop_.reset();
+  scoped_task_environment_.reset();
 
   base::TestSuite::Shutdown();
 }

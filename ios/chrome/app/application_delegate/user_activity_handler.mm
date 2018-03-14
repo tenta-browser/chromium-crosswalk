@@ -19,6 +19,7 @@
 #include "ios/chrome/app/application_mode.h"
 #import "ios/chrome/app/spotlight/actions_spotlight_manager.h"
 #import "ios/chrome/app/spotlight/spotlight_util.h"
+#include "ios/chrome/app/startup/chrome_app_startup_parameters.h"
 #include "ios/chrome/browser/app_startup_parameters.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/metrics/first_user_action_recorder.h"
@@ -42,6 +43,7 @@ NSString* const kShortcutNewTab = @"OpenNewTab";
 NSString* const kShortcutNewIncognitoTab = @"OpenIncognitoTab";
 NSString* const kShortcutVoiceSearch = @"OpenVoiceSearch";
 NSString* const kShortcutQRScanner = @"OpenQRScanner";
+
 }  // namespace
 
 @interface UserActivityHandler ()
@@ -73,15 +75,21 @@ NSString* const kShortcutQRScanner = @"OpenQRScanner";
                               handoff::ORIGIN_COUNT);
   } else if ([userActivity.activityType
                  isEqualToString:NSUserActivityTypeBrowsingWeb]) {
-    // App was launched as the result of a Universal Link navigation. The value
-    // of userActivity.webpageURL is not used. The only supported action
-    // at this time is opening a New Tab Page.
-    GURL newTabURL(kChromeUINewTabURL);
-    webpageURL = net::NSURLWithGURL(newTabURL);
+    // App was launched as the result of a Universal Link navigation.
+    GURL gurl = net::GURLWithNSURL(webpageURL);
     AppStartupParameters* startupParams =
-        [[AppStartupParameters alloc] initWithExternalURL:newTabURL];
+        [[AppStartupParameters alloc] initWithUniversalLink:gurl];
     [startupInformation setStartupParameters:startupParams];
     base::RecordAction(base::UserMetricsAction("IOSLaunchedByUniversalLink"));
+
+    if (startupParams)
+      webpageURL = net::NSURLWithGURL([startupParams externalURL]);
+
+    // Don't call continueUserActivityURL if the completePaymentRequest flag
+    // is set since the startup parameters need to be handled in
+    // -handleStartupParametersWithTabOpener:
+    if (startupParams && startupParams.completePaymentRequest)
+      return YES;
   } else if (spotlight::IsSpotlightAvailable() &&
              [userActivity.activityType
                  isEqualToString:CSSearchableItemActionType]) {
@@ -108,24 +116,24 @@ NSString* const kShortcutQRScanner = @"OpenQRScanner";
       }
       [startupInformation setStartupParameters:startupParams];
     } else if (!webpageURL && base::ios::IsRunningOnIOS10OrLater()) {
-      // spotlight::GetURLForSpotlightItemID uses CSSearchQuery, which is only
-      // supported from iOS 10.
-      spotlight::GetURLForSpotlightItemID(itemID, ^(NSURL* contentURL) {
-        if (!contentURL) {
-          return;
-        }
-        dispatch_async(dispatch_get_main_queue(), ^{
-          // Update the isActive flag as it may have changed during the async
-          // calls.
-          BOOL isActive = [[UIApplication sharedApplication]
-                              applicationState] == UIApplicationStateActive;
-          [self continueUserActivityURL:contentURL
-                    applicationIsActive:isActive
-                              tabOpener:tabOpener
-                     startupInformation:startupInformation];
+      if (@available(iOS 10, *)) {
+        spotlight::GetURLForSpotlightItemID(itemID, ^(NSURL* contentURL) {
+          if (!contentURL) {
+            return;
+          }
+          dispatch_async(dispatch_get_main_queue(), ^{
+            // Update the isActive flag as it may have changed during the async
+            // calls.
+            BOOL isActive = [[UIApplication sharedApplication]
+                                applicationState] == UIApplicationStateActive;
+            [self continueUserActivityURL:contentURL
+                      applicationIsActive:isActive
+                                tabOpener:tabOpener
+                       startupInformation:startupInformation];
+          });
         });
-      });
-      return YES;
+        return YES;
+      }
     }
   } else {
     // Do nothing for unknown activity type.
@@ -158,6 +166,7 @@ NSString* const kShortcutQRScanner = @"OpenQRScanner";
             : ApplicationMode::NORMAL;
     [tabOpener dismissModalsAndOpenSelectedTabInMode:targetMode
                                              withURL:webpageGURL
+                                      dismissOmnibox:YES
                                           transition:ui::PAGE_TRANSITION_LINK
                                           completion:^{
                                             [startupInformation
@@ -226,6 +235,13 @@ NSString* const kShortcutQRScanner = @"OpenQRScanner";
     // synchronously.
     [startupInformation setStartupParameters:nil];
   } else {
+    // Depending on the startup parameters the user may need to stay on the
+    // current tab rather than open a new one in order to complete a Payment
+    // Request. This attempts to complete any Payment Request instances on
+    // the current tab, and returns if successful.
+    if ([tabOpener shouldCompletePaymentRequestOnCurrentTab:startupInformation])
+      return;
+
     // The app is already active so the applicationDidBecomeActive: method
     // will never be called. Open the requested URL after all modal UIs have
     // been dismissed. |_startupParameters| must be retained until all deferred
@@ -238,6 +254,10 @@ NSString* const kShortcutQRScanner = @"OpenQRScanner";
                                              withURL:[[startupInformation
                                                          startupParameters]
                                                          externalURL]
+                                      dismissOmnibox:[[startupInformation
+                                                         startupParameters]
+                                                         postOpeningAction] !=
+                                                     FOCUS_OMNIBOX
                                           transition:ui::PAGE_TRANSITION_LINK
                                           completion:^{
                                             [startupInformation
@@ -271,14 +291,14 @@ NSString* const kShortcutQRScanner = @"OpenQRScanner";
   } else if ([shortcutItem.type isEqualToString:kShortcutVoiceSearch]) {
     base::RecordAction(
         UserMetricsAction("ApplicationShortcut.VoiceSearchPressed"));
-    [startupParams setLaunchVoiceSearch:YES];
+    [startupParams setPostOpeningAction:START_VOICE_SEARCH];
     [startupInformation setStartupParameters:startupParams];
     return YES;
 
   } else if ([shortcutItem.type isEqualToString:kShortcutQRScanner]) {
     base::RecordAction(
         UserMetricsAction("ApplicationShortcut.ScanQRCodePressed"));
-    [startupParams setLaunchQRScanner:YES];
+    [startupParams setPostOpeningAction:START_QR_CODE_SCANNER];
     [startupInformation setStartupParameters:startupParams];
     return YES;
   }

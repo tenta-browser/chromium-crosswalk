@@ -7,9 +7,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <queue>
-
 #include "base/bind.h"
+#include "base/containers/queue.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
@@ -20,6 +19,7 @@
 #include "content/renderer/accessibility/blink_ax_enum_conversion.h"
 #include "content/renderer/render_frame_impl.h"
 #include "content/renderer/render_view_impl.h"
+#include "third_party/WebKit/public/platform/TaskType.h"
 #include "third_party/WebKit/public/platform/WebFloatRect.h"
 #include "third_party/WebKit/public/web/WebAXObject.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
@@ -59,6 +59,9 @@ const size_t kMaxSnapshotNodeCount = 5000;
 void RenderAccessibilityImpl::SnapshotAccessibilityTree(
     RenderFrameImpl* render_frame,
     AXContentTreeUpdate* response) {
+  TRACE_EVENT0("accessibility",
+               "RenderAccessibilityImpl::SnapshotAccessibilityTree");
+
   DCHECK(render_frame);
   DCHECK(response);
   if (!render_frame->GetWebFrame())
@@ -70,19 +73,31 @@ void RenderAccessibilityImpl::SnapshotAccessibilityTree(
   if (!root.UpdateLayoutAndCheckValidity())
     return;
   BlinkAXTreeSource tree_source(
-      render_frame,
-      AccessibilityMode::kNativeAPIs | AccessibilityMode::kWebContents |
-          AccessibilityMode::kInlineTextBoxes |
-          AccessibilityMode::kScreenReader | AccessibilityMode::kHTML);
+      render_frame, ui::AXMode::kNativeAPIs | ui::AXMode::kWebContents |
+                        ui::AXMode::kInlineTextBoxes |
+                        ui::AXMode::kScreenReader | ui::AXMode::kHTML);
   tree_source.SetRoot(root);
   ScopedFreezeBlinkAXTreeSource freeze(&tree_source);
   BlinkAXTreeSerializer serializer(&tree_source);
   serializer.set_max_node_count(kMaxSnapshotNodeCount);
-  serializer.SerializeChanges(context.Root(), response);
+
+  if (serializer.SerializeChanges(context.Root(), response))
+    return;
+
+  // It's possible for the page to fail to serialize the first time due to
+  // aria-owns rearranging the page while it's being scanned. Try a second
+  // time.
+  *response = AXContentTreeUpdate();
+  if (serializer.SerializeChanges(context.Root(), response))
+    return;
+
+  // It failed again. Clear the response object because it might have errors.
+  *response = AXContentTreeUpdate();
+  LOG(WARNING) << "Unable to serialize accessibility tree.";
 }
 
 RenderAccessibilityImpl::RenderAccessibilityImpl(RenderFrameImpl* render_frame,
-                                                 AccessibilityMode mode)
+                                                 ui::AXMode mode)
     : RenderFrameObserver(render_frame),
       render_frame_(render_frame),
       tree_source_(render_frame, mode),
@@ -106,7 +121,7 @@ RenderAccessibilityImpl::RenderAccessibilityImpl(RenderFrameImpl* render_frame,
 #if !defined(OS_ANDROID)
   // Inline text boxes can be enabled globally on all except Android.
   // On Android they can be requested for just a specific node.
-  if (mode.has_mode(AccessibilityMode::kInlineTextBoxes))
+  if (mode.has_mode(ui::AXMode::kInlineTextBoxes))
     settings->SetInlineTextBoxAccessibilityEnabled(true);
 #endif
 
@@ -115,7 +130,8 @@ RenderAccessibilityImpl::RenderAccessibilityImpl(RenderFrameImpl* render_frame,
     // It's possible that the webview has already loaded a webpage without
     // accessibility being enabled. Initialize the browser's cached
     // accessibility tree by sending it a notification.
-    HandleAXEvent(document.AccessibilityObject(), ui::AX_EVENT_LAYOUT_COMPLETE);
+    HandleAXEvent(WebAXObject::FromWebDocument(document),
+                  ui::AX_EVENT_LAYOUT_COMPLETE);
   }
 }
 
@@ -123,7 +139,7 @@ RenderAccessibilityImpl::~RenderAccessibilityImpl() {
 }
 
 void RenderAccessibilityImpl::AccessibilityModeChanged() {
-  AccessibilityMode new_mode = render_frame_->accessibility_mode();
+  ui::AXMode new_mode = render_frame_->accessibility_mode();
   if (tree_source_.accessibility_mode() == new_mode)
     return;
   tree_source_.SetAccessibilityMode(new_mode);
@@ -137,7 +153,7 @@ void RenderAccessibilityImpl::AccessibilityModeChanged() {
     if (web_view) {
       WebSettings* settings = web_view->GetSettings();
       if (settings) {
-        if (new_mode.has_mode(AccessibilityMode::kInlineTextBoxes)) {
+        if (new_mode.has_mode(ui::AXMode::kInlineTextBoxes)) {
           settings->SetInlineTextBoxAccessibilityEnabled(true);
           tree_source_.GetRoot().LoadInlineTextBoxes();
         } else {
@@ -154,10 +170,10 @@ void RenderAccessibilityImpl::AccessibilityModeChanged() {
     // If there are any events in flight, |HandleAXEvent| will refuse to process
     // our new event.
     pending_events_.clear();
-    ui::AXEvent event = document.AccessibilityObject().IsLoaded()
-                            ? ui::AX_EVENT_LOAD_COMPLETE
-                            : ui::AX_EVENT_LAYOUT_COMPLETE;
-    HandleAXEvent(document.AccessibilityObject(), event);
+    auto webax_object = WebAXObject::FromWebDocument(document);
+    ui::AXEvent event = webax_object.IsLoaded() ? ui::AX_EVENT_LOAD_COMPLETE
+                                                : ui::AX_EVENT_LAYOUT_COMPLETE;
+    HandleAXEvent(webax_object, event);
   }
 }
 
@@ -208,7 +224,7 @@ void RenderAccessibilityImpl::AccessibilityFocusedNodeChanged(
   if (node.IsNull()) {
     // When focus is cleared, implicitly focus the document.
     // TODO(dmazzoni): Make Blink send this notification instead.
-    HandleAXEvent(document.AccessibilityObject(), ui::AX_EVENT_BLUR);
+    HandleAXEvent(WebAXObject::FromWebDocument(document), ui::AX_EVENT_BLUR);
   }
 }
 
@@ -243,9 +259,9 @@ void RenderAccessibilityImpl::HandleAXEvent(
       // TODO(dmazzoni): remove this as soon as
       // https://bugs.webkit.org/show_bug.cgi?id=73460 is fixed.
       last_scroll_offset_ = scroll_offset;
-      if (!obj.Equals(document.AccessibilityObject())) {
-        HandleAXEvent(document.AccessibilityObject(),
-                      ui::AX_EVENT_LAYOUT_COMPLETE);
+      auto webax_object = WebAXObject::FromWebDocument(document);
+      if (!obj.Equals(webax_object)) {
+        HandleAXEvent(webax_object, ui::AX_EVENT_LAYOUT_COMPLETE);
       }
     }
   }
@@ -257,12 +273,35 @@ void RenderAccessibilityImpl::HandleAXEvent(
     serializer_.DeleteClientSubtree(obj);
 #endif
 
+  // If some cell IDs have been added or removed, we need to update the whole
+  // table.
+  if (obj.Role() == blink::kWebAXRoleRow &&
+      event == ui::AX_EVENT_CHILDREN_CHANGED) {
+    WebAXObject table_like_object = obj.ParentObject();
+    if (!table_like_object.IsDetached()) {
+      serializer_.DeleteClientSubtree(table_like_object);
+      HandleAXEvent(table_like_object, ui::AX_EVENT_CHILDREN_CHANGED);
+    }
+  }
+
+  // If a select tag is opened or closed, all the children must be updated
+  // because their visibility may have changed.
+  if (obj.Role() == blink::kWebAXRoleMenuListPopup &&
+      event == ui::AX_EVENT_CHILDREN_CHANGED) {
+    WebAXObject popup_like_object = obj.ParentObject();
+    if (!popup_like_object.IsDetached()) {
+      serializer_.DeleteClientSubtree(popup_like_object);
+      HandleAXEvent(popup_like_object, ui::AX_EVENT_CHILDREN_CHANGED);
+    }
+  }
+
   // Add the accessibility object to our cache and ensure it's valid.
   AccessibilityHostMsg_EventParams acc_event;
   acc_event.id = obj.AxID();
   acc_event.event_type = event;
 
-  if (blink::WebUserGestureIndicator::IsProcessingUserGesture())
+  if (blink::WebUserGestureIndicator::IsProcessingUserGesture(
+          render_frame_->GetWebFrame()))
     acc_event.event_from = ui::AX_EVENT_FROM_USER;
   else if (during_action_)
     acc_event.event_from = ui::AX_EVENT_FROM_ACTION;
@@ -278,14 +317,23 @@ void RenderAccessibilityImpl::HandleAXEvent(
   }
   pending_events_.push_back(acc_event);
 
+  // Don't send accessibility events for frames that are not in the frame tree
+  // yet (i.e., provisional frames used for remote-to-local navigations, which
+  // haven't committed yet).  Doing so might trigger layout, which may not work
+  // correctly for those frames.  The events should be sent once such a frame
+  // commits.
+  if (!render_frame_->in_frame_tree())
+    return;
+
   if (!ack_pending_ && !weak_factory_.HasWeakPtrs()) {
     // When no accessibility events are in-flight post a task to send
     // the events to the browser. We use PostTask so that we can queue
     // up additional events.
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::Bind(&RenderAccessibilityImpl::SendPendingAccessibilityEvents,
-                   weak_factory_.GetWeakPtr()));
+    render_frame_->GetTaskRunner(blink::TaskType::kUnspecedTimer)
+        ->PostTask(FROM_HERE,
+                   base::BindOnce(
+                       &RenderAccessibilityImpl::SendPendingAccessibilityEvents,
+                       weak_factory_.GetWeakPtr()));
   }
 }
 
@@ -312,7 +360,7 @@ void RenderAccessibilityImpl::OnPluginRootNodeUpdated() {
   if (!root.UpdateLayoutAndCheckValidity())
     return;
 
-  std::queue<WebAXObject> objs_to_explore;
+  base::queue<WebAXObject> objs_to_explore;
   objs_to_explore.push(root);
   while (objs_to_explore.size()) {
     WebAXObject obj = objs_to_explore.front();
@@ -336,12 +384,15 @@ void RenderAccessibilityImpl::OnPluginRootNodeUpdated() {
 }
 
 WebDocument RenderAccessibilityImpl::GetMainDocument() {
-  if (render_frame_ && render_frame_->GetWebFrame())
+  if (render_frame_->GetWebFrame())
     return render_frame_->GetWebFrame()->GetDocument();
   return WebDocument();
 }
 
 void RenderAccessibilityImpl::SendPendingAccessibilityEvents() {
+  TRACE_EVENT0("accessibility",
+               "RenderAccessibilityImpl::SendPendingAccessibilityEvents");
+
   const WebDocument& document = GetMainDocument();
   if (document.IsNull())
     return;
@@ -369,7 +420,7 @@ void RenderAccessibilityImpl::SendPendingAccessibilityEvents() {
     if (event.event_type == ui::AX_EVENT_LAYOUT_COMPLETE)
       had_layout_complete_messages = true;
 
-    WebAXObject obj = document.AccessibilityObjectFromID(event.id);
+    auto obj = WebAXObject::FromWebDocumentByID(document, event.id);
 
     // Make sure the object still exists.
     if (!obj.UpdateLayoutAndCheckValidity())
@@ -427,6 +478,8 @@ void RenderAccessibilityImpl::SendPendingAccessibilityEvents() {
 }
 
 void RenderAccessibilityImpl::SendLocationChanges() {
+  TRACE_EVENT0("accessibility", "RenderAccessibilityImpl::SendLocationChanges");
+
   std::vector<AccessibilityHostMsg_LocationChangeParams> messages;
 
   // Update layout on the root of the tree.
@@ -437,7 +490,7 @@ void RenderAccessibilityImpl::SendLocationChanges() {
 
   // Do a breadth-first explore of the whole blink AX tree.
   base::hash_map<int, ui::AXRelativeBounds> new_locations;
-  std::queue<WebAXObject> objs_to_explore;
+  base::queue<WebAXObject> objs_to_explore;
   objs_to_explore.push(root);
   while (objs_to_explore.size()) {
     WebAXObject obj = objs_to_explore.front();
@@ -489,23 +542,23 @@ void RenderAccessibilityImpl::OnPerformAction(
   if (document.IsNull())
     return;
 
-  WebAXObject root = document.AccessibilityObject();
+  auto root = WebAXObject::FromWebDocument(document);
   if (!root.UpdateLayoutAndCheckValidity())
     return;
 
-  WebAXObject target = document.AccessibilityObjectFromID(data.target_node_id);
-  WebAXObject anchor = document.AccessibilityObjectFromID(data.anchor_node_id);
-  WebAXObject focus = document.AccessibilityObjectFromID(data.focus_node_id);
+  auto target = WebAXObject::FromWebDocumentByID(document, data.target_node_id);
+  auto anchor = WebAXObject::FromWebDocumentByID(document, data.anchor_node_id);
+  auto focus = WebAXObject::FromWebDocumentByID(document, data.focus_node_id);
 
   switch (data.action) {
     case ui::AX_ACTION_BLUR:
-      target.SetFocused(false);
+      root.Focus();
       break;
     case ui::AX_ACTION_DECREMENT:
       target.Decrement();
       break;
     case ui::AX_ACTION_DO_DEFAULT:
-      target.PerformDefaultAction();
+      target.Click();
       break;
     case ui::AX_ACTION_GET_IMAGE_DATA:
       OnGetImageData(target, data.target_rect.size());
@@ -526,16 +579,11 @@ void RenderAccessibilityImpl::OnPerformAction(
       target.ScrollToGlobalPoint(
           WebPoint(data.target_point.x(), data.target_point.y()));
       break;
-    case ui::AX_ACTION_SET_ACCESSIBILITY_FOCUS:
-      OnSetAccessibilityFocus(target);
+    case ui::AX_ACTION_LOAD_INLINE_TEXT_BOXES:
+      OnLoadInlineTextBoxes(target);
       break;
     case ui::AX_ACTION_FOCUS:
-      // By convention, calling SetFocus on the root of the tree should
-      // clear the current focus. Otherwise set the focus to the new node.
-      if (data.target_node_id == root.AxID())
-        render_frame_->GetRenderView()->GetWebView()->ClearFocusedElement();
-      else
-        target.SetFocused(true);
+      target.Focus();
       break;
     case ui::AX_ACTION_SET_SCROLL_OFFSET:
       target.SetScrollOffset(
@@ -555,7 +603,14 @@ void RenderAccessibilityImpl::OnPerformAction(
     case ui::AX_ACTION_SHOW_CONTEXT_MENU:
       target.ShowContextMenu();
       break;
+    case ui::AX_ACTION_CUSTOM_ACTION:
     case ui::AX_ACTION_REPLACE_SELECTED_TEXT:
+    case ui::AX_ACTION_SCROLL_BACKWARD:
+    case ui::AX_ACTION_SCROLL_FORWARD:
+    case ui::AX_ACTION_SCROLL_UP:
+    case ui::AX_ACTION_SCROLL_DOWN:
+    case ui::AX_ACTION_SCROLL_LEFT:
+    case ui::AX_ACTION_SCROLL_RIGHT:
     case ui::AX_ACTION_NONE:
       NOTREACHED();
       break;
@@ -581,7 +636,7 @@ void RenderAccessibilityImpl::OnHitTest(const gfx::Point& point,
   const WebDocument& document = GetMainDocument();
   if (document.IsNull())
     return;
-  WebAXObject root_obj = document.AccessibilityObject();
+  auto root_obj = WebAXObject::FromWebDocument(document);
   if (!root_obj.UpdateLayoutAndCheckValidity())
     return;
 
@@ -599,7 +654,11 @@ void RenderAccessibilityImpl::OnHitTest(const gfx::Point& point,
       data.HasContentIntAttribute(
           AX_CONTENT_ATTR_CHILD_BROWSER_PLUGIN_INSTANCE_ID)) {
     Send(new AccessibilityHostMsg_ChildFrameHitTestResult(
-        routing_id(), point, obj.AxID(), event_to_fire));
+        routing_id(), point,
+        data.GetContentIntAttribute(AX_CONTENT_ATTR_CHILD_ROUTING_ID),
+        data.GetContentIntAttribute(
+            AX_CONTENT_ATTR_CHILD_BROWSER_PLUGIN_INSTANCE_ID),
+        event_to_fire));
     return;
   }
 
@@ -607,13 +666,13 @@ void RenderAccessibilityImpl::OnHitTest(const gfx::Point& point,
   HandleAXEvent(obj, event_to_fire);
 }
 
-void RenderAccessibilityImpl::OnSetAccessibilityFocus(
+void RenderAccessibilityImpl::OnLoadInlineTextBoxes(
     const blink::WebAXObject& obj) {
   ScopedFreezeBlinkAXTreeSource freeze(&tree_source_);
-  if (tree_source_.accessibility_focus_id() == obj.AxID())
+  if (tree_source_.ShouldLoadInlineTextBoxes(obj))
     return;
 
-  tree_source_.set_accessibility_focus_id(obj.AxID());
+  tree_source_.SetLoadInlineTextBoxesForId(obj.AxID());
 
   const WebDocument& document = GetMainDocument();
   if (document.IsNull())
@@ -653,10 +712,10 @@ void RenderAccessibilityImpl::OnReset(int reset_token) {
   if (!document.IsNull()) {
     // Tree-only mode gets used by the automation extension API which requires a
     // load complete event to invoke listener callbacks.
-    ui::AXEvent evt = document.AccessibilityObject().IsLoaded()
-                          ? ui::AX_EVENT_LOAD_COMPLETE
-                          : ui::AX_EVENT_LAYOUT_COMPLETE;
-    HandleAXEvent(document.AccessibilityObject(), evt);
+    auto webax_object = WebAXObject::FromWebDocument(document);
+    ui::AXEvent evt = webax_object.IsLoaded() ? ui::AX_EVENT_LOAD_COMPLETE
+                                              : ui::AX_EVENT_LAYOUT_COMPLETE;
+    HandleAXEvent(webax_object, evt);
   }
 }
 
@@ -711,7 +770,7 @@ void RenderAccessibilityImpl::ScrollPlugin(int id_to_make_visible) {
   if (document.IsNull())
     return;
 
-  document.AccessibilityObject().ScrollToMakeVisibleWithSubFocus(
+  WebAXObject::FromWebDocument(document).ScrollToMakeVisibleWithSubFocus(
       WebRect(bounds.x(), bounds.y(), bounds.width(), bounds.height()));
 }
 

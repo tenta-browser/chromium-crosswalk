@@ -35,6 +35,8 @@ std::string GetCodecName(VideoCodec codec) {
       return "vp8";
     case kCodecVP9:
       return "vp9";
+    case kCodecAV1:
+      return "av1";
   }
   NOTREACHED();
   return "";
@@ -90,6 +92,10 @@ std::string GetProfileName(VideoCodecProfile profile) {
       return "dolby vision profile 5";
     case DOLBYVISION_PROFILE7:
       return "dolby vision profile 7";
+    case THEORAPROFILE_ANY:
+      return "theora";
+    case AV1PROFILE_PROFILE0:
+      return "av1 profile0";
   }
   NOTREACHED();
   return "";
@@ -237,9 +243,10 @@ bool ParseLegacyVp9CodecID(const std::string& codec_id,
                            VideoCodecProfile* profile,
                            uint8_t* level_idc) {
   if (codec_id == "vp9" || codec_id == "vp9.0") {
-    // Profile is not included in the codec string. Assuming profile 0 to be
-    // backward compatible.
-    *profile = VP9PROFILE_PROFILE0;
+    // Profile is not included in the codec string. Consumers of parsed codec
+    // should handle by rejecting ambiguous string or resolving to a default
+    // profile.
+    *profile = VIDEO_CODEC_PROFILE_UNKNOWN;
     // Use 0 to indicate unknown level.
     *level_idc = 0;
     return true;
@@ -605,6 +612,10 @@ VideoCodec StringToVideoCodec(const std::string& codec_id) {
   uint8_t level = 0;
   VideoColorSpace color_space;
 
+  // TODO(dalecurtis): The actual codec string will be similar (equivalent?) to
+  // the vp9 codec string. Fix this before release. http://crbug.com/784607.
+  if (codec_id == "av1")
+    return kCodecAV1;
   if (codec_id == "vp8" || codec_id == "vp8.0")
     return kCodecVP8;
   if (ParseNewStyleVp9CodecID(codec_id, &profile, &level, &color_space) ||

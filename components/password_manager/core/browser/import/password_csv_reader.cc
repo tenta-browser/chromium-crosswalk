@@ -10,6 +10,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/common/password_form.h"
+#include "components/password_manager/core/browser/android_affiliation/affiliation_utils.h"
 #include "components/password_manager/core/browser/import/csv_reader.h"
 
 using autofill::PasswordForm;
@@ -97,9 +98,13 @@ bool PasswordCSVReader::RecordToPasswordForm(
   GURL origin;
   auto origin_in_record = record.find(url_field_name_);
 
-  if (origin_in_record == record.end())
+  if (origin_in_record == record.end() ||
+      !base::IsStringASCII(origin_in_record->second)) {
     return false;
+  }
   origin = GURL(origin_in_record->second);
+  if (!origin.is_valid())
+    return false;
 
   base::string16 username_value;
   auto username_in_record = record.find(username_field_name_);
@@ -114,7 +119,13 @@ bool PasswordCSVReader::RecordToPasswordForm(
   password_value = base::UTF8ToUTF16(password_in_record->second);
 
   form->origin.Swap(&origin);
-  form->signon_realm = form->origin.GetOrigin().spec();
+  // |GURL::GetOrigin| returns an empty GURL for Android credentials due to the
+  // non-standard scheme ("android://"). Hence the following explicit check is
+  // necessary to set |signon_realm| correctly for both regular and Android
+  // credentials.
+  form->signon_realm = IsValidAndroidFacetURI(form->origin.spec())
+                           ? form->origin.spec()
+                           : form->origin.GetOrigin().spec();
   form->username_value.swap(username_value);
   form->password_value.swap(password_value);
   return true;

@@ -14,10 +14,10 @@
 namespace ash {
 namespace {
 
-class LaserPointerControllerTest : public test::AshTestBase {
+class LaserPointerControllerTest : public AshTestBase {
  public:
-  LaserPointerControllerTest() {}
-  ~LaserPointerControllerTest() override {}
+  LaserPointerControllerTest() = default;
+  ~LaserPointerControllerTest() override = default;
 
   void SetUp() override {
     AshTestBase::SetUp();
@@ -43,9 +43,6 @@ class LaserPointerControllerTest : public test::AshTestBase {
 // Test to ensure the class responsible for drawing the laser pointer receives
 // points from stylus movements as expected.
 TEST_F(LaserPointerControllerTest, LaserPointerRenderer) {
-  // Crashes in mash mode: crbug.com/702657
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
   LaserPointerControllerTestApi controller_test_api_(controller_.get());
 
   // The laser pointer mode only works with stylus.
@@ -88,10 +85,10 @@ TEST_F(LaserPointerControllerTest, LaserPointerRenderer) {
   // Verify that disabling the mode does not display the laser pointer.
   controller_test_api_.SetEnabled(false);
   EXPECT_FALSE(controller_test_api_.IsShowingLaserPointer());
+  EXPECT_FALSE(controller_test_api_.IsFadingAway());
 
   // Verify that disabling the mode while laser pointer is displayed does not
   // display the laser pointer.
-  controller_test_api_.SetIsFadingAway(false);
   controller_test_api_.SetEnabled(true);
   GetEventGenerator().PressTouch();
   GetEventGenerator().MoveTouch(gfx::Point(6, 6));
@@ -120,9 +117,6 @@ TEST_F(LaserPointerControllerTest, LaserPointerRenderer) {
 // Test to ensure the class responsible for drawing the laser pointer handles
 // prediction as expected when it receives points from stylus movements.
 TEST_F(LaserPointerControllerTest, LaserPointerPrediction) {
-  // Crashes in mash mode: crbug.com/702657
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
   LaserPointerControllerTestApi controller_test_api_(controller_.get());
 
   controller_test_api_.SetEnabled(true);
@@ -145,7 +139,7 @@ TEST_F(LaserPointerControllerTest, LaserPointerPrediction) {
             controller_test_api_.predicted_laser_points().GetNumberOfPoints());
   // Verify predicted points are in the right direction.
   for (const auto& point :
-       controller_test_api_.predicted_laser_points().laser_points()) {
+       controller_test_api_.predicted_laser_points().points()) {
     EXPECT_LT(30, point.location.x());
     EXPECT_LT(30, point.location.y());
   }

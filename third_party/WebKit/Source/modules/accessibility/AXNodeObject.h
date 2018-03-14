@@ -49,11 +49,9 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
  public:
   static AXNodeObject* Create(Node*, AXObjectCacheImpl&);
   ~AXNodeObject() override;
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  protected:
-  // Protected data.
-  AccessibilityRole aria_role_;
   bool children_dirty_;
 #if DCHECK_IS_ON()
   bool initialized_ = false;
@@ -61,7 +59,7 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
 
   bool ComputeAccessibilityIsIgnored(IgnoredReasons* = nullptr) const override;
   const AXObject* InheritsPresentationalRoleFrom() const override;
-  virtual AccessibilityRole DetermineAccessibilityRole();
+  AccessibilityRole DetermineAccessibilityRole() override;
   virtual AccessibilityRole NativeAccessibilityRoleIgnoringAria() const;
   String AccessibilityDescriptionForElements(
       HeapVector<Member<Element>>& elements) const;
@@ -69,9 +67,8 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   AXObject* ActiveDescendant() override;
   String AriaAccessibilityDescription() const;
   String AriaAutoComplete() const;
-  AccessibilityRole DetermineAriaRoleAttribute() const;
-  void AccessibilityChildrenFromAttribute(QualifiedName attr,
-                                          AXObject::AXObjectVector&) const;
+  void AccessibilityChildrenFromAOMProperty(AOMRelationListProperty,
+                                            AXObject::AXObjectVector&) const;
 
   bool HasContentEditableAttributeSet() const;
   bool IsTextControl() const override;
@@ -81,7 +78,6 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   AXObject* MenuButtonForMenu() const;
   Element* MenuItemElementForMenu() const;
   Element* MouseButtonListener() const;
-  AccessibilityRole RemapAriaRoleDueToParent(AccessibilityRole) const;
   bool IsNativeCheckboxOrRadio() const;
   void SetNode(Node*);
   AXObject* CorrespondingControlForLabelElement() const;
@@ -96,13 +92,12 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   bool IsDetached() const override { return !node_; }
   bool IsAXNodeObject() const final { return true; }
 
-  void GetSparseAXAttributes(AXSparseAttributeClient&) const override;
-
   // Check object role or purpose.
   bool IsAnchor() const final;
-  bool IsControl() const override;
   bool IsControllingVideoElement() const;
+  bool IsMultiline() const override;
   bool IsEditable() const override { return IsNativeTextControl(); }
+  bool ComputeIsEditableRoot() const override;
   bool IsEmbeddedObject() const final;
   bool IsFieldset() const final;
   bool IsHeading() const final;
@@ -124,21 +119,15 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   bool IsRichlyEditable() const override;
   bool IsSlider() const override;
   bool IsNativeSlider() const override;
+  bool IsMoveableSplitter() const override;
 
   // Check object state.
-  bool IsChecked() const final;
   bool IsClickable() const final;
-  bool IsEnabled() const override;
   AccessibilityExpanded IsExpanded() const override;
   bool IsModal() const final;
-  bool IsPressed() const final;
-  bool IsReadOnly() const override;
   bool IsRequired() const final;
-
-  // Check whether certain properties can be modified.
-  bool CanSetFocusAttribute() const override;
-  bool CanSetValueAttribute() const override;
-  bool CanSetSelectedAttribute() const override;
+  bool IsControl() const;
+  AXRestriction Restriction() const override;
 
   // Properties of static elements.
   RGBA32 ColorValue() const final;
@@ -155,15 +144,15 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   String GetText() const override;
 
   // Properties of interactive elements.
-  AccessibilityButtonState CheckboxOrRadioValue() const final;
   AriaCurrentState GetAriaCurrentState() const final;
   InvalidState GetInvalidState() const final;
   // Only used when invalidState() returns InvalidStateOther.
   String AriaInvalidValue() const final;
   String ValueDescription() const override;
-  float ValueForRange() const override;
-  float MaxValueForRange() const override;
-  float MinValueForRange() const override;
+  bool ValueForRange(float* out_value) const override;
+  bool MaxValueForRange(float* out_value) const override;
+  bool MinValueForRange(float* out_value) const override;
+  bool StepValueForRange(float* out_value) const override;
   String StringValue() const override;
 
   // ARIA attributes.
@@ -185,12 +174,12 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
                      AXRelatedObjectVector*) const override;
   String Placeholder(AXNameFrom) const override;
   bool NameFromLabelElement() const override;
-  bool NameFromContents() const override;
 
   // Location
   void GetRelativeBounds(AXObject** out_container,
                          FloatRect& out_bounds_in_container,
-                         SkMatrix44& out_container_transform) const override;
+                         SkMatrix44& out_container_transform,
+                         bool* clips_children = nullptr) const override;
 
   // High-level accessibility tree access.
   AXObject* ComputeParent() const override;
@@ -211,20 +200,24 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
   Node* GetNode() const override { return node_; }
 
   // Modify or take an action on an object.
-  void SetFocused(bool) final;
-  void Increment() final;
-  void Decrement() final;
-  void SetSequentialFocusNavigationStartingPoint() final;
+  bool OnNativeFocusAction() final;
+  bool OnNativeIncrementAction() final;
+  bool OnNativeDecrementAction() final;
+  bool OnNativeSetSequentialFocusNavigationStartingPointAction() final;
 
   // Notifications that this object may have changed.
   void ChildrenChanged() override;
   void SelectionChanged() final;
   void TextChanged() override;
-  void UpdateAccessibilityRole() final;
 
   // Position in set and Size of set
   int PosInSet() const override;
   int SetSize() const override;
+  // Compute the number of siblings that have the same role before |this|,
+  // following rules for counting the number of items in a set.
+  int AutoPosInSet() const;
+  // Compute the number of unignored siblings with the same role as |this|.
+  int AutoSetSize() const;
 
   // Aria-owns.
   void ComputeAriaOwnsChildren(
@@ -241,7 +234,6 @@ class MODULES_EXPORT AXNodeObject : public AXObject {
                                AXRelatedObjectVector*,
                                NameSources*,
                                bool* found_text_alternative) const;
-  float StepValueForRange() const;
   bool IsDescendantOfElementType(HashSet<QualifiedName>& tag_names) const;
   String PlaceholderFromNativeAttribute() const;
 };

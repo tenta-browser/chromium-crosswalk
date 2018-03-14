@@ -6,8 +6,8 @@
 #define BackgroundFetchManager_h
 
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/ModulesExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/GarbageCollected.h"
 #include "platform/heap/Handle.h"
 #include "public/platform/modules/background_fetch/background_fetch.mojom-blink.h"
@@ -26,9 +26,7 @@ class WebServiceWorkerRequest;
 
 // Implementation of the BackgroundFetchManager JavaScript object, accessible
 // by developers through ServiceWorkerRegistration.backgroundFetch.
-class MODULES_EXPORT BackgroundFetchManager final
-    : public GarbageCollected<BackgroundFetchManager>,
-      public ScriptWrappable {
+class MODULES_EXPORT BackgroundFetchManager final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -40,14 +38,14 @@ class MODULES_EXPORT BackgroundFetchManager final
   // Web Exposed methods defined in the IDL file.
   ScriptPromise fetch(
       ScriptState*,
-      const String& tag,
+      const String& id,
       const RequestOrUSVStringOrRequestOrUSVStringSequence& requests,
       const BackgroundFetchOptions&,
       ExceptionState&);
-  ScriptPromise get(ScriptState*, const String& tag);
-  ScriptPromise getTags(ScriptState*);
+  ScriptPromise get(ScriptState*, const String& id);
+  ScriptPromise getIds(ScriptState*);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   friend class BackgroundFetchManagerTest;
@@ -67,9 +65,9 @@ class MODULES_EXPORT BackgroundFetchManager final
   void DidGetRegistration(ScriptPromiseResolver*,
                           mojom::blink::BackgroundFetchError,
                           BackgroundFetchRegistration*);
-  void DidGetTags(ScriptPromiseResolver*,
-                  mojom::blink::BackgroundFetchError,
-                  const Vector<String>& tags);
+  void DidGetDeveloperIds(ScriptPromiseResolver*,
+                          mojom::blink::BackgroundFetchError,
+                          const Vector<String>& developer_ids);
 
   Member<ServiceWorkerRegistration> registration_;
   Member<BackgroundFetchBridge> bridge_;

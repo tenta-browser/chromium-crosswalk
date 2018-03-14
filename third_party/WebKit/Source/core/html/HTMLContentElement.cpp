@@ -26,15 +26,14 @@
 
 #include "core/html/HTMLContentElement.h"
 
-#include "core/HTMLNames.h"
 #include "core/css/SelectorChecker.h"
 #include "core/css/parser/CSSParser.h"
+#include "core/dom/ElementShadow.h"
+#include "core/dom/ElementShadowV0.h"
 #include "core/dom/QualifiedName.h"
-#include "core/dom/shadow/ElementShadow.h"
-#include "core/dom/shadow/ElementShadowV0.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/frame/UseCounter.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "core/html_names.h"
 
 namespace blink {
 
@@ -48,18 +47,18 @@ HTMLContentElement* HTMLContentElement::Create(
 
 inline HTMLContentElement::HTMLContentElement(Document& document,
                                               HTMLContentSelectFilter* filter)
-    : InsertionPoint(contentTag, document),
+    : V0InsertionPoint(contentTag, document),
       should_parse_select_(false),
       is_valid_selector_(true),
       filter_(filter) {
-  UseCounter::Count(document, UseCounter::kHTMLContentElement);
+  UseCounter::Count(document, WebFeature::kHTMLContentElement);
 }
 
 HTMLContentElement::~HTMLContentElement() {}
 
-DEFINE_TRACE(HTMLContentElement) {
+void HTMLContentElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(filter_);
-  InsertionPoint::Trace(visitor);
+  V0InsertionPoint::Trace(visitor);
 }
 
 void HTMLContentElement::ParseSelect() {
@@ -83,7 +82,7 @@ void HTMLContentElement::ParseAttribute(
     should_parse_select_ = true;
     select_ = params.new_value;
   } else {
-    InsertionPoint::ParseAttribute(params);
+    V0InsertionPoint::ParseAttribute(params);
   }
 }
 

@@ -25,9 +25,9 @@
 
 #include "core/layout/LayoutVideo.h"
 
-#include "core/HTMLNames.h"
 #include "core/dom/Document.h"
-#include "core/html/HTMLVideoElement.h"
+#include "core/html/media/HTMLVideoElement.h"
+#include "core/html_names.h"
 #include "core/layout/LayoutBlockFlow.h"
 #include "core/layout/LayoutFullScreen.h"
 #include "core/paint/VideoPainter.h"
@@ -108,8 +108,10 @@ LayoutSize LayoutVideo::CalculateIntrinsicSize() {
   return DefaultSize();
 }
 
-void LayoutVideo::ImageChanged(WrappedImagePtr new_image, const IntRect* rect) {
-  LayoutMedia::ImageChanged(new_image, rect);
+void LayoutVideo::ImageChanged(WrappedImagePtr new_image,
+                               CanDeferInvalidation defer,
+                               const IntRect* rect) {
+  LayoutMedia::ImageChanged(new_image, defer, rect);
 
   // Cache the image intrinsic size so we can continue to use it to draw the
   // image correctly even if we know the video intrinsic size but aren't able to
@@ -138,7 +140,7 @@ void LayoutVideo::UpdateLayout() {
 }
 
 HTMLVideoElement* LayoutVideo::VideoElement() const {
-  return toHTMLVideoElement(GetNode());
+  return ToHTMLVideoElement(GetNode());
 }
 
 void LayoutVideo::UpdateFromElement() {
@@ -180,9 +182,9 @@ LayoutRect LayoutVideo::ReplacedContentRect() const {
   if (ShouldDisplayVideo()) {
     // Video codecs may need to restart from an I-frame when the output is
     // resized. Round size in advance to avoid 1px snap difference.
-    // TODO(trchen): The way of rounding is different from LayoutPart just to
-    // match existing behavior. This is probably a bug and We should unify it
-    // with LayoutPart.
+    // TODO(trchen): The way of rounding is different from LayoutEmbeddedContent
+    // just to match existing behavior. This is probably a bug and We should
+    // unify it with LayoutEmbeddedContent.
     return LayoutRect(PixelSnappedIntRect(ComputeObjectFit()));
   }
   // If we are displaying the poster image no pre-rounding is needed, but the
@@ -201,7 +203,7 @@ static const LayoutBlock* LayoutObjectPlaceholder(
     return nullptr;
 
   LayoutFullScreen* full_screen =
-      parent->IsLayoutFullScreen() ? ToLayoutFullScreen(parent) : 0;
+      parent->IsLayoutFullScreen() ? ToLayoutFullScreen(parent) : nullptr;
   if (!full_screen)
     return nullptr;
 

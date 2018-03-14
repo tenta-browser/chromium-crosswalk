@@ -25,8 +25,8 @@ void PaymentAppContextImpl::Init(
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&PaymentAppContextImpl::CreatePaymentAppDatabaseOnIO, this,
-                 service_worker_context));
+      base::BindOnce(&PaymentAppContextImpl::CreatePaymentAppDatabaseOnIO, this,
+                     service_worker_context));
 }
 
 void PaymentAppContextImpl::Shutdown() {
@@ -34,18 +34,18 @@ void PaymentAppContextImpl::Shutdown() {
 
   BrowserThread::PostTaskAndReply(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&PaymentAppContextImpl::ShutdownOnIO, this),
-      base::Bind(&PaymentAppContextImpl::DidShutdown, this));
+      base::BindOnce(&PaymentAppContextImpl::ShutdownOnIO, this),
+      base::BindOnce(&PaymentAppContextImpl::DidShutdown, this));
 }
 
 void PaymentAppContextImpl::CreatePaymentManager(
-    mojo::InterfaceRequest<payments::mojom::PaymentManager> request) {
+    payments::mojom::PaymentManagerRequest request) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&PaymentAppContextImpl::CreatePaymentManagerOnIO, this,
-                 base::Passed(&request)));
+      base::BindOnce(&PaymentAppContextImpl::CreatePaymentManagerOnIO, this,
+                     base::Passed(&request)));
 }
 
 void PaymentAppContextImpl::PaymentManagerHadConnectionError(
@@ -70,7 +70,7 @@ void PaymentAppContextImpl::CreatePaymentAppDatabaseOnIO(
     scoped_refptr<ServiceWorkerContextWrapper> service_worker_context) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   payment_app_database_ =
-      base::MakeUnique<PaymentAppDatabase>(service_worker_context);
+      std::make_unique<PaymentAppDatabase>(service_worker_context);
 }
 
 void PaymentAppContextImpl::CreatePaymentManagerOnIO(

@@ -17,19 +17,29 @@ class FullscreenToolbarAnimationController;
 @class FullscreenToolbarVisibilityLockController;
 @class ImmersiveFullscreenController;
 
+namespace content {
+class WebContents;
+}
+
 // This enum class represents the appearance of the fullscreen toolbar, which
-// includes the tab strip and omnibox.
+// includes the tab strip and omnibox. These values are logged in a histogram
+// and shouldn't be renumbered or removed.
 enum class FullscreenToolbarStyle {
   // The toolbar is present. Moving the cursor to the top
   // causes the menubar to appear and the toolbar to slide down.
-  TOOLBAR_PRESENT,
+  TOOLBAR_PRESENT = 0,
   // The toolbar is hidden. Moving cursor to top shows the
   // toolbar and menubar.
   TOOLBAR_HIDDEN,
   // Toolbar is hidden. Moving cursor to top causes the menubar
   // to appear, but not the toolbar.
   TOOLBAR_NONE,
+  // The last enum value. Used for logging in a histogram.
+  TOOLBAR_LAST = TOOLBAR_NONE
 };
+
+static constexpr int kFullscreenToolbarStyleCount =
+    (int)FullscreenToolbarStyle::TOOLBAR_LAST + 1;
 
 // This struct contains the calculated values of the fullscreen toolbar layout.
 struct FullscreenToolbarLayout {
@@ -67,8 +77,9 @@ struct FullscreenToolbarLayout {
   // Manages the toolbar animations for the TOOLBAR_HIDDEN style.
   std::unique_ptr<FullscreenToolbarAnimationController> animationController_;
 
-  // Mouse tracker to track the user's interactions with the toolbar. This
-  // object is only set when the browser is in fullscreen mode.
+  // When the menu bar and toolbar are visible, creates a tracking area which
+  // is used to keep them visible until the mouse moves far enough away from
+  // them. Only set when the browser is in fullscreen mode.
   base::scoped_nsobject<FullscreenToolbarMouseTracker> mouseTracker_;
 
   // Controller for immersive fullscreen.
@@ -93,13 +104,17 @@ struct FullscreenToolbarLayout {
 - (void)cancelAnimationAndTimer;
 
 // Animates the toolbar dropping down to show changes to the tab strip.
-- (void)revealToolbarForTabStripChanges;
+- (void)revealToolbarForWebContents:(content::WebContents*)contents
+                       inForeground:(BOOL)inForeground;
 
 // Returns the fraction of the toolbar exposed at the top.
 // It returns 1.0 if the toolbar is fully shown and 0.0 if the toolbar is
 // hidden. Otherwise, if the toolbar is in progress of animating, it will
 // return a float that ranges from (0, 1).
 - (CGFloat)toolbarFraction;
+
+// Returns |toolbarStyle_|.
+- (FullscreenToolbarStyle)toolbarStyle;
 
 // Computes and return the layout for the fullscreen toolbar.
 - (FullscreenToolbarLayout)computeLayout;
@@ -112,10 +127,10 @@ struct FullscreenToolbarLayout {
 
 // Updates the toolbar style. If the style has changed, then the toolbar will
 // relayout.
-- (void)updateToolbarStyleExitingTabFullscreen:(BOOL)isExitingTabFullscreen;
+- (void)layoutToolbarStyleIsExitingTabFullscreen:(BOOL)isExitingTabFullscreen;
 
 // Updates the toolbar by updating the layout.
-- (void)updateToolbarLayout;
+- (void)layoutToolbar;
 
 // Returns YES if the browser in in fullscreen.
 - (BOOL)isInFullscreen;

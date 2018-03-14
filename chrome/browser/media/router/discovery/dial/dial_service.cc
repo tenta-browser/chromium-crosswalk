@@ -15,10 +15,9 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/rand_util.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/media/router/discovery/dial/dial_device_data.h"
@@ -33,10 +32,11 @@
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
 #include "net/log/net_log.h"
-#include "net/log/net_log_source_type.h"
+#include "net/log/net_log_source.h"
 #include "url/gurl.h"
 
 #if defined(OS_CHROMEOS)
+#include "base/task_runner_util.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -124,11 +124,14 @@ void InsertBestBindAddressChromeOS(const chromeos::NetworkTypePattern& type,
   const chromeos::NetworkState* state = chromeos::NetworkHandler::Get()
                                             ->network_state_handler()
                                             ->ConnectedNetworkByType(type);
+  if (!state)
+    return;
+  std::string state_ip_address = state->GetIpAddress();
   IPAddress bind_ip_address;
-  if (state && bind_ip_address.AssignFromIPLiteral(state->ip_address()) &&
+  if (bind_ip_address.AssignFromIPLiteral(state_ip_address) &&
       bind_ip_address.IsIPv4()) {
     VLOG(2) << "Found " << state->type() << ", " << state->name() << ": "
-            << state->ip_address();
+            << state_ip_address;
     bind_address_list->push_back(bind_ip_address);
   }
 }
@@ -150,7 +153,8 @@ net::IPAddressList GetBestBindAddressOnUIThread() {
 }
 
 #else
-NetworkInterfaceList GetNetworkListOnFileThread() {
+// Note: This can be called only on a thread that allows IO.
+NetworkInterfaceList GetNetworkList() {
   NetworkInterfaceList list;
   bool success =
       net::GetNetworkList(&list, net::INCLUDE_HOST_SCOPE_VIRTUAL_INTERFACES);
@@ -162,16 +166,10 @@ NetworkInterfaceList GetNetworkListOnFileThread() {
 
 }  // namespace
 
-DialServiceImpl::DialSocket::DialSocket(
-    const base::Closure& discovery_request_cb,
-    const base::Callback<void(const DialDeviceData&)>& device_discovered_cb,
-    const base::Closure& on_error_cb)
-    : discovery_request_cb_(discovery_request_cb),
-      device_discovered_cb_(device_discovered_cb),
-      on_error_cb_(on_error_cb),
-      is_writing_(false),
-      is_reading_(false) {
+DialServiceImpl::DialSocket::DialSocket(DialServiceImpl* dial_service)
+    : is_writing_(false), is_reading_(false), dial_service_(dial_service) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK(dial_service_);
 }
 
 DialServiceImpl::DialSocket::~DialSocket() {
@@ -180,15 +178,14 @@ DialServiceImpl::DialSocket::~DialSocket() {
 
 bool DialServiceImpl::DialSocket::CreateAndBindSocket(
     const IPAddress& bind_ip_address,
-    net::NetLog* net_log,
-    net::NetLogSource net_log_source) {
+    net::NetLog* net_log) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(!socket_);
   DCHECK(bind_ip_address.IsIPv4());
 
   net::RandIntCallback rand_cb = base::Bind(&base::RandInt);
   socket_ = base::MakeUnique<UDPSocket>(net::DatagramSocket::RANDOM_BIND,
-                                        rand_cb, net_log, net_log_source);
+                                        rand_cb, net_log, net::NetLogSource());
 
   // 0 means bind a random port
   net::IPEndPoint address(bind_ip_address, 0);
@@ -242,7 +239,7 @@ bool DialServiceImpl::DialSocket::CheckResult(const char* operation,
     Close();
     std::string error_str(net::ErrorToString(result));
     VLOG(1) << "dial socket error: " << error_str;
-    on_error_cb_.Run();
+    dial_service_->NotifyOnError();
     return false;
   }
   return true;
@@ -265,7 +262,7 @@ void DialServiceImpl::DialSocket::OnSocketWrite(int send_buffer_size,
     VLOG(1) << "Sent " << result << " chars, expected " << send_buffer_size
             << " chars";
   }
-  discovery_request_cb_.Run();
+  dial_service_->NotifyOnDiscoveryRequest();
 }
 
 bool DialServiceImpl::DialSocket::ReadSocket() {
@@ -327,7 +324,7 @@ void DialServiceImpl::DialSocket::HandleResponse(int bytes_read) {
   // Attempt to parse response, notify observers if successful.
   DialDeviceData parsed_device;
   if (ParseResponse(response, response_time, &parsed_device))
-    device_discovered_cb_.Run(parsed_device);
+    dial_service_->NotifyOnDeviceDiscovered(parsed_device);
 }
 
 // static
@@ -397,15 +394,12 @@ DialServiceImpl::DialServiceImpl(net::NetLog* net_log)
                                                 kDialRequestIntervalMillis) +
                     TimeDelta::FromSeconds(kDialResponseTimeoutSecs)),
       request_interval_(
-          TimeDelta::FromMilliseconds(kDialRequestIntervalMillis)),
-      weak_factory_(this) {
+          TimeDelta::FromMilliseconds(kDialRequestIntervalMillis)) {
   IPAddress address;
   bool success = address.AssignFromIPLiteral(kDialRequestAddress);
   DCHECK(success);
   send_address_ = net::IPEndPoint(address, kDialRequestPort);
   send_buffer_ = new StringIOBuffer(BuildRequest());
-  net_log_source_.type = net::NetLogSourceType::UDP_SOCKET;
-  net_log_source_.id = net_log_->NextID();
 }
 
 DialServiceImpl::~DialServiceImpl() {
@@ -450,15 +444,19 @@ void DialServiceImpl::StartDiscovery() {
   }
 
 #if defined(OS_CHROMEOS)
-  BrowserThread::PostTaskAndReplyWithResult(
-      BrowserThread::UI, FROM_HERE, base::Bind(&GetBestBindAddressOnUIThread),
-      base::Bind(&DialServiceImpl::DiscoverOnAddresses,
-                 weak_factory_.GetWeakPtr()));
+  auto task_runner =
+      content::BrowserThread::GetTaskRunnerForThread(BrowserThread::UI);
+  task_tracker_.PostTaskAndReplyWithResult(
+      task_runner.get(), FROM_HERE,
+      base::BindOnce(&GetBestBindAddressOnUIThread),
+      base::BindOnce(&DialServiceImpl::DiscoverOnAddresses,
+                     base::Unretained(this)));
 #else
-  BrowserThread::PostTaskAndReplyWithResult(
-      BrowserThread::FILE, FROM_HERE, base::Bind(&GetNetworkListOnFileThread),
-      base::Bind(&DialServiceImpl::SendNetworkList,
-                 weak_factory_.GetWeakPtr()));
+  auto task_runner = base::CreateTaskRunnerWithTraits({base::MayBlock()});
+  task_tracker_.PostTaskAndReplyWithResult(
+      task_runner.get(), FROM_HERE, base::BindOnce(&GetNetworkList),
+      base::BindOnce(&DialServiceImpl::SendNetworkList,
+                     base::Unretained(this)));
 #endif
 }
 
@@ -472,14 +470,13 @@ void DialServiceImpl::SendNetworkList(const NetworkInterfaceList& networks) {
   // there may be duplicates in |networks|, so address family + interface index
   // is used to identify unique interfaces.
   // TODO(mfoltz): Support IPV6 multicast.  http://crbug.com/165286
-  for (NetworkInterfaceList::const_iterator iter = networks.begin();
-       iter != networks.end(); ++iter) {
-    net::AddressFamily addr_family = net::GetAddressFamily(iter->address);
-    VLOG(2) << "Found " << iter->name << ", " << iter->address.ToString()
+  for (const auto& network : networks) {
+    net::AddressFamily addr_family = net::GetAddressFamily(network.address);
+    VLOG(2) << "Found " << network.name << ", " << network.address.ToString()
             << ", address family: " << addr_family;
     if (addr_family == net::ADDRESS_FAMILY_IPV4) {
       InterfaceIndexAddressFamily interface_index_addr_family =
-          std::make_pair(iter->interface_index, addr_family);
+          std::make_pair(network.interface_index, addr_family);
       bool inserted =
           interface_index_addr_family_seen.insert(interface_index_addr_family)
               .second;
@@ -487,14 +484,14 @@ void DialServiceImpl::SendNetworkList(const NetworkInterfaceList& networks) {
       // discovery list.
       if (inserted) {
         VLOG(2) << "Encountered "
-                << "interface index: " << iter->interface_index << ", "
+                << "interface index: " << network.interface_index << ", "
                 << "address family: " << addr_family << " for the first time, "
-                << "adding IP address " << iter->address.ToString()
+                << "adding IP address " << network.address.ToString()
                 << " to list.";
-        ip_addresses.push_back(iter->address);
+        ip_addresses.push_back(network.address);
       } else {
         VLOG(2) << "Already encountered "
-                << "interface index: " << iter->interface_index << ", "
+                << "interface index: " << network.interface_index << ", "
                 << "address family: " << addr_family << " before, not adding.";
       }
     }
@@ -527,19 +524,13 @@ void DialServiceImpl::DiscoverOnAddresses(
 
 void DialServiceImpl::BindAndAddSocket(const IPAddress& bind_ip_address) {
   std::unique_ptr<DialServiceImpl::DialSocket> dial_socket(CreateDialSocket());
-  if (dial_socket->CreateAndBindSocket(bind_ip_address, net_log_,
-                                       net_log_source_))
+  if (dial_socket->CreateAndBindSocket(bind_ip_address, net_log_))
     dial_sockets_.push_back(std::move(dial_socket));
 }
 
 std::unique_ptr<DialServiceImpl::DialSocket>
 DialServiceImpl::CreateDialSocket() {
-  return base::MakeUnique<DialServiceImpl::DialSocket>(
-      base::Bind(&DialServiceImpl::NotifyOnDiscoveryRequest,
-                 weak_factory_.GetWeakPtr()),
-      base::Bind(&DialServiceImpl::NotifyOnDeviceDiscovered,
-                 weak_factory_.GetWeakPtr()),
-      base::Bind(&DialServiceImpl::NotifyOnError, weak_factory_.GetWeakPtr()));
+  return base::MakeUnique<DialServiceImpl::DialSocket>(this);
 }
 
 void DialServiceImpl::SendOneRequest() {

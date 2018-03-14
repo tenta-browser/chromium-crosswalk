@@ -30,13 +30,16 @@
 #define Frame_h
 
 #include "core/CoreExport.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "core/frame/FrameLifecycle.h"
 #include "core/frame/FrameTypes.h"
+#include "core/frame/FrameView.h"
+#include "core/frame/UserActivationState.h"
 #include "core/loader/FrameLoaderTypes.h"
 #include "core/page/FrameTree.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
-#include "public/platform/WebFeaturePolicy.h"
+#include "third_party/WebKit/common/feature_policy/feature_policy.h"
 
 namespace blink {
 
@@ -47,10 +50,12 @@ class Document;
 class FrameClient;
 class FrameOwner;
 class HTMLFrameOwnerElement;
-class LayoutPart;
-class LayoutPartItem;
+class LayoutEmbeddedContent;
+class LayoutEmbeddedContentItem;
+class LocalFrame;
 class KURL;
 class Page;
+class ResourceTimingInfo;
 class SecurityContext;
 class Settings;
 class WindowProxy;
@@ -69,7 +74,7 @@ class CORE_EXPORT Frame : public GarbageCollectedFinalized<Frame> {
  public:
   virtual ~Frame();
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   virtual bool IsLocalFrame() const = 0;
   virtual bool IsRemoteFrame() const = 0;
@@ -83,6 +88,8 @@ class CORE_EXPORT Frame : public GarbageCollectedFinalized<Frame> {
   virtual void Navigate(const FrameLoadRequest&) = 0;
   virtual void Reload(FrameLoadType, ClientRedirectPolicy) = 0;
 
+  virtual void AddResourceTiming(const ResourceTimingInfo&) = 0;
+
   virtual void Detach(FrameDetachType);
   void DisconnectOwnerElement();
   virtual bool ShouldClose() = 0;
@@ -90,12 +97,13 @@ class CORE_EXPORT Frame : public GarbageCollectedFinalized<Frame> {
   FrameClient* Client() const;
 
   Page* GetPage() const;  // Null when the frame is detached.
+  virtual FrameView* View() const = 0;
 
   bool IsMainFrame() const;
   bool IsLocalRoot() const;
 
   FrameOwner* Owner() const;
-  void SetOwner(FrameOwner* owner) { owner_ = owner; }
+  void SetOwner(FrameOwner*);
   HTMLFrameOwnerElement* DeprecatedLocalOwner() const;
 
   DOMWindow* DomWindow() const { return dom_window_; }
@@ -105,7 +113,6 @@ class CORE_EXPORT Frame : public GarbageCollectedFinalized<Frame> {
 
   virtual SecurityContext* GetSecurityContext() const = 0;
 
-  Frame* FindFrameForNavigation(const AtomicString& name, Frame& active_frame);
   Frame* FindUnsafeParentScrollPropagationBoundary();
 
   // This prepares the Frame for the next commit. It will detach children,
@@ -115,16 +122,15 @@ class CORE_EXPORT Frame : public GarbageCollectedFinalized<Frame> {
   virtual bool PrepareForCommit() = 0;
 
   // TODO(japhet): These should all move to LocalFrame.
-  bool CanNavigate(const Frame&);
   virtual void PrintNavigationErrorMessage(const Frame&,
                                            const char* reason) = 0;
   virtual void PrintNavigationWarning(const String&) = 0;
 
   // TODO(pilgrim): Replace all instances of ownerLayoutObject() with
   // ownerLayoutItem(), https://crbug.com/499321
-  LayoutPart* OwnerLayoutObject()
+  LayoutEmbeddedContent* OwnerLayoutObject()
       const;  // LayoutObject for the element that contains this frame.
-  LayoutPartItem OwnerLayoutItem() const;
+  LayoutEmbeddedContentItem OwnerLayoutItem() const;
 
   Settings* GetSettings() const;  // can be null
 
@@ -142,8 +148,48 @@ class CORE_EXPORT Frame : public GarbageCollectedFinalized<Frame> {
 
   virtual void DidChangeVisibilityState();
 
-  void SetDocumentHasReceivedUserGesture();
-  bool HasReceivedUserGesture() const { return has_received_user_gesture_; }
+  void UpdateUserActivationInFrameTree();
+
+  bool HasBeenActivated() const {
+    return user_activation_state_.HasBeenActive();
+  }
+
+  void ClearActivation() { user_activation_state_.Clear(); }
+
+  void SetDocumentHasReceivedUserGestureBeforeNavigation(bool value) {
+    has_received_user_gesture_before_nav_ = value;
+  }
+
+  bool HasReceivedUserGestureBeforeNavigation() const {
+    return has_received_user_gesture_before_nav_;
+  }
+
+  // Creates a |UserGestureIndicator| that contains a |UserGestureToken| with
+  // the given status.  Also activates the user activation state of the
+  // |LocalFrame| (provided it's non-null) and all its ancestors.
+  static std::unique_ptr<UserGestureIndicator> NotifyUserActivation(
+      Frame*,
+      UserGestureToken::Status = UserGestureToken::kPossiblyExistingGesture);
+
+  // Returns the transient user activation state of the |LocalFrame|, provided
+  // it is non-null.  Otherwise returns |false|.
+  //
+  // The |checkIfMainThread| parameter determines if the token based gestures
+  // (legacy code) must be used in a thread-safe manner.
+  //
+  // TODO(mustaq): clarify/enforce the relation between the two params after
+  // null-frame main-thread cases (crbug.com/730690) have been removed.
+  static bool HasTransientUserActivation(Frame*,
+                                         bool checkIfMainThread = false);
+
+  // Consumes the transient user activation state of the |LocalFrame|, provided
+  // the frame pointer is non-null and the state hasn't been consumed since
+  // activation.  Returns |true| if succesfully consumed the state.
+  //
+  // The |checkIfMainThread| parameter determines if the token based gestures
+  // (legacy code) must be used in a thread-safe manner.
+  static bool ConsumeTransientUserActivation(Frame*,
+                                             bool checkIfMainThread = false);
 
   bool IsAttached() const {
     return lifecycle_.GetState() == FrameLifecycle::kAttached;
@@ -151,7 +197,13 @@ class CORE_EXPORT Frame : public GarbageCollectedFinalized<Frame> {
 
   // Tests whether the feature-policy controlled feature is enabled by policy in
   // the given frame.
-  bool IsFeatureEnabled(WebFeaturePolicyFeature) const;
+  bool IsFeatureEnabled(FeaturePolicyFeature) const;
+
+  // Called to make a frame inert or non-inert. A frame is inert when there
+  // is a modal dialog displayed within an ancestor frame, and this frame
+  // itself is not within the dialog.
+  virtual void SetIsInert(bool) = 0;
+  void UpdateInertIfPossible();
 
  protected:
   Frame(FrameClient*, Page&, FrameOwner*, WindowProxyManager*);
@@ -162,12 +214,27 @@ class CORE_EXPORT Frame : public GarbageCollectedFinalized<Frame> {
   Member<FrameOwner> owner_;
   Member<DOMWindow> dom_window_;
 
-  bool has_received_user_gesture_ = false;
+  UserActivationState user_activation_state_;
+  bool has_received_user_gesture_before_nav_ = false;
 
   FrameLifecycle lifecycle_;
 
+  // This is set to true if this is a subframe, and the frame element in the
+  // parent frame's document becomes inert. This should always be false for
+  // the main frame.
+  bool is_inert_ = false;
+
  private:
-  bool CanNavigateWithoutFramebusting(const Frame&, String& error_reason);
+  // Activates the user activation state of this frame and all its ancestors.
+  void NotifyUserActivation();
+
+  bool HasTransientUserActivation() {
+    return user_activation_state_.IsActive();
+  }
+
+  // Consumes and returns the transient user activation of current Frame, after
+  // updating all ancestor/descendant frames.
+  bool ConsumeTransientUserActivation();
 
   Member<FrameClient> client_;
   const Member<WindowProxyManager> window_proxy_manager_;

@@ -5,14 +5,15 @@
 #ifndef UI_WM_PUBLIC_ACTIVATION_CHANGE_OBSERVER_H_
 #define UI_WM_PUBLIC_ACTIVATION_CHANGE_OBSERVER_H_
 
-#include "ui/aura/aura_export.h"
+#include "ui/wm/public/wm_public_export.h"
 
 namespace aura {
 class Window;
+}
 
-namespace client {
+namespace wm {
 
-class AURA_EXPORT ActivationChangeObserver {
+class WM_PUBLIC_EXPORT ActivationChangeObserver {
  public:
   // The reason or cause of a window activation change.
   enum class ActivationReason {
@@ -25,13 +26,21 @@ class AURA_EXPORT ActivationChangeObserver {
     WINDOW_DISPOSITION_CHANGED,
   };
 
-  // Called when |gained_active| gains focus, or there is no active window
+  // Called when |gaining_active| will gain activation, or there is no active
+  // window (|gaining_active| is NULL in this case.) |losing_active| refers to
+  // the previous active window or NULL if there was no previously active
+  // window. |reason| specifies the cause of the activation change.
+  virtual void OnWindowActivating(ActivationReason reason,
+                                  aura::Window* gaining_active,
+                                  aura::Window* losing_active) {}
+
+  // Called when |gained_active| gains activation, or there is no active window
   // (|gained_active| is NULL in this case.) |lost_active| refers to the
   // previous active window or NULL if there was no previously active
   // window. |reason| specifies the cause of the activation change.
   virtual void OnWindowActivated(ActivationReason reason,
-                                 Window* gained_active,
-                                 Window* lost_active) = 0;
+                                 aura::Window* gained_active,
+                                 aura::Window* lost_active) = 0;
 
   // Called when during window activation the currently active window is
   // selected for activation. This can happen when a window requested for
@@ -44,13 +53,12 @@ class AURA_EXPORT ActivationChangeObserver {
 
 // Gets/Sets the ActivationChangeObserver for a specific window. This observer
 // is notified after the ActivationClient notifies all registered observers.
-AURA_EXPORT void SetActivationChangeObserver(
-    Window* window,
+WM_PUBLIC_EXPORT void SetActivationChangeObserver(
+    aura::Window* window,
     ActivationChangeObserver* observer);
-AURA_EXPORT ActivationChangeObserver* GetActivationChangeObserver(
-    Window* window);
+WM_PUBLIC_EXPORT ActivationChangeObserver* GetActivationChangeObserver(
+    aura::Window* window);
 
-}  // namespace client
-}  // namespace aura
+}  // namespace wm
 
 #endif  // UI_WM_PUBLIC_ACTIVATION_CHANGE_OBSERVER_H_

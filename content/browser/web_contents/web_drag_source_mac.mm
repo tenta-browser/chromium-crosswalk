@@ -16,9 +16,9 @@
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
-#include "content/browser/browser_thread_impl.h"
 #include "content/browser/download/drag_download_file.h"
 #include "content/browser/download/drag_download_util.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
@@ -244,6 +244,12 @@ void PromiseWriterHelper(const DropData& drop_data,
 
   contents_->SystemDragEnded(dragStartRWH_.get());
 
+  if (dragImage_) {
+    screenPoint.x += imageOffset_.x;
+    // Deal with Cocoa's flipped coordinate system.
+    screenPoint.y += [dragImage_.get() size].height - imageOffset_.y;
+  }
+
   // Convert |screenPoint| to view coordinates and flip it.
   NSPoint localPoint = NSZeroPoint;
   if ([contentsView_ window])
@@ -262,8 +268,9 @@ void PromiseWriterHelper(const DropData& drop_data,
 
   // |localPoint| and |screenPoint| are in the root coordinate space, for
   // non-root RenderWidgetHosts they need to be transformed.
-  gfx::Point transformedPoint = gfx::Point(localPoint.x, localPoint.y);
-  gfx::Point transformedScreenPoint = gfx::Point(screenPoint.x, screenPoint.y);
+  gfx::PointF transformedPoint = gfx::PointF(localPoint.x, localPoint.y);
+  gfx::PointF transformedScreenPoint =
+      gfx::PointF(screenPoint.x, screenPoint.y);
   if (dragStartRWH_ && contents_->GetRenderWidgetHostView()) {
     content::RenderWidgetHostViewBase* contentsViewBase =
         static_cast<content::RenderWidgetHostViewBase*>(
@@ -272,10 +279,10 @@ void PromiseWriterHelper(const DropData& drop_data,
         static_cast<content::RenderWidgetHostViewBase*>(
             dragStartRWH_->GetView());
     contentsViewBase->TransformPointToCoordSpaceForView(
-        gfx::Point(localPoint.x, localPoint.y), dragStartViewBase,
+        gfx::PointF(localPoint.x, localPoint.y), dragStartViewBase,
         &transformedPoint);
     contentsViewBase->TransformPointToCoordSpaceForView(
-        gfx::Point(screenPoint.x, screenPoint.y), dragStartViewBase,
+        gfx::PointF(screenPoint.x, screenPoint.y), dragStartViewBase,
         &transformedScreenPoint);
   }
 
@@ -318,11 +325,9 @@ void PromiseWriterHelper(const DropData& drop_data,
         dragFileDownloader.get()));
   } else {
     // The writer will take care of closing and deletion.
-    BrowserThread::PostTask(BrowserThread::FILE,
-                            FROM_HERE,
-                            base::Bind(&PromiseWriterHelper,
-                                       *dropData_,
-                                       base::Passed(&file)));
+    base::PostTaskWithTraits(
+        FROM_HERE, {base::TaskPriority::USER_VISIBLE, base::MayBlock()},
+        base::Bind(&PromiseWriterHelper, *dropData_, base::Passed(&file)));
   }
 
   // The DragDownloadFile constructor may have altered the value of |filePath|

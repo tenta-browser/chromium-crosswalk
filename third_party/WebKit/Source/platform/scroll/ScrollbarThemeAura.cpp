@@ -31,9 +31,9 @@
 #include "platform/scroll/ScrollbarThemeAura.h"
 
 #include "platform/LayoutTestSupport.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/paint/DrawingRecorder.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/scroll/ScrollableArea.h"
 #include "platform/scroll/Scrollbar.h"
 #include "platform/scroll/ScrollbarThemeOverlay.h"
@@ -134,7 +134,7 @@ static int GetScrollbarThickness() {
 }  // namespace
 
 ScrollbarTheme& ScrollbarTheme::NativeTheme() {
-  if (RuntimeEnabledFeatures::overlayScrollbarsEnabled()) {
+  if (RuntimeEnabledFeatures::OverlayScrollbarsEnabled()) {
     DEFINE_STATIC_LOCAL(
         ScrollbarThemeOverlay, theme,
         (GetScrollbarThickness(), 0, ScrollbarThemeOverlay::kAllowHitTest));
@@ -244,7 +244,7 @@ void ScrollbarThemeAura::PaintTrackPiece(GraphicsContext& gc,
                                                   display_item_type))
     return;
 
-  DrawingRecorder recorder(gc, scrollbar, display_item_type, rect);
+  DrawingRecorder recorder(gc, scrollbar, display_item_type);
 
   WebThemeEngine::State state = scrollbar.HoveredPart() == part_type
                                     ? WebThemeEngine::kStateHover
@@ -280,7 +280,7 @@ void ScrollbarThemeAura::PaintButton(GraphicsContext& gc,
       ButtonPartPaintingParams(scrollbar, scrollbar.CurrentPos(), part);
   if (!params.should_paint)
     return;
-  DrawingRecorder recorder(gc, scrollbar, display_item_type, rect);
+  DrawingRecorder recorder(gc, scrollbar, display_item_type);
   Platform::Current()->ThemeEngine()->Paint(
       gc.Canvas(), params.part, params.state, WebRect(rect), nullptr);
 }
@@ -292,7 +292,7 @@ void ScrollbarThemeAura::PaintThumb(GraphicsContext& gc,
                                                   DisplayItem::kScrollbarThumb))
     return;
 
-  DrawingRecorder recorder(gc, scrollbar, DisplayItem::kScrollbarThumb, rect);
+  DrawingRecorder recorder(gc, scrollbar, DisplayItem::kScrollbarThumb);
 
   WebThemeEngine::State state;
   WebCanvas* canvas = gc.Canvas();
@@ -321,7 +321,7 @@ ScrollbarPart ScrollbarThemeAura::InvalidateOnThumbPositionChange(
     float old_position,
     float new_position) const {
   ScrollbarPart invalid_parts = kNoPart;
-  ASSERT(ButtonsPlacement() == kWebScrollbarButtonsPlacementSingle);
+  DCHECK_EQ(ButtonsPlacement(), kWebScrollbarButtonsPlacementSingle);
   static const ScrollbarPart kButtonParts[] = {kBackButtonStartPart,
                                                kForwardButtonEndPart};
   for (ScrollbarPart part : kButtonParts) {

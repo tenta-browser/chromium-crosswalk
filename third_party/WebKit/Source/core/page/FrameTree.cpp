@@ -22,14 +22,14 @@
 
 #include "core/dom/Document.h"
 #include "core/frame/FrameClient.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameClient.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/RemoteFrame.h"
 #include "core/frame/RemoteFrameView.h"
 #include "core/frame/UseCounter.h"
 #include "core/page/Page.h"
 #include "platform/wtf/Assertions.h"
-#include "platform/wtf/Vector.h"
 #include "platform/wtf/text/CString.h"
 #include "platform/wtf/text/StringBuilder.h"
 
@@ -51,8 +51,18 @@ FrameTree::~FrameTree() {}
 const AtomicString& FrameTree::GetName() const {
   // TODO(andypaicu): remove this once we have gathered the data
   if (experimental_set_nulled_name_) {
-    UseCounter::Count(this_frame_.Get(),
-                      UseCounter::kCrossOriginMainFrameNulledNameAccessed);
+    const LocalFrame* frame =
+        this_frame_->IsLocalFrame()
+            ? ToLocalFrame(this_frame_)
+            : (Top().IsLocalFrame() ? ToLocalFrame(&Top()) : nullptr);
+    if (frame) {
+      UseCounter::Count(frame,
+                        WebFeature::kCrossOriginMainFrameNulledNameAccessed);
+      if (!name_.IsEmpty()) {
+        UseCounter::Count(
+            frame, WebFeature::kCrossOriginMainFrameNulledNonEmptyNameAccessed);
+      }
+    }
   }
   return name_;
 }
@@ -62,7 +72,24 @@ void FrameTree::ExperimentalSetNulledName() {
   experimental_set_nulled_name_ = true;
 }
 
-void FrameTree::SetName(const AtomicString& name) {
+void FrameTree::SetName(const AtomicString& name,
+                        ReplicationPolicy replication) {
+  if (replication == kReplicate) {
+    // Avoid calling out to notify the embedder if the browsing context name
+    // didn't change. This is important to avoid violating the browser
+    // assumption that the unique name doesn't change if the browsing context
+    // name doesn't change.
+    // TODO(dcheng): This comment is indicative of a problematic layering
+    // violation. The browser should not be relying on the renderer to get this
+    // correct; unique name calculation should be moved up into the browser.
+    if (name != name_) {
+      // TODO(lukasza): https://crbug.com/660485: Eventually we need to also
+      // support replication of name changes that originate in a *remote* frame.
+      DCHECK(this_frame_->IsLocalFrame());
+      ToLocalFrame(this_frame_)->Client()->DidChangeName(name);
+    }
+  }
+
   // TODO(andypaicu): remove this once we have gathered the data
   experimental_set_nulled_name_ = false;
   name_ = name;
@@ -75,14 +102,14 @@ Frame* FrameTree::Parent() const {
   return this_frame_->Client()->Parent();
 }
 
-Frame* FrameTree::Top() const {
+Frame& FrameTree::Top() const {
   // FIXME: top() should never return null, so here are some hacks to deal
   // with EmptyLocalFrameClient and cases where the frame is detached
   // already...
   if (!this_frame_->Client())
-    return this_frame_;
+    return *this_frame_;
   Frame* candidate = this_frame_->Client()->Top();
-  return candidate ? candidate : this_frame_.Get();
+  return candidate ? *candidate : *this_frame_;
 }
 
 Frame* FrameTree::NextSibling() const {
@@ -149,12 +176,15 @@ unsigned FrameTree::ChildCount() const {
 }
 
 Frame* FrameTree::Find(const AtomicString& name) const {
+  // Named frame lookup should always be relative to a local frame.
+  DCHECK(this_frame_->IsLocalFrame());
+
   if (EqualIgnoringASCIICase(name, "_self") ||
       EqualIgnoringASCIICase(name, "_current") || name.IsEmpty())
     return this_frame_;
 
   if (EqualIgnoringASCIICase(name, "_top"))
-    return Top();
+    return &Top();
 
   if (EqualIgnoringASCIICase(name, "_parent"))
     return Parent() ? Parent() : this_frame_.Get();
@@ -217,7 +247,7 @@ DISABLE_CFI_PERF
 Frame* FrameTree::TraverseNext(const Frame* stay_within) const {
   Frame* child = FirstChild();
   if (child) {
-    ASSERT(!stay_within || child->Tree().IsDescendantOf(stay_within));
+    DCHECK(!stay_within || child->Tree().IsDescendantOf(stay_within));
     return child;
   }
 
@@ -226,7 +256,7 @@ Frame* FrameTree::TraverseNext(const Frame* stay_within) const {
 
   Frame* sibling = NextSibling();
   if (sibling) {
-    ASSERT(!stay_within || sibling->Tree().IsDescendantOf(stay_within));
+    DCHECK(!stay_within || sibling->Tree().IsDescendantOf(stay_within));
     return sibling;
   }
 
@@ -239,7 +269,7 @@ Frame* FrameTree::TraverseNext(const Frame* stay_within) const {
   }
 
   if (frame) {
-    ASSERT(!stay_within || !sibling ||
+    DCHECK(!stay_within || !sibling ||
            sibling->Tree().IsDescendantOf(stay_within));
     return sibling;
   }
@@ -247,7 +277,7 @@ Frame* FrameTree::TraverseNext(const Frame* stay_within) const {
   return nullptr;
 }
 
-DEFINE_TRACE(FrameTree) {
+void FrameTree::Trace(blink::Visitor* visitor) {
   visitor->Trace(this_frame_);
 }
 
@@ -270,8 +300,8 @@ static void printFrames(const blink::Frame* frame,
     printIndent(indent);
   }
 
-  blink::FrameView* view =
-      frame->IsLocalFrame() ? ToLocalFrame(frame)->View() : 0;
+  blink::LocalFrameView* view =
+      frame->IsLocalFrame() ? ToLocalFrame(frame)->View() : nullptr;
   printf("Frame %p %dx%d\n", frame, view ? view->Width() : 0,
          view ? view->Height() : 0);
   printIndent(indent);
@@ -280,13 +310,13 @@ static void printFrames(const blink::Frame* frame,
   printf("  frameView=%p\n", view);
   printIndent(indent);
   printf("  document=%p\n",
-         frame->IsLocalFrame() ? ToLocalFrame(frame)->GetDocument() : 0);
+         frame->IsLocalFrame() ? ToLocalFrame(frame)->GetDocument() : nullptr);
   printIndent(indent);
   printf(
       "  uri=%s\n\n",
       frame->IsLocalFrame()
-          ? ToLocalFrame(frame)->GetDocument()->Url().GetString().Utf8().Data()
-          : 0);
+          ? ToLocalFrame(frame)->GetDocument()->Url().GetString().Utf8().data()
+          : nullptr);
 
   for (blink::Frame* child = frame->Tree().FirstChild(); child;
        child = child->Tree().NextSibling())
@@ -299,7 +329,7 @@ void showFrameTree(const blink::Frame* frame) {
     return;
   }
 
-  printFrames(frame->Tree().Top(), frame, 0);
+  printFrames(&frame->Tree().Top(), frame, 0);
 }
 
 #endif

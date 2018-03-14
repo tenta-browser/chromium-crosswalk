@@ -11,13 +11,14 @@
 #include "build/build_config.h"
 #include "media/base/media.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/WebKit/public/platform/InterfaceRegistry.h"
+#include "third_party/WebKit/public/platform/WebThread.h"
 #include "third_party/WebKit/public/platform/scheduler/renderer/renderer_scheduler.h"
 #include "third_party/WebKit/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/WebKit/public/web/WebKit.h"
 
 #if defined(OS_ANDROID)
-#include "base/android/jni_android.h"
-#include "media/base/android/media_jni_registrar.h"
+#include "media/base/android/media_codec_util.h"
 #endif
 
 #if !defined(OS_IOS)
@@ -67,14 +68,15 @@ BlinkMediaTestSuite::BlinkMediaTestSuite(int argc, char** argv)
       blink_platform_support_(new TestBlinkPlatformSupport()) {
 }
 
-BlinkMediaTestSuite::~BlinkMediaTestSuite() {}
+BlinkMediaTestSuite::~BlinkMediaTestSuite() = default;
 
 void BlinkMediaTestSuite::Initialize() {
   // Run TestSuite::Initialize first so that logging is initialized.
   base::TestSuite::Initialize();
 
 #if defined(OS_ANDROID)
-  media::RegisterJni(base::android::AttachCurrentThread());
+  if (media::MediaCodecUtil::IsMediaCodecAvailable())
+    media::EnablePlatformDecoderSupport();
 #endif
 
   // Run this here instead of main() to ensure an AtExitManager is already
@@ -96,7 +98,8 @@ void BlinkMediaTestSuite::Initialize() {
   std::unique_ptr<base::MessageLoop> message_loop;
   if (!base::MessageLoop::current())
     message_loop.reset(new base::MessageLoop());
-  blink::Initialize(blink_platform_support_.get());
+  blink::Initialize(blink_platform_support_.get(),
+                    blink::InterfaceRegistry::GetEmptyInterfaceRegistry());
 }
 
 int main(int argc, char** argv) {

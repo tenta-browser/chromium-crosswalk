@@ -39,6 +39,11 @@ class TestTextInputClient : public ui::mojom::TextInputClient {
     if (run_loop_)
       run_loop_->Quit();
   }
+  void DispatchKeyEventPostIME(
+      std::unique_ptr<ui::Event> event,
+      DispatchKeyEventPostIMECallback callback) override {
+    std::move(callback).Run(false);
+  }
 
   mojo::Binding<ui::mojom::TextInputClient> binding_;
   std::unique_ptr<base::RunLoop> run_loop_;
@@ -49,7 +54,7 @@ class TestTextInputClient : public ui::mojom::TextInputClient {
 
 class IMEAppTest : public service_manager::test::ServiceTest {
  public:
-  IMEAppTest() : ServiceTest("mus_ime_unittests") {}
+  IMEAppTest() : ServiceTest("ime_unittests") {}
   ~IMEAppTest() override {}
 
   // service_manager::test::ServiceTest:
@@ -57,7 +62,7 @@ class IMEAppTest : public service_manager::test::ServiceTest {
     ServiceTest::SetUp();
     // test_ime_driver will register itself as the current IMEDriver.
     connector()->StartService("test_ime_driver");
-    connector()->BindInterface(ui::mojom::kServiceName, &ime_server_);
+    connector()->BindInterface(ui::mojom::kServiceName, &ime_driver_);
   }
 
   bool ProcessKeyEvent(ui::mojom::InputMethodPtr* input_method,
@@ -80,24 +85,21 @@ class IMEAppTest : public service_manager::test::ServiceTest {
     run_loop_->Quit();
   }
 
-  ui::mojom::IMEServerPtr ime_server_;
+  ui::mojom::IMEDriverPtr ime_driver_;
   std::unique_ptr<base::RunLoop> run_loop_;
   bool handled_;
 
   DISALLOW_COPY_AND_ASSIGN(IMEAppTest);
 };
 
-// Tests sending a KeyEvent to the IMEDriver through the Mus IMEServer.
+// Tests sending a KeyEvent to the IMEDriver through the Mus IMEDriver.
 TEST_F(IMEAppTest, ProcessKeyEvent) {
-  ui::mojom::TextInputClientPtr client_ptr;
-  TestTextInputClient client(MakeRequest(&client_ptr));
-
   ui::mojom::InputMethodPtr input_method;
   ui::mojom::StartSessionDetailsPtr details =
       ui::mojom::StartSessionDetails::New();
-  details->client = std::move(client_ptr);
+  TestTextInputClient client(MakeRequest(&details->client));
   details->input_method_request = MakeRequest(&input_method);
-  ime_server_->StartSession(std::move(details));
+  ime_driver_->StartSession(std::move(details));
 
   // Send character key event.
   ui::KeyEvent char_event('A', ui::VKEY_A, 0);

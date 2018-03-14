@@ -34,28 +34,29 @@
 #include <memory>
 #include "core/dom/DOMNodeIds.h"
 #include "core/dom/Document.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/VisualViewport.h"
 #include "core/inspector/IdentifiersFactory.h"
 #include "core/inspector/InspectedFrames.h"
-#include "core/layout/LayoutPart.h"
+#include "core/layout/LayoutEmbeddedContent.h"
 #include "core/layout/api/LayoutViewItem.h"
-#include "core/layout/compositing/CompositedLayerMapping.h"
-#include "core/layout/compositing/PaintLayerCompositor.h"
 #include "core/loader/DocumentLoader.h"
 #include "core/page/ChromeClient.h"
 #include "core/page/Page.h"
+#include "core/paint/compositing/CompositedLayerMapping.h"
+#include "core/paint/compositing/PaintLayerCompositor.h"
 #include "platform/geometry/IntRect.h"
 #include "platform/graphics/CompositingReasons.h"
+#include "platform/graphics/CompositorElementId.h"
 #include "platform/graphics/GraphicsLayer.h"
 #include "platform/graphics/PictureSnapshot.h"
-#include "platform/image-encoders/PNGImageEncoder.h"
 #include "platform/transforms/TransformationMatrix.h"
+#include "platform/wtf/text/Base64.h"
+#include "platform/wtf/text/StringBuilder.h"
 #include "public/platform/WebFloatPoint.h"
 #include "public/platform/WebLayer.h"
-#include "wtf/text/Base64.h"
-#include "wtf/text/StringBuilder.h"
+#include "public/platform/WebLayerStickyPositionConstraint.h"
 
 namespace blink {
 
@@ -68,16 +69,20 @@ inline String IdForLayer(const GraphicsLayer* graphics_layer) {
   return String::Number(graphics_layer->PlatformLayer()->Id());
 }
 
+static std::unique_ptr<protocol::DOM::Rect> BuildObjectForRect(
+    const WebRect& rect) {
+  return protocol::DOM::Rect::create()
+      .setX(rect.x)
+      .setY(rect.y)
+      .setHeight(rect.height)
+      .setWidth(rect.width)
+      .build();
+}
+
 static std::unique_ptr<protocol::LayerTree::ScrollRect> BuildScrollRect(
     const WebRect& rect,
     const String& type) {
-  std::unique_ptr<protocol::DOM::Rect> rect_object =
-      protocol::DOM::Rect::create()
-          .setX(rect.x)
-          .setY(rect.y)
-          .setHeight(rect.height)
-          .setWidth(rect.width)
-          .build();
+  std::unique_ptr<protocol::DOM::Rect> rect_object = BuildObjectForRect(rect);
   std::unique_ptr<protocol::LayerTree::ScrollRect> scroll_rect_object =
       protocol::LayerTree::ScrollRect::create()
           .setRect(std::move(rect_object))
@@ -116,7 +121,60 @@ BuildScrollRectsForLayer(GraphicsLayer* graphics_layer,
   return scroll_rects->length() ? std::move(scroll_rects) : nullptr;
 }
 
+// TODO(flackr): We should be getting the sticky position constraints from the
+// property tree once blink is able to access them. https://crbug.com/754339
+static GraphicsLayer* FindLayerByElementId(GraphicsLayer* root,
+                                           CompositorElementId element_id) {
+  if (root->PlatformLayer()->GetElementId() == element_id)
+    return root;
+  for (size_t i = 0, size = root->Children().size(); i < size; ++i) {
+    if (GraphicsLayer* layer =
+            FindLayerByElementId(root->Children()[i], element_id))
+      return layer;
+  }
+  return nullptr;
+}
+
+static std::unique_ptr<protocol::LayerTree::StickyPositionConstraint>
+BuildStickyInfoForLayer(GraphicsLayer* root, WebLayer* layer) {
+  WebLayerStickyPositionConstraint constraints =
+      layer->StickyPositionConstraint();
+  if (!constraints.is_sticky)
+    return nullptr;
+
+  std::unique_ptr<protocol::DOM::Rect> sticky_box_rect =
+      BuildObjectForRect(constraints.scroll_container_relative_sticky_box_rect);
+
+  std::unique_ptr<protocol::DOM::Rect> containing_block_rect =
+      BuildObjectForRect(
+          constraints.scroll_container_relative_containing_block_rect);
+
+  std::unique_ptr<protocol::LayerTree::StickyPositionConstraint>
+      constraints_obj =
+          protocol::LayerTree::StickyPositionConstraint::create()
+              .setStickyBoxRect(std::move(sticky_box_rect))
+              .setContainingBlockRect(std::move(containing_block_rect))
+              .build();
+  if (constraints.nearest_element_shifting_sticky_box) {
+    constraints_obj->setNearestLayerShiftingStickyBox(String::Number(
+        FindLayerByElementId(root,
+                             constraints.nearest_element_shifting_sticky_box)
+            ->PlatformLayer()
+            ->Id()));
+  }
+  if (constraints.nearest_element_shifting_containing_block) {
+    constraints_obj->setNearestLayerShiftingContainingBlock(String::Number(
+        FindLayerByElementId(
+            root, constraints.nearest_element_shifting_containing_block)
+            ->PlatformLayer()
+            ->Id()));
+  }
+
+  return constraints_obj;
+}
+
 static std::unique_ptr<protocol::LayerTree::Layer> BuildObjectForLayer(
+    GraphicsLayer* root,
     GraphicsLayer* graphics_layer,
     int node_id,
     bool report_wheel_event_listeners) {
@@ -166,17 +224,23 @@ static std::unique_ptr<protocol::LayerTree::Layer> BuildObjectForLayer(
       BuildScrollRectsForLayer(graphics_layer, report_wheel_event_listeners);
   if (scroll_rects)
     layer_object->setScrollRects(std::move(scroll_rects));
+  std::unique_ptr<protocol::LayerTree::StickyPositionConstraint> sticky_info =
+      BuildStickyInfoForLayer(root, web_layer);
+  if (sticky_info)
+    layer_object->setStickyPositionConstraint(std::move(sticky_info));
   return layer_object;
 }
 
 InspectorLayerTreeAgent::InspectorLayerTreeAgent(
-    InspectedFrames* inspected_frames)
+    InspectedFrames* inspected_frames,
+    Client* client)
     : inspected_frames_(inspected_frames),
+      client_(client),
       suppress_layer_paint_events_(false) {}
 
 InspectorLayerTreeAgent::~InspectorLayerTreeAgent() {}
 
-DEFINE_TRACE(InspectorLayerTreeAgent) {
+void InspectorLayerTreeAgent::Trace(blink::Visitor* visitor) {
   visitor->Trace(inspected_frames_);
   InspectorBaseAgent::Trace(visitor);
 }
@@ -198,7 +262,7 @@ Response InspectorLayerTreeAgent::enable() {
 
 Response InspectorLayerTreeAgent::disable() {
   instrumenting_agents_->removeInspectorLayerTreeAgent(this);
-  snapshot_by_id_.Clear();
+  snapshot_by_id_.clear();
   return Response::OK();
 }
 
@@ -211,8 +275,8 @@ void InspectorLayerTreeAgent::DidPaint(const GraphicsLayer* graphics_layer,
                                        const LayoutRect& rect) {
   if (suppress_layer_paint_events_)
     return;
-  // Should only happen for FrameView paints when compositing is off. Consider
-  // different instrumentation method for that.
+  // Should only happen for LocalFrameView paints when compositing is off.
+  // Consider different instrumentation method for that.
   if (!graphics_layer)
     return;
 
@@ -237,6 +301,7 @@ InspectorLayerTreeAgent::BuildLayerTree() {
   BuildLayerIdToNodeIdMap(compositor->RootLayer(), layer_id_to_node_id_map);
   int scrolling_layer_id = inspected_frames_->Root()
                                ->View()
+                               ->LayoutViewportScrollableArea()
                                ->LayerForScrolling()
                                ->PlatformLayer()
                                ->Id();
@@ -266,31 +331,34 @@ void InspectorLayerTreeAgent::BuildLayerIdToNodeIdMap(
     BuildLayerIdToNodeIdMap(child, layer_id_to_node_id_map);
   if (!root->GetLayoutObject().IsLayoutIFrame())
     return;
-  FrameView* child_frame_view =
-      ToLayoutPart(root->GetLayoutObject()).ChildFrameView();
+  LocalFrameView* child_frame_view =
+      ToLayoutEmbeddedContent(root->GetLayoutObject()).ChildFrameView();
+  if (!child_frame_view)
+    return;
   LayoutViewItem child_layout_view_item = child_frame_view->GetLayoutViewItem();
-  if (!child_layout_view_item.IsNull()) {
-    if (PaintLayerCompositor* child_compositor =
-            child_layout_view_item.Compositor())
-      BuildLayerIdToNodeIdMap(child_compositor->RootLayer(),
-                              layer_id_to_node_id_map);
-  }
+  if (child_layout_view_item.IsNull())
+    return;
+  PaintLayerCompositor* child_compositor = child_layout_view_item.Compositor();
+  if (!child_compositor)
+    return;
+  BuildLayerIdToNodeIdMap(child_compositor->RootLayer(),
+                          layer_id_to_node_id_map);
 }
 
 void InspectorLayerTreeAgent::GatherGraphicsLayers(
-    GraphicsLayer* root,
+    GraphicsLayer* layer,
     HashMap<int, int>& layer_id_to_node_id_map,
     std::unique_ptr<Array<protocol::LayerTree::Layer>>& layers,
     bool has_wheel_event_handlers,
     int scrolling_layer_id) {
-  int layer_id = root->PlatformLayer()->Id();
-  if (page_overlay_layer_ids_.Find(layer_id) != WTF::kNotFound)
+  if (client_->IsInspectorLayer(layer))
     return;
+  int layer_id = layer->PlatformLayer()->Id();
   layers->addItem(BuildObjectForLayer(
-      root, layer_id_to_node_id_map.at(layer_id),
+      RootGraphicsLayer(), layer, layer_id_to_node_id_map.at(layer_id),
       has_wheel_event_handlers && layer_id == scrolling_layer_id));
-  for (size_t i = 0, size = root->Children().size(); i < size; ++i)
-    GatherGraphicsLayers(root->Children()[i], layer_id_to_node_id_map, layers,
+  for (size_t i = 0, size = layer->Children().size(); i < size; ++i)
+    GatherGraphicsLayers(layer->Children()[i], layer_id_to_node_id_map, layers,
                          has_wheel_event_handlers, scrolling_layer_id);
 }
 
@@ -355,7 +423,7 @@ Response InspectorLayerTreeAgent::compositingReasons(
     reasons_bitmask &= ~kCompositingReasonStringMap[i].reason;
 #endif
   }
-  ASSERT(!reasons_bitmask);
+  DCHECK(!reasons_bitmask);
   return Response::OK();
 }
 
@@ -369,17 +437,24 @@ Response InspectorLayerTreeAgent::makeSnapshot(const String& layer_id,
     return Response::Error("Layer does not draw content");
 
   IntSize size = ExpandedIntSize(layer->Size());
-
   IntRect interest_rect(IntPoint(0, 0), size);
   suppress_layer_paint_events_ = true;
+
+  inspected_frames_->Root()->View()->UpdateAllLifecyclePhasesExceptPaint();
+  for (auto frame = inspected_frames_->begin();
+       frame != inspected_frames_->end(); ++frame) {
+    frame->GetDocument()->Lifecycle().AdvanceTo(DocumentLifecycle::kInPaint);
+  }
   layer->Paint(&interest_rect);
+  for (auto frame = inspected_frames_->begin();
+       frame != inspected_frames_->end(); ++frame) {
+    frame->GetDocument()->Lifecycle().AdvanceTo(DocumentLifecycle::kPaintClean);
+  }
+
   suppress_layer_paint_events_ = false;
 
-  GraphicsContext context(layer->GetPaintController());
-  context.BeginRecording(interest_rect);
-  layer->GetPaintController().GetPaintArtifact().Replay(interest_rect, context);
-  RefPtr<PictureSnapshot> snapshot =
-      AdoptRef(new PictureSnapshot(ToSkPicture(context.EndRecording())));
+  auto snapshot = base::AdoptRef(new PictureSnapshot(
+      ToSkPicture(layer->CapturePaintRecord(), interest_rect)));
 
   *snapshot_id = String::Number(++last_snapshot_id_);
   bool new_entry = snapshot_by_id_.insert(*snapshot_id, snapshot).is_new_entry;
@@ -392,16 +467,17 @@ Response InspectorLayerTreeAgent::loadSnapshot(
     String* snapshot_id) {
   if (!tiles->length())
     return Response::Error("Invalid argument, no tiles provided");
-  Vector<RefPtr<PictureSnapshot::TilePictureStream>> decoded_tiles;
+  Vector<scoped_refptr<PictureSnapshot::TilePictureStream>> decoded_tiles;
   decoded_tiles.Grow(tiles->length());
   for (size_t i = 0; i < tiles->length(); ++i) {
     protocol::LayerTree::PictureTile* tile = tiles->get(i);
-    decoded_tiles[i] = AdoptRef(new PictureSnapshot::TilePictureStream());
+    decoded_tiles[i] = base::AdoptRef(new PictureSnapshot::TilePictureStream());
     decoded_tiles[i]->layer_offset.Set(tile->getX(), tile->getY());
     if (!Base64Decode(tile->getPicture(), decoded_tiles[i]->data))
       return Response::Error("Invalid base64 encoding");
   }
-  RefPtr<PictureSnapshot> snapshot = PictureSnapshot::Load(decoded_tiles);
+  scoped_refptr<PictureSnapshot> snapshot =
+      PictureSnapshot::Load(decoded_tiles);
   if (!snapshot)
     return Response::Error("Invalid snapshot format");
   if (snapshot->IsEmpty())
@@ -414,7 +490,7 @@ Response InspectorLayerTreeAgent::loadSnapshot(
 }
 
 Response InspectorLayerTreeAgent::releaseSnapshot(const String& snapshot_id) {
-  SnapshotById::iterator it = snapshot_by_id_.Find(snapshot_id);
+  SnapshotById::iterator it = snapshot_by_id_.find(snapshot_id);
   if (it == snapshot_by_id_.end())
     return Response::Error("Snapshot not found");
   snapshot_by_id_.erase(it);
@@ -424,10 +500,10 @@ Response InspectorLayerTreeAgent::releaseSnapshot(const String& snapshot_id) {
 Response InspectorLayerTreeAgent::GetSnapshotById(
     const String& snapshot_id,
     const PictureSnapshot*& result) {
-  SnapshotById::iterator it = snapshot_by_id_.Find(snapshot_id);
+  SnapshotById::iterator it = snapshot_by_id_.find(snapshot_id);
   if (it == snapshot_by_id_.end())
     return Response::Error("Snapshot not found");
-  result = it->value.Get();
+  result = it->value.get();
   return Response::OK();
 }
 
@@ -472,7 +548,7 @@ Response InspectorLayerTreeAgent::profileSnapshot(
     ParseRect(clip_rect.fromJust(), &rect);
   std::unique_ptr<PictureSnapshot::Timings> timings = snapshot->Profile(
       min_repeat_count.fromMaybe(1), min_duration.fromMaybe(0),
-      clip_rect.isJust() ? &rect : 0);
+      clip_rect.isJust() ? &rect : nullptr);
   *out_timings = Array<Array<double>>::create();
   for (size_t i = 0; i < timings->size(); ++i) {
     const Vector<double>& row = (*timings)[i];
@@ -499,17 +575,6 @@ Response InspectorLayerTreeAgent::snapshotCommandLog(
   if (errors.hasErrors())
     return Response::Error(errors.errors());
   return Response::OK();
-}
-
-void InspectorLayerTreeAgent::WillAddPageOverlay(const GraphicsLayer* layer) {
-  page_overlay_layer_ids_.push_back(layer->PlatformLayer()->Id());
-}
-
-void InspectorLayerTreeAgent::DidRemovePageOverlay(const GraphicsLayer* layer) {
-  size_t index = page_overlay_layer_ids_.Find(layer->PlatformLayer()->Id());
-  if (index == WTF::kNotFound)
-    return;
-  page_overlay_layer_ids_.erase(index);
 }
 
 }  // namespace blink

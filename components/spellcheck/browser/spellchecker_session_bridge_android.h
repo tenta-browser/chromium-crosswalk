@@ -21,7 +21,6 @@ class SpellCheckerSessionBridge {
  public:
   explicit SpellCheckerSessionBridge(int render_process_id);
   ~SpellCheckerSessionBridge();
-  static bool RegisterJNI(JNIEnv* env);
 
   // Receives text to be checked from the message filter and sends it to Java
   // to be spellchecked.
@@ -35,7 +34,8 @@ class SpellCheckerSessionBridge {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jobj,
       const base::android::JavaParamRef<jintArray>& offset_array,
-      const base::android::JavaParamRef<jintArray>& length_array);
+      const base::android::JavaParamRef<jintArray>& length_array,
+      const base::android::JavaParamRef<jobjectArray>& suggestions_array);
 
   // Sets the handle to the Java SpellCheckerSessionBridge object to null,
   // marking the Java object for garbage collection.

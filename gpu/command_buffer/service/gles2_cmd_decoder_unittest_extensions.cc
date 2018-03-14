@@ -589,7 +589,7 @@ TEST_P(GLES2DecoderTestWithCHROMIUMPathRendering, GenDeletePaths) {
   EXPECT_EQ(error::kNoError, ExecuteCmd(delete_cmd));
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
 
-  delete_cmd.Init(std::numeric_limits<GLsizei>::max() + 1,
+  delete_cmd.Init(static_cast<GLuint>(std::numeric_limits<GLsizei>::max()) + 1,
                   std::numeric_limits<GLsizei>::max());
   EXPECT_EQ(error::kNoError, ExecuteCmd(delete_cmd));
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
@@ -775,7 +775,7 @@ TEST_P(GLES2DecoderTestWithCHROMIUMPathRendering,
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
 
   // Too big range causes client id to wrap, connection error.
-  gen_cmd.Init(std::numeric_limits<GLsizei>::max() + 3,
+  gen_cmd.Init(static_cast<GLuint>(std::numeric_limits<GLsizei>::max()) + 3,
                std::numeric_limits<GLsizei>::max());
   EXPECT_EQ(error::kInvalidArguments, ExecuteCmd(gen_cmd));
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
@@ -819,7 +819,7 @@ TEST_P(GLES2DecoderTestWithCHROMIUMPathRendering,
   EXPECT_EQ(GL_INVALID_VALUE, GetGLError());
 
   // Too big range causes client id to wrap, connection error.
-  delete_cmd.Init(std::numeric_limits<GLsizei>::max() + 3,
+  delete_cmd.Init(static_cast<GLuint>(std::numeric_limits<GLsizei>::max()) + 3,
                   std::numeric_limits<GLsizei>::max());
   EXPECT_EQ(error::kInvalidArguments, ExecuteCmd(delete_cmd));
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
@@ -1722,6 +1722,62 @@ TEST_P(GLES2DecoderTestWithCHROMIUMPathRendering,
   cmd.Init(client_program_id_, kLocation, kBucketId);
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   EXPECT_EQ(GL_INVALID_OPERATION, GetGLError());
+}
+
+class GLES2DecoderTestWithCHROMIUMRasterTransport : public GLES2DecoderTest {
+ public:
+  GLES2DecoderTestWithCHROMIUMRasterTransport() {}
+  void SetUp() override {
+    InitState init;
+    init.gl_version = "opengl es 2.0";
+    init.has_alpha = true;
+    init.has_depth = true;
+    init.request_alpha = true;
+    init.request_depth = true;
+    init.bind_generates_resource = true;
+    init.extensions = "chromium_raster_transport";
+    InitDecoder(init);
+  }
+};
+
+INSTANTIATE_TEST_CASE_P(Service,
+                        GLES2DecoderTestWithCHROMIUMRasterTransport,
+                        ::testing::Bool());
+
+class GLES3DecoderTestWithEXTWindowRectangles : public GLES3DecoderTest {
+ public:
+  GLES3DecoderTestWithEXTWindowRectangles() {}
+  void SetUp() override {
+    InitState init;
+    init.context_type = CONTEXT_TYPE_OPENGLES3;
+    init.gl_version = "opengl es 3.0";
+    init.has_alpha = true;
+    init.has_depth = true;
+    init.request_alpha = true;
+    init.request_depth = true;
+    init.bind_generates_resource = true;
+    init.extensions = "GL_EXT_window_rectangles";
+    InitDecoder(init);
+  }
+};
+
+INSTANTIATE_TEST_CASE_P(Service,
+                        GLES3DecoderTestWithEXTWindowRectangles,
+                        ::testing::Bool());
+
+TEST_P(GLES3DecoderTestWithEXTWindowRectangles,
+       WindowRectanglesEXTImmediateValidArgs) {
+  cmds::WindowRectanglesEXTImmediate& cmd =
+      *GetImmediateAs<cmds::WindowRectanglesEXTImmediate>();
+  SpecializedSetup<cmds::WindowRectanglesEXTImmediate, 0>(true);
+  GLint temp[4 * 2] = {};
+
+  // The backbuffer is still bound, so the expected result is actually a reset
+  // to the default state. (Window rectangles don't affect the backbuffer.)
+  EXPECT_CALL(*gl_, WindowRectanglesEXT(GL_EXCLUSIVE_EXT, 0, nullptr));
+  cmd.Init(GL_INCLUSIVE_EXT, 2, &temp[0]);
+  EXPECT_EQ(error::kNoError, ExecuteImmediateCmd(cmd, sizeof(temp)));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
 }
 
 #include "gpu/command_buffer/service/gles2_cmd_decoder_unittest_extensions_autogen.h"

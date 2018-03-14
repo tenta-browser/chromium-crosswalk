@@ -38,7 +38,7 @@ def findAndReplace(filepath, findString, replaceString):
   """Does a search and replace on the contents of a file."""
   oldFilename = os.path.basename(filepath) + '.old'
   oldFilepath = os.path.join(os.path.dirname(filepath), oldFilename)
-  os.rename(filepath, oldFilepath)
+  shutil.move(filepath, oldFilepath)
   with open(oldFilepath) as input:
     with open(filepath, 'w') as output:
       for s in input:
@@ -293,7 +293,6 @@ def buildWebApp(buildtype, version, destination, zip_path,
   # For overriding the client ID/secret via env vars, see google_api_keys.py.
   apiClientId = google_api_keys.GetClientID('REMOTING')
   apiClientSecret = google_api_keys.GetClientSecret('REMOTING')
-  apiKey = google_api_keys.GetAPIKeyRemoting()
 
   apiClientIdV2 = os.environ.get(
       'REMOTING_IDENTITY_API_CLIENT_ID',
@@ -301,7 +300,6 @@ def buildWebApp(buildtype, version, destination, zip_path,
 
   replaceString(destination, 'API_CLIENT_ID', apiClientId)
   replaceString(destination, 'API_CLIENT_SECRET', apiClientSecret)
-  replaceString(destination, 'API_KEY', apiKey)
 
   # Use a fixed key in the app manifest. For dev builds, this ensures that the
   # app can be run directly from the output directory. For official CRD builds,

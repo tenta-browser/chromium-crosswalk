@@ -31,15 +31,14 @@
 #ifndef VideoPlaybackQuality_h
 #define VideoPlaybackQuality_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
 class Document;
 
-class VideoPlaybackQuality : public GarbageCollected<VideoPlaybackQuality>,
-                             public ScriptWrappable {
+class VideoPlaybackQuality : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -52,8 +51,6 @@ class VideoPlaybackQuality : public GarbageCollected<VideoPlaybackQuality>,
   unsigned totalVideoFrames() const { return total_video_frames_; }
   unsigned droppedVideoFrames() const { return dropped_video_frames_; }
   unsigned corruptedVideoFrames() const { return corrupted_video_frames_; }
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   VideoPlaybackQuality(const Document&,

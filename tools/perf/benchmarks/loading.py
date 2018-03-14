@@ -5,85 +5,104 @@
 from core import perf_benchmark
 import page_sets
 
-import ct_benchmarks_util
-from benchmarks import page_cycler_v2
+from benchmarks import loading_metrics_category
 from telemetry import benchmark
+from telemetry import story
 from telemetry.page import cache_temperature
 from telemetry.page import traffic_setting
 from telemetry.web_perf import timeline_based_measurement
 
 
-@benchmark.Enabled('android')
-@benchmark.Owner(emails=['kouhei@chromium.org', 'ksakamoto@chromium.org'])
-class LoadingMobile(perf_benchmark.PerfBenchmark):
-  """ A benchmark measuring loading performance of mobile sites. """
+class _LoadingBase(perf_benchmark.PerfBenchmark):
+  """ A base class for loading benchmarks. """
 
   options = {'pageset_repeat': 2}
 
-  def CreateTimelineBasedMeasurementOptions(self):
+  def CreateCoreTimelineBasedMeasurementOptions(self):
     tbm_options = timeline_based_measurement.Options()
-    page_cycler_v2.AugmentOptionsForLoadingMetrics(tbm_options)
+    loading_metrics_category.AugmentOptionsForLoadingMetrics(tbm_options)
     return tbm_options
 
-  @classmethod
-  def ShouldDisable(cls, possible_browser):
-    # crbug.com/619254
-    if possible_browser.browser_type == 'reference':
-      return True
 
-    # crbug.com/676612
-    if ((possible_browser.platform.GetDeviceTypeName() == 'Nexus 6' or
-         possible_browser.platform.GetDeviceTypeName() == 'AOSP on Shamu') and
-        possible_browser.browser_type == 'android-webview'):
-      return True
+@benchmark.Owner(emails=['kouhei@chormium.org', 'ksakamoto@chromium.org'])
+class LoadingDesktop(_LoadingBase):
+  """ A benchmark measuring loading performance of desktop sites. """
+  SUPPORTED_PLATFORMS = [story.expectations.ALL_DESKTOP]
 
-    return False
+  def CreateStorySet(self, options):
+    return page_sets.LoadingDesktopStorySet(
+        cache_temperatures=[cache_temperature.COLD, cache_temperature.WARM])
+
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        self.DisableStory(
+            'uol.com.br', [story.expectations.ALL_LINUX], 'crbug.com/752611')
+        self.DisableStory(
+            'Orange', [story.expectations.ALL_WIN], 'crbug.com/723783')
+    return StoryExpectations()
 
   @classmethod
   def Name(cls):
-    return 'loading.mobile'
+    return 'loading.desktop'
+
+
+@benchmark.Owner(emails=['kouhei@chromium.org', 'ksakamoto@chromium.org'])
+class LoadingMobile(_LoadingBase):
+  """ A benchmark measuring loading performance of mobile sites. """
+  SUPPORTED_PLATFORMS = [story.expectations.ALL_MOBILE]
 
   def CreateStorySet(self, options):
     return page_sets.LoadingMobileStorySet(
         cache_temperatures=[cache_temperature.ANY],
+        cache_temperatures_for_pwa=[cache_temperature.COLD,
+                                    cache_temperature.WARM,
+                                    cache_temperature.HOT],
         traffic_settings=[traffic_setting.NONE, traffic_setting.REGULAR_3G])
 
-
-# Disabled because we do not plan on running CT benchmarks on the perf
-# waterfall any time soon.
-@benchmark.Disabled('all')
-class LoadingClusterTelemetry(perf_benchmark.PerfBenchmark):
-
-  options = {'upload_results': True}
-
-  _ALL_NET_CONFIGS = traffic_setting.NETWORK_CONFIGS.keys()
-
-  def CreateTimelineBasedMeasurementOptions(self):
-    tbm_options = timeline_based_measurement.Options()
-    page_cycler_v2.AugmentOptionsForLoadingMetrics(tbm_options)
-    return tbm_options
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        self.DisableBenchmark(
+            [story.expectations.ANDROID_NEXUS6_WEBVIEW], 'crbug.com/676612')
+        self.DisableStory('GFK', [story.expectations.ALL],
+                          'N5X Timeout issue: crbug.com/702175')
+        self.DisableStory('MLSMatrix', [story.expectations.ALL],
+                          'N5XTimeout issue: crbug.com/702175')
+        self.DisableStory('EBS', [story.expectations.ALL],
+                          'N5XTimeout issue: crbug.com/702175')
+        self.DisableStory('IBI', [story.expectations.ALL],
+                          'N5XTimeout issue: crbug.com/702175')
+        self.DisableStory('SBS', [story.expectations.ALL],
+                          'N5XTimeout issue: crbug.com/702175')
+        self.DisableStory('FuturaSciences', [story.expectations.ALL],
+                          'N5XTimeout issue: crbug.com/702175')
+        self.DisableStory('HashOcean', [story.expectations.ALL],
+                          'N5XTimeout issue: crbug.com/702175')
+        self.DisableStory('163', [story.expectations.ALL],
+                          'N5XTimeout issue: crbug.com/702175')
+        self.DisableStory('G1', [story.expectations.ALL], 'crbug.com/656861')
+        self.DisableStory('Dramaq', [story.expectations.ANDROID_NEXUS5X],
+                          'Test Failure: crbug.com/750747')
+        self.DisableStory('Hongkiat', [story.expectations.ANDROID_NEXUS5X],
+                          'Test Failure: crbug.com/750747')
+        self.DisableStory('Facebook', [story.expectations.ANDROID_NEXUS7],
+                          'Nexus7v2 Timeout: crbug.com/759861')
+        self.DisableStory('GoogleRedirectToGoogleJapan',
+                          [story.expectations.ANDROID_ONE], 'crbug.com/776092')
+        # TODO(rnephew): Uncomment Disablings. crbug.com/728882
+        # self.DisableStory(
+        #     'AirHorner', [story.expectations.ALL], 'crbug.com/653775')
+        # self.DisableStory(
+        #     'BusRouter', [story.expectations.ALL], 'crbug.com/653775')
+        # self.DisableStory('WikiOffline', [story.expectations.ALL],
+        #                   'crbug.com/653775')
+        # self.DisableStory(
+        #     'Detik', [story.expectations.ALL], 'crbug.com/653775')
+        # self.DisableStory(
+        #     'Blogspot', [story.expectations.ALL], 'crbug.com/653775')
+    return StoryExpectations()
 
   @classmethod
   def Name(cls):
-    return 'loading.cluster_telemetry'
-
-  @classmethod
-  def AddBenchmarkCommandLineArgs(cls, parser):
-    super(LoadingClusterTelemetry, cls).AddBenchmarkCommandLineArgs(parser)
-    ct_benchmarks_util.AddBenchmarkCommandLineArgs(parser)
-    parser.add_option(
-        '--wait-time',  action='store', type='int',
-        default=60, help='Number of seconds to wait for after navigation.')
-    parser.add_option(
-        '--traffic-setting',  choices=cls._ALL_NET_CONFIGS,
-        default=traffic_setting.REGULAR_4G,
-        help='Traffic condition (string). Default to "%%default". Can be: %s' %
-         ', '.join(cls._ALL_NET_CONFIGS))
-
-  def CreateStorySet(self, options):
-    def Wait(action_runner):
-      action_runner.Wait(options.wait_time)
-    return page_sets.CTPageSet(
-      options.urls_list, options.user_agent, options.archive_data_file,
-      traffic_setting=options.traffic_setting,
-      run_page_interaction_callback=Wait)
+    return 'loading.mobile'

@@ -6,20 +6,49 @@
 #define CHROME_BROWSER_EXTENSIONS_API_NOTIFICATIONS_EXTENSION_NOTIFICATION_HANDLER_H_
 
 #include "base/macros.h"
-#include "chrome/browser/notifications/non_persistent_notification_handler.h"
+#include "chrome/browser/notifications/notification_handler.h"
+#include "extensions/browser/event_router.h"
+
+class Profile;
+
+namespace extensions {
 
 // Handler for notifications shown by extensions. Will be created and owned by
-// the NotificationDisplayService.
-class ExtensionNotificationHandler : public NonPersistentNotificationHandler {
+// the NativeNotificationDisplayService.
+class ExtensionNotificationHandler : public NotificationHandler {
  public:
   ExtensionNotificationHandler();
   ~ExtensionNotificationHandler() override;
 
-  // NotificationHandler implementation.
-  void OpenSettings(Profile* profile) override;
+  // Extracts an extension ID from the URL for an app window, or an empty string
+  // if the URL is not a valid app window URL.
+  static std::string GetExtensionId(const GURL& url);
 
- private:
+  // NotificationHandler implementation.
+  void OnClose(Profile* profile,
+               const GURL& origin,
+               const std::string& notification_id,
+               bool by_user,
+               base::OnceClosure completed_closure) override;
+  void OnClick(Profile* profile,
+               const GURL& origin,
+               const std::string& notification_id,
+               const base::Optional<int>& action_index,
+               const base::Optional<base::string16>& reply,
+               base::OnceClosure completed_closure) override;
+
+ protected:
+  // Overriden in unit tests.
+  virtual void SendEvent(Profile* profile,
+                         const std::string& extension_id,
+                         events::HistogramValue histogram_value,
+                         const std::string& name,
+                         EventRouter::UserGestureState user_gesture,
+                         std::unique_ptr<base::ListValue> args);
+
   DISALLOW_COPY_AND_ASSIGN(ExtensionNotificationHandler);
 };
+
+}  // namespace extensions
 
 #endif  // CHROME_BROWSER_EXTENSIONS_API_NOTIFICATIONS_EXTENSION_NOTIFICATION_HANDLER_H_

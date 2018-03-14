@@ -32,22 +32,25 @@
 
 #include <memory>
 #include "core/dom/Document.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/frame/VisualViewport.h"
-#include "core/html/HTMLTextAreaElement.h"
+#include "core/html/forms/HTMLTextAreaElement.h"
 #include "core/layout/LayoutBlock.h"
 #include "core/layout/LayoutInline.h"
 #include "core/layout/LayoutListItem.h"
 #include "core/layout/LayoutListMarker.h"
+#include "core/layout/LayoutMultiColumnFlowThread.h"
 #include "core/layout/LayoutRubyRun.h"
 #include "core/layout/LayoutTable.h"
 #include "core/layout/LayoutTableCell.h"
 #include "core/layout/LayoutView.h"
 #include "core/layout/api/LayoutAPIShim.h"
 #include "core/layout/api/LayoutViewItem.h"
+#include "core/page/ChromeClient.h"
 #include "core/page/Page.h"
+#include "platform/geometry/IntRect.h"
 #include "platform/wtf/PtrUtil.h"
 
 namespace blink {
@@ -72,7 +75,7 @@ static bool IsNonTextAreaFormControl(const LayoutObject* layout_object) {
     return false;
   const Element* element = ToElement(node);
 
-  return (element->IsFormControlElement() && !isHTMLTextAreaElement(element));
+  return (element->IsFormControlElement() && !IsHTMLTextAreaElement(element));
 }
 
 static bool IsPotentialClusterRoot(const LayoutObject* layout_object) {
@@ -115,7 +118,7 @@ static bool IsIndependentDescendant(const LayoutBlock* layout_object) {
                                   layout_object->IsHorizontalWritingMode()) ||
          layout_object->Style()->IsDisplayReplacedType() ||
          layout_object->IsTextArea() ||
-         layout_object->Style()->UserModify() != READ_ONLY;
+         layout_object->Style()->UserModify() != EUserModify::kReadOnly;
 }
 
 static bool BlockIsRowOfLinks(const LayoutBlock* block) {
@@ -164,7 +167,8 @@ static bool BlockHeightConstrained(const LayoutBlock* block) {
   // the content is already overflowing before autosizing kicks in.
   for (; block; block = block->ContainingBlock()) {
     const ComputedStyle& style = block->StyleRef();
-    if (style.OverflowY() >= EOverflow::kScroll)
+    if (style.OverflowY() != EOverflow::kVisible
+        && style.OverflowY() != EOverflow::kHidden)
       return false;
     if (style.Height().IsSpecified() || style.MaxHeight().IsSpecified() ||
         block->IsOutOfFlowPositioned()) {
@@ -286,7 +290,7 @@ void TextAutosizer::Destroy(LayoutBlock* block) {
     // Clear the cluster stack and the supercluster map to avoid stale pointers.
     // Speculative fix for http://crbug.com/369485.
     first_block_to_begin_layout_ = nullptr;
-    cluster_stack_.Clear();
+    cluster_stack_.clear();
   }
 }
 
@@ -386,10 +390,10 @@ void TextAutosizer::EndLayout(LayoutBlock* block) {
 
   if (block == first_block_to_begin_layout_) {
     first_block_to_begin_layout_ = nullptr;
-    cluster_stack_.Clear();
-    styles_retained_during_layout_.Clear();
+    cluster_stack_.clear();
+    styles_retained_during_layout_.clear();
 #if DCHECK_IS_ON()
-    blocks_that_have_begun_layout_.Clear();
+    blocks_that_have_begun_layout_.clear();
 #endif
     // Tables can create two layout scopes for the same block so the isEmpty
     // check below is needed to guard against endLayout being called twice.
@@ -474,7 +478,7 @@ float TextAutosizer::Inflate(LayoutObject* parent,
   }
 
   if (page_info_.has_autosized_)
-    UseCounter::Count(*document_, UseCounter::kTextAutosizing);
+    UseCounter::Count(*document_, WebFeature::kTextAutosizing);
 
   return multiplier;
 }
@@ -562,11 +566,11 @@ void TextAutosizer::UpdatePageInfo() {
 
     // FIXME: With out-of-process iframes, the top frame can be remote and
     // doesn't have sizing information. Just return if this is the case.
-    Frame* frame = document_->GetFrame()->Tree().Top();
-    if (frame->IsRemoteFrame())
+    Frame& frame = document_->GetFrame()->Tree().Top();
+    if (frame.IsRemoteFrame())
       return;
 
-    LocalFrame* main_frame = ToLocalFrame(frame);
+    LocalFrame& main_frame = ToLocalFrame(frame);
     IntSize frame_size =
         document_->GetSettings()->TextAutosizingWindowSizeOverride();
     if (frame_size.IsEmpty())
@@ -575,7 +579,7 @@ void TextAutosizer::UpdatePageInfo() {
     page_info_.frame_width_ =
         horizontal_writing_mode ? frame_size.Width() : frame_size.Height();
 
-    IntSize layout_size = main_frame->View()->GetLayoutSize();
+    IntSize layout_size = main_frame.View()->GetLayoutSize();
     page_info_.layout_width_ =
         horizontal_writing_mode ? layout_size.Width() : layout_size.Height();
 
@@ -586,11 +590,12 @@ void TextAutosizer::UpdatePageInfo() {
 
     // If the page has a meta viewport or @viewport, don't apply the device
     // scale adjustment.
-    if (!main_frame->GetDocument()
+    if (!main_frame.GetDocument()
              ->GetViewportDescription()
              .IsSpecifiedByAuthor()) {
       page_info_.device_scale_adjustment_ =
-          document_->GetSettings()->GetDeviceScaleAdjustment();
+          document_->GetPage()->GetChromeClient().WindowToViewportScalar(
+              document_->GetSettings()->GetDeviceScaleAdjustment());
     } else {
       page_info_.device_scale_adjustment_ = 1.0f;
     }
@@ -675,8 +680,12 @@ TextAutosizer::BlockFlags TextAutosizer::ClassifyBlock(
     if (mask & POTENTIAL_ROOT)
       flags |= POTENTIAL_ROOT;
 
+    LayoutMultiColumnFlowThread* flow_thread = nullptr;
+    if (block->IsLayoutBlockFlow())
+      flow_thread = ToLayoutBlockFlow(block)->MultiColumnFlowThread();
     if ((mask & INDEPENDENT) &&
-        (IsIndependentDescendant(block) || block->IsTable()))
+        (IsIndependentDescendant(block) || block->IsTable() ||
+         (flow_thread && flow_thread->ColumnCount() > 1)))
       flags |= INDEPENDENT;
 
     if ((mask & EXPLICIT_WIDTH) && HasExplicitWidth(block))
@@ -707,8 +716,8 @@ bool TextAutosizer::ClusterHasEnoughTextToAutosize(
 
   // TextAreas and user-modifiable areas get a free pass to autosize regardless
   // of text content.
-  if (root->IsTextArea() ||
-      (root->Style() && root->Style()->UserModify() != READ_ONLY)) {
+  if (root->IsTextArea() || (root->Style() && root->Style()->UserModify() !=
+                                                  EUserModify::kReadOnly)) {
     cluster->has_enough_text_to_autosize_ = kHasEnoughText;
     return true;
   }
@@ -720,6 +729,14 @@ bool TextAutosizer::ClusterHasEnoughTextToAutosize(
 
   // 4 lines of text is considered enough to autosize.
   float minimum_text_length_to_autosize = WidthFromBlock(width_provider) * 4;
+  if (LocalFrameView* view = document_->View()) {
+    minimum_text_length_to_autosize =
+        document_->GetPage()
+            ->GetChromeClient()
+            .ViewportToScreen(IntRect(0, 0, minimum_text_length_to_autosize, 0),
+                              view)
+            .Width();
+  }
 
   float length = 0;
   LayoutObject* descendant = root->FirstChild();
@@ -1009,6 +1026,11 @@ const LayoutBlock* TextAutosizer::DeepestBlockContainingAllText(
 // FIXME: Refactor this to look more like TextAutosizer::deepestCommonAncestor.
 const LayoutBlock* TextAutosizer::DeepestBlockContainingAllText(
     const LayoutBlock* root) const {
+  // To avoid font-size shaking caused by the change of LayoutView's
+  // DeepestBlockContainingAllText.
+  if (root->IsLayoutView())
+    return root;
+
   size_t first_depth = 0;
   const LayoutObject* first_text_leaf = FindTextLeaf(root, first_depth, kFirst);
   if (!first_text_leaf)
@@ -1110,7 +1132,7 @@ void TextAutosizer::ApplyMultiplier(LayoutObject* layout_object,
     return;
 
   // We need to clone the layoutObject style to avoid breaking style sharing.
-  RefPtr<ComputedStyle> style = ComputedStyle::Clone(current_style);
+  scoped_refptr<ComputedStyle> style = ComputedStyle::Clone(current_style);
   style->SetTextAutosizingMultiplier(multiplier);
   style->SetUnique();
 
@@ -1155,7 +1177,8 @@ bool TextAutosizer::IsWiderOrNarrowerDescendant(Cluster* cluster) {
       parent_deepest_block_containing_all_text));
 #endif
 
-  float content_width = cluster->root_->ContentLogicalWidth().ToFloat();
+  float content_width =
+      DeepestBlockContainingAllText(cluster)->ContentLogicalWidth().ToFloat();
   float cluster_text_width =
       parent_deepest_block_containing_all_text->ContentLogicalWidth().ToFloat();
 
@@ -1243,7 +1266,7 @@ bool TextAutosizer::FingerprintMapper::Remove(LayoutObject* layout_object) {
     return false;
 
   ReverseFingerprintMap::iterator blocks_iter =
-      blocks_for_fingerprint_.Find(fingerprint);
+      blocks_for_fingerprint_.find(fingerprint);
   if (blocks_iter == blocks_for_fingerprint_.end())
     return false;
 
@@ -1253,7 +1276,7 @@ bool TextAutosizer::FingerprintMapper::Remove(LayoutObject* layout_object) {
     blocks_for_fingerprint_.erase(blocks_iter);
 
     SuperclusterMap::iterator supercluster_iter =
-        superclusters_.Find(fingerprint);
+        superclusters_.find(fingerprint);
 
     if (supercluster_iter != superclusters_.end()) {
       Supercluster* supercluster = supercluster_iter->value.get();
@@ -1386,10 +1409,10 @@ void TextAutosizer::CheckSuperclusterConsistency() {
       supercluster->multiplier_ = old_multipiler;
     }
   }
-  potentially_inconsistent_superclusters.Clear();
+  potentially_inconsistent_superclusters.clear();
 }
 
-DEFINE_TRACE(TextAutosizer) {
+void TextAutosizer::Trace(blink::Visitor* visitor) {
   visitor->Trace(document_);
 }
 

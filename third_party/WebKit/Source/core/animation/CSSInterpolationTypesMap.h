@@ -5,6 +5,7 @@
 #ifndef CSSInterpolationTypesMap_h
 #define CSSInterpolationTypesMap_h
 
+#include "core/CoreExport.h"
 #include "core/animation/CSSInterpolationType.h"
 #include "core/animation/InterpolationTypesMap.h"
 #include "platform/heap/Handle.h"
@@ -14,9 +15,7 @@ namespace blink {
 class CSSSyntaxDescriptor;
 class PropertyRegistry;
 
-using CSSInterpolationTypes = Vector<std::unique_ptr<CSSInterpolationType>>;
-
-class CSSInterpolationTypesMap : public InterpolationTypesMap {
+class CORE_EXPORT CSSInterpolationTypesMap : public InterpolationTypesMap {
  public:
   CSSInterpolationTypesMap(const PropertyRegistry* registry)
       : registry_(registry) {}
@@ -24,9 +23,10 @@ class CSSInterpolationTypesMap : public InterpolationTypesMap {
   const InterpolationTypes& Get(const PropertyHandle&) const final;
   size_t Version() const final;
 
-  static CSSInterpolationTypes CreateCSSInterpolationTypesForSyntax(
+  static InterpolationTypes CreateInterpolationTypesForCSSSyntax(
       const AtomicString& property_name,
-      const CSSSyntaxDescriptor&);
+      const CSSSyntaxDescriptor&,
+      const PropertyRegistration&);
 
  private:
   Member<const PropertyRegistry> registry_;

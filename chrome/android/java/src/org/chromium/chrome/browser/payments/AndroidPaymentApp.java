@@ -7,8 +7,6 @@ package org.chromium.chrome.browser.payments;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Context;
-import android.content.DialogInterface;
-import android.content.DialogInterface.OnCancelListener;
 import android.content.DialogInterface.OnClickListener;
 import android.content.Intent;
 import android.content.ServiceConnection;
@@ -27,7 +25,9 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.components.url_formatter.UrlFormatter;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.payments.mojom.PaymentCurrencyAmount;
 import org.chromium.payments.mojom.PaymentDetailsModifier;
 import org.chromium.payments.mojom.PaymentItem;
 import org.chromium.payments.mojom.PaymentMethodData;
@@ -35,7 +35,9 @@ import org.chromium.ui.base.WindowAndroid;
 
 import java.io.IOException;
 import java.io.StringWriter;
+import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -44,7 +46,10 @@ import java.util.Set;
 
 import javax.annotation.Nullable;
 
-/** The point of interaction with a locally installed 3rd party native Android payment app. */
+/**
+ * The point of interaction with a locally installed 3rd party native Android payment app.
+ * https://docs.google.com/document/d/1izV4uC-tiRJG3JLooqY3YRLU22tYOsLTNq0P_InPJeE
+ */
 public class AndroidPaymentApp
         extends PaymentInstrument implements PaymentApp, WindowAndroid.IntentCallback {
     /** The action name for the Pay Intent. */
@@ -56,18 +61,35 @@ public class AndroidPaymentApp
     /** The maximum number of milliseconds to wait for a connection to READY_TO_PAY service. */
     private static final long SERVICE_CONNECTION_TIMEOUT_MS = 1000;
 
-    private static final String EXTRA_MERCHANT_NAME = "merchantName";
-    private static final String EXTRA_METHOD_NAME = "methodName";
-    private static final String EXTRA_METHOD_NAMES = "methodNames";
-    private static final String EXTRA_DATA = "data";
-    private static final String EXTRA_ORIGIN = "origin";
-    private static final String EXTRA_IFRAME_ORIGIN = "iframeOrigin";
-    private static final String EXTRA_DATA_MAP = "dataMap";
-    private static final String EXTRA_DETAILS = "details";
-    private static final String EXTRA_INSTRUMENT_DETAILS = "instrumentDetails";
-    private static final String EXTRA_CERTIFICATE_CHAIN = "certificateChain";
+    // Deprecated parameters sent to the payment app for backward compatibility.
+    private static final String EXTRA_DEPRECATED_CERTIFICATE_CHAIN = "certificateChain";
+    private static final String EXTRA_DEPRECATED_DATA = "data";
+    private static final String EXTRA_DEPRECATED_DATA_MAP = "dataMap";
+    private static final String EXTRA_DEPRECATED_DETAILS = "details";
+    private static final String EXTRA_DEPRECATED_ID = "id";
+    private static final String EXTRA_DEPRECATED_IFRAME_ORIGIN = "iframeOrigin";
+    private static final String EXTRA_DEPRECATED_METHOD_NAME = "methodName";
+    private static final String EXTRA_DEPRECATED_ORIGIN = "origin";
+
+    // Freshest parameters sent to the payment app.
     private static final String EXTRA_CERTIFICATE = "certificate";
+    private static final String EXTRA_MERCHANT_NAME = "merchantName";
+    private static final String EXTRA_METHOD_DATA = "methodData";
+    private static final String EXTRA_METHOD_NAMES = "methodNames";
+    private static final String EXTRA_MODIFIERS = "modifiers";
+    private static final String EXTRA_PAYMENT_REQUEST_ID = "paymentRequestId";
+    private static final String EXTRA_PAYMENT_REQUEST_ORIGIN = "paymentRequestOrigin";
+    private static final String EXTRA_TOP_LEVEL_CERTIFICATE_CHAIN = "topLevelCertificateChain";
+    private static final String EXTRA_TOP_LEVEL_ORIGIN = "topLevelOrigin";
+    private static final String EXTRA_TOTAL = "total";
+
+    // Response from the payment app.
+    private static final String EXTRA_DEPRECATED_RESPONSE_INSTRUMENT_DETAILS = "instrumentDetails";
+    private static final String EXTRA_RESPONSE_DETAILS = "details";
+    private static final String EXTRA_RESPONSE_METHOD_NAME = "methodName";
+
     private static final String EMPTY_JSON_DATA = "{}";
+
     private final Handler mHandler;
     private final WebContents mWebContents;
     private final Intent mIsReadyToPayIntent;
@@ -77,21 +99,25 @@ public class AndroidPaymentApp
     private InstrumentsCallback mInstrumentsCallback;
     private InstrumentDetailsCallback mInstrumentDetailsCallback;
     private ServiceConnection mServiceConnection;
+    @Nullable
+    private URI mCanDedupedApplicationId;
     private boolean mIsReadyToPayQueried;
 
     /**
      * Builds the point of interaction with a locally installed 3rd party native Android payment
      * app.
      *
-     * @param webContents The web contents.
-     * @param packageName The name of the package of the payment app.
-     * @param activity    The name of the payment activity in the payment app.
-     * @param label       The UI label to use for the payment app.
-     * @param icon        The icon to use in UI for the payment app.
-     * @param isIncognito Whether the user is in incognito mode.
+     * @param webContents             The web contents.
+     * @param packageName             The name of the package of the payment app.
+     * @param activity                The name of the payment activity in the payment app.
+     * @param label                   The UI label to use for the payment app.
+     * @param icon                    The icon to use in UI for the payment app.
+     * @param isIncognito             Whether the user is in incognito mode.
+     * @param canDedupedApplicationId The corresponding app Id this app can deduped.
      */
     public AndroidPaymentApp(WebContents webContents, String packageName, String activity,
-            String label, Drawable icon, boolean isIncognito) {
+            String label, Drawable icon, boolean isIncognito,
+            @Nullable URI canDedupedApplicationId) {
         super(packageName, label, null, icon);
         ThreadUtils.assertOnUiThread();
         mHandler = new Handler();
@@ -103,6 +129,7 @@ public class AndroidPaymentApp
         mPayIntent.setAction(ACTION_PAY);
         mMethodNames = new HashSet<>();
         mIsIncognito = isIncognito;
+        mCanDedupedApplicationId = canDedupedApplicationId;
     }
 
     /** @param methodName A payment method that this app supports, e.g., "https://bobpay.com". */
@@ -118,7 +145,7 @@ public class AndroidPaymentApp
     @Override
     public void getInstruments(Map<String, PaymentMethodData> methodDataMap, String origin,
             String iframeOrigin, @Nullable byte[][] certificateChain,
-            InstrumentsCallback callback) {
+            Map<String, PaymentDetailsModifier> modifiers, InstrumentsCallback callback) {
         assert mMethodNames.containsAll(methodDataMap.keySet());
         assert mInstrumentsCallback
                 == null : "Have not responded to previous request for instruments yet";
@@ -146,8 +173,9 @@ public class AndroidPaymentApp
             public void onServiceDisconnected(ComponentName name) {}
         };
 
-        mIsReadyToPayIntent.putExtras(buildExtras(
-                null, origin, iframeOrigin, certificateChain, methodDataMap, null, null, null));
+        mIsReadyToPayIntent.putExtras(buildExtras(null /* id */, null /* merchantName */,
+                removeUrlScheme(origin), removeUrlScheme(iframeOrigin), certificateChain,
+                methodDataMap, null /* total */, null /* displayItems */, null /* modifiers */));
         try {
             if (!ContextUtils.getApplicationContext().bindService(
                         mIsReadyToPayIntent, mServiceConnection, Context.BIND_AUTO_CREATE)) {
@@ -159,11 +187,8 @@ public class AndroidPaymentApp
             return;
         }
 
-        mHandler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (!mIsReadyToPayQueried) respondToGetInstrumentsQuery(null);
-            }
+        mHandler.postDelayed(() -> {
+            if (!mIsReadyToPayQueried) respondToGetInstrumentsQuery(null);
         }, SERVICE_CONNECTION_TIMEOUT_MS);
     }
 
@@ -174,19 +199,16 @@ public class AndroidPaymentApp
         }
 
         if (mInstrumentsCallback == null) return;
-        mHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                ThreadUtils.assertOnUiThread();
-                if (mInstrumentsCallback == null) return;
-                List<PaymentInstrument> instruments = null;
-                if (instrument != null) {
-                    instruments = new ArrayList<>();
-                    instruments.add(instrument);
-                }
-                mInstrumentsCallback.onInstrumentsReady(AndroidPaymentApp.this, instruments);
-                mInstrumentsCallback = null;
+        mHandler.post(() -> {
+            ThreadUtils.assertOnUiThread();
+            if (mInstrumentsCallback == null) return;
+            List<PaymentInstrument> instruments = null;
+            if (instrument != null) {
+                instruments = new ArrayList<>();
+                instruments.add(instrument);
             }
+            mInstrumentsCallback.onInstrumentsReady(AndroidPaymentApp.this, instruments);
+            mInstrumentsCallback = null;
         });
     }
 
@@ -211,12 +233,7 @@ public class AndroidPaymentApp
             respondToGetInstrumentsQuery(null);
             return;
         }
-        mHandler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                respondToGetInstrumentsQuery(null);
-            }
-        }, READY_TO_PAY_TIMEOUT_MS);
+        mHandler.postDelayed(() -> respondToGetInstrumentsQuery(null), READY_TO_PAY_TIMEOUT_MS);
     }
 
     @Override
@@ -225,6 +242,11 @@ public class AndroidPaymentApp
         Set<String> methodNames = new HashSet<>(methodsAndData.keySet());
         methodNames.retainAll(getAppMethodNames());
         return !methodNames.isEmpty();
+    }
+
+    @Override
+    public URI getCanDedupedApplicationId() {
+        return mCanDedupedApplicationId;
     }
 
     @Override
@@ -243,17 +265,19 @@ public class AndroidPaymentApp
     }
 
     @Override
-    public void invokePaymentApp(final String merchantName, final String origin,
-            final String iframeOrigin, final byte[][] certificateChain,
+    public void invokePaymentApp(final String id, final String merchantName, String origin,
+            String iframeOrigin, final byte[][] certificateChain,
             final Map<String, PaymentMethodData> methodDataMap, final PaymentItem total,
             final List<PaymentItem> displayItems,
             final Map<String, PaymentDetailsModifier> modifiers,
             InstrumentDetailsCallback callback) {
         mInstrumentDetailsCallback = callback;
 
+        final String schemelessOrigin = removeUrlScheme(origin);
+        final String schemelessIframeOrigin = removeUrlScheme(iframeOrigin);
         if (!mIsIncognito) {
-            launchPaymentApp(merchantName, origin, iframeOrigin, certificateChain, methodDataMap,
-                    total, displayItems, modifiers);
+            launchPaymentApp(id, merchantName, schemelessOrigin, schemelessIframeOrigin,
+                    certificateChain, methodDataMap, total, displayItems, modifiers);
             return;
         }
 
@@ -267,34 +291,24 @@ public class AndroidPaymentApp
                 .setTitle(R.string.external_app_leave_incognito_warning_title)
                 .setMessage(R.string.external_payment_app_leave_incognito_warning)
                 .setPositiveButton(R.string.ok,
-                        new OnClickListener() {
-                            @Override
-                            public void onClick(DialogInterface dialog, int which) {
-                                launchPaymentApp(merchantName, origin, iframeOrigin,
-                                        certificateChain, methodDataMap, total, displayItems,
-                                        modifiers);
-                            }
-                        })
+                        (OnClickListener) (dialog, which) -> launchPaymentApp(id, merchantName,
+                                schemelessOrigin,
+                                schemelessIframeOrigin, certificateChain, methodDataMap,
+                                total, displayItems, modifiers))
                 .setNegativeButton(R.string.cancel,
-                        new OnClickListener() {
-                            @Override
-                            public void onClick(DialogInterface dialog, int which) {
-                                notifyErrorInvokingPaymentApp();
-                            }
-                        })
-                .setOnCancelListener(new OnCancelListener() {
-                    @Override
-                    public void onCancel(DialogInterface dialog) {
-                        notifyErrorInvokingPaymentApp();
-                    }
-                })
+                        (OnClickListener) (dialog, which) -> notifyErrorInvokingPaymentApp())
+                .setOnCancelListener(dialog -> notifyErrorInvokingPaymentApp())
                 .show();
     }
 
-    private void launchPaymentApp(String merchantName, String origin, String iframeOrigin,
-            byte[][] certificateChain, Map<String, PaymentMethodData> methodDataMap,
-            PaymentItem total, List<PaymentItem> displayItems,
-            Map<String, PaymentDetailsModifier> modifiers) {
+    private static String removeUrlScheme(String url) {
+        return UrlFormatter.formatUrlForSecurityDisplay(url, false /* omit scheme */);
+    }
+
+    private void launchPaymentApp(String id, String merchantName, String origin,
+            String iframeOrigin, byte[][] certificateChain,
+            Map<String, PaymentMethodData> methodDataMap, PaymentItem total,
+            List<PaymentItem> displayItems, Map<String, PaymentDetailsModifier> modifiers) {
         assert mMethodNames.containsAll(methodDataMap.keySet());
         assert mInstrumentDetailsCallback != null;
 
@@ -309,49 +323,90 @@ public class AndroidPaymentApp
             return;
         }
 
-        mPayIntent.putExtras(buildExtras(merchantName, origin, iframeOrigin, certificateChain,
+        mPayIntent.putExtras(buildExtras(id, merchantName, origin, iframeOrigin, certificateChain,
                 methodDataMap, total, displayItems, modifiers));
-        if (!window.showIntent(mPayIntent, this, R.string.payments_android_app_error)) {
+        try {
+            if (!window.showIntent(mPayIntent, this, R.string.payments_android_app_error)) {
+                notifyErrorInvokingPaymentApp();
+            }
+        } catch (SecurityException e) {
+            // Payment app does not have android:exported="true" on the PAY activity.
             notifyErrorInvokingPaymentApp();
         }
     }
 
-    private static Bundle buildExtras(@Nullable String merchantName, String origin,
-            String iframeOrigin, @Nullable byte[][] certificateChain,
+    private static Bundle buildExtras(@Nullable String id, @Nullable String merchantName,
+            String origin, String iframeOrigin, @Nullable byte[][] certificateChain,
             Map<String, PaymentMethodData> methodDataMap, @Nullable PaymentItem total,
             @Nullable List<PaymentItem> displayItems,
             @Nullable Map<String, PaymentDetailsModifier> modifiers) {
         Bundle extras = new Bundle();
 
-        if (merchantName != null) extras.putString(EXTRA_MERCHANT_NAME, merchantName);
-        extras.putString(EXTRA_ORIGIN, origin);
-        extras.putString(EXTRA_IFRAME_ORIGIN, iframeOrigin);
+        if (id != null) extras.putString(EXTRA_PAYMENT_REQUEST_ID, id);
 
+        if (merchantName != null) extras.putString(EXTRA_MERCHANT_NAME, merchantName);
+
+        extras.putString(EXTRA_TOP_LEVEL_ORIGIN, origin);
+
+        extras.putString(EXTRA_PAYMENT_REQUEST_ORIGIN, iframeOrigin);
+
+        Parcelable[] serializedCertificateChain = null;
         if (certificateChain != null && certificateChain.length > 0) {
+            serializedCertificateChain = buildCertificateChain(certificateChain);
             extras.putParcelableArray(
-                    EXTRA_CERTIFICATE_CHAIN, buildCertificateChain(certificateChain));
+                    EXTRA_TOP_LEVEL_CERTIFICATE_CHAIN, serializedCertificateChain);
         }
 
-        // Deprecated:
-        String methodName = methodDataMap.entrySet().iterator().next().getKey();
-        extras.putString(EXTRA_METHOD_NAME, methodName);
-        PaymentMethodData firstMethodData = methodDataMap.get(methodName);
-        extras.putString(EXTRA_DATA,
-                firstMethodData == null ? EMPTY_JSON_DATA : firstMethodData.stringifiedData);
-
         extras.putStringArrayList(EXTRA_METHOD_NAMES, new ArrayList<>(methodDataMap.keySet()));
+
         Bundle methodDataBundle = new Bundle();
         for (Map.Entry<String, PaymentMethodData> methodData : methodDataMap.entrySet()) {
             methodDataBundle.putString(methodData.getKey(),
                     methodData.getValue() == null ? EMPTY_JSON_DATA
                                                   : methodData.getValue().stringifiedData);
         }
-        extras.putParcelable(EXTRA_DATA_MAP, methodDataBundle);
+        extras.putParcelable(EXTRA_METHOD_DATA, methodDataBundle);
+
+        if (modifiers != null) {
+            extras.putString(EXTRA_MODIFIERS, serializeModifiers(modifiers.values()));
+        }
 
         if (total != null) {
-            String details = serializeDetails(total, displayItems);
-            extras.putString(EXTRA_DETAILS, details == null ? EMPTY_JSON_DATA : details);
+            String serializedTotalAmount = serializeTotalAmount(total.amount);
+            extras.putString(EXTRA_TOTAL,
+                    serializedTotalAmount == null ? EMPTY_JSON_DATA : serializedTotalAmount);
         }
+
+        return addDeprecatedExtras(id, origin, iframeOrigin, serializedCertificateChain,
+                methodDataMap, methodDataBundle, total, displayItems, extras);
+    }
+
+    private static Bundle addDeprecatedExtras(@Nullable String id, String origin,
+            String iframeOrigin, @Nullable Parcelable[] serializedCertificateChain,
+            Map<String, PaymentMethodData> methodDataMap, Bundle methodDataBundle,
+            @Nullable PaymentItem total, @Nullable List<PaymentItem> displayItems, Bundle extras) {
+        if (id != null) extras.putString(EXTRA_DEPRECATED_ID, id);
+
+        extras.putString(EXTRA_DEPRECATED_ORIGIN, origin);
+
+        extras.putString(EXTRA_DEPRECATED_IFRAME_ORIGIN, iframeOrigin);
+
+        if (serializedCertificateChain != null) {
+            extras.putParcelableArray(
+                    EXTRA_DEPRECATED_CERTIFICATE_CHAIN, serializedCertificateChain);
+        }
+
+        String methodName = methodDataMap.entrySet().iterator().next().getKey();
+        extras.putString(EXTRA_DEPRECATED_METHOD_NAME, methodName);
+
+        PaymentMethodData firstMethodData = methodDataMap.get(methodName);
+        extras.putString(EXTRA_DEPRECATED_DATA,
+                firstMethodData == null ? EMPTY_JSON_DATA : firstMethodData.stringifiedData);
+
+        extras.putParcelable(EXTRA_DEPRECATED_DATA_MAP, methodDataBundle);
+
+        String details = deprecatedSerializeDetails(total, displayItems);
+        extras.putString(EXTRA_DEPRECATED_DETAILS, details == null ? EMPTY_JSON_DATA : details);
 
         return extras;
     }
@@ -367,33 +422,28 @@ public class AndroidPaymentApp
     }
 
     private void notifyErrorInvokingPaymentApp() {
-        mHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                mInstrumentDetailsCallback.onInstrumentDetailsError();
-            }
-        });
+        mHandler.post(() -> mInstrumentDetailsCallback.onInstrumentDetailsError());
     }
 
-    private static String serializeDetails(
-            PaymentItem total, @Nullable List<PaymentItem> displayItems) {
+    private static String deprecatedSerializeDetails(
+            @Nullable PaymentItem total, @Nullable List<PaymentItem> displayItems) {
         StringWriter stringWriter = new StringWriter();
         JsonWriter json = new JsonWriter(stringWriter);
         try {
             // details {{{
             json.beginObject();
 
-            // total {{{
-            json.name("total");
-            serializePaymentItem(total, json);
-            // }}} total
+            if (total != null) {
+                // total {{{
+                json.name("total");
+                serializeTotal(total, json);
+                // }}} total
+            }
 
             // displayitems {{{
             if (displayItems != null) {
                 json.name("displayItems").beginArray();
-                for (int i = 0; i < displayItems.size(); i++) {
-                    serializePaymentItem(displayItems.get(i), json);
-                }
+                // Do not pass any display items to the payment app.
                 json.endArray();
             }
             // }}} displayItems
@@ -407,10 +457,30 @@ public class AndroidPaymentApp
         return stringWriter.toString();
     }
 
-    private static void serializePaymentItem(PaymentItem item, JsonWriter json) throws IOException {
+    private static String serializeTotalAmount(PaymentCurrencyAmount totalAmount) {
+        StringWriter stringWriter = new StringWriter();
+        JsonWriter json = new JsonWriter(stringWriter);
+        try {
+            // {{{
+            json.beginObject();
+            json.name("currency").value(totalAmount.currency);
+            json.name("value").value(totalAmount.value);
+            json.endObject();
+            // }}}
+        } catch (IOException e) {
+            return null;
+        }
+        return stringWriter.toString();
+    }
+
+    private static void serializeTotal(PaymentItem item, JsonWriter json)
+            throws IOException {
         // item {{{
         json.beginObject();
-        json.name("label").value(item.label);
+        // Sanitize the total name, because the payment app does not need it to complete the
+        // transaction. Matches the behavior of:
+        // https://w3c.github.io/payment-handler/#total-attribute
+        json.name("label").value("");
 
         // amount {{{
         json.name("amount").beginObject();
@@ -423,6 +493,51 @@ public class AndroidPaymentApp
         // }}} item
     }
 
+    private static String serializeModifiers(Collection<PaymentDetailsModifier> modifiers) {
+        StringWriter stringWriter = new StringWriter();
+        JsonWriter json = new JsonWriter(stringWriter);
+        try {
+            json.beginArray();
+            for (PaymentDetailsModifier modifier : modifiers) {
+                serializeModifier(modifier, json);
+            }
+            json.endArray();
+        } catch (IOException e) {
+            return EMPTY_JSON_DATA;
+        }
+        return stringWriter.toString();
+    }
+
+    private static void serializeModifier(PaymentDetailsModifier modifier, JsonWriter json)
+            throws IOException {
+        // {{{
+        json.beginObject();
+
+        // total {{{
+        if (modifier.total != null) {
+            json.name("total");
+            serializeTotal(modifier.total, json);
+        } else {
+            json.name("total").nullValue();
+        }
+        // }}} total
+
+        // supportedMethods {{{
+        json.name("supportedMethods").beginArray();
+        for (String method : modifier.methodData.supportedMethods) {
+            json.value(method);
+        }
+        json.endArray();
+        // }}} supportedMethods
+
+        // data {{{
+        json.name("data").value(modifier.methodData.stringifiedData);
+        // }}}
+
+        json.endObject();
+        // }}}
+    }
+
     @Override
     public void onIntentCompleted(WindowAndroid window, int resultCode, Intent data) {
         ThreadUtils.assertOnUiThread();
@@ -430,9 +545,14 @@ public class AndroidPaymentApp
         if (data == null || data.getExtras() == null || resultCode != Activity.RESULT_OK) {
             mInstrumentDetailsCallback.onInstrumentDetailsError();
         } else {
-            mInstrumentDetailsCallback.onInstrumentDetailsReady(
-                    data.getExtras().getString(EXTRA_METHOD_NAME),
-                    data.getExtras().getString(EXTRA_INSTRUMENT_DETAILS));
+            String details = data.getExtras().getString(EXTRA_RESPONSE_DETAILS);
+            if (details == null) {
+                details = data.getExtras().getString(EXTRA_DEPRECATED_RESPONSE_INSTRUMENT_DETAILS);
+            }
+            if (details == null) details = EMPTY_JSON_DATA;
+            String methodName = data.getExtras().getString(EXTRA_RESPONSE_METHOD_NAME);
+            if (methodName == null) methodName = "";
+            mInstrumentDetailsCallback.onInstrumentDetailsReady(methodName, details);
         }
         mInstrumentDetailsCallback = null;
     }

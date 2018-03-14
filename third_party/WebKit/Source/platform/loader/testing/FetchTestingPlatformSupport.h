@@ -7,7 +7,7 @@
 
 #include <memory>
 #include "platform/heap/Persistent.h"
-#include "platform/testing/TestingPlatformSupport.h"
+#include "platform/testing/TestingPlatformSupportWithMockScheduler.h"
 
 namespace blink {
 
@@ -22,9 +22,8 @@ class FetchTestingPlatformSupport
   MockFetchContext* Context();
 
   // Platform:
-  WebURLError CancelledError(const WebURL&) const override;
   WebURLLoaderMockFactory* GetURLLoaderMockFactory() override;
-  WebURLLoader* CreateURLLoader() override;
+  std::unique_ptr<WebURLLoaderFactory> CreateDefaultURLLoaderFactory() override;
 
  private:
   class FetchTestingWebURLLoaderMockFactory;

@@ -28,11 +28,9 @@ class VlogNetLog::Observer : public net::NetLog::ThreadSafeObserver {
   DISALLOW_COPY_AND_ASSIGN(Observer);
 };
 
-VlogNetLog::Observer::Observer() {
-}
+VlogNetLog::Observer::Observer() = default;
 
-VlogNetLog::Observer::~Observer() {
-}
+VlogNetLog::Observer::~Observer() = default;
 
 void VlogNetLog::Observer::OnAddEntry(const net::NetLogEntry& entry) {
   if (VLOG_IS_ON(4)) {
@@ -45,12 +43,12 @@ void VlogNetLog::Observer::OnAddEntry(const net::NetLogEntry& entry) {
 
 VlogNetLog::VlogNetLog()
     : observer_(new Observer()) {
-  DeprecatedAddObserver(observer_.get(),
-                        net::NetLogCaptureMode::IncludeCookiesAndCredentials());
+  AddObserver(observer_.get(),
+              net::NetLogCaptureMode::IncludeCookiesAndCredentials());
 }
 
 VlogNetLog::~VlogNetLog() {
-  DeprecatedRemoveObserver(observer_.get());
+  RemoveObserver(observer_.get());
 }
 
 }  // namespace remoting

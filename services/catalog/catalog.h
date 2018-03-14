@@ -10,24 +10,20 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "components/filesystem/public/interfaces/directory.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "services/catalog/entry_cache.h"
 #include "services/catalog/public/interfaces/catalog.mojom.h"
-#include "services/service_manager/public/cpp/interface_factory.h"
 #include "services/service_manager/public/cpp/service.h"
-#include "services/service_manager/public/interfaces/resolver.mojom.h"
 #include "services/service_manager/public/interfaces/service.mojom.h"
 
 namespace base {
 class FilePath;
+class SequencedTaskRunner;
 class Value;
-}
-
-namespace filesystem {
-class LockTable;
 }
 
 namespace service_manager {
@@ -41,11 +37,7 @@ class ManifestProvider;
 
 // Creates and owns an instance of the catalog. Exposes a ServicePtr that
 // can be passed to the service manager, potentially in a different process.
-class Catalog
-    : public service_manager::InterfaceFactory<mojom::Catalog>,
-      public service_manager::InterfaceFactory<filesystem::mojom::Directory>,
-      public service_manager::InterfaceFactory<
-          service_manager::mojom::Resolver> {
+class Catalog {
  public:
   // Constructs a catalog over a static manifest. This catalog never performs
   // file I/O. Note that either |static_manifest| or |service_manifest_provider|
@@ -53,7 +45,7 @@ class Catalog
   explicit Catalog(std::unique_ptr<base::Value> static_manifest,
                    ManifestProvider* service_manifest_provider = nullptr);
 
-  ~Catalog() override;
+  ~Catalog();
 
   service_manager::mojom::ServicePtr TakeService();
 
@@ -66,22 +58,22 @@ class Catalog
   // to be relative to the current executable's path.
   static void LoadDefaultCatalogManifest(const base::FilePath& path);
 
+  Instance* GetInstanceForUserId(const std::string& user_id);
+
  private:
+  class DirectoryThreadState;
   class ServiceImpl;
 
-  // service_manager::InterfaceFactory<service_manager::mojom::Resolver>:
-  void Create(const service_manager::Identity& remote_identity,
-              service_manager::mojom::ResolverRequest request) override;
+  void BindCatalogRequest(mojom::CatalogRequest request,
+                          const service_manager::BindSourceInfo& source_info);
 
-  // service_manager::InterfaceFactory<mojom::Catalog>:
-  void Create(const service_manager::Identity& remote_identity,
-              mojom::CatalogRequest request) override;
+  void BindDirectoryRequest(filesystem::mojom::DirectoryRequest request,
+                            const service_manager::BindSourceInfo& source_info);
 
-  // service_manager::InterfaceFactory<filesystem::mojom::Directory>:
-  void Create(const service_manager::Identity& remote_identity,
-              filesystem::mojom::DirectoryRequest request) override;
-
-  Instance* GetInstanceForUserId(const std::string& user_id);
+  static void BindDirectoryRequestOnBackgroundThread(
+      scoped_refptr<DirectoryThreadState> thread_state,
+      filesystem::mojom::DirectoryRequest request,
+      const service_manager::BindSourceInfo& source_info);
 
   service_manager::mojom::ServicePtr service_;
   std::unique_ptr<service_manager::ServiceContext> service_context_;
@@ -89,7 +81,12 @@ class Catalog
   EntryCache system_cache_;
   std::map<std::string, std::unique_ptr<Instance>> instances_;
 
-  scoped_refptr<filesystem::LockTable> lock_table_;
+  // The TaskRunner used for directory requests. Directory requests run on a
+  // separate thread as they run file io, which is not allowed on the thread the
+  // service manager runs on. Additionally we shouldn't block the service
+  // manager while doing file io.
+  scoped_refptr<base::SequencedTaskRunner> directory_task_runner_;
+  scoped_refptr<DirectoryThreadState> directory_thread_state_;
 
   base::WeakPtrFactory<Catalog> weak_factory_;
 

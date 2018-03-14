@@ -6,12 +6,13 @@
 
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "cc/output/begin_frame_args.h"
-#include "cc/surfaces/local_surface_id_allocator.h"
-#include "cc/surfaces/surface_manager.h"
-#include "cc/test/begin_frame_args_test.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
+#include "components/viz/common/surfaces/local_surface_id_allocator.h"
+#include "components/viz/service/surfaces/surface_manager.h"
+#include "components/viz/test/begin_frame_args_test.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/compositor/compositor.h"
@@ -38,7 +39,9 @@ class CompositorTest : public testing::Test {
 
     compositor_.reset(new ui::Compositor(
         context_factory_private->AllocateFrameSinkId(), context_factory,
-        context_factory_private, CreateTaskRunner()));
+        context_factory_private, CreateTaskRunner(),
+        false /* enable_surface_synchronization */,
+        false /* enable_pixel_canvas */));
     compositor_->SetAcceleratedWidget(gfx::kNullAcceleratedWidget);
   }
 
@@ -100,6 +103,8 @@ class CompositorObserverForLocks : public CompositorObserver {
     changed_ = true;
     locked_ = compositor->IsLocked();
   }
+  void OnCompositingChildResizing(Compositor* compositor) override {}
+
   void OnCompositingShuttingDown(Compositor* compositor) override {}
 
   bool changed() const { return changed_; }
@@ -112,8 +117,7 @@ class CompositorObserverForLocks : public CompositorObserver {
   bool locked_ = false;
 };
 
-class MockCompositorLockClient
-    : NON_EXPORTED_BASE(public ui::CompositorLockClient) {
+class MockCompositorLockClient : public ui::CompositorLockClient {
  public:
   MOCK_METHOD0(CompositorLockTimedOut, void());
 };
@@ -239,6 +243,137 @@ TEST_F(CompositorTestWithMockedTime, AddingLocksDoesNotExtendTimeout) {
   EXPECT_CALL(lock_client1, CompositorLockTimedOut()).Times(1);
   EXPECT_CALL(lock_client2, CompositorLockTimedOut()).Times(1);
   task_runner()->FastForwardBy(timeout1);
+  task_runner()->RunUntilIdle();
+  EXPECT_FALSE(compositor()->IsLocked());
+}
+
+TEST_F(CompositorTestWithMockedTime, AllowAndExtendTimeout) {
+  testing::StrictMock<MockCompositorLockClient> lock_client1;
+  std::unique_ptr<CompositorLock> lock1;
+  testing::StrictMock<MockCompositorLockClient> lock_client2;
+  std::unique_ptr<CompositorLock> lock2;
+
+  base::TimeDelta timeout1 = base::TimeDelta::FromMilliseconds(1);
+  base::TimeDelta timeout2 = base::TimeDelta::FromMilliseconds(10);
+
+  // The first lock has a short timeout.
+  lock1 = compositor()->GetCompositorLock(&lock_client1, timeout1);
+  EXPECT_TRUE(compositor()->IsLocked());
+
+  // Allow locks to extend timeout.
+  compositor()->set_allow_locks_to_extend_timeout(true);
+  // The second lock has a longer timeout, so the second one is used for both.
+  lock2 = compositor()->GetCompositorLock(&lock_client2, timeout2);
+  compositor()->set_allow_locks_to_extend_timeout(false);
+
+  EXPECT_CALL(lock_client1, CompositorLockTimedOut()).Times(0);
+  EXPECT_CALL(lock_client2, CompositorLockTimedOut()).Times(0);
+  task_runner()->FastForwardBy(timeout1);
+  task_runner()->RunUntilIdle();
+  EXPECT_TRUE(compositor()->IsLocked());
+
+  EXPECT_CALL(lock_client1, CompositorLockTimedOut()).Times(1);
+  EXPECT_CALL(lock_client2, CompositorLockTimedOut()).Times(1);
+  task_runner()->FastForwardBy(timeout2 - timeout1);
+  task_runner()->RunUntilIdle();
+  EXPECT_FALSE(compositor()->IsLocked());
+}
+
+TEST_F(CompositorTestWithMockedTime, ExtendingTimeoutStartingCreatedTime) {
+  testing::StrictMock<MockCompositorLockClient> lock_client1;
+  std::unique_ptr<CompositorLock> lock1;
+  testing::StrictMock<MockCompositorLockClient> lock_client2;
+  std::unique_ptr<CompositorLock> lock2;
+
+  base::TimeDelta timeout1 = base::TimeDelta::FromMilliseconds(5);
+  base::TimeDelta timeout2 = base::TimeDelta::FromMilliseconds(10);
+
+  // The first lock has a short timeout.
+  lock1 = compositor()->GetCompositorLock(&lock_client1, timeout1);
+  EXPECT_TRUE(compositor()->IsLocked());
+
+  base::TimeDelta time_elapse = base::TimeDelta::FromMilliseconds(1);
+  task_runner()->FastForwardBy(time_elapse);
+  task_runner()->RunUntilIdle();
+
+  // Allow locks to extend timeout.
+  compositor()->set_allow_locks_to_extend_timeout(true);
+  // The second lock has a longer timeout, so the second one is used for both
+  // and start from the time second lock created.
+  lock2 = compositor()->GetCompositorLock(&lock_client2, timeout2);
+  compositor()->set_allow_locks_to_extend_timeout(false);
+
+  EXPECT_CALL(lock_client1, CompositorLockTimedOut()).Times(0);
+  EXPECT_CALL(lock_client2, CompositorLockTimedOut()).Times(0);
+  task_runner()->FastForwardBy(timeout1 - time_elapse);
+  task_runner()->RunUntilIdle();
+  EXPECT_TRUE(compositor()->IsLocked());
+
+  EXPECT_CALL(lock_client1, CompositorLockTimedOut()).Times(1);
+  EXPECT_CALL(lock_client2, CompositorLockTimedOut()).Times(1);
+  task_runner()->FastForwardBy(timeout2 - (timeout1 - time_elapse));
+  task_runner()->RunUntilIdle();
+  EXPECT_FALSE(compositor()->IsLocked());
+}
+
+TEST_F(CompositorTestWithMockedTime, AllowButNotExtendTimeout) {
+  testing::StrictMock<MockCompositorLockClient> lock_client1;
+  std::unique_ptr<CompositorLock> lock1;
+  testing::StrictMock<MockCompositorLockClient> lock_client2;
+  std::unique_ptr<CompositorLock> lock2;
+
+  base::TimeDelta timeout1 = base::TimeDelta::FromMilliseconds(10);
+  base::TimeDelta timeout2 = base::TimeDelta::FromMilliseconds(1);
+
+  // The first lock has a longer timeout.
+  lock1 = compositor()->GetCompositorLock(&lock_client1, timeout1);
+  EXPECT_TRUE(compositor()->IsLocked());
+
+  // Allow locks to extend timeout.
+  compositor()->set_allow_locks_to_extend_timeout(true);
+  // The second lock has a short timeout, so the first one is used for both.
+  lock2 = compositor()->GetCompositorLock(&lock_client2, timeout2);
+  compositor()->set_allow_locks_to_extend_timeout(false);
+
+  EXPECT_CALL(lock_client1, CompositorLockTimedOut()).Times(0);
+  EXPECT_CALL(lock_client2, CompositorLockTimedOut()).Times(0);
+  task_runner()->FastForwardBy(timeout2);
+  task_runner()->RunUntilIdle();
+  EXPECT_TRUE(compositor()->IsLocked());
+
+  EXPECT_CALL(lock_client1, CompositorLockTimedOut()).Times(1);
+  EXPECT_CALL(lock_client2, CompositorLockTimedOut()).Times(1);
+  task_runner()->FastForwardBy(timeout1 - timeout2);
+  task_runner()->RunUntilIdle();
+  EXPECT_FALSE(compositor()->IsLocked());
+}
+
+TEST_F(CompositorTestWithMockedTime, AllowingExtendDoesNotUseDeadClient) {
+  testing::StrictMock<MockCompositorLockClient> lock_client1;
+  std::unique_ptr<CompositorLock> lock1;
+  testing::StrictMock<MockCompositorLockClient> lock_client2;
+  std::unique_ptr<CompositorLock> lock2;
+
+  base::TimeDelta timeout1 = base::TimeDelta::FromMilliseconds(1);
+  base::TimeDelta timeout2 = base::TimeDelta::FromMilliseconds(10);
+
+  lock1 = compositor()->GetCompositorLock(&lock_client1, timeout1);
+  EXPECT_TRUE(compositor()->IsLocked());
+  EXPECT_CALL(lock_client1, CompositorLockTimedOut()).Times(1);
+  EXPECT_CALL(lock_client2, CompositorLockTimedOut()).Times(0);
+  task_runner()->FastForwardBy(timeout1);
+  task_runner()->RunUntilIdle();
+  EXPECT_FALSE(compositor()->IsLocked());
+
+  // Allow locks to extend timeout.
+  compositor()->set_allow_locks_to_extend_timeout(true);
+  // |lock1| is timed out already. The second lock can timeout on its own.
+  lock2 = compositor()->GetCompositorLock(&lock_client2, timeout2);
+  compositor()->set_allow_locks_to_extend_timeout(false);
+  EXPECT_TRUE(compositor()->IsLocked());
+  EXPECT_CALL(lock_client1, CompositorLockTimedOut()).Times(0);
+  EXPECT_CALL(lock_client2, CompositorLockTimedOut()).Times(1);
+  task_runner()->FastForwardBy(timeout2);
   task_runner()->RunUntilIdle();
   EXPECT_FALSE(compositor()->IsLocked());
 }

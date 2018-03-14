@@ -5,7 +5,7 @@
 #include "platform/threading/BackgroundTaskRunner.h"
 
 #include <memory>
-#include "base/test/scoped_async_task_scheduler.h"
+#include "base/test/scoped_task_environment.h"
 #include "platform/CrossThreadFunctional.h"
 #include "platform/WaitableEvent.h"
 #include "platform/wtf/PtrUtil.h"
@@ -23,8 +23,8 @@ void PingPongTask(WaitableEvent* done_event) {
 }  // namespace
 
 TEST(BackgroundTaskRunnerTest, RunOnBackgroundThread) {
-  base::test::ScopedAsyncTaskScheduler scoped_async_task_scheduler;
-  std::unique_ptr<WaitableEvent> done_event = WTF::MakeUnique<WaitableEvent>();
+  base::test::ScopedTaskEnvironment scoped_task_environment;
+  std::unique_ptr<WaitableEvent> done_event = std::make_unique<WaitableEvent>();
   BackgroundTaskRunner::PostOnBackgroundThread(
       BLINK_FROM_HERE,
       CrossThreadBind(&PingPongTask, CrossThreadUnretained(done_event.get())));

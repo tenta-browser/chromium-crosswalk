@@ -9,14 +9,15 @@
 #include "base/memory/ptr_util.h"
 #include "remoting/host/audio_capturer.h"
 #include "remoting/host/desktop_capturer_proxy.h"
+#include "remoting/host/file_proxy_wrapper.h"
 #include "remoting/host/input_injector.h"
 #include "remoting/proto/event.pb.h"
 #include "remoting/protocol/fake_desktop_capturer.h"
 
 namespace remoting {
 
-FakeInputInjector::FakeInputInjector() {}
-FakeInputInjector::~FakeInputInjector() {}
+FakeInputInjector::FakeInputInjector() : weak_factory_(this) {}
+FakeInputInjector::~FakeInputInjector() = default;
 
 void FakeInputInjector::Start(
     std::unique_ptr<protocol::ClipboardStub> client_clipboard) {}
@@ -47,8 +48,8 @@ void FakeInputInjector::InjectClipboardEvent(
     clipboard_events_->push_back(event);
 }
 
-FakeScreenControls::FakeScreenControls() {}
-FakeScreenControls::~FakeScreenControls() {}
+FakeScreenControls::FakeScreenControls() = default;
+FakeScreenControls::~FakeScreenControls() = default;
 
 void FakeScreenControls::SetScreenResolution(
     const ScreenResolution& resolution) {
@@ -57,7 +58,9 @@ void FakeScreenControls::SetScreenResolution(
 FakeDesktopEnvironment::FakeDesktopEnvironment(
     scoped_refptr<base::SingleThreadTaskRunner> capture_thread,
     const DesktopEnvironmentOptions& options)
-    : capture_thread_(std::move(capture_thread)), options_(options) {}
+    : capture_thread_(std::move(capture_thread)),
+      options_(options),
+      weak_factory_(this) {}
 
 FakeDesktopEnvironment::~FakeDesktopEnvironment() = default;
 
@@ -68,7 +71,7 @@ std::unique_ptr<AudioCapturer> FakeDesktopEnvironment::CreateAudioCapturer() {
 
 std::unique_ptr<InputInjector> FakeDesktopEnvironment::CreateInputInjector() {
   std::unique_ptr<FakeInputInjector> result(new FakeInputInjector());
-  last_input_injector_ = result->AsWeakPtr();
+  last_input_injector_ = result->weak_factory_.GetWeakPtr();
   return std::move(result);
 }
 
@@ -92,6 +95,11 @@ FakeDesktopEnvironment::CreateVideoCapturer() {
 std::unique_ptr<webrtc::MouseCursorMonitor>
 FakeDesktopEnvironment::CreateMouseCursorMonitor() {
   return base::MakeUnique<FakeMouseCursorMonitor>();
+}
+
+std::unique_ptr<FileProxyWrapper>
+FakeDesktopEnvironment::CreateFileProxyWrapper() {
+  return nullptr;
 }
 
 std::string FakeDesktopEnvironment::GetCapabilities() const {
@@ -121,7 +129,7 @@ std::unique_ptr<DesktopEnvironment> FakeDesktopEnvironmentFactory::Create(
   std::unique_ptr<FakeDesktopEnvironment> result(
       new FakeDesktopEnvironment(capture_thread_, options));
   result->set_frame_generator(frame_generator_);
-  last_desktop_environment_ = result->AsWeakPtr();
+  last_desktop_environment_ = result->weak_factory_.GetWeakPtr();
   return std::move(result);
 }
 

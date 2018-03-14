@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/macros.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/extensions/browser_action_button.h"
@@ -11,7 +12,9 @@
 #import "chrome/browser/ui/cocoa/test/run_loop_testing.h"
 #import "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
 #include "chrome/browser/ui/extensions/extension_message_bubble_browsertest.h"
+#include "chrome/browser/ui/extensions/settings_api_bubble_helpers.h"
 #include "ui/base/cocoa/cocoa_base_utils.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/events/test/cocoa_test_event_utils.h"
 
 namespace {
@@ -88,9 +91,14 @@ class ExtensionMessageBubbleBrowserTestMac
     : public ExtensionMessageBubbleBrowserTest {
  public:
   ExtensionMessageBubbleBrowserTestMac() {}
-  ~ExtensionMessageBubbleBrowserTestMac() override {}
 
   // ExtensionMessageBubbleBrowserTest:
+  void SetUp() override {
+    // This file only tests Cocoa UI and can be deleted when kSecondaryUiMd is
+    // default.
+    scoped_feature_list_.InitAndDisableFeature(features::kSecondaryUiMd);
+    ExtensionMessageBubbleBrowserTest::SetUp();
+  }
   void SetUpCommandLine(base::CommandLine* command_line) override;
 
  private:
@@ -102,18 +110,9 @@ class ExtensionMessageBubbleBrowserTestMac
   void ClickActionButton(Browser* browser) override;
   void ClickDismissButton(Browser* browser) override;
 
-  DISALLOW_COPY_AND_ASSIGN(ExtensionMessageBubbleBrowserTestMac);
-};
+  base::test::ScopedFeatureList scoped_feature_list_;
 
-class ExtensionMessageBubbleBrowserTestLegacyMac
-    : public ExtensionMessageBubbleBrowserTestMac {
- protected:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    ExtensionMessageBubbleBrowserTestMac::SetUpCommandLine(command_line);
-    override_redesign_.reset();
-    override_redesign_.reset(new extensions::FeatureSwitch::ScopedOverride(
-        extensions::FeatureSwitch::extension_action_redesign(), false));
-  }
+  DISALLOW_COPY_AND_ASSIGN(ExtensionMessageBubbleBrowserTestMac);
 };
 
 void ExtensionMessageBubbleBrowserTestMac::SetUpCommandLine(
@@ -180,12 +179,12 @@ IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
   TestBubbleAnchoredToExtensionAction();
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestLegacyMac,
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
                        ExtensionBubbleAnchoredToAppMenu) {
   TestBubbleAnchoredToAppMenu();
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestLegacyMac,
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
                        ExtensionBubbleAnchoredToAppMenuWithOtherAction) {
   TestBubbleAnchoredToAppMenuWithOtherAction();
 }
@@ -258,4 +257,28 @@ IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
 IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
                        TestControlledStartupNotShownOnRestart) {
   TestControlledStartupNotShownOnRestart();
+}
+
+// The NTP bubble is currently disabled on Mac. Enable it for testing purposes.
+class NtpBubbleBrowserTestMac : public ExtensionMessageBubbleBrowserTestMac {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    ExtensionMessageBubbleBrowserTestMac::SetUpCommandLine(command_line);
+    extensions::SetNtpBubbleEnabledForTesting(true);
+  }
+
+  void TearDownOnMainThread() override {
+    extensions::SetNtpBubbleEnabledForTesting(false);
+    ExtensionMessageBubbleBrowserTestMac::TearDownOnMainThread();
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(NtpBubbleBrowserTestMac,
+                       TestControlledNewTabPageMessageBubble) {
+  TestControlledNewTabPageBubbleShown(false);
+}
+
+IN_PROC_BROWSER_TEST_F(NtpBubbleBrowserTestMac,
+                       TestBubbleClosedAfterExtensionUninstall) {
+  TestBubbleClosedAfterExtensionUninstall();
 }

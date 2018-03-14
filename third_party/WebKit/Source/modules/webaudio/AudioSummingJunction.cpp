@@ -30,7 +30,7 @@
 namespace blink {
 
 AudioSummingJunction::AudioSummingJunction(DeferredTaskHandler& handler)
-    : deferred_task_handler_(handler), rendering_state_need_updating_(false) {}
+    : deferred_task_handler_(&handler), rendering_state_need_updating_(false) {}
 
 AudioSummingJunction::~AudioSummingJunction() {
   GetDeferredTaskHandler().RemoveMarkedSummingJunction(this);
@@ -49,7 +49,7 @@ void AudioSummingJunction::UpdateRenderingState() {
   DCHECK(GetDeferredTaskHandler().IsGraphOwner());
   if (rendering_state_need_updating_) {
     // Copy from m_outputs to m_renderingOutputs.
-    rendering_outputs_.Resize(outputs_.size());
+    rendering_outputs_.resize(outputs_.size());
     unsigned j = 0;
     for (AudioNodeOutput* output : outputs_) {
       rendering_outputs_[j++] = output;

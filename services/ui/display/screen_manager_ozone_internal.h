@@ -11,16 +11,15 @@
 
 #include "base/macros.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
-#include "services/service_manager/public/cpp/interface_factory.h"
 #include "services/ui/display/screen_manager.h"
 #include "services/ui/display/viewport_metrics.h"
 #include "services/ui/public/interfaces/display/display_controller.mojom.h"
 #include "services/ui/public/interfaces/display/output_protection.mojom.h"
-#include "services/ui/public/interfaces/display/test_display_controller.mojom.h"
 #include "ui/display/display.h"
 #include "ui/display/display_observer.h"
 #include "ui/display/manager/chromeos/display_configurator.h"
 #include "ui/display/manager/display_manager.h"
+#include "ui/display/mojo/dev_display_controller.mojom.h"
 #include "ui/display/types/display_constants.h"
 
 namespace display {
@@ -33,15 +32,11 @@ class TouchTransformController;
 // ScreenManagerOzoneInternal provides the necessary functionality to configure
 // all attached physical displays on the the ozone platform when operating in
 // internal window mode.
-class ScreenManagerOzoneInternal
-    : public ScreenManager,
-      public mojom::TestDisplayController,
-      public mojom::DisplayController,
-      public DisplayObserver,
-      public DisplayManager::Delegate,
-      public service_manager::InterfaceFactory<mojom::DisplayController>,
-      public service_manager::InterfaceFactory<mojom::OutputProtection>,
-      public service_manager::InterfaceFactory<mojom::TestDisplayController> {
+class ScreenManagerOzoneInternal : public ScreenManager,
+                                   public mojom::DevDisplayController,
+                                   public mojom::DisplayController,
+                                   public DisplayObserver,
+                                   public DisplayManager::Delegate {
  public:
   ScreenManagerOzoneInternal();
   ~ScreenManagerOzoneInternal() override;
@@ -49,13 +44,15 @@ class ScreenManagerOzoneInternal
   void SetPrimaryDisplayId(int64_t display_id);
 
   // ScreenManager:
-  void AddInterfaces(service_manager::BinderRegistry* registry) override;
+  void AddInterfaces(
+      service_manager::BinderRegistryWithArgs<
+          const service_manager::BindSourceInfo&>* registry) override;
   void Init(ScreenManagerDelegate* delegate) override;
   void RequestCloseDisplay(int64_t display_id) override;
+  display::ScreenBase* GetScreen() override;
 
-  // mojom::TestDisplayController:
+  // mojom::DevDisplayController:
   void ToggleAddRemoveDisplay() override;
-  void ToggleDisplayResolution() override;
 
   // mojom::DisplayController:
   void IncreaseInternalDisplayZoom() override;
@@ -87,20 +84,20 @@ class ScreenManagerOzoneInternal
       const DisplayInfoList& display_info_list) override;
   void CloseMirroringDisplayIfNotNecessary() override;
   void PreDisplayConfigurationChange(bool clear_focus) override;
-  void PostDisplayConfigurationChange(bool must_clear_window) override;
+  void PostDisplayConfigurationChange() override;
   DisplayConfigurator* display_configurator() override;
 
-  // mojo::InterfaceFactory<mojom::DisplayController>:
-  void Create(const service_manager::Identity& remote_identity,
-              mojom::DisplayControllerRequest request) override;
+  void BindDisplayControllerRequest(
+      mojom::DisplayControllerRequest request,
+      const service_manager::BindSourceInfo& source_info);
 
-  // mojo::InterfaceFactory<mojom:OutputProtection>:
-  void Create(const service_manager::Identity& remote_identity,
-              mojom::OutputProtectionRequest request) override;
+  void BindOutputProtectionRequest(
+      mojom::OutputProtectionRequest request,
+      const service_manager::BindSourceInfo& source_info);
 
-  // mojo::InterfaceFactory<mojom::TestDisplayController>:
-  void Create(const service_manager::Identity& remote_identity,
-              mojom::TestDisplayControllerRequest request) override;
+  void BindDevDisplayControllerRequest(
+      mojom::DevDisplayControllerRequest request,
+      const service_manager::BindSourceInfo& source_info);
 
   DisplayConfigurator display_configurator_;
   std::unique_ptr<DisplayManager> display_manager_;
@@ -126,7 +123,7 @@ class ScreenManagerOzoneInternal
   int64_t primary_display_id_ = kInvalidDisplayId;
 
   mojo::BindingSet<mojom::DisplayController> controller_bindings_;
-  mojo::BindingSet<mojom::TestDisplayController> test_bindings_;
+  mojo::BindingSet<mojom::DevDisplayController> test_bindings_;
 
   DISALLOW_COPY_AND_ASSIGN(ScreenManagerOzoneInternal);
 };

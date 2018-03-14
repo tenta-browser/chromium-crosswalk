@@ -33,12 +33,11 @@ MediaPlayerListener::MediaPlayerListener(
 MediaPlayerListener::~MediaPlayerListener() {}
 
 void MediaPlayerListener::CreateMediaPlayerListener(
-    const JavaRef<jobject>& context,
     const JavaRef<jobject>& media_player) {
   JNIEnv* env = AttachCurrentThread();
   if (j_media_player_listener_.is_null()) {
     j_media_player_listener_.Reset(Java_MediaPlayerListener_create(
-        env, reinterpret_cast<intptr_t>(this), context, media_player));
+        env, reinterpret_cast<intptr_t>(this), media_player));
   }
 }
 
@@ -98,10 +97,6 @@ void MediaPlayerListener::OnMediaInterrupted(
     const JavaParamRef<jobject>& /* obj */) {
   task_runner_->PostTask(FROM_HERE, base::Bind(
       &MediaPlayerAndroid::OnMediaInterrupted, media_player_));
-}
-
-bool MediaPlayerListener::RegisterMediaPlayerListener(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace media

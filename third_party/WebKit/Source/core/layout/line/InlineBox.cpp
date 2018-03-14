@@ -38,11 +38,11 @@ namespace blink {
 class LayoutObject;
 
 struct SameSizeAsInlineBox : DisplayItemClient {
-  virtual ~SameSizeAsInlineBox() {}
-  uint32_t bitfields;
+  ~SameSizeAsInlineBox() override {}
   void* a[4];
   LayoutPoint b;
   LayoutUnit c;
+  uint32_t bitfields;
 #if DCHECK_IS_ON()
   bool f;
 #endif
@@ -78,8 +78,8 @@ void InlineBox::Remove(MarkLineBoxes mark_line_boxes) {
 }
 
 void* InlineBox::operator new(size_t sz) {
-  return PartitionAlloc(WTF::Partitions::LayoutPartition(), sz,
-                        WTF_HEAP_PROFILER_TYPE_NAME(InlineBox));
+  return WTF::Partitions::LayoutPartition()->Alloc(
+      sz, WTF_HEAP_PROFILER_TYPE_NAME(InlineBox));
 }
 
 void InlineBox::operator delete(void* ptr) {
@@ -132,11 +132,11 @@ void InlineBox::ShowBox(int printed_characters) const {
   for (; printed_characters < kShowTreeCharacterOffset; printed_characters++)
     fputc(' ', stderr);
   fprintf(stderr, "\t%s %p {pos=%g,%g size=%g,%g} baseline=%i/%i\n",
-          GetLineLayoutItem().DecoratedName().Ascii().Data(),
+          GetLineLayoutItem().DecoratedName().Ascii().data(),
           GetLineLayoutItem().DebugPointer(), X().ToFloat(), Y().ToFloat(),
           Width().ToFloat(), Height().ToFloat(),
-          BaselinePosition(kAlphabeticBaseline),
-          BaselinePosition(kIdeographicBaseline));
+          BaselinePosition(kAlphabeticBaseline).ToInt(),
+          BaselinePosition(kIdeographicBaseline).ToInt());
 }
 #endif
 
@@ -166,7 +166,7 @@ LayoutUnit InlineBox::LogicalHeight() const {
   return result;
 }
 
-int InlineBox::BaselinePosition(FontBaseline baseline_type) const {
+LayoutUnit InlineBox::BaselinePosition(FontBaseline baseline_type) const {
   return BoxModelObject().BaselinePosition(
       baseline_type, bitfields_.FirstLine(),
       IsHorizontal() ? kHorizontalLine : kVerticalLine,
@@ -313,7 +313,7 @@ LayoutUnit InlineBox::PlaceEllipsisBox(bool,
                                        LayoutUnit,
                                        LayoutUnit,
                                        LayoutUnit& truncated_width,
-                                       bool&,
+                                       InlineBox**,
                                        LayoutUnit) {
   // Use -1 to mean "we didn't set the position."
   truncated_width += LogicalWidth();
@@ -330,12 +330,6 @@ LayoutPoint InlineBox::PhysicalLocation() const {
   LayoutRect rect(Location(), Size());
   FlipForWritingMode(rect);
   return rect.Location();
-}
-
-void InlineBox::LogicalRectToPhysicalRect(LayoutRect& rect) const {
-  if (!IsHorizontal())
-    rect = rect.TransposedRect();
-  FlipForWritingMode(rect);
 }
 
 void InlineBox::FlipForWritingMode(FloatRect& rect) const {
@@ -376,6 +370,13 @@ void InlineBox::SetLineLayoutItemShouldDoFullPaintInvalidationIfNeeded() {
   // style. Otherwise it paints nothing so we don't need to invalidate it.
   if (!IsRootInlineBox() || IsFirstLineStyle())
     line_layout_item_.SetShouldDoFullPaintInvalidation();
+}
+
+bool CanUseInlineBox(const LayoutObject& node) {
+  DCHECK(node.IsText() || node.IsInline() || node.IsLayoutBlockFlow());
+  return !RuntimeEnabledFeatures::LayoutNGEnabled() ||
+         !RuntimeEnabledFeatures::LayoutNGPaintFragmentsEnabled() ||
+         !node.EnclosingNGBlockFlow();
 }
 
 }  // namespace blink

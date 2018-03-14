@@ -3,7 +3,21 @@
 // found in the LICENSE file.
 
 (function() {
-  'use strict';
+'use strict';
+
+var categoryLabels = {
+  app_cache: loadTimeData.getString('cookieAppCache'),
+  cache_storage: loadTimeData.getString('cookieCacheStorage'),
+  channel_id: loadTimeData.getString('cookieChannelId'),
+  database: loadTimeData.getString('cookieDatabaseStorage'),
+  file_system: loadTimeData.getString('cookieFileSystem'),
+  flash_lso: loadTimeData.getString('cookieFlashLso'),
+  indexed_db: loadTimeData.getString('cookieDatabaseStorage'),
+  local_storage: loadTimeData.getString('cookieLocalStorage'),
+  service_worker: loadTimeData.getString('cookieServiceWorker'),
+  shared_worker: loadTimeData.getString('cookieSharedWorker'),
+  media_license: loadTimeData.getString('cookieMediaLicense'),
+};
 
 /**
  * 'site-data-details-subpage' Display cookie contents.
@@ -36,17 +50,16 @@ Polymer({
 
   /**
    * The browser proxy used to retrieve and change cookies.
-   * @private {?settings.SiteSettingsPrefsBrowserProxy}
+   * @private {?settings.LocalDataBrowserProxy}
    */
   browserProxy_: null,
 
   /** @override */
   ready: function() {
-    this.browserProxy_ =
-        settings.SiteSettingsPrefsBrowserProxyImpl.getInstance();
+    this.browserProxy_ = settings.LocalDataBrowserProxyImpl.getInstance();
 
-    this.addWebUIListener('onTreeItemRemoved',
-                          this.getCookieDetails_.bind(this));
+    this.addWebUIListener(
+        'on-tree-item-removed', this.getCookieDetails_.bind(this));
   },
 
   /**
@@ -55,10 +68,11 @@ Polymer({
    * @protected
    */
   currentRouteChanged: function(route) {
-    if (settings.getCurrentRoute() != settings.Route.SITE_SETTINGS_DATA_DETAILS)
+    if (settings.getCurrentRoute() !=
+        settings.routes.SITE_SETTINGS_DATA_DETAILS)
       return;
     var site = settings.getQueryParameters().get('site');
-    if (!site || site == this.site_)
+    if (!site)
       return;
     this.site_ = site;
     this.pageTitle = loadTimeData.getStringF('siteSettingsCookieSubpage', site);
@@ -69,9 +83,10 @@ Polymer({
   getCookieDetails_: function() {
     if (!this.site_)
       return;
-    this.browserProxy_.getCookieDetails(this.site_).then(
-        this.onCookiesLoaded_.bind(this),
-        this.onCookiesLoadFailed_.bind(this));
+    this.browserProxy_.getCookieDetails(this.site_)
+        .then(
+            this.onCookiesLoaded_.bind(this),
+            this.onCookiesLoadFailed_.bind(this));
   },
 
   /**
@@ -90,7 +105,9 @@ Polymer({
     this.siteId_ = cookies.id;
     this.entries_ = cookies.children;
     // Set up flag for expanding cookie details.
-    this.entries_.forEach(function(e) { e.expanded_ = false; });
+    this.entries_.forEach(function(e) {
+      e.expanded_ = false;
+    });
   },
 
   /**
@@ -115,7 +132,9 @@ Polymer({
     // cookie to differentiate them.
     if (item.type == 'cookie')
       return item.title;
-    return getCookieDataCategoryText(item.type, item.totalUsage);
+    if (item.type == 'quota')
+      return item.totalUsage;
+    return categoryLabels[item.type];
   },
 
   /**
@@ -125,7 +144,7 @@ Polymer({
    */
   onRemove_: function(event) {
     this.browserProxy_.removeCookie(
-        /** @type {!CookieDetails} */(event.currentTarget.dataset).idPath);
+        /** @type {!CookieDetails} */ (event.currentTarget.dataset).idPath);
   },
 
   /**

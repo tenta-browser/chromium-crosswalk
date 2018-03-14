@@ -5,9 +5,10 @@
 #include "net/quic/core/congestion_control/general_loss_algorithm.h"
 
 #include "net/quic/core/congestion_control/rtt_stats.h"
-#include "net/quic/core/quic_flags.h"
 #include "net/quic/core/quic_packets.h"
 #include "net/quic/platform/api/quic_bug_tracker.h"
+#include "net/quic/platform/api/quic_flag_utils.h"
+#include "net/quic/platform/api/quic_flags.h"
 
 namespace net {
 
@@ -62,7 +63,7 @@ void GeneralLossAlgorithm::DetectLosses(
     QuicTime time,
     const RttStats& rtt_stats,
     QuicPacketNumber largest_newly_acked,
-    SendAlgorithmInterface::CongestionVector* packets_lost) {
+    LostPacketVector* packets_lost) {
   loss_detection_timeout_ = QuicTime::Zero();
   QuicTime::Delta max_rtt =
       std::max(rtt_stats.previous_srtt(), rtt_stats.latest_rtt());
@@ -81,7 +82,7 @@ void GeneralLossAlgorithm::DetectLosses(
       // FACK based loss detection.
       if (largest_newly_acked - packet_number >=
           kNumberOfNacksBeforeRetransmission) {
-        packets_lost->push_back(std::make_pair(packet_number, it->bytes_sent));
+        packets_lost->push_back(LostPacket(packet_number, it->bytes_sent));
         continue;
       }
     } else if (loss_type_ == kLazyFack) {
@@ -91,7 +92,7 @@ void GeneralLossAlgorithm::DetectLosses(
           largest_previously_acked_ > packet_number &&
           largest_previously_acked_ - packet_number >=
               (kNumberOfNacksBeforeRetransmission - 1)) {
-        packets_lost->push_back(std::make_pair(packet_number, it->bytes_sent));
+        packets_lost->push_back(LostPacket(packet_number, it->bytes_sent));
         continue;
       }
     }
@@ -108,14 +109,14 @@ void GeneralLossAlgorithm::DetectLosses(
         loss_detection_timeout_ = when_lost;
         break;
       }
-      packets_lost->push_back(std::make_pair(packet_number, it->bytes_sent));
+      packets_lost->push_back(LostPacket(packet_number, it->bytes_sent));
       continue;
     }
 
     // NACK-based loss detection allows for a max reordering window of 1 RTT.
     if (it->sent_time + rtt_stats.smoothed_rtt() <
         unacked_packets.GetTransmissionInfo(largest_newly_acked).sent_time) {
-      packets_lost->push_back(std::make_pair(packet_number, it->bytes_sent));
+      packets_lost->push_back(LostPacket(packet_number, it->bytes_sent));
       continue;
     }
   }
@@ -134,10 +135,6 @@ void GeneralLossAlgorithm::SpuriousRetransmitDetected(
   if (loss_type_ != kAdaptiveTime || reordering_shift_ == 0) {
     return;
   }
-  if (spurious_retransmission <= largest_sent_on_spurious_retransmit_) {
-    return;
-  }
-  largest_sent_on_spurious_retransmit_ = unacked_packets.largest_sent_packet();
   // Calculate the extra time needed so this wouldn't have been declared lost.
   // Extra time needed is based on how long it's been since the spurious
   // retransmission was sent, because the SRTT and latest RTT may have changed.
@@ -147,6 +144,19 @@ void GeneralLossAlgorithm::SpuriousRetransmitDetected(
   // Increase the reordering fraction until enough time would be allowed.
   QuicTime::Delta max_rtt =
       std::max(rtt_stats.previous_srtt(), rtt_stats.latest_rtt());
+  if (FLAGS_quic_reloadable_flag_quic_fix_adaptive_time_loss) {
+    QUIC_FLAG_COUNT(quic_reloadable_flag_quic_fix_adaptive_time_loss);
+    while ((max_rtt >> reordering_shift_) <= extra_time_needed &&
+           reordering_shift_ > 0) {
+      --reordering_shift_;
+    }
+    return;
+  }
+
+  if (spurious_retransmission <= largest_sent_on_spurious_retransmit_) {
+    return;
+  }
+  largest_sent_on_spurious_retransmit_ = unacked_packets.largest_sent_packet();
   QuicTime::Delta proposed_extra_time(QuicTime::Delta::Zero());
   do {
     proposed_extra_time = max_rtt >> reordering_shift_;

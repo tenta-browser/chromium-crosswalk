@@ -8,12 +8,16 @@
 #include <memory>
 
 #include "ash/ash_export.h"
+#include "ash/public/cpp/immersive/immersive_fullscreen_controller_delegate.h"
 #include "ash/public/interfaces/window_style.mojom.h"
-#include "ash/shared/immersive_fullscreen_controller_delegate.h"
-#include "ash/shell_observer.h"
+#include "ash/wm/tablet_mode/tablet_mode_observer.h"
 #include "base/macros.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/views/view.h"
+
+namespace gfx {
+class ImageSkia;
+}
 
 namespace views {
 class ImageView;
@@ -22,14 +26,16 @@ class Widget;
 
 namespace ash {
 
-class DefaultHeaderPainter;
+class DefaultFrameHeader;
+class FrameCaptionButton;
 class FrameCaptionButtonContainerView;
+enum class FrameBackButtonState;
 
 // View which paints the frame header (title, caption buttons...). It slides off
 // and on screen in immersive fullscreen.
 class ASH_EXPORT HeaderView : public views::View,
                               public ImmersiveFullscreenControllerDelegate,
-                              public ShellObserver {
+                              public TabletModeObserver {
  public:
   // |target_widget| is the widget that the caption buttons act on.
   // |target_widget| is not necessarily the same as the widget the header is
@@ -42,6 +48,8 @@ class ASH_EXPORT HeaderView : public views::View,
   ~HeaderView() override;
 
   void set_is_immersive_delegate(bool value) { is_immersive_delegate_ = value; }
+
+  FrameCaptionButton* back_button() { return back_button_; }
 
   // Schedules a repaint for the entire title.
   void SchedulePaintForTitle();
@@ -58,7 +66,10 @@ class ASH_EXPORT HeaderView : public views::View,
   // Returns the view's minimum width.
   int GetMinimumWidth() const;
 
-  void UpdateAvatarIcon();
+  // Sets the avatar icon to be displayed on the frame header.
+  void SetAvatarIcon(const gfx::ImageSkia& avatar);
+
+  void SetBackButtonState(FrameBackButtonState state);
 
   void SizeConstraintsChanged();
 
@@ -71,17 +82,17 @@ class ASH_EXPORT HeaderView : public views::View,
   void OnPaint(gfx::Canvas* canvas) override;
   void ChildPreferredSizeChanged(views::View* child) override;
 
-  // ShellObserver:
-  void OnOverviewModeStarting() override;
-  void OnOverviewModeEnded() override;
-  void OnMaximizeModeStarted() override;
-  void OnMaximizeModeEnded() override;
+  // TabletModeObserver:
+  void OnTabletModeStarted() override;
+  void OnTabletModeEnded() override;
 
   FrameCaptionButtonContainerView* caption_button_container() {
     return caption_button_container_;
   }
 
   views::View* avatar_icon() const;
+
+  void SetShouldPaintHeader(bool paint);
 
  private:
   // ImmersiveFullscreenControllerDelegate:
@@ -95,9 +106,11 @@ class ASH_EXPORT HeaderView : public views::View,
   views::Widget* target_widget_;
 
   // Helper for painting the header.
-  std::unique_ptr<DefaultHeaderPainter> header_painter_;
+  std::unique_ptr<DefaultFrameHeader> frame_header_;
 
   views::ImageView* avatar_icon_;
+
+  FrameCaptionButton* back_button_ = nullptr;
 
   // View which contains the window caption buttons.
   FrameCaptionButtonContainerView* caption_button_container_;
@@ -110,6 +123,9 @@ class ASH_EXPORT HeaderView : public views::View,
   bool is_immersive_delegate_ = true;
 
   bool did_layout_ = false;
+
+  // False to skip painting. Used for overview mode to hide the header.
+  bool should_paint_;
 
   DISALLOW_COPY_AND_ASSIGN(HeaderView);
 };

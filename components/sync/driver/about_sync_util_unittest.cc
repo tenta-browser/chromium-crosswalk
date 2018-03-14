@@ -26,10 +26,6 @@ class SyncServiceMock : public FakeSyncService {
 
   bool QueryDetailedSyncStatus(SyncStatus* result) override { return false; }
 
-  base::string16 GetLastSyncedTimeString() const override {
-    return base::string16(base::ASCIIToUTF16("none"));
-  }
-
   SyncCycleSnapshot GetLastCycleSnapshot() const override {
     return SyncCycleSnapshot();
   }
@@ -39,7 +35,7 @@ TEST(SyncUIUtilTestAbout, ConstructAboutInformationWithUnrecoverableErrorTest) {
   SyncServiceMock service;
 
   std::unique_ptr<base::DictionaryValue> strings(ConstructAboutInformation(
-      &service, nullptr, version_info::Channel::UNKNOWN));
+      &service, AccountInfo(), version_info::Channel::UNKNOWN));
 
   EXPECT_TRUE(strings->HasKey("unrecoverable_error_detected"));
 }

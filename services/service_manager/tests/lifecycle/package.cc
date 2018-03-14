@@ -8,10 +8,10 @@
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "services/service_manager/public/c/main.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
-#include "services/service_manager/public/cpp/interface_factory.h"
 #include "services/service_manager/public/cpp/service_context.h"
 #include "services/service_manager/public/cpp/service_runner.h"
 #include "services/service_manager/public/interfaces/service_factory.mojom.h"
@@ -20,11 +20,8 @@
 
 namespace {
 
-class PackagedApp
-    : public service_manager::Service,
-      public service_manager::InterfaceFactory<
-          service_manager::test::mojom::LifecycleControl>,
-      public service_manager::test::mojom::LifecycleControl {
+class PackagedApp : public service_manager::Service,
+                    public service_manager::test::mojom::LifecycleControl {
  public:
   PackagedApp(
       const base::Closure& service_manager_connection_closed_callback,
@@ -35,31 +32,25 @@ class PackagedApp
     bindings_.set_connection_error_handler(base::Bind(&PackagedApp::BindingLost,
                                                       base::Unretained(this)));
     registry_.AddInterface<service_manager::test::mojom::LifecycleControl>(
-        this);
+        base::Bind(&PackagedApp::Create, base::Unretained(this)));
   }
 
   ~PackagedApp() override {}
 
  private:
   // service_manager::Service:
-  void OnBindInterface(const service_manager::ServiceInfo& source_info,
+  void OnBindInterface(const service_manager::BindSourceInfo& source_info,
                        const std::string& interface_name,
                        mojo::ScopedMessagePipeHandle interface_pipe) override {
-    registry_.BindInterface(source_info.identity, interface_name,
-                            std::move(interface_pipe));
+    registry_.BindInterface(interface_name, std::move(interface_pipe));
   }
 
-  // service_manager::InterfaceFactory<LifecycleControl>
-  void Create(
-      const service_manager::Identity& remote_identity,
-      service_manager::test::mojom::LifecycleControlRequest request) override {
+  void Create(service_manager::test::mojom::LifecycleControlRequest request) {
     bindings_.AddBinding(this, std::move(request));
   }
 
   // LifecycleControl:
-  void Ping(const PingCallback& callback) override {
-    callback.Run();
-  }
+  void Ping(PingCallback callback) override { std::move(callback).Run(); }
 
   void GracefulQuit() override {
     service_manager_connection_closed_callback_.Run();
@@ -78,8 +69,7 @@ class PackagedApp
     service_manager_connection_closed_callback_.Run();
     context()->QuitNow();
     // This only closed our relationship with the service manager, existing
-    // |bindings_|
-    // remain active.
+    // |bindings_| remain active.
   }
 
   void BindingLost() {
@@ -101,32 +91,26 @@ class PackagedApp
 };
 
 class Package : public service_manager::ForwardingService,
-                public service_manager::InterfaceFactory<
-                    service_manager::mojom::ServiceFactory>,
                 public service_manager::mojom::ServiceFactory {
  public:
   Package() : ForwardingService(&app_client_) {
-    registry_.AddInterface<service_manager::mojom::ServiceFactory>(this);
+    registry_.AddInterface<service_manager::mojom::ServiceFactory>(
+        base::Bind(&Package::Create, base::Unretained(this)));
   }
   ~Package() override {}
 
  private:
   // ForwardingService:
-  void OnBindInterface(const service_manager::ServiceInfo& source_info,
+  void OnBindInterface(const service_manager::BindSourceInfo& source_info,
                        const std::string& interface_name,
                        mojo::ScopedMessagePipeHandle interface_pipe) override {
-    if (registry_.CanBindInterface(interface_name)) {
-      registry_.BindInterface(source_info.identity, interface_name,
-                              std::move(interface_pipe));
-    } else {
+    if (!registry_.TryBindInterface(interface_name, &interface_pipe)) {
       ForwardingService::OnBindInterface(source_info, interface_name,
                                          std::move(interface_pipe));
     }
   }
 
-  // service_manager::InterfaceFactory<service_manager::mojom::ServiceFactory>:
-  void Create(const service_manager::Identity& remote_identity,
-              service_manager::mojom::ServiceFactoryRequest request) override {
+  void Create(service_manager::mojom::ServiceFactoryRequest request) {
     bindings_.AddBinding(this, std::move(request));
   }
 
@@ -136,8 +120,8 @@ class Package : public service_manager::ForwardingService,
     ++service_manager_connection_refcount_;
     int id = next_id_++;
     std::unique_ptr<service_manager::ServiceContext> context =
-        base::MakeUnique<service_manager::ServiceContext>(
-            base::MakeUnique<PackagedApp>(
+        std::make_unique<service_manager::ServiceContext>(
+            std::make_unique<PackagedApp>(
                 base::Bind(&Package::AppServiceManagerConnectionClosed,
                            base::Unretained(this)),
                 base::Bind(&Package::DestroyService, base::Unretained(this),
@@ -161,8 +145,8 @@ class Package : public service_manager::ForwardingService,
     DCHECK(it != contexts_.end());
     contexts_.erase(it);
     id_to_context_.erase(id_it);
-    if (contexts_.empty() && base::MessageLoop::current()->is_running())
-      base::MessageLoop::current()->QuitWhenIdle();
+    if (contexts_.empty() && base::RunLoop::IsRunningOnCurrentThread())
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   service_manager::test::AppClient app_client_;

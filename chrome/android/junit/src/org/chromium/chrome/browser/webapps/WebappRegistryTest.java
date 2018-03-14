@@ -5,20 +5,20 @@
 package org.chromium.chrome.browser.webapps;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.os.AsyncTask;
 import android.text.TextUtils;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-
 import org.robolectric.RuntimeEnvironment;
+import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
@@ -49,6 +49,8 @@ public class WebappRegistryTest {
     private static final String REGISTRY_FILE_NAME = "webapp_registry";
     private static final String KEY_WEBAPP_SET = "webapp_set";
     private static final String KEY_LAST_CLEANUP = "last_cleanup";
+
+    private static final String START_URL = "https://foo.com";
 
     private static final int INITIAL_TIME = 0;
 
@@ -127,8 +129,8 @@ public class WebappRegistryTest {
         long after = System.currentTimeMillis();
         SharedPreferences webAppPrefs = ContextUtils.getApplicationContext().getSharedPreferences(
                 WebappDataStorage.SHARED_PREFS_FILE_PREFIX + "test", Context.MODE_PRIVATE);
-        long actual = webAppPrefs.getLong(WebappDataStorage.KEY_LAST_USED,
-                WebappDataStorage.LAST_USED_INVALID);
+        long actual = webAppPrefs.getLong(
+                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.TIMESTAMP_INVALID);
         assertTrue("Timestamp is out of range", actual <= after);
     }
 
@@ -247,8 +249,8 @@ public class WebappRegistryTest {
         Set<String> actual = getRegisteredWebapps();
         assertEquals(new HashSet<>(Arrays.asList("oldWebapp")), actual);
 
-        long actualLastUsed = webAppPrefs.getLong(WebappDataStorage.KEY_LAST_USED,
-                WebappDataStorage.LAST_USED_INVALID);
+        long actualLastUsed = webAppPrefs.getLong(
+                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.TIMESTAMP_INVALID);
         assertEquals(Long.MIN_VALUE, actualLastUsed);
 
         // The last cleanup time was set to 0 in setUp() so check that this hasn't changed.
@@ -280,8 +282,8 @@ public class WebappRegistryTest {
         Set<String> actual = getRegisteredWebapps();
         assertEquals(new HashSet<>(Arrays.asList("recentWebapp")), actual);
 
-        long actualLastUsed = webAppPrefs.getLong(WebappDataStorage.KEY_LAST_USED,
-                WebappDataStorage.LAST_USED_INVALID);
+        long actualLastUsed = webAppPrefs.getLong(
+                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.TIMESTAMP_INVALID);
         assertEquals(lastUsed, actualLastUsed);
 
         long lastCleanup = mSharedPreferences.getLong(WebappRegistry.KEY_LAST_CLEANUP, -1);
@@ -311,9 +313,9 @@ public class WebappRegistryTest {
         Set<String> actual = getRegisteredWebapps();
         assertTrue(actual.isEmpty());
 
-        long actualLastUsed = webAppPrefs.getLong(WebappDataStorage.KEY_LAST_USED,
-                WebappDataStorage.LAST_USED_INVALID);
-        assertEquals(WebappDataStorage.LAST_USED_INVALID, actualLastUsed);
+        long actualLastUsed = webAppPrefs.getLong(
+                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.TIMESTAMP_INVALID);
+        assertEquals(WebappDataStorage.TIMESTAMP_INVALID, actualLastUsed);
 
         long lastCleanup = mSharedPreferences.getLong(WebappRegistry.KEY_LAST_CLEANUP, -1);
         assertEquals(currentTime, lastCleanup);
@@ -322,18 +324,18 @@ public class WebappRegistryTest {
     @Test
     @Feature({"WebApk"})
     public void testCleanupRemovesUninstalledWebApks() throws Exception {
-        String webappId1 = "webapk:uninstalledWebApk1";
+        String webappId1 = WebApkConstants.WEBAPK_ID_PREFIX + "uninstalledWebApk1";
         String webApkPackage1 = "uninstalledWebApk1";
-        String webappId2 = "webapk:uninstalledWebApk2";
+        String webappId2 = WebApkConstants.WEBAPK_ID_PREFIX + "uninstalledWebApk2";
         String webApkPackage2 = "uninstalledWebApk2";
 
-        FetchStorageCallback storageCallback1 = new FetchStorageCallback(
-                createWebApkIntent(webappId1, webApkPackage1));
+        FetchStorageCallback storageCallback1 =
+                new FetchStorageCallback(createWebApkIntent(webappId1, START_URL, webApkPackage1));
         registerWebapp(webappId1, storageCallback1);
         assertTrue(storageCallback1.getCallbackCalled());
 
-        FetchStorageCallback storageCallback2 = new FetchStorageCallback(
-                createWebApkIntent(webappId1, webApkPackage2));
+        FetchStorageCallback storageCallback2 =
+                new FetchStorageCallback(createWebApkIntent(webappId1, START_URL, webApkPackage2));
         registerWebapp(webappId2, storageCallback2);
         assertTrue(storageCallback2.getCallbackCalled());
 
@@ -360,18 +362,18 @@ public class WebappRegistryTest {
     @Test
     @Feature({"WebApk"})
     public void testCleanupDoesNotRemoveInstalledWebApks() throws Exception {
-        String webappId = "webapk:installedWebApk";
+        String webappId = WebApkConstants.WEBAPK_ID_PREFIX + "installedWebApk";
         String webApkPackage = "installedWebApk";
-        String uninstalledWebappId = "webapk:uninstalledWebApk";
+        String uninstalledWebappId = WebApkConstants.WEBAPK_ID_PREFIX + "uninstalledWebApk";
         String uninstalledWebApkPackage = "uninstalledWebApk";
 
-        FetchStorageCallback storageCallback = new FetchStorageCallback(
-                createWebApkIntent(webappId, webApkPackage));
+        FetchStorageCallback storageCallback =
+                new FetchStorageCallback(createWebApkIntent(webappId, START_URL, webApkPackage));
         registerWebapp(webappId, storageCallback);
         assertTrue(storageCallback.getCallbackCalled());
 
         FetchStorageCallback storageCallback2 = new FetchStorageCallback(
-                createWebApkIntent(uninstalledWebappId, uninstalledWebApkPackage));
+                createWebApkIntent(uninstalledWebappId, START_URL, uninstalledWebApkPackage));
         registerWebapp(uninstalledWebappId, storageCallback2);
         assertTrue(storageCallback2.getCallbackCalled());
 
@@ -381,7 +383,8 @@ public class WebappRegistryTest {
         assertTrue(actual.contains(webappId));
         assertTrue(actual.contains(uninstalledWebappId));
 
-        RuntimeEnvironment.getRobolectricPackageManager().addPackage(webApkPackage);
+        Shadows.shadowOf(RuntimeEnvironment.application.getPackageManager())
+                .addPackage(webApkPackage);
 
         // Set the current time such that the task runs.
         long currentTime = System.currentTimeMillis() + WebappRegistry.FULL_CLEANUP_DURATION;
@@ -396,6 +399,47 @@ public class WebappRegistryTest {
 
         long lastCleanup = mSharedPreferences.getLong(
                 WebappRegistry.KEY_LAST_CLEANUP, -1);
+        assertEquals(currentTime, lastCleanup);
+    }
+
+    @Test
+    @Feature({"WebApk"})
+    public void testCleanupDoesRemoveOldInstalledWebApks() throws Exception {
+        String deprecatedWebappId = "webapk:installedWebApk";
+        String webApkPackage = "installedWebApk";
+        String installedWebappId = WebApkConstants.WEBAPK_ID_PREFIX + "installedWebApk";
+
+        FetchStorageCallback storageCallback = new FetchStorageCallback(
+                createWebApkIntent(deprecatedWebappId, START_URL, webApkPackage));
+        registerWebapp(deprecatedWebappId, storageCallback);
+        assertTrue(storageCallback.getCallbackCalled());
+
+        FetchStorageCallback storageCallback2 = new FetchStorageCallback(
+                createWebApkIntent(installedWebappId, START_URL, webApkPackage));
+        registerWebapp(installedWebappId, storageCallback2);
+        assertTrue(storageCallback2.getCallbackCalled());
+
+        // Verify that both WebAPKs are registered.
+        Set<String> actual = getRegisteredWebapps();
+        assertEquals(2, actual.size());
+        assertTrue(actual.contains(deprecatedWebappId));
+        assertTrue(actual.contains(installedWebappId));
+
+        Shadows.shadowOf(RuntimeEnvironment.application.getPackageManager())
+                .addPackage(webApkPackage);
+
+        // Set the current time such that the task runs.
+        long currentTime = System.currentTimeMillis() + WebappRegistry.FULL_CLEANUP_DURATION;
+        // Because the time is just inside the window, there should be a cleanup of
+        // uninstalled WebAPKs and the last cleaned up time should be set to the
+        // current time.
+        WebappRegistry.getInstance().unregisterOldWebapps(currentTime);
+
+        actual = getRegisteredWebapps();
+        assertEquals(1, actual.size());
+        assertTrue(actual.contains(installedWebappId));
+
+        long lastCleanup = mSharedPreferences.getLong(WebappRegistry.KEY_LAST_CLEANUP, -1);
         assertEquals(currentTime, lastCleanup);
     }
 
@@ -421,11 +465,11 @@ public class WebappRegistryTest {
                 WebappDataStorage.SHARED_PREFS_FILE_PREFIX + "webapp2", Context.MODE_PRIVATE);
 
         long webapp1OriginalLastUsed = webapp2Prefs.getLong(
-                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.LAST_USED_UNSET);
+                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.TIMESTAMP_INVALID);
         long webapp2OriginalLastUsed = webapp2Prefs.getLong(
-                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.LAST_USED_UNSET);
-        assertTrue(webapp1OriginalLastUsed != WebappDataStorage.LAST_USED_UNSET);
-        assertTrue(webapp2OriginalLastUsed != WebappDataStorage.LAST_USED_UNSET);
+                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.TIMESTAMP_INVALID);
+        assertTrue(webapp1OriginalLastUsed != WebappDataStorage.TIMESTAMP_INVALID);
+        assertTrue(webapp2OriginalLastUsed != WebappDataStorage.TIMESTAMP_INVALID);
 
         // Clear data for |webapp1Url|.
         WebappRegistry.getInstance().clearWebappHistoryForUrlsImpl(
@@ -437,12 +481,12 @@ public class WebappRegistryTest {
         assertTrue(actual.contains("webapp2"));
 
         // Verify that the last used time for the first web app is
-        // WebappDataStorage.LAST_USED_UNSET, while for the second one it's unchanged.
+        // WebappDataStorage.TIMESTAMP_INVALID, while for the second one it's unchanged.
         long actualLastUsed = webapp1Prefs.getLong(
-                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.LAST_USED_UNSET);
-        assertEquals(WebappDataStorage.LAST_USED_UNSET, actualLastUsed);
+                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.TIMESTAMP_INVALID);
+        assertEquals(WebappDataStorage.TIMESTAMP_INVALID, actualLastUsed);
         actualLastUsed = webapp2Prefs.getLong(
-                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.LAST_USED_UNSET);
+                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.TIMESTAMP_INVALID);
         assertEquals(webapp2OriginalLastUsed, actualLastUsed);
 
         // Verify that the URL and scope for the first web app is WebappDataStorage.URL_INVALID,
@@ -463,13 +507,13 @@ public class WebappRegistryTest {
         // Clear data for all urls.
         WebappRegistry.getInstance().clearWebappHistoryForUrlsImpl(new UrlFilters.AllUrls());
 
-        // Verify that the last used time for both web apps is WebappDataStorage.LAST_USED_UNSET.
+        // Verify that the last used time for both web apps is WebappDataStorage.TIMESTAMP_INVALID.
         actualLastUsed = webapp1Prefs.getLong(
-                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.LAST_USED_UNSET);
-        assertEquals(WebappDataStorage.LAST_USED_UNSET, actualLastUsed);
+                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.TIMESTAMP_INVALID);
+        assertEquals(WebappDataStorage.TIMESTAMP_INVALID, actualLastUsed);
         actualLastUsed = webapp2Prefs.getLong(
-                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.LAST_USED_UNSET);
-        assertEquals(WebappDataStorage.LAST_USED_UNSET, actualLastUsed);
+                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.TIMESTAMP_INVALID);
+        assertEquals(WebappDataStorage.TIMESTAMP_INVALID, actualLastUsed);
 
         // Verify that the URL and scope for both web apps is WebappDataStorage.URL_INVALID.
         actualScope = webapp1Prefs.getString(
@@ -500,9 +544,8 @@ public class WebappRegistryTest {
 
         // Verify that the last used time is valid.
         long actualLastUsed = webappPrefs.getLong(
-                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.LAST_USED_INVALID);
-        assertTrue(WebappDataStorage.LAST_USED_INVALID != actualLastUsed);
-        assertTrue(WebappDataStorage.LAST_USED_UNSET != actualLastUsed);
+                WebappDataStorage.KEY_LAST_USED, WebappDataStorage.TIMESTAMP_INVALID);
+        assertTrue(WebappDataStorage.TIMESTAMP_INVALID != actualLastUsed);
     }
 
     @Test
@@ -605,6 +648,31 @@ public class WebappRegistryTest {
         assertEquals(null, storage6);
     }
 
+    @Test
+    @Feature({"WebApk"})
+    public void testGetWebappDataStorageForUrlWithWebApk() throws Exception {
+        final String startUrl = START_URL;
+        final String testUrl = START_URL + "/index.html";
+
+        String webApkId = WebApkConstants.WEBAPK_ID_PREFIX + "WebApk";
+        registerWebapp(webApkId,
+                new FetchStorageCallback(
+                        createWebApkIntent(webApkId, startUrl, "org.chromium.webapk")));
+
+        // testUrl should return null.
+        WebappDataStorage storage1 =
+                WebappRegistry.getInstance().getWebappDataStorageForUrl(testUrl);
+        assertNull(storage1);
+
+        String webappId = "webapp";
+        registerWebapp(webappId, new FetchStorageCallback(createShortcutIntent(startUrl)));
+
+        // testUrl should return the webapp.
+        WebappDataStorage storage2 =
+                WebappRegistry.getInstance().getWebappDataStorageForUrl(testUrl);
+        assertEquals(webappId, storage2.getId());
+    }
+
     private Set<String> addWebappsToRegistry(String... webapps) {
         final Set<String> expected = new HashSet<>(Arrays.asList(webapps));
         mSharedPreferences.edit().putStringSet(WebappRegistry.KEY_WEBAPP_SET, expected).apply();
@@ -616,20 +684,14 @@ public class WebappRegistryTest {
                 WebappRegistry.KEY_WEBAPP_SET, Collections.<String>emptySet());
     }
 
-    private Intent createShortcutIntent(final String url) throws Exception {
-        AsyncTask<Void, Void, Intent> shortcutIntentTask = new AsyncTask<Void, Void, Intent>() {
-            @Override
-            protected Intent doInBackground(Void... nothing) {
-                return ShortcutHelper.createWebappShortcutIntentForTesting("id", url);
-            }
-        };
-        return shortcutIntentTask.execute().get();
+    private Intent createShortcutIntent(final String url) {
+        return ShortcutHelper.createWebappShortcutIntentForTesting("id", url);
     }
 
-    private Intent createWebApkIntent(String webappId, String webApkPackage) {
+    private Intent createWebApkIntent(String webappId, String url, String webApkPackage) {
         Intent intent = new Intent();
         intent.putExtra(ShortcutHelper.EXTRA_ID, webappId)
-                .putExtra(ShortcutHelper.EXTRA_URL, "https://foo.com")
+                .putExtra(ShortcutHelper.EXTRA_URL, url)
                 .putExtra(WebApkConstants.EXTRA_WEBAPK_PACKAGE_NAME, webApkPackage);
         return intent;
     }

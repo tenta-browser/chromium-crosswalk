@@ -18,6 +18,7 @@ import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 
+import java.util.List;
 /**
  * An implementation of {@link BackgroundTaskSchedulerDelegate} that uses the system
  * {@link JobScheduler} to schedule jobs.
@@ -32,7 +33,7 @@ class BackgroundTaskSchedulerJobService implements BackgroundTaskSchedulerDelega
 
     static BackgroundTask getBackgroundTaskFromJobParameters(JobParameters jobParameters) {
         String backgroundTaskClassName = getBackgroundTaskClassFromJobParameters(jobParameters);
-        return BackgroundTaskScheduler.getBackgroundTaskFromClassName(backgroundTaskClassName);
+        return BackgroundTaskReflection.getBackgroundTaskFromClassName(backgroundTaskClassName);
     }
 
     private static String getBackgroundTaskClassFromJobParameters(JobParameters jobParameters) {
@@ -129,7 +130,7 @@ class BackgroundTaskSchedulerJobService implements BackgroundTaskSchedulerDelega
     @Override
     public boolean schedule(Context context, TaskInfo taskInfo) {
         ThreadUtils.assertOnUiThread();
-        if (!BackgroundTaskScheduler.hasParameterlessPublicConstructor(
+        if (!BackgroundTaskReflection.hasParameterlessPublicConstructor(
                     taskInfo.getBackgroundTaskClass())) {
             Log.e(TAG, "BackgroundTask " + taskInfo.getBackgroundTaskClass()
                             + " has no parameterless public constructor.");
@@ -141,8 +142,8 @@ class BackgroundTaskSchedulerJobService implements BackgroundTaskSchedulerDelega
         JobScheduler jobScheduler =
                 (JobScheduler) context.getSystemService(Context.JOB_SCHEDULER_SERVICE);
 
-        if (taskInfo.shouldUpdateCurrent()) {
-            jobScheduler.cancel(taskInfo.getTaskId());
+        if (!taskInfo.shouldUpdateCurrent() && hasPendingJob(jobScheduler, taskInfo.getTaskId())) {
+            return true;
         }
 
         int result = jobScheduler.schedule(jobInfo);
@@ -155,5 +156,14 @@ class BackgroundTaskSchedulerJobService implements BackgroundTaskSchedulerDelega
         JobScheduler jobScheduler =
                 (JobScheduler) context.getSystemService(Context.JOB_SCHEDULER_SERVICE);
         jobScheduler.cancel(taskId);
+    }
+
+    private boolean hasPendingJob(JobScheduler jobScheduler, int jobId) {
+        List<JobInfo> pendingJobs = jobScheduler.getAllPendingJobs();
+        for (JobInfo pendingJob : pendingJobs) {
+            if (pendingJob.getId() == jobId) return true;
+        }
+
+        return false;
     }
 }

@@ -11,8 +11,9 @@
 #include "public/web/WebFrame.h"
 
 namespace blink {
-enum class WebClientRedirectPolicy;
+enum class ClientRedirectPolicy;
 enum class WebFrameLoadType;
+class WebURLRequest;
 struct WebRect;
 
 class WebRemoteFrameClient {
@@ -33,7 +34,7 @@ class WebRemoteFrameClient {
   // A remote frame was asked to start a navigation.
   virtual void Navigate(const WebURLRequest& request,
                         bool should_replace_current_entry) {}
-  virtual void Reload(WebFrameLoadType, WebClientRedirectPolicy) {}
+  virtual void Reload(WebFrameLoadType, ClientRedirectPolicy) {}
 
   virtual void FrameRectsChanged(const WebRect&) {}
 
@@ -41,6 +42,13 @@ class WebRemoteFrameClient {
       const WebRect& viewport_intersection) {}
 
   virtual void VisibilityChanged(bool visible) {}
+
+  // Set or clear the inert property on the remote frame.
+  virtual void SetIsInert(bool) {}
+
+  // Toggles render throttling for the remote frame.
+  virtual void UpdateRenderThrottlingStatus(bool is_throttled,
+                                            bool subtree_throttled) {}
 
   // This frame updated its opener to another frame.
   virtual void DidChangeOpener(WebFrame* opener) {}
@@ -52,6 +60,9 @@ class WebRemoteFrameClient {
 
   // This frame was focused by another frame.
   virtual void FrameFocused() {}
+
+ protected:
+  virtual ~WebRemoteFrameClient() {}
 };
 
 }  // namespace blink

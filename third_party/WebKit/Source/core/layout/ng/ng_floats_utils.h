@@ -5,23 +5,43 @@
 #ifndef NGFloatsUtils_h
 #define NGFloatsUtils_h
 
-#include "core/layout/ng/geometry/ng_logical_offset.h"
-#include "core/layout/ng/ng_constraint_space.h"
-#include "core/layout/ng/ng_floating_object.h"
-#include "core/layout/ng/ng_fragment_builder.h"
+#include "base/memory/scoped_refptr.h"
+#include "core/CoreExport.h"
+#include "platform/LayoutUnit.h"
+#include "platform/wtf/Vector.h"
 
 namespace blink {
 
-// Positions {@code floating_object} into {@code new_parent_space}.
-// @returns Logical offset of the positioned float.
-CORE_EXPORT NGLogicalOffset PositionFloat(NGFloatingObject*,
-                                          NGConstraintSpace* new_parent_space);
+class NGConstraintSpace;
+class NGExclusionSpace;
+struct NGPositionedFloat;
+struct NGUnpositionedFloat;
 
-// Positions pending floats stored on the fragment builder starting from
-// {@code origin_block_offset}.
-void PositionPendingFloats(const LayoutUnit& origin_block_offset,
-                           NGConstraintSpace* space,
-                           NGFragmentBuilder* builder);
+// Returns the inline size (relative to {@code parent_space}) of the
+// unpositioned float. If the float is in a different writing mode, this will
+// perform a layout.
+CORE_EXPORT LayoutUnit
+ComputeInlineSizeForUnpositionedFloat(const NGConstraintSpace& parent_space,
+                                      NGUnpositionedFloat* unpositioned_float);
+
+// Positions {@code unpositioned_float} into {@code new_parent_space}.
+// @returns A positioned float.
+CORE_EXPORT NGPositionedFloat
+PositionFloat(LayoutUnit origin_block_offset,
+              LayoutUnit parent_bfc_block_offset,
+              NGUnpositionedFloat*,
+              const NGConstraintSpace& parent_space,
+              NGExclusionSpace* exclusion_space);
+
+// Positions the list of {@code unpositioned_floats}. Adds them as exclusions to
+// {@code space}.
+CORE_EXPORT const Vector<NGPositionedFloat> PositionFloats(
+    LayoutUnit origin_block_offset,
+    LayoutUnit container_block_offset,
+    const Vector<scoped_refptr<NGUnpositionedFloat>>& unpositioned_floats,
+    const NGConstraintSpace& space,
+    NGExclusionSpace* exclusion_space);
+
 }  // namespace blink
 
 #endif  // NGFloatsUtils_h

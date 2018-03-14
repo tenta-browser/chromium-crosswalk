@@ -25,10 +25,11 @@
 #ifndef TimingFunction_h
 #define TimingFunction_h
 
+#include "base/memory/scoped_refptr.h"
 #include "cc/animation/timing_function.h"
 #include "platform/PlatformExport.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/wtf/Assertions.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/RefCounted.h"
 #include "platform/wtf/StdLibExtras.h"
 #include "platform/wtf/text/WTFString.h"
@@ -67,7 +68,7 @@ class PLATFORM_EXPORT LinearTimingFunction final : public TimingFunction {
  public:
   static LinearTimingFunction* Shared() {
     DEFINE_STATIC_REF(LinearTimingFunction, linear,
-                      (AdoptRef(new LinearTimingFunction())));
+                      (base::AdoptRef(new LinearTimingFunction())));
     return linear;
   }
 
@@ -87,41 +88,14 @@ class PLATFORM_EXPORT CubicBezierTimingFunction final : public TimingFunction {
  public:
   using EaseType = cc::CubicBezierTimingFunction::EaseType;
 
-  static PassRefPtr<CubicBezierTimingFunction> Create(double x1,
-                                                      double y1,
-                                                      double x2,
-                                                      double y2) {
-    return AdoptRef(new CubicBezierTimingFunction(x1, y1, x2, y2));
+  static scoped_refptr<CubicBezierTimingFunction> Create(double x1,
+                                                         double y1,
+                                                         double x2,
+                                                         double y2) {
+    return base::AdoptRef(new CubicBezierTimingFunction(x1, y1, x2, y2));
   }
 
-  static CubicBezierTimingFunction* Preset(EaseType ease_type) {
-    DEFINE_STATIC_REF(
-        CubicBezierTimingFunction, ease,
-        (AdoptRef(new CubicBezierTimingFunction(EaseType::EASE))));
-    DEFINE_STATIC_REF(
-        CubicBezierTimingFunction, ease_in,
-        (AdoptRef(new CubicBezierTimingFunction(EaseType::EASE_IN))));
-    DEFINE_STATIC_REF(
-        CubicBezierTimingFunction, ease_out,
-        (AdoptRef(new CubicBezierTimingFunction(EaseType::EASE_OUT))));
-    DEFINE_STATIC_REF(
-        CubicBezierTimingFunction, ease_in_out,
-        (AdoptRef(new CubicBezierTimingFunction(EaseType::EASE_IN_OUT))));
-
-    switch (ease_type) {
-      case EaseType::EASE:
-        return ease;
-      case EaseType::EASE_IN:
-        return ease_in;
-      case EaseType::EASE_OUT:
-        return ease_out;
-      case EaseType::EASE_IN_OUT:
-        return ease_in_out;
-      default:
-        NOTREACHED();
-        return nullptr;
-    }
-  }
+  static CubicBezierTimingFunction* Preset(EaseType);
 
   ~CubicBezierTimingFunction() override {}
 
@@ -179,9 +153,9 @@ class PLATFORM_EXPORT StepsTimingFunction final : public TimingFunction {
  public:
   using StepPosition = cc::StepsTimingFunction::StepPosition;
 
-  static PassRefPtr<StepsTimingFunction> Create(int steps,
-                                                StepPosition step_position) {
-    return AdoptRef(new StepsTimingFunction(steps, step_position));
+  static scoped_refptr<StepsTimingFunction> Create(int steps,
+                                                   StepPosition step_position) {
+    return base::AdoptRef(new StepsTimingFunction(steps, step_position));
   }
 
   static StepsTimingFunction* Preset(StepPosition position) {
@@ -222,14 +196,42 @@ class PLATFORM_EXPORT StepsTimingFunction final : public TimingFunction {
   std::unique_ptr<cc::StepsTimingFunction> steps_;
 };
 
-PLATFORM_EXPORT PassRefPtr<TimingFunction> CreateCompositorTimingFunctionFromCC(
-    const cc::TimingFunction*);
+class PLATFORM_EXPORT FramesTimingFunction final : public TimingFunction {
+ public:
+  static scoped_refptr<FramesTimingFunction> Create(int frames) {
+    return base::AdoptRef(new FramesTimingFunction(frames));
+  }
+
+  ~FramesTimingFunction() override {}
+
+  // TimingFunction implementation.
+  String ToString() const override;
+  double Evaluate(double fraction, double) const override;
+  void Range(double* min_value, double* max_value) const override;
+  std::unique_ptr<cc::TimingFunction> CloneToCC() const override;
+
+  int NumberOfFrames() const { return frames_->frames(); }
+
+ private:
+  FramesTimingFunction(int frames)
+      : TimingFunction(Type::FRAMES),
+        frames_(cc::FramesTimingFunction::Create(frames)) {
+    DCHECK(RuntimeEnabledFeatures::FramesTimingFunctionEnabled());
+  }
+
+  std::unique_ptr<cc::FramesTimingFunction> frames_;
+};
+
+PLATFORM_EXPORT scoped_refptr<TimingFunction>
+CreateCompositorTimingFunctionFromCC(const cc::TimingFunction*);
 
 PLATFORM_EXPORT bool operator==(const LinearTimingFunction&,
                                 const TimingFunction&);
 PLATFORM_EXPORT bool operator==(const CubicBezierTimingFunction&,
                                 const TimingFunction&);
 PLATFORM_EXPORT bool operator==(const StepsTimingFunction&,
+                                const TimingFunction&);
+PLATFORM_EXPORT bool operator==(const FramesTimingFunction&,
                                 const TimingFunction&);
 
 PLATFORM_EXPORT bool operator==(const TimingFunction&, const TimingFunction&);
@@ -243,6 +245,7 @@ PLATFORM_EXPORT bool operator!=(const TimingFunction&, const TimingFunction&);
 DEFINE_TIMING_FUNCTION_TYPE_CASTS(Linear, LINEAR);
 DEFINE_TIMING_FUNCTION_TYPE_CASTS(CubicBezier, CUBIC_BEZIER);
 DEFINE_TIMING_FUNCTION_TYPE_CASTS(Steps, STEPS);
+DEFINE_TIMING_FUNCTION_TYPE_CASTS(Frames, FRAMES);
 
 }  // namespace blink
 

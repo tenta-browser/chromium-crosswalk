@@ -42,9 +42,6 @@ const char kHungRendererOutstandingEventType[] = "hung-outstanding-event-type";
 const char kHungRendererLastEventType[] = "hung-last-event-type";
 const char kHungRendererReason[] = "hung-reason";
 
-const char kThirdPartyModulesLoaded[] = "third-party-modules-loaded";
-const char kThirdPartyModulesNotLoaded[] = "third-party-modules-not-loaded";
-
 const char kIsEnterpriseManaged[] = "is-enterprise-managed";
 
 // Registry values used to determine Chrome's update channel; see
@@ -59,8 +56,6 @@ const char kPrinterInfo[] = "prn-info-%" PRIuS;
 
 #if defined(OS_CHROMEOS)
 const char kNumberOfUsers[] = "num-users";
-// Temporary for https://crbug.com/660960
-const char kLastGoodCloseStack[] = "last-good-close-stack";
 #endif
 
 #if defined(OS_MACOSX)
@@ -86,7 +81,8 @@ const char kToolbarNibInfo[] = "toolbar-nib-info";
 
 const char kViewCount[] = "view-count";
 
-const char kZeroEncodeDetails[] = "zero-encode-details";
+const char kUserCloudPolicyManagerConnectTrace[] =
+    "user-cloud-policy-manager-connect-trace";
 
 size_t RegisterChromeCrashKeys() {
   // The following keys may be chunked by the underlying crash logging system,
@@ -114,6 +110,8 @@ size_t RegisterChromeCrashKeys() {
     {kApValue, kSmallSize},
     {kCohortName, kSmallSize},
 #endif  // defined(OS_WIN)
+
+// gpu
 #if !defined(OS_ANDROID)
     {gpu::crash_keys::kGPUVendorID, kSmallSize},
     {gpu::crash_keys::kGPUDeviceID, kSmallSize},
@@ -127,6 +125,7 @@ size_t RegisterChromeCrashKeys() {
     {gpu::crash_keys::kGPUVendor, kSmallSize},
     {gpu::crash_keys::kGPURenderer, kSmallSize},
 #endif
+    {gpu::crash_keys::kGPUGLContextIsVirtual, kSmallSize},
 
     // content/:
     {"bad_message_reason", kSmallSize},
@@ -142,20 +141,11 @@ size_t RegisterChromeCrashKeys() {
     {kHungRendererOutstandingEventType, kSmallSize},
     {kHungRendererLastEventType, kSmallSize},
     {kHungRendererReason, kSmallSize},
-    {kThirdPartyModulesLoaded, kSmallSize},
-    {kThirdPartyModulesNotLoaded, kSmallSize},
     {kIsEnterpriseManaged, kSmallSize},
 #endif
     {kInputEventFilterSendFailure, kSmallSize},
 #if defined(OS_CHROMEOS)
     {kNumberOfUsers, kSmallSize},
-    // Temporary for https://crbug.com/660960
-    {kLastGoodCloseStack, kMediumSize},
-    // Temporary for https://crbug.com/629521
-    {"mmap_params", kSmallSize},
-    {"buffer_size", kSmallSize},
-    {"errno", kSmallSize},
-    {"number_of_fds", kSmallSize},
 #endif
 #if defined(OS_MACOSX)
     {mac::kFirstNSException, kMediumSize},
@@ -167,37 +157,23 @@ size_t RegisterChromeCrashKeys() {
     {mac::kSendAction, kMediumSize},
     {mac::kNSEvent, kMediumSize},
     {mac::kToolbarNibInfo, kMediumSize},
-    {mac::kZombie, kMediumSize},
-    {mac::kZombieTrace, kMediumSize},
     // content/:
-    {"channel_error_bt", kMediumSize},
-    {"remove_route_bt", kMediumSize},
-    {"rwhvm_window", kMediumSize},
-    // media/:
+    {"text-input-context-client", kMediumSize},
+// media/:
 #endif
-    {kBug464926CrashKey, kSmallSize},
     {kViewCount, kSmallSize},
-
-    // media/:
-    {kZeroEncodeDetails, kSmallSize},
-
-    // gin/:
-    {"v8-ignition", kSmallSize},
 
     // sandbox/:
 #if defined(OS_LINUX)
     {"seccomp-sigsys", kMediumSize},
 #endif
 
-    // Temporary for https://crbug.com/591478.
-    {"initrf_parent_proxy_exists", kSmallSize},
-    {"initrf_render_view_is_live", kSmallSize},
-    {"initrf_parent_is_in_same_site_instance", kSmallSize},
-    {"initrf_parent_process_is_live", kSmallSize},
-    {"initrf_root_is_in_same_site_instance", kSmallSize},
-    {"initrf_root_is_in_same_site_instance_as_parent", kSmallSize},
-    {"initrf_root_process_is_live", kSmallSize},
-    {"initrf_root_proxy_is_live", kSmallSize},
+    // Site isolation.  These keys help debug renderer kills such as
+    // https://crbug.com/773140.
+    {"requested_site_url", kSmallSize},
+    {"requested_origin", kSmallSize},
+    {"killed_process_origin_lock", kSmallSize},
+    {"site_isolation_mode", kSmallSize},
 
     // Temporary for https://crbug.com/626802.
     {"newframe_routing_id", kSmallSize},
@@ -207,28 +183,19 @@ size_t RegisterChromeCrashKeys() {
     {"newframe_widget_id", kSmallSize},
     {"newframe_widget_hidden", kSmallSize},
     {"newframe_replicated_origin", kSmallSize},
-    {"newframe_oopifs_possible", kSmallSize},
 
-    // Temporary for https://crbug.com/630103.
-    {"origin_mismatch_url", crash_keys::kLargeSize},
-    {"origin_mismatch_origin", crash_keys::kMediumSize},
-    {"origin_mismatch_transition", crash_keys::kSmallSize},
-    {"origin_mismatch_redirects", crash_keys::kSmallSize},
-    {"origin_mismatch_same_page", crash_keys::kSmallSize},
+    // Temporary for https://crbug.com/685996.
+    {kUserCloudPolicyManagerConnectTrace, kMediumSize},
 
-    // Temporary for https://crbug.com/612711.
-    {"aci_wrong_sp_extension_id", kSmallSize},
+    // TODO(sunnyps): Remove after fixing crbug.com/724999.
+    {"gl-context-set-current-stack-trace", kMediumSize},
 
-    // Temporary for https://crbug.com/668633.
-    {"swdh_set_hosted_version_worker_pid", crash_keys::kSmallSize},
-    {"swdh_set_hosted_version_host_pid", crash_keys::kSmallSize},
-    {"swdh_set_hosted_version_is_new_process", crash_keys::kSmallSize},
-    {"swdh_set_hosted_version_restart_count", crash_keys::kSmallSize},
+    // TODO(asvitkine): Remove after fixing https://crbug.com/736675
+    {"bad_histogram", kMediumSize},
 
-    // Temporary for https://crbug.com/697745.
-    {"engine_params", crash_keys::kMediumSize},
-    {"engine1_params", crash_keys::kMediumSize},
-    {"engine2_params", crash_keys::kMediumSize},
+    // Accessibility keys. Temporary for http://crbug.com/765490.
+    {"ax_tree_error", kSmallSize},
+    {"ax_tree_update", kMediumSize},
   };
 
   // This dynamic set of keys is used for sets of key value pairs when gathering
@@ -287,7 +254,6 @@ static bool IsBoringSwitch(const std::string& flag) {
     switches::kPpapiFlashArgs,
     switches::kPpapiFlashPath,
     switches::kRegisterPepperPlugins,
-    switches::kUIPrioritizeInGpuProcess,
     switches::kUseGL,
     switches::kUserDataDir,
     // Cros/CC flags are specified as raw strings to avoid dependency.

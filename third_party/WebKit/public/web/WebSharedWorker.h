@@ -31,44 +31,48 @@
 #ifndef WebSharedWorker_h
 #define WebSharedWorker_h
 
-#include "../platform/WebAddressSpace.h"
-#include "../platform/WebCommon.h"
-#include "../platform/WebContentSecurityPolicy.h"
+#include "mojo/public/cpp/system/message_pipe.h"
+#include "public/platform/WebAddressSpace.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebContentSecurityPolicy.h"
 
 namespace blink {
 
+class MessagePortChannel;
 class WebString;
-class WebMessagePortChannel;
 class WebSharedWorkerClient;
 class WebURL;
 
 // This is the interface to a SharedWorker thread.
-class WebSharedWorker {
+class BLINK_EXPORT WebSharedWorker {
  public:
   // Instantiate a WebSharedWorker that interacts with the shared worker.
   // WebSharedWorkerClient given here must outlive or have the identical
   // lifetime as this instance.
-  BLINK_EXPORT static WebSharedWorker* Create(WebSharedWorkerClient*);
+  static WebSharedWorker* Create(WebSharedWorkerClient*);
 
-  virtual void StartWorkerContext(const WebURL& script_url,
-                                  const WebString& name,
-                                  const WebString& content_security_policy,
-                                  WebContentSecurityPolicyType,
-                                  WebAddressSpace) = 0;
+  virtual void StartWorkerContext(
+      const WebURL& script_url,
+      const WebString& name,
+      const WebString& content_security_policy,
+      WebContentSecurityPolicyType,
+      WebAddressSpace,
+      const WebString& instrumentation_token,
+      mojo::ScopedMessagePipeHandle content_settings_handle,
+      mojo::ScopedMessagePipeHandle interface_provider) = 0;
 
   // Sends a connect event to the SharedWorker context.
-  virtual void Connect(std::unique_ptr<WebMessagePortChannel>) = 0;
+  virtual void Connect(MessagePortChannel) = 0;
 
   // Invoked to shutdown the worker when there are no more associated documents.
   // This eventually deletes this instance.
   virtual void TerminateWorkerContext() = 0;
 
   virtual void PauseWorkerContextOnStart() = 0;
-  virtual void AttachDevTools(const WebString& host_id, int session_id) = 0;
-  virtual void ReattachDevTools(const WebString& host_id,
-                                int session_id,
+  virtual void AttachDevTools(int session_id) = 0;
+  virtual void ReattachDevTools(int session_id,
                                 const WebString& saved_state) = 0;
-  virtual void DetachDevTools() = 0;
+  virtual void DetachDevTools(int session_id) = 0;
   virtual void DispatchDevToolsMessage(int session_id,
                                        int call_id,
                                        const WebString& method,

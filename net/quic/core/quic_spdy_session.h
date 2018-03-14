@@ -13,8 +13,10 @@
 #include "net/quic/core/quic_headers_stream.h"
 #include "net/quic/core/quic_session.h"
 #include "net/quic/core/quic_spdy_stream.h"
+#include "net/quic/http/decoder/quic_http_frame_decoder_adapter.h"
 #include "net/quic/platform/api/quic_export.h"
 #include "net/quic/platform/api/quic_string_piece.h"
+#include "net/spdy/core/http2_frame_decoder_adapter.h"
 
 namespace net {
 
@@ -76,7 +78,7 @@ class QUIC_EXPORT_PRIVATE QuicSpdySession : public QuicSession {
                                    size_t frame_len,
                                    const QuicHeaderList& header_list);
 
-  // Sends contents of |iov| to spdy_framer_, returns number of bytes processd.
+  // Sends contents of |iov| to h2_deframer_, returns number of bytes processed.
   size_t ProcessHeaderData(const struct iovec& iov, QuicTime timestamp);
 
   // Writes |headers| for the stream |id| to the dedicated headers stream.
@@ -96,15 +98,6 @@ class QUIC_EXPORT_PRIVATE QuicSpdySession : public QuicSession {
   virtual size_t WritePushPromise(QuicStreamId original_stream_id,
                                   QuicStreamId promised_stream_id,
                                   SpdyHeaderBlock headers);
-
-  // For forcing HOL blocking.  This encapsulates data from other
-  // streams into HTTP/2 data frames on the headers stream.
-  QuicConsumedData WritevStreamData(
-      QuicStreamId id,
-      QuicIOVector iov,
-      QuicStreamOffset offset,
-      bool fin,
-      QuicReferenceCountedPointer<QuicAckListenerInterface> ack_listener);
 
   // Sends SETTINGS_MAX_HEADER_LIST_SIZE SETTINGS frame.
   size_t SendMaxHeaderListSize(size_t value);
@@ -126,14 +119,6 @@ class QUIC_EXPORT_PRIVATE QuicSpdySession : public QuicSession {
 
   void OnConfigNegotiated() override;
 
-  // Called by |headers_stream_| when |force_hol_blocking_| is true.
-  virtual void OnStreamFrameData(QuicStreamId stream_id,
-                                 const char* data,
-                                 size_t len,
-                                 bool fin);
-
-  bool force_hol_blocking() const { return force_hol_blocking_; }
-
   bool server_push_enabled() const { return server_push_enabled_; }
 
   void UpdateCurMaxTimeStamp(QuicTime timestamp) {
@@ -148,28 +133,19 @@ class QUIC_EXPORT_PRIVATE QuicSpdySession : public QuicSession {
   // aggressively.
   virtual bool ShouldReleaseHeadersStreamSequencerBuffer();
 
-  SpdyFramer* spdy_framer() { return &spdy_framer_; }
-
   void CloseConnectionWithDetails(QuicErrorCode error,
                                   const std::string& details);
 
-  // Sets how much encoded data the hpack decoder of spdy_framer_ is willing to
-  // buffer.
-  void set_max_decode_buffer_size_bytes(size_t max_decode_buffer_size_bytes) {
-    spdy_framer_.set_max_decode_buffer_size_bytes(max_decode_buffer_size_bytes);
+  void set_max_inbound_header_list_size(size_t max_inbound_header_list_size) {
+    max_inbound_header_list_size_ = max_inbound_header_list_size;
   }
-
-  void set_max_uncompressed_header_bytes(
-      size_t set_max_uncompressed_header_bytes);
 
  protected:
   // Override CreateIncomingDynamicStream() and CreateOutgoingDynamicStream()
   // with QuicSpdyStream return type to make sure that all data streams are
   // QuicSpdyStreams.
   QuicSpdyStream* CreateIncomingDynamicStream(QuicStreamId id) override = 0;
-  QuicSpdyStream* CreateOutgoingDynamicStream(SpdyPriority priority) override =
-      0;
-
+  QuicSpdyStream* CreateOutgoingDynamicStream() override = 0;
   QuicSpdyStream* GetSpdyDataStream(const QuicStreamId stream_id);
 
   // If an incoming stream can be created, return true.
@@ -194,7 +170,7 @@ class QUIC_EXPORT_PRIVATE QuicSpdySession : public QuicSession {
       std::unique_ptr<QuicHpackDebugVisitor> visitor);
 
   // Sets the maximum size of the header compression table spdy_framer_ is
-  // willing to use to decode header blocks.
+  // willing to use to encode header blocks.
   void UpdateHeaderEncoderTableSize(uint32_t value);
 
   // Called when SETTINGS_ENABLE_PUSH is received, only supported on
@@ -202,6 +178,21 @@ class QUIC_EXPORT_PRIVATE QuicSpdySession : public QuicSession {
   void UpdateEnableServerPush(bool value);
 
   bool IsConnected() { return connection()->connected(); }
+
+  // Sets how much encoded data the hpack decoder of h2_deframer_ is willing to
+  // buffer.
+  void set_max_decode_buffer_size_bytes(size_t max_decode_buffer_size_bytes) {
+    if (use_hq_deframer_) {
+      hq_deframer_.GetHpackDecoder()->set_max_decode_buffer_size_bytes(
+          max_decode_buffer_size_bytes);
+    } else {
+      h2_deframer_.GetHpackDecoder()->set_max_decode_buffer_size_bytes(
+          max_decode_buffer_size_bytes);
+    }
+  }
+
+  void set_max_uncompressed_header_bytes(
+      size_t set_max_uncompressed_header_bytes);
 
  private:
   friend class test::QuicSpdySessionPeer;
@@ -227,19 +218,6 @@ class QUIC_EXPORT_PRIVATE QuicSpdySession : public QuicSession {
   // Called when the size of the compressed frame payload is available.
   void OnCompressedFrameSize(size_t frame_len);
 
-  // For force HOL blocking, where stream frames from all streams are
-  // plumbed through headers stream as HTTP/2 data frames.
-  // The following two return false if force_hol_blocking_ is false.
-  bool OnDataFrameHeader(QuicStreamId stream_id, size_t length, bool fin);
-  bool OnStreamFrameData(QuicStreamId stream_id, const char* data, size_t len);
-
-  // Helper for |WritevStreamData()|.
-  void WriteDataFrame(
-      QuicStreamId stream_id,
-      QuicStringPiece data,
-      bool fin,
-      QuicReferenceCountedPointer<QuicAckListenerInterface> ack_listener);
-
   // This was formerly QuicHeadersStream::WriteHeaders.  Needs to be
   // separate from QuicSpdySession::WriteHeaders because tests call
   // this but mock the latter.
@@ -252,10 +230,9 @@ class QUIC_EXPORT_PRIVATE QuicSpdySession : public QuicSession {
 
   std::unique_ptr<QuicHeadersStream> headers_stream_;
 
-  // If set, redirect all data through the headers stream in order to
-  // simulate forced HOL blocking between streams as happens in
-  // HTTP/2 over TCP.
-  bool force_hol_blocking_;
+  // The maximum size of a header block that will be accepted from the peer,
+  // defined per spec as key + value + overhead per field (uncompressed).
+  size_t max_inbound_header_list_size_;
 
   // Set during handshake. If true, resources in x-associated-content and link
   // headers will be pushed.
@@ -279,7 +256,12 @@ class QUIC_EXPORT_PRIVATE QuicSpdySession : public QuicSession {
   QuicTime cur_max_timestamp_;
   QuicTime prev_max_timestamp_;
 
+  // TODO(ckrasic): remove |use_hq_deframer_| and |h2_deframer_| when
+  // FLAGS_quic_reloadable_flag_quic_enable_hq_deframer is deprecated.
+  bool use_hq_deframer_;
   SpdyFramer spdy_framer_;
+  Http2DecoderAdapter h2_deframer_;
+  QuicHttpDecoderAdapter hq_deframer_;
   std::unique_ptr<SpdyFramerVisitor> spdy_framer_visitor_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicSpdySession);

@@ -21,14 +21,16 @@
 #ifndef AtomicString_h
 #define AtomicString_h
 
+#include <cstring>
+#include <iosfwd>
+
+#include "build/build_config.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/HashTableDeletedValueType.h"
 #include "platform/wtf/WTFExport.h"
 #include "platform/wtf/text/CString.h"
 #include "platform/wtf/text/StringView.h"
 #include "platform/wtf/text/WTFString.h"
-#include <cstring>
-#include <iosfwd>
 
 namespace WTF {
 
@@ -45,8 +47,8 @@ struct AtomicStringHash;
 // count in StringImpl, and would hit a runtime CHECK in
 // AtomicStringTable::remove().
 //
-// Exception: nullAtom and emptyAtom, are shared in multiple threads, and are
-// never stored in AtomicStringTable.
+// Exception: g_null_atom and g_empty_atom, are shared in multiple threads, and
+// are never stored in AtomicStringTable.
 class WTF_EXPORT AtomicString {
   USING_FAST_MALLOC(AtomicString);
 
@@ -69,20 +71,12 @@ class WTF_EXPORT AtomicString {
 
   template <size_t inlineCapacity>
   explicit AtomicString(const Vector<UChar, inlineCapacity>& vector)
-      : AtomicString(vector.Data(), vector.size()) {}
+      : AtomicString(vector.data(), vector.size()) {}
 
   // Constructing an AtomicString from a String / StringImpl can be expensive if
   // the StringImpl is not already atomic.
   explicit AtomicString(StringImpl* impl) : string_(Add(impl)) {}
   explicit AtomicString(const String& s) : string_(Add(s.Impl())) {}
-
-  // Hash table deleted values, which are only constructed and never copied or
-  // destroyed.
-  AtomicString(WTF::HashTableDeletedValueType)
-      : string_(WTF::kHashTableDeletedValue) {}
-  bool IsHashTableDeletedValue() const {
-    return string_.IsHashTableDeletedValue();
-  }
 
   explicit operator bool() const { return !IsNull(); }
   operator const String&() const { return string_; }
@@ -98,14 +92,14 @@ class WTF_EXPORT AtomicString {
   UChar operator[](unsigned i) const { return string_[i]; }
 
   // Find characters.
-  size_t Find(UChar c, unsigned start = 0) const {
-    return string_.Find(c, start);
+  size_t find(UChar c, unsigned start = 0) const {
+    return string_.find(c, start);
   }
-  size_t Find(LChar c, unsigned start = 0) const {
-    return string_.Find(c, start);
+  size_t find(LChar c, unsigned start = 0) const {
+    return string_.find(c, start);
   }
-  size_t Find(char c, unsigned start = 0) const {
-    return Find(static_cast<LChar>(c), start);
+  size_t find(char c, unsigned start = 0) const {
+    return find(static_cast<LChar>(c), start);
   }
   size_t Find(CharacterMatchFunctionPtr match_function,
               unsigned start = 0) const {
@@ -132,7 +126,7 @@ class WTF_EXPORT AtomicString {
     return string_.FindIgnoringASCIICase(value, start);
   }
 
-  bool Contains(char c) const { return Find(c) != kNotFound; }
+  bool Contains(char c) const { return find(c) != kNotFound; }
   bool Contains(
       const StringView& value,
       TextCaseSensitivity case_sensitivity = kTextCaseSensitive) const {
@@ -151,6 +145,12 @@ class WTF_EXPORT AtomicString {
       const StringView& prefix,
       TextCaseSensitivity case_sensitivity = kTextCaseSensitive) const {
     return string_.StartsWith(prefix, case_sensitivity);
+  }
+  bool StartsWithIgnoringCase(const StringView& prefix) const {
+    return string_.StartsWithIgnoringCase(prefix);
+  }
+  bool StartsWithIgnoringASCIICase(const StringView& prefix) const {
+    return string_.StartsWithIgnoringASCIICase(prefix);
   }
   bool StartsWith(UChar character) const {
     return string_.StartsWith(character);
@@ -177,9 +177,10 @@ class WTF_EXPORT AtomicString {
   AtomicString LowerASCII() const;
   AtomicString UpperASCII() const;
 
-  int ToInt(bool* ok = 0) const { return string_.ToInt(ok); }
-  double ToDouble(bool* ok = 0) const { return string_.ToDouble(ok); }
-  float ToFloat(bool* ok = 0) const { return string_.ToFloat(ok); }
+  // See comments in WTFString.h.
+  int ToInt(bool* ok = nullptr) const { return string_.ToInt(ok); }
+  double ToDouble(bool* ok = nullptr) const { return string_.ToDouble(ok); }
+  float ToFloat(bool* ok = nullptr) const { return string_.ToFloat(ok); }
 
   static AtomicString Number(int);
   static AtomicString Number(unsigned);
@@ -222,16 +223,18 @@ class WTF_EXPORT AtomicString {
 #endif
 
  private:
+  friend struct HashTraits<AtomicString>;
+
   String string_;
 
-  ALWAYS_INLINE static PassRefPtr<StringImpl> Add(StringImpl* r) {
+  ALWAYS_INLINE static scoped_refptr<StringImpl> Add(StringImpl* r) {
     if (!r || r->IsAtomic())
       return r;
     return AddSlowCase(r);
   }
-  static PassRefPtr<StringImpl> AddSlowCase(StringImpl*);
-#if OS(MACOSX)
-  static PassRefPtr<StringImpl> Add(CFStringRef);
+  static scoped_refptr<StringImpl> AddSlowCase(StringImpl*);
+#if defined(OS_MACOSX)
+  static scoped_refptr<StringImpl> Add(CFStringRef);
 #endif
 };
 

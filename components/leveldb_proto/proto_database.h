@@ -10,8 +10,8 @@
 #include <utility>
 #include <vector>
 
-#include "base/callback_forward.h"
-#include "components/leveldb_proto/options.h"
+#include "base/callback.h"
+#include "third_party/leveldatabase/env_chromium.h"
 
 namespace base {
 class FilePath;
@@ -24,33 +24,28 @@ namespace leveldb_proto {
 template <typename T>
 class ProtoDatabase {
  public:
-  using InitCallback = base::Callback<void(bool success)>;
-  using UpdateCallback = base::Callback<void(bool success)>;
+  using InitCallback = base::OnceCallback<void(bool success)>;
+  using UpdateCallback = base::OnceCallback<void(bool success)>;
   using LoadCallback =
-      base::Callback<void(bool success, std::unique_ptr<std::vector<T>>)>;
+      base::OnceCallback<void(bool success, std::unique_ptr<std::vector<T>>)>;
   using LoadKeysCallback =
-      base::Callback<void(bool success,
-                          std::unique_ptr<std::vector<std::string>>)>;
-  using GetCallback = base::Callback<void(bool success, std::unique_ptr<T>)>;
-  using DestroyCallback = base::Callback<void(bool success)>;
+      base::OnceCallback<void(bool success,
+                              std::unique_ptr<std::vector<std::string>>)>;
+  using GetCallback =
+      base::OnceCallback<void(bool success, std::unique_ptr<T>)>;
+  using DestroyCallback = base::OnceCallback<void(bool success)>;
 
   // A list of key-value (string, T) tuples.
   using KeyEntryVector = std::vector<std::pair<std::string, T>>;
 
   virtual ~ProtoDatabase() {}
 
-  // Asynchronously initializes the object with default options. |callback| will
-  // be invoked on the calling thread when complete.
-  void Init(const char* client_name,
-            const base::FilePath& database_dir,
-            const InitCallback& callback) {
-    InitWithOptions(client_name, Options(database_dir), callback);
-  }
-
-  // Similar to Init, but takes additional options.
-  virtual void InitWithOptions(const char* client_name,
-                               const Options& options,
-                               const InitCallback& callback) = 0;
+  // Asynchronously initializes the object with the specified |options|.
+  // |callback| will be invoked on the calling thread when complete.
+  virtual void Init(const char* client_name,
+                    const base::FilePath& database_dir,
+                    const leveldb_env::Options& options,
+                    InitCallback callback) = 0;
 
   // Asynchronously saves |entries_to_save| and deletes entries from
   // |keys_to_remove| from the database. |callback| will be invoked on the
@@ -58,25 +53,29 @@ class ProtoDatabase {
   virtual void UpdateEntries(
       std::unique_ptr<KeyEntryVector> entries_to_save,
       std::unique_ptr<std::vector<std::string>> keys_to_remove,
-      const UpdateCallback& callback) = 0;
+      UpdateCallback callback) = 0;
 
   // Asynchronously loads all entries from the database and invokes |callback|
   // when complete.
-  virtual void LoadEntries(const LoadCallback& callback) = 0;
+  virtual void LoadEntries(LoadCallback callback) = 0;
 
   // Asynchronously loads all keys from the database and invokes |callback| with
   // those keys when complete.
-  virtual void LoadKeys(const LoadKeysCallback& callback) = 0;
+  virtual void LoadKeys(LoadKeysCallback callback) = 0;
 
   // Asynchronously loads a single entry, identified by |key|, from the database
   // and invokes |callback| when complete. If no entry with |key| is found,
   // a nullptr is passed to the callback, but the success flag is still true.
-  virtual void GetEntry(const std::string& key,
-                        const GetCallback& callback) = 0;
+  virtual void GetEntry(const std::string& key, GetCallback callback) = 0;
 
   // Asynchronously destroys the database.
-  virtual void Destroy(const DestroyCallback& callback) = 0;
+  virtual void Destroy(DestroyCallback callback) = 0;
 };
+
+// Return a new instance of Options, but with two additions:
+// 1) create_if_missing = true
+// 2) max_open_files = 0
+leveldb_env::Options CreateSimpleOptions();
 
 }  // namespace leveldb_proto
 

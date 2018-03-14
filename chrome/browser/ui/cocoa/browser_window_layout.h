@@ -49,6 +49,8 @@ struct LayoutParameters {
   // Whether to use the new avatar button. Only needs to be set when
   // shouldShowAvatar is YES.
   BOOL shouldUseNewAvatar;
+  // True if the avatar button is a generic avatar.
+  BOOL isGenericAvatar;
   // The size of the avatar button. Only needs to be set when shouldShowAvatar
   // is YES.
   NSSize avatarSize;
@@ -72,7 +74,7 @@ struct LayoutParameters {
   // The distance from the bottom of the location icon to the bottom of the
   // toolbar. Only needs to be set if infoBarHeight is not 0 and hasToolbar is
   // YES.
-  CGFloat pageInfoBubblePointY;
+  CGFloat infoBarAnchorPointY;
 
   BOOL hasDownloadShelf;
   CGFloat downloadShelfHeight;
@@ -159,6 +161,7 @@ struct LayoutOutput {
 - (void)setFullscreenButtonFrame:(NSRect)frame;
 - (void)setShouldShowAvatar:(BOOL)shouldShowAvatar;
 - (void)setShouldUseNewAvatar:(BOOL)shouldUseNewAvatar;
+- (void)setIsGenericAvatar:(BOOL)isGenericAvatar;
 - (void)setAvatarSize:(NSSize)avatarSize;
 - (void)setAvatarLineWidth:(CGFloat)avatarLineWidth;
 
@@ -172,8 +175,8 @@ struct LayoutOutput {
 
 // The height of the info bar, not including the top arrow.
 - (void)setInfoBarHeight:(CGFloat)infoBarHeight;
-// The min Y of the bubble point, relative to the toolbar.
-- (void)setPageInfoBubblePointY:(CGFloat)pageInfoBubblePointY;
+// The min Y of the infobar anchor point, relative to the toolbar.
+- (void)setInfoBarAnchorPointY:(CGFloat)infoBarAnchorPointY;
 
 - (void)setHasDownloadShelf:(BOOL)hasDownloadShelf;
 - (void)setDownloadShelfHeight:(CGFloat)downloadShelfHeight;

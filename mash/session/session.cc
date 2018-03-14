@@ -7,7 +7,6 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/message_loop/message_loop.h"
-#include "content/public/common/service_names.mojom.h"
 #include "mash/common/config.h"
 #include "mash/quick_launch/public/interfaces/constants.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
@@ -16,16 +15,18 @@
 namespace mash {
 namespace session {
 
-Session::Session() {}
-Session::~Session() {}
+Session::Session() = default;
+Session::~Session() = default;
 
 void Session::OnStart() {
   StartWindowManager();
-  StartQuickLaunch();
-
-  // Launch a chrome window for dev convience; don't do this in the long term.
-  context()->connector()->StartService(
-      content::mojom::kPackagedServicesServiceName);
+  // TODO(jonross): Re-enable when QuickLaunch for all builds once it no longer
+  // deadlocks with ServiceManager shutdown in mash_browser_tests.
+  // (crbug.com/594852)
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          quick_launch::mojom::kServiceName)) {
+    StartQuickLaunch();
+  }
 }
 
 void Session::StartWindowManager() {

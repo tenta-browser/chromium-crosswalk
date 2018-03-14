@@ -250,6 +250,8 @@ TimelineModel.TimelineProfileTree.TopDownRootNode = class extends TimelineModel.
    */
   _grouppedTopNodes() {
     var flatNodes = super.children();
+    for (var node of flatNodes.values())
+      this.selfTime -= node.totalTime;
     if (!this._eventGroupIdCallback)
       return flatNodes;
     var groupNodes = new Map();
@@ -576,6 +578,6 @@ TimelineModel.TimelineProfileTree._eventId = function(event) {
   const functionName = frame['functionName'];
   const name = TimelineModel.TimelineJSProfileProcessor.isNativeRuntimeFrame(frame) ?
       TimelineModel.TimelineJSProfileProcessor.nativeGroup(functionName) || functionName :
-      functionName;
+      `${functionName}:${frame['lineNumber']}`;
   return `f:${name}@${location}`;
 };

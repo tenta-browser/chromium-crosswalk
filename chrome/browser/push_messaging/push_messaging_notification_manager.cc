@@ -8,6 +8,8 @@
 
 #include <bitset>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
@@ -29,8 +31,10 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/notification_resources.h"
+#include "content/public/common/push_messaging_status.mojom.h"
 #include "content/public/common/url_constants.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "third_party/WebKit/common/page/page_visibility_state.mojom.h"
 #include "third_party/WebKit/public/platform/modules/budget_service/budget_service.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
@@ -54,9 +58,10 @@ using content::ServiceWorkerContext;
 using content::WebContents;
 
 namespace {
-void RecordUserVisibleStatus(content::PushUserVisibleStatus status) {
-  UMA_HISTOGRAM_ENUMERATION("PushMessaging.UserVisibleStatus", status,
-                            content::PUSH_USER_VISIBLE_STATUS_LAST + 1);
+void RecordUserVisibleStatus(content::mojom::PushUserVisibleStatus status) {
+  UMA_HISTOGRAM_ENUMERATION(
+      "PushMessaging.UserVisibleStatus", status,
+      static_cast<int>(content::mojom::PushUserVisibleStatus::LAST) + 1);
 }
 
 content::StoragePartition* GetStoragePartition(Profile* profile,
@@ -76,6 +81,7 @@ NotificationDatabaseData CreateDatabaseData(
       l10n_util::GetStringUTF16(IDS_PUSH_MESSAGING_GENERIC_NOTIFICATION_BODY);
   notification_data.tag = kPushMessagingForcedNotificationTag;
   notification_data.icon = GURL();
+  notification_data.timestamp = base::Time::Now();
   notification_data.silent = true;
 
   NotificationDatabaseData database_data;
@@ -104,7 +110,7 @@ void PushMessagingNotificationManager::EnforceUserVisibleOnlyRequirements(
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &PlatformNotificationContext::
               ReadAllNotificationDataForServiceWorkerRegistration,
           notification_context, origin, service_worker_registration_id,
@@ -125,7 +131,7 @@ void PushMessagingNotificationManager::DidGetNotificationsFromDatabaseIOProxy(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &PushMessagingNotificationManager::DidGetNotificationsFromDatabase,
           ui_weak_ptr, origin, service_worker_registration_id,
           message_handled_closure, success, data));
@@ -181,7 +187,8 @@ void PushMessagingNotificationManager::DidGetNotificationsFromDatabase(
           profile_, notification_database_data.notification_id);
       platform_notification_service->OnPersistentNotificationClose(
           profile_, notification_database_data.notification_id,
-          notification_database_data.origin, false /* by_user */);
+          notification_database_data.origin, false /* by_user */,
+          base::BindOnce(&base::DoNothing));
 
       break;
     }
@@ -192,7 +199,8 @@ void PushMessagingNotificationManager::DidGetNotificationsFromDatabase(
     // push was allowed.
     BudgetManager* manager = BudgetManagerFactory::GetForProfile(profile_);
     manager->Consume(
-        url::Origin(origin), blink::mojom::BudgetOperationType::SILENT_PUSH,
+        url::Origin::Create(origin),
+        blink::mojom::BudgetOperationType::SILENT_PUSH,
         base::Bind(&PushMessagingNotificationManager::ProcessSilentPush,
                    weak_factory_.GetWeakPtr(), origin,
                    service_worker_registration_id, message_handled_closure));
@@ -201,13 +209,13 @@ void PushMessagingNotificationManager::DidGetNotificationsFromDatabase(
 
   if (notification_needed && notification_shown) {
     RecordUserVisibleStatus(
-        content::PUSH_USER_VISIBLE_STATUS_REQUIRED_AND_SHOWN);
+        content::mojom::PushUserVisibleStatus::REQUIRED_AND_SHOWN);
   } else if (!notification_needed && !notification_shown) {
     RecordUserVisibleStatus(
-        content::PUSH_USER_VISIBLE_STATUS_NOT_REQUIRED_AND_NOT_SHOWN);
+        content::mojom::PushUserVisibleStatus::NOT_REQUIRED_AND_NOT_SHOWN);
   } else {
     RecordUserVisibleStatus(
-        content::PUSH_USER_VISIBLE_STATUS_NOT_REQUIRED_BUT_SHOWN);
+        content::mojom::PushUserVisibleStatus::NOT_REQUIRED_BUT_SHOWN);
   }
 
   message_handled_closure.Run();
@@ -226,10 +234,10 @@ bool PushMessagingNotificationManager::IsTabVisible(
 
   // Ignore minimized windows.
   switch (active_web_contents->GetMainFrame()->GetVisibilityState()) {
-    case blink::kWebPageVisibilityStateHidden:
-    case blink::kWebPageVisibilityStatePrerender:
+    case blink::mojom::PageVisibilityState::kHidden:
+    case blink::mojom::PageVisibilityState::kPrerender:
       return false;
-    case blink::kWebPageVisibilityStateVisible:
+    case blink::mojom::PageVisibilityState::kVisible:
       break;
   }
 
@@ -255,14 +263,14 @@ void PushMessagingNotificationManager::ProcessSilentPush(
 
   // If the origin was allowed to issue a silent push, just return.
   if (silent_push_allowed) {
-    RecordUserVisibleStatus(
-        content::PUSH_USER_VISIBLE_STATUS_REQUIRED_BUT_NOT_SHOWN_USED_GRACE);
+    RecordUserVisibleStatus(content::mojom::PushUserVisibleStatus::
+                                REQUIRED_BUT_NOT_SHOWN_USED_GRACE);
     message_handled_closure.Run();
     return;
   }
 
-  RecordUserVisibleStatus(
-      content::PUSH_USER_VISIBLE_STATUS_REQUIRED_BUT_NOT_SHOWN_GRACE_EXCEEDED);
+  RecordUserVisibleStatus(content::mojom::PushUserVisibleStatus::
+                              REQUIRED_BUT_NOT_SHOWN_GRACE_EXCEEDED);
   rappor::SampleDomainAndRegistryFromGURL(
       g_browser_process->rappor_service(),
       "PushMessaging.GenericNotificationShown.Origin", origin);
@@ -276,13 +284,13 @@ void PushMessagingNotificationManager::ProcessSilentPush(
       GetStoragePartition(profile_, origin)->GetPlatformNotificationContext();
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&PlatformNotificationContext::WriteNotificationData,
-                 notification_context, origin, database_data,
-                 base::Bind(&PushMessagingNotificationManager::
-                                DidWriteNotificationDataIOProxy,
-                            weak_factory_.GetWeakPtr(), origin,
-                            database_data.notification_data,
-                            message_handled_closure)));
+      base::BindOnce(&PlatformNotificationContext::WriteNotificationData,
+                     notification_context, origin, database_data,
+                     base::Bind(&PushMessagingNotificationManager::
+                                    DidWriteNotificationDataIOProxy,
+                                weak_factory_.GetWeakPtr(), origin,
+                                database_data.notification_data,
+                                message_handled_closure)));
 }
 
 // static
@@ -296,9 +304,10 @@ void PushMessagingNotificationManager::DidWriteNotificationDataIOProxy(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&PushMessagingNotificationManager::DidWriteNotificationData,
-                 ui_weak_ptr, origin, notification_data,
-                 message_handled_closure, success, notification_id));
+      base::BindOnce(
+          &PushMessagingNotificationManager::DidWriteNotificationData,
+          ui_weak_ptr, origin, notification_data, message_handled_closure,
+          success, notification_id));
 }
 
 void PushMessagingNotificationManager::DidWriteNotificationData(

@@ -19,13 +19,13 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/vector_icons/vector_icons.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/paint_vector_icon.h"
-#include "ui/vector_icons/vector_icons.h"
 
 using content::WebContents;
 
@@ -120,11 +120,12 @@ struct ContentSettingsImageDetails {
 };
 
 const ContentSettingsImageDetails kImageDetails[] = {
-    {CONTENT_SETTINGS_TYPE_COOKIES, kCookieIcon, IDS_BLOCKED_COOKIES_TITLE, 0,
-     IDS_ACCESSED_COOKIES_TITLE},
-    {CONTENT_SETTINGS_TYPE_IMAGES, kImageIcon, IDS_BLOCKED_IMAGES_TITLE, 0, 0},
-    {CONTENT_SETTINGS_TYPE_JAVASCRIPT, kCodeIcon, IDS_BLOCKED_JAVASCRIPT_TITLE,
-     0, 0},
+    {CONTENT_SETTINGS_TYPE_COOKIES, kCookieIcon, IDS_BLOCKED_COOKIES_MESSAGE, 0,
+     IDS_ACCESSED_COOKIES_MESSAGE},
+    {CONTENT_SETTINGS_TYPE_IMAGES, kImageIcon, IDS_BLOCKED_IMAGES_MESSAGE, 0,
+     0},
+    {CONTENT_SETTINGS_TYPE_JAVASCRIPT, kCodeIcon,
+     IDS_BLOCKED_JAVASCRIPT_MESSAGE, 0, 0},
     {CONTENT_SETTINGS_TYPE_PLUGINS, kExtensionIcon, IDS_BLOCKED_PLUGINS_MESSAGE,
      IDS_BLOCKED_PLUGIN_EXPLANATORY_TEXT, 0},
     {CONTENT_SETTINGS_TYPE_POPUPS, kWebIcon, IDS_BLOCKED_POPUPS_TOOLTIP,
@@ -132,7 +133,8 @@ const ContentSettingsImageDetails kImageDetails[] = {
     {CONTENT_SETTINGS_TYPE_MIXEDSCRIPT, kMixedContentIcon,
      IDS_BLOCKED_DISPLAYING_INSECURE_CONTENT, 0, 0},
     {CONTENT_SETTINGS_TYPE_PPAPI_BROKER, kExtensionIcon,
-     IDS_BLOCKED_PPAPI_BROKER_TITLE, 0, IDS_ALLOWED_PPAPI_BROKER_TITLE},
+     IDS_BLOCKED_PPAPI_BROKER_MESSAGE, 0, IDS_ALLOWED_PPAPI_BROKER_MESSAGE},
+    {CONTENT_SETTINGS_TYPE_SOUND, kTabAudioIcon, IDS_BLOCKED_SOUND_TITLE, 0, 0},
 };
 
 // The ordering of the models here influences the order in which icons are
@@ -148,9 +150,10 @@ constexpr ContentSettingsType kContentTypeIconOrder[] = {
     CONTENT_SETTINGS_TYPE_MIXEDSCRIPT,
     CONTENT_SETTINGS_TYPE_PROTOCOL_HANDLERS,
     CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,  // Note: also handles mic.
-    CONTENT_SETTINGS_TYPE_SUBRESOURCE_FILTER,
+    CONTENT_SETTINGS_TYPE_ADS,
     CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
     CONTENT_SETTINGS_TYPE_MIDI_SYSEX,
+    CONTENT_SETTINGS_TYPE_SOUND,
 };
 
 const ContentSettingsImageDetails* GetImageDetails(ContentSettingsType type) {
@@ -361,11 +364,11 @@ void ContentSettingMediaImageModel::UpdateFromWebContents(
   int id = IDS_CAMERA_BLOCKED;
   if (state & (TabSpecificContentSettings::MICROPHONE_BLOCKED |
                TabSpecificContentSettings::CAMERA_BLOCKED)) {
-    set_icon(ui::kVideocamIcon, kBlockedBadgeIcon);
+    set_icon(vector_icons::kVideocamIcon, kBlockedBadgeIcon);
     if (is_mic)
       id = is_cam ? IDS_MICROPHONE_CAMERA_BLOCKED : IDS_MICROPHONE_BLOCKED;
   } else {
-    set_icon(ui::kVideocamIcon, gfx::kNoneIcon);
+    set_icon(vector_icons::kVideocamIcon, gfx::kNoneIcon);
     id = IDS_CAMERA_ACCESSED;
     if (is_mic)
       id = is_cam ? IDS_MICROPHONE_CAMERA_ALLOWED : IDS_MICROPHONE_ACCESSED;
@@ -426,15 +429,14 @@ void ContentSettingSubresourceFilterImageModel::UpdateFromWebContents(
 
   TabSpecificContentSettings* content_settings =
       TabSpecificContentSettings::FromWebContents(web_contents);
-  if (!content_settings || !content_settings->IsContentBlocked(
-                               CONTENT_SETTINGS_TYPE_SUBRESOURCE_FILTER)) {
+  if (!content_settings ||
+      !content_settings->IsContentBlocked(CONTENT_SETTINGS_TYPE_ADS)) {
     return;
   }
 
   set_icon(kSubresourceFilterActiveIcon, kBlockedBadgeIcon);
-  set_explanatory_string_id(IDS_FILTERED_DECEPTIVE_CONTENT_PROMPT_TITLE);
-  set_tooltip(
-      l10n_util::GetStringUTF16(IDS_FILTERED_DECEPTIVE_CONTENT_PROMPT_TITLE));
+  set_explanatory_string_id(IDS_BLOCKED_ADS_PROMPT_TITLE);
+  set_tooltip(l10n_util::GetStringUTF16(IDS_BLOCKED_ADS_PROMPT_TOOLTIP));
   set_visible(true);
 }
 
@@ -453,8 +455,8 @@ bool ContentSettingSubresourceFilterImageModel::ShouldRunAnimation(
     return false;
   TabSpecificContentSettings* content_settings =
       TabSpecificContentSettings::FromWebContents(web_contents);
-  return content_settings && !content_settings->IsBlockageIndicated(
-                                 CONTENT_SETTINGS_TYPE_SUBRESOURCE_FILTER);
+  return content_settings &&
+         !content_settings->IsBlockageIndicated(CONTENT_SETTINGS_TYPE_ADS);
 }
 
 void ContentSettingSubresourceFilterImageModel::SetAnimationHasRun(
@@ -464,8 +466,7 @@ void ContentSettingSubresourceFilterImageModel::SetAnimationHasRun(
   TabSpecificContentSettings* content_settings =
       TabSpecificContentSettings::FromWebContents(web_contents);
   if (content_settings) {
-    content_settings->SetBlockageHasBeenIndicated(
-        CONTENT_SETTINGS_TYPE_SUBRESOURCE_FILTER);
+    content_settings->SetBlockageHasBeenIndicated(CONTENT_SETTINGS_TYPE_ADS);
   }
 }
 
@@ -473,7 +474,7 @@ void ContentSettingSubresourceFilterImageModel::SetAnimationHasRun(
 
 ContentSettingRPHImageModel::ContentSettingRPHImageModel()
     : ContentSettingSimpleImageModel(CONTENT_SETTINGS_TYPE_PROTOCOL_HANDLERS) {
-  set_icon(ui::kProtocolHandlerIcon, gfx::kNoneIcon);
+  set_icon(vector_icons::kProtocolHandlerIcon, gfx::kNoneIcon);
   set_tooltip(l10n_util::GetStringUTF16(IDS_REGISTER_PROTOCOL_HANDLER_TOOLTIP));
 }
 
@@ -520,7 +521,8 @@ void ContentSettingMIDISysExImageModel::UpdateFromWebContents(
   usages_state.GetDetailedInfo(nullptr, &state_flags);
   bool allowed =
       !!(state_flags & ContentSettingsUsagesState::TABSTATE_HAS_ANY_ALLOWED);
-  set_icon(ui::kMidiIcon, allowed ? gfx::kNoneIcon : kBlockedBadgeIcon);
+  set_icon(vector_icons::kMidiIcon,
+           allowed ? gfx::kNoneIcon : kBlockedBadgeIcon);
   set_tooltip(l10n_util::GetStringUTF16(allowed
                                             ? IDS_MIDI_SYSEX_ALLOWED_TOOLTIP
                                             : IDS_MIDI_SYSEX_BLOCKED_TOOLTIP));
@@ -545,20 +547,20 @@ void ContentSettingDownloadsImageModel::UpdateFromWebContents(
   if (!download_request_limiter)
     return;
 
-  switch (download_request_limiter->GetDownloadStatus(web_contents)) {
-    case DownloadRequestLimiter::ALLOW_ALL_DOWNLOADS:
+  switch (download_request_limiter->GetDownloadUiStatus(web_contents)) {
+    case DownloadRequestLimiter::DOWNLOAD_UI_ALLOWED:
       set_visible(true);
       set_icon(kFileDownloadIcon, gfx::kNoneIcon);
       set_explanatory_string_id(0);
       set_tooltip(l10n_util::GetStringUTF16(IDS_ALLOWED_DOWNLOAD_TITLE));
       return;
-    case DownloadRequestLimiter::DOWNLOADS_NOT_ALLOWED:
+    case DownloadRequestLimiter::DOWNLOAD_UI_BLOCKED:
       set_visible(true);
       set_icon(kFileDownloadIcon, kBlockedBadgeIcon);
       set_explanatory_string_id(IDS_BLOCKED_DOWNLOADS_EXPLANATION);
       set_tooltip(l10n_util::GetStringUTF16(IDS_BLOCKED_DOWNLOAD_TITLE));
       return;
-    default:
+    case DownloadRequestLimiter::DOWNLOAD_UI_DEFAULT:
       // No need to show icon otherwise.
       return;
   }
@@ -566,13 +568,7 @@ void ContentSettingDownloadsImageModel::UpdateFromWebContents(
 
 // Base class ------------------------------------------------------------------
 
-gfx::Image ContentSettingImageModel::GetIcon(SkColor nearby_text_color) const {
-#if defined(OS_MACOSX)
-  SkColor icon_color = nearby_text_color;
-#else
-  SkColor icon_color = color_utils::DeriveDefaultIconColor(nearby_text_color);
-#endif
-
+gfx::Image ContentSettingImageModel::GetIcon(SkColor icon_color) const {
   return gfx::Image(
       gfx::CreateVectorIconWithBadge(*icon_, 16, icon_color, *icon_badge_));
 }
@@ -600,7 +596,7 @@ ContentSettingImageModel::GenerateContentSettingImageModels() {
       case CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA:
         model = base::MakeUnique<ContentSettingMediaImageModel>();
         break;
-      case CONTENT_SETTINGS_TYPE_SUBRESOURCE_FILTER:
+      case CONTENT_SETTINGS_TYPE_ADS:
         model = base::MakeUnique<ContentSettingSubresourceFilterImageModel>();
         break;
       case CONTENT_SETTINGS_TYPE_MIDI_SYSEX:

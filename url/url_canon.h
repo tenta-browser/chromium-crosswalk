@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "base/export_template.h"
 #include "base/strings/string16.h"
 #include "url/third_party/mozilla/url_parse.h"
 #include "url/url_export.h"
@@ -174,6 +175,11 @@ class RawCanonOutputT : public CanonOutputT<T> {
   T fixed_buffer_[fixed_capacity];
 };
 
+// Explicitely instantiate commonly used instatiations.
+extern template class EXPORT_TEMPLATE_DECLARE(URL_EXPORT) CanonOutputT<char>;
+extern template class EXPORT_TEMPLATE_DECLARE(URL_EXPORT)
+    CanonOutputT<base::char16>;
+
 // Normally, all canonicalization output is in narrow characters. We support
 // the templates so it can also be used internally if a wide buffer is
 // required.
@@ -231,14 +237,21 @@ class URL_EXPORT CharsetConverter {
 //
 // Therefore, callers should not use the buffer, since it may actually be empty,
 // use the computed pointer and |*output_len| instead.
-URL_EXPORT const char* RemoveURLWhitespace(const char* input, int input_len,
+//
+// If |input| contained both removable whitespace and a raw `<` character,
+// |potentially_dangling_markup| will be set to `true`. Otherwise, it will be
+// left untouched.
+URL_EXPORT const char* RemoveURLWhitespace(const char* input,
+                                           int input_len,
                                            CanonOutputT<char>* buffer,
-                                           int* output_len);
+                                           int* output_len,
+                                           bool* potentially_dangling_markup);
 URL_EXPORT const base::char16* RemoveURLWhitespace(
     const base::char16* input,
     int input_len,
     CanonOutputT<base::char16>* buffer,
-    int* output_len);
+    int* output_len,
+    bool* potentially_dangling_markup);
 
 // IDN ------------------------------------------------------------------------
 

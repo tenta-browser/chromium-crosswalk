@@ -6,7 +6,6 @@
 
 #include <vector>
 
-#include "android_webview/common/aw_resource.h"
 #include "android_webview/common/aw_switches.h"
 #include "android_webview/common/render_view_messages.h"
 #include "android_webview/common/url_constants.h"
@@ -14,7 +13,7 @@
 #include "android_webview/grit/aw_strings.h"
 #include "android_webview/renderer/aw_content_settings_client.h"
 #include "android_webview/renderer/aw_key_systems.h"
-#include "android_webview/renderer/aw_print_web_view_helper_delegate.h"
+#include "android_webview/renderer/aw_print_render_frame_helper_delegate.h"
 #include "android_webview/renderer/aw_render_frame_ext.h"
 #include "android_webview/renderer/aw_render_view_ext.h"
 #include "android_webview/renderer/print_render_frame_observer.h"
@@ -22,16 +21,22 @@
 #include "base/i18n/rtl.h"
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/content/renderer/autofill_agent.h"
-#include "components/autofill/content/renderer/password_autofill_agent.h"
-#include "components/printing/renderer/print_web_view_helper.h"
+#include "components/printing/renderer/print_render_frame_helper.h"
+#include "components/safe_browsing/renderer/renderer_url_loader_throttle.h"
+#include "components/safe_browsing/renderer/websocket_sb_handshake_throttle.h"
 #include "components/spellcheck/spellcheck_build_features.h"
 #include "components/supervised_user_error_page/gin_wrapper.h"
 #include "components/supervised_user_error_page/supervised_user_error_page_android.h"
 #include "components/visitedlink/renderer/visitedlink_slave.h"
 #include "components/web_restrictions/interfaces/web_restrictions.mojom.h"
+#include "content/public/child/child_thread.h"
+#include "content/public/common/content_features.h"
+#include "content/public/common/service_manager_connection.h"
+#include "content/public/common/service_names.mojom.h"
+#include "content/public/common/simple_connection_filter.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/renderer/document_state.h"
 #include "content/public/renderer/navigation_state.h"
@@ -40,8 +45,8 @@
 #include "content/public/renderer/render_view.h"
 #include "net/base/escape.h"
 #include "net/base/net_errors.h"
+#include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/platform/WebURLError.h"
@@ -63,6 +68,12 @@ using content::RenderThread;
 
 namespace android_webview {
 
+namespace {
+constexpr char kThrottledErrorDescription[] =
+    "Request throttled. Visit http://dev.chromium.org/throttling for more "
+    "information.";
+}  // namespace
+
 AwContentRendererClient::AwContentRendererClient() {}
 
 AwContentRendererClient::~AwContentRendererClient() {}
@@ -73,12 +84,18 @@ void AwContentRendererClient::RenderThreadStarted() {
   thread->AddObserver(aw_render_thread_observer_.get());
 
   visited_link_slave_.reset(new visitedlink::VisitedLinkSlave);
-  thread->GetInterfaceRegistry()->AddInterface(
-      visited_link_slave_->GetBindCallback());
+
+  auto registry = base::MakeUnique<service_manager::BinderRegistry>();
+  registry->AddInterface(visited_link_slave_->GetBindCallback(),
+                         base::ThreadTaskRunnerHandle::Get());
+  content::ChildThread::Get()
+      ->GetServiceManagerConnection()
+      ->AddConnectionFilter(base::MakeUnique<content::SimpleConnectionFilter>(
+          std::move(registry)));
 
 #if BUILDFLAG(ENABLE_SPELLCHECK)
   if (!spellcheck_) {
-    spellcheck_ = base::MakeUnique<SpellCheck>();
+    spellcheck_ = base::MakeUnique<SpellCheck>(this);
     thread->AddObserver(spellcheck_.get());
   }
 #endif
@@ -150,8 +167,8 @@ void AwContentRendererClient::RenderFrameCreated(
     content::RenderFrame* render_frame) {
   new AwContentSettingsClient(render_frame);
   new PrintRenderFrameObserver(render_frame);
-  new printing::PrintWebViewHelper(
-      render_frame, base::MakeUnique<AwPrintWebViewHelperDelegate>());
+  new printing::PrintRenderFrameHelper(
+      render_frame, base::MakeUnique<AwPrintRenderFrameHelperDelegate>());
   new AwRenderFrameExt(render_frame);
 
   // TODO(jam): when the frame tree moves into content and parent() works at
@@ -165,14 +182,8 @@ void AwContentRendererClient::RenderFrameCreated(
         parent_frame->GetRoutingID(), render_frame->GetRoutingID()));
   }
 
-  // TODO(sgurun) do not create a password autofill agent (change
-  // autofill agent to store a weakptr).
-  autofill::PasswordAutofillAgent* password_autofill_agent =
-      new autofill::PasswordAutofillAgent(render_frame);
-  new autofill::AutofillAgent(render_frame, password_autofill_agent, NULL);
-
 #if BUILDFLAG(ENABLE_SPELLCHECK)
-  new SpellCheckProvider(render_frame, spellcheck_.get());
+  new SpellCheckProvider(render_frame, spellcheck_.get(), this);
 #endif
 }
 
@@ -191,8 +202,7 @@ void AwContentRendererClient::RenderViewCreated(
 #endif
 }
 
-bool AwContentRendererClient::HasErrorPage(int http_status_code,
-                                           std::string* error_domain) {
+bool AwContentRendererClient::HasErrorPage(int http_status_code) {
   return http_status_code >= 400;
 }
 
@@ -202,12 +212,13 @@ void AwContentRendererClient::GetNavigationErrorStrings(
     const blink::WebURLError& error,
     std::string* error_html,
     base::string16* error_description) {
-  if (error_description) {
-    if (error.localized_description.IsEmpty())
-      *error_description = base::ASCIIToUTF16(net::ErrorToString(error.reason));
-    else
-      *error_description = error.localized_description.Utf16();
-  }
+  std::string err;
+  if (error.reason() == net::ERR_TEMPORARILY_THROTTLED)
+    err = kThrottledErrorDescription;
+  else
+    err = net::ErrorToString(error.reason());
+  if (error_description)
+    *error_description = base::ASCIIToUTF16(err);
 
   if (!error_html)
     return;
@@ -217,7 +228,7 @@ void AwContentRendererClient::GetNavigationErrorStrings(
   std::string url_string = gurl.possibly_invalid_spec();
   int reason_id = IDS_AW_WEBPAGE_CAN_NOT_BE_LOADED;
 
-  if (error.reason == net::ERR_BLOCKED_BY_ADMINISTRATOR) {
+  if (error.reason() == net::ERR_BLOCKED_BY_ADMINISTRATOR) {
     // This creates a different error page giving considerably more
     // detail, and possibly allowing the user to request access.
     // Get the details this needs from the browser.
@@ -241,9 +252,6 @@ void AwContentRendererClient::GetNavigationErrorStrings(
         reason_id = IDS_AW_WEBPAGE_PARENTAL_PERMISSION_NEEDED;
     }
   }
-
-  std::string err = error.localized_description.Utf8(
-      blink::WebString::UTF8ConversionMode::kStrictReplacingErrorsWithFFFD);
 
   if (err.empty())
     reason_id = IDS_AW_WEBPAGE_TEMPORARILY_DOWN;
@@ -269,7 +277,7 @@ void AwContentRendererClient::GetNavigationErrorStrings(
   else
     replacements.push_back("");
   *error_html = base::ReplaceStringPlaceholders(
-      ResourceBundle::GetSharedInstance().GetRawDataResource(
+      ui::ResourceBundle::GetSharedInstance().GetRawDataResource(
           IDR_AW_LOAD_ERROR_HTML),
       replacements, nullptr);
 }
@@ -289,6 +297,31 @@ void AwContentRendererClient::AddSupportedKeySystems(
   AwAddKeySystems(key_systems);
 }
 
+std::unique_ptr<blink::WebSocketHandshakeThrottle>
+AwContentRendererClient::CreateWebSocketHandshakeThrottle() {
+  if (!UsingSafeBrowsingMojoService())
+    return nullptr;
+  return base::MakeUnique<safe_browsing::WebSocketSBHandshakeThrottle>(
+      safe_browsing_.get());
+}
+
+bool AwContentRendererClient::WillSendRequest(
+    blink::WebLocalFrame* frame,
+    ui::PageTransition transition_type,
+    const blink::WebURL& url,
+    std::vector<std::unique_ptr<content::URLLoaderThrottle>>* throttles,
+    GURL* new_url) {
+  if (UsingSafeBrowsingMojoService()) {
+    content::RenderFrame* render_frame =
+        content::RenderFrame::FromWebFrame(frame);
+    throttles->push_back(
+        base::MakeUnique<safe_browsing::RendererURLLoaderThrottle>(
+            safe_browsing_.get(), render_frame->GetRoutingID()));
+  }
+
+  return false;
+}
+
 bool AwContentRendererClient::ShouldUseMediaPlayerForURL(const GURL& url) {
   // Android WebView needs to support codecs that Chrome does not, for these
   // cases we must force the usage of Android MediaPlayer instead of Chrome's
@@ -300,16 +333,53 @@ bool AwContentRendererClient::ShouldUseMediaPlayerForURL(const GURL& url) {
   //
   // Format list mirrors:
   // http://developer.android.com/guide/appendix/media-formats.html
+  //
+  // Enum and extension list are parallel arrays and must stay in sync. These
+  // enum values are written to logs. New enum values can be added, but existing
+  // enums must never be renumbered or deleted and reused.
+  enum MediaPlayerContainers {
+    CONTAINER_3GP = 0,
+    CONTAINER_TS = 1,
+    CONTAINER_MID = 2,
+    CONTAINER_XMF = 3,
+    CONTAINER_MXMF = 4,
+    CONTAINER_RTTTL = 5,
+    CONTAINER_RTX = 6,
+    CONTAINER_OTA = 7,
+    CONTAINER_IMY = 8,
+    MEDIA_PLAYER_CONTAINERS_COUNT,
+  };
   static const char* kMediaPlayerExtensions[] = {
-      ".3gp",  ".ts",    ".flac", ".mid", ".xmf",
-      ".mxmf", ".rtttl", ".rtx",  ".ota", ".imy"};
-  for (auto* extension : kMediaPlayerExtensions) {
-    if (base::EndsWith(url.path(), extension,
+      ".3gp", ".ts", ".mid", ".xmf", ".mxmf", ".rtttl", ".rtx", ".ota", ".imy"};
+  static_assert(arraysize(kMediaPlayerExtensions) ==
+                    MediaPlayerContainers::MEDIA_PLAYER_CONTAINERS_COUNT,
+                "Invalid enum or extension change.");
+
+  for (size_t i = 0; i < arraysize(kMediaPlayerExtensions); ++i) {
+    if (base::EndsWith(url.path(), kMediaPlayerExtensions[i],
                        base::CompareCase::INSENSITIVE_ASCII)) {
+      UMA_HISTOGRAM_ENUMERATION(
+          "Media.WebView.UnsupportedContainer",
+          static_cast<MediaPlayerContainers>(i),
+          MediaPlayerContainers::MEDIA_PLAYER_CONTAINERS_COUNT);
       return true;
     }
   }
   return false;
+}
+
+void AwContentRendererClient::GetInterface(
+    const std::string& interface_name,
+    mojo::ScopedMessagePipeHandle interface_pipe) {}
+
+bool AwContentRendererClient::UsingSafeBrowsingMojoService() {
+  if (safe_browsing_)
+    return true;
+  if (!base::FeatureList::IsEnabled(features::kNetworkService))
+    return false;
+  RenderThread::Get()->GetConnector()->BindInterface(
+      content::mojom::kBrowserServiceName, &safe_browsing_);
+  return true;
 }
 
 }  // namespace android_webview

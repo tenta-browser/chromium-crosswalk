@@ -33,32 +33,33 @@
 #include <memory>
 #include "base/command_line.h"
 #include "base/memory/discardable_memory_allocator.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/run_loop.h"
 #include "base/test/icu_test_util.h"
 #include "base/test/test_discardable_memory_allocator.h"
 #include "cc/blink/web_compositor_support_impl.h"
-#include "cc/test/ordered_simple_task_runner.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
-#include "platform/HTTPNames.h"
+#include "platform/Language.h"
+#include "platform/font_family_names.h"
 #include "platform/heap/Heap.h"
-#include "platform/loader/fetch/FetchInitiatorTypeNames.h"
+#include "platform/instrumentation/resource_coordinator/BlinkResourceCoordinatorBase.h"
+#include "platform/instrumentation/resource_coordinator/RendererResourceCoordinator.h"
+#include "platform/loader/fetch/fetch_initiator_type_names.h"
+#include "platform/network/http_names.h"
 #include "platform/network/mime/MockMimeRegistry.h"
 #include "platform/scheduler/base/real_time_domain.h"
 #include "platform/scheduler/base/task_queue_manager.h"
 #include "platform/scheduler/base/test_time_source.h"
-#include "platform/scheduler/child/scheduler_tqm_delegate_for_test.h"
 #include "platform/scheduler/renderer/renderer_scheduler_impl.h"
+#include "platform/scheduler/test/create_task_queue_manager_for_test.h"
 #include "platform/wtf/CryptographicallyRandomNumber.h"
-#include "platform/wtf/CurrentTime.h"
-#include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/WTF.h"
 #include "platform/wtf/allocator/Partitions.h"
 #include "public/platform/InterfaceProvider.h"
 #include "public/platform/WebContentLayer.h"
 #include "public/platform/WebExternalTextureLayer.h"
 #include "public/platform/WebImageLayer.h"
+#include "public/platform/WebRuntimeFeatures.h"
 #include "public/platform/WebScrollbarLayer.h"
 
 namespace blink {
@@ -73,18 +74,14 @@ class TestingPlatformSupport::TestingInterfaceProvider
                     mojo::ScopedMessagePipeHandle handle) override {
     if (std::string(name) == mojom::blink::MimeRegistry::Name_) {
       mojo::MakeStrongBinding(
-          WTF::MakeUnique<MockMimeRegistry>(),
-          mojo::MakeRequest<mojom::blink::MimeRegistry>(std::move(handle)));
+          std::make_unique<MockMimeRegistry>(),
+          mojom::blink::MimeRegistryRequest(std::move(handle)));
       return;
     }
   }
 };
 
 namespace {
-
-double DummyCurrentTime() {
-  return 0.0;
-}
 
 class DummyThread final : public blink::WebThread {
  public:
@@ -190,16 +187,14 @@ WebURLLoaderMockFactory* TestingPlatformSupport::GetURLLoaderMockFactory() {
   return old_platform_ ? old_platform_->GetURLLoaderMockFactory() : nullptr;
 }
 
-WebURLLoader* TestingPlatformSupport::CreateURLLoader() {
-  return old_platform_ ? old_platform_->CreateURLLoader() : nullptr;
+std::unique_ptr<WebURLLoaderFactory>
+TestingPlatformSupport::CreateDefaultURLLoaderFactory() {
+  return old_platform_ ? old_platform_->CreateDefaultURLLoaderFactory()
+                       : nullptr;
 }
 
-WebData TestingPlatformSupport::LoadResource(const char* name) {
-  return old_platform_ ? old_platform_->LoadResource(name) : WebData();
-}
-
-WebURLError TestingPlatformSupport::CancelledError(const WebURL& url) const {
-  return old_platform_ ? old_platform_->CancelledError(url) : WebURLError();
+WebData TestingPlatformSupport::GetDataResource(const char* name) {
+  return old_platform_ ? old_platform_->GetDataResource(name) : WebData();
 }
 
 InterfaceProvider* TestingPlatformSupport::GetInterfaceProvider() {
@@ -208,106 +203,6 @@ InterfaceProvider* TestingPlatformSupport::GetInterfaceProvider() {
 
 void TestingPlatformSupport::RunUntilIdle() {
   base::RunLoop().RunUntilIdle();
-}
-
-// TestingPlatformSupportWithMockScheduler definition:
-
-TestingPlatformSupportWithMockScheduler::
-    TestingPlatformSupportWithMockScheduler()
-    : TestingPlatformSupportWithMockScheduler(
-          TestingPlatformSupport::Config()) {}
-
-TestingPlatformSupportWithMockScheduler::
-    TestingPlatformSupportWithMockScheduler(const Config& config)
-    : TestingPlatformSupport(config),
-      clock_(new base::SimpleTestTickClock()),
-      mock_task_runner_(new cc::OrderedSimpleTaskRunner(clock_.get(), true)),
-      scheduler_(new scheduler::RendererSchedulerImpl(
-          scheduler::SchedulerTqmDelegateForTest::Create(
-              mock_task_runner_,
-              base::WrapUnique(new scheduler::TestTimeSource(clock_.get()))))),
-      thread_(scheduler_->CreateMainThread()) {
-  // Set the work batch size to one so RunPendingTasks behaves as expected.
-  scheduler_->GetSchedulerHelperForTesting()->SetWorkBatchSizeForTesting(1);
-
-  WTF::SetTimeFunctionsForTesting(GetTestTime);
-}
-
-TestingPlatformSupportWithMockScheduler::
-    ~TestingPlatformSupportWithMockScheduler() {
-  WTF::SetTimeFunctionsForTesting(nullptr);
-  scheduler_->Shutdown();
-}
-
-WebThread* TestingPlatformSupportWithMockScheduler::CurrentThread() {
-  if (thread_->IsCurrentThread())
-    return thread_.get();
-  return TestingPlatformSupport::CurrentThread();
-}
-
-void TestingPlatformSupportWithMockScheduler::RunSingleTask() {
-  mock_task_runner_->SetRunTaskLimit(1);
-  mock_task_runner_->RunPendingTasks();
-  mock_task_runner_->ClearRunTaskLimit();
-}
-
-void TestingPlatformSupportWithMockScheduler::RunUntilIdle() {
-  mock_task_runner_->RunUntilIdle();
-}
-
-void TestingPlatformSupportWithMockScheduler::RunForPeriodSeconds(
-    double seconds) {
-  const base::TimeTicks deadline =
-      clock_->NowTicks() + base::TimeDelta::FromSecondsD(seconds);
-
-  scheduler::TaskQueueManager* task_queue_manager =
-      scheduler_->GetSchedulerHelperForTesting()
-          ->GetTaskQueueManagerForTesting();
-
-  for (;;) {
-    // If we've run out of immediate work then fast forward to the next delayed
-    // task, but don't pass |deadline|.
-    if (!task_queue_manager->HasImmediateWorkForTesting()) {
-      base::TimeTicks next_delayed_task;
-      if (!task_queue_manager->real_time_domain()->NextScheduledRunTime(
-              &next_delayed_task) ||
-          next_delayed_task > deadline) {
-        break;
-      }
-
-      clock_->SetNowTicks(next_delayed_task);
-    }
-
-    if (clock_->NowTicks() > deadline)
-      break;
-
-    mock_task_runner_->RunPendingTasks();
-  }
-
-  clock_->SetNowTicks(deadline);
-}
-
-void TestingPlatformSupportWithMockScheduler::AdvanceClockSeconds(
-    double seconds) {
-  clock_->Advance(base::TimeDelta::FromSecondsD(seconds));
-}
-
-void TestingPlatformSupportWithMockScheduler::SetAutoAdvanceNowToPendingTasks(
-    bool auto_advance) {
-  mock_task_runner_->SetAutoAdvanceNowToPendingTasks(auto_advance);
-}
-
-scheduler::RendererScheduler*
-TestingPlatformSupportWithMockScheduler::GetRendererScheduler() const {
-  return scheduler_.get();
-}
-
-// static
-double TestingPlatformSupportWithMockScheduler::GetTestTime() {
-  TestingPlatformSupportWithMockScheduler* platform =
-      static_cast<TestingPlatformSupportWithMockScheduler*>(
-          Platform::Current());
-  return (platform->clock_->NowTicks() - base::TimeTicks()).InSecondsF();
 }
 
 class ScopedUnittestsEnvironmentSetup::DummyPlatform final
@@ -320,6 +215,9 @@ class ScopedUnittestsEnvironmentSetup::DummyPlatform final
     return &dummy_thread;
   };
 };
+
+class ScopedUnittestsEnvironmentSetup::DummyRendererResourceCoordinator final
+    : public blink::RendererResourceCoordinator {};
 
 ScopedUnittestsEnvironmentSetup::ScopedUnittestsEnvironmentSetup(int argc,
                                                                  char** argv) {
@@ -337,7 +235,6 @@ ScopedUnittestsEnvironmentSetup::ScopedUnittestsEnvironmentSetup(int argc,
   Platform::SetCurrentPlatformForTesting(dummy_platform_.get());
 
   WTF::Partitions::Initialize(nullptr);
-  WTF::SetTimeFunctionsForTesting(DummyCurrentTime);
   WTF::Initialize(nullptr);
 
   compositor_support_ = WTF::WrapUnique(new cc_blink::WebCompositorSupportImpl);
@@ -346,12 +243,25 @@ ScopedUnittestsEnvironmentSetup::ScopedUnittestsEnvironmentSetup(int argc,
       WTF::WrapUnique(new TestingPlatformSupport(testing_platform_config_));
   Platform::SetCurrentPlatformForTesting(testing_platform_support_.get());
 
+  if (BlinkResourceCoordinatorBase::IsEnabled()) {
+    dummy_renderer_resource_coordinator_ =
+        WTF::WrapUnique(new DummyRendererResourceCoordinator);
+    RendererResourceCoordinator::
+        SetCurrentRendererResourceCoordinatorForTesting(
+            dummy_renderer_resource_coordinator_.get());
+  }
+
   ProcessHeap::Init();
   ThreadState::AttachMainThread();
   ThreadState::Current()->RegisterTraceDOMWrappers(nullptr, nullptr, nullptr,
                                                    nullptr);
   HTTPNames::init();
   FetchInitiatorTypeNames::init();
+
+  InitializePlatformLanguage();
+  FontFamilyNames::init();
+  WebRuntimeFeatures::EnableExperimentalFeatures(true);
+  WebRuntimeFeatures::EnableTestOnlyFeatures(true);
 }
 
 ScopedUnittestsEnvironmentSetup::~ScopedUnittestsEnvironmentSetup() {}

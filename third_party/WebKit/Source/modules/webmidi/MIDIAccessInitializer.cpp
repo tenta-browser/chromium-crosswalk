@@ -16,7 +16,6 @@
 #include "modules/webmidi/MIDIAccess.h"
 #include "modules/webmidi/MIDIOptions.h"
 #include "modules/webmidi/MIDIPort.h"
-#include "platform/UserGestureIndicator.h"
 #include "platform/mojo/MojoHelper.h"
 #include "public/platform/InterfaceProvider.h"
 #include "public/platform/modules/permissions/permission.mojom-blink.h"
@@ -41,10 +40,12 @@ ScriptPromise MIDIAccessInitializer::Start() {
 
   ConnectToPermissionService(GetExecutionContext(),
                              mojo::MakeRequest(&permission_service_));
+
+  Document* doc = ToDocumentOrNull(GetExecutionContext());
   permission_service_->RequestPermission(
       CreateMidiPermissionDescriptor(options_.hasSysex() && options_.sysex()),
       GetExecutionContext()->GetSecurityOrigin(),
-      UserGestureIndicator::ProcessingUserGesture(),
+      Frame::HasTransientUserActivation(doc ? doc->GetFrame() : nullptr),
       ConvertToBaseCallback(WTF::Bind(
           &MIDIAccessInitializer::OnPermissionsUpdated, WrapPersistent(this))));
 

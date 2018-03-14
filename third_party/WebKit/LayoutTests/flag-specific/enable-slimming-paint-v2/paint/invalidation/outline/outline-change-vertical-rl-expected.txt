@@ -1,0 +1,41 @@
+{
+  "layers": [
+    {
+      "name": "LayoutView #document",
+      "position": [-216, 0],
+      "bounds": [1016, 585],
+      "contentsOpaque": true,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "LayoutBlockFlow HTML",
+      "position": [-216, 0],
+      "bounds": [1016, 128],
+      "backgroundColor": "#008000",
+      "paintInvalidations": [
+        {
+          "object": "LayoutBlockFlow DIV id='target'",
+          "rect": [0, 0, 1016, 128],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutBlockFlow DIV id='target'",
+          "rect": [0, 0, 1016, 128],
+          "reason": "style change"
+        }
+      ]
+    },
+    {
+      "name": "LayoutView #document",
+      "position": [0, 585],
+      "bounds": [800, 15]
+    }
+  ],
+  "objectPaintInvalidations": [
+    {
+      "object": "LayoutBlockFlow DIV id='target'",
+      "reason": "style change"
+    }
+  ]
+}
+

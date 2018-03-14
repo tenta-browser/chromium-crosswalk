@@ -45,19 +45,14 @@ FaviconSource::IconRequest::IconRequest(const IconRequest& other) = default;
 FaviconSource::IconRequest::~IconRequest() {
 }
 
-FaviconSource::FaviconSource(Profile* profile, IconType type)
-    : profile_(profile->GetOriginalProfile()),
-      icon_types_(type == FAVICON ? favicon_base::FAVICON
-                                  : favicon_base::TOUCH_PRECOMPOSED_ICON |
-                                        favicon_base::TOUCH_ICON |
-                                        favicon_base::FAVICON) {}
+FaviconSource::FaviconSource(Profile* profile)
+    : profile_(profile->GetOriginalProfile()) {}
 
 FaviconSource::~FaviconSource() {
 }
 
 std::string FaviconSource::GetSource() const {
-  return icon_types_ == favicon_base::FAVICON ? chrome::kChromeUIFaviconHost
-                                              : chrome::kChromeUITouchIconHost;
+  return chrome::kChromeUIFaviconHost;
 }
 
 void FaviconSource::StartDataRequest(
@@ -73,7 +68,7 @@ void FaviconSource::StartDataRequest(
   }
 
   chrome::ParsedFaviconPath parsed;
-  bool success = chrome::ParseFaviconPath(path, icon_types_, &parsed);
+  bool success = chrome::ParseFaviconPath(path, &parsed);
   if (!success) {
     SendDefaultResponse(callback);
     return;
@@ -87,14 +82,11 @@ void FaviconSource::StartDataRequest(
     // TODO(michaelbai): Change GetRawFavicon to support combination of
     // IconType.
     favicon_service->GetRawFavicon(
-        url,
-        favicon_base::FAVICON,
-        desired_size_in_pixel,
-        base::Bind(
-            &FaviconSource::OnFaviconDataAvailable,
-            base::Unretained(this),
-            IconRequest(
-                callback, url, parsed.size_in_dip, parsed.device_scale_factor)),
+        url, favicon_base::IconType::kFavicon, desired_size_in_pixel,
+        base::Bind(&FaviconSource::OnFaviconDataAvailable,
+                   base::Unretained(this),
+                   IconRequest(callback, url, parsed.size_in_dip,
+                               parsed.device_scale_factor)),
         &cancelable_task_tracker_);
   } else {
     // Intercept requests for prepopulated pages if TopSites exists.
@@ -106,22 +98,20 @@ void FaviconSource::StartDataRequest(
           ui::ScaleFactor resource_scale_factor =
               ui::GetSupportedScaleFactor(parsed.device_scale_factor);
           callback.Run(
-              ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
-                  prepopulated_page.favicon_id, resource_scale_factor));
+              ui::ResourceBundle::GetSharedInstance()
+                  .LoadDataResourceBytesForScale(prepopulated_page.favicon_id,
+                                                 resource_scale_factor));
           return;
         }
       }
     }
 
     favicon_service->GetRawFaviconForPageURL(
-        url,
-        icon_types_,
-        desired_size_in_pixel,
-        base::Bind(
-            &FaviconSource::OnFaviconDataAvailable,
-            base::Unretained(this),
-            IconRequest(
-                callback, url, parsed.size_in_dip, parsed.device_scale_factor)),
+        url, {favicon_base::IconType::kFavicon}, desired_size_in_pixel,
+        base::Bind(&FaviconSource::OnFaviconDataAvailable,
+                   base::Unretained(this),
+                   IconRequest(callback, url, parsed.size_in_dip,
+                               parsed.device_scale_factor)),
         &cancelable_task_tracker_);
   }
 }
@@ -142,10 +132,16 @@ bool FaviconSource::ShouldReplaceExistingSource() const {
   return false;
 }
 
-bool FaviconSource::ShouldServiceRequest(const net::URLRequest* request) const {
-  if (request->url().SchemeIs(chrome::kChromeSearchScheme))
-    return InstantIOContext::ShouldServiceRequest(request);
-  return URLDataSource::ShouldServiceRequest(request);
+bool FaviconSource::ShouldServiceRequest(
+    const GURL& url,
+    content::ResourceContext* resource_context,
+    int render_process_id) const {
+  if (url.SchemeIs(chrome::kChromeSearchScheme)) {
+    return InstantIOContext::ShouldServiceRequest(url, resource_context,
+                                                  render_process_id);
+  }
+  return URLDataSource::ShouldServiceRequest(url, resource_context,
+                                             render_process_id);
 }
 
 bool FaviconSource::HandleMissingResource(const IconRequest& request) {
@@ -196,7 +192,7 @@ void FaviconSource::SendDefaultResponse(const IconRequest& icon_request) {
   }
 
   base::RefCountedMemory* default_favicon =
-      ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
+      ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
           resource_id,
           ui::GetSupportedScaleFactor(icon_request.device_scale_factor));
 

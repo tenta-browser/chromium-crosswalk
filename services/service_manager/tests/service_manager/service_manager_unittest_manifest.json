@@ -10,14 +10,22 @@
       },
       "requires": {
         "service_manager": [
+          "service_manager:singleton",
           "service_manager:service_manager",
-          "service_manager:client_process"
+          "service_manager:client_process",
+          "service_manager:instance_name"
         ],
         "service_manager_unittest_embedder": [
           "service_manager_unittest:embedder"
         ],
         "service_manager_unittest_singleton": [
           "service_manager_unittest:singleton"
+        ],
+        "service_manager_unittest_all_users": [
+          "service_manager_unittest:all_users"
+        ],
+        "service_manager_unittest_regular": [
+          "service_manager_unittest:regular"
         ],
         "service_manager_unittest_target": [ ]
       }

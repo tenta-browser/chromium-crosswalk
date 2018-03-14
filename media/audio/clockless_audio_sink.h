@@ -17,8 +17,7 @@ class ClocklessAudioSinkThread;
 
 // Implementation of an AudioRendererSink that consumes the audio as fast as
 // possible. This class does not support multiple Play()/Pause() events.
-class MEDIA_EXPORT ClocklessAudioSink
-    : NON_EXPORTED_BASE(public AudioRendererSink) {
+class MEDIA_EXPORT ClocklessAudioSink : public AudioRendererSink {
  public:
   ClocklessAudioSink();
   explicit ClocklessAudioSink(const OutputDeviceInfo& device_info);
@@ -32,6 +31,7 @@ class MEDIA_EXPORT ClocklessAudioSink
   void Play() override;
   bool SetVolume(double volume) override;
   OutputDeviceInfo GetOutputDeviceInfo() override;
+  bool IsOptimizedForHardwareParameters() override;
   bool CurrentThreadIsRenderingThread() override;
 
   // Returns the time taken to consume all the audio.
@@ -43,6 +43,8 @@ class MEDIA_EXPORT ClocklessAudioSink
   // Returns the hash of all audio frames seen since construction.
   std::string GetAudioHashForTesting();
 
+  void SetIsOptimizedForHardwareParametersForTesting(bool value);
+
  protected:
   ~ClocklessAudioSink() override;
 
@@ -52,6 +54,7 @@ class MEDIA_EXPORT ClocklessAudioSink
   bool initialized_;
   bool playing_;
   bool hashing_;
+  bool is_optimized_for_hw_params_;
 
   // Time taken in last set of Render() calls.
   base::TimeDelta playback_time_;

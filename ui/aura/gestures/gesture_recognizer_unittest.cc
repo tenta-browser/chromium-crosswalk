@@ -352,7 +352,7 @@ class QueueTouchEventDelegate : public GestureEventConsumeDelegate {
           synchronous_ack_for_next_event_ == AckState::CONSUMED
               ? ui::ER_CONSUMED
               : ui::ER_UNHANDLED,
-          window_);
+          false /* is_source_touch_event_set_non_blocking */, window_);
       synchronous_ack_for_next_event_ = AckState::PENDING;
     } else {
       sent_events_ids_.push_back(event->unique_event_id());
@@ -389,7 +389,8 @@ class QueueTouchEventDelegate : public GestureEventConsumeDelegate {
     sent_events_ids_.pop_front();
     dispatcher_->ProcessedTouchEvent(
         sent_event_id, window_,
-        prevent_defaulted ? ui::ER_HANDLED : ui::ER_UNHANDLED);
+        prevent_defaulted ? ui::ER_HANDLED : ui::ER_UNHANDLED,
+        false /* is_source_touch_event_set_non_blocking */);
   }
 
   Window* window_;
@@ -659,8 +660,7 @@ void SetTouchRadius(ui::TouchEvent* event, float radius_x, float radius_y) {
 
 }  // namespace
 
-class GestureRecognizerTest : public AuraTestBase,
-                              public ::testing::WithParamInterface<bool> {
+class GestureRecognizerTest : public AuraTestBase {
  public:
   GestureRecognizerTest() {}
 
@@ -693,7 +693,7 @@ class GestureRecognizerWithSwitchTest : public GestureRecognizerTest {
 // event originating from CancelActiveTouchesExcept. This monitors for
 // regressions on crbug.com/651258.
 TEST_F(GestureRecognizerTest, TouchCancelCanDestroyWindow) {
-  auto delegate = base::MakeUnique<GestureEventConsumeDelegate>();
+  auto delegate = std::make_unique<GestureEventConsumeDelegate>();
   TimedEvents tes;
   const int kTouchId = 1;
 
@@ -701,7 +701,7 @@ TEST_F(GestureRecognizerTest, TouchCancelCanDestroyWindow) {
   // events.
   std::unique_ptr<aura::Window> window(CreateTestWindowWithDelegate(
       delegate.get(), -1234, gfx::Rect(0, 0, 200, 200), root_window()));
-  auto handler = base::MakeUnique<RemoveOnTouchCancelHandler>();
+  auto handler = std::make_unique<RemoveOnTouchCancelHandler>();
   window->AddPreTargetHandler(handler.get());
 
   // Dispatch an event to |host_window| that will be cancelled.
@@ -1700,8 +1700,8 @@ TEST_F(GestureRecognizerTest, GestureTapFollowedByScroll) {
   EXPECT_TRUE(delegate->tap_cancel());
   EXPECT_TRUE(delegate->scroll_begin());
   EXPECT_TRUE(delegate->scroll_update());
-  EXPECT_EQ(15, delegate->scroll_x_hint());
-  EXPECT_EQ(15, delegate->scroll_y_hint());
+  EXPECT_EQ(10, delegate->scroll_x_hint());
+  EXPECT_EQ(10, delegate->scroll_y_hint());
 
   delegate->Reset();
 
@@ -3709,7 +3709,7 @@ TEST_F(GestureRecognizerTest, NoDriftInScroll) {
   EXPECT_TRUE(delegate->scroll_update());
   // 3 px consumed by touch slop region.
   EXPECT_EQ(-1, delegate->scroll_y());
-  EXPECT_EQ(-4, delegate->scroll_y_hint());
+  EXPECT_EQ(-1, delegate->scroll_y_hint());
 
   delegate->Reset();
 
@@ -4096,7 +4096,7 @@ TEST_F(GestureRecognizerTest, TestExceedingSlopSlowly) {
   EXPECT_TRUE(delegate->scroll_begin());
   EXPECT_TRUE(delegate->scroll_update());
   EXPECT_NEAR(0.1, delegate->scroll_x(), 0.0001);
-  EXPECT_FLOAT_EQ(3.1f, delegate->scroll_x_hint());
+  EXPECT_NEAR(0.1, delegate->scroll_x_hint(), 0.0001);
   delegate->Reset();
 
   ui::TouchEvent move4(

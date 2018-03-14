@@ -2,17 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// MSVC++ requires this to be set before any other includes to get M_PI.
-#define _USE_MATH_DEFINES
-
 #include "ui/events/gesture_detection/motion_event_generic.h"
 
-#include <cmath>
 #include <utility>
 
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/numerics/math_constants.h"
 #include "ui/events/base_event_utils.h"
+#include "ui/gfx/geometry/angle_conversions.h"
 
 namespace ui {
 
@@ -31,9 +29,9 @@ PointerProperties::PointerProperties(float x, float y, float touch_major)
       touch_major(touch_major),
       touch_minor(0),
       orientation(0),
-      tilt(0),
-      source_device_id(0) {
-}
+      tilt_x(0),
+      tilt_y(0),
+      source_device_id(0) {}
 
 PointerProperties::PointerProperties(const MotionEvent& event,
                                      size_t pointer_index)
@@ -47,9 +45,9 @@ PointerProperties::PointerProperties(const MotionEvent& event,
       touch_major(event.GetTouchMajor(pointer_index)),
       touch_minor(event.GetTouchMinor(pointer_index)),
       orientation(event.GetOrientation(pointer_index)),
-      tilt(event.GetTilt(pointer_index)),
-      source_device_id(0) {
-}
+      tilt_x(event.GetTiltX(pointer_index)),
+      tilt_y(event.GetTiltY(pointer_index)),
+      source_device_id(0) {}
 
 PointerProperties::PointerProperties(const PointerProperties& other) = default;
 
@@ -57,16 +55,16 @@ void PointerProperties::SetAxesAndOrientation(float radius_x,
                                               float radius_y,
                                               float rotation_angle_degree) {
   DCHECK(!touch_major && !touch_minor && !orientation);
-  float rotation_angle_rad = rotation_angle_degree * M_PI / 180.f;
+  float rotation_angle_rad = gfx::DegToRad(rotation_angle_degree);
   DCHECK_GE(radius_x, 0) << "Unexpected x-radius < 0 (" << radius_x << ")";
   DCHECK_GE(radius_y, 0) << "Unexpected y-radius < 0 (" << radius_y << ")";
-  DCHECK(0 <= rotation_angle_rad && rotation_angle_rad < M_PI)
+  DCHECK(0 <= rotation_angle_rad && rotation_angle_rad < base::kPiFloat)
       << "Unexpected touch rotation angle " << rotation_angle_rad << " rad";
 
   // Make the angle acute to ease subsequent logic. The angle range effectively
   // changes from [0, pi) to [0, pi/2).
-  if (rotation_angle_rad >= M_PI_2) {
-    rotation_angle_rad -= static_cast<float>(M_PI_2);
+  if (rotation_angle_rad >= base::kPiFloat / 2) {
+    rotation_angle_rad -= base::kPiFloat / 2;
     std::swap(radius_x, radius_y);
   }
 
@@ -76,7 +74,7 @@ void PointerProperties::SetAxesAndOrientation(float radius_x,
     // cases but always seem to be set to zero) unchanged.
     touch_major = 2.f * radius_x;
     touch_minor = 2.f * radius_y;
-    orientation = rotation_angle_rad - M_PI_2;
+    orientation = rotation_angle_rad - base::kPiFloat / 2;
   } else {
     touch_major = 2.f * radius_y;
     touch_minor = 2.f * radius_x;
@@ -176,9 +174,14 @@ float MotionEventGeneric::GetPressure(size_t pointer_index) const {
   return pointers_[pointer_index].pressure;
 }
 
-float MotionEventGeneric::GetTilt(size_t pointer_index) const {
+float MotionEventGeneric::GetTiltX(size_t pointer_index) const {
   DCHECK_LT(pointer_index, pointers_->size());
-  return pointers_[pointer_index].tilt;
+  return pointers_[pointer_index].tilt_x;
+}
+
+float MotionEventGeneric::GetTiltY(size_t pointer_index) const {
+  DCHECK_LT(pointer_index, pointers_->size());
+  return pointers_[pointer_index].tilt_y;
 }
 
 MotionEvent::ToolType MotionEventGeneric::GetToolType(
@@ -263,8 +266,7 @@ void MotionEventGeneric::PushHistoricalEvent(
   DCHECK_EQ(event->GetAction(), ACTION_MOVE);
   DCHECK_EQ(event->GetPointerCount(), GetPointerCount());
   DCHECK_EQ(event->GetAction(), GetAction());
-  DCHECK_LE(event->GetEventTime().ToInternalValue(),
-            GetEventTime().ToInternalValue());
+  DCHECK_LE(event->GetEventTime(), GetEventTime());
   historical_events_.push_back(std::move(event));
 }
 

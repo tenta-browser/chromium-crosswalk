@@ -27,8 +27,6 @@ class RenderFrameHostImpl;
 // native counterpart.
 class RenderFrameHostAndroid : public base::SupportsUserData::Data {
  public:
-  static bool Register(JNIEnv* env);
-
   RenderFrameHostAndroid(
       RenderFrameHostImpl* render_frame_host,
       service_manager::mojom::InterfaceProviderPtr interface_provider_ptr);
@@ -38,6 +36,16 @@ class RenderFrameHostAndroid : public base::SupportsUserData::Data {
 
   // Methods called from Java
   base::android::ScopedJavaLocalRef<jstring> GetLastCommittedURL(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>&) const;
+
+  void GetCanonicalUrlForSharing(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>&,
+      const base::android::JavaParamRef<jobject>& jcallback) const;
+
+  // Returns UnguessableToken.
+  base::android::ScopedJavaLocalRef<jobject> GetAndroidOverlayRoutingToken(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>&) const;
 

@@ -6,9 +6,12 @@
 
 #include <linux/magic.h>
 #include <sys/statfs.h>
+#include <map>
 #include <set>
+#include <string>
 
 #include "base/callback.h"
+#include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
@@ -16,11 +19,16 @@
 #include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/chromeos/arc/arc_session_manager.h"
+#include "chrome/browser/chromeos/arc/policy/arc_policy_util.h"
+#include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/user_flow.h"
 #include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
+#include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/pref_names.h"
+#include "chromeos/chromeos_switches.h"
+#include "components/arc/arc_prefs.h"
 #include "components/arc/arc_util.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_manager/known_user.h"
@@ -34,8 +42,23 @@ namespace {
 constexpr char kLsbReleaseArcVersionKey[] = "CHROMEOS_ARC_ANDROID_SDK_VERSION";
 constexpr char kAndroidMSdkVersion[] = "23";
 
+// Contains map of profile to check result of ARC allowed. Contains true if ARC
+// allowed check was performed and ARC is allowed. If map does not contain
+// a value then this means that check has not been performed yet.
+base::LazyInstance<std::map<const Profile*, bool>>::DestructorAtExit
+    g_profile_status_check = LAZY_INSTANCE_INITIALIZER;
+
+// The cached value of migration allowed for profile. It is necessary to use
+// the same value during a user session.
+base::LazyInstance<std::map<base::FilePath, bool>>::DestructorAtExit
+    g_is_arc_migration_allowed = LAZY_INSTANCE_INITIALIZER;
+
 // Let IsAllowedForProfile() return "false" for any profile.
 bool g_disallow_for_testing = false;
+
+// Let IsArcBlockedDueToIncompatibleFileSystem() return the specified value
+// during test runs.
+bool g_arc_blocked_due_to_incomaptible_filesystem_for_testing = false;
 
 // TODO(kinaba): Temporary workaround for crbug.com/729034.
 //
@@ -53,7 +76,7 @@ base::LazyInstance<std::set<AccountId>>::DestructorAtExit
 // Returns whether ARC can run on the filesystem mounted at |path|.
 // This function should run only on threads where IO operations are allowed.
 bool IsArcCompatibleFilesystem(const base::FilePath& path) {
-  base::ThreadRestrictions::AssertIOAllowed();
+  base::AssertBlockingAllowed();
 
   // If it can be verified it is not on ecryptfs, then it is ok.
   struct statfs statfs_buf;
@@ -90,27 +113,71 @@ void StoreCompatibilityCheckResult(const AccountId& account_id,
   callback.Run();
 }
 
-}  // namespace
-
-bool IsArcAllowedForProfile(const Profile* profile) {
-  if (!IsArcAllowedInAppListForProfile(profile))
-    return false;
-
-  if (base::SysInfo::IsRunningOnChromeOS()) {
-    // Do not allow newer version of ARC on old filesystem.
-    // Check this condition only on real Chrome OS devices. Test runs on Linux
-    // workstation does not have expected /etc/lsb-release field nor profile
-    // creation step.
-    if (!IsArcCompatibleFileSystemUsedForProfile(profile))
-      return false;
+bool IsArcMigrationAllowedInternal(const Profile* profile) {
+  policy_util::EcryptfsMigrationAction migration_strategy =
+      policy_util::GetDefaultEcryptfsMigrationActionForManagedUser(
+          IsActiveDirectoryUserForProfile(profile));
+  if (profile->GetPrefs()->IsManagedPreference(
+          prefs::kEcryptfsMigrationStrategy)) {
+    migration_strategy = static_cast<policy_util::EcryptfsMigrationAction>(
+        profile->GetPrefs()->GetInteger(prefs::kEcryptfsMigrationStrategy));
+  }
+  // |kAskForEcryptfsArcUsers| value is received only if the device is in EDU
+  // and admin left the migration policy unset. Note that when enabling ARC on
+  // the admin console, it is mandatory for the administrator to also choose a
+  // migration policy.
+  // In this default case, only a group of devices that had ARC M enabled are
+  // allowed to migrate, provided that ARC is enabled by policy.
+  // TODO(pmarko): Remove the special kAskForEcryptfsArcUsers handling when we
+  // assess that it's not necessary anymore: crbug.com/761348.
+  if (migration_strategy ==
+      policy_util::EcryptfsMigrationAction::kAskForEcryptfsArcUsers) {
+    // Note that ARC enablement is controlled by policy for managed users (as
+    // it's marked 'default_for_enterprise_users': False in
+    // policy_templates.json).
+    DCHECK(profile->GetPrefs()->IsManagedPreference(prefs::kArcEnabled));
+    // We can't reuse IsArcPlayStoreEnabledForProfile here because this would
+    // lead to a circular dependency: It ends up calling this function for some
+    // cases.
+    return profile->GetPrefs()->GetBoolean(prefs::kArcEnabled) &&
+           base::CommandLine::ForCurrentProcess()->HasSwitch(
+               chromeos::switches::kArcTransitionMigrationRequired);
   }
 
+  return migration_strategy !=
+         policy_util::EcryptfsMigrationAction::kDisallowMigration;
+}
+
+bool IsUnaffiliatedArcAllowed() {
+  bool arc_allowed;
+  ArcSessionManager* arc_session_manager = ArcSessionManager::Get();
+  if (arc_session_manager) {
+    switch (arc_session_manager->state()) {
+      case ArcSessionManager::State::NOT_INITIALIZED:
+      case ArcSessionManager::State::STOPPED:
+        // Apply logic below
+        break;
+      case ArcSessionManager::State::NEGOTIATING_TERMS_OF_SERVICE:
+      case ArcSessionManager::State::CHECKING_ANDROID_MANAGEMENT:
+      case ArcSessionManager::State::REMOVING_DATA_DIR:
+      case ArcSessionManager::State::ACTIVE:
+      case ArcSessionManager::State::STOPPING:
+        // Never forbid unaffiliated ARC while ARC is running
+        return true;
+    }
+  }
+  if (chromeos::CrosSettings::Get()->GetBoolean(
+          chromeos::kUnaffiliatedArcAllowed, &arc_allowed)) {
+    return arc_allowed;
+  }
+  // If device policy is not set, allow ARC.
   return true;
 }
 
-bool IsArcAllowedInAppListForProfile(const Profile* profile) {
+bool IsArcAllowedForProfileInternal(const Profile* profile,
+                                    bool should_report_reason) {
   if (g_disallow_for_testing) {
-    VLOG(1) << "ARC is disallowed for testing.";
+    VLOG_IF(1, should_report_reason) << "ARC is disallowed for testing.";
     return false;
   }
 
@@ -118,29 +185,26 @@ bool IsArcAllowedInAppListForProfile(const Profile* profile) {
   // In that case IsArcKioskMode() should return true as profile is already
   // created.
   if (!IsArcAvailable() && !(IsArcKioskMode() && IsArcKioskAvailable())) {
-    VLOG(1) << "ARC is not available.";
-    return false;
-  }
-
-  if (!profile) {
-    VLOG(1) << "ARC is not supported for systems without profile.";
+    VLOG_IF(1, should_report_reason) << "ARC is not available.";
     return false;
   }
 
   if (!chromeos::ProfileHelper::IsPrimaryProfile(profile)) {
-    VLOG(1) << "Non-primary users are not supported in ARC.";
-    return false;
-  }
-
-  // IsPrimaryProfile can return true for an incognito profile corresponding
-  // to the primary profile, but ARC does not support it.
-  if (profile->IsOffTheRecord()) {
-    VLOG(1) << "Incognito profile is not supported in ARC.";
+    VLOG_IF(1, should_report_reason)
+        << "Non-primary users are not supported in ARC.";
     return false;
   }
 
   if (profile->IsLegacySupervised()) {
-    VLOG(1) << "Supervised users are not supported in ARC.";
+    VLOG_IF(1, should_report_reason)
+        << "Supervised users are not supported in ARC.";
+    return false;
+  }
+
+  if (IsArcBlockedDueToIncompatibleFileSystem(profile) &&
+      !IsArcMigrationAllowedByPolicyForProfile(profile)) {
+    VLOG_IF(1, should_report_reason)
+        << "Incompatible encryption and migration forbidden.";
     return false;
   }
 
@@ -150,12 +214,14 @@ bool IsArcAllowedInAppListForProfile(const Profile* profile) {
   // (e.g. in public sessions). cf) crbug.com/605545
   const user_manager::User* user =
       chromeos::ProfileHelper::Get()->GetUserByProfile(profile);
-  const bool has_gaia_account = user && user->HasGaiaAccount();
-  const bool is_arc_active_directory_user =
-      user && user->IsActiveDirectoryUser() &&
-      IsArcAllowedForActiveDirectoryUsers();
-  if (!has_gaia_account && !is_arc_active_directory_user && !IsArcKioskMode()) {
-    VLOG(1) << "Users without GAIA accounts are not supported in ARC.";
+  if (!IsArcAllowedForUser(user)) {
+    VLOG_IF(1, should_report_reason) << "ARC is not allowed for the user.";
+    return false;
+  }
+
+  if (!user->IsAffiliated() && !IsUnaffiliatedArcAllowed()) {
+    VLOG_IF(1, should_report_reason)
+        << "Device admin disallowed ARC for unaffiliated users.";
     return false;
   }
 
@@ -164,18 +230,78 @@ bool IsArcAllowedInAppListForProfile(const Profile* profile) {
   chromeos::UserFlow* user_flow =
       chromeos::ChromeUserManager::Get()->GetUserFlow(user->GetAccountId());
   if (!user_flow || !user_flow->CanStartArc()) {
-    VLOG(1) << "ARC is not allowed in the current user flow.";
-    return false;
-  }
-
-  // Do not allow for Ephemeral data user. cf) b/26402681
-  if (user_manager::UserManager::Get()
-          ->IsCurrentUserCryptohomeDataEphemeral()) {
-    VLOG(1) << "Users with ephemeral data are not supported in ARC.";
+    VLOG_IF(1, should_report_reason)
+        << "ARC is not allowed in the current user flow.";
     return false;
   }
 
   return true;
+}
+
+}  // namespace
+
+bool IsArcAllowedForProfile(const Profile* profile) {
+  // Silently ignore default, lock screen and incognito profiles.
+  if (!profile || chromeos::ProfileHelper::IsSigninProfile(profile) ||
+      profile->IsOffTheRecord() ||
+      chromeos::ProfileHelper::IsLockScreenAppProfile(profile)) {
+    return false;
+  }
+
+  auto it = g_profile_status_check.Get().find(profile);
+
+  const bool first_check = it == g_profile_status_check.Get().end();
+  const bool result =
+      IsArcAllowedForProfileInternal(profile, first_check /* report_reason */);
+
+  if (first_check) {
+    g_profile_status_check.Get()[profile] = result;
+    return result;
+  }
+
+  // This is next check. We should be persistent and report the same result.
+  if (result != it->second) {
+    NOTREACHED() << "ARC allowed was changed for the current user session "
+                 << "and profile " << profile->GetPath().MaybeAsASCII()
+                 << ". This may lead to unexpected behavior. ARC allowed is"
+                 << " forced to " << it->second;
+  }
+  return it->second;
+}
+
+void ResetArcAllowedCheckForTesting(const Profile* profile) {
+  g_profile_status_check.Get().erase(profile);
+}
+
+bool IsArcMigrationAllowedByPolicyForProfile(const Profile* profile) {
+  // Always allow migration for unmanaged users.
+  if (!profile || !policy_util::IsAccountManaged(profile))
+    return true;
+
+  // Use the profile path as unique identifier for profile.
+  const base::FilePath path = profile->GetPath();
+  auto iter = g_is_arc_migration_allowed.Get().find(path);
+  if (iter == g_is_arc_migration_allowed.Get().end()) {
+    iter = g_is_arc_migration_allowed.Get()
+               .emplace(path, IsArcMigrationAllowedInternal(profile))
+               .first;
+  }
+
+  return iter->second;
+}
+
+bool IsArcBlockedDueToIncompatibleFileSystem(const Profile* profile) {
+  // Test runs on Linux workstation does not have expected /etc/lsb-release
+  // field nor profile creation step. Hence it returns a dummy test value.
+  if (!base::SysInfo::IsRunningOnChromeOS())
+    return g_arc_blocked_due_to_incomaptible_filesystem_for_testing;
+
+  // Conducts the actual check, only when running on a real Chrome OS device.
+  return !IsArcCompatibleFileSystemUsedForProfile(profile);
+}
+
+void SetArcBlockedDueToIncompatibleFileSystemForTesting(bool block) {
+  g_arc_blocked_due_to_incomaptible_filesystem_for_testing = block;
 }
 
 bool IsArcCompatibleFileSystemUsedForProfile(const Profile* profile) {
@@ -213,6 +339,7 @@ bool IsArcCompatibleFileSystemUsedForProfile(const Profile* profile) {
 
 void DisallowArcForTesting() {
   g_disallow_for_testing = true;
+  g_profile_status_check.Get().clear();
 }
 
 bool IsArcPlayStoreEnabledForProfile(const Profile* profile) {
@@ -228,33 +355,93 @@ bool IsArcPlayStoreEnabledPreferenceManagedForProfile(const Profile* profile) {
   return profile->GetPrefs()->IsManagedPreference(prefs::kArcEnabled);
 }
 
-void SetArcPlayStoreEnabledForProfile(Profile* profile, bool enabled) {
+bool SetArcPlayStoreEnabledForProfile(Profile* profile, bool enabled) {
   DCHECK(IsArcAllowedForProfile(profile));
   if (IsArcPlayStoreEnabledPreferenceManagedForProfile(profile)) {
+    if (enabled && !IsArcPlayStoreEnabledForProfile(profile)) {
+      LOG(WARNING) << "Attempt to enable disabled by policy ARC.";
+      return false;
+    }
     VLOG(1) << "Google-Play-Store-enabled pref is managed. Request to "
             << (enabled ? "enable" : "disable") << " Play Store is not stored";
     // Need update ARC session manager manually for managed case in order to
     // keep its state up to date, otherwise it may stuck with enabling
     // request.
-    // TODO (khmel): Consider finding the better way handling this.
+    // TODO(khmel): Consider finding the better way handling this.
     ArcSessionManager* arc_session_manager = ArcSessionManager::Get();
     // |arc_session_manager| can be nullptr in unit_tests.
     if (!arc_session_manager)
-      return;
+      return false;
     if (enabled)
       arc_session_manager->RequestEnable();
     else
       arc_session_manager->RequestDisable();
-    return;
+    return true;
   }
   profile->GetPrefs()->SetBoolean(prefs::kArcEnabled, enabled);
+  return true;
 }
 
-bool AreArcAllOptInPreferencesManagedForProfile(const Profile* profile) {
-  return profile->GetPrefs()->IsManagedPreference(
-             prefs::kArcBackupRestoreEnabled) &&
-         profile->GetPrefs()->IsManagedPreference(
-             prefs::kArcLocationServiceEnabled);
+bool AreArcAllOptInPreferencesIgnorableForProfile(const Profile* profile) {
+  // For Active Directory users, a LaForge account is created, where
+  // backup&restore and location services are not supported, hence the policies
+  // are unused.
+  if (IsActiveDirectoryUserForProfile(profile))
+    return true;
+
+  if (profile->GetPrefs()->IsManagedPreference(
+          prefs::kArcBackupRestoreEnabled) &&
+      profile->GetPrefs()->IsManagedPreference(
+          prefs::kArcLocationServiceEnabled)) {
+    return true;
+  }
+
+  return false;
+}
+
+bool IsActiveDirectoryUserForProfile(const Profile* profile) {
+  const user_manager::User* user =
+      chromeos::ProfileHelper::Get()->GetUserByProfile(profile);
+  return user ? user->IsActiveDirectoryUser() : false;
+}
+
+bool IsArcOobeOptInActive() {
+  // No OOBE is expected in case Play Store is not available.
+  if (!IsPlayStoreAvailable())
+    return false;
+
+  // Check if Chrome OS OOBE or OPA OptIn flow is currently showing.
+  // TODO(b/65861628): Rename the method since it is no longer accurate.
+  // Redesign the OptIn flow since there is no longer reason to have two
+  // different OptIn flows.
+  chromeos::LoginDisplayHost* host = chromeos::LoginDisplayHost::default_host();
+  if (!host)
+    return false;
+
+  // Make sure the wizard controller is active and have the ARC ToS screen
+  // showing for the voice interaction OptIn flow.
+  if (host->IsVoiceInteractionOobe()) {
+    const chromeos::WizardController* wizard_controller =
+        host->GetWizardController();
+    if (!wizard_controller)
+      return false;
+    const chromeos::BaseScreen* screen = wizard_controller->current_screen();
+    if (!screen)
+      return false;
+    return screen->screen_id() ==
+           chromeos::OobeScreen::SCREEN_ARC_TERMS_OF_SERVICE;
+  }
+
+  // Use the legacy logic for first sign-in OOBE OptIn flow. Make sure the user
+  // is new and the swtich is appended.
+  if (!user_manager::UserManager::Get()->IsCurrentUserNew())
+    return false;
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          chromeos::switches::kEnableArcOOBEOptIn)) {
+    return false;
+  }
+
+  return true;
 }
 
 void UpdateArcFileSystemCompatibilityPrefIfNeeded(
@@ -282,13 +469,39 @@ void UpdateArcFileSystemCompatibilityPrefIfNeeded(
   // Otherwise, check the underlying filesystem.
   base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE,
-      base::TaskTraits()
-          .WithShutdownBehavior(
-              base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-          .WithPriority(base::TaskPriority::USER_BLOCKING)
-          .MayBlock(),
+      {base::MayBlock(), base::TaskPriority::USER_BLOCKING,
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::Bind(&IsArcCompatibleFilesystem, profile_path),
       base::Bind(&StoreCompatibilityCheckResult, account_id, callback));
+}
+
+ash::mojom::AssistantAllowedState IsAssistantAllowedForProfile(
+    const Profile* profile) {
+  if (!chromeos::switches::IsVoiceInteractionFlagsEnabled())
+    return ash::mojom::AssistantAllowedState::DISALLOWED_BY_FLAG;
+
+  if (!chromeos::switches::IsVoiceInteractionLocalesSupported())
+    return ash::mojom::AssistantAllowedState::DISALLOWED_BY_LOCALE;
+
+  if (!chromeos::ProfileHelper::IsPrimaryProfile(profile))
+    return ash::mojom::AssistantAllowedState::DISALLOWED_BY_NONPRIMARY_USER;
+
+  if (profile->IsOffTheRecord())
+    return ash::mojom::AssistantAllowedState::DISALLOWED_BY_INCOGNITO;
+
+  if (profile->IsLegacySupervised())
+    return ash::mojom::AssistantAllowedState::DISALLOWED_BY_SUPERVISED_USER;
+
+  const PrefService* prefs = profile->GetPrefs();
+  if (prefs->IsManagedPreference(prefs::kArcEnabled) &&
+      !prefs->GetBoolean(prefs::kArcEnabled)) {
+    return ash::mojom::AssistantAllowedState::DISALLOWED_BY_ARC_POLICY;
+  }
+
+  if (!IsArcAllowedForProfile(profile))
+    return ash::mojom::AssistantAllowedState::DISALLOWED_BY_ARC_DISALLOWED;
+
+  return ash::mojom::AssistantAllowedState::ALLOWED;
 }
 
 }  // namespace arc

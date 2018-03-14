@@ -4,6 +4,7 @@
 
 #include "headless/test/headless_browser_test.h"
 
+#include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
@@ -23,6 +24,7 @@
 #include "headless/public/headless_web_contents.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gl/gl_switches.h"
 #include "url/gurl.h"
 
 namespace headless {
@@ -135,24 +137,30 @@ HeadlessBrowserTest::HeadlessBrowserTest() {
   CreateTestServer(headless_test_data);
 }
 
-HeadlessBrowserTest::~HeadlessBrowserTest() {}
-
-void HeadlessBrowserTest::SetUpOnMainThread() {}
-
-void HeadlessBrowserTest::TearDownOnMainThread() {
-  browser()->Shutdown();
+void HeadlessBrowserTest::SetUp() {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  // Enable GPU usage (i.e., SwiftShader, hardware GL on macOS) in all tests
+  // since that's the default configuration of --headless.
+  command_line->AppendSwitch(switches::kUseGpuInTests);
+  SetUpCommandLine(command_line);
+  BrowserTestBase::SetUp();
 }
 
-void HeadlessBrowserTest::RunTestOnMainThreadLoop() {
+void HeadlessBrowserTest::SetUpWithoutGPU() {
+  BrowserTestBase::SetUp();
+}
+
+HeadlessBrowserTest::~HeadlessBrowserTest() = default;
+
+void HeadlessBrowserTest::PreRunTestOnMainThread() {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   // Pump startup related events.
   base::RunLoop().RunUntilIdle();
+}
 
-  SetUpOnMainThread();
-  RunTestOnMainThread();
-  TearDownOnMainThread();
-
+void HeadlessBrowserTest::PostRunTestOnMainThread() {
+  browser()->Shutdown();
   for (content::RenderProcessHost::iterator i(
            content::RenderProcessHost::AllHostsIterator());
        !i.IsAtEnd(); i.Advance()) {
@@ -190,7 +198,9 @@ void HeadlessBrowserTest::RunAsynchronousTest() {
       base::MessageLoop::current());
   EXPECT_FALSE(run_loop_);
   run_loop_ = base::MakeUnique<base::RunLoop>();
+  PreRunAsynchronousTest();
   run_loop_->Run();
+  PostRunAsynchronousTest();
   run_loop_ = nullptr;
 }
 
@@ -202,9 +212,11 @@ HeadlessAsyncDevTooledBrowserTest::HeadlessAsyncDevTooledBrowserTest()
     : browser_context_(nullptr),
       web_contents_(nullptr),
       devtools_client_(HeadlessDevToolsClient::Create()),
+      browser_devtools_client_(HeadlessDevToolsClient::Create()),
       render_process_exited_(false) {}
 
-HeadlessAsyncDevTooledBrowserTest::~HeadlessAsyncDevTooledBrowserTest() {}
+HeadlessAsyncDevTooledBrowserTest::~HeadlessAsyncDevTooledBrowserTest() =
+    default;
 
 void HeadlessAsyncDevTooledBrowserTest::DevToolsTargetReady() {
   EXPECT_TRUE(web_contents_->GetDevToolsTarget());
@@ -218,25 +230,28 @@ void HeadlessAsyncDevTooledBrowserTest::RenderProcessExited(
   if (status == base::TERMINATION_STATUS_NORMAL_TERMINATION)
     return;
 
-  FAIL() << "Abnormal renderer termination";
   FinishAsynchronousTest();
   render_process_exited_ = true;
+  FAIL() << "Abnormal renderer termination";
 }
 
 void HeadlessAsyncDevTooledBrowserTest::RunTest() {
   HeadlessBrowserContext::Builder builder =
       browser()->CreateBrowserContextBuilder();
   builder.SetProtocolHandlers(GetProtocolHandlers());
-  if (GetCreateTabSocket()) {
+  if (GetAllowTabSockets()) {
     builder.EnableUnsafeNetworkAccessWithMojoBindings(true);
     builder.AddTabSocketMojoBindings();
   }
+  CustomizeHeadlessBrowserContext(builder);
   browser_context_ = builder.Build();
 
   browser()->SetDefaultBrowserContext(browser_context_);
+  browser()->GetDevToolsTarget()->AttachClient(browser_devtools_client_.get());
 
   web_contents_ = browser_context_->CreateWebContentsBuilder()
-                      .CreateTabSocket(GetCreateTabSocket())
+                      .SetAllowTabSockets(GetAllowTabSockets())
+                      .SetEnableBeginFrameControl(GetEnableBeginFrameControl())
                       .Build();
   web_contents_->AddObserver(this);
 
@@ -247,6 +262,7 @@ void HeadlessAsyncDevTooledBrowserTest::RunTest() {
   web_contents_->RemoveObserver(this);
   web_contents_->Close();
   web_contents_ = nullptr;
+  browser()->GetDevToolsTarget()->DetachClient(browser_devtools_client_.get());
   browser_context_->Close();
   browser_context_ = nullptr;
 }
@@ -255,8 +271,15 @@ ProtocolHandlerMap HeadlessAsyncDevTooledBrowserTest::GetProtocolHandlers() {
   return ProtocolHandlerMap();
 }
 
-bool HeadlessAsyncDevTooledBrowserTest::GetCreateTabSocket() {
+bool HeadlessAsyncDevTooledBrowserTest::GetAllowTabSockets() {
   return false;
 }
+
+bool HeadlessAsyncDevTooledBrowserTest::GetEnableBeginFrameControl() {
+  return false;
+}
+
+void HeadlessAsyncDevTooledBrowserTest::CustomizeHeadlessBrowserContext(
+    HeadlessBrowserContext::Builder& builder) {}
 
 }  // namespace headless

@@ -19,28 +19,37 @@ Polymer({
       notify: true,
     },
 
+    /**
+     * True if the current profile manages supervised users.
+     * Set in people-page.
+     */
+    profileManagesSupervisedUsers: {
+      type: Boolean,
+      value: false,
+    },
+
     /** @private */
     isOwner_: {
       type: Boolean,
-      value: true
+      value: true,
     },
 
     /** @private */
     isWhitelistManaged_: {
       type: Boolean,
-      value: false
+      value: false,
     },
   },
 
   /** @override */
   created: function() {
-    chrome.usersPrivate.isCurrentUserOwner(function(isOwner) {
+    chrome.usersPrivate.isCurrentUserOwner(isOwner => {
       this.isOwner_ = isOwner;
-    }.bind(this));
+    });
 
-    chrome.usersPrivate.isWhitelistManaged(function(isWhitelistManaged) {
+    chrome.usersPrivate.isWhitelistManaged(isWhitelistManaged => {
       this.isWhitelistManaged_ = isWhitelistManaged;
-    }.bind(this));
+    });
   },
 
   /**
@@ -54,7 +63,7 @@ Polymer({
 
   /** @private */
   onAddUserDialogClose_: function() {
-    this.$$('#add-user-button a').focus();
+    cr.ui.focusWithoutInk(assert(this.$$('#add-user-button a')));
   },
 
   /**

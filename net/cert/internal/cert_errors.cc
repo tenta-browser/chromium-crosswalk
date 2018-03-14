@@ -5,7 +5,6 @@
 #include "net/cert/internal/cert_errors.h"
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "net/cert/internal/cert_error_params.h"
@@ -130,6 +129,12 @@ CertErrors* CertPathErrors::GetErrorsForCert(size_t cert_index) {
   return &cert_errors_[cert_index];
 }
 
+const CertErrors* CertPathErrors::GetErrorsForCert(size_t cert_index) const {
+  if (cert_index >= cert_errors_.size())
+    return nullptr;
+  return &cert_errors_[cert_index];
+}
+
 CertErrors* CertPathErrors::GetOtherErrors() {
   return &other_errors_;
 }
@@ -171,11 +176,8 @@ std::string CertPathErrors::ToDebugString(
     if (cert_errors_string.empty())
       continue;
 
-    // Add a header for the CertErrors that describes which certificate they
-    // apply to.
-    //
-    // TODO(eroman): Show the subject for trust anchor (which currently uses the
-    // bucket cert_errors_[certs.size()]).
+    // Add a header that identifies which certificate this CertErrors pertains
+    // to.
     std::string cert_name_debug_str;
     if (i < certs.size() && certs[i]) {
       RDNSequence subject;

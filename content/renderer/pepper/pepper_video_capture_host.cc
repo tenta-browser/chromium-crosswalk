@@ -261,7 +261,6 @@ int32_t PepperVideoCaptureHost::OnOpen(
       renderer_ppapi_host_->GetRenderFrameForInstance(pp_instance())->
           GetRoutingID(),
       device_id,
-      document_url,
       this));
 
   open_reply_context_ = context->MakeReplyMessageContext();
@@ -409,8 +408,7 @@ bool PepperVideoCaptureHost::SetStatus(PP_VideoCaptureStatus_Dev status,
 }
 
 PepperVideoCaptureHost::BufferInfo::BufferInfo()
-    : in_use(false), data(NULL), buffer() {
-}
+    : in_use(false), data(nullptr), buffer() {}
 
 PepperVideoCaptureHost::BufferInfo::BufferInfo(const BufferInfo& other) =
     default;

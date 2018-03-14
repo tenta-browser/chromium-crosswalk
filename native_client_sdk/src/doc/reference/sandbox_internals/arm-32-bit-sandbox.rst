@@ -1,5 +1,7 @@
 .. _arm-32-bit-sandbox:
 
+.. include:: /migration/deprecation.inc
+
 ==================
 ARM 32-bit Sandbox
 ==================
@@ -897,7 +899,7 @@ Validator Code
 ^^^^^^^^^^^^^^
 
 By now you're itching to see the sandbox validator's code and dissect
-it. You'll have a disapointing read: at less that 500 lines of code
+it. You'll have a disappointing read: at less that 500 lines of code
 `validator.cc
 <http://src.chromium.org/viewvc/native_client/trunk/src/native_client/src/trusted/validator_arm/validator.cc>`_
 is quite simple to understand and much shorter than this document. It's

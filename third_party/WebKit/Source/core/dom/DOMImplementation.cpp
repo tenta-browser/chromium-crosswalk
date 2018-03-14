@@ -26,8 +26,6 @@
 #include "core/dom/DOMImplementation.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/HTMLNames.h"
-#include "core/SVGNames.h"
 #include "core/css/CSSStyleSheet.h"
 #include "core/css/MediaList.h"
 #include "core/css/StyleSheetContents.h"
@@ -37,20 +35,22 @@
 #include "core/dom/Element.h"
 #include "core/dom/Text.h"
 #include "core/dom/XMLDocument.h"
-#include "core/dom/custom/V0CustomElementRegistrationContext.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLDocument.h"
 #include "core/html/HTMLHeadElement.h"
-#include "core/html/HTMLMediaElement.h"
 #include "core/html/HTMLTitleElement.h"
 #include "core/html/HTMLViewSourceDocument.h"
 #include "core/html/ImageDocument.h"
 #include "core/html/PluginDocument.h"
 #include "core/html/TextDocument.h"
+#include "core/html/custom/V0CustomElementRegistrationContext.h"
+#include "core/html/media/HTMLMediaElement.h"
 #include "core/html/media/MediaDocument.h"
+#include "core/html_names.h"
 #include "core/loader/FrameLoader.h"
 #include "core/page/Page.h"
+#include "core/svg_names.h"
 #include "platform/graphics/Image.h"
 #include "platform/network/mime/ContentType.h"
 #include "platform/network/mime/MIMETypeRegistry.h"
@@ -83,18 +83,18 @@ XMLDocument* DOMImplementation::createDocument(
     ExceptionState& exception_state) {
   XMLDocument* doc = nullptr;
   DocumentInit init =
-      DocumentInit::FromContext(GetDocument().ContextDocument());
+      DocumentInit::Create().WithContextDocument(document_->ContextDocument());
   if (namespace_uri == SVGNames::svgNamespaceURI) {
     doc = XMLDocument::CreateSVG(init);
   } else if (namespace_uri == HTMLNames::xhtmlNamespaceURI) {
     doc = XMLDocument::CreateXHTML(
-        init.WithRegistrationContext(GetDocument().RegistrationContext()));
+        init.WithRegistrationContext(document_->RegistrationContext()));
   } else {
     doc = XMLDocument::Create(init);
   }
 
-  doc->SetSecurityOrigin(GetDocument().GetSecurityOrigin());
-  doc->SetContextFeatures(GetDocument().GetContextFeatures());
+  doc->SetSecurityOrigin(document_->GetSecurityOrigin());
+  doc->SetContextFeatures(document_->GetContextFeatures());
 
   Node* document_element = nullptr;
   if (!qualified_name.IsEmpty()) {
@@ -113,9 +113,9 @@ XMLDocument* DOMImplementation::createDocument(
 }
 
 bool DOMImplementation::IsXMLMIMEType(const String& mime_type) {
-  if (DeprecatedEqualIgnoringCase(mime_type, "text/xml") ||
-      DeprecatedEqualIgnoringCase(mime_type, "application/xml") ||
-      DeprecatedEqualIgnoringCase(mime_type, "text/xsl"))
+  if (EqualIgnoringASCIICase(mime_type, "text/xml") ||
+      EqualIgnoringASCIICase(mime_type, "application/xml") ||
+      EqualIgnoringASCIICase(mime_type, "text/xsl"))
     return true;
 
   // Per RFCs 3023 and 2045, an XML MIME type is of the form:
@@ -126,7 +126,7 @@ bool DOMImplementation::IsXMLMIMEType(const String& mime_type) {
     return false;
 
   if (mime_type[0] == '/' || mime_type[length - 5] == '/' ||
-      !mime_type.EndsWith("+xml", kTextCaseASCIIInsensitive))
+      !mime_type.EndsWithIgnoringASCIICase("+xml"))
     return false;
 
   bool has_slash = false;
@@ -171,10 +171,10 @@ bool DOMImplementation::IsXMLMIMEType(const String& mime_type) {
 }
 
 bool DOMImplementation::IsJSONMIMEType(const String& mime_type) {
-  if (mime_type.StartsWith("application/json", kTextCaseASCIIInsensitive))
+  if (mime_type.StartsWithIgnoringASCIICase("application/json"))
     return true;
-  if (mime_type.StartsWith("application/", kTextCaseASCIIInsensitive)) {
-    size_t subtype = mime_type.Find("+json", 12, kTextCaseASCIIInsensitive);
+  if (mime_type.StartsWithIgnoringASCIICase("application/")) {
+    size_t subtype = mime_type.FindIgnoringASCIICase("+json", 12);
     if (subtype != kNotFound) {
       // Just check that a parameter wasn't matched.
       size_t parameter_marker = mime_type.Find(";");
@@ -190,10 +190,10 @@ bool DOMImplementation::IsJSONMIMEType(const String& mime_type) {
 }
 
 static bool IsTextPlainType(const String& mime_type) {
-  return mime_type.StartsWith("text/", kTextCaseASCIIInsensitive) &&
-         !(DeprecatedEqualIgnoringCase(mime_type, "text/html") ||
-           DeprecatedEqualIgnoringCase(mime_type, "text/xml") ||
-           DeprecatedEqualIgnoringCase(mime_type, "text/xsl"));
+  return mime_type.StartsWithIgnoringASCIICase("text/") &&
+         !(EqualIgnoringASCIICase(mime_type, "text/html") ||
+           EqualIgnoringASCIICase(mime_type, "text/xml") ||
+           EqualIgnoringASCIICase(mime_type, "text/xsl"));
 }
 
 bool DOMImplementation::IsTextMIMEType(const String& mime_type) {
@@ -201,10 +201,11 @@ bool DOMImplementation::IsTextMIMEType(const String& mime_type) {
          IsJSONMIMEType(mime_type) || IsTextPlainType(mime_type);
 }
 
-HTMLDocument* DOMImplementation::createHTMLDocument(const String& title) {
+Document* DOMImplementation::createHTMLDocument(const String& title) {
   DocumentInit init =
-      DocumentInit::FromContext(GetDocument().ContextDocument())
-          .WithRegistrationContext(GetDocument().RegistrationContext());
+      DocumentInit::Create()
+          .WithContextDocument(document_->ContextDocument())
+          .WithRegistrationContext(document_->RegistrationContext());
   HTMLDocument* d = HTMLDocument::Create(init);
   d->open();
   d->write("<!doctype html><html><head></head><body></body></html>");
@@ -215,8 +216,8 @@ HTMLDocument* DOMImplementation::createHTMLDocument(const String& title) {
     head_element->AppendChild(title_element);
     title_element->AppendChild(d->createTextNode(title), ASSERT_NO_EXCEPTION);
   }
-  d->SetSecurityOrigin(GetDocument().GetSecurityOrigin());
-  d->SetContextFeatures(GetDocument().GetContextFeatures());
+  d->SetSecurityOrigin(document_->GetSecurityOrigin());
+  d->SetContextFeatures(document_->GetContextFeatures());
   return d;
 }
 
@@ -240,14 +241,14 @@ Document* DOMImplementation::createDocument(const String& type,
     // init.frame()->tree().top()->securityContext() returns nullptr.
     // For that reason, the origin must be retrieved directly from init.url().
     if (init.GetFrame()->IsMainFrame()) {
-      RefPtr<SecurityOrigin> origin = SecurityOrigin::Create(init.Url());
-      plugin_data = init.GetFrame()->GetPage()->GetPluginData(origin.Get());
+      scoped_refptr<SecurityOrigin> origin = SecurityOrigin::Create(init.Url());
+      plugin_data = init.GetFrame()->GetPage()->GetPluginData(origin.get());
     } else {
       plugin_data =
           init.GetFrame()->GetPage()->GetPluginData(init.GetFrame()
                                                         ->Tree()
                                                         .Top()
-                                                        ->GetSecurityContext()
+                                                        .GetSecurityContext()
                                                         ->GetSecurityOrigin());
     }
   }
@@ -284,8 +285,9 @@ Document* DOMImplementation::createDocument(const String& type,
   return HTMLDocument::Create(init);
 }
 
-DEFINE_TRACE(DOMImplementation) {
+void DOMImplementation::Trace(blink::Visitor* visitor) {
   visitor->Trace(document_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

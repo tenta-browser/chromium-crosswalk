@@ -2,22 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#define _USE_MATH_DEFINES
-
 #include <stddef.h>
 #include <stdint.h>
 
 #include <algorithm>
-#include <cmath>
 #include <limits>
 
 #include "skia/ext/image_operations.h"
 
-// TODO(pkasting): skia/ext should not depend on base/!
 #include "base/containers/stack_container.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/numerics/math_constants.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -59,7 +56,7 @@ float EvalLanczos(int filter_size, float x) {
   if (x > -std::numeric_limits<float>::epsilon() &&
       x < std::numeric_limits<float>::epsilon())
     return 1.0f;  // Special case the discontinuity at the origin.
-  float xpi = x * static_cast<float>(M_PI);
+  float xpi = x * base::kPiFloat;
   return (sin(xpi) / xpi) *  // sinc(x)
           sin(xpi / filter_size) / (xpi / filter_size);  // sinc(x/filter_size)
 }
@@ -85,7 +82,7 @@ float EvalHamming(int filter_size, float x) {
   if (x > -std::numeric_limits<float>::epsilon() &&
       x < std::numeric_limits<float>::epsilon())
     return 1.0f;  // Special case the sinc discontinuity at the origin.
-  const float xpi = x * static_cast<float>(M_PI);
+  const float xpi = x * base::kPiFloat;
 
   return ((sin(xpi) / xpi) *  // sinc(x)
           (0.54f + 0.46f * cos(xpi / filter_size)));  // hamming(x)
@@ -328,9 +325,10 @@ ImageOperations::ResizeMethod ResizeMethodToAlgorithmMethod(
 // Resize ----------------------------------------------------------------------
 
 // static
-SkBitmap ImageOperations::Resize(const SkBitmap& source,
+SkBitmap ImageOperations::Resize(const SkPixmap& source,
                                  ResizeMethod method,
-                                 int dest_width, int dest_height,
+                                 int dest_width,
+                                 int dest_height,
                                  const SkIRect& dest_subset,
                                  SkBitmap::Allocator* allocator) {
   TRACE_EVENT2("disabled-by-default-skia", "ImageOperations::Resize",
@@ -345,23 +343,22 @@ SkBitmap ImageOperations::Resize(const SkBitmap& source,
   // Time how long this takes to see if it's a problem for users.
   base::TimeTicks resize_start = base::TimeTicks::Now();
 
-  SkIRect dest = { 0, 0, dest_width, dest_height };
-  DCHECK(dest.contains(dest_subset)) <<
-      "The supplied subset does not fall within the destination image.";
-
   // If the size of source or destination is 0, i.e. 0x0, 0xN or Nx0, just
   // return empty.
   if (source.width() < 1 || source.height() < 1 ||
       dest_width < 1 || dest_height < 1)
     return SkBitmap();
 
+  SkIRect dest = {0, 0, dest_width, dest_height};
+  DCHECK(dest.contains(dest_subset))
+      << "The supplied subset does not fall within the destination image.";
+
   method = ResizeMethodToAlgorithmMethod(method);
   // Check that we deal with an "algorithm methods" from this point onward.
   SkASSERT((ImageOperations::RESIZE_FIRST_ALGORITHM_METHOD <= method) &&
            (method <= ImageOperations::RESIZE_LAST_ALGORITHM_METHOD));
 
-  SkAutoLockPixels locker(source);
-  if (!source.readyToDraw() || source.colorType() != kN32_SkColorType)
+  if (!source.addr() || source.colorType() != kN32_SkColorType)
     return SkBitmap();
 
   ResizeFilter filter(method, source.width(), source.height(),
@@ -371,12 +368,12 @@ SkBitmap ImageOperations::Resize(const SkBitmap& source,
   // offsets and row strides such that it looks like a new bitmap, while
   // referring to the old data.
   const uint8_t* source_subset =
-      reinterpret_cast<const uint8_t*>(source.getPixels());
+      reinterpret_cast<const uint8_t*>(source.addr());
 
   // Convolve into the result.
   SkBitmap result;
   result.setInfo(SkImageInfo::MakeN32(dest_subset.width(), dest_subset.height(), source.alphaType()));
-  result.allocPixels(allocator, NULL);
+  result.allocPixels(allocator);
   if (!result.readyToDraw())
     return SkBitmap();
 
@@ -390,6 +387,20 @@ SkBitmap ImageOperations::Resize(const SkBitmap& source,
   UMA_HISTOGRAM_TIMES("Image.ResampleMS", delta);
 
   return result;
+}
+
+// static
+SkBitmap ImageOperations::Resize(const SkBitmap& source,
+                                 ResizeMethod method,
+                                 int dest_width,
+                                 int dest_height,
+                                 const SkIRect& dest_subset,
+                                 SkBitmap::Allocator* allocator) {
+  SkPixmap pixmap;
+  if (!source.peekPixels(&pixmap))
+    return SkBitmap();
+  return Resize(pixmap, method, dest_width, dest_height, dest_subset,
+                allocator);
 }
 
 // static

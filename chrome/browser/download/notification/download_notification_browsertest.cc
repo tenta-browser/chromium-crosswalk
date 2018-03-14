@@ -13,9 +13,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
+#include "chrome/browser/download/download_core_service.h"
+#include "chrome/browser/download/download_core_service_factory.h"
 #include "chrome/browser/download/download_prefs.h"
-#include "chrome/browser/download/download_service.h"
-#include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
@@ -23,9 +23,7 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/theme_resources.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chromeos/chromeos_switches.h"
@@ -41,6 +39,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_observer.h"
+#include "ui/message_center/public/cpp/message_center_switches.h"
 #include "url/gurl.h"
 
 namespace {
@@ -282,7 +281,7 @@ class DownloadNotificationTestBase : public InProcessBrowserTest {
 
     content::BrowserThread::PostTask(
         content::BrowserThread::IO, FROM_HERE,
-        base::Bind(&net::URLRequestSlowDownloadJob::AddUrlHandler));
+        base::BindOnce(&net::URLRequestSlowDownloadJob::AddUrlHandler));
 
     GetMessageCenter()->DisableTimersForTest();
 
@@ -331,7 +330,7 @@ class DownloadNotificationTest : public DownloadNotificationTestBase {
     test_delegate.reset(new TestChromeDownloadManagerDelegate(profile));
     test_delegate->GetDownloadIdReceiverCallback().Run(
         content::DownloadItem::kInvalidId + 1);
-    DownloadServiceFactory::GetForBrowserContext(profile)
+    DownloadCoreServiceFactory::GetForBrowserContext(profile)
         ->SetDownloadManagerDelegateForTesting(std::move(test_delegate));
 
     DownloadNotificationTestBase::SetUpOnMainThread();
@@ -339,7 +338,7 @@ class DownloadNotificationTest : public DownloadNotificationTestBase {
 
   TestChromeDownloadManagerDelegate* GetDownloadManagerDelegate() const {
     return static_cast<TestChromeDownloadManagerDelegate*>(
-        DownloadServiceFactory::GetForBrowserContext(browser()->profile())
+        DownloadCoreServiceFactory::GetForBrowserContext(browser()->profile())
             ->GetDownloadManagerDelegate());
   }
 
@@ -352,7 +351,7 @@ class DownloadNotificationTest : public DownloadNotificationTestBase {
     std::unique_ptr<TestChromeDownloadManagerDelegate> incognito_test_delegate;
     incognito_test_delegate.reset(
         new TestChromeDownloadManagerDelegate(incognito_profile));
-    DownloadServiceFactory::GetForBrowserContext(incognito_profile)
+    DownloadCoreServiceFactory::GetForBrowserContext(incognito_profile)
         ->SetDownloadManagerDelegateForTesting(
             std::move(incognito_test_delegate));
   }
@@ -361,8 +360,8 @@ class DownloadNotificationTest : public DownloadNotificationTestBase {
       const {
     Profile* incognito_profile = incognito_browser()->profile();
     return static_cast<TestChromeDownloadManagerDelegate*>(
-        DownloadServiceFactory::GetForBrowserContext(incognito_profile)->
-        GetDownloadManagerDelegate());
+        DownloadCoreServiceFactory::GetForBrowserContext(incognito_profile)
+            ->GetDownloadManagerDelegate());
   }
 
   void CreateDownload() {
@@ -441,10 +440,18 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest, DownloadFile) {
   }
 
   // Checks strings.
-  EXPECT_EQ(l10n_util::GetStringFUTF16(
-                IDS_DOWNLOAD_STATUS_DOWNLOADED_TITLE,
-                download_item()->GetFileNameToReportUser().LossyDisplayName()),
-            GetNotification(notification_id())->title());
+  if (message_center::IsNewStyleNotificationEnabled()) {
+    EXPECT_EQ(l10n_util::GetStringUTF16(IDS_DOWNLOAD_STATUS_COMPLETE_TITLE),
+              GetNotification(notification_id())->title());
+    EXPECT_EQ(download_item()->GetFileNameToReportUser().LossyDisplayName(),
+              GetNotification(notification_id())->message());
+  } else {
+    EXPECT_EQ(
+        l10n_util::GetStringFUTF16(
+            IDS_DOWNLOAD_STATUS_DOWNLOADED_TITLE,
+            download_item()->GetFileNameToReportUser().LossyDisplayName()),
+        GetNotification(notification_id())->title());
+  }
   EXPECT_EQ(message_center::NOTIFICATION_TYPE_BASE_FORMAT,
             GetNotification(notification_id())->type());
 
@@ -834,10 +841,12 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest, DownloadMultipleFiles) {
   EXPECT_TRUE(IsInNotifications(popup_notifications, notification_id2));
 
   // Confirms that the old one is low priority, and the new one is default.
-  EXPECT_EQ(message_center::LOW_PRIORITY,
-            GetNotification(notification_id1)->priority());
-  EXPECT_EQ(message_center::DEFAULT_PRIORITY,
-            GetNotification(notification_id2)->priority());
+  const int in_progress_priority1 =
+      GetNotification(notification_id1)->priority();
+  const int in_progress_priority2 =
+      GetNotification(notification_id2)->priority();
+  EXPECT_EQ(message_center::LOW_PRIORITY, in_progress_priority1);
+  EXPECT_EQ(message_center::DEFAULT_PRIORITY, in_progress_priority2);
 
   // Confirms that the updates of both download are delivered to the
   // notifications.
@@ -875,11 +884,11 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest, DownloadMultipleFiles) {
   EXPECT_TRUE(IsInNotifications(popup_notifications, notification_id1));
   EXPECT_TRUE(IsInNotifications(popup_notifications, notification_id2));
 
-  // Confirms that the both are default priority after downloads finish.
-  EXPECT_EQ(message_center::DEFAULT_PRIORITY,
-            GetNotification(notification_id1)->priority());
-  EXPECT_EQ(message_center::DEFAULT_PRIORITY,
-            GetNotification(notification_id2)->priority());
+  // Confirms that both increase in priority when finished.
+  EXPECT_GT(GetNotification(notification_id1)->priority(),
+            in_progress_priority1);
+  EXPECT_GT(GetNotification(notification_id2)->priority(),
+            in_progress_priority2);
 
   // Confirms the types of download notifications are correct.
   EXPECT_EQ(message_center::NOTIFICATION_TYPE_BASE_FORMAT,
@@ -1047,10 +1056,18 @@ IN_PROC_BROWSER_TEST_F(DownloadNotificationTest, IncognitoDownloadFile) {
     download_change_notification_observer.Reset();
   }
 
-  EXPECT_EQ(l10n_util::GetStringFUTF16(
-                IDS_DOWNLOAD_STATUS_DOWNLOADED_TITLE,
-                download_item()->GetFileNameToReportUser().LossyDisplayName()),
-            GetNotification(notification_id())->title());
+  if (message_center::IsNewStyleNotificationEnabled()) {
+    EXPECT_EQ(l10n_util::GetStringUTF16(IDS_DOWNLOAD_STATUS_COMPLETE_TITLE),
+              GetNotification(notification_id())->title());
+    EXPECT_EQ(download_item()->GetFileNameToReportUser().LossyDisplayName(),
+              GetNotification(notification_id())->message());
+  } else {
+    EXPECT_EQ(
+        l10n_util::GetStringFUTF16(
+            IDS_DOWNLOAD_STATUS_DOWNLOADED_TITLE,
+            download_item()->GetFileNameToReportUser().LossyDisplayName()),
+        GetNotification(notification_id())->title());
+  }
   EXPECT_EQ(message_center::NOTIFICATION_TYPE_BASE_FORMAT,
             GetNotification(notification_id())->type());
 
@@ -1178,7 +1195,7 @@ class MultiProfileDownloadNotificationTest
   }
 
   Profile* GetProfileByIndex(int index) {
-    return chromeos::ProfileHelper::GetProfileByUserIdHash(
+    return chromeos::ProfileHelper::GetProfileByUserIdHashForTest(
         kTestAccounts[index].hash);
   }
 
@@ -1186,14 +1203,15 @@ class MultiProfileDownloadNotificationTest
   void AddUser(const TestAccountInfo& info, bool log_in) {
     if (log_in) {
       session_manager::SessionManager::Get()->CreateSession(
-          AccountId::FromUserEmailGaiaId(info.email, info.gaia_id), info.hash);
+          AccountId::FromUserEmailGaiaId(info.email, info.gaia_id), info.hash,
+          false);
     }
     user_manager::UserManager::Get()->SaveUserDisplayName(
         AccountId::FromUserEmailGaiaId(info.email, info.gaia_id),
         base::UTF8ToUTF16(info.display_name));
     SigninManagerFactory::GetForProfile(
-        chromeos::ProfileHelper::GetProfileByUserIdHash(info.hash))
-            ->SetAuthenticatedAccountInfo(info.gaia_id, info.email);
+        chromeos::ProfileHelper::GetProfileByUserIdHashForTest(info.hash))
+        ->SetAuthenticatedAccountInfo(info.gaia_id, info.email);
   }
 };
 

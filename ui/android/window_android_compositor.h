@@ -7,8 +7,8 @@
 
 #include <memory>
 
-#include "cc/output/copy_output_request.h"
-#include "cc/surfaces/frame_sink_id.h"
+#include "components/viz/common/frame_sinks/copy_output_request.h"
+#include "components/viz/common/surfaces/frame_sink_id.h"
 #include "ui/android/ui_android_export.h"
 
 namespace cc {
@@ -26,12 +26,12 @@ class UI_ANDROID_EXPORT WindowAndroidCompositor {
 
   virtual void AttachLayerForReadback(scoped_refptr<cc::Layer> layer) = 0;
   virtual void RequestCopyOfOutputOnRootLayer(
-      std::unique_ptr<cc::CopyOutputRequest> request) = 0;
+      std::unique_ptr<viz::CopyOutputRequest> request) = 0;
   virtual void SetNeedsAnimate() = 0;
   virtual ResourceManager& GetResourceManager() = 0;
-  virtual cc::FrameSinkId GetFrameSinkId() = 0;
-  virtual void AddChildFrameSink(const cc::FrameSinkId& frame_sink_id) = 0;
-  virtual void RemoveChildFrameSink(const cc::FrameSinkId& frame_sink_id) = 0;
+  virtual viz::FrameSinkId GetFrameSinkId() = 0;
+  virtual void AddChildFrameSink(const viz::FrameSinkId& frame_sink_id) = 0;
+  virtual void RemoveChildFrameSink(const viz::FrameSinkId& frame_sink_id) = 0;
 };
 
 }  // namespace ui

@@ -26,8 +26,8 @@
 #ifndef NamedNodeMap_h
 #define NamedNodeMap_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/Element.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/text/AtomicString.h"
 
 namespace blink {
@@ -35,8 +35,7 @@ namespace blink {
 class Attr;
 class ExceptionState;
 
-class NamedNodeMap final : public GarbageCollected<NamedNodeMap>,
-                           public ScriptWrappable {
+class NamedNodeMap final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
   friend class Element;
 
@@ -62,7 +61,10 @@ class NamedNodeMap final : public GarbageCollected<NamedNodeMap>,
   Attr* item(unsigned index) const;
   size_t length() const;
 
-  DECLARE_TRACE();
+  void NamedPropertyEnumerator(Vector<String>& names, ExceptionState&) const;
+  bool NamedPropertyQuery(const AtomicString&, ExceptionState&) const;
+
+  void Trace(blink::Visitor*);
 
  private:
   explicit NamedNodeMap(Element* element) : element_(element) {

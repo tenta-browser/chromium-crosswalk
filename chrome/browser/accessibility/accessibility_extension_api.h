@@ -32,6 +32,15 @@ class AccessibilityPrivateSetFocusRingFunction
                              ACCESSIBILITY_PRIVATE_SETFOCUSRING)
 };
 
+// API function that sets the location of the accessibility highlights.
+class AccessibilityPrivateSetHighlightsFunction
+    : public UIThreadExtensionFunction {
+  ~AccessibilityPrivateSetHighlightsFunction() override {}
+  ResponseAction Run() override;
+  DECLARE_EXTENSION_FUNCTION("accessibilityPrivate.setHighlights",
+                             ACCESSIBILITY_PRIVATE_SETHIGHLIGHTS)
+};
+
 // API function that sets keyboard capture mode.
 class AccessibilityPrivateSetKeyboardListenerFunction
     : public UIThreadExtensionFunction {
@@ -49,5 +58,27 @@ class AccessibilityPrivateDarkenScreenFunction
   DECLARE_EXTENSION_FUNCTION("accessibilityPrivate.darkenScreen",
                              ACCESSIBILITY_PRIVATE_DARKENSCREEN)
 };
+
+// API function that sets the keys to be captured by Switch Access.
+#if defined(OS_CHROMEOS)
+class AccessibilityPrivateSetSwitchAccessKeysFunction
+    : public UIThreadExtensionFunction {
+  ~AccessibilityPrivateSetSwitchAccessKeysFunction() override {}
+  ResponseAction Run() override;
+  DECLARE_EXTENSION_FUNCTION("accessibilityPrivate.setSwitchAccessKeys",
+                             ACCESSIBILITY_PRIVATE_SETSWITCHACCESSKEYS)
+};
+
+// API function that sets native ChromeVox ARC support.
+class AccessibilityPrivateSetNativeChromeVoxArcSupportForCurrentAppFunction
+    : public UIThreadExtensionFunction {
+  ~AccessibilityPrivateSetNativeChromeVoxArcSupportForCurrentAppFunction()
+      override {}
+  ResponseAction Run() override;
+  DECLARE_EXTENSION_FUNCTION(
+      "accessibilityPrivate.setNativeChromeVoxArcSupportForCurrentApp",
+      ACCESSIBILITY_PRIVATE_SETNATIVECHROMEVOXARCSUPPORTFORCURRENTAPP)
+};
+#endif  // defined (OS_CHROMEOS)
 
 #endif  // CHROME_BROWSER_ACCESSIBILITY_ACCESSIBILITY_EXTENSION_API_H_

@@ -44,7 +44,4 @@ SVGStringListTearOff::SVGStringListTearOff(
                                         property_is_anim_val,
                                         attribute_name) {}
 
-DEFINE_TRACE_WRAPPERS(SVGStringListTearOff) {
-  visitor->TraceWrappers(contextElement());
-}
-}
+}  // namespace blink

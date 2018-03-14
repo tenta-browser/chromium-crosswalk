@@ -19,44 +19,33 @@
 
 namespace display {
 
-class DisplaySnapshotMojo;
+class DisplaySnapshot;
 
 // NativeDisplayDelegate implementation that forwards calls to a real
 // NativeDisplayDelegate in another process. Only forwards the methods
 // implemented by Ozone DRM, other method won't do anything.
 class DISPLAY_MANAGER_EXPORT ForwardingDisplayDelegate
     : public NativeDisplayDelegate,
-      public NON_EXPORTED_BASE(mojom::NativeDisplayObserver) {
+      public mojom::NativeDisplayObserver {
  public:
   explicit ForwardingDisplayDelegate(mojom::NativeDisplayDelegatePtr delegate);
   ~ForwardingDisplayDelegate() override;
 
   // display::NativeDisplayDelegate:
   void Initialize() override;
-  void GrabServer() override;
-  void UngrabServer() override;
   void TakeDisplayControl(const DisplayControlCallback& callback) override;
   void RelinquishDisplayControl(
       const DisplayControlCallback& callback) override;
-  void SyncWithServer() override;
-  void SetBackgroundColor(uint32_t color_argb) override;
-  void ForceDPMSOn() override;
   void GetDisplays(const GetDisplaysCallback& callback) override;
-  void AddMode(const DisplaySnapshot& output, const DisplayMode* mode) override;
   void Configure(const DisplaySnapshot& output,
                  const DisplayMode* mode,
                  const gfx::Point& origin,
                  const ConfigureCallback& callback) override;
-  void CreateFrameBuffer(const gfx::Size& size) override;
   void GetHDCPState(const DisplaySnapshot& output,
                     const GetHDCPStateCallback& callback) override;
   void SetHDCPState(const DisplaySnapshot& output,
                     HDCPState state,
                     const SetHDCPStateCallback& callback) override;
-  std::vector<ColorCalibrationProfile> GetAvailableColorCalibrationProfiles(
-      const DisplaySnapshot& output) override;
-  bool SetColorCalibrationProfile(const DisplaySnapshot& output,
-                                  ColorCalibrationProfile new_profile) override;
   bool SetColorCorrection(const DisplaySnapshot& output,
                           const std::vector<GammaRampRGBEntry>& degamma_lut,
                           const std::vector<GammaRampRGBEntry>& gamma_lut,
@@ -69,17 +58,24 @@ class DISPLAY_MANAGER_EXPORT ForwardingDisplayDelegate
   void OnConfigurationChanged() override;
 
  private:
-  // Stores display snapshots and forards them to |callback|.
+  // Stores display snapshots and forwards pointers to |callback|.
   void StoreAndForwardDisplays(
       const GetDisplaysCallback& callback,
-      std::vector<std::unique_ptr<DisplaySnapshotMojo>> snapshots);
+      std::vector<std::unique_ptr<DisplaySnapshot>> snapshots);
+
+  // Forwards display snapshot pointers to |callback|.
+  void ForwardDisplays(const GetDisplaysCallback& callback);
+
+  // True if we should use |delegate_|. This will be false if synchronous
+  // GetDisplays() and Configure() are required.
+  bool use_delegate_ = false;
 
   mojom::NativeDisplayDelegatePtr delegate_;
   mojo::Binding<mojom::NativeDisplayObserver> binding_;
 
   // Display snapshots are owned here but accessed via raw pointers elsewhere.
   // Call OnDisplaySnapshotsInvalidated() on observers before invalidating them.
-  std::vector<std::unique_ptr<DisplaySnapshotMojo>> snapshots_;
+  std::vector<std::unique_ptr<DisplaySnapshot>> snapshots_;
 
   base::ObserverList<display::NativeDisplayObserver> observers_;
 

@@ -123,7 +123,6 @@ function RPCWrapper() {
       for (var pname in params) {
         msg[pname] = params[pname];
       }
-      domAutomationController.setAutomationId(0);
       domAutomationController.send(JSON.stringify(msg));
     } else if (this_.rpc_available) {
       // Construct the URL for the RPC request.
@@ -237,7 +236,7 @@ function RPCWrapper() {
 
   this.log = function(test_name, message, from_completed_test) {
     if (message == undefined) {
-      // This is a log message that is not assosiated with a test.
+      // This is a log message that is not associated with a test.
       // What we though was the test name is actually the message.
       this._log(test_name);
     } else {

@@ -37,8 +37,8 @@ void DeviceEventRouter::Startup() {
   is_starting_up_ = true;
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&DeviceEventRouter::StartupDelayed,
-                 weak_factory_.GetWeakPtr()),
+      base::BindOnce(&DeviceEventRouter::StartupDelayed,
+                     weak_factory_.GetWeakPtr()),
       startup_time_delta_);
 }
 
@@ -121,7 +121,26 @@ void DeviceEventRouter::OnFormatCompleted(const std::string& device_path,
                 device_path);
 }
 
-void DeviceEventRouter::SuspendImminent() {
+void DeviceEventRouter::OnRenameStarted(const std::string& device_path,
+                                        bool success) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  OnDeviceEvent(success ? file_manager_private::DEVICE_EVENT_TYPE_RENAME_START
+                        : file_manager_private::DEVICE_EVENT_TYPE_RENAME_FAIL,
+                device_path);
+}
+
+void DeviceEventRouter::OnRenameCompleted(const std::string& device_path,
+                                          bool success) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  OnDeviceEvent(success ? file_manager_private::DEVICE_EVENT_TYPE_RENAME_SUCCESS
+                        : file_manager_private::DEVICE_EVENT_TYPE_RENAME_FAIL,
+                device_path);
+}
+
+void DeviceEventRouter::SuspendImminent(
+    power_manager::SuspendImminent::Reason reason) {
   DCHECK(thread_checker_.CalledOnValidThread());
   is_resuming_ = true;
 }
@@ -130,8 +149,8 @@ void DeviceEventRouter::SuspendDone(const base::TimeDelta& sleep_duration) {
   DCHECK(thread_checker_.CalledOnValidThread());
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&DeviceEventRouter::SuspendDoneDelayed,
-                 weak_factory_.GetWeakPtr()),
+      base::BindOnce(&DeviceEventRouter::SuspendDoneDelayed,
+                     weak_factory_.GetWeakPtr()),
       resume_time_delta_);
 }
 

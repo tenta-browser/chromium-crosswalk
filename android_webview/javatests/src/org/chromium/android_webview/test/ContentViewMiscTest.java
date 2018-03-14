@@ -5,16 +5,23 @@
 package org.chromium.android_webview.test;
 
 import android.content.BroadcastReceiver;
-import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.net.Proxy;
+import android.os.Looper;
+import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.SmallTest;
-import android.test.mock.MockContext;
+
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
 
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContentsStatics;
-import org.chromium.base.annotations.SuppressFBWarnings;
+import org.chromium.base.ContextUtils;
+import org.chromium.base.test.util.AdvancedMockContext;
 import org.chromium.base.test.util.Feature;
 import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.ContentViewStatics;
@@ -26,68 +33,64 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  *  Tests for ContentView methods that don't fall into any other category.
  */
-public class ContentViewMiscTest extends AwTestBase {
+@RunWith(AwJUnit4ClassRunner.class)
+public class ContentViewMiscTest {
+    @Rule
+    public AwActivityTestRule mActivityTestRule = new AwActivityTestRule();
 
     private TestAwContentsClient mContentsClient;
     private AwContents mAwContents;
     private ContentViewCore mContentViewCore;
 
-    @SuppressFBWarnings("URF_UNREAD_FIELD")
-    @Override
+    @Before
     public void setUp() throws Exception {
-        super.setUp();
         mContentsClient = new TestAwContentsClient();
         final AwTestContainerView testContainerView =
-                createAwTestContainerViewOnMainSync(mContentsClient);
+                mActivityTestRule.createAwTestContainerViewOnMainSync(mContentsClient);
         mAwContents = testContainerView.getAwContents();
         mContentViewCore = testContainerView.getContentViewCore();
     }
 
+    @Test
     @SmallTest
     @Feature({"AndroidWebView"})
     public void testFindAddress() {
-        assertNull(AwContentsStatics.findAddress("This is some random text"));
+        Assert.assertNull(AwContentsStatics.findAddress("This is some random text"));
 
         String googleAddr = "1600 Amphitheatre Pkwy, Mountain View, CA 94043";
         String testString = "Address: " + googleAddr + "  in a string";
-        assertEquals(googleAddr, AwContentsStatics.findAddress(testString));
+        Assert.assertEquals(googleAddr, AwContentsStatics.findAddress(testString));
     }
 
+    @Test
     @SmallTest
     @Feature({"AndroidWebView"})
     public void testEnableDisablePlatformNotifications() {
-
+        Looper.prepare();
         // Set up mock contexts to use with the listener
         final AtomicReference<BroadcastReceiver> receiverRef =
                 new AtomicReference<BroadcastReceiver>();
-        final MockContext appContext = new MockContext() {
+        final AdvancedMockContext appContext = new AdvancedMockContext(
+                InstrumentationRegistry.getInstrumentation()
+                        .getTargetContext()
+                        .getApplicationContext()) {
             @Override
             public Intent registerReceiver(BroadcastReceiver receiver, IntentFilter filter) {
                 receiverRef.set(receiver);
                 return null;
             }
         };
-        final MockContext context = new MockContext() {
-            @Override
-            public Context getApplicationContext() {
-                return appContext;
-            }
-        };
+        ContextUtils.initApplicationContextForTests(appContext);
 
         // Set up a delegate so we know when native code is about to get
         // informed of a proxy change.
         final AtomicBoolean proxyChanged = new AtomicBoolean();
-        final ProxyChangeListener.Delegate delegate = new ProxyChangeListener.Delegate() {
-            @Override
-            public void proxySettingsChanged() {
-                proxyChanged.set(true);
-            }
-        };
+        final ProxyChangeListener.Delegate delegate = () -> proxyChanged.set(true);
         Intent intent = new Intent();
         intent.setAction(Proxy.PROXY_CHANGE_ACTION);
 
         // Create the listener that's going to be used for the test
-        ProxyChangeListener listener = ProxyChangeListener.create(context);
+        ProxyChangeListener listener = ProxyChangeListener.create();
         listener.setDelegateForTesting(delegate);
         listener.start(0);
 
@@ -95,19 +98,19 @@ public class ContentViewMiscTest extends AwTestBase {
 
         // Make sure everything works by default
         proxyChanged.set(false);
-        receiverRef.get().onReceive(context, intent);
-        assertEquals(true, proxyChanged.get());
+        receiverRef.get().onReceive(appContext, intent);
+        Assert.assertEquals(true, proxyChanged.get());
 
         // Now disable platform notifications and make sure we don't notify
         // native code.
         proxyChanged.set(false);
         ContentViewStatics.disablePlatformNotifications();
-        receiverRef.get().onReceive(context, intent);
-        assertEquals(false, proxyChanged.get());
+        receiverRef.get().onReceive(appContext, intent);
+        Assert.assertEquals(false, proxyChanged.get());
 
         // Now re-enable notifications to make sure they work again.
         ContentViewStatics.enablePlatformNotifications();
-        receiverRef.get().onReceive(context, intent);
-        assertEquals(true, proxyChanged.get());
+        receiverRef.get().onReceive(appContext, intent);
+        Assert.assertEquals(true, proxyChanged.get());
     }
 }

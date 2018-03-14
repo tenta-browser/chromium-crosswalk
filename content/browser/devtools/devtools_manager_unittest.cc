@@ -9,6 +9,7 @@
 #include "base/guid.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -23,6 +24,8 @@
 #include "content/public/browser/devtools_external_agent_proxy.h"
 #include "content/public/browser/devtools_external_agent_proxy_delegate.h"
 #include "content/public/browser/web_contents_delegate.h"
+#include "content/public/common/browser_side_navigation_policy.h"
+#include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_utils.h"
 #include "content/test/test_content_browser_client.h"
 #include "content/test/test_render_view_host.h"
@@ -36,10 +39,7 @@ namespace {
 
 class TestDevToolsClientHost : public DevToolsAgentHostClient {
  public:
-  TestDevToolsClientHost()
-      : last_sent_message(NULL),
-        closed_(false) {
-  }
+  TestDevToolsClientHost() : last_sent_message(nullptr), closed_(false) {}
 
   ~TestDevToolsClientHost() override { EXPECT_TRUE(closed_); }
 
@@ -50,9 +50,7 @@ class TestDevToolsClientHost : public DevToolsAgentHostClient {
     closed_ = true;
   }
 
-  void AgentHostClosed(DevToolsAgentHost* agent_host, bool replaced) override {
-    FAIL();
-  }
+  void AgentHostClosed(DevToolsAgentHost* agent_host) override { FAIL(); }
 
   void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
                                const std::string& message) override {
@@ -168,19 +166,16 @@ TEST_F(DevToolsManagerTest, NoUnresponsiveDialogInInspectedContents) {
   base::RunLoop().Run();
   EXPECT_TRUE(delegate.renderer_unresponsive_received());
 
-  contents()->SetDelegate(NULL);
+  contents()->SetDelegate(nullptr);
 }
 
 TEST_F(DevToolsManagerTest, ReattachOnCancelPendingNavigation) {
+  // This test triggers incorrect notifications with PlzNavigate.
+  if (IsBrowserSideNavigationEnabled())
+    return;
   // Navigate to URL.  First URL should use first RenderViewHost.
   const GURL url("http://www.google.com");
-  controller().LoadURL(
-      url, Referrer(), ui::PAGE_TRANSITION_TYPED, std::string());
-  int pending_id = controller().GetPendingEntry()->GetUniqueID();
-  contents()->GetMainFrame()->PrepareForCommit();
-  contents()->TestDidNavigate(contents()->GetMainFrame(), pending_id, true,
-                              url, ui::PAGE_TRANSITION_TYPED);
-  contents()->GetMainFrame()->SimulateNavigationStop();
+  NavigationSimulator::NavigateAndCommitFromBrowser(web_contents(), url);
   EXPECT_FALSE(contents()->CrossProcessNavigationPending());
 
   TestDevToolsClientHost client_host;
@@ -189,20 +184,15 @@ TEST_F(DevToolsManagerTest, ReattachOnCancelPendingNavigation) {
 
   // Navigate to new site which should get a new RenderViewHost.
   const GURL url2("http://www.yahoo.com");
-  controller().LoadURL(
-      url2, Referrer(), ui::PAGE_TRANSITION_TYPED, std::string());
-  contents()->GetMainFrame()->PrepareForCommit();
+  auto navigation =
+      NavigationSimulator::CreateBrowserInitiated(url2, web_contents());
+  navigation->ReadyToCommit();
   EXPECT_TRUE(contents()->CrossProcessNavigationPending());
   EXPECT_EQ(client_host.agent_host(),
             DevToolsAgentHost::GetOrCreateFor(web_contents()).get());
 
   // Interrupt pending navigation and navigate back to the original site.
-  controller().LoadURL(
-      url, Referrer(), ui::PAGE_TRANSITION_TYPED, std::string());
-  pending_id = controller().GetPendingEntry()->GetUniqueID();
-  contents()->GetMainFrame()->PrepareForCommit();
-  contents()->TestDidNavigate(contents()->GetMainFrame(), pending_id, false,
-                              url, ui::PAGE_TRANSITION_TYPED);
+  NavigationSimulator::NavigateAndCommitFromBrowser(web_contents(), url);
   EXPECT_FALSE(contents()->CrossProcessNavigationPending());
   EXPECT_EQ(client_host.agent_host(),
             DevToolsAgentHost::GetOrCreateFor(web_contents()).get());
@@ -238,7 +228,9 @@ class TestExternalAgentDelegate: public DevToolsExternalAgentProxyDelegate {
     recordEvent("Attach");
   };
 
-  void Detach() override { recordEvent("Detach"); };
+  void Detach(DevToolsExternalAgentProxy* proxy) override {
+    recordEvent("Detach");
+  };
 
   std::string GetType() override { return std::string(); }
   std::string GetTitle() override { return std::string(); }
@@ -251,7 +243,8 @@ class TestExternalAgentDelegate: public DevToolsExternalAgentProxyDelegate {
   bool Close() override { return false; };
   base::TimeTicks GetLastActivityTime() override { return base::TimeTicks(); }
 
-  void SendMessageToBackend(const std::string& message) override {
+  void SendMessageToBackend(DevToolsExternalAgentProxy* proxy,
+                            const std::string& message) override {
     recordEvent(std::string("SendMessageToBackend.") + message);
   };
 

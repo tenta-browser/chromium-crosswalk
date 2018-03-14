@@ -22,6 +22,10 @@ namespace chrome_browser_net {
 class Predictor;
 }
 
+namespace predictors {
+class PreconnectManager;
+}
+
 namespace content_settings {
 class CookieSettings;
 }
@@ -49,7 +53,6 @@ class ChromeRenderMessageFilter : public content::BrowserMessageFilter {
 
   void OnDnsPrefetch(const network_hints::LookupRequest& request);
   void OnPreconnect(const GURL& url, bool allow_credentials, int count);
-  void OnUpdatedCacheStats(uint64_t capacity, uint64_t size);
 
   void OnAllowDatabase(int render_frame_id,
                        const GURL& origin_url,
@@ -66,14 +69,6 @@ class ChromeRenderMessageFilter : public content::BrowserMessageFilter {
                                      const GURL& origin_url,
                                      const GURL& top_origin_url,
                                      IPC::Message* message);
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  static void FileSystemAccessedSyncOnUIThread(
-      int render_process_id,
-      int render_frame_id,
-      const GURL& url,
-      bool blocked_by_policy,
-      IPC::Message* reply_msg);
-#endif
   void OnRequestFileSystemAccessAsync(int render_frame_id,
                                       int request_id,
                                       const GURL& origin_url,
@@ -116,6 +111,9 @@ class ChromeRenderMessageFilter : public content::BrowserMessageFilter {
   // The Predictor for the associated Profile. It is stored so that it can be
   // used on the IO thread.
   chrome_browser_net::Predictor* predictor_;
+  // The PreconnectManager for the associated Profile. It is stored so that it
+  // can be used on the IO thread.
+  predictors::PreconnectManager* preconnect_manager_;
 
   // Used to look up permissions at database creation time.
   scoped_refptr<content_settings::CookieSettings> cookie_settings_;

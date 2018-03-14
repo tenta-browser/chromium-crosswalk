@@ -4,8 +4,9 @@
 
 #import "ios/chrome/browser/ui/settings/cells/autofill_data_item.h"
 
+#import "ios/chrome/browser/ui/collection_view/cells/MDCCollectionViewCell+Chrome.h"
 #import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
-#import "ios/third_party/material_roboto_font_loader_ios/src/src/MaterialRobotoFontLoader.h"
+#import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -42,7 +43,7 @@ const CGFloat kVerticalPadding = 16;
   cell.textLabel.text = self.text;
   cell.leadingDetailTextLabel.text = self.leadingDetailText;
   cell.trailingDetailTextLabel.text = self.trailingDetailText;
-  cell.accessoryType = self.accessoryType;
+  [cell cr_setAccessoryType:self.accessoryType];
 }
 
 @end
@@ -85,19 +86,19 @@ const CGFloat kVerticalPadding = 16;
 
 // Sets default font and text colors for labels.
 - (void)setDefaultViewStyling {
-  _textLabel.font = [[MDFRobotoFontLoader sharedInstance] mediumFontOfSize:14];
+  _textLabel.font = [[MDCTypography fontLoader] mediumFontOfSize:14];
   _textLabel.textColor = [[MDCPalette greyPalette] tint900];
   _textLabel.numberOfLines = 0;
   _textLabel.lineBreakMode = NSLineBreakByWordWrapping;
 
   _leadingDetailTextLabel.font =
-      [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:14];
+      [[MDCTypography fontLoader] regularFontOfSize:14];
   _leadingDetailTextLabel.textColor = [[MDCPalette greyPalette] tint500];
   _leadingDetailTextLabel.numberOfLines = 0;
   _leadingDetailTextLabel.lineBreakMode = NSLineBreakByWordWrapping;
 
   _trailingDetailTextLabel.font =
-      [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:12];
+      [[MDCTypography fontLoader] regularFontOfSize:12];
   _trailingDetailTextLabel.textColor = [[MDCPalette greyPalette] tint500];
 }
 

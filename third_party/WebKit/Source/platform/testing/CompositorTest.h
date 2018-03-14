@@ -5,7 +5,7 @@
 #ifndef CompositorTest_h
 #define CompositorTest_h
 
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "platform/wtf/Noncopyable.h"
@@ -13,7 +13,7 @@
 
 namespace blink {
 
-class CompositorTest : public testing::Test {
+class CompositorTest : public ::testing::Test {
   WTF_MAKE_NONCOPYABLE(CompositorTest);
 
  public:

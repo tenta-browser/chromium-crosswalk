@@ -12,8 +12,10 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/values.h"
 #include "components/feedback/feedback_util.h"
+#include "components/feedback/proto/extension.pb.h"
 #include "components/feedback/tracing_manager.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -32,9 +34,14 @@ const char kHistogramsAttachmentName[] = "histograms.zip";
 
 }  // namespace
 
-FeedbackData::FeedbackData()
-    : send_report_(base::Bind(&feedback_util::SendReport)), context_(NULL),
-      trace_id_(0), pending_op_count_(1), report_sent_(false) {}
+FeedbackData::FeedbackData(feedback::FeedbackUploader* uploader)
+    : uploader_(uploader),
+      context_(nullptr),
+      trace_id_(0),
+      pending_op_count_(1),
+      report_sent_(false) {
+  CHECK(uploader_);
+}
 
 FeedbackData::~FeedbackData() {
 }
@@ -63,8 +70,9 @@ void FeedbackData::SetAndCompressSystemInfo(
   if (sys_info) {
     ++pending_op_count_;
     AddLogs(std::move(sys_info));
-    BrowserThread::PostBlockingPoolTaskAndReply(
-        FROM_HERE, base::Bind(&FeedbackData::CompressLogs, this),
+    base::PostTaskWithTraitsAndReply(
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        base::Bind(&FeedbackData::CompressLogs, this),
         base::Bind(&FeedbackData::OnCompressComplete, this));
   }
 }
@@ -76,8 +84,8 @@ void FeedbackData::SetAndCompressHistograms(
   if (!histograms)
     return;
   ++pending_op_count_;
-  BrowserThread::PostBlockingPoolTaskAndReply(
-      FROM_HERE,
+  base::PostTaskWithTraitsAndReply(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
       base::Bind(&FeedbackData::CompressFile, this,
                  base::FilePath(kHistogramsFilename), kHistogramsAttachmentName,
                  base::Passed(&histograms)),
@@ -93,9 +101,10 @@ void FeedbackData::AttachAndCompressFileData(
   ++pending_op_count_;
   base::FilePath attached_file =
                   base::FilePath::FromUTF8Unsafe(attached_filename_);
-  BrowserThread::PostBlockingPoolTaskAndReply(
-      FROM_HERE, base::Bind(&FeedbackData::CompressFile, this, attached_file,
-                            std::string(), base::Passed(&attached_filedata)),
+  base::PostTaskWithTraitsAndReply(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      base::Bind(&FeedbackData::CompressFile, this, attached_file,
+                 std::string(), base::Passed(&attached_filedata)),
       base::Bind(&FeedbackData::OnCompressComplete, this));
 }
 
@@ -132,7 +141,11 @@ void FeedbackData::SendReport() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (IsDataComplete() && !report_sent_) {
     report_sent_ = true;
-    send_report_.Run(this);
+    userfeedback::ExtensionSubmit feedback_data;
+    PrepareReport(&feedback_data);
+    std::string post_body;
+    feedback_data.SerializeToString(&post_body);
+    uploader_->QueueReport(post_body);
   }
 }
 

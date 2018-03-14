@@ -7,11 +7,14 @@
 #include "base/callback.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "content/common/service_worker/service_worker_types.h"
 #include "content/public/browser/permission_type.h"
+#include "content/public/common/push_messaging_status.mojom.h"
 #include "content/public/common/push_subscription_options.h"
 #include "content/shell/browser/layout_test/layout_test_browser_context.h"
 #include "content/shell/browser/layout_test/layout_test_content_browser_client.h"
 #include "content/shell/browser/layout_test/layout_test_permission_manager.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
 
 namespace content {
 
@@ -26,8 +29,6 @@ const uint8_t kTestP256Key[] = {
   0x21, 0xD3, 0x71, 0x90, 0x13, 0xA8, 0xC1, 0xCF, 0xED, 0x20, 0xF7, 0x1F, 0xD1,
   0x7F, 0xF2, 0x76, 0xB6, 0x01, 0x20, 0xD8, 0x35, 0xA5, 0xD9, 0x3C, 0x43, 0xFD
 };
-
-const int64_t kInvalidServiceWorkerRegistrationId = -1LL;
 
 static_assert(sizeof(kTestP256Key) == 65,
               "The fake public key must be a valid P-256 uncompressed point.");
@@ -59,7 +60,7 @@ blink::WebPushPermissionStatus ToWebPushPermissionStatus(
 
 LayoutTestPushMessagingService::LayoutTestPushMessagingService()
     : subscribed_service_worker_registration_(
-          kInvalidServiceWorkerRegistrationId) {}
+          blink::mojom::kInvalidServiceWorkerRegistrationId) {}
 
 LayoutTestPushMessagingService::~LayoutTestPushMessagingService() {
 }
@@ -75,6 +76,7 @@ void LayoutTestPushMessagingService::SubscribeFromDocument(
     int renderer_id,
     int render_frame_id,
     const PushSubscriptionOptions& options,
+    bool user_gesture,
     const RegisterCallback& callback) {
   SubscribeFromWorker(requesting_origin, service_worker_registration_id,
                       options, callback);
@@ -94,11 +96,11 @@ void LayoutTestPushMessagingService::SubscribeFromWorker(
 
     subscribed_service_worker_registration_ = service_worker_registration_id;
     callback.Run("layoutTestRegistrationId", p256dh, auth,
-                 PUSH_REGISTRATION_STATUS_SUCCESS_FROM_PUSH_SERVICE);
+                 mojom::PushRegistrationStatus::SUCCESS_FROM_PUSH_SERVICE);
   } else {
     callback.Run("registration_id", std::vector<uint8_t>() /* p256dh */,
                  std::vector<uint8_t>() /* auth */,
-                 PUSH_REGISTRATION_STATUS_PERMISSION_DENIED);
+                 mojom::PushRegistrationStatus::PERMISSION_DENIED);
   }
 }
 
@@ -119,10 +121,11 @@ void LayoutTestPushMessagingService::GetSubscriptionInfo(
 blink::WebPushPermissionStatus
 LayoutTestPushMessagingService::GetPermissionStatus(const GURL& origin,
                                                     bool user_visible) {
-  return ToWebPushPermissionStatus(LayoutTestContentBrowserClient::Get()
-      ->browser_context()
-      ->GetPermissionManager()
-      ->GetPermissionStatus(PermissionType::PUSH_MESSAGING, origin, origin));
+  return ToWebPushPermissionStatus(
+      LayoutTestContentBrowserClient::Get()
+          ->browser_context()
+          ->GetPermissionManager()
+          ->GetPermissionStatus(PermissionType::NOTIFICATIONS, origin, origin));
 }
 
 bool LayoutTestPushMessagingService::SupportNonVisibleMessages() {
@@ -130,7 +133,7 @@ bool LayoutTestPushMessagingService::SupportNonVisibleMessages() {
 }
 
 void LayoutTestPushMessagingService::Unsubscribe(
-    PushUnregistrationReason reason,
+    mojom::PushUnregistrationReason reason,
     const GURL& requesting_origin,
     int64_t service_worker_registration_id,
     const std::string& sender_id,
@@ -138,15 +141,16 @@ void LayoutTestPushMessagingService::Unsubscribe(
   ClearPushSubscriptionId(
       LayoutTestContentBrowserClient::Get()->browser_context(),
       requesting_origin, service_worker_registration_id,
-      base::Bind(callback,
-                 service_worker_registration_id ==
-                         subscribed_service_worker_registration_
-                     ? PUSH_UNREGISTRATION_STATUS_SUCCESS_UNREGISTERED
-                     : PUSH_UNREGISTRATION_STATUS_SUCCESS_WAS_NOT_REGISTERED));
+      base::Bind(
+          callback,
+          service_worker_registration_id ==
+                  subscribed_service_worker_registration_
+              ? mojom::PushUnregistrationStatus::SUCCESS_UNREGISTERED
+              : mojom::PushUnregistrationStatus::SUCCESS_WAS_NOT_REGISTERED));
   if (service_worker_registration_id ==
       subscribed_service_worker_registration_) {
     subscribed_service_worker_registration_ =
-        kInvalidServiceWorkerRegistrationId;
+        blink::mojom::kInvalidServiceWorkerRegistrationId;
   }
 }
 
@@ -156,8 +160,13 @@ void LayoutTestPushMessagingService::DidDeleteServiceWorkerRegistration(
   if (service_worker_registration_id ==
       subscribed_service_worker_registration_) {
     subscribed_service_worker_registration_ =
-        kInvalidServiceWorkerRegistrationId;
+        blink::mojom::kInvalidServiceWorkerRegistrationId;
   }
+}
+
+void LayoutTestPushMessagingService::DidDeleteServiceWorkerDatabase() {
+  subscribed_service_worker_registration_ =
+      blink::mojom::kInvalidServiceWorkerRegistrationId;
 }
 
 }  // namespace content

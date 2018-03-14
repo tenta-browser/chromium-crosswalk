@@ -2,9 +2,13 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//mojo/public/tools/bindings/mojom.gni")
+
 component("common") {
   output_name = "storage_common"
   sources = [
+    "blob_storage/blob_handle.cc",
+    "blob_storage/blob_handle.h",
     "blob_storage/blob_item_bytes_request.cc",
     "blob_storage/blob_item_bytes_request.h",
     "blob_storage/blob_item_bytes_response.cc",
@@ -29,6 +33,8 @@ component("common") {
     "quota/quota_status_code.h",
     "quota/quota_types.h",
     "storage_common_export.h",
+    "storage_histograms.cc",
+    "storage_histograms.h",
   ]
 
   # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
@@ -39,11 +45,44 @@ component("common") {
 
   defines = [ "STORAGE_COMMON_IMPLEMENTATION" ]
 
+  public_deps = [
+    "//services/network/public/interfaces",
+    "//third_party/WebKit/public:blink_headers",
+  ]
+
   deps = [
     "//base",
     "//base/third_party/dynamic_annotations",
     "//net",
-    "//third_party/WebKit/public:blink_headers",
+    "//url",
+  ]
+}
+
+mojom("mojo_bindings") {
+  sources = [
+    "quota/quota_types.mojom",
+  ]
+
+  public_deps = [
+    "//url/mojo:url_mojom_gurl",
+  ]
+}
+
+source_set("unittests") {
+  testonly = true
+
+  sources = [
+    "database/database_connections_unittest.cc",
+    "database/database_identifier_unittest.cc",
+    "fileapi/file_system_util_unittest.cc",
+    "run_all_unittests.cc",
+  ]
+
+  deps = [
+    ":common",
+    "//base/test:test_support",
+    "//mojo/edk/system",
+    "//testing/gtest",
     "//url",
   ]
 }

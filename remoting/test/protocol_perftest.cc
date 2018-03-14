@@ -15,13 +15,14 @@
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task_runner_util.h"
+#include "base/task_scheduler/task_scheduler.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "jingle/glue/thread_wrapper.h"
 #include "net/test/test_data_directory.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "remoting/base/rsa_key_pair.h"
 #include "remoting/base/url_request.h"
-#include "remoting/client/audio_player.h"
+#include "remoting/client/audio/audio_player.h"
 #include "remoting/client/chromoting_client.h"
 #include "remoting/client/client_context.h"
 #include "remoting/client/client_user_interface.h"
@@ -86,11 +87,11 @@ struct NetworkPerformanceParams {
 
 class FakeCursorShapeStub : public protocol::CursorShapeStub {
  public:
-  FakeCursorShapeStub() {}
-  ~FakeCursorShapeStub() override {}
+  FakeCursorShapeStub() = default;
+  ~FakeCursorShapeStub() override = default;
 
   // protocol::CursorShapeStub interface.
-  void SetCursorShape(const protocol::CursorShapeInfo& cursor_shape) override{};
+  void SetCursorShape(const protocol::CursorShapeInfo& cursor_shape) override {}
 };
 
 }  // namespace
@@ -113,6 +114,8 @@ class ProtocolPerfTest
     capture_thread_.Start();
     encode_thread_.Start();
     decode_thread_.Start();
+
+    base::TaskScheduler::CreateAndStartWithDefaultParams("ProtocolPerfTest");
 
     desktop_environment_factory_.reset(
         new FakeDesktopEnvironmentFactory(capture_thread_.task_runner()));
@@ -311,10 +314,11 @@ class ProtocolPerfTest
         protocol::GetSharedSecretHash(kHostId, kHostPin);
     std::unique_ptr<protocol::AuthenticatorFactory> auth_factory =
         protocol::Me2MeHostAuthenticatorFactory::CreateWithPin(
-            true, kHostOwner, host_cert, key_pair, "", host_pin_hash, nullptr);
+            true, kHostOwner, host_cert, key_pair, std::vector<std::string>(),
+            host_pin_hash, nullptr);
     host_->SetAuthenticatorFactory(std::move(auth_factory));
 
-    host_->AddStatusObserver(this);
+    host_->status_monitor()->AddStatusObserver(this);
     host_->Start(kHostOwner);
 
     message_loop_.task_runner()->PostTask(

@@ -4,7 +4,6 @@
 
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/test/fuzzed_data_provider.h"
 #include "net/base/net_errors.h"
@@ -96,7 +95,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   base::FuzzedDataProvider data_provider(data, size);
 
   std::unique_ptr<net::ServerSocket> server_socket(
-      base::MakeUnique<net::FuzzedServerSocket>(&data_provider, &test_net_log));
+      std::make_unique<net::FuzzedServerSocket>(&data_provider, &test_net_log));
   CHECK_EQ(net::OK,
            server_socket->ListenWithAddressAndPort("127.0.0.1", 80, 5));
 

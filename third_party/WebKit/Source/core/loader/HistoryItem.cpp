@@ -25,11 +25,14 @@
 
 #include "core/loader/HistoryItem.h"
 
+#include <memory>
+#include <utility>
+
 #include "core/html/forms/FormController.h"
 #include "platform/loader/fetch/ResourceRequest.h"
 #include "platform/weborigin/SecurityPolicy.h"
 #include "platform/wtf/Assertions.h"
-#include "platform/wtf/CurrentTime.h"
+#include "platform/wtf/Time.h"
 #include "platform/wtf/text/CString.h"
 
 namespace blink {
@@ -42,9 +45,7 @@ static long long GenerateSequenceNumber() {
 }
 
 HistoryItem::HistoryItem()
-    : did_save_scroll_or_scale_state_(false),
-      page_scale_factor_(0),
-      item_sequence_number_(GenerateSequenceNumber()),
+    : item_sequence_number_(GenerateSequenceNumber()),
       document_sequence_number_(GenerateSequenceNumber()),
       scroll_restoration_type_(kScrollRestorationAuto) {}
 
@@ -55,7 +56,7 @@ const String& HistoryItem::UrlString() const {
 }
 
 KURL HistoryItem::Url() const {
-  return KURL(kParsedURLString, url_string_);
+  return KURL(url_string_);
 }
 
 const Referrer& HistoryItem::GetReferrer() const {
@@ -72,36 +73,34 @@ void HistoryItem::SetURL(const KURL& url) {
 }
 
 void HistoryItem::SetReferrer(const Referrer& referrer) {
-  // This should be a RELEASE_ASSERT.
+  // This should be a CHECK.
   referrer_ = SecurityPolicy::GenerateReferrer(referrer.referrer_policy, Url(),
                                                referrer.referrer);
 }
 
-const ScrollOffset& HistoryItem::VisualViewportScrollOffset() const {
-  return visual_viewport_scroll_offset_;
-}
-
 void HistoryItem::SetVisualViewportScrollOffset(const ScrollOffset& offset) {
-  visual_viewport_scroll_offset_ = offset;
-  SetDidSaveScrollOrScaleState(true);
-}
-
-const ScrollOffset& HistoryItem::GetScrollOffset() const {
-  return scroll_offset_;
+  if (!view_state_)
+    view_state_ = std::make_unique<ViewState>();
+  view_state_->visual_viewport_scroll_offset_ = offset;
 }
 
 void HistoryItem::SetScrollOffset(const ScrollOffset& offset) {
-  scroll_offset_ = offset;
-  SetDidSaveScrollOrScaleState(true);
-}
-
-float HistoryItem::PageScaleFactor() const {
-  return page_scale_factor_;
+  if (!view_state_)
+    view_state_ = std::make_unique<ViewState>();
+  view_state_->scroll_offset_ = offset;
 }
 
 void HistoryItem::SetPageScaleFactor(float scale_factor) {
-  page_scale_factor_ = scale_factor;
-  SetDidSaveScrollOrScaleState(true);
+  if (!view_state_)
+    view_state_ = std::make_unique<ViewState>();
+  view_state_->page_scale_factor_ = scale_factor;
+}
+
+void HistoryItem::SetScrollAnchorData(
+    const ScrollAnchorData& scroll_anchor_data) {
+  if (!view_state_)
+    view_state_ = std::make_unique<ViewState>();
+  view_state_->scroll_anchor_data_ = scroll_anchor_data;
 }
 
 void HistoryItem::SetDocumentState(const Vector<String>& state) {
@@ -125,10 +124,10 @@ Vector<String> HistoryItem::GetReferencedFilePaths() {
 
 void HistoryItem::ClearDocumentState() {
   document_state_.Clear();
-  document_state_vector_.Clear();
+  document_state_vector_.clear();
 }
 
-void HistoryItem::SetStateObject(PassRefPtr<SerializedScriptValue> object) {
+void HistoryItem::SetStateObject(scoped_refptr<SerializedScriptValue> object) {
   state_object_ = std::move(object);
 }
 
@@ -149,7 +148,7 @@ void HistoryItem::SetFormInfoFromRequest(const ResourceRequest& request) {
   }
 }
 
-void HistoryItem::SetFormData(PassRefPtr<EncodedFormData> form_data) {
+void HistoryItem::SetFormData(scoped_refptr<EncodedFormData> form_data) {
   form_data_ = std::move(form_data);
 }
 
@@ -158,14 +157,14 @@ void HistoryItem::SetFormContentType(const AtomicString& form_content_type) {
 }
 
 EncodedFormData* HistoryItem::FormData() {
-  return form_data_.Get();
+  return form_data_.get();
 }
 
 ResourceRequest HistoryItem::GenerateResourceRequest(
-    WebCachePolicy cache_policy) {
+    mojom::FetchCacheMode cache_mode) {
   ResourceRequest request(url_string_);
   request.SetHTTPReferrer(referrer_);
-  request.SetCachePolicy(cache_policy);
+  request.SetCacheMode(cache_mode);
   if (form_data_) {
     request.SetHTTPMethod(HTTPNames::POST);
     request.SetHTTPBody(form_data_);
@@ -175,7 +174,7 @@ ResourceRequest HistoryItem::GenerateResourceRequest(
   return request;
 }
 
-DEFINE_TRACE(HistoryItem) {
+void HistoryItem::Trace(blink::Visitor* visitor) {
   visitor->Trace(document_state_);
 }
 

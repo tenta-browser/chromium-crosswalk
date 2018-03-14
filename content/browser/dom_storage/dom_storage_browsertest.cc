@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/run_loop.h"
 #include "build/build_config.h"
 #include "content/browser/dom_storage/dom_storage_context_wrapper.h"
 #include "content/browser/dom_storage/local_storage_context_mojo.h"
@@ -15,6 +16,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/test_launcher.h"
 #include "content/shell/browser/shell.h"
 
 namespace content {
@@ -24,6 +26,11 @@ namespace content {
 class DOMStorageBrowserTest : public ContentBrowserTest {
  public:
   DOMStorageBrowserTest() {}
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    ContentBrowserTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitch(switches::kDisableMojoLocalStorage);
+  }
 
   void SimpleTest(const GURL& test_url, bool incognito) {
     // The test page will perform tests then navigate to either
@@ -46,7 +53,6 @@ class MojoDOMStorageBrowserTest : public DOMStorageBrowserTest {
  public:
   void SetUpCommandLine(base::CommandLine* command_line) override {
     ContentBrowserTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitch(switches::kMojoLocalStorage);
   }
 
   LocalStorageContextMojo* context() {
@@ -54,22 +60,20 @@ class MojoDOMStorageBrowserTest : public DOMStorageBrowserTest {
                BrowserContext::GetDefaultStoragePartition(
                    shell()->web_contents()->GetBrowserContext())
                    ->GetDOMStorageContext())
-        ->mojo_state_.get();
+        ->mojo_state_;
   }
 
   void EnsureConnected() {
     base::RunLoop run_loop;
-    context()->RunWhenConnected(run_loop.QuitClosure());
+    BrowserThread::PostTask(
+        BrowserThread::IO, FROM_HERE,
+        base::BindOnce(
+            &LocalStorageContextMojo::RunWhenConnected,
+            base::Unretained(context()),
+            base::BindOnce(base::IgnoreResult(&base::TaskRunner::PostTask),
+                           base::ThreadTaskRunnerHandle::Get(), FROM_HERE,
+                           run_loop.QuitClosure())));
     run_loop.Run();
-  }
-
-  void Flush() {
-    // Process any tasks that are currently queued, to ensure
-    // LevelDBWrapperImpl methods get called.
-    base::RunLoop().RunUntilIdle();
-    // And finally flush all the now queued up changes to leveldb.
-    context()->Flush();
-    base::RunLoop().RunUntilIdle();
   }
 };
 
@@ -109,7 +113,6 @@ IN_PROC_BROWSER_TEST_F(MojoDOMStorageBrowserTest, SanityCheckIncognito) {
 IN_PROC_BROWSER_TEST_F(MojoDOMStorageBrowserTest, PRE_DataPersists) {
   EnsureConnected();
   SimpleTest(GetTestUrl("dom_storage", "store_data.html"), kNotIncognito);
-  Flush();
 }
 
 IN_PROC_BROWSER_TEST_F(MojoDOMStorageBrowserTest, MAYBE_DataPersists) {
@@ -121,10 +124,8 @@ class DOMStorageMigrationBrowserTest : public DOMStorageBrowserTest {
   void SetUpCommandLine(base::CommandLine* command_line) override {
     ContentBrowserTest::SetUpCommandLine(command_line);
     // Only enable mojo local storage if this is not a PRE_ test.
-    const testing::TestInfo* test =
-        testing::UnitTest::GetInstance()->current_test_info();
-    if (!base::StartsWith(test->name(), "PRE_", base::CompareCase::SENSITIVE))
-      command_line->AppendSwitch(switches::kMojoLocalStorage);
+    if (IsPreTest())
+      command_line->AppendSwitch(switches::kDisableMojoLocalStorage);
   }
 };
 

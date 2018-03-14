@@ -92,7 +92,7 @@ class FileSelectHelper : public base::RefCountedThreadSafe<
 
   void RunFileChooser(content::RenderFrameHost* render_frame_host,
                       std::unique_ptr<content::FileChooserParams> params);
-  void GetFileTypesOnFileThread(
+  void GetFileTypesInThreadPool(
       std::unique_ptr<content::FileChooserParams> params);
   void GetSanitizedFilenameOnUIThread(
       std::unique_ptr<content::FileChooserParams> params);
@@ -158,9 +158,9 @@ class FileSelectHelper : public base::RefCountedThreadSafe<
   void EnumerateDirectoryEnd();
 
 #if defined(OS_MACOSX)
-  // Must be called on the FILE_USER_BLOCKING thread. Each selected file that is
-  // a package will be zipped, and the zip will be passed to the render view
-  // host in place of the package.
+  // Must be called from a MayBlock() task. Each selected file that is a package
+  // will be zipped, and the zip will be passed to the render view host in place
+  // of the package.
   void ProcessSelectedFilesMac(const std::vector<ui::SelectedFileInfo>& files);
 
   // Saves the paths of |zipped_files| for later deletion. Passes |files| to the
@@ -190,6 +190,10 @@ class FileSelectHelper : public base::RefCountedThreadSafe<
 
   // Cleans up when the initiator of the file chooser is no longer valid.
   void CleanUp();
+
+  // Calls RunFileChooserEnd() if the webcontents was destroyed. Returns true
+  // if the file chooser operation shouldn't proceed.
+  bool AbortIfWebContentsDestroyed();
 
   // Helper method to get allowed extensions for select file dialog from
   // the specified accept types as defined in the spec:

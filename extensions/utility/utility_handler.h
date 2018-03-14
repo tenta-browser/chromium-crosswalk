@@ -5,9 +5,7 @@
 #ifndef EXTENSIONS_UTILITY_UTILITY_HANDLER_H_
 #define EXTENSIONS_UTILITY_UTILITY_HANDLER_H_
 
-namespace service_manager {
-class InterfaceRegistry;
-}
+#include "services/service_manager/public/cpp/binder_registry.h"
 
 namespace extensions {
 
@@ -15,7 +13,7 @@ namespace utility_handler {
 
 void UtilityThreadStarted();
 
-void ExposeInterfacesToBrowser(service_manager::InterfaceRegistry* registry,
+void ExposeInterfacesToBrowser(service_manager::BinderRegistry* registry,
                                bool running_elevated);
 
 }  // namespace utility_handler

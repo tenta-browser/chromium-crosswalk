@@ -689,11 +689,11 @@ LayerViewer.Layers3DView = class extends UI.VBox {
    */
   _onContextMenu(event) {
     var contextMenu = new UI.ContextMenu(event);
-    contextMenu.appendItem(
+    contextMenu.defaultSection().appendItem(
         Common.UIString('Reset View'), this._transformController.resetAndNotify.bind(this._transformController), false);
     var selection = this._selectionFromEventPoint(event);
     if (selection && selection.type() === LayerViewer.LayerView.Selection.Type.Snapshot) {
-      contextMenu.appendItem(
+      contextMenu.defaultSection().appendItem(
           Common.UIString('Show Paint Profiler'),
           this.dispatchEventToListeners.bind(this, LayerViewer.Layers3DView.Events.PaintProfilerRequested, selection),
           false);
@@ -1174,11 +1174,11 @@ LayerViewer.LayerTextureManager.Tile = class {
    * @param {number} scale
    * @return {!Promise}
    */
-  update(glContext, scale) {
+  async update(glContext, scale) {
     this._gl = glContext;
     this.scale = scale;
-    return this.snapshot.replay(null, null, scale).then(imageURL => imageURL && UI.loadImage(imageURL)).then(image => {
-      this.texture = image && LayerViewer.LayerTextureManager._createTextureForImage(glContext, image);
-    });
+    var imageURL = await this.snapshot.replay(scale);
+    var image = imageURL && await UI.loadImage(imageURL);
+    this.texture = image && LayerViewer.LayerTextureManager._createTextureForImage(glContext, image);
   }
 };

@@ -1,10 +1,10 @@
 android.webkit.WebView focusable focused scrollable
-++android.widget.Spinner role_description='combo box'
-++android.widget.Spinner role_description='combo box'
-++android.widget.Spinner role_description='combo box'
-++android.widget.ListView role_description='list box' collection
-++android.widget.ListView role_description='list box' collection
-++android.widget.ListView role_description='list box' collection
+++android.view.View
+++android.view.View
+++android.view.View
+++android.widget.ListView role_description='list box' clickable collection
+++android.widget.ListView role_description='list box' clickable collection
+++android.widget.ListView role_description='list box' clickable collection
 ++android.view.View role_description='menu'
 ++android.view.View role_description='menu'
 ++android.view.View role_description='menu'
@@ -14,12 +14,12 @@ android.webkit.WebView focusable focused scrollable
 ++android.view.View role_description='radio group'
 ++android.view.View role_description='radio group'
 ++android.view.View role_description='radio group'
-++android.view.View role_description='scroll bar' range
-++android.view.View role_description='scroll bar' range
-++android.view.View role_description='scroll bar' range
-++android.widget.SeekBar role_description='slider' range item_count=100
-++android.widget.SeekBar role_description='slider' range item_count=100
-++android.widget.SeekBar role_description='slider' range item_count=100
+++android.view.View role_description='scroll bar' range item_count=100 range_max=100
+++android.view.View role_description='scroll bar' range item_count=100 range_max=100
+++android.view.View role_description='scroll bar' range item_count=100 range_max=100
+++android.widget.SeekBar role_description='slider' range item_count=100 range_max=100
+++android.widget.SeekBar role_description='slider' range item_count=100 range_max=100
+++android.widget.SeekBar role_description='slider' range item_count=100 range_max=100
 ++android.view.View role_description='splitter'
 ++android.view.View role_description='splitter'
 ++android.view.View role_description='splitter'
@@ -32,9 +32,9 @@ android.webkit.WebView focusable focused scrollable
 ++android.view.View role_description='tree' collection hierarchical
 ++android.view.View role_description='tree' collection hierarchical
 ++android.view.View role_description='tree' collection hierarchical
-++android.widget.GridView role_description='table' collection
+++android.widget.GridView role_description='tree grid' collection
 ++++android.view.View
-++android.widget.GridView role_description='table' collection
+++android.widget.GridView role_description='tree grid' collection
 ++++android.view.View
-++android.widget.GridView role_description='table' collection
+++android.widget.GridView role_description='tree grid' collection
 ++++android.view.View

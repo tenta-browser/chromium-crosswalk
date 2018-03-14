@@ -31,7 +31,6 @@
 #include "extensions/renderer/user_script_set_manager.h"
 #include "extensions/renderer/v8_schema_registry.h"
 #include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
 #include "v8/include/v8.h"
 
 class ChromeRenderViewTest;
@@ -42,6 +41,7 @@ struct ExtensionMsg_ExternalConnectionInfo;
 struct ExtensionMsg_Loaded_Params;
 struct ExtensionMsg_TabConnectionInfo;
 struct ExtensionMsg_UpdatePermissions_Params;
+struct ExtensionMsg_UpdateDefaultPolicyHostRestrictions_Params;
 
 namespace blink {
 class WebLocalFrame;
@@ -57,6 +57,7 @@ class DispatcherDelegate;
 class ExtensionBindingsSystem;
 class ScriptContext;
 class ScriptInjectionManager;
+struct EventFilteringInfo;
 struct Message;
 struct PortId;
 
@@ -65,7 +66,7 @@ struct PortId;
 class Dispatcher : public content::RenderThreadObserver,
                    public UserScriptSetManager::Observer {
  public:
-  explicit Dispatcher(DispatcherDelegate* delegate);
+  explicit Dispatcher(std::unique_ptr<DispatcherDelegate> delegate);
   ~Dispatcher() override;
 
   const ScriptContextSet& script_context_set() const {
@@ -73,8 +74,6 @@ class Dispatcher : public content::RenderThreadObserver,
   }
 
   V8SchemaRegistry* v8_schema_registry() { return v8_schema_registry_.get(); }
-
-  ContentWatcher* content_watcher() { return content_watcher_.get(); }
 
   const std::string& webview_partition_id() { return webview_partition_id_; }
 
@@ -93,7 +92,8 @@ class Dispatcher : public content::RenderThreadObserver,
   void DidInitializeServiceWorkerContextOnWorkerThread(
       v8::Local<v8::Context> v8_context,
       int64_t service_worker_version_id,
-      const GURL& url);
+      const GURL& service_worker_scope,
+      const GURL& script_url);
 
   void WillReleaseScriptContext(blink::WebLocalFrame* frame,
                                 const v8::Local<v8::Context>& context,
@@ -103,7 +103,8 @@ class Dispatcher : public content::RenderThreadObserver,
   static void WillDestroyServiceWorkerContextOnWorkerThread(
       v8::Local<v8::Context> v8_context,
       int64_t service_worker_version_id,
-      const GURL& url);
+      const GURL& service_worker_scope,
+      const GURL& script_url);
 
   // This method is not allowed to run JavaScript code in the frame.
   void DidCreateDocumentElement(blink::WebLocalFrame* frame);
@@ -123,7 +124,7 @@ class Dispatcher : public content::RenderThreadObserver,
   void DispatchEvent(const std::string& extension_id,
                      const std::string& event_name,
                      const base::ListValue& event_args,
-                     const base::DictionaryValue& filtering_info) const;
+                     const EventFilteringInfo* filtering_info) const;
 
   // Shared implementation of the various MessageInvoke IPCs.
   void InvokeModuleSystemMethod(content::RenderFrame* render_frame,
@@ -132,14 +133,20 @@ class Dispatcher : public content::RenderThreadObserver,
                                 const std::string& function_name,
                                 const base::ListValue& args);
 
-  // Returns a list of (module name, resource id) pairs for the JS modules to
-  // add to the source map.
-  static std::vector<std::pair<const char*, int>> GetJsResources();
+  struct JsResourceInfo {
+    const char* name = nullptr;
+    int id = 0;
+    bool gzipped = false;
+  };
+  // Returns a list of resources for the JS modules to add to the source map.
+  static std::vector<JsResourceInfo> GetJsResources();
   static void RegisterNativeHandlers(ModuleSystem* module_system,
                                      ScriptContext* context,
                                      Dispatcher* dispatcher,
                                      ExtensionBindingsSystem* bindings_system,
                                      V8SchemaRegistry* v8_schema_registry);
+
+  ExtensionBindingsSystem* bindings_system() { return bindings_system_.get(); }
 
  private:
   // The RendererPermissionsPolicyDelegateTest.CannotScriptWebstore test needs
@@ -151,7 +158,6 @@ class Dispatcher : public content::RenderThreadObserver,
   // RenderThreadObserver implementation:
   bool OnControlMessageReceived(const IPC::Message& message) override;
   void IdleNotification() override;
-  void OnRenderProcessShutdown() override;
 
   void OnActivateExtension(const std::string& extension_id);
   void OnCancelSuspend(const std::string& extension_id);
@@ -172,7 +178,8 @@ class Dispatcher : public content::RenderThreadObserver,
   void OnDispatchEvent(const ExtensionMsg_DispatchEvent_Params& params,
                        const base::ListValue& event_args);
   void OnSetSessionInfo(version_info::Channel channel,
-                        FeatureSessionType session_type);
+                        FeatureSessionType session_type,
+                        bool lock_screen_context);
   void OnSetScriptingWhitelist(
       const ExtensionsClient::ScriptingWhitelist& extension_ids);
   void OnSetSystemFont(const std::string& font_family,
@@ -183,6 +190,8 @@ class Dispatcher : public content::RenderThreadObserver,
   void OnTransferBlobs(const std::vector<std::string>& blob_uuids);
   void OnUnloaded(const std::string& id);
   void OnUpdatePermissions(const ExtensionMsg_UpdatePermissions_Params& params);
+  void OnUpdateDefaultPolicyHostRestrictions(
+      const ExtensionMsg_UpdateDefaultPolicyHostRestrictions_Params& params);
   void OnUpdateTabSpecificPermissions(const GURL& visible_url,
                                       const std::string& extension_id,
                                       const URLPatternSet& new_hosts,
@@ -237,9 +246,8 @@ class Dispatcher : public content::RenderThreadObserver,
   // |context|.
   void RequireGuestViewModules(ScriptContext* context);
 
-  // The delegate for this dispatcher. Not owned, but must extend beyond the
-  // Dispatcher's own lifetime.
-  DispatcherDelegate* delegate_;
+  // The delegate for this dispatcher to handle embedder-specific logic.
+  std::unique_ptr<DispatcherDelegate> delegate_;
 
   // True if the IdleNotification timer should be set.
   bool set_idle_notifications_;

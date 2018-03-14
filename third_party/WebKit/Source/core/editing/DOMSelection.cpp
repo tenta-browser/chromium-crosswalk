@@ -37,7 +37,13 @@
 #include "core/dom/Range.h"
 #include "core/dom/TreeScope.h"
 #include "core/editing/EditingUtilities.h"
+#include "core/editing/EphemeralRange.h"
 #include "core/editing/FrameSelection.h"
+#include "core/editing/Position.h"
+#include "core/editing/SelectionModifier.h"
+#include "core/editing/SelectionTemplate.h"
+#include "core/editing/SetSelectionOptions.h"
+#include "core/editing/VisibleSelection.h"
 #include "core/editing/iterators/TextIterator.h"
 #include "core/frame/Deprecation.h"
 #include "core/frame/LocalFrame.h"
@@ -53,10 +59,10 @@ static Node* SelectionShadowAncestor(LocalFrame* frame) {
                    .Base()
                    .AnchorNode();
   if (!node)
-    return 0;
+    return nullptr;
 
   if (!node->IsInShadowTree())
-    return 0;
+    return nullptr;
 
   return frame->GetDocument()->AncestorInThisScope(node);
 }
@@ -80,18 +86,25 @@ void DOMSelection::UpdateFrameSelection(const SelectionInDOMTree& selection,
   DCHECK(GetFrame());
   FrameSelection& frame_selection = GetFrame()->Selection();
   // TODO(tkent): Specify FrameSelection::DoNotSetFocus. crbug.com/690272
-  bool did_set = frame_selection.SetSelectionDeprecated(selection);
+  const bool did_set = frame_selection.SetSelectionDeprecated(
+      selection, SetSelectionOptions::Builder()
+                     .SetShouldCloseTyping(true)
+                     .SetShouldClearTypingStyle(true)
+                     .Build());
   CacheRangeIfSelectionOfDocument(new_cached_range);
   if (!did_set)
     return;
   Element* focused_element = GetFrame()->GetDocument()->FocusedElement();
-  frame_selection.DidSetSelectionDeprecated();
+  frame_selection.DidSetSelectionDeprecated(SetSelectionOptions::Builder()
+                                                .SetShouldCloseTyping(true)
+                                                .SetShouldClearTypingStyle(true)
+                                                .Build());
   if (GetFrame() && GetFrame()->GetDocument() &&
       focused_element != GetFrame()->GetDocument()->FocusedElement())
-    UseCounter::Count(GetFrame(), UseCounter::kSelectionFuncionsChangeFocus);
+    UseCounter::Count(GetFrame(), WebFeature::kSelectionFuncionsChangeFocus);
 }
 
-const VisibleSelection& DOMSelection::GetVisibleSelection() const {
+VisibleSelection DOMSelection::GetVisibleSelection() const {
   DCHECK(GetFrame());
   return GetFrame()->Selection().ComputeVisibleSelectionInDOMTreeDeprecated();
 }
@@ -107,13 +120,13 @@ bool DOMSelection::IsBaseFirstInSelection() const {
 // removed.
 static Position AnchorPosition(const VisibleSelection& selection) {
   Position anchor =
-      selection.IsBaseFirst() ? selection.Start() : selection.end();
+      selection.IsBaseFirst() ? selection.Start() : selection.End();
   return anchor.ParentAnchoredEquivalent();
 }
 
 static Position FocusPosition(const VisibleSelection& selection) {
   Position focus =
-      selection.IsBaseFirst() ? selection.end() : selection.Start();
+      selection.IsBaseFirst() ? selection.End() : selection.Start();
   return focus.ParentAnchoredEquivalent();
 }
 
@@ -163,7 +176,7 @@ unsigned DOMSelection::focusOffset() const {
 
 Node* DOMSelection::baseNode() const {
   if (!IsAvailable())
-    return 0;
+    return nullptr;
 
   return ShadowAdjustedNode(BasePosition(GetVisibleSelection()));
 }
@@ -177,7 +190,7 @@ unsigned DOMSelection::baseOffset() const {
 
 Node* DOMSelection::extentNode() const {
   if (!IsAvailable())
-    return 0;
+    return nullptr;
 
   return ShadowAdjustedNode(ExtentPosition(GetVisibleSelection()));
 }
@@ -241,7 +254,7 @@ void DOMSelection::collapse(Node* node,
   // 1. If node is null, this method must behave identically as
   // removeAllRanges() and abort these steps.
   if (!node) {
-    UseCounter::Count(GetFrame(), UseCounter::kSelectionCollapseNull);
+    UseCounter::Count(GetFrame(), WebFeature::kSelectionCollapseNull);
     GetFrame()->Selection().Clear();
     return;
   }
@@ -364,12 +377,12 @@ void DOMSelection::setBaseAndExtent(Node* base_node,
   // TODO(editing-dev): Behavior on where base or extent is null is still
   // under discussion: https://github.com/w3c/selection-api/issues/72
   if (!base_node) {
-    UseCounter::Count(GetFrame(), UseCounter::kSelectionSetBaseAndExtentNull);
+    UseCounter::Count(GetFrame(), WebFeature::kSelectionSetBaseAndExtentNull);
     GetFrame()->Selection().Clear();
     return;
   }
   if (!extent_node) {
-    UseCounter::Count(GetFrame(), UseCounter::kSelectionSetBaseAndExtentNull);
+    UseCounter::Count(GetFrame(), WebFeature::kSelectionSetBaseAndExtentNull);
     extent_offset = 0;
   }
 
@@ -386,12 +399,6 @@ void DOMSelection::setBaseAndExtent(Node* base_node,
     return;
 
   ClearCachedRangeIfSelectionOfDocument();
-
-  // TODO(editing-dev): Once SVG USE element doesn't modify DOM tree, we
-  // should get rid of this update layout call.
-  // See http://crbug.com/566281
-  // See "svg/text/textpath-reference-crash.html"
-  GetFrame()->GetDocument()->UpdateStyleAndLayoutIgnorePendingStylesheets();
 
   Position base_position(base_node, base_offset);
   Position extent_position(extent_node, extent_offset);
@@ -420,53 +427,58 @@ void DOMSelection::modify(const String& alter_string,
   if (!IsAvailable())
     return;
 
-  FrameSelection::EAlteration alter;
+  SelectionModifyAlteration alter;
   if (DeprecatedEqualIgnoringCase(alter_string, "extend"))
-    alter = FrameSelection::kAlterationExtend;
+    alter = SelectionModifyAlteration::kExtend;
   else if (DeprecatedEqualIgnoringCase(alter_string, "move"))
-    alter = FrameSelection::kAlterationMove;
+    alter = SelectionModifyAlteration::kMove;
   else
     return;
 
-  SelectionDirection direction;
+  SelectionModifyDirection direction;
   if (DeprecatedEqualIgnoringCase(direction_string, "forward"))
-    direction = kDirectionForward;
+    direction = SelectionModifyDirection::kForward;
   else if (DeprecatedEqualIgnoringCase(direction_string, "backward"))
-    direction = kDirectionBackward;
+    direction = SelectionModifyDirection::kBackward;
   else if (DeprecatedEqualIgnoringCase(direction_string, "left"))
-    direction = kDirectionLeft;
+    direction = SelectionModifyDirection::kLeft;
   else if (DeprecatedEqualIgnoringCase(direction_string, "right"))
-    direction = kDirectionRight;
+    direction = SelectionModifyDirection::kRight;
   else
     return;
 
   TextGranularity granularity;
   if (DeprecatedEqualIgnoringCase(granularity_string, "character"))
-    granularity = kCharacterGranularity;
+    granularity = TextGranularity::kCharacter;
   else if (DeprecatedEqualIgnoringCase(granularity_string, "word"))
-    granularity = kWordGranularity;
+    granularity = TextGranularity::kWord;
   else if (DeprecatedEqualIgnoringCase(granularity_string, "sentence"))
-    granularity = kSentenceGranularity;
+    granularity = TextGranularity::kSentence;
   else if (DeprecatedEqualIgnoringCase(granularity_string, "line"))
-    granularity = kLineGranularity;
+    granularity = TextGranularity::kLine;
   else if (DeprecatedEqualIgnoringCase(granularity_string, "paragraph"))
-    granularity = kParagraphGranularity;
+    granularity = TextGranularity::kParagraph;
   else if (DeprecatedEqualIgnoringCase(granularity_string, "lineboundary"))
-    granularity = kLineBoundary;
+    granularity = TextGranularity::kLineBoundary;
   else if (DeprecatedEqualIgnoringCase(granularity_string, "sentenceboundary"))
-    granularity = kSentenceBoundary;
+    granularity = TextGranularity::kSentenceBoundary;
   else if (DeprecatedEqualIgnoringCase(granularity_string, "paragraphboundary"))
-    granularity = kParagraphBoundary;
+    granularity = TextGranularity::kParagraphBoundary;
   else if (DeprecatedEqualIgnoringCase(granularity_string, "documentboundary"))
-    granularity = kDocumentBoundary;
+    granularity = TextGranularity::kDocumentBoundary;
   else
     return;
 
+  // TODO(editing-dev): The use of updateStyleAndLayoutIgnorePendingStylesheets
+  // needs to be audited.  See http://crbug.com/590369 for more details.
+  GetFrame()->GetDocument()->UpdateStyleAndLayoutIgnorePendingStylesheets();
+
   Element* focused_element = GetFrame()->GetDocument()->FocusedElement();
-  GetFrame()->Selection().Modify(alter, direction, granularity);
+  GetFrame()->Selection().Modify(alter, direction, granularity,
+                                 SetSelectionBy::kSystem);
   if (GetFrame() && GetFrame()->GetDocument() &&
       focused_element != GetFrame()->GetDocument()->FocusedElement())
-    UseCounter::Count(GetFrame(), UseCounter::kSelectionFuncionsChangeFocus);
+    UseCounter::Count(GetFrame(), WebFeature::kSelectionFuncionsChangeFocus);
 }
 
 // https://www.w3.org/TR/selection-api/#dom-selection-extend
@@ -669,7 +681,7 @@ void DOMSelection::addRange(Range* new_range) {
   // warning message for a while, and continue to collect the usage data.
   // <https://code.google.com/p/chromium/issues/detail?id=353069>.
   Deprecation::CountDeprecation(GetFrame(),
-                                UseCounter::kSelectionAddRangeIntersect);
+                                WebFeature::kSelectionAddRangeIntersect);
 }
 
 // https://www.w3.org/TR/selection-api/#dom-selection-deletefromdocument
@@ -685,6 +697,10 @@ void DOMSelection::deleteFromDocument() {
     return;
   }
 
+  // TODO(editing-dev): The use of updateStyleAndLayoutIgnorePendingStylesheets
+  // needs to be audited.  See http://crbug.com/590369 for more details.
+  GetFrame()->GetDocument()->UpdateStyleAndLayoutIgnorePendingStylesheets();
+
   // The following code is necessary for
   // editing/selection/deleteFromDocument-crash.html, which assumes
   // deleteFromDocument() for text selection in a TEXTAREA deletes the TEXTAREA
@@ -692,16 +708,11 @@ void DOMSelection::deleteFromDocument() {
 
   FrameSelection& selection = GetFrame()->Selection();
 
-  if (selection.ComputeVisibleSelectionInDOMTreeDeprecated().IsNone())
+  if (selection.ComputeVisibleSelectionInDOMTree().IsNone())
     return;
 
-  // TODO(xiaochengh): The use of updateStyleAndLayoutIgnorePendingStylesheets
-  // needs to be audited.  See http://crbug.com/590369 for more details.
-  // |VisibleSelection::toNormalizedEphemeralRange| requires clean layout.
-  GetFrame()->GetDocument()->UpdateStyleAndLayoutIgnorePendingStylesheets();
-
   Range* selected_range =
-      CreateRange(selection.ComputeVisibleSelectionInDOMTreeDeprecated()
+      CreateRange(selection.ComputeVisibleSelectionInDOMTree()
                       .ToNormalizedEphemeralRange());
   if (!selected_range)
     return;
@@ -721,7 +732,7 @@ bool DOMSelection::containsNode(const Node* n, bool allow_partial) const {
 
   unsigned node_index = n->NodeIndex();
 
-  // TODO(xiaochengh): The use of updateStyleAndLayoutIgnorePendingStylesheets
+  // TODO(editing-dev): The use of updateStyleAndLayoutIgnorePendingStylesheets
   // needs to be audited.  See http://crbug.com/590369 for more details.
   // |VisibleSelection::toNormalizedEphemeralRange| requires clean layout.
   GetFrame()->GetDocument()->UpdateStyleAndLayoutIgnorePendingStylesheets();
@@ -782,7 +793,7 @@ String DOMSelection::toString() {
   if (!IsAvailable())
     return String();
 
-  // TODO(xiaochengh): The use of updateStyleAndLayoutIgnorePendingStylesheets
+  // TODO(editing-dev): The use of updateStyleAndLayoutIgnorePendingStylesheets
   // needs to be audited.  See http://crbug.com/590369 for more details.
   GetFrame()->GetDocument()->UpdateStyleAndLayoutIgnorePendingStylesheets();
 
@@ -800,13 +811,13 @@ String DOMSelection::toString() {
 
 Node* DOMSelection::ShadowAdjustedNode(const Position& position) const {
   if (position.IsNull())
-    return 0;
+    return nullptr;
 
   Node* container_node = position.ComputeContainerNode();
   Node* adjusted_node = tree_scope_->AncestorInThisScope(container_node);
 
   if (!adjusted_node)
-    return 0;
+    return nullptr;
 
   if (container_node == adjusted_node)
     return container_node;
@@ -845,8 +856,9 @@ void DOMSelection::AddConsoleError(const String& message) {
         ConsoleMessage::Create(kJSMessageSource, kErrorMessageLevel, message));
 }
 
-DEFINE_TRACE(DOMSelection) {
+void DOMSelection::Trace(blink::Visitor* visitor) {
   visitor->Trace(tree_scope_);
+  ScriptWrappable::Trace(visitor);
   ContextClient::Trace(visitor);
 }
 

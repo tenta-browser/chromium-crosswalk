@@ -4,18 +4,31 @@
 
 #include "chrome/browser/ui/app_list/app_list_syncable_service.h"
 
+#include <set>
 #include <utility>
 
+#include "ash/app_list/model/app_list_folder_item.h"
+#include "ash/app_list/model/app_list_item.h"
+#include "ash/app_list/model/app_list_model.h"
+#include "ash/app_list/model/app_list_model_observer.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/apps/drive/drive_app_provider.h"
+#include "chrome/browser/chromeos/arc/arc_util.h"
+#include "chrome/browser/chromeos/file_manager/app_id.h"
+#include "chrome/browser/chromeos/genius_app/app_id.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/app_list_service.h"
+#include "chrome/browser/ui/app_list/arc/arc_app_item.h"
+#include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
+#include "chrome/browser/ui/app_list/arc/arc_app_model_builder.h"
+#include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
 #include "chrome/browser/ui/app_list/extension_app_item.h"
 #include "chrome/browser/ui/app_list/extension_app_model_builder.h"
 #include "chrome/common/chrome_switches.h"
@@ -32,18 +45,8 @@
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/one_shot_event.h"
-#include "ui/app_list/app_list_folder_item.h"
-#include "ui/app_list/app_list_item.h"
-#include "ui/app_list/app_list_model.h"
-#include "ui/app_list/app_list_model_observer.h"
 #include "ui/app_list/app_list_switches.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "chrome/browser/chromeos/arc/arc_util.h"
-#include "chrome/browser/chromeos/file_manager/app_id.h"
-#include "chrome/browser/chromeos/genius_app/app_id.h"
-#include "chrome/browser/ui/app_list/arc/arc_app_item.h"
-#include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
-#include "chrome/browser/ui/app_list/arc/arc_app_model_builder.h"
 
 using syncer::SyncChange;
 
@@ -82,8 +85,7 @@ bool UpdateSyncItemFromAppItem(const AppListItem* app_item,
                                AppListSyncableService::SyncItem* sync_item) {
   DCHECK_EQ(sync_item->item_id, app_item->id());
   bool changed = false;
-  if (app_list::switches::IsFolderUIEnabled() &&
-      sync_item->parent_id != app_item->folder_id()) {
+  if (sync_item->parent_id != app_item->folder_id()) {
     sync_item->parent_id = app_item->folder_id();
     changed = true;
   }
@@ -182,20 +184,33 @@ void UpdateSyncItemInLocalStorage(
     const AppListSyncableService::SyncItem* sync_item) {
   DictionaryPrefUpdate pref_update(profile->GetPrefs(),
                                    prefs::kAppListLocalState);
-  base::DictionaryValue* dict_item = nullptr;
-  if (!pref_update->GetDictionaryWithoutPathExpansion(sync_item->item_id,
-      &dict_item)) {
-    dict_item = new base::DictionaryValue();
-    pref_update->SetWithoutPathExpansion(sync_item->item_id, dict_item);
+  base::Value* dict_item = pref_update->FindKeyOfType(
+      sync_item->item_id, base::Value::Type::DICTIONARY);
+  if (!dict_item) {
+    dict_item = pref_update->SetKey(sync_item->item_id,
+                                    base::Value(base::Value::Type::DICTIONARY));
   }
 
-  dict_item->SetString(kNameKey, sync_item->item_name);
-  dict_item->SetString(kParentIdKey, sync_item->parent_id);
-  dict_item->SetString(kPositionKey,sync_item->item_ordinal.IsValid() ?
-      sync_item->item_ordinal.ToInternalValue() : std::string());
-  dict_item->SetString(kPinPositionKey, sync_item->item_pin_ordinal.IsValid() ?
-      sync_item->item_pin_ordinal.ToInternalValue() : std::string());
-  dict_item->SetInteger(kTypeKey, static_cast<int>(sync_item->item_type));
+  dict_item->SetKey(kNameKey, base::Value(sync_item->item_name));
+  dict_item->SetKey(kParentIdKey, base::Value(sync_item->parent_id));
+  dict_item->SetKey(kPositionKey,
+                    base::Value(sync_item->item_ordinal.IsValid()
+                                    ? sync_item->item_ordinal.ToInternalValue()
+                                    : std::string()));
+  dict_item->SetKey(
+      kPinPositionKey,
+      base::Value(sync_item->item_pin_ordinal.IsValid()
+                      ? sync_item->item_pin_ordinal.ToInternalValue()
+                      : std::string()));
+  dict_item->SetKey(kTypeKey,
+                    base::Value(static_cast<int>(sync_item->item_type)));
+}
+
+bool IsDefaultSyncItem(const AppListSyncableService::SyncItem* sync_item) {
+  DCHECK(sync_item->item_ordinal.IsValid());
+  return sync_item->parent_id.empty() &&
+         sync_item->item_ordinal.Equals(
+             syncer::StringOrdinal::CreateInitialOrdinal());
 }
 
 }  // namespace
@@ -273,6 +288,35 @@ class AppListSyncableService::ModelObserver : public AppListModelObserver {
   DISALLOW_COPY_AND_ASSIGN(ModelObserver);
 };
 
+// AppListSyncableService::ModelUpdater
+
+class AppListSyncableService::ModelUpdater : public AppListModelUpdater {
+ public:
+  explicit ModelUpdater(AppListModel* model) : model_(model) {}
+  ~ModelUpdater() override {}
+  void AddItem(std::unique_ptr<AppListItem> app_item) override {
+    model_->AddItem(std::move(app_item));
+  }
+  void RemoveItem(const std::string& id) override { model_->DeleteItem(id); }
+  void RemoveUninstalledItem(const std::string& id) override {
+    model_->DeleteUninstalledItem(id);
+  }
+  AppListItem* FindItem(const std::string& id) override {
+    return model_->FindItem(id);
+  }
+  size_t ItemCount() override {
+    return model_->top_level_item_list()->item_count();
+  }
+
+  AppListItem* ItemAt(size_t index) override {
+    return model_->top_level_item_list()->item_at(index);
+  }
+
+ private:
+  AppListModel* model_;
+  DISALLOW_COPY_AND_ASSIGN(ModelUpdater);
+};
+
 // AppListSyncableService
 
 // static
@@ -291,6 +335,7 @@ AppListSyncableService::AppListSyncableService(
     : profile_(profile),
       extension_system_(extension_system),
       model_(new AppListModel),
+      model_updater_(new ModelUpdater(model_.get())),
       initial_sync_data_processed_(false),
       first_app_list_sync_(true),
       weak_ptr_factory_(this) {
@@ -302,10 +347,7 @@ AppListSyncableService::AppListSyncableService(
   oem_folder_name_ =
       l10n_util::GetStringUTF8(IDS_APP_LIST_OEM_DEFAULT_FOLDER_NAME);
 
-  // TODO(khmel): Now we support persistent state of this service. It is
-  // possible to remove folder UI enabled check.
-  if (switches::IsFolderUIEnabled())
-    model_->SetFoldersEnabled(true);
+  model_->SetFoldersEnabled(true);
 
   if (IsExtensionServiceReady()) {
     BuildModel();
@@ -385,21 +427,15 @@ void AppListSyncableService::BuildModel() {
   if (arc::IsArcAllowedForProfile(profile_))
     arc_apps_builder_.reset(new ArcAppModelBuilder(controller));
   DCHECK(profile_);
-  if (app_list::switches::IsAppListSyncEnabled()) {
-    VLOG(1) << this << ": AppListSyncableService: InitializeWithService.";
-    SyncStarted();
-    apps_builder_->InitializeWithService(this, model_.get());
-    if (arc_apps_builder_.get())
-      arc_apps_builder_->InitializeWithService(this, model_.get());
-  } else {
-    VLOG(1) << this << ": AppListSyncableService: InitializeWithProfile.";
-    apps_builder_->InitializeWithProfile(profile_, model_.get());
-    if (arc_apps_builder_.get())
-      arc_apps_builder_->InitializeWithProfile(profile_, model_.get());
-  }
+  SyncStarted();
+  apps_builder_->Initialize(this, profile_, model_updater_.get());
+  if (arc_apps_builder_.get())
+    arc_apps_builder_->Initialize(this, profile_, model_updater_.get());
 
-  if (app_list::switches::IsDriveAppsInAppListEnabled())
+  if (app_list::switches::IsDriveAppsInAppListEnabled() &&
+      !::switches::ExtensionsDisabled()) {
     drive_app_provider_.reset(new DriveAppProvider(profile_, this));
+  }
 
   HandleUpdateFinished();
 }
@@ -502,14 +538,12 @@ void AppListSyncableService::AddItem(std::unique_ptr<AppListItem> app_item) {
     return;  // Item is not valid.
 
   std::string folder_id;
-  if (app_list::switches::IsFolderUIEnabled()) {
-    if (AppIsOem(app_item->id())) {
-      folder_id = FindOrCreateOemFolder();
-      VLOG_IF(2, !folder_id.empty())
-          << this << ": AddItem to OEM folder: " << sync_item->ToString();
-    } else {
-      folder_id = sync_item->parent_id;
-    }
+  if (AppIsOem(app_item->id())) {
+    folder_id = FindOrCreateOemFolder();
+    VLOG_IF(2, !folder_id.empty())
+        << this << ": AddItem to OEM folder: " << sync_item->ToString();
+  } else {
+    folder_id = sync_item->parent_id;
   }
   VLOG(2) << this << ": AddItem: " << sync_item->ToString()
           << " Folder: '" << folder_id << "'";
@@ -671,8 +705,6 @@ void AppListSyncableService::RemoveUninstalledItem(const std::string& id) {
 
 void AppListSyncableService::UpdateItem(AppListItem* app_item) {
   // Check to see if the item needs to be moved to/from the OEM folder.
-  if (!app_list::switches::IsFolderUIEnabled())
-    return;
   bool is_oem = AppIsOem(app_item->id());
   if (!is_oem && app_item->folder_id() == kOemFolderId)
     model_->MoveItemToFolder(app_item, "");
@@ -713,9 +745,6 @@ void AppListSyncableService::RemoveSyncItem(const std::string& id) {
 }
 
 void AppListSyncableService::ResolveFolderPositions() {
-  if (!app_list::switches::IsFolderUIEnabled())
-    return;
-
   VLOG(1) << "ResolveFolderPositions.";
   for (const auto& sync_pair : sync_items_) {
     SyncItem* sync_item = sync_pair.second.get();
@@ -738,9 +767,6 @@ void AppListSyncableService::ResolveFolderPositions() {
 }
 
 void AppListSyncableService::PruneEmptySyncFolders() {
-  if (!app_list::switches::IsFolderUIEnabled())
-    return;
-
   std::set<std::string> parent_ids;
   for (const auto& sync_pair : sync_items_)
     parent_ids.insert(sync_pair.second->parent_id);
@@ -858,6 +884,8 @@ syncer::SyncMergeResult AppListSyncableService::MergeDataAndStartSyncing(
                                      GetSyncDataFromSyncItem(sync_item)));
   }
 
+  MaybeImportLegacyPlayStorePosition(&change_list);
+
   sync_processor_->ProcessSyncChanges(FROM_HERE, change_list);
 
   HandleUpdateFinished();
@@ -886,7 +914,7 @@ syncer::SyncDataList AppListSyncableService::GetAllSyncData(
 }
 
 syncer::SyncError AppListSyncableService::ProcessSyncChanges(
-    const tracked_objects::Location& from_here,
+    const base::Location& from_here,
     const syncer::SyncChangeList& change_list) {
   if (!sync_processor_.get()) {
     return syncer::SyncError(FROM_HERE,
@@ -1006,7 +1034,6 @@ void AppListSyncableService::ProcessExistingSyncItem(SyncItem* sync_item) {
   }
   VLOG(2) << "ProcessExistingSyncItem: " << sync_item->ToString();
   AppListItem* app_item = model_->FindItem(sync_item->item_id);
-  DVLOG(2) << " AppItem: " << app_item->ToDebugString();
   if (!app_item) {
     // This is expected in case the user uses devices with different app set,
     // for example, ARC enabled and ARC disabled devices. Another scenario is
@@ -1015,9 +1042,9 @@ void AppListSyncableService::ProcessExistingSyncItem(SyncItem* sync_item) {
     DVLOG(2) << "Skip updating missing item : " << sync_item->ToString();
     return;
   }
+  DVLOG(2) << " AppItem: " << app_item->ToDebugString();
   // This is the only place where sync can cause an item to change folders.
-  if (app_list::switches::IsFolderUIEnabled() &&
-      app_item->folder_id() != sync_item->parent_id &&
+  if (app_item->folder_id() != sync_item->parent_id &&
       !AppIsOem(app_item->id())) {
     VLOG(2) << " Moving Item To Folder: " << sync_item->parent_id;
     model_->MoveItemToFolder(app_item, sync_item->parent_id);
@@ -1235,6 +1262,31 @@ std::string AppListSyncableService::SyncItem::ToString() const {
     res += " [" + item_pin_ordinal.ToDebugString() + "]";
   }
   return res;
+}
+
+void AppListSyncableService::MaybeImportLegacyPlayStorePosition(
+    syncer::SyncChangeList* change_list) {
+  SyncItem* play_store_sync_item = FindSyncItem(arc::kPlayStoreAppId);
+  if (!play_store_sync_item || !IsDefaultSyncItem(play_store_sync_item))
+    return;
+
+  const SyncItem* legacy_play_store_sync_item =
+      FindSyncItem(arc::kLegacyPlayStoreAppId);
+  if (!legacy_play_store_sync_item ||
+      IsDefaultSyncItem(legacy_play_store_sync_item)) {
+    return;
+  }
+
+  play_store_sync_item->parent_id = legacy_play_store_sync_item->parent_id;
+  play_store_sync_item->item_ordinal =
+      legacy_play_store_sync_item->item_ordinal;
+  DCHECK(!IsDefaultSyncItem(play_store_sync_item));
+  ProcessExistingSyncItem(play_store_sync_item);
+  UpdateSyncItemInLocalStorage(profile_, play_store_sync_item);
+  change_list->push_back(
+      SyncChange(FROM_HERE, SyncChange::ACTION_UPDATE,
+                 GetSyncDataFromSyncItem(play_store_sync_item)));
+  DVLOG(2) << "Play Store app list item was updated from the legacy entry";
 }
 
 }  // namespace app_list

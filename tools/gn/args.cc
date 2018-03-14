@@ -96,11 +96,9 @@ Args::ValueWithOverride::ValueWithOverride(const Value& def_val)
       override_value() {
 }
 
-Args::ValueWithOverride::~ValueWithOverride() {
-}
+Args::ValueWithOverride::~ValueWithOverride() = default;
 
-Args::Args() {
-}
+Args::Args() = default;
 
 Args::Args(const Args& other)
     : overrides_(other.overrides_),
@@ -110,8 +108,7 @@ Args::Args(const Args& other)
       toolchain_overrides_(other.toolchain_overrides_) {
 }
 
-Args::~Args() {
-}
+Args::~Args() = default;
 
 void Args::AddArgOverride(const char* name, const Value& value) {
   base::AutoLock lock(lock_);
@@ -248,7 +245,7 @@ bool Args::VerifyAllOverridesUsed(Err* err) const {
   std::string err_help(
       "The variable \"" + name + "\" was set as a build argument\n"
       "but never appeared in a declare_args() block in any buildfile.\n\n"
-      "To view all possible args, run \"gn args --list <builddir>\"");
+      "To view all possible args, run \"gn args --list <out_dir>\"");
 
   // Use all declare_args for a spelling suggestion.
   std::vector<base::StringPiece> candidates;
@@ -302,9 +299,15 @@ void Args::SetSystemVarsLocked(Scope* dest) const {
   os = "android";
 #elif defined(OS_NETBSD)
   os = "netbsd";
+#elif defined(OS_AIX)
+  os = "aix";
+#elif defined(OS_FUCHSIA)
+  os = "fuchsia";
 #else
   #error Unknown OS type.
 #endif
+  // NOTE: Adding a new port? Please follow
+  // https://chromium.googlesource.com/chromium/src/+/master/docs/new_port_policy.md
 
   // Host architecture.
   static const char kX86[] = "x86";
@@ -312,6 +315,7 @@ void Args::SetSystemVarsLocked(Scope* dest) const {
   static const char kArm[] = "arm";
   static const char kArm64[] = "arm64";
   static const char kMips[] = "mipsel";
+  static const char kMips64[] = "mips64el";
   static const char kS390X[] = "s390x";
   static const char kPPC64[] = "ppc64";
   const char* arch = nullptr;
@@ -329,9 +333,14 @@ void Args::SetSystemVarsLocked(Scope* dest) const {
     arch = kArm64;
   else if (os_arch == "mips")
     arch = kMips;
+  else if (os_arch == "mips64")
+    arch = kMips64;
   else if (os_arch == "s390x")
     arch = kS390X;
-  else if (os_arch == "mips")
+  else if (os_arch == "ppc64" || os_arch == "ppc64le")
+    // We handle the endianness inside //build/config/host_byteorder.gni.
+    // This allows us to use the same toolchain as ppc64 BE
+    // and specific flags are included using the host_byteorder logic.
     arch = kPPC64;
   else
     CHECK(false) << "OS architecture not handled. (" << os_arch << ")";

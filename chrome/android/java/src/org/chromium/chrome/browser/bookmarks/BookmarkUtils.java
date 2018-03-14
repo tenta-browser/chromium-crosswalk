@@ -9,6 +9,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.Resources;
 import android.net.Uri;
 import android.provider.Browser;
 import android.text.TextUtils;
@@ -19,6 +20,7 @@ import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
@@ -27,6 +29,7 @@ import org.chromium.chrome.browser.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.snackbar.SnackbarManager.SnackbarController;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.util.IntentUtils;
+import org.chromium.chrome.browser.widget.TintedDrawable;
 import org.chromium.components.bookmarks.BookmarkId;
 import org.chromium.components.bookmarks.BookmarkType;
 import org.chromium.ui.base.DeviceFormFactor;
@@ -154,10 +157,13 @@ public class BookmarkUtils {
     /**
      * Shows bookmark main UI.
      */
-    public static void showBookmarkManager(Activity activity) {
+    public static void showBookmarkManager(ChromeActivity activity) {
         String url = getFirstUrlToLoad(activity);
 
-        if (DeviceFormFactor.isTablet(activity)) {
+        if (activity.getBottomSheet() != null) {
+            activity.getBottomSheetContentController().showContentAndOpenSheet(
+                    R.id.action_bookmarks);
+        } else if (DeviceFormFactor.isTablet()) {
             openUrl(activity, url, activity.getComponentName());
         } else {
             Intent intent = new Intent(activity, BookmarkActivity.class);
@@ -242,8 +248,10 @@ public class BookmarkUtils {
         RecordUserAction.record("MobileBookmarkManagerEntryOpened");
         RecordHistogram.recordEnumeratedHistogram(
                 "Stars.LaunchLocation", launchLocation, BookmarkLaunchLocation.COUNT);
+        RecordHistogram.recordEnumeratedHistogram(
+                "Bookmarks.OpenBookmarkType", bookmarkId.getType(), BookmarkType.LAST + 1);
 
-        if (DeviceFormFactor.isTablet(activity)) {
+        if (DeviceFormFactor.isTablet()) {
             // For tablets, the bookmark manager is open in a tab in the ChromeActivity. Use
             // the ComponentName of the ChromeActivity passed into this method.
             openUrl(activity, url, activity.getComponentName());
@@ -256,6 +264,22 @@ public class BookmarkUtils {
         }
 
         return true;
+    }
+
+    /**
+     * @param res {@link Resources} used to retrieve the drawable.
+     * @return A {@link TintedDrawable} to use for displaying bookmark folders.
+     */
+    public static TintedDrawable getFolderIcon(Resources res) {
+        return TintedDrawable.constructTintedDrawable(
+                res, R.drawable.ic_folder_blue_24dp, getFolderIconTint());
+    }
+
+    /**
+     * @return The tint used on the bookmark folder icon.
+     */
+    public static int getFolderIconTint() {
+        return R.color.dark_mode_tint;
     }
 
     private static void openUrl(Activity activity, String url, ComponentName componentName) {

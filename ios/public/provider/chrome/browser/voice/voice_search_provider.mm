@@ -6,6 +6,10 @@
 
 #import "ios/public/provider/chrome/browser/voice/voice_search_controller.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 bool VoiceSearchProvider::IsVoiceSearchEnabled() const {
   return false;
 }
@@ -27,4 +31,10 @@ VoiceSearchProvider::CreateVoiceSearchController(
 UIView<VoiceSearchBar>* VoiceSearchProvider::BuildVoiceSearchBar(
     CGRect frame) const {
   return nil;
+}
+
+UIView<VoiceSearchBar>* VoiceSearchProvider::BuildVoiceSearchBar(
+    CGRect frame,
+    id<ApplicationCommands> dispatcher) const {
+  return BuildVoiceSearchBar(frame);
 }

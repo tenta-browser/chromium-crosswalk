@@ -2,15 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "extensions/renderer/gc_callback.h"
+
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/features/feature.h"
-#include "extensions/renderer/gc_callback.h"
 #include "extensions/renderer/scoped_web_frame.h"
 #include "extensions/renderer/script_context.h"
 #include "extensions/renderer/script_context_set.h"
@@ -29,13 +30,13 @@ void SetToTrue(bool* value) {
   *value = true;
 }
 
-class GCCallbackTest : public testing::Test {
+enum CallbackType { NATIVE, JS };
+
+class GCCallbackTest : public testing::TestWithParam<CallbackType> {
  public:
   GCCallbackTest() : script_context_set_(&active_extensions_) {}
 
  protected:
-  base::MessageLoop& message_loop() { return message_loop_; }
-
   ScriptContextSet& script_context_set() { return script_context_set_; }
 
   v8::Local<v8::Context> v8_context() {
@@ -52,6 +53,29 @@ class GCCallbackTest : public testing::Test {
   void RequestGarbageCollection() {
     v8::Isolate::GetCurrent()->RequestGarbageCollectionForTesting(
         v8::Isolate::kFullGarbageCollection);
+  }
+
+  // Returns a (self-owning) GCCallback for a soon-to-be-collected object.
+  // The GCCallback will delete itself, or memory tests will complain.
+  GCCallback* GetGCCallback(ScriptContext* script_context,
+                            bool* callback_invoked,
+                            bool* fallback_invoked) {
+    // Nest another HandleScope so that |object| and |unreachable_function|'s
+    // handles will be garbage collected.
+    v8::Isolate* isolate = script_context->isolate();
+    v8::HandleScope handle_scope(isolate);
+    v8::Local<v8::Object> object = v8::Object::New(isolate);
+    if (GetParam() == JS) {
+      v8::Local<v8::FunctionTemplate> unreachable_function =
+          gin::CreateFunctionTemplate(isolate,
+                                      base::Bind(SetToTrue, callback_invoked));
+      return new GCCallback(script_context, object,
+                            unreachable_function->GetFunction(),
+                            base::Bind(SetToTrue, fallback_invoked));
+    }
+    return new GCCallback(script_context, object,
+                          base::Bind(SetToTrue, callback_invoked),
+                          base::Bind(SetToTrue, fallback_invoked));
   }
 
  private:
@@ -71,7 +95,8 @@ class GCCallbackTest : public testing::Test {
     RequestGarbageCollection();
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
+
   ScopedWebFrame web_frame_;  // (this will construct the v8::Isolate)
   // ExtensionsRendererClient is a dependency of ScriptContextSet.
   TestExtensionsRendererClient extensions_renderer_client_;
@@ -82,7 +107,7 @@ class GCCallbackTest : public testing::Test {
   DISALLOW_COPY_AND_ASSIGN(GCCallbackTest);
 };
 
-TEST_F(GCCallbackTest, GCBeforeContextInvalidated) {
+TEST_P(GCCallbackTest, GCBeforeContextInvalidated) {
   v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::HandleScope handle_scope(isolate);
   v8::Context::Scope context_scope(v8_context());
@@ -91,19 +116,7 @@ TEST_F(GCCallbackTest, GCBeforeContextInvalidated) {
 
   bool callback_invoked = false;
   bool fallback_invoked = false;
-
-  {
-    // Nest another HandleScope so that |object| and |unreachable_function|'s
-    // handles will be garbage collected.
-    v8::HandleScope handle_scope(isolate);
-    v8::Local<v8::Object> object = v8::Object::New(isolate);
-    v8::Local<v8::FunctionTemplate> unreachable_function =
-        gin::CreateFunctionTemplate(isolate,
-                                    base::Bind(SetToTrue, &callback_invoked));
-    // The GCCallback will delete itself, or memory tests will complain.
-    new GCCallback(script_context, object, unreachable_function->GetFunction(),
-                   base::Bind(SetToTrue, &fallback_invoked));
-  }
+  GetGCCallback(script_context, &callback_invoked, &fallback_invoked);
 
   // Trigger a GC. Only the callback should be invoked.
   RequestGarbageCollection();
@@ -120,7 +133,7 @@ TEST_F(GCCallbackTest, GCBeforeContextInvalidated) {
   EXPECT_FALSE(fallback_invoked);
 }
 
-TEST_F(GCCallbackTest, ContextInvalidatedBeforeGC) {
+TEST_P(GCCallbackTest, ContextInvalidatedBeforeGC) {
   v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::HandleScope handle_scope(isolate);
   v8::Context::Scope context_scope(v8_context());
@@ -129,19 +142,7 @@ TEST_F(GCCallbackTest, ContextInvalidatedBeforeGC) {
 
   bool callback_invoked = false;
   bool fallback_invoked = false;
-
-  {
-    // Nest another HandleScope so that |object| and |unreachable_function|'s
-    // handles will be garbage collected.
-    v8::HandleScope handle_scope(isolate);
-    v8::Local<v8::Object> object = v8::Object::New(isolate);
-    v8::Local<v8::FunctionTemplate> unreachable_function =
-        gin::CreateFunctionTemplate(isolate,
-                                    base::Bind(SetToTrue, &callback_invoked));
-    // The GCCallback will delete itself, or memory tests will complain.
-    new GCCallback(script_context, object, unreachable_function->GetFunction(),
-                   base::Bind(SetToTrue, &fallback_invoked));
-  }
+  GetGCCallback(script_context, &callback_invoked, &fallback_invoked);
 
   // Invalidate the context. Only the fallback should be invoked.
   script_context_set().Remove(script_context);
@@ -157,6 +158,35 @@ TEST_F(GCCallbackTest, ContextInvalidatedBeforeGC) {
 
   EXPECT_FALSE(callback_invoked);
 }
+
+// Test the scenario of an object being garbage collected while the
+// ScriptContext is valid, but the ScriptContext being invalidated before the
+// callback has a chance to run.
+TEST_P(GCCallbackTest,
+       ContextInvalidatedBetweenGarbageCollectionAndCallbackRunning) {
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  v8::HandleScope handle_scope(isolate);
+  v8::Context::Scope context_scope(v8_context());
+
+  ScriptContext* script_context = RegisterScriptContext();
+
+  bool callback_invoked = false;
+  bool fallback_invoked = false;
+
+  GetGCCallback(script_context, &callback_invoked, &fallback_invoked);
+
+  RequestGarbageCollection();                   // Object GC'd; callback queued.
+  script_context_set().Remove(script_context);  // Script context invalidated.
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_FALSE(callback_invoked);
+  EXPECT_TRUE(fallback_invoked);
+}
+
+INSTANTIATE_TEST_CASE_P(NativeCallback,
+                        GCCallbackTest,
+                        ::testing::Values(NATIVE));
+INSTANTIATE_TEST_CASE_P(JSCallback, GCCallbackTest, ::testing::Values(JS));
 
 }  // namespace
 }  // namespace extensions

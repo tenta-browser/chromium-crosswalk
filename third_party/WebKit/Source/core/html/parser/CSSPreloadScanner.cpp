@@ -34,9 +34,9 @@
 #include "core/html/parser/HTMLResourcePreloader.h"
 #include "core/loader/DocumentLoader.h"
 #include "core/loader/resource/CSSStyleSheetResource.h"
-#include "platform/HTTPNames.h"
 #include "platform/Histogram.h"
-#include "platform/loader/fetch/FetchInitiatorTypeNames.h"
+#include "platform/loader/fetch/fetch_initiator_type_names.h"
+#include "platform/network/http_names.h"
 #include "platform/text/SegmentedString.h"
 #include "platform/weborigin/SecurityPolicy.h"
 
@@ -73,7 +73,7 @@ void CSSPreloadScanner::Scan(const HTMLToken::DataVector& data,
                              const SegmentedString& source,
                              PreloadRequestStream& requests,
                              const KURL& predicted_base_element_url) {
-  ScanCommon(data.Data(), data.Data() + data.size(), source, requests,
+  ScanCommon(data.data(), data.data() + data.size(), source, requests,
              predicted_base_element_url);
 }
 
@@ -241,7 +241,8 @@ void CSSPreloadScanner::EmitRule(const SegmentedString& source) {
     auto request = PreloadRequest::CreateIfNeeded(
         FetchInitiatorTypeNames::css, position, url,
         *predicted_base_element_url_, Resource::kCSSStyleSheet,
-        referrer_policy_, PreloadRequest::kBaseUrlIsReferrer);
+        referrer_policy_, PreloadRequest::kBaseUrlIsReferrer,
+        ResourceFetcher::kImageNotImageSet);
     if (request) {
       // FIXME: Should this be including the charset in the preload request?
       requests_->push_back(std::move(request));
@@ -265,7 +266,7 @@ CSSPreloaderResourceClient::CSSPreloaderResourceClient(
                   : kScanOnly),
       preloader_(preloader),
       resource_(ToCSSStyleSheetResource(resource)) {
-  resource_->AddClient(this, Resource::kDontMarkAsReferenced);
+  resource_->AddClient(this);
 }
 
 CSSPreloaderResourceClient::~CSSPreloaderResourceClient() {}
@@ -274,17 +275,21 @@ void CSSPreloaderResourceClient::SetCSSStyleSheet(
     const String& href,
     const KURL& base_url,
     ReferrerPolicy referrer_policy,
-    const String& charset,
+    const WTF::TextEncoding&,
     const CSSStyleSheetResource*) {
   ClearResource();
 }
 
 // Only attach for one appendData call, as that's where most imports will likely
 // be (according to spec).
-void CSSPreloaderResourceClient::DidAppendFirstData(
-    const CSSStyleSheetResource* resource) {
+void CSSPreloaderResourceClient::DataReceived(Resource* resource,
+                                              const char*,
+                                              size_t) {
+  if (received_first_data_)
+    return;
+  received_first_data_ = true;
   if (preloader_)
-    ScanCSS(resource);
+    ScanCSS(ToCSSStyleSheetResource(resource));
   ClearResource();
 }
 
@@ -303,7 +308,7 @@ void CSSPreloaderResourceClient::ScanCSS(
   // augmented to take care of this case without performing an additional
   // copy.
   double start_time = MonotonicallyIncreasingTimeMS();
-  const String& chunk = resource->SheetText();
+  const String& chunk = resource->SheetText(nullptr);
   if (chunk.IsNull())
     return;
   CSSPreloadScanner css_preload_scanner;
@@ -362,7 +367,7 @@ void CSSPreloaderResourceClient::ClearResource() {
   resource_.Clear();
 }
 
-DEFINE_TRACE(CSSPreloaderResourceClient) {
+void CSSPreloaderResourceClient::Trace(blink::Visitor* visitor) {
   visitor->Trace(preloader_);
   visitor->Trace(resource_);
   StyleSheetResourceClient::Trace(visitor);

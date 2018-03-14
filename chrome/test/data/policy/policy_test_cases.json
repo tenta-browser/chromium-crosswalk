@@ -14,7 +14,7 @@
         "check_for_recommended": "Should the preference be tested when a recommended value is set for the policy? Defaults to |true| if not specified.",
         "note": "When |can_be_recommended| is |false|, the policy is never set to a recommended value so |check_for_recommended| has no effect.",
         "note": "The following entries should be specified if controlled setting indicators exist for |pref| in the settings UI.",
-        "indicator_test_url": "The URL to navigate to in order to test the indicators. Defaults to |chrome://settings-frame/| if not specified.",
+        "indicator_test_url": "The URL to navigate to in order to test the indicators. Defaults to |chrome://extensions-frame/| if not specified.",
         "indicator_test_setup_js": "Any JavaScript that should be executed before testing the indicators. This should be specified only if an explicit user action must be simulated (e.g. clicking a button).",
         "indicator_selector": "A CSS selector that locates all controlled setting indicators for |pref|. This is appended to the selector 'span.controlled-setting-indicator' and if not specified, defaults to '[pref=(the value of |pref|)', e.g. '[pref=homepage]'.",
         "note": "Any number of test cases may be specified in the following array.",
@@ -28,6 +28,12 @@
     ],
     "note": "The following entry should be specified if there is a controlled setting indicator that reacts to the policy directly, without a preference serving as an intermediary.",
     "indicator_selector": "A CSS selector that locates the controlled setting indicator directly affected by the policy. This is appended to the selector 'span.controlled-setting-indicator'."
+  },
+
+  "UnsafelyTreatInsecureOriginAsSecure": {
+    "os": ["win", "linux", "max", "chromeos", "android"],
+    "test_policy": { "UnsafelyTreatInsecureOriginAsSecure": ["http://example.com/"] },
+    "pref_mappings": [ { "pref": "unsafely_treat_insecure_origin_as_securex" } ]
   },
 
   "HomepageLocation": {
@@ -221,6 +227,9 @@
   "RemoteAccessHostClientDomain": {
   },
 
+  "RemoteAccessHostClientDomainList": {
+  },
+
   "RemoteAccessHostFirewallTraversal": {
   },
 
@@ -228,6 +237,9 @@
   },
 
   "RemoteAccessHostDomain": {
+  },
+
+  "RemoteAccessHostDomainList": {
   },
 
   "RemoteAccessHostTalkGadgetPrefix": {
@@ -310,6 +322,45 @@
     },
     "pref_mappings": [
       { "pref": "native_printing.recommended_printers" }
+    ]
+  },
+
+  "NativePrintersBulkConfiguration": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "NativePrintersBulkConfiguration": {
+        "url": "https://example.com/policyfile",
+        "hash": "deadbeefdeadbeefdeadbeef"
+      }
+    }
+  },
+
+  "NativePrintersBulkAccessMode": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "NativePrintersBulkAccessMode": 1
+    },
+    "pref_mappings": [
+      { "pref": "native_printing.recommended_printers_access_mode" }
+    ]
+  },
+
+  "NativePrintersBulkBlacklist": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "NativePrintersBulkBlacklist": ["id4", "id7", "id10"]
+    },
+    "pref_mappings": [
+      { "pref": "native_printing.recommended_printers_blacklist" }
+    ]
+  },
+  "NativePrintersBulkWhitelist": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "NativePrintersBulkWhitelist":  ["id4", "id7", "id10"]
+    },
+    "pref_mappings": [
+      { "pref": "native_printing.recommended_printers_whitelist" }
     ]
   },
 
@@ -401,6 +452,19 @@
     ]
   },
 
+  "AutofillCreditCardEnabled": {
+    "os": ["win", "linux", "mac", "chromeos"],
+    "can_be_recommended": true,
+    "test_policy": { "AutofillCreditCardEnabled": false },
+    "pref_mappings": [
+      { "pref": "autofill.credit_card_enabled",
+        "indicator_tests": [
+          { "policy": { "AutofillCreditCardEnabled": false } }
+        ]
+      }
+    ]
+  },
+
   "DisabledPlugins.0": {
     "note": "This policy is deprecated. This test tests its migration path.",
     "os": ["win", "linux", "mac", "chromeos"],
@@ -476,13 +540,9 @@
   },
 
   "DisablePluginFinder": {
+    "note": "This policy is not in use anymore.",
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DisablePluginFinder": true },
-    "pref_mappings": [
-      { "pref": "plugins.disable_plugin_finder",
-        "local_state": true
-      }
-    ]
+    "test_policy": { "DisablePluginFinder": true }
   },
 
   "SyncDisabled": {
@@ -531,6 +591,24 @@
     "test_policy": { "MediaCacheSize": 200 },
     "pref_mappings": [
       { "pref": "browser.media_cache_size" }
+    ]
+  },
+
+  "DownloadRestrictions": {
+    "os": ["win", "mac", "linux", "chromeos"],
+    "can_be_recommended": true,
+    "test_policy": { "DownloadRestrictions": 3 },
+    "pref_mappings": [
+      { "pref": "download_restrictions" }
+    ]
+  },
+
+  "SafeBrowsingForTrustedSourcesEnabled": {
+    "os": ["win"],
+    "can_be_recommended": true,
+    "test_policy": { "SafeBrowsingForTrustedSourcesEnabled": false },
+    "pref_mappings": [
+      { "pref": "safebrowsing_for_trusted_sources_enabled" }
     ]
   },
 
@@ -783,6 +861,52 @@
     ]
   },
 
+  "NtlmV2Enabled": {
+    "os": ["linux", "mac", "chromeos", "android"],
+    "test_policy": { "NtlmV2Enabled": true },
+    "pref_mappings": [
+      { "pref": "auth.ntlm_v2_enabled",
+        "local_state": true
+      }
+    ]
+  },
+
+  "PromptForDownloadLocation": {
+    "os": ["win", "linux", "mac", "chromeos"],
+    "test_policy": { "PromptForDownloadLocation": false },
+    "pref_mappings": [
+      { "pref": "download.prompt_for_download" }
+    ]
+  },
+
+  "IsolateOrigins": {
+    "os": ["win", "linux", "mac", "chromeos"],
+    "test_policy": { "IsolateOrigins": "" },
+    "note": "There is a pref behind this setting, but due to the fact that tests override the default with a command-line flag on some trybots, this setting cannot be verified with the common test."
+  },
+
+  "SitePerProcess": {
+    "os": ["win", "linux", "mac", "chromeos"],
+    "test_policy": { "SitePerProcess": false },
+    "note": "There is a pref behind this setting, but due to the fact that tests override the default with a command-line flag on some trybots, this setting cannot be verified with the common test."
+  },
+
+  "DefaultDownloadDirectory": {
+    "os": ["win", "linux", "mac", "chbromeos"],
+    "test_policy": { "DefaultDownloadDirectory": "${user_home}/test-downloads" },
+    "can_be_recommended": true,
+    "pref_mappings": [
+      { "pref": "download.default_directory",
+        "check_for_mandatory": false,
+        "check_for_recommended": true
+      },
+      { "pref": "savefile.default_directory",
+        "check_for_mandatory": false,
+        "check_for_recommended": true
+      }
+    ]
+  },
+
   "ExtensionInstallBlacklist": {
     "os": ["win", "linux", "mac", "chromeos"],
     "test_policy": { "ExtensionInstallBlacklist": ["*"] },
@@ -935,7 +1059,12 @@
 
   "DefaultSearchProviderName": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google", "DefaultSearchProviderName": "google.com" },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}",
+      "DefaultSearchProviderKeyword": "google",
+      "DefaultSearchProviderName": "google.com"
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data" }
     ]
@@ -943,7 +1072,11 @@
 
   "DefaultSearchProviderKeyword": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google" },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderKeyword": "google",
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}"
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data" }
     ]
@@ -951,7 +1084,11 @@
 
   "DefaultSearchProviderSearchURL": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google" },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}",
+      "DefaultSearchProviderKeyword": "google"
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data",
         "indicator_selector": "[setting=search-engine]",
@@ -964,7 +1101,12 @@
 
   "DefaultSearchProviderSuggestURL": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google", "DefaultSearchProviderSuggestURL": "http://www.google.com/suggest?q={searchTerms}" },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}",
+      "DefaultSearchProviderKeyword": "google",
+      "DefaultSearchProviderSuggestURL": "http://www.google.com/suggest?q={searchTerms}"
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data" }
     ]
@@ -972,7 +1114,12 @@
 
   "DefaultSearchProviderInstantURL": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google", "DefaultSearchProviderInstantURL": "http://www.google.com/instant?q={searchTerms}" },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}",
+      "DefaultSearchProviderKeyword": "google",
+      "DefaultSearchProviderInstantURL": "http://www.google.com/instant?q={searchTerms}"
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data" }
     ]
@@ -980,7 +1127,12 @@
 
   "DefaultSearchProviderNewTabURL": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google", "DefaultSearchProviderNewTabURL": "http://www.google.com/newtab" },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}",
+      "DefaultSearchProviderKeyword": "google",
+      "DefaultSearchProviderNewTabURL": "http://www.google.com/newtab"
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data" }
     ]
@@ -988,7 +1140,12 @@
 
   "DefaultSearchProviderIconURL": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google", "DefaultSearchProviderIconURL": "http://www.google.com/favicon.ico" },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}",
+      "DefaultSearchProviderKeyword": "google",
+      "DefaultSearchProviderIconURL": "http://www.google.com/favicon.ico"
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data" }
     ]
@@ -996,7 +1153,12 @@
 
   "DefaultSearchProviderEncodings": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google", "DefaultSearchProviderEncodings": ["UTF-8"] },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}",
+      "DefaultSearchProviderKeyword": "google",
+      "DefaultSearchProviderEncodings": ["UTF-8"]
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data" }
     ]
@@ -1004,7 +1166,12 @@
 
   "DefaultSearchProviderAlternateURLs": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google", "DefaultSearchProviderAlternateURLs": ["http://www.google.com/#q={searchTerms}", "http://www.google.com/search#q={searchTerms}"] },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}",
+      "DefaultSearchProviderKeyword": "google",
+      "DefaultSearchProviderAlternateURLs": ["http://www.google.com/#q={searchTerms}", "http://www.google.com/search#q={searchTerms}"]
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data" }
     ]
@@ -1012,7 +1179,12 @@
 
   "DefaultSearchProviderSearchTermsReplacementKey": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google", "DefaultSearchProviderSearchTermsReplacementKey": "espv" },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}",
+      "DefaultSearchProviderKeyword": "google",
+      "DefaultSearchProviderSearchTermsReplacementKey": "espv"
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data" }
     ]
@@ -1020,7 +1192,12 @@
 
   "DefaultSearchProviderImageURL": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google", "DefaultSearchProviderImageURL": "http://www.google.com/searchbyimage/upload" },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}",
+      "DefaultSearchProviderKeyword": "google",
+      "DefaultSearchProviderImageURL": "http://www.google.com/searchbyimage/upload"
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data" }
     ]
@@ -1028,7 +1205,12 @@
 
   "DefaultSearchProviderSearchURLPostParams": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google", "DefaultSearchProviderSearchURLPostParams": "" },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}",
+      "DefaultSearchProviderKeyword": "google",
+      "DefaultSearchProviderSearchURLPostParams": ""
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data" }
     ]
@@ -1036,7 +1218,12 @@
 
   "DefaultSearchProviderSuggestURLPostParams": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google", "DefaultSearchProviderSuggestURLPostParams": "" },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}",
+      "DefaultSearchProviderKeyword": "google",
+      "DefaultSearchProviderSuggestURLPostParams": ""
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data" }
     ]
@@ -1044,7 +1231,12 @@
 
   "DefaultSearchProviderInstantURLPostParams": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google", "DefaultSearchProviderInstantURLPostParams": "" },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}",
+      "DefaultSearchProviderKeyword": "google",
+      "DefaultSearchProviderInstantURLPostParams": ""
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data" }
     ]
@@ -1052,7 +1244,12 @@
 
   "DefaultSearchProviderImageURLPostParams": {
     "os": ["win", "linux", "mac", "chromeos"],
-    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderKeyword": "google", "DefaultSearchProviderImageURLPostParams": "image_content={imageThumbnail},image_url={imageURL},sbisrc={imageSearchSource}" },
+    "test_policy": {
+      "DefaultSearchProviderEnabled": true,
+      "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}",
+      "DefaultSearchProviderKeyword": "google",
+      "DefaultSearchProviderImageURLPostParams": "image_content={imageThumbnail},image_url={imageURL},sbisrc={imageSearchSource}"
+    },
     "pref_mappings": [
       { "pref": "default_search_provider_data.template_url_data" }
     ]
@@ -1594,6 +1791,14 @@
     ]
   },
 
+  "RunAllFlashInAllowMode": {
+    "os": ["win", "linux", "mac", "chromeos"],
+    "test_policy": { "RunAllFlashInAllowMode": true },
+    "pref_mappings": [
+      { "pref": "plugins.run_all_flash_in_allow_mode" }
+    ]
+  },
+
   "BookmarkBarEnabled": {
     "os": ["win", "linux", "mac", "chromeos"],
     "can_be_recommended": true,
@@ -1635,6 +1840,14 @@
           { "policy": { "AllowFileSelectionDialogs": false } }
         ]
       }
+    ]
+  },
+
+  "SecurityKeyPermitAttestation": {
+    "os": ["win", "linux", "mac", "chromeos"],
+    "test_policy": { "SecurityKeyPermitAttestation": ["https://example.com", "example.net"] },
+    "pref_mappings": [
+      { "pref": "securitykey.permit_attestation" }
     ]
   },
 
@@ -1767,6 +1980,14 @@
     },
     "pref_mappings": [
       { "pref": "printing.default_destination_selection_rules" }
+    ]
+  },
+
+  "PrintPreviewUseSystemDefaultPrinter": {
+    "os": ["win", "mac", "linux"],
+    "test_policy": { "PrintPreviewUseSystemDefaultPrinter": false },
+    "pref_mappings": [
+      { "pref": "printing.use_system_default_printer" }
     ]
   },
 
@@ -2476,7 +2697,7 @@
           { "policy": { "ScreenMagnifierType": 1 } }
         ]
       },
-      { "pref": "settings.a11y.screen_magnifier_type2" }
+      { "pref": "settings.a11y.screen_magnifier" }
     ]
   },
 
@@ -2751,6 +2972,33 @@
       { "pref": "arc.status_reporting_enabled" }
     ]
   },
+
+  "InstantTetheringAllowed": {
+    "os": ["chromeos"],
+    "test_policy": { "InstantTetheringAllowed": false },
+    "pref_mappings": [
+      { "pref": "tether.allowed" }
+    ]
+  },
+
+  "EcryptfsMigrationStrategy": {
+    "os": ["chromeos"],
+    "test_policy": { "EcryptfsMigrationStrategy": 1 },
+    "pref_mappings": [
+      { "pref": "ecryptfs_migration_strategy" }
+    ]
+  },
+
+  "CloudPolicyOverridesMachinePolicy": {
+    "os": ["win", "linux", "mac"],
+    "test_policy": { "CloudPolicyOverridesMachinePolicy": false },
+    "pref_mappings": [
+      { "pref": "policy.cloud_override",
+        "local_state": true
+      }
+    ]
+  },
+
 
   "----- Chrome OS device policies ---------------------------------------": {},
 
@@ -3064,6 +3312,127 @@
     ]
   },
 
+  "BrowserNetworkTimeQueriesEnabled": {
+    "os": ["win", "linux", "mac", "chromeos"],
+    "test_policy": { "BrowserNetworkTimeQueriesEnabled": true },
+    "pref_mappings": [
+      { "pref": "network_time.network_time_queries_enabled",
+        "local_state": true
+      }
+    ]
+  },
+
+  "DeviceSecondFactorAuthentication": {
+    "os": ["chromeos"]
+  },
+
+  "DeviceEcryptfsMigrationStrategy": {
+    "note": "This policy is deprecated.",
+    "os": ["chromeos"]
+  },
+
+  "NoteTakingAppsLockScreenWhitelist": {
+    "os": ["chromeos"],
+    "test_policy": { "NoteTakingAppsLockScreenWhitelist": [] },
+    "pref_mappings": [
+      {"pref": "settings.note_taking_apps_lock_screen_whitelist"}
+    ]
+  },
+
+  "CastReceiverEnabled": {
+    "os": ["chromeos"],
+    "test_policy": { "CastReceiverEnabled": true },
+    "pref_mappings": [
+      { "pref": "cast_receiver.enabled" }
+    ]
+  },
+
+  "CastReceiverName": {
+    "os": ["chromeos"],
+    "test_policy": { "CastReceiverName": "Hallway" },
+    "pref_mappings": [
+      { "pref": "cros.device.cast_receiver.name",
+        "local_state": true }
+    ]
+  },
+
+  "DeviceNativePrinters": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "DeviceNativePrinters": {
+        "url": "https://example.com/policyfile",
+        "hash": "deadbeefdeadbeefdeadbeef"
+      }
+    },
+    "pref_mappings": [{
+      "pref": "cros.device.printer_configurations",
+      "local_state": true
+    }]
+  },
+
+  "DeviceNativePrintersAccessMode": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "DeviceNativePrintersAccessMode": 1
+    },
+    "pref_mappings": [
+      { "pref": "cros.device.printers_access_mode" }
+    ]
+  },
+
+  "DeviceNativePrintersBlacklist": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "DeviceNativePrintersBlacklist": ["id4", "id7", "id10"]
+    },
+    "pref_mappings": [
+      { "pref": "cros.device.printers_blacklist" }
+    ]
+  },
+  "DeviceNativePrintersWhitelist": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "DeviceNativePrintersWhitelist":  ["id4", "id7", "id10"]
+    },
+    "pref_mappings": [
+      { "pref": "cros.device.printers_whitelist" }
+    ]
+  },
+
+  "TPMFirmwareUpdateSettings": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "allow-user-initiated-powerwash": true
+    },
+    "pref_mappings": [
+      { "pref": "cros.tpm_firmware_update_settings" }
+    ]
+  },
+
+
+  "MinimumRequiredChromeVersion": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "MinimumRequiredChromeVersion": "61.0.3163.120"
+    },
+    "pref_mappings": [
+      { "pref": "cros.min_version.chrome"}
+    ]
+  },
+
+  "DeviceLoginScreenAutoSelectCertificateForUrls": {
+  },
+
+  "UnaffiliatedArcAllowed": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "unaffiliated_arc_allowed": false
+    },
+    "pref_mappings": [
+      { "pref": "cros.unaffiliated_arc_allowed"}
+    ]
+  },
+
   "----- Chrome Frame policies -------------------------------------------": {},
 
   "ChromeFrameRendererSettings": {
@@ -3088,5 +3457,10 @@
   },
 
   "SkipMetadataCheck": {
+  },
+
+  "DeviceOffHours": {
+    "os": ["chromeos"],
+    "test_policy": {"DeviceOffHours": {"intervals": [{"start" : {"day_of_week" : 1, "time": 12840000}, "end": {"day_of_week" : 1, "time": 21720000}}], "timezone" : "GMT", "ignored_policy_proto_tags": [8, 3]}}
   }
 }

@@ -7,6 +7,7 @@
 
 
 let BaseAudioContextOwnProperties = [
+  'audioWorklet',
   'constructor',
   'createAnalyser',
   'createBiquadFilter',
@@ -43,11 +44,7 @@ let BaseAudioContextOwnProperties = [
 
 
 let AudioContextOwnProperties = [
-  'close',
-  'constructor',
-  'suspend',
-  'getOutputTimestamp',
-  'baseLatency',
+  'close', 'constructor', 'suspend', 'getOutputTimestamp', 'baseLatency',
 
   // TODO(hongchan): Not implemented yet.
   // 'outputLatency',

@@ -9,8 +9,18 @@
 
 #include "base/macros.h"
 #include "base/profiler/stack_sampling_profiler.h"
-#include "components/variations/child_process_field_trial_syncer.h"
 #include "content/public/gpu/content_gpu_client.h"
+
+#if defined(OS_CHROMEOS)
+#include "components/arc/common/protected_buffer_manager.mojom.h"
+#include "components/arc/common/video_decode_accelerator.mojom.h"
+#include "components/arc/common/video_encode_accelerator.mojom.h"
+#include "gpu/command_buffer/service/gpu_preferences.h"
+
+namespace arc {
+class ProtectedBufferManager;
+}  // namespace arc
+#endif
 
 class ChromeContentGpuClient : public content::ContentGpuClient {
  public:
@@ -18,17 +28,29 @@ class ChromeContentGpuClient : public content::ContentGpuClient {
   ~ChromeContentGpuClient() override;
 
   // content::ContentGpuClient:
-  void Initialize(base::FieldTrialList::Observer* observer) override;
-  void ExposeInterfacesToBrowser(
-      service_manager::InterfaceRegistry* registry,
+  void InitializeRegistry(service_manager::BinderRegistry* registry) override;
+  void GpuServiceInitialized(
       const gpu::GpuPreferences& gpu_preferences) override;
-  void ConsumeInterfacesFromBrowser(
-      service_manager::Connector* connector) override;
 
  private:
-  std::unique_ptr<variations::ChildProcessFieldTrialSyncer> field_trial_syncer_;
+#if defined(OS_CHROMEOS)
+  void CreateArcVideoDecodeAccelerator(
+      ::arc::mojom::VideoDecodeAcceleratorRequest request);
+
+  void CreateArcVideoEncodeAccelerator(
+      ::arc::mojom::VideoEncodeAcceleratorRequest request);
+
+  void CreateProtectedBufferManager(
+      ::arc::mojom::ProtectedBufferManagerRequest request);
+#endif
+
   // Used to profile process startup.
   base::StackSamplingProfiler stack_sampling_profiler_;
+
+#if defined(OS_CHROMEOS)
+  gpu::GpuPreferences gpu_preferences_;
+  std::unique_ptr<arc::ProtectedBufferManager> protected_buffer_manager_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(ChromeContentGpuClient);
 };

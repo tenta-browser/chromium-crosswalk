@@ -5,6 +5,7 @@
 #ifndef NET_HTTP_PROXY_CLIENT_SOCKET_H_
 #define NET_HTTP_PROXY_CLIENT_SOCKET_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
@@ -33,18 +34,21 @@ class NET_EXPORT_PRIVATE ProxyClientSocket : public StreamSocket {
 
   // Transfers ownership of a newly created HttpStream to the caller
   // which can be used to read the response body.
-  virtual HttpStream* CreateConnectResponseStream() = 0;
+  virtual std::unique_ptr<HttpStream> CreateConnectResponseStream() = 0;
 
   // Returns the HttpAuthController which can be used
   // to interact with an HTTP Proxy Authorization Required (407) request.
   virtual const scoped_refptr<HttpAuthController>& GetAuthController() const
       = 0;
 
-  // If Connect (or its callback) returns PROXY_AUTH_REQUESTED, then
-  // credentials should be added to the HttpAuthController before calling
-  // RestartWithAuth.  Not all ProxyClientSocket implementations will be
-  // restartable.  Such implementations should disconnect themselves and
-  // return OK.
+  // If Connect (or its callback) returns PROXY_AUTH_REQUESTED, then an
+  // auth challenge was received.  If the HttpAuthController's HaveAuth()
+  // method returns true, then the request just needs to be restarted with
+  // this method to try with those credentials, and new credentials cannot
+  // be provided.  Otherwise, credentials should be added to the
+  // HttpAuthController before calling RestartWithAuth.  Not all
+  // ProxyClientSocket implementations will be restartable.  Such
+  // implementations should disconnect themselves and return OK.
   virtual int RestartWithAuth(const CompletionCallback& callback) = 0;
 
   // Returns true of the connection to the proxy is using SPDY.

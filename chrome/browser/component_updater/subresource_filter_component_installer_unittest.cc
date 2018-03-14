@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -15,7 +16,9 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
+#include "base/sequenced_task_runner.h"
 #include "base/strings/string_util.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/version.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -26,7 +29,6 @@
 #include "components/subresource_filter/core/browser/subresource_filter_constants.h"
 #include "components/subresource_filter/core/browser/subresource_filter_features.h"
 #include "components/subresource_filter/core/browser/subresource_filter_features_test_support.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 
@@ -77,13 +79,16 @@ class SubresourceFilterMockComponentUpdateService
   SubresourceFilterMockComponentUpdateService() {}
   ~SubresourceFilterMockComponentUpdateService() override {}
 
-  scoped_refptr<base::SequencedTaskRunner> GetSequencedTaskRunner() override {
-    return base::ThreadTaskRunnerHandle::Get();
-  }
-
  private:
   DISALLOW_COPY_AND_ASSIGN(SubresourceFilterMockComponentUpdateService);
 };
+
+subresource_filter::Configuration CreateConfigUsingRulesetFlavor(
+    const std::string& ruleset_flavor) {
+  subresource_filter::Configuration config;
+  config.general_settings.ruleset_flavor = ruleset_flavor;
+  return config;
+}
 
 }  //  namespace
 
@@ -112,11 +117,12 @@ class SubresourceFilterComponentInstallerTest : public PlatformTest {
 
     TestingBrowserProcess::GetGlobal()->SetRulesetService(
         std::move(content_service));
-    traits_.reset(new SubresourceFilterComponentInstallerTraits());
+    policy_ = base::MakeUnique<SubresourceFilterComponentInstallerPolicy>();
   }
 
   void TearDown() override {
     TestingBrowserProcess::GetGlobal()->SetRulesetService(nullptr);
+    scoped_task_environment_.RunUntilIdle();
     PlatformTest::TearDown();
   }
 
@@ -150,37 +156,33 @@ class SubresourceFilterComponentInstallerTest : public PlatformTest {
   void LoadSubresourceFilterRuleset(int ruleset_format) {
     std::unique_ptr<base::DictionaryValue> manifest(new base::DictionaryValue);
     manifest->SetInteger(
-        SubresourceFilterComponentInstallerTraits::kManifestRulesetFormatKey,
+        SubresourceFilterComponentInstallerPolicy::kManifestRulesetFormatKey,
         ruleset_format);
     ASSERT_TRUE(
-        traits_->VerifyInstallation(*manifest, component_install_dir()));
+        policy_->VerifyInstallation(*manifest, component_install_dir()));
     const base::Version expected_version(kTestRulesetVersion);
-    traits_->ComponentReady(expected_version, component_install_dir(),
+    policy_->ComponentReady(expected_version, component_install_dir(),
                             std::move(manifest));
     base::RunLoop().RunUntilIdle();
   }
 
   update_client::InstallerAttributes GetInstallerAttributes() {
-    return traits_->GetInstallerAttributes();
+    return policy_->GetInstallerAttributes();
   }
 
-  void ExpectInstallerTag(const char* expected_tag,
-                          const char* ruleset_flavor) {
-    base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
-    subresource_filter::testing::ScopedSubresourceFilterFeatureToggle
-        scoped_feature_toggle(base::FeatureList::OVERRIDE_ENABLE_FEATURE,
-                              {{subresource_filter::kRulesetFlavorParameterName,
-                                ruleset_flavor}});
-    EXPECT_EQ(expected_tag,
-              SubresourceFilterComponentInstallerTraits::GetInstallerTag());
+ protected:
+  void RunUntilIdle() {
+    scoped_task_environment_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
  private:
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
+
   base::ScopedTempDir component_install_dir_;
   base::ScopedTempDir ruleset_service_dir_;
 
-  content::TestBrowserThreadBundle thread_bundle_;
-  std::unique_ptr<SubresourceFilterComponentInstallerTraits> traits_;
+  std::unique_ptr<SubresourceFilterComponentInstallerPolicy> policy_;
   TestingPrefServiceSimple pref_service_;
 
   TestRulesetService* test_ruleset_service_ = nullptr;
@@ -190,32 +192,26 @@ class SubresourceFilterComponentInstallerTest : public PlatformTest {
 
 TEST_F(SubresourceFilterComponentInstallerTest,
        TestComponentRegistrationWhenFeatureDisabled) {
-  base::FieldTrialList field_trial_list(nullptr);
   subresource_filter::testing::ScopedSubresourceFilterFeatureToggle
-      scoped_feature_toggle(base::FeatureList::OVERRIDE_DISABLE_FEATURE,
-                            subresource_filter::kActivationLevelEnabled,
-                            subresource_filter::kActivationScopeNoSites);
+      scoped_feature(base::FeatureList::OVERRIDE_DISABLE_FEATURE);
   std::unique_ptr<SubresourceFilterMockComponentUpdateService>
       component_updater(new SubresourceFilterMockComponentUpdateService());
   EXPECT_CALL(*component_updater, RegisterComponent(testing::_)).Times(0);
   RegisterSubresourceFilterComponent(component_updater.get());
-  base::RunLoop().RunUntilIdle();
+  RunUntilIdle();
 }
 
 TEST_F(SubresourceFilterComponentInstallerTest,
        TestComponentRegistrationWhenFeatureEnabled) {
-  base::FieldTrialList field_trial_list(nullptr);
   subresource_filter::testing::ScopedSubresourceFilterFeatureToggle
-      scoped_feature_toggle(base::FeatureList::OVERRIDE_ENABLE_FEATURE,
-                            subresource_filter::kActivationLevelDisabled,
-                            subresource_filter::kActivationScopeNoSites);
+      scoped_feature(base::FeatureList::OVERRIDE_ENABLE_FEATURE);
   std::unique_ptr<SubresourceFilterMockComponentUpdateService>
       component_updater(new SubresourceFilterMockComponentUpdateService());
   EXPECT_CALL(*component_updater, RegisterComponent(testing::_))
       .Times(1)
       .WillOnce(testing::Return(true));
   RegisterSubresourceFilterComponent(component_updater.get());
-  base::RunLoop().RunUntilIdle();
+  RunUntilIdle();
 }
 
 TEST_F(SubresourceFilterComponentInstallerTest, LoadEmptyRuleset) {
@@ -223,7 +219,7 @@ TEST_F(SubresourceFilterComponentInstallerTest, LoadEmptyRuleset) {
   ASSERT_NO_FATAL_FAILURE(
       CreateTestSubresourceFilterRuleset(std::string(), nullptr));
   ASSERT_NO_FATAL_FAILURE(LoadSubresourceFilterRuleset(
-      SubresourceFilterComponentInstallerTraits::kCurrentRulesetFormat));
+      SubresourceFilterComponentInstallerPolicy::kCurrentRulesetFormat));
   EXPECT_EQ(kTestRulesetVersion, service()->content_version());
   std::string actual_ruleset_contents;
   ASSERT_TRUE(base::ReadFileToString(service()->ruleset_path(),
@@ -238,7 +234,7 @@ TEST_F(SubresourceFilterComponentInstallerTest, FutureVersionIgnored) {
   ASSERT_NO_FATAL_FAILURE(
       CreateTestSubresourceFilterRuleset(expected_ruleset_contents, nullptr));
   ASSERT_NO_FATAL_FAILURE(LoadSubresourceFilterRuleset(
-      SubresourceFilterComponentInstallerTraits::kCurrentRulesetFormat + 1));
+      SubresourceFilterComponentInstallerPolicy::kCurrentRulesetFormat + 1));
   EXPECT_EQ(std::string(), service()->content_version());
   EXPECT_TRUE(service()->ruleset_path().empty());
   EXPECT_TRUE(service()->license_path().empty());
@@ -251,7 +247,7 @@ TEST_F(SubresourceFilterComponentInstallerTest, LoadFileWithData) {
   ASSERT_NO_FATAL_FAILURE(CreateTestSubresourceFilterRuleset(
       expected_ruleset_contents, &expected_license_contents));
   ASSERT_NO_FATAL_FAILURE(LoadSubresourceFilterRuleset(
-      SubresourceFilterComponentInstallerTraits::kCurrentRulesetFormat));
+      SubresourceFilterComponentInstallerPolicy::kCurrentRulesetFormat));
   EXPECT_EQ(kTestRulesetVersion, service()->content_version());
   std::string actual_ruleset_contents;
   std::string actual_license_contents;
@@ -264,20 +260,46 @@ TEST_F(SubresourceFilterComponentInstallerTest, LoadFileWithData) {
 }
 
 TEST_F(SubresourceFilterComponentInstallerTest, InstallerTag) {
-  ExpectInstallerTag("", "");
-  ExpectInstallerTag("a", "a");
-  ExpectInstallerTag("b", "b");
-  ExpectInstallerTag("c", "c");
-  ExpectInstallerTag("d", "d");
-  ExpectInstallerTag("invalid", "e");
-  ExpectInstallerTag("invalid", "foo");
+  const struct {
+    const char* expected_installer_tag_selected;
+    std::vector<std::string> ruleset_flavors;
+  } kTestCases[] = {{"", std::vector<std::string>()},
+                    {"", {""}},
+                    {"a", {"a"}},
+                    {"b", {"b"}},
+                    {"c", {"c"}},
+                    {"d", {"d"}},
+                    {"invalid", {"e"}},
+                    {"invalid", {"foo"}},
+                    {"", {"", ""}},
+                    {"a", {"a", ""}},
+                    {"a", {"", "a"}},
+                    {"a", {"a", "a"}},
+                    {"c", {"b", "", "c"}},
+                    {"b", {"", "b", "a"}},
+                    {"c", {"aaa", "c", "aba"}},
+                    {"invalid", {"", "a", "e"}},
+                    {"invalid", {"foo", "a", "b"}}};
+
+  for (const auto& test_case : kTestCases) {
+    SCOPED_TRACE(::testing::Message()
+                 << "ruleset_flavors: "
+                 << ::testing::PrintToString(test_case.ruleset_flavors));
+
+    std::vector<subresource_filter::Configuration> configs;
+    for (const auto& ruleset_flavor : test_case.ruleset_flavors)
+      configs.push_back(CreateConfigUsingRulesetFlavor(ruleset_flavor));
+    subresource_filter::testing::ScopedSubresourceFilterConfigurator
+        scoped_configuration(std::move(configs));
+
+    EXPECT_EQ(test_case.expected_installer_tag_selected,
+              SubresourceFilterComponentInstallerPolicy::GetInstallerTag());
+  }
 }
 
 TEST_F(SubresourceFilterComponentInstallerTest, InstallerAttributesDefault) {
-  base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
-  subresource_filter::testing::ScopedSubresourceFilterFeatureToggle
-      scoped_feature_toggle(base::FeatureList::OVERRIDE_ENABLE_FEATURE,
-                            std::map<std::string, std::string>());
+  subresource_filter::testing::ScopedSubresourceFilterConfigurator
+      scoped_configuration((subresource_filter::Configuration()));
   EXPECT_EQ(update_client::InstallerAttributes(), GetInstallerAttributes());
 }
 
@@ -285,25 +307,10 @@ TEST_F(SubresourceFilterComponentInstallerTest, InstallerAttributesCustomTag) {
   constexpr char kTagKey[] = "tag";
   constexpr char kTagValue[] = "a";
 
-  base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
-  subresource_filter::testing::ScopedSubresourceFilterFeatureToggle
-      scoped_feature_toggle(
-          base::FeatureList::OVERRIDE_ENABLE_FEATURE,
-          {{subresource_filter::kRulesetFlavorParameterName, kTagValue}});
+  subresource_filter::testing::ScopedSubresourceFilterConfigurator
+      scoped_configuration(CreateConfigUsingRulesetFlavor(kTagValue));
   EXPECT_EQ(update_client::InstallerAttributes({{kTagKey, kTagValue}}),
             GetInstallerAttributes());
-}
-
-TEST_F(SubresourceFilterComponentInstallerTest,
-       InstallerAttributesFeatureDisabled) {
-  constexpr char kTagValue[] = "test_value";
-
-  base::FieldTrialList field_trial_list(nullptr /* entropy_provider */);
-  subresource_filter::testing::ScopedSubresourceFilterFeatureToggle
-      scoped_feature_toggle(
-          base::FeatureList::OVERRIDE_USE_DEFAULT,
-          {{subresource_filter::kRulesetFlavorParameterName, kTagValue}});
-  EXPECT_EQ(update_client::InstallerAttributes(), GetInstallerAttributes());
 }
 
 }  // namespace component_updater

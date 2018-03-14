@@ -10,11 +10,13 @@
 #include <string>
 
 #include "base/macros.h"
-#include "public/platform/scheduler/base/task_queue.h"
-#include "public/platform/WebCommon.h"
-#include "public/platform/WebScheduler.h"
-#include "public/platform/WebViewScheduler.h"
+#include "base/observer_list.h"
+#include "platform/PlatformExport.h"
+#include "platform/scheduler/base/task_queue.h"
+#include "platform/scheduler/child/web_scheduler.h"
+#include "platform/scheduler/child/web_task_runner_impl.h"
 #include "platform/scheduler/renderer/task_queue_throttler.h"
+#include "platform/scheduler/renderer/web_view_scheduler.h"
 
 namespace base {
 namespace trace_event {
@@ -30,11 +32,11 @@ class RendererSchedulerImpl;
 class CPUTimeBudgetPool;
 class WebFrameSchedulerImpl;
 
-class BLINK_PLATFORM_EXPORT WebViewSchedulerImpl : public WebViewScheduler {
+class PLATFORM_EXPORT WebViewSchedulerImpl : public WebViewScheduler {
  public:
   WebViewSchedulerImpl(
       WebScheduler::InterventionReporter* intervention_reporter,
-      WebViewScheduler::WebViewSchedulerSettings* settings,
+      WebViewScheduler::WebViewSchedulerDelegate* delegate,
       RendererSchedulerImpl* renderer_scheduler,
       bool disable_background_timer_throttling);
 
@@ -42,33 +44,48 @@ class BLINK_PLATFORM_EXPORT WebViewSchedulerImpl : public WebViewScheduler {
 
   // WebViewScheduler implementation:
   void SetPageVisible(bool page_visible) override;
+  void SetPageStopped(bool) override;
   std::unique_ptr<WebFrameScheduler> CreateFrameScheduler(
-      BlameContext* blame_context) override;
-  void EnableVirtualTime() override;
+      BlameContext* blame_context,
+      WebFrameScheduler::FrameType frame_type) override;
+  base::TimeTicks EnableVirtualTime() override;
   void DisableVirtualTimeForTesting() override;
   bool VirtualTimeAllowedToAdvance() const override;
   void SetVirtualTimePolicy(VirtualTimePolicy virtual_time_policy) override;
+  void GrantVirtualTimeBudget(base::TimeDelta budget,
+                              WTF::Closure budget_exhausted_callback) override;
+  void SetMaxVirtualTimeTaskStarvationCount(
+      int max_task_starvation_count) override;
   void AudioStateChanged(bool is_audio_playing) override;
+  bool IsPlayingAudio() const override;
+  bool IsExemptFromBudgetBasedThrottling() const override;
   bool HasActiveConnectionForTest() const override;
+  void RequestBeginMainFrameNotExpected(bool new_state) override;
+  void AddVirtualTimeObserver(VirtualTimeObserver*) override;
+  void RemoveVirtualTimeObserver(VirtualTimeObserver*) override;
 
   // Virtual for testing.
   virtual void ReportIntervention(const std::string& message);
 
   std::unique_ptr<WebFrameSchedulerImpl> CreateWebFrameSchedulerImpl(
-      base::trace_event::BlameContext* blame_context);
+      base::trace_event::BlameContext* blame_context,
+      WebFrameScheduler::FrameType frame_type);
 
-  void DidStartLoading(unsigned long identifier);
-  void DidStopLoading(unsigned long identifier);
-  void IncrementBackgroundParserCount();
-  void DecrementBackgroundParserCount();
   void Unregister(WebFrameSchedulerImpl* frame_scheduler);
   void OnNavigation();
 
-  bool IsAudioPlaying() const;
-
   void OnConnectionUpdated();
 
+  void OnTraceLogEnabled();
+
+  // Return a number of child web frame schedulers for this WebViewScheduler.
+  size_t FrameCount() const;
+
   void AsValueInto(base::trace_event::TracedValue* state) const;
+
+  WTF::WeakPtr<WebViewSchedulerImpl> CreateWeakPtr() {
+    return weak_factory_.CreateWeakPtr();
+  }
 
  private:
   friend class WebFrameSchedulerImpl;
@@ -76,14 +93,7 @@ class BLINK_PLATFORM_EXPORT WebViewSchedulerImpl : public WebViewScheduler {
   CPUTimeBudgetPool* BackgroundCPUTimeBudgetPool();
   void MaybeInitializeBackgroundCPUTimeBudgetPool();
 
-  void SetAllowVirtualTimeToAdvance(bool allow_virtual_time_to_advance);
-  void ApplyVirtualTimePolicyForLoading();
-  void ApplyVirtualTimePolicyToTimers();
-
   void OnThrottlingReported(base::TimeDelta throttling_duration);
-
-  static const char* VirtualTimePolicyToString(
-      VirtualTimePolicy virtual_time_policy);
 
   // Depending on page visibility, either turns throttling off, or schedules a
   // call to enable it after a grace period.
@@ -94,27 +104,19 @@ class BLINK_PLATFORM_EXPORT WebViewSchedulerImpl : public WebViewScheduler {
   // number of active connections.
   void UpdateBackgroundBudgetPoolThrottlingState();
 
-  void EnableBackgroundThrottling();
-
   std::set<WebFrameSchedulerImpl*> frame_schedulers_;
-  std::set<unsigned long> pending_loads_;
   WebScheduler::InterventionReporter* intervention_reporter_;  // Not owned.
   RendererSchedulerImpl* renderer_scheduler_;
-  VirtualTimePolicy virtual_time_policy_;
-  int background_parser_count_;
+
   bool page_visible_;
-  bool should_throttle_frames_;
   bool disable_background_timer_throttling_;
-  bool allow_virtual_time_to_advance_;
-  bool timers_suspended_;
-  bool have_seen_loading_task_;
-  bool virtual_time_;
   bool is_audio_playing_;
   bool reported_background_throttling_since_navigation_;
   bool has_active_connection_;
+  bool nested_runloop_;
   CPUTimeBudgetPool* background_time_budget_pool_;  // Not owned.
-  CancelableClosureHolder delayed_background_throttling_enabler_;
-  WebViewScheduler::WebViewSchedulerSettings* settings_;  // Not owned.
+  WebViewScheduler::WebViewSchedulerDelegate* delegate_;  // Not owned.
+  WTF::WeakPtrFactory<WebViewSchedulerImpl> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(WebViewSchedulerImpl);
 };

@@ -111,6 +111,10 @@ class CORE_EXPORT LayoutFlowThread : public LayoutBlockFlow {
                                   Vector<FloatQuad>&,
                                   MapCoordinatesFlags mode = 0);
 
+  void AddOutlineRects(Vector<LayoutRect>&,
+                       const LayoutPoint& additional_offset,
+                       IncludeBlockVisualOverflowOrNot) const override;
+
   bool NodeAtPoint(HitTestResult&,
                    const HitTestLocation& location_in_container,
                    const LayoutPoint& accumulated_offset,
@@ -179,7 +183,7 @@ class CORE_EXPORT LayoutFlowThread : public LayoutBlockFlow {
       LayoutUnit,
       PageBoundaryRule) const = 0;
 
-  virtual const char* GetName() const = 0;
+  const char* GetName() const override = 0;
 
  protected:
   void GenerateColumnSetIntervalTree();

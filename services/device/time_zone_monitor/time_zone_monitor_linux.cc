@@ -59,14 +59,14 @@ class TimeZoneMonitorLinuxImpl
         main_task_runner_(base::ThreadTaskRunnerHandle::Get()),
         file_task_runner_(file_task_runner),
         owner_(owner) {
-    DCHECK(main_task_runner_->RunsTasksOnCurrentThread());
+    DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
     file_task_runner_->PostTask(
         FROM_HERE,
         base::Bind(&TimeZoneMonitorLinuxImpl::StartWatchingOnFileThread, this));
   }
 
   void StopWatching() {
-    DCHECK(main_task_runner_->RunsTasksOnCurrentThread());
+    DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
     owner_ = NULL;
     file_task_runner_->PostTask(
         FROM_HERE,
@@ -79,8 +79,8 @@ class TimeZoneMonitorLinuxImpl
   ~TimeZoneMonitorLinuxImpl() { DCHECK(!owner_); }
 
   void StartWatchingOnFileThread() {
-    base::ThreadRestrictions::AssertIOAllowed();
-    DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+    base::AssertBlockingAllowed();
+    DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
 
     // There is no true standard for where time zone information is actually
     // stored. glibc uses /etc/localtime, uClibc uses /etc/TZ, and some older
@@ -94,7 +94,7 @@ class TimeZoneMonitorLinuxImpl
     };
 
     for (size_t index = 0; index < arraysize(kFilesToWatch); ++index) {
-      file_path_watchers_.push_back(base::MakeUnique<base::FilePathWatcher>());
+      file_path_watchers_.push_back(std::make_unique<base::FilePathWatcher>());
       file_path_watchers_.back()->Watch(
           base::FilePath(kFilesToWatch[index]), false,
           base::Bind(&TimeZoneMonitorLinuxImpl::OnTimeZoneFileChanged, this));
@@ -102,12 +102,12 @@ class TimeZoneMonitorLinuxImpl
   }
 
   void StopWatchingOnFileThread() {
-    DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+    DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
     file_path_watchers_.clear();
   }
 
   void OnTimeZoneFileChanged(const base::FilePath& path, bool error) {
-    DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+    DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
     main_task_runner_->PostTask(
         FROM_HERE,
         base::Bind(&TimeZoneMonitorLinuxImpl::OnTimeZoneFileChangedOnUIThread,
@@ -115,7 +115,7 @@ class TimeZoneMonitorLinuxImpl
   }
 
   void OnTimeZoneFileChangedOnUIThread() {
-    DCHECK(main_task_runner_->RunsTasksOnCurrentThread());
+    DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
     if (owner_) {
       owner_->NotifyClientsFromImpl();
     }

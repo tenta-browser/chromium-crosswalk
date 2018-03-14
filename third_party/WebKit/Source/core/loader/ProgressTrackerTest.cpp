@@ -29,10 +29,7 @@ class ProgressClient : public EmptyLocalFrameClient {
 class ProgressTrackerTest : public ::testing::Test {
  public:
   ProgressTrackerTest()
-      : response_(KURL(kParsedURLString, "http://example.com"),
-                  "text/html",
-                  1024,
-                  g_null_atom) {}
+      : response_(KURL("http://example.com"), "text/html", 1024, g_null_atom) {}
 
   void SetUp() override {
     client_ = new ProgressClient;
@@ -52,7 +49,7 @@ class ProgressTrackerTest : public ::testing::Test {
   // emulating payload and load completion.
   void EmulateMainResourceRequestAndResponse() const {
     Progress().ProgressStarted(kFrameLoadTypeStandard);
-    Progress().WillStartLoading(1ul, kResourceLoadPriorityVeryHigh);
+    Progress().WillStartLoading(1ul, ResourceLoadPriority::kVeryHigh);
     EXPECT_EQ(0.0, LastProgress());
     Progress().IncrementProgress(1ul, ResponseHeaders());
     EXPECT_EQ(0.0, LastProgress());
@@ -67,7 +64,7 @@ class ProgressTrackerTest : public ::testing::Test {
 TEST_F(ProgressTrackerTest, Static) {
   Progress().ProgressStarted(kFrameLoadTypeStandard);
   EXPECT_EQ(0.0, LastProgress());
-  Progress().FinishedParsing();
+  Progress().ProgressCompleted();
   EXPECT_EQ(1.0, LastProgress());
 }
 
@@ -78,18 +75,19 @@ TEST_F(ProgressTrackerTest, MainResourceOnly) {
   Progress().IncrementProgress(1ul, 512);
   EXPECT_EQ(0.45, LastProgress());
 
-  // .2 for finishing parsing, .5 for all bytes received.
+  // .2 for committing, .5 for all bytes received.
   Progress().CompleteProgress(1ul);
   EXPECT_EQ(0.7, LastProgress());
 
   Progress().FinishedParsing();
+  Progress().DidFirstContentfulPaint();
   EXPECT_EQ(1.0, LastProgress());
 }
 
 TEST_F(ProgressTrackerTest, WithHighPriorirySubresource) {
   EmulateMainResourceRequestAndResponse();
 
-  Progress().WillStartLoading(2ul, kResourceLoadPriorityHigh);
+  Progress().WillStartLoading(2ul, ResourceLoadPriority::kHigh);
   Progress().IncrementProgress(2ul, ResponseHeaders());
   EXPECT_EQ(0.0, LastProgress());
 
@@ -98,8 +96,10 @@ TEST_F(ProgressTrackerTest, WithHighPriorirySubresource) {
   Progress().CompleteProgress(1ul);
   EXPECT_EQ(0.45, LastProgress());
 
-  // .4 for finishing parsing, .25 out of .5 possible for bytes received.
+  // .4 for finishing parsing/painting,
+  // .25 out of .5 possible for bytes received.
   Progress().FinishedParsing();
+  Progress().DidFirstContentfulPaint();
   EXPECT_EQ(0.65, LastProgress());
 
   Progress().CompleteProgress(2ul);
@@ -109,14 +109,43 @@ TEST_F(ProgressTrackerTest, WithHighPriorirySubresource) {
 TEST_F(ProgressTrackerTest, WithMediumPrioritySubresource) {
   EmulateMainResourceRequestAndResponse();
 
-  Progress().WillStartLoading(2ul, kResourceLoadPriorityMedium);
+  Progress().WillStartLoading(2ul, ResourceLoadPriority::kMedium);
   Progress().IncrementProgress(2ul, ResponseHeaders());
   EXPECT_EQ(0.0, LastProgress());
 
-  // .2 for finishing parsing, .5 for all bytes received.
+  // .2 for committing, .5 for all bytes received.
   // Medium priority resource is ignored.
   Progress().CompleteProgress(1ul);
   EXPECT_EQ(0.7, LastProgress());
+
+  Progress().FinishedParsing();
+  Progress().DidFirstContentfulPaint();
+  EXPECT_EQ(1.0, LastProgress());
+}
+
+TEST_F(ProgressTrackerTest, FinishParsingBeforeContentfulPaint) {
+  EmulateMainResourceRequestAndResponse();
+
+  // .2 for committing, .5 for all bytes received.
+  Progress().CompleteProgress(1ul);
+  EXPECT_EQ(0.7, LastProgress());
+
+  Progress().FinishedParsing();
+  EXPECT_EQ(0.8, LastProgress());
+
+  Progress().DidFirstContentfulPaint();
+  EXPECT_EQ(1.0, LastProgress());
+}
+
+TEST_F(ProgressTrackerTest, ContentfulPaintBeforeFinishParsing) {
+  EmulateMainResourceRequestAndResponse();
+
+  // .2 for committing, .5 for all bytes received.
+  Progress().CompleteProgress(1ul);
+  EXPECT_EQ(0.7, LastProgress());
+
+  Progress().DidFirstContentfulPaint();
+  EXPECT_EQ(0.8, LastProgress());
 
   Progress().FinishedParsing();
   EXPECT_EQ(1.0, LastProgress());

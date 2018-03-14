@@ -30,12 +30,12 @@
 
 #include "bindings/core/v8/V8MessageChannel.h"
 
-#include "bindings/core/v8/V8Binding.h"
+#include "base/memory/scoped_refptr.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8MessagePort.h"
-#include "bindings/core/v8/V8PrivateProperty.h"
 #include "core/dom/MessageChannel.h"
 #include "core/workers/WorkerGlobalScope.h"
-#include "platform/wtf/RefPtr.h"
+#include "platform/bindings/V8PrivateProperty.h"
 
 namespace blink {
 

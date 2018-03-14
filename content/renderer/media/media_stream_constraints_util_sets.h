@@ -7,11 +7,13 @@
 
 #include <algorithm>
 #include <limits>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
 #include "base/logging.h"
+#include "base/optional.h"
 #include "content/common/content_export.h"
 #include "content/renderer/media/media_stream_constraints_util.h"
 
@@ -26,40 +28,61 @@ namespace content {
 template <typename T>
 class NumericRangeSet {
  public:
-  NumericRangeSet() : min_(0), max_(DefaultMax()) {}
-  NumericRangeSet(T min, T max) : min_(min), max_(max) {}
+  NumericRangeSet() = default;
+  NumericRangeSet(base::Optional<T> min, base::Optional<T> max)
+      : min_(min), max_(max) {}
   NumericRangeSet(const NumericRangeSet& other) = default;
   NumericRangeSet& operator=(const NumericRangeSet& other) = default;
   ~NumericRangeSet() = default;
 
-  T Min() const { return min_; }
-  T Max() const { return max_; }
-  bool IsEmpty() const { return max_ < min_; }
+  const base::Optional<T>& Min() const { return min_; }
+  const base::Optional<T>& Max() const { return max_; }
+  bool IsEmpty() const { return max_ && min_ && *max_ < *min_; }
 
   NumericRangeSet Intersection(const NumericRangeSet& other) const {
-    return NumericRangeSet(std::max(min_, other.min_),
-                           std::min(max_, other.max_));
+    base::Optional<T> min = min_;
+    if (other.Min())
+      min = min ? std::max(*min, *other.Min()) : other.Min();
+
+    base::Optional<T> max = max_;
+    if (other.Max())
+      max = max ? std::min(*max, *other.Max()) : other.Max();
+
+    return NumericRangeSet(min, max);
   }
 
   // Creates a NumericRangeSet based on the minimum and maximum values of
-  // |constraint|.
+  // |constraint| and a client-provided range of valid values.
+  // If the range given in |constraint| has empty intersection with the range
+  // [|lower_bound|, |upper_bound|], an empty NumericRangeSet is returned.
+  // Otherwise, if the minimum or maximum value of |constraint| is outside
+  // [|lower_bound|, |upper_bound|], the value is ignored.
   template <typename ConstraintType>
-  static auto FromConstraint(ConstraintType constraint)
-      -> NumericRangeSet<decltype(constraint.Min())> {
-    return NumericRangeSet<decltype(constraint.Min())>(
-        ConstraintHasMin(constraint) ? ConstraintMin(constraint) : 0,
-        ConstraintHasMax(constraint) ? ConstraintMax(constraint)
-                                     : DefaultMax());
+  static NumericRangeSet<T> FromConstraint(ConstraintType constraint,
+                                           T lower_bound,
+                                           T upper_bound) {
+    DCHECK_LE(lower_bound, upper_bound);
+    // Return an empty set if the constraint range does not overlap with the
+    // valid range.
+    if ((ConstraintHasMax(constraint) &&
+         ConstraintMax(constraint) < lower_bound) ||
+        (ConstraintHasMin(constraint) &&
+         ConstraintMin(constraint) > upper_bound)) {
+      return NumericRangeSet<decltype(constraint.Min())>(1, 0);
+    }
+
+    return NumericRangeSet<T>(
+        ConstraintHasMin(constraint) && ConstraintMin(constraint) >= lower_bound
+            ? ConstraintMin(constraint)
+            : base::Optional<T>(),
+        ConstraintHasMax(constraint) && ConstraintMax(constraint) <= upper_bound
+            ? ConstraintMax(constraint)
+            : base::Optional<T>());
   }
 
  private:
-  static inline T DefaultMax() {
-    return std::numeric_limits<T>::has_infinity
-               ? std::numeric_limits<T>::infinity()
-               : std::numeric_limits<T>::max();
-  }
-  T min_;
-  T max_;
+  base::Optional<T> min_;
+  base::Optional<T> max_;
 };
 
 // This class defines a set of discrete elements suitable for resolving
@@ -71,9 +94,12 @@ class NumericRangeSet {
 // is application defined (e.g., it could be all possible boolean values, all
 // possible strings of length N, or anything that suits a particular
 // application).
+// TODO(guidou): Rename this class. http://crbug.com/731166
 template <typename T>
 class DiscreteSet {
  public:
+  // Creates a universal set.
+  DiscreteSet() : is_universal_(true) {}
   // Creates a set containing the elements in |elements|.
   // It is the responsibility of the caller to ensure that |elements| is not
   // equivalent to the universal set and that |elements| has no repeated
@@ -127,15 +153,24 @@ class DiscreteSet {
     return elements_[0];
   }
 
+  // Returns a reference to the list of elements in the set.
+  // Behavior is undefined if the set is universal.
+  const std::vector<T>& elements() const {
+    DCHECK(!is_universal_);
+    return elements_;
+  }
+
   bool is_universal() const { return is_universal_; }
 
  private:
-  // Creates a universal set.
-  DiscreteSet() : is_universal_(true) {}
-
   bool is_universal_;
   std::vector<T> elements_;
 };
+
+DiscreteSet<std::string> StringSetFromConstraint(
+    const blink::StringConstraint& constraint);
+DiscreteSet<bool> BoolSetFromConstraint(
+    const blink::BooleanConstraint& constraint);
 
 // This class represents a set of (height, width) screen resolution candidates
 // determined by width, height and aspect-ratio constraints.

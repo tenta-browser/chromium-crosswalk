@@ -43,13 +43,14 @@ enum ENinePieceImageRule {
   kRepeatImageRule
 };
 
-class CORE_EXPORT NinePieceImageData : public RefCounted<NinePieceImageData> {
+class CORE_EXPORT NinePieceImageData
+    : public RefCountedCopyable<NinePieceImageData> {
  public:
-  static PassRefPtr<NinePieceImageData> Create() {
-    return AdoptRef(new NinePieceImageData);
+  static scoped_refptr<NinePieceImageData> Create() {
+    return base::AdoptRef(new NinePieceImageData);
   }
-  PassRefPtr<NinePieceImageData> Copy() const {
-    return AdoptRef(new NinePieceImageData(*this));
+  scoped_refptr<NinePieceImageData> Copy() const {
+    return base::AdoptRef(new NinePieceImageData(*this));
   }
 
   bool operator==(const NinePieceImageData&) const;
@@ -65,7 +66,7 @@ class CORE_EXPORT NinePieceImageData : public RefCounted<NinePieceImageData> {
 
  private:
   NinePieceImageData();
-  NinePieceImageData(const NinePieceImageData&);
+  NinePieceImageData(const NinePieceImageData&) = default;
 };
 
 class CORE_EXPORT NinePieceImage {
@@ -80,6 +81,14 @@ class CORE_EXPORT NinePieceImage {
                  const BorderImageLengthBox& outset,
                  ENinePieceImageRule horizontal_rule,
                  ENinePieceImageRule vertical_rule);
+
+  static NinePieceImage MaskDefaults() {
+    NinePieceImage image;
+    image.data_.Access()->image_slices = LengthBox(0);
+    image.data_.Access()->fill = true;
+    image.data_.Access()->border_slices = BorderImageLengthBox(Length(kAuto));
+    return image;
+  }
 
   bool operator==(const NinePieceImage& other) const {
     return data_ == other.data_;
@@ -142,12 +151,6 @@ class CORE_EXPORT NinePieceImage {
   void CopyRepeatFrom(const NinePieceImage& other) {
     data_.Access()->horizontal_rule = other.data_->horizontal_rule;
     data_.Access()->vertical_rule = other.data_->vertical_rule;
-  }
-
-  void SetMaskDefaults() {
-    data_.Access()->image_slices = LengthBox(0);
-    data_.Access()->fill = true;
-    data_.Access()->border_slices = BorderImageLengthBox(Length(kAuto));
   }
 
   static LayoutUnit ComputeOutset(const BorderImageLength& outset_side,

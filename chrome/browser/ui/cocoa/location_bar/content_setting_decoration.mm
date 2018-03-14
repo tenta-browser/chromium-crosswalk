@@ -11,16 +11,16 @@
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_content_setting_bubble_model_delegate.h"
-#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/cocoa/browser_dialogs_views_mac.h"
 #import "chrome/browser/ui/cocoa/content_settings/content_setting_bubble_cocoa.h"
-#include "chrome/browser/ui/cocoa/last_active_browser_cocoa.h"
 #import "chrome/browser/ui/cocoa/l10n_util.h"
+#include "chrome/browser/ui/cocoa/last_active_browser_cocoa.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
+#import "chrome/browser/ui/cocoa/location_bar/star_decoration.h"
 #import "chrome/browser/ui/cocoa/themed_window.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
 #include "chrome/browser/ui/content_settings/content_setting_image_model.h"
-#include "chrome/grit/theme_resources.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "skia/ext/skia_utils_mac.h"
@@ -28,7 +28,6 @@
 #include "ui/base/cocoa/cocoa_base_utils.h"
 #import "ui/base/cocoa/nsview_additions.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/material_design/material_design_controller.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/mac/coordinate_conversion.h"
@@ -37,10 +36,6 @@
 using content::WebContents;
 
 namespace {
-
-// The bubble point should look like it points to the bottom of the respective
-// icon. The offset should be 2px.
-const CGFloat kPageBubblePointYOffset = 2.0;
 
 // Duration of animation, 3 seconds. The ContentSettingAnimationState breaks
 // this up into different states of varying lengths.
@@ -270,13 +265,13 @@ NSPoint ContentSettingDecoration::GetBubblePointInFrame(NSRect frame) {
   if (!cocoa_l10n_util::ShouldDoExperimentalRTLLayout())
     frame.origin.x += frame.size.width - image_size.width;
   frame.size = image_size;
-  const NSRect draw_frame = GetDrawRectInFrame(frame);
-  return NSMakePoint(NSMidX(draw_frame),
-                     NSMaxY(draw_frame) + kPageBubblePointYOffset);
+
+  // Position the same way as the bookmark star.
+  return StarDecoration::GetStarBubblePointInFrame(GetDrawRectInFrame(frame));
 }
 
-bool ContentSettingDecoration::AcceptsMousePress() {
-  return true;
+AcceptsPress ContentSettingDecoration::AcceptsMousePress() {
+  return AcceptsPress::WHEN_ACTIVATED;
 }
 
 bool ContentSettingDecoration::OnMousePressed(NSRect frame, NSPoint location) {
@@ -286,14 +281,8 @@ bool ContentSettingDecoration::OnMousePressed(NSRect frame, NSPoint location) {
   if (!web_contents)
     return true;
 
-  // Find point for bubble's arrow in screen coordinates.
-  // TODO(shess): |owner_| is only being used to fetch |field|.
-  // Consider passing in |control_view|.  Or refactoring to be
-  // consistent with other decorations (which don't currently bring up
-  // their bubble directly).
   AutocompleteTextField* field = owner_->GetAutocompleteTextField();
-  NSPoint anchor = GetBubblePointInFrame(frame);
-  anchor = [field convertPoint:anchor toView:nil];
+  NSPoint anchor = [field bubblePointForDecoration:this];
   anchor = ui::ConvertPointFromWindowToScreen([field window], anchor);
 
   // Open bubble.
@@ -303,28 +292,34 @@ bool ContentSettingDecoration::OnMousePressed(NSRect frame, NSPoint location) {
           web_contents,
           profile_);
 
-  if (ui::MaterialDesignController::IsSecondaryUiMaterial()) {
+  // If the bubble is already opened, close it. Otherwise, open a new bubble.
+  if (bubbleWindow_ && [bubbleWindow_ isVisible]) {
+    [bubbleWindow_ close];
+    bubbleWindow_.reset();
+    return true;
+  }
+
+  if (chrome::ShowAllDialogsWithViewsToolkit()) {
     gfx::Point origin = gfx::ScreenPointFromNSPoint(anchor);
-    chrome::ContentSettingBubbleViewsBridge::Show(
-        [web_contents->GetTopLevelNativeWindow() contentView],
-        model, web_contents, origin);
+    NSWindow* bubble = chrome::ContentSettingBubbleViewsBridge::Show(
+        [web_contents->GetTopLevelNativeWindow() contentView], model,
+        web_contents, origin, this);
+    bubbleWindow_.reset([bubble retain]);
   } else {
-    // If the bubble is already opened, close it. Otherwise, open a new bubble.
-    if (bubbleWindow_ && [bubbleWindow_ isVisible]) {
-      [bubbleWindow_ close];
-      bubbleWindow_.reset();
-    } else {
-      ContentSettingBubbleController* bubbleController =
-          [ContentSettingBubbleController showForModel:model
-                                           webContents:web_contents
-                                          parentWindow:[field window]
-                                            decoration:this
-                                            anchoredAt:anchor];
-      bubbleWindow_.reset([[bubbleController window] retain]);
-    }
+    ContentSettingBubbleController* bubbleController =
+        [ContentSettingBubbleController showForModel:model
+                                         webContents:web_contents
+                                        parentWindow:[field window]
+                                          decoration:this
+                                          anchoredAt:anchor];
+    bubbleWindow_.reset([[bubbleController window] retain]);
   }
 
   return true;
+}
+
+CGFloat ContentSettingDecoration::DividerPadding() const {
+  return kDividerPadding;
 }
 
 NSString* ContentSettingDecoration::GetToolTip() {
@@ -425,17 +420,7 @@ void ContentSettingDecoration::DrawInFrame(NSRect frame, NSView* control_view) {
 
     // Draw the divider if available.
     if (state() == DecorationMouseState::NONE && !active()) {
-      const CGFloat divider_x_position =
-          is_rtl ? NSMinX(background_rect) + kDividerPadding
-                 : NSMaxX(background_rect) - kDividerPadding;
-      NSBezierPath* line = [NSBezierPath bezierPath];
-      [line setLineWidth:1];
-      [line
-          moveToPoint:NSMakePoint(divider_x_position, NSMinY(background_rect))];
-      [line
-          lineToPoint:NSMakePoint(divider_x_position, NSMaxY(background_rect))];
-      [GetDividerColor(owner_->IsLocationBarDark()) set];
-      [line stroke];
+      DrawDivider(control_view, background_rect, 1.0);
     }
   } else {
     // No animation, draw the image as normal.

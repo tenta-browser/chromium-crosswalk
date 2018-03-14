@@ -15,6 +15,7 @@
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/box_layout.h"
@@ -38,7 +39,6 @@ const ui::ResourceBundle::FontStyle kKeyLabelFontStyle =
 
 // Duration of slide animation when overlay is shown or hidden.
 const int kSlideAnimationDurationMs = 100;
-}
 
 ///////////////////////////////////////////////////////////////////////////////
 //  StickyKeyOverlayLabel
@@ -67,11 +67,10 @@ StickyKeyOverlayLabel::StickyKeyOverlayLabel(const std::string& key_name)
   SetFontList(rb->GetFontList(kKeyLabelFontStyle));
   SetAutoColorReadabilityEnabled(false);
   SetEnabledColor(SkColorSetARGB(0x80, 0xFF, 0xFF, 0xFF));
-  SetDisabledColor(SkColorSetARGB(0x80, 0xFF, 0xFF, 0xFF));
   SetSubpixelRenderingEnabled(false);
 }
 
-StickyKeyOverlayLabel::~StickyKeyOverlayLabel() {}
+StickyKeyOverlayLabel::~StickyKeyOverlayLabel() = default;
 
 void StickyKeyOverlayLabel::SetKeyState(StickyKeyState state) {
   state_ = state;
@@ -92,9 +91,10 @@ void StickyKeyOverlayLabel::SetKeyState(StickyKeyState state) {
   }
 
   SetEnabledColor(label_color);
-  SetDisabledColor(label_color);
   SetFontList(font_list().DeriveWithStyle(style));
 }
+
+}  // namespace
 
 ///////////////////////////////////////////////////////////////////////////////
 //  StickyKeysOverlayView
@@ -141,9 +141,9 @@ StickyKeysOverlayView::StickyKeysOverlayView() {
   int vertical_spacing = font_size / 2 - font_padding;
   int child_spacing = font_size - 2 * font_padding;
 
-  SetLayoutManager(new views::BoxLayout(views::BoxLayout::kVertical,
-                                        horizontal_spacing, vertical_spacing,
-                                        child_spacing));
+  SetLayoutManager(new views::BoxLayout(
+      views::BoxLayout::kVertical,
+      gfx::Insets(vertical_spacing, horizontal_spacing), child_spacing));
   AddKeyLabel(ui::EF_CONTROL_DOWN,
               l10n_util::GetStringUTF8(IDS_ASH_CONTROL_KEY));
   AddKeyLabel(ui::EF_ALT_DOWN, l10n_util::GetStringUTF8(IDS_ASH_ALT_KEY));
@@ -154,7 +154,7 @@ StickyKeysOverlayView::StickyKeysOverlayView() {
   AddKeyLabel(ui::EF_MOD3_DOWN, l10n_util::GetStringUTF8(IDS_ASH_MOD3_KEY));
 }
 
-StickyKeysOverlayView::~StickyKeysOverlayView() {}
+StickyKeysOverlayView::~StickyKeysOverlayView() = default;
 
 void StickyKeysOverlayView::OnPaint(gfx::Canvas* canvas) {
   cc::PaintFlags flags;
@@ -226,12 +226,7 @@ StickyKeysOverlay::StickyKeysOverlay()
 StickyKeysOverlay::~StickyKeysOverlay() {
   // Remove ourself from the animator to avoid being re-entrantly called in
   // |overlay_widget_|'s destructor.
-  ui::Layer* layer = overlay_widget_->GetLayer();
-  if (layer) {
-    ui::LayerAnimator* animator = layer->GetAnimator();
-    if (animator)
-      animator->RemoveObserver(this);
-  }
+  StopObservingImplicitAnimations();
 }
 
 void StickyKeysOverlay::Show(bool visible) {
@@ -244,7 +239,6 @@ void StickyKeysOverlay::Show(bool visible) {
   overlay_widget_->SetBounds(CalculateOverlayBounds());
 
   ui::LayerAnimator* animator = overlay_widget_->GetLayer()->GetAnimator();
-  animator->AddObserver(this);
 
   // Ensure transform is correct before beginning animation.
   if (!animator->is_animating()) {
@@ -256,6 +250,7 @@ void StickyKeysOverlay::Show(bool visible) {
   }
 
   ui::ScopedLayerAnimationSettings settings(animator);
+  settings.AddObserver(this);
   settings.SetPreemptionStrategy(
       ui::LayerAnimator::IMMEDIATELY_ANIMATE_TO_NEW_TARGET);
   settings.SetTweenType(visible ? gfx::Tween::EASE_OUT : gfx::Tween::EASE_IN);
@@ -293,23 +288,13 @@ gfx::Rect StickyKeysOverlay::CalculateOverlayBounds() {
   return gfx::Rect(gfx::Point(x, kVerticalOverlayOffset), widget_size_);
 }
 
-void StickyKeysOverlay::OnLayerAnimationEnded(
-    ui::LayerAnimationSequence* sequence) {
-  ui::LayerAnimator* animator = overlay_widget_->GetLayer()->GetAnimator();
-  if (animator)
-    animator->RemoveObserver(this);
+void StickyKeysOverlay::OnImplicitAnimationsCompleted() {
+  if (WasAnimationAbortedForProperty(ui::LayerAnimationElement::TRANSFORM))
+    return;
+  DCHECK(
+      WasAnimationCompletedForProperty(ui::LayerAnimationElement::TRANSFORM));
   if (!is_visible_)
     overlay_widget_->Hide();
 }
-
-void StickyKeysOverlay::OnLayerAnimationAborted(
-    ui::LayerAnimationSequence* sequence) {
-  ui::LayerAnimator* animator = overlay_widget_->GetLayer()->GetAnimator();
-  if (animator)
-    animator->RemoveObserver(this);
-}
-
-void StickyKeysOverlay::OnLayerAnimationScheduled(
-    ui::LayerAnimationSequence* sequence) {}
 
 }  // namespace ash

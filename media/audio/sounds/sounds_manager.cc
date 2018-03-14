@@ -22,8 +22,10 @@ bool g_initialized_for_testing = false;
 
 class SoundsManagerImpl : public SoundsManager {
  public:
-  SoundsManagerImpl() {}
-  ~SoundsManagerImpl() override { DCHECK(CalledOnValidThread()); }
+  SoundsManagerImpl() = default;
+  ~SoundsManagerImpl() override {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  }
 
   // SoundsManager implementation:
   bool Initialize(SoundKey key, const base::StringPiece& data) override;
@@ -62,13 +64,13 @@ bool SoundsManagerImpl::Initialize(SoundKey key,
 }
 
 bool SoundsManagerImpl::Play(SoundKey key) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   AudioStreamHandler* handler = GetHandler(key);
   return handler && handler->Play();
 }
 
 bool SoundsManagerImpl::Stop(SoundKey key) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   AudioStreamHandler* handler = GetHandler(key);
   if (!handler)
     return false;
@@ -77,7 +79,7 @@ bool SoundsManagerImpl::Stop(SoundKey key) {
 }
 
 base::TimeDelta SoundsManagerImpl::GetDuration(SoundKey key) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   AudioStreamHandler* handler = GetHandler(key);
   return !handler ? base::TimeDelta() : handler->duration();
 }
@@ -92,9 +94,11 @@ AudioStreamHandler* SoundsManagerImpl::GetHandler(SoundKey key) {
 
 }  // namespace
 
-SoundsManager::SoundsManager() {}
+SoundsManager::SoundsManager() = default;
 
-SoundsManager::~SoundsManager() { DCHECK(CalledOnValidThread()); }
+SoundsManager::~SoundsManager() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+}
 
 // static
 void SoundsManager::Create() {

@@ -9,9 +9,8 @@
 
 namespace content {
 
-class DevToolsSession;
-class DevToolsAgentHostImpl;
 class RenderFrameHostImpl;
+class RenderProcessHost;
 
 namespace protocol {
 
@@ -20,14 +19,12 @@ class DevToolsDomainHandler {
   explicit DevToolsDomainHandler(const std::string& name);
   virtual ~DevToolsDomainHandler();
 
-  virtual void SetRenderFrameHost(RenderFrameHostImpl* host);
+  virtual void SetRenderer(RenderProcessHost* process_host,
+                           RenderFrameHostImpl* frame_host);
   virtual void Wire(UberDispatcher* dispatcher);
   virtual Response Disable();
 
   const std::string& name() const { return name_; }
-
- protected:
-  static DevToolsSession* GetFirstSession(DevToolsAgentHostImpl* host);
 
  private:
   std::string name_;

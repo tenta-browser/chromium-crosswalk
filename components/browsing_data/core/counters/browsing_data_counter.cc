@@ -19,8 +19,7 @@ static const int kDelayUntilReadyToShowResultMs = 1000;
 }
 
 BrowsingDataCounter::BrowsingDataCounter()
-    : initialized_(false),
-      state_(State::IDLE) {}
+    : initialized_(false), use_delay_(true), state_(State::IDLE) {}
 
 BrowsingDataCounter::~BrowsingDataCounter() {}
 
@@ -40,10 +39,29 @@ void BrowsingDataCounter::Init(PrefService* pref_service,
   OnInitialized();
 }
 
+void BrowsingDataCounter::InitWithoutPref(base::Time begin_time,
+                                          const Callback& callback) {
+  DCHECK(!initialized_);
+  use_delay_ = false;
+  callback_ = callback;
+  clear_browsing_data_tab_ = ClearBrowsingDataTab::ADVANCED;
+  begin_time_ = begin_time;
+  initialized_ = true;
+  OnInitialized();
+}
+
 void BrowsingDataCounter::OnInitialized() {}
 
 base::Time BrowsingDataCounter::GetPeriodStart() {
+  if (period_.GetPrefName().empty())
+    return begin_time_;
   return CalculateBeginDeleteTime(static_cast<TimePeriod>(*period_));
+}
+
+base::Time BrowsingDataCounter::GetPeriodEnd() {
+  if (period_.GetPrefName().empty())
+    return base::Time::Max();
+  return CalculateEndDeleteTime(static_cast<TimePeriod>(*period_));
 }
 
 void BrowsingDataCounter::Restart() {
@@ -59,9 +77,14 @@ void BrowsingDataCounter::Restart() {
   state_transitions_.clear();
   state_transitions_.push_back(state_);
 
-  timer_.Start(FROM_HERE,
-               base::TimeDelta::FromMilliseconds(kDelayUntilShowCalculatingMs),
-               this, &BrowsingDataCounter::TransitionToShowCalculating);
+  if (use_delay_) {
+    timer_.Start(
+        FROM_HERE,
+        base::TimeDelta::FromMilliseconds(kDelayUntilShowCalculatingMs), this,
+        &BrowsingDataCounter::TransitionToShowCalculating);
+  } else {
+    state_ = State::READY_TO_REPORT_RESULT;
+  }
   Count();
 }
 
@@ -139,7 +162,9 @@ void BrowsingDataCounter::TransitionToReadyToReportResult() {
 // BrowsingDataCounter::Result -------------------------------------------------
 
 BrowsingDataCounter::Result::Result(const BrowsingDataCounter* source)
-    : source_(source) {}
+    : source_(source) {
+  DCHECK(source);
+}
 
 BrowsingDataCounter::Result::~Result() {}
 
@@ -164,5 +189,14 @@ BrowsingDataCounter::ResultInt BrowsingDataCounter::FinishedResult::Value()
     const {
   return value_;
 }
+
+// BrowsingDataCounter::SyncResult -----------------------------------------
+
+BrowsingDataCounter::SyncResult::SyncResult(const BrowsingDataCounter* source,
+                                            ResultInt value,
+                                            bool sync_enabled)
+    : FinishedResult(source, value), sync_enabled_(sync_enabled) {}
+
+BrowsingDataCounter::SyncResult::~SyncResult() {}
 
 }  // namespace browsing_data

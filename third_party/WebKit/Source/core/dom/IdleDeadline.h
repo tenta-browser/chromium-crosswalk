@@ -5,13 +5,13 @@
 #ifndef IdleDeadline_h
 #define IdleDeadline_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "core/CoreExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
-class CORE_EXPORT IdleDeadline : public GarbageCollected<IdleDeadline>,
-                                 public ScriptWrappable {
+class CORE_EXPORT IdleDeadline : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -21,8 +21,6 @@ class CORE_EXPORT IdleDeadline : public GarbageCollected<IdleDeadline>,
                               CallbackType callback_type) {
     return new IdleDeadline(deadline_seconds, callback_type);
   }
-
-  DEFINE_INLINE_TRACE() {}
 
   double timeRemaining() const;
 

@@ -4,17 +4,19 @@
 
 #include "components/omnibox/browser/autocomplete_input.h"
 
+#include <vector>
+
 #include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/metrics/proto/omnibox_event.pb.h"
 #include "components/omnibox/browser/autocomplete_scheme_classifier.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/url_formatter/url_fixer.h"
 #include "components/url_formatter/url_formatter.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/url_util.h"
+#include "third_party/metrics_proto/omnibox_event.pb.h"
 #include "url/url_canon_ip.h"
 #include "url/url_util.h"
 
@@ -72,32 +74,60 @@ AutocompleteInput::AutocompleteInput()
       prefer_keyword_(false),
       allow_exact_keyword_match_(true),
       want_asynchronous_matches_(true),
+      from_omnibox_focus_(false) {}
+
+AutocompleteInput::AutocompleteInput(
+    const base::string16& text,
+    metrics::OmniboxEventProto::PageClassification current_page_classification,
+    const AutocompleteSchemeClassifier& scheme_classifier)
+    : cursor_position_(std::string::npos),
+      current_page_classification_(current_page_classification),
+      prevent_inline_autocomplete_(false),
+      prefer_keyword_(false),
+      allow_exact_keyword_match_(true),
+      want_asynchronous_matches_(true),
       from_omnibox_focus_(false) {
+  Init(text, scheme_classifier);
+}
+
+AutocompleteInput::AutocompleteInput(
+    const base::string16& text,
+    size_t cursor_position,
+    metrics::OmniboxEventProto::PageClassification current_page_classification,
+    const AutocompleteSchemeClassifier& scheme_classifier)
+    : cursor_position_(cursor_position),
+      current_page_classification_(current_page_classification),
+      prevent_inline_autocomplete_(false),
+      prefer_keyword_(false),
+      allow_exact_keyword_match_(true),
+      want_asynchronous_matches_(true),
+      from_omnibox_focus_(false) {
+  Init(text, scheme_classifier);
 }
 
 AutocompleteInput::AutocompleteInput(
     const base::string16& text,
     size_t cursor_position,
     const std::string& desired_tld,
-    const GURL& current_url,
     metrics::OmniboxEventProto::PageClassification current_page_classification,
-    bool prevent_inline_autocomplete,
-    bool prefer_keyword,
-    bool allow_exact_keyword_match,
-    bool want_asynchronous_matches,
-    bool from_omnibox_focus,
     const AutocompleteSchemeClassifier& scheme_classifier)
     : cursor_position_(cursor_position),
-      current_url_(current_url),
       current_page_classification_(current_page_classification),
-      prevent_inline_autocomplete_(prevent_inline_autocomplete),
-      prefer_keyword_(prefer_keyword),
-      allow_exact_keyword_match_(allow_exact_keyword_match),
-      want_asynchronous_matches_(want_asynchronous_matches),
-      from_omnibox_focus_(from_omnibox_focus) {
-  DCHECK(cursor_position <= text.length() ||
-         cursor_position == base::string16::npos)
-      << "Text: '" << text << "', cp: " << cursor_position;
+      desired_tld_(desired_tld),
+      prevent_inline_autocomplete_(false),
+      prefer_keyword_(false),
+      allow_exact_keyword_match_(true),
+      want_asynchronous_matches_(true),
+      from_omnibox_focus_(false) {
+  Init(text, scheme_classifier);
+}
+
+void AutocompleteInput::Init(
+    const base::string16& text,
+    const AutocompleteSchemeClassifier& scheme_classifier) {
+  DCHECK(cursor_position_ <= text.length() ||
+         cursor_position_ == base::string16::npos)
+      << "Text: '" << text << "', cp: " << cursor_position_;
   // None of the providers care about leading white space so we always trim it.
   // Providers that care about trailing white space handle trimming themselves.
   if ((base::TrimWhitespace(text, base::TRIM_LEADING, &text_) &
@@ -106,12 +136,9 @@ AutocompleteInput::AutocompleteInput(
                                     &cursor_position_);
 
   GURL canonicalized_url;
-  type_ = Parse(text_, desired_tld, scheme_classifier, &parts_, &scheme_,
+  type_ = Parse(text_, desired_tld_, scheme_classifier, &parts_, &scheme_,
                 &canonicalized_url);
   PopulateTermsPrefixedByHttpOrHttps(text_, &terms_prefixed_by_http_or_https_);
-
-  if (type_ == metrics::OmniboxInputType::INVALID)
-    return;
 
   if (((type_ == metrics::OmniboxInputType::UNKNOWN) ||
        (type_ == metrics::OmniboxInputType::URL)) &&
@@ -128,15 +155,18 @@ AutocompleteInput::~AutocompleteInput() {
 }
 
 // static
-std::string AutocompleteInput::TypeToString(
-    metrics::OmniboxInputType::Type type) {
+std::string AutocompleteInput::TypeToString(metrics::OmniboxInputType type) {
   switch (type) {
-    case metrics::OmniboxInputType::INVALID:      return "invalid";
-    case metrics::OmniboxInputType::UNKNOWN:      return "unknown";
+    case metrics::OmniboxInputType::INVALID:
+      return "invalid";
+    case metrics::OmniboxInputType::UNKNOWN:
+      return "unknown";
     case metrics::OmniboxInputType::DEPRECATED_REQUESTED_URL:
       return "deprecated-requested-url";
-    case metrics::OmniboxInputType::URL:          return "url";
-    case metrics::OmniboxInputType::QUERY:        return "query";
+    case metrics::OmniboxInputType::URL:
+      return "url";
+    case metrics::OmniboxInputType::QUERY:
+      return "query";
     case metrics::OmniboxInputType::DEPRECATED_FORCED_QUERY:
       return "deprecated-forced-query";
   }
@@ -144,7 +174,7 @@ std::string AutocompleteInput::TypeToString(
 }
 
 // static
-metrics::OmniboxInputType::Type AutocompleteInput::Parse(
+metrics::OmniboxInputType AutocompleteInput::Parse(
     const base::string16& text,
     const std::string& desired_tld,
     const AutocompleteSchemeClassifier& scheme_classifier,
@@ -194,7 +224,7 @@ metrics::OmniboxInputType::Type AutocompleteInput::Parse(
   if (parts->scheme.is_nonempty() &&
       !base::LowerCaseEqualsASCII(parsed_scheme_utf8, url::kHttpScheme) &&
       !base::LowerCaseEqualsASCII(parsed_scheme_utf8, url::kHttpsScheme)) {
-    metrics::OmniboxInputType::Type type =
+    metrics::OmniboxInputType type =
         scheme_classifier.GetInputTypeForScheme(parsed_scheme_utf8);
     if (type != metrics::OmniboxInputType::INVALID)
       return type;
@@ -207,7 +237,7 @@ metrics::OmniboxInputType::Type AutocompleteInput::Parse(
     url::Parsed http_parts;
     base::string16 http_scheme;
     GURL http_canonicalized_url;
-    metrics::OmniboxInputType::Type http_type =
+    metrics::OmniboxInputType http_type =
         Parse(http_scheme_prefix + text, desired_tld, scheme_classifier,
               &http_parts, &http_scheme, &http_canonicalized_url);
     DCHECK_EQ(std::string(url::kHttpScheme),
@@ -298,8 +328,10 @@ metrics::OmniboxInputType::Type AutocompleteInput::Parse(
     // These might be possible in intranets, but we're not going to support them
     // without concrete evidence that doing so is necessary.
     return (parts->scheme.is_nonempty() ||
-        (has_known_tld && (original_host.find(' ') == base::string16::npos))) ?
-        metrics::OmniboxInputType::UNKNOWN : metrics::OmniboxInputType::QUERY;
+            (has_known_tld &&
+             (original_host.find(' ') == base::string16::npos)))
+               ? metrics::OmniboxInputType::UNKNOWN
+               : metrics::OmniboxInputType::QUERY;
   }
 
   // For hostnames that look like IP addresses, distinguish between IPv6
@@ -359,8 +391,19 @@ metrics::OmniboxInputType::Type AutocompleteInput::Parse(
   if (parts->scheme.is_nonempty())
     return metrics::OmniboxInputType::URL;
 
-  // Trailing slashes force the input to be treated as a URL.
-  if (parts->path.is_nonempty()) {
+  // Check to see if the username is set and, if so, whether it contains a
+  // space.  Usernames usually do not contain a space.  If a username contains
+  // a space, that's likely an indication of incorrectly parsing of the input.
+  const bool username_has_space =
+      parts->username.is_nonempty() &&
+      (text.substr(parts->username.begin, parts->username.len)
+           .find_first_of(base::kWhitespaceUTF16) != base::string16::npos);
+
+  // Generally, trailing slashes force the input to be treated as a URL.
+  // However, if the username has a space, this may be input like
+  // "dep missing: @test/", which should not be parsed as a URL (with the
+  // username "dep missing: ").
+  if (parts->path.is_nonempty() && !username_has_space) {
     base::char16 c = text[parts->path.end() - 1];
     if ((c == '\\') || (c == '/'))
       return metrics::OmniboxInputType::URL;
@@ -372,6 +415,11 @@ metrics::OmniboxInputType::Type AutocompleteInput::Parse(
   if ((host_info.family == url::CanonHostInfo::IPV4) &&
       (host_info.num_ipv4_components > 1))
     return metrics::OmniboxInputType::QUERY;
+
+  // The URL did not have an explicit scheme and has an unusual-looking
+  // username (with a space).  It's not likely to be a URL.
+  if (username_has_space)
+    return metrics::OmniboxInputType::UNKNOWN;
 
   // If there is more than one recognized non-host component, this is likely to
   // be a URL, even if the TLD is unknown (in which case this is likely an
@@ -418,7 +466,7 @@ void AutocompleteInput::ParseForEmphasizeComponents(
     url::Component* host) {
   url::Parsed parts;
   base::string16 scheme_str;
-  Parse(text, std::string(), scheme_classifier, &parts, &scheme_str, NULL);
+  Parse(text, std::string(), scheme_classifier, &parts, &scheme_str, nullptr);
 
   *scheme = parts.scheme;
   *host = parts.host;
@@ -432,7 +480,7 @@ void AutocompleteInput::ParseForEmphasizeComponents(
     base::string16 real_url(text.substr(after_scheme_and_colon));
     url::Parsed real_parts;
     AutocompleteInput::Parse(real_url, std::string(), scheme_classifier,
-                             &real_parts, NULL, NULL);
+                             &real_parts, nullptr, nullptr);
     if (real_parts.scheme.is_nonempty() || real_parts.host.is_nonempty()) {
       if (real_parts.scheme.is_nonempty()) {
         *scheme = url::Component(
@@ -462,11 +510,13 @@ base::string16 AutocompleteInput::FormattedStringWithEquivalentMeaning(
   if (!url_formatter::CanStripTrailingSlash(url))
     return formatted_url;
   const base::string16 url_with_path(formatted_url + base::char16('/'));
-  return (AutocompleteInput::Parse(formatted_url, std::string(),
-                                   scheme_classifier, NULL, NULL, NULL) ==
-          AutocompleteInput::Parse(url_with_path, std::string(),
-                                   scheme_classifier, NULL, NULL, NULL)) ?
-      formatted_url : url_with_path;
+  return (AutocompleteInput::Parse(
+              formatted_url, std::string(), scheme_classifier, nullptr, nullptr,
+              nullptr) == AutocompleteInput::Parse(url_with_path, std::string(),
+                                                   scheme_classifier, nullptr,
+                                                   nullptr, nullptr))
+             ? formatted_url
+             : url_with_path;
 }
 
 // static
@@ -496,7 +546,7 @@ bool AutocompleteInput::HasHTTPScheme(const base::string16& input) {
   if (url::FindAndCompareScheme(utf8_input, kViewSourceScheme, &scheme)) {
     utf8_input.erase(0, scheme.end() + 1);
   }
-  return url::FindAndCompareScheme(utf8_input, url::kHttpScheme, NULL);
+  return url::FindAndCompareScheme(utf8_input, url::kHttpScheme, nullptr);
 }
 
 void AutocompleteInput::UpdateText(const base::string16& text,
@@ -514,6 +564,7 @@ void AutocompleteInput::Clear() {
   text_.clear();
   cursor_position_ = base::string16::npos;
   current_url_ = GURL();
+  current_title_.clear();
   current_page_classification_ = metrics::OmniboxEventProto::INVALID_SPEC;
   type_ = metrics::OmniboxInputType::INVALID;
   parts_ = url::Parsed();

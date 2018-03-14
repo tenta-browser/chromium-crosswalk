@@ -8,6 +8,7 @@
 #include <memory>
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Noncopyable.h"
+#include "platform/wtf/Time.h"
 
 namespace blink {
 
@@ -26,19 +27,17 @@ class DOMTimerCoordinator {
   WTF_MAKE_NONCOPYABLE(DOMTimerCoordinator);
 
  public:
-  explicit DOMTimerCoordinator(RefPtr<WebTaskRunner>);
+  explicit DOMTimerCoordinator(scoped_refptr<WebTaskRunner>);
 
   // Creates and installs a new timer. Returns the assigned ID.
   int InstallNewTimeout(ExecutionContext*,
                         ScheduledAction*,
-                        int timeout,
+                        TimeDelta timeout,
                         bool single_shot);
 
   // Removes and disposes the timer with the specified ID, if any. This may
   // destroy the timer.
   DOMTimer* RemoveTimeoutByID(int id);
-
-  bool HasInstalledTimeout() const;
 
   // Timers created during the execution of other timers, and
   // repeating timers, are throttled. Timer nesting level tracks the
@@ -51,11 +50,13 @@ class DOMTimerCoordinator {
   // deeper timer nesting level, see DOMTimer::DOMTimer.
   void SetTimerNestingLevel(int level) { timer_nesting_level_ = level; }
 
-  void SetTimerTaskRunner(RefPtr<WebTaskRunner>);
+  void SetTimerTaskRunner(scoped_refptr<WebTaskRunner>);
 
-  RefPtr<WebTaskRunner> TimerTaskRunner() const { return timer_task_runner_; }
+  scoped_refptr<WebTaskRunner> TimerTaskRunner() const {
+    return timer_task_runner_;
+  }
 
-  DECLARE_TRACE();  // Oilpan.
+  void Trace(blink::Visitor*);  // Oilpan.
 
  private:
   int NextID();
@@ -65,7 +66,7 @@ class DOMTimerCoordinator {
 
   int circular_sequential_id_;
   int timer_nesting_level_;
-  RefPtr<WebTaskRunner> timer_task_runner_;
+  scoped_refptr<WebTaskRunner> timer_task_runner_;
 };
 
 }  // namespace blink

@@ -2,7 +2,7 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file. */
 
- // Single iframe for NTP tiles.
+// Single iframe for NTP tiles.
 (function() {
 'use strict';
 
@@ -23,6 +23,21 @@ var LOG_TYPE = {
   // before the actual DOM elements have loaded (in particular the thumbnail
   // images).
   NTP_ALL_TILES_RECEIVED: 12,
+};
+
+
+/**
+ * The different sources where an NTP tile's title can originate from.
+ * Note: Keep in sync with components/ntp_tiles/tile_title_source.h
+ * @enum {number}
+ * @const
+ */
+var TileTitleSource = {
+  UNKNOWN: 0,
+  MANIFEST: 1,
+  META_TAG: 2,
+  TITLE: 3,
+  INFERRED: 4
 };
 
 
@@ -72,7 +87,8 @@ var NUM_TITLE_LINES = 1;
 
 
 /**
- * The origin of this request.
+ * The origin of this request, i.e. 'https://www.google.TLD' for the remote NTP,
+ * or 'chrome-search://local-ntp' for the local NTP.
  * @const {string}
  */
 var DOMAIN_ORIGIN = '{{ORIGIN}}';
@@ -112,25 +128,31 @@ var logEvent = function(eventType) {
 /**
  * Log impression of an NTP tile.
  * @param {number} tileIndex Position of the tile, >= 0 and < NUMBER_OF_TILES.
+ * @param {number} tileTitleSource The title's source from TileTitleSource.
  * @param {number} tileSource The source from TileSource.
  * @param {number} tileType The type from TileVisualType.
+ * @param {Date} dataGenerationTime Timestamp representing when the tile was
+ *               produced by a ranking algorithm.
  */
-function logMostVisitedImpression(tileIndex, tileSource, tileType) {
-  chrome.embeddedSearch.newTabPage.logMostVisitedImpression(tileIndex,
-                                                            tileSource,
-                                                            tileType);
+function logMostVisitedImpression(
+    tileIndex, tileTitleSource, tileSource, tileType, dataGenerationTime) {
+  chrome.embeddedSearch.newTabPage.logMostVisitedImpression(
+      tileIndex, tileTitleSource, tileSource, tileType, dataGenerationTime);
 }
 
 /**
  * Log click on an NTP tile.
  * @param {number} tileIndex Position of the tile, >= 0 and < NUMBER_OF_TILES.
+ * @param {number} tileTitleSource The title's source from TileTitleSource.
  * @param {number} tileSource The source from TileSource.
  * @param {number} tileType The type from TileVisualType.
+ * @param {Date} dataGenerationTime Timestamp representing when the tile was
+ *               produced by a ranking algorithm.
  */
-function logMostVisitedNavigation(tileIndex, tileSource, tileType) {
-  chrome.embeddedSearch.newTabPage.logMostVisitedNavigation(tileIndex,
-                                                            tileSource,
-                                                            tileType);
+function logMostVisitedNavigation(
+    tileIndex, tileTitleSource, tileSource, tileType, dataGenerationTime) {
+  chrome.embeddedSearch.newTabPage.logMostVisitedNavigation(
+      tileIndex, tileTitleSource, tileSource, tileType, dataGenerationTime);
 }
 
 /**
@@ -144,7 +166,8 @@ var countLoad = function() {
     swapInNewTiles();
     logEvent(LOG_TYPE.NTP_ALL_TILES_LOADED);
     window.parent.postMessage({cmd: 'loaded'}, DOMAIN_ORIGIN);
-    // TODO(treib): Why do we reset to 1 here?
+    // Reset to 1, so that any further 'show' message will cause us to swap in
+    // fresh tiles.
     loadedCounter = 1;
   }
 };
@@ -179,8 +202,6 @@ var handleCommand = function(data) {
     showTiles(data);
   } else if (cmd == 'updateTheme') {
     updateTheme(data);
-  } else if (cmd == 'tilesVisible') {
-    hideOverflowTiles(data);
   } else {
     console.error('Unknown command: ' + JSON.stringify(data));
   }
@@ -194,8 +215,7 @@ var handleCommand = function(data) {
 var showTiles = function(info) {
   logEvent(LOG_TYPE.NTP_ALL_TILES_RECEIVED);
   countLoad();
-  hideOverflowTiles(info);
-}
+};
 
 
 /**
@@ -203,54 +223,8 @@ var showTiles = function(info) {
  * @param {object} info Data received in the message.
  */
 var updateTheme = function(info) {
-  var themeStyle = [];
-
-  if (info.tileBorderColor) {
-    themeStyle.push('.mv-tile {' +
-        'border: 1px solid ' + info.tileBorderColor + '; }');
-  }
-  if (info.tileHoverBorderColor) {
-    themeStyle.push('.mv-tile:hover {' +
-        'border-color: ' + info.tileHoverBorderColor + '; }');
-  }
-  if (info.isThemeDark) {
-    themeStyle.push('.mv-tile, .mv-empty-tile { ' +
-        'background: rgb(51,51,51); }');
-    themeStyle.push('.mv-thumb.failed-img { ' +
-        'background-color: #555; }');
-    themeStyle.push('.mv-thumb.failed-img::after { ' +
-        'border-color: #333; }');
-    themeStyle.push('.mv-x { ' +
-        'background: linear-gradient(to left, ' +
-        'rgb(51,51,51) 60%, transparent); }');
-    themeStyle.push('html[dir=rtl] .mv-x { ' +
-        'background: linear-gradient(to right, ' +
-        'rgb(51,51,51) 60%, transparent); }');
-    themeStyle.push('.mv-x::after { ' +
-        'background-color: rgba(255,255,255,0.7); }');
-    themeStyle.push('.mv-x:hover::after { ' +
-        'background-color: #fff; }');
-    themeStyle.push('.mv-x:active::after { ' +
-        'background-color: rgba(255,255,255,0.5); }');
-  }
-  if (info.tileTitleColor) {
-    themeStyle.push('body { color: ' + info.tileTitleColor + '; }');
-  }
-
-  document.querySelector('#custom-theme').textContent = themeStyle.join('\n');
-};
-
-
-/**
- * Hides extra tiles that don't fit on screen. Called in response to the 'show'
- * and 'tilesVisible' messages from the host page.
- */
-var hideOverflowTiles = function(data) {
-  var tileAndEmptyTileList = document.querySelectorAll(
-      '#mv-tiles .mv-tile,#mv-tiles .mv-empty-tile');
-  for (var i = 0; i < tileAndEmptyTileList.length; ++i) {
-    tileAndEmptyTileList[i].classList.toggle('hidden', i >= data.maxVisible);
-  }
+  document.body.style.setProperty('--tile-title-color', info.tileTitleColor);
+  document.body.classList.toggle('dark-theme', info.isThemeDark);
 };
 
 
@@ -322,8 +296,7 @@ var swapInNewTiles = function() {
  */
 var addTile = function(args) {
   if (isFinite(args.rid)) {
-    // If a valid number passed in |args.rid|: a local Chrome suggestion. Grab
-    // the data from the embeddedSearch API.
+    // An actual suggestion. Grab the data from the embeddedSearch API.
     var data =
         chrome.embeddedSearch.newTabPage.getMostVisitedItemData(args.rid);
     if (!data)
@@ -335,15 +308,8 @@ var addTile = function(args) {
           window.devicePixelRatio + 'x/' + data.renderViewId + '/' + data.tid;
     }
     tiles.appendChild(renderTile(data));
-  } else if (args.url) {
-    // If a URL is passed: a server-side suggestion.
-    args.tileSource = TileSource.SUGGESTIONS_SERVICE;
-    // check sanity of the arguments
-    if (/^javascript:/i.test(args.url) ||
-        /^javascript:/i.test(args.thumbnailUrl))
-      return;
-    tiles.appendChild(renderTile(args));
-  } else {  // an empty tile
+  } else {
+    // An empty tile
     tiles.appendChild(renderTile(null));
   }
 };
@@ -357,11 +323,12 @@ var addTile = function(args) {
 var blacklistTile = function(tile) {
   tile.classList.add('blacklisted');
   tile.addEventListener('transitionend', function(ev) {
-    if (ev.propertyName != 'width') return;
+    if (ev.propertyName != 'width')
+      return;
 
-    window.parent.postMessage({cmd: 'tileBlacklisted',
-                               tid: Number(tile.getAttribute('data-tid'))},
-                              DOMAIN_ORIGIN);
+    window.parent.postMessage(
+        {cmd: 'tileBlacklisted', tid: Number(tile.getAttribute('data-tid'))},
+        DOMAIN_ORIGIN);
   });
 };
 
@@ -372,7 +339,7 @@ var blacklistTile = function(tile) {
  */
 var isSchemeAllowed = function(url) {
   return url.startsWith('http://') || url.startsWith('https://') ||
-         url.startsWith('ftp://') || url.startsWith('chrome-extension://');
+      url.startsWith('ftp://') || url.startsWith('chrome-extension://');
 };
 
 
@@ -400,7 +367,7 @@ var renderTile = function(data) {
   var html = [];
   html.push('<div class="mv-favicon"></div>');
   html.push('<div class="mv-title"></div><div class="mv-thumb"></div>');
-  html.push('<div class="mv-x" role="button"></div>');
+  html.push('<button class="mv-x"></button>');
   tile.innerHTML = html.join('');
   tile.lastElementChild.title = queryArgs['removeTooltip'] || '';
 
@@ -411,7 +378,9 @@ var renderTile = function(data) {
   tile.title = data.title;
 
   tile.addEventListener('click', function(ev) {
-    logMostVisitedNavigation(position, data.tileSource, tileType);
+    logMostVisitedNavigation(
+        position, data.tileTitleSource, data.tileSource, tileType,
+        data.dataGenerationTime);
   });
 
   tile.addEventListener('keydown', function(event) {
@@ -420,8 +389,8 @@ var renderTile = function(data) {
       event.preventDefault();
       event.stopPropagation();
       blacklistTile(this);
-    } else if (event.keyCode == 13 /* ENTER */ ||
-               event.keyCode == 32 /* SPACE */) {
+    } else if (
+        event.keyCode == 13 /* ENTER */ || event.keyCode == 32 /* SPACE */) {
       event.preventDefault();
       this.click();
     } else if (event.keyCode >= 37 && event.keyCode <= 40 /* ARROWS */) {
@@ -430,15 +399,15 @@ var renderTile = function(data) {
         return (event.keyCode == 37 /* LEFT */ &&
                 origin.offsetTop == target.offsetTop &&
                 origin.offsetLeft > target.offsetLeft) ||
-                (event.keyCode == 38 /* UP */ &&
-                origin.offsetTop > target.offsetTop &&
-                origin.offsetLeft == target.offsetLeft) ||
-                (event.keyCode == 39 /* RIGHT */ &&
-                origin.offsetTop == target.offsetTop &&
-                origin.offsetLeft < target.offsetLeft) ||
-                (event.keyCode == 40 /* DOWN */ &&
-                origin.offsetTop < target.offsetTop &&
-                origin.offsetLeft == target.offsetLeft);
+            (event.keyCode == 38 /* UP */ &&
+             origin.offsetTop > target.offsetTop &&
+             origin.offsetLeft == target.offsetLeft) ||
+            (event.keyCode == 39 /* RIGHT */ &&
+             origin.offsetTop == target.offsetTop &&
+             origin.offsetLeft < target.offsetLeft) ||
+            (event.keyCode == 40 /* DOWN */ &&
+             origin.offsetTop < target.offsetTop &&
+             origin.offsetLeft == target.offsetLeft);
       };
 
       var nonEmptyTiles = document.querySelectorAll('#mv-tiles .mv-tile');
@@ -471,7 +440,9 @@ var renderTile = function(data) {
   img.addEventListener('load', function(ev) {
     // Store the type for a potential later navigation.
     tileType = TileVisualType.THUMBNAIL;
-    logMostVisitedImpression(position, data.tileSource, tileType);
+    logMostVisitedImpression(
+        position, data.tileTitleSource, data.tileSource, tileType,
+        data.dataGenerationTime);
     // Note: It's important to call countLoad last, because that might emit the
     // NTP_ALL_TILES_LOADED event, which must happen after the impression log.
     countLoad();
@@ -481,7 +452,9 @@ var renderTile = function(data) {
     thumb.removeChild(img);
     // Store the type for a potential later navigation.
     tileType = TileVisualType.THUMBNAIL_FAILED;
-    logMostVisitedImpression(position, data.tileSource, tileType);
+    logMostVisitedImpression(
+        position, data.tileTitleSource, data.tileSource, tileType,
+        data.dataGenerationTime);
     // Note: It's important to call countLoad last, because that might emit the
     // NTP_ALL_TILES_LOADED event, which must happen after the impression log.
     countLoad();
@@ -489,21 +462,18 @@ var renderTile = function(data) {
   thumb.appendChild(img);
 
   var favicon = tile.querySelector('.mv-favicon');
-  if (data.faviconUrl) {
-    var fi = document.createElement('img');
-    fi.src = data.faviconUrl;
-    // Set the title to empty so screen readers won't say the image name.
-    fi.title = '';
-    loadedCounter += 1;
-    fi.addEventListener('load', countLoad);
-    fi.addEventListener('error', countLoad);
-    fi.addEventListener('error', function(ev) {
-      favicon.classList.add('failed-favicon');
-    });
-    favicon.appendChild(fi);
-  } else {
+  var fi = document.createElement('img');
+  fi.src = data.faviconUrl;
+  // Set title and alt to empty so screen readers won't say the image name.
+  fi.title = '';
+  fi.alt = '';
+  loadedCounter += 1;
+  fi.addEventListener('load', countLoad);
+  fi.addEventListener('error', countLoad);
+  fi.addEventListener('error', function(ev) {
     favicon.classList.add('failed-favicon');
-  }
+  });
+  favicon.appendChild(fi);
 
   var mvx = tile.querySelector('.mv-x');
   mvx.addEventListener('click', function(ev) {
@@ -511,6 +481,12 @@ var renderTile = function(data) {
     blacklistTile(tile);
     ev.preventDefault();
     ev.stopPropagation();
+  });
+
+  // Don't allow the event to bubble out to the containing tile, as that would
+  // trigger navigation to the tile URL.
+  mvx.addEventListener('keydown', function(event) {
+    event.stopPropagation();
   });
 
   return tile;
@@ -532,7 +508,8 @@ var init = function() {
   queryArgs = {};
   for (var i = 0; i < query.length; ++i) {
     var val = query[i].split('=');
-    if (val[0] == '') continue;
+    if (val[0] == '')
+      continue;
     queryArgs[decodeURIComponent(val[0])] = decodeURIComponent(val[1]);
   }
 

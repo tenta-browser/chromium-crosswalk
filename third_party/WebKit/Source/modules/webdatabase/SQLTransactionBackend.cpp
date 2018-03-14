@@ -398,7 +398,7 @@ SQLTransactionBackend::~SQLTransactionBackend() {
   DCHECK(!sqlite_transaction_);
 }
 
-DEFINE_TRACE(SQLTransactionBackend) {
+void SQLTransactionBackend::Trace(blink::Visitor* visitor) {
   visitor->Trace(database_);
   visitor->Trace(wrapper_);
 }
@@ -415,7 +415,7 @@ void SQLTransactionBackend::DoCleanup() {
              ->IsDatabaseThread());
 
   MutexLocker locker(statement_mutex_);
-  statement_queue_.Clear();
+  statement_queue_.clear();
 
   if (sqlite_transaction_) {
     // In the event we got here because of an interruption or error (i.e. if

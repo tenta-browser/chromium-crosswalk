@@ -8,10 +8,6 @@
 
 namespace content {
 
-// TODO(crbug.com/524128): This restriction comes from Cast.  Raise this limit
-// for non-Cast presentations.
-const size_t kMaxPresentationConnectionMessageSize = 64 * 1024;  // 64 KB.
-
 PresentationConnectionMessage::PresentationConnectionMessage() = default;
 
 PresentationConnectionMessage::PresentationConnectionMessage(
@@ -23,7 +19,13 @@ PresentationConnectionMessage::PresentationConnectionMessage(
     : data(std::move(data)) {}
 
 PresentationConnectionMessage::PresentationConnectionMessage(
-    PresentationConnectionMessage&& other) = default;
+    const PresentationConnectionMessage& other) = default;
+
+// Note: "move constructor noexcept = default" currently does not compile on
+// Windows and Android (crbug.com/706963).
+PresentationConnectionMessage::PresentationConnectionMessage(
+    PresentationConnectionMessage&& other) noexcept
+    : message(std::move(other.message)), data(std::move(other.data)) {}
 
 PresentationConnectionMessage::~PresentationConnectionMessage() {}
 
@@ -31,6 +33,9 @@ bool PresentationConnectionMessage::operator==(
     const PresentationConnectionMessage& other) const {
   return this->data == other.data && this->message == other.message;
 }
+
+PresentationConnectionMessage& PresentationConnectionMessage::operator=(
+    const PresentationConnectionMessage& other) = default;
 
 PresentationConnectionMessage& PresentationConnectionMessage::operator=(
     PresentationConnectionMessage&& other) = default;

@@ -15,6 +15,7 @@ static CSPDirective::Name CSPFallback(CSPDirective::Name directive) {
   switch (directive) {
     case CSPDirective::DefaultSrc:
     case CSPDirective::FormAction:
+    case CSPDirective::UpgradeInsecureRequests:
       return CSPDirective::Unknown;
 
     case CSPDirective::FrameSrc:
@@ -50,6 +51,15 @@ void ReportViolation(CSPContext* context,
   DCHECK_NE(directive_name, CSPDirective::DefaultSrc);
   DCHECK_NE(directive_name, CSPDirective::ChildSrc);
 
+  // For security reasons, some urls must not be disclosed. This includes the
+  // blocked url and the source location of the error. Care must be taken to
+  // ensure that these are not transmitted between different cross-origin
+  // renderers.
+  GURL safe_url = url;
+  SourceLocation safe_source_location = source_location;
+  context->SanitizeDataForUseInCspViolation(is_redirect, directive_name,
+                                            &safe_url, &safe_source_location);
+
   std::stringstream message;
 
   if (policy.header.type == blink::kWebContentSecurityPolicyTypeReport)
@@ -60,7 +70,7 @@ void ReportViolation(CSPContext* context,
   else if (directive_name == CSPDirective::FrameSrc)
     message << "Refused to frame '";
 
-  message << ElideURLForReportViolation(url)
+  message << ElideURLForReportViolation(safe_url)
           << "' because it violates the following Content Security Policy "
              "directive: \""
           << directive.ToString() << "\".";
@@ -75,9 +85,9 @@ void ReportViolation(CSPContext* context,
 
   context->ReportContentSecurityPolicyViolation(CSPViolationParams(
       CSPDirective::NameToString(directive.name),
-      CSPDirective::NameToString(directive_name), message.str(), url,
+      CSPDirective::NameToString(directive_name), message.str(), safe_url,
       policy.report_endpoints, policy.header.header_value, policy.header.type,
-      is_redirect, source_location));
+      is_redirect, safe_source_location));
 }
 
 bool AllowDirective(CSPContext* context,
@@ -175,6 +185,16 @@ std::string ContentSecurityPolicy::ToString() const {
   }
 
   return text.str();
+}
+
+// static
+bool ContentSecurityPolicy::ShouldUpgradeInsecureRequest(
+    const ContentSecurityPolicy& policy) {
+  for (const CSPDirective& directive : policy.directives) {
+    if (directive.name == CSPDirective::UpgradeInsecureRequests)
+      return true;
+  }
+  return false;
 }
 
 }  // namespace content

@@ -480,20 +480,9 @@ EVENT_TYPE(SSL_CLIENT_CERT_REQUESTED)
 // The SSL stack blocked on a private key operation. The following parameters
 // are attached to the event.
 //   {
-//     "type": <type of the key>,
 //     "hash": <hash function used>,
 //   }
 EVENT_TYPE(SSL_PRIVATE_KEY_OP)
-
-// The start/end of getting a domain-bound certificate and private key.
-//
-// The END event will contain the following parameters on failure:
-//
-//   {
-//     "net_error": <Net integer error code>,
-//   }
-// TODO(nharper): remove this event.
-EVENT_TYPE(SSL_GET_DOMAIN_BOUND_CERT)
 
 // The start/end of getting a Channel ID key.
 //
@@ -510,14 +499,6 @@ EVENT_TYPE(SSL_GET_DOMAIN_BOUND_CERT)
 //     "key": <Hex-encoded EC point of public key (uncompressed point format)>,
 //   }
 EVENT_TYPE(SSL_GET_CHANNEL_ID)
-
-// The SSL server requested a channel id.
-// TODO(nharper): Remove this event.
-EVENT_TYPE(SSL_CHANNEL_ID_REQUESTED)
-
-// A channel ID was provided to the SSL library to be sent to the SSL server.
-// TODO(nharper): Remove this event.
-EVENT_TYPE(SSL_CHANNEL_ID_PROVIDED)
 
 // A client certificate (or none) was provided to the SSL library to be sent
 // to the SSL server.
@@ -540,29 +521,6 @@ EVENT_TYPE(SSL_HANDSHAKE_ERROR)
 EVENT_TYPE(SSL_READ_ERROR)
 EVENT_TYPE(SSL_WRITE_ERROR)
 
-// An SSL connection needs to be retried with a lower protocol version because
-// the server may be intolerant of the protocol version we offered.
-// The following parameters are attached to the event:
-//   {
-//     "host_and_port": <String encoding the host and port>,
-//     "net_error": <Net integer error code>,
-//     "version_before": <SSL version before the fallback>,
-//     "version_after": <SSL version after the fallback>,
-//   }
-//
-// TODO(davidben): Remove this event and the corresponding log_view_painter.js
-// logic in M56.
-EVENT_TYPE(SSL_VERSION_FALLBACK)
-
-// An SSL connection needs to be retried with more cipher suites because the
-// server may require a deprecated cipher suite. The following parameters are
-// attached to the event:
-//   {
-//     "host_and_port": <String encoding the host and port>,
-//     "net_error": <Net integer error code>,
-//   }
-EVENT_TYPE(SSL_CIPHER_FALLBACK)
-
 // An SSL connection needs to be retried with a lower protocol version to detect
 // if the error was due to a middlebox interfering with the protocol version we
 // offered.
@@ -576,15 +534,23 @@ EVENT_TYPE(SSL_VERSION_INTERFERENCE_PROBE)
 // we merged the verification with the SSLHostInfo. (Note: now obsolete.)
 EVENT_TYPE(SSL_VERIFICATION_MERGED)
 
-// An SSL error occurred while calling an NSS function not directly related to
-// one of the above activities.  Can also be used when more information than
-// is provided by just an error code is needed:
+// An SSL connection sent or received an alert.
+// The following parameters are attached:
 //   {
-//     "function": <Name of the NSS function, as a string>,
-//     "param": <Most relevant parameter, if any>,
-//     "ssl_lib_error": <NSS library's integer code for the specific error type>
+//     "hex_encoded_bytes": <The exact bytes sent, as a hexadecimal string>
 //   }
-EVENT_TYPE(SSL_NSS_ERROR)
+EVENT_TYPE(SSL_ALERT_RECEIVED)
+EVENT_TYPE(SSL_ALERT_SENT)
+
+// An SSL connection sent or received a handshake message.
+// The following parameters are attached:
+//   {
+//     "type": <The type of the handshake message, as an integer>
+//     "hex_encoded_bytes": <The exact bytes sent, as a hexadecimal string. May
+//                           be elided in some cases>
+//   }
+EVENT_TYPE(SSL_HANDSHAKE_MESSAGE_RECEIVED)
+EVENT_TYPE(SSL_HANDSHAKE_MESSAGE_SENT)
 
 // The specified number of bytes were sent on the socket.  Depending on the
 // source of the event, may be logged either once the data is sent, or when it
@@ -1087,11 +1053,12 @@ EVENT_TYPE(HTTP_STREAM_JOB_WAITING)
 //   }
 EVENT_TYPE(HTTP_STREAM_REQUEST_STARTED_JOB)
 
-// Logs the proxy server resolved for the job. The event parameters are:
-//   {
-//      "proxy_server": The proxy server resolved for the Job,
-//   }
-EVENT_TYPE(HTTP_STREAM_JOB_PROXY_SERVER_RESOLVED)
+// Emitted when a job is throttled.
+EVENT_TYPE(HTTP_STREAM_JOB_THROTTLED)
+
+// Emitted when a job resumes initializing a connection after being previously
+// throttled.
+EVENT_TYPE(HTTP_STREAM_JOB_RESUME_INIT_CONNECTION)
 
 // Emitted when a job is asked to initialize a connection.
 EVENT_TYPE(HTTP_STREAM_JOB_INIT_CONNECTION)
@@ -1160,6 +1127,12 @@ EVENT_TYPE(HTTP_STREAM_JOB_CONTROLLER)
 //          URL_REQUEST if the event is logged in HTTP_STREAM_JOB_CONTROLLER>,
 //   }
 EVENT_TYPE(HTTP_STREAM_JOB_CONTROLLER_BOUND)
+
+// Logs the proxy server resolved for the controller. The event parameters are:
+//   {
+//      "proxy_server": The proxy server resolved for the Job,
+//   }
+EVENT_TYPE(HTTP_STREAM_JOB_CONTROLLER_PROXY_SERVER_RESOLVED)
 
 // ------------------------------------------------------------------------
 // HttpNetworkTransaction
@@ -1259,6 +1232,10 @@ EVENT_TYPE(HTTP_TRANSACTION_SET_PRIORITY)
 //   }
 EVENT_TYPE(HTTP_TRANSACTION_RESTART_AFTER_ERROR)
 
+// This event is sent when we try to restart a transaction after the initial
+// attempt failed with HTTP 421 Misdirected Requested.
+EVENT_TYPE(HTTP_TRANSACTION_RESTART_MISDIRECTED_REQUEST)
+
 // ------------------------------------------------------------------------
 // BidirectionalStream
 // ------------------------------------------------------------------------
@@ -1278,9 +1255,6 @@ EVENT_TYPE(BIDIRECTIONAL_STREAM_ALIVE)
 //     "rv": <The value in int that is returned to the caller>
 // }
 EVENT_TYPE(BIDIRECTIONAL_STREAM_READ_DATA)
-
-// Marks the SendData call of a net::BidirectionalStream.
-EVENT_TYPE(BIDIRECTIONAL_STREAM_SEND_DATA)
 
 // Marks the SendvData call of a net::BidirectionalStream.
 // The following parameters are attached:
@@ -1404,18 +1378,17 @@ EVENT_TYPE(HTTP2_SESSION_SEND_HEADERS)
 //   }
 EVENT_TYPE(HTTP2_SESSION_RECV_HEADERS)
 
-// On sending an HTTP/2 SETTINGS frame.
+// On sending an HTTP/2 SETTINGS frame without ACK flag.
 // The following parameters are attached:
 //   {
-//     "settings": <The list of setting id, flags and value>,
+//     "settings": <The list of setting ids and values>,
 //   }
 EVENT_TYPE(HTTP2_SESSION_SEND_SETTINGS)
 
-// Receipt of an HTTP/2 SETTINGS frame.
-// The following parameters are attached:
-//   {
-//     "host": <The host-port string>,
-//   }
+// On sending an HTTP/2 SETTINGS frame with ACK flag.
+EVENT_TYPE(HTTP2_SESSION_SEND_SETTINGS_ACK)
+
+// Receipt of an HTTP/2 SETTINGS frame without ACK flag.
 EVENT_TYPE(HTTP2_SESSION_RECV_SETTINGS)
 
 // Receipt of an individual HTTP/2 setting.
@@ -1425,6 +1398,9 @@ EVENT_TYPE(HTTP2_SESSION_RECV_SETTINGS)
 //     "value": <The setting value>,
 //   }
 EVENT_TYPE(HTTP2_SESSION_RECV_SETTING)
+
+// Receipt of an HTTP/2 SETTINGS frame with ACK flag.
+EVENT_TYPE(HTTP2_SESSION_RECV_SETTINGS_ACK)
 
 // The receipt of a RST_STREAM frame.
 // The following parameters are attached:
@@ -1489,6 +1465,14 @@ EVENT_TYPE(HTTP2_SESSION_UPDATE_SEND_WINDOW)
 //     "new_window": <The new window size>,
 //   }
 EVENT_TYPE(HTTP2_SESSION_UPDATE_RECV_WINDOW)
+
+// This event indicates that an invalid response header has been received.
+//   {
+//     "header_name": <The header name>,
+//     "header_value": <The header value>,
+//     "error": <Error message>,
+//   }
+EVENT_TYPE(HTTP2_SESSION_RECV_INVALID_HEADER)
 
 // Sending a data frame
 //   {
@@ -1669,9 +1653,6 @@ EVENT_TYPE(QUIC_STREAM_FACTORY_JOB)
 //                           attached>,
 //  }
 EVENT_TYPE(QUIC_STREAM_FACTORY_JOB_BOUND_TO_HTTP_STREAM_JOB)
-
-// Measures the time taken to load server information.
-EVENT_TYPE(QUIC_STREAM_FACTORY_JOB_LOAD_SERVER_INFO)
 
 // Measures the time taken to establish a QUIC connection.
 // The event parameters are:
@@ -2046,6 +2027,70 @@ EVENT_TYPE(QUIC_CONNECTION_MIGRATION_FAILURE)
 //  }
 EVENT_TYPE(QUIC_CONNECTION_MIGRATION_SUCCESS)
 
+// Records that QUIC connectivity probing is triggered.
+// Identified by network id.
+//  {
+//     "network": <ID of the network being probed>
+//     "initial_timeout_ms": <Initial timeout in milliseconds>
+//  }
+EVENT_TYPE(QUIC_CONNECTION_CONNECTIVITY_PROBING_TRIGGERED)
+
+// Records that QUIC connectivity probing succeeds.
+//  {
+//     "network": <ID of the network being probed>
+//  }
+EVENT_TYPE(QUIC_CONNECTION_CONNECTIVITY_PROBING_SUCCEEDED)
+
+// Records that QUIC connectivity probing fails.
+//  {
+//     "network": <ID of the network being probed>
+//  }
+EVENT_TYPE(QUIC_CONNECTION_CONNECTIVITY_PROBING_FAILED)
+
+// Records that QUIC connectivity probing fails.
+//  {
+//     "network": <ID of the network being probed>
+//  }
+EVENT_TYPE(QUIC_CONNECTION_CONNECTIVITY_PROBING_CANCELLED)
+
+// Records that a QUIC connectivity probing packet has been sent.
+//  {
+//     "network": <ID of the network being probed>
+//     "retry_count": <Number of trials>
+//  }
+EVENT_TYPE(QUIC_CONNECTION_CONNECTIVITY_PROBING_PACKET_SENT)
+
+// Records that a QUIC connectivity probing packet has been received.
+//  {
+//     "network": <ID of the network being probed>
+//     "self_address": <Self address on the probed path>
+//     "peer_address": <Peer address on the probed path>
+//  }
+EVENT_TYPE(QUIC_CONNECTION_CONNECTIVITY_PROBING_PACKET_RECEIVED)
+
+// Records that a QUIC connection migration attempt due to new network
+// being connected.
+EVENT_TYPE(QUIC_CONNECTION_MIGRATION_ON_NETWORK_CONNECTED)
+
+// Records that a QUIC connection migration attempt due to new network
+// being marked as default network.
+EVENT_TYPE(QUIC_CONNECTION_MIGRATION_ON_NETWORK_MADE_DEFAULT)
+
+// Records that a QUIC connection migration attempt due to old network
+// being disconnected.
+EVENT_TYPE(QUIC_CONNECTION_MIGRATION_ON_NETWORK_DISCONNECTED)
+
+// Records that a QUIC connection migration attempt due to encountering
+// packet write error on the current network.
+EVENT_TYPE(QUIC_CONNECTION_MIGRATION_ON_WRITE_ERROR)
+
+// Records that a QUIC connection migration attempt due to path
+// degrading on the current network.
+EVENT_TYPE(QUIC_CONNECTION_MIGRATION_ON_PATH_DEGRADING)
+
+// Records that a QUIC connection migration attempt due to efforts to
+// migrate back to the default network.
+EVENT_TYPE(QUIC_CONNECTION_MIGRATION_ON_MIGRATE_BACK)
 // ------------------------------------------------------------------------
 // HttpStreamParser
 // ------------------------------------------------------------------------
@@ -2192,9 +2237,7 @@ EVENT_TYPE(SERVICE_WORKER_ERROR_REQUEST_BODY_BLOB_FAILED)
 //
 // The BEGIN phase consists of the following parameters:
 // {
-//   "event_type": A string indicating the type of fetch event. Generally it is
-//   either a fetch or foreignfetch event; fetch events are additionally
-//   categorized by resource type.
+//   "event_type": A string indicating the resource type being fetched.
 // }
 //
 // For the END phase, the following parameters are attached. No parameters are
@@ -2705,42 +2748,6 @@ EVENT_TYPE(DOWNLOAD_FILE_ERROR)
 // information (for Mark Of The Web and anti-virus integration).
 EVENT_TYPE(DOWNLOAD_FILE_ANNOTATED)
 
-// ------------------------------------------------------------------------
-// FileStream events.
-// ------------------------------------------------------------------------
-
-// This event lasts the lifetime of a file stream.
-EVENT_TYPE(FILE_STREAM_ALIVE)
-
-// This event is created when a file stream is associated with a NetLog source.
-// It indicates what file stream event source is used.
-//   {
-//     "source_dependency": <Source id of the file stream>,
-//   }
-EVENT_TYPE(FILE_STREAM_SOURCE)
-
-// This event is created when a file stream is associated with a NetLog source.
-// It indicates what event source owns the file stream source.
-//   {
-//     "source_dependency": <Source id of the owner of the file stream>,
-//   }
-EVENT_TYPE(FILE_STREAM_BOUND_TO_OWNER)
-
-// Mark the opening/closing of a file stream.
-// The BEGIN event has the following parameters:
-//   {
-//     "file_name".
-//   }
-EVENT_TYPE(FILE_STREAM_OPEN)
-
-// This event is created when a file stream operation has an error.
-//   {
-//     "operation": <open, write, close, etc>,
-//     "os_error": <OS-dependent error code>,
-//     "net_error": <net::Error code>,
-//   }
-EVENT_TYPE(FILE_STREAM_ERROR)
-
 // -----------------------------------------------------------------------------
 // FTP events.
 // -----------------------------------------------------------------------------
@@ -2985,49 +2992,6 @@ EVENT_TYPE(SIMPLE_CACHE_ENTRY_CLOSE_BEGIN)
 // contains no parameters.
 EVENT_TYPE(SIMPLE_CACHE_ENTRY_CLOSE_END)
 
-// ------------------------------------------------------------------------
-// SDCH
-// ------------------------------------------------------------------------
-
-// This event is created when some problem occurs during sdch-encoded resource
-// handling. It contains the following parameters:
-//   {
-//     "sdch_problem_code": <SDCH problem code>,
-//     "net_error": <Always ERR_FAILED, present just to indicate this is a
-//                   failure>,
-//   }
-EVENT_TYPE(SDCH_DECODING_ERROR)
-
-// This event is created when SdchFilter initialization fails due to the
-// response corruption. It contains the following parameters:
-//   {
-//     "cause": <Response corruption detection cause>,
-//     "cached": <True if response was read from cache>,
-//   }
-EVENT_TYPE(SDCH_RESPONSE_CORRUPTION_DETECTION)
-
-// This event is created when some problem occurs during sdch dictionary fetch.
-// It contains the following parameters:
-//   {
-//     "dictionary_url": <Dictionary url>,
-//     "sdch_problem_code": <SDCH problem code>,
-//     "net_error": <Only present on unexpected errors. Always ERR_FAILED when
-//                   present. Used to indicate this is a real failure>,
-//   }
-EVENT_TYPE(SDCH_DICTIONARY_ERROR)
-
-// This event is created when SdchDictionaryFetcher starts fetch.  It contains
-// no parameters.
-EVENT_TYPE(SDCH_DICTIONARY_FETCH)
-
-// This event is created if the SdchDictionaryFetcher URLRequest returns
-// no error, but signals an error through bytes_read < 0.
-// It contains the following parameters:
-//   {
-//     "net_error": <error created>
-//   }
-EVENT_TYPE(SDCH_DICTIONARY_FETCH_IMPLIED_ERROR)
-
 // -----------------------------------------------------------------------------
 // Data Reduction Proxy events.
 // -----------------------------------------------------------------------------
@@ -3202,3 +3166,50 @@ EVENT_TYPE(RESOURCE_SCHEDULER_REQUEST_STARTED)
 //                                  type>,
 //  }
 EVENT_TYPE(NETWORK_QUALITY_CHANGED)
+
+// -----------------------------------------------------------------------------
+// Http Server Properties Manager related events
+// -----------------------------------------------------------------------------
+
+// This event is emitted when HttpServerPropertiesManager initialization starts
+// and finishes.
+EVENT_TYPE(HTTP_SERVER_PROPERTIES_INITIALIZATION)
+
+// This event is emitted when HttpServerPropertiesManager is updating in-memory
+// version of HttpServerProperties from the serialized version from perfs/disk.
+// parameters:
+//  {
+//    "servers": <List of servers and their protocol usage information>,
+//    "supports_quic": <Local IP addresses that used QUIC>,
+//    "version": <The version number>,
+//  }
+EVENT_TYPE(HTTP_SERVER_PROPERTIES_UPDATE_CACHE)
+
+// This event is emitted when HttpServerPropertiesManager is persisting
+// in-memory version of HttpServerProperties to prefs/disk.
+// parameters:
+//  {
+//    "servers": <List of servers and their protocol usage information>,
+//    "supports_quic": <Local IP addresses that used QUIC>,
+//    "version": <The version number>,
+//  }
+EVENT_TYPE(HTTP_SERVER_PROPERTIES_UPDATE_PREFS)
+
+// -----------------------------------------------------------------------------
+// HostCachePersistenceManager related events
+// -----------------------------------------------------------------------------
+
+// The start/end of getting the persisted HostCache value and restoring it.
+// The END phase contains the following parameters:
+//  {
+//    "success": <Whether the persisted HostCache was restored successfully>,
+//  }
+EVENT_TYPE(HOST_CACHE_PREF_READ)
+
+// This event is created when the HostCachePersistenceManager writes the cache
+// contents to prefs.
+EVENT_TYPE(HOST_CACHE_PREF_WRITE)
+
+// This event is created when the HostCachePersistenceManager starts the timer
+// for writing a cache change to prefs.
+EVENT_TYPE(HOST_CACHE_PERSISTENCE_START_TIMER)

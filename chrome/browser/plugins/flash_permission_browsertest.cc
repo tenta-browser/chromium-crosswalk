@@ -2,21 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/permissions/permissions_browsertest.h"
 #include "chrome/browser/ui/permission_bubble/mock_permission_prompt_factory.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/variations/variations_switches.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/ppapi_test_utils.h"
+#include "content/public/test/test_utils.h"
 #include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "url/gurl.h"
 
@@ -53,15 +54,22 @@ class FlashPermissionBrowserTest : public PermissionsBrowserTest {
 
     ASSERT_TRUE(ppapi::RegisterFlashTestPlugin(command_line));
 
+    // These tests are for the permission prompt to add and remove Flash from
+    // navigator.plugins. We disable Plugin Power Saver, because its plugin
+    // throttling make it harder to test if Flash was succcessfully enabled.
+    command_line->AppendSwitchASCII(
+        switches::kOverridePluginPowerSaverForTesting, "never");
+  }
+
+  void SetUpOnMainThread() override {
     // Set a high engagement threshhold so it doesn't interfere with testing the
     // permission.
-    command_line->AppendSwitchASCII(switches::kEnableFeatures,
-                                    "PreferHtmlOverPlugins<Study1");
-    command_line->AppendSwitchASCII(switches::kForceFieldTrials,
-                                    "Study1/Enabled/");
-    command_line->AppendSwitchASCII(
-        variations::switches::kForceFieldTrialParams,
-        "Study1.Enabled:engagement_threshold_for_flash/100");
+    std::map<std::string, std::string> parameters;
+    parameters["engagement_threshold_for_flash"] = "100";
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        features::kPreferHtmlOverPlugins, parameters);
+
+    PermissionsBrowserTest::SetUpOnMainThread();
   }
 
   void TriggerPrompt() override {
@@ -95,6 +103,11 @@ class FlashPermissionBrowserTest : public PermissionsBrowserTest {
     return RunScriptReturnBool("flashIsEnabled();") ||
            RunScriptReturnBool("flashIsEnabledForPluginWithoutFallback();");
   }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+
+  DISALLOW_COPY_AND_ASSIGN(FlashPermissionBrowserTest);
 };
 
 IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest,
@@ -126,9 +139,8 @@ IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest, SucceedsInPopupWindow) {
       GetWebContents());
   auto popup_prompt_factory =
       base::MakeUnique<MockPermissionPromptFactory>(manager);
-  manager->DisplayPendingRequests();
 
-  EXPECT_EQ(0, popup_prompt_factory->total_request_count());
+  EXPECT_EQ(0, popup_prompt_factory->TotalRequestCount());
   popup_prompt_factory->set_response_type(PermissionRequestManager::ACCEPT_ALL);
   // FlashPermissionContext::UpdateTabContext will reload the page, we'll have
   // to wait until it is ready.
@@ -137,7 +149,7 @@ IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest, SucceedsInPopupWindow) {
   EXPECT_TRUE(reload_waiter.Wait());
 
   EXPECT_TRUE(FeatureUsageSucceeds());
-  EXPECT_EQ(1, popup_prompt_factory->total_request_count());
+  EXPECT_EQ(1, popup_prompt_factory->TotalRequestCount());
 
   // Shut down the popup window tab, as the normal test teardown assumes there
   // is only one test tab.
@@ -146,7 +158,7 @@ IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest, SucceedsInPopupWindow) {
 }
 
 IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest, TriggerPromptViaNewWindow) {
-  EXPECT_EQ(0, prompt_factory()->total_request_count());
+  EXPECT_EQ(0, prompt_factory()->TotalRequestCount());
   prompt_factory()->set_response_type(PermissionRequestManager::ACCEPT_ALL);
   // FlashPermissionContext::UpdateTabContext will reload the page, we'll have
   // to wait until it is ready.
@@ -155,12 +167,12 @@ IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest, TriggerPromptViaNewWindow) {
   EXPECT_TRUE(reload_waiter.Wait());
 
   EXPECT_TRUE(FeatureUsageSucceeds());
-  EXPECT_EQ(1, prompt_factory()->total_request_count());
+  EXPECT_EQ(1, prompt_factory()->TotalRequestCount());
 }
 
 IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest,
                        TriggerPromptViaPluginPlaceholder) {
-  EXPECT_EQ(0, prompt_factory()->total_request_count());
+  EXPECT_EQ(0, prompt_factory()->TotalRequestCount());
   EXPECT_FALSE(FeatureUsageSucceeds());
   prompt_factory()->set_response_type(PermissionRequestManager::ACCEPT_ALL);
   // We need to simulate a mouse click to trigger the placeholder to prompt.
@@ -172,12 +184,12 @@ IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest,
   EXPECT_TRUE(reload_waiter.Wait());
 
   EXPECT_TRUE(FeatureUsageSucceeds());
-  EXPECT_EQ(1, prompt_factory()->total_request_count());
+  EXPECT_EQ(1, prompt_factory()->TotalRequestCount());
 }
 
 IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest,
                        TriggerPromptViaMainFrameNavigationWithoutUserGesture) {
-  EXPECT_EQ(0, prompt_factory()->total_request_count());
+  EXPECT_EQ(0, prompt_factory()->TotalRequestCount());
   EXPECT_FALSE(FeatureUsageSucceeds());
   prompt_factory()->set_response_type(PermissionRequestManager::ACCEPT_ALL);
 
@@ -190,7 +202,7 @@ IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest,
   EXPECT_TRUE(reload_waiter.Wait());
 
   EXPECT_TRUE(FeatureUsageSucceeds());
-  EXPECT_EQ(1, prompt_factory()->total_request_count());
+  EXPECT_EQ(1, prompt_factory()->TotalRequestCount());
 }
 
 IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest, AllowFileURL) {
@@ -199,7 +211,7 @@ IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest, AllowFileURL) {
   ui_test_utils::NavigateToURL(
       browser(), GURL("file://" + test_path.AsUTF8Unsafe() + test_url()));
   CommonSucceedsIfAllowed();
-  EXPECT_EQ(1, prompt_factory()->total_request_count());
+  EXPECT_EQ(1, prompt_factory()->TotalRequestCount());
 
   // Navigate to a second URL to verify it's allowed on all file: URLs.
   ui_test_utils::NavigateToURL(
@@ -214,7 +226,7 @@ IN_PROC_BROWSER_TEST_F(FlashPermissionBrowserTest, BlockFileURL) {
   ui_test_utils::NavigateToURL(
       browser(), GURL("file://" + test_path.AsUTF8Unsafe() + test_url()));
   CommonFailsIfBlocked();
-  EXPECT_EQ(1, prompt_factory()->total_request_count());
+  EXPECT_EQ(1, prompt_factory()->TotalRequestCount());
 
   // Navigate to a second URL to verify it's blocked on all file: URLs.
   ui_test_utils::NavigateToURL(

@@ -25,12 +25,15 @@
 
 #include <memory>
 #include "platform/PlatformExport.h"
+#include "platform/loader/fetch/BufferingDataPipeWriter.h"
 #include "platform/loader/fetch/Resource.h"
 #include "platform/loader/fetch/ResourceClient.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
 #include "platform/wtf/WeakPtr.h"
 #include "public/platform/WebDataConsumerHandle.h"
 
 namespace blink {
+class WebDataConsumerHandle;
 class FetchParameters;
 class RawResourceClient;
 class ResourceFetcher;
@@ -51,8 +54,16 @@ class PLATFORM_EXPORT RawResource final : public Resource {
   static RawResource* FetchManifest(FetchParameters&, ResourceFetcher*);
 
   // Exposed for testing
-  static RawResource* Create(const ResourceRequest& request, Type type) {
-    return new RawResource(request, type, ResourceLoaderOptions());
+  static RawResource* CreateForTest(ResourceRequest request, Type type) {
+    ResourceLoaderOptions options;
+    return new RawResource(request, type, options);
+  }
+  static RawResource* CreateForTest(const KURL& url, Type type) {
+    ResourceRequest request(url);
+    return CreateForTest(request, type);
+  }
+  static RawResource* CreateForTest(const char* url, Type type) {
+    return CreateForTest(KURL(url), type);
   }
 
   // FIXME: AssociatedURLLoader shouldn't be a DocumentThreadableLoader and
@@ -67,13 +78,13 @@ class PLATFORM_EXPORT RawResource final : public Resource {
                           const ResourceResponse&) override;
 
  private:
-  class RawResourceFactory : public ResourceFactory {
+  class RawResourceFactory : public NonTextResourceFactory {
    public:
-    explicit RawResourceFactory(Resource::Type type) : ResourceFactory(type) {}
+    explicit RawResourceFactory(Resource::Type type)
+        : NonTextResourceFactory(type) {}
 
     Resource* Create(const ResourceRequest& request,
-                     const ResourceLoaderOptions& options,
-                     const String& charset) const override {
+                     const ResourceLoaderOptions& options) const override {
       return new RawResource(request, type_, options);
     }
   };
@@ -94,16 +105,22 @@ class PLATFORM_EXPORT RawResource final : public Resource {
                    unsigned long long total_bytes_to_be_sent) override;
   void DidDownloadData(int) override;
   void ReportResourceTimingToClients(const ResourceTimingInfo&) override;
+  bool MatchPreload(const FetchParameters&, WebTaskRunner*) override;
+  void NotifyFinished() override;
+
+  // Used for preload matching.
+  std::unique_ptr<BufferingDataPipeWriter> data_pipe_writer_;
+  std::unique_ptr<WebDataConsumerHandle> data_consumer_handle_;
 };
 
-#if ENABLE(SECURITY_ASSERT)
+// TODO(yhirano): Recover #if ENABLE_SECURITY_ASSERT when we stop adding
+// RawResources to MemoryCache.
 inline bool IsRawResource(const Resource& resource) {
   Resource::Type type = resource.GetType();
   return type == Resource::kMainResource || type == Resource::kRaw ||
          type == Resource::kTextTrack || type == Resource::kMedia ||
          type == Resource::kManifest || type == Resource::kImportResource;
 }
-#endif
 inline RawResource* ToRawResource(Resource* resource) {
   SECURITY_DCHECK(!resource || IsRawResource(*resource));
   return static_cast<RawResource*>(resource);
@@ -142,9 +159,6 @@ class PLATFORM_EXPORT RawResourceClient : public ResourceClient {
                                 const ResourceResponse&,
                                 std::unique_ptr<WebDataConsumerHandle>) {}
   virtual void SetSerializedCachedMetadata(Resource*, const char*, size_t) {}
-  virtual void DataReceived(Resource*,
-                            const char* /* data */,
-                            size_t /* length */) {}
   virtual bool RedirectReceived(Resource*,
                                 const ResourceRequest&,
                                 const ResourceResponse&) {

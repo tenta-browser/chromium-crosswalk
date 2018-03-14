@@ -13,6 +13,7 @@
 #include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
+#include "base/numerics/math_constants.h"
 #include "base/strings/string_util.h"
 #include "skia/ext/image_operations.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -162,7 +163,6 @@ void DrawCheckerToBitmap(int w, int h,
 
 #if DEBUG_BITMAP_GENERATION
 void SaveBitmapToPNG(const SkBitmap& bmp, const char* path) {
-  SkAutoLockPixels lock(bmp);
   std::vector<unsigned char> png;
   gfx::PNGCodec::ColorFormat color_format = gfx::PNGCodec::FORMAT_RGBA;
   if (!gfx::PNGCodec::Encode(
@@ -195,8 +195,6 @@ void CheckResampleToSame(skia::ImageOperations::ResizeMethod method) {
   ASSERT_EQ(src_w, results.width());
   ASSERT_EQ(src_h, results.height());
 
-  SkAutoLockPixels src_lock(src);
-  SkAutoLockPixels results_lock(results);
   for (int y = 0; y < src_h; y++) {
     for (int x = 0; x < src_w; x++) {
       EXPECT_EQ(*src.getAddr32(x, y), *results.getAddr32(x, y));
@@ -260,8 +258,6 @@ void CheckResizeMethodShouldAverageGrid(
   // Check that pixels match the expected average.
   float max_observed_distance = 0.0f;
   bool all_pixels_ok = true;
-
-  SkAutoLockPixels dest_lock(dest);
 
   for (size_t pixel_index = 0;
        pixel_index < arraysize(tested_pixels);
@@ -367,7 +363,6 @@ TEST(ImageOperations, Halve) {
   ASSERT_EQ(src_h / 2, actual_results.height());
 
   // Compute the expected values & compare.
-  SkAutoLockPixels lock(actual_results);
   for (int y = 0; y < actual_results.height(); y++) {
     for (int x = 0; x < actual_results.width(); x++) {
       // Note that those expressions take into account the "half-pixel"
@@ -421,8 +416,6 @@ TEST(ImageOperations, HalveSubset) {
 
   // The computed subset and the corresponding subset of the original image
   // should be the same.
-  SkAutoLockPixels full_lock(full_results);
-  SkAutoLockPixels subset_lock(subset_results);
   for (int y = 0; y < subset_rect.height(); y++) {
     for (int x = 0; x < subset_rect.width(); x++) {
       ASSERT_EQ(
@@ -505,15 +498,9 @@ TEST(ImageOperations, ResizeShouldAverageColors) {
   }
 }
 
-
-#ifndef M_PI
-// No M_PI in math.h on windows? No problem.
-#define M_PI 3.14159265358979323846
-#endif
-
 static double sinc(double x) {
   if (x == 0.0) return 1.0;
-  x *= M_PI;
+  x *= base::kPiDouble;
   return sin(x) / x;
 }
 
@@ -543,7 +530,6 @@ TEST(ImageOperations, ScaleUp) {
       src,
       skia::ImageOperations::RESIZE_LANCZOS3,
       dst_w, dst_h);
-  SkAutoLockPixels dst_lock(dst);
   for (int dst_y = 0; dst_y < dst_h; ++dst_y) {
     for (int dst_x = 0; dst_x < dst_w; ++dst_x) {
       float dst_x_in_src = (dst_x + 0.5) * src_w / dst_w;

@@ -5,7 +5,7 @@
 #ifndef StorageManager_h
 #define StorageManager_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Heap.h"
 #include "public/platform/modules/permissions/permission.mojom-blink.h"
 
@@ -16,8 +16,7 @@ class ScriptPromise;
 class ScriptPromiseResolver;
 class ScriptState;
 
-class StorageManager final : public GarbageCollectedFinalized<StorageManager>,
-                             public ScriptWrappable {
+class StorageManager final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -25,10 +24,9 @@ class StorageManager final : public GarbageCollectedFinalized<StorageManager>,
   ScriptPromise persist(ScriptState*);
 
   ScriptPromise estimate(ScriptState*);
-  DECLARE_TRACE();
 
  private:
-  mojom::blink::PermissionService* GetPermissionService(ExecutionContext*);
+  mojom::blink::PermissionService& GetPermissionService(ExecutionContext*);
   void PermissionServiceConnectionError();
   void PermissionRequestComplete(ScriptPromiseResolver*,
                                  mojom::blink::PermissionStatus);

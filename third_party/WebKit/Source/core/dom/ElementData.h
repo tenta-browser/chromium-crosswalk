@@ -32,6 +32,7 @@
 #ifndef ElementData_h
 #define ElementData_h
 
+#include "build/build_config.h"
 #include "core/dom/Attribute.h"
 #include "core/dom/AttributeCollection.h"
 #include "core/dom/SpaceSplitString.h"
@@ -41,7 +42,7 @@
 namespace blink {
 
 class ShareableElementData;
-class StylePropertySet;
+class CSSPropertyValueSet;
 class UniqueElementData;
 
 // ElementData represents very common, but not necessarily unique to an element,
@@ -54,8 +55,7 @@ class ElementData : public GarbageCollectedFinalized<ElementData> {
 
   void ClearClass() const { class_names_.Clear(); }
   void SetClass(const AtomicString& class_name, bool should_fold_case) const {
-    class_names_.Set(should_fold_case ? class_name.LowerASCII() : class_name,
-                     SpaceSplitString::kShouldNotFoldCase);
+    class_names_.Set(should_fold_case ? class_name.LowerASCII() : class_name);
   }
   const SpaceSplitString& ClassNames() const { return class_names_; }
 
@@ -66,9 +66,9 @@ class ElementData : public GarbageCollectedFinalized<ElementData> {
     id_for_style_resolution_ = new_id;
   }
 
-  const StylePropertySet* InlineStyle() const { return inline_style_.Get(); }
+  const CSSPropertyValueSet* InlineStyle() const { return inline_style_.Get(); }
 
-  const StylePropertySet* PresentationAttributeStyle() const;
+  const CSSPropertyValueSet* PresentationAttributeStyle() const;
 
   AttributeCollection Attributes() const;
 
@@ -79,8 +79,8 @@ class ElementData : public GarbageCollectedFinalized<ElementData> {
 
   bool IsUnique() const { return is_unique_; }
 
-  DECLARE_TRACE_AFTER_DISPATCH();
-  DECLARE_TRACE();
+  void TraceAfterDispatch(blink::Visitor*);
+  void Trace(blink::Visitor*);
 
  protected:
   ElementData();
@@ -95,7 +95,7 @@ class ElementData : public GarbageCollectedFinalized<ElementData> {
   mutable unsigned style_attribute_is_dirty_ : 1;
   mutable unsigned animated_svg_attributes_are_dirty_ : 1;
 
-  mutable Member<StylePropertySet> inline_style_;
+  mutable Member<CSSPropertyValueSet> inline_style_;
   mutable SpaceSplitString class_names_;
   mutable AtomicString id_for_style_resolution_;
 
@@ -113,10 +113,10 @@ class ElementData : public GarbageCollectedFinalized<ElementData> {
   DEFINE_TYPE_CASTS(thisType, ElementData, data, pointerPredicate, \
                     referencePredicate)
 
-#if COMPILER(MSVC)
+#if defined(COMPILER_MSVC)
 #pragma warning(push)
-#pragma warning( \
-    disable : 4200)  // Disable "zero-sized array in struct/union" warning
+// Disable "zero-sized array in struct/union" warning
+#pragma warning(disable : 4200)
 #endif
 
 // SharableElementData is managed by ElementDataCache and is produced by
@@ -131,7 +131,7 @@ class ShareableElementData final : public ElementData {
   explicit ShareableElementData(const UniqueElementData&);
   ~ShareableElementData();
 
-  DEFINE_INLINE_TRACE_AFTER_DISPATCH() {
+  void TraceAfterDispatch(blink::Visitor* visitor) {
     ElementData::TraceAfterDispatch(visitor);
   }
 
@@ -151,7 +151,7 @@ DEFINE_ELEMENT_DATA_TYPE_CASTS(ShareableElementData,
                                !data->IsUnique(),
                                !data.IsUnique());
 
-#if COMPILER(MSVC)
+#if defined(COMPILER_MSVC)
 #pragma warning(pop)
 #endif
 
@@ -173,13 +173,13 @@ class UniqueElementData final : public ElementData {
   explicit UniqueElementData(const ShareableElementData&);
   explicit UniqueElementData(const UniqueElementData&);
 
-  DECLARE_TRACE_AFTER_DISPATCH();
+  void TraceAfterDispatch(blink::Visitor*);
 
   // FIXME: We might want to support sharing element data for elements with
   // presentation attribute style. Lots of table cells likely have the same
   // attributes. Most modern pages don't use presentation attributes though
   // so this might not make sense.
-  mutable Member<StylePropertySet> presentation_attribute_style_;
+  mutable Member<CSSPropertyValueSet> presentation_attribute_style_;
   AttributeVector attribute_vector_;
 };
 
@@ -187,9 +187,10 @@ DEFINE_ELEMENT_DATA_TYPE_CASTS(UniqueElementData,
                                data->IsUnique(),
                                data.IsUnique());
 
-inline const StylePropertySet* ElementData::PresentationAttributeStyle() const {
+inline const CSSPropertyValueSet* ElementData::PresentationAttributeStyle()
+    const {
   if (!is_unique_)
-    return 0;
+    return nullptr;
   return ToUniqueElementData(this)->presentation_attribute_style_.Get();
 }
 
@@ -204,7 +205,7 @@ inline AttributeCollection ShareableElementData::Attributes() const {
 }
 
 inline AttributeCollection UniqueElementData::Attributes() const {
-  return AttributeCollection(attribute_vector_.Data(),
+  return AttributeCollection(attribute_vector_.data(),
                              attribute_vector_.size());
 }
 

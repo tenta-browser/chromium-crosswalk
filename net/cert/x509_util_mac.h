@@ -15,10 +15,9 @@
 #include "base/memory/ref_counted.h"
 #include "net/base/hash_value.h"
 #include "net/base/net_export.h"
+#include "net/cert/x509_certificate.h"
 
 namespace net {
-
-class X509Certificate;
 
 namespace x509_util {
 
@@ -44,20 +43,20 @@ CreateSecCertificateFromBytes(const uint8_t* data, size_t length);
 NET_EXPORT base::ScopedCFTypeRef<SecCertificateRef>
 CreateSecCertificateFromX509Certificate(const X509Certificate* cert);
 
-// Returns a new CFMutableArrayRef containing this certificate and its
-// intermediate certificates in the form expected by Security.framework
-// and Keychain Services, or NULL on failure.
-// The first item in the array will be this certificate, followed by its
-// intermediates, if any.
-NET_EXPORT base::ScopedCFTypeRef<CFMutableArrayRef>
-CreateSecCertificateArrayForX509Certificate(X509Certificate* cert);
-
 // Creates an X509Certificate representing |sec_cert| with intermediates
 // |sec_chain|.
 NET_EXPORT scoped_refptr<X509Certificate>
 CreateX509CertificateFromSecCertificate(
     SecCertificateRef sec_cert,
     const std::vector<SecCertificateRef>& sec_chain);
+
+// Creates an X509Certificate with non-standard parsing options.
+// Do not use without consulting //net owners.
+NET_EXPORT scoped_refptr<X509Certificate>
+CreateX509CertificateFromSecCertificate(
+    SecCertificateRef sec_cert,
+    const std::vector<SecCertificateRef>& sec_chain,
+    X509Certificate::UnsafeCreateOptions options);
 
 // Returns true if the certificate is self-signed.
 NET_EXPORT bool IsSelfSigned(SecCertificateRef cert_handle);
@@ -178,6 +177,12 @@ class CSSMCachedCertificate {
   CSSM_CL_HANDLE cl_handle_;
   CSSM_HANDLE cached_cert_handle_;
 };
+
+// Compares two OIDs by value.
+inline bool CSSMOIDEqual(const CSSM_OID* oid1, const CSSM_OID* oid2) {
+  return oid1->Length == oid2->Length &&
+         (memcmp(oid1->Data, oid2->Data, oid1->Length) == 0);
+}
 
 #pragma clang diagnostic pop  // "-Wdeprecated-declarations"
 

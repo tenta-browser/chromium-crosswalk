@@ -24,14 +24,10 @@ class TraceMessageFilter : public BrowserMessageFilter {
   explicit TraceMessageFilter(int child_process_id);
 
   // BrowserMessageFilter implementation.
+  void OnChannelConnected(int32_t peer_pid) override;
   void OnChannelClosing() override;
   bool OnMessageReceived(const IPC::Message& message) override;
 
-  void SendBeginTracing(
-      const base::trace_event::TraceConfig& trace_config);
-  void SendEndTracing();
-  void SendCancelTracing();
-  void SendGetTraceLogStatus();
   void SendSetWatchEvent(const std::string& category_name,
                          const std::string& event_name);
   void SendCancelWatchEvent();
@@ -42,23 +38,20 @@ class TraceMessageFilter : public BrowserMessageFilter {
  private:
   // Message handlers.
   void OnChildSupportsTracing();
-  void OnEndTracingAck(const std::vector<std::string>& known_categories);
   void OnWatchEventMatched();
-  void OnTraceLogStatusReply(const base::trace_event::TraceLogStatus& status);
-  void OnTraceDataCollected(const std::string& data);
   void OnTriggerBackgroundTrace(const std::string& histogram_name);
   void OnAbortBackgroundTrace();
+
+  // For registering/unregistering the filter to different tracing
+  // managers/controllers.
+  void Register();
+  void Unregister();
 
   // ChildTraceMessageFilter exists:
   bool has_child_;
 
   // Hash of id of the child process.
   uint64_t tracing_process_id_;
-
-  // Awaiting ack for previously sent SendEndTracing
-  bool is_awaiting_end_ack_;
-  // Awaiting ack for previously sent SendGetTraceLogStatus
-  bool is_awaiting_buffer_percent_full_ack_;
 
   DISALLOW_COPY_AND_ASSIGN(TraceMessageFilter);
 };

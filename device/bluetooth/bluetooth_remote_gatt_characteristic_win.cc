@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "device/bluetooth/bluetooth_adapter_win.h"
 #include "device/bluetooth/bluetooth_gatt_notify_session.h"
 #include "device/bluetooth/bluetooth_remote_gatt_descriptor_win.h"
@@ -25,10 +26,10 @@ BluetoothRemoteGattCharacteristicWin::BluetoothRemoteGattCharacteristicWin(
       ui_task_runner_(ui_task_runner),
       characteristic_added_notified_(false),
       characteristic_value_read_or_write_in_progress_(false),
-      gatt_event_registeration_in_progress_(false),
       gatt_event_handle_(nullptr),
+      discovery_pending_count_(0),
       weak_ptr_factory_(this) {
-  DCHECK(ui_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(ui_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(parent_service_);
   DCHECK(characteristic_info_);
 
@@ -45,7 +46,7 @@ BluetoothRemoteGattCharacteristicWin::BluetoothRemoteGattCharacteristicWin(
 }
 
 BluetoothRemoteGattCharacteristicWin::~BluetoothRemoteGattCharacteristicWin() {
-  DCHECK(ui_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(ui_task_runner_->RunsTasksInCurrentSequence());
 
   ClearIncludedDescriptors();
 
@@ -151,78 +152,10 @@ BluetoothRemoteGattCharacteristicWin::GetDescriptor(
   return nullptr;
 }
 
-void BluetoothRemoteGattCharacteristicWin::StartNotifySession(
-    const NotifySessionCallback& callback,
-    const ErrorCallback& error_callback) {
-  DCHECK(ui_task_runner_->RunsTasksOnCurrentThread());
-
-  if (IsNotifying()) {
-    std::unique_ptr<BluetoothGattNotifySession> notify_session(
-        new BluetoothGattNotifySession(weak_ptr_factory_.GetWeakPtr()));
-    ui_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(callback, base::Passed(std::move(notify_session))));
-    return;
-  }
-
-  if (!characteristic_info_->IsNotifiable &&
-      !characteristic_info_->IsIndicatable) {
-    ui_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(error_callback,
-                   BluetoothRemoteGattService::GATT_ERROR_NOT_SUPPORTED));
-    return;
-  }
-
-  std::vector<BluetoothRemoteGattDescriptor*> ccc_descriptors =
-      GetDescriptorsByUUID(BluetoothRemoteGattDescriptor::
-                               ClientCharacteristicConfigurationUuid());
-  if (ccc_descriptors.size() < 1) {
-    ui_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(error_callback,
-                   BluetoothRemoteGattService::GATT_ERROR_NOT_SUPPORTED));
-    return;
-  }
-  if (ccc_descriptors.size() > 1) {
-    ui_task_runner_->PostTask(
-        FROM_HERE, base::Bind(error_callback,
-                              BluetoothRemoteGattService::GATT_ERROR_FAILED));
-    return;
-  }
-
-  start_notify_session_callbacks_.push_back(
-      std::make_pair(callback, error_callback));
-  if (gatt_event_registeration_in_progress_)
-    return;
-
-  task_manager_->PostRegisterGattCharacteristicValueChangedEvent(
-      parent_service_->GetServicePath(), characteristic_info_.get(),
-      static_cast<BluetoothRemoteGattDescriptorWin*>(ccc_descriptors[0])
-          ->GetWinDescriptorInfo(),
-      base::Bind(
-          &BluetoothRemoteGattCharacteristicWin::GattEventRegistrationCallback,
-          weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&BluetoothRemoteGattCharacteristicWin::
-                     OnGattCharacteristicValueChanged,
-                 weak_ptr_factory_.GetWeakPtr()));
-  gatt_event_registeration_in_progress_ = true;
-}
-
-void BluetoothRemoteGattCharacteristicWin::StopNotifySession(
-    BluetoothGattNotifySession* session,
-    const base::Closure& callback) {
-  // TODO(http://crbug.com/636270): Remove this method and use the base version.
-  //   Instead, we should implement SubscribeToNotifications and
-  //   UnsubscribeFromNotifications.
-
-  ui_task_runner_->PostTask(FROM_HERE, callback);
-}
-
 void BluetoothRemoteGattCharacteristicWin::ReadRemoteCharacteristic(
     const ValueCallback& callback,
     const ErrorCallback& error_callback) {
-  DCHECK(ui_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(ui_task_runner_->RunsTasksInCurrentSequence());
 
   if (!characteristic_info_.get()->IsReadable) {
     error_callback.Run(BluetoothRemoteGattService::GATT_ERROR_NOT_PERMITTED);
@@ -248,9 +181,10 @@ void BluetoothRemoteGattCharacteristicWin::WriteRemoteCharacteristic(
     const std::vector<uint8_t>& value,
     const base::Closure& callback,
     const ErrorCallback& error_callback) {
-  DCHECK(ui_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(ui_task_runner_->RunsTasksInCurrentSequence());
 
-  if (!characteristic_info_.get()->IsWritable) {
+  if (!characteristic_info_->IsWritable &&
+      !characteristic_info_->IsWritableWithoutResponse) {
     error_callback.Run(BluetoothRemoteGattService::GATT_ERROR_NOT_PERMITTED);
     return;
   }
@@ -271,8 +205,9 @@ void BluetoothRemoteGattCharacteristicWin::WriteRemoteCharacteristic(
 }
 
 void BluetoothRemoteGattCharacteristicWin::Update() {
-  DCHECK(ui_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(ui_task_runner_->RunsTasksInCurrentSequence());
 
+  ++discovery_pending_count_;
   task_manager_->PostGetGattIncludedDescriptors(
       parent_service_->GetServicePath(), characteristic_info_.get(),
       base::Bind(&BluetoothRemoteGattCharacteristicWin::
@@ -288,29 +223,41 @@ void BluetoothRemoteGattCharacteristicWin::SubscribeToNotifications(
     BluetoothRemoteGattDescriptor* ccc_descriptor,
     const base::Closure& callback,
     const ErrorCallback& error_callback) {
-  // TODO(http://crbug.com/636270): Implement this method
-  NOTIMPLEMENTED();
+  task_manager_->PostRegisterGattCharacteristicValueChangedEvent(
+      parent_service_->GetServicePath(), characteristic_info_.get(),
+      static_cast<BluetoothRemoteGattDescriptorWin*>(ccc_descriptor)
+          ->GetWinDescriptorInfo(),
+      base::Bind(
+          &BluetoothRemoteGattCharacteristicWin::GattEventRegistrationCallback,
+          weak_ptr_factory_.GetWeakPtr(), callback, error_callback),
+      base::Bind(&BluetoothRemoteGattCharacteristicWin::
+                     OnGattCharacteristicValueChanged,
+                 weak_ptr_factory_.GetWeakPtr()));
 }
 
 void BluetoothRemoteGattCharacteristicWin::UnsubscribeFromNotifications(
     BluetoothRemoteGattDescriptor* ccc_descriptor,
     const base::Closure& callback,
     const ErrorCallback& error_callback) {
-  // TODO(http://crbug.com/636270): Implement this method
-  NOTIMPLEMENTED();
+  // TODO(crbug.com/735828): Implement this method.
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback);
 }
 
 void BluetoothRemoteGattCharacteristicWin::OnGetIncludedDescriptorsCallback(
     std::unique_ptr<BTH_LE_GATT_DESCRIPTOR> descriptors,
     uint16_t num,
     HRESULT hr) {
-  DCHECK(ui_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(ui_task_runner_->RunsTasksInCurrentSequence());
 
   UpdateIncludedDescriptors(descriptors.get(), num);
   if (!characteristic_added_notified_) {
     characteristic_added_notified_ = true;
     parent_service_->GetWinAdapter()->NotifyGattCharacteristicAdded(this);
   }
+
+  // Report discovery complete.
+  if (--discovery_pending_count_ == 0)
+    parent_service_->GattCharacteristicDiscoveryComplete(this);
 }
 
 void BluetoothRemoteGattCharacteristicWin::UpdateIncludedDescriptors(
@@ -386,7 +333,7 @@ void BluetoothRemoteGattCharacteristicWin::
     OnReadRemoteCharacteristicValueCallback(
         std::unique_ptr<BTH_LE_GATT_CHARACTERISTIC_VALUE> value,
         HRESULT hr) {
-  DCHECK(ui_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(ui_task_runner_->RunsTasksInCurrentSequence());
 
   std::pair<ValueCallback, ErrorCallback> callbacks;
   callbacks.swap(read_characteristic_value_callbacks_);
@@ -404,7 +351,7 @@ void BluetoothRemoteGattCharacteristicWin::
 
 void BluetoothRemoteGattCharacteristicWin::
     OnWriteRemoteCharacteristicValueCallback(HRESULT hr) {
-  DCHECK(ui_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(ui_task_runner_->RunsTasksInCurrentSequence());
 
   std::pair<base::Closure, ErrorCallback> callbacks;
   callbacks.swap(write_characteristic_value_callbacks_);
@@ -438,7 +385,7 @@ BluetoothRemoteGattCharacteristicWin::HRESULTToGattErrorCode(HRESULT hr) {
 
 void BluetoothRemoteGattCharacteristicWin::OnGattCharacteristicValueChanged(
     std::unique_ptr<std::vector<uint8_t>> new_value) {
-  DCHECK(ui_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(ui_task_runner_->RunsTasksInCurrentSequence());
 
   characteristic_value_.assign(new_value->begin(), new_value->end());
   parent_service_->GetWinAdapter()->NotifyGattCharacteristicValueChanged(
@@ -446,22 +393,16 @@ void BluetoothRemoteGattCharacteristicWin::OnGattCharacteristicValueChanged(
 }
 
 void BluetoothRemoteGattCharacteristicWin::GattEventRegistrationCallback(
+    const base::Closure& callback,
+    const ErrorCallback& error_callback,
     BLUETOOTH_GATT_EVENT_HANDLE event_handle,
     HRESULT hr) {
-  DCHECK(ui_task_runner_->RunsTasksOnCurrentThread());
-
-  gatt_event_registeration_in_progress_ = false;
-  std::vector<std::pair<NotifySessionCallback, ErrorCallback>> callbacks;
-  callbacks.swap(start_notify_session_callbacks_);
+  DCHECK(ui_task_runner_->RunsTasksInCurrentSequence());
   if (SUCCEEDED(hr)) {
     gatt_event_handle_ = event_handle;
-    for (const auto& callback : callbacks) {
-      callback.first.Run(base::MakeUnique<BluetoothGattNotifySession>(
-          weak_ptr_factory_.GetWeakPtr()));
-    }
+    callback.Run();
   } else {
-    for (const auto& callback : callbacks)
-      callback.second.Run(HRESULTToGattErrorCode(hr));
+    error_callback.Run(HRESULTToGattErrorCode(hr));
   }
 }
 

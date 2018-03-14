@@ -4,7 +4,9 @@
 
 #include "chrome/browser/metrics/renderer_uptime_web_contents_observer.h"
 
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/metrics/renderer_uptime_tracker.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 
 DEFINE_WEB_CONTENTS_USER_DATA_KEY(metrics::RendererUptimeWebContentsObserver);
@@ -24,14 +26,14 @@ RendererUptimeWebContentsObserver::CreateForWebContents(
   RendererUptimeWebContentsObserver* observer = FromWebContents(web_contents);
   if (!observer) {
     observer = new RendererUptimeWebContentsObserver(web_contents);
-    web_contents->SetUserData(UserDataKey(), observer);
+    web_contents->SetUserData(UserDataKey(), base::WrapUnique(observer));
   }
   return observer;
 }
 
 void RendererUptimeWebContentsObserver::DocumentAvailableInMainFrame() {
   RendererUptimeTracker::Get()->OnLoadInMainFrame(
-      web_contents()->GetRenderProcessHost()->GetID());
+      web_contents()->GetMainFrame()->GetProcess()->GetID());
 }
 
 }  // namespace metrics

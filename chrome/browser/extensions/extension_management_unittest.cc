@@ -4,12 +4,13 @@
 
 #include "chrome/browser/extensions/extension_management.h"
 
-#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "base/json/json_parser.h"
+#include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_management_internal.h"
 #include "chrome/browser/extensions/extension_management_test_util.h"
@@ -61,8 +62,9 @@ const char kExampleDictPreference[] =
     "  },"
     "  \"defghijklmnopabcdefghijklmnopabc\": {"  // kTargetExtension4
     "    \"installation_mode\": \"blocked\","
-    "    \"runtime_blocked_hosts\": [\"*://*.foo.com/*\", "
+    "    \"runtime_blocked_hosts\": [\"*://*.foo.com\", "
     "\"https://bar.org/test\"],"
+    "    \"blocked_install_message\": \"Custom Error Extension4\","
     "  },"
     "  \"jdkrmdirkjskemfioeesiofoielsmroi\": {"  // kTargetExtension5
     "    \"installation_mode\": \"normal_installed\","
@@ -76,10 +78,17 @@ const char kExampleDictPreference[] =
     "    \"install_sources\": [\"*://foo.com/*\"],"
     "    \"allowed_types\": [\"theme\", \"user_script\"],"
     "    \"blocked_permissions\": [\"fileSystem\", \"downloads\"],"
-    "    \"runtime_blocked_hosts\": [\"*://*.example.com/default*\"],"
+    "    \"runtime_blocked_hosts\": [\"*://*.example.com\"],"
+    "    \"blocked_install_message\": \"Custom Error Default\","
     "  },"
     "}";
 
+const char kExampleDictNoCustomError[] =
+    "{"
+    "  \"*\": {"
+    "    \"installation_mode\": \"blocked\","
+    "  },"
+    "}";
 }  // namespace
 
 class ExtensionManagementServiceTest : public testing::Test {
@@ -158,13 +167,12 @@ class ExtensionManagementServiceTest : public testing::Test {
     return GetBlockedAPIPermissions(kNonExistingExtension, update_url);
   }
 
-  void SetExampleDictPref() {
+  void SetExampleDictPref(const base::StringPiece example_dict_preference) {
     std::string error_msg;
     std::unique_ptr<base::Value> parsed = base::JSONReader::ReadAndReturnError(
-        kExampleDictPreference,
+        example_dict_preference,
         base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS, NULL, &error_msg);
-    ASSERT_TRUE(parsed && parsed->IsType(base::Value::Type::DICTIONARY))
-        << error_msg;
+    ASSERT_TRUE(parsed && parsed->is_dict()) << error_msg;
     SetPref(true, pref_names::kExtensionManagement, std::move(parsed));
   }
 
@@ -184,6 +192,12 @@ class ExtensionManagementServiceTest : public testing::Test {
     scoped_refptr<const Extension> extension =
         CreateExtension(Manifest::UNPACKED, "0.1", id, kNonExistingUpdateUrl);
     return extension_management_->GetRuntimeBlockedHosts(extension.get());
+  }
+
+  // Wrapper of ExtensionManagement::BlockedInstallMessage, |id| is used
+  // in case the message is extension specific.
+  const std::string GetBlockedInstallMessage(const std::string& id) {
+    return extension_management_->BlockedInstallMessage(id);
   }
 
   // Wrapper of ExtensionManagement::GetBlockedAPIPermissions, |id| and
@@ -251,7 +265,8 @@ class ExtensionAdminPolicyTest : public ExtensionManagementServiceTest {
 
   void CreateHostedApp(Manifest::Location location) {
     base::DictionaryValue values;
-    values.Set(extensions::manifest_keys::kWebURLs, new base::ListValue());
+    values.Set(extensions::manifest_keys::kWebURLs,
+               base::MakeUnique<base::ListValue>());
     values.SetString(extensions::manifest_keys::kLaunchWebURL,
                      "http://www.example.com");
     CreateExtensionFromValues(location, &values);
@@ -353,15 +368,9 @@ TEST_F(ExtensionManagementServiceTest, LegacyAllowedTypes) {
       ReadGlobalSettings()->allowed_types;
   ASSERT_TRUE(ReadGlobalSettings()->has_restricted_allowed_types);
   EXPECT_EQ(allowed_types.size(), 2u);
-  EXPECT_FALSE(std::find(allowed_types.begin(),
-                         allowed_types.end(),
-                         Manifest::TYPE_EXTENSION) != allowed_types.end());
-  EXPECT_TRUE(std::find(allowed_types.begin(),
-                        allowed_types.end(),
-                        Manifest::TYPE_THEME) != allowed_types.end());
-  EXPECT_TRUE(std::find(allowed_types.begin(),
-                   allowed_types.end(),
-                   Manifest::TYPE_USER_SCRIPT) != allowed_types.end());
+  EXPECT_FALSE(base::ContainsValue(allowed_types, Manifest::TYPE_EXTENSION));
+  EXPECT_TRUE(base::ContainsValue(allowed_types, Manifest::TYPE_THEME));
+  EXPECT_TRUE(base::ContainsValue(allowed_types, Manifest::TYPE_USER_SCRIPT));
 }
 
 // Verify that preference controlled by legacy ExtensionInstallBlacklist policy
@@ -428,7 +437,7 @@ TEST_F(ExtensionManagementServiceTest, LegacyInstallForcelist) {
 
 // Tests parsing of new dictionary preference.
 TEST_F(ExtensionManagementServiceTest, PreferenceParsing) {
-  SetExampleDictPref();
+  SetExampleDictPref(kExampleDictPreference);
 
   // Verifies the installation mode settings.
   EXPECT_TRUE(extension_management_->BlacklistedByDefault());
@@ -449,6 +458,11 @@ TEST_F(ExtensionManagementServiceTest, PreferenceParsing) {
                   .MatchesURL(GURL("http://test.foo.com/test")));
   EXPECT_TRUE(GetRuntimeBlockedHosts(kTargetExtension4)
                   .MatchesURL(GURL("https://bar.org/test")));
+  EXPECT_TRUE(GetBlockedInstallMessage(kTargetExtension).empty());
+  EXPECT_EQ("Custom Error Extension4",
+            GetBlockedInstallMessage(kTargetExtension4));
+  EXPECT_EQ("Custom Error Default",
+            GetBlockedInstallMessage(kNonExistingExtension));
 
   // Verifies global settings.
   EXPECT_TRUE(ReadGlobalSettings()->has_restricted_install_sources);
@@ -463,12 +477,8 @@ TEST_F(ExtensionManagementServiceTest, PreferenceParsing) {
   const std::vector<Manifest::Type>& allowed_types =
       ReadGlobalSettings()->allowed_types;
   EXPECT_EQ(allowed_types.size(), 2u);
-  EXPECT_TRUE(std::find(allowed_types.begin(),
-                        allowed_types.end(),
-                        Manifest::TYPE_THEME) != allowed_types.end());
-  EXPECT_TRUE(std::find(allowed_types.begin(),
-                        allowed_types.end(),
-                        Manifest::TYPE_USER_SCRIPT) != allowed_types.end());
+  EXPECT_TRUE(base::ContainsValue(allowed_types, Manifest::TYPE_THEME));
+  EXPECT_TRUE(base::ContainsValue(allowed_types, Manifest::TYPE_USER_SCRIPT));
 
   // Verifies blocked permission list settings.
   APIPermissionSet api_permission_set;
@@ -505,12 +515,17 @@ TEST_F(ExtensionManagementServiceTest, PreferenceParsing) {
   EXPECT_FALSE(CheckMinimumVersion(kTargetExtension, "1.0.99"));
   EXPECT_TRUE(CheckMinimumVersion(kTargetExtension, "1.1"));
   EXPECT_TRUE(CheckMinimumVersion(kTargetExtension, "1.1.0.1"));
+
+  // Verifies that an extension using the default scope where
+  // no custom blocked install message is defined returns an empty string.
+  SetExampleDictPref(kExampleDictNoCustomError);
+  EXPECT_EQ("", GetBlockedInstallMessage(kNonExistingExtension));
 }
 
 // Tests the handling of installation mode in case it's specified in both
 // per-extension and per-update-url settings.
 TEST_F(ExtensionManagementServiceTest, InstallationModeConflictHandling) {
-  SetExampleDictPref();
+  SetExampleDictPref(kExampleDictPreference);
 
   // Per-extension installation mode settings should always override
   // per-update-url settings.
@@ -525,7 +540,7 @@ TEST_F(ExtensionManagementServiceTest, InstallationModeConflictHandling) {
 // Tests the handling of blocked permissions in case it's specified in both
 // per-extension and per-update-url settings.
 TEST_F(ExtensionManagementServiceTest, BlockedPermissionsConflictHandling) {
-  SetExampleDictPref();
+  SetExampleDictPref(kExampleDictPreference);
 
   // Both settings should be enforced.
   APIPermissionSet blocked_permissions_for_update_url;
@@ -733,7 +748,7 @@ TEST_F(ExtensionManagementServiceTest, NewInstallForcelist) {
 
 // Tests the behavior of IsInstallationExplicitlyAllowed().
 TEST_F(ExtensionManagementServiceTest, IsInstallationExplicitlyAllowed) {
-  SetExampleDictPref();
+  SetExampleDictPref(kExampleDictPreference);
 
   // Constant name indicates the installation_mode of extensions in example
   // preference.

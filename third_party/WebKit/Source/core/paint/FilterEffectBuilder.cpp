@@ -33,8 +33,8 @@
 #include "core/svg/SVGLengthContext.h"
 #include "core/svg/graphics/filters/SVGFilterBuilder.h"
 #include "platform/LengthFunctions.h"
-#include "platform/graphics/ColorSpace.h"
 #include "platform/graphics/CompositorFilterOperations.h"
+#include "platform/graphics/InterpolationSpace.h"
 #include "platform/graphics/filters/FEBoxReflect.h"
 #include "platform/graphics/filters/FEColorMatrix.h"
 #include "platform/graphics/filters/FEComponentTransfer.h"
@@ -42,7 +42,7 @@
 #include "platform/graphics/filters/FEGaussianBlur.h"
 #include "platform/graphics/filters/Filter.h"
 #include "platform/graphics/filters/FilterEffect.h"
-#include "platform/graphics/filters/SkiaImageFilterBuilder.h"
+#include "platform/graphics/filters/PaintFilterBuilder.h"
 #include "platform/graphics/filters/SourceGraphic.h"
 #include "platform/wtf/MathExtras.h"
 #include "public/platform/WebPoint.h"
@@ -293,7 +293,7 @@ FilterEffect* FilterEffectBuilder::BuildFilterEffect(
         // Unlike SVG, filters applied here should not clip to their primitive
         // subregions.
         effect->SetClipsToBounds(false);
-        effect->SetOperatingColorSpace(kColorSpaceDeviceRGB);
+        effect->SetOperatingInterpolationSpace(kInterpolationSpaceSRGB);
         effect->InputEffects().push_back(previous_effect);
       }
       if (previous_effect->OriginTainted())
@@ -306,7 +306,7 @@ FilterEffect* FilterEffectBuilder::BuildFilterEffect(
 
 CompositorFilterOperations FilterEffectBuilder::BuildFilterOperations(
     const FilterOperations& operations) const {
-  ColorSpace current_color_space = kColorSpaceDeviceRGB;
+  InterpolationSpace current_interpolation_space = kInterpolationSpaceSRGB;
 
   CompositorFilterOperations filters;
   for (FilterOperation* op : operations.Operations()) {
@@ -317,14 +317,18 @@ CompositorFilterOperations FilterEffectBuilder::BuildFilterOperations(
         Filter* reference_filter =
             BuildReferenceFilter(reference_operation, nullptr);
         if (reference_filter && reference_filter->LastEffect()) {
-          SkiaImageFilterBuilder::PopulateSourceGraphicImageFilters(
+          PaintFilterBuilder::PopulateSourceGraphicImageFilters(
               reference_filter->GetSourceGraphic(), nullptr,
-              current_color_space);
+              current_interpolation_space);
 
           FilterEffect* filter_effect = reference_filter->LastEffect();
-          current_color_space = filter_effect->OperatingColorSpace();
-          filters.AppendReferenceFilter(SkiaImageFilterBuilder::Build(
-              filter_effect, current_color_space));
+          current_interpolation_space =
+              filter_effect->OperatingInterpolationSpace();
+          auto paint_filter = PaintFilterBuilder::Build(
+              filter_effect, current_interpolation_space);
+          if (!paint_filter)
+            continue;
+          filters.AppendReferenceFilter(std::move(paint_filter));
         }
         reference_operation.SetFilter(reference_filter);
         break;
@@ -393,17 +397,17 @@ CompositorFilterOperations FilterEffectBuilder::BuildFilterOperations(
         // instead of calling this a "reference filter".
         const auto& reflection = ToBoxReflectFilterOperation(*op).Reflection();
         filters.AppendReferenceFilter(
-            SkiaImageFilterBuilder::BuildBoxReflectFilter(reflection, nullptr));
+            PaintFilterBuilder::BuildBoxReflectFilter(reflection, nullptr));
         break;
       }
       case FilterOperation::NONE:
         break;
     }
   }
-  if (current_color_space != kColorSpaceDeviceRGB) {
+  if (current_interpolation_space != kInterpolationSpaceSRGB) {
     // Transform to device color space at the end of processing, if required.
-    sk_sp<SkImageFilter> filter = SkiaImageFilterBuilder::TransformColorSpace(
-        nullptr, current_color_space, kColorSpaceDeviceRGB);
+    sk_sp<PaintFilter> filter = PaintFilterBuilder::TransformInterpolationSpace(
+        nullptr, current_interpolation_space, kInterpolationSpaceSRGB);
     filters.AppendReferenceFilter(std::move(filter));
   }
   return filters;
@@ -415,10 +419,9 @@ Filter* FilterEffectBuilder::BuildReferenceFilter(
   DCHECK(target_context_);
   Element* filter_element = reference_operation.ElementProxy().FindElement(
       target_context_->GetTreeScope());
-  if (!isSVGFilterElement(filter_element))
-    return nullptr;
-  return BuildReferenceFilter(toSVGFilterElement(*filter_element),
-                              previous_effect);
+  if (auto* filter = ToSVGFilterElementOrNull(filter_element))
+    return BuildReferenceFilter(*filter, previous_effect);
+  return nullptr;
 }
 
 Filter* FilterEffectBuilder::BuildReferenceFilter(

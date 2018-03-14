@@ -4,21 +4,33 @@
 
 #include "core/layout/ng/inline/ng_physical_line_box_fragment.h"
 
-#include "core/layout/ng/ng_floating_object.h"
-
 namespace blink {
 
 NGPhysicalLineBoxFragment::NGPhysicalLineBoxFragment(
+    const ComputedStyle& style,
     NGPhysicalSize size,
-    Vector<RefPtr<NGPhysicalFragment>>& children,
+    Vector<scoped_refptr<NGPhysicalFragment>>& children,
+    const NGPhysicalOffsetRect& contents_visual_rect,
     const NGLineHeightMetrics& metrics,
-    RefPtr<NGBreakToken> break_token)
-    : NGPhysicalFragment(nullptr,
-                         size,
-                         kFragmentLineBox,
-                         std::move(break_token)),
-      metrics_(metrics) {
-  children_.Swap(children);
+    scoped_refptr<NGBreakToken> break_token)
+    : NGPhysicalContainerFragment(nullptr,
+                                  style,
+                                  size,
+                                  kFragmentLineBox,
+                                  children,
+                                  contents_visual_rect,
+                                  std::move(break_token)),
+      metrics_(metrics) {}
+
+LayoutUnit NGPhysicalLineBoxFragment::BaselinePosition(FontBaseline) const {
+  // TODO(kojii): Computing other baseline types than the used one is not
+  // implemented yet.
+  // TODO(kojii): We might need locale/script to look up OpenType BASE table.
+  return metrics_.ascent;
+}
+
+NGPhysicalOffsetRect NGPhysicalLineBoxFragment::VisualRectWithContents() const {
+  return ContentsVisualRect();
 }
 
 }  // namespace blink

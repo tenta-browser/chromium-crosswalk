@@ -26,6 +26,7 @@
 #ifndef TypingCommand_h
 #define TypingCommand_h
 
+#include "core/editing/TextGranularity.h"
 #include "core/editing/commands/CompositeEditCommand.h"
 
 namespace blink {
@@ -61,11 +62,12 @@ class CORE_EXPORT TypingCommand final : public CompositeEditCommand {
   static void DeleteSelection(Document&, Options = 0);
   static void DeleteKeyPressed(Document&,
                                Options,
-                               TextGranularity = kCharacterGranularity);
-  static void ForwardDeleteKeyPressed(Document&,
-                                      EditingState*,
-                                      Options = 0,
-                                      TextGranularity = kCharacterGranularity);
+                               TextGranularity = TextGranularity::kCharacter);
+  static void ForwardDeleteKeyPressed(
+      Document&,
+      EditingState*,
+      Options = 0,
+      TextGranularity = TextGranularity::kCharacter);
   static void InsertText(Document&,
                          const String&,
                          Options,
@@ -76,6 +78,7 @@ class CORE_EXPORT TypingCommand final : public CompositeEditCommand {
       const String&,
       const SelectionInDOMTree&,
       Options,
+      EditingState*,
       TextCompositionType = kTextCompositionNone,
       const bool is_incremental_insertion = false,
       InputEvent::InputType = InputEvent::InputType::kInsertText);
@@ -100,7 +103,9 @@ class CORE_EXPORT TypingCommand final : public CompositeEditCommand {
     composition_type_ = type;
   }
   void AdjustSelectionAfterIncrementalInsertion(LocalFrame*,
-                                                const size_t text_length);
+                                                const size_t selection_start,
+                                                const size_t text_length,
+                                                EditingState*);
 
   ETypingCommand CommandTypeOfOpenCommand() const { return command_type_; }
   TextCompositionType CompositionType() const { return composition_type_; }
@@ -114,7 +119,7 @@ class CORE_EXPORT TypingCommand final : public CompositeEditCommand {
       ETypingCommand command,
       const String& text = "",
       Options options = 0,
-      TextGranularity granularity = kCharacterGranularity) {
+      TextGranularity granularity = TextGranularity::kCharacter) {
     return new TypingCommand(document, command, text, options, granularity,
                              kTextCompositionNone);
   }
@@ -125,7 +130,7 @@ class CORE_EXPORT TypingCommand final : public CompositeEditCommand {
                                Options options,
                                TextCompositionType composition_type) {
     return new TypingCommand(document, command, text, options,
-                             kCharacterGranularity, composition_type);
+                             TextGranularity::kCharacter, composition_type);
   }
 
   TypingCommand(Document&,
@@ -163,12 +168,24 @@ class CORE_EXPORT TypingCommand final : public CompositeEditCommand {
 
   bool IsIncrementalInsertion() const { return is_incremental_insertion_; }
 
+  void DeleteKeyPressedInternal(
+      const VisibleSelection& selection_to_delete,
+      const SelectionForUndoStep& selection_after_undo,
+      bool kill_ring,
+      EditingState*);
+
   void DeleteSelectionIfRange(const VisibleSelection&,
                               EditingState*,
                               bool smart_delete = false,
                               bool merge_blocks_after_delete = true,
                               bool expand_for_special_elements = true,
                               bool sanitize_markup = true);
+
+  void ForwardDeleteKeyPressedInternal(
+      const VisibleSelection& selection_to_delete,
+      const SelectionForUndoStep& selection_after_undo,
+      bool kill_ring,
+      EditingState*);
 
   ETypingCommand command_type_;
   String text_to_insert_;

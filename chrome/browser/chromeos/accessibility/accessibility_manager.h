@@ -7,7 +7,7 @@
 
 #include <set>
 
-#include "ash/accessibility_types.h"
+#include "ash/public/cpp/accessibility_types.h"
 #include "ash/shell_observer.h"
 #include "base/callback_forward.h"
 #include "base/callback_list.h"
@@ -62,15 +62,8 @@ struct AccessibilityStatusEventDetails {
       bool enabled,
       ash::AccessibilityNotificationVisibility notify);
 
-  AccessibilityStatusEventDetails(
-      AccessibilityNotificationType notification_type,
-      bool enabled,
-      ash::MagnifierType magnifier_type,
-      ash::AccessibilityNotificationVisibility notify);
-
   AccessibilityNotificationType notification_type;
   bool enabled;
-  ash::MagnifierType magnifier_type;
   ash::AccessibilityNotificationVisibility notify;
 };
 
@@ -134,19 +127,14 @@ class AccessibilityManager
   // Returns true when the accessibility menu should be shown.
   bool ShouldShowAccessibilityMenu();
 
-  // Returns true when cursor compositing should be enabled.
-  bool ShouldEnableCursorCompositing();
-
   // Enables or disables the large cursor.
   void EnableLargeCursor(bool enabled);
+
   // Returns true if the large cursor is enabled, or false if not.
   bool IsLargeCursorEnabled() const;
 
   // Enables or disable Sticky Keys.
   void EnableStickyKeys(bool enabled);
-
-  // Returns true if Incognito mode is allowed, or false if not.
-  bool IsIncognitoAllowed();
 
   // Returns true if the Sticky Keys is enabled, or false if not.
   bool IsStickyKeysEnabled() const;
@@ -235,15 +223,12 @@ class AccessibilityManager
 
   // ShellObserver overrides:
   void OnFullscreenStateChanged(bool is_fullscreen,
-                                ash::WmWindow* root_window) override;
+                                aura::Window* root_window) override;
 
   void SetProfileForTest(Profile* profile);
 
   static void SetBrailleControllerForTest(
       extensions::api::braille_display_private::BrailleController* controller);
-
-  // Enables/disables system sounds.
-  void EnableSystemSounds(bool system_sounds_enabled);
 
   // Initiates play of shutdown sound and returns it's duration.
   base::TimeDelta PlayShutdownSound();
@@ -311,6 +296,9 @@ class AccessibilityManager
   }
   bool keyboard_listener_capture() { return keyboard_listener_capture_; }
 
+  // Set the keys to be captured by Switch Access.
+  void SetSwitchAccessKeys(const std::set<int>& key_codes);
+
  protected:
   AccessibilityManager();
   ~AccessibilityManager() override;
@@ -321,14 +309,15 @@ class AccessibilityManager
   void PostSwitchChromeVoxProfile();
   void ReloadChromeVoxPanel();
 
-  void UpdateLargeCursorFromPref();
+  void UpdateAlwaysShowMenuFromPref();
+  void OnLargeCursorChanged();
   void UpdateStickyKeysFromPref();
   void UpdateSpokenFeedbackFromPref();
-  void UpdateHighContrastFromPref();
+  void OnHighContrastChanged();
   void UpdateAutoclickFromPref();
   void UpdateAutoclickDelayFromPref();
   void UpdateVirtualKeyboardFromPref();
-  void UpdateMonoAudioFromPref();
+  void OnMonoAudioChanged();
   void UpdateCaretHighlightFromPref();
   void UpdateCursorHighlightFromPref();
   void UpdateFocusHighlightFromPref();
@@ -361,10 +350,9 @@ class AccessibilityManager
       const extensions::api::braille_display_private::KeyEvent& event) override;
 
   // ExtensionRegistryObserver implementation.
-  void OnExtensionUnloaded(
-      content::BrowserContext* browser_context,
-      const extensions::Extension* extension,
-      extensions::UnloadedExtensionInfo::Reason reason) override;
+  void OnExtensionUnloaded(content::BrowserContext* browser_context,
+                           const extensions::Extension* extension,
+                           extensions::UnloadedExtensionReason reason) override;
   void OnShutdown(extensions::ExtensionRegistry* registry) override;
 
   // InputMethodManager::Observer
@@ -399,15 +387,11 @@ class AccessibilityManager
   PrefHandler select_to_speak_pref_handler_;
   PrefHandler switch_access_pref_handler_;
 
-  bool large_cursor_enabled_;
-  int large_cursor_size_in_dip_;
   bool sticky_keys_enabled_;
   bool spoken_feedback_enabled_;
-  bool high_contrast_enabled_;
   bool autoclick_enabled_;
   base::TimeDelta autoclick_delay_ms_;
   bool virtual_keyboard_enabled_;
-  bool mono_audio_enabled_;
   bool caret_highlight_enabled_;
   bool cursor_highlight_enabled_;
   bool focus_highlight_enabled_;
@@ -417,13 +401,12 @@ class AccessibilityManager
 
   ash::AccessibilityNotificationVisibility spoken_feedback_notification_;
 
-  bool system_sounds_enabled_;
-
   AccessibilityStatusCallbackList callback_list_;
 
   bool braille_display_connected_;
   ScopedObserver<extensions::api::braille_display_private::BrailleController,
-                 AccessibilityManager> scoped_braille_observer_;
+                 AccessibilityManager>
+      scoped_braille_observer_;
 
   bool braille_ime_current_;
 

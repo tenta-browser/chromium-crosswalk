@@ -31,13 +31,14 @@
 #ifndef WorkerInspectorController_h
 #define WorkerInspectorController_h
 
+#include "base/memory/scoped_refptr.h"
 #include "core/inspector/InspectorSession.h"
 #include "core/inspector/InspectorTaskRunner.h"
+#include "platform/wtf/Allocator.h"
+#include "platform/wtf/Forward.h"
+#include "platform/wtf/HashMap.h"
+#include "platform/wtf/Noncopyable.h"
 #include "public/platform/WebThread.h"
-#include "wtf/Allocator.h"
-#include "wtf/Forward.h"
-#include "wtf/Noncopyable.h"
-#include "wtf/RefPtr.h"
 
 namespace blink {
 
@@ -54,15 +55,14 @@ class WorkerInspectorController final
  public:
   static WorkerInspectorController* Create(WorkerThread*);
   ~WorkerInspectorController() override;
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
-  CoreProbeSink* InstrumentingAgents() const {
-    return instrumenting_agents_.Get();
-  }
+  CoreProbeSink* GetProbeSink() const { return probe_sink_.Get(); }
 
-  void ConnectFrontend();
-  void DisconnectFrontend();
-  void DispatchMessageFromFrontend(const String&);
+  void ConnectFrontend(int session_id,
+                       const String& parent_instrumentation_token);
+  void DisconnectFrontend(int session_id);
+  void DispatchMessageFromFrontend(int session_id, const String& message);
   void Dispose();
   void FlushProtocolNotifications();
 
@@ -81,8 +81,8 @@ class WorkerInspectorController final
 
   WorkerThreadDebugger* debugger_;
   WorkerThread* thread_;
-  Member<CoreProbeSink> instrumenting_agents_;
-  Member<InspectorSession> session_;
+  Member<CoreProbeSink> probe_sink_;
+  HeapHashMap<int, Member<InspectorSession>> sessions_;
 };
 
 }  // namespace blink

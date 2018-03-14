@@ -13,8 +13,8 @@
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/events/event_constants.h"
 
-#if defined(USE_ASH)
-#include "ash/accelerators/accelerator_table.h"  // nogncheck
+#if defined(OS_CHROMEOS)
+#include "ash/accelerators/accelerator_table.h"
 #endif
 
 namespace {
@@ -149,6 +149,8 @@ const AcceleratorMapping kAcceleratorMap[] = {
   { ui::VKEY_BROWSER_STOP, ui::EF_NONE, IDC_STOP },
   { ui::VKEY_P, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN,
     IDC_TOUCH_HUD_PROJECTION_TOGGLE },
+  // On Chrome OS, Search + Esc is used to call out task manager.
+  { ui::VKEY_ESCAPE, ui::EF_COMMAND_DOWN, IDC_TASK_MANAGER },
 #else  // !OS_CHROMEOS
   { ui::VKEY_ESCAPE, ui::EF_SHIFT_DOWN, IDC_TASK_MANAGER },
   { ui::VKEY_LMENU, ui::EF_NONE, IDC_FOCUS_MENU_BAR },
@@ -160,18 +162,19 @@ const AcceleratorMapping kAcceleratorMap[] = {
   { ui::VKEY_M, ui::EF_SHIFT_DOWN | kPlatformModifier, IDC_SHOW_AVATAR_MENU },
   // For each entry until the end of the !OS_CHROMEOS block, and an entry into
   // kChromeCmdId2AshActionId below if Ash has a corresponding accelerator.
-#if defined(GOOGLE_CHROME_BUILD) && !defined(OS_MACOSX)
-  { ui::VKEY_I, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN, IDC_FEEDBACK },
-#endif  // GOOGLE_CHROME_BUILD && !OS_MACOSX
 #if !defined(OS_MACOSX)
   { ui::VKEY_Q, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN, IDC_EXIT },
 #endif  // !OS_MACOSX
+#endif  // !OS_CHROMEOS
+
+#if defined(GOOGLE_CHROME_BUILD) && !defined(OS_MACOSX)
+  { ui::VKEY_I, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN, IDC_FEEDBACK },
+#endif  // GOOGLE_CHROME_BUILD && !OS_MACOSX
   { ui::VKEY_N, ui::EF_SHIFT_DOWN | kPlatformModifier,
     IDC_NEW_INCOGNITO_WINDOW },
   { ui::VKEY_T, kPlatformModifier, IDC_NEW_TAB },
   { ui::VKEY_N, kPlatformModifier, IDC_NEW_WINDOW },
   { ui::VKEY_T, ui::EF_SHIFT_DOWN | kPlatformModifier, IDC_RESTORE_TAB },
-#endif  // !OS_CHROMEOS
 
 #if defined(OS_MACOSX)
   // VKEY_OEM_4 is Left Brace '[{' key.
@@ -271,7 +274,7 @@ const int kRepeatableCommandIds[] = {
 };
 const size_t kRepeatableCommandIdsLength = arraysize(kRepeatableCommandIds);
 
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
 // Below we map Chrome command ids to Ash action ids for commands that have
 // an shortcut that is handled by Ash (instead of Chrome). Adding entries
 // here will show shortcut text on menus. See comment above.
@@ -295,7 +298,7 @@ const ChromeCmdId2AshActionId kChromeCmdId2AshActionId[] = {
 };
 const size_t kChromeCmdId2AshActionIdLength =
     arraysize(kChromeCmdId2AshActionId);
-#endif // defined(USE_ASH)
+#endif  // defined(OS_CHROMEOS)
 
 } // namespace
 
@@ -308,7 +311,7 @@ std::vector<AcceleratorMapping> GetAcceleratorList() {
 
 bool GetAshAcceleratorForCommandId(int command_id,
                                    ui::Accelerator* accelerator) {
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
   for (size_t i = 0; i < kChromeCmdId2AshActionIdLength; ++i) {
     if (command_id == kChromeCmdId2AshActionId[i].chrome_cmd_id) {
       for (size_t j = 0; j < ash::kAcceleratorDataLength; ++j) {
@@ -321,7 +324,7 @@ bool GetAshAcceleratorForCommandId(int command_id,
       }
     }
   }
-#endif // defined(USE_ASH)
+#endif  // defined(OS_CHROMEOS)
   return false;
 }
 

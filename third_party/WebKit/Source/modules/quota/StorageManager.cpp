@@ -10,12 +10,15 @@
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
+#include "core/frame/Frame.h"
+#include "core/frame/LocalFrame.h"
 #include "modules/permissions/PermissionUtils.h"
 #include "modules/quota/StorageEstimate.h"
 #include "platform/StorageQuotaCallbacks.h"
-#include "platform/UserGestureIndicator.h"
+#include "platform/wtf/Assertions.h"
 #include "platform/wtf/Functional.h"
 #include "public/platform/Platform.h"
+#include "public/platform/WebStorageQuotaError.h"
 
 namespace blink {
 
@@ -50,7 +53,7 @@ class EstimateCallbacks final : public StorageQuotaCallbacks {
     resolver_->Reject(DOMException::Create(static_cast<ExceptionCode>(error)));
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  virtual void Trace(blink::Visitor* visitor) {
     visitor->Trace(resolver_);
     StorageQuotaCallbacks::Trace(visitor);
   }
@@ -74,21 +77,15 @@ ScriptPromise StorageManager::persist(ScriptState* script_state) {
   }
 
   DCHECK(execution_context->IsDocument());
-  PermissionService* permission_service =
-      GetPermissionService(ExecutionContext::From(script_state));
-  if (!permission_service) {
-    resolver->Reject(DOMException::Create(
-        kInvalidStateError,
-        "In its current state, the global scope can't request permissions."));
-    return promise;
-  }
-  permission_service->RequestPermission(
-      CreatePermissionDescriptor(PermissionName::DURABLE_STORAGE),
-      ExecutionContext::From(script_state)->GetSecurityOrigin(),
-      UserGestureIndicator::ProcessingUserGesture(),
-      ConvertToBaseCallback(
-          WTF::Bind(&StorageManager::PermissionRequestComplete,
-                    WrapPersistent(this), WrapPersistent(resolver))));
+  Document* doc = ToDocumentOrNull(execution_context);
+  GetPermissionService(ExecutionContext::From(script_state))
+      .RequestPermission(
+          CreatePermissionDescriptor(PermissionName::DURABLE_STORAGE),
+          ExecutionContext::From(script_state)->GetSecurityOrigin(),
+          Frame::HasTransientUserActivation(doc ? doc->GetFrame() : nullptr),
+          ConvertToBaseCallback(
+              WTF::Bind(&StorageManager::PermissionRequestComplete,
+                        WrapPersistent(this), WrapPersistent(resolver))));
 
   return promise;
 }
@@ -105,20 +102,13 @@ ScriptPromise StorageManager::persisted(ScriptState* script_state) {
     return promise;
   }
 
-  PermissionService* permission_service =
-      GetPermissionService(ExecutionContext::From(script_state));
-  if (!permission_service) {
-    resolver->Reject(DOMException::Create(
-        kInvalidStateError,
-        "In its current state, the global scope can't query permissions."));
-    return promise;
-  }
-  permission_service->HasPermission(
-      CreatePermissionDescriptor(PermissionName::DURABLE_STORAGE),
-      ExecutionContext::From(script_state)->GetSecurityOrigin(),
-      ConvertToBaseCallback(
-          WTF::Bind(&StorageManager::PermissionRequestComplete,
-                    WrapPersistent(this), WrapPersistent(resolver))));
+  GetPermissionService(ExecutionContext::From(script_state))
+      .HasPermission(
+          CreatePermissionDescriptor(PermissionName::DURABLE_STORAGE),
+          ExecutionContext::From(script_state)->GetSecurityOrigin(),
+          ConvertToBaseCallback(
+              WTF::Bind(&StorageManager::PermissionRequestComplete,
+                        WrapPersistent(this), WrapPersistent(resolver))));
   return promise;
 }
 
@@ -134,24 +124,23 @@ ScriptPromise StorageManager::estimate(ScriptState* script_state) {
     return promise;
   }
 
-  KURL storage_partition = KURL(KURL(), security_origin->ToString());
+  KURL storage_partition = KURL(NullURL(), security_origin->ToString());
   Platform::Current()->QueryStorageUsageAndQuota(
       storage_partition, kWebStorageQuotaTypeTemporary,
       new EstimateCallbacks(resolver));
   return promise;
 }
 
-DEFINE_TRACE(StorageManager) {}
-
-PermissionService* StorageManager::GetPermissionService(
+PermissionService& StorageManager::GetPermissionService(
     ExecutionContext* execution_context) {
-  if (!permission_service_ &&
-      ConnectToPermissionService(execution_context,
-                                 mojo::MakeRequest(&permission_service_)))
+  if (!permission_service_) {
+    ConnectToPermissionService(execution_context,
+                               mojo::MakeRequest(&permission_service_));
     permission_service_.set_connection_error_handler(ConvertToBaseCallback(
         WTF::Bind(&StorageManager::PermissionServiceConnectionError,
                   WrapWeakPersistent(this))));
-  return permission_service_.get();
+  }
+  return *permission_service_;
 }
 
 void StorageManager::PermissionServiceConnectionError() {
@@ -165,5 +154,11 @@ void StorageManager::PermissionRequestComplete(ScriptPromiseResolver* resolver,
     return;
   resolver->Resolve(status == PermissionStatus::GRANTED);
 }
+
+STATIC_ASSERT_ENUM(kWebStorageQuotaErrorNotSupported, kNotSupportedError);
+STATIC_ASSERT_ENUM(kWebStorageQuotaErrorInvalidModification,
+                   kInvalidModificationError);
+STATIC_ASSERT_ENUM(kWebStorageQuotaErrorInvalidAccess, kInvalidAccessError);
+STATIC_ASSERT_ENUM(kWebStorageQuotaErrorAbort, kAbortError);
 
 }  // namespace blink

@@ -25,20 +25,20 @@
 
 #include "core/svg/animation/SMILTimeContainer.h"
 
+#include <algorithm>
 #include "core/animation/AnimationClock.h"
 #include "core/animation/DocumentTimeline.h"
+#include "core/dom/Document.h"
 #include "core/dom/ElementTraversal.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/frame/UseCounter.h"
 #include "core/svg/SVGSVGElement.h"
 #include "core/svg/animation/SMILTime.h"
 #include "core/svg/animation/SVGSMILElement.h"
-#include <algorithm>
 
 namespace blink {
 
-static const double kInitialFrameDelay = 0.025;
 static const double kAnimationPolicyOnceDuration = 3.000;
 
 SMILTimeContainer::SMILTimeContainer(SVGSVGElement& owner)
@@ -48,12 +48,11 @@ SMILTimeContainer::SMILTimeContainer(SVGSVGElement& owner)
       started_(false),
       paused_(false),
       document_order_indexes_dirty_(false),
-      wakeup_timer_(
-          TaskRunnerHelper::Get(TaskType::kUnspecedTimer, &owner.GetDocument()),
-          this,
-          &SMILTimeContainer::WakeupTimerFired),
+      wakeup_timer_(owner.GetDocument().GetTaskRunner(TaskType::kUnspecedTimer),
+                    this,
+                    &SMILTimeContainer::WakeupTimerFired),
       animation_policy_once_timer_(
-          TaskRunnerHelper::Get(TaskType::kUnspecedTimer, &owner.GetDocument()),
+          owner.GetDocument().GetTaskRunner(TaskType::kUnspecedTimer),
           this,
           &SMILTimeContainer::AnimationPolicyTimerFired),
       owner_svg_element_(&owner) {}
@@ -101,11 +100,11 @@ void SMILTimeContainer::Unschedule(SVGSMILElement* animation,
 #endif
 
   ElementAttributePair key(target, attribute_name);
-  GroupedAnimationsMap::iterator it = scheduled_animations_.Find(key);
+  GroupedAnimationsMap::iterator it = scheduled_animations_.find(key);
   DCHECK_NE(it, scheduled_animations_.end());
   AnimationsLinkedHashSet* scheduled = it->value.Get();
   DCHECK(scheduled);
-  AnimationsLinkedHashSet::iterator it_animation = scheduled->Find(animation);
+  AnimationsLinkedHashSet::iterator it_animation = scheduled->find(animation);
   DCHECK(it_animation != scheduled->end());
   scheduled->erase(it_animation);
 
@@ -176,18 +175,10 @@ void SMILTimeContainer::Start() {
   started_ = true;
 
   // If the "presentation time" is non-zero, the timeline was modified via
-  // setElapsed() before the document began.  In this case pass on
-  // 'seekToTime=true' to updateAnimations() to issue a seek.
-  SMILTime earliest_fire_time =
-      UpdateAnimations(presentation_time_, presentation_time_ ? true : false);
-  if (!CanScheduleFrame(earliest_fire_time))
-    return;
-  // If the timeline is running, and there are pending animation updates,
-  // always perform the first update after the timeline was started using
-  // the wake-up mechanism.
-  double delay_time = earliest_fire_time.Value() - presentation_time_;
-  ScheduleWakeUp(std::max(kInitialFrameDelay, delay_time),
-                 kSynchronizeAnimations);
+  // SetElapsed() before the document began. In this case pass on
+  // seek_to_time=true to issue a seek.
+  UpdateAnimationsAndScheduleFrameIfNeeded(presentation_time_,
+                                           presentation_time_ ? true : false);
 }
 
 void SMILTimeContainer::Pause() {
@@ -203,7 +194,7 @@ void SMILTimeContainer::Pause() {
   paused_ = true;
 }
 
-void SMILTimeContainer::Resume() {
+void SMILTimeContainer::Unpause() {
   if (!HandleAnimationPolicy(kRestartOnceTimer))
     return;
   DCHECK(IsPaused());
@@ -256,10 +247,10 @@ void SMILTimeContainer::ScheduleAnimationFrame(double delay_time) {
   DCHECK(IsTimelineRunning());
   DCHECK(!wakeup_timer_.IsActive());
 
-  if (delay_time < AnimationTimeline::kMinimumDelay) {
+  if (delay_time < DocumentTimeline::kMinimumDelay) {
     ServiceOnNextFrame();
   } else {
-    ScheduleWakeUp(delay_time - AnimationTimeline::kMinimumDelay,
+    ScheduleWakeUp(delay_time - DocumentTimeline::kMinimumDelay,
                    kFutureAnimationFrame);
   }
 }
@@ -499,7 +490,7 @@ SMILTime SMILTimeContainer::UpdateAnimations(double elapsed,
     return earliest_fire_time;
   }
 
-  UseCounter::Count(&GetDocument(), UseCounter::kSVGSMILAnimationAppliedEffect);
+  UseCounter::Count(&GetDocument(), WebFeature::kSVGSMILAnimationAppliedEffect);
 
   std::sort(animations_to_apply.begin(), animations_to_apply.end(),
             PriorityCompare(elapsed));
@@ -530,10 +521,11 @@ SMILTime SMILTimeContainer::UpdateAnimations(double elapsed,
 }
 
 void SMILTimeContainer::AdvanceFrameForTesting() {
+  const double kInitialFrameDelay = 0.025;
   SetElapsed(Elapsed() + kInitialFrameDelay);
 }
 
-DEFINE_TRACE(SMILTimeContainer) {
+void SMILTimeContainer::Trace(blink::Visitor* visitor) {
   visitor->Trace(scheduled_animations_);
   visitor->Trace(owner_svg_element_);
 }

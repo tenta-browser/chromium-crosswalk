@@ -10,23 +10,22 @@
 
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
-#include "cc/base/filter_operations.h"
 #include "cc/base/math_util.h"
 #include "cc/debug/debug_colors.h"
 #include "cc/layers/append_quads_data.h"
-#include "cc/layers/layer_impl.h"
-#include "cc/quads/content_draw_quad_base.h"
-#include "cc/quads/debug_border_draw_quad.h"
-#include "cc/quads/render_pass.h"
-#include "cc/quads/render_pass_draw_quad.h"
-#include "cc/quads/shared_quad_state.h"
-#include "cc/quads/solid_color_draw_quad.h"
+#include "cc/paint/filter_operations.h"
 #include "cc/trees/damage_tracker.h"
 #include "cc/trees/draw_property_utils.h"
 #include "cc/trees/effect_node.h"
 #include "cc/trees/layer_tree_impl.h"
 #include "cc/trees/occlusion.h"
 #include "cc/trees/transform_node.h"
+#include "components/viz/common/quads/content_draw_quad_base.h"
+#include "components/viz/common/quads/debug_border_draw_quad.h"
+#include "components/viz/common/quads/render_pass.h"
+#include "components/viz/common/quads/render_pass_draw_quad.h"
+#include "components/viz/common/quads/shared_quad_state.h"
+#include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "third_party/skia/include/core/SkImageFilter.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/transform.h"
@@ -34,14 +33,16 @@
 namespace cc {
 
 RenderSurfaceImpl::RenderSurfaceImpl(LayerTreeImpl* layer_tree_impl,
-                                     int stable_effect_id)
+                                     uint64_t stable_id)
     : layer_tree_impl_(layer_tree_impl),
-      stable_effect_id_(stable_effect_id),
+      stable_id_(stable_id),
       effect_tree_index_(EffectTree::kInvalidNodeId),
+      num_contributors_(0),
       has_contributing_layer_that_escapes_clip_(false),
       surface_property_changed_(false),
       ancestor_property_changed_(false),
       contributes_to_drawn_surface_(false),
+      is_render_surface_list_member_(false),
       nearest_occlusion_immune_ancestor_(nullptr) {
   damage_tracker_ = DamageTracker::Create();
 }
@@ -125,7 +126,11 @@ LayerImpl* RenderSurfaceImpl::MaskLayer() {
 }
 
 bool RenderSurfaceImpl::HasMask() const {
-  return OwningEffectNode()->mask_layer_id != EffectTree::kInvalidNodeId;
+  return OwningEffectNode()->mask_layer_id != Layer::INVALID_ID;
+}
+
+bool RenderSurfaceImpl::HasMaskingContributingSurface() const {
+  return OwningEffectNode()->has_masking_child;
 }
 
 const FilterOperations& RenderSurfaceImpl::Filters() const {
@@ -147,8 +152,16 @@ const FilterOperations& RenderSurfaceImpl::BackgroundFilters() const {
   return OwningEffectNode()->background_filters;
 }
 
+bool RenderSurfaceImpl::TrilinearFiltering() const {
+  return OwningEffectNode()->trilinear_filtering;
+}
+
 bool RenderSurfaceImpl::HasCopyRequest() const {
   return OwningEffectNode()->has_copy_request;
+}
+
+bool RenderSurfaceImpl::ShouldCacheRenderSurface() const {
+  return OwningEffectNode()->cache_render_surface;
 }
 
 int RenderSurfaceImpl::TransformTreeIndex() const {
@@ -160,10 +173,6 @@ int RenderSurfaceImpl::ClipTreeIndex() const {
 }
 
 int RenderSurfaceImpl::EffectTreeIndex() const {
-  DCHECK_EQ(
-      effect_tree_index_,
-      layer_tree_impl_->property_trees()
-          ->effect_tree.FindNodeIndexFromOwningLayerId(stable_effect_id_));
   return effect_tree_index_;
 }
 
@@ -204,7 +213,7 @@ gfx::Rect RenderSurfaceImpl::CalculateExpandedClipForFilters(
 }
 
 gfx::Rect RenderSurfaceImpl::CalculateClippedAccumulatedContentRect() {
-  if (HasCopyRequest() || !is_clipped())
+  if (ShouldCacheRenderSurface() || HasCopyRequest() || !is_clipped())
     return accumulated_content_rect();
 
   if (accumulated_content_rect().IsEmpty())
@@ -339,7 +348,11 @@ void RenderSurfaceImpl::NoteAncestorPropertyChanged() {
   ancestor_property_changed_ = true;
 }
 
-gfx::Rect RenderSurfaceImpl::GetDamageRect() {
+bool RenderSurfaceImpl::HasDamageFromeContributingContent() const {
+  return damage_tracker_->has_damage_from_contributing_content();
+}
+
+gfx::Rect RenderSurfaceImpl::GetDamageRect() const {
   gfx::Rect damage_rect;
   bool is_valid_rect = damage_tracker_->GetDamageRectIfValid(&damage_rect);
   if (!is_valid_rect)
@@ -352,26 +365,24 @@ void RenderSurfaceImpl::ResetPropertyChangedFlags() {
   ancestor_property_changed_ = false;
 }
 
-void RenderSurfaceImpl::ClearLayerLists() {
-  layer_list_.clear();
-}
-
-int RenderSurfaceImpl::GetRenderPassId() {
-  return id();
-}
-
-std::unique_ptr<RenderPass> RenderSurfaceImpl::CreateRenderPass() {
-  std::unique_ptr<RenderPass> pass = RenderPass::Create(layer_list_.size());
+std::unique_ptr<viz::RenderPass> RenderSurfaceImpl::CreateRenderPass() {
+  std::unique_ptr<viz::RenderPass> pass =
+      viz::RenderPass::Create(num_contributors_);
   gfx::Rect damage_rect = GetDamageRect();
   damage_rect.Intersect(content_rect());
   pass->SetNew(id(), content_rect(), damage_rect,
                draw_properties_.screen_space_transform);
   pass->filters = Filters();
   pass->background_filters = BackgroundFilters();
+  pass->generate_mipmap = TrilinearFiltering();
+  pass->cache_render_pass = ShouldCacheRenderSurface();
+  pass->has_damage_from_contributing_content =
+      HasDamageFromeContributingContent();
   return pass;
 }
 
-void RenderSurfaceImpl::AppendQuads(RenderPass* render_pass,
+void RenderSurfaceImpl::AppendQuads(DrawMode draw_mode,
+                                    viz::RenderPass* render_pass,
                                     AppendQuadsData* append_quads_data) {
   gfx::Rect visible_layer_rect =
       occlusion_in_content_space().GetUnoccludedContentRect(content_rect());
@@ -382,62 +393,69 @@ void RenderSurfaceImpl::AppendQuads(RenderPass* render_pass,
   int sorting_context_id =
       property_trees->transform_tree.Node(TransformTreeIndex())
           ->sorting_context_id;
-  SharedQuadState* shared_quad_state =
+  bool contents_opaque = false;
+  viz::SharedQuadState* shared_quad_state =
       render_pass->CreateAndAppendSharedQuadState();
   shared_quad_state->SetAll(
-      draw_transform(), content_rect().size(), content_rect(),
-      draw_properties_.clip_rect, draw_properties_.is_clipped,
+      draw_transform(), content_rect(), content_rect(),
+      draw_properties_.clip_rect, draw_properties_.is_clipped, contents_opaque,
       draw_properties_.draw_opacity, BlendMode(), sorting_context_id);
 
   if (layer_tree_impl_->debug_state().show_debug_borders.test(
           DebugBorderType::RENDERPASS)) {
-    DebugBorderDrawQuad* debug_border_quad =
-        render_pass->CreateAndAppendDrawQuad<DebugBorderDrawQuad>();
+    auto* debug_border_quad =
+        render_pass->CreateAndAppendDrawQuad<viz::DebugBorderDrawQuad>();
     debug_border_quad->SetNew(shared_quad_state, content_rect(),
                               visible_layer_rect, GetDebugBorderColor(),
                               GetDebugBorderWidth());
   }
 
-  ResourceId mask_resource_id = 0;
+  viz::ResourceId mask_resource_id = 0;
   gfx::Size mask_texture_size;
   gfx::RectF mask_uv_rect;
   gfx::Vector2dF surface_contents_scale =
       OwningEffectNode()->surface_contents_scale;
   PictureLayerImpl* mask_layer = static_cast<PictureLayerImpl*>(MaskLayer());
-  if (mask_layer && mask_layer->DrawsContent() &&
-      !mask_layer->bounds().IsEmpty()) {
+  // Resourceless mode does not support masks.
+  if (draw_mode != DRAW_MODE_RESOURCELESS_SOFTWARE && mask_layer &&
+      mask_layer->DrawsContent() && !mask_layer->bounds().IsEmpty()) {
     // The software renderer applies mask layer and blending in the wrong
     // order but kDstIn doesn't commute with masking. It is okay to not
     // support this configuration because kDstIn was introduced to replace
     // mask layers.
     DCHECK(BlendMode() != SkBlendMode::kDstIn)
         << "kDstIn blend mode with mask layer is unsupported.";
+    TRACE_EVENT1("cc", "RenderSurfaceImpl::AppendQuads",
+                 "mask_layer_gpu_memory_usage",
+                 mask_layer->GPUMemoryUsageInBytes());
     if (mask_layer->mask_type() == Layer::LayerMaskType::MULTI_TEXTURE_MASK) {
       TileMaskLayer(render_pass, shared_quad_state, visible_layer_rect);
       return;
     }
-    mask_layer->GetContentsResourceId(&mask_resource_id, &mask_texture_size);
+    gfx::SizeF mask_uv_size;
+    mask_layer->GetContentsResourceId(&mask_resource_id, &mask_texture_size,
+                                      &mask_uv_size);
     gfx::SizeF unclipped_mask_target_size = gfx::ScaleSize(
         gfx::SizeF(OwningEffectNode()->unscaled_mask_target_size),
         surface_contents_scale.x(), surface_contents_scale.y());
-    // Convert content_rect from target space to normalized space.
-    // Where unclipped_mask_target_size maps to gfx::Size(1, 1).
-    mask_uv_rect = gfx::ScaleRect(gfx::RectF(content_rect()),
-                                  1.0f / unclipped_mask_target_size.width(),
-                                  1.0f / unclipped_mask_target_size.height());
+    // Convert content_rect from target space to normalized mask UV space.
+    // Where |unclipped_mask_target_size| maps to |mask_uv_size|.
+    mask_uv_rect = gfx::ScaleRect(
+        gfx::RectF(content_rect()),
+        mask_uv_size.width() / unclipped_mask_target_size.width(),
+        mask_uv_size.height() / unclipped_mask_target_size.height());
   }
 
   gfx::RectF tex_coord_rect(gfx::Rect(content_rect().size()));
-  RenderPassDrawQuad* quad =
-      render_pass->CreateAndAppendDrawQuad<RenderPassDrawQuad>();
-  quad->SetNew(shared_quad_state, content_rect(), visible_layer_rect,
-               GetRenderPassId(), mask_resource_id, mask_uv_rect,
-               mask_texture_size, surface_contents_scale, FiltersOrigin(),
-               tex_coord_rect);
+  auto* quad = render_pass->CreateAndAppendDrawQuad<viz::RenderPassDrawQuad>();
+  quad->SetNew(shared_quad_state, content_rect(), visible_layer_rect, id(),
+               mask_resource_id, mask_uv_rect, mask_texture_size,
+               surface_contents_scale, FiltersOrigin(), tex_coord_rect,
+               !layer_tree_impl_->settings().enable_edge_anti_aliasing);
 }
 
-void RenderSurfaceImpl::TileMaskLayer(RenderPass* render_pass,
-                                      SharedQuadState* shared_quad_state,
+void RenderSurfaceImpl::TileMaskLayer(viz::RenderPass* render_pass,
+                                      viz::SharedQuadState* shared_quad_state,
                                       const gfx::Rect& visible_layer_rect) {
   DCHECK(MaskLayer());
   DCHECK(Filters().IsEmpty());
@@ -445,7 +463,7 @@ void RenderSurfaceImpl::TileMaskLayer(RenderPass* render_pass,
   LayerImpl* mask_layer = MaskLayer();
   gfx::Vector2dF owning_layer_to_surface_contents_scale =
       OwningEffectNode()->surface_contents_scale;
-  std::unique_ptr<RenderPass> temp_render_pass = RenderPass::Create();
+  std::unique_ptr<viz::RenderPass> temp_render_pass = viz::RenderPass::Create();
   AppendQuadsData temp_append_quads_data;
   mask_layer->AppendQuads(temp_render_pass.get(), &temp_append_quads_data);
 
@@ -461,28 +479,33 @@ void RenderSurfaceImpl::TileMaskLayer(RenderPass* render_pass,
   shared_quad_state->quad_to_target_transform.matrix().preScale(
       mask_quad_to_surface_contents_scale.x(),
       mask_quad_to_surface_contents_scale.y(), 1.f);
-  shared_quad_state->quad_layer_bounds =
-      gfx::ScaleToCeiledSize(shared_quad_state->quad_layer_bounds,
-                             1.f / mask_quad_to_surface_contents_scale.x(),
-                             1.f / mask_quad_to_surface_contents_scale.y());
+  shared_quad_state->quad_layer_rect =
+      gfx::ScaleToEnclosingRect(shared_quad_state->quad_layer_rect,
+                                1.f / mask_quad_to_surface_contents_scale.x(),
+                                1.f / mask_quad_to_surface_contents_scale.y());
   shared_quad_state->visible_quad_layer_rect =
-      gfx::ScaleToEnclosedRect(shared_quad_state->visible_quad_layer_rect,
-                               mask_quad_to_surface_contents_scale.x(),
-                               mask_quad_to_surface_contents_scale.y());
-  gfx::Rect content_rect_in_coverage_space = gfx::ScaleToEnclosedRect(
+      gfx::ScaleToEnclosingRect(shared_quad_state->visible_quad_layer_rect,
+                                1.f / mask_quad_to_surface_contents_scale.x(),
+                                1.f / mask_quad_to_surface_contents_scale.y());
+  gfx::Rect content_rect_in_coverage_space = gfx::ScaleToEnclosingRect(
       content_rect(), 1.f / mask_quad_to_surface_contents_scale.x(),
       1.f / mask_quad_to_surface_contents_scale.y());
-  gfx::Rect visible_layer_rect_in_coverage_space = gfx::ScaleToEnclosedRect(
+  gfx::Rect visible_layer_rect_in_coverage_space = gfx::ScaleToEnclosingRect(
       visible_layer_rect, 1.f / mask_quad_to_surface_contents_scale.x(),
       1.f / mask_quad_to_surface_contents_scale.y());
 
   for (auto* temp_quad : temp_render_pass->quad_list) {
     gfx::Rect quad_rect = temp_quad->rect;
-    gfx::Rect render_quad_rect = quad_rect;
     if (!quad_rect.Intersects(content_rect_in_coverage_space))
       continue;
-    render_quad_rect =
+
+    gfx::Rect render_quad_rect =
         gfx::IntersectRects(quad_rect, content_rect_in_coverage_space);
+    gfx::Rect quad_visible_rect_in_coverage_space = gfx::IntersectRects(
+        render_quad_rect, visible_layer_rect_in_coverage_space);
+    if (quad_visible_rect_in_coverage_space.IsEmpty())
+      continue;
+
     gfx::RectF quad_rect_in_surface_contents_space = gfx::ScaleRect(
         gfx::RectF(render_quad_rect), mask_quad_to_surface_contents_scale.x(),
         mask_quad_to_surface_contents_scale.y());
@@ -492,15 +515,12 @@ void RenderSurfaceImpl::TileMaskLayer(RenderPass* render_pass,
         -content_rect().OffsetFromOrigin());
 
     switch (temp_quad->material) {
-      case DrawQuad::TILED_CONTENT: {
+      case viz::DrawQuad::TILED_CONTENT: {
         DCHECK_EQ(1U, temp_quad->resources.count);
-        RenderPassDrawQuad* quad =
-            render_pass->CreateAndAppendDrawQuad<RenderPassDrawQuad>();
-
         gfx::Size mask_texture_size =
-            static_cast<ContentDrawQuadBase*>(temp_quad)->texture_size;
+            static_cast<viz::ContentDrawQuadBase*>(temp_quad)->texture_size;
         gfx::RectF temp_tex_coord_rect =
-            static_cast<ContentDrawQuadBase*>(temp_quad)->tex_coord_rect;
+            static_cast<viz::ContentDrawQuadBase*>(temp_quad)->tex_coord_rect;
         gfx::Transform coverage_to_non_normalized_mask =
             gfx::Transform(SkMatrix44(SkMatrix::MakeRectToRect(
                 RectToSkRect(quad_rect), RectFToSkRect(temp_tex_coord_rect),
@@ -513,31 +533,32 @@ void RenderSurfaceImpl::TileMaskLayer(RenderPass* render_pass,
         gfx::RectF mask_uv_rect = gfx::RectF(render_quad_rect);
         coverage_to_normalized_mask.TransformRect(&mask_uv_rect);
 
+        auto* quad =
+            render_pass->CreateAndAppendDrawQuad<viz::RenderPassDrawQuad>();
         quad->SetNew(shared_quad_state, render_quad_rect,
-                     gfx::IntersectRects(temp_quad->visible_rect,
-                                         visible_layer_rect_in_coverage_space),
-                     GetRenderPassId(), temp_quad->resources.ids[0],
-                     mask_uv_rect, mask_texture_size,
-                     owning_layer_to_surface_contents_scale, FiltersOrigin(),
-                     quad_rect_in_non_normalized_texture_space);
+                     quad_visible_rect_in_coverage_space, id(),
+                     temp_quad->resources.ids[0], mask_uv_rect,
+                     mask_texture_size, owning_layer_to_surface_contents_scale,
+                     FiltersOrigin(), quad_rect_in_non_normalized_texture_space,
+                     !layer_tree_impl_->settings().enable_edge_anti_aliasing);
       } break;
-      case DrawQuad::SOLID_COLOR: {
-        if (!static_cast<SolidColorDrawQuad*>(temp_quad)->color)
+      case viz::DrawQuad::SOLID_COLOR: {
+        if (!static_cast<viz::SolidColorDrawQuad*>(temp_quad)->color)
           continue;
         SkAlpha solid = SK_AlphaOPAQUE;
-        DCHECK_EQ(
-            SkColorGetA(static_cast<SolidColorDrawQuad*>(temp_quad)->color),
-            solid);
-        RenderPassDrawQuad* quad =
-            render_pass->CreateAndAppendDrawQuad<RenderPassDrawQuad>();
+        DCHECK_EQ(SkColorGetA(
+                      static_cast<viz::SolidColorDrawQuad*>(temp_quad)->color),
+                  solid);
+
+        auto* quad =
+            render_pass->CreateAndAppendDrawQuad<viz::RenderPassDrawQuad>();
         quad->SetNew(shared_quad_state, render_quad_rect,
-                     gfx::IntersectRects(temp_quad->visible_rect,
-                                         visible_layer_rect_in_coverage_space),
-                     GetRenderPassId(), 0, gfx::RectF(), gfx::Size(),
-                     owning_layer_to_surface_contents_scale, FiltersOrigin(),
-                     quad_rect_in_non_normalized_texture_space);
+                     quad_visible_rect_in_coverage_space, id(), 0, gfx::RectF(),
+                     gfx::Size(), owning_layer_to_surface_contents_scale,
+                     FiltersOrigin(), quad_rect_in_non_normalized_texture_space,
+                     !layer_tree_impl_->settings().enable_edge_anti_aliasing);
       } break;
-      case DrawQuad::DEBUG_BORDER:
+      case viz::DrawQuad::DEBUG_BORDER:
         NOTIMPLEMENTED();
         break;
       default:

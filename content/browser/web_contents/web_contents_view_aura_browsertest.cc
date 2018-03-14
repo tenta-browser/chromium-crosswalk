@@ -28,9 +28,9 @@
 #include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/browser_message_filter.h"
+#include "content/public/browser/overscroll_configuration.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_widget_host.h"
-#include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
@@ -48,10 +48,6 @@
 #include "ui/events/event_utils.h"
 #include "ui/events/test/event_generator.h"
 
-#if defined(OS_WIN)
-#include "base/win/windows_version.h"
-#endif
-
 namespace {
 
 // TODO(tdresser): Find a way to avoid sleeping like this. See crbug.com/405282
@@ -64,38 +60,6 @@ void GiveItSomeTime() {
   run_loop.Run();
 }
 
-// WebContentsDelegate which tracks vertical overscroll updates.
-class VerticalOverscrollTracker : public content::WebContentsDelegate {
- public:
-  VerticalOverscrollTracker() : count_(0), completed_(false) {}
-  ~VerticalOverscrollTracker() override {}
-
-  int num_overscroll_updates() const {
-    return count_;
-  }
-
-  bool overscroll_completed() const {
-    return completed_;
-  }
-
-  void Reset() {
-    count_ = 0;
-    completed_ = false;
-  }
-
- private:
-  bool CanOverscrollContent() const override { return true; }
-
-  void OverscrollUpdate(float delta_y) override { ++count_; }
-
-  void OverscrollComplete() override { completed_ = true; }
-
-  int count_;
-  bool completed_;
-
-  DISALLOW_COPY_AND_ASSIGN(VerticalOverscrollTracker);
-};
-
 }  //namespace
 
 
@@ -106,16 +70,15 @@ class ScreenshotTracker : public NavigationEntryScreenshotManager {
  public:
   explicit ScreenshotTracker(NavigationControllerImpl* controller)
       : NavigationEntryScreenshotManager(controller),
-        screenshot_taken_for_(NULL),
-        waiting_for_screenshots_(0) {
-  }
+        screenshot_taken_for_(nullptr),
+        waiting_for_screenshots_(0) {}
 
   ~ScreenshotTracker() override {}
 
   RenderViewHost* screenshot_taken_for() { return screenshot_taken_for_; }
 
   void Reset() {
-    screenshot_taken_for_ = NULL;
+    screenshot_taken_for_ = nullptr;
     screenshot_set_.clear();
   }
 
@@ -192,9 +155,10 @@ class InputEventMessageFilterWaitsForAcks : public BrowserMessageFilter {
       InputHostMsg_HandleInputEvent_ACK::Read(&message, &params);
       blink::WebInputEvent::Type type = std::get<0>(params).type;
       InputEventAckState ack = std::get<0>(params).state;
-      BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-          base::Bind(&InputEventMessageFilterWaitsForAcks::ReceivedEventAck,
-                     this, type, ack));
+      BrowserThread::PostTask(
+          BrowserThread::UI, FROM_HERE,
+          base::BindOnce(&InputEventMessageFilterWaitsForAcks::ReceivedEventAck,
+                         this, type, ack));
     }
     return false;
   }
@@ -208,9 +172,7 @@ class InputEventMessageFilterWaitsForAcks : public BrowserMessageFilter {
 
 class WebContentsViewAuraTest : public ContentBrowserTest {
  public:
-  WebContentsViewAuraTest()
-      : screenshot_manager_(NULL) {
-  }
+  WebContentsViewAuraTest() : screenshot_manager_(nullptr) {}
 
   // Executes the javascript synchronously and makes sure the returned value is
   // freed properly.
@@ -429,10 +391,111 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
   TestOverscrollNavigation(true);
 }
 
+namespace {
+// This fails the test if it sees any mouse move events.
+class SpuriousMouseMoveEventObserver
+    : public RenderWidgetHost::InputEventObserver {
+ public:
+  explicit SpuriousMouseMoveEventObserver(RenderWidgetHost* host)
+      : host_(host) {
+    host_->AddInputEventObserver(this);
+  }
+
+  ~SpuriousMouseMoveEventObserver() override {
+    host_->RemoveInputEventObserver(this);
+  }
+
+  void OnInputEvent(const blink::WebInputEvent& event) override {
+    EXPECT_NE(blink::WebInputEvent::kMouseMove, event.GetType())
+        << "Unexpected mouse move event.";
+  }
+
+ private:
+  RenderWidgetHost* host_;
+
+  DISALLOW_COPY_AND_ASSIGN(SpuriousMouseMoveEventObserver);
+};
+}  // namespace
+
+// Start an overscroll gesture and then check if the gesture is interrupted by
+// a spurious mouse event. Overscrolling may trigger mouse-move events, but
+// these should all be marked as synthesized and get dropped while the
+// overscroll gesture is in progress.
+// See crbug.com/731914
+IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
+                       OverscrollNotInterruptedBySpuriousMouseEvents) {
+  ASSERT_NO_FATAL_FAILURE(StartTestWithPage("/overscroll_navigation.html"));
+  WebContentsImpl* web_contents =
+      static_cast<WebContentsImpl*>(shell()->web_contents());
+  NavigationController& controller = web_contents->GetController();
+  RenderFrameHost* main_frame = web_contents->GetMainFrame();
+
+  EXPECT_FALSE(controller.CanGoBack());
+  EXPECT_FALSE(controller.CanGoForward());
+  int index = -1;
+  std::unique_ptr<base::Value> value =
+      content::ExecuteScriptAndGetValue(main_frame, "get_current()");
+  ASSERT_TRUE(value->GetAsInteger(&index));
+  EXPECT_EQ(0, index);
+
+  ExecuteSyncJSFunction(main_frame, "navigate_next()");
+  value = content::ExecuteScriptAndGetValue(main_frame, "get_current()");
+  ASSERT_TRUE(value->GetAsInteger(&index));
+  EXPECT_EQ(1, index);
+  EXPECT_TRUE(controller.CanGoBack());
+  EXPECT_FALSE(controller.CanGoForward());
+
+  // We start an overscroll gesture, but pause mid-gesture.
+
+  // Fail the test if the following gesture produces mouse-moves that don't get
+  // dropped.
+  SpuriousMouseMoveEventObserver mouse_observer(GetRenderWidgetHost());
+
+  blink::WebGestureEvent gesture_scroll_begin(
+      blink::WebGestureEvent::kGestureScrollBegin,
+      blink::WebInputEvent::kNoModifiers,
+      blink::WebInputEvent::kTimeStampForTesting);
+  gesture_scroll_begin.source_device = blink::kWebGestureDeviceTouchscreen;
+  gesture_scroll_begin.data.scroll_begin.delta_hint_units =
+      blink::WebGestureEvent::ScrollUnits::kPrecisePixels;
+  gesture_scroll_begin.data.scroll_begin.delta_x_hint = 0.f;
+  gesture_scroll_begin.data.scroll_begin.delta_y_hint = 0.f;
+  GetRenderWidgetHost()->ForwardGestureEvent(gesture_scroll_begin);
+
+  blink::WebGestureEvent gesture_scroll_update(
+      blink::WebGestureEvent::kGestureScrollUpdate,
+      blink::WebInputEvent::kNoModifiers,
+      blink::WebInputEvent::kTimeStampForTesting);
+  gesture_scroll_update.source_device = blink::kWebGestureDeviceTouchscreen;
+  gesture_scroll_update.data.scroll_update.delta_units =
+      blink::WebGestureEvent::ScrollUnits::kPrecisePixels;
+  gesture_scroll_update.data.scroll_update.delta_y = 0.f;
+  float start_threshold =
+      GetOverscrollConfig(OverscrollConfig::THRESHOLD_START_TOUCHSCREEN);
+  gesture_scroll_update.data.scroll_update.delta_x = start_threshold + 1;
+  GetRenderWidgetHost()->ForwardGestureEvent(gesture_scroll_update);
+
+  // Wait for the overscroll gesture to start and then allow some time for the
+  // spurious mouse event. Since we're testing that an event does not happen,
+  // we just have a timeout. This could potentially result in the event
+  // happening after the timeout, which would cause the test to succeed
+  // incorrectly. That said, the event we're worried about happens almost
+  // instantly after the start of the overscroll gesture.
+  base::RunLoop run_loop;
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
+  run_loop.Run();
+
+  // Check that the overscroll gesture was not reset.
+  OverscrollController* overscroll_controller =
+      static_cast<RenderWidgetHostViewAura*>(GetRenderWidgetHostView())
+          ->overscroll_controller();
+  EXPECT_NE(OVERSCROLL_NONE, overscroll_controller->overscroll_mode());
+}
+
 // Disabled because the test always fails the first time it runs on the Win Aura
 // bots, and usually but not always passes second-try (See crbug.com/179532).
-// On Linux, the test frequently times out. (See crbug.com/440043).
-#if defined(OS_WIN) || defined(OS_LINUX)
+#if defined(OS_WIN)
 #define MAYBE_QuickOverscrollDirectionChange \
         DISABLED_QuickOverscrollDirectionChange
 #else
@@ -461,6 +524,10 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
   aura::Window* content = web_contents->GetContentNativeView();
   ui::EventSink* sink = content->GetHost()->event_sink();
   gfx::Rect bounds = content->GetBoundsInRootWindow();
+
+  // Spurious mouse moves interfere with the overscroll gesture which causes
+  // this test to fail. This observer will let us know if this is happening.
+  SpuriousMouseMoveEventObserver mouse_observer(GetRenderWidgetHost());
 
   base::TimeTicks timestamp = ui::EventTimeForNow();
   ui::TouchEvent press(
@@ -533,14 +600,6 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
 #define MAYBE_OverscrollScreenshot OverscrollScreenshot
 #endif
 IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest, MAYBE_OverscrollScreenshot) {
-  // Disable the test for WinXP.  See http://crbug/294116.
-#if defined(OS_WIN)
-  if (base::win::GetVersion() < base::win::VERSION_VISTA) {
-    LOG(WARNING) << "Test disabled due to unknown bug on WinXP.";
-    return;
-  }
-#endif
-
   ASSERT_NO_FATAL_FAILURE(StartTestWithPage("/overscroll_navigation.html"));
   WebContentsImpl* web_contents =
       static_cast<WebContentsImpl*>(shell()->web_contents());
@@ -689,7 +748,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
   WaitForLoadStop(web_contents);
   screenshot_manager()->WaitUntilScreenshotIsReady();
 
-  EXPECT_EQ(NULL, screenshot_manager()->screenshot_taken_for());
+  EXPECT_EQ(nullptr, screenshot_manager()->screenshot_taken_for());
 }
 
 // Tests that navigations resulting from reloads, history.replaceState,
@@ -735,7 +794,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
                        DISABLED_ContentWindowReparent) {
   ASSERT_NO_FATAL_FAILURE(StartTestWithPage("/overscroll_navigation.html"));
 
-  std::unique_ptr<aura::Window> window(new aura::Window(NULL));
+  std::unique_ptr<aura::Window> window(new aura::Window(nullptr));
   window->Init(ui::LAYER_NOT_DRAWN);
 
   WebContentsImpl* web_contents =
@@ -860,7 +919,7 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest, HideContentOnParenHide) {
 IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest, WebContentsViewReparent) {
   ASSERT_NO_FATAL_FAILURE(StartTestWithPage("/overscroll_navigation.html"));
 
-  std::unique_ptr<aura::Window> window(new aura::Window(NULL));
+  std::unique_ptr<aura::Window> window(new aura::Window(nullptr));
   window->Init(ui::LAYER_NOT_DRAWN);
 
   RenderWidgetHostViewAura* rwhva =
@@ -971,159 +1030,6 @@ IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest,
       EXPECT_EQ(10, ExecuteScriptAndExtractInt("touchmoveCount"));
     else
       EXPECT_GT(10, ExecuteScriptAndExtractInt("touchmoveCount"));
-  }
-}
-
-// Test that vertical overscroll updates are sent only when a user overscrolls
-// vertically. Flaky on several platforms. https://crbug.com/679420
-#if defined(OS_WIN) || defined(OS_CHROMEOS)
-#define MAYBE_VerticalOverscroll DISABLED_VerticalOverscroll
-#else
-#define MAYBE_VerticalOverscroll VerticalOverscroll
-#endif
-
-IN_PROC_BROWSER_TEST_F(WebContentsViewAuraTest, MAYBE_VerticalOverscroll) {
-  base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-      switches::kScrollEndEffect, "1");
-
-  ASSERT_NO_FATAL_FAILURE(StartTestWithPage("about:blank"));
-  WebContentsImpl* web_contents =
-      static_cast<WebContentsImpl*>(shell()->web_contents());
-  VerticalOverscrollTracker tracker;
-  web_contents->SetDelegate(&tracker);
-
-  // This test triggers a large number of animations. Speed them up to ensure
-  // the test completes within its time limit.
-  ui::ScopedAnimationDurationScaleMode fast_duration_mode(
-      ui::ScopedAnimationDurationScaleMode::FAST_DURATION);
-
-  aura::Window* content = web_contents->GetContentNativeView();
-  ui::EventSink* sink = content->GetHost()->event_sink();
-  gfx::Rect bounds = content->GetBoundsInRootWindow();
-
-  // Overscroll horizontally.
-  {
-    int kXStep = bounds.width() / 10;
-    gfx::Point location(bounds.right() - kXStep, bounds.y() + 5);
-    base::TimeTicks timestamp = ui::EventTimeForNow();
-    ui::TouchEvent press(
-        ui::ET_TOUCH_PRESSED, location, timestamp,
-        ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 0));
-    ui::EventDispatchDetails details = sink->OnEventFromSource(&press);
-    ASSERT_FALSE(details.dispatcher_destroyed);
-    WaitAFrame();
-    location -= gfx::Vector2d(kXStep, 0);
-    timestamp += base::TimeDelta::FromMilliseconds(10);
-
-    while (location.x() > bounds.x() + kXStep) {
-      ui::TouchEvent inc(
-          ui::ET_TOUCH_MOVED, location, timestamp,
-          ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 0));
-      details = sink->OnEventFromSource(&inc);
-      ASSERT_FALSE(details.dispatcher_destroyed);
-      WaitAFrame();
-      location -= gfx::Vector2d(10, 0);
-      timestamp += base::TimeDelta::FromMilliseconds(10);
-    }
-
-    ui::TouchEvent release(
-        ui::ET_TOUCH_RELEASED, location, timestamp,
-        ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 0));
-    details = sink->OnEventFromSource(&release);
-    ASSERT_FALSE(details.dispatcher_destroyed);
-    WaitAFrame();
-
-    EXPECT_EQ(0, tracker.num_overscroll_updates());
-    EXPECT_FALSE(tracker.overscroll_completed());
-  }
-
-  // Overscroll vertically.
-  {
-    tracker.Reset();
-
-    int kYStep = bounds.height() / 10;
-    gfx::Point location(bounds.x() + 10, bounds.y() + kYStep);
-    base::TimeTicks timestamp = ui::EventTimeForNow();
-    ui::TouchEvent press(
-        ui::ET_TOUCH_PRESSED, location, timestamp,
-        ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 0));
-    ui::EventDispatchDetails details = sink->OnEventFromSource(&press);
-    ASSERT_FALSE(details.dispatcher_destroyed);
-    WaitAFrame();
-    location += gfx::Vector2d(0, kYStep);
-    timestamp += base::TimeDelta::FromMilliseconds(10);
-
-    while (location.y() < bounds.bottom() - kYStep) {
-      ui::TouchEvent inc(
-          ui::ET_TOUCH_MOVED, location, timestamp,
-          ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 0));
-      details = sink->OnEventFromSource(&inc);
-      ASSERT_FALSE(details.dispatcher_destroyed);
-      WaitAFrame();
-      location += gfx::Vector2d(0, kYStep);
-      timestamp += base::TimeDelta::FromMilliseconds(10);
-    }
-
-    ui::TouchEvent release(
-        ui::ET_TOUCH_RELEASED, location, timestamp,
-        ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 0));
-    details = sink->OnEventFromSource(&release);
-    ASSERT_FALSE(details.dispatcher_destroyed);
-    WaitAFrame();
-
-    EXPECT_LT(0, tracker.num_overscroll_updates());
-    EXPECT_TRUE(tracker.overscroll_completed());
-  }
-
-  // Start out overscrolling vertically, then switch directions and finish
-  // overscrolling horizontally.
-  {
-    tracker.Reset();
-
-    int kXStep = bounds.width() / 10;
-    int kYStep = bounds.height() / 10;
-    gfx::Point location = bounds.origin() + gfx::Vector2d(0, kYStep);
-    base::TimeTicks timestamp = ui::EventTimeForNow();
-    ui::TouchEvent press(
-        ui::ET_TOUCH_PRESSED, location, timestamp,
-        ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 0));
-    ui::EventDispatchDetails details = sink->OnEventFromSource(&press);
-    ASSERT_FALSE(details.dispatcher_destroyed);
-    WaitAFrame();
-    location += gfx::Vector2d(0, kYStep);
-    timestamp += base::TimeDelta::FromMilliseconds(10);
-
-    for (size_t i = 0; i < 3; ++i) {
-      ui::TouchEvent inc(
-          ui::ET_TOUCH_MOVED, location, timestamp,
-          ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 0));
-      details = sink->OnEventFromSource(&inc);
-      ASSERT_FALSE(details.dispatcher_destroyed);
-      WaitAFrame();
-      location += gfx::Vector2d(0, kYStep);
-      timestamp += base::TimeDelta::FromMilliseconds(10);
-    }
-
-    while (location.x() < bounds.right() - kXStep) {
-      ui::TouchEvent inc(
-          ui::ET_TOUCH_MOVED, location, timestamp,
-          ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 0));
-      details = sink->OnEventFromSource(&inc);
-      ASSERT_FALSE(details.dispatcher_destroyed);
-      WaitAFrame();
-      location += gfx::Vector2d(kXStep, 0);
-      timestamp += base::TimeDelta::FromMilliseconds(10);
-    }
-
-    ui::TouchEvent release(
-        ui::ET_TOUCH_RELEASED, location, timestamp,
-        ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 0));
-    details = sink->OnEventFromSource(&release);
-    ASSERT_FALSE(details.dispatcher_destroyed);
-    WaitAFrame();
-
-    EXPECT_LT(0, tracker.num_overscroll_updates());
-    EXPECT_FALSE(tracker.overscroll_completed());
   }
 }
 

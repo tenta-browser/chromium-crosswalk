@@ -26,7 +26,6 @@
 #define WebMediaStreamTrack_h
 
 #include "WebCommon.h"
-#include "WebNonCopyable.h"
 #include "WebPrivatePtr.h"
 #include "WebString.h"
 
@@ -35,6 +34,7 @@ namespace blink {
 class MediaStreamComponent;
 class MediaStreamTrack;
 class WebAudioSourceProvider;
+class WebMediaConstraints;
 class WebMediaStream;
 class WebMediaStreamSource;
 class WebString;
@@ -47,7 +47,9 @@ class WebMediaStreamTrack {
     bool HasFrameRate() const { return frame_rate >= 0.0; }
     bool HasWidth() const { return width >= 0; }
     bool HasHeight() const { return height >= 0; }
+    bool HasAspectRatio() const { return aspect_ratio >= 0.0; }
     bool HasFacingMode() const { return facing_mode != FacingMode::kNone; }
+    bool HasEchoCancellationValue() const { return echo_cancellation >= 0; }
     bool HasVideoKind() const { return !video_kind.IsNull(); }
     bool HasFocalLengthX() const { return focal_length_x >= 0.0; }
     bool HasFocalLengthY() const { return focal_length_y >= 0.0; }
@@ -58,8 +60,12 @@ class WebMediaStreamTrack {
     double frame_rate = -1.0;
     long width = -1;
     long height = -1;
+    double aspect_ratio = -1.0;
     WebString device_id;
     FacingMode facing_mode = FacingMode::kNone;
+    // |echo_cancellation| should be some form of Optional<bool> instead of int,
+    // but none is available for this file. Using -1 to indicate no value.
+    int echo_cancellation = -1;
     // Media Capture Depth Stream Extensions.
     WebString video_kind;
     double focal_length_x = -1.0;
@@ -101,11 +107,14 @@ class WebMediaStreamTrack {
   bool IsNull() const { return private_.IsNull(); }
 
   BLINK_PLATFORM_EXPORT WebString Id() const;
+  BLINK_PLATFORM_EXPORT int UniqueId() const;
 
   BLINK_PLATFORM_EXPORT WebMediaStreamSource Source() const;
   BLINK_PLATFORM_EXPORT bool IsEnabled() const;
   BLINK_PLATFORM_EXPORT bool IsMuted() const;
   BLINK_PLATFORM_EXPORT ContentHintType ContentHint() const;
+  BLINK_PLATFORM_EXPORT WebMediaConstraints Constraints() const;
+  BLINK_PLATFORM_EXPORT void SetConstraints(const WebMediaConstraints&);
 
   // Extra data associated with this WebMediaStream.
   // If non-null, the extra data pointer will be deleted when the object is
@@ -116,13 +125,13 @@ class WebMediaStreamTrack {
 
   // The lifetime of the WebAudioSourceProvider should outlive the
   // WebMediaStreamTrack, and clients are responsible for calling
-  // setSourceProvider(0) before the WebMediaStreamTrack is going away.
+  // SetSourceProvider(0) before the WebMediaStreamTrack is going away.
   BLINK_PLATFORM_EXPORT void SetSourceProvider(WebAudioSourceProvider*);
 
 #if INSIDE_BLINK
   BLINK_PLATFORM_EXPORT WebMediaStreamTrack(MediaStreamComponent*);
   BLINK_PLATFORM_EXPORT WebMediaStreamTrack& operator=(MediaStreamComponent*);
-  BLINK_PLATFORM_EXPORT operator WTF::PassRefPtr<MediaStreamComponent>() const;
+  BLINK_PLATFORM_EXPORT operator scoped_refptr<MediaStreamComponent>() const;
   BLINK_PLATFORM_EXPORT operator MediaStreamComponent*() const;
 #endif
 

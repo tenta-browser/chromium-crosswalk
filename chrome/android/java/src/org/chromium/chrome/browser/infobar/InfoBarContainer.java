@@ -4,7 +4,10 @@
 
 package org.chromium.chrome.browser.infobar;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.content.Context;
+import android.support.annotation.Nullable;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -14,17 +17,23 @@ import org.chromium.base.ObserverList;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.banners.SwipableOverlayView;
+import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager;
+import org.chromium.chrome.browser.infobar.InfoBarContainerLayout.Item;
+import org.chromium.chrome.browser.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
+import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet;
+import org.chromium.chrome.browser.widget.bottomsheet.BottomSheetObserver;
+import org.chromium.chrome.browser.widget.bottomsheet.EmptyBottomSheetObserver;
 import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.UiUtils;
 import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.ArrayList;
-
 
 /**
  * A container for all the infobars of a specific tab.
@@ -57,6 +66,12 @@ public class InfoBarContainer extends SwipableOverlayView {
          * Notifies the subscriber when an animation is completed.
          */
         void notifyAnimationFinished(int animationType);
+
+        /**
+         * Notifies the subscriber when all animations are finished.
+         * @param frontInfoBar The frontmost infobar or {@code null} if none are showing.
+         */
+        void notifyAllAnimationsFinished(Item frontInfoBar);
     }
 
     /**
@@ -84,6 +99,13 @@ public class InfoBarContainer extends SwipableOverlayView {
          * @param hasInfobars True if infobar container has infobars to show.
          */
         void onInfoBarContainerAttachedToWindow(boolean hasInfobars);
+
+        /**
+         * A notification that the shown ratio of the infobar container has changed.
+         * @param container The notifying {@link InfoBarContainer}
+         * @param shownRatio The shown ratio of the infobar container.
+         */
+        void onInfoBarContainerShownRatioChanged(InfoBarContainer container, float shownRatio);
     }
 
     /** Resets the state of the InfoBarContainer when the user navigates. */
@@ -106,8 +128,11 @@ public class InfoBarContainer extends SwipableOverlayView {
         }
 
         @Override
-        public void onReparentingFinished(Tab tab) {
+        public void onActivityAttachmentChanged(Tab tab, boolean isAttached) {
+            if (!isAttached) return;
+
             setParentView((ViewGroup) tab.getActivity().findViewById(R.id.bottom_container));
+            mTab = tab;
         }
     };
 
@@ -130,6 +155,9 @@ public class InfoBarContainer extends SwipableOverlayView {
 
     private final InfoBarContainerLayout mLayout;
 
+    /** Helper class to manage showing in-product help bubbles over specific info bars. */
+    private final IPHInfoBarSupport mIPHSupport;
+
     /** Native InfoBarContainer pointer which will be set by nativeInit(). */
     private final long mNativeInfoBarContainer;
 
@@ -148,13 +176,29 @@ public class InfoBarContainer extends SwipableOverlayView {
     /** Whether or not another View is occupying the same space as this one. */
     private boolean mIsObscured;
 
+    /** Animation used to snap the container to the nearest state if scroll direction changes. */
+    private Animator mScrollDirectionChangeAnimation;
+
+    /** Whether or not the current scroll is downward. */
+    private boolean mIsScrollingDownward;
+
+    /** Tracks the previous event's scroll offset to determine if a scroll is up or down. */
+    private int mLastScrollOffsetY;
+
+    /** A {@link BottomSheetObserver} so this view knows when to show/hide. */
+    private BottomSheetObserver mBottomSheetObserver;
+
     private final ObserverList<InfoBarContainerObserver> mObservers =
             new ObserverList<InfoBarContainerObserver>();
+
+    /** The tab that hosts this infobar container. */
+    private Tab mTab;
 
     public InfoBarContainer(Context context, final ViewGroup parentView, Tab tab) {
         super(context, null);
         tab.addObserver(mTabObserver);
         mTabView = tab.getView();
+        mTab = tab;
 
         // TODO(newt): move this workaround into the infobar views if/when they're scrollable.
         // Workaround for http://crbug.com/407149. See explanation in onMeasure() below.
@@ -162,20 +206,31 @@ public class InfoBarContainer extends SwipableOverlayView {
 
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
-        int topMarginDp = DeviceFormFactor.isTablet(context)
-                ? TOP_MARGIN_TABLET_DP : TOP_MARGIN_PHONE_DP;
+        int topMarginDp = DeviceFormFactor.isTablet() ? TOP_MARGIN_TABLET_DP : TOP_MARGIN_PHONE_DP;
         lp.topMargin = Math.round(topMarginDp * getResources().getDisplayMetrics().density);
         setLayoutParams(lp);
 
         mParentView = parentView;
-
         mLayout = new InfoBarContainerLayout(context);
         addView(mLayout, new FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT,
                 LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL));
 
+        mIPHSupport = new IPHInfoBarSupport(new IPHBubbleDelegateImpl(context));
+
+        mLayout.addAnimationListener(mIPHSupport);
+        addObserver(mIPHSupport);
+
         // Chromium's InfoBarContainer may add an InfoBar immediately during this initialization
         // call, so make sure everything in the InfoBarContainer is completely ready beforehand.
         mNativeInfoBarContainer = nativeInit();
+    }
+
+    public SnackbarManager getSnackbarManager() {
+        if (mTab != null && mTab.getActivity() != null) {
+            return mTab.getActivity().getSnackbarManager();
+        }
+
+        return null;
     }
 
     /**
@@ -192,6 +247,15 @@ public class InfoBarContainer extends SwipableOverlayView {
      */
     public void removeObserver(InfoBarContainerObserver observer) {
         mObservers.removeObserver(observer);
+    }
+
+    @Override
+    public void setTranslationY(float translationY) {
+        super.setTranslationY(translationY);
+        float shownFraction = getHeight() > 0 ? 1f - (translationY / getHeight()) : 0;
+        for (InfoBarContainerObserver observer : mObservers) {
+            observer.onInfoBarContainerShownRatioChanged(this, shownFraction);
+        }
     }
 
     @Override
@@ -212,8 +276,15 @@ public class InfoBarContainer extends SwipableOverlayView {
     }
 
     @VisibleForTesting
-    public void setAnimationListener(InfoBarAnimationListener listener) {
-        mLayout.setAnimationListener(listener);
+    public void addAnimationListener(InfoBarAnimationListener listener) {
+        mLayout.addAnimationListener(listener);
+    }
+
+    /**
+     * Removes the passed in {@link InfoBarAnimationListener} from the {@link InfoBarContainer}.
+     */
+    public void removeAnimationListener(InfoBarAnimationListener listener) {
+        mLayout.removeAnimationListener(listener);
     }
 
     /**
@@ -260,6 +331,15 @@ public class InfoBarContainer extends SwipableOverlayView {
     }
 
     /**
+     * Adds an InfoBar to the view hierarchy.
+     * @param infoBar InfoBar to add to the View hierarchy.
+     */
+    @VisibleForTesting
+    public void addInfoBarForTesting(InfoBar infoBar) {
+        addInfoBar(infoBar);
+    }
+
+    /**
      * Notifies that an infobar's View ({@link InfoBar#getView}) has changed. If the infobar is
      * visible, a view swapping animation will be run.
      */
@@ -298,6 +378,12 @@ public class InfoBarContainer extends SwipableOverlayView {
     }
 
     public void destroy() {
+        ChromeActivity activity = mTab.getActivity();
+        if (activity != null && mBottomSheetObserver != null && activity.getBottomSheet() != null) {
+            activity.getBottomSheet().removeObserver(mBottomSheetObserver);
+        }
+        mLayout.removeAnimationListener(mIPHSupport);
+        removeObserver(mIPHSupport);
         mDestroyed = true;
         if (mNativeInfoBarContainer != 0) {
             nativeDestroy(mNativeInfoBarContainer);
@@ -368,6 +454,20 @@ public class InfoBarContainer extends SwipableOverlayView {
             setAlpha(0f);
             animate().alpha(1f).setDuration(REATTACH_FADE_IN_MS);
         }
+
+        // Activity is checked first in the following block for tests.
+        ChromeActivity activity = mTab.getActivity();
+        if (activity != null && activity.getBottomSheet() != null && mBottomSheetObserver == null) {
+            mBottomSheetObserver = new EmptyBottomSheetObserver() {
+                @Override
+                public void onSheetStateChanged(int sheetState) {
+                    if (mTab.isHidden()) return;
+                    setVisibility(sheetState == BottomSheet.SHEET_STATE_FULL ? INVISIBLE : VISIBLE);
+                }
+            };
+            activity.getBottomSheet().addObserver(mBottomSheetObserver);
+        }
+
         // Notify observers that the container has attached to the window.
         for (InfoBarContainerObserver observer : mObservers) {
             observer.onInfoBarContainerAttachedToWindow(!mInfoBars.isEmpty());
@@ -391,6 +491,70 @@ public class InfoBarContainer extends SwipableOverlayView {
         }
 
         super.onLayout(changed, l, t, r, b);
+    }
+
+    @Override
+    protected boolean shouldConsumeScroll(int scrollOffsetY, int scrollExtentY) {
+        ChromeFullscreenManager manager = mTab.getActivity().getFullscreenManager();
+
+        if (!manager.areBrowserControlsAtBottom()) return true;
+
+        boolean isScrollingDownward = scrollOffsetY > mLastScrollOffsetY;
+        boolean didDirectionChange = isScrollingDownward != mIsScrollingDownward;
+        mLastScrollOffsetY = scrollOffsetY;
+        mIsScrollingDownward = isScrollingDownward;
+
+        // If the scroll changed directions, snap to a completely shown or hidden state.
+        if (didDirectionChange) {
+            runDirectionChangeAnimation(shouldSnapToVisibleState(scrollOffsetY));
+            return false;
+        }
+
+        boolean areControlsCompletelyShown = manager.getBottomControlOffset() > 0;
+        boolean areControlsCompletelyHidden = manager.areBrowserControlsOffScreen();
+
+        if ((!mIsScrollingDownward && areControlsCompletelyShown)
+                || (mIsScrollingDownward && !areControlsCompletelyHidden)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    @Override
+    protected void runUpEventAnimation(boolean visible) {
+        if (mScrollDirectionChangeAnimation != null) mScrollDirectionChangeAnimation.cancel();
+        super.runUpEventAnimation(visible);
+    }
+
+    @Override
+    protected boolean isIndependentlyAnimating() {
+        return mScrollDirectionChangeAnimation != null;
+    }
+
+    /**
+     * Run an animation when the scrolling direction of a gesture has changed (this does not mean
+     * the gesture has ended).
+     * @param visible Whether or not the view should be visible.
+     */
+    private void runDirectionChangeAnimation(boolean visible) {
+        mScrollDirectionChangeAnimation = createVerticalSnapAnimation(visible);
+        mScrollDirectionChangeAnimation.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                mScrollDirectionChangeAnimation = null;
+            }
+        });
+        mScrollDirectionChangeAnimation.start();
+    }
+
+    /**
+     * @return The infobar in front.
+     */
+    @Nullable
+    InfoBar getFrontInfoBar() {
+        if (mInfoBars.isEmpty()) return null;
+        return mInfoBars.get(0);
     }
 
     private native long nativeInit();

@@ -31,7 +31,7 @@
 #ifndef RTCSessionDescription_h
 #define RTCSessionDescription_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/Forward.h"
 #include "public/platform/WebRTCSessionDescription.h"
 
@@ -42,9 +42,7 @@ class RTCSessionDescriptionInit;
 class ScriptState;
 class ScriptValue;
 
-class RTCSessionDescription final
-    : public GarbageCollectedFinalized<RTCSessionDescription>,
-      public ScriptWrappable {
+class RTCSessionDescription final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -61,8 +59,6 @@ class RTCSessionDescription final
   ScriptValue toJSONForBinding(ScriptState*);
 
   WebRTCSessionDescription WebSessionDescription();
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   explicit RTCSessionDescription(WebRTCSessionDescription);

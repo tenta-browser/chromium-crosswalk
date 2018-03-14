@@ -22,16 +22,18 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/path_service.h"
+#include "base/sequenced_task_runner.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/task_scheduler/task_traits.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/version.h"
 #include "base/win/scoped_bstr.h"
-#include "base/win/windows_version.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/install_static/install_util.h"
@@ -63,6 +65,7 @@ enum GoogleUpdateUpgradeStatus {
 };
 
 GoogleUpdate3ClassFactory* g_google_update_factory = nullptr;
+base::SingleThreadTaskRunner* g_update_driver_task_runner = nullptr;
 
 // The time interval, in milliseconds, between polls to Google Update. This
 // value was chosen unscientificaly during an informal discussion.
@@ -122,9 +125,8 @@ void ConfigureProxyBlanket(IUnknown* interface_pointer) {
                       EOAC_DYNAMIC_CLOAKING);
 }
 
-// Creates a class factory for a COM Local Server class using either plain
-// vanilla CoGetClassObject, or using the Elevation moniker if running on
-// Vista+. |hwnd| must refer to a foregound window in order to get the UAC
+// Creates a class factory for a COM Local Server class using the Elevation
+// moniker. |hwnd| must refer to a foregound window in order to get the UAC
 // prompt to appear in the foreground if running on Vista+. It can also be NULL
 // if background UAC prompts are desired.
 HRESULT CoGetClassObjectAsAdmin(gfx::AcceleratedWidget hwnd,
@@ -136,42 +138,36 @@ HRESULT CoGetClassObjectAsAdmin(gfx::AcceleratedWidget hwnd,
 
   // For Vista+, need to instantiate the class factory via the elevation
   // moniker. This ensures that the UAC dialog shows up.
-  if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
-    wchar_t class_id_as_string[MAX_PATH] = {};
-    StringFromGUID2(class_id, class_id_as_string,
-                    arraysize(class_id_as_string));
+  wchar_t class_id_as_string[MAX_PATH] = {};
+  StringFromGUID2(class_id, class_id_as_string, arraysize(class_id_as_string));
 
-    base::string16 elevation_moniker_name = base::StringPrintf(
-        L"Elevation:Administrator!clsid:%ls", class_id_as_string);
+  base::string16 elevation_moniker_name = base::StringPrintf(
+      L"Elevation:Administrator!clsid:%ls", class_id_as_string);
 
-    BIND_OPTS3 bind_opts;
-    // An explicit memset is needed rather than relying on value initialization
-    // since BIND_OPTS3 is not an aggregate (it is a derived type).
-    memset(&bind_opts, 0, sizeof(bind_opts));
-    bind_opts.cbStruct = sizeof(bind_opts);
-    bind_opts.dwClassContext = CLSCTX_LOCAL_SERVER;
-    bind_opts.hwnd = hwnd;
+  BIND_OPTS3 bind_opts;
+  // An explicit memset is needed rather than relying on value initialization
+  // since BIND_OPTS3 is not an aggregate (it is a derived type).
+  memset(&bind_opts, 0, sizeof(bind_opts));
+  bind_opts.cbStruct = sizeof(bind_opts);
+  bind_opts.dwClassContext = CLSCTX_LOCAL_SERVER;
+  bind_opts.hwnd = hwnd;
 
-    return ::CoGetObject(elevation_moniker_name.c_str(), &bind_opts,
-                         interface_id, interface_ptr);
-  }
-
-  return ::CoGetClassObject(class_id, CLSCTX_LOCAL_SERVER, nullptr,
-                            interface_id, interface_ptr);
+  return ::CoGetObject(elevation_moniker_name.c_str(), &bind_opts, interface_id,
+                       interface_ptr);
 }
 
 HRESULT CreateGoogleUpdate3WebClass(
     bool system_level_install,
     bool install_update_if_possible,
     gfx::AcceleratedWidget elevation_window,
-    base::win::ScopedComPtr<IGoogleUpdate3Web>* google_update) {
+    Microsoft::WRL::ComPtr<IGoogleUpdate3Web>* google_update) {
   if (g_google_update_factory)
     return g_google_update_factory->Run(google_update);
 
   const CLSID& google_update_clsid = system_level_install ?
       CLSID_GoogleUpdate3WebMachineClass :
       CLSID_GoogleUpdate3WebUserClass;
-  base::win::ScopedComPtr<IClassFactory> class_factory;
+  Microsoft::WRL::ComPtr<IClassFactory> class_factory;
   HRESULT hresult = S_OK;
 
   // For a user-level install, update checks and updates can both be done by a
@@ -193,9 +189,10 @@ HRESULT CreateGoogleUpdate3WebClass(
   if (FAILED(hresult))
     return hresult;
 
-  ConfigureProxyBlanket(class_factory.get());
+  ConfigureProxyBlanket(class_factory.Get());
 
-  return class_factory->CreateInstance(nullptr, IID_PPV_ARGS(google_update));
+  return class_factory->CreateInstance(
+      nullptr, IID_PPV_ARGS(google_update->GetAddressOf()));
 }
 
 // UpdateCheckDriver -----------------------------------------------------------
@@ -204,10 +201,9 @@ HRESULT CreateGoogleUpdate3WebClass(
 // Google Update on another.
 class UpdateCheckDriver {
  public:
-  // Runs an update check on |task_runner|, invoking methods of |delegate| on
-  // the caller's thread to report progress and final results.
+  // Runs an update check, invoking methods of |delegate| on the caller's thread
+  // to report progress and final results.
   static void RunUpdateCheck(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
       const std::string& locale,
       bool install_update_if_possible,
       gfx::AcceleratedWidget elevation_window,
@@ -217,7 +213,6 @@ class UpdateCheckDriver {
   friend class base::DeleteHelper<UpdateCheckDriver>;
 
   UpdateCheckDriver(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
       const std::string& locale,
       bool install_update_if_possible,
       gfx::AcceleratedWidget elevation_window,
@@ -258,7 +253,7 @@ class UpdateCheckDriver {
   // Returns true if |current_state| and |state_value| can be obtained from the
   // ongoing update check. Otherwise, populates |hresult| with the reason they
   // could not be obtained.
-  bool GetCurrentState(base::win::ScopedComPtr<ICurrentState>* current_state,
+  bool GetCurrentState(Microsoft::WRL::ComPtr<ICurrentState>* current_state,
                        CurrentState* state_value,
                        HRESULT* hresult) const;
 
@@ -273,7 +268,7 @@ class UpdateCheckDriver {
   // chrome/installer/util/util_constants.h); otherwise, it will be -1.
   // |error_string| will be populated with a completion message if one is
   // provided by Google Update.
-  bool IsErrorState(const base::win::ScopedComPtr<ICurrentState>& current_state,
+  bool IsErrorState(const Microsoft::WRL::ComPtr<ICurrentState>& current_state,
                     CurrentState state_value,
                     GoogleUpdateErrorCode* error_code,
                     HRESULT* hresult,
@@ -287,7 +282,7 @@ class UpdateCheckDriver {
   // (in case an update is being performed). For the UPGRADE_IS_AVAILABLE case,
   // |new_version| will be populated with the available version, if provided by
   // Google Update.
-  bool IsFinalState(const base::win::ScopedComPtr<ICurrentState>& current_state,
+  bool IsFinalState(const Microsoft::WRL::ComPtr<ICurrentState>& current_state,
                     CurrentState state_value,
                     GoogleUpdateUpgradeStatus* upgrade_status,
                     base::string16* new_version) const;
@@ -299,7 +294,7 @@ class UpdateCheckDriver {
   // between 0 and 100 according to how far Google Update has progressed in the
   // download and install process.
   bool IsIntermediateState(
-      const base::win::ScopedComPtr<ICurrentState>& current_state,
+      const Microsoft::WRL::ComPtr<ICurrentState>& current_state,
       CurrentState state_value,
       base::string16* new_version,
       int* progress) const;
@@ -319,7 +314,7 @@ class UpdateCheckDriver {
 
   // The caller's task runner, on which methods of the |delegates_| will be
   // invoked.
-  scoped_refptr<base::SingleThreadTaskRunner> result_runner_;
+  scoped_refptr<base::SequencedTaskRunner> result_runner_;
 
   // The UI locale.
   std::string locale_;
@@ -341,13 +336,13 @@ class UpdateCheckDriver {
   bool system_level_install_;
 
   // The on-demand updater that is doing the work.
-  base::win::ScopedComPtr<IGoogleUpdate3Web> google_update_;
+  Microsoft::WRL::ComPtr<IGoogleUpdate3Web> google_update_;
 
   // An app bundle containing the application being updated.
-  base::win::ScopedComPtr<IAppBundleWeb> app_bundle_;
+  Microsoft::WRL::ComPtr<IAppBundleWeb> app_bundle_;
 
   // The application being updated (Chrome, Chrome Binaries, or Chrome SxS).
-  base::win::ScopedComPtr<IAppWeb> app_;
+  Microsoft::WRL::ComPtr<IAppWeb> app_;
 
   // The progress value reported most recently to the caller.
   int last_reported_progress_;
@@ -368,7 +363,6 @@ UpdateCheckDriver* UpdateCheckDriver::driver_ = nullptr;
 
 // static
 void UpdateCheckDriver::RunUpdateCheck(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     const std::string& locale,
     bool install_update_if_possible,
     gfx::AcceleratedWidget elevation_window,
@@ -378,27 +372,28 @@ void UpdateCheckDriver::RunUpdateCheck(
   if (!driver_) {
     // The driver is owned by itself, and will self-destruct when its work is
     // done.
-    driver_ =
-        new UpdateCheckDriver(task_runner, locale, install_update_if_possible,
-                              elevation_window, delegate);
-    task_runner->PostTask(FROM_HERE,
-                          base::Bind(&UpdateCheckDriver::BeginUpdateCheck,
-                                     base::Unretained(driver_)));
+    driver_ = new UpdateCheckDriver(locale, install_update_if_possible,
+                                    elevation_window, delegate);
+    driver_->task_runner_->PostTask(
+        FROM_HERE, base::Bind(&UpdateCheckDriver::BeginUpdateCheck,
+                              base::Unretained(driver_)));
   } else {
-    DCHECK_EQ(driver_->task_runner_, task_runner);
     driver_->AddDelegate(delegate);
   }
 }
 
 // Runs on the caller's thread.
 UpdateCheckDriver::UpdateCheckDriver(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     const std::string& locale,
     bool install_update_if_possible,
     gfx::AcceleratedWidget elevation_window,
     const base::WeakPtr<UpdateCheckDelegate>& delegate)
-    : task_runner_(std::move(task_runner)),
-      result_runner_(base::ThreadTaskRunnerHandle::Get()),
+    : task_runner_(
+          g_update_driver_task_runner
+              ? g_update_driver_task_runner
+              : base::CreateCOMSTATaskRunnerWithTraits(
+                    {base::MayBlock(), base::TaskPriority::USER_VISIBLE})),
+      result_runner_(base::SequencedTaskRunnerHandle::Get()),
       locale_(locale),
       install_update_if_possible_(install_update_if_possible),
       elevation_window_(elevation_window),
@@ -412,7 +407,7 @@ UpdateCheckDriver::UpdateCheckDriver(
       installer_exit_code_(-1) {}
 
 UpdateCheckDriver::~UpdateCheckDriver() {
-  DCHECK(result_runner_->BelongsToCurrentThread());
+  DCHECK(result_runner_->RunsTasksInCurrentSequence());
   // If there is an error, then error_code must not be blank, and vice versa.
   DCHECK_NE(status_ == UPGRADE_ERROR, error_code_ == GOOGLE_UPDATE_NO_ERROR);
   UMA_HISTOGRAM_ENUMERATION("GoogleUpdate.UpgradeResult", status_,
@@ -447,14 +442,14 @@ UpdateCheckDriver::~UpdateCheckDriver() {
 
 void UpdateCheckDriver::AddDelegate(
     const base::WeakPtr<UpdateCheckDelegate>& delegate) {
-  DCHECK(result_runner_->BelongsToCurrentThread());
+  DCHECK(result_runner_->RunsTasksInCurrentSequence());
   delegates_.push_back(delegate);
 }
 
 void UpdateCheckDriver::NotifyUpgradeProgress(
     int progress,
     const base::string16& new_version) {
-  DCHECK(result_runner_->BelongsToCurrentThread());
+  DCHECK(result_runner_->RunsTasksInCurrentSequence());
 
   for (const auto& delegate : delegates_) {
     if (delegate)
@@ -515,7 +510,7 @@ HRESULT UpdateCheckDriver::BeginUpdateCheckInternal(
       return hresult;
     }
 
-    ConfigureProxyBlanket(google_update_.get());
+    ConfigureProxyBlanket(google_update_.Get());
   }
 
   // The class was created, so all subsequent errors are reported as:
@@ -523,17 +518,17 @@ HRESULT UpdateCheckDriver::BeginUpdateCheckInternal(
 
   // Create an app bundle.
   if (!app_bundle_) {
-    base::win::ScopedComPtr<IAppBundleWeb> app_bundle;
-    base::win::ScopedComPtr<IDispatch> dispatch;
-    hresult = google_update_->createAppBundleWeb(dispatch.Receive());
+    Microsoft::WRL::ComPtr<IAppBundleWeb> app_bundle;
+    Microsoft::WRL::ComPtr<IDispatch> dispatch;
+    hresult = google_update_->createAppBundleWeb(dispatch.GetAddressOf());
     if (FAILED(hresult))
       return hresult;
-    hresult = dispatch.QueryInterface(app_bundle.Receive());
+    hresult = dispatch.CopyTo(app_bundle.GetAddressOf());
     if (FAILED(hresult))
       return hresult;
     dispatch.Reset();
 
-    ConfigureProxyBlanket(app_bundle.get());
+    ConfigureProxyBlanket(app_bundle.Get());
 
     if (!locale_.empty()) {
       // Ignore the result of this since, while setting the display language is
@@ -552,7 +547,7 @@ HRESULT UpdateCheckDriver::BeginUpdateCheckInternal(
       app_bundle->put_parentHWND(
           reinterpret_cast<ULONG_PTR>(elevation_window_));
     }
-    app_bundle_.swap(app_bundle);
+    app_bundle_.Swap(app_bundle);
   }
 
   // Get a reference to the Chrome app in the bundle.
@@ -561,7 +556,7 @@ HRESULT UpdateCheckDriver::BeginUpdateCheckInternal(
     DCHECK(app_guid);
     DCHECK(*app_guid);
 
-    base::win::ScopedComPtr<IDispatch> dispatch;
+    Microsoft::WRL::ComPtr<IDispatch> dispatch;
     // It is common for this call to fail with APP_USING_EXTERNAL_UPDATER if
     // an auto update is in progress.
     hresult = app_bundle_->createInstalledApp(base::win::ScopedBstr(app_guid));
@@ -569,38 +564,38 @@ HRESULT UpdateCheckDriver::BeginUpdateCheckInternal(
       return hresult;
     // Move the IAppBundleWeb reference into a local now so that failures from
     // this point onward result in it being released.
-    base::win::ScopedComPtr<IAppBundleWeb> app_bundle;
-    app_bundle.swap(app_bundle_);
-    hresult = app_bundle->get_appWeb(0, dispatch.Receive());
+    Microsoft::WRL::ComPtr<IAppBundleWeb> app_bundle;
+    app_bundle.Swap(app_bundle_);
+    hresult = app_bundle->get_appWeb(0, dispatch.GetAddressOf());
     if (FAILED(hresult))
       return hresult;
-    base::win::ScopedComPtr<IAppWeb> app;
-    hresult = dispatch.QueryInterface(app.Receive());
+    Microsoft::WRL::ComPtr<IAppWeb> app;
+    hresult = dispatch.CopyTo(app.GetAddressOf());
     if (FAILED(hresult))
       return hresult;
-    ConfigureProxyBlanket(app.get());
+    ConfigureProxyBlanket(app.Get());
     hresult = app_bundle->checkForUpdate();
     if (FAILED(hresult))
       return hresult;
-    app_bundle_.swap(app_bundle);
-    app_.swap(app);
+    app_bundle_.Swap(app_bundle);
+    app_.Swap(app);
   }
 
   return hresult;
 }
 
 bool UpdateCheckDriver::GetCurrentState(
-    base::win::ScopedComPtr<ICurrentState>* current_state,
+    Microsoft::WRL::ComPtr<ICurrentState>* current_state,
     CurrentState* state_value,
     HRESULT* hresult) const {
-  base::win::ScopedComPtr<IDispatch> dispatch;
-  *hresult = app_->get_currentState(dispatch.Receive());
+  Microsoft::WRL::ComPtr<IDispatch> dispatch;
+  *hresult = app_->get_currentState(dispatch.GetAddressOf());
   if (FAILED(*hresult))
     return false;
-  *hresult = dispatch.QueryInterface(current_state->Receive());
+  *hresult = dispatch.CopyTo(current_state->GetAddressOf());
   if (FAILED(*hresult))
     return false;
-  ConfigureProxyBlanket(current_state->get());
+  ConfigureProxyBlanket(current_state->Get());
   LONG value = 0;
   *hresult = (*current_state)->get_stateValue(&value);
   if (FAILED(*hresult))
@@ -610,7 +605,7 @@ bool UpdateCheckDriver::GetCurrentState(
 }
 
 bool UpdateCheckDriver::IsErrorState(
-    const base::win::ScopedComPtr<ICurrentState>& current_state,
+    const Microsoft::WRL::ComPtr<ICurrentState>& current_state,
     CurrentState state_value,
     GoogleUpdateErrorCode* error_code,
     HRESULT* hresult,
@@ -668,7 +663,7 @@ bool UpdateCheckDriver::IsErrorState(
 }
 
 bool UpdateCheckDriver::IsFinalState(
-    const base::win::ScopedComPtr<ICurrentState>& current_state,
+    const Microsoft::WRL::ComPtr<ICurrentState>& current_state,
     CurrentState state_value,
     GoogleUpdateUpgradeStatus* upgrade_status,
     base::string16* new_version) const {
@@ -692,7 +687,7 @@ bool UpdateCheckDriver::IsFinalState(
 }
 
 bool UpdateCheckDriver::IsIntermediateState(
-    const base::win::ScopedComPtr<ICurrentState>& current_state,
+    const Microsoft::WRL::ComPtr<ICurrentState>& current_state,
     CurrentState state_value,
     base::string16* new_version,
     int* progress) const {
@@ -767,7 +762,7 @@ bool UpdateCheckDriver::IsIntermediateState(
 }
 
 void UpdateCheckDriver::PollGoogleUpdate() {
-  base::win::ScopedComPtr<ICurrentState> state;
+  Microsoft::WRL::ComPtr<ICurrentState> state;
   CurrentState state_value = STATE_INIT;
   HRESULT hresult = S_OK;
   GoogleUpdateErrorCode error_code = GOOGLE_UPDATE_NO_ERROR;
@@ -866,13 +861,11 @@ void UpdateCheckDriver::OnUpgradeError(GoogleUpdateErrorCode error_code,
 // Globals ---------------------------------------------------------------------
 
 void BeginUpdateCheck(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     const std::string& locale,
     bool install_update_if_possible,
     gfx::AcceleratedWidget elevation_window,
     const base::WeakPtr<UpdateCheckDelegate>& delegate) {
-  UpdateCheckDriver::RunUpdateCheck(std::move(task_runner), locale,
-                                    install_update_if_possible,
+  UpdateCheckDriver::RunUpdateCheck(locale, install_update_if_possible,
                                     elevation_window, delegate);
 }
 
@@ -889,4 +882,11 @@ void SetGoogleUpdateFactoryForTesting(
     g_google_update_factory =
         new GoogleUpdate3ClassFactory(google_update_factory);
   }
+}
+
+// TODO(calamity): Remove once a MockTimer is implemented in
+// ScopedTaskEnvironment. See https://crbug.com/708584.
+void SetUpdateDriverTaskRunnerForTesting(
+    base::SingleThreadTaskRunner* task_runner) {
+  g_update_driver_task_runner = task_runner;
 }

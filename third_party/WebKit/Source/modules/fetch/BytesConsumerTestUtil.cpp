@@ -5,20 +5,22 @@
 #include "modules/fetch/BytesConsumerTestUtil.h"
 
 #include "core/dom/ExecutionContext.h"
-#include "core/dom/TaskRunnerHelper.h"
 #include "platform/WebTaskRunner.h"
 #include "platform/testing/UnitTestHelpers.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/Functional.h"
+#include "public/platform/TaskType.h"
 
 namespace blink {
 
+namespace {
 using Result = BytesConsumer::Result;
 using ::testing::_;
 using ::testing::ByMove;
 using ::testing::DoAll;
 using ::testing::Return;
 using ::testing::SetArgPointee;
+}  // namespace
 
 BytesConsumerTestUtil::MockBytesConsumer::MockBytesConsumer() {
   ON_CALL(*this, BeginRead(_, _))
@@ -56,7 +58,7 @@ Result BytesConsumerTestUtil::ReplayingBytesConsumer::BeginRead(
   switch (command.GetName()) {
     case Command::kData:
       DCHECK_LE(offset_, command.Body().size());
-      *buffer = command.Body().Data() + offset_;
+      *buffer = command.Body().data() + offset_;
       *available = command.Body().size() - offset_;
       return Result::kOk;
     case Command::kDone:
@@ -64,15 +66,15 @@ Result BytesConsumerTestUtil::ReplayingBytesConsumer::BeginRead(
       Close();
       return Result::kDone;
     case Command::kError: {
-      Error e(String::FromUTF8(command.Body().Data(), command.Body().size()));
+      Error e(String::FromUTF8(command.Body().data(), command.Body().size()));
       commands_.pop_front();
-      GetError(std::move(e));
+      MakeErrored(std::move(e));
       return Result::kError;
     }
     case Command::kWait:
       commands_.pop_front();
       state_ = InternalState::kWaiting;
-      TaskRunnerHelper::Get(TaskType::kNetworking, execution_context_)
+      execution_context_->GetTaskRunner(TaskType::kNetworking)
           ->PostTask(BLINK_FROM_HERE,
                      WTF::Bind(&ReplayingBytesConsumer::NotifyAsReadable,
                                WrapPersistent(this), notification_token_));
@@ -137,21 +139,23 @@ void BytesConsumerTestUtil::ReplayingBytesConsumer::NotifyAsReadable(
 }
 
 void BytesConsumerTestUtil::ReplayingBytesConsumer::Close() {
-  commands_.Clear();
+  commands_.clear();
   offset_ = 0;
   state_ = InternalState::kClosed;
   ++notification_token_;
 }
 
-void BytesConsumerTestUtil::ReplayingBytesConsumer::GetError(const Error& e) {
-  commands_.Clear();
+void BytesConsumerTestUtil::ReplayingBytesConsumer::MakeErrored(
+    const Error& e) {
+  commands_.clear();
   offset_ = 0;
   error_ = e;
   state_ = InternalState::kErrored;
   ++notification_token_;
 }
 
-DEFINE_TRACE(BytesConsumerTestUtil::ReplayingBytesConsumer) {
+void BytesConsumerTestUtil::ReplayingBytesConsumer::Trace(
+    blink::Visitor* visitor) {
   visitor->Trace(execution_context_);
   visitor->Trace(client_);
   BytesConsumer::Trace(visitor);
@@ -193,6 +197,10 @@ BytesConsumerTestUtil::TwoPhaseReader::Run() {
     testing::RunPendingTasks();
   testing::RunPendingTasks();
   return std::make_pair(result_, std::move(data_));
+}
+
+String BytesConsumerTestUtil::CharVectorToString(const Vector<char>& v) {
+  return String(v.data(), v.size());
 }
 
 }  // namespace blink

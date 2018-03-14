@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 #include "base/files/file.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_file_system_operation_runner_util.h"
 #include "content/public/browser/browser_thread.h"
@@ -29,7 +29,7 @@ int ReadFile(base::File* file,
 
 // Seeks the file, returns 0 on success, or errno on an error.
 int SeekFile(base::File* file, size_t offset) {
-  base::ThreadRestrictions::AssertIOAllowed();
+  base::AssertBlockingAllowed();
   // lseek() instead of |file|'s method for errno.
   off_t result = lseek(file->GetPlatformFile(), offset, SEEK_SET);
   return result < 0 ? errno : 0;
@@ -41,17 +41,16 @@ ArcContentFileSystemFileStreamReader::ArcContentFileSystemFileStreamReader(
     const GURL& arc_url,
     int64_t offset)
     : arc_url_(arc_url), offset_(offset), weak_ptr_factory_(this) {
-  auto* blocking_pool = content::BrowserThread::GetBlockingPool();
-  task_runner_ = blocking_pool->GetSequencedTaskRunnerWithShutdownBehavior(
-      blocking_pool->GetSequenceToken(),
-      base::SequencedWorkerPool::SKIP_ON_SHUTDOWN);
+  task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
+      {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
 }
 
 ArcContentFileSystemFileStreamReader::~ArcContentFileSystemFileStreamReader() {
   // Use the task runner to destruct |file_| after the completion of all
   // in-flight operations.
   task_runner_->PostTask(
-      FROM_HERE, base::Bind(&base::DeletePointer<base::File>, file_.release()));
+      FROM_HERE,
+      base::BindOnce(&base::DeletePointer<base::File>, file_.release()));
 }
 
 int ArcContentFileSystemFileStreamReader::Read(
@@ -66,7 +65,7 @@ int ArcContentFileSystemFileStreamReader::Read(
   file_system_operation_runner_util::OpenFileToReadOnIOThread(
       arc_url_,
       base::Bind(&ArcContentFileSystemFileStreamReader::OnOpenFile,
-                 weak_ptr_factory_.GetWeakPtr(), make_scoped_refptr(buffer),
+                 weak_ptr_factory_.GetWeakPtr(), base::WrapRefCounted(buffer),
                  buffer_length, callback));
   return net::ERR_IO_PENDING;
 }
@@ -89,7 +88,7 @@ void ArcContentFileSystemFileStreamReader::ReadInternal(
   DCHECK(file_->IsValid());
   base::PostTaskAndReplyWithResult(
       task_runner_.get(), FROM_HERE,
-      base::Bind(&ReadFile, file_.get(), make_scoped_refptr(buffer),
+      base::Bind(&ReadFile, file_.get(), base::WrapRefCounted(buffer),
                  buffer_length),
       base::Bind(&ArcContentFileSystemFileStreamReader::OnRead,
                  weak_ptr_factory_.GetWeakPtr(), callback));
@@ -154,7 +153,7 @@ void ArcContentFileSystemFileStreamReader::OnSeekFile(
       // Pipe is not seekable. Just consume the contents.
       const size_t kTemporaryBufferSize = 1024 * 1024;
       auto temporary_buffer =
-          make_scoped_refptr(new net::IOBufferWithSize(kTemporaryBufferSize));
+          base::MakeRefCounted<net::IOBufferWithSize>(kTemporaryBufferSize);
       ConsumeFileContents(buf, buffer_length, callback, temporary_buffer,
                           offset_);
       break;

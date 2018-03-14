@@ -4,14 +4,15 @@
 
 #include "modules/time_zone_monitor/TimeZoneMonitorClient.h"
 
-#include "bindings/core/v8/V8Binding.h"
-#include "bindings/core/v8/V8PerIsolateData.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/workers/WorkerBackingThread.h"
 #include "core/workers/WorkerOrWorkletGlobalScope.h"
 #include "core/workers/WorkerThread.h"
 #include "platform/CrossThreadFunctional.h"
+#include "platform/bindings/V8PerIsolateData.h"
 #include "public/platform/Platform.h"
+#include "public/platform/TaskType.h"
 #include "services/device/public/interfaces/constants.mojom-blink.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "third_party/icu/source/i18n/unicode/timezone.h"
@@ -41,7 +42,9 @@ void TimeZoneMonitorClient::Init() {
   device::mojom::blink::TimeZoneMonitorPtr monitor;
   Platform::Current()->GetConnector()->BindInterface(
       device::mojom::blink::kServiceName, mojo::MakeRequest(&monitor));
-  monitor->AddClient(instance.binding_.CreateInterfacePtrAndBind());
+  device::mojom::blink::TimeZoneMonitorClientPtr client;
+  instance.binding_.Bind(mojo::MakeRequest(&client));
+  monitor->AddClient(std::move(client));
 }
 
 TimeZoneMonitorClient::TimeZoneMonitorClient() : binding_(this) {
@@ -54,8 +57,9 @@ void TimeZoneMonitorClient::OnTimeZoneChange(const String& time_zone_info) {
   DCHECK(IsMainThread());
 
   if (!time_zone_info.IsEmpty()) {
+    DCHECK(time_zone_info.ContainsOnlyASCII());
     icu::TimeZone* zone = icu::TimeZone::createTimeZone(
-        icu::UnicodeString::fromUTF8(time_zone_info.Utf8().Data()));
+        icu::UnicodeString(time_zone_info.Ascii().data(), -1, US_INV));
     icu::TimeZone::adoptDefault(zone);
     VLOG(1) << "ICU default timezone is set to " << time_zone_info;
   }
@@ -70,9 +74,10 @@ void TimeZoneMonitorClient::OnTimeZoneChange(const String& time_zone_info) {
     // among multiple WorkerThreads.
     if (posted.Contains(&thread->GetWorkerBackingThread()))
       continue;
-    thread->PostTask(BLINK_FROM_HERE,
-                     CrossThreadBind(&NotifyTimezoneChangeOnWorkerThread,
-                                     WTF::CrossThreadUnretained(thread)));
+    thread->GetTaskRunner(TaskType::kUnspecedTimer)
+        ->PostTask(BLINK_FROM_HERE,
+                   CrossThreadBind(&NotifyTimezoneChangeOnWorkerThread,
+                                   WTF::CrossThreadUnretained(thread)));
     posted.insert(&thread->GetWorkerBackingThread());
   }
 }

@@ -27,53 +27,46 @@
 
 #include "core/html/canvas/CanvasContextCreationAttributes.h"
 #include "core/html/canvas/CanvasImageSource.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "public/platform/Platform.h"
 
 namespace blink {
 
 CanvasRenderingContext::CanvasRenderingContext(
-    HTMLCanvasElement* canvas,
-    OffscreenCanvas* offscreen_canvas,
+    CanvasRenderingContextHost* host,
     const CanvasContextCreationAttributes& attrs)
-    : canvas_(canvas),
-      offscreen_canvas_(offscreen_canvas),
-      color_space_(kLegacyCanvasColorSpace),
-      pixel_format_(kRGBA8CanvasPixelFormat),
-      linear_pixel_math_(false),
+    : host_(host),
+      color_params_(kSRGBCanvasColorSpace, kRGBA8CanvasPixelFormat, kNonOpaque),
       creation_attributes_(attrs) {
-  if (RuntimeEnabledFeatures::experimentalCanvasFeaturesEnabled() &&
-      RuntimeEnabledFeatures::colorCorrectRenderingEnabled()) {
-    // Set the default color space to SRGB and continue
-    color_space_ = kSRGBCanvasColorSpace;
+  // Supported color spaces: srgb-8888, srgb-f16, p3-f16, rec2020-f16. For wide
+  // gamut color spaces, user must explicitly request for float16 storage.
+  // Otherwise, we fall back to srgb-8888. Invalid requests fall back to
+  // srgb-8888 too.
+  if (creation_attributes_.pixelFormat() == kF16CanvasPixelFormatName) {
+    color_params_.SetCanvasPixelFormat(kF16CanvasPixelFormat);
     if (creation_attributes_.colorSpace() == kRec2020CanvasColorSpaceName)
-      color_space_ = kRec2020CanvasColorSpace;
+      color_params_.SetCanvasColorSpace(kRec2020CanvasColorSpace);
     else if (creation_attributes_.colorSpace() == kP3CanvasColorSpaceName)
-      color_space_ = kP3CanvasColorSpace;
-
-    // For now, we only support RGBA8 (for SRGB) and F16 (for all). Everything
-    // else falls back to SRGB + RGBA8.
-    if (creation_attributes_.pixelFormat() == kF16CanvasPixelFormatName) {
-      pixel_format_ = kF16CanvasPixelFormat;
-      linear_pixel_math_ = true;
-    } else {
-      color_space_ = kSRGBCanvasColorSpace;
-      pixel_format_ = kRGBA8CanvasPixelFormat;
-    }
+      color_params_.SetCanvasColorSpace(kP3CanvasColorSpace);
   }
 
-  // Make m_creationAttributes reflect the effective colorSpace, pixelFormat and
-  // linearPixelMath rather than the requested one.
+  if (!creation_attributes_.alpha()) {
+    color_params_.SetOpacityMode(kOpaque);
+  }
+
+  if (!RuntimeEnabledFeatures::LowLatencyCanvasEnabled() &&
+      creation_attributes_.hasLowLatency())
+    creation_attributes_.setLowLatency(false);
+
+  // Make m_creationAttributes reflect the effective colorSpace and pixelFormat
+  // rather than the requested one.
   creation_attributes_.setColorSpace(ColorSpaceAsString());
   creation_attributes_.setPixelFormat(PixelFormatAsString());
-  creation_attributes_.setLinearPixelMath(LinearPixelMath());
 }
 
 WTF::String CanvasRenderingContext::ColorSpaceAsString() const {
-  switch (color_space_) {
-    case kLegacyCanvasColorSpace:
-      return kLegacyCanvasColorSpaceName;
+  switch (color_params_.ColorSpace()) {
     case kSRGBCanvasColorSpace:
       return kSRGBCanvasColorSpaceName;
     case kRec2020CanvasColorSpace:
@@ -86,7 +79,7 @@ WTF::String CanvasRenderingContext::ColorSpaceAsString() const {
 }
 
 WTF::String CanvasRenderingContext::PixelFormatAsString() const {
-  switch (pixel_format_) {
+  switch (color_params_.PixelFormat()) {
     case kRGBA8CanvasPixelFormat:
       return kRGBA8CanvasPixelFormatName;
     case kRGB10A2CanvasPixelFormat:
@@ -100,48 +93,6 @@ WTF::String CanvasRenderingContext::PixelFormatAsString() const {
   return "";
 }
 
-gfx::ColorSpace CanvasRenderingContext::GfxColorSpace() const {
-  switch (color_space_) {
-    case kLegacyCanvasColorSpace:
-      return gfx::ColorSpace::CreateSRGB();
-    case kSRGBCanvasColorSpace:
-      if (pixel_format_ == kF16CanvasPixelFormat)
-        return gfx::ColorSpace::CreateSCRGBLinear();
-      return gfx::ColorSpace::CreateSRGB();
-    case kRec2020CanvasColorSpace:
-      return gfx::ColorSpace(gfx::ColorSpace::PrimaryID::BT2020,
-                             gfx::ColorSpace::TransferID::IEC61966_2_1);
-    case kP3CanvasColorSpace:
-      return gfx::ColorSpace(gfx::ColorSpace::PrimaryID::SMPTEST432_1,
-                             gfx::ColorSpace::TransferID::IEC61966_2_1);
-  }
-  NOTREACHED();
-  return gfx::ColorSpace();
-}
-
-sk_sp<SkColorSpace> CanvasRenderingContext::SkSurfaceColorSpace() const {
-  if (SkSurfacesUseColorSpace())
-    return GfxColorSpace().ToSkColorSpace();
-  return nullptr;
-}
-
-bool CanvasRenderingContext::SkSurfacesUseColorSpace() const {
-  return color_space_ != kLegacyCanvasColorSpace;
-}
-
-ColorBehavior CanvasRenderingContext::ColorBehaviorForMediaDrawnToCanvas()
-    const {
-  if (RuntimeEnabledFeatures::colorCorrectRenderingEnabled())
-    return ColorBehavior::TransformTo(GfxColorSpace());
-  return ColorBehavior::TransformToGlobalTarget();
-}
-
-SkColorType CanvasRenderingContext::ColorType() const {
-  if (pixel_format_ == kF16CanvasPixelFormat)
-    return kRGBA_F16_SkColorType;
-  return kN32_SkColorType;
-}
-
 void CanvasRenderingContext::Dispose() {
   if (finalize_frame_scheduled_) {
     Platform::Current()->CurrentThread()->RemoveTaskObserver(this);
@@ -153,23 +104,19 @@ void CanvasRenderingContext::Dispose() {
   // the other in order to break the circular reference.  This is to avoid
   // an error when CanvasRenderingContext::didProcessTask() is invoked
   // after the HTMLCanvasElement is destroyed.
-  if (canvas()) {
-    canvas()->DetachContext();
-    canvas_ = nullptr;
-  }
-  if (offscreenCanvas()) {
-    offscreenCanvas()->DetachContext();
-    offscreen_canvas_ = nullptr;
+  if (Host()) {
+    Host()->DetachContext();
+    host_ = nullptr;
   }
 }
 
 void CanvasRenderingContext::DidDraw(const SkIRect& dirty_rect) {
-  canvas()->DidDraw(SkRect::Make(dirty_rect));
+  Host()->DidDraw(SkRect::Make(dirty_rect));
   NeedsFinalizeFrame();
 }
 
 void CanvasRenderingContext::DidDraw() {
-  canvas()->DidDraw();
+  Host()->DidDraw();
   NeedsFinalizeFrame();
 }
 
@@ -185,10 +132,9 @@ void CanvasRenderingContext::DidProcessTask() {
   finalize_frame_scheduled_ = false;
   // The end of a script task that drew content to the canvas is the point
   // at which the current frame may be considered complete.
-  if (canvas())
-    canvas()->FinalizeFrame();
-  if (offscreenCanvas())
-    offscreenCanvas()->FinalizeFrame();
+  if (Host()) {
+    Host()->FinalizeFrame();
+  }
   FinalizeFrame();
 }
 
@@ -203,7 +149,7 @@ CanvasRenderingContext::ContextType CanvasRenderingContext::ContextTypeFromId(
   if (id == "webgl2")
     return kContextWebgl2;
   if (id == "bitmaprenderer" &&
-      RuntimeEnabledFeatures::experimentalCanvasFeaturesEnabled()) {
+      RuntimeEnabledFeatures::ExperimentalCanvasFeaturesEnabled()) {
     return kContextImageBitmap;
   }
   return kContextTypeCount;
@@ -242,9 +188,9 @@ bool CanvasRenderingContext::WouldTaintOrigin(
   return taint_origin;
 }
 
-DEFINE_TRACE(CanvasRenderingContext) {
-  visitor->Trace(canvas_);
-  visitor->Trace(offscreen_canvas_);
+void CanvasRenderingContext::Trace(blink::Visitor* visitor) {
+  visitor->Trace(host_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

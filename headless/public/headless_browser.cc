@@ -9,6 +9,10 @@
 #include "content/public/common/user_agent.h"
 #include "headless/public/version.h"
 
+#if defined(OS_WIN)
+#include "sandbox/win/src/sandbox_types.h"
+#endif
+
 using Options = headless::HeadlessBrowser::Options;
 using Builder = headless::HeadlessBrowser::Options::Builder;
 
@@ -27,32 +31,37 @@ std::string GetProductNameAndVersion() {
 Options::Options(int argc, const char** argv)
     : argc(argc),
       argv(argv),
-      message_pump(nullptr),
-      single_process_mode(false),
-      disable_sandbox(false),
-#if !defined(OS_MACOSX)
+#if defined(USE_OZONE)
+      // TODO(skyostil): Implement SwiftShader backend for headless ozone.
       gl_implementation("osmesa"),
+#elif defined(OS_WIN)
+      // TODO(skyostil): Enable SwiftShader on Windows (crbug.com/729961).
+      gl_implementation("osmesa"),
+#elif !defined(OS_MACOSX)
+      gl_implementation("swiftshader-webgl"),
 #else
       gl_implementation("any"),
 #endif
       product_name_and_version(GetProductNameAndVersion()),
       user_agent(content::BuildUserAgentFromProduct(product_name_and_version)),
-      window_size(kDefaultWindowSize),
-      incognito_mode(true),
-      enable_crash_reporter(false) {
+      window_size(kDefaultWindowSize) {
 }
 
 Options::Options(Options&& options) = default;
 
-Options::~Options() {}
+Options::~Options() = default;
 
 Options& Options::operator=(Options&& options) = default;
+
+bool Options::DevtoolsServerEnabled() {
+  return (!devtools_endpoint.IsEmpty() || devtools_socket_fd != 0);
+}
 
 Builder::Builder(int argc, const char** argv) : options_(argc, argv) {}
 
 Builder::Builder() : options_(0, nullptr) {}
 
-Builder::~Builder() {}
+Builder::~Builder() = default;
 
 Builder& Builder::SetProductNameAndVersion(
     const std::string& product_name_and_version) {
@@ -65,8 +74,18 @@ Builder& Builder::SetUserAgent(const std::string& user_agent) {
   return *this;
 }
 
-Builder& Builder::EnableDevToolsServer(const net::IPEndPoint& endpoint) {
+Builder& Builder::SetAcceptLanguage(const std::string& accept_language) {
+  options_.accept_language = accept_language;
+  return *this;
+}
+
+Builder& Builder::EnableDevToolsServer(const net::HostPortPair& endpoint) {
   options_.devtools_endpoint = endpoint;
+  return *this;
+}
+
+Builder& Builder::EnableDevToolsServer(const size_t socket_fd) {
+  options_.devtools_socket_fd = socket_fd;
   return *this;
 }
 
@@ -75,8 +94,9 @@ Builder& Builder::SetMessagePump(base::MessagePump* message_pump) {
   return *this;
 }
 
-Builder& Builder::SetProxyServer(const net::HostPortPair& proxy_server) {
-  options_.proxy_server = proxy_server;
+Builder& Builder::SetProxyConfig(
+    std::unique_ptr<net::ProxyConfig> proxy_config) {
+  options_.proxy_config = std::move(proxy_config);
   return *this;
 }
 
@@ -95,6 +115,11 @@ Builder& Builder::SetDisableSandbox(bool disable_sandbox) {
   return *this;
 }
 
+Builder& Builder::SetEnableResourceScheduler(bool enable_resource_scheduler) {
+  options_.enable_resource_scheduler = enable_resource_scheduler;
+  return *this;
+}
+
 Builder& Builder::SetGLImplementation(const std::string& gl_implementation) {
   options_.gl_implementation = gl_implementation;
   return *this;
@@ -104,6 +129,24 @@ Builder& Builder::AddMojoServiceName(const std::string& mojo_service_name) {
   options_.mojo_service_names.insert(mojo_service_name);
   return *this;
 }
+
+Builder& Builder::SetAppendCommandLineFlagsCallback(
+    const Options::AppendCommandLineFlagsCallback& callback) {
+  options_.append_command_line_flags_callback = callback;
+  return *this;
+}
+
+#if defined(OS_WIN)
+Builder& Builder::SetInstance(HINSTANCE instance) {
+  options_.instance = instance;
+  return *this;
+}
+
+Builder& Builder::SetSandboxInfo(sandbox::SandboxInterfaceInfo* sandbox_info) {
+  options_.sandbox_info = sandbox_info;
+  return *this;
+}
+#endif  // defined(OS_WIN)
 
 Builder& Builder::SetUserDataDir(const base::FilePath& user_data_dir) {
   options_.user_data_dir = user_data_dir;
@@ -121,7 +164,7 @@ Builder& Builder::SetIncognitoMode(bool incognito_mode) {
 }
 
 Builder& Builder::SetOverrideWebPreferencesCallback(
-    base::Callback<void(WebPreferences*)> callback) {
+    const base::Callback<void(WebPreferences*)>& callback) {
   options_.override_web_preferences_callback = callback;
   return *this;
 }

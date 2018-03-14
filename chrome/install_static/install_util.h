@@ -10,6 +10,8 @@
 #ifndef CHROME_INSTALL_STATIC_INSTALL_UTIL_H_
 #define CHROME_INSTALL_STATIC_INSTALL_UTIL_H_
 
+#include <windows.h>
+
 #include <string>
 #include <vector>
 
@@ -20,12 +22,6 @@ enum class Channel;
 namespace install_static {
 
 struct InstallConstants;
-
-enum class ProcessType {
-  UNINITIALIZED,
-  NON_BROWSER_PROCESS,
-  BROWSER_PROCESS,
-};
 
 // Registry key to store the stats/crash sampling state of Chrome. If set to 1,
 // stats and crash reports will be uploaded in line with the user's consent,
@@ -81,6 +77,10 @@ std::wstring GetUninstallRegistryPath();
 // an empty string if this brand does not integrate with Google Update. This is
 // a simple convenience wrapper around InstallDetails.
 const wchar_t* GetAppGuid();
+
+// Returns the toast activator CLSID with which Chrome is registered with the
+// the Windows OS.
+const CLSID& GetToastActivatorClsid();
 
 // Returns the unsuffixed application name of this program. This is the base of
 // the name registered with Default Programs. IMPORTANT: This must only be
@@ -154,9 +154,16 @@ bool ReportingIsEnforcedByPolicy(bool* crash_reporting_enabled);
 // process is the main browser process.
 void InitializeProcessType();
 
+// Returns true if the process type is initialized. False otherwise.
+bool IsProcessTypeInitialized();
+
 // Returns true if invoked in a Chrome process other than the main browser
 // process. False otherwise.
 bool IsNonBrowserProcess();
+
+// Returns true if the |process_type| has the rights to access the profile.
+// False otherwise.
+bool ProcessNeedsProfileDir(const std::string& process_type);
 
 // Populates |crash_dir| with the crash dump location, respecting modifications
 // to user-data-dir.
@@ -252,9 +259,6 @@ std::wstring DetermineChannel(const InstallConstants& mode,
                               bool from_binaries,
                               std::wstring* update_ap,
                               std::wstring* update_cohort_name);
-
-// Caches the |ProcessType| of the current process.
-extern ProcessType g_process_type;
 
 }  // namespace install_static
 

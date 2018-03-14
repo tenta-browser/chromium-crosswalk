@@ -86,8 +86,9 @@ class RenderbufferAttachment
 
   bool CanRenderTo(const FeatureInfo*) const override { return true; }
 
-  void DetachFromFramebuffer(Framebuffer* framebuffer) const override {
-    // Nothing to do for renderbuffers.
+  void DetachFromFramebuffer(Framebuffer* framebuffer,
+                             GLenum attachment) const override {
+    renderbuffer_->RemoveFramebufferAttachmentPoint(framebuffer, attachment);
   }
 
   bool IsLayerValid() const override { return true; }
@@ -238,11 +239,15 @@ class TextureAttachment
     return texture_ref_->texture()->CanRenderTo(feature_info, level_);
   }
 
-  void DetachFromFramebuffer(Framebuffer* framebuffer) const override {
+  void DetachFromFramebuffer(Framebuffer* framebuffer,
+                             GLenum attachment) const override {
     texture_ref_->texture()->DetachFromFramebuffer();
   }
 
   bool IsLayerValid() const override {
+    if (!Is3D()) {
+      return true;
+    }
     Texture* texture = texture_ref_->texture();
     DCHECK(texture);
     GLsizei width, height, depth;
@@ -313,8 +318,7 @@ class TextureAttachment
 FramebufferManager::FramebufferManager(
     uint32_t max_draw_buffers,
     uint32_t max_color_attachments,
-    const scoped_refptr<FramebufferCompletenessCache>&
-        framebuffer_combo_complete_cache)
+    FramebufferCompletenessCache* framebuffer_combo_complete_cache)
     : framebuffer_state_change_count_(1),
       framebuffer_count_(0),
       have_context_(true),
@@ -335,9 +339,10 @@ FramebufferManager::~FramebufferManager() {
 void Framebuffer::MarkAsDeleted() {
   deleted_ = true;
   while (!attachments_.empty()) {
-    Attachment* attachment = attachments_.begin()->second.get();
-    attachment->DetachFromFramebuffer(this);
-    attachments_.erase(attachments_.begin());
+    auto entry = attachments_.begin();
+    Attachment* attachment = entry->second.get();
+    attachment->DetachFromFramebuffer(this, entry->first);
+    attachments_.erase(entry);
   }
 }
 
@@ -398,6 +403,10 @@ Framebuffer::~Framebuffer() {
     }
     manager_->StopTracking(this);
     manager_ = NULL;
+  }
+
+  for (auto& attachment : attachments_) {
+    attachment.second->DetachFromFramebuffer(this, attachment.first);
   }
 }
 
@@ -713,6 +722,7 @@ GLenum Framebuffer::IsPossiblyComplete(const FeatureInfo* feature_info) const {
       // Since DirectX doesn't allow attachments to be of different sizes,
       // even though ES3 allows it, it is still forbidden to ensure consistent
       // behaviors across platforms.
+      // Note: Framebuffer::GetFramebufferValidSize relies on this behavior.
       return GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS_EXT;
     }
 
@@ -977,26 +987,27 @@ void Framebuffer::DoUnbindGLAttachmentsForWorkaround(GLenum target) {
 
 void Framebuffer::AttachRenderbuffer(
     GLenum attachment, Renderbuffer* renderbuffer) {
-  DCHECK(attachment != GL_DEPTH_STENCIL_ATTACHMENT);
+  DCHECK_NE(static_cast<GLenum>(GL_DEPTH_STENCIL_ATTACHMENT), attachment);
   const Attachment* a = GetAttachment(attachment);
   if (a)
-    a->DetachFromFramebuffer(this);
+    a->DetachFromFramebuffer(this, attachment);
   if (renderbuffer) {
     attachments_[attachment] = scoped_refptr<Attachment>(
         new RenderbufferAttachment(renderbuffer));
+    renderbuffer->AddFramebufferAttachmentPoint(this, attachment);
   } else {
     attachments_.erase(attachment);
   }
-  framebuffer_complete_state_count_id_ = 0;
+  UnmarkAsComplete();
 }
 
 void Framebuffer::AttachTexture(
     GLenum attachment, TextureRef* texture_ref, GLenum target,
     GLint level, GLsizei samples) {
-  DCHECK(attachment != GL_DEPTH_STENCIL_ATTACHMENT);
+  DCHECK_NE(static_cast<GLenum>(GL_DEPTH_STENCIL_ATTACHMENT), attachment);
   const Attachment* a = GetAttachment(attachment);
   if (a)
-    a->DetachFromFramebuffer(this);
+    a->DetachFromFramebuffer(this, attachment);
   if (texture_ref) {
     attachments_[attachment] = scoped_refptr<Attachment>(
         new TextureAttachment(texture_ref, target, level, samples, 0));
@@ -1004,16 +1015,16 @@ void Framebuffer::AttachTexture(
   } else {
     attachments_.erase(attachment);
   }
-  framebuffer_complete_state_count_id_ = 0;
+  UnmarkAsComplete();
 }
 
 void Framebuffer::AttachTextureLayer(
     GLenum attachment, TextureRef* texture_ref, GLenum target,
     GLint level, GLint layer) {
-  DCHECK(attachment != GL_DEPTH_STENCIL_ATTACHMENT);
+  DCHECK_NE(static_cast<GLenum>(GL_DEPTH_STENCIL_ATTACHMENT), attachment);
   const Attachment* a = GetAttachment(attachment);
   if (a)
-    a->DetachFromFramebuffer(this);
+    a->DetachFromFramebuffer(this, attachment);
   if (texture_ref) {
     attachments_[attachment] = scoped_refptr<Attachment>(
         new TextureAttachment(texture_ref, target, level, 0, layer));
@@ -1021,7 +1032,7 @@ void Framebuffer::AttachTextureLayer(
   } else {
     attachments_.erase(attachment);
   }
-  framebuffer_complete_state_count_id_ = 0;
+  UnmarkAsComplete();
 }
 
 const Framebuffer::Attachment*
@@ -1038,6 +1049,19 @@ const Framebuffer::Attachment* Framebuffer::GetReadBufferAttachment() const {
   if (read_buffer_ == GL_NONE)
     return nullptr;
   return GetAttachment(read_buffer_);
+}
+
+gfx::Size Framebuffer::GetFramebufferValidSize() const {
+  // This DCHECK ensures the framebuffer was already checked to be complete.
+  DCHECK(manager_->IsComplete(this));
+
+  // IsPossiblyComplete ensures that there is at least one attachment, and that
+  // all of the attachments have the same dimensions. So it's okay to just pick
+  // any arbitrary attachment and return it as the min size.
+  auto it = attachments_.begin();
+  DCHECK(it != attachments_.end());
+  const auto& attachment = it->second;
+  return gfx::Size(attachment->width(), attachment->height());
 }
 
 bool FramebufferManager::GetClientId(
@@ -1070,8 +1094,7 @@ void FramebufferManager::MarkAsComplete(
   framebuffer->MarkAsComplete(framebuffer_state_change_count_);
 }
 
-bool FramebufferManager::IsComplete(
-    Framebuffer* framebuffer) {
+bool FramebufferManager::IsComplete(const Framebuffer* framebuffer) {
   DCHECK(framebuffer);
   return framebuffer->framebuffer_complete_state_count_id() ==
       framebuffer_state_change_count_;

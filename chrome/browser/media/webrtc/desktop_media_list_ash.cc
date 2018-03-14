@@ -6,15 +6,13 @@
 
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "chrome/grit/generated_resources.h"
-#include "content/public/browser/browser_thread.h"
 #include "media/base/video_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/image/image.h"
 #include "ui/snapshot/snapshot.h"
 
-using content::BrowserThread;
+using content::DesktopMediaID;
 
 namespace {
 
@@ -23,16 +21,22 @@ const int kDefaultUpdatePeriod = 500;
 
 }  // namespace
 
-DesktopMediaListAsh::DesktopMediaListAsh(int source_types)
+DesktopMediaListAsh::DesktopMediaListAsh(content::DesktopMediaID::Type type)
     : DesktopMediaListBase(
           base::TimeDelta::FromMilliseconds(kDefaultUpdatePeriod)),
-      source_types_(source_types),
-      pending_window_capture_requests_(0),
-      weak_factory_(this) {}
+      weak_factory_(this) {
+  DCHECK(type == content::DesktopMediaID::TYPE_SCREEN ||
+         type == content::DesktopMediaID::TYPE_WINDOW);
+  type_ = type;
+}
 
-DesktopMediaListAsh::~DesktopMediaListAsh() {}
+DesktopMediaListAsh::~DesktopMediaListAsh() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+}
 
 void DesktopMediaListAsh::Refresh() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
   std::vector<SourceDescription> new_sources;
   EnumerateSources(&new_sources);
 
@@ -43,7 +47,7 @@ void DesktopMediaListAsh::EnumerateWindowsForRoot(
     std::vector<DesktopMediaListAsh::SourceDescription>* sources,
     aura::Window* root_window,
     int container_id) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   aura::Window* container = ash::Shell::GetContainer(root_window, container_id);
   if (!container)
@@ -65,12 +69,12 @@ void DesktopMediaListAsh::EnumerateWindowsForRoot(
 
 void DesktopMediaListAsh::EnumerateSources(
     std::vector<DesktopMediaListAsh::SourceDescription>* sources) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   aura::Window::Windows root_windows = ash::Shell::GetAllRootWindows();
 
   for (size_t i = 0; i < root_windows.size(); ++i) {
-    if (source_types_ & SCREENS) {
+    if (type_ == content::DesktopMediaID::TYPE_SCREEN) {
       SourceDescription screen_source(
           content::DesktopMediaID::RegisterAuraWindow(
               content::DesktopMediaID::TYPE_SCREEN, root_windows[i]),
@@ -98,9 +102,7 @@ void DesktopMediaListAsh::EnumerateSources(
       }
 
       CaptureThumbnail(screen_source.id, root_windows[i]);
-    }
-
-    if (source_types_ & WINDOWS) {
+    } else {
       EnumerateWindowsForRoot(
           sources, root_windows[i], ash::kShellWindowId_DefaultContainer);
       EnumerateWindowsForRoot(
@@ -117,17 +119,15 @@ void DesktopMediaListAsh::CaptureThumbnail(content::DesktopMediaID id,
 
   ++pending_window_capture_requests_;
   ui::GrabWindowSnapshotAndScaleAsync(
-      window,
-      window_rect,
-      scaled_rect.size(),
-      BrowserThread::GetBlockingPool(),
+      window, window_rect, scaled_rect.size(),
       base::Bind(&DesktopMediaListAsh::OnThumbnailCaptured,
-                 weak_factory_.GetWeakPtr(),
-                 id));
+                 weak_factory_.GetWeakPtr(), id));
 }
 
 void DesktopMediaListAsh::OnThumbnailCaptured(content::DesktopMediaID id,
-                                              const gfx::Image& image) {
+                                              gfx::Image image) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
   UpdateSourceThumbnail(id, image.AsImageSkia());
 
   --pending_window_capture_requests_;

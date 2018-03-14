@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/safe_browsing/download_protection_service.h"
+#include "chrome/browser/safe_browsing/download_protection/download_protection_service.h"
 #include "chrome/browser/safe_browsing/safe_browsing_navigation_observer.h"
 #include "chrome/browser/safe_browsing/safe_browsing_navigation_observer_manager.h"
 #include "chrome/browser/safe_browsing/test_safe_browsing_service.h"
@@ -42,6 +44,7 @@ const char kMultiFrameTestURL[] =
     "navigation_observer_multi_frame_tests.html";
 const char kRedirectURL[] =
     "/safe_browsing/download_protection/navigation_observer/redirect.html";
+// Please update |kShortDataURL| too if you're changing |kDownloadDataURL|.
 const char kDownloadDataURL[] =
     "data:application/octet-stream;base64,a2poYWxrc2hkbGtoYXNka2xoYXNsa2RoYWxra"
     "GtoYWxza2hka2xzamFoZGxramhhc2xka2hhc2xrZGgKYXNrZGpoa2FzZGpoYWtzaGRrYXNoZGt"
@@ -49,6 +52,14 @@ const char kDownloadDataURL[] =
     "mFoZGtoYXNrZGhhc2tka2hrYXNkCjg3MzQ2ODEyNzQ2OGtqc2hka2FoZHNrZGhraApha3NqZGt"
     "hc2Roa3NkaGthc2hka2FzaGtkaAohISomXkAqJl4qYWhpZGFzeWRpeWlhc1xcb1wKa2Fqc2Roa"
     "2FzaGRrYXNoZGsKYWtzamRoc2tkaAplbmQK";
+// Short data url is computed by keeping the prefix of |kDownloadDataURL| up to
+// the first ",", and appending the hash (SHA256) of entire |kDownloadDataURL|.
+// e.g.,
+// $echo -n <kDownloadDataURL> | sha256sum |
+//  awk '{print "data:application/octet-stream;base64,"toupper($1)}'
+const char kShortDataURL[] =
+    "data:application/octet-stream;base64,4A19A03B1EF9D2C3061C5B87BF7D0BE05998D"
+    "A5F6BA693B6759B47EEA211D246";
 const char kIframeDirectDownloadURL[] =
     "/safe_browsing/download_protection/navigation_observer/iframe.html";
 const char kIframeRetargetingURL[] =
@@ -64,6 +75,9 @@ const char kLandingURL[] =
 const char kLandingReferrerURL[] =
     "/safe_browsing/download_protection/navigation_observer/"
     "landing_referrer.html";
+const char kLandingReferrerURLWithQuery[] =
+    "/safe_browsing/download_protection/navigation_observer/"
+    "landing_referrer.html?bar=foo";
 const char kPageBeforeLandingReferrerURL[] =
     "/safe_browsing/download_protection/navigation_observer/"
     "page_before_landing_referrer.html";
@@ -163,7 +177,9 @@ class SBNavigationObserverBrowserTest : public InProcessBrowserTest {
   SBNavigationObserverBrowserTest() {}
 
   void SetUpOnMainThread() override {
-    // Disable Safe Browsing service since it is irrelevant to this test.
+    // Disable Safe Browsing service so we can directly control when
+    // SafeBrowsingNavigationObserverManager and SafeBrowsingNavigationObserver
+    // are instantiated.
     browser()->profile()->GetPrefs()->SetBoolean(prefs::kSafeBrowsingEnabled,
                                                  false);
     ASSERT_TRUE(embedded_test_server()->Start());
@@ -174,9 +190,6 @@ class SBNavigationObserverBrowserTest : public InProcessBrowserTest {
         observer_manager_);
     ASSERT_TRUE(observer_);
     ASSERT_TRUE(InitialSetup());
-    // Navigate to test page.
-    ui_test_utils::NavigateToURL(
-        browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   }
 
   bool InitialSetup() {
@@ -225,6 +238,8 @@ class SBNavigationObserverBrowserTest : public InProcessBrowserTest {
     content::DownloadManager* manager =
         content::BrowserContext::GetDownloadManager(browser()->profile());
     manager->GetAllDownloads(&download_items);
+    if (download_items.empty())
+      DownloadItemCreatedObserver(manager).WaitForDownloadItem(&download_items);
     EXPECT_EQ(1U, download_items.size());
     return download_items[0];
   }
@@ -370,6 +385,14 @@ class SBNavigationObserverBrowserTest : public InProcessBrowserTest {
     }
   }
 
+  void IdentifyReferrerChainForWebContents(content::WebContents* web_contents,
+                                           ReferrerChain* referrer_chain) {
+    observer_manager_->IdentifyReferrerChainByWebContents(
+        web_contents,
+        2,  // kDownloadAttributionUserGestureLimit
+        referrer_chain);
+  }
+
   // Identify referrer chain of a PPAPI download and populate |referrer_chain|.
   void IdentifyReferrerChainForPPAPIDownload(
       const GURL& initiating_frame_url,
@@ -424,6 +447,8 @@ class SBNavigationObserverBrowserTest : public InProcessBrowserTest {
 // Type download URL into address bar and start download on the same page.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, TypeInURLDownload) {
   ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
+  ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL(kDownloadItemURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   GURL download_url = embedded_test_server()->GetURL(kDownloadItemURL);
@@ -464,6 +489,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, TypeInURLDownload) {
 }
 // Click on a link and start download on the same page.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, DirectDownload) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("direct_download", 1, initial_url);
   GURL download_url = embedded_test_server()->GetURL(kDownloadItemURL);
@@ -516,6 +543,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, DirectDownload) {
 // same page.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        DirectDownloadNoReferrer) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("direct_download_noreferrer", 1, initial_url);
   GURL download_url = embedded_test_server()->GetURL(kDownloadItemURL);
@@ -568,6 +597,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 // new tab using target=_blank.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        DirectDownloadNoReferrerTargetBlank) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("direct_download_noreferrer_target_blank", 1, initial_url);
   GURL download_url = embedded_test_server()->GetURL(kDownloadItemURL);
@@ -630,6 +661,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 // META HTTP-EQUIV="refresh". All transitions happen in the same tab.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        SingleMetaRefreshRedirect) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("single_meta_refresh_redirect", 2, initial_url);
   GURL redirect_url = embedded_test_server()->GetURL(kRedirectURL);
@@ -702,6 +735,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 // META HTTP-EQUIV="refresh". First navigation happens in target blank.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        SingleMetaRefreshRedirectTargetBlank) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("single_meta_refresh_redirect_target_blank", 2, initial_url);
   GURL redirect_url = embedded_test_server()->GetURL(kRedirectURL);
@@ -780,6 +815,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 // META HTTP-EQUIV="refresh". All transitions happen in the same tab.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        MultiMetaRefreshRedirects) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("multiple_meta_refresh_redirects", 3, initial_url);
   GURL first_redirect_url = embedded_test_server()->GetURL(
@@ -870,6 +907,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 // All transitions happen in the same tab.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        WindowLocationRedirect) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("window_location_redirection", 1, initial_url);
   GURL download_url = embedded_test_server()->GetURL(kDownloadItemURL);
@@ -921,6 +960,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 // mixture of meta refresh and window.location. All transitions happen in the
 // same tab.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, MixRedirects) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("mix_redirects", 2, initial_url);
   GURL redirect_url = embedded_test_server()->GetURL(kRedirectURL);
@@ -989,6 +1030,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, MixRedirects) {
 
 // Use javascript to open download in a new tab.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, NewTabDownload) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("new_tab_download", 2, initial_url);
   GURL download_url = embedded_test_server()->GetURL(kDownloadItemURL);
@@ -1070,9 +1113,12 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, NewTabDownload) {
 // Use javascript to open download in a new tab and download has a data url.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        NewTabDownloadWithDataURL) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("new_tab_download_with_data_url", 2, initial_url);
   GURL download_url = GURL(kDownloadDataURL);
+  GURL short_download_url = GURL(kShortDataURL);
   GURL blank_url = GURL(url::kAboutBlankURL);
   std::string test_server_ip(embedded_test_server()->host_port_pair().host());
   auto* nav_list = navigation_event_list();
@@ -1122,7 +1168,7 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
   ReferrerChain referrer_chain;
   IdentifyReferrerChainForDownload(GetDownload(), &referrer_chain);
   ASSERT_EQ(3, referrer_chain.size());
-  VerifyReferrerChainEntry(download_url,                   // url
+  VerifyReferrerChainEntry(short_download_url,             // url
                            GURL(),                         // main_frame_url
                            ReferrerChainEntry::EVENT_URL,  // type
                            "",                             // ip_address
@@ -1154,6 +1200,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 // Click a link in a subframe and start download.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        SubFrameDirectDownload) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("sub_frame_download_attribution", 1, initial_url);
   std::string test_name =
@@ -1185,22 +1233,43 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                         true,                  // has_committed
                         false,                 // has_server_redirect
                         nav_list->Get(1));
-  VerifyNavigationEvent(GURL(),                // source_url
-                        multi_frame_test_url,  // source_main_frame_url
-                        iframe_url,            // original_request_url
-                        iframe_url,            // destination_url
-                        false,                 // is_user_initiated,
-                        true,                  // has_committed
-                        false,                 // has_server_redirect
-                        nav_list->Get(2));
-  VerifyNavigationEvent(GURL(),                  // source_url
-                        multi_frame_test_url,    // source_main_frame_url
-                        iframe_retargeting_url,  // original_request_url
-                        iframe_retargeting_url,  // destination_url
-                        false,                   // is_user_initiated,
-                        true,                    // has_committed
-                        false,                   // has_server_redirect
-                        nav_list->Get(3));
+  // The order of the next two navigation events may vary. We check for both
+  // possibilities. Their order doesn't impact referrer chain attribution logic.
+  if (nav_list->Get(2)->original_request_url == iframe_url) {
+    VerifyNavigationEvent(GURL(),                // source_url
+                          multi_frame_test_url,  // source_main_frame_url
+                          iframe_url,            // original_request_url
+                          iframe_url,            // destination_url
+                          false,                 // is_user_initiated,
+                          true,                  // has_committed
+                          false,                 // has_server_redirect
+                          nav_list->Get(2));
+    VerifyNavigationEvent(GURL(),                  // source_url
+                          multi_frame_test_url,    // source_main_frame_url
+                          iframe_retargeting_url,  // original_request_url
+                          iframe_retargeting_url,  // destination_url
+                          false,                   // is_user_initiated,
+                          true,                    // has_committed
+                          false,                   // has_server_redirect
+                          nav_list->Get(3));
+  } else {
+    VerifyNavigationEvent(GURL(),                  // source_url
+                          multi_frame_test_url,    // source_main_frame_url
+                          iframe_retargeting_url,  // original_request_url
+                          iframe_retargeting_url,  // destination_url
+                          false,                   // is_user_initiated,
+                          true,                    // has_committed
+                          false,                   // has_server_redirect
+                          nav_list->Get(2));
+    VerifyNavigationEvent(GURL(),                // source_url
+                          multi_frame_test_url,  // source_main_frame_url
+                          iframe_url,            // original_request_url
+                          iframe_url,            // destination_url
+                          false,                 // is_user_initiated,
+                          true,                  // has_committed
+                          false,                 // has_server_redirect
+                          nav_list->Get(3));
+  }
   VerifyNavigationEvent(iframe_url,            // source_url
                         multi_frame_test_url,  // source_main_frame_url
                         download_url,          // original_request_url
@@ -1255,6 +1324,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 // Click a link in a subframe and open download in a new tab.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        SubFrameNewTabDownload) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("sub_frame_download_attribution", 1, initial_url);
   std::string test_name =
@@ -1287,22 +1358,43 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                         true,                  // has_committed
                         false,                 // has_server_redirect
                         nav_list->Get(1));
-  VerifyNavigationEvent(GURL(),                // source_url
-                        multi_frame_test_url,  // source_main_frame_url
-                        iframe_url,            // original_request_url
-                        iframe_url,            // destination_url
-                        false,                 // is_user_initiated,
-                        true,                  // has_committed
-                        false,                 // has_server_redirect
-                        nav_list->Get(2));
-  VerifyNavigationEvent(GURL(),                  // source_url
-                        multi_frame_test_url,    // source_main_frame_url
-                        iframe_retargeting_url,  // original_request_url
-                        iframe_retargeting_url,  // destination_url
-                        false,                   // is_user_initiated,
-                        true,                    // has_committed
-                        false,                   // has_server_redirect
-                        nav_list->Get(3));
+  // The order of the next two navigation events may vary. We check for both
+  // possibilities. Their order doesn't impact referrer chain attribution logic.
+  if (nav_list->Get(2)->original_request_url == iframe_url) {
+    VerifyNavigationEvent(GURL(),                // source_url
+                          multi_frame_test_url,  // source_main_frame_url
+                          iframe_url,            // original_request_url
+                          iframe_url,            // destination_url
+                          false,                 // is_user_initiated,
+                          true,                  // has_committed
+                          false,                 // has_server_redirect
+                          nav_list->Get(2));
+    VerifyNavigationEvent(GURL(),                  // source_url
+                          multi_frame_test_url,    // source_main_frame_url
+                          iframe_retargeting_url,  // original_request_url
+                          iframe_retargeting_url,  // destination_url
+                          false,                   // is_user_initiated,
+                          true,                    // has_committed
+                          false,                   // has_server_redirect
+                          nav_list->Get(3));
+  } else {
+    VerifyNavigationEvent(GURL(),                  // source_url
+                          multi_frame_test_url,    // source_main_frame_url
+                          iframe_retargeting_url,  // original_request_url
+                          iframe_retargeting_url,  // destination_url
+                          false,                   // is_user_initiated,
+                          true,                    // has_committed
+                          false,                   // has_server_redirect
+                          nav_list->Get(2));
+    VerifyNavigationEvent(GURL(),                // source_url
+                          multi_frame_test_url,  // source_main_frame_url
+                          iframe_url,            // original_request_url
+                          iframe_url,            // destination_url
+                          false,                 // is_user_initiated,
+                          true,                  // has_committed
+                          false,                 // has_server_redirect
+                          nav_list->Get(3));
+  }
   VerifyNavigationEvent(iframe_retargeting_url,  // source_url
                         multi_frame_test_url,    // source_main_frame_url
                         blank_url,               // original_request_url
@@ -1382,6 +1474,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 // Click a link which redirects to the landing page, and then click on the
 // landing page to trigger download.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, CompleteReferrerChain) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("complete_referrer_chain", 2, initial_url);
   GURL redirect_url = embedded_test_server()->GetURL(kRedirectToLandingURL);
@@ -1471,6 +1565,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, CompleteReferrerChain) {
 // Click three links before reaching download.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        ReferrerAttributionWithinTwoUserGestures) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("attribution_within_two_user_gestures", 1, initial_url);
   GURL page_before_landing_referrer_url =
@@ -1566,6 +1662,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 // Click a link which redirects to a PPAPI landing page.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        PPAPIDownloadWithUserGestureOnHostingFrame) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("complete_referrer_chain", 2, initial_url);
   GURL redirect_url = embedded_test_server()->GetURL(kRedirectToLandingURL);
@@ -1643,6 +1741,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 // user gesture (a.k.a not a landing page).
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        PPAPIDownloadWithoutUserGestureOnHostingFrame) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL landing_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   ClickTestLink("complete_referrer_chain", 2, landing_url);
   GURL redirect_url = embedded_test_server()->GetURL(kRedirectToLandingURL);
@@ -1715,6 +1815,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 
 // Server-side redirect.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, ServerRedirect) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   GURL download_url = embedded_test_server()->GetURL(kDownloadItemURL);
   GURL request_url =
@@ -1757,6 +1859,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, ServerRedirect) {
 
 // 2 consecutive server-side redirects.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, TwoServerRedirects) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   GURL destination_url = embedded_test_server()->GetURL(kDownloadItemURL);
   GURL redirect_url = embedded_test_server()->GetURL("/server-redirect?" +
@@ -1806,6 +1910,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, TwoServerRedirects) {
 // Retargeting immediately followed by server-side redirect.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        RetargetingAndServerRedirect) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   GURL download_url = embedded_test_server()->GetURL(kDownloadItemURL);
   GURL request_url =
@@ -1865,6 +1971,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 
 // host_to_ip_map_ size should increase by one after a new navigation.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, AddIPMapping) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   auto* ip_map = host_to_ip_map();
   std::string test_server_host(embedded_test_server()->base_url().host());
@@ -1880,6 +1988,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, AddIPMapping) {
 
 // If we have already seen an IP associated with a host, update its timestamp.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, IPListDedup) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   auto* ip_map = host_to_ip_map();
   ip_map->clear();
@@ -1901,6 +2011,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest, IPListDedup) {
 // Download via html5 file API with user gesture.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        DownloadViaHTML5FileApiWithUserGesture) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL hosting_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   // Trigger download by user gesture.
   TriggerDownloadViaHtml5FileApi(true /* has_user_gesture */);
@@ -1935,6 +2047,8 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
 // Download via html5 file API without user gesture.
 IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                        DownloadViaHTML5FileApiWithoutUserGesture) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
   GURL hosting_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
   // Trigger download without user gesture.
   TriggerDownloadViaHtml5FileApi(false /* has_user_gesture */);
@@ -1965,4 +2079,92 @@ IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
                            std::vector<GURL>(),  // server redirects
                            referrer_chain.Get(0));
 }
+
+// Verify referrer chain when there are URL fragments.
+IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
+                       DownloadAttributionWithURLFragment) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
+  GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
+  // Clicks on link and navigates to ".../page_before_landing_referrer.html".
+  ClickTestLink("attribution_should_ignore_url_fragments", 1, initial_url);
+  GURL expected_page_before_landing_referrer_url =
+      embedded_test_server()->GetURL(kPageBeforeLandingReferrerURL);
+  // Clicks on link and navigates to ".../landing_referrer.html?bar=foo#baz".
+  ClickTestLink("link_to_landing_referrer_with_query_and_fragment", 1,
+                expected_page_before_landing_referrer_url);
+  GURL expected_landing_referrer_url_with_query =
+      embedded_test_server()->GetURL(kLandingReferrerURLWithQuery);
+  // Clicks on link and navigates to ".../landing.html#".
+  ClickTestLink("link_to_landing_with_empty_fragment", 1,
+                expected_landing_referrer_url_with_query);
+  GURL expected_landing_url = embedded_test_server()->GetURL(kLandingURL);
+
+  std::string test_server_ip(embedded_test_server()->host_port_pair().host());
+  auto* nav_list = navigation_event_list();
+  ASSERT_EQ(4U, nav_list->Size());
+
+  ReferrerChain referrer_chain;
+  SimulateUserGesture();
+  IdentifyReferrerChainForWebContents(
+      browser()->tab_strip_model()->GetActiveWebContents(), &referrer_chain);
+  ASSERT_EQ(2, referrer_chain.size());
+
+  // Verify url fragment is cleared in referrer chain.
+  VerifyReferrerChainEntry(expected_landing_url,              // url
+                           GURL(),                            // main_frame_url
+                           ReferrerChainEntry::LANDING_PAGE,  // type
+                           test_server_ip,                    // ip_address
+                           expected_landing_referrer_url_with_query,
+                           GURL(),               // referrer_main_frame_url
+                           false,                // is_retargeting
+                           std::vector<GURL>(),  // server redirects
+                           referrer_chain.Get(0));
+  VerifyReferrerChainEntry(
+      expected_landing_referrer_url_with_query,  // url
+      GURL(),                                    // main_frame_url
+      ReferrerChainEntry::LANDING_REFERRER,      // type
+      test_server_ip,                            // ip_address
+      GURL(),  // referrer_url is empty since this beyonds 2 clicks.
+      GURL(),  // referrer_main_frame_url is empty for the same reason.
+      false,   // is_retargeting
+      std::vector<GURL>(),  // server redirects
+      referrer_chain.Get(1));
+}
+
+IN_PROC_BROWSER_TEST_F(SBNavigationObserverBrowserTest,
+                       VerifySanitizeReferrerChain) {
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(kSingleFrameTestURL));
+  GURL initial_url = embedded_test_server()->GetURL(kSingleFrameTestURL);
+  GURL test_server_origin = embedded_test_server()->base_url().GetOrigin();
+  ClickTestLink("direct_download", 1, initial_url);
+  std::string test_server_ip(embedded_test_server()->host_port_pair().host());
+  auto* nav_list = navigation_event_list();
+  ASSERT_TRUE(nav_list);
+  ASSERT_EQ(2U, nav_list->Size());
+  ReferrerChain referrer_chain;
+  IdentifyReferrerChainForDownload(GetDownload(), &referrer_chain);
+  SafeBrowsingNavigationObserverManager::SanitizeReferrerChain(&referrer_chain);
+  ASSERT_EQ(2, referrer_chain.size());
+  VerifyReferrerChainEntry(test_server_origin,             // url
+                           GURL(),                         // main_frame_url
+                           ReferrerChainEntry::EVENT_URL,  // type
+                           test_server_ip,                 // ip_address
+                           test_server_origin,             // referrer_url
+                           GURL(),               // referrer_main_frame_url
+                           false,                // is_retargeting
+                           std::vector<GURL>(),  // server redirects
+                           referrer_chain.Get(0));
+  VerifyReferrerChainEntry(test_server_origin,                // url
+                           GURL(),                            // main_frame_url
+                           ReferrerChainEntry::LANDING_PAGE,  // type
+                           test_server_ip,                    // ip_address
+                           GURL(),                            // referrer_url
+                           GURL(),               // referrer_main_frame_url
+                           false,                // is_retargeting
+                           std::vector<GURL>(),  // server redirects
+                           referrer_chain.Get(1));
+}
+
 }  // namespace safe_browsing

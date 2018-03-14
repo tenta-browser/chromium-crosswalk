@@ -5,6 +5,7 @@
 #include "components/guest_view/browser/guest_view_message_filter.h"
 
 #include "base/memory/ptr_util.h"
+#include "components/guest_view/browser/bad_message.h"
 #include "components/guest_view/browser/guest_view_base.h"
 #include "components/guest_view/browser/guest_view_manager.h"
 #include "components/guest_view/browser/guest_view_manager_delegate.h"
@@ -57,6 +58,15 @@ GuestViewManager* GuestViewMessageFilter::GetOrCreateGuestViewManager() {
   return manager;
 }
 
+GuestViewManager* GuestViewMessageFilter::GetGuestViewManagerOrKill() {
+  auto* manager = GuestViewManager::FromBrowserContext(browser_context_);
+  if (!manager) {
+    bad_message::ReceivedBadMessage(
+        this, bad_message::GVMF_UNEXPECTED_MESSAGE_BEFORE_GVM_CREATION);
+  }
+  return manager;
+}
+
 void GuestViewMessageFilter::OverrideThreadForMessage(
     const IPC::Message& message,
     BrowserThread::ID* thread) {
@@ -102,9 +112,9 @@ void GuestViewMessageFilter::OnAttachGuest(
     int guest_instance_id,
     const base::DictionaryValue& params) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  auto* manager = GuestViewManager::FromBrowserContext(browser_context_);
   // We should have a GuestViewManager at this point. If we don't then the
   // embedder is misbehaving.
+  auto* manager = GetGuestViewManagerOrKill();
   if (!manager)
     return;
 
@@ -119,8 +129,12 @@ void GuestViewMessageFilter::OnAttachToEmbedderFrame(
     int element_instance_id,
     int guest_instance_id,
     const base::DictionaryValue& params) {
-  auto* manager = GuestViewManager::FromBrowserContext(browser_context_);
-  DCHECK(manager);
+  // We should have a GuestViewManager at this point. If we don't then the
+  // embedder is misbehaving.
+  auto* manager = GetGuestViewManagerOrKill();
+  if (!manager)
+    return;
+
   content::WebContents* guest_web_contents =
       manager->GetGuestByInstanceIDSafely(guest_instance_id,
                                           render_process_id_);
@@ -132,6 +146,11 @@ void GuestViewMessageFilter::OnAttachToEmbedderFrame(
   DCHECK(owner_web_contents);
   auto* embedder_frame = RenderFrameHost::FromID(
       render_process_id_, embedder_local_render_frame_id);
+  // If we're creating a new guest through window.open /
+  // RenderViewImpl::CreateView, the embedder may not be the same as
+  // the original creator/owner, so update embedder_web_contents here.
+  content::WebContents* embedder_web_contents =
+      WebContents::FromRenderFrameHost(embedder_frame);
 
   // Update the guest manager about the attachment.
   // This sets up the embedder and guest pairing information inside
@@ -139,24 +158,21 @@ void GuestViewMessageFilter::OnAttachToEmbedderFrame(
   manager->AttachGuest(render_process_id_, element_instance_id,
                        guest_instance_id, params);
 
-  owner_web_contents->GetMainFrame()->Send(
+  embedder_web_contents->GetMainFrame()->Send(
       new GuestViewMsg_AttachToEmbedderFrame_ACK(element_instance_id));
 
   guest->WillAttach(
-      owner_web_contents, element_instance_id, false,
-      base::Bind(&GuestViewMessageFilter::WillAttachCallback, this, guest));
+      embedder_web_contents, element_instance_id, false,
+      base::Bind(&GuestViewBase::DidAttach,
+                 guest->weak_ptr_factory_.GetWeakPtr(), MSG_ROUTING_NONE));
 
   // Attach this inner WebContents |guest_web_contents| to the outer
-  // WebContents |owner_web_contents|. The outer WebContents's
+  // WebContents |embedder_web_contents|. The outer WebContents's
   // frame |embedder_frame| hosts the inner WebContents.
   // NOTE: this must be called last, because it could unblock pending requests
   // which depend on the WebViewGuest being initialized which happens above.
-  guest_web_contents->AttachToOuterWebContentsFrame(owner_web_contents,
+  guest_web_contents->AttachToOuterWebContentsFrame(embedder_web_contents,
                                                     embedder_frame);
-}
-
-void GuestViewMessageFilter::WillAttachCallback(GuestViewBase* guest) {
-  guest->DidAttach(MSG_ROUTING_NONE);
 }
 
 }  // namespace guest_view

@@ -5,7 +5,6 @@
 #include "content/renderer/media/webrtc/webrtc_video_capturer_adapter.h"
 
 #include "base/bind.h"
-#include "base/memory/aligned_memory.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -15,13 +14,14 @@
 #include "content/renderer/render_thread_impl.h"
 #include "media/base/timestamp_constants.h"
 #include "media/base/video_util.h"
-#include "media/renderers/skcanvas_video_renderer.h"
+#include "media/renderers/paint_canvas_video_renderer.h"
 #include "services/ui/public/cpp/gpu/context_provider_command_buffer.h"
 #include "skia/ext/platform_canvas.h"
 #include "third_party/libyuv/include/libyuv/convert.h"
 #include "third_party/libyuv/include/libyuv/convert_from.h"
 #include "third_party/libyuv/include/libyuv/scale.h"
 #include "third_party/webrtc/api/video/video_rotation.h"
+#include "third_party/webrtc/rtc_base/refcountedobject.h"
 
 namespace content {
 
@@ -55,7 +55,7 @@ class WebRtcVideoCapturerAdapter::TextureFrameCopier
  public:
   TextureFrameCopier()
       : main_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-        canvas_video_renderer_(new media::SkCanvasVideoRenderer) {
+        canvas_video_renderer_(new media::PaintCanvasVideoRenderer) {
     RenderThreadImpl* const main_thread = RenderThreadImpl::current();
     if (main_thread)
       provider_ = main_thread->SharedMainThreadContextProvider();
@@ -75,8 +75,9 @@ class WebRtcVideoCapturerAdapter::TextureFrameCopier
     base::WaitableEvent waiter(base::WaitableEvent::ResetPolicy::MANUAL,
                                base::WaitableEvent::InitialState::NOT_SIGNALED);
     main_thread_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&TextureFrameCopier::CopyTextureFrameOnMainThread,
-                              this, frame, new_frame, &waiter));
+        FROM_HERE,
+        base::BindOnce(&TextureFrameCopier::CopyTextureFrameOnMainThread, this,
+                       frame, new_frame, &waiter));
     waiter.Wait();
   }
 
@@ -129,7 +130,7 @@ class WebRtcVideoCapturerAdapter::TextureFrameCopier
         (kN32_SkColorType == kRGBA_8888_SkColorType) ? cricket::FOURCC_ABGR
                                                      : cricket::FOURCC_ARGB;
     libyuv::ConvertToI420(
-        static_cast<const uint8*>(pixmap.addr(0, 0)), pixmap.getSafeSize64(),
+        static_cast<const uint8*>(pixmap.addr(0, 0)), pixmap.computeByteSize(),
         (*new_frame)->visible_data(media::VideoFrame::kYPlane),
         (*new_frame)->stride(media::VideoFrame::kYPlane),
         (*new_frame)->visible_data(media::VideoFrame::kUPlane),
@@ -144,7 +145,7 @@ class WebRtcVideoCapturerAdapter::TextureFrameCopier
 
   const scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
   scoped_refptr<ui::ContextProviderCommandBuffer> provider_;
-  std::unique_ptr<media::SkCanvasVideoRenderer> canvas_video_renderer_;
+  std::unique_ptr<media::PaintCanvasVideoRenderer> canvas_video_renderer_;
 };
 
 WebRtcVideoCapturerAdapter::WebRtcVideoCapturerAdapter(
@@ -178,10 +179,6 @@ void WebRtcVideoCapturerAdapter::OnFrameCaptured(
     return;
   }
   scoped_refptr<media::VideoFrame> frame = input_frame;
-  // Drop alpha channel since we do not support it yet.
-  if (frame->format() == media::PIXEL_FORMAT_YV12A)
-    frame = media::WrapAsI420VideoFrame(input_frame);
-
   const int orig_width = frame->natural_size().width();
   const int orig_height = frame->natural_size().height();
   int adapted_width;
@@ -231,7 +228,8 @@ void WebRtcVideoCapturerAdapter::OnFrameCaptured(
   if (!video_frame)
     return;
 
-  video_frame->AddDestructionObserver(base::Bind(&ReleaseOriginalFrame, frame));
+  video_frame->AddDestructionObserver(
+      base::BindOnce(&ReleaseOriginalFrame, frame));
 
   // If no scaling is needed, return a wrapped version of |frame| directly.
   if (video_frame->natural_size() == video_frame->visible_rect().size()) {
@@ -245,10 +243,12 @@ void WebRtcVideoCapturerAdapter::OnFrameCaptured(
   }
 
   // We need to scale the frame before we hand it over to webrtc.
+  const bool has_alpha = video_frame->format() == media::PIXEL_FORMAT_YV12A;
   scoped_refptr<media::VideoFrame> scaled_frame =
-      scaled_frame_pool_.CreateFrame(media::PIXEL_FORMAT_I420, adapted_size,
-                                     gfx::Rect(adapted_size), adapted_size,
-                                     frame->timestamp());
+      scaled_frame_pool_.CreateFrame(
+          has_alpha ? media::PIXEL_FORMAT_YV12A : media::PIXEL_FORMAT_I420,
+          adapted_size, gfx::Rect(adapted_size), adapted_size,
+          frame->timestamp());
   libyuv::I420Scale(video_frame->visible_data(media::VideoFrame::kYPlane),
                     video_frame->stride(media::VideoFrame::kYPlane),
                     video_frame->visible_data(media::VideoFrame::kUPlane),
@@ -264,6 +264,15 @@ void WebRtcVideoCapturerAdapter::OnFrameCaptured(
                     scaled_frame->data(media::VideoFrame::kVPlane),
                     scaled_frame->stride(media::VideoFrame::kVPlane),
                     adapted_width, adapted_height, libyuv::kFilterBilinear);
+  if (has_alpha) {
+    libyuv::ScalePlane(video_frame->visible_data(media::VideoFrame::kAPlane),
+                       video_frame->stride(media::VideoFrame::kAPlane),
+                       video_frame->visible_rect().width(),
+                       video_frame->visible_rect().height(),
+                       scaled_frame->data(media::VideoFrame::kAPlane),
+                       scaled_frame->stride(media::VideoFrame::kAPlane),
+                       adapted_width, adapted_height, libyuv::kFilterBilinear);
+  }
 
   OnFrame(webrtc::VideoFrame(
               new rtc::RefCountedObject<WebRtcVideoFrameAdapter>(
@@ -288,7 +297,7 @@ void WebRtcVideoCapturerAdapter::Stop() {
   DVLOG(3) << __func__;
   DCHECK(running_);
   running_ = false;
-  SetCaptureFormat(NULL);
+  SetCaptureFormat(nullptr);
   SignalStateChange(this, cricket::CS_STOPPED);
 }
 

@@ -37,12 +37,15 @@ class VisualStudioWriter {
   // semicolon-separated list of label patterns used to limit the set of
   // generated projects. Only matching targets and their dependencies (unless
   // |no_deps| is true) will be included to the solution. On failure will
-  // populate |err| and will return false.
+  // populate |err| and will return false. |win_sdk| is the Windows SDK version
+  // which will be used by Visual Studio IntelliSense.
   static bool RunAndWriteFiles(const BuildSettings* build_settings,
                                const Builder& builder,
                                Version version,
                                const std::string& sln_name,
                                const std::string& filters,
+                               const std::string& win_sdk,
+                               const std::string& ninja_extra_args,
                                bool no_deps,
                                Err* err);
 
@@ -98,13 +101,17 @@ class VisualStudioWriter {
 
   VisualStudioWriter(const BuildSettings* build_settings,
                      const char* config_platform,
-                     Version version);
+                     Version version,
+                     const std::string& win_kit);
   ~VisualStudioWriter();
 
-  bool WriteProjectFiles(const Target* target, Err* err);
+  bool WriteProjectFiles(const Target* target,
+                         const std::string& ninja_extra_args,
+                         Err* err);
   bool WriteProjectFileContents(std::ostream& out,
                                 const SolutionProject& solution_project,
                                 const Target* target,
+                                const std::string& ninja_extra_args,
                                 SourceFileCompileTypePairs* source_types,
                                 Err* err);
   void WriteFiltersFileContents(std::ostream& out,
@@ -149,6 +156,9 @@ class VisualStudioWriter {
 
   // Path formatter for ninja targets.
   PathOutput ninja_path_output_;
+
+  // Windows 10 SDK version string (e.g. 10.0.14393.0)
+  std::string windows_sdk_version_;
 
   DISALLOW_COPY_AND_ASSIGN(VisualStudioWriter);
 };

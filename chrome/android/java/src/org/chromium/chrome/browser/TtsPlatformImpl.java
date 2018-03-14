@@ -71,20 +71,11 @@ class TtsPlatformImpl {
     protected TtsPlatformImpl(long nativeTtsPlatformImplAndroid) {
         mInitialized = false;
         mNativeTtsPlatformImplAndroid = nativeTtsPlatformImplAndroid;
-        mTextToSpeech = new TextToSpeech(
-                ContextUtils.getApplicationContext(), new TextToSpeech.OnInitListener() {
-                    @Override
-                    public void onInit(int status) {
-                        if (status == TextToSpeech.SUCCESS) {
-                            ThreadUtils.runOnUiThread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    initialize();
-                                }
-                            });
-                        }
-                    }
-                });
+        mTextToSpeech = new TextToSpeech(ContextUtils.getApplicationContext(), status -> {
+            if (status == TextToSpeech.SUCCESS) {
+                ThreadUtils.runOnUiThread(() -> initialize());
+            }
+        });
         addOnUtteranceProgressListener();
     }
 
@@ -196,12 +187,9 @@ class TtsPlatformImpl {
      * Post a task to the UI thread to send the TTS "end" event.
      */
     protected void sendEndEventOnUiThread(final String utteranceId) {
-        ThreadUtils.runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                if (mNativeTtsPlatformImplAndroid != 0) {
-                    nativeOnEndEvent(mNativeTtsPlatformImplAndroid, Integer.parseInt(utteranceId));
-                }
+        ThreadUtils.runOnUiThread(() -> {
+            if (mNativeTtsPlatformImplAndroid != 0) {
+                nativeOnEndEvent(mNativeTtsPlatformImplAndroid, Integer.parseInt(utteranceId));
             }
         });
     }
@@ -210,13 +198,10 @@ class TtsPlatformImpl {
      * Post a task to the UI thread to send the TTS "error" event.
      */
     protected void sendErrorEventOnUiThread(final String utteranceId) {
-        ThreadUtils.runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                if (mNativeTtsPlatformImplAndroid != 0) {
-                    nativeOnErrorEvent(mNativeTtsPlatformImplAndroid,
-                            Integer.parseInt(utteranceId));
-                }
+        ThreadUtils.runOnUiThread(() -> {
+            if (mNativeTtsPlatformImplAndroid != 0) {
+                nativeOnErrorEvent(mNativeTtsPlatformImplAndroid,
+                        Integer.parseInt(utteranceId));
             }
         });
     }
@@ -225,13 +210,10 @@ class TtsPlatformImpl {
      * Post a task to the UI thread to send the TTS "start" event.
      */
     protected void sendStartEventOnUiThread(final String utteranceId) {
-        ThreadUtils.runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                if (mNativeTtsPlatformImplAndroid != 0) {
-                    nativeOnStartEvent(mNativeTtsPlatformImplAndroid,
-                            Integer.parseInt(utteranceId));
-                }
+        ThreadUtils.runOnUiThread(() -> {
+            if (mNativeTtsPlatformImplAndroid != 0) {
+                nativeOnStartEvent(mNativeTtsPlatformImplAndroid,
+                        Integer.parseInt(utteranceId));
             }
         });
     }
@@ -297,6 +279,7 @@ class TtsPlatformImpl {
         mVoices = new ArrayList<TtsVoice>();
         for (int i = 0; i < locales.length; ++i) {
             if (!locales[i].getVariant().isEmpty()) continue;
+
             try {
                 if (mTextToSpeech.isLanguageAvailable(locales[i]) > 0) {
                     String name = locales[i].getDisplayLanguage();
@@ -306,8 +289,13 @@ class TtsPlatformImpl {
                     TtsVoice voice = new TtsVoice(name, locales[i].toString());
                     mVoices.add(voice);
                 }
-            } catch (java.util.MissingResourceException e) {
+            } catch (Exception e) {
                 // Just skip the locale if it's invalid.
+                //
+                // We used to catch only java.util.MissingResourceException,
+                // but we need to catch more exceptions to work around a bug
+                // in Google TTS when we query "bn".
+                // http://crbug.com/792856
             }
         }
 

@@ -4,22 +4,24 @@
 
 #include "core/dom/IdleDeadline.h"
 
-#include "platform/testing/TestingPlatformSupport.h"
-#include "platform/wtf/CurrentTime.h"
+#include "platform/scheduler/child/web_scheduler.h"
+#include "platform/testing/TestingPlatformSupportWithMockScheduler.h"
+#include "platform/wtf/Time.h"
 #include "public/platform/Platform.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
 namespace {
 
-class MockScheduler final : public WebScheduler {
+class MockIdleDeadlineScheduler final : public WebScheduler {
  public:
-  MockScheduler() {}
-  ~MockScheduler() override {}
+  MockIdleDeadlineScheduler() {}
+  ~MockIdleDeadlineScheduler() override {}
 
   // WebScheduler implementation:
   WebTaskRunner* LoadingTaskRunner() override { return nullptr; }
   WebTaskRunner* TimerTaskRunner() override { return nullptr; }
+  WebTaskRunner* V8TaskRunner() override { return nullptr; }
   void Shutdown() override {}
   bool ShouldYieldForHighPriorityWork() override { return true; }
   bool CanExceedIdleDeadlineIfRequired() override { return false; }
@@ -28,44 +30,48 @@ class MockScheduler final : public WebScheduler {
                                WebThread::IdleTask*) override {}
   std::unique_ptr<WebViewScheduler> CreateWebViewScheduler(
       InterventionReporter*,
-      WebViewScheduler::WebViewSchedulerSettings*) override {
+      WebViewScheduler::WebViewSchedulerDelegate*) override {
     return nullptr;
   }
-  void SuspendTimerQueue() override {}
-  void ResumeTimerQueue() override {}
-  void AddPendingNavigation(WebScheduler::NavigatingFrameType) override {}
-  void RemovePendingNavigation(WebScheduler::NavigatingFrameType) override {}
+  WebTaskRunner* CompositorTaskRunner() override { return nullptr; }
+  std::unique_ptr<RendererPauseHandle> PauseScheduler() override {
+    return nullptr;
+  }
+  void AddPendingNavigation(
+      scheduler::RendererScheduler::NavigatingFrameType) override {}
+  void RemovePendingNavigation(
+      scheduler::RendererScheduler::NavigatingFrameType) override {}
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(MockScheduler);
+  DISALLOW_COPY_AND_ASSIGN(MockIdleDeadlineScheduler);
 };
 
-class MockThread final : public WebThread {
+class MockIdleDeadlineThread final : public WebThread {
  public:
-  MockThread() {}
-  ~MockThread() override {}
+  MockIdleDeadlineThread() {}
+  ~MockIdleDeadlineThread() override {}
   bool IsCurrentThread() const override { return true; }
   WebScheduler* Scheduler() const override { return &scheduler_; }
 
  private:
-  mutable MockScheduler scheduler_;
-  DISALLOW_COPY_AND_ASSIGN(MockThread);
+  mutable MockIdleDeadlineScheduler scheduler_;
+  DISALLOW_COPY_AND_ASSIGN(MockIdleDeadlineThread);
 };
 
-class MockPlatform : public TestingPlatformSupport {
+class MockIdleDeadlinePlatform : public TestingPlatformSupport {
  public:
-  MockPlatform() {}
-  ~MockPlatform() override {}
+  MockIdleDeadlinePlatform() {}
+  ~MockIdleDeadlinePlatform() override {}
   WebThread* CurrentThread() override { return &thread_; }
 
  private:
-  MockThread thread_;
-  DISALLOW_COPY_AND_ASSIGN(MockPlatform);
+  MockIdleDeadlineThread thread_;
+  DISALLOW_COPY_AND_ASSIGN(MockIdleDeadlinePlatform);
 };
 
 }  // namespace
 
-class IdleDeadlineTest : public testing::Test {
+class IdleDeadlineTest : public ::testing::Test {
  public:
   void SetUp() override {
     original_time_function_ = SetTimeFunctionsForTesting([] { return 1.0; });
@@ -83,7 +89,7 @@ TEST_F(IdleDeadlineTest, deadlineInFuture) {
   IdleDeadline* deadline =
       IdleDeadline::Create(1.25, IdleDeadline::CallbackType::kCalledWhenIdle);
   // Note: the deadline is computed with reduced resolution.
-  EXPECT_FLOAT_EQ(249.995, deadline->timeRemaining());
+  EXPECT_FLOAT_EQ(250.0, deadline->timeRemaining());
 }
 
 TEST_F(IdleDeadlineTest, deadlineInPast) {
@@ -93,7 +99,7 @@ TEST_F(IdleDeadlineTest, deadlineInPast) {
 }
 
 TEST_F(IdleDeadlineTest, yieldForHighPriorityWork) {
-  ScopedTestingPlatformSupport<MockPlatform> platform;
+  ScopedTestingPlatformSupport<MockIdleDeadlinePlatform> platform;
 
   IdleDeadline* deadline =
       IdleDeadline::Create(1.25, IdleDeadline::CallbackType::kCalledWhenIdle);

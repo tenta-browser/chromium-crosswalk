@@ -11,6 +11,9 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_thread.h"
+#if !defined(OS_ANDROID)
+#include "chrome/browser/media/router/mojo/media_route_controller.h"
+#endif  // !defined(OS_ANDROID)
 
 namespace media_router {
 
@@ -72,9 +75,20 @@ void MediaRouterBase::OnIncognitoProfileShutdown() {
     TerminateRoute(route_id);
 }
 
+IssueManager* MediaRouterBase::GetIssueManager() {
+  return &issue_manager_;
+}
+
 std::vector<MediaRoute> MediaRouterBase::GetCurrentRoutes() const {
   return internal_routes_observer_->current_routes;
 }
+
+#if !defined(OS_ANDROID)
+scoped_refptr<MediaRouteController> MediaRouterBase::GetRouteController(
+    const MediaRoute::Id& route_id) {
+  return nullptr;
+}
+#endif  // !defined(OS_ANDROID)
 
 MediaRouterBase::MediaRouterBase() : initialized_(false) {}
 
@@ -115,6 +129,16 @@ bool MediaRouterBase::HasJoinableRoute() const {
   return internal_routes_observer_->has_route;
 }
 
+const MediaRoute* MediaRouterBase::GetRoute(
+    const MediaRoute::Id& route_id) const {
+  const auto& routes = internal_routes_observer_->current_routes;
+  auto it = std::find_if(routes.begin(), routes.end(),
+                         [&route_id](const MediaRoute& route) {
+                           return route.media_route_id() == route_id;
+                         });
+  return it == routes.end() ? nullptr : &*it;
+}
+
 void MediaRouterBase::Initialize() {
   DCHECK(!initialized_);
   // The observer calls virtual methods on MediaRouter; it must be created
@@ -136,6 +160,28 @@ void MediaRouterBase::Shutdown() {
   // The observer calls virtual methods on MediaRouter; it must be destroyed
   // outside of the dtor
   internal_routes_observer_.reset();
+}
+
+#if !defined(OS_ANDROID)
+void MediaRouterBase::DetachRouteController(const MediaRoute::Id& route_id,
+                                            MediaRouteController* controller) {}
+#endif  // !defined(OS_ANDROID)
+
+void MediaRouterBase::RegisterRemotingSource(
+    int32_t tab_id,
+    CastRemotingConnector* remoting_source) {
+  auto it = remoting_sources_.find(tab_id);
+  if (it != remoting_sources_.end()) {
+    DCHECK(remoting_source == it->second);
+    return;
+  }
+  remoting_sources_.emplace(tab_id, remoting_source);
+}
+
+void MediaRouterBase::UnregisterRemotingSource(int32_t tab_id) {
+  auto it = remoting_sources_.find(tab_id);
+  DCHECK(it != remoting_sources_.end());
+  remoting_sources_.erase(it);
 }
 
 }  // namespace media_router

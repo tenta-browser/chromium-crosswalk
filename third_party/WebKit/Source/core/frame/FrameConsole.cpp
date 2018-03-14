@@ -50,14 +50,17 @@ void FrameConsole::AddMessage(ConsoleMessage* console_message) {
   // information for how the request was triggered has been stored in the
   // provisional DocumentLoader. Use it instead.
   DocumentLoader* provisional_loader =
-      frame_->Loader().ProvisionalDocumentLoader();
+      frame_->Loader().GetProvisionalDocumentLoader();
   if (provisional_loader) {
     std::unique_ptr<SourceLocation> source_location =
         provisional_loader->CopySourceLocation();
     if (source_location) {
+      Vector<DOMNodeId> nodes(console_message->Nodes());
+      LocalFrame* frame = console_message->Frame();
       console_message = ConsoleMessage::Create(
           console_message->Source(), console_message->Level(),
           console_message->Message(), std::move(source_location));
+      console_message->SetNodes(frame, std::move(nodes));
     }
   }
 
@@ -105,23 +108,6 @@ void FrameConsole::ReportMessageToClient(MessageSource source,
       frame_, source, level, message, location->LineNumber(), url, stack_trace);
 }
 
-void FrameConsole::AddMessageFromWorker(
-    MessageLevel level,
-    const String& message,
-    std::unique_ptr<SourceLocation> location,
-    const String& worker_id) {
-  ReportMessageToClient(kWorkerMessageSource, level, message, location.get());
-  AddMessageToStorage(ConsoleMessage::CreateFromWorker(
-      level, message, std::move(location), worker_id));
-}
-
-void FrameConsole::AddSingletonMessage(ConsoleMessage* console_message) {
-  if (singleton_messages_.Contains(console_message->Message()))
-    return;
-  singleton_messages_.insert(console_message->Message());
-  AddMessage(console_message);
-}
-
 void FrameConsole::ReportResourceResponseReceived(
     DocumentLoader* loader,
     unsigned long request_identifier,
@@ -157,7 +143,7 @@ void FrameConsole::DidFailLoading(unsigned long request_identifier,
       error.FailingURL(), request_identifier));
 }
 
-DEFINE_TRACE(FrameConsole) {
+void FrameConsole::Trace(blink::Visitor* visitor) {
   visitor->Trace(frame_);
 }
 

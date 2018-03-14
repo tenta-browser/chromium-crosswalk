@@ -3,7 +3,6 @@
 # found in the LICENSE file.
 
 import os
-import sys
 import unittest
 import StringIO
 
@@ -25,11 +24,6 @@ class FetchBenchmarkDepsUnittest(unittest.TestCase):
   py_utils.cloud_storage.GetFilesInDirectoryIfChanged
   """
 
-  def setUp(self):
-    """Override sys.argv as if it is called from command line."""
-    self._argv = sys.argv
-    sys.argv = ['./fetch_benchmark_deps', '']
-
   def _RunFetchBenchmarkDepsTest(self, benchmark_name,
                                  expected_fetched_file_paths=None):
     """Simulates './fetch_benchmark_deps [benchmark_name]'
@@ -42,7 +36,7 @@ class FetchBenchmarkDepsUnittest(unittest.TestCase):
       benchmark_name: benchmark name
       expected_fetched_file_paths: the expected result.
     """
-    sys.argv[1] = benchmark_name
+    args = [benchmark_name]
     output = StringIO.StringIO()
     with mock.patch('telemetry.wpr.archive_info.WprArchiveInfo'
                     '.DownloadArchivesIfNeeded') as mock_download:
@@ -50,7 +44,7 @@ class FetchBenchmarkDepsUnittest(unittest.TestCase):
                       '.GetFilesInDirectoryIfChanged') as mock_get:
         mock_download.return_value = True
         mock_get.GetFilesInDirectoryIfChanged.return_value = True
-        fetch_benchmark_deps.main(output)
+        fetch_benchmark_deps.main(args, output)
     for f in output.getvalue().splitlines():
       fullpath = os.path.join(path_util.GetChromiumSrcDir(), f)
       sha1path = fullpath + '.sha1'
@@ -63,11 +57,11 @@ class FetchBenchmarkDepsUnittest(unittest.TestCase):
     self._RunFetchBenchmarkDepsTest('smoothness.top_25_smooth')
 
   def testFetchServingDirs(self):
-    self._RunFetchBenchmarkDepsTest('media.tough_video_cases')
+    self._RunFetchBenchmarkDepsTest('media.desktop')
 
   def testFetchOctane(self):
     octane_wpr_path = os.path.join(
-        os.path.dirname(__file__), 'page_sets', 'data', 'octane_002.wpr')
+        os.path.dirname(__file__), 'page_sets', 'data', 'octane_002.wprgo')
     expected = os.path.relpath(octane_wpr_path,
                                path_util.GetChromiumSrcDir())
     self._RunFetchBenchmarkDepsTest('octane', NormPaths(expected))

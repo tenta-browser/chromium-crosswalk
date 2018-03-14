@@ -10,6 +10,7 @@
 #include "chrome/browser/extensions/api/chrome_device_permissions_prompt.h"
 #include "chrome/browser/extensions/chrome_extension_chooser_dialog.h"
 #include "chrome/browser/extensions/device_permissions_dialog_controller.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/views/device_chooser_content_view.h"
 #include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "components/constrained_window/constrained_window_views.h"
@@ -17,10 +18,10 @@
 #include "content/public/browser/browser_thread.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/views/background.h"
+#include "ui/views/border.h"
 #include "ui/views/controls/link.h"
 #include "ui/views/controls/styled_label.h"
 #include "ui/views/layout/fill_layout.h"
-#include "ui/views/window/dialog_client_view.h"
 
 ChooserDialogView::ChooserDialogView(
     std::unique_ptr<ChooserController> chooser_controller) {
@@ -42,6 +43,10 @@ ChooserDialogView::ChooserDialogView(
   DCHECK(chooser_controller);
   device_chooser_content_view_ =
       new DeviceChooserContentView(this, std::move(chooser_controller));
+  device_chooser_content_view_->SetBorder(views::CreateEmptyBorder(
+      ChromeLayoutProvider::Get()->GetDialogInsetsForContentType(
+          views::CONTROL, views::CONTROL)));
+  chrome::RecordDialogCreation(chrome::DialogIdentifier::CHOOSER);
 }
 
 ChooserDialogView::~ChooserDialogView() {}
@@ -68,35 +73,13 @@ bool ChooserDialogView::IsDialogButtonEnabled(ui::DialogButton button) const {
 }
 
 views::View* ChooserDialogView::CreateFootnoteView() {
-  return device_chooser_content_view_->footnote_link();
-}
-
-views::ClientView* ChooserDialogView::CreateClientView(views::Widget* widget) {
-  views::DialogClientView* client =
-      new views::DialogClientView(widget, GetContentsView());
-
-  constexpr int kMinWidth = 402;
-  constexpr int kMinHeight = 320;
-  ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
-  int min_width = provider->GetDialogPreferredWidth(DialogWidth::MEDIUM);
-  if (!min_width)
-    min_width = kMinWidth;
-  client->set_minimum_size(gfx::Size(min_width, kMinHeight));
-
-  client->SetButtonRowInsets(gfx::Insets(
-      provider->GetDistanceMetric(DISTANCE_UNRELATED_CONTROL_VERTICAL), 0, 0,
-      0));
-  return client;
-}
-
-views::NonClientFrameView* ChooserDialogView::CreateNonClientFrameView(
-    views::Widget* widget) {
-  // ChooserDialogView always has a parent, so ShouldUseCustomFrame() should
-  // always be true.
-  DCHECK(ShouldUseCustomFrame());
-  return views::DialogDelegate::CreateDialogFrameView(
-      widget, gfx::Insets(ChromeLayoutProvider::Get()->GetDistanceMetric(
-                  DISTANCE_PANEL_CONTENT_MARGIN)));
+  views::View* footnote_link = device_chooser_content_view_->footnote_link();
+  if (footnote_link) {
+    footnote_link->SetBorder(
+        views::CreateEmptyBorder(ChromeLayoutProvider::Get()->GetInsetsMetric(
+            views::INSETS_DIALOG_SUBSECTION)));
+  }
+  return footnote_link;
 }
 
 bool ChooserDialogView::Accept() {
@@ -127,7 +110,7 @@ const views::Widget* ChooserDialogView::GetWidget() const {
 }
 
 void ChooserDialogView::OnSelectionChanged() {
-  GetDialogClientView()->UpdateDialogButtons();
+  DialogModelChanged();
 }
 
 DeviceChooserContentView*

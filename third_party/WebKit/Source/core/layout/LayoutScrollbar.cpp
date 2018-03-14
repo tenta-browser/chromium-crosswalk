@@ -26,13 +26,13 @@
 #include "core/layout/LayoutScrollbar.h"
 
 #include "core/css/PseudoStyleRequest.h"
-#include "core/frame/FrameView.h"
-#include "core/layout/LayoutPart.h"
+#include "core/frame/LocalFrameView.h"
+#include "core/layout/LayoutEmbeddedContent.h"
 #include "core/layout/LayoutScrollbarPart.h"
 #include "core/layout/LayoutScrollbarTheme.h"
 #include "core/layout/LayoutView.h"
 #include "core/layout/api/LayoutAPIShim.h"
-#include "core/layout/api/LayoutPartItem.h"
+#include "core/layout/api/LayoutEmbeddedContentItem.h"
 #include "core/paint/ObjectPaintInvalidator.h"
 #include "platform/graphics/GraphicsContext.h"
 
@@ -65,10 +65,10 @@ LayoutScrollbar::LayoutScrollbar(ScrollableArea* scrollable_area,
   if (LayoutScrollbarPart* part = parts_.at(kScrollbarBGPart)) {
     part->UpdateLayout();
     rect.SetSize(FlooredIntSize(part->Size()));
-  } else if (this->Orientation() == kHorizontalScrollbar) {
-    rect.SetWidth(this->Width());
+  } else if (Orientation() == kHorizontalScrollbar) {
+    rect.SetWidth(Width());
   } else {
-    rect.SetHeight(this->Height());
+    rect.SetHeight(Height());
   }
 
   SetFrameRect(rect);
@@ -88,7 +88,7 @@ LayoutScrollbar::~LayoutScrollbar() {
   UpdateScrollbarParts(true);
 }
 
-DEFINE_TRACE(LayoutScrollbar) {
+void LayoutScrollbar::Trace(blink::Visitor* visitor) {
   visitor->Trace(style_source_);
   Scrollbar::Trace(visitor);
 }
@@ -96,15 +96,12 @@ DEFINE_TRACE(LayoutScrollbar) {
 LayoutBox* LayoutScrollbar::StyleSource() const {
   return style_source_ && style_source_->GetLayoutObject()
              ? style_source_->GetLayoutObject()->EnclosingBox()
-             : 0;
+             : nullptr;
 }
 
-void LayoutScrollbar::SetParent(FrameViewBase* parent) {
-  Scrollbar::SetParent(parent);
-  if (!parent) {
-    // Destroy all of the scrollbar's LayoutBoxes.
-    UpdateScrollbarParts(true);
-  }
+void LayoutScrollbar::DisconnectFromScrollableArea() {
+  UpdateScrollbarParts(true);
+  Scrollbar::DisconnectFromScrollableArea();
 }
 
 void LayoutScrollbar::SetEnabled(bool e) {
@@ -143,7 +140,7 @@ void LayoutScrollbar::SetPressedPart(ScrollbarPart part) {
   UpdateScrollbarPart(kTrackBGPart);
 }
 
-PassRefPtr<ComputedStyle> LayoutScrollbar::GetScrollbarPseudoStyle(
+scoped_refptr<ComputedStyle> LayoutScrollbar::GetScrollbarPseudoStyle(
     ScrollbarPart part_type,
     PseudoId pseudo_id) {
   if (!StyleSource())
@@ -222,10 +219,10 @@ void LayoutScrollbar::UpdateScrollbarPart(ScrollbarPart part_type,
   if (part_type == kNoPart)
     return;
 
-  RefPtr<ComputedStyle> part_style =
+  scoped_refptr<ComputedStyle> part_style =
       !destroy ? GetScrollbarPseudoStyle(part_type,
                                          PseudoForScrollbarPart(part_type))
-               : PassRefPtr<ComputedStyle>(nullptr);
+               : scoped_refptr<ComputedStyle>(nullptr);
 
   bool need_layout_object =
       !destroy && part_style && part_style->Display() != EDisplay::kNone;
@@ -387,14 +384,14 @@ void LayoutScrollbar::InvalidateDisplayItemClientsOfScrollbarParts() {
   for (auto& part : parts_) {
     ObjectPaintInvalidator(*part.value)
         .InvalidateDisplayItemClientsIncludingNonCompositingDescendants(
-            kPaintInvalidationScroll);
+            PaintInvalidationReason::kScrollControl);
   }
 }
 
 void LayoutScrollbar::SetVisualRect(const LayoutRect& rect) {
   Scrollbar::SetVisualRect(rect);
   for (auto& part : parts_)
-    part.value->SetVisualRect(rect);
+    part.value->GetMutableForPainting().FirstFragment().SetVisualRect(rect);
 }
 
 }  // namespace blink

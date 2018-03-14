@@ -5,16 +5,21 @@
 package org.chromium.chrome.browser.widget.selection;
 
 import android.content.Context;
+import android.content.res.ColorStateList;
+import android.graphics.drawable.Drawable;
+import android.support.annotation.Nullable;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.View.OnLongClickListener;
-import android.view.ViewGroup.MarginLayoutParams;
 import android.widget.Checkable;
 import android.widget.FrameLayout;
+import android.widget.TextView;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.util.FeatureUtilities;
+import org.chromium.chrome.browser.widget.TintedImageView;
 import org.chromium.chrome.browser.widget.selection.SelectionDelegate.SelectionObserver;
 
 import java.util.List;
@@ -28,15 +33,28 @@ import java.util.List;
  */
 public abstract class SelectableItemView<E> extends FrameLayout implements Checkable,
         OnClickListener, OnLongClickListener, SelectionObserver<E> {
+    protected final int mDefaultLevel;
+    protected final int mSelectedLevel;
+
+    protected TintedImageView mIconView;
+    protected TextView mTitleView;
+    protected TextView mDescriptionView;
+    protected ColorStateList mIconColorList;
+
     private SelectionDelegate<E> mSelectionDelegate;
-    private SelectableItemHighlightView mHighlightView;
     private E mItem;
+    private boolean mIsChecked;
+    private Drawable mIconDrawable;
 
     /**
      * Constructor for inflating from XML.
      */
     public SelectableItemView(Context context, AttributeSet attrs) {
         super(context, attrs);
+        mIconColorList =
+                ApiCompatibilityUtils.getColorStateList(getResources(), R.color.white_mode_tint);
+        mDefaultLevel = getResources().getInteger(R.integer.list_item_level_default);
+        mSelectedLevel = getResources().getInteger(R.integer.list_item_level_selected);
     }
 
     /**
@@ -81,8 +99,17 @@ public abstract class SelectableItemView<E> extends FrameLayout implements Check
     protected void onFinishInflate() {
         super.onFinishInflate();
 
-        inflate(getContext(), R.layout.selectable_item_highlight_view, this);
-        mHighlightView = (SelectableItemHighlightView) findViewById(R.id.highlight);
+        mIconView = findViewById(R.id.icon_view);
+        mTitleView = findViewById(R.id.title);
+        mDescriptionView = findViewById(R.id.description);
+
+        if (mIconView != null) {
+            mIconView.setBackgroundResource(R.drawable.list_item_icon_modern_bg);
+            mIconView.setTint(getDefaultIconTint());
+            if (!FeatureUtilities.isChromeHomeEnabled()) {
+                mIconView.getBackground().setAlpha(0);
+            }
+        }
 
         setOnClickListener(this);
         setOnLongClickListener(this);
@@ -142,7 +169,7 @@ public abstract class SelectableItemView<E> extends FrameLayout implements Check
     // Checkable implementations.
     @Override
     public boolean isChecked() {
-        return mHighlightView.isChecked();
+        return mIsChecked;
     }
 
     @Override
@@ -152,7 +179,9 @@ public abstract class SelectableItemView<E> extends FrameLayout implements Check
 
     @Override
     public void setChecked(boolean checked) {
-        mHighlightView.setChecked(checked);
+        if (checked == mIsChecked) return;
+        mIsChecked = checked;
+        updateIconView();
     }
 
     // SelectionObserver implementation.
@@ -162,59 +191,49 @@ public abstract class SelectableItemView<E> extends FrameLayout implements Check
     }
 
     /**
+     * Set drawable for the icon view. Note that you may need to use this method instead of
+     * mIconView#setImageDrawable to ensure icon view is correctly set in selection mode.
+     */
+    protected void setIconDrawable(Drawable iconDrawable) {
+        mIconDrawable = iconDrawable;
+        updateIconView();
+    }
+
+    /**
+     * Update icon image and background based on whether this item is selected.
+     */
+    protected void updateIconView() {
+        // TODO(huayinz): Refactor this method so that mIconView is not exposed to subclass.
+        if (mIconView == null) return;
+
+        if (isChecked()) {
+            mIconView.getBackground().setLevel(mSelectedLevel);
+            mIconView.setImageResource(R.drawable.ic_check_googblue_24dp);
+            mIconView.setTint(mIconColorList);
+        } else {
+            mIconView.getBackground().setLevel(mDefaultLevel);
+            mIconView.setImageDrawable(mIconDrawable);
+            mIconView.setTint(getDefaultIconTint());
+        }
+
+        if (!FeatureUtilities.isChromeHomeEnabled()) {
+            mIconView.getBackground().setAlpha(isChecked() ? 255 : 0);
+        }
+    }
+
+    /**
+     * @return The {@link ColorStateList} used to tint the icon drawable set via
+     *         {@link #setIconDrawable(Drawable)} when the item is not selected.
+     */
+    protected @Nullable ColorStateList getDefaultIconTint() {
+        return null;
+    }
+
+    /**
      * Same as {@link OnClickListener#onClick(View)} on this.
      * Subclasses should override this instead of setting their own OnClickListener because this
      * class handles onClick events in selection mode, and won't forward events to subclasses in
      * that case.
      */
     protected abstract void onClick();
-
-    /**
-     * Sets the background resource for this view using the item's positioning in its group.
-     * @param isFirstInGroup Whether this item is the first in its group.
-     * @param isLastInGroup Whether this item is the last in its group.
-     */
-    public void setBackgroundResourceForGroupPosition(
-            boolean isFirstInGroup, boolean isLastInGroup) {
-        int backgroundResource;
-
-        if (!isLastInGroup && !isFirstInGroup) {
-            backgroundResource = R.drawable.list_item_middle;
-        } else if (!isLastInGroup) {
-            backgroundResource = R.drawable.list_item_top;
-        } else if (!isFirstInGroup) {
-            backgroundResource = R.drawable.list_item_bottom;
-        } else {
-            backgroundResource = R.drawable.list_item_single;
-        }
-
-        setBackgroundResource(backgroundResource);
-    }
-
-    /**
-     * Sets lateral margins to effectively hide the lateral shadow and rounded corners on the
-     * list_item* 9-patches used as backgrounds.
-     * @param contentView The container view surrounding the list item content. Extra start and end
-     *                    padding will be added to this view to account for incorrect internal
-     *                    padding in the 9-patches.
-     */
-    public void setLateralMarginsForDefaultDisplay(View contentView) {
-        MarginLayoutParams layoutParams = (MarginLayoutParams) getLayoutParams();
-        layoutParams.setMargins(
-                SelectableListLayout.getDefaultListItemLateralMarginPx(getResources()),
-                layoutParams.topMargin,
-                SelectableListLayout.getDefaultListItemLateralMarginPx(getResources()),
-                layoutParams.bottomMargin);
-
-        // TODO(twellington): remove this when new assets with the correct built in padding are
-        //                    available. This can move to XML once the bookmark and download layouts
-        //                    are width constrained to 600dp.
-        int lateralPaddingOffset =
-                getResources().getDimensionPixelSize(R.dimen.list_item_lateral_padding);
-        int startPadding = ApiCompatibilityUtils.getPaddingStart(contentView);
-        int endPadding = ApiCompatibilityUtils.getPaddingEnd(contentView);
-        ApiCompatibilityUtils.setPaddingRelative(contentView, startPadding + lateralPaddingOffset,
-                contentView.getPaddingTop(), endPadding + lateralPaddingOffset,
-                contentView.getPaddingBottom());
-    }
 }

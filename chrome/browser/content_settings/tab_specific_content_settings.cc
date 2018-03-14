@@ -5,9 +5,11 @@
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 
 #include <list>
+#include <vector>
 
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -50,6 +52,7 @@
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/cookies/canonical_cookie.h"
 #include "storage/common/fileapi/file_system_types.h"
+#include "url/origin.h"
 
 using content::BrowserThread;
 using content::NavigationController;
@@ -152,13 +155,13 @@ void TabSpecificContentSettings::CookieChanged(
     const base::Callback<WebContents*(void)>& wc_getter,
     const GURL& url,
     const GURL& frame_url,
-    const std::string& cookie_line,
+    const net::CanonicalCookie& cookie,
     const net::CookieOptions& options,
     bool blocked_by_policy) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   TabSpecificContentSettings* settings = GetForWCGetter(wc_getter);
   if (settings)
-    settings->OnCookieChanged(url, frame_url, cookie_line, options,
+    settings->OnCookieChanged(url, frame_url, cookie, options,
                               blocked_by_policy);
 }
 
@@ -229,6 +232,22 @@ void TabSpecificContentSettings::ServiceWorkerAccessed(
                                       blocked_by_policy_cookie);
 }
 
+// static
+void TabSpecificContentSettings::SharedWorkerAccessed(
+    int render_process_id,
+    int render_frame_id,
+    const GURL& worker_url,
+    const std::string& name,
+    const url::Origin& constructor_origin,
+    bool blocked_by_policy) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  TabSpecificContentSettings* settings =
+      GetForFrame(render_process_id, render_frame_id);
+  if (settings)
+    settings->OnSharedWorkerAccessed(worker_url, name, constructor_origin,
+                                     blocked_by_policy);
+}
+
 bool TabSpecificContentSettings::IsContentBlocked(
     ContentSettingsType content_type) const {
   DCHECK_NE(CONTENT_SETTINGS_TYPE_GEOLOCATION, content_type)
@@ -249,7 +268,8 @@ bool TabSpecificContentSettings::IsContentBlocked(
       content_type == CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA ||
       content_type == CONTENT_SETTINGS_TYPE_PPAPI_BROKER ||
       content_type == CONTENT_SETTINGS_TYPE_MIDI_SYSEX ||
-      content_type == CONTENT_SETTINGS_TYPE_SUBRESOURCE_FILTER) {
+      content_type == CONTENT_SETTINGS_TYPE_ADS ||
+      content_type == CONTENT_SETTINGS_TYPE_SOUND) {
     const auto& it = content_settings_status_.find(content_type);
     if (it != content_settings_status_.end())
       return it->second.blocked;
@@ -329,12 +349,6 @@ void TabSpecificContentSettings::OnContentBlockedWithDetail(
   }
 #endif
 
-  if (type == CONTENT_SETTINGS_TYPE_PLUGINS && !details.empty() &&
-      std::find(blocked_plugin_names_.begin(), blocked_plugin_names_.end(),
-                details) == blocked_plugin_names_.end()) {
-    blocked_plugin_names_.push_back(details);
-  }
-
   if (!status.blocked) {
     status.blocked = true;
     // TODO: it would be nice to have a way of mocking this in tests.
@@ -412,16 +426,16 @@ void TabSpecificContentSettings::OnCookiesRead(
 void TabSpecificContentSettings::OnCookieChanged(
     const GURL& url,
     const GURL& frame_url,
-    const std::string& cookie_line,
+    const net::CanonicalCookie& cookie,
     const net::CookieOptions& options,
     bool blocked_by_policy) {
   if (blocked_by_policy) {
-    blocked_local_shared_objects_.cookies()->AddChangedCookie(
-        frame_url, url, cookie_line, options);
+    blocked_local_shared_objects_.cookies()->AddChangedCookie(frame_url, url,
+                                                              cookie);
     OnContentBlocked(CONTENT_SETTINGS_TYPE_COOKIES);
   } else {
-    allowed_local_shared_objects_.cookies()->AddChangedCookie(
-        frame_url, url, cookie_line, options);
+    allowed_local_shared_objects_.cookies()->AddChangedCookie(frame_url, url,
+                                                              cookie);
     OnContentAllowed(CONTENT_SETTINGS_TYPE_COOKIES);
   }
 
@@ -484,6 +498,23 @@ void TabSpecificContentSettings::OnServiceWorkerAccessed(
   if (blocked_by_policy_cookie) {
     OnContentBlocked(CONTENT_SETTINGS_TYPE_COOKIES);
   } else {
+    OnContentAllowed(CONTENT_SETTINGS_TYPE_COOKIES);
+  }
+}
+
+void TabSpecificContentSettings::OnSharedWorkerAccessed(
+    const GURL& worker_url,
+    const std::string& name,
+    const url::Origin& constructor_origin,
+    bool blocked_by_policy) {
+  DCHECK(worker_url.is_valid());
+  if (blocked_by_policy) {
+    blocked_local_shared_objects_.shared_workers()->AddSharedWorker(
+        worker_url, name, constructor_origin);
+    OnContentBlocked(CONTENT_SETTINGS_TYPE_COOKIES);
+  } else {
+    allowed_local_shared_objects_.shared_workers()->AddSharedWorker(
+        worker_url, name, constructor_origin);
     OnContentAllowed(CONTENT_SETTINGS_TYPE_COOKIES);
   }
 }
@@ -697,6 +728,10 @@ void TabSpecificContentSettings::SetPopupsBlocked(bool blocked) {
       content::NotificationService::NoDetails());
 }
 
+void TabSpecificContentSettings::OnAudioBlocked() {
+  OnContentBlocked(CONTENT_SETTINGS_TYPE_SOUND);
+}
+
 void TabSpecificContentSettings::SetPepperBrokerAllowed(bool allowed) {
   if (allowed) {
     OnContentAllowed(CONTENT_SETTINGS_TYPE_PPAPI_BROKER);
@@ -741,7 +776,7 @@ void TabSpecificContentSettings::OnContentSettingChanged(
     GetRendererContentSettingRules(map, &rules);
 
     IPC::ChannelProxy* channel =
-        web_contents()->GetRenderProcessHost()->GetChannel();
+        web_contents()->GetMainFrame()->GetProcess()->GetChannel();
     // channel might be NULL in tests.
     if (channel) {
       chrome::mojom::RendererConfigurationAssociatedPtr rc_interface;
@@ -778,13 +813,6 @@ void TabSpecificContentSettings::DidStartNavigation(
     return;
   }
 
-  const content::NavigationController& controller =
-      web_contents()->GetController();
-  content::NavigationEntry* last_committed_entry =
-      controller.GetLastCommittedEntry();
-  if (last_committed_entry)
-    previous_url_ = last_committed_entry->GetURL();
-
   // If we're displaying a network error page do not reset the content
   // settings delegate's cookies so the user has a chance to modify cookie
   // settings.
@@ -805,7 +833,6 @@ void TabSpecificContentSettings::DidFinishNavigation(
 
   // Clear "blocked" flags.
   ClearContentSettingsExceptForNavigationRelatedSettings();
-  blocked_plugin_names_.clear();
   GeolocationDidNavigate(navigation_handle);
   MidiDidNavigate(navigation_handle);
 
@@ -851,19 +878,14 @@ void TabSpecificContentSettings::ClearMidiContentSettings() {
 
 void TabSpecificContentSettings::GeolocationDidNavigate(
     content::NavigationHandle* navigation_handle) {
-  ContentSettingsUsagesState::CommittedDetails committed_details;
-  committed_details.current_url = navigation_handle->GetURL();
-  committed_details.previous_url = previous_url_;
-
-  geolocation_usages_state_.DidNavigate(committed_details);
+  geolocation_usages_state_.DidNavigate(navigation_handle->GetURL(),
+                                        navigation_handle->GetPreviousURL());
 }
 
 void TabSpecificContentSettings::MidiDidNavigate(
     content::NavigationHandle* navigation_handle) {
-  ContentSettingsUsagesState::CommittedDetails committed_details;
-  committed_details.current_url = navigation_handle->GetURL();
-  committed_details.previous_url = previous_url_;
-  midi_usages_state_.DidNavigate(committed_details);
+  midi_usages_state_.DidNavigate(navigation_handle->GetURL(),
+                                 navigation_handle->GetPreviousURL());
 }
 
 void TabSpecificContentSettings::BlockAllContentForTesting() {

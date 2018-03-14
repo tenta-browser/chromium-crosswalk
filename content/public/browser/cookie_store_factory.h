@@ -18,8 +18,8 @@ class SequencedTaskRunner;
 }
 
 namespace net {
+class ChannelIDService;
 class CookieCryptoDelegate;
-class CookieMonsterDelegate;
 class CookieStore;
 }
 
@@ -60,14 +60,12 @@ struct CONTENT_EXPORT CookieStoreConfig {
   // created using this config.
   CookieStoreConfig(const base::FilePath& path,
                     SessionCookieMode session_cookie_mode,
-                    storage::SpecialStoragePolicy* storage_policy,
-                    net::CookieMonsterDelegate* cookie_delegate);
+                    storage::SpecialStoragePolicy* storage_policy);
   ~CookieStoreConfig();
 
   const base::FilePath path;
   const SessionCookieMode session_cookie_mode;
   const scoped_refptr<storage::SpecialStoragePolicy> storage_policy;
-  const scoped_refptr<net::CookieMonsterDelegate> cookie_delegate;
 
   // The following are infrequently used cookie store parameters.
   // Rather than clutter the constructor API, these are assigned a default
@@ -78,6 +76,11 @@ struct CONTENT_EXPORT CookieStoreConfig {
   // CookieCryptoDelegate must outlive any cookie store created with this
   // config.
   net::CookieCryptoDelegate* crypto_delegate;
+
+  // Provides the cookie store with a pointer to the corresponding
+  // ChannelIDService that should be used with that cookie store. The
+  // ChannelIDService must outlive any cookie store created with this config.
+  net::ChannelIDService* channel_id_service;
 
   // Callbacks for data load events will be performed on |client_task_runner|.
   // If nullptr, uses the task runner for BrowserThread::IO.

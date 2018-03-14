@@ -21,38 +21,35 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
-#include "components/browser_watcher/postmortem_report_extractor.h"
 #include "components/browser_watcher/stability_report.pb.h"
+#include "components/browser_watcher/stability_report_extractor.h"
 #include "components/browser_watcher/system_session_analyzer_win.h"
 #include "third_party/crashpad/crashpad/client/crash_report_database.h"
 
 namespace browser_watcher {
 
-// Handles postmortem report collection by establishing the set of stability
-// files to collect, then for each file:
-//   - extracting a report protocol buffer
-//   - registering a crash report with the crash database
-//   - writing a minidump file for the report
-// TODO(manzagop): throttling, graceful handling of accumulating data.
+// Performs postmortem stability data collection and analysis. The data is then
+// reported as user metrics (e.g. to estimate the number of unclean shutdowns,
+// or those attributable to the system) and, optionally, as crash reports for
+// a more detailed view.
 class PostmortemReportCollector {
  public:
+  // Creates a postmortem report collector. The |product_name|, |version_number|
+  // and |channel_name| are used to set reporter information in postmortem
+  // crash reports. If |report_database| is set, postmortem crash reports are
+  // generated and registered against it. If |analyzer| is set, it used to
+  // analyze the containing system session.
+  PostmortemReportCollector(SystemSessionAnalyzer* analyzer);
   PostmortemReportCollector(const std::string& product_name,
                             const std::string& version_number,
                             const std::string& channel_name,
+                            crashpad::CrashReportDatabase* report_database,
                             SystemSessionAnalyzer* analyzer);
-  virtual ~PostmortemReportCollector();
+  ~PostmortemReportCollector();
 
-  // Collects postmortem stability reports from files found in |debug_info_dir|,
-  // relying on |debug_file_pattern| and |excluded_debug_files|. Reports are
-  // then wrapped in Crashpad reports, manufactured via |report_database|.
-  // Returns the number crash reports successfully registered with the reporter.
-  // TODO(manzagop): consider mechanisms for partial collection if this is to be
-  //     used on a critical path.
-  int CollectAndSubmitAllPendingReports(
-      const base::FilePath& debug_info_dir,
-      const base::FilePath::StringType& debug_file_pattern,
-      const std::set<base::FilePath>& excluded_debug_files,
-      crashpad::CrashReportDatabase* report_database);
+  // Analyzes |stability_files|, logs postmortem user metrics and optionally
+  // generates postmortem crash reports.
+  void Process(const std::vector<base::FilePath>& stability_files);
 
   const std::string& product_name() const { return product_name_; }
   const std::string& version_number() const { return version_number_; }
@@ -81,16 +78,10 @@ class PostmortemReportCollector {
       PostmortemReportCollectorCollectionFromGlobalTrackerTest,
       SystemStateTest);
 
-  // Virtual for unittesting.
-  virtual std::vector<base::FilePath> GetDebugStateFilePaths(
-      const base::FilePath& debug_info_dir,
-      const base::FilePath::StringType& debug_file_pattern,
-      const std::set<base::FilePath>& excluded_debug_files);
-
-  CollectionStatus CollectAndSubmitOneReport(
-      const crashpad::UUID& client_id,
-      const base::FilePath& file,
-      crashpad::CrashReportDatabase* report_database);
+  // Processes a stability file, reports user metrics and optionally generates a
+  // crash report.
+  void ProcessOneReport(const crashpad::UUID& client_id,
+                        const base::FilePath& file);
 
   virtual CollectionStatus CollectOneReport(
       const base::FilePath& stability_file,
@@ -99,6 +90,9 @@ class PostmortemReportCollector {
   void SetReporterDetails(StabilityReport* report) const;
 
   void RecordSystemShutdownState(StabilityReport* report) const;
+
+  void GenerateCrashReport(const crashpad::UUID& client_id,
+                           StabilityReport* report_proto);
 
   virtual bool WriteReportToMinidump(StabilityReport* report,
                                      const crashpad::UUID& client_id,
@@ -109,6 +103,7 @@ class PostmortemReportCollector {
   std::string version_number_;
   std::string channel_name_;
 
+  crashpad::CrashReportDatabase* report_database_;  // Not owned.
   SystemSessionAnalyzer* system_session_analyzer_;  // Not owned.
 
   DISALLOW_COPY_AND_ASSIGN(PostmortemReportCollector);

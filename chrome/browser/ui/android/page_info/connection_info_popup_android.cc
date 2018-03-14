@@ -12,7 +12,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ssl/security_state_tab_helper.h"
 #include "chrome/browser/ui/page_info/page_info.h"
-#include "chrome/grit/generated_resources.h"
 #include "components/security_state/core/security_state.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_context.h"
@@ -33,10 +32,11 @@ using base::android::ScopedJavaLocalRef;
 using content::WebContents;
 
 // static
-static jlong Init(JNIEnv* env,
-                  const JavaParamRef<jclass>& clazz,
-                  const JavaParamRef<jobject>& obj,
-                  const JavaParamRef<jobject>& java_web_contents) {
+static jlong JNI_ConnectionInfoPopup_Init(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    const JavaParamRef<jobject>& obj,
+    const JavaParamRef<jobject>& java_web_contents) {
   content::WebContents* web_contents =
       content::WebContents::FromJavaWebContents(java_web_contents);
 
@@ -111,7 +111,7 @@ void ConnectionInfoPopupAndroid::SetIdentityInfo(
     if (identity_info.identity_status !=
         PageInfo::SITE_IDENTITY_STATUS_NO_CERT) {
       certificate_label =
-          l10n_util::GetStringUTF16(IDS_PAGEINFO_CERT_INFO_BUTTON);
+          l10n_util::GetStringUTF16(IDS_PAGE_INFO_CERT_INFO_BUTTON);
     }
 
     Java_ConnectionInfoPopup_addCertificateSection(
@@ -120,7 +120,7 @@ void ConnectionInfoPopupAndroid::SetIdentityInfo(
 
     if (identity_info.show_ssl_decision_revoke_button) {
       base::string16 reset_button_label = l10n_util::GetStringUTF16(
-          IDS_PAGEINFO_RESET_INVALID_CERTIFICATE_DECISIONS_BUTTON);
+          IDS_PAGE_INFO_RESET_INVALID_CERTIFICATE_DECISIONS_BUTTON);
       Java_ConnectionInfoPopup_addResetCertDecisionsButton(
           env, popup_jobject_,
           ConvertUTF16ToJavaString(env, reset_button_label));
@@ -153,11 +153,4 @@ void ConnectionInfoPopupAndroid::SetPermissionInfo(
     const PermissionInfoList& permission_info_list,
     ChosenObjectInfoList chosen_object_info_list) {
   NOTIMPLEMENTED();
-}
-
-// static
-bool
-ConnectionInfoPopupAndroid::RegisterConnectionInfoPopupAndroid(
-    JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }

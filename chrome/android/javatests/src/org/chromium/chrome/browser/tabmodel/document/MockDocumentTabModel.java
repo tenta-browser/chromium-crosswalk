@@ -4,7 +4,7 @@
 
 package org.chromium.chrome.browser.tabmodel.document;
 
-import junit.framework.Assert;
+import org.junit.Assert;
 
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
@@ -159,6 +159,13 @@ public class MockDocumentTabModel implements DocumentTabModel {
     }
 
     @Override
-    public void openMostRecentlyClosedTab() {
+    public void openMostRecentlyClosedTab() {}
+
+    @Override
+    public void setIsPendingTabAdd(boolean isPendingTabAdd) {}
+
+    @Override
+    public boolean isPendingTabAdd() {
+        return false;
     }
 }

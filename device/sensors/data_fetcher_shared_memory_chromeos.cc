@@ -8,9 +8,9 @@
 
 namespace device {
 
-DataFetcherSharedMemory::DataFetcherSharedMemory() {}
+DataFetcherSharedMemory::DataFetcherSharedMemory() = default;
 
-DataFetcherSharedMemory::~DataFetcherSharedMemory() {}
+DataFetcherSharedMemory::~DataFetcherSharedMemory() = default;
 
 bool DataFetcherSharedMemory::Start(ConsumerType consumer_type, void* buffer) {
   DCHECK(buffer);
@@ -38,9 +38,6 @@ bool DataFetcherSharedMemory::Start(ConsumerType consumer_type, void* buffer) {
       orientation_absolute_buffer_->seqlock.WriteEnd();
       return false;
     }
-    case CONSUMER_TYPE_LIGHT:
-      NOTIMPLEMENTED();
-      return false;
   }
   NOTREACHED();
   return false;
@@ -61,9 +58,6 @@ bool DataFetcherSharedMemory::Stop(ConsumerType consumer_type) {
         orientation_absolute_buffer_ = nullptr;
       }
       return true;
-    case CONSUMER_TYPE_LIGHT:
-      NOTIMPLEMENTED();
-      return false;
   }
   NOTREACHED();
   return false;

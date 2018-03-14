@@ -13,6 +13,7 @@
 #include "base/run_loop.h"
 #include "base/scoped_observer.h"
 #include "base/strings/string_split.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/browsertest_util.h"
 #include "chrome/browser/extensions/chrome_content_verifier_delegate.h"
@@ -21,6 +22,7 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/policy_extension_reinstaller.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "content/public/common/browser_side_navigation_policy.h"
@@ -38,10 +40,6 @@
 #include "extensions/browser/updater/extension_downloader_test_delegate.h"
 #include "extensions/browser/updater/manifest_fetch_data.h"
 #include "extensions/common/extension_urls.h"
-
-#if defined(OS_WIN)
-#include "base/win/windows_version.h"
-#endif
 
 namespace extensions {
 
@@ -83,7 +81,7 @@ class RegistryObserver : public ExtensionRegistryObserver {
   // ExtensionRegistryObserver
   void OnExtensionUnloaded(content::BrowserContext* browser_context,
                            const Extension* extension,
-                           UnloadedExtensionInfo::Reason reason) override {
+                           UnloadedExtensionReason reason) override {
     unloaded_.insert(extension->id());
     if (awaited_unload_id_ == extension->id()) {
       awaited_unload_id_.clear();
@@ -248,8 +246,8 @@ void JobObserver::JobFinished(const std::string& extension_id,
   if (!content::BrowserThread::CurrentlyOn(creation_thread_)) {
     content::BrowserThread::PostTask(
         creation_thread_, FROM_HERE,
-        base::Bind(&JobObserver::JobFinished, base::Unretained(this),
-                   extension_id, relative_path, failure_reason));
+        base::BindOnce(&JobObserver::JobFinished, base::Unretained(this),
+                       extension_id, relative_path, failure_reason));
     return;
   }
   Result result = failure_reason == ContentVerifyJob::NONE ? Result::SUCCESS
@@ -355,7 +353,7 @@ class DownloaderTestDelegate : public ExtensionDownloaderTestDelegate {
         // requests needed before a file could be returned).
         base::ThreadTaskRunnerHandle::Get()->PostTask(
             FROM_HERE,
-            base::Bind(
+            base::BindOnce(
                 &ExtensionDownloaderDelegate::OnExtensionDownloadFinished,
                 base::Unretained(delegate),
                 CRXFileInfo(id, responses_[id].second),
@@ -394,7 +392,7 @@ class TestExternalProvider : public ExternalProviderInterface {
     visitor_->OnExternalExtensionUpdateUrlFound(
         ExternalInstallInfoUpdateUrl(
             extension_id_, std::string() /* install_parameter */,
-            base::MakeUnique<GURL>(extension_urls::GetWebstoreUpdateUrl()),
+            extension_urls::GetWebstoreUpdateUrl(),
             Manifest::EXTERNAL_POLICY_DOWNLOAD, 0 /* creation_flags */,
             true /* mark_acknowledged */),
         true /* is_initial_load */);
@@ -478,6 +476,8 @@ class ContentVerifierTest : public ExtensionBrowserTest {
         switches::kExtensionContentVerificationEnforce);
   }
 
+  bool ShouldEnableContentVerification() override { return true; }
+
   virtual void OpenPageAndWaitForUnload() {
     ScopedContentVerifyJobDelegateOverride scoped_delegate(&delegate_);
     std::string id = "npnbmohejbjohgpjnmjagbafnjhkmgko";
@@ -491,18 +491,65 @@ class ContentVerifierTest : public ExtensionBrowserTest {
     ASSERT_TRUE(extension);
     ASSERT_EQ(id, extension->id());
     page_url_ = extension->GetResourceURL("page.html");
-
-    // This call passes false for |check_navigation_success|, because checking
-    // for navigation success needs the WebContents to still exist after the
-    // navigation, whereas this navigation triggers an unload which destroys
-    // the WebContents.
-    AddTabAtIndexToBrowser(browser(), 1, page_url_, ui::PAGE_TRANSITION_LINK,
-                           false);
+    // Wait for 0 navigations to complete because with PlzNavigate it's racy
+    // when the didstop IPC arrives relative to the tab being closed. The
+    // wait call below is what the tests care about.
+    ui_test_utils::NavigateToURLWithDispositionBlockUntilNavigationsComplete(
+        browser(), page_url_, 0, WindowOpenDisposition::NEW_FOREGROUND_TAB,
+        ui_test_utils::BROWSER_TEST_NONE);
 
     EXPECT_TRUE(unload_observer.WaitForUnload(id));
     ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
     int reasons = prefs->GetDisableReasons(id);
-    EXPECT_TRUE(reasons & Extension::DISABLE_CORRUPTED);
+    EXPECT_TRUE(reasons & disable_reason::DISABLE_CORRUPTED);
+  }
+
+  void TestContentScriptExtension(const std::string& crx_relpath,
+                                  const std::string& id,
+                                  const std::string& script_relpath) {
+    VerifierObserver verifier_observer;
+
+    // Install the extension with content scripts. The initial read of the
+    // content scripts will fail verification because they are read before the
+    // content verification system has completed a one-time processing of the
+    // expected hashes. (The extension only contains the root level hashes of
+    // the merkle tree, but the content verification system builds the entire
+    // tree and caches it in the extension install directory - see
+    // ContentHashFetcher for more details).
+    const Extension* extension = InstallExtensionFromWebstore(
+        test_data_dir_.AppendASCII(crx_relpath), 1);
+    ASSERT_TRUE(extension);
+    EXPECT_EQ(id, extension->id());
+
+    // Wait for the content verification code to finish processing the hashes.
+    if (!base::ContainsKey(verifier_observer.completed_fetches(), id))
+      verifier_observer.WaitForFetchComplete(id);
+
+    // Now disable the extension, since content scripts are read at enable time,
+    // set up our job observer, and re-enable, expecting a success this time.
+    DisableExtension(id);
+    JobObserver job_observer;
+    base::FilePath script_relfilepath =
+        base::FilePath().AppendASCII(script_relpath);
+    job_observer.ExpectJobResult(id, script_relfilepath,
+                                 JobObserver::Result::SUCCESS);
+    EnableExtension(id);
+    EXPECT_TRUE(job_observer.WaitForExpectedJobs());
+
+    // Now alter the contents of the content script, reload the extension, and
+    // expect to see a job failure due to the content script content hash not
+    // being what was signed by the webstore.
+    base::FilePath scriptfile = extension->path().AppendASCII(script_relpath);
+    std::string extra = "some_extra_function_call();";
+    {
+      base::ScopedAllowBlockingForTesting allow_blocking;
+      ASSERT_TRUE(base::AppendToFile(scriptfile, extra.data(), extra.size()));
+    }
+    DisableExtension(id);
+    job_observer.ExpectJobResult(id, script_relfilepath,
+                                 JobObserver::Result::FAILURE);
+    EnableExtension(id);
+    EXPECT_TRUE(job_observer.WaitForExpectedJobs());
   }
 
   void TestContentScriptExtension(const std::string& crx_relpath,
@@ -556,13 +603,6 @@ class ContentVerifierTest : public ExtensionBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(ContentVerifierTest, FailOnRead) {
-#if defined(OS_WIN)
-  if (content::IsBrowserSideNavigationEnabled() &&
-      base::win::GetVersion() >= base::win::VERSION_WIN10) {
-    // http://crbug.com/699437
-    return;
-  }
-#endif
   EXPECT_EQ(0, delegate_.bytes_read_failed());
   delegate_.fail_next_read();
   OpenPageAndWaitForUnload();
@@ -570,13 +610,6 @@ IN_PROC_BROWSER_TEST_F(ContentVerifierTest, FailOnRead) {
 }
 
 IN_PROC_BROWSER_TEST_F(ContentVerifierTest, FailOnDone) {
-#if defined(OS_WIN)
-  if (content::IsBrowserSideNavigationEnabled() &&
-      base::win::GetVersion() >= base::win::VERSION_WIN10) {
-    // http://crbug.com/699437
-    return;
-  }
-#endif
   EXPECT_EQ(0, delegate_.done_reading_failed());
   delegate_.fail_next_done();
   OpenPageAndWaitForUnload();
@@ -674,13 +707,13 @@ IN_PROC_BROWSER_TEST_F(ContentVerifierTest, PolicyCorrupted) {
   EXPECT_TRUE(registry_observer.WaitForUnload(id));
   ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
   int reasons = prefs->GetDisableReasons(id);
-  EXPECT_TRUE(reasons & Extension::DISABLE_CORRUPTED);
+  EXPECT_TRUE(reasons & disable_reason::DISABLE_CORRUPTED);
 
   // Make sure the extension then got re-installed, and that after reinstall it
   // is no longer disabled due to corruption.
   EXPECT_TRUE(registry_observer.WaitForInstall(id));
   reasons = prefs->GetDisableReasons(id);
-  EXPECT_FALSE(reasons & Extension::DISABLE_CORRUPTED);
+  EXPECT_FALSE(reasons & disable_reason::DISABLE_CORRUPTED);
 
   // Make sure that the update check request properly included a parameter
   // indicating that this was a corrupt policy reinstall.
@@ -759,7 +792,7 @@ IN_PROC_BROWSER_TEST_F(ContentVerifierPolicyTest,
   EXPECT_TRUE(registry_observer.WaitForUnload(id_));
   ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
   int reasons = prefs->GetDisableReasons(id_);
-  EXPECT_TRUE(reasons & Extension::DISABLE_CORRUPTED);
+  EXPECT_TRUE(reasons & disable_reason::DISABLE_CORRUPTED);
 }
 
 // Now actually test what happens on the next startup after the PRE test above.
@@ -772,12 +805,12 @@ IN_PROC_BROWSER_TEST_F(ContentVerifierPolicyTest, PolicyCorruptedOnStartup) {
   ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
   ExtensionRegistry* registry = ExtensionRegistry::Get(profile());
   int disable_reasons = prefs->GetDisableReasons(id_);
-  if (disable_reasons & Extension::DISABLE_CORRUPTED) {
+  if (disable_reasons & disable_reason::DISABLE_CORRUPTED) {
     RegistryObserver registry_observer(registry);
     EXPECT_TRUE(registry_observer.WaitForInstall(id_));
     disable_reasons = prefs->GetDisableReasons(id_);
   }
-  EXPECT_FALSE(disable_reasons & Extension::DISABLE_CORRUPTED);
+  EXPECT_FALSE(disable_reasons & disable_reason::DISABLE_CORRUPTED);
   EXPECT_TRUE(registry->enabled_extensions().Contains(id_));
 }
 

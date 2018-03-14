@@ -32,10 +32,10 @@
 
 #include <algorithm>
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "platform/SharedBuffer.h"
 #include "platform/graphics/Image.h"
 #include "platform/image-decoders/ImageDecoder.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/Vector.h"
 #include "public/platform/WebData.h"
 #include "public/platform/WebSize.h"
@@ -44,10 +44,8 @@
 namespace blink {
 
 WebImage WebImage::FromData(const WebData& data, const WebSize& desired_size) {
-  RefPtr<SharedBuffer> buffer = PassRefPtr<SharedBuffer>(data);
-  std::unique_ptr<ImageDecoder> decoder(
-      ImageDecoder::Create(buffer, true, ImageDecoder::kAlphaPremultiplied,
-                           ColorBehavior::Ignore()));
+  std::unique_ptr<ImageDecoder> decoder(ImageDecoder::Create(
+      data, true, ImageDecoder::kAlphaPremultiplied, ColorBehavior::Ignore()));
   if (!decoder || !decoder->IsSizeAvailable())
     return WebImage();
 
@@ -74,7 +72,7 @@ WebImage WebImage::FromData(const WebData& data, const WebSize& desired_size) {
     }
   }
 
-  ImageFrame* frame = decoder->FrameBufferAtIndex(index);
+  ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(index);
   return (frame && !decoder->Failed()) ? WebImage(frame->Bitmap()) : WebImage();
 }
 
@@ -83,10 +81,8 @@ WebVector<WebImage> WebImage::FramesFromData(const WebData& data) {
   // never hit in practice.
   const size_t kMaxFrameCount = 8;
 
-  RefPtr<SharedBuffer> buffer = PassRefPtr<SharedBuffer>(data);
-  std::unique_ptr<ImageDecoder> decoder(
-      ImageDecoder::Create(buffer, true, ImageDecoder::kAlphaPremultiplied,
-                           ColorBehavior::Ignore()));
+  std::unique_ptr<ImageDecoder> decoder(ImageDecoder::Create(
+      data, true, ImageDecoder::kAlphaPremultiplied, ColorBehavior::Ignore()));
   if (!decoder || !decoder->IsSizeAvailable())
     return WebVector<WebImage>();
 
@@ -102,13 +98,56 @@ WebVector<WebImage> WebImage::FramesFromData(const WebData& data) {
       continue;
     last_size = frame_size;
 
-    ImageFrame* frame = decoder->FrameBufferAtIndex(i);
+    ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(i);
     if (!frame)
       continue;
 
     SkBitmap bitmap = frame->Bitmap();
     if (!bitmap.isNull() && frame->GetStatus() == ImageFrame::kFrameComplete)
       frames.push_back(WebImage(bitmap));
+  }
+
+  return frames;
+}
+
+WebVector<WebImage::AnimationFrame> WebImage::AnimationFromData(
+    const WebData& data) {
+  std::unique_ptr<ImageDecoder> decoder(ImageDecoder::Create(
+      data, true, ImageDecoder::kAlphaPremultiplied, ColorBehavior::Ignore()));
+  if (!decoder || !decoder->IsSizeAvailable() || decoder->FrameCount() == 0)
+    return WebVector<WebImage::AnimationFrame>();
+
+  const size_t frame_count = decoder->FrameCount();
+  IntSize last_size = decoder->FrameSizeAtIndex(0);
+
+  Vector<WebImage::AnimationFrame> frames;
+  frames.ReserveCapacity(frame_count);
+  for (size_t i = 0; i < frame_count; ++i) {
+    // If frame size changes, this is most likely not an animation and is
+    // instead an image with multiple versions at different resolutions. If
+    // that's the case, return only the first frame (or no frames if we failed
+    // decoding the first one).
+    if (last_size != decoder->FrameSizeAtIndex(i)) {
+      frames.resize(frames.IsEmpty() ? 0 : 1);
+      return frames;
+    }
+    last_size = decoder->FrameSizeAtIndex(i);
+
+    ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(i);
+
+    SkBitmap bitmap = frame->Bitmap();
+    if (bitmap.isNull() || frame->GetStatus() != ImageFrame::kFrameComplete)
+      continue;
+
+    // Make the bitmap a deep copy, otherwise the next loop iteration will
+    // replace the contents of the previous frame. DecodeFrameBufferAtIndex
+    // reuses the same underlying pixel buffer.
+    bitmap.setImmutable();
+
+    AnimationFrame output;
+    output.bitmap = bitmap;
+    output.duration = frame->Duration();
+    frames.push_back(output);
   }
 
   return frames;
@@ -130,11 +169,11 @@ WebSize WebImage::Size() const {
   return WebSize(bitmap_.width(), bitmap_.height());
 }
 
-WebImage::WebImage(PassRefPtr<Image> image) {
+WebImage::WebImage(scoped_refptr<Image> image) {
   if (!image)
     return;
 
-  if (sk_sp<SkImage> sk_image = image->ImageForCurrentFrame())
+  if (sk_sp<SkImage> sk_image = image->PaintImageForCurrentFrame().GetSkImage())
     sk_image->asLegacyBitmap(&bitmap_, SkImage::kRO_LegacyBitmapMode);
 }
 

@@ -9,6 +9,7 @@
 
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/containers/stack.h"
 #include "base/containers/stack_container.h"
 #include "base/i18n/string_compare.h"
 #include "base/memory/ptr_util.h"
@@ -38,6 +39,7 @@ using base::android::AttachCurrentThread;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::ConvertUTF16ToJavaString;
 using base::android::JavaParamRef;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 using base::android::ScopedJavaGlobalRef;
 using base::android::ToJavaIntArray;
@@ -86,7 +88,9 @@ std::unique_ptr<icu::Collator> GetICUCollator() {
 
 }  // namespace
 
-BookmarkBridge::BookmarkBridge(JNIEnv* env, jobject obj, jobject j_profile)
+BookmarkBridge::BookmarkBridge(JNIEnv* env,
+                               const JavaRef<jobject>& obj,
+                               const JavaRef<jobject>& j_profile)
     : weak_java_ref_(env, obj),
       bookmark_model_(NULL),
       managed_bookmark_service_(NULL),
@@ -130,14 +134,9 @@ void BookmarkBridge::Destroy(JNIEnv*, const JavaParamRef<jobject>&) {
   delete this;
 }
 
-// static
-bool BookmarkBridge::RegisterBookmarkBridge(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
-static jlong Init(JNIEnv* env,
-                  const JavaParamRef<jobject>& obj,
-                  const JavaParamRef<jobject>& j_profile) {
+static jlong JNI_BookmarkBridge_Init(JNIEnv* env,
+                                     const JavaParamRef<jobject>& obj,
+                                     const JavaParamRef<jobject>& j_profile) {
   BookmarkBridge* delegate = new BookmarkBridge(env, obj, j_profile);
   return reinterpret_cast<intptr_t>(delegate);
 }
@@ -227,10 +226,6 @@ void BookmarkBridge::GetTopLevelFolderIDs(
         managed_bookmark_service_->managed_node()->child_count() > 0) {
       top_level_folders.push_back(managed_bookmark_service_->managed_node());
     }
-    if (managed_bookmark_service_->supervised_node() &&
-        managed_bookmark_service_->supervised_node()->child_count() > 0) {
-      top_level_folders.push_back(managed_bookmark_service_->supervised_node());
-    }
     if (partner_bookmarks_shim_->HasPartnerBookmarks()
         && IsReachable(partner_bookmarks_shim_->GetPartnerBookmarksRoot())) {
       top_level_folders.push_back(
@@ -296,7 +291,7 @@ void BookmarkBridge::GetAllFoldersWithDepths(
 
   // Stack for Depth-First Search of bookmark model. It stores nodes and their
   // heights.
-  std::stack<std::pair<const BookmarkNode*, int> > stk;
+  base::stack<std::pair<const BookmarkNode*, int>> stk;
 
   bookmarkList.push_back(bookmark_model_->mobile_node());
   bookmarkList.push_back(bookmark_model_->bookmark_bar_node());
@@ -752,8 +747,9 @@ ScopedJavaLocalRef<jobject> BookmarkBridge::CreateJavaBookmark(
       GetBookmarkType(parent), IsEditable(node), IsManaged(node));
 }
 
-void BookmarkBridge::ExtractBookmarkNodeInformation(const BookmarkNode* node,
-                                                     jobject j_result_obj) {
+void BookmarkBridge::ExtractBookmarkNodeInformation(
+    const BookmarkNode* node,
+    const JavaRef<jobject>& j_result_obj) {
   JNIEnv* env = AttachCurrentThread();
   if (!IsReachable(node))
     return;
@@ -802,7 +798,7 @@ bool BookmarkBridge::IsEditable(const BookmarkNode* node) const {
       node->type() != BookmarkNode::URL)) {
     return false;
   }
-  if (!IsEditBookmarksEnabled())
+  if (!IsEditBookmarksEnabled() || bookmark_model_->is_permanent_node(node))
     return false;
   if (partner_bookmarks_shim_->IsPartnerBookmark(node))
     return partner_bookmarks_shim_->IsEditable(node);
@@ -845,10 +841,6 @@ bool BookmarkBridge::IsFolderAvailable(
   // The managed bookmarks folder is not shown if there are no bookmarks
   // configured via policy.
   if (folder == managed_bookmark_service_->managed_node() && folder->empty())
-    return false;
-  // Similarly, the supervised bookmarks folder is not shown if there are no
-  // bookmarks configured by the custodian.
-  if (folder == managed_bookmark_service_->supervised_node() && folder->empty())
     return false;
 
   SigninManager* signin = SigninManagerFactory::GetForProfile(

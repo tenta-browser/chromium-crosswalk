@@ -15,32 +15,22 @@
 #include "base/time/time.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos.h"
-#include "chrome/browser/chromeos/policy/proto/chrome_device_policy.pb.h"
+#include "chrome/browser/chromeos/policy/off_hours/device_off_hours_controller.h"
+#include "chrome/browser/chromeos/policy/off_hours/off_hours_policy_applier.h"
 #include "chrome/browser/chromeos/settings/session_manager_operation.h"
 #include "components/ownership/owner_key_util.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/policy/proto/chrome_device_policy.pb.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
+
 #include "crypto/rsa_private_key.h"
 
 namespace em = enterprise_management;
 
 using ownership::OwnerKeyUtil;
 using ownership::PublicKey;
-
-namespace {
-
-// Delay between load retries when there was a validation error.
-// NOTE: This code is here to mitigate clock loss on some devices where policy
-// loads will fail with a validation error caused by RTC clock being reset when
-// the battery is drained.
-int kLoadRetryDelayMs = 1000 * 5;
-// Maximal number of retries before we give up. Calculated to allow for 10 min
-// of retry time.
-int kMaxLoadRetries = (1000 * 60 * 10) / kLoadRetryDelayMs;
-
-}  // namespace
 
 namespace chromeos {
 
@@ -78,8 +68,10 @@ DeviceSettingsService* DeviceSettingsService::Get() {
   return g_device_settings_service;
 }
 
-DeviceSettingsService::DeviceSettingsService()
-    : load_retries_left_(kMaxLoadRetries), weak_factory_(this) {}
+DeviceSettingsService::DeviceSettingsService() {
+  device_off_hours_controller_ =
+      base::MakeUnique<policy::off_hours::DeviceOffHoursController>();
+}
 
 DeviceSettingsService::~DeviceSettingsService() {
   DCHECK(pending_operations_.empty());
@@ -123,6 +115,11 @@ void DeviceSettingsService::SetDeviceMode(policy::DeviceMode device_mode) {
 
 scoped_refptr<PublicKey> DeviceSettingsService::GetPublicKey() {
   return public_key_;
+}
+
+void DeviceSettingsService::SetDeviceOffHoursControllerForTesting(
+    std::unique_ptr<policy::off_hours::DeviceOffHoursController> controller) {
+  device_off_hours_controller_ = std::move(controller);
 }
 
 void DeviceSettingsService::Load() {
@@ -303,26 +300,20 @@ void DeviceSettingsService::HandleCompletedOperation(
   if (status == STORE_SUCCESS) {
     policy_data_ = std::move(operation->policy_data());
     device_settings_ = std::move(operation->device_settings());
-    load_retries_left_ = kMaxLoadRetries;
+    // Update "OffHours" policy state and apply "OffHours" policy to current
+    // proto only during "OffHours" mode. When "OffHours" mode begins and ends
+    // DeviceOffHoursController requests DeviceSettingsService to asynchronously
+    // reload device policies. (See |DeviceOffHoursController| class
+    // description)
+    device_off_hours_controller_->UpdateOffHoursPolicy(*device_settings_);
+    if (device_off_hours_controller_->is_off_hours_mode()) {
+      std::unique_ptr<em::ChromeDeviceSettingsProto> off_device_settings =
+          policy::off_hours::ApplyOffHoursPolicyToProto(*device_settings_);
+      if (off_device_settings)
+        device_settings_.swap(off_device_settings);
+    }
   } else if (status != STORE_KEY_UNAVAILABLE) {
     LOG(ERROR) << "Session manager operation failed: " << status;
-    // Validation errors can be temporary if the rtc has gone on holiday for a
-    // short while. So we will retry such loads for up to 10 minutes.
-    if (status == STORE_TEMP_VALIDATION_ERROR) {
-      if (load_retries_left_ > 0) {
-        load_retries_left_--;
-        LOG(ERROR) << "A re-load has been scheduled due to a validation error.";
-        content::BrowserThread::PostDelayedTask(
-            content::BrowserThread::UI,
-            FROM_HERE,
-            base::Bind(&DeviceSettingsService::Load, base::Unretained(this)),
-            base::TimeDelta::FromMilliseconds(kLoadRetryDelayMs));
-      } else {
-        // Once we've given up retrying, the validation error is not temporary
-        // anymore.
-        store_status_ = STORE_VALIDATION_ERROR;
-      }
-    }
   }
 
   public_key_ = scoped_refptr<PublicKey>(operation->public_key());
@@ -332,18 +323,6 @@ void DeviceSettingsService::HandleCompletedOperation(
   }
   NotifyDeviceSettingsUpdated();
   RunPendingOwnershipStatusCallbacks();
-
-  // The completion callback happens after the notification so clients can
-  // filter self-triggered updates.
-  if (!callback.is_null())
-    callback.Run();
-}
-
-void DeviceSettingsService::HandleError(Status status,
-                                        const base::Closure& callback) {
-  store_status_ = status;
-  LOG(ERROR) << "Session manager operation failed: " << status;
-  NotifyDeviceSettingsUpdated();
 
   // The completion callback happens after the notification so clients can
   // filter self-triggered updates.

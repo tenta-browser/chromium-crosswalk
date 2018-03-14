@@ -6,7 +6,6 @@
 
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
-#include "base/mac/scoped_nsobject.h"
 #include "base/metrics/user_metrics.h"
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
 #include "ios/chrome/browser/ui/rtl_geometry.h"
@@ -19,6 +18,10 @@
 #import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
 #include "ui/base/l10n/l10n_util.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace {
 const CGFloat kHeaderHeight = 95;
 const CGFloat kNewTabButtonMarginFromEdges = 48;
@@ -26,11 +29,11 @@ const CGFloat kNewTabButtonWidth = 48;
 }
 
 @interface TabSwitcherView ()<UIScrollViewDelegate> {
-  base::scoped_nsobject<TabSwitcherHeaderView> _headerView;
-  base::scoped_nsobject<UIScrollView> _scrollView;
-  base::scoped_nsobject<MDCButton> _openNewTabButton;
-  base::scoped_nsobject<NSMutableArray> _panels;
-  ios_internal::NewTabButtonStyle _openNewTabButtonStyle;
+  TabSwitcherHeaderView* _headerView;
+  UIScrollView* _scrollView;
+  MDCButton* _openNewTabButton;
+  NSMutableArray* _panels;
+  NewTabButtonStyle _openNewTabButtonStyle;
   NSInteger _previousPanelIndex;
 }
 
@@ -59,9 +62,9 @@ const CGFloat kNewTabButtonWidth = 48;
 - (instancetype)initWithFrame:(CGRect)frame {
   self = [super initWithFrame:frame];
   if (self) {
-    _openNewTabButtonStyle = ios_internal::NewTabButtonStyle::UNINITIALIZED;
+    _openNewTabButtonStyle = NewTabButtonStyle::UNINITIALIZED;
     [self loadSubviews];
-    _panels.reset([[NSMutableArray alloc] init]);
+    _panels = [[NSMutableArray alloc] init];
     _previousPanelIndex = -1;
   }
   return self;
@@ -104,7 +107,7 @@ const CGFloat kNewTabButtonWidth = 48;
 }
 
 - (void)removePanelViewAtIndex:(NSUInteger)index updateScrollView:(BOOL)update {
-  DCHECK_EQ([[_panels objectAtIndex:index] superview], _scrollView.get());
+  DCHECK_EQ([[_panels objectAtIndex:index] superview], _scrollView);
   [[_panels objectAtIndex:index] removeFromSuperview];
   [_panels removeObjectAtIndex:index];
   if (update)
@@ -117,7 +120,7 @@ const CGFloat kNewTabButtonWidth = 48;
 
 - (void)updateOverlayButtonState {
   NSInteger panelIndex = [self currentPageIndex];
-  ios_internal::NewTabButtonStyle newButtonStyle =
+  NewTabButtonStyle newButtonStyle =
       [delegate_ buttonStyleForPanelAtIndex:panelIndex];
   [self setNewTabButtonStyle:newButtonStyle];
   BOOL dismissButtonVisible =
@@ -125,6 +128,14 @@ const CGFloat kNewTabButtonWidth = 48;
   [UIView beginAnimations:nil context:NULL];
   [[_headerView dismissButton] setAlpha:dismissButtonVisible ? 1.0 : 0.0];
   [UIView commitAnimations];
+}
+
+- (void)wasShown {
+  [self currentPanelWasShown];
+}
+
+- (void)wasHidden {
+  [self panelWasHiddenAtIndex:self.currentPageIndex];
 }
 
 #pragma mark - Private
@@ -171,14 +182,14 @@ const CGFloat kNewTabButtonWidth = 48;
 
 - (void)loadSubviews {
   // Creates and add the header view showing the list of panels.
-  base::scoped_nsobject<TabSwitcherHeaderView> headerView(
-      [[TabSwitcherHeaderView alloc] initWithFrame:[self headerViewFrame]]);
+  TabSwitcherHeaderView* headerView =
+      [[TabSwitcherHeaderView alloc] initWithFrame:[self headerViewFrame]];
   [self addSubview:headerView];
   _headerView = headerView;
 
   // Creates and add the scrollview containing the panels.
-  base::scoped_nsobject<UIScrollView> scrollView(
-      [[UIScrollView alloc] initWithFrame:[self scrollViewFrame]]);
+  UIScrollView* scrollView =
+      [[UIScrollView alloc] initWithFrame:[self scrollViewFrame]];
   [scrollView setBackgroundColor:[[MDCPalette greyPalette] tint900]];
   [scrollView setAlwaysBounceHorizontal:YES];
   [scrollView setDelegate:self];
@@ -190,7 +201,7 @@ const CGFloat kNewTabButtonWidth = 48;
   _scrollView = scrollView;
 
   // Creates and add the floating new tab button.
-  _openNewTabButton.reset([[MDCFloatingButton alloc] init]);
+  _openNewTabButton = [[MDCFloatingButton alloc] init];
   UIImage* openNewTabButtonImage =
       [[UIImage imageNamed:@"tabswitcher_new_tab_fab"]
           imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
@@ -207,7 +218,7 @@ const CGFloat kNewTabButtonWidth = 48;
                         action:@selector(openNewTabButtonPressed)
               forControlEvents:UIControlEventTouchUpInside];
   [self addSubview:_openNewTabButton];
-  [self setNewTabButtonStyle:ios_internal::NewTabButtonStyle::GRAY];
+  [self setNewTabButtonStyle:NewTabButtonStyle::GRAY];
 }
 
 - (CGRect)headerViewFrame {
@@ -251,17 +262,17 @@ const CGFloat kNewTabButtonWidth = 48;
   [self.delegate openNewTabInPanelAtIndex:[self currentPageIndex]];
 }
 
-- (void)setNewTabButtonStyle:(ios_internal::NewTabButtonStyle)newStyle {
+- (void)setNewTabButtonStyle:(NewTabButtonStyle)newStyle {
   if (newStyle == _openNewTabButtonStyle)
     return;
   _openNewTabButtonStyle = newStyle;
   [UIView animateWithDuration:0.25
       animations:^{
         switch (_openNewTabButtonStyle) {
-          case ios_internal::NewTabButtonStyle::HIDDEN:
+          case NewTabButtonStyle::HIDDEN:
             [_openNewTabButton setFrame:[self openNewTabButtonFrameOffscreen]];
             break;
-          case ios_internal::NewTabButtonStyle::BLUE: {
+          case NewTabButtonStyle::BLUE: {
             [_openNewTabButton setFrame:[self openNewTabButtonFrame]];
             MDCPalette* palette = [MDCPalette cr_bluePalette];
             [_openNewTabButton
@@ -276,7 +287,7 @@ const CGFloat kNewTabButtonWidth = 48;
                                           IDS_IOS_TAB_SWITCHER_CREATE_NEW_TAB)];
             break;
           }
-          case ios_internal::NewTabButtonStyle::GRAY: {
+          case NewTabButtonStyle::GRAY: {
             [_openNewTabButton setFrame:[self openNewTabButtonFrame]];
             MDCPalette* palette = [MDCPalette greyPalette];
             [_openNewTabButton
@@ -292,7 +303,7 @@ const CGFloat kNewTabButtonWidth = 48;
                         IDS_IOS_TAB_SWITCHER_CREATE_NEW_INCOGNITO_TAB)];
             break;
           }
-          case ios_internal::NewTabButtonStyle::UNINITIALIZED:
+          case NewTabButtonStyle::UNINITIALIZED:
             NOTREACHED();
         }
       }
@@ -317,16 +328,24 @@ const CGFloat kNewTabButtonWidth = 48;
   [self updateOverlayButtonState];
 
   NSInteger panelIndex = [self currentPanelIndex];
-  TabSwitcherPanelOverlayView* overlayView =
-      base::mac::ObjCCast<TabSwitcherPanelOverlayView>(
-          [_panels objectAtIndex:panelIndex]);
-  if (panelIndex != _previousPanelIndex && overlayView &&
-      [overlayView overlayType] ==
-          TabSwitcherPanelOverlayType::OVERLAY_PANEL_USER_SIGNED_OUT) {
-    base::RecordAction(
-        base::UserMetricsAction("Signin_Impression_FromTabSwitcher"));
+  if (panelIndex != _previousPanelIndex) {
+    if (_previousPanelIndex != -1)
+      [self panelWasHiddenAtIndex:_previousPanelIndex];
+    [self currentPanelWasShown];
   }
   _previousPanelIndex = panelIndex;
+}
+
+- (void)panelWasHiddenAtIndex:(NSInteger)index {
+  id panel = [_panels objectAtIndex:index];
+  if ([panel respondsToSelector:@selector(wasHidden)])
+    [panel wasHidden];
+}
+
+- (void)currentPanelWasShown {
+  id panel = [_panels objectAtIndex:self.currentPanelIndex];
+  if ([panel respondsToSelector:@selector(wasShown)])
+    [panel wasShown];
 }
 
 #pragma mark - UIScrollViewAccessibilityDelegate
@@ -352,15 +371,15 @@ const CGFloat kNewTabButtonWidth = 48;
 - (BOOL)accessibilityPerformMagicTap {
   // If the New Tab Button is visible, then the magic tap opens a new tab.
   NSInteger panelIndex = [self currentPageIndex];
-  ios_internal::NewTabButtonStyle buttonStyle =
+  NewTabButtonStyle buttonStyle =
       [delegate_ buttonStyleForPanelAtIndex:panelIndex];
   switch (buttonStyle) {
-    case ios_internal::BLUE:
-    case ios_internal::GRAY:
+    case NewTabButtonStyle::BLUE:
+    case NewTabButtonStyle::GRAY:
       [self.delegate openNewTabInPanelAtIndex:panelIndex];
       return YES;
-    case ios_internal::UNINITIALIZED:
-    case ios_internal::HIDDEN:
+    case NewTabButtonStyle::UNINITIALIZED:
+    case NewTabButtonStyle::HIDDEN:
       return NO;
   }
 }

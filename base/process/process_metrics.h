@@ -103,6 +103,18 @@ struct CommittedKBytes {
   size_t image;
 };
 
+#if defined(OS_LINUX) || defined(OS_ANDROID)
+// Minor and major page fault counts since the process creation.
+// Both counts are process-wide, and exclude child processes.
+//
+// minor: Number of page faults that didn't require disk IO.
+// major: Number of page faults that required disk IO.
+struct PageFaultCounts {
+  int64_t minor;
+  int64_t major;
+};
+#endif  // defined(OS_LINUX) || defined(OS_ANDROID)
+
 // Convert a POSIX timeval to microseconds.
 BASE_EXPORT int64_t TimeValToMicroseconds(const struct timeval& tv);
 
@@ -167,10 +179,20 @@ class BASE_EXPORT ProcessMetrics {
   bool GetCommittedAndWorkingSetKBytes(CommittedKBytes* usage,
                                        WorkingSetKBytes* ws_usage) const;
 
-  // Returns the physical footprint, only available on macOS 10.11+. This
-  // measures anonymous, non-discardable memory. Returns 0 on error, or if the
-  // measurement was unavailable.
-  size_t GetPhysicalFootprint() const;
+  struct TaskVMInfo {
+    // Only available on macOS 10.12+.
+    // Anonymous, non-discardable memory, including non-volatile IOKit.
+    // Measured in bytes.
+    uint64_t phys_footprint = 0;
+
+    // Anonymous, non-discardable, non-compressed memory, excluding IOKit.
+    // Measured in bytes.
+    uint64_t internal = 0;
+
+    // Compressed memory measured in bytes.
+    uint64_t compressed = 0;
+  };
+  TaskVMInfo GetTaskVMInfo() const;
 
   // Returns private, shared, and total resident bytes. |locked_bytes| refers to
   // bytes that must stay resident. |locked_bytes| only counts bytes locked by
@@ -181,22 +203,40 @@ class BASE_EXPORT ProcessMetrics {
                       size_t* locked_bytes) const;
 #endif
 
-  // Returns the CPU usage in percent since the last time this method or
-  // GetPlatformIndependentCPUUsage() was called. The first time this method
-  // is called it returns 0 and will return the actual CPU info on subsequent
-  // calls. On Windows, the CPU usage value is for all CPUs. So if you have
-  // 2 CPUs and your process is using all the cycles of 1 CPU and not the other
-  // CPU, this method returns 50.
-  double GetCPUUsage();
+  // Returns the percentage of time spent executing, across all threads of the
+  // process, in the interval since the last time the method was called. Since
+  // this considers the total execution time across all threads in a process,
+  // the result can easily exceed 100% in multi-thread processes running on
+  // multi-core systems. In general the result is therefore a value in the
+  // range 0% to SysInfo::NumberOfProcessors() * 100%.
+  //
+  // To obtain the percentage of total available CPU resources consumed by this
+  // process over the interval, the caller must divide by NumberOfProcessors().
+  //
+  // Since this API measures usage over an interval, it will return zero on the
+  // first call, and an actual value only on the second and subsequent calls.
+  double GetPlatformIndependentCPUUsage();
 
   // Returns the number of average idle cpu wakeups per second since the last
   // call.
   int GetIdleWakeupsPerSecond();
 
-  // Same as GetCPUUsage(), but will return consistent values on all platforms
-  // (cancelling the Windows exception mentioned above) by returning a value in
-  // the range of 0 to (100 * numCPUCores) everywhere.
-  double GetPlatformIndependentCPUUsage();
+#if defined(OS_MACOSX)
+  // Returns the number of average "package idle exits" per second, which have
+  // a higher energy impact than a regular wakeup, since the last call.
+  //
+  // From the powermetrics man page:
+  // "With the exception of some Mac Pro systems, Mac and
+  // iOS systems are typically single package systems, wherein all CPUs are
+  // part of a single processor complex (typically a single IC die) with shared
+  // logic that can include (depending on system specifics) shared last level
+  // caches, an integrated memory controller etc. When all CPUs in the package
+  // are idle, the hardware can power-gate significant portions of the shared
+  // logic in addition to each individual processor's logic, as well as take
+  // measures such as placing DRAM in to self-refresh (also referred to as
+  // auto-refresh), place interconnects into lower-power states etc"
+  int GetPackageIdleWakeupsPerSecond();
+#endif
 
   // Retrieves accounting information for all I/O operations performed by the
   // process.
@@ -205,7 +245,7 @@ class BASE_EXPORT ProcessMetrics {
   // otherwise.
   bool GetIOCounters(IoCounters* io_counters) const;
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_AIX)
   // Returns the number of file descriptors currently open by the process, or
   // -1 on error.
   int GetOpenFdCount() const;
@@ -213,7 +253,19 @@ class BASE_EXPORT ProcessMetrics {
   // Returns the soft limit of file descriptors that can be opened by the
   // process, or -1 on error.
   int GetOpenFdSoftLimit() const;
-#endif  // defined(OS_LINUX)
+#endif  // defined(OS_LINUX) || defined(OS_AIX)
+
+#if defined(OS_LINUX) || defined(OS_ANDROID)
+  // Bytes of swap as reported by /proc/[pid]/status.
+  uint64_t GetVmSwapBytes() const;
+
+  // Minor and major page fault count as reported by /proc/[pid]/stat.
+  // Returns true for success.
+  bool GetPageFaultCounts(PageFaultCounts* counts) const;
+#endif  // defined(OS_LINUX) || defined(OS_ANDROID)
+
+  // Returns total memory usage of malloc.
+  size_t GetMallocUsage();
 
  private:
 #if !defined(OS_MACOSX) || defined(OS_IOS)
@@ -222,7 +274,7 @@ class BASE_EXPORT ProcessMetrics {
   ProcessMetrics(ProcessHandle process, PortProvider* port_provider);
 #endif  // !defined(OS_MACOSX) || defined(OS_IOS)
 
-#if defined(OS_LINUX) || defined(OS_ANDROID)
+#if defined(OS_LINUX) || defined(OS_ANDROID) | defined(OS_AIX)
   bool GetWorkingSetKBytesStatm(WorkingSetKBytes* ws_usage) const;
 #endif
 
@@ -230,8 +282,14 @@ class BASE_EXPORT ProcessMetrics {
   bool GetWorkingSetKBytesTotmaps(WorkingSetKBytes *ws_usage) const;
 #endif
 
-#if defined(OS_MACOSX) || defined(OS_LINUX)
+#if defined(OS_MACOSX) || defined(OS_LINUX) || defined(OS_AIX)
   int CalculateIdleWakeupsPerSecond(uint64_t absolute_idle_wakeups);
+#endif
+#if defined(OS_MACOSX)
+  // The subset of wakeups that cause a "package exit" can be tracked on macOS.
+  // See |GetPackageIdleWakeupsForSecond| comment for more info.
+  int CalculatePackageIdleWakeupsPerSecond(
+      uint64_t absolute_package_idle_wakeups);
 #endif
 
 #if defined(OS_WIN)
@@ -240,17 +298,21 @@ class BASE_EXPORT ProcessMetrics {
   ProcessHandle process_;
 #endif
 
-  int processor_count_;
-
   // Used to store the previous times and CPU usage counts so we can
   // compute the CPU usage between calls.
   TimeTicks last_cpu_time_;
   int64_t last_system_time_;
 
-#if defined(OS_MACOSX) || defined(OS_LINUX)
+#if defined(OS_MACOSX) || defined(OS_LINUX) || defined(OS_AIX)
   // Same thing for idle wakeups.
   TimeTicks last_idle_wakeups_time_;
   uint64_t last_absolute_idle_wakeups_;
+#endif
+
+#if defined(OS_MACOSX)
+  // And same thing for package idle exit wakeups.
+  TimeTicks last_package_idle_wakeups_time_;
+  uint64_t last_absolute_package_idle_wakeups_;
 #endif
 
 #if !defined(OS_IOS)
@@ -278,18 +340,18 @@ BASE_EXPORT size_t GetSystemCommitCharge();
 // returned by GetPageSize().
 BASE_EXPORT size_t GetPageSize();
 
-#if defined(OS_POSIX)
 // Returns the maximum number of file descriptors that can be open by a process
 // at once. If the number is unavailable, a conservative best guess is returned.
 BASE_EXPORT size_t GetMaxFds();
 
+#if defined(OS_POSIX)
 // Sets the file descriptor soft limit to |max_descriptors| or the OS hard
 // limit, whichever is lower.
 BASE_EXPORT void SetFdLimit(unsigned int max_descriptors);
 #endif  // defined(OS_POSIX)
 
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || \
-    defined(OS_ANDROID)
+    defined(OS_ANDROID) || defined(OS_AIX) || defined(OS_FUCHSIA)
 // Data about system-wide memory consumption. Values are in KB. Available on
 // Windows, Mac, Linux, Android and Chrome OS.
 //
@@ -305,7 +367,7 @@ struct BASE_EXPORT SystemMemoryInfoKB {
   SystemMemoryInfoKB(const SystemMemoryInfoKB& other);
 
   // Serializes the platform specific fields to value.
-  std::unique_ptr<Value> ToValue() const;
+  std::unique_ptr<DictionaryValue> ToValue() const;
 
   int total = 0;
 
@@ -322,7 +384,7 @@ struct BASE_EXPORT SystemMemoryInfoKB {
   int avail_phys = 0;
 #endif
 
-#if defined(OS_LINUX) || defined(OS_ANDROID)
+#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_AIX)
   // This provides an estimate of available memory as described here:
   // https://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git/commit/?id=34e431b0ae398fc54ea69ff85ec700722c9da773
   // NOTE: this is ONLY valid in kernels 3.14 and up.  Its value will always
@@ -336,7 +398,8 @@ struct BASE_EXPORT SystemMemoryInfoKB {
   int swap_free = 0;
 #endif
 
-#if defined(OS_ANDROID) || defined(OS_LINUX)
+#if defined(OS_ANDROID) || defined(OS_LINUX) || defined(OS_AIX) || \
+    defined(OS_FUCHSIA)
   int buffers = 0;
   int cached = 0;
   int active_anon = 0;
@@ -345,12 +408,8 @@ struct BASE_EXPORT SystemMemoryInfoKB {
   int inactive_file = 0;
   int dirty = 0;
   int reclaimable = 0;
-
-  // vmstats data.
-  unsigned long pswpin = 0;
-  unsigned long pswpout = 0;
-  unsigned long pgmajfault = 0;
-#endif  // defined(OS_ANDROID) || defined(OS_LINUX)
+#endif  // defined(OS_ANDROID) || defined(OS_LINUX) || defined(OS_AIX) ||
+        // defined(OS_FUCHSIA)
 
 #if defined(OS_CHROMEOS)
   int shmem = 0;
@@ -376,13 +435,13 @@ struct BASE_EXPORT SystemMemoryInfoKB {
 BASE_EXPORT bool GetSystemMemoryInfo(SystemMemoryInfoKB* meminfo);
 
 #endif  // defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) ||
-        // defined(OS_ANDROID)
+        // defined(OS_ANDROID) || defined(OS_AIX) || defined(OS_FUCHSIA)
 
-#if defined(OS_LINUX) || defined(OS_ANDROID)
+#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_AIX)
 // Parse the data found in /proc/<pid>/stat and return the sum of the
 // CPU-related ticks.  Returns -1 on parse error.
 // Exposed for testing.
-BASE_EXPORT int ParseProcStatCPU(const std::string& input);
+BASE_EXPORT int ParseProcStatCPU(StringPiece input);
 
 // Get the number of threads of |process| as available in /proc/<pid>/stat.
 // This should be used with care as no synchronization with running threads is
@@ -395,13 +454,28 @@ BASE_EXPORT extern const char kProcSelfExe[];
 
 // Parses a string containing the contents of /proc/meminfo
 // returns true on success or false for a parsing error
-BASE_EXPORT bool ParseProcMeminfo(const std::string& input,
+// Exposed for testing.
+BASE_EXPORT bool ParseProcMeminfo(StringPiece input,
                                   SystemMemoryInfoKB* meminfo);
+
+// Data from /proc/vmstat.
+struct BASE_EXPORT VmStatInfo {
+  // Serializes the platform specific fields to value.
+  std::unique_ptr<DictionaryValue> ToValue() const;
+
+  unsigned long pswpin = 0;
+  unsigned long pswpout = 0;
+  unsigned long pgmajfault = 0;
+};
+
+// Retrieves data from /proc/vmstat about system-wide vm operations.
+// Fills in the provided |vmstat| structure. Returns true on success.
+BASE_EXPORT bool GetVmStatInfo(VmStatInfo* vmstat);
 
 // Parses a string containing the contents of /proc/vmstat
 // returns true on success or false for a parsing error
-BASE_EXPORT bool ParseProcVmstat(const std::string& input,
-                                 SystemMemoryInfoKB* meminfo);
+// Exposed for testing.
+BASE_EXPORT bool ParseProcVmstat(StringPiece input, VmStatInfo* vmstat);
 
 // Data from /proc/diskstats about system-wide disk I/O.
 struct BASE_EXPORT SystemDiskInfo {
@@ -411,23 +485,23 @@ struct BASE_EXPORT SystemDiskInfo {
   // Serializes the platform specific fields to value.
   std::unique_ptr<Value> ToValue() const;
 
-  uint64_t reads;
-  uint64_t reads_merged;
-  uint64_t sectors_read;
-  uint64_t read_time;
-  uint64_t writes;
-  uint64_t writes_merged;
-  uint64_t sectors_written;
-  uint64_t write_time;
-  uint64_t io;
-  uint64_t io_time;
-  uint64_t weighted_io_time;
+  uint64_t reads = 0;
+  uint64_t reads_merged = 0;
+  uint64_t sectors_read = 0;
+  uint64_t read_time = 0;
+  uint64_t writes = 0;
+  uint64_t writes_merged = 0;
+  uint64_t sectors_written = 0;
+  uint64_t write_time = 0;
+  uint64_t io = 0;
+  uint64_t io_time = 0;
+  uint64_t weighted_io_time = 0;
 };
 
 // Checks whether the candidate string is a valid disk name, [hsv]d[a-z]+
 // for a generic disk or mmcblk[0-9]+ for the MMC case.
 // Names of disk partitions (e.g. sda1) are not valid.
-BASE_EXPORT bool IsValidDiskName(const std::string& candidate);
+BASE_EXPORT bool IsValidDiskName(StringPiece candidate);
 
 // Retrieves data from /proc/diskstats about system-wide disk I/O.
 // Fills in the provided |diskinfo| structure. Returns true on success.
@@ -435,6 +509,7 @@ BASE_EXPORT bool GetSystemDiskInfo(SystemDiskInfo* diskinfo);
 
 // Returns the amount of time spent in user space since boot across all CPUs.
 BASE_EXPORT TimeDelta GetUserCpuTimeSinceBoot();
+
 #endif  // defined(OS_LINUX) || defined(OS_ANDROID)
 
 #if defined(OS_CHROMEOS)
@@ -451,16 +526,29 @@ struct BASE_EXPORT SwapInfo {
   // Serializes the platform specific fields to value.
   std::unique_ptr<Value> ToValue() const;
 
-  uint64_t num_reads;
-  uint64_t num_writes;
-  uint64_t compr_data_size;
-  uint64_t orig_data_size;
-  uint64_t mem_used_total;
+  uint64_t num_reads = 0;
+  uint64_t num_writes = 0;
+  uint64_t compr_data_size = 0;
+  uint64_t orig_data_size = 0;
+  uint64_t mem_used_total = 0;
 };
+
+// Parses a string containing the contents of /sys/block/zram0/mm_stat.
+// This should be used for the new ZRAM sysfs interfaces.
+// Returns true on success or false for a parsing error.
+// Exposed for testing.
+BASE_EXPORT bool ParseZramMmStat(StringPiece mm_stat_data, SwapInfo* swap_info);
+
+// Parses a string containing the contents of /sys/block/zram0/stat
+// This should be used for the new ZRAM sysfs interfaces.
+// Returns true on success or false for a parsing error.
+// Exposed for testing.
+BASE_EXPORT bool ParseZramStat(StringPiece stat_data, SwapInfo* swap_info);
 
 // In ChromeOS, reads files from /sys/block/zram0 that contain ZRAM usage data.
 // Fills in the provided |swap_data| structure.
-BASE_EXPORT void GetSwapInfo(SwapInfo* swap_info);
+// Returns true on success or false for a parsing error.
+BASE_EXPORT bool GetSwapInfo(SwapInfo* swap_info);
 #endif  // defined(OS_CHROMEOS)
 
 // Collects and holds performance metrics for system memory and disk.
@@ -481,6 +569,7 @@ class SystemMetrics {
   size_t committed_memory_;
 #if defined(OS_LINUX) || defined(OS_ANDROID)
   SystemMemoryInfoKB memory_info_;
+  VmStatInfo vmstat_info_;
   SystemDiskInfo disk_info_;
 #endif
 #if defined(OS_CHROMEOS)

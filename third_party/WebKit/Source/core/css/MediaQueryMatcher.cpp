@@ -26,8 +26,8 @@
 #include "core/css/MediaQueryListListener.h"
 #include "core/css/resolver/StyleResolver.h"
 #include "core/dom/Document.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "platform/wtf/Vector.h"
 
 namespace blink {
@@ -41,7 +41,7 @@ MediaQueryMatcher::MediaQueryMatcher(Document& document)
   DCHECK(document_);
 }
 
-MediaQueryMatcher::~MediaQueryMatcher() {}
+MediaQueryMatcher::~MediaQueryMatcher() = default;
 
 void MediaQueryMatcher::DocumentDetached() {
   document_ = nullptr;
@@ -75,7 +75,7 @@ MediaQueryList* MediaQueryMatcher::MatchMedia(const String& query) {
   if (!document_)
     return nullptr;
 
-  RefPtr<MediaQuerySet> media = MediaQuerySet::Create(query);
+  scoped_refptr<MediaQuerySet> media = MediaQuerySet::Create(query);
   return MediaQueryList::Create(document_, this, media);
 }
 
@@ -130,7 +130,7 @@ void MediaQueryMatcher::ViewportChanged() {
   document_->EnqueueMediaQueryChangeListeners(listeners_to_notify);
 }
 
-DEFINE_TRACE(MediaQueryMatcher) {
+void MediaQueryMatcher::Trace(blink::Visitor* visitor) {
   visitor->Trace(document_);
   visitor->Trace(evaluator_);
   visitor->Trace(media_lists_);

@@ -69,7 +69,7 @@ class LayoutScrollbar final : public Scrollbar {
 
   void SetVisualRect(const LayoutRect&) final;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  protected:
   LayoutScrollbar(ScrollableArea*, ScrollbarOrientation, Element*);
@@ -77,8 +77,8 @@ class LayoutScrollbar final : public Scrollbar {
  private:
   friend class Scrollbar;
 
-  void SetParent(FrameViewBase*) override;
   void SetEnabled(bool) override;
+  void DisconnectFromScrollableArea() override;
 
   void SetHoveredPart(ScrollbarPart) override;
   void SetPressedPart(ScrollbarPart) override;
@@ -89,7 +89,7 @@ class LayoutScrollbar final : public Scrollbar {
 
   void UpdateScrollbarParts(bool destroy = false);
 
-  PassRefPtr<ComputedStyle> GetScrollbarPseudoStyle(ScrollbarPart, PseudoId);
+  scoped_refptr<ComputedStyle> GetScrollbarPseudoStyle(ScrollbarPart, PseudoId);
   void UpdateScrollbarPart(ScrollbarPart, bool destroy = false);
 
   // The element that supplies our style information.

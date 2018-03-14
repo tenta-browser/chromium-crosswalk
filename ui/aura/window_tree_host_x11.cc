@@ -5,12 +5,6 @@
 #include "ui/aura/window_tree_host_x11.h"
 
 #include <strings.h>
-#include <X11/cursorfont.h>
-#include <X11/extensions/XInput2.h>
-#include <X11/extensions/Xrandr.h>
-#include <X11/Xatom.h>
-#include <X11/Xcursor/Xcursor.h>
-#include <X11/Xlib.h>
 
 #include <algorithm>
 #include <limits>
@@ -51,6 +45,8 @@
 #include "ui/events/platform/platform_event_observer.h"
 #include "ui/events/platform/platform_event_source.h"
 #include "ui/events/platform/x11/x11_event_source.h"
+#include "ui/gfx/x/x11.h"
+#include "ui/gfx/x/x11_atom_cache.h"
 
 using std::max;
 using std::min;
@@ -58,13 +54,6 @@ using std::min;
 namespace aura {
 
 namespace {
-
-const char* kAtomsToCache[] = {
-  "WM_DELETE_WINDOW",
-  "_NET_WM_PING",
-  "_NET_WM_PID",
-  NULL
-};
 
 constexpr uint32_t kInputEventMask =
     ButtonPressMask | ButtonReleaseMask | FocusChangeMask | KeyPressMask |
@@ -120,13 +109,12 @@ WindowTreeHostX11::WindowTreeHostX11(const gfx::Rect& bounds)
     : xdisplay_(gfx::GetXDisplay()),
       xwindow_(0),
       x_root_window_(DefaultRootWindow(xdisplay_)),
-      current_cursor_(ui::kCursorNull),
+      current_cursor_(ui::CursorType::kNull),
       window_mapped_(false),
-      bounds_(bounds),
-      atom_cache_(xdisplay_, kAtomsToCache) {
+      bounds_(bounds) {
   XSetWindowAttributes swa;
   memset(&swa, 0, sizeof(swa));
-  swa.background_pixmap = None;
+  swa.background_pixmap = x11::None;
   swa.bit_gravity = NorthWestGravity;
   swa.override_redirect = ui::UseTestConfigForPlatformWindows();
   xwindow_ = XCreateWindow(
@@ -153,8 +141,8 @@ WindowTreeHostX11::WindowTreeHostX11(const gfx::Rect& bounds)
   // should listen for activation events and anything else that GTK+ listens
   // for, and do something useful.
   ::Atom protocols[2];
-  protocols[0] = atom_cache_.GetAtom("WM_DELETE_WINDOW");
-  protocols[1] = atom_cache_.GetAtom("_NET_WM_PING");
+  protocols[0] = gfx::GetAtom("WM_DELETE_WINDOW");
+  protocols[1] = gfx::GetAtom("_NET_WM_PING");
   XSetWMProtocols(xdisplay_, xwindow_, protocols, 2);
 
   // We need a WM_CLIENT_MACHINE and WM_LOCALE_NAME value so we integrate with
@@ -168,16 +156,9 @@ WindowTreeHostX11::WindowTreeHostX11(const gfx::Rect& bounds)
   static_assert(sizeof(long) >= sizeof(pid_t),
                 "pid_t should not be larger than long");
   long pid = getpid();
-  XChangeProperty(xdisplay_,
-                  xwindow_,
-                  atom_cache_.GetAtom("_NET_WM_PID"),
-                  XA_CARDINAL,
-                  32,
-                  PropModeReplace,
-                  reinterpret_cast<unsigned char*>(&pid), 1);
-
-  // Allow subclasses to create and cache additional atoms.
-  atom_cache_.allow_uncached_atoms();
+  XChangeProperty(xdisplay_, xwindow_, gfx::GetAtom("_NET_WM_PID"), XA_CARDINAL,
+                  32, PropModeReplace, reinterpret_cast<unsigned char*>(&pid),
+                  1);
 
   XRRSelectInput(xdisplay_, x_root_window_,
                  RRScreenChangeNotifyMask | RROutputChangeNotifyMask);
@@ -266,9 +247,6 @@ uint32_t WindowTreeHostX11::DispatchEvent(const ui::PlatformEvent& event) {
                     root_window);
             cursor_client->SetDisplay(display);
           }
-          // EnterNotify creates ET_MOUSE_MOVE. Mark as synthesized as this is
-          // not a real mouse move event.
-          mouse_event.set_flags(mouse_event.flags() | ui::EF_IS_SYNTHESIZED);
         }
 
         TranslateAndDispatchLocatedEvent(&mouse_event);
@@ -305,8 +283,16 @@ uint32_t WindowTreeHostX11::DispatchEvent(const ui::PlatformEvent& event) {
       // It's possible that the X window may be resized by some other means
       // than from within aura (e.g. the X window manager can change the
       // size). Make sure the root window size is maintained properly.
-      gfx::Rect bounds(xev->xconfigure.x, xev->xconfigure.y,
-          xev->xconfigure.width, xev->xconfigure.height);
+      int translated_x = xev->xconfigure.x;
+      int translated_y = xev->xconfigure.y;
+      if (!xev->xconfigure.send_event && !xev->xconfigure.override_redirect) {
+        ::Window unused;
+        XTranslateCoordinates(xdisplay_, xwindow_, x_root_window_, 0, 0,
+                              &translated_x, &translated_y, &unused);
+      }
+      gfx::Rect bounds(translated_x, translated_y, xev->xconfigure.width,
+                       xev->xconfigure.height);
+
       bool size_changed = bounds_.size() != bounds.size();
       bool origin_changed = bounds_.origin() != bounds.origin();
       bounds_ = bounds;
@@ -322,16 +308,14 @@ uint32_t WindowTreeHostX11::DispatchEvent(const ui::PlatformEvent& event) {
       break;
     case ClientMessage: {
       Atom message_type = static_cast<Atom>(xev->xclient.data.l[0]);
-      if (message_type == atom_cache_.GetAtom("WM_DELETE_WINDOW")) {
+      if (message_type == gfx::GetAtom("WM_DELETE_WINDOW")) {
         // We have received a close message from the window manager.
         OnHostCloseRequested();
-      } else if (message_type == atom_cache_.GetAtom("_NET_WM_PING")) {
+      } else if (message_type == gfx::GetAtom("_NET_WM_PING")) {
         XEvent reply_event = *xev;
         reply_event.xclient.window = x_root_window_;
 
-        XSendEvent(xdisplay_,
-                   reply_event.xclient.window,
-                   False,
+        XSendEvent(xdisplay_, reply_event.xclient.window, x11::False,
                    SubstructureRedirectMask | SubstructureNotifyMask,
                    &reply_event);
         XFlush(xdisplay_);
@@ -465,7 +449,7 @@ void WindowTreeHostX11::SetCursorNative(gfx::NativeCursor cursor) {
 
 void WindowTreeHostX11::MoveCursorToScreenLocationInPixels(
     const gfx::Point& location_in_pixels) {
-  XWarpPointer(xdisplay_, None, x_root_window_, 0, 0, 0, 0,
+  XWarpPointer(xdisplay_, x11::None, x_root_window_, 0, 0, 0, 0,
                bounds_.x() + location_in_pixels.x(),
                bounds_.y() + location_in_pixels.y());
 }

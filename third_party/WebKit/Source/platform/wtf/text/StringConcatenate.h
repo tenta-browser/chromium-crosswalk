@@ -33,12 +33,6 @@
 #include "platform/wtf/text/AtomicString.h"
 #endif
 
-// This macro is helpful for testing how many intermediate Strings are created
-// while evaluating an expression containing operator+.
-#ifndef WTF_STRINGTYPEADAPTER_COPIED_WTF_STRING
-#define WTF_STRINGTYPEADAPTER_COPIED_WTF_STRING() ((void)0)
-#endif
-
 namespace WTF {
 
 template <typename StringType>
@@ -148,7 +142,7 @@ class WTF_EXPORT StringTypeAdapter<const UChar*> {
   unsigned length() const { return length_; }
   bool Is8Bit() const { return false; }
 
-  void WriteTo(LChar*) const { RELEASE_ASSERT(false); }
+  void WriteTo(LChar*) const { CHECK(false); }
   void WriteTo(UChar* destination) const;
 
  private:

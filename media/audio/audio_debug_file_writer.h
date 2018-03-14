@@ -13,7 +13,8 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequence_checker.h"
-#include "base/single_thread_task_runner.h"
+#include "base/sequenced_task_runner.h"
+#include "base/task_scheduler/post_task.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/media_export.h"
 
@@ -29,9 +30,7 @@ class MEDIA_EXPORT AudioDebugFileWriter {
   // Number of channels and sample rate are used from |params|, the other
   // parameters are ignored. The number of channels in the data passed to
   // Write() must match |params|.
-  AudioDebugFileWriter(
-      const AudioParameters& params,
-      scoped_refptr<base::SingleThreadTaskRunner> file_task_runner);
+  explicit AudioDebugFileWriter(const AudioParameters& params);
 
   virtual ~AudioDebugFileWriter();
 
@@ -64,31 +63,21 @@ class MEDIA_EXPORT AudioDebugFileWriter {
  private:
   class AudioFileWriter;
 
-  // Deleter for AudioFileWriter.
-  struct OnThreadDeleter {
-   public:
-    OnThreadDeleter();
-    OnThreadDeleter(const OnThreadDeleter& other);
-    OnThreadDeleter(scoped_refptr<base::SingleThreadTaskRunner> task_runner);
-    ~OnThreadDeleter();
-    void operator()(AudioFileWriter* ptr) const;
-
-   private:
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  };
-
   using AudioFileWriterUniquePtr =
-      std::unique_ptr<AudioFileWriter, OnThreadDeleter>;
-
-  AudioFileWriterUniquePtr file_writer_;
-  base::SequenceChecker client_sequence_checker_;
+      std::unique_ptr<AudioFileWriter, base::OnTaskRunnerDeleter>;
 
   // The task runner to do file output operations on.
-  scoped_refptr<base::SingleThreadTaskRunner> file_task_runner_;
+  const scoped_refptr<base::SequencedTaskRunner> file_task_runner_ =
+      base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+           base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
+
+  AudioFileWriterUniquePtr file_writer_;
+  SEQUENCE_CHECKER(client_sequence_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(AudioDebugFileWriter);
 };
 
-}  // namspace media
+}  // namespace media
 
 #endif  // MEDIA_AUDIO_AUDIO_DEBUG_FILE_WRITER_H_

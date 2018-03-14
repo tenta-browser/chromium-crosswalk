@@ -145,25 +145,48 @@ public class MyRule implements TestRule {
 }
 ```
 
+## Command Line Flags
 
-## Caveats
+In our Junit3 tests command line flags (set by the CommandLineFlag annotations) were inherited from the
+test base classes. As an example, ChromeActivityTestBase is annotated with:
+
+```java
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, ...
+```
+
+and as a result any test in a class derived from ChromeActivityTestBase will disable the first run experience.
+
+The Junit4 tests classes are not however, derived from test base classes; instead their behavior is defined by
+test rules. To support this our Junit4 test runner will examine the command line flag annotations on all rules
+referenced with @Rule annotations in the test class. In addition, where one rule is derived from another, the
+command line flags propogate through the hierarchy of rules. See, for example, [BottomSheetTestRule][11]
+
+Note:- This has only recently been implemented, so is not yet used in all tests. See [this bug][12]
+
+The CommandLineFlags annonations are more fully documented in the [CommandLineFlags class][13]
+
+## Common Errors
 
 1.  Instrumentation tests that rely on test thread to have message handler
     will not work. For example error message:
 
         java.lang.RuntimeException: Can't create handler inside thread that has not called Looper.prepare()
 
-    Please utilize `@UiThreadTest` or
-    `ActivityTestRule.runOnUiThread(Runnable r)` to refactor these tests.
-    For more, check this [GitHub issue][6]
+    or
 
-1.  Use `@UiThreadTest` with caution. Currently,
-    **@UiThreadTest is only effective when UiThreadTestRule or
-    ActivityTestRule is declared** in the test class. Please use
-    `android.support.test.annotation.UiThreadTest`, not
-    `android.test.UiThreadTest`. When using @UiThreadTest, **it would cause
-    `setUp` and `tearDown` to run in Ui Thread** as well. Avoid that by simply
-    calling [`runOnUiThread`][9] or [`runOnMainSync`][10] with a Runnable.
+        java.lang.IllegalStateException: The current thread must have a looper!
+
+    Please utilize `ActivityTestRule.runOnUiThread(Runnable r)` to refactor
+    these tests. For more, check this [GitHub issue][6]
+
+1.  Use `@UiThreadTest` with caution!!
+    -   Currently, **@UiThreadTest is only effective when UiThreadTestRule or
+        ActivityTestRule is declared** in the test class.
+    -   Please use **`android.support.test.annotation.UiThreadTest`, NOT
+        `android.test.UiThreadTest`**.
+    -   When using @UiThreadTest, **it would cause `setUp` and `tearDown` to
+        run in Ui Thread** as well. Avoid that by calling [`runOnUiThread`][9]
+        or [`runOnMainSync`][10] with a Runnable.
     
     ```java
     // Wrong test
@@ -211,12 +234,19 @@ public class MyRule implements TestRule {
     }
     ```
 
-
 1.  `assertEquals(float a, float b)` and `assertEquals(double a, double b)` are
     deprecated in JUnit4's Assert class. **Despite only generating a warning at
     build time, they fail at runtime.** Please use
     `Assert.assertEquals(float a, float b, float delta)`
 
+1.  Errorprone expects all public methods starting with `test...` to be
+    annotated with `@Test`. Failure to meet that expectation will cause
+    errorprone to fail with something like this: 
+
+        [JUnit4TestNotRun] Test method will not be run; please add @Test annotation
+
+    In particular, you may see this when attempting to disable tests. In that
+    case, the test should be annotated with both @DisabledTest and @Test.
 
 ## Common questions
 
@@ -252,3 +282,6 @@ If you have any other questions, feel free to report in [this bug][7].
 [8]: http://junit.org/junit4/javadoc/4.12/org/junit/rules/RuleChain.html
 [9]: https://developer.android.com/reference/android/app/Instrumentation.html#runOnMainSync(java.lang.Runnable)
 [10]: https://developer.android.com/reference/android/support/test/rule/UiThreadTestRule.html#runOnUiThread(java.lang.Runnable)
+[11]: /chrome/test/android/javatests/src/org/chromium/chrome/test/BottomSheetTestRule.java
+[12]: https://bugs.chromium.org/p/chromium/issues/detail?id=734553
+[13]: /base/test/android/javatests/src/org/chromium/base/test/util/CommandLineFlags.java

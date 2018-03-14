@@ -29,11 +29,11 @@ namespace {
 
 typedef uint16_t PacketLength;
 const int kPacketHeaderSize = sizeof(PacketLength);
-const int kReadBufferSize = 4096;
+const int kTcpReadBufferSize = 4096;
 const int kPacketLengthOffset = 2;
 const int kTurnChannelDataHeaderSize = 4;
-const int kRecvSocketBufferSize = 128 * 1024;
-const int kSendSocketBufferSize = 128 * 1024;
+const int kTcpRecvSocketBufferSize = 128 * 1024;
+const int kTcpSendSocketBufferSize = 128 * 1024;
 
 bool IsTlsClientSocket(content::P2PSocketType type) {
   return (type == content::P2P_SOCKET_STUN_TLS_CLIENT ||
@@ -133,8 +133,8 @@ bool P2PSocketHostTcpBase::Init(const net::IPEndPoint& local_address,
     // happen here.  This is okay, as from the caller's point of view,
     // the connect always happens asynchronously.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&P2PSocketHostTcpBase::OnConnected,
-                              base::Unretained(this), status));
+        FROM_HERE, base::BindOnce(&P2PSocketHostTcpBase::OnConnected,
+                                  base::Unretained(this), status));
   }
 
   return state_ != STATE_ERROR;
@@ -245,14 +245,14 @@ void P2PSocketHostTcpBase::ProcessTlsSslConnectDone(int status) {
 void P2PSocketHostTcpBase::OnOpen() {
   state_ = STATE_OPEN;
   // Setting socket send and receive buffer size.
-  if (net::OK != socket_->SetReceiveBufferSize(kRecvSocketBufferSize)) {
+  if (net::OK != socket_->SetReceiveBufferSize(kTcpRecvSocketBufferSize)) {
     LOG(WARNING) << "Failed to set socket receive buffer size to "
-                 << kRecvSocketBufferSize;
+                 << kTcpRecvSocketBufferSize;
   }
 
-  if (net::OK != socket_->SetSendBufferSize(kSendSocketBufferSize)) {
+  if (net::OK != socket_->SetSendBufferSize(kTcpSendSocketBufferSize)) {
     LOG(WARNING) << "Failed to set socket send buffer size to "
-                 << kSendSocketBufferSize;
+                 << kTcpSendSocketBufferSize;
   }
 
   if (!DoSendSocketCreateMsg())
@@ -312,13 +312,13 @@ void P2PSocketHostTcpBase::DoRead() {
   do {
     if (!read_buffer_.get()) {
       read_buffer_ = new net::GrowableIOBuffer();
-      read_buffer_->SetCapacity(kReadBufferSize);
-    } else if (read_buffer_->RemainingCapacity() < kReadBufferSize) {
-      // Make sure that we always have at least kReadBufferSize of
+      read_buffer_->SetCapacity(kTcpReadBufferSize);
+    } else if (read_buffer_->RemainingCapacity() < kTcpReadBufferSize) {
+      // Make sure that we always have at least kTcpReadBufferSize of
       // remaining capacity in the read buffer. Normally all packets
-      // are smaller than kReadBufferSize, so this is not really
+      // are smaller than kTcpReadBufferSize, so this is not really
       // required.
-      read_buffer_->SetCapacity(read_buffer_->capacity() + kReadBufferSize -
+      read_buffer_->SetCapacity(read_buffer_->capacity() + kTcpReadBufferSize -
                                 read_buffer_->RemainingCapacity());
     }
     result = socket_->Read(
@@ -495,7 +495,11 @@ void P2PSocketHostTcpBase::DidCompleteRead(int result) {
 }
 
 bool P2PSocketHostTcpBase::SetOption(P2PSocketOption option, int value) {
-  DCHECK_EQ(STATE_OPEN, state_);
+  if (state_ != STATE_OPEN) {
+    DCHECK_EQ(state_, STATE_ERROR);
+    return false;
+  }
+
   switch (option) {
     case P2P_SOCKET_OPT_RCVBUF:
       return socket_->SetReceiveBufferSize(value) == net::OK;

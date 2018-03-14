@@ -11,7 +11,8 @@ import java.util.ArrayList;
  * (components/offline_items_collection/core/offline_content_provider.h) class.
  */
 public interface OfflineContentProvider {
-    /** This interface is a Java counterpart to the C++ OfflineContentProvider::Observer
+    /**
+     * This interface is a Java counterpart to the C++ OfflineContentProvider::Observer
      * (components/offline_items_collection/core/offline_content_provider.h) class.
      */
     interface Observer {
@@ -44,13 +45,16 @@ public interface OfflineContentProvider {
     void pauseDownload(ContentId id);
 
     /** See OfflineContentProvider::ResumeDownload(...). */
-    void resumeDownload(ContentId id);
+    void resumeDownload(ContentId id, boolean hasUserGesture);
 
     /** See OfflineContentProvider::GetItemById(...). */
     OfflineItem getItemById(ContentId id);
 
     /** See OfflineContentProvider::GetAllItems(). */
     ArrayList<OfflineItem> getAllItems();
+
+    /** See OfflineContentProvider::GetVisualsForItem(...). */
+    void getVisualsForItem(ContentId id, VisualsCallback callback);
 
     /** See OfflineContentProvider::AddObserver(...). */
     void addObserver(Observer observer);

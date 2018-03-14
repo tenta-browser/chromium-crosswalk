@@ -74,11 +74,21 @@ chrome.accessibilityPrivate.setNativeAccessibilityEnabled = function(enabled) {}
  * Set the bounds of the accessibility focus ring.
  * @param {!Array<!chrome.accessibilityPrivate.ScreenRect>} rects Array of
  *     rectangles to draw the accessibility focus ring around.
- * @param {string=} opt_color CSS-style hex color string beginning with "#"
- *     like "#FF9982" or "#EEE".
+ * @param {string=} color CSS-style hex color string beginning with # like
+ *     #FF9982 or #EEE.
  * @see https://developer.chrome.com/extensions/accessibilityPrivate#method-setFocusRing
  */
-chrome.accessibilityPrivate.setFocusRing = function(rects, opt_color) {};
+chrome.accessibilityPrivate.setFocusRing = function(rects, color) {};
+
+/**
+ * Set the bounds of highlighted regions on the screen.
+ * @param {!Array<!chrome.accessibilityPrivate.ScreenRect>} rects Array of
+ *     rectangles to draw the highlights on.
+ * @param {string=} color CSS-style hex color string beginning with # like
+ *     #FF9982 or #EEE.
+ * @see https://developer.chrome.com/extensions/accessibilityPrivate#method-setHighlights
+ */
+chrome.accessibilityPrivate.setHighlights = function(rects, color) {};
 
 /**
  * Sets the calling extension as a listener of all keyboard events optionally
@@ -102,6 +112,21 @@ chrome.accessibilityPrivate.setKeyboardListener = function(enabled, capture) {};
 chrome.accessibilityPrivate.darkenScreen = function(enabled) {};
 
 /**
+ * Change the keyboard keys captured by Switch Access.
+ * @param {!Array<number>} key_codes The key codes for the keys that will be
+ *     captured.
+ * @see https://developer.chrome.com/extensions/accessibilityPrivate#method-setSwitchAccessKeys
+ */
+chrome.accessibilityPrivate.setSwitchAccessKeys = function(key_codes) {};
+
+/**
+ * Sets current ARC app to use native ARC support.
+ * @param {boolean} enabled True for ChromeVox (native), false for TalkBack.
+ * @see https://developer.chrome.com/extensions/accessibilityPrivate#method-setNativeChromeVoxArcSupportForCurrentApp
+ */
+chrome.accessibilityPrivate.setNativeChromeVoxArcSupportForCurrentApp = function(enabled) {};
+
+/**
  * Fired whenever ChromeVox should output introduction.
  * @type {!ChromeEvent}
  * @see https://developer.chrome.com/extensions/accessibilityPrivate#event-onIntroduceChromeVox
@@ -115,3 +140,19 @@ chrome.accessibilityPrivate.onIntroduceChromeVox;
  * @see https://developer.chrome.com/extensions/accessibilityPrivate#event-onAccessibilityGesture
  */
 chrome.accessibilityPrivate.onAccessibilityGesture;
+
+/**
+ * Fired when we first detect two fingers are held down, which can be used to
+ * toggle spoken feedback on some touch-only devices.
+ * @type {!ChromeEvent}
+ * @see https://developer.chrome.com/extensions/accessibilityPrivate#event-onTwoFingerTouchStart
+ */
+chrome.accessibilityPrivate.onTwoFingerTouchStart;
+
+/**
+ * Fired when  the user is no longer holding down two fingers (including
+ * releasing one, holding down three, or moving them).
+ * @type {!ChromeEvent}
+ * @see https://developer.chrome.com/extensions/accessibilityPrivate#event-onTwoFingerTouchStop
+ */
+chrome.accessibilityPrivate.onTwoFingerTouchStop;

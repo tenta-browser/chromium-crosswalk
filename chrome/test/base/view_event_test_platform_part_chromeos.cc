@@ -5,18 +5,19 @@
 #include "chrome/test/base/view_event_test_platform_part.h"
 
 #include <memory>
+#include <utility>
 
+#include "ash/session/test_session_controller_client.h"
 #include "ash/shell.h"
 #include "ash/shell_init_params.h"
+#include "ash/shell_port_classic.h"
 #include "ash/test/ash_test_helper.h"
-#include "ash/test/test_session_controller_client.h"
-#include "ash/test/test_shell_delegate.h"
+#include "ash/test_shell_delegate.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "chromeos/audio/cras_audio_handler.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/network/network_handler.h"
-#include "content/public/browser/browser_thread.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window_tree_host.h"
@@ -60,17 +61,15 @@ ViewEventTestPlatformPartChromeOS::ViewEventTestPlatformPartChromeOS(
   chromeos::NetworkHandler::Initialize();
 
   env_ = aura::Env::CreateInstance();
-  ash::test::TestShellDelegate* shell_delegate =
-      new ash::test::TestShellDelegate();
   ash::ShellInitParams init_params;
-  init_params.delegate = shell_delegate;
+  init_params.shell_port = std::make_unique<ash::ShellPortClassic>();
+  init_params.delegate = std::make_unique<ash::TestShellDelegate>();
   init_params.context_factory = context_factory;
   init_params.context_factory_private = context_factory_private;
-  init_params.blocking_pool = content::BrowserThread::GetBlockingPool();
   base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
       switches::kHostWindowBounds, "0+0-1280x800");
-  ash::Shell::CreateInstance(init_params);
-  ash::test::TestSessionControllerClient session_controller_client(
+  ash::Shell::CreateInstance(std::move(init_params));
+  ash::TestSessionControllerClient session_controller_client(
       ash::Shell::Get()->session_controller());
   session_controller_client.CreatePredefinedUserSessions(1);
   GetContext()->GetHost()->Show();

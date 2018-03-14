@@ -4,8 +4,13 @@
 
 package org.chromium.net;
 
+import android.annotation.SuppressLint;
+import android.annotation.TargetApi;
 import android.content.Context;
+import android.net.ConnectivityManager;
+import android.os.Build;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.ObserverList;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
@@ -34,30 +39,32 @@ public class NetworkChangeNotifier {
         public void onConnectionTypeChanged(int connectionType);
     }
 
-    private final Context mContext;
     private final ArrayList<Long> mNativeChangeNotifiers;
     private final ObserverList<ConnectionTypeObserver> mConnectionTypeObservers;
+    private final ConnectivityManager mConnectivityManager;
     private NetworkChangeNotifierAutoDetect mAutoDetector;
+    // Last value broadcast via ConnectionTypeChange signal.
     private int mCurrentConnectionType = ConnectionType.CONNECTION_UNKNOWN;
-    private double mCurrentMaxBandwidth = Double.POSITIVE_INFINITY;
-    private int mMaxBandwidthConnectionType = mCurrentConnectionType;
 
+    @SuppressLint("StaticFieldLeak")
     private static NetworkChangeNotifier sInstance;
 
     @VisibleForTesting
-    protected NetworkChangeNotifier(Context context) {
-        mContext = context.getApplicationContext();
+    protected NetworkChangeNotifier() {
         mNativeChangeNotifiers = new ArrayList<Long>();
         mConnectionTypeObservers = new ObserverList<ConnectionTypeObserver>();
+        mConnectivityManager =
+                (ConnectivityManager) ContextUtils.getApplicationContext().getSystemService(
+                        Context.CONNECTIVITY_SERVICE);
     }
 
     /**
      * Initializes the singleton once.
      */
     @CalledByNative
-    public static NetworkChangeNotifier init(Context context) {
+    public static NetworkChangeNotifier init() {
         if (sInstance == null) {
-            sInstance = new NetworkChangeNotifier(context);
+            sInstance = new NetworkChangeNotifier();
         }
         return sInstance;
     }
@@ -77,14 +84,9 @@ public class NetworkChangeNotifier {
 
     @CalledByNative
     public int getCurrentConnectionSubtype() {
-        return mAutoDetector == null ? ConnectionSubtype.SUBTYPE_UNKNOWN
-                                     : NetworkChangeNotifierAutoDetect.convertToConnectionSubtype(
-                                               mAutoDetector.getCurrentNetworkState());
-    }
-
-    @CalledByNative
-    public double getCurrentMaxBandwidthInMbps() {
-        return mCurrentMaxBandwidth;
+        return mAutoDetector == null
+                ? ConnectionSubtype.SUBTYPE_UNKNOWN
+                : mAutoDetector.getCurrentNetworkState().getConnectionSubtype();
     }
 
     /**
@@ -111,13 +113,6 @@ public class NetworkChangeNotifier {
     }
 
     /**
-     * Calls a native map lookup of subtype to max bandwidth.
-     */
-    public static double getMaxBandwidthForConnectionSubtype(int subtype) {
-        return nativeGetMaxBandwidthForConnectionSubtype(subtype);
-    }
-
-    /**
      * Adds a native-side observer.
      */
     @CalledByNative
@@ -131,6 +126,15 @@ public class NetworkChangeNotifier {
     @CalledByNative
     public void removeNativeObserver(long nativeChangeNotifier) {
         mNativeChangeNotifiers.remove(nativeChangeNotifier);
+    }
+
+    /**
+     * Returns {@code true} if NetworkCallback failed to register, indicating that network-specific
+     * callbacks will not be issued.
+     */
+    @CalledByNative
+    public boolean registerNetworkCallbackFailed() {
+        return mAutoDetector == null ? false : mAutoDetector.registerNetworkCallbackFailed();
     }
 
     /**
@@ -194,8 +198,8 @@ public class NetworkChangeNotifier {
                                 updateCurrentConnectionType(newConnectionType);
                             }
                             @Override
-                            public void onMaxBandwidthChanged(double maxBandwidthMbps) {
-                                updateCurrentMaxBandwidth(maxBandwidthMbps);
+                            public void onConnectionSubtypeChanged(int newConnectionSubtype) {
+                                notifyObserversOfConnectionSubtypeChange(newConnectionSubtype);
                             }
                             @Override
                             public void onNetworkConnect(long netId, int connectionType) {
@@ -214,12 +218,11 @@ public class NetworkChangeNotifier {
                                 notifyObserversToPurgeActiveNetworkList(activeNetIds);
                             }
                         },
-                        mContext, policy);
+                        policy);
                 final NetworkChangeNotifierAutoDetect.NetworkState networkState =
                         mAutoDetector.getCurrentNetworkState();
-                updateCurrentConnectionType(
-                        NetworkChangeNotifierAutoDetect.convertToConnectionType(networkState));
-                updateCurrentMaxBandwidth(mAutoDetector.getCurrentMaxBandwidthInMbps(networkState));
+                updateCurrentConnectionType(networkState.getConnectionType());
+                notifyObserversOfConnectionSubtypeChange(networkState.getConnectionSubtype());
             }
         } else {
             destroyAutoDetector();
@@ -227,7 +230,8 @@ public class NetworkChangeNotifier {
     }
 
     /**
-     * Updates the perceived network state when not auto-detecting changes to connectivity.
+     * For testing, updates the perceived network state when not auto-detecting changes to
+     * connectivity.
      *
      * @param networkAvailable True if the NetworkChangeNotifier should perceive a "connected"
      *    state, false implies "disconnected".
@@ -243,8 +247,9 @@ public class NetworkChangeNotifier {
                 mCurrentConnectionType != ConnectionType.CONNECTION_NONE;
         if (connectionCurrentlyExists != forceOnline) {
             updateCurrentConnectionType(forceOnline ? ConnectionType.CONNECTION_UNKNOWN
-                    : ConnectionType.CONNECTION_NONE);
-            updateCurrentMaxBandwidth(forceOnline ? Double.POSITIVE_INFINITY : 0.0);
+                                                    : ConnectionType.CONNECTION_NONE);
+            notifyObserversOfConnectionSubtypeChange(forceOnline ? ConnectionSubtype.SUBTYPE_UNKNOWN
+                                                                 : ConnectionSubtype.SUBTYPE_NONE);
         }
     }
 
@@ -283,26 +288,16 @@ public class NetworkChangeNotifier {
         getInstance().notifyObserversOfConnectionTypeChange(connectionType, netId);
     }
 
-    // For testing, pretend the max bandwidth has changed.
+    // For testing, pretend the connection subtype has changed.
     @CalledByNative
-    public static void fakeMaxBandwidthChanged(double maxBandwidthMbps) {
+    public static void fakeConnectionSubtypeChanged(int connectionSubtype) {
         setAutoDetectConnectivityState(false);
-        getInstance().notifyObserversOfMaxBandwidthChange(maxBandwidthMbps);
+        getInstance().notifyObserversOfConnectionSubtypeChange(connectionSubtype);
     }
 
     private void updateCurrentConnectionType(int newConnectionType) {
         mCurrentConnectionType = newConnectionType;
         notifyObserversOfConnectionTypeChange(newConnectionType);
-    }
-
-    private void updateCurrentMaxBandwidth(double maxBandwidthMbps) {
-        if (maxBandwidthMbps == mCurrentMaxBandwidth
-                && mCurrentConnectionType == mMaxBandwidthConnectionType) {
-            return;
-        }
-        mCurrentMaxBandwidth = maxBandwidthMbps;
-        mMaxBandwidthConnectionType = mCurrentConnectionType;
-        notifyObserversOfMaxBandwidthChange(maxBandwidthMbps);
     }
 
     /**
@@ -325,9 +320,9 @@ public class NetworkChangeNotifier {
     /**
      * Alerts all observers of a bandwidth change.
      */
-    void notifyObserversOfMaxBandwidthChange(double maxBandwidthMbps) {
+    void notifyObserversOfConnectionSubtypeChange(int connectionSubtype) {
         for (Long nativeChangeNotifier : mNativeChangeNotifiers) {
-            nativeNotifyMaxBandwidthChanged(nativeChangeNotifier, maxBandwidthMbps);
+            nativeNotifyMaxBandwidthChanged(nativeChangeNotifier, connectionSubtype);
         }
     }
 
@@ -392,12 +387,34 @@ public class NetworkChangeNotifier {
         mConnectionTypeObservers.removeObserver(observer);
     }
 
+    /**
+     * Is the process bound to a network?
+     */
+    @TargetApi(Build.VERSION_CODES.M)
+    private boolean isProcessBoundToNetworkInternal() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            return false;
+        } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return ConnectivityManager.getProcessDefaultNetwork() != null;
+        } else {
+            return mConnectivityManager.getBoundNetworkForProcess() != null;
+        }
+    }
+
+    /**
+     * Is the process bound to a network?
+     */
+    @CalledByNative
+    public static boolean isProcessBoundToNetwork() {
+        return getInstance().isProcessBoundToNetworkInternal();
+    }
+
     @NativeClassQualifiedName("NetworkChangeNotifierDelegateAndroid")
     private native void nativeNotifyConnectionTypeChanged(
             long nativePtr, int newConnectionType, long defaultNetId);
 
     @NativeClassQualifiedName("NetworkChangeNotifierDelegateAndroid")
-    private native void nativeNotifyMaxBandwidthChanged(long nativePtr, double maxBandwidthMbps);
+    private native void nativeNotifyMaxBandwidthChanged(long nativePtr, int subType);
 
     @NativeClassQualifiedName("NetworkChangeNotifierDelegateAndroid")
     private native void nativeNotifyOfNetworkConnect(
@@ -411,8 +428,6 @@ public class NetworkChangeNotifier {
 
     @NativeClassQualifiedName("NetworkChangeNotifierDelegateAndroid")
     private native void nativeNotifyPurgeActiveNetworkList(long nativePtr, long[] activeNetIds);
-
-    private static native double nativeGetMaxBandwidthForConnectionSubtype(int subtype);
 
     // For testing only.
     public static NetworkChangeNotifierAutoDetect getAutoDetectorForTest() {

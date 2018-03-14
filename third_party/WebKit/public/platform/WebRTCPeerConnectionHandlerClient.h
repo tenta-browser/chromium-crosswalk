@@ -31,13 +31,18 @@
 #ifndef WebRTCPeerConnectionHandlerClient_h
 #define WebRTCPeerConnectionHandlerClient_h
 
+#include <memory>
+
+#include "WebCommon.h"
+#include "base/memory/scoped_refptr.h"
+
 namespace blink {
 
-class WebMediaStream;
 class WebRTCDataChannelHandler;
 class WebRTCICECandidate;
+class WebRTCRtpReceiver;
 
-class WebRTCPeerConnectionHandlerClient {
+class BLINK_PLATFORM_EXPORT WebRTCPeerConnectionHandlerClient {
  public:
   enum SignalingState {
     kSignalingStateStable = 1,
@@ -67,18 +72,18 @@ class WebRTCPeerConnectionHandlerClient {
     kICEGatheringStateComplete = 3
   };
 
-  virtual ~WebRTCPeerConnectionHandlerClient() {}
+  virtual ~WebRTCPeerConnectionHandlerClient();
 
   virtual void NegotiationNeeded() = 0;
-  virtual void DidGenerateICECandidate(const WebRTCICECandidate&) = 0;
+  virtual void DidGenerateICECandidate(scoped_refptr<WebRTCICECandidate>) = 0;
   virtual void DidChangeSignalingState(SignalingState) = 0;
   virtual void DidChangeICEGatheringState(ICEGatheringState) = 0;
   virtual void DidChangeICEConnectionState(ICEConnectionState) = 0;
-  virtual void DidAddRemoteStream(const WebMediaStream&) = 0;
-  virtual void DidRemoveRemoteStream(const WebMediaStream&) = 0;
+  virtual void DidAddRemoteTrack(std::unique_ptr<WebRTCRtpReceiver>) = 0;
+  virtual void DidRemoveRemoteTrack(std::unique_ptr<WebRTCRtpReceiver>) = 0;
   virtual void DidAddRemoteDataChannel(WebRTCDataChannelHandler*) = 0;
   virtual void ReleasePeerConnectionHandler() = 0;
-  virtual void ClosePeerConnection() {}
+  virtual void ClosePeerConnection();
 };
 
 }  // namespace blink

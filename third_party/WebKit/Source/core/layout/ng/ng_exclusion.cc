@@ -13,7 +13,7 @@ bool NGExclusion::operator==(const NGExclusion& other) const {
 }
 
 String NGExclusion::ToString() const {
-  return String::Format("Rect: %s Type: %d", rect.ToString().Ascii().Data(),
+  return String::Format("Rect: %s Type: %d", rect.ToString().Ascii().data(),
                         type);
 }
 
@@ -26,14 +26,14 @@ bool NGExclusion::MaybeCombineWith(const NGExclusion& other) {
 
   switch (other.type) {
     case NGExclusion::kFloatLeft: {
-      if (other.rect.offset == rect.InlineEndBlockStartOffset()) {
+      if (other.rect.offset == rect.LineEndBlockStartOffset()) {
         rect.size = {other.rect.InlineSize() + rect.InlineSize(),
                      other.rect.BlockSize()};
         return true;
       }
     }
     case NGExclusion::kFloatRight: {
-      if (rect.offset == other.rect.InlineEndBlockStartOffset()) {
+      if (rect.offset == other.rect.LineEndBlockStartOffset()) {
         rect.offset = other.rect.offset;
         rect.size = {other.rect.InlineSize() + rect.InlineSize(),
                      other.rect.BlockSize()};
@@ -47,32 +47,6 @@ bool NGExclusion::MaybeCombineWith(const NGExclusion& other) {
 
 std::ostream& operator<<(std::ostream& stream, const NGExclusion& value) {
   return stream << value.ToString();
-}
-
-NGExclusions::NGExclusions()
-    : last_left_float(nullptr), last_right_float(nullptr) {}
-
-NGExclusions::NGExclusions(const NGExclusions& other) {
-  for (const auto& exclusion : other.storage)
-    Add(*exclusion);
-}
-
-void NGExclusions::Add(const NGExclusion& exclusion) {
-  storage.push_back(WTF::MakeUnique<NGExclusion>(exclusion));
-  if (exclusion.type == NGExclusion::kFloatLeft) {
-    last_left_float = storage.rbegin()->get();
-  } else if (exclusion.type == NGExclusion::kFloatRight) {
-    last_right_float = storage.rbegin()->get();
-  }
-}
-
-inline NGExclusions& NGExclusions::operator=(const NGExclusions& other) {
-  storage.Clear();
-  last_left_float = nullptr;
-  last_right_float = nullptr;
-  for (const auto& exclusion : other.storage)
-    Add(*exclusion);
-  return *this;
 }
 
 }  // namespace blink

@@ -15,11 +15,6 @@
 using base::android::JavaParamRef;
 
 // static
-bool SiteEngagementServiceAndroid::Register(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
-// static
 const base::android::ScopedJavaGlobalRef<jobject>&
 SiteEngagementServiceAndroid::GetOrCreate(JNIEnv* env,
                                           SiteEngagementService* service) {
@@ -69,11 +64,14 @@ void SiteEngagementServiceAndroid::ResetBaseScoreForURL(
   }
 }
 
-void SetParamValuesForTesting(JNIEnv* env, const JavaParamRef<jclass>& clazz) {
+void JNI_SiteEngagementService_SetParamValuesForTesting(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz) {
   SiteEngagementScore::SetParamValuesForTesting();
 }
 
-base::android::ScopedJavaLocalRef<jobject> SiteEngagementServiceForProfile(
+base::android::ScopedJavaLocalRef<jobject>
+JNI_SiteEngagementService_SiteEngagementServiceForProfile(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& jprofile) {

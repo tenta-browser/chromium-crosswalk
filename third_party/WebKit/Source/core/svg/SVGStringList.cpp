@@ -34,7 +34,7 @@ SVGStringList::SVGStringList() {}
 SVGStringList::~SVGStringList() {}
 
 void SVGStringList::Initialize(const String& item) {
-  values_.Clear();
+  values_.clear();
   values_.push_back(item);
 }
 
@@ -64,7 +64,7 @@ String SVGStringList::RemoveItem(size_t index,
     return String();
 
   String old_item = values_.at(index);
-  values_.erase(index);
+  values_.EraseAt(index);
   return old_item;
 }
 
@@ -99,7 +99,7 @@ void SVGStringList::ParseInternal(const CharType*& ptr, const CharType* end) {
 
 SVGParsingError SVGStringList::SetValueAsString(const String& data) {
   // FIXME: Add more error checking and reporting.
-  values_.Clear();
+  values_.clear();
 
   if (data.IsEmpty())
     return SVGParseStatus::kNoError;

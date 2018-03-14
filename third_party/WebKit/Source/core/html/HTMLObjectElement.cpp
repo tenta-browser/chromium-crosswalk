@@ -25,13 +25,13 @@
 #include "core/html/HTMLObjectElement.h"
 
 #include "bindings/core/v8/ScriptEventListener.h"
-#include "core/HTMLNames.h"
 #include "core/dom/Attribute.h"
 #include "core/dom/Document.h"
 #include "core/dom/ElementTraversal.h"
+#include "core/dom/ShadowRoot.h"
+#include "core/dom/SyncReattachContext.h"
 #include "core/dom/TagCollection.h"
 #include "core/dom/Text.h"
-#include "core/dom/shadow/ShadowRoot.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
 #include "core/frame/Settings.h"
@@ -39,9 +39,9 @@
 #include "core/html/HTMLMetaElement.h"
 #include "core/html/HTMLParamElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
+#include "core/html_names.h"
 #include "core/layout/api/LayoutEmbeddedItem.h"
 #include "core/plugins/PluginView.h"
-#include "platform/FrameViewBase.h"
 #include "platform/network/mime/MIMETypeRegistry.h"
 
 namespace blink {
@@ -66,14 +66,15 @@ HTMLObjectElement* HTMLObjectElement::Create(Document& document,
   return element;
 }
 
-DEFINE_TRACE(HTMLObjectElement) {
+void HTMLObjectElement::Trace(blink::Visitor* visitor) {
   ListedElement::Trace(visitor);
   HTMLPlugInElement::Trace(visitor);
 }
 
-LayoutPart* HTMLObjectElement::ExistingLayoutPart() const {
-  // This will return 0 if the layoutObject is not a LayoutPart.
-  return GetLayoutPart();
+LayoutEmbeddedContent* HTMLObjectElement::ExistingLayoutEmbeddedContent()
+    const {
+  // This will return 0 if the layoutObject is not a LayoutEmbeddedContent.
+  return GetLayoutEmbeddedContent();
 }
 
 bool HTMLObjectElement::IsPresentationAttribute(
@@ -86,7 +87,7 @@ bool HTMLObjectElement::IsPresentationAttribute(
 void HTMLObjectElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,
     const AtomicString& value,
-    MutableStylePropertySet* style) {
+    MutableCSSPropertyValueSet* style) {
   if (name == borderAttr)
     ApplyBorderAttributeToStyle(value, style);
   else
@@ -99,7 +100,7 @@ void HTMLObjectElement::ParseAttribute(
   if (name == formAttr) {
     FormAttributeChanged();
   } else if (name == typeAttr) {
-    service_type_ = params.new_value.DeprecatedLower();
+    service_type_ = params.new_value.LowerASCII();
     size_t pos = service_type_.Find(";");
     if (pos != kNotFound)
       service_type_ = service_type_.Left(pos);
@@ -148,11 +149,8 @@ static void MapDataParamToSrc(Vector<String>* param_names,
 // TODO(schenney): crbug.com/572908 This function should not deal with url or
 // serviceType!
 void HTMLObjectElement::ParametersForPlugin(Vector<String>& param_names,
-                                            Vector<String>& param_values,
-                                            String& url,
-                                            String& service_type) {
+                                            Vector<String>& param_values) {
   HashSet<StringImpl*, CaseFoldingHash> unique_param_names;
-  String url_parameter;
 
   // Scan the PARAM children and store their name/value pairs.
   // Get the URL and type from the params if we don't already have them.
@@ -168,33 +166,22 @@ void HTMLObjectElement::ParametersForPlugin(Vector<String>& param_names,
 
     // TODO(schenney): crbug.com/572908 url adjustment does not belong in this
     // function.
-    if (url.IsEmpty() && url_parameter.IsEmpty() &&
-        (DeprecatedEqualIgnoringCase(name, "src") ||
-         DeprecatedEqualIgnoringCase(name, "movie") ||
-         DeprecatedEqualIgnoringCase(name, "code") ||
-         DeprecatedEqualIgnoringCase(name, "url")))
-      url_parameter = StripLeadingAndTrailingHTMLSpaces(p->Value());
+    // HTML5 says that an object resource's URL is specified by the object's
+    // data attribute, not by a param element with a name of "data". However,
+    // for compatibility, allow the resource's URL to be given by a param
+    // element with one of the common names if we know that resource points
+    // to a plugin.
+    if (url_.IsEmpty() && !DeprecatedEqualIgnoringCase(name, "data") &&
+        HTMLParamElement::IsURLParameter(name)) {
+      url_ = StripLeadingAndTrailingHTMLSpaces(p->Value());
+    }
     // TODO(schenney): crbug.com/572908 serviceType calculation does not belong
     // in this function.
-    if (service_type.IsEmpty() && DeprecatedEqualIgnoringCase(name, "type")) {
-      service_type = p->Value();
-      size_t pos = service_type.Find(";");
+    if (service_type_.IsEmpty() && DeprecatedEqualIgnoringCase(name, "type")) {
+      size_t pos = p->Value().Find(";");
       if (pos != kNotFound)
-        service_type = service_type.Left(pos);
+        service_type_ = p->Value().GetString().Left(pos);
     }
-  }
-
-  // When OBJECT is used for an applet via Sun's Java plugin, the CODEBASE
-  // attribute in the tag points to the Java plugin itself (an ActiveX
-  // component) while the actual applet CODEBASE is in a PARAM tag. See
-  // <http://java.sun.com/products/plugin/1.2/docs/tags.html>. This means we
-  // have to explicitly suppress the tag's CODEBASE attribute if there is none
-  // in a PARAM, else our Java plugin will misinterpret it. [4004531]
-  String codebase;
-  if (MIMETypeRegistry::IsJavaAppletMIMEType(service_type)) {
-    codebase = "codebase";
-    unique_param_names.insert(
-        codebase.Impl());  // pretend we found it in a PARAM already
   }
 
   // Turn the attributes of the <object> element into arrays, but don't override
@@ -209,27 +196,16 @@ void HTMLObjectElement::ParametersForPlugin(Vector<String>& param_names,
   }
 
   MapDataParamToSrc(&param_names, &param_values);
-
-  // HTML5 says that an object resource's URL is specified by the object's data
-  // attribute, not by a param element. However, for compatibility, allow the
-  // resource's URL to be given by a param named "src", "movie", "code" or "url"
-  // if we know that resource points to a plugin.
-  if (url.IsEmpty() && !url_parameter.IsEmpty()) {
-    KURL completed_url = GetDocument().CompleteURL(url_parameter);
-    bool use_fallback;
-    if (ShouldUsePlugin(completed_url, service_type, false, use_fallback))
-      url = url_parameter;
-  }
 }
 
 bool HTMLObjectElement::HasFallbackContent() const {
-  for (Node* child = FirstChild(); child; child = child->nextSibling()) {
+  for (Node* child = firstChild(); child; child = child->nextSibling()) {
     // Ignore whitespace-only text, and <param> tags, any other content is
     // fallback content.
     if (child->IsTextNode()) {
       if (!ToText(child)->ContainsOnlyWhitespace())
         return true;
-    } else if (!isHTMLParamElement(*child)) {
+    } else if (!IsHTMLParamElement(*child)) {
       return true;
     }
   }
@@ -238,7 +214,7 @@ bool HTMLObjectElement::HasFallbackContent() const {
 
 bool HTMLObjectElement::HasValidClassId() const {
   if (MIMETypeRegistry::IsJavaAppletMIMEType(service_type_) &&
-      ClassId().StartsWith("java:", kTextCaseASCIIInsensitive))
+      ClassId().StartsWithIgnoringASCIICase("java:"))
     return true;
 
   // HTML5 says that fallback content should be rendered if a non-empty
@@ -292,17 +268,14 @@ void HTMLObjectElement::UpdatePluginInternal() {
     return;
   }
 
-  String url = this->Url();
-  String service_type = service_type_;
-
   // TODO(schenney): crbug.com/572908 These should be joined into a
   // PluginParameters class.
   Vector<String> param_names;
   Vector<String> param_values;
-  ParametersForPlugin(param_names, param_values, url, service_type);
+  ParametersForPlugin(param_names, param_values);
 
   // Note: url is modified above by parametersForPlugin.
-  if (!AllowedToLoadFrameURL(url)) {
+  if (!AllowedToLoadFrameURL(url_)) {
     DispatchErrorEvent();
     return;
   }
@@ -314,19 +287,21 @@ void HTMLObjectElement::UpdatePluginInternal() {
 
   // Overwrites the URL and MIME type of a Flash embed to use an HTML5 embed.
   KURL overriden_url =
-      GetDocument().GetFrame()->Loader().Client()->OverrideFlashEmbedWithHTML(
+      GetDocument().GetFrame()->Client()->OverrideFlashEmbedWithHTML(
           GetDocument().CompleteURL(url_));
   if (!overriden_url.IsEmpty()) {
-    url = url_ = overriden_url.GetString();
-    service_type = service_type_ = "text/html";
+    url_ = overriden_url.GetString();
+    service_type_ = "text/html";
   }
 
-  if (!HasValidClassId() ||
-      !RequestObject(url, service_type, param_names, param_values)) {
-    if (!url.IsEmpty())
+  if (!HasValidClassId() || !RequestObject(param_names, param_values)) {
+    if (!url_.IsEmpty())
       DispatchErrorEvent();
     if (HasFallbackContent())
       RenderFallbackContent();
+  } else {
+    if (IsErrorplaceholder())
+      DispatchErrorEvent();
   }
 }
 
@@ -372,12 +347,13 @@ const AtomicString HTMLObjectElement::ImageSourceURL() const {
 
 // TODO(schenney): crbug.com/572908 Remove this hack.
 void HTMLObjectElement::ReattachFallbackContent() {
-  // This can happen inside of attachLayoutTree() in the middle of a recalcStyle
-  // so we need to reattach synchronously here.
-  if (GetDocument().InStyleRecalc())
-    ReattachLayoutTree();
-  else
+  if (GetDocument().InStyleRecalc()) {
+    // This can happen inside of AttachLayoutTree() in the middle of a
+    // RebuildLayoutTree, so we need to reattach synchronously here.
+    ReattachLayoutTree(SyncReattachContext::CurrentAttachContext());
+  } else {
     LazyReattachIfAttached();
+  }
 }
 
 void HTMLObjectElement::RenderFallbackContent() {
@@ -389,13 +365,14 @@ void HTMLObjectElement::RenderFallbackContent() {
 
   // Before we give up and use fallback content, check to see if this is a MIME
   // type issue.
-  if (image_loader_ && image_loader_->GetImage() &&
-      image_loader_->GetImage()->GetStatus() != ResourceStatus::kLoadError) {
-    service_type_ = image_loader_->GetImage()->GetResponse().MimeType();
+  if (image_loader_ && image_loader_->GetContent() &&
+      image_loader_->GetContent()->GetContentStatus() !=
+          ResourceStatus::kLoadError) {
+    service_type_ = image_loader_->GetContent()->GetResponse().MimeType();
     if (!IsImageType()) {
       // If we don't think we have an image type anymore, then clear the image
       // from the loader.
-      image_loader_->SetImage(0);
+      image_loader_->ClearImage();
       ReattachFallbackContent();
       return;
     }
@@ -418,7 +395,7 @@ bool HTMLObjectElement::IsExposed() const {
       return false;
   }
   for (HTMLElement& element : Traversal<HTMLElement>::DescendantsOf(*this)) {
-    if (isHTMLObjectElement(element) || isHTMLEmbedElement(element))
+    if (IsHTMLObjectElement(element) || IsHTMLEmbedElement(element))
       return false;
   }
   return true;
@@ -429,13 +406,13 @@ bool HTMLObjectElement::ContainsJavaApplet() const {
     return true;
 
   for (HTMLElement& child : Traversal<HTMLElement>::ChildrenOf(*this)) {
-    if (isHTMLParamElement(child) &&
+    if (IsHTMLParamElement(child) &&
         DeprecatedEqualIgnoringCase(child.GetNameAttribute(), "type") &&
         MIMETypeRegistry::IsJavaAppletMIMEType(
             child.getAttribute(valueAttr).GetString()))
       return true;
-    if (isHTMLObjectElement(child) &&
-        toHTMLObjectElement(child).ContainsJavaApplet())
+    if (IsHTMLObjectElement(child) &&
+        ToHTMLObjectElement(child).ContainsJavaApplet())
       return true;
   }
 
@@ -465,6 +442,28 @@ bool HTMLObjectElement::WillUseFallbackContentAtLayout() const {
 
 void HTMLObjectElement::AssociateWith(HTMLFormElement* form) {
   AssociateByParser(form);
-};
+}
+
+void HTMLObjectElement::AttachLayoutTree(AttachContext& context) {
+  SyncReattachContext reattach_context(context);
+  HTMLPlugInElement::AttachLayoutTree(context);
+}
+
+const HTMLObjectElement* ToHTMLObjectElementFromListedElement(
+    const ListedElement* element) {
+  SECURITY_DCHECK(!element || !element->IsFormControlElement());
+  const HTMLObjectElement* object_element =
+      static_cast<const HTMLObjectElement*>(element);
+  // We need to assert after the cast because ListedElement doesn't
+  // have hasTagName.
+  SECURITY_DCHECK(!object_element ||
+                  object_element->HasTagName(HTMLNames::objectTag));
+  return object_element;
+}
+
+const HTMLObjectElement& ToHTMLObjectElementFromListedElement(
+    const ListedElement& element) {
+  return *ToHTMLObjectElementFromListedElement(&element);
+}
 
 }  // namespace blink

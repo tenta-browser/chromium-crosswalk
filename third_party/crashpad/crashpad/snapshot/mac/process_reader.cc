@@ -19,6 +19,7 @@
 #include <mach-o/loader.h>
 
 #include <algorithm>
+#include <utility>
 
 #include "base/logging.h"
 #include "base/mac/mach_logging.h"
@@ -112,13 +113,11 @@ ProcessReader::~ProcessReader() {
 bool ProcessReader::Initialize(task_t task) {
   INITIALIZATION_STATE_SET_INITIALIZING(initialized_);
 
-  if (!process_info_.InitializeFromTask(task)) {
+  if (!process_info_.InitializeWithTask(task)) {
     return false;
   }
 
-  if (!process_info_.Is64Bit(&is_64_bit_)) {
-    return false;
-  }
+  is_64_bit_ = process_info_.Is64Bit();
 
   task_memory_.reset(new TaskMemory(task));
   task_ = task;
@@ -196,6 +195,46 @@ const std::vector<ProcessReader::Module>& ProcessReader::Modules() {
   }
 
   return modules_;
+}
+
+mach_vm_address_t ProcessReader::DyldAllImageInfo(
+    mach_vm_size_t* all_image_info_size) {
+  INITIALIZATION_STATE_DCHECK_VALID(initialized_);
+
+  task_dyld_info_data_t dyld_info;
+  mach_msg_type_number_t count = TASK_DYLD_INFO_COUNT;
+  kern_return_t kr = task_info(
+      task_, TASK_DYLD_INFO, reinterpret_cast<task_info_t>(&dyld_info), &count);
+  if (kr != KERN_SUCCESS) {
+    MACH_LOG(WARNING, kr) << "task_info";
+    return 0;
+  }
+
+  // TODO(mark): Deal with statically linked executables which don’t use dyld.
+  // This may look for the module that matches the executable path in the same
+  // data set that vmmap uses.
+
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_7
+  // The task_dyld_info_data_t struct grew in 10.7, adding the format field.
+  // Don’t check this field if it’s not present, which can happen when either
+  // the SDK used at compile time or the kernel at run time are too old and
+  // don’t know about it.
+  if (count >= TASK_DYLD_INFO_COUNT) {
+    const integer_t kExpectedFormat =
+        !Is64Bit() ? TASK_DYLD_ALL_IMAGE_INFO_32 : TASK_DYLD_ALL_IMAGE_INFO_64;
+    if (dyld_info.all_image_info_format != kExpectedFormat) {
+      LOG(WARNING) << "unexpected task_dyld_info_data_t::all_image_info_format "
+                   << dyld_info.all_image_info_format;
+      DCHECK_EQ(dyld_info.all_image_info_format, kExpectedFormat);
+      return 0;
+    }
+  }
+#endif
+
+  if (all_image_info_size) {
+    *all_image_info_size = dyld_info.all_image_info_size;
+  }
+  return dyld_info.all_image_info_addr;
 }
 
 void ProcessReader::InitializeThreads() {
@@ -345,38 +384,12 @@ void ProcessReader::InitializeModules() {
 
   initialized_modules_ = true;
 
-  task_dyld_info_data_t dyld_info;
-  mach_msg_type_number_t count = TASK_DYLD_INFO_COUNT;
-  kern_return_t kr = task_info(
-      task_, TASK_DYLD_INFO, reinterpret_cast<task_info_t>(&dyld_info), &count);
-  if (kr != KERN_SUCCESS) {
-    MACH_LOG(WARNING, kr) << "task_info";
-    return;
-  }
-
-  // TODO(mark): Deal with statically linked executables which don’t use dyld.
-  // This may look for the module that matches the executable path in the same
-  // data set that vmmap uses.
-
-#if MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_7
-  // The task_dyld_info_data_t struct grew in 10.7, adding the format field.
-  // Don’t check this field if it’s not present, which can happen when either
-  // the SDK used at compile time or the kernel at run time are too old and
-  // don’t know about it.
-  if (count >= TASK_DYLD_INFO_COUNT) {
-    const integer_t kExpectedFormat =
-        !Is64Bit() ? TASK_DYLD_ALL_IMAGE_INFO_32 : TASK_DYLD_ALL_IMAGE_INFO_64;
-    if (dyld_info.all_image_info_format != kExpectedFormat) {
-      LOG(WARNING) << "unexpected task_dyld_info_data_t::all_image_info_format "
-                   << dyld_info.all_image_info_format;
-      DCHECK_EQ(dyld_info.all_image_info_format, kExpectedFormat);
-      return;
-    }
-  }
-#endif
+  mach_vm_size_t all_image_info_size;
+  mach_vm_address_t all_image_info_addr =
+      DyldAllImageInfo(&all_image_info_size);
 
   process_types::dyld_all_image_infos all_image_infos;
-  if (!all_image_infos.Read(this, dyld_info.all_image_info_addr)) {
+  if (!all_image_infos.Read(this, all_image_info_addr)) {
     LOG(WARNING) << "could not read dyld_all_image_infos";
     return;
   }
@@ -390,10 +403,10 @@ void ProcessReader::InitializeModules() {
   size_t expected_size =
       process_types::dyld_all_image_infos::ExpectedSizeForVersion(
           this, all_image_infos.version);
-  if (dyld_info.all_image_info_size < expected_size) {
-    LOG(WARNING) << "small dyld_all_image_infos size "
-                 << dyld_info.all_image_info_size << " < " << expected_size
-                 << " for version " << all_image_infos.version;
+  if (all_image_info_size < expected_size) {
+    LOG(WARNING) << "small dyld_all_image_infos size " << all_image_info_size
+                 << " < " << expected_size << " for version "
+                 << all_image_infos.version;
     return;
   }
 
@@ -445,7 +458,7 @@ void ProcessReader::InitializeModules() {
 
     uint32_t file_type = reader ? reader->FileType() : 0;
 
-    module_readers_.push_back(reader.release());
+    module_readers_.push_back(std::move(reader));
     modules_.push_back(module);
 
     if (all_image_infos.version >= 2 && all_image_infos.dyldImageLoadAddress &&
@@ -545,7 +558,7 @@ void ProcessReader::InitializeModules() {
     }
 
     // dyld is loaded in the process even if its path can’t be determined.
-    module_readers_.push_back(reader.release());
+    module_readers_.push_back(std::move(reader));
     modules_.push_back(module);
   }
 }
@@ -597,7 +610,7 @@ mach_vm_address_t ProcessReader::CalculateStackRegion(
     // Regardless of whether the ABI requires a red zone, capture up to
     // kExtraCaptureSize additional bytes of stack, but only if present in the
     // region that was already found.
-    const mach_vm_size_t kExtraCaptureSize = 128;
+    constexpr mach_vm_size_t kExtraCaptureSize = 128;
     start_address = std::max(start_address >= kExtraCaptureSize
                                  ? start_address - kExtraCaptureSize
                                  : start_address,
@@ -606,7 +619,7 @@ mach_vm_address_t ProcessReader::CalculateStackRegion(
     // Align start_address to a 16-byte boundary, which can help readers by
     // ensuring that data is aligned properly. This could page-align instead,
     // but that might be wasteful.
-    const mach_vm_size_t kDesiredAlignment = 16;
+    constexpr mach_vm_size_t kDesiredAlignment = 16;
     start_address &= ~(kDesiredAlignment - 1);
     DCHECK_GE(start_address, region_base);
   }
@@ -668,10 +681,10 @@ void ProcessReader::LocateRedZone(mach_vm_address_t* const start_address,
                                   const unsigned int user_tag) {
 #if defined(ARCH_CPU_X86_FAMILY)
   if (Is64Bit()) {
-    // x86_64 has a red zone. See AMD64 ABI 0.99.6,
-    // http://www.x86-64.org/documentation/abi.pdf, section 3.2.2, “The Stack
-    // Frame”.
-    const mach_vm_size_t kRedZoneSize = 128;
+    // x86_64 has a red zone. See AMD64 ABI 0.99.8,
+    // https://raw.githubusercontent.com/wiki/hjl-tools/x86-psABI/x86-64-psABI-r252.pdf#page=19,
+    // section 3.2.2, “The Stack Frame”.
+    constexpr mach_vm_size_t kRedZoneSize = 128;
     mach_vm_address_t red_zone_base =
         *start_address >= kRedZoneSize ? *start_address - kRedZoneSize : 0;
     bool red_zone_ok = false;

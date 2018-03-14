@@ -18,8 +18,9 @@
 #include "components/signin/core/browser/account_info.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/signin_client.h"
-#include "components/signin/core/common/signin_pref_names.h"
-#include "components/signin/core/common/signin_switches.h"
+#include "components/signin/core/browser/signin_error_controller.h"
+#include "components/signin/core/browser/signin_pref_names.h"
+#include "components/signin/core/browser/signin_switches.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/gaia_urls.h"
@@ -28,9 +29,11 @@ using namespace signin_internals_util;
 
 SigninManagerBase::SigninManagerBase(
     SigninClient* client,
-    AccountTrackerService* account_tracker_service)
+    AccountTrackerService* account_tracker_service,
+    SigninErrorController* signin_error_controller)
     : client_(client),
       account_tracker_service_(account_tracker_service),
+      signin_error_controller_(signin_error_controller),
       initialized_(false),
       weak_pointer_factory_(this) {
   DCHECK(client_);
@@ -184,9 +187,9 @@ void SigninManagerBase::SetAuthenticatedAccountId(
     const std::string& account_id) {
   DCHECK(!account_id.empty());
   if (!authenticated_account_id_.empty()) {
-    DLOG_IF(ERROR, account_id != authenticated_account_id_)
-        << "Tried to change the authenticated id to something different: "
-        << "Current: " << authenticated_account_id_ << ", New: " << account_id;
+    DCHECK_EQ(account_id, authenticated_account_id_)
+        << "Changing the authenticated account while authenticated is not "
+           "allowed.";
     return;
   }
 
@@ -221,6 +224,15 @@ void SigninManagerBase::SetAuthenticatedAccountId(
   // Commit authenticated account info immediately so that it does not get lost
   // if Chrome crashes before the next commit interval.
   client_->GetPrefs()->CommitPendingWrite();
+
+  if (signin_error_controller_)
+    signin_error_controller_->SetPrimaryAccountID(authenticated_account_id_);
+}
+
+void SigninManagerBase::ClearAuthenticatedAccountId() {
+  authenticated_account_id_.clear();
+  if (signin_error_controller_)
+    signin_error_controller_->SetPrimaryAccountID(std::string());
 }
 
 bool SigninManagerBase::IsAuthenticated() const {
@@ -232,7 +244,9 @@ bool SigninManagerBase::AuthInProgress() const {
   return false;
 }
 
-void SigninManagerBase::Shutdown() {}
+void SigninManagerBase::Shutdown() {
+  on_shutdown_callback_list_.Notify();
+}
 
 void SigninManagerBase::AddObserver(Observer* observer) {
   observer_list_.AddObserver(observer);

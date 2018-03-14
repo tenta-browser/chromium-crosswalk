@@ -1,8 +1,36 @@
 # These tests currently fail when they run with --site-per-process.
 # See https://crbug.com/477150.
 
-# https://crbug.com/700535: Times out after r454488 landed.
-crbug.com/700535 fast/dnd/dropEffect-for-effectAllowed.html [ Timeout ]
+# https://crbug.com/789781: Document blocking should skip these cases.
+crbug.com/789781 http/tests/xmlhttprequest/origin-whitelisting-exact-match.html [ Failure ]
+crbug.com/789781 virtual/mojo-loading/http/tests/xmlhttprequest/origin-whitelisting-exact-match.html [ Failure ]
+crbug.com/789781 http/tests/xmlhttprequest/origin-whitelisting-removal.html [ Failure ]
+crbug.com/789781 virtual/mojo-loading/http/tests/xmlhttprequest/origin-whitelisting-removal.html [ Failure ]
+crbug.com/789781 http/tests/xmlhttprequest/origin-whitelisting-subdomains.html [ Failure ]
+crbug.com/789781 virtual/mojo-loading/http/tests/xmlhttprequest/origin-whitelisting-subdomains.html [ Failure ]
+crbug.com/789781 http/tests/xmlhttprequest/xmlhttprequest-allowed-with-disabled-web-security.html [ Failure ]
+crbug.com/789781 virtual/mojo-loading/http/tests/xmlhttprequest/xmlhttprequest-allowed-with-disabled-web-security.html [ Failure ]
+crbug.com/789781 http/tests/xmlhttprequest/workers/xmlhttprequest-allowed-with-disabled-web-security.html [ Failure ]
+crbug.com/789781 virtual/mojo-loading/http/tests/xmlhttprequest/workers/xmlhttprequest-allowed-with-disabled-web-security.html [ Failure ]
+
+# https://crbug.com/769502: PlzNavigate-related, not-yet-investigated timeout.
+crbug.com/769502 fast/loader/recursive-before-unload-crash.html [ Timeout ]
+
+# https://crbug.com/769508: PlzNavigate-related, not-yet-investigated failures.
+crbug.com/769508 fast/css/acid2.html [ Failure ]
+crbug.com/769508 fast/css/acid2-pixel.html [ Failure ]
+
+# https://crbug.com/765779: unique name trouble with PlzNavigate
+crbug.com/765779 http/tests/loading/bad-server-subframe.html [ Failure ]
+crbug.com/765779 virtual/mojo-loading/http/tests/loading/bad-server-subframe.html [ Failure ]
+
+# https://crbug.com/393285: Text-autosizing doesn't support OOPIFs.
+# https://crbug.com/667551: Pixel dumps don't support OOPIFs.
+# Both of the bugs above need to be fixed, before enabling the tests below.
+crbug.com/393285 http/tests/text-autosizing/narrow-iframe.html [ Failure ]
+crbug.com/393285 http/tests/text-autosizing/wide-iframe.html [ Failure ]
+crbug.com/393285 virtual/mojo-loading/http/tests/text-autosizing/narrow-iframe.html [ Failure ]
+crbug.com/393285 virtual/mojo-loading/http/tests/text-autosizing/wide-iframe.html [ Failure ]
 
 # https://crbug.com/697111: assert failures in test added in r451938.
 crbug.com/697111 svg/dom/getScreenCTM-ancestor-transform.html [ Failure ]
@@ -16,6 +44,9 @@ crbug.com/661725 http/tests/security/frameNavigation/xss-ALLOWED-top-navigation-
 crbug.com/661725 virtual/mojo-loading/http/tests/security/frameNavigation/xss-ALLOWED-top-navigation-after-postMessage.html [ Failure Timeout ]
 
 # https://crbug.com/582245 - no exception, b/c BindingSecurity::shouldAllowAccessTo exits early when |!target|.
+crbug.com/582245 external/wpt/x-frame-options/deny.sub.html [ Failure ]
+crbug.com/582245 external/wpt/x-frame-options/multiple.sub.html [ Failure ]
+crbug.com/582245 external/wpt/x-frame-options/sameorigin.sub.html [ Failure ]
 crbug.com/582245 http/tests/security/xss-DENIED-getSVGDocument-iframe.html [ Failure ]
 crbug.com/582245 http/tests/security/xss-DENIED-getSVGDocument-object.html [ Failure ]
 crbug.com/582245 virtual/mojo-loading/http/tests/security/xss-DENIED-getSVGDocument-iframe.html [ Failure ]
@@ -28,36 +59,26 @@ crbug.com/582245 http/tests/security/xssAuditor/full-block-script-tag-cross-doma
 crbug.com/582245 virtual/mojo-loading/http/tests/security/xssAuditor/full-block-script-tag-cross-domain.html [ Failure ]
 
 # https://crbug.com/582176 - InspectorTest.changeExecutionContext doesn't like OOPIFs.
-crbug.com/582176 http/tests/inspector/console-cd-completions.html [ Failure ]
-crbug.com/582176 http/tests/inspector/console-cd.html [ Failure ]
-crbug.com/582176 virtual/mojo-loading/http/tests/inspector/console-cd-completions.html [ Failure ]
-crbug.com/582176 virtual/mojo-loading/http/tests/inspector/console-cd.html [ Failure ]
+crbug.com/582176 http/tests/devtools/console-cd-completions.js [ Failure ]
+crbug.com/582176 http/tests/devtools/console-cd.js [ Failure ]
+crbug.com/582176 virtual/mojo-loading/http/tests/devtools/console-cd-completions.js [ Failure ]
+crbug.com/582176 virtual/mojo-loading/http/tests/devtools/console-cd.js [ Failure ]
 
 # https://crbug.com/608015 - node.contentDocument is undefined.
-crbug.com/608015 http/tests/inspector-protocol/access-inspected-object.html [ Failure Timeout ]
-crbug.com/608015 virtual/mojo-loading/http/tests/inspector-protocol/access-inspected-object.html [ Failure Timeout ]
+crbug.com/608015 http/tests/inspector-protocol/access-inspected-object.js [ Failure Timeout ]
+crbug.com/608015 virtual/mojo-loading/http/tests/inspector-protocol/access-inspected-object.js [ Failure Timeout ]
 
-# https://crbug.com/608023 - does injecting injections work with OOPIFs?
-crbug.com/608023 http/tests/inspector/injected-script-for-origin.html [ Failure ]
-crbug.com/608023 virtual/mojo-loading/http/tests/inspector/injected-script-for-origin.html [ Failure ]
-
-# https://crbug.com/602493 - Layout tests harness doesn't support history dump across OOPIFs
-crbug.com/602493 http/tests/security/mixedContent/insecure-iframe-in-main-frame.html [ Crash ]
-crbug.com/602493 virtual/mojo-loading/http/tests/security/mixedContent/insecure-iframe-in-main-frame.html [ Crash ]
-
-# https://crbug.com/582522 - extra mixedContent checks reported with --site-per-process
-# https://crbug.com/602497 - Inconsistent console messages about mixed content,
-#                            when running with or without --site-per-process
-crbug.com/602497 http/tests/security/mixedContent/insecure-iframe-in-iframe.html [ Failure ]
-crbug.com/602497 http/tests/security/mixedContent/insecure-iframe-in-main-frame-allowed.html [ Failure ]
-crbug.com/602497 virtual/mojo-loading/http/tests/security/mixedContent/insecure-iframe-in-main-frame-allowed.html [ Failure ]
-crbug.com/602497 virtual/mojo-loading/http/tests/security/mixedContent/insecure-iframe-in-iframe.html [ Failure ]
+# https://crbug.com/771003 - Dump history from all processes in layout tests
+crbug.com/771003 http/tests/security/mixedContent/insecure-iframe-in-main-frame.html [ Failure ]
+crbug.com/771003 virtual/mojo-loading/http/tests/security/mixedContent/insecure-iframe-in-main-frame.html [ Failure ]
 
 # https://crbug.com/585188 - testRunner.addOriginAccessWhitelistEntry is not replicated to OOPIFs.
 crbug.com/585188 http/tests/xmlhttprequest/origin-whitelisting-all.html [ Failure ]
 crbug.com/585188 virtual/mojo-loading/http/tests/xmlhttprequest/origin-whitelisting-all.html [ Failure ]
+crbug.com/585188 virtual/outofblink-cors/http/tests/xmlhttprequest/origin-whitelisting-all.html [ Failure ]
 crbug.com/585188 http/tests/xmlhttprequest/origin-whitelisting-ip-addresses.html [ Failure ]
 crbug.com/585188 virtual/mojo-loading/http/tests/xmlhttprequest/origin-whitelisting-ip-addresses.html [ Failure ]
+crbug.com/585188 virtual/outofblink-cors/http/tests/xmlhttprequest/origin-whitelisting-ip-addresses.html [ Failure ]
 
 # https://crbug.com/601584 - No OOPIF support for UserGestureIndicator triggers
 #                            cross-origin-iframe.html layout test failure
@@ -65,8 +86,9 @@ crbug.com/601584 http/tests/bluetooth/https/requestDevice/cross-origin-iframe.ht
 crbug.com/601584 virtual/mojo-loading/http/tests/bluetooth/https/requestDevice/cross-origin-iframe.html [ Failure ]
 
 # https://crbug.com/606594 - UaF of delegate_ in WebFrameTestClient::willSendRequest
-crbug.com/606594 http/tests/local/serviceworker/fetch-request-body-file.html [ Failure Crash ]
-crbug.com/606594 virtual/mojo-loading/http/tests/local/serviceworker/fetch-request-body-file.html [ Crash ]
+# https://crbug.com/786510 - test tries to access cross-origin document body
+crbug.com/606594 http/tests/local/serviceworker/fetch-request-body-file.html [ Skip ]
+crbug.com/606594 virtual/mojo-loading/http/tests/local/serviceworker/fetch-request-body-file.html [ Skip ]
 
 # https://crbug.com/607991 - MockWebClipboardImpl not replicated across OOPIFs.
 crbug.com/607991 http/tests/misc/copy-resolves-urls.html [ Failure ]
@@ -96,81 +118,95 @@ crbug.com/619662 http/tests/navigation/cross-origin-fragment-navigation-is-async
 crbug.com/619662 virtual/stable/http/tests/navigation/cross-origin-fragment-navigation-is-async.html [ Failure ]
 crbug.com/619662 virtual/mojo-loading/http/tests/navigation/cross-origin-fragment-navigation-is-async.html [ Failure ]
 
-# https://crbug.com/616905 - history.back() has different behavior with --site-per-process.
-crbug.com/616905 http/tests/history/cross-origin-redirect-on-back.html [ Timeout ]
-crbug.com/616905 virtual/mojo-loading/http/tests/history/cross-origin-redirect-on-back.html [ Timeout ]
-
 # https://crbug.com/623268 - Can't inspect OOPIFs from main page's DevTools window.
-crbug.com/623268 http/tests/inspector-protocol/request-mixed-content-status-blockable.html [ Timeout ]
-crbug.com/623268 http/tests/inspector-protocol/request-mixed-content-status-none.html [ Timeout ]
-crbug.com/623268 http/tests/inspector-protocol/request-mixed-content-status-optionally-blockable.html [ Timeout ]
-crbug.com/623268 virtual/mojo-loading/http/tests/inspector-protocol/request-mixed-content-status-blockable.html [ Timeout ]
-crbug.com/623268 virtual/mojo-loading/http/tests/inspector-protocol/request-mixed-content-status-none.html [ Timeout ]
-crbug.com/623268 virtual/mojo-loading/http/tests/inspector-protocol/request-mixed-content-status-optionally-blockable.html [ Timeout ]
-crbug.com/623268 http/tests/inspector/change-iframe-src.html [ Timeout ]
-crbug.com/623268 http/tests/inspector/console-cross-origin-iframe-logging.html [ Timeout ]
-crbug.com/623268 http/tests/inspector/inspect-iframe-from-different-domain.html [ Timeout ]
-crbug.com/623268 virtual/mojo-loading/http/tests/inspector/change-iframe-src.html [ Timeout ]
-crbug.com/623268 virtual/mojo-loading/http/tests/inspector/console-cross-origin-iframe-logging.html [ Timeout ]
-crbug.com/623268 virtual/mojo-loading/http/tests/inspector/inspect-iframe-from-different-domain.html [ Timeout ]
-
-# https://crbug.com/623210 - DevTools extensions load in separate process in layout tests.
-crbug.com/623210 http/tests/inspector/extensions-headers.html [ Timeout ]
-crbug.com/623210 http/tests/inspector/extensions-iframe-eval.html [ Timeout ]
-crbug.com/623210 http/tests/inspector/extensions-ignore-cache.html [ Timeout ]
-crbug.com/623210 http/tests/inspector/extensions-network-redirect.html [ Timeout ]
-crbug.com/623210 http/tests/inspector/extensions-useragent.html [ Timeout ]
-crbug.com/623210 virtual/mojo-loading/http/tests/inspector/extensions-headers.html [ Timeout ]
-crbug.com/623210 virtual/mojo-loading/http/tests/inspector/extensions-iframe-eval.html [ Timeout ]
-crbug.com/623210 virtual/mojo-loading/http/tests/inspector/extensions-ignore-cache.html [ Timeout ]
-crbug.com/623210 virtual/mojo-loading/http/tests/inspector/extensions-network-redirect.html [ Timeout ]
-crbug.com/623210 virtual/mojo-loading/http/tests/inspector/extensions-useragent.html [ Timeout ]
-
-# https://crbug.com/623265 - cross-site navigation in main page breaks test.
-crbug.com/623265 http/tests/inspector/indexeddb/resources-panel.html [ Timeout ]
-crbug.com/623265 virtual/mojo-loading/http/tests/inspector/indexeddb/resources-panel.html [ Timeout ]
+crbug.com/623268 http/tests/inspector-protocol/request-mixed-content-status-blockable.js [ Timeout ]
+crbug.com/623268 http/tests/inspector-protocol/request-mixed-content-status-none.js [ Timeout ]
+crbug.com/623268 http/tests/inspector-protocol/request-mixed-content-status-optionally-blockable.js [ Timeout ]
+crbug.com/623268 virtual/mojo-loading/http/tests/inspector-protocol/request-mixed-content-status-blockable.js [ Timeout ]
+crbug.com/623268 virtual/mojo-loading/http/tests/inspector-protocol/request-mixed-content-status-none.js [ Timeout ]
+crbug.com/623268 virtual/mojo-loading/http/tests/inspector-protocol/request-mixed-content-status-optionally-blockable.js [ Timeout ]
+crbug.com/623268 http/tests/devtools/console-cross-origin-iframe-logging.js [ Timeout ]
+crbug.com/623268 virtual/mojo-loading/http/tests/devtools/console-cross-origin-iframe-logging.js [ Timeout ]
 
 # https://crbug.com/645641 - test_runner.cc(1863) Check failed:
 # layout_test_runtime_flags_.have_top_loading_frame()
 crbug.com/645641 external/wpt/html/syntax/parsing/html5lib_tests19.html [ Crash Failure ]
 
 # http/ flaky tests w/ --site-per-process
-crbug.com/678481 http/tests/inspector/appcache/appcache-iframe-manifests.html [ Timeout Pass ]
-crbug.com/678481 virtual/mojo-loading/http/tests/inspector/appcache/appcache-iframe-manifests.html [ Timeout Pass ]
-crbug.com/678482 http/tests/inspector/debugger/fetch-breakpoints.html [ Timeout Pass ]
-crbug.com/678482 virtual/mojo-loading/http/tests/inspector/debugger/fetch-breakpoints.html [ Timeout Pass ]
-crbug.com/678484 http/tests/inspector-enabled/reattach-after-editing-styles.html [ Timeout Pass ]
-crbug.com/678484 virtual/mojo-loading/http/tests/inspector-enabled/reattach-after-editing-styles.html [ Timeout Pass ]
-crbug.com/678485 http/tests/inspector-enabled/shadow-dom-rules-restart.html [ Timeout ]
-crbug.com/678485 virtual/mojo-loading/http/tests/inspector-enabled/shadow-dom-rules-restart.html [ Timeout ]
+crbug.com/678481 http/tests/devtools/appcache/appcache-iframe-manifests.js [ Timeout Pass ]
+crbug.com/678481 virtual/mojo-loading/http/tests/devtools/appcache/appcache-iframe-manifests.js [ Timeout Pass ]
+crbug.com/678482 http/tests/devtools/debugger/fetch-breakpoints.js [ Timeout Pass ]
+crbug.com/678482 virtual/mojo-loading/http/tests/devtools/debugger/fetch-breakpoints.js [ Timeout Pass ]
+crbug.com/678484 http/tests/devtools/startup/reattach-after-editing-styles.html [ Timeout Pass ]
+crbug.com/678484 virtual/mojo-loading/http/tests/devtools/startup/reattach-after-editing-styles.html [ Timeout Pass ]
+crbug.com/678485 http/tests/devtools/startup/shadow-dom-rules-restart.html [ Timeout ]
+crbug.com/678485 virtual/mojo-loading/http/tests/devtools/startup/shadow-dom-rules-restart.html [ Timeout ]
 crbug.com/678491 http/tests/misc/webtiming-no-origin.html [ Crash Pass ]
 crbug.com/678491 virtual/mojo-loading/http/tests/misc/webtiming-no-origin.html [ Crash Pass ]
-
-# These tests sometimes fail on usual bots but crash w/ --site-per-process.
-crbug.com/678492 http/tests/misc/webtiming-ssl.php [ Crash ]
-crbug.com/678492 virtual/mojo-loading/http/tests/misc/webtiming-ssl.php [ Crash ]
 
 # Slow tests. These are listed in SlowTests listed here also because
 # expectations are unfortunately not inherited automatically (e.g. see
 # https://crbug.com/594216)
-crbug.com/451577 http/tests/inspector/network/network-datareceived.html [ Timeout Pass ]
-crbug.com/451577 virtual/mojo-loading/http/tests/inspector/network/network-datareceived.html [ Timeout Pass ]
+crbug.com/451577 http/tests/devtools/network/network-datareceived.js [ Timeout Pass ]
+crbug.com/451577 virtual/mojo-loading/http/tests/devtools/network/network-datareceived.js [ Timeout Pass ]
 crbug.com/24182 http/tests/perf/large-inlined-script.html [ Timeout Pass ]
 crbug.com/24182 virtual/mojo-loading/http/tests/perf/large-inlined-script.html [ Timeout Pass ]
-
-# https://crbug.com/680307: blob-url-in-iframe.html is missing PASS w/ --site-per-process
-crbug.com/680307 http/tests/security/mixedContent/blob-url-in-iframe.html [ Failure ]
-crbug.com/680307 virtual/mojo-loading/http/tests/security/mixedContent/blob-url-in-iframe.html [ Failure ]
 
 # https://crbug.com/650348: Remove input event forwarding path from RenderFrameProxies
 # This test needs to be modified to not rely on EventSender passing mouse events directly to an OOPIF.
 crbug.com/650348 http/tests/webaudio/autoplay-crossorigin.html [ Timeout ]
 crbug.com/650348 virtual/mojo-loading/http/tests/webaudio/autoplay-crossorigin.html [ Timeout ]
 
+# https://crbug.com/745881: Image diff in test due to font rendering issues.
+crbug.com/745881 [ Win ] fast/text/ellipsis-in-relative-inline.html [ Failure ]
+
+# https://crbug.com/778372: Unique name conflict with old entries?
+crbug.com/778372 external/wpt/html/browsers/origin/cross-origin-objects/cross-origin-objects.html [ Crash ]
+
+# The tests below are inherently incompatible with isolating same-site, cross-origin
+# frames into separate processes (which is how Site Isolation bots treat
+# www1.web-platform.test, www2.web-platform.test, etc).
+Bug(none) external/wpt/html/browsers/origin/relaxing-the-same-origin-restriction [ Skip ]
+
 # TODO(lukasza, alexmos): Triage these failures.
-Bug(none) fast/frames/cached-frame-counter.html [ Timeout ]
-Bug(none) fast/frames/frame-limit.html [ Timeout ]
-Bug(none) fast/loader/reload-zero-byte-plugin.html [ Failure ]
+Bug(none) external/wpt/FileAPI/url/multi-global-origin-serialization.sub.html [ Failure ]
+Bug(none) external/wpt/IndexedDB/interleaved-cursors.html [ Timeout ]
+Bug(none) external/wpt/XMLHttpRequest/xmlhttprequest-sync-default-feature-policy.sub.html [ Timeout ]
+Bug(none) external/wpt/content-security-policy/frame-ancestors/frame-ancestors-nested-cross-in-cross-none-block.html [ Timeout ]
+Bug(none) external/wpt/content-security-policy/frame-ancestors/frame-ancestors-nested-cross-in-cross-star-allow.html [ Timeout ]
+Bug(none) external/wpt/content-security-policy/frame-ancestors/frame-ancestors-nested-cross-in-same-star-allow.html [ Timeout ]
+Bug(none) external/wpt/content-security-policy/securitypolicyviolation/upgrade-insecure-requests-reporting.https.html [ Crash ]
+Bug(none) external/wpt/credential-management/credentialscontainer-create-basics.https.html [ Crash ]
+Bug(none) external/wpt/css-fonts/font-display/font-display.html [ Crash ]
+Bug(none) external/wpt/dom/events/EventListener-incumbent-global-1.sub.html [ Timeout ]
+Bug(none) external/wpt/dom/events/EventListener-incumbent-global-2.sub.html [ Timeout ]
+Bug(none) external/wpt/dom/nodes/Element-matches.html [ Failure ]
+Bug(none) external/wpt/encrypted-media/encrypted-media-default-feature-policy.https.sub.html [ Timeout ]
+Bug(none) external/wpt/feature-policy/payment-allowed-by-feature-policy-attribute-redirect-on-load.https.sub.html [ Timeout ]
+Bug(none) external/wpt/feature-policy/payment-allowed-by-feature-policy-attribute.https.sub.html [ Timeout ]
+Bug(none) external/wpt/feature-policy/payment-allowed-by-feature-policy.https.sub.html [ Timeout ]
+Bug(none) external/wpt/feature-policy/payment-default-feature-policy.https.sub.html [ Timeout ]
+Bug(none) external/wpt/feature-policy/payment-disabled-by-feature-policy.https.sub.html [ Timeout ]
+Bug(none) external/wpt/fetch/api/basic/keepalive.html [ Timeout ]
+Bug(none) external/wpt/fetch/api/redirect/redirect-location-worker.html [ Timeout ]
+Bug(none) external/wpt/fetch/api/redirect/redirect-location.html [ Timeout ]
+Bug(none) external/wpt/fetch/api/request/request-cache-default-conditional.html [ Timeout ]
+Bug(none) external/wpt/fullscreen/api/element-ready-check-allowed-cross-origin-manual.sub.html [ Failure ]
+Bug(none) external/wpt/fullscreen/api/element-ready-check-not-allowed-cross-origin-manual.sub.html [ Failure ]
+Bug(none) external/wpt/html/browsers/browsing-the-web/navigating-across-documents/004.html [ Timeout ]
+Bug(none) external/wpt/html/browsers/history/the-location-interface/allow_prototype_cycle_through_location.sub.html [ Failure ]
+Bug(none) external/wpt/html/browsers/history/the-location-interface/location-origin-idna.sub.window.html [ Timeout ]
+Bug(none) external/wpt/html/browsers/history/the-location-interface/location-prototype-setting-same-origin-domain.sub.html [ Failure ]
+Bug(none) external/wpt/html/browsers/origin/cross-origin-objects/cross-origin-objects-on-new-window.html [ Failure ]
+Bug(none) external/wpt/html/browsers/the-window-object/apis-for-creating-and-navigating-browsing-contexts-by-name/open-features-non-integer-top.html [ Crash ]
+Bug(none) external/wpt/html/browsers/the-windowproxy-exotic-object/windowproxy-prototype-setting-same-origin-domain.sub.html [ Failure ]
+Bug(none) external/wpt/html/infrastructure/safe-passing-of-structured-data/shared-array-buffers/window-domain-success.sub.html [ Timeout ]
+Bug(none) external/wpt/html/infrastructure/safe-passing-of-structured-data/shared-array-buffers/window-similar-but-cross-origin-success.sub.html [ Timeout ]
+Bug(none) external/wpt/html/infrastructure/urls/resolving-urls/query-encoding/windows-1251.html [ Crash ]
+Bug(none) external/wpt/html/semantics/embedded-content/media-elements/error-codes/error.html [ Timeout ]
+Bug(none) external/wpt/html/semantics/embedded-content/media-elements/ready-states/autoplay.html [ Timeout ]
+Bug(none) external/wpt/html/semantics/embedded-content/media-elements/seeking/seek-to-currentTime.html [ Timeout ]
+Bug(none) external/wpt/html/semantics/embedded-content/media-elements/track/track-element/cloneNode.html [ Crash ]
 Bug(none) external/wpt/html/syntax/parsing/html5lib_adoption01.html [ Failure ]
 Bug(none) external/wpt/html/syntax/parsing/html5lib_adoption02.html [ Failure ]
 Bug(none) external/wpt/html/syntax/parsing/html5lib_comments01.html [ Failure ]
@@ -217,8 +253,40 @@ Bug(none) external/wpt/html/syntax/parsing/html5lib_tests9.html [ Failure ]
 Bug(none) external/wpt/html/syntax/parsing/html5lib_tricky01.html [ Failure ]
 Bug(none) external/wpt/html/syntax/parsing/html5lib_webkit01.html [ Failure ]
 Bug(none) external/wpt/html/syntax/parsing/html5lib_webkit02.html [ Failure ]
-Bug(none) inspector/sources/debugger-frameworks/frameworks-dom-xhr-event-breakpoints.html [ Timeout ]
+Bug(none) external/wpt/payment-request/allowpaymentrequest/setting-allowpaymentrequest-timing.https.sub.html [ Failure ]
+Bug(none) external/wpt/preload/delaying-onload-link-preload-after-discovery.html [ Failure ]
+Bug(none) external/wpt/preload/download-resources.html [ Failure ]
+Bug(none) external/wpt/preload/dynamic-adding-preload-nonce.html [ Failure ]
+Bug(none) external/wpt/preload/dynamic-adding-preload.html [ Failure ]
+Bug(none) external/wpt/preload/link-header-on-subresource.html [ Failure ]
+Bug(none) external/wpt/preload/link-header-preload-delay-onload.html [ Failure ]
+Bug(none) external/wpt/preload/link-header-preload-nonce.html [ Failure ]
+Bug(none) external/wpt/preload/link-header-preload.html [ Failure ]
+Bug(none) external/wpt/preload/onerror-event.html [ Failure ]
+Bug(none) external/wpt/preload/onload-event.html [ Failure ]
+Bug(none) external/wpt/preload/preload-with-type.html [ Failure ]
+Bug(none) external/wpt/preload/single-download-late-used-preload.html [ Failure ]
+Bug(none) external/wpt/preload/single-download-preload.html [ Failure ]
+Bug(none) external/wpt/service-workers/service-worker/ServiceWorkerGlobalScope/registration-attribute.https.html [ Failure ]
+Bug(none) external/wpt/upgrade-insecure-requests/iframe-redirect-upgrade.https.html [ Crash ]
+Bug(none) external/wpt/upgrade-insecure-requests/iframe-upgrade.https.html [ Crash Timeout ]
+Bug(none) external/wpt/webmessaging/event.origin.sub.htm [ Failure ]
+Bug(none) external/wpt/webmessaging/postMessage_asterisk_xorigin.sub.htm [ Failure ]
+Bug(none) external/wpt/webmessaging/with-ports/021.html [ Failure ]
+Bug(none) external/wpt/webmessaging/without-ports/020.html [ Failure ]
+Bug(none) external/wpt/webusb/usb-allowed-by-feature-policy-attribute-redirect-on-load.https.sub.html [ Timeout ]
+Bug(none) external/wpt/webusb/usb-default-feature-policy.https.sub.html [ Timeout ]
+Bug(none) external/wpt/webusb/usb-disabled-by-feature-policy.https.sub.html [ Timeout ]
+Bug(none) external/wpt/webvr/webvr-disabled-by-feature-policy.https.sub.html [ Timeout ]
+Bug(none) external/wpt/webvr/webvr-enabled-by-feature-policy-attribute-redirect-on-load.https.sub.html [ Timeout ]
+Bug(none) external/wpt/webvr/webvr-enabled-on-self-origin-by-feature-policy.https.sub.html [ Timeout ]
+Bug(none) external/wpt/x-frame-options/invalid.sub.html [ Timeout ]
 Bug(none) jquery/manipulation.html [ Timeout ]
 Bug(none) storage/indexeddb/blob-valid-after-deletion.html [ Failure ]
 Bug(none) storage/indexeddb/blob-valid-before-commit.html [ Failure ]
 Bug(none) storage/indexeddb/empty-crash.html [ Timeout ]
+Bug(none) virtual/mojo-blobs/external/wpt/FileAPI/url/multi-global-origin-serialization.sub.html [ Failure ]
+Bug(none) virtual/mojo-blobs/external/wpt/fetch/api/basic/keepalive.html [ Timeout ]
+Bug(none) virtual/mojo-blobs/external/wpt/webmessaging/event.origin.sub.htm [ Failure ]
+Bug(none) virtual/mojo-blobs/external/wpt/webmessaging/postMessage_asterisk_xorigin.sub.htm [ Failure ]
+Bug(none) virtual/outofblink-cors/external/wpt/fetch/api/basic/keepalive.html [ Timeout ]

@@ -12,7 +12,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
-#include "components/wallpaper/wallpaper_layout.h"
+#include "components/wallpaper/wallpaper_info.h"
 #include "components/wallpaper/wallpaper_resizer_observer.h"
 #include "skia/ext/image_operations.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -38,14 +38,14 @@ class WALLPAPER_EXPORT WallpaperResizer {
 
   WallpaperResizer(const gfx::ImageSkia& image,
                    const gfx::Size& target_size,
-                   WallpaperLayout layout,
+                   const WallpaperInfo& info,
                    scoped_refptr<base::TaskRunner> task_runner);
 
   ~WallpaperResizer();
 
   const gfx::ImageSkia& image() const { return image_; }
   uint32_t original_image_id() const { return original_image_id_; }
-  WallpaperLayout layout() const { return layout_; }
+  const WallpaperInfo& wallpaper_info() const { return wallpaper_info_; }
 
   // Called on the UI thread to run Resize() on the task runner and post an
   // OnResizeFinished() task back to the UI thread on completion.
@@ -72,7 +72,7 @@ class WALLPAPER_EXPORT WallpaperResizer {
 
   gfx::Size target_size_;
 
-  WallpaperLayout layout_;
+  const WallpaperInfo wallpaper_info_;
 
   // The time that StartResize() was last called. Used for recording timing
   // metrics.

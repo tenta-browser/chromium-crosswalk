@@ -20,7 +20,7 @@ SVGTreeScopeResources::~SVGTreeScopeResources() = default;
 
 static LayoutSVGResourceContainer* LookupResource(TreeScope& tree_scope,
                                                   const AtomicString& id) {
-  Element* element = tree_scope.GetElementById(id);
+  Element* element = tree_scope.getElementById(id);
   if (!element)
     return nullptr;
   LayoutObject* layout_object = element->GetLayoutObject();
@@ -40,7 +40,7 @@ void SVGTreeScopeResources::UpdateResource(
   LayoutSVGResourceContainer* current_resource =
       LookupResource(*tree_scope_, id);
   // Lookup the currently registered resource.
-  auto it = resources_.Find(id);
+  auto it = resources_.find(id);
   if (it != resources_.end()) {
     // Is the local map up-to-date already?
     if (it->value == current_resource)
@@ -65,7 +65,7 @@ void SVGTreeScopeResources::RemoveResource(
   DCHECK(resource);
   if (!resource->IsRegistered() || id.IsEmpty())
     return;
-  auto it = resources_.Find(id);
+  auto it = resources_.find(id);
   // If this is not the currently registered resource for this id, then do
   // nothing.
   if (it == resources_.end() || it->value != resource)
@@ -216,8 +216,8 @@ void SVGTreeScopeResources::NotifyResourceAvailable(const AtomicString& id) {
     // TODO(fs): Ideally we'd always resolve pending resources async instead of
     // inside insertedInto and svgAttributeChanged. For now we only do it for
     // <use> since that would stamp out DOM.
-    if (isSVGUseElement(client_element))
-      toSVGUseElement(client_element)->InvalidateShadowTree();
+    if (auto* use = ToSVGUseElementOrNull(client_element))
+      use->InvalidateShadowTree();
     else
       client_element->BuildPendingResource();
 
@@ -225,7 +225,7 @@ void SVGTreeScopeResources::NotifyResourceAvailable(const AtomicString& id) {
   }
 }
 
-DEFINE_TRACE(SVGTreeScopeResources) {
+void SVGTreeScopeResources::Trace(blink::Visitor* visitor) {
   visitor->Trace(pending_resources_);
   visitor->Trace(tree_scope_);
 }

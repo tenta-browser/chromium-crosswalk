@@ -1,8 +1,8 @@
 // TODO(672127) Use this test case to test the rest of characteristic functions.
 'use strict';
-promise_test(() => {
+bluetooth_test(() => {
   return setBluetoothFakeAdapter('DisconnectingHealthThermometerAdapter')
-    .then(() => requestDeviceWithKeyDown({
+    .then(() => requestDeviceWithTrustedClick({
       filters: [{services: ['health_thermometer']}]}))
     .then(device => device.gatt.connect())
     .then(gattServer => gattServer.getPrimaryService('health_thermometer'))

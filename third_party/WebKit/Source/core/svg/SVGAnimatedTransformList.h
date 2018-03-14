@@ -31,18 +31,19 @@
 #ifndef SVGAnimatedTransformList_h
 #define SVGAnimatedTransformList_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGTransformListTearOff.h"
 #include "core/svg/properties/SVGAnimatedProperty.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
 // SVG Spec:
 // http://www.w3.org/TR/SVG11/coords.html#InterfaceSVGAnimatedTransformList
 class SVGAnimatedTransformList final
-    : public SVGAnimatedProperty<SVGTransformList>,
-      public ScriptWrappable {
+    : public ScriptWrappable,
+      public SVGAnimatedProperty<SVGTransformList> {
   DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(SVGAnimatedTransformList);
 
  public:
   static SVGAnimatedTransformList* Create(
@@ -53,8 +54,14 @@ class SVGAnimatedTransformList final
                                         css_property_id);
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE_WRAPPERS() {
-    visitor->TraceWrappers(contextElement());
+  void Trace(blink::Visitor* visitor) override {
+    SVGAnimatedProperty<SVGTransformList>::Trace(visitor);
+    ScriptWrappable::Trace(visitor);
+  }
+
+  void TraceWrappers(const ScriptWrappableVisitor* visitor) const override {
+    SVGAnimatedProperty<SVGTransformList>::TraceWrappers(visitor);
+    ScriptWrappable::TraceWrappers(visitor);
   }
 
  protected:

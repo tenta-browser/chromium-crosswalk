@@ -59,7 +59,7 @@ class DownloadShelfView : public views::AccessiblePaneView,
   BrowserView* get_parent() { return parent_; }
 
   // views::View:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;
@@ -132,7 +132,7 @@ class DownloadShelfView : public views::AccessiblePaneView,
   SkColor GetTextColorForIconMd();
 
   // The browser for this shelf.
-  Browser* browser_;
+  Browser* const browser_;
 
   // The animation for adding new items to the shelf.
   gfx::SlideAnimation new_item_animation_;

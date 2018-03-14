@@ -58,16 +58,8 @@ void ProcessResourceOnUiThread(int resource_id,
                                scoped_refptr<base::RefCountedBytes> data) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   ProcessImageOnUiThread(
-      *ResourceBundle::GetSharedInstance().GetImageSkiaNamed(resource_id),
+      *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(resource_id),
       scale, data);
-}
-
-base::RefCountedMemory* GetNewTabCSSOnUiThread(Profile* profile) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-
-  NTPResourceCache::WindowType type =
-      NTPResourceCache::GetWindowType(profile, nullptr);
-  return NTPResourceCacheFactory::GetForProfile(profile)->GetNewTabCSS(type);
 }
 
 }  // namespace
@@ -77,8 +69,7 @@ base::RefCountedMemory* GetNewTabCSSOnUiThread(Profile* profile) {
 
 ThemeSource::ThemeSource(Profile* profile) : profile_(profile) {}
 
-ThemeSource::~ThemeSource() {
-}
+ThemeSource::~ThemeSource() = default;
 
 std::string ThemeSource::GetSource() const {
   return chrome::kChromeUIThemeHost;
@@ -90,15 +81,17 @@ void ThemeSource::StartDataRequest(
     const content::URLDataSource::GotDataCallback& callback) {
   // Default scale factor if not specified.
   float scale = 1.0f;
+  // All frames by default if not specified.
+  int frame = -1;
   std::string parsed_path;
-  webui::ParsePathAndScale(GetThemeUrl(path), &parsed_path, &scale);
+  webui::ParsePathAndImageSpec(GetThemeUrl(path), &parsed_path, &scale, &frame);
 
   if (IsNewTabCssPath(parsed_path)) {
-    DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-    // NB: it's important that this is |profile_| and not |original_profile_|.
-    content::BrowserThread::PostTaskAndReplyWithResult(
-        content::BrowserThread::UI, FROM_HERE,
-        base::Bind(&GetNewTabCSSOnUiThread, profile_), callback);
+    DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+    NTPResourceCache::WindowType type =
+        NTPResourceCache::GetWindowType(profile_, /*render_host=*/nullptr);
+    NTPResourceCache* cache = NTPResourceCacheFactory::GetForProfile(profile_);
+    callback.Run(cache->GetNewTabCSS(type));
     return;
   }
 
@@ -139,16 +132,22 @@ void ThemeSource::StartDataRequest(
   // use 2x scale without 2x data packs, as well as omnibox requests for larger
   // (but still reasonable) scales (see below).
   const float max_scale = ui::GetScaleForScaleFactor(
-      ResourceBundle::GetSharedInstance().GetMaxScaleFactor());
+      ui::ResourceBundle::GetSharedInstance().GetMaxScaleFactor());
   const float unreasonable_scale = max_scale * 32;
-  if ((resource_id == -1) || (scale >= unreasonable_scale)) {
+  // TODO(reveman): Add support frames beyond 0 (crbug.com/750064).
+  if ((resource_id == -1) || (scale >= unreasonable_scale) || (frame > 0)) {
     // Either we have no data to send back, or the requested scale is
     // unreasonably large.  This shouldn't happen normally, as chrome://theme/
     // URLs are only used by WebUI pages and component extensions.  However, the
     // user can also enter these into the omnibox, so we need to fail
     // gracefully.
     callback.Run(nullptr);
-  } else if ((GetMimeType(path) == "image/png") && (scale > max_scale)) {
+  } else if ((GetMimeType(path) == "image/png") &&
+             ((scale > max_scale) || (frame != -1))) {
+    // This will extract and scale frame 0 of animated images.
+    // TODO(reveman): Support scaling of animated images and avoid scaling and
+    // re-encode when specific frame is specified (crbug.com/750064).
+    DCHECK_LE(frame, 0);
     SendThemeImage(callback, resource_id, scale);
   } else {
     SendThemeBitmap(callback, resource_id, scale);
@@ -167,9 +166,9 @@ ThemeSource::TaskRunnerForRequestPath(const std::string& path) const {
   webui::ParsePathAndScale(GetThemeUrl(path), &parsed_path, nullptr);
 
   if (IsNewTabCssPath(parsed_path)) {
-    // We generated and cached this when we initialized the object.  We don't
-    // have to go back to the UI thread to send the data.
-    return nullptr;
+    // We'll get this data from the NTPResourceCache, which must be accessed on
+    // the UI thread.
+    return content::URLDataSource::TaskRunnerForRequestPath(path);
   }
 
   // If it's not a themeable image, we don't need to go to the UI thread.
@@ -183,10 +182,15 @@ bool ThemeSource::AllowCaching() const {
   return false;
 }
 
-bool ThemeSource::ShouldServiceRequest(const net::URLRequest* request) const {
-  return request->url().SchemeIs(chrome::kChromeSearchScheme) ?
-      InstantIOContext::ShouldServiceRequest(request) :
-      URLDataSource::ShouldServiceRequest(request);
+bool ThemeSource::ShouldServiceRequest(
+    const GURL& url,
+    content::ResourceContext* resource_context,
+    int render_process_id) const {
+  return url.SchemeIs(chrome::kChromeSearchScheme)
+             ? InstantIOContext::ShouldServiceRequest(url, resource_context,
+                                                      render_process_id)
+             : URLDataSource::ShouldServiceRequest(url, resource_context,
+                                                   render_process_id);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -205,7 +209,7 @@ void ThemeSource::SendThemeBitmap(
     callback.Run(image_data.get());
   } else {
     DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-    const ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+    const ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
     callback.Run(rb.LoadDataResourceBytesForScale(resource_id, scale_factor));
   }
 }
@@ -227,7 +231,7 @@ void ThemeSource::SendThemeImage(
     // crbug.com/449277
     content::BrowserThread::PostTaskAndReply(
         content::BrowserThread::UI, FROM_HERE,
-        base::Bind(&ProcessResourceOnUiThread, resource_id, scale, data),
-        base::Bind(callback, data));
+        base::BindOnce(&ProcessResourceOnUiThread, resource_id, scale, data),
+        base::BindOnce(callback, data));
   }
 }

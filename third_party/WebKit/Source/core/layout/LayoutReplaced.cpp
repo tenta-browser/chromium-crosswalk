@@ -26,9 +26,9 @@
 #include "core/editing/PositionWithAffinity.h"
 #include "core/layout/LayoutAnalyzer.h"
 #include "core/layout/LayoutBlock.h"
+#include "core/layout/LayoutEmbeddedContent.h"
 #include "core/layout/LayoutImage.h"
 #include "core/layout/LayoutInline.h"
-#include "core/layout/LayoutPart.h"
 #include "core/layout/LayoutVideo.h"
 #include "core/layout/api/LineLayoutBlockFlow.h"
 #include "core/paint/PaintInfo.h"
@@ -69,9 +69,9 @@ void LayoutReplaced::StyleDidChange(StyleDifference diff,
                                     const ComputedStyle* old_style) {
   LayoutBox::StyleDidChange(diff, old_style);
 
-  bool had_style = (old_style != 0);
-  float old_zoom =
-      had_style ? old_style->EffectiveZoom() : ComputedStyle::InitialZoom();
+  bool had_style = !!old_style;
+  float old_zoom = had_style ? old_style->EffectiveZoom()
+                             : ComputedStyleInitialValues::InitialZoom();
   if (Style() && Style()->EffectiveZoom() != old_zoom)
     IntrinsicSizeChanged();
 }
@@ -89,13 +89,12 @@ void LayoutReplaced::UpdateLayout() {
 
   overflow_.reset();
   AddVisualEffectOverflow();
-  UpdateLayerTransformAfterLayout();
+  UpdateAfterLayout();
   InvalidateBackgroundObscurationStatus();
 
   ClearNeedsLayout();
 
-  if (!RuntimeEnabledFeatures::slimmingPaintV2Enabled() &&
-      ReplacedContentRect() != old_content_rect)
+  if (ReplacedContentRect() != old_content_rect)
     SetShouldDoFullPaintInvalidation();
 }
 
@@ -583,10 +582,11 @@ void LayoutReplaced::ComputePositionedLogicalHeight(
 LayoutRect LayoutReplaced::ComputeObjectFit(
     const LayoutSize* overridden_intrinsic_size) const {
   LayoutRect content_rect = ContentBoxRect();
-  ObjectFit object_fit = Style()->GetObjectFit();
+  EObjectFit object_fit = Style()->GetObjectFit();
 
-  if (object_fit == kObjectFitFill &&
-      Style()->ObjectPosition() == ComputedStyle::InitialObjectPosition()) {
+  if (object_fit == EObjectFit::kFill &&
+      Style()->ObjectPosition() ==
+          ComputedStyleInitialValues::InitialObjectPosition()) {
     return content_rect;
   }
 
@@ -595,29 +595,28 @@ LayoutRect LayoutReplaced::ComputeObjectFit(
   // intrinsic ratio but no intrinsic size. In order to maintain aspect ratio,
   // the intrinsic size for SVG might be faked from the aspect ratio,
   // see SVGImage::containerSize().
-  LayoutSize intrinsic_size = overridden_intrinsic_size
-                                  ? *overridden_intrinsic_size
-                                  : this->IntrinsicSize();
+  LayoutSize intrinsic_size =
+      overridden_intrinsic_size ? *overridden_intrinsic_size : IntrinsicSize();
   if (!intrinsic_size.Width() || !intrinsic_size.Height())
     return content_rect;
 
   LayoutRect final_rect = content_rect;
   switch (object_fit) {
-    case kObjectFitContain:
-    case kObjectFitScaleDown:
-    case kObjectFitCover:
+    case EObjectFit::kContain:
+    case EObjectFit::kScaleDown:
+    case EObjectFit::kCover:
       final_rect.SetSize(final_rect.Size().FitToAspectRatio(
-          intrinsic_size, object_fit == kObjectFitCover
+          intrinsic_size, object_fit == EObjectFit::kCover
                               ? kAspectRatioFitGrow
                               : kAspectRatioFitShrink));
-      if (object_fit != kObjectFitScaleDown ||
+      if (object_fit != EObjectFit::kScaleDown ||
           final_rect.Width() <= intrinsic_size.Width())
         break;
     // fall through
-    case kObjectFitNone:
+    case EObjectFit::kNone:
       final_rect.SetSize(intrinsic_size);
       break;
-    case kObjectFitFill:
+    case EObjectFit::kFill:
       break;
     default:
       NOTREACHED();
@@ -886,7 +885,7 @@ PositionWithAffinity LayoutReplaced::PositionForPoint(
     const LayoutPoint& point) {
   // FIXME: This code is buggy if the replaced element is relative positioned.
   InlineBox* box = InlineBoxWrapper();
-  RootInlineBox* root_box = box ? &box->Root() : 0;
+  RootInlineBox* root_box = box ? &box->Root() : nullptr;
 
   LayoutUnit top = root_box ? root_box->SelectionTop() : LogicalTop();
   LayoutUnit bottom = root_box ? root_box->SelectionBottom() : LogicalBottom();
@@ -916,7 +915,7 @@ PositionWithAffinity LayoutReplaced::PositionForPoint(
 }
 
 LayoutRect LayoutReplaced::LocalSelectionRect() const {
-  if (GetSelectionState() == SelectionNone)
+  if (GetSelectionState() == SelectionState::kNone)
     return LayoutRect();
 
   if (!InlineBoxWrapper()) {
@@ -934,18 +933,6 @@ LayoutRect LayoutReplaced::LocalSelectionRect() const {
                       root.SelectionHeight());
   return LayoutRect(new_logical_top, LayoutUnit(), root.SelectionHeight(),
                     Size().Height());
-}
-
-void LayoutReplaced::SetSelectionState(SelectionState state) {
-  // The selection state for our containing block hierarchy is updated by the
-  // base class call.
-  LayoutBox::SetSelectionState(state);
-
-  if (!InlineBoxWrapper())
-    return;
-
-  if (CanUpdateSelectionOnRootLineBoxes())
-    InlineBoxWrapper()->Root().SetHasSelectedChildren(state != SelectionNone);
 }
 
 void LayoutReplaced::IntrinsicSizingInfo::Transpose() {

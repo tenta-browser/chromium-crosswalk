@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/exo/display.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "components/exo/buffer.h"
-#include "components/exo/display.h"
+#include "components/exo/client_controlled_shell_surface.h"
+#include "components/exo/data_device.h"
+#include "components/exo/data_device_delegate.h"
+#include "components/exo/file_helper.h"
 #include "components/exo/shared_memory.h"
 #include "components/exo/shell_surface.h"
 #include "components/exo/sub_surface.h"
@@ -111,31 +115,7 @@ TEST_F(DisplayTest, CreateShellSurface) {
   EXPECT_TRUE(shell_surface2);
 }
 
-TEST_F(DisplayTest, CreatePopupShellSurface) {
-  std::unique_ptr<Display> display(new Display);
-
-  // Create two surfaces.
-  std::unique_ptr<Surface> surface1 = display->CreateSurface();
-  ASSERT_TRUE(surface1);
-  std::unique_ptr<Surface> surface2 = display->CreateSurface();
-  ASSERT_TRUE(surface2);
-
-  // Create a shell surface for surface1.
-  std::unique_ptr<ShellSurface> shell_surface1 =
-      display->CreateShellSurface(surface1.get());
-  EXPECT_TRUE(shell_surface1);
-
-  // Maximize shell surface to ensure it's visible.
-  shell_surface1->Maximize();
-
-  // Create a popup shell surface for surface2 with shell_surface1 as parent.
-  std::unique_ptr<ShellSurface> shell_surface2 =
-      display->CreatePopupShellSurface(surface2.get(), shell_surface1.get(),
-                                       gfx::Point());
-  EXPECT_TRUE(shell_surface2);
-}
-
-TEST_F(DisplayTest, CreateRemoteShellSurface) {
+TEST_F(DisplayTest, CreateClientControlledShellSurface) {
   std::unique_ptr<Display> display(new Display);
 
   // Create two surfaces.
@@ -145,15 +125,17 @@ TEST_F(DisplayTest, CreateRemoteShellSurface) {
   ASSERT_TRUE(surface2);
 
   // Create a remote shell surface for surface1.
-  std::unique_ptr<ShellSurface> shell_surface1 =
-      display->CreateRemoteShellSurface(
-          surface1.get(), ash::kShellWindowId_SystemModalContainer);
+  std::unique_ptr<ShellSurfaceBase> shell_surface1 =
+      display->CreateClientControlledShellSurface(
+          surface1.get(), ash::kShellWindowId_SystemModalContainer,
+          2.0 /* default_scale_factor */);
   EXPECT_TRUE(shell_surface1);
 
   // Create a remote shell surface for surface2.
-  std::unique_ptr<ShellSurface> shell_surface2 =
-      display->CreateRemoteShellSurface(surface2.get(),
-                                        ash::kShellWindowId_DefaultContainer);
+  std::unique_ptr<ShellSurfaceBase> shell_surface2 =
+      display->CreateClientControlledShellSurface(
+          surface2.get(), ash::kShellWindowId_DefaultContainer,
+          1.0 /* default_scale_factor */);
   EXPECT_TRUE(shell_surface2);
 }
 
@@ -220,6 +202,43 @@ TEST_F(DisplayTest, CreateSubSurface) {
 
   // Create a sub surface for parent.
   EXPECT_TRUE(display->CreateSubSurface(parent.get(), toplevel.get()));
+}
+
+class TestDataDeviceDelegate : public DataDeviceDelegate {
+ public:
+  // Overriden from DataDeviceDelegate:
+  void OnDataDeviceDestroying(DataDevice* data_device) override {}
+  DataOffer* OnDataOffer() override { return nullptr; }
+  void OnEnter(Surface* surface,
+               const gfx::PointF& location,
+               const DataOffer& data_offer) override {}
+  void OnLeave() override {}
+  void OnMotion(base::TimeTicks time_stamp,
+                const gfx::PointF& location) override {}
+  void OnDrop() override {}
+  void OnSelection(const DataOffer& data_offer) override {}
+  bool CanAcceptDataEventsForSurface(Surface* surface) override {
+    return false;
+  }
+};
+
+class TestFileHelper : public FileHelper {
+ public:
+  // Overriden from TestFileHelper:
+  TestFileHelper() {}
+  std::string GetMimeTypeForUriList() const override { return ""; }
+  bool ConvertPathToUrl(const base::FilePath& path, GURL* out) override {
+    return true;
+  }
+};
+
+TEST_F(DisplayTest, CreateDataDevice) {
+  TestDataDeviceDelegate device_delegate;
+  Display display(nullptr, std::make_unique<TestFileHelper>());
+
+  std::unique_ptr<DataDevice> device =
+      display.CreateDataDevice(&device_delegate);
+  EXPECT_TRUE(device.get());
 }
 
 }  // namespace

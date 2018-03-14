@@ -6,16 +6,15 @@
 #define Iterator_h
 
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
 class ExceptionState;
 
-class CORE_EXPORT Iterator : public GarbageCollectedFinalized<Iterator>,
-                             public ScriptWrappable {
+class CORE_EXPORT Iterator : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -27,8 +26,6 @@ class CORE_EXPORT Iterator : public GarbageCollectedFinalized<Iterator>,
                            ScriptValue /* value */,
                            ExceptionState&) = 0;
   Iterator* GetIterator(ScriptState*, ExceptionState&) { return this; }
-
-  DEFINE_INLINE_VIRTUAL_TRACE() {}
 };
 
 }  // namespace blink

@@ -10,11 +10,12 @@
 
 namespace blink {
 
-MutableStylePropertySet*
+MutableCSSPropertyValueSet*
 SVGElementRareData::EnsureAnimatedSMILStyleProperties() {
-  if (!animated_smil_style_properties_)
+  if (!animated_smil_style_properties_) {
     animated_smil_style_properties_ =
-        MutableStylePropertySet::Create(kSVGAttributeMode);
+        MutableCSSPropertyValueSet::Create(kSVGAttributeMode);
+  }
   return animated_smil_style_properties_.Get();
 }
 
@@ -30,15 +31,14 @@ ComputedStyle* SVGElementRareData::OverrideComputedStyle(
     // animation sandwhich model.
     override_computed_style_ =
         element->GetDocument().EnsureStyleResolver().StyleForElement(
-            element, parent_style, parent_style, kDisallowStyleSharing,
-            kMatchAllRulesExcludingSMIL);
+            element, parent_style, parent_style, kMatchAllRulesExcludingSMIL);
     needs_override_computed_style_update_ = false;
   }
   DCHECK(override_computed_style_);
-  return override_computed_style_.Get();
+  return override_computed_style_.get();
 }
 
-DEFINE_TRACE(SVGElementRareData) {
+void SVGElementRareData::Trace(blink::Visitor* visitor) {
   visitor->Trace(outgoing_references_);
   visitor->Trace(incoming_references_);
   visitor->Trace(element_proxy_set_);

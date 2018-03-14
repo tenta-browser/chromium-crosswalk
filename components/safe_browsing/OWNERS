@@ -1,8 +1,11 @@
 jialiul@chromium.org
-mattm@chromium.org
 nparker@chromium.org
+vakh@chromium.org
 
 # For componentization
 timvolodine@chromium.org
+
+per-file *resource_throttle*=yzshen@chromium.org
+per-file *url_loader_throttle*=yzshen@chromium.org
 
 # COMPONENT: Services>Safebrowsing

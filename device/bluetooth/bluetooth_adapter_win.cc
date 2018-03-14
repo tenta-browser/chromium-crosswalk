@@ -50,10 +50,8 @@ BluetoothAdapterWin::BluetoothAdapterWin(const InitCallback& init_callback)
       weak_ptr_factory_(this) {}
 
 BluetoothAdapterWin::~BluetoothAdapterWin() {
-  if (task_manager_.get()) {
+  if (task_manager_.get())
     task_manager_->RemoveObserver(this);
-    task_manager_->Shutdown();
-  }
 }
 
 std::string BluetoothAdapterWin::GetAddress() const {
@@ -284,8 +282,9 @@ void BluetoothAdapterWin::DevicesPolled(
       // (primary services of BLE device) are the same. However, in BLE tests,
       // we may simulate characteristic, descriptor and secondary GATT service
       // after device has been initialized.
-      if (force_update_device_for_test_)
+      if (force_update_device_for_test_) {
         device_win->Update(*device_state);
+      }
     }
   }
 }

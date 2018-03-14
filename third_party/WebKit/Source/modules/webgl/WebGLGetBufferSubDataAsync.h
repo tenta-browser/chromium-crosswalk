@@ -6,7 +6,7 @@
 #define WebGLGetBufferSubDataAsync_h
 
 #include "bindings/core/v8/ScriptPromise.h"
-#include "core/dom/NotShared.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
 #include "modules/webgl/WebGLExtension.h"
 
 namespace blink {
@@ -49,7 +49,7 @@ class WebGLGetBufferSubDataAsyncCallback
 
   void Resolve();
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   WeakMember<WebGL2RenderingContextBase> context_;

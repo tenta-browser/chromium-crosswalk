@@ -5,24 +5,26 @@
 #include "platform/scheduler/renderer/webthread_impl_for_renderer_scheduler.h"
 
 #include <stddef.h>
+#include <memory>
 
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/simple_test_tick_clock.h"
+#include "platform/WebTaskRunner.h"
 #include "platform/scheduler/base/test_time_source.h"
-#include "platform/scheduler/child/scheduler_tqm_delegate_impl.h"
 #include "platform/scheduler/renderer/renderer_scheduler_impl.h"
+#include "platform/scheduler/test/create_task_queue_manager_for_test.h"
+#include "public/platform/WebTraceLocation.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "platform/WebTaskRunner.h"
-#include "public/platform/WebTraceLocation.h"
 
 namespace blink {
 namespace scheduler {
-namespace {
+// To avoid symbol collisions in jumbo builds.
+namespace webthread_impl_for_renderer_scheduler_unittest {
 
 const int kWorkBatchSize = 2;
 
@@ -36,18 +38,18 @@ class MockTaskObserver : public blink::WebThread::TaskObserver {
   MOCK_METHOD0(WillProcessTask, void());
   MOCK_METHOD0(DidProcessTask, void());
 };
-}  // namespace
 
-class WebThreadImplForRendererSchedulerTest : public testing::Test {
+class WebThreadImplForRendererSchedulerTest : public ::testing::Test {
  public:
   WebThreadImplForRendererSchedulerTest() {}
 
   void SetUp() override {
     clock_.reset(new base::SimpleTestTickClock());
     clock_->Advance(base::TimeDelta::FromMicroseconds(5000));
-    scheduler_.reset(new RendererSchedulerImpl(SchedulerTqmDelegateImpl::Create(
-        &message_loop_, base::MakeUnique<TestTimeSource>(clock_.get()))));
-    default_task_runner_ = scheduler_->DefaultTaskRunner();
+    scheduler_.reset(
+        new RendererSchedulerImpl(CreateTaskQueueManagerWithUnownedClockForTest(
+            &message_loop_, message_loop_.task_runner(), clock_.get())));
+    default_task_runner_ = scheduler_->DefaultTaskQueue();
     thread_ = scheduler_->CreateMainThread();
   }
 
@@ -76,7 +78,7 @@ TEST_F(WebThreadImplForRendererSchedulerTest, TestTaskObserver) {
   MockTask task;
 
   {
-    testing::InSequence sequence;
+    ::testing::InSequence sequence;
     EXPECT_CALL(observer, WillProcessTask());
     EXPECT_CALL(task, Run());
     EXPECT_CALL(observer, DidProcessTask());
@@ -95,7 +97,7 @@ TEST_F(WebThreadImplForRendererSchedulerTest, TestWorkBatchWithOneTask) {
 
   SetWorkBatchSizeForTesting(kWorkBatchSize);
   {
-    testing::InSequence sequence;
+    ::testing::InSequence sequence;
     EXPECT_CALL(observer, WillProcessTask());
     EXPECT_CALL(task, Run());
     EXPECT_CALL(observer, DidProcessTask());
@@ -115,7 +117,7 @@ TEST_F(WebThreadImplForRendererSchedulerTest, TestWorkBatchWithTwoTasks) {
 
   SetWorkBatchSizeForTesting(kWorkBatchSize);
   {
-    testing::InSequence sequence;
+    ::testing::InSequence sequence;
     EXPECT_CALL(observer, WillProcessTask());
     EXPECT_CALL(task1, Run());
     EXPECT_CALL(observer, DidProcessTask());
@@ -142,7 +144,7 @@ TEST_F(WebThreadImplForRendererSchedulerTest, TestWorkBatchWithThreeTasks) {
 
   SetWorkBatchSizeForTesting(kWorkBatchSize);
   {
-    testing::InSequence sequence;
+    ::testing::InSequence sequence;
     EXPECT_CALL(observer, WillProcessTask());
     EXPECT_CALL(task1, Run());
     EXPECT_CALL(observer, DidProcessTask());
@@ -182,7 +184,7 @@ TEST_F(WebThreadImplForRendererSchedulerTest, TestNestedRunLoop) {
   thread_->AddTaskObserver(&observer);
 
   {
-    testing::InSequence sequence;
+    ::testing::InSequence sequence;
 
     // One callback for EnterRunLoop.
     EXPECT_CALL(observer, WillProcessTask());
@@ -202,5 +204,6 @@ TEST_F(WebThreadImplForRendererSchedulerTest, TestNestedRunLoop) {
   thread_->RemoveTaskObserver(&observer);
 }
 
+}  // namespace webthread_impl_for_renderer_scheduler_unittest
 }  // namespace scheduler
 }  // namespace blink

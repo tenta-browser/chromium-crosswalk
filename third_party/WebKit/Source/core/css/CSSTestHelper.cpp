@@ -29,27 +29,31 @@
 
 #include "core/css/CSSTestHelper.h"
 
+#include "bindings/core/v8/ExceptionState.h"
 #include "core/css/CSSRuleList.h"
 #include "core/css/CSSStyleSheet.h"
 #include "core/css/RuleSet.h"
 #include "core/css/StyleSheetContents.h"
 #include "core/dom/Document.h"
-#include "platform/wtf/text/WTFString.h"
+#include "platform/wtf/text/TextEncoding.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
 
-CSSTestHelper::~CSSTestHelper() {}
+CSSTestHelper::~CSSTestHelper() = default;
 
 CSSTestHelper::CSSTestHelper() {
-  document_ = Document::Create();
+  document_ = Document::CreateForTest();
   TextPosition position;
-  style_sheet_ =
-      CSSStyleSheet::CreateInline(*document_, KURL(), position, "UTF-8");
+  style_sheet_ = CSSStyleSheet::CreateInline(*document_, NullURL(), position,
+                                             UTF8Encoding());
 }
 
 CSSRuleList* CSSTestHelper::CssRules() {
-  return style_sheet_->cssRules();
+  DummyExceptionStateForTesting exception_state;
+  CSSRuleList* result = style_sheet_->cssRules(exception_state);
+  EXPECT_FALSE(exception_state.HadException());
+  return result;
 }
 
 RuleSet& CSSTestHelper::GetRuleSet() {
@@ -63,7 +67,7 @@ void CSSTestHelper::AddCSSRules(const char* css_text) {
   TextPosition position;
   unsigned sheet_length = style_sheet_->length();
   style_sheet_->Contents()->ParseStringAtPosition(css_text, position);
-  ASSERT_TRUE(style_sheet_->length() > sheet_length);
+  ASSERT_GT(style_sheet_->length(), sheet_length);
 }
 
 }  // namespace blink

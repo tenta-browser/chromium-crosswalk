@@ -15,7 +15,10 @@
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chrome/test/base/testing_profile_manager.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
@@ -47,20 +50,19 @@ BrowserWithTestWindowTest::BrowserWithTestWindowTest()
 
 BrowserWithTestWindowTest::BrowserWithTestWindowTest(Browser::Type browser_type,
                                                      bool hosted_app)
-    : browser_type_(browser_type), hosted_app_(hosted_app) {}
-
-BrowserWithTestWindowTest::~BrowserWithTestWindowTest() {
+    : browser_type_(browser_type), hosted_app_(hosted_app) {
+#if defined(OS_CHROMEOS)
+  ash_test_environment_ = base::MakeUnique<AshTestEnvironmentChrome>();
+  ash_test_helper_ =
+      base::MakeUnique<ash::AshTestHelper>(ash_test_environment_.get());
+#endif
 }
+
+BrowserWithTestWindowTest::~BrowserWithTestWindowTest() {}
 
 void BrowserWithTestWindowTest::SetUp() {
   testing::Test::SetUp();
 #if defined(OS_CHROMEOS)
-  // TODO(jamescook): Windows Ash support. This will require refactoring
-  // AshTestHelper and AuraTestHelper so they can be used at the same time,
-  // perhaps by AshTestHelper owning an AuraTestHelper.
-  ash_test_environment_ = base::MakeUnique<AshTestEnvironmentChrome>();
-  ash_test_helper_.reset(
-      new ash::test::AshTestHelper(ash_test_environment_.get()));
   ash_test_helper_->SetUp(true);
 #elif defined(TOOLKIT_VIEWS)
   views_test_helper_.reset(new views::ScopedViewsTestHelper());
@@ -74,6 +76,10 @@ void BrowserWithTestWindowTest::SetUp() {
 
   if (content::IsBrowserSideNavigationEnabled())
     content::BrowserSideNavigationSetUp();
+
+  profile_manager_ = std::make_unique<TestingProfileManager>(
+      TestingBrowserProcess::GetGlobal());
+  ASSERT_TRUE(profile_manager_->SetUp());
 
   // Subclasses can provide their own Profile.
   profile_ = CreateProfile();
@@ -104,20 +110,15 @@ void BrowserWithTestWindowTest::TearDown() {
   constrained_window::SetConstrainedWindowViewsClient(nullptr);
 #endif
 
+  profile_manager_->DeleteAllTestingProfiles();
+  profile_ = nullptr;
+  profile_manager_.reset();
+
 #if defined(OS_CHROMEOS)
-  // Destroy the shell before the profile to match production shutdown ordering.
   ash_test_helper_->TearDown();
 #elif defined(TOOLKIT_VIEWS)
   views_test_helper_.reset();
 #endif
-
-  // Destroy the profile here - otherwise, if the profile is freed in the
-  // destructor, and a test subclass owns a resource that the profile depends
-  // on (such as g_browser_process()->local_state()) there's no way for the
-  // subclass to free it after the profile.
-  if (profile_)
-    DestroyProfile(profile_);
-  profile_ = nullptr;
 
   testing::Test::TearDown();
 
@@ -179,11 +180,14 @@ void BrowserWithTestWindowTest::NavigateAndCommitActiveTabWithTitle(
 }
 
 TestingProfile* BrowserWithTestWindowTest::CreateProfile() {
-  return new TestingProfile();
+  return profile_manager_->CreateTestingProfile(
+      "testing_profile", nullptr, base::string16(), 0, std::string(),
+      GetTestingFactories());
 }
 
-void BrowserWithTestWindowTest::DestroyProfile(TestingProfile* profile) {
-  delete profile;
+TestingProfile::TestingFactories
+BrowserWithTestWindowTest::GetTestingFactories() {
+  return {};
 }
 
 BrowserWindow* BrowserWithTestWindowTest::CreateBrowserWindow() {

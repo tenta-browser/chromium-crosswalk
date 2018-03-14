@@ -12,6 +12,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/win/win_util.h"
 #include "ui/display/display.h"
 #include "ui/display/display_layout.h"
@@ -20,10 +21,11 @@
 #include "ui/display/win/dpi.h"
 #include "ui/display/win/scaling_util.h"
 #include "ui/display/win/screen_win_display.h"
-#include "ui/gfx/geometry/point.h"
+#include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/vector2d.h"
+#include "ui/gfx/icc_profile.h"
 
 namespace display {
 namespace win {
@@ -78,7 +80,9 @@ std::vector<DisplayInfo> FindAndRemoveTouchingDisplayInfos(
   return touching_display_infos;
 }
 
-Display CreateDisplayFromDisplayInfo(const DisplayInfo& display_info) {
+Display CreateDisplayFromDisplayInfo(const DisplayInfo& display_info,
+                                     ColorProfileReader* color_profile_reader,
+                                     bool hdr_enabled) {
   Display display(display_info.id());
   float scale_factor = display_info.device_scale_factor();
   display.set_device_scale_factor(scale_factor);
@@ -88,6 +92,14 @@ Display CreateDisplayFromDisplayInfo(const DisplayInfo& display_info) {
   display.set_bounds(gfx::ScaleToEnclosingRect(display_info.screen_rect(),
                      1.0f / scale_factor));
   display.set_rotation(display_info.rotation());
+  if (!Display::HasForceColorProfile()) {
+    if (hdr_enabled) {
+      display.SetColorSpaceAndDepth(gfx::ColorSpace::CreateSCRGBLinear());
+    } else {
+      display.SetColorSpaceAndDepth(
+          color_profile_reader->GetDisplayColorSpace(display_info.id()));
+    }
+  }
   return display;
 }
 
@@ -109,7 +121,9 @@ Display CreateDisplayFromDisplayInfo(const DisplayInfo& display_info) {
 // map to multiple screen points due to overlap. The first discovered screen
 // will take precedence.
 std::vector<ScreenWinDisplay> DisplayInfosToScreenWinDisplays(
-    const std::vector<DisplayInfo>& display_infos) {
+    const std::vector<DisplayInfo>& display_infos,
+    ColorProfileReader* color_profile_reader,
+    bool hdr_enabled) {
   // Find and extract the primary display.
   std::vector<DisplayInfo> display_infos_remaining = display_infos;
   auto primary_display_iter = std::find_if(
@@ -137,8 +151,10 @@ std::vector<ScreenWinDisplay> DisplayInfosToScreenWinDisplays(
 
   // Layout and create the ScreenWinDisplays.
   std::vector<Display> displays;
-  for (const auto& display_info : display_infos)
-    displays.push_back(CreateDisplayFromDisplayInfo(display_info));
+  for (const auto& display_info : display_infos) {
+    displays.push_back(CreateDisplayFromDisplayInfo(
+        display_info, color_profile_reader, hdr_enabled));
+  }
 
   std::unique_ptr<DisplayLayout> layout(builder.Build());
   layout->ApplyToDisplayList(&displays, nullptr, 0);
@@ -156,7 +172,6 @@ std::vector<Display> ScreenWinDisplaysToDisplays(
   std::vector<Display> displays;
   for (const auto& screen_win_display : screen_win_displays)
     displays.push_back(screen_win_display.display());
-
   return displays;
 }
 
@@ -191,23 +206,26 @@ std::vector<DisplayInfo> GetDisplayInfosFromSystem() {
 
 // Returns a point in |to_origin|'s coordinates and position scaled by
 // |scale_factor|.
-gfx::Point ScalePointRelative(const gfx::Point& from_origin,
-                              const gfx::Point& to_origin,
-                              const float scale_factor,
-                              const gfx::Point& point) {
+gfx::PointF ScalePointRelative(const gfx::Point& from_origin,
+                               const gfx::Point& to_origin,
+                               const float scale_factor,
+                               const gfx::PointF& point) {
   gfx::Vector2d from_origin_vector(from_origin.x(), from_origin.y());
   gfx::Vector2d to_origin_vector(to_origin.x(), to_origin.y());
-  gfx::Point scaled_relative_point(
-      gfx::ScaleToFlooredPoint(point - from_origin_vector, scale_factor));
+  gfx::PointF scaled_relative_point(
+      gfx::ScalePoint(point - from_origin_vector, scale_factor));
   return scaled_relative_point + to_origin_vector;
 }
-
 }  // namespace
 
-ScreenWin::ScreenWin() {
+ScreenWin::ScreenWin() : ScreenWin(true) {}
+
+ScreenWin::ScreenWin(bool initialize)
+    : color_profile_reader_(new ColorProfileReader(this)) {
   DCHECK(!g_screen_win_instance);
   g_screen_win_instance = this;
-  Initialize();
+  if (initialize)
+    Initialize();
 }
 
 ScreenWin::~ScreenWin() {
@@ -216,15 +234,14 @@ ScreenWin::~ScreenWin() {
 }
 
 // static
-gfx::Point ScreenWin::ScreenToDIPPoint(const gfx::Point& pixel_point) {
+gfx::PointF ScreenWin::ScreenToDIPPoint(const gfx::PointF& pixel_point) {
   const ScreenWinDisplay screen_win_display =
       GetScreenWinDisplayVia(&ScreenWin::GetScreenWinDisplayNearestScreenPoint,
-                             pixel_point);
+                             gfx::ToFlooredPoint(pixel_point));
   const Display display = screen_win_display.display();
   return ScalePointRelative(screen_win_display.pixel_bounds().origin(),
                             display.bounds().origin(),
-                            1.0f / display.device_scale_factor(),
-                            pixel_point);
+                            1.0f / display.device_scale_factor(), pixel_point);
 }
 
 // static
@@ -233,10 +250,9 @@ gfx::Point ScreenWin::DIPToScreenPoint(const gfx::Point& dip_point) {
       GetScreenWinDisplayVia(&ScreenWin::GetScreenWinDisplayNearestDIPPoint,
                              dip_point);
   const Display display = screen_win_display.display();
-  return ScalePointRelative(display.bounds().origin(),
-                            screen_win_display.pixel_bounds().origin(),
-                            display.device_scale_factor(),
-                            dip_point);
+  return gfx::ToFlooredPoint(ScalePointRelative(
+      display.bounds().origin(), screen_win_display.pixel_bounds().origin(),
+      display.device_scale_factor(), gfx::PointF(dip_point)));
 }
 
 // static
@@ -260,11 +276,9 @@ gfx::Rect ScreenWin::ScreenToDIPRect(HWND hwnd, const gfx::Rect& pixel_bounds) {
   float scale_factor = screen_win_display.display().device_scale_factor();
   gfx::Rect dip_rect = ScaleToEnclosingRect(pixel_bounds, 1.0f / scale_factor);
   const Display display = screen_win_display.display();
-  dip_rect.set_origin(ScalePointRelative(
-      screen_win_display.pixel_bounds().origin(),
-      display.bounds().origin(),
-      1.0f / scale_factor,
-      pixel_bounds.origin()));
+  dip_rect.set_origin(gfx::ToFlooredPoint(ScalePointRelative(
+      screen_win_display.pixel_bounds().origin(), display.bounds().origin(),
+      1.0f / scale_factor, gfx::PointF(pixel_bounds.origin()))));
   return dip_rect;
 }
 
@@ -277,11 +291,9 @@ gfx::Rect ScreenWin::DIPToScreenRect(HWND hwnd, const gfx::Rect& dip_bounds) {
   float scale_factor = screen_win_display.display().device_scale_factor();
   gfx::Rect screen_rect = ScaleToEnclosingRect(dip_bounds, scale_factor);
   const Display display = screen_win_display.display();
-  screen_rect.set_origin(ScalePointRelative(
-      display.bounds().origin(),
-      screen_win_display.pixel_bounds().origin(),
-      scale_factor,
-      dip_bounds.origin()));
+  screen_rect.set_origin(gfx::ToFlooredPoint(ScalePointRelative(
+      display.bounds().origin(), screen_win_display.pixel_bounds().origin(),
+      scale_factor, gfx::PointF(dip_bounds.origin()))));
   return screen_rect;
 }
 
@@ -356,6 +368,27 @@ float ScreenWin::GetSystemScaleFactor() {
   return GetUnforcedDeviceScaleFactor();
 }
 
+// static
+void ScreenWin::SetRequestHDRStatusCallback(
+    RequestHDRStatusCallback request_hdr_status_callback) {
+  if (!g_screen_win_instance)
+    return;
+  g_screen_win_instance->request_hdr_status_callback_ =
+      std::move(request_hdr_status_callback);
+  g_screen_win_instance->request_hdr_status_callback_.Run();
+}
+
+// static
+void ScreenWin::SetHDREnabled(bool hdr_enabled) {
+  if (!g_screen_win_instance)
+    return;
+
+  if (g_screen_win_instance->hdr_enabled_ == hdr_enabled)
+    return;
+  g_screen_win_instance->hdr_enabled_ = hdr_enabled;
+  g_screen_win_instance->UpdateAllDisplaysAndNotify();
+}
+
 HWND ScreenWin::GetHWNDFromNativeView(gfx::NativeView window) const {
   NOTREACHED();
   return nullptr;
@@ -369,8 +402,8 @@ gfx::NativeWindow ScreenWin::GetNativeWindowFromHWND(HWND hwnd) const {
 gfx::Point ScreenWin::GetCursorScreenPoint() {
   POINT pt;
   ::GetCursorPos(&pt);
-  gfx::Point cursor_pos_pixels(pt);
-  return ScreenToDIPPoint(cursor_pos_pixels);
+  gfx::PointF cursor_pos_pixels(pt.x, pt.y);
+  return gfx::ToFlooredPoint(ScreenToDIPPoint(cursor_pos_pixels));
 }
 
 bool ScreenWin::IsWindowUnderCursor(gfx::NativeWindow window) {
@@ -394,6 +427,8 @@ const std::vector<Display>& ScreenWin::GetAllDisplays() const {
 }
 
 Display ScreenWin::GetDisplayNearestWindow(gfx::NativeWindow window) const {
+  if (!window)
+    return GetPrimaryDisplay();
   HWND window_hwnd = GetHWNDFromNativeView(window);
   if (!window_hwnd) {
     // When |window| isn't rooted to a display, we should just return the
@@ -445,11 +480,13 @@ gfx::Rect ScreenWin::DIPToScreenRectInWindow(gfx::NativeView view,
 
 void ScreenWin::UpdateFromDisplayInfos(
     const std::vector<DisplayInfo>& display_infos) {
-  screen_win_displays_ = DisplayInfosToScreenWinDisplays(display_infos);
+  screen_win_displays_ = DisplayInfosToScreenWinDisplays(
+      display_infos, color_profile_reader_.get(), hdr_enabled_);
   displays_ = ScreenWinDisplaysToDisplays(screen_win_displays_);
 }
 
 void ScreenWin::Initialize() {
+  color_profile_reader_->UpdateIfNeeded();
   singleton_hwnd_observer_.reset(
       new gfx::SingletonHwndObserver(
           base::Bind(&ScreenWin::OnWndProc, base::Unretained(this))));
@@ -488,9 +525,35 @@ void ScreenWin::OnWndProc(HWND hwnd,
                           UINT message,
                           WPARAM wparam,
                           LPARAM lparam) {
-  if (message != WM_DISPLAYCHANGE)
+  if (message != WM_DISPLAYCHANGE &&
+    !(message == WM_SETTINGCHANGE && wparam == SPI_SETWORKAREA))
     return;
 
+  color_profile_reader_->UpdateIfNeeded();
+  if (request_hdr_status_callback_)
+    request_hdr_status_callback_.Run();
+  UpdateAllDisplaysAndNotify();
+}
+
+void ScreenWin::OnColorProfilesChanged() {
+  // The color profile reader will often just confirm that our guess that the
+  // color profile was sRGB was indeed correct. Avoid doing an update in these
+  // cases.
+  bool changed = false;
+  for (const auto& display : displays_) {
+    if (display.color_space() !=
+        color_profile_reader_->GetDisplayColorSpace(display.id())) {
+      changed = true;
+      break;
+    }
+  }
+  if (!changed)
+    return;
+
+  UpdateAllDisplaysAndNotify();
+}
+
+void ScreenWin::UpdateAllDisplaysAndNotify() {
   std::vector<Display> old_displays = std::move(displays_);
   UpdateFromDisplayInfos(GetDisplayInfosFromSystem());
   change_notifier_.NotifyDisplaysChanged(old_displays, displays_);
@@ -565,8 +628,8 @@ ScreenWinDisplay ScreenWin::GetScreenWinDisplay(
   }
   // There is 1:1 correspondence between MONITORINFOEX and ScreenWinDisplay.
   // If we make it here, it means we have no displays and we should hand out the
-  // default display.
-  DCHECK_EQ(screen_win_displays_.size(), 0u);
+  // default display. [Sometimes we get here anyway: crbug.com/768845]
+  // DCHECK_EQ(screen_win_displays_.size(), 0u);
   return ScreenWinDisplay();
 }
 
@@ -589,8 +652,7 @@ void ScreenWin::RecordDisplayScaleFactors() const {
     // it so that if it's wildly out-of-band we won't send it to the backend.
     const int reported_scale = std::min(
         std::max(base::checked_cast<int>(scale_factor * 100), 0), 1000);
-    if (std::find(unique_scale_factors.begin(), unique_scale_factors.end(),
-                  reported_scale) == unique_scale_factors.end()) {
+    if (!base::ContainsValue(unique_scale_factors, reported_scale)) {
       unique_scale_factors.push_back(reported_scale);
       UMA_HISTOGRAM_SPARSE_SLOWLY("UI.DeviceScale", reported_scale);
     }

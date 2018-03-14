@@ -60,7 +60,7 @@ void WebGLObject::DeleteObject(gpu::gles2::GLES2Interface* gl) {
     if (gl) {
       DeleteObjectImpl(gl);
       // Ensure the inherited class no longer claims to have a valid object
-      ASSERT(!HasObject());
+      DCHECK(!HasObject());
     }
   }
 }
@@ -95,7 +95,5 @@ void WebGLObject::OnDetached(gpu::gles2::GLES2Interface* gl) {
   if (deleted_)
     DeleteObject(gl);
 }
-
-DEFINE_TRACE_WRAPPERS(WebGLObject) {}
 
 }  // namespace blink

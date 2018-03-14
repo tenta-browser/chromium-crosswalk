@@ -5,6 +5,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
@@ -13,6 +14,7 @@
 #include "content/browser/frame_host/navigation_request_info.h"
 #include "content/browser/loader/navigation_url_loader_impl.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
+#include "content/browser/loader/test_resource_handler.h"
 #include "content/browser/loader_delegate_impl.h"
 #include "content/browser/streams/stream.h"
 #include "content/browser/streams/stream_context.h"
@@ -31,7 +33,10 @@
 #include "content/test/test_navigation_url_loader_delegate.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
+#include "net/cert/cert_status_flags.h"
 #include "net/http/http_response_headers.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
@@ -39,6 +44,7 @@
 #include "net/url_request/url_request_test_job.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/WebKit/common/page/page_visibility_state.mojom.h"
 #include "url/origin.h"
 
 namespace content {
@@ -66,6 +72,27 @@ class StreamProtocolHandler
   DISALLOW_COPY_AND_ASSIGN(StreamProtocolHandler);
 };
 
+class DownloadProtocolHandler
+    : public net::URLRequestJobFactory::ProtocolHandler {
+ public:
+  DownloadProtocolHandler() {}
+
+  // net::URLRequestJobFactory::ProtocolHandler implementation.
+  net::URLRequestJob* MaybeCreateJob(
+      net::URLRequest* request,
+      net::NetworkDelegate* network_delegate) const override {
+    static const char kHeaders[] =
+        "HTTP/1.1 200 OK\n"
+        "Content-type: text/html\n"
+        "Content-disposition: attachment\n"
+        "\n";
+    return new net::URLRequestTestJob(request, network_delegate, kHeaders,
+                                      "test", false);
+  }
+
+  DISALLOW_COPY_AND_ASSIGN(DownloadProtocolHandler);
+};
+
 class RequestBlockingResourceDispatcherHostDelegate
     : public ResourceDispatcherHostDelegate {
  public:
@@ -78,13 +105,21 @@ class RequestBlockingResourceDispatcherHostDelegate
   }
 };
 
+std::unique_ptr<ResourceHandler> CreateDownloadResourceHandler(
+    net::URLRequest* request) {
+  return std::make_unique<TestResourceHandler>();
+}
+
 }  // namespace
 
 class NavigationURLLoaderTest : public testing::Test {
  public:
   NavigationURLLoaderTest()
       : thread_bundle_(TestBrowserThreadBundle::IO_MAINLOOP),
-        browser_context_(new TestBrowserContext) {
+        browser_context_(new TestBrowserContext),
+        host_(base::Bind(&CreateDownloadResourceHandler),
+              base::ThreadTaskRunnerHandle::Get(),
+              /* enable_resource_scheduler */ true) {
     host_.SetLoaderDelegate(&loader_delegate_);
     BrowserContext::EnsureResourceContextInitialized(browser_context_.get());
     base::RunLoop().RunUntilIdle();
@@ -94,8 +129,10 @@ class NavigationURLLoaderTest : public testing::Test {
     job_factory_.SetProtocolHandler(
         "test", net::URLRequestTestJob::CreateProtocolHandler());
     job_factory_.SetProtocolHandler(
-        "blob", base::MakeUnique<StreamProtocolHandler>(
+        "blob", std::make_unique<StreamProtocolHandler>(
                     StreamContext::GetFor(browser_context_.get())->registry()));
+    job_factory_.SetProtocolHandler(
+        "download", std::make_unique<DownloadProtocolHandler>());
     request_context->set_job_factory(&job_factory_);
 
     // NavigationURLLoader is only used for browser-side navigations.
@@ -106,18 +143,26 @@ class NavigationURLLoaderTest : public testing::Test {
   std::unique_ptr<NavigationURLLoader> MakeTestLoader(
       const GURL& url,
       NavigationURLLoaderDelegate* delegate) {
+    return CreateTestLoader(url, delegate, false);
+  }
+
+  std::unique_ptr<NavigationURLLoader> CreateTestLoader(
+      const GURL& url,
+      NavigationURLLoaderDelegate* delegate,
+      bool allow_download) {
     BeginNavigationParams begin_params(
-        std::string(), net::LOAD_NORMAL, false, false,
-        REQUEST_CONTEXT_TYPE_LOCATION,
+        std::string(), net::LOAD_NORMAL, false, REQUEST_CONTEXT_TYPE_LOCATION,
         blink::WebMixedContentContextType::kBlockable,
         false,  // is_form_submission
-        url::Origin(url));
+        url::Origin::Create(url));
     CommonNavigationParams common_params;
     common_params.url = url;
+    common_params.allow_download = allow_download;
+
     std::unique_ptr<NavigationRequestInfo> request_info(
         new NavigationRequestInfo(common_params, begin_params, url, true, false,
                                   false, -1, false, false,
-                                  blink::kWebPageVisibilityStateVisible));
+                                  blink::mojom::PageVisibilityState::kVisible));
     return NavigationURLLoader::Create(
         browser_context_->GetResourceContext(),
         BrowserContext::GetDefaultStoragePartition(browser_context_.get()),
@@ -129,8 +174,8 @@ class NavigationURLLoaderTest : public testing::Test {
     net::TestDelegate delegate;
     net::URLRequestContext* request_context =
         browser_context_->GetResourceContext()->GetRequestContext();
-    std::unique_ptr<net::URLRequest> request(
-        request_context->CreateRequest(url, net::DEFAULT_PRIORITY, &delegate));
+    std::unique_ptr<net::URLRequest> request(request_context->CreateRequest(
+        url, net::DEFAULT_PRIORITY, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
     request->Start();
     base::RunLoop().Run();
 
@@ -171,7 +216,7 @@ TEST_F(NavigationURLLoaderTest, Basic) {
 }
 
 // Tests that request failures are propagated correctly.
-TEST_F(NavigationURLLoaderTest, RequestFailed) {
+TEST_F(NavigationURLLoaderTest, RequestFailedNoCertError) {
   TestNavigationURLLoaderDelegate delegate;
   std::unique_ptr<NavigationURLLoader> loader =
       MakeTestLoader(GURL("bogus:bogus"), &delegate);
@@ -179,6 +224,65 @@ TEST_F(NavigationURLLoaderTest, RequestFailed) {
   // Wait for the request to fail as expected.
   delegate.WaitForRequestFailed();
   EXPECT_EQ(net::ERR_UNKNOWN_URL_SCHEME, delegate.net_error());
+  EXPECT_FALSE(delegate.ssl_info().is_valid());
+  EXPECT_EQ(1, delegate.on_request_handled_counter());
+}
+
+// Tests that request failures are propagated correctly for a (non-fatal) cert
+// error:
+// - |ssl_info| has the expected values.
+// - |should_ssl_errors_be_fatal| is false.
+TEST_F(NavigationURLLoaderTest, RequestFailedCertError) {
+  net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
+  https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_MISMATCHED_NAME);
+  ASSERT_TRUE(https_server.Start());
+
+  TestNavigationURLLoaderDelegate delegate;
+  std::unique_ptr<NavigationURLLoader> loader =
+      MakeTestLoader(https_server.GetURL("/"), &delegate);
+
+  // Wait for the request to fail as expected.
+  delegate.WaitForRequestFailed();
+  ASSERT_EQ(net::ERR_ABORTED, delegate.net_error());
+  net::SSLInfo ssl_info = delegate.ssl_info();
+  EXPECT_TRUE(ssl_info.is_valid());
+  EXPECT_TRUE(https_server.GetCertificate()->Equals(ssl_info.cert.get()));
+  EXPECT_EQ(net::ERR_CERT_COMMON_NAME_INVALID,
+            net::MapCertStatusToNetError(ssl_info.cert_status));
+  EXPECT_FALSE(delegate.should_ssl_errors_be_fatal());
+  EXPECT_EQ(1, delegate.on_request_handled_counter());
+}
+
+// Tests that request failures are propagated correctly for a fatal cert error:
+// - |ssl_info| has the expected values.
+// - |should_ssl_errors_be_fatal| is true.
+TEST_F(NavigationURLLoaderTest, RequestFailedCertErrorFatal) {
+  net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
+  https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_MISMATCHED_NAME);
+  ASSERT_TRUE(https_server.Start());
+  GURL url = https_server.GetURL("/");
+
+  // Set HSTS for the test domain in order to make SSL errors fatal.
+  net::TransportSecurityState* transport_security_state =
+      browser_context_->GetResourceContext()
+          ->GetRequestContext()
+          ->transport_security_state();
+  base::Time expiry = base::Time::Now() + base::TimeDelta::FromDays(1000);
+  bool include_subdomains = false;
+  transport_security_state->AddHSTS(url.host(), expiry, include_subdomains);
+
+  TestNavigationURLLoaderDelegate delegate;
+  std::unique_ptr<NavigationURLLoader> loader = MakeTestLoader(url, &delegate);
+
+  // Wait for the request to fail as expected.
+  delegate.WaitForRequestFailed();
+  ASSERT_EQ(net::ERR_ABORTED, delegate.net_error());
+  net::SSLInfo ssl_info = delegate.ssl_info();
+  EXPECT_TRUE(ssl_info.is_valid());
+  EXPECT_TRUE(https_server.GetCertificate()->Equals(ssl_info.cert.get()));
+  EXPECT_EQ(net::ERR_CERT_COMMON_NAME_INVALID,
+            net::MapCertStatusToNetError(ssl_info.cert_status));
+  EXPECT_TRUE(delegate.should_ssl_errors_be_fatal());
   EXPECT_EQ(1, delegate.on_request_handled_counter());
 }
 
@@ -196,7 +300,7 @@ TEST_F(NavigationURLLoaderTest, RequestRedirected) {
             delegate.redirect_info().new_url);
   EXPECT_EQ("GET", delegate.redirect_info().new_method);
   EXPECT_EQ(net::URLRequestTestJob::test_url_2(),
-            delegate.redirect_info().new_first_party_for_cookies);
+            delegate.redirect_info().new_site_for_cookies);
   EXPECT_EQ(302, delegate.redirect_response()->head.headers->response_code());
   EXPECT_EQ(1, delegate.on_request_handled_counter());
 
@@ -290,7 +394,9 @@ TEST_F(NavigationURLLoaderTest, RequestBlocked) {
   // Wait for the request to fail as expected.
   delegate.WaitForRequestFailed();
   EXPECT_EQ(net::ERR_ABORTED, delegate.net_error());
-  EXPECT_EQ(1, delegate.on_request_handled_counter());
+
+  // Failing before start means OnRequestStarted is never called.
+  EXPECT_EQ(0, delegate.on_request_handled_counter());
 
   host_.SetDelegate(nullptr);
 }
@@ -341,6 +447,32 @@ TEST_F(NavigationURLLoaderTest, OwnedByHandle) {
 
   // Verify that URLRequestTestJob no longer has anything paused.
   EXPECT_FALSE(net::URLRequestTestJob::ProcessOnePendingMessage());
+}
+
+// Tests that download is allowed for the request.
+TEST_F(NavigationURLLoaderTest, DownloadAllowed) {
+  // Fake a top-level request to a URL whose body does not load immediately.
+  TestNavigationURLLoaderDelegate delegate;
+  std::unique_ptr<NavigationURLLoader> loader =
+      CreateTestLoader(GURL("download:test"), &delegate, true);
+
+  delegate.WaitForResponseStarted();
+  EXPECT_TRUE(delegate.is_download());
+  loader.reset();
+  base::RunLoop().RunUntilIdle();
+}
+
+// Tests that download is not allowed for the request.
+TEST_F(NavigationURLLoaderTest, DownloadDisallowed) {
+  // Fake a top-level request to a URL whose body does not load immediately.
+  TestNavigationURLLoaderDelegate delegate;
+  std::unique_ptr<NavigationURLLoader> loader =
+      CreateTestLoader(GURL("download:test"), &delegate, false);
+
+  delegate.WaitForResponseStarted();
+  EXPECT_FALSE(delegate.is_download());
+  loader.reset();
+  base::RunLoop().RunUntilIdle();
 }
 
 }  // namespace content

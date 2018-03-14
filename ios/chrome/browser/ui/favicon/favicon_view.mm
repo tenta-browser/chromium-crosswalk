@@ -4,7 +4,7 @@
 
 #import "ios/chrome/browser/ui/favicon/favicon_view.h"
 
-#import "ios/chrome/browser/ui/uikit_ui_util.h"
+#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -56,10 +56,8 @@ const CGFloat kDefaultWhitePercentage = 0.47;
     [_faviconFallbackLabel setTranslatesAutoresizingMaskIntoConstraints:NO];
 
     // Both image and fallback label are centered and match the size of favicon.
-    AddSameCenterConstraints(_faviconImageView, self);
-    AddSameCenterConstraints(_faviconFallbackLabel, self);
-    AddSameSizeConstraint(_faviconFallbackLabel, self);
-    AddSameSizeConstraint(_faviconImageView, self);
+    AddSameConstraints(_faviconFallbackLabel, self);
+    AddSameConstraints(_faviconImageView, self);
   }
   return self;
 }

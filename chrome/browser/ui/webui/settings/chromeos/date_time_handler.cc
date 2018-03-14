@@ -8,7 +8,6 @@
 #include "base/command_line.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chromeos/policy/proto/chrome_device_policy.pb.h"
 #include "chrome/browser/chromeos/set_time_dialog.h"
 #include "chrome/browser/chromeos/system/timezone_resolver_manager.h"
 #include "chrome/browser/chromeos/system/timezone_util.h"
@@ -17,6 +16,7 @@
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/system_clock_client.h"
 #include "chromeos/settings/timezone_settings.h"
+#include "components/policy/proto/chrome_device_policy.pb.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
@@ -170,15 +170,12 @@ void DateTimeHandler::NotifyTimezoneAutomaticDetectionPolicy() {
                            ->GetTimezoneResolverManager()
                            ->ShouldApplyResolvedTimezone();
 
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("time-zone-auto-detect-policy"),
-                         base::Value(managed), base::Value(force_enabled));
+  FireWebUIListener("time-zone-auto-detect-policy", base::Value(managed),
+                    base::Value(force_enabled));
 }
 
 void DateTimeHandler::SystemClockCanSetTimeChanged(bool can_set_time) {
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("can-set-date-time-changed"),
-                         base::Value(can_set_time));
+  FireWebUIListener("can-set-date-time-changed", base::Value(can_set_time));
 }
 
 }  // namespace settings

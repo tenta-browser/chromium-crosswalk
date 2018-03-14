@@ -7,7 +7,7 @@
 #include "bindings/core/v8/Dictionary.h"
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ScriptController.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8StringResource.h"
 #include "platform/wtf/text/WTFString.h"
 
@@ -17,9 +17,9 @@ DictionaryIterator::DictionaryIterator(v8::Local<v8::Object> iterator,
                                        v8::Isolate* isolate)
     : isolate_(isolate),
       iterator_(iterator),
-      next_key_(V8String(isolate, "next")),
-      done_key_(V8String(isolate, "done")),
-      value_key_(V8String(isolate, "value")),
+      next_key_(V8AtomicString(isolate, "next")),
+      done_key_(V8AtomicString(isolate, "done")),
+      value_key_(V8AtomicString(isolate, "value")),
       done_(false) {
   DCHECK(!iterator.IsEmpty());
 }
@@ -88,7 +88,7 @@ bool DictionaryIterator::ValueAsDictionary(Dictionary& result,
   DCHECK(!done_);
 
   v8::Local<v8::Value> value;
-  if (!V8Call(value_, value) || !value->IsObject())
+  if (!value_.ToLocal(&value) || !value->IsObject())
     return false;
 
   result = Dictionary(isolate_, value, exception_state);
@@ -100,7 +100,7 @@ bool DictionaryIterator::ValueAsString(String& result) {
   DCHECK(!done_);
 
   v8::Local<v8::Value> value;
-  if (!V8Call(value_, value))
+  if (!value_.ToLocal(&value))
     return false;
 
   V8StringResource<> string_value(value);

@@ -11,37 +11,30 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/lazy_instance.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
-#include "base/process/process_handle.h"
-#include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/synchronization/lock.h"
-#include "base/synchronization/waitable_event.h"
-#include "build/build_config.h"
+#include "components/network_session_configurator/common/network_switches.h"
 #include "content/browser/browser_child_process_host_impl.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/service_manager/service_manager_context.h"
 #include "content/common/child_process_host_impl.h"
 #include "content/common/in_process_child_thread_params.h"
 #include "content/common/service_manager/child_connection.h"
-#include "content/common/utility_messages.h"
+#include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/utility_process_host_client.h"
 #include "content/public/common/content_switches.h"
-#include "content/public/common/mojo_channel_switches.h"
 #include "content/public/common/process_type.h"
-#include "content/public/common/sandbox_type.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
 #include "content/public/common/service_manager_connection.h"
 #include "content/public/common/service_names.mojom.h"
-#include "mojo/edk/embedder/embedder.h"
+#include "media/base/media_switches.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
+#include "services/service_manager/sandbox/sandbox_type.h"
 #include "ui/base/ui_base_switches.h"
+#include "ui/gl/gl_switches.h"
 
 #if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_MACOSX)
 #include "content/public/browser/zygote_handle_linux.h"
@@ -54,36 +47,43 @@
 
 namespace content {
 
-#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_MACOSX)
-namespace {
-ZygoteHandle g_utility_zygote;
-}  // namespace
-#endif  // defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_MACOSX)
-
 // NOTE: changes to this class need to be reviewed by the security team.
 class UtilitySandboxedProcessLauncherDelegate
     : public SandboxedProcessLauncherDelegate {
  public:
-  UtilitySandboxedProcessLauncherDelegate(const base::FilePath& exposed_dir,
-                                          bool launch_elevated,
-                                          bool no_sandbox,
-                                          const base::EnvironmentMap& env)
+  UtilitySandboxedProcessLauncherDelegate(
+      const base::FilePath& exposed_dir,
+      service_manager::SandboxType sandbox_type,
+      const base::EnvironmentMap& env)
       : exposed_dir_(exposed_dir),
+#if defined(OS_POSIX)
+        env_(env),
+#endif
+        sandbox_type_(sandbox_type) {
+#if DCHECK_IS_ON()
+    bool supported_sandbox_type =
+        sandbox_type_ == service_manager::SANDBOX_TYPE_NO_SANDBOX ||
 #if defined(OS_WIN)
-        launch_elevated_(launch_elevated)
-#elif defined(OS_POSIX)
-        env_(env)
-#if !defined(OS_MACOSX) && !defined(OS_ANDROID)
-        ,
-        no_sandbox_(no_sandbox)
-#endif  // !defined(OS_MACOSX)  && !defined(OS_ANDROID)
-#endif  // OS_WIN
-  {}
+        sandbox_type_ ==
+            service_manager::SANDBOX_TYPE_NO_SANDBOX_AND_ELEVATED_PRIVILEGES ||
+#endif
+        sandbox_type_ == service_manager::SANDBOX_TYPE_UTILITY ||
+        sandbox_type_ == service_manager::SANDBOX_TYPE_NETWORK ||
+        sandbox_type_ == service_manager::SANDBOX_TYPE_CDM ||
+        sandbox_type_ == service_manager::SANDBOX_TYPE_PDF_COMPOSITOR ||
+        sandbox_type_ == service_manager::SANDBOX_TYPE_PROFILING ||
+        sandbox_type_ == service_manager::SANDBOX_TYPE_PPAPI;
+    DCHECK(supported_sandbox_type);
+#endif  // DCHECK_IS_ON()
+  }
 
   ~UtilitySandboxedProcessLauncherDelegate() override {}
 
 #if defined(OS_WIN)
-  bool ShouldLaunchElevated() override { return launch_elevated_; }
+  bool ShouldLaunchElevated() override {
+    return sandbox_type_ ==
+           service_manager::SANDBOX_TYPE_NO_SANDBOX_AND_ELEVATED_PRIVILEGES;
+  }
 
   bool PreSpawnTarget(sandbox::TargetPolicy* policy) override {
     if (exposed_dir_.empty())
@@ -105,34 +105,33 @@ class UtilitySandboxedProcessLauncherDelegate
 
 #elif defined(OS_POSIX)
 
-#if !defined(OS_MACOSX) && !defined(OS_ANDROID)
-  ZygoteHandle* GetZygote() override {
-    if (no_sandbox_ || !exposed_dir_.empty())
+#if !defined(OS_MACOSX) && !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
+  ZygoteHandle GetZygote() override {
+    if (service_manager::IsUnsandboxedSandboxType(sandbox_type_) ||
+        sandbox_type_ == service_manager::SANDBOX_TYPE_NETWORK ||
+        !exposed_dir_.empty()) {
       return nullptr;
+    }
     return GetGenericZygote();
   }
-#endif  // !defined(OS_MACOSX) && !defined(OS_ANDROID)
+#endif  // !defined(OS_MACOSX) && !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
   base::EnvironmentMap GetEnvironment() override { return env_; }
 #endif  // OS_WIN
 
-  SandboxType GetSandboxType() override {
-    return SANDBOX_TYPE_UTILITY;
+  service_manager::SandboxType GetSandboxType() override {
+    return sandbox_type_;
   }
 
  private:
   base::FilePath exposed_dir_;
 
-#if defined(OS_WIN)
-  bool launch_elevated_;
-#elif defined(OS_POSIX)
+#if defined(OS_POSIX)
   base::EnvironmentMap env_;
-#if !defined(OS_MACOSX) && !defined(OS_ANDROID)
-  bool no_sandbox_;
-#endif  // !defined(OS_MACOSX) && !defined(OS_ANDROID)
 #endif  // OS_WIN
+  service_manager::SandboxType sandbox_type_;
 };
 
-UtilityMainThreadFactoryFunction g_utility_main_thread_factory = NULL;
+UtilityMainThreadFactoryFunction g_utility_main_thread_factory = nullptr;
 
 UtilityProcessHost* UtilityProcessHost::Create(
     const scoped_refptr<UtilityProcessHostClient>& client,
@@ -150,9 +149,7 @@ UtilityProcessHostImpl::UtilityProcessHostImpl(
     const scoped_refptr<base::SequencedTaskRunner>& client_task_runner)
     : client_(client),
       client_task_runner_(client_task_runner),
-      is_batch_mode_(false),
-      no_sandbox_(false),
-      run_elevated_(false),
+      sandbox_type_(service_manager::SANDBOX_TYPE_UTILITY),
 #if defined(OS_LINUX)
       child_flags_(ChildProcessHost::CHILD_ALLOW_SELF),
 #else
@@ -167,8 +164,6 @@ UtilityProcessHostImpl::UtilityProcessHostImpl(
 
 UtilityProcessHostImpl::~UtilityProcessHostImpl() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  if (is_batch_mode_)
-    EndBatchMode();
 }
 
 base::WeakPtr<UtilityProcessHost> UtilityProcessHostImpl::AsWeakPtr() {
@@ -182,45 +177,25 @@ bool UtilityProcessHostImpl::Send(IPC::Message* message) {
   return process_->Send(message);
 }
 
-bool UtilityProcessHostImpl::StartBatchMode()  {
-  CHECK(!is_batch_mode_);
-  is_batch_mode_ = StartProcess();
-  Send(new UtilityMsg_BatchMode_Started());
-  return is_batch_mode_;
-}
-
-void UtilityProcessHostImpl::EndBatchMode()  {
-  CHECK(is_batch_mode_);
-  is_batch_mode_ = false;
-  Send(new UtilityMsg_BatchMode_Finished());
-}
-
 void UtilityProcessHostImpl::SetExposedDir(const base::FilePath& dir) {
   exposed_dir_ = dir;
 }
 
-void UtilityProcessHostImpl::DisableSandbox() {
-  no_sandbox_ = true;
+void UtilityProcessHostImpl::SetSandboxType(
+    service_manager::SandboxType sandbox_type) {
+  DCHECK(sandbox_type != service_manager::SANDBOX_TYPE_INVALID);
+  sandbox_type_ = sandbox_type;
 }
-
-#if defined(OS_WIN)
-void UtilityProcessHostImpl::ElevatePrivileges() {
-  no_sandbox_ = true;
-  run_elevated_ = true;
-}
-#endif
 
 const ChildProcessData& UtilityProcessHostImpl::GetData() {
   return process_->GetData();
 }
 
 #if defined(OS_POSIX)
-
 void UtilityProcessHostImpl::SetEnv(const base::EnvironmentMap& env) {
   env_ = env;
 }
-
-#endif  // OS_POSIX
+#endif
 
 bool UtilityProcessHostImpl::Start() {
   return StartProcess();
@@ -237,22 +212,20 @@ void UtilityProcessHostImpl::SetName(const base::string16& name) {
   name_ = name;
 }
 
-#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_MACOSX)
-// static
-void UtilityProcessHostImpl::EarlyZygoteLaunch() {
-  DCHECK(!g_utility_zygote);
-  g_utility_zygote = CreateZygote();
+void UtilityProcessHostImpl::SetServiceIdentity(
+    const service_manager::Identity& identity) {
+  service_identity_ = identity;
 }
-#endif  // defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_MACOSX)
+
+void UtilityProcessHostImpl::AddFilter(BrowserMessageFilter* filter) {
+  process_->AddFilter(filter);
+}
 
 bool UtilityProcessHostImpl::StartProcess() {
   if (started_)
     return true;
+
   started_ = true;
-
-  if (is_batch_mode_)
-    return true;
-
   process_->SetName(name_);
   process_->GetHost()->CreateChannelMojo();
 
@@ -263,6 +236,7 @@ bool UtilityProcessHostImpl::StartProcess() {
     in_process_thread_.reset(
         g_utility_main_thread_factory(InProcessChildThreadParams(
             BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
+            process_->GetInProcessBrokerClientInvitation(),
             process_->child_connection()->service_token())));
     in_process_thread_->Start();
   } else {
@@ -277,7 +251,7 @@ bool UtilityProcessHostImpl::StartProcess() {
       // As a workaround skip calling it here, since the executable name is
       // not needed on Android anyway. See crbug.com/500854.
     std::unique_ptr<base::CommandLine> cmd_line =
-        base::MakeUnique<base::CommandLine>(base::CommandLine::NO_PROGRAM);
+        std::make_unique<base::CommandLine>(base::CommandLine::NO_PROGRAM);
     #else
       int child_flags = child_flags_;
 
@@ -296,11 +270,12 @@ bool UtilityProcessHostImpl::StartProcess() {
       }
 
       std::unique_ptr<base::CommandLine> cmd_line =
-          base::MakeUnique<base::CommandLine>(exe_path);
+          std::make_unique<base::CommandLine>(exe_path);
     #endif
 
     cmd_line->AppendSwitchASCII(switches::kProcessType,
                                 switches::kUtilityProcess);
+    BrowserChildProcessHostImpl::CopyFeatureAndFieldTrialFlags(cmd_line.get());
     std::string locale = GetContentClient()->browser()->GetApplicationLocale();
     cmd_line->AppendSwitchASCII(switches::kLang, locale);
 
@@ -308,20 +283,40 @@ bool UtilityProcessHostImpl::StartProcess() {
     cmd_line->AppendArg(switches::kPrefetchArgumentOther);
 #endif  // defined(OS_WIN)
 
-    if (no_sandbox_)
-      cmd_line->AppendSwitch(switches::kNoSandbox);
+    service_manager::SetCommandLineFlagsForSandboxType(cmd_line.get(),
+                                                       sandbox_type_);
 
     // Browser command-line switches to propagate to the utility process.
     static const char* const kSwitchNames[] = {
-      switches::kEnableNetworkService,
+      switches::kHostResolverRules,
+      switches::kIgnoreCertificateErrors,
+      switches::kIgnoreCertificateErrorsSPKIList,
+      switches::kLogNetLog,
       switches::kNoSandbox,
-      switches::kProfilerTiming,
+      switches::kOverrideUseSoftwareGLForTests,
+      switches::kProxyServer,
 #if defined(OS_MACOSX)
       switches::kEnableSandboxLogging,
+#endif
+#if defined(USE_AURA)
+      switches::kMus,
+#endif
+      switches::kUseFakeDeviceForMediaStream,
+      switches::kUseFileForFakeVideoCapture,
+#if defined(OS_WIN)
+      switches::kForceMediaFoundationVideoCapture,
+#endif  // defined(OS_WIN)
+      switches::kUtilityStartupDialog,
+      switches::kUseGL,
+#if defined(OS_ANDROID)
+      switches::kMadviseRandomExecutableCode,
 #endif
     };
     cmd_line->CopySwitchesFrom(browser_command_line, kSwitchNames,
                                arraysize(kSwitchNames));
+
+    network_session_configurator::CopyNetworkSwitches(browser_command_line,
+                                                      cmd_line.get());
 
     if (has_cmd_prefix) {
       // Launch the utility child process with some prefix
@@ -335,14 +330,14 @@ bool UtilityProcessHostImpl::StartProcess() {
                                  exposed_dir_);
     }
 
-#if defined(OS_WIN)
-    // Let the utility process know if it is intended to be elevated.
-    if (run_elevated_)
-      cmd_line->AppendSwitch(switches::kUtilityProcessRunningElevated);
-#endif
+    const bool is_service = service_identity_.has_value();
+    if (is_service) {
+      GetContentClient()->browser()->AdjustUtilityServiceProcessCommandLine(
+          *service_identity_, cmd_line.get());
+    }
 
-    process_->Launch(base::MakeUnique<UtilitySandboxedProcessLauncherDelegate>(
-                         exposed_dir_, run_elevated_, no_sandbox_, env_),
+    process_->Launch(std::make_unique<UtilitySandboxedProcessLauncherDelegate>(
+                         exposed_dir_, sandbox_type_, env_),
                      std::move(cmd_line), true);
   }
 
@@ -355,10 +350,9 @@ bool UtilityProcessHostImpl::OnMessageReceived(const IPC::Message& message) {
 
   client_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           base::IgnoreResult(&UtilityProcessHostClient::OnMessageReceived),
-          client_.get(),
-          message));
+          client_.get(), message));
 
   return true;
 }
@@ -369,9 +363,8 @@ void UtilityProcessHostImpl::OnProcessLaunchFailed(int error_code) {
 
   client_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&UtilityProcessHostClient::OnProcessLaunchFailed,
-                 client_,
-                 error_code));
+      base::BindOnce(&UtilityProcessHostClient::OnProcessLaunchFailed, client_,
+                     error_code));
 }
 
 void UtilityProcessHostImpl::OnProcessCrashed(int exit_code) {
@@ -379,17 +372,15 @@ void UtilityProcessHostImpl::OnProcessCrashed(int exit_code) {
     return;
 
   client_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&UtilityProcessHostClient::OnProcessCrashed, client_,
-            exit_code));
+      FROM_HERE, base::BindOnce(&UtilityProcessHostClient::OnProcessCrashed,
+                                client_, exit_code));
 }
 
 void UtilityProcessHostImpl::NotifyAndDelete(int error_code) {
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&UtilityProcessHostImpl::NotifyLaunchFailedAndDelete,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 error_code));
+      base::BindOnce(&UtilityProcessHostImpl::NotifyLaunchFailedAndDelete,
+                     weak_ptr_factory_.GetWeakPtr(), error_code));
 }
 
 // static

@@ -8,9 +8,11 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/format_macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/numerics/safe_math.h"
 #include "base/process/memory.h"
+#include "base/strings/stringprintf.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gl/gl_bindings.h"
 
@@ -20,6 +22,7 @@ GpuMemoryBufferImplSharedMemory::GpuMemoryBufferImplSharedMemory(
     gfx::GpuMemoryBufferId id,
     const gfx::Size& size,
     gfx::BufferFormat format,
+    gfx::BufferUsage usage,
     const DestructionCallback& callback,
     std::unique_ptr<base::SharedMemory> shared_memory,
     size_t offset,
@@ -28,6 +31,7 @@ GpuMemoryBufferImplSharedMemory::GpuMemoryBufferImplSharedMemory(
       shared_memory_(std::move(shared_memory)),
       offset_(offset),
       stride_(stride) {
+  DCHECK(IsUsageSupported(usage));
   DCHECK(IsSizeValidForFormat(size, format));
 }
 
@@ -38,7 +42,10 @@ std::unique_ptr<GpuMemoryBufferImplSharedMemory>
 GpuMemoryBufferImplSharedMemory::Create(gfx::GpuMemoryBufferId id,
                                         const gfx::Size& size,
                                         gfx::BufferFormat format,
+                                        gfx::BufferUsage usage,
                                         const DestructionCallback& callback) {
+  if (!IsUsageSupported(usage))
+    return nullptr;
   size_t buffer_size = 0u;
   if (!gfx::BufferSizeForBufferFormatChecked(size, format, &buffer_size))
     return nullptr;
@@ -48,7 +55,7 @@ GpuMemoryBufferImplSharedMemory::Create(gfx::GpuMemoryBufferId id,
     return nullptr;
 
   return base::WrapUnique(new GpuMemoryBufferImplSharedMemory(
-      id, size, format, callback, std::move(shared_memory), 0,
+      id, size, format, usage, callback, std::move(shared_memory), 0,
       gfx::RowSizeForBufferFormat(size.width(), format, 0)));
 }
 
@@ -57,7 +64,10 @@ gfx::GpuMemoryBufferHandle
 GpuMemoryBufferImplSharedMemory::CreateGpuMemoryBuffer(
     gfx::GpuMemoryBufferId id,
     const gfx::Size& size,
-    gfx::BufferFormat format) {
+    gfx::BufferFormat format,
+    gfx::BufferUsage usage) {
+  if (!IsUsageSupported(usage))
+    return gfx::GpuMemoryBufferHandle();
   size_t buffer_size = 0u;
   if (!gfx::BufferSizeForBufferFormatChecked(size, format, &buffer_size))
     return gfx::GpuMemoryBufferHandle();
@@ -87,8 +97,8 @@ GpuMemoryBufferImplSharedMemory::CreateFromHandle(
   DCHECK(base::SharedMemory::IsHandleValid(handle.handle));
 
   return base::WrapUnique(new GpuMemoryBufferImplSharedMemory(
-      handle.id, size, format, callback,
-      base::MakeUnique<base::SharedMemory>(handle.handle, false), handle.offset,
+      handle.id, size, format, usage, callback,
+      std::make_unique<base::SharedMemory>(handle.handle, false), handle.offset,
       handle.stride));
 }
 
@@ -101,6 +111,8 @@ bool GpuMemoryBufferImplSharedMemory::IsUsageSupported(gfx::BufferUsage usage) {
     case gfx::BufferUsage::SCANOUT_CPU_READ_WRITE:
       return true;
     case gfx::BufferUsage::SCANOUT:
+    case gfx::BufferUsage::SCANOUT_CAMERA_READ_WRITE:
+    case gfx::BufferUsage::SCANOUT_VDA_WRITE:
       return false;
   }
   NOTREACHED();
@@ -128,6 +140,7 @@ bool GpuMemoryBufferImplSharedMemory::IsSizeValidForFormat(
       // by the block size.
       return size.width() % 4 == 0 && size.height() % 4 == 0;
     case gfx::BufferFormat::R_8:
+    case gfx::BufferFormat::R_16:
     case gfx::BufferFormat::RG_88:
     case gfx::BufferFormat::BGR_565:
     case gfx::BufferFormat::RGBA_4444:
@@ -135,6 +148,7 @@ bool GpuMemoryBufferImplSharedMemory::IsSizeValidForFormat(
     case gfx::BufferFormat::RGBX_8888:
     case gfx::BufferFormat::BGRA_8888:
     case gfx::BufferFormat::BGRX_8888:
+    case gfx::BufferFormat::BGRX_1010102:
     case gfx::BufferFormat::RGBA_F16:
       return true;
     case gfx::BufferFormat::YVU_420:
@@ -161,7 +175,7 @@ base::Closure GpuMemoryBufferImplSharedMemory::AllocateForTesting(
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
     gfx::GpuMemoryBufferHandle* handle) {
-  *handle = CreateGpuMemoryBuffer(handle->id, size, format);
+  *handle = CreateGpuMemoryBuffer(handle->id, size, format, usage);
   return base::Bind(&base::DoNothing);
 }
 
@@ -209,6 +223,13 @@ gfx::GpuMemoryBufferHandle GpuMemoryBufferImplSharedMemory::GetHandle() const {
   handle.stride = stride_;
   handle.handle = shared_memory_->handle();
   return handle;
+}
+
+base::trace_event::MemoryAllocatorDumpGuid
+GpuMemoryBufferImplSharedMemory::GetGUIDForTracing(
+    uint64_t tracing_process_id) const {
+  return base::trace_event::MemoryAllocatorDumpGuid(base::StringPrintf(
+      "shared_memory_gpu/%" PRIx64 "/%d", tracing_process_id, id_.id));
 }
 
 }  // namespace gpu

@@ -4,7 +4,6 @@
 
 #include "modules/device_orientation/DeviceOrientationAbsoluteController.h"
 
-#include "core/dom/Document.h"
 #include "core/frame/Settings.h"
 #include "modules/device_orientation/DeviceOrientationDispatcher.h"
 
@@ -44,11 +43,11 @@ void DeviceOrientationAbsoluteController::DidAddEventListener(
   if (GetDocument().GetFrame()) {
     if (GetDocument().IsSecureContext()) {
       UseCounter::Count(GetDocument().GetFrame(),
-                        UseCounter::kDeviceOrientationAbsoluteSecureOrigin);
+                        WebFeature::kDeviceOrientationAbsoluteSecureOrigin);
     } else {
       Deprecation::CountDeprecation(
           GetDocument().GetFrame(),
-          UseCounter::kDeviceOrientationAbsoluteInsecureOrigin);
+          WebFeature::kDeviceOrientationAbsoluteInsecureOrigin);
       // TODO: add rappor logging of insecure origins as in
       // DeviceOrientationController.
       if (GetDocument()
@@ -73,7 +72,7 @@ const AtomicString& DeviceOrientationAbsoluteController::EventTypeName() const {
   return EventTypeNames::deviceorientationabsolute;
 }
 
-DEFINE_TRACE(DeviceOrientationAbsoluteController) {
+void DeviceOrientationAbsoluteController::Trace(blink::Visitor* visitor) {
   DeviceOrientationController::Trace(visitor);
 }
 

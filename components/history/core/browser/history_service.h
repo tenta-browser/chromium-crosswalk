@@ -16,6 +16,7 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/callback_list.h"
+#include "base/containers/flat_set.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -245,10 +246,11 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   // empty.
   //
   // If success is false, neither the row nor the vector will be valid.
-  typedef base::Callback<void(
+  typedef base::OnceCallback<void(
       bool,  // Success flag, when false, nothing else is valid.
       const URLRow&,
-      const VisitVector&)> QueryURLCallback;
+      const VisitVector&)>
+      QueryURLCallback;
 
   // Queries the basic information about the URL in the history database. If
   // the caller is interested in the visits (each time the URL is visited),
@@ -257,7 +259,7 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   base::CancelableTaskTracker::TaskId QueryURL(
       const GURL& url,
       bool want_visits,
-      const QueryURLCallback& callback,
+      QueryURLCallback callback,
       base::CancelableTaskTracker* tracker);
 
   // Provides the result of a query. See QueryResults in history_types.h.
@@ -534,7 +536,7 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   void StopSyncing(syncer::ModelType type) override;
   syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const override;
   syncer::SyncError ProcessSyncChanges(
-      const tracked_objects::Location& from_here,
+      const base::Location& from_here,
       const syncer::SyncChangeList& change_list) override;
 
  protected:
@@ -644,18 +646,15 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   // FaviconService.
 
   // Used by FaviconService to get the favicon bitmaps from the history backend
-  // whose edge sizes most closely match |desired_sizes| for |icon_types|. If
+  // whose edge sizes most closely match |desired_sizes| for |icon_type|. If
   // |desired_sizes| has a '0' entry, the largest favicon bitmap for
-  // |icon_types| is returned. The returned FaviconBitmapResults will have at
+  // |icon_type| is returned. The returned FaviconBitmapResults will have at
   // most one result for each entry in |desired_sizes|. If a favicon bitmap is
   // determined to be the best candidate for multiple |desired_sizes| there will
   // be fewer results.
-  // If |icon_types| has several types, results for only a single type will be
-  // returned in the priority of TOUCH_PRECOMPOSED_ICON, TOUCH_ICON, and
-  // FAVICON.
-  base::CancelableTaskTracker::TaskId GetFavicons(
-      const std::vector<GURL>& icon_urls,
-      int icon_types,
+  base::CancelableTaskTracker::TaskId GetFavicon(
+      const GURL& icon_url,
+      favicon_base::IconType icon_type,
       const std::vector<int>& desired_sizes,
       const favicon_base::FaviconResultsCallback& callback,
       base::CancelableTaskTracker* tracker);
@@ -666,12 +665,10 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   // |icon_types| is returned. The returned FaviconBitmapResults will have at
   // most one result for each entry in |desired_sizes|. If a favicon bitmap is
   // determined to be the best candidate for multiple |desired_sizes| there
-  // will be fewer results. If |icon_types| has several types, results for only
-  // a single type will be returned in the priority of TOUCH_PRECOMPOSED_ICON,
-  // TOUCH_ICON, and FAVICON.
+  // will be fewer results.
   base::CancelableTaskTracker::TaskId GetFaviconsForURL(
       const GURL& page_url,
-      int icon_types,
+      const favicon_base::IconTypeSet& icon_types,
       const std::vector<int>& desired_sizes,
       const favicon_base::FaviconResultsCallback& callback,
       base::CancelableTaskTracker* tracker);
@@ -689,7 +686,7 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   // long as its size is larger than a specific value.
   base::CancelableTaskTracker::TaskId GetLargestFaviconForURL(
       const GURL& page_url,
-      const std::vector<int>& icon_types,
+      const std::vector<favicon_base::IconTypeSet>& icon_types,
       int minimum_size_in_pixels,
       const favicon_base::FaviconRawBitmapCallback& callback,
       base::CancelableTaskTracker* tracker);
@@ -704,31 +701,23 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
       const favicon_base::FaviconResultsCallback& callback,
       base::CancelableTaskTracker* tracker);
 
-  // Used by the FaviconService to replace the favicon mappings to |page_url|
-  // for |icon_types| on the history backend.
-  // Sample |icon_urls|:
-  //  { ICON_URL1 -> TOUCH_ICON, known to the database,
-  //    ICON_URL2 -> TOUCH_ICON, not known to the database,
-  //    ICON_URL3 -> TOUCH_PRECOMPOSED_ICON, known to the database }
-  // The new mappings are computed from |icon_urls| with these rules:
-  // 1) Any urls in |icon_urls| which are not already known to the database are
-  //    rejected.
-  //    Sample new mappings to |page_url|: { ICON_URL1, ICON_URL3 }
-  // 2) If |icon_types| has multiple types, the mappings are only set for the
-  //    largest icon type.
-  //    Sample new mappings to |page_url|: { ICON_URL3 }
-  // |icon_types| can only have multiple IconTypes if
-  // |icon_types| == TOUCH_ICON | TOUCH_PRECOMPOSED_ICON.
-  // The favicon bitmaps whose edge sizes most closely match |desired_sizes|
-  // from the favicons which were just mapped to |page_url| are returned. If
-  // |desired_sizes| has a '0' entry, the largest favicon bitmap is returned.
+  // Maps |page_urls| to the favicon at |icon_url| if there is an entry in the
+  // database for |icon_url| and |icon_type|. This occurs when there is a
+  // mapping from a different page URL to |icon_url|. The favicon bitmaps whose
+  // edge sizes most closely match |desired_sizes| from the favicons which were
+  // just mapped to |page_urls| are returned. If |desired_sizes| has a '0'
+  // entry, the largest favicon bitmap is returned.
   base::CancelableTaskTracker::TaskId UpdateFaviconMappingsAndFetch(
-      const GURL& page_url,
-      const std::vector<GURL>& icon_urls,
-      int icon_types,
+      const base::flat_set<GURL>& page_urls,
+      const GURL& icon_url,
+      favicon_base::IconType icon_type,
       const std::vector<int>& desired_sizes,
       const favicon_base::FaviconResultsCallback& callback,
       base::CancelableTaskTracker* tracker);
+
+  // Deletes favicon mappings for each URL in |page_urls| and their redirects.
+  void DeleteFaviconMappings(const base::flat_set<GURL>& page_urls,
+                             favicon_base::IconType icon_type);
 
   // Used by FaviconService to set a favicon for |page_url| and |icon_url| with
   // |pixel_size|.
@@ -756,16 +745,25 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
                     scoped_refptr<base::RefCountedMemory> bitmap_data,
                     const gfx::Size& pixel_size);
 
-  // Used by the FaviconService to replace all of the favicon bitmaps mapped to
-  // |page_url| for |icon_type|.
+  // Used by the FaviconService to replace the favicon bitmaps mapped to all
+  // URLs in |page_urls| for |icon_type|.
   // Use MergeFavicon() if |bitmaps| is incomplete, and favicon bitmaps in the
   // database should be preserved if possible. For instance, favicon bitmaps
   // from sync are 1x only. MergeFavicon() is used to avoid deleting the 2x
-  // favicon bitmap if it is present in the history backend.
-  void SetFavicons(const GURL& page_url,
+  // favicon bitmap if it is present in the history backend. |page_urls| must
+  // not be empty.
+  void SetFavicons(const base::flat_set<GURL>& page_urls,
                    favicon_base::IconType icon_type,
                    const GURL& icon_url,
                    const std::vector<SkBitmap>& bitmaps);
+
+  // Causes each page in |page_urls_to_write| to be associated to the same
+  // icon as the page |page_url_to_read| for icon types matching |icon_types|.
+  // No-op if |page_url_to_read| has no mappings for |icon_types|.
+  void CloneFaviconMappingsForPages(
+      const GURL& page_url_to_read,
+      const favicon_base::IconTypeSet& icon_types,
+      const base::flat_set<GURL>& page_urls_to_write);
 
   // Same as SetFavicons with three differences:
   // 1) It will be a no-op if there is an existing cached favicon for *any* type
@@ -773,17 +771,36 @@ class HistoryService : public syncer::SyncableService, public KeyedService {
   // 2) If |icon_url| is known to the database, |bitmaps| will be ignored (i.e.
   //    the icon won't be overwritten) but the mappings from |page_url| to
   //    |icon_url| will be stored (conditioned to point 1 above).
-  // 3) If |icon_url| is stored, it will be marked as expired.
+  // 3) If |icon_url| is stored, it will be marked as "on-demand".
+  //
+  // On-demand favicons are those that are fetched without visiting their page.
+  // For this reason, their life-time cannot be bound to the life-time of the
+  // corresponding visit in history.
+  // - These bitmaps are evicted from the database based on the last time they
+  //   get requested. The last requested time is initially set to Now() and is
+  //   further updated by calling TouchOnDemandFavicon().
+  // - Furthermore, on-demand bitmaps are immediately marked as expired. Hence,
+  //   they are always replaced by standard favicons whenever their page gets
+  //   visited.
   // The callback will receive whether the write actually happened.
-  void SetLastResortFavicons(const GURL& page_url,
-                             favicon_base::IconType icon_type,
-                             const GURL& icon_url,
-                             const std::vector<SkBitmap>& bitmaps,
-                             base::Callback<void(bool)> callback);
+  void SetOnDemandFavicons(const GURL& page_url,
+                           favicon_base::IconType icon_type,
+                           const GURL& icon_url,
+                           const std::vector<SkBitmap>& bitmaps,
+                           base::Callback<void(bool)> callback);
 
   // Used by the FaviconService to mark the favicon for the page as being out
   // of date.
   void SetFaviconsOutOfDateForPage(const GURL& page_url);
+
+  // Mark that the on-demand favicon at |icon_url| was requested now. This
+  // postpones the automatic eviction of the favicon from the database. Not all
+  // calls end up in a write into the DB:
+  // - it is no-op if the bitmaps are not stored using SetOnDemandFavicons();
+  // - the updates of the "last requested time" have limited frequency for each
+  //   particular favicon (e.g. once per week). This limits the overhead of
+  //   cache management for on-demand favicons.
+  void TouchOnDemandFavicon(const GURL& icon_url);
 
   // Used by the FaviconService for importing many favicons for many pages at
   // once. The pages must exist, any favicon sets for unknown pages will be

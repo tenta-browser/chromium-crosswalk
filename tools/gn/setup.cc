@@ -5,7 +5,9 @@
 #include "tools/gn/setup.h"
 
 #include <stdlib.h>
+
 #include <algorithm>
+#include <memory>
 #include <sstream>
 #include <utility>
 
@@ -40,7 +42,7 @@
 #include <windows.h>
 #endif
 
-extern const char kDotfile_Help[] =
+const char kDotfile_Help[] =
     R"(.gn file
 
   When gn starts, it will search the current directory and parent directories
@@ -97,6 +99,11 @@ Variables
       Label of the root build target. The GN build will start by loading the
       build file containing this target name. This defaults to "//:" which will
       cause the file //BUILD.gn to be loaded.
+
+  script_executable [optional]
+      Path to specific Python executable or potentially a different language
+      interpreter that is used to execute scripts in action targets and
+      exec_script calls.
 
   secondary_source [optional]
       Label of an alternate directory tree to find input files. When searching
@@ -265,21 +272,6 @@ base::FilePath FindWindowsPython() {
 }
 #endif
 
-// Expands all ./, ../, and symbolic links in the given path.
-bool GetRealPath(const base::FilePath& path, base::FilePath* out) {
-#if defined(OS_POSIX)
-  char buf[PATH_MAX];
-  if (!realpath(path.value().c_str(), buf)) {
-    return false;
-  }
-  *out = base::FilePath(buf);
-#else
-  // Do nothing on a non-POSIX system.
-  *out = path;
-#endif
-  return true;
-}
-
 }  // namespace
 
 const char Setup::kBuildArgFileName[] = "args.gn";
@@ -305,8 +297,7 @@ Setup::Setup()
   loader_->set_task_runner(scheduler_.task_runner());
 }
 
-Setup::~Setup() {
-}
+Setup::~Setup() = default;
 
 bool Setup::DoSetup(const std::string& build_dir, bool force_create) {
   base::CommandLine* cmdline = base::CommandLine::ForCurrentProcess();
@@ -329,13 +320,6 @@ bool Setup::DoSetup(const std::string& build_dir, bool force_create) {
   if (!FillBuildDir(build_dir, !force_create))
     return false;
 
-  // Check for unused variables in the .gn file.
-  Err err;
-  if (!dotfile_scope_.CheckForUnusedVars(&err)) {
-    err.PrintToStdout();
-    return false;
-  }
-
   // Apply project-specific default (if specified).
   // Must happen before FillArguments().
   if (default_args_) {
@@ -348,7 +332,15 @@ bool Setup::DoSetup(const std::string& build_dir, bool force_create) {
     if (!FillArguments(*cmdline))
       return false;
   }
-  FillPythonPath(*cmdline);
+  if (!FillPythonPath(*cmdline))
+    return false;
+
+  // Check for unused variables in the .gn file.
+  Err err;
+  if (!dotfile_scope_.CheckForUnusedVars(&err)) {
+    err.PrintToStdout();
+    return false;
+  }
 
   return true;
 }
@@ -380,13 +372,14 @@ bool Setup::RunPostMessageLoop() {
   }
 
   if (!build_settings_.build_args().VerifyAllOverridesUsed(&err)) {
-    // TODO(brettw) implement a system to have a different marker for
-    // warnings. Until we have a better system, print the error but don't
-    // return failure unless requested on the command line.
-    err.PrintToStdout();
     if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-            switches::kFailOnUnusedArgs))
+            switches::kFailOnUnusedArgs)) {
+      err.PrintToStdout();
       return false;
+    }
+    err.PrintNonfatalToStdout();
+    OutputString("\nThe build continued as if that argument was "
+                 "unspecified.\n\n");
     return true;
   }
 
@@ -431,7 +424,7 @@ bool Setup::FillArguments(const base::CommandLine& cmdline) {
 }
 
 bool Setup::FillArgsFromCommandLine(const std::string& args) {
-  args_input_file_.reset(new InputFile(SourceFile()));
+  args_input_file_ = std::make_unique<InputFile>(SourceFile());
   args_input_file_->SetContents(args);
   args_input_file_->set_friendly_name("the command-line \"--args\"");
   return FillArgsFromArgsInputFile();
@@ -455,7 +448,7 @@ bool Setup::FillArgsFromFile() {
   if (contents.empty())
     return true;  // Empty file, do nothing.
 
-  args_input_file_.reset(new InputFile(build_arg_source_file));
+  args_input_file_ = std::make_unique<InputFile>(build_arg_source_file);
   args_input_file_->SetContents(contents);
   args_input_file_->set_friendly_name(
       "build arg file (use \"gn args <out_dir>\" to edit)");
@@ -578,8 +571,8 @@ bool Setup::FillSourceDir(const base::CommandLine& cmdline) {
     root_path = dotfile_name_.DirName();
   }
 
-  base::FilePath root_realpath;
-  if (!GetRealPath(root_path, &root_realpath)) {
+  base::FilePath root_realpath = base::MakeAbsoluteFilePath(root_path);
+  if (root_realpath.empty()) {
     Err(Location(), "Can't get the real root path.",
         "I could not get the real path of \"" + FilePathToUTF8(root_path) +
         "\".").PrintToStdout();
@@ -610,8 +603,9 @@ bool Setup::FillBuildDir(const std::string& build_dir, bool require_exists) {
         "\".").PrintToStdout();
     return false;
   }
-  base::FilePath build_dir_realpath;
-  if (!GetRealPath(build_dir_path, &build_dir_realpath)) {
+  base::FilePath build_dir_realpath =
+      base::MakeAbsoluteFilePath(build_dir_path);
+  if (build_dir_realpath.empty()) {
     Err(Location(), "Can't get the real build dir path.",
         "I could not get the real path of \"" + FilePathToUTF8(build_dir_path) +
         "\".").PrintToStdout();
@@ -640,12 +634,21 @@ bool Setup::FillBuildDir(const std::string& build_dir, bool require_exists) {
   return true;
 }
 
-void Setup::FillPythonPath(const base::CommandLine& cmdline) {
+bool Setup::FillPythonPath(const base::CommandLine& cmdline) {
   // Trace this since it tends to be a bit slow on Windows.
   ScopedTrace setup_trace(TraceItem::TRACE_SETUP, "Fill Python Path");
+  const Value* value = dotfile_scope_.GetValue("script_executable", true);
   if (cmdline.HasSwitch(switches::kScriptExecutable)) {
     build_settings_.set_python_path(
         cmdline.GetSwitchValuePath(switches::kScriptExecutable));
+  } else if (value) {
+    Err err;
+    if (!value->VerifyTypeIs(Value::STRING, &err)) {
+      err.PrintToStdout();
+      return false;
+    }
+    build_settings_.set_python_path(
+        base::FilePath(UTF8ToFilePath(value->string_value())));
   } else {
 #if defined(OS_WIN)
     base::FilePath python_path = FindWindowsPython();
@@ -659,13 +662,14 @@ void Setup::FillPythonPath(const base::CommandLine& cmdline) {
     build_settings_.set_python_path(base::FilePath("python"));
 #endif
   }
+  return true;
 }
 
 bool Setup::RunConfigFile() {
   if (scheduler_.verbose_logging())
     scheduler_.Log("Got dotfile", FilePathToUTF8(dotfile_name_));
 
-  dotfile_input_file_.reset(new InputFile(SourceFile("//.gn")));
+  dotfile_input_file_ = std::make_unique<InputFile>(SourceFile("//.gn"));
   if (!dotfile_input_file_->Load(dotfile_name_)) {
     Err(Location(), "Could not load dotfile.",
         "The file \"" + FilePathToUTF8(dotfile_name_) + "\" couldn't be loaded")
@@ -698,6 +702,7 @@ bool Setup::RunConfigFile() {
 bool Setup::FillOtherConfig(const base::CommandLine& cmdline) {
   Err err;
   SourceDir current_dir("//");
+  Label root_target_label(current_dir, "");
 
   // Secondary source path, read from the config file if present.
   // Read from the config file if present.
@@ -720,8 +725,7 @@ bool Setup::FillOtherConfig(const base::CommandLine& cmdline) {
       return false;
     }
 
-    Label root_target_label =
-        Label::Resolve(current_dir, Label(), *root_value, &err);
+    root_target_label = Label::Resolve(current_dir, Label(), *root_value, &err);
     if (err.has_error()) {
       err.PrintToStdout();
       return false;
@@ -729,6 +733,7 @@ bool Setup::FillOtherConfig(const base::CommandLine& cmdline) {
 
     root_build_file_ = Loader::BuildFileForLabel(root_target_label);
   }
+  build_settings_.SetRootTargetLabel(root_target_label);
 
   // Build config file.
   const Value* build_config_value =
@@ -767,7 +772,8 @@ bool Setup::FillOtherConfig(const base::CommandLine& cmdline) {
       err.PrintToStdout();
       return false;
     }
-    std::unique_ptr<std::set<SourceFile>> whitelist(new std::set<SourceFile>);
+    std::unique_ptr<std::set<SourceFile>> whitelist =
+        std::make_unique<std::set<SourceFile>>();
     for (const auto& item : exec_script_whitelist_value->list_value()) {
       if (!item.VerifyTypeIs(Value::STRING, &err)) {
         err.PrintToStdout();

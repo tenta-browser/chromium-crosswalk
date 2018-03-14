@@ -38,7 +38,7 @@ void BlacklistStateFetcher::Request(const std::string& id,
           g_browser_process->safe_browsing_service()->GetProtocolConfig());
     } else {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(callback, BLACKLISTED_UNKNOWN));
+          FROM_HERE, base::BindOnce(callback, BLACKLISTED_UNKNOWN));
       return;
     }
   }
@@ -84,7 +84,7 @@ void BlacklistStateFetcher::SendRequest(const std::string& id) {
           destination: GOOGLE_OWNED_SERVICE
         }
         policy {
-          cookies_allowed: true
+          cookies_allowed: YES
           cookies_store: "Safe Browsing cookies store"
           setting:
             "Users can enable or disable this feature by toggling 'Protect you "

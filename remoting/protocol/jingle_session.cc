@@ -28,7 +28,7 @@
 #include "remoting/signaling/iq_sender.h"
 #include "third_party/libjingle_xmpp/xmllite/xmlelement.h"
 #include "third_party/libjingle_xmpp/xmpp/constants.h"
-#include "third_party/webrtc/p2p/base/candidate.h"
+#include "third_party/webrtc/api/candidate.h"
 
 using buzz::XmlElement;
 
@@ -107,13 +107,16 @@ int GetSequentialId(const std::string& id) {
 // session due to an unexpected request.
 class JingleSession::OrderedMessageQueue {
  public:
-  OrderedMessageQueue() {}
-  ~OrderedMessageQueue() {}
+  OrderedMessageQueue() = default;
+  ~OrderedMessageQueue() = default;
 
   // Returns the list of messages ordered by their sequential IDs.
   std::vector<PendingMessage> OnIncomingMessage(
       const std::string& id,
       PendingMessage&& pending_message);
+
+  // Sets the initial ID of the session initiate message.
+  void SetInitialId(const std::string& id);
 
  private:
   // Implements an ordered list by using map with the |sequence_id| as the key,
@@ -162,6 +165,12 @@ JingleSession::OrderedMessageQueue::OnIncomingMessage(
   return result;
 };
 
+void JingleSession::OrderedMessageQueue::SetInitialId(const std::string& id) {
+  int current = GetSequentialId(id);
+  if (current != kInvalid)
+    next_incoming_ = current + 1;
+}
+
 JingleSession::PendingMessage::PendingMessage() = default;
 JingleSession::PendingMessage::PendingMessage(PendingMessage&& moved) = default;
 JingleSession::PendingMessage::PendingMessage(
@@ -182,6 +191,7 @@ JingleSession::JingleSession(JingleSessionManager* session_manager)
       weak_factory_(this) {}
 
 JingleSession::~JingleSession() {
+  DCHECK(thread_checker_.CalledOnValidThread());
   session_manager_->SessionDestroyed(this);
 }
 
@@ -223,6 +233,7 @@ void JingleSession::StartConnection(
 }
 
 void JingleSession::InitializeIncomingConnection(
+    const std::string& message_id,
     const JingleMessage& initiate_message,
     std::unique_ptr<Authenticator> authenticator) {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -233,6 +244,7 @@ void JingleSession::InitializeIncomingConnection(
   peer_address_ = initiate_message.from;
   authenticator_ = std::move(authenticator);
   session_id_ = initiate_message.sid;
+  message_queue_->SetInitialId(message_id);
 
   SetState(ACCEPTING);
 

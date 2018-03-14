@@ -64,7 +64,7 @@ void PagePopupSupplement::Dispose() {
 void PagePopupSupplement::Install(LocalFrame& frame,
                                   PagePopup& popup,
                                   PagePopupClient* popup_client) {
-  ASSERT(popup_client);
+  DCHECK(popup_client);
   ProvideTo(frame, SupplementName(),
             new PagePopupSupplement(frame, popup, popup_client));
 }
@@ -74,7 +74,7 @@ void PagePopupSupplement::Uninstall(LocalFrame& frame) {
   frame.RemoveSupplement(SupplementName());
 }
 
-DEFINE_TRACE(PagePopupSupplement) {
+void PagePopupSupplement::Trace(blink::Visitor* visitor) {
   visitor->Trace(controller_);
   Supplement<LocalFrame>::Trace(visitor);
 }

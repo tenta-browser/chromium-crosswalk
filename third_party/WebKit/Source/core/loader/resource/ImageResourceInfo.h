@@ -8,9 +8,11 @@
 #include "core/CoreExport.h"
 #include "platform/heap/Handle.h"
 #include "platform/heap/Heap.h"
+#include "platform/loader/fetch/ResourceError.h"
 #include "platform/loader/fetch/ResourceStatus.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/wtf/Forward.h"
+#include "platform/wtf/Optional.h"
 
 namespace blink {
 
@@ -32,7 +34,6 @@ class CORE_EXPORT ImageResourceInfo : public GarbageCollectedMixin {
   virtual bool HasDevicePixelRatioHeaderValue() const = 0;
   virtual float DevicePixelRatioHeaderValue() const = 0;
   virtual const ResourceResponse& GetResponse() const = 0;
-  virtual ResourceStatus GetStatus() const = 0;
   virtual bool ShouldShowPlaceholder() const = 0;
   virtual bool IsCacheValidator() const = 0;
   virtual bool SchedulingReloadOrShouldReloadBrokenPlaceholder() const = 0;
@@ -44,7 +45,7 @@ class CORE_EXPORT ImageResourceInfo : public GarbageCollectedMixin {
       SecurityOrigin*,
       DoesCurrentFrameHaveSingleSecurityOrigin) const = 0;
   virtual bool HasCacheControlNoStoreHeader() const = 0;
-  virtual const ResourceError& GetResourceError() const = 0;
+  virtual Optional<ResourceError> GetResourceError() const = 0;
 
   // TODO(hiroshige): Remove this once MemoryCache becomes further weaker.
   virtual void SetDecodedSize(size_t) = 0;
@@ -59,7 +60,7 @@ class CORE_EXPORT ImageResourceInfo : public GarbageCollectedMixin {
       const KURL&,
       const AtomicString& initiator_name) = 0;
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {}
+  void Trace(blink::Visitor* visitor) override {}
 };
 
 }  // namespace blink

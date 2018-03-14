@@ -26,6 +26,7 @@
 #include "platform/SharedBuffer.h"
 #include "platform/loader/fetch/FetchParameters.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
+#include "platform/loader/fetch/TextResourceDecoderOptions.h"
 #include "platform/wtf/text/StringBuilder.h"
 
 namespace blink {
@@ -39,29 +40,31 @@ DocumentResource* DocumentResource::FetchSVGDocument(FetchParameters& params,
       fetcher->RequestResource(params, SVGDocumentResourceFactory()));
 }
 
-DocumentResource::DocumentResource(const ResourceRequest& request,
-                                   Type type,
-                                   const ResourceLoaderOptions& options)
-    : TextResource(request, type, options, "application/xml", String()) {
+DocumentResource::DocumentResource(
+    const ResourceRequest& request,
+    Type type,
+    const ResourceLoaderOptions& options,
+    const TextResourceDecoderOptions& decoder_options)
+    : TextResource(request, type, options, decoder_options) {
   // FIXME: We'll support more types to support HTMLImports.
   DCHECK_EQ(type, kSVGDocument);
 }
 
 DocumentResource::~DocumentResource() {}
 
-DEFINE_TRACE(DocumentResource) {
+void DocumentResource::Trace(blink::Visitor* visitor) {
   visitor->Trace(document_);
   Resource::Trace(visitor);
 }
 
-void DocumentResource::CheckNotify() {
+void DocumentResource::NotifyFinished() {
   if (Data() && MimeTypeAllowed()) {
     // We don't need to create a new frame because the new document belongs to
     // the parent UseElement.
     document_ = CreateDocument(GetResponse().Url());
     document_->SetContent(DecodedText());
   }
-  Resource::CheckNotify();
+  Resource::NotifyFinished();
 }
 
 bool DocumentResource::MimeTypeAllowed() const {
@@ -76,7 +79,7 @@ bool DocumentResource::MimeTypeAllowed() const {
 Document* DocumentResource::CreateDocument(const KURL& url) {
   switch (GetType()) {
     case kSVGDocument:
-      return XMLDocument::CreateSVG(DocumentInit(url));
+      return XMLDocument::CreateSVG(DocumentInit::Create().WithURL(url));
     default:
       // FIXME: We'll add more types to support HTMLImports.
       NOTREACHED();

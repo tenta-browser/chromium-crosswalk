@@ -25,6 +25,8 @@
 
 #include <memory>
 #include "core/CoreExport.h"
+#include "core/css/parser/CSSParserContext.h"
+#include "core/css/parser/CSSParserMode.h"
 #include "core/dom/QualifiedName.h"
 #include "core/style/ComputedStyleConstants.h"
 #include "platform/wtf/RefCounted.h"
@@ -32,7 +34,7 @@
 namespace blink {
 class CSSSelectorList;
 
-// This class represents a selector for a StyleRule.
+// This class represents a simple selector for a StyleRule.
 
 // CSS selector representation is somewhat complicated and subtle. A
 // representative list of selectors is in CSSSelectorTest; run it in a debug
@@ -40,7 +42,7 @@ class CSSSelectorList;
 //
 // ** TagHistory() and Relation():
 //
-// Selectors are represented as a linked list of simple selectors (defined more
+// Selectors are represented as an array of simple selectors (defined more
 // or less according to
 // http://www.w3.org/TR/css3-selectors/#simple-selectors-dfn). The tagHistory()
 // method returns the next simple selector in the list. The relation() method
@@ -96,7 +98,7 @@ class CORE_EXPORT CSSSelector {
 
   ~CSSSelector();
 
-  String SelectorText(const String& right_side = "") const;
+  String SelectorText() const;
 
   bool operator==(const CSSSelector&) const;
 
@@ -132,6 +134,7 @@ class CORE_EXPORT CSSSelector {
     // Special cases for shadow DOM related selectors.
     kShadowPiercingDescendant,  // >>> combinator
     kShadowDeep,                // /deep/ combinator
+    kShadowDeepAsDescendant,    // /deep/ as an alias for descendant
     kShadowPseudo,              // ::shadow pseudo element
     kShadowSlot                 // ::slotted() pseudo element
   };
@@ -205,8 +208,12 @@ class CORE_EXPORT CSSSelector {
     kPseudoLeftPage,
     kPseudoRightPage,
     kPseudoFirstPage,
+    // TODO(foolip): When the unprefixed Fullscreen API is enabled, merge
+    // kPseudoFullScreen and kPseudoFullscreen into one. (kPseudoFullscreen is
+    // controlled by the FullscreenUnprefixed REF, but is otherwise an alias.)
     kPseudoFullScreen,
     kPseudoFullScreenAncestor,
+    kPseudoFullscreen,
     kPseudoInRange,
     kPseudoOutOfRange,
     // Pseudo elements in UA ShadowRoots. Available in any stylesheets.
@@ -238,7 +245,12 @@ class CORE_EXPORT CSSSelector {
   PseudoType GetPseudoType() const {
     return static_cast<PseudoType>(pseudo_type_);
   }
-  void UpdatePseudoType(const AtomicString&, bool has_arguments);
+
+  void UpdatePseudoType(const AtomicString&,
+                        const CSSParserContext&,
+                        bool has_arguments,
+                        CSSParserMode);
+  void UpdatePseudoPage(const AtomicString&);
 
   static PseudoType ParsePseudoType(const AtomicString&, bool has_arguments);
   static PseudoId ParsePseudoId(const String&);
@@ -247,7 +259,8 @@ class CORE_EXPORT CSSSelector {
   // Selectors are kept in an array by CSSSelectorList. The next component of
   // the selector is the next item in the array.
   const CSSSelector* TagHistory() const {
-    return is_last_in_tag_history_ ? 0 : const_cast<CSSSelector*>(this + 1);
+    return is_last_in_tag_history_ ? nullptr
+                                   : const_cast<CSSSelector*>(this + 1);
   }
 
   const QualifiedName& TagQName() const;
@@ -256,7 +269,7 @@ class CORE_EXPORT CSSSelector {
 
   // WARNING: Use of QualifiedName by attribute() is a lie.
   // attribute() will return a QualifiedName with prefix and namespaceURI
-  // set to starAtom to mean "matches any namespace". Be very careful
+  // set to g_star_atom to mean "matches any namespace". Be very careful
   // how you use the returned QualifiedName.
   // http://www.w3.org/TR/css3-selectors/#attrnmsp
   const QualifiedName& Attribute() const;
@@ -284,7 +297,7 @@ class CORE_EXPORT CSSSelector {
   void SetSelectorList(std::unique_ptr<CSSSelectorList>);
 
   void SetNth(int a, int b);
-  bool MatchNth(int count) const;
+  bool MatchNth(unsigned count) const;
 
   bool IsAdjacentSelector() const {
     return relation_ == kDirectAdjacent || relation_ == kIndirectAdjacent;
@@ -299,7 +312,7 @@ class CORE_EXPORT CSSSelector {
     return pseudo_type_ == kPseudoHost || pseudo_type_ == kPseudoHostContext;
   }
   bool IsUserActionPseudoClass() const;
-  bool IsInsertionPointCrossing() const {
+  bool IsV0InsertionPointCrossing() const {
     return pseudo_type_ == kPseudoHostContext || pseudo_type_ == kPseudoContent;
   }
   bool IsIdClassOrAttributeSelector() const;
@@ -368,17 +381,18 @@ class CORE_EXPORT CSSSelector {
 
   unsigned SpecificityForOneSelector() const;
   unsigned SpecificityForPage() const;
+  const CSSSelector* SerializeCompound(StringBuilder&) const;
 
   // Hide.
   CSSSelector& operator=(const CSSSelector&);
 
   struct RareData : public RefCounted<RareData> {
-    static PassRefPtr<RareData> Create(const AtomicString& value) {
-      return AdoptRef(new RareData(value));
+    static scoped_refptr<RareData> Create(const AtomicString& value) {
+      return base::AdoptRef(new RareData(value));
     }
     ~RareData();
 
-    bool MatchNth(int count);
+    bool MatchNth(unsigned count);
     int NthAValue() const { return bits_.nth_.a_; }
     int NthBValue() const { return bits_.nth_.b_; }
 
@@ -439,9 +453,9 @@ inline void CSSSelector::SetValue(const AtomicString& value,
   // Need to do ref counting manually for the union.
   if (!has_rare_data_) {
     if (data_.value_)
-      data_.value_->Deref();
+      data_.value_->Release();
     data_.value_ = value.Impl();
-    data_.value_->Ref();
+    data_.value_->AddRef();
     return;
   }
   data_.rare_data_->matching_value_ =
@@ -472,7 +486,7 @@ inline CSSSelector::CSSSelector(const QualifiedName& tag_q_name,
       tag_is_implicit_(tag_is_implicit),
       relation_is_affected_by_pseudo_content_(false) {
   data_.tag_q_name_ = tag_q_name.Impl();
-  data_.tag_q_name_->Ref();
+  data_.tag_q_name_->AddRef();
 }
 
 inline CSSSelector::CSSSelector(const CSSSelector& o)
@@ -488,23 +502,23 @@ inline CSSSelector::CSSSelector(const CSSSelector& o)
           o.relation_is_affected_by_pseudo_content_) {
   if (o.match_ == kTag) {
     data_.tag_q_name_ = o.data_.tag_q_name_;
-    data_.tag_q_name_->Ref();
+    data_.tag_q_name_->AddRef();
   } else if (o.has_rare_data_) {
     data_.rare_data_ = o.data_.rare_data_;
-    data_.rare_data_->Ref();
+    data_.rare_data_->AddRef();
   } else if (o.data_.value_) {
     data_.value_ = o.data_.value_;
-    data_.value_->Ref();
+    data_.value_->AddRef();
   }
 }
 
 inline CSSSelector::~CSSSelector() {
   if (match_ == kTag)
-    data_.tag_q_name_->Deref();
+    data_.tag_q_name_->Release();
   else if (has_rare_data_)
-    data_.rare_data_->Deref();
+    data_.rare_data_->Release();
   else if (data_.value_)
-    data_.value_->Deref();
+    data_.value_->Release();
 }
 
 inline const QualifiedName& CSSSelector::TagQName() const {

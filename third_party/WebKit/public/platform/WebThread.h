@@ -26,6 +26,7 @@
 #define WebThread_h
 
 #include "WebCommon.h"
+#include "base/memory/scoped_refptr.h"
 
 #include <stdint.h>
 
@@ -70,9 +71,9 @@ class BLINK_PLATFORM_EXPORT WebThread {
   //
   // Default scheduler task queue does not give scheduler enough freedom to
   // manage task priorities and should not be used.
-  // Use TaskRunnerHelper::get instead (crbug.com/624696).
+  // Use TaskRunnerHelper::Get instead (crbug.com/624696).
   virtual WebTaskRunner* GetWebTaskRunner() { return nullptr; }
-  base::SingleThreadTaskRunner* GetSingleThreadTaskRunner();
+  scoped_refptr<base::SingleThreadTaskRunner> GetSingleThreadTaskRunner();
 
   virtual bool IsCurrentThread() const = 0;
   virtual PlatformThreadId ThreadId() const { return 0; }

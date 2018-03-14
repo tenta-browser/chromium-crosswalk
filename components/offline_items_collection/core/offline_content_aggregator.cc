@@ -107,14 +107,16 @@ void OfflineContentAggregator::PauseDownload(const ContentId& id) {
                                     base::Unretained(it->second), id));
 }
 
-void OfflineContentAggregator::ResumeDownload(const ContentId& id) {
+void OfflineContentAggregator::ResumeDownload(const ContentId& id,
+                                              bool has_user_gesture) {
   auto it = providers_.find(id.name_space);
 
   if (it == providers_.end())
     return;
 
-  RunIfReady(it->second, base::Bind(&OfflineContentProvider::ResumeDownload,
-                                    base::Unretained(it->second), id));
+  RunIfReady(it->second,
+             base::Bind(&OfflineContentProvider::ResumeDownload,
+                        base::Unretained(it->second), id, has_user_gesture));
 }
 
 const OfflineItem* OfflineContentAggregator::GetItemById(const ContentId& id) {
@@ -145,6 +147,20 @@ OfflineContentAggregator::GetAllItems() {
   return items;
 }
 
+void OfflineContentAggregator::GetVisualsForItem(
+    const ContentId& id,
+    const VisualsCallback& callback) {
+  auto it = providers_.find(id.name_space);
+
+  if (it == providers_.end()) {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(callback, id, nullptr));
+    return;
+  }
+
+  it->second->GetVisualsForItem(id, callback);
+}
+
 void OfflineContentAggregator::AddObserver(
     OfflineContentProvider::Observer* observer) {
   DCHECK(observer);
@@ -153,7 +169,7 @@ void OfflineContentAggregator::AddObserver(
 
   observers_.AddObserver(observer);
 
-  if (sent_on_items_available_) {
+  if (sent_on_items_available_ || providers_.empty()) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
         base::Bind(&OfflineContentAggregator::CheckAndNotifyItemsAvailable,
@@ -208,9 +224,6 @@ void OfflineContentAggregator::OnItemUpdated(const OfflineItem& item) {
 }
 
 void OfflineContentAggregator::CheckAndNotifyItemsAvailable() {
-  if (providers_.size() == 0)
-    return;
-
   // If we haven't sent out the initialization message yet, make sure all
   // underlying OfflineContentProviders are ready before notifying observers
   // that we're ready to send items.
@@ -224,7 +237,7 @@ void OfflineContentAggregator::CheckAndNotifyItemsAvailable() {
   // Notify all observers who haven't been told about the initialization that we
   // are initialized.  Track the observers so that we don't notify them again.
   for (auto& observer : observers_) {
-    if (!base::ContainsValue(signaled_observers_, &observer)) {
+    if (!base::ContainsKey(signaled_observers_, &observer)) {
       observer.OnItemsAvailable(this);
       signaled_observers_.insert(&observer);
     }

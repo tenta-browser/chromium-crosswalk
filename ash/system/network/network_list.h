@@ -13,35 +13,35 @@
 
 #include "ash/system/network/network_icon_animation_observer.h"
 #include "ash/system/network/network_info.h"
-#include "ash/system/network/network_list_view_base.h"
+#include "ash/system/network/network_state_list_detailed_view.h"
 #include "base/macros.h"
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/network/network_type_pattern.h"
-#include "ui/gfx/image/image_skia.h"
 
 namespace views {
-class Label;
 class Separator;
 class View;
 }
 
 namespace ash {
+class HoverHighlightView;
+class TrayInfoLabel;
+class TriView;
 
-struct NetworkInfo;
-class NetworkListDelegate;
+namespace tray {
 
 // A list of available networks of a given type. This class is used for all
 // network types except VPNs. For VPNs, see the |VPNList| class.
-class NetworkListView : public NetworkListViewBase,
+class NetworkListView : public NetworkStateListDetailedView,
                         public network_icon::AnimationObserver {
  public:
   class SectionHeaderRowView;
 
-  explicit NetworkListView(NetworkListDelegate* delegate);
+  NetworkListView(SystemTrayItem* owner, LoginStatus login);
   ~NetworkListView() override;
 
-  // NetworkListViewBase:
-  void Update() override;
+  // NetworkStateListDetailedView:
+  void UpdateNetworkList() override;
   bool IsNetworkEntry(views::View* view, std::string* guid) const override;
 
  private:
@@ -67,6 +67,25 @@ class NetworkListView : public NetworkListViewBase,
   // Returns a set of guids for the added network connections.
   std::unique_ptr<std::set<std::string>> UpdateNetworkListEntries();
 
+  bool ShouldMobileDataSectionBeShown();
+
+  // Creates the view which displays a warning message, if a VPN or proxy is
+  // being used.
+  TriView* CreateConnectionWarning();
+
+  // Updates |view| with the information in |info|.
+  void UpdateViewForNetwork(HoverHighlightView* view, const NetworkInfo& info);
+
+  // Creates the a battery icon next to the name of Tether networks indicating
+  // the battery percentage of the mobile device that is being used as a
+  // hotspot.
+  views::View* CreatePowerStatusView(const NetworkInfo& info);
+
+  // Creates the view of an extra icon appearing next to the network name
+  // indicating that the network is controlled by an extension. If no extension
+  // is registered for this network, returns |nullptr|.
+  views::View* CreateControlledByExtensionView(const NetworkInfo& info);
+
   // Adds or updates child views representing the network connections when
   // |is_wifi| is matching the attribute of a network connection starting at
   // |child_index|. Returns a set of guids for the added network
@@ -76,23 +95,24 @@ class NetworkListView : public NetworkListViewBase,
       int child_index);
   void UpdateNetworkChild(int index, const NetworkInfo* info);
 
-  // Reorders children of |container()| as necessary placing |view| at |index|.
+  // Reorders children of |scroll_content()| as necessary placing |view| at
+  // |index|.
   void PlaceViewAtIndex(views::View* view, int index);
 
-  // Creates a Label with text specified by |message_id| and adds it to
-  // |container()| if necessary or updates the text and reorders the
-  // |container()| placing the label at |insertion_index|. When |message_id| is
-  // zero removes the |*label_ptr| from the |container()| and destroys it.
-  // |label_ptr| is an in / out parameter and is only modified if the Label is
-  // created or destroyed.
+  // Creates an info label with text specified by |message_id| and adds it to
+  // |scroll_content()| if necessary or updates the text and reorders the
+  // |scroll_content()| placing the info label at |insertion_index|. When
+  // |message_id| is zero removes the |*info_label_ptr| from the
+  // |scroll_content()| and destroys it. |info_label_ptr| is an in/out parameter
+  // and is only modified if the info label is created or destroyed.
   void UpdateInfoLabel(int message_id,
                        int insertion_index,
-                       views::Label** label_ptr);
+                       TrayInfoLabel** info_label_ptr);
 
-  // Creates a cellular/Wi-Fi header row |view| and adds it to |container()| if
-  // necessary and reorders the |container()| placing the |view| at
-  // |child_index|. Returns the index where the next child should be inserted,
-  // i.e., the index directly after the last inserted child.
+  // Creates a cellular/tether/Wi-Fi header row |view| and adds it to
+  // |scroll_content()| if necessary and reorders the |scroll_content()| placing
+  // the |view| at |child_index|. Returns the index where the next child should
+  // be inserted, i.e., the index directly after the last inserted child.
   int UpdateSectionHeaderRow(chromeos::NetworkTypePattern pattern,
                              bool enabled,
                              int child_index,
@@ -107,16 +127,13 @@ class NetworkListView : public NetworkListViewBase,
   bool NeedUpdateViewForNetwork(const NetworkInfo& info) const;
 
   bool needs_relayout_;
-  NetworkListDelegate* delegate_;
 
-  views::Label* no_wifi_networks_view_;
-  views::Label* no_cellular_networks_view_;
-  SectionHeaderRowView* cellular_header_view_;
-  SectionHeaderRowView* tether_header_view_;
+  TrayInfoLabel* no_wifi_networks_view_;
+  SectionHeaderRowView* mobile_header_view_;
   SectionHeaderRowView* wifi_header_view_;
-  views::Separator* cellular_separator_view_;
-  views::Separator* tether_separator_view_;
+  views::Separator* mobile_separator_view_;
   views::Separator* wifi_separator_view_;
+  TriView* connection_warning_;
 
   // An owned list of network info.
   std::vector<std::unique_ptr<NetworkInfo>> network_list_;
@@ -125,7 +142,7 @@ class NetworkListView : public NetworkListViewBase,
   NetworkMap network_map_;
 
   // A map of network guids to their view.
-  using NetworkGuidMap = std::map<std::string, views::View*>;
+  using NetworkGuidMap = std::map<std::string, HoverHighlightView*>;
   NetworkGuidMap network_guid_map_;
 
   // Save a map of network guids to their infos against current |network_list_|.
@@ -135,6 +152,7 @@ class NetworkListView : public NetworkListViewBase,
   DISALLOW_COPY_AND_ASSIGN(NetworkListView);
 };
 
+}  // namespace tray
 }  // namespace ash
 
 #endif  // ASH_SYSTEM_NETWORK_NETWORK_LIST_H_

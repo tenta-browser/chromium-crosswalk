@@ -5,13 +5,15 @@
 #ifndef EventUtil_h
 #define EventUtil_h
 
-#include "core/EventTypeNames.h"
+#include "core/event_type_names.h"
 
 namespace blink {
 
 namespace EventUtil {
 
 bool IsPointerEventType(const AtomicString& event_type);
+
+bool IsDOMMutationEventType(const AtomicString& event_type);
 
 }  // namespace eventUtil
 

@@ -34,9 +34,8 @@ class MediaPermission;
 
 class MEDIA_BLINK_EXPORT KeySystemConfigSelector {
  public:
-  KeySystemConfigSelector(
-      const KeySystems* key_systems,
-      MediaPermission* media_permission);
+  KeySystemConfigSelector(const KeySystems* key_systems,
+                          MediaPermission* media_permission);
 
   ~KeySystemConfigSelector();
 
@@ -45,10 +44,9 @@ class MEDIA_BLINK_EXPORT KeySystemConfigSelector {
       const blink::WebVector<blink::WebMediaKeySystemConfiguration>&
           candidate_configurations,
       const blink::WebSecurityOrigin& security_origin,
-      bool are_secure_codecs_supported,
       base::Callback<void(const blink::WebMediaKeySystemConfiguration&,
                           const CdmConfig&)> succeeded_cb,
-      base::Callback<void(const blink::WebString&)> not_supported_cb);
+      base::Closure not_supported_cb);
 
  private:
   struct SelectionRequest;

@@ -51,8 +51,8 @@ std::string BuildPolicy(const base::DictionaryValue& mandatory,
   root_dict.SetWithoutPathExpansion(policyType, std::move(policy_type_dict));
   root_dict.SetWithoutPathExpansion("managed_users",
                                     std::move(managed_users_list));
-  root_dict.SetStringWithoutPathExpansion("policy_user", account_id);
-  root_dict.SetIntegerWithoutPathExpansion("current_key_index", 0);
+  root_dict.SetKey("policy_user", base::Value(account_id));
+  root_dict.SetKey("current_key_index", base::Value(0));
 
   std::string json_policy;
   base::JSONWriter::WriteWithOptions(
@@ -102,7 +102,8 @@ void UserPolicyTestHelper::WaitForInitialPolicy(Profile* profile) {
   policy_manager->core()->client()->Register(
       registration_type,
       enterprise_management::DeviceRegisterRequest::FLAVOR_USER_REGISTRATION,
-      "bogus", std::string(), std::string(), std::string());
+      enterprise_management::LicenseType::UNDEFINED, "bogus", std::string(),
+      std::string(), std::string());
 
   policy::ProfilePolicyConnector* const profile_connector =
       policy::ProfilePolicyConnectorFactory::GetForBrowserContext(profile);

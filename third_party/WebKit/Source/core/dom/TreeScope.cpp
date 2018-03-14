@@ -26,31 +26,31 @@
 
 #include "core/dom/TreeScope.h"
 
-#include "core/HTMLNames.h"
+#include "core/css/StyleChangeReason.h"
 #include "core/css/resolver/ScopedStyleResolver.h"
 #include "core/dom/ContainerNode.h"
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
+#include "core/dom/ElementShadow.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/dom/IdTargetObserverRegistry.h"
 #include "core/dom/NodeComputedStyle.h"
-#include "core/dom/StyleChangeReason.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/dom/TreeScopeAdopter.h"
-#include "core/dom/shadow/ElementShadow.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/events/EventPath.h"
 #include "core/editing/DOMSelection.h"
-#include "core/events/EventPath.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/HTMLAnchorElement.h"
 #include "core/html/HTMLFrameOwnerElement.h"
 #include "core/html/HTMLMapElement.h"
+#include "core/html_names.h"
 #include "core/layout/HitTestResult.h"
 #include "core/layout/api/LayoutViewItem.h"
 #include "core/page/FocusController.h"
 #include "core/page/Page.h"
 #include "core/svg/SVGTreeScopeResources.h"
-#include "platform/ScriptForbiddenScope.h"
+#include "platform/bindings/ScriptForbiddenScope.h"
 #include "platform/wtf/Vector.h"
 
 namespace blink {
@@ -118,12 +118,12 @@ void TreeScope::ClearScopedStyleResolver() {
   scoped_style_resolver_.Clear();
 }
 
-Element* TreeScope::GetElementById(const AtomicString& element_id) const {
+Element* TreeScope::getElementById(const AtomicString& element_id) const {
   if (element_id.IsEmpty())
     return nullptr;
   if (!elements_by_id_)
     return nullptr;
-  return elements_by_id_->GetElementById(element_id, this);
+  return elements_by_id_->GetElementById(element_id, *this);
 }
 
 const HeapVector<Member<Element>>& TreeScope::GetAllElementsById(
@@ -134,13 +134,13 @@ const HeapVector<Member<Element>>& TreeScope::GetAllElementsById(
     return empty_vector;
   if (!elements_by_id_)
     return empty_vector;
-  return elements_by_id_->GetAllElementsById(element_id, this);
+  return elements_by_id_->GetAllElementsById(element_id, *this);
 }
 
 void TreeScope::AddElementById(const AtomicString& element_id,
                                Element* element) {
   if (!elements_by_id_)
-    elements_by_id_ = DocumentOrderedMap::Create();
+    elements_by_id_ = TreeOrderedMap::Create();
   elements_by_id_->Add(element_id, element);
   id_target_observer_registry_->NotifyObservers(element_id);
 }
@@ -171,7 +171,7 @@ void TreeScope::AddImageMap(HTMLMapElement* image_map) {
   if (!name)
     return;
   if (!image_maps_by_name_)
-    image_maps_by_name_ = DocumentOrderedMap::Create();
+    image_maps_by_name_ = TreeOrderedMap::Create();
   image_maps_by_name_->Add(name, image_map);
 }
 
@@ -189,56 +189,65 @@ HTMLMapElement* TreeScope::GetImageMap(const String& url) const {
     return nullptr;
   if (!image_maps_by_name_)
     return nullptr;
-  size_t hash_pos = url.Find('#');
+  size_t hash_pos = url.find('#');
   String name = hash_pos == kNotFound ? url : url.Substring(hash_pos + 1);
-  return toHTMLMapElement(
-      image_maps_by_name_->GetElementByMapName(AtomicString(name), this));
+  return ToHTMLMapElement(
+      image_maps_by_name_->GetElementByMapName(AtomicString(name), *this));
 }
 
-static bool PointWithScrollAndZoomIfPossible(const Document& document,
-                                             IntPoint& point) {
+// If the point is not in the viewport, returns false. Otherwise, adjusts the
+// point to account for the frame's zoom and scroll.
+static bool PointInFrameContentIfVisible(Document& document,
+                                         DoublePoint& point_in_frame) {
   LocalFrame* frame = document.GetFrame();
   if (!frame)
     return false;
-  FrameView* frame_view = frame->View();
+  LocalFrameView* frame_view = frame->View();
   if (!frame_view)
     return false;
 
-  FloatPoint point_in_document(point);
-  point_in_document.Scale(frame->PageZoomFactor(), frame->PageZoomFactor());
-  point_in_document.Move(frame_view->GetScrollOffset());
-  IntPoint rounded_point_in_document = RoundedIntPoint(point_in_document);
+  // The VisibleContentRect check below requires that scrollbars are up-to-date.
+  document.UpdateStyleAndLayoutIgnorePendingStylesheets();
 
-  if (!frame_view->VisibleContentRect().Contains(rounded_point_in_document))
+  auto* scrollable_area = frame_view->LayoutViewportScrollableArea();
+  IntRect visible_frame_rect(IntPoint(),
+                             scrollable_area->VisibleContentRect().Size());
+  visible_frame_rect.Scale(1 / frame->PageZoomFactor());
+  if (!visible_frame_rect.Contains(RoundedIntPoint(point_in_frame)))
     return false;
 
-  point = rounded_point_in_document;
+  point_in_frame.Scale(frame->PageZoomFactor(), frame->PageZoomFactor());
+  // For non RLS case, the point needs to be adjusted by the frame's scroll
+  // offset.
+  if (!RuntimeEnabledFeatures::RootLayerScrollingEnabled())
+    point_in_frame.Move(scrollable_area->GetScrollOffset());
+
   return true;
 }
 
-HitTestResult HitTestInDocument(const Document* document,
-                                int x,
-                                int y,
+HitTestResult HitTestInDocument(Document* document,
+                                double x,
+                                double y,
                                 const HitTestRequest& request) {
-  IntPoint hit_point(x, y);
-  if (!PointWithScrollAndZoomIfPossible(*document, hit_point))
-    return HitTestResult();
-
   if (!document->IsActive())
     return HitTestResult();
 
-  HitTestResult result(request, hit_point);
+  DoublePoint hit_point(x, y);
+  if (!PointInFrameContentIfVisible(*document, hit_point))
+    return HitTestResult();
+
+  HitTestResult result(request, LayoutPoint(hit_point));
   document->GetLayoutViewItem().HitTest(result);
   return result;
 }
 
-Element* TreeScope::ElementFromPoint(int x, int y) const {
+Element* TreeScope::ElementFromPoint(double x, double y) const {
   return HitTestPoint(x, y,
                       HitTestRequest::kReadOnly | HitTestRequest::kActive);
 }
 
-Element* TreeScope::HitTestPoint(int x,
-                                 int y,
+Element* TreeScope::HitTestPoint(double x,
+                                 double y,
                                  const HitTestRequest& request) const {
   HitTestResult result =
       HitTestInDocument(&RootNode().GetDocument(), x, y, request);
@@ -289,16 +298,17 @@ HeapVector<Member<Element>> TreeScope::ElementsFromHitTestResult(
   return elements;
 }
 
-HeapVector<Member<Element>> TreeScope::ElementsFromPoint(int x, int y) const {
+HeapVector<Member<Element>> TreeScope::ElementsFromPoint(double x,
+                                                         double y) const {
   Document& document = RootNode().GetDocument();
-  IntPoint hit_point(x, y);
-  if (!PointWithScrollAndZoomIfPossible(document, hit_point))
+  DoublePoint hit_point(x, y);
+  if (!PointInFrameContentIfVisible(document, hit_point))
     return HeapVector<Member<Element>>();
 
   HitTestRequest request(HitTestRequest::kReadOnly | HitTestRequest::kActive |
                          HitTestRequest::kListBased |
                          HitTestRequest::kPenetratingList);
-  HitTestResult result(request, hit_point);
+  HitTestResult result(request, LayoutPoint(hit_point));
   document.GetLayoutViewItem().HitTest(result);
 
   return ElementsFromHitTestResult(result);
@@ -327,7 +337,7 @@ DOMSelection* TreeScope::GetSelection() const {
 Element* TreeScope::FindAnchor(const String& name) {
   if (name.IsEmpty())
     return nullptr;
-  if (Element* element = GetElementById(AtomicString(name)))
+  if (Element* element = getElementById(AtomicString(name)))
     return element;
   for (HTMLAnchorElement& anchor :
        Traversal<HTMLAnchorElement>::StartsAfter(RootNode())) {
@@ -453,11 +463,10 @@ unsigned short TreeScope::ComparePosition(const TreeScope& other_scope) const {
 
   // There was no difference between the two parent chains, i.e., one was a
   // subset of the other. The shorter chain is the ancestor.
-  return index1 < index2
-             ? Node::kDocumentPositionFollowing |
-                   Node::kDocumentPositionContainedBy
-             : Node::kDocumentPositionPreceding |
-                   Node::kDocumentPositionContains;
+  return index1 < index2 ? Node::kDocumentPositionFollowing |
+                               Node::kDocumentPositionContainedBy
+                         : Node::kDocumentPositionPreceding |
+                               Node::kDocumentPositionContains;
 }
 
 const TreeScope* TreeScope::CommonAncestorTreeScope(
@@ -529,7 +538,7 @@ void TreeScope::SetNeedsStyleRecalcForViewportUnits() {
   }
 }
 
-DEFINE_TRACE(TreeScope) {
+void TreeScope::Trace(blink::Visitor* visitor) {
   visitor->Trace(root_node_);
   visitor->Trace(document_);
   visitor->Trace(parent_tree_scope_);

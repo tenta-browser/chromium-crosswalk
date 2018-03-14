@@ -15,6 +15,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/url_constants.h"
+#include "mojo/public/js/grit/mojo_bindings_resources.h"
 #include "ui/base/layout.h"
 #include "ui/base/webui/web_ui_util.h"
 #include "ui/resources/grit/webui_resources.h"
@@ -37,7 +38,16 @@ const char* const kPathAliases[][2] = {
      "polymer/v1_0/web-animations-js/"},
     {"../../views/resources/default_100_percent/common/", "images/apps/"},
     {"../../views/resources/default_200_percent/common/", "images/2x/apps/"},
-    {"../../webui/resources/cr_elements/", "cr_elements/"}};
+    {"../../webui/resources/cr_components/", "cr_components/"},
+    {"../../webui/resources/cr_elements/", "cr_elements/"},
+};
+
+const struct {
+  const char* const path;
+  const int resource_id;
+} kAdditionalResourceMapEntries[] = {
+    {"js/mojo_bindings.js", IDR_MOJO_BINDINGS_JS},
+};
 
 void AddResource(const std::string& path,
                  int resource_id,
@@ -60,7 +70,10 @@ const ResourcesMap* CreateResourcesMap() {
       }
     }
   }
-
+  for (size_t i = 0; i < arraysize(kAdditionalResourceMapEntries); ++i) {
+    const auto& entry = kAdditionalResourceMapEntries[i];
+    AddResource(entry.path, entry.resource_id, result);
+  }
   return result;
 }
 
@@ -184,6 +197,10 @@ SharedResourcesDataSource::GetAccessControlAllowOriginForOrigin(
     return "null";
   }
   return origin;
+}
+
+bool SharedResourcesDataSource::IsGzipped(const std::string& path) const {
+  return webui::IsSharedResourceGzipped(path);
 }
 
 }  // namespace content

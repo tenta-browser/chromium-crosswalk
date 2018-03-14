@@ -10,13 +10,21 @@
 goog.provide('cvox.ApiImplementation');
 
 goog.require('cvox.ChromeVox');
+goog.require('cvox.ExtensionBridge');
 goog.require('cvox.ScriptInstaller');
 
 /**
  * @constructor
  */
-cvox.ApiImplementation = function() {
-};
+cvox.ApiImplementation = function() {};
+
+/**
+ * The message between content script and the page that indicates the
+ * connection to the background page has been lost.
+ * @type {string}
+ * @const
+ */
+cvox.ApiImplementation.DISCONNECT_MSG = 'cvox.Disconnect';
 
 /**
  * Inject the API into the page and set up communication with it.
@@ -26,12 +34,17 @@ cvox.ApiImplementation.init = function(opt_onload) {
   window.addEventListener('message', cvox.ApiImplementation.portSetup, true);
   var scripts = [window.chrome.extension.getURL('chromevox/injected/api.js')];
 
-  var didInstall = cvox.ScriptInstaller.installScript(scripts,
-      'cvoxapi', opt_onload);
+  var didInstall =
+      cvox.ScriptInstaller.installScript(scripts, 'cvoxapi', opt_onload);
   if (!didInstall) {
     // If the API script is already installed, just re-enable it.
     window.location.href = 'javascript:cvox.Api.internalEnable();';
   }
+
+  cvox.ExtensionBridge.addDisconnectListener(function() {
+    cvox.ApiImplementation.port.postMessage(
+        cvox.ApiImplementation.DISCONNECT_MSG);
+  });
 };
 
 /**
@@ -44,8 +57,7 @@ cvox.ApiImplementation.portSetup = function(event) {
   if (event.data == 'cvox.PortSetup') {
     cvox.ApiImplementation.port = event.ports[0];
     cvox.ApiImplementation.port.onmessage = function(event) {
-      cvox.ApiImplementation.dispatchApiMessage(
-          JSON.parse(event.data));
+      cvox.ApiImplementation.dispatchApiMessage(JSON.parse(event.data));
     };
 
     // Stop propagation since it was our message.
@@ -62,8 +74,10 @@ cvox.ApiImplementation.portSetup = function(event) {
 cvox.ApiImplementation.dispatchApiMessage = function(message) {
   var method;
   switch (message['cmd']) {
-    case 'speak': method = cvox.ApiImplementation.speak; break;
-    break;
+    case 'speak':
+      method = cvox.ApiImplementation.speak;
+      break;
+      break;
   }
   if (!method) {
     throw 'Unknown API call: ' + message['cmd'];
@@ -80,10 +94,7 @@ cvox.ApiImplementation.dispatchApiMessage = function(message) {
  */
 function setupEndCallback_(properties, callbackId) {
   var endCallback = function() {
-    cvox.ApiImplementation.port.postMessage(JSON.stringify(
-        {
-          'id': callbackId
-        }));
+    cvox.ApiImplementation.port.postMessage(JSON.stringify({'id': callbackId}));
   };
   if (properties) {
     properties['endCallback'] = endCallback;
@@ -104,11 +115,13 @@ cvox.ApiImplementation.speak = function(
     properties = {};
   }
   setupEndCallback_(properties, callbackId);
-  var message = {'target': 'TTS',
-                 'action': 'speak',
-                 'text': textString,
-                 'queueMode': queueMode,
-                 'properties': properties};
+  var message = {
+    'target': 'TTS',
+    'action': 'speak',
+    'text': textString,
+    'queueMode': queueMode,
+    'properties': properties
+  };
 
   cvox.ExtensionBridge.send(message);
 };

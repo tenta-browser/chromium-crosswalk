@@ -66,13 +66,7 @@ class BluetoothGetServiceTest : public BluetoothTest {
     TestBluetoothAdapterObserver observer(adapter_);
     SimulateGattConnection(device_);
     base::RunLoop().RunUntilIdle();
-#if defined(OS_WIN)
-    // TODO(crbug.com/507419): Check connection once CreateGattConnection is
-    // implemented on Windows.
-    EXPECT_FALSE(device_->IsConnected());
-#else
-    EXPECT_TRUE(device_->IsConnected());
-#endif  // defined(OS_WIN)
+    EXPECT_TRUE(device_->IsGattConnected());
 
     // Discover services.
     std::vector<std::string> service_uuids;
@@ -82,13 +76,7 @@ class BluetoothGetServiceTest : public BluetoothTest {
     service_uuids.push_back(duplicate_service_uuid_.canonical_value());
     SimulateGattServicesDiscovered(device_, service_uuids);
     base::RunLoop().RunUntilIdle();
-#if defined(OS_WIN)
-    // TODO(crbug.com/507419): Check connection once CreateGattConnection is
-    // implemented on Windows.
-    EXPECT_FALSE(device_->IsGattServicesDiscoveryComplete());
-#else
     EXPECT_TRUE(device_->IsGattServicesDiscoveryComplete());
-#endif  // defined(OS_WIN)
   }
 
  protected:
@@ -483,11 +471,11 @@ TEST_F(BluetoothTest, GetUUIDs_Connection) {
 
 #if defined(OS_MACOSX)
 // Tests that receiving 2 notifications in a row from macOS that services has
-// changed is handled correctly. Each notification should generate a notfication
-// that the gatt device has changed, and each notification should ask to macOS
-// to scan for services. Only after the second service scan is received, the
-// device changed notification should be sent and the characteristic discovery
-// procedure should be started.
+// changed is handled correctly. Each notification should generate a
+// notification that the gatt device has changed, and each notification should
+// ask to macOS to scan for services. Only after the second service scan is
+// received, the device changed notification should be sent and the
+// characteristic discovery procedure should be started.
 // Android: This test doesn't apply to Android because there is no services
 // changed event that could arrive during a discovery procedure.
 TEST_F(BluetoothTest, TwoPendingServiceDiscoveryRequests) {
@@ -511,16 +499,21 @@ TEST_F(BluetoothTest, TwoPendingServiceDiscoveryRequests) {
   EXPECT_EQ(1, observer.device_changed_count());
   EXPECT_FALSE(device->IsGattServicesDiscoveryComplete());
 
-  // Fist system call to
-  // -[id<CBPeripheralDelegate> peripheral:didDiscoverServices:]
+  // First system call to
+  // -[id<CBPeripheralDelegate> peripheral:didDiscoverServices:] using
+  // SimulateDidDiscoverServicesMac().
   observer.Reset();
-  SimulateDidDiscoverServices(device, {kTestUUIDHeartRate});
+  AddServicesToDeviceMac(device, {kTestUUIDHeartRate});
+  SimulateDidDiscoverServicesMac(device);
   EXPECT_EQ(0, observer.device_changed_count());
   EXPECT_FALSE(device->IsGattServicesDiscoveryComplete());
   EXPECT_EQ(gatt_characteristic_discovery_attempts_, 0);
 
   // Second system call to
-  // -[id<CBPeripheralDelegate> peripheral:didDiscoverServices:]
+  // -[id<CBPeripheralDelegate> peripheral:didDiscoverServices:] using the
+  // generic call to SimulateGattServicesDiscovered(). This method triggers
+  // the full discovery cycles (services, characteristics and descriptors),
+  // which includes -[id<CBPeripheralDelegate> peripheral:didDiscoverServices:].
   SimulateGattServicesDiscovered(
       device, std::vector<std::string>({kTestUUIDImmediateAlert}));
   EXPECT_EQ(1, observer.device_changed_count());
@@ -551,7 +544,7 @@ TEST_F(BluetoothTest, ExtraDidDiscoverServicesCall) {
   EXPECT_FALSE(device->IsGattServicesDiscoveryComplete());
 
   // Legitimate system call to
-  // -[id<CBPeripheralDelegate> peripheral:didDiscoverServices:]
+  // -[id<CBPeripheralDelegate> peripheral:didDiscoverServices:].
   observer.Reset();
   SimulateGattServicesDiscovered(
       device, std::vector<std::string>({kTestUUIDHeartRate}));
@@ -561,8 +554,15 @@ TEST_F(BluetoothTest, ExtraDidDiscoverServicesCall) {
   EXPECT_EQ(1u, device->GetGattServices().size());
 
   // Unexpected system call to
-  // -[id<CBPeripheralDelegate> peripheral:didDiscoverServices:]
-  SimulateDidDiscoverServices(device, {kTestUUIDImmediateAlert});
+  // -[id<CBPeripheralDelegate> peripheral:didDiscoverServices:]:
+  // This system call is expected only once after -[CBCentralManager
+  // discoverServices:]. The call to -[CBCentralManager discoverServices:] and
+  // its answer with -[id<CBPeripheralDelegate> peripheral:didDiscoverServices:]
+  // is done with SimulateGattServicesDiscovered(). So a second system call to
+  // -[id<CBPeripheralDelegate> peripheral:didDiscoverServices:] is not expected
+  // and should be ignored.
+  AddServicesToDeviceMac(device, {kTestUUIDImmediateAlert});
+  SimulateDidDiscoverServicesMac(device);
   EXPECT_EQ(1, observer.device_changed_count());
   EXPECT_TRUE(device->IsGattServicesDiscoveryComplete());
 
@@ -1015,6 +1015,7 @@ TEST_F(BluetoothTest,
     return;
   }
   InitWithFakeAdapter();
+  TestBluetoothAdapterObserver observer(adapter_);
   StartLowEnergyDiscoverySession();
   BluetoothDevice* device = SimulateLowEnergyDevice(3);
 
@@ -1027,6 +1028,16 @@ TEST_F(BluetoothTest,
   SimulateGattConnection(device);
   base::RunLoop().RunUntilIdle();
 
+#if defined(OS_ANDROID)
+  // Android incorrectly starts second discovery for devices that are already
+  // connected.
+  // TODO(crbug.com/718168): Remove once Android is fixed.
+  EXPECT_EQ(2, gatt_discovery_attempts_);
+  EXPECT_EQ(2, observer.device_changed_count());
+#else   // !defined(OS_ANDROID)
+  EXPECT_EQ(1, gatt_discovery_attempts_);
+  EXPECT_EQ(1, observer.device_changed_count());
+#endif  // defined(OS_ANDROID)
   EXPECT_EQ(1, gatt_connection_attempts_);
   EXPECT_EQ(1, callback_count_);
   EXPECT_EQ(0, error_callback_count_);
@@ -1365,11 +1376,39 @@ TEST_F(BluetoothTest, GattServices_ObserversCalls) {
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(1, observer.gatt_services_discovered_count());
-  EXPECT_EQ(2, observer.gatt_service_added_count());
 }
 #endif  // defined(OS_ANDROID) || defined(OS_WIN) || defined(OS_MACOSX)
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_WIN) || defined(OS_MACOSX)
+TEST_F(BluetoothTest, GattServicesDiscovered_Success) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
+  InitWithFakeAdapter();
+  StartLowEnergyDiscoverySession();
+  TestBluetoothAdapterObserver observer(adapter_);
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
+  device->CreateGattConnection(GetGattConnectionCallback(Call::EXPECTED),
+                               GetConnectErrorCallback(Call::NOT_EXPECTED));
+  ResetEventCounts();
+  SimulateGattConnection(device);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(1, gatt_discovery_attempts_);
+  EXPECT_EQ(0, observer.gatt_services_discovered_count());
+
+  SimulateGattServicesDiscovered(
+      device,
+      std::vector<std::string>({kTestUUIDGenericAccess, kTestUUIDHeartRate}));
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_TRUE(device->IsGattServicesDiscoveryComplete());
+  EXPECT_EQ(1, observer.gatt_services_discovered_count());
+  EXPECT_EQ(2u, device->GetGattServices().size());
+}
+#endif  // defined(OS_ANDROID) || defined(OS_WIN) || defined(OS_MACOSX)
+
+#if defined(OS_ANDROID) || defined(OS_WIN)
 // macOS: Not applicable: This can never happen because when
 // the device gets destroyed the CBPeripheralDelegate is also destroyed
 // and no more events are dispatched.
@@ -1398,9 +1437,9 @@ TEST_F(BluetoothTest, GattServicesDiscovered_AfterDeleted) {
       std::vector<std::string>({kTestUUIDGenericAccess, kTestUUIDHeartRate}));
   base::RunLoop().RunUntilIdle();
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_WIN)
 
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || defined(OS_WIN)
 // macOS: Not applicable: This can never happen because when
 // the device gets destroyed the CBPeripheralDelegate is also destroyed
 // and no more events are dispatched.
@@ -1427,11 +1466,12 @@ TEST_F(BluetoothTest, GattServicesDiscoveredError_AfterDeleted) {
   SimulateGattServicesDiscoveryError(nullptr /* use remembered device */);
   base::RunLoop().RunUntilIdle();
 }
-#endif  // defined(OS_ANDROID)
+#endif  // defined(OS_ANDROID) || defined(OS_WIN)
 
 #if defined(OS_ANDROID) || defined(OS_MACOSX)
+// Windows does not support disconnection.
 TEST_F(BluetoothTest, GattServicesDiscovered_AfterDisconnection) {
-  // Tests that we don't crash there was an error discovering services after
+  // Tests that we don't crash if there was an error discovering services after
   // the device disconnects.
   if (!PlatformSupportsLowEnergy()) {
     LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
@@ -1461,6 +1501,7 @@ TEST_F(BluetoothTest, GattServicesDiscovered_AfterDisconnection) {
 #endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
 
 #if defined(OS_ANDROID) || defined(OS_MACOSX)
+// Windows does not support disconnecting.
 TEST_F(BluetoothTest, GattServicesDiscoveredError_AfterDisconnection) {
   // Tests that we don't crash if services are discovered after
   // the device disconnects.
@@ -1486,7 +1527,7 @@ TEST_F(BluetoothTest, GattServicesDiscoveredError_AfterDisconnection) {
   EXPECT_FALSE(device->IsGattServicesDiscoveryComplete());
   EXPECT_EQ(0u, device->GetGattServices().size());
 }
-#endif  // defined(OS_ANDROID) || defined(OS_MACOSX)
+#endif  // defined(OS_ANDROID) || defined(OS_WIN) || defined(OS_MACOSX)
 
 #if defined(OS_ANDROID) || defined(OS_WIN) || defined(OS_MACOSX)
 TEST_F(BluetoothTest, GetGattServices_and_GetGattService) {

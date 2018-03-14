@@ -2,6 +2,8 @@
 
 .. TODO: After default toolchain is changed to pnacl, recreate the make examples.
 
+.. include:: /migration/deprecation.inc
+
 Examples
 ========
 
@@ -136,7 +138,7 @@ Disable the Chrome cache
 Chrome's intelligent caching caches resources aggressively. When building a
 Native Client application you should disable the cache to make sure that Chrome
 loads the latest version. Intelligent caching only remains inactive while
-Developer Tools are open. Otherwise, agressive caching continues.
+Developer Tools are open. Otherwise, aggressive caching continues.
 
 #. Open Chrome's developer tools by clicking the menu icon |menu-icon| and
    choosing Tools > Developer tools.

@@ -50,7 +50,7 @@ void FakeGCMDriver::Disable() {
 }
 
 GCMClient* FakeGCMDriver::GetGCMClientForTesting() const {
-  return NULL;
+  return nullptr;
 }
 
 bool FakeGCMDriver::IsStarted() const {
@@ -86,10 +86,8 @@ void FakeGCMDriver::SendImpl(const std::string& app_id,
                              const OutgoingMessage& message) {
 }
 
-void FakeGCMDriver::RecordDecryptionFailure(
-    const std::string& app_id,
-    GCMEncryptionProvider::DecryptionResult result) {
-}
+void FakeGCMDriver::RecordDecryptionFailure(const std::string& app_id,
+                                            GCMDecryptionResult result) {}
 
 void FakeGCMDriver::SetAccountTokens(
     const std::vector<GCMClient::AccountTokenInfo>& account_tokens) {
@@ -113,7 +111,7 @@ void FakeGCMDriver::WakeFromSuspendForHeartbeat(bool wake) {
 }
 
 InstanceIDHandler* FakeGCMDriver::GetInstanceIDHandlerInternal() {
-  return NULL;
+  return nullptr;
 }
 
 void FakeGCMDriver::AddHeartbeatInterval(const std::string& scope,

@@ -8,8 +8,6 @@
 #include "net/http2/hpack/hpack_string.h"
 #include "net/http2/http2_constants.h"
 
-using base::StringPiece;
-
 namespace net {
 namespace {
 
@@ -36,11 +34,6 @@ HpackDecoderState::HpackDecoderState(HpackDecoderListener* listener)
   CHECK(listener);
 }
 HpackDecoderState::~HpackDecoderState() {}
-
-void HpackDecoderState::set_listener(HpackDecoderListener* listener) {
-  CHECK(listener);
-  listener_ = listener;
-}
 
 void HpackDecoderState::set_tables_debug_listener(
     HpackDecoderTablesDebugListener* debug_listener) {
@@ -192,7 +185,7 @@ void HpackDecoderState::OnDynamicTableSizeUpdate(size_t size_limit) {
   lowest_header_table_size_ = final_header_table_size_;
 }
 
-void HpackDecoderState::OnHpackDecodeError(StringPiece error_message) {
+void HpackDecoderState::OnHpackDecodeError(Http2StringPiece error_message) {
   DVLOG(2) << "HpackDecoderState::OnHpackDecodeError " << error_message;
   if (!error_detected_) {
     ReportError(error_message);
@@ -213,7 +206,7 @@ void HpackDecoderState::OnHeaderBlockEnd() {
   }
 }
 
-void HpackDecoderState::ReportError(StringPiece error_message) {
+void HpackDecoderState::ReportError(Http2StringPiece error_message) {
   DVLOG(2) << "HpackDecoderState::ReportError is new="
            << (!error_detected_ ? "true" : "false")
            << ", error_message: " << error_message;

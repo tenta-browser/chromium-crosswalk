@@ -17,11 +17,16 @@
 #include "content/public/common/frame_navigate_params.h"
 #include "content/public/common/resource_type.h"
 #include "ipc/ipc_listener.h"
-#include "ipc/ipc_sender.h"
+#include "mojo/public/cpp/system/message_pipe.h"
+#include "services/service_manager/public/cpp/bind_source_info.h"
 #include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
+
+namespace gfx {
+class Size;
+}  // namespace gfx
 
 namespace content {
 
@@ -34,10 +39,11 @@ class WebContents;
 class WebContentsImpl;
 struct AXEventNotificationDetails;
 struct AXLocationChangeNotificationDetails;
+struct EntryChangedDetails;
 struct FaviconURL;
 struct LoadCommittedDetails;
+struct PrunedDetails;
 struct Referrer;
-struct ResourceRedirectDetails;
 struct ResourceRequestDetails;
 
 // An observer API implemented by classes which are interested in various page
@@ -53,8 +59,7 @@ struct ResourceRequestDetails;
 //
 // TODO(creis, jochen): Hide the fact that there are several RenderViewHosts
 // from the WebContentsObserver API. http://crbug.com/173325
-class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
-                                           public IPC::Sender {
+class CONTENT_EXPORT WebContentsObserver : public IPC::Listener {
  public:
   // Frames and Views ----------------------------------------------------------
 
@@ -236,8 +241,7 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   virtual void DidFailLoad(RenderFrameHost* render_frame_host,
                            const GURL& validated_url,
                            int error_code,
-                           const base::string16& error_description,
-                           bool was_ignored_by_handler) {}
+                           const base::string16& error_description) {}
 
   // This method is invoked when the visible security state of the page changes.
   virtual void DidChangeVisibleSecurityState() {}
@@ -253,17 +257,32 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   virtual void DidGetResourceResponseStart(
       const ResourceRequestDetails& details) {}
 
-  // This method is invoked when a redirect has been received for a resource
-  // request.
-  virtual void DidGetRedirectForResourceRequest(
-      const ResourceRedirectDetails& details) {}
-
   // This method is invoked when a new non-pending navigation entry is created.
   // This corresponds to one NavigationController entry being created
   // (in the case of new navigations) or renavigated to (for back/forward
   // navigations).
   virtual void NavigationEntryCommitted(
       const LoadCommittedDetails& load_details) {}
+
+  // Invoked when the NavigationController decreased its back/forward list count
+  // by removing entries from either the front or back of its list. This is
+  // usually the result of going back and then doing a new navigation, meaning
+  // all the "forward" items are deleted.
+  //
+  // This normally happens as a result of a new navigation. It will be
+  // followed by a NavigationEntryCommitted() call for the new page that
+  // caused the pruning. It could also be a result of removing an item from
+  // the list to fix up after interstitials.
+  virtual void NavigationListPruned(const PrunedDetails& pruned_details) {}
+
+  // Invoked when a NavigationEntry has changed.
+  //
+  // This will NOT be sent on navigation, interested parties should also
+  // implement NavigationEntryCommitted() to handle that case. This will be
+  // sent when the entry is updated outside of navigation (like when a new
+  // title comes).
+  virtual void NavigationEntryChanged(
+      const EntryChangedDetails& change_details) {}
 
   // This method is invoked when a new WebContents was created in response to
   // an action in the observed WebContents, e.g. a link with target=_blank was
@@ -312,10 +331,10 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   virtual void FrameNameChanged(RenderFrameHost* render_frame_host,
                                 const std::string& name) {}
 
-  // This methods is invoked when the title of the WebContents is set. If the
-  // title was explicitly set, |explicit_set| is true, otherwise the title was
-  // synthesized and |explicit_set| is false.
-  virtual void TitleWasSet(NavigationEntry* entry, bool explicit_set) {}
+  // This method is invoked when the title of the WebContents is set. Note that
+  // |entry| may be null if the web page whose title changed has not yet had a
+  // NavigationEntry assigned to it.
+  virtual void TitleWasSet(NavigationEntry* entry) {}
 
   virtual void AppCacheAccessed(const GURL& manifest_url,
                                 bool blocked_by_policy) {}
@@ -389,7 +408,7 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
 
   // Called when accessibility events or location changes are received
   // from a render frame, but only when the accessibility mode has the
-  // AccessibilityMode::kWebContents flag set.
+  // ui::AXMode::kWebContents flag set.
   virtual void AccessibilityEventReceived(
       const std::vector<AXEventNotificationDetails>& details) {}
   virtual void AccessibilityLocationChangesReceived(
@@ -404,14 +423,32 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   // be followed by MediaStoppedPlaying() after player teardown.  Observers must
   // release all stored copies of |id| when MediaStoppedPlaying() is received.
   struct MediaPlayerInfo {
-    explicit MediaPlayerInfo(bool in_has_video) : has_video(in_has_video) {}
+    MediaPlayerInfo(bool has_video, bool has_audio)
+        : has_video(has_video), has_audio(has_audio) {}
     bool has_video;
+    bool has_audio;
   };
   using MediaPlayerId = std::pair<RenderFrameHost*, int>;
   virtual void MediaStartedPlaying(const MediaPlayerInfo& video_type,
                                    const MediaPlayerId& id) {}
-  virtual void MediaStoppedPlaying(const MediaPlayerInfo& video_type,
-                                   const MediaPlayerId& id) {}
+  enum class MediaStoppedReason {
+    // The media was stopped for an unspecified reason.
+    kUnspecified,
+
+    // The media was stopped because it reached the end of the stream.
+    kReachedEndOfStream,
+  };
+  virtual void MediaStoppedPlaying(
+      const MediaPlayerInfo& video_type,
+      const MediaPlayerId& id,
+      WebContentsObserver::MediaStoppedReason reason) {}
+  virtual void MediaResized(const gfx::Size& size, const MediaPlayerId& id) {}
+  // Invoked when media enters or exits fullscreen. We must use a heuristic
+  // to determine this as it is not trivial for media with custom controls.
+  // There is a slight delay between media entering or exiting fullscreen
+  // and it being detected.
+  virtual void MediaEffectivelyFullscreenChanged(bool is_fullscreen) {}
+  virtual void MediaMutedStatusChanged(const MediaPlayerId& id, bool muted) {}
 
   // Invoked when the renderer process changes the page scale factor.
   virtual void OnPageScaleFactorChanged(float page_scale_factor) {}
@@ -420,18 +457,39 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   virtual bool OnMessageReceived(const IPC::Message& message,
                                  RenderFrameHost* render_frame_host);
 
-  // Notification that |contents| has gained focus.
-  virtual void OnWebContentsFocused() {}
+  // Notification that the |render_widget_host| for this WebContents has gained
+  // focus.
+  virtual void OnWebContentsFocused(RenderWidgetHost* render_widget_host) {}
+
+  // Notification that the |render_widget_host| for this WebContents has lost
+  // focus.
+  virtual void OnWebContentsLostFocus(RenderWidgetHost* render_widget_host) {}
 
   // Notifes that a CompositorFrame was received from the renderer.
   virtual void DidReceiveCompositorFrame() {}
 
-  // IPC::Listener implementation.
-  bool OnMessageReceived(const IPC::Message& message) override;
+  // Notifies that the manifest URL for the main frame changed to
+  // |manifest_url|. This will be invoked when a document with a manifest loads
+  // or when the manifest URL changes (possibly to nothing). It is not invoked
+  // when a document with no manifest loads. During document load, if the
+  // document has both a manifest and a favicon, DidUpdateWebManifestURL() will
+  // be invoked before DidUpdateFaviconURL().
+  virtual void DidUpdateWebManifestURL(
+      const base::Optional<GURL>& manifest_url) {}
 
-  // IPC::Sender implementation.
-  bool Send(IPC::Message* message) override;
-  int routing_id() const;
+  // Called to give the embedder an opportunity to bind an interface request
+  // from a frame. If the request can be bound, |interface_pipe| will be taken.
+  virtual void OnInterfaceRequestFromFrame(
+      RenderFrameHost* render_frame_host,
+      const std::string& interface_name,
+      mojo::ScopedMessagePipeHandle* interface_pipe) {}
+
+  // IPC::Listener implementation.
+  // DEPRECATED: Use (i.e. override) the other overload instead:
+  //     virtual bool OnMessageReceived(const IPC::Message& message,
+  //                                    RenderFrameHost* render_frame_host);
+  // TODO(https://crbug.com/758026): Delete this overload when possible.
+  bool OnMessageReceived(const IPC::Message& message) override;
 
   WebContents* web_contents() const;
 

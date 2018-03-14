@@ -9,6 +9,7 @@ import android.animation.AnimatorListenerAdapter;
 import android.animation.AnimatorSet;
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.res.Resources;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.View.OnClickListener;
@@ -17,14 +18,15 @@ import android.widget.ImageButton;
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.NavigationPopup;
-import org.chromium.chrome.browser.device.DeviceClassManager;
 import org.chromium.chrome.browser.download.DownloadUtils;
 import org.chromium.chrome.browser.ntp.NewTabPage;
 import org.chromium.chrome.browser.omnibox.LocationBar;
 import org.chromium.chrome.browser.omnibox.LocationBarTablet;
 import org.chromium.chrome.browser.partnercustomizations.HomepageManager;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.util.AccessibilityUtil;
 import org.chromium.chrome.browser.widget.TintedImageButton;
 import org.chromium.ui.base.DeviceFormFactor;
 
@@ -36,7 +38,8 @@ import java.util.Collection;
  */
 @SuppressLint("Instantiatable")
 
-public class ToolbarTablet extends ToolbarLayout implements OnClickListener {
+public class ToolbarTablet
+        extends ToolbarLayout implements OnClickListener, View.OnLongClickListener {
     // The number of toolbar buttons that can be hidden at small widths (reload, back, forward).
     public static final int HIDEABLE_BUTTON_COUNT = 3;
 
@@ -46,6 +49,7 @@ public class ToolbarTablet extends ToolbarLayout implements OnClickListener {
     private TintedImageButton mReloadButton;
     private TintedImageButton mBookmarkButton;
     private TintedImageButton mSaveOfflineButton;
+    private TintedImageButton mSecurityButton;
     private ImageButton mAccessibilitySwitcherButton;
 
     private OnClickListener mBookmarkListener;
@@ -94,7 +98,8 @@ public class ToolbarTablet extends ToolbarLayout implements OnClickListener {
         mBackButton = (TintedImageButton) findViewById(R.id.back_button);
         mForwardButton = (TintedImageButton) findViewById(R.id.forward_button);
         mReloadButton = (TintedImageButton) findViewById(R.id.refresh_button);
-        mShowTabStack = DeviceClassManager.isAccessibilityModeEnabled(getContext());
+        mSecurityButton = (TintedImageButton) findViewById(R.id.security_button);
+        mShowTabStack = AccessibilityUtil.isAccessibilityEnabled();
 
         mTabSwitcherButtonDrawable =
                 TabSwitcherDrawable.createTabSwitcherDrawable(getResources(), false);
@@ -201,6 +206,7 @@ public class ToolbarTablet extends ToolbarLayout implements OnClickListener {
         });
 
         mReloadButton.setOnClickListener(this);
+        mReloadButton.setOnLongClickListener(this);
         mReloadButton.setOnKeyListener(new KeyboardNavigationListener() {
             @Override
             public View getNextFocusForward() {
@@ -223,6 +229,7 @@ public class ToolbarTablet extends ToolbarLayout implements OnClickListener {
 
         mAccessibilitySwitcherButton.setOnClickListener(this);
         mBookmarkButton.setOnClickListener(this);
+        mBookmarkButton.setOnLongClickListener(this);
 
         mMenuButton.setOnKeyListener(new KeyboardNavigationListener() {
             @Override
@@ -240,11 +247,20 @@ public class ToolbarTablet extends ToolbarLayout implements OnClickListener {
                 return getMenuButtonHelper().onEnterKeyPress(mMenuButton);
             }
         });
-        if (HomepageManager.isHomepageEnabled(getContext())) {
+        if (HomepageManager.isHomepageEnabled()) {
             mHomeButton.setVisibility(VISIBLE);
         }
 
         mSaveOfflineButton.setOnClickListener(this);
+        mSaveOfflineButton.setOnLongClickListener(this);
+
+        mSecurityButton.setOnLongClickListener(this);
+
+        // If Memex is enabled, enable the accessibility tab switcher button.
+        if (ChromeFeatureList.isInitialized()
+                && ChromeFeatureList.isEnabled(ChromeFeatureList.CHROME_MEMEX)) {
+            onAccessibilityStatusChanged(true);
+        }
     }
 
     @Override
@@ -292,11 +308,9 @@ public class ToolbarTablet extends ToolbarLayout implements OnClickListener {
         } else if (mBackButton == v) {
             if (!back()) return;
             RecordUserAction.record("MobileToolbarBack");
-            RecordUserAction.record("MobileTabClobbered");
         } else if (mForwardButton == v) {
             forward();
             RecordUserAction.record("MobileToolbarForward");
-            RecordUserAction.record("MobileTabClobbered");
         } else if (mReloadButton == v) {
             stopOrReloadCurrentTab();
         } else if (mBookmarkButton == v) {
@@ -305,6 +319,11 @@ public class ToolbarTablet extends ToolbarLayout implements OnClickListener {
                 RecordUserAction.record("MobileToolbarToggleBookmark");
             }
         } else if (mAccessibilitySwitcherButton == v) {
+            if (ChromeFeatureList.isInitialized()
+                    && ChromeFeatureList.isEnabled(ChromeFeatureList.CHROME_MEMEX)) {
+                openMemexUI();
+                return;
+            }
             if (mTabSwitcherListener != null) {
                 cancelAppMenuUpdateBadgeAnimation();
                 mTabSwitcherListener.onClick(mAccessibilitySwitcherButton);
@@ -313,6 +332,27 @@ public class ToolbarTablet extends ToolbarLayout implements OnClickListener {
             DownloadUtils.downloadOfflinePage(getContext(), getToolbarDataProvider().getTab());
             RecordUserAction.record("MobileToolbarDownloadPage");
         }
+    }
+
+    @Override
+    public boolean onLongClick(View v) {
+        String description = null;
+        Context context = getContext();
+        Resources resources = context.getResources();
+
+        if (v == mReloadButton) {
+            description = (mReloadButton.getDrawable().getLevel()
+                                  == resources.getInteger(R.integer.reload_button_level_reload))
+                    ? resources.getString(R.string.menu_refresh)
+                    : resources.getString(R.string.menu_stop_refresh);
+        } else if (v == mBookmarkButton) {
+            description = resources.getString(R.string.menu_bookmark);
+        } else if (v == mSaveOfflineButton) {
+            description = resources.getString(R.string.menu_download);
+        } else if (v == mSecurityButton) {
+            description = resources.getString(R.string.menu_page_info);
+        }
+        return AccessibilityUtil.showAccessibilityToast(context, v, description);
     }
 
     private void updateSwitcherButtonVisibility(boolean enabled) {
@@ -412,11 +452,13 @@ public class ToolbarTablet extends ToolbarLayout implements OnClickListener {
     @Override
     protected void updateReloadButtonVisibility(boolean isReloading) {
         if (isReloading) {
-            mReloadButton.setImageResource(R.drawable.btn_close);
+            mReloadButton.getDrawable().setLevel(
+                    getResources().getInteger(R.integer.reload_button_level_stop));
             mReloadButton.setContentDescription(getContext().getString(
                     R.string.accessibility_btn_stop_loading));
         } else {
-            mReloadButton.setImageResource(R.drawable.btn_toolbar_reload);
+            mReloadButton.getDrawable().setLevel(
+                    getResources().getInteger(R.integer.reload_button_level_reload));
             mReloadButton.setContentDescription(getContext().getString(
                     R.string.accessibility_btn_refresh));
         }
@@ -479,6 +521,11 @@ public class ToolbarTablet extends ToolbarLayout implements OnClickListener {
 
     @Override
     public void onAccessibilityStatusChanged(boolean enabled) {
+        // If Memex is enabled, don't allow the accessibility tab switcher button to be disabled.
+        if (!enabled && ChromeFeatureList.isInitialized()
+                && ChromeFeatureList.isEnabled(ChromeFeatureList.CHROME_MEMEX)) {
+            return;
+        }
         mShowTabStack = enabled;
         updateSwitcherButtonVisibility(enabled);
     }
@@ -505,14 +552,14 @@ public class ToolbarTablet extends ToolbarLayout implements OnClickListener {
 
     @Override
     public boolean useLightDrawables() {
-        return mUseLightColorAssets;
+        return mUseLightColorAssets != null && mUseLightColorAssets;
     }
 
     @Override
     public void showAppMenuUpdateBadge() {
         super.showAppMenuUpdateBadge();
         if (!mIsInTabSwitcherMode) {
-            if (mUseLightColorAssets) {
+            if (mUseLightColorAssets != null && mUseLightColorAssets) {
                 setAppMenuUpdateBadgeDrawable(mUseLightColorAssets);
             }
             setAppMenuUpdateBadgeToVisible(true);

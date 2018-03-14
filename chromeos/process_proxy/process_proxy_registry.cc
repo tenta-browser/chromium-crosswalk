@@ -5,6 +5,9 @@
 #include "chromeos/process_proxy/process_proxy_registry.h"
 
 #include "base/bind.h"
+#include "base/message_loop/message_loop.h"
+#include "base/sequenced_task_runner.h"
+#include "base/task_scheduler/lazy_task_runner.h"
 
 namespace chromeos {
 
@@ -31,8 +34,7 @@ static base::LazyInstance<ProcessProxyRegistry>::DestructorAtExit
 
 }  // namespace
 
-ProcessProxyRegistry::ProcessProxyInfo::ProcessProxyInfo() {
-}
+ProcessProxyRegistry::ProcessProxyInfo::ProcessProxyInfo() = default;
 
 ProcessProxyRegistry::ProcessProxyInfo::ProcessProxyInfo(
     const ProcessProxyInfo& other) {
@@ -40,16 +42,14 @@ ProcessProxyRegistry::ProcessProxyInfo::ProcessProxyInfo(
   DCHECK(!other.proxy.get());
 }
 
-ProcessProxyRegistry::ProcessProxyInfo::~ProcessProxyInfo() {
-}
+ProcessProxyRegistry::ProcessProxyInfo::~ProcessProxyInfo() = default;
 
-ProcessProxyRegistry::ProcessProxyRegistry() {
-}
+ProcessProxyRegistry::ProcessProxyRegistry() = default;
 
 ProcessProxyRegistry::~ProcessProxyRegistry() {
   // TODO(tbarzic): Fix issue with ProcessProxyRegistry being destroyed
   // on a different thread (it's a LazyInstance).
-  DetachFromThread();
+  // DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   ShutDown();
 }
@@ -67,12 +67,21 @@ void ProcessProxyRegistry::ShutDown() {
 
 // static
 ProcessProxyRegistry* ProcessProxyRegistry::Get() {
+  DCHECK(ProcessProxyRegistry::GetTaskRunner()->RunsTasksInCurrentSequence());
   return g_process_proxy_registry.Pointer();
+}
+
+// static
+scoped_refptr<base::SequencedTaskRunner> ProcessProxyRegistry::GetTaskRunner() {
+  static base::LazySequencedTaskRunner task_runner =
+      LAZY_SEQUENCED_TASK_RUNNER_INITIALIZER(
+          base::TaskTraits({base::MayBlock(), base::TaskPriority::BACKGROUND}));
+  return task_runner.Get();
 }
 
 int ProcessProxyRegistry::OpenProcess(const std::string& command,
                                       const OutputCallback& output_callback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (!EnsureWatcherThreadStarted())
     return -1;
@@ -88,7 +97,7 @@ int ProcessProxyRegistry::OpenProcess(const std::string& command,
   // We can use Unretained because proxy will stop calling callback after it is
   // closed, which is done before this object goes away.
   if (!proxy->StartWatchingOutput(
-          watcher_thread_->task_runner(),
+          watcher_thread_->task_runner(), GetTaskRunner(),
           base::Bind(&ProcessProxyRegistry::OnProcessOutput,
                      base::Unretained(this), terminal_id))) {
     proxy->Close();
@@ -103,7 +112,7 @@ int ProcessProxyRegistry::OpenProcess(const std::string& command,
 }
 
 bool ProcessProxyRegistry::SendInput(int id, const std::string& data) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   std::map<int, ProcessProxyInfo>::iterator it = proxy_map_.find(id);
   if (it == proxy_map_.end())
@@ -112,7 +121,7 @@ bool ProcessProxyRegistry::SendInput(int id, const std::string& data) {
 }
 
 bool ProcessProxyRegistry::CloseProcess(int id) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   std::map<int, ProcessProxyInfo>::iterator it = proxy_map_.find(id);
   if (it == proxy_map_.end())
@@ -124,7 +133,7 @@ bool ProcessProxyRegistry::CloseProcess(int id) {
 }
 
 bool ProcessProxyRegistry::OnTerminalResize(int id, int width, int height) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   std::map<int, ProcessProxyInfo>::iterator it = proxy_map_.find(id);
   if (it == proxy_map_.end())
@@ -134,7 +143,7 @@ bool ProcessProxyRegistry::OnTerminalResize(int id, int width, int height) {
 }
 
 void ProcessProxyRegistry::AckOutput(int id) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   std::map<int, ProcessProxyInfo>::iterator it = proxy_map_.find(id);
   if (it == proxy_map_.end())
@@ -146,7 +155,7 @@ void ProcessProxyRegistry::AckOutput(int id) {
 void ProcessProxyRegistry::OnProcessOutput(int id,
                                            ProcessOutputType type,
                                            const std::string& data) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   const char* type_str = ProcessOutputTypeToString(type);
   DCHECK(type_str);

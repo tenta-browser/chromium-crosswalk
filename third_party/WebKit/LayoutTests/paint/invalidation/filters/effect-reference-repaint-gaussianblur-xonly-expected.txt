@@ -4,11 +4,11 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow DIV class='box'",
-          "rect": [1, 50, 314, 200],
+          "rect": [-2, 50, 320, 200],
           "reason": "style change"
         }
       ]

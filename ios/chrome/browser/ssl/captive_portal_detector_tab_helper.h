@@ -7,6 +7,8 @@
 
 #import "ios/web/public/web_state/web_state_user_data.h"
 
+@protocol CaptivePortalDetectorTabHelperDelegate;
+
 namespace captive_portal {
 class CaptivePortalDetector;
 }
@@ -19,13 +21,28 @@ class WebState;
 class CaptivePortalDetectorTabHelper
     : public web::WebStateUserData<CaptivePortalDetectorTabHelper> {
  public:
-  explicit CaptivePortalDetectorTabHelper(web::WebState* web_state);
-
-  captive_portal::CaptivePortalDetector* detector();
-
- private:
   ~CaptivePortalDetectorTabHelper() override;
 
+  // Creates a Tab Helper and attaches it to |web_state|. The |delegate| is not
+  // retained by the CaptivePortalDetectorTabHelper and must not be nil.
+  static void CreateForWebState(
+      web::WebState* web_state,
+      id<CaptivePortalDetectorTabHelperDelegate> delegate);
+
+  // Returns the associated captive portal detector.
+  captive_portal::CaptivePortalDetector* detector();
+
+  // Displays the Captive Portal Login page at |landing_url|.
+  void DisplayCaptivePortalLoginPage(GURL landing_url);
+
+ private:
+  CaptivePortalDetectorTabHelper(
+      web::WebState* web_state,
+      id<CaptivePortalDetectorTabHelperDelegate> delegate);
+
+  // The delegate to notify when the user performs an action in response to the
+  // captive portal detector state.
+  __weak id<CaptivePortalDetectorTabHelperDelegate> delegate_;
   // The underlying CaptivePortalDetector.
   std::unique_ptr<captive_portal::CaptivePortalDetector> detector_;
 

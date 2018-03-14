@@ -9,6 +9,7 @@
 #include "media/base/audio_block_fifo.h"
 
 #include "base/logging.h"
+#include "base/trace_event/trace_event.h"
 
 namespace media {
 
@@ -22,21 +23,27 @@ AudioBlockFifo::AudioBlockFifo(int channels, int frames, int blocks)
   IncreaseCapacity(blocks);
 }
 
-AudioBlockFifo::~AudioBlockFifo() {}
+AudioBlockFifo::~AudioBlockFifo() = default;
 
 void AudioBlockFifo::Push(const void* source,
                           int frames,
                           int bytes_per_sample) {
+  TRACE_EVENT2("audio", "AudioBlockFifo::Push", "pushed frames", frames,
+               "available frames", GetAvailableFrames());
   PushInternal(source, frames, bytes_per_sample);
 }
 
 void AudioBlockFifo::PushSilence(int frames) {
+  TRACE_EVENT2("audio", "AudioBlockFifo::PushSilence", "pushed frames", frames,
+               "available frames", GetAvailableFrames());
   PushInternal(nullptr, frames, 0);
 }
 
 const AudioBus* AudioBlockFifo::Consume() {
   DCHECK(available_blocks_);
-  AudioBus* audio_bus = audio_blocks_[read_block_];
+  TRACE_EVENT1("audio", "AudioBlockFifo::Consume", "available frames",
+               GetAvailableFrames());
+  AudioBus* audio_bus = audio_blocks_[read_block_].get();
   read_block_ = (read_block_ + 1) % audio_blocks_.size();
   --available_blocks_;
   return audio_bus;
@@ -67,10 +74,8 @@ void AudioBlockFifo::IncreaseCapacity(int blocks) {
   audio_blocks_.reserve(audio_blocks_.size() + blocks);
 
   const int original_size = audio_blocks_.size();
-  for (int i = 0; i < blocks; ++i) {
-    audio_blocks_.push_back(
-        AudioBus::Create(channels_, block_frames_).release());
-  }
+  for (int i = 0; i < blocks; ++i)
+    audio_blocks_.push_back(AudioBus::Create(channels_, block_frames_));
 
   if (!original_size)
     return;
@@ -103,7 +108,7 @@ void AudioBlockFifo::PushInternal(const void* source,
   int frames_to_push = frames;
   while (frames_to_push) {
     // Get the current write block.
-    AudioBus* current_block = audio_blocks_[write_block_];
+    AudioBus* current_block = audio_blocks_[write_block_].get();
 
     // Figure out what segment sizes we need when adding the new content to
     // the FIFO.

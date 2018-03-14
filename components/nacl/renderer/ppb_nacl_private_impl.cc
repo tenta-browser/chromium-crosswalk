@@ -323,23 +323,26 @@ blink::WebAssociatedURLLoader* CreateAssociatedURLLoader(
     const GURL& gurl) {
   blink::WebAssociatedURLLoaderOptions options;
   options.untrusted_http = true;
-
-  // Options settings here follow the original behavior in the trusted
-  // plugin and PepperURLLoaderHost.
-  if (document.GetSecurityOrigin().CanRequest(gurl)) {
-    options.allow_credentials = true;
-  } else {
-    // Allow CORS.
-    options.cross_origin_request_policy = blink::WebAssociatedURLLoaderOptions::
-        kCrossOriginRequestPolicyUseAccessControl;
-  }
   return document.GetFrame()->CreateAssociatedURLLoader(options);
 }
 
 blink::WebURLRequest CreateWebURLRequest(const blink::WebDocument& document,
                                          const GURL& gurl) {
   blink::WebURLRequest request(gurl);
-  request.SetFirstPartyForCookies(document.FirstPartyForCookies());
+  request.SetSiteForCookies(document.SiteForCookies());
+
+  // Follow the original behavior in the trusted plugin and
+  // PepperURLLoaderHost.
+  if (document.GetSecurityOrigin().CanRequest(gurl)) {
+    request.SetFetchRequestMode(network::mojom::FetchRequestMode::kSameOrigin);
+    request.SetFetchCredentialsMode(
+        network::mojom::FetchCredentialsMode::kSameOrigin);
+  } else {
+    request.SetFetchRequestMode(network::mojom::FetchRequestMode::kCORS);
+    request.SetFetchCredentialsMode(
+        network::mojom::FetchCredentialsMode::kOmit);
+  }
+
   return request;
 }
 
@@ -461,8 +464,7 @@ void PPBNaClPrivate::LaunchSelLdr(
   if (nexe_file_info->handle != PP_kInvalidFileHandle)
     nexe_for_transit = base::FileDescriptor(nexe_file_info->handle, true);
 #elif defined(OS_WIN)
-  nexe_for_transit = IPC::PlatformFileForTransit(nexe_file_info->handle,
-                                                 base::GetCurrentProcId());
+  nexe_for_transit = IPC::PlatformFileForTransit(nexe_file_info->handle);
 #else
 # error Unsupported target platform.
 #endif
@@ -523,7 +525,8 @@ void PPBNaClPrivate::LaunchSelLdr(
       *translator_channel = IPC::SyncChannel::Create(
           instance_info.channel_handle, IPC::Channel::MODE_CLIENT,
           new NoOpListener, content::RenderThread::Get()->GetIOTaskRunner(),
-          true, content::RenderThread::Get()->GetShutdownEvent());
+          base::ThreadTaskRunnerHandle::Get(), true,
+          content::RenderThread::Get()->GetShutdownEvent());
     } else {
       // Save the channel handle for when StartPpapiProxy() is called.
       NaClPluginInstance* nacl_plugin_instance =
@@ -538,20 +541,18 @@ void PPBNaClPrivate::LaunchSelLdr(
       launch_result.crash_info_shmem_handle);
 
   // Create the trusted plugin channel.
-  if (IsValidChannelHandle(launch_result.trusted_ipc_channel_handle)) {
-    bool is_helper_nexe = !PP_ToBool(main_service_runtime);
-    std::unique_ptr<TrustedPluginChannel> trusted_plugin_channel(
-        new TrustedPluginChannel(
-            load_manager,
-            mojo::MakeRequest<mojom::NaClRendererHost>(
-                mojo::ScopedMessagePipeHandle(
-                    launch_result.trusted_ipc_channel_handle.mojo_handle)),
-            is_helper_nexe));
-    load_manager->set_trusted_plugin_channel(std::move(trusted_plugin_channel));
-  } else {
+  if (!IsValidChannelHandle(launch_result.trusted_ipc_channel_handle)) {
     PostPPCompletionCallback(callback, PP_ERROR_FAILED);
     return;
   }
+  bool is_helper_nexe = !PP_ToBool(main_service_runtime);
+  std::unique_ptr<TrustedPluginChannel> trusted_plugin_channel(
+      new TrustedPluginChannel(
+          load_manager,
+          mojom::NaClRendererHostRequest(mojo::ScopedMessagePipeHandle(
+              launch_result.trusted_ipc_channel_handle.mojo_handle)),
+          is_helper_nexe));
+  load_manager->set_trusted_plugin_channel(std::move(trusted_plugin_channel));
 
   // Create the manifest service handle as well.
   if (IsValidChannelHandle(launch_result.manifest_service_ipc_channel_handle)) {
@@ -602,7 +603,8 @@ PP_Bool StartPpapiProxy(PP_Instance instance) {
     // (roughly) the cost of using NaCl, in terms of startup time.
     load_manager->ReportStartupOverhead();
     return PP_TRUE;
-  } else if (result == PP_EXTERNAL_PLUGIN_ERROR_MODULE) {
+  }
+  if (result == PP_EXTERNAL_PLUGIN_ERROR_MODULE) {
     load_manager->ReportLoadError(PP_NACL_ERROR_START_PROXY_MODULE,
                                   "could not initialize module.");
   } else if (result == PP_EXTERNAL_PLUGIN_ERROR_INSTANCE) {
@@ -1022,6 +1024,7 @@ void DownloadManifestToBuffer(PP_Instance instance,
         FROM_HERE,
         base::Bind(callback.func, callback.user_data,
                    static_cast<int32_t>(PP_ERROR_FAILED)));
+    return;
   }
   const blink::WebDocument& document =
       plugin_instance->GetContainer()->GetDocument();
@@ -1377,6 +1380,7 @@ void PPBNaClPrivate::DownloadNexe(PP_Instance instance,
         FROM_HERE,
         base::Bind(callback.func, callback.user_data,
                    static_cast<int32_t>(PP_ERROR_FAILED)));
+    return;
   }
   const blink::WebDocument& document =
       plugin_instance->GetContainer()->GetDocument();
@@ -1529,6 +1533,7 @@ void DownloadFile(PP_Instance instance,
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(callback, static_cast<int32_t>(PP_ERROR_FAILED),
                               kInvalidNaClFileInfo));
+    return;
   }
   const blink::WebDocument& document =
       plugin_instance->GetContainer()->GetDocument();

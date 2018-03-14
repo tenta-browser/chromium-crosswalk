@@ -7,16 +7,14 @@
 
 #include <memory>
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/encryptedmedia/MediaKeySystemConfiguration.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/Forward.h"
 #include "public/platform/WebContentDecryptionModuleAccess.h"
 
 namespace blink {
 
-class MediaKeySystemAccess final
-    : public GarbageCollectedFinalized<MediaKeySystemAccess>,
-      public ScriptWrappable {
+class MediaKeySystemAccess final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -27,8 +25,6 @@ class MediaKeySystemAccess final
   const String& keySystem() const { return key_system_; }
   void getConfiguration(MediaKeySystemConfiguration& result);
   ScriptPromise createMediaKeys(ScriptState*);
-
-  DECLARE_TRACE();
 
  private:
   const String key_system_;

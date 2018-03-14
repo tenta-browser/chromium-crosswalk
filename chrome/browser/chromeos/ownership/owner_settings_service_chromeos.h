@@ -12,13 +12,13 @@
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/values.h"
-#include "chrome/browser/chromeos/policy/proto/chrome_device_policy.pb.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
 #include "chromeos/dbus/session_manager_client.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/ownership/owner_key_util.h"
 #include "components/ownership/owner_settings_service.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/policy/proto/chrome_device_policy.pb.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
@@ -61,6 +61,8 @@ class OwnerSettingsServiceChromeOS : public ownership::OwnerSettingsService,
   static OwnerSettingsServiceChromeOS* FromWebUI(content::WebUI* web_ui);
 
   void OnTPMTokenReady(bool tpm_token_enabled);
+
+  void OnEasyUnlockKeyOpsFinished();
 
   bool HasPendingChanges() const;
 
@@ -162,13 +164,16 @@ class OwnerSettingsServiceChromeOS : public ownership::OwnerSettingsService,
   std::string user_id_;
 
   // Whether profile still needs to be initialized.
-  bool waiting_for_profile_creation_;
+  bool waiting_for_profile_creation_ = true;
 
   // Whether TPM token still needs to be initialized.
-  bool waiting_for_tpm_token_;
+  bool waiting_for_tpm_token_ = true;
+
+  // Whether easy unlock operation is finished.
+  bool waiting_for_easy_unlock_operation_finshed_ = true;
 
   // True if local-owner policy fixups are still pending.
-  bool has_pending_fixups_;
+  bool has_pending_fixups_ = false;
 
   // A set of pending changes to device settings.
   std::unordered_map<std::string, std::unique_ptr<base::Value>>

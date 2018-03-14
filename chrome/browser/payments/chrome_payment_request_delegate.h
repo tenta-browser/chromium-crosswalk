@@ -9,7 +9,7 @@
 #include <string>
 
 #include "base/macros.h"
-#include "components/payments/core/payment_request_delegate.h"
+#include "components/payments/content/content_payment_request_delegate.h"
 
 namespace content {
 class WebContents;
@@ -19,10 +19,10 @@ namespace payments {
 
 class PaymentRequestDialog;
 
-class ChromePaymentRequestDelegate : public PaymentRequestDelegate {
+class ChromePaymentRequestDelegate : public ContentPaymentRequestDelegate {
  public:
   explicit ChromePaymentRequestDelegate(content::WebContents* web_contents);
-  ~ChromePaymentRequestDelegate() override {}
+  ~ChromePaymentRequestDelegate() override;
 
   // PaymentRequestDelegate:
   void ShowDialog(PaymentRequest* request) override;
@@ -31,14 +31,20 @@ class ChromePaymentRequestDelegate : public PaymentRequestDelegate {
   autofill::PersonalDataManager* GetPersonalDataManager() override;
   const std::string& GetApplicationLocale() const override;
   bool IsIncognito() const override;
+  bool IsSslCertificateValid() override;
+  const GURL& GetLastCommittedURL() const override;
   void DoFullCardRequest(
       const autofill::CreditCard& credit_card,
       base::WeakPtr<autofill::payments::FullCardRequest::ResultDelegate>
           result_delegate) override;
-  std::unique_ptr<const ::i18n::addressinput::Source> GetAddressInputSource()
-      override;
-  std::unique_ptr<::i18n::addressinput::Storage> GetAddressInputStorage()
-      override;
+  autofill::AddressNormalizer* GetAddressNormalizer() override;
+  autofill::RegionDataLoader* GetRegionDataLoader() override;
+  ukm::UkmRecorder* GetUkmRecorder() override;
+  std::string GetAuthenticatedEmail() const override;
+  PrefService* GetPrefService() override;
+  bool IsBrowserWindowActive() const override;
+  scoped_refptr<PaymentManifestWebDataService>
+  GetPaymentManifestWebDataService() const override;
 
  protected:
   // Reference to the dialog so that we can satisfy calls to CloseDialog(). This

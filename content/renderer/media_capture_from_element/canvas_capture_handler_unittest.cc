@@ -2,13 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/renderer/media_capture_from_element/canvas_capture_handler.h"
+
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/test/scoped_task_environment.h"
 #include "content/child/child_process.h"
 #include "content/renderer/media/media_stream_video_capturer_source.h"
-#include "content/renderer/media_capture_from_element/canvas_capture_handler.h"
 #include "media/base/limits.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -48,14 +48,15 @@ ACTION_P(RunClosure, closure) {
 class CanvasCaptureHandlerTest
     : public TestWithParam<testing::tuple<bool, int, int>> {
  public:
-  CanvasCaptureHandlerTest() {}
+  CanvasCaptureHandlerTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI) {}
 
   void SetUp() override {
-    canvas_capture_handler_.reset(
-        CanvasCaptureHandler::CreateCanvasCaptureHandler(
-            blink::WebSize(kTestCanvasCaptureWidth, kTestCanvasCaptureHeight),
-            kTestCanvasCaptureFramesPerSecond, message_loop_.task_runner(),
-            &track_));
+    canvas_capture_handler_ = CanvasCaptureHandler::CreateCanvasCaptureHandler(
+        blink::WebSize(kTestCanvasCaptureWidth, kTestCanvasCaptureHeight),
+        kTestCanvasCaptureFramesPerSecond,
+        scoped_task_environment_.GetMainThreadTaskRunner(), &track_);
   }
 
   void TearDown() override {
@@ -73,12 +74,6 @@ class CanvasCaptureHandlerTest
   void OnDeliverFrame(const scoped_refptr<media::VideoFrame>& video_frame,
                       base::TimeTicks estimated_capture_time) {
     DoOnDeliverFrame(video_frame, estimated_capture_time);
-  }
-
-  MOCK_METHOD1(DoOnVideoCaptureDeviceFormats,
-               void(const media::VideoCaptureFormats&));
-  void OnVideoCaptureDeviceFormats(const media::VideoCaptureFormats& formats) {
-    DoOnVideoCaptureDeviceFormats(formats);
   }
 
   MOCK_METHOD1(DoOnRunning, void(bool));
@@ -103,8 +98,6 @@ class CanvasCaptureHandlerTest
     else
       EXPECT_EQ(media::PIXEL_FORMAT_YV12A, video_frame->format());
 
-    EXPECT_EQ(video_frame->timestamp().InMilliseconds(),
-              (estimated_capture_time - base::TimeTicks()).InMilliseconds());
     const gfx::Size& size = video_frame->visible_rect().size();
     EXPECT_EQ(expected_width, size.width());
     EXPECT_EQ(expected_height, size.height());
@@ -134,9 +127,10 @@ class CanvasCaptureHandlerTest
     return ms_source->source_.get();
   }
 
-  // A ChildProcess and a MessageLoopForUI are both needed to fool the Tracks
-  // and Sources into believing they are on the right threads.
-  base::MessageLoopForUI message_loop_;
+  // A ChildProcess is needed to fool the Tracks and Sources believing they are
+  // on the right threads. A ScopedTaskEnvironment must be instantiated before
+  // ChildProcess to prevent it from leaking a TaskScheduler.
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   ChildProcess child_process_;
 
  private:
@@ -175,16 +169,7 @@ TEST_P(CanvasCaptureHandlerTest, GetFormatsStartAndStop) {
   media::VideoCapturerSource* source = GetVideoCapturerSource(ms_source);
   EXPECT_TRUE(source != nullptr);
 
-  media::VideoCaptureFormats formats;
-  EXPECT_CALL(*this, DoOnVideoCaptureDeviceFormats(_))
-      .Times(1)
-      .WillOnce(SaveArg<0>(&formats));
-  source->GetCurrentSupportedFormats(
-      media::limits::kMaxCanvas /* max_requesteed_width */,
-      media::limits::kMaxCanvas /* max_requesteed_height */,
-      media::limits::kMaxFramesPerSecond /* max_requested_frame_rate */,
-      base::Bind(&CanvasCaptureHandlerTest::OnVideoCaptureDeviceFormats,
-                 base::Unretained(this)));
+  media::VideoCaptureFormats formats = source->GetPreferredFormats();
   ASSERT_EQ(2u, formats.size());
   EXPECT_EQ(kTestCanvasCaptureWidth, formats[0].frame_size.width());
   EXPECT_EQ(kTestCanvasCaptureHeight, formats[0].frame_size.height());
@@ -204,8 +189,8 @@ TEST_P(CanvasCaptureHandlerTest, GetFormatsStartAndStop) {
   canvas_capture_handler_->SendNewFrame(
       GenerateTestImage(testing::get<0>(GetParam()),
                         testing::get<1>(GetParam()),
-                        testing::get<2>(GetParam()))
-          .get());
+                        testing::get<2>(GetParam())),
+      nullptr);
   run_loop.Run();
 
   source->StopCapture();
@@ -226,11 +211,12 @@ TEST_P(CanvasCaptureHandlerTest, VerifyFrame) {
   EXPECT_CALL(*this, DoOnRunning(true)).Times(1);
   media::VideoCaptureParams params;
   source->StartCapture(
-      params, base::Bind(&CanvasCaptureHandlerTest::OnVerifyDeliveredFrame,
-                         base::Unretained(this), opaque_frame, width, height),
+      params,
+      base::Bind(&CanvasCaptureHandlerTest::OnVerifyDeliveredFrame,
+                 base::Unretained(this), opaque_frame, width, height),
       base::Bind(&CanvasCaptureHandlerTest::OnRunning, base::Unretained(this)));
   canvas_capture_handler_->SendNewFrame(
-      GenerateTestImage(opaque_frame, width, height).get());
+      GenerateTestImage(opaque_frame, width, height), nullptr);
   run_loop.RunUntilIdle();
 }
 

@@ -4,11 +4,13 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "content/common/resize_params.h"
+#include "content/public/renderer/render_frame_visitor.h"
 #include "content/public/test/render_view_test.h"
 #include "content/renderer/render_view_impl.h"
 #include "content/renderer/render_widget.h"
 #include "third_party/WebKit/public/web/WebFrameWidget.h"
 #include "third_party/WebKit/public/web/WebInputMethodController.h"
+#include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebRange.h"
 #include "ui/base/ime/text_input_type.h"
 
@@ -37,10 +39,9 @@ class RenderWidgetTest : public RenderViewTest {
   }
 
   void CommitText(std::string text) {
-    widget()->OnImeCommitText(
-        base::UTF8ToUTF16(text),
-        std::vector<blink::WebCompositionUnderline>(),
-        gfx::Range::InvalidRange(), 0);
+    widget()->OnImeCommitText(base::UTF8ToUTF16(text),
+                              std::vector<blink::WebImeTextSpan>(),
+                              gfx::Range::InvalidRange(), 0);
   }
 
   ui::TextInputType GetTextInputType() { return widget()->GetTextInputType(); }
@@ -124,14 +125,29 @@ TEST_F(RenderWidgetInitialSizeTest, InitialSize) {
   EXPECT_TRUE(next_paint_is_resize_ack());
 }
 
+TEST_F(RenderWidgetTest, HitTestAPI) {
+  LoadHTML(
+      "<body style='padding: 0px; margin: 0px'>"
+      "<div style='background: green; padding: 100px; margin: 0px;'>"
+      "<iframe style='width: 200px; height: 100px;'"
+      "srcdoc='<body style=\"margin: 0px; height: 100px; width: 200px;\">"
+      "</body>'></iframe><div></body>");
+  blink::WebFrame* main_web_frame =
+      static_cast<RenderViewImpl*>(view_)->GetMainRenderFrame()->GetWebFrame();
+  EXPECT_EQ(RenderFrame::GetRoutingIdForWebFrame(main_web_frame),
+            widget()->GetWidgetRoutingIdAtPoint(gfx::Point(10, 10)));
+  EXPECT_EQ(RenderFrame::GetRoutingIdForWebFrame(main_web_frame->FirstChild()),
+            widget()->GetWidgetRoutingIdAtPoint(gfx::Point(150, 150)));
+}
+
 TEST_F(RenderWidgetTest, GetCompositionRangeValidComposition) {
   LoadHTML(
       "<div contenteditable>EDITABLE</div>"
       "<script> document.querySelector('div').focus(); </script>");
-  blink::WebVector<blink::WebCompositionUnderline> emptyUnderlines;
+  blink::WebVector<blink::WebImeTextSpan> empty_ime_text_spans;
   DCHECK(widget()->GetInputMethodController());
-  widget()->GetInputMethodController()->SetComposition("hello", emptyUnderlines,
-                                                       blink::WebRange(), 3, 3);
+  widget()->GetInputMethodController()->SetComposition(
+      "hello", empty_ime_text_spans, blink::WebRange(), 3, 3);
   gfx::Range range;
   GetCompositionRange(&range);
   EXPECT_TRUE(range.IsValid());

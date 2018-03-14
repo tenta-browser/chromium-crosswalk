@@ -5,41 +5,44 @@
 #ifndef HTMLImportTreeRoot_h
 #define HTMLImportTreeRoot_h
 
-#include "core/dom/TaskRunnerHelper.h"
 #include "core/html/imports/HTMLImport.h"
 #include "platform/Timer.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/bindings/TraceWrapperMember.h"
+#include "public/platform/TaskType.h"
 
 namespace blink {
 
 class HTMLImportChild;
 class KURL;
 
-class HTMLImportTreeRoot : public HTMLImport {
+class HTMLImportTreeRoot final : public HTMLImport, public TraceWrapperBase {
  public:
   static HTMLImportTreeRoot* Create(Document*);
 
-  ~HTMLImportTreeRoot() override;
+  ~HTMLImportTreeRoot() final;
   void Dispose();
 
-  // HTMLImport
-  Document* GetDocument() const override;
-  bool HasFinishedLoading() const override;
-  void StateWillChange() override;
-  void StateDidChange() override;
+  // HTMLImport overrides:
+  Document* GetDocument() const final;
+  bool HasFinishedLoading() const final;
+  void StateWillChange() final;
+  void StateDidChange() final;
 
   void ScheduleRecalcState();
 
   HTMLImportChild* Add(HTMLImportChild*);
   HTMLImportChild* Find(const KURL&) const;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
+  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
 
  private:
   explicit HTMLImportTreeRoot(Document*);
 
   void RecalcTimerFired(TimerBase*);
 
-  Member<Document> document_;
+  TraceWrapperMember<Document> document_;
   TaskRunnerTimer<HTMLImportTreeRoot> recalc_timer_;
 
   // List of import which has been loaded or being loaded.

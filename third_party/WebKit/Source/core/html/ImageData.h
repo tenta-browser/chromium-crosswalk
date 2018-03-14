@@ -29,16 +29,17 @@
 #ifndef ImageData_h
 #define ImageData_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/core/v8/Uint8ClampedArrayOrUint16ArrayOrFloat32Array.h"
+#include "bindings/core/v8/uint8_clamped_array_or_uint16_array_or_float32_array.h"
 #include "core/CoreExport.h"
-#include "core/dom/DOMTypedArray.h"
-#include "core/dom/NotShared.h"
 #include "core/html/ImageDataColorSettings.h"
 #include "core/html/canvas/CanvasRenderingContext.h"
 #include "core/imagebitmap/ImageBitmapSource.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
+#include "core/typed_arrays/DOMTypedArray.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/geometry/IntRect.h"
 #include "platform/geometry/IntSize.h"
+#include "platform/graphics/CanvasColorParams.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/CheckedNumeric.h"
 #include "platform/wtf/Compiler.h"
@@ -59,24 +60,20 @@ enum ConstructorParams {
   kParamData = 1 << 3,
 };
 
-enum ImageDataStorageFormat {
-  kUint8ClampedArrayStorageFormat,
-  kUint16ArrayStorageFormat,
-  kFloat32ArrayStorageFormat,
-};
-
 constexpr const char* kUint8ClampedArrayStorageFormatName = "uint8";
 constexpr const char* kUint16ArrayStorageFormatName = "uint16";
 constexpr const char* kFloat32ArrayStorageFormatName = "float32";
 
-class CORE_EXPORT ImageData final : public GarbageCollectedFinalized<ImageData>,
-                                    public ScriptWrappable,
+class CORE_EXPORT ImageData final : public ScriptWrappable,
                                     public ImageBitmapSource {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   static ImageData* Create(const IntSize&,
                            const ImageDataColorSettings* = nullptr);
+  static ImageData* Create(const IntSize&,
+                           CanvasColorSpace,
+                           ImageDataStorageFormat);
   static ImageData* Create(const IntSize&,
                            NotShared<DOMArrayBufferView>,
                            const ImageDataColorSettings* = nullptr);
@@ -90,15 +87,15 @@ class CORE_EXPORT ImageData final : public GarbageCollectedFinalized<ImageData>,
                            unsigned height,
                            ExceptionState&);
 
-  ImageData* createImageData(unsigned width,
-                             unsigned height,
-                             const ImageDataColorSettings&,
-                             ExceptionState&);
-  ImageData* createImageData(ImageDataArray&,
-                             unsigned width,
-                             unsigned height,
-                             ImageDataColorSettings&,
-                             ExceptionState&);
+  static ImageData* CreateImageData(unsigned width,
+                                    unsigned height,
+                                    const ImageDataColorSettings&,
+                                    ExceptionState&);
+  static ImageData* CreateImageData(ImageDataArray&,
+                                    unsigned width,
+                                    unsigned height,
+                                    ImageDataColorSettings&,
+                                    ExceptionState&);
 
   void getColorSettings(ImageDataColorSettings& result) {
     result = color_settings_;
@@ -108,13 +105,15 @@ class CORE_EXPORT ImageData final : public GarbageCollectedFinalized<ImageData>,
   static ImageData* CreateForTest(const IntSize&,
                                   DOMArrayBufferView*,
                                   const ImageDataColorSettings* = nullptr);
-  static sk_sp<SkColorSpace> GetSkColorSpaceForTest(const CanvasColorSpace&,
-                                                    const CanvasPixelFormat&);
 
+  ImageData* CropRect(const IntRect&, bool flip_y = false);
+
+  ImageDataStorageFormat GetImageDataStorageFormat();
   static CanvasColorSpace GetCanvasColorSpace(const String&);
-  static String CanvasColorSpaceName(const CanvasColorSpace&);
+  static String CanvasColorSpaceName(CanvasColorSpace);
   static ImageDataStorageFormat GetImageDataStorageFormat(const String&);
   static unsigned StorageFormatDataSize(const String&);
+  static unsigned StorageFormatDataSize(ImageDataStorageFormat);
   static DOMArrayBufferView*
   ConvertPixelsFromCanvasPixelFormatToImageDataStorageFormat(
       WTF::ArrayBufferContents&,
@@ -131,20 +130,28 @@ class CORE_EXPORT ImageData final : public GarbageCollectedFinalized<ImageData>,
   const ImageDataArray& dataUnion() const { return data_union_; }
   void dataUnion(ImageDataArray& result) { result = data_union_; };
 
-  sk_sp<SkColorSpace> GetSkColorSpace();
-  bool ImageDataInCanvasColorSettings(const CanvasColorSpace&,
-                                      const CanvasPixelFormat&,
-                                      std::unique_ptr<uint8_t[]>&);
+  DOMArrayBufferBase* BufferBase() const;
+  CanvasColorParams GetCanvasColorParams();
+
+  // DataU8ColorType param specifies if the converted pixels in 8-8-8-8 pixel
+  // format should respect the "native" 32bit ARGB format of Skia's blitters.
+  // For example, if ImageDataInCanvasColorSettings() is called to fill an
+  // ImageBuffer, kRGBAColorType should be used. If the converted pixels are
+  // used to create an ImageBitmap, kN32ColorType should be used.
+  bool ImageDataInCanvasColorSettings(CanvasColorSpace,
+                                      CanvasPixelFormat,
+                                      unsigned char* converted_pixels,
+                                      DataU8ColorType,
+                                      const IntRect* = nullptr);
 
   // ImageBitmapSource implementation
   IntSize BitmapSourceSize() const override { return size_; }
   ScriptPromise CreateImageBitmap(ScriptState*,
                                   EventTarget&,
                                   Optional<IntRect> crop_rect,
-                                  const ImageBitmapOptions&,
-                                  ExceptionState&) override;
+                                  const ImageBitmapOptions&) override;
 
-  void Trace(Visitor*);
+  void Trace(blink::Visitor*) override;
 
   WARN_UNUSED_RESULT v8::Local<v8::Object> AssociateWithWrapper(
       v8::Isolate*,
@@ -192,8 +199,8 @@ class CORE_EXPORT ImageData final : public GarbageCollectedFinalized<ImageData>,
   static DOMFloat32Array* ConvertFloat16ArrayToFloat32Array(const uint16_t*,
                                                             unsigned);
 
-  static sk_sp<SkColorSpace> GetSkColorSpace(const CanvasColorSpace&,
-                                             const CanvasPixelFormat&);
+  void SwapU16EndiannessForSkColorSpaceXform(const IntRect* = nullptr);
+  void SwizzleIfNeeded(DataU8ColorType, const IntRect*);
 };
 
 }  // namespace blink

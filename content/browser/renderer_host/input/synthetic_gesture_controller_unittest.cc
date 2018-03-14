@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
 #include "content/browser/renderer_host/input/synthetic_gesture.h"
 #include "content/browser/renderer_host/input/synthetic_gesture_target.h"
@@ -52,6 +53,7 @@ const int kPointerAssumedStoppedTimeMs = 43;
 const float kTouchSlopInDips = 7.0f;
 const float kMinScalingSpanInDips = 27.5f;
 const int kTouchPointersLength = 16;
+const int kMouseWheelTickMultiplier = 0;
 
 enum TouchGestureType { TOUCH_SCROLL, TOUCH_DRAG };
 
@@ -135,8 +137,6 @@ class MockSyntheticGestureTarget : public SyntheticGestureTarget {
   // SyntheticGestureTarget:
   void DispatchInputEventToPlatform(const WebInputEvent& event) override {}
 
-  void SetNeedsFlush() override { flush_requested_ = true; }
-
   SyntheticGestureParams::GestureSourceType
   GetDefaultSyntheticGestureSourceType() const override {
     return SyntheticGestureParams::TOUCH_INPUT;
@@ -151,6 +151,10 @@ class MockSyntheticGestureTarget : public SyntheticGestureTarget {
   }
 
   float GetTouchSlopInDips() const override { return kTouchSlopInDips; }
+
+  int GetMouseWheelMinimumGranularity() const override {
+    return kMouseWheelTickMultiplier;
+  }
 
   float GetMinScalingSpanInDips() const override {
     return kMinScalingSpanInDips;
@@ -209,16 +213,16 @@ class MockMoveTouchTarget : public MockMoveGestureTarget {
 
     if (!started_) {
       ASSERT_EQ(touch_event.GetType(), WebInputEvent::kTouchStart);
-      start_.SetPoint(touch_event.touches[0].position.x,
-                      touch_event.touches[0].position.y);
+      start_.SetPoint(touch_event.touches[0].PositionInWidget().x,
+                      touch_event.touches[0].PositionInWidget().y);
       last_touch_point_ = gfx::PointF(start_);
       started_ = true;
     } else {
       ASSERT_NE(touch_event.GetType(), WebInputEvent::kTouchStart);
       ASSERT_NE(touch_event.GetType(), WebInputEvent::kTouchCancel);
 
-      gfx::PointF touch_point(touch_event.touches[0].position.x,
-                              touch_event.touches[0].position.y);
+      gfx::PointF touch_point(touch_event.touches[0].PositionInWidget().x,
+                              touch_event.touches[0].PositionInWidget().y);
       gfx::Vector2dF delta = touch_point - last_touch_point_;
       total_abs_move_distance_length_ += delta.Length();
 
@@ -293,8 +297,8 @@ class MockSyntheticTouchscreenPinchTouchTarget
     if (!started_) {
       ASSERT_EQ(touch_event.GetType(), WebInputEvent::kTouchStart);
 
-      start_0_ = gfx::PointF(touch_event.touches[0].position);
-      start_1_ = gfx::PointF(touch_event.touches[1].position);
+      start_0_ = gfx::PointF(touch_event.touches[0].PositionInWidget());
+      start_1_ = gfx::PointF(touch_event.touches[1].PositionInWidget());
       last_pointer_distance_ = (start_0_ - start_1_).Length();
       initial_pointer_distance_ = last_pointer_distance_;
       EXPECT_GE(initial_pointer_distance_, GetMinScalingSpanInDips());
@@ -304,8 +308,10 @@ class MockSyntheticTouchscreenPinchTouchTarget
       ASSERT_NE(touch_event.GetType(), WebInputEvent::kTouchStart);
       ASSERT_NE(touch_event.GetType(), WebInputEvent::kTouchCancel);
 
-      gfx::PointF current_0 = gfx::PointF(touch_event.touches[0].position);
-      gfx::PointF current_1 = gfx::PointF(touch_event.touches[1].position);
+      gfx::PointF current_0 =
+          gfx::PointF(touch_event.touches[0].PositionInWidget());
+      gfx::PointF current_1 =
+          gfx::PointF(touch_event.touches[1].PositionInWidget());
 
       float pointer_distance = (current_0 - current_1).Length();
 
@@ -458,14 +464,15 @@ class MockSyntheticTapTouchTarget : public MockSyntheticTapGestureTarget {
     switch (state_) {
       case NOT_STARTED:
         EXPECT_EQ(touch_event.GetType(), WebInputEvent::kTouchStart);
-        position_ = gfx::PointF(touch_event.touches[0].position);
+        position_ = gfx::PointF(touch_event.touches[0].PositionInWidget());
         start_time_ = base::TimeDelta::FromMilliseconds(
             static_cast<int64_t>(touch_event.TimeStampSeconds() * 1000));
         state_ = STARTED;
         break;
       case STARTED:
         EXPECT_EQ(touch_event.GetType(), WebInputEvent::kTouchEnd);
-        EXPECT_EQ(position_, gfx::PointF(touch_event.touches[0].position));
+        EXPECT_EQ(position_,
+                  gfx::PointF(touch_event.touches[0].PositionInWidget()));
         stop_time_ = base::TimeDelta::FromMilliseconds(
             static_cast<int64_t>(touch_event.TimeStampSeconds() * 1000));
         state_ = FINISHED;
@@ -538,7 +545,7 @@ class MockSyntheticPointerTouchActionTarget
     type_ = touch_event.GetType();
     for (size_t i = 0; i < WebTouchEvent::kTouchesLengthCap; ++i) {
       indexes_[i] = touch_event.touches[i].id;
-      positions_[i] = gfx::PointF(touch_event.touches[i].position);
+      positions_[i] = gfx::PointF(touch_event.touches[i].PositionInWidget());
       states_[i] = touch_event.touches[i].state;
     }
     touch_length_ = touch_event.touches_length;
@@ -662,6 +669,21 @@ class MockSyntheticPointerMouseActionTarget
   WebMouseEvent::Button button_;
 };
 
+class DummySyntheticGestureControllerDelegate
+    : public SyntheticGestureController::Delegate {
+ public:
+  DummySyntheticGestureControllerDelegate() {}
+  ~DummySyntheticGestureControllerDelegate() override {}
+
+ private:
+  // SyntheticGestureController::Delegate:
+  bool HasGestureStopped() override { return true; }
+
+  DISALLOW_COPY_AND_ASSIGN(DummySyntheticGestureControllerDelegate);
+};
+
+}  // namespace
+
 class SyntheticGestureControllerTestBase {
  public:
   SyntheticGestureControllerTestBase() {}
@@ -671,27 +693,28 @@ class SyntheticGestureControllerTestBase {
   template<typename MockGestureTarget>
   void CreateControllerAndTarget() {
     target_ = new MockGestureTarget();
-    controller_.reset(new SyntheticGestureController(
-        std::unique_ptr<SyntheticGestureTarget>(target_)));
+    controller_ = std::make_unique<SyntheticGestureController>(
+        &delegate_, std::unique_ptr<SyntheticGestureTarget>(target_));
   }
 
   void QueueSyntheticGesture(std::unique_ptr<SyntheticGesture> gesture) {
     controller_->QueueSyntheticGesture(
         std::move(gesture),
-        base::Bind(
+        base::BindOnce(
             &SyntheticGestureControllerTestBase::OnSyntheticGestureCompleted,
             base::Unretained(this)));
   }
 
   void FlushInputUntilComplete() {
-    while (target_->flush_requested()) {
-      while (target_->flush_requested()) {
-        target_->ClearFlushRequest();
-        time_ += base::TimeDelta::FromMilliseconds(kFlushInputRateInMs);
-        controller_->Flush(time_);
-      }
-      controller_->OnDidFlushInput();
-    }
+    // Start and stop the timer explicitly here, since the test does not need to
+    // wait for begin-frame to start the timer.
+    controller_->dispatch_timer_.Start(FROM_HERE,
+                                       base::TimeDelta::FromSeconds(1),
+                                       base::Bind(&base::DoNothing));
+    do
+      time_ += base::TimeDelta::FromMilliseconds(kFlushInputRateInMs);
+    while (controller_->DispatchNextEvent(time_));
+    controller_->dispatch_timer_.Stop();
   }
 
   void OnSyntheticGestureCompleted(SyntheticGesture::Result result) {
@@ -704,7 +727,9 @@ class SyntheticGestureControllerTestBase {
 
   base::TimeDelta GetTotalTime() const { return time_ - start_time_; }
 
+  base::test::ScopedTaskEnvironment env_;
   MockSyntheticGestureTarget* target_;
+  DummySyntheticGestureControllerDelegate delegate_;
   std::unique_ptr<SyntheticGestureController> controller_;
   base::TimeTicks start_time_;
   base::TimeTicks time_;
@@ -836,22 +861,7 @@ TEST_F(SyntheticGestureControllerTest, GestureCompletedOnDidFlushInput) {
   QueueSyntheticGesture(std::move(gesture_1));
   QueueSyntheticGesture(std::move(gesture_2));
 
-  while (target_->flush_requested()) {
-    target_->ClearFlushRequest();
-    time_ += base::TimeDelta::FromMilliseconds(kFlushInputRateInMs);
-    controller_->Flush(time_);
-  }
-  EXPECT_EQ(0, num_success_);
-  controller_->OnDidFlushInput();
-  EXPECT_EQ(1, num_success_);
-
-  while (target_->flush_requested()) {
-    target_->ClearFlushRequest();
-    time_ += base::TimeDelta::FromMilliseconds(kFlushInputRateInMs);
-    controller_->Flush(time_);
-  }
-  EXPECT_EQ(1, num_success_);
-  controller_->OnDidFlushInput();
+  FlushInputUntilComplete();
   EXPECT_EQ(2, num_success_);
 }
 
@@ -1156,8 +1166,8 @@ TEST_F(SyntheticGestureControllerTest, MultiScrollGestureMouseHorizontal) {
   // floating point precision issues with diagonal scrolls.
   EXPECT_FLOAT_EQ(params.distances[0].Length() + params.distances[1].Length(),
                   scroll_target->total_abs_move_distance_length());
-  EXPECT_EQ(params.distances[0] + params.distances[1],
-            scroll_target->start_to_end_distance());
+  EXPECT_FLOAT_EQ((params.distances[0] + params.distances[1]).x(),
+                  scroll_target->start_to_end_distance().x());
 }
 
 void CheckIsWithinRangeMulti(float scroll_distance,
@@ -1764,7 +1774,5 @@ TEST_F(SyntheticGestureControllerTest, PointerMouseAction) {
   EXPECT_TRUE(
       pointer_mouse_target->SyntheticMouseActionDispatchedCorrectly(param, 1));
 }
-
-}  // namespace
 
 }  // namespace content

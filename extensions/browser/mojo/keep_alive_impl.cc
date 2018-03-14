@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "content/public/browser/browser_context.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/process_manager.h"
 
@@ -15,7 +16,8 @@ namespace extensions {
 // static
 void KeepAliveImpl::Create(content::BrowserContext* context,
                            const Extension* extension,
-                           KeepAliveRequest request) {
+                           KeepAliveRequest request,
+                           content::RenderFrameHost* render_frame_host) {
   // Owns itself.
   new KeepAliveImpl(context, extension, std::move(request));
 }
@@ -38,7 +40,7 @@ KeepAliveImpl::~KeepAliveImpl() = default;
 void KeepAliveImpl::OnExtensionUnloaded(
     content::BrowserContext* browser_context,
     const Extension* extension,
-    UnloadedExtensionInfo::Reason reason) {
+    UnloadedExtensionReason reason) {
   if (browser_context == context_ && extension == extension_)
     delete this;
 }

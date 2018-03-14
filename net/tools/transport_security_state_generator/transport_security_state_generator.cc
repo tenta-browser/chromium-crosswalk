@@ -23,7 +23,6 @@
 using net::transport_security_state::TransportSecurityStateEntries;
 using net::transport_security_state::Pinsets;
 using net::transport_security_state::PreloadedStateGenerator;
-using net::transport_security_state::DomainIDList;
 
 namespace {
 
@@ -153,6 +152,50 @@ bool CheckSubdomainsFlags(const TransportSecurityStateEntries& entries) {
   return true;
 }
 
+bool IsLowercaseAlphanumeric(char c) {
+  return ((c >= 'a') && (c <= 'z')) || ((c >= '0') && (c <= '9'));
+}
+
+// Checks the well-formedness of the hostnames. All hostnames should be in their
+// canonicalized form because they will be matched against canonicalized input.
+bool CheckHostnames(const TransportSecurityStateEntries& entries) {
+  for (const auto& entry : entries) {
+    const std::string& hostname = entry->hostname;
+
+    bool in_component = false;
+    bool most_recent_component_started_alphanumeric = false;
+    for (const char& c : hostname) {
+      if (!in_component) {
+        most_recent_component_started_alphanumeric = IsLowercaseAlphanumeric(c);
+        if (!most_recent_component_started_alphanumeric && (c != '-') &&
+            (c != '_')) {
+          LOG(ERROR) << hostname << " is not in canonicalized form";
+          return false;
+        }
+        in_component = true;
+      } else if (c == '.') {
+        in_component = false;
+      } else if (!IsLowercaseAlphanumeric(c) && (c != '-') && (c != '_')) {
+        LOG(ERROR) << hostname << " is not in canonicalized form";
+        return false;
+      }
+    }
+
+    if (!most_recent_component_started_alphanumeric) {
+      LOG(ERROR) << "The last label of " << hostname
+                 << " must start with a lowercase alphanumeric character";
+      return false;
+    }
+
+    if (!in_component) {
+      LOG(ERROR) << hostname << " must not end with a \".\"";
+      return false;
+    }
+  }
+
+  return true;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -208,17 +251,16 @@ int main(int argc, char* argv[]) {
 
   TransportSecurityStateEntries entries;
   Pinsets pinsets;
-  DomainIDList domain_ids;
 
   if (!ParseCertificatesFile(certs_input, &pinsets) ||
-      !ParseJSON(json_input, &entries, &pinsets, &domain_ids)) {
+      !ParseJSON(json_input, &entries, &pinsets)) {
     LOG(ERROR) << "Error while parsing the input files.";
     return 1;
   }
 
   if (!CheckDuplicateEntries(entries) || !CheckNoopEntries(entries) ||
       !CheckSubdomainsFlags(entries) || !CheckForDuplicatePins(pinsets) ||
-      !CheckCertificatesInPinsets(pinsets)) {
+      !CheckCertificatesInPinsets(pinsets) || !CheckHostnames(entries)) {
     LOG(ERROR) << "Checks failed. Aborting.";
     return 1;
   }
@@ -238,7 +280,7 @@ int main(int argc, char* argv[]) {
 
   std::string output;
   PreloadedStateGenerator generator;
-  output = generator.Generate(preload_template, entries, domain_ids, pinsets);
+  output = generator.Generate(preload_template, entries, pinsets);
   if (output.empty()) {
     LOG(ERROR) << "Trie generation failed.";
     return 1;
@@ -254,8 +296,7 @@ int main(int argc, char* argv[]) {
   }
 
   VLOG(1) << "Wrote trie containing " << entries.size()
-          << " entries, referencing " << pinsets.size() << " pinsets and "
-          << domain_ids.size() << " domain IDs to "
+          << " entries, referencing " << pinsets.size() << " pinsets to "
           << output_path.AsUTF8Unsafe() << std::endl;
 
   return 0;

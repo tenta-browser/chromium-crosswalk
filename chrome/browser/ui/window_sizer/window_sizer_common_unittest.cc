@@ -7,7 +7,6 @@
 #include <stddef.h>
 #include <utility>
 
-#include "ash/wm/window_resizer.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "build/build_config.h"
@@ -288,8 +287,6 @@ TEST(WindowSizerTestCommon,
   }
 
   { // off the top
-    gfx::Rect initial_bounds(50, -370, 500, 400);
-
     gfx::Rect window_bounds;
     GetWindowBounds(p1024x768, p1024x768, gfx::Rect(),
                     gfx::Rect(50, -370, 500, 400), gfx::Rect(), PERSISTED,

@@ -4,6 +4,8 @@
 
 #include "content/shell/browser/shell_download_manager_delegate.h"
 
+#include <string>
+
 #if defined(OS_WIN)
 #include <windows.h>
 #include <commdlg.h>
@@ -16,6 +18,7 @@
 #include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -32,16 +35,14 @@
 namespace content {
 
 ShellDownloadManagerDelegate::ShellDownloadManagerDelegate()
-    : download_manager_(NULL),
+    : download_manager_(nullptr),
       suppress_prompting_(false),
       weak_ptr_factory_(this) {}
 
 ShellDownloadManagerDelegate::~ShellDownloadManagerDelegate() {
   if (download_manager_) {
-    DCHECK_EQ(static_cast<DownloadManagerDelegate*>(this),
-              download_manager_->GetDelegate());
-    download_manager_->SetDelegate(NULL);
-    download_manager_ = NULL;
+    download_manager_->SetDelegate(nullptr);
+    download_manager_ = nullptr;
   }
 }
 
@@ -55,7 +56,7 @@ void ShellDownloadManagerDelegate::Shutdown() {
   // Revoke any pending callbacks. download_manager_ et. al. are no longer safe
   // to access after this point.
   weak_ptr_factory_.InvalidateWeakPtrs();
-  download_manager_ = NULL;
+  download_manager_ = nullptr;
 }
 
 bool ShellDownloadManagerDelegate::DetermineDownloadTarget(
@@ -83,16 +84,14 @@ bool ShellDownloadManagerDelegate::DetermineDownloadTarget(
                  download->GetId(),
                  callback);
 
-  BrowserThread::PostTask(
-      BrowserThread::FILE,
+  PostTaskWithTraits(
       FROM_HERE,
-      base::Bind(&ShellDownloadManagerDelegate::GenerateFilename,
-                 download->GetURL(),
-                 download->GetContentDisposition(),
-                 download->GetSuggestedFilename(),
-                 download->GetMimeType(),
-                 default_download_path_,
-                 filename_determined_callback));
+      {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN,
+       base::TaskPriority::USER_VISIBLE},
+      base::BindOnce(&ShellDownloadManagerDelegate::GenerateFilename,
+                     download->GetURL(), download->GetContentDisposition(),
+                     download->GetSuggestedFilename(), download->GetMimeType(),
+                     default_download_path_, filename_determined_callback));
   return true;
 }
 
@@ -116,7 +115,6 @@ void ShellDownloadManagerDelegate::GenerateFilename(
     const std::string& mime_type,
     const base::FilePath& suggested_directory,
     const FilenameDeterminedCallback& callback) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
   base::FilePath generated_name = net::GenerateFileName(url,
                                                         content_disposition,
                                                         std::string(),
@@ -128,8 +126,8 @@ void ShellDownloadManagerDelegate::GenerateFilename(
     base::CreateDirectory(suggested_directory);
 
   base::FilePath suggested_path(suggested_directory.Append(generated_name));
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE, base::Bind(callback, suggested_path));
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::BindOnce(callback, suggested_path));
 }
 
 void ShellDownloadManagerDelegate::OnDownloadPathGenerated(

@@ -2,6 +2,11 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//extensions/features/features.gni")
+
+assert(enable_extensions,
+       "Cannot depend on extensions because enable_extensions=false.")
+
 source_set("updater") {
   sources = [
     "extension_cache.h",
@@ -18,8 +23,6 @@ source_set("updater") {
     "request_queue_impl.h",
     "safe_manifest_parser.cc",
     "safe_manifest_parser.h",
-    "update_client_config.cc",
-    "update_client_config.h",
     "update_data_provider.cc",
     "update_data_provider.h",
     "update_install_shim.cc",
@@ -38,5 +41,6 @@ source_set("updater") {
   deps = [
     "//extensions/common",
     "//extensions/strings",
+    "//services/data_decoder/public/cpp",
   ]
 }

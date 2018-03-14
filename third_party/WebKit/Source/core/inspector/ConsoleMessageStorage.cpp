@@ -25,7 +25,7 @@ void ConsoleMessageStorage::AddConsoleMessage(ExecutionContext* context,
 }
 
 void ConsoleMessageStorage::Clear() {
-  messages_.Clear();
+  messages_.clear();
   expired_count_ = 0;
 }
 
@@ -41,7 +41,7 @@ int ConsoleMessageStorage::ExpiredCount() const {
   return expired_count_;
 }
 
-DEFINE_TRACE(ConsoleMessageStorage) {
+void ConsoleMessageStorage::Trace(blink::Visitor* visitor) {
   visitor->Trace(messages_);
 }
 

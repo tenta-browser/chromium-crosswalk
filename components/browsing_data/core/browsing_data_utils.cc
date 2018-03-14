@@ -4,6 +4,8 @@
 
 #include "components/browsing_data/core/browsing_data_utils.h"
 
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "components/browsing_data/core/counters/autofill_counter.h"
 #include "components/browsing_data/core/counters/history_counter.h"
@@ -32,6 +34,7 @@ base::Time CalculateBeginDeleteTime(TimePeriod time_period) {
       diff = base::TimeDelta::FromHours(4 * 7 * 24);
       break;
     case TimePeriod::ALL_TIME:
+    case TimePeriod::OLDER_THAN_30_DAYS:
       delete_begin_time = base::Time();
       break;
   }
@@ -39,7 +42,9 @@ base::Time CalculateBeginDeleteTime(TimePeriod time_period) {
 }
 
 base::Time CalculateEndDeleteTime(TimePeriod time_period) {
-  // No TimePeriod currently supports the second time bound.
+  if (time_period == TimePeriod::OLDER_THAN_30_DAYS) {
+    return base::Time::Now() - base::TimeDelta::FromDays(30);
+  }
   return base::Time::Max();
 }
 
@@ -62,11 +67,44 @@ void RecordDeletionForPeriod(TimePeriod period) {
       base::RecordAction(
           base::UserMetricsAction("ClearBrowsingData_Everything"));
       break;
+    case TimePeriod::OLDER_THAN_30_DAYS:
+      base::RecordAction(
+          base::UserMetricsAction("ClearBrowsingData_OlderThan30Days"));
+      break;
+  }
+}
+
+void RecordTimePeriodChange(TimePeriod period) {
+  switch (period) {
+    case TimePeriod::LAST_HOUR:
+      base::RecordAction(base::UserMetricsAction(
+          "ClearBrowsingData_TimePeriodChanged_LastHour"));
+      break;
+    case TimePeriod::LAST_DAY:
+      base::RecordAction(base::UserMetricsAction(
+          "ClearBrowsingData_TimePeriodChanged_LastDay"));
+      break;
+    case TimePeriod::LAST_WEEK:
+      base::RecordAction(base::UserMetricsAction(
+          "ClearBrowsingData_TimePeriodChanged_LastWeek"));
+      break;
+    case TimePeriod::FOUR_WEEKS:
+      base::RecordAction(base::UserMetricsAction(
+          "ClearBrowsingData_TimePeriodChanged_LastMonth"));
+      break;
+    case TimePeriod::ALL_TIME:
+      base::RecordAction(base::UserMetricsAction(
+          "ClearBrowsingData_TimePeriodChanged_Everything"));
+      break;
+    case TimePeriod::OLDER_THAN_30_DAYS:
+      base::RecordAction(base::UserMetricsAction(
+          "ClearBrowsingData_TimePeriodChanged_OlderThan30Days"));
+      break;
   }
 }
 
 base::string16 GetCounterTextFromResult(
-    const browsing_data::BrowsingDataCounter::Result* result) {
+    const BrowsingDataCounter::Result* result) {
   base::string16 text;
   std::string pref_name = result->source()->GetPrefName();
 
@@ -74,28 +112,35 @@ base::string16 GetCounterTextFromResult(
     // The counter is still counting.
     text = l10n_util::GetStringUTF16(IDS_CLEAR_BROWSING_DATA_CALCULATING);
 
-  } else if (pref_name == browsing_data::prefs::kDeletePasswords ||
-             pref_name == browsing_data::prefs::kDeleteDownloadHistory) {
-    // Counters with trivially formatted result: passwords and downloads.
-    browsing_data::BrowsingDataCounter::ResultInt count =
-        static_cast<const browsing_data::BrowsingDataCounter::FinishedResult*>(
-            result)
-            ->Value();
+  } else if (pref_name == prefs::kDeletePasswords) {
+    const BrowsingDataCounter::SyncResult* password_result =
+        static_cast<const BrowsingDataCounter::SyncResult*>(result);
+
+    BrowsingDataCounter::ResultInt count = password_result->Value();
+
     text = l10n_util::GetPluralStringFUTF16(
-        pref_name == browsing_data::prefs::kDeletePasswords
-            ? IDS_DEL_PASSWORDS_COUNTER
-            : IDS_DEL_DOWNLOADS_COUNTER,
+        password_result->is_sync_enabled() ? IDS_DEL_PASSWORDS_COUNTER_SYNCED
+                                           : IDS_DEL_PASSWORDS_COUNTER,
         count);
-  } else if (pref_name == browsing_data::prefs::kDeleteBrowsingHistoryBasic) {
+  } else if (pref_name == prefs::kDeleteDownloadHistory) {
+    BrowsingDataCounter::ResultInt count =
+        static_cast<const BrowsingDataCounter::FinishedResult*>(result)
+            ->Value();
+    text = l10n_util::GetPluralStringFUTF16(IDS_DEL_DOWNLOADS_COUNTER, count);
+  } else if (pref_name == prefs::kDeleteSiteSettings) {
+    BrowsingDataCounter::ResultInt count =
+        static_cast<const BrowsingDataCounter::FinishedResult*>(result)
+            ->Value();
+    text =
+        l10n_util::GetPluralStringFUTF16(IDS_DEL_SITE_SETTINGS_COUNTER, count);
+  } else if (pref_name == prefs::kDeleteBrowsingHistoryBasic) {
     // The basic tab doesn't show history counter results.
     NOTREACHED();
-  } else if (pref_name == browsing_data::prefs::kDeleteBrowsingHistory) {
+  } else if (pref_name == prefs::kDeleteBrowsingHistory) {
     // History counter.
-    const browsing_data::HistoryCounter::HistoryResult* history_result =
-        static_cast<const browsing_data::HistoryCounter::HistoryResult*>(
-            result);
-    browsing_data::BrowsingDataCounter::ResultInt local_item_count =
-        history_result->Value();
+    const HistoryCounter::HistoryResult* history_result =
+        static_cast<const HistoryCounter::HistoryResult*>(result);
+    BrowsingDataCounter::ResultInt local_item_count = history_result->Value();
     bool has_synced_visits = history_result->has_synced_visits();
     text = has_synced_visits
                ? l10n_util::GetPluralStringFUTF16(
@@ -103,17 +148,14 @@ base::string16 GetCounterTextFromResult(
                : l10n_util::GetPluralStringFUTF16(
                      IDS_DEL_BROWSING_HISTORY_COUNTER, local_item_count);
 
-  } else if (pref_name == browsing_data::prefs::kDeleteFormData) {
+  } else if (pref_name == prefs::kDeleteFormData) {
     // Autofill counter.
-    const browsing_data::AutofillCounter::AutofillResult* autofill_result =
-        static_cast<const browsing_data::AutofillCounter::AutofillResult*>(
-            result);
-    browsing_data::AutofillCounter::ResultInt num_suggestions =
-        autofill_result->Value();
-    browsing_data::AutofillCounter::ResultInt num_credit_cards =
+    const AutofillCounter::AutofillResult* autofill_result =
+        static_cast<const AutofillCounter::AutofillResult*>(result);
+    AutofillCounter::ResultInt num_suggestions = autofill_result->Value();
+    AutofillCounter::ResultInt num_credit_cards =
         autofill_result->num_credit_cards();
-    browsing_data::AutofillCounter::ResultInt num_addresses =
-        autofill_result->num_addresses();
+    AutofillCounter::ResultInt num_addresses = autofill_result->num_addresses();
 
     std::vector<base::string16> displayed_strings;
 
@@ -146,23 +188,30 @@ base::string16 GetCounterTextFromResult(
       }
     }
 
+    bool synced = autofill_result->is_sync_enabled();
+
     // Construct the resulting string from the sections in |displayed_strings|.
     switch (displayed_strings.size()) {
       case 0:
         text = l10n_util::GetStringUTF16(IDS_DEL_AUTOFILL_COUNTER_EMPTY);
         break;
       case 1:
-        text = displayed_strings[0];
+        text = synced ? l10n_util::GetStringFUTF16(
+                            IDS_DEL_AUTOFILL_COUNTER_ONE_TYPE_SYNCED,
+                            displayed_strings[0])
+                      : displayed_strings[0];
         break;
       case 2:
-        text = l10n_util::GetStringFUTF16(IDS_DEL_AUTOFILL_COUNTER_TWO_TYPES,
-                                          displayed_strings[0],
-                                          displayed_strings[1]);
+        text = l10n_util::GetStringFUTF16(
+            synced ? IDS_DEL_AUTOFILL_COUNTER_TWO_TYPES_SYNCED
+                   : IDS_DEL_AUTOFILL_COUNTER_TWO_TYPES,
+            displayed_strings[0], displayed_strings[1]);
         break;
       case 3:
         text = l10n_util::GetStringFUTF16(
-            IDS_DEL_AUTOFILL_COUNTER_THREE_TYPES, displayed_strings[0],
-            displayed_strings[1], displayed_strings[2]);
+            synced ? IDS_DEL_AUTOFILL_COUNTER_THREE_TYPES_SYNCED
+                   : IDS_DEL_AUTOFILL_COUNTER_THREE_TYPES,
+            displayed_strings[0], displayed_strings[1], displayed_strings[2]);
         break;
       default:
         NOTREACHED();
@@ -194,8 +243,16 @@ bool GetDeletionPreferenceFromDataType(
       case BrowsingDataType::COOKIES:
         *out_pref = prefs::kDeleteCookiesBasic;
         return true;
-      default:
-        // This is not a valid type for the basic tab.
+      case BrowsingDataType::PASSWORDS:
+      case BrowsingDataType::FORM_DATA:
+      case BrowsingDataType::BOOKMARKS:
+      case BrowsingDataType::SITE_SETTINGS:
+      case BrowsingDataType::DOWNLOADS:
+      case BrowsingDataType::MEDIA_LICENSES:
+      case BrowsingDataType::HOSTED_APPS_DATA:
+        return false;  // No corresponding preference on basic tab.
+      case BrowsingDataType::NUM_TYPES:
+        // This is not an actual type.
         NOTREACHED();
         return false;
     }
@@ -218,15 +275,54 @@ bool GetDeletionPreferenceFromDataType(
       return true;
     case BrowsingDataType::BOOKMARKS:
       // Bookmarks are deleted on the Android side. No corresponding deletion
-      // preference.
+      // preference. Not implemented on Desktop.
       return false;
+    case BrowsingDataType::SITE_SETTINGS:
+      *out_pref = prefs::kDeleteSiteSettings;
+      return true;
+    case BrowsingDataType::DOWNLOADS:
+      *out_pref = prefs::kDeleteDownloadHistory;
+      return true;
+    case BrowsingDataType::MEDIA_LICENSES:
+      *out_pref = prefs::kDeleteMediaLicenses;
+      return true;
+    case BrowsingDataType::HOSTED_APPS_DATA:
+      *out_pref = prefs::kDeleteHostedAppsData;
+      return true;
     case BrowsingDataType::NUM_TYPES:
-      // This is not an actual type.
-      NOTREACHED();
+      NOTREACHED();  // This is not an actual type.
       return false;
   }
   NOTREACHED();
   return false;
+}
+
+BrowsingDataType GetDataTypeFromDeletionPreference(
+    const std::string& pref_name) {
+  using DataTypeMap = base::flat_map<std::string, BrowsingDataType>;
+  CR_DEFINE_STATIC_LOCAL(
+      DataTypeMap, preference_to_datatype,
+      (
+          {
+              {prefs::kDeleteBrowsingHistory, BrowsingDataType::HISTORY},
+              {prefs::kDeleteBrowsingHistoryBasic, BrowsingDataType::HISTORY},
+              {prefs::kDeleteCache, BrowsingDataType::CACHE},
+              {prefs::kDeleteCacheBasic, BrowsingDataType::CACHE},
+              {prefs::kDeleteCookies, BrowsingDataType::COOKIES},
+              {prefs::kDeleteCookiesBasic, BrowsingDataType::COOKIES},
+              {prefs::kDeletePasswords, BrowsingDataType::PASSWORDS},
+              {prefs::kDeleteFormData, BrowsingDataType::FORM_DATA},
+              {prefs::kDeleteSiteSettings, BrowsingDataType::SITE_SETTINGS},
+              {prefs::kDeleteDownloadHistory, BrowsingDataType::DOWNLOADS},
+              {prefs::kDeleteMediaLicenses, BrowsingDataType::MEDIA_LICENSES},
+              {prefs::kDeleteHostedAppsData,
+               BrowsingDataType::HOSTED_APPS_DATA},
+          },
+          base::KEEP_FIRST_OF_DUPES));
+
+  auto iter = preference_to_datatype.find(pref_name);
+  DCHECK(iter != preference_to_datatype.end());
+  return iter->second;
 }
 
 void MigratePreferencesToBasic(PrefService* prefs) {

@@ -7,9 +7,9 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/run_loop.h"
 #include "build/build_config.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/nacl/common/features.h"
 #include "components/prefs/pref_service.h"
 #include "components/storage_monitor/storage_monitor.h"
 #include "components/update_client/update_query_params.h"
@@ -18,12 +18,10 @@
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/common/result_codes.h"
 #include "content/shell/browser/shell_devtools_manager_delegate.h"
-#include "extensions/browser/app_window/app_window_client.h"
 #include "extensions/browser/browser_context_keyed_service_factories.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/updater/update_service.h"
 #include "extensions/common/constants.h"
-#include "extensions/common/switches.h"
 #include "extensions/shell/browser/shell_browser_context.h"
 #include "extensions/shell/browser/shell_browser_context_keyed_service_factories.h"
 #include "extensions/shell/browser/shell_browser_main_delegate.h"
@@ -47,20 +45,28 @@
 #if defined(OS_CHROMEOS)
 #include "chromeos/audio/audio_devices_pref_handler_impl.h"
 #include "chromeos/audio/cras_audio_handler.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/disks/disk_mount_manager.h"
 #include "chromeos/network/network_handler.h"
-#include "device/bluetooth/bluetooth_adapter_factory.h"
-#include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "extensions/shell/browser/shell_audio_controller_chromeos.h"
 #include "extensions/shell/browser/shell_network_controller_chromeos.h"
+#endif
+
+#if defined(OS_LINUX)
+#include "device/bluetooth/bluetooth_adapter_factory.h"
+#include "device/bluetooth/dbus/bluez_dbus_manager.h"
+#endif
+
+#if defined(OS_CHROMEOS)
+#include "chromeos/dbus/dbus_thread_manager.h"
+#elif defined(OS_LINUX)
+#include "device/bluetooth/dbus/dbus_thread_manager_linux.h"
 #endif
 
 #if defined(OS_MACOSX)
 #include "extensions/shell/browser/shell_browser_main_parts_mac.h"
 #endif
 
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
 #include "components/nacl/browser/nacl_browser.h"
 #include "components/nacl/browser/nacl_process_host.h"
 #include "content/public/browser/browser_thread.h"
@@ -74,7 +80,7 @@
 using base::CommandLine;
 using content::BrowserContext;
 
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
 using content::BrowserThread;
 #endif
 
@@ -122,8 +128,17 @@ void ShellBrowserMainParts::PostMainMessageLoopStart() {
       switches::kAppShellAllowRoaming)) {
     network_controller_->SetCellularAllowRoaming(true);
   }
+#elif defined(OS_LINUX)
+  // app_shell doesn't need GTK, so the fake input method context can work.
+  // See crbug.com/381852 and revision fb69f142.
+  // TODO(michaelpg): Verify this works for target environments.
+  ui::InitializeInputMethodForTesting();
+
+  bluez::DBusThreadManagerLinux::Initialize();
+  bluez::BluezDBusManager::Initialize(
+      bluez::DBusThreadManagerLinux::Get()->GetSystemBus(),
+      /*use_dbus_fakes=*/false);
 #else
-  // Non-Chrome OS platforms are for developer convenience, so use a test IME.
   ui::InitializeInputMethodForTesting();
 #endif
 }
@@ -165,7 +180,8 @@ void ShellBrowserMainParts::PreMainMessageLoopRun() {
 
   storage_monitor::StorageMonitor::Create();
 
-  desktop_controller_.reset(browser_main_delegate_->CreateDesktopController());
+  desktop_controller_.reset(
+      browser_main_delegate_->CreateDesktopController(browser_context_.get()));
 
   // TODO(jamescook): Initialize user_manager::UserManager.
 
@@ -202,9 +218,9 @@ void ShellBrowserMainParts::PreMainMessageLoopRun() {
       cmd->GetSwitchValueASCII(switches::kAppShellUser),
       cmd->GetSwitchValueASCII(switches::kAppShellRefreshToken)));
 
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   nacl::NaClBrowser::SetDelegate(
-      base::MakeUnique<ShellNaClBrowserDelegate>(browser_context_.get()));
+      std::make_unique<ShellNaClBrowserDelegate>(browser_context_.get()));
   // Track the task so it can be canceled if app_shell shuts down very quickly,
   // such as in browser tests.
   task_tracker_.PostTask(
@@ -227,19 +243,20 @@ void ShellBrowserMainParts::PreMainMessageLoopRun() {
 bool ShellBrowserMainParts::MainMessageLoopRun(int* result_code) {
   if (!run_message_loop_)
     return true;
-  // TODO(yoz): just return false here?
-  base::RunLoop run_loop;
-  run_loop.Run();
+  desktop_controller_->Run();
   *result_code = content::RESULT_CODE_NORMAL_EXIT;
   return true;
 }
 
 void ShellBrowserMainParts::PostMainMessageLoopRun() {
+  // Close apps before shutting down browser context and extensions system.
+  desktop_controller_->CloseAppWindows();
+
   // NOTE: Please destroy objects in the reverse order of their creation.
   browser_main_delegate_->Shutdown();
   content::ShellDevToolsManagerDelegate::StopHttpHandler();
 
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   task_tracker_.TryCancelAll();
 #endif
 
@@ -251,9 +268,6 @@ void ShellBrowserMainParts::PostMainMessageLoopRun() {
   extensions_browser_client_.reset();
 
   desktop_controller_.reset();
-
-  // ShellDeviceClient must be shutdown when the FILE thread is still alive.
-  device_client_->Shutdown();
 
   storage_monitor::StorageMonitor::Destroy();
 
@@ -278,6 +292,10 @@ void ShellBrowserMainParts::PostDestroyThreads() {
   device::BluetoothAdapterFactory::Shutdown();
   bluez::BluezDBusManager::Shutdown();
   chromeos::DBusThreadManager::Shutdown();
+#elif defined(OS_LINUX)
+  device::BluetoothAdapterFactory::Shutdown();
+  bluez::BluezDBusManager::Shutdown();
+  bluez::DBusThreadManagerLinux::Shutdown();
 #endif
 }
 

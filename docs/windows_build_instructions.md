@@ -1,6 +1,6 @@
 # Checking out and Building Chromium for Windows
 
-There are instructions for other platforms linked from the 
+There are instructions for other platforms linked from the
 [get the code](get_the_code.md) page.
 
 ## Instructions for Google Employees
@@ -16,30 +16,32 @@ Are you a Google employee? See
   recommended.
 * At least 100GB of free disk space on an NTFS-formatted hard drive. FAT32
   will not work, as some of the Git packfiles are larger than 4GB.
-* Visual Studio 2015 Update 3, see below (no other version is supported).
+* An appropriate version of Visual Studio, as described below.
 * Windows 7 or newer.
 
 ## Setting up Windows
 
 ### Visual Studio
 
-As of December 8, 2016 Chromium requires Visual Studio 2015, with the 14393
-Windows SDK to build.
+As of September, 2017 (R503915) Chromium requires Visual Studio 2017 update 3.2
+with the 15063 (Creators Update) Windows SDK or later to build. Visual Studio
+Community Edition should work if its license is appropriate for you. You must
+install the "Desktop development with C++" component and the "MFC and ATL
+support" sub-component. This can be done from the command line by passing these
+arguments to the Visual Studio installer that you download:
+```shell
+--add Microsoft.VisualStudio.Workload.NativeDesktop
+    --add Microsoft.VisualStudio.Component.VC.ATLMFC --includeRecommended
+```
+You must have the Windows 10 SDK installed, version 10.0.15063 or later.
+The 10.0.15063 SDK initially had errors but the 10.0.15063.468 version works
+well. Most of this will be installed by Visual Studio.
 
-Install Visual Studio 2015 Update 3 or later - Community Edition
-should work if its license is appropriate for you. Use the Custom Install option
-and select:
-
-- Visual C++, which will select three sub-categories including MFC
-- Universal Windows Apps Development Tools > Tools (1.4.1) and Windows 10 SDK
-  (10.0.14393)
-
-You must have the 14393 SDK installed or else you will hit compile errors such
-as undefined or redefined macros.
-
-Install the Windows SDK 10, and choose Debugging Tools For Windows when you
-install this in order to get windbg and cdb. The latter is required for the
-build to succeed as some tests use it for symbolizing crash dumps.
+If the Windows 10 SDK was installed via the Visual Studio installer, the Debugging
+Tools can be installed by going to: Control Panel → Programs →
+Programs and Features → Select the "Windows Software Development Kit" →
+Change → Change → Check "Debugging Tools For Windows" → Change. Or, you can
+download the standalone SDK installer and use it to install the Debugging Tools.
 
 ## Install `depot_tools`
 
@@ -49,11 +51,11 @@ and extract it somewhere.
 *** note
 **Warning:** **DO NOT** use drag-n-drop or copy-n-paste extract from Explorer,
 this will not extract the hidden “.git” folder which is necessary for
-depot_tools to autoupdate itself. You can use “Extract all…” from the 
+depot_tools to autoupdate itself. You can use “Extract all…” from the
 context menu though.
 ***
 
-Add depot_tools to the start of your PATH (must be ahead of any installs of 
+Add depot_tools to the start of your PATH (must be ahead of any installs of
 Python). Assuming you unzipped the bundle to C:\src\depot_tools, open:
 
 Control Panel → System and Security → System → Advanced system settings
@@ -80,12 +82,22 @@ the code, including msysgit and python.
 * If you see strange errors with the file system on the first run of gclient,
   you may want to [disable Windows Indexing](http://tortoisesvn.tigris.org/faq.html#cantmove2).
 
-After running gclient open a command prompt and type `where python` and 
-confirm that the depot_tools `python.bat` comes ahead of any copies of 
-python.exe. Failing to ensure this can lead to overbuilding when 
+After running gclient open a command prompt and type `where python` and
+confirm that the depot_tools `python.bat` comes ahead of any copies of
+python.exe. Failing to ensure this can lead to overbuilding when
 using gn - see [crbug.com/611087](https://crbug.com/611087).
 
 ## Get the code
+
+First, configure Git:
+
+```shell
+$ git config --global user.name "My Name"
+$ git config --global user.email "my-name@chromium.org"
+$ git config --global core.autocrlf false
+$ git config --global core.filemode false
+$ git config --global branch.autosetuprebase always
+```
 
 Create a `chromium` directory for the checkout and change to it (you can call
 this whatever you like and put it wherever you like, as
@@ -179,9 +191,46 @@ help gen` for the current documentation.
 * Reduce file system overhead by excluding build directories from
   antivirus and indexing software.
 * Store the build tree on a fast disk (preferably SSD).
+* The more cores the better (20+ is not excessive) and lots of RAM is needed
+(64 GB is not excessive).
 
-Still, expect build times of 30 minutes to 2 hours when everything has to
-be recompiled.
+There are some gn flags that can improve build speeds. You can specify these
+in the editor that appears when you create your output directory
+(`gn args out/Default`) or on the gn gen command line
+(`gn gen out/Default --args="is_component_build = true is_debug = true"`).
+Some helpful settings to consider using include:
+* `use_jumbo_build = true` - *Experimental* [Jumbo/unity](jumbo.md) builds.
+* `is_component_build = true` - this uses more, smaller DLLs, and incremental
+linking.
+* `enable_nacl = false` - this disables Native Client which is usually not
+needed for local builds.
+* `target_cpu = "x86"` - x86 builds are slightly faster than x64 builds and
+support incremental linking for more targets. Note that if you set this but
+don't' set enable_nacl = false then build times may get worse.
+* `remove_webcore_debug_symbols = true` - turn off source-level debugging for
+blink to reduce build times, appropriate if you don't plan to debug blink.
+
+In addition, Google employees should consider using goma, a distributed
+compilation system. Detailed information is available internally but the
+relevant gn args are:
+* `use_goma = true`
+* `symbol_level = 2` - by default goma builds change symbol_level from 2 to 1
+which disables source-level debugging. This turns it back on. This actually
+makes builds slower, but it makes goma more usable.
+* `is_win_fastlink = true` - this is required if you have goma enabled and
+symbol_level set to 2.
+
+Note that debugging of is_win_fastlink built binaries is unreliable prior to
+VS 2017 Update 3 and may crash Visual Studio.
+
+To get any benefit from goma it is important to pass a large -j value to ninja.
+A good default is 10\*numCores to 20\*numCores. If you run autoninja.bat then it
+will pass an appropriate -j value to ninja for goma or not, automatically.
+
+When invoking ninja specify 'chrome' as the target to avoid building all test
+binaries as well.
+
+Still, builds will take many hours on many machines.
 
 ## Build Chromium
 
@@ -229,7 +278,7 @@ $ gclient sync
 
 The first command updates the primary Chromium source repository and rebases
 any of your local branches on top of tip-of-tree (aka the Git branch `origin/master`).
-If you don't want to use this script, you can also just use `git pull` or 
+If you don't want to use this script, you can also just use `git pull` or
 other common Git commands to update the repo.
 
 The second command syncs the subrepositories to the appropriate versions and

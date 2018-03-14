@@ -2,14 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef DEVICE_USB_USB_SERVICE_IMPL_H_
+#define DEVICE_USB_USB_SERVICE_IMPL_H_
+
 #include "device/usb/usb_service.h"
 
 #include <stddef.h>
 
 #include <map>
-#include <queue>
 #include <set>
 
+#include "base/containers/queue.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
@@ -25,10 +28,6 @@
 struct libusb_device;
 struct libusb_context;
 
-namespace base {
-class SequencedTaskRunner;
-}
-
 namespace device {
 
 typedef struct libusb_device* PlatformUsbDevice;
@@ -42,8 +41,7 @@ class UsbServiceImpl :
 #endif  // OS_WIN
     public UsbService {
  public:
-  explicit UsbServiceImpl(
-      scoped_refptr<base::SequencedTaskRunner> blocking_task_runner);
+  UsbServiceImpl();
   ~UsbServiceImpl() override;
 
  private:
@@ -99,7 +97,7 @@ class UsbServiceImpl :
   // Enumeration callbacks are queued until an enumeration completes.
   bool enumeration_ready_ = false;
   bool enumeration_in_progress_ = false;
-  std::queue<std::string> pending_path_enumerations_;
+  base::queue<std::string> pending_path_enumerations_;
   std::vector<GetDevicesCallback> pending_enumeration_callbacks_;
 
   // The map from PlatformUsbDevices to UsbDevices.
@@ -125,3 +123,5 @@ class UsbServiceImpl :
 };
 
 }  // namespace device
+
+#endif  // DEVICE_USB_USB_SERVICE_IMPL_H_

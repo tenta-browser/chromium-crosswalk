@@ -5,18 +5,17 @@
 #ifndef V8InspectorString_h
 #define V8InspectorString_h
 
+#include <memory>
 #include "core/CoreExport.h"
 #include "platform/Decimal.h"
-#include "wtf/Allocator.h"
-#include "wtf/Assertions.h"
-#include "wtf/text/StringBuilder.h"
-#include "wtf/text/StringHash.h"
-#include "wtf/text/StringToNumber.h"
-#include "wtf/text/StringView.h"
-#include "wtf/text/WTFString.h"
-
-#include <memory>
-#include <v8-inspector.h>
+#include "platform/wtf/Allocator.h"
+#include "platform/wtf/Assertions.h"
+#include "platform/wtf/text/StringBuilder.h"
+#include "platform/wtf/text/StringHash.h"
+#include "platform/wtf/text/StringToNumber.h"
+#include "platform/wtf/text/StringView.h"
+#include "platform/wtf/text/WTFString.h"
+#include "v8/include/v8-inspector.h"
 
 namespace blink {
 
@@ -65,6 +64,7 @@ class CORE_EXPORT StringUtil {
   static void builderAppend(StringBuilder& builder, const char* s, size_t len) {
     builder.Append(s, len);
   }
+  static void builderAppendQuotedString(StringBuilder&, const String&);
   static void builderReserve(StringBuilder& builder, unsigned capacity) {
     builder.ReserveCapacity(capacity);
   }

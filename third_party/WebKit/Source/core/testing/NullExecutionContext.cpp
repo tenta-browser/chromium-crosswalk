@@ -4,9 +4,10 @@
 
 #include "core/testing/NullExecutionContext.h"
 
-#include "core/dom/ExecutionContextTask.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/DOMTimer.h"
+#include "core/frame/csp/ContentSecurityPolicy.h"
+#include "public/platform/Platform.h"
 
 namespace blink {
 
@@ -16,7 +17,7 @@ class NullEventQueue final : public EventQueue {
  public:
   NullEventQueue() {}
   ~NullEventQueue() override {}
-  bool EnqueueEvent(Event*) override { return true; }
+  bool EnqueueEvent(const WebTraceLocation&, Event*) override { return true; }
   bool CancelEvent(Event*) override { return true; }
   void Close() override {}
 };
@@ -24,25 +25,29 @@ class NullEventQueue final : public EventQueue {
 }  // namespace
 
 NullExecutionContext::NullExecutionContext()
-    : tasks_need_suspension_(false),
+    : tasks_need_pause_(false),
       is_secure_context_(true),
       queue_(new NullEventQueue()) {}
-
-void NullExecutionContext::PostTask(TaskType,
-                                    const WebTraceLocation&,
-                                    std::unique_ptr<ExecutionContextTask>,
-                                    const String&) {}
 
 void NullExecutionContext::SetIsSecureContext(bool is_secure_context) {
   is_secure_context_ = is_secure_context;
 }
 
-bool NullExecutionContext::IsSecureContext(
-    String& error_message,
-    const SecureContextCheck privilege_context_check) const {
+bool NullExecutionContext::IsSecureContext(String& error_message) const {
   if (!is_secure_context_)
     error_message = "A secure context is required";
   return is_secure_context_;
+}
+
+void NullExecutionContext::SetUpSecurityContext() {
+  ContentSecurityPolicy* policy = ContentSecurityPolicy::Create();
+  SecurityContext::SetSecurityOrigin(SecurityOrigin::Create(url_));
+  policy->BindToExecutionContext(this);
+  SecurityContext::SetContentSecurityPolicy(policy);
+}
+
+scoped_refptr<WebTaskRunner> NullExecutionContext::GetTaskRunner(TaskType) {
+  return Platform::Current()->CurrentThread()->GetWebTaskRunner();
 }
 
 }  // namespace blink

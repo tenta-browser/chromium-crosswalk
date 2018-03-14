@@ -32,12 +32,49 @@
 #include "core/css/CSSBasicShapeValues.h"
 #include "core/css/CSSIdentifierValue.h"
 #include "core/css/CSSPrimitiveValueMappings.h"
+#include "core/css/CSSRayValue.h"
 #include "core/css/CSSValuePair.h"
 #include "core/css/resolver/StyleResolverState.h"
 #include "core/style/BasicShapes.h"
 #include "core/style/ComputedStyle.h"
+#include "core/style/StyleRay.h"
 
 namespace blink {
+
+static StyleRay::RaySize KeywordToRaySize(CSSValueID id) {
+  switch (id) {
+    case CSSValueClosestSide:
+      return StyleRay::RaySize::kClosestSide;
+    case CSSValueClosestCorner:
+      return StyleRay::RaySize::kClosestCorner;
+    case CSSValueFarthestSide:
+      return StyleRay::RaySize::kFarthestSide;
+    case CSSValueFarthestCorner:
+      return StyleRay::RaySize::kFarthestCorner;
+    case CSSValueSides:
+      return StyleRay::RaySize::kSides;
+    default:
+      NOTREACHED();
+      return StyleRay::RaySize::kClosestSide;
+  }
+}
+
+static CSSValueID RaySizeToKeyword(StyleRay::RaySize size) {
+  switch (size) {
+    case StyleRay::RaySize::kClosestSide:
+      return CSSValueClosestSide;
+    case StyleRay::RaySize::kClosestCorner:
+      return CSSValueClosestCorner;
+    case StyleRay::RaySize::kFarthestSide:
+      return CSSValueFarthestSide;
+    case StyleRay::RaySize::kFarthestCorner:
+      return CSSValueFarthestCorner;
+    case StyleRay::RaySize::kSides:
+      return CSSValueSides;
+  }
+  NOTREACHED();
+  return CSSValueInvalid;
+}
 
 static CSSValue* ValueForCenterCoordinate(
     const ComputedStyle& style,
@@ -47,7 +84,7 @@ static CSSValue* ValueForCenterCoordinate(
     return CSSValue::Create(center.length(), style.EffectiveZoom());
 
   CSSValueID keyword =
-      orientation == HORIZONTAL ? CSSValueRight : CSSValueBottom;
+      orientation == EBoxOrient::kHorizontal ? CSSValueRight : CSSValueBottom;
 
   return CSSValuePair::Create(
       CSSIdentifierValue::Create(keyword),
@@ -81,15 +118,28 @@ static CSSValue* BasicShapeRadiusToCSSValue(const ComputedStyle& style,
 CSSValue* ValueForBasicShape(const ComputedStyle& style,
                              const BasicShape* basic_shape) {
   switch (basic_shape->GetType()) {
+    case BasicShape::kStyleRayType: {
+      const StyleRay& ray = ToStyleRay(*basic_shape);
+      return CSSRayValue::Create(
+          *CSSPrimitiveValue::Create(ray.Angle(),
+                                     CSSPrimitiveValue::UnitType::kDegrees),
+          *CSSIdentifierValue::Create(RaySizeToKeyword(ray.Size())),
+          (ray.Contain() ? CSSIdentifierValue::Create(CSSValueContain)
+                         : nullptr));
+    }
+
+    case BasicShape::kStylePathType:
+      return ToStylePath(basic_shape)->ComputedCSSValue();
+
     case BasicShape::kBasicShapeCircleType: {
       const BasicShapeCircle* circle = ToBasicShapeCircle(basic_shape);
       CSSBasicShapeCircleValue* circle_value =
           CSSBasicShapeCircleValue::Create();
 
-      circle_value->SetCenterX(
-          ValueForCenterCoordinate(style, circle->CenterX(), HORIZONTAL));
-      circle_value->SetCenterY(
-          ValueForCenterCoordinate(style, circle->CenterY(), VERTICAL));
+      circle_value->SetCenterX(ValueForCenterCoordinate(
+          style, circle->CenterX(), EBoxOrient::kHorizontal));
+      circle_value->SetCenterY(ValueForCenterCoordinate(
+          style, circle->CenterY(), EBoxOrient::kVertical));
       circle_value->SetRadius(
           BasicShapeRadiusToCSSValue(style, circle->Radius()));
       return circle_value;
@@ -99,10 +149,10 @@ CSSValue* ValueForBasicShape(const ComputedStyle& style,
       CSSBasicShapeEllipseValue* ellipse_value =
           CSSBasicShapeEllipseValue::Create();
 
-      ellipse_value->SetCenterX(
-          ValueForCenterCoordinate(style, ellipse->CenterX(), HORIZONTAL));
-      ellipse_value->SetCenterY(
-          ValueForCenterCoordinate(style, ellipse->CenterY(), VERTICAL));
+      ellipse_value->SetCenterX(ValueForCenterCoordinate(
+          style, ellipse->CenterX(), EBoxOrient::kHorizontal));
+      ellipse_value->SetCenterY(ValueForCenterCoordinate(
+          style, ellipse->CenterY(), EBoxOrient::kVertical));
       ellipse_value->SetRadiusX(
           BasicShapeRadiusToCSSValue(style, ellipse->RadiusX()));
       ellipse_value->SetRadiusY(
@@ -231,14 +281,15 @@ static BasicShapeRadius CssValueToBasicShapeRadius(
   return BasicShapeRadius(ConvertToLength(state, ToCSSPrimitiveValue(radius)));
 }
 
-PassRefPtr<BasicShape> BasicShapeForValue(const StyleResolverState& state,
-                                          const CSSValue& basic_shape_value) {
-  RefPtr<BasicShape> basic_shape;
+scoped_refptr<BasicShape> BasicShapeForValue(
+    const StyleResolverState& state,
+    const CSSValue& basic_shape_value) {
+  scoped_refptr<BasicShape> basic_shape;
 
   if (basic_shape_value.IsBasicShapeCircleValue()) {
     const CSSBasicShapeCircleValue& circle_value =
         ToCSSBasicShapeCircleValue(basic_shape_value);
-    RefPtr<BasicShapeCircle> circle = BasicShapeCircle::Create();
+    scoped_refptr<BasicShapeCircle> circle = BasicShapeCircle::Create();
 
     circle->SetCenterX(
         ConvertToCenterCoordinate(state, circle_value.CenterX()));
@@ -250,7 +301,7 @@ PassRefPtr<BasicShape> BasicShapeForValue(const StyleResolverState& state,
   } else if (basic_shape_value.IsBasicShapeEllipseValue()) {
     const CSSBasicShapeEllipseValue& ellipse_value =
         ToCSSBasicShapeEllipseValue(basic_shape_value);
-    RefPtr<BasicShapeEllipse> ellipse = BasicShapeEllipse::Create();
+    scoped_refptr<BasicShapeEllipse> ellipse = BasicShapeEllipse::Create();
 
     ellipse->SetCenterX(
         ConvertToCenterCoordinate(state, ellipse_value.CenterX()));
@@ -265,7 +316,7 @@ PassRefPtr<BasicShape> BasicShapeForValue(const StyleResolverState& state,
   } else if (basic_shape_value.IsBasicShapePolygonValue()) {
     const CSSBasicShapePolygonValue& polygon_value =
         ToCSSBasicShapePolygonValue(basic_shape_value);
-    RefPtr<BasicShapePolygon> polygon = BasicShapePolygon::Create();
+    scoped_refptr<BasicShapePolygon> polygon = BasicShapePolygon::Create();
 
     polygon->SetWindRule(polygon_value.GetWindRule());
     const HeapVector<Member<CSSPrimitiveValue>>& values =
@@ -278,7 +329,7 @@ PassRefPtr<BasicShape> BasicShapeForValue(const StyleResolverState& state,
   } else if (basic_shape_value.IsBasicShapeInsetValue()) {
     const CSSBasicShapeInsetValue& rect_value =
         ToCSSBasicShapeInsetValue(basic_shape_value);
-    RefPtr<BasicShapeInset> rect = BasicShapeInset::Create();
+    scoped_refptr<BasicShapeInset> rect = BasicShapeInset::Create();
 
     rect->SetTop(ConvertToLength(state, rect_value.Top()));
     rect->SetRight(ConvertToLength(state, rect_value.Right()));
@@ -295,11 +346,17 @@ PassRefPtr<BasicShape> BasicShapeForValue(const StyleResolverState& state,
         ConvertToLengthSize(state, rect_value.BottomLeftRadius()));
 
     basic_shape = std::move(rect);
+  } else if (basic_shape_value.IsRayValue()) {
+    const CSSRayValue& ray_value = ToCSSRayValue(basic_shape_value);
+    float angle = ray_value.Angle().ComputeDegrees();
+    StyleRay::RaySize size = KeywordToRaySize(ray_value.Size().GetValueID());
+    bool contain = !!ray_value.Contain();
+    basic_shape = StyleRay::Create(angle, size, contain);
   } else {
     NOTREACHED();
   }
 
-  return basic_shape.Release();
+  return basic_shape;
 }
 
 FloatPoint FloatPointForCenterCoordinate(

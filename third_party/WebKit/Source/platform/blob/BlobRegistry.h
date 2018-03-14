@@ -32,17 +32,16 @@
 #define BlobRegistry_h
 
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "platform/PlatformExport.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Forward.h"
-#include "platform/wtf/PassRefPtr.h"
 
 namespace blink {
 
 class BlobData;
 class BlobDataHandle;
 class KURL;
-class RawData;
 class SecurityOrigin;
 
 // A bridging class for calling blink::WebBlobRegistry methods.
@@ -56,19 +55,8 @@ class PLATFORM_EXPORT BlobRegistry {
   static void RemoveBlobDataRef(const String& uuid);
   static void RegisterPublicBlobURL(SecurityOrigin*,
                                     const KURL&,
-                                    PassRefPtr<BlobDataHandle>);
+                                    scoped_refptr<BlobDataHandle>);
   static void RevokePublicBlobURL(const KURL&);
-
-  // Methods for controlling Streams.
-  static void RegisterStreamURL(const KURL&, const String&);
-  static void RegisterStreamURL(SecurityOrigin*,
-                                const KURL&,
-                                const KURL& src_url);
-  static void AddDataToStream(const KURL&, PassRefPtr<RawData>);
-  static void FlushStream(const KURL&);
-  static void FinalizeStream(const KURL&);
-  static void AbortStream(const KURL&);
-  static void UnregisterStreamURL(const KURL&);
 };
 
 }  // namespace blink

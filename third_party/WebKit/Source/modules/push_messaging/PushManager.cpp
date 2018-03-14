@@ -4,13 +4,17 @@
 
 #include "modules/push_messaging/PushManager.h"
 
+#include <memory>
+
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/DOMException.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
+#include "core/frame/Frame.h"
+#include "core/frame/LocalFrame.h"
 #include "modules/push_messaging/PushController.h"
 #include "modules/push_messaging/PushError.h"
 #include "modules/push_messaging/PushPermissionStatusCallbacks.h"
@@ -19,8 +23,8 @@
 #include "modules/push_messaging/PushSubscriptionOptions.h"
 #include "modules/push_messaging/PushSubscriptionOptionsInit.h"
 #include "modules/serviceworkers/ServiceWorkerRegistration.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/wtf/Assertions.h"
-#include "platform/wtf/RefPtr.h"
 #include "public/platform/Platform.h"
 #include "public/platform/modules/push_messaging/WebPushClient.h"
 #include "public/platform/modules/push_messaging/WebPushProvider.h"
@@ -40,6 +44,11 @@ WebPushProvider* PushProvider() {
 PushManager::PushManager(ServiceWorkerRegistration* registration)
     : registration_(registration) {
   DCHECK(registration);
+}
+
+// static
+Vector<String> PushManager::supportedContentEncodings() {
+  return Vector<String>({"aes128gcm", "aesgcm"});
 }
 
 ScriptPromise PushManager::subscribe(ScriptState* script_state,
@@ -64,19 +73,22 @@ ScriptPromise PushManager::subscribe(ScriptState* script_state,
   // permission so that later calls in different contexts can succeed.
   if (ExecutionContext::From(script_state)->IsDocument()) {
     Document* document = ToDocument(ExecutionContext::From(script_state));
-    if (!document->domWindow() || !document->GetFrame())
+    LocalFrame* frame = document->GetFrame();
+    if (!document->domWindow() || !frame)
       return ScriptPromise::RejectWithDOMException(
           script_state,
           DOMException::Create(kInvalidStateError,
                                "Document is detached from window."));
-    PushController::ClientFrom(document->GetFrame())
-        .Subscribe(registration_->WebRegistration(), web_options,
-                   WTF::MakeUnique<PushSubscriptionCallbacks>(resolver,
-                                                              registration_));
+    PushController::ClientFrom(frame).Subscribe(
+        registration_->WebRegistration(), web_options,
+        Frame::HasTransientUserActivation(frame, true /* checkIfMainThread */),
+        std::make_unique<PushSubscriptionCallbacks>(resolver, registration_));
   } else {
     PushProvider()->Subscribe(
         registration_->WebRegistration(), web_options,
-        WTF::MakeUnique<PushSubscriptionCallbacks>(resolver, registration_));
+        Frame::HasTransientUserActivation(nullptr,
+                                          true /* checkIfMainThread */),
+        std::make_unique<PushSubscriptionCallbacks>(resolver, registration_));
   }
 
   return promise;
@@ -88,7 +100,7 @@ ScriptPromise PushManager::getSubscription(ScriptState* script_state) {
 
   PushProvider()->GetSubscription(
       registration_->WebRegistration(),
-      WTF::MakeUnique<PushSubscriptionCallbacks>(resolver, registration_));
+      std::make_unique<PushSubscriptionCallbacks>(resolver, registration_));
   return promise;
 }
 
@@ -111,12 +123,13 @@ ScriptPromise PushManager::permissionState(
   PushProvider()->GetPermissionStatus(
       registration_->WebRegistration(),
       PushSubscriptionOptions::ToWeb(options, exception_state),
-      WTF::MakeUnique<PushPermissionStatusCallbacks>(resolver));
+      std::make_unique<PushPermissionStatusCallbacks>(resolver));
   return promise;
 }
 
-DEFINE_TRACE(PushManager) {
+void PushManager::Trace(blink::Visitor* visitor) {
   visitor->Trace(registration_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

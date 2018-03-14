@@ -26,6 +26,7 @@
 #include "components/proxy_config/proxy_config_pref_names.h"
 #include "components/sync_preferences/pref_service_mock_factory.h"
 #include "components/sync_preferences/pref_service_syncable.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -115,7 +116,7 @@ class ProxyPolicyTest : public testing::Test {
         new user_prefs::PrefRegistrySyncable);
     std::unique_ptr<sync_preferences::PrefServiceSyncable> prefs =
         factory.CreateSyncable(registry.get());
-    chrome::RegisterUserProfilePrefs(registry.get());
+    RegisterUserProfilePrefs(registry.get());
     return std::move(prefs);
   }
 

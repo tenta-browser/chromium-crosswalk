@@ -24,16 +24,38 @@ QuicSimpleDispatcher::QuicSimpleDispatcher(
                      std::move(alarm_factory)),
       response_cache_(response_cache) {}
 
-QuicSimpleDispatcher::~QuicSimpleDispatcher() {}
+QuicSimpleDispatcher::~QuicSimpleDispatcher() = default;
+
+int QuicSimpleDispatcher::GetRstErrorCount(
+    QuicRstStreamErrorCode error_code) const {
+  auto it = rst_error_map_.find(error_code);
+  if (it == rst_error_map_.end()) {
+    return 0;
+  } else {
+    return it->second;
+  }
+}
+
+void QuicSimpleDispatcher::OnRstStreamReceived(
+    const QuicRstStreamFrame& frame) {
+  auto it = rst_error_map_.find(frame.error_code);
+  if (it == rst_error_map_.end()) {
+    rst_error_map_.insert(std::make_pair(frame.error_code, 1));
+  } else {
+    it->second++;
+  }
+}
 
 QuicServerSessionBase* QuicSimpleDispatcher::CreateQuicSession(
     QuicConnectionId connection_id,
-    const QuicSocketAddress& client_address) {
+    const QuicSocketAddress& client_address,
+    QuicStringPiece /*alpn*/) {
   // The QuicServerSessionBase takes ownership of |connection| below.
-  QuicConnection* connection = new QuicConnection(
-      connection_id, client_address, helper(), alarm_factory(),
-      CreatePerConnectionWriter(),
-      /* owns_writer= */ true, Perspective::IS_SERVER, GetSupportedVersions());
+  QuicConnection* connection =
+      new QuicConnection(connection_id, client_address, helper(),
+                         alarm_factory(), CreatePerConnectionWriter(),
+                         /* owns_writer= */ true, Perspective::IS_SERVER,
+                         GetSupportedTransportVersions());
 
   QuicServerSessionBase* session = new QuicSimpleServerSession(
       config(), connection, this, session_helper(), crypto_config(),

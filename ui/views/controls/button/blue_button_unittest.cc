@@ -27,12 +27,12 @@ TEST_F(BlueButtonTest, Border) {
   LabelButton* button = new LabelButton(nullptr, base::ASCIIToUTF16("foo"));
   EXPECT_EQ(Button::STYLE_TEXTBUTTON, button->style());
   // Focus painter by default.
-  EXPECT_TRUE(button->focus_painter());
+  EXPECT_TRUE(button->focus_painter_.get());
 
   // Switch to the same style as BlueButton for a more compelling comparison.
-  button->SetStyle(Button::STYLE_BUTTON);
+  button->SetStyleDeprecated(Button::STYLE_BUTTON);
   EXPECT_EQ(Button::STYLE_BUTTON, button->style());
-  EXPECT_FALSE(button->focus_painter());
+  EXPECT_FALSE(button->focus_painter_.get());
 
   widget->GetContentsView()->AddChildView(button);
   button->SizeToPreferredSize();
@@ -47,21 +47,10 @@ TEST_F(BlueButtonTest, Border) {
   // ... a special blue border should be used.
   BlueButton* blue_button = new BlueButton(nullptr, base::ASCIIToUTF16("foo"));
   EXPECT_EQ(Button::STYLE_BUTTON, blue_button->style());
-  EXPECT_FALSE(blue_button->focus_painter());
+  EXPECT_FALSE(blue_button->focus_painter_.get());
 
   widget->GetContentsView()->AddChildView(blue_button);
   blue_button->SizeToPreferredSize();
-#if defined(OS_MACOSX)
-  // On Mac, themed STYLE_BUTTON buttons provide blue theming for dialog-default
-  // buttons. This makes it unlikely that they will appear together with a
-  // BlueButton on the same dialog. So the sizes don't really need to be
-  // consistent. However, for the purposes of this test (e.g. to ensure we don't
-  // accidentally make BlueButtons look like themed buttons on Mac), force the
-  // sizes to match (ignoring the minimum size) so that the bitmaps can be
-  // compared.
-  EXPECT_NE(button->size(), blue_button->size());  // Verify this is needed.
-  blue_button->SetSize(button->size());
-#endif
 
   SkBitmap blue_button_bitmap;
   blue_button_bitmap.allocN32Pixels(blue_button->size().width(),

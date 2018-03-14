@@ -6,7 +6,7 @@
 
 #include "ash/accelerators/accelerator_controller.h"
 #include "ash/accelerators/accelerator_table.h"
-#include "ash/accessibility_types.h"
+#include "ash/public/cpp/accessibility_types.h"
 #include "ash/shell.h"
 #include "ash/system/tray/system_tray.h"
 #include "base/command_line.h"
@@ -44,6 +44,7 @@
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/process_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/app_list/app_list_features.h"
 #include "ui/app_list/app_list_switches.h"
 #include "ui/base/test/ui_controls.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
@@ -207,7 +208,7 @@ IN_PROC_BROWSER_TEST_F(LoggedInSpokenFeedbackTest,
                        DISABLED_NavigateNotificationCenter) {
   EnableChromeVox();
 
-  EXPECT_TRUE(PerformAcceleratorAction(ash::SHOW_MESSAGE_CENTER_BUBBLE));
+  EXPECT_TRUE(PerformAcceleratorAction(ash::TOGGLE_MESSAGE_CENTER_BUBBLE));
 
   // Tab to request the initial focus.
   SendKeyPress(ui::VKEY_TAB);
@@ -244,10 +245,7 @@ IN_PROC_BROWSER_TEST_F(LoggedInSpokenFeedbackTest,
 // Spoken feedback tests in both a logged in browser window and guest mode.
 //
 
-enum SpokenFeedbackTestVariant {
-  kTestAsNormalUser,
-  kTestAsGuestUser
-};
+enum SpokenFeedbackTestVariant { kTestAsNormalUser, kTestAsGuestUser };
 
 class SpokenFeedbackTest
     : public LoggedInSpokenFeedbackTest,
@@ -268,11 +266,9 @@ class SpokenFeedbackTest
   }
 };
 
-INSTANTIATE_TEST_CASE_P(
-    TestAsNormalAndGuestUser,
-    SpokenFeedbackTest,
-    ::testing::Values(kTestAsNormalUser,
-                      kTestAsGuestUser));
+INSTANTIATE_TEST_CASE_P(TestAsNormalAndGuestUser,
+                        SpokenFeedbackTest,
+                        ::testing::Values(kTestAsNormalUser, kTestAsGuestUser));
 
 // TODO(tommi): Flakily hitting HasOneRef DCHECK in
 // AudioOutputResampler::Shutdown, see crbug.com/630031.
@@ -325,6 +321,10 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, FocusShelf) {
 }
 
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, NavigateAppLauncher) {
+  // TODO(newcomer): reimplement this test once the AppListFocus changes are
+  // complete (http://crbug.com/784942).
+  return;
+
   EnableChromeVox();
 
   EXPECT_TRUE(PerformAcceleratorAction(ash::FOCUS_SHELF));
@@ -381,7 +381,7 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, NavigateAppLauncher) {
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, OpenStatusTray) {
   EnableChromeVox();
 
-  EXPECT_TRUE(PerformAcceleratorAction(ash::SHOW_SYSTEM_TRAY_BUBBLE));
+  EXPECT_TRUE(PerformAcceleratorAction(ash::TOGGLE_SYSTEM_TRAY_BUBBLE));
   while (true) {
     std::string utterance = speech_monitor_.GetNextUtterance();
     if (base::MatchPattern(utterance, "Status tray*"))
@@ -389,14 +389,19 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, OpenStatusTray) {
   }
   EXPECT_TRUE(base::MatchPattern(speech_monitor_.GetNextUtterance(), "time *"));
   EXPECT_TRUE(base::MatchPattern(speech_monitor_.GetNextUtterance(),
-                                 "Battery is*full.,"));
-  EXPECT_EQ("window", speech_monitor_.GetNextUtterance());
+                                 "Battery is*full."));
+  EXPECT_EQ("Dialog", speech_monitor_.GetNextUtterance());
+  EXPECT_TRUE(
+      base::MatchPattern(speech_monitor_.GetNextUtterance(), "*window"));
 }
 
+// Fails on ASAN. See http://crbug.com/776308 . (Note MAYBE_ doesn't work well
+// with parameterized tests).
+#if !defined(ADDRESS_SANITIZER)
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, NavigateSystemTray) {
   EnableChromeVox();
 
-  EXPECT_TRUE(PerformAcceleratorAction(ash::SHOW_SYSTEM_TRAY_BUBBLE));
+  EXPECT_TRUE(PerformAcceleratorAction(ash::TOGGLE_SYSTEM_TRAY_BUBBLE));
   while (true) {
     std::string utterance = speech_monitor_.GetNextUtterance();
     if (base::MatchPattern(utterance, "Status tray,"))
@@ -404,7 +409,7 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, NavigateSystemTray) {
   }
   while (true) {
     std::string utterance = speech_monitor_.GetNextUtterance();
-    if (base::MatchPattern(utterance, "window"))
+    if (base::MatchPattern(utterance, "*window"))
       break;
   }
 
@@ -451,6 +456,7 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, NavigateSystemTray) {
       break;
   }
 }
+#endif  // !defined(ADDRESS_SANITIZER)
 
 // See http://crbug.com/443608
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, DISABLED_ScreenBrightness) {
@@ -465,7 +471,7 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, DISABLED_ScreenBrightness) {
                                  "Brightness * percent"));
 }
 
-IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, VolumeSlider) {
+IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, DISABLED_VolumeSlider) {
   EnableChromeVox();
 
   // Volume slider does not fire valueChanged event on first key press because
@@ -532,8 +538,9 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, MAYBE_ChromeVoxShiftSearch) {
   }
 }
 
-#if defined(MEMORY_SANITIZER)
+#if defined(MEMORY_SANITIZER) || defined(OS_CHROMEOS)
 // Fails under MemorySanitizer: http://crbug.com/472125
+// TODO(crbug.com/721475): Flaky on CrOS.
 #define MAYBE_ChromeVoxNavigateAndSelect DISABLED_ChromeVoxNavigateAndSelect
 #else
 #define MAYBE_ChromeVoxNavigateAndSelect ChromeVoxNavigateAndSelect
@@ -608,7 +615,8 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, DISABLED_ChromeVoxNextStickyMode) {
   }
 }
 
-IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, TouchExploreStatusTray) {
+// Flaky on Linux ChromiumOS MSan Tests. https://crbug.com/752427
+IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, DISABLED_TouchExploreStatusTray) {
   EnableChromeVox();
   SimulateTouchScreenInChromeVox();
 

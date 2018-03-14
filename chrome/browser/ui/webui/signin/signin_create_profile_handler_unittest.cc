@@ -13,6 +13,7 @@
 #include "chrome/browser/signin/fake_signin_manager_builder.h"
 #include "chrome/browser/signin/signin_error_controller_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/signin_util.h"
 #include "chrome/browser/ui/webui/signin/signin_utils.h"
 #include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
@@ -170,10 +171,7 @@ class SigninCreateProfileHandlerTest : public BrowserWithTestWindowTest {
 
   void SetUp() override {
     BrowserWithTestWindowTest::SetUp();
-
-    profile_manager_.reset(
-        new TestingProfileManager(TestingBrowserProcess::GetGlobal()));
-    ASSERT_TRUE(profile_manager_->SetUp());
+    profile_manager()->DeleteAllTestingProfiles();
 
     handler_.reset(new TestSigninCreateProfileHandler(web_ui(),
                                                       profile_manager()));
@@ -181,7 +179,7 @@ class SigninCreateProfileHandlerTest : public BrowserWithTestWindowTest {
     TestingProfile::TestingFactories factories;
     factories.push_back(std::make_pair(SigninManagerFactory::GetInstance(),
                                        BuildFakeSigninManagerBase));
-    custodian_ = profile_manager_.get()->CreateTestingProfile(
+    custodian_ = profile_manager()->CreateTestingProfile(
         "custodian-profile",
         std::unique_ptr<sync_preferences::TestingPrefServiceSyncable>(),
         base::UTF8ToUTF16("custodian-profile"), 0, std::string(), factories);
@@ -228,7 +226,6 @@ class SigninCreateProfileHandlerTest : public BrowserWithTestWindowTest {
 
   void TearDown() override {
     handler_.reset();
-    profile_manager_.reset();
     BrowserWithTestWindowTest::TearDown();
   }
 
@@ -238,10 +235,6 @@ class SigninCreateProfileHandlerTest : public BrowserWithTestWindowTest {
 
   TestSigninCreateProfileHandler* handler() {
     return handler_.get();
-  }
-
-  TestingProfileManager* profile_manager() {
-    return profile_manager_.get();
   }
 
   TestingProfile* custodian() {
@@ -254,7 +247,6 @@ class SigninCreateProfileHandlerTest : public BrowserWithTestWindowTest {
 
  private:
   std::unique_ptr<content::TestWebUI> web_ui_;
-  std::unique_ptr<TestingProfileManager> profile_manager_;
   TestingProfile* custodian_;
   FakeSigninManagerForTesting* fake_signin_manager_;
   std::unique_ptr<TestSigninCreateProfileHandler> handler_;
@@ -374,9 +366,8 @@ TEST_F(SigninCreateProfileHandlerTest, CreateProfile) {
 }
 
 TEST_F(SigninCreateProfileHandlerTest, CreateProfileWithForceSignin) {
-  g_browser_process->local_state()->SetBoolean(prefs::kForceBrowserSignin,
-                                               true);
-  ASSERT_TRUE(signin::IsForceSigninEnabled());
+  signin_util::SetForceSigninForTesting(true);
+  ASSERT_TRUE(signin_util::IsForceSigninEnabled());
 
   // Expect the call to create the profile.
   EXPECT_CALL(*handler(), DoCreateProfile(_, _, _, _, _))
@@ -422,6 +413,7 @@ TEST_F(SigninCreateProfileHandlerTest, CreateProfileWithForceSignin) {
   bool show_confirmation;
   ASSERT_TRUE(profile->GetBoolean("showConfirmation", &show_confirmation));
   ASSERT_FALSE(show_confirmation);
+  signin_util::SetForceSigninForTesting(false);
 }
 
 #if BUILDFLAG(ENABLE_SUPERVISED_USERS)

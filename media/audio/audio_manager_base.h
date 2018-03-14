@@ -9,11 +9,12 @@
 #include <string>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_vector.h"
 #include "base/observer_list.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
 #include "media/audio/audio_debug_recording_manager.h"
@@ -34,15 +35,6 @@ class MEDIA_EXPORT AudioManagerBase : public AudioManager {
  public:
   ~AudioManagerBase() override;
 
-  // AudioManager:
-  base::string16 GetAudioInputDeviceModel() override;
-  void ShowAudioInputSettings() override;
-
-  void GetAudioInputDeviceDescriptions(
-      AudioDeviceDescriptions* device_descriptions) final;
-  void GetAudioOutputDeviceDescriptions(
-      AudioDeviceDescriptions* device_descriptions) final;
-
   AudioOutputStream* MakeAudioOutputStream(
       const AudioParameters& params,
       const std::string& device_id,
@@ -59,17 +51,10 @@ class MEDIA_EXPORT AudioManagerBase : public AudioManager {
   void AddOutputDeviceChangeListener(AudioDeviceListener* listener) override;
   void RemoveOutputDeviceChangeListener(AudioDeviceListener* listener) override;
 
-  AudioParameters GetDefaultOutputStreamParameters() override;
-  AudioParameters GetOutputStreamParameters(
-      const std::string& device_id) override;
-  AudioParameters GetInputStreamParameters(
-      const std::string& device_id) override;
-  std::string GetAssociatedOutputDeviceID(
-      const std::string& input_device_id) override;
   std::unique_ptr<AudioLog> CreateAudioLog(
       AudioLogFactory::AudioComponent component) override;
-  void EnableOutputDebugRecording(const base::FilePath& base_file_name) final;
-  void DisableOutputDebugRecording() final;
+  void EnableDebugRecording(const base::FilePath& base_file_name) final;
+  void DisableDebugRecording() final;
 
   void SetMaxStreamCountForTesting(int max_input, int max_output) final;
 
@@ -91,6 +76,12 @@ class MEDIA_EXPORT AudioManagerBase : public AudioManager {
       const std::string& device_id,
       const LogCallback& log_callback) = 0;
 
+  // Creates the output stream for the |AUDIO_BITSTREAM_XXX| format.
+  virtual AudioOutputStream* MakeBitstreamOutputStream(
+      const AudioParameters& params,
+      const std::string& device_id,
+      const LogCallback& log_callback);
+
   // Creates the input stream for the |AUDIO_PCM_LINEAR| format. The legacy
   // name is also from |AUDIO_PCM_LINEAR|.
   virtual AudioInputStream* MakeLinearInputStream(
@@ -111,16 +102,24 @@ class MEDIA_EXPORT AudioManagerBase : public AudioManager {
   int output_stream_count() const { return num_output_streams_; }
 
  protected:
-  AudioManagerBase(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
-      AudioLogFactory* audio_log_factory);
+  AudioManagerBase(std::unique_ptr<AudioThread> audio_thread,
+                   AudioLogFactory* audio_log_factory);
 
-  // Releases all the audio output dispatchers.
-  // All audio streams should be closed before Shutdown() is called.
-  // This must be called in the destructor of every AudioManagerBase
-  // implementation.
-  void Shutdown();
+  // AudioManager:
+  void ShutdownOnAudioThread() override;
+
+  void GetAudioInputDeviceDescriptions(
+      AudioDeviceDescriptions* device_descriptions) final;
+  void GetAudioOutputDeviceDescriptions(
+      AudioDeviceDescriptions* device_descriptions) final;
+
+  AudioParameters GetDefaultOutputStreamParameters() override;
+  AudioParameters GetOutputStreamParameters(
+      const std::string& device_id) override;
+  AudioParameters GetInputStreamParameters(
+      const std::string& device_id) override;
+  std::string GetAssociatedOutputDeviceID(
+      const std::string& input_device_id) override;
 
   void SetMaxOutputStreamsAllowed(int max) { max_num_output_streams_ = max; }
 
@@ -158,27 +157,26 @@ class MEDIA_EXPORT AudioManagerBase : public AudioManager {
 
   virtual std::unique_ptr<AudioDebugRecordingManager>
   CreateAudioDebugRecordingManager(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> file_task_runner);
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+
+  // These functions assign group ids to devices based on their device ids. The
+  // default implementation is an attempt to do this based on
+  // GetAssociatedOutputDeviceID. They may be overridden by subclasses that want
+  // a different logic for assigning group ids. Must be called on the audio
+  // worker thread (see GetTaskRunner()).
+  virtual std::string GetGroupIDOutput(const std::string& output_device_id);
+  virtual std::string GetGroupIDInput(const std::string& input_device_id);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(AudioManagerTest, AudioDebugRecording);
 
   struct DispatcherParams;
-  typedef ScopedVector<DispatcherParams> AudioOutputDispatchers;
+  typedef std::vector<std::unique_ptr<DispatcherParams>> AudioOutputDispatchers;
 
   class CompareByParams;
 
   // AudioManager:
-  void InitializeOutputDebugRecording(
-      scoped_refptr<base::SingleThreadTaskRunner> file_task_runner) final;
-
-  // These functions assign group ids to devices based on their device ids.
-  // The default implementation is an attempt to do this based on
-  // GetAssociatedOutputDeviceID. Must be called on the audio worker thread
-  // (see GetTaskRunner()).
-  std::string GetGroupIDOutput(const std::string& output_device_id);
-  std::string GetGroupIDInput(const std::string& input_device_id);
+  void InitializeDebugRecording() final;
 
   // Max number of open output streams, modified by
   // SetMaxOutputStreamsAllowed().

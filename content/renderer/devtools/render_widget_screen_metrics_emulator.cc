@@ -50,50 +50,39 @@ void RenderWidgetScreenMetricsEmulator::Apply() {
   if (!applied_widget_rect_.height())
     applied_widget_rect_.set_height(original_size().height());
 
-  if (emulation_params_.fit_to_view && !original_size().IsEmpty()) {
-    int original_width = std::max(original_size().width(), 1);
-    int original_height = std::max(original_size().height(), 1);
-    float width_ratio =
-        static_cast<float>(applied_widget_rect_.width()) / original_width;
-    float height_ratio =
-        static_cast<float>(applied_widget_rect_.height()) / original_height;
-    float ratio = std::max(1.0f, std::max(width_ratio, height_ratio));
-    scale_ = 1.f / ratio;
-
-    // Center emulated view inside available view space.
-    offset_.set_x(
-        (original_size().width() - scale_ * applied_widget_rect_.width()) / 2);
-    offset_.set_y(
-        (original_size().height() - scale_ * applied_widget_rect_.height()) /
-        2);
-  } else {
-    scale_ = emulation_params_.scale;
-    offset_.SetPoint(0, 0);
-    if (!emulation_params_.view_size.width &&
-        !emulation_params_.view_size.height && scale_) {
-      applied_widget_rect_.set_size(
-          gfx::ScaleToRoundedSize(original_size(), 1.f / scale_));
-    }
+  scale_ = emulation_params_.scale;
+  if (!emulation_params_.view_size.width &&
+      !emulation_params_.view_size.height && scale_) {
+    applied_widget_rect_.set_size(
+        gfx::ScaleToRoundedSize(original_size(), 1.f / scale_));
   }
 
   gfx::Rect window_screen_rect;
   if (emulation_params_.screen_position ==
       blink::WebDeviceEmulationParams::kDesktop) {
-    applied_widget_rect_.set_origin(original_view_screen_rect_.origin());
     modified_resize_params.screen_info.rect = original_screen_info().rect;
     modified_resize_params.screen_info.available_rect =
         original_screen_info().available_rect;
     window_screen_rect = original_window_screen_rect_;
-  } else {
-    applied_widget_rect_.set_origin(emulation_params_.view_position);
-    gfx::Rect screen_rect = applied_widget_rect_;
-    if (!emulation_params_.screen_size.IsEmpty()) {
-      screen_rect = gfx::Rect(0, 0, emulation_params_.screen_size.width,
-                              emulation_params_.screen_size.height);
+    if (emulation_params_.view_position) {
+      applied_widget_rect_.set_origin(*emulation_params_.view_position);
+      window_screen_rect.set_origin(*emulation_params_.view_position);
+    } else {
+      applied_widget_rect_.set_origin(original_view_screen_rect_.origin());
     }
+  } else {
+    applied_widget_rect_.set_origin(
+        emulation_params_.view_position.value_or(blink::WebPoint()));
+    modified_resize_params.screen_info.rect = applied_widget_rect_;
+    modified_resize_params.screen_info.available_rect = applied_widget_rect_;
+    window_screen_rect = applied_widget_rect_;
+  }
+
+  if (!emulation_params_.screen_size.IsEmpty()) {
+    gfx::Rect screen_rect = gfx::Rect(0, 0, emulation_params_.screen_size.width,
+                                      emulation_params_.screen_size.height);
     modified_resize_params.screen_info.rect = screen_rect;
     modified_resize_params.screen_info.available_rect = screen_rect;
-    window_screen_rect = applied_widget_rect_;
   }
 
   modified_resize_params.screen_info.device_scale_factor =
@@ -137,8 +126,6 @@ void RenderWidgetScreenMetricsEmulator::Apply() {
   blink::WebDeviceEmulationParams modified_emulation_params = emulation_params_;
   modified_emulation_params.device_scale_factor =
       original_screen_info().device_scale_factor;
-  modified_emulation_params.offset =
-      blink::WebFloatPoint(offset_.x(), offset_.y());
   modified_emulation_params.scale = scale_;
   delegate_->SetScreenMetricsEmulationParameters(true,
                                                  modified_emulation_params);
@@ -181,17 +168,12 @@ void RenderWidgetScreenMetricsEmulator::OnUpdateScreenRects(
 void RenderWidgetScreenMetricsEmulator::OnShowContextMenu(
     ContextMenuParams* params) {
   params->x *= scale_;
-  params->x += offset_.x();
   params->y *= scale_;
-  params->y += offset_.y();
 }
 
 gfx::Rect RenderWidgetScreenMetricsEmulator::AdjustValidationMessageAnchor(
     const gfx::Rect& anchor) {
-  gfx::Rect scaled = gfx::ScaleToEnclosedRect(anchor, scale_);
-  scaled.set_x(scaled.x() + offset_.x());
-  scaled.set_y(scaled.y() + offset_.y());
-  return scaled;
+  return gfx::ScaleToEnclosedRect(anchor, scale_);
 }
 
 }  // namespace content

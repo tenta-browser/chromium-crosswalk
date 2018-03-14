@@ -6,6 +6,7 @@
 #import <XCTest/XCTest.h>
 
 #include "base/strings/sys_string_conversions.h"
+#import "base/test/ios/wait_util.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_reporting_default_state.h"
 #include "components/prefs/pref_member.h"
@@ -19,6 +20,7 @@
 #include "ios/chrome/browser/signin/signin_manager_factory.h"
 #include "ios/chrome/browser/sync/sync_setup_service.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
+#import "ios/chrome/browser/ui/authentication/signin_earlgrey_utils.h"
 #import "ios/chrome/browser/ui/first_run/first_run_chrome_signin_view_controller.h"
 #include "ios/chrome/browser/ui/first_run/welcome_to_chrome_view_controller.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
@@ -28,42 +30,55 @@
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 #import "ios/public/provider/chrome/browser/signin/fake_chrome_identity.h"
 #import "ios/public/provider/chrome/browser/signin/fake_chrome_identity_service.h"
+#import "ios/testing/wait_util.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
 
+using chrome_test_util::AccountConsistencySetupSigninButton;
+using chrome_test_util::ButtonWithAccessibilityLabel;
+using chrome_test_util::ButtonWithAccessibilityLabelId;
+using chrome_test_util::NavigationBarDoneButton;
+using chrome_test_util::SettingsMenuBackButton;
+
 namespace {
 
-// Returns a fake identity.
-ChromeIdentity* GetFakeIdentity() {
-  return [FakeChromeIdentity identityWithEmail:@"foo@gmail.com"
-                                        gaiaID:@"fooID"
-                                          name:@"Fake Foo"];
+// Returns matcher for the opt in accept button.
+id<GREYMatcher> FirstRunOptInAcceptButton() {
+  return ButtonWithAccessibilityLabel(
+      l10n_util::GetNSString(IDS_IOS_FIRSTRUN_OPT_IN_ACCEPT_BUTTON));
 }
 
-// Taps the button with accessibility labelId |message_id|.
-void TapButtonWithLabelId(int message_id) {
-  id<GREYMatcher> matcher = chrome_test_util::ButtonWithAccessibilityLabel(
-      l10n_util::GetNSString(message_id));
-  [[EarlGrey selectElementWithMatcher:matcher] performAction:grey_tap()];
+// Returns matcher for the skip sign in button.
+id<GREYMatcher> SkipSigninButton() {
+  return grey_accessibilityID(kSignInSkipButtonAccessibilityIdentifier);
 }
 
-// Asserts that |identity| is actually signed in to the active profile.
-void AssertAuthenticatedIdentityInActiveProfile(ChromeIdentity* identity) {
-  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
+// Returns matcher for the first run account consistency skip button.
+id<GREYMatcher> FirstRunAccountConsistencySkipButton() {
+  return ButtonWithAccessibilityLabelId(
+      IDS_IOS_FIRSTRUN_ACCOUNT_CONSISTENCY_SKIP_BUTTON);
+}
 
-  ios::ChromeBrowserState* browser_state =
-      chrome_test_util::GetOriginalBrowserState();
-  AccountInfo info =
-      ios::SigninManagerFactory::GetForBrowserState(browser_state)
-          ->GetAuthenticatedAccountInfo();
+// Returns matcher for the undo sign in button.
+id<GREYMatcher> UndoAccountConsistencyButton() {
+  return ButtonWithAccessibilityLabelId(
+      IDS_IOS_ACCOUNT_CONSISTENCY_CONFIRMATION_UNDO_BUTTON);
+}
 
-  GREYAssertEqual(base::SysNSStringToUTF8(identity.gaiaID), info.gaia,
-                  @"Unexpected Gaia ID of the signed in user [expected = "
-                  @"\"%@\", actual = \"%s\"]",
-                  identity.gaiaID, info.gaia.c_str());
+// Wait until |matcher| is accessible (not nil)
+void WaitForMatcher(id<GREYMatcher> matcher) {
+  ConditionBlock condition = ^{
+    NSError* error = nil;
+    [[EarlGrey selectElementWithMatcher:matcher] assertWithMatcher:grey_notNil()
+                                                             error:&error];
+    return error == nil;
+  };
+  GREYAssert(testing::WaitUntilConditionOrTimeout(
+                 testing::kWaitForUIElementTimeout, condition),
+             @"Waiting for matcher %@ failed.", matcher);
 }
 }
 
@@ -119,7 +134,7 @@ void AssertAuthenticatedIdentityInActiveProfile(ChromeIdentity* identity) {
                                           IDS_IOS_FIRSTRUN_TERMS_TITLE))]
       assertWithMatcher:grey_sufficientlyVisible()];
 
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(@"ic_arrow_back")]
+  [[EarlGrey selectElementWithMatcher:SettingsMenuBackButton()]
       performAction:grey_tap()];
 
   // Ensure we went back to the First Run screen.
@@ -135,9 +150,8 @@ void AssertAuthenticatedIdentityInActiveProfile(ChromeIdentity* identity) {
       grey_accessibilityID(kUMAMetricsButtonAccessibilityIdentifier);
   [[EarlGrey selectElementWithMatcher:metrics] performAction:grey_tap()];
 
-  id<GREYMatcher> optInAccept = chrome_test_util::ButtonWithAccessibilityLabel(
-      l10n_util::GetNSString(IDS_IOS_FIRSTRUN_OPT_IN_ACCEPT_BUTTON));
-  [[EarlGrey selectElementWithMatcher:optInAccept] performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:FirstRunOptInAcceptButton()]
+      performAction:grey_tap()];
 
   BOOL metricsOptIn = GetApplicationContext()->GetLocalState()->GetBoolean(
       metrics::prefs::kMetricsReportingEnabled);
@@ -150,9 +164,8 @@ void AssertAuthenticatedIdentityInActiveProfile(ChromeIdentity* identity) {
 - (void)testDismissFirstRun {
   [chrome_test_util::GetMainController() showFirstRunUI];
 
-  id<GREYMatcher> optInAccept = chrome_test_util::ButtonWithAccessibilityLabel(
-      l10n_util::GetNSString(IDS_IOS_FIRSTRUN_OPT_IN_ACCEPT_BUTTON));
-  [[EarlGrey selectElementWithMatcher:optInAccept] performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:FirstRunOptInAcceptButton()]
+      performAction:grey_tap()];
 
   PrefService* preferences = GetApplicationContext()->GetLocalState();
   GREYAssert(
@@ -160,9 +173,8 @@ void AssertAuthenticatedIdentityInActiveProfile(ChromeIdentity* identity) {
           [WelcomeToChromeViewController defaultStatsCheckboxValue],
       @"Metrics reporting does not match.");
 
-  id<GREYMatcher> skipSignIn =
-      grey_accessibilityID(kSignInSkipButtonAccessibilityIdentifier);
-  [[EarlGrey selectElementWithMatcher:skipSignIn] performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:SkipSigninButton()]
+      performAction:grey_tap()];
 
   id<GREYMatcher> newTab =
       grey_kindOfClass(NSClassFromString(@"NewTabPageView"));
@@ -172,43 +184,51 @@ void AssertAuthenticatedIdentityInActiveProfile(ChromeIdentity* identity) {
 
 // Signs in to an account and then taps the Undo button to sign out.
 - (void)testSignInAndUndo {
-  ChromeIdentity* identity = GetFakeIdentity();
+  ChromeIdentity* identity = [SigninEarlGreyUtils fakeIdentity1];
   ios::FakeChromeIdentityService::GetInstanceFromChromeProvider()->AddIdentity(
       identity);
 
   // Launch First Run and accept tems of services.
   [chrome_test_util::GetMainController() showFirstRunUI];
-  TapButtonWithLabelId(IDS_IOS_FIRSTRUN_OPT_IN_ACCEPT_BUTTON);
+  [[EarlGrey selectElementWithMatcher:FirstRunOptInAcceptButton()]
+      performAction:grey_tap()];
 
   // Sign In |identity|.
-  TapButtonWithLabelId(IDS_IOS_ACCOUNT_CONSISTENCY_SETUP_SIGNIN_BUTTON);
-  AssertAuthenticatedIdentityInActiveProfile(identity);
+  [[EarlGrey selectElementWithMatcher:AccountConsistencySetupSigninButton()]
+      performAction:grey_tap()];
+
+  [SigninEarlGreyUtils assertSignedInWithIdentity:identity];
 
   // Undo the sign-in and dismiss the Sign In screen.
-  TapButtonWithLabelId(IDS_IOS_ACCOUNT_CONSISTENCY_CONFIRMATION_UNDO_BUTTON);
-  TapButtonWithLabelId(IDS_IOS_FIRSTRUN_ACCOUNT_CONSISTENCY_SKIP_BUTTON);
+  [[EarlGrey selectElementWithMatcher:UndoAccountConsistencyButton()]
+      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:FirstRunAccountConsistencySkipButton()]
+      performAction:grey_tap()];
 
   // |identity| shouldn't be signed in.
-  AssertAuthenticatedIdentityInActiveProfile(nil);
+  [SigninEarlGreyUtils assertSignedOut];
 }
 
 // Signs in to an account and then taps the Advanced link to go to settings.
 - (void)testSignInAndTapSettingsLink {
-  ChromeIdentity* identity = GetFakeIdentity();
+  ChromeIdentity* identity = [SigninEarlGreyUtils fakeIdentity1];
   ios::FakeChromeIdentityService::GetInstanceFromChromeProvider()->AddIdentity(
       identity);
 
   // Launch First Run and accept tems of services.
   [chrome_test_util::GetMainController() showFirstRunUI];
-  TapButtonWithLabelId(IDS_IOS_FIRSTRUN_OPT_IN_ACCEPT_BUTTON);
+  [[EarlGrey selectElementWithMatcher:FirstRunOptInAcceptButton()]
+      performAction:grey_tap()];
 
   // Sign In |identity|.
-  TapButtonWithLabelId(IDS_IOS_ACCOUNT_CONSISTENCY_SETUP_SIGNIN_BUTTON);
-  AssertAuthenticatedIdentityInActiveProfile(identity);
+  [[EarlGrey selectElementWithMatcher:AccountConsistencySetupSigninButton()]
+      performAction:grey_tap()];
+  [SigninEarlGreyUtils assertSignedInWithIdentity:identity];
 
   // Tap Settings link.
   id<GREYMatcher> settings_link_matcher = grey_allOf(
       grey_accessibilityLabel(@"Settings"), grey_sufficientlyVisible(), nil);
+  WaitForMatcher(settings_link_matcher);
   [[EarlGrey selectElementWithMatcher:settings_link_matcher]
       performAction:grey_tap()];
 
@@ -219,8 +239,9 @@ void AssertAuthenticatedIdentityInActiveProfile(ChromeIdentity* identity) {
                   @"Sync shouldn't have finished its original setup yet");
 
   // Close Settings, user is still signed in and sync is now starting.
-  TapButtonWithLabelId(IDS_IOS_NAVIGATION_BAR_DONE_BUTTON);
-  AssertAuthenticatedIdentityInActiveProfile(identity);
+  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+      performAction:grey_tap()];
+  [SigninEarlGreyUtils assertSignedInWithIdentity:identity];
   GREYAssertTrue(sync_service->HasFinishedInitialSetup(),
                  @"Sync should have finished its original setup");
 }

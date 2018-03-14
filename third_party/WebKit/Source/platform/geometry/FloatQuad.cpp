@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include "platform/geometry/FloatShapeHelpers.h"
 #include "platform/wtf/text/WTFString.h"
 #include "third_party/skia/include/core/SkPoint.h"
 
@@ -48,10 +49,6 @@ static inline float Max4(float a, float b, float c, float d) {
 
 inline float Dot(const FloatSize& a, const FloatSize& b) {
   return a.Width() * b.Width() + a.Height() * b.Height();
-}
-
-inline float Determinant(const FloatSize& a, const FloatSize& b) {
-  return a.Width() * b.Height() - a.Height() * b.Width();
 }
 
 inline bool IsPointInTriangle(const FloatPoint& p,
@@ -248,11 +245,15 @@ bool FloatQuad::IsCounterclockwise() const {
   return Determinant(p2_ - p1_, p3_ - p2_) < 0;
 }
 
+std::ostream& operator<<(std::ostream& ostream, const FloatQuad& quad) {
+  return ostream << quad.ToString();
+}
+
 String FloatQuad::ToString() const {
-  return String::Format("%s; %s; %s; %s", p1_.ToString().Ascii().Data(),
-                        p2_.ToString().Ascii().Data(),
-                        p3_.ToString().Ascii().Data(),
-                        p4_.ToString().Ascii().Data());
+  return String::Format("%s; %s; %s; %s", p1_.ToString().Ascii().data(),
+                        p2_.ToString().Ascii().data(),
+                        p3_.ToString().Ascii().data(),
+                        p4_.ToString().Ascii().data());
 }
 
 }  // namespace blink

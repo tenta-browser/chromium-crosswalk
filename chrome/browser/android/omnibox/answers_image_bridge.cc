@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/android/omnibox/answers_image_bridge.h"
-
-#include <jni.h>
-
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
@@ -53,10 +49,11 @@ class AnswersImageObserverAndroid : public BitmapFetcherService::Observer {
 
 }  // namespace
 
-static void CancelAnswersImageRequest(JNIEnv* env,
-                                      const JavaParamRef<jclass>&,
-                                      const JavaParamRef<jobject>& java_profile,
-                                      jint java_request_id) {
+static void JNI_AnswersImage_CancelAnswersImageRequest(
+    JNIEnv* env,
+    const JavaParamRef<jclass>&,
+    const JavaParamRef<jobject>& java_profile,
+    jint java_request_id) {
   Profile* profile = ProfileAndroid::FromProfileAndroid(java_profile);
   DCHECK(profile);
   BitmapFetcherService* bitmap_fetcher_service =
@@ -64,11 +61,12 @@ static void CancelAnswersImageRequest(JNIEnv* env,
   bitmap_fetcher_service->CancelRequest(java_request_id);
 }
 
-static int RequestAnswersImage(JNIEnv* env,
-                               const JavaParamRef<jclass>&,
-                               const JavaParamRef<jobject>& java_profile,
-                               const JavaParamRef<jstring>& java_url,
-                               const JavaParamRef<jobject>& java_callback) {
+static int JNI_AnswersImage_RequestAnswersImage(
+    JNIEnv* env,
+    const JavaParamRef<jclass>&,
+    const JavaParamRef<jobject>& java_profile,
+    const JavaParamRef<jstring>& java_url,
+    const JavaParamRef<jobject>& java_callback) {
   Profile* profile = ProfileAndroid::FromProfileAndroid(java_profile);
   DCHECK(profile);
   BitmapFetcherService* bitmap_fetcher_service =
@@ -78,9 +76,4 @@ static int RequestAnswersImage(JNIEnv* env,
   return bitmap_fetcher_service->RequestImage(
       GURL(url), new AnswersImageObserverAndroid(env, java_callback),
       NO_TRAFFIC_ANNOTATION_YET);
-}
-
-// static
-bool RegisterAnswersImageBridge(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }

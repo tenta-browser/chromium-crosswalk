@@ -48,7 +48,10 @@ class PLATFORM_EXPORT ImageObserver : public GarbageCollectedMixin {
 
   virtual void ChangedInRect(const Image*, const IntRect&) = 0;
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {}
+  // See the comment of Image::SetData().
+  virtual void AsyncLoadCompleted(const Image*) = 0;
+
+  virtual void Trace(blink::Visitor* visitor) {}
 };
 
 }  // namespace blink

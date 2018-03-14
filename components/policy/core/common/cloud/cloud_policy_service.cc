@@ -8,6 +8,9 @@
 
 #include "base/callback.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/time/time.h"
+#include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 
 namespace em = enterprise_management;
@@ -113,10 +116,20 @@ void CloudPolicyService::OnStoreLoaded(CloudPolicyStore* store) {
 
   // Timestamp.
   base::Time policy_timestamp;
-  if (policy && policy->has_timestamp()) {
-    policy_timestamp =
-        base::Time::UnixEpoch() +
-        base::TimeDelta::FromMilliseconds(policy->timestamp());
+  if (policy && policy->has_timestamp())
+    policy_timestamp = base::Time::FromJavaTime(policy->timestamp());
+
+  const base::Time& old_timestamp = client_->last_policy_timestamp();
+  if (!policy_timestamp.is_null() && !old_timestamp.is_null() &&
+      policy_timestamp != old_timestamp) {
+    const base::TimeDelta age = policy_timestamp - old_timestamp;
+    if (policy_type_ == dm_protocol::kChromeUserPolicyType) {
+      UMA_HISTOGRAM_CUSTOM_COUNTS("Enterprise.PolicyUpdatePeriod.User",
+                                  age.InDays(), 1, 1000, 100);
+    } else if (policy_type_ == dm_protocol::kChromeDevicePolicyType) {
+      UMA_HISTOGRAM_CUSTOM_COUNTS("Enterprise.PolicyUpdatePeriod.Device",
+                                  age.InDays(), 1, 1000, 100);
+    }
   }
   client_->set_last_policy_timestamp(policy_timestamp);
 
@@ -125,12 +138,6 @@ void CloudPolicyService::OnStoreLoaded(CloudPolicyStore* store) {
     client_->set_public_key_version(policy->public_key_version());
   else
     client_->clear_public_key_version();
-
-  // Whether to submit the machine ID.
-  bool submit_machine_id = false;
-  if (policy && policy->has_valid_serial_number_missing())
-    submit_machine_id = policy->valid_serial_number_missing();
-  client_->set_submit_machine_id(submit_machine_id);
 
   // Finally, set up registration if necessary.
   if (policy && policy->has_request_token() && policy->has_device_id() &&

@@ -7,9 +7,13 @@
 
 #include <set>
 #include <string>
+#include <vector>
 
 #include "base/macros.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
+#include "components/autofill/core/browser/credit_card.h"
+#include "ui/gfx/image/image_skia.h"
 
 namespace payments {
 
@@ -17,7 +21,7 @@ namespace payments {
 class PaymentInstrument {
  public:
   // The type of this instrument instance.
-  enum class Type { AUTOFILL };
+  enum class Type { AUTOFILL, NATIVE_MOBILE_APP, SERVICE_WORKER_APP };
 
   class Delegate {
    public:
@@ -38,28 +42,41 @@ class PaymentInstrument {
   virtual void InvokePaymentApp(Delegate* delegate) = 0;
   // Returns whether the instrument is complete to be used as a payment method
   // without further editing.
-  virtual bool IsCompleteForPayment() = 0;
+  virtual bool IsCompleteForPayment() const = 0;
+  // Returns whether the instrument is exactly matching all filters provided by
+  // the merchant. For example, this can return "false" for unknown card types,
+  // if the merchant requested only debit cards.
+  virtual bool IsExactlyMatchingMerchantRequest() const = 0;
+  // Returns a message to indicate to the user what's missing for the instrument
+  // to be complete for payment.
+  virtual base::string16 GetMissingInfoLabel() const = 0;
   // Returns whether the instrument is valid for the purposes of responding to
   // canMakePayment.
-  virtual bool IsValidForCanMakePayment() = 0;
+  virtual bool IsValidForCanMakePayment() const = 0;
+  // Records the use of this payment instrument.
+  virtual void RecordUse() = 0;
+  // Return the sub/label of payment instrument, to be displayed to the user.
+  virtual base::string16 GetLabel() const = 0;
+  virtual base::string16 GetSublabel() const = 0;
+  virtual const gfx::ImageSkia* icon_image_skia() const;
 
-  const std::string& method_name() const { return method_name_; }
-  const base::string16& label() const { return label_; }
-  const base::string16& sublabel() const { return sublabel_; }
+  // Returns true if this payment instrument can be used to fulfill a request
+  // specifying |methods| as supported methods of payment, false otherwise.
+  virtual bool IsValidForModifier(
+      const std::vector<std::string>& methods,
+      bool supported_networks_specified,
+      const std::set<std::string>& supported_networks,
+      bool supported_types_specified,
+      const std::set<autofill::CreditCard::CardType>& supported_types)
+      const = 0;
+
   int icon_resource_id() const { return icon_resource_id_; }
   Type type() { return type_; }
 
  protected:
-  PaymentInstrument(const std::string& method_name,
-                    const base::string16& label,
-                    const base::string16& sublabel,
-                    int icon_resource_id,
-                    Type type);
+  PaymentInstrument(int icon_resource_id, Type type);
 
  private:
-  const std::string method_name_;
-  const base::string16 label_;
-  const base::string16 sublabel_;
   int icon_resource_id_;
   Type type_;
 

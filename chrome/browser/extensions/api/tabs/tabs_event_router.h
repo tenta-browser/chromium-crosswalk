@@ -12,8 +12,8 @@
 #include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "chrome/browser/extensions/api/tabs/tabs_api.h"
-#include "chrome/browser/memory/tab_manager.h"
-#include "chrome/browser/memory/tab_manager_observer.h"
+#include "chrome/browser/resource_coordinator/tab_lifecycle_observer.h"
+#include "chrome/browser/resource_coordinator/tab_manager.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/browser_tab_strip_tracker.h"
 #include "chrome/browser/ui/browser_tab_strip_tracker_delegate.h"
@@ -42,7 +42,7 @@ class TabsEventRouter : public TabStripModelObserver,
                         public chrome::BrowserListObserver,
                         public favicon::FaviconDriverObserver,
                         public zoom::ZoomObserver,
-                        public memory::TabManagerObserver {
+                        public resource_coordinator::TabLifecycleObserver {
  public:
   explicit TabsEventRouter(Profile* profile);
   ~TabsEventRouter() override;
@@ -93,7 +93,7 @@ class TabsEventRouter : public TabStripModelObserver,
                         bool icon_url_changed,
                         const gfx::Image& image) override;
 
-  // memory::TabManagerObserver:
+  // resource_coordinator::TabLifecycleObserver:
   void OnDiscardedStateChange(content::WebContents* contents,
                               bool is_discarded) override;
   void OnAutoDiscardableStateChange(content::WebContents* contents,
@@ -169,8 +169,7 @@ class TabsEventRouter : public TabStripModelObserver,
     // content::WebContentsObserver:
     void NavigationEntryCommitted(
         const content::LoadCommittedDetails& load_details) override;
-    void TitleWasSet(content::NavigationEntry* entry,
-                     bool explicit_set) override;
+    void TitleWasSet(content::NavigationEntry* entry) override;
     void WebContentsDestroyed() override;
 
    private:
@@ -207,7 +206,7 @@ class TabsEventRouter : public TabStripModelObserver,
 
   BrowserTabStripTracker browser_tab_strip_tracker_;
 
-  ScopedObserver<memory::TabManager, TabsEventRouter>
+  ScopedObserver<resource_coordinator::TabManager, TabsEventRouter>
       tab_manager_scoped_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(TabsEventRouter);

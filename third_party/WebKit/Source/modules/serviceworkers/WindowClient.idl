@@ -10,10 +10,10 @@ enum ContextFrameType {
     "none"
 };
 
-// https://w3c.github.io/ServiceWorker/#window-client-interface
+// https://w3c.github.io/ServiceWorker/#windowclient
 [
     Exposed=ServiceWorker,
-    ImplementedAs=ServiceWorkerWindowClient,
+    ImplementedAs=ServiceWorkerWindowClient
 ] interface WindowClient : Client {
     readonly attribute VisibilityState visibilityState;
     readonly attribute boolean focused;

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/bind.h"
+#include "base/run_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/extensions/browser_action_test_util.h"
@@ -49,8 +50,6 @@ class MediaRouterUIBrowserTest : public InProcessBrowserTest {
   ~MediaRouterUIBrowserTest() override {}
 
   void SetUpOnMainThread() override {
-    InProcessBrowserTest::SetUpOnMainThread();
-
     BrowserActionsContainer* browser_actions_container =
         BrowserView::GetBrowserViewForBrowser(browser())
             ->toolbar()
@@ -75,8 +74,8 @@ class MediaRouterUIBrowserTest : public InProcessBrowserTest {
     // contents to chrome://media-router.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&MediaRouterUIBrowserTest::ExecuteMediaRouterAction,
-                   base::Unretained(this), app_menu_button));
+        base::BindOnce(&MediaRouterUIBrowserTest::ExecuteMediaRouterAction,
+                       base::Unretained(this), app_menu_button));
 
     base::RunLoop run_loop;
     app_menu_button->ShowMenu(false);
@@ -131,7 +130,7 @@ class MediaRouterUIBrowserTest : public InProcessBrowserTest {
       update->SetBoolean(ComponentToolbarActionsFactory::kMediaRouterActionId,
                          always_show);
     }
-    chrome::MigrateObsoleteProfilePrefs(browser()->profile());
+    MigrateObsoleteProfilePrefs(browser()->profile());
   }
 
  protected:

@@ -31,11 +31,12 @@
 #ifndef WindowProxy_h
 #define WindowProxy_h
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
-#include "bindings/core/v8/ScopedPersistent.h"
+#include "base/debug/stack_trace.h"
+#include "base/memory/scoped_refptr.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/ScopedPersistent.h"
 #include "platform/heap/Handle.h"
-#include "platform/wtf/RefPtr.h"
 #include "v8/include/v8.h"
 
 namespace blink {
@@ -76,7 +77,7 @@ class Frame;
 // security checks for same-origin/cross-origin access to the Window interface.
 // When the check passes (i.e. the access is same-origin), the access is
 // forwarded to the inner global object of the active Document in this
-// WindowProxy's Frame).
+// WindowProxy's Frame.
 //
 // When the security check fails, the access is delegated to the outer global
 // proxy's cross-origin interceptors. The cross-origin interceptors may choose
@@ -144,12 +145,13 @@ class WindowProxy : public GarbageCollectedFinalized<WindowProxy> {
  public:
   virtual ~WindowProxy();
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
   void InitializeIfNeeded();
 
   void ClearForClose();
   void ClearForNavigation();
+  void ClearForSwap();
 
   CORE_EXPORT v8::Local<v8::Object> GlobalProxyIfNotDetached();
   v8::Local<v8::Object> ReleaseGlobalProxy();
@@ -160,6 +162,8 @@ class WindowProxy : public GarbageCollectedFinalized<WindowProxy> {
   DOMWrapperWorld& World() { return *world_; }
 
   virtual bool IsLocal() const { return false; }
+
+  enum FrameReuseStatus { kFrameWillNotBeReused, kFrameWillBeReused };
 
  protected:
   // Lifecycle represents the following four states.
@@ -222,11 +226,11 @@ class WindowProxy : public GarbageCollectedFinalized<WindowProxy> {
     kFrameIsDetached,
   };
 
-  WindowProxy(v8::Isolate*, Frame&, RefPtr<DOMWrapperWorld>);
+  WindowProxy(v8::Isolate*, Frame&, scoped_refptr<DOMWrapperWorld>);
 
   virtual void Initialize() = 0;
 
-  virtual void DisposeContext(Lifecycle next_status) = 0;
+  virtual void DisposeContext(Lifecycle next_status, FrameReuseStatus) = 0;
 
   WARN_UNUSED_RESULT v8::Local<v8::Object> AssociateWithWrapper(
       DOMWindow*,
@@ -250,13 +254,17 @@ class WindowProxy : public GarbageCollectedFinalized<WindowProxy> {
 
  protected:
   // TODO(dcheng): Consider making these private and using getters.
-  const RefPtr<DOMWrapperWorld> world_;
+  const scoped_refptr<DOMWrapperWorld> world_;
   // |global_proxy_| is the root reference from Blink to v8::Context (a strong
   // reference to the global proxy makes the entire context alive).  In order to
   // discard the v8::Context, |global_proxy_| needs to be a weak reference or
   // to be destroyed.
   ScopedPersistent<v8::Object> global_proxy_;
   Lifecycle lifecycle_;
+
+  // TODO(dcheng): Remove this temporary code for debugging
+  // https://crbug.com/728693.
+  base::debug::StackTrace initialization_stack_;
 };
 
 }  // namespace blink

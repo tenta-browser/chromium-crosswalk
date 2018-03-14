@@ -16,6 +16,8 @@
 #include "base/time/time.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/devtools_agent_host.h"
+#include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -248,7 +250,9 @@ ProcessManager::ProcessManager(BrowserContext* context,
   content::DevToolsAgentHost::AddObserver(this);
 }
 
-ProcessManager::~ProcessManager() = default;
+ProcessManager::~ProcessManager() {
+  content::DevToolsAgentHost::RemoveObserver(this);
+}
 
 void ProcessManager::Shutdown() {
   extension_registry_->RemoveObserver(this);
@@ -262,6 +266,7 @@ void ProcessManager::RegisterRenderFrameHost(
     content::WebContents* web_contents,
     content::RenderFrameHost* render_frame_host,
     const Extension* extension) {
+  DCHECK(render_frame_host->IsRenderFrameLive());
   ExtensionRenderFrameData* data = &all_extension_frames_[render_frame_host];
   data->view_type = GetViewType(web_contents);
 
@@ -287,19 +292,6 @@ void ProcessManager::UnregisterRenderFrameHost(
 
     for (auto& observer : observer_list_)
       observer.OnExtensionFrameUnregistered(extension_id, render_frame_host);
-  }
-}
-
-void ProcessManager::DidNavigateRenderFrameHost(
-    content::RenderFrameHost* render_frame_host) {
-  ExtensionRenderFrames::iterator frame =
-      all_extension_frames_.find(render_frame_host);
-
-  if (frame != all_extension_frames_.end()) {
-    std::string extension_id = GetExtensionID(render_frame_host);
-
-    for (auto& observer : observer_list_)
-      observer.OnExtensionFrameNavigated(extension_id, render_frame_host);
   }
 }
 
@@ -433,8 +425,9 @@ bool ProcessManager::WakeEventPage(const std::string& extension_id,
   }
   LazyBackgroundTaskQueue* queue =
       LazyBackgroundTaskQueue::Get(browser_context_);
-  queue->AddPendingTask(browser_context_, extension_id,
-                        base::Bind(&PropagateExtensionWakeResult, callback));
+  queue->AddPendingTask(
+      browser_context_, extension_id,
+      base::BindOnce(&PropagateExtensionWakeResult, callback));
   return true;
 }
 
@@ -453,8 +446,30 @@ const Extension* ProcessManager::GetExtensionForWebContents(
     const content::WebContents* web_contents) {
   if (!web_contents->GetSiteInstance())
     return nullptr;
-  return extension_registry_->enabled_extensions().GetByID(
-      GetExtensionIdForSiteInstance(web_contents->GetSiteInstance()));
+  const Extension* extension =
+      extension_registry_->enabled_extensions().GetByID(
+          GetExtensionIdForSiteInstance(web_contents->GetSiteInstance()));
+  if (extension && extension->is_hosted_app()) {
+    // For hosted apps, be sure to exclude URLs outside of the app that might
+    // be loaded in the same SiteInstance (extensions guarantee that only
+    // extension urls are loaded in that SiteInstance).
+    const content::NavigationController& controller =
+        web_contents->GetController();
+    content::NavigationEntry* entry = controller.GetLastCommittedEntry();
+    // If there is no last committed entry, check the pending entry. This can
+    // happen in cases where we query this before any entry is fully committed,
+    // such as when attributing a WebContents for the TaskManager. If there is
+    // a committed navigation, use that instead.
+    if (!entry)
+      entry = controller.GetPendingEntry();
+    if (!entry ||
+        extension_registry_->enabled_extensions().GetExtensionOrAppByURL(
+            entry->GetURL()) != extension) {
+      return nullptr;
+    }
+  }
+
+  return extension;
 }
 
 int ProcessManager::GetLazyKeepaliveCount(const Extension* extension) {
@@ -596,8 +611,9 @@ void ProcessManager::Observe(int type,
     case extensions::NOTIFICATION_EXTENSION_HOST_DESTROYED: {
       ExtensionHost* host = content::Details<ExtensionHost>(details).ptr();
       if (background_hosts_.erase(host)) {
-        ClearBackgroundPageData(host->extension()->id());
-        background_page_data_[host->extension()->id()].since_suspended.reset(
+        // Note: |host->extension()| may be null at this point.
+        ClearBackgroundPageData(host->extension_id());
+        background_page_data_[host->extension_id()].since_suspended.reset(
             new base::ElapsedTimer());
       }
       break;
@@ -622,10 +638,9 @@ void ProcessManager::OnExtensionLoaded(BrowserContext* browser_context,
   }
 }
 
-void ProcessManager::OnExtensionUnloaded(
-    BrowserContext* browser_context,
-    const Extension* extension,
-    UnloadedExtensionInfo::Reason reason) {
+void ProcessManager::OnExtensionUnloaded(BrowserContext* browser_context,
+                                         const Extension* extension,
+                                         UnloadedExtensionReason reason) {
   ExtensionHost* host = GetBackgroundHostForExtension(extension->id());
   if (host != nullptr)
     CloseBackgroundHost(host);
@@ -776,8 +791,8 @@ void ProcessManager::CloseLazyBackgroundPageNow(const std::string& extension_id,
     for (content::RenderFrameHost* frame : frames_to_close) {
       content::WebContents::FromRenderFrameHost(frame)->ClosePage();
       // WebContents::ClosePage() may result in calling
-      // UnregisterRenderViewHost() asynchronously and may cause race conditions
-      // when the background page is reloaded.
+      // UnregisterRenderFrameHost() asynchronously and may cause race
+      // conditions when the background page is reloaded.
       // To avoid this, unregister the view now.
       UnregisterRenderFrameHost(frame);
     }
@@ -838,7 +853,7 @@ void ProcessManager::UnregisterExtension(const std::string& extension_id) {
 void ProcessManager::ClearBackgroundPageData(const std::string& extension_id) {
   background_page_data_.erase(extension_id);
 
-  // Re-register all RenderViews for this extension. We do this to restore
+  // Re-register all RenderFrames for this extension. We do this to restore
   // the lazy_keepalive_count (if any) to properly reflect the number of open
   // views.
   for (const auto& key_value : all_extension_frames_) {

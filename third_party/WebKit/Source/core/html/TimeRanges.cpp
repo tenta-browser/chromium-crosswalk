@@ -76,7 +76,7 @@ void TimeRanges::Invert() {
       inverted->Add(end, pos_inf);
   }
 
-  ranges_.Swap(inverted->ranges_);
+  ranges_.swap(inverted->ranges_);
 }
 
 void TimeRanges::IntersectWith(const TimeRanges* other) {
@@ -101,7 +101,7 @@ void TimeRanges::UnionWith(const TimeRanges* other) {
     unioned->Add(range.start_, range.end_);
   }
 
-  ranges_.Swap(unioned->ranges_);
+  ranges_.swap(unioned->ranges_);
 }
 
 double TimeRanges::start(unsigned index,
@@ -145,7 +145,7 @@ void TimeRanges::Add(double start, double end) {
       // We need to merge the addedRange and that range.
       added_range = added_range.UnionWithOverlappingOrContiguousRange(
           ranges_[overlapping_arc_index]);
-      ranges_.erase(overlapping_arc_index);
+      ranges_.EraseAt(overlapping_arc_index);
       overlapping_arc_index--;
     } else {
       // Check the case for which there is no more to do

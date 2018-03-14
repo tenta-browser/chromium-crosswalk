@@ -15,9 +15,11 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
 #include "base/threading/thread_restrictions.h"
+#include "content/browser/download/download_task_runner.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/common/frame_messages.h"
 #include "content/public/browser/mhtml_extra_parts.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/mhtml_generation_params.h"
@@ -45,7 +47,7 @@ namespace {
 // A dummy WebContentsDelegate which tracks the results of a find operation.
 class FindTrackingDelegate : public WebContentsDelegate {
  public:
-  FindTrackingDelegate(const std::string& search)
+  explicit FindTrackingDelegate(const std::string& search)
       : search_(search), matches_(-1) {}
 
   // Returns number of results.
@@ -124,7 +126,26 @@ class MHTMLGenerationTest : public ContentBrowserTest {
     // Block until the MHTML is generated.
     run_loop.Run();
 
-    EXPECT_TRUE(has_mhtml_callback_run());
+    ASSERT_TRUE(has_mhtml_callback_run())
+        << "Unexpected error generating MHTML file";
+
+    // Skip well formedness check if there was an generation error.
+    if (file_size() == -1)
+      return;
+
+    // Loads the generated file to check if it is well formed.
+    WebContentsDelegate* old_delegate = shell()->web_contents()->GetDelegate();
+    ConsoleObserverDelegate console_delegate(shell()->web_contents(),
+                                             "Malformed multipart archive: *");
+    shell()->web_contents()->SetDelegate(&console_delegate);
+
+    EXPECT_TRUE(
+        NavigateToURL(shell(), net::FilePathToFileURL(params.file_path)))
+        << "Error navigating to the generated MHTML file";
+    EXPECT_EQ(0U, console_delegate.message().length())
+        << "The generated MHTML file is malformed";
+
+    shell()->web_contents()->SetDelegate(old_delegate);
   }
 
   int64_t ReadFileSizeFromDisk(base::FilePath path) {
@@ -153,7 +174,6 @@ class MHTMLGenerationTest : public ContentBrowserTest {
     }
 
     GenerateMHTML(params, url);
-    ASSERT_FALSE(HasFailure());
 
     // Stop the test server (to make sure the locally saved page
     // is self-contained / won't try to open original resources).
@@ -223,7 +243,6 @@ IN_PROC_BROWSER_TEST_F(MHTMLGenerationTest, GenerateMHTML) {
   path = path.Append(FILE_PATH_LITERAL("test.mht"));
 
   GenerateMHTML(path, embedded_test_server()->GetURL("/simple_page.html"));
-  ASSERT_FALSE(HasFailure());
 
   // Make sure the actual generated file has some contents.
   EXPECT_GT(file_size(), 0);  // Verify the size reported by the callback.
@@ -258,12 +277,12 @@ class GenerateMHTMLAndExitRendererMessageFilter : public BrowserMessageFilter {
     if (message.type() == FrameHostMsg_SerializeAsMHTMLResponse::ID) {
       // After |return false| below, this IPC message will be handled by the
       // product code as illustrated below.  (1), (2), (3) depict points in time
-      // when product code runs on UI and FILE threads.  (X), (Y), (Z) depict
-      // when we want test-injected tasks to run - for the repro, (Z) has to
-      // happen between (1) and (3).  (Y?) and (Z?) depict when test tasks can
-      // theoretically happen and ruin the repro.
+      // when product code runs on UI thread and download sequence.  (X), (Y),
+      // (Z) depict when we want test-injected tasks to run - for the repro, (Z)
+      // has to happen between (1) and (3).  (Y?) and (Z?) depict when test
+      // tasks can theoretically happen and ruin the repro.
       //
-      //     IO thread       UI thread           FILE thread
+      //     IO thread       UI thread         download sequence
       //     ---------       ---------           -----------
       //        |                |                     |
       //    WE ARE HERE          |                     |
@@ -301,34 +320,35 @@ class GenerateMHTMLAndExitRendererMessageFilter : public BrowserMessageFilter {
       // - From here post TaskX to UI thread.  (X) is guaranteed to happen
       //   before timepoint (1) (because posting of (1) happens after
       //   |return false| / before we post TaskX below).
-      // - From (X) post TaskY to FILE thread.  Because this posting is done
-      //   before (1), we can guarantee that (Y) will happen before (2).
+      // - From (X) post TaskY to download sequence.  Because this posting is
+      //   done before (1), we can guarantee that (Y) will happen before (2).
       // - From (Y) post TaskZ to UI thread.  Because this posting is done
       //   before (2), we can guarantee that (Z) will happen before (3).
       // - We cannot really guarantee that (Y) and (Z) happen *after* (1) - i.e.
       //   execution at (Y?) and (Z?) instead is possible.  In practice,
-      //   bouncing off of UI and FILE thread does mean (Z) happens after (1).
+      //   bouncing off of UI and download sequence does mean (Z) happens
+      //   after (1).
       BrowserThread::PostTask(
-          BrowserThread::UI, FROM_HERE, base::Bind(
-              &GenerateMHTMLAndExitRendererMessageFilter::TaskX,
-              base::Unretained(this)));
+          BrowserThread::UI, FROM_HERE,
+          base::BindOnce(&GenerateMHTMLAndExitRendererMessageFilter::TaskX,
+                         base::Unretained(this)));
     }
 
     return false;
   };
 
   void TaskX() {
-    BrowserThread::PostTask(
-        BrowserThread::FILE, FROM_HERE, base::Bind(
-            &GenerateMHTMLAndExitRendererMessageFilter::TaskY,
-            base::Unretained(this)));
+    GetDownloadTaskRunner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&GenerateMHTMLAndExitRendererMessageFilter::TaskY,
+                       base::Unretained(this)));
   }
 
   void TaskY() {
     BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE, base::Bind(
-            &GenerateMHTMLAndExitRendererMessageFilter::TaskZ,
-            base::Unretained(this)));
+        BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&GenerateMHTMLAndExitRendererMessageFilter::TaskZ,
+                       base::Unretained(this)));
   }
 
   void TaskZ() {
@@ -346,7 +366,7 @@ IN_PROC_BROWSER_TEST_F(MHTMLGenerationTest, GenerateMHTMLAndExitRenderer) {
 
   RenderProcessHostImpl* render_process_host =
       static_cast<RenderProcessHostImpl*>(
-          shell()->web_contents()->GetRenderProcessHost());
+          shell()->web_contents()->GetMainFrame()->GetProcess());
   scoped_refptr<BrowserMessageFilter> filter =
       new GenerateMHTMLAndExitRendererMessageFilter(render_process_host);
   render_process_host->AddFilter(filter.get());
@@ -358,12 +378,17 @@ IN_PROC_BROWSER_TEST_F(MHTMLGenerationTest, GenerateMHTMLAndExitRenderer) {
   EXPECT_GT(ReadFileSizeFromDisk(path), 100);  // Verify the actual file size.
 }
 
-IN_PROC_BROWSER_TEST_F(MHTMLGenerationTest, InvalidPath) {
+// TODO(crbug.com/672313): Flaky on Windows.
+#if defined(OS_WIN)
+#define MAYBE_InvalidPath DISABLED_InvalidPath
+#else
+#define MAYBE_InvalidPath InvalidPath
+#endif
+IN_PROC_BROWSER_TEST_F(MHTMLGenerationTest, MAYBE_InvalidPath) {
   base::FilePath path(FILE_PATH_LITERAL("/invalid/file/path"));
 
   GenerateMHTML(path, embedded_test_server()->GetURL(
                           "/download/local-about-blank-subframes.html"));
-  ASSERT_FALSE(HasFailure());  // No failures with the invocation itself?
 
   EXPECT_EQ(file_size(), -1);  // Expecting that the callback reported failure.
 
@@ -382,7 +407,6 @@ IN_PROC_BROWSER_TEST_F(MHTMLGenerationTest, GenerateNonBinaryMHTMLWithImage) {
 
   GURL url(embedded_test_server()->GetURL("/page_with_image.html"));
   GenerateMHTML(path, url);
-  ASSERT_FALSE(HasFailure());
   EXPECT_GT(file_size(), 0);  // Verify the size reported by the callback.
   EXPECT_GT(ReadFileSizeFromDisk(path), 100);  // Verify the actual file size.
 
@@ -408,7 +432,6 @@ IN_PROC_BROWSER_TEST_F(MHTMLGenerationTest, GenerateBinaryMHTMLWithImage) {
   params.use_binary_encoding = true;
 
   GenerateMHTML(params, url);
-  ASSERT_FALSE(HasFailure());
   EXPECT_GT(file_size(), 0);  // Verify the size reported by the callback.
   EXPECT_GT(ReadFileSizeFromDisk(path), 100);  // Verify the actual file size.
 
@@ -430,9 +453,6 @@ IN_PROC_BROWSER_TEST_F(MHTMLGenerationTest, GenerateMHTMLIgnoreNoStore) {
 
   // Generate MHTML without specifying the FailForNoStoreMainFrame policy.
   GenerateMHTML(path, url);
-
-  // We expect that there wasn't an error (file size -1 indicates an error.)
-  ASSERT_FALSE(HasFailure());
 
   std::string mhtml;
   {
@@ -630,7 +650,6 @@ IN_PROC_BROWSER_TEST_F(MHTMLGenerationSitePerProcessTest, GenerateMHTML) {
   GURL url(embedded_test_server()->GetURL(
       "a.com", "/frame_tree/page_with_one_frame.html"));
   GenerateMHTML(path, url);
-  ASSERT_FALSE(HasFailure());
 
   std::string mhtml;
   {
@@ -660,7 +679,6 @@ IN_PROC_BROWSER_TEST_F(MHTMLGenerationTest, RemovePopupOverlay) {
   params.remove_popup_overlay = true;
 
   GenerateMHTML(params, url);
-  ASSERT_FALSE(HasFailure());
 
   std::string mhtml;
   {
@@ -687,15 +705,16 @@ IN_PROC_BROWSER_TEST_F(MHTMLGenerationTest, GenerateMHTMLWithExtraData) {
   // Place the extra data we need into the web contents user data.
   std::string content_type(kFakeContentType);
   std::string content_location(kFakeContentLocation);
+  std::string extra_headers;
 
   // Get the MHTMLExtraParts
   MHTMLExtraParts* extra_parts =
       MHTMLExtraParts::FromWebContents(shell()->web_contents());
 
   // Add two extra data parts to the MHTML.
-  extra_parts->AddExtraMHTMLPart(content_type, content_location,
+  extra_parts->AddExtraMHTMLPart(content_type, content_location, extra_headers,
                                  kFakeSignalData1);
-  extra_parts->AddExtraMHTMLPart(content_type, content_location,
+  extra_parts->AddExtraMHTMLPart(content_type, content_location, extra_headers,
                                  kFakeSignalData2);
   EXPECT_EQ(extra_parts->size(), 2);
   GenerateMHTML(params, url);

@@ -12,12 +12,16 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
+#include "base/unguessable_token.h"
 #include "media/base/bitstream_buffer.h"
 #include "media/base/cdm_context.h"
 #include "media/base/encryption_scheme.h"
+#include "media/base/overlay_info.h"
 #include "media/base/surface_manager.h"
 #include "media/base/video_decoder_config.h"
 #include "media/video/picture.h"
+#include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 
@@ -128,9 +132,7 @@ class MEDIA_EXPORT VideoDecodeAccelerator {
     Config();
     Config(const Config& config);
 
-    // Intentional converting constructor.
-    // TODO(watk): Make this explicit.
-    Config(VideoCodecProfile profile);
+    explicit Config(VideoCodecProfile profile);
 
     ~Config();
 
@@ -150,10 +152,9 @@ class MEDIA_EXPORT VideoDecodeAccelerator {
     // Whether the client supports deferred initialization.
     bool is_deferred_initialization_allowed = false;
 
-    // An optional graphics surface that the VDA should render to. For setting
-    // an output SurfaceView on Android. It's only valid when not equal to
-    // |kNoSurfaceID|.
-    int surface_id = SurfaceManager::kNoSurfaceID;
+    // Optional overlay info available at startup, rather than waiting for the
+    // VDA to receive a callback.
+    OverlayInfo overlay_info;
 
     // Coded size of the video frame hint, subject to change.
     gfx::Size initial_expected_coded_size = gfx::Size(320, 240);
@@ -171,7 +172,12 @@ class MEDIA_EXPORT VideoDecodeAccelerator {
     std::vector<uint8_t> pps;
 
     // Color space specified by the container.
-    VideoColorSpace color_space;
+    VideoColorSpace container_color_space;
+
+    // Target color space.
+    // Used as a hint to the decoder. Outputting VideoFrames in this color space
+    // may avoid extra conversion steps.
+    gfx::ColorSpace target_color_space;
   };
 
   // Interface for collaborating with picture interface to provide memory for
@@ -307,7 +313,9 @@ class MEDIA_EXPORT VideoDecodeAccelerator {
   // An optional graphics surface that the VDA should render to. For setting
   // an output SurfaceView on Android. Passing |kNoSurfaceID| will clear any
   // previously set surface in favor of an internally generated texture.
-  virtual void SetSurface(int32_t surface_id);
+  // |routing_token| is an optional AndroidOverlay routing token.  At most one
+  // should be non-empty.
+  virtual void SetOverlayInfo(const OverlayInfo& overlay_info);
 
   // Destroys the decoder: all pending inputs are dropped immediately and the
   // component is freed.  This call may asynchornously free system resources,

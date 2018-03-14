@@ -7,6 +7,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "content/common/content_export.h"
 #include "third_party/WebKit/public/platform/WebGestureEvent.h"
 #include "third_party/WebKit/public/platform/WebInputEvent.h"
 
@@ -36,8 +37,11 @@ enum class OverscrollSource {
 // overscroll gesture. This controller receives the events that are dispatched
 // to the renderer, and the ACKs of events, and updates the overscroll gesture
 // status accordingly.
-class OverscrollController {
+class CONTENT_EXPORT OverscrollController {
  public:
+  // Exported for testing.
+  // TODO(mcnee): Tests needing CONTENT_EXPORT are BrowserPlugin specific.
+  // Remove after removing BrowserPlugin (crbug.com/533069).
   OverscrollController();
   virtual ~OverscrollController();
 
@@ -49,11 +53,11 @@ class OverscrollController {
 
   // This must be called when the ACK for any event comes in. This updates the
   // overscroll gesture status as appropriate.
-  void ReceivedEventACK(const blink::WebInputEvent& event, bool processed);
-
-  // This must be called when a gesture event is filtered out and not sent to
-  // the renderer.
-  void DiscardingGestureEvent(const blink::WebGestureEvent& event);
+  // Virtual and exported for testing.
+  // TODO(mcnee): Tests needing CONTENT_EXPORT and virtual are BrowserPlugin
+  // specific. Remove after removing BrowserPlugin (crbug.com/533069).
+  virtual void ReceivedEventACK(const blink::WebInputEvent& event,
+                                bool processed);
 
   OverscrollMode overscroll_mode() const { return overscroll_mode_; }
 
@@ -110,24 +114,35 @@ class OverscrollController {
   // Whether this event should be processed or not handled by the controller.
   bool ShouldProcessEvent(const blink::WebInputEvent& event);
 
+  // Helper function to reset |scroll_state_| and |locked_mode_|.
+  void ResetScrollState();
+
   // The current state of overscroll gesture.
-  OverscrollMode overscroll_mode_;
+  OverscrollMode overscroll_mode_ = OVERSCROLL_NONE;
+
+  // When set to something other than OVERSCROLL_NONE, the overscroll cannot
+  // switch to any other mode, except to OVERSCROLL_NONE. This is set when an
+  // overscroll is started until the touch sequence is completed.
+  OverscrollMode locked_mode_ = OVERSCROLL_NONE;
+
+  // Source of the current overscroll gesture.
+  OverscrollSource overscroll_source_ = OverscrollSource::NONE;
 
   // Used to keep track of the scrolling state.
   // If scrolling starts, and some scroll events are consumed at the beginning
   // of the scroll (i.e. some content on the web-page was scrolled), then do not
   // process any of the subsequent scroll events for generating overscroll
   // gestures.
-  ScrollState scroll_state_;
+  ScrollState scroll_state_ = STATE_UNKNOWN;
 
   // The amount of overscroll in progress. These values are invalid when
   // |overscroll_mode_| is set to OVERSCROLL_NONE.
-  float overscroll_delta_x_;
-  float overscroll_delta_y_;
+  float overscroll_delta_x_ = 0.f;
+  float overscroll_delta_y_ = 0.f;
 
   // The delegate that receives the overscroll updates. The delegate is not
   // owned by this controller.
-  OverscrollControllerDelegate* delegate_;
+  OverscrollControllerDelegate* delegate_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(OverscrollController);
 };

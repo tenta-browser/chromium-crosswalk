@@ -6,6 +6,7 @@
 
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/events/event_utils.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/controls/native/native_view_host.h"
@@ -14,17 +15,62 @@
 
 namespace views {
 
+namespace {
+
+bool IsAccessibilityFocusableWhenEnabled(View* view) {
+  return view->focus_behavior() != View::FocusBehavior::NEVER &&
+         view->IsDrawn();
+}
+
+// Used to determine if a View should be ignored by accessibility clients by
+// being a non-keyboard-focusable child of a keyboard-focusable ancestor. E.g.,
+// LabelButtons contain Labels, but a11y should just show that there's a button.
+bool IsViewUnfocusableChildOfFocusableAncestor(View* view) {
+  if (IsAccessibilityFocusableWhenEnabled(view))
+    return false;
+
+  while (view->parent()) {
+    view = view->parent();
+    if (IsAccessibilityFocusableWhenEnabled(view))
+      return true;
+  }
+  return false;
+}
+
+ui::AXPlatformNode* FromNativeWindow(gfx::NativeWindow native_window) {
+  Widget* widget = Widget::GetWidgetForNativeWindow(native_window);
+  if (!widget)
+    return nullptr;
+
+  View* view = widget->GetRootView();
+  if (!view)
+    return nullptr;
+
+  gfx::NativeViewAccessible native_view_accessible =
+      view->GetNativeViewAccessible();
+  if (!native_view_accessible)
+    return nullptr;
+
+  return ui::AXPlatformNode::FromNativeViewAccessible(native_view_accessible);
+}
+
+}  // namespace
+
 NativeViewAccessibilityBase::NativeViewAccessibilityBase(View* view)
-    : view_(view),
-      parent_widget_(nullptr),
-      ax_node_(ui::AXPlatformNode::Create(this)) {
+    : view_(view) {
+  ax_node_ = ui::AXPlatformNode::Create(this);
   DCHECK(ax_node_);
+
+  static bool first_time = true;
+  if (first_time) {
+    ui::AXPlatformNode::RegisterNativeWindowHandler(
+        base::BindRepeating(&FromNativeWindow));
+    first_time = false;
+  }
 }
 
 NativeViewAccessibilityBase::~NativeViewAccessibilityBase() {
   ax_node_->Destroy();
-  if (parent_widget_)
-    parent_widget_->RemoveObserver(this);
 }
 
 gfx::NativeViewAccessible NativeViewAccessibilityBase::GetNativeObject() {
@@ -40,13 +86,12 @@ void NativeViewAccessibilityBase::NotifyAccessibilityEvent(
 
 const ui::AXNodeData& NativeViewAccessibilityBase::GetData() const {
   data_ = ui::AXNodeData();
-  data_.state = 0;
 
   // Views may misbehave if their widget is closed; return an unknown role
   // rather than possibly crashing.
   if (!view_->GetWidget() || view_->GetWidget()->IsClosed()) {
     data_.role = ui::AX_ROLE_UNKNOWN;
-    data_.state = 1 << ui::AX_STATE_DISABLED;
+    data_.AddIntAttribute(ui::AX_ATTR_RESTRICTION, ui::AX_RESTRICTION_DISABLED);
     return data_;
   }
 
@@ -58,15 +103,29 @@ const ui::AXNodeData& NativeViewAccessibilityBase::GetData() const {
                            base::UTF16ToUTF8(description));
 
   if (view_->IsAccessibilityFocusable())
-    data_.state |= (1 << ui::AX_STATE_FOCUSABLE);
+    data_.AddState(ui::AX_STATE_FOCUSABLE);
 
-  if (!view_->enabled())
-    data_.state |= (1 << ui::AX_STATE_DISABLED);
+  if (!view_->enabled()) {
+    data_.AddIntAttribute(ui::AX_ATTR_RESTRICTION, ui::AX_RESTRICTION_DISABLED);
+  }
 
   if (!view_->IsDrawn())
-    data_.state |= (1 << ui::AX_STATE_INVISIBLE);
+    data_.AddState(ui::AX_STATE_INVISIBLE);
 
+  if (view_->context_menu_controller())
+    data_.AddAction(ui::AX_ACTION_SHOW_CONTEXT_MENU);
+
+  // Make sure this element is excluded from the a11y tree if there's a
+  // focusable parent. All keyboard focusable elements should be leaf nodes.
+  // Exceptions to this rule will themselves be accessibility focusable.
+  if (IsViewUnfocusableChildOfFocusableAncestor(view_))
+    data_.role = ui::AX_ROLE_IGNORED;
   return data_;
+}
+
+const ui::AXTreeData& NativeViewAccessibilityBase::GetTreeData() const {
+  CR_DEFINE_STATIC_LOCAL(ui::AXTreeData, empty_data, ());
+  return empty_data;
 }
 
 int NativeViewAccessibilityBase::GetChildCount() {
@@ -105,8 +164,11 @@ gfx::NativeViewAccessible NativeViewAccessibilityBase::GetParent() {
   if (view_->parent())
     return view_->parent()->GetNativeViewAccessible();
 
-  if (parent_widget_)
-    return parent_widget_->GetRootView()->GetNativeViewAccessible();
+  if (Widget* widget = view_->GetWidget()) {
+    Widget* top_widget = widget->GetTopLevelWidget();
+    if (top_widget && widget != top_widget && top_widget->GetRootView())
+      return top_widget->GetRootView()->GetNativeViewAccessible();
+  }
 
   return nullptr;
 }
@@ -161,6 +223,14 @@ gfx::NativeViewAccessible NativeViewAccessibilityBase::GetFocus() {
   return focused_view ? focused_view->GetNativeViewAccessible() : nullptr;
 }
 
+ui::AXPlatformNode* NativeViewAccessibilityBase::GetFromNodeID(int32_t id) {
+  return nullptr;
+}
+
+int NativeViewAccessibilityBase::GetIndexInParent() const {
+  return -1;
+}
+
 gfx::AcceleratedWidget
 NativeViewAccessibilityBase::GetTargetForNativeAccessibilityEvent() {
   return gfx::kNullAcceleratedWidget;
@@ -171,18 +241,13 @@ bool NativeViewAccessibilityBase::AccessibilityPerformAction(
   return view_->HandleAccessibleAction(data);
 }
 
-void NativeViewAccessibilityBase::OnWidgetDestroying(Widget* widget) {
-  if (parent_widget_ == widget) {
-    parent_widget_->RemoveObserver(this);
-    parent_widget_ = nullptr;
-  }
+bool NativeViewAccessibilityBase::ShouldIgnoreHoveredStateForTesting() {
+  return false;
 }
 
-void NativeViewAccessibilityBase::SetParentWidget(Widget* parent_widget) {
-  if (parent_widget_)
-    parent_widget_->RemoveObserver(this);
-  parent_widget_ = parent_widget;
-  parent_widget_->AddObserver(this);
+bool NativeViewAccessibilityBase::IsOffscreen() const {
+  // TODO: need to implement.
+  return false;
 }
 
 gfx::RectF NativeViewAccessibilityBase::GetBoundsInScreen() const {
@@ -209,18 +274,6 @@ void NativeViewAccessibilityBase::PopulateChildWidgetVector(
 
     if (widget->GetNativeWindowProperty(kWidgetNativeViewHostKey))
       continue;
-
-    gfx::NativeViewAccessible child_widget_accessible =
-        child_widget->GetRootView()->GetNativeViewAccessible();
-    ui::AXPlatformNode* child_widget_platform_node =
-        ui::AXPlatformNode::FromNativeViewAccessible(child_widget_accessible);
-    if (child_widget_platform_node) {
-      NativeViewAccessibilityBase* child_widget_view_accessibility =
-          static_cast<NativeViewAccessibilityBase*>(
-              child_widget_platform_node->GetDelegate());
-      if (child_widget_view_accessibility->parent_widget() != widget)
-        child_widget_view_accessibility->SetParentWidget(widget);
-    }
 
     result_child_widgets->push_back(child_widget);
   }

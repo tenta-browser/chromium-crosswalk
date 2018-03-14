@@ -6,6 +6,7 @@
 
 #include "base/i18n/case_conversion.h"
 #include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
@@ -22,29 +23,29 @@
 #include "ui/views/layout/layout_provider.h"
 #include "ui/views/painter.h"
 #include "ui/views/style/platform_style.h"
+#include "ui/views/style/typography.h"
 
 namespace views {
 
 namespace {
 
+bool UseMaterialSecondaryButtons() {
+#if defined(OS_MACOSX)
+  return true;
+#else
+  return ui::MaterialDesignController::IsSecondaryUiMaterial();
+#endif  // defined(OS_MACOSX)
+}
+
 LabelButton* CreateButton(ButtonListener* listener,
                           const base::string16& text,
                           bool md) {
   if (md)
-    return MdTextButton::Create(listener, text);
+    return MdTextButton::Create(listener, text, style::CONTEXT_BUTTON_MD);
 
-  LabelButton* button = new LabelButton(listener, text);
-  button->SetStyle(CustomButton::STYLE_BUTTON);
+  LabelButton* button = new LabelButton(listener, text, style::CONTEXT_BUTTON);
+  button->SetStyleDeprecated(Button::STYLE_BUTTON);
   return button;
-}
-
-const gfx::FontList& GetMdFontList() {
-  static base::LazyInstance<gfx::FontList>::Leaky font_list =
-      LAZY_INSTANCE_INITIALIZER;
-  const gfx::Font::Weight min_weight = gfx::Font::Weight::MEDIUM;
-  if (font_list.Get().GetFontWeight() < min_weight)
-    font_list.Get() = font_list.Get().DeriveWithWeight(min_weight);
-  return font_list.Get();
 }
 
 }  // namespace
@@ -52,16 +53,16 @@ const gfx::FontList& GetMdFontList() {
 // static
 LabelButton* MdTextButton::CreateSecondaryUiButton(ButtonListener* listener,
                                                    const base::string16& text) {
-  return CreateButton(listener, text,
-                      ui::MaterialDesignController::IsSecondaryUiMaterial());
+  return CreateButton(listener, text, UseMaterialSecondaryButtons());
 }
 
 // static
 LabelButton* MdTextButton::CreateSecondaryUiBlueButton(
     ButtonListener* listener,
     const base::string16& text) {
-  if (ui::MaterialDesignController::IsSecondaryUiMaterial()) {
-    MdTextButton* md_button = MdTextButton::Create(listener, text);
+  if (UseMaterialSecondaryButtons()) {
+    MdTextButton* md_button =
+        MdTextButton::Create(listener, text, style::CONTEXT_BUTTON_MD);
     md_button->SetProminent(true);
     return md_button;
   }
@@ -71,8 +72,9 @@ LabelButton* MdTextButton::CreateSecondaryUiBlueButton(
 
 // static
 MdTextButton* MdTextButton::Create(ButtonListener* listener,
-                                   const base::string16& text) {
-  MdTextButton* button = new MdTextButton(listener);
+                                   const base::string16& text,
+                                   int button_context) {
+  MdTextButton* button = new MdTextButton(listener, button_context);
   button->SetText(text);
   button->SetFocusForPlatform();
   return button;
@@ -154,7 +156,7 @@ std::unique_ptr<views::InkDropHighlight> MdTextButton::CreateInkDropHighlight()
                                      SkColorSetA(SK_ColorBLACK, shadow_alpha)));
   const SkColor fill_color =
       SkColorSetA(SK_ColorWHITE, is_prominent_ ? 0x0D : 0x05);
-  return base::MakeUnique<InkDropHighlight>(
+  return std::make_unique<InkDropHighlight>(
       gfx::RectF(GetLocalBounds()).CenterPoint(),
       base::WrapUnique(new BorderShadowLayerDelegate(
           shadows, GetLocalBounds(), fill_color, kInkDropSmallCornerRadius)));
@@ -170,26 +172,15 @@ void MdTextButton::SetText(const base::string16& text) {
   UpdatePadding();
 }
 
-void MdTextButton::AdjustFontSize(int size_delta) {
-  LabelButton::AdjustFontSize(size_delta);
-  UpdatePadding();
-}
-
 void MdTextButton::UpdateStyleToIndicateDefaultStatus() {
   is_prominent_ = is_prominent_ || is_default();
   UpdateColors();
 }
 
-void MdTextButton::SetFontList(const gfx::FontList& font_list) {
-  NOTREACHED()
-      << "Don't call MdTextButton::SetFontList (it will soon be protected)";
-}
-
-MdTextButton::MdTextButton(ButtonListener* listener)
-    : LabelButton(listener, base::string16()),
+MdTextButton::MdTextButton(ButtonListener* listener, int button_context)
+    : LabelButton(listener, base::string16(), button_context),
       is_prominent_(false) {
-  SetInkDropMode(PlatformStyle::kUseRipples ? InkDropMode::ON
-                                            : InkDropMode::OFF);
+  SetInkDropMode(InkDropMode::ON);
   set_has_ink_drop_action_on_click(true);
   SetHorizontalAlignment(gfx::ALIGN_CENTER);
   SetFocusForPlatform();
@@ -199,7 +190,6 @@ MdTextButton::MdTextButton(ButtonListener* listener)
   SetFocusPainter(nullptr);
   label()->SetAutoColorReadabilityEnabled(false);
   set_request_focus_on_press(false);
-  LabelButton::SetFontList(GetMdFontList());
 
   set_animate_on_state_change(true);
 
@@ -228,7 +218,13 @@ void MdTextButton::UpdatePadding() {
   // * Linux user sets base system font size to 17dp. For a normal button, the
   // |size_delta| will be zero, so to adjust upwards we double 17 to get 34.
   int size_delta =
-      label()->font_list().GetFontSize() - GetMdFontList().GetFontSize();
+      label()->font_list().GetFontSize() -
+      style::GetFont(style::CONTEXT_BUTTON_MD, style::STYLE_PRIMARY)
+          .GetFontSize();
+  // TODO(tapted): This should get |target_height| using LayoutProvider::
+  // GetControlHeightForFont(). It can't because that only returns a correct
+  // result with --secondary-ui-md, and MdTextButtons appear in top chrome
+  // without that.
   const int kBaseHeight = 28;
   int target_height = std::max(kBaseHeight + size_delta * 2,
                                label()->font_list().GetFontSize() * 2);
@@ -247,22 +243,32 @@ void MdTextButton::UpdatePadding() {
 }
 
 void MdTextButton::UpdateColors() {
-  ui::NativeTheme::ColorId fg_color_id =
-      is_prominent_ ? ui::NativeTheme::kColorId_TextOnProminentButtonColor
-                    : ui::NativeTheme::kColorId_ButtonEnabledColor;
-
-  ui::NativeTheme* theme = GetNativeTheme();
+  bool is_disabled = state() == STATE_DISABLED;
+  SkColor enabled_text_color =
+      style::GetColor(*this, label()->text_context(),
+                      is_prominent_ ? style::STYLE_DIALOG_BUTTON_DEFAULT
+                                    : style::STYLE_PRIMARY);
   if (!explicitly_set_normal_color()) {
     const auto colors = explicitly_set_colors();
-    LabelButton::SetEnabledTextColors(theme->GetSystemColor(fg_color_id));
+    LabelButton::SetEnabledTextColors(enabled_text_color);
+    // Non-prominent, disabled buttons need the disabled color explicitly set.
+    // This ensures that label()->enabled_color() returns the correct color as
+    // the basis for calculating the stroke color. enabled_text_color isn't used
+    // since a descendant could have overridden the label enabled color.
+    if (is_disabled && !is_prominent_) {
+      LabelButton::SetTextColor(STATE_DISABLED,
+                                style::GetColor(*this, label()->text_context(),
+                                                style::STYLE_DISABLED));
+    }
     set_explicitly_set_colors(colors);
   }
 
   // Prominent buttons keep their enabled text color; disabled state is conveyed
   // by shading the background instead.
   if (is_prominent_)
-    SetTextColor(STATE_DISABLED, theme->GetSystemColor(fg_color_id));
+    SetTextColor(STATE_DISABLED, enabled_text_color);
 
+  ui::NativeTheme* theme = GetNativeTheme();
   SkColor text_color = label()->enabled_color();
   SkColor bg_color =
       theme->GetSystemColor(ui::NativeTheme::kColorId_DialogBackground);
@@ -272,9 +278,10 @@ void MdTextButton::UpdateColors() {
   } else if (is_prominent_) {
     bg_color = theme->GetSystemColor(
         ui::NativeTheme::kColorId_ProminentButtonColor);
-    if (state() == STATE_DISABLED)
+    if (is_disabled) {
       bg_color = color_utils::BlendTowardOppositeLuma(
           bg_color, gfx::kDisabledControlAlpha);
+    }
   }
 
   if (state() == STATE_PRESSED) {
@@ -283,25 +290,48 @@ void MdTextButton::UpdateColors() {
     bg_color = color_utils::GetResultingPaintColor(shade, bg_color);
   }
 
-  // Specified text color: 5a5a5a @ 1.0 alpha
-  // Specified stroke color: 000000 @ 0.2 alpha
-  // 000000 @ 0.2 is very close to 5a5a5a @ 0.308 (== 0x4e); both are cccccc @
-  // 1.0, and this way if NativeTheme changes the button color, the button
-  // stroke will also change colors to match.
-  SkColor stroke_color =
-      is_prominent_ ? SK_ColorTRANSPARENT : SkColorSetA(text_color, 0x4e);
-
-  // Disabled, non-prominent buttons need their stroke lightened. Prominent
-  // buttons need it left at SK_ColorTRANSPARENT from above.
-  if (state() == STATE_DISABLED && !is_prominent_) {
-    stroke_color = color_utils::BlendTowardOppositeLuma(
-        stroke_color, gfx::kDisabledControlAlpha);
+  SkColor stroke_color;
+  if (is_prominent_) {
+    stroke_color = SK_ColorTRANSPARENT;
+  } else {
+    int stroke_alpha;
+    if (is_disabled) {
+      // Disabled, non-prominent buttons need a lighter stroke. This alpha
+      // value will take the disabled button colors, a1a192 @ 1.0 alpha for
+      // non-Harmony, 9e9e9e @ 1.0 alpha for Harmony and turn it into
+      // e6e6e6 @ 1.0 alpha (or very close to it) or an effective 000000 @ 0.1
+      // alpha for the stroke color. The same alpha value will work with both
+      // Harmony and non-Harmony colors.
+      stroke_alpha = 0x43;
+    } else {
+      // These alpha values will take the enabled button colors, 5a5a5a @ 1.0
+      // alpha for non-Harmony, 757575 @ 1.0 alpha for Harmony and turn it into
+      // an effective b2b2b2 @ 1.0 alpha or 000000 @ 0.3 for the stroke_color.
+      stroke_alpha = UseMaterialSecondaryButtons() ? 0x8f : 0x77;
+#if defined(OS_MACOSX)
+      // Without full secondary UI MD support, the text color is solid black,
+      // and so the border is too dark on Mac. On Retina it looks OK, so
+      // heuristically determine the scale factor as well.
+      if (!ui::MaterialDesignController::IsSecondaryUiMaterial()) {
+        // The Compositor may only be set when attached to a Widget. But, since
+        // that also determines the theme, UpdateColors() will always be called
+        // after attaching to a Widget.
+        // TODO(tapted): Move this into SolidRoundRectPainter if we like this
+        // logic for Harmony.
+        auto* compositor = layer()->GetCompositor();
+        if (compositor && compositor->device_scale_factor() == 1)
+          stroke_alpha = 0x4d;  // Chosen to match full secondary UI MD (0.3).
+      }
+#endif
+    }
+    stroke_color = SkColorSetA(text_color, stroke_alpha);
   }
 
   DCHECK_EQ(SK_AlphaOPAQUE, static_cast<int>(SkColorGetA(bg_color)));
-  set_background(Background::CreateBackgroundPainter(
-      Painter::CreateRoundRectWith1PxBorderPainter(bg_color, stroke_color,
-                                                   kInkDropSmallCornerRadius)));
+  SetBackground(
+      CreateBackgroundFromPainter(Painter::CreateRoundRectWith1PxBorderPainter(
+          bg_color, stroke_color, kInkDropSmallCornerRadius)));
+  SchedulePaint();
 }
 
 }  // namespace views

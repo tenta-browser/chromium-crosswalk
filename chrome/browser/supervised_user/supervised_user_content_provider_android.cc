@@ -32,7 +32,8 @@ void SupervisedUserContentProvider::UrlFilterObserver::OnURLFilterChanged() {
       AttachCurrentThread(), java_content_provider_);
 }
 
-static jlong CreateSupervisedUserContentProvider(
+static jlong
+JNI_SupervisedUserContentProvider_CreateSupervisedUserContentProvider(
     JNIEnv* env,
     const JavaParamRef<jobject>& caller) {
   return reinterpret_cast<intptr_t>(
@@ -148,8 +149,4 @@ void SupervisedUserContentProvider::OnInsertRequestSendComplete(
     bool sent_ok) {
   Java_SupervisedUserInsertReply_onInsertRequestSendComplete(
       AttachCurrentThread(), insert_reply_jobj, sent_ok);
-}
-
-bool SupervisedUserContentProvider::Register(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }

@@ -35,7 +35,7 @@ InFlightBoundsChange::InFlightBoundsChange(
     WindowTreeClient* window_tree_client,
     WindowMus* window,
     const gfx::Rect& revert_bounds,
-    const base::Optional<cc::LocalSurfaceId>& revert_local_surface_id)
+    const base::Optional<viz::LocalSurfaceId>& revert_local_surface_id)
     : InFlightChange(window, ChangeType::BOUNDS),
       window_tree_client_(window_tree_client),
       revert_bounds_(revert_bounds),
@@ -65,6 +65,28 @@ InFlightDragChange::InFlightDragChange(WindowMus* window, ChangeType type)
 void InFlightDragChange::SetRevertValueFrom(const InFlightChange& change) {}
 
 void InFlightDragChange::Revert() {}
+
+// InFlightTransformChange -----------------------------------------------------
+
+InFlightTransformChange::InFlightTransformChange(
+    WindowTreeClient* window_tree_client,
+    WindowMus* window,
+    const gfx::Transform& revert_transform)
+    : InFlightChange(window, ChangeType::TRANSFORM),
+      window_tree_client_(window_tree_client),
+      revert_transform_(revert_transform) {}
+
+InFlightTransformChange::~InFlightTransformChange() {}
+
+void InFlightTransformChange::SetRevertValueFrom(const InFlightChange& change) {
+  revert_transform_ =
+      static_cast<const InFlightTransformChange&>(change).revert_transform_;
+}
+
+void InFlightTransformChange::Revert() {
+  window_tree_client_->SetWindowTransformFromServer(window(),
+                                                    revert_transform_);
+}
 
 // CrashInFlightChange --------------------------------------------------------
 
@@ -171,7 +193,7 @@ void InFlightPropertyChange::SetRevertValueFrom(const InFlightChange& change) {
       static_cast<const InFlightPropertyChange&>(change);
   if (property_change.revert_value_) {
     revert_value_ =
-        base::MakeUnique<std::vector<uint8_t>>(*property_change.revert_value_);
+        std::make_unique<std::vector<uint8_t>>(*property_change.revert_value_);
   } else {
     revert_value_.reset();
   }
@@ -181,24 +203,22 @@ void InFlightPropertyChange::Revert() {
   window()->SetPropertyFromServer(property_name_, revert_value_.get());
 }
 
-// InFlightPredefinedCursorChange ---------------------------------------------
+// InFlightCursorChange ----------------------------------------------------
 
-InFlightPredefinedCursorChange::InFlightPredefinedCursorChange(
-    WindowMus* window,
-    ui::mojom::CursorType revert_value)
-    : InFlightChange(window, ChangeType::PREDEFINED_CURSOR),
+InFlightCursorChange::InFlightCursorChange(WindowMus* window,
+                                           const ui::CursorData& revert_value)
+    : InFlightChange(window, ChangeType::CURSOR),
       revert_cursor_(revert_value) {}
 
-InFlightPredefinedCursorChange::~InFlightPredefinedCursorChange() {}
+InFlightCursorChange::~InFlightCursorChange() {}
 
-void InFlightPredefinedCursorChange::SetRevertValueFrom(
-    const InFlightChange& change) {
+void InFlightCursorChange::SetRevertValueFrom(const InFlightChange& change) {
   revert_cursor_ =
-      static_cast<const InFlightPredefinedCursorChange&>(change).revert_cursor_;
+      static_cast<const InFlightCursorChange&>(change).revert_cursor_;
 }
 
-void InFlightPredefinedCursorChange::Revert() {
-  window()->SetPredefinedCursorFromServer(revert_cursor_);
+void InFlightCursorChange::Revert() {
+  window()->SetCursorFromServer(revert_cursor_);
 }
 
 // InFlightVisibleChange -------------------------------------------------------

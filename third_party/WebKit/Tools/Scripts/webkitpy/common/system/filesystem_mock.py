@@ -33,8 +33,12 @@ import re
 import StringIO
 import unittest
 
+from webkitpy.common.system.filesystem import _remove_contents
+
 
 class MockFileSystem(object):
+    # pylint: disable=unused-argument
+
     sep = '/'
     pardir = '..'
 
@@ -238,7 +242,7 @@ class MockFileSystem(object):
             return 0
         self._raise_not_found(path)
 
-    def _mktemp(self, suffix='', prefix='tmp', dir=None, **_):  # pylint: disable=redefined-builtin
+    def mktemp(self, suffix='', prefix='tmp', dir=None, **_):  # pylint: disable=redefined-builtin
         if dir is None:
             dir = self.sep + '__im_tmp'
         curno = self.current_tmpno
@@ -252,7 +256,7 @@ class MockFileSystem(object):
             def __init__(self, fs, **kwargs):
                 self._kwargs = kwargs
                 self._filesystem = fs
-                self._directory_path = fs._mktemp(**kwargs)  # pylint: disable=protected-access
+                self._directory_path = fs.mktemp(**kwargs)  # pylint: disable=protected-access
                 fs.maybe_make_directory(self._directory_path)
 
             def __str__(self):
@@ -310,7 +314,7 @@ class MockFileSystem(object):
         return path
 
     def open_binary_tempfile(self, suffix=''):
-        path = self._mktemp(suffix)
+        path = self.mktemp(suffix)
         return (WritableBinaryFileObject(self, path), path)
 
     def open_binary_file_for_reading(self, path):
@@ -332,6 +336,10 @@ class MockFileSystem(object):
         self.maybe_make_directory(self.dirname(path))
         self.files[path] = contents
         self.written_files[path] = contents
+
+    def open_text_tempfile(self, suffix=''):
+        path = self.mktemp(suffix)
+        return (WritableTextFileObject(self, path), path)
 
     def open_text_file_for_reading(self, path):
         if self.files[path] is None:
@@ -386,13 +394,13 @@ class MockFileSystem(object):
 
         return dot_dot + rel_path
 
-    def remove(self, path):
+    def remove(self, path, retry=True):
         if self.files[path] is None:
             self._raise_not_found(path)
         self.files[path] = None
         self.written_files[path] = None
 
-    def rmtree(self, path_to_remove):
+    def rmtree(self, path_to_remove, ignore_errors=True, onerror=None):
         path_to_remove = self.normpath(path_to_remove)
 
         for file_path in self.files:
@@ -405,6 +413,9 @@ class MockFileSystem(object):
             return directory == path_to_remove or directory.startswith(path_to_remove + self.sep)
 
         self.dirs = {d for d in self.dirs if not should_remove(d)}
+
+    def remove_contents(self, dirname):
+        return _remove_contents(self, dirname, sleep=lambda *args, **kw: None)
 
     def copytree(self, source, destination):
         source = self.normpath(source)

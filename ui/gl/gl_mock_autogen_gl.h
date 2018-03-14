@@ -64,28 +64,6 @@ MOCK_METHOD10(BlitFramebuffer,
                    GLint dstY1,
                    GLbitfield mask,
                    GLenum filter));
-MOCK_METHOD10(BlitFramebufferANGLE,
-              void(GLint srcX0,
-                   GLint srcY0,
-                   GLint srcX1,
-                   GLint srcY1,
-                   GLint dstX0,
-                   GLint dstY0,
-                   GLint dstX1,
-                   GLint dstY1,
-                   GLbitfield mask,
-                   GLenum filter));
-MOCK_METHOD10(BlitFramebufferEXT,
-              void(GLint srcX0,
-                   GLint srcY0,
-                   GLint srcX1,
-                   GLint srcY1,
-                   GLint dstX0,
-                   GLint dstY0,
-                   GLint dstX1,
-                   GLint dstY1,
-                   GLbitfield mask,
-                   GLenum filter));
 MOCK_METHOD4(
     BufferData,
     void(GLenum target, GLsizeiptr size, const void* data, GLenum usage));
@@ -125,6 +103,16 @@ MOCK_METHOD8(CompressedTexImage2D,
                   GLint border,
                   GLsizei imageSize,
                   const void* data));
+MOCK_METHOD9(CompressedTexImage2DRobustANGLE,
+             void(GLenum target,
+                  GLint level,
+                  GLenum internalformat,
+                  GLsizei width,
+                  GLsizei height,
+                  GLint border,
+                  GLsizei imageSize,
+                  GLsizei dataSize,
+                  const void* data));
 MOCK_METHOD9(CompressedTexImage3D,
              void(GLenum target,
                   GLint level,
@@ -135,6 +123,17 @@ MOCK_METHOD9(CompressedTexImage3D,
                   GLint border,
                   GLsizei imageSize,
                   const void* data));
+MOCK_METHOD10(CompressedTexImage3DRobustANGLE,
+              void(GLenum target,
+                   GLint level,
+                   GLenum internalformat,
+                   GLsizei width,
+                   GLsizei height,
+                   GLsizei depth,
+                   GLint border,
+                   GLsizei imageSize,
+                   GLsizei dataSize,
+                   const void* data));
 MOCK_METHOD9(CompressedTexSubImage2D,
              void(GLenum target,
                   GLint level,
@@ -145,8 +144,21 @@ MOCK_METHOD9(CompressedTexSubImage2D,
                   GLenum format,
                   GLsizei imageSize,
                   const void* data));
+MOCK_METHOD10(CompressedTexSubImage2DRobustANGLE,
+              void(GLenum target,
+                   GLint level,
+                   GLint xoffset,
+                   GLint yoffset,
+                   GLsizei width,
+                   GLsizei height,
+                   GLenum format,
+                   GLsizei imageSize,
+                   GLsizei dataSize,
+                   const void* data));
 // TODO(zmo): crbug.com/456340
 // glCompressedTexSubImage3D cannot be mocked because it has 11 args.
+// TODO(zmo): crbug.com/456340
+// glCompressedTexSubImage3DRobustANGLE cannot be mocked because it has 12 args.
 MOCK_METHOD5(CopyBufferSubData,
              void(GLenum readTarget,
                   GLenum writeTarget,
@@ -307,13 +319,6 @@ MOCK_METHOD5(FramebufferTexture2DEXT,
                   GLuint texture,
                   GLint level));
 MOCK_METHOD6(FramebufferTexture2DMultisampleEXT,
-             void(GLenum target,
-                  GLenum attachment,
-                  GLenum textarget,
-                  GLuint texture,
-                  GLint level,
-                  GLsizei samples));
-MOCK_METHOD6(FramebufferTexture2DMultisampleIMG,
              void(GLenum target,
                   GLenum attachment,
                   GLenum textarget,
@@ -481,6 +486,7 @@ MOCK_METHOD6(GetInternalformativRobustANGLE,
                   GLsizei bufSize,
                   GLsizei* length,
                   GLint* params));
+MOCK_METHOD3(GetMultisamplefv, void(GLenum pname, GLuint index, GLfloat* val));
 MOCK_METHOD5(GetMultisamplefvRobustANGLE,
              void(GLenum pname,
                   GLuint index,
@@ -842,6 +848,7 @@ MOCK_METHOD3(PathStencilFuncNV, void(GLenum func, GLint ref, GLuint mask));
 MOCK_METHOD0(PauseTransformFeedback, void());
 MOCK_METHOD2(PixelStorei, void(GLenum pname, GLint param));
 MOCK_METHOD2(PointParameteri, void(GLenum pname, GLint param));
+MOCK_METHOD2(PolygonMode, void(GLenum face, GLenum mode));
 MOCK_METHOD2(PolygonOffset, void(GLfloat factor, GLfloat units));
 MOCK_METHOD0(PopDebugGroup, void());
 MOCK_METHOD0(PopGroupMarkerEXT, void());
@@ -887,19 +894,7 @@ MOCK_METHOD5(RenderbufferStorageMultisample,
                   GLenum internalformat,
                   GLsizei width,
                   GLsizei height));
-MOCK_METHOD5(RenderbufferStorageMultisampleANGLE,
-             void(GLenum target,
-                  GLsizei samples,
-                  GLenum internalformat,
-                  GLsizei width,
-                  GLsizei height));
 MOCK_METHOD5(RenderbufferStorageMultisampleEXT,
-             void(GLenum target,
-                  GLsizei samples,
-                  GLenum internalformat,
-                  GLsizei width,
-                  GLsizei height));
-MOCK_METHOD5(RenderbufferStorageMultisampleIMG,
              void(GLenum target,
                   GLsizei samples,
                   GLenum internalformat,
@@ -998,6 +993,14 @@ MOCK_METHOD4(StencilThenCoverStrokePathNV,
              void(GLuint path, GLint reference, GLuint mask, GLenum coverMode));
 MOCK_METHOD1(TestFenceAPPLE, GLboolean(GLuint fence));
 MOCK_METHOD1(TestFenceNV, GLboolean(GLuint fence));
+MOCK_METHOD3(TexBuffer,
+             void(GLenum target, GLenum internalformat, GLuint buffer));
+MOCK_METHOD5(TexBufferRange,
+             void(GLenum target,
+                  GLenum internalformat,
+                  GLuint buffer,
+                  GLintptr offset,
+                  GLsizeiptr size));
 MOCK_METHOD9(TexImage2D,
              void(GLenum target,
                   GLint level,
@@ -1203,4 +1206,6 @@ MOCK_METHOD6(VertexAttribPointer,
                   GLsizei stride,
                   const void* ptr));
 MOCK_METHOD4(Viewport, void(GLint x, GLint y, GLsizei width, GLsizei height));
-MOCK_METHOD3(WaitSync, GLenum(GLsync sync, GLbitfield flags, GLuint64 timeout));
+MOCK_METHOD3(WaitSync, void(GLsync sync, GLbitfield flags, GLuint64 timeout));
+MOCK_METHOD3(WindowRectanglesEXT,
+             void(GLenum mode, GLsizei n, const GLint* box));

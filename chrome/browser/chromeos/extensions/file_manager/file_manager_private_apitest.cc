@@ -15,7 +15,6 @@
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/common/extensions/api/file_system_provider_capabilities/file_system_provider_capabilities_handler.h"
 #include "chrome/test/base/testing_profile.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "chromeos/dbus/cros_disks_client.h"
 #include "chromeos/disks/mock_disk_mount_manager.h"
 #include "components/drive/file_change.h"
@@ -51,6 +50,8 @@ struct TestDiskInfo {
   bool on_boot_device;
   bool on_removable_device;
   bool is_hidden;
+  const char* file_system_type;
+  const char* base_mount_path;
 };
 
 struct TestMountPoint {
@@ -63,71 +64,69 @@ struct TestMountPoint {
   int disk_info_index;
 };
 
-TestDiskInfo kTestDisks[] = {
-  {
-    "system_path1",
-    "file_path1",
-    false,
-    "device_label1",
-    "drive_label1",
-    "0123",
-    "vendor1",
-    "abcd",
-    "product1",
-    "FFFF-FFFF",
-    "system_path_prefix1",
-    chromeos::DEVICE_TYPE_USB,
-    1073741824,
-    false,
-    false,
-    false,
-    false,
-    false,
-    false
-  },
-  {
-    "system_path2",
-    "file_path2",
-    false,
-    "device_label2",
-    "drive_label2",
-    "4567",
-    "vendor2",
-    "cdef",
-    "product2",
-    "0FFF-FFFF",
-    "system_path_prefix2",
-    chromeos::DEVICE_TYPE_MOBILE,
-    47723,
-    true,
-    true,
-    true,
-    true,
-    false,
-    false
-  },
-  {
-    "system_path3",
-    "file_path3",
-    true,  // write_disabled_by_policy
-    "device_label3",
-    "drive_label3",
-    "89ab",
-    "vendor3",
-    "ef01",
-    "product3",
-    "00FF-FFFF",
-    "system_path_prefix3",
-    chromeos::DEVICE_TYPE_OPTICAL_DISC,
-    0,
-    true,
-    false,  // is_hardware_read_only
-    false,
-    true,
-    false,
-    false
-  }
-};
+TestDiskInfo kTestDisks[] = {{"system_path1",
+                              "file_path1",
+                              false,
+                              "device_label1",
+                              "drive_label1",
+                              "0123",
+                              "vendor1",
+                              "abcd",
+                              "product1",
+                              "FFFF-FFFF",
+                              "system_path_prefix1",
+                              chromeos::DEVICE_TYPE_USB,
+                              1073741824,
+                              false,
+                              false,
+                              false,
+                              false,
+                              false,
+                              false,
+                              "exfat",
+                              ""},
+                             {"system_path2",
+                              "file_path2",
+                              false,
+                              "device_label2",
+                              "drive_label2",
+                              "4567",
+                              "vendor2",
+                              "cdef",
+                              "product2",
+                              "0FFF-FFFF",
+                              "system_path_prefix2",
+                              chromeos::DEVICE_TYPE_MOBILE,
+                              47723,
+                              true,
+                              true,
+                              true,
+                              true,
+                              false,
+                              false,
+                              "exfat",
+                              ""},
+                             {"system_path3",
+                              "file_path3",
+                              true,  // write_disabled_by_policy
+                              "device_label3",
+                              "drive_label3",
+                              "89ab",
+                              "vendor3",
+                              "ef01",
+                              "product3",
+                              "00FF-FFFF",
+                              "system_path_prefix3",
+                              chromeos::DEVICE_TYPE_OPTICAL_DISC,
+                              0,
+                              true,
+                              false,  // is_hardware_read_only
+                              false,
+                              true,
+                              false,
+                              false,
+                              "exfat",
+                              ""}};
 
 void DispatchDirectoryChangeEventImpl(
     int* counter,
@@ -293,7 +292,9 @@ class FileManagerPrivateApiTest : public ExtensionApiTest {
                 kTestDisks[disk_info_index].has_media,
                 kTestDisks[disk_info_index].on_boot_device,
                 kTestDisks[disk_info_index].on_removable_device,
-                kTestDisks[disk_info_index].is_hidden)));
+                kTestDisks[disk_info_index].is_hidden,
+                kTestDisks[disk_info_index].file_system_type,
+                kTestDisks[disk_info_index].base_mount_path)));
       }
     }
   }
@@ -379,11 +380,11 @@ IN_PROC_BROWSER_TEST_F(FileManagerPrivateApiTest, OnFileChanged) {
       base::FilePath(FILE_PATH_LITERAL("/no-existing-fs-hash/root/aaa")),
       "extension_3", base::Bind(&AddFileWatchCallback));
 
-  // event_router->addFileWatch create some tasks which are performed on message
-  // loop of BrowserThread::FILE. Wait until they are done.
-  content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
-  // We also wait the UI thread here, since some tasks which are performed above
-  // message loop back results to the UI thread.
+  // event_router->addFileWatch create some tasks which are performed on
+  // TaskScheduler. Wait until they are done.
+  base::TaskScheduler::GetInstance()->FlushForTesting();
+  // We also wait the UI thread here, since some tasks which are performed
+  // above message loop back results to the UI thread.
   base::RunLoop().RunUntilIdle();
 
   // When /a is deleted (1 and 2 is notified).
@@ -421,9 +422,9 @@ IN_PROC_BROWSER_TEST_F(FileManagerPrivateApiTest, OnFileChanged) {
       base::FilePath(FILE_PATH_LITERAL("/no-existing-fs/root/aaa")),
       "extension_3");
 
-  // event_router->removeFileWatch create some tasks which are performed on
-  // message loop of BrowserThread::FILE. Wait until they are done.
-  content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
+  // event_router->addFileWatch create some tasks which are performed on
+  // TaskScheduler. Wait until they are done.
+  base::TaskScheduler::GetInstance()->FlushForTesting();
 }
 
 IN_PROC_BROWSER_TEST_F(FileManagerPrivateApiTest, ContentChecksum) {
@@ -445,4 +446,22 @@ IN_PROC_BROWSER_TEST_F(FileManagerPrivateApiTest, ContentChecksum) {
                             false /* read_only */);
 
   ASSERT_TRUE(RunComponentExtensionTest("file_browser/content_checksum_test"));
+}
+
+IN_PROC_BROWSER_TEST_F(FileManagerPrivateApiTest, Recent) {
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  const base::FilePath downloads_dir = temp_dir.GetPath();
+
+  ASSERT_TRUE(file_manager::VolumeManager::Get(browser()->profile())
+                  ->RegisterDownloadsDirectoryForTesting(downloads_dir));
+
+  // Create an empty file.
+  {
+    base::File file(downloads_dir.Append("all-justice.jpg"),
+                    base::File::FLAG_CREATE | base::File::FLAG_WRITE);
+    ASSERT_TRUE(file.IsValid());
+  }
+
+  ASSERT_TRUE(RunComponentExtensionTest("file_browser/recent_test"));
 }

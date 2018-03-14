@@ -5,6 +5,7 @@
 #include "platform/graphics/gpu/WebGLImageConversion.h"
 
 #include <memory>
+#include "build/build_config.h"
 #include "platform/graphics/ImageObserver.h"
 #include "platform/graphics/cpu/arm/WebGLImageConversionNEON.h"
 #include "platform/graphics/cpu/mips/WebGLImageConversionMSA.h"
@@ -41,6 +42,7 @@ int32_t ClampMin(int32_t value) {
   return value < kMinInt32Value ? kMinInt32Value : value;
 }
 
+// Return kDataFormatNumFormats if format/type combination is invalid.
 WebGLImageConversion::DataFormat GetDataFormat(GLenum destination_format,
                                                GLenum destination_type) {
   WebGLImageConversion::DataFormat dst_format =
@@ -65,7 +67,7 @@ WebGLImageConversion::DataFormat GetDataFormat(GLenum destination_format,
           dst_format = WebGLImageConversion::kDataFormatRGBA8_S;
           break;
         default:
-          NOTREACHED();
+          return WebGLImageConversion::kDataFormatNumFormats;
       }
       break;
     case GL_UNSIGNED_BYTE:
@@ -96,7 +98,7 @@ WebGLImageConversion::DataFormat GetDataFormat(GLenum destination_format,
           dst_format = WebGLImageConversion::kDataFormatRA8;
           break;
         default:
-          NOTREACHED();
+          return WebGLImageConversion::kDataFormatNumFormats;
       }
       break;
     case GL_SHORT:
@@ -112,7 +114,7 @@ WebGLImageConversion::DataFormat GetDataFormat(GLenum destination_format,
         case GL_RGBA_INTEGER:
           dst_format = WebGLImageConversion::kDataFormatRGBA16_S;
         default:
-          NOTREACHED();
+          return WebGLImageConversion::kDataFormatNumFormats;
       }
       break;
     case GL_UNSIGNED_SHORT:
@@ -133,7 +135,7 @@ WebGLImageConversion::DataFormat GetDataFormat(GLenum destination_format,
           dst_format = WebGLImageConversion::kDataFormatRGBA16;
           break;
         default:
-          NOTREACHED();
+          return WebGLImageConversion::kDataFormatNumFormats;
       }
       break;
     case GL_INT:
@@ -151,7 +153,7 @@ WebGLImageConversion::DataFormat GetDataFormat(GLenum destination_format,
           dst_format = WebGLImageConversion::kDataFormatRGBA32_S;
           break;
         default:
-          NOTREACHED();
+          return WebGLImageConversion::kDataFormatNumFormats;
       }
       break;
     case GL_UNSIGNED_INT:
@@ -172,7 +174,7 @@ WebGLImageConversion::DataFormat GetDataFormat(GLenum destination_format,
           dst_format = WebGLImageConversion::kDataFormatRGBA32;
           break;
         default:
-          NOTREACHED();
+          return WebGLImageConversion::kDataFormatNumFormats;
       }
       break;
     case GL_HALF_FLOAT_OES:  // OES_texture_half_float
@@ -198,7 +200,7 @@ WebGLImageConversion::DataFormat GetDataFormat(GLenum destination_format,
           dst_format = WebGLImageConversion::kDataFormatRA16F;
           break;
         default:
-          NOTREACHED();
+          return WebGLImageConversion::kDataFormatNumFormats;
       }
       break;
     case GL_FLOAT:  // OES_texture_float
@@ -226,7 +228,7 @@ WebGLImageConversion::DataFormat GetDataFormat(GLenum destination_format,
           dst_format = WebGLImageConversion::kDataFormatRA32F;
           break;
         default:
-          NOTREACHED();
+          return WebGLImageConversion::kDataFormatNumFormats;
       }
       break;
     case GL_UNSIGNED_SHORT_4_4_4_4:
@@ -251,7 +253,7 @@ WebGLImageConversion::DataFormat GetDataFormat(GLenum destination_format,
       dst_format = WebGLImageConversion::kDataFormatRGBA2_10_10_10;
       break;
     default:
-      NOTREACHED();
+      return WebGLImageConversion::kDataFormatNumFormats;
   }
   return dst_format;
 }
@@ -442,17 +444,17 @@ void Unpack<WebGLImageConversion::kDataFormatBGRA8, uint8_t, uint8_t>(
   const uint32_t* source32 = reinterpret_cast_ptr<const uint32_t*>(source);
   uint32_t* destination32 = reinterpret_cast_ptr<uint32_t*>(destination);
 
-#if CPU(X86) || CPU(X86_64)
+#if defined(ARCH_CPU_X86_FAMILY)
   SIMD::UnpackOneRowOfBGRA8LittleToRGBA8(source32, destination32,
                                          pixels_per_row);
 #endif
-#if HAVE(MIPS_MSA_INTRINSICS)
+#if HAVE_MIPS_MSA_INTRINSICS
   SIMD::unpackOneRowOfBGRA8LittleToRGBA8MSA(source32, destination32,
-                                            pixelsPerRow);
+                                            pixels_per_row);
 #endif
   for (unsigned i = 0; i < pixels_per_row; ++i) {
     uint32_t bgra = source32[i];
-#if CPU(BIG_ENDIAN)
+#if defined(ARCH_CPU_BIG_ENDIAN)
     uint32_t brMask = 0xff00ff00;
     uint32_t gaMask = 0x00ff00ff;
 #else
@@ -470,15 +472,15 @@ void Unpack<WebGLImageConversion::kDataFormatRGBA5551, uint16_t, uint8_t>(
     const uint16_t* source,
     uint8_t* destination,
     unsigned pixels_per_row) {
-#if CPU(X86) || CPU(X86_64)
+#if defined(ARCH_CPU_X86_FAMILY)
   SIMD::UnpackOneRowOfRGBA5551LittleToRGBA8(source, destination,
                                             pixels_per_row);
 #endif
-#if HAVE(ARM_NEON_INTRINSICS)
+#if WTF_CPU_ARM_NEON
   SIMD::UnpackOneRowOfRGBA5551ToRGBA8(source, destination, pixels_per_row);
 #endif
-#if HAVE(MIPS_MSA_INTRINSICS)
-  SIMD::unpackOneRowOfRGBA5551ToRGBA8MSA(source, destination, pixelsPerRow);
+#if HAVE_MIPS_MSA_INTRINSICS
+  SIMD::unpackOneRowOfRGBA5551ToRGBA8MSA(source, destination, pixels_per_row);
 #endif
 
   for (unsigned i = 0; i < pixels_per_row; ++i) {
@@ -500,15 +502,15 @@ void Unpack<WebGLImageConversion::kDataFormatRGBA4444, uint16_t, uint8_t>(
     const uint16_t* source,
     uint8_t* destination,
     unsigned pixels_per_row) {
-#if CPU(X86) || CPU(X86_64)
+#if defined(ARCH_CPU_X86_FAMILY)
   SIMD::UnpackOneRowOfRGBA4444LittleToRGBA8(source, destination,
                                             pixels_per_row);
 #endif
-#if HAVE(ARM_NEON_INTRINSICS)
+#if WTF_CPU_ARM_NEON
   SIMD::UnpackOneRowOfRGBA4444ToRGBA8(source, destination, pixels_per_row);
 #endif
-#if HAVE(MIPS_MSA_INTRINSICS)
-  SIMD::unpackOneRowOfRGBA4444ToRGBA8MSA(source, destination, pixelsPerRow);
+#if HAVE_MIPS_MSA_INTRINSICS
+  SIMD::unpackOneRowOfRGBA4444ToRGBA8MSA(source, destination, pixels_per_row);
 #endif
   for (unsigned i = 0; i < pixels_per_row; ++i) {
     uint16_t packed_value = source[0];
@@ -716,11 +718,11 @@ void Pack<WebGLImageConversion::kDataFormatR8,
           uint8_t>(const uint8_t* source,
                    uint8_t* destination,
                    unsigned pixels_per_row) {
-#if CPU(X86) || CPU(X86_64)
+#if defined(ARCH_CPU_X86_FAMILY)
   SIMD::PackOneRowOfRGBA8LittleToR8(source, destination, pixels_per_row);
 #endif
-#if HAVE(MIPS_MSA_INTRINSICS)
-  SIMD::packOneRowOfRGBA8LittleToR8MSA(source, destination, pixelsPerRow);
+#if HAVE_MIPS_MSA_INTRINSICS
+  SIMD::packOneRowOfRGBA8LittleToR8MSA(source, destination, pixels_per_row);
 #endif
   for (unsigned i = 0; i < pixels_per_row; ++i) {
     float scale_factor = source[3] ? 255.0f / source[3] : 1.0f;
@@ -773,11 +775,11 @@ void Pack<WebGLImageConversion::kDataFormatRA8,
           uint8_t>(const uint8_t* source,
                    uint8_t* destination,
                    unsigned pixels_per_row) {
-#if CPU(X86) || CPU(X86_64)
+#if defined(ARCH_CPU_X86_FAMILY)
   SIMD::PackOneRowOfRGBA8LittleToRA8(source, destination, pixels_per_row);
 #endif
-#if HAVE(MIPS_MSA_INTRINSICS)
-  SIMD::packOneRowOfRGBA8LittleToRA8MSA(source, destination, pixelsPerRow);
+#if HAVE_MIPS_MSA_INTRINSICS
+  SIMD::packOneRowOfRGBA8LittleToRA8MSA(source, destination, pixels_per_row);
 #endif
   for (unsigned i = 0; i < pixels_per_row; ++i) {
     float scale_factor = source[3] ? 255.0f / source[3] : 1.0f;
@@ -885,11 +887,11 @@ void Pack<WebGLImageConversion::kDataFormatRGBA8,
           uint8_t>(const uint8_t* source,
                    uint8_t* destination,
                    unsigned pixels_per_row) {
-#if CPU(X86) || CPU(X86_64)
+#if defined(ARCH_CPU_X86_FAMILY)
   SIMD::PackOneRowOfRGBA8LittleToRGBA8(source, destination, pixels_per_row);
 #endif
-#if HAVE(MIPS_MSA_INTRINSICS)
-  SIMD::packOneRowOfRGBA8LittleToRGBA8MSA(source, destination, pixelsPerRow);
+#if HAVE_MIPS_MSA_INTRINSICS
+  SIMD::packOneRowOfRGBA8LittleToRGBA8MSA(source, destination, pixels_per_row);
 #endif
   for (unsigned i = 0; i < pixels_per_row; ++i) {
     float scale_factor = source[3] ? 255.0f / source[3] : 1.0f;
@@ -915,13 +917,13 @@ void Pack<WebGLImageConversion::kDataFormatRGBA4444,
           uint16_t>(const uint8_t* source,
                     uint16_t* destination,
                     unsigned pixels_per_row) {
-#if HAVE(ARM_NEON_INTRINSICS)
+#if WTF_CPU_ARM_NEON
   SIMD::PackOneRowOfRGBA8ToUnsignedShort4444(source, destination,
                                              pixels_per_row);
 #endif
-#if HAVE(MIPS_MSA_INTRINSICS)
+#if HAVE_MIPS_MSA_INTRINSICS
   SIMD::packOneRowOfRGBA8ToUnsignedShort4444MSA(source, destination,
-                                                pixelsPerRow);
+                                                pixels_per_row);
 #endif
   for (unsigned i = 0; i < pixels_per_row; ++i) {
     *destination = (((source[0] & 0xF0) << 8) | ((source[1] & 0xF0) << 4) |
@@ -983,13 +985,13 @@ void Pack<WebGLImageConversion::kDataFormatRGBA5551,
           uint16_t>(const uint8_t* source,
                     uint16_t* destination,
                     unsigned pixels_per_row) {
-#if HAVE(ARM_NEON_INTRINSICS)
+#if WTF_CPU_ARM_NEON
   SIMD::PackOneRowOfRGBA8ToUnsignedShort5551(source, destination,
                                              pixels_per_row);
 #endif
-#if HAVE(MIPS_MSA_INTRINSICS)
+#if HAVE_MIPS_MSA_INTRINSICS
   SIMD::packOneRowOfRGBA8ToUnsignedShort5551MSA(source, destination,
-                                                pixelsPerRow);
+                                                pixels_per_row);
 #endif
   for (unsigned i = 0; i < pixels_per_row; ++i) {
     *destination = (((source[0] & 0xF8) << 8) | ((source[1] & 0xF8) << 3) |
@@ -1051,13 +1053,13 @@ void Pack<WebGLImageConversion::kDataFormatRGB565,
           uint16_t>(const uint8_t* source,
                     uint16_t* destination,
                     unsigned pixels_per_row) {
-#if HAVE(ARM_NEON_INTRINSICS)
+#if WTF_CPU_ARM_NEON
   SIMD::PackOneRowOfRGBA8ToUnsignedShort565(source, destination,
                                             pixels_per_row);
 #endif
-#if HAVE(MIPS_MSA_INTRINSICS)
+#if HAVE_MIPS_MSA_INTRINSICS
   SIMD::packOneRowOfRGBA8ToUnsignedShort565MSA(source, destination,
-                                               pixelsPerRow);
+                                               pixels_per_row);
 #endif
   for (unsigned i = 0; i < pixels_per_row; ++i) {
     *destination = (((source[0] & 0xF8) << 8) | ((source[1] & 0xFC) << 3) |
@@ -1618,6 +1620,24 @@ void Pack<WebGLImageConversion::kDataFormatRGBA32_S,
 
 template <>
 void Pack<WebGLImageConversion::kDataFormatRGBA2_10_10_10,
+          WebGLImageConversion::kAlphaDoNothing,
+          float,
+          uint32_t>(const float* source,
+                    uint32_t* destination,
+                    unsigned pixels_per_row) {
+  for (unsigned i = 0; i < pixels_per_row; ++i) {
+    uint32_t r = static_cast<uint32_t>(source[0] * 1023.0f);
+    uint32_t g = static_cast<uint32_t>(source[1] * 1023.0f);
+    uint32_t b = static_cast<uint32_t>(source[2] * 1023.0f);
+    uint32_t a = static_cast<uint32_t>(source[3] * 3.0f);
+    destination[0] = (a << 30) | (b << 20) | (g << 10) | r;
+    source += 4;
+    destination += 1;
+  }
+}
+
+template <>
+void Pack<WebGLImageConversion::kDataFormatRGBA2_10_10_10,
           WebGLImageConversion::kAlphaDoPremultiply,
           float,
           uint32_t>(const float* source,
@@ -1627,6 +1647,25 @@ void Pack<WebGLImageConversion::kDataFormatRGBA2_10_10_10,
     uint32_t r = static_cast<uint32_t>(source[0] * source[3] * 1023.0f);
     uint32_t g = static_cast<uint32_t>(source[1] * source[3] * 1023.0f);
     uint32_t b = static_cast<uint32_t>(source[2] * source[3] * 1023.0f);
+    uint32_t a = static_cast<uint32_t>(source[3] * 3.0f);
+    destination[0] = (a << 30) | (b << 20) | (g << 10) | r;
+    source += 4;
+    destination += 1;
+  }
+}
+
+template <>
+void Pack<WebGLImageConversion::kDataFormatRGBA2_10_10_10,
+          WebGLImageConversion::kAlphaDoUnmultiply,
+          float,
+          uint32_t>(const float* source,
+                    uint32_t* destination,
+                    unsigned pixels_per_row) {
+  for (unsigned i = 0; i < pixels_per_row; ++i) {
+    float scale_factor = source[3] ? 1023.0f / source[3] : 1023.0f;
+    uint32_t r = static_cast<uint32_t>(source[0] * scale_factor);
+    uint32_t g = static_cast<uint32_t>(source[1] * scale_factor);
+    uint32_t b = static_cast<uint32_t>(source[2] * scale_factor);
     uint32_t a = static_cast<uint32_t>(source[3] * 3.0f);
     destination[0] = (a << 30) | (b << 20) | (g << 10) | r;
     source += 4;
@@ -2405,7 +2444,8 @@ struct SupportsConversionFromDomElements {
       Format == WebGLImageConversion::kDataFormatR16F ||
       Format == WebGLImageConversion::kDataFormatRGBA5551 ||
       Format == WebGLImageConversion::kDataFormatRGBA4444 ||
-      Format == WebGLImageConversion::kDataFormatRGB565;
+      Format == WebGLImageConversion::kDataFormatRGB565 ||
+      Format == WebGLImageConversion::kDataFormatRGBA2_10_10_10;
 };
 
 template <WebGLImageConversion::DataFormat SrcFormat,
@@ -2759,7 +2799,7 @@ void WebGLImageConversion::ImageExtractor::ExtractImage(
   if (!image_)
     return;
 
-  sk_sp<SkImage> skia_image = image_->ImageForCurrentFrame();
+  sk_sp<SkImage> skia_image = image_->PaintImageForCurrentFrame().GetSkImage();
   SkImageInfo info =
       skia_image ? SkImageInfo::MakeN32Premul(image_->width(), image_->height())
                  : SkImageInfo::MakeUnknown();
@@ -2773,10 +2813,10 @@ void WebGLImageConversion::ImageExtractor::ExtractImage(
     std::unique_ptr<ImageDecoder> decoder(ImageDecoder::Create(
         image_->Data(), true, ImageDecoder::kAlphaNotPremultiplied,
         ignore_color_space ? ColorBehavior::Ignore()
-                           : ColorBehavior::TransformToGlobalTarget()));
+                           : ColorBehavior::TransformToSRGB()));
     if (!decoder || !decoder->FrameCount())
       return;
-    ImageFrame* frame = decoder->FrameBufferAtIndex(0);
+    ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(0);
     if (!frame || frame->GetStatus() != ImageFrame::kFrameComplete)
       return;
     has_alpha = frame->HasAlpha();
@@ -2937,14 +2977,15 @@ bool WebGLImageConversion::PackImageData(
   params.alignment = 1;
   if (ComputeImageSizeInBytes(format, type, source_image_sub_rectangle.Width(),
                               source_image_sub_rectangle.Height(), depth,
-                              params, &packed_size, 0, 0) != GL_NO_ERROR)
+                              params, &packed_size, nullptr,
+                              nullptr) != GL_NO_ERROR)
     return false;
-  data.Resize(packed_size);
+  data.resize(packed_size);
 
   return PackPixels(reinterpret_cast<const uint8_t*>(pixels), source_format,
                     source_image_width, source_image_height,
                     source_image_sub_rectangle, depth, source_unpack_alignment,
-                    unpack_image_height, format, type, alpha_op, data.Data(),
+                    unpack_image_height, format, type, alpha_op, data.data(),
                     flip_y);
 }
 
@@ -2971,31 +3012,35 @@ bool WebGLImageConversion::ExtractImageData(
   params.alignment = 1;
   if (ComputeImageSizeInBytes(format, type, source_image_sub_rectangle.Width(),
                               source_image_sub_rectangle.Height(), depth,
-                              params, &packed_size, 0, 0) != GL_NO_ERROR)
+                              params, &packed_size, nullptr,
+                              nullptr) != GL_NO_ERROR)
     return false;
-  data.Resize(packed_size);
+  data.resize(packed_size);
 
   if (!PackPixels(image_data, source_data_format, width, height,
                   source_image_sub_rectangle, depth, 0, unpack_image_height,
                   format, type,
                   premultiply_alpha ? kAlphaDoPremultiply : kAlphaDoNothing,
-                  data.Data(), flip_y))
+                  data.data(), flip_y))
     return false;
 
   return true;
 }
 
-bool WebGLImageConversion::ExtractTextureData(unsigned width,
-                                              unsigned height,
-                                              GLenum format,
-                                              GLenum type,
-                                              unsigned unpack_alignment,
-                                              bool flip_y,
-                                              bool premultiply_alpha,
-                                              const void* pixels,
-                                              Vector<uint8_t>& data) {
+bool WebGLImageConversion::ExtractTextureData(
+    unsigned width,
+    unsigned height,
+    GLenum format,
+    GLenum type,
+    const PixelStoreParams& unpack_params,
+    bool flip_y,
+    bool premultiply_alpha,
+    const void* pixels,
+    Vector<uint8_t>& data) {
   // Assumes format, type, etc. have already been validated.
   DataFormat source_data_format = GetDataFormat(format, type);
+  if (source_data_format == kDataFormatNumFormats)
+    return false;
 
   // Resize the output buffer.
   unsigned int components_per_pixel, bytes_per_component;
@@ -3003,13 +3048,22 @@ bool WebGLImageConversion::ExtractTextureData(unsigned width,
                                       &bytes_per_component))
     return false;
   unsigned bytes_per_pixel = components_per_pixel * bytes_per_component;
-  data.Resize(width * height * bytes_per_pixel);
+  data.resize(width * height * bytes_per_pixel);
 
-  if (!PackPixels(static_cast<const uint8_t*>(pixels), source_data_format,
-                  width, height, IntRect(0, 0, width, height), 1,
-                  unpack_alignment, 0, format, type,
+  unsigned image_size_in_bytes, skip_size_in_bytes;
+  ComputeImageSizeInBytes(format, type, width, height, 1, unpack_params,
+                          &image_size_in_bytes, nullptr, &skip_size_in_bytes);
+  const uint8_t* src_data = static_cast<const uint8_t*>(pixels);
+  if (skip_size_in_bytes) {
+    src_data += skip_size_in_bytes;
+  }
+
+  if (!PackPixels(src_data, source_data_format,
+                  unpack_params.row_length ? unpack_params.row_length : width,
+                  height, IntRect(0, 0, width, height), 1,
+                  unpack_params.alignment, 0, format, type,
                   (premultiply_alpha ? kAlphaDoPremultiply : kAlphaDoNothing),
-                  data.Data(), flip_y))
+                  data.data(), flip_y))
     return false;
 
   return true;
@@ -3042,6 +3096,8 @@ bool WebGLImageConversion::PackPixels(const uint8_t* source_data,
 
   DataFormat dst_data_format =
       GetDataFormat(destination_format, destination_type);
+  if (dst_data_format == kDataFormatNumFormats)
+    return false;
   int dst_stride =
       source_data_sub_rectangle.Width() * TexelBytesForFormat(dst_data_format);
   if (flip_y) {

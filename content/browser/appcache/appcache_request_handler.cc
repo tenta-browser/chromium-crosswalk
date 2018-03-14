@@ -7,19 +7,36 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/command_line.h"
 #include "content/browser/appcache/appcache.h"
 #include "content/browser/appcache/appcache_backend_impl.h"
+#include "content/browser/appcache/appcache_host.h"
+#include "content/browser/appcache/appcache_navigation_handle_core.h"
 #include "content/browser/appcache/appcache_policy.h"
+#include "content/browser/appcache/appcache_request.h"
+#include "content/browser/appcache/appcache_subresource_url_factory.h"
+#include "content/browser/appcache/appcache_url_loader_job.h"
+#include "content/browser/appcache/appcache_url_loader_request.h"
 #include "content/browser/appcache/appcache_url_request_job.h"
 #include "content/browser/service_worker/service_worker_request_handler.h"
+#include "content/common/navigation_subresource_loader_params.h"
+#include "content/public/common/content_features.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_job.h"
 
 namespace content {
 
-AppCacheRequestHandler::AppCacheRequestHandler(AppCacheHost* host,
-                                               ResourceType resource_type,
-                                               bool should_reset_appcache)
+namespace {
+
+bool g_running_in_tests = false;
+
+}  // namespace
+
+AppCacheRequestHandler::AppCacheRequestHandler(
+    AppCacheHost* host,
+    ResourceType resource_type,
+    bool should_reset_appcache,
+    std::unique_ptr<AppCacheRequest> request)
     : host_(host),
       resource_type_(resource_type),
       should_reset_appcache_(should_reset_appcache),
@@ -33,7 +50,9 @@ AppCacheRequestHandler::AppCacheRequestHandler(AppCacheHost* host,
       old_process_id_(0),
       old_host_id_(kAppCacheNoHostId),
       cache_id_(kAppCacheNoCacheId),
-      service_(host_->service()) {
+      service_(host_->service()),
+      request_(std::move(request)),
+      weak_factory_(this) {
   DCHECK(host_);
   DCHECK(service_);
   host_->AddObserver(this);
@@ -47,6 +66,9 @@ AppCacheRequestHandler::~AppCacheRequestHandler() {
   }
   if (service_)
     service_->RemoveObserver(this);
+
+  if (job_ && job_->AsURLLoaderJob())
+    job_->AsURLLoaderJob()->DeleteIfNeeded();
 }
 
 AppCacheStorage* AppCacheRequestHandler::storage() const {
@@ -54,13 +76,13 @@ AppCacheStorage* AppCacheRequestHandler::storage() const {
   return host_->storage();
 }
 
-AppCacheURLRequestJob* AppCacheRequestHandler::MaybeLoadResource(
-    net::URLRequest* request,
+AppCacheJob* AppCacheRequestHandler::MaybeLoadResource(
     net::NetworkDelegate* network_delegate) {
   maybe_load_resource_executed_ = true;
-  if (!host_ || !IsSchemeAndMethodSupportedForAppCache(request) ||
+  if (!host_ ||
+      !AppCacheRequest::IsSchemeAndMethodSupportedForAppCache(request_.get()) ||
       cache_entry_not_found_) {
-    return NULL;
+    return nullptr;
   }
 
   // This method can get called multiple times over the life
@@ -72,7 +94,7 @@ AppCacheURLRequestJob* AppCacheRequestHandler::MaybeLoadResource(
   // This time through, we return NULL so the request hits the wire.
   if (is_delivering_network_response_) {
     is_delivering_network_response_ = false;
-    return NULL;
+    return nullptr;
   }
 
   // Clear out our 'found' fields since we're starting a request for a
@@ -83,52 +105,57 @@ AppCacheURLRequestJob* AppCacheRequestHandler::MaybeLoadResource(
   found_manifest_url_ = GURL();
   found_network_namespace_ = false;
 
-  std::unique_ptr<AppCacheURLRequestJob> job;
+  std::unique_ptr<AppCacheJob> job;
   if (is_main_resource())
-    job = MaybeLoadMainResource(request, network_delegate);
+    job = MaybeLoadMainResource(network_delegate);
   else
-    job = MaybeLoadSubResource(request, network_delegate);
+    job = MaybeLoadSubResource(network_delegate);
 
   // If its been setup to deliver a network response, we can just delete
   // it now and return NULL instead to achieve that since it couldn't
   // have been started yet.
-  if (job && job->is_delivering_network_response()) {
-    DCHECK(!job->has_been_started());
-    job.reset();
+  if (job && job->IsDeliveringNetworkResponse()) {
+    DCHECK(!job->IsStarted());
+    if (job->AsURLLoaderJob()) {
+      job.release();  // AppCacheURLLoaderJob always deletes itself.
+      job_ = nullptr;
+    } else {
+      job.reset();
+    }
   }
 
   return job.release();
 }
 
-AppCacheURLRequestJob* AppCacheRequestHandler::MaybeLoadFallbackForRedirect(
-    net::URLRequest* request,
+AppCacheJob* AppCacheRequestHandler::MaybeLoadFallbackForRedirect(
     net::NetworkDelegate* network_delegate,
     const GURL& location) {
-  if (!host_ || !IsSchemeAndMethodSupportedForAppCache(request) ||
+  if (!host_ ||
+      !AppCacheRequest::IsSchemeAndMethodSupportedForAppCache(request_.get()) ||
       cache_entry_not_found_)
-    return NULL;
+    return nullptr;
   if (is_main_resource())
-    return NULL;
+    return nullptr;
   // TODO(vabr) This is a temporary fix (see crbug/141114). We should get rid of
   // it once a more general solution to crbug/121325 is in place.
   if (!maybe_load_resource_executed_)
-    return NULL;
-  if (request->url().GetOrigin() == location.GetOrigin())
-    return NULL;
+    return nullptr;
+  if (request_->GetURL().GetOrigin() == location.GetOrigin())
+    return nullptr;
 
   DCHECK(!job_.get());  // our jobs never generate redirects
 
-  std::unique_ptr<AppCacheURLRequestJob> job;
+  std::unique_ptr<AppCacheJob> job;
   if (found_fallback_entry_.has_response_id()) {
     // 6.9.6, step 4: If this results in a redirect to another origin,
     // get the resource of the fallback entry.
-    job = CreateJob(request, network_delegate);
+    job = CreateJob(network_delegate);
     DeliverAppCachedResponse(found_fallback_entry_, found_cache_id_,
                              found_manifest_url_, true,
                              found_namespace_entry_url_);
   } else if (!found_network_namespace_) {
     // 6.9.6, step 6: Fail the resource load.
-    job = CreateJob(request, network_delegate);
+    job = CreateJob(network_delegate);
     DeliverErrorResponse();
   } else {
     // 6.9.6 step 3 and 5: Fetch the resource normally.
@@ -137,30 +164,35 @@ AppCacheURLRequestJob* AppCacheRequestHandler::MaybeLoadFallbackForRedirect(
   return job.release();
 }
 
-AppCacheURLRequestJob* AppCacheRequestHandler::MaybeLoadFallbackForResponse(
-    net::URLRequest* request,
+AppCacheJob* AppCacheRequestHandler::MaybeLoadFallbackForResponse(
     net::NetworkDelegate* network_delegate) {
-  if (!host_ || !IsSchemeAndMethodSupportedForAppCache(request) ||
+  if (!host_ ||
+      !AppCacheRequest::IsSchemeAndMethodSupportedForAppCache(request_.get()) ||
       cache_entry_not_found_)
-    return NULL;
+    return nullptr;
   if (!found_fallback_entry_.has_response_id())
-    return NULL;
+    return nullptr;
 
-  if (request->status().status() == net::URLRequestStatus::CANCELED) {
+  if (request_->IsCancelled()) {
     // 6.9.6, step 4: But not if the user canceled the download.
-    return NULL;
+    return nullptr;
   }
 
   // We don't fallback for responses that we delivered.
   if (job_.get()) {
-    DCHECK(!job_->is_delivering_network_response());
-    return NULL;
+    if (!base::FeatureList::IsEnabled(features::kNetworkService)) {
+      DCHECK(!job_->IsDeliveringNetworkResponse());
+      return nullptr;
+    } else if (job_->IsDeliveringAppCacheResponse() ||
+               job_->IsDeliveringErrorResponse()) {
+      return nullptr;
+    }
   }
 
-  if (request->status().is_success()) {
-    int code_major = request->GetResponseCode() / 100;
+  if (request_->IsSuccess()) {
+    int code_major = request_->GetResponseCode() / 100;
     if (code_major !=4 && code_major != 5)
-      return NULL;
+      return nullptr;
 
     // Servers can override the fallback behavior with a response header.
     const std::string kFallbackOverrideHeader(
@@ -168,15 +200,16 @@ AppCacheURLRequestJob* AppCacheRequestHandler::MaybeLoadFallbackForResponse(
     const std::string kFallbackOverrideValue(
         "disallow-fallback");
     std::string header_value;
-    request->GetResponseHeaderByName(kFallbackOverrideHeader, &header_value);
+    header_value = request_->GetResponseHeaderByName(kFallbackOverrideHeader);
     if (header_value == kFallbackOverrideValue)
-      return NULL;
+      return nullptr;
   }
 
   // 6.9.6, step 4: If this results in a 4xx or 5xx status code
   // or there were network errors, get the resource of the fallback entry.
-  std::unique_ptr<AppCacheURLRequestJob> job =
-      CreateJob(request, network_delegate);
+
+  std::unique_ptr<AppCacheJob> job = CreateJob(network_delegate);
+
   DeliverAppCachedResponse(found_fallback_entry_, found_cache_id_,
                            found_manifest_url_, true,
                            found_namespace_entry_url_);
@@ -220,14 +253,30 @@ void AppCacheRequestHandler::MaybeCompleteCrossSiteTransferInOldProcess(
   CompleteCrossSiteTransfer(old_process_id_, old_host_id_);
 }
 
+// static
+std::unique_ptr<AppCacheRequestHandler>
+AppCacheRequestHandler::InitializeForNavigationNetworkService(
+    const ResourceRequest& request,
+    AppCacheNavigationHandleCore* appcache_handle_core,
+    URLLoaderFactoryGetter* url_loader_factory_getter) {
+  std::unique_ptr<AppCacheRequestHandler> handler =
+      appcache_handle_core->host()->CreateRequestHandler(
+          AppCacheURLLoaderRequest::Create(request), request.resource_type,
+          request.should_reset_appcache);
+  handler->network_url_loader_factory_getter_ = url_loader_factory_getter;
+  handler->appcache_host_ = appcache_handle_core->host()->GetWeakPtr();
+  return handler;
+}
+
 void AppCacheRequestHandler::OnDestructionImminent(AppCacheHost* host) {
   storage()->CancelDelegateCallbacks(this);
-  host_ = NULL;  // no need to RemoveObserver, the host is being deleted
+  host_ = nullptr;  // no need to RemoveObserver, the host is being deleted
 
   // Since the host is being deleted, we don't have to complete any job
   // that is current running. It's destined for the bit bucket anyway.
   if (job_.get()) {
-    job_->Kill();
+    if (job_->AsURLRequestJob())
+      job_->AsURLRequestJob()->Kill();
     job_.reset();
   }
 }
@@ -251,7 +300,7 @@ void AppCacheRequestHandler::DeliverAppCachedResponse(
     const GURL& manifest_url,
     bool is_fallback,
     const GURL& namespace_entry_url) {
-  DCHECK(host_ && job_.get() && job_->is_waiting());
+  DCHECK(host_ && job_.get() && job_->IsWaiting());
   DCHECK(entry.has_response_id());
 
   // Cache information about the response, for use by GetExtraResponseInfo.
@@ -265,51 +314,55 @@ void AppCacheRequestHandler::DeliverAppCachedResponse(
 }
 
 void AppCacheRequestHandler::DeliverErrorResponse() {
-  DCHECK(job_.get() && job_->is_waiting());
+  DCHECK(job_.get() && job_->IsWaiting());
   DCHECK_EQ(kAppCacheNoCacheId, cache_id_);
   DCHECK(manifest_url_.is_empty());
   job_->DeliverErrorResponse();
 }
 
 void AppCacheRequestHandler::DeliverNetworkResponse() {
-  DCHECK(job_.get() && job_->is_waiting());
+  DCHECK(job_.get() && job_->IsWaiting());
   DCHECK_EQ(kAppCacheNoCacheId, cache_id_);
   DCHECK(manifest_url_.is_empty());
   job_->DeliverNetworkResponse();
 }
 
-void AppCacheRequestHandler::OnPrepareToRestart() {
-  DCHECK(job_->is_delivering_network_response() ||
-         job_->cache_entry_not_found());
+void AppCacheRequestHandler::OnPrepareToRestartURLRequest() {
+  DCHECK(job_->AsURLRequestJob());
+  DCHECK(job_->IsDeliveringNetworkResponse() || job_->IsCacheEntryNotFound());
 
   // Any information about the source of the response is no longer relevant.
   cache_id_ = kAppCacheNoCacheId;
   manifest_url_ = GURL();
 
-  cache_entry_not_found_ = job_->cache_entry_not_found();
-  is_delivering_network_response_ = job_->is_delivering_network_response();
+  cache_entry_not_found_ = job_->IsCacheEntryNotFound();
+  is_delivering_network_response_ = job_->IsDeliveringNetworkResponse();
 
   storage()->CancelDelegateCallbacks(this);
 
   job_.reset();
 }
 
-std::unique_ptr<AppCacheURLRequestJob> AppCacheRequestHandler::CreateJob(
-    net::URLRequest* request,
+std::unique_ptr<AppCacheJob> AppCacheRequestHandler::CreateJob(
     net::NetworkDelegate* network_delegate) {
-  std::unique_ptr<AppCacheURLRequestJob> job(new AppCacheURLRequestJob(
-      request, network_delegate, storage(), host_, is_main_resource(),
-      base::Bind(&AppCacheRequestHandler::OnPrepareToRestart,
-                 base::Unretained(this))));
+  std::unique_ptr<AppCacheJob> job;
+  if (base::FeatureList::IsEnabled(features::kNetworkService)) {
+    job.reset(new AppCacheURLLoaderJob(request_->AsURLLoaderRequest(),
+                                       storage(), std::move(loader_callback_)));
+  } else {
+    job.reset(new AppCacheURLRequestJob(
+        request_->GetURLRequest(), network_delegate, storage(), host_,
+        is_main_resource(),
+        base::BindOnce(&AppCacheRequestHandler::OnPrepareToRestartURLRequest,
+                       base::Unretained(this))));
+  }
   job_ = job->GetWeakPtr();
   return job;
 }
 
 // Main-resource handling ----------------------------------------------
 
-std::unique_ptr<AppCacheURLRequestJob>
-AppCacheRequestHandler::MaybeLoadMainResource(
-    net::URLRequest* request,
+std::unique_ptr<AppCacheJob> AppCacheRequestHandler::MaybeLoadMainResource(
     net::NetworkDelegate* network_delegate) {
   DCHECK(!job_.get());
   DCHECK(host_);
@@ -317,8 +370,19 @@ AppCacheRequestHandler::MaybeLoadMainResource(
   // If a page falls into the scope of a ServiceWorker, any matching AppCaches
   // should be ignored. This depends on the ServiceWorker handler being invoked
   // prior to the AppCache handler.
-  if (ServiceWorkerRequestHandler::IsControlledByServiceWorker(request)) {
+  // TODO(ananta/michaeln)
+  // We need to handle this for AppCache requests initiated for the network
+  // service
+  if (request_->GetURLRequest() &&
+      ServiceWorkerRequestHandler::IsControlledByServiceWorker(
+          request_->GetURLRequest())) {
     host_->enable_cache_selection(false);
+    return nullptr;
+  }
+
+  if (storage()->IsInitialized() &&
+      service_->storage()->usage_map()->find(request_->GetURL().GetOrigin()) ==
+          service_->storage()->usage_map()->end()) {
     return nullptr;
   }
 
@@ -332,10 +396,9 @@ AppCacheRequestHandler::MaybeLoadMainResource(
 
   // We may have to wait for our storage query to complete, but
   // this query can also complete syncrhonously.
-  std::unique_ptr<AppCacheURLRequestJob> job =
-      CreateJob(request, network_delegate);
-  storage()->FindResponseForMainRequest(
-      request->url(), preferred_manifest_url, this);
+  std::unique_ptr<AppCacheJob> job = CreateJob(network_delegate);
+  storage()->FindResponseForMainRequest(request_->GetURL(),
+                                        preferred_manifest_url, this);
   return job;
 }
 
@@ -408,11 +471,21 @@ void AppCacheRequestHandler::OnMainResponseFound(
   }
 }
 
+// NetworkService loading:
+void AppCacheRequestHandler::RunLoaderCallbackForMainResource(
+    LoaderCallback callback,
+    StartLoaderCallback start_loader_callback) {
+  // For now let |this| always also return the subresource loader
+  // if (and only if) this returns a non-null |start_loader_callback|
+  // for handling the main resource.
+  if (start_loader_callback)
+    should_create_subresource_loader_ = true;
+  std::move(callback).Run(std::move(start_loader_callback));
+}
+
 // Sub-resource handling ----------------------------------------------
 
-std::unique_ptr<AppCacheURLRequestJob>
-AppCacheRequestHandler::MaybeLoadSubResource(
-    net::URLRequest* request,
+std::unique_ptr<AppCacheJob> AppCacheRequestHandler::MaybeLoadSubResource(
     net::NetworkDelegate* network_delegate) {
   DCHECK(!job_.get());
 
@@ -420,7 +493,7 @@ AppCacheRequestHandler::MaybeLoadSubResource(
     // We have to wait until cache selection is complete and the
     // selected cache is loaded.
     is_waiting_for_cache_selection_ = true;
-    return CreateJob(request, network_delegate);
+    return CreateJob(network_delegate);
   }
 
   if (!host_->associated_cache() ||
@@ -429,8 +502,7 @@ AppCacheRequestHandler::MaybeLoadSubResource(
     return nullptr;
   }
 
-  std::unique_ptr<AppCacheURLRequestJob> job =
-      CreateJob(request, network_delegate);
+  std::unique_ptr<AppCacheJob> job = CreateJob(network_delegate);
   ContinueMaybeLoadSubResource();
   return job;
 }
@@ -442,7 +514,7 @@ void AppCacheRequestHandler::ContinueMaybeLoadSubResource() {
   DCHECK(job_.get());
   DCHECK(host_->associated_cache() && host_->associated_cache()->is_complete());
 
-  const GURL& url = job_->request()->url();
+  const GURL& url = request_->GetURL();
   AppCache* cache = host_->associated_cache();
   storage()->FindResponseForSubRequest(
       host_->associated_cache(), url,
@@ -505,6 +577,123 @@ void AppCacheRequestHandler::OnCacheSelectionComplete(AppCacheHost* host) {
   }
 
   ContinueMaybeLoadSubResource();
+}
+
+void AppCacheRequestHandler::MaybeCreateLoader(
+    const ResourceRequest& resource_request,
+    ResourceContext* resource_context,
+    LoaderCallback callback) {
+  loader_callback_ =
+      base::BindOnce(&AppCacheRequestHandler::RunLoaderCallbackForMainResource,
+                     weak_factory_.GetWeakPtr(), std::move(callback));
+  request_->AsURLLoaderRequest()->set_request(resource_request);
+  MaybeLoadResource(nullptr);
+  // If a job is created, the job assumes ownership of the callback and
+  // the responsibility to call it. If no job is created, we call it with
+  // an empty StartLoaderCallback to let our client we have no loader for
+  // this resource request.
+  if (loader_callback_)
+    std::move(loader_callback_).Run(StartLoaderCallback());
+}
+
+bool AppCacheRequestHandler::MaybeCreateLoaderForResponse(
+    const ResourceResponseHead& response,
+    mojom::URLLoaderPtr* loader,
+    mojom::URLLoaderClientRequest* client_request) {
+  // The sync interface of this method is inherited from the
+  // URLLoaderRequestHandler class. The LoaderCallback created here is invoked
+  // synchronously in fallback cases, and only when there really is a loader
+  // to start.
+  bool was_called = false;
+  loader_callback_ = base::BindOnce(
+      [](mojom::URLLoaderPtr* loader,
+         mojom::URLLoaderClientRequest* client_request, bool* was_called,
+         StartLoaderCallback start_function) {
+        *was_called = true;
+        mojom::URLLoaderClientPtr client;
+        *client_request = mojo::MakeRequest(&client);
+        std::move(start_function)
+            .Run(mojo::MakeRequest(loader), std::move(client));
+      },
+      loader, client_request, &was_called);
+  request_->AsURLLoaderRequest()->set_response(response);
+  if (!MaybeLoadFallbackForResponse(nullptr)) {
+    DCHECK(!was_called);
+    loader_callback_.Reset();
+    return false;
+  }
+  DCHECK(was_called);
+  return true;
+}
+
+base::Optional<SubresourceLoaderParams>
+AppCacheRequestHandler::MaybeCreateSubresourceLoaderParams() {
+  if (!should_create_subresource_loader_)
+    return base::nullopt;
+
+  // The factory is destroyed when the renderer drops the connection.
+  mojom::URLLoaderFactoryPtr factory_ptr;
+  AppCacheSubresourceURLFactory::CreateURLLoaderFactory(
+      network_url_loader_factory_getter_.get(), appcache_host_, &factory_ptr);
+
+  SubresourceLoaderParams params;
+  params.loader_factory_info = factory_ptr.PassInterface();
+  return params;
+}
+
+void AppCacheRequestHandler::MaybeCreateSubresourceLoader(
+    const ResourceRequest& resource_request,
+    LoaderCallback loader_callback) {
+  DCHECK(!job_);
+  DCHECK(!is_main_resource());
+  // Subresource loads start out just like a main resource loads, but they go
+  // down different branches along the way to completion.
+  MaybeCreateLoader(resource_request, nullptr, std::move(loader_callback));
+}
+
+void AppCacheRequestHandler::MaybeFallbackForSubresourceResponse(
+    const ResourceResponseHead& response,
+    LoaderCallback loader_callback) {
+  DCHECK(!job_);
+  DCHECK(!is_main_resource());
+  loader_callback_ = std::move(loader_callback);
+  request_->AsURLLoaderRequest()->set_response(response);
+  MaybeLoadFallbackForResponse(nullptr);
+  if (loader_callback_)
+    std::move(loader_callback_).Run(StartLoaderCallback());
+}
+
+void AppCacheRequestHandler::MaybeFallbackForSubresourceRedirect(
+    const net::RedirectInfo& redirect_info,
+    LoaderCallback loader_callback) {
+  DCHECK(!job_);
+  DCHECK(!is_main_resource());
+  loader_callback_ = std::move(loader_callback);
+  MaybeLoadFallbackForRedirect(nullptr, redirect_info.new_url);
+  if (loader_callback_)
+    std::move(loader_callback_).Run(StartLoaderCallback());
+}
+
+void AppCacheRequestHandler::MaybeFollowSubresourceRedirect(
+    const net::RedirectInfo& redirect_info,
+    LoaderCallback loader_callback) {
+  DCHECK(!job_);
+  DCHECK(!is_main_resource());
+  loader_callback_ = std::move(loader_callback);
+  request_->AsURLLoaderRequest()->UpdateWithRedirectInfo(redirect_info);
+  MaybeLoadResource(nullptr);
+  if (loader_callback_)
+    std::move(loader_callback_).Run(StartLoaderCallback());
+}
+
+// static
+void AppCacheRequestHandler::SetRunningInTests(bool in_tests) {
+  g_running_in_tests = in_tests;
+}
+
+// static
+bool AppCacheRequestHandler::IsRunningInTests() {
+  return g_running_in_tests;
 }
 
 }  // namespace content

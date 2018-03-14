@@ -29,15 +29,19 @@
 
 namespace WTF {
 
-// ListHashSet: Just like HashSet, this class provides a Set interface - a
-// collection of unique objects with O(1) insertion, removal and test for
-// containership. However, it also has an order - iterating it will always give
-// back values in the order in which they are added.
-
-// Unlike iteration of most WTF Hash data structures, iteration is guaranteed
-// safe against mutation of the ListHashSet, except for removal of the item
-// currently pointed to by a given iterator.
-
+// ListHashSet provides a Set interface like HashSet, but also has a
+// predictable iteration order. It has O(1) insertion, removal, and test for
+// containership. It maintains a linked list through its contents such that
+// iterating it yields values in the order in which they were inserted.
+//
+// ListHashSet iterators are not invalidated by mutation of the collection,
+// unless they point to removed items. This means, for example, that you can
+// safely modify the container while iterating over it, as long as you don't
+// remove the current item.
+//
+// Prefer to use LinkedHashSet instead where possible
+// (https://crbug.com/614112). We would like to eventually remove ListHashSet
+// in favor of LinkedHashSet, because the latter supports WeakMember<T>.
 template <typename Value,
           size_t inlineCapacity,
           typename HashFunctions,
@@ -154,16 +158,18 @@ class ListHashSet
   bool IsEmpty() const { return impl_.IsEmpty(); }
 
   iterator begin() { return MakeIterator(head_); }
-  iterator end() { return MakeIterator(0); }
+  iterator end() { return MakeIterator(nullptr); }
   const_iterator begin() const { return MakeConstIterator(head_); }
-  const_iterator end() const { return MakeConstIterator(0); }
+  const_iterator end() const { return MakeConstIterator(nullptr); }
 
   reverse_iterator rbegin() { return MakeReverseIterator(tail_); }
-  reverse_iterator rend() { return MakeReverseIterator(0); }
+  reverse_iterator rend() { return MakeReverseIterator(nullptr); }
   const_reverse_iterator rbegin() const {
     return MakeConstReverseIterator(tail_);
   }
-  const_reverse_iterator rend() const { return MakeConstReverseIterator(0); }
+  const_reverse_iterator rend() const {
+    return MakeConstReverseIterator(nullptr);
+  }
 
   ValueType& front();
   const ValueType& front() const;
@@ -173,8 +179,8 @@ class ListHashSet
   const ValueType& back() const;
   void pop_back();
 
-  iterator Find(ValuePeekInType);
-  const_iterator Find(ValuePeekInType) const;
+  iterator find(ValuePeekInType);
+  const_iterator find(ValuePeekInType) const;
   bool Contains(ValuePeekInType) const;
 
   // An alternate version of find() that finds the object by hashing and
@@ -214,9 +220,9 @@ class ListHashSet
   template <typename IncomingValueType>
   AddResult InsertBefore(iterator, IncomingValueType&&);
 
-  void erase(ValuePeekInType value) { return erase(Find(value)); }
+  void erase(ValuePeekInType value) { return erase(find(value)); }
   void erase(iterator);
-  void Clear();
+  void clear();
   template <typename Collection>
   void RemoveAll(const Collection& other) {
     WTF::RemoveAll(*this, other);
@@ -796,7 +802,7 @@ ListHashSet<T, inlineCapacity, U, V>::operator=(ListHashSet&& other) {
 
 template <typename T, size_t inlineCapacity, typename U, typename V>
 inline void ListHashSet<T, inlineCapacity, U, V>::Swap(ListHashSet& other) {
-  impl_.Swap(other.impl_);
+  impl_.swap(other.impl_);
   std::swap(head_, other.head_);
   std::swap(tail_, other.tail_);
   allocator_provider_.Swap(other.allocator_provider_);
@@ -850,7 +856,7 @@ inline void ListHashSet<T, inlineCapacity, U, V>::pop_back() {
 
 template <typename T, size_t inlineCapacity, typename U, typename V>
 inline typename ListHashSet<T, inlineCapacity, U, V>::iterator
-ListHashSet<T, inlineCapacity, U, V>::Find(ValuePeekInType value) {
+ListHashSet<T, inlineCapacity, U, V>::find(ValuePeekInType value) {
   ImplTypeIterator it = impl_.template Find<BaseTranslator>(value);
   if (it == impl_.end())
     return end();
@@ -859,7 +865,7 @@ ListHashSet<T, inlineCapacity, U, V>::Find(ValuePeekInType value) {
 
 template <typename T, size_t inlineCapacity, typename U, typename V>
 inline typename ListHashSet<T, inlineCapacity, U, V>::const_iterator
-ListHashSet<T, inlineCapacity, U, V>::Find(ValuePeekInType value) const {
+ListHashSet<T, inlineCapacity, U, V>::find(ValuePeekInType value) const {
   ImplTypeConstIterator it = impl_.template Find<BaseTranslator>(value);
   if (it == impl_.end())
     return end();
@@ -990,7 +996,7 @@ ListHashSet<T, inlineCapacity, U, V>::InsertBefore(
     ValuePeekInType before_value,
     IncomingValueType&& new_value) {
   CreateAllocatorIfNeeded();
-  return InsertBefore(Find(before_value),
+  return InsertBefore(find(before_value),
                       std::forward<IncomingValueType>(new_value));
 }
 
@@ -1003,9 +1009,9 @@ inline void ListHashSet<T, inlineCapacity, U, V>::erase(iterator it) {
 }
 
 template <typename T, size_t inlineCapacity, typename U, typename V>
-inline void ListHashSet<T, inlineCapacity, U, V>::Clear() {
+inline void ListHashSet<T, inlineCapacity, U, V>::clear() {
   DeleteAllNodes();
-  impl_.Clear();
+  impl_.clear();
   head_ = nullptr;
   tail_ = nullptr;
 }
@@ -1025,7 +1031,7 @@ auto ListHashSet<T, inlineCapacity, U, V>::Take(iterator it) -> ValueType {
 template <typename T, size_t inlineCapacity, typename U, typename V>
 auto ListHashSet<T, inlineCapacity, U, V>::Take(ValuePeekInType value)
     -> ValueType {
-  return Take(Find(value));
+  return Take(find(value));
 }
 
 template <typename T, size_t inlineCapacity, typename U, typename V>
@@ -1114,7 +1120,7 @@ void ListHashSet<T, inlineCapacity, U, V>::DeleteAllNodes() {
     return;
 
   for (Node *node = head_, *next = head_->Next(); node;
-       node = next, next = node ? node->Next() : 0)
+       node = next, next = node ? node->Next() : nullptr)
     node->Destroy(this->GetAllocator());
 }
 

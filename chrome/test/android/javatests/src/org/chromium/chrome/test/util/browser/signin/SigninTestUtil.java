@@ -5,21 +5,24 @@
 package org.chromium.chrome.test.util.browser.signin;
 
 import android.accounts.Account;
+import android.annotation.SuppressLint;
 import android.app.Instrumentation;
 import android.content.Context;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.chrome.browser.init.ProcessInitializationHandler;
-import org.chromium.chrome.browser.signin.AccountIdProvider;
 import org.chromium.chrome.browser.signin.AccountTrackerService;
 import org.chromium.chrome.browser.signin.OAuth2TokenService;
-import org.chromium.components.signin.AccountManagerHelper;
+import org.chromium.components.signin.AccountIdProvider;
+import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.components.signin.test.util.AccountHolder;
-import org.chromium.components.signin.test.util.MockAccountManager;
+import org.chromium.components.signin.test.util.FakeAccountManagerDelegate;
 
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 
 /**
  * Utility class for test signin functionality.
@@ -29,8 +32,12 @@ public final class SigninTestUtil {
 
     private static final String DEFAULT_ACCOUNT = "test@gmail.com";
 
+    @SuppressLint("StaticFieldLeak")
     private static Context sContext;
-    private static MockAccountManager sAccountManager;
+    @SuppressLint("StaticFieldLeak")
+    private static FakeAccountManagerDelegate sAccountManager;
+    @SuppressLint("StaticFieldLeak")
+    private static List<AccountHolder> sAddedAccounts = new ArrayList<>();
 
     /**
      * Sets up the test authentication environment.
@@ -46,10 +53,24 @@ public final class SigninTestUtil {
                 ProcessInitializationHandler.getInstance().initializePreNative();
             }
         });
-        sAccountManager = new MockAccountManager(sContext, instrumentation.getContext());
-        AccountManagerHelper.overrideAccountManagerHelperForTests(sContext, sAccountManager);
+        sAccountManager = new FakeAccountManagerDelegate(
+                FakeAccountManagerDelegate.DISABLE_PROFILE_DATA_SOURCE);
+        AccountManagerFacade.overrideAccountManagerFacadeForTests(sAccountManager);
         overrideAccountIdProvider();
         resetSigninState();
+    }
+
+    /**
+     * Tears down the test authentication environment.
+     */
+    public static void tearDownAuthForTest() {
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            for (AccountHolder accountHolder : sAddedAccounts) {
+                sAccountManager.removeAccountHolderExplicitly(accountHolder);
+            }
+        });
+        sAddedAccounts.clear();
+        sContext = null;
     }
 
     /**
@@ -71,13 +92,12 @@ public final class SigninTestUtil {
      * Add an account with a given name.
      */
     public static Account addTestAccount(String name) {
-        Account account = createTestAccount(name);
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                AccountTrackerService.get().invalidateAccountSeedStatus(true);
-            }
-        });
+        Account account = AccountManagerFacade.createAccountFromName(name);
+        AccountHolder accountHolder = AccountHolder.builder(account).alwaysAccept(true).build();
+        sAccountManager.addAccountHolderBlocking(accountHolder);
+        sAddedAccounts.add(accountHolder);
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> AccountTrackerService.get().invalidateAccountSeedStatus(true));
         return account;
     }
 
@@ -85,22 +105,11 @@ public final class SigninTestUtil {
      * Add and sign in an account with the default name.
      */
     public static Account addAndSignInTestAccount() {
-        Account account = createTestAccount(DEFAULT_ACCOUNT);
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                ChromeSigninController.get().setSignedInAccountName(DEFAULT_ACCOUNT);
-                AccountTrackerService.get().invalidateAccountSeedStatus(true);
-            }
+        Account account = addTestAccount();
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            ChromeSigninController.get().setSignedInAccountName(DEFAULT_ACCOUNT);
+            AccountTrackerService.get().invalidateAccountSeedStatus(true);
         });
-        return account;
-    }
-
-    private static Account createTestAccount(String accountName) {
-        assert sContext != null;
-        Account account = AccountManagerHelper.createAccountFromName(accountName);
-        AccountHolder.Builder accountHolder = AccountHolder.builder(account).alwaysAccept(true);
-        sAccountManager.addAccountHolderExplicitly(accountHolder.build());
         return account;
     }
 

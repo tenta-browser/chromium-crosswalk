@@ -8,6 +8,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "cc/paint/paint_image_builder.h"
 #include "cc/test/skia_common.h"
 #include "cc/tiles/image_controller.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -15,8 +16,13 @@
 namespace cc {
 namespace {
 
+// 5MB max image cache size.
+const size_t kMaxImageCacheSizeBytes = 5 * 1024 * 1024;
+
 const int kCheckerableImageDimension = 512;
-const int kNonCheckerableImageDimension = 16;
+// This size will result in an image just over kMaxImageCacheSizeBytes.
+const int kLargeNonCheckerableImageDimension = 1145;
+const int kSmallNonCheckerableImageDimension = 16;
 
 class TestImageController : public ImageController {
  public:
@@ -24,11 +30,19 @@ class TestImageController : public ImageController {
   // the ImageController is over-ridden here.
   TestImageController()
       : ImageController(base::ThreadTaskRunnerHandle::Get().get(),
-                        base::ThreadTaskRunnerHandle::Get()) {}
+                        base::ThreadTaskRunnerHandle::Get()) {
+    SetMaxImageCacheLimitBytesForTesting(kMaxImageCacheSizeBytes);
+  }
 
   ~TestImageController() override { DCHECK_EQ(locked_images_.size(), 0U); }
 
   int num_of_locked_images() const { return locked_images_.size(); }
+  const PaintImageIdFlatSet& decodes_requested() const {
+    return decodes_requested_;
+  }
+  const std::vector<DrawImage>& decoded_images() const {
+    return decoded_images_;
+  }
 
   void UnlockImageDecode(ImageDecodeRequestId id) override {
     DCHECK_EQ(locked_images_.count(id), 1U);
@@ -36,14 +50,12 @@ class TestImageController : public ImageController {
   }
 
   ImageDecodeRequestId QueueImageDecode(
-      sk_sp<const SkImage> image,
+      const DrawImage& image,
       const ImageDecodedCallback& callback) override {
     ImageDecodeRequestId request_id = next_image_request_id_++;
 
-    // The tracker should request a decode only once.
-    EXPECT_EQ(decodes_requested_.count(image->uniqueID()), 0u);
-    decodes_requested_.insert(image->uniqueID());
-
+    decoded_images_.push_back(image);
+    decodes_requested_.insert(image.paint_image().stable_id());
     locked_images_.insert(request_id);
 
     // Post the callback asynchronously to match the behaviour in
@@ -58,30 +70,75 @@ class TestImageController : public ImageController {
  private:
   ImageDecodeRequestId next_image_request_id_ = 1U;
   std::unordered_set<ImageDecodeRequestId> locked_images_;
-  ImageIdFlatSet decodes_requested_;
+  PaintImageIdFlatSet decodes_requested_;
+  std::vector<DrawImage> decoded_images_;
 };
 
 class CheckerImageTrackerTest : public testing::Test,
                                 public CheckerImageTrackerClient {
  public:
-  enum class ImageType { CHECKERABLE, NON_CHECKERABLE };
+  enum class ImageType {
+    CHECKERABLE,
+    SMALL_NON_CHECKERABLE,
+    LARGE_NON_CHECKERABLE
+  };
 
   void SetUpTracker(bool checker_images_enabled) {
-    checker_image_tracker_ = base::MakeUnique<CheckerImageTracker>(
-        &image_controller_, this, checker_images_enabled);
+    size_t size_to_checker = 512 * 1024;
+    checker_image_tracker_ = std::make_unique<CheckerImageTracker>(
+        &image_controller_, this, checker_images_enabled, size_to_checker);
+    checker_image_tracker_->SetMaxDecodePriorityAllowed(
+        CheckerImageTracker::DecodeType::kPreDecode);
   }
 
   void TearDown() override { checker_image_tracker_.reset(); }
 
-  DrawImage CreateImage(ImageType image_type) {
-    int dimension = image_type == ImageType::CHECKERABLE
-                        ? kCheckerableImageDimension
-                        : kNonCheckerableImageDimension;
-    sk_sp<SkImage> image =
-        CreateDiscardableImage(gfx::Size(dimension, dimension));
-    gfx::ColorSpace target_color_space = gfx::ColorSpace::CreateSRGB();
-    return DrawImage(image, SkIRect::MakeWH(image->width(), image->height()),
-                     kNone_SkFilterQuality, SkMatrix::I(), target_color_space);
+  DrawImage CreateImage(
+      ImageType image_type,
+      PaintImage::AnimationType animation = PaintImage::AnimationType::STATIC,
+      PaintImage::CompletionState completion =
+          PaintImage::CompletionState::DONE,
+      bool is_multipart = false) {
+    int dimension = 0;
+    switch (image_type) {
+      case ImageType::CHECKERABLE:
+        dimension = kCheckerableImageDimension;
+        break;
+      case ImageType::SMALL_NON_CHECKERABLE:
+        dimension = kSmallNonCheckerableImageDimension;
+        break;
+      case ImageType::LARGE_NON_CHECKERABLE:
+        dimension = kLargeNonCheckerableImageDimension;
+        break;
+    }
+
+    auto generator = CreatePaintImageGenerator(gfx::Size(dimension, dimension));
+    return DrawImage(PaintImageBuilder::WithDefault()
+                         .set_id(PaintImage::GetNextId())
+                         .set_paint_image_generator(std::move(generator))
+                         .set_animation_type(animation)
+                         .set_completion_state(completion)
+                         .set_is_multipart(is_multipart)
+                         .TakePaintImage(),
+                     SkIRect::MakeWH(dimension, dimension),
+                     kNone_SkFilterQuality, SkMatrix::I(),
+                     PaintImage::kDefaultFrameIndex, gfx::ColorSpace());
+  }
+
+  bool ShouldCheckerImage(const DrawImage& draw_image, WhichTree tree) {
+    return checker_image_tracker_->ShouldCheckerImage(draw_image, tree);
+  }
+
+  CheckerImageTracker::ImageDecodeQueue BuildImageDecodeQueue(
+      std::vector<DrawImage> images,
+      WhichTree tree) {
+    CheckerImageTracker::ImageDecodeQueue decode_queue;
+    for (const auto& image : images) {
+      if (ShouldCheckerImage(image, tree))
+        decode_queue.push_back(CheckerImageTracker::ImageDecodeRequest(
+            image.paint_image(), CheckerImageTracker::DecodeType::kRaster));
+    }
+    return decode_queue;
   }
 
   // CheckerImageTrackerClient implementation.
@@ -101,13 +158,9 @@ TEST_F(CheckerImageTrackerTest, CheckerImagesDisabled) {
   // disabled.
   SetUpTracker(false);
 
-  std::vector<DrawImage> draw_images;
-  ImageIdFlatSet checkered_images;
-  draw_images.push_back(CreateImage(ImageType::CHECKERABLE));
-  checker_image_tracker_->FilterImagesForCheckeringForTile(
-      &draw_images, &checkered_images, WhichTree::PENDING_TREE);
-  EXPECT_EQ(draw_images.size(), 1U);
-  EXPECT_EQ(checkered_images.size(), 0U);
+  PaintImageIdFlatSet checkered_images;
+  DrawImage draw_image = CreateImage(ImageType::CHECKERABLE);
+  EXPECT_FALSE(ShouldCheckerImage(draw_image, WhichTree::PENDING_TREE));
   EXPECT_EQ(image_controller_.num_of_locked_images(), 0);
 }
 
@@ -116,21 +169,24 @@ TEST_F(CheckerImageTrackerTest, UpdatesImagesAtomically) {
   SetUpTracker(true);
 
   DrawImage checkerable_image = CreateImage(ImageType::CHECKERABLE);
-  DrawImage non_checkerable_image = CreateImage(ImageType::NON_CHECKERABLE);
-  ImageIdFlatSet checkered_images;
-  std::vector<DrawImage> draw_images;
+  DrawImage small_non_checkerable_image =
+      CreateImage(ImageType::SMALL_NON_CHECKERABLE);
+  DrawImage large_non_checkerable_image =
+      CreateImage(ImageType::LARGE_NON_CHECKERABLE);
+  CheckerImageTracker::ImageDecodeQueue image_decode_queue;
 
   // First request to filter images.
-  draw_images.push_back(checkerable_image);
-  draw_images.push_back(non_checkerable_image);
-  draw_images.push_back(checkerable_image);
-  checker_image_tracker_->FilterImagesForCheckeringForTile(
-      &draw_images, &checkered_images, WhichTree::PENDING_TREE);
+  std::vector<DrawImage> draw_images = {
+      checkerable_image, small_non_checkerable_image,
+      large_non_checkerable_image, checkerable_image};
+  image_decode_queue =
+      BuildImageDecodeQueue(draw_images, WhichTree::PENDING_TREE);
 
-  EXPECT_EQ(draw_images.size(), 1U);
-  EXPECT_EQ(draw_images[0].image(), non_checkerable_image.image());
-  EXPECT_EQ(checkered_images.size(), 1U);
-  EXPECT_EQ(checkered_images.count(checkerable_image.image()->uniqueID()), 1U);
+  ASSERT_EQ(2u, image_decode_queue.size());
+  EXPECT_EQ(checkerable_image.paint_image(), image_decode_queue[0].paint_image);
+  EXPECT_EQ(checkerable_image.paint_image(), image_decode_queue[1].paint_image);
+
+  checker_image_tracker_->ScheduleImageDecodeQueue(image_decode_queue);
   EXPECT_EQ(image_controller_.num_of_locked_images(), 1);
 
   // Run pending task to indicate completion of decode request to the tracker.
@@ -143,44 +199,30 @@ TEST_F(CheckerImageTrackerTest, UpdatesImagesAtomically) {
 
   // Continue checkering the image until the set of images to invalidate is
   // pulled.
-  draw_images.clear();
-  draw_images.push_back(checkerable_image);
-  checkered_images.clear();
-  checker_image_tracker_->FilterImagesForCheckeringForTile(
-      &draw_images, &checkered_images, WhichTree::PENDING_TREE);
-  EXPECT_EQ(draw_images.size(), 0U);
-  EXPECT_EQ(checkered_images.size(), 1U);
-  EXPECT_EQ(image_controller_.num_of_locked_images(), 1);
+  EXPECT_TRUE(ShouldCheckerImage(checkerable_image, WhichTree::PENDING_TREE));
 
-  ImageIdFlatSet invalidated_images =
+  PaintImageIdFlatSet invalidated_images =
       checker_image_tracker_->TakeImagesToInvalidateOnSyncTree();
   EXPECT_EQ(invalidated_images.size(), 1U);
-  EXPECT_EQ(invalidated_images.count(checkerable_image.image()->uniqueID()),
-            1U);
+  EXPECT_EQ(
+      invalidated_images.count(checkerable_image.paint_image().stable_id()),
+      1U);
 
   // Use the same set of draw images to ensure that they are not checkered on
   // the pending tree now.
-  draw_images.clear();
-  draw_images.push_back(checkerable_image);
-  draw_images.push_back(non_checkerable_image);
-  checkered_images.clear();
-  checker_image_tracker_->FilterImagesForCheckeringForTile(
-      &draw_images, &checkered_images, WhichTree::PENDING_TREE);
-  EXPECT_EQ(draw_images.size(), 2U);
-  EXPECT_EQ(checkered_images.size(), 0U);
+  EXPECT_FALSE(ShouldCheckerImage(checkerable_image, WhichTree::PENDING_TREE));
+  EXPECT_FALSE(
+      ShouldCheckerImage(small_non_checkerable_image, WhichTree::PENDING_TREE));
+  EXPECT_FALSE(
+      ShouldCheckerImage(large_non_checkerable_image, WhichTree::PENDING_TREE));
 
   // Use this set to make the same request from the active tree, we should
   // continue checkering this image on the active tree until activation.
-  draw_images.clear();
-  draw_images.push_back(checkerable_image);
-  draw_images.push_back(non_checkerable_image);
-  checkered_images.clear();
-  checker_image_tracker_->FilterImagesForCheckeringForTile(
-      &draw_images, &checkered_images, WhichTree::ACTIVE_TREE);
-  EXPECT_EQ(draw_images.size(), 1U);
-  EXPECT_EQ(draw_images[0].image(), non_checkerable_image.image());
-  EXPECT_EQ(checkered_images.size(), 1U);
-  EXPECT_EQ(checkered_images.count(checkerable_image.image()->uniqueID()), 1U);
+  EXPECT_TRUE(ShouldCheckerImage(checkerable_image, WhichTree::ACTIVE_TREE));
+  EXPECT_FALSE(
+      ShouldCheckerImage(small_non_checkerable_image, WhichTree::ACTIVE_TREE));
+  EXPECT_FALSE(
+      ShouldCheckerImage(large_non_checkerable_image, WhichTree::ACTIVE_TREE));
 
   // Activate the sync tree. The images should be unlocked upon activation.
   EXPECT_EQ(image_controller_.num_of_locked_images(), 1);
@@ -193,17 +235,12 @@ TEST_F(CheckerImageTrackerTest, NoConsecutiveCheckeringForImage) {
   SetUpTracker(true);
 
   DrawImage checkerable_image = CreateImage(ImageType::CHECKERABLE);
-  DrawImage non_checkerable_image = CreateImage(ImageType::NON_CHECKERABLE);
-  ImageIdFlatSet checkered_images;
-  std::vector<DrawImage> draw_images;
+  std::vector<DrawImage> draw_images = {checkerable_image};
 
-  draw_images.clear();
-  draw_images.push_back(checkerable_image);
-  checkered_images.clear();
-  checker_image_tracker_->FilterImagesForCheckeringForTile(
-      &draw_images, &checkered_images, WhichTree::PENDING_TREE);
-  EXPECT_EQ(draw_images.size(), 0U);
-  EXPECT_EQ(checkered_images.size(), 1U);
+  CheckerImageTracker::ImageDecodeQueue image_decode_queue =
+      BuildImageDecodeQueue(draw_images, WhichTree::PENDING_TREE);
+  EXPECT_EQ(image_decode_queue.size(), 1U);
+  checker_image_tracker_->ScheduleImageDecodeQueue(image_decode_queue);
 
   // Trigger decode completion, take images to invalidate and activate the sync
   // tree.
@@ -212,13 +249,7 @@ TEST_F(CheckerImageTrackerTest, NoConsecutiveCheckeringForImage) {
   checker_image_tracker_->DidActivateSyncTree();
 
   // Subsequent requests for this image should not be checkered.
-  draw_images.clear();
-  draw_images.push_back(checkerable_image);
-  checkered_images.clear();
-  checker_image_tracker_->FilterImagesForCheckeringForTile(
-      &draw_images, &checkered_images, WhichTree::PENDING_TREE);
-  EXPECT_EQ(draw_images.size(), 1U);
-  EXPECT_EQ(checkered_images.size(), 0U);
+  EXPECT_FALSE(ShouldCheckerImage(checkerable_image, WhichTree::PENDING_TREE));
 }
 
 TEST_F(CheckerImageTrackerTest,
@@ -228,71 +259,379 @@ TEST_F(CheckerImageTrackerTest,
   SetUpTracker(true);
 
   DrawImage checkerable_image1 = CreateImage(ImageType::CHECKERABLE);
-  ImageIdFlatSet checkered_images;
   std::vector<DrawImage> draw_images;
+  CheckerImageTracker::ImageDecodeQueue image_decode_queue;
 
   // First request to filter images on the pending and active tree.
   draw_images.push_back(checkerable_image1);
-  checker_image_tracker_->FilterImagesForCheckeringForTile(
-      &draw_images, &checkered_images, WhichTree::PENDING_TREE);
-  EXPECT_EQ(draw_images.size(), 0U);
-  EXPECT_EQ(checkered_images.size(), 1U);
+  image_decode_queue =
+      BuildImageDecodeQueue(draw_images, WhichTree::PENDING_TREE);
+  EXPECT_EQ(image_decode_queue.size(), 1U);
+  checker_image_tracker_->ScheduleImageDecodeQueue(image_decode_queue);
 
   // The image is also checkered on the active tree while a decode request is
   // pending.
-  draw_images.clear();
-  checkered_images.clear();
-  draw_images.push_back(checkerable_image1);
-  checker_image_tracker_->FilterImagesForCheckeringForTile(
-      &draw_images, &checkered_images, WhichTree::ACTIVE_TREE);
-  EXPECT_EQ(draw_images.size(), 0U);
-  EXPECT_EQ(checkered_images.size(), 1U);
+  EXPECT_TRUE(ShouldCheckerImage(checkerable_image1, WhichTree::ACTIVE_TREE));
 
   // Trigger decode completion and take images to invalidate on the sync tree.
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(invalidation_request_pending_);
-  ImageIdFlatSet invalidated_images =
+  PaintImageIdFlatSet invalidated_images =
       checker_image_tracker_->TakeImagesToInvalidateOnSyncTree();
   EXPECT_EQ(invalidated_images.size(), 1U);
-  EXPECT_EQ(invalidated_images.count(checkerable_image1.image()->uniqueID()),
-            1U);
+  EXPECT_EQ(
+      invalidated_images.count(checkerable_image1.paint_image().stable_id()),
+      1U);
 
   // Second request to filter the same image on the pending and active tree. It
   // should be checkered on the active tree, but not the pending tree.
-  draw_images.clear();
-  checkered_images.clear();
-  draw_images.push_back(checkerable_image1);
-  checker_image_tracker_->FilterImagesForCheckeringForTile(
-      &draw_images, &checkered_images, WhichTree::PENDING_TREE);
-  EXPECT_EQ(draw_images.size(), 1U);
-  EXPECT_EQ(checkered_images.size(), 0U);
-
-  checker_image_tracker_->FilterImagesForCheckeringForTile(
-      &draw_images, &checkered_images, WhichTree::ACTIVE_TREE);
-  EXPECT_EQ(draw_images.size(), 0U);
-  EXPECT_EQ(checkered_images.size(), 1U);
+  EXPECT_TRUE(ShouldCheckerImage(checkerable_image1, WhichTree::ACTIVE_TREE));
+  EXPECT_FALSE(ShouldCheckerImage(checkerable_image1, WhichTree::PENDING_TREE));
 
   // New checkerable image on the pending tree.
   DrawImage checkerable_image2 = CreateImage(ImageType::CHECKERABLE);
-  draw_images.clear();
-  checkered_images.clear();
-  draw_images.push_back(checkerable_image2);
-  checker_image_tracker_->FilterImagesForCheckeringForTile(
-      &draw_images, &checkered_images, WhichTree::PENDING_TREE);
-  EXPECT_EQ(draw_images.size(), 0U);
-  EXPECT_EQ(checkered_images.size(), 1U);
+  EXPECT_TRUE(ShouldCheckerImage(checkerable_image2, WhichTree::PENDING_TREE));
 
   // Activate the sync tree. The initial image should no longer be checkered on
   // the active tree.
   checker_image_tracker_->DidActivateSyncTree();
+  EXPECT_FALSE(ShouldCheckerImage(checkerable_image1, WhichTree::ACTIVE_TREE));
+}
 
-  draw_images.clear();
-  checkered_images.clear();
-  draw_images.push_back(checkerable_image1);
-  checker_image_tracker_->FilterImagesForCheckeringForTile(
-      &draw_images, &checkered_images, WhichTree::ACTIVE_TREE);
-  EXPECT_EQ(draw_images.size(), 1U);
-  EXPECT_EQ(checkered_images.size(), 0U);
+TEST_F(CheckerImageTrackerTest, CancelsScheduledDecodes) {
+  SetUpTracker(true);
+
+  DrawImage checkerable_image1 = CreateImage(ImageType::CHECKERABLE);
+  DrawImage checkerable_image2 = CreateImage(ImageType::CHECKERABLE);
+  std::vector<DrawImage> draw_images = {checkerable_image1, checkerable_image2};
+
+  CheckerImageTracker::ImageDecodeQueue image_decode_queue;
+  image_decode_queue =
+      BuildImageDecodeQueue(draw_images, WhichTree::PENDING_TREE);
+  EXPECT_EQ(image_decode_queue.size(), 2U);
+  checker_image_tracker_->ScheduleImageDecodeQueue(
+      std::move(image_decode_queue));
+
+  // Only the first image in the queue should have been decoded.
+  EXPECT_EQ(image_controller_.decodes_requested().size(), 1U);
+  EXPECT_EQ(image_controller_.decodes_requested().count(
+                checkerable_image1.paint_image().stable_id()),
+            1U);
+
+  // Rebuild the queue before the tracker is notified of decode completion,
+  // removing the second image and adding a new one.
+  DrawImage checkerable_image3 = CreateImage(ImageType::CHECKERABLE);
+  draw_images = {checkerable_image1, checkerable_image3};
+  image_decode_queue =
+      BuildImageDecodeQueue(draw_images, WhichTree::PENDING_TREE);
+
+  // The queue has 2 decodes because we are still checkering on the first one.
+  EXPECT_EQ(image_decode_queue.size(), 2U);
+  checker_image_tracker_->ScheduleImageDecodeQueue(
+      std::move(image_decode_queue));
+
+  // We still have only one decode because the tracker keeps only one decode
+  // pending at a time.
+  EXPECT_EQ(image_controller_.decodes_requested().size(), 1U);
+  EXPECT_EQ(image_controller_.decodes_requested().count(
+                checkerable_image1.paint_image().stable_id()),
+            1U);
+
+  // Trigger completion for all decodes. Only 2 images should have been decoded
+  // since the second image was cancelled.
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(image_controller_.decodes_requested().size(), 2U);
+  EXPECT_EQ(image_controller_.decodes_requested().count(
+                checkerable_image3.paint_image().stable_id()),
+            1U);
+  EXPECT_EQ(image_controller_.num_of_locked_images(), 2);
+}
+
+TEST_F(CheckerImageTrackerTest, ClearsTracker) {
+  SetUpTracker(true);
+
+  DrawImage checkerable_image = CreateImage(ImageType::CHECKERABLE);
+  CheckerImageTracker::ImageDecodeQueue image_decode_queue =
+      BuildImageDecodeQueue({checkerable_image}, WhichTree::PENDING_TREE);
+  EXPECT_EQ(image_decode_queue.size(), 1U);
+  checker_image_tracker_->ScheduleImageDecodeQueue(
+      std::move(image_decode_queue));
+  base::RunLoop().RunUntilIdle();
+  checker_image_tracker_->TakeImagesToInvalidateOnSyncTree();
+
+  // The image is no longer checkered on the pending tree.
+  image_decode_queue =
+      BuildImageDecodeQueue({checkerable_image}, WhichTree::PENDING_TREE);
+  EXPECT_EQ(image_decode_queue.size(), 0U);
+  EXPECT_EQ(image_controller_.num_of_locked_images(), 1);
+
+  // Clear the tracker without clearing the async decode tracking. This should
+  // drop the decode but the image should not be checkered.
+  bool can_clear_decode_policy_tracking = false;
+  checker_image_tracker_->ClearTracker(can_clear_decode_policy_tracking);
+  EXPECT_EQ(image_controller_.num_of_locked_images(), 0);
+  image_decode_queue =
+      BuildImageDecodeQueue({checkerable_image}, WhichTree::PENDING_TREE);
+  EXPECT_EQ(image_decode_queue.size(), 0U);
+  checker_image_tracker_->DidActivateSyncTree();
+
+  // Now clear the decode tracking as well. The image will be re-checkered.
+  can_clear_decode_policy_tracking = true;
+  checker_image_tracker_->ClearTracker(can_clear_decode_policy_tracking);
+  image_decode_queue =
+      BuildImageDecodeQueue({checkerable_image}, WhichTree::PENDING_TREE);
+  image_decode_queue =
+      BuildImageDecodeQueue({checkerable_image}, WhichTree::PENDING_TREE);
+  EXPECT_EQ(image_decode_queue.size(), 1U);
+
+  // If an image had been decoded and tracker was cleared after it, we should
+  // continue checkering it.
+  DrawImage checkerable_image2 = CreateImage(ImageType::CHECKERABLE);
+  image_decode_queue =
+      BuildImageDecodeQueue({checkerable_image}, WhichTree::PENDING_TREE);
+  EXPECT_EQ(image_decode_queue.size(), 1U);
+  checker_image_tracker_->ScheduleImageDecodeQueue(
+      std::move(image_decode_queue));
+  base::RunLoop().RunUntilIdle();
+
+  EXPECT_EQ(image_controller_.num_of_locked_images(), 1);
+  can_clear_decode_policy_tracking = false;
+  checker_image_tracker_->ClearTracker(can_clear_decode_policy_tracking);
+  EXPECT_EQ(image_controller_.num_of_locked_images(), 0);
+  image_decode_queue =
+      BuildImageDecodeQueue({checkerable_image}, WhichTree::PENDING_TREE);
+  EXPECT_EQ(image_decode_queue.size(), 1U);
+}
+
+TEST_F(CheckerImageTrackerTest, CheckersOnlyStaticCompletedImages) {
+  SetUpTracker(true);
+
+  DrawImage static_image = CreateImage(ImageType::CHECKERABLE);
+  DrawImage animated_image =
+      CreateImage(ImageType::CHECKERABLE, PaintImage::AnimationType::ANIMATED);
+  DrawImage partial_image =
+      CreateImage(ImageType::CHECKERABLE, PaintImage::AnimationType::STATIC,
+                  PaintImage::CompletionState::PARTIALLY_DONE);
+  DrawImage video_image =
+      CreateImage(ImageType::CHECKERABLE, PaintImage::AnimationType::VIDEO);
+  std::vector<DrawImage> draw_images = {static_image, animated_image,
+                                        partial_image, video_image};
+
+  CheckerImageTracker::ImageDecodeQueue image_decode_queue =
+      BuildImageDecodeQueue(draw_images, WhichTree::PENDING_TREE);
+  EXPECT_EQ(image_decode_queue.size(), 1U);
+  EXPECT_EQ(image_decode_queue[0].paint_image, static_image.paint_image());
+
+  // Change the partial image to complete and try again. It should sstill not
+  // be checkered.
+  gfx::Size image_size = gfx::Size(partial_image.paint_image().width(),
+                                   partial_image.paint_image().height());
+  DrawImage completed_paint_image = DrawImage(
+      PaintImageBuilder::WithDefault()
+          .set_id(partial_image.paint_image().stable_id())
+          .set_paint_image_generator(CreatePaintImageGenerator(image_size))
+          .TakePaintImage(),
+      SkIRect::MakeWH(image_size.width(), image_size.height()),
+      kNone_SkFilterQuality, SkMatrix::I(), PaintImage::kDefaultFrameIndex,
+      gfx::ColorSpace());
+  EXPECT_FALSE(
+      ShouldCheckerImage(completed_paint_image, WhichTree::PENDING_TREE));
+}
+
+TEST_F(CheckerImageTrackerTest, DontCheckerDisallowedImages) {
+  SetUpTracker(true);
+
+  DrawImage image = CreateImage(ImageType::CHECKERABLE);
+  EXPECT_TRUE(ShouldCheckerImage(image, WhichTree::PENDING_TREE));
+  checker_image_tracker_->DisallowCheckeringForImage(image.paint_image());
+  // Since the tracker already saw the image, even disallowing it would still
+  // ensure that we checker it until it's completed.
+  EXPECT_TRUE(ShouldCheckerImage(image, WhichTree::PENDING_TREE));
+
+  // Reset the tracker.
+  checker_image_tracker_->ClearTracker(true);
+  // If we haven't seen the image and disallow it first, then it's not
+  // checkerable anymore.
+  checker_image_tracker_->DisallowCheckeringForImage(image.paint_image());
+  EXPECT_FALSE(ShouldCheckerImage(image, WhichTree::PENDING_TREE));
+}
+
+TEST_F(CheckerImageTrackerTest, ChoosesMaxScaleAndQuality) {
+  SetUpTracker(true);
+
+  DrawImage image = CreateImage(ImageType::CHECKERABLE);
+  DrawImage scaled_image1(image, 0.5f, PaintImage::kDefaultFrameIndex,
+                          gfx::ColorSpace());
+  DrawImage scaled_image2 =
+      DrawImage(image.paint_image(), image.src_rect(), kHigh_SkFilterQuality,
+                SkMatrix::MakeScale(1.8f), PaintImage::kDefaultFrameIndex,
+                gfx::ColorSpace());
+
+  std::vector<DrawImage> draw_images = {scaled_image1, scaled_image2};
+  CheckerImageTracker::ImageDecodeQueue image_decode_queue =
+      BuildImageDecodeQueue(draw_images, WhichTree::PENDING_TREE);
+  checker_image_tracker_->ScheduleImageDecodeQueue(image_decode_queue);
+  EXPECT_EQ(image_controller_.decoded_images().size(), 1u);
+  EXPECT_EQ(image_controller_.decoded_images()[0].scale(),
+            SkSize::Make(1.8f, 1.8f));
+  EXPECT_EQ(image_controller_.decoded_images()[0].filter_quality(),
+            kHigh_SkFilterQuality);
+}
+
+TEST_F(CheckerImageTrackerTest, DontCheckerMultiPartImages) {
+  SetUpTracker(true);
+
+  DrawImage image = CreateImage(ImageType::CHECKERABLE);
+  EXPECT_FALSE(image.paint_image().is_multipart());
+  DrawImage multi_part_image =
+      CreateImage(ImageType::CHECKERABLE, PaintImage::AnimationType::STATIC,
+                  PaintImage::CompletionState::DONE, true);
+  EXPECT_TRUE(multi_part_image.paint_image().is_multipart());
+
+  EXPECT_TRUE(ShouldCheckerImage(image, WhichTree::PENDING_TREE));
+  EXPECT_FALSE(ShouldCheckerImage(multi_part_image, WhichTree::PENDING_TREE));
+}
+
+TEST_F(CheckerImageTrackerTest, RespectsDecodePriority) {
+  SetUpTracker(true);
+
+  DrawImage image1 = CreateImage(ImageType::CHECKERABLE);
+  DrawImage image2 = CreateImage(ImageType::CHECKERABLE);
+  DrawImage image3 = CreateImage(ImageType::CHECKERABLE);
+  DrawImage image4 = CreateImage(ImageType::CHECKERABLE);
+  CheckerImageTracker::ImageDecodeQueue image_decode_queue =
+      BuildImageDecodeQueue({image1, image2, image3, image4},
+                            WhichTree::PENDING_TREE);
+
+  // Mark the last 2 images as pre-decode.
+  EXPECT_EQ(image_decode_queue.size(), 4u);
+  image_decode_queue[2].type = CheckerImageTracker::DecodeType::kPreDecode;
+  image_decode_queue[3].type = CheckerImageTracker::DecodeType::kPreDecode;
+
+  // No decodes allowed. Nothing should be scheduled.
+  EXPECT_EQ(image_controller_.decoded_images().size(), 0u);
+  checker_image_tracker_->SetNoDecodesAllowed();
+  checker_image_tracker_->ScheduleImageDecodeQueue(image_decode_queue);
+  EXPECT_EQ(image_controller_.decoded_images().size(), 0u);
+
+  // Raster decodes allowed. Only those should be scheduled.
+  checker_image_tracker_->SetMaxDecodePriorityAllowed(
+      CheckerImageTracker::DecodeType::kRaster);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(image_controller_.decoded_images().size(), 2u);
+  EXPECT_EQ(image_controller_.decoded_images()[0], image1);
+  EXPECT_EQ(image_controller_.decoded_images()[1], image2);
+
+  // All decodes allowed. The complete queue should be flushed.
+  checker_image_tracker_->SetMaxDecodePriorityAllowed(
+      CheckerImageTracker::DecodeType::kPreDecode);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(image_controller_.decoded_images()[0], image1);
+  EXPECT_EQ(image_controller_.decoded_images()[1], image2);
+  EXPECT_EQ(image_controller_.decoded_images()[2], image3);
+  EXPECT_EQ(image_controller_.decoded_images()[3], image4);
+}
+
+TEST_F(CheckerImageTrackerTest, UseSrcRectForSize) {
+  SetUpTracker(true);
+
+  // Create an image with checkerable dimensions and subrect it. It should not
+  // be checkered.
+  DrawImage image = CreateImage(ImageType::CHECKERABLE);
+  image = DrawImage(image.paint_image(), SkIRect::MakeWH(200, 200),
+                    image.filter_quality(), SkMatrix::I(),
+                    PaintImage::kDefaultFrameIndex, image.target_color_space());
+  EXPECT_FALSE(ShouldCheckerImage(image, WhichTree::PENDING_TREE));
+}
+
+TEST_F(CheckerImageTrackerTest, DisableForSoftwareRaster) {
+  SetUpTracker(true);
+
+  // Should checker when not disabled.
+  checker_image_tracker_->set_force_disabled(false);
+  DrawImage image1 = CreateImage(ImageType::CHECKERABLE);
+  EXPECT_TRUE(ShouldCheckerImage(image1, WhichTree::PENDING_TREE));
+
+  // Toggle disable. If we were already checkering this image, we need to
+  // continue it.
+  checker_image_tracker_->set_force_disabled(true);
+  EXPECT_TRUE(ShouldCheckerImage(image1, WhichTree::PENDING_TREE));
+
+  // New image should not be checkered while disabled.
+  DrawImage image2 = CreateImage(ImageType::CHECKERABLE);
+  EXPECT_FALSE(ShouldCheckerImage(image2, WhichTree::PENDING_TREE));
+}
+
+TEST_F(CheckerImageTrackerTest, DecodingModeHints) {
+  SetUpTracker(true);
+
+  base::flat_map<PaintImage::Id, PaintImage::DecodingMode> hints = {
+      {1, PaintImage::DecodingMode::kUnspecified},
+      {2, PaintImage::DecodingMode::kSync},
+      {3, PaintImage::DecodingMode::kAsync}};
+  checker_image_tracker_->UpdateImageDecodingHints(hints);
+
+  EXPECT_EQ(PaintImage::DecodingMode::kUnspecified,
+            checker_image_tracker_->get_decoding_mode_hint_for_testing(1));
+  EXPECT_EQ(PaintImage::DecodingMode::kSync,
+            checker_image_tracker_->get_decoding_mode_hint_for_testing(2));
+  EXPECT_EQ(PaintImage::DecodingMode::kAsync,
+            checker_image_tracker_->get_decoding_mode_hint_for_testing(3));
+
+  hints = {{1, PaintImage::DecodingMode::kAsync},
+           {2, PaintImage::DecodingMode::kAsync},
+           {3, PaintImage::DecodingMode::kAsync}};
+  checker_image_tracker_->UpdateImageDecodingHints(hints);
+
+  // The more conservative state should persist.
+  EXPECT_EQ(PaintImage::DecodingMode::kUnspecified,
+            checker_image_tracker_->get_decoding_mode_hint_for_testing(1));
+  EXPECT_EQ(PaintImage::DecodingMode::kSync,
+            checker_image_tracker_->get_decoding_mode_hint_for_testing(2));
+  EXPECT_EQ(PaintImage::DecodingMode::kAsync,
+            checker_image_tracker_->get_decoding_mode_hint_for_testing(3));
+
+  hints = {{1, PaintImage::DecodingMode::kUnspecified},
+           {2, PaintImage::DecodingMode::kUnspecified},
+           {3, PaintImage::DecodingMode::kUnspecified}};
+  checker_image_tracker_->UpdateImageDecodingHints(hints);
+
+  EXPECT_EQ(PaintImage::DecodingMode::kUnspecified,
+            checker_image_tracker_->get_decoding_mode_hint_for_testing(1));
+  EXPECT_EQ(PaintImage::DecodingMode::kSync,
+            checker_image_tracker_->get_decoding_mode_hint_for_testing(2));
+  EXPECT_EQ(PaintImage::DecodingMode::kUnspecified,
+            checker_image_tracker_->get_decoding_mode_hint_for_testing(3));
+
+  hints = {{1, PaintImage::DecodingMode::kSync}};
+  checker_image_tracker_->UpdateImageDecodingHints(hints);
+
+  EXPECT_EQ(PaintImage::DecodingMode::kSync,
+            checker_image_tracker_->get_decoding_mode_hint_for_testing(1));
+  EXPECT_EQ(PaintImage::DecodingMode::kSync,
+            checker_image_tracker_->get_decoding_mode_hint_for_testing(2));
+  EXPECT_EQ(PaintImage::DecodingMode::kUnspecified,
+            checker_image_tracker_->get_decoding_mode_hint_for_testing(3));
+}
+
+TEST_F(CheckerImageTrackerTest, UsageHintsMakeImagesSync) {
+  SetUpTracker(true);
+
+  DrawImage image = CreateImage(ImageType::CHECKERABLE);
+  EXPECT_TRUE(ShouldCheckerImage(image, WhichTree::PENDING_TREE));
+
+  base::flat_map<PaintImage::Id, PaintImage::DecodingMode> hints = {
+      {image.paint_image().stable_id(), PaintImage::DecodingMode::kSync}};
+  checker_image_tracker_->UpdateImageDecodingHints(hints);
+
+  auto invalidated = checker_image_tracker_->TakeImagesToInvalidateOnSyncTree();
+  ASSERT_EQ(invalidated.size(), 1u);
+  EXPECT_EQ(*invalidated.begin(), image.paint_image().stable_id());
+
+  EXPECT_FALSE(ShouldCheckerImage(image, WhichTree::PENDING_TREE));
+  // We should still continue checkering on the active tree, since we want
+  // atomic updates from the pending tree.
+  EXPECT_TRUE(ShouldCheckerImage(image, WhichTree::ACTIVE_TREE));
 }
 
 }  // namespace

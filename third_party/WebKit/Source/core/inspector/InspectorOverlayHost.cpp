@@ -30,7 +30,8 @@
 
 namespace blink {
 
-InspectorOverlayHost::InspectorOverlayHost() : listener_(nullptr) {}
+InspectorOverlayHost::InspectorOverlayHost(Listener* listener)
+    : listener_(listener) {}
 
 void InspectorOverlayHost::resume() {
   if (listener_)
@@ -42,8 +43,13 @@ void InspectorOverlayHost::stepOver() {
     listener_->OverlaySteppedOver();
 }
 
-DEFINE_TRACE(InspectorOverlayHost) {
+void InspectorOverlayHost::ClearListener() {
+  listener_.Clear();
+}
+
+void InspectorOverlayHost::Trace(blink::Visitor* visitor) {
   visitor->Trace(listener_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

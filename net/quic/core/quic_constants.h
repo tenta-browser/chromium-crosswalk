@@ -180,6 +180,21 @@ const size_t kDiversificationNonceSize = 32;
 // This will likely have to be tuned.
 const QuicPacketNumber kMaxPacketGap = 5000;
 
+// The maximum number of random padding bytes to add.
+const QuicByteCount kMaxNumRandomPaddingBytes = 256;
+
+// The size of stream send buffer data slice size in bytes. A data slice is
+// piece of stream data stored in contiguous memory, and a stream frame can
+// contain data from multiple data slices.
+const QuicByteCount kQuicStreamSendBufferSliceSize = 4 * 1024;
+
+// For When using Random Initial Packet Numbers, they can start
+// anyplace in the range 1...((2^31)-1) or 0x7fffffff
+const QuicPacketNumber kMaxRandomInitialPacketNumber = 0x7fffffff;
+
+// Used to represent an invalid or no control frame id.
+const QuicControlFrameId kInvalidControlFrameId = 0;
+
 }  // namespace net
 
 #endif  // NET_QUIC_CORE_QUIC_CONSTANTS_H_

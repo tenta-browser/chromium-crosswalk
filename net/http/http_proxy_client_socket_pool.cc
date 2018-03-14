@@ -5,10 +5,16 @@
 #include "net/http/http_proxy_client_socket_pool.h"
 
 #include <algorithm>
+#include <map>
+#include <string>
 #include <utility>
 
 #include "base/compiler_specific.h"
-#include "base/time/time.h"
+#include "base/metrics/field_trial.h"
+#include "base/metrics/field_trial_params.h"
+#include "base/optional.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/values.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
@@ -17,53 +23,23 @@
 #include "net/http/http_proxy_client_socket_wrapper.h"
 #include "net/log/net_log_source_type.h"
 #include "net/log/net_log_with_source.h"
+#include "net/nqe/network_quality_provider.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/client_socket_handle.h"
 #include "net/socket/client_socket_pool_base.h"
 #include "net/socket/ssl_client_socket.h"
 #include "net/socket/ssl_client_socket_pool.h"
 #include "net/socket/transport_client_socket_pool.h"
-#include "net/spdy/spdy_proxy_client_socket.h"
-#include "net/spdy/spdy_session.h"
-#include "net/spdy/spdy_session_pool.h"
-#include "net/spdy/spdy_stream.h"
+#include "net/spdy/chromium/spdy_proxy_client_socket.h"
+#include "net/spdy/chromium/spdy_session.h"
+#include "net/spdy/chromium/spdy_session_pool.h"
+#include "net/spdy/chromium/spdy_stream.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "url/gurl.h"
 
 namespace net {
 
-HttpProxySocketParams::HttpProxySocketParams(
-    const scoped_refptr<TransportSocketParams>& transport_params,
-    const scoped_refptr<SSLSocketParams>& ssl_params,
-    const std::string& user_agent,
-    const HostPortPair& endpoint,
-    HttpAuthCache* http_auth_cache,
-    HttpAuthHandlerFactory* http_auth_handler_factory,
-    SpdySessionPool* spdy_session_pool,
-    bool tunnel,
-    ProxyDelegate* proxy_delegate)
-    : transport_params_(transport_params),
-      ssl_params_(ssl_params),
-      spdy_session_pool_(spdy_session_pool),
-      user_agent_(user_agent),
-      endpoint_(endpoint),
-      http_auth_cache_(tunnel ? http_auth_cache : NULL),
-      http_auth_handler_factory_(tunnel ? http_auth_handler_factory : NULL),
-      tunnel_(tunnel),
-      proxy_delegate_(proxy_delegate) {
-  DCHECK((transport_params.get() == NULL && ssl_params.get() != NULL) ||
-         (transport_params.get() != NULL && ssl_params.get() == NULL));
-}
-
-const HostResolver::RequestInfo& HttpProxySocketParams::destination() const {
-  if (transport_params_.get() == NULL) {
-    return ssl_params_->GetDirectConnectionParams()->destination();
-  } else {
-    return transport_params_->destination();
-  }
-}
-
-HttpProxySocketParams::~HttpProxySocketParams() {}
+namespace {
 
 // HttpProxyConnectJobs will time out after this many seconds.  Note this is on
 // top of the timeout for the transport socket.
@@ -74,6 +50,72 @@ static const int kHttpProxyConnectJobTimeoutInSeconds = 10;
 #else
 static const int kHttpProxyConnectJobTimeoutInSeconds = 30;
 #endif
+
+static const char kNetAdaptiveProxyConnectionTimeout[] =
+    "NetAdaptiveProxyConnectionTimeout";
+
+bool IsInNetAdaptiveProxyConnectionTimeoutFieldTrial() {
+  // Field trial is enabled if the group name starts with "Enabled".
+  return base::FieldTrialList::FindFullName(kNetAdaptiveProxyConnectionTimeout)
+             .find("Enabled") == 0;
+}
+
+// Return the value of the parameter |param_name| for the field trial
+// |kNetAdaptiveProxyConnectionTimeout|. If the value of the parameter is
+// unavailable, then |default_value| is available.
+int32_t GetInt32Param(const std::string& param_name, int32_t default_value) {
+  int32_t param;
+  if (!base::StringToInt(base::GetFieldTrialParamValue(
+                             kNetAdaptiveProxyConnectionTimeout, param_name),
+                         &param)) {
+    return default_value;
+  }
+  return param;
+}
+
+}  // namespace
+
+HttpProxySocketParams::HttpProxySocketParams(
+    const scoped_refptr<TransportSocketParams>& transport_params,
+    const scoped_refptr<SSLSocketParams>& ssl_params,
+    QuicTransportVersion quic_version,
+    const std::string& user_agent,
+    const HostPortPair& endpoint,
+    HttpAuthCache* http_auth_cache,
+    HttpAuthHandlerFactory* http_auth_handler_factory,
+    SpdySessionPool* spdy_session_pool,
+    QuicStreamFactory* quic_stream_factory,
+    bool tunnel,
+    ProxyDelegate* proxy_delegate)
+    : transport_params_(transport_params),
+      ssl_params_(ssl_params),
+      quic_version_(quic_version),
+      spdy_session_pool_(spdy_session_pool),
+      quic_stream_factory_(quic_stream_factory),
+      user_agent_(user_agent),
+      endpoint_(endpoint),
+      http_auth_cache_(tunnel ? http_auth_cache : NULL),
+      http_auth_handler_factory_(tunnel ? http_auth_handler_factory : NULL),
+      tunnel_(tunnel),
+      proxy_delegate_(proxy_delegate) {
+  // If doing a QUIC proxy, |quic_version| must not be QUIC_VERSION_UNSUPPORTED,
+  // and |ssl_params| must be valid while |transport_params| is null.
+  // Otherwise, |quic_version| must be QUIC_VERSION_UNSUPPORTED, and exactly
+  // one of |transport_params| or |ssl_params| must be set.
+  DCHECK(quic_version_ == QUIC_VERSION_UNSUPPORTED
+             ? (bool)transport_params != (bool)ssl_params
+             : !transport_params && ssl_params);
+}
+
+const HostResolver::RequestInfo& HttpProxySocketParams::destination() const {
+  if (transport_params_.get() == NULL) {
+    return ssl_params_->GetDirectConnectionParams()->destination();
+  } else {
+    return transport_params_->destination();
+  }
+}
+
+HttpProxySocketParams::~HttpProxySocketParams() = default;
 
 HttpProxyConnectJob::HttpProxyConnectJob(
     const std::string& group_name,
@@ -103,16 +145,18 @@ HttpProxyConnectJob::HttpProxyConnectJob(
           ssl_pool,
           params->transport_params(),
           params->ssl_params(),
+          params->quic_version(),
           params->user_agent(),
           params->endpoint(),
           params->http_auth_cache(),
           params->http_auth_handler_factory(),
           params->spdy_session_pool(),
+          params->quic_stream_factory(),
           params->tunnel(),
           params->proxy_delegate(),
           this->net_log())) {}
 
-HttpProxyConnectJob::~HttpProxyConnectJob() {}
+HttpProxyConnectJob::~HttpProxyConnectJob() = default;
 
 LoadState HttpProxyConnectJob::GetLoadState() const {
   return client_socket_->GetConnectLoadState();
@@ -149,28 +193,24 @@ int HttpProxyConnectJob::HandleConnectResult(int result) {
   return result;
 }
 
-HttpProxyClientSocketPool::
-HttpProxyConnectJobFactory::HttpProxyConnectJobFactory(
-    TransportClientSocketPool* transport_pool,
-    SSLClientSocketPool* ssl_pool,
-    NetLog* net_log)
+HttpProxyClientSocketPool::HttpProxyConnectJobFactory::
+    HttpProxyConnectJobFactory(TransportClientSocketPool* transport_pool,
+                               SSLClientSocketPool* ssl_pool,
+                               NetworkQualityProvider* network_quality_provider,
+                               NetLog* net_log)
     : transport_pool_(transport_pool),
       ssl_pool_(ssl_pool),
+      network_quality_provider_(network_quality_provider),
+      transport_rtt_multiplier_(GetInt32Param("transport_rtt_multiplier", 5)),
+      min_proxy_connection_timeout_(base::TimeDelta::FromSeconds(
+          GetInt32Param("min_proxy_connection_timeout_seconds", 8))),
+      max_proxy_connection_timeout_(base::TimeDelta::FromSeconds(
+          GetInt32Param("max_proxy_connection_timeout_seconds", 60))),
       net_log_(net_log) {
-  base::TimeDelta max_pool_timeout = base::TimeDelta();
-
-// TODO(kundaji): Proxy connect timeout should be independent of platform and be
-// based on proxy. Bug http://crbug.com/407446.
-#if (defined(OS_ANDROID) || defined(OS_IOS))
-#else
-  if (transport_pool_)
-    max_pool_timeout = transport_pool_->ConnectionTimeout();
-  if (ssl_pool_)
-    max_pool_timeout = std::max(max_pool_timeout,
-                                ssl_pool_->ConnectionTimeout());
-#endif
-  timeout_ = max_pool_timeout +
-    base::TimeDelta::FromSeconds(kHttpProxyConnectJobTimeoutInSeconds);
+  DCHECK_LT(0, transport_rtt_multiplier_);
+  DCHECK_LE(base::TimeDelta(), min_proxy_connection_timeout_);
+  DCHECK_LE(base::TimeDelta(), max_proxy_connection_timeout_);
+  DCHECK_LE(min_proxy_connection_timeout_, max_proxy_connection_timeout_);
 }
 
 std::unique_ptr<ConnectJob>
@@ -185,9 +225,39 @@ HttpProxyClientSocketPool::HttpProxyConnectJobFactory::NewConnectJob(
 }
 
 base::TimeDelta
-HttpProxyClientSocketPool::HttpProxyConnectJobFactory::ConnectionTimeout(
-    ) const {
-  return timeout_;
+HttpProxyClientSocketPool::HttpProxyConnectJobFactory::ConnectionTimeout()
+    const {
+  if (IsInNetAdaptiveProxyConnectionTimeoutFieldTrial() &&
+      network_quality_provider_) {
+    base::Optional<base::TimeDelta> transport_rtt_estimate =
+        network_quality_provider_->GetTransportRTT();
+    if (transport_rtt_estimate) {
+      base::TimeDelta timeout = base::TimeDelta::FromMilliseconds(
+          transport_rtt_multiplier_ *
+          transport_rtt_estimate.value().InMilliseconds());
+      // Ensure that connection timeout is between
+      // |min_proxy_connection_timeout_| and |max_proxy_connection_timeout_|.
+      if (timeout < min_proxy_connection_timeout_)
+        return min_proxy_connection_timeout_;
+      if (timeout > max_proxy_connection_timeout_)
+        return max_proxy_connection_timeout_;
+      return timeout;
+    }
+  }
+
+  // Return the default proxy connection timeout.
+  base::TimeDelta max_pool_timeout = base::TimeDelta();
+#if (!defined(OS_ANDROID) && !defined(OS_IOS))
+  if (transport_pool_)
+    max_pool_timeout = transport_pool_->ConnectionTimeout();
+  if (ssl_pool_) {
+    max_pool_timeout =
+        std::max(max_pool_timeout, ssl_pool_->ConnectionTimeout());
+  }
+#endif  // !defined(OS_ANDROID) && !defined(OS_IOS)
+
+  return max_pool_timeout +
+         base::TimeDelta::FromSeconds(kHttpProxyConnectJobTimeoutInSeconds);
 }
 
 HttpProxyClientSocketPool::HttpProxyClientSocketPool(
@@ -195,6 +265,7 @@ HttpProxyClientSocketPool::HttpProxyClientSocketPool(
     int max_sockets_per_group,
     TransportClientSocketPool* transport_pool,
     SSLClientSocketPool* ssl_pool,
+    NetworkQualityProvider* network_quality_provider,
     NetLog* net_log)
     : transport_pool_(transport_pool),
       ssl_pool_(ssl_pool),
@@ -203,7 +274,10 @@ HttpProxyClientSocketPool::HttpProxyClientSocketPool(
             max_sockets_per_group,
             ClientSocketPool::unused_idle_socket_timeout(),
             ClientSocketPool::used_idle_socket_timeout(),
-            new HttpProxyConnectJobFactory(transport_pool, ssl_pool, net_log)) {
+            new HttpProxyConnectJobFactory(transport_pool,
+                                           ssl_pool,
+                                           network_quality_provider,
+                                           net_log)) {
   // We should always have a |transport_pool_| except in unit tests.
   if (transport_pool_)
     base_.AddLowerLayeredPool(transport_pool_);
@@ -211,8 +285,7 @@ HttpProxyClientSocketPool::HttpProxyClientSocketPool(
     base_.AddLowerLayeredPool(ssl_pool_);
 }
 
-HttpProxyClientSocketPool::~HttpProxyClientSocketPool() {
-}
+HttpProxyClientSocketPool::~HttpProxyClientSocketPool() = default;
 
 int HttpProxyClientSocketPool::RequestSocket(const std::string& group_name,
                                              const void* socket_params,
@@ -232,11 +305,13 @@ void HttpProxyClientSocketPool::RequestSockets(
     const std::string& group_name,
     const void* params,
     int num_sockets,
-    const NetLogWithSource& net_log) {
+    const NetLogWithSource& net_log,
+    HttpRequestInfo::RequestMotivation motivation) {
   const scoped_refptr<HttpProxySocketParams>* casted_params =
       static_cast<const scoped_refptr<HttpProxySocketParams>*>(params);
 
-  base_.RequestSockets(group_name, *casted_params, num_sockets, net_log);
+  base_.RequestSockets(group_name, *casted_params, num_sockets, net_log,
+                       motivation);
 }
 
 void HttpProxyClientSocketPool::CancelRequest(
@@ -291,7 +366,7 @@ HttpProxyClientSocketPool::GetInfoAsValue(const std::string& name,
                                           bool include_nested_pools) const {
   std::unique_ptr<base::DictionaryValue> dict(base_.GetInfoAsValue(name, type));
   if (include_nested_pools) {
-    base::ListValue* list = new base::ListValue();
+    auto list = std::make_unique<base::ListValue>();
     if (transport_pool_) {
       list->Append(transport_pool_->GetInfoAsValue("transport_socket_pool",
                                                    "transport_socket_pool",
@@ -302,7 +377,7 @@ HttpProxyClientSocketPool::GetInfoAsValue(const std::string& name,
                                              "ssl_socket_pool",
                                              true));
     }
-    dict->Set("nested_pools", list);
+    dict->Set("nested_pools", std::move(list));
   }
   return dict;
 }

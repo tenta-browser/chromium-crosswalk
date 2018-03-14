@@ -24,11 +24,10 @@
 #include "core/layout/svg/LayoutSVGInlineText.h"
 
 #include "core/css/CSSFontSelector.h"
-#include "core/css/FontSize.h"
-#include "core/dom/StyleEngine.h"
+#include "core/css/FontSizeFunctions.h"
+#include "core/css/StyleEngine.h"
 #include "core/editing/TextAffinity.h"
-#include "core/editing/VisiblePosition.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/layout/svg/LayoutSVGText.h"
 #include "core/layout/svg/SVGLayoutSupport.h"
 #include "core/layout/svg/line/SVGInlineTextBox.h"
@@ -44,20 +43,21 @@ namespace blink {
 // Turn tabs, newlines and carriage returns into spaces. In the future this
 // should be removed in favor of letting the generic white-space code handle
 // this.
-static PassRefPtr<StringImpl> NormalizeWhitespace(
-    PassRefPtr<StringImpl> string) {
-  RefPtr<StringImpl> new_string = string->Replace('\t', ' ');
+static scoped_refptr<StringImpl> NormalizeWhitespace(
+    scoped_refptr<StringImpl> string) {
+  scoped_refptr<StringImpl> new_string = string->Replace('\t', ' ');
   new_string = new_string->Replace('\n', ' ');
   new_string = new_string->Replace('\r', ' ');
-  return new_string.Release();
+  return new_string;
 }
 
-LayoutSVGInlineText::LayoutSVGInlineText(Node* n, PassRefPtr<StringImpl> string)
+LayoutSVGInlineText::LayoutSVGInlineText(Node* n,
+                                         scoped_refptr<StringImpl> string)
     : LayoutText(n, NormalizeWhitespace(std::move(string))),
       scaling_factor_(1) {}
 
-void LayoutSVGInlineText::SetTextInternal(PassRefPtr<StringImpl> text) {
-  LayoutText::SetTextInternal(std::move(text));
+void LayoutSVGInlineText::SetTextInternal(scoped_refptr<StringImpl> text) {
+  LayoutText::SetTextInternal(NormalizeWhitespace(std::move(text)));
   if (LayoutSVGText* text_layout_object =
           LayoutSVGText::LocateLayoutSVGTextAncestor(this))
     text_layout_object->SubtreeTextDidChange();
@@ -97,13 +97,13 @@ InlineTextBox* LayoutSVGInlineText::CreateTextBox(int start,
   return box;
 }
 
-LayoutRect LayoutSVGInlineText::LocalCaretRect(InlineBox* box,
+LayoutRect LayoutSVGInlineText::LocalCaretRect(const InlineBox* box,
                                                int caret_offset,
-                                               LayoutUnit*) {
+                                               LayoutUnit*) const {
   if (!box || !box->IsInlineTextBox())
     return LayoutRect();
 
-  InlineTextBox* text_box = ToInlineTextBox(box);
+  const InlineTextBox* text_box = ToInlineTextBox(box);
   if (static_cast<unsigned>(caret_offset) < text_box->Start() ||
       static_cast<unsigned>(caret_offset) > text_box->Start() + text_box->Len())
     return LayoutRect();
@@ -125,7 +125,7 @@ LayoutRect LayoutSVGInlineText::LocalCaretRect(InlineBox* box,
 
 FloatRect LayoutSVGInlineText::FloatLinesBoundingBox() const {
   FloatRect bounding_box;
-  for (InlineTextBox* box = FirstTextBox(); box; box = box->NextTextBox())
+  for (InlineTextBox* box : InlineTextBoxesOf(*this))
     bounding_box.Unite(FloatRect(box->FrameRect()));
   return bounding_box;
 }
@@ -144,7 +144,7 @@ bool LayoutSVGInlineText::CharacterStartsNewTextChunk(int position) const {
     return true;
 
   const SVGCharacterDataMap::const_iterator it =
-      character_data_map_.Find(static_cast<unsigned>(position + 1));
+      character_data_map_.find(static_cast<unsigned>(position + 1));
   if (it == character_data_map_.end())
     return false;
 
@@ -164,7 +164,7 @@ PositionWithAffinity LayoutSVGInlineText::PositionForPoint(
       font_data ? font_data->GetFontMetrics().FloatAscent() / scaling_factor_
                 : 0;
 
-  LayoutBlock* containing_block = this->ContainingBlock();
+  LayoutBlock* containing_block = ContainingBlock();
   DCHECK(containing_block);
 
   // Map local point to absolute point, as the character origins stored in the
@@ -177,7 +177,7 @@ PositionWithAffinity LayoutSVGInlineText::PositionForPoint(
   const SVGTextFragment* closest_distance_fragment = nullptr;
   SVGInlineTextBox* closest_distance_box = nullptr;
 
-  for (InlineTextBox* box = FirstTextBox(); box; box = box->NextTextBox()) {
+  for (InlineTextBox* box : InlineTextBoxesOf(*this)) {
     if (!box->IsSVGInlineTextBox())
       continue;
 
@@ -204,9 +204,10 @@ PositionWithAffinity LayoutSVGInlineText::PositionForPoint(
   int offset = closest_distance_box->OffsetForPositionInFragment(
       *closest_distance_fragment,
       LayoutUnit(absolute_point.X() - closest_distance_position), true);
-  return CreatePositionWithAffinity(
-      offset + closest_distance_box->Start(),
-      offset > 0 ? VP_UPSTREAM_IF_POSSIBLE : TextAffinity::kDownstream);
+  return CreatePositionWithAffinity(offset + closest_distance_box->Start(),
+                                    offset > 0
+                                        ? TextAffinity::kUpstreamIfPossible
+                                        : TextAffinity::kDownstream);
 }
 
 namespace {
@@ -333,7 +334,7 @@ void LayoutSVGInlineText::AddMetricsFromRun(
 
 void LayoutSVGInlineText::UpdateMetricsList(
     bool& last_character_was_white_space) {
-  metrics_.Clear();
+  metrics_.clear();
 
   if (!TextLength())
     return;
@@ -399,7 +400,7 @@ void LayoutSVGInlineText::ComputeNewScaledFontForStyle(
     scaling_factor = 1;
 
   Document& document = layout_object.GetDocument();
-  float scaled_font_size = FontSize::GetComputedSizeFromSpecifiedSize(
+  float scaled_font_size = FontSizeFunctions::GetComputedSizeFromSpecifiedSize(
       &document, scaling_factor, unscaled_font_description.IsAbsoluteSize(),
       unscaled_font_description.SpecifiedSize(), kDoNotApplyMinimumForFontSize);
   if (scaled_font_size == unscaled_font_description.ComputedSize()) {
@@ -411,7 +412,7 @@ void LayoutSVGInlineText::ComputeNewScaledFontForStyle(
   font_description.SetComputedSize(scaled_font_size);
 
   scaled_font = Font(font_description);
-  scaled_font.Update(document.GetStyleEngine().FontSelector());
+  scaled_font.Update(document.GetStyleEngine().GetFontSelector());
 }
 
 LayoutRect LayoutSVGInlineText::AbsoluteVisualRect() const {
@@ -420,13 +421,6 @@ LayoutRect LayoutSVGInlineText::AbsoluteVisualRect() const {
 
 FloatRect LayoutSVGInlineText::VisualRectInLocalSVGCoordinates() const {
   return Parent()->VisualRectInLocalSVGCoordinates();
-}
-
-PassRefPtr<StringImpl> LayoutSVGInlineText::OriginalText() const {
-  RefPtr<StringImpl> result = LayoutText::OriginalText();
-  if (!result)
-    return nullptr;
-  return NormalizeWhitespace(result);
 }
 
 }  // namespace blink

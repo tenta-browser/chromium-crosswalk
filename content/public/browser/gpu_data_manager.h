@@ -16,6 +16,7 @@ class GURL;
 
 namespace gpu {
 struct GPUInfo;
+struct VideoMemoryUsageStats;
 }
 
 namespace content {
@@ -34,6 +35,7 @@ class GpuDataManager {
   virtual bool IsFeatureBlacklisted(int feature) const = 0;
   virtual bool IsFeatureEnabled(int feature) const = 0;
   virtual bool IsWebGLEnabled() const = 0;
+  virtual bool IsWebGL2Enabled() const = 0;
 
   virtual gpu::GPUInfo GetGPUInfo() const = 0;
 
@@ -58,9 +60,10 @@ class GpuDataManager {
   // On other platforms, it's the same as IsEsentialGpuInfoAvailable().
   virtual bool IsCompleteGpuInfoAvailable() const = 0;
 
-  // Requests that the GPU process report its current video memory usage stats,
-  // which can be retrieved via the GPU data manager's on-update function.
-  virtual void RequestVideoMemoryUsageStatsUpdate() const = 0;
+  // Requests that the GPU process report its current video memory usage stats.
+  virtual void RequestVideoMemoryUsageStatsUpdate(
+      const base::Callback<void(const gpu::VideoMemoryUsageStats& stats)>&
+          callback) const = 0;
 
   // Returns true if SwiftShader should be used.
   virtual bool ShouldUseSwiftShader() const = 0;
@@ -89,9 +92,6 @@ class GpuDataManager {
 
   // Whether a GPU is in use (as opposed to a software renderer).
   virtual bool HardwareAccelerationEnabled() const = 0;
-
-  // Whether the browser compositor can be used.
-  virtual bool CanUseGpuBrowserCompositor() const = 0;
 
   // Extensions that are currently disabled.
   virtual void GetDisabledExtensions(

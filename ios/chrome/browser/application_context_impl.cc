@@ -13,10 +13,9 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/path_service.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/time/default_clock.h"
 #include "base/time/default_tick_clock.h"
-#include "base/tracked_objects.h"
 #include "components/component_updater/component_updater_service.h"
 #include "components/gcm_driver/gcm_client_factory.h"
 #include "components/gcm_driver/gcm_desktop_utils.h"
@@ -42,7 +41,6 @@
 #include "ios/chrome/browser/history/history_service_factory.h"
 #include "ios/chrome/browser/ios_chrome_io_thread.h"
 #include "ios/chrome/browser/metrics/ios_chrome_metrics_services_manager_client.h"
-#include "ios/chrome/browser/net/crl_set_fetcher.h"
 #include "ios/chrome/browser/physical_web/create_physical_web_data_source.h"
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/prefs/browser_prefs.h"
@@ -55,20 +53,18 @@
 #include "net/log/net_log_capture_mode.h"
 #include "net/socket/client_socket_pool_manager.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "services/metrics/public/cpp/ukm_recorder.h"
 
 ApplicationContextImpl::ApplicationContextImpl(
     base::SequencedTaskRunner* local_state_task_runner,
     const base::CommandLine& command_line,
     const std::string& locale)
     : local_state_task_runner_(local_state_task_runner),
-      was_last_shutdown_clean_(false),
-      created_local_state_(false) {
+      was_last_shutdown_clean_(false) {
   DCHECK(!GetApplicationContext());
   SetApplicationContext(this);
 
-  net_log_.reset(new net_log::ChromeNetLog(
-      base::FilePath(), net::NetLogCaptureMode::Default(),
-      command_line.GetCommandLineString(), GetChannelString()));
+  net_log_.reset(new net_log::ChromeNetLog());
 
   SetApplicationLocale(locale);
 
@@ -78,7 +74,6 @@ ApplicationContextImpl::ApplicationContextImpl(
 
 ApplicationContextImpl::~ApplicationContextImpl() {
   DCHECK_EQ(this, GetApplicationContext());
-  tracked_objects::ThreadData::EnsureCleanupWasCalled(4);
   SetApplicationContext(nullptr);
 }
 
@@ -141,7 +136,7 @@ void ApplicationContextImpl::OnAppEnterForeground() {
   variations::VariationsService* variations_service = GetVariationsService();
   if (variations_service)
     variations_service->OnAppEnterForeground();
-  ukm::UkmService* ukm_service = GetUkmService();
+  ukm::UkmService* ukm_service = GetMetricsServicesManager()->GetUkmService();
   if (ukm_service)
     ukm_service->OnAppEnterForeground();
 }
@@ -170,7 +165,7 @@ void ApplicationContextImpl::OnAppEnterBackground() {
   metrics::MetricsService* metrics_service = GetMetricsService();
   if (metrics_service && local_state)
     metrics_service->OnAppEnterBackground();
-  ukm::UkmService* ukm_service = GetUkmService();
+  ukm::UkmService* ukm_service = GetMetricsServicesManager()->GetUkmService();
   if (ukm_service)
     ukm_service->OnAppEnterBackground();
 
@@ -187,7 +182,7 @@ bool ApplicationContextImpl::WasLastShutdownClean() {
 
 PrefService* ApplicationContextImpl::GetLocalState() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (!created_local_state_)
+  if (!local_state_)
     CreateLocalState();
   return local_state_.get();
 }
@@ -229,7 +224,7 @@ metrics::MetricsService* ApplicationContextImpl::GetMetricsService() {
   return GetMetricsServicesManager()->GetMetricsService();
 }
 
-ukm::UkmService* ApplicationContextImpl::GetUkmService() {
+ukm::UkmRecorder* ApplicationContextImpl::GetUkmRecorder() {
   DCHECK(thread_checker_.CalledOnValidThread());
   return GetMetricsServicesManager()->GetUkmService();
 }
@@ -289,14 +284,6 @@ ApplicationContextImpl::GetComponentUpdateService() {
   return component_updater_.get();
 }
 
-CRLSetFetcher* ApplicationContextImpl::GetCRLSetFetcher() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  if (!crl_set_fetcher_) {
-    crl_set_fetcher_ = new CRLSetFetcher;
-  }
-  return crl_set_fetcher_.get();
-}
-
 physical_web::PhysicalWebDataSource*
 ApplicationContextImpl::GetPhysicalWebDataSource() {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -317,8 +304,7 @@ void ApplicationContextImpl::SetApplicationLocale(const std::string& locale) {
 
 void ApplicationContextImpl::CreateLocalState() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK(!created_local_state_ && !local_state_);
-  created_local_state_ = true;
+  DCHECK(!local_state_);
 
   base::FilePath local_state_path;
   CHECK(PathService::Get(ios::FILE_LOCAL_STATE, &local_state_path));
@@ -329,6 +315,7 @@ void ApplicationContextImpl::CreateLocalState() {
 
   local_state_ = ::CreateLocalState(
       local_state_path, local_state_task_runner_.get(), pref_registry);
+  DCHECK(local_state_);
 
   net::ClientSocketPoolManager::set_max_sockets_per_proxy_server(
       net::HttpNetworkSession::NORMAL_SOCKET_POOL,
@@ -350,11 +337,10 @@ void ApplicationContextImpl::CreateGCMDriver() {
   base::FilePath store_path;
   CHECK(PathService::Get(ios::DIR_GLOBAL_GCM_STORE, &store_path));
 
-  base::SequencedWorkerPool* worker_pool = web::WebThread::GetBlockingPool();
   scoped_refptr<base::SequencedTaskRunner> blocking_task_runner(
-      worker_pool->GetSequencedTaskRunnerWithShutdownBehavior(
-          worker_pool->GetSequenceToken(),
-          base::SequencedWorkerPool::SKIP_ON_SHUTDOWN));
+      base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+           base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}));
 
   gcm_driver_ = gcm::CreateGCMDriverDesktop(
       base::WrapUnique(new gcm::GCMClientFactory), GetLocalState(), store_path,

@@ -1,15 +1,13 @@
-{% from "macros.tmpl" import license %}
+{% from "templates/macros.tmpl" import license, source_files_for_generated_file %}
 {{ license() }}
+
+{{source_files_for_generated_file(template_file, input_files)}}
 
 #ifndef {{namespace}}{{suffix}}Names_h
 #define {{namespace}}{{suffix}}Names_h
 
 {% set symbol_export = '%s ' % export if export else '' %}
-{% if suffix %}
-#include "core/{{namespace}}Names.h"
-{% else %}
-#include "wtf/text/AtomicString.h"
-{% endif %}
+#include "platform/wtf/text/AtomicString.h"
 {% if export == 'CORE_EXPORT' %}
 #include "core/CoreExport.h"
 {% elif export == 'MODULES_EXPORT' %}
@@ -17,11 +15,6 @@
 {% else %}
 #include "platform/PlatformExport.h"
 {% endif %}
-
-// Generated from:
-{% for entry in in_files|sort %}
-// - {{entry}}
-{% endfor %}
 
 namespace blink {
 namespace {{namespace}}Names {

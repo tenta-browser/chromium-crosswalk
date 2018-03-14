@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "components/cryptauth/proto/cryptauth_api.pb.h"
+
 namespace cryptauth {
 
 struct RemoteDevice {
@@ -17,7 +19,14 @@ struct RemoteDevice {
   std::string public_key;
   std::string bluetooth_address;
   std::string persistent_symmetric_key;
-  std::string sign_in_challenge;
+  bool unlock_key;
+  bool supports_mobile_hotspot;
+  int64_t last_update_time_millis;
+
+  // Note: To save space, the BeaconSeeds may not necessarily be included in
+  // this object.
+  bool are_beacon_seeds_loaded = false;
+  std::vector<BeaconSeed> beacon_seeds;
 
   RemoteDevice();
   RemoteDevice(const std::string& user_id,
@@ -25,9 +34,14 @@ struct RemoteDevice {
                const std::string& public_key,
                const std::string& bluetooth_address,
                const std::string& persistent_symmetric_key,
-               std::string sign_in_challenge);
+               bool unlock_key,
+               bool supports_mobile_hotspot,
+               int64_t last_update_time_millis);
   RemoteDevice(const RemoteDevice& other);
   ~RemoteDevice();
+
+  // Loads a vector of BeaconSeeds for the RemoteDevice.
+  void LoadBeaconSeeds(const std::vector<BeaconSeed>& beacon_seeds);
 
   // Returns a unique ID for the device.
   std::string GetDeviceId() const;

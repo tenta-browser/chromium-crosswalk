@@ -33,6 +33,8 @@
 
 #include "platform/PlatformExport.h"
 #include "platform/json/JSONValues.h"
+#include "platform/network/ParsedContentType.h"
+#include "platform/network/ServerTimingHeader.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/HashSet.h"
@@ -44,15 +46,9 @@
 
 namespace blink {
 
+class HTTPHeaderMap;
 class Suborigin;
 class ResourceResponse;
-
-typedef enum {
-  kContentDispositionNone,
-  kContentDispositionInline,
-  kContentDispositionAttachment,
-  kContentDispositionOther
-} ContentDispositionType;
 
 enum ContentTypeOptionsDisposition {
   kContentTypeOptionsNone,
@@ -88,9 +84,10 @@ struct CacheControlHeader {
         max_age(0.0) {}
 };
 
-PLATFORM_EXPORT ContentDispositionType GetContentDispositionType(const String&);
+using ServerTimingHeaderVector = Vector<std::unique_ptr<ServerTimingHeader>>;
+
+PLATFORM_EXPORT bool IsContentDispositionAttachment(const String&);
 PLATFORM_EXPORT bool IsValidHTTPHeaderValue(const String&);
-PLATFORM_EXPORT bool IsValidHTTPFieldContentRFC7230(const String&);
 // Checks whether the given string conforms to the |token| ABNF production
 // defined in the RFC 7230 or not.
 //
@@ -116,11 +113,7 @@ PLATFORM_EXPORT double ParseDate(const String&);
 // - OWSes at the head and the tail of the region before the first semicolon
 //   are trimmed.
 PLATFORM_EXPORT AtomicString ExtractMIMETypeFromMediaType(const AtomicString&);
-PLATFORM_EXPORT String ExtractCharsetFromMediaType(const String&);
-PLATFORM_EXPORT void FindCharsetInMediaType(const String& media_type,
-                                            unsigned& charset_pos,
-                                            unsigned& charset_len,
-                                            unsigned start = 0);
+
 PLATFORM_EXPORT ReflectedXSSDisposition
 ParseXSSProtectionHeader(const String& header,
                          String& failure_reason,
@@ -144,16 +137,24 @@ ParseContentTypeOptionsHeader(const String& header);
 
 // Returns true and stores the position of the end of the headers to |*end|
 // if the headers part ends in |bytes[0..size]|. Returns false otherwise.
+PLATFORM_EXPORT bool ParseMultipartFormHeadersFromBody(
+    const char* bytes,
+    size_t,
+    HTTPHeaderMap* header_fields,
+    size_t* end);
+
+// Returns true and stores the position of the end of the headers to |*end|
+// if the headers part ends in |bytes[0..size]|. Returns false otherwise.
 PLATFORM_EXPORT bool ParseMultipartHeadersFromBody(const char* bytes,
                                                    size_t,
                                                    ResourceResponse*,
                                                    size_t* end);
 
-// Parses a header value containing JSON data, according to
+// Parses a header duration containing JSON data, according to
 // https://tools.ietf.org/html/draft-ietf-httpbis-jfv-01
 // Returns an empty unique_ptr if the header cannot be parsed as JSON. JSON
 // strings which represent object nested deeper than |maxParseDepth| will also
-// cause an empty return value.
+// cause an empty return duration.
 PLATFORM_EXPORT std::unique_ptr<JSONArray> ParseJSONHeader(const String& header,
                                                            int max_parse_depth);
 
@@ -168,6 +169,11 @@ PLATFORM_EXPORT bool ParseContentRangeHeaderFor206(const String& content_range,
                                                    int64_t* first_byte_position,
                                                    int64_t* last_byte_position,
                                                    int64_t* instance_length);
+
+PLATFORM_EXPORT std::unique_ptr<ServerTimingHeaderVector>
+ParseServerTimingHeader(const String&);
+
+using Mode = blink::ParsedContentType::Mode;
 
 }  // namespace blink
 

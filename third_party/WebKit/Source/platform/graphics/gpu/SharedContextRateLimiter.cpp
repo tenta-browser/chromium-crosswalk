@@ -21,8 +21,8 @@ std::unique_ptr<SharedContextRateLimiter> SharedContextRateLimiter::Create(
 
 SharedContextRateLimiter::SharedContextRateLimiter(unsigned max_pending_ticks)
     : max_pending_ticks_(max_pending_ticks), can_use_sync_queries_(false) {
-  context_provider_ = WTF::WrapUnique(
-      Platform::Current()->CreateSharedOffscreenGraphicsContext3DProvider());
+  context_provider_ =
+      Platform::Current()->CreateSharedOffscreenGraphicsContext3DProvider();
   if (!context_provider_)
     return;
 
@@ -46,9 +46,8 @@ void SharedContextRateLimiter::Tick() {
     return;
 
   queries_.push_back(0);
-  if (can_use_sync_queries_)
-    gl->GenQueriesEXT(1, &queries_.back());
   if (can_use_sync_queries_) {
+    gl->GenQueriesEXT(1, &queries_.back());
     gl->BeginQueryEXT(GL_COMMANDS_COMPLETED_CHROMIUM, queries_.back());
     gl->EndQueryEXT(GL_COMMANDS_COMPLETED_CHROMIUM);
   }
@@ -70,13 +69,14 @@ void SharedContextRateLimiter::Reset() {
     return;
 
   gpu::gles2::GLES2Interface* gl = context_provider_->ContextGL();
-  if (gl && gl->GetGraphicsResetStatusKHR() == GL_NO_ERROR) {
+  if (can_use_sync_queries_ && gl &&
+      gl->GetGraphicsResetStatusKHR() == GL_NO_ERROR) {
     while (queries_.size() > 0) {
       gl->DeleteQueriesEXT(1, &queries_.front());
       queries_.pop_front();
     }
   } else {
-    queries_.Clear();
+    queries_.clear();
   }
 }
 

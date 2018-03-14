@@ -4,10 +4,11 @@
 
 #include "modules/credentialmanager/CredentialManagerClient.h"
 
-#include "bindings/core/v8/ScriptState.h"
+#include <utility>
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/page/Page.h"
+#include "platform/bindings/ScriptState.h"
 
 namespace blink {
 
@@ -17,7 +18,8 @@ CredentialManagerClient::CredentialManagerClient(
 
 CredentialManagerClient::~CredentialManagerClient() {}
 
-DEFINE_TRACE(CredentialManagerClient) {
+void CredentialManagerClient::Trace(blink::Visitor* visitor) {
+  visitor->Trace(authentication_client_);
   Supplement<Page>::Trace(visitor);
 }
 
@@ -31,7 +33,7 @@ CredentialManagerClient* CredentialManagerClient::From(
     ExecutionContext* execution_context) {
   if (!execution_context->IsDocument() ||
       !ToDocument(execution_context)->GetPage())
-    return 0;
+    return nullptr;
   return From(ToDocument(execution_context)->GetPage());
 }
 
@@ -63,22 +65,29 @@ void CredentialManagerClient::DispatchStore(
   client_->DispatchStore(credential, callbacks);
 }
 
-void CredentialManagerClient::DispatchRequireUserMediation(
+void CredentialManagerClient::DispatchPreventSilentAccess(
     WebCredentialManagerClient::NotificationCallbacks* callbacks) {
   if (!client_)
     return;
-  client_->DispatchRequireUserMediation(callbacks);
+  client_->DispatchPreventSilentAccess(callbacks);
 }
 
 void CredentialManagerClient::DispatchGet(
-    bool zero_click_only,
+    WebCredentialMediationRequirement mediation,
     bool include_passwords,
     const WebVector<WebURL>& federations,
     WebCredentialManagerClient::RequestCallbacks* callbacks) {
   if (!client_)
     return;
-  client_->DispatchGet(zero_click_only, include_passwords, federations,
-                       callbacks);
+  client_->DispatchGet(mediation, include_passwords, federations, callbacks);
 }
 
+void CredentialManagerClient::DispatchMakeCredential(
+    LocalFrame& frame,
+    const MakePublicKeyCredentialOptions& options,
+    std::unique_ptr<WebAuthenticationClient::PublicKeyCallbacks> callbacks) {
+  if (!authentication_client_)
+    authentication_client_ = new WebAuthenticationClient(frame);
+  authentication_client_->DispatchMakeCredential(options, std::move(callbacks));
+}
 }  // namespace blink

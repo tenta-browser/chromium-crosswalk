@@ -18,14 +18,8 @@ SettingsEasyUnlockBrowserTest.prototype = {
 
   /** @override */
   extraLibraries: PolymerTest.getLibraries(ROOT_PATH).concat([
-    'test_browser_proxy.js',
+    '../test_browser_proxy.js',
   ]),
-
-  /** @override */
-  preLoad: function() {
-    SettingsPageBrowserTest.prototype.preLoad.call(this);
-    settingsHidePagesByDefaultForTest = true;
-  },
 };
 
 // Times out on debug builders and may time out on memory bots because
@@ -40,60 +34,56 @@ TEST_F('SettingsEasyUnlockBrowserTest', 'DISABLED_EasyUnlock', function() {
    * for allowing tests to know when a method was called, as well as
    * specifying mock responses.
    *
-   * @constructor
    * @implements {settings.EasyUnlockBrowserProxy}
-   * @extends {settings.TestBrowserProxy}
    */
-  var TestEasyUnlockBrowserProxy = function() {
-    settings.TestBrowserProxy.call(this, [
-      'getEnabledStatus',
-      'startTurnOnFlow',
-      'getTurnOffFlowStatus',
-      'startTurnOffFlow',
-      'cancelTurnOffFlow',
-    ]);
+  class TestEasyUnlockBrowserProxy extends TestBrowserProxy {
+    constructor() {
+      super([
+        'getEnabledStatus',
+        'startTurnOnFlow',
+        'getTurnOffFlowStatus',
+        'startTurnOffFlow',
+        'cancelTurnOffFlow',
+      ]);
 
-    /** @private {boolean} */
-    this.isEnabled_ = false;
-  };
-
-  TestEasyUnlockBrowserProxy.prototype = {
-    __proto__: settings.TestBrowserProxy.prototype,
+      /** @private {boolean} */
+      this.isEnabled_ = false;
+    }
 
     /**
      * @param {boolean} easyUnlockEnabled
      */
-    setEnabledStatus: function(easyUnlockEnabled) {
+    setEnabledStatus(easyUnlockEnabled) {
       this.isEnabled_ = easyUnlockEnabled;
-    },
+    }
 
     /** @override */
-    getEnabledStatus: function() {
+    getEnabledStatus() {
       this.methodCalled('getEnabledStatus');
       return Promise.resolve(this.isEnabled_);
-    },
+    }
 
     /** @override */
-    startTurnOnFlow: function() {
+    startTurnOnFlow() {
       this.methodCalled('startTurnOnFlow');
-    },
+    }
 
     /** @override */
-    getTurnOffFlowStatus: function() {
+    getTurnOffFlowStatus() {
       this.methodCalled('getTurnOffFlowStatus');
       return Promise.resolve('idle');
-    },
+    }
 
     /** @override */
-    startTurnOffFlow: function() {
+    startTurnOffFlow() {
       this.methodCalled('startTurnOffFlow');
-    },
+    }
 
     /** @override */
-    cancelTurnOffFlow: function() {
+    cancelTurnOffFlow() {
       this.methodCalled('cancelTurnOffFlow');
-    },
-  };
+    }
+  }
 
   /** @type {?SettingsLockScreenElement} */
   var lockScreen = null;
@@ -109,7 +99,6 @@ TEST_F('SettingsEasyUnlockBrowserTest', 'DISABLED_EasyUnlock', function() {
       // bots that do not have Bluetooth (don't actually support Easy Unlock).
       loadTimeData.overrideValues({
         easyUnlockAllowed: true,
-        easyUnlockProximityDetectionAllowed: false,
 
         easyUnlockSectionTitle: '',
         easyUnlockLearnMoreURL: '',
@@ -164,7 +153,7 @@ TEST_F('SettingsEasyUnlockBrowserTest', 'DISABLED_EasyUnlock', function() {
 
             var turnOffButton = lockScreen.$$('#easyUnlockTurnOff');
             assertTrue(!!turnOffButton);
-            expectFalse(turnOffButton.hidden)
+            expectFalse(turnOffButton.hidden);
 
             MockInteractions.tap(turnOffButton);
             return browserProxy.whenCalled('getTurnOffFlowStatus');
@@ -178,7 +167,7 @@ TEST_F('SettingsEasyUnlockBrowserTest', 'DISABLED_EasyUnlock', function() {
             // Verify that elements on the turn off dialog are hidden or active
             // according to the easy unlock turn off status.
             var turnOffDialogButtonContainer =
-                turnOffDialog.$$('.button-container');
+                turnOffDialog.$$('[slot=button-container]');
             var turnOffDialogButtonSpinner = turnOffDialog.$$('paper-spinner');
             var turnOffDialogConfirmButton = turnOffDialog.$$('#turnOff');
             var turnOffDialogCancelButton = turnOffDialog.$$('.cancel-button');

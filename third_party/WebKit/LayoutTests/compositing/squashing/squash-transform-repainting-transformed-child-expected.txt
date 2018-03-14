@@ -5,39 +5,35 @@ CASE 1, original layer tree
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
-    },
-    {
-      "name": "LayoutBlockFlow (positioned) DIV class='composited box behind'",
-      "position": [100, 100],
-      "bounds": [100, 100],
-      "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#0000FF"
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "Squashing Containment Layer",
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
-      "name": "LayoutBlockFlow (positioned) DIV class='box middle'",
-      "position": [20, 20],
+      "name": "LayoutBlockFlow (positioned) DIV class='composited box behind'",
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#00FF00",
-      "transform": [
-        [0.927183854566787, 0.374606593415912, 0, 0],
-        [-0.374606593415912, 0.927183854566787, 0, 0],
-        [0, 0, 1, 0],
-        [0, 0, 0, 1]
-      ]
+      "backgroundColor": "#0000FF",
+      "transform": 1
     },
     {
-      "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV class='box top')",
-      "position": [180, 180],
-      "bounds": [100, 100],
-      "drawsContent": true
+      "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV class='box middle')",
+      "position": [4, 4],
+      "bounds": [276, 276]
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [100, 100, 0, 1]
+      ],
+      "flattenInheritedTransform": false
     }
   ]
 }
@@ -48,46 +44,42 @@ CASE 2, hovering over the outer div
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
-    },
-    {
-      "name": "LayoutBlockFlow (positioned) DIV class='composited box behind'",
-      "position": [100, 100],
-      "bounds": [100, 100],
-      "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#0000FF"
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "Squashing Containment Layer",
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
-      "name": "LayoutBlockFlow (positioned) DIV class='box middle'",
-      "position": [20, 20],
+      "name": "LayoutBlockFlow (positioned) DIV class='composited box behind'",
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#008000",
-      "transform": [
-        [0.927183854566787, 0.374606593415912, 0, 0],
-        [-0.374606593415912, 0.927183854566787, 0, 0],
-        [0, 0, 1, 0],
-        [0, 0, 0, 1]
-      ],
+      "backgroundColor": "#0000FF",
+      "transform": 1
+    },
+    {
+      "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV class='box middle')",
+      "position": [4, 4],
+      "bounds": [276, 276],
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV class='box middle'",
-          "rect": [0, 0, 100, 100],
+          "rect": [0, 0, 132, 132],
           "reason": "style change"
         }
       ]
-    },
+    }
+  ],
+  "transforms": [
     {
-      "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV class='box top')",
-      "position": [180, 180],
-      "bounds": [100, 100],
-      "drawsContent": true
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [100, 100, 0, 1]
+      ],
+      "flattenInheritedTransform": false
     }
   ],
   "objectPaintInvalidations": [
@@ -104,46 +96,47 @@ CASE 3, hovering over the inner div
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
-    },
-    {
-      "name": "LayoutBlockFlow (positioned) DIV class='composited box behind'",
-      "position": [100, 100],
-      "bounds": [100, 100],
-      "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#0000FF"
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "Squashing Containment Layer",
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
-      "name": "LayoutBlockFlow (positioned) DIV class='box middle'",
-      "position": [20, 20],
+      "name": "LayoutBlockFlow (positioned) DIV class='composited box behind'",
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#008000",
-      "transform": [
-        [0.927183854566787, 0.374606593415912, 0, 0],
-        [-0.374606593415912, 0.927183854566787, 0, 0],
-        [0, 0, 1, 0],
-        [0, 0, 0, 1]
-      ],
+      "backgroundColor": "#0000FF",
+      "transform": 1
+    },
+    {
+      "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV class='box middle')",
+      "position": [4, 4],
+      "bounds": [276, 276],
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV class='box middle'",
-          "rect": [0, 0, 100, 100],
+          "rect": [0, 0, 132, 132],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutBlockFlow (positioned) DIV class='smallbox'",
+          "rect": [19, 21, 85, 86],
           "reason": "style change"
         }
       ]
-    },
+    }
+  ],
+  "transforms": [
     {
-      "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV class='box top')",
-      "position": [180, 180],
-      "bounds": [100, 100],
-      "drawsContent": true
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [100, 100, 0, 1]
+      ],
+      "flattenInheritedTransform": false
     }
   ],
   "objectPaintInvalidations": [

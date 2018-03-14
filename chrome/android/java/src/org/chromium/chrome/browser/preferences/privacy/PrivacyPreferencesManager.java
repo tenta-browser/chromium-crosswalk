@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.preferences.privacy;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
@@ -16,8 +17,10 @@ import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.device.DeviceClassManager;
 import org.chromium.chrome.browser.physicalweb.PhysicalWeb;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
+import org.chromium.chrome.browser.survey.SurveyController;
 import org.chromium.components.minidump_uploader.util.CrashReportingPermissionManager;
 import org.chromium.components.minidump_uploader.util.NetworkPermissionUtil;
+import org.chromium.ui.base.DeviceFormFactor;
 
 /**
  * Reads, writes, and migrates preferences related to network usage and privacy.
@@ -39,6 +42,7 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
     private static final int PHYSICAL_WEB_ON = 1;
     private static final int PHYSICAL_WEB_ONBOARDING = 2;
 
+    @SuppressLint("StaticFieldLeak")
     private static PrivacyPreferencesManager sInstance;
 
     private final Context mContext;
@@ -222,6 +226,9 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
     public void setUsageAndCrashReporting(boolean enabled) {
         mSharedPreferences.edit().putBoolean(PREF_METRICS_REPORTING, enabled).apply();
         syncUsageAndCrashReportingPrefs();
+        if (!enabled && !DeviceFormFactor.isTablet()) {
+            SurveyController.getInstance().clearCache(ContextUtils.getApplicationContext());
+        }
     }
 
     /**

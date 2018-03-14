@@ -8,10 +8,8 @@
 #import <UIKit/UIKit.h>
 
 #import "ios/chrome/browser/ui/authentication/chrome_signin_view_controller.h"
-#import "ios/chrome/browser/ui/promos/promo_view_controller.h"
 
-@class SigninPromoViewController;
-
+@protocol ApplicationCommands;
 namespace ios {
 class ChromeBrowserState;
 }
@@ -20,20 +18,34 @@ class ChromeBrowserState;
 // SSO Recall promo has been displayed.
 // Exposed for testing.
 extern NSString* kDisplayedSSORecallForMajorVersionKey;
+// Key in the UserDefaults to record the GAIA id list when the sign-in promo
+// was shown.
+// Exposed for testing.
+extern NSString* kLastShownAccountGaiaIdVersionKey;
+// Key in the UserDefaults to record the number of time the sign-in promo has
+// been shown.
+// Exposed for testing.
+extern NSString* kSigninPromoViewDisplayCountKey;
 
 // Class to display a promotion view to encourage the user to sign on, if
 // SSO detects that the user has signed in with another application.
 //
 // Note: On iPhone, this controller supports portrait orientation only. It
 // should always be presented in an |OrientationLimitingNavigationController|.
-@interface SigninPromoViewController
-    : ChromeSigninViewController<PromoViewController>
+@interface SigninPromoViewController : ChromeSigninViewController
+
+// YES if this promo should be shown for |browserState|
++ (BOOL)shouldBePresentedForBrowserState:(ios::ChromeBrowserState*)browserState;
 
 // Designated initializer.  |browserState| must not be nil.
-- (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState;
+- (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState
+                          dispatcher:(id<ApplicationCommands>)dispatcher;
 
-// Records in user defaults that the promo has been shown along with the current
-// version number.
+// Records in user defaults:
+//   + the Chromium current version.
+//   + increases the sign-in promo display count.
+//   + Gaia ids list.
+// Separated out into a discrete function to allow overriding when testing.
 + (void)recordVersionSeen;
 
 @end

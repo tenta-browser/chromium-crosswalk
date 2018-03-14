@@ -91,7 +91,7 @@ class AutoclickRingHandler::AutoclickRingView : public views::View {
     SetNewLocation(event_location);
   }
 
-  ~AutoclickRingView() override {}
+  ~AutoclickRingView() override = default;
 
   void SetNewLocation(const gfx::Point& new_event_location) {
     gfx::Point point = new_event_location;
@@ -129,7 +129,7 @@ class AutoclickRingHandler::AutoclickRingView : public views::View {
 
  private:
   // Overridden from views::View.
-  gfx::Size GetPreferredSize() const override {
+  gfx::Size CalculatePreferredSize() const override {
     return gfx::Size(2 * (kAutoclickRingOuterRadius + kAutoclickRingGlowWidth),
                      2 * (kAutoclickRingOuterRadius + kAutoclickRingGlowWidth));
   }
@@ -200,17 +200,16 @@ void AutoclickRingHandler::SetGestureCenter(
 
 // AutoclickRingHandler, private
 void AutoclickRingHandler::StartAnimation(base::TimeDelta delay) {
-  int delay_ms = static_cast<int>(delay.InMilliseconds());
   switch (current_animation_type_) {
     case AnimationType::GROW_ANIMATION: {
       view_.reset(new AutoclickRingView(tap_down_location_, ring_widget_));
-      SetDuration(delay_ms);
+      SetDuration(delay);
       Start();
       break;
     }
     case AnimationType::SHRINK_ANIMATION: {
       view_.reset(new AutoclickRingView(tap_down_location_, ring_widget_));
-      SetDuration(delay_ms);
+      SetDuration(delay);
       Start();
       break;
     }

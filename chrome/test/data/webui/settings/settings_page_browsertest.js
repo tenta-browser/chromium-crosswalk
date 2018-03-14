@@ -21,16 +21,13 @@ SettingsPageBrowserTest.prototype = {
   __proto__: PolymerTest.prototype,
 
   /** @override */
-  browsePreload: 'chrome://md-settings/',
+  browsePreload: 'chrome://settings/',
 
   /** @override */
   extraLibraries: PolymerTest.getLibraries(ROOT_PATH).concat([
     '../fake_chrome_event.js',
     'fake_settings_private.js',
   ]),
-
-  /** @override */
-  runAccessibilityChecks: false,
 
   /** @type {?SettingsBasicPageElement} */
   basicPage: null,

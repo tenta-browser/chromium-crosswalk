@@ -23,16 +23,4 @@ TEST(WTF_PtrUtilTest, canWrapUniqueArray) {
   ASSERT_TRUE(wrapped_char_array.get());
 }
 
-TEST(WTF_PtrUtilTest, canMakeUnique) {
-  auto char_ptr = MakeUnique<char>();
-
-  ASSERT_TRUE(char_ptr.get());
-}
-
-TEST(WTF_PtrUtilTest, canMakeUniqueArray) {
-  constexpr size_t kBufferSize = 20;
-  auto char_array = MakeUnique<char[]>(kBufferSize);
-
-  ASSERT_TRUE(char_array.get());
-}
-}
+}  // namespace WTF

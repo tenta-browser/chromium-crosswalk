@@ -4,6 +4,8 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "base/strings/utf_string_conversions.h"
@@ -15,6 +17,7 @@
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/blocked_content/popup_blocker_tab_helper.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
@@ -26,6 +29,7 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/infobars/core/infobar_delegate.h"
 #include "components/prefs/pref_service.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/elide_url.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/web_contents_tester.h"
@@ -38,11 +42,6 @@ class ContentSettingBubbleModelTest : public ChromeRenderViewHostTestHarness {
  protected:
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
-
-    // Although this is redundant with the Field Trial testing configuration,
-    // the
-    // official builders don't use those, so enable it here.
-    feature_list.InitAndEnableFeature(features::kPreferHtmlOverPlugins);
 
     TabSpecificContentSettings::CreateForWebContents(web_contents());
     InfoBarService::CreateForWebContents(web_contents());
@@ -167,6 +166,8 @@ TEST_F(ContentSettingBubbleModelTest, MediastreamMicAndCamera) {
   const ContentSettingBubbleModel::BubbleContent& bubble_content =
       content_setting_bubble_model->bubble_content();
   EXPECT_EQ(bubble_content.title,
+            l10n_util::GetStringUTF16(IDS_MICROPHONE_CAMERA_ALLOWED_TITLE));
+  EXPECT_EQ(bubble_content.message,
             l10n_util::GetStringUTF16(IDS_MICROPHONE_CAMERA_ALLOWED));
   EXPECT_EQ(2U, bubble_content.radio_group.radio_items.size());
   EXPECT_EQ(bubble_content.radio_group.radio_items[0],
@@ -396,8 +397,8 @@ TEST_F(ContentSettingBubbleModelTest, MediastreamContentBubbleMediaMenus) {
               bubble_content.media_menus.begin()->first);
     EXPECT_FALSE(bubble_content.media_menus.begin()->second.disabled);
     // The first audio device should be selected by default.
-    EXPECT_TRUE(fake_audio_device1.IsEqual(
-                bubble_content.media_menus.begin()->second.selected_device));
+    EXPECT_TRUE(fake_audio_device1.IsSameDevice(
+        bubble_content.media_menus.begin()->second.selected_device));
 
     // Select a different (the second) device.
     content_setting_bubble_model->OnMediaMenuClicked(
@@ -415,8 +416,8 @@ TEST_F(ContentSettingBubbleModelTest, MediastreamContentBubbleMediaMenus) {
               bubble_content.media_menus.begin()->first);
     EXPECT_FALSE(bubble_content.media_menus.begin()->second.disabled);
     // The second audio device should be selected.
-    EXPECT_TRUE(fake_audio_device2.IsEqual(
-                bubble_content.media_menus.begin()->second.selected_device));
+    EXPECT_TRUE(fake_audio_device2.IsSameDevice(
+        bubble_content.media_menus.begin()->second.selected_device));
     // The "settings changed" message should not be displayed when there is no
     // active capture.
     EXPECT_FALSE(bubble_content.custom_link_enabled);
@@ -452,8 +453,8 @@ TEST_F(ContentSettingBubbleModelTest, MediastreamContentBubbleMediaMenus) {
     EXPECT_EQ(content::MEDIA_DEVICE_AUDIO_CAPTURE,
               bubble_content.media_menus.begin()->first);
     EXPECT_FALSE(bubble_content.media_menus.begin()->second.disabled);
-    EXPECT_TRUE(fake_audio_device2.IsEqual(
-                bubble_content.media_menus.begin()->second.selected_device));
+    EXPECT_TRUE(fake_audio_device2.IsSameDevice(
+        bubble_content.media_menus.begin()->second.selected_device));
 
     // Select a different different device.
     content_setting_bubble_model->OnMediaMenuClicked(
@@ -499,8 +500,8 @@ TEST_F(ContentSettingBubbleModelTest, MediastreamContentBubbleMediaMenus) {
     EXPECT_EQ(content::MEDIA_DEVICE_AUDIO_CAPTURE,
               bubble_content.media_menus.begin()->first);
     EXPECT_FALSE(bubble_content.media_menus.begin()->second.disabled);
-    EXPECT_TRUE(fake_audio_device3.IsEqual(
-                bubble_content.media_menus.begin()->second.selected_device));
+    EXPECT_TRUE(fake_audio_device3.IsSameDevice(
+        bubble_content.media_menus.begin()->second.selected_device));
   }
 }
 
@@ -528,6 +529,8 @@ TEST_F(ContentSettingBubbleModelTest, MediastreamMic) {
   const ContentSettingBubbleModel::BubbleContent& bubble_content =
       content_setting_bubble_model->bubble_content();
   EXPECT_EQ(bubble_content.title,
+            l10n_util::GetStringUTF16(IDS_MICROPHONE_ACCESSED_TITLE));
+  EXPECT_EQ(bubble_content.message,
             l10n_util::GetStringUTF16(IDS_MICROPHONE_ACCESSED));
   EXPECT_EQ(2U, bubble_content.radio_group.radio_items.size());
   EXPECT_EQ(bubble_content.radio_group.radio_items[0],
@@ -558,6 +561,8 @@ TEST_F(ContentSettingBubbleModelTest, MediastreamMic) {
   const ContentSettingBubbleModel::BubbleContent& new_bubble_content =
       content_setting_bubble_model->bubble_content();
   EXPECT_EQ(new_bubble_content.title,
+            l10n_util::GetStringUTF16(IDS_MICROPHONE_BLOCKED_TITLE));
+  EXPECT_EQ(new_bubble_content.message,
             l10n_util::GetStringUTF16(IDS_MICROPHONE_BLOCKED));
   EXPECT_EQ(2U, new_bubble_content.radio_group.radio_items.size());
   EXPECT_EQ(new_bubble_content.radio_group.radio_items[0],
@@ -599,6 +604,8 @@ TEST_F(ContentSettingBubbleModelTest, MediastreamCamera) {
   const ContentSettingBubbleModel::BubbleContent& bubble_content =
       content_setting_bubble_model->bubble_content();
   EXPECT_EQ(bubble_content.title,
+            l10n_util::GetStringUTF16(IDS_CAMERA_ACCESSED_TITLE));
+  EXPECT_EQ(bubble_content.message,
             l10n_util::GetStringUTF16(IDS_CAMERA_ACCESSED));
   EXPECT_EQ(2U, bubble_content.radio_group.radio_items.size());
   EXPECT_EQ(bubble_content.radio_group.radio_items[0],
@@ -629,6 +636,8 @@ TEST_F(ContentSettingBubbleModelTest, MediastreamCamera) {
   const ContentSettingBubbleModel::BubbleContent& new_bubble_content =
       content_setting_bubble_model->bubble_content();
   EXPECT_EQ(new_bubble_content.title,
+            l10n_util::GetStringUTF16(IDS_CAMERA_BLOCKED_TITLE));
+  EXPECT_EQ(new_bubble_content.message,
             l10n_util::GetStringUTF16(IDS_CAMERA_BLOCKED));
   EXPECT_EQ(2U, new_bubble_content.radio_group.radio_items.size());
   EXPECT_EQ(new_bubble_content.radio_group.radio_items[0],
@@ -673,6 +682,8 @@ TEST_F(ContentSettingBubbleModelTest, AccumulateMediastreamMicAndCamera) {
   const ContentSettingBubbleModel::BubbleContent& bubble_content =
       content_setting_bubble_model->bubble_content();
   EXPECT_EQ(bubble_content.title,
+            l10n_util::GetStringUTF16(IDS_MICROPHONE_ACCESSED_TITLE));
+  EXPECT_EQ(bubble_content.message,
             l10n_util::GetStringUTF16(IDS_MICROPHONE_ACCESSED));
   EXPECT_EQ(2U, bubble_content.radio_group.radio_items.size());
   EXPECT_EQ(bubble_content.radio_group.radio_items[0],
@@ -701,6 +712,8 @@ TEST_F(ContentSettingBubbleModelTest, AccumulateMediastreamMicAndCamera) {
   const ContentSettingBubbleModel::BubbleContent& new_bubble_content =
       content_setting_bubble_model->bubble_content();
   EXPECT_EQ(new_bubble_content.title,
+            l10n_util::GetStringUTF16(IDS_MICROPHONE_CAMERA_ALLOWED_TITLE));
+  EXPECT_EQ(new_bubble_content.message,
             l10n_util::GetStringUTF16(IDS_MICROPHONE_CAMERA_ALLOWED));
   EXPECT_EQ(2U, new_bubble_content.radio_group.radio_items.size());
   EXPECT_EQ(new_bubble_content.radio_group.radio_items[0],
@@ -730,13 +743,12 @@ TEST_F(ContentSettingBubbleModelTest, Plugins) {
   const ContentSettingBubbleModel::BubbleContent& bubble_content =
       content_setting_bubble_model->bubble_content();
   EXPECT_FALSE(bubble_content.title.empty());
-  ASSERT_EQ(1U, bubble_content.list_items.size());
-  EXPECT_EQ(plugin_name, bubble_content.list_items[0].title);
+  ASSERT_EQ(0U, bubble_content.list_items.size());
   EXPECT_EQ(0U, bubble_content.radio_group.radio_items.size());
   EXPECT_FALSE(bubble_content.custom_link.empty());
   EXPECT_TRUE(bubble_content.custom_link_enabled);
   EXPECT_FALSE(bubble_content.manage_text.empty());
-  EXPECT_FALSE(bubble_content.learn_more_link.empty());
+  EXPECT_TRUE(bubble_content.show_learn_more);
 }
 
 TEST_F(ContentSettingBubbleModelTest, PepperBroker) {
@@ -859,14 +871,6 @@ class FakeDelegate : public ProtocolHandlerRegistry::Delegate {
     // side effects on other tests.
   }
 
-  scoped_refptr<shell_integration::DefaultProtocolClientWorker>
-  CreateShellWorker(
-      const shell_integration::DefaultWebClientWorkerCallback& callback,
-      const std::string& protocol) override {
-    VLOG(1) << "CreateShellWorker";
-    return NULL;
-  }
-
   void RegisterWithOSAsDefaultClient(
       const std::string& protocol,
       ProtocolHandlerRegistry* registry) override {
@@ -943,20 +947,44 @@ TEST_F(ContentSettingBubbleModelTest, SubresourceFilter) {
                                                      profile()));
   const ContentSettingBubbleModel::BubbleContent& bubble_content =
       content_setting_bubble_model->bubble_content();
-  EXPECT_EQ(
-      bubble_content.title,
-      l10n_util::GetStringUTF16(IDS_FILTERED_DECEPTIVE_CONTENT_PROMPT_TITLE));
+  EXPECT_TRUE(bubble_content.title.empty());
   EXPECT_EQ(bubble_content.message,
-            l10n_util::GetStringUTF16(
-                IDS_FILTERED_DECEPTIVE_CONTENT_PROMPT_EXPLANATION));
+            l10n_util::GetStringUTF16(IDS_BLOCKED_ADS_PROMPT_EXPLANATION));
   EXPECT_EQ(0U, bubble_content.radio_group.radio_items.size());
   EXPECT_EQ(0, bubble_content.radio_group.default_item);
+  EXPECT_TRUE(bubble_content.show_learn_more);
   EXPECT_TRUE(bubble_content.custom_link.empty());
   EXPECT_FALSE(bubble_content.custom_link_enabled);
-  EXPECT_EQ(
-      bubble_content.manage_text,
-      l10n_util::GetStringUTF16(IDS_FILTERED_DECEPTIVE_CONTENT_PROMPT_RELOAD));
+  EXPECT_EQ(bubble_content.manage_text,
+            l10n_util::GetStringUTF16(IDS_ALLOW_ADS));
   EXPECT_EQ(0U, bubble_content.media_menus.size());
+}
+
+TEST_F(ContentSettingBubbleModelTest, PopupBubbleModelListItems) {
+  const GURL url("https://www.example.test/");
+  WebContentsTester::For(web_contents())->NavigateAndCommit(url);
+  TabSpecificContentSettings* content_settings =
+      TabSpecificContentSettings::FromWebContents(web_contents());
+  content_settings->OnContentBlocked(CONTENT_SETTINGS_TYPE_POPUPS);
+
+  PopupBlockerTabHelper::CreateForWebContents(web_contents());
+  std::unique_ptr<ContentSettingBubbleModel> content_setting_bubble_model(
+      ContentSettingBubbleModel::CreateContentSettingBubbleModel(
+          nullptr, web_contents(), profile(), CONTENT_SETTINGS_TYPE_POPUPS));
+  const auto& list_items =
+      content_setting_bubble_model->bubble_content().list_items;
+  EXPECT_EQ(0U, list_items.size());
+
+  BlockedWindowParams params(GURL("about:blank"), content::Referrer(),
+                             std::string(), WindowOpenDisposition::NEW_POPUP,
+                             blink::mojom::WindowFeatures(), false, true);
+  constexpr size_t kItemCount = 3;
+  for (size_t i = 1; i <= kItemCount; i++) {
+    EXPECT_TRUE(PopupBlockerTabHelper::MaybeBlockPopup(
+        web_contents(), url, params.CreateNavigateParams(web_contents()),
+        nullptr /*=open_url_params*/, params.features()));
+    EXPECT_EQ(i, list_items.size());
+  }
 }
 
 TEST_F(ContentSettingBubbleModelTest, ValidUrl) {

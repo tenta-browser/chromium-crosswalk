@@ -27,8 +27,8 @@
 #ifndef ScriptRegexp_h
 #define ScriptRegexp_h
 
-#include "bindings/core/v8/ScopedPersistent.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScopedPersistent.h"
 #include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/text/WTFString.h"
 #include "v8/include/v8.h"
@@ -54,7 +54,9 @@ class CORE_EXPORT ScriptRegexp {
                MultilineMode = kMultilineDisabled,
                CharacterMode = BMP);
 
-  int Match(const String&, int start_from = 0, int* match_length = 0) const;
+  int Match(const String&,
+            int start_from = 0,
+            int* match_length = nullptr) const;
 
   bool IsValid() const { return !regex_.IsEmpty(); }
   // exceptionMessage is available only if !isValid().

@@ -23,13 +23,13 @@ class RSAPrivateKey;
 
 namespace net {
 
+struct ParseCertificateOptions;
 class X509Certificate;
 
 namespace x509_util {
 
 // Supported digest algorithms for signing certificates.
 enum DigestAlgorithm {
-  DIGEST_SHA1,
   DIGEST_SHA256
 };
 
@@ -65,8 +65,7 @@ NET_EXPORT bool CreateKeyAndSelfSignedCert(
     std::string* der_cert);
 
 // Creates a self-signed certificate from a provided key, using the specified
-// hash algorithm.  You should not re-use a key for signing data with multiple
-// signature algorithms or parameters.
+// hash algorithm.
 NET_EXPORT bool CreateSelfSignedCert(crypto::RSAPrivateKey* key,
                                      DigestAlgorithm alg,
                                      const std::string& subject,
@@ -86,28 +85,6 @@ NET_EXPORT bool ParseCertificateSandboxed(
     std::vector<std::string>* dns_names,
     std::vector<std::string>* ip_addresses);
 
-// Comparator for use in STL algorithms that will sort client certificates by
-// order of preference.
-// Returns true if |a| is more preferable than |b|, allowing it to be used
-// with any algorithm that compares according to strict weak ordering.
-//
-// Criteria include:
-// - Prefer certificates that have a longer validity period (later
-//   expiration dates)
-// - If equal, prefer certificates that were issued more recently
-// - If equal, prefer shorter chains (if available)
-class NET_EXPORT_PRIVATE ClientCertSorter {
- public:
-  ClientCertSorter();
-
-  bool operator()(
-      const scoped_refptr<X509Certificate>& a,
-      const scoped_refptr<X509Certificate>& b) const;
-
- private:
-  base::Time now_;
-};
-
 // Returns a CRYPTO_BUFFER_POOL for deduplicating certificates.
 NET_EXPORT CRYPTO_BUFFER_POOL* GetBufferPool();
 
@@ -124,6 +101,18 @@ NET_EXPORT bssl::UniquePtr<CRYPTO_BUFFER> CreateCryptoBuffer(
 // char* due to StringPiece implicit ctor.
 NET_EXPORT bssl::UniquePtr<CRYPTO_BUFFER> CreateCryptoBuffer(
     const char* invalid_data);
+
+// Returns a StringPiece pointing to the data in |buffer|.
+NET_EXPORT base::StringPiece CryptoBufferAsStringPiece(
+    const CRYPTO_BUFFER* buffer);
+
+// Creates a new X509Certificate from the chain in |buffers|, which must have at
+// least one element.
+scoped_refptr<X509Certificate> CreateX509CertificateFromBuffers(
+    STACK_OF(CRYPTO_BUFFER) * buffers);
+
+// Returns the default ParseCertificateOptions for the net stack.
+ParseCertificateOptions DefaultParseCertificateOptions();
 
 } // namespace x509_util
 

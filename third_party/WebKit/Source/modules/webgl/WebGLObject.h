@@ -26,8 +26,8 @@
 #ifndef WebGLObject_h
 #define WebGLObject_h
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Assertions.h"
 #include "third_party/khronos/GLES2/gl2.h"
@@ -55,8 +55,7 @@ GLuint ObjectNonZero(const T* object) {
   return result;
 }
 
-class WebGLObject : public GarbageCollectedFinalized<WebGLObject>,
-                    public ScriptWrappable {
+class WebGLObject : public ScriptWrappable {
   WTF_MAKE_NONCOPYABLE(WebGLObject);
 
  public:
@@ -91,10 +90,7 @@ class WebGLObject : public GarbageCollectedFinalized<WebGLObject>,
   // refer back to their owning context in their destructor to delete their
   // resources if they are GC'd before the context is.
   EAGERLY_FINALIZE();
-
-  DEFINE_INLINE_VIRTUAL_TRACE() {}
-
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+  DECLARE_EAGER_FINALIZATION_OPERATOR_NEW();
 
  protected:
   explicit WebGLObject(WebGLRenderingContextBase*);

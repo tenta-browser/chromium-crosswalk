@@ -7,11 +7,13 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "chrome/browser/browsing_data/browsing_data_counter_utils.h"
 #include "chrome/browser/browsing_data/cache_counter.h"
 #include "chrome/browser/browsing_data/downloads_counter.h"
 #include "chrome/browser/browsing_data/media_licenses_counter.h"
 #include "chrome/browser/browsing_data/site_data_counter.h"
+#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/history/web_history_service_factory.h"
 #include "chrome/browser/password_manager/password_store_factory.h"
@@ -19,6 +21,7 @@
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/web_data_service_factory.h"
 #include "components/browser_sync/profile_sync_service.h"
+#include "components/browsing_data/content/counters/site_settings_counter.h"
 #include "components/browsing_data/core/counters/autofill_counter.h"
 #include "components/browsing_data/core/counters/browsing_data_counter.h"
 #include "components/browsing_data/core/counters/history_counter.h"
@@ -30,6 +33,10 @@
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/browsing_data/hosted_apps_counter.h"
+#endif
+
+#if !defined(OS_ANDROID)
+#include "content/public/browser/host_zoom_map.h"
 #endif
 
 namespace {
@@ -44,9 +51,6 @@ history::WebHistoryService* GetUpdatedWebHistoryService(Profile* profile) {
 std::unique_ptr<browsing_data::BrowsingDataCounter>
 BrowsingDataCounterFactory::GetForProfileAndPref(Profile* profile,
                                                  const std::string& pref_name) {
-  if (!AreCountersEnabled())
-    return nullptr;
-
   if (pref_name == browsing_data::prefs::kDeleteBrowsingHistory) {
     return base::MakeUnique<browsing_data::HistoryCounter>(
         HistoryServiceFactory::GetForProfile(
@@ -76,21 +80,34 @@ BrowsingDataCounterFactory::GetForProfileAndPref(Profile* profile,
 
   if (pref_name == browsing_data::prefs::kDeletePasswords) {
     return base::MakeUnique<browsing_data::PasswordsCounter>(
-        PasswordStoreFactory::GetForProfile(
-            profile, ServiceAccessType::EXPLICIT_ACCESS));
+        PasswordStoreFactory::GetForProfile(profile,
+                                            ServiceAccessType::EXPLICIT_ACCESS),
+        ProfileSyncServiceFactory::GetForProfile(profile));
   }
 
   if (pref_name == browsing_data::prefs::kDeleteFormData) {
     return base::MakeUnique<browsing_data::AutofillCounter>(
         WebDataServiceFactory::GetAutofillWebDataForProfile(
-            profile, ServiceAccessType::EXPLICIT_ACCESS));
+            profile, ServiceAccessType::EXPLICIT_ACCESS),
+        ProfileSyncServiceFactory::GetForProfile(profile));
   }
 
   if (pref_name == browsing_data::prefs::kDeleteDownloadHistory)
     return base::MakeUnique<DownloadsCounter>(profile);
 
   if (pref_name == browsing_data::prefs::kDeleteMediaLicenses)
-    return base::MakeUnique<MediaLicensesCounter>(profile);
+    return MediaLicensesCounter::Create(profile);
+
+  if (pref_name == browsing_data::prefs::kDeleteSiteSettings) {
+    return base::MakeUnique<browsing_data::SiteSettingsCounter>(
+        HostContentSettingsMapFactory::GetForProfile(profile),
+#if !defined(OS_ANDROID)
+        content::HostZoomMap::GetDefaultForBrowserContext(profile)
+#else
+        nullptr
+#endif
+            );
+  }
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   if (pref_name == browsing_data::prefs::kDeleteHostedAppsData)

@@ -14,6 +14,18 @@
  * </settings-lock-screen>
  */
 
+/**
+ * Possible values of the proximity threshould displayed to the user.
+ * This should be kept in sync with the enum defined here:
+ * components/proximity_auth/proximity_monitor_impl.cc
+ */
+settings.EasyUnlockProximityThreshold = {
+  VERY_CLOSE: 0,
+  CLOSE: 1,
+  FAR: 2,
+  VERY_FAR: 3,
+};
+
 Polymer({
   is: 'settings-lock-screen',
 
@@ -68,6 +80,18 @@ Polymer({
     },
 
     /**
+     * True if quick unlock settings are disabled by policy.
+     * @private
+     */
+    quickUnlockDisabledByPolicy_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('quickUnlockDisabledByPolicy');
+      },
+      readOnly: true,
+    },
+
+    /**
      * True if fingerprint unlock settings should be displayed on this machine.
      * @private
      */
@@ -107,13 +131,31 @@ Polymer({
     },
 
     /**
-     * True if Easy Unlock's proximity detection feature is allowed.
+     * Returns the proximity threshold mapping to be displayed in the
+     * threshold selector dropdown menu.
      */
-    easyUnlockProximityDetectionAllowed_: {
-      type: Boolean,
+    easyUnlockProximityThresholdMapping_: {
+      type: Array,
       value: function() {
-        return loadTimeData.getBoolean('easyUnlockAllowed') &&
-            loadTimeData.getBoolean('easyUnlockProximityDetectionAllowed');
+        return [
+          {
+            value: settings.EasyUnlockProximityThreshold.VERY_CLOSE,
+            name:
+                loadTimeData.getString('easyUnlockProximityThresholdVeryClose')
+          },
+          {
+            value: settings.EasyUnlockProximityThreshold.CLOSE,
+            name: loadTimeData.getString('easyUnlockProximityThresholdClose')
+          },
+          {
+            value: settings.EasyUnlockProximityThreshold.FAR,
+            name: loadTimeData.getString('easyUnlockProximityThresholdFar')
+          },
+          {
+            value: settings.EasyUnlockProximityThreshold.VERY_FAR,
+            name: loadTimeData.getString('easyUnlockProximityThresholdVeryFar')
+          }
+        ];
       },
       readOnly: true,
     },
@@ -123,6 +165,12 @@ Polymer({
       type: Boolean,
       value: false,
     },
+
+    /** @private */
+    showPasswordPromptDialog_: Boolean,
+
+    /** @private */
+    showSetupPinDialog_: Boolean,
   },
 
   /** @private {?settings.EasyUnlockBrowserProxy} */
@@ -137,7 +185,7 @@ Polymer({
   /** @override */
   attached: function() {
     if (this.shouldAskForPassword_(settings.getCurrentRoute()))
-      this.$.passwordPrompt.open();
+      this.openPasswordPromptDialog_();
 
     this.easyUnlockBrowserProxy_ =
         settings.EasyUnlockBrowserProxyImpl.getInstance();
@@ -160,18 +208,21 @@ Polymer({
    * @protected
    */
   currentRouteChanged: function(newRoute, oldRoute) {
-    if (newRoute == settings.Route.LOCK_SCREEN &&
-        this.fingerprintUnlockEnabled_ && this.fingerprintBrowserProxy_) {
-      this.fingerprintBrowserProxy_.getNumFingerprints().then(
-          function(numFingerprints) {
-            this.numFingerprints_ = numFingerprints;
-          }.bind(this));
+    if (newRoute == settings.routes.LOCK_SCREEN) {
+      this.updateUnlockType();
+      if (this.fingerprintUnlockEnabled_ && this.fingerprintBrowserProxy_) {
+        this.fingerprintBrowserProxy_.getNumFingerprints().then(
+            numFingerprints => {
+              this.numFingerprints_ = numFingerprints;
+            });
+      }
     }
 
     if (this.shouldAskForPassword_(newRoute)) {
-      this.$.passwordPrompt.open();
-    } else if (newRoute != settings.Route.FINGERPRINT &&
-        oldRoute != settings.Route.FINGERPRINT) {
+      this.openPasswordPromptDialog_();
+    } else if (
+        newRoute != settings.routes.FINGERPRINT &&
+        oldRoute != settings.routes.FINGERPRINT) {
       // If the user navigated away from the lock screen settings page they will
       // have to re-enter their password. An exception is if they are navigating
       // to or from the fingerprint subpage.
@@ -198,27 +249,39 @@ Polymer({
   /** @private */
   onSetModesChanged_: function() {
     if (this.shouldAskForPassword_(settings.getCurrentRoute())) {
-      this.$.setupPin.close();
-      this.$.passwordPrompt.open();
+      this.showSetupPinDialog_ = false;
+      this.openPasswordPromptDialog_();
     }
   },
 
   /** @private */
-  onPasswordClosed_: function() {
+  openPasswordPromptDialog_: function() {
+    this.showPasswordPromptDialog_ = true;
+  },
+
+  /** @private */
+  onPasswordPromptDialogClose_: function() {
+    this.showPasswordPromptDialog_ = false;
     if (!this.setModes_)
-      settings.navigateTo(settings.Route.PEOPLE);
+      settings.navigateToPreviousRoute();
     else
-      this.$$('#unlockType').focus();
+      cr.ui.focusWithoutInk(assert(this.$$('#unlockType')));
+  },
+
+  /**
+   * @param {!Event} e
+   * @private
+   */
+  onConfigurePin_: function(e) {
+    e.preventDefault();
+    this.writeUma_(LockScreenProgress.CHOOSE_PIN_OR_PASSWORD);
+    this.showSetupPinDialog_ = true;
   },
 
   /** @private */
-  onPinSetupDone_: function() {
-    this.$.setupPin.close();
-  },
-
-  /** @private */
-  onSetupPinClosed_: function() {
-    this.$$('#setupPinButton').focus();
+  onSetupPinDialogClose_: function() {
+    this.showSetupPinDialog_ = false;
+    cr.ui.focusWithoutInk(assert(this.$$('#setupPinButton')));
   },
 
   /**
@@ -244,26 +307,16 @@ Polymer({
   /** @private */
   getDescriptionText_: function() {
     if (this.numFingerprints_ > 0) {
-      return this.i18n('lockScreenNumberFingerprints',
-          this.numFingerprints_.toString());
+      return this.i18n(
+          'lockScreenNumberFingerprints', this.numFingerprints_.toString());
     }
 
     return this.i18n('lockScreenEditFingerprintsDescription');
   },
 
-  /**
-   * @param {!Event} e
-   * @private
-   */
-  onConfigurePin_: function(e) {
-    e.preventDefault();
-    this.$.setupPin.open();
-    this.writeUma_(LockScreenProgress.CHOOSE_PIN_OR_PASSWORD);
-  },
-
   /** @private */
   onEditFingerprints_: function() {
-    settings.navigateTo(settings.Route.FINGERPRINT);
+    settings.navigateTo(settings.routes.FINGERPRINT);
   },
 
   /**
@@ -272,7 +325,7 @@ Polymer({
    * @private
    */
   shouldAskForPassword_: function(route) {
-    return route == settings.Route.LOCK_SCREEN && !this.setModes_;
+    return route == settings.routes.LOCK_SCREEN && !this.setModes_;
   },
 
   /**
@@ -307,7 +360,7 @@ Polymer({
 
     // Restores focus on close to either the turn-off or set-up button,
     // whichever is being displayed.
-    this.$$('.secondary-button').focus();
+    cr.ui.focusWithoutInk(assert(this.$$('.secondary-button')));
   },
 
   /**

@@ -21,10 +21,6 @@ class Grid;
 class GridTrackSizingAlgorithmStrategy;
 class LayoutGrid;
 
-enum MarginDirection;
-
-enum SizingOperation { kTrackSizing, kIntrinsicSizeComputation };
-
 enum TrackSizeComputationPhase {
   kResolveIntrinsicMinimums,
   kResolveContentBasedMinimums,
@@ -42,6 +38,7 @@ class GridTrack {
   void SetBaseSize(LayoutUnit);
 
   LayoutUnit GrowthLimit() const;
+  bool GrowthLimitIsInfinite() const { return growth_limit_ == kInfinity; }
   void SetGrowthLimit(LayoutUnit);
 
   bool InfiniteGrowthPotential() const;
@@ -63,7 +60,6 @@ class GridTrack {
   void SetGrowthLimitCap(Optional<LayoutUnit>);
 
  private:
-  bool GrowthLimitIsInfinite() const { return growth_limit_ == kInfinity; }
   bool IsGrowthLimitBiggerThanBaseSize() const;
   void EnsureGrowthLimitIsBiggerThanBaseSize();
 
@@ -88,33 +84,32 @@ class GridTrackSizingAlgorithm final {
   // the algorithm.
   void Setup(GridTrackSizingDirection,
              size_t num_tracks,
-             SizingOperation,
-             Optional<LayoutUnit> available_space,
-             Optional<LayoutUnit> free_space);
+             Optional<LayoutUnit> available_space);
   void Run();
   void Reset();
 
   // Required by LayoutGrid. Try to minimize the exposed surface.
   const Grid& GetGrid() const { return grid_; }
   GridTrackSize GetGridTrackSize(GridTrackSizingDirection,
-                                 size_t translated_index,
-                                 SizingOperation) const;
+                                 size_t translated_index) const;
   LayoutUnit MinContentSize() const { return min_content_size_; };
   LayoutUnit MaxContentSize() const { return max_content_size_; };
 
   Vector<GridTrack>& Tracks(GridTrackSizingDirection);
   const Vector<GridTrack>& Tracks(GridTrackSizingDirection) const;
 
-  Optional<LayoutUnit> FreeSpace(GridTrackSizingDirection);
+  Optional<LayoutUnit> FreeSpace(GridTrackSizingDirection) const;
   void SetFreeSpace(GridTrackSizingDirection, Optional<LayoutUnit>);
+
+  Optional<LayoutUnit> AvailableSpace(GridTrackSizingDirection) const;
+  void SetAvailableSpace(GridTrackSizingDirection, Optional<LayoutUnit>);
 
 #if DCHECK_IS_ON()
   bool TracksAreWiderThanMinTrackBreadth() const;
 #endif
 
  private:
-  GridTrackSize GetGridTrackSize(GridTrackSizingDirection,
-                                 size_t translated_index) const;
+  Optional<LayoutUnit> AvailableSpace() const;
   GridTrackSize RawGridTrackSize(GridTrackSizingDirection,
                                  size_t translated_index) const;
   LayoutUnit AssumedRowsSizeForOrthogonalChild(const LayoutBox&) const;
@@ -170,6 +165,7 @@ class GridTrackSizingAlgorithm final {
   void InitializeTrackSizes();
   void ResolveIntrinsicTrackSizes();
   void StretchFlexibleTracks(Optional<LayoutUnit> free_space);
+  void StretchAutoTracks();
 
   // State machine.
   void AdvanceNextState();
@@ -177,7 +173,9 @@ class GridTrackSizingAlgorithm final {
 
   // Data.
   bool needs_setup_{true};
-  Optional<LayoutUnit> available_space_;
+  bool is_in_perform_layout_{true};
+  Optional<LayoutUnit> available_space_columns_;
+  Optional<LayoutUnit> available_space_rows_;
 
   Optional<LayoutUnit> free_space_columns_;
   Optional<LayoutUnit> free_space_rows_;
@@ -188,9 +186,9 @@ class GridTrackSizingAlgorithm final {
   Vector<GridTrack> rows_;
   Vector<size_t> content_sized_tracks_index_;
   Vector<size_t> flexible_sized_tracks_index_;
+  Vector<size_t> auto_sized_tracks_for_stretch_index_;
 
   GridTrackSizingDirection direction_;
-  SizingOperation sizing_operation_;
 
   Grid& grid_;
 
@@ -232,6 +230,8 @@ class GridTrackSizingAlgorithmStrategy {
   USING_FAST_MALLOC(GridTrackSizingAlgorithmStrategy);
 
  public:
+  virtual ~GridTrackSizingAlgorithmStrategy();
+
   LayoutUnit MinContentForChild(LayoutBox&) const;
   LayoutUnit MaxContentForChild(LayoutBox&) const;
   LayoutUnit MinSizeForChild(LayoutBox&) const;
@@ -247,6 +247,7 @@ class GridTrackSizingAlgorithmStrategy {
       double& flex_fraction,
       Vector<LayoutUnit>& increments,
       LayoutUnit& total_growth) const = 0;
+  virtual LayoutUnit FreeSpaceForStretchAutoTracksStep() const = 0;
 
  protected:
   GridTrackSizingAlgorithmStrategy(GridTrackSizingAlgorithm& algorithm)
@@ -255,7 +256,7 @@ class GridTrackSizingAlgorithmStrategy {
   virtual LayoutUnit MinLogicalWidthForChild(
       LayoutBox&,
       Length child_min_size,
-      GridTrackSizingDirection) const = 0;
+      LayoutUnit available_size) const = 0;
   virtual void LayoutGridItemForMinSizeComputation(
       LayoutBox&,
       bool override_size_has_changed) const = 0;
@@ -264,20 +265,23 @@ class GridTrackSizingAlgorithmStrategy {
 
   bool UpdateOverrideContainingBlockContentSizeForChild(
       LayoutBox&,
-      GridTrackSizingDirection) const;
+      GridTrackSizingDirection,
+      Optional<LayoutUnit> = WTF::nullopt) const;
   LayoutUnit ComputeTrackBasedSize() const;
+  Optional<LayoutUnit> ExtentForBaselineAlignment(LayoutBox&) const;
+
   GridTrackSizingDirection Direction() const { return algorithm_.direction_; }
   double FindFrUnitSize(const GridSpan& tracks_span,
                         LayoutUnit left_over_space) const;
   void DistributeSpaceToTracks(Vector<GridTrack*>& tracks,
                                LayoutUnit& available_logical_space) const;
   const LayoutGrid* GetLayoutGrid() const { return algorithm_.layout_grid_; }
+  Optional<LayoutUnit> AvailableSpace() const {
+    return algorithm_.AvailableSpace();
+  }
+  void SetNeedsLayoutForChild(LayoutBox&) const;
 
   // Helper functions
-  static LayoutUnit ComputeMarginLogicalSizeForChild(
-      MarginDirection for_direction,
-      const LayoutGrid*,
-      const LayoutBox& child);
   static bool HasOverrideContainingBlockContentSizeForChild(
       const LayoutBox& child,
       GridTrackSizingDirection);
@@ -285,6 +289,7 @@ class GridTrackSizingAlgorithmStrategy {
       const LayoutBox& child,
       GridTrackSizingDirection);
   static bool ShouldClearOverrideContainingBlockContentSizeForChild(
+      const LayoutGrid&,
       const LayoutBox& child,
       GridTrackSizingDirection);
   static void SetOverrideContainingBlockContentSizeForChild(

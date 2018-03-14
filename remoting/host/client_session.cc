@@ -9,14 +9,17 @@
 
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
+#include "base/optional.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "remoting/base/capabilities.h"
 #include "remoting/base/constants.h"
+#include "remoting/base/session_options.h"
 #include "remoting/base/logging.h"
 #include "remoting/host/audio_capturer.h"
 #include "remoting/host/desktop_environment.h"
+#include "remoting/host/file_transfer_message_handler.h"
 #include "remoting/host/host_extension_session.h"
 #include "remoting/host/input_injector.h"
 #include "remoting/host/mouse_shape_pump.h"
@@ -25,6 +28,7 @@
 #include "remoting/proto/control.pb.h"
 #include "remoting/proto/event.pb.h"
 #include "remoting/protocol/audio_stream.h"
+#include "remoting/protocol/capability_names.h"
 #include "remoting/protocol/client_stub.h"
 #include "remoting/protocol/clipboard_thread_proxy.h"
 #include "remoting/protocol/pairing_registry.h"
@@ -82,7 +86,7 @@ ClientSession::ClientSession(
 }
 
 ClientSession::~ClientSession() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!audio_stream_);
   DCHECK(!desktop_environment_);
   DCHECK(!input_injector_);
@@ -94,7 +98,7 @@ ClientSession::~ClientSession() {
 
 void ClientSession::NotifyClientResolution(
     const protocol::ClientResolution& resolution) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(resolution.dips_width() > 0 && resolution.dips_height() > 0);
 
   VLOG(1) << "Received ClientResolution (dips_width="
@@ -124,7 +128,7 @@ void ClientSession::NotifyClientResolution(
 }
 
 void ClientSession::ControlVideo(const protocol::VideoControl& video_control) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Note that |video_stream_| may be null, depending upon whether
   // extensions choose to wrap or "steal" the video capturer or encoder.
@@ -152,7 +156,7 @@ void ClientSession::ControlVideo(const protocol::VideoControl& video_control) {
 }
 
 void ClientSession::ControlAudio(const protocol::AudioControl& audio_control) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (audio_control.has_enable()) {
     VLOG(1) << "Received AudioControl (enable="
@@ -164,7 +168,7 @@ void ClientSession::ControlAudio(const protocol::AudioControl& audio_control) {
 
 void ClientSession::SetCapabilities(
     const protocol::Capabilities& capabilities) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Ignore all the messages but the 1st one.
   if (client_capabilities_) {
@@ -180,6 +184,13 @@ void ClientSession::SetCapabilities(
                                         host_capabilities_);
   extension_manager_->OnNegotiatedCapabilities(
       connection_->client_stub(), capabilities_);
+
+  if (HasCapability(capabilities_, protocol::kFileTransferCapability)) {
+    data_channel_manager_.RegisterCreateHandlerCallback(
+        kFileTransferDataChannelPrefix,
+        base::Bind(&ClientSession::CreateFileTransferMessageHandler,
+                   base::Unretained(this)));
+  }
 
   VLOG(1) << "Client capabilities: " << *client_capabilities_;
 
@@ -201,20 +212,11 @@ void ClientSession::RequestPairing(
 void ClientSession::DeliverClientMessage(
     const protocol::ExtensionMessage& message) {
   if (message.has_type()) {
-    if (message.type() == "test-echo") {
-      protocol::ExtensionMessage reply;
-      reply.set_type("test-echo-reply");
-      if (message.has_data())
-        reply.set_data(message.data().substr(0, 16));
-      connection_->client_stub()->DeliverHostMessage(reply);
+    if (extension_manager_->OnExtensionMessage(message))
       return;
-    } else {
-      if (extension_manager_->OnExtensionMessage(message))
-        return;
 
-      DLOG(INFO) << "Unexpected message received: "
-                 << message.type() << ": " << message.data();
-    }
+    DLOG(INFO) << "Unexpected message received: " << message.type() << ": "
+               << message.data();
   }
 }
 
@@ -223,7 +225,7 @@ void ClientSession::OnConnectionAuthenticating() {
 }
 
 void ClientSession::OnConnectionAuthenticated() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!audio_stream_);
   DCHECK(!desktop_environment_);
   DCHECK(!input_injector_);
@@ -242,9 +244,13 @@ void ClientSession::OnConnectionAuthenticated() {
   // Notify EventHandler.
   event_handler_->OnSessionAuthenticated(this);
 
+  const SessionOptions session_options(
+      host_experiment_session_plugin_.configuration());
+
+  connection_->ApplySessionOptions(session_options);
+
   DesktopEnvironmentOptions options = desktop_environment_options_;
-  options.ApplyHostSessionOptions(HostSessionOptions(
-      host_experiment_session_plugin_.configuration()));
+  options.ApplySessionOptions(session_options);
   // Create the desktop environment. Drop the connection if it could not be
   // created for any reason (for instance the curtain could not initialize).
   desktop_environment_ =
@@ -280,7 +286,7 @@ void ClientSession::OnConnectionAuthenticated() {
 }
 
 void ClientSession::CreateMediaStreams() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Create a VideoStream to pump frames from the capturer to the client.
   video_stream_ = connection_->StartVideoStream(
@@ -307,7 +313,7 @@ void ClientSession::CreateMediaStreams() {
 }
 
 void ClientSession::OnConnectionChannelsConnected() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   DCHECK(!channels_connected_);
   channels_connected_ = true;
@@ -337,7 +343,7 @@ void ClientSession::OnConnectionChannelsConnected() {
 }
 
 void ClientSession::OnConnectionClosed(protocol::ErrorCode error) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   HOST_LOG << "Client disconnected: " << client_jid_ << "; error = " << error;
 
@@ -365,11 +371,16 @@ void ClientSession::OnConnectionClosed(protocol::ErrorCode error) {
   event_handler_->OnSessionClosed(this);
 }
 
-void ClientSession::OnRouteChange(
-    const std::string& channel_name,
-    const protocol::TransportRoute& route) {
-  DCHECK(CalledOnValidThread());
+void ClientSession::OnRouteChange(const std::string& channel_name,
+                                  const protocol::TransportRoute& route) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   event_handler_->OnSessionRouteChange(this, channel_name, route);
+}
+
+void ClientSession::OnIncomingDataChannel(
+    const std::string& channel_name,
+    std::unique_ptr<protocol::MessagePipe> pipe) {
+  data_channel_manager_.OnIncomingDataChannel(channel_name, std::move(pipe));
 }
 
 const std::string& ClientSession::client_jid() const {
@@ -377,7 +388,7 @@ const std::string& ClientSession::client_jid() const {
 }
 
 void ClientSession::DisconnectSession(protocol::ErrorCode error) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(connection_.get());
 
   max_duration_timer_.Stop();
@@ -388,12 +399,12 @@ void ClientSession::DisconnectSession(protocol::ErrorCode error) {
 }
 
 void ClientSession::OnLocalMouseMoved(const webrtc::DesktopVector& position) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   remote_input_filter_.LocalMouseMoved(position);
 }
 
 void ClientSession::SetDisableInputs(bool disable_inputs) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (disable_inputs)
     input_tracker_.ReleaseAll();
@@ -403,27 +414,34 @@ void ClientSession::SetDisableInputs(bool disable_inputs) {
 }
 
 uint32_t ClientSession::desktop_session_id() const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(desktop_environment_);
   return desktop_environment_->GetDesktopSessionId();
 }
 
 ClientSessionControl* ClientSession::session_control() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return this;
+}
+
+void ClientSession::RegisterCreateHandlerCallbackForTesting(
+    const std::string& prefix,
+    protocol::DataChannelManager::CreateHandlerCallback constructor) {
+  data_channel_manager_.RegisterCreateHandlerCallback(
+      prefix, std::move(constructor));
 }
 
 void ClientSession::SetEventTimestampsSourceForTests(
     scoped_refptr<protocol::InputEventTimestampsSource>
         event_timestamp_source) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   event_timestamp_source_for_tests_ = event_timestamp_source;
   if (video_stream_)
     video_stream_->SetEventTimestampsSource(event_timestamp_source_for_tests_);
 }
 
 std::unique_ptr<protocol::ClipboardStub> ClientSession::CreateClipboardProxy() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return base::MakeUnique<protocol::ClipboardThreadProxy>(
       client_clipboard_factory_.GetWeakPtr(),
       base::ThreadTaskRunnerHandle::Get());
@@ -432,7 +450,7 @@ std::unique_ptr<protocol::ClipboardStub> ClientSession::CreateClipboardProxy() {
 void ClientSession::OnVideoSizeChanged(protocol::VideoStream* video_stream,
                                        const webrtc::DesktopSize& size,
                                        const webrtc::DesktopVector& dpi) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   mouse_clamping_filter_.set_output_size(size);
 
@@ -470,6 +488,17 @@ void ClientSession::OnVideoSizeChanged(protocol::VideoStream* video_stream,
       break;
     }
   }
+}
+
+void ClientSession::CreateFileTransferMessageHandler(
+    const std::string& channel_name,
+    std::unique_ptr<protocol::MessagePipe> pipe) {
+  // FileTransferMessageHandler manages its own lifetime and is tied to the
+  // lifetime of |pipe|. Once |pipe| is closed, this instance will be cleaned
+  // up.
+  new FileTransferMessageHandler(
+      channel_name, std::move(pipe),
+      desktop_environment_->CreateFileProxyWrapper());
 }
 
 }  // namespace remoting

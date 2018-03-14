@@ -4,6 +4,8 @@
 
 #import "chrome/browser/ui/cocoa/first_run_dialog.h"
 
+#include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/mac/bundle_locations.h"
 #import "base/mac/scoped_nsobject.h"
 #include "base/memory/ref_counted.h"
@@ -15,10 +17,11 @@
 #include "chrome/browser/first_run/first_run_dialog.h"
 #include "chrome/browser/metrics/metrics_reporting_state.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/shell_integration.h"
+#include "chrome/browser/ui/cocoa/first_run_dialog_controller.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
-#include "components/search_engines/template_url_service.h"
+#include "content/public/common/content_switches.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "url/gurl.h"
@@ -34,7 +37,7 @@ class FirstRunShowBridge : public base::RefCounted<FirstRunShowBridge> {
  public:
   FirstRunShowBridge(FirstRunDialogController* controller);
 
-  void ShowDialog();
+  void ShowDialog(const base::Closure& quit_closure);
 
  private:
   friend class base::RefCounted<FirstRunShowBridge>;
@@ -48,57 +51,37 @@ FirstRunShowBridge::FirstRunShowBridge(
     FirstRunDialogController* controller) : controller_(controller) {
 }
 
-void FirstRunShowBridge::ShowDialog() {
+void FirstRunShowBridge::ShowDialog(const base::Closure& quit_closure) {
+  // Proceeding past the modal dialog requires user interaction. Allow nested
+  // tasks to run so that signal handlers operate correctly.
+  base::MessageLoop::ScopedNestableTaskAllower allow_nested(
+      base::MessageLoop::current());
   [controller_ show];
-  base::MessageLoop::current()->QuitNow();
+  quit_closure.Run();
 }
 
 FirstRunShowBridge::~FirstRunShowBridge() {}
 
-// Show the first run UI.
-// Returns true if the first run dialog was shown.
-bool ShowFirstRun(Profile* profile) {
-  bool dialog_shown = false;
-#if defined(GOOGLE_CHROME_BUILD)
-  // The purpose of the dialog is to ask the user to enable stats and crash
-  // reporting. This setting may be controlled through configuration management
-  // in enterprise scenarios. If that is the case, skip the dialog entirely, as
-  // it's not worth bothering the user for only the default browser question
-  // (which is likely to be forced in enterprise deployments anyway).
-  if (!IsMetricsReportingPolicyManaged()) {
-    base::scoped_nsobject<FirstRunDialogController> dialog(
-        [[FirstRunDialogController alloc] init]);
+void ShowFirstRunModal(Profile* profile) {
+  base::scoped_nsobject<FirstRunDialogController> dialog(
+      [[FirstRunDialogController alloc] init]);
 
-    [dialog.get() showWindow:nil];
-    dialog_shown = true;
+  [dialog.get() showWindow:nil];
 
-    // If the dialog asked the user to opt-in for stats and crash reporting,
-    // record the decision and enable the crash reporter if appropriate.
-    bool consent_given = [dialog.get() statsEnabled];
-    ChangeMetricsReportingState(consent_given);
+  // If the dialog asked the user to opt-in for stats and crash reporting,
+  // record the decision and enable the crash reporter if appropriate.
+  bool consent_given = [dialog.get() isStatsReportingEnabled];
+  ChangeMetricsReportingState(consent_given);
 
-    // If selected set as default browser.
-    BOOL make_default_browser = [dialog.get() makeDefaultBrowser];
-    if (make_default_browser) {
-      bool success = shell_integration::SetAsDefaultBrowser();
-      DCHECK(success);
-    }
+  // If selected, set as default browser. Skip in automated tests so that an OS
+  // dialog confirming the default browser choice isn't left on screen.
+  BOOL make_default_browser =
+      [dialog.get() isMakeDefaultBrowserEnabled] &&
+      !base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kTestType);
+  if (make_default_browser) {
+    bool success = shell_integration::SetAsDefaultBrowser();
+    DCHECK(success);
   }
-#else  // GOOGLE_CHROME_BUILD
-  // We don't show the dialog in Chromium.
-#endif  // GOOGLE_CHROME_BUILD
-
-  // Set preference to show first run bubble and welcome page.
-  // Only display the bubble if there is a default search provider.
-  TemplateURLService* search_engines_model =
-      TemplateURLServiceFactory::GetForProfile(profile);
-  if (search_engines_model &&
-      search_engines_model->GetDefaultSearchProvider()) {
-    first_run::SetShowFirstRunBubblePref(first_run::FIRST_RUN_BUBBLE_SHOW);
-  }
-  first_run::SetShouldShowWelcomePage();
-
-  return dialog_shown;
 }
 
 // True when the stats checkbox should be checked by default. This is only
@@ -112,26 +95,35 @@ bool StatsCheckboxDefault() {
 
 namespace first_run {
 
-bool ShowFirstRunDialog(Profile* profile) {
-  return ShowFirstRun(profile);
+void ShowFirstRunDialog(Profile* profile) {
+  ShowFirstRunModal(profile);
 }
 
 }  // namespace first_run
 
-@implementation FirstRunDialogController
+@implementation FirstRunDialogController {
+  base::scoped_nsobject<FirstRunDialogViewController> viewController_;
+}
 
-@synthesize statsEnabled = statsEnabled_;
-@synthesize makeDefaultBrowser = makeDefaultBrowser_;
+- (instancetype)init {
+  viewController_.reset([[FirstRunDialogViewController alloc]
+      initWithStatsCheckboxInitiallyChecked:StatsCheckboxDefault()
+              defaultBrowserCheckboxVisible:shell_integration::
+                                                CanSetAsDefaultBrowser()]);
 
-- (id)init {
-  NSString* nibpath =
-      [base::mac::FrameworkBundle() pathForResource:@"FirstRunDialog"
-                                             ofType:@"nib"];
-  if ((self = [super initWithWindowNibPath:nibpath owner:self])) {
-    // Bound to the dialog checkboxes.
-    makeDefaultBrowser_ = shell_integration::CanSetAsDefaultBrowser();
-    statsEnabled_ = StatsCheckboxDefault();
-  }
+  // Create the content view controller (and the content view) *before* the
+  // window, so that we can find out what the content view's frame is supposed
+  // to be for use here.
+  base::scoped_nsobject<NSWindow> window([[NSWindow alloc]
+      initWithContentRect:[[viewController_ view] frame]
+                styleMask:NSTitledWindowMask
+                  backing:NSBackingStoreBuffered
+                    defer:YES]);
+  [window setContentView:[viewController_ view]];
+  [window setTitle:[viewController_ windowTitle]];
+
+  self = [super initWithWindow:window.get()];
+
   return self;
 }
 
@@ -145,107 +137,15 @@ bool ShowFirstRunDialog(Profile* profile) {
   // Therefore the main MessageLoop is run so things work.
 
   scoped_refptr<FirstRunShowBridge> bridge(new FirstRunShowBridge(self));
+  base::RunLoop run_loop;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&FirstRunShowBridge::ShowDialog, bridge.get()));
-  base::RunLoop().Run();
+      FROM_HERE, base::Bind(&FirstRunShowBridge::ShowDialog, bridge.get(),
+                            run_loop.QuitClosure()));
+  run_loop.Run();
 }
 
 - (void)show {
   NSWindow* win = [self window];
-
-  if (!shell_integration::CanSetAsDefaultBrowser()) {
-    [setAsDefaultCheckbox_ setHidden:YES];
-  }
-
-  // Only support the sizing the window once.
-  DCHECK(!beenSized_) << "ShowWindow was called twice?";
-  if (!beenSized_) {
-    beenSized_ = YES;
-    DCHECK_GT([objectsToSize_ count], 0U);
-
-    // Size everything to fit, collecting the widest growth needed (XIB provides
-    // the min size, i.e.-never shrink, just grow).
-    CGFloat largestWidthChange = 0.0;
-    for (NSView* view in objectsToSize_) {
-      DCHECK_NE(statsCheckbox_, view) << "Stats checkbox shouldn't be in list";
-      if (![view isHidden]) {
-        NSSize delta = [GTMUILocalizerAndLayoutTweaker sizeToFitView:view];
-        DCHECK_EQ(delta.height, 0.0)
-            << "Didn't expect anything to change heights";
-        if (largestWidthChange < delta.width)
-          largestWidthChange = delta.width;
-      }
-    }
-
-    // Make the window wide enough to fit everything.
-    if (largestWidthChange > 0.0) {
-      NSView* contentView = [win contentView];
-      NSRect windowFrame = [contentView convertRect:[win frame] fromView:nil];
-      windowFrame.size.width += largestWidthChange;
-      windowFrame = [contentView convertRect:windowFrame toView:nil];
-      [win setFrame:windowFrame display:NO];
-    }
-
-    // The stats checkbox gets some really long text, so it gets word wrapped
-    // and then sized.
-    DCHECK(statsCheckbox_);
-    CGFloat statsCheckboxHeightChange = 0.0;
-    [GTMUILocalizerAndLayoutTweaker wrapButtonTitleForWidth:statsCheckbox_];
-    statsCheckboxHeightChange =
-        [GTMUILocalizerAndLayoutTweaker sizeToFitView:statsCheckbox_].height;
-
-    // Walk bottom up shuffling for all the hidden views.
-    NSArray* subViews =
-        [[[win contentView] subviews] sortedArrayUsingComparator:^(id a, id b) {
-          CGFloat y1 = NSMinY([a frame]);
-          CGFloat y2 = NSMinY([b frame]);
-          if (y1 < y2)
-            return NSOrderedAscending;
-          else if (y1 > y2)
-            return NSOrderedDescending;
-          else
-            return NSOrderedSame;
-        }];
-    CGFloat moveDown = 0.0;
-    NSUInteger numSubViews = [subViews count];
-    for (NSUInteger idx = 0 ; idx < numSubViews ; ++idx) {
-      NSView* view = [subViews objectAtIndex:idx];
-
-      // If the view is hidden, collect the amount to move everything above it
-      // down, if it's not hidden, apply any shift down.
-      if ([view isHidden]) {
-        DCHECK_GT((numSubViews - 1), idx)
-            << "Don't support top view being hidden";
-        NSView* nextView = [subViews objectAtIndex:(idx + 1)];
-        CGFloat viewBottom = [view frame].origin.y;
-        CGFloat nextViewBottom = [nextView frame].origin.y;
-        moveDown += nextViewBottom - viewBottom;
-      } else {
-        if (moveDown != 0.0) {
-          NSPoint origin = [view frame].origin;
-          origin.y -= moveDown;
-          [view setFrameOrigin:origin];
-        }
-      }
-      // Special case, if this is the stats checkbox, everything above it needs
-      // to get moved up by the amount it changed height.
-      if (view == statsCheckbox_) {
-        moveDown -= statsCheckboxHeightChange;
-      }
-    }
-
-    // Resize the window for any height change from hidden views, etc.
-    if (moveDown != 0.0) {
-      NSView* contentView = [win contentView];
-      [contentView setAutoresizesSubviews:NO];
-      NSRect windowFrame = [contentView convertRect:[win frame] fromView:nil];
-      windowFrame.size.height -= moveDown;
-      windowFrame = [contentView convertRect:windowFrame toView:nil];
-      [win setFrame:windowFrame display:NO];
-      [contentView setAutoresizesSubviews:YES];
-    }
-
-  }
 
   // Neat weirdness in the below code - the Application menu stays enabled
   // while the window is open but selecting items from it (e.g. Quit) has
@@ -258,15 +158,12 @@ bool ShowFirstRunDialog(Profile* profile) {
   [NSApp runModalForWindow:win];
 }
 
-- (IBAction)ok:(id)sender {
-  [[self window] close];
-  [NSApp stopModal];
+- (BOOL)isStatsReportingEnabled {
+  return [viewController_ isStatsReportingEnabled];
 }
 
-- (IBAction)learnMore:(id)sender {
-  NSString* urlStr = base::SysUTF8ToNSString(chrome::kLearnMoreReportingURL);
-  NSURL* learnMoreUrl = [NSURL URLWithString:urlStr];
-  [[NSWorkspace sharedWorkspace] openURL:learnMoreUrl];
+- (BOOL)isMakeDefaultBrowserEnabled {
+  return [viewController_ isMakeDefaultBrowserEnabled];
 }
 
 @end

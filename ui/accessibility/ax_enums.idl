@@ -3,8 +3,7 @@
 // found in the LICENSE file.
 
 // TODO(nektar): Migrate entire file to Mojoq.
-// These should be kept in sync with third_party/WebKit/public/web/WebAXEnums.h
-// until the Chromium and Blink trees are merged.
+// Must also be kept in sync with chrome/common/extensions/api/automation.idl.
 [camel_case_enum_to_string=true] namespace ui {
 
   // For new entries to the following four enums, also add to
@@ -87,19 +86,19 @@
     audio,
     banner,
     blockquote,
-    // TODO(nektar): Remove busy_indicator because it's used nowhere.
-    busy_indicator,
     button,
     button_drop_down,  // Not used on Web.
     canvas,
     caption,
+    caret,
     cell,
     check_box,
     client,
     color_well,
     column_header,
     column,
-    combo_box,
+    combo_box_grouping,
+    combo_box_menu_button,
     complementary,
     content_info,
     date,
@@ -113,7 +112,6 @@
     dialog,
     directory,
     disclosure_triangle,
-    div,
     document,
     embedded_object,
     feed,
@@ -121,13 +119,13 @@
     figure,
     footer,
     form,
+    generic_container,
     grid,
     group,
     heading,
     iframe,
     iframe_presentational,
     ignored,
-    image_map_link,
     image_map,
     image,
     inline_text_box,
@@ -158,7 +156,6 @@
     meter,
     navigation,
     note,
-    outline,
     pane,
     paragraph,
     pop_up_button,
@@ -172,11 +169,8 @@
     row_header,
     row,
     ruby,
-    ruler,
     svg_root,
-    scroll_area,
     scroll_bar,
-    seamless_web_area,
     search,
     search_box,
     slider,
@@ -187,7 +181,6 @@
     static_text,
     status,
     switch,
-    tab_group,
     tab_list,
     tab_panel,
     tab,
@@ -195,6 +188,7 @@
     table,
     term,
     text_field,
+    text_field_with_combo_box,
     time,
     timer,
     title_bar,
@@ -212,11 +206,8 @@
   };
 
   enum AXState {
-    busy,
-    checked,
     collapsed,
     default,
-    disabled,
     editable,
     expanded,
     focusable,
@@ -228,10 +219,7 @@
     linked,
     multiline,
     multiselectable,
-    offscreen,
-    pressed,
     protected,
-    read_only,
     required,
     richly_editable,
     selectable,
@@ -242,10 +230,12 @@
   };
 
   // An action to be taken on an accessibility node.
-  // In contrast to |AXSupportedAction|, these describe what happens to the
+  // In contrast to |AXDefaultActionVerb|, these describe what happens to the
   // object, e.g. "FOCUS".
   enum AXAction {
     blur,
+
+    custom_action,
 
     // Decrement a slider or range control by one step value.
     decrement,
@@ -265,9 +255,23 @@
     // Increment a slider or range control by one step value.
     increment,
 
+    // Load inline text boxes for this subtree, providing information
+    // about word boundaries, line layout, and individual character
+    // bounding boxes.
+    load_inline_text_boxes,
+
     // Delete any selected text in the control's text value and
     // insert |AXActionData::value| in its place, like when typing or pasting.
     replace_selected_text,
+
+    // Scrolls by approximately one screen in a specific direction. Should be
+    // called on a node that has scrollable boolean set to true.
+    scroll_backward,
+    scroll_forward,
+    scroll_up,
+    scroll_down,
+    scroll_left,
+    scroll_right,
 
     // Scroll any scrollable containers to make the target object visible
     // on the screen.  Optionally pass a subfocus rect in
@@ -278,7 +282,6 @@
     // global screen coordinates. Pass a point in AXActionData.target_point.
     scroll_to_point,
 
-    set_accessibility_focus,
     set_scroll_offset,
     set_selection,
 
@@ -299,14 +302,23 @@
     request_inline_text_boxes
   };
 
-  // Lists the actions that can be performed on a given node.
+  // A list of valid values for the |AXIntAttribute| |default_action_verb|.
+  // These will describe the action that will be performed on a given node when
+  // executing the default action, which is a click.
   // In contrast to |AXAction|, these describe what the user can do on the
   // object, e.g. "PRESS", not what happens to the object as a result.
-  // Only one action is supported for now.
-  enum AXSupportedAction {
+  // Only one verb can be used at a time to describe the default action.
+  enum AXDefaultActionVerb {
     activate,
     check,
     click,
+
+    // A click will be performed on one of the node's ancestors.
+    // This happens when the node itself is not clickable, but one of its
+    // ancestors has click handlers attached which are able to capture the click
+    // as it bubbles up.
+    click_ancestor,
+
     jump,
     open,
     press,
@@ -346,13 +358,12 @@
     placeholder,
     role,
     role_description,
-    shortcut,
     url,
     value
   };
 
   [cpp_enum_prefix_override="ax_attr"] enum AXIntAttribute {
-    action,
+    default_action_verb,
     // Scrollable container attributes.
     scroll_x,
     scroll_x_min,
@@ -366,10 +377,10 @@
     text_sel_end,
 
     // aria_col* and aria_row* attributes
-    aria_col_count,
-    aria_col_index,
+    aria_column_count,
+    aria_cell_column_index,
     aria_row_count,
-    aria_row_index,
+    aria_cell_row_index,
 
     // Table attributes.
     table_row_count,
@@ -404,6 +415,7 @@
 
     // Relationships between this element and other elements.
     activedescendant_id,
+    details_id,
     errormessage_id,
     in_page_link_target_id,
     member_of_id,
@@ -412,6 +424,11 @@
 
     // Identifies a child tree which this node hosts.
     child_tree_id,
+
+    // Input restriction, if any, such as readonly or disabled.
+    // Of type AXRestriction, see below.
+    // No value or enabled control or other object that is not disabled.
+    restriction,
 
     // Position or Number of items in current set of listitems or treeitems
     set_size,
@@ -434,6 +451,9 @@
     // if an element has an aria-invalid attribute.
     invalid_state,
 
+    // Of type AXCheckedState
+    checked_state,
+
     // Specifies the direction of the text, e.g., right-to-left.
     text_direction,
 
@@ -446,6 +466,7 @@
     value_for_range,
     min_value_for_range,
     max_value_for_range,
+    step_value_for_range,
 
     // Text attributes.
     // Font size is in pixels.
@@ -453,31 +474,36 @@
   };
 
   [cpp_enum_prefix_override="ax_attr"] enum AXBoolAttribute {
-    // True if an ARIA toggle button, a checkbox or
-    // a menu item checkbox is in the "mixed" state.
-    STATE_mixed,
+    // Generic busy state, does not have to be on a live region.
+    busy,
+    // The object is at the root of an editable field, such as a content
+    // editable.
+    editable_root,
 
     // Live region attributes.
     container_live_atomic,
     container_live_busy,
     live_atomic,
-    live_busy,
 
     // If a dialog box is marked as explicitly modal
     modal,
-
-    // ARIA readonly flag.
-    aria_readonly,
-
-    // Writeable attributes
-    can_set_value,
 
     // If this is set, all of the other fields in this struct should
     // be ignored and only the locations should change.
     update_location_only,
 
     // Set on a canvas element if it has fallback content.
-    canvas_has_fallback
+    canvas_has_fallback,
+
+    // Indicates this node is scrollable (Android only).
+    scrollable,
+
+    // A hint to clients that the node is clickable.
+    clickable,
+
+    // Indicates that this node clips its children, i.e. may have
+    // overflow: hidden or clip children by default.
+    clips_children
   };
 
   [cpp_enum_prefix_override="ax_attr"] enum AXIntListAttribute {
@@ -490,7 +516,6 @@
     // Relationships between this element and other elements.
     controls_ids,
     describedby_ids,
-    details_ids,
     flowto_ids,
     labelledby_ids,
     radio_group_ids,
@@ -533,9 +558,23 @@
     // For inline text. These int lists must be the same size; they represent
     // the start and end character offset of each word within this text.
     word_starts,
-    word_ends
+    word_ends,
+
+    // Used for an UI element to define custom actions for it. For example, a
+    // list UI will allow a user to reorder items in the list by dragging the
+    // items. Developer can expose those actions as custom actions. Currently
+    // custom actions are used only in Android window.
+    custom_action_ids
   };
 
+  [cpp_enum_prefix_override="ax_attr"] enum AXStringListAttribute {
+    // Descriptions for custom actions. This must be aligned with
+    // custom_action_ids.
+    custom_action_descriptions
+  };
+
+  // TODO(dmazzoni, nektar): make this list not grow exponentially as new
+  // MarkerTypes are added
   enum AXMarkerType {
     // Assignments are ignored by the parser, but are kept here for clarity.
     spelling = 1,
@@ -544,7 +583,34 @@
     text_match = 4,
     spelling_text_match = 5,
     grammar_text_match = 6,
-    spelling_grammar_text_match = 7
+    spelling_grammar_text_match = 7,
+    // DocumentMarker::MarkerType::Composition = 8 is ignored for accessibility
+    // purposes
+    active_suggestion = 16,
+    spelling_active_suggestion = 17,
+    grammar_active_suggestion = 18,
+    spelling_grammar_active_suggestion = 19,
+    text_match_active_suggestion = 20,
+    spelling_text_match_active_suggestion = 21,
+    grammar_text_match_active_suggestion = 22,
+    spelling_grammar_text_match_active_suggestion = 23,
+    suggestion = 32,
+    spelling_suggestion = 33,
+    grammar_suggestion = 34,
+    spelling_grammar_suggestion = 35,
+    text_match_suggestion = 36,
+    spelling_text_match_suggestion = 37,
+    grammar_text_match_suggestion = 38,
+    spelling_grammar_text_match_suggestion = 39,
+    // We again skip over DocumentMarker::MarkerType::Composition = 8 here
+    active_suggestion_suggestion = 48,
+    spelling_active_suggestion_suggestion = 49,
+    grammar_active_suggestion_suggestion = 50,
+    spelling_grammar_active_suggestion_suggestion = 51,
+    text_match_active_suggestion_suggestion = 52,
+    spelling_text_match_active_suggestion_suggestion = 53,
+    grammar_text_match_active_suggestion_suggestion = 54,
+    spelling_grammar_text_match_active_suggestion_suggestion = 55
   };
 
   enum AXTextDirection {
@@ -581,6 +647,7 @@
     page,
     step,
     location,
+    unclipped_location,
     date,
     time
   };
@@ -593,6 +660,21 @@
     other
   };
 
+  // Input restriction associated with an object.
+  // No value for a control means it is enabled.
+  // Use read_only for a textbox that allows focus/selection but not input.
+  // Use disabled for a control or group of controls that disallows input.
+  enum AXRestriction {
+    read_only,
+    disabled
+  };
+
+  enum AXCheckedState {
+    false,
+    true,
+    mixed
+  };
+
   enum AXSortDirection {
     unsorted,
     ascending,
@@ -603,6 +685,7 @@
   enum AXNameFrom {
     uninitialized,
     attribute,
+    attribute_explicitly_empty,
     contents,
     placeholder,
     related_element,
@@ -641,7 +724,8 @@
     swipe_left_4,
     swipe_up_4,
     swipe_right_4,
-    swipe_down_4
+    swipe_down_4,
+    tap_2
   };
 
   enum AXTextAffinity {

@@ -33,6 +33,14 @@
       'includes': ['../../../../../third_party/closure_compiler/compile_js2.gypi'],
     },
     {
+      'target_name': 'important_site_checkbox',
+      'dependencies': [
+        '../clear_browsing_data_dialog/compiled_resources2.gyp:clear_browsing_data_browser_proxy',
+        'settings_boolean_control_behavior',
+      ],
+      'includes': ['../../../../../third_party/closure_compiler/compile_js2.gypi'],
+    },
+    {
       'target_name': 'pref_control_behavior',
       'dependencies': [
         '../prefs/compiled_resources2.gyp:prefs_types',
@@ -93,6 +101,7 @@
     {
       'target_name': 'settings_toggle_button',
       'dependencies': [
+        '<(DEPTH)/ui/webui/resources/cr_elements/cr_toggle/compiled_resources2.gyp:cr_toggle',
         'settings_boolean_control_behavior',
       ],
       'includes': ['../../../../../third_party/closure_compiler/compile_js2.gypi'],

@@ -7,9 +7,9 @@
 
 #include <memory>
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/core/v8/SerializedScriptValue.h"
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
 #include "modules/ModulesExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerClientsInfo.h"
@@ -19,9 +19,7 @@ namespace blink {
 class ScriptPromiseResolver;
 class ScriptState;
 
-class MODULES_EXPORT ServiceWorkerClient
-    : public GarbageCollectedFinalized<ServiceWorkerClient>,
-      public ScriptWrappable {
+class MODULES_EXPORT ServiceWorkerClient : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -36,16 +34,15 @@ class MODULES_EXPORT ServiceWorkerClient
 
   // Client.idl
   String url() const { return url_; }
-  String frameType() const;
+  String type() const;
+  String frameType(ScriptState*) const;
   String id() const { return uuid_; }
   void postMessage(ScriptState*,
-                   PassRefPtr<SerializedScriptValue> message,
+                   scoped_refptr<SerializedScriptValue> message,
                    const MessagePortArray&,
                    ExceptionState&);
 
   static bool CanTransferArrayBuffersAndImageBitmaps() { return false; }
-
-  DEFINE_INLINE_VIRTUAL_TRACE() {}
 
  protected:
   explicit ServiceWorkerClient(const WebServiceWorkerClientInfo&);
@@ -55,6 +52,7 @@ class MODULES_EXPORT ServiceWorkerClient
  private:
   String uuid_;
   String url_;
+  mojom::ServiceWorkerClientType type_;
   WebURLRequest::FrameType frame_type_;
 };
 

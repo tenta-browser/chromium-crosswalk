@@ -11,30 +11,24 @@
 #include "base/memory/weak_ptr.h"
 #include "content/browser/media/capture/cursor_renderer_aura.h"
 #include "media/capture/content/screen_capture_device_core.h"
+#include "services/device/public/interfaces/wake_lock.mojom.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_observer.h"
 #include "ui/base/cursor/cursors_aura.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/compositor_animation_observer.h"
 
-namespace cc {
+namespace viz {
 class CopyOutputResult;
-}  // namespace cc
-
-namespace device {
-class PowerSaveBlocker;
-}  // namespace device
-
-namespace display_compositor {
 class ReadbackYUVInterface;
 }
 
 namespace content {
 
-class AuraWindowCaptureMachine
-    : public media::VideoCaptureMachine,
-      public aura::WindowObserver,
-      public ui::CompositorAnimationObserver {
+class AuraWindowCaptureMachine : public media::VideoCaptureMachine,
+                                 public aura::WindowObserver,
+                                 public ui::ContextFactoryObserver,
+                                 public ui::CompositorAnimationObserver {
  public:
   AuraWindowCaptureMachine();
   ~AuraWindowCaptureMachine() override;
@@ -51,7 +45,8 @@ class AuraWindowCaptureMachine
   // Implements aura::WindowObserver.
   void OnWindowBoundsChanged(aura::Window* window,
                              const gfx::Rect& old_bounds,
-                             const gfx::Rect& new_bounds) override;
+                             const gfx::Rect& new_bounds,
+                             ui::PropertyChangeReason reason) override;
   void OnWindowDestroying(aura::Window* window) override;
   void OnWindowAddedToRootWindow(aura::Window* window) override;
   void OnWindowRemovingFromRootWindow(aura::Window* window,
@@ -87,7 +82,7 @@ class AuraWindowCaptureMachine
                      base::TimeTicks event_time,
                      base::TimeTicks start_time,
                      const CaptureFrameCallback& capture_frame_cb,
-                     std::unique_ptr<cc::CopyOutputResult> result);
+                     std::unique_ptr<viz::CopyOutputResult> result);
 
   // A helper which does the real work for DidCopyOutput. Returns true if
   // succeeded and |capture_frame_cb| will be run at some future point. Returns
@@ -96,7 +91,10 @@ class AuraWindowCaptureMachine
   bool ProcessCopyOutputResponse(scoped_refptr<media::VideoFrame> video_frame,
                                  base::TimeTicks event_time,
                                  const CaptureFrameCallback& capture_frame_cb,
-                                 std::unique_ptr<cc::CopyOutputResult> result);
+                                 std::unique_ptr<viz::CopyOutputResult> result);
+
+  // ui::ContextFactoryObserver implementation.
+  void OnLostResources() override;
 
   // Renders the cursor if needed and then delivers the captured frame.
   static void CopyOutputFinishedForVideo(
@@ -104,7 +102,7 @@ class AuraWindowCaptureMachine
       base::TimeTicks event_time,
       const CaptureFrameCallback& capture_frame_cb,
       scoped_refptr<media::VideoFrame> target,
-      std::unique_ptr<cc::SingleReleaseCallback> release_callback,
+      std::unique_ptr<viz::SingleReleaseCallback> release_callback,
       bool result);
 
   // The window associated with the desktop.
@@ -120,15 +118,14 @@ class AuraWindowCaptureMachine
   media::VideoCaptureParams capture_params_;
 
   // YUV readback pipeline.
-  std::unique_ptr<display_compositor::ReadbackYUVInterface>
-      yuv_readback_pipeline_;
+  std::unique_ptr<viz::ReadbackYUVInterface> yuv_readback_pipeline_;
 
   // Renders mouse cursor on frame.
   std::unique_ptr<content::CursorRendererAura> cursor_renderer_;
 
-  // TODO(jiayl): Remove power_save_blocker_ when there is an API to keep the
+  // TODO(jiayl): Remove wake_lock_ when there is an API to keep the
   // screen from sleeping for the drive-by web.
-  std::unique_ptr<device::PowerSaveBlocker> power_save_blocker_;
+  device::mojom::WakeLockPtr wake_lock_;
 
   // False while frame capture has been suspended. All other aspects of the
   // machine are maintained.

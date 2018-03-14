@@ -29,8 +29,6 @@ class LayoutViewItem : public LayoutBlockItem {
 
   PaintLayerCompositor* Compositor() { return ToView()->Compositor(); }
 
-  bool HasPendingSelection() const { return ToView()->HasPendingSelection(); }
-
   IntRect DocumentRect() const { return ToView()->DocumentRect(); }
 
   LayoutRect ViewRect() const { return ToView()->ViewRect(); }
@@ -43,8 +41,6 @@ class LayoutViewItem : public LayoutBlockItem {
   LayoutRect OverflowClipRect(const LayoutPoint& location) const {
     return ToView()->OverflowClipRect(location);
   }
-
-  void ClearSelection() { return ToView()->ClearSelection(); }
 
   bool HitTest(HitTestResult& result) { return ToView()->HitTest(result); }
 
@@ -78,6 +74,8 @@ class LayoutViewItem : public LayoutBlockItem {
   FloatSize ViewportSizeForViewportUnits() const {
     return ToView()->ViewportSizeForViewportUnits();
   }
+
+  void UpdateCounters() { ToView()->UpdateCounters(); }
 
  private:
   LayoutView* ToView() { return ToLayoutView(GetLayoutObject()); }

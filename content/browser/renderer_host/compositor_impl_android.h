@@ -14,10 +14,10 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/timer/timer.h"
-#include "cc/surfaces/frame_sink_id.h"
 #include "cc/trees/layer_tree_host_client.h"
 #include "cc/trees/layer_tree_host_single_thread_client.h"
+#include "components/viz/common/surfaces/frame_sink_id.h"
+#include "components/viz/host/host_frame_sink_client.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/android/compositor.h"
 #include "gpu/command_buffer/common/capabilities.h"
@@ -28,23 +28,27 @@
 #include "ui/android/resources/resource_manager_impl.h"
 #include "ui/android/resources/ui_resource_provider.h"
 #include "ui/android/window_android_compositor.h"
+#include "ui/display/display_observer.h"
 
 struct ANativeWindow;
 
 namespace cc {
 class AnimationHost;
-class Display;
-class FrameSinkId;
 class Layer;
 class LayerTreeHost;
+}
+
+namespace viz {
+class Display;
+class FrameSinkId;
+class FrameSinkManagerImpl;
+class HostFrameSinkManager;
 class OutputSurface;
-class SurfaceManager;
 class VulkanContextProvider;
 }
 
 namespace content {
 class CompositorClient;
-class FrameSinkManagerHost;
 
 // -----------------------------------------------------------------------------
 // Browser-side compositor that manages a tree of content and UI layers.
@@ -54,16 +58,18 @@ class CONTENT_EXPORT CompositorImpl
       public cc::LayerTreeHostClient,
       public cc::LayerTreeHostSingleThreadClient,
       public ui::UIResourceProvider,
-      public ui::WindowAndroidCompositor {
+      public ui::WindowAndroidCompositor,
+      public viz::HostFrameSinkClient,
+      public display::DisplayObserver {
  public:
   CompositorImpl(CompositorClient* client, gfx::NativeWindow root_window);
   ~CompositorImpl() override;
 
   static bool IsInitialized();
 
-  static cc::SurfaceManager* GetSurfaceManager();
-  static FrameSinkManagerHost* GetFrameSinkManagerHost();
-  static cc::FrameSinkId AllocateFrameSinkId();
+  static viz::FrameSinkManagerImpl* GetFrameSinkManager();
+  static viz::HostFrameSinkManager* GetHostFrameSinkManager();
+  static viz::FrameSinkId AllocateFrameSinkId();
 
   // ui::ResourceProvider implementation.
   cc::UIResourceId CreateUIResource(cc::UIResourceClient* client) override;
@@ -74,8 +80,10 @@ class CONTENT_EXPORT CompositorImpl
   // Compositor implementation.
   void SetRootLayer(scoped_refptr<cc::Layer> root) override;
   void SetSurface(jobject surface) override;
+  void SetBackgroundColor(int color) override;
   void SetWindowBounds(const gfx::Size& size) override;
-  void SetHasTransparentBackground(bool flag) override;
+  void SetDeferCommits(bool defer_commits) override;
+  void SetRequiresAlphaChannel(bool flag) override;
   void SetNeedsComposite() override;
   ui::UIResourceProvider& GetUIResourceProvider() override;
   ui::ResourceManager& GetResourceManager() override;
@@ -83,8 +91,9 @@ class CONTENT_EXPORT CompositorImpl
   // LayerTreeHostClient implementation.
   void WillBeginMainFrame() override {}
   void DidBeginMainFrame() override {}
-  void BeginMainFrame(const cc::BeginFrameArgs& args) override {}
+  void BeginMainFrame(const viz::BeginFrameArgs& args) override {}
   void BeginMainFrameNotExpectedSoon() override {}
+  void BeginMainFrameNotExpectedUntil(base::TimeTicks time) override {}
   void UpdateLayerTreeHost() override;
   void ApplyViewportDeltas(const gfx::Vector2dF& inner_delta,
                            const gfx::Vector2dF& outer_delta,
@@ -93,9 +102,9 @@ class CONTENT_EXPORT CompositorImpl
                            float top_controls_delta) override {}
   void RecordWheelAndTouchScrollingCount(bool has_scrolled_by_wheel,
                                          bool has_scrolled_by_touch) override {}
-  void RequestNewCompositorFrameSink() override;
-  void DidInitializeCompositorFrameSink() override;
-  void DidFailToInitializeCompositorFrameSink() override;
+  void RequestNewLayerTreeFrameSink() override;
+  void DidInitializeLayerTreeFrameSink() override;
+  void DidFailToInitializeLayerTreeFrameSink() override;
   void WillCommit() override {}
   void DidCommit() override;
   void DidCommitAndDrawFrame() override {}
@@ -105,38 +114,44 @@ class CONTENT_EXPORT CompositorImpl
 
   // LayerTreeHostSingleThreadClient implementation.
   void DidSubmitCompositorFrame() override;
-  void DidLoseCompositorFrameSink() override;
+  void DidLoseLayerTreeFrameSink() override;
 
   // WindowAndroidCompositor implementation.
   void AttachLayerForReadback(scoped_refptr<cc::Layer> layer) override;
   void RequestCopyOfOutputOnRootLayer(
-      std::unique_ptr<cc::CopyOutputRequest> request) override;
+      std::unique_ptr<viz::CopyOutputRequest> request) override;
   void SetNeedsAnimate() override;
-  cc::FrameSinkId GetFrameSinkId() override;
-  void AddChildFrameSink(const cc::FrameSinkId& frame_sink_id) override;
-  void RemoveChildFrameSink(const cc::FrameSinkId& frame_sink_id) override;
+  viz::FrameSinkId GetFrameSinkId() override;
+  void AddChildFrameSink(const viz::FrameSinkId& frame_sink_id) override;
+  void RemoveChildFrameSink(const viz::FrameSinkId& frame_sink_id) override;
+
+  // viz::HostFrameSinkClient implementation.
+  void OnFirstSurfaceActivation(const viz::SurfaceInfo& surface_info) override;
+  void OnFrameTokenChanged(uint32_t frame_token) override {}
+
+  // display::DisplayObserver implementation.
+  void OnDisplayMetricsChanged(const display::Display& display,
+                               uint32_t changed_metrics) override;
 
   void SetVisible(bool visible);
   void CreateLayerTreeHost();
 
-  void HandlePendingCompositorFrameSinkRequest();
+  void HandlePendingLayerTreeFrameSinkRequest();
 
 #if BUILDFLAG(ENABLE_VULKAN)
   void CreateVulkanOutputSurface();
 #endif
   void OnGpuChannelEstablished(
       scoped_refptr<gpu::GpuChannelHost> gpu_channel_host);
-  void OnGpuChannelTimeout();
   void InitializeDisplay(
-      std::unique_ptr<cc::OutputSurface> display_output_surface,
-      scoped_refptr<cc::VulkanContextProvider> vulkan_context_provider,
-      scoped_refptr<cc::ContextProvider> context_provider);
+      std::unique_ptr<viz::OutputSurface> display_output_surface,
+      scoped_refptr<viz::VulkanContextProvider> vulkan_context_provider,
+      scoped_refptr<viz::ContextProvider> context_provider);
   void DidSwapBuffers();
 
   bool HavePendingReadbacks();
-  void SetBackgroundColor(int color);
 
-  cc::FrameSinkId frame_sink_id_;
+  viz::FrameSinkId frame_sink_id_;
 
   // root_layer_ is the persistent internal root layer, while subroot_layer_
   // is the one attached by the compositor client.
@@ -150,10 +165,11 @@ class CONTENT_EXPORT CompositorImpl
   std::unique_ptr<cc::LayerTreeHost> host_;
   ui::ResourceManagerImpl resource_manager_;
 
-  std::unique_ptr<cc::Display> display_;
+  std::unique_ptr<viz::Display> display_;
 
+  gfx::ColorSpace display_color_space_;
   gfx::Size size_;
-  bool has_transparent_background_;
+  bool requires_alpha_channel_ = false;
 
   ANativeWindow* window_;
   gpu::SurfaceHandle surface_handle_;
@@ -169,25 +185,21 @@ class CONTENT_EXPORT CompositorImpl
   // the GPU thread.
   unsigned int pending_frames_;
 
-  size_t num_successive_context_creation_failures_;
-
-  base::OneShotTimer establish_gpu_channel_timeout_;
-
-  // Whether there is an CompositorFrameSink request pending from the current
-  // |host_|. Becomes |true| if RequestNewCompositorFrameSink is called, and
+  // Whether there is a LayerTreeFrameSink request pending from the current
+  // |host_|. Becomes |true| if RequestNewLayerTreeFrameSink is called, and
   // |false| if |host_| is deleted or we succeed in creating *and* initializing
-  // a CompositorFrameSink (which is essentially the contract with cc).
-  bool compositor_frame_sink_request_pending_;
+  // a LayerTreeFrameSink (which is essentially the contract with cc).
+  bool layer_tree_frame_sink_request_pending_;
 
   gpu::Capabilities gpu_capabilities_;
-  bool has_compositor_frame_sink_ = false;
-  std::unordered_set<cc::FrameSinkId, cc::FrameSinkIdHash>
+  bool has_layer_tree_frame_sink_ = false;
+  std::unordered_set<viz::FrameSinkId, viz::FrameSinkIdHash>
       pending_child_frame_sink_ids_;
   base::WeakPtrFactory<CompositorImpl> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(CompositorImpl);
 };
 
-} // namespace content
+}  // namespace content
 
 #endif  // CONTENT_BROWSER_RENDERER_HOST_COMPOSITOR_IMPL_ANDROID_H_

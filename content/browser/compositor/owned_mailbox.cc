@@ -5,15 +5,19 @@
 #include "content/browser/compositor/owned_mailbox.h"
 
 #include "base/logging.h"
-#include "components/display_compositor/gl_helper.h"
+#include "components/viz/common/gl_helper.h"
 #include "content/browser/compositor/image_transport_factory.h"
 
 namespace content {
 
-OwnedMailbox::OwnedMailbox(display_compositor::GLHelper* gl_helper)
+OwnedMailbox::OwnedMailbox(viz::GLHelper* gl_helper)
     : texture_id_(0), gl_helper_(gl_helper) {
   texture_id_ = gl_helper_->CreateTexture();
   mailbox_holder_ = gl_helper_->ProduceMailboxHolderFromTexture(texture_id_);
+  // The texture target is not exposed on this class, as GLHelper assumes
+  // GL_TEXTURE_2D.
+  DCHECK_EQ(mailbox_holder_.texture_target,
+            static_cast<uint32_t>(GL_TEXTURE_2D));
   ImageTransportFactory::GetInstance()->GetContextFactory()->AddObserver(this);
 }
 
@@ -34,7 +38,7 @@ void OwnedMailbox::Destroy() {
   gl_helper_->DeleteTexture(texture_id_);
   texture_id_ = 0;
   mailbox_holder_ = gpu::MailboxHolder();
-  gl_helper_ = NULL;
+  gl_helper_ = nullptr;
 }
 
 void OwnedMailbox::OnLostResources() {

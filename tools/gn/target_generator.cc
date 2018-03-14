@@ -6,6 +6,9 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <utility>
+
 #include "tools/gn/action_target_generator.h"
 #include "tools/gn/binary_target_generator.h"
 #include "tools/gn/build_settings.h"
@@ -35,8 +38,7 @@ TargetGenerator::TargetGenerator(Target* target,
       err_(err) {
 }
 
-TargetGenerator::~TargetGenerator() {
-}
+TargetGenerator::~TargetGenerator() = default;
 
 void TargetGenerator::Run() {
   // All target types use these.
@@ -88,7 +90,8 @@ void TargetGenerator::GenerateTarget(Scope* scope,
   if (g_scheduler->verbose_logging())
     g_scheduler->Log("Defining target", label.GetUserVisibleName(true));
 
-  std::unique_ptr<Target> target(new Target(scope->settings(), label));
+  std::unique_ptr<Target> target =
+      std::make_unique<Target>(scope->settings(), label);
   target->set_defined_from(function_call);
 
   // Create and call out to the proper generator.
@@ -148,7 +151,7 @@ void TargetGenerator::GenerateTarget(Scope* scope,
     *err = Err(function_call, "Can't define a target in this context.");
     return;
   }
-  collector->push_back(target.release());
+  collector->push_back(std::move(target));
 }
 
 const BuildSettings* TargetGenerator::GetBuildSettings() const {

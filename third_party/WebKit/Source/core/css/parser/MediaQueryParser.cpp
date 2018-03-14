@@ -4,23 +4,23 @@
 
 #include "core/css/parser/MediaQueryParser.h"
 
-#include "core/MediaTypeNames.h"
 #include "core/css/parser/CSSTokenizer.h"
-#include "platform/wtf/Vector.h"
+#include "core/media_type_names.h"
 
 namespace blink {
 
-RefPtr<MediaQuerySet> MediaQueryParser::ParseMediaQuerySet(
+scoped_refptr<MediaQuerySet> MediaQueryParser::ParseMediaQuerySet(
     const String& query_string) {
-  return ParseMediaQuerySet(CSSTokenizer(query_string).TokenRange());
+  return ParseMediaQuerySet(
+      CSSParserTokenRange(CSSTokenizer(query_string).TokenizeToEOF()));
 }
 
-RefPtr<MediaQuerySet> MediaQueryParser::ParseMediaQuerySet(
+scoped_refptr<MediaQuerySet> MediaQueryParser::ParseMediaQuerySet(
     CSSParserTokenRange range) {
   return MediaQueryParser(kMediaQuerySetParser).ParseImpl(range);
 }
 
-RefPtr<MediaQuerySet> MediaQueryParser::ParseMediaCondition(
+scoped_refptr<MediaQuerySet> MediaQueryParser::ParseMediaCondition(
     CSSParserTokenRange range) {
   return MediaQueryParser(kMediaConditionParser).ParseImpl(range);
 }
@@ -57,7 +57,7 @@ MediaQueryParser::MediaQueryParser(ParserType parser_type)
     state_ = &MediaQueryParser::ReadMediaNot;
 }
 
-MediaQueryParser::~MediaQueryParser() {}
+MediaQueryParser::~MediaQueryParser() = default;
 
 void MediaQueryParser::SetStateAndRestrict(
     State state,
@@ -227,7 +227,8 @@ void MediaQueryParser::ProcessToken(const CSSParserToken& token) {
 }
 
 // The state machine loop
-RefPtr<MediaQuerySet> MediaQueryParser::ParseImpl(CSSParserTokenRange range) {
+scoped_refptr<MediaQuerySet> MediaQueryParser::ParseImpl(
+    CSSParserTokenRange range) {
   while (!range.AtEnd())
     ProcessToken(range.Consume());
 
@@ -254,8 +255,8 @@ void MediaQueryData::Clear() {
   media_type_ = MediaTypeNames::all;
   media_type_set_ = false;
   media_feature_ = String();
-  value_list_.Clear();
-  expressions_.Clear();
+  value_list_.clear();
+  expressions_.clear();
 }
 
 std::unique_ptr<MediaQuery> MediaQueryData::TakeMediaQuery() {
@@ -268,7 +269,7 @@ std::unique_ptr<MediaQuery> MediaQueryData::TakeMediaQuery() {
 bool MediaQueryData::AddExpression() {
   MediaQueryExp expression = MediaQueryExp::Create(media_feature_, value_list_);
   expressions_.push_back(expression);
-  value_list_.Clear();
+  value_list_.clear();
   return expression.IsValid();
 }
 

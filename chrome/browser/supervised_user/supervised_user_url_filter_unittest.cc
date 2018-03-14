@@ -9,9 +9,9 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_task_environment.h"
 #include "chrome/browser/supervised_user/supervised_user_site_list.h"
 #include "extensions/features/features.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -40,7 +40,7 @@ class SupervisedUserURLFilterTest : public ::testing::Test,
     return filter_.GetEmbeddedURL(GURL(url));
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::RunLoop run_loop_;
   SupervisedUserURLFilter filter_;
 };
@@ -445,10 +445,10 @@ TEST_F(SupervisedUserURLFilterTest, WhitelistsPatterns) {
   const std::vector<std::string> hostname_hashes;
   const GURL entry_point("https://entry.com");
 
-  scoped_refptr<SupervisedUserSiteList> site_list1 = make_scoped_refptr(
+  scoped_refptr<SupervisedUserSiteList> site_list1 = base::WrapRefCounted(
       new SupervisedUserSiteList(id1, title1, entry_point, base::FilePath(),
                                  patterns1, hostname_hashes));
-  scoped_refptr<SupervisedUserSiteList> site_list2 = make_scoped_refptr(
+  scoped_refptr<SupervisedUserSiteList> site_list2 = base::WrapRefCounted(
       new SupervisedUserSiteList(id2, title2, entry_point, base::FilePath(),
                                  patterns2, hostname_hashes));
 
@@ -502,13 +502,13 @@ TEST_F(SupervisedUserURLFilterTest, WhitelistsHostnameHashes) {
   const base::string16 title3 = base::ASCIIToUTF16("Title 3");
   const GURL entry_point("https://entry.com");
 
-  scoped_refptr<SupervisedUserSiteList> site_list1 = make_scoped_refptr(
+  scoped_refptr<SupervisedUserSiteList> site_list1 = base::WrapRefCounted(
       new SupervisedUserSiteList(id1, title1, entry_point, base::FilePath(),
                                  patterns1, hostname_hashes1));
-  scoped_refptr<SupervisedUserSiteList> site_list2 = make_scoped_refptr(
+  scoped_refptr<SupervisedUserSiteList> site_list2 = base::WrapRefCounted(
       new SupervisedUserSiteList(id2, title2, entry_point, base::FilePath(),
                                  patterns2, hostname_hashes2));
-  scoped_refptr<SupervisedUserSiteList> site_list3 = make_scoped_refptr(
+  scoped_refptr<SupervisedUserSiteList> site_list3 = base::WrapRefCounted(
       new SupervisedUserSiteList(id3, title3, entry_point, base::FilePath(),
                                  patterns3, hostname_hashes3));
 

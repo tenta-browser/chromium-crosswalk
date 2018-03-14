@@ -131,10 +131,8 @@ void SVGTextLayoutEngine::ComputeCurrentFragmentMetrics(
     return;
 
   float width = scaled_font.Width(run, nullptr, &glyph_overflow_bounds);
-  float ascent = font_data->GetFontMetrics().FloatAscent();
-  float descent = font_data->GetFontMetrics().FloatDescent();
   current_text_fragment_.glyph_overflow.SetFromBounds(glyph_overflow_bounds,
-                                                      ascent, descent, width);
+                                                      scaled_font, width);
   current_text_fragment_.glyph_overflow.top /= scaling_factor;
   current_text_fragment_.glyph_overflow.left /= scaling_factor;
   current_text_fragment_.glyph_overflow.right /= scaling_factor;
@@ -206,11 +204,16 @@ void SVGTextLayoutEngine::BeginTextPathLayout(SVGInlineFlowBox* flow_box) {
     return;
 
   float total_length = text_path_chunk_layout_builder.TotalLength();
-  if (length_adjust == kSVGLengthAdjustSpacing)
-    text_path_spacing_ = (desired_text_length - total_length) /
-                         text_path_chunk_layout_builder.TotalCharacters();
-  else
+  if (length_adjust == kSVGLengthAdjustSpacing) {
+    text_path_spacing_ = 0;
+    if (text_path_chunk_layout_builder.TotalCharacters() > 1) {
+      text_path_spacing_ = desired_text_length - total_length;
+      text_path_spacing_ /=
+          text_path_chunk_layout_builder.TotalCharacters() - 1;
+    }
+  } else {
     text_path_scaling_ = desired_text_length / total_length;
+  }
 }
 
 void SVGTextLayoutEngine::EndTextPathLayout() {
@@ -271,7 +274,7 @@ void SVGTextLayoutEngine::LayoutCharactersInTextBoxes(InlineFlowBox* start) {
         continue;
 
       SVGInlineFlowBox* flow_box = ToSVGInlineFlowBox(child);
-      bool is_text_path = isSVGTextPathElement(*node);
+      bool is_text_path = IsSVGTextPathElement(*node);
       if (is_text_path)
         BeginTextPathLayout(flow_box);
 
@@ -293,7 +296,7 @@ void SVGTextLayoutEngine::FinishLayout() {
   SVGTextChunkBuilder chunk_layout_builder;
   chunk_layout_builder.ProcessTextChunks(line_layout_boxes_);
 
-  line_layout_boxes_.Clear();
+  line_layout_boxes_.clear();
 }
 
 const LayoutSVGInlineText* SVGTextLayoutEngine::NextLogicalTextNode() {

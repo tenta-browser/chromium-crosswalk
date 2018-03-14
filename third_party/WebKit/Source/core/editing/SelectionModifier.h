@@ -28,41 +28,48 @@
 #define SelectionModifier_h
 
 #include "base/macros.h"
-#include "core/editing/FrameSelection.h"
+#include "core/editing/SelectionTemplate.h"
+#include "core/editing/VisibleSelection.h"
 #include "platform/LayoutUnit.h"
 #include "platform/wtf/Allocator.h"
 
 namespace blink {
 
+class LocalFrame;
+
+enum class SelectionModifyAlteration { kMove, kExtend };
+enum class SelectionModifyVerticalDirection { kUp, kDown };
+enum class SelectionModifyDirection { kBackward, kForward, kLeft, kRight };
+
 class SelectionModifier {
   STACK_ALLOCATED();
 
  public:
-  using EAlteration = FrameSelection::EAlteration;
-  using VerticalDirection = FrameSelection::VerticalDirection;
-
   // |frame| is used for providing settings.
   SelectionModifier(const LocalFrame& /* frame */,
-                    const VisibleSelection&,
+                    const SelectionInDOMTree&,
                     LayoutUnit);
-  SelectionModifier(const LocalFrame&, const VisibleSelection&);
+  SelectionModifier(const LocalFrame&, const SelectionInDOMTree&);
 
   LayoutUnit XPosForVerticalArrowNavigation() const {
     return x_pos_for_vertical_arrow_navigation_;
   }
-  const VisibleSelection& Selection() const { return selection_; }
 
-  bool Modify(EAlteration, SelectionDirection, TextGranularity);
-  bool ModifyWithPageGranularity(EAlteration,
+  // TODO(editing-dev): We should rename |Selection()| to
+  // |ComputeVisibleSelectionDeprecated()| and introduce |GetSelection()|
+  // to return |current_selection_|.
+  VisibleSelection Selection() const;
+
+  bool Modify(SelectionModifyAlteration,
+              SelectionModifyDirection,
+              TextGranularity);
+  bool ModifyWithPageGranularity(SelectionModifyAlteration,
                                  unsigned vertical_distance,
-                                 VerticalDirection);
+                                 SelectionModifyVerticalDirection);
 
  private:
-  // TODO(yosin): We should move |EPositionType| to "SelectionModifier.cpp",
-  // it is only used for implementing |modify()|.
-  // TODO(yosin) We should use capitalized name for |EPositionType|.
-  enum EPositionType { START, END, BASE, EXTENT };  // NOLINT
-
+  // TODO(editing-dev): We should make |GetFrame()| to return |LocalFrame&|
+  // since it can not be |nullptr|.
   LocalFrame* GetFrame() const { return frame_; }
 
   static bool ShouldAlwaysUseDirectionalSelection(LocalFrame*);
@@ -71,25 +78,62 @@ class SelectionModifier {
   VisiblePosition PositionForPlatform(bool is_get_start) const;
   VisiblePosition StartForPlatform() const;
   VisiblePosition EndForPlatform() const;
-  LayoutUnit LineDirectionPointForBlockDirectionNavigation(EPositionType);
+  LayoutUnit LineDirectionPointForBlockDirectionNavigation(const Position&);
+  VisiblePosition ComputeModifyPosition(SelectionModifyAlteration,
+                                        SelectionModifyDirection,
+                                        TextGranularity);
   VisiblePosition ModifyExtendingRight(TextGranularity);
+  VisiblePosition ModifyExtendingRightInternal(TextGranularity);
   VisiblePosition ModifyExtendingForward(TextGranularity);
+  VisiblePosition ModifyExtendingForwardInternal(TextGranularity);
   VisiblePosition ModifyMovingRight(TextGranularity);
   VisiblePosition ModifyMovingForward(TextGranularity);
   VisiblePosition ModifyExtendingLeft(TextGranularity);
+  VisiblePosition ModifyExtendingLeftInternal(TextGranularity);
   VisiblePosition ModifyExtendingBackward(TextGranularity);
+  VisiblePosition ModifyExtendingBackwardInternal(TextGranularity);
   VisiblePosition ModifyMovingLeft(TextGranularity);
   VisiblePosition ModifyMovingBackward(TextGranularity);
   VisiblePosition NextWordPositionForPlatform(const VisiblePosition&);
 
+  // TODO(editing-dev): We should handle |skips_spaces_when_moving_right| in
+  // another way, e.g. pass |EditingBehavior()|.
+  static VisiblePosition LeftWordPosition(const VisiblePosition&,
+                                          bool skips_space_when_moving_right);
+  static VisiblePosition RightWordPosition(const VisiblePosition&,
+                                           bool skips_space_when_moving_right);
+
   Member<LocalFrame> frame_;
+  // TODO(editing-dev): We should get rid of |selection_| once we change
+  // all member functions not to use |selection_|.
+  // |selection_| is used as implicit parameter or a cache instead of pass it.
   VisibleSelection selection_;
+  // TODO(editing-dev): We should introduce |GetSelection()| to return
+  // |result_| to replace |Selection().AsSelection()|.
+  // |current_selection_| holds initial value and result of |Modify()|.
+  SelectionInDOMTree current_selection_;
   LayoutUnit x_pos_for_vertical_arrow_navigation_;
 
   DISALLOW_COPY_AND_ASSIGN(SelectionModifier);
 };
 
 LayoutUnit NoXPosForVerticalArrowNavigation();
+
+// Following functions are exported for using in SelectionModifier and
+// testing only.
+
+// TODO(yosin) Since return value of |leftPositionOf()| with |VisiblePosition|
+// isn't defined well on flat tree, we should not use it for a position in
+// flat tree.
+CORE_EXPORT VisiblePosition LeftPositionOf(const VisiblePosition&);
+CORE_EXPORT VisiblePositionInFlatTree
+LeftPositionOf(const VisiblePositionInFlatTree&);
+// TODO(yosin) Since return value of |rightPositionOf()| with |VisiblePosition|
+// isn't defined well on flat tree, we should not use it for a position in
+// flat tree.
+CORE_EXPORT VisiblePosition RightPositionOf(const VisiblePosition&);
+CORE_EXPORT VisiblePositionInFlatTree
+RightPositionOf(const VisiblePositionInFlatTree&);
 
 }  // namespace blink
 

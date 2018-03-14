@@ -15,42 +15,42 @@
 
 namespace content {
 
-BlinkInterfaceProviderImpl::BlinkInterfaceProviderImpl(
-    base::WeakPtr<service_manager::Connector> connector)
-    : connector_(connector),
-      main_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      weak_ptr_factory_(this) {
-  weak_ptr_ = weak_ptr_factory_.GetWeakPtr();
+namespace {
+
+void BindInterface(base::WeakPtr<service_manager::Connector> connector,
+                   const std::string& name,
+                   mojo::ScopedMessagePipeHandle handle) {
+  if (!connector)
+    return;
+
+  connector->BindInterface(
+      service_manager::Identity(mojom::kBrowserServiceName,
+                                service_manager::mojom::kInheritUserID),
+      name, std::move(handle));
 }
 
+}  // namespace
+
 BlinkInterfaceProviderImpl::BlinkInterfaceProviderImpl(
-    base::WeakPtr<service_manager::InterfaceProvider> remote_interfaces)
-    : remote_interfaces_(remote_interfaces),
-      main_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      weak_ptr_factory_(this) {
-  weak_ptr_ = weak_ptr_factory_.GetWeakPtr();
-}
+    service_manager::Connector* connector)
+    : connector_(connector->GetWeakPtr()),
+      main_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()) {}
 
 BlinkInterfaceProviderImpl::~BlinkInterfaceProviderImpl() = default;
 
 void BlinkInterfaceProviderImpl::GetInterface(
     const char* name,
     mojo::ScopedMessagePipeHandle handle) {
-  if (!main_thread_task_runner_->BelongsToCurrentThread()) {
-    main_thread_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&BlinkInterfaceProviderImpl::GetInterface,
-                              weak_ptr_, name, base::Passed(&handle)));
+  // Construct a closure that can safely be passed across threads if necessary.
+  base::OnceClosure closure = base::BindOnce(
+      &BindInterface, connector_, std::string(name), std::move(handle));
+
+  if (main_thread_task_runner_->BelongsToCurrentThread()) {
+    std::move(closure).Run();
     return;
   }
 
-  if (connector_) {
-    connector_->BindInterface(
-        service_manager::Identity(mojom::kBrowserServiceName,
-                                  service_manager::mojom::kInheritUserID),
-        name, std::move(handle));
-  } else {
-    remote_interfaces_->GetInterface(name, std::move(handle));
-  }
+  main_thread_task_runner_->PostTask(FROM_HERE, std::move(closure));
 }
 
 }  // namespace content

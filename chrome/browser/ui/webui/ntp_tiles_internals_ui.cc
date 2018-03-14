@@ -34,7 +34,10 @@ class ChromeNTPTilesInternalsMessageHandlerClient
     : public content::WebUIMessageHandler,
       public ntp_tiles::NTPTilesInternalsMessageHandlerClient {
  public:
-  ChromeNTPTilesInternalsMessageHandlerClient() {}
+  // |favicon_service| must not be null and must outlive this object.
+  explicit ChromeNTPTilesInternalsMessageHandlerClient(
+      favicon::FaviconService* favicon_service)
+      : handler_(favicon_service) {}
 
  private:
   // content::WebUIMessageHandler:
@@ -72,7 +75,9 @@ bool ChromeNTPTilesInternalsMessageHandlerClient::DoesSourceExist(
     case ntp_tiles::TileSource::TOP_SITES:
     case ntp_tiles::TileSource::SUGGESTIONS_SERVICE:
     case ntp_tiles::TileSource::WHITELIST:
+    case ntp_tiles::TileSource::HOMEPAGE:
       return true;
+    case ntp_tiles::TileSource::POPULAR_BAKED_IN:
     case ntp_tiles::TileSource::POPULAR:
 #if defined(OS_ANDROID)
       return true;
@@ -114,6 +119,7 @@ content::WebUIDataSource* CreateNTPTilesInternalsHTMLSource() {
   source->AddResourcePath("ntp_tiles_internals.css",
                           IDR_NTP_TILES_INTERNALS_CSS);
   source->SetDefaultResource(IDR_NTP_TILES_INTERNALS_HTML);
+  source->UseGzip();
   return source;
 }
 
@@ -121,10 +127,12 @@ content::WebUIDataSource* CreateNTPTilesInternalsHTMLSource() {
 
 NTPTilesInternalsUI::NTPTilesInternalsUI(content::WebUI* web_ui)
     : WebUIController(web_ui) {
-  content::WebUIDataSource::Add(Profile::FromWebUI(web_ui),
-                                CreateNTPTilesInternalsHTMLSource());
+  Profile* profile = Profile::FromWebUI(web_ui);
+  content::WebUIDataSource::Add(profile, CreateNTPTilesInternalsHTMLSource());
   web_ui->AddMessageHandler(
-      base::MakeUnique<ChromeNTPTilesInternalsMessageHandlerClient>());
+      base::MakeUnique<ChromeNTPTilesInternalsMessageHandlerClient>(
+          FaviconServiceFactory::GetForProfile(
+              profile, ServiceAccessType::EXPLICIT_ACCESS)));
 }
 
 NTPTilesInternalsUI::~NTPTilesInternalsUI() {}

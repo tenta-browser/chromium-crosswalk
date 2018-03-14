@@ -289,6 +289,10 @@ class DragStartWaiter : public aura::client::DragDropClient {
 
   bool IsDragDropInProgress() override { return drag_started_; }
 
+  void AddObserver(aura::client::DragDropClientObserver* observer) override {}
+  void RemoveObserver(aura::client::DragDropClientObserver* observer) override {
+  }
+
  private:
   content::WebContents* web_contents_;
   scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
@@ -702,21 +706,8 @@ class DragAndDropBrowserTest : public InProcessBrowserTest,
   }
 
   content::RenderFrameHost* GetFrameByName(const std::string& name_to_find) {
-    content::RenderFrameHost* result = nullptr;
-    for (content::RenderFrameHost* rfh : web_contents()->GetAllFrames()) {
-      if (rfh->GetFrameName() == name_to_find) {
-        if (result) {
-          ADD_FAILURE() << "More than one frame named "
-                        << "'" << name_to_find << "'";
-          return nullptr;
-        }
-        result = rfh;
-      }
-    }
-
-    EXPECT_TRUE(result) << "Couldn't find a frame named "
-                        << "'" << name_to_find << "'";
-    return result;
+    return content::FrameMatchingPredicate(
+        web_contents(), base::Bind(&content::FrameMatchesName, name_to_find));
   }
 
   void AssertTestPageIsLoaded() {
@@ -1223,10 +1214,9 @@ void DragAndDropBrowserTest::CrossSiteDrag_Step2(
     // the test before the event has had a chance to be reported back to the
     // browser.
     std::string expected_response = base::StringPrintf("\"i%d\"", i);
-    right_frame()->ExecuteJavaScriptWithUserGestureForTests(base::UTF8ToUTF16(
-        base::StringPrintf("domAutomationController.setAutomationId(0);\n"
-                           "domAutomationController.send(%s);\n",
-                           expected_response.c_str())));
+    right_frame()->ExecuteJavaScriptWithUserGestureForTests(
+        base::UTF8ToUTF16(base::StringPrintf(
+            "domAutomationController.send(%s);", expected_response.c_str())));
 
     // Wait until our response comes back (it might be mixed with responses
     // carrying events that are sent by event_monitoring.js).

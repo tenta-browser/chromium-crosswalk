@@ -33,15 +33,14 @@ CastDevToolsManagerDelegate::~CastDevToolsManagerDelegate() {
   g_devtools_manager_delegate = nullptr;
 }
 
-bool CastDevToolsManagerDelegate::DiscoverTargets(
-    const content::DevToolsAgentHost::DiscoveryCallback& callback) {
+content::DevToolsAgentHost::List
+CastDevToolsManagerDelegate::RemoteDebuggingTargets() {
   content::DevToolsAgentHost::List enabled_hosts;
   for (auto* web_contents : enabled_webcontents_) {
     enabled_hosts.push_back(
         content::DevToolsAgentHost::GetOrCreateFor(web_contents));
   }
-  callback.Run(enabled_hosts);
-  return true;
+  return enabled_hosts;
 }
 
 void CastDevToolsManagerDelegate::EnableWebContentsForDebugging(
@@ -55,12 +54,17 @@ void CastDevToolsManagerDelegate::DisableWebContentsForDebugging(
   enabled_webcontents_.erase(web_contents);
 }
 
+bool CastDevToolsManagerDelegate::HasEnabledWebContents() const {
+  return !enabled_webcontents_.empty();
+}
+
 std::string CastDevToolsManagerDelegate::GetDiscoveryPageHTML() {
 #if defined(OS_ANDROID)
   return std::string();
 #else
-  return ResourceBundle::GetSharedInstance().GetRawDataResource(
-      IDR_CAST_SHELL_DEVTOOLS_DISCOVERY_PAGE).as_string();
+  return ui::ResourceBundle::GetSharedInstance()
+      .GetRawDataResource(IDR_CAST_SHELL_DEVTOOLS_DISCOVERY_PAGE)
+      .as_string();
 #endif
 }
 

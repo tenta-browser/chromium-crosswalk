@@ -21,6 +21,10 @@
 #include "dbus/dbus_export.h"
 #include "dbus/object_path.h"
 
+namespace base {
+class TaskRunner;
+}  // namespace base
+
 namespace dbus {
 
 class Bus;
@@ -68,30 +72,38 @@ class CHROME_DBUS_EXPORT ObjectProxy
 
   // Called when an error response is returned or no response is returned.
   // Used for CallMethodWithErrorCallback().
-  typedef base::Callback<void(ErrorResponse*)> ErrorCallback;
+  using ErrorCallback = base::OnceCallback<void(ErrorResponse*)>;
 
   // Called when the response is returned. Used for CallMethod().
-  typedef base::Callback<void(Response*)> ResponseCallback;
+  using ResponseCallback = base::OnceCallback<void(Response*)>;
+
+  // Called when the response is returned or an error occurs. Used for
+  // CallMethodWithErrorResponse().
+  // Note that even in error case, ErrorResponse* may be nullptr.
+  // E.g. out-of-memory error is found in libdbus, or the connection of
+  // |bus_| is not yet established.
+  using ResponseOrErrorCallback =
+      base::OnceCallback<void(Response*, ErrorResponse*)>;
 
   // Called when a signal is received. Signal* is the incoming signal.
-  typedef base::Callback<void (Signal*)> SignalCallback;
+  using SignalCallback = base::Callback<void(Signal*)>;
 
   // Called when NameOwnerChanged signal is received.
-  typedef base::Callback<void(
-      const std::string& old_owner,
-      const std::string& new_owner)> NameOwnerChangedCallback;
+  using NameOwnerChangedCallback =
+      base::Callback<void(const std::string& old_owner,
+                          const std::string& new_owner)>;
 
   // Called when the service becomes available.
-  typedef base::Callback<void(
-      bool service_is_available)> WaitForServiceToBeAvailableCallback;
+  using WaitForServiceToBeAvailableCallback =
+      base::OnceCallback<void(bool service_is_available)>;
 
   // Called when the object proxy is connected to the signal.
   // Parameters:
   // - the interface name.
   // - the signal name.
   // - whether it was successful or not.
-  typedef base::Callback<void (const std::string&, const std::string&, bool)>
-      OnConnectedCallback;
+  using OnConnectedCallback =
+      base::OnceCallback<void(const std::string&, const std::string&, bool)>;
 
   // Calls the method of the remote object and blocks until the response
   // is returned. Returns NULL on error with the error details specified
@@ -120,7 +132,7 @@ class CHROME_DBUS_EXPORT ObjectProxy
   // EmptyResponseCallback() can be passed to the |callback| parameter.
   //
   // If the method call is successful, a pointer to Response object will
-  // be passed to the callback. If unsuccessful, NULL will be passed to
+  // be passed to the callback. If unsuccessful, nullptr will be passed to
   // the callback.
   //
   // Must be called in the origin thread.
@@ -128,6 +140,20 @@ class CHROME_DBUS_EXPORT ObjectProxy
                           int timeout_ms,
                           ResponseCallback callback);
 
+  // Requests to call the method of the remote object.
+  //
+  // This is almost as same as CallMethod() defined above.
+  // The difference is that, the |callback| can take ErrorResponse.
+  // In case of error, ErrorResponse object is passed to the |callback|
+  // if the remote object returned an error, or nullptr if a response was not
+  // received at all (e.g., D-Bus connection is not established). In either
+  // error case, Response* should be nullptr.
+  virtual void CallMethodWithErrorResponse(MethodCall* method_call,
+                                           int timeout_ms,
+                                           ResponseOrErrorCallback callback);
+
+  // DEPRECATED. Please use CallMethodWithErrorResponse() instead.
+  // TODO(hidehiko): Remove this when migration is done.
   // Requests to call the method of the remote object.
   //
   // |callback| and |error_callback| will be called in the origin thread, once
@@ -201,44 +227,50 @@ class CHROME_DBUS_EXPORT ObjectProxy
  private:
   friend class base::RefCountedThreadSafe<ObjectProxy>;
 
-  // Struct of data we'll be passing from StartAsyncMethodCall() to
-  // OnPendingCallIsCompleteThunk().
-  struct OnPendingCallIsCompleteData {
-    OnPendingCallIsCompleteData(ObjectProxy* in_object_proxy,
-                                ResponseCallback in_response_callback,
-                                ErrorCallback error_callback,
-                                base::TimeTicks start_time);
-    ~OnPendingCallIsCompleteData();
+  // Callback passed to CallMethod and its family should be deleted on the
+  // origin thread in any cases. This class manages the work.
+  class ReplyCallbackHolder {
+   public:
+    // Designed to be created on the origin thread.
+    // Both |origin_task_runner| and |callback| must not be null.
+    ReplyCallbackHolder(scoped_refptr<base::TaskRunner> origin_task_runner,
+                        ResponseOrErrorCallback callback);
 
-    ObjectProxy* object_proxy;
-    ResponseCallback response_callback;
-    ErrorCallback error_callback;
-    base::TimeTicks start_time;
+    // This is movable to be bound to an OnceCallback.
+    ReplyCallbackHolder(ReplyCallbackHolder&& other);
+
+    // |callback_| needs to be destroyed on the origin thread.
+    // If this is not destroyed on non-origin thread, it PostTask()s the
+    // callback to the origin thread for destroying.
+    ~ReplyCallbackHolder();
+
+    // Returns |callback_| with releasing its ownership.
+    // This must be called on the origin thread.
+    ResponseOrErrorCallback ReleaseCallback();
+
+   private:
+    scoped_refptr<base::TaskRunner> origin_task_runner_;
+    ResponseOrErrorCallback callback_;
+    DISALLOW_COPY_AND_ASSIGN(ReplyCallbackHolder);
   };
 
   // Starts the async method call. This is a helper function to implement
   // CallMethod().
   void StartAsyncMethodCall(int timeout_ms,
                             DBusMessage* request_message,
-                            ResponseCallback response_callback,
-                            ErrorCallback error_callback,
+                            ReplyCallbackHolder callback_holder,
                             base::TimeTicks start_time);
 
   // Called when the pending call is complete.
-  void OnPendingCallIsComplete(DBusPendingCall* pending_call,
-                               ResponseCallback response_callback,
-                               ErrorCallback error_callback,
-                               base::TimeTicks start_time);
+  void OnPendingCallIsComplete(ReplyCallbackHolder callback_holder,
+                               base::TimeTicks start_time,
+                               DBusPendingCall* pending_call);
 
-  // Runs the response callback with the given response object.
-  void RunResponseCallback(ResponseCallback response_callback,
-                           ErrorCallback error_callback,
-                           base::TimeTicks start_time,
-                           DBusMessage* response_message);
-
-  // Redirects the function call to OnPendingCallIsComplete().
-  static void OnPendingCallIsCompleteThunk(DBusPendingCall* pending_call,
-                                           void* user_data);
+  // Runs the ResponseOrErrorCallback with the given response object.
+  void RunResponseOrErrorCallback(ReplyCallbackHolder callback_holderk,
+                                  base::TimeTicks start_time,
+                                  Response* response,
+                                  ErrorResponse* error_response);
 
   // Connects to NameOwnerChanged signal.
   bool ConnectToNameOwnerChangedSignal();
@@ -272,11 +304,14 @@ class CHROME_DBUS_EXPORT ObjectProxy
                             const base::StringPiece& error_name,
                             const base::StringPiece& error_message) const;
 
-  // Used as ErrorCallback by CallMethod().
-  void OnCallMethodError(const std::string& interface_name,
-                         const std::string& method_name,
-                         ResponseCallback response_callback,
-                         ErrorResponse* error_response);
+  // Used as ResponseOrErrorCallback by CallMethod().
+  // Logs error message, and drops |error_response| from the arguments to pass
+  // |response_callback|.
+  void OnCallMethod(const std::string& interface_name,
+                    const std::string& method_name,
+                    ResponseCallback response_callback,
+                    Response* response,
+                    ErrorResponse* error_response);
 
   // Adds the match rule to the bus and associate the callback with the signal.
   bool AddMatchRuleWithCallback(const std::string& match_rule,
@@ -310,7 +345,7 @@ class CHROME_DBUS_EXPORT ObjectProxy
 
   // The method table where keys are absolute signal names (i.e. interface
   // name + signal name), and values are lists of the corresponding callbacks.
-  typedef std::map<std::string, std::vector<SignalCallback> > MethodTable;
+  using MethodTable = std::map<std::string, std::vector<SignalCallback>>;
   MethodTable method_table_;
 
   // The callback called when NameOwnerChanged signal is received.

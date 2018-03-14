@@ -21,7 +21,7 @@ except ImportError:
 
 
 SUPPORTED_TARGETS = ('iphoneos', 'iphonesimulator')
-SUPPORTED_CONFIGS = ('Debug', 'Release', 'Profile', 'Official')
+SUPPORTED_CONFIGS = ('Debug', 'Release', 'Profile', 'Official', 'Coverage')
 
 
 class ConfigParserWithStringInterpolation(ConfigParser.SafeConfigParser):
@@ -90,12 +90,20 @@ class GnGenerator(object):
       if goma_dir:
         args.append(('goma_dir', '"%s"' % os.path.expanduser(goma_dir)))
 
-    args.append(('is_debug', self._config == 'Debug'))
+    args.append(('is_debug', self._config in ('Debug', 'Coverage')))
     args.append(('enable_dsyms', self._config in ('Profile', 'Official')))
     args.append(('enable_stripping', 'enable_dsyms'))
     args.append(('is_official_build', self._config == 'Official'))
     args.append(('is_chrome_branded', 'is_official_build'))
-    args.append(('use_xcode_clang', 'is_official_build'))
+    args.append(('ios_enable_coverage', self._config == 'Coverage'))
+
+    # TODO(crbug.com/75794): the version of llvm-cov used for code coverage is
+    # tied to the version of clang used. As no copy of llvm-cov is shipped with
+    # the Chrome's clang, the version shipped with Xcode is used, thus code
+    # needs to be compiled with Xcode's clang when enabling code coverage.
+    # Remove this once llvm-cov is shipped with Chrome's clang.
+    args.append(('use_xcode_clang', 'is_official_build || ios_enable_coverage'))
+
     if os.environ.get('FORCE_MAC_TOOLCHAIN', '0') == '1':
       args.append(('use_system_xcode', False))
 
@@ -229,7 +237,7 @@ def WriteToFileIfChanged(filename, content, overwrite):
 
 
 def NinjaNeedEscape(arg):
-  '''Returns True if |arg| need to be escaped when writen to .ninja file.'''
+  '''Returns True if |arg| needs to be escaped when written to .ninja file.'''
   return ':' in arg or '*' in arg or ';' in arg
 
 

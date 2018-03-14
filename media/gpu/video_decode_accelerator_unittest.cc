@@ -21,7 +21,6 @@
 #include <sys/types.h>
 
 #include <algorithm>
-#include <deque>
 #include <map>
 #include <memory>
 #include <tuple>
@@ -38,7 +37,9 @@
 #include "base/macros.h"
 #include "base/md5.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/process/process_handle.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -50,7 +51,7 @@
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/launcher/unit_test_launcher.h"
-#include "base/test/scoped_task_scheduler.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/test_suite.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -58,11 +59,13 @@
 #include "gpu/command_buffer/service/gpu_preferences.h"
 #include "gpu/config/gpu_driver_bug_workarounds.h"
 #include "media/base/test_data_util.h"
-#include "media/filters/h264_parser.h"
 #include "media/gpu/fake_video_decode_accelerator.h"
+#include "media/gpu/features.h"
+#include "media/gpu/format_utils.h"
 #include "media/gpu/gpu_video_decode_accelerator_factory.h"
 #include "media/gpu/rendering_helper.h"
 #include "media/gpu/video_accelerator_unittest_helpers.h"
+#include "media/video/h264_parser.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gl/gl_image.h"
@@ -70,26 +73,17 @@
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
 #include "media/gpu/dxva_video_decode_accelerator_win.h"
-#elif defined(OS_CHROMEOS)
-#if defined(USE_V4L2_CODEC)
-#include "media/gpu/v4l2_device.h"
-#include "media/gpu/v4l2_slice_video_decode_accelerator.h"
-#include "media/gpu/v4l2_video_decode_accelerator.h"
-#endif
-#if defined(ARCH_CPU_X86_FAMILY)
-#include "media/gpu/vaapi_video_decode_accelerator.h"
+#endif  // defined(OS_WIN)
+#if BUILDFLAG(USE_VAAPI)
 #include "media/gpu/vaapi_wrapper.h"
-#endif  // defined(ARCH_CPU_X86_FAMILY)
-#else
-#error The VideoAccelerator tests are not supported on this platform.
-#endif  // OS_WIN
+#endif  // BUILDFLAG(USE_VAAPI)
 
-#if defined(USE_OZONE)
+#if defined(OS_CHROMEOS)
 #include "ui/gfx/native_pixmap.h"
 #include "ui/ozone/public/ozone_gpu_test_helper.h"
 #include "ui/ozone/public/ozone_platform.h"
 #include "ui/ozone/public/surface_factory_ozone.h"
-#endif  // defined(USE_OZONE)
+#endif  // defined(OS_CHROMEOS)
 
 namespace media {
 
@@ -123,9 +117,6 @@ const base::FilePath::CharType* g_output_log = NULL;
 
 // The value is set by the switch "--rendering_fps".
 double g_rendering_fps = 60;
-
-// The value is set by the switch "--rendering_warm_up".
-int g_rendering_warm_up = 0;
 
 // The value is set by the switch "--num_play_throughs". The video will play
 // the specified number of times. In different test cases, we have different
@@ -266,9 +257,7 @@ class VideoDecodeAcceleratorTestEnvironment : public ::testing::Environment {
 
   void SetUp() override {
     base::Thread::Options options;
-#if defined(OS_WIN)
     options.message_loop_type = base::MessageLoop::TYPE_UI;
-#endif
     rendering_thread_.StartWithOptions(options);
 
     base::WaitableEvent done(base::WaitableEvent::ResetPolicy::AUTOMATIC,
@@ -277,20 +266,19 @@ class VideoDecodeAcceleratorTestEnvironment : public ::testing::Environment {
         FROM_HERE, base::Bind(&RenderingHelper::InitializeOneOff, &done));
     done.Wait();
 
-#if defined(USE_OZONE)
+#if defined(OS_CHROMEOS)
     gpu_helper_.reset(new ui::OzoneGpuTestHelper());
     // Need to initialize after the rendering side since the rendering side
     // initializes the "GPU" parts of Ozone.
     //
     // This also needs to be done in the test environment since this shouldn't
     // be initialized multiple times for the same Ozone platform.
-    gpu_helper_->Initialize(base::ThreadTaskRunnerHandle::Get(),
-                            GetRenderingTaskRunner());
+    gpu_helper_->Initialize(base::ThreadTaskRunnerHandle::Get());
 #endif
   }
 
   void TearDown() override {
-#if defined(USE_OZONE)
+#if defined(OS_CHROMEOS)
     gpu_helper_.reset();
 #endif
     rendering_thread_.Stop();
@@ -302,7 +290,7 @@ class VideoDecodeAcceleratorTestEnvironment : public ::testing::Environment {
 
  private:
   base::Thread rendering_thread_;
-#if defined(USE_OZONE)
+#if defined(OS_CHROMEOS)
   std::unique_ptr<ui::OzoneGpuTestHelper> gpu_helper_;
 #endif
 
@@ -337,7 +325,7 @@ class TextureRef : public base::RefCounted<TextureRef> {
 
   uint32_t texture_id_;
   base::Closure no_longer_needed_cb_;
-#if defined(USE_OZONE)
+#if defined(OS_CHROMEOS)
   scoped_refptr<gfx::NativePixmap> pixmap_;
 #endif
 };
@@ -350,25 +338,8 @@ TextureRef::~TextureRef() {
 scoped_refptr<TextureRef> TextureRef::Create(
     uint32_t texture_id,
     const base::Closure& no_longer_needed_cb) {
-  return make_scoped_refptr(new TextureRef(texture_id, no_longer_needed_cb));
+  return base::WrapRefCounted(new TextureRef(texture_id, no_longer_needed_cb));
 }
-
-#if defined(USE_OZONE)
-gfx::BufferFormat VideoPixelFormatToGfxBufferFormat(
-    VideoPixelFormat pixel_format) {
-  switch (pixel_format) {
-    case VideoPixelFormat::PIXEL_FORMAT_ARGB:
-      return gfx::BufferFormat::BGRA_8888;
-    case VideoPixelFormat::PIXEL_FORMAT_XRGB:
-      return gfx::BufferFormat::BGRX_8888;
-    case VideoPixelFormat::PIXEL_FORMAT_NV12:
-      return gfx::BufferFormat::YUV_420_BIPLANAR;
-    default:
-      LOG_ASSERT(false) << "Unknown VideoPixelFormat";
-      return gfx::BufferFormat::BGRX_8888;
-  }
-}
-#endif
 
 // static
 scoped_refptr<TextureRef> TextureRef::CreatePreallocated(
@@ -377,7 +348,7 @@ scoped_refptr<TextureRef> TextureRef::CreatePreallocated(
     VideoPixelFormat pixel_format,
     const gfx::Size& size) {
   scoped_refptr<TextureRef> texture_ref;
-#if defined(USE_OZONE)
+#if defined(OS_CHROMEOS)
   texture_ref = TextureRef::Create(texture_id, no_longer_needed_cb);
   LOG_ASSERT(texture_ref);
 
@@ -396,7 +367,7 @@ scoped_refptr<TextureRef> TextureRef::CreatePreallocated(
 
 gfx::GpuMemoryBufferHandle TextureRef::ExportGpuMemoryBufferHandle() const {
   gfx::GpuMemoryBufferHandle handle;
-#if defined(USE_OZONE)
+#if defined(OS_CHROMEOS)
   CHECK(pixmap_);
   int duped_fd = HANDLE_EINTR(dup(pixmap_->GetDmaBufFd(0)));
   LOG_ASSERT(duped_fd != -1) << "Failed duplicating dmabuf fd";
@@ -642,10 +613,12 @@ void GLRenderingVDAClient::CreateAndStartDecoder() {
   LOG_ASSERT(decoder_deleted());
   LOG_ASSERT(!decoder_.get());
 
+  VideoDecodeAccelerator::Config config(profile_);
+
   if (fake_decoder_) {
     decoder_.reset(new FakeVideoDecodeAccelerator(
         frame_size_, base::Bind(&DoNothingReturnTrue)));
-    LOG_ASSERT(decoder_->Initialize(profile_, this));
+    LOG_ASSERT(decoder_->Initialize(config, this));
   } else {
     if (!vda_factory_) {
       vda_factory_ = GpuVideoDecodeAcceleratorFactory::Create(
@@ -655,7 +628,6 @@ void GLRenderingVDAClient::CreateAndStartDecoder() {
       LOG_ASSERT(vda_factory_);
     }
 
-    VideoDecodeAccelerator::Config config(profile_);
     if (g_test_import) {
       config.output_mode = VideoDecodeAccelerator::Config::OutputMode::IMPORT;
     }
@@ -727,7 +699,8 @@ void GLRenderingVDAClient::ProvidePictureBuffers(
 
     PictureBuffer::TextureIds texture_ids(1, texture_id);
     buffers.push_back(PictureBuffer(picture_buffer_id, dimensions,
-                                    PictureBuffer::TextureIds(), texture_ids));
+                                    PictureBuffer::TextureIds(), texture_ids,
+                                    texture_target, pixel_format));
   }
   decoder_->AssignPictureBuffers(buffers);
 
@@ -756,7 +729,8 @@ void GLRenderingVDAClient::PictureReady(const Picture& picture) {
     return;
 
   gfx::Rect visible_rect = picture.visible_rect();
-  EXPECT_TRUE(visible_rect.IsEmpty() || visible_rect == gfx::Rect(frame_size_));
+  if (!visible_rect.IsEmpty())
+    EXPECT_EQ(gfx::Rect(frame_size_), visible_rect);
 
   base::TimeTicks now = base::TimeTicks::Now();
 
@@ -1081,10 +1055,11 @@ void GLRenderingVDAClient::DecodeNextFragment() {
   base::SharedMemory shm;
   LOG_ASSERT(shm.CreateAndMapAnonymous(next_fragment_size));
   memcpy(shm.memory(), next_fragment_bytes.data(), next_fragment_size);
-  base::SharedMemoryHandle dup_handle;
-  bool result =
-      shm.ShareToProcess(base::GetCurrentProcessHandle(), &dup_handle);
-  LOG_ASSERT(result);
+  base::SharedMemoryHandle dup_handle = shm.handle().Duplicate();
+  LOG_ASSERT(dup_handle.IsValid());
+
+  // TODO(erikchen): This may leak the SharedMemoryHandle.
+  // https://crbug.com/640840.
   BitstreamBuffer bitstream_buffer(next_bitstream_buffer_id_, dup_handle,
                                    next_fragment_size);
   decode_start_time_[next_bitstream_buffer_id_] = base::TimeTicks::Now();
@@ -1211,8 +1186,6 @@ void VideoDecodeAcceleratorTest::TearDown() {
       FROM_HERE, base::Bind(&RenderingHelper::UnInitialize,
                             base::Unretained(&rendering_helper_), &done));
   done.Wait();
-
-  rendering_helper_.TearDown();
 }
 
 void VideoDecodeAcceleratorTest::ParseAndReadTestVideoData(
@@ -1284,8 +1257,6 @@ void VideoDecodeAcceleratorTest::UpdateTestVideoFileParams(
 
 void VideoDecodeAcceleratorTest::InitializeRenderingHelper(
     const RenderingHelperParams& helper_params) {
-  rendering_helper_.Setup();
-
   base::WaitableEvent done(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                            base::WaitableEvent::InitialState::NOT_SIGNALED);
   g_env->GetRenderingTaskRunner()->PostTask(
@@ -1398,7 +1369,6 @@ TEST_P(VideoDecodeAcceleratorParamTest, TestSimpleDecode) {
 
   RenderingHelperParams helper_params;
   helper_params.rendering_fps = g_rendering_fps;
-  helper_params.warm_up_iterations = g_rendering_warm_up;
   helper_params.render_as_thumbnails = render_as_thumbnails;
   if (render_as_thumbnails) {
     // Only one decoder is supported with thumbnail rendering
@@ -1407,6 +1377,7 @@ TEST_P(VideoDecodeAcceleratorParamTest, TestSimpleDecode) {
     helper_params.thumbnail_size = kThumbnailSize;
   }
 
+  helper_params.num_windows = num_concurrent_decoders;
   // First kick off all the decoders.
   for (size_t index = 0; index < num_concurrent_decoders; ++index) {
     TestVideoFile* video_file =
@@ -1431,10 +1402,6 @@ TEST_P(VideoDecodeAcceleratorParamTest, TestSimpleDecode) {
             render_as_thumbnails);
 
     clients_[index] = std::move(client);
-    helper_params.window_sizes.push_back(
-        render_as_thumbnails
-            ? kThumbnailsPageSize
-            : gfx::Size(video_file->width, video_file->height));
   }
 
   InitializeRenderingHelper(helper_params);
@@ -1519,15 +1486,32 @@ TEST_P(VideoDecodeAcceleratorParamTest, TestSimpleDecode) {
   }
 
   if (render_as_thumbnails) {
-    std::vector<unsigned char> rgb;
-    bool alpha_solid;
+    std::vector<unsigned char> rgba;
     base::WaitableEvent done(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                              base::WaitableEvent::InitialState::NOT_SIGNALED);
     g_env->GetRenderingTaskRunner()->PostTask(
-        FROM_HERE, base::Bind(&RenderingHelper::GetThumbnailsAsRGB,
-                              base::Unretained(&rendering_helper_), &rgb,
-                              &alpha_solid, &done));
+        FROM_HERE,
+        base::Bind(&RenderingHelper::GetThumbnailsAsRGBA,
+                   base::Unretained(&rendering_helper_), &rgba, &done));
     done.Wait();
+
+    std::vector<unsigned char> rgb;
+    size_t num_pixels = rgba.size() / 4;
+
+    rgb.resize(num_pixels * 3);
+    // Drop the alpha channel, but check as we go that it is all 0xff.
+    bool solid = true;
+    unsigned char* rgb_ptr = &rgb[0];
+    unsigned char* rgba_ptr = &rgba[0];
+    for (size_t i = 0; i < num_pixels; i++) {
+      *rgb_ptr++ = *rgba_ptr++;
+      *rgb_ptr++ = *rgba_ptr++;
+      *rgb_ptr++ = *rgba_ptr++;
+      solid = solid && (*rgba_ptr == 0xff);
+      rgba_ptr++;
+    }
+
+    EXPECT_EQ(solid, true) << "RGBA frame had incorrect alpha";
 
     std::vector<std::string> golden_md5s;
     std::string md5_string = base::MD5String(
@@ -1536,15 +1520,12 @@ TEST_P(VideoDecodeAcceleratorParamTest, TestSimpleDecode) {
     std::vector<std::string>::iterator match =
         find(golden_md5s.begin(), golden_md5s.end(), md5_string);
     if (match == golden_md5s.end()) {
-      // Convert raw RGB into PNG for export.
+      // Convert raw RGBA into PNG for export.
       std::vector<unsigned char> png;
-      gfx::PNGCodec::Encode(&rgb[0],
-                            gfx::PNGCodec::FORMAT_RGB,
+      gfx::PNGCodec::Encode(&rgba[0], gfx::PNGCodec::FORMAT_RGBA,
                             kThumbnailsPageSize,
-                            kThumbnailsPageSize.width() * 3,
-                            true,
-                            std::vector<gfx::PNGCodec::Comment>(),
-                            &png);
+                            kThumbnailsPageSize.width() * 4, true,
+                            std::vector<gfx::PNGCodec::Comment>(), &png);
 
       LOG(ERROR) << "Unknown thumbnails MD5: " << md5_string;
 
@@ -1569,7 +1550,6 @@ TEST_P(VideoDecodeAcceleratorParamTest, TestSimpleDecode) {
       EXPECT_EQ(num_bytes, static_cast<int>(png.size()));
     }
     EXPECT_NE(match, golden_md5s.end());
-    EXPECT_EQ(alpha_solid, true) << "RGBA frame had incorrect alpha";
   }
 
   // Output the frame delivery time to file
@@ -1765,8 +1745,7 @@ TEST_F(VideoDecodeAcceleratorTest, TestDecodeTimeMedian) {
       test_video_files_[0]->profile, g_fake_decoder, true,
       std::numeric_limits<int>::max(), kWebRtcDecodeCallsPerSecond, false));
   RenderingHelperParams helper_params;
-  helper_params.window_sizes.push_back(
-      gfx::Size(test_video_files_[0]->width, test_video_files_[0]->height));
+  helper_params.num_windows = 1;
   InitializeRenderingHelper(helper_params);
   CreateAndStartDecoder(clients_[0].get(), notes_[0].get());
   ClientState last_state = WaitUntilDecodeFinish(notes_[0].get());
@@ -1794,8 +1773,7 @@ TEST_F(VideoDecodeAcceleratorTest, NoCrash) {
       test_video_files_[0]->profile, g_fake_decoder, true,
       std::numeric_limits<int>::max(), 0, false));
   RenderingHelperParams helper_params;
-  helper_params.window_sizes.push_back(
-      gfx::Size(test_video_files_[0]->width, test_video_files_[0]->height));
+  helper_params.num_windows = 1;
   InitializeRenderingHelper(helper_params);
   CreateAndStartDecoder(clients_[0].get(), notes_[0].get());
   WaitUntilDecodeFinish(notes_[0].get());
@@ -1812,28 +1790,29 @@ class VDATestSuite : public base::TestSuite {
   VDATestSuite(int argc, char** argv) : base::TestSuite(argc, argv) {}
 
   int Run() {
-#if defined(OS_WIN) || defined(USE_OZONE)
+#if defined(OS_WIN) || defined(OS_CHROMEOS)
     // For windows the decoding thread initializes the media foundation decoder
     // which uses COM. We need the thread to be a UI thread.
     // On Ozone, the backend initializes the event system using a UI
     // thread.
-    base::MessageLoopForUI main_loop;
+    base::test::ScopedTaskEnvironment scoped_task_environment(
+        base::test::ScopedTaskEnvironment::MainThreadType::UI);
 #else
-    base::MessageLoop main_loop;
-#endif  // OS_WIN || USE_OZONE
-
-    base::test::ScopedTaskScheduler scoped_task_scheduler(&main_loop);
+    base::test::ScopedTaskEnvironment scoped_task_environment;
+#endif  // OS_WIN || OS_CHROMEOS
 
     media::g_env =
         reinterpret_cast<media::VideoDecodeAcceleratorTestEnvironment*>(
             testing::AddGlobalTestEnvironment(
                 new media::VideoDecodeAcceleratorTestEnvironment()));
 
-#if defined(USE_OZONE)
-    ui::OzonePlatform::InitializeForUI();
+#if defined(OS_CHROMEOS)
+    ui::OzonePlatform::InitParams params;
+    params.single_process = false;
+    ui::OzonePlatform::InitializeForUI(params);
 #endif
 
-#if defined(OS_CHROMEOS) && defined(ARCH_CPU_X86_FAMILY)
+#if BUILDFLAG(USE_VAAPI)
     media::VaapiWrapper::PreSandboxInitialization();
 #elif defined(OS_WIN)
     media::DXVAVideoDecodeAccelerator::PreSandboxInitialization();
@@ -1876,8 +1855,7 @@ int main(int argc, char** argv) {
       continue;
     }
     if (it->first == "rendering_warm_up") {
-      std::string input(it->second.begin(), it->second.end());
-      LOG_ASSERT(base::StringToInt(input, &media::g_rendering_warm_up));
+      // TODO(owenlin): Remove this after autotest stop using it.
       continue;
     }
     // TODO(owenlin): Remove this flag once it is not used in autotest.

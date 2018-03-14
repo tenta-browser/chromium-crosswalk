@@ -11,7 +11,7 @@
 #include "base/strings/string_util.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/common/chrome_switches.h"
-#include "components/safe_browsing_db/v4_local_database_manager.h"
+#include "components/safe_browsing/db/v4_local_database_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "services/preferences/public/interfaces/tracked_preference_validation_delegate.mojom.h"
 
@@ -102,6 +102,9 @@ void ServicesDelegateImpl::ShutdownServices() {
   resource_request_detector_.reset();
   incident_service_.reset();
 
+  // Delete the ChromePasswordProtectionService instances.
+  password_protection_service_map_.clear();
+
   // Must shut down last.
   download_service_.reset();
 }
@@ -177,6 +180,33 @@ void ServicesDelegateImpl::StopOnIOThread(bool shutdown) {
   if (v4_local_database_manager_.get()) {
     v4_local_database_manager_->StopOnIOThread(shutdown);
   }
+}
+
+void ServicesDelegateImpl::CreatePasswordProtectionService(Profile* profile) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  DCHECK(profile);
+  auto it = password_protection_service_map_.find(profile);
+  DCHECK(it == password_protection_service_map_.end());
+  std::unique_ptr<ChromePasswordProtectionService> service =
+      base::MakeUnique<ChromePasswordProtectionService>(safe_browsing_service_,
+                                                        profile);
+  password_protection_service_map_[profile] = std::move(service);
+}
+
+void ServicesDelegateImpl::RemovePasswordProtectionService(Profile* profile) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  DCHECK(profile);
+  auto it = password_protection_service_map_.find(profile);
+  if (it != password_protection_service_map_.end())
+    password_protection_service_map_.erase(it);
+}
+
+PasswordProtectionService* ServicesDelegateImpl::GetPasswordProtectionService(
+    Profile* profile) const {
+  DCHECK(profile);
+  auto it = password_protection_service_map_.find(profile);
+  return it != password_protection_service_map_.end() ? it->second.get()
+                                                      : nullptr;
 }
 
 }  // namespace safe_browsing

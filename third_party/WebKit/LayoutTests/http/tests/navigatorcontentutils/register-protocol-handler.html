@@ -63,7 +63,7 @@ invalid_schemes.forEach(function (scheme) {
         debug('Fail: Invalid scheme "' + scheme + '" allowed. Threw exception: "' + errorMessage + '".');
 });
 
-var invalid_urls = ["", "%S"];
+var invalid_urls = ["", "%S", "http://[v8.:::]//url=%s"];
 invalid_urls.forEach(function (url) {
     var succeeded = false;
     try {
@@ -78,6 +78,21 @@ invalid_urls.forEach(function (url) {
     else
         debug('FAIL Invalid url "' + url + '" allowed.');
 });
+
+// Test if the API can register when URL's origin is same with the document's origin.
+var succeeded = false;
+var errorMessage;
+try {
+    window.navigator.registerProtocolHandler('web+myprotocol', "http://127.0.0.1:8000/navigatorcontentutils/url=%s", "title");
+    succeeded = true;
+} catch (e) {
+    errorMessage = e.message;
+}
+
+if (succeeded)
+    debug('PASS The registeration of URL that has the same origin with the document origin is allowed.');
+else
+    debug('FAIL The registeration of URL that has the same origin with the document origin is denied. errorMessage: "' + errorMessage + '".');
 
 // Test that the API throws SecurityError exception if the URL's origin differs from the document's origin.
 succeeded = false;
@@ -107,23 +122,6 @@ if (succeeded)
 else
     debug('FAIL Invalid call did not succeed.');
 
-// Check if registerProtocolHandler can register custom scheme.
-debug("\nCheck if registerProtocolHandler can register scheme correctly. If isProtocolHandlerRegistered() returns 'registered' state, registerProtoclHandler() works well.");
-debug("'bitcoin' scheme will be registered for testing.\n");
-try {
-    // Register 'bitcoin' scheme for testing.
-    window.navigator.registerProtocolHandler('bitcoin', 'invalid scheme uri=%s', 'title');
-
-    var state = window.navigator.isProtocolHandlerRegistered('bitcoin', 'valid scheme %s');
-    if (state == "registered")
-        debug("PASS window.navigator.isProtocolHandlerRegistered returns 'registered' state. 'bitcoin' is registered successfully.");
-    else if (state == "new")
-        debug("FAIL window.navigator.isProtocolHandlerRegistered returns 'new' state. Fail to register 'bitcoin' scheme.");
-    else if (state == "declined")
-        debug("FAIL window.navigator.isProtocolHandlerRegistered returns 'declined' state. Fail to register 'bitcoin' scheme");
-} catch (e) {
-    debug('FAIL window.navigator.isProtocolHandlerRegistered call is failed: "' + e.message + '".');
-}
 debug("\n");
 
 </script>

@@ -26,22 +26,25 @@
 #include "gpu/command_buffer/common/command_buffer.h"
 #include "gpu/command_buffer/common/command_buffer_id.h"
 #include "gpu/command_buffer/common/command_buffer_shared.h"
+#include "gpu/command_buffer/common/context_result.h"
 #include "gpu/command_buffer/common/gpu_memory_allocation.h"
+#include "gpu/command_buffer/common/scheduling_priority.h"
 #include "gpu/gpu_export.h"
-#include "gpu/ipc/common/gpu_stream_constants.h"
 #include "gpu/ipc/common/surface_handle.h"
 #include "ipc/ipc_listener.h"
 #include "ui/gfx/swap_result.h"
 #include "ui/gl/gpu_preference.h"
-#include "ui/latency/latency_info.h"
 
 struct GPUCommandBufferConsoleMessage;
-struct GPUCreateCommandBufferConfig;
 struct GpuCommandBufferMsg_SwapBuffersCompleted_Params;
 class GURL;
 
 namespace base {
 class SharedMemory;
+}
+
+namespace gfx {
+struct PresentationFeedback;
 }
 
 namespace gpu {
@@ -59,11 +62,9 @@ class GpuChannelHost;
 
 // Client side proxy that forwards messages synchronously to a
 // CommandBufferStub.
-class GPU_EXPORT CommandBufferProxyImpl
-    : public gpu::CommandBuffer,
-      public gpu::GpuControl,
-      public IPC::Listener,
-      public base::SupportsWeakPtr<CommandBufferProxyImpl> {
+class GPU_EXPORT CommandBufferProxyImpl : public gpu::CommandBuffer,
+                                          public gpu::GpuControl,
+                                          public IPC::Listener {
  public:
   class DeletionObserver {
    public:
@@ -77,17 +78,19 @@ class GPU_EXPORT CommandBufferProxyImpl
   typedef base::Callback<void(const std::string& msg, int id)>
       GpuConsoleMessageCallback;
 
-  // Create and connect to a command buffer in the GPU process.
-  static std::unique_ptr<CommandBufferProxyImpl> Create(
-      scoped_refptr<GpuChannelHost> host,
-      gpu::SurfaceHandle surface_handle,
-      CommandBufferProxyImpl* share_group,
+  CommandBufferProxyImpl(
+      scoped_refptr<GpuChannelHost> channel,
       int32_t stream_id,
-      gpu::GpuStreamPriority stream_priority,
-      const gpu::gles2::ContextCreationAttribHelper& attribs,
-      const GURL& active_url,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner);
   ~CommandBufferProxyImpl() override;
+
+  // Connect to a command buffer in the GPU process.
+  ContextResult Initialize(
+      gpu::SurfaceHandle surface_handle,
+      CommandBufferProxyImpl* share_group,
+      gpu::SchedulingPriority stream_priority,
+      const gpu::gles2::ContextCreationAttribHelper& attribs,
+      const GURL& active_url);
 
   // IPC::Listener implementation:
   bool OnMessageReceived(const IPC::Message& message) override;
@@ -98,7 +101,9 @@ class GPU_EXPORT CommandBufferProxyImpl
   void Flush(int32_t put_offset) override;
   void OrderingBarrier(int32_t put_offset) override;
   State WaitForTokenInRange(int32_t start, int32_t end) override;
-  State WaitForGetOffsetInRange(int32_t start, int32_t end) override;
+  State WaitForGetOffsetInRange(uint32_t set_get_buffer_count,
+                                int32_t start,
+                                int32_t end) override;
   void SetGetBuffer(int32_t shm_id) override;
   scoped_refptr<gpu::Buffer> CreateTransferBuffer(size_t size,
                                                   int32_t* id) override;
@@ -106,7 +111,7 @@ class GPU_EXPORT CommandBufferProxyImpl
 
   // gpu::GpuControl implementation:
   void SetGpuControlClient(GpuControlClient* client) override;
-  gpu::Capabilities GetCapabilities() override;
+  const gpu::Capabilities& GetCapabilities() const override;
   int32_t CreateImage(ClientBuffer buffer,
                       size_t width,
                       size_t height,
@@ -117,7 +122,7 @@ class GPU_EXPORT CommandBufferProxyImpl
   void EnsureWorkVisible() override;
   gpu::CommandBufferNamespace GetNamespaceID() const override;
   gpu::CommandBufferId GetCommandBufferID() const override;
-  int32_t GetExtraCommandBufferData() const override;
+  void FlushPendingWork() override;
   uint64_t GenerateFenceSyncRelease() override;
   bool IsFenceSyncRelease(uint64_t release) override;
   bool IsFenceSyncFlushed(uint64_t release) override;
@@ -127,7 +132,7 @@ class GPU_EXPORT CommandBufferProxyImpl
                        const base::Closure& callback) override;
   void WaitSyncTokenHint(const gpu::SyncToken& sync_token) override;
   bool CanWaitUnverifiedSyncToken(const gpu::SyncToken& sync_token) override;
-
+  void SetSnapshotRequested() override;
   void TakeFrontBuffer(const gpu::Mailbox& mailbox);
   void ReturnFrontBuffer(const gpu::Mailbox& mailbox,
                          const gpu::SyncToken& sync_token,
@@ -138,12 +143,8 @@ class GPU_EXPORT CommandBufferProxyImpl
 
   bool EnsureBackbuffer();
 
-  void SetOnConsoleMessageCallback(const GpuConsoleMessageCallback& callback);
-
-  void AddLatencyInfo(const std::vector<ui::LatencyInfo>& latency_info);
   using SwapBuffersCompletionCallback = base::Callback<void(
-      const std::vector<ui::LatencyInfo>& latency_info,
-      gfx::SwapResult result,
+      const gfx::SwapResponse& response,
       const gpu::GpuProcessHostedCALayerTreeParamsMac* params_mac)>;
   void SetSwapBuffersCompletionCallback(
       const SwapBuffersCompletionCallback& callback);
@@ -152,6 +153,11 @@ class GPU_EXPORT CommandBufferProxyImpl
       base::Callback<void(base::TimeTicks timebase, base::TimeDelta interval)>;
   void SetUpdateVSyncParametersCallback(
       const UpdateVSyncParametersCallback& callback);
+
+  using PresentationCallback =
+      base::Callback<void(uint64_t swap_id,
+                          const gfx::PresentationFeedback& feedback)>;
+  void SetPresentationCallback(const PresentationCallback& callback);
 
   void SetNeedsVSync(bool needs_vsync);
 
@@ -168,11 +174,6 @@ class GPU_EXPORT CommandBufferProxyImpl
   typedef std::map<int32_t, scoped_refptr<gpu::Buffer>> TransferBufferMap;
   typedef base::hash_map<uint32_t, base::Closure> SignalTaskMap;
 
-  CommandBufferProxyImpl(int channel_id, int32_t route_id, int32_t stream_id);
-  bool Initialize(scoped_refptr<GpuChannelHost> channel,
-                  const GPUCreateCommandBufferConfig& config,
-                  scoped_refptr<base::SingleThreadTaskRunner> task_runner);
-
   void CheckLock() {
     if (lock_) {
       lock_->AssertAcquired();
@@ -181,24 +182,26 @@ class GPU_EXPORT CommandBufferProxyImpl
     }
   }
 
+  void OrderingBarrierHelper(int32_t put_offset);
+
   // Send an IPC message over the GPU channel. This is private to fully
   // encapsulate the channel; all callers of this function must explicitly
   // verify that the context has not been lost.
   bool Send(IPC::Message* msg);
 
+  std::unique_ptr<base::SharedMemory> AllocateAndMapSharedMemory(size_t size);
+
   // Message handlers:
   void OnDestroyed(gpu::error::ContextLostReason reason,
                    gpu::error::Error error);
   void OnConsoleMessage(const GPUCommandBufferConsoleMessage& message);
-  void OnSignalAck(uint32_t id);
+  void OnSignalAck(uint32_t id, const CommandBuffer::State& state);
   void OnSwapBuffersCompleted(
       const GpuCommandBufferMsg_SwapBuffersCompleted_Params& params);
   void OnUpdateVSyncParameters(base::TimeTicks timebase,
                                base::TimeDelta interval);
-
-  // Updates the highest verified release fence sync.
-  void UpdateVerifiedReleases(uint32_t verified_flush);
-  void CleanupFlushedReleases(uint32_t highest_verified_flush_id);
+  void OnBufferPresented(uint64_t swap_id,
+                         const gfx::PresentationFeedback& feedback);
 
   // Try to read an updated copy of the state from shared memory, and calls
   // OnGpuStateError() if the new state has an error.
@@ -210,7 +213,7 @@ class GPU_EXPORT CommandBufferProxyImpl
   // has an error.
   void TryUpdateStateDontReportError();
   // Sets the state, and calls OnGpuStateError() if the new state has an error.
-  void SetStateFromSyncReply(const gpu::CommandBuffer::State& state);
+  void SetStateFromMessageReply(const CommandBuffer::State& state);
 
   // Loses the context after we received an invalid reply from the GPU
   // process.
@@ -248,30 +251,30 @@ class GPU_EXPORT CommandBufferProxyImpl
   // There should be a lock_ if this is going to be used across multiple
   // threads, or we guarantee it is used by a single thread by using a thread
   // checker if no lock_ is set.
-  base::Lock* lock_;
+  base::Lock* lock_ = nullptr;
   base::ThreadChecker lockless_thread_checker_;
 
   // Client that wants to listen for important events on the GpuControl.
-  gpu::GpuControlClient* gpu_control_client_;
+  gpu::GpuControlClient* gpu_control_client_ = nullptr;
 
   // Unowned list of DeletionObservers.
   base::ObserverList<DeletionObserver> deletion_observers_;
 
   scoped_refptr<GpuChannelHost> channel_;
-  const gpu::CommandBufferId command_buffer_id_;
+  bool disconnected_ = false;
+  const int channel_id_;
   const int32_t route_id_;
   const int32_t stream_id_;
-  uint32_t flush_count_ = 0;
+  const gpu::CommandBufferId command_buffer_id_;
+  uint32_t last_flush_id_ = 0;
   int32_t last_put_offset_ = -1;
-  int32_t last_barrier_put_offset_ = -1;
+  bool has_buffer_ = false;
 
   // Next generated fence sync.
   uint64_t next_fence_sync_release_ = 1;
 
+  // Sync token waits that haven't been flushed yet.
   std::vector<SyncToken> pending_sync_token_fences_;
-
-  // Unverified flushed fence syncs with their corresponding flush id.
-  std::queue<std::pair<uint64_t, uint32_t>> flushed_release_flush_id_;
 
   // Last flushed fence sync release, same as last item in queue if not empty.
   uint64_t flushed_fence_sync_release_ = 0;
@@ -287,13 +290,14 @@ class GPU_EXPORT CommandBufferProxyImpl
 
   gpu::Capabilities capabilities_;
 
-  std::vector<ui::LatencyInfo> latency_info_;
+  bool snapshot_requested_ = false;
 
   SwapBuffersCompletionCallback swap_buffers_completion_callback_;
   UpdateVSyncParametersCallback update_vsync_parameters_completion_callback_;
+  PresentationCallback presentation_callback_;
 
-  base::WeakPtr<CommandBufferProxyImpl> weak_this_;
-  scoped_refptr<base::SequencedTaskRunner> callback_thread_;
+  scoped_refptr<base::SingleThreadTaskRunner> callback_thread_;
+  base::WeakPtrFactory<CommandBufferProxyImpl> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(CommandBufferProxyImpl);
 };

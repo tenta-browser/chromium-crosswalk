@@ -5,9 +5,9 @@
 #include "components/sync/engine_impl/cycle/data_type_tracker.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "components/sync/engine_impl/cycle/nudge_tracker.h"
 
 namespace syncer {
@@ -108,7 +108,7 @@ void DataTypeTracker::RecordRemoteInvalidation(
   // The incoming invalidation may have caused us to exceed our buffer size.
   // Trim some items from our list, if necessary.
   while (pending_invalidations_.size() > payload_buffer_size_) {
-    last_dropped_invalidation_.reset(pending_invalidations_.front().release());
+    last_dropped_invalidation_ = std::move(pending_invalidations_.front());
     last_dropped_invalidation_->Drop();
     pending_invalidations_.erase(pending_invalidations_.begin());
   }
@@ -255,13 +255,13 @@ void DataTypeTracker::ThrottleType(base::TimeDelta duration,
                                    base::TimeTicks now) {
   unblock_time_ = std::max(unblock_time_, now + duration);
   wait_interval_ =
-      base::MakeUnique<WaitInterval>(WaitInterval::THROTTLED, duration);
+      std::make_unique<WaitInterval>(WaitInterval::THROTTLED, duration);
 }
 
 void DataTypeTracker::BackOffType(base::TimeDelta duration,
                                   base::TimeTicks now) {
   unblock_time_ = std::max(unblock_time_, now + duration);
-  wait_interval_ = base::MakeUnique<WaitInterval>(
+  wait_interval_ = std::make_unique<WaitInterval>(
       WaitInterval::EXPONENTIAL_BACKOFF, duration);
 }
 

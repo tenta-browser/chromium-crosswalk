@@ -14,56 +14,6 @@
 #error "This file requires ARC support."
 #endif
 
-#pragma mark - UIActivityTextSource
-
-@interface UIActivityTextSource () {
-  // The shared text.
-  NSString* _text;
-}
-
-@end
-
-@implementation UIActivityTextSource
-
-- (instancetype)init {
-  NOTREACHED();
-  return nil;
-}
-
-- (instancetype)initWithText:(NSString*)text {
-  DCHECK(text);
-  self = [super init];
-  if (self) {
-    _text = [text copy];
-  }
-  return self;
-}
-
-#pragma mark - UIActivityItemSource
-
-- (id)activityViewController:(UIActivityViewController*)activityViewController
-         itemForActivityType:(NSString*)activityType {
-  // The UIActivityTypeMail is excluded because it obtains the text through the
-  // UIActivityURLSource's |...subjectForActivityType:| method.
-  // The UIActivityTypeCopyToPasteboard and UIActivityTypeMessage are excluded
-  // because the pasteboard and message should only contain the URL, to match
-  // Safari's behavior.
-  NSSet* excludedActivityTypes = [NSSet setWithArray:@[
-    UIActivityTypeCopyToPasteboard, UIActivityTypeMail, UIActivityTypeMessage
-  ]];
-  if ([excludedActivityTypes containsObject:activityType]) {
-    return nil;
-  }
-  return _text;
-}
-
-- (id)activityViewControllerPlaceholderItem:
-    (UIActivityViewController*)activityViewController {
-  return _text;
-}
-
-@end
-
 #pragma mark - UIActivityImageSource
 
 @interface UIActivityImageSource () {
@@ -107,27 +57,38 @@
 
 @interface UIActivityURLSource () {
   NSString* _subject;
-  NSURL* _url;
   ThumbnailGeneratorBlock _thumbnailGenerator;
 }
+
+// URL to be shared with share extensions.
+@property(nonatomic, strong) NSURL* shareURL;
+// URL to be shared with password managers.
+@property(nonatomic, strong) NSURL* passwordManagerURL;
+
 @end
 
 @implementation UIActivityURLSource
+
+@synthesize shareURL = _shareURL;
+@synthesize passwordManagerURL = _passwordManagerURL;
 
 - (instancetype)init {
   NOTREACHED();
   return nil;
 }
 
-- (instancetype)initWithURL:(NSURL*)url
-                    subject:(NSString*)subject
-         thumbnailGenerator:(ThumbnailGeneratorBlock)thumbnailGenerator {
-  DCHECK(url);
+- (instancetype)initWithShareURL:(NSURL*)shareURL
+              passwordManagerURL:(NSURL*)passwordManagerURL
+                         subject:(NSString*)subject
+              thumbnailGenerator:(ThumbnailGeneratorBlock)thumbnailGenerator {
+  DCHECK(shareURL);
+  DCHECK(passwordManagerURL);
   DCHECK(subject);
   DCHECK(thumbnailGenerator);
   self = [super init];
   if (self) {
-    _url = url;
+    _shareURL = shareURL;
+    _passwordManagerURL = passwordManagerURL;
     _subject = [subject copy];
     _thumbnailGenerator = thumbnailGenerator;
   }
@@ -139,7 +100,7 @@
 - (id)activityViewControllerPlaceholderItem:
     (UIActivityViewController*)activityViewController {
   // Return the current URL as a placeholder
-  return _url;
+  return self.shareURL;
 }
 
 - (NSString*)activityViewController:
@@ -150,15 +111,17 @@
 
 - (id)activityViewController:(UIActivityViewController*)activityViewController
          itemForActivityType:(NSString*)activityType {
-  NSNumber* versionNumber =
-      activity_type_util::PasswordAppExActivityVersion(activityType);
-  if (!versionNumber)
-    return _url;
+  if (activity_type_util::TypeFromString(activityType) !=
+      activity_type_util::APPEX_PASSWORD_MANAGEMENT)
+    return self.shareURL;
 
-  // Constructs an NSExtensionItem object from the URL being "shared".
+  // Constructs an NSExtensionItem object from the URL designated for password
+  // managers.
   NSDictionary* appExItems = @{
-    activity_services::kPasswordAppExVersionNumberKey : versionNumber,
-    activity_services::kPasswordAppExURLStringKey : [_url absoluteString]
+    activity_services::kPasswordAppExVersionNumberKey :
+        activity_services::kPasswordAppExVersionNumber,
+    activity_services::
+    kPasswordAppExURLStringKey : [self.passwordManagerURL absoluteString]
   };
   NSItemProvider* itemProvider = [[NSItemProvider alloc]
         initWithItem:appExItems
@@ -188,10 +151,9 @@
   // after user made a choice of which AppEx to run, this method may be called
   // with |activityType| equals to the bundle ID of the AppEx selected.
   // Default action is to return @"public.url" UTType.
-  if (!activityType ||
-      activity_type_util::PasswordAppExActivityVersion(activityType)) {
+  if (!activityType || activity_type_util::TypeFromString(activityType) ==
+                           activity_type_util::APPEX_PASSWORD_MANAGEMENT)
     return findLoginType;
-  }
   return (NSString*)kUTTypeURL;
 }
 

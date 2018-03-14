@@ -8,6 +8,7 @@
 
 #include "base/memory/shared_memory.h"
 #include "base/strings/string16.h"
+#include "base/unguessable_token.h"
 #include "base/win/windows_version.h"
 #include "sandbox/win/src/interception.h"
 #include "sandbox/win/src/interceptors.h"
@@ -20,15 +21,17 @@ namespace sandbox {
 namespace {
 
 base::SharedMemoryHandle GetSharedMemoryHandle(const ClientInfo& client_info,
-                                               HANDLE handle) {
+                                               HANDLE handle,
+                                               size_t size) {
   HANDLE result_handle = nullptr;
   intptr_t handle_int = reinterpret_cast<intptr_t>(handle);
   if (handle_int <= 0 ||
       !::DuplicateHandle(client_info.process, handle, ::GetCurrentProcess(),
-                         &result_handle, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+                         &result_handle, 0, false, DUPLICATE_SAME_ACCESS)) {
     result_handle = nullptr;
   }
-  return base::SharedMemoryHandle(result_handle, ::GetCurrentProcessId());
+  return base::SharedMemoryHandle(result_handle, size,
+                                  base::UnguessableToken::Create());
 }
 
 }  // namespace
@@ -121,7 +124,8 @@ ProcessMitigationsWin32KDispatcher::ProcessMitigationsWin32KDispatcher(
 ProcessMitigationsWin32KDispatcher::~ProcessMitigationsWin32KDispatcher() {}
 
 bool ProcessMitigationsWin32KDispatcher::SetupService(
-    InterceptionManager* manager, int service) {
+    InterceptionManager* manager,
+    int service) {
   if (!(policy_base_->GetProcessMitigations() &
         sandbox::MITIGATION_WIN32K_DISABLE)) {
     return false;
@@ -310,7 +314,7 @@ bool ProcessMitigationsWin32KDispatcher::GetMonitorInfo(IPCInfo* ipc,
   // Ensure size is valid and represents what we've been passed.
   monitor_info->cbSize = buffer->Size();
   HMONITOR monitor_handle = static_cast<HMONITOR>(monitor);
-  BOOL success = ProcessMitigationsWin32KLockdownPolicy::GetMonitorInfoAction(
+  bool success = ProcessMitigationsWin32KLockdownPolicy::GetMonitorInfoAction(
       *ipc->client_info, monitor_handle, monitor_info);
   ipc->return_info.win32_result =
       success ? ERROR_SUCCESS : ERROR_INVALID_PARAMETER;
@@ -409,8 +413,8 @@ bool ProcessMitigationsWin32KDispatcher::GetCertificate(
     ipc->return_info.nt_status = STATUS_ACCESS_DENIED;
     return true;
   }
-  base::SharedMemoryHandle handle =
-      GetSharedMemoryHandle(*ipc->client_info, shared_buffer_handle);
+  base::SharedMemoryHandle handle = GetSharedMemoryHandle(
+      *ipc->client_info, shared_buffer_handle, shared_buffer_size);
   if (!handle.IsValid()) {
     ipc->return_info.nt_status = STATUS_ACCESS_DENIED;
     return true;
@@ -514,7 +518,8 @@ bool ProcessMitigationsWin32KDispatcher::ConfigureOPMProtectedOutput(
     return true;
   };
   base::SharedMemoryHandle handle =
-      GetSharedMemoryHandle(*ipc->client_info, shared_buffer_handle);
+      GetSharedMemoryHandle(*ipc->client_info, shared_buffer_handle,
+                            sizeof(DXGKMDT_OPM_CONFIGURE_PARAMETERS));
   if (!handle.IsValid()) {
     ipc->return_info.nt_status = STATUS_ACCESS_DENIED;
     return true;
@@ -545,17 +550,18 @@ bool ProcessMitigationsWin32KDispatcher::GetOPMInformation(
     ipc->return_info.nt_status = STATUS_ACCESS_DENIED;
     return true;
   }
-  base::SharedMemoryHandle handle =
-      GetSharedMemoryHandle(*ipc->client_info, shared_buffer_handle);
+  size_t shared_buffer_size =
+      std::max(sizeof(DXGKMDT_OPM_GET_INFO_PARAMETERS),
+               sizeof(DXGKMDT_OPM_REQUESTED_INFORMATION));
+
+  base::SharedMemoryHandle handle = GetSharedMemoryHandle(
+      *ipc->client_info, shared_buffer_handle, shared_buffer_size);
   if (!handle.IsValid()) {
     ipc->return_info.nt_status = STATUS_ACCESS_DENIED;
     return true;
   }
   base::SharedMemory buffer(handle, false);
 
-  size_t shared_buffer_size =
-      std::max(sizeof(DXGKMDT_OPM_GET_INFO_PARAMETERS),
-               sizeof(DXGKMDT_OPM_REQUESTED_INFORMATION));
   if (!buffer.Map(shared_buffer_size)) {
     ipc->return_info.nt_status = STATUS_ACCESS_DENIED;
     return true;
@@ -574,4 +580,3 @@ bool ProcessMitigationsWin32KDispatcher::GetOPMInformation(
 }
 
 }  // namespace sandbox
-

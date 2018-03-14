@@ -32,32 +32,39 @@ cr.define('print_preview', function() {
 
     /**
      * Custom page range input.
-     * @type {HTMLInputElement}
+     * @type {?HTMLInputElement}
      * @private
      */
     this.customInput_ = null;
 
     /**
      * Custom page range radio button.
-     * @type {HTMLInputElement}
+     * @type {?HTMLInputElement}
      * @private
      */
     this.customRadio_ = null;
 
     /**
+     * Custom page range label.
+     * @type {?HTMLElement}
+     * @private
+     */
+    this.customLabel_ = null;
+
+    /**
      * All page rage radio button.
-     * @type {HTMLInputElement}
+     * @type {?HTMLInputElement}
      * @private
      */
     this.allRadio_ = null;
 
     /**
      * Container of a hint to show when the custom page range is invalid.
-     * @type {HTMLElement}
+     * @type {?HTMLElement}
      * @private
      */
     this.customHintEl_ = null;
-  };
+  }
 
   /**
    * CSS classes used by the page settings.
@@ -68,6 +75,7 @@ cr.define('print_preview', function() {
     ALL_RADIO: 'page-settings-all-radio',
     CUSTOM_HINT: 'page-settings-custom-hint',
     CUSTOM_INPUT: 'page-settings-custom-input',
+    CUSTOM_LABEL: 'page-settings-print-pages-div',
     CUSTOM_RADIO: 'page-settings-custom-radio'
   };
 
@@ -101,18 +109,22 @@ cr.define('print_preview', function() {
     /** @override */
     enterDocument: function() {
       print_preview.SettingsSection.prototype.enterDocument.call(this);
+      const customInput = assert(this.customInput_);
       this.tracker.add(
-          this.allRadio_, 'click', this.onAllRadioClick_.bind(this));
+          assert(this.allRadio_), 'click', this.onAllRadioClick_.bind(this));
       this.tracker.add(
-          this.customRadio_, 'click', this.onCustomRadioClick_.bind(this));
+          assert(this.customRadio_), 'click',
+          this.focusCustomInput_.bind(this));
+      this.tracker.add(customInput, 'blur', this.onCustomInputBlur_.bind(this));
       this.tracker.add(
-          this.customInput_, 'blur', this.onCustomInputBlur_.bind(this));
+          customInput, 'focus', this.onCustomInputFocus_.bind(this));
       this.tracker.add(
-          this.customInput_, 'focus', this.onCustomInputFocus_.bind(this));
+          customInput, 'keydown', this.onCustomInputKeyDown_.bind(this));
       this.tracker.add(
-          this.customInput_, 'keydown', this.onCustomInputKeyDown_.bind(this));
+          customInput, 'input', this.onCustomInputChange_.bind(this));
       this.tracker.add(
-          this.customInput_, 'input', this.onCustomInputChange_.bind(this));
+          assert(this.customLabel_), 'focus',
+          this.focusCustomInput_.bind(this));
       this.tracker.add(
           this.pageRangeTicketItem_,
           print_preview.ticket_items.TicketItem.EventType.CHANGE,
@@ -138,6 +150,8 @@ cr.define('print_preview', function() {
           PageSettings.Classes_.CUSTOM_RADIO)[0];
       this.customHintEl_ = this.getElement().getElementsByClassName(
           PageSettings.Classes_.CUSTOM_HINT)[0];
+      this.customLabel_ = this.getElement().getElementsByClassName(
+          PageSettings.Classes_.CUSTOM_LABEL)[0];
     },
 
     /**
@@ -145,29 +159,28 @@ cr.define('print_preview', function() {
      * @private
      */
     setInvalidStateVisible_: function(validity) {
-      if (validity !== PageRangeStatus.NO_ERROR) {
-        var message;
-        if (validity === PageRangeStatus.LIMIT_ERROR) {
-          if (this.pageRangeTicketItem_.getDocumentNumPages()) {
-            message = loadTimeData.getStringF(
-                'pageRangeLimitInstructionWithValue',
-                this.pageRangeTicketItem_.getDocumentNumPages());
-          } else {
-            message = loadTimeData.getString(
-                'pageRangeLimitInstruction');
-          }
-        } else {
-          message = loadTimeData.getStringF(
-              'pageRangeSyntaxInstruction',
-              loadTimeData.getString('examplePageRangeText'));
-        }
-        this.customHintEl_.textContent = message;
-        this.customInput_.classList.add('invalid');
-        fadeInElement(this.customHintEl_);
-      } else {
+      if (validity === PageRangeStatus.NO_ERROR) {
         this.customInput_.classList.remove('invalid');
         fadeOutElement(this.customHintEl_);
+        return;
       }
+      let message;
+      if (validity === PageRangeStatus.LIMIT_ERROR) {
+        if (this.pageRangeTicketItem_.getDocumentNumPages()) {
+          message = loadTimeData.getStringF(
+              'pageRangeLimitInstructionWithValue',
+              this.pageRangeTicketItem_.getDocumentNumPages());
+        } else {
+          message = loadTimeData.getString('pageRangeLimitInstruction');
+        }
+      } else {
+        message = loadTimeData.getStringF(
+            'pageRangeSyntaxInstruction',
+            loadTimeData.getString('examplePageRangeText'));
+      }
+      this.customHintEl_.textContent = message;
+      this.customInput_.classList.add('invalid');
+      fadeInElement(this.customHintEl_);
     },
 
     /**
@@ -179,10 +192,11 @@ cr.define('print_preview', function() {
     },
 
     /**
-     * Called when the custom radio button is clicked. Updates the print ticket.
+     * Focuses the custom input. Called when the custom radio button or custom
+     * input label is clicked.
      * @private
      */
-    onCustomRadioClick_: function() {
+    focusCustomInput_: function() {
       this.customInput_.focus();
     },
 
@@ -193,8 +207,18 @@ cr.define('print_preview', function() {
      */
     onCustomInputBlur_: function(event) {
       if (this.customInput_.value == '' &&
+          event.relatedTarget !=
+              this.getElement().querySelector(
+                  '.page-settings-print-pages-div') &&
           event.relatedTarget != this.customRadio_) {
         this.allRadio_.checked = true;
+        if (!this.pageRangeTicketItem_.isValueEqual(this.customInput_.value)) {
+          // Update ticket item to match, set timeout to avoid losing focus
+          // when the preview regenerates.
+          setTimeout(() => {
+            this.pageRangeTicketItem_.updateValue(this.customInput_.value);
+          });
+        }
       }
     },
 
@@ -253,7 +277,7 @@ cr.define('print_preview', function() {
      */
     onPageRangeTicketItemChange_: function() {
       if (this.isAvailable()) {
-        var pageRangeStr = this.pageRangeTicketItem_.getValue();
+        const pageRangeStr = this.pageRangeTicketItem_.getValue();
         if (pageRangeStr || this.customRadio_.checked) {
           if (!document.hasFocus() ||
               document.activeElement != this.customInput_) {
@@ -272,7 +296,5 @@ cr.define('print_preview', function() {
   };
 
   // Export
-  return {
-    PageSettings: PageSettings
-  };
+  return {PageSettings: PageSettings};
 });

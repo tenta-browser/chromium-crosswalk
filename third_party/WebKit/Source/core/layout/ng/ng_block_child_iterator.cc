@@ -9,12 +9,28 @@
 
 namespace blink {
 
-NGBlockChildIterator::NGBlockChildIterator(NGLayoutInputNode* first_child,
+NGBlockChildIterator::NGBlockChildIterator(NGLayoutInputNode first_child,
                                            NGBlockBreakToken* break_token)
-    : child_(first_child), break_token_(break_token), child_token_idx_(0) {}
+    : child_(first_child), break_token_(break_token), child_token_idx_(0) {
+  // Locate the first child to resume layout at.
+  if (!break_token)
+    return;
+  const auto& child_break_tokens = break_token->ChildBreakTokens();
+  if (!child_break_tokens.size())
+    return;
+  child_ = child_break_tokens[0]->InputNode();
+}
 
-NGBlockChildIterator::Entry NGBlockChildIterator::NextChild() {
+NGBlockChildIterator::Entry NGBlockChildIterator::NextChild(
+    NGBreakToken* previous_inline_break_token) {
   NGBreakToken* child_break_token = nullptr;
+
+  if (previous_inline_break_token &&
+      !previous_inline_break_token->IsFinished()) {
+    DCHECK(previous_inline_break_token->IsInlineType());
+    return Entry(previous_inline_break_token->InputNode(),
+                 previous_inline_break_token);
+  }
 
   if (break_token_) {
     // If we're resuming layout after a fragmentainer break, we need to skip
@@ -34,7 +50,7 @@ NGBlockChildIterator::Entry NGBlockChildIterator::NextChild() {
       // This child break token candidate doesn't match the current node, this
       // node must be unfinished.
       NGBreakToken* child_break_token_candidate =
-          child_break_tokens[child_token_idx_].Get();
+          child_break_tokens[child_token_idx_].get();
       if (child_break_token_candidate->InputNode() != child_)
         break;
 
@@ -45,12 +61,12 @@ NGBlockChildIterator::Entry NGBlockChildIterator::NextChild() {
         child_break_token = child_break_token_candidate;
         break;
       }
-    } while ((child_ = child_->NextSibling()));
+    } while ((child_ = child_.NextSibling()));
   }
 
-  NGLayoutInputNode* child = child_;
+  NGLayoutInputNode child = child_;
   if (child_)
-    child_ = child_->NextSibling();
+    child_ = child_.NextSibling();
 
   return Entry(child, child_break_token);
 }

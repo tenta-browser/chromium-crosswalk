@@ -8,6 +8,7 @@
 #define COMPONENTS_GOOGLE_CORE_BROWSER_GOOGLE_UTIL_H_
 
 #include <string>
+#include <vector>
 
 #include "base/strings/string_piece.h"
 
@@ -20,14 +21,6 @@ namespace google_util {
 // value. |str| should be a query or a hash fragment, without the ? or # (as
 // returned by GURL::query() or GURL::ref().
 bool HasGoogleSearchQueryParam(base::StringPiece str);
-
-// The query key that identifies a Google Extended API request for Instant.
-const char kInstantExtendedAPIParam[] = "espv";
-
-constexpr char kGoogleInstantExtendedEnabledKey[] =
-    "google:instantExtendedEnabledKey";
-constexpr char kGoogleInstantExtendedEnabledKeyFull[] =
-    "{google:instantExtendedEnabledKey}";
 
 GURL LinkDoctorBaseURL();
 void SetMockLinkDoctorBaseURLForTesting();
@@ -111,6 +104,14 @@ bool IsGoogleSearchUrl(const GURL& url);
 bool IsYoutubeDomainUrl(const GURL& url,
                         SubdomainPermission subdomain_permission,
                         PortPermission port_permission);
+
+// Returns the list of all Google's registerable domains, i.e. domains named
+// google.<eTLD> owned by Google.
+// TODO(msramek): This is currently only used to ensure the deletion of Google
+// service workers on signout. Remove this once we have other options to do it,
+// such as service workers discovering that signin cookies are missing and
+// unregistering themselves.
+const std::vector<std::string>& GetGoogleRegistrableDomains();
 
 }  // namespace google_util
 

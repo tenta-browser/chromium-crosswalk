@@ -4,14 +4,19 @@
 
 #include "core/editing/spellcheck/SpellCheckTestBase.h"
 
+#include "core/frame/LocalFrame.h"
+
 namespace blink {
 
 void SpellCheckTestBase::SetUp() {
   Page::PageClients page_clients;
   FillWithEmptyClients(page_clients);
-  spell_checker_client_ = WTF::WrapUnique(new DummySpellCheckerClient);
-  page_clients.spell_checker_client = spell_checker_client_.get();
   SetupPageWithClients(&page_clients);
+  GetPage().SetSpellCheckStatus(Page::SpellCheckStatus::kForcedOn);
+}
+
+SpellChecker& SpellCheckTestBase::GetSpellChecker() const {
+  return GetFrame().GetSpellChecker();
 }
 
 }  // namespace blink

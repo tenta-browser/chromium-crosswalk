@@ -30,24 +30,24 @@
 #ifndef InspectorDOMAgent_h
 #define InspectorDOMAgent_h
 
+#include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "core/CoreExport.h"
-#include "core/events/EventListenerMap.h"
+#include "core/dom/events/EventListenerMap.h"
 #include "core/inspector/InspectorBaseAgent.h"
-#include "core/inspector/InspectorHighlight.h"
 #include "core/inspector/protocol/DOM.h"
 #include "core/style/ComputedStyleConstants.h"
 #include "platform/geometry/FloatQuad.h"
-#include "wtf/HashMap.h"
-#include "wtf/HashSet.h"
-#include "wtf/RefPtr.h"
-#include "wtf/Vector.h"
-#include "wtf/text/AtomicString.h"
-#include <memory>
-#include <v8-inspector.h>
+#include "platform/wtf/HashMap.h"
+#include "platform/wtf/HashSet.h"
+#include "platform/wtf/Vector.h"
+#include "platform/wtf/text/AtomicString.h"
+#include "v8/include/v8-inspector.h"
 
 namespace blink {
 
 class CharacterData;
+class Color;
 class DOMEditor;
 class Document;
 class DocumentLoader;
@@ -55,7 +55,7 @@ class Element;
 class ExceptionState;
 class FloatQuad;
 class HTMLSlotElement;
-class InsertionPoint;
+class V0InsertionPoint;
 class InspectedFrames;
 class InspectorHistory;
 class Node;
@@ -77,35 +77,16 @@ class CORE_EXPORT InspectorDOMAgent final
     virtual void DidModifyDOMAttr(Element*) = 0;
   };
 
-  enum SearchMode {
-    kNotSearching,
-    kSearchingForNormal,
-    kSearchingForUAShadow,
-  };
-
-  class Client {
-   public:
-    virtual ~Client() {}
-    virtual void HideHighlight() {}
-    virtual void HighlightNode(Node*,
-                               const InspectorHighlightConfig&,
-                               bool omit_tooltip) {}
-    virtual void HighlightQuad(std::unique_ptr<FloatQuad>,
-                               const InspectorHighlightConfig&) {}
-    virtual void SetInspectMode(SearchMode search_mode,
-                                std::unique_ptr<InspectorHighlightConfig>) {}
-  };
-
   static protocol::Response ToResponse(ExceptionState&);
   static bool GetPseudoElementType(PseudoId, String*);
   static ShadowRoot* UserAgentShadowRoot(Node*);
+  static Color ParseColor(protocol::DOM::RGBA*);
 
   InspectorDOMAgent(v8::Isolate*,
                     InspectedFrames*,
-                    v8_inspector::V8InspectorSession*,
-                    Client*);
+                    v8_inspector::V8InspectorSession*);
   ~InspectorDOMAgent() override;
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
   void Restore() override;
 
@@ -149,7 +130,10 @@ class CORE_EXPORT InspectorDOMAgent final
                                          const String& text,
                                          protocol::Maybe<String> name) override;
   protocol::Response removeAttribute(int node_id, const String& name) override;
-  protocol::Response getOuterHTML(int node_id, String* outer_html) override;
+  protocol::Response getOuterHTML(protocol::Maybe<int> node_id,
+                                  protocol::Maybe<int> backend_node_id,
+                                  protocol::Maybe<String> object_id,
+                                  String* outer_html) override;
   protocol::Response setOuterHTML(int node_id,
                                   const String& outer_html) override;
   protocol::Response performSearch(
@@ -165,30 +149,6 @@ class CORE_EXPORT InspectorDOMAgent final
   protocol::Response discardSearchResults(const String& search_id) override;
   protocol::Response requestNode(const String& object_id,
                                  int* out_node_id) override;
-  protocol::Response setInspectMode(
-      const String& mode,
-      protocol::Maybe<protocol::DOM::HighlightConfig>) override;
-  protocol::Response highlightRect(
-      int x,
-      int y,
-      int width,
-      int height,
-      protocol::Maybe<protocol::DOM::RGBA> color,
-      protocol::Maybe<protocol::DOM::RGBA> outline_color) override;
-  protocol::Response highlightQuad(
-      std::unique_ptr<protocol::Array<double>> quad,
-      protocol::Maybe<protocol::DOM::RGBA> color,
-      protocol::Maybe<protocol::DOM::RGBA> outline_color) override;
-  protocol::Response highlightNode(
-      std::unique_ptr<protocol::DOM::HighlightConfig>,
-      protocol::Maybe<int> node_id,
-      protocol::Maybe<int> backend_node_id,
-      protocol::Maybe<String> object_id) override;
-  protocol::Response hideHighlight() override;
-  protocol::Response highlightFrame(
-      const String& frame_id,
-      protocol::Maybe<protocol::DOM::RGBA> content_color,
-      protocol::Maybe<protocol::DOM::RGBA> content_outline_color) override;
   protocol::Response pushNodeByPathToFrontend(const String& path,
                                               int* out_node_id) override;
   protocol::Response pushNodesByBackendIdsToFrontend(
@@ -196,7 +156,8 @@ class CORE_EXPORT InspectorDOMAgent final
       std::unique_ptr<protocol::Array<int>>* node_ids) override;
   protocol::Response setInspectedNode(int node_id) override;
   protocol::Response resolveNode(
-      int node_id,
+      protocol::Maybe<int> node_id,
+      protocol::Maybe<int> backend_node_id,
       protocol::Maybe<String> object_group,
       std::unique_ptr<v8_inspector::protocol::Runtime::API::RemoteObject>*)
       override;
@@ -214,12 +175,18 @@ class CORE_EXPORT InspectorDOMAgent final
   protocol::Response undo() override;
   protocol::Response redo() override;
   protocol::Response markUndoableState() override;
-  protocol::Response focus(int node_id) override;
+  protocol::Response focus(protocol::Maybe<int> node_id,
+                           protocol::Maybe<int> backend_node_id,
+                           protocol::Maybe<String> object_id) override;
   protocol::Response setFileInputFiles(
-      int node_id,
-      std::unique_ptr<protocol::Array<String>> files) override;
+      std::unique_ptr<protocol::Array<String>> files,
+      protocol::Maybe<int> node_id,
+      protocol::Maybe<int> backend_node_id,
+      protocol::Maybe<String> object_id) override;
   protocol::Response getBoxModel(
-      int node_id,
+      protocol::Maybe<int> node_id,
+      protocol::Maybe<int> backend_node_id,
+      protocol::Maybe<String> object_id,
       std::unique_ptr<protocol::DOM::BoxModel>*) override;
   protocol::Response getNodeForLocation(
       int x,
@@ -228,9 +195,13 @@ class CORE_EXPORT InspectorDOMAgent final
       int* out_node_id) override;
   protocol::Response getRelayoutBoundary(int node_id,
                                          int* out_node_id) override;
-  protocol::Response getHighlightObjectForTest(
-      int node_id,
-      std::unique_ptr<protocol::DictionaryValue>* highlight) override;
+  protocol::Response describeNode(
+      protocol::Maybe<int> node_id,
+      protocol::Maybe<int> backend_node_id,
+      protocol::Maybe<String> object_id,
+      protocol::Maybe<int> depth,
+      protocol::Maybe<bool> pierce,
+      std::unique_ptr<protocol::DOM::Node>*) override;
 
   bool Enabled() const;
   void ReleaseDanglingNodes();
@@ -261,14 +232,13 @@ class CORE_EXPORT InspectorDOMAgent final
   Node* NodeForId(int node_id);
   int BoundNodeId(Node*);
   void SetDOMListener(DOMListener*);
-  void Inspect(Node*);
-  void NodeHighlightedInOverlay(Node*);
   int PushNodePathToFrontend(Node*);
+  protocol::Response PushDocumentUponHandlelessOperation();
+  protocol::Response NodeForRemoteObjectId(const String& remote_object_id,
+                                           Node*&);
 
   static String DocumentURLString(Document*);
-
-  std::unique_ptr<v8_inspector::protocol::Runtime::API::RemoteObject>
-  ResolveNode(Node*, const String& object_group);
+  static String DocumentBaseURLString(Document*);
 
   InspectorHistory* History() { return history_.Get(); }
 
@@ -281,28 +251,23 @@ class CORE_EXPORT InspectorDOMAgent final
   static unsigned InnerChildNodeCount(Node*);
   static Node* InnerParentNode(Node*);
   static bool IsWhitespace(Node*);
-  static v8::Local<v8::Value> NodeV8Value(v8::Local<v8::Context>, Node*);
   static void CollectNodes(Node* root,
                            int depth,
                            bool pierce,
-                           Function<bool(Node*)>*,
+                           const Function<bool(Node*)>&,
                            HeapVector<Member<Node>>* result);
 
   protocol::Response AssertNode(int node_id, Node*&);
+  protocol::Response AssertNode(const protocol::Maybe<int>& node_id,
+                                const protocol::Maybe<int>& backend_node_id,
+                                const protocol::Maybe<String>& object_id,
+                                Node*&);
   protocol::Response AssertElement(int node_id, Element*&);
   Document* GetDocument() const { return document_.Get(); }
 
  private:
   void SetDocument(Document*);
   void InnerEnable();
-
-  protocol::Response SetSearchingForNode(
-      SearchMode,
-      protocol::Maybe<protocol::DOM::HighlightConfig>);
-  protocol::Response HighlightConfigFromInspectorObject(
-      protocol::Maybe<protocol::DOM::HighlightConfig>
-          highlight_inspector_object,
-      std::unique_ptr<InspectorHighlightConfig>*);
 
   // Node-related methods.
   typedef HeapHashMap<Member<Node>, int> NodeToIdMap;
@@ -340,27 +305,19 @@ class CORE_EXPORT InspectorDOMAgent final
   std::unique_ptr<protocol::Array<protocol::DOM::Node>>
   BuildArrayForPseudoElements(Element*, NodeToIdMap* nodes_map);
   std::unique_ptr<protocol::Array<protocol::DOM::BackendNode>>
-  BuildArrayForDistributedNodes(InsertionPoint*);
+  BuildArrayForDistributedNodes(V0InsertionPoint*);
   std::unique_ptr<protocol::Array<protocol::DOM::BackendNode>>
   BuildDistributedNodesForSlot(HTMLSlotElement*);
 
   Node* NodeForPath(const String& path);
-  protocol::Response NodeForRemoteId(const String& id, Node*&);
 
   void DiscardFrontendBindings();
-
-  void InnerHighlightQuad(std::unique_ptr<FloatQuad>,
-                          protocol::Maybe<protocol::DOM::RGBA> color,
-                          protocol::Maybe<protocol::DOM::RGBA> outline_color);
-
-  protocol::Response PushDocumentUponHandlelessOperation();
 
   InspectorRevalidateDOMTask* RevalidateTask();
 
   v8::Isolate* isolate_;
   Member<InspectedFrames> inspected_frames_;
   v8_inspector::V8InspectorSession* v8_session_;
-  Client* client_;
   Member<DOMListener> dom_listener_;
   Member<NodeToIdMap> document_node_to_id_map_;
   // Owns node mappings for dangling nodes.
@@ -378,7 +335,6 @@ class CORE_EXPORT InspectorDOMAgent final
   Member<InspectorHistory> history_;
   Member<DOMEditor> dom_editor_;
   bool suppress_attribute_modified_event_;
-  int backend_node_id_to_inspect_;
 };
 
 }  // namespace blink

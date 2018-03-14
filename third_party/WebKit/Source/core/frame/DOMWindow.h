@@ -5,11 +5,12 @@
 #ifndef DOMWindow_h
 #define DOMWindow_h
 
-#include "bindings/core/v8/Transferables.h"
+#include "bindings/core/v8/serialization/Transferables.h"
 #include "core/CoreExport.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/frame/DOMWindowBase64.h"
 #include "core/frame/Frame.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/Forward.h"
@@ -18,10 +19,11 @@ namespace blink {
 
 class Document;
 class InputDeviceCapabilitiesConstants;
-class Location;
 class LocalDOMWindow;
+class Location;
 class MessageEvent;
 class SerializedScriptValue;
+class WindowProxyManager;
 
 class CORE_EXPORT DOMWindow : public EventTargetWithInlineData,
                               public DOMWindowBase64 {
@@ -47,7 +49,9 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData,
   }
 
   // GarbageCollectedFinalized overrides:
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
+
+  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
 
   virtual bool IsLocalDOMWindow() const = 0;
   virtual bool IsRemoteDOMWindow() const = 0;
@@ -78,16 +82,14 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData,
   DOMWindow* parent() const;
   DOMWindow* top() const;
 
-  void focus(ExecutionContext*);
+  void focus(LocalDOMWindow* incumbent_window);
   virtual void blur() = 0;
-  void close(ExecutionContext*);
+  void close(LocalDOMWindow* incumbent_window);
 
-  // FIXME: This handles both window[index] and window.frames[index]. However,
-  // the spec exposes window.frames[index] across origins but not
-  // window[index]...
-  DOMWindow* AnonymousIndexedGetter(uint32_t) const;
+  // Indexed properties
+  DOMWindow* AnonymousIndexedGetter(uint32_t index) const;
 
-  void postMessage(PassRefPtr<SerializedScriptValue> message,
+  void postMessage(scoped_refptr<SerializedScriptValue> message,
                    const MessagePortArray&,
                    const String& target_origin,
                    LocalDOMWindow* source,
@@ -114,15 +116,19 @@ class CORE_EXPORT DOMWindow : public EventTargetWithInlineData,
   explicit DOMWindow(Frame&);
 
   virtual void SchedulePostMessage(MessageEvent*,
-                                   PassRefPtr<SecurityOrigin> target,
+                                   scoped_refptr<SecurityOrigin> target,
                                    Document* source) = 0;
 
   void DisconnectFromFrame() { frame_ = nullptr; }
 
  private:
   Member<Frame> frame_;
+  // Unlike |frame_|, |window_proxy_manager_| is available even after the
+  // window's frame gets detached from the DOM, until the end of the lifetime
+  // of this object.
+  const Member<WindowProxyManager> window_proxy_manager_;
   Member<InputDeviceCapabilitiesConstants> input_capabilities_;
-  mutable Member<Location> location_;
+  mutable TraceWrapperMember<Location> location_;
 
   // Set to true when close() has been called. Needed for
   // |window.closed| determinism; having it return 'true'

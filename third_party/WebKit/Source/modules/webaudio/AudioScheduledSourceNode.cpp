@@ -26,14 +26,15 @@
 #include "modules/webaudio/AudioScheduledSourceNode.h"
 
 #include <algorithm>
+#include "bindings/core/v8/ExceptionMessages.h"
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/dom/ExceptionCode.h"
-#include "core/dom/TaskRunnerHelper.h"
 #include "modules/EventModules.h"
 #include "modules/webaudio/BaseAudioContext.h"
 #include "platform/CrossThreadFunctional.h"
 #include "platform/audio/AudioUtilities.h"
 #include "platform/wtf/MathExtras.h"
+#include "public/platform/TaskType.h"
 
 namespace blink {
 
@@ -45,7 +46,12 @@ AudioScheduledSourceHandler::AudioScheduledSourceHandler(NodeType node_type,
     : AudioHandler(node_type, node, sample_rate),
       start_time_(0),
       end_time_(kUnknownTime),
-      playback_state_(UNSCHEDULED_STATE) {}
+      playback_state_(UNSCHEDULED_STATE) {
+  if (Context()->GetExecutionContext()) {
+    task_runner_ = Context()->GetExecutionContext()->GetTaskRunner(
+        TaskType::kMediaElementEvent);
+  }
+}
 
 void AudioScheduledSourceHandler::UpdateSchedulingInfo(
     size_t quantum_frame_size,
@@ -167,8 +173,7 @@ void AudioScheduledSourceHandler::Start(double when,
   }
 
   if (when < 0) {
-    exception_state.ThrowDOMException(
-        kInvalidAccessError,
+    exception_state.ThrowRangeError(
         ExceptionMessages::IndexExceedsMinimumBound("start time", when, 0.0));
     return;
   }
@@ -200,8 +205,7 @@ void AudioScheduledSourceHandler::Stop(double when,
   }
 
   if (when < 0) {
-    exception_state.ThrowDOMException(
-        kInvalidAccessError,
+    exception_state.ThrowRangeError(
         ExceptionMessages::IndexExceedsMinimumBound("stop time", when, 0.0));
     return;
   }
@@ -227,17 +231,16 @@ void AudioScheduledSourceHandler::FinishWithoutOnEnded() {
 void AudioScheduledSourceHandler::Finish() {
   FinishWithoutOnEnded();
 
-  if (Context()->GetExecutionContext()) {
-    TaskRunnerHelper::Get(TaskType::kMediaElementEvent,
-                          Context()->GetExecutionContext())
-        ->PostTask(BLINK_FROM_HERE,
-                   CrossThreadBind(&AudioScheduledSourceHandler::NotifyEnded,
-                                   WrapPassRefPtr(this)));
-  }
+  task_runner_->PostTask(
+      BLINK_FROM_HERE,
+      CrossThreadBind(&AudioScheduledSourceHandler::NotifyEnded,
+                      WrapRefCounted(this)));
 }
 
 void AudioScheduledSourceHandler::NotifyEnded() {
   DCHECK(IsMainThread());
+  if (!Context() || !Context()->GetExecutionContext())
+    return;
   if (GetNode())
     GetNode()->DispatchEvent(Event::Create(EventTypeNames::ended));
 }

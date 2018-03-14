@@ -6,12 +6,18 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "base/strings/stringprintf.h"
 #include "build/build_config.h"
+#include "content/browser/frame_host/frame_tree.h"
+#include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
+#include "content/browser/web_contents/web_contents_impl.h"
+#include "content/common/page_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
@@ -20,7 +26,9 @@
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/common/shell_switches.h"
+#include "net/dns/mock_host_resolver.h"
 #include "ui/compositor/compositor_switches.h"
+#include "ui/display/screen.h"
 
 namespace content {
 
@@ -29,22 +37,26 @@ class ScreenOrientationBrowserTest : public ContentBrowserTest  {
   ScreenOrientationBrowserTest() {
   }
 
+  WebContentsImpl* web_contents() {
+    return static_cast<WebContentsImpl*>(shell()->web_contents());
+  }
+
  protected:
-  void SendFakeScreenOrientation(unsigned angle, const std::string& strType) {
-    RenderWidgetHost* rwh = shell()->web_contents()->GetRenderWidgetHostView()
-        ->GetRenderWidgetHost();
+  void SendFakeScreenOrientation(unsigned angle, const std::string& str_type) {
+    RenderWidgetHost* main_frame_rwh =
+        web_contents()->GetMainFrame()->GetRenderWidgetHost();
     ScreenInfo screen_info;
-    rwh->GetScreenInfo(&screen_info);
+    main_frame_rwh->GetScreenInfo(&screen_info);
     screen_info.orientation_angle = angle;
 
     ScreenOrientationValues type = SCREEN_ORIENTATION_VALUES_DEFAULT;
-    if (strType == "portrait-primary") {
+    if (str_type == "portrait-primary") {
       type = SCREEN_ORIENTATION_VALUES_PORTRAIT_PRIMARY;
-    } else if (strType == "portrait-secondary") {
+    } else if (str_type == "portrait-secondary") {
       type = SCREEN_ORIENTATION_VALUES_PORTRAIT_SECONDARY;
-    } else if (strType == "landscape-primary") {
+    } else if (str_type == "landscape-primary") {
       type = SCREEN_ORIENTATION_VALUES_LANDSCAPE_PRIMARY;
-    } else if (strType == "landscape-secondary") {
+    } else if (str_type == "landscape-secondary") {
       type = SCREEN_ORIENTATION_VALUES_LANDSCAPE_SECONDARY;
     }
     ASSERT_NE(SCREEN_ORIENTATION_VALUES_DEFAULT, type);
@@ -52,12 +64,35 @@ class ScreenOrientationBrowserTest : public ContentBrowserTest  {
 
     ResizeParams params;
     params.screen_info = screen_info;
-    params.new_size = gfx::Size(0, 0);
-    params.physical_backing_size = gfx::Size(300, 300);
+    params.new_size = main_frame_rwh->GetView()->GetViewBounds().size();
+    params.physical_backing_size = params.new_size;
     params.top_controls_height = 0.f;
     params.browser_controls_shrink_blink_size = false;
     params.is_fullscreen_granted = false;
-    rwh->Send(new ViewMsg_Resize(rwh->GetRoutingID(), params));
+
+    std::set<RenderWidgetHost*> rwhs;
+    for (RenderFrameHost* rfh : web_contents()->GetAllFrames()) {
+      if (rfh == web_contents()->GetMainFrame())
+        continue;
+
+      rwhs.insert(static_cast<RenderFrameHostImpl*>(rfh)
+                      ->frame_tree_node()
+                      ->render_manager()
+                      ->GetRenderWidgetHostView()
+                      ->GetRenderWidgetHost());
+    }
+
+    // This simulates what the browser process does when the screen orientation
+    // is changed:
+    // 1. The top-level frame is resized and a ViweMsg_Resize is sent to the
+    // top-level frame.
+    main_frame_rwh->Send(
+        new ViewMsg_Resize(main_frame_rwh->GetRoutingID(), params));
+
+    // 2. The WebContents sends a PageMsg_UpdateScreenInfo to all the renderers
+    // involved in the FrameTree.
+    web_contents()->GetFrameTree()->root()->render_manager()->SendPageMessage(
+        new PageMsg_UpdateScreenInfo(MSG_ROUTING_NONE, screen_info), nullptr);
   }
 
   int GetOrientationAngle() {
@@ -97,6 +132,24 @@ class ScreenOrientationBrowserTest : public ContentBrowserTest  {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ScreenOrientationBrowserTest);
+};
+
+class ScreenOrientationOOPIFBrowserTest : public ScreenOrientationBrowserTest {
+ public:
+  ScreenOrientationOOPIFBrowserTest() {}
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    IsolateAllSitesForTesting(command_line);
+  }
+
+  void SetUpOnMainThread() override {
+    host_resolver()->AddRule("*", "127.0.0.1");
+    SetupCrossSiteRedirector(embedded_test_server());
+    ASSERT_TRUE(embedded_test_server()->Start());
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ScreenOrientationOOPIFBrowserTest);
 };
 
 // This test doesn't work on MacOS X but the reason is mostly because it is not
@@ -244,5 +297,157 @@ IN_PROC_BROWSER_TEST_F(ScreenOrientationLockDisabledBrowserTest,
   }
 }
 #endif // defined(OS_ANDROID)
+
+IN_PROC_BROWSER_TEST_F(ScreenOrientationOOPIFBrowserTest, ScreenOrientation) {
+  GURL main_url(embedded_test_server()->GetURL(
+      "a.com", "/cross_site_iframe_factory.html?a(b)"));
+  EXPECT_TRUE(NavigateToURL(shell(), main_url));
+#if USE_AURA || defined(OS_ANDROID)
+  WaitForResizeComplete(shell()->web_contents());
+#endif  // USE_AURA || defined(OS_ANDROID)
+
+  std::string types[] = {"portrait-primary", "portrait-secondary",
+                         "landscape-primary", "landscape-secondary"};
+
+  int angle = GetOrientationAngle();
+
+  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* child = root->child_at(0);
+  MainThreadFrameObserver root_observer(
+      root->current_frame_host()->GetRenderWidgetHost());
+  MainThreadFrameObserver child_observer(
+      child->current_frame_host()->GetRenderWidgetHost());
+  for (int i = 0; i < 4; ++i) {
+    angle = (angle + 90) % 360;
+    SendFakeScreenOrientation(angle, types[i]);
+
+    root_observer.Wait();
+    child_observer.Wait();
+
+    int orientation_angle;
+    std::string orientation_type;
+
+    EXPECT_TRUE(ExecuteScriptAndExtractInt(
+        root->current_frame_host(),
+        "window.domAutomationController.send(screen.orientation.angle)",
+        &orientation_angle));
+    EXPECT_EQ(angle, orientation_angle);
+    EXPECT_TRUE(ExecuteScriptAndExtractInt(
+        child->current_frame_host(),
+        "window.domAutomationController.send(screen.orientation.angle)",
+        &orientation_angle));
+    EXPECT_EQ(angle, orientation_angle);
+
+    EXPECT_TRUE(ExecuteScriptAndExtractString(
+        root->current_frame_host(),
+        "window.domAutomationController.send(screen.orientation.type)",
+        &orientation_type));
+    EXPECT_EQ(types[i], orientation_type);
+    EXPECT_TRUE(ExecuteScriptAndExtractString(
+        child->current_frame_host(),
+        "window.domAutomationController.send(screen.orientation.type)",
+        &orientation_type));
+    EXPECT_EQ(types[i], orientation_type);
+  }
+}
+
+// Regression test for triggering a screen orientation change for a pending
+// main frame RenderFrameHost.  See https://crbug.com/764202.  In the bug, this
+// was triggered via the DevTools audit panel and
+// ViewMsg_EnableDeviceEmulation, which calls RenderWidget::Resize on the
+// renderer side.  The test fakes this by directly sending the resize message
+// to the widget.
+IN_PROC_BROWSER_TEST_F(ScreenOrientationOOPIFBrowserTest,
+                       ScreenOrientationInPendingMainFrame) {
+  GURL main_url(embedded_test_server()->GetURL("a.com", "/title1.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), main_url));
+#if USE_AURA || defined(OS_ANDROID)
+  WaitForResizeComplete(shell()->web_contents());
+#endif  // USE_AURA || defined(OS_ANDROID)
+
+  // Set up a fake Resize message with a screen orientation change.
+  RenderWidgetHost* main_frame_rwh =
+      web_contents()->GetMainFrame()->GetRenderWidgetHost();
+  ScreenInfo screen_info;
+  main_frame_rwh->GetScreenInfo(&screen_info);
+  int expected_angle = (screen_info.orientation_angle + 90) % 360;
+  screen_info.orientation_angle = expected_angle;
+
+  ResizeParams params;
+  params.screen_info = screen_info;
+  params.new_size = gfx::Size(300, 300);
+  params.physical_backing_size = gfx::Size(300, 300);
+  params.top_controls_height = 0.f;
+  params.browser_controls_shrink_blink_size = false;
+  params.is_fullscreen_granted = false;
+
+  // Start a cross-site navigation, but don't commit yet.
+  GURL second_url(embedded_test_server()->GetURL("b.com", "/title1.html"));
+  TestNavigationManager delayer(shell()->web_contents(), second_url);
+  shell()->LoadURL(second_url);
+  EXPECT_TRUE(delayer.WaitForRequestStart());
+
+  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  RenderFrameHostImpl* pending_rfh =
+      IsBrowserSideNavigationEnabled()
+          ? root->render_manager()->speculative_frame_host()
+          : root->render_manager()->pending_frame_host();
+
+  // Send the orientation change to the pending RFH's widget.
+  pending_rfh->GetRenderWidgetHost()->Send(new ViewMsg_Resize(
+      pending_rfh->GetRenderWidgetHost()->GetRoutingID(), params));
+
+  // Let the navigation finish and make sure it succeeded.
+  delayer.WaitForNavigationFinished();
+  EXPECT_EQ(second_url, web_contents()->GetMainFrame()->GetLastCommittedURL());
+
+  int orientation_angle;
+  EXPECT_TRUE(ExecuteScriptAndExtractInt(
+      root->current_frame_host(),
+      "window.domAutomationController.send(screen.orientation.angle)",
+      &orientation_angle));
+  EXPECT_EQ(expected_angle, orientation_angle);
+}
+
+#ifdef OS_ANDROID
+// This test is disabled because th trybots run in system portrait lock, which
+// prevents the test from changing the screen orientation.
+IN_PROC_BROWSER_TEST_F(ScreenOrientationOOPIFBrowserTest,
+                       DISABLED_ScreenOrientationLock) {
+  GURL main_url(embedded_test_server()->GetURL(
+      "a.com", "/cross_site_iframe_factory.html?a(b)"));
+  EXPECT_TRUE(NavigateToURL(shell(), main_url));
+  WaitForResizeComplete(shell()->web_contents());
+
+  const char* types[] = {"portrait-primary", "portrait-secondary",
+                         "landscape-primary", "landscape-secondary"};
+
+  FrameTreeNode* root = web_contents()->GetFrameTree()->root();
+  FrameTreeNode* child = root->child_at(0);
+  RenderFrameHostImpl* frames[] = {root->current_frame_host(),
+                                   child->current_frame_host()};
+
+  EXPECT_TRUE(ExecuteScript(root->current_frame_host(),
+                            "document.body.webkitRequestFullscreen()"));
+  for (const char* type : types) {
+    std::string script =
+        base::StringPrintf("screen.orientation.lock('%s')", type);
+    EXPECT_TRUE(ExecuteScript(child->current_frame_host(), script));
+
+    for (auto* frame : frames) {
+      std::string orientation_type;
+      while (type != orientation_type) {
+        EXPECT_TRUE(ExecuteScriptAndExtractString(
+            frame,
+            "window.domAutomationController.send(screen.orientation.type)",
+            &orientation_type));
+      }
+    }
+
+    EXPECT_TRUE(ExecuteScript(child->current_frame_host(),
+                              "screen.orientation.unlock()"));
+  }
+}
+#endif  // OS_ANDROID
 
 } // namespace content

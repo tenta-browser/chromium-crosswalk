@@ -7,15 +7,24 @@ package org.chromium.chrome.browser;
 import static org.chromium.base.test.util.ScalableTimeout.scaleTimeout;
 
 import android.os.Environment;
+import android.support.test.InstrumentationRegistry;
 import android.text.TextUtils;
 import android.util.Log;
 
-import org.chromium.base.annotations.SuppressFBWarnings;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
 import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Manual;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.test.ChromeActivityTestCaseBase;
+import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.base.PageTransition;
 
@@ -39,7 +48,13 @@ import java.util.concurrent.TimeoutException;
  * page load. When aborted, they save the last opened URL in /sdcard/test_status.txt, so that they
  * can continue opening the next URL when they are restarted.
  */
-public class PopularUrlsTest extends ChromeActivityTestCaseBase<ChromeActivity> {
+@RunWith(ChromeJUnit4ClassRunner.class)
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
+        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+public class PopularUrlsTest {
+    @Rule
+    public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
+            new ChromeActivityTestRule<>(ChromeActivity.class);
 
     private static final String TAG = "PopularUrlsTest";
     private static final String NEW_LINE = System.getProperty("line.separator");
@@ -61,29 +76,19 @@ public class PopularUrlsTest extends ChromeActivityTestCaseBase<ChromeActivity> 
     private boolean mFailed;
     private boolean mDoShortWait;
 
-    public PopularUrlsTest() {
-        super(ChromeActivity.class);
-    }
-
-    @Override
-    protected void setUp() throws Exception {
+    @Before
+    public void setUp() throws Exception {
         mStatus = new RunStatus(STATUS_FILE);
         mFailed = false;
         mDoShortWait = checkDoShortWait();
-        super.setUp();
+        mActivityTestRule.startMainActivityFromLauncher();
     }
 
-    @Override
-    protected void tearDown() throws Exception {
+    @After
+    public void tearDown() throws Exception {
         if (mStatus != null) {
             mStatus.cleanUp();
         }
-        super.tearDown();
-    }
-
-    @Override
-    public void startMainActivity() throws InterruptedException {
-        startMainActivityFromLauncher();
     }
 
     private BufferedReader getInputStream(File inputFile) throws FileNotFoundException {
@@ -156,7 +161,6 @@ public class PopularUrlsTest extends ChromeActivityTestCaseBase<ChromeActivity> 
             }
         }
 
-        @SuppressFBWarnings("RV_RETURN_VALUE_IGNORED_BAD_PRACTICE")
         public void write() throws IOException {
             FileWriter output = null;
             if (mFile.exists()) {
@@ -174,7 +178,6 @@ public class PopularUrlsTest extends ChromeActivityTestCaseBase<ChromeActivity> 
             }
         }
 
-        @SuppressFBWarnings("RV_RETURN_VALUE_IGNORED_BAD_PRACTICE")
         public void cleanUp() {
             // Only perform cleanup when mAllClear flag is set, i.e.
             // when the test was not interrupted by a Java crash.
@@ -224,7 +227,7 @@ public class PopularUrlsTest extends ChromeActivityTestCaseBase<ChromeActivity> 
      */
     public void loadUrl(final String url, OutputStreamWriter failureWriter)
             throws InterruptedException, IOException {
-        Tab tab = getActivity().getActivityTab();
+        Tab tab = mActivityTestRule.getActivity().getActivityTab();
         final CallbackHelper loadedCallback = new CallbackHelper();
         final CallbackHelper failedCallback = new CallbackHelper();
         final CallbackHelper crashedCallback = new CallbackHelper();
@@ -246,13 +249,10 @@ public class PopularUrlsTest extends ChromeActivityTestCaseBase<ChromeActivity> 
             }
         });
 
-        getInstrumentation().runOnMainSync(new Runnable() {
-            @Override
-            public void run() {
-                Tab tab = getActivity().getActivityTab();
-                int pageTransition = PageTransition.TYPED | PageTransition.FROM_ADDRESS_BAR;
-                tab.loadUrl(new LoadUrlParams(url, pageTransition));
-            }
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            Tab tab1 = mActivityTestRule.getActivity().getActivityTab();
+            int pageTransition = PageTransition.TYPED | PageTransition.FROM_ADDRESS_BAR;
+            tab1.loadUrl(new LoadUrlParams(url, pageTransition));
         });
         // There are a combination of events ordering in a failure case.
         // There might be TAB_CRASHED with or without PAGE_LOAD_FINISHED preceding it.
@@ -304,13 +304,9 @@ public class PopularUrlsTest extends ChromeActivityTestCaseBase<ChromeActivity> 
             mFailed = true;
         }
         // Try to stop page load.
-        getInstrumentation().runOnMainSync(new Runnable() {
-            @Override
-            public void run() {
-                getActivity().getActivityTab().stopLoading();
-            }
-        });
-        getInstrumentation().waitForIdleSync();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(
+                () -> mActivityTestRule.getActivity().getActivityTab().stopLoading());
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 
     /**
@@ -360,7 +356,7 @@ public class PopularUrlsTest extends ChromeActivityTestCaseBase<ChromeActivity> 
                 loadUrl(page, failureWriter);
                 long stopTime = System.currentTimeMillis();
 
-                String currentUrl = getActivity().getActivityTab().getUrl();
+                String currentUrl = mActivityTestRule.getActivity().getActivityTab().getUrl();
                 Log.i(TAG, "Finish: " + currentUrl);
                 logToStream(page + "|" + (stopTime - startTime) + NEW_LINE, outputWriter);
                 mStatus.incrementPage();
@@ -388,7 +384,7 @@ public class PopularUrlsTest extends ChromeActivityTestCaseBase<ChromeActivity> 
             int loopCount = perf ? PERF_LOOPCOUNT : STABILITY_LOOPCOUNT;
             try {
                 loopUrls(bufferedReader, outputWriter, failureWriter, true, loopCount);
-                assertFalse(
+                Assert.assertFalse(
                         String.format("Failed to load all pages. Take a look at %s", FAILURE_FILE),
                         mFailed);
             } finally {
@@ -398,7 +394,7 @@ public class PopularUrlsTest extends ChromeActivityTestCaseBase<ChromeActivity> 
             }
         } catch (FileNotFoundException fnfe) {
             Log.e(TAG, fnfe.getMessage(), fnfe);
-            fail(String.format("URL file %s is not found.", INPUT_FILE));
+            Assert.fail(String.format("URL file %s is not found.", INPUT_FILE));
         } finally {
             if (outputWriter != null) {
                 outputWriter.close();
@@ -412,6 +408,7 @@ public class PopularUrlsTest extends ChromeActivityTestCaseBase<ChromeActivity> 
     /**
      * Repeats loading all URLs by PERF_LOOPCOUNT times, and records the time each load takes.
      */
+    @Test
     @Manual
     public void testLoadPerformance() throws IOException, InterruptedException {
         loadPages(true);
@@ -420,6 +417,7 @@ public class PopularUrlsTest extends ChromeActivityTestCaseBase<ChromeActivity> 
     /**
      * Loads all URLs.
      */
+    @Test
     @Manual
     public void testStability() throws IOException, InterruptedException {
         loadPages(false);

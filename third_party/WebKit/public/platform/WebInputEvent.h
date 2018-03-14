@@ -41,7 +41,7 @@
 namespace blink {
 
 // The classes defined in this file are intended to be used with
-// WebWidget's handleInputEvent method.  These event types are cross-
+// WebWidget's HandleInputEvent method.  These event types are cross-
 // platform and correspond closely to WebCore's Platform*Event classes.
 //
 // WARNING! These classes must remain PODs (plain old data).  They are
@@ -130,8 +130,10 @@ class WebInputEvent {
     kGestureFlingCancel,
     // Pinch is two fingers moving closer or farther apart.
     kGesturePinchBegin,
+    kGesturePinchTypeFirst = kGesturePinchBegin,
     kGesturePinchEnd,
     kGesturePinchUpdate,
+    kGesturePinchTypeLast = kGesturePinchUpdate,
 
     // The following types are variations and subevents of single-taps.
     //
@@ -177,6 +179,14 @@ class WebInputEvent {
     kTouchCancel,
     kTouchScrollStarted,
     kTouchTypeLast = kTouchScrollStarted,
+
+    // WebPointerEvent: work in progress
+    kPointerDown,
+    kPointerTypeFirst = kPointerDown,
+    kPointerUp,
+    kPointerMove,
+    kPointerCancel,
+    kPointerTypeLast = kPointerCancel,
 
     kTypeLast = kTouchTypeLast
   };
@@ -232,14 +242,17 @@ class WebInputEvent {
     kBackButtonDown = 1 << 20,
     kForwardButtonDown = 1 << 21,
 
+    // Represents movement as a result of content changing under the cursor,
+    // not actual physical movement of the pointer
+    kRelativeMotionEvent = 1 << 22,
+
     // The set of non-stateful modifiers that specifically change the
     // interpretation of the key being pressed. For example; IsLeft,
     // IsRight, IsComposing don't change the meaning of the key
     // being pressed. NumLockOn, ScrollLockOn, CapsLockOn are stateful
     // and don't indicate explicit depressed state.
     kKeyModifiers = kSymbolKey | kFnKey | kAltGrKey | kMetaKey | kAltKey |
-                    kControlKey |
-                    kShiftKey,
+                    kControlKey | kShiftKey,
     kNoModifiers = 0,
   };
 
@@ -262,6 +275,8 @@ class WebInputEvent {
     // was forced to be non-blocking due to the main thread being
     // unresponsive.
     kListenersForcedNonBlockingDueToMainThreadResponsiveness,
+    kLastDispatchType =
+        kListenersForcedNonBlockingDueToMainThreadResponsiveness,
   };
 
   // The rail mode for a wheel event specifies the axis on which scrolling is
@@ -279,23 +294,28 @@ class WebInputEvent {
   static constexpr double kTimeStampForTesting = 123.0;
 
   // Returns true if the WebInputEvent |type| is a mouse event.
-  static bool IsMouseEventType(int type) {
+  static bool IsMouseEventType(WebInputEvent::Type type) {
     return kMouseTypeFirst <= type && type <= kMouseTypeLast;
   }
 
   // Returns true if the WebInputEvent |type| is a keyboard event.
-  static bool IsKeyboardEventType(int type) {
+  static bool IsKeyboardEventType(WebInputEvent::Type type) {
     return kKeyboardTypeFirst <= type && type <= kKeyboardTypeLast;
   }
 
   // Returns true if the WebInputEvent |type| is a touch event.
-  static bool IsTouchEventType(int type) {
+  static bool IsTouchEventType(WebInputEvent::Type type) {
     return kTouchTypeFirst <= type && type <= kTouchTypeLast;
   }
 
   // Returns true if the WebInputEvent is a gesture event.
-  static bool IsGestureEventType(int type) {
+  static bool IsGestureEventType(WebInputEvent::Type type) {
     return kGestureTypeFirst <= type && type <= kGestureTypeLast;
+  }
+
+  // Returns true if the WebInputEvent |type| is a pointer event.
+  static bool IsPointerEventType(WebInputEvent::Type type) {
+    return kPointerTypeFirst <= type && type <= kPointerTypeLast;
   }
 
   bool IsSameEventClass(const WebInputEvent& other) const {
@@ -307,7 +327,14 @@ class WebInputEvent {
       return IsTouchEventType(other.type_);
     if (IsKeyboardEventType(type_))
       return IsKeyboardEventType(other.type_);
+    if (IsPointerEventType(type_))
+      return IsPointerEventType(other.type_);
     return type_ == other.type_;
+  }
+
+  // Returns true if the WebInputEvent |type| is a pinch gesture event.
+  static bool IsPinchGestureEventType(WebInputEvent::Type type) {
+    return kGesturePinchTypeFirst <= type && type <= kGesturePinchTypeLast;
   }
 
   static const char* GetName(WebInputEvent::Type type) {
@@ -349,11 +376,14 @@ class WebInputEvent {
       CASE_TYPE(TouchEnd);
       CASE_TYPE(TouchCancel);
       CASE_TYPE(TouchScrollStarted);
-      default:
-        NOTREACHED();
-        return "";
+      CASE_TYPE(PointerDown);
+      CASE_TYPE(PointerUp);
+      CASE_TYPE(PointerMove);
+      CASE_TYPE(PointerCancel);
     }
 #undef CASE_TYPE
+    NOTREACHED();
+    return "";
   }
 
   float FrameScale() const { return frame_scale_; }
@@ -402,7 +432,7 @@ class WebInputEvent {
 #endif
   }
 
-  WebInputEvent(unsigned size_param) {
+  explicit WebInputEvent(unsigned size_param) {
     // TODO(dtapuska): Remove this memset when we remove the chrome IPC of this
     // struct.
     memset(this, 0, size_param);

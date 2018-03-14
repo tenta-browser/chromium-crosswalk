@@ -6,31 +6,44 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+
+#include <algorithm>
 #include <utility>
-#include <vector>
 
 #include "base/bind.h"
 #include "base/guid.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/browser/android/offline_pages/offline_page_model_factory.h"
-#include "chrome/browser/android/offline_pages/request_coordinator_factory.h"
+#include "build/build_config.h"
+#include "chrome/browser/offline_pages/offline_page_model_factory.h"
+#include "chrome/browser/offline_pages/prefetch/prefetch_service_factory.h"
+#include "chrome/browser/offline_pages/prefetch/prefetched_pages_notifier.h"
+#include "chrome/browser/offline_pages/request_coordinator_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/channel_info.h"
+#include "chrome/common/chrome_content_client.h"
 #include "components/offline_pages/core/client_namespace_constants.h"
+#include "components/offline_pages/core/offline_page_feature.h"
+#include "components/offline_pages/core/prefetch/generate_page_bundle_request.h"
+#include "components/offline_pages/core/prefetch/get_operation_request.h"
+#include "components/offline_pages/core/prefetch/prefetch_background_task_handler.h"
+#include "components/offline_pages/core/prefetch/prefetch_dispatcher.h"
+#include "components/offline_pages/core/prefetch/prefetch_downloader.h"
+#include "components/offline_pages/core/prefetch/prefetch_service.h"
+#include "components/offline_pages/core/prefetch/prefetch_types.h"
 #include "content/public/browser/web_ui.h"
 #include "net/base/network_change_notifier.h"
 
 namespace offline_internals {
 
-OfflineInternalsUIMessageHandler::OfflineInternalsUIMessageHandler()
-    : offline_page_model_(nullptr),
-      request_coordinator_(nullptr),
-      weak_ptr_factory_(this) {}
+namespace {
 
-OfflineInternalsUIMessageHandler::~OfflineInternalsUIMessageHandler() {}
-
-std::string OfflineInternalsUIMessageHandler::GetStringFromDeletePageResult(
+std::string GetStringFromDeletePageResult(
     offline_pages::DeletePageResult value) {
   switch (value) {
     case offline_pages::DeletePageResult::SUCCESS:
@@ -50,7 +63,7 @@ std::string OfflineInternalsUIMessageHandler::GetStringFromDeletePageResult(
   return "Unknown";
 }
 
-std::string OfflineInternalsUIMessageHandler::GetStringFromDeleteRequestResults(
+std::string GetStringFromDeleteRequestResults(
     const offline_pages::MultipleItemStatuses& results) {
   // If any requests failed, return "failure", else "success".
   for (const auto& result : results) {
@@ -61,9 +74,19 @@ std::string OfflineInternalsUIMessageHandler::GetStringFromDeleteRequestResults(
   return "Success";
 }
 
-std::string OfflineInternalsUIMessageHandler::GetStringFromSavePageStatus() {
+std::string GetStringFromSavePageStatus() {
   return "Available";
 }
+
+}  // namespace
+
+OfflineInternalsUIMessageHandler::OfflineInternalsUIMessageHandler()
+    : offline_page_model_(nullptr),
+      request_coordinator_(nullptr),
+      prefetch_service_(nullptr),
+      weak_ptr_factory_(this) {}
+
+OfflineInternalsUIMessageHandler::~OfflineInternalsUIMessageHandler() {}
 
 void OfflineInternalsUIMessageHandler::HandleDeleteSelectedPages(
     const base::ListValue* args) {
@@ -146,6 +169,7 @@ void OfflineInternalsUIMessageHandler::HandleStoredPagesCallback(
     offline_page->SetDouble("lastAccessTime", page.last_access_time.ToJsTime());
     offline_page->SetInteger("accessCount", page.access_count);
     offline_page->SetString("originalUrl", page.original_url.spec());
+    offline_page->SetString("requestOrigin", page.request_origin);
     results.Append(std::move(offline_page));
   }
   ResolveJavascriptCallback(base::Value(callback_id), results);
@@ -165,11 +189,12 @@ void OfflineInternalsUIMessageHandler::HandleRequestQueueCallback(
       save_page_request->SetString("status", GetStringFromSavePageStatus());
       save_page_request->SetString("namespace",
                                    request->client_id().name_space);
-      save_page_request->SetDouble("lastAttempt",
+      save_page_request->SetDouble("lastAttemptTime",
                                    request->last_attempt_time().ToJsTime());
       save_page_request->SetString("id", std::to_string(request->request_id()));
       save_page_request->SetString("originalUrl",
                                    request->original_url().spec());
+      save_page_request->SetString("requestOrigin", request->request_origin());
       save_page_requests.Append(std::move(save_page_request));
     }
   }
@@ -210,6 +235,7 @@ void OfflineInternalsUIMessageHandler::HandleGetStoredPages(
 
 void OfflineInternalsUIMessageHandler::HandleSetRecordPageModel(
     const base::ListValue* args) {
+  AllowJavascript();
   bool should_record;
   CHECK(args->GetBoolean(0, &should_record));
   if (offline_page_model_)
@@ -218,6 +244,7 @@ void OfflineInternalsUIMessageHandler::HandleSetRecordPageModel(
 
 void OfflineInternalsUIMessageHandler::HandleGetNetworkStatus(
     const base::ListValue* args) {
+  AllowJavascript();
   const base::Value* callback_id;
   CHECK(args->Get(0, &callback_id));
 
@@ -227,12 +254,130 @@ void OfflineInternalsUIMessageHandler::HandleGetNetworkStatus(
                                                           : "Online"));
 }
 
+void OfflineInternalsUIMessageHandler::HandleScheduleNwake(
+    const base::ListValue* args) {
+  AllowJavascript();
+  const base::Value* callback_id;
+  CHECK(args->Get(0, &callback_id));
+
+  if (prefetch_service_) {
+    prefetch_service_->GetPrefetchBackgroundTaskHandler()
+        ->EnsureTaskScheduled();
+    ResolveJavascriptCallback(*callback_id, base::Value("Scheduled."));
+  } else {
+    RejectJavascriptCallback(*callback_id,
+                             base::Value("No prefetch service available."));
+  }
+}
+
+void OfflineInternalsUIMessageHandler::HandleCancelNwake(
+    const base::ListValue* args) {
+  AllowJavascript();
+  const base::Value* callback_id;
+  CHECK(args->Get(0, &callback_id));
+
+  if (prefetch_service_) {
+    prefetch_service_->GetPrefetchBackgroundTaskHandler()
+        ->CancelBackgroundTask();
+    ResolveJavascriptCallback(*callback_id, base::Value("Cancelled."));
+  } else {
+    RejectJavascriptCallback(*callback_id,
+                             base::Value("No prefetch service available."));
+  }
+}
+
+void OfflineInternalsUIMessageHandler::HandleShowPrefetchNotification(
+    const base::ListValue* args) {
+  AllowJavascript();
+  const base::Value* callback_id;
+  CHECK(args->Get(0, &callback_id));
+
+  offline_pages::ShowPrefetchedContentNotification(
+      GURL("https://www.example.com"));
+  ResolveJavascriptCallback(*callback_id, base::Value("Scheduled."));
+}
+
+void OfflineInternalsUIMessageHandler::HandleGeneratePageBundle(
+    const base::ListValue* args) {
+  AllowJavascript();
+  std::string callback_id;
+  CHECK(args->GetString(0, &callback_id));
+
+  if (!prefetch_service_) {
+    RejectJavascriptCallback(base::Value(callback_id),
+                             base::Value("No prefetch service available."));
+    return;
+  }
+
+  std::string data;
+  CHECK(args->GetString(1, &data));
+  std::vector<std::string> page_urls = base::SplitStringUsingSubstr(
+      data, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  std::vector<offline_pages::PrefetchURL> prefetch_urls;
+  for (auto& page_url : page_urls) {
+    // Creates a dummy prefetch URL with a bogus ID, and using the URL as the
+    // page title.
+    prefetch_urls.push_back(offline_pages::PrefetchURL(
+        "dummy id", GURL(page_url), base::UTF8ToUTF16(page_url)));
+  }
+
+  prefetch_service_->GetPrefetchDispatcher()->AddCandidatePrefetchURLs(
+      offline_pages::kSuggestedArticlesNamespace, prefetch_urls);
+  ResolveJavascriptCallback(base::Value(callback_id),
+                            base::Value("Added candidate URLs."));
+}
+
+void OfflineInternalsUIMessageHandler::HandleGetOperation(
+    const base::ListValue* args) {
+  AllowJavascript();
+  std::string callback_id;
+  CHECK(args->GetString(0, &callback_id));
+
+  if (!prefetch_service_) {
+    RejectJavascriptCallback(base::Value(callback_id),
+                             base::Value("No prefetch service available."));
+    return;
+  }
+
+  std::string name;
+  CHECK(args->GetString(1, &name));
+  base::TrimWhitespaceASCII(name, base::TRIM_ALL, &name);
+
+  prefetch_service_->GetPrefetchDispatcher()
+      ->GCMOperationCompletedMessageReceived(name);
+  base::Value message("GetOperation will be attempted for any matching pages.");
+  ResolveJavascriptCallback(base::Value(callback_id), message);
+}
+
+void OfflineInternalsUIMessageHandler::HandleDownloadArchive(
+    const base::ListValue* args) {
+  AllowJavascript();
+  std::string name;
+  CHECK(args->GetString(0, &name));
+  base::TrimWhitespaceASCII(name, base::TRIM_ALL, &name);
+
+  if (prefetch_service_) {
+    prefetch_service_->GetPrefetchDownloader()->StartDownload(
+        base::GenerateGUID(), name);
+  }
+}
+
 void OfflineInternalsUIMessageHandler::HandleSetRecordRequestQueue(
     const base::ListValue* args) {
+  AllowJavascript();
   bool should_record;
   CHECK(args->GetBoolean(0, &should_record));
   if (request_coordinator_)
     request_coordinator_->GetLogger()->SetIsLogging(should_record);
+}
+
+void OfflineInternalsUIMessageHandler::HandleSetRecordPrefetchService(
+    const base::ListValue* args) {
+  AllowJavascript();
+  bool should_record;
+  CHECK(args->GetBoolean(0, &should_record));
+  if (prefetch_service_)
+    prefetch_service_->GetLogger()->SetIsLogging(should_record);
 }
 
 void OfflineInternalsUIMessageHandler::HandleGetLoggingState(
@@ -250,6 +395,11 @@ void OfflineInternalsUIMessageHandler::HandleGetLoggingState(
                     request_coordinator_
                         ? request_coordinator_->GetLogger()->GetIsLogging()
                         : false);
+  bool prefetch_logging = false;
+  if (prefetch_service_) {
+    prefetch_logging = prefetch_service_->GetLogger()->GetIsLogging();
+  }
+  result.SetBoolean("prefetchIsLogging", prefetch_logging);
   ResolveJavascriptCallback(*callback_id, result);
 }
 
@@ -264,6 +414,8 @@ void OfflineInternalsUIMessageHandler::HandleGetEventLogs(
     offline_page_model_->GetLogger()->GetLogs(&logs);
   if (request_coordinator_)
     request_coordinator_->GetLogger()->GetLogs(&logs);
+  if (prefetch_service_)
+    prefetch_service_->GetLogger()->GetLogs(&logs);
   std::sort(logs.begin(), logs.end());
 
   base::ListValue result;
@@ -302,44 +454,74 @@ void OfflineInternalsUIMessageHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "deleteSelectedPages",
       base::Bind(&OfflineInternalsUIMessageHandler::HandleDeleteSelectedPages,
-                 weak_ptr_factory_.GetWeakPtr()));
+                 base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "deleteSelectedRequests",
       base::Bind(
           &OfflineInternalsUIMessageHandler::HandleDeleteSelectedRequests,
-          weak_ptr_factory_.GetWeakPtr()));
+          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "getRequestQueue",
       base::Bind(&OfflineInternalsUIMessageHandler::HandleGetRequestQueue,
-                 weak_ptr_factory_.GetWeakPtr()));
+                 base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "getStoredPages",
       base::Bind(&OfflineInternalsUIMessageHandler::HandleGetStoredPages,
-                 weak_ptr_factory_.GetWeakPtr()));
+                 base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "getEventLogs",
       base::Bind(&OfflineInternalsUIMessageHandler::HandleGetEventLogs,
-                 weak_ptr_factory_.GetWeakPtr()));
+                 base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "setRecordRequestQueue",
       base::Bind(&OfflineInternalsUIMessageHandler::HandleSetRecordRequestQueue,
-                 weak_ptr_factory_.GetWeakPtr()));
+                 base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "setRecordPageModel",
       base::Bind(&OfflineInternalsUIMessageHandler::HandleSetRecordPageModel,
-                 weak_ptr_factory_.GetWeakPtr()));
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "setRecordPrefetchService",
+      base::Bind(
+          &OfflineInternalsUIMessageHandler::HandleSetRecordPrefetchService,
+          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "getLoggingState",
       base::Bind(&OfflineInternalsUIMessageHandler::HandleGetLoggingState,
-                 weak_ptr_factory_.GetWeakPtr()));
+                 base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "addToRequestQueue",
       base::Bind(&OfflineInternalsUIMessageHandler::HandleAddToRequestQueue,
-                 weak_ptr_factory_.GetWeakPtr()));
+                 base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "getNetworkStatus",
       base::Bind(&OfflineInternalsUIMessageHandler::HandleGetNetworkStatus,
-                 weak_ptr_factory_.GetWeakPtr()));
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "scheduleNwake",
+      base::Bind(&OfflineInternalsUIMessageHandler::HandleScheduleNwake,
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "cancelNwake",
+      base::Bind(&OfflineInternalsUIMessageHandler::HandleCancelNwake,
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "showPrefetchNotification",
+      base::Bind(
+          &OfflineInternalsUIMessageHandler::HandleShowPrefetchNotification,
+          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "generatePageBundle",
+      base::Bind(&OfflineInternalsUIMessageHandler::HandleGeneratePageBundle,
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "getOperation",
+      base::Bind(&OfflineInternalsUIMessageHandler::HandleGetOperation,
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "downloadArchive",
+      base::Bind(&OfflineInternalsUIMessageHandler::HandleDownloadArchive,
+                 base::Unretained(this)));
 
   // Get the offline page model associated with this web ui.
   Profile* profile = Profile::FromWebUI(web_ui());
@@ -347,6 +529,12 @@ void OfflineInternalsUIMessageHandler::RegisterMessages() {
       offline_pages::OfflinePageModelFactory::GetForBrowserContext(profile);
   request_coordinator_ =
       offline_pages::RequestCoordinatorFactory::GetForBrowserContext(profile);
+  prefetch_service_ =
+      offline_pages::PrefetchServiceFactory::GetForBrowserContext(profile);
+}
+
+void OfflineInternalsUIMessageHandler::OnJavascriptDisallowed() {
+  weak_ptr_factory_.InvalidateWeakPtrs();
 }
 
 }  // namespace offline_internals

@@ -36,7 +36,6 @@
 #include "platform/geometry/IntRect.h"
 #include "platform/graphics/Color.h"
 #include "platform/graphics/CompositorElementId.h"
-#include "platform/graphics/ContentLayerDelegate.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/GraphicsLayerClient.h"
 #include "platform/graphics/GraphicsLayerDebugInfo.h"
@@ -48,19 +47,22 @@
 #include "platform/transforms/TransformationMatrix.h"
 #include "platform/wtf/Vector.h"
 #include "public/platform/WebContentLayer.h"
+#include "public/platform/WebContentLayerClient.h"
 #include "public/platform/WebImageLayer.h"
 #include "public/platform/WebLayerStickyPositionConstraint.h"
+#include "public/platform/WebOverscrollBehavior.h"
 #include "third_party/skia/include/core/SkFilterQuality.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 
 namespace blink {
 
 class CompositorFilterOperations;
+class CompositedLayerRasterInvalidator;
 class Image;
 class JSONObject;
 class LinkHighlight;
 class PaintController;
-struct RasterInvalidationTracking;
+class RasterInvalidationTracking;
 class ScrollableArea;
 class WebLayer;
 
@@ -69,7 +71,8 @@ typedef Vector<GraphicsLayer*, 64> GraphicsLayerVector;
 // GraphicsLayer is an abstraction for a rendering surface with backing store,
 // which may have associated transformation and animations.
 class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
-                                      public DisplayItemClient {
+                                      public DisplayItemClient,
+                                      private WebContentLayerClient {
   WTF_MAKE_NONCOPYABLE(GraphicsLayer);
   USING_FAST_MALLOC(GraphicsLayer);
 
@@ -164,6 +167,7 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
   // For special cases, e.g. drawing missing tiles on Android.
   // The compositor should never paint this color in normal cases because the
   // Layer will paint the background by itself.
+  Color BackgroundColor() const { return background_color_; }
   void SetBackgroundColor(const Color&);
 
   // opaque means that we know the layer contents have no alpha
@@ -178,6 +182,11 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
 
   void SetBlendMode(WebBlendMode);
   void SetIsRootForIsolatedGroup(bool);
+
+  void SetHitTestableWithoutDrawsContent(bool);
+  bool GetHitTestableWithoutDrawsContentForTesting() {
+    return hit_testable_without_draws_content_;
+  }
 
   void SetFilters(CompositorFilterOperations);
   void SetBackdropFilters(CompositorFilterOperations);
@@ -204,6 +213,7 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
   // Layer contents
   void SetContentsToImage(
       Image*,
+      Image::ImageDecodingMode decode_mode,
       RespectImageOrientationEnum = kDoNotRespectImageOrientation);
   void SetContentsToPlatformLayer(WebLayer* layer) { SetContentsTo(layer); }
   bool HasContentsLayer() const { return contents_layer_; }
@@ -216,19 +226,14 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
   // Return a string with a human readable form of the layer tree. If debug is
   // true, pointers for the layers and timing data will be included in the
   // returned string.
-  String LayerTreeAsText(LayerTreeFlags = kLayerTreeNormal) const;
+  String GetLayerTreeAsTextForTesting(LayerTreeFlags = kLayerTreeNormal) const;
 
   std::unique_ptr<JSONObject> LayerTreeAsJSON(LayerTreeFlags) const;
 
-  void SetTracksRasterInvalidations(bool);
-  bool IsTrackingOrCheckingRasterInvalidations() const {
-    return RuntimeEnabledFeatures::paintUnderInvalidationCheckingEnabled() ||
-           is_tracking_raster_invalidations_;
-  }
-
+  void UpdateTrackingRasterInvalidations();
   void ResetTrackedRasterInvalidations();
   bool HasTrackedRasterInvalidations() const;
-  const RasterInvalidationTracking* GetRasterInvalidationTracking() const;
+  RasterInvalidationTracking* GetRasterInvalidationTracking() const;
   void TrackRasterInvalidation(const DisplayItemClient&,
                                const IntRect&,
                                PaintInvalidationReason);
@@ -239,7 +244,7 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
   unsigned NumLinkHighlights() { return link_highlights_.size(); }
   LinkHighlight* GetLinkHighlight(int i) { return link_highlights_[i]; }
 
-  void SetScrollableArea(ScrollableArea*, bool is_visual_viewport);
+  void SetScrollableArea(ScrollableArea*);
   ScrollableArea* GetScrollableArea() const { return scrollable_area_; }
 
   WebContentLayer* ContentLayer() const { return layer_.get(); }
@@ -248,6 +253,7 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
   static void UnregisterContentsLayer(WebLayer*);
 
   IntRect InterestRect();
+  void PaintRecursively();
   void Paint(const IntRect* interest_rect,
              GraphicsContext::DisabledMode = GraphicsContext::kNothingDisabled);
 
@@ -255,9 +261,9 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
   std::unique_ptr<base::trace_event::ConvertableToTraceFormat> TakeDebugInfo(
       cc::Layer*) override;
   void didUpdateMainThreadScrollingReasons() override;
-  void didChangeScrollbarsHidden(bool);
+  void didChangeScrollbarsHidden(bool) override;
 
-  PaintController& GetPaintController();
+  PaintController& GetPaintController() const;
 
   // Exposed for tests.
   WebLayer* ContentsLayer() const { return contents_layer_; }
@@ -265,11 +271,7 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
   void SetElementId(const CompositorElementId&);
   CompositorElementId GetElementId() const;
 
-  void SetCompositorMutableProperties(uint32_t);
-
-  ContentLayerDelegate* ContentLayerDelegateForTesting() const {
-    return content_layer_delegate_.get();
-  }
+  WebContentLayerClient& WebContentLayerClientForTesting() { return *this; }
 
   // DisplayItemClient methods
   String DebugName() const final { return client_->DebugName(this); }
@@ -277,16 +279,33 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
 
   void SetHasWillChangeTransformHint(bool);
 
+  void SetOverscrollBehavior(const WebOverscrollBehavior&);
+  void SetIsResizedByBrowserControls(bool);
+
+  void SetLayerState(PropertyTreeState&&, const IntPoint& layer_offset);
+
+  // Capture the last painted result into a PaintRecord.
+  sk_sp<PaintRecord> CapturePaintRecord() const;
+
  protected:
   String DebugName(cc::Layer*) const;
   bool ShouldFlattenTransform() const { return should_flatten_transform_; }
 
   explicit GraphicsLayer(GraphicsLayerClient*);
-  // for testing
+
   friend class CompositedLayerMappingTest;
   friend class PaintControllerPaintTestBase;
+  friend class GraphicsLayerTest;
 
  private:
+  // WebContentLayerClient implementation.
+  gfx::Rect PaintableRegion() final { return InterestRect(); }
+  void PaintContents(WebDisplayItemList*,
+                     PaintingControlSetting = kPaintDefaultBehavior) final;
+  size_t ApproximateUnsharedMemoryUsage() const final;
+
+  void PaintRecursivelyInternal();
+
   // Returns true if PaintController::paintArtifact() changed and needs commit.
   bool PaintWithoutCommit(
       const IntRect* interest_rect,
@@ -316,15 +335,17 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
   std::unique_ptr<JSONObject> LayerTreeAsJSONInternal(
       LayerTreeFlags,
       RenderingContextMap&) const;
-  // Outputs the layer tree rooted at |this| as a JSON array, in paint order.
-  void LayersAsJSONArray(LayerTreeFlags,
-                         RenderingContextMap&,
-                         JSONArray*) const;
-  std::unique_ptr<JSONObject> LayerAsJSONInternal(LayerTreeFlags,
-                                                  RenderingContextMap&) const;
+  std::unique_ptr<JSONObject> LayerAsJSONInternal(
+      LayerTreeFlags,
+      RenderingContextMap&,
+      const FloatPoint& position) const;
+  void AddTransformJSONProperties(JSONObject&, RenderingContextMap&) const;
+  void AddFlattenInheritedTransformJSON(JSONObject&) const;
+  class LayersAsJSONArray;
 
-  sk_sp<PaintRecord> CaptureRecord();
-  void CheckPaintUnderInvalidations(sk_sp<PaintRecord>);
+  Vector<const PaintChunk*> AllChunkPointers() const;
+  CompositedLayerRasterInvalidator& EnsureRasterInvalidator();
+  void SetNeedsDisplayInRectInternal(const IntRect&);
 
   GraphicsLayerClient* client_;
 
@@ -350,13 +371,12 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
   bool draws_content_ : 1;
   bool contents_visible_ : 1;
   bool is_root_for_isolated_group_ : 1;
+  bool hit_testable_without_draws_content_ : 1;
 
   bool has_scroll_parent_ : 1;
   bool has_clip_parent_ : 1;
 
   bool painted_ : 1;
-
-  bool is_tracking_raster_invalidations_ : 1;
 
   GraphicsLayerPaintingPhase painting_phase_;
 
@@ -383,22 +403,47 @@ class PLATFORM_EXPORT GraphicsLayer : public cc::LayerClient,
 
   Vector<LinkHighlight*> link_highlights_;
 
-  std::unique_ptr<ContentLayerDelegate> content_layer_delegate_;
-
   WeakPersistent<ScrollableArea> scrollable_area_;
   GraphicsLayerDebugInfo debug_info_;
   int rendering_context3d_;
 
-  std::unique_ptr<PaintController> paint_controller_;
+  mutable std::unique_ptr<PaintController> paint_controller_;
 
   IntRect previous_interest_rect_;
+
+  struct LayerState {
+    PropertyTreeState state;
+    IntPoint offset;
+  };
+  std::unique_ptr<LayerState> layer_state_;
+
+  std::unique_ptr<CompositedLayerRasterInvalidator> raster_invalidator_;
+};
+
+// ObjectPaintInvalidatorWithContext::InvalidatePaintRectangleWithContext uses
+// this to reduce differences between layout test results of SPv1 and SPv2.
+class PLATFORM_EXPORT ScopedSetNeedsDisplayInRectForTrackingOnly {
+ public:
+  ScopedSetNeedsDisplayInRectForTrackingOnly() {
+    DCHECK(!s_enabled_);
+    s_enabled_ = true;
+  }
+  ~ScopedSetNeedsDisplayInRectForTrackingOnly() {
+    DCHECK(s_enabled_);
+    s_enabled_ = false;
+  }
+
+ private:
+  friend class GraphicsLayer;
+  static bool s_enabled_;
 };
 
 }  // namespace blink
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 // Outside the blink namespace for ease of invocation from gdb.
 void PLATFORM_EXPORT showGraphicsLayerTree(const blink::GraphicsLayer*);
+void PLATFORM_EXPORT showGraphicsLayers(const blink::GraphicsLayer*);
 #endif
 
 #endif  // GraphicsLayer_h

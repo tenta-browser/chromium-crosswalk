@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/containers/flat_map.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_checker.h"
 #include "base/trace_event/trace_event_impl.h"
@@ -19,6 +20,7 @@
 #include "cc/blink/web_blend_mode.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/layer_position_constraint.h"
+#include "cc/layers/touch_action_region.h"
 #include "cc/trees/element_id.h"
 #include "cc/trees/layer_tree_host.h"
 #include "third_party/WebKit/public/platform/WebFloatPoint.h"
@@ -38,6 +40,7 @@ using blink::WebVector;
 using blink::WebRect;
 using blink::WebSize;
 using blink::WebColor;
+using blink::WebOverscrollBehavior;
 
 namespace cc_blink {
 
@@ -104,7 +107,7 @@ bool WebLayerImpl::MasksToBounds() const {
 
 void WebLayerImpl::SetMaskLayer(WebLayer* maskLayer) {
   layer_->SetMaskLayer(
-      maskLayer ? static_cast<WebLayerImpl*>(maskLayer)->layer() : 0);
+      maskLayer ? static_cast<WebLayerImpl*>(maskLayer)->layer() : nullptr);
 }
 
 void WebLayerImpl::SetOpacity(float opacity) {
@@ -129,6 +132,10 @@ void WebLayerImpl::SetIsRootForIsolatedGroup(bool isolate) {
 
 bool WebLayerImpl::IsRootForIsolatedGroup() {
   return layer_->is_root_for_isolated_group();
+}
+
+void WebLayerImpl::SetHitTestableWithoutDrawsContent(bool should_hit_test) {
+  layer_->SetHitTestableWithoutDrawsContent(should_hit_test);
 }
 
 void WebLayerImpl::SetOpaque(bool opaque) {
@@ -217,6 +224,10 @@ bool WebLayerImpl::HasTickingAnimationForTesting() {
   return layer_->HasTickingAnimationForTesting();
 }
 
+void WebLayerImpl::SetScrollable(const blink::WebSize& size) {
+  layer_->SetScrollable(size);
+}
+
 void WebLayerImpl::SetScrollPosition(blink::WebFloatPoint position) {
   layer_->SetScrollOffset(gfx::ScrollOffset(position.x, position.y));
 }
@@ -226,16 +237,12 @@ blink::WebFloatPoint WebLayerImpl::ScrollPosition() const {
                               layer_->scroll_offset().y());
 }
 
-void WebLayerImpl::SetScrollClipLayer(WebLayer* clip_layer) {
-  if (!clip_layer) {
-    layer_->SetScrollClipLayerId(Layer::INVALID_ID);
-    return;
-  }
-  layer_->SetScrollClipLayerId(clip_layer->Id());
-}
-
 bool WebLayerImpl::Scrollable() const {
   return layer_->scrollable();
+}
+
+blink::WebSize WebLayerImpl::ScrollContainerBoundsForTesting() const {
+  return layer_->scroll_container_bounds();
 }
 
 void WebLayerImpl::SetUserScrollable(bool horizontal, bool vertical) {
@@ -299,25 +306,46 @@ WebVector<WebRect> WebLayerImpl::NonFastScrollableRegion() const {
   return result;
 }
 
-void WebLayerImpl::SetTouchEventHandlerRegion(const WebVector<WebRect>& rects) {
-  cc::Region region;
-  for (size_t i = 0; i < rects.size(); ++i)
-    region.Union(rects[i]);
-  layer_->SetTouchEventHandlerRegion(region);
+void WebLayerImpl::SetTouchEventHandlerRegion(
+    const WebVector<blink::WebTouchInfo>& touch_info) {
+  base::flat_map<blink::WebTouchAction, cc::Region> region_map;
+  for (size_t i = 0; i < touch_info.size(); ++i)
+    region_map[touch_info[i].touch_action].Union(touch_info[i].rect);
+  layer_->SetTouchActionRegion(cc::TouchActionRegion(region_map));
 }
 
 WebVector<WebRect> WebLayerImpl::TouchEventHandlerRegion() const {
   size_t num_rects = 0;
-  for (cc::Region::Iterator region_rects(layer_->touch_event_handler_region());
-       region_rects.has_rect();
-       region_rects.next())
+  for (cc::Region::Iterator region_rects(
+           layer_->touch_action_region().region());
+       region_rects.has_rect(); region_rects.next())
     ++num_rects;
 
   WebVector<WebRect> result(num_rects);
   size_t i = 0;
-  for (cc::Region::Iterator region_rects(layer_->touch_event_handler_region());
-       region_rects.has_rect();
-       region_rects.next()) {
+  for (cc::Region::Iterator region_rects(
+           layer_->touch_action_region().region());
+       region_rects.has_rect(); region_rects.next()) {
+    result[i] = region_rects.rect();
+    ++i;
+  }
+  return result;
+}
+
+WebVector<WebRect>
+WebLayerImpl::TouchEventHandlerRegionForTouchActionForTesting(
+    cc::TouchAction touch_action) const {
+  size_t num_rects = 0;
+  for (cc::Region::Iterator region_rects(
+           layer_->touch_action_region().GetRegionForTouchAction(touch_action));
+       region_rects.has_rect(); region_rects.next())
+    ++num_rects;
+
+  WebVector<WebRect> result(num_rects);
+  size_t i = 0;
+  for (cc::Region::Iterator region_rects(
+           layer_->touch_action_region().GetRegionForTouchAction(touch_action));
+       region_rects.has_rect(); region_rects.next()) {
     result[i] = region_rects.rect();
     ++i;
   }
@@ -330,6 +358,10 @@ void WebLayerImpl::SetIsContainerForFixedPositionLayers(bool enable) {
 
 bool WebLayerImpl::IsContainerForFixedPositionLayers() const {
   return layer_->IsContainerForFixedPositionLayers();
+}
+
+void WebLayerImpl::SetIsResizedByBrowserControls(bool enable) {
+  layer_->SetIsResizedByBrowserControls(enable);
 }
 
 static blink::WebLayerPositionConstraint ToWebLayerPositionConstraint(
@@ -373,16 +405,14 @@ ToWebLayerStickyPositionConstraint(
   web_constraint.right_offset = constraint.right_offset;
   web_constraint.top_offset = constraint.top_offset;
   web_constraint.bottom_offset = constraint.bottom_offset;
-  web_constraint.parent_relative_sticky_box_offset =
-      constraint.parent_relative_sticky_box_offset;
   web_constraint.scroll_container_relative_sticky_box_rect =
       constraint.scroll_container_relative_sticky_box_rect;
   web_constraint.scroll_container_relative_containing_block_rect =
       constraint.scroll_container_relative_containing_block_rect;
-  web_constraint.nearest_layer_shifting_sticky_box =
-      constraint.nearest_layer_shifting_sticky_box;
-  web_constraint.nearest_layer_shifting_containing_block =
-      constraint.nearest_layer_shifting_containing_block;
+  web_constraint.nearest_element_shifting_sticky_box =
+      constraint.nearest_element_shifting_sticky_box;
+  web_constraint.nearest_element_shifting_containing_block =
+      constraint.nearest_element_shifting_containing_block;
   return web_constraint;
 }
 static cc::LayerStickyPositionConstraint ToStickyPositionConstraint(
@@ -397,16 +427,14 @@ static cc::LayerStickyPositionConstraint ToStickyPositionConstraint(
   constraint.right_offset = web_constraint.right_offset;
   constraint.top_offset = web_constraint.top_offset;
   constraint.bottom_offset = web_constraint.bottom_offset;
-  constraint.parent_relative_sticky_box_offset =
-      web_constraint.parent_relative_sticky_box_offset;
   constraint.scroll_container_relative_sticky_box_rect =
       web_constraint.scroll_container_relative_sticky_box_rect;
   constraint.scroll_container_relative_containing_block_rect =
       web_constraint.scroll_container_relative_containing_block_rect;
-  constraint.nearest_layer_shifting_sticky_box =
-      web_constraint.nearest_layer_shifting_sticky_box;
-  constraint.nearest_layer_shifting_containing_block =
-      web_constraint.nearest_layer_shifting_containing_block;
+  constraint.nearest_element_shifting_sticky_box =
+      web_constraint.nearest_element_shifting_sticky_box;
+  constraint.nearest_element_shifting_containing_block =
+      web_constraint.nearest_element_shifting_containing_block;
   return constraint;
 }
 void WebLayerImpl::SetStickyPositionConstraint(
@@ -426,8 +454,13 @@ void WebLayerImpl::SetScrollClient(blink::WebLayerScrollClient* scroll_client) {
                    base::Unretained(scroll_client)));
   } else {
     layer_->set_did_scroll_callback(
-        base::Callback<void(const gfx::ScrollOffset&)>());
+        base::Callback<void(const gfx::ScrollOffset&, const cc::ElementId&)>());
   }
+}
+
+void WebLayerImpl::SetScrollOffsetFromImplSideForTesting(
+    const gfx::ScrollOffset& offset) {
+  layer_->SetScrollOffsetFromImplSide(offset);
 }
 
 void WebLayerImpl::SetLayerClient(cc::LayerClient* client) {
@@ -448,14 +481,6 @@ void WebLayerImpl::SetElementId(const cc::ElementId& id) {
 
 cc::ElementId WebLayerImpl::GetElementId() const {
   return layer_->element_id();
-}
-
-void WebLayerImpl::SetCompositorMutableProperties(uint32_t properties) {
-  layer_->SetMutableProperties(properties);
-}
-
-uint32_t WebLayerImpl::CompositorMutableProperties() const {
-  return layer_->mutable_properties();
 }
 
 void WebLayerImpl::SetScrollParent(blink::WebLayer* parent) {
@@ -486,6 +511,11 @@ void WebLayerImpl::SetHasWillChangeTransformHint(bool has_will_change) {
 
 void WebLayerImpl::ShowScrollbars() {
   layer_->ShowScrollbars();
+}
+
+void WebLayerImpl::SetOverscrollBehavior(
+    const blink::WebOverscrollBehavior& behavior) {
+  layer_->SetOverscrollBehavior(static_cast<cc::OverscrollBehavior>(behavior));
 }
 
 }  // namespace cc_blink

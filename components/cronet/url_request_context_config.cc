@@ -19,10 +19,15 @@
 #include "net/cert/caching_cert_verifier.h"
 #include "net/cert/cert_verifier.h"
 #include "net/cert/cert_verify_proc.h"
+#include "net/cert/ct_policy_enforcer.h"
+#include "net/cert/ct_policy_status.h"
+#include "net/cert/do_nothing_ct_verifier.h"
 #include "net/cert/multi_threaded_cert_verifier.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/mapped_host_resolver.h"
+#include "net/http/http_network_session.h"
 #include "net/http/http_server_properties.h"
+#include "net/nqe/network_quality_estimator_params.h"
 #include "net/quic/chromium/quic_utils_chromium.h"
 #include "net/quic/core/quic_packets.h"
 #include "net/socket/ssl_client_socket.h"
@@ -37,23 +42,29 @@ const char kDiskCacheDirectoryName[] = "disk_cache";
 // TODO(xunjieli): Refactor constants in io_thread.cc.
 const char kQuicFieldTrialName[] = "QUIC";
 const char kQuicConnectionOptions[] = "connection_options";
+const char kQuicClientConnectionOptions[] = "client_connection_options";
 const char kQuicStoreServerConfigsInProperties[] =
     "store_server_configs_in_properties";
 const char kQuicMaxServerConfigsStoredInProperties[] =
     "max_server_configs_stored_in_properties";
-const char kQuicDelayTcpRace[] = "delay_tcp_race";
 const char kQuicIdleConnectionTimeoutSeconds[] =
     "idle_connection_timeout_seconds";
-const char kQuicHostWhitelist[] = "host_whitelist";
+const char kQuicMaxTimeBeforeCryptoHandshakeSeconds[] =
+    "max_time_before_crypto_handshake_seconds";
+const char kQuicMaxIdleTimeBeforeCryptoHandshakeSeconds[] =
+    "max_idle_time_before_crypto_handshake_seconds";
 const char kQuicCloseSessionsOnIpChange[] = "close_sessions_on_ip_change";
 const char kQuicMigrateSessionsOnNetworkChange[] =
     "migrate_sessions_on_network_change";
-const char kQuicPreferAes[] = "prefer_aes";
+const char kQuicMigrateSessionsOnNetworkChangeV2[] =
+    "migrate_sessions_on_network_change_v2";
 const char kQuicUserAgentId[] = "user_agent_id";
 const char kQuicMigrateSessionsEarly[] = "migrate_sessions_early";
+const char kQuicMigrateSessionsEarlyV2[] = "migrate_sessions_early_v2";
 const char kQuicDisableBidirectionalStreams[] =
     "quic_disable_bidirectional_streams";
 const char kQuicRaceCertVerification[] = "race_cert_verification";
+const char kQuicHostWhitelist[] = "host_whitelist";
 
 // AsyncDNS experiment dictionary name.
 const char kAsyncDnsFieldTrialName[] = "AsyncDNS";
@@ -76,11 +87,20 @@ const char kStaleDnsMaxStaleUses[] = "max_stale_uses";
 // Name of boolean to allow stale DNS results from other networks to be used on
 // the current network.
 const char kStaleDnsAllowOtherNetwork[] = "allow_other_network";
+// Name of boolean to enable persisting the DNS cache to disk.
+const char kStaleDnsPersist[] = "persist_to_disk";
+// Name of integer minimum time in milliseconds between writes to disk for DNS
+// cache persistence. Default value is one minute. Only relevant if
+// "persist_to_disk" is true.
+const char kStaleDnsPersistTimer[] = "persist_delay_ms";
 
 // Rules to override DNS resolution. Intended for testing.
 // See explanation of format in net/dns/mapped_host_resolver.h.
 const char kHostResolverRulesFieldTrialName[] = "HostResolverRules";
 const char kHostResolverRules[] = "host_resolver_rules";
+
+// NetworkQualityEstimator (NQE) experiment dictionary name.
+const char kNetworkQualityEstimatorFieldTrialName[] = "NetworkQualityEstimator";
 
 // Disable IPv6 when on WiFi. This is a workaround for a known issue on certain
 // Android phones, and should not be necessary when not on one of those devices.
@@ -89,14 +109,77 @@ const char kDisableIPv6OnWifi[] = "disable_ipv6_on_wifi";
 
 const char kSSLKeyLogFile[] = "ssl_key_log_file";
 
-// Returns the effective experimental options.
-std::unique_ptr<base::DictionaryValue> ParseAndSetExperimentalOptions(
+// A CTPolicyEnforcer that accepts all certificates.
+class DoNothingCTPolicyEnforcer : public net::CTPolicyEnforcer {
+ public:
+  DoNothingCTPolicyEnforcer() = default;
+  ~DoNothingCTPolicyEnforcer() override = default;
+
+  net::ct::CTPolicyCompliance CheckCompliance(
+      net::X509Certificate* cert,
+      const net::SCTList& verified_scts,
+      const net::NetLogWithSource& net_log) override {
+    return net::ct::CTPolicyCompliance::CT_POLICY_COMPLIES_VIA_SCTS;
+  }
+};
+
+}  // namespace
+
+URLRequestContextConfig::QuicHint::QuicHint(const std::string& host,
+                                            int port,
+                                            int alternate_port)
+    : host(host), port(port), alternate_port(alternate_port) {}
+
+URLRequestContextConfig::QuicHint::~QuicHint() {}
+
+URLRequestContextConfig::Pkp::Pkp(const std::string& host,
+                                  bool include_subdomains,
+                                  const base::Time& expiration_date)
+    : host(host),
+      include_subdomains(include_subdomains),
+      expiration_date(expiration_date) {}
+
+URLRequestContextConfig::Pkp::~Pkp() {}
+
+URLRequestContextConfig::URLRequestContextConfig(
+    bool enable_quic,
+    const std::string& quic_user_agent_id,
+    bool enable_spdy,
+    bool enable_brotli,
+    HttpCacheType http_cache,
+    int http_cache_max_size,
+    bool load_disable_cache,
+    const std::string& storage_path,
+    const std::string& user_agent,
     const std::string& experimental_options,
+    std::unique_ptr<net::CertVerifier> mock_cert_verifier,
+    bool enable_network_quality_estimator,
+    bool bypass_public_key_pinning_for_local_trust_anchors,
+    const std::string& cert_verifier_data)
+    : enable_quic(enable_quic),
+      quic_user_agent_id(quic_user_agent_id),
+      enable_spdy(enable_spdy),
+      enable_brotli(enable_brotli),
+      http_cache(http_cache),
+      http_cache_max_size(http_cache_max_size),
+      load_disable_cache(load_disable_cache),
+      storage_path(storage_path),
+      user_agent(user_agent),
+      mock_cert_verifier(std::move(mock_cert_verifier)),
+      enable_network_quality_estimator(enable_network_quality_estimator),
+      bypass_public_key_pinning_for_local_trust_anchors(
+          bypass_public_key_pinning_for_local_trust_anchors),
+      cert_verifier_data(cert_verifier_data),
+      experimental_options(experimental_options) {}
+
+URLRequestContextConfig::~URLRequestContextConfig() {}
+
+void URLRequestContextConfig::ParseAndSetExperimentalOptions(
     net::URLRequestContextBuilder* context_builder,
-    net::NetLog* net_log,
-    const scoped_refptr<base::SequencedTaskRunner>& file_task_runner) {
+    net::HttpNetworkSession::Params* session_params,
+    net::NetLog* net_log) {
   if (experimental_options.empty())
-    return nullptr;
+    return;
 
   DCHECK(net_log);
 
@@ -107,7 +190,7 @@ std::unique_ptr<base::DictionaryValue> ParseAndSetExperimentalOptions(
   if (!options) {
     DCHECK(false) << "Parsing experimental options failed: "
                   << experimental_options;
-    return nullptr;
+    return;
   }
 
   std::unique_ptr<base::DictionaryValue> dict =
@@ -116,7 +199,7 @@ std::unique_ptr<base::DictionaryValue> ParseAndSetExperimentalOptions(
   if (!dict) {
     DCHECK(false) << "Experimental options string is not a dictionary: "
                   << experimental_options;
-    return nullptr;
+    return;
   }
 
   bool async_dns_enable = false;
@@ -124,10 +207,10 @@ std::unique_ptr<base::DictionaryValue> ParseAndSetExperimentalOptions(
   bool host_resolver_rules_enable = false;
   bool disable_ipv6_on_wifi = false;
 
-  std::unique_ptr<base::DictionaryValue> effective_experimental_options =
-      dict->CreateDeepCopy();
+  effective_experimental_options = dict->CreateDeepCopy();
   StaleHostResolver::StaleOptions stale_dns_options;
   std::string host_resolver_rules_string;
+
   for (base::DictionaryValue::Iterator it(*dict.get()); !it.IsAtEnd();
        it.Advance()) {
     if (it.key() == kQuicFieldTrialName) {
@@ -141,8 +224,15 @@ std::unique_ptr<base::DictionaryValue> ParseAndSetExperimentalOptions(
       std::string quic_connection_options;
       if (quic_args->GetString(kQuicConnectionOptions,
                                &quic_connection_options)) {
-        context_builder->set_quic_connection_options(
-            net::ParseQuicConnectionOptions(quic_connection_options));
+        session_params->quic_connection_options =
+            net::ParseQuicConnectionOptions(quic_connection_options);
+      }
+
+      std::string quic_client_connection_options;
+      if (quic_args->GetString(kQuicClientConnectionOptions,
+                               &quic_client_connection_options)) {
+        session_params->quic_client_connection_options =
+            net::ParseQuicConnectionOptions(quic_client_connection_options);
       }
 
       // TODO(rtenneti): Delete this option after apps stop using it.
@@ -150,84 +240,104 @@ std::unique_ptr<base::DictionaryValue> ParseAndSetExperimentalOptions(
       bool quic_store_server_configs_in_properties = false;
       if (quic_args->GetBoolean(kQuicStoreServerConfigsInProperties,
                                 &quic_store_server_configs_in_properties)) {
-        context_builder->set_quic_max_server_configs_stored_in_properties(
-            net::kMaxQuicServersToPersist);
+        session_params->quic_max_server_configs_stored_in_properties =
+            net::kDefaultMaxQuicServerEntries;
       }
 
       int quic_max_server_configs_stored_in_properties = 0;
       if (quic_args->GetInteger(
               kQuicMaxServerConfigsStoredInProperties,
               &quic_max_server_configs_stored_in_properties)) {
-        context_builder->set_quic_max_server_configs_stored_in_properties(
-            static_cast<size_t>(quic_max_server_configs_stored_in_properties));
-      }
-
-      bool quic_delay_tcp_race = false;
-      if (quic_args->GetBoolean(kQuicDelayTcpRace, &quic_delay_tcp_race)) {
-        context_builder->set_quic_delay_tcp_race(quic_delay_tcp_race);
+        session_params->quic_max_server_configs_stored_in_properties =
+            static_cast<size_t>(quic_max_server_configs_stored_in_properties);
       }
 
       int quic_idle_connection_timeout_seconds = 0;
       if (quic_args->GetInteger(kQuicIdleConnectionTimeoutSeconds,
                                 &quic_idle_connection_timeout_seconds)) {
-        context_builder->set_quic_idle_connection_timeout_seconds(
-            quic_idle_connection_timeout_seconds);
+        session_params->quic_idle_connection_timeout_seconds =
+            quic_idle_connection_timeout_seconds;
       }
 
-      std::string quic_host_whitelist;
-      if (quic_args->GetString(kQuicHostWhitelist, &quic_host_whitelist)) {
-        std::unordered_set<std::string> hosts;
-        for (const std::string& host :
-             base::SplitString(quic_host_whitelist, ",", base::TRIM_WHITESPACE,
-                               base::SPLIT_WANT_ALL)) {
-          hosts.insert(host);
-        }
-        context_builder->set_quic_host_whitelist(hosts);
+      int quic_max_time_before_crypto_handshake_seconds = 0;
+      if (quic_args->GetInteger(
+              kQuicMaxTimeBeforeCryptoHandshakeSeconds,
+              &quic_max_time_before_crypto_handshake_seconds)) {
+        session_params->quic_max_time_before_crypto_handshake_seconds =
+            quic_max_time_before_crypto_handshake_seconds;
+      }
+
+      int quic_max_idle_time_before_crypto_handshake_seconds = 0;
+      if (quic_args->GetInteger(
+              kQuicMaxIdleTimeBeforeCryptoHandshakeSeconds,
+              &quic_max_idle_time_before_crypto_handshake_seconds)) {
+        session_params->quic_max_idle_time_before_crypto_handshake_seconds =
+            quic_max_idle_time_before_crypto_handshake_seconds;
       }
 
       bool quic_close_sessions_on_ip_change = false;
       if (quic_args->GetBoolean(kQuicCloseSessionsOnIpChange,
                                 &quic_close_sessions_on_ip_change)) {
-        context_builder->set_quic_close_sessions_on_ip_change(
-            quic_close_sessions_on_ip_change);
+        session_params->quic_close_sessions_on_ip_change =
+            quic_close_sessions_on_ip_change;
       }
 
       bool quic_migrate_sessions_on_network_change = false;
       if (quic_args->GetBoolean(kQuicMigrateSessionsOnNetworkChange,
                                 &quic_migrate_sessions_on_network_change)) {
-        context_builder->set_quic_migrate_sessions_on_network_change(
-            quic_migrate_sessions_on_network_change);
-      }
-
-      bool quic_prefer_aes = false;
-      if (quic_args->GetBoolean(kQuicPreferAes, &quic_prefer_aes)) {
-        context_builder->set_quic_prefer_aes(quic_prefer_aes);
-      }
-
-      std::string quic_user_agent_id;
-      if (quic_args->GetString(kQuicUserAgentId, &quic_user_agent_id)) {
-        context_builder->set_quic_user_agent_id(quic_user_agent_id);
+        session_params->quic_migrate_sessions_on_network_change =
+            quic_migrate_sessions_on_network_change;
       }
 
       bool quic_migrate_sessions_early = false;
       if (quic_args->GetBoolean(kQuicMigrateSessionsEarly,
                                 &quic_migrate_sessions_early)) {
-        context_builder->set_quic_migrate_sessions_early(
-            quic_migrate_sessions_early);
+        session_params->quic_migrate_sessions_early =
+            quic_migrate_sessions_early;
+      }
+
+      std::string quic_user_agent_id;
+      if (quic_args->GetString(kQuicUserAgentId, &quic_user_agent_id)) {
+        session_params->quic_user_agent_id = quic_user_agent_id;
+      }
+
+      bool quic_migrate_sessions_on_network_change_v2 = false;
+      if (quic_args->GetBoolean(kQuicMigrateSessionsOnNetworkChangeV2,
+                                &quic_migrate_sessions_on_network_change_v2)) {
+        session_params->quic_migrate_sessions_on_network_change_v2 =
+            quic_migrate_sessions_on_network_change_v2;
+      }
+
+      bool quic_migrate_sessions_early_v2 = false;
+      if (quic_args->GetBoolean(kQuicMigrateSessionsEarlyV2,
+                                &quic_migrate_sessions_early_v2)) {
+        session_params->quic_migrate_sessions_early_v2 =
+            quic_migrate_sessions_early_v2;
       }
 
       bool quic_disable_bidirectional_streams = false;
       if (quic_args->GetBoolean(kQuicDisableBidirectionalStreams,
                                 &quic_disable_bidirectional_streams)) {
-        context_builder->set_quic_disable_bidirectional_streams(
-            quic_disable_bidirectional_streams);
+        session_params->quic_disable_bidirectional_streams =
+            quic_disable_bidirectional_streams;
       }
 
       bool quic_race_cert_verification = false;
       if (quic_args->GetBoolean(kQuicRaceCertVerification,
                                 &quic_race_cert_verification)) {
-        context_builder->set_quic_race_cert_verification(
-            quic_race_cert_verification);
+        session_params->quic_race_cert_verification =
+            quic_race_cert_verification;
+      }
+
+      std::string quic_host_whitelist;
+      if (quic_args->GetString(kQuicHostWhitelist, &quic_host_whitelist)) {
+        std::vector<std::string> host_vector =
+            base::SplitString(quic_host_whitelist, ",", base::TRIM_WHITESPACE,
+                              base::SPLIT_WANT_ALL);
+        session_params->quic_host_whitelist.clear();
+        for (const std::string& host : host_vector) {
+          session_params->quic_host_whitelist.insert(host);
+        }
       }
 
     } else if (it.key() == kAsyncDnsFieldTrialName) {
@@ -266,6 +376,12 @@ std::unique_ptr<base::DictionaryValue> ParseAndSetExperimentalOptions(
                                        &allow_other_network)) {
           stale_dns_options.allow_other_network = allow_other_network;
         }
+        bool persist;
+        if (stale_dns_args->GetBoolean(kStaleDnsPersist, &persist))
+          enable_host_cache_persistence = persist;
+        int persist_timer;
+        if (stale_dns_args->GetInteger(kStaleDnsPersistTimer, &persist_timer))
+          host_cache_persistence_delay_ms = persist_timer;
       }
     } else if (it.key() == kHostResolverRulesFieldTrialName) {
       const base::DictionaryValue* host_resolver_rules_args = nullptr;
@@ -287,18 +403,36 @@ std::unique_ptr<base::DictionaryValue> ParseAndSetExperimentalOptions(
     } else if (it.key() == kSSLKeyLogFile) {
       std::string ssl_key_log_file_string;
       if (it.value().GetAsString(&ssl_key_log_file_string)) {
-        DCHECK(file_task_runner);
         base::FilePath ssl_key_log_file(ssl_key_log_file_string);
-        if (!ssl_key_log_file.empty() && file_task_runner) {
+        if (!ssl_key_log_file.empty()) {
           // SetSSLKeyLogFile is only safe to call before any SSLClientSockets
           // are created. This should not be used if there are multiple
           // CronetEngine.
           // TODO(xunjieli): Expose this as a stable API after crbug.com/458365
           // is resolved.
-          net::SSLClientSocket::SetSSLKeyLogFile(ssl_key_log_file,
-                                                 file_task_runner);
+          net::SSLClientSocket::SetSSLKeyLogFile(ssl_key_log_file);
         }
       }
+    } else if (it.key() == kNetworkQualityEstimatorFieldTrialName) {
+      const base::DictionaryValue* nqe_args = nullptr;
+      if (!it.value().GetAsDictionary(&nqe_args)) {
+        LOG(ERROR) << "\"" << it.key() << "\" config params \"" << it.value()
+                   << "\" is not a dictionary value";
+        effective_experimental_options->Remove(it.key(), nullptr);
+        continue;
+      }
+
+      std::string nqe_option;
+      if (nqe_args->GetString(net::kForceEffectiveConnectionType,
+                              &nqe_option)) {
+        nqe_forced_effective_connection_type =
+            net::GetEffectiveConnectionTypeForName(nqe_option);
+        if (!nqe_option.empty() && !nqe_forced_effective_connection_type) {
+          LOG(ERROR) << "\"" << nqe_option
+                     << "\" is not a valid effective connection type value";
+        }
+      }
+
     } else {
       LOG(WARNING) << "Unrecognized Cronet experimental option \"" << it.key()
                    << "\" with params \"" << it.value();
@@ -330,73 +464,11 @@ std::unique_ptr<base::DictionaryValue> ParseAndSetExperimentalOptions(
     }
     context_builder->set_host_resolver(std::move(host_resolver));
   }
-  return effective_experimental_options;
 }
-
-}  // namespace
-
-URLRequestContextConfig::QuicHint::QuicHint(const std::string& host,
-                                            int port,
-                                            int alternate_port)
-    : host(host), port(port), alternate_port(alternate_port) {}
-
-URLRequestContextConfig::QuicHint::~QuicHint() {}
-
-URLRequestContextConfig::Pkp::Pkp(const std::string& host,
-                                  bool include_subdomains,
-                                  const base::Time& expiration_date)
-    : host(host),
-      include_subdomains(include_subdomains),
-      expiration_date(expiration_date) {}
-
-URLRequestContextConfig::Pkp::~Pkp() {}
-
-URLRequestContextConfig::URLRequestContextConfig(
-    bool enable_quic,
-    const std::string& quic_user_agent_id,
-    bool enable_spdy,
-    bool enable_sdch,
-    HttpCacheType http_cache,
-    int http_cache_max_size,
-    bool load_disable_cache,
-    const std::string& storage_path,
-    const std::string& user_agent,
-    const std::string& experimental_options,
-    const std::string& data_reduction_proxy_key,
-    const std::string& data_reduction_primary_proxy,
-    const std::string& data_reduction_fallback_proxy,
-    const std::string& data_reduction_secure_proxy_check_url,
-    std::unique_ptr<net::CertVerifier> mock_cert_verifier,
-    bool enable_network_quality_estimator,
-    bool bypass_public_key_pinning_for_local_trust_anchors,
-    const std::string& cert_verifier_data)
-    : enable_quic(enable_quic),
-      quic_user_agent_id(quic_user_agent_id),
-      enable_spdy(enable_spdy),
-      enable_sdch(enable_sdch),
-      http_cache(http_cache),
-      http_cache_max_size(http_cache_max_size),
-      load_disable_cache(load_disable_cache),
-      storage_path(storage_path),
-      user_agent(user_agent),
-      experimental_options(experimental_options),
-      data_reduction_proxy_key(data_reduction_proxy_key),
-      data_reduction_primary_proxy(data_reduction_primary_proxy),
-      data_reduction_fallback_proxy(data_reduction_fallback_proxy),
-      data_reduction_secure_proxy_check_url(
-          data_reduction_secure_proxy_check_url),
-      mock_cert_verifier(std::move(mock_cert_verifier)),
-      enable_network_quality_estimator(enable_network_quality_estimator),
-      bypass_public_key_pinning_for_local_trust_anchors(
-          bypass_public_key_pinning_for_local_trust_anchors),
-      cert_verifier_data(cert_verifier_data) {}
-
-URLRequestContextConfig::~URLRequestContextConfig() {}
 
 void URLRequestContextConfig::ConfigureURLRequestContextBuilder(
     net::URLRequestContextBuilder* context_builder,
-    net::NetLog* net_log,
-    const scoped_refptr<base::SequencedTaskRunner>& file_task_runner) {
+    net::NetLog* net_log) {
   DCHECK(net_log);
 
   std::string config_cache;
@@ -417,13 +489,14 @@ void URLRequestContextConfig::ConfigureURLRequestContextBuilder(
     context_builder->DisableHttpCache();
   }
   context_builder->set_user_agent(user_agent);
-  context_builder->SetSpdyAndQuicEnabled(enable_spdy, enable_quic);
-  context_builder->set_sdch_enabled(enable_sdch);
+  net::HttpNetworkSession::Params session_params;
+  session_params.enable_http2 = enable_spdy;
+  session_params.enable_quic = enable_quic;
   if (enable_quic)
-    context_builder->set_quic_user_agent_id(quic_user_agent_id);
+    session_params.quic_user_agent_id = quic_user_agent_id;
 
-  effective_experimental_options = ParseAndSetExperimentalOptions(
-      experimental_options, context_builder, net_log, file_task_runner);
+  ParseAndSetExperimentalOptions(context_builder, &session_params, net_log);
+  context_builder->set_http_network_session_params(session_params);
 
   std::unique_ptr<net::CertVerifier> cert_verifier;
   if (mock_cert_verifier) {
@@ -436,6 +509,12 @@ void URLRequestContextConfig::ConfigureURLRequestContextBuilder(
     cert_verifier = net::CertVerifier::CreateDefault();
   }
   context_builder->SetCertVerifier(std::move(cert_verifier));
+  // Certificate Transparency is intentionally ignored in Cronet.
+  // See //net/docs/certificate-transparency.md for more details.
+  context_builder->set_ct_verifier(
+      base::MakeUnique<net::DoNothingCTVerifier>());
+  context_builder->set_ct_policy_enforcer(
+      base::MakeUnique<DoNothingCTPolicyEnforcer>());
   // TODO(mef): Use |config| to set cookies.
 }
 
@@ -445,11 +524,9 @@ URLRequestContextConfigBuilder::~URLRequestContextConfigBuilder() {}
 std::unique_ptr<URLRequestContextConfig>
 URLRequestContextConfigBuilder::Build() {
   return base::MakeUnique<URLRequestContextConfig>(
-      enable_quic, quic_user_agent_id, enable_spdy, enable_sdch, http_cache,
+      enable_quic, quic_user_agent_id, enable_spdy, enable_brotli, http_cache,
       http_cache_max_size, load_disable_cache, storage_path, user_agent,
-      experimental_options, data_reduction_proxy_key,
-      data_reduction_primary_proxy, data_reduction_fallback_proxy,
-      data_reduction_secure_proxy_check_url, std::move(mock_cert_verifier),
+      experimental_options, std::move(mock_cert_verifier),
       enable_network_quality_estimator,
       bypass_public_key_pinning_for_local_trust_anchors, cert_verifier_data);
 }

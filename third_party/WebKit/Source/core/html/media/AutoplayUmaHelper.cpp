@@ -6,12 +6,17 @@
 
 #include "core/dom/Document.h"
 #include "core/dom/ElementVisibilityObserver.h"
-#include "core/events/Event.h"
-#include "core/frame/Settings.h"
-#include "core/html/HTMLMediaElement.h"
+#include "core/dom/events/Event.h"
+#include "core/frame/UseCounter.h"
+#include "core/html/media/AutoplayPolicy.h"
+#include "core/html/media/HTMLMediaElement.h"
 #include "platform/Histogram.h"
-#include "platform/wtf/CurrentTime.h"
+#include "platform/network/NetworkStateNotifier.h"
+#include "platform/wtf/Time.h"
+#include "public/platform/InterfaceProvider.h"
 #include "public/platform/Platform.h"
+#include "services/metrics/public/cpp/ukm_entry_builder.h"
+#include "services/metrics/public/cpp/ukm_recorder.h"
 
 namespace blink {
 
@@ -19,6 +24,20 @@ namespace {
 
 const int32_t kMaxOffscreenDurationUmaMS = 60 * 60 * 1000;
 const int32_t kOffscreenDurationUmaBucketCount = 50;
+const int32_t kMaxWaitTimeUmaMS = 30 * 1000;
+const int32_t kWaitTimeBucketCount = 50;
+
+const char kAutoplayAttemptUkmEvent[] = "Media.Autoplay.Attempt";
+const char kAutoplayAttemptUkmSourceMetric[] = "Source";
+const char kAutoplayAttemptUkmAudioTrackMetric[] = "AudioTrack";
+const char kAutoplayAttemptUkmVideoTrackMetric[] = "VideoTrack";
+const char kAutoplayAttemptUkmUserGestureRequiredMetric[] =
+    "UserGestureRequired";
+const char kAutoplayAttemptUkmMutedMetric[] = "Muted";
+
+const char kAutoplayMutedUnmuteUkmEvent[] = "Media.Autoplay.Muted.UnmuteAction";
+const char kAutoplayMutedUnmuteUkmSourceMetric[] = "Source";
+const char kAutoplayMutedUnmuteUkmResultMetric[] = "Result";
 
 }  // namespace
 
@@ -34,7 +53,10 @@ AutoplayUmaHelper::AutoplayUmaHelper(HTMLMediaElement* element)
       muted_video_autoplay_offscreen_start_time_ms_(0),
       muted_video_autoplay_offscreen_duration_ms_(0),
       is_visible_(false),
-      muted_video_offscreen_duration_visibility_observer_(nullptr) {}
+      muted_video_offscreen_duration_visibility_observer_(nullptr),
+      load_start_time_ms_(0.0) {
+  element->addEventListener(EventTypeNames::loadstart, this, false);
+}
 
 AutoplayUmaHelper::~AutoplayUmaHelper() = default;
 
@@ -42,7 +64,18 @@ bool AutoplayUmaHelper::operator==(const EventListener& other) const {
   return this == &other;
 }
 
+void AutoplayUmaHelper::OnLoadStarted() {
+  if (element_->GetLoadType() == WebMediaPlayer::kLoadTypeURL)
+    load_start_time_ms_ = MonotonicallyIncreasingTimeMS();
+}
+
 void AutoplayUmaHelper::OnAutoplayInitiated(AutoplaySource source) {
+  int32_t autoplay_wait_time_ms = -1;
+  if (load_start_time_ms_ != 0.0) {
+    autoplay_wait_time_ms = static_cast<int32_t>(
+        std::min<int64_t>(MonotonicallyIncreasingTimeMS() - load_start_time_ms_,
+                          std::numeric_limits<int32_t>::max()));
+  }
   DEFINE_STATIC_LOCAL(EnumerationHistogram, video_histogram,
                       ("Media.Video.Autoplay",
                        static_cast<int>(AutoplaySource::kNumberOfUmaSources)));
@@ -56,6 +89,19 @@ void AutoplayUmaHelper::OnAutoplayInitiated(AutoplaySource source) {
       EnumerationHistogram, blocked_muted_video_histogram,
       ("Media.Video.Autoplay.Muted.Blocked", kAutoplayBlockedReasonMax));
 
+  DEFINE_STATIC_LOCAL(CustomCountHistogram, wait_time_video_attrib_histogram,
+                      ("Media.Video.Autoplay.Attribute.WaitTime", 1,
+                       kMaxWaitTimeUmaMS, kWaitTimeBucketCount));
+  DEFINE_STATIC_LOCAL(CustomCountHistogram, wait_time_audio_attrib_histogram,
+                      ("Media.Audio.Autoplay.Attribute.WaitTime", 1,
+                       kMaxWaitTimeUmaMS, kWaitTimeBucketCount));
+  DEFINE_STATIC_LOCAL(CustomCountHistogram, wait_time_video_play_histogram,
+                      ("Media.Video.Autoplay.PlayMethod.WaitTime", 1,
+                       kMaxWaitTimeUmaMS, kWaitTimeBucketCount));
+  DEFINE_STATIC_LOCAL(CustomCountHistogram, wait_time_audio_play_histogram,
+                      ("Media.Audio.Autoplay.PlayMethod.WaitTime", 1,
+                       kMaxWaitTimeUmaMS, kWaitTimeBucketCount));
+
   // Autoplay already initiated
   if (sources_.count(source))
     return;
@@ -67,8 +113,22 @@ void AutoplayUmaHelper::OnAutoplayInitiated(AutoplaySource source) {
     video_histogram.Count(static_cast<int>(source));
     if (element_->muted())
       muted_video_histogram.Count(static_cast<int>(source));
+    if (autoplay_wait_time_ms >= 0) {
+      if (source == AutoplaySource::kAttribute) {
+        wait_time_video_attrib_histogram.Count(autoplay_wait_time_ms);
+      } else if (source == AutoplaySource::kMethod) {
+        wait_time_video_play_histogram.Count(autoplay_wait_time_ms);
+      }
+    }
   } else {
     audio_histogram.Count(static_cast<int>(source));
+    if (autoplay_wait_time_ms >= 0) {
+      if (source == AutoplaySource::kAttribute) {
+        wait_time_audio_attrib_histogram.Count(autoplay_wait_time_ms);
+      } else if (source == AutoplaySource::kMethod) {
+        wait_time_audio_play_histogram.Count(autoplay_wait_time_ms);
+      }
+    }
   }
 
   // Record dual source.
@@ -106,11 +166,10 @@ void AutoplayUmaHelper::OnAutoplayInitiated(AutoplaySource source) {
 
   // Record if it will be blocked by Data Saver or Autoplay setting.
   if (element_->IsHTMLVideoElement() && element_->muted() &&
-      RuntimeEnabledFeatures::autoplayMutedVideosEnabled()) {
-    bool data_saver_enabled =
-        element_->GetDocument().GetSettings() &&
-        element_->GetDocument().GetSettings()->GetDataSaverEnabled();
-    bool blocked_by_setting = !element_->IsAutoplayAllowedPerSettings();
+      RuntimeEnabledFeatures::AutoplayMutedVideosEnabled()) {
+    bool data_saver_enabled = GetNetworkStateNotifier().SaveDataEnabled();
+    bool blocked_by_setting =
+        !element_->GetAutoplayPolicy().IsAutoplayAllowedPerSettings();
 
     if (data_saver_enabled && blocked_by_setting) {
       blocked_muted_video_histogram.Count(
@@ -120,6 +179,22 @@ void AutoplayUmaHelper::OnAutoplayInitiated(AutoplaySource source) {
     } else if (blocked_by_setting) {
       blocked_muted_video_histogram.Count(kAutoplayBlockedReasonSetting);
     }
+  }
+
+  // Record UKM autoplay event.
+  if (element_->GetDocument().IsInMainFrame()) {
+    std::unique_ptr<ukm::UkmEntryBuilder> builder =
+        CreateUkmBuilder(kAutoplayAttemptUkmEvent);
+    builder->AddMetric(kAutoplayAttemptUkmSourceMetric,
+                       source == AutoplaySource::kMethod);
+    builder->AddMetric(kAutoplayAttemptUkmAudioTrackMetric,
+                       element_->HasAudio());
+    builder->AddMetric(kAutoplayAttemptUkmVideoTrackMetric,
+                       element_->HasVideo());
+    builder->AddMetric(
+        kAutoplayAttemptUkmUserGestureRequiredMetric,
+        element_->GetAutoplayPolicy().IsGestureNeededForPlayback());
+    builder->AddMetric(kAutoplayAttemptUkmMutedMetric, element_->muted());
   }
 
   element_->addEventListener(EventTypeNames::playing, this, false);
@@ -211,6 +286,31 @@ void AutoplayUmaHelper::RecordAutoplayUnmuteStatus(
        static_cast<int>(AutoplayUnmuteActionStatus::kNumberOfStatus)));
 
   autoplay_unmute_histogram.Count(static_cast<int>(status));
+
+  // Record UKM event for unmute muted autoplay.
+  if (element_->GetDocument().IsInMainFrame()) {
+    std::unique_ptr<ukm::UkmEntryBuilder> builder =
+        CreateUkmBuilder(kAutoplayMutedUnmuteUkmEvent);
+
+    int source = static_cast<int>(AutoplaySource::kAttribute);
+    if (sources_.size() ==
+        static_cast<size_t>(AutoplaySource::kNumberOfSources)) {
+      source = static_cast<int>(AutoplaySource::kDualSource);
+    } else if (sources_.count(AutoplaySource::kMethod)) {
+      source = static_cast<int>(AutoplaySource::kAttribute);
+    }
+
+    builder->AddMetric(kAutoplayMutedUnmuteUkmSourceMetric, source);
+    builder->AddMetric(kAutoplayMutedUnmuteUkmResultMetric,
+                       status == AutoplayUnmuteActionStatus::kSuccess);
+  }
+}
+
+void AutoplayUmaHelper::VideoWillBeDrawnToCanvas() {
+  if (HasSource() && !IsVisible()) {
+    UseCounter::Count(element_->GetDocument(),
+                      WebFeature::kHiddenAutoplayedVideoInCanvas);
+  }
 }
 
 void AutoplayUmaHelper::DidMoveToNewDocument(Document& old_document) {
@@ -247,7 +347,9 @@ void AutoplayUmaHelper::OnVisibilityChangedForMutedVideoOffscreenDuration(
 
 void AutoplayUmaHelper::handleEvent(ExecutionContext* execution_context,
                                     Event* event) {
-  if (event->type() == EventTypeNames::playing)
+  if (event->type() == EventTypeNames::loadstart)
+    OnLoadStarted();
+  else if (event->type() == EventTypeNames::playing)
     HandlePlayingEvent();
   else if (event->type() == EventTypeNames::pause)
     HandlePauseEvent();
@@ -387,7 +489,16 @@ bool AutoplayUmaHelper::ShouldRecordUserPausedAutoplayingCrossOriginVideo()
              CrossOriginAutoplayResult::kUserPaused);
 }
 
-DEFINE_TRACE(AutoplayUmaHelper) {
+std::unique_ptr<ukm::UkmEntryBuilder> AutoplayUmaHelper::CreateUkmBuilder(
+    const char* event) {
+  ukm::UkmRecorder* ukm_recorder = element_->GetDocument().UkmRecorder();
+  DCHECK(ukm_recorder);
+
+  return ukm_recorder->GetEntryBuilder(element_->GetDocument().UkmSourceID(),
+                                       event);
+}
+
+void AutoplayUmaHelper::Trace(blink::Visitor* visitor) {
   EventListener::Trace(visitor);
   ContextLifecycleObserver::Trace(visitor);
   visitor->Trace(element_);

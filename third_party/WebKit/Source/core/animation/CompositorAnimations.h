@@ -43,6 +43,7 @@ namespace blink {
 
 class Animation;
 class CompositorAnimation;
+class CompositorAnimationPlayer;
 class Element;
 class FloatBox;
 class KeyframeEffectModelBase;
@@ -51,10 +52,47 @@ class CORE_EXPORT CompositorAnimations {
   STATIC_ONLY(CompositorAnimations);
 
  public:
-  static bool IsCompositableProperty(CSSPropertyID);
-  static const CSSPropertyID kCompositableProperties[7];
+  struct FailureCode {
+    const bool can_composite;
+    const bool web_developer_actionable;
+    // This variable is used only to set the
+    // Animation::is_non_composited_compositable_.
+    const bool will_composite;
+    const String reason;
 
-  static bool IsCandidateForAnimationOnCompositor(
+    static FailureCode None() {
+      return FailureCode(true, false, true, String());
+    }
+    static FailureCode Actionable(const String& reason) {
+      return FailureCode(false, true, false, reason);
+    }
+    static FailureCode NonActionable(const String& reason) {
+      return FailureCode(false, false, false, reason);
+    }
+    static FailureCode NotPaintIntoOwnBacking(const String& reason) {
+      return FailureCode(true, false, false, reason);
+    }
+
+    bool Ok() const { return will_composite; }
+
+    bool operator==(const FailureCode& other) const {
+      return can_composite == other.can_composite &&
+             web_developer_actionable == other.web_developer_actionable &&
+             reason == other.reason;
+    }
+
+   private:
+    FailureCode(bool can_composite,
+                bool web_developer_actionable,
+                bool will_composite,
+                const String& reason)
+        : can_composite(can_composite),
+          web_developer_actionable(web_developer_actionable),
+          will_composite(will_composite),
+          reason(reason) {}
+  };
+
+  static FailureCode CheckCanStartAnimationOnCompositor(
       const Timing&,
       const Element&,
       const Animation*,
@@ -63,13 +101,13 @@ class CORE_EXPORT CompositorAnimations {
   static void CancelIncompatibleAnimationsOnCompositor(const Element&,
                                                        const Animation&,
                                                        const EffectModel&);
-  static bool CanStartAnimationOnCompositor(const Element&);
   static void StartAnimationOnCompositor(const Element&,
                                          int group,
                                          double start_time,
                                          double time_offset,
                                          const Timing&,
-                                         const Animation&,
+                                         const Animation*,
+                                         CompositorAnimationPlayer&,
                                          const EffectModel&,
                                          Vector<int>& started_animation_ids,
                                          double animation_playback_rate);
@@ -81,7 +119,7 @@ class CORE_EXPORT CompositorAnimations {
                                                    int id,
                                                    double pause_time);
 
-  static void AttachCompositedLayers(Element&, const Animation&);
+  static void AttachCompositedLayers(Element&, CompositorAnimationPlayer*);
 
   static bool GetAnimatedBoundingBox(FloatBox&,
                                      const EffectModel&,
@@ -111,6 +149,28 @@ class CORE_EXPORT CompositorAnimations {
       const KeyframeEffectModelBase&,
       Vector<std::unique_ptr<CompositorAnimation>>& animations,
       double animation_playback_rate);
+
+ private:
+  static FailureCode CheckCanStartEffectOnCompositor(
+      const Timing&,
+      const Element&,
+      const Animation*,
+      const EffectModel&,
+      double animation_playback_rate);
+  static FailureCode CheckCanStartElementOnCompositor(const Element&);
+
+  friend class AnimationCompositorAnimationsTest;
+  FRIEND_TEST_ALL_PREFIXES(AnimationCompositorAnimationsTest,
+                           canStartElementOnCompositorTransformSPv2);
+  FRIEND_TEST_ALL_PREFIXES(AnimationCompositorAnimationsTest,
+                           canStartElementOnCompositorEffectSPv2);
+  FRIEND_TEST_ALL_PREFIXES(AnimationCompositorAnimationsTest,
+                           canStartElementOnCompositorEffect);
+  FRIEND_TEST_ALL_PREFIXES(
+      AnimationCompositorAnimationsTest,
+      cannotStartElementOnCompositorEffectWithRuntimeFeature);
+  FRIEND_TEST_ALL_PREFIXES(AnimationCompositorAnimationsTest,
+                           cancelIncompatibleCompositorAnimations);
 };
 
 }  // namespace blink

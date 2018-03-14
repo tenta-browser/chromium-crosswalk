@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "content/common/media/media_stream_options.h"
+#include "content/common/media/media_stream_controls.h"
 #include "content/renderer/media/media_stream_constraints_util_sets.h"
 #include "content/renderer/media/media_stream_video_source.h"
 #include "media/base/limits.h"
@@ -45,7 +45,6 @@ using Point = ResolutionSet::Point;
 using StringSet = DiscreteSet<std::string>;
 using BoolSet = DiscreteSet<bool>;
 
-
 constexpr double kMinScreenCastAspectRatio =
     static_cast<double>(kMinScreenCastDimension) /
     static_cast<double>(kMaxScreenCastDimension);
@@ -53,34 +52,12 @@ constexpr double kMaxScreenCastAspectRatio =
     static_cast<double>(kMaxScreenCastDimension) /
     static_cast<double>(kMinScreenCastDimension);
 
-StringSet StringSetFromConstraint(const blink::StringConstraint& constraint) {
-  if (!constraint.HasExact())
-    return StringSet::UniversalSet();
-
-  std::vector<std::string> elements;
-  for (const auto& entry : constraint.Exact())
-    elements.push_back(entry.Ascii());
-
-  return StringSet(std::move(elements));
-}
-
-BoolSet BoolSetFromConstraint(const blink::BooleanConstraint& constraint) {
-  if (!constraint.HasExact())
-    return BoolSet::UniversalSet();
-
-  return BoolSet({constraint.Exact()});
-}
-
 using DoubleRangeSet = NumericRangeSet<double>;
 
 class VideoContentCaptureCandidates {
  public:
   VideoContentCaptureCandidates()
-      : has_explicit_max_height_(false),
-        has_explicit_max_width_(false),
-        has_explicit_max_frame_rate_(false),
-        device_id_set_(StringSet::UniversalSet()),
-        noise_reduction_set_(BoolSet::UniversalSet()) {}
+      : has_explicit_max_height_(false), has_explicit_max_width_(false) {}
   explicit VideoContentCaptureCandidates(
       const blink::WebMediaTrackConstraintSet& constraint_set)
       : resolution_set_(ResolutionSet::FromConstraintSet(constraint_set)),
@@ -91,11 +68,9 @@ class VideoContentCaptureCandidates {
                                 ConstraintMax(constraint_set.width) <=
                                     kMaxScreenCastDimension),
         frame_rate_set_(
-            DoubleRangeSet::FromConstraint(constraint_set.frame_rate)),
-        has_explicit_max_frame_rate_(
-            ConstraintHasMax(constraint_set.frame_rate) &&
-            ConstraintMax(constraint_set.frame_rate) <=
-                kMaxScreenCastFrameRate),
+            DoubleRangeSet::FromConstraint(constraint_set.frame_rate,
+                                           0.0,
+                                           kMaxScreenCastFrameRate)),
         device_id_set_(StringSetFromConstraint(constraint_set.device_id)),
         noise_reduction_set_(
             BoolSetFromConstraint(constraint_set.goog_noise_reduction)) {}
@@ -121,8 +96,6 @@ class VideoContentCaptureCandidates {
         has_explicit_max_width_ || other.has_explicit_max_width_;
     intersection.frame_rate_set_ =
         frame_rate_set_.Intersection(other.frame_rate_set_);
-    intersection.has_explicit_max_frame_rate_ =
-        has_explicit_max_frame_rate_ || other.has_explicit_max_frame_rate_;
     intersection.device_id_set_ =
         device_id_set_.Intersection(other.device_id_set_);
     intersection.noise_reduction_set_ =
@@ -134,9 +107,6 @@ class VideoContentCaptureCandidates {
   bool has_explicit_max_height() const { return has_explicit_max_height_; }
   bool has_explicit_max_width() const { return has_explicit_max_width_; }
   const DoubleRangeSet& frame_rate_set() const { return frame_rate_set_; }
-  bool has_explicit_max_frame_rate() const {
-    return has_explicit_max_frame_rate_;
-  }
   const StringSet& device_id_set() const { return device_id_set_; }
   const BoolSet& noise_reduction_set() const { return noise_reduction_set_; }
   void set_resolution_set(const ResolutionSet& set) { resolution_set_ = set; }
@@ -147,7 +117,6 @@ class VideoContentCaptureCandidates {
   bool has_explicit_max_height_;
   bool has_explicit_max_width_;
   DoubleRangeSet frame_rate_set_;
-  bool has_explicit_max_frame_rate_;
   StringSet device_id_set_;
   BoolSet noise_reduction_set_;
 };
@@ -205,10 +174,10 @@ double SelectFrameRateFromCandidates(
   double frame_rate = basic_constraint_set.frame_rate.HasIdeal()
                           ? basic_constraint_set.frame_rate.Ideal()
                           : default_frame_rate;
-  if (frame_rate > candidate_set.Max())
-    frame_rate = candidate_set.Max();
-  else if (frame_rate < candidate_set.Min())
-    frame_rate = candidate_set.Min();
+  if (candidate_set.Max() && frame_rate > *candidate_set.Max())
+    frame_rate = *candidate_set.Max();
+  else if (candidate_set.Min() && frame_rate < *candidate_set.Min())
+    frame_rate = *candidate_set.Min();
 
   return frame_rate;
 }
@@ -280,7 +249,7 @@ base::Optional<bool> SelectNoiseReductionFromCandidates(
   return base::Optional<bool>(candidates.FirstElement());
 }
 
-int ClampToValidDimension(int value) {
+int ClampToValidScreenCastDimension(int value) {
   if (value > kMaxScreenCastDimension)
     return kMaxScreenCastDimension;
   else if (value < kMinScreenCastDimension)
@@ -317,16 +286,15 @@ VideoCaptureSettings SelectResultFromCandidates(
   // When the given maximum values are large, the computed values using default
   // aspect ratio may fall out of range. Ensure the defaults are in the valid
   // range.
-  default_height = ClampToValidDimension(default_height);
-  default_width = ClampToValidDimension(default_width);
+  default_height = ClampToValidScreenCastDimension(default_height);
+  default_width = ClampToValidScreenCastDimension(default_width);
 
   // If a maximum frame rate is explicitly given, use it as default for
   // better compatibility with the old constraints algorithm.
   // TODO(guidou): Use the actual default when applications migrate to the new
   // constraint syntax.  http://crbug.com/710800
-  double default_frame_rate = candidates.has_explicit_max_frame_rate()
-                                  ? candidates.frame_rate_set().Max()
-                                  : kDefaultScreenCastFrameRate;
+  double default_frame_rate =
+      candidates.frame_rate_set().Max().value_or(kDefaultScreenCastFrameRate);
 
   // This default comes from the old algorithm.
   media::ResolutionChangePolicy default_resolution_policy =
@@ -342,17 +310,14 @@ VideoCaptureSettings SelectResultFromCandidates(
   base::Optional<bool> noise_reduction = SelectNoiseReductionFromCandidates(
       candidates.noise_reduction_set(), basic_constraint_set);
 
-  // Using false because the resolution policy for content capture can produce
-  // frames in various sizes.
-  bool expect_source_native_size = false;
   auto track_adapter_settings = SelectVideoTrackAdapterSettings(
       basic_constraint_set, candidates.resolution_set(),
-      candidates.frame_rate_set(), capture_params.requested_format,
-      expect_source_native_size);
+      candidates.frame_rate_set(), capture_params.requested_format);
 
   return VideoCaptureSettings(std::move(device_id), capture_params,
                               noise_reduction, track_adapter_settings,
-                              candidates.frame_rate_set().Min());
+                              candidates.frame_rate_set().Min(),
+                              candidates.frame_rate_set().Max());
 }
 
 VideoCaptureSettings UnsatisfiedConstraintsResult(
@@ -382,10 +347,6 @@ VideoCaptureSettings SelectSettingsVideoContentCapture(
     const std::string& stream_source) {
   VideoContentCaptureCandidates candidates;
   candidates.set_resolution_set(ScreenCastResolutionCapabilities());
-  candidates.set_frame_rate_set(
-      DoubleRangeSet(0.0, kMaxScreenCastFrameRate));
-  // candidates.device_id_set and candidates.noise_reduction_set are
-  // automatically initialized with the universal set.
 
   candidates = candidates.Intersection(
       VideoContentCaptureCandidates(constraints.Basic()));

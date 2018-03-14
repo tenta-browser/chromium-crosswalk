@@ -65,7 +65,8 @@ PartnerBookmarksShim* PartnerBookmarksShim::BuildForBrowserContext(
 
   data = new PartnerBookmarksShim(
       Profile::FromBrowserContext(browser_context)->GetPrefs());
-  browser_context->SetUserData(kPartnerBookmarksShimUserDataKey, data);
+  browser_context->SetUserData(kPartnerBookmarksShimUserDataKey,
+                               base::WrapUnique(data));
   data->ReloadNodeMapping();
   return data;
 }
@@ -217,10 +218,7 @@ void PartnerBookmarksShim::EnablePartnerBookmarksEditing() {
 }
 
 PartnerBookmarksShim::PartnerBookmarksShim(PrefService* prefs)
-    : prefs_(prefs),
-      observers_(base::ObserverList<
-          PartnerBookmarksShim::Observer>::NOTIFY_EXISTING_ONLY) {
-}
+    : prefs_(prefs), observers_(base::ObserverListPolicy::EXISTING_ONLY) {}
 
 PartnerBookmarksShim::~PartnerBookmarksShim() {
   for (PartnerBookmarksShim::Observer& observer : observers_)

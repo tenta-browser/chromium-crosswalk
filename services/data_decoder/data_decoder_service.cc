@@ -10,7 +10,9 @@
 #include "base/time/time.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/data_decoder/image_decoder_impl.h"
+#include "services/data_decoder/json_parser_impl.h"
 #include "services/data_decoder/public/interfaces/image_decoder.mojom.h"
+#include "services/data_decoder/xml_parser.h"
 #include "services/service_manager/public/cpp/service_context.h"
 
 namespace data_decoder {
@@ -21,8 +23,21 @@ void OnImageDecoderRequest(
     service_manager::ServiceContextRefFactory* ref_factory,
     mojom::ImageDecoderRequest request) {
   mojo::MakeStrongBinding(
-      base::MakeUnique<ImageDecoderImpl>(ref_factory->CreateRef()),
+      std::make_unique<ImageDecoderImpl>(ref_factory->CreateRef()),
       std::move(request));
+}
+
+void OnJsonParserRequest(service_manager::ServiceContextRefFactory* ref_factory,
+                         mojom::JsonParserRequest request) {
+  mojo::MakeStrongBinding(
+      std::make_unique<JsonParserImpl>(ref_factory->CreateRef()),
+      std::move(request));
+}
+
+void OnXmlParserRequest(service_manager::ServiceContextRefFactory* ref_factory,
+                        mojom::XmlParserRequest request) {
+  mojo::MakeStrongBinding(base::MakeUnique<XmlParser>(ref_factory->CreateRef()),
+                          std::move(request));
 }
 
 }  // namespace
@@ -33,7 +48,7 @@ DataDecoderService::~DataDecoderService() = default;
 
 // static
 std::unique_ptr<service_manager::Service> DataDecoderService::Create() {
-  return base::MakeUnique<DataDecoderService>();
+  return std::make_unique<DataDecoderService>();
 }
 
 void DataDecoderService::OnStart() {
@@ -41,14 +56,15 @@ void DataDecoderService::OnStart() {
       &DataDecoderService::MaybeRequestQuitDelayed, base::Unretained(this))));
   registry_.AddInterface(
       base::Bind(&OnImageDecoderRequest, ref_factory_.get()));
+  registry_.AddInterface(base::Bind(&OnJsonParserRequest, ref_factory_.get()));
+  registry_.AddInterface(base::Bind(&OnXmlParserRequest, ref_factory_.get()));
 }
 
 void DataDecoderService::OnBindInterface(
-    const service_manager::ServiceInfo& source_info,
+    const service_manager::BindSourceInfo& source_info,
     const std::string& interface_name,
     mojo::ScopedMessagePipeHandle interface_pipe) {
-  registry_.BindInterface(source_info.identity, interface_name,
-                          std::move(interface_pipe));
+  registry_.BindInterface(interface_name, std::move(interface_pipe));
 }
 
 void DataDecoderService::MaybeRequestQuitDelayed() {

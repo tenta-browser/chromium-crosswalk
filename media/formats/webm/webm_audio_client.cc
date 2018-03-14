@@ -10,13 +10,11 @@
 
 namespace media {
 
-WebMAudioClient::WebMAudioClient(const scoped_refptr<MediaLog>& media_log)
-    : media_log_(media_log) {
+WebMAudioClient::WebMAudioClient(MediaLog* media_log) : media_log_(media_log) {
   Reset();
 }
 
-WebMAudioClient::~WebMAudioClient() {
-}
+WebMAudioClient::~WebMAudioClient() = default;
 
 void WebMAudioClient::Reset() {
   channels_ = -1;
@@ -51,7 +49,8 @@ bool WebMAudioClient::InitializeConfig(
   if (channels_ == -1)
     channels_ = 1;
 
-  ChannelLayout channel_layout =  GuessChannelLayout(channels_);
+  ChannelLayout channel_layout =
+      channels_ > 8 ? CHANNEL_LAYOUT_DISCRETE : GuessChannelLayout(channels_);
 
   if (channel_layout == CHANNEL_LAYOUT_UNSUPPORTED) {
     MEDIA_LOG(ERROR, media_log_) << "Unsupported channel count " << channels_;
@@ -83,6 +82,7 @@ bool WebMAudioClient::InitializeConfig(
                      base::TimeDelta::FromMicroseconds(
                          (seek_preroll != -1 ? seek_preroll : 0) / 1000),
                      codec_delay_in_frames);
+  config->SetChannelsForDiscrete(channels_);
   return config->IsValidConfig();
 }
 

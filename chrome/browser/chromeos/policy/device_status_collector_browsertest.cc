@@ -26,7 +26,6 @@
 #include "chrome/browser/chromeos/app_mode/kiosk_app_data.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/login/users/mock_user_manager.h"
-#include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
 #include "chrome/browser/chromeos/ownership/fake_owner_settings_service.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/device_local_account.h"
@@ -44,9 +43,11 @@
 #include "chromeos/dbus/fake_update_engine_client.h"
 #include "chromeos/dbus/shill_device_client.h"
 #include "chromeos/dbus/shill_ipconfig_client.h"
+#include "chromeos/dbus/shill_profile_client.h"
 #include "chromeos/dbus/shill_service_client.h"
 #include "chromeos/disks/disk_mount_manager.h"
 #include "chromeos/disks/mock_disk_mount_manager.h"
+#include "chromeos/login/login_state.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
@@ -55,6 +56,7 @@
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/user_manager/scoped_user_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
@@ -87,6 +89,8 @@ const char kArcStatus[] = "{\"applications\":[ { "
     "\"permissions\": [\"android.permission.INTERNET\"] }],"
     "\"userEmail\":\"xxx@google.com\"}";
 const char kDroidGuardInfo[] = "{\"droid_guard_info\":42}";
+const std::string kShillFakeProfilePath = "/profile/user1/shill";
+const std::string kShillFakeUserhash = "user1";
 
 class TestingDeviceStatusCollector : public policy::DeviceStatusCollector {
  public:
@@ -154,7 +158,7 @@ class TestingDeviceStatusCollector : public policy::DeviceStatusCollector {
 
   void RefreshSampleResourceUsage() {
     SampleResourceUsage();
-    content::RunAllBlockingPoolTasksUntilIdle();
+    content::RunAllTasksUntilIdle();
   }
 
  protected:
@@ -244,8 +248,8 @@ bool GetFakeAndroidStatus(
     const policy::DeviceStatusCollector::AndroidStatusReceiver& receiver) {
   // Post it to the thread because this call is expected to be asynchronous.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&CallAndroidStatusReceiver, receiver,
-          status, droid_guard_info));
+      FROM_HERE, base::BindOnce(&CallAndroidStatusReceiver, receiver, status,
+                                droid_guard_info));
   return true;
 }
 
@@ -253,7 +257,7 @@ bool GetEmptyAndroidStatus(
     const policy::DeviceStatusCollector::AndroidStatusReceiver& receiver) {
   // Post it to the thread because this call is expected to be asynchronous.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&CallAndroidStatusReceiver, receiver, "", ""));
+      FROM_HERE, base::BindOnce(&CallAndroidStatusReceiver, receiver, "", ""));
   return true;
 }
 
@@ -278,7 +282,7 @@ class DeviceStatusCollectorTest : public testing::Test {
                 "device_id")),
         settings_helper_(false),
         user_manager_(new chromeos::MockUserManager()),
-        user_manager_enabler_(user_manager_),
+        user_manager_enabler_(base::WrapUnique(user_manager_)),
         got_session_status_(false),
         fake_device_local_account_(policy::DeviceLocalAccount::TYPE_KIOSK_APP,
                                    kKioskAccountId,
@@ -286,6 +290,8 @@ class DeviceStatusCollectorTest : public testing::Test {
                                    std::string() /* kiosk_app_update_url */),
         user_data_dir_override_(chrome::DIR_USER_DATA),
         update_engine_client_(new chromeos::FakeUpdateEngineClient) {
+    EXPECT_CALL(*user_manager_, Shutdown()).Times(1);
+
     // Although this is really a unit test which runs in the browser_tests
     // binary, it doesn't get the unit setup which normally happens in the unit
     // test binary.
@@ -328,11 +334,6 @@ class DeviceStatusCollectorTest : public testing::Test {
         settings_helper_.CreateOwnerSettingsService(nullptr);
     owner_settings_service_->set_ignore_profile_creation_notification(true);
 
-    RestartStatusCollector(base::Bind(&GetEmptyVolumeInfo),
-                           base::Bind(&GetEmptyCPUStatistics),
-                           base::Bind(&GetEmptyCPUTempInfo),
-                           base::Bind(&GetEmptyAndroidStatus));
-
     // Set up a fake local state for KioskAppManager.
     TestingBrowserProcess::GetGlobal()->SetLocalState(&local_state_);
     chromeos::KioskAppManager::RegisterPrefs(local_state_.registry());
@@ -344,23 +345,22 @@ class DeviceStatusCollectorTest : public testing::Test {
         base::WrapUnique<chromeos::UpdateEngineClient>(update_engine_client_));
 
     chromeos::CrasAudioHandler::InitializeForTesting();
-  }
+    chromeos::LoginState::Initialize();
 
-  void AddMountPoint(const std::string& mount_point) {
-    mount_point_map_.insert(DiskMountManager::MountPointMap::value_type(
-        mount_point,
-        DiskMountManager::MountPointInfo(
-            mount_point, mount_point, chromeos::MOUNT_TYPE_DEVICE,
-            chromeos::disks::MOUNT_CONDITION_NONE)));
+    RestartStatusCollector(base::Bind(&GetEmptyVolumeInfo),
+                           base::Bind(&GetEmptyCPUStatistics),
+                           base::Bind(&GetEmptyCPUTempInfo),
+                           base::Bind(&GetEmptyAndroidStatus));
   }
 
   ~DeviceStatusCollectorTest() override {
+    chromeos::LoginState::Shutdown();
     chromeos::CrasAudioHandler::Shutdown();
     chromeos::KioskAppManager::Shutdown();
     TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
 
     // Finish pending tasks.
-    content::RunAllBlockingPoolTasksUntilIdle();
+    content::RunAllTasksUntilIdle();
     storage::ExternalMountPoints::GetSystemInstance()->RevokeAllFileSystems();
     DiskMountManager::Shutdown();
   }
@@ -373,6 +373,14 @@ class DeviceStatusCollectorTest : public testing::Test {
 
   void TearDown() override {
     settings_helper_.RestoreProvider();
+  }
+
+ protected:
+  void AddMountPoint(const std::string& mount_point) {
+    mount_point_map_.insert(DiskMountManager::MountPointMap::value_type(
+        mount_point, DiskMountManager::MountPointInfo(
+                         mount_point, mount_point, chromeos::MOUNT_TYPE_DEVICE,
+                         chromeos::disks::MOUNT_CONDITION_NONE)));
   }
 
   void RestartStatusCollector(
@@ -476,7 +484,6 @@ class DeviceStatusCollectorTest : public testing::Test {
               manager->GetAutoLaunchAppRequiredPlatformVersion());
   }
 
- protected:
   // Convenience method.
   int64_t ActivePeriodMilliseconds() {
     return policy::DeviceStatusCollector::kIdlePollIntervalSeconds * 1000;
@@ -498,7 +505,7 @@ class DeviceStatusCollectorTest : public testing::Test {
   // Only set after MockRunningKioskApp was called.
   std::unique_ptr<TestingProfile> testing_profile_;
   chromeos::MockUserManager* const user_manager_;
-  chromeos::ScopedUserManagerEnabler user_manager_enabler_;
+  user_manager::ScopedUserManager user_manager_enabler_;
   em::DeviceStatusReportRequest device_status_;
   em::SessionStatusReportRequest session_status_;
   bool got_session_status_;
@@ -580,6 +587,47 @@ TEST_F(DeviceStatusCollectorTest, MixedStates) {
             GetActiveMilliseconds(device_status_));
 }
 
+// For kiosks report total uptime instead of only active periods.
+TEST_F(DeviceStatusCollectorTest, MixedStatesForKiosk) {
+  ui::IdleState test_states[] = {
+    ui::IDLE_STATE_ACTIVE,
+    ui::IDLE_STATE_IDLE,
+    ui::IDLE_STATE_ACTIVE,
+    ui::IDLE_STATE_ACTIVE,
+    ui::IDLE_STATE_IDLE,
+    ui::IDLE_STATE_IDLE,
+  };
+  chromeos::LoginState::Get()->SetLoggedInState(
+      chromeos::LoginState::LOGGED_IN_ACTIVE,
+      chromeos::LoginState::LOGGED_IN_USER_KIOSK_APP);
+  settings_helper_.SetBoolean(chromeos::kReportDeviceActivityTimes, true);
+  status_collector_->Simulate(test_states,
+                              sizeof(test_states) / sizeof(ui::IdleState));
+  GetStatus();
+  EXPECT_EQ(6 * ActivePeriodMilliseconds(),
+            GetActiveMilliseconds(device_status_));
+}
+
+// For Arc kiosks report total uptime instead of only active periods.
+TEST_F(DeviceStatusCollectorTest, MixedStatesForArcKiosk) {
+  ui::IdleState test_states[] = {
+    ui::IDLE_STATE_ACTIVE,
+    ui::IDLE_STATE_IDLE,
+    ui::IDLE_STATE_ACTIVE,
+    ui::IDLE_STATE_ACTIVE,
+    ui::IDLE_STATE_IDLE,
+  };
+  chromeos::LoginState::Get()->SetLoggedInState(
+      chromeos::LoginState::LOGGED_IN_ACTIVE,
+      chromeos::LoginState::LOGGED_IN_USER_ARC_KIOSK_APP);
+  settings_helper_.SetBoolean(chromeos::kReportDeviceActivityTimes, true);
+  status_collector_->Simulate(test_states,
+                              sizeof(test_states) / sizeof(ui::IdleState));
+  GetStatus();
+  EXPECT_EQ(5 * ActivePeriodMilliseconds(),
+            GetActiveMilliseconds(device_status_));
+}
+
 TEST_F(DeviceStatusCollectorTest, StateKeptInPref) {
   ui::IdleState test_states[] = {
     ui::IDLE_STATE_ACTIVE,
@@ -605,23 +653,6 @@ TEST_F(DeviceStatusCollectorTest, StateKeptInPref) {
 
   GetStatus();
   EXPECT_EQ(6 * ActivePeriodMilliseconds(),
-            GetActiveMilliseconds(device_status_));
-}
-
-TEST_F(DeviceStatusCollectorTest, Times) {
-  ui::IdleState test_states[] = {
-    ui::IDLE_STATE_ACTIVE,
-    ui::IDLE_STATE_IDLE,
-    ui::IDLE_STATE_ACTIVE,
-    ui::IDLE_STATE_ACTIVE,
-    ui::IDLE_STATE_IDLE,
-    ui::IDLE_STATE_IDLE
-  };
-  settings_helper_.SetBoolean(chromeos::kReportDeviceActivityTimes, true);
-  status_collector_->Simulate(test_states,
-                              sizeof(test_states) / sizeof(ui::IdleState));
-  GetStatus();
-  EXPECT_EQ(3 * ActivePeriodMilliseconds(),
             GetActiveMilliseconds(device_status_));
 }
 
@@ -735,8 +766,7 @@ TEST_F(DeviceStatusCollectorTest, ActivityCrossingMidnight) {
 
 TEST_F(DeviceStatusCollectorTest, ActivityTimesKeptUntilSubmittedSuccessfully) {
   ui::IdleState test_states[] = {
-    ui::IDLE_STATE_ACTIVE,
-    ui::IDLE_STATE_ACTIVE,
+      ui::IDLE_STATE_ACTIVE, ui::IDLE_STATE_ACTIVE,
   };
   // Make sure CPU stats get reported in time. If we don't run this, the second
   // call to |GetStatus()| will contain these stats, but the first call won't
@@ -751,10 +781,14 @@ TEST_F(DeviceStatusCollectorTest, ActivityTimesKeptUntilSubmittedSuccessfully) {
             GetActiveMilliseconds(device_status_));
   em::DeviceStatusReportRequest first_status(device_status_);
 
-  // The collector returns the same status again.
+  // The collector returns the same activity times again.
   GetStatus();
-  EXPECT_EQ(first_status.SerializeAsString(),
-            device_status_.SerializeAsString());
+  int period_count = first_status.active_period_size();
+  EXPECT_EQ(period_count, device_status_.active_period_size());
+  for (int n = 0; n < period_count; ++n) {
+    EXPECT_EQ(first_status.active_period(n).SerializeAsString(),
+              device_status_.active_period(n).SerializeAsString());
+  }
 
   // After indicating a successful submit, the submitted status gets cleared,
   // but what got collected meanwhile sticks around.
@@ -811,6 +845,7 @@ TEST_F(DeviceStatusCollectorTest, VersionInfo) {
   EXPECT_TRUE(device_status_.has_browser_version());
   EXPECT_TRUE(device_status_.has_os_version());
   EXPECT_TRUE(device_status_.has_firmware_version());
+  EXPECT_TRUE(device_status_.has_tpm_version_info());
 
   // When the pref to collect this data is not enabled, expect that none of
   // the fields are present in the protobuf.
@@ -819,12 +854,14 @@ TEST_F(DeviceStatusCollectorTest, VersionInfo) {
   EXPECT_FALSE(device_status_.has_browser_version());
   EXPECT_FALSE(device_status_.has_os_version());
   EXPECT_FALSE(device_status_.has_firmware_version());
+  EXPECT_FALSE(device_status_.has_tpm_version_info());
 
   settings_helper_.SetBoolean(chromeos::kReportDeviceVersionInfo, true);
   GetStatus();
   EXPECT_TRUE(device_status_.has_browser_version());
   EXPECT_TRUE(device_status_.has_os_version());
   EXPECT_TRUE(device_status_.has_firmware_version());
+  EXPECT_TRUE(device_status_.has_tpm_version_info());
 
   // Check that the browser version is not empty. OS version & firmware
   // don't have any reasonable values inside the unit test, so those
@@ -902,7 +939,7 @@ TEST_F(DeviceStatusCollectorTest, TestVolumeInfo) {
                          base::Bind(&GetEmptyCPUTempInfo),
                          base::Bind(&GetEmptyAndroidStatus));
   // Force finishing tasks posted by ctor of DeviceStatusCollector.
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   GetStatus();
   EXPECT_EQ(expected_mount_points.size(),
@@ -955,7 +992,7 @@ TEST_F(DeviceStatusCollectorTest, TestCPUSamples) {
                          base::Bind(&GetEmptyCPUTempInfo),
                          base::Bind(&GetEmptyAndroidStatus));
   // Force finishing tasks posted by ctor of DeviceStatusCollector.
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
   GetStatus();
   ASSERT_EQ(1, device_status_.cpu_utilization_pct().size());
   EXPECT_EQ(100, device_status_.cpu_utilization_pct(0));
@@ -1006,7 +1043,7 @@ TEST_F(DeviceStatusCollectorTest, TestCPUTemp) {
                          base::Bind(&GetFakeCPUTempInfo, expected_temp_info),
                          base::Bind(&GetEmptyAndroidStatus));
   // Force finishing tasks posted by ctor of DeviceStatusCollector.
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   GetStatus();
   EXPECT_EQ(expected_temp_info.size(),
@@ -1399,46 +1436,55 @@ class DeviceStatusCollectorNetworkInterfacesTest
   void SetUp() override {
     chromeos::DBusThreadManager::Initialize();
     chromeos::NetworkHandler::Initialize();
-    chromeos::ShillDeviceClient::TestInterface* test_device_client =
-        chromeos::DBusThreadManager::Get()->GetShillDeviceClient()->
-            GetTestInterface();
-    test_device_client->ClearDevices();
-    for (size_t i = 0; i < arraysize(kFakeDevices); ++i) {
-      const FakeDeviceData& dev = kFakeDevices[i];
-      test_device_client->AddDevice(dev.device_path, dev.type,
-                                    dev.object_path);
+    base::RunLoop().RunUntilIdle();
+
+    chromeos::ShillDeviceClient::TestInterface* device_client =
+        chromeos::DBusThreadManager::Get()
+            ->GetShillDeviceClient()
+            ->GetTestInterface();
+    chromeos::ShillServiceClient::TestInterface* service_client =
+        chromeos::DBusThreadManager::Get()
+            ->GetShillServiceClient()
+            ->GetTestInterface();
+    chromeos::ShillIPConfigClient::TestInterface* ip_config_client =
+        chromeos::DBusThreadManager::Get()
+            ->GetShillIPConfigClient()
+            ->GetTestInterface();
+
+    device_client->ClearDevices();
+    service_client->ClearServices();
+
+    for (const FakeDeviceData& dev : kFakeDevices) {
+      device_client->AddDevice(dev.device_path, dev.type, dev.object_path);
       if (*dev.mac_address) {
-        test_device_client->SetDeviceProperty(dev.device_path,
-                                              shill::kAddressProperty,
-                                              base::Value(dev.mac_address));
+        device_client->SetDeviceProperty(dev.device_path,
+                                         shill::kAddressProperty,
+                                         base::Value(dev.mac_address));
       }
       if (*dev.meid) {
-        test_device_client->SetDeviceProperty(
-            dev.device_path, shill::kMeidProperty, base::Value(dev.meid));
+        device_client->SetDeviceProperty(dev.device_path, shill::kMeidProperty,
+                                         base::Value(dev.meid));
       }
       if (*dev.imei) {
-        test_device_client->SetDeviceProperty(
-            dev.device_path, shill::kImeiProperty, base::Value(dev.imei));
+        device_client->SetDeviceProperty(dev.device_path, shill::kImeiProperty,
+                                         base::Value(dev.imei));
       }
     }
 
-    chromeos::ShillServiceClient::TestInterface* service_client =
-        chromeos::DBusThreadManager::Get()->GetShillServiceClient()->
-            GetTestInterface();
-    service_client->ClearServices();
+    chromeos::DBusThreadManager::Get()
+        ->GetShillProfileClient()
+        ->GetTestInterface()
+        ->AddProfile(kShillFakeProfilePath, kShillFakeUserhash);
 
     // Now add services for every fake network.
     for (const FakeNetworkState& fake_network : kFakeNetworks) {
       // Shill forces non-visible networks to report a disconnected state.
       bool is_visible =
           fake_network.connection_status != shill::kStateDisconnect;
-      service_client->AddService(
-          fake_network.name,       /* service_path */
-          fake_network.name        /* guid */,
-          fake_network.name        /* name */,
-          fake_network.type        /* type */,
-          fake_network.connection_status,
-          is_visible);
+      service_client->AddService(fake_network.name /* service_path */,
+                                 fake_network.name /* guid */,
+                                 fake_network.name, fake_network.type,
+                                 fake_network.connection_status, is_visible);
       service_client->SetServiceProperty(
           fake_network.name, shill::kSignalStrengthProperty,
           base::Value(fake_network.signal_strength));
@@ -1448,19 +1494,16 @@ class DeviceStatusCollectorNetworkInterfacesTest
       // Set the profile so this shows up as a configured network.
       service_client->SetServiceProperty(fake_network.name,
                                          shill::kProfileProperty,
-                                         base::Value(fake_network.name));
+                                         base::Value(kShillFakeProfilePath));
       if (strlen(fake_network.address) > 0) {
         // Set the IP config.
         base::DictionaryValue ip_config_properties;
-        ip_config_properties.SetStringWithoutPathExpansion(
-            shill::kAddressProperty, fake_network.address);
-        ip_config_properties.SetStringWithoutPathExpansion(
-            shill::kGatewayProperty, fake_network.gateway);
-        chromeos::ShillIPConfigClient::TestInterface* ip_config_test =
-            chromeos::DBusThreadManager::Get()->GetShillIPConfigClient()->
-            GetTestInterface();
+        ip_config_properties.SetKey(shill::kAddressProperty,
+                                    base::Value(fake_network.address));
+        ip_config_properties.SetKey(shill::kGatewayProperty,
+                                    base::Value(fake_network.gateway));
         const std::string kIPConfigPath = "test_ip_config";
-        ip_config_test->AddIPConfig(kIPConfigPath, ip_config_properties);
+        ip_config_client->AddIPConfig(kIPConfigPath, ip_config_properties);
         service_client->SetServiceProperty(fake_network.name,
                                            shill::kIPConfigProperty,
                                            base::Value(kIPConfigPath));
@@ -1469,13 +1512,12 @@ class DeviceStatusCollectorNetworkInterfacesTest
 
     // Now add an unconfigured network - it should not show up in the
     // reported list of networks because it doesn't have a profile specified.
-    service_client->AddService(
-        kUnconfiguredNetwork.name,       /* service_path */
-        kUnconfiguredNetwork.name        /* guid */,
-        kUnconfiguredNetwork.name        /* name */,
-        kUnconfiguredNetwork.type        /* type */,
-        kUnconfiguredNetwork.connection_status,
-        true /* visible */);
+    service_client->AddService(kUnconfiguredNetwork.name, /* service_path */
+                               kUnconfiguredNetwork.name /* guid */,
+                               kUnconfiguredNetwork.name /* name */,
+                               kUnconfiguredNetwork.type /* type */,
+                               kUnconfiguredNetwork.connection_status,
+                               true /* visible */);
     service_client->SetServiceProperty(
         kUnconfiguredNetwork.name, shill::kSignalStrengthProperty,
         base::Value(kUnconfiguredNetwork.signal_strength));
@@ -1505,8 +1547,7 @@ class DeviceStatusCollectorNetworkInterfacesTest
 
   void VerifyNetworkReporting() {
     int count = 0;
-    for (size_t i = 0; i < arraysize(kFakeDevices); ++i) {
-      const FakeDeviceData& dev = kFakeDevices[i];
+    for (const FakeDeviceData& dev : kFakeDevices) {
       if (dev.expected_type == -1)
         continue;
 
@@ -1529,7 +1570,8 @@ class DeviceStatusCollectorNetworkInterfacesTest
         }
       }
 
-      EXPECT_TRUE(found_match) << "No matching interface for fake device " << i;
+      EXPECT_TRUE(found_match)
+          << "No matching interface for fake device " << dev.device_path;
       count++;
     }
 

@@ -648,6 +648,27 @@ _STATES = {
       },
     ],
   },
+  'WindowRectanglesEXT': {
+    'type': 'Normal',
+    'func': 'WindowRectanglesEXT',
+    'custom_function': True,
+    'extension_flag': 'ext_window_rectangles',
+    'no_init': True,
+    'states': [
+      {
+        'name': 'window_rectangles_mode',
+        'type': 'GLenum',
+        'enum': 'GL_WINDOW_RECTANGLE_MODE_EXT',
+        'default': 'GL_EXCLUSIVE_EXT',
+      },
+      {
+        'name': 'num_window_rectangles',
+        'type': 'GLint',
+        'enum': 'GL_NUM_WINDOW_RECTANGLES_EXT',
+        'default': '0',
+      },
+    ],
+  },
 }
 
 # Named type info object represents a named type that is used in OpenGL call
@@ -958,7 +979,6 @@ _NAMED_TYPE_INFO = {
   },
   'IndexedGLState': {
     'type': 'GLenum',
-    'is_complete': True,
     'valid': [
       'GL_TRANSFORM_FEEDBACK_BUFFER_BINDING',
       'GL_TRANSFORM_FEEDBACK_BUFFER_SIZE',
@@ -2057,6 +2077,7 @@ _NAMED_TYPE_INFO = {
       'GL_RGB_YCRCB_420_CHROMIUM',
       'GL_RGB_YCBCR_422_CHROMIUM',
       'GL_RGB_YCBCR_420V_CHROMIUM',
+      'GL_R16_EXT',
     ],
   },
   'TextureInternalFormatStorage': {
@@ -2292,6 +2313,24 @@ _NAMED_TYPE_INFO = {
       'GL_SYNC_FENCE',
     ],
   },
+  'ClientBufferUsage': {
+    'type': 'GLenum',
+    'is_complete': True,
+    'valid': [
+      'GL_SCANOUT_CHROMIUM',
+    ],
+    'invalid': [
+      'GL_NONE',
+    ],
+  },
+  'WindowRectanglesMode': {
+    'type': 'GLenum',
+    'is_complete': True,
+    'valid': [
+      'GL_INCLUSIVE_EXT',
+      'GL_EXCLUSIVE_EXT',
+    ],
+  },
 }
 
 _ETC_COMPRESSED_TEXTURE_FORMATS = [
@@ -2382,8 +2421,6 @@ _PEPPER_INTERFACES = [
 #               'extension': True.
 # not_shared:   For GENn types, True if objects can't be shared between contexts
 # es3:          ES3 API. True if the function requires an ES3 or WebGL2 context.
-# id_mapping:   A list of resource type names whose client side IDs need to be
-#               mapped to service side IDs.  This is only used for ES3 APIs.
 
 _FUNCTION_INFO = {
   'ActiveTexture': {
@@ -2560,16 +2597,6 @@ _FUNCTION_INFO = {
     'state': 'ColorMask',
     'no_gl': True,
     'expectation': False,
-  },
-  'ConsumeTextureCHROMIUM': {
-    'decoder_func': 'DoConsumeTextureCHROMIUM',
-    'impl_func': False,
-    'type': 'PUT',
-    'count': 16,  # GL_MAILBOX_SIZE_CHROMIUM
-    'unit_test': False,
-    'client_test': False,
-    'extension': "CHROMIUM_texture_mailbox",
-    'trace_level': 2,
   },
   'CopyBufferSubData': {
     'decoder_func': 'DoCopyBufferSubData',
@@ -2817,6 +2844,7 @@ _FUNCTION_INFO = {
   'DisableVertexAttribArray': {
     'decoder_func': 'DoDisableVertexAttribArray',
     'impl_func': False,
+    'unit_test': False,
   },
   'DrawArrays': {
     'type': 'Custom',
@@ -2846,6 +2874,7 @@ _FUNCTION_INFO = {
   'EnableVertexAttribArray': {
     'decoder_func': 'DoEnableVertexAttribArray',
     'impl_func': False,
+    'unit_test': False,
   },
   'FenceSync': {
     'type': 'Create',
@@ -2917,6 +2946,7 @@ _FUNCTION_INFO = {
     'gl_test_func': 'glGenFramebuffersEXT',
     'resource_type': 'Framebuffer',
     'resource_types': 'Framebuffers',
+    'not_shared': 'True',
   },
   'GenRenderbuffers': {
     'type': 'GENn', 'gl_test_func': 'glGenRenderbuffersEXT',
@@ -2942,6 +2972,7 @@ _FUNCTION_INFO = {
     'resource_type': 'TransformFeedback',
     'resource_types': 'TransformFeedbacks',
     'es3': True,
+    'not_shared': 'True',
   },
   'GetActiveAttrib': {
     'type': 'Custom',
@@ -3213,8 +3244,8 @@ _FUNCTION_INFO = {
   'GetSynciv': {
     'type': 'GETn',
     'cmd_args': 'GLuint sync, GLenumSyncParameter pname, void* values',
+    'decoder_func': 'DoGetSynciv',
     'result': ['SizedResult<GLint>'],
-    'id_mapping': ['Sync'],
     'es3': True,
   },
   'GetTexParameterfv': {
@@ -3409,7 +3440,6 @@ _FUNCTION_INFO = {
   },
   'IsSync': {
     'type': 'Is',
-    'id_mapping': [ 'Sync' ],
     'cmd_args': 'GLuint sync',
     'decoder_func': 'DoIsSync',
     'expectation': False,
@@ -4245,6 +4275,7 @@ _FUNCTION_INFO = {
     'resource_types': 'VertexArrays',
     'unit_test': False,
     'pepper_interface': 'VertexArrayObject',
+    'not_shared': 'True',
   },
   'BindVertexArrayOES': {
     'type': 'Bind',
@@ -4275,6 +4306,11 @@ _FUNCTION_INFO = {
   },
   'BindTexImage2DCHROMIUM': {
     'decoder_func': 'DoBindTexImage2DCHROMIUM',
+    'unit_test': False,
+    'extension': "CHROMIUM_image",
+  },
+  'BindTexImage2DWithInternalformatCHROMIUM': {
+    'decoder_func': 'DoBindTexImage2DWithInternalformatCHROMIUM',
     'unit_test': False,
     'extension': "CHROMIUM_image",
   },
@@ -4399,7 +4435,7 @@ _FUNCTION_INFO = {
     'type': 'Custom',
     'impl_func': False,
     'client_test': False,
-    'cmd_args': 'GLuint contents_texture_id, GLuint background_color, '
+    'cmd_args': 'GLsizei num_textures, GLuint background_color, '
                 'GLuint edge_aa_mask, GLuint filter, GLuint shm_id, '
                 'GLuint shm_offset',
     'extension': 'CHROMIUM_schedule_ca_layer',
@@ -4552,6 +4588,100 @@ _FUNCTION_INFO = {
     'decoder_func': 'DoSetEnableDCLayersCHROMIUM',
     'extension': 'CHROMIUM_dc_layers',
   },
+  'InitializeDiscardableTextureCHROMIUM': {
+    'type': 'Custom',
+    'cmd_args': 'GLuint texture_id, uint32_t shm_id, '
+                'uint32_t shm_offset',
+    'impl_func': False,
+    'client_test': False,
+    'extension': True,
+  },
+  'UnlockDiscardableTextureCHROMIUM': {
+    'type': 'Custom',
+    'cmd_args': 'GLuint texture_id',
+    'impl_func': False,
+    'client_test': False,
+    'extension': True,
+  },
+  'LockDiscardableTextureCHROMIUM': {
+    'type': 'Custom',
+    'cmd_args': 'GLuint texture_id',
+    'impl_func': False,
+    'client_test': False,
+    'extension': True,
+  },
+  'BeginRasterCHROMIUM': {
+    'decoder_func': 'DoBeginRasterCHROMIUM',
+    'impl_func': True,
+    'unit_test': False,
+    'extension': 'CHROMIUM_raster_transport',
+    'extension_flag': 'chromium_raster_transport',
+  },
+  'RasterCHROMIUM': {
+    'type': 'Custom',
+    'decoder_func': 'DoRasterCHROMIUM',
+    'impl_func': False,
+    'immediate': False,
+    'data_transfer_methods': ['shm'],
+    'needs_size': True,
+    'extension': 'CHROMIUM_raster_transport',
+    'extension_flag': 'chromium_raster_transport',
+    'cmd_args': 'void* list',
+  },
+  'EndRasterCHROMIUM': {
+    'decoder_func': 'DoEndRasterCHROMIUM',
+    'impl_func': True,
+    'unit_test': False,
+    'extension': 'CHROMIUM_raster_transport',
+    'extension_flag': 'chromium_raster_transport',
+  },
+  "CreateTransferCacheEntryCHROMIUM": {
+    'type': 'Custom',
+    'cmd_args': 'GLuint64 handle_id, GLuint handle_shm_id, '
+                'GLuint handle_shm_offset, GLuint type, '
+                'GLuint data_shm_id, GLuint data_shm_offset, '
+                'GLuint data_size',
+    'impl_func': False,
+    'client_test': False,
+    'extension': True,
+  },
+  "DeleteTransferCacheEntryCHROMIUM": {
+    'decoder_func': 'DoDeleteTransferCacheEntryCHROMIUM',
+    'cmd_args': 'GLuint64 handle_id',
+    'impl_func': True,
+    'client_test': False,
+    'extension': True,
+  },
+  "UnlockTransferCacheEntryCHROMIUM": {
+    'decoder_func': 'DoUnlockTransferCacheEntryCHROMIUM',
+    'cmd_args': 'GLuint64 handle_id',
+    'impl_func': True,
+    'client_test': False,
+    'extension': True,
+  },
+  'TexStorage2DImageCHROMIUM': {
+    'decoder_func': 'DoTexStorage2DImageCHROMIUM',
+    'unit_test': False,
+    'extension': 'CHROMIUM_texture_storage_image',
+    'extension_flag': 'chromium_texture_storage_image',
+  },
+  'SetColorSpaceMetadataCHROMIUM': {
+    'type': 'Custom',
+    'impl_func': False,
+    'client_test': False,
+    'cmd_args': 'GLuint texture_id, GLuint shm_id, GLuint shm_offset, '
+                'GLsizei color_space_size',
+    'extension': 'CHROMIUM_color_space_metadata',
+  },
+  'WindowRectanglesEXT': {
+    'type': 'PUTn',
+    'count': 4,
+    'decoder_func': 'DoWindowRectanglesEXT',
+    'unit_test': False,
+    'extension': 'EXT_window_rectangles',
+    'extension_flag': 'ext_window_rectangles',
+    'es3': True,
+  },
 }
 
 
@@ -4632,6 +4762,27 @@ def ToGLExtensionString(extension_flag):
 def ToCamelCase(input_string):
   """converts ABC_underscore_case to ABCUnderscoreCase."""
   return ''.join(w[0].upper() + w[1:] for w in input_string.split('_'))
+
+def EnumsConflict(a, b):
+  """Returns true if the enums have different names (ignoring suffixes) and one
+  of them is a Chromium enum."""
+  if a == b:
+    return False
+
+  if b.endswith('_CHROMIUM'):
+    a, b = b, a
+
+  if not a.endswith('_CHROMIUM'):
+    return False
+
+  def removesuffix(string, suffix):
+    if not string.endswith(suffix):
+      return string
+    return string[:-len(suffix)]
+  b = removesuffix(b, "_NV")
+  b = removesuffix(b, "_EXT")
+  b = removesuffix(b, "_OES")
+  return removesuffix(a, "_CHROMIUM") != b
 
 def GetGLGetTypeConversion(result_type, value_type, value):
   """Makes a gl compatible type conversion string for accessing state variables.
@@ -4807,56 +4958,9 @@ static_assert(offsetof(%(cmd_name)s::Result, %(field_name)s) == %(offset)d,
 
   def WriteHandlerImplementation(self, func, f):
     """Writes the handler implementation for this command."""
-    if func.IsES3() and func.GetInfo('id_mapping'):
-      code_no_gen = """  if (!group_->Get%(type)sServiceId(
-        %(var)s, &%(service_var)s)) {
-    LOCAL_SET_GL_ERROR(GL_INVALID_VALUE, "%(func)s", "invalid %(var)s id");
-    return error::kNoError;
-  }
-"""
-      code_gen = """  if (!group_->Get%(type)sServiceId(
-        %(var)s, &%(service_var)s)) {
-    if (!group_->bind_generates_resource()) {
-      LOCAL_SET_GL_ERROR(
-          GL_INVALID_OPERATION, "%(func)s", "invalid %(var)s id");
-      return error::kNoError;
-    }
-    GLuint client_id = %(var)s;
-    gl%(gen_func)s(1, &%(service_var)s);
-    Create%(type)s(client_id, %(service_var)s);
-  }
-"""
-      gen_func = func.GetInfo('gen_func')
-      for id_type in func.GetInfo('id_mapping'):
-        service_var = id_type.lower()
-        if id_type == 'Sync':
-          service_var = "service_%s" % service_var
-          f.write("  GLsync %s = 0;\n" % service_var)
-        if id_type == 'Sampler' and func.IsType('Bind'):
-          # No error generated when binding a reserved zero sampler.
-          args = [arg.name for arg in func.GetOriginalArgs()]
-          f.write("""  if(%(var)s == 0) {
-    %(func)s(%(args)s);
-    return error::kNoError;
-  }""" % { 'var': id_type.lower(),
-           'func': func.GetGLFunctionName(),
-           'args': ", ".join(args) })
-        if gen_func and id_type in gen_func:
-          f.write(code_gen % { 'type': id_type,
-                                  'var': id_type.lower(),
-                                  'service_var': service_var,
-                                  'func': func.GetGLFunctionName(),
-                                  'gen_func': gen_func })
-        else:
-          f.write(code_no_gen % { 'type': id_type,
-                                     'var': id_type.lower(),
-                                     'service_var': service_var,
-                                     'func': func.GetGLFunctionName() })
     args = []
     for arg in func.GetOriginalArgs():
-      if arg.type == "GLsync":
-        args.append("service_%s" % arg.name)
-      elif arg.name.endswith("size") and arg.type == "GLsizei":
+      if arg.name.endswith("size") and arg.type == "GLsizei":
         args.append("num_%s" % func.GetLastOriginalArg().name)
       elif arg.name == "length":
         args.append("nullptr")
@@ -4904,23 +5008,13 @@ static_assert(offsetof(%(cmd_name)s::Result, %(field_name)s) == %(offset)d,
     """Writes the code to set data_size used in validation"""
     pass
 
-  def __WriteIdMapping(self, func, f):
-    """Writes client side / service side ID mapping."""
-    if not func.IsES3() or not func.GetInfo('id_mapping'):
-      return
-    for id_type in func.GetInfo('id_mapping'):
-      f.write("  group_->Get%sServiceId(%s, &%s);\n" %
-                 (id_type, id_type.lower(), id_type.lower()))
-
   def WriteImmediateHandlerImplementation (self, func, f):
     """Writes the handler impl for the immediate version of a command."""
-    self.__WriteIdMapping(func, f)
     f.write("  %s(%s);\n" %
                (func.GetGLFunctionName(), func.MakeOriginalArgString("")))
 
   def WriteBucketHandlerImplementation (self, func, f):
     """Writes the handler impl for the bucket version of a command."""
-    self.__WriteIdMapping(func, f)
     f.write("  %s(%s);\n" %
                (func.GetGLFunctionName(), func.MakeOriginalArgString("")))
 
@@ -5005,6 +5099,10 @@ static_assert(offsetof(%(cmd_name)s::Result, %(field_name)s) == %(offset)d,
     f.write("""error::Error GLES2DecoderPassthroughImpl::Handle%(name)s(
         uint32_t immediate_data_size, const volatile void* cmd_data) {
       """ % {'name': func.name})
+    if func.IsES3():
+      f.write("""if (!feature_info_->IsWebGL2OrES3Context())
+          return error::kUnknownCommand;
+        """)
     if func.GetCmdArgs():
       f.write("""const volatile gles2::cmds::%(name)s& c =
             *static_cast<const volatile gles2::cmds::%(name)s*>(cmd_data);
@@ -5021,6 +5119,7 @@ static_assert(offsetof(%(cmd_name)s::Result, %(field_name)s) == %(offset)d,
   def WritePassthroughServiceImplementation(self, func, f):
     """Writes the service implementation for a command."""
     self.WritePassthroughServiceFunctionHeader(func, f)
+    self.WriteHandlerExtensionCheck(func, f)
     self.WriteServiceHandlerArgGetCode(func, f)
     func.WritePassthroughHandlerValidation(f)
     self.WritePassthroughServiceFunctionDoerCall(func, f)
@@ -5031,6 +5130,7 @@ static_assert(offsetof(%(cmd_name)s::Result, %(field_name)s) == %(offset)d,
   def WritePassthroughImmediateServiceImplementation(self, func, f):
     """Writes the service implementation for a command."""
     self.WritePassthroughServiceFunctionHeader(func, f)
+    self.WriteHandlerExtensionCheck(func, f)
     self.WriteImmediateServiceHandlerArgGetCode(func, f)
     func.WritePassthroughHandlerValidation(f)
     self.WritePassthroughServiceFunctionDoerCall(func, f)
@@ -5041,6 +5141,7 @@ static_assert(offsetof(%(cmd_name)s::Result, %(field_name)s) == %(offset)d,
   def WritePassthroughBucketServiceImplementation(self, func, f):
     """Writes the service implementation for a command."""
     self.WritePassthroughServiceFunctionHeader(func, f)
+    self.WriteHandlerExtensionCheck(func, f)
     self.WriteBucketServiceHandlerArgGetCode(func, f)
     func.WritePassthroughHandlerValidation(f)
     self.WritePassthroughServiceFunctionDoerCall(func, f)
@@ -5819,7 +5920,7 @@ TEST_P(%(test_name)s, %(name)sValidArgs) {
 TEST_P(%(test_name)s, %(name)sValidArgsNewId) {
   EXPECT_CALL(*gl_, %(gl_func_name)s(kNewServiceId));
   EXPECT_CALL(*gl_, %(gl_gen_func_name)s(1, _))
-     .WillOnce(SetArgumentPointee<1>(kNewServiceId));
+     .WillOnce(SetArgPointee<1>(kNewServiceId));
   SpecializedSetup<cmds::%(name)s, 0>(true);
   cmds::%(name)s cmd;
   cmd.Init(kNewClientId);
@@ -5849,7 +5950,7 @@ TEST_P(%(test_name)s, %(name)sValidArgsNewId) {
   EXPECT_CALL(*gl_,
               %(gl_func_name)s(%(gl_args_with_new_id)s));
   EXPECT_CALL(*gl_, %(gl_gen_func_name)s(1, _))
-     .WillOnce(SetArgumentPointee<1>(kNewServiceId));
+     .WillOnce(SetArgPointee<1>(kNewServiceId));
   SpecializedSetup<cmds::%(name)s, 0>(true);
   cmds::%(name)s cmd;
   cmd.Init(%(args_with_new_id)s);
@@ -5978,7 +6079,7 @@ class GENnHandler(TypeHandler):
   def WriteImmediateHandlerImplementation(self, func, f):
     """Overrriden from TypeHandler."""
     param_name = func.GetLastOriginalArg().name
-    f.write("  auto %(name)s_copy = base::MakeUnique<GLuint[]>(n);\n"
+    f.write("  auto %(name)s_copy = std::make_unique<GLuint[]>(n);\n"
             "  GLuint* %(name)s_safe = %(name)s_copy.get();\n"
             "  std::copy(%(name)s, %(name)s + n, %(name)s_safe);\n"
             "  if (!CheckUniqueAndNonNullIds(n, %(name)s_safe) ||\n"
@@ -6011,28 +6112,34 @@ class GENnHandler(TypeHandler):
       arg.WriteClientSideValidationCode(f, func)
     not_shared = func.GetInfo('not_shared')
     if not_shared:
-      alloc_code = (
-
-"""  IdAllocator* id_allocator = GetIdAllocator(id_namespaces::k%s);
-  for (GLsizei ii = 0; ii < n; ++ii)
-    %s[ii] = id_allocator->AllocateID();""" %
-  (func.GetInfo('resource_types'), func.GetOriginalArgs()[1].name))
+      alloc_code = ("""\
+      IdAllocator* id_allocator = GetIdAllocator(IdNamespaces::k%s);
+      for (GLsizei ii = 0; ii < n; ++ii)
+      %s[ii] = id_allocator->AllocateID();""" %
+      (func.GetInfo('resource_types'), func.GetOriginalArgs()[1].name))
     else:
-      alloc_code = ("""  GetIdHandler(id_namespaces::k%(resource_types)s)->
+      alloc_code = ("""\
+      GetIdHandler(SharedIdNamespaces::k%(resource_types)s)->
       MakeIds(this, 0, %(args)s);""" % args)
     args['alloc_code'] = alloc_code
 
-    code = """ GPU_CLIENT_SINGLE_THREAD_CHECK();
-%(alloc_code)s
-  %(name)sHelper(%(args)s);
-  helper_->%(name)sImmediate(%(args)s);
-  if (share_group_->bind_generates_resource())
-    helper_->CommandBufferHelper::Flush();
-%(log_code)s
-  CheckGLError();
-}
+    code = """\
+    GPU_CLIENT_SINGLE_THREAD_CHECK();
+    %(alloc_code)s
+    %(name)sHelper(%(args)s);
+    helper_->%(name)sImmediate(%(args)s);
+    """
+    if not not_shared:
+      code += """\
+      if (share_group_->bind_generates_resource())
+      helper_->CommandBufferHelper::Flush();
+      """
+    code += """\
+    %(log_code)s
+    CheckGLError();
+    }
 
-"""
+    """
     f.write(code % args)
 
   def WriteGLES2ImplementationUnitTest(self, func, f):
@@ -6068,7 +6175,7 @@ TEST_F(GLES2ImplementationTest, %(name)s) {
     valid_test = """
 TEST_P(%(test_name)s, %(name)sValidArgs) {
   EXPECT_CALL(*gl_, %(gl_func_name)s(1, _))
-      .WillOnce(SetArgumentPointee<1>(kNewServiceId));
+      .WillOnce(SetArgPointee<1>(kNewServiceId));
   cmds::%(name)s* cmd = GetImmediateAs<cmds::%(name)s>();
   GLuint temp = kNewClientId;
   SpecializedSetup<cmds::%(name)s, 0>(true);
@@ -6322,10 +6429,10 @@ TEST_P(%(test_name)s, %(name)sInvalidArgs%(arg_index)d_%(value_index)d) {
     f.write("  GLuint client_id;\n")
     if func.return_type == "GLsync":
       f.write(
-          "  GetIdHandler(id_namespaces::kSyncs)->\n")
+          "  GetIdHandler(SharedIdNamespaces::kSyncs)->\n")
     else:
       f.write(
-          "  GetIdHandler(id_namespaces::kProgramsAndShaders)->\n")
+          "  GetIdHandler(SharedIdNamespaces::kProgramsAndShaders)->\n")
     f.write("      MakeIds(this, 0, 1, &client_id);\n")
     f.write("  helper_->%s(%s);\n" %
                (func.name, func.MakeCmdArgString("")))
@@ -7037,7 +7144,7 @@ TEST_P(%(test_name)s, %(name)sInvalidArgs%(arg_index)d_%(value_index)d) {
   def WriteGetDataSizeCode(self, func, f):
     """Overrriden from TypeHandler."""
     code = """  uint32_t data_size;
-  if (!GLES2Util::ComputeDataSize(1, sizeof(%s), %d, &data_size)) {
+  if (!GLES2Util::ComputeDataSize<%s, %d>(1, &data_size)) {
     return error::kOutOfBounds;
   }
 """
@@ -7335,7 +7442,7 @@ TEST_P(%(test_name)s, %(name)sInvalidArgs%(arg_index)d_%(value_index)d) {
     """Overrriden from TypeHandler."""
     code = """  uint32_t data_size = 0;
   if (count >= 0 &&
-      !GLES2Util::ComputeDataSize(count, sizeof(%s), %d, &data_size)) {
+      !GLES2Util::ComputeDataSize<%s, %d>(count, &data_size)) {
     return error::kOutOfBounds;
   }
 """
@@ -8195,6 +8302,7 @@ TEST_P(%(test_name)s, %(name)sInvalidArgsBadSharedMemoryId) {
   def WritePassthroughServiceImplementation(self, func, f):
     """Overrriden from TypeHandler."""
     self.WritePassthroughServiceFunctionHeader(func, f)
+    self.WriteHandlerExtensionCheck(func, f)
     self.WriteServiceHandlerArgGetCode(func, f)
 
     code = """  typedef cmds::%(func_name)s::Result Result;
@@ -8349,7 +8457,7 @@ TEST_P(%(test_name)s, %(name)sValidArgs) {
   SpecializedSetup<cmds::%(name)s, 0>(true);
 %(expect_len_code)s
   EXPECT_CALL(*gl_, %(gl_func_name)s(%(gl_args)s))
-      .WillOnce(DoAll(SetArgumentPointee<2>(strlen(kInfo)),
+      .WillOnce(DoAll(SetArgPointee<2>(strlen(kInfo)),
                       SetArrayArgument<3>(kInfo, kInfo + strlen(kInfo) + 1)));
   cmds::%(name)s cmd;
   cmd.Init(%(args)s);
@@ -8378,7 +8486,7 @@ TEST_P(%(test_name)s, %(name)sValidArgs) {
     if get_len_func and get_len_func[0:2] == 'gl':
       sub['expect_len_code'] = (
         "  EXPECT_CALL(*gl_, %s(%s, %s, _))\n"
-        "      .WillOnce(SetArgumentPointee<2>(strlen(kInfo) + 1));") % (
+        "      .WillOnce(SetArgPointee<2>(strlen(kInfo) + 1));") % (
             get_len_func[2:], id_name, get_len_enum)
     self.WriteValidUnitTest(func, f, valid_test, sub, *extras)
 
@@ -9367,7 +9475,7 @@ class Function(object):
     """Gets the function to call to execute GL for this command."""
     if self.GetInfo('decoder_func'):
       return self.GetInfo('decoder_func')
-    return "gl%s" % self.original_name
+    return "api()->gl%sFn" % self.original_name
 
   def GetGLTestFunctionName(self):
     gl_func_name = self.GetInfo('gl_test_func')
@@ -9902,7 +10010,9 @@ def CreateArg(arg_string):
 class GLGenerator(object):
   """A class to generate GL command buffers."""
 
-  _function_re = re.compile(r'GL_APICALL(.*?)GL_APIENTRY (.*?) \((.*?)\);')
+  _whitespace_re = re.compile(r'^\w*$')
+  _comment_re = re.compile(r'^//.*$')
+  _function_re = re.compile(r'^GL_APICALL(.*?)GL_APIENTRY (.*?) \((.*?)\);$')
 
   def __init__(self, verbose):
     self.original_functions = []
@@ -9949,6 +10059,8 @@ class GLGenerator(object):
     with open(filename, "r") as f:
       functions = f.read()
     for line in functions.splitlines():
+      if self._whitespace_re.match(line) or self._comment_re.match(line):
+        continue
       match = self._function_re.match(line)
       if match:
         func_name = match.group(2)[2:]
@@ -9986,6 +10098,9 @@ class GLGenerator(object):
               self.AddFunction(f)
           else:
             self.AddFunction(f)
+      else:
+        self.Error("Could not parse function: %s using regex: %s" %
+                   (line, self._function_re.pattern))
 
     self.Log("Auto Generated Functions    : %d" %
              len([f for f in self.functions if f.can_auto_generate or
@@ -10028,6 +10143,7 @@ class GLGenerator(object):
       # Forward declaration of a few enums used in constant argument
       # to avoid including GL header files.
       enum_defines = {
+          'GL_SCANOUT_CHROMIUM': '0x6000',
           'GL_SYNC_GPU_COMMANDS_COMPLETE': '0x9117',
           'GL_SYNC_FLUSH_COMMANDS_BIT': '0x00000001',
         }
@@ -10114,9 +10230,9 @@ class GLGenerator(object):
                 return;
             }
             if (enable)
-              glEnable(cap);
+              api()->glEnableFn(cap);
             else
-              glDisable(cap);
+              api()->glDisableFn(cap);
           }
           """)
     self.generated_cpp_filenames.append(filename)
@@ -10273,6 +10389,8 @@ void ContextState::InitState(const ContextState *prev_state) const {
         # We need to sort the keys so the expectations match
         for state_name in sorted(_STATES.keys()):
           state = _STATES[state_name]
+          if 'no_init' in state and state['no_init']:
+            continue
           if state['type'] == 'FrontBack':
             num_states = len(state['states'])
             for ndx, group in enumerate(Grouper(num_states / 2,
@@ -10290,7 +10408,7 @@ void ContextState::InitState(const ContextState *prev_state) const {
               if test_prev:
                 f.write(")\n")
               f.write(
-                  "  gl%s(%s, %s);\n" %
+                  "  api()->gl%sFn(%s, %s);\n" %
                   (state['func'], ('GL_FRONT', 'GL_BACK')[ndx],
                    ", ".join(args)))
           elif state['type'] == 'NamedParameter':
@@ -10308,7 +10426,7 @@ void ContextState::InitState(const ContextState *prev_state) const {
                   operation.append("  if (prev_state->%s != %s) {\n  " %
                                       (item_name, item_name))
 
-              operation.append("  gl%s(%s, %s);\n" %
+              operation.append("  api()->gl%sFn(%s, %s);\n" %
                              (state['func'],
                              (item['enum_set']
                                  if 'enum_set' in item else item['enum']),
@@ -10339,7 +10457,8 @@ void ContextState::InitState(const ContextState *prev_state) const {
             if 'custom_function' in state:
               f.write("  %s(%s);\n" % (state['func'], ", ".join(args)))
             else:
-              f.write("  gl%s(%s);\n" % (state['func'], ", ".join(args)))
+              f.write("  api()->gl%sFn(%s);\n" % (state['func'],
+                                                  ", ".join(args)))
 
       f.write("  if (prev_state) {")
       WriteStates(True)
@@ -10586,7 +10705,7 @@ void GLES2DecoderTestBase::SetupInitStateExpectations(bool es3_capable) {
 
             guarded_operation = GuardState(item, ''.join(operation))
             f.write(guarded_operation)
-        else:
+        elif 'no_init' not in state:
           if 'extension_flag' in state:
             f.write("  if (group_->feature_info()->feature_flags().%s) {\n" %
                        state['extension_flag'])
@@ -10906,8 +11025,7 @@ extern const NameToFunc g_gles2_function_table[] = {
             if not value in dict:
               dict[value] = name
             # check our own _CHROMIUM macro conflicts with khronos GL headers.
-            elif dict[value] != name and (name.endswith('_CHROMIUM') or
-                dict[value].endswith('_CHROMIUM')):
+            elif EnumsConflict(dict[value], name):
               self.Error("code collision: %s and %s have the same code %s" %
                          (dict[value], name, value))
 

@@ -10,30 +10,24 @@
 
 #include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event_argument.h"
-#include "cc/base/filter_operation.h"
-#include "cc/base/filter_operations.h"
-#include "cc/paint/clip_display_item.h"
-#include "cc/paint/clip_path_display_item.h"
-#include "cc/paint/compositing_display_item.h"
-#include "cc/paint/drawing_display_item.h"
-#include "cc/paint/filter_display_item.h"
-
-#include "cc/paint/float_clip_display_item.h"
+#include "base/values.h"
+#include "cc/paint/filter_operation.h"
+#include "cc/paint/filter_operations.h"
 #include "cc/paint/paint_canvas.h"
 #include "cc/paint/paint_flags.h"
+#include "cc/paint/paint_image_builder.h"
 #include "cc/paint/paint_record.h"
-#include "cc/paint/paint_recorder.h"
-#include "cc/paint/transform_display_item.h"
+#include "cc/paint/render_surface_filters.h"
+#include "cc/paint/skia_paint_canvas.h"
 #include "cc/test/geometry_test_utils.h"
 #include "cc/test/pixel_test_utils.h"
 #include "cc/test/skia_common.h"
+#include "cc/test/test_skcanvas.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkSurface.h"
-#include "third_party/skia/include/effects/SkColorMatrixFilter.h"
-#include "third_party/skia/include/effects/SkImageSource.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/skia_util.h"
@@ -68,55 +62,27 @@ bool CompareN32Pixels(void* actual_pixels,
   return false;
 }
 
-const gfx::Rect kVisualRect(0, 0, 42, 42);
-
-sk_sp<const PaintRecord> CreateRectPicture(const gfx::Rect& bounds) {
-  PaintRecorder recorder;
-  PaintCanvas* canvas =
-      recorder.beginRecording(bounds.width(), bounds.height());
-  canvas->drawRect(
-      SkRect::MakeXYWH(bounds.x(), bounds.y(), bounds.width(), bounds.height()),
-      PaintFlags());
-  return recorder.finishRecordingAsPicture();
-}
-
-void AppendFirstSerializationTestPicture(scoped_refptr<DisplayItemList> list,
-                                         const gfx::Size& layer_size) {
-  gfx::PointF offset(2.f, 3.f);
-  PaintRecorder recorder;
-
-  PaintFlags red_paint;
-  red_paint.setColor(SK_ColorRED);
-
-  PaintCanvas* canvas = recorder.beginRecording(SkRect::MakeXYWH(
-      offset.x(), offset.y(), layer_size.width(), layer_size.height()));
-  canvas->translate(offset.x(), offset.y());
-  canvas->drawRect(SkRect::MakeWH(4, 4), red_paint);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      kVisualRect, recorder.finishRecordingAsPicture());
-}
-
 }  // namespace
 
-TEST(DisplayItemListTest, SingleDrawingItem) {
+TEST(DisplayItemListTest, SingleUnpairedRange) {
   gfx::Rect layer_rect(100, 100);
-  PaintRecorder recorder;
   PaintFlags blue_flags;
   blue_flags.setColor(SK_ColorBLUE);
   PaintFlags red_paint;
   red_paint.setColor(SK_ColorRED);
   unsigned char pixels[4 * 100 * 100] = {0};
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
 
-  gfx::PointF offset(8.f, 9.f);
-  gfx::RectF recording_rect(offset, gfx::SizeF(layer_rect.size()));
-  PaintCanvas* canvas =
-      recorder.beginRecording(gfx::RectFToSkRect(recording_rect));
-  canvas->translate(offset.x(), offset.y());
-  canvas->drawRect(SkRect::MakeLTRB(0.f, 0.f, 60.f, 60.f), red_paint);
-  canvas->drawRect(SkRect::MakeLTRB(50.f, 50.f, 75.f, 75.f), blue_flags);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      kVisualRect, recorder.finishRecordingAsPicture());
+  gfx::Point offset(8, 9);
+
+  list->StartPaint();
+  list->push<SaveOp>();
+  list->push<TranslateOp>(static_cast<float>(offset.x()),
+                          static_cast<float>(offset.y()));
+  list->push<DrawRectOp>(SkRect::MakeLTRB(0.f, 0.f, 60.f, 60.f), red_paint);
+  list->push<DrawRectOp>(SkRect::MakeLTRB(50.f, 50.f, 75.f, 75.f), blue_flags);
+  list->push<RestoreOp>();
+  list->EndPaintOfUnpaired(gfx::Rect(offset, layer_rect.size()));
   list->Finalize();
   DrawDisplayList(pixels, layer_rect, list);
 
@@ -139,39 +105,77 @@ TEST(DisplayItemListTest, SingleDrawingItem) {
   EXPECT_TRUE(CompareN32Pixels(pixels, expected_pixels, 100, 100));
 }
 
-TEST(DisplayItemListTest, ClipItem) {
+TEST(DisplayItemListTest, EmptyUnpairedRangeDoesNotAddVisualRect) {
   gfx::Rect layer_rect(100, 100);
-  PaintRecorder recorder;
+  auto list = base::MakeRefCounted<DisplayItemList>();
+
+  {
+    list->StartPaint();
+    list->EndPaintOfUnpaired(layer_rect);
+  }
+  // No ops.
+  EXPECT_EQ(0u, list->op_count());
+
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<RestoreOp>();
+    list->EndPaintOfUnpaired(layer_rect);
+  }
+  // Two ops.
+  EXPECT_EQ(2u, list->op_count());
+}
+
+TEST(DisplayItemListTest, ClipPairedRange) {
+  gfx::Rect layer_rect(100, 100);
   PaintFlags blue_flags;
   blue_flags.setColor(SK_ColorBLUE);
   PaintFlags red_paint;
   red_paint.setColor(SK_ColorRED);
   unsigned char pixels[4 * 100 * 100] = {0};
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
 
-  gfx::PointF first_offset(8.f, 9.f);
-  gfx::RectF first_recording_rect(first_offset, gfx::SizeF(layer_rect.size()));
-  PaintCanvas* canvas =
-      recorder.beginRecording(gfx::RectFToSkRect(first_recording_rect));
-  canvas->translate(first_offset.x(), first_offset.y());
-  canvas->drawRect(SkRect::MakeWH(60, 60), red_paint);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      kVisualRect, recorder.finishRecordingAsPicture());
+  gfx::Point first_offset(8, 9);
+  gfx::Rect first_recording_rect(first_offset, layer_rect.size());
+
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<TranslateOp>(static_cast<float>(first_offset.x()),
+                            static_cast<float>(first_offset.y()));
+    list->push<DrawRectOp>(SkRect::MakeWH(60, 60), red_paint);
+    list->push<RestoreOp>();
+    list->EndPaintOfUnpaired(first_recording_rect);
+  }
 
   gfx::Rect clip_rect(60, 60, 10, 10);
-  list->CreateAndAppendPairedBeginItem<ClipDisplayItem>(
-      clip_rect, std::vector<SkRRect>(), true);
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ClipRectOp>(gfx::RectToSkRect(clip_rect), SkClipOp::kIntersect,
+                           true);
+    list->EndPaintOfPairedBegin();
+  }
 
-  gfx::PointF second_offset(2.f, 3.f);
-  gfx::RectF second_recording_rect(second_offset,
-                                   gfx::SizeF(layer_rect.size()));
-  canvas = recorder.beginRecording(gfx::RectFToSkRect(second_recording_rect));
-  canvas->translate(second_offset.x(), second_offset.y());
-  canvas->drawRect(SkRect::MakeLTRB(50.f, 50.f, 75.f, 75.f), blue_flags);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      kVisualRect, recorder.finishRecordingAsPicture());
+  gfx::Point second_offset(2, 3);
+  gfx::Rect second_recording_rect(second_offset, layer_rect.size());
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<TranslateOp>(static_cast<float>(second_offset.x()),
+                            static_cast<float>(second_offset.y()));
+    list->push<DrawRectOp>(SkRect::MakeLTRB(50.f, 50.f, 75.f, 75.f),
+                           blue_flags);
+    list->push<RestoreOp>();
+    list->EndPaintOfUnpaired(second_recording_rect);
+  }
 
-  list->CreateAndAppendPairedEndItem<EndClipDisplayItem>();
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
+
   list->Finalize();
 
   DrawDisplayList(pixels, layer_rect, list);
@@ -196,39 +200,54 @@ TEST(DisplayItemListTest, ClipItem) {
   EXPECT_TRUE(CompareN32Pixels(pixels, expected_pixels, 100, 100));
 }
 
-TEST(DisplayItemListTest, TransformItem) {
+TEST(DisplayItemListTest, TransformPairedRange) {
   gfx::Rect layer_rect(100, 100);
-  PaintRecorder recorder;
   PaintFlags blue_flags;
   blue_flags.setColor(SK_ColorBLUE);
   PaintFlags red_paint;
   red_paint.setColor(SK_ColorRED);
   unsigned char pixels[4 * 100 * 100] = {0};
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
 
-  gfx::PointF first_offset(8.f, 9.f);
-  gfx::RectF first_recording_rect(first_offset, gfx::SizeF(layer_rect.size()));
-  PaintCanvas* canvas =
-      recorder.beginRecording(gfx::RectFToSkRect(first_recording_rect));
-  canvas->translate(first_offset.x(), first_offset.y());
-  canvas->drawRect(SkRect::MakeWH(60, 60), red_paint);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      kVisualRect, recorder.finishRecordingAsPicture());
+  gfx::Point first_offset(8, 9);
+  gfx::Rect first_recording_rect(first_offset, layer_rect.size());
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<TranslateOp>(static_cast<float>(first_offset.x()),
+                            static_cast<float>(first_offset.y()));
+    list->push<DrawRectOp>(SkRect::MakeWH(60, 60), red_paint);
+    list->push<RestoreOp>();
+    list->EndPaintOfUnpaired(first_recording_rect);
+  }
 
   gfx::Transform transform;
   transform.Rotate(45.0);
-  list->CreateAndAppendPairedBeginItem<TransformDisplayItem>(transform);
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ConcatOp>(static_cast<SkMatrix>(transform.matrix()));
+    list->EndPaintOfPairedBegin();
+  }
 
-  gfx::PointF second_offset(2.f, 3.f);
-  gfx::RectF second_recording_rect(second_offset,
-                                   gfx::SizeF(layer_rect.size()));
-  canvas = recorder.beginRecording(gfx::RectFToSkRect(second_recording_rect));
-  canvas->translate(second_offset.x(), second_offset.y());
-  canvas->drawRect(SkRect::MakeLTRB(50.f, 50.f, 75.f, 75.f), blue_flags);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      kVisualRect, recorder.finishRecordingAsPicture());
+  gfx::Point second_offset(2, 3);
+  gfx::Rect second_recording_rect(second_offset, layer_rect.size());
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<TranslateOp>(static_cast<float>(second_offset.x()),
+                            static_cast<float>(second_offset.y()));
+    list->push<DrawRectOp>(SkRect::MakeLTRB(50.f, 50.f, 75.f, 75.f),
+                           blue_flags);
+    list->push<RestoreOp>();
+    list->EndPaintOfUnpaired(second_recording_rect);
+  }
 
-  list->CreateAndAppendPairedEndItem<EndTransformDisplayItem>();
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
   list->Finalize();
 
   DrawDisplayList(pixels, layer_rect, list);
@@ -253,16 +272,19 @@ TEST(DisplayItemListTest, TransformItem) {
   EXPECT_TRUE(CompareN32Pixels(pixels, expected_pixels, 100, 100));
 }
 
-TEST(DisplayItemListTest, FilterItem) {
+TEST(DisplayItemListTest, FilterPairedRange) {
   gfx::Rect layer_rect(100, 100);
   FilterOperations filters;
   unsigned char pixels[4 * 100 * 100] = {0};
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
 
   sk_sp<SkSurface> source_surface = SkSurface::MakeRasterN32Premul(50, 50);
   SkCanvas* source_canvas = source_surface->getCanvas();
   source_canvas->clear(SkColorSetRGB(128, 128, 128));
-  sk_sp<SkImage> source_image = source_surface->makeImageSnapshot();
+  PaintImage source_image = PaintImageBuilder::WithDefault()
+                                .set_id(PaintImage::GetNextId())
+                                .set_image(source_surface->makeImageSnapshot())
+                                .TakePaintImage();
 
   // For most SkImageFilters, the |dst| bounds computed by computeFastBounds are
   // dependent on the provided |src| bounds. This means, for example, that
@@ -275,31 +297,51 @@ TEST(DisplayItemListTest, FilterItem) {
   // incorrect clipping of filter output. To test for this, we include an
   // SkImageSource filter in |filters|. Here, |src| is |filter_bounds|, defined
   // below.
-  sk_sp<SkImageFilter> image_filter = SkImageSource::Make(source_image);
+  SkRect rect = SkRect::MakeWH(source_image.width(), source_image.height());
+  sk_sp<PaintFilter> image_filter = sk_make_sp<ImagePaintFilter>(
+      source_image, rect, rect, kHigh_SkFilterQuality);
   filters.Append(FilterOperation::CreateReferenceFilter(image_filter));
   filters.Append(FilterOperation::CreateBrightnessFilter(0.5f));
   gfx::RectF filter_bounds(10.f, 10.f, 50.f, 50.f);
-  list->CreateAndAppendPairedBeginItem<FilterDisplayItem>(
-      filters, filter_bounds, filter_bounds.origin());
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<TranslateOp>(filter_bounds.x(), filter_bounds.y());
+
+    PaintFlags flags;
+    flags.setImageFilter(
+        RenderSurfaceFilters::BuildImageFilter(filters, filter_bounds.size()));
+
+    SkRect layer_bounds = gfx::RectFToSkRect(filter_bounds);
+    layer_bounds.offset(-filter_bounds.x(), -filter_bounds.y());
+    list->push<SaveLayerOp>(&layer_bounds, &flags);
+    list->push<TranslateOp>(-filter_bounds.x(), -filter_bounds.y());
+
+    list->EndPaintOfPairedBegin();
+  }
 
   // Include a rect drawing so that filter is actually applied to something.
   {
-    PaintRecorder recorder;
+    list->StartPaint();
 
-    PaintFlags red_paint;
-    red_paint.setColor(SK_ColorRED);
+    PaintFlags red_flags;
+    red_flags.setColor(SK_ColorRED);
 
-    PaintCanvas* canvas = recorder.beginRecording(
-        SkRect::MakeXYWH(0, 0, layer_rect.width(), layer_rect.height()));
-    canvas->drawRect(
+    list->push<DrawRectOp>(
         SkRect::MakeLTRB(filter_bounds.x(), filter_bounds.y(),
                          filter_bounds.right(), filter_bounds.bottom()),
-        red_paint);
-    list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-        ToNearestRect(filter_bounds), recorder.finishRecordingAsPicture());
+        red_flags);
+
+    list->EndPaintOfUnpaired(ToEnclosingRect(filter_bounds));
   }
 
-  list->CreateAndAppendPairedEndItem<EndFilterDisplayItem>();
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();  // For SaveLayerOp.
+    list->push<RestoreOp>();  // For SaveOp.
+    list->EndPaintOfPairedEnd();
+  }
+
   list->Finalize();
 
   DrawDisplayList(pixels, layer_rect, list);
@@ -317,391 +359,664 @@ TEST(DisplayItemListTest, FilterItem) {
   EXPECT_TRUE(CompareN32Pixels(pixels, expected_pixels, 100, 100));
 }
 
-TEST(DisplayItemListTest, ApproximateMemoryUsage) {
-  const int kNumCommandsInTestSkPicture = 1000;
+TEST(DisplayItemListTest, BytesUsed) {
+  const int kNumPaintOps = 1000;
   size_t memory_usage;
 
-  // Make an PaintRecord whose size is known.
+  auto list = base::MakeRefCounted<DisplayItemList>();
+
   gfx::Rect layer_rect(100, 100);
-  PaintRecorder recorder;
   PaintFlags blue_flags;
   blue_flags.setColor(SK_ColorBLUE);
-  PaintCanvas* canvas = recorder.beginRecording(gfx::RectToSkRect(layer_rect));
-  for (int i = 0; i < kNumCommandsInTestSkPicture; i++)
-    canvas->drawRect(SkRect(), blue_flags);
-  sk_sp<PaintRecord> record = recorder.finishRecordingAsPicture();
-  size_t record_size = record->approximateBytesUsed();
-  ASSERT_GE(record_size, kNumCommandsInTestSkPicture * sizeof(SkRect));
 
-  auto list = make_scoped_refptr(new DisplayItemList);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(kVisualRect, record);
-  list->Finalize();
-  memory_usage = list->ApproximateMemoryUsage();
-  EXPECT_GE(memory_usage, record_size);
-  EXPECT_LE(memory_usage, 2 * record_size);
+  {
+    list->StartPaint();
+    for (int i = 0; i < kNumPaintOps; i++)
+      list->push<DrawRectOp>(SkRect::MakeWH(1, 1), blue_flags);
+    list->EndPaintOfUnpaired(layer_rect);
+  }
+
+  memory_usage = list->BytesUsed();
+  EXPECT_GE(memory_usage, sizeof(DrawRectOp) * kNumPaintOps);
+  EXPECT_LE(memory_usage, 2 * sizeof(DrawRectOp) * kNumPaintOps);
 }
 
-TEST(DisplayItemListTest, AsValueWithNoItems) {
-  auto list = make_scoped_refptr(new DisplayItemList);
-  list->SetRetainVisualRectsForTesting(true);
+TEST(DisplayItemListTest, AsValueWithNoOps) {
+  auto list = base::MakeRefCounted<DisplayItemList>();
   list->Finalize();
 
-  std::string value = list->CreateTracedValue(true)->ToString();
-  EXPECT_EQ(value.find("\"layer_rect\": [0,0,0,0]"), std::string::npos);
-  EXPECT_NE(value.find("\"items\":[]"), std::string::npos);
-  EXPECT_EQ(value.find("visualRect: [0,0 42x42]"), std::string::npos);
-  EXPECT_NE(value.find("\"skp64\":"), std::string::npos);
+  // Pass |true| to ask for PaintOps even though there are none.
+  std::unique_ptr<base::Value> root =
+      list->CreateTracedValue(true)->ToBaseValue();
+  const base::DictionaryValue* root_dict;
+  ASSERT_TRUE(root->GetAsDictionary(&root_dict));
+  // The traced value has a params dictionary as its root.
+  {
+    const base::DictionaryValue* params_dict;
+    ASSERT_TRUE(root_dict->GetDictionary("params", &params_dict));
 
-  value = list->CreateTracedValue(false)->ToString();
-  EXPECT_EQ(value.find("\"layer_rect\": [0,0,0,0]"), std::string::npos);
-  EXPECT_EQ(value.find("\"items\":"), std::string::npos);
-  EXPECT_EQ(value.find("visualRect: [0,0 42x42]"), std::string::npos);
-  EXPECT_NE(value.find("\"skp64\":"), std::string::npos);
+    // The real contents of the traced value is in here.
+    {
+      const base::ListValue* list;
+      double d;
+
+      // The layer_rect field is present by empty.
+      ASSERT_TRUE(params_dict->GetList("layer_rect", &list));
+      ASSERT_EQ(4u, list->GetSize());
+      EXPECT_TRUE(list->GetDouble(0, &d) && d == 0) << d;
+      EXPECT_TRUE(list->GetDouble(1, &d) && d == 0) << d;
+      EXPECT_TRUE(list->GetDouble(2, &d) && d == 0) << d;
+      EXPECT_TRUE(list->GetDouble(3, &d) && d == 0) << d;
+
+      // The items list is there but empty.
+      ASSERT_TRUE(params_dict->GetList("items", &list));
+      EXPECT_EQ(0u, list->GetSize());
+    }
+  }
+
+  // Pass |false| to not include PaintOps.
+  root = list->CreateTracedValue(false)->ToBaseValue();
+  ASSERT_TRUE(root->GetAsDictionary(&root_dict));
+  // The traced value has a params dictionary as its root.
+  {
+    const base::DictionaryValue* params_dict;
+    ASSERT_TRUE(root_dict->GetDictionary("params", &params_dict));
+
+    // The real contents of the traced value is in here.
+    {
+      const base::ListValue* list;
+      double d;
+
+      // The layer_rect field is present by empty.
+      ASSERT_TRUE(params_dict->GetList("layer_rect", &list));
+      ASSERT_EQ(4u, list->GetSize());
+      EXPECT_TRUE(list->GetDouble(0, &d) && d == 0) << d;
+      EXPECT_TRUE(list->GetDouble(1, &d) && d == 0) << d;
+      EXPECT_TRUE(list->GetDouble(2, &d) && d == 0) << d;
+      EXPECT_TRUE(list->GetDouble(3, &d) && d == 0) << d;
+
+      // The items list is not there since we asked for no ops.
+      ASSERT_FALSE(params_dict->GetList("items", &list));
+    }
+  }
 }
 
-TEST(DisplayItemListTest, AsValueWithItems) {
+TEST(DisplayItemListTest, AsValueWithOps) {
   gfx::Rect layer_rect = gfx::Rect(1, 2, 8, 9);
-  auto list = make_scoped_refptr(new DisplayItemList);
-  list->SetRetainVisualRectsForTesting(true);
+  auto list = base::MakeRefCounted<DisplayItemList>();
   gfx::Transform transform;
   transform.Translate(6.f, 7.f);
-  list->CreateAndAppendPairedBeginItem<TransformDisplayItem>(transform);
-  AppendFirstSerializationTestPicture(list, layer_rect.size());
-  list->CreateAndAppendPairedEndItem<EndTransformDisplayItem>();
+
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ConcatOp>(static_cast<SkMatrix>(transform.matrix()));
+    list->EndPaintOfPairedBegin();
+  }
+
+  gfx::Point offset(2, 3);
+  gfx::Rect bounds(offset, layer_rect.size());
+  {
+    list->StartPaint();
+
+    PaintFlags red_paint;
+    red_paint.setColor(SK_ColorRED);
+
+    list->push<SaveOp>();
+    list->push<TranslateOp>(static_cast<float>(offset.x()),
+                            static_cast<float>(offset.y()));
+    list->push<DrawRectOp>(SkRect::MakeWH(4, 4), red_paint);
+
+    list->EndPaintOfUnpaired(bounds);
+  }
+
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
   list->Finalize();
 
-  std::string value = list->CreateTracedValue(true)->ToString();
-  EXPECT_EQ(value.find("\"layer_rect\": [0,0,42,42]"), std::string::npos);
-  EXPECT_NE(value.find("{\"items\":[\"TransformDisplayItem"),
-            std::string::npos);
-  EXPECT_NE(value.find("visualRect: [0,0 42x42]"), std::string::npos);
-  EXPECT_NE(value.find("\"skp64\":"), std::string::npos);
+  // Pass |true| to ask for PaintOps to be included.
+  std::unique_ptr<base::Value> root =
+      list->CreateTracedValue(true)->ToBaseValue();
+  const base::DictionaryValue* root_dict;
+  ASSERT_TRUE(root->GetAsDictionary(&root_dict));
+  // The traced value has a params dictionary as its root.
+  {
+    const base::DictionaryValue* params_dict;
+    ASSERT_TRUE(root_dict->GetDictionary("params", &params_dict));
 
-  value = list->CreateTracedValue(false)->ToString();
-  EXPECT_EQ(value.find("\"layer_rect\": [0,0,42,42]"), std::string::npos);
-  EXPECT_EQ(value.find("{\"items\":[\"TransformDisplayItem"),
-            std::string::npos);
-  EXPECT_EQ(value.find("visualRect: [0,0 42x42]"), std::string::npos);
-  EXPECT_NE(value.find("\"skp64\":"), std::string::npos);
+    // The real contents of the traced value is in here.
+    {
+      const base::ListValue* list;
+      double d;
+
+      // The layer_rect field is present and has the bounds of the rtree.
+      ASSERT_TRUE(params_dict->GetList("layer_rect", &list));
+      ASSERT_EQ(4u, list->GetSize());
+      EXPECT_TRUE(list->GetDouble(0, &d) && d == 2) << d;
+      EXPECT_TRUE(list->GetDouble(1, &d) && d == 3) << d;
+      EXPECT_TRUE(list->GetDouble(2, &d) && d == 8) << d;
+      EXPECT_TRUE(list->GetDouble(3, &d) && d == 9) << d;
+
+      // The items list has 3 things in it since we built 3 visual rects.
+      ASSERT_TRUE(params_dict->GetList("items", &list));
+      EXPECT_EQ(6u, list->GetSize());
+
+      for (int i = 0; i < 6; ++i) {
+        const base::DictionaryValue* item_dict;
+
+        ASSERT_TRUE(list->GetDictionary(i, &item_dict));
+
+        // The SkPicture for each item exists.
+        EXPECT_TRUE(
+            item_dict->GetString("skp64", static_cast<std::string*>(nullptr)));
+      }
+    }
+  }
+
+  // Pass |false| to not include PaintOps.
+  root = list->CreateTracedValue(false)->ToBaseValue();
+  ASSERT_TRUE(root->GetAsDictionary(&root_dict));
+  // The traced value has a params dictionary as its root.
+  {
+    const base::DictionaryValue* params_dict;
+    ASSERT_TRUE(root_dict->GetDictionary("params", &params_dict));
+
+    // The real contents of the traced value is in here.
+    {
+      const base::ListValue* list;
+      double d;
+
+      // The layer_rect field is present and has the bounds of the rtree.
+      ASSERT_TRUE(params_dict->GetList("layer_rect", &list));
+      ASSERT_EQ(4u, list->GetSize());
+      EXPECT_TRUE(list->GetDouble(0, &d) && d == 2) << d;
+      EXPECT_TRUE(list->GetDouble(1, &d) && d == 3) << d;
+      EXPECT_TRUE(list->GetDouble(2, &d) && d == 8) << d;
+      EXPECT_TRUE(list->GetDouble(3, &d) && d == 9) << d;
+
+      // The items list is not present since we asked for no ops.
+      ASSERT_FALSE(params_dict->GetList("items", &list));
+    }
+  }
 }
 
 TEST(DisplayItemListTest, SizeEmpty) {
-  auto list = make_scoped_refptr(new DisplayItemList);
-  EXPECT_EQ(0u, list->size());
+  auto list = base::MakeRefCounted<DisplayItemList>();
+  EXPECT_EQ(0u, list->op_count());
 }
 
 TEST(DisplayItemListTest, SizeOne) {
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
   gfx::Rect drawing_bounds(5, 6, 1, 1);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      drawing_bounds, CreateRectPicture(drawing_bounds));
-  EXPECT_EQ(1u, list->size());
+  {
+    list->StartPaint();
+    list->push<DrawRectOp>(gfx::RectToSkRect(drawing_bounds), PaintFlags());
+    list->EndPaintOfUnpaired(drawing_bounds);
+  }
+  EXPECT_EQ(1u, list->op_count());
 }
 
 TEST(DisplayItemListTest, SizeMultiple) {
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
   gfx::Rect clip_bounds(5, 6, 7, 8);
-  list->CreateAndAppendPairedBeginItem<ClipDisplayItem>(
-      clip_bounds, std::vector<SkRRect>(), true);
-  list->CreateAndAppendPairedEndItem<EndClipDisplayItem>();
-  EXPECT_EQ(2u, list->size());
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ClipRectOp>(gfx::RectToSkRect(clip_bounds), SkClipOp::kIntersect,
+                           false);
+    list->EndPaintOfPairedBegin();
+  }
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
+  EXPECT_EQ(3u, list->op_count());
 }
 
 TEST(DisplayItemListTest, AppendVisualRectSimple) {
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
 
   // One drawing: D.
 
   gfx::Rect drawing_bounds(5, 6, 7, 8);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      drawing_bounds, CreateRectPicture(drawing_bounds));
+  {
+    list->StartPaint();
+    list->push<DrawRectOp>(gfx::RectToSkRect(drawing_bounds), PaintFlags());
+    list->EndPaintOfUnpaired(drawing_bounds);
+  }
 
-  EXPECT_EQ(1u, list->size());
+  EXPECT_EQ(1u, list->op_count());
   EXPECT_RECT_EQ(drawing_bounds, list->VisualRectForTesting(0));
 }
 
 TEST(DisplayItemListTest, AppendVisualRectEmptyBlock) {
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
 
   // One block: B1, E1.
 
   gfx::Rect clip_bounds(5, 6, 7, 8);
-  list->CreateAndAppendPairedBeginItem<ClipDisplayItem>(
-      clip_bounds, std::vector<SkRRect>(), true);
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ClipRectOp>(gfx::RectToSkRect(clip_bounds), SkClipOp::kIntersect,
+                           false);
+    list->EndPaintOfPairedBegin();
+  }
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
 
-  list->CreateAndAppendPairedEndItem<EndClipDisplayItem>();
-
-  EXPECT_EQ(2u, list->size());
+  EXPECT_EQ(3u, list->op_count());
   EXPECT_RECT_EQ(gfx::Rect(), list->VisualRectForTesting(0));
   EXPECT_RECT_EQ(gfx::Rect(), list->VisualRectForTesting(1));
+  EXPECT_RECT_EQ(gfx::Rect(), list->VisualRectForTesting(2));
 }
 
 TEST(DisplayItemListTest, AppendVisualRectEmptyBlockContainingEmptyBlock) {
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
 
   // Two nested blocks: B1, B2, E2, E1.
 
   gfx::Rect clip_bounds(5, 6, 7, 8);
-  list->CreateAndAppendPairedBeginItem<ClipDisplayItem>(
-      clip_bounds, std::vector<SkRRect>(), true);
-  list->CreateAndAppendPairedBeginItem<TransformDisplayItem>(gfx::Transform());
-  list->CreateAndAppendPairedEndItem<EndTransformDisplayItem>();
-  list->CreateAndAppendPairedEndItem<EndClipDisplayItem>();
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ClipRectOp>(gfx::RectToSkRect(clip_bounds), SkClipOp::kIntersect,
+                           false);
+    list->EndPaintOfPairedBegin();
+  }
 
-  EXPECT_EQ(4u, list->size());
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->EndPaintOfPairedBegin();
+  }
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
+
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
+
+  EXPECT_EQ(5u, list->op_count());
   EXPECT_RECT_EQ(gfx::Rect(), list->VisualRectForTesting(0));
   EXPECT_RECT_EQ(gfx::Rect(), list->VisualRectForTesting(1));
   EXPECT_RECT_EQ(gfx::Rect(), list->VisualRectForTesting(2));
   EXPECT_RECT_EQ(gfx::Rect(), list->VisualRectForTesting(3));
+  EXPECT_RECT_EQ(gfx::Rect(), list->VisualRectForTesting(4));
 }
 
 TEST(DisplayItemListTest, AppendVisualRectBlockContainingDrawing) {
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
 
   // One block with one drawing: B1, Da, E1.
 
   gfx::Rect clip_bounds(5, 6, 7, 8);
-  list->CreateAndAppendPairedBeginItem<ClipDisplayItem>(
-      clip_bounds, std::vector<SkRRect>(), true);
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ClipRectOp>(gfx::RectToSkRect(clip_bounds), SkClipOp::kIntersect,
+                           false);
+    list->EndPaintOfPairedBegin();
+  }
 
   gfx::Rect drawing_bounds(5, 6, 1, 1);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      drawing_bounds, CreateRectPicture(drawing_bounds));
+  {
+    list->StartPaint();
+    list->push<DrawRectOp>(gfx::RectToSkRect(drawing_bounds), PaintFlags());
+    list->EndPaintOfUnpaired(drawing_bounds);
+  }
 
-  list->CreateAndAppendPairedEndItem<EndClipDisplayItem>();
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
 
-  EXPECT_EQ(3u, list->size());
+  EXPECT_EQ(4u, list->op_count());
   EXPECT_RECT_EQ(drawing_bounds, list->VisualRectForTesting(0));
   EXPECT_RECT_EQ(drawing_bounds, list->VisualRectForTesting(1));
   EXPECT_RECT_EQ(drawing_bounds, list->VisualRectForTesting(2));
+  EXPECT_RECT_EQ(drawing_bounds, list->VisualRectForTesting(3));
 }
 
 TEST(DisplayItemListTest, AppendVisualRectBlockContainingEscapedDrawing) {
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
 
   // One block with one drawing: B1, Da (escapes), E1.
 
   gfx::Rect clip_bounds(5, 6, 7, 8);
-  list->CreateAndAppendPairedBeginItem<ClipDisplayItem>(
-      clip_bounds, std::vector<SkRRect>(), true);
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ClipRectOp>(gfx::RectToSkRect(clip_bounds), SkClipOp::kIntersect,
+                           false);
+    list->EndPaintOfPairedBegin();
+  }
 
   gfx::Rect drawing_bounds(1, 2, 3, 4);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      drawing_bounds, CreateRectPicture(drawing_bounds));
+  {
+    list->StartPaint();
+    list->push<DrawRectOp>(gfx::RectToSkRect(drawing_bounds), PaintFlags());
+    list->EndPaintOfUnpaired(drawing_bounds);
+  }
 
-  list->CreateAndAppendPairedEndItem<EndClipDisplayItem>();
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
 
-  EXPECT_EQ(3u, list->size());
+  EXPECT_EQ(4u, list->op_count());
   EXPECT_RECT_EQ(drawing_bounds, list->VisualRectForTesting(0));
   EXPECT_RECT_EQ(drawing_bounds, list->VisualRectForTesting(1));
   EXPECT_RECT_EQ(drawing_bounds, list->VisualRectForTesting(2));
+  EXPECT_RECT_EQ(drawing_bounds, list->VisualRectForTesting(3));
 }
 
 TEST(DisplayItemListTest,
      AppendVisualRectDrawingFollowedByBlockContainingEscapedDrawing) {
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
 
   // One drawing followed by one block with one drawing: Da, B1, Db (escapes),
   // E1.
 
   gfx::Rect drawing_a_bounds(1, 2, 3, 4);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      drawing_a_bounds, CreateRectPicture(drawing_a_bounds));
+  {
+    list->StartPaint();
+    list->push<DrawRectOp>(gfx::RectToSkRect(drawing_a_bounds), PaintFlags());
+    list->EndPaintOfUnpaired(drawing_a_bounds);
+  }
 
   gfx::Rect clip_bounds(5, 6, 7, 8);
-  list->CreateAndAppendPairedBeginItem<ClipDisplayItem>(
-      clip_bounds, std::vector<SkRRect>(), true);
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ClipRectOp>(gfx::RectToSkRect(clip_bounds), SkClipOp::kIntersect,
+                           false);
+    list->EndPaintOfPairedBegin();
+  }
 
   gfx::Rect drawing_b_bounds(13, 14, 1, 1);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      drawing_b_bounds, CreateRectPicture(drawing_b_bounds));
+  {
+    list->StartPaint();
+    list->push<DrawRectOp>(gfx::RectToSkRect(drawing_b_bounds), PaintFlags());
+    list->EndPaintOfUnpaired(drawing_b_bounds);
+  }
 
-  list->CreateAndAppendPairedEndItem<EndClipDisplayItem>();
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
 
-  EXPECT_EQ(4u, list->size());
+  EXPECT_EQ(5u, list->op_count());
   EXPECT_RECT_EQ(drawing_a_bounds, list->VisualRectForTesting(0));
   EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(1));
   EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(2));
   EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(3));
+  EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(4));
 }
 
 TEST(DisplayItemListTest, AppendVisualRectTwoBlocksTwoDrawings) {
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
 
   // Multiple nested blocks with drawings amidst: B1, Da, B2, Db, E2, E1.
 
   gfx::Rect clip_bounds(5, 6, 7, 8);
-  list->CreateAndAppendPairedBeginItem<ClipDisplayItem>(
-      clip_bounds, std::vector<SkRRect>(), true);
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ClipRectOp>(gfx::RectToSkRect(clip_bounds), SkClipOp::kIntersect,
+                           false);
+    list->EndPaintOfPairedBegin();
+  }
 
   gfx::Rect drawing_a_bounds(5, 6, 1, 1);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      drawing_a_bounds, CreateRectPicture(drawing_a_bounds));
+  {
+    list->StartPaint();
+    list->push<DrawRectOp>(gfx::RectToSkRect(drawing_a_bounds), PaintFlags());
+    list->EndPaintOfUnpaired(drawing_a_bounds);
+  }
 
-  list->CreateAndAppendPairedBeginItem<TransformDisplayItem>(gfx::Transform());
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ConcatOp>(SkMatrix::I());
+    list->EndPaintOfPairedBegin();
+  }
 
   gfx::Rect drawing_b_bounds(7, 8, 1, 1);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      drawing_b_bounds, CreateRectPicture(drawing_b_bounds));
+  {
+    list->StartPaint();
+    list->push<DrawRectOp>(gfx::RectToSkRect(drawing_b_bounds), PaintFlags());
+    list->EndPaintOfUnpaired(drawing_b_bounds);
+  }
 
-  list->CreateAndAppendPairedEndItem<EndTransformDisplayItem>();
-  list->CreateAndAppendPairedEndItem<EndClipDisplayItem>();
+  // End transform.
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
+  // End clip.
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
 
-  EXPECT_EQ(6u, list->size());
+  EXPECT_EQ(8u, list->op_count());
   gfx::Rect merged_drawing_bounds = gfx::Rect(drawing_a_bounds);
   merged_drawing_bounds.Union(drawing_b_bounds);
   EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(0));
-  EXPECT_RECT_EQ(drawing_a_bounds, list->VisualRectForTesting(1));
-  EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(2));
+  EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(1));
+  EXPECT_RECT_EQ(drawing_a_bounds, list->VisualRectForTesting(2));
   EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(3));
   EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(4));
-  EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(5));
+  EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(5));
+  EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(6));
+  EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(7));
 }
 
 TEST(DisplayItemListTest,
      AppendVisualRectTwoBlocksTwoDrawingsInnerDrawingEscaped) {
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
 
   // Multiple nested blocks with drawings amidst: B1, Da, B2, Db (escapes), E2,
   // E1.
 
   gfx::Rect clip_bounds(5, 6, 7, 8);
-  list->CreateAndAppendPairedBeginItem<ClipDisplayItem>(
-      clip_bounds, std::vector<SkRRect>(), true);
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ClipRectOp>(gfx::RectToSkRect(clip_bounds), SkClipOp::kIntersect,
+                           false);
+    list->EndPaintOfPairedBegin();
+  }
 
   gfx::Rect drawing_a_bounds(5, 6, 1, 1);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      drawing_a_bounds, CreateRectPicture(drawing_a_bounds));
+  {
+    list->StartPaint();
+    list->push<DrawRectOp>(gfx::RectToSkRect(drawing_a_bounds), PaintFlags());
+    list->EndPaintOfUnpaired(drawing_a_bounds);
+  }
 
-  list->CreateAndAppendPairedBeginItem<TransformDisplayItem>(gfx::Transform());
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ConcatOp>(SkMatrix::I());
+    list->EndPaintOfPairedBegin();
+  }
 
   gfx::Rect drawing_b_bounds(1, 2, 3, 4);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      drawing_b_bounds, CreateRectPicture(drawing_b_bounds));
+  {
+    list->StartPaint();
+    list->push<DrawRectOp>(gfx::RectToSkRect(drawing_b_bounds), PaintFlags());
+    list->EndPaintOfUnpaired(drawing_b_bounds);
+  }
 
-  list->CreateAndAppendPairedEndItem<EndTransformDisplayItem>();
-  list->CreateAndAppendPairedEndItem<EndClipDisplayItem>();
+  // End transform.
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
+  // End clip.
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
 
-  EXPECT_EQ(6u, list->size());
+  EXPECT_EQ(8u, list->op_count());
   gfx::Rect merged_drawing_bounds = gfx::Rect(drawing_a_bounds);
   merged_drawing_bounds.Union(drawing_b_bounds);
   EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(0));
-  EXPECT_RECT_EQ(drawing_a_bounds, list->VisualRectForTesting(1));
-  EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(2));
+  EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(1));
+  EXPECT_RECT_EQ(drawing_a_bounds, list->VisualRectForTesting(2));
   EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(3));
   EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(4));
-  EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(5));
+  EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(5));
+  EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(6));
+  EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(7));
 }
 
 TEST(DisplayItemListTest,
      AppendVisualRectTwoBlocksTwoDrawingsOuterDrawingEscaped) {
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
 
   // Multiple nested blocks with drawings amidst: B1, Da (escapes), B2, Db, E2,
   // E1.
 
   gfx::Rect clip_bounds(5, 6, 7, 8);
-  list->CreateAndAppendPairedBeginItem<ClipDisplayItem>(
-      clip_bounds, std::vector<SkRRect>(), true);
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ClipRectOp>(gfx::RectToSkRect(clip_bounds), SkClipOp::kIntersect,
+                           false);
+    list->EndPaintOfPairedBegin();
+  }
 
   gfx::Rect drawing_a_bounds(1, 2, 3, 4);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      drawing_a_bounds, CreateRectPicture(drawing_a_bounds));
+  {
+    list->StartPaint();
+    list->push<DrawRectOp>(gfx::RectToSkRect(drawing_a_bounds), PaintFlags());
+    list->EndPaintOfUnpaired(drawing_a_bounds);
+  }
 
-  list->CreateAndAppendPairedBeginItem<TransformDisplayItem>(gfx::Transform());
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ConcatOp>(SkMatrix::I());
+    list->EndPaintOfPairedBegin();
+  }
 
   gfx::Rect drawing_b_bounds(7, 8, 1, 1);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      drawing_b_bounds, CreateRectPicture(drawing_b_bounds));
+  {
+    list->StartPaint();
+    list->push<DrawRectOp>(gfx::RectToSkRect(drawing_b_bounds), PaintFlags());
+    list->EndPaintOfUnpaired(drawing_b_bounds);
+  }
 
-  list->CreateAndAppendPairedEndItem<EndTransformDisplayItem>();
-  list->CreateAndAppendPairedEndItem<EndClipDisplayItem>();
+  // End transform.
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
+  // End clip.
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
 
-  EXPECT_EQ(6u, list->size());
+  EXPECT_EQ(8u, list->op_count());
   gfx::Rect merged_drawing_bounds = gfx::Rect(drawing_a_bounds);
   merged_drawing_bounds.Union(drawing_b_bounds);
   EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(0));
-  EXPECT_RECT_EQ(drawing_a_bounds, list->VisualRectForTesting(1));
-  EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(2));
+  EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(1));
+  EXPECT_RECT_EQ(drawing_a_bounds, list->VisualRectForTesting(2));
   EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(3));
   EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(4));
-  EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(5));
+  EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(5));
+  EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(6));
+  EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(7));
 }
 
 TEST(DisplayItemListTest,
      AppendVisualRectTwoBlocksTwoDrawingsBothDrawingsEscaped) {
-  auto list = make_scoped_refptr(new DisplayItemList);
+  auto list = base::MakeRefCounted<DisplayItemList>();
 
   // Multiple nested blocks with drawings amidst:
   // B1, Da (escapes to the right), B2, Db (escapes to the left), E2, E1.
 
   gfx::Rect clip_bounds(5, 6, 7, 8);
-  list->CreateAndAppendPairedBeginItem<ClipDisplayItem>(
-      clip_bounds, std::vector<SkRRect>(), true);
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ClipRectOp>(gfx::RectToSkRect(clip_bounds), SkClipOp::kIntersect,
+                           false);
+    list->EndPaintOfPairedBegin();
+  }
 
   gfx::Rect drawing_a_bounds(13, 14, 1, 1);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      drawing_a_bounds, CreateRectPicture(drawing_a_bounds));
+  {
+    list->StartPaint();
+    list->push<DrawRectOp>(gfx::RectToSkRect(drawing_a_bounds), PaintFlags());
+    list->EndPaintOfUnpaired(drawing_a_bounds);
+  }
 
-  list->CreateAndAppendPairedBeginItem<TransformDisplayItem>(gfx::Transform());
+  {
+    list->StartPaint();
+    list->push<SaveOp>();
+    list->push<ConcatOp>(SkMatrix::I());
+    list->EndPaintOfPairedBegin();
+  }
 
   gfx::Rect drawing_b_bounds(1, 2, 3, 4);
-  list->CreateAndAppendDrawingItem<DrawingDisplayItem>(
-      drawing_b_bounds, CreateRectPicture(drawing_b_bounds));
+  {
+    list->StartPaint();
+    list->push<DrawRectOp>(gfx::RectToSkRect(drawing_b_bounds), PaintFlags());
+    list->EndPaintOfUnpaired(drawing_b_bounds);
+  }
 
-  list->CreateAndAppendPairedEndItem<EndTransformDisplayItem>();
-  list->CreateAndAppendPairedEndItem<EndClipDisplayItem>();
+  // End transform.
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
+  // End clip.
+  {
+    list->StartPaint();
+    list->push<RestoreOp>();
+    list->EndPaintOfPairedEnd();
+  }
 
-  EXPECT_EQ(6u, list->size());
+  EXPECT_EQ(8u, list->op_count());
   gfx::Rect merged_drawing_bounds = gfx::Rect(drawing_a_bounds);
   merged_drawing_bounds.Union(drawing_b_bounds);
   EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(0));
-  EXPECT_RECT_EQ(drawing_a_bounds, list->VisualRectForTesting(1));
-  EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(2));
+  EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(1));
+  EXPECT_RECT_EQ(drawing_a_bounds, list->VisualRectForTesting(2));
   EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(3));
   EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(4));
-  EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(5));
-}
-
-TEST(DisplayItemListTest, AppendVisualRectOneFilterNoDrawings) {
-  auto list = make_scoped_refptr(new DisplayItemList);
-
-  // One filter containing no drawings: Bf, Ef
-
-  gfx::Rect filter_bounds(5, 6, 1, 1);
-  list->CreateAndAppendPairedBeginItemWithVisualRect<FilterDisplayItem>(
-      filter_bounds, FilterOperations(), gfx::RectF(filter_bounds),
-      gfx::PointF(filter_bounds.origin()));
-
-  list->CreateAndAppendPairedEndItem<EndFilterDisplayItem>();
-
-  EXPECT_EQ(2u, list->size());
-  EXPECT_RECT_EQ(filter_bounds, list->VisualRectForTesting(0));
-  EXPECT_RECT_EQ(filter_bounds, list->VisualRectForTesting(1));
-}
-
-TEST(DisplayItemListTest, AppendVisualRectBlockContainingFilterNoDrawings) {
-  auto list = make_scoped_refptr(new DisplayItemList);
-
-  // One block containing one filter and no drawings: B1, Bf, Ef, E1.
-
-  gfx::Rect clip_bounds(5, 6, 7, 8);
-  list->CreateAndAppendPairedBeginItem<ClipDisplayItem>(
-      clip_bounds, std::vector<SkRRect>(), true);
-
-  gfx::Rect filter_bounds(5, 6, 1, 1);
-  list->CreateAndAppendPairedBeginItemWithVisualRect<FilterDisplayItem>(
-      filter_bounds, FilterOperations(), gfx::RectF(filter_bounds),
-      gfx::PointF(filter_bounds.origin()));
-
-  list->CreateAndAppendPairedEndItem<EndFilterDisplayItem>();
-  list->CreateAndAppendPairedEndItem<EndClipDisplayItem>();
-
-  EXPECT_EQ(4u, list->size());
-  EXPECT_RECT_EQ(filter_bounds, list->VisualRectForTesting(0));
-  EXPECT_RECT_EQ(filter_bounds, list->VisualRectForTesting(1));
-  EXPECT_RECT_EQ(filter_bounds, list->VisualRectForTesting(2));
-  EXPECT_RECT_EQ(filter_bounds, list->VisualRectForTesting(3));
+  EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(5));
+  EXPECT_RECT_EQ(drawing_b_bounds, list->VisualRectForTesting(6));
+  EXPECT_RECT_EQ(merged_drawing_bounds, list->VisualRectForTesting(7));
 }
 
 }  // namespace cc

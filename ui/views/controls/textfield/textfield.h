@@ -15,7 +15,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
-#include "base/timer/timer.h"
+#include "base/time/time.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/base/ime/text_input_type.h"
@@ -33,6 +33,10 @@
 #include "ui/views/selection_controller_delegate.h"
 #include "ui/views/view.h"
 #include "ui/views/word_lookup_client.h"
+
+namespace base {
+class TimeDelta;
+}
 
 namespace views {
 
@@ -52,11 +56,11 @@ class VIEWS_EXPORT Textfield : public View,
   // The textfield's class name.
   static const char kViewClassName[];
 
-  // The preferred size of the padding to be used around textfield text.
-  static const int kTextPadding;
+  // Returns the text cursor blink time, or 0 for no blinking.
+  static base::TimeDelta GetCaretBlinkInterval();
 
-  // Returns the text cursor blink time in milliseconds, or 0 for no blinking.
-  static size_t GetCaretBlinkMs();
+  // Returns the default FontList used by all textfields.
+  static const gfx::FontList& GetDefaultFontList();
 
   Textfield();
   ~Textfield() override;
@@ -162,6 +166,14 @@ class VIEWS_EXPORT Textfield : public View,
     placeholder_text_color_ = color;
   }
 
+  void set_placeholder_font_list(const gfx::FontList& font_list) {
+    placeholder_font_list_ = font_list;
+  }
+
+  void set_placeholder_text_draw_flags(int flags) {
+    placeholder_text_draw_flags_ = flags;
+  }
+
   // Sets whether to indicate the textfield has invalid content.
   void SetInvalid(bool invalid);
   bool invalid() const { return invalid_; }
@@ -209,10 +221,12 @@ class VIEWS_EXPORT Textfield : public View,
   // Set the accessible name of the text field.
   void SetAccessibleName(const base::string16& name);
 
+  // Set extra spacing placed between glyphs; used for obscured text styling.
+  void SetGlyphSpacing(int spacing);
+
   // View overrides:
-  gfx::Insets GetInsets() const override;
   int GetBaseline() const override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   const char* GetClassName() const override;
   void SetBorder(std::unique_ptr<Border> b) override;
   gfx::NativeCursor GetCursor(const ui::MouseEvent& event) override;
@@ -220,6 +234,7 @@ class VIEWS_EXPORT Textfield : public View,
   bool OnMouseDragged(const ui::MouseEvent& event) override;
   void OnMouseReleased(const ui::MouseEvent& event) override;
   void OnMouseCaptureLost() override;
+  bool OnMouseWheel(const ui::MouseWheelEvent& event) override;
   WordLookupClient* GetWordLookupClient() override;
   void OnGestureEvent(ui::GestureEvent* event) override;
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
@@ -320,6 +335,7 @@ class VIEWS_EXPORT Textfield : public View,
   void EnsureCaretNotInRect(const gfx::Rect& rect) override;
   bool IsTextEditCommandEnabled(ui::TextEditCommand command) const override;
   void SetTextEditCommandForNextKeyEvent(ui::TextEditCommand command) override;
+  const std::string& GetClientSourceInfo() const override;
 
  protected:
   // Inserts or appends a character in response to an IME operation.
@@ -378,6 +394,9 @@ class VIEWS_EXPORT Textfield : public View,
 
   // Update the cursor position in the text field.
   void UpdateCursorViewPosition();
+
+  // Gets the style::TextStyle that should be used.
+  int GetTextStyle() const;
 
   void PaintTextAndCursor(gfx::Canvas* canvas);
 
@@ -471,6 +490,13 @@ class VIEWS_EXPORT Textfield : public View,
   // Placeholder text color.
   // TODO(estade): remove this when Harmony/MD is default.
   SkColor placeholder_text_color_;
+
+  // The draw flags specified for |placeholder_text_|.
+  int placeholder_text_draw_flags_;
+
+  // The font used for the placeholder text. If this value is null, the
+  // placeholder text uses the same font list as the underlying RenderText.
+  base::Optional<gfx::FontList> placeholder_font_list_;
 
   // True when the contents are deemed unacceptable and should be indicated as
   // such.

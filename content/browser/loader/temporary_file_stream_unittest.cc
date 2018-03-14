@@ -14,6 +14,7 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/test_utils.h"
 #include "net/base/file_stream.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -52,8 +53,8 @@ class WaitForFileStream {
   }
 
   void Release() {
-    file_stream_.reset(NULL);
-    deletable_file_ = NULL;
+    file_stream_.reset(nullptr);
+    deletable_file_ = nullptr;
   }
  private:
   base::RunLoop loop_;
@@ -111,7 +112,7 @@ TEST(TemporaryFileStreamTest, Basic) {
 
   // Release everything. The file should be gone now.
   file_stream_waiter.Release();
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   // The temporary should be gone now.
   EXPECT_FALSE(base::PathExists(file_path));

@@ -21,6 +21,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
@@ -74,7 +75,7 @@ class NotificationCollector
 
  private:
   friend class base::RefCountedThreadSafe<NotificationCollector>;
-  ~NotificationCollector() {}
+  ~NotificationCollector() = default;
 
   void RecordChange(TestDelegate* delegate) {
     // Warning: |delegate| is Unretained. Do not dereference.
@@ -99,8 +100,8 @@ class NotificationCollector
 
 class TestDelegateBase : public SupportsWeakPtr<TestDelegateBase> {
  public:
-  TestDelegateBase() {}
-  virtual ~TestDelegateBase() {}
+  TestDelegateBase() = default;
+  virtual ~TestDelegateBase() = default;
 
   virtual void OnFileChanged(const FilePath& path, bool error) = 0;
 
@@ -119,7 +120,7 @@ class TestDelegate : public TestDelegateBase {
       : collector_(collector) {
     collector_->Register(this);
   }
-  ~TestDelegate() override {}
+  ~TestDelegate() override = default;
 
   void OnFileChanged(const FilePath& path, bool error) override {
     if (error)
@@ -143,7 +144,7 @@ class FilePathWatcherTest : public testing::Test {
   {
   }
 
-  ~FilePathWatcherTest() override {}
+  ~FilePathWatcherTest() override = default;
 
  protected:
   void SetUp() override {
@@ -274,7 +275,7 @@ class Deleter : public TestDelegateBase {
       : watcher_(watcher),
         loop_(loop) {
   }
-  ~Deleter() override {}
+  ~Deleter() override = default;
 
   void OnFileChanged(const FilePath&, bool) override {
     watcher_.reset();
@@ -303,7 +304,7 @@ TEST_F(FilePathWatcherTest, DeleteDuringNotify) {
 
   // We win if we haven't crashed yet.
   // Might as well double-check it got deleted, too.
-  ASSERT_TRUE(deleter->watcher() == NULL);
+  ASSERT_TRUE(deleter->watcher() == nullptr);
 }
 
 // Verify that deleting the watcher works even if there is a pending
@@ -538,15 +539,14 @@ TEST_F(FilePathWatcherTest, RecursiveWatch) {
   ASSERT_TRUE(WaitForEvents());
 }
 
-#if defined(OS_POSIX)
-#if defined(OS_ANDROID)
+#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
 // Apps cannot create symlinks on Android in /sdcard as /sdcard uses the
 // "fuse" file system, while /data uses "ext4".  Running these tests in /data
 // would be preferable and allow testing file attributes and symlinks.
 // TODO(pauljensen): Re-enable when crbug.com/475568 is fixed and SetUp() places
 // the |temp_dir_| in /data.
-#define RecursiveWithSymLink DISABLED_RecursiveWithSymLink
-#endif  // defined(OS_ANDROID)
+//
+// This test is disabled on Fuchsia since it doesn't support symlinking.
 TEST_F(FilePathWatcherTest, RecursiveWithSymLink) {
   if (!FilePathWatcher::RecursiveWatchAvailable())
     return;
@@ -584,7 +584,7 @@ TEST_F(FilePathWatcherTest, RecursiveWithSymLink) {
   ASSERT_TRUE(WriteFile(target2_file, "content"));
   ASSERT_TRUE(WaitForEvents());
 }
-#endif  // OS_POSIX
+#endif  // defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
 
 TEST_F(FilePathWatcherTest, MoveChild) {
   FilePathWatcher file_watcher;

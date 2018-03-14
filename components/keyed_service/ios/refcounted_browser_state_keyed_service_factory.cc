@@ -12,20 +12,26 @@
 void RefcountedBrowserStateKeyedServiceFactory::SetTestingFactory(
     web::BrowserState* context,
     TestingFactoryFunction testing_factory) {
-  RefcountedKeyedServiceFactory::SetTestingFactory(
-      context,
-      reinterpret_cast<RefcountedKeyedServiceFactory::TestingFactoryFunction>(
-          testing_factory));
+  RefcountedKeyedServiceFactory::TestingFactoryFunction func;
+  if (testing_factory) {
+    func = [=](base::SupportsUserData* context) {
+      return testing_factory(static_cast<web::BrowserState*>(context));
+    };
+  }
+  RefcountedKeyedServiceFactory::SetTestingFactory(context, func);
 }
 
 scoped_refptr<RefcountedKeyedService>
 RefcountedBrowserStateKeyedServiceFactory::SetTestingFactoryAndUse(
     web::BrowserState* context,
     TestingFactoryFunction testing_factory) {
-  return RefcountedKeyedServiceFactory::SetTestingFactoryAndUse(
-      context,
-      reinterpret_cast<RefcountedKeyedServiceFactory::TestingFactoryFunction>(
-          testing_factory));
+  RefcountedKeyedServiceFactory::TestingFactoryFunction func;
+  if (testing_factory) {
+    func = [=](base::SupportsUserData* context) {
+      return testing_factory(static_cast<web::BrowserState*>(context));
+    };
+  }
+  return RefcountedKeyedServiceFactory::SetTestingFactoryAndUse(context, func);
 }
 
 RefcountedBrowserStateKeyedServiceFactory::
@@ -50,7 +56,7 @@ web::BrowserState*
 RefcountedBrowserStateKeyedServiceFactory::GetBrowserStateToUse(
     web::BrowserState* context) const {
   // TODO(crbug.com/701326): This DCHECK should be moved to GetContextToUse().
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Safe default for Incognito mode: no service.
   if (context->IsOffTheRecord())

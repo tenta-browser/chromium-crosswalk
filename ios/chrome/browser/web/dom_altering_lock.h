@@ -6,7 +6,6 @@
 #define IOS_CHROME_BROWSER_WEB_DOM_ALTERING_LOCK_H_
 
 #include "base/ios/block_types.h"
-#import "base/ios/weak_nsobject.h"
 #include "ios/web/public/web_state/web_state_user_data.h"
 
 namespace web {
@@ -41,6 +40,7 @@ typedef void (^ProceduralBlockWithBool)(BOOL);
 class DOMAlteringLock : public web::WebStateUserData<DOMAlteringLock> {
  public:
   DOMAlteringLock(web::WebState* web_state);
+  ~DOMAlteringLock() override;
 
   // This method must be called before altering the DOM of the page. This will
   // ensure that only one class tries to alter the page at a time.
@@ -56,9 +56,7 @@ class DOMAlteringLock : public web::WebStateUserData<DOMAlteringLock> {
 
  private:
   // DOMAltering object currently having the lock.
-  base::WeakNSProtocol<id<DOMAltering>> current_dom_altering_feature_;
-
-  ~DOMAlteringLock() override;
+  __weak id<DOMAltering> current_dom_altering_feature_ = nil;
 };
 
 #endif  // IOS_CHROME_BROWSER_WEB_DOM_ALTERING_LOCK_H_

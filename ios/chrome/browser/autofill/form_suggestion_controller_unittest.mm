@@ -9,15 +9,18 @@
 
 #include "base/ios/ios_util.h"
 #include "base/mac/foundation_util.h"
+#include "base/path_service.h"
+#include "base/strings/stringprintf.h"
 #import "components/autofill/ios/browser/form_suggestion.h"
+#import "components/autofill/ios/browser/form_suggestion_provider.h"
 #import "ios/chrome/browser/autofill/form_input_accessory_view_controller.h"
-#import "ios/chrome/browser/autofill/form_suggestion_provider.h"
 #import "ios/chrome/browser/autofill/form_suggestion_view.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/web/chrome_web_test.h"
-#include "ios/chrome/test/base/scoped_block_swizzler.h"
+#import "ios/web/public/navigation_manager.h"
+#include "ios/web/public/web_state/form_activity_params.h"
 #import "ios/web/public/web_state/ui/crw_web_view_proxy.h"
-#import "ios/web/web_state/ui/crw_web_controller.h"
+#import "ios/web/public/web_state/web_state.h"
 #import "testing/gtest_mac.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #include "third_party/ocmock/gtest_support.h"
@@ -78,6 +81,7 @@
 
 - (void)checkIfSuggestionsAvailableForForm:(NSString*)formName
                                      field:(NSString*)fieldName
+                                 fieldType:(NSString*)fieldType
                                       type:(NSString*)type
                                 typedValue:(NSString*)typedValue
                                   webState:(web::WebState*)webState
@@ -89,6 +93,7 @@
 
 - (void)retrieveSuggestionsForForm:(NSString*)formName
                              field:(NSString*)fieldName
+                         fieldType:(NSString*)fieldType
                               type:(NSString*)type
                         typedValue:(NSString*)typedValue
                           webState:(web::WebState*)webState
@@ -157,16 +162,8 @@ class FormSuggestionControllerTest : public ChromeWebTest {
   }
 
   // Sets |url| to be current for WebState.
-  void SetCurrentUrl(const std::string& url) { LoadHtml(@"", GURL(url)); }
-
-  // Swizzles the current web controller to set whether the content is HTML.
-  void SetContentIsHtml(BOOL content_is_html) {
-    id content_is_html_block = ^BOOL(CRWWebController* webController) {
-      return content_is_html;
-    };
-    content_is_html_swizzler_.reset(new ScopedBlockSwizzler(
-        [CRWWebController class], @selector(contentIsHTML),
-        content_is_html_block));
+  void SetCurrentUrl(const std::string& url) {
+    LoadHtml(@"<html></html>", GURL(url));
   }
 
  protected:
@@ -225,9 +222,6 @@ class FormSuggestionControllerTest : public ChromeWebTest {
     }
   }
 
-  // Swizzler for [CRWWebController contentIsHTML].
-  std::unique_ptr<ScopedBlockSwizzler> content_is_html_swizzler_;
-
   // The FormSuggestionController under test.
   FormSuggestionController* suggestion_controller_;
 
@@ -259,10 +253,22 @@ TEST_F(FormSuggestionControllerTest, PageLoadShouldBeIgnoredWhenNotWebScheme) {
 // Tests that pages whose content isn't HTML aren't processed.
 TEST_F(FormSuggestionControllerTest, PageLoadShouldBeIgnoredWhenNotHtml) {
   SetUpController(@[]);
-  SetCurrentUrl("http://foo.com");
-  SetContentIsHtml(NO);
-  [suggestion_controller_ webState:web_state() didLoadPageWithSuccess:YES];
 
+  // Construct file:// URL for a PDF file.
+  base::FilePath path;
+  base::PathService::Get(base::DIR_MODULE, &path);
+  const char kPdfFilePath[] = "ios/testing/data/http_server_files/testpage.pdf";
+  path = path.Append(FILE_PATH_LITERAL(kPdfFilePath));
+  GURL url(base::StringPrintf("file://%s", path.value().c_str()));
+
+  // Load PDF file URL.
+  web::NavigationManager::WebLoadParams params(url);
+  web_state()->GetNavigationManager()->LoadURLWithParams(params);
+  WaitForCondition(^{
+    return !web_state()->IsLoading();
+  });
+
+  ASSERT_EQ("application/pdf", web_state()->GetContentsMimeType());
   EXPECT_FALSE(GetSuggestionView(input_accessory_view_));
   EXPECT_OCMOCK_VERIFY(mock_js_suggestion_manager_);
 }
@@ -280,12 +286,14 @@ TEST_F(FormSuggestionControllerTest,
   EXPECT_OCMOCK_VERIFY(mock_js_suggestion_manager_);
 
   // Trigger form activity, which should set up the suggestions view.
-  [accessory_controller_ webState:web_state()
-      didRegisterFormActivityWithFormNamed:"form"
-                                 fieldName:"field"
-                                      type:"type"
-                                     value:"value"
-                              inputMissing:false];
+  web::FormActivityParams params;
+  params.form_name = "form";
+  params.field_name = "field";
+  params.field_type = "text";
+  params.type = "type";
+  params.value = "value";
+  params.input_missing = false;
+  [accessory_controller_ webState:web_state() didRegisterFormActivity:params];
   EXPECT_TRUE(GetSuggestionView(input_accessory_view_));
 
   // Trigger another page load. The suggestions accessory view should
@@ -296,12 +304,14 @@ TEST_F(FormSuggestionControllerTest,
 
 // Tests that "blur" events are ignored.
 TEST_F(FormSuggestionControllerTest, FormActivityBlurShouldBeIgnored) {
-  [accessory_controller_ webState:web_state()
-      didRegisterFormActivityWithFormNamed:"form"
-                                 fieldName:"field"
-                                      type:"blur"  // blur!
-                                     value:"value"
-                              inputMissing:false];
+  web::FormActivityParams params;
+  params.form_name = "form";
+  params.field_name = "field";
+  params.field_type = "text";
+  params.type = "blur";  // blur!
+  params.value = "value";
+  params.input_missing = false;
+  [accessory_controller_ webState:web_state() didRegisterFormActivity:params];
   EXPECT_FALSE(GetSuggestionView(input_accessory_view_));
 }
 
@@ -311,12 +321,14 @@ TEST_F(FormSuggestionControllerTest,
   // Set up the controller without any providers.
   SetUpController(@[]);
   SetCurrentUrl("http://foo.com");
-  [accessory_controller_ webState:web_state()
-      didRegisterFormActivityWithFormNamed:"form"
-                                 fieldName:"field"
-                                      type:"type"
-                                     value:"value"
-                              inputMissing:false];
+  web::FormActivityParams params;
+  params.form_name = "form";
+  params.field_name = "field";
+  params.field_type = "text";
+  params.type = "type";
+  params.value = "value";
+  params.input_missing = false;
+  [accessory_controller_ webState:web_state() didRegisterFormActivity:params];
 
   // The suggestions accessory view should be empty.
   FormSuggestionView* suggestionView = GetSuggestionView(input_accessory_view_);
@@ -337,12 +349,14 @@ TEST_F(FormSuggestionControllerTest,
   SetUpController(@[ provider1, provider2 ]);
   SetCurrentUrl("http://foo.com");
 
-  [accessory_controller_ webState:web_state()
-      didRegisterFormActivityWithFormNamed:"form"
-                                 fieldName:"field"
-                                      type:"type"
-                                     value:"value"
-                              inputMissing:false];
+  web::FormActivityParams params;
+  params.form_name = "form";
+  params.field_name = "field";
+  params.field_type = "text";
+  params.type = "type";
+  params.value = "value";
+  params.input_missing = false;
+  [accessory_controller_ webState:web_state() didRegisterFormActivity:params];
 
   // The providers should each be asked if they have suggestions for the
   // form in question.
@@ -384,12 +398,14 @@ TEST_F(FormSuggestionControllerTest,
   SetUpController(@[ provider1, provider2 ]);
   SetCurrentUrl("http://foo.com");
 
-  [accessory_controller_ webState:web_state()
-      didRegisterFormActivityWithFormNamed:"form"
-                                 fieldName:"field"
-                                      type:"type"
-                                     value:"value"
-                              inputMissing:false];
+  web::FormActivityParams params;
+  params.form_name = "form";
+  params.field_name = "field";
+  params.field_type = "text";
+  params.type = "type";
+  params.value = "value";
+  params.input_missing = false;
+  [accessory_controller_ webState:web_state() didRegisterFormActivity:params];
 
   // Since the first provider has suggestions available, it and only it
   // should have been asked.
@@ -421,12 +437,14 @@ TEST_F(FormSuggestionControllerTest, SelectingSuggestionShouldNotifyDelegate) {
       [[TestSuggestionProvider alloc] initWithSuggestions:suggestions];
   SetUpController(@[ provider ]);
   SetCurrentUrl("http://foo.com");
-  [accessory_controller_ webState:web_state()
-      didRegisterFormActivityWithFormNamed:"form"
-                                 fieldName:"field"
-                                      type:"type"
-                                     value:"value"
-                              inputMissing:false];
+  web::FormActivityParams params;
+  params.form_name = "form";
+  params.field_name = "field";
+  params.field_type = "text";
+  params.type = "type";
+  params.value = "value";
+  params.input_missing = false;
+  [accessory_controller_ webState:web_state() didRegisterFormActivity:params];
 
   // Selecting a suggestion should notify the delegate.
   [suggestion_controller_ didSelectSuggestion:suggestions[0]];

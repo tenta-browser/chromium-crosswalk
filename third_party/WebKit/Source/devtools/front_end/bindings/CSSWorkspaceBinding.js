@@ -79,18 +79,32 @@ Bindings.CSSWorkspaceBinding = class {
   }
 
   /**
-   * @param {?SDK.CSSLocation} rawLocation
+   * @param {!SDK.CSSLocation} rawLocation
    * @return {?Workspace.UILocation}
    */
   rawLocationToUILocation(rawLocation) {
-    if (!rawLocation)
-      return null;
     for (var i = this._sourceMappings.length - 1; i >= 0; --i) {
       var uiLocation = this._sourceMappings[i].rawLocationToUILocation(rawLocation);
       if (uiLocation)
         return uiLocation;
     }
     return this._modelToInfo.get(rawLocation.cssModel())._rawLocationToUILocation(rawLocation);
+  }
+
+  /**
+   * @param {!Workspace.UILocation} uiLocation
+   * @return {!Array<!SDK.CSSLocation>}
+   */
+  uiLocationToRawLocations(uiLocation) {
+    for (var i = this._sourceMappings.length - 1; i >= 0; --i) {
+      var rawLocations = this._sourceMappings[i].uiLocationToRawLocations(uiLocation);
+      if (rawLocations.length)
+        return rawLocations;
+    }
+    var rawLocations = [];
+    for (var modelInfo of this._modelToInfo.values())
+      rawLocations.pushAll(modelInfo._uiLocationToRawLocations(uiLocation));
+    return rawLocations;
   }
 
   /**
@@ -112,6 +126,12 @@ Bindings.CSSWorkspaceBinding.SourceMapping.prototype = {
    * @return {?Workspace.UILocation}
    */
   rawLocationToUILocation(rawLocation) {},
+
+  /**
+   * @param {!Workspace.UILocation} uiLocation
+   * @return {!Array<!SDK.CSSLocation>}
+   */
+  uiLocationToRawLocations(uiLocation) {},
 };
 
 Bindings.CSSWorkspaceBinding.ModelInfo = class {
@@ -127,8 +147,7 @@ Bindings.CSSWorkspaceBinding.ModelInfo = class {
 
     this._stylesSourceMapping = new Bindings.StylesSourceMapping(cssModel, workspace);
     var sourceMapManager = cssModel.sourceMapManager();
-    this._sassSourceMapping = new Bindings.SASSSourceMapping(
-        sourceMapManager, workspace, Bindings.NetworkProject.forTarget(cssModel.target()));
+    this._sassSourceMapping = new Bindings.SASSSourceMapping(cssModel.target(), sourceMapManager, workspace);
 
     /** @type {!Multimap<!SDK.CSSStyleSheetHeader, !Bindings.CSSWorkspaceBinding.LiveLocation>} */
     this._locations = new Multimap();
@@ -160,9 +179,9 @@ Bindings.CSSWorkspaceBinding.ModelInfo = class {
    */
   _disposeLocation(location) {
     if (location._header)
-      this._locations.remove(location._header, location);
+      this._locations.delete(location._header, location);
     else
-      this._unboundLocations.remove(location._url, location);
+      this._unboundLocations.delete(location._url, location);
   }
 
   /**
@@ -186,7 +205,7 @@ Bindings.CSSWorkspaceBinding.ModelInfo = class {
       this._locations.set(header, location);
       location.update();
     }
-    this._unboundLocations.removeAll(header.sourceURL);
+    this._unboundLocations.deleteAll(header.sourceURL);
   }
 
   /**
@@ -199,7 +218,7 @@ Bindings.CSSWorkspaceBinding.ModelInfo = class {
       this._unboundLocations.set(location._url, location);
       location.update();
     }
-    this._locations.removeAll(header);
+    this._locations.deleteAll(header);
   }
 
   /**
@@ -210,7 +229,19 @@ Bindings.CSSWorkspaceBinding.ModelInfo = class {
     var uiLocation = null;
     uiLocation = uiLocation || this._sassSourceMapping.rawLocationToUILocation(rawLocation);
     uiLocation = uiLocation || this._stylesSourceMapping.rawLocationToUILocation(rawLocation);
+    uiLocation = uiLocation || Bindings.resourceMapping.cssLocationToUILocation(rawLocation);
     return uiLocation;
+  }
+
+  /**
+   * @param {!Workspace.UILocation} uiLocation
+   * @return {!Array<!SDK.CSSLocation>}
+   */
+  _uiLocationToRawLocations(uiLocation) {
+    var rawLocations = this._sassSourceMapping.uiLocationToRawLocations(uiLocation);
+    if (rawLocations.length)
+      return rawLocations;
+    return this._stylesSourceMapping.uiLocationToRawLocations(uiLocation);
   }
 
   _dispose() {

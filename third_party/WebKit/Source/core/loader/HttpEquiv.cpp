@@ -4,9 +4,10 @@
 
 #include "core/loader/HttpEquiv.h"
 
+#include "core/css/StyleEngine.h"
 #include "core/dom/Document.h"
 #include "core/dom/ScriptableDocumentParser.h"
-#include "core/dom/StyleEngine.h"
+#include "core/frame/Deprecation.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/UseCounter.h"
 #include "core/frame/csp/ContentSecurityPolicy.h"
@@ -14,9 +15,9 @@
 #include "core/loader/DocumentLoader.h"
 #include "core/loader/private/FrameClientHintsPreferencesContext.h"
 #include "core/origin_trials/OriginTrialContext.h"
-#include "platform/HTTPNames.h"
 #include "platform/loader/fetch/ClientHintsPreferences.h"
 #include "platform/network/HTTPParsers.h"
+#include "platform/network/http_names.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SecurityViolationReportingPolicy.h"
 
@@ -62,7 +63,7 @@ void HttpEquiv::Process(Document& document,
             "which is disallowed. The Suborigin has been ignored."));
   } else if (EqualIgnoringASCIICase(equiv, HTTPNames::Origin_Trial)) {
     if (in_document_head_element)
-      OriginTrialContext::From(&document)->AddToken(content);
+      OriginTrialContext::FromOrCreate(&document)->AddToken(content);
   }
 }
 
@@ -91,7 +92,7 @@ void HttpEquiv::ProcessHttpEquivAcceptCH(Document& document,
   if (!document.GetFrame())
     return;
 
-  UseCounter::Count(document, UseCounter::kClientHintsMetaAcceptCH);
+  UseCounter::Count(document, WebFeature::kClientHintsMetaAcceptCH);
   FrameClientHintsPreferencesContext hints_context(document.GetFrame());
   document.GetClientHintsPreferences().UpdateFromAcceptClientHintsHeader(
       content, &hints_context);
@@ -105,12 +106,13 @@ void HttpEquiv::ProcessHttpEquivDefaultStyle(Document& document,
 void HttpEquiv::ProcessHttpEquivRefresh(Document& document,
                                         const AtomicString& content,
                                         Element* element) {
-  UseCounter::Count(document, UseCounter::kMetaRefresh);
+  UseCounter::Count(document, WebFeature::kMetaRefresh);
   if (!document.GetContentSecurityPolicy()->AllowInlineScript(
-          element, KURL(), "", OrdinalNumber(), "",
+          element, NullURL(), "", OrdinalNumber(), "",
+          ContentSecurityPolicy::InlineType::kBlock,
           SecurityViolationReportingPolicy::kSuppressReporting)) {
     UseCounter::Count(document,
-                      UseCounter::kMetaRefreshWhenCSPBlocksInlineScript);
+                      WebFeature::kMetaRefreshWhenCSPBlocksInlineScript);
   }
 
   document.MaybeHandleHttpRefresh(content, Document::kHttpRefreshFromMetaTag);
@@ -119,21 +121,26 @@ void HttpEquiv::ProcessHttpEquivRefresh(Document& document,
 void HttpEquiv::ProcessHttpEquivSetCookie(Document& document,
                                           const AtomicString& content,
                                           Element* element) {
-  // FIXME: make setCookie work on XML documents too; e.g. in case of
-  // <html:meta.....>
-  if (!document.IsHTMLDocument())
-    return;
+  Deprecation::CountDeprecation(document, WebFeature::kMetaSetCookie);
 
-  UseCounter::Count(document, UseCounter::kMetaSetCookie);
   if (!document.GetContentSecurityPolicy()->AllowInlineScript(
-          element, KURL(), "", OrdinalNumber(), "",
+          element, NullURL(), "", OrdinalNumber(), "",
+          ContentSecurityPolicy::InlineType::kBlock,
           SecurityViolationReportingPolicy::kSuppressReporting)) {
     UseCounter::Count(document,
-                      UseCounter::kMetaSetCookieWhenCSPBlocksInlineScript);
+                      WebFeature::kMetaSetCookieWhenCSPBlocksInlineScript);
   }
 
-  // Exception (for sandboxed documents) ignored.
-  document.setCookie(content, IGNORE_EXCEPTION_FOR_TESTING);
+  if (!RuntimeEnabledFeatures::BlockMetaSetCookieEnabled()) {
+    // Exception (for sandboxed documents) ignored.
+    document.setCookie(content, IGNORE_EXCEPTION_FOR_TESTING);
+    return;
+  }
+
+  document.AddConsoleMessage(ConsoleMessage::Create(
+      kSecurityMessageSource, kErrorMessageLevel,
+      String::Format("Blocked setting the `%s` cookie from a `<meta>` tag.",
+                     content.Utf8().data())));
 }
 
 }  // namespace blink

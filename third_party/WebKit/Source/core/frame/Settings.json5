@@ -75,7 +75,7 @@
     // draw canvas in software.
     {
       name: "minimumAccelerated2dCanvasSize",
-      initial: "257*256",
+      initial: "129*128",
       type: "int",
     },
 
@@ -121,10 +121,6 @@
     {
       name: "allowFileAccessFromFileURLs",
       initial: true,
-    },
-    {
-      name: "javaScriptCanOpenWindowsAutomatically",
-      initial: false,
     },
     {
       name: "supportsMultipleWindows",
@@ -182,10 +178,14 @@
       invalidate: "AcceleratedCompositing",
     },
 
-    // 3D canvas (WebGL) support.
     {
-      name: "webGLEnabled",
-      initial: false,
+      name: "webGL1Enabled",
+      initial: true,
+    },
+
+    {
+      name: "webGL2Enabled",
+      initial: true,
     },
 
     {
@@ -216,18 +216,8 @@
     },
 
     {
-      name: "mediaPlaybackRequiresUserGesture",
-      initial: false,
-    },
-    {
       name: "mediaPlaybackGestureWhitelistScope",
       type: "String",
-    },
-
-    // This flags overrides mediaPlaybackRequiresUserGesture
-    {
-      name: "crossOriginMediaPlaybackRequiresUserGesture",
-      initial: false,
     },
 
     {
@@ -237,6 +227,17 @@
 
     {
       name: "embeddedMediaExperienceEnabled",
+      initial: false,
+    },
+
+    // This is used when page popups should not be presented at all from time
+    // to time in the life of a renderer. This is different than the runtime
+    // enabled feature to enable page popups which remains fixed for the
+    // lifetime of a render and semantically means that an alternative UI
+    // should be shown. An example of when this might be used is in an
+    // embedder than cannot render these popups (in VR mode, say).
+    {
+      name: "pagePopupsSuppressed",
       initial: false,
     },
 
@@ -301,6 +302,13 @@
     {
       name: "multiTargetTapNotificationEnabled",
       initial: true,
+    },
+
+    // Determines whether the barrel on stylus input should be used for selecting
+    // text and dragging.
+    {
+      name: "barrelButtonForDragEnabled",
+      initial: false,
     },
 
     {
@@ -472,13 +480,6 @@
       initial: false,
     },
 
-    // Experiment to have all APIs reflect the layout viewport.
-    // crbug.com/489206 tracks the experiment.
-    {
-      name: "inertVisualViewport",
-      initial: false,
-    },
-
     // The rubber-band overscroll effect is implemented in Blink and is being moved
     // to the compositor thread. This will be set to true and eventually removed.
     // crbug.com/133097
@@ -551,11 +552,7 @@
     {
       name: "pluginsEnabled",
       initial: false,
-    },
-
-    {
-      name: "encryptedMediaEnabled",
-      initial: true,
+      invalidate: "Plugins",
     },
 
     {
@@ -575,16 +572,17 @@
       invalidate: "DNSPrefetching",
     },
 
-    {
-      name: "dataSaverEnabled",
-      initial: false,
-    },
-
     // Clients that execute script should call ExecutionContext::canExecuteScripts()
     // instead of this function. ExecutionContext::canExecuteScripts() checks the
     // HTML sandbox, plugin sandboxing, and other important details.
     {
       name: "scriptEnabled",
+      initial: false,
+    },
+
+    // Forces Android Overlay Scrollbar for mobile emulator.
+    {
+      name: "forceAndroidOverlayScrollbar",
       initial: false,
     },
 
@@ -594,6 +592,14 @@
       name: "forceMainWorldInitialization",
       initial: false,
       invalidate: "DOMWorlds",
+    },
+
+    // Forces TouchEventFeatureDetection conditional feature for all main
+    // worlds in the page. Used by inspector to emulate touch on devices
+    // which don't support it naturally.
+    {
+      name: "forceTouchEventFeatureDetectionForInspector",
+      initial: false,
     },
 
     // Compensates for poor text legibility on mobile devices. This value is
@@ -633,13 +639,6 @@
       name: "v8CacheOptions",
       initial: "kV8CacheOptionsDefault",
       type: "V8CacheOptions",
-    },
-
-    // V8 code cache for CacheStorage supports three types of strategies (none, normal and aggressive).
-    {
-      name: "v8CacheStrategiesForCacheStorage",
-      initial: "V8CacheStrategiesForCacheStorage::kDefault",
-      type: "V8CacheStrategiesForCacheStorage",
     },
 
     // These values are bit fields for the properties of available pointing devices
@@ -797,8 +796,9 @@
     },
 
     {
-      name: "lowPriorityIframes",
-      initial: false,
+      name: "savePreviousDocumentResources",
+      initial: "SavePreviousDocumentResources::kNever",
+      type: "SavePreviousDocumentResources",
     },
 
     {
@@ -856,13 +856,6 @@
       name: "passiveListenerDefault",
       initial: "PassiveListenerDefault::kFalse",
       type: "PassiveListenerDefault",
-    },
-
-    // Use default interpolation quality to scale bitmap images if quality is not determined
-    // in other ways. This can help us writing reftests containing scaled images.
-    {
-      name: "useDefaultImageInterpolationQuality",
-      initial: false,
     },
 
     // Whether the CSSPreloadScanner is used for externally CSS preloads. NoPreload
@@ -931,6 +924,48 @@
     {
       name: "doNotUpdateSelectionOnMutatingSelectionRange",
       initial: false,
+    },
+
+    // Defines the autoplay policy to use.
+    {
+      name: "autoplayPolicy",
+      type: "AutoplayPolicy::Type",
+      initial: "AutoplayPolicy::Type::kNoUserGestureRequired",
+    },
+
+    //
+    // High contrast mode
+    //
+    {
+      name: "highContrastMode",
+      initial: "HighContrastMode::kOff",
+      type: "HighContrastMode",
+    },
+    {
+      name: "highContrastGrayscale",
+      initial: false,
+    },
+    {
+      name: "highContrastContrast",
+      initial: 0,
+      type: "double",
+    },
+    {
+      name: "highContrastImagePolicy",
+      initial: "HighContrastImagePolicy::kFilterAll",
+      type: "HighContrastImagePolicy",
+    },
+    {
+      name: "mediaDownloadInProductHelpEnabled",
+      initial: false,
+    },
+    {
+      name: "forceDisplayList2dCanvasEnabled",
+      initial: false,
+    },
+    {
+      name: "navigatorPlatformOverride",
+      type: "String",
     },
   ],
 }

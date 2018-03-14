@@ -10,13 +10,13 @@
 
 #include "base/callback.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/rand_util.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_process_host_observer.h"
 #include "content/public/browser/storage_partition.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
 
 namespace content {
 
@@ -54,8 +54,10 @@ class WebSocketManager::Handle : public base::SupportsUserData::Data,
 };
 
 // static
-void WebSocketManager::CreateWebSocket(int process_id, int frame_id,
-                                       blink::mojom::WebSocketRequest request) {
+void WebSocketManager::CreateWebSocket(
+    int process_id,
+    int frame_id,
+    blink::mojom::WebSocketRequest request) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
   RenderProcessHost* host = RenderProcessHost::FromID(process_id);
@@ -70,42 +72,36 @@ void WebSocketManager::CreateWebSocket(int process_id, int frame_id,
   if (!handle) {
     handle = new Handle(
         new WebSocketManager(process_id, host->GetStoragePartition()));
-    host->SetUserData(kWebSocketManagerKeyName, handle);
+    host->SetUserData(kWebSocketManagerKeyName, base::WrapUnique(handle));
     host->AddObserver(handle);
   } else {
     DCHECK(handle->manager());
   }
 
-  BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&WebSocketManager::DoCreateWebSocket,
-                 base::Unretained(handle->manager()),
-                 frame_id,
-                 base::Passed(&request)));
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::BindOnce(&WebSocketManager::DoCreateWebSocket,
+                                         base::Unretained(handle->manager()),
+                                         frame_id, base::Passed(&request)));
 }
 
 WebSocketManager::WebSocketManager(int process_id,
                                    StoragePartition* storage_partition)
     : process_id_(process_id),
-      storage_partition_(storage_partition),
       num_pending_connections_(0),
       num_current_succeeded_connections_(0),
       num_previous_succeeded_connections_(0),
       num_current_failed_connections_(0),
       num_previous_failed_connections_(0),
       context_destroyed_(false) {
-  if (storage_partition_) {
-    url_request_context_getter_ = storage_partition_->GetURLRequestContext();
+  if (storage_partition) {
+    url_request_context_getter_ = storage_partition->GetURLRequestContext();
     // This unretained pointer is safe because we destruct a WebSocketManager
     // only via WebSocketManager::Handle::RenderProcessHostDestroyed which
     // posts a deletion task to the IO thread.
     BrowserThread::PostTask(
-        BrowserThread::IO,
-        FROM_HERE,
-        base::Bind(
-            &WebSocketManager::ObserveURLRequestContextGetter,
-            base::Unretained(this)));
+        BrowserThread::IO, FROM_HERE,
+        base::BindOnce(&WebSocketManager::ObserveURLRequestContextGetter,
+                       base::Unretained(this)));
   }
 }
 
@@ -197,8 +193,8 @@ int WebSocketManager::GetClientProcessId() {
   return process_id_;
 }
 
-StoragePartition* WebSocketManager::GetStoragePartition() {
-  return storage_partition_;
+net::URLRequestContext* WebSocketManager::GetURLRequestContext() {
+  return url_request_context_getter_->GetURLRequestContext();
 }
 
 void WebSocketManager::OnReceivedResponseFromServer(WebSocketImpl* impl) {

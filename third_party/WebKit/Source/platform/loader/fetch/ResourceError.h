@@ -27,124 +27,82 @@
 #ifndef ResourceError_h
 #define ResourceError_h
 
-// TODO(toyoshim): Move net/base inclusion from header file.
 #include <iosfwd>
-#include "net/base/net_errors.h"
 #include "platform/PlatformExport.h"
+#include "platform/weborigin/KURL.h"
 #include "platform/wtf/Allocator.h"
+#include "platform/wtf/Optional.h"
 #include "platform/wtf/text/WTFString.h"
+#include "public/platform/WebURLError.h"
+#include "services/network/public/cpp/cors_error_status.h"
 
 namespace blink {
 
 enum class ResourceRequestBlockedReason;
 
-// Used for errors that won't be exposed to clients.
-PLATFORM_EXPORT extern const char kErrorDomainBlinkInternal[];
-
+// ResourceError represents an error for loading a resource. There is no
+// "no-error" instance. Use Optional for nullable errors.
 class PLATFORM_EXPORT ResourceError final {
-  DISALLOW_NEW();
+  DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
 
  public:
-  enum Error {
-    ACCESS_DENIED = net::ERR_ACCESS_DENIED,
-    BLOCKED_BY_XSS_AUDITOR = net::ERR_BLOCKED_BY_XSS_AUDITOR
-  };
-
-  static ResourceError CancelledError(const String& failing_url);
+  static ResourceError CancelledError(const KURL&);
   static ResourceError CancelledDueToAccessCheckError(
-      const String& failing_url,
+      const KURL&,
       ResourceRequestBlockedReason);
+  static ResourceError CancelledDueToAccessCheckError(
+      const KURL&,
+      ResourceRequestBlockedReason,
+      const String& localized_description);
 
-  // Only for Blink internal usage.
-  static ResourceError CacheMissError(const String& failing_url);
+  static ResourceError CacheMissError(const KURL&);
+  static ResourceError TimeoutError(const KURL&);
+  static ResourceError Failure(const KURL&);
 
-  ResourceError()
-      : error_code_(0),
-        is_null_(true),
-        is_cancellation_(false),
-        is_access_check_(false),
-        is_timeout_(false),
-        stale_copy_in_cache_(false),
-        was_ignored_by_handler_(false),
-        is_cache_miss_(false),
-        should_collapse_initiator_(false) {}
-
-  ResourceError(const String& domain,
-                int error_code,
-                const String& failing_url,
-                const String& localized_description)
-      : domain_(domain),
-        error_code_(error_code),
-        failing_url_(failing_url),
-        localized_description_(localized_description),
-        is_null_(false),
-        is_cancellation_(false),
-        is_access_check_(false),
-        is_timeout_(false),
-        stale_copy_in_cache_(false),
-        was_ignored_by_handler_(false),
-        is_cache_miss_(false),
-        should_collapse_initiator_(false) {}
+  ResourceError() = delete;
+  // |error_code| must not be 0.
+  ResourceError(int error_code,
+                const KURL& failing_url,
+                WTF::Optional<network::CORSErrorStatus>);
+  ResourceError(const WebURLError&);
 
   // Makes a deep copy. Useful for when you need to use a ResourceError on
   // another thread.
   ResourceError Copy() const;
 
-  bool IsNull() const { return is_null_; }
-
-  const String& Domain() const { return domain_; }
   int ErrorCode() const { return error_code_; }
   const String& FailingURL() const { return failing_url_; }
   const String& LocalizedDescription() const { return localized_description_; }
 
-  void SetIsCancellation(bool is_cancellation) {
-    is_cancellation_ = is_cancellation;
-  }
-  bool IsCancellation() const { return is_cancellation_; }
-
-  void SetIsAccessCheck(bool is_access_check) {
-    is_access_check_ = is_access_check;
-  }
+  bool IsCancellation() const;
   bool IsAccessCheck() const { return is_access_check_; }
-
-  void SetIsTimeout(bool is_timeout) { is_timeout_ = is_timeout; }
-  bool IsTimeout() const { return is_timeout_; }
-  void SetStaleCopyInCache(bool stale_copy_in_cache) {
-    stale_copy_in_cache_ = stale_copy_in_cache;
-  }
-  bool StaleCopyInCache() const { return stale_copy_in_cache_; }
-
-  void SetWasIgnoredByHandler(bool ignored_by_handler) {
-    was_ignored_by_handler_ = ignored_by_handler;
-  }
-  bool WasIgnoredByHandler() const { return was_ignored_by_handler_; }
-
-  void SetIsCacheMiss(bool is_cache_miss) { is_cache_miss_ = is_cache_miss; }
-  bool IsCacheMiss() const { return is_cache_miss_; }
-  bool WasBlockedByResponse() const {
-    return error_code_ == net::ERR_BLOCKED_BY_RESPONSE;
-  }
-
-  void SetShouldCollapseInitiator(bool should_collapse_initiator) {
-    should_collapse_initiator_ = should_collapse_initiator;
-  }
+  bool HasCopyInCache() const { return has_copy_in_cache_; }
+  bool IsTimeout() const;
+  bool IsCacheMiss() const;
+  bool WasBlockedByResponse() const;
   bool ShouldCollapseInitiator() const { return should_collapse_initiator_; }
+
+  WTF::Optional<network::CORSErrorStatus> CORSErrorStatus() const {
+    return cors_error_status_;
+  }
+
+  operator WebURLError() const;
 
   static bool Compare(const ResourceError&, const ResourceError&);
 
+  // Net error code getters are here to avoid unpreferred header inclusion.
+  static int BlockedByXSSAuditorErrorCode();
+
  private:
-  String domain_;
+  void InitializeDescription();
+
   int error_code_;
-  String failing_url_;
+  KURL failing_url_;
   String localized_description_;
-  bool is_null_;
-  bool is_cancellation_;
-  bool is_access_check_;
-  bool is_timeout_;
-  bool stale_copy_in_cache_;
-  bool was_ignored_by_handler_;
-  bool is_cache_miss_;
-  bool should_collapse_initiator_;
+  bool is_access_check_ = false;
+  bool has_copy_in_cache_ = false;
+  bool should_collapse_initiator_ = false;
+  WTF::Optional<network::CORSErrorStatus> cors_error_status_;
 };
 
 inline bool operator==(const ResourceError& a, const ResourceError& b) {

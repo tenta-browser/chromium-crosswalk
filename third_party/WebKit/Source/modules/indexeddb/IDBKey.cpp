@@ -26,12 +26,14 @@
 #include "modules/indexeddb/IDBKey.h"
 
 #include <algorithm>
+#include "platform/wtf/Assertions.h"
+#include "public/platform/modules/indexeddb/WebIDBTypes.h"
 
 namespace blink {
 
 IDBKey::~IDBKey() {}
 
-DEFINE_TRACE(IDBKey) {
+void IDBKey::Trace(blink::Visitor* visitor) {
   visitor->Trace(array_);
 }
 
@@ -119,8 +121,15 @@ IDBKey::KeyArray IDBKey::ToMultiEntryArray() const {
             });
   const auto end = std::unique(result.begin(), result.end());
   DCHECK_LE(static_cast<size_t>(end - result.begin()), result.size());
-  result.Resize(end - result.begin());
+  result.resize(end - result.begin());
   return result;
 }
+
+STATIC_ASSERT_ENUM(kWebIDBKeyTypeInvalid, IDBKey::kInvalidType);
+STATIC_ASSERT_ENUM(kWebIDBKeyTypeArray, IDBKey::kArrayType);
+STATIC_ASSERT_ENUM(kWebIDBKeyTypeBinary, IDBKey::kBinaryType);
+STATIC_ASSERT_ENUM(kWebIDBKeyTypeString, IDBKey::kStringType);
+STATIC_ASSERT_ENUM(kWebIDBKeyTypeDate, IDBKey::kDateType);
+STATIC_ASSERT_ENUM(kWebIDBKeyTypeNumber, IDBKey::kNumberType);
 
 }  // namespace blink

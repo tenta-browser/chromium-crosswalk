@@ -10,13 +10,20 @@
 #include <memory>
 #include <string>
 
+#include "base/callback.h"
 #include "base/observer_list.h"
 #include "base/strings/string16.h"
+#include "components/viz/common/surfaces/surface_id.h"
 #include "ui/aura/aura_export.h"
 #include "ui/base/class_property.h"
 
+namespace cc {
+class LayerTreeFrameSink;
+}
+
 namespace gfx {
 class Rect;
+class Transform;
 }
 
 namespace aura {
@@ -37,7 +44,8 @@ class AURA_EXPORT WindowPort {
   // Called from Window::Init().
   virtual void OnPreInit(Window* window) = 0;
 
-  virtual void OnDeviceScaleFactorChanged(float device_scale_factor) = 0;
+  virtual void OnDeviceScaleFactorChanged(float old_device_scale_factor,
+                                          float new_device_scale_factor) = 0;
 
   // Called when a window is being added as a child. |child| may already have
   // a parent, but its parent is not the Window this WindowPort is associated
@@ -58,6 +66,9 @@ class AURA_EXPORT WindowPort {
   virtual void OnDidChangeBounds(const gfx::Rect& old_bounds,
                                  const gfx::Rect& new_bounds) = 0;
 
+  virtual void OnDidChangeTransform(const gfx::Transform& old_transform,
+                                    const gfx::Transform& new_transform) = 0;
+
   // Called before a property is changed. The return value from this is supplied
   // into OnPropertyChanged() so that WindowPort may pass data between the two
   // calls.
@@ -69,6 +80,34 @@ class AURA_EXPORT WindowPort {
   virtual void OnPropertyChanged(const void* key,
                                  int64_t old_value,
                                  std::unique_ptr<ui::PropertyData> data) = 0;
+
+  // Called for creating a cc::LayerTreeFrameSink for the window.
+  virtual std::unique_ptr<cc::LayerTreeFrameSink>
+  CreateLayerTreeFrameSink() = 0;
+
+  // Get the current viz::SurfaceId.
+  virtual viz::SurfaceId GetSurfaceId() const = 0;
+
+  // Forces the window to allocate a new viz::LocalSurfaceId for the next
+  // CompositorFrame submission in anticipation of a synchronization operation
+  // that does not involve a resize or a device scale factor change.
+  virtual void AllocateLocalSurfaceId() = 0;
+
+  // Gets the current viz::LocalSurfaceId. The viz::LocalSurfaceId is allocated
+  // lazily on call, and will be updated on changes to size or device scale
+  // factor.
+  virtual const viz::LocalSurfaceId& GetLocalSurfaceId() = 0;
+
+  // This can return invalid FrameSinkId.
+  virtual viz::FrameSinkId GetFrameSinkId() const = 0;
+
+  virtual void OnWindowAddedToRootWindow() = 0;
+  virtual void OnWillRemoveWindowFromRootWindow() = 0;
+
+  virtual void OnEventTargetingPolicyChanged() = 0;
+
+  // See description of function with same name in transient_window_client.
+  virtual bool ShouldRestackTransientChildren() = 0;
 
  protected:
   // Returns the WindowPort associated with a Window.

@@ -7,11 +7,14 @@
 #import <CoreBluetooth/CoreBluetooth.h>
 #import <CoreLocation/CoreLocation.h>
 
-#include "base/mac/scoped_nsobject.h"
 #include "base/metrics/histogram_macros.h"
 #include "components/prefs/pref_service.h"
 #include "ios/chrome/browser/physical_web/physical_web_constants.h"
 #include "ios/chrome/browser/pref_names.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -62,8 +65,8 @@ enum PhysicalWebInitialStateIosChrome {
 @implementation PhysicalWebInitialStateRecorder {
   int preferenceState_;
   BOOL recordedState_;
-  base::scoped_nsobject<NSTimer> startupDelayTimer_;
-  base::scoped_nsobject<CBCentralManager> centralManager_;
+  NSTimer* startupDelayTimer_;
+  CBCentralManager* centralManager_;
 }
 
 - (instancetype)initWithPrefService:(PrefService*)prefService {
@@ -81,23 +84,31 @@ enum PhysicalWebInitialStateIosChrome {
 
 - (void)dealloc {
   [self invalidate];
-  [super dealloc];
 }
 
 - (void)invalidate {
-  if (startupDelayTimer_.get()) {
+  if (startupDelayTimer_) {
     [startupDelayTimer_ invalidate];
-    startupDelayTimer_.reset();
+    startupDelayTimer_ = nil;
   }
   [centralManager_ setDelegate:nil];
-  centralManager_.reset();
+  centralManager_ = nil;
 }
 
 - (void)centralManagerDidUpdateState:(CBCentralManager*)central {
   [centralManager_ setDelegate:nil];
-  centralManager_.reset();
+  centralManager_ = nil;
 
-  BOOL bluetoothEnabled = [centralManager_ state] == CBManagerStatePoweredOn;
+  BOOL bluetoothEnabled = NO;
+  if (@available(iOS 10, *)) {
+    bluetoothEnabled = [centralManager_ state] == CBManagerStatePoweredOn;
+  }
+#if !defined(__IPHONE_10_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_10_0
+  else {
+    bluetoothEnabled = (CBCentralManagerState)[centralManager_ state] ==
+                       CBCentralManagerStatePoweredOn;
+  }
+#endif
 
   BOOL locationServicesEnabled = [CLLocationManager locationServicesEnabled];
 
@@ -117,20 +128,20 @@ enum PhysicalWebInitialStateIosChrome {
     return;
   }
   recordedState_ = YES;
-  startupDelayTimer_.reset(
-      [[NSTimer scheduledTimerWithTimeInterval:kStartupDelaySeconds
-                                        target:self
-                                      selector:@selector(startupDelayElapsed:)
-                                      userInfo:nil
-                                       repeats:NO] retain]);
+  startupDelayTimer_ =
+      [NSTimer scheduledTimerWithTimeInterval:kStartupDelaySeconds
+                                       target:self
+                                     selector:@selector(startupDelayElapsed:)
+                                     userInfo:nil
+                                      repeats:NO];
 }
 
 - (void)startupDelayElapsed:(NSTimer*)timer {
-  startupDelayTimer_.reset();
+  startupDelayTimer_ = nil;
 
   // The Bluetooth enabled state must be checked asynchronously. When the state
   // is ready, it will call our centralManagerDidUpdateState method.
-  centralManager_.reset([[CBCentralManager alloc]
+  centralManager_ = [[CBCentralManager alloc]
       initWithDelegate:self
                  queue:dispatch_get_main_queue()
                options:@{
@@ -139,7 +150,7 @@ enum PhysicalWebInitialStateIosChrome {
                  // Passing ShowPowerAlert=NO disables the prompt so we can
                  // check the Bluetooth enabled state silently.
                  CBCentralManagerOptionShowPowerAlertKey : @NO
-               }]);
+               }];
 }
 
 - (void)recordStateWithPreferenceState:(int)preferenceState
@@ -163,8 +174,10 @@ enum PhysicalWebInitialStateIosChrome {
   }
 
   DCHECK(state < PHYSICAL_WEB_INITIAL_STATE_COUNT);
-  UMA_HISTOGRAM_ENUMERATION("PhysicalWeb.InitialState.IosChrome", state,
-                            PHYSICAL_WEB_INITIAL_STATE_COUNT);
+  UMA_HISTOGRAM_ENUMERATION(
+      "PhysicalWeb.InitialState.IosChrome",
+      static_cast<PhysicalWebInitialStateIosChrome>(state),
+      PHYSICAL_WEB_INITIAL_STATE_COUNT);
 }
 
 @end

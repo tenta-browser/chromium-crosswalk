@@ -4,10 +4,12 @@
 
 #include "chromeos/dbus/fake_shill_profile_client.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
@@ -38,9 +40,9 @@ void PassDictionary(
 
 }  // namespace
 
-FakeShillProfileClient::FakeShillProfileClient() {}
+FakeShillProfileClient::FakeShillProfileClient() = default;
 
-FakeShillProfileClient::~FakeShillProfileClient() {}
+FakeShillProfileClient::~FakeShillProfileClient() = default;
 
 void FakeShillProfileClient::Init(dbus::Bus* bus) {}
 
@@ -62,14 +64,16 @@ void FakeShillProfileClient::GetProperties(
   if (!profile)
     return;
 
-  std::unique_ptr<base::DictionaryValue> properties(
-      profile->properties.DeepCopy());
-  base::ListValue* entry_paths = new base::ListValue;
-  properties->SetWithoutPathExpansion(shill::kEntriesProperty, entry_paths);
+  auto entry_paths = std::make_unique<base::ListValue>();
   for (base::DictionaryValue::Iterator it(profile->entries); !it.IsAtEnd();
        it.Advance()) {
     entry_paths->AppendString(it.key());
   }
+
+  std::unique_ptr<base::DictionaryValue> properties =
+      profile->properties.CreateDeepCopy();
+  properties->SetWithoutPathExpansion(shill::kEntriesProperty,
+                                      std::move(entry_paths));
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
@@ -133,9 +137,8 @@ void FakeShillProfileClient::AddProfile(const std::string& profile_path,
   CHECK(profile_path != GetSharedProfilePath() || profiles_.empty())
       << "Shared profile must be added before any user profile.";
 
-  auto profile = base::MakeUnique<ProfileProperties>();
-  profile->properties.SetStringWithoutPathExpansion(shill::kUserHashProperty,
-                                                    userhash);
+  auto profile = std::make_unique<ProfileProperties>();
+  profile->properties.SetKey(shill::kUserHashProperty, base::Value(userhash));
   profile->path = profile_path;
   profiles_.emplace_back(std::move(profile));
 
@@ -149,7 +152,7 @@ void FakeShillProfileClient::AddEntry(const std::string& profile_path,
   ProfileProperties* profile = GetProfile(dbus::ObjectPath(profile_path),
                                           ErrorCallback());
   DCHECK(profile);
-  profile->entries.SetWithoutPathExpansion(entry_path, properties.DeepCopy());
+  profile->entries.SetKey(entry_path, properties.Clone());
   DBusThreadManager::Get()->GetShillManagerClient()->GetTestInterface()->
       AddManagerService(entry_path, true);
 }
@@ -211,8 +214,7 @@ bool FakeShillProfileClient::AddOrUpdateServiceImpl(
     return false;
   }
 
-  profile->entries.SetWithoutPathExpansion(service_path,
-                                           service_properties->DeepCopy());
+  profile->entries.SetKey(service_path, service_properties->Clone());
   return true;
 }
 

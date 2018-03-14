@@ -11,13 +11,12 @@
 #include <memory>
 #include <string>
 
-#include "base/files/file.h"
 #include "base/memory/weak_ptr.h"
-#include "media/audio/audio_debug_file_writer.h"
-#include "media/audio/audio_io.h"
-#include "media/audio/audio_manager_base.h"
-#include "media/base/audio_bus.h"
+#include "base/optional.h"
+#include "base/strings/string_piece.h"
+#include "base/timer/timer.h"
 #include "media/base/audio_parameters.h"
+#include "media/base/media_export.h"
 
 // An AudioInputController controls an AudioInputStream and records data
 // from this input stream. The two main methods are Record() and Close() and
@@ -65,7 +64,16 @@
 // audio thread, the controller must not add or release references to the
 // AudioManager or itself (since it in turn holds a reference to the manager).
 //
+
+namespace base {
+class SingleThreadTaskRunner;
+}
+
 namespace media {
+
+class AudioInputStream;
+class AudioManager;
+class AudioBus;
 
 // Only do power monitoring for non-mobile platforms to save resources.
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
@@ -100,11 +108,14 @@ class MEDIA_EXPORT AudioInputController
   // following methods are all called on the audio thread.
   class MEDIA_EXPORT EventHandler {
    public:
-    virtual void OnCreated(AudioInputController* controller) = 0;
-    virtual void OnError(AudioInputController* controller,
-                         ErrorCode error_code) = 0;
-    virtual void OnLog(AudioInputController* controller,
-                       const std::string& message) = 0;
+    // The initial "muted" state of the underlying stream is sent along with the
+    // OnCreated callback, to avoid the stream being treated as unmuted until an
+    // OnMuted callback has had time to be processed.
+    virtual void OnCreated(bool initially_muted) = 0;
+    virtual void OnError(ErrorCode error_code) = 0;
+    virtual void OnLog(base::StringPiece) = 0;
+    // Called whenever the muted state of the underlying stream changes.
+    virtual void OnMuted(bool is_muted) = 0;
 
    protected:
     virtual ~EventHandler() {}
@@ -120,7 +131,7 @@ class MEDIA_EXPORT AudioInputController
     virtual void Write(const AudioBus* data,
                        double volume,
                        bool key_pressed,
-                       uint32_t hardware_delay_bytes) = 0;
+                       base::TimeTicks capture_time) = 0;
 
     // Close this synchronous writer.
     virtual void Close() = 0;
@@ -161,8 +172,6 @@ class MEDIA_EXPORT AudioInputController
   // The audio device will be created on the audio thread, and when that is
   // done, the event handler will receive an OnCreated() call from that same
   // thread. |user_input_monitor| is used for typing detection and can be NULL.
-  // |file_task_runner| is used for debug recordings.
-  // TODO(grunell): Move handling of debug recording to AudioManager.
   static scoped_refptr<AudioInputController> Create(
       AudioManager* audio_manager,
       EventHandler* event_handler,
@@ -171,23 +180,19 @@ class MEDIA_EXPORT AudioInputController
       const AudioParameters& params,
       const std::string& device_id,
       // External synchronous writer for audio controller.
-      bool agc_is_enabled,
-      scoped_refptr<base::SingleThreadTaskRunner> file_task_runner);
+      bool agc_is_enabled);
 
   // Factory method for creating an AudioInputController with an existing
   // |stream|. The stream will be opened on the audio thread, and when that is
   // done, the event  handler will receive an OnCreated() call from that same
   // thread. |user_input_monitor| is used for typing detection and can be NULL.
-  // |file_task_runner| and |params| are used for debug recordings.
   static scoped_refptr<AudioInputController> CreateForStream(
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
       EventHandler* event_handler,
       AudioInputStream* stream,
       // External synchronous writer for audio controller.
       SyncWriter* sync_writer,
-      UserInputMonitor* user_input_monitor,
-      scoped_refptr<base::SingleThreadTaskRunner> file_task_runner,
-      const AudioParameters& params);
+      UserInputMonitor* user_input_monitor);
 
   // Starts recording using the created audio input stream.
   // This method is called on the creator thread.
@@ -201,17 +206,11 @@ class MEDIA_EXPORT AudioInputController
   // It is safe to call this method more than once. Calls after the first one
   // will have no effect.
   // This method trampolines to the audio thread.
-  virtual void Close(const base::Closure& closed_task);
+  virtual void Close(base::OnceClosure closed_task);
 
   // Sets the capture volume of the input stream. The value 0.0 corresponds
   // to muted and 1.0 to maximum volume.
   virtual void SetVolume(double volume);
-
-  // Enable debug recording of audio input.
-  virtual void EnableDebugRecording(const base::FilePath& file_name);
-
-  // Disable debug recording of audio input.
-  virtual void DisableDebugRecording();
 
  protected:
   friend class base::RefCountedThreadSafe<AudioInputController>;
@@ -256,14 +255,12 @@ class MEDIA_EXPORT AudioInputController
   };
 #endif
 
-  AudioInputController(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-      EventHandler* handler,
-      SyncWriter* sync_writer,
-      UserInputMonitor* user_input_monitor,
-      const AudioParameters& params,
-      StreamType type,
-      scoped_refptr<base::SingleThreadTaskRunner> file_task_runner);
+  AudioInputController(scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+                       EventHandler* handler,
+                       SyncWriter* sync_writer,
+                       UserInputMonitor* user_input_monitor,
+                       const AudioParameters& params,
+                       StreamType type);
   virtual ~AudioInputController();
 
   const scoped_refptr<base::SingleThreadTaskRunner>& GetTaskRunnerForTesting()
@@ -301,14 +298,6 @@ class MEDIA_EXPORT AudioInputController
   // Logs whether an error was encountered suring the stream.
   void LogCallbackError();
 
-  // Enable and disable debug recording of audio input. Called on the audio
-  // thread.
-  void DoEnableDebugRecording(const base::FilePath& file_name);
-  void DoDisableDebugRecording();
-
-  // Called on the audio thread.
-  void WriteInputDataForDebugging(std::unique_ptr<AudioBus> data);
-
   // Called by the stream with log messages.
   void LogMessage(const std::string& message);
 
@@ -326,6 +315,8 @@ class MEDIA_EXPORT AudioInputController
                        double volume,
                        float* average_power_dbfs,
                        int* mic_volume_percent);
+
+  void CheckMutedState();
 
   static StreamType ParamsToStreamType(const AudioParameters& params);
 
@@ -371,8 +362,8 @@ class MEDIA_EXPORT AudioInputController
   // Time when the stream started recording.
   base::TimeTicks stream_create_time_;
 
-  // Used for audio debug recordings. Accessed on audio thread.
-  const std::unique_ptr<AudioDebugFileWriter> debug_writer_;
+  bool is_muted_ = false;
+  base::RepeatingTimer check_muted_state_timer_;
 
   class AudioCallback;
   // Holds a pointer to the callback object that receives audio data from

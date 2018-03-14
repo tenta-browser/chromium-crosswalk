@@ -27,8 +27,7 @@
 #ifndef XPathExpression_h
 #define XPathExpression_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "platform/heap/Handle.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/Forward.h"
 
 namespace blink {
@@ -43,8 +42,7 @@ namespace XPath {
 class Expression;
 }
 
-class XPathExpression : public GarbageCollected<XPathExpression>,
-                        public ScriptWrappable {
+class XPathExpression : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -58,7 +56,7 @@ class XPathExpression : public GarbageCollected<XPathExpression>,
                         const ScriptValue&,
                         ExceptionState&);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   XPathExpression();

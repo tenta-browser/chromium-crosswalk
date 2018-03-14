@@ -17,13 +17,13 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "build/build_config.h"
 #include "content/browser/download/download_manager_impl.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/web_contents.h"
@@ -38,6 +38,7 @@
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/browser/shell_network_delegate.h"
+#include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -62,12 +63,10 @@ class ResourceDispatcherHostBrowserTest : public ContentBrowserTest,
     base::FilePath path = GetTestFilePath("", "");
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(
-            &net::URLRequestMockHTTPJob::AddUrlHandlers, path,
-            make_scoped_refptr(content::BrowserThread::GetBlockingPool())));
+        base::BindOnce(&net::URLRequestMockHTTPJob::AddUrlHandlers, path));
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&net::URLRequestFailedJob::AddUrlHandler));
+        base::BindOnce(&net::URLRequestFailedJob::AddUrlHandler));
   }
 
   void OnDownloadCreated(DownloadManager* manager,
@@ -76,8 +75,7 @@ class ResourceDispatcherHostBrowserTest : public ContentBrowserTest,
       got_downloads_ = !!manager->InProgressCount();
   }
 
-  void CheckTitleTest(const GURL& url,
-                      const std::string& expected_title) {
+  void CheckTitleTest(const GURL& url, const std::string& expected_title) {
     base::string16 expected_title16(ASCIIToUTF16(expected_title));
     TitleWatcher title_watcher(shell()->web_contents(), expected_title16);
     NavigateToURL(shell(), url);
@@ -99,8 +97,8 @@ class ResourceDispatcherHostBrowserTest : public ContentBrowserTest,
   }
 
   std::string GetCookies(const GURL& url) {
-    return content::GetCookies(
-        shell()->web_contents()->GetBrowserContext(), url);
+    return content::GetCookies(shell()->web_contents()->GetBrowserContext(),
+                               url);
   }
 
   bool got_downloads() const { return got_downloads_; }
@@ -118,7 +116,7 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest, DynamicTitle1) {
   base::string16 title;
   ASSERT_TRUE(GetPopupTitle(url, &title));
   EXPECT_TRUE(base::StartsWith(title, ASCIIToUTF16("My Popup Title"),
-              base::CompareCase::SENSITIVE))
+                               base::CompareCase::SENSITIVE))
       << "Actual title: " << title;
 }
 
@@ -166,7 +164,8 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
                        SniffNoContentTypeNoData) {
   // Make sure no downloads start.
   BrowserContext::GetDownloadManager(
-      shell()->web_contents()->GetBrowserContext())->AddObserver(this);
+      shell()->web_contents()->GetBrowserContext())
+      ->AddObserver(this);
   CheckTitleTest(
       net::URLRequestMockHTTPJob::GetMockUrl("content-sniffer-test3.html"),
       "Content Sniffer Test 3");
@@ -191,8 +190,8 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
 // Test for bug #1091358.
 IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest, SyncXMLHttpRequest) {
   ASSERT_TRUE(embedded_test_server()->Start());
-  NavigateToURL(
-      shell(), embedded_test_server()->GetURL("/sync_xmlhttprequest.html"));
+  NavigateToURL(shell(),
+                embedded_test_server()->GetURL("/sync_xmlhttprequest.html"));
 
   // Let's check the XMLHttpRequest ran successfully.
   bool success = false;
@@ -206,9 +205,8 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest, SyncXMLHttpRequest) {
 IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
                        SyncXMLHttpRequest_Disallowed) {
   ASSERT_TRUE(embedded_test_server()->Start());
-  NavigateToURL(
-      shell(),
-      embedded_test_server()->GetURL("/sync_xmlhttprequest_disallowed.html"));
+  NavigateToURL(shell(), embedded_test_server()->GetURL(
+                             "/sync_xmlhttprequest_disallowed.html"));
 
   // Let's check the XMLHttpRequest ran successfully.
   bool success = false;
@@ -231,7 +229,8 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
                        MAYBE_SyncXMLHttpRequest_DuringUnload) {
   ASSERT_TRUE(embedded_test_server()->Start());
   BrowserContext::GetDownloadManager(
-      shell()->web_contents()->GetBrowserContext())->AddObserver(this);
+      shell()->web_contents()->GetBrowserContext())
+      ->AddObserver(this);
 
   CheckTitleTest(
       embedded_test_server()->GetURL("/sync_xmlhttprequest_during_unload.html"),
@@ -239,8 +238,8 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
 
   // Navigate to a new page, to dispatch unload event and trigger xhr.
   // (the bug would make this step hang the renderer).
-  CheckTitleTest(
-      embedded_test_server()->GetURL("/title2.html"), "Title Of Awesomeness");
+  CheckTitleTest(embedded_test_server()->GetURL("/title2.html"),
+                 "Title Of Awesomeness");
 
   ASSERT_FALSE(got_downloads());
 }
@@ -257,13 +256,12 @@ std::unique_ptr<net::test_server::HttpResponse> CancelOnRequest(
     return nullptr;
 
   content::BrowserThread::PostTask(
-      content::BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&ResourceDispatcherHostImpl::CancelRequestsForProcess,
-                 base::Unretained(ResourceDispatcherHostImpl::Get()),
-                 child_id));
+      content::BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&ResourceDispatcherHostImpl::CancelRequestsForProcess,
+                     base::Unretained(ResourceDispatcherHostImpl::Get()),
+                     child_id));
 
-  return base::MakeUnique<net::test_server::HungResponse>();
+  return std::make_unique<net::test_server::HungResponse>();
 }
 
 }  // namespace
@@ -273,9 +271,9 @@ std::unique_ptr<net::test_server::HttpResponse> CancelOnRequest(
 // response to call to AsyncResourceHandler::OnResponseComplete.
 IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
                        SyncXMLHttpRequest_Cancelled) {
-  embedded_test_server()->RegisterRequestHandler(
-      base::Bind(&CancelOnRequest, "/hung",
-                 shell()->web_contents()->GetRenderProcessHost()->GetID()));
+  embedded_test_server()->RegisterRequestHandler(base::Bind(
+      &CancelOnRequest, "/hung",
+      shell()->web_contents()->GetMainFrame()->GetProcess()->GetID()));
 
   ASSERT_TRUE(embedded_test_server()->Start());
   WaitForLoadStop(shell()->web_contents());
@@ -431,8 +429,8 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
   // TODO(creis): If this causes crashes or hangs, it might be for the same
   // reason as ErrorPageTest::DNSError.  See bug 1199491 and
   // http://crbug.com/22877.
-  GURL failed_url = net::URLRequestFailedJob::GetMockHttpUrl(
-      net::ERR_NAME_NOT_RESOLVED);
+  GURL failed_url =
+      net::URLRequestFailedJob::GetMockHttpUrl(net::ERR_NAME_NOT_RESOLVED);
   NavigateToURL(shell(), failed_url);
 
   EXPECT_NE(ASCIIToUTF16("set cookie on unload"),
@@ -456,8 +454,8 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
   bool success;
   GURL test_url(embedded_test_server()->GetURL("/title2.html"));
   std::string redirect_script = "window.location='" +
-      test_url.possibly_invalid_spec() + "';" +
-      "window.domAutomationController.send(true);";
+                                test_url.possibly_invalid_spec() + "';" +
+                                "window.domAutomationController.send(true);";
   EXPECT_TRUE(ExecuteScriptAndExtractBool(shell(), redirect_script, &success));
   EXPECT_EQ(expected_title16, title_watcher.WaitAndGetTitle());
 }
@@ -473,8 +471,8 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
   // TODO(creis): If this causes crashes or hangs, it might be for the same
   // reason as ErrorPageTest::DNSError.  See bug 1199491 and
   // http://crbug.com/22877.
-  GURL failed_url = net::URLRequestFailedJob::GetMockHttpUrl(
-      net::ERR_NAME_NOT_RESOLVED);
+  GURL failed_url =
+      net::URLRequestFailedJob::GetMockHttpUrl(net::ERR_NAME_NOT_RESOLVED);
 
   NavigateToURL(shell(), failed_url);
   EXPECT_NE(ASCIIToUTF16("Title Of Awesomeness"),
@@ -552,8 +550,8 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest, CookiePolicy) {
 class PageTransitionResourceDispatcherHostDelegate
     : public ResourceDispatcherHostDelegate {
  public:
-  PageTransitionResourceDispatcherHostDelegate(GURL watch_url)
-    : watch_url_(watch_url) {}
+  explicit PageTransitionResourceDispatcherHostDelegate(GURL watch_url)
+      : watch_url_(watch_url) {}
 
   // ResourceDispatcherHostDelegate implementation:
   void RequestBeginning(
@@ -587,12 +585,9 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
   ResourceDispatcherHost::Get()->SetDelegate(&delegate);
 
   NavigateToURLBlockUntilNavigationsComplete(
-      shell(),
-      embedded_test_server()->GetURL("/client_redirect.html"),
-      2);
+      shell(), embedded_test_server()->GetURL("/client_redirect.html"), 2);
 
-  EXPECT_TRUE(
-      delegate.page_transition() & ui::PAGE_TRANSITION_CLIENT_REDIRECT);
+  EXPECT_TRUE(delegate.page_transition() & ui::PAGE_TRANSITION_CLIENT_REDIRECT);
 }
 
 namespace {
@@ -625,8 +620,8 @@ class PreviewsStateResourceDispatcherHostDelegate
       std::vector<std::unique_ptr<ResourceThrottle>>* throttles) override {
     DCHECK_CURRENTLY_ON(BrowserThread::IO);
     const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
-    if (request->url() != main_frame_url_ && request->url() != subresource_url_
-        && request->url() != iframe_url_)
+    if (request->url() != main_frame_url_ &&
+        request->url() != subresource_url_ && request->url() != iframe_url_)
       return;
     if (request->url() == main_frame_url_) {
       EXPECT_FALSE(main_frame_url_seen_);
@@ -648,13 +643,14 @@ class PreviewsStateResourceDispatcherHostDelegate
     ResourceDispatcherHost::Get()->SetDelegate(this);
   }
 
-  PreviewsState GetPreviewsState(
-      const net::URLRequest& request,
-      content::ResourceContext* resource_context) override {
+  PreviewsState DeterminePreviewsState(
+      net::URLRequest* request,
+      content::ResourceContext* resource_context,
+      content::PreviewsState previews_to_allow) override {
     DCHECK_CURRENTLY_ON(BrowserThread::IO);
     EXPECT_FALSE(should_get_previews_state_called_);
     should_get_previews_state_called_ = true;
-    EXPECT_EQ(main_frame_url_, request.url());
+    EXPECT_EQ(main_frame_url_, request->url());
     return previews_state_;
   }
 
@@ -709,27 +705,26 @@ class PreviewsStateResourceDispatcherHostBrowserTest
         embedded_test_server()->GetURL("/title1.html")));
 
     content::BrowserThread::PostTask(
-           content::BrowserThread::IO,
-           FROM_HERE,
-           base::Bind(&PreviewsStateResourceDispatcherHostDelegate::SetDelegate,
-                      base::Unretained(delegate_.get())));
+        content::BrowserThread::IO, FROM_HERE,
+        base::BindOnce(
+            &PreviewsStateResourceDispatcherHostDelegate::SetDelegate,
+            base::Unretained(delegate_.get())));
   }
 
   void Reset(PreviewsState previews_state) {
     content::BrowserThread::PostTask(
         content::BrowserThread::IO, FROM_HERE,
-        base::Bind(&PreviewsStateResourceDispatcherHostDelegate::Reset,
-                   base::Unretained(delegate_.get()), previews_state));
+        base::BindOnce(&PreviewsStateResourceDispatcherHostDelegate::Reset,
+                       base::Unretained(delegate_.get()), previews_state));
   }
 
-  void CheckResourcesRequested(
-      bool should_get_previews_state_called) {
+  void CheckResourcesRequested(bool should_get_previews_state_called) {
     content::BrowserThread::PostTask(
         content::BrowserThread::IO, FROM_HERE,
-        base::Bind(&PreviewsStateResourceDispatcherHostDelegate::
-                       CheckResourcesRequested,
-                   base::Unretained(delegate_.get()),
-                   should_get_previews_state_called));
+        base::BindOnce(&PreviewsStateResourceDispatcherHostDelegate::
+                           CheckResourcesRequested,
+                       base::Unretained(delegate_.get()),
+                       should_get_previews_state_called));
   }
 
  private:
@@ -803,7 +798,7 @@ IN_PROC_BROWSER_TEST_F(PreviewsStateResourceDispatcherHostBrowserTest,
   // Reload with Lo-Fi disabled.
   Reset(PREVIEWS_NO_TRANSFORM);
   TestNavigationObserver tab_observer(shell()->web_contents(), 1);
-  shell()->web_contents()->GetController().Reload(ReloadType::DISABLE_LOFI_MODE,
+  shell()->web_contents()->GetController().Reload(ReloadType::DISABLE_PREVIEWS,
                                                   true);
   tab_observer.Wait();
   CheckResourcesRequested(false);
@@ -815,15 +810,23 @@ struct RequestDataForDelegate {
   const GURL url;
   const GURL first_party;
   const base::Optional<url::Origin> initiator;
+  const int load_flags;
+  const std::string referrer;
 
   RequestDataForDelegate(const GURL& url,
                          const GURL& first_party,
-                         const base::Optional<url::Origin>& initiator)
-      : url(url), first_party(first_party), initiator(initiator) {}
+                         const base::Optional<url::Origin>& initiator,
+                         int load_flags,
+                         const std::string& referrer)
+      : url(url),
+        first_party(first_party),
+        initiator(initiator),
+        load_flags(load_flags),
+        referrer(referrer) {}
 };
 
 // Captures calls to 'RequestBeginning' and records the URL, first-party for
-// cookies, and initiator.
+// cookies, initiator, load flags, and referrer.
 class RequestDataResourceDispatcherHostDelegate
     : public ResourceDispatcherHostDelegate {
  public:
@@ -840,9 +843,9 @@ class RequestDataResourceDispatcherHostDelegate
       AppCacheService* appcache_service,
       ResourceType resource_type,
       std::vector<std::unique_ptr<ResourceThrottle>>* throttles) override {
-    requests_.push_back(base::MakeUnique<RequestDataForDelegate>(
-        request->url(), request->first_party_for_cookies(),
-        request->initiator()));
+    requests_.push_back(std::make_unique<RequestDataForDelegate>(
+        request->url(), request->site_for_cookies(), request->initiator(),
+        request->load_flags(), request->referrer()));
   }
 
   void SetDelegate() { ResourceDispatcherHost::Get()->SetDelegate(this); }
@@ -871,8 +874,9 @@ class RequestDataResourceDispatcherHostBrowserTest : public ContentBrowserTest {
 
     content::BrowserThread::PostTask(
         content::BrowserThread::IO, FROM_HERE,
-        base::Bind(&RequestDataResourceDispatcherHostDelegate::SetDelegate,
-                   base::Unretained(delegate_.get())));
+        base::BindOnce(&RequestDataResourceDispatcherHostDelegate::SetDelegate,
+                       base::Unretained(delegate_.get())));
+    host_resolver()->AddRule("*", "127.0.0.1");
   }
 
  protected:
@@ -881,7 +885,7 @@ class RequestDataResourceDispatcherHostBrowserTest : public ContentBrowserTest {
 
 IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest, Basic) {
   GURL top_url(embedded_test_server()->GetURL("/page_with_subresources.html"));
-  url::Origin top_origin(top_url);
+  url::Origin top_origin = url::Origin::Create(top_url);
 
   NavigateToURLBlockUntilNavigationsComplete(shell(), top_url, 1);
 
@@ -911,14 +915,43 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest, Basic) {
 }
 
 IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
+                       LinkRelPrefetch) {
+  GURL top_url(embedded_test_server()->GetURL("/link_rel_prefetch.html"));
+  url::Origin top_origin = url::Origin::Create(top_url);
+
+  NavigateToURLBlockUntilNavigationsComplete(shell(), top_url, 1);
+
+  EXPECT_EQ(2u, delegate_->data().size());
+  auto* request = delegate_->data()[1].get();
+  EXPECT_EQ(top_origin, request->initiator);
+  EXPECT_EQ(top_url, request->referrer);
+  EXPECT_TRUE(request->load_flags & net::LOAD_PREFETCH);
+}
+
+IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
+                       LinkRelPrefetchReferrerPolicy) {
+  GURL top_url(embedded_test_server()->GetURL(
+      "/link_rel_prefetch_referrer_policy.html"));
+  url::Origin top_origin = url::Origin::Create(top_url);
+
+  NavigateToURLBlockUntilNavigationsComplete(shell(), top_url, 1);
+
+  EXPECT_EQ(2u, delegate_->data().size());
+  auto* request = delegate_->data()[1].get();
+  EXPECT_EQ(top_origin, request->initiator);
+  // Respect the "origin" policy set by the <meta> tag.
+  EXPECT_EQ(top_url.GetOrigin().spec(), request->referrer);
+  EXPECT_TRUE(request->load_flags & net::LOAD_PREFETCH);
+}
+
+IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
                        BasicCrossSite) {
-  host_resolver()->AddRule("*", "127.0.0.1");
   GURL top_url(embedded_test_server()->GetURL(
       "a.com", "/nested_page_with_subresources.html"));
   GURL nested_url(embedded_test_server()->GetURL(
       "not-a.com", "/page_with_subresources.html"));
-  url::Origin top_origin(top_url);
-  url::Origin nested_origin(nested_url);
+  url::Origin top_origin = url::Origin::Create(top_url);
+  url::Origin nested_origin = url::Origin::Create(nested_url);
 
   NavigateToURLBlockUntilNavigationsComplete(shell(), top_url, 1);
 
@@ -956,7 +989,7 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
   GURL top_url(embedded_test_server()->GetURL("/page_with_iframe.html"));
   GURL image_url(embedded_test_server()->GetURL("/image.jpg"));
   GURL nested_url(embedded_test_server()->GetURL("/title1.html"));
-  url::Origin top_origin(top_url);
+  url::Origin top_origin = url::Origin::Create(top_url);
 
   NavigateToURLBlockUntilNavigationsComplete(shell(), top_url, 1);
 
@@ -991,7 +1024,7 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
                        SameOriginAuxiliary) {
   GURL top_url(embedded_test_server()->GetURL("/simple_links.html"));
   GURL auxiliary_url(embedded_test_server()->GetURL("/title2.html"));
-  url::Origin top_origin(top_url);
+  url::Origin top_origin = url::Origin::Create(top_url);
 
   NavigateToURLBlockUntilNavigationsComplete(shell(), top_url, 1);
 
@@ -1030,7 +1063,7 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
                        CrossOriginAuxiliary) {
   GURL top_url(embedded_test_server()->GetURL("/simple_links.html"));
   GURL auxiliary_url(embedded_test_server()->GetURL("foo.com", "/title2.html"));
-  url::Origin top_origin(top_url);
+  url::Origin top_origin = url::Origin::Create(top_url);
 
   NavigateToURLBlockUntilNavigationsComplete(shell(), top_url, 1);
 
@@ -1078,7 +1111,7 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
   // Navigating to this URL will fail, as we haven't taught the host resolver
   // about 'a.com'.
   GURL top_url(embedded_test_server()->GetURL("a.com", "/simple_page.html"));
-  url::Origin top_origin(top_url);
+  url::Origin top_origin = url::Origin::Create(top_url);
 
   NavigateToURLBlockUntilNavigationsComplete(shell(), top_url, 1);
 
@@ -1099,7 +1132,6 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
                        CrossOriginNested) {
-  host_resolver()->AddRule("*", "127.0.0.1");
   GURL top_url(embedded_test_server()->GetURL(
       "a.com", "/cross_site_iframe_factory.html?a(b)"));
   GURL top_js_url(
@@ -1108,8 +1140,8 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
       "b.com", "/cross_site_iframe_factory.html?b()"));
   GURL nested_js_url(
       embedded_test_server()->GetURL("b.com", "/tree_parser_util.js"));
-  url::Origin top_origin(top_url);
-  url::Origin nested_origin(nested_url);
+  url::Origin top_origin = url::Origin::Create(top_url);
+  url::Origin nested_origin = url::Origin::Create(nested_url);
 
   NavigateToURLBlockUntilNavigationsComplete(shell(), top_url, 1);
 

@@ -91,11 +91,62 @@ static inline bool HasIdenticalLineHeightProperties(
          child_style.VerticalAlign() == EVerticalAlign::kBaseline;
 }
 
+inline bool InlineFlowBox::HasEmphasisMarkBefore(
+    const InlineTextBox* text_box) const {
+  TextEmphasisPosition emphasis_mark_position;
+  const auto& style =
+      text_box->GetLineLayoutItem().StyleRef(IsFirstLineStyle());
+  if (!text_box->GetEmphasisMarkPosition(style, emphasis_mark_position))
+    return false;
+  if (IsHorizontal()) {
+    return emphasis_mark_position == TextEmphasisPosition::kOverRight ||
+           emphasis_mark_position == TextEmphasisPosition::kOverLeft;
+  }
+  if (style.IsFlippedLinesWritingMode()) {
+    return emphasis_mark_position == TextEmphasisPosition::kOverLeft ||
+           emphasis_mark_position == TextEmphasisPosition::kUnderLeft;
+  }
+  if (style.IsFlippedBlocksWritingMode()) {
+    return emphasis_mark_position == TextEmphasisPosition::kOverRight ||
+           emphasis_mark_position == TextEmphasisPosition::kUnderRight;
+  }
+  return false;
+}
+
+inline bool InlineFlowBox::HasEmphasisMarkOver(
+    const InlineTextBox* text_box) const {
+  TextEmphasisPosition emphasis_mark_position;
+  if (!text_box->GetEmphasisMarkPosition(
+          text_box->GetLineLayoutItem().StyleRef(IsFirstLineStyle()),
+          emphasis_mark_position))
+    return false;
+
+  return IsHorizontal()
+             ? emphasis_mark_position == TextEmphasisPosition::kOverRight ||
+                   emphasis_mark_position == TextEmphasisPosition::kOverLeft
+             : emphasis_mark_position == TextEmphasisPosition::kOverRight ||
+                   emphasis_mark_position == TextEmphasisPosition::kUnderRight;
+}
+
+inline bool InlineFlowBox::HasEmphasisMarkUnder(
+    const InlineTextBox* text_box) const {
+  TextEmphasisPosition emphasis_mark_position;
+  if (!text_box->GetEmphasisMarkPosition(
+          text_box->GetLineLayoutItem().StyleRef(IsFirstLineStyle()),
+          emphasis_mark_position))
+    return false;
+
+  return IsHorizontal()
+             ? emphasis_mark_position == TextEmphasisPosition::kUnderRight ||
+                   emphasis_mark_position == TextEmphasisPosition::kUnderLeft
+             : emphasis_mark_position == TextEmphasisPosition::kOverLeft ||
+                   emphasis_mark_position == TextEmphasisPosition::kUnderLeft;
+}
+
 void InlineFlowBox::AddToLine(InlineBox* child) {
   DCHECK(!child->Parent());
   DCHECK(!child->NextOnLine());
   DCHECK(!child->PrevOnLine());
-  CheckConsistency();
 
   child->SetParent(this);
   if (!first_child_) {
@@ -134,7 +185,7 @@ void InlineFlowBox::AddToLine(InlineBox* child) {
           should_clear_descendants_have_same_line_height_and_baseline = true;
       }
       if (child_style.HasTextCombine() ||
-          child_style.GetTextEmphasisMark() != kTextEmphasisMarkNone)
+          child_style.GetTextEmphasisMark() != TextEmphasisMark::kNone)
         should_clear_descendants_have_same_line_height_and_baseline = true;
     } else {
       if (child->GetLineLayoutItem().IsBR()) {
@@ -167,7 +218,7 @@ void InlineFlowBox::AddToLine(InlineBox* child) {
       const ComputedStyle& child_style =
           child->GetLineLayoutItem().StyleRef(IsFirstLineStyle());
       if (child_style.LetterSpacing() < 0 || child_style.TextShadow() ||
-          child_style.GetTextEmphasisMark() != kTextEmphasisMarkNone ||
+          child_style.GetTextEmphasisMark() != TextEmphasisMark::kNone ||
           child_style.TextStrokeWidth())
         child->ClearKnownToHaveNoOverflow();
     } else if (child->GetLineLayoutItem().IsAtomicInlineLevel()) {
@@ -195,13 +246,9 @@ void InlineFlowBox::AddToLine(InlineBox* child) {
         !ToInlineFlowBox(child)->KnownToHaveNoOverflow())
       ClearKnownToHaveNoOverflow();
   }
-
-  CheckConsistency();
 }
 
 void InlineFlowBox::RemoveChild(InlineBox* child, MarkLineBoxes mark_dirty) {
-  CheckConsistency();
-
   if (mark_dirty == kMarkLineBoxesDirty && !IsDirty())
     DirtyLineBoxes();
 
@@ -217,8 +264,6 @@ void InlineFlowBox::RemoveChild(InlineBox* child, MarkLineBoxes mark_dirty) {
     child->PrevOnLine()->SetNextOnLine(child->NextOnLine());
 
   child->SetParent(nullptr);
-
-  CheckConsistency();
 }
 
 void InlineFlowBox::DeleteLine() {
@@ -339,7 +384,7 @@ void InlineFlowBox::DetermineSpacingForFlowBoxes(
     if (!line_box_list->FirstLineBox()->IsConstructed() &&
         !GetLineLayoutItem().IsInlineElementContinuation()) {
       if (GetLineLayoutItem().Style()->BoxDecorationBreak() ==
-          kBoxDecorationBreakClone)
+          EBoxDecorationBreak::kClone)
         include_left_edge = include_right_edge = true;
       else if (ltr && line_box_list->FirstLineBox() == this)
         include_left_edge = true;
@@ -368,7 +413,7 @@ void InlineFlowBox::DetermineSpacingForFlowBoxes(
       // (4) The decoration break is set to clone therefore there will be
       //     borders on every sides.
       if (GetLineLayoutItem().Style()->BoxDecorationBreak() ==
-          kBoxDecorationBreakClone) {
+          EBoxDecorationBreak::kClone) {
         include_left_edge = include_right_edge = true;
       } else if (ltr) {
         if (!NextLineBox() && ((last_line || is_last_object_on_line) &&
@@ -525,12 +570,12 @@ FontBaseline InlineFlowBox::DominantBaseline() const {
   return kAlphabeticBaseline;
 }
 
-void InlineFlowBox::AdjustMaxAscentAndDescent(int& max_ascent,
-                                              int& max_descent,
+void InlineFlowBox::AdjustMaxAscentAndDescent(LayoutUnit& max_ascent,
+                                              LayoutUnit& max_descent,
                                               int max_position_top,
                                               int max_position_bottom) {
-  int original_max_ascent = max_ascent;
-  int original_max_descent = max_descent;
+  LayoutUnit original_max_ascent(max_ascent);
+  LayoutUnit original_max_descent(max_descent);
   for (InlineBox* curr = FirstChild(); curr; curr = curr->NextOnLine()) {
     // The computed lineheight needs to be extended for the
     // positioned elements
@@ -564,8 +609,8 @@ void InlineFlowBox::ComputeLogicalBoxHeights(
     RootInlineBox* root_box,
     LayoutUnit& max_position_top,
     LayoutUnit& max_position_bottom,
-    int& max_ascent,
-    int& max_descent,
+    LayoutUnit& max_ascent,
+    LayoutUnit& max_descent,
     bool& set_max_ascent,
     bool& set_max_descent,
     bool no_quirks_mode,
@@ -600,8 +645,8 @@ void InlineFlowBox::ComputeLogicalBoxHeights(
 
   if (IsRootInlineBox()) {
     // Examine our root box.
-    int ascent = 0;
-    int descent = 0;
+    LayoutUnit ascent;
+    LayoutUnit descent;
     root_box->AscentAndDescentForBox(root_box, text_box_data_map, ascent,
                                      descent, affects_ascent, affects_descent);
     if (no_quirks_mode || HasTextChildren() ||
@@ -638,8 +683,8 @@ void InlineFlowBox::ComputeLogicalBoxHeights(
     curr->SetLogicalTop(
         root_box->VerticalPositionForBox(curr, vertical_position_cache));
 
-    int ascent = 0;
-    int descent = 0;
+    LayoutUnit ascent;
+    LayoutUnit descent;
     root_box->AscentAndDescentForBox(curr, text_box_data_map, ascent, descent,
                                      affects_ascent, affects_descent);
 
@@ -664,8 +709,8 @@ void InlineFlowBox::ComputeLogicalBoxHeights(
       // that ascent and descent (including leading), can end up being negative.
       // The setMaxAscent and setMaxDescent booleans are used to ensure that
       // we're willing to initially set maxAscent/Descent to negative values.
-      ascent -= curr->LogicalTop().Round();
-      descent += curr->LogicalTop().Round();
+      ascent -= curr->LogicalTop();
+      descent += curr->LogicalTop();
       if (affects_ascent && (max_ascent < ascent || !set_max_ascent)) {
         max_ascent = ascent;
         set_max_ascent = true;
@@ -688,7 +733,7 @@ void InlineFlowBox::ComputeLogicalBoxHeights(
 void InlineFlowBox::PlaceBoxesInBlockDirection(
     LayoutUnit top,
     LayoutUnit max_height,
-    int max_ascent,
+    LayoutUnit max_ascent,
     bool no_quirks_mode,
     LayoutUnit& line_top,
     LayoutUnit& line_bottom,
@@ -710,8 +755,7 @@ void InlineFlowBox::PlaceBoxesInBlockDirection(
     // RootInlineBoxes are always placed at pixel boundaries in their logical y
     // direction. Not doing so results in incorrect layout of text decorations,
     // most notably underlines.
-    SetLogicalTop(LayoutUnit(
-        RoundToInt(top + max_ascent - font_metrics.Ascent(baseline_type))));
+    SetLogicalTop(top + max_ascent - font_metrics.Ascent(baseline_type));
   }
 
   LayoutUnit adjustment_for_children_with_same_line_height_and_baseline;
@@ -746,7 +790,8 @@ void InlineFlowBox::PlaceBoxesInBlockDirection(
           !(inline_flow_box->DescendantsHaveSameLineHeightAndBaseline() &&
             inline_flow_box->HasTextDescendants()))
         child_affects_top_bottom_pos = false;
-      int pos_adjust = max_ascent - curr->BaselinePosition(baseline_type);
+      LayoutUnit pos_adjust =
+          max_ascent - curr->BaselinePosition(baseline_type);
       curr->SetLogicalTop(curr->LogicalTop() + top + pos_adjust);
     }
 
@@ -801,7 +846,7 @@ void InlineFlowBox::PlaceBoxesInBlockDirection(
         // been done as line layout and not done using inline-block.
         if (GetLineLayoutItem().Style()->IsFlippedLinesWritingMode() ==
             (curr->GetLineLayoutItem().Style()->GetRubyPosition() ==
-             kRubyPositionAfter))
+             RubyPosition::kAfter))
           has_annotations_before = true;
         else
           has_annotations_after = true;
@@ -830,11 +875,7 @@ void InlineFlowBox::PlaceBoxesInBlockDirection(
         if (ToInlineTextBox(curr)->GetEmphasisMarkPosition(
                 curr->GetLineLayoutItem().StyleRef(IsFirstLineStyle()),
                 emphasis_mark_position)) {
-          bool emphasis_mark_is_over =
-              emphasis_mark_position == kTextEmphasisPositionOver;
-          if (emphasis_mark_is_over != curr->GetLineLayoutItem()
-                                           .Style(IsFirstLineStyle())
-                                           ->IsFlippedLinesWritingMode())
+          if (HasEmphasisMarkBefore(ToInlineTextBox(curr)))
             has_annotations_before = true;
           else
             has_annotations_after = true;
@@ -898,58 +939,38 @@ void InlineFlowBox::PlaceBoxesInBlockDirection(
   }
 }
 
-LayoutUnit InlineFlowBox::MaxLogicalBottomForUnderline(
-    LineLayoutItem decoration_object,
-    LayoutUnit max_logical_bottom) const {
+LayoutUnit InlineFlowBox::FarthestPositionForUnderline(
+    LineLayoutItem decorating_box,
+    LineVerticalPositionType position_type,
+    FontBaseline baseline_type,
+    LayoutUnit farthest) const {
   for (InlineBox* curr = FirstChild(); curr; curr = curr->NextOnLine()) {
     if (curr->GetLineLayoutItem().IsOutOfFlowPositioned())
       continue;  // Positioned placeholders don't affect calculations.
 
     // If the text decoration isn't in effect on the child, it must be outside
     // of |decorationObject|.
-    if (!(curr->LineStyleRef().TextDecorationsInEffect() &
-          kTextDecorationUnderline))
+    if (!EnumHasFlags(curr->LineStyleRef().TextDecorationsInEffect(),
+                      TextDecoration::kUnderline))
       continue;
 
-    if (decoration_object && decoration_object.IsLayoutInline() &&
-        !IsAncestorAndWithinBlock(decoration_object, curr->GetLineLayoutItem()))
-      continue;
-
-    if (curr->IsInlineFlowBox()) {
-      max_logical_bottom = ToInlineFlowBox(curr)->MaxLogicalBottomForUnderline(
-          decoration_object, max_logical_bottom);
-    } else if (curr->IsInlineTextBox()) {
-      max_logical_bottom = std::max(max_logical_bottom, curr->LogicalBottom());
-    }
-  }
-  return max_logical_bottom;
-}
-
-LayoutUnit InlineFlowBox::MinLogicalTopForUnderline(
-    LineLayoutItem decoration_object,
-    LayoutUnit min_logical_top) const {
-  for (InlineBox* curr = FirstChild(); curr; curr = curr->NextOnLine()) {
-    if (curr->GetLineLayoutItem().IsOutOfFlowPositioned())
-      continue;  // Positioned placeholders don't affect calculations.
-
-    // If the text decoration isn't in effect on the child, it must be outside
-    // of |decorationObject|.
-    if (!(curr->LineStyleRef().TextDecorationsInEffect() &
-          kTextDecorationUnderline))
-      continue;
-
-    if (decoration_object && decoration_object.IsLayoutInline() &&
-        !IsAncestorAndWithinBlock(decoration_object, curr->GetLineLayoutItem()))
+    if (decorating_box && decorating_box.IsLayoutInline() &&
+        !IsAncestorAndWithinBlock(decorating_box, curr->GetLineLayoutItem()))
       continue;
 
     if (curr->IsInlineFlowBox()) {
-      min_logical_top = ToInlineFlowBox(curr)->MinLogicalTopForUnderline(
-          decoration_object, min_logical_top);
+      farthest = ToInlineFlowBox(curr)->FarthestPositionForUnderline(
+          decorating_box, position_type, baseline_type, farthest);
     } else if (curr->IsInlineTextBox()) {
-      min_logical_top = std::min(min_logical_top, curr->LogicalTop());
+      LayoutUnit position =
+          ToInlineTextBox(curr)->VerticalPosition(position_type, baseline_type);
+      if (IsLineOverSide(position_type))
+        farthest = std::min(farthest, position);
+      else
+        farthest = std::max(farthest, position);
     }
   }
-  return min_logical_top;
+  return farthest;
 }
 
 void InlineFlowBox::FlipLinesInBlockDirection(LayoutUnit line_top,
@@ -990,7 +1011,7 @@ inline void InlineFlowBox::AddBoxShadowVisualOverflow(
   // actually the opposite shadow that applies, since the line is "upside down"
   // in terms of block coordinates.
   LayoutRectOutsets logical_outsets(
-      outsets.LogicalOutsetsWithFlippedLines(writing_mode));
+      outsets.LineOrientationOutsetsWithFlippedLines(writing_mode));
 
   LayoutRect shadow_bounds(LogicalFrameRect());
   shadow_bounds.Expand(logical_outsets);
@@ -1014,7 +1035,7 @@ inline void InlineFlowBox::AddBorderOutsetVisualOverflow(
   // actually the opposite border that applies, since the line is "upside down"
   // in terms of block coordinates. vertical-rl is the flipped line mode.
   LayoutRectOutsets logical_outsets =
-      style.BorderImageOutsets().LogicalOutsetsWithFlippedLines(
+      style.BorderImageOutsets().LineOrientationOutsetsWithFlippedLines(
           style.GetWritingMode());
 
   if (!IncludeLogicalLeftEdge())
@@ -1047,100 +1068,52 @@ inline void InlineFlowBox::AddTextBoxVisualOverflow(
   if (text_box->KnownToHaveNoOverflow())
     return;
 
+  LayoutRectOutsets visual_rect_outsets;
   const ComputedStyle& style =
       text_box->GetLineLayoutItem().StyleRef(IsFirstLineStyle());
 
   GlyphOverflowAndFallbackFontsMap::iterator it =
-      text_box_data_map.Find(text_box);
-  GlyphOverflow* glyph_overflow =
-      it == text_box_data_map.end() ? nullptr : &it->value.second;
-  bool is_flipped_line = style.IsFlippedLinesWritingMode();
-
-  float top_glyph_edge =
-      glyph_overflow
-          ? (is_flipped_line ? glyph_overflow->bottom : glyph_overflow->top)
-          : 0;
-  float bottom_glyph_edge =
-      glyph_overflow
-          ? (is_flipped_line ? glyph_overflow->top : glyph_overflow->bottom)
-          : 0;
-  float left_glyph_edge = glyph_overflow ? glyph_overflow->left : 0;
-  float right_glyph_edge = glyph_overflow ? glyph_overflow->right : 0;
-
-  float stroke_overflow = style.TextStrokeWidth() / 2.0f;
-  float top_glyph_overflow = -stroke_overflow - top_glyph_edge;
-  float bottom_glyph_overflow = stroke_overflow + bottom_glyph_edge;
-  float left_glyph_overflow = -stroke_overflow - left_glyph_edge;
-  float right_glyph_overflow = stroke_overflow + right_glyph_edge;
-
-  TextEmphasisPosition emphasis_mark_position;
-  if (style.GetTextEmphasisMark() != kTextEmphasisMarkNone &&
-      text_box->GetEmphasisMarkPosition(style, emphasis_mark_position)) {
-    float emphasis_mark_height =
-        style.GetFont().EmphasisMarkHeight(style.TextEmphasisMarkString());
-    if ((emphasis_mark_position == kTextEmphasisPositionOver) ==
-        (!style.IsFlippedLinesWritingMode()))
-      top_glyph_overflow = std::min(top_glyph_overflow, -emphasis_mark_height);
-    else
-      bottom_glyph_overflow =
-          std::max(bottom_glyph_overflow, emphasis_mark_height);
+      text_box_data_map.find(text_box);
+  if (it != text_box_data_map.end()) {
+    const GlyphOverflow& glyph_overflow = it->value.second;
+    bool is_flipped_line = style.IsFlippedLinesWritingMode();
+    visual_rect_outsets = EnclosingLayoutRectOutsets(FloatRectOutsets(
+        is_flipped_line ? glyph_overflow.bottom : glyph_overflow.top,
+        glyph_overflow.right,
+        is_flipped_line ? glyph_overflow.top : glyph_overflow.bottom,
+        glyph_overflow.left));
   }
 
-  // If letter-spacing is negative, we should factor that into right layout
-  // overflow. Even in RTL, letter-spacing is applied to the right, so this is
-  // not an issue with left overflow.
-  right_glyph_overflow -=
-      std::min(0.0f, style.GetFont().GetFontDescription().LetterSpacing());
+  if (float stroke_width = style.TextStrokeWidth()) {
+    visual_rect_outsets += LayoutUnit::FromFloatCeil(stroke_width / 2.0f);
+  }
 
-  LayoutRectOutsets text_shadow_logical_outsets;
-  if (ShadowList* text_shadow = style.TextShadow())
-    text_shadow_logical_outsets =
+  TextEmphasisPosition emphasis_mark_position;
+  if (style.GetTextEmphasisMark() != TextEmphasisMark::kNone &&
+      text_box->GetEmphasisMarkPosition(style, emphasis_mark_position)) {
+    LayoutUnit emphasis_mark_height = LayoutUnit(
+        style.GetFont().EmphasisMarkHeight(style.TextEmphasisMarkString()));
+    if (HasEmphasisMarkBefore(text_box)) {
+      visual_rect_outsets.SetTop(
+          std::max(visual_rect_outsets.Top(), emphasis_mark_height));
+    } else {
+      visual_rect_outsets.SetBottom(
+          std::max(visual_rect_outsets.Bottom(), emphasis_mark_height));
+    }
+  }
+
+  if (ShadowList* text_shadow = style.TextShadow()) {
+    LayoutRectOutsets text_shadow_logical_outsets =
         LayoutRectOutsets(text_shadow->RectOutsetsIncludingOriginal())
-            .LogicalOutsets(style.GetWritingMode());
+            .LineOrientationOutsets(style.GetWritingMode());
+    text_shadow_logical_outsets.ClampNegativeToZero();
+    visual_rect_outsets += text_shadow_logical_outsets;
+  }
 
-  // FIXME: This code currently uses negative values for expansion of the top
-  // and left edges. This should be cleaned up.
-  LayoutUnit text_shadow_logical_top = -text_shadow_logical_outsets.Top();
-  LayoutUnit text_shadow_logical_bottom = text_shadow_logical_outsets.Bottom();
-  LayoutUnit text_shadow_logical_left = -text_shadow_logical_outsets.Left();
-  LayoutUnit text_shadow_logical_right = text_shadow_logical_outsets.Right();
-
-  LayoutUnit child_overflow_logical_top(std::min(
-      text_shadow_logical_top + top_glyph_overflow, top_glyph_overflow));
-  LayoutUnit child_overflow_logical_bottom(
-      std::max(text_shadow_logical_bottom + bottom_glyph_overflow,
-               bottom_glyph_overflow));
-  LayoutUnit child_overflow_logical_left(std::min(
-      text_shadow_logical_left + left_glyph_overflow, left_glyph_overflow));
-  LayoutUnit child_overflow_logical_right(std::max(
-      text_shadow_logical_right + right_glyph_overflow, right_glyph_overflow));
-
-  int enclosing_logical_top_with_overflow =
-      (text_box->LogicalTop() + child_overflow_logical_top).Floor();
-  int enclosing_logical_bottom_with_overflow =
-      (text_box->LogicalBottom() + child_overflow_logical_bottom).Ceil();
-  int enclosing_logical_left_with_overflow =
-      (text_box->LogicalLeft() + child_overflow_logical_left).Floor();
-  int enclosing_logical_right_with_overflow =
-      (text_box->LogicalRight() + child_overflow_logical_right).Ceil();
-
-  LayoutUnit logical_top_visual_overflow =
-      std::min(LayoutUnit(enclosing_logical_top_with_overflow),
-               logical_visual_overflow.Y());
-  LayoutUnit logical_bottom_visual_overflow =
-      std::max(LayoutUnit(enclosing_logical_bottom_with_overflow),
-               logical_visual_overflow.MaxY());
-  LayoutUnit logical_left_visual_overflow =
-      std::min(LayoutUnit(enclosing_logical_left_with_overflow),
-               logical_visual_overflow.X());
-  LayoutUnit logical_right_visual_overflow =
-      std::max(LayoutUnit(enclosing_logical_right_with_overflow),
-               logical_visual_overflow.MaxX());
-
-  logical_visual_overflow =
-      LayoutRect(logical_left_visual_overflow, logical_top_visual_overflow,
-                 logical_right_visual_overflow - logical_left_visual_overflow,
-                 logical_bottom_visual_overflow - logical_top_visual_overflow);
+  LayoutRect frame_rect = text_box->LogicalFrameRect();
+  frame_rect.Expand(visual_rect_outsets);
+  frame_rect = LayoutRect(EnclosingIntRect(frame_rect));
+  logical_visual_overflow.Unite(frame_rect);
 
   if (logical_visual_overflow != text_box->LogicalFrameRect())
     text_box->SetLogicalOverflowRect(logical_visual_overflow);
@@ -1158,8 +1131,7 @@ inline void InlineFlowBox::AddReplacedChildOverflow(
   // be adjusted for writing-mode differences.
   if (!box.HasSelfPaintingLayer()) {
     LayoutRect child_logical_visual_overflow =
-        box.LogicalVisualOverflowRectForPropagation(
-            GetLineLayoutItem().StyleRef());
+        box.LogicalVisualOverflowRectForPropagation();
     child_logical_visual_overflow.Move(inline_box->LogicalLeft(),
                                        inline_box->LogicalTop());
     logical_visual_overflow.Unite(child_logical_visual_overflow);
@@ -1170,8 +1142,7 @@ inline void InlineFlowBox::AddReplacedChildOverflow(
   // as layout overflow. This rectangle must include transforms and relative
   // positioning and be adjusted for writing-mode differences.
   LayoutRect child_logical_layout_overflow =
-      box.LogicalLayoutOverflowRectForPropagation(
-          GetLineLayoutItem().StyleRef());
+      box.LogicalLayoutOverflowRectForPropagation();
   child_logical_layout_overflow.Move(inline_box->LogicalLeft(),
                                      inline_box->LogicalTop());
   logical_layout_overflow.Unite(child_logical_layout_overflow);
@@ -1188,12 +1159,7 @@ static void ComputeGlyphOverflow(
       text->Start(), text->Len(), LayoutUnit(), text->Direction(), false,
       &fallback_fonts, &glyph_bounds);
   const Font& font = layout_text.Style()->GetFont();
-  const SimpleFontData* font_data = font.PrimaryFont();
-  DCHECK(font_data);
-  glyph_overflow.SetFromBounds(
-      glyph_bounds, font_data ? font_data->GetFontMetrics().FloatAscent() : 0,
-      font_data ? font_data->GetFontMetrics().FloatDescent() : 0,
-      measured_width);
+  glyph_overflow.SetFromBounds(glyph_bounds, font, measured_width);
   if (!fallback_fonts.IsEmpty()) {
     GlyphOverflowAndFallbackFontsMap::ValueType* it =
         text_box_data_map
@@ -1230,9 +1196,9 @@ void InlineFlowBox::ComputeOverflow(
   // invalidations for ourselves. Self-painting layers are ignored.
   // Layout overflow is used to determine scrolling extent, so it still includes
   // child layers and also factors in transforms, relative positioning, etc.
-  LayoutRect logical_layout_overflow(
+  LayoutRect logical_layout_overflow;
+  LayoutRect logical_visual_overflow(
       LogicalFrameRectIncludingLineHeight(line_top, line_bottom));
-  LayoutRect logical_visual_overflow(logical_layout_overflow);
 
   AddBoxShadowVisualOverflow(logical_visual_overflow);
   AddBorderOutsetVisualOverflow(logical_visual_overflow);
@@ -1267,10 +1233,18 @@ void InlineFlowBox::ComputeOverflow(
             flow->LogicalVisualOverflowRect(line_top, line_bottom));
       LayoutRect child_layout_overflow =
           flow->LogicalLayoutOverflowRect(line_top, line_bottom);
-      child_layout_overflow.Move(
-          flow->BoxModelObject().RelativePositionLogicalOffset());
+      child_layout_overflow.Unite(
+          LogicalFrameRectIncludingLineHeight(line_top, line_bottom));
+      if (flow->BoxModelObject().IsRelPositioned()) {
+        child_layout_overflow.Move(
+            flow->BoxModelObject().RelativePositionLogicalOffset());
+      }
       logical_layout_overflow.Unite(child_layout_overflow);
     } else {
+      if (logical_layout_overflow.IsEmpty()) {
+        logical_layout_overflow =
+            LogicalFrameRectIncludingLineHeight(line_top, line_bottom);
+      }
       AddReplacedChildOverflow(curr, logical_layout_overflow,
                                logical_visual_overflow);
     }
@@ -1287,7 +1261,7 @@ void InlineFlowBox::SetLayoutOverflow(const LayoutRect& rect,
     return;
 
   if (!overflow_)
-    overflow_ = WTF::MakeUnique<SimpleOverflowModel>(frame_box, frame_box);
+    overflow_ = std::make_unique<SimpleOverflowModel>(frame_box, frame_box);
 
   overflow_->SetLayoutOverflow(rect);
 }
@@ -1299,7 +1273,7 @@ void InlineFlowBox::SetVisualOverflow(const LayoutRect& rect,
     return;
 
   if (!overflow_)
-    overflow_ = WTF::MakeUnique<SimpleOverflowModel>(frame_box, frame_box);
+    overflow_ = std::make_unique<SimpleOverflowModel>(frame_box, frame_box);
 
   overflow_->SetVisualOverflow(rect);
 }
@@ -1466,7 +1440,7 @@ InlineBox* InlineFlowBox::LastLeafChild() const {
 }
 
 SelectionState InlineFlowBox::GetSelectionState() const {
-  return SelectionNone;
+  return SelectionState::kNone;
 }
 
 bool InlineFlowBox::CanAccommodateEllipsis(bool ltr,
@@ -1484,7 +1458,7 @@ LayoutUnit InlineFlowBox::PlaceEllipsisBox(bool ltr,
                                            LayoutUnit block_right_edge,
                                            LayoutUnit ellipsis_width,
                                            LayoutUnit& truncated_width,
-                                           bool& found_box,
+                                           InlineBox** found_box,
                                            LayoutUnit logical_left_offset) {
   LayoutUnit result(-1);
   // We iterate over all children, the foundBox variable tells us when we've
@@ -1493,6 +1467,11 @@ LayoutUnit InlineFlowBox::PlaceEllipsisBox(bool ltr,
   // If our flow is ltr then iterate over the boxes from left to right,
   // otherwise iterate from right to left. Varying the order allows us to
   // correctly hide the boxes following the ellipsis.
+  LayoutUnit relative_offset =
+      BoxModelObject().IsInline() && BoxModelObject().IsRelPositioned()
+          ? BoxModelObject().RelativePositionLogicalOffset().Width()
+          : LayoutUnit();
+  logical_left_offset += relative_offset;
   InlineBox* box = ltr ? FirstChild() : LastChild();
 
   // NOTE: these will cross after foundBox = true.
@@ -1500,9 +1479,12 @@ LayoutUnit InlineFlowBox::PlaceEllipsisBox(bool ltr,
   LayoutUnit visible_right_edge = block_right_edge;
 
   while (box) {
+    bool had_found_box = *found_box;
     LayoutUnit curr_result = box->PlaceEllipsisBox(
         ltr, visible_left_edge, visible_right_edge, ellipsis_width,
         truncated_width, found_box, logical_left_offset);
+    if (IsRootInlineBox() && *found_box && !had_found_box)
+      *found_box = box;
     if (curr_result != -1 && result == -1)
       result = curr_result;
 
@@ -1519,7 +1501,7 @@ LayoutUnit InlineFlowBox::PlaceEllipsisBox(bool ltr,
       box = box->PrevOnLine();
     }
   }
-  return result;
+  return result + relative_offset;
 }
 
 void InlineFlowBox::ClearTruncation() {
@@ -1542,7 +1524,7 @@ LayoutUnit InlineFlowBox::ComputeOverAnnotationAdjustment(
     if (curr->GetLineLayoutItem().IsAtomicInlineLevel() &&
         curr->GetLineLayoutItem().IsRubyRun() &&
         curr->GetLineLayoutItem().Style()->GetRubyPosition() ==
-            kRubyPositionBefore) {
+            RubyPosition::kBefore) {
       LineLayoutRubyRun ruby_run = LineLayoutRubyRun(curr->GetLineLayoutItem());
       LineLayoutRubyText ruby_text = ruby_run.RubyText();
       if (!ruby_text)
@@ -1575,10 +1557,10 @@ LayoutUnit InlineFlowBox::ComputeOverAnnotationAdjustment(
       const ComputedStyle& style =
           curr->GetLineLayoutItem().StyleRef(IsFirstLineStyle());
       TextEmphasisPosition emphasis_mark_position;
-      if (style.GetTextEmphasisMark() != kTextEmphasisMarkNone &&
+      if (style.GetTextEmphasisMark() != TextEmphasisMark::kNone &&
           ToInlineTextBox(curr)->GetEmphasisMarkPosition(
               style, emphasis_mark_position) &&
-          emphasis_mark_position == kTextEmphasisPositionOver) {
+          HasEmphasisMarkOver(ToInlineTextBox(curr))) {
         if (!style.IsFlippedLinesWritingMode()) {
           int top_of_emphasis_mark =
               (curr->LogicalTop() - style.GetFont().EmphasisMarkHeight(
@@ -1613,7 +1595,7 @@ LayoutUnit InlineFlowBox::ComputeUnderAnnotationAdjustment(
     if (curr->GetLineLayoutItem().IsAtomicInlineLevel() &&
         curr->GetLineLayoutItem().IsRubyRun() &&
         curr->GetLineLayoutItem().Style()->GetRubyPosition() ==
-            kRubyPositionAfter) {
+            RubyPosition::kAfter) {
       LineLayoutRubyRun ruby_run = LineLayoutRubyRun(curr->GetLineLayoutItem());
       LineLayoutRubyText ruby_text = ruby_run.RubyText();
       if (!ruby_text)
@@ -1645,8 +1627,8 @@ LayoutUnit InlineFlowBox::ComputeUnderAnnotationAdjustment(
     if (curr->IsInlineTextBox()) {
       const ComputedStyle& style =
           curr->GetLineLayoutItem().StyleRef(IsFirstLineStyle());
-      if (style.GetTextEmphasisMark() != kTextEmphasisMarkNone &&
-          style.GetTextEmphasisPosition() == kTextEmphasisPositionUnder) {
+      if (style.GetTextEmphasisMark() != TextEmphasisMark::kNone &&
+          HasEmphasisMarkUnder(ToInlineTextBox(curr))) {
         if (!style.IsFlippedLinesWritingMode()) {
           LayoutUnit bottom_of_emphasis_mark =
               curr->LogicalBottom() + style.GetFont().EmphasisMarkHeight(
@@ -1738,23 +1720,6 @@ void InlineFlowBox::ShowLineTreeAndMark(const InlineBox* marked_box1,
   for (const InlineBox* box = FirstChild(); box; box = box->NextOnLine())
     box->ShowLineTreeAndMark(marked_box1, marked_label1, marked_box2,
                              marked_label2, obj, depth + 1);
-}
-
-#endif
-
-#if DCHECK_IS_ON()
-void InlineFlowBox::CheckConsistency() const {
-#ifdef CHECK_CONSISTENCY
-  DCHECK(!m_hasBadChildList);
-  const InlineBox* prev = nullptr;
-  for (const InlineBox* child = m_firstChild; child;
-       child = child->nextOnLine()) {
-    DCHECK_EQ(child->parent(), this);
-    DCHECK_EQ(child->prevOnLine(), prev);
-    prev = child;
-  }
-  DCHECK_EQ(prev, m_lastChild);
-#endif
 }
 
 #endif

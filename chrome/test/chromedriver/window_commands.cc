@@ -8,10 +8,13 @@
 
 #include <list>
 #include <string>
+#include <utility>
 
 #include "base/callback.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -29,13 +32,26 @@
 #include "chrome/test/chromedriver/chrome/ui_events.h"
 #include "chrome/test/chromedriver/chrome/web_view.h"
 #include "chrome/test/chromedriver/element_util.h"
+#include "chrome/test/chromedriver/key_converter.h"
+#include "chrome/test/chromedriver/keycode_text_conversion.h"
 #include "chrome/test/chromedriver/net/timeout.h"
 #include "chrome/test/chromedriver/session.h"
 #include "chrome/test/chromedriver/util.h"
 
 namespace {
 
-const std::string kUnreachableWebDataURL = "data:text/html,chromewebdata";
+// The error page URL was renamed in
+// https://chromium-review.googlesource.com/c/580169, but because ChromeDriver
+// needs to be backward-compatible with older versions of Chrome, it is
+// necessary to compare against both the old and new error URL.
+static const char kUnreachableWebDataURL[] = "chrome-error://chromewebdata/";
+const char kDeprecatedUnreachableWebDataURL[] = "data:text/html,chromewebdata";
+
+// Defaults to 20 years into the future when adding a cookie.
+const double kDefaultCookieExpiryTime = 20*365*24*60*60;
+
+// for pointer actions
+enum class PointerActionType { NOT_INITIALIZED, PRESS, MOVE, RELEASE, IDLE };
 
 Status GetMouseButton(const base::DictionaryValue& params,
                       MouseButton* button) {
@@ -102,8 +118,12 @@ std::unique_ptr<base::DictionaryValue> CreateDictionaryFrom(
 
 Status GetVisibleCookies(WebView* web_view,
                          std::list<Cookie>* cookies) {
+  std::string current_page_url;
+  Status status = GetUrl(web_view, std::string(), &current_page_url);
+  if (status.IsError())
+    return status;
   std::unique_ptr<base::ListValue> internal_cookies;
-  Status status = web_view->GetCookies(&internal_cookies);
+  status = web_view->GetCookies(&internal_cookies, current_page_url);
   if (status.IsError())
     return status;
   std::list<Cookie> cookies_tmp;
@@ -122,7 +142,8 @@ Status GetVisibleCookies(WebView* web_view,
     cookie_dict->GetString("path", &path);
     double expiry = 0;
     cookie_dict->GetDouble("expires", &expiry);
-    expiry /= 1000;  // Convert from millisecond to second.
+    if (expiry > 1e12)
+      expiry /= 1000;  // Backwards compatibility ms -> sec.
     bool http_only = false;
     cookie_dict->GetBoolean("httpOnly", &http_only);
     bool session = false;
@@ -349,7 +370,7 @@ Status ExecuteSwitchToFrame(Session* session,
   if (!params.Get("id", &id))
     return Status(kUnknownError, "missing 'id'");
 
-  if (id->IsType(base::Value::Type::NONE)) {
+  if (id->is_none()) {
     session->SwitchToTopFrame();
     return Status(kOk);
   }
@@ -358,6 +379,14 @@ Status ExecuteSwitchToFrame(Session* session,
   base::ListValue args;
   const base::DictionaryValue* id_dict;
   if (id->GetAsDictionary(&id_dict)) {
+    std::string element_id;
+    if (!id_dict->GetString("ELEMENT", &element_id))
+      return Status(kUnknownError, "missing 'ELEMENT'");
+    bool is_displayed = false;
+    Status status = IsElementDisplayed(
+          session, web_view, element_id, true, &is_displayed);
+    if (status.IsError())
+      return status;
     script = "function(elem) { return elem; }";
     args.Append(id_dict->CreateDeepCopy());
   } else {
@@ -472,7 +501,8 @@ Status ExecuteGetCurrentUrl(Session* session,
   Status status = GetUrl(web_view, std::string(), &url);
   if (status.IsError())
     return status;
-  if (url == kUnreachableWebDataURL) {
+  if (url == kUnreachableWebDataURL ||
+      url == kDeprecatedUnreachableWebDataURL) {
     // https://bugs.chromium.org/p/chromedriver/issues/detail?id=1272
     const BrowserInfo* browser_info = session->chrome->GetBrowserInfo();
     bool is_kitkat_webview = browser_info->browser_name == "webview" &&
@@ -558,7 +588,7 @@ Status ExecuteMouseMoveTo(Session* session,
 
   std::list<MouseEvent> events;
   events.push_back(
-      MouseEvent(kMovedMouseEventType, kNoneMouseButton,
+      MouseEvent(kMovedMouseEventType, session->pressed_mouse_button,
                  location.x, location.y, session->sticky_modifiers, 0));
   Status status =
       web_view->DispatchMouseEvents(events, session->GetCurrentFrameId());
@@ -585,6 +615,7 @@ Status ExecuteMouseClick(Session* session,
       MouseEvent(kReleasedMouseEventType, button,
                  session->mouse_position.x, session->mouse_position.y,
                  session->sticky_modifiers, 1));
+  session->pressed_mouse_button = kNoneMouseButton;
   return web_view->DispatchMouseEvents(events, session->GetCurrentFrameId());
 }
 
@@ -602,6 +633,7 @@ Status ExecuteMouseButtonDown(Session* session,
       MouseEvent(kPressedMouseEventType, button,
                  session->mouse_position.x, session->mouse_position.y,
                  session->sticky_modifiers, 1));
+  session->pressed_mouse_button = button;
   return web_view->DispatchMouseEvents(events, session->GetCurrentFrameId());
 }
 
@@ -619,6 +651,7 @@ Status ExecuteMouseButtonUp(Session* session,
       MouseEvent(kReleasedMouseEventType, button,
                  session->mouse_position.x, session->mouse_position.y,
                  session->sticky_modifiers, 1));
+  session->pressed_mouse_button = kNoneMouseButton;
   return web_view->DispatchMouseEvents(events, session->GetCurrentFrameId());
 }
 
@@ -640,6 +673,7 @@ Status ExecuteMouseDoubleClick(Session* session,
       MouseEvent(kReleasedMouseEventType, button,
                  session->mouse_position.x, session->mouse_position.y,
                  session->sticky_modifiers, 2));
+  session->pressed_mouse_button = kNoneMouseButton;
   return web_view->DispatchMouseEvents(events, session->GetCurrentFrameId());
 }
 
@@ -712,6 +746,401 @@ Status ExecuteTouchPinch(Session* session,
   if (!params.GetDouble("scale", &scale_factor))
     return Status(kUnknownError, "'scale' must be an integer");
   return web_view->SynthesizePinchGesture(location.x, location.y, scale_factor);
+}
+
+Status ProcessInputActionSequence(Session* session,
+                                  const base::DictionaryValue* action_sequence,
+                                  std::unique_ptr<base::ListValue>* result) {
+  std::string id;
+  std::string type;
+  const base::DictionaryValue* source;
+  const base::DictionaryValue* parameters;
+  std::string pointer_type = "mouse";
+
+  if (!action_sequence->GetString("type", &type) ||
+      ((type != "key") && (type != "pointer") && (type != "none"))) {
+    return Status(
+        kInvalidArgument,
+        "'type' must be one of the strings 'key', 'pointer' or 'none'");
+  }
+
+  if (!action_sequence->GetString("id", &id))
+    return Status(kInvalidArgument, "'id' must be a string");
+
+  if (type == "pointer") {
+    if (action_sequence->GetDictionary("parameters", &parameters)) {
+      // error check arguments
+      if (parameters->GetString("pointerType", &pointer_type) &&
+          (pointer_type != "mouse" && pointer_type != "pen" &&
+           pointer_type != "touch"))
+        return Status(kInvalidArgument,
+                      "'pointerType' must be one of mouse, pen or touch");
+    }
+  }
+
+  bool found = false;
+  for (size_t i = 0; i < session->active_input_sources->GetSize(); i++) {
+    session->active_input_sources->GetDictionary(i, &source);
+    DCHECK(source);
+
+    std::string source_id;
+    source->GetString("id", &source_id);
+    if (source_id == id) {
+      found = true;
+      if (type == "pointer") {
+        std::string source_pointer_type;
+        if (!source->GetString("pointerType", &source_pointer_type) ||
+            pointer_type != source_pointer_type) {
+          return Status(kInvalidArgument,
+                        "'pointerType' must be a string that matches sources "
+                        "pointer type");
+        }
+      }
+      std::string source_type;
+      source->GetString("type", &source_type);
+      if (source_type != type) {
+        return Status(kInvalidArgument,
+                      "input state with same id has a different type");
+      }
+      break;
+    }
+  }
+
+  // if we found no matching active input source
+  base::DictionaryValue tmp_source;
+  if (!found) {
+    // create input source
+    tmp_source.SetString("id", id);
+    tmp_source.SetString("type", type);
+    if (type == "pointer") {
+      tmp_source.SetString("pointerType", pointer_type);
+    }
+
+    session->active_input_sources->Append(
+        base::MakeUnique<base::DictionaryValue>(std::move(tmp_source)));
+
+    base::DictionaryValue tmp_state;
+    if (type == "key") {
+      std::unique_ptr<base::ListValue> pressed(new base::ListValue);
+      bool alt = false;
+      bool shift = false;
+      bool ctrl = false;
+      bool meta = false;
+
+      tmp_state.SetList("pressed", std::move(pressed));
+      tmp_state.SetBoolean("alt", alt);
+      tmp_state.SetBoolean("shift", shift);
+      tmp_state.SetBoolean("ctrl", ctrl);
+      tmp_state.SetBoolean("meta", meta);
+    } else if (type == "pointer") {
+      std::unique_ptr<base::ListValue> pressed(new base::ListValue);
+      int x = 0;
+      int y = 0;
+
+      tmp_state.SetList("pressed", std::move(pressed));
+      tmp_state.SetString("subtype", pointer_type);
+
+      tmp_state.SetInteger("x", x);
+      tmp_state.SetInteger("y", y);
+    }
+    session->input_state_table->SetDictionary(
+        id, base::MakeUnique<base::DictionaryValue>(std::move(tmp_state)));
+  }
+
+  const base::ListValue* actions;
+  if (!action_sequence->GetList("actions", &actions)) {
+    return Status(kInvalidArgument, "actions must be an array");
+  }
+
+  std::unique_ptr<base::ListValue> ret(new base::ListValue);
+  for (size_t i = 0; i < actions->GetSize(); i++) {
+    std::unique_ptr<base::DictionaryValue> action(new base::DictionaryValue());
+    const base::DictionaryValue* action_item;
+    if (!actions->GetDictionary(i, &action_item))
+      return Status(
+          kInvalidArgument,
+          "each argument in the action sequence must be a dictionary");
+
+    if (type == "none") {
+      // process null action
+      std::string subtype;
+      if (!action_item->GetString("type", &subtype) || subtype != "pause")
+        return Status(kInvalidArgument,
+                      "type of action must be the  string 'pause'");
+
+      action->SetString("id", id);
+      action->SetString("type", "none");
+      action->SetString("subtype", subtype);
+
+      int duration;
+      if (action_item->GetInteger("duration", &duration)) {
+        if (duration < 0)
+          return Status(kInvalidArgument,
+                        "duration must be a non-negative int");
+        action->SetInteger("duration", duration);
+      }
+    } else if (type == "key") {
+      // process key action
+      std::string subtype;
+      if (!action_item->GetString("type", &subtype) ||
+          (subtype != "keyUp" && subtype != "keyDown" && subtype != "pause"))
+        return Status(
+            kInvalidArgument,
+            "type of action must be the string 'keyUp', 'keyDown' or 'pause'");
+
+      action->SetString("id", id);
+      action->SetString("type", "key");
+      action->SetString("subtype", subtype);
+
+      if (subtype == "pause") {
+        int duration;
+        if (action_item->GetInteger("duration", &duration)) {
+          if (duration < 0)
+            return Status(kInvalidArgument,
+                          "duration must be a non-negative int");
+          action->SetInteger("duration", duration);
+        }
+      }
+      std::string key;
+      // TODO: check if key is a single unicode code point
+      if (!action_item->GetString("value", &key)) {
+        return Status(kInvalidArgument,
+                      "'value' must be a single unicode point");
+      }
+      action->SetString("value", key);
+    } else if (type == "pointer") {
+      std::string subtype;
+      if (!action_item->GetString("type", &subtype) ||
+          (subtype != "pointerUp" && subtype != "pointerDown" &&
+           subtype != "pointerMove" && subtype != "pointerCancel" &&
+           subtype != "pause"))
+        return Status(kInvalidArgument,
+                      "type of action must be the string 'pointerUp', "
+                      "'pointerDown', 'pointerMove' or 'pause'");
+
+      action->SetString("id", id);
+      action->SetString("type", "pointer");
+      action->SetString("subtype", subtype);
+
+      if (subtype == "pause") {
+        int duration;
+        if (action_item->GetInteger("duration", &duration)) {
+          if (duration < 0)
+            return Status(kInvalidArgument,
+                          "duration must be a non-negative int");
+          action->SetInteger("duration", duration);
+        }
+      }
+
+      action->SetString("pointerType", pointer_type);
+      if (subtype == "pointerUp" || subtype == "pointerDown") {
+        int button;
+        if (!action_item->GetInteger("button", &button) || button < 0)
+          return Status(kInvalidArgument,
+                        "'button' must be a non-negative int");
+        action->SetInteger("button", button);
+        if (subtype == "pointerDown") {
+          int x;
+          if (!action_item->GetInteger("x", &x))
+            return Status(kInvalidArgument, "'x' must be an integer");
+          int y;
+          if (!action_item->GetInteger("y", &y))
+            return Status(kInvalidArgument, "'y' must be an integer");
+
+          action->SetInteger("x", x);
+          action->SetInteger("y", y);
+        }
+      } else {
+        // pointerMove
+        int duration;
+        if (!action_item->GetInteger("duration", &duration) || duration < 0)
+          return Status(kInvalidArgument,
+                        "'duration' must be a non-negative int");
+
+        std::string origin;
+        if (!action_item->GetString("origin", &origin))
+          origin = "viewport";
+        if (origin != "viewport" && origin != "pointer")
+          return Status(kInvalidArgument, "'origin' must be a string");
+
+        action->SetString("origin", origin);
+
+        int x;
+        if (!action_item->GetInteger("x", &x))
+          return Status(kInvalidArgument, "'x' must be an integer");
+        int y;
+        if (!action_item->GetInteger("y", &y))
+          return Status(kInvalidArgument, "'y' must be an integer");
+
+        action->SetInteger("x", x);
+        action->SetInteger("y", y);
+      }
+    }
+    ret->Append(std::move(action));
+  }
+  *result = std::move(ret);
+  return Status(kOk);
+}
+
+Status ExecutePerformActions(Session* session,
+                             WebView* web_view,
+                             const base::DictionaryValue& params,
+                             std::unique_ptr<base::Value>* value,
+                             Timeout* timeout) {
+  // TODO(kereliuk): check if the current browsing context is still open
+  // or if this error check is handled elsewhere
+
+  // TODO(kereliuk): handle prompts
+
+  // extract action sequence
+  const base::ListValue* actions;
+  if (!params.GetList("actions", &actions))
+    return Status(kInvalidArgument, "'actions' must be an array");
+
+  // the processed actions
+  base::ListValue actions_by_tick;
+  // the type of each action list in actions_by_tick
+  std::list<std::string> action_list_types;
+
+  for (size_t i = 0; i < actions->GetSize(); i++) {
+    std::unique_ptr<base::ListValue> input_source_actions(
+        new base::ListValue());
+    // proccess input action sequence
+    const base::DictionaryValue* action_sequence;
+    if (!actions->GetDictionary(i, &action_sequence))
+      return Status(kInvalidArgument, "each argument must be a dictionary");
+
+    std::string type;
+    if (!action_sequence->GetString("type", &type) ||
+        ((type != "key") && (type != "pointer") && (type != "none"))) {
+      return Status(
+          kInvalidArgument,
+          "'type' must be one of the strings 'key', 'pointer' or 'none'");
+    }
+    action_list_types.push_back(type);
+
+    Status status = ProcessInputActionSequence(session, action_sequence,
+                                               &input_source_actions);
+    if (status.IsError())
+      return Status(kInvalidArgument, status);
+
+    actions_by_tick.Append(std::move(input_source_actions));
+  }
+
+  for (size_t i = 0; i < actions_by_tick.GetSize(); i++) {
+    // compute duration
+    int max_duration = 0;
+    int duration;
+    base::ListValue* action_sequence;
+    actions_by_tick.GetList(i, &action_sequence);
+    DCHECK(action_sequence);
+    for (size_t j = 0; j < action_sequence->GetSize(); j++) {
+      base::DictionaryValue* action;
+      if (!action_sequence->GetDictionary(i, &action))
+        return Status(kInvalidArgument, "each argument must be a dictionary");
+      if (action->GetInteger("duration", &duration) &&
+          duration > max_duration) {
+        max_duration = duration;
+      }
+    }
+
+    // get the type of the actions so we can dispatch all at once for that type
+    std::string type = action_list_types.back();
+    action_list_types.pop_back();
+
+    // pause only
+
+    // key actions
+    if (type == "key") {
+      KeyEventBuilder builder;
+      std::list<KeyEvent> key_events;
+      for (size_t j = 0; j < action_sequence->GetSize(); j++) {
+        base::DictionaryValue* action;
+        if (!action_sequence->GetDictionary(j, &action))
+          return Status(kInvalidArgument, "each argument must be a dictionary");
+        std::string subtype;
+        if (!action->GetString("subtype", &subtype))
+          return Status(kInvalidArgument, "'type' must be a string");
+
+        std::string id;
+        if (!action->GetString("id", &id))
+          return Status(kInvalidArgument, "id");
+
+        if (subtype == "pause") {
+          // TODO: handle this
+        } else {
+          base::DictionaryValue dispatch_params;
+          base::string16 raw_key;
+
+          if (!action->GetString("value", &raw_key))
+            return Status(kInvalidArgument, "value");
+
+          base::char16 key = raw_key[0];
+          // TODO: understand necessary_modifiers
+          int necessary_modifiers = 0;
+          ui::KeyboardCode key_code = ui::VKEY_UNKNOWN;
+          std::string error_msg;
+          ConvertCharToKeyCode(key, &key_code, &necessary_modifiers,
+                               &error_msg);
+          if (!error_msg.empty())
+            return Status(kUnknownError, error_msg);
+
+          if (subtype == "keyDown")
+            key_events.push_back(builder.SetType(kKeyDownEventType)
+                                     ->SetText(base::UTF16ToUTF8(raw_key),
+                                               base::UTF16ToUTF8(raw_key))
+                                     ->SetKeyCode(key_code)
+                                     ->SetModifiers(0)
+                                     ->Build());
+          else if (subtype == "keyUp")
+            key_events.push_back(builder.SetType(kKeyUpEventType)
+                                     ->SetText(base::UTF16ToUTF8(raw_key),
+                                               base::UTF16ToUTF8(raw_key))
+                                     ->SetKeyCode(key_code)
+                                     ->SetModifiers(0)
+                                     ->Build());
+        }
+      }
+      Status status = web_view->DispatchKeyEvents(key_events);
+      if (status.IsError())
+        return status;
+    } else if (type == "pointer") {
+      // TODO:implement this
+    }
+  }
+  return Status(kOk);
+}
+
+Status ExecuteSendCommand(Session* session,
+                          WebView* web_view,
+                          const base::DictionaryValue& params,
+                          std::unique_ptr<base::Value>* value,
+                          Timeout* timeout) {
+  std::string cmd;
+  if (!params.GetString("cmd", &cmd)) {
+    return Status(kUnknownError, "command not passed");
+  }
+  const base::DictionaryValue* cmdParams;
+  if (!params.GetDictionary("params", &cmdParams)) {
+    return Status(kUnknownError, "params not passed");
+  }
+  return web_view->SendCommand(cmd, *cmdParams);
+}
+
+Status ExecuteSendCommandAndGetResult(Session* session,
+                                      WebView* web_view,
+                                      const base::DictionaryValue& params,
+                                      std::unique_ptr<base::Value>* value,
+                                      Timeout* timeout) {
+  std::string cmd;
+  if (!params.GetString("cmd", &cmd)) {
+    return Status(kUnknownError, "command not passed");
+  }
+  const base::DictionaryValue* cmdParams;
+  if (!params.GetDictionary("params", &cmdParams)) {
+    return Status(kUnknownError, "params not passed");
+  }
+  return web_view->SendCommandAndGetResult(cmd, *cmdParams, value);
 }
 
 Status ExecuteGetActiveElement(Session* session,
@@ -903,8 +1332,32 @@ Status ExecuteGetCookies(Session* session,
        it != cookies.end(); ++it) {
     cookie_list->Append(CreateDictionaryFrom(*it));
   }
-  value->reset(cookie_list.release());
+  *value = std::move(cookie_list);
   return Status(kOk);
+}
+
+Status ExecuteGetNamedCookie(Session* session,
+                             WebView* web_view,
+                             const base::DictionaryValue& params,
+                             std::unique_ptr<base::Value>* value,
+                             Timeout* timeout) {
+  std::string name;
+  if (!params.GetString("name", &name))
+    return Status(kUnknownError, "missing 'cookie name'");
+
+  std::list<Cookie> cookies;
+  Status status = GetVisibleCookies(web_view, &cookies);
+  if (status.IsError())
+    return status;
+
+  for (std::list<Cookie>::const_iterator it = cookies.begin();
+       it != cookies.end(); ++it) {
+    if (name == it->name) {
+      value->reset(CreateDictionaryFrom(*it)->DeepCopy());
+      return Status(kOk);
+    }
+  }
+  return Status(kNoSuchCookie);
 }
 
 Status ExecuteAddCookie(Session* session,
@@ -915,11 +1368,30 @@ Status ExecuteAddCookie(Session* session,
   const base::DictionaryValue* cookie;
   if (!params.GetDictionary("cookie", &cookie))
     return Status(kUnknownError, "missing 'cookie'");
-  base::ListValue args;
-  args.Append(cookie->CreateDeepCopy());
-  std::unique_ptr<base::Value> result;
-  return web_view->CallFunction(
-      session->GetCurrentFrameId(), kAddCookieScript, args, &result);
+  std::string name;
+  std::string cookie_value;
+  if (!cookie->GetString("name", &name))
+    return Status(kInvalidArgument, "missing 'name'");
+  if (!cookie->GetString("value", &cookie_value))
+    return Status(kInvalidArgument, "missing 'value'");
+  std::string url;
+  Status status = GetUrl(web_view, session->GetCurrentFrameId(), &url);
+  if (status.IsError())
+    return status;
+  std::string domain;
+  cookie->GetString("domain", &domain);
+  std::string path("/");
+  cookie->GetString("path", &path);
+  bool secure = false;
+  cookie->GetBoolean("secure", &secure);
+  bool httpOnly = false;
+  cookie->GetBoolean("httpOnly", &httpOnly);
+  double expiry;
+  if (!cookie->GetDouble("expiry", &expiry))
+    expiry = (base::Time::Now() - base::Time::UnixEpoch()).InSeconds() +
+              kDefaultCookieExpiryTime;
+  return web_view->AddCookie(name, url, cookie_value, domain, path,
+      secure, httpOnly, expiry);
 }
 
 Status ExecuteDeleteCookie(Session* session,
@@ -936,7 +1408,21 @@ Status ExecuteDeleteCookie(Session* session,
   Status status = GetUrl(web_view, session->GetCurrentFrameId(), &url);
   if (status.IsError())
     return status;
-  return web_view->DeleteCookie(name, url);
+
+  std::list<Cookie> cookies;
+  status = GetVisibleCookies(web_view, &cookies);
+  if (status.IsError())
+    return status;
+
+  for (std::list<Cookie>::const_iterator it = cookies.begin();
+       it != cookies.end(); ++it) {
+    if (name == it->name) {
+      status = web_view->DeleteCookie(it->name, url, it->domain, it->path);
+      if (status.IsError())
+        return status;
+    }
+  }
+  return Status(kOk);
 }
 
 Status ExecuteDeleteAllCookies(Session* session,
@@ -958,7 +1444,7 @@ Status ExecuteDeleteAllCookies(Session* session,
       return status;
     for (std::list<Cookie>::const_iterator it = cookies.begin();
          it != cookies.end(); ++it) {
-      status = web_view->DeleteCookie(it->name, url);
+      status = web_view->DeleteCookie(it->name, url, it->domain, it->path);
       if (status.IsError())
         return status;
     }

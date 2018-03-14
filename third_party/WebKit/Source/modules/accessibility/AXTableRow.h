@@ -45,7 +45,7 @@ class MODULES_EXPORT AXTableRow : public AXLayoutObject {
   static AXTableRow* Create(LayoutObject*, AXObjectCacheImpl&);
   ~AXTableRow() override;
 
-  void AddChildren() final;
+  void AddChildren() override;
   bool IsTableRow() const final;
 
   // retrieves the "row" header (a th tag in the rightmost column)
@@ -53,13 +53,16 @@ class MODULES_EXPORT AXTableRow : public AXLayoutObject {
   // Retrieves the "row" headers (th, scope) from left to right for the each
   // row.
   virtual void HeaderObjectsForRow(AXObjectVector&);
-  AXObject* ParentTable() const;
+  virtual AXObject* ParentTable() const;
+  virtual const AXObjectVector& Cells() { return Children(); }
 
   void SetRowIndex(int row_index) { row_index_ = row_index; }
   int RowIndex() const { return row_index_; }
 
   unsigned AriaColumnIndex() const;
   unsigned AriaRowIndex() const;
+
+  virtual bool CanSetSelectedAttribute() const { return false; }
 
  protected:
   AccessibilityRole DetermineAccessibilityRole() final;

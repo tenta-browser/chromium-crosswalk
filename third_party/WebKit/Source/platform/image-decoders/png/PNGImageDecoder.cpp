@@ -38,6 +38,8 @@
 
 #include "platform/image-decoders/png/PNGImageDecoder.h"
 
+#include <memory>
+
 namespace blink {
 
 PNGImageDecoder::PNGImageDecoder(AlphaOption alpha_option,
@@ -47,10 +49,10 @@ PNGImageDecoder::PNGImageDecoder(AlphaOption alpha_option,
     : ImageDecoder(alpha_option, color_behavior, max_decoded_bytes),
       offset_(offset),
       current_frame_(0),
-      // It would be logical to default to cAnimationNone, but BitmapImage uses
+      // It would be logical to default to kAnimationNone, but BitmapImage uses
       // that as a signal to never check again, meaning the actual count will
       // never be respected.
-      repetition_count_(kCAnimationLoopOnce),
+      repetition_count_(kAnimationLoopOnce),
       has_alpha_channel_(false),
       current_buffer_saw_alpha_(false) {}
 
@@ -99,7 +101,7 @@ void PNGImageDecoder::Parse(ParseQuery query) {
     return;
 
   if (!reader_)
-    reader_ = WTF::MakeUnique<PNGImageReader>(this, offset_);
+    reader_ = std::make_unique<PNGImageReader>(this, offset_);
 
   if (!reader_->Parse(*data_, query))
     SetFailed();
@@ -122,7 +124,7 @@ void PNGImageDecoder::SetRepetitionCount(int repetition_count) {
 }
 
 int PNGImageDecoder::RepetitionCount() const {
-  return Failed() ? kCAnimationLoopOnce : repetition_count_;
+  return Failed() ? kAnimationLoopOnce : repetition_count_;
 }
 
 void PNGImageDecoder::InitializeNewFrame(size_t index) {
@@ -132,7 +134,7 @@ void PNGImageDecoder::InitializeNewFrame(size_t index) {
   DCHECK(IntRect(IntPoint(), Size()).Contains(frame_info.frame_rect));
   buffer.SetOriginalFrameRect(frame_info.frame_rect);
 
-  buffer.SetDuration(frame_info.duration);
+  buffer.SetDuration(TimeDelta::FromMilliseconds(frame_info.duration));
   buffer.SetDisposalMethod(frame_info.disposal_method);
   buffer.SetAlphaBlendSource(frame_info.alpha_blend);
 
@@ -382,8 +384,10 @@ void PNGImageDecoder::RowAvailable(unsigned char* row_buffer,
     if (SkColorSpaceXform* xform = ColorTransform()) {
       SkColorSpaceXform::ColorFormat color_format =
           SkColorSpaceXform::kRGBA_8888_ColorFormat;
-      xform->apply(color_format, dst_row, color_format, src_ptr, width,
-                   kUnpremul_SkAlphaType);
+      bool color_converison_successful =
+          xform->apply(color_format, dst_row, color_format, src_ptr, width,
+                       kUnpremul_SkAlphaType);
+      DCHECK(color_converison_successful);
       src_ptr = png_bytep(dst_row);
     }
 
@@ -393,35 +397,35 @@ void PNGImageDecoder::RowAvailable(unsigned char* row_buffer,
       if (buffer.PremultiplyAlpha()) {
         for (auto *dst_pixel = dst_row; dst_pixel < dst_row + width;
              dst_pixel++, src_ptr += 4) {
-          buffer.SetRGBAPremultiply(dst_pixel, src_ptr[0], src_ptr[1],
-                                    src_ptr[2], src_ptr[3]);
+          ImageFrame::SetRGBAPremultiply(dst_pixel, src_ptr[0], src_ptr[1],
+                                         src_ptr[2], src_ptr[3]);
           alpha_mask &= src_ptr[3];
         }
       } else {
         for (auto *dst_pixel = dst_row; dst_pixel < dst_row + width;
              dst_pixel++, src_ptr += 4) {
-          buffer.SetRGBARaw(dst_pixel, src_ptr[0], src_ptr[1], src_ptr[2],
-                            src_ptr[3]);
+          ImageFrame::SetRGBARaw(dst_pixel, src_ptr[0], src_ptr[1], src_ptr[2],
+                                 src_ptr[3]);
           alpha_mask &= src_ptr[3];
         }
       }
     } else {
       // Now, the blend method is ImageFrame::BlendAtopPreviousFrame. Since the
-      // frame data of the previous frame is copied at initFrameBuffer, we can
-      // blend the pixel of this frame, stored in |srcPtr|, over the previous
-      // pixel stored in |dstPixel|.
+      // frame data of the previous frame is copied at InitFrameBuffer, we can
+      // blend the pixel of this frame, stored in |src_ptr|, over the previous
+      // pixel stored in |dst_pixel|.
       if (buffer.PremultiplyAlpha()) {
         for (auto *dst_pixel = dst_row; dst_pixel < dst_row + width;
              dst_pixel++, src_ptr += 4) {
-          buffer.BlendRGBAPremultiplied(dst_pixel, src_ptr[0], src_ptr[1],
-                                        src_ptr[2], src_ptr[3]);
+          ImageFrame::BlendRGBAPremultiplied(dst_pixel, src_ptr[0], src_ptr[1],
+                                             src_ptr[2], src_ptr[3]);
           alpha_mask &= src_ptr[3];
         }
       } else {
         for (auto *dst_pixel = dst_row; dst_pixel < dst_row + width;
              dst_pixel++, src_ptr += 4) {
-          buffer.BlendRGBARaw(dst_pixel, src_ptr[0], src_ptr[1], src_ptr[2],
-                              src_ptr[3]);
+          ImageFrame::BlendRGBARaw(dst_pixel, src_ptr[0], src_ptr[1],
+                                   src_ptr[2], src_ptr[3]);
           alpha_mask &= src_ptr[3];
         }
       }
@@ -433,15 +437,18 @@ void PNGImageDecoder::RowAvailable(unsigned char* row_buffer,
   } else {
     for (auto *dst_pixel = dst_row; dst_pixel < dst_row + width;
          src_ptr += 3, ++dst_pixel) {
-      buffer.SetRGBARaw(dst_pixel, src_ptr[0], src_ptr[1], src_ptr[2], 255);
+      ImageFrame::SetRGBARaw(dst_pixel, src_ptr[0], src_ptr[1], src_ptr[2],
+                             255);
     }
 
     // We'll apply the color space xform to opaque pixels after they have been
     // written to the ImageFrame, purely because SkColorSpaceXform supports
     // RGBA (and not RGB).
     if (SkColorSpaceXform* xform = ColorTransform()) {
-      xform->apply(XformColorFormat(), dst_row, XformColorFormat(), dst_row,
-                   width, kOpaque_SkAlphaType);
+      bool color_converison_successful =
+          xform->apply(XformColorFormat(), dst_row, XformColorFormat(), dst_row,
+                       width, kOpaque_SkAlphaType);
+      DCHECK(color_converison_successful);
     }
   }
 
@@ -467,25 +474,24 @@ void PNGImageDecoder::FrameComplete() {
   buffer.SetStatus(ImageFrame::kFrameComplete);
 }
 
-bool PNGImageDecoder::FrameIsCompleteAtIndex(size_t index) const {
+bool PNGImageDecoder::FrameIsReceivedAtIndex(size_t index) const {
   if (!IsDecodedSizeAvailable())
     return false;
 
   DCHECK(!Failed() && reader_);
 
-  // For non-animated images, return whether the status of the frame is
-  // ImageFrame::FrameComplete with ImageDecoder::frameIsCompleteAtIndex.
+  // For non-animated images, return ImageDecoder::FrameIsReceivedAtIndex.
   // This matches the behavior of WEBPImageDecoder.
   if (reader_->ParseCompleted() && reader_->FrameCount() == 1)
-    return ImageDecoder::FrameIsCompleteAtIndex(index);
+    return ImageDecoder::FrameIsReceivedAtIndex(index);
 
   return reader_->FrameIsReceivedAtIndex(index);
 }
 
-float PNGImageDecoder::FrameDurationAtIndex(size_t index) const {
+TimeDelta PNGImageDecoder::FrameDurationAtIndex(size_t index) const {
   if (index < frame_buffer_cache_.size())
     return frame_buffer_cache_[index].Duration();
-  return 0;
+  return TimeDelta();
 }
 
 }  // namespace blink

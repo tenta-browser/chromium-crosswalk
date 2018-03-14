@@ -5,9 +5,10 @@
 #ifndef DOMRectReadOnly_h
 #define DOMRectReadOnly_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
-#include "platform/heap/Handle.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/geometry/FloatRect.h"
+#include "platform/geometry/IntRect.h"
 
 namespace blink {
 
@@ -15,8 +16,7 @@ class DOMRectInit;
 class ScriptValue;
 class ScriptState;
 
-class CORE_EXPORT DOMRectReadOnly : public GarbageCollected<DOMRectReadOnly>,
-                                    public ScriptWrappable {
+class CORE_EXPORT DOMRectReadOnly : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -24,6 +24,8 @@ class CORE_EXPORT DOMRectReadOnly : public GarbageCollected<DOMRectReadOnly>,
                                  double y,
                                  double width,
                                  double height);
+  static DOMRectReadOnly* FromIntRect(const IntRect&);
+  static DOMRectReadOnly* FromFloatRect(const FloatRect&);
   static DOMRectReadOnly* fromRect(const DOMRectInit&);
 
   double x() const { return x_; }
@@ -35,8 +37,6 @@ class CORE_EXPORT DOMRectReadOnly : public GarbageCollected<DOMRectReadOnly>,
   double right() const { return std::max(x_, x_ + width_); }
   double bottom() const { return std::max(y_, y_ + height_); }
   double left() const { return std::min(x_, x_ + width_); }
-
-  DEFINE_INLINE_TRACE() {}
 
   ScriptValue toJSONForBinding(ScriptState*) const;
 

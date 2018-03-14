@@ -4,12 +4,14 @@
 
 #include <string>
 
+#include "ash/public/cpp/config.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/chromeos/ash_config.h"
 #include "chrome/browser/chromeos/login/existing_user_controller.h"
 #include "chrome/browser/chromeos/login/test/oobe_base_test.h"
 #include "chrome/browser/chromeos/login/ui/webui_login_display.h"
@@ -52,13 +54,9 @@ class LoginUtilsTest : public OobeBaseTest {
  public:
   LoginUtilsTest() {}
 
-  void RunUntilIdle() {
-    base::RunLoop().RunUntilIdle();
-  }
+  void RunUntilIdle() { base::RunLoop().RunUntilIdle(); }
 
-  PrefService* local_state() {
-    return g_browser_process->local_state();
-  }
+  PrefService* local_state() { return g_browser_process->local_state(); }
 
   void Login(const std::string& username) {
     content::WindowedNotificationObserver session_started_observer(
@@ -82,6 +80,16 @@ class LoginUtilsTest : public OobeBaseTest {
  private:
   DISALLOW_COPY_AND_ASSIGN(LoginUtilsTest);
 };
+
+// Exercises login, like the desktopui_MashLogin Chrome OS autotest.
+IN_PROC_BROWSER_TEST_F(LoginUtilsTest, MashLogin) {
+  if (GetAshConfig() != ash::Config::MASH)
+    return;
+
+  WaitForSigninScreen();
+  Login("username");
+  // Login did not time out and did not crash.
+}
 
 #if BUILDFLAG(ENABLE_RLZ)
 IN_PROC_BROWSER_TEST_F(LoginUtilsTest, RlzInitialized) {
@@ -110,8 +118,7 @@ IN_PROC_BROWSER_TEST_F(LoginUtilsTest, RlzInitialized) {
     base::RunLoop loop;
     base::string16 rlz_string;
     base::PostTaskWithTraitsAndReply(
-        FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                       base::TaskPriority::BACKGROUND),
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
         base::Bind(&GetAccessPointRlzInBackgroundThread,
                    rlz::RLZTracker::ChromeHomePage(), &rlz_string),
         loop.QuitClosure());

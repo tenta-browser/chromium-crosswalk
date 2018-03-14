@@ -32,9 +32,8 @@ struct MediaLogEvent;
 namespace content {
 
 // This class stores information about currently active media.
-class CONTENT_EXPORT MediaInternals
-    : NON_EXPORTED_BASE(public media::AudioLogFactory),
-      public NotificationObserver {
+class CONTENT_EXPORT MediaInternals : public media::AudioLogFactory,
+                                      public NotificationObserver {
  public:
   // Called with the update string.
   typedef base::Callback<void(const base::string16&)> UpdateCallback;
@@ -83,7 +82,9 @@ class CONTENT_EXPORT MediaInternals
 
   // If possible, i.e. a WebContents exists for the given RenderFrameHostID,
   // tells an existing AudioLogEntry the WebContents title for easier
-  // differentiation on the UI.
+  // differentiation on the UI. Note that the log entry must be created (by
+  // calling OnCreated with |component_id| on |audio_log|) before calling this
+  // method.
   void SetWebContentsTitleForAudioLogEntry(int component_id,
                                            int render_process_id,
                                            int render_frame_id,

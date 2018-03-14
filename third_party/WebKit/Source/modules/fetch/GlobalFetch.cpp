@@ -59,7 +59,7 @@ class GlobalFetchImpl final
                                  r->PassRequestData(script_state));
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  virtual void Trace(blink::Visitor* visitor) {
     visitor->Trace(fetch_manager_);
     ScopedFetcher::Trace(visitor);
     Supplement<T>::Trace(visitor);
@@ -90,14 +90,14 @@ GlobalFetch::ScopedFetcher* GlobalFetch::ScopedFetcher::From(
                                                   worker.GetExecutionContext());
 }
 
-DEFINE_TRACE(GlobalFetch::ScopedFetcher) {}
+void GlobalFetch::ScopedFetcher::Trace(blink::Visitor* visitor) {}
 
 ScriptPromise GlobalFetch::fetch(ScriptState* script_state,
                                  LocalDOMWindow& window,
                                  const RequestInfo& input,
                                  const Dictionary& init,
                                  ExceptionState& exception_state) {
-  UseCounter::Count(window.GetExecutionContext(), UseCounter::kFetch);
+  UseCounter::Count(window.GetExecutionContext(), WebFeature::kFetch);
   if (!window.GetFrame()) {
     exception_state.ThrowTypeError("The global scope is shutting down.");
     return ScriptPromise();
@@ -111,8 +111,7 @@ ScriptPromise GlobalFetch::fetch(ScriptState* script_state,
                                  const RequestInfo& input,
                                  const Dictionary& init,
                                  ExceptionState& exception_state) {
-  // Note that UseCounter doesn't work with SharedWorker or ServiceWorker.
-  UseCounter::Count(worker.GetExecutionContext(), UseCounter::kFetch);
+  UseCounter::Count(worker.GetExecutionContext(), WebFeature::kFetch);
   return ScopedFetcher::From(worker)->Fetch(script_state, input, init,
                                             exception_state);
 }

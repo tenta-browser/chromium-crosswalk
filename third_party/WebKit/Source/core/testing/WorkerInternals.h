@@ -5,16 +5,16 @@
 #ifndef WorkerInternals_h
 #define WorkerInternals_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/GarbageCollected.h"
 
 namespace blink {
 
+class ExceptionState;
 class OriginTrialsTest;
 class ScriptState;
 
-class WorkerInternals final : public GarbageCollectedFinalized<WorkerInternals>,
-                              public ScriptWrappable {
+class WorkerInternals final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -22,12 +22,10 @@ class WorkerInternals final : public GarbageCollectedFinalized<WorkerInternals>,
   virtual ~WorkerInternals();
 
   OriginTrialsTest* originTrialsTest() const;
-  void countFeature(ScriptState*, uint32_t feature);
-  void countDeprecation(ScriptState*, uint32_t feature);
+  void countFeature(ScriptState*, uint32_t feature, ExceptionState&);
+  void countDeprecation(ScriptState*, uint32_t feature, ExceptionState&);
 
   void collectGarbage(ScriptState*);
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   explicit WorkerInternals();

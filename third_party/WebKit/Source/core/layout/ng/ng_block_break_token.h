@@ -5,13 +5,13 @@
 #ifndef NGBlockBreakToken_h
 #define NGBlockBreakToken_h
 
+#include "base/memory/scoped_refptr.h"
 #include "core/CoreExport.h"
 #include "core/layout/ng/ng_break_token.h"
 #include "platform/LayoutUnit.h"
+#include "platform/wtf/Vector.h"
 
 namespace blink {
-
-class NGBlockNode;
 
 // Represents a break token for a block node.
 class CORE_EXPORT NGBlockBreakToken : public NGBreakToken {
@@ -24,17 +24,18 @@ class CORE_EXPORT NGBlockBreakToken : public NGBreakToken {
   //
   // The node is NGBlockNode, or any other NGLayoutInputNode that produces
   // anonymous box.
-  static RefPtr<NGBlockBreakToken> Create(
-      NGLayoutInputNode* node,
+  static scoped_refptr<NGBlockBreakToken> Create(
+      NGLayoutInputNode node,
       LayoutUnit used_block_size,
-      Vector<RefPtr<NGBreakToken>>& child_break_tokens) {
-    return AdoptRef(
+      Vector<scoped_refptr<NGBreakToken>>& child_break_tokens) {
+    return base::AdoptRef(
         new NGBlockBreakToken(node, used_block_size, child_break_tokens));
   }
 
   // Creates a break token for a node which cannot produce any more fragments.
-  static RefPtr<NGBlockBreakToken> Create(NGLayoutInputNode* node) {
-    return AdoptRef(new NGBlockBreakToken(node));
+  static scoped_refptr<NGBlockBreakToken> Create(NGLayoutInputNode node,
+                                                 LayoutUnit used_block_size) {
+    return base::AdoptRef(new NGBlockBreakToken(node, used_block_size));
   }
 
   // Represents the amount of block size used in previous fragments.
@@ -52,19 +53,19 @@ class CORE_EXPORT NGBlockBreakToken : public NGBreakToken {
   // this child).
   //
   // A child which we haven't visited yet doesn't have a break token here.
-  const Vector<RefPtr<NGBreakToken>>& ChildBreakTokens() const {
+  const Vector<scoped_refptr<NGBreakToken>>& ChildBreakTokens() const {
     return child_break_tokens_;
   }
 
  private:
-  NGBlockBreakToken(NGLayoutInputNode* node,
+  NGBlockBreakToken(NGLayoutInputNode node,
                     LayoutUnit used_block_size,
-                    Vector<RefPtr<NGBreakToken>>& child_break_tokens);
+                    Vector<scoped_refptr<NGBreakToken>>& child_break_tokens);
 
-  explicit NGBlockBreakToken(NGLayoutInputNode* node);
+  NGBlockBreakToken(NGLayoutInputNode node, LayoutUnit used_block_size);
 
   LayoutUnit used_block_size_;
-  Vector<RefPtr<NGBreakToken>> child_break_tokens_;
+  Vector<scoped_refptr<NGBreakToken>> child_break_tokens_;
 };
 
 DEFINE_TYPE_CASTS(NGBlockBreakToken,

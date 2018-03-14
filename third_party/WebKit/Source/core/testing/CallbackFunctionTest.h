@@ -5,45 +5,46 @@
 #ifndef CallbackFunctionTest_h
 #define CallbackFunctionTest_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/Vector.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/Vector.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
 class ExceptionState;
 class HTMLDivElement;
-class TestCallback;
-class TestInterfaceCallback;
-class TestReceiverObjectCallback;
-class TestSequenceCallback;
+class V8TestCallback;
+class V8TestEnumCallback;
+class V8TestInterfaceCallback;
+class V8TestReceiverObjectCallback;
+class V8TestSequenceCallback;
 
-class CallbackFunctionTest final
-    : public GarbageCollected<CallbackFunctionTest>,
-      public ScriptWrappable {
+class CallbackFunctionTest final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  DECLARE_TRACE();
-
   static CallbackFunctionTest* Create() { return new CallbackFunctionTest(); }
 
-  String testCallback(TestCallback*,
+  String testCallback(V8TestCallback*,
                       const String&,
                       const String&,
                       ExceptionState&);
-  String testNullableCallback(TestCallback*,
+  String testNullableCallback(V8TestCallback*,
                               const String&,
                               const String&,
                               ExceptionState&);
-  void testInterfaceCallback(TestInterfaceCallback*,
+  void testInterfaceCallback(V8TestInterfaceCallback*,
                              HTMLDivElement*,
                              ExceptionState&);
-  void testReceiverObjectCallback(TestReceiverObjectCallback*, ExceptionState&);
-  Vector<String> testSequenceCallback(TestSequenceCallback*,
+  void testReceiverObjectCallback(V8TestReceiverObjectCallback*,
+                                  ExceptionState&);
+  Vector<String> testSequenceCallback(V8TestSequenceCallback*,
                                       const Vector<int>& numbers,
                                       ExceptionState&);
+  void testEnumCallback(V8TestEnumCallback*,
+                        const String& enum_value,
+                        ExceptionState&);
 };
 
 }  // namespace blink

@@ -12,8 +12,8 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "chromecast/base/init_command_line_shlib.h"
 #include "chromecast/base/task_runner_impl.h"
-#include "chromecast/media/cma/backend/alsa/media_pipeline_backend_alsa.h"
-#include "chromecast/media/cma/backend/alsa/stream_mixer_alsa.h"
+#include "chromecast/media/cma/backend/media_pipeline_backend_audio.h"
+#include "chromecast/media/cma/backend/stream_mixer.h"
 #include "chromecast/public/cast_media_shlib.h"
 #include "chromecast/public/graphics_types.h"
 #include "chromecast/public/video_plane.h"
@@ -88,6 +88,8 @@ std::unique_ptr<base::ThreadTaskRunnerHandle> g_thread_task_runner_handle;
 }  // namespace
 
 void CastMediaShlib::Initialize(const std::vector<std::string>& argv) {
+  // Sets logging to display process and thread ID.
+  logging::SetLogItems(true, true, false, false);
   chromecast::InitCommandLineShlib(argv);
 
   g_video_plane = new DefaultVideoPlane();
@@ -131,8 +133,8 @@ MediaPipelineBackend* CastMediaShlib::CreateMediaPipelineBackend(
         new base::ThreadTaskRunnerHandle(task_runner));
   }
 
-  // TODO(cleichner): Implement MediaSyncType in MediaPipelineDeviceAlsa
-  return new MediaPipelineBackendAlsa(params);
+  // TODO(cleichner): Implement MediaSyncType in MediaPipelineDeviceAlsa.
+  return new MediaPipelineBackendAudio(params);
 }
 
 double CastMediaShlib::GetMediaClockRate() {
@@ -189,12 +191,17 @@ bool CastMediaShlib::SupportsMediaClockRateChange() {
 }
 
 void CastMediaShlib::AddLoopbackAudioObserver(LoopbackAudioObserver* observer) {
-  StreamMixerAlsa::Get()->AddLoopbackAudioObserver(observer);
+  StreamMixer::Get()->AddLoopbackAudioObserver(observer);
 }
 
 void CastMediaShlib::RemoveLoopbackAudioObserver(
     LoopbackAudioObserver* observer) {
-  StreamMixerAlsa::Get()->RemoveLoopbackAudioObserver(observer);
+  StreamMixer::Get()->RemoveLoopbackAudioObserver(observer);
+}
+
+void CastMediaShlib::SetPostProcessorConfig(const std::string& name,
+                                            const std::string& config) {
+  StreamMixer::Get()->SetPostProcessorConfig(name, config);
 }
 
 }  // namespace media

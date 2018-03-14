@@ -39,9 +39,9 @@ namespace blink {
 class AXObjectCacheImpl;
 class AXSVGRoot;
 class Element;
-class FrameView;
 class HTMLAreaElement;
 class IntPoint;
+class LocalFrameView;
 class Node;
 
 class MODULES_EXPORT AXLayoutObject : public AXNodeObject {
@@ -83,7 +83,6 @@ class MODULES_EXPORT AXLayoutObject : public AXNodeObject {
   bool IsLinked() const override;
   bool IsLoaded() const override;
   bool IsOffScreen() const override;
-  bool IsReadOnly() const override;
   bool IsVisited() const override;
 
   // Check object state.
@@ -119,12 +118,9 @@ class MODULES_EXPORT AXLayoutObject : public AXNodeObject {
 
   // ARIA attributes.
   void AriaDescribedbyElements(AXObjectVector&) const override;
-  void AriaLabelledbyElements(AXObjectVector&) const override;
   void AriaOwnsElements(AXObjectVector&) const override;
 
   bool AriaHasPopup() const override;
-  bool AriaRoleHasPresentationalChildren() const override;
-  AXObject* AncestorForWhichThisIsAPresentationalChild() const override;
   bool SupportsARIADragging() const override;
   bool SupportsARIADropping() const override;
   bool SupportsARIAFlowTo() const override;
@@ -133,8 +129,6 @@ class MODULES_EXPORT AXLayoutObject : public AXNodeObject {
   // ARIA live-region features.
   const AtomicString& LiveRegionStatus() const override;
   const AtomicString& LiveRegionRelevant() const override;
-  bool LiveRegionAtomic() const override;
-  bool LiveRegionBusy() const override;
 
   // AX name calc.
   String TextAlternative(bool recursive,
@@ -144,11 +138,13 @@ class MODULES_EXPORT AXLayoutObject : public AXNodeObject {
                          AXRelatedObjectVector*,
                          NameSources*) const override;
 
-  // Methods that retrieve or manipulate the current selection.
+  // Modify or take an action on an object.
+  bool OnNativeSetSelectionAction(const AXRange&) override;
+  bool OnNativeSetValueAction(const String&) override;
 
+  // Methods that retrieve or manipulate the current selection.
   AXRange Selection() const override;
   AXRange SelectionUnderObject() const override;
-  void SetSelection(const AXRange&) override;
 
   // Hit testing.
   AXObject* AccessibilityHitTest(const IntPoint&) const override;
@@ -176,10 +172,8 @@ class MODULES_EXPORT AXLayoutObject : public AXNodeObject {
   // DOM and layout tree access.
   Node* GetNode() const override;
   Document* GetDocument() const override;
-  FrameView* DocumentFrameView() const override;
+  LocalFrameView* DocumentFrameView() const override;
   Element* AnchorElement() const override;
-
-  void SetValue(const String&) override;
 
   // Notifications that this object may have changed.
   void HandleActiveDescendantChanged() override;
@@ -192,7 +186,6 @@ class MODULES_EXPORT AXLayoutObject : public AXNodeObject {
   void LineBreaks(Vector<int>&) const final;
 
  private:
-  AXObject* TreeAncestorDisallowingChild() const;
   bool IsTabItemSelected() const;
   bool IsValidSelectionBound(const AXObject*) const;
   AXObject* AccessibilityImageMapHitTest(HTMLAreaElement*,
@@ -211,11 +204,14 @@ class MODULES_EXPORT AXLayoutObject : public AXNodeObject {
   void AddRemoteSVGChildren();
   void AddInlineTextBoxChildren(bool force);
 
-  bool ElementAttributeValue(const QualifiedName&) const;
   LayoutRect ComputeElementRect() const;
   AXRange TextControlSelection() const;
   int IndexForVisiblePosition(const VisiblePosition&) const;
   AXLayoutObject* GetUnignoredObjectFromNode(Node&) const;
+
+  bool CanIgnoreTextAsEmpty() const;
+  bool CanIgnoreSpaceNextTo(LayoutObject*, bool is_after) const;
+  bool HasAriaCellRole(Element*) const;
 };
 
 DEFINE_AX_OBJECT_TYPE_CASTS(AXLayoutObject, IsAXLayoutObject());

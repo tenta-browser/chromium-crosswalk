@@ -25,9 +25,9 @@
 
 #include "modules/speech/SpeechGrammarList.h"
 
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
+#include "platform/bindings/ScriptState.h"
 
 namespace blink {
 
@@ -53,13 +53,15 @@ void SpeechGrammarList::addFromUri(ScriptState* script_state,
 void SpeechGrammarList::addFromString(const String& string, double weight) {
   String url_string =
       String("data:application/xml,") + EncodeWithURLEscapeSequences(string);
-  grammars_.push_back(SpeechGrammar::Create(KURL(KURL(), url_string), weight));
+  grammars_.push_back(
+      SpeechGrammar::Create(KURL(NullURL(), url_string), weight));
 }
 
 SpeechGrammarList::SpeechGrammarList() {}
 
-DEFINE_TRACE(SpeechGrammarList) {
+void SpeechGrammarList::Trace(blink::Visitor* visitor) {
   visitor->Trace(grammars_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

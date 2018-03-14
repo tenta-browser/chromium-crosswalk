@@ -17,14 +17,17 @@ class GpuProcessExpectations(GpuTestExpectations):
     self.Skip('GpuProcess_no_gpu_process', ['android'], bug=643282)
     self.Skip('GpuProcess_skip_gpu_process', ['android'], bug=(610951, 610023))
 
+    # TODO(zmo): Consider deleting this test on Linux/Win due to SwiftShader?
+    self.Fail('GpuProcess_no_gpu_process', ['win', 'linux'])
+
     # Chrome on Windows and Linux create a GPU process that uses SwiftShader
     # when using either --disable-gpu or a blacklisted GPU.
     self.Skip('GpuProcess_skip_gpu_process', ['win', 'linux'], bug=630728)
 
     # Currently SwiftShader is integrated only on Windows and Linux. Remove
     # platforms from this suppression as it is integrated on more platforms.
-    self.Skip('GpuProcess_swiftshader_for_webgl',
-              ['mac', 'android', 'chromeos'], bug=630728)
+    self.Skip('GpuProcess_swiftshader_for_webgl', ['mac', 'android'],
+              bug=630728)
 
     # There is no Android multi-gpu configuration and the helper
     # gpu_info_collector.cc::IdentifyActiveGPU is not even called.

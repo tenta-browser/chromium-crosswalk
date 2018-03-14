@@ -7,6 +7,7 @@
 #include "base/macros.h"
 #include "base/path_service.h"
 #include "base/test/test_timeouts.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
@@ -21,6 +22,7 @@
 #include "chrome/test/nacl/nacl_browsertest_util.h"
 #include "chrome/test/ppapi/ppapi_test.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/nacl/common/features.h"
 #include "components/nacl/common/nacl_switches.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
@@ -72,7 +74,8 @@ using content::RenderViewHost;
 // Flaky on Mac ASAN:
 //    http://crbug.com/428670
 
-#if defined(DISABLE_NACL) || (defined(OS_MACOSX) && defined(ADDRESS_SANITIZER))
+#if !BUILDFLAG(ENABLE_NACL) || \
+    (defined(OS_MACOSX) && defined(ADDRESS_SANITIZER))
 
 #define MAYBE_PPAPI_NACL(test_name) DISABLED_##test_name
 #define MAYBE_PPAPI_PNACL(test_name) DISABLED_##test_name
@@ -86,8 +89,8 @@ using content::RenderViewHost;
 #else
 
 #define MAYBE_PPAPI_NACL(test_name) test_name
-#if defined (OS_WIN) || defined(ADDRESS_SANITIZER)
-// http://crbug.com/633067
+#if defined(OS_WIN) || defined(OS_LINUX) || defined(ADDRESS_SANITIZER)
+// http://crbug.com/633067, http://crbug.com/727989
 #define MAYBE_PPAPI_PNACL(test_name) DISABLED_##test_name
 #else
 #define MAYBE_PPAPI_PNACL(test_name) test_name
@@ -145,8 +148,7 @@ using content::RenderViewHost;
       RunTestWithSSLServer(STRIP_PREFIXES(test_name)); \
     }
 
-
-#endif  // DISABLE_NACL
+#endif  // !BUILDFLAG(ENABLE_NACL)
 
 //
 // Interface tests.
@@ -1076,9 +1078,9 @@ IN_PROC_BROWSER_TEST_F(OutOfProcessPPAPITest, InputEvent_AcceptTouchEvent) {
                                  };
 
   for (size_t i = 0; i < arraysize(positive_tests); ++i) {
+    RunTest(positive_tests[i]);
     RenderViewHost* host = browser()->tab_strip_model()->
         GetActiveWebContents()->GetRenderViewHost();
-    RunTest(positive_tests[i]);
     EXPECT_TRUE(content::RenderViewHostTester::HasTouchEventHandler(host));
   }
 }
@@ -1180,7 +1182,13 @@ TEST_PPAPI_NACL(MouseCursor)
 
 TEST_PPAPI_NACL(NetworkProxy)
 
-TEST_PPAPI_NACL(TrueTypeFont)
+// TODO(crbug.com/619765): get working on CrOS build.
+#if defined(OS_CHROMEOS)
+#define MAYBE_TrueTypeFont DISABLED_TrueTypeFont
+#else
+#define MAYBE_TrueTypeFont TrueTypeFont
+#endif
+TEST_PPAPI_NACL(MAYBE_TrueTypeFont)
 
 // TODO(crbug.com/602875), TODO(crbug.com/602876) Flaky on Win and CrOS.
 #if defined(OS_CHROMEOS) || defined(OS_WIN)
@@ -1231,11 +1239,15 @@ TEST_PPAPI_OUT_OF_PROCESS(MAYBE_FlashFullscreen)
 
 TEST_PPAPI_OUT_OF_PROCESS(PDF)
 
-// TODO(dalecurtis): Renable once the platform verification infobar has been
-// implemented; see http://crbug.com/270908
-// #if defined(OS_CHROMEOS)
-// TEST_PPAPI_OUT_OF_PROCESS(PlatformVerificationPrivate)
-// #endif
+IN_PROC_BROWSER_TEST_F(OutOfProcessPPAPITest, PlatformVerificationPrivate) {
+  RunTest(
+#if defined(OS_CHROMEOS)
+// TODO(dalecurtis): Renable once the platform verification infobar has
+// been implemented; see http://crbug.com/270908
+// LIST_TEST(PlatformVerificationPrivate_ChallengePlatform)
+#endif
+      LIST_TEST(PlatformVerificationPrivate_StorageId));
+}
 
 IN_PROC_BROWSER_TEST_F(OutOfProcessPPAPITest, FlashDRM) {
   RunTest(
@@ -1251,7 +1263,7 @@ IN_PROC_BROWSER_TEST_F(OutOfProcessPPAPITest, FlashDRM) {
 TEST_PPAPI_OUT_OF_PROCESS(OutputProtectionPrivate)
 #endif
 
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
 class PackagedAppTest : public ExtensionBrowserTest {
  public:
   explicit PackagedAppTest(const std::string& toolchain)
@@ -1259,7 +1271,10 @@ class PackagedAppTest : public ExtensionBrowserTest {
 
   void LaunchTestingApp(const std::string& extension_dirname) {
     base::FilePath data_dir;
-    ASSERT_TRUE(PathService::Get(chrome::DIR_GEN_TEST_DATA, &data_dir));
+    {
+      base::ScopedAllowBlockingForTesting allow_blocking;
+      ASSERT_TRUE(PathService::Get(chrome::DIR_GEN_TEST_DATA, &data_dir));
+    }
     base::FilePath app_dir = data_dir.AppendASCII("ppapi")
                                      .AppendASCII("tests")
                                      .AppendASCII("extensions")

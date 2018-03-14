@@ -10,7 +10,7 @@
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 
-#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
 #include "ui/base/x/x11_util.h"  // nogncheck
 #endif
 
@@ -23,8 +23,6 @@ const char kTabStripLayoutType[] = "tab_strip_layout_type";
 
 }  // namespace
 
-namespace chrome {
-
 void RegisterBrowserViewLocalPrefs(PrefRegistrySimple* registry) {
   registry->RegisterIntegerPref(kTabStripLayoutType, 0);
   registry->RegisterBooleanPref(prefs::kTabStripStackedLayout, false);
@@ -32,7 +30,7 @@ void RegisterBrowserViewLocalPrefs(PrefRegistrySimple* registry) {
 
 void RegisterBrowserViewProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry) {
-#if !defined(OS_CHROMEOS) && defined(USE_X11)
+#if defined(USE_X11)
   registry->RegisterBooleanPref(prefs::kUseCustomChromeFrame,
                                 ui::GetCustomFramePrefDefault());
 #endif
@@ -49,5 +47,3 @@ void MigrateBrowserTabStripPrefs(PrefService* prefs) {
     prefs->ClearPref(kTabStripLayoutType);
   }
 }
-
-}  // namespace chrome

@@ -12,12 +12,35 @@
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/resource_request_info.h"
 
 #if defined(OS_MACOSX)
 #include "chrome/browser/ui/browser_dialogs.h"
 #endif  // defined(OS_MACOSX)
 
 namespace task_manager {
+
+namespace {
+BytesTransferredKey KeyForRequest(const net::URLRequest& request) {
+  // Only net::URLRequestJob instances created by the ResourceDispatcherHost
+  // have an associated ResourceRequestInfo and a render frame associated.
+  const content::ResourceRequestInfo* info =
+      content::ResourceRequestInfo::ForRequest(&request);
+
+  // Requests without ResourceRequestInfo are attributed to the browser process.
+  if (!info)
+    return {content::ChildProcessHost::kInvalidUniqueID, MSG_ROUTING_NONE};
+
+  // Requests from PPAPI instances are proxied through the renderer, and specify
+  // the plugin_child_id of the plugin process.
+  if (info->GetPluginChildID() != content::ChildProcessHost::kInvalidUniqueID)
+    return {info->GetPluginChildID(), MSG_ROUTING_NONE};
+
+  // Other requests are associated with the child process (and frame, if
+  // originating from a renderer process).
+  return {info->GetChildID(), info->GetRenderFrameID()};
+}
+}  // namespace
 
 // static
 void TaskManagerInterface::RegisterPrefs(PrefRegistrySimple* registry) {
@@ -43,8 +66,18 @@ TaskManagerInterface* TaskManagerInterface::GetTaskManager() {
 void TaskManagerInterface::OnRawBytesRead(const net::URLRequest& request,
                                           int64_t bytes_read) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
+  BytesTransferredKey key = KeyForRequest(request);
+  TaskManagerIoThreadHelper::OnRawBytesTransferred(key, bytes_read,
+                                                   0 /*bytes_sent*/);
+}
 
-  TaskManagerIoThreadHelper::OnRawBytesRead(request, bytes_read);
+// static
+void TaskManagerInterface::OnRawBytesSent(const net::URLRequest& request,
+                                          int64_t bytes_sent) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
+  BytesTransferredKey key = KeyForRequest(request);
+  TaskManagerIoThreadHelper::OnRawBytesTransferred(key, 0 /*bytes_read*/,
+                                                   bytes_sent);
 }
 
 void TaskManagerInterface::AddObserver(TaskManagerObserver* observer) {

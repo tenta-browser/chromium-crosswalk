@@ -26,19 +26,21 @@ namespace extensions {
 class ChromeExtensionWebContentsObserver
     : public ExtensionWebContentsObserver,
       public content::WebContentsUserData<ChromeExtensionWebContentsObserver> {
+ public:
+  ~ChromeExtensionWebContentsObserver() override;
+
  private:
   friend class content::WebContentsUserData<ChromeExtensionWebContentsObserver>;
 
   explicit ChromeExtensionWebContentsObserver(
       content::WebContents* web_contents);
-  ~ChromeExtensionWebContentsObserver() override;
 
   // ExtensionWebContentsObserver:
   void InitializeRenderFrame(
       content::RenderFrameHost* render_frame_host) override;
 
   // content::WebContentsObserver overrides.
-  void RenderViewCreated(content::RenderViewHost* render_view_host) override;
+  void RenderFrameCreated(content::RenderFrameHost* render_frame_host) override;
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
 
@@ -55,11 +57,7 @@ class ChromeExtensionWebContentsObserver
       int32_t severity_level);
 
   // Reloads an extension if it is on the terminated list.
-  void ReloadIfTerminated(content::RenderViewHost* render_view_host);
-
-  // Determines which bucket of a synthetic field trial this client belongs
-  // to and sets it.
-  void SetExtensionIsolationTrial(content::RenderFrameHost* render_frame_host);
+  void ReloadIfTerminated(content::RenderFrameHost* render_frame_host);
 
   DISALLOW_COPY_AND_ASSIGN(ChromeExtensionWebContentsObserver);
 };

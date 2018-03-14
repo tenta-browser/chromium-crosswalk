@@ -5,7 +5,6 @@
 #include "content/public/common/drop_data.h"
 
 #include "base/strings/utf_string_conversions.h"
-#include "components/mime_util/mime_util.h"
 #include "net/base/filename_util.h"
 #include "net/base/mime_util.h"
 
@@ -65,7 +64,8 @@ base::Optional<base::FilePath> DropData::GetSafeFilenameForImageFileContents()
   std::string mime_type;
   if (net::GetWellKnownMimeTypeFromExtension(file_contents_filename_extension,
                                              &mime_type) &&
-      mime_util::IsSupportedImageMimeType(mime_type)) {
+      base::StartsWith(mime_type, "image/",
+                       base::CompareCase::INSENSITIVE_ASCII)) {
     return file_name.ReplaceExtension(file_contents_filename_extension);
   }
   return base::nullopt;

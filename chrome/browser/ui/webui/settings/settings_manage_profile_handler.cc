@@ -32,8 +32,8 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "components/signin/core/browser/profile_management_switches.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/signin/core/common/profile_management_switches.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_ui.h"
@@ -98,9 +98,7 @@ void ManageProfileHandler::OnJavascriptDisallowed() {
 void ManageProfileHandler::OnProfileAvatarChanged(
     const base::FilePath& profile_path) {
   // This is necessary to send the potentially updated GAIA photo.
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("available-icons-changed"),
-                         *GetAvailableIcons());
+  FireWebUIListener("available-icons-changed", *GetAvailableIcons());
 }
 
 void ManageProfileHandler::HandleGetAvailableIcons(

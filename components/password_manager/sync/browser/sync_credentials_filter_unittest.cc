@@ -13,7 +13,6 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
@@ -72,7 +71,7 @@ class FakePasswordManagerClient : public StubPasswordManagerClient {
 
 bool IsFormFiltered(const CredentialsFilter* filter, const PasswordForm& form) {
   std::vector<std::unique_ptr<PasswordForm>> vector;
-  vector.push_back(base::MakeUnique<PasswordForm>(form));
+  vector.push_back(std::make_unique<PasswordForm>(form));
   vector = filter->FilterResults(std::move(vector));
   return vector.empty();
 }
@@ -100,13 +99,14 @@ class CredentialsFilterTest : public SyncUsernameTestBase {
                       &client_,
                       driver_.AsWeakPtr(),
                       pending_,
-                      base::MakeUnique<StubFormSaver>(),
+                      std::make_unique<StubFormSaver>(),
                       &fetcher_),
         filter_(&client_,
                 base::Bind(&SyncUsernameTestBase::sync_service,
                            base::Unretained(this)),
                 base::Bind(&SyncUsernameTestBase::signin_manager,
                            base::Unretained(this))) {
+    form_manager_.Init(nullptr);
     fetcher_.Fetch();
   }
 
@@ -369,9 +369,9 @@ TEST_F(CredentialsFilterTest, ShouldFilterOneForm) {
 
   std::vector<std::unique_ptr<PasswordForm>> results;
   results.push_back(
-      base::MakeUnique<PasswordForm>(SimpleGaiaForm("test1@gmail.com")));
+      std::make_unique<PasswordForm>(SimpleGaiaForm("test1@gmail.com")));
   results.push_back(
-      base::MakeUnique<PasswordForm>(SimpleGaiaForm("test2@gmail.com")));
+      std::make_unique<PasswordForm>(SimpleGaiaForm("test2@gmail.com")));
 
   FakeSigninAs("test1@gmail.com");
 

@@ -8,6 +8,8 @@
 #include <utility>
 
 #include "base/base_switches.h"
+#include "base/files/file_path.h"
+#include "base/path_service.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -20,12 +22,14 @@
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/common/extensions/extension_process_policy.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/content_switches.h"
 #include "extensions/browser/api/test/test_api.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/extension_paths.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/switches.h"
 #include "extensions/test/result_catcher.h"
@@ -41,9 +45,9 @@ namespace {
 const char kTestCustomArg[] = "customArg";
 const char kTestDataDirectory[] = "testDataDirectory";
 const char kTestWebSocketPort[] = "testWebSocketPort";
-const char kIsolateExtensions[] = "isolateExtensions";
 const char kFtpServerPort[] = "ftpServer.port";
 const char kEmbeddedTestServerPort[] = "testServer.port";
+const char kBrowserSideNavigationEnabled[] = "browserSideNavigationEnabled";
 
 std::unique_ptr<net::test_server::HttpResponse> HandleServerRedirectRequest(
     const net::test_server::HttpRequest& request) {
@@ -157,9 +161,14 @@ void ExtensionApiTest::SetUpOnMainThread() {
   test_config_.reset(new base::DictionaryValue());
   test_config_->SetString(kTestDataDirectory,
                           net::FilePathToFileURL(test_data_dir_).spec());
-  test_config_->SetInteger(kTestWebSocketPort, 0);
-  bool isolate_extensions = extensions::IsIsolateExtensionsEnabled();
-  test_config_->SetBoolean(kIsolateExtensions, isolate_extensions);
+  test_config_->SetBoolean(kBrowserSideNavigationEnabled,
+                           content::IsBrowserSideNavigationEnabled());
+  if (embedded_test_server()->Started()) {
+    // InitializeEmbeddedTestServer was called before |test_config_| was set.
+    // Set the missing port key.
+    test_config_->SetInteger(kEmbeddedTestServerPort,
+                             embedded_test_server()->port());
+  }
   extensions::TestGetConfigFunction::set_test_config_state(
       test_config_.get());
 }
@@ -173,6 +182,12 @@ void ExtensionApiTest::TearDownOnMainThread() {
 bool ExtensionApiTest::RunExtensionTest(const std::string& extension_name) {
   return RunExtensionTestImpl(
       extension_name, std::string(), NULL, kFlagEnableFileAccess);
+}
+
+bool ExtensionApiTest::RunExtensionTestWithFlags(
+    const std::string& extension_name,
+    int flags) {
+  return RunExtensionTestImpl(extension_name, std::string(), nullptr, flags);
 }
 
 bool ExtensionApiTest::RunExtensionTestWithArg(
@@ -291,6 +306,7 @@ bool ExtensionApiTest::RunExtensionTestImpl(const std::string& extension_name,
   bool load_as_component = (flags & kFlagLoadAsComponent) != 0;
   bool launch_platform_app = (flags & kFlagLaunchPlatformApp) != 0;
   bool use_incognito = (flags & kFlagUseIncognito) != 0;
+  bool use_root_extensions_dir = (flags & kFlagUseRootExtensionsDir) != 0;
 
   if (custom_arg && custom_arg[0])
     test_config_->SetString(kTestCustomArg, custom_arg);
@@ -301,7 +317,9 @@ bool ExtensionApiTest::RunExtensionTestImpl(const std::string& extension_name,
 
   const extensions::Extension* extension = NULL;
   if (!extension_name.empty()) {
-    base::FilePath extension_path = test_data_dir_.AppendASCII(extension_name);
+    const base::FilePath& root_path =
+        use_root_extensions_dir ? shared_test_data_dir_ : test_data_dir_;
+    base::FilePath extension_path = root_path.AppendASCII(extension_name);
     if (load_as_component) {
       extension = LoadExtensionAsComponent(extension_path);
     } else {
@@ -404,8 +422,12 @@ bool ExtensionApiTest::InitializeEmbeddedTestServer() {
   // Build a dictionary of values that tests can use to build URLs that
   // access the test server and local file system.  Tests can see these values
   // using the extension API function chrome.test.getConfig().
-  test_config_->SetInteger(kEmbeddedTestServerPort,
-                           embedded_test_server()->port());
+  if (test_config_) {
+    test_config_->SetInteger(kEmbeddedTestServerPort,
+                             embedded_test_server()->port());
+  }
+  // else SetUpOnMainThread has not been called yet. Possibly because the
+  // caller needs a valid port in an overridden SetUpCommandLine method.
 
   return true;
 }
@@ -418,9 +440,7 @@ bool ExtensionApiTest::StartWebSocketServer(
     const base::FilePath& root_directory,
     bool enable_basic_auth) {
   websocket_server_.reset(new net::SpawnedTestServer(
-      net::SpawnedTestServer::TYPE_WS,
-      net::SpawnedTestServer::kLocalhost,
-      root_directory));
+      net::SpawnedTestServer::TYPE_WS, root_directory));
   websocket_server_->set_websocket_basic_auth(enable_basic_auth);
 
   if (!websocket_server_->Start())
@@ -433,10 +453,8 @@ bool ExtensionApiTest::StartWebSocketServer(
 }
 
 bool ExtensionApiTest::StartFTPServer(const base::FilePath& root_directory) {
-  ftp_server_.reset(new net::SpawnedTestServer(
-      net::SpawnedTestServer::TYPE_FTP,
-      net::SpawnedTestServer::kLocalhost,
-      root_directory));
+  ftp_server_.reset(new net::SpawnedTestServer(net::SpawnedTestServer::TYPE_FTP,
+                                               root_directory));
 
   if (!ftp_server_->Start())
     return false;
@@ -449,7 +467,13 @@ bool ExtensionApiTest::StartFTPServer(const base::FilePath& root_directory) {
 
 void ExtensionApiTest::SetUpCommandLine(base::CommandLine* command_line) {
   ExtensionBrowserTest::SetUpCommandLine(command_line);
+
   test_data_dir_ = test_data_dir_.AppendASCII("api_test");
+
+  extensions::RegisterPathProvider();
+  PathService::Get(extensions::DIR_TEST_DATA, &shared_test_data_dir_);
+  shared_test_data_dir_ = shared_test_data_dir_.AppendASCII("api_test");
+
   // Backgrounded renderer processes run at a lower priority, causing the
   // tests to take more time to complete. Disable backgrounding so that the
   // tests don't time out.

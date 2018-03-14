@@ -9,7 +9,8 @@
 
 #include "base/macros.h"
 #include "base/run_loop.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
+#include "base/test/histogram_tester.h"
 #include "chrome/browser/safe_browsing/certificate_reporting_service.h"
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -100,8 +101,7 @@ class RequestObserver {
 // empty response. If Resume() is called before a request is made, then the
 // request will not be delayed. If not delayed, it can return a failed or a
 // successful URL request job.
-class DelayableCertReportURLRequestJob : public net::URLRequestJob,
-                                         public base::NonThreadSafe {
+class DelayableCertReportURLRequestJob : public net::URLRequestJob {
  public:
   DelayableCertReportURLRequestJob(
       bool delayed,
@@ -116,7 +116,6 @@ class DelayableCertReportURLRequestJob : public net::URLRequestJob,
   // net::URLRequestJob methods:
   void Start() override;
   int ReadRawData(net::IOBuffer* buf, int buf_size) override;
-  int GetResponseCode() const override;
   void GetResponseInfo(net::HttpResponseInfo* info) override;
 
   // Resumes a previously started request that was delayed. If no
@@ -129,6 +128,9 @@ class DelayableCertReportURLRequestJob : public net::URLRequestJob,
   bool should_fail_;
   bool started_;
   base::Callback<void()> destruction_callback_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
+
   base::WeakPtrFactory<DelayableCertReportURLRequestJob> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DelayableCertReportURLRequestJob);
@@ -136,6 +138,8 @@ class DelayableCertReportURLRequestJob : public net::URLRequestJob,
 
 // A job interceptor that returns a failed, succesful or delayed request job.
 // Used to simulate report uploads that fail, succeed or hang.
+// The caller is responsible for guaranteeing that |this| is kept alive for
+// all posted tasks and URLRequestJob objects.
 class CertReportJobInterceptor : public net::URLRequestInterceptor {
  public:
   CertReportJobInterceptor(ReportSendingResult expected_report_result,
@@ -176,9 +180,7 @@ class CertReportJobInterceptor : public net::URLRequestInterceptor {
   mutable RequestObserver request_created_observer_;
   mutable RequestObserver request_destroyed_observer_;
 
-  mutable base::WeakPtr<DelayableCertReportURLRequestJob> delayed_request_ =
-      nullptr;
-  mutable base::WeakPtrFactory<CertReportJobInterceptor> weak_factory_;
+  mutable base::WeakPtr<DelayableCertReportURLRequestJob> delayed_request_;
 
   DISALLOW_COPY_AND_ASSIGN(CertReportJobInterceptor);
 };
@@ -239,6 +241,28 @@ class CertificateReportingServiceTestHelper {
   uint8_t server_private_key_[32];
 
   DISALLOW_COPY_AND_ASSIGN(CertificateReportingServiceTestHelper);
+};
+
+// Class to test reporting events histogram for CertificateReportingService.
+// We can't use a simple HistogramTester, as we need to wait until test teardown
+// to check the histogram contents. This ensures that all in-flight requests
+// are torn down by the time we check the histograms.
+class EventHistogramTester {
+ public:
+  EventHistogramTester();
+  ~EventHistogramTester();
+
+  void SetExpectedValues(int submitted,
+                         int failed,
+                         int successful,
+                         int dropped);
+
+ private:
+  int submitted_ = 0;
+  int failed_ = 0;
+  int successful_ = 0;
+  int dropped_ = 0;
+  base::HistogramTester histogram_tester_;
 };
 
 }  // namespace certificate_reporting_test_utils

@@ -118,9 +118,8 @@ public class ContentSettingsResources {
                                  R.string.javascript_permission_title, ContentSetting.ALLOW,
                                  ContentSetting.BLOCK,
                                  R.string.website_settings_category_javascript_allowed, 0));
-            localMap.put(
-                    ContentSettingsType.CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,
-                    new ResourceItem(R.drawable.permission_camera,
+            localMap.put(ContentSettingsType.CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,
+                    new ResourceItem(R.drawable.ic_videocam_white_24dp,
                             R.string.website_settings_use_camera, R.string.camera_permission_title,
                             ContentSetting.ASK, ContentSetting.BLOCK,
                             R.string.website_settings_category_camera_ask, 0));
@@ -148,15 +147,20 @@ public class ContentSettingsResources {
                                  org.chromium.chrome.R.string.protected_content,
                                  org.chromium.chrome.R.string.protected_content,
                                  ContentSetting.ASK, ContentSetting.BLOCK, 0, 0));
-            // TODO(csharrison): Swap out the placeholder icon once it is ready.
-            localMap.put(ContentSettingsType.CONTENT_SETTINGS_TYPE_SUBRESOURCE_FILTER,
-                    new ResourceItem(R.drawable.permission_popups,
-                            R.string.subresource_filter_permission_title,
-                            R.string.subresource_filter_permission_title, ContentSetting.ALLOW,
-                            ContentSetting.BLOCK, 0, 0));
+            localMap.put(ContentSettingsType.CONTENT_SETTINGS_TYPE_ADS,
+                    new ResourceItem(R.drawable.ic_ad_24dp_grey600, R.string.ads_permission_title,
+                            R.string.ads_permission_title, ContentSetting.ALLOW,
+                            ContentSetting.BLOCK, 0,
+                            R.string.website_settings_category_ads_blocked));
             localMap.put(ContentSettingsType.CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA,
                     new ResourceItem(R.drawable.settings_usb, 0, 0, ContentSetting.ASK,
                                  ContentSetting.BLOCK, 0, 0));
+            localMap.put(ContentSettingsType.CONTENT_SETTINGS_TYPE_SOUND,
+                    new ResourceItem(R.drawable.ic_volume_up_grey600_24dp,
+                            R.string.sound_permission_title, R.string.sound_permission_title,
+                            ContentSetting.ALLOW, ContentSetting.BLOCK,
+                            R.string.website_settings_category_sound_allowed,
+                            R.string.website_settings_category_sound_blocked));
             sResourceInfo = localMap;
         }
         return sResourceInfo;
@@ -174,6 +178,16 @@ public class ContentSettingsResources {
      */
     public static int getIcon(int contentType) {
         return getResourceItem(contentType).getIcon();
+    }
+
+    /**
+     * Creates a {@link Drawable} for the given content type with the correct tint applied.
+     */
+    public static Drawable getTintedIcon(int contentType, Resources resources) {
+        Drawable icon = ApiCompatibilityUtils.getDrawable(resources, getIcon(contentType));
+        icon.setColorFilter(ApiCompatibilityUtils.getColor(resources, R.color.black_alpha_65),
+                PorterDuff.Mode.SRC_IN);
+        return icon;
     }
 
     /**
@@ -299,5 +313,21 @@ public class ContentSettingsResources {
      */
     public static int getAutoplayDisabledByDataSaverSummary() {
         return R.string.website_settings_category_autoplay_disabled_data_saver;
+    }
+
+    /**
+     * Returns the blocked summary for the ads permission which should be used for display in the
+     * site settings list only.
+     */
+    public static int getAdsBlockedListSummary() {
+        return R.string.website_settings_category_ads_blocked_list;
+    }
+
+    /**
+     * Returns the blocked summary for the sound permission which should be used for display in the
+     * site settings list only.
+     */
+    public static int getSoundBlockedListSummary() {
+        return R.string.website_settings_category_sound_blocked_list;
     }
 }

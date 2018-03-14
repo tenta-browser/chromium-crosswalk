@@ -75,6 +75,14 @@ class NET_EXPORT HttpUtil {
                                     base::Time now,
                                     base::TimeDelta* retry_after);
 
+  // Returns true if the request method is "safe" (per section 4.2.1 of
+  // RFC 7231).
+  static bool IsMethodSafe(const std::string& method);
+
+  // Returns true if the request method is idempotent (per section 4.2.2 of
+  // RFC 7231).
+  static bool IsMethodIdempotent(const std::string& method);
+
   // Returns true if it is safe to allow users and scripts to specify the header
   // named |name|.
   static bool IsSafeHeader(const std::string& name);
@@ -104,9 +112,6 @@ class NET_EXPORT HttpUtil {
   static void TrimLWS(std::string::const_iterator* begin,
                       std::string::const_iterator* end);
   static base::StringPiece TrimLWS(const base::StringPiece& string);
-
-  // Whether the character is the start of a quotation mark.
-  static bool IsQuote(char c);
 
   // Whether the character is a valid |tchar| as defined in RFC 7230 Sec 3.2.6.
   static bool IsTokenChar(char c);

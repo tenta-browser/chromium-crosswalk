@@ -21,6 +21,7 @@ class AvSettings {
  public:
   // Defines whether or not the cast receiver is the current active source of
   // the screen. If the device is connected to HDMI sinks, it may be unknown.
+  // GENERATED_JAVA_ENUM_PACKAGE: com.google.android.apps.mediashell.avsettings
   enum ActiveState {
     UNKNOWN,
     STANDBY,   // Screen is off
@@ -29,6 +30,7 @@ class AvSettings {
   };
 
   // Audio codec supported by the device (or HDMI sink).
+  // GENERATED_JAVA_ENUM_PACKAGE: com.google.android.apps.mediashell.avsettings
   enum AudioCodec {
     AC3 = 1 << 0,
     DTS = 1 << 1,
@@ -63,6 +65,7 @@ class AvSettings {
     WAKE_ON_CAST_ENABLED,
   };
 
+  // GENERATED_JAVA_ENUM_PACKAGE: com.google.android.apps.mediashell.avsettings
   enum Event {
     // This event shall be fired whenever the active state is changed including
     // when the screen turned on, when the cast receiver (or the device where
@@ -148,6 +151,9 @@ class AvSettings {
     // specification (CEC Table 30 in the HDMI 1.4a specification).
     virtual void OnKeyPressed(int key_code) = 0;
 
+    // This should be invoked when a key is released.
+    virtual void OnKeyReleased(int key_code) = 0;
+
    protected:
     ~Delegate() override {}
   };
@@ -165,9 +171,10 @@ class AvSettings {
   // Returns current active state.
   virtual ActiveState GetActiveState() = 0;
 
-  // Turns the screen on and sets the active input to the cast receiver.
+  // Turns the screen on. Sets the active input to the cast receiver iff
+  // switch_to_cast == true.
   // If successful, it must return true and fire ACTIVE_STATE_CHANGED.
-  virtual bool TurnActive() = 0;
+  virtual bool TurnActive(bool switch_to_cast) = 0;
 
   // Turns the screen off (or stand-by). If the device is connecting to HDMI
   // sinks, broadcasts a CEC standby message on the HDMI control bus to put all
@@ -251,6 +258,7 @@ class AvSettings {
 
   // Supported Electro-Optical Transfer Function (EOTF) reported by the device.
   // The values are according to Table 8 in CTA-861.3 (formerly CEA-861.3).
+  // GENERATED_JAVA_ENUM_PACKAGE: com.google.android.apps.mediashell.avsettings
   enum Eotf {
     EOTF_SDR = 1 << 0,
     EOTF_HDR = 1 << 1,
@@ -297,6 +305,7 @@ class AvSettings {
   virtual bool EnableWakeOnCast(bool enabled) = 0;
 
   // Supported HDR output modes.
+  // GENERATED_JAVA_ENUM_PACKAGE: com.google.android.apps.mediashell.avsettings
   enum HdrOutputType {
     HDR_OUTPUT_SDR,  // not HDR
     HDR_OUTPUT_HDR,  // HDR with static metadata

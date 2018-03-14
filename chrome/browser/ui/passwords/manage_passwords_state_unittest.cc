@@ -65,7 +65,7 @@ class ManagePasswordsStateTest : public testing::Test {
 
     test_local_federated_form_ = test_local_form_;
     test_local_federated_form_.federation_origin =
-        url::Origin(GURL("https://idp.com"));
+        url::Origin::Create(GURL("https://idp.com"));
     test_local_federated_form_.password_value.clear();
     test_local_federated_form_.signon_realm =
         "federation://example.com/accounts.com";
@@ -140,6 +140,7 @@ ManagePasswordsStateTest::CreateFormManagerInternal(bool include_federated) {
           &password_manager_, &stub_client_, driver_.AsWeakPtr(),
           test_local_form(),
           base::WrapUnique(new password_manager::StubFormSaver), &fetcher_));
+  test_form_manager->Init(nullptr);
   fetcher_.SetNonFederated(test_stored_forms_, 0u);
   if (include_federated) {
     fetcher_.set_federated({&test_local_federated_form()});

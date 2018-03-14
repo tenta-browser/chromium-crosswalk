@@ -5,7 +5,9 @@
 #include "components/omnibox/browser/shortcuts_backend.h"
 
 #include <stddef.h>
+
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -16,6 +18,7 @@
 #include "base/i18n/case_conversion.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/omnibox/browser/autocomplete_input.h"
@@ -68,7 +71,6 @@ ShortcutsBackend::ShortcutsBackend(
     TemplateURLService* template_url_service,
     std::unique_ptr<SearchTermsData> search_terms_data,
     history::HistoryService* history_service,
-    scoped_refptr<base::SequencedTaskRunner> db_runner,
     base::FilePath database_path,
     bool suppress_db)
     : template_url_service_(template_url_service),
@@ -76,7 +78,9 @@ ShortcutsBackend::ShortcutsBackend(
       current_state_(NOT_INITIALIZED),
       history_service_observer_(this),
       main_runner_(base::ThreadTaskRunnerHandle::Get()),
-      db_runner_(db_runner),
+      db_runner_(base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+           base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
       no_db_access_(suppress_db) {
   if (!suppress_db)
     db_ = new ShortcutsDatabase(database_path);
@@ -117,6 +121,9 @@ void ShortcutsBackend::RemoveObserver(ShortcutsBackendObserver* obs) {
 
 void ShortcutsBackend::AddOrUpdateShortcut(const base::string16& text,
                                            const AutocompleteMatch& match) {
+  // TODO(crbug.com/46623): Let's think twice about saving these.
+  if (match.type == AutocompleteMatchType::TAB_SEARCH)
+    return;
   const base::string16 text_lowercase(base::i18n::ToLower(text));
   const base::Time now(base::Time::Now());
   for (ShortcutMap::const_iterator it(
@@ -223,8 +230,8 @@ void ShortcutsBackend::InitInternal() {
 void ShortcutsBackend::InitCompleted() {
   temp_guid_map_->swap(guid_map_);
   temp_shortcuts_map_->swap(shortcuts_map_);
-  temp_shortcuts_map_.reset(NULL);
-  temp_guid_map_.reset(NULL);
+  temp_shortcuts_map_.reset(nullptr);
+  temp_guid_map_.reset(nullptr);
   UMA_HISTOGRAM_COUNTS_10000("ShortcutsProvider.DatabaseSize",
                              shortcuts_map_.size());
   current_state_ = INITIALIZED;

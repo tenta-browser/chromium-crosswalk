@@ -1,31 +1,52 @@
-CONSOLE MESSAGE: line 1: 239
-CONSOLE MESSAGE: line 2: 239
+Tests line and column numbers in reported console messages.
 {
-    stackTrace : {
-        callFrames : [
+    method : Runtime.consoleAPICalled
+    params : {
+        args : [
             [0] : {
-                columnNumber : 8
-                functionName : 
-                lineNumber : 0
-                scriptId : 0
-                url : 
+                type : number
+                value : 239
             }
         ]
+        executionContextId : 3
+        stackTrace : {
+            callFrames : [
+                [0] : {
+                    columnNumber : 8
+                    functionName : 
+                    lineNumber : 0
+                    scriptId : <string>
+                    url : 
+                }
+            ]
+        }
+        timestamp : <number>
+        type : log
     }
-    type : log
 }
 {
-    stackTrace : {
-        callFrames : [
+    method : Runtime.consoleAPICalled
+    params : {
+        args : [
             [0] : {
-                columnNumber : 2
-                functionName : 
-                lineNumber : 1
-                scriptId : 0
-                url : 
+                type : number
+                value : 239
             }
         ]
+        executionContextId : 3
+        stackTrace : {
+            callFrames : [
+                [0] : {
+                    columnNumber : 2
+                    functionName : 
+                    lineNumber : 1
+                    scriptId : <string>
+                    url : 
+                }
+            ]
+        }
+        timestamp : <number>
+        type : log
     }
-    type : log
 }
 

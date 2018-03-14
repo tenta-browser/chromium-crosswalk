@@ -36,7 +36,7 @@ UI.highlightedCurrentSearchResultClassName = 'current-search-result';
  * @param {?function(!MouseEvent): boolean} elementDragStart
  * @param {function(!MouseEvent)} elementDrag
  * @param {?function(!MouseEvent)} elementDragEnd
- * @param {string} cursor
+ * @param {?string} cursor
  * @param {?string=} hoverCursor
  * @param {number=} startDelay
  */
@@ -66,7 +66,7 @@ UI.installDragHandle = function(
   if (startDelay)
     element.addEventListener('mouseup', onMouseUp, false);
   if (hoverCursor !== null)
-    element.style.cursor = hoverCursor || cursor;
+    element.style.cursor = hoverCursor || cursor || '';
 };
 
 /**
@@ -74,7 +74,7 @@ UI.installDragHandle = function(
  * @param {?function(!MouseEvent):boolean} elementDragStart
  * @param {function(!MouseEvent)} elementDrag
  * @param {?function(!MouseEvent)} elementDragEnd
- * @param {string} cursor
+ * @param {?string} cursor
  * @param {!Event} event
  */
 UI.elementDragStart = function(targetElement, elementDragStart, elementDrag, elementDragEnd, cursor, event) {
@@ -96,7 +96,7 @@ UI.DragHandler = class {
     this._glassPaneInUse = true;
     if (!UI.DragHandler._glassPaneUsageCount++) {
       UI.DragHandler._glassPane = new UI.GlassPane();
-      UI.DragHandler._glassPane.setBlockPointerEvents(true);
+      UI.DragHandler._glassPane.setPointerEventsBehavior(UI.GlassPane.PointerEventsBehavior.BlockedByGlassPane);
       UI.DragHandler._glassPane.show(UI.DragHandler._documentForMouseOut);
     }
   }
@@ -117,7 +117,7 @@ UI.DragHandler = class {
    * @param {?function(!MouseEvent):boolean} elementDragStart
    * @param {function(!MouseEvent)} elementDrag
    * @param {?function(!MouseEvent)} elementDragEnd
-   * @param {string} cursor
+   * @param {?string} cursor
    * @param {!Event} event
    */
   elementDragStart(targetElement, elementDragStart, elementDrag, elementDragEnd, cursor, event) {
@@ -226,80 +226,6 @@ UI.DragHandler = class {
 };
 
 UI.DragHandler._glassPaneUsageCount = 0;
-
-/**
- * @param {!Element} element
- * @param {function(number, number, !MouseEvent): boolean} elementDragStart
- * @param {function(number, number)} elementDrag
- * @param {function(number, number)} elementDragEnd
- * @param {string} cursor
- * @param {?string=} hoverCursor
- * @param {number=} startDelay
- * @param {number=} friction
- */
-UI.installInertialDragHandle = function(
-    element, elementDragStart, elementDrag, elementDragEnd, cursor, hoverCursor, startDelay, friction) {
-  UI.installDragHandle(
-      element, drag.bind(null, elementDragStart), drag.bind(null, elementDrag), dragEnd, cursor, hoverCursor,
-      startDelay);
-  if (typeof friction !== 'number')
-    friction = 50;
-  var lastX;
-  var lastY;
-  var lastTime;
-  var velocityX;
-  var velocityY;
-  var holding = false;
-
-  /**
-   * @param {function(number, number, !MouseEvent): boolean} callback
-   * @param {!MouseEvent} event
-   * @return {boolean}
-   */
-  function drag(callback, event) {
-    lastTime = window.performance.now();
-    lastX = event.pageX;
-    lastY = event.pageY;
-    holding = true;
-    return callback(lastX, lastY, event);
-  }
-
-  /**
-   * @param {!MouseEvent} event
-   */
-  function dragEnd(event) {
-    var now = window.performance.now();
-    var duration = now - lastTime || 1;
-    const maxVelocity = 4;  // 4px per millisecond.
-    velocityX = Number.constrain((event.pageX - lastX) / duration, -maxVelocity, maxVelocity);
-    velocityY = Number.constrain((event.pageY - lastY) / duration, -maxVelocity, maxVelocity);
-    lastX = event.pageX;
-    lastY = event.pageY;
-    lastTime = now;
-    holding = false;
-    animationStep();
-  }
-
-  function animationStep() {
-    var v2 = velocityX * velocityX + velocityY * velocityY;
-    if (v2 < 0.001 || holding) {
-      elementDragEnd(lastX, lastY);
-      return;
-    }
-    element.window().requestAnimationFrame(animationStep);
-    var now = window.performance.now();
-    var duration = now - lastTime;
-    if (!duration)
-      return;
-    lastTime = now;
-    lastX += velocityX * duration;
-    lastY += velocityY * duration;
-    var k = Math.pow(1 / (1 + friction), duration / 1000);
-    velocityX *= k;
-    velocityY *= k;
-    elementDrag(lastX, lastY);
-  }
-};
 
 /**
  * @param {?Node=} node
@@ -704,14 +630,14 @@ UI.formatLocalized = function(format, substitutions) {
  * @return {string}
  */
 UI.openLinkExternallyLabel = function() {
-  return Common.UIString.capitalize('Open in ^new ^tab');
+  return Common.UIString('Open in new tab');
 };
 
 /**
  * @return {string}
  */
 UI.copyLinkAddressLabel = function() {
-  return Common.UIString.capitalize('Copy ^link ^address');
+  return Common.UIString('Copy link address');
 };
 
 /**
@@ -742,7 +668,26 @@ UI.asyncStackTraceLabel = function(description) {
 UI.installComponentRootStyles = function(element) {
   UI.appendStyle(element, 'ui/inspectorCommon.css');
   UI.themeSupport.injectHighlightStyleSheets(element);
+  UI.themeSupport.injectCustomStyleSheets(element);
   element.classList.add('platform-' + Host.platform());
+
+  /**
+   * Detect overlay scrollbar enable by checking clientWidth and offsetWidth of
+   * overflow: scroll div.
+   * @param {?Document=} document
+   * @return {boolean}
+   */
+  function overlayScrollbarEnabled(document) {
+    var scrollDiv = document.createElement('div');
+    scrollDiv.setAttribute('style', 'width: 100px; height: 100px; overflow: scroll;');
+    document.body.appendChild(scrollDiv);
+    var scrollbarWidth = scrollDiv.offsetWidth - scrollDiv.clientWidth;
+    document.body.removeChild(scrollDiv);
+    return scrollbarWidth === 0;
+  }
+
+  if (!Host.isMac() && overlayScrollbarEnabled(element.ownerDocument))
+    element.classList.add('overlay-scrollbar-enabled');
 };
 
 /**
@@ -754,6 +699,7 @@ UI.createShadowRootWithCoreStyles = function(element, cssFile) {
   var shadowRoot = element.createShadowRoot();
   UI.appendStyle(shadowRoot, 'ui/inspectorCommon.css');
   UI.themeSupport.injectHighlightStyleSheets(shadowRoot);
+  UI.themeSupport.injectCustomStyleSheets(shadowRoot);
   if (cssFile)
     UI.appendStyle(shadowRoot, cssFile);
   shadowRoot.addEventListener('focus', UI._focusChanged.bind(UI), true);
@@ -767,6 +713,19 @@ UI.createShadowRootWithCoreStyles = function(element, cssFile) {
 UI._windowFocused = function(document, event) {
   if (event.target.document.nodeType === Node.DOCUMENT_NODE)
     document.body.classList.remove('inactive');
+  UI._keyboardFocus = true;
+  var listener = () => {
+    var activeElement = document.deepActiveElement();
+    if (activeElement)
+      activeElement.removeAttribute('data-keyboard-focus');
+    UI._keyboardFocus = false;
+  };
+  document.defaultView.requestAnimationFrame(() => {
+    UI._keyboardFocus = false;
+    document.removeEventListener('mousedown', listener, true);
+  });
+  document.addEventListener('mousedown', listener, true);
+
 };
 
 /**
@@ -1184,6 +1143,7 @@ UI.LongClickController = class extends Common.Object {
  * @param {!Common.Setting} themeSetting
  */
 UI.initializeUIUtils = function(document, themeSetting) {
+  document.body.classList.toggle('inactive', !document.hasFocus());
   document.defaultView.addEventListener('focus', UI._windowFocused.bind(UI, document), false);
   document.defaultView.addEventListener('blur', UI._windowBlurred.bind(UI, document), false);
   document.addEventListener('focus', UI._focusChanged.bind(UI), true);
@@ -1225,16 +1185,30 @@ UI.registerCustomElement = function(localName, typeExtension, prototype) {
  * @param {string} text
  * @param {function(!Event)=} clickHandler
  * @param {string=} className
- * @param {string=} title
+ * @param {boolean=} primary
  * @return {!Element}
  */
-UI.createTextButton = function(text, clickHandler, className, title) {
+UI.createTextButton = function(text, clickHandler, className, primary) {
   var element = createElementWithClass('button', className || '', 'text-button');
   element.textContent = text;
+  if (primary)
+    element.classList.add('primary-button');
   if (clickHandler)
     element.addEventListener('click', clickHandler, false);
-  if (title)
-    element.title = title;
+  return element;
+};
+
+/**
+ * @param {string=} className
+ * @param {string=} type
+ * @return {!Element}
+ */
+UI.createInput = function(className, type) {
+  var element = createElementWithClass('input', className || '');
+  element.spellcheck = false;
+  element.classList.add('harmony-input');
+  if (type)
+    element.type = type;
   return element;
 };
 
@@ -1561,6 +1535,7 @@ UI.bindInput = function(input, apply, validate, numeric) {
     if (isEnterKey(event)) {
       if (validate(input.value))
         apply(input.value);
+      event.preventDefault();
       return;
     }
 
@@ -1702,6 +1677,7 @@ UI.ThemeSupport = class {
     /** @type {!Map<string, string>} */
     this._cachedThemePatches = new Map();
     this._setting = setting;
+    this._customSheets = new Set();
   }
 
   /**
@@ -1727,6 +1703,25 @@ UI.ThemeSupport = class {
     if (this._themeName === 'dark')
       UI.appendStyle(element, 'ui/inspectorSyntaxHighlightDark.css');
     this._injectingStyleSheet = false;
+  }
+
+   /**
+   * @param {!Element|!ShadowRoot} element
+   */
+  injectCustomStyleSheets(element) {
+    for (const sheet of this._customSheets){
+      var styleElement = createElement('style');
+      styleElement.type = 'text/css';
+      styleElement.textContent = sheet;
+      element.appendChild(styleElement);
+    }
+  }
+
+  /**
+   * @param {string} sheetText
+   */
+  addCustomStylesheet(sheetText) {
+    this._customSheets.add(sheetText);
   }
 
   /**
@@ -1852,7 +1847,7 @@ UI.ThemeSupport = class {
     output.push(':');
     var items = value.replace(Common.Color.Regex, '\0$1\0').split('\0');
     for (var i = 0; i < items.length; ++i)
-      output.push(this.patchColor(items[i], colorUsage));
+      output.push(this.patchColorText(items[i], colorUsage));
     if (style.getPropertyPriority(name))
       output.push(' !important');
     output.push(';');
@@ -1863,20 +1858,28 @@ UI.ThemeSupport = class {
    * @param {!UI.ThemeSupport.ColorUsage} colorUsage
    * @return {string}
    */
-  patchColor(text, colorUsage) {
+  patchColorText(text, colorUsage) {
     var color = Common.Color.parse(text);
     if (!color)
       return text;
-
-    var hsla = color.hsla();
-    this._patchHSLA(hsla, colorUsage);
-    var rgba = [];
-    Common.Color.hsl2rgb(hsla, rgba);
-    var outColor = new Common.Color(rgba, color.format());
+    var outColor = this.patchColor(color, colorUsage);
     var outText = outColor.asString(null);
     if (!outText)
       outText = outColor.asString(outColor.hasAlpha() ? Common.Color.Format.RGBA : Common.Color.Format.RGB);
     return outText || text;
+  }
+
+  /**
+   * @param {!Common.Color} color
+   * @param {!UI.ThemeSupport.ColorUsage} colorUsage
+   * @return {!Common.Color}
+   */
+  patchColor(color, colorUsage) {
+    var hsla = color.hsla();
+    this._patchHSLA(hsla, colorUsage);
+    var rgba = [];
+    Common.Color.hsl2rgb(hsla, rgba);
+    return new Common.Color(rgba, color.format());
   }
 
   /**
@@ -1932,6 +1935,9 @@ UI.createExternalLink = function(url, linkText, className, preventClick) {
     linkText = url;
 
   var a = createElementWithClass('span', className);
+  UI.ARIAUtils.markAsLink(a);
+  a.tabIndex = 0;
+
   var href = url;
   if (url.trim().toLowerCase().startsWith('javascript:'))
     href = null;
@@ -1942,6 +1948,12 @@ UI.createExternalLink = function(url, linkText, className, preventClick) {
     a.classList.add('devtools-link');
     if (!preventClick) {
       a.addEventListener('click', event => {
+        event.consume(true);
+        InspectorFrontendHost.openInNewTab(/** @type {string} */ (href));
+      }, false);
+      a.addEventListener('keydown', event => {
+        if (event.key !== ' ' && !isEnterKey(event))
+          return;
         event.consume(true);
         InspectorFrontendHost.openInNewTab(/** @type {string} */ (href));
       }, false);
@@ -1977,8 +1989,10 @@ UI.ExternaLinkContextMenuProvider = class {
       targetNode = targetNode.parentNodeOrShadowHost();
     if (!targetNode || !targetNode.href)
       return;
-    contextMenu.appendItem(UI.openLinkExternallyLabel(), () => InspectorFrontendHost.openInNewTab(targetNode.href));
-    contextMenu.appendItem(UI.copyLinkAddressLabel(), () => InspectorFrontendHost.copyText(targetNode.href));
+    contextMenu.revealSection().appendItem(
+        UI.openLinkExternallyLabel(), () => InspectorFrontendHost.openInNewTab(targetNode.href));
+    contextMenu.revealSection().appendItem(
+        UI.copyLinkAddressLabel(), () => InspectorFrontendHost.copyText(targetNode.href));
   }
 };
 
@@ -2003,6 +2017,14 @@ UI.loadImage = function(url) {
     image.addEventListener('error', () => fulfill(null));
     image.src = url;
   });
+};
+
+/**
+ * @param {?string} data
+ * @return {!Promise<?Image>}
+ */
+UI.loadImageFromData = function(data) {
+  return data ? UI.loadImage('data:image/jpg;base64,' + data) : Promise.resolve(null);
 };
 
 /** @type {!UI.ThemeSupport} */
@@ -2030,43 +2052,71 @@ UI.createFileSelectorElement = function(callback) {
  */
 UI.MaxLengthForDisplayedURLs = 150;
 
-/**
- * @unrestricted
- */
-UI.ConfirmDialog = class extends UI.VBox {
+UI.MessageDialog = class {
   /**
-   * @param {!Document|!Element} where
    * @param {string} message
-   * @param {!Function} callback
+   * @param {!Document|!Element=} where
+   * @return {!Promise}
    */
-  static show(where, message, callback) {
+  static async show(message, where) {
     var dialog = new UI.Dialog();
     dialog.setSizeBehavior(UI.GlassPane.SizeBehavior.MeasureContent);
-    dialog.addCloseButton();
     dialog.setDimmed(true);
-    new UI
-        .ConfirmDialog(
-            message,
-            () => {
-              dialog.hide();
-              callback();
-            },
-            () => dialog.hide())
-        .show(dialog.contentElement);
-    dialog.show(where);
+    var shadowRoot = UI.createShadowRootWithCoreStyles(dialog.contentElement, 'ui/confirmDialog.css');
+    var content = shadowRoot.createChild('div', 'widget');
+    await new Promise(resolve => {
+      var okButton = UI.createTextButton(Common.UIString('OK'), resolve, '', true);
+      content.createChild('div', 'message').createChild('span').textContent = message;
+      content.createChild('div', 'button').appendChild(okButton);
+      dialog.setOutsideClickCallback(event => {
+        event.consume();
+        resolve();
+      });
+      dialog.show(where);
+      okButton.focus();
+    });
+    dialog.hide();
   }
+};
 
+UI.ConfirmDialog = class {
   /**
    * @param {string} message
-   * @param {!Function} okCallback
-   * @param {!Function} cancelCallback
+   * @param {!Document|!Element=} where
+   * @return {!Promise<boolean>}
    */
-  constructor(message, okCallback, cancelCallback) {
-    super(true);
-    this.registerRequiredCSS('ui/confirmDialog.css');
-    this.contentElement.createChild('div', 'message').createChild('span').textContent = message;
-    var buttonsBar = this.contentElement.createChild('div', 'button');
-    buttonsBar.appendChild(UI.createTextButton(Common.UIString('Ok'), okCallback));
-    buttonsBar.appendChild(UI.createTextButton(Common.UIString('Cancel'), cancelCallback));
+  static async show(message, where) {
+    var dialog = new UI.Dialog();
+    dialog.setSizeBehavior(UI.GlassPane.SizeBehavior.MeasureContent);
+    dialog.setDimmed(true);
+    var shadowRoot = UI.createShadowRootWithCoreStyles(dialog.contentElement, 'ui/confirmDialog.css');
+    var content = shadowRoot.createChild('div', 'widget');
+    content.createChild('div', 'message').createChild('span').textContent = message;
+    var buttonsBar = content.createChild('div', 'button');
+    var result = await new Promise(resolve => {
+      buttonsBar.appendChild(UI.createTextButton(Common.UIString('OK'), () => resolve(true), '', true));
+      buttonsBar.appendChild(UI.createTextButton(Common.UIString('Cancel'), () => resolve(false)));
+      dialog.setOutsideClickCallback(event => {
+        event.consume();
+        resolve(false);
+      });
+      dialog.show(where);
+    });
+    dialog.hide();
+    return result;
   }
+};
+
+/**
+ * @param {!UI.ToolbarToggle} toolbarButton
+ * @return {!Element}
+ */
+UI.createInlineButton = function(toolbarButton) {
+  var element = createElement('span');
+  var shadowRoot = UI.createShadowRootWithCoreStyles(element, 'ui/inlineButton.css');
+  element.classList.add('inline-button');
+  var toolbar = new UI.Toolbar('');
+  toolbar.appendToolbarItem(toolbarButton);
+  shadowRoot.appendChild(toolbar.element);
+  return element;
 };

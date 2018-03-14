@@ -11,9 +11,16 @@
 // Test implementation of CRWWebStateObserver protocol.
 @interface CRWTestWebStateObserver : NSObject<CRWWebStateObserver>
 
-// Arguments passed to |webState:didStartProvisionalNavigationForURL:|.
+// Arguments passed to |webStateWasShown:|.
+@property(nonatomic, readonly) web::TestWasShownInfo* wasShownInfo;
+// Arguments passed to |webStateWasHidden:|.
+@property(nonatomic, readonly) web::TestWasHiddenInfo* wasHiddenInfo;
+// Arguments passed to |webState:didPruneNavigationItemsWithCount:|.
 @property(nonatomic, readonly)
-    web::TestStartProvisionalNavigationInfo* startProvisionalNavigationInfo;
+    web::TestNavigationItemsPrunedInfo* navigationItemsPrunedInfo;
+// Arguments passed to |webState:didStartNavigation:|.
+@property(nonatomic, readonly)
+    web::TestDidStartNavigationInfo* didStartNavigationInfo;
 // Arguments passed to |webState:didFinishNavigation:|.
 @property(nonatomic, readonly)
     web::TestDidFinishNavigationInfo* didFinishNavigationInfo;
@@ -22,9 +29,6 @@
     web::TestCommitNavigationInfo* commitNavigationInfo;
 // Arguments passed to |webState:didLoadPageWithSuccess:|.
 @property(nonatomic, readonly) web::TestLoadPageInfo* loadPageInfo;
-// Arguments passed to |webStateDidDismissInterstitial:|.
-@property(nonatomic, readonly)
-    web::TestDismissInterstitialInfo* dismissInterstitialInfo;
 // Arguments passed to |webState:didChangeLoadingProgress:|.
 @property(nonatomic, readonly)
     web::TestChangeLoadingProgressInfo* changeLoadingProgressInfo;
@@ -39,7 +43,7 @@
 // Arguments passed to |webState:didSubmitDocumentWithFormNamed:userInitiated:|.
 @property(nonatomic, readonly) web::TestSubmitDocumentInfo* submitDocumentInfo;
 // Arguments passed to
-// |webState:didRegisterFormActivityWithFormNamed:fieldName:type:value:|.
+// |webState:didRegisterFormActivity:|.
 @property(nonatomic, readonly) web::TestFormActivityInfo* formActivityInfo;
 // Arguments passed to |webState:didUpdateFaviconURLCandidates|.
 @property(nonatomic, readonly)

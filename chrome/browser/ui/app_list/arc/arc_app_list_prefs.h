@@ -23,9 +23,8 @@
 #include "chrome/browser/chromeos/arc/arc_session_manager.h"
 #include "chrome/browser/ui/app_list/arc/arc_default_app_list.h"
 #include "components/arc/common/app.mojom.h"
-#include "components/arc/instance_holder.h"
+#include "components/arc/connection_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "mojo/public/cpp/bindings/binding.h"
 #include "ui/base/layout.h"
 
 class PrefService;
@@ -33,6 +32,8 @@ class Profile;
 
 namespace arc {
 class ArcPackageSyncableService;
+template <typename InstanceType, typename HostType>
+class ConnectionHolder;
 }  // namespace arc
 
 namespace content {
@@ -48,12 +49,11 @@ class PrefRegistrySyncable;
 // information is used to pre-create non-ready app items while ARC bridge
 // service is not ready to provide information about available ARC apps.
 // NOTE: ArcAppListPrefs is only created for the primary user.
-class ArcAppListPrefs
-    : public KeyedService,
-      public arc::mojom::AppHost,
-      public arc::InstanceHolder<arc::mojom::AppInstance>::Observer,
-      public arc::ArcSessionManager::Observer,
-      public ArcDefaultAppList::Delegate {
+class ArcAppListPrefs : public KeyedService,
+                        public arc::mojom::AppHost,
+                        public arc::ConnectionObserver<arc::mojom::AppInstance>,
+                        public arc::ArcSessionManager::Observer,
+                        public ArcDefaultAppList::Delegate {
  public:
   struct AppInfo {
     AppInfo(const std::string& name,
@@ -94,7 +94,8 @@ class ArcAppListPrefs
                 int64_t last_backup_android_id,
                 int64_t last_backup_time,
                 bool should_sync,
-                bool system);
+                bool system,
+                bool vpn_provider);
 
     std::string package_name;
     int32_t package_version;
@@ -102,6 +103,7 @@ class ArcAppListPrefs
     int64_t last_backup_time;
     bool should_sync;
     bool system;
+    bool vpn_provider;
   };
 
   class Observer {
@@ -119,14 +121,24 @@ class ArcAppListPrefs
     // Notifies an observer that the name of an app has changed.
     virtual void OnAppNameUpdated(const std::string& id,
                                   const std::string& name) {}
+    // Notifies an observer that the last launch time of an app has changed.
+    virtual void OnAppLastLaunchTimeUpdated(const std::string& app_id) {}
     // Notifies that task has been created and provides information about
     // initial activity.
     virtual void OnTaskCreated(int32_t task_id,
                                const std::string& package_name,
                                const std::string& activity,
                                const std::string& intent) {}
+    // Notifies that task description has been updated.
+    virtual void OnTaskDescriptionUpdated(
+        int32_t task_id,
+        const std::string& label,
+        const std::vector<uint8_t>& icon_png_data) {}
     // Notifies that task has been destroyed.
     virtual void OnTaskDestroyed(int32_t task_id) {}
+    virtual void OnTaskOrientationLockRequested(
+        int32_t task_id,
+        const arc::mojom::OrientationLock orientation_lock) {}
     // Notifies that task has been activated and moved to the front.
     virtual void OnTaskSetActive(int32_t task_id) {}
 
@@ -138,14 +150,14 @@ class ArcAppListPrefs
     // Notifies that package has been modified.
     virtual void OnPackageModified(
         const arc::mojom::ArcPackageInfo& package_info) {}
-    // Notifies that package has been uninstalled.
-    virtual void OnPackageRemoved(const std::string& package_name) {}
+    // Notifies that package has been removed from the system. |uninstalled| is
+    // set to true in case package was uninstalled by user or sync.
+    // OnPackageRemoved is called for each active package with |uninstalled| set
+    // to false in case the user opts out the Play Store.
+    virtual void OnPackageRemoved(const std::string& package_name,
+                                  bool uninstalled) {}
     // Notifies sync date type controller the model is ready to start.
     virtual void OnPackageListInitialRefreshed() {}
-
-    virtual void OnTaskOrientationLockRequested(
-        int32_t task_id,
-        const arc::mojom::OrientationLock orientation_lock) {}
 
    protected:
     virtual ~Observer() {}
@@ -153,7 +165,8 @@ class ArcAppListPrefs
 
   static ArcAppListPrefs* Create(
       Profile* profile,
-      arc::InstanceHolder<arc::mojom::AppInstance>* app_instance_holder);
+      arc::ConnectionHolder<arc::mojom::AppInstance, arc::mojom::AppHost>*
+          app_connection_holder);
 
   // Convenience function to get the ArcAppListPrefs for a BrowserContext. It
   // will only return non-null pointer for the primary user.
@@ -197,7 +210,7 @@ class ArcAppListPrefs
       ui::ScaleFactor scale_factor) const;
 
   // Sets last launched time for the requested app.
-  void SetLastLaunchTime(const std::string& app_id, const base::Time& time);
+  void SetLastLaunchTime(const std::string& app_id);
 
   // Calls RequestIcon if no request is recorded.
   void MaybeRequestIcon(const std::string& app_id,
@@ -231,8 +244,9 @@ class ArcAppListPrefs
   // Removes app with the given app_id.
   void RemoveApp(const std::string& app_id);
 
-  arc::InstanceHolder<arc::mojom::AppInstance>* app_instance_holder() {
-    return app_instance_holder_;
+  arc::ConnectionHolder<arc::mojom::AppInstance, arc::mojom::AppHost>*
+  app_connection_holder() {
+    return app_connection_holder_;
   }
 
   bool package_list_initial_refreshed() const {
@@ -248,17 +262,18 @@ class ArcAppListPrefs
   void SimulateDefaultAppAvailabilityTimeoutForTesting();
 
  private:
-  friend class ChromeLauncherControllerImplTest;
+  friend class ChromeLauncherControllerTest;
   friend class ArcAppModelBuilderTest;
 
   // See the Create methods.
   ArcAppListPrefs(
       Profile* profile,
-      arc::InstanceHolder<arc::mojom::AppInstance>* app_instance_holder);
+      arc::ConnectionHolder<arc::mojom::AppInstance, arc::mojom::AppHost>*
+          app_connection_holder);
 
-  // arc::InstanceHolder<arc::mojom::AppInstance>::Observer:
-  void OnInstanceReady() override;
-  void OnInstanceClosed() override;
+  // arc::ConnectionObserver<arc::mojom::AppInstance>:
+  void OnConnectionReady() override;
+  void OnConnectionClosed() override;
 
   // arc::mojom::AppHost:
   void OnAppListRefreshed(std::vector<arc::mojom::AppInfoPtr> apps) override;
@@ -282,7 +297,14 @@ class ArcAppListPrefs
                      const std::string& activity,
                      const base::Optional<std::string>& name,
                      const base::Optional<std::string>& intent) override;
+  void OnTaskDescriptionUpdated(
+      int32_t task_id,
+      const std::string& label,
+      const std::vector<uint8_t>& icon_png_data) override;
   void OnTaskDestroyed(int32_t task_id) override;
+  void OnTaskOrientationLockRequested(
+      int32_t task_id,
+      const arc::mojom::OrientationLock orientation_lock) override;
   void OnTaskSetActive(int32_t task_id) override;
   void OnNotificationsEnabledChanged(const std::string& package_name,
                                      bool enabled) override;
@@ -290,9 +312,6 @@ class ArcAppListPrefs
   void OnPackageModified(arc::mojom::ArcPackageInfoPtr package_info) override;
   void OnPackageListRefreshed(
       std::vector<arc::mojom::ArcPackageInfoPtr> packages) override;
-  void OnTaskOrientationLockRequested(
-      int32_t task_id,
-      const arc::mojom::OrientationLock orientation_lock) override;
   void OnInstallationStarted(
       const base::Optional<std::string>& package_name) override;
   void OnInstallationFinished(
@@ -306,8 +325,10 @@ class ArcAppListPrefs
   // Returns list of packages from prefs. If |installed| is set to true then
   // returns currently installed packages. If not, returns list of packages that
   // where uninstalled. Note, we store uninstall packages only for packages of
-  // default apps.
-  std::vector<std::string> GetPackagesFromPrefs(bool installed) const;
+  // default apps. If |check_arc_alive| is set to true then package list is
+  // filled only in case ARC is currently active.
+  std::vector<std::string> GetPackagesFromPrefs(bool check_arc_alive,
+                                                bool installed) const;
 
   void AddApp(const arc::mojom::AppInfo& app_info);
   void AddAppAndShortcut(bool app_ready,
@@ -329,7 +350,7 @@ class ArcAppListPrefs
                               const std::string& package_name);
 
   void DisableAllApps();
-  void RemoveAllApps();
+  void RemoveAllAppsAndPackages();
   std::vector<std::string> GetAppIdsNoArcEnabledCheck() const;
   std::unordered_set<std::string> GetAppsAndShortcutsForPackage(
       const std::string& package_name,
@@ -357,10 +378,11 @@ class ArcAppListPrefs
   void RequestIcon(const std::string& app_id, ui::ScaleFactor scale_factor);
 
   // This checks if app is not registered yet and in this case creates
-  // non-launchable app entry.
-  void MaybeAddNonLaunchableApp(const base::Optional<std::string>& name,
-                                const std::string& package_name,
-                                const std::string& activity);
+  // non-launchable app entry. In case app is already registered then updates
+  // last launch time.
+  void HandleTaskCreated(const base::Optional<std::string>& name,
+                         const std::string& package_name,
+                         const std::string& activity);
 
   // Reveals first app from provided package in app launcher if package is newly
   // installed by user. If all apps in package are hidden then app list is not
@@ -393,12 +415,19 @@ class ArcAppListPrefs
   // Dispatches OnAppReadyChanged event to observers.
   void NotifyAppReadyChanged(const std::string& app_id, bool ready);
 
+  // Marks app icons as invalidated and request icons updated.
+  void InvalidateAppIcons(const std::string& app_id);
+
+  // Marks package icons as invalidated and request icons updated.
+  void InvalidatePackageIcons(const std::string& package_name);
+
   Profile* const profile_;
 
   // Owned by the BrowserContext.
   PrefService* const prefs_;
 
-  arc::InstanceHolder<arc::mojom::AppInstance>* const app_instance_holder_;
+  arc::ConnectionHolder<arc::mojom::AppInstance, arc::mojom::AppHost>* const
+      app_connection_holder_;
 
   // List of observers.
   base::ObserverList<Observer> observer_list_;
@@ -424,8 +453,10 @@ class ArcAppListPrefs
   bool is_initialized_ = false;
   // True if apps were restored.
   bool apps_restored_ = false;
-  // True is ARC package list has been refreshed once.
+  // True is ARC package list has been successfully refreshed.
   bool package_list_initial_refreshed_ = false;
+  // Used to detect first ARC app launch request.
+  bool first_launch_app_request_ = true;
   // Play Store does not have publicly available observers for default app
   // installations. This timeout is for validating default app availability.
   // Default apps should be either already installed or their installations
@@ -433,10 +464,10 @@ class ArcAppListPrefs
   base::OneShotTimer detect_default_app_availability_timeout_;
   // Set of currently installing default apps_.
   std::unordered_set<std::string> default_apps_installations_;
+  // Mask of scale factors for which the app's icon needs invalidation.
+  uint32_t invalidated_icon_scale_factor_mask_;
 
   arc::ArcPackageSyncableService* sync_service_ = nullptr;
-
-  mojo::Binding<arc::mojom::AppHost> binding_;
 
   bool default_apps_ready_ = false;
   ArcDefaultAppList default_apps_;

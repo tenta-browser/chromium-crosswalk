@@ -44,11 +44,11 @@
 namespace base {
 
 MessagePumpLibevent::FileDescriptorWatcher::FileDescriptorWatcher(
-    const tracked_objects::Location& from_here)
-    : event_(NULL),
-      pump_(NULL),
-      watcher_(NULL),
-      was_destroyed_(NULL),
+    const Location& from_here)
+    : event_(nullptr),
+      pump_(nullptr),
+      watcher_(nullptr),
+      was_destroyed_(nullptr),
       created_from_location_(from_here) {}
 
 MessagePumpLibevent::FileDescriptorWatcher::~FileDescriptorWatcher() {
@@ -63,14 +63,14 @@ MessagePumpLibevent::FileDescriptorWatcher::~FileDescriptorWatcher() {
 
 bool MessagePumpLibevent::FileDescriptorWatcher::StopWatchingFileDescriptor() {
   event* e = ReleaseEvent();
-  if (e == NULL)
+  if (e == nullptr)
     return true;
 
   // event_del() is a no-op if the event isn't active.
   int rv = event_del(e);
   delete e;
-  pump_ = NULL;
-  watcher_ = NULL;
+  pump_ = nullptr;
+  watcher_ = nullptr;
   return (rv == 0);
 }
 
@@ -83,7 +83,7 @@ void MessagePumpLibevent::FileDescriptorWatcher::Init(event* e) {
 
 event* MessagePumpLibevent::FileDescriptorWatcher::ReleaseEvent() {
   struct event* e = event_;
-  event_ = NULL;
+  event_ = nullptr;
   return e;
 }
 
@@ -153,13 +153,12 @@ bool MessagePumpLibevent::WatchFileDescriptor(int fd,
   }
 
   std::unique_ptr<event> evt(controller->ReleaseEvent());
-  if (evt.get() == NULL) {
+  if (!evt) {
     // Ownership is transferred to the controller.
     evt.reset(new event);
   } else {
     // Make sure we don't pick up any funky internal libevent masks.
-    int old_interest_mask = evt.get()->ev_events &
-        (EV_READ | EV_WRITE | EV_PERSIST);
+    int old_interest_mask = evt->ev_events & (EV_READ | EV_WRITE | EV_PERSIST);
 
     // Combine old/new event masks.
     event_mask |= old_interest_mask;
@@ -180,11 +179,13 @@ bool MessagePumpLibevent::WatchFileDescriptor(int fd,
 
   // Tell libevent which message pump this socket will belong to when we add it.
   if (event_base_set(event_base_, evt.get())) {
+    DPLOG(ERROR) << "event_base_set(fd=" << EVENT_FD(evt.get()) << ")";
     return false;
   }
 
   // Add this socket to the list of monitored sockets.
-  if (event_add(evt.get(), NULL)) {
+  if (event_add(evt.get(), nullptr)) {
+    DPLOG(ERROR) << "event_add failed(fd=" << EVENT_FD(evt.get()) << ")";
     return false;
   }
 
@@ -304,7 +305,7 @@ bool MessagePumpLibevent::Init() {
             OnWakeup, this);
   event_base_set(event_base_, wakeup_event_);
 
-  if (event_add(wakeup_event_, 0))
+  if (event_add(wakeup_event_, nullptr))
     return false;
   return true;
 }

@@ -56,11 +56,6 @@ constexpr base::TimeDelta kMaxExponentialDelay =
 // Max number of clients to schedule immediately (e.g when loading a new page).
 const uint32_t kMaxBurstClients = 10;
 
-// Sliding window of time during which we allow clients to be scheduled
-// immediately, to accomodate for a "bursts" of requests when loading new pages.
-const base::TimeDelta kMinDelayWindow =
-    (kLinearThrottlingDelay + kBaseExponentialDelay) * kMaxBurstClients;
-
 // The throttling progression based on number of crashes looks as follows:
 //
 // | # crashes | period  | clients/sec | clients/mins | # burst clients
@@ -141,7 +136,8 @@ base::TimeDelta MediaServiceThrottler::GetDelayForClientCreation() {
 
   // If the scheduling delay is low enough, schedule it immediately instead.
   // This allows up to kMaxBurstClients clients to be scheduled immediately.
-  if (delay <= kMinDelayWindow)
+  if (delay <=
+      (kLinearThrottlingDelay + kBaseExponentialDelay) * kMaxBurstClients)
     return base::TimeDelta();
 
   return delay;
@@ -164,7 +160,7 @@ base::TimeDelta MediaServiceThrottler::GetThrottlingDelayFromServerCrashes() {
 }
 
 void MediaServiceThrottler::OnMediaServerCrash(bool watchdog_needs_release) {
-  if (watchdog_needs_release)
+  if (watchdog_needs_release && crash_listener_)
     crash_listener_->ReleaseWatchdog();
 
   UpdateServerCrashes();
@@ -196,8 +192,8 @@ void MediaServiceThrottler::ReleaseCrashListener() {
 
 void MediaServiceThrottler::EnsureCrashListenerStarted() {
   if (!crash_listener_) {
-    // base::Unretained is safe here because both the MediaServiceThrottler and
-    // the MediaServerCrashListener live until the process is terminated.
+    // base::Unretained is safe here because the MediaServiceThrottler will live
+    // until the process is terminated.
     crash_listener_ = base::MakeUnique<MediaServerCrashListener>(
         base::Bind(&MediaServiceThrottler::OnMediaServerCrash,
                    base::Unretained(this)),

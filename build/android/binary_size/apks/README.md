@@ -1,24 +1,41 @@
-### Updating APKs in this folder (for new milestones, builders, or APKs)
+## Milestone Reference APKs
 
-1. Find the commit as close as possible to the current branch point (i.e. if the
-latest builds are m59, we want to compare to the commit before the m58 branch
-point).
+This folder contains APKs for official (upstream) builds for each milestone.
+The primary use for these APKs is per-milestone binary size analysis.
+  * `//build/android/resource_sizes.py` uses them for calculating patch size
+  * They can be used with `tools/binary_size/diagnose_bloat.py` for analyzing
+    what grew in an APK milestone-to-milestone
 
-2. Download and unzip build artifacts from the relevant perf builder. You can
-use this link:
-[https<nolink>://storage.cloud.google.com/chrome-perf/**Android%20Builder**/full-build-linux_**3a87aecc31cd1ffe751dd72c04e5a96a1fc8108a**.zip](https://storage.cloud.google.com/chrome-perf/Android%20Builder/full-build-linux_3a87aecc31cd1ffe751dd72c04e5a96a1fc8108a.zip)
-, replacing the bolded parts with your info OR from the
-"gsutil upload_build_product" step on the bot page (both are Googlers only).
+## Downloading Reference APKs
 
-3. Upload the apk: _upload_to_google_storage.py --bucket
-'chromium-android-tools/apks/**Android_Builder**/**58**'
-**path/to/ApkTarget.apk**_ replacing the bolded parts again.
-  * Note that we use **Android_Builder** instead of **Android Builder** (replace
-spaces with underscores)
+```bash
+# Downloads ARM 32 MonochromePublic.apk for the latest milestone that we've
+# uploaded APKs for.
+build/android/binary_size/apk_downloader.py
 
-4. Move the generated .sha1 file to the corresponding place in
-//build/android/binary_size/apks/. In this case, the path would be
-//build/android/binary_size/apks/Android_Builder/58
+# Print usage and see all options.
+build/android/binary_size/apk_downloader.py -h
+```
 
-5. Commit the added .sha1 files and (optionally) update the `CURRENT_MILESTONE`
-in apk_downloader.py
+## Updating Reference APKs
+```bash
+# Downloads build products from perf builders and uploads the following APKs
+# for M62 and M63:
+#   ARM 32 - ChromePublic.apk, ChromeModernPublic.apk, MonochromePublic.apk
+#   ARM 64 - ChromePublic.apk ChromeModernPublic.apk
+build/android/binary_size/apk_downloader.py --update 63 508578 --update 62 499187
+```
+
+  * **Remember to commit the generated .sha1 files, update the
+    CURRENT_MILESTONE variable in apk_downloader.py, and update the list of
+    revisions below**
+
+## Chromium revisions for each APK
+  * [M56](https://crrev.com/433059)
+  * [M57](https://crrev.com/444943)
+  * [M58](https://crrev.com/454471)
+  * [M59](https://crrev.com/464641)
+  * [M60](https://crrev.com/474934)
+  * [M61](https://crrev.com/488528)
+  * [M62](https://crrev.com/499187)
+  * [M63](https://crrev.com/508578)

@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/android/policy/policy_auditor.h"
-
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/ssl_status.h"
@@ -13,9 +11,10 @@
 
 using base::android::JavaParamRef;
 
-int GetCertificateFailure(JNIEnv* env,
-                          const JavaParamRef<jclass>& obj,
-                          const JavaParamRef<jobject>& java_web_contents) {
+int JNI_PolicyAuditor_GetCertificateFailure(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& obj,
+    const JavaParamRef<jobject>& java_web_contents) {
   // This function is similar to
   // ToolbarModelImpl::GetSecurityLevelForWebContents, but has a custom mapping
   // for policy auditing
@@ -63,8 +62,4 @@ int GetCertificateFailure(JNIEnv* env,
     }
   }
   return NONE;
-}
-
-bool RegisterPolicyAuditor(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }

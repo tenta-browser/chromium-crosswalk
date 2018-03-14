@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.webapps;
 
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
@@ -12,6 +13,7 @@ import org.chromium.base.annotations.CalledByNative;
 import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.banners.InstallerDelegate;
 import org.chromium.chrome.browser.metrics.WebApkUma;
+import org.chromium.webapk.lib.common.WebApkConstants;
 
 /**
  * Java counterpart to webapk_installer.h
@@ -48,11 +50,13 @@ public class WebApkInstaller {
      * @param version The version of WebAPK to install.
      * @param title The title of the WebAPK to display during installation.
      * @param token The token from WebAPK Server.
-     * @param url The start URL of the WebAPK to install.
+     * @param source The source (either app banner or menu) that the install of a WebAPK was
+     *               triggered.
+     * @param icon The primary icon of the WebAPK to install.
      */
     @CalledByNative
-    private void installWebApkAsync(
-            String packageName, int version, String title, String token, String url) {
+    private void installWebApkAsync(final String packageName, int version, final String title,
+            String token, final int source, final Bitmap icon) {
         // Check whether the WebAPK package is already installed. The WebAPK may have been installed
         // by another Chrome version (e.g. Chrome Dev). We have to do this check because the Play
         // install API fails silently if the package is already installed.
@@ -72,9 +76,21 @@ public class WebApkInstaller {
             @Override
             public void onResult(Integer result) {
                 WebApkInstaller.this.notify(result);
+                if (result == WebApkInstallResult.FAILURE) return;
+
+                // Stores the source info of WebAPK in WebappDataStorage.
+                WebappRegistry.getInstance().register(
+                        WebApkConstants.WEBAPK_ID_PREFIX + packageName,
+                        new WebappRegistry.FetchWebappDataStorageCallback() {
+                            @Override
+                            public void onWebappDataStorageRetrieved(WebappDataStorage storage) {
+                                storage.updateSource(source);
+                                storage.updateTimeOfLastCheckForUpdatedWebManifest();
+                            }
+                        });
             }
         };
-        mInstallDelegate.installAsync(packageName, version, title, token, url, callback);
+        mInstallDelegate.installAsync(packageName, version, title, token, callback);
     }
 
     private void notify(@WebApkInstallResult int result) {
@@ -89,11 +105,10 @@ public class WebApkInstaller {
      * @param version The version of WebAPK to install.
      * @param title The title of the WebAPK to display during installation.
      * @param token The token from WebAPK Server.
-     * @param url The start URL of the WebAPK to install.
      */
     @CalledByNative
     private void updateAsync(
-            String packageName, int version, String title, String token, String url) {
+            String packageName, int version, String title, String token) {
         if (mInstallDelegate == null) {
             notify(WebApkInstallResult.FAILURE);
             return;
@@ -105,7 +120,7 @@ public class WebApkInstaller {
                 WebApkInstaller.this.notify(result);
             }
         };
-        mInstallDelegate.updateAsync(packageName, version, title, token, url, callback);
+        mInstallDelegate.updateAsync(packageName, version, title, token, callback);
     }
 
     private boolean isWebApkInstalled(String packageName) {

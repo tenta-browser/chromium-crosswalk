@@ -27,6 +27,7 @@
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/signin/signin_error_controller_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/signin_util.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/user_manager.h"
@@ -85,7 +86,7 @@ void SigninCreateProfileHandler::GetLocalizedValues(
       l10n_util::GetStringUTF16(
           IDS_PROFILES_CREATE_SUPERVISED_NO_SIGNED_IN_USER_TEXT));
   localized_strings->SetString("createProfileConfirm",
-                               l10n_util::GetStringUTF16(IDS_SAVE));
+                               l10n_util::GetStringUTF16(IDS_ADD));
   localized_strings->SetString("learnMore",
                                l10n_util::GetStringUTF16(IDS_LEARN_MORE));
   localized_strings->SetString(
@@ -373,7 +374,7 @@ void SigninCreateProfileHandler::CreateShortcutAndShowSuccess(
   dict.SetString("name", profile->GetPrefs()->GetString(prefs::kProfileName));
   dict.Set("filePath", base::CreateFilePathValue(profile->GetPath()));
 
-  bool is_force_signin_enabled = signin::IsForceSigninEnabled();
+  bool is_force_signin_enabled = signin_util::IsForceSigninEnabled();
   bool open_new_window = !is_force_signin_enabled;
 
 #if BUILDFLAG(ENABLE_SUPERVISED_USERS)
@@ -430,7 +431,10 @@ void SigninCreateProfileHandler::OpenNewWindowForProfile(
 
 void SigninCreateProfileHandler::OpenSigninDialogForProfile(Profile* profile) {
   UserManagerProfileDialog::ShowSigninDialog(
-      web_ui()->GetWebContents()->GetBrowserContext(), profile->GetPath());
+      web_ui()->GetWebContents()->GetBrowserContext(), profile->GetPath(),
+      signin_util::IsForceSigninEnabled()
+          ? signin_metrics::Reason::REASON_FORCED_SIGNIN_PRIMARY_ACCOUNT
+          : signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT);
 }
 
 void SigninCreateProfileHandler::ShowProfileCreationError(

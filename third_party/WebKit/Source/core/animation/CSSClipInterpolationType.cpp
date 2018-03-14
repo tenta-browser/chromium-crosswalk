@@ -9,6 +9,7 @@
 #include "core/css/CSSIdentifierValue.h"
 #include "core/css/CSSQuadValue.h"
 #include "core/css/resolver/StyleResolverState.h"
+#include "core/style/ComputedStyle.h"
 #include "platform/wtf/PtrUtil.h"
 
 namespace blink {
@@ -58,7 +59,8 @@ static ClipAutos GetClipAutos(const ComputedStyle& style) {
                    style.ClipBottom().IsAuto(), style.ClipLeft().IsAuto());
 }
 
-class InheritedAutosChecker : public InterpolationType::ConversionChecker {
+class InheritedAutosChecker
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<InheritedAutosChecker> Create(
       const ClipAutos& inherited_autos) {
@@ -69,10 +71,9 @@ class InheritedAutosChecker : public InterpolationType::ConversionChecker {
   InheritedAutosChecker(const ClipAutos& inherited_autos)
       : inherited_autos_(inherited_autos) {}
 
-  bool IsValid(const InterpolationEnvironment& environment,
+  bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
-    return inherited_autos_ ==
-           GetClipAutos(*environment.GetState().ParentStyle());
+    return inherited_autos_ == GetClipAutos(*state.ParentStyle());
   }
 
   const ClipAutos inherited_autos_;
@@ -82,9 +83,9 @@ class CSSClipNonInterpolableValue : public NonInterpolableValue {
  public:
   ~CSSClipNonInterpolableValue() final {}
 
-  static PassRefPtr<CSSClipNonInterpolableValue> Create(
+  static scoped_refptr<CSSClipNonInterpolableValue> Create(
       const ClipAutos& clip_autos) {
-    return AdoptRef(new CSSClipNonInterpolableValue(clip_autos));
+    return base::AdoptRef(new CSSClipNonInterpolableValue(clip_autos));
   }
 
   const ClipAutos& GetClipAutos() const { return clip_autos_; }
@@ -103,7 +104,8 @@ class CSSClipNonInterpolableValue : public NonInterpolableValue {
 DEFINE_NON_INTERPOLABLE_VALUE_TYPE(CSSClipNonInterpolableValue);
 DEFINE_NON_INTERPOLABLE_VALUE_TYPE_CASTS(CSSClipNonInterpolableValue);
 
-class UnderlyingAutosChecker : public InterpolationType::ConversionChecker {
+class UnderlyingAutosChecker
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   ~UnderlyingAutosChecker() final {}
 
@@ -123,7 +125,7 @@ class UnderlyingAutosChecker : public InterpolationType::ConversionChecker {
   UnderlyingAutosChecker(const ClipAutos& underlying_autos)
       : underlying_autos_(underlying_autos) {}
 
-  bool IsValid(const InterpolationEnvironment&,
+  bool IsValid(const StyleResolverState&,
                const InterpolationValue& underlying) const final {
     return underlying_autos_ == GetUnderlyingAutos(underlying);
   }

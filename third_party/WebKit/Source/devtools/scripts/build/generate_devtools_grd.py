@@ -53,7 +53,9 @@ kGrdTemplate = '''<?xml version="1.0" encoding="UTF-8"?>
     <output filename="devtools_resources.pak" type="data_package" />
   </outputs>
   <release seq="1">
-    <includes></includes>
+    <includes>
+      <include name="COMPRESSED_PROTOCOL_JSON" file="${compressed_protocol_file}" use_base_dir="false" type="BINDATA" />
+    </includes>
   </release>
 </grit>
 '''
@@ -153,7 +155,7 @@ def main(argv):
         add_file_to_grd(doc, relative_filename)
 
     for dirname in parsed_args.image_dirs:
-        for filename in os.listdir(dirname):
+        for filename in sorted(os.listdir(dirname)):
             if not filename.endswith('.png') and not filename.endswith('.gif') and not filename.endswith('.svg'):
                 continue
             shutil.copy(path.join(dirname, filename), path.join(output_directory, 'Images'))

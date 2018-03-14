@@ -29,6 +29,9 @@ enum ScrollbarButtonsPlacement;
 enum ScrollerStyle;
 
 [Native]
+enum V8CacheOptions;
+
+[Native]
 struct WebPreferences;
 
 // TODO(rockot): This should most likely be defined by network service mojom,
@@ -36,5 +39,64 @@ struct WebPreferences;
 [Native]
 enum NetworkConnectionType;
 
+// TODO(rockot): This should most likely be defined by network service mojom,
+// but the network service doesn't exist yet.
+[Native]
+enum EffectiveConnectionType;
+
 [Native]
 enum WebPopupType;
+
+[Native]
+enum Button;
+
+[Native]
+enum PointerType;
+
+[Native]
+struct EditCommand;
+
+[Native]
+enum InputEventAckState;
+
+[Native]
+enum InputEventAckSource;
+
+[Native]
+enum EventType;
+
+[Native]
+enum Cancelability;
+
+[Native]
+enum GestureDevice;
+
+[Native]
+enum ScrollUnits;
+
+[Native]
+enum InertialPhaseState;
+
+[Native]
+enum TouchState;
+
+[Native]
+struct DidOverscrollParams;
+
+[Native]
+struct SyntheticSmoothDrag;
+
+[Native]
+struct SyntheticSmoothScroll;
+
+[Native]
+struct SyntheticPinch;
+
+[Native]
+struct SyntheticTap;
+
+[Native]
+struct SyntheticPointerAction;
+
+[Native]
+enum TouchAction;

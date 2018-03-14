@@ -65,7 +65,7 @@ class DesktopSessionProxy::IpcSharedBufferCore
   void* memory() { return shared_memory_.memory(); }
 
  private:
-  virtual ~IpcSharedBufferCore() {}
+  virtual ~IpcSharedBufferCore() = default;
   friend class base::RefCountedThreadSafe<IpcSharedBufferCore>;
 
   int id_;
@@ -222,9 +222,9 @@ bool DesktopSessionProxy::AttachToDesktop(
     return false;
 
   // Connect to the desktop process.
-  desktop_channel_ = IPC::ChannelProxy::Create(desktop_pipe,
-                                               IPC::Channel::MODE_CLIENT, this,
-                                               io_task_runner_.get());
+  desktop_channel_ = IPC::ChannelProxy::Create(
+      desktop_pipe, IPC::Channel::MODE_CLIENT, this, io_task_runner_.get(),
+      base::ThreadTaskRunnerHandle::Get());
 
   // Pass ID of the client (which is authenticated at this point) to the desktop
   // session agent and start the agent.
@@ -482,6 +482,7 @@ void DesktopSessionProxy::OnCaptureResult(
           new IpcSharedBuffer(shared_buffer_core)));
   frame->set_capture_time_ms(serialized_frame.capture_time_ms);
   frame->set_dpi(serialized_frame.dpi);
+  frame->set_capturer_id(serialized_frame.capturer_id);
 
   for (const auto& rect : serialized_frame.dirty_region) {
     frame->mutable_updated_region()->AddRect(rect);

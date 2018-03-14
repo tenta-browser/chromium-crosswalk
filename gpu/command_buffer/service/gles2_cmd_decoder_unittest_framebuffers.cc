@@ -15,7 +15,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
-#include "gpu/command_buffer/service/cmd_buffer_engine.h"
 #include "gpu/command_buffer/service/context_group.h"
 #include "gpu/command_buffer/service/context_state.h"
 #include "gpu/command_buffer/service/gl_surface_mock.h"
@@ -356,6 +355,8 @@ TEST_P(GLES2DecoderTest, GetFramebufferAttachmentParameterivWithNoBoundTarget) {
 TEST_P(GLES2DecoderTest, GetFramebufferAttachmentParameterivWithRenderbuffer) {
   DoBindFramebuffer(
       GL_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
+  DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
+                     kServiceRenderbufferId);
   EXPECT_CALL(*gl_, GetError())
       .WillRepeatedly(Return(GL_NO_ERROR));
   EXPECT_CALL(*gl_,
@@ -592,16 +593,8 @@ void GLES2DecoderTest::CheckReadPixelsOutOfRange(GLint in_read_x,
   // access
   if (init) {
     DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
-    DoTexImage2D(GL_TEXTURE_2D,
-                 0,
-                 kFormat,
-                 kWidth,
-                 kHeight,
-                 0,
-                 kFormat,
-                 GL_UNSIGNED_BYTE,
-                 kSharedMemoryId,
-                 kSharedMemoryOffset);
+    DoTexImage2D(GL_TEXTURE_2D, 0, kFormat, kWidth, kHeight, 0, kFormat,
+                 GL_UNSIGNED_BYTE, shared_memory_id_, kSharedMemoryOffset);
     DoBindFramebuffer(
         GL_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
     DoFramebufferTexture2D(GL_FRAMEBUFFER,
@@ -620,9 +613,9 @@ void GLES2DecoderTest::CheckReadPixelsOutOfRange(GLint in_read_x,
       kWidth, kHeight, kBytesPerPixel, kSrcPixels, kSrcPixels, kPackAlignment);
   typedef ReadPixels::Result Result;
   Result* result = GetSharedMemoryAs<Result*>();
-  uint32_t result_shm_id = kSharedMemoryId;
+  uint32_t result_shm_id = shared_memory_id_;
   uint32_t result_shm_offset = kSharedMemoryOffset;
-  uint32_t pixels_shm_id = kSharedMemoryId;
+  uint32_t pixels_shm_id = shared_memory_id_;
   uint32_t pixels_shm_offset = kSharedMemoryOffset + sizeof(*result);
   void* dest = &result[1];
 
@@ -725,9 +718,9 @@ TEST_P(GLES2DecoderTest, ReadPixels) {
       kWidth, kHeight, kBytesPerPixel, kSrcPixels, kSrcPixels, kPackAlignment);
   typedef ReadPixels::Result Result;
   Result* result = GetSharedMemoryAs<Result*>();
-  uint32_t result_shm_id = kSharedMemoryId;
+  uint32_t result_shm_id = shared_memory_id_;
   uint32_t result_shm_offset = kSharedMemoryOffset;
-  uint32_t pixels_shm_id = kSharedMemoryId;
+  uint32_t pixels_shm_id = shared_memory_id_;
   uint32_t pixels_shm_offset = kSharedMemoryOffset + sizeof(*result);
   void* dest = &result[1];
   EXPECT_CALL(*gl_, GetError())
@@ -788,9 +781,9 @@ TEST_P(GLES3DecoderTest, ReadPixelsBufferBound) {
   EXPECT_CALL(*gl_, ReadPixels(_, _, _, _, _, _, _)).Times(0);
   typedef ReadPixels::Result Result;
   Result* result = GetSharedMemoryAs<Result*>();
-  uint32_t result_shm_id = kSharedMemoryId;
+  uint32_t result_shm_id = shared_memory_id_;
   uint32_t result_shm_offset = kSharedMemoryOffset;
-  uint32_t pixels_shm_id = kSharedMemoryId;
+  uint32_t pixels_shm_id = shared_memory_id_;
   uint32_t pixels_shm_offset = kSharedMemoryOffset + sizeof(Result);
 
   DoBindBuffer(GL_PIXEL_PACK_BUFFER, client_buffer_id_, kServiceBufferId);
@@ -854,9 +847,9 @@ TEST_P(GLES3DecoderTest, ReadPixelsPixelPackBufferMapped) {
 
   std::vector<int8_t> mapped_data(size);
 
-  uint32_t result_shm_id = kSharedMemoryId;
+  uint32_t result_shm_id = shared_memory_id_;
   uint32_t result_shm_offset = kSharedMemoryOffset;
-  uint32_t data_shm_id = kSharedMemoryId;
+  uint32_t data_shm_id = shared_memory_id_;
   // uint32_t is Result for both MapBufferRange and UnmapBuffer commands.
   uint32_t data_shm_offset = kSharedMemoryOffset + sizeof(uint32_t);
   EXPECT_CALL(*gl_,
@@ -915,15 +908,13 @@ TEST_P(GLES3DecoderTest, ReadPixelsPixelPackBufferIsNotLargeEnough) {
 }
 
 TEST_P(GLES2DecoderManualInitTest, ReadPixels2RowLengthWorkaround) {
-  base::CommandLine command_line(0, NULL);
-  command_line.AppendSwitchASCII(
-      switches::kGpuDriverBugWorkarounds,
-      base::IntToString(gpu::PACK_PARAMETERS_WORKAROUND_WITH_PACK_BUFFER));
+  gpu::GpuDriverBugWorkarounds workarounds;
+  workarounds.pack_parameters_workaround_with_pack_buffer = true;
   InitState init;
   init.gl_version = "OpenGL ES 3.0";
   init.bind_generates_resource = true;
   init.context_type = CONTEXT_TYPE_OPENGLES3;
-  InitDecoderWithCommandLine(init, &command_line);
+  InitDecoderWithWorkarounds(init, workarounds);
 
   const GLsizei kWidth = 5;
   const GLsizei kHeight = 3;
@@ -968,15 +959,13 @@ TEST_P(GLES2DecoderManualInitTest, ReadPixels2RowLengthWorkaround) {
 }
 
 TEST_P(GLES2DecoderManualInitTest, ReadPixels2AlignmentWorkaround) {
-  base::CommandLine command_line(0, NULL);
-  command_line.AppendSwitchASCII(
-      switches::kGpuDriverBugWorkarounds,
-      base::IntToString(gpu::PACK_PARAMETERS_WORKAROUND_WITH_PACK_BUFFER));
+  gpu::GpuDriverBugWorkarounds workarounds;
+  workarounds.pack_parameters_workaround_with_pack_buffer = true;
   InitState init;
   init.gl_version = "OpenGL ES 3.0";
   init.bind_generates_resource = true;
   init.context_type = CONTEXT_TYPE_OPENGLES3;
-  InitDecoderWithCommandLine(init, &command_line);
+  InitDecoderWithWorkarounds(init, workarounds);
 
   const GLsizei kWidth = 5;
   const GLsizei kHeight = 3;
@@ -1023,15 +1012,13 @@ TEST_P(GLES2DecoderManualInitTest, ReadPixels2AlignmentWorkaround) {
 
 TEST_P(GLES2DecoderManualInitTest,
        ReadPixels2RowLengthAndAlignmentWorkarounds) {
-  base::CommandLine command_line(0, NULL);
-  command_line.AppendSwitchASCII(
-      switches::kGpuDriverBugWorkarounds,
-      base::IntToString(gpu::PACK_PARAMETERS_WORKAROUND_WITH_PACK_BUFFER));
+  gpu::GpuDriverBugWorkarounds workarounds;
+  workarounds.pack_parameters_workaround_with_pack_buffer = true;
   InitState init;
   init.gl_version = "OpenGL ES 3.0";
   init.bind_generates_resource = true;
   init.context_type = CONTEXT_TYPE_OPENGLES3;
-  InitDecoderWithCommandLine(init, &command_line);
+  InitDecoderWithWorkarounds(init, workarounds);
 
   const GLsizei kWidth = 5;
   const GLsizei kHeight = 3;
@@ -1112,9 +1099,9 @@ TEST_P(GLES2DecoderRGBBackbufferTest, ReadPixelsNoAlphaBackbuffer) {
                          kPackAlignment);
   typedef ReadPixels::Result Result;
   Result* result = GetSharedMemoryAs<Result*>();
-  uint32_t result_shm_id = kSharedMemoryId;
+  uint32_t result_shm_id = shared_memory_id_;
   uint32_t result_shm_offset = kSharedMemoryOffset;
-  uint32_t pixels_shm_id = kSharedMemoryId;
+  uint32_t pixels_shm_id = shared_memory_id_;
   uint32_t pixels_shm_offset = kSharedMemoryOffset + sizeof(*result);
   void* dest = &result[1];
   EXPECT_CALL(*gl_, GetError())
@@ -1178,9 +1165,9 @@ TEST_P(GLES2DecoderTest, ReadPixelsOutOfRange) {
 TEST_P(GLES2DecoderTest, ReadPixelsInvalidArgs) {
   typedef ReadPixels::Result Result;
   Result* result = GetSharedMemoryAs<Result*>();
-  uint32_t result_shm_id = kSharedMemoryId;
+  uint32_t result_shm_id = shared_memory_id_;
   uint32_t result_shm_offset = kSharedMemoryOffset;
-  uint32_t pixels_shm_id = kSharedMemoryId;
+  uint32_t pixels_shm_id = shared_memory_id_;
   uint32_t pixels_shm_offset = kSharedMemoryOffset + sizeof(Result);
   EXPECT_CALL(*gl_, ReadPixels(_, _, _, _, _, _, _)).Times(0);
   ReadPixels cmd;
@@ -1292,9 +1279,9 @@ TEST_P(GLES2DecoderManualInitTest, ReadPixelsAsyncError) {
   Result* result = GetSharedMemoryAs<Result*>();
   const GLsizei kWidth = 4;
   const GLsizei kHeight = 4;
-  uint32_t result_shm_id = kSharedMemoryId;
+  uint32_t result_shm_id = shared_memory_id_;
   uint32_t result_shm_offset = kSharedMemoryOffset;
-  uint32_t pixels_shm_id = kSharedMemoryId;
+  uint32_t pixels_shm_id = shared_memory_id_;
   uint32_t pixels_shm_offset = kSharedMemoryOffset + sizeof(Result);
 
   EXPECT_CALL(*gl_, GetError())
@@ -1374,7 +1361,7 @@ class GLES2ReadPixelsAsyncTest : public GLES2DecoderManualInitTest {
     EXPECT_TRUE(decoder_->HasMoreIdleWork());
 
     const size_t kBufferSize = width * height * 4;
-    auto buffer = base::MakeUnique<char[]>(kBufferSize);
+    auto buffer = std::make_unique<char[]>(kBufferSize);
     for (size_t i = 0; i < kBufferSize; ++i)
       buffer[i] = i;
 
@@ -1402,9 +1389,9 @@ TEST_P(GLES2ReadPixelsAsyncTest, ReadPixelsAsync) {
   Result* result = GetSharedMemoryAs<Result*>();
   const GLsizei kWidth = 4;
   const GLsizei kHeight = 4;
-  uint32_t result_shm_id = kSharedMemoryId;
+  uint32_t result_shm_id = shared_memory_id_;
   uint32_t result_shm_offset = kSharedMemoryOffset;
-  uint32_t pixels_shm_id = kSharedMemoryId;
+  uint32_t pixels_shm_id = shared_memory_id_;
   uint32_t pixels_shm_offset = kSharedMemoryOffset + sizeof(Result);
   char* pixels = reinterpret_cast<char*>(result + 1);
 
@@ -1431,9 +1418,9 @@ TEST_P(GLES2ReadPixelsAsyncTest, ReadPixelsAsyncModifyCommand) {
   Result* result = GetSharedMemoryAs<Result*>();
   const GLsizei kWidth = 4;
   const GLsizei kHeight = 4;
-  uint32_t result_shm_id = kSharedMemoryId;
+  uint32_t result_shm_id = shared_memory_id_;
   uint32_t result_shm_offset = kSharedMemoryOffset;
-  uint32_t pixels_shm_id = kSharedMemoryId;
+  uint32_t pixels_shm_id = shared_memory_id_;
   uint32_t pixels_shm_offset = kSharedMemoryOffset + sizeof(Result);
   char* pixels = reinterpret_cast<char*>(result + 1);
 
@@ -1460,9 +1447,9 @@ TEST_P(GLES2ReadPixelsAsyncTest, ReadPixelsAsyncChangePackAlignment) {
   Result* result = GetSharedMemoryAs<Result*>();
   const GLsizei kWidth = 1;
   const GLsizei kHeight = 4;
-  uint32_t result_shm_id = kSharedMemoryId;
+  uint32_t result_shm_id = shared_memory_id_;
   uint32_t result_shm_offset = kSharedMemoryOffset;
-  uint32_t pixels_shm_id = kSharedMemoryId;
+  uint32_t pixels_shm_id = shared_memory_id_;
   uint32_t pixels_shm_offset = kSharedMemoryOffset + sizeof(Result);
   char* pixels = reinterpret_cast<char*>(result + 1);
 
@@ -1498,6 +1485,8 @@ INSTANTIATE_TEST_CASE_P(Service, GLES2ReadPixelsAsyncTest, ::testing::Bool());
 TEST_P(GLES2DecoderTest, FramebufferRenderbufferClearColor) {
   DoBindFramebuffer(
       GL_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
+  DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
+                     kServiceRenderbufferId);
   ClearColor color_cmd;
   ColorMask color_mask_cmd;
   Enable enable_cmd;
@@ -1536,6 +1525,8 @@ TEST_P(GLES2DecoderTest, FramebufferRenderbufferClearColor) {
 TEST_P(GLES2DecoderTest, FramebufferRenderbufferClearDepth) {
   DoBindFramebuffer(
       GL_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
+  DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
+                     kServiceRenderbufferId);
   ClearDepthf depth_cmd;
   DepthMask depth_mask_cmd;
   FramebufferRenderbuffer cmd;
@@ -1568,6 +1559,8 @@ TEST_P(GLES2DecoderTest, FramebufferRenderbufferClearDepth) {
 TEST_P(GLES2DecoderTest, FramebufferRenderbufferClearStencil) {
   DoBindFramebuffer(
       GL_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
+  DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
+                     kServiceRenderbufferId);
   ClearStencil stencil_cmd;
   StencilMaskSeparate stencil_mask_separate_cmd;
   FramebufferRenderbuffer cmd;
@@ -1600,6 +1593,8 @@ TEST_P(GLES2DecoderTest, FramebufferRenderbufferClearStencil) {
 TEST_P(GLES3DecoderTest, FramebufferRenderbufferClearDepthStencil) {
   DoBindFramebuffer(GL_FRAMEBUFFER, client_framebuffer_id_,
                     kServiceFramebufferId);
+  DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
+                     kServiceRenderbufferId);
   ClearDepthf depth_cmd;
   ClearStencil stencil_cmd;
   FramebufferRenderbuffer cmd;
@@ -2017,6 +2012,14 @@ TEST_P(GLES2DecoderManualInitTest, PackedDepthStencilRenderbufferStencil) {
 TEST_P(GLES2DecoderTest, FramebufferRenderbufferGLError) {
   DoBindFramebuffer(
       GL_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
+  FramebufferRenderbuffer cmd;
+  cmd.Init(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
+           client_renderbuffer_id_);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_INVALID_OPERATION, GetGLError());
+
+  DoBindRenderbuffer(GL_RENDERBUFFER, client_renderbuffer_id_,
+                     kServiceRenderbufferId);
   EXPECT_CALL(*gl_, GetError())
       .WillOnce(Return(GL_NO_ERROR))
       .WillOnce(Return(GL_OUT_OF_MEMORY))
@@ -2028,11 +2031,6 @@ TEST_P(GLES2DecoderTest, FramebufferRenderbufferGLError) {
                                          kServiceRenderbufferId))
       .Times(1)
       .RetiresOnSaturation();
-  FramebufferRenderbuffer cmd;
-  cmd.Init(GL_FRAMEBUFFER,
-           GL_COLOR_ATTACHMENT0,
-           GL_RENDERBUFFER,
-           client_renderbuffer_id_);
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   EXPECT_EQ(GL_OUT_OF_MEMORY, GetGLError());
 }
@@ -2121,8 +2119,7 @@ TEST_P(GLES3DecoderTest, ClearBufferivImmediateValidArgs) {
 
   // TODO(zmo): Set up expectations for the path where the attachment isn't
   // marked as cleared.
-  Framebuffer* framebuffer =
-      group().framebuffer_manager()->GetFramebuffer(client_framebuffer_id_);
+  Framebuffer* framebuffer = GetFramebuffer(client_framebuffer_id_);
   framebuffer->MarkAttachmentAsCleared(
       group().renderbuffer_manager(), nullptr, GL_COLOR_ATTACHMENT0, true);
 
@@ -2153,8 +2150,7 @@ TEST_P(GLES3DecoderTest, ClearBufferuivImmediateValidArgs) {
 
   // TODO(zmo): Set up expectations for the path where the attachment isn't
   // marked as cleared.
-  Framebuffer* framebuffer =
-      group().framebuffer_manager()->GetFramebuffer(client_framebuffer_id_);
+  Framebuffer* framebuffer = GetFramebuffer(client_framebuffer_id_);
   framebuffer->MarkAttachmentAsCleared(
       group().renderbuffer_manager(), nullptr, GL_COLOR_ATTACHMENT0, true);
 
@@ -2186,8 +2182,7 @@ TEST_P(GLES3DecoderTest, ClearBufferfvImmediateValidArgs) {
 
   // TODO(zmo): Set up expectations for the path where the attachment isn't
   // marked as cleared.
-  Framebuffer* framebuffer =
-      group().framebuffer_manager()->GetFramebuffer(client_framebuffer_id_);
+  Framebuffer* framebuffer = GetFramebuffer(client_framebuffer_id_);
   framebuffer->MarkAttachmentAsCleared(
       group().renderbuffer_manager(), nullptr, GL_DEPTH_ATTACHMENT, true);
 
@@ -2224,8 +2219,7 @@ TEST_P(GLES3DecoderTest, ClearBufferfiValidArgs) {
 
   // TODO(zmo): Set up expectations for the path where the attachment isn't
   // marked as cleared.
-  Framebuffer* framebuffer =
-      group().framebuffer_manager()->GetFramebuffer(client_framebuffer_id_);
+  Framebuffer* framebuffer = GetFramebuffer(client_framebuffer_id_);
   framebuffer->MarkAttachmentAsCleared(group().renderbuffer_manager(), nullptr,
                                        GL_DEPTH_ATTACHMENT, true);
   framebuffer->MarkAttachmentAsCleared(group().renderbuffer_manager(), nullptr,
@@ -2255,7 +2249,7 @@ TEST_P(GLES3DecoderTest, ClearBufferfiValidArgs) {
 TEST_P(GLES2DecoderManualInitTest,
        RenderbufferStorageMultisampleCHROMIUMGLError) {
   InitState init;
-  init.extensions = "GL_EXT_framebuffer_multisample";
+  init.extensions = "GL_ARB_framebuffer_object";
   init.bind_generates_resource = true;
   InitDecoder(init);
   DoBindRenderbuffer(
@@ -2265,9 +2259,8 @@ TEST_P(GLES2DecoderManualInitTest,
       .WillOnce(Return(GL_NO_ERROR))
       .WillOnce(Return(GL_OUT_OF_MEMORY))
       .RetiresOnSaturation();
-  EXPECT_CALL(
-      *gl_,
-      RenderbufferStorageMultisampleEXT(GL_RENDERBUFFER, 1, GL_RGBA, 100, 50))
+  EXPECT_CALL(*gl_, RenderbufferStorageMultisample(GL_RENDERBUFFER, 1, GL_RGBA,
+                                                   100, 50))
       .Times(1)
       .RetiresOnSaturation();
   RenderbufferStorageMultisampleCHROMIUM cmd;
@@ -2279,12 +2272,12 @@ TEST_P(GLES2DecoderManualInitTest,
 TEST_P(GLES2DecoderManualInitTest,
        RenderbufferStorageMultisampleCHROMIUMBadArgs) {
   InitState init;
-  init.extensions = "GL_EXT_framebuffer_multisample";
+  init.extensions = "GL_ARB_framebuffer_object";
   init.bind_generates_resource = true;
   InitDecoder(init);
   DoBindRenderbuffer(
       GL_RENDERBUFFER, client_renderbuffer_id_, kServiceRenderbufferId);
-  EXPECT_CALL(*gl_, RenderbufferStorageMultisampleEXT(_, _, _, _, _))
+  EXPECT_CALL(*gl_, RenderbufferStorageMultisample(_, _, _, _, _))
       .Times(0)
       .RetiresOnSaturation();
   RenderbufferStorageMultisampleCHROMIUM cmd;
@@ -2313,48 +2306,41 @@ TEST_P(GLES2DecoderManualInitTest,
 
 TEST_P(GLES2DecoderManualInitTest, RenderbufferStorageMultisampleCHROMIUM) {
   InitState init;
-  init.extensions = "GL_EXT_framebuffer_multisample";
+  init.extensions = "GL_ARB_framebuffer_object";
   InitDecoder(init);
   DoBindRenderbuffer(
       GL_RENDERBUFFER, client_renderbuffer_id_, kServiceRenderbufferId);
   InSequence sequence;
-  EnsureRenderbufferBound(false);
-  DoRenderbufferStorageMultisampleCHROMIUM(GL_RENDERBUFFER,
-                                           TestHelper::kMaxSamples,
-                                           GL_RGBA4,
-                                           GL_RGBA,
-                                           TestHelper::kMaxRenderbufferSize,
-                                           1);
+  DoRenderbufferStorageMultisampleCHROMIUM(
+      GL_RENDERBUFFER, TestHelper::kMaxSamples, GL_RGBA4, GL_RGBA,
+      TestHelper::kMaxRenderbufferSize, 1, false);
 }
 
 TEST_P(GLES2DecoderManualInitTest,
        RenderbufferStorageMultisampleCHROMIUMRebindRenderbuffer) {
   InitState init;
-  init.extensions = "GL_EXT_framebuffer_multisample";
+  init.extensions = "GL_ARB_framebuffer_object";
   InitDecoder(init);
   DoBindRenderbuffer(
       GL_RENDERBUFFER, client_renderbuffer_id_, kServiceRenderbufferId);
   RestoreRenderbufferBindings();
   InSequence sequence;
-  EnsureRenderbufferBound(true);
-  DoRenderbufferStorageMultisampleCHROMIUM(GL_RENDERBUFFER,
-                                           TestHelper::kMaxSamples,
-                                           GL_RGBA4,
-                                           GL_RGBA,
-                                           TestHelper::kMaxRenderbufferSize,
-                                           1);
+  DoRenderbufferStorageMultisampleCHROMIUM(
+      GL_RENDERBUFFER, TestHelper::kMaxSamples, GL_RGBA4, GL_RGBA,
+      TestHelper::kMaxRenderbufferSize, 1, true);
 }
 
 TEST_P(GLES2DecoderManualInitTest,
        RenderbufferStorageMultisampleEXTNotSupported) {
   InitState init;
-  init.extensions = "GL_EXT_framebuffer_multisample";
+  init.extensions = "GL_ARB_framebuffer_object";
   init.bind_generates_resource = true;
   InitDecoder(init);
   DoBindRenderbuffer(
       GL_RENDERBUFFER, client_renderbuffer_id_, kServiceRenderbufferId);
   InSequence sequence;
-  // GL_EXT_framebuffer_multisample uses RenderbufferStorageMultisampleCHROMIUM.
+  // GL_CHROMIUM_framebuffer_multisample uses
+  // RenderbufferStorageMultisampleCHROMIUM.
   RenderbufferStorageMultisampleEXT cmd;
   cmd.Init(GL_RENDERBUFFER,
            TestHelper::kMaxSamples,
@@ -2384,37 +2370,21 @@ class GLES2DecoderMultisampledRenderToTextureTest
     DoBindRenderbuffer(
         GL_RENDERBUFFER, client_renderbuffer_id_, kServiceRenderbufferId);
     InSequence sequence;
+
+    EXPECT_CALL(*gl_, GetError())
+        .WillOnce(Return(GL_NO_ERROR))
+        .RetiresOnSaturation();
     if (rb_rebind) {
       RestoreRenderbufferBindings();
       EnsureRenderbufferBound(true);
     } else {
       EnsureRenderbufferBound(false);
     }
-
-    EXPECT_CALL(*gl_, GetError())
-        .WillOnce(Return(GL_NO_ERROR))
+    EXPECT_CALL(*gl_, RenderbufferStorageMultisampleEXT(
+                          GL_RENDERBUFFER, TestHelper::kMaxSamples, GL_RGBA4,
+                          TestHelper::kMaxRenderbufferSize, 1))
+        .Times(1)
         .RetiresOnSaturation();
-    if (strstr(extension, "GL_IMG_multisampled_render_to_texture")) {
-      EXPECT_CALL(
-          *gl_,
-          RenderbufferStorageMultisampleIMG(GL_RENDERBUFFER,
-                                            TestHelper::kMaxSamples,
-                                            GL_RGBA4,
-                                            TestHelper::kMaxRenderbufferSize,
-                                            1))
-          .Times(1)
-          .RetiresOnSaturation();
-    } else {
-      EXPECT_CALL(
-          *gl_,
-          RenderbufferStorageMultisampleEXT(GL_RENDERBUFFER,
-                                            TestHelper::kMaxSamples,
-                                            GL_RGBA4,
-                                            TestHelper::kMaxRenderbufferSize,
-                                            1))
-          .Times(1)
-          .RetiresOnSaturation();
-    }
     EXPECT_CALL(*gl_, GetError())
         .WillOnce(Return(GL_NO_ERROR))
         .RetiresOnSaturation();
@@ -2481,9 +2451,9 @@ TEST_P(GLES2DecoderTest, ReadPixelsGLError) {
   GLsizei height = 4;
   typedef ReadPixels::Result Result;
   Result* result = GetSharedMemoryAs<Result*>();
-  uint32_t result_shm_id = kSharedMemoryId;
+  uint32_t result_shm_id = shared_memory_id_;
   uint32_t result_shm_offset = kSharedMemoryOffset;
-  uint32_t pixels_shm_id = kSharedMemoryId;
+  uint32_t pixels_shm_id = shared_memory_id_;
   uint32_t pixels_shm_offset = kSharedMemoryOffset + sizeof(Result);
   EXPECT_CALL(*gl_, GetError())
       .WillOnce(Return(GL_NO_ERROR))
@@ -2614,9 +2584,9 @@ TEST_P(GLES2DecoderWithShaderTest, UnClearedAttachmentsGetClearedOnReadPixels) {
       .RetiresOnSaturation();
   typedef ReadPixels::Result Result;
   Result* result = GetSharedMemoryAs<Result*>();
-  uint32_t result_shm_id = kSharedMemoryId;
+  uint32_t result_shm_id = shared_memory_id_;
   uint32_t result_shm_offset = kSharedMemoryOffset;
-  uint32_t pixels_shm_id = kSharedMemoryId;
+  uint32_t pixels_shm_id = shared_memory_id_;
   uint32_t pixels_shm_offset = kSharedMemoryOffset + sizeof(Result);
   ReadPixels cmd;
   cmd.Init(0,
@@ -2654,16 +2624,8 @@ TEST_P(GLES3DecoderTest, CopyTexImage2DValidInternalFormat) {
   GenHelper<GenTexturesImmediate>(kFBOClientTextureId);
 
   DoBindTexture(GL_TEXTURE_2D, kFBOClientTextureId, kFBOServiceTextureId);
-  DoTexImage2D(GL_TEXTURE_2D,
-               level,
-               internal_format,
-               width,
-               height,
-               0,
-               format,
-               type,
-               kSharedMemoryId,
-               kSharedMemoryOffset);
+  DoTexImage2D(GL_TEXTURE_2D, level, internal_format, width, height, 0, format,
+               type, shared_memory_id_, kSharedMemoryOffset);
   DoBindFramebuffer(
       GL_READ_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
   DoFramebufferTexture2D(GL_READ_FRAMEBUFFER,
@@ -2720,16 +2682,8 @@ TEST_P(GLES3DecoderManualInitTest, CopyTexImage2DValidInternalFormat_FloatEXT) {
   GenHelper<GenTexturesImmediate>(kFBOClientTextureId);
 
   DoBindTexture(GL_TEXTURE_2D, kFBOClientTextureId, kFBOServiceTextureId);
-  DoTexImage2D(GL_TEXTURE_2D,
-               level,
-               GL_RGBA16F,
-               width,
-               height,
-               0,
-               format,
-               type,
-               kSharedMemoryId,
-               kSharedMemoryOffset);
+  DoTexImage2D(GL_TEXTURE_2D, level, GL_RGBA16F, width, height, 0, format, type,
+               shared_memory_id_, kSharedMemoryOffset);
   DoBindFramebuffer(
       GL_READ_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
   DoFramebufferTexture2D(GL_READ_FRAMEBUFFER,
@@ -2785,16 +2739,8 @@ TEST_P(GLES3DecoderManualInitTest,
   GenHelper<GenTexturesImmediate>(kFBOClientTextureId);
 
   DoBindTexture(GL_TEXTURE_2D, kFBOClientTextureId, kFBOServiceTextureId);
-  DoTexImage2D(GL_TEXTURE_2D,
-               level,
-               GL_RGBA8,
-               width,
-               height,
-               0,
-               format,
-               type,
-               kSharedMemoryId,
-               kSharedMemoryOffset);
+  DoTexImage2D(GL_TEXTURE_2D, level, GL_RGBA8, width, height, 0, format, type,
+               shared_memory_id_, kSharedMemoryOffset);
   DoBindFramebuffer(
       GL_READ_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
   DoFramebufferTexture2D(GL_READ_FRAMEBUFFER,
@@ -2837,16 +2783,8 @@ TEST_P(GLES3DecoderTest, CopyTexImage2DInvalidInternalFormat) {
   GenHelper<GenTexturesImmediate>(kFBOClientTextureId);
 
   DoBindTexture(GL_TEXTURE_2D, kFBOClientTextureId, kFBOServiceTextureId);
-  DoTexImage2D(GL_TEXTURE_2D,
-               level,
-               GL_RG8,
-               width,
-               height,
-               0,
-               format,
-               type,
-               kSharedMemoryId,
-               kSharedMemoryOffset);
+  DoTexImage2D(GL_TEXTURE_2D, level, GL_RG8, width, height, 0, format, type,
+               shared_memory_id_, kSharedMemoryOffset);
   DoBindFramebuffer(
       GL_READ_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
   DoFramebufferTexture2D(GL_READ_FRAMEBUFFER,
@@ -2886,16 +2824,8 @@ TEST_P(GLES3DecoderTest, CopyTexImage2DInvalidInternalFormat_Float) {
   GenHelper<GenTexturesImmediate>(kFBOClientTextureId);
 
   DoBindTexture(GL_TEXTURE_2D, kFBOClientTextureId, kFBOServiceTextureId);
-  DoTexImage2D(GL_TEXTURE_2D,
-               level,
-               GL_RGBA8,
-               width,
-               height,
-               0,
-               format,
-               type,
-               kSharedMemoryId,
-               kSharedMemoryOffset);
+  DoTexImage2D(GL_TEXTURE_2D, level, GL_RGBA8, width, height, 0, format, type,
+               shared_memory_id_, kSharedMemoryOffset);
   DoBindFramebuffer(
       GL_READ_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
   DoFramebufferTexture2D(GL_READ_FRAMEBUFFER,
@@ -2938,16 +2868,8 @@ TEST_P(GLES3DecoderTest, CopyTexImage2DInvalidInternalFormat_Integer) {
   GenHelper<GenTexturesImmediate>(kFBOClientTextureId);
 
   DoBindTexture(GL_TEXTURE_2D, kFBOClientTextureId, kFBOServiceTextureId);
-  DoTexImage2D(GL_TEXTURE_2D,
-               level,
-               GL_RG8UI,
-               width,
-               height,
-               0,
-               format,
-               type,
-               kSharedMemoryId,
-               kSharedMemoryOffset);
+  DoTexImage2D(GL_TEXTURE_2D, level, GL_RG8UI, width, height, 0, format, type,
+               shared_memory_id_, kSharedMemoryOffset);
   DoBindFramebuffer(
       GL_READ_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
   DoFramebufferTexture2D(GL_READ_FRAMEBUFFER,
@@ -2990,16 +2912,8 @@ TEST_P(GLES3DecoderTest, CopyTexImage2DInvalidInternalFormat_sRGB) {
   GenHelper<GenTexturesImmediate>(kFBOClientTextureId);
 
   DoBindTexture(GL_TEXTURE_2D, kFBOClientTextureId, kFBOServiceTextureId);
-  DoTexImage2D(GL_TEXTURE_2D,
-               level,
-               GL_RGB,
-               width,
-               height,
-               0,
-               format,
-               type,
-               kSharedMemoryId,
-               kSharedMemoryOffset);
+  DoTexImage2D(GL_TEXTURE_2D, level, GL_RGB, width, height, 0, format, type,
+               shared_memory_id_, kSharedMemoryOffset);
   DoBindFramebuffer(
       GL_READ_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
   DoFramebufferTexture2D(GL_READ_FRAMEBUFFER,
@@ -3026,7 +2940,7 @@ TEST_P(GLES3DecoderTest, CopyTexImage2DInvalidInternalFormat_sRGB) {
 TEST_P(GLES2DecoderManualInitTest,
        UnClearedAttachmentsGetClearedOnReadPixelsAndDrawBufferGetsRestored) {
   InitState init;
-  init.extensions = "GL_EXT_framebuffer_multisample";
+  init.extensions = "GL_ARB_framebuffer_object";
   init.bind_generates_resource = true;
   InitDecoder(init);
   const GLuint kFBOClientTextureId = 4100;
@@ -3078,9 +2992,9 @@ TEST_P(GLES2DecoderManualInitTest,
       .RetiresOnSaturation();
   typedef ReadPixels::Result Result;
   Result* result = GetSharedMemoryAs<Result*>();
-  uint32_t result_shm_id = kSharedMemoryId;
+  uint32_t result_shm_id = shared_memory_id_;
   uint32_t result_shm_offset = kSharedMemoryOffset;
-  uint32_t pixels_shm_id = kSharedMemoryId;
+  uint32_t pixels_shm_id = shared_memory_id_;
   uint32_t pixels_shm_offset = kSharedMemoryOffset + sizeof(Result);
   ReadPixels cmd;
   cmd.Init(0,
@@ -3129,7 +3043,7 @@ TEST_P(GLES2DecoderWithShaderTest, CopyTexImageWithInCompleteFBOFails) {
 
 void GLES2DecoderWithShaderTest::CheckRenderbufferChangesMarkFBOAsNotComplete(
     bool bound_fbo) {
-  FramebufferManager* framebuffer_manager = group().framebuffer_manager();
+  FramebufferManager* framebuffer_manager = GetFramebufferManager();
   SetupTexture();
   DoBindRenderbuffer(
       GL_RENDERBUFFER, client_renderbuffer_id_, kServiceRenderbufferId);
@@ -3189,7 +3103,7 @@ TEST_P(GLES2DecoderWithShaderTest,
 
 void GLES2DecoderWithShaderTest::CheckTextureChangesMarkFBOAsNotComplete(
     bool bound_fbo) {
-  FramebufferManager* framebuffer_manager = group().framebuffer_manager();
+  FramebufferManager* framebuffer_manager = GetFramebufferManager();
   const GLuint kFBOClientTextureId = 4100;
   const GLuint kFBOServiceTextureId = 4101;
 
@@ -3422,7 +3336,7 @@ TEST_P(GLES2DecoderTest, ClearBackbufferBitsOnFlipSwap) {
 
   EXPECT_CALL(*gl_, Finish()).Times(AnyNumber());
   ResizeCHROMIUM& resize_cmd = *GetImmediateAs<ResizeCHROMIUM>();
-  resize_cmd.Init(1, 1, 1.0f, GL_TRUE);
+  resize_cmd.Init(1, 1, 1.0f, GL_COLOR_SPACE_UNSPECIFIED_CHROMIUM, GL_TRUE);
   EXPECT_EQ(error::kNoError, ExecuteCmd(resize_cmd));
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
   EXPECT_EQ(static_cast<uint32_t>(GL_COLOR_BUFFER_BIT),
@@ -3465,7 +3379,7 @@ TEST_P(GLES2DecoderManualInitTest, DiscardFramebufferEXT) {
                          kServiceTextureId,
                          0,
                          GL_NO_ERROR);
-  FramebufferManager* framebuffer_manager = group().framebuffer_manager();
+  FramebufferManager* framebuffer_manager = GetFramebufferManager();
   Framebuffer* framebuffer =
       framebuffer_manager->GetFramebuffer(client_framebuffer_id_);
   EXPECT_TRUE(framebuffer->IsCleared());
@@ -3571,7 +3485,7 @@ TEST_P(GLES3DecoderTest, DiscardFramebufferEXTInvalidTarget) {
                          kServiceTextureId,
                          0,
                          GL_NO_ERROR);
-  FramebufferManager* framebuffer_manager = group().framebuffer_manager();
+  FramebufferManager* framebuffer_manager = GetFramebufferManager();
   Framebuffer* framebuffer =
       framebuffer_manager->GetFramebuffer(client_framebuffer_id_);
   EXPECT_TRUE(framebuffer->IsCleared());
@@ -3612,7 +3526,7 @@ TEST_P(GLES3DecoderTest, DiscardFramebufferEXTUseCorrectTarget) {
       .RetiresOnSaturation();
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_ + 1, kServiceTextureId + 1);
   DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-               kSharedMemoryId, kSharedMemoryOffset);
+               shared_memory_id_, kSharedMemoryOffset);
   DoFramebufferTexture2D(GL_DRAW_FRAMEBUFFER,
                          GL_COLOR_ATTACHMENT0,
                          GL_TEXTURE_2D,
@@ -3621,7 +3535,7 @@ TEST_P(GLES3DecoderTest, DiscardFramebufferEXTUseCorrectTarget) {
                          0,
                          GL_NO_ERROR);
 
-  FramebufferManager* framebuffer_manager = group().framebuffer_manager();
+  FramebufferManager* framebuffer_manager = GetFramebufferManager();
   Framebuffer* framebuffer =
       framebuffer_manager->GetFramebuffer(client_framebuffer_id_);
   EXPECT_TRUE(framebuffer->IsCleared());
@@ -3705,7 +3619,7 @@ TEST_P(GLES2DecoderManualInitTest,
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
 
   // Check that framebuffer is cleared and complete.
-  FramebufferManager* framebuffer_manager = group().framebuffer_manager();
+  FramebufferManager* framebuffer_manager = GetFramebufferManager();
   Framebuffer* framebuffer =
       framebuffer_manager->GetFramebuffer(client_framebuffer_id_);
   EXPECT_TRUE(framebuffer->IsCleared());
@@ -3739,9 +3653,8 @@ TEST_P(GLES2DecoderManualInitTest,
 TEST_P(GLES2DecoderTest, ImplementationReadColorFormatAndType) {
   ClearSharedMemory();
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
-  DoTexImage2D(
-      GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-      kSharedMemoryId, kSharedMemoryOffset);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+               shared_memory_id_, kSharedMemoryOffset);
   DoBindFramebuffer(
       GL_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
   DoFramebufferTexture2D(GL_FRAMEBUFFER,
@@ -3849,8 +3762,7 @@ TEST_P(GLES3DecoderTest, InvalidateFramebufferDepthStencilAttachment) {
       GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
       client_renderbuffer_id_, kServiceRenderbufferId, GL_NO_ERROR);
 
-  Framebuffer* framebuffer =
-      group().framebuffer_manager()->GetFramebuffer(client_framebuffer_id_);
+  Framebuffer* framebuffer = GetFramebuffer(client_framebuffer_id_);
   ASSERT_TRUE(framebuffer);
   ASSERT_FALSE(framebuffer->GetAttachment(GL_DEPTH_STENCIL_ATTACHMENT));
   ASSERT_TRUE(framebuffer->GetAttachment(GL_DEPTH_ATTACHMENT));
@@ -4025,9 +3937,7 @@ TEST_P(GLES3DecoderTest, BlitFramebufferMissingDepthOrStencil) {
                     kServiceFramebufferId);
   DoBindFramebuffer(GL_DRAW_FRAMEBUFFER, color_fbo, kNewServiceId);
   {
-    EXPECT_CALL(*gl_, BlitFramebufferEXT(0, 0, 1, 1, 0, 0, 1, 1,
-                                         _, _))
-        .Times(0);
+    EXPECT_CALL(*gl_, BlitFramebuffer(0, 0, 1, 1, 0, 0, 1, 1, _, _)).Times(0);
     BlitFramebufferCHROMIUM cmd;
     cmd.Init(0, 0, 1, 1, 0, 0, 1, 1, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
     EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));

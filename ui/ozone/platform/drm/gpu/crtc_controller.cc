@@ -80,15 +80,9 @@ bool CrtcController::SchedulePageFlip(
     scoped_refptr<PageFlipRequest> page_flip_request) {
   DCHECK(!page_flip_request_.get() || test_only);
   DCHECK(!is_disabled_);
-  const OverlayPlane* primary = OverlayPlane::GetPrimaryPlane(overlays);
-  if (!primary) {
-    LOG(ERROR) << "No primary plane to display on crtc " << crtc_;
-    page_flip_request->Signal(gfx::SwapResult::SWAP_ACK);
-    return true;
-  }
-  DCHECK(primary->buffer.get());
 
-  if (primary->buffer->GetSize() != gfx::Size(mode_.hdisplay, mode_.vdisplay)) {
+  const OverlayPlane* primary = OverlayPlane::GetPrimaryPlane(overlays);
+  if (primary && !drm_->plane_manager()->ValidatePrimarySize(*primary, mode_)) {
     VLOG(2) << "Trying to pageflip a buffer with the wrong size. Expected "
             << mode_.hdisplay << "x" << mode_.vdisplay << " got "
             << primary->buffer->GetSize().ToString() << " for"
@@ -125,12 +119,8 @@ std::vector<uint64_t> CrtcController::GetFormatModifiers(uint32_t format) {
 }
 
 void CrtcController::OnPageFlipEvent(unsigned int frame,
-                                     unsigned int seconds,
-                                     unsigned int useconds) {
-  time_of_last_flip_ =
-      static_cast<uint64_t>(seconds) * base::Time::kMicrosecondsPerSecond +
-      useconds;
-
+                                     base::TimeTicks timestamp) {
+  time_of_last_flip_ = timestamp;
   SignalPageFlipRequest(gfx::SwapResult::SWAP_ACK);
 }
 

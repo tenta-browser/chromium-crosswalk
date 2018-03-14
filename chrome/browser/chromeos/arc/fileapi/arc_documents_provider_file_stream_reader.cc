@@ -5,36 +5,67 @@
 #include "chrome/browser/chromeos/arc/fileapi/arc_documents_provider_file_stream_reader.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_content_file_system_file_stream_reader.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_documents_provider_root.h"
 #include "chrome/browser/chromeos/arc/fileapi/arc_documents_provider_root_map.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
+#include "storage/browser/fileapi/file_system_url.h"
 #include "url/gurl.h"
 
 using content::BrowserThread;
 
 namespace arc {
 
-ArcDocumentsProviderFileStreamReader::ArcDocumentsProviderFileStreamReader(
+namespace {
+
+void OnResolveToContentUrlOnUIThread(
+    const ArcDocumentsProviderRoot::ResolveToContentUrlCallback& callback,
+    const GURL& url) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::BindOnce(callback, url));
+}
+
+void ResolveToContentUrlOnUIThread(
     const storage::FileSystemURL& url,
-    int64_t offset,
-    ArcDocumentsProviderRootMap* roots)
-    : offset_(offset), content_url_resolved_(false), weak_ptr_factory_(this) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+    const ArcDocumentsProviderRoot::ResolveToContentUrlCallback& callback) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  ArcDocumentsProviderRootMap* roots =
+      ArcDocumentsProviderRootMap::GetForArcBrowserContext();
+  if (!roots) {
+    OnResolveToContentUrlOnUIThread(callback, GURL());
+    return;
+  }
 
   base::FilePath path;
   ArcDocumentsProviderRoot* root = roots->ParseAndLookup(url, &path);
   if (!root) {
-    content_url_resolved_ = true;
+    OnResolveToContentUrlOnUIThread(callback, GURL());
     return;
   }
+
   root->ResolveToContentUrl(
-      path,
-      base::Bind(&ArcDocumentsProviderFileStreamReader::OnResolveToContentUrl,
-                 weak_ptr_factory_.GetWeakPtr()));
+      path, base::Bind(&OnResolveToContentUrlOnUIThread, callback));
+}
+
+}  // namespace
+
+ArcDocumentsProviderFileStreamReader::ArcDocumentsProviderFileStreamReader(
+    const storage::FileSystemURL& url,
+    int64_t offset)
+    : offset_(offset), content_url_resolved_(false), weak_ptr_factory_(this) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(
+          &ResolveToContentUrlOnUIThread, url,
+          base::Bind(
+              &ArcDocumentsProviderFileStreamReader::OnResolveToContentUrl,
+              weak_ptr_factory_.GetWeakPtr())));
 }
 
 ArcDocumentsProviderFileStreamReader::~ArcDocumentsProviderFileStreamReader() {
@@ -49,7 +80,7 @@ int ArcDocumentsProviderFileStreamReader::Read(
   if (!content_url_resolved_) {
     pending_operations_.emplace_back(base::Bind(
         &ArcDocumentsProviderFileStreamReader::RunPendingRead,
-        base::Unretained(this), base::Passed(make_scoped_refptr(buffer)),
+        base::Unretained(this), base::Passed(base::WrapRefCounted(buffer)),
         buffer_length, callback));
     return net::ERR_IO_PENDING;
   }
@@ -78,7 +109,7 @@ void ArcDocumentsProviderFileStreamReader::OnResolveToContentUrl(
   DCHECK(!content_url_resolved_);
 
   if (content_url.is_valid()) {
-    underlying_reader_ = base::MakeUnique<ArcContentFileSystemFileStreamReader>(
+    underlying_reader_ = std::make_unique<ArcContentFileSystemFileStreamReader>(
         content_url, offset_);
   }
   content_url_resolved_ = true;

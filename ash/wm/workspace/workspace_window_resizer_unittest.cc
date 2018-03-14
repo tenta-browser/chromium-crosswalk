@@ -4,21 +4,18 @@
 
 #include "ash/wm/workspace/workspace_window_resizer.h"
 
-#include "ash/public/cpp/config.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/screen_util.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_constants.h"
-#include "ash/shelf/wm_shelf.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/window_positioning_utils.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_util.h"
 #include "ash/wm/wm_event.h"
 #include "ash/wm/workspace/phantom_window_controller.h"
 #include "ash/wm/workspace_controller.h"
-#include "ash/wm_window.h"
 #include "base/command_line.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -44,8 +41,8 @@ const int kRootHeight = 600;
 // A simple window delegate that returns the specified min size.
 class TestWindowDelegate : public aura::test::TestWindowDelegate {
  public:
-  TestWindowDelegate() {}
-  ~TestWindowDelegate() override {}
+  TestWindowDelegate() = default;
+  ~TestWindowDelegate() override = default;
 
   void set_min_size(const gfx::Size& size) { min_size_ = size; }
 
@@ -65,10 +62,10 @@ class TestWindowDelegate : public aura::test::TestWindowDelegate {
 
 }  // namespace
 
-class WorkspaceWindowResizerTest : public test::AshTestBase {
+class WorkspaceWindowResizerTest : public AshTestBase {
  public:
   WorkspaceWindowResizerTest() : workspace_resizer_(nullptr) {}
-  ~WorkspaceWindowResizerTest() override {}
+  ~WorkspaceWindowResizerTest() override = default;
 
   void SetUp() override {
     AshTestBase::SetUp();
@@ -82,25 +79,25 @@ class WorkspaceWindowResizerTest : public test::AshTestBase {
     EXPECT_EQ(800, root_bounds.width());
     Shell::Get()->SetDisplayWorkAreaInsets(root, gfx::Insets());
     window_.reset(new aura::Window(&delegate_));
-    window_->SetType(ui::wm::WINDOW_TYPE_NORMAL);
+    window_->SetType(aura::client::WINDOW_TYPE_NORMAL);
     window_->Init(ui::LAYER_NOT_DRAWN);
     ParentWindowInPrimaryRootWindow(window_.get());
     window_->set_id(1);
 
     window2_.reset(new aura::Window(&delegate2_));
-    window2_->SetType(ui::wm::WINDOW_TYPE_NORMAL);
+    window2_->SetType(aura::client::WINDOW_TYPE_NORMAL);
     window2_->Init(ui::LAYER_NOT_DRAWN);
     ParentWindowInPrimaryRootWindow(window2_.get());
     window2_->set_id(2);
 
     window3_.reset(new aura::Window(&delegate3_));
-    window3_->SetType(ui::wm::WINDOW_TYPE_NORMAL);
+    window3_->SetType(aura::client::WINDOW_TYPE_NORMAL);
     window3_->Init(ui::LAYER_NOT_DRAWN);
     ParentWindowInPrimaryRootWindow(window3_.get());
     window3_->set_id(3);
 
     window4_.reset(new aura::Window(&delegate4_));
-    window4_->SetType(ui::wm::WINDOW_TYPE_NORMAL);
+    window4_->SetType(aura::client::WINDOW_TYPE_NORMAL);
     window4_->Init(ui::LAYER_NOT_DRAWN);
     ParentWindowInPrimaryRootWindow(window4_.get());
     window4_->set_id(4);
@@ -137,9 +134,8 @@ class WorkspaceWindowResizerTest : public test::AshTestBase {
                                       const gfx::Point& point_in_parent,
                                       int window_component) {
     WindowResizer* resizer =
-        CreateWindowResizer(WmWindow::Get(window), point_in_parent,
-                            window_component,
-                            aura::client::WINDOW_MOVE_SOURCE_MOUSE)
+        CreateWindowResizer(window, point_in_parent, window_component,
+                            ::wm::WINDOW_MOVE_SOURCE_MOUSE)
             .release();
     workspace_resizer_ = WorkspaceWindowResizer::GetInstanceForTest();
     return resizer;
@@ -148,12 +144,11 @@ class WorkspaceWindowResizerTest : public test::AshTestBase {
       aura::Window* window,
       const gfx::Point& point_in_parent,
       int window_component,
-      aura::client::WindowMoveSource source,
+      ::wm::WindowMoveSource source,
       const std::vector<aura::Window*>& attached_windows) {
     wm::WindowState* window_state = wm::GetWindowState(window);
     window_state->CreateDragDetails(point_in_parent, window_component, source);
-    return WorkspaceWindowResizer::Create(
-        window_state, WmWindow::FromAuraWindows(attached_windows));
+    return WorkspaceWindowResizer::Create(window_state, attached_windows);
   }
 
   PhantomWindowController* snap_phantom_window_controller() const {
@@ -204,9 +199,9 @@ TEST_F(WorkspaceWindowResizerTest, AttachedResize_RIGHT_2) {
 
   std::vector<aura::Window*> windows;
   windows.push_back(window2_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTRIGHT,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTRIGHT,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it 100 to the right, which should expand w1 and push w2.
   resizer->Drag(CalculateDragPoint(*resizer, 100, 10), 0);
@@ -238,9 +233,9 @@ TEST_F(WorkspaceWindowResizerTest, AttachedResize_RIGHT_Compress) {
 
   std::vector<aura::Window*> windows;
   windows.push_back(window2_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTRIGHT,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTRIGHT,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it 100 to the left, which should expand w2 and collapse w1.
   resizer->Drag(CalculateDragPoint(*resizer, -100, 10), 0);
@@ -281,9 +276,9 @@ TEST_F(WorkspaceWindowResizerTest, AttachedResize_RIGHT_3) {
   std::vector<aura::Window*> windows;
   windows.push_back(window2_.get());
   windows.push_back(window3_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTRIGHT,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTRIGHT,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it 100 to the right, which should expand w1 and push w2 and w3.
   resizer->Drag(CalculateDragPoint(*resizer, 100, -10), 0);
@@ -322,9 +317,9 @@ TEST_F(WorkspaceWindowResizerTest, AttachedResize_RIGHT_3_Compress) {
   std::vector<aura::Window*> windows;
   windows.push_back(window2_.get());
   windows.push_back(window3_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTRIGHT,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTRIGHT,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it -100 to the right, which should collapse w1 and expand w2 and w3.
   resizer->Drag(CalculateDragPoint(*resizer, -100, -10), 0);
@@ -352,9 +347,9 @@ TEST_F(WorkspaceWindowResizerTest, AttachedResize_BOTTOM_Compress) {
 
   std::vector<aura::Window*> windows;
   windows.push_back(window2_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTBOTTOM,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTBOTTOM,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it up 100, which should expand w2 and collapse w1.
   resizer->Drag(CalculateDragPoint(*resizer, 10, -100), 0);
@@ -386,9 +381,9 @@ TEST_F(WorkspaceWindowResizerTest, AttachedResize_BOTTOM_2) {
 
   std::vector<aura::Window*> windows;
   windows.push_back(window2_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTBOTTOM,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTBOTTOM,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it 100 to the bottom, which should expand w1 and push w2.
   resizer->Drag(CalculateDragPoint(*resizer, 10, 100), 0);
@@ -429,9 +424,9 @@ TEST_F(WorkspaceWindowResizerTest, AttachedResize_BOTTOM_3) {
   std::vector<aura::Window*> windows;
   windows.push_back(window2_.get());
   windows.push_back(window3_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTBOTTOM,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTBOTTOM,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it 100 down, which should expand w1 and push w2 and w3.
   resizer->Drag(CalculateDragPoint(*resizer, -10, 100), 0);
@@ -470,9 +465,9 @@ TEST_F(WorkspaceWindowResizerTest, AttachedResize_BOTTOM_3_Compress) {
   std::vector<aura::Window*> windows;
   windows.push_back(window2_.get());
   windows.push_back(window3_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTBOTTOM,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTBOTTOM,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it 100 up, which should collapse w1 and expand w2 and w3.
   resizer->Drag(CalculateDragPoint(*resizer, -10, -100), 0);
@@ -496,11 +491,6 @@ TEST_F(WorkspaceWindowResizerTest, AttachedResize_BOTTOM_3_Compress) {
 // Tests that touch-dragging a window does not lock the mouse cursor
 // and therefore shows the cursor on a mousemove.
 TEST_F(WorkspaceWindowResizerTest, MouseMoveWithTouchDrag) {
-  // TODO: fails because mash doesn't support CursorManager.
-  // http://crbug.com/631103.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
   window_->SetBounds(gfx::Rect(0, 300, 400, 300));
   window2_->SetBounds(gfx::Rect(400, 200, 100, 200));
 
@@ -512,9 +502,9 @@ TEST_F(WorkspaceWindowResizerTest, MouseMoveWithTouchDrag) {
 
   std::vector<aura::Window*> windows;
   windows.push_back(window2_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTRIGHT,
-      aura::client::WINDOW_MOVE_SOURCE_TOUCH, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTRIGHT,
+                                    ::wm::WINDOW_MOVE_SOURCE_TOUCH, windows));
   ASSERT_TRUE(resizer.get());
 
   // Creating a WorkspaceWindowResizer should not lock the cursor.
@@ -550,8 +540,7 @@ TEST_F(WorkspaceWindowResizerTest, Edge) {
 
   {
     gfx::Rect expected_bounds_in_parent(
-        wm::GetDefaultLeftSnappedWindowBoundsInParent(
-            WmWindow::Get(window_.get())));
+        wm::GetDefaultLeftSnappedWindowBoundsInParent(window_.get()));
 
     std::unique_ptr<WindowResizer> resizer(
         CreateResizerForTest(window_.get(), gfx::Point(), HTCAPTION));
@@ -568,8 +557,7 @@ TEST_F(WorkspaceWindowResizerTest, Edge) {
   // Try the same with the right side.
   {
     gfx::Rect expected_bounds_in_parent(
-        wm::GetDefaultRightSnappedWindowBoundsInParent(
-            WmWindow::Get(window_.get())));
+        wm::GetDefaultRightSnappedWindowBoundsInParent(window_.get()));
 
     std::unique_ptr<WindowResizer> resizer(
         CreateResizerForTest(window_.get(), gfx::Point(), HTCAPTION));
@@ -668,7 +656,7 @@ TEST_F(WorkspaceWindowResizerTest, DragSnapped) {
   window_->Show();
   const wm::WMEvent snap_event(wm::WM_EVENT_SNAP_LEFT);
   window_state->OnWMEvent(&snap_event);
-  EXPECT_EQ(wm::WINDOW_STATE_TYPE_LEFT_SNAPPED, window_state->GetStateType());
+  EXPECT_EQ(mojom::WindowStateType::LEFT_SNAPPED, window_state->GetStateType());
   gfx::Rect snapped_bounds = window_->bounds();
   EXPECT_NE(snapped_bounds.ToString(), kInitialBounds.ToString());
   EXPECT_EQ(window_state->GetRestoreBoundsInParent().ToString(),
@@ -679,7 +667,7 @@ TEST_F(WorkspaceWindowResizerTest, DragSnapped) {
       CreateResizerForTest(window_.get(), gfx::Point(), HTCAPTION));
   resizer->Drag(CalculateDragPoint(*resizer, 10, 0), 0);
   resizer->CompleteDrag();
-  EXPECT_EQ(wm::WINDOW_STATE_TYPE_NORMAL, window_state->GetStateType());
+  EXPECT_EQ(mojom::WindowStateType::NORMAL, window_state->GetStateType());
   EXPECT_EQ("10,0 100x100", window_->bounds().ToString());
   EXPECT_FALSE(window_state->HasRestoreBounds());
 }
@@ -694,7 +682,7 @@ TEST_F(WorkspaceWindowResizerTest, ResizeSnapped) {
 
   const wm::WMEvent snap_event(wm::WM_EVENT_SNAP_LEFT);
   window_state->OnWMEvent(&snap_event);
-  EXPECT_EQ(wm::WINDOW_STATE_TYPE_LEFT_SNAPPED, window_state->GetStateType());
+  EXPECT_EQ(mojom::WindowStateType::LEFT_SNAPPED, window_state->GetStateType());
   gfx::Rect snapped_bounds = window_->bounds();
   EXPECT_NE(snapped_bounds.ToString(), kInitialBounds.ToString());
   EXPECT_EQ(window_state->GetRestoreBoundsInParent().ToString(),
@@ -707,7 +695,8 @@ TEST_F(WorkspaceWindowResizerTest, ResizeSnapped) {
         CreateResizerForTest(window_.get(), gfx::Point(), HTRIGHT));
     resizer->Drag(CalculateDragPoint(*resizer, 10, 0), 0);
     resizer->CompleteDrag();
-    EXPECT_EQ(wm::WINDOW_STATE_TYPE_LEFT_SNAPPED, window_state->GetStateType());
+    EXPECT_EQ(mojom::WindowStateType::LEFT_SNAPPED,
+              window_state->GetStateType());
     snapped_bounds.Inset(0, 0, -10, 0);
     EXPECT_EQ(snapped_bounds.ToString(), window_->bounds().ToString());
     EXPECT_EQ(window_state->GetRestoreBoundsInParent().ToString(),
@@ -722,7 +711,8 @@ TEST_F(WorkspaceWindowResizerTest, ResizeSnapped) {
     resizer->Drag(CalculateDragPoint(*resizer, 0, -30), 0);
     resizer->Drag(CalculateDragPoint(*resizer, 0, 0), 0);
     resizer->CompleteDrag();
-    EXPECT_EQ(wm::WINDOW_STATE_TYPE_LEFT_SNAPPED, window_state->GetStateType());
+    EXPECT_EQ(mojom::WindowStateType::LEFT_SNAPPED,
+              window_state->GetStateType());
     EXPECT_EQ(snapped_bounds.ToString(), window_->bounds().ToString());
     EXPECT_EQ(window_state->GetRestoreBoundsInParent().ToString(),
               kInitialBounds.ToString());
@@ -735,7 +725,7 @@ TEST_F(WorkspaceWindowResizerTest, ResizeSnapped) {
         CreateResizerForTest(window_.get(), gfx::Point(), HTBOTTOM));
     resizer->Drag(CalculateDragPoint(*resizer, 0, -10), 0);
     resizer->CompleteDrag();
-    EXPECT_EQ(wm::WINDOW_STATE_TYPE_NORMAL, window_state->GetStateType());
+    EXPECT_EQ(mojom::WindowStateType::NORMAL, window_state->GetStateType());
     gfx::Rect expected_bounds(snapped_bounds);
     expected_bounds.Inset(0, 0, 0, 10);
     EXPECT_EQ(expected_bounds.ToString(), window_->bounds().ToString());
@@ -754,8 +744,7 @@ TEST_F(WorkspaceWindowResizerTest, RestackAttached) {
     windows.push_back(window2_.get());
     std::unique_ptr<WorkspaceWindowResizer> resizer(
         CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTRIGHT,
-                                      aura::client::WINDOW_MOVE_SOURCE_MOUSE,
-                                      windows));
+                                      ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
     ASSERT_TRUE(resizer.get());
     // Move it 100 to the right, which should expand w1 and push w2 and w3.
     resizer->Drag(CalculateDragPoint(*resizer, 100, -10), 0);
@@ -769,8 +758,7 @@ TEST_F(WorkspaceWindowResizerTest, RestackAttached) {
     windows.push_back(window3_.get());
     std::unique_ptr<WorkspaceWindowResizer> resizer(
         CreateWorkspaceResizerForTest(window2_.get(), gfx::Point(), HTRIGHT,
-                                      aura::client::WINDOW_MOVE_SOURCE_MOUSE,
-                                      windows));
+                                      ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
     ASSERT_TRUE(resizer.get());
     // Move it 100 to the right, which should expand w1 and push w2 and w3.
     resizer->Drag(CalculateDragPoint(*resizer, 100, -10), 0);
@@ -800,11 +788,6 @@ TEST_F(WorkspaceWindowResizerTest, DontDragOffBottom) {
 
 // Makes sure we don't allow dragging on the work area with multidisplay.
 TEST_F(WorkspaceWindowResizerTest, DontDragOffBottomWithMultiDisplay) {
-  // TODO: SetLayoutForCurrentDisplays() needs to ported to mash.
-  // http://crbug.com/698043.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
   UpdateDisplay("800x600,800x600");
   ASSERT_EQ(2, display::Screen::GetScreen()->GetNumDisplays());
 
@@ -1025,19 +1008,11 @@ TEST_F(WorkspaceWindowResizerTest, SnapToEdge) {
   resizer->Drag(CalculateDragPoint(*resizer, distance_to_right + 33, 0), 0);
   EXPECT_EQ("513,112 320x160", window_->bounds().ToString());
 
-  int auto_hidden_shelf_height = GetShelfConstant(SHELF_INSETS_FOR_AUTO_HIDE);
-
   // And the bottom should snap too.
-  resizer->Drag(
-      CalculateDragPoint(*resizer, 0,
-                         distance_to_bottom - auto_hidden_shelf_height - 7),
-      0);
+  resizer->Drag(CalculateDragPoint(*resizer, 0, distance_to_bottom - 7), 0);
   EXPECT_EQ(gfx::Rect(96, 440, 320, 160).ToString(),
             window_->bounds().ToString());
-  resizer->Drag(
-      CalculateDragPoint(*resizer, 0,
-                         distance_to_bottom - auto_hidden_shelf_height + 15),
-      0);
+  resizer->Drag(CalculateDragPoint(*resizer, 0, distance_to_bottom + 15), 0);
   EXPECT_EQ(gfx::Rect(96, 440, 320, 160).ToString(),
             window_->bounds().ToString());
   resizer->Drag(CalculateDragPoint(*resizer, 0, distance_to_bottom - 2 + 32),
@@ -1054,16 +1029,14 @@ TEST_F(WorkspaceWindowResizerTest, SnapToEdge) {
   EXPECT_EQ("96,0 320x160", window_->bounds().ToString());
 
   // And bottom/left should snap too.
-  resizer->Drag(
-      CalculateDragPoint(*resizer, 7 - distance_to_left,
-                         distance_to_bottom - auto_hidden_shelf_height - 7),
-      0);
+  resizer->Drag(CalculateDragPoint(*resizer, 7 - distance_to_left,
+                                   distance_to_bottom - 7),
+                0);
   EXPECT_EQ(gfx::Rect(0, 440, 320, 160).ToString(),
             window_->bounds().ToString());
-  resizer->Drag(
-      CalculateDragPoint(*resizer, -15 - distance_to_left,
-                         distance_to_bottom - auto_hidden_shelf_height + 15),
-      0);
+  resizer->Drag(CalculateDragPoint(*resizer, -15 - distance_to_left,
+                                   distance_to_bottom + 15),
+                0);
   EXPECT_EQ(gfx::Rect(0, 440, 320, 160).ToString(),
             window_->bounds().ToString());
   // should move past snap points.
@@ -1541,9 +1514,9 @@ TEST_F(WorkspaceWindowResizerTest, DontRewardRightmostWindowForOverflows) {
   windows.push_back(window2_.get());
   windows.push_back(window3_.get());
   windows.push_back(window4_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTRIGHT,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTRIGHT,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it 51 to the left, which should contract w1 and expand w2-4.
   // w2 will hit its max size straight away, and in doing so will leave extra
@@ -1573,9 +1546,9 @@ TEST_F(WorkspaceWindowResizerTest, DontExceedMaxWidth) {
   windows.push_back(window2_.get());
   windows.push_back(window3_.get());
   windows.push_back(window4_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTRIGHT,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTRIGHT,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it 52 to the left, which should contract w1 and expand w2-4.
   resizer->Drag(CalculateDragPoint(*resizer, -52, 0), 0);
@@ -1602,9 +1575,9 @@ TEST_F(WorkspaceWindowResizerTest, DontExceedMaxHeight) {
   windows.push_back(window2_.get());
   windows.push_back(window3_.get());
   windows.push_back(window4_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTBOTTOM,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTBOTTOM,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it 52 up, which should contract w1 and expand w2-4.
   resizer->Drag(CalculateDragPoint(*resizer, 0, -52), 0);
@@ -1631,9 +1604,9 @@ TEST_F(WorkspaceWindowResizerTest, DontExceedMinHeight) {
   windows.push_back(window2_.get());
   windows.push_back(window3_.get());
   windows.push_back(window4_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTBOTTOM,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTBOTTOM,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it 52 down, which should expand w1 and contract w2-4.
   resizer->Drag(CalculateDragPoint(*resizer, 0, 52), 0);
@@ -1658,9 +1631,9 @@ TEST_F(WorkspaceWindowResizerTest, DontExpandRightmostPastMaxWidth) {
   windows.push_back(window2_.get());
   windows.push_back(window3_.get());
   windows.push_back(window4_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTRIGHT,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTRIGHT,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it 51 to the left, which should contract w1 and expand w2-3.
   resizer->Drag(CalculateDragPoint(*resizer, -51, 0), 0);
@@ -1685,9 +1658,9 @@ TEST_F(WorkspaceWindowResizerTest, MoveAttachedWhenGrownToMaxSize) {
   windows.push_back(window2_.get());
   windows.push_back(window3_.get());
   windows.push_back(window4_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTRIGHT,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTRIGHT,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it 52 to the left, which should contract w1 and expand and move w2-3.
   resizer->Drag(CalculateDragPoint(*resizer, -52, 0), 0);
@@ -1711,9 +1684,9 @@ TEST_F(WorkspaceWindowResizerTest, MainWindowHonoursMaxWidth) {
   windows.push_back(window2_.get());
   windows.push_back(window3_.get());
   windows.push_back(window4_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTRIGHT,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTRIGHT,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it 50 to the right, which should expand w1 and contract w2-3, as they
   // won't fit in the root window in their original sizes.
@@ -1737,9 +1710,9 @@ TEST_F(WorkspaceWindowResizerTest, MainWindowHonoursMinWidth) {
   std::vector<aura::Window*> windows;
   windows.push_back(window2_.get());
   windows.push_back(window3_.get());
-  std::unique_ptr<WorkspaceWindowResizer> resizer(CreateWorkspaceResizerForTest(
-      window_.get(), gfx::Point(), HTRIGHT,
-      aura::client::WINDOW_MOVE_SOURCE_MOUSE, windows));
+  std::unique_ptr<WorkspaceWindowResizer> resizer(
+      CreateWorkspaceResizerForTest(window_.get(), gfx::Point(), HTRIGHT,
+                                    ::wm::WINDOW_MOVE_SOURCE_MOUSE, windows));
   ASSERT_TRUE(resizer.get());
   // Move it 50 to the left, which should contract w1 and expand w2-3.
   resizer->Drag(CalculateDragPoint(*resizer, -50, 0), 0);

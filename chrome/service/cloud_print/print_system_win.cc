@@ -4,6 +4,8 @@
 
 #include "chrome/service/cloud_print/print_system.h"
 
+#include <wrl/client.h>
+
 #include <memory>
 
 #include "base/command_line.h"
@@ -15,7 +17,6 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/win/object_watcher.h"
 #include "base/win/scoped_bstr.h"
-#include "base/win/scoped_comptr.h"
 #include "base/win/scoped_hdc.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/cloud_print/cloud_print_cdd_conversion.h"
@@ -39,7 +40,7 @@ bool CurrentlyOnServiceIOThread() {
   return g_service_process->io_task_runner()->BelongsToCurrentThread();
 }
 
-bool PostIOThreadTask(const tracked_objects::Location& from_here,
+bool PostIOThreadTask(const base::Location& from_here,
                       const base::Closure& task) {
   return g_service_process->io_task_runner()->PostTask(from_here, task);
 }
@@ -357,7 +358,7 @@ class JobSpoolerWin : public PrintSystem::JobSpooler {
 
     // base::win::ObjectWatcher::Delegate implementation.
     void OnObjectSignaled(HANDLE object) override {
-      DCHECK(xps_print_job_.get());
+      DCHECK(xps_print_job_.Get());
       DCHECK(object == job_progress_event_.Get());
       ResetEvent(job_progress_event_.Get());
       if (!delegate_)
@@ -386,12 +387,10 @@ class JobSpoolerWin : public PrintSystem::JobSpooler {
     // Helper class to allow PrintXPSDocument() to have multiple exits.
     class PrintJobCanceler {
      public:
-      explicit PrintJobCanceler(
-          base::win::ScopedComPtr<IXpsPrintJob>* job_ptr)
-          : job_ptr_(job_ptr) {
-      }
+      explicit PrintJobCanceler(Microsoft::WRL::ComPtr<IXpsPrintJob>* job_ptr)
+          : job_ptr_(job_ptr) {}
       ~PrintJobCanceler() {
-        if (job_ptr_ && job_ptr_->get()) {
+        if (job_ptr_ && job_ptr_->Get()) {
           (*job_ptr_)->Cancel();
           job_ptr_->Reset();
         }
@@ -400,7 +399,7 @@ class JobSpoolerWin : public PrintSystem::JobSpooler {
       void reset() { job_ptr_ = NULL; }
 
      private:
-      base::win::ScopedComPtr<IXpsPrintJob>* job_ptr_;
+      Microsoft::WRL::ComPtr<IXpsPrintJob>* job_ptr_;
 
       DISALLOW_COPY_AND_ASSIGN(PrintJobCanceler);
     };
@@ -471,14 +470,14 @@ class JobSpoolerWin : public PrintSystem::JobSpooler {
         return false;
 
       PrintJobCanceler job_canceler(&xps_print_job_);
-      base::win::ScopedComPtr<IXpsPrintJobStream> doc_stream;
-      base::win::ScopedComPtr<IXpsPrintJobStream> print_ticket_stream;
+      Microsoft::WRL::ComPtr<IXpsPrintJobStream> doc_stream;
+      Microsoft::WRL::ComPtr<IXpsPrintJobStream> print_ticket_stream;
       if (FAILED(printing::XPSPrintModule::StartXpsPrintJob(
               base::UTF8ToWide(printer_name).c_str(),
               base::UTF8ToWide(job_title).c_str(), nullptr,
               job_progress_event_.Get(), nullptr, nullptr, 0,
-              xps_print_job_.Receive(), doc_stream.Receive(),
-              print_ticket_stream.Receive()))) {
+              xps_print_job_.GetAddressOf(), doc_stream.GetAddressOf(),
+              print_ticket_stream.GetAddressOf()))) {
         return false;
       }
 
@@ -521,7 +520,7 @@ class JobSpoolerWin : public PrintSystem::JobSpooler {
     base::win::ScopedCreateDC printer_dc_;
     base::win::ScopedHandle job_progress_event_;
     base::win::ObjectWatcher job_progress_watcher_;
-    base::win::ScopedComPtr<IXpsPrintJob> xps_print_job_;
+    Microsoft::WRL::ComPtr<IXpsPrintJob> xps_print_job_;
 
     DISALLOW_COPY_AND_ASSIGN(Core);
   };
@@ -562,13 +561,11 @@ class PrinterCapsHandler : public ServiceUtilityProcessHost::Client {
     printing::PrinterCapsAndDefaults printer_info;
     if (succeeded) {
       printer_info.caps_mime_type = kContentTypeJSON;
-      std::unique_ptr<base::DictionaryValue> description(
-          PrinterSemanticCapsAndDefaultsToCdd(semantic_info));
-      if (description) {
-        base::JSONWriter::WriteWithOptions(
-            *description, base::JSONWriter::OPTIONS_PRETTY_PRINT,
-            &printer_info.printer_capabilities);
-      }
+      std::unique_ptr<base::DictionaryValue> description =
+          PrinterSemanticCapsAndDefaultsToCdd(semantic_info);
+      base::JSONWriter::WriteWithOptions(*description,
+                                         base::JSONWriter::OPTIONS_PRETTY_PRINT,
+                                         &printer_info.printer_capabilities);
     }
     callback_.Run(succeeded, printer_name, printer_info);
     callback_.Reset();
@@ -720,17 +717,18 @@ bool PrintSystemWin::ValidatePrintTicket(
   DCHECK(print_ticket_data_mime_type == kContentTypeXML);
 
   printing::ScopedXPSInitializer xps_initializer;
-  if (!xps_initializer.initialized()) {
-    // TODO(sanjeevr): Handle legacy proxy case (with no prntvpt.dll)
-    return false;
-  }
-  bool ret = false;
-  HPTPROVIDER provider = NULL;
+  CHECK(xps_initializer.initialized());
+
+  HPTPROVIDER provider = nullptr;
   printing::XPSModule::OpenProvider(base::UTF8ToWide(printer_name), 1,
                                     &provider);
-  if (provider) {
-    base::win::ScopedComPtr<IStream> print_ticket_stream;
-    CreateStreamOnHGlobal(NULL, TRUE, print_ticket_stream.Receive());
+  if (!provider)
+    return false;
+
+  bool ret;
+  {
+    Microsoft::WRL::ComPtr<IStream> print_ticket_stream;
+    CreateStreamOnHGlobal(nullptr, TRUE, print_ticket_stream.GetAddressOf());
     ULONG bytes_written = 0;
     print_ticket_stream->Write(print_ticket_data.c_str(),
                                print_ticket_data.length(),
@@ -740,15 +738,11 @@ bool PrintSystemWin::ValidatePrintTicket(
     ULARGE_INTEGER new_pos = {};
     print_ticket_stream->Seek(pos, STREAM_SEEK_SET, &new_pos);
     base::win::ScopedBstr error;
-    base::win::ScopedComPtr<IStream> result_ticket_stream;
-    CreateStreamOnHGlobal(NULL, TRUE, result_ticket_stream.Receive());
+    Microsoft::WRL::ComPtr<IStream> result_ticket_stream;
+    CreateStreamOnHGlobal(nullptr, TRUE, result_ticket_stream.GetAddressOf());
     ret = SUCCEEDED(printing::XPSModule::MergeAndValidatePrintTicket(
-        provider,
-        print_ticket_stream.get(),
-        NULL,
-        kPTJobScope,
-        result_ticket_stream.get(),
-        error.Receive()));
+        provider, print_ticket_stream.Get(), nullptr, kPTJobScope,
+        result_ticket_stream.Get(), error.Receive()));
     printing::XPSModule::CloseProvider(provider);
   }
   return ret;

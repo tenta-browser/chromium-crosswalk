@@ -17,10 +17,12 @@
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
 #include "ui/events/test/events_test_utils.h"
+#include "ui/events/test/test_event_target.h"
+#include "ui/gfx/transform.h"
 
 #if defined(USE_X11)
-#include <X11/Xlib.h>
 #include "ui/events/test/events_test_utils_x11.h"
+#include "ui/gfx/x/x11.h"        // nogncheck
 #include "ui/gfx/x/x11_types.h"  // nogncheck
 #endif
 
@@ -426,8 +428,9 @@ TEST(EventTest, KeyEventCode) {
 #endif  // OS_WIN
 }
 
-namespace {
 #if defined(USE_X11)
+namespace {
+
 void SetKeyEventTimestamp(XEvent* event, int64_t time) {
   event->xkey.time = time & UINT32_MAX;
 }
@@ -436,24 +439,13 @@ void AdvanceKeyEventTimestamp(XEvent* event) {
   event->xkey.time++;
 }
 
-#elif defined(OS_WIN)
-void SetKeyEventTimestamp(MSG& msg, int64_t time) {
-  msg.time = static_cast<long>(time);
-}
-
-void AdvanceKeyEventTimestamp(MSG& msg) {
-  msg.time++;
-}
-#endif
 }  // namespace
 
-#if defined(USE_X11) || defined(OS_WIN)
 TEST(EventTest, AutoRepeat) {
   const uint16_t kNativeCodeA =
       ui::KeycodeConverter::DomCodeToNativeKeycode(DomCode::US_A);
   const uint16_t kNativeCodeB =
       ui::KeycodeConverter::DomCodeToNativeKeycode(DomCode::US_B);
-#if defined(USE_X11)
 
   ScopedXI2Event native_event_a_pressed;
   native_event_a_pressed.InitKeyEvent(ET_KEY_PRESSED, VKEY_A, kNativeCodeA);
@@ -474,15 +466,7 @@ TEST(EventTest, AutoRepeat) {
   // IBUS-GTK uses the mask (1 << 25) to detect reposted event.
   static_cast<XEvent*>(native_event_a_pressed_nonstandard_state)->xkey.state |=
       1 << 25;
-#elif defined(OS_WIN)
-  const LPARAM lParam_a = GetLParamFromScanCode(kNativeCodeA);
-  const LPARAM lParam_b = GetLParamFromScanCode(kNativeCodeB);
-  MSG native_event_a_pressed = { NULL, WM_KEYDOWN, VKEY_A, lParam_a };
-  MSG native_event_a_pressed_1500 = { NULL, WM_KEYDOWN, VKEY_A, lParam_a };
-  MSG native_event_a_pressed_3000 = { NULL, WM_KEYDOWN, VKEY_A, lParam_a };
-  MSG native_event_a_released = { NULL, WM_KEYUP, VKEY_A, lParam_a };
-  MSG native_event_b_pressed = { NULL, WM_KEYUP, VKEY_B, lParam_b };
-#endif
+
   int64_t ticks_base =
       (base::TimeTicks::Now() - base::TimeTicks()).InMilliseconds() - 5000;
   SetKeyEventTimestamp(native_event_a_pressed, ticks_base);
@@ -546,7 +530,6 @@ TEST(EventTest, AutoRepeat) {
     EXPECT_FALSE(key_a4_released.is_repeat());
   }
 
-#if defined(USE_X11)
   {
     KeyEvent key_a4_pressed(native_event_a_pressed);
     EXPECT_FALSE(key_a4_pressed.is_repeat());
@@ -563,9 +546,8 @@ TEST(EventTest, AutoRepeat) {
     KeyEvent key_a1_with_same_event(native_event_a_pressed);
     EXPECT_FALSE(key_a1_with_same_event.is_repeat());
   }
-#endif
 }
-#endif  // USE_X11 || OS_WIN
+#endif  // USE_X11
 
 TEST(EventTest, TouchEventRadiusDefaultsToOtherAxis) {
   const base::TimeTicks time = base::TimeTicks();
@@ -1096,6 +1078,49 @@ TEST(EventTest, EventLatencyOSMouseWheelHistogram) {
 
   histogram_tester.ExpectTotalCount("Event.Latency.OS.MOUSE_WHEEL", 1);
 #endif
+}
+
+TEST(EventTest, UpdateForRootTransformation) {
+  gfx::Transform identity_transform;
+  const gfx::Point location(10, 10);
+  const gfx::Point root_location(20, 20);
+
+  // A mouse event that is untargeted should reset the root location when
+  // transformed. Though the events start out with different locations and
+  // root_locations, they should be equal afterwards.
+  ui::MouseEvent untargeted(ET_MOUSE_PRESSED, location, root_location,
+                            EventTimeForNow(), 0, 0);
+  untargeted.UpdateForRootTransform(identity_transform, identity_transform);
+  EXPECT_EQ(location, untargeted.location());
+  EXPECT_EQ(location, untargeted.root_location());
+
+  ui::test::TestEventTarget target;
+
+  // A mouse event that is targeted should not set the root location to the
+  // local location. They start with different locations and should stay
+  // unequal after a transform is applied.
+  {
+    ui::MouseEvent targeted(ET_MOUSE_PRESSED, location, root_location,
+                            EventTimeForNow(), 0, 0);
+    Event::DispatcherApi(&targeted).set_target(&target);
+    targeted.UpdateForRootTransform(identity_transform, identity_transform);
+    EXPECT_EQ(location, targeted.location());
+    EXPECT_EQ(root_location, targeted.root_location());
+  }
+
+  {
+    // Targeted event with 2x and 3x scales.
+    gfx::Transform transform2x;
+    transform2x.Scale(2, 2);
+    gfx::Transform transform3x;
+    transform3x.Scale(3, 3);
+    ui::MouseEvent targeted(ET_MOUSE_PRESSED, location, root_location,
+                            EventTimeForNow(), 0, 0);
+    Event::DispatcherApi(&targeted).set_target(&target);
+    targeted.UpdateForRootTransform(transform2x, transform3x);
+    EXPECT_EQ(gfx::Point(30, 30), targeted.location());
+    EXPECT_EQ(gfx::Point(40, 40), targeted.root_location());
+  }
 }
 
 }  // namespace ui

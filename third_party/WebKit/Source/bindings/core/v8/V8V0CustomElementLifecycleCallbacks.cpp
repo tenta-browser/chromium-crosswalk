@@ -31,14 +31,14 @@
 #include "bindings/core/v8/V8V0CustomElementLifecycleCallbacks.h"
 
 #include <memory>
-#include "bindings/core/v8/DOMDataStore.h"
 #include "bindings/core/v8/ScriptController.h"
-#include "bindings/core/v8/V0CustomElementBinding.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8Element.h"
-#include "bindings/core/v8/V8PerContextData.h"
-#include "bindings/core/v8/V8PrivateProperty.h"
 #include "core/dom/ExecutionContext.h"
+#include "platform/bindings/DOMDataStore.h"
+#include "platform/bindings/V0CustomElementBinding.h"
+#include "platform/bindings/V8PerContextData.h"
+#include "platform/bindings/V8PrivateProperty.h"
 
 namespace blink {
 
@@ -123,11 +123,11 @@ V8V0CustomElementLifecycleCallbacks::V8V0CustomElementLifecycleCallbacks(
 
 V8PerContextData* V8V0CustomElementLifecycleCallbacks::CreationContextData() {
   if (!script_state_->ContextIsValid())
-    return 0;
+    return nullptr;
 
   v8::Local<v8::Context> context = script_state_->GetContext();
   if (context.IsEmpty())
-    return 0;
+    return nullptr;
 
   return V8PerContextData::From(context);
 }
@@ -156,7 +156,7 @@ void V8V0CustomElementLifecycleCallbacks::Created(Element* element) {
 
   element->SetV0CustomElementState(Element::kV0Upgraded);
 
-  ScriptState::Scope scope(script_state_.Get());
+  ScriptState::Scope scope(script_state_.get());
   v8::Isolate* isolate = script_state_->GetIsolate();
   v8::Local<v8::Context> context = script_state_->GetContext();
   v8::Local<v8::Value> receiver_value =
@@ -179,8 +179,8 @@ void V8V0CustomElementLifecycleCallbacks::Created(Element* element) {
   v8::TryCatch exception_catcher(isolate);
   exception_catcher.SetVerbose(true);
   V8ScriptRunner::CallFunction(callback,
-                               ExecutionContext::From(script_state_.Get()),
-                               receiver, 0, 0, isolate);
+                               ExecutionContext::From(script_state_.get()),
+                               receiver, 0, nullptr, isolate);
 }
 
 void V8V0CustomElementLifecycleCallbacks::Attached(Element* element) {
@@ -201,7 +201,7 @@ void V8V0CustomElementLifecycleCallbacks::AttributeChanged(
   // Bug 329665 tracks similar behavior for other synchronous events.
   if (!script_state_->ContextIsValid())
     return;
-  ScriptState::Scope scope(script_state_.Get());
+  ScriptState::Scope scope(script_state_.get());
   v8::Isolate* isolate = script_state_->GetIsolate();
   v8::Local<v8::Context> context = script_state_->GetContext();
   v8::Local<v8::Value> receiver = ToV8(element, context->Global(), isolate);
@@ -222,7 +222,7 @@ void V8V0CustomElementLifecycleCallbacks::AttributeChanged(
   v8::TryCatch exception_catcher(isolate);
   exception_catcher.SetVerbose(true);
   V8ScriptRunner::CallFunction(callback,
-                               ExecutionContext::From(script_state_.Get()),
+                               ExecutionContext::From(script_state_.get()),
                                receiver, WTF_ARRAY_LENGTH(argv), argv, isolate);
 }
 
@@ -234,7 +234,7 @@ void V8V0CustomElementLifecycleCallbacks::Call(
   // Bug 329665 tracks similar behavior for other synchronous events.
   if (!script_state_->ContextIsValid())
     return;
-  ScriptState::Scope scope(script_state_.Get());
+  ScriptState::Scope scope(script_state_.get());
   v8::Isolate* isolate = script_state_->GetIsolate();
   v8::Local<v8::Context> context = script_state_->GetContext();
   v8::Local<v8::Function> callback = weak_callback.NewLocal(isolate);
@@ -248,11 +248,11 @@ void V8V0CustomElementLifecycleCallbacks::Call(
   v8::TryCatch exception_catcher(isolate);
   exception_catcher.SetVerbose(true);
   V8ScriptRunner::CallFunction(callback,
-                               ExecutionContext::From(script_state_.Get()),
-                               receiver, 0, 0, isolate);
+                               ExecutionContext::From(script_state_.get()),
+                               receiver, 0, nullptr, isolate);
 }
 
-DEFINE_TRACE(V8V0CustomElementLifecycleCallbacks) {
+void V8V0CustomElementLifecycleCallbacks::Trace(blink::Visitor* visitor) {
   V0CustomElementLifecycleCallbacks::Trace(visitor);
 }
 

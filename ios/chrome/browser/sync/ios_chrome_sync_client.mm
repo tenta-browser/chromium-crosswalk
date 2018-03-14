@@ -10,7 +10,6 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "components/autofill/core/browser/webdata/autocomplete_sync_bridge.h"
 #include "components/autofill/core/browser/webdata/autocomplete_syncable_service.h"
 #include "components/autofill/core/browser/webdata/autofill_profile_syncable_service.h"
@@ -35,9 +34,10 @@
 #include "components/sync/base/report_unrecoverable_error.h"
 #include "components/sync/driver/sync_api_component_factory.h"
 #include "components/sync/driver/sync_util.h"
-#include "components/sync/engine/browser_thread_model_worker.h"
 #include "components/sync/engine/passive_model_worker.h"
+#include "components/sync/engine/sequenced_model_worker.h"
 #include "components/sync/engine/ui_model_worker.h"
+#include "components/sync/user_events/user_event_service.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "components/sync_sessions/favicon_cache.h"
 #include "components/sync_sessions/local_session_event_router.h"
@@ -59,6 +59,7 @@
 #include "ios/chrome/browser/signin/oauth2_token_service_factory.h"
 #include "ios/chrome/browser/sync/glue/sync_start_util.h"
 #include "ios/chrome/browser/sync/ios_chrome_profile_sync_service_factory.h"
+#include "ios/chrome/browser/sync/ios_user_event_service_factory.h"
 #include "ios/chrome/browser/sync/sessions/ios_chrome_local_session_event_router.h"
 #include "ios/chrome/browser/tabs/tab_model_synced_window_delegate_getter.h"
 #include "ios/chrome/browser/undo/bookmark_undo_service_factory.h"
@@ -81,9 +82,9 @@ class SyncSessionsClientImpl : public sync_sessions::SyncSessionsClient {
   explicit SyncSessionsClientImpl(ios::ChromeBrowserState* browser_state)
       : browser_state_(browser_state),
         window_delegates_getter_(
-            base::MakeUnique<TabModelSyncedWindowDelegatesGetter>()),
+            std::make_unique<TabModelSyncedWindowDelegatesGetter>()),
         local_session_event_router_(
-            base::MakeUnique<IOSChromeLocalSessionEventRouter>(
+            std::make_unique<IOSChromeLocalSessionEventRouter>(
                 browser_state_,
                 this,
                 ios::sync_start_util::GetFlareForSyncableService(
@@ -144,7 +145,7 @@ class SyncSessionsClientImpl : public sync_sessions::SyncSessionsClient {
 IOSChromeSyncClient::IOSChromeSyncClient(ios::ChromeBrowserState* browser_state)
     : browser_state_(browser_state),
       sync_sessions_client_(
-          base::MakeUnique<SyncSessionsClientImpl>(browser_state)),
+          std::make_unique<SyncSessionsClientImpl>(browser_state)),
       weak_ptr_factory_(this) {}
 
 IOSChromeSyncClient::~IOSChromeSyncClient() {}
@@ -155,6 +156,8 @@ void IOSChromeSyncClient::Initialize() {
   web_data_service_ =
       ios::WebDataServiceFactory::GetAutofillWebDataForBrowserState(
           browser_state_, ServiceAccessType::IMPLICIT_ACCESS);
+  db_thread_ =
+      web_data_service_ ? web_data_service_->GetDBTaskRunner() : nullptr;
   password_store_ = IOSChromePasswordStoreFactory::GetForBrowserState(
       browser_state_, ServiceAccessType::IMPLICIT_ACCESS);
 
@@ -173,15 +176,10 @@ void IOSChromeSyncClient::Initialize() {
         ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET,
         *base::CommandLine::ForCurrentProcess(),
         prefs::kSavingBrowserHistoryDisabled, sync_service_url,
-        web::WebThread::GetTaskRunnerForThread(web::WebThread::UI),
-        web::WebThread::GetTaskRunnerForThread(web::WebThread::DB),
+        web::WebThread::GetTaskRunnerForThread(web::WebThread::UI), db_thread_,
         token_service, url_request_context_getter, web_data_service_,
         password_store_));
   }
-}
-
-base::SequencedWorkerPool* IOSChromeSyncClient::GetBlockingPool() {
-  return web::WebThread::GetBlockingPool();
 }
 
 syncer::SyncService* IOSChromeSyncClient::GetSyncService() {
@@ -266,11 +264,6 @@ IOSChromeSyncClient::GetSyncSessionsClient() {
 base::WeakPtr<syncer::SyncableService>
 IOSChromeSyncClient::GetSyncableServiceForType(syncer::ModelType type) {
   switch (type) {
-    case syncer::DEVICE_INFO:
-      return IOSChromeProfileSyncServiceFactory::GetForBrowserState(
-                 browser_state_)
-          ->GetDeviceInfoSyncableService()
-          ->AsWeakPtr();
     case syncer::PREFERENCES:
       return browser_state_->GetSyncablePrefs()
           ->GetSyncableService(syncer::PREFERENCES)
@@ -364,10 +357,17 @@ IOSChromeSyncClient::GetSyncBridgeForModelType(syncer::ModelType type) {
       return autofill::AutocompleteSyncBridge::FromWebDataService(
                  web_data_service_.get())
           ->AsWeakPtr();
-    case syncer::TYPED_URLS:
-      // TODO(gangwu):implement TypedURLSyncBridge and return real
-      // TypedURLSyncBridge here.
-      return base::WeakPtr<syncer::ModelTypeSyncBridge>();
+    case syncer::TYPED_URLS: {
+      history::HistoryService* history =
+          ios::HistoryServiceFactory::GetForBrowserState(
+              browser_state_, ServiceAccessType::EXPLICIT_ACCESS);
+      return history ? history->GetTypedURLSyncBridge()->AsWeakPtr()
+                     : base::WeakPtr<syncer::ModelTypeSyncBridge>();
+    }
+    case syncer::USER_EVENTS:
+      return IOSUserEventServiceFactory::GetForBrowserState(browser_state_)
+          ->GetSyncBridge()
+          ->AsWeakPtr();
     default:
       NOTREACHED();
       return base::WeakPtr<syncer::ModelTypeSyncBridge>();
@@ -379,13 +379,10 @@ IOSChromeSyncClient::CreateModelWorkerForGroup(syncer::ModelSafeGroup group) {
   DCHECK_CURRENTLY_ON(web::WebThread::UI);
   switch (group) {
     case syncer::GROUP_DB:
-      return new syncer::BrowserThreadModelWorker(
-          web::WebThread::GetTaskRunnerForThread(web::WebThread::DB),
-          syncer::GROUP_DB);
+      return new syncer::SequencedModelWorker(db_thread_, syncer::GROUP_DB);
     case syncer::GROUP_FILE:
-      return new syncer::BrowserThreadModelWorker(
-          web::WebThread::GetTaskRunnerForThread(web::WebThread::FILE),
-          syncer::GROUP_FILE);
+      // Not supported on iOS.
+      return nullptr;
     case syncer::GROUP_UI:
       return new syncer::UIModelWorker(
           web::WebThread::GetTaskRunnerForThread(web::WebThread::UI));

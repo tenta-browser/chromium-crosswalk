@@ -12,14 +12,14 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
+#include "third_party/WebKit/public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
 #include "url/gurl.h"
 
 class SkBitmap;
 
 namespace blink {
-class WebFrame;
+class WebLocalFrame;
 class WebURLResponse;
-enum class WebCachePolicy;
 }
 
 namespace content {
@@ -35,10 +35,10 @@ class MultiResolutionImageResourceFetcher {
 
   MultiResolutionImageResourceFetcher(
       const GURL& image_url,
-      blink::WebFrame* frame,
+      blink::WebLocalFrame* frame,
       int id,
       blink::WebURLRequest::RequestContext request_context,
-      blink::WebCachePolicy cache_policy,
+      blink::mojom::FetchCacheMode cache_mode,
       const Callback& callback);
 
   virtual ~MultiResolutionImageResourceFetcher();

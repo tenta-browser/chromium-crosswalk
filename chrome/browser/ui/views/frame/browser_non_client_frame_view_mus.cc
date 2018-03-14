@@ -11,8 +11,8 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/frame/browser_frame.h"
+#include "chrome/browser/ui/views/frame/browser_frame_header_ash.h"
 #include "chrome/browser/ui/views/frame/browser_frame_mus.h"
-#include "chrome/browser/ui/views/frame/browser_header_painter_ash.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
 #include "chrome/browser/ui/views/frame/top_container_view.h"
@@ -20,7 +20,6 @@
 #include "chrome/browser/ui/views/tab_icon_view.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/browser/web_applications/web_app.h"
-#include "chrome/grit/theme_resources.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/aura/client/aura_constants.h"
@@ -29,13 +28,10 @@
 #include "ui/base/layout.h"
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/theme_provider.h"
-#include "ui/compositor/layer_animator.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/gfx/scoped_canvas.h"
 #include "ui/views/controls/label.h"
-#include "ui/views/layout/layout_constants.h"
 #include "ui/views/mus/desktop_window_tree_host_mus.h"
 #include "ui/views/mus/window_manager_frame_values.h"
 #include "ui/views/widget/widget.h"
@@ -189,8 +185,10 @@ void BrowserNonClientFrameViewMus::UpdateClientArea() {
                                       immersive_mode_controller->IsRevealed();
   if (browser_view()->IsTabStripVisible() && show_frame_decorations) {
     gfx::Rect tab_strip_bounds(GetBoundsForTabStrip(tab_strip_));
-    if (!tab_strip_bounds.IsEmpty() && tab_strip_->max_x()) {
-      tab_strip_bounds.set_width(tab_strip_->max_x());
+
+    int tab_strip_max_x = tab_strip_->GetMaxX();
+    if (!tab_strip_bounds.IsEmpty() && tab_strip_max_x) {
+      tab_strip_bounds.set_width(tab_strip_max_x);
       if (immersive_mode_controller->IsEnabled()) {
         top_container_offset =
             immersive_mode_controller->GetTopContainerVerticalOffset(
@@ -224,6 +222,17 @@ void BrowserNonClientFrameViewMus::UpdateClientArea() {
     }
   } else {
     window_tree_host_mus->SetClientArea(gfx::Insets(), additional_client_area);
+  }
+}
+
+void BrowserNonClientFrameViewMus::UpdateMinimumSize() {
+  gfx::Size min_size = GetMinimumSize();
+  aura::Window* frame_window = frame()->GetNativeWindow();
+  const gfx::Size* previous_min_size =
+      frame_window->GetProperty(aura::client::kMinimumSize);
+  if (!previous_min_size || *previous_min_size != min_size) {
+    frame_window->SetProperty(aura::client::kMinimumSize,
+                              new gfx::Size(min_size));
   }
 }
 
@@ -461,46 +470,6 @@ bool BrowserNonClientFrameViewMus::ShouldPaint() const {
       browser_view()->immersive_mode_controller();
   return immersive_mode_controller->IsEnabled() &&
          immersive_mode_controller->IsRevealed();
-}
-
-void BrowserNonClientFrameViewMus::PaintToolbarBackground(gfx::Canvas* canvas) {
-  gfx::Rect toolbar_bounds(browser_view()->GetToolbarBounds());
-  if (toolbar_bounds.IsEmpty())
-    return;
-  gfx::Point toolbar_origin(toolbar_bounds.origin());
-  View::ConvertPointToTarget(browser_view(), this, &toolbar_origin);
-  toolbar_bounds.set_origin(toolbar_origin);
-  const ui::ThemeProvider* tp = GetThemeProvider();
-
-  // Background.
-  if (tp->HasCustomImage(IDR_THEME_TOOLBAR)) {
-    const int bg_y = GetTopInset(false) + GetLayoutInsets(TAB).top();
-    const int x = toolbar_bounds.x();
-    const int y = toolbar_bounds.y();
-    canvas->TileImageInt(*tp->GetImageSkiaNamed(IDR_THEME_TOOLBAR),
-                         x + GetThemeBackgroundXInset(), y - bg_y, x, y,
-                         toolbar_bounds.width(), toolbar_bounds.height());
-  } else {
-    canvas->FillRect(toolbar_bounds,
-                     tp->GetColor(ThemeProperties::COLOR_TOOLBAR));
-  }
-
-  // Top stroke.
-  gfx::ScopedCanvas scoped_canvas(canvas);
-  gfx::Rect tabstrip_bounds(GetBoundsForTabStrip(browser_view()->tabstrip()));
-  tabstrip_bounds.set_x(GetMirroredXForRect(tabstrip_bounds));
-  canvas->ClipRect(tabstrip_bounds, SkClipOp::kDifference);
-  const gfx::Rect separator_rect(toolbar_bounds.x(), tabstrip_bounds.bottom(),
-                                 toolbar_bounds.width(), 0);
-  BrowserView::Paint1pxHorizontalLine(canvas, GetToolbarTopSeparatorColor(),
-                                      separator_rect, true);
-
-  // Toolbar/content separator.
-  toolbar_bounds.Inset(kClientEdgeThickness, 0);
-  BrowserView::Paint1pxHorizontalLine(
-      canvas, tp->GetColor(ThemeProperties::COLOR_TOOLBAR_BOTTOM_SEPARATOR),
-      toolbar_bounds,
-      true);
 }
 
 void BrowserNonClientFrameViewMus::PaintContentEdge(gfx::Canvas* canvas) {

@@ -5,70 +5,58 @@
 #ifndef NET_SSL_SSL_PRIVATE_KEY_H_
 #define NET_SSL_SSL_PRIVATE_KEY_H_
 
-#include <stddef.h>
 #include <stdint.h>
 
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/containers/span.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/strings/string_piece.h"
 #include "net/base/net_errors.h"
+#include "net/base/net_export.h"
 
 namespace net {
 
-// An interface for a private key for use with SSL client authentication.
-class SSLPrivateKey : public base::RefCountedThreadSafe<SSLPrivateKey> {
+// An interface for a private key for use with SSL client authentication. A
+// private key may be used with multiple signature algorithms, so methods use
+// |SSL_SIGN_*| constants from BoringSSL, which correspond to TLS 1.3
+// SignatureScheme values.
+//
+// Note that although ECDSA constants are named like
+// |SSL_SIGN_ECDSA_SECP256R1_SHA256|, they may be used with any curve for
+// purposes of this API. This descrepancy is due to differences between TLS 1.2
+// and TLS 1.3.
+class NET_EXPORT SSLPrivateKey
+    : public base::RefCountedThreadSafe<SSLPrivateKey> {
  public:
   using SignCallback = base::Callback<void(Error, const std::vector<uint8_t>&)>;
 
-  enum class Type {
-    RSA,
-    ECDSA_P256,
-    ECDSA_P384,
-    ECDSA_P521,
-  };
-
-  // Returns true if |type| is an ECDSA key type.
-  static bool IsECDSAType(Type type) {
-    return type == Type::ECDSA_P256 || type == Type::ECDSA_P384 ||
-           type == Type::ECDSA_P521;
-  }
-
-  enum class Hash {
-    MD5_SHA1,
-    SHA1,
-    SHA256,
-    SHA384,
-    SHA512,
-  };
-
   SSLPrivateKey() {}
 
-  // Returns whether the key is an RSA key or an ECDSA key. Although the signing
-  // interface is type-agnositic and type tags in interfaces are discouraged,
-  // TLS has key-specific logic in selecting which hashes to sign. Exposing the
-  // key type avoids replicating BoringSSL's TLS-specific logic in SSLPrivateKey
-  // implementations and complicating the interface between Chromium and
-  // BoringSSL.
-  virtual Type GetType() = 0;
+  // Returns the algorithms that are supported by the key in decreasing
+  // preference for TLS 1.2 and later. Note that |SSL_SIGN_RSA_PKCS1_MD5_SHA1|
+  // is only used by TLS 1.1 and earlier and should not be in this list.
+  virtual std::vector<uint16_t> GetAlgorithmPreferences() = 0;
 
-  // Returns the digests that are supported by the key in decreasing preference.
-  virtual std::vector<SSLPrivateKey::Hash> GetDigestPreferences() = 0;
+  // Asynchronously signs an |input| with the specified TLS signing algorithm.
+  // |input| is an unhashed message to be signed. On completion, it calls
+  // |callback| with the signature or an error code if the operation failed.
+  virtual void Sign(uint16_t algorithm,
+                    base::span<const uint8_t> input,
+                    const SignCallback& callback) = 0;
 
-  // Returns the maximum size of a signature, in bytes. For an RSA key, this
-  // must be the size of the modulus.
-  virtual size_t GetMaxSignatureLengthInBytes() = 0;
-
-  // Asynchronously signs an |input| which was computed with the hash |hash|. On
-  // completion, it calls |callback| with the signature or an error code if the
-  // operation failed. For an RSA key, the signature is a PKCS#1 signature. The
-  // SSLPrivateKey implementation is responsible for prepending the DigestInfo
-  // prefix and adding PKCS#1 padding.
-  virtual void SignDigest(Hash hash,
-                          const base::StringPiece& input,
-                          const SignCallback& callback) = 0;
+  // Returns the default signature algorithm preferences for the specified key
+  // type, which should be a BoringSSL |EVP_PKEY_*| constant. RSA keys which use
+  // this must support PKCS #1 v1.5 signatures with SHA-1, SHA-256, SHA-384, and
+  // SHA-512. If |supports_pss| is true, they must additionally support PSS
+  // signatures with SHA-256, SHA-384, and SHA-512. ECDSA keys must support
+  // SHA-256, SHA-384, SHA-512.
+  //
+  // Keys with more specific capabilities or preferences should return a custom
+  // list.
+  static std::vector<uint16_t> DefaultAlgorithmPreferences(int type,
+                                                           bool supports_pss);
 
  protected:
   virtual ~SSLPrivateKey() {}

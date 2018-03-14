@@ -114,10 +114,15 @@ void ExternalInstallManager::RemoveExternalInstallError(
     const std::string& extension_id) {
   auto iter = errors_.find(extension_id);
   if (iter != errors_.end()) {
+    // The |extension_id| may be owned by the ExternalInstallError, which is
+    // deleted subsequently. To avoid any UAFs, make a safe copy of
+    // |extension_id| now.
+    std::string extension_id_copy = extension_id;
+
     if (iter->second.get() == currently_visible_install_alert_)
       currently_visible_install_alert_ = nullptr;
     errors_.erase(iter);
-    unacknowledged_ids_.erase(extension_id);
+    unacknowledged_ids_.erase(extension_id_copy);
     UpdateExternalExtensionAlert();
   }
 }
@@ -131,8 +136,15 @@ void ExternalInstallManager::UpdateExternalExtensionAlert() {
   // external extensions.
   const ExtensionSet& disabled_extensions =
       ExtensionRegistry::Get(browser_context_)->disabled_extensions();
+  const ExtensionSet& blocked_extensions =
+      ExtensionRegistry::Get(browser_context_)->blocked_extensions();
   for (const auto& id : unacknowledged_ids_) {
     if (base::ContainsKey(errors_, id) || shown_ids_.count(id) > 0)
+      continue;
+
+    // Ignore the blocked and disabled extensions. They will be put into
+    // disabled list once unblocked.
+    if (blocked_extensions.GetByID(id))
       continue;
 
     const Extension* extension = disabled_extensions.GetByID(id);
@@ -232,12 +244,12 @@ bool ExternalInstallManager::IsUnacknowledgedExternalExtension(
 
   int disable_reasons = extension_prefs_->GetDisableReasons(extension.id());
   bool is_from_sideload_wipeout =
-      (disable_reasons & Extension::DISABLE_SIDELOAD_WIPEOUT) != 0;
+      (disable_reasons & disable_reason::DISABLE_SIDELOAD_WIPEOUT) != 0;
   // We don't consider extensions that weren't disabled for being external so
   // that we grandfather in extensions. External extensions are only disabled on
   // install with the "prompt for external extensions" feature enabled.
   bool is_disabled_external =
-      (disable_reasons & Extension::DISABLE_EXTERNAL_EXTENSION) != 0;
+      (disable_reasons & disable_reason::DISABLE_EXTERNAL_EXTENSION) != 0;
   return is_disabled_external && !is_from_sideload_wipeout &&
          Manifest::IsExternalLocation(extension.location()) &&
          !extension_prefs_->IsExternalExtensionAcknowledged(extension.id());

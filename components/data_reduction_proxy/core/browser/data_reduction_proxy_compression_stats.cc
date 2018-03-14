@@ -20,7 +20,6 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_metrics.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_service.h"
 #include "components/data_reduction_proxy/core/browser/data_usage_store.h"
-#include "components/data_reduction_proxy/core/browser/data_use_group.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
@@ -63,7 +62,7 @@ int64_t GetInt64PrefValue(const base::ListValue& list_value, size_t index) {
 void MaintainContentLengthPrefsWindow(base::ListValue* list, size_t length) {
   // Remove data for old days from the front.
   while (list->GetSize() > length)
-    list->Remove(0, NULL);
+    list->Remove(0, nullptr);
   // Newly added lists are empty. Add entries to back to fill the window,
   // each initialized to zero.
   while (list->GetSize() < length)
@@ -78,7 +77,8 @@ void AddInt64ToListPref(size_t index,
                         int64_t length,
                         base::ListValue* list_update) {
   int64_t value = GetInt64PrefValue(*list_update, index) + length;
-  list_update->Set(index, new base::Value(base::Int64ToString(value)));
+  list_update->Set(index,
+                   base::MakeUnique<base::Value>(base::Int64ToString(value)));
 }
 
 // DailyContentLengthUpdate maintains a data saving pref. The pref is a list
@@ -436,41 +436,23 @@ void DataReductionProxyCompressionStats::Init() {
   InitListPref(prefs::kDailyOriginalContentLengthWithDataReductionProxyEnabled);
 }
 
-void DataReductionProxyCompressionStats::UpdateContentLengths(
+void DataReductionProxyCompressionStats::RecordDataUseWithMimeType(
     int64_t data_used,
     int64_t original_size,
     bool data_saver_enabled,
     DataReductionProxyRequestType request_type,
-    const scoped_refptr<DataUseGroup>& data_use_group,
     const std::string& mime_type) {
   DCHECK(thread_checker_.CalledOnValidThread());
+  TRACE_EVENT0("loader",
+               "DataReductionProxyCompressionStats::RecordDataUseWithMimeType")
   session_total_received_ += data_used;
   session_total_original_ += original_size;
-  std::string data_use_host;
-  if (data_use_group) {
-    data_use_host = data_use_group->GetHostname();
-  }
-
-  RecordData(data_used, original_size, data_saver_enabled, request_type,
-             data_use_host, mime_type);
-}
-
-void DataReductionProxyCompressionStats::RecordData(
-    int64_t data_used,
-    int64_t original_size,
-    bool data_saver_enabled,
-    DataReductionProxyRequestType request_type,
-    const std::string& data_use_host,
-    const std::string& mime_type) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  TRACE_EVENT0("loader", "DataReductionProxyCompressionStats::RecordData")
 
   IncreaseInt64Pref(data_reduction_proxy::prefs::kHttpReceivedContentLength,
                     data_used);
   IncreaseInt64Pref(data_reduction_proxy::prefs::kHttpOriginalContentLength,
                     original_size);
 
-  RecordDataUsage(data_use_host, data_used, original_size, base::Time::Now());
   RecordRequestSizePrefs(data_used, original_size, data_saver_enabled,
                          request_type, mime_type, base::Time::Now());
 }
@@ -1096,6 +1078,7 @@ void DataReductionProxyCompressionStats::RecordRequestSizePrefs(
         long_bypass.Add(data_used);
         break;
       case UPDATE:
+      case DIRECT_HTTP:
         // Don't record any request level prefs. If this is an update, this data
         // was already recorded at the URLRequest level. Updates are generally
         // page load level optimizations and don't correspond to request types.
@@ -1185,11 +1168,12 @@ void DataReductionProxyCompressionStats::IncrementDailyUmaPrefs(
   }
 }
 
-void DataReductionProxyCompressionStats::RecordDataUsage(
+void DataReductionProxyCompressionStats::RecordDataUseByHost(
     const std::string& data_usage_host,
     int64_t data_used,
     int64_t original_size,
-    const base::Time& time) {
+    const base::Time time) {
+  DCHECK(thread_checker_.CalledOnValidThread());
   if (current_data_usage_load_status_ != LOADED)
     return;
 

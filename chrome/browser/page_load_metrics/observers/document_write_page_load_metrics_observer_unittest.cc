@@ -6,6 +6,8 @@
 
 #include "base/memory/ptr_util.h"
 #include "chrome/browser/page_load_metrics/observers/page_load_metrics_observer_test_harness.h"
+#include "chrome/browser/page_load_metrics/page_load_tracker.h"
+#include "chrome/common/page_load_metrics/test/page_load_metrics_test_util.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "third_party/WebKit/public/platform/WebLoadingBehaviorFlag.h"
 
@@ -16,10 +18,6 @@ class DocumentWritePageLoadMetricsObserverTest
     tracker->AddObserver(
         base::MakeUnique<DocumentWritePageLoadMetricsObserver>());
   }
-  void AssertNoPreloadHistogramsLogged() {
-    histogram_tester().ExpectTotalCount(
-        internal::kHistogramDocWriteParseStartToFirstContentfulPaint, 0);
-  }
 
   void AssertNoBlockHistogramsLogged() {
     histogram_tester().ExpectTotalCount(
@@ -28,65 +26,34 @@ class DocumentWritePageLoadMetricsObserverTest
 };
 
 TEST_F(DocumentWritePageLoadMetricsObserverTest, NoMetrics) {
-  AssertNoPreloadHistogramsLogged();
   AssertNoBlockHistogramsLogged();
-}
-
-TEST_F(DocumentWritePageLoadMetricsObserverTest, PossiblePreload) {
-  base::TimeDelta contentful_paint = base::TimeDelta::FromMilliseconds(1);
-  page_load_metrics::PageLoadTiming timing;
-  timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_contentful_paint = contentful_paint;
-  timing.parse_start = base::TimeDelta::FromMilliseconds(1);
-  PopulateRequiredTimingFields(&timing);
-
-  page_load_metrics::PageLoadMetadata metadata;
-  metadata.behavior_flags |=
-      blink::WebLoadingBehaviorFlag::kWebLoadingBehaviorDocumentWriteEvaluator;
-  NavigateAndCommit(GURL("https://www.google.com"));
-  SimulateTimingAndMetadataUpdate(timing, metadata);
-
-  histogram_tester().ExpectTotalCount(
-      internal::kHistogramDocWriteParseStartToFirstContentfulPaint, 1);
-  histogram_tester().ExpectBucketCount(
-      internal::kHistogramDocWriteParseStartToFirstContentfulPaint,
-      contentful_paint.InMilliseconds(), 1);
-
-  NavigateAndCommit(GURL("https://www.example.com"));
-
-  histogram_tester().ExpectTotalCount(
-      internal::kHistogramDocWriteParseStartToFirstContentfulPaint, 1);
-  histogram_tester().ExpectBucketCount(
-      internal::kHistogramDocWriteParseStartToFirstContentfulPaint,
-      contentful_paint.InMilliseconds(), 1);
-}
-
-TEST_F(DocumentWritePageLoadMetricsObserverTest, NoPossiblePreload) {
-  base::TimeDelta contentful_paint = base::TimeDelta::FromMilliseconds(1);
-  page_load_metrics::PageLoadTiming timing;
-  timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_contentful_paint = contentful_paint;
-  PopulateRequiredTimingFields(&timing);
-
-  page_load_metrics::PageLoadMetadata metadata;
-  NavigateAndCommit(GURL("https://www.google.com"));
-  SimulateTimingAndMetadataUpdate(timing, metadata);
-  NavigateAndCommit(GURL("https://www.example.com"));
-  AssertNoPreloadHistogramsLogged();
+  EXPECT_EQ(0ul, test_ukm_recorder().entries_count());
 }
 
 TEST_F(DocumentWritePageLoadMetricsObserverTest, PossibleBlock) {
   base::TimeDelta contentful_paint = base::TimeDelta::FromMilliseconds(1);
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_contentful_paint = contentful_paint;
-  timing.parse_start = base::TimeDelta::FromMilliseconds(1);
+  timing.paint_timing->first_contentful_paint = contentful_paint;
+  timing.parse_timing->parse_start = base::TimeDelta::FromMilliseconds(1);
+  timing.parse_timing->parse_stop = base::TimeDelta::FromMilliseconds(100);
+  timing.parse_timing->parse_blocked_on_script_load_duration =
+      base::TimeDelta::FromMilliseconds(5);
+  timing.parse_timing
+      ->parse_blocked_on_script_load_from_document_write_duration =
+      base::TimeDelta::FromMilliseconds(5);
+  timing.parse_timing->parse_blocked_on_script_execution_duration =
+      base::TimeDelta::FromMilliseconds(3);
+  timing.parse_timing
+      ->parse_blocked_on_script_execution_from_document_write_duration =
+      base::TimeDelta::FromMilliseconds(3);
   PopulateRequiredTimingFields(&timing);
 
-  page_load_metrics::PageLoadMetadata metadata;
+  page_load_metrics::mojom::PageLoadMetadata metadata;
   metadata.behavior_flags |=
       blink::WebLoadingBehaviorFlag::kWebLoadingBehaviorDocumentWriteBlock;
-  NavigateAndCommit(GURL("https://www.google.com"));
+  NavigateAndCommit(GURL("https://www.google.com/"));
   SimulateTimingAndMetadataUpdate(timing, metadata);
 
   histogram_tester().ExpectTotalCount(internal::kHistogramDocWriteBlockCount,
@@ -97,7 +64,22 @@ TEST_F(DocumentWritePageLoadMetricsObserverTest, PossibleBlock) {
       internal::kHistogramDocWriteBlockParseStartToFirstContentfulPaint,
       contentful_paint.InMilliseconds(), 1);
 
-  NavigateAndCommit(GURL("https://www.example.com"));
+  std::map<ukm::SourceId, ukm::mojom::UkmEntryPtr> entries =
+      test_ukm_recorder().GetMergedEntriesByName(
+          internal::kUkmDocWriteBlockName);
+  EXPECT_EQ(1u, entries.size());
+  for (const auto& kv : entries) {
+    test_ukm_recorder().ExpectEntrySourceHasUrl(
+        kv.second.get(), GURL("https://www.google.com/"));
+    test_ukm_recorder().ExpectEntryMetric(
+        kv.second.get(), internal::kUkmParseBlockedOnScriptLoadDocumentWrite,
+        5);
+    test_ukm_recorder().ExpectEntryMetric(
+        kv.second.get(),
+        internal::kUkmParseBlockedOnScriptExecutionDocumentWrite, 3);
+  }
+
+  NavigateAndCommit(GURL("https://www.example.com/"));
 
   histogram_tester().ExpectTotalCount(
       internal::kHistogramDocWriteBlockParseStartToFirstContentfulPaint, 1);
@@ -108,27 +90,51 @@ TEST_F(DocumentWritePageLoadMetricsObserverTest, PossibleBlock) {
 
 TEST_F(DocumentWritePageLoadMetricsObserverTest, PossibleBlockReload) {
   base::TimeDelta contentful_paint = base::TimeDelta::FromMilliseconds(1);
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_contentful_paint = contentful_paint;
-  timing.parse_start = base::TimeDelta::FromMilliseconds(1);
+  timing.paint_timing->first_contentful_paint = contentful_paint;
+  timing.parse_timing->parse_start = base::TimeDelta::FromMilliseconds(1);
   PopulateRequiredTimingFields(&timing);
 
-  page_load_metrics::PageLoadMetadata metadata;
+  page_load_metrics::mojom::PageLoadMetadata metadata;
   metadata.behavior_flags |= blink::WebLoadingBehaviorFlag::
       kWebLoadingBehaviorDocumentWriteBlockReload;
-  NavigateAndCommit(GURL("https://www.google.com"));
+  NavigateAndCommit(GURL("https://www.google.com/"));
   SimulateTimingAndMetadataUpdate(timing, metadata);
 
   histogram_tester().ExpectTotalCount(
       internal::kHistogramDocWriteBlockReloadCount, 1);
 
+  auto entries =
+      test_ukm_recorder().GetEntriesByName(internal::kUkmDocWriteBlockName);
+  EXPECT_EQ(1u, entries.size());
+  const ukm::mojom::UkmEntry* entry1 = nullptr;
+  for (const auto* const entry : entries) {
+    test_ukm_recorder().ExpectEntrySourceHasUrl(
+        entry, GURL("https://www.google.com/"));
+    test_ukm_recorder().ExpectEntryMetric(
+        entry, internal::kUkmDocWriteBlockReload, true);
+    entry1 = entry;
+  }
+
   // Another reload.
-  NavigateAndCommit(GURL("https://www.example.com"));
+  NavigateAndCommit(GURL("https://www.example.com/"));
   SimulateTimingAndMetadataUpdate(timing, metadata);
 
   histogram_tester().ExpectTotalCount(
       internal::kHistogramDocWriteBlockReloadCount, 2);
+
+  auto entries2 =
+      test_ukm_recorder().GetEntriesByName(internal::kUkmDocWriteBlockName);
+  EXPECT_EQ(2u, entries2.size());
+  for (const auto* const entry : entries2) {
+    if (entry != entry1)
+      test_ukm_recorder().ExpectEntrySourceHasUrl(
+          entry, GURL("https://www.example.com/"));
+    test_ukm_recorder().ExpectEntryMetric(
+        entry, internal::kUkmDocWriteBlockReload, true);
+  }
 
   // Another metadata update should not increase reload count.
   metadata.behavior_flags |=
@@ -143,15 +149,16 @@ TEST_F(DocumentWritePageLoadMetricsObserverTest, PossibleBlockReload) {
 
 TEST_F(DocumentWritePageLoadMetricsObserverTest, NoPossibleBlock) {
   base::TimeDelta contentful_paint = base::TimeDelta::FromMilliseconds(1);
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_contentful_paint = contentful_paint;
+  timing.paint_timing->first_contentful_paint = contentful_paint;
   PopulateRequiredTimingFields(&timing);
 
-  page_load_metrics::PageLoadMetadata metadata;
-  NavigateAndCommit(GURL("https://www.google.com"));
+  page_load_metrics::mojom::PageLoadMetadata metadata;
+  NavigateAndCommit(GURL("https://www.google.com/"));
   SimulateTimingAndMetadataUpdate(timing, metadata);
 
-  NavigateAndCommit(GURL("https://www.example.com"));
+  NavigateAndCommit(GURL("https://www.example.com/"));
   AssertNoBlockHistogramsLogged();
 }

@@ -13,6 +13,7 @@
 #include "services/service_manager/public/cpp/service.h"
 #include "services/service_manager/public/cpp/service_context.h"
 #include "services/service_manager/public/cpp/service_runner.h"
+#include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/default_capture_client.h"
 #include "ui/aura/env.h"
 #include "ui/aura/mus/property_converter.h"
@@ -55,15 +56,15 @@ class TestWM : public service_manager::Service,
   void OnStart() override {
     CHECK(!started_);
     started_ = true;
-    screen_ = base::MakeUnique<display::ScreenBase>();
+    screen_ = std::make_unique<display::ScreenBase>();
     display::Screen::SetScreenInstance(screen_.get());
     aura_env_ = aura::Env::CreateInstance(aura::Env::Mode::MUS);
-    window_tree_client_ = base::MakeUnique<aura::WindowTreeClient>(
+    window_tree_client_ = std::make_unique<aura::WindowTreeClient>(
         context()->connector(), this, this);
     aura_env_->SetWindowTreeClient(window_tree_client_.get());
     window_tree_client_->ConnectAsWindowManager();
   }
-  void OnBindInterface(const service_manager::ServiceInfo& source_info,
+  void OnBindInterface(const service_manager::BindSourceInfo& source_info,
                        const std::string& interface_name,
                        mojo::ScopedMessagePipeHandle interface_pipe) override {}
 
@@ -96,6 +97,10 @@ class TestWM : public service_manager::Service,
   void SetWindowManagerClient(aura::WindowManagerClient* client) override {
     window_manager_client_ = client;
   }
+  void OnWmConnected() override {}
+  void OnWmAcceleratedWidgetAvailableForDisplay(
+      int64_t display_id,
+      gfx::AcceleratedWidget widget) override {}
   void OnWmSetBounds(aura::Window* window, const gfx::Rect& bounds) override {
     window->SetBounds(bounds);
   }
@@ -111,6 +116,8 @@ class TestWM : public service_manager::Service,
       ui::mojom::WindowType window_type,
       std::map<std::string, std::vector<uint8_t>>* properties) override {
     aura::Window* window = new aura::Window(nullptr);
+    window->SetProperty(aura::client::kEmbedType,
+                        aura::client::WindowEmbedType::TOP_LEVEL_IN_WM);
     SetWindowType(window, window_type);
     window->Init(LAYER_NOT_DRAWN);
     window->SetBounds(gfx::Rect(10, 10, 500, 500));
@@ -140,7 +147,7 @@ class TestWM : public service_manager::Service,
     window_tree_host_ = std::move(window_tree_host);
     root_ = window_tree_host_->window();
     default_capture_client_ =
-        base::MakeUnique<aura::client::DefaultCaptureClient>(
+        std::make_unique<aura::client::DefaultCaptureClient>(
             root_->GetRootWindow());
     DCHECK(window_manager_client_);
     window_manager_client_->AddActivationParent(root_);
@@ -158,6 +165,7 @@ class TestWM : public service_manager::Service,
     window_tree_host_.reset();
   }
   void OnWmDisplayModified(const display::Display& display) override {}
+  void OnCursorTouchVisibleChanged(bool enabled) override {}
   void OnWmPerformMoveLoop(aura::Window* window,
                            mojom::MoveLoopSource source,
                            const gfx::Point& cursor_location,

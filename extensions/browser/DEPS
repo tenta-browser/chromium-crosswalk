@@ -15,7 +15,6 @@ include_rules = [
   "+components/zoom",
   "+content/public/browser",
   "+device/bluetooth",
-  "+device/power_save_blocker",
   "+device/serial",
   "+device/usb",
   "+google_apis/gaia",
@@ -24,6 +23,9 @@ include_rules = [
   "+net",
   # This directory contains build flags and does not pull all of PPAPI in.
   "+ppapi/features",
+  "+services/data_decoder/public/cpp",
+  "+services/network/public/cpp",
+  "+services/preferences/public/cpp",
   "+services/service_manager/public/cpp",
   "+skia/ext/image_operations.h",
   "+third_party/leveldatabase",

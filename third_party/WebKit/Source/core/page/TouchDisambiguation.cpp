@@ -30,18 +30,17 @@
 
 #include "core/page/TouchDisambiguation.h"
 
-#include "core/HTMLNames.h"
+#include <algorithm>
+#include <cmath>
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
 #include "core/dom/NodeTraversal.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/HTMLHtmlElement.h"
 #include "core/input/EventHandler.h"
 #include "core/layout/HitTestResult.h"
 #include "core/layout/LayoutBlock.h"
-#include <algorithm>
-#include <cmath>
 
 namespace blink {
 
@@ -90,7 +89,7 @@ void FindGoodTouchTargets(const IntRect& touch_box_in_root_frame,
                           LocalFrame* main_frame,
                           Vector<IntRect>& good_targets,
                           HeapVector<Member<Node>>& highlight_nodes) {
-  good_targets.Clear();
+  good_targets.clear();
 
   int touch_point_padding = ceil(std::max(touch_box_in_root_frame.Width(),
                                           touch_box_in_root_frame.Height()) *
@@ -137,8 +136,8 @@ void FindGoodTouchTargets(const IntRect& touch_box_in_root_frame,
     for (Node& node : NodeTraversal::InclusiveAncestorsOf(*hit_result)) {
       if (black_list.Contains(&node))
         continue;
-      if (node.IsDocumentNode() || isHTMLHtmlElement(node) ||
-          isHTMLBodyElement(node))
+      if (node.IsDocumentNode() || IsHTMLHtmlElement(node) ||
+          IsHTMLBodyElement(node))
         break;
       if (node.WillRespondToMouseClickEvents()) {
         TouchTargetData& target_data =
@@ -152,12 +151,18 @@ void FindGoodTouchTargets(const IntRect& touch_box_in_root_frame,
     }
   }
 
+  // The scoring function uses the overlap area with the fat point as the score.
+  // We ignore the candidates that have less than this (empirically tuned)
+  // fraction of overlap than the best candidate to avoid excessive popups.
+  //
+  // If this value were 1, then the disambiguation feature would only be seen
+  // when two nodes have precisely the same overlap with the touch radius.  If
+  // it were 0, then any miniscule overlap with the edge of another node would
+  // trigger it.
+  const float kRelativeAmbiguityThreshold = 0.75f;
+
   for (const auto& touch_target : touch_targets) {
-    // Currently the scoring function uses the overlap area with the fat point
-    // as the score.  We ignore the candidates that has less than 1/2 overlap
-    // (we consider not really ambiguous enough) than the best candidate to
-    // avoid excessive popups.
-    if (touch_target.value.score < best_score * 0.5)
+    if (touch_target.value.score < best_score * kRelativeAmbiguityThreshold)
       continue;
     good_targets.push_back(touch_target.value.window_bounding_box);
     highlight_nodes.push_back(touch_target.key);

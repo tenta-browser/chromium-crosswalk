@@ -18,11 +18,11 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
-#include "components/metrics/proto/omnibox_event.pb.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
 #include "components/omnibox/browser/search_suggestion_parser.h"
+#include "third_party/metrics_proto/omnibox_event.pb.h"
 
 class AutocompleteProviderClient;
 class GURL;
@@ -102,6 +102,10 @@ class BaseSearchProvider : public AutocompleteProvider {
   typedef std::vector<std::unique_ptr<SuggestionDeletionHandler>>
       SuggestionDeletionHandlers;
 
+  // Returns whether the provided classification indicates some sort of NTP.
+  static bool IsNTPPage(
+      metrics::OmniboxEventProto::PageClassification classification);
+
   // Returns an AutocompleteMatch with the given |autocomplete_provider|
   // for the search |suggestion|, which represents a search via |template_url|.
   // If |template_url| is NULL, returns a match with an invalid destination URL.
@@ -128,10 +132,8 @@ class BaseSearchProvider : public AutocompleteProvider {
       int accepted_suggestion,
       bool append_extra_query_params);
 
-  // Returns whether the requirements for requesting zero suggest results
-  // are met. The requirements are
-  // * The user is enrolled in a zero suggest experiment.
-  // * The user is not on the NTP.
+  // Returns whether we can send the URL of the current page in any suggest
+  // requests.  Doing this requires that all the following hold:
   // * The suggest request is sent over HTTPS.  This avoids leaking the current
   //   page URL or personal data in unencrypted network traffic.
   // * The user has suggest enabled in their settings and is not in incognito
@@ -139,16 +141,7 @@ class BaseSearchProvider : public AutocompleteProvider {
   // * The user's suggest provider is Google.  We might want to allow other
   //   providers to see this data someday, but for now this has only been
   //   implemented for Google.
-  static bool ZeroSuggestEnabled(
-      const GURL& suggest_url,
-      const TemplateURL* template_url,
-      metrics::OmniboxEventProto::PageClassification page_classification,
-      const SearchTermsData& search_terms_data,
-      const AutocompleteProviderClient* client);
-
-  // Returns whether we can send the URL of the current page in any suggest
-  // requests.  Doing this requires that all the following hold:
-  // * ZeroSuggestEnabled() is true, so we meet the requirements above.
+  // * The user is not on the NTP.
   // * The current URL is HTTP, or HTTPS with the same domain as the suggest
   //   server.  Non-HTTP[S] URLs (e.g. FTP/file URLs) may contain sensitive
   //   information.  HTTPS URLs may also contain sensitive information, but if
@@ -257,8 +250,8 @@ class BaseSearchProvider : public AutocompleteProvider {
   bool field_trial_triggered_in_session_;
 
   // Each deletion handler in this vector corresponds to an outstanding request
-  // that a server delete a personalized suggestion. Making this a ScopedVector
-  // causes us to auto-cancel all such requests on shutdown.
+  // that a server delete a personalized suggestion. Making this a vector of
+  // unique_ptr causes us to auto-cancel all such requests on shutdown.
   SuggestionDeletionHandlers deletion_handlers_;
 
   DISALLOW_COPY_AND_ASSIGN(BaseSearchProvider);

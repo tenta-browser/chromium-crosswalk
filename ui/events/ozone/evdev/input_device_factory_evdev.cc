@@ -10,9 +10,9 @@
 
 #include <utility>
 
+#include "base/files/scoped_file.h"
 #include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "base/threading/worker_pool.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/events/devices/device_data_manager.h"
@@ -20,8 +20,10 @@
 #include "ui/events/ozone/evdev/device_event_dispatcher_evdev.h"
 #include "ui/events/ozone/evdev/event_converter_evdev_impl.h"
 #include "ui/events/ozone/evdev/event_device_info.h"
+#include "ui/events/ozone/evdev/gamepad_event_converter_evdev.h"
 #include "ui/events/ozone/evdev/tablet_event_converter_evdev.h"
 #include "ui/events/ozone/evdev/touch_event_converter_evdev.h"
+#include "ui/events/ozone/gamepad/gamepad_provider_ozone.h"
 
 #if defined(USE_EVDEV_GESTURES)
 #include "ui/events/ozone/evdev/libgestures_glue/event_reader_libevdev_cros.h"
@@ -82,17 +84,17 @@ void SetGestureBoolProperty(GesturePropertyProvider* provider,
 
 std::unique_ptr<EventConverterEvdev> CreateConverter(
     const OpenInputDeviceParams& params,
-    ScopedInputDevice fd,
+    base::ScopedFD fd,
     const EventDeviceInfo& devinfo) {
 #if defined(USE_EVDEV_GESTURES)
   // Touchpad or mouse: use gestures library.
   // EventReaderLibevdevCros -> GestureInterpreterLibevdevCros -> DispatchEvent
   if (devinfo.HasTouchpad() || devinfo.HasMouse()) {
     std::unique_ptr<GestureInterpreterLibevdevCros> gesture_interp =
-        base::MakeUnique<GestureInterpreterLibevdevCros>(
+        std::make_unique<GestureInterpreterLibevdevCros>(
             params.id, params.cursor, params.gesture_property_provider,
             params.dispatcher);
-    return base::MakeUnique<EventReaderLibevdevCros>(std::move(fd), params.path,
+    return std::make_unique<EventReaderLibevdevCros>(std::move(fd), params.path,
                                                      params.id, devinfo,
                                                      std::move(gesture_interp));
   }
@@ -108,10 +110,16 @@ std::unique_ptr<EventConverterEvdev> CreateConverter(
   }
 
   // Graphics tablet
-  if (devinfo.HasTablet())
+  if (devinfo.HasTablet()) {
     return base::WrapUnique<EventConverterEvdev>(new TabletEventConverterEvdev(
         std::move(fd), params.path, params.id, params.cursor, devinfo,
         params.dispatcher));
+  }
+
+  if (devinfo.HasGamepad()) {
+    return base::WrapUnique<EventConverterEvdev>(new GamepadEventConverterEvdev(
+        std::move(fd), params.path, params.id, devinfo, params.dispatcher));
+  }
 
   // Everything else: use EventConverterEvdevImpl.
   return base::WrapUnique<EventConverterEvdevImpl>(
@@ -125,7 +133,7 @@ std::unique_ptr<EventConverterEvdev> OpenInputDevice(
   const base::FilePath& path = params.path;
   TRACE_EVENT1("evdev", "OpenInputDevice", "path", path.value());
 
-  ScopedInputDevice fd(open(path.value().c_str(), O_RDWR | O_NONBLOCK));
+  base::ScopedFD fd(open(path.value().c_str(), O_RDWR | O_NONBLOCK));
   if (fd.get() < 0) {
     PLOG(ERROR) << "Cannot open " << path.value();
     return nullptr;
@@ -201,7 +209,7 @@ void InputDeviceFactoryEvdev::AttachInputDevice(
     const base::FilePath& path = converter->path();
 
     TRACE_EVENT1("evdev", "AttachInputDevice", "path", path.value());
-    DCHECK(task_runner_->RunsTasksOnCurrentThread());
+    DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
     // If we have an existing device, detach it. We don't want two
     // devices with the same name open at the same time.
@@ -231,7 +239,7 @@ void InputDeviceFactoryEvdev::AttachInputDevice(
 
 void InputDeviceFactoryEvdev::DetachInputDevice(const base::FilePath& path) {
   TRACE_EVENT1("evdev", "DetachInputDevice", "path", path.value());
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   // Remove device from map.
   std::unique_ptr<EventConverterEvdev> converter = std::move(converters_[path]);
@@ -261,24 +269,22 @@ void InputDeviceFactoryEvdev::UpdateInputDeviceSettings(
 }
 
 void InputDeviceFactoryEvdev::GetTouchDeviceStatus(
-    const GetTouchDeviceStatusReply& reply) {
-  std::unique_ptr<std::string> status(new std::string);
+    InputController::GetTouchDeviceStatusReply reply) {
+  std::string status;
 #if defined(USE_EVDEV_GESTURES)
-  DumpTouchDeviceStatus(gesture_property_provider_.get(), status.get());
+  DumpTouchDeviceStatus(gesture_property_provider_.get(), &status);
 #endif
-  reply.Run(std::move(status));
+  std::move(reply).Run(status);
 }
 
 void InputDeviceFactoryEvdev::GetTouchEventLog(
     const base::FilePath& out_dir,
-    const GetTouchEventLogReply& reply) {
-  std::unique_ptr<std::vector<base::FilePath>> log_paths(
-      new std::vector<base::FilePath>);
+    InputController::GetTouchEventLogReply reply) {
 #if defined(USE_EVDEV_GESTURES)
   DumpTouchEventLog(converters_, gesture_property_provider_.get(), out_dir,
-                    std::move(log_paths), reply);
+                    std::move(reply));
 #else
-  reply.Run(std::move(log_paths));
+  std::move(reply).Run(std::vector<base::FilePath>());
 #endif
 }
 
@@ -308,13 +314,25 @@ void InputDeviceFactoryEvdev::ApplyInputDeviceSettings() {
                            input_device_settings_.mouse_sensitivity);
   SetIntPropertyForOneType(DT_MOUSE, "Scroll Sensitivity",
                            input_device_settings_.mouse_sensitivity);
+  SetBoolPropertyForOneType(
+      DT_MOUSE, "Mouse Reverse Scrolling",
+      input_device_settings_.mouse_reverse_scroll_enabled);
 
   SetBoolPropertyForOneType(DT_TOUCHPAD, "Tap Paused",
                             input_device_settings_.tap_to_click_paused);
 
   for (const auto& it : converters_) {
     EventConverterEvdev* converter = it.second.get();
-    converter->SetEnabled(IsDeviceEnabled(converter));
+
+    bool should_be_enabled = IsDeviceEnabled(converter);
+    bool was_enabled = converter->IsEnabled();
+    if (should_be_enabled != was_enabled) {
+      converter->SetEnabled(should_be_enabled);
+
+      // The device was activated/deactivated we need to notify so
+      // Interactions MQs can be updated.
+      UpdateDirtyFlags(converter);
+    }
 
     if (converter->type() == InputDeviceType::INPUT_DEVICE_INTERNAL &&
         converter->HasKeyboard()) {
@@ -326,6 +344,8 @@ void InputDeviceFactoryEvdev::ApplyInputDeviceSettings() {
     converter->SetTouchEventLoggingEnabled(
         input_device_settings_.touch_event_logging_enabled);
   }
+
+  NotifyDevicesUpdated();
 }
 
 void InputDeviceFactoryEvdev::ApplyCapsLockLed() {
@@ -367,6 +387,9 @@ void InputDeviceFactoryEvdev::UpdateDirtyFlags(
 
   if (converter->HasTouchpad())
     touchpad_list_dirty_ = true;
+
+  if (converter->HasGamepad())
+    gamepad_list_dirty_ = true;
 }
 
 void InputDeviceFactoryEvdev::NotifyDevicesUpdated() {
@@ -380,6 +403,8 @@ void InputDeviceFactoryEvdev::NotifyDevicesUpdated() {
     NotifyMouseDevicesUpdated();
   if (touchpad_list_dirty_)
     NotifyTouchpadDevicesUpdated();
+  if (gamepad_list_dirty_)
+    NotifyGamepadDevicesUpdated();
   if (!startup_devices_opened_) {
     dispatcher_->DispatchDeviceListsComplete();
     startup_devices_opened_ = true;
@@ -388,17 +413,16 @@ void InputDeviceFactoryEvdev::NotifyDevicesUpdated() {
   keyboard_list_dirty_ = false;
   mouse_list_dirty_ = false;
   touchpad_list_dirty_ = false;
+  gamepad_list_dirty_ = false;
 }
 
 void InputDeviceFactoryEvdev::NotifyTouchscreensUpdated() {
   std::vector<TouchscreenDevice> touchscreens;
   for (auto it = converters_.begin(); it != converters_.end(); ++it) {
     if (it->second->HasTouchscreen()) {
-      TouchscreenDevice device(it->second->input_device(),
-          it->second->GetTouchscreenSize(), it->second->GetTouchPoints());
-      if (it->second->HasPen())
-        device.is_stylus = true;
-      touchscreens.push_back(device);
+      touchscreens.emplace_back(
+          it->second->input_device(), it->second->GetTouchscreenSize(),
+          it->second->GetTouchPoints(), it->second->HasPen());
     }
   }
 
@@ -438,6 +462,17 @@ void InputDeviceFactoryEvdev::NotifyTouchpadDevicesUpdated() {
   dispatcher_->DispatchTouchpadDevicesUpdated(touchpads);
 }
 
+void InputDeviceFactoryEvdev::NotifyGamepadDevicesUpdated() {
+  std::vector<InputDevice> gamepads;
+  for (auto it = converters_.begin(); it != converters_.end(); ++it) {
+    if (it->second->HasGamepad()) {
+      gamepads.push_back(it->second->input_device());
+    }
+  }
+
+  dispatcher_->DispatchGamepadDevicesUpdated(gamepads);
+}
+
 void InputDeviceFactoryEvdev::SetIntPropertyForOneType(
     const EventDeviceType type,
     const std::string& name,
@@ -473,10 +508,7 @@ void InputDeviceFactoryEvdev::EnablePalmSuppression(bool enabled) {
   if (enabled == palm_suppression_enabled_)
     return;
   palm_suppression_enabled_ = enabled;
-
-  for (const auto& it : converters_) {
-    it.second->SetEnabled(IsDeviceEnabled(it.second.get()));
-  }
+  ApplyInputDeviceSettings();
 }
 
 }  // namespace ui

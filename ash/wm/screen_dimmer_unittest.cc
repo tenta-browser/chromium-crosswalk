@@ -11,22 +11,19 @@
 #include "ash/test/ash_test_base.h"
 #include "ash/window_user_data.h"
 #include "ash/wm/window_dimmer.h"
-#include "ash/wm_window.h"
-#include "base/memory/ptr_util.h"
 #include "ui/aura/test/test_windows.h"
 #include "ui/compositor/layer.h"
 
 namespace ash {
-namespace test {
 
 class ScreenDimmerTest : public AshTestBase {
  public:
-  ScreenDimmerTest() {}
-  ~ScreenDimmerTest() override {}
+  ScreenDimmerTest() = default;
+  ~ScreenDimmerTest() override = default;
 
   void SetUp() override {
     AshTestBase::SetUp();
-    dimmer_ = base::MakeUnique<ScreenDimmer>(ScreenDimmer::Container::ROOT);
+    dimmer_ = std::make_unique<ScreenDimmer>(ScreenDimmer::Container::ROOT);
   }
 
   void TearDown() override {
@@ -115,8 +112,8 @@ TEST_F(ScreenDimmerTest, DimAtBottom) {
 // See description above TEST_F for details.
 class ScreenDimmerShellDestructionTest : public AshTestBase {
  public:
-  ScreenDimmerShellDestructionTest() {}
-  ~ScreenDimmerShellDestructionTest() override {}
+  ScreenDimmerShellDestructionTest() = default;
+  ~ScreenDimmerShellDestructionTest() override = default;
 
   void TearDown() override {
     ScreenDimmer screen_dimmer(ScreenDimmer::Container::ROOT);
@@ -134,5 +131,4 @@ class ScreenDimmerShellDestructionTest : public AshTestBase {
 TEST_F(ScreenDimmerShellDestructionTest, DontCrashIfScreenDimmerOutlivesShell) {
 }
 
-}  // namespace test
 }  // namespace ash

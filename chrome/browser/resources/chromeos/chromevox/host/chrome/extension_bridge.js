@@ -94,12 +94,12 @@ cvox.ExtensionBridge.PONG_MSG = 'cvox.ExtensionBridge.Pong';
 cvox.ExtensionBridge.send = function(message) {
   var self = cvox.ExtensionBridge;
   switch (self.context) {
-  case self.BACKGROUND:
-    self.sendBackgroundToContentScript(message);
-    break;
-  case self.CONTENT_SCRIPT:
-    self.sendContentScriptToBackground(message);
-    break;
+    case self.BACKGROUND:
+      self.sendBackgroundToContentScript(message);
+      break;
+    case self.CONTENT_SCRIPT:
+      self.sendContentScriptToBackground(message);
+      break;
   }
 };
 
@@ -240,8 +240,7 @@ cvox.ExtensionBridge.setupBackgroundPort = function() {
   }
   self.backgroundPort.onMessage.addListener(function(message) {
     if (message[cvox.ExtensionBridge.PONG_MSG]) {
-      self.gotPongFromBackgroundPage(
-          message[cvox.ExtensionBridge.PONG_MSG]);
+      self.gotPongFromBackgroundPage(message[cvox.ExtensionBridge.PONG_MSG]);
     } else {
       for (var i = 0; i < self.messageListeners.length; i++) {
         self.messageListeners[i](message, self.backgroundPort);
@@ -255,6 +254,8 @@ cvox.ExtensionBridge.setupBackgroundPort = function() {
       return;
     }
 
+    self.backgroundPort = null;
+    self.connected = false;
     for (var i = 0; i < self.disconnectListeners.length; i++) {
       self.disconnectListeners[i]();
     }

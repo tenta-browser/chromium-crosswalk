@@ -33,8 +33,6 @@ class ASH_EXPORT TrayItemView : public views::View,
   explicit TrayItemView(SystemTrayItem* owner);
   ~TrayItemView() override;
 
-  static void DisableAnimationsForTest();
-
   // Convenience function for creating a child Label or ImageView.
   // Only one of the two should be called.
   void CreateLabel();
@@ -46,7 +44,7 @@ class ASH_EXPORT TrayItemView : public views::View,
 
   // Overridden from views::View.
   void SetVisible(bool visible) override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   int GetHeightForWidth(int width) const override;
 
  protected:

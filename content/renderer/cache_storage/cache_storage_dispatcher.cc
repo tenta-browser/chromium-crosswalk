@@ -18,19 +18,21 @@
 #include "base/threading/thread_local.h"
 #include "content/child/thread_safe_sender.h"
 #include "content/common/cache_storage/cache_storage_messages.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/referrer.h"
 #include "content/public/renderer/render_thread.h"
 #include "content/renderer/service_worker/service_worker_type_util.h"
+#include "storage/common/blob_storage/blob_handle.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerCache.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerRequest.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerResponse.h"
 #include "url/origin.h"
 
-using base::TimeTicks;
 
 namespace content {
 
-using blink::WebServiceWorkerCacheError;
+using base::TimeTicks;
+using blink::mojom::CacheStorageError;
 using blink::WebServiceWorkerCacheStorage;
 using blink::WebServiceWorkerRequest;
 using blink::WebString;
@@ -104,9 +106,6 @@ CacheStorageCacheOperationType CacheOperationTypeFromWebCacheOperationType(
 
 CacheStorageBatchOperation BatchOperationFromWebBatchOperation(
     const blink::WebServiceWorkerCache::BatchOperation& web_operation) {
-  // We don't support streaming for cache.
-  DCHECK(web_operation.response.StreamURL().IsEmpty());
-
   CacheStorageBatchOperation operation;
   operation.operation_type =
       CacheOperationTypeFromWebCacheOperationType(web_operation.operation_type);
@@ -122,7 +121,7 @@ template <typename T>
 void ClearCallbacksMapWithErrors(T* callbacks_map) {
   typename T::iterator iter(callbacks_map);
   while (!iter.IsAtEnd()) {
-    iter.GetCurrentValue()->OnError(blink::kWebServiceWorkerCacheErrorNotFound);
+    iter.GetCurrentValue()->OnError(CacheStorageError::kErrorNotFound);
     callbacks_map->Remove(iter.GetCurrentKey());
     iter.Advance();
   }
@@ -208,7 +207,7 @@ CacheStorageDispatcher* CacheStorageDispatcher::ThreadSpecificInstance(
     ThreadSafeSender* thread_safe_sender) {
   if (g_cache_storage_dispatcher_tls.Pointer()->Get() == kHasBeenDeleted) {
     NOTREACHED() << "Re-instantiating TLS CacheStorageDispatcher.";
-    g_cache_storage_dispatcher_tls.Pointer()->Set(NULL);
+    g_cache_storage_dispatcher_tls.Pointer()->Set(nullptr);
   }
   if (g_cache_storage_dispatcher_tls.Pointer()->Get())
     return g_cache_storage_dispatcher_tls.Pointer()->Get();
@@ -342,10 +341,9 @@ void CacheStorageDispatcher::OnCacheStorageMatchSuccess(
   match_times_.erase(request_id);
 }
 
-void CacheStorageDispatcher::OnCacheStorageHasError(
-    int thread_id,
-    int request_id,
-    blink::WebServiceWorkerCacheError reason) {
+void CacheStorageDispatcher::OnCacheStorageHasError(int thread_id,
+                                                    int request_id,
+                                                    CacheStorageError reason) {
   DCHECK_EQ(thread_id, CurrentWorkerId());
   WebServiceWorkerCacheStorage::CacheStorageCallbacks* callbacks =
       has_callbacks_.Lookup(request_id);
@@ -354,10 +352,9 @@ void CacheStorageDispatcher::OnCacheStorageHasError(
   has_times_.erase(request_id);
 }
 
-void CacheStorageDispatcher::OnCacheStorageOpenError(
-    int thread_id,
-    int request_id,
-    blink::WebServiceWorkerCacheError reason) {
+void CacheStorageDispatcher::OnCacheStorageOpenError(int thread_id,
+                                                     int request_id,
+                                                     CacheStorageError reason) {
   DCHECK_EQ(thread_id, CurrentWorkerId());
   WebServiceWorkerCacheStorage::CacheStorageWithCacheCallbacks* callbacks =
       open_callbacks_.Lookup(request_id);
@@ -369,7 +366,7 @@ void CacheStorageDispatcher::OnCacheStorageOpenError(
 void CacheStorageDispatcher::OnCacheStorageDeleteError(
     int thread_id,
     int request_id,
-    blink::WebServiceWorkerCacheError reason) {
+    CacheStorageError reason) {
   DCHECK_EQ(thread_id, CurrentWorkerId());
   WebServiceWorkerCacheStorage::CacheStorageCallbacks* callbacks =
       delete_callbacks_.Lookup(request_id);
@@ -381,7 +378,7 @@ void CacheStorageDispatcher::OnCacheStorageDeleteError(
 void CacheStorageDispatcher::OnCacheStorageMatchError(
     int thread_id,
     int request_id,
-    blink::WebServiceWorkerCacheError reason) {
+    CacheStorageError reason) {
   DCHECK_EQ(thread_id, CurrentWorkerId());
   WebServiceWorkerCacheStorage::CacheStorageMatchCallbacks* callbacks =
       match_callbacks_.Lookup(request_id);
@@ -451,10 +448,9 @@ void CacheStorageDispatcher::OnCacheBatchSuccess(
   cache_batch_times_.erase(request_id);
 }
 
-void CacheStorageDispatcher::OnCacheMatchError(
-    int thread_id,
-    int request_id,
-    blink::WebServiceWorkerCacheError reason) {
+void CacheStorageDispatcher::OnCacheMatchError(int thread_id,
+                                               int request_id,
+                                               CacheStorageError reason) {
   DCHECK_EQ(thread_id, CurrentWorkerId());
   blink::WebServiceWorkerCache::CacheMatchCallbacks* callbacks =
       cache_match_callbacks_.Lookup(request_id);
@@ -463,10 +459,9 @@ void CacheStorageDispatcher::OnCacheMatchError(
   cache_match_times_.erase(request_id);
 }
 
-void CacheStorageDispatcher::OnCacheMatchAllError(
-    int thread_id,
-    int request_id,
-    blink::WebServiceWorkerCacheError reason) {
+void CacheStorageDispatcher::OnCacheMatchAllError(int thread_id,
+                                                  int request_id,
+                                                  CacheStorageError reason) {
   DCHECK_EQ(thread_id, CurrentWorkerId());
   blink::WebServiceWorkerCache::CacheWithResponsesCallbacks* callbacks =
       cache_match_all_callbacks_.Lookup(request_id);
@@ -475,10 +470,9 @@ void CacheStorageDispatcher::OnCacheMatchAllError(
   cache_match_all_times_.erase(request_id);
 }
 
-void CacheStorageDispatcher::OnCacheKeysError(
-    int thread_id,
-    int request_id,
-    blink::WebServiceWorkerCacheError reason) {
+void CacheStorageDispatcher::OnCacheKeysError(int thread_id,
+                                              int request_id,
+                                              CacheStorageError reason) {
   DCHECK_EQ(thread_id, CurrentWorkerId());
   blink::WebServiceWorkerCache::CacheWithRequestsCallbacks* callbacks =
       cache_keys_callbacks_.Lookup(request_id);
@@ -487,14 +481,13 @@ void CacheStorageDispatcher::OnCacheKeysError(
   cache_keys_times_.erase(request_id);
 }
 
-void CacheStorageDispatcher::OnCacheBatchError(
-    int thread_id,
-    int request_id,
-    blink::WebServiceWorkerCacheError reason) {
+void CacheStorageDispatcher::OnCacheBatchError(int thread_id,
+                                               int request_id,
+                                               CacheStorageError reason) {
   DCHECK_EQ(thread_id, CurrentWorkerId());
   blink::WebServiceWorkerCache::CacheBatchCallbacks* callbacks =
       cache_batch_callbacks_.Lookup(request_id);
-  callbacks->OnError(blink::WebServiceWorkerCacheError(reason));
+  callbacks->OnError(CacheStorageError(reason));
   cache_batch_callbacks_.Remove(request_id);
   cache_batch_times_.erase(request_id);
 }
@@ -633,7 +626,7 @@ void CacheStorageDispatcher::PopulateWebResponseFromResponse(
   web_response->SetStatus(response.status_code);
   web_response->SetStatusText(WebString::FromASCII(response.status_text));
   web_response->SetResponseType(response.response_type);
-  web_response->SetResponseTime(response.response_time.ToInternalValue());
+  web_response->SetResponseTime(response.response_time);
   web_response->SetCacheStorageCacheName(
       response.is_in_cache_storage
           ? blink::WebString::FromUTF8(response.cache_storage_cache_name)
@@ -651,8 +644,12 @@ void CacheStorageDispatcher::PopulateWebResponseFromResponse(
   }
 
   if (!response.blob_uuid.empty()) {
+    DCHECK_EQ(response.blob != nullptr, features::IsMojoBlobsEnabled());
+    mojo::ScopedMessagePipeHandle blob_pipe;
+    if (response.blob)
+      blob_pipe = response.blob->Clone().PassInterface().PassHandle();
     web_response->SetBlob(blink::WebString::FromUTF8(response.blob_uuid),
-                          response.blob_size);
+                          response.blob_size, std::move(blob_pipe));
     // Let the host know that it can release its reference to the blob.
     Send(new CacheStorageHostMsg_BlobDataHandled(response.blob_uuid));
   }

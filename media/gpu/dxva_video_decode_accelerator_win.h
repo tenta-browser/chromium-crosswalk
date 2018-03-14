@@ -9,6 +9,7 @@
 #include <d3d9.h>
 #include <initguid.h>
 #include <stdint.h>
+#include <wrl/client.h>
 
 // Work around bug in this header by disabling the relevant warning for it.
 // https://connect.microsoft.com/VisualStudio/feedback/details/911260/dxva2api-h-in-win8-sdk-triggers-c4201-with-w4
@@ -28,12 +29,9 @@
 #include "base/memory/linked_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
-#include "base/threading/non_thread_safe.h"
 #include "base/threading/thread.h"
-#include "base/win/scoped_comptr.h"
 #include "gpu/command_buffer/service/gpu_preferences.h"
 #include "media/base/video_color_space.h"
-#include "media/filters/h264_parser.h"
 #include "media/gpu/gpu_video_decode_accelerator_helpers.h"
 #include "media/gpu/media_gpu_export.h"
 #include "media/video/video_decode_accelerator.h"
@@ -61,39 +59,17 @@ class EGLStreamCopyPictureBuffer;
 class EGLStreamPictureBuffer;
 class PbufferPictureBuffer;
 
-// Provides functionality to detect H.264 stream configuration changes.
-// TODO(ananta)
-// Move this to a common place so that all VDA's can use this.
-class H264ConfigChangeDetector {
+class ConfigChangeDetector {
  public:
-  H264ConfigChangeDetector();
-  ~H264ConfigChangeDetector();
-
-  // Detects stream configuration changes.
-  // Returns false on failure.
-  bool DetectConfig(const uint8_t* stream, unsigned int size);
+  virtual ~ConfigChangeDetector();
+  virtual bool DetectConfig(const uint8_t* stream, unsigned int size) = 0;
+  virtual VideoColorSpace current_color_space(
+      const VideoColorSpace& container_color_space) const = 0;
   bool config_changed() const { return config_changed_; }
 
-  VideoColorSpace current_color_space() const;
-
- private:
-  // These fields are used to track the SPS/PPS in the H.264 bitstream and
-  // are eventually compared against the SPS/PPS in the bitstream to detect
-  // a change.
-  int last_sps_id_;
-  std::vector<uint8_t> last_sps_;
-  int last_pps_id_;
-  std::vector<uint8_t> last_pps_;
+ protected:
   // Set to true if we detect a stream configuration change.
-  bool config_changed_;
-  // We want to indicate configuration changes only after we see IDR slices.
-  // This flag tracks that we potentially have a configuration change which
-  // we want to honor after we see an IDR slice.
-  bool pending_config_changed_;
-
-  std::unique_ptr<H264Parser> parser_;
-
-  DISALLOW_COPY_AND_ASSIGN(H264ConfigChangeDetector);
+  bool config_changed_ = false;
 };
 
 // Class to provide a DXVA 2.0 based accelerator using the Microsoft Media
@@ -144,21 +120,45 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
 
  private:
   friend class DXVAPictureBuffer;
+  friend class EGLStreamDelayedCopyPictureBuffer;
   friend class EGLStreamCopyPictureBuffer;
   friend class EGLStreamPictureBuffer;
   friend class PbufferPictureBuffer;
   typedef void* EGLConfig;
   typedef void* EGLSurface;
-  typedef std::list<base::win::ScopedComPtr<IMFSample>> PendingInputs;
+  typedef std::list<Microsoft::WRL::ComPtr<IMFSample>> PendingInputs;
+
+  enum class PictureBufferMechanism {
+    // Copy to either a BGRA8 or FP16 texture using the video processor.
+    COPY_TO_RGB,
+
+    // Copy to another NV12 texture that can be used in ANGLE.
+    COPY_TO_NV12,
+
+    // Bind the resulting GLImage to the NV12 texture. If the texture's used
+    // in a an overlay than use it directly, otherwise copy it to another NV12
+    // texture when necessary.
+    DELAYED_COPY_TO_NV12,
+
+    // Bind the NV12 decoder texture directly to the texture used in ANGLE.
+    BIND
+  };
 
   // Returns the minimum resolution for the |profile| passed in.
-  static std::pair<int, int> GetMinResolution(const VideoCodecProfile profile);
+  static gfx::Size GetMinResolution(VideoCodecProfile profile);
 
   // Returns the maximum resolution for the |profile| passed in.
-  static std::pair<int, int> GetMaxResolution(const VideoCodecProfile profile);
+  static gfx::Size GetMaxResolution(VideoCodecProfile profile);
 
-  // Returns the maximum resolution for H264 video.
-  static std::pair<int, int> GetMaxH264Resolution();
+  // Returns the maximum resolution for by attempting to create a decoder for
+  // each of the resolutions in |resolutions_to_test| for the first decoder
+  // matching a GUID from |valid_guids|. |resolutions_to_test| should be ordered
+  // from smallest to largest resolution. |default_max_resolution| will be
+  // returned if any errors occur during the process.
+  static gfx::Size GetMaxResolutionForGUIDs(
+      const gfx::Size& default_max_resolution,
+      const std::vector<GUID>& valid_guids,
+      const std::vector<gfx::Size>& resolutions_to_test);
 
   // Certain AMD GPU drivers like R600, R700, Evergreen and Cayman and
   // some second generation Intel GPU drivers crash if we create a video
@@ -210,7 +210,7 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   // Invoked when we have a valid decoded output sample. Retrieves the D3D
   // surface and maintains a copy of it which is passed eventually to the
   // client when we have a picture buffer to copy the surface contents to.
-  bool ProcessOutputSample(base::win::ScopedComPtr<IMFSample> sample,
+  bool ProcessOutputSample(Microsoft::WRL::ComPtr<IMFSample> sample,
                            const gfx::ColorSpace& color_space);
 
   // Processes pending output samples by copying them to available picture
@@ -257,7 +257,7 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   void FlushInternal();
 
   // Helper for handling the Decode operation.
-  void DecodeInternal(const base::win::ScopedComPtr<IMFSample>& input_sample);
+  void DecodeInternal(const Microsoft::WRL::ComPtr<IMFSample>& input_sample);
 
   // Handles mid stream resolution changes.
   void HandleResolutionChanged(int width, int height);
@@ -301,7 +301,7 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
                            int picture_buffer_id,
                            int input_buffer_id);
 
-  void BindPictureBufferToSample(base::win::ScopedComPtr<IMFSample> sample,
+  void BindPictureBufferToSample(Microsoft::WRL::ComPtr<IMFSample> sample,
                                  int picture_buffer_id,
                                  int input_buffer_id);
 
@@ -309,7 +309,7 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   // The copying is done on the decoder thread.
   void CopyTexture(ID3D11Texture2D* src_texture,
                    ID3D11Texture2D* dest_texture,
-                   base::win::ScopedComPtr<IDXGIKeyedMutex> dest_keyed_mutex,
+                   Microsoft::WRL::ComPtr<IDXGIKeyedMutex> dest_keyed_mutex,
                    uint64_t keyed_mutex_value,
                    int picture_buffer_id,
                    int input_buffer_id,
@@ -318,9 +318,9 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   // Copies the |video_frame| to the destination |dest_texture|.
   void CopyTextureOnDecoderThread(
       ID3D11Texture2D* dest_texture,
-      base::win::ScopedComPtr<IDXGIKeyedMutex> dest_keyed_mutex,
+      Microsoft::WRL::ComPtr<IDXGIKeyedMutex> dest_keyed_mutex,
       uint64_t keyed_mutex_value,
-      base::win::ScopedComPtr<IMFSample> input_sample,
+      Microsoft::WRL::ComPtr<IMFSample> input_sample,
       int picture_buffer_id,
       int input_buffer_id);
 
@@ -375,34 +375,38 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
 
   uint32_t GetTextureTarget() const;
 
+  PictureBufferMechanism GetPictureBufferMechanism() const;
+  bool ShouldUseANGLEDevice() const;
+  ID3D11Device* D3D11Device() const;
+
   // To expose client callbacks from VideoDecodeAccelerator.
   VideoDecodeAccelerator::Client* client_;
 
-  base::win::ScopedComPtr<IMFTransform> decoder_;
+  Microsoft::WRL::ComPtr<IMFTransform> decoder_;
 
-  base::win::ScopedComPtr<IDirect3D9Ex> d3d9_;
-  base::win::ScopedComPtr<IDirect3DDevice9Ex> d3d9_device_ex_;
-  base::win::ScopedComPtr<IDirect3DDeviceManager9> device_manager_;
-  base::win::ScopedComPtr<IDirect3DQuery9> query_;
+  Microsoft::WRL::ComPtr<IDirect3D9Ex> d3d9_;
+  Microsoft::WRL::ComPtr<IDirect3DDevice9Ex> d3d9_device_ex_;
+  Microsoft::WRL::ComPtr<IDirect3DDeviceManager9> device_manager_;
+  Microsoft::WRL::ComPtr<IDirect3DQuery9> query_;
 
-  base::win::ScopedComPtr<ID3D11Device> d3d11_device_;
-  base::win::ScopedComPtr<ID3D11Device> angle_device_;
-  base::win::ScopedComPtr<IMFDXGIDeviceManager> d3d11_device_manager_;
-  base::win::ScopedComPtr<ID3D10Multithread> multi_threaded_;
-  base::win::ScopedComPtr<ID3D11DeviceContext> d3d11_device_context_;
-  base::win::ScopedComPtr<ID3D11Query> d3d11_query_;
+  Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device_;
+  Microsoft::WRL::ComPtr<ID3D11Device> angle_device_;
+  Microsoft::WRL::ComPtr<IMFDXGIDeviceManager> d3d11_device_manager_;
+  Microsoft::WRL::ComPtr<ID3D10Multithread> multi_threaded_;
+  Microsoft::WRL::ComPtr<ID3D11DeviceContext> d3d11_device_context_;
+  Microsoft::WRL::ComPtr<ID3D11Query> d3d11_query_;
 
-  base::win::ScopedComPtr<ID3D11VideoDevice> video_device_;
-  base::win::ScopedComPtr<ID3D11VideoContext> video_context_;
-  base::win::ScopedComPtr<ID3D11VideoProcessorEnumerator> enumerator_;
-  base::win::ScopedComPtr<ID3D11VideoProcessor> d3d11_processor_;
+  Microsoft::WRL::ComPtr<ID3D11VideoDevice> video_device_;
+  Microsoft::WRL::ComPtr<ID3D11VideoContext> video_context_;
+  Microsoft::WRL::ComPtr<ID3D11VideoProcessorEnumerator> enumerator_;
+  Microsoft::WRL::ComPtr<ID3D11VideoProcessor> d3d11_processor_;
 
   int processor_width_ = 0;
   int processor_height_ = 0;
 
-  base::win::ScopedComPtr<IDirectXVideoProcessorService>
+  Microsoft::WRL::ComPtr<IDirectXVideoProcessorService>
       video_processor_service_;
-  base::win::ScopedComPtr<IDirectXVideoProcessor> processor_;
+  Microsoft::WRL::ComPtr<IDirectXVideoProcessor> processor_;
   DXVA2_ProcAmpValues default_procamp_values_;
 
   // Ideally the reset token would be a stack variable which is used while
@@ -429,7 +433,7 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   // Contains information about a decoded sample.
   struct PendingSampleInfo {
     PendingSampleInfo(int32_t buffer_id,
-                      base::win::ScopedComPtr<IMFSample> sample,
+                      Microsoft::WRL::ComPtr<IMFSample> sample,
                       const gfx::ColorSpace& color_space);
     PendingSampleInfo(const PendingSampleInfo& other);
     ~PendingSampleInfo();
@@ -443,7 +447,7 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
     // The color space of this picture.
     gfx::ColorSpace color_space;
 
-    base::win::ScopedComPtr<IMFSample> output_sample;
+    Microsoft::WRL::ComPtr<IMFSample> output_sample;
   };
 
   typedef std::list<PendingSampleInfo> PendingOutputSamples;
@@ -515,10 +519,15 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   // Use CODECAPI_AVLowLatencyMode.
   bool enable_low_latency_;
 
-  bool share_nv12_textures_;
+  // Supports sharing the decoded NV12 textures with ANGLE
+  bool support_share_nv12_textures_;
 
-  // Copy NV12 texture to another NV12 texture.
-  bool copy_nv12_textures_;
+  // Supports copying the NV12 texture to another NV12 texture to use in
+  // ANGLE.
+  bool support_copy_nv12_textures_;
+
+  // Supports copying NV12 textures on the main thread to use in ANGLE.
+  bool support_delayed_copy_nv12_textures_;
 
   // Copy video to FP16 scRGB textures.
   bool use_fp16_ = false;
@@ -552,7 +561,7 @@ class MEDIA_GPU_EXPORT DXVAVideoDecodeAccelerator
   // when these changes occur then, the decoder works fine. The
   // H264ConfigChangeDetector class provides functionality to check if the
   // stream configuration changed.
-  std::unique_ptr<H264ConfigChangeDetector> config_change_detector_;
+  std::unique_ptr<ConfigChangeDetector> config_change_detector_;
 
   // Contains the initialization parameters for the video.
   Config config_;

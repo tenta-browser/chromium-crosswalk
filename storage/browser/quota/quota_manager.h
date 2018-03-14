@@ -7,7 +7,6 @@
 
 #include <stdint.h>
 
-#include <deque>
 #include <list>
 #include <map>
 #include <memory>
@@ -18,6 +17,7 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/containers/flat_map.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -113,6 +113,12 @@ class STORAGE_EXPORT QuotaManager
   typedef base::Callback<
       void(QuotaStatusCode, int64_t /* usage */, int64_t /* quota */)>
       UsageAndQuotaCallback;
+  typedef base::Callback<void(
+      QuotaStatusCode,
+      int64_t /* usage */,
+      int64_t /* quota */,
+      base::flat_map<QuotaClient::ID, int64_t> /* usage breakdown */)>
+      UsageAndQuotaWithBreakdownCallback;
 
   static const int64_t kNoLimit;
 
@@ -120,7 +126,6 @@ class STORAGE_EXPORT QuotaManager
       bool is_incognito,
       const base::FilePath& profile_path,
       const scoped_refptr<base::SingleThreadTaskRunner>& io_thread,
-      const scoped_refptr<base::SequencedTaskRunner>& db_thread,
       const scoped_refptr<SpecialStoragePolicy>& special_storage_policy,
       const GetQuotaSettingsFunc& get_settings_function);
 
@@ -139,6 +144,13 @@ class STORAGE_EXPORT QuotaManager
       const GURL& origin,
       StorageType type,
       const UsageAndQuotaCallback& callback);
+
+  // Called by DevTools.
+  // This method is declared as virtual to allow test code to override it.
+  virtual void GetUsageAndQuotaWithBreakdown(
+      const GURL& origin,
+      StorageType type,
+      const UsageAndQuotaWithBreakdownCallback& callback);
 
   // Called by StorageClients.
   // This method is declared as virtual to allow test code to override it.
@@ -207,6 +219,9 @@ class STORAGE_EXPORT QuotaManager
   void GetHostUsage(const std::string& host, StorageType type,
                     QuotaClient::ID client_id,
                     const UsageCallback& callback);
+  void GetHostUsageWithBreakdown(const std::string& host,
+                                 StorageType type,
+                                 const UsageWithBreakdownCallback& callback);
 
   bool IsTrackingHostUsage(StorageType type, QuotaClient::ID client_id) const;
 
@@ -224,8 +239,6 @@ class STORAGE_EXPORT QuotaManager
   void AddStorageObserver(StorageObserver* observer,
                           const StorageObserver::MonitorParams& params);
   void RemoveStorageObserver(StorageObserver* observer);
-  void RemoveStorageObserverForFilter(StorageObserver* observer,
-                                      const StorageObserver::Filter& filter);
 
   static const int64_t kPerHostPersistentQuotaLimit;
   static const char kDatabaseName[];
@@ -401,7 +414,7 @@ class STORAGE_EXPORT QuotaManager
   void DeleteOnCorrectThread() const;
 
   void PostTaskAndReplyWithResultForDBThread(
-      const tracked_objects::Location& from_here,
+      const base::Location& from_here,
       base::Callback<bool(QuotaDatabase*)> task,
       base::Callback<void(bool)> reply);
 
@@ -417,7 +430,7 @@ class STORAGE_EXPORT QuotaManager
   bool db_disabled_;
   bool eviction_disabled_;
   scoped_refptr<base::SingleThreadTaskRunner> io_thread_;
-  scoped_refptr<base::SequencedTaskRunner> db_thread_;
+  scoped_refptr<base::SequencedTaskRunner> db_runner_;
   mutable std::unique_ptr<QuotaDatabase> database_;
   bool is_database_bootstrapped_ = false;
 

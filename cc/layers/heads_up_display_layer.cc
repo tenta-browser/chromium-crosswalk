@@ -14,14 +14,13 @@
 namespace cc {
 
 scoped_refptr<HeadsUpDisplayLayer> HeadsUpDisplayLayer::Create() {
-  return make_scoped_refptr(new HeadsUpDisplayLayer());
+  return base::WrapRefCounted(new HeadsUpDisplayLayer());
 }
 
 HeadsUpDisplayLayer::HeadsUpDisplayLayer()
     : typeface_(SkTypeface::MakeFromName("times new roman", SkFontStyle())) {
   if (!typeface_) {
-    typeface_ = SkTypeface::MakeFromName(
-        "monospace", SkFontStyle::FromOldStyle(SkTypeface::kBold));
+    typeface_ = SkTypeface::MakeFromName("monospace", SkFontStyle::Bold());
   }
   DCHECK(typeface_.get());
   SetIsDrawable(true);

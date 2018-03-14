@@ -367,7 +367,7 @@ class SharedIsolateFactory {
 
   // Lazily creates a v8::Isolate, or returns the already created instance.
   v8::Isolate* GetSharedIsolate() {
-    base::AutoLock l(lock_);
+    base::AutoLock lock(lock_);
 
     if (!holder_) {
       // Do one-time initialization for V8.
@@ -400,7 +400,7 @@ class SharedIsolateFactory {
   }
 
   v8::Isolate* GetSharedIsolateWithoutCreating() {
-    base::AutoLock l(lock_);
+    base::AutoLock lock(lock_);
     return holder_ ? holder_->isolate() : NULL;
   }
 
@@ -653,8 +653,12 @@ class ProxyResolverV8::Context {
     // Compile the script.
     v8::ScriptOrigin origin =
         v8::ScriptOrigin(ASCIILiteralToV8String(isolate_, script_name));
+    v8::ScriptCompiler::Source script_source(script, origin);
     v8::Local<v8::Script> code;
-    if (!v8::Script::Compile(context, script, &origin).ToLocal(&code)) {
+    if (!v8::ScriptCompiler::Compile(
+             context, &script_source, v8::ScriptCompiler::kNoCompileOptions,
+             v8::ScriptCompiler::NoCacheReason::kNoCacheBecausePacScript)
+             .ToLocal(&code)) {
       DCHECK(try_catch.HasCaught());
       HandleError(try_catch.Message());
       return ERR_PAC_SCRIPT_FAILED;

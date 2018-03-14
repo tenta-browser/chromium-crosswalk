@@ -87,11 +87,17 @@ class URL_EXPORT Origin {
   // 2. 'filesystem' URLs behave as 'blob' URLs (that is, the origin is parsed
   //    out of everything in the URL which follows the scheme).
   // 3. 'file' URLs all parse as ("file", "", 0).
-  explicit Origin(const GURL& url);
+  static Origin Create(const GURL& url);
 
-  // Creates an Origin from a |scheme|, |host|, and |port|. All the parameters
-  // must be valid and canonicalized. Do not use this method to create unique
-  // origins. Use Origin() for that.
+  // Copyable and movable.
+  Origin(const Origin&);
+  Origin& operator=(const Origin&);
+  Origin(Origin&&);
+  Origin& operator=(Origin&&);
+
+  // Creates an Origin from a |scheme|, |host|, |port| and |suborigin|. All the
+  // parameters must be valid and canonicalized. Do not use this method to
+  // create unique origins. Use Origin() for that.
   //
   // This constructor should be used in order to pass 'Origin' objects back and
   // forth over IPC (as transitioning through GURL would risk potentially
@@ -100,7 +106,8 @@ class URL_EXPORT Origin {
   static Origin UnsafelyCreateOriginWithoutNormalization(
       base::StringPiece scheme,
       base::StringPiece host,
-      uint16_t port);
+      uint16_t port,
+      base::StringPiece suborigin);
 
   // Creates an origin without sanity checking that the host is canonicalized.
   // This should only be used when converting between already normalized types,
@@ -153,26 +160,22 @@ class URL_EXPORT Origin {
   // Note: The returned URL will not necessarily be serialized to the same value
   // as the Origin would. The GURL will have an added "/" path for Origins with
   // valid SchemeHostPorts and file Origins.
+  //
+  // Try not to use this method under normal circumstances, as it loses type
+  // information. Downstream consumers can mistake the returned GURL with a full
+  // URL (e.g. with a path component).
   GURL GetURL() const;
 
   // Same as GURL::DomainIs. If |this| origin is unique, then returns false.
-  bool DomainIs(base::StringPiece lower_ascii_domain) const;
+  bool DomainIs(base::StringPiece canonical_domain) const;
 
   // Allows Origin to be used as a key in STL (for example, a std::set or
   // std::map).
   bool operator<(const Origin& other) const;
 
  private:
-  Origin(base::StringPiece scheme,
-         base::StringPiece host,
-         uint16_t port,
-         base::StringPiece suborigin,
-         SchemeHostPort::ConstructPolicy policy);
-  Origin(std::string scheme,
-         std::string host,
-         uint16_t port,
-         std::string suborigin,
-         SchemeHostPort::ConstructPolicy policy);
+  // |tuple| must be valid, implying that the created Origin is never unique.
+  Origin(SchemeHostPort tuple, std::string suborigin);
 
   SchemeHostPort tuple_;
   bool unique_;

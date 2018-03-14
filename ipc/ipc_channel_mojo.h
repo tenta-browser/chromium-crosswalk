@@ -28,6 +28,7 @@
 #include "ipc/ipc_mojo_bootstrap.h"
 #include "mojo/public/cpp/bindings/thread_safe_interface_ptr.h"
 #include "mojo/public/cpp/system/core.h"
+#include "mojo/public/interfaces/bindings/native_struct.mojom.h"
 
 namespace IPC {
 
@@ -40,29 +41,30 @@ namespace IPC {
 // TODO(morrita): Add APIs to create extra MessagePipes to let
 //                Mojo-based objects talk over this Channel.
 //
-class IPC_EXPORT ChannelMojo
-    : public Channel,
-      public Channel::AssociatedInterfaceSupport,
-      public NON_EXPORTED_BASE(internal::MessagePipeReader::Delegate) {
+class IPC_EXPORT ChannelMojo : public Channel,
+                               public Channel::AssociatedInterfaceSupport,
+                               public internal::MessagePipeReader::Delegate {
  public:
   // Creates a ChannelMojo.
-  static std::unique_ptr<ChannelMojo>
-  Create(mojo::ScopedMessagePipeHandle handle,
-         Mode mode,
-         Listener* listener,
-         const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner =
-            base::ThreadTaskRunnerHandle::Get());
+  static std::unique_ptr<ChannelMojo> Create(
+      mojo::ScopedMessagePipeHandle handle,
+      Mode mode,
+      Listener* listener,
+      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
+      const scoped_refptr<base::SingleThreadTaskRunner>& proxy_task_runner);
 
   // Create a factory object for ChannelMojo.
   // The factory is used to create Mojo-based ChannelProxy family.
   // |host| must not be null.
   static std::unique_ptr<ChannelFactory> CreateServerFactory(
       mojo::ScopedMessagePipeHandle handle,
-      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner);
+      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
+      const scoped_refptr<base::SingleThreadTaskRunner>& proxy_task_runner);
 
   static std::unique_ptr<ChannelFactory> CreateClientFactory(
       mojo::ScopedMessagePipeHandle handle,
-      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner);
+      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
+      const scoped_refptr<base::SingleThreadTaskRunner>& proxy_task_runner);
 
   ~ChannelMojo() override;
 
@@ -78,11 +80,11 @@ class IPC_EXPORT ChannelMojo
   // These access protected API of IPC::Message, which has ChannelMojo
   // as a friend class.
   static MojoResult WriteToMessageAttachmentSet(
-      base::Optional<std::vector<mojom::SerializedHandlePtr>> handle_buffer,
+      base::Optional<std::vector<mojo::native::SerializedHandlePtr>> handles,
       Message* message);
   static MojoResult ReadFromMessageAttachmentSet(
       Message* message,
-      base::Optional<std::vector<mojom::SerializedHandlePtr>>* handles);
+      base::Optional<std::vector<mojo::native::SerializedHandlePtr>>* handles);
 
   // MessagePipeReader::Delegate
   void OnPeerPidReceived(int32_t peer_pid) override;
@@ -97,7 +99,8 @@ class IPC_EXPORT ChannelMojo
       mojo::ScopedMessagePipeHandle handle,
       Mode mode,
       Listener* listener,
-      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner);
+      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
+      const scoped_refptr<base::SingleThreadTaskRunner>& proxy_task_runner);
 
   void ForwardMessageFromThreadSafePtr(mojo::Message message);
   void ForwardMessageWithResponderFromThreadSafePtr(
@@ -113,6 +116,8 @@ class IPC_EXPORT ChannelMojo
   void GetGenericRemoteAssociatedInterface(
       const std::string& name,
       mojo::ScopedInterfaceEndpointHandle handle) override;
+
+  base::WeakPtr<ChannelMojo> weak_ptr_;
 
   // A TaskRunner which runs tasks on the ChannelMojo's owning thread.
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;

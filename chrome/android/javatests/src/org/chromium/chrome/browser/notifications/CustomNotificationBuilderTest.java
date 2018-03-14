@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.notifications;
 
+import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Notification;
 import android.app.PendingIntent;
@@ -31,9 +32,11 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.test.BaseJUnit4ClassRunner;
+import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.notifications.channels.ChannelDefinitions;
 import org.chromium.content.browser.test.NativeLibraryTestRule;
 
 import java.util.ArrayList;
@@ -55,8 +58,10 @@ public class CustomNotificationBuilderTest {
     @Test
     @SmallTest
     @Feature({"Browser", "Notifications"})
+    @SuppressLint("NewApi")
+    @DisableIf.Build(sdk_is_greater_than = 23, message = "crbug.com/779228")
     public void testSetAll() {
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Context context = InstrumentationRegistry.getTargetContext();
 
         PendingIntent contentIntent = createIntent(context, "Content");
         PendingIntent deleteIntent = createIntent(context, "Delete");
@@ -72,24 +77,25 @@ public class CustomNotificationBuilderTest {
                 new int[] {Color.WHITE}, 1 /* width */, 1 /* height */, Bitmap.Config.ARGB_8888);
         actionIcon = actionIcon.copy(Bitmap.Config.ARGB_8888, true /* isMutable */);
 
-        Notification notification = new CustomNotificationBuilder(context)
-                                            .setSmallIcon(R.drawable.ic_chrome)
-                                            .setLargeIcon(largeIcon)
-                                            .setTitle("title")
-                                            .setBody("body")
-                                            .setOrigin("origin")
-                                            .setTicker("ticker")
-                                            .setDefaults(Notification.DEFAULT_ALL)
-                                            .setVibrate(new long[] {100L})
-                                            .setContentIntent(contentIntent)
-                                            .setDeleteIntent(deleteIntent)
-                                            .addButtonAction(actionIcon, "button",
-                                                    createIntent(context, "ActionButtonOne"))
-                                            .addButtonAction(actionIcon, "button",
-                                                    createIntent(context, "ActionButtonTwo"))
-                                            .addSettingsAction(0 /* iconId */, "settings",
-                                                    createIntent(context, "SettingsButton"))
-                                            .build();
+        Notification notification =
+                new CustomNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES)
+                        .setSmallIcon(R.drawable.ic_chrome)
+                        .setLargeIcon(largeIcon)
+                        .setTitle("title")
+                        .setBody("body")
+                        .setOrigin("origin")
+                        .setTicker("ticker")
+                        .setDefaults(Notification.DEFAULT_ALL)
+                        .setVibrate(new long[] {100L})
+                        .setContentIntent(contentIntent)
+                        .setDeleteIntent(deleteIntent)
+                        .addButtonAction(
+                                actionIcon, "button", createIntent(context, "ActionButtonOne"))
+                        .addButtonAction(
+                                actionIcon, "button", createIntent(context, "ActionButtonTwo"))
+                        .addSettingsAction(
+                                0 /* iconId */, "settings", createIntent(context, "SettingsButton"))
+                        .build();
 
         assertSmallNotificationIconAsExpected(context, notification, smallIcon);
         assertLargeNotificationIconAsExpected(context, notification, largeIcon);
@@ -140,9 +146,11 @@ public class CustomNotificationBuilderTest {
     @Test
     @SmallTest
     @Feature({"Browser", "Notifications"})
+    @DisableIf.Build(sdk_is_greater_than = 23, message = "crbug.com/779228")
     public void testZeroActionButtons() {
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        Notification notification = new CustomNotificationBuilder(context).build();
+        Context context = InstrumentationRegistry.getTargetContext();
+        Notification notification =
+                new CustomNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES).build();
         View bigView = notification.bigContentView.apply(context, new LinearLayout(context));
         ArrayList<View> buttons = new ArrayList<>();
         bigView.findViewsWithText(buttons, "button", View.FIND_VIEWS_WITH_TEXT);
@@ -156,13 +164,15 @@ public class CustomNotificationBuilderTest {
     @Test
     @SmallTest
     @Feature({"Browser", "Notifications"})
+    @DisableIf.Build(sdk_is_greater_than = 23, message = "crbug.com/779228")
     public void testMaxActionButtons() {
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        NotificationBuilderBase builder = new CustomNotificationBuilder(context)
-                                                  .addButtonAction(null /* iconBitmap */, "button",
-                                                          createIntent(context, "ActionButtonOne"))
-                                                  .addButtonAction(null /* iconBitmap */, "button",
-                                                          createIntent(context, "ActionButtonTwo"));
+        Context context = InstrumentationRegistry.getTargetContext();
+        NotificationBuilderBase builder =
+                new CustomNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES)
+                        .addButtonAction(null /* iconBitmap */, "button",
+                                createIntent(context, "ActionButtonOne"))
+                        .addButtonAction(null /* iconBitmap */, "button",
+                                createIntent(context, "ActionButtonTwo"));
         try {
             builder.addButtonAction(
                     null /* iconBitmap */, "button", createIntent(context, "ActionButtonThree"));
@@ -182,8 +192,9 @@ public class CustomNotificationBuilderTest {
     @Test
     @SmallTest
     @Feature({"Browser", "Notifications"})
+    @DisableIf.Build(sdk_is_greater_than = 23, message = "crbug.com/779228")
     public void testPaintIcons() {
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Context context = InstrumentationRegistry.getTargetContext();
 
         Bitmap largeIcon = Bitmap.createBitmap(
                 new int[] {Color.RED}, 1 /* width */, 1 /* height */, Bitmap.Config.ARGB_8888);
@@ -197,12 +208,13 @@ public class CustomNotificationBuilderTest {
                 new int[] {Color.RED}, 1 /* width */, 1 /* height */, Bitmap.Config.ARGB_8888);
         actionIcon = actionIcon.copy(Bitmap.Config.ARGB_8888, true /* isMutable */);
 
-        Notification notification = new CustomNotificationBuilder(context)
-                                            .setLargeIcon(largeIcon)
-                                            .setSmallIcon(smallIcon)
-                                            .addButtonAction(actionIcon, "button",
-                                                    createIntent(context, "ActionButton"))
-                                            .build();
+        Notification notification =
+                new CustomNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES)
+                        .setLargeIcon(largeIcon)
+                        .setSmallIcon(smallIcon)
+                        .addButtonAction(
+                                actionIcon, "button", createIntent(context, "ActionButton"))
+                        .build();
 
         // The large icon should be unchanged.
         assertLargeNotificationIconAsExpected(context, notification, largeIcon);
@@ -223,11 +235,12 @@ public class CustomNotificationBuilderTest {
     @Test
     @SmallTest
     @Feature({"Browser", "Notifications"})
+    @DisableIf.Build(sdk_is_greater_than = 23, message = "crbug.com/779228")
     public void testCharSequenceLimits() {
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Context context = InstrumentationRegistry.getTargetContext();
         int maxLength = CustomNotificationBuilder.MAX_CHARSEQUENCE_LENGTH;
         Notification notification =
-                new CustomNotificationBuilder(context)
+                new CustomNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES)
                         .setTitle(createString('a', maxLength + 1))
                         .setBody(createString('b', maxLength + 1))
                         .setOrigin(createString('c', maxLength + 1))
@@ -253,6 +266,7 @@ public class CustomNotificationBuilderTest {
     @Test
     @SmallTest
     @Feature({"Browser", "Notifications"})
+    @DisableIf.Build(sdk_is_greater_than = 23, message = "crbug.com/779228")
     public void testCalculateMaxBodyLines() {
         Assert.assertEquals(7, CustomNotificationBuilder.calculateMaxBodyLines(-1000.0f));
         Assert.assertEquals(7, CustomNotificationBuilder.calculateMaxBodyLines(0.5f));
@@ -264,6 +278,7 @@ public class CustomNotificationBuilderTest {
     @Test
     @SmallTest
     @Feature({"Browser", "Notifications"})
+    @DisableIf.Build(sdk_is_greater_than = 23, message = "crbug.com/779228")
     public void testCalculateScaledPadding() {
         DisplayMetrics metrics = new DisplayMetrics();
         metrics.density = 10.0f;
@@ -280,10 +295,12 @@ public class CustomNotificationBuilderTest {
     @Test
     @SmallTest
     @Feature({"Browser", "Notifications"})
+    @DisableIf.Build(sdk_is_greater_than = 23, message = "crbug.com/779228")
     public void testGeneratesLargeIconFromOriginWhenNoLargeIconProvided() {
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Context context = InstrumentationRegistry.getTargetContext();
         NotificationBuilderBase notificationBuilder =
-                new CustomNotificationBuilder(context).setOrigin("https://www.google.com");
+                new CustomNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES)
+                        .setOrigin("https://www.google.com");
 
         Notification notification = notificationBuilder.build();
 
@@ -296,11 +313,13 @@ public class CustomNotificationBuilderTest {
     @Test
     @SmallTest
     @Feature({"Browser", "Notifications"})
+    @DisableIf.Build(sdk_is_greater_than = 23, message = "crbug.com/779228")
     public void testGeneratesLargeIconFromOriginWhenLargeIconProvidedIsNull() {
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        NotificationBuilderBase notificationBuilder = new CustomNotificationBuilder(context)
-                                                              .setOrigin("https://www.chromium.org")
-                                                              .setLargeIcon(null);
+        Context context = InstrumentationRegistry.getTargetContext();
+        NotificationBuilderBase notificationBuilder =
+                new CustomNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES)
+                        .setOrigin("https://www.chromium.org")
+                        .setLargeIcon(null);
 
         Notification notification = notificationBuilder.build();
 
@@ -321,10 +340,12 @@ public class CustomNotificationBuilderTest {
     @TargetApi(Build.VERSION_CODES.KITKAT_WATCH) // RemoteInputs were only added in KITKAT_WATCH.
     @SmallTest
     @Feature({"Browser", "Notifications"})
+    @DisableIf.Build(sdk_is_greater_than = 23, message = "crbug.com/779228")
     public void testAddTextActionSetsRemoteInput() {
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        NotificationBuilderBase notificationBuilder = new CustomNotificationBuilder(
-                context).addTextAction(null, "Action Title", null, "Placeholder");
+        Context context = InstrumentationRegistry.getTargetContext();
+        NotificationBuilderBase notificationBuilder =
+                new CustomNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES)
+                        .addTextAction(null, "Action Title", null, "Placeholder");
 
         Notification notification = notificationBuilder.build();
 

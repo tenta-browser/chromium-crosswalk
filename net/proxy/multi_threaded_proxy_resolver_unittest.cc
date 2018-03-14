@@ -7,7 +7,6 @@
 #include <utility>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
@@ -152,19 +151,19 @@ class BlockableProxyResolverFactory : public ProxyResolverFactory {
       std::unique_ptr<Request>* request) override {
     BlockableProxyResolver* resolver = new BlockableProxyResolver;
     result->reset(resolver);
-    base::AutoLock l(lock_);
+    base::AutoLock lock(lock_);
     resolvers_.push_back(resolver);
     script_data_.push_back(script_data);
     return OK;
   }
 
   std::vector<BlockableProxyResolver*> resolvers() {
-    base::AutoLock l(lock_);
+    base::AutoLock lock(lock_);
     return resolvers_;
   }
 
   const std::vector<scoped_refptr<ProxyResolverScriptData>> script_data() {
-    base::AutoLock l(lock_);
+    base::AutoLock lock(lock_);
     return script_data_;
   }
 
@@ -697,7 +696,7 @@ class FailingProxyResolverFactory : public ProxyResolverFactory {
 TEST_F(MultiThreadedProxyResolverTest, ProxyResolverFactoryError) {
   const size_t kNumThreads = 1u;
   SingleShotMultiThreadedProxyResolverFactory resolver_factory(
-      kNumThreads, base::WrapUnique(new FailingProxyResolverFactory));
+      kNumThreads, std::make_unique<FailingProxyResolverFactory>());
   TestCompletionCallback ready_callback;
   std::unique_ptr<ProxyResolverFactory::Request> request;
   std::unique_ptr<ProxyResolver> resolver;
@@ -719,7 +718,7 @@ TEST_F(MultiThreadedProxyResolverTest, CancelCreate) {
   const size_t kNumThreads = 1u;
   {
     SingleShotMultiThreadedProxyResolverFactory resolver_factory(
-        kNumThreads, base::WrapUnique(new BlockableProxyResolverFactory));
+        kNumThreads, std::make_unique<BlockableProxyResolverFactory>());
     std::unique_ptr<ProxyResolverFactory::Request> request;
     std::unique_ptr<ProxyResolver> resolver;
     EXPECT_EQ(ERR_IO_PENDING,
@@ -746,7 +745,7 @@ void DeleteRequest(const CompletionCallback& callback,
 TEST_F(MultiThreadedProxyResolverTest, DeleteRequestInFactoryCallback) {
   const size_t kNumThreads = 1u;
   SingleShotMultiThreadedProxyResolverFactory resolver_factory(
-      kNumThreads, base::WrapUnique(new BlockableProxyResolverFactory));
+      kNumThreads, std::make_unique<BlockableProxyResolverFactory>());
   std::unique_ptr<ProxyResolverFactory::Request> request;
   std::unique_ptr<ProxyResolver> resolver;
   TestCompletionCallback callback;
@@ -767,7 +766,7 @@ TEST_F(MultiThreadedProxyResolverTest, DestroyFactoryWithRequestsInProgress) {
   std::unique_ptr<ProxyResolver> resolver;
   {
     SingleShotMultiThreadedProxyResolverFactory resolver_factory(
-        kNumThreads, base::WrapUnique(new BlockableProxyResolverFactory));
+        kNumThreads, std::make_unique<BlockableProxyResolverFactory>());
     EXPECT_EQ(ERR_IO_PENDING,
               resolver_factory.CreateProxyResolver(
                   ProxyResolverScriptData::FromUTF8("pac script bytes"),

@@ -29,12 +29,13 @@
 #include "net/quic/core/crypto/quic_encrypter.h"
 #include "net/quic/core/crypto/quic_random.h"
 #include "net/quic/core/proto/source_address_token.pb.h"
-#include "net/quic/core/quic_flags.h"
 #include "net/quic/core/quic_packets.h"
 #include "net/quic/core/quic_socket_address_coder.h"
 #include "net/quic/core/quic_utils.h"
 #include "net/quic/platform/api/quic_bug_tracker.h"
 #include "net/quic/platform/api/quic_clock.h"
+#include "net/quic/platform/api/quic_endian.h"
+#include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_hostname_utils.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_reference_counted.h"
@@ -282,7 +283,7 @@ QuicCryptoServerConfig::GenerateConfig(QuicRandom* rand,
 
   std::unique_ptr<QuicServerConfigProtobuf> config(
       new QuicServerConfigProtobuf);
-  config->set_config(serialized->AsStringPiece());
+  config->set_config(std::string(serialized->AsStringPiece()));
   QuicServerConfigProtobuf::PrivateKey* curve25519_key = config->add_key();
   curve25519_key->set_tag(kC255);
   curve25519_key->set_private_key(curve25519_private_key);
@@ -430,7 +431,7 @@ void QuicCryptoServerConfig::ValidateClientHello(
     const CryptoHandshakeMessage& client_hello,
     const QuicIpAddress& client_ip,
     const QuicSocketAddress& server_address,
-    QuicVersion version,
+    QuicTransportVersion version,
     const QuicClock* clock,
     QuicReferenceCountedPointer<QuicSignedServerConfig> signed_config,
     std::unique_ptr<ValidateClientHelloResultCallback> done_cb) const {
@@ -527,8 +528,8 @@ class QuicCryptoServerConfig::ProcessClientHelloCallback
       bool reject_only,
       QuicConnectionId connection_id,
       const QuicSocketAddress& client_address,
-      QuicVersion version,
-      const QuicVersionVector& supported_versions,
+      QuicTransportVersion version,
+      const QuicTransportVersionVector& supported_versions,
       bool use_stateless_rejects,
       QuicConnectionId server_designated_connection_id,
       const QuicClock* clock,
@@ -587,8 +588,8 @@ class QuicCryptoServerConfig::ProcessClientHelloCallback
   const bool reject_only_;
   const QuicConnectionId connection_id_;
   const QuicSocketAddress client_address_;
-  const QuicVersion version_;
-  const QuicVersionVector supported_versions_;
+  const QuicTransportVersion version_;
+  const QuicTransportVersionVector supported_versions_;
   const bool use_stateless_rejects_;
   const QuicConnectionId server_designated_connection_id_;
   const QuicClock* const clock_;
@@ -612,8 +613,8 @@ void QuicCryptoServerConfig::ProcessClientHello(
     QuicConnectionId connection_id,
     const QuicSocketAddress& server_address,
     const QuicSocketAddress& client_address,
-    QuicVersion version,
-    const QuicVersionVector& supported_versions,
+    QuicTransportVersion version,
+    const QuicTransportVersionVector& supported_versions,
     bool use_stateless_rejects,
     QuicConnectionId server_designated_connection_id,
     const QuicClock* clock,
@@ -693,12 +694,6 @@ void QuicCryptoServerConfig::ProcessClientHello(
 
   // No need to get a new proof if one was already generated.
   if (!signed_config->chain) {
-    const QuicTag* tag_ptr;
-    size_t num_tags;
-    QuicTagVector connection_options;
-    if (client_hello.GetTaglist(kCOPT, &tag_ptr, &num_tags) == QUIC_NO_ERROR) {
-      connection_options.assign(tag_ptr, tag_ptr + num_tags);
-    }
     std::unique_ptr<ProcessClientHelloCallback> cb(
         new ProcessClientHelloCallback(
             this, validate_chlo_result, reject_only, connection_id,
@@ -709,7 +704,7 @@ void QuicCryptoServerConfig::ProcessClientHello(
             primary_config, std::move(done_cb)));
     proof_source_->GetProof(server_address, info.sni.as_string(),
                             primary_config->serialized, version, chlo_hash,
-                            connection_options, std::move(cb));
+                            std::move(cb));
     helper.DetachCallback();
     return;
   }
@@ -731,8 +726,8 @@ void QuicCryptoServerConfig::ProcessClientHelloAfterGetProof(
     bool reject_only,
     QuicConnectionId connection_id,
     const QuicSocketAddress& client_address,
-    QuicVersion version,
-    const QuicVersionVector& supported_versions,
+    QuicTransportVersion version,
+    const QuicTransportVersionVector& supported_versions,
     bool use_stateless_rejects,
     QuicConnectionId server_designated_connection_id,
     const QuicClock* clock,
@@ -745,6 +740,8 @@ void QuicCryptoServerConfig::ProcessClientHelloAfterGetProof(
     const QuicReferenceCountedPointer<Config>& requested_config,
     const QuicReferenceCountedPointer<Config>& primary_config,
     std::unique_ptr<ProcessClientHelloResultCallback> done_cb) const {
+  connection_id = QuicEndian::HostToNet64(connection_id);
+
   ProcessClientHelloHelper helper(&done_cb);
 
   if (found_error) {
@@ -785,39 +782,33 @@ void QuicCryptoServerConfig::ProcessClientHelloAfterGetProof(
     return;
   }
 
-  const QuicTag* their_aeads;
-  const QuicTag* their_key_exchanges;
-  size_t num_their_aeads, num_their_key_exchanges;
-  if (client_hello.GetTaglist(kAEAD, &their_aeads, &num_their_aeads) !=
-          QUIC_NO_ERROR ||
-      client_hello.GetTaglist(kKEXS, &their_key_exchanges,
-                              &num_their_key_exchanges) != QUIC_NO_ERROR ||
-      num_their_aeads != 1 || num_their_key_exchanges != 1) {
+  QuicTagVector their_aeads;
+  QuicTagVector their_key_exchanges;
+  if (client_hello.GetTaglist(kAEAD, &their_aeads) != QUIC_NO_ERROR ||
+      client_hello.GetTaglist(kKEXS, &their_key_exchanges) != QUIC_NO_ERROR ||
+      their_aeads.size() != 1 || their_key_exchanges.size() != 1) {
     helper.Fail(QUIC_INVALID_CRYPTO_MESSAGE_PARAMETER,
                 "Missing or invalid AEAD or KEXS");
     return;
   }
 
   size_t key_exchange_index;
-  if (!FindMutualQuicTag(requested_config->aead, their_aeads, num_their_aeads,
-                         &params->aead, nullptr) ||
+  if (!FindMutualQuicTag(requested_config->aead, their_aeads, &params->aead,
+                         nullptr) ||
       !FindMutualQuicTag(requested_config->kexs, their_key_exchanges,
-                         num_their_key_exchanges, &params->key_exchange,
-                         &key_exchange_index)) {
+                         &params->key_exchange, &key_exchange_index)) {
     helper.Fail(QUIC_CRYPTO_NO_SUPPORT, "Unsupported AEAD or KEXS");
     return;
   }
 
   if (!requested_config->tb_key_params.empty()) {
-    const QuicTag* their_tbkps;
-    size_t num_their_tbkps;
-    switch (client_hello.GetTaglist(kTBKP, &their_tbkps, &num_their_tbkps)) {
+    QuicTagVector their_tbkps;
+    switch (client_hello.GetTaglist(kTBKP, &their_tbkps)) {
       case QUIC_CRYPTO_MESSAGE_PARAMETER_NOT_FOUND:
         break;
       case QUIC_NO_ERROR:
         if (FindMutualQuicTag(requested_config->tb_key_params, their_tbkps,
-                              num_their_tbkps, &params->token_binding_key_param,
-                              nullptr)) {
+                              &params->token_binding_key_param, nullptr)) {
           break;
         }
       default:
@@ -988,12 +979,7 @@ void QuicCryptoServerConfig::ProcessClientHelloAfterGetProof(
   }
 
   out->set_tag(kSHLO);
-  QuicTagVector supported_version_tags;
-  for (size_t i = 0; i < supported_versions.size(); ++i) {
-    supported_version_tags.push_back(
-        QuicVersionToQuicTag(supported_versions[i]));
-  }
-  out->SetVector(kVER, supported_version_tags);
+  out->SetVersionVector(kVER, supported_versions);
   out->SetStringPiece(
       kSourceAddressTokenTag,
       NewSourceAddressToken(*requested_config, info.source_address_tokens,
@@ -1132,7 +1118,7 @@ class QuicCryptoServerConfig::EvaluateClientHelloCallback
       const QuicCryptoServerConfig& config,
       bool found_error,
       const QuicIpAddress& server_ip,
-      QuicVersion version,
+      QuicTransportVersion version,
       QuicReferenceCountedPointer<QuicCryptoServerConfig::Config>
           requested_config,
       QuicReferenceCountedPointer<QuicCryptoServerConfig::Config>
@@ -1169,7 +1155,7 @@ class QuicCryptoServerConfig::EvaluateClientHelloCallback
   const QuicCryptoServerConfig& config_;
   const bool found_error_;
   const QuicIpAddress& server_ip_;
-  const QuicVersion version_;
+  const QuicTransportVersion version_;
   const QuicReferenceCountedPointer<QuicCryptoServerConfig::Config>
       requested_config_;
   const QuicReferenceCountedPointer<QuicCryptoServerConfig::Config>
@@ -1182,7 +1168,7 @@ class QuicCryptoServerConfig::EvaluateClientHelloCallback
 
 void QuicCryptoServerConfig::EvaluateClientHello(
     const QuicSocketAddress& server_address,
-    QuicVersion version,
+    QuicTransportVersion version,
     QuicReferenceCountedPointer<Config> requested_config,
     QuicReferenceCountedPointer<Config> primary_config,
     QuicReferenceCountedPointer<QuicSignedServerConfig> signed_config,
@@ -1261,12 +1247,6 @@ void QuicCryptoServerConfig::EvaluateClientHello(
                                     Perspective::IS_SERVER);
   bool need_proof = true;
   need_proof = !signed_config->chain;
-  const QuicTag* tag_ptr;
-  size_t num_tags;
-  QuicTagVector connection_options;
-  if (client_hello.GetTaglist(kCOPT, &tag_ptr, &num_tags) == QUIC_NO_ERROR) {
-    connection_options.assign(tag_ptr, tag_ptr + num_tags);
-  }
 
   if (need_proof) {
     // Make an async call to GetProof and setup the callback to trampoline
@@ -1278,7 +1258,7 @@ void QuicCryptoServerConfig::EvaluateClientHello(
             std::move(done_cb)));
     proof_source_->GetProof(server_address, info->sni.as_string(),
                             serialized_config, version, chlo_hash,
-                            connection_options, std::move(cb));
+                            std::move(cb));
     helper.DetachCallback();
     return;
   }
@@ -1295,7 +1275,7 @@ void QuicCryptoServerConfig::EvaluateClientHello(
 void QuicCryptoServerConfig::EvaluateClientHelloAfterGetProof(
     bool found_error,
     const QuicIpAddress& server_ip,
-    QuicVersion version,
+    QuicTransportVersion version,
     QuicReferenceCountedPointer<Config> requested_config,
     QuicReferenceCountedPointer<Config> primary_config,
     QuicReferenceCountedPointer<QuicSignedServerConfig> signed_config,
@@ -1341,7 +1321,7 @@ void QuicCryptoServerConfig::EvaluateClientHelloAfterGetProof(
 }
 
 void QuicCryptoServerConfig::BuildServerConfigUpdateMessage(
-    QuicVersion version,
+    QuicTransportVersion version,
     QuicStringPiece chlo_hash,
     const SourceAddressTokens& previous_source_address_tokens,
     const QuicSocketAddress& server_address,
@@ -1351,7 +1331,6 @@ void QuicCryptoServerConfig::BuildServerConfigUpdateMessage(
     QuicCompressedCertsCache* compressed_certs_cache,
     const QuicCryptoNegotiatedParameters& params,
     const CachedNetworkParameters* cached_network_params,
-    const QuicTagVector& connection_options,
     std::unique_ptr<BuildServerConfigUpdateMessageResultCallback> cb) const {
   string serialized;
   string source_address_token;
@@ -1382,8 +1361,7 @@ void QuicCryptoServerConfig::BuildServerConfigUpdateMessage(
   // tag (plus it would be a chore to plumb information about the tag down to
   // here).
   proof_source_->GetProof(server_address, params.sni, serialized, version,
-                          chlo_hash, connection_options,
-                          std::move(proof_source_cb));
+                          chlo_hash, std::move(proof_source_cb));
 }
 
 QuicCryptoServerConfig::BuildServerConfigUpdateMessageProofSourceCallback::
@@ -1392,7 +1370,7 @@ QuicCryptoServerConfig::BuildServerConfigUpdateMessageProofSourceCallback::
 QuicCryptoServerConfig::BuildServerConfigUpdateMessageProofSourceCallback::
     BuildServerConfigUpdateMessageProofSourceCallback(
         const QuicCryptoServerConfig* config,
-        QuicVersion version,
+        QuicTransportVersion version,
         QuicCompressedCertsCache* compressed_certs_cache,
         const CommonCertSets* common_cert_sets,
         const QuicCryptoNegotiatedParameters& params,
@@ -1422,7 +1400,7 @@ void QuicCryptoServerConfig::BuildServerConfigUpdateMessageProofSourceCallback::
 }
 
 void QuicCryptoServerConfig::FinishBuildServerConfigUpdateMessage(
-    QuicVersion version,
+    QuicTransportVersion version,
     QuicCompressedCertsCache* compressed_certs_cache,
     const CommonCertSets* common_cert_sets,
     const string& client_common_set_hashes,
@@ -1458,7 +1436,7 @@ void QuicCryptoServerConfig::FinishBuildServerConfigUpdateMessage(
 }
 
 void QuicCryptoServerConfig::BuildRejection(
-    QuicVersion version,
+    QuicTransportVersion version,
     QuicWallTime now,
     const Config& config,
     const CryptoHandshakeMessage& client_hello,
@@ -1479,7 +1457,8 @@ void QuicCryptoServerConfig::BuildRejection(
                   << "with server-designated connection ID "
                   << server_designated_connection_id;
     out->set_tag(kSREJ);
-    out->SetValue(kRCID, server_designated_connection_id);
+    out->SetValue(kRCID,
+                  QuicEndian::HostToNet64(server_designated_connection_id));
   } else {
     out->set_tag(kREJ);
   }
@@ -1614,31 +1593,24 @@ QuicCryptoServerConfig::ParseConfigProtobuf(
   }
   config->id = scid.as_string();
 
-  const QuicTag* aead_tags;
-  size_t aead_len;
-  if (msg->GetTaglist(kAEAD, &aead_tags, &aead_len) != QUIC_NO_ERROR) {
+  if (msg->GetTaglist(kAEAD, &config->aead) != QUIC_NO_ERROR) {
     QUIC_LOG(WARNING) << "Server config message is missing AEAD";
     return nullptr;
   }
-  config->aead = std::vector<QuicTag>(aead_tags, aead_tags + aead_len);
 
-  const QuicTag* kexs_tags;
-  size_t kexs_len;
-  if (msg->GetTaglist(kKEXS, &kexs_tags, &kexs_len) != QUIC_NO_ERROR) {
+  QuicTagVector kexs_tags;
+  if (msg->GetTaglist(kKEXS, &kexs_tags) != QUIC_NO_ERROR) {
     QUIC_LOG(WARNING) << "Server config message is missing KEXS";
     return nullptr;
   }
 
-  const QuicTag* tbkp_tags;
-  size_t tbkp_len;
   QuicErrorCode err;
-  if ((err = msg->GetTaglist(kTBKP, &tbkp_tags, &tbkp_len)) !=
+  if ((err = msg->GetTaglist(kTBKP, &config->tb_key_params)) !=
           QUIC_CRYPTO_MESSAGE_PARAMETER_NOT_FOUND &&
       err != QUIC_NO_ERROR) {
     QUIC_LOG(WARNING) << "Server config message is missing or has invalid TBKP";
     return nullptr;
   }
-  config->tb_key_params = std::vector<QuicTag>(tbkp_tags, tbkp_tags + tbkp_len);
 
   QuicStringPiece orbit;
   if (!msg->GetStringPiece(kORBT, &orbit)) {
@@ -1655,26 +1627,24 @@ QuicCryptoServerConfig::ParseConfigProtobuf(
   static_assert(sizeof(config->orbit) == kOrbitSize, "incorrect orbit size");
   memcpy(config->orbit, orbit.data(), sizeof(config->orbit));
 
-  if (kexs_len != protobuf->key_size()) {
-    QUIC_LOG(WARNING) << "Server config has " << kexs_len
+  if (kexs_tags.size() != protobuf->key_size()) {
+    QUIC_LOG(WARNING) << "Server config has " << kexs_tags.size()
                       << " key exchange methods configured, but "
                       << protobuf->key_size() << " private keys";
     return nullptr;
   }
 
-  const QuicTag* proof_demand_tags;
-  size_t num_proof_demand_tags;
-  if (msg->GetTaglist(kPDMD, &proof_demand_tags, &num_proof_demand_tags) ==
-      QUIC_NO_ERROR) {
-    for (size_t i = 0; i < num_proof_demand_tags; i++) {
-      if (proof_demand_tags[i] == kCHID) {
+  QuicTagVector proof_demand_tags;
+  if (msg->GetTaglist(kPDMD, &proof_demand_tags) == QUIC_NO_ERROR) {
+    for (QuicTag tag : proof_demand_tags) {
+      if (tag == kCHID) {
         config->channel_id_enabled = true;
         break;
       }
     }
   }
 
-  for (size_t i = 0; i < kexs_len; i++) {
+  for (size_t i = 0; i < kexs_tags.size(); i++) {
     const QuicTag tag = kexs_tags[i];
     string private_key;
 
@@ -1742,8 +1712,8 @@ QuicCryptoServerConfig::ParseConfigProtobuf(
 }
 
 void QuicCryptoServerConfig::SetEphemeralKeySource(
-    EphemeralKeySource* ephemeral_key_source) {
-  ephemeral_key_source_.reset(ephemeral_key_source);
+    std::unique_ptr<EphemeralKeySource> ephemeral_key_source) {
+  ephemeral_key_source_ = std::move(ephemeral_key_source);
 }
 
 void QuicCryptoServerConfig::set_replay_protection(bool on) {
@@ -1932,18 +1902,15 @@ bool QuicCryptoServerConfig::ValidateExpectedLeafCertificate(
 
 bool QuicCryptoServerConfig::ClientDemandsX509Proof(
     const CryptoHandshakeMessage& client_hello) const {
-  const QuicTag* their_proof_demands;
-  size_t num_their_proof_demands;
+  QuicTagVector their_proof_demands;
 
-  if (client_hello.GetTaglist(kPDMD, &their_proof_demands,
-                              &num_their_proof_demands) != QUIC_NO_ERROR) {
+  if (client_hello.GetTaglist(kPDMD, &their_proof_demands) != QUIC_NO_ERROR) {
     return false;
   }
 
-  for (size_t i = 0; i < num_their_proof_demands; i++) {
-    switch (their_proof_demands[i]) {
-      case kX509:
-        return true;
+  for (const QuicTag tag : their_proof_demands) {
+    if (tag == kX509) {
+      return true;
     }
   }
   return false;

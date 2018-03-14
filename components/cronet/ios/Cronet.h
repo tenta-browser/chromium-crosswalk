@@ -6,10 +6,6 @@
 
 #include "bidirectional_stream_c.h"
 
-// TODO(mef): Remove this header after transition to bidirectional_stream_c.h
-// See crbug.com/650462 for details.
-#include "cronet_c_for_grpc.h"
-
 // Type of HTTP cache; public interface to private implementation defined in
 // URLRequestContextConfig class.
 typedef NS_ENUM(NSInteger, CRNHttpCacheType) {
@@ -21,9 +17,32 @@ typedef NS_ENUM(NSInteger, CRNHttpCacheType) {
   CRNHttpCacheTypeMemory,
 };
 
+/// Cronet error domain name.
+FOUNDATION_EXPORT GRPC_SUPPORT_EXPORT NSString* const CRNCronetErrorDomain;
+
+/// Enum of Cronet NSError codes.
+NS_ENUM(NSInteger){
+    CRNErrorInvalidArgument = 1001, CRNErrorUnsupportedConfig = 1002,
+};
+
+/// The corresponding value is a String object that contains the name of
+/// an invalid argument inside the NSError userInfo dictionary.
+FOUNDATION_EXPORT GRPC_SUPPORT_EXPORT NSString* const CRNInvalidArgumentKey;
+
 // A block, that takes a request, and returns YES if the request should
 // be handled.
 typedef BOOL (^RequestFilterBlock)(NSURLRequest* request);
+
+// A delegate that a client can pass to Cronet to collect metrics for a
+// session task. The delegate can be added and removed by calling
+// [Cronet addMetricsDelegate:] and [Cronet removeMetricsDelegate:] methods
+// respectively.
+@protocol CronetMetricsDelegate <NSObject>
+// Is invoked by Cronet when the metrics for the task are ready.
+- (void)URLSession:(NSURLSession*)session task:(NSURLSessionTask*)task
+                    didFinishCollectingMetrics:(NSURLSessionTaskMetrics*)metrics
+    NS_AVAILABLE_IOS(10.0);
+@end
 
 // Interface for installing Cronet.
 // TODO(gcasto): Should this macro be separate from the one defined in
@@ -43,14 +62,24 @@ GRPC_SUPPORT_EXPORT
 // any effect before |start| is called.
 + (void)setQuicEnabled:(BOOL)quicEnabled;
 
+// Sets whether Brotli should be supported by CronetEngine. This method only has
+// any effect before |start| is called.
++ (void)setBrotliEnabled:(BOOL)brotliEnabled;
+
 // Set HTTP Cache type to be used by CronetEngine.  This method only has any
 // effect before |start| is called.  See HttpCacheType enum for available
 // options.
 + (void)setHttpCacheType:(CRNHttpCacheType)httpCacheType;
 
 // Adds hint that host supports QUIC on altPort. This method only has any effect
-// before |start| is called.
-+ (void)addQuicHint:(NSString*)host port:(int)port altPort:(int)altPort;
+// before |start| is called.  Returns NO if it fails to add hint (because the
+// host is invalid).
++ (BOOL)addQuicHint:(NSString*)host port:(int)port altPort:(int)altPort;
+
+// Set experimental Cronet options.  Argument is a JSON string; see
+// |URLRequestContextConfig| for more details.  This method only has
+// any effect before |start| is called.
++ (void)setExperimentalOptions:(NSString*)experimentalOptions;
 
 // Sets the User-Agent request header string to be sent with all requests.
 // If |partial| is set to YES, then actual user agent value is based on device
@@ -67,6 +96,45 @@ GRPC_SUPPORT_EXPORT
 // Sets SSLKEYLogFileName to export SSL key for Wireshark decryption of packet
 // captures. This method only has any effect before |start| is called.
 + (void)setSslKeyLogFileName:(NSString*)sslKeyLogFileName;
+
+/// Pins a set of public keys for a given host. This method only has any effect
+/// before |start| is called. By pinning a set of public keys, |pinHashes|,
+/// communication with |host| is required to authenticate with a certificate
+/// with a public key from the set of pinned ones.
+/// An app can pin the public key of the root certificate, any of the
+/// intermediate certificates or the end-entry certificate. Authentication will
+/// fail and secure communication will not be established if none of the public
+/// keys is present in the host's certificate chain, even if the host attempts
+/// to authenticate with a certificate allowed by the device's trusted store of
+/// certificates.
+///
+/// Calling this method multiple times with the same host name overrides the
+/// previously set pins for the host.
+///
+/// More information about the public key pinning can be found in
+/// [RFC 7469](https://tools.ietf.org/html/rfc7469).
+///
+/// @param host name of the host to which the public keys should be pinned.
+///             A host that consists only of digits and the dot character
+///             is treated as invalid.
+/// @param pinHashes a set of pins. Each pin is the SHA-256 cryptographic
+///                  hash of the DER-encoded ASN.1 representation of the
+///                  Subject Public Key Info (SPKI) of the host's X.509
+///                  certificate. Although, the method does not mandate the
+///                  presence of the backup pin that can be used if the control
+///                  of the primary private key has been lost, it is highly
+///                  recommended to supply one.
+/// @param includeSubdomains indicates whether the pinning policy should be
+///                          applied to subdomains of |host|.
+/// @param expirationDate specifies the expiration date for the pins.
+/// @param outError on return, if the pin cannot be added, a pointer to an
+///                 error object that encapsulates the reason for the error.
+/// @return returns |YES| if the pins were added successfully; |NO|, otherwise.
++ (BOOL)addPublicKeyPinsForHost:(NSString*)host
+                      pinHashes:(NSSet<NSData*>*)pinHashes
+              includeSubdomains:(BOOL)includeSubdomains
+                 expirationDate:(NSDate*)expirationDate
+                          error:(NSError**)outError;
 
 // Sets the block used to determine whether or not Cronet should handle the
 // request. If the block is not set, Cronet will handle all requests. Cronet
@@ -137,5 +205,20 @@ GRPC_SUPPORT_EXPORT
 // Enables TestCertVerifier which accepts all certificates for testing.
 // This method only has any effect before |start| is called.
 + (void)enableTestCertVerifierForTesting;
+
+// Registers a CronetMetricsDelegate callback.  The client is responsible for
+// creating an object which implements CronetMetricsDelegate, and passing
+// that as a |delegate|.  Returns |YES| if the delegate is added successfully,
+// and |NO| if it was not (because there is already an identical delegate
+// registered).
++ (BOOL)addMetricsDelegate:(id<CronetMetricsDelegate>)delegate
+    NS_AVAILABLE_IOS(10.0);
+
+// Unregisters a CronetMetricsDelegate callback.  |delegate| should be a
+// pointer to the delegate which is to be removed.  It returns |YES| if the
+// delegate is successfully removed and |NO| if the delegate is not
+// contained in the set of delegates (and therefore cannot be removed).
++ (BOOL)removeMetricsDelegate:(id<CronetMetricsDelegate>)delegate
+    NS_AVAILABLE_IOS(10.0);
 
 @end

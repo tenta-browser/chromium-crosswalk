@@ -29,13 +29,13 @@
 #ifndef SQLTransaction_h
 #define SQLTransaction_h
 
+#include <memory>
 #include "bindings/core/v8/Nullable.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "bindings/modules/v8/V8BindingForModules.h"
 #include "modules/webdatabase/SQLStatement.h"
 #include "modules/webdatabase/SQLTransactionStateMachine.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include <memory>
 
 namespace blink {
 
@@ -51,9 +51,8 @@ class SQLValue;
 class ScriptValue;
 class VoidCallback;
 
-class SQLTransaction final : public GarbageCollectedFinalized<SQLTransaction>,
-                             public SQLTransactionStateMachine<SQLTransaction>,
-                             public ScriptWrappable {
+class SQLTransaction final : public ScriptWrappable,
+                             public SQLTransactionStateMachine<SQLTransaction> {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -63,7 +62,7 @@ class SQLTransaction final : public GarbageCollectedFinalized<SQLTransaction>,
                                 SQLTransactionErrorCallback*,
                                 bool read_only);
   ~SQLTransaction();
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
   void PerformPendingCallback();
 

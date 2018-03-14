@@ -17,14 +17,16 @@
 #include "components/translate/core/browser/translate_manager.h"
 #include "components/translate/core/browser/translate_prefs.h"
 #include "components/translate/core/browser/translate_step.h"
+#include "components/translate/core/common/language_detection_details.h"
 #include "ios/web/public/browser_state.h"
 #import "ios/web/public/web_state/web_state.h"
+#import "ios/web_view/internal/cwv_web_view_configuration_internal.h"
+#include "ios/web_view/internal/language/web_view_language_model_factory.h"
 #include "ios/web_view/internal/pref_names.h"
-#import "ios/web_view/internal/translate/cwv_translate_manager_impl.h"
+#import "ios/web_view/internal/translate/cwv_translation_controller_internal.h"
 #include "ios/web_view/internal/translate/web_view_translate_accept_languages_factory.h"
 #include "ios/web_view/internal/translate/web_view_translate_ranker_factory.h"
 #include "ios/web_view/internal/web_view_browser_state.h"
-#import "ios/web_view/public/cwv_translate_delegate.h"
 #include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -35,17 +37,26 @@ DEFINE_WEB_STATE_USER_DATA_KEY(ios_web_view::WebViewTranslateClient);
 
 namespace ios_web_view {
 
+namespace {
+// Translate settings for off-the-record browser states are inherited from a
+// non-off-the-record browser state. This allows them to share settings.
+WebViewBrowserState* GetMainBrowserState() {
+  return [CWVWebViewConfiguration defaultConfiguration].browserState;
+}
+}  // namespace
+
 WebViewTranslateClient::WebViewTranslateClient(web::WebState* web_state)
-    : web::WebStateObserver(web_state),
-      translate_manager_(base::MakeUnique<translate::TranslateManager>(
+    : translate_manager_(base::MakeUnique<translate::TranslateManager>(
           this,
           WebViewTranslateRankerFactory::GetForBrowserState(
-              WebViewBrowserState::FromBrowserState(
-                  web_state->GetBrowserState())),
-          prefs::kAcceptLanguages)),
+              WebViewBrowserState::FromBrowserState(GetMainBrowserState())),
+          WebViewLanguageModelFactory::GetForBrowserState(
+              WebViewBrowserState::FromBrowserState(GetMainBrowserState())))),
       translate_driver_(web_state,
                         web_state->GetNavigationManager(),
-                        translate_manager_.get()) {}
+                        translate_manager_.get()) {
+  web_state->AddObserver(this);
+}
 
 WebViewTranslateClient::~WebViewTranslateClient() = default;
 
@@ -63,60 +74,23 @@ void WebViewTranslateClient::ShowTranslateUI(
     const std::string& target_language,
     translate::TranslateErrors::Type error_type,
     bool triggered_from_menu) {
-  if (!delegate_.get())
-    return;
-
-  if (error_type != translate::TranslateErrors::NONE)
-    step = translate::TRANSLATE_STEP_TRANSLATE_ERROR;
-
-  translate_manager_->GetLanguageState().SetTranslateEnabled(true);
-
-  if (step == translate::TRANSLATE_STEP_BEFORE_TRANSLATE &&
-      !translate_manager_->GetLanguageState().HasLanguageChanged()) {
-    return;
-  }
-
-  base::scoped_nsobject<CWVTranslateManagerImpl> criwv_manager(
-      [[CWVTranslateManagerImpl alloc]
-          initWithTranslateManager:translate_manager_.get()
-                    sourceLanguage:source_language
-                    targetLanguage:target_language]);
-
-  CRIWVTransateStep criwv_step;
-  switch (step) {
-    case translate::TRANSLATE_STEP_BEFORE_TRANSLATE:
-      criwv_step = CRIWVTransateStepBeforeTranslate;
-      break;
-    case translate::TRANSLATE_STEP_TRANSLATING:
-      criwv_step = CRIWVTransateStepTranslating;
-      break;
-    case translate::TRANSLATE_STEP_AFTER_TRANSLATE:
-      criwv_step = CRIWVTransateStepAfterTranslate;
-      break;
-    case translate::TRANSLATE_STEP_TRANSLATE_ERROR:
-      criwv_step = CRIWVTransateStepError;
-      break;
-    case translate::TRANSLATE_STEP_NEVER_TRANSLATE:
-      NOTREACHED() << "Never translate is not supported yet in web_view.";
-      criwv_step = CRIWVTransateStepError;
-      break;
-  }
-  [delegate_ translateStepChanged:criwv_step manager:criwv_manager.get()];
+  [translation_controller_ updateTranslateStep:step
+                                sourceLanguage:source_language
+                                targetLanguage:target_language
+                                     errorType:error_type
+                             triggeredFromMenu:triggered_from_menu];
 }
 
-translate::TranslateDriver* WebViewTranslateClient::GetTranslateDriver() {
+translate::IOSTranslateDriver* WebViewTranslateClient::GetTranslateDriver() {
   return &translate_driver_;
 }
 
 PrefService* WebViewTranslateClient::GetPrefs() {
-  DCHECK(web_state());
-  return WebViewBrowserState::FromBrowserState(web_state()->GetBrowserState())
-      ->GetPrefs();
+  return GetMainBrowserState()->GetPrefs();
 }
 
 std::unique_ptr<translate::TranslatePrefs>
 WebViewTranslateClient::GetTranslatePrefs() {
-  DCHECK(web_state());
   return base::MakeUnique<translate::TranslatePrefs>(
       GetPrefs(), prefs::kAcceptLanguages, nullptr);
 }
@@ -125,8 +99,7 @@ translate::TranslateAcceptLanguages*
 WebViewTranslateClient::GetTranslateAcceptLanguages() {
   translate::TranslateAcceptLanguages* accept_languages =
       WebViewTranslateAcceptLanguagesFactory::GetForBrowserState(
-          WebViewBrowserState::FromBrowserState(
-              web_state()->GetBrowserState()));
+          WebViewBrowserState::FromBrowserState(GetMainBrowserState()));
   DCHECK(accept_languages);
   return accept_languages;
 }
@@ -134,6 +107,16 @@ WebViewTranslateClient::GetTranslateAcceptLanguages() {
 int WebViewTranslateClient::GetInfobarIconID() const {
   NOTREACHED();
   return 0;
+}
+
+void WebViewTranslateClient::RecordLanguageDetectionEvent(
+    const translate::LanguageDetectionDetails& details) const {
+  // TODO(crbug.com/722679): Implementing gaia-keyed logging.
+}
+
+void WebViewTranslateClient::RecordTranslateEvent(
+    const metrics::TranslateEventProto&) {
+  // TODO(crbug.com/728491): Implementing gaia-keyed logging.
 }
 
 bool WebViewTranslateClient::IsTranslatableURL(const GURL& url) {
@@ -145,7 +128,8 @@ void WebViewTranslateClient::ShowReportLanguageDetectionErrorUI(
   NOTREACHED();
 }
 
-void WebViewTranslateClient::WebStateDestroyed() {
+void WebViewTranslateClient::WebStateDestroyed(web::WebState* web_state) {
+  web_state->RemoveObserver(this);
   // Translation process can be interrupted.
   // Destroying the TranslateManager now guarantees that it never has to deal
   // with nullptr WebState.

@@ -6,6 +6,10 @@
 
 #import <Foundation/Foundation.h>
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 BrandedImageProvider::BrandedImageProvider() {}
 
 BrandedImageProvider::~BrandedImageProvider() {}
@@ -19,10 +23,6 @@ UIImage* BrandedImageProvider::GetClearBrowsingDataAccountActivityImage() {
 }
 
 UIImage* BrandedImageProvider::GetClearBrowsingDataSiteDataImage() {
-  return nil;
-}
-
-UIImage* BrandedImageProvider::GetContextualSearchHeaderImage() {
   return nil;
 }
 

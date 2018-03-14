@@ -31,25 +31,22 @@
 #include "public/platform/WebHTTPBody.h"
 
 #include "platform/FileMetadata.h"
+#include "platform/SharedBuffer.h"
 #include "platform/network/EncodedFormData.h"
+#include "platform/network/FormDataEncoder.h"
 
 namespace blink {
 
-class WebHTTPBodyPrivate : public EncodedFormData {};
-
 void WebHTTPBody::Initialize() {
-  Assign(static_cast<WebHTTPBodyPrivate*>(EncodedFormData::Create().LeakRef()));
+  private_ = EncodedFormData::Create();
 }
 
 void WebHTTPBody::Reset() {
-  Assign(0);
+  private_ = nullptr;
 }
 
 void WebHTTPBody::Assign(const WebHTTPBody& other) {
-  WebHTTPBodyPrivate* p = const_cast<WebHTTPBodyPrivate*>(other.private_);
-  if (p)
-    p->Ref();
-  Assign(p);
+  private_ = other.private_;
 }
 
 size_t WebHTTPBody::ElementCount() const {
@@ -75,7 +72,7 @@ bool WebHTTPBody::ElementAt(size_t index, Element& result) const {
   switch (element.type_) {
     case FormDataElement::kData:
       result.type = Element::kTypeData;
-      result.data.Assign(element.data_.Data(), element.data_.size());
+      result.data.Assign(element.data_.data(), element.data_.size());
       break;
     case FormDataElement::kEncodedFile:
       result.type = Element::kTypeFile;
@@ -87,13 +84,6 @@ bool WebHTTPBody::ElementAt(size_t index, Element& result) const {
     case FormDataElement::kEncodedBlob:
       result.type = Element::kTypeBlob;
       result.blob_uuid = element.blob_uuid_;
-      break;
-    case FormDataElement::kEncodedFileSystemURL:
-      result.type = Element::kTypeFileSystemURL;
-      result.file_system_url = element.file_system_url_;
-      result.file_start = element.file_start_;
-      result.file_length = element.file_length_;
-      result.modification_time = element.expected_file_modification_time_;
       break;
     default:
       NOTREACHED();
@@ -107,7 +97,11 @@ void WebHTTPBody::AppendData(const WebData& data) {
   EnsureMutable();
   // FIXME: FormDataElement::m_data should be a SharedBuffer<char>.  Then we
   // could avoid this buffer copy.
-  private_->AppendData(data.Data(), data.size());
+  data.ForEachSegment(
+      [this](const char* segment, size_t segment_size, size_t segment_offset) {
+        private_->AppendData(segment, segment_size);
+        return true;
+      });
 }
 
 void WebHTTPBody::AppendFile(const WebString& file_path) {
@@ -122,16 +116,6 @@ void WebHTTPBody::AppendFileRange(const WebString& file_path,
   EnsureMutable();
   private_->AppendFileRange(file_path, file_start, file_length,
                             modification_time);
-}
-
-void WebHTTPBody::AppendFileSystemURLRange(const WebURL& url,
-                                           long long start,
-                                           long long length,
-                                           double modification_time) {
-  // Currently we only support filesystem URL.
-  DCHECK(KURL(url).ProtocolIs("filesystem"));
-  EnsureMutable();
-  private_->AppendFileSystemURLRange(url, start, length, modification_time);
 }
 
 void WebHTTPBody::AppendBlob(const WebString& uuid) {
@@ -149,6 +133,11 @@ void WebHTTPBody::SetIdentifier(long long identifier) {
   return private_->SetIdentifier(identifier);
 }
 
+void WebHTTPBody::SetUniqueBoundary() {
+  EnsureMutable();
+  private_->SetBoundary(FormDataEncoder::GenerateUniqueBoundaryString());
+}
+
 bool WebHTTPBody::ContainsPasswordData() const {
   return private_->ContainsPasswordData();
 }
@@ -157,29 +146,22 @@ void WebHTTPBody::SetContainsPasswordData(bool contains_password_data) {
   private_->SetContainsPasswordData(contains_password_data);
 }
 
-WebHTTPBody::WebHTTPBody(PassRefPtr<EncodedFormData> data)
-    : private_(static_cast<WebHTTPBodyPrivate*>(data.LeakRef())) {}
+WebHTTPBody::WebHTTPBody(scoped_refptr<EncodedFormData> data)
+    : private_(std::move(data)) {}
 
-WebHTTPBody& WebHTTPBody::operator=(PassRefPtr<EncodedFormData> data) {
-  DCHECK(static_cast<WebHTTPBodyPrivate*>(data.LeakRef()));
+WebHTTPBody& WebHTTPBody::operator=(scoped_refptr<EncodedFormData> data) {
+  private_ = std::move(data);
   return *this;
 }
 
-WebHTTPBody::operator PassRefPtr<EncodedFormData>() const {
-  return private_;
-}
-
-void WebHTTPBody::Assign(WebHTTPBodyPrivate* p) {
-  // p is already ref'd for us by the caller
-  if (private_)
-    private_->Deref();
-  private_ = p;
+WebHTTPBody::operator scoped_refptr<EncodedFormData>() const {
+  return private_.Get();
 }
 
 void WebHTTPBody::EnsureMutable() {
   DCHECK(!IsNull());
   if (!private_->HasOneRef())
-    Assign(static_cast<WebHTTPBodyPrivate*>(private_->Copy().LeakRef()));
+    private_ = private_->Copy();
 }
 
 }  // namespace blink

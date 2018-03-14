@@ -30,7 +30,7 @@
 #define SQLError_h
 
 #include <memory>
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/text/WTFString.h"
 
@@ -71,15 +71,13 @@ class SQLErrorData {
   String message_;
 };
 
-class SQLError final : public GarbageCollectedFinalized<SQLError>,
-                       public ScriptWrappable {
+class SQLError final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   static SQLError* Create(const SQLErrorData& data) {
     return new SQLError(data);
   }
-  DEFINE_INLINE_TRACE() {}
 
   unsigned code() const { return data_.Code(); }
   String message() const { return data_.Message(); }

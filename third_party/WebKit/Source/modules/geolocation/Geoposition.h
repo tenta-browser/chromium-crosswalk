@@ -26,16 +26,15 @@
 #ifndef Geoposition_h
 #define Geoposition_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/EventModules.h"
 #include "modules/geolocation/Coordinates.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/Assertions.h"
+#include "platform/wtf/Assertions.h"
 
 namespace blink {
 
-class Geoposition final : public GarbageCollected<Geoposition>,
-                          public ScriptWrappable {
+class Geoposition final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -43,7 +42,10 @@ class Geoposition final : public GarbageCollected<Geoposition>,
     return new Geoposition(coordinates, timestamp);
   }
 
-  DEFINE_INLINE_TRACE() { visitor->Trace(coordinates_); }
+  void Trace(blink::Visitor* visitor) override {
+    visitor->Trace(coordinates_);
+    ScriptWrappable::Trace(visitor);
+  }
 
   DOMTimeStamp timestamp() const { return timestamp_; }
   Coordinates* coords() const { return coordinates_; }

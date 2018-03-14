@@ -27,7 +27,6 @@ class TestResourceThrottleDelegate
         quit_closure_(quit_closure) {}
 
   void Cancel() override {}
-  void CancelAndIgnore() override {}
   void CancelWithError(int error_code) override {
     cancel_with_error_called_ = true;
     error_code_ = error_code;
@@ -114,7 +113,15 @@ TEST_F(WebRestrictionsResourceThrottleTest, WillStartRequest_DeferredForbid) {
   EXPECT_EQ(net::ERR_BLOCKED_BY_ADMINISTRATOR, delegate_.GetErrorCode());
 }
 
-TEST_F(WebRestrictionsResourceThrottleTest, WillStartRequest_Subresource) {
+#if defined(OS_ANDROID)
+// Flaky on android: https://crbug.com/718066
+#define MAYBE_WillStartRequest_Subresource DISABLED_WillStartRequest_Subresource
+#else
+#define MAYBE_WillStartRequest_Subresource WillStartRequest_Subresource
+#endif
+
+TEST_F(WebRestrictionsResourceThrottleTest,
+       MAYBE_WillStartRequest_Subresource) {
   // Only the main frame should be deferred.
   // Initialization of the delegate is asynchronous, and this will only work
   // correctly if the provider is initialized. Run a main frame through this

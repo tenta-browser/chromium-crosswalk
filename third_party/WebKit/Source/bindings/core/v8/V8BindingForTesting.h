@@ -6,7 +6,7 @@
 #define V8BindingForTesting_h
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptState.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Forward.h"
 #include "v8/include/v8.h"
@@ -22,10 +22,12 @@ class Page;
 
 class ScriptStateForTesting : public ScriptState {
  public:
-  static PassRefPtr<ScriptStateForTesting> Create(v8::Local<v8::Context>,
-                                                  PassRefPtr<DOMWrapperWorld>);
+  static scoped_refptr<ScriptStateForTesting> Create(
+      v8::Local<v8::Context>,
+      scoped_refptr<DOMWrapperWorld>);
+
  private:
-  ScriptStateForTesting(v8::Local<v8::Context>, PassRefPtr<DOMWrapperWorld>);
+  ScriptStateForTesting(v8::Local<v8::Context>, scoped_refptr<DOMWrapperWorld>);
 };
 
 class V8TestingScope {

@@ -8,9 +8,10 @@
 #include <deque>
 #include <memory>
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
+#include "core/dom/Element.h"
 #include "core/page/scrolling/ScrollStateInit.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/scroll/ScrollStateData.h"
 #include "platform/wtf/Forward.h"
 
@@ -18,9 +19,7 @@ namespace blink {
 
 class Element;
 
-class CORE_EXPORT ScrollState final
-    : public GarbageCollectedFinalized<ScrollState>,
-      public ScriptWrappable {
+class CORE_EXPORT ScrollState final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -42,6 +41,10 @@ class CORE_EXPORT ScrollState final
   double deltaX() const { return data_->delta_x; };
   // Positive when scrolling down.
   double deltaY() const { return data_->delta_y; };
+  // Positive when scrolling right.
+  double deltaXHint() const { return data_->delta_x_hint; };
+  // Positive when scrolling down.
+  double deltaYHint() const { return data_->delta_y_hint; };
   // Indicates the smallest delta the input device can produce. 0 for
   // unquantized inputs.
   double deltaGranularity() const { return data_->delta_granularity; };
@@ -60,8 +63,6 @@ class CORE_EXPORT ScrollState final
   // True if this scroll is the result of the user interacting directly with
   // the screen, e.g., via touch.
   bool isDirectManipulation() const { return data_->is_direct_manipulation; }
-  // True if this scroll is allowed to bubble upwards.
-  bool shouldPropagate() const { return data_->should_propagate; };
 
   // Non web exposed methods.
   void ConsumeDeltaNative(double x, double y);
@@ -71,10 +72,8 @@ class CORE_EXPORT ScrollState final
     scroll_chain_ = scroll_chain;
   }
 
-  Element* CurrentNativeScrollingElement() const;
+  Element* CurrentNativeScrollingElement();
   void SetCurrentNativeScrollingElement(Element*);
-
-  void SetCurrentNativeScrollingElementById(int element_id);
 
   bool DeltaConsumedForScrollSequence() const {
     return data_->delta_consumed_for_scroll_sequence;
@@ -89,7 +88,10 @@ class CORE_EXPORT ScrollState final
 
   ScrollStateData* Data() const { return data_.get(); }
 
-  DEFINE_INLINE_TRACE() {}
+  void Trace(blink::Visitor* visitor) override {
+    visitor->Trace(element_);
+    ScriptWrappable::Trace(visitor);
+  }
 
  private:
   ScrollState();
@@ -97,6 +99,7 @@ class CORE_EXPORT ScrollState final
 
   std::unique_ptr<ScrollStateData> data_;
   std::deque<int> scroll_chain_;
+  Member<Element> element_;
 };
 
 }  // namespace blink

@@ -40,16 +40,37 @@ class AXARIAGridRow final : public AXTableRow {
 
  private:
   AXARIAGridRow(LayoutObject*, AXObjectCacheImpl&);
+  virtual void Trace(blink::Visitor*);
+
+  AXObjectVector cells_;
 
  public:
   static AXARIAGridRow* Create(LayoutObject*, AXObjectCacheImpl&);
   ~AXARIAGridRow() override;
 
   void HeaderObjectsForRow(AXObjectVector&) override;
+  bool CanSetSelectedAttribute() const final {
+    return Restriction() != kDisabled;
+  }
+  AXObject* ParentTable() const final;
+
+  void AddChildren() final;
+  void ClearChildren() final {
+    cells_.clear();
+    AXTableRow::ClearChildren();
+  }
+  const AXObjectVector& Cells() final {
+    UpdateChildrenIfNecessary();
+    return cells_;
+  };
 
  private:
-  bool IsARIATreeGridRow() const override;
+  bool IsARIARow() const final;
+  void ComputeCells(AXObjectVector from_child_list);
+  bool AddCell(AXObject*);
 };
+
+DEFINE_AX_OBJECT_TYPE_CASTS(AXARIAGridRow, IsARIARow());
 
 }  // namespace blink
 

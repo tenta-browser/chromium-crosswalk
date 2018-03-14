@@ -6,6 +6,7 @@
 
 #include "platform/Language.h"
 #include "platform/fonts/AcceptLanguagesResolver.h"
+#include "platform/fonts/FontGlobalContext.h"
 #include "platform/text/ICUError.h"
 #include "platform/text/LocaleToScriptMapping.h"
 #include "platform/wtf/HashMap.h"
@@ -17,14 +18,9 @@
 
 namespace blink {
 
-const LayoutLocale* LayoutLocale::default_ = nullptr;
-const LayoutLocale* LayoutLocale::system_ = nullptr;
-const LayoutLocale* LayoutLocale::default_for_han_ = nullptr;
-bool LayoutLocale::default_for_han_computed_ = false;
-
 static hb_language_t ToHarfbuzLanguage(const AtomicString& locale) {
   CString locale_as_latin1 = locale.Latin1();
-  return hb_language_from_string(locale_as_latin1.Data(),
+  return hb_language_from_string(locale_as_latin1.data(),
                                  locale_as_latin1.length());
 }
 
@@ -51,7 +47,7 @@ const char* LayoutLocale::LocaleForSkFontMgr() const {
     if (string_for_sk_font_mgr_.IsNull())
       string_for_sk_font_mgr_ = string_.Ascii();
   }
-  return string_for_sk_font_mgr_.Data();
+  return string_for_sk_font_mgr_.data();
 }
 
 void LayoutLocale::ComputeScriptForHan() const {
@@ -85,21 +81,21 @@ const LayoutLocale* LayoutLocale::LocaleForHan(
     const LayoutLocale* content_locale) {
   if (content_locale && content_locale->HasScriptForHan())
     return content_locale;
-  if (!default_for_han_computed_)
-    ComputeLocaleForHan();
-  return default_for_han_;
-}
 
-void LayoutLocale::ComputeLocaleForHan() {
+  if (FontGlobalContext::HasDefaultLocaleForHan())
+    return FontGlobalContext::GetDefaultLocaleForHan();
+
+  const LayoutLocale* default_for_han;
   if (const LayoutLocale* locale = AcceptLanguagesResolver::LocaleForHan())
-    default_for_han_ = locale;
+    default_for_han = locale;
   else if (GetDefault().HasScriptForHan())
-    default_for_han_ = &GetDefault();
+    default_for_han = &GetDefault();
   else if (GetSystem().HasScriptForHan())
-    default_for_han_ = &GetSystem();
+    default_for_han = &GetSystem();
   else
-    default_for_han_ = nullptr;
-  default_for_han_computed_ = true;
+    default_for_han = nullptr;
+  FontGlobalContext::SetDefaultLocaleForHan(default_for_han);
+  return default_for_han;
 }
 
 const char* LayoutLocale::LocaleForHanForSkFontMgr() const {
@@ -116,69 +112,57 @@ LayoutLocale::LayoutLocale(const AtomicString& locale)
       has_script_for_han_(false),
       hyphenation_computed_(false) {}
 
-using LayoutLocaleMap =
-    HashMap<AtomicString, RefPtr<LayoutLocale>, CaseFoldingHash>;
-
-static LayoutLocaleMap& GetLocaleMap() {
-  DEFINE_STATIC_LOCAL(LayoutLocaleMap, locale_map, ());
-  return locale_map;
-}
-
 const LayoutLocale* LayoutLocale::Get(const AtomicString& locale) {
   if (locale.IsNull())
     return nullptr;
 
-  auto result = GetLocaleMap().insert(locale, nullptr);
+  auto result = FontGlobalContext::GetLayoutLocaleMap().insert(locale, nullptr);
   if (result.is_new_entry)
-    result.stored_value->value = AdoptRef(new LayoutLocale(locale));
-  return result.stored_value->value.Get();
+    result.stored_value->value = base::AdoptRef(new LayoutLocale(locale));
+  return result.stored_value->value.get();
 }
 
 const LayoutLocale& LayoutLocale::GetDefault() {
-  if (default_)
-    return *default_;
+  if (const LayoutLocale* locale = FontGlobalContext::GetDefaultLayoutLocale())
+    return *locale;
 
-  AtomicString locale = DefaultLanguage();
-  default_ = Get(!locale.IsEmpty() ? locale : "en");
-  return *default_;
+  AtomicString language = DefaultLanguage();
+  const LayoutLocale* locale =
+      LayoutLocale::Get(!language.IsEmpty() ? language : "en");
+  FontGlobalContext::SetDefaultLayoutLocale(locale);
+  return *locale;
 }
 
 const LayoutLocale& LayoutLocale::GetSystem() {
-  if (system_)
-    return *system_;
+  if (const LayoutLocale* locale = FontGlobalContext::GetSystemLayoutLocale())
+    return *locale;
 
   // Platforms such as Windows can give more information than the default
   // locale, such as "en-JP" for English speakers in Japan.
   String name = icu::Locale::getDefault().getName();
-  system_ = Get(AtomicString(name.Replace('_', '-')));
-  return *system_;
+  const LayoutLocale* locale =
+      LayoutLocale::Get(AtomicString(name.Replace('_', '-')));
+  FontGlobalContext::SetSystemLayoutLocale(locale);
+  return *locale;
 }
 
-PassRefPtr<LayoutLocale> LayoutLocale::CreateForTesting(
+scoped_refptr<LayoutLocale> LayoutLocale::CreateForTesting(
     const AtomicString& locale) {
-  return AdoptRef(new LayoutLocale(locale));
-}
-
-void LayoutLocale::ClearForTesting() {
-  default_ = nullptr;
-  system_ = nullptr;
-  default_for_han_ = nullptr;
-  default_for_han_computed_ = false;
-  GetLocaleMap().Clear();
+  return base::AdoptRef(new LayoutLocale(locale));
 }
 
 Hyphenation* LayoutLocale::GetHyphenation() const {
   if (hyphenation_computed_)
-    return hyphenation_.Get();
+    return hyphenation_.get();
 
   hyphenation_computed_ = true;
   hyphenation_ = Hyphenation::PlatformGetHyphenation(LocaleString());
-  return hyphenation_.Get();
+  return hyphenation_.get();
 }
 
 void LayoutLocale::SetHyphenationForTesting(
     const AtomicString& locale_string,
-    PassRefPtr<Hyphenation> hyphenation) {
+    scoped_refptr<Hyphenation> hyphenation) {
   const LayoutLocale& locale = ValueOrDefault(Get(locale_string));
   locale.hyphenation_computed_ = true;
   locale.hyphenation_ = std::move(hyphenation);
@@ -196,7 +180,7 @@ AtomicString LayoutLocale::LocaleWithBreakKeyword(
 
   CString utf8_locale = string_.Utf8();
   Vector<char> buffer(utf8_locale.length() + 11, 0);
-  memcpy(buffer.Data(), utf8_locale.Data(), utf8_locale.length());
+  memcpy(buffer.data(), utf8_locale.data(), utf8_locale.length());
 
   const char* keyword_value = nullptr;
   switch (mode) {
@@ -219,20 +203,20 @@ AtomicString LayoutLocale::LocaleWithBreakKeyword(
 
   ICUError status;
   int32_t length_needed = uloc_setKeywordValue(
-      "lb", keyword_value, buffer.Data(), buffer.size(), &status);
+      "lb", keyword_value, buffer.data(), buffer.size(), &status);
   if (U_SUCCESS(status))
-    return AtomicString::FromUTF8(buffer.Data(), length_needed);
+    return AtomicString::FromUTF8(buffer.data(), length_needed);
 
   if (status == U_BUFFER_OVERFLOW_ERROR) {
     buffer.Grow(length_needed + 1);
-    memset(buffer.Data() + utf8_locale.length(), 0,
+    memset(buffer.data() + utf8_locale.length(), 0,
            buffer.size() - utf8_locale.length());
     status = U_ZERO_ERROR;
     int32_t length_needed2 = uloc_setKeywordValue(
-        "lb", keyword_value, buffer.Data(), buffer.size(), &status);
+        "lb", keyword_value, buffer.data(), buffer.size(), &status);
     DCHECK_EQ(length_needed, length_needed2);
     if (U_SUCCESS(status) && length_needed == length_needed2)
-      return AtomicString::FromUTF8(buffer.Data(), length_needed);
+      return AtomicString::FromUTF8(buffer.data(), length_needed);
   }
 
   NOTREACHED();

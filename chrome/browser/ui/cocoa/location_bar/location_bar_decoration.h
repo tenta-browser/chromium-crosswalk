@@ -18,6 +18,10 @@ namespace gfx {
 struct VectorIcon;
 }
 
+namespace test {
+class LocationBarDecorationTestApi;
+}
+
 // Base class for decorations at the left and right of the location
 // bar.  For instance, the location icon.
 
@@ -31,6 +35,14 @@ struct VectorIcon;
 // This enum class represents the state of the decoration's interactions
 // with the mouse.
 enum class DecorationMouseState { NONE, HOVER, PRESSED };
+
+// Return values to indicate when subclasses should receive a press event.
+enum class AcceptsPress {
+  NEVER,           // Decoration is not clickable (decorative only).
+  ALWAYS,          // Receives a press whether the button is active or not.
+  WHEN_ACTIVATED,  // Receives a press only if the button was inactive before
+                   // the press began.
+};
 
 class LocationBarDecoration {
  public:
@@ -63,6 +75,13 @@ class LocationBarDecoration {
   // Returns the tooltip for this decoration, return |nil| for no tooltip.
   virtual NSString* GetToolTip();
 
+  // Returns the accessibility label for this decoration, return |nil| to use
+  // the result of |GetTooltip()| as a fallback.
+  virtual NSString* GetAccessibilityLabel();
+
+  // Returns a NSRect derived from |frame| to set up the tracking area.
+  virtual NSRect GetTrackingFrame(NSRect frame);
+
   // Methods to set up and remove the tracking area from the |control_view|.
   CrTrackingArea* SetupTrackingArea(NSRect frame, NSView* control_view);
   void RemoveTrackingArea();
@@ -72,7 +91,7 @@ class LocationBarDecoration {
   // decorations are adjacent to the text area, they will show the
   // I-beam cursor.  Decorations which do accept mouse events will get
   // an arrow cursor when the mouse is over them.
-  virtual bool AcceptsMousePress();
+  virtual AcceptsPress AcceptsMousePress();
 
   // Returns true if the decoration should display a background if it's
   // hovered or pressed. The default value is equivalent to the value returned
@@ -94,9 +113,13 @@ class LocationBarDecoration {
   // The pasteboard to drag.
   virtual NSPasteboard* GetDragPasteboard();
 
-  // Called on mouse down, when the decoration isn't being dragged. Return
-  // |false| to indicate that the press was not processed and should be
-  // handled by the cell.
+  // Called on mouse down. Or, for draggable buttons, on mouse up when a drag
+  // did not occur. Returns |false| to indicate that the press was not processed
+  // and should be handled by the cell.
+  bool HandleMousePressed(NSRect frame, NSPoint location);
+
+  // Hook for subclasses to react to calls to HandleMousePressed(). Not invoked
+  // if the button was already active and AcceptsMousePress() is WHEN_ACTIVATED.
   virtual bool OnMousePressed(NSRect frame, NSPoint location);
 
   // Mouse events called on mouse down/up.
@@ -143,6 +166,17 @@ class LocationBarDecoration {
   // to the private DecorationAccessibilityView helper class.
   void OnAccessibilityViewAction();
 
+  // Called when the omnibox decoration changes state to update the
+  // accessibility view's attributes to match. The |apparent_frame| rectangle is
+  // the frame the accessibility view should appear at visually (which may be
+  // different from its frame in the Cocoa sense).
+  void UpdateAccessibilityView(NSRect apparent_frame);
+
+  // Computes the real bounds the focus ring should be drawn around for this
+  // decoration. Some decorations include visual spacing or separators in their
+  // bounds, but these should not be encompassed by the focus ring.
+  virtual NSRect GetRealFocusRingBounds(NSRect bounds) const;
+
   DecorationMouseState state() const { return state_; }
 
   bool active() const { return active_; }
@@ -155,6 +189,9 @@ class LocationBarDecoration {
   static const SkColor kMaterialDarkModeTextColor;
 
  protected:
+  // Returns the amount of padding between the divider and the label text.
+  virtual CGFloat DividerPadding() const;
+
   // Gets the color used to draw the Material Design icon. The default
   // implementation satisfies most cases - few subclasses should need to
   // override.
@@ -165,10 +202,15 @@ class LocationBarDecoration {
   // decorations are assigned their icon (vs. creating it themselves).
   virtual const gfx::VectorIcon* GetMaterialVectorIcon() const;
 
-  // Gets the color used for the divider. Only used in Material design.
-  NSColor* GetDividerColor(bool location_bar_is_dark) const;
+  // Draws the decoration's vertical divider. Assumes already lock focused on
+  // the control_view.
+  void DrawDivider(NSView* control_view,
+                   NSRect decoration_frame,
+                   CGFloat alpha) const;
 
  private:
+  friend class test::LocationBarDecorationTestApi;
+
   // Called when the state of the decoration is updated.
   void UpdateDecorationState();
 
@@ -177,7 +219,10 @@ class LocationBarDecoration {
   // True if the decoration is active.
   bool active_ = false;
 
-  base::scoped_nsobject<NSView> accessibility_view_;
+  // True if the decoration was active when the last mouse down was received.
+  bool was_active_in_last_mouse_down_ = false;
+
+  base::scoped_nsobject<NSControl> accessibility_view_;
 
   // The decoration's tracking area. Only set if the decoration accepts a mouse
   // press.

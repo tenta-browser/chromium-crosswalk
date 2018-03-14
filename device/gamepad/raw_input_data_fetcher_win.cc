@@ -12,8 +12,6 @@
 
 namespace device {
 
-using namespace blink;
-
 namespace {
 
 float NormalizeAxis(long value, long min, long max) {
@@ -34,6 +32,9 @@ USHORT DeviceUsages[] = {
 const uint32_t kAxisMinimumUsageNumber = 0x30;
 const uint32_t kGameControlsUsagePage = 0x05;
 const uint32_t kButtonUsagePage = 0x09;
+
+const uint32_t kVendorOculus = 0x2833;
+const uint32_t kVendorBlue = 0xb58e;
 
 }  // namespace
 
@@ -149,7 +150,7 @@ void RawInputDataFetcher::GetGamepadData(bool devices_changed_hint) {
     if (!state)
       continue;
 
-    WebGamepad& pad = state->data;
+    Gamepad& pad = state->data;
 
     pad.timestamp = gamepad->report_id;
     pad.buttons_length = gamepad->buttons_length;
@@ -205,22 +206,25 @@ void RawInputDataFetcher::EnumerateDevices() {
 
         controllers_[device_handle] = gamepad;
 
-        WebGamepad& pad = state->data;
+        Gamepad& pad = state->data;
         pad.connected = true;
 
         std::string vendor = base::StringPrintf("%04x", gamepad->vendor_id);
         std::string product = base::StringPrintf("%04x", gamepad->product_id);
-        state->mapper = GetGamepadStandardMappingFunction(vendor, product);
+        std::string version =
+            base::StringPrintf("%04x", gamepad->version_number);
+        state->mapper =
+            GetGamepadStandardMappingFunction(vendor, product, version);
         state->axis_mask = 0;
         state->button_mask = 0;
 
-        swprintf(pad.id, WebGamepad::kIdLengthCap,
+        swprintf(pad.id, Gamepad::kIdLengthCap,
                  L"%ls (%lsVendor: %04x Product: %04x)", gamepad->id,
                  state->mapper ? L"STANDARD GAMEPAD " : L"", gamepad->vendor_id,
                  gamepad->product_id);
 
         if (state->mapper)
-          swprintf(pad.mapping, WebGamepad::kMappingLengthCap, L"standard");
+          swprintf(pad.mapping, Gamepad::kMappingLengthCap, L"standard");
         else
           pad.mapping[0] = 0;
       }
@@ -230,11 +234,14 @@ void RawInputDataFetcher::EnumerateDevices() {
   }
 
   // Clear out old controllers that weren't part of this enumeration pass.
-  for (const auto& controller : controllers_) {
-    RawGamepadInfo* gamepad = controller.second;
+  auto controller_it = controllers_.begin();
+  while (controller_it != controllers_.end()) {
+    RawGamepadInfo* gamepad = controller_it->second;
     if (gamepad->enumeration_id != last_enumeration_id_) {
-      controllers_.erase(gamepad->handle);
+      controller_it = controllers_.erase(controller_it);
       delete gamepad;
+    } else {
+      ++controller_it;
     }
   }
 }
@@ -270,9 +277,11 @@ RawGamepadInfo* RawInputDataFetcher::ParseGamepadInfo(HANDLE hDevice) {
     }
   }
 
-  // This is terrible, but the Oculus Rift seems to think it's a gamepad.
-  // Filter out any Oculus devices. (We'll handle Oculus Touch elsewhere.)
-  if (device_info->hid.dwVendorId == 0x2833) {
+  // This is terrible, but the Oculus Rift and some Blue Yeti microphones seem
+  // to think they are gamepads. Filter out any such devices. Oculus Touch is
+  // handled elsewhere.
+  if (device_info->hid.dwVendorId == kVendorOculus ||
+      device_info->hid.dwVendorId == kVendorBlue) {
     valid_type = false;
   }
 
@@ -285,6 +294,7 @@ RawGamepadInfo* RawInputDataFetcher::ParseGamepadInfo(HANDLE hDevice) {
   gamepad_info->report_id = 0;
   gamepad_info->vendor_id = device_info->hid.dwVendorId;
   gamepad_info->product_id = device_info->hid.dwProductId;
+  gamepad_info->version_number = device_info->hid.dwVersionNumber;
   gamepad_info->buttons_length = 0;
   ZeroMemory(gamepad_info->buttons, sizeof(gamepad_info->buttons));
   gamepad_info->axes_length = 0;
@@ -325,7 +335,7 @@ RawGamepadInfo* RawInputDataFetcher::ParseGamepadInfo(HANDLE hDevice) {
   }
 
   if (!got_product_string)
-    swprintf(gamepad_info->id, WebGamepad::kIdLengthCap, L"Unknown Gamepad");
+    swprintf(gamepad_info->id, Gamepad::kIdLengthCap, L"Unknown Gamepad");
 
   // Query device capabilities.
   result = GetRawInputDeviceInfo(hDevice, RIDI_PREPARSEDDATA, NULL, &size);
@@ -360,10 +370,10 @@ RawGamepadInfo* RawInputDataFetcher::ParseGamepadInfo(HANDLE hDevice) {
     DCHECK_EQ(HIDP_STATUS_SUCCESS, status);
 
     for (uint32_t i = 0; i < count; ++i) {
-      if (button_caps[i].Range.UsageMin <= WebGamepad::kButtonsLengthCap &&
+      if (button_caps[i].Range.UsageMin <= Gamepad::kButtonsLengthCap &&
           button_caps[i].UsagePage == kButtonUsagePage) {
         uint32_t max_index =
-            std::min(WebGamepad::kButtonsLengthCap,
+            std::min(Gamepad::kButtonsLengthCap,
                      static_cast<size_t>(button_caps[i].Range.UsageMax));
         gamepad_info->buttons_length =
             std::max(gamepad_info->buttons_length, max_index);
@@ -381,7 +391,7 @@ RawGamepadInfo* RawInputDataFetcher::ParseGamepadInfo(HANDLE hDevice) {
 
   for (UINT i = 0; i < count; i++) {
     uint32_t axis_index = axes_caps[i].Range.UsageMin - kAxisMinimumUsageNumber;
-    if (axis_index < WebGamepad::kAxesLengthCap) {
+    if (axis_index < Gamepad::kAxesLengthCap) {
       gamepad_info->axes[axis_index].caps = axes_caps[i];
       gamepad_info->axes[axis_index].value = 0;
       gamepad_info->axes[axis_index].active = true;
@@ -398,13 +408,13 @@ RawGamepadInfo* RawInputDataFetcher::ParseGamepadInfo(HANDLE hDevice) {
     uint32_t next_index = 0;
     for (UINT i = 0; i < count; i++) {
       uint32_t usage = axes_caps[i].Range.UsageMin - kAxisMinimumUsageNumber;
-      if (usage >= WebGamepad::kAxesLengthCap &&
+      if (usage >= Gamepad::kAxesLengthCap &&
           axes_caps[i].UsagePage <= kGameControlsUsagePage) {
-        for (; next_index < WebGamepad::kAxesLengthCap; ++next_index) {
+        for (; next_index < Gamepad::kAxesLengthCap; ++next_index) {
           if (!gamepad_info->axes[next_index].active)
             break;
         }
-        if (next_index < WebGamepad::kAxesLengthCap) {
+        if (next_index < Gamepad::kAxesLengthCap) {
           gamepad_info->axes[next_index].caps = axes_caps[i];
           gamepad_info->axes[next_index].value = 0;
           gamepad_info->axes[next_index].active = true;
@@ -415,7 +425,7 @@ RawGamepadInfo* RawInputDataFetcher::ParseGamepadInfo(HANDLE hDevice) {
         }
       }
 
-      if (next_index >= WebGamepad::kAxesLengthCap)
+      if (next_index >= Gamepad::kAxesLengthCap)
         break;
     }
   }
@@ -457,8 +467,7 @@ void RawInputDataFetcher::UpdateGamepad(RAWINPUT* input,
       for (uint32_t j = 0; j < buttons_length; j++) {
         int32_t button_index = usages[j].Usage - 1;
         if (usages[j].UsagePage == kButtonUsagePage && button_index >= 0 &&
-            button_index <
-                static_cast<int>(blink::WebGamepad::kButtonsLengthCap)) {
+            button_index < static_cast<int>(Gamepad::kButtonsLengthCap)) {
           gamepad_info->buttons[button_index] = true;
         }
       }

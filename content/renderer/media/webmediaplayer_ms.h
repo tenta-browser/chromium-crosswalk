@@ -10,18 +10,20 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
 #include "content/common/content_export.h"
 #include "media/blink/webmediaplayer_delegate.h"
 #include "media/blink/webmediaplayer_util.h"
-#include "media/renderers/gpu_video_accelerator_factories.h"
-#include "media/renderers/skcanvas_video_renderer.h"
+#include "media/renderers/paint_canvas_video_renderer.h"
+#include "media/video/gpu_video_accelerator_factories.h"
 #include "third_party/WebKit/public/platform/WebMediaPlayer.h"
+#include "third_party/WebKit/public/platform/WebMediaStream.h"
 #include "url/origin.h"
 
 namespace blink {
-class WebFrame;
+class WebLocalFrame;
 class WebMediaPlayerClient;
 class WebSecurityOrigin;
 class WebString;
@@ -29,7 +31,6 @@ class WebString;
 
 namespace media {
 class MediaLog;
-enum VideoRotation;
 }
 
 namespace cc_blink {
@@ -62,18 +63,19 @@ class WebMediaPlayerMSCompositor;
 // blink::WebMediaPlayerClient
 //   WebKit client of this media player object.
 class CONTENT_EXPORT WebMediaPlayerMS
-    : public NON_EXPORTED_BASE(blink::WebMediaPlayer),
-      public NON_EXPORTED_BASE(media::WebMediaPlayerDelegate::Observer),
-      public NON_EXPORTED_BASE(base::SupportsWeakPtr<WebMediaPlayerMS>) {
+    : public blink::WebMediaStreamObserver,
+      public blink::WebMediaPlayer,
+      public media::WebMediaPlayerDelegate::Observer,
+      public base::SupportsWeakPtr<WebMediaPlayerMS> {
  public:
   // Construct a WebMediaPlayerMS with reference to the client, and
   // a MediaStreamClient which provides MediaStreamVideoRenderer.
   // |delegate| must not be null.
   WebMediaPlayerMS(
-      blink::WebFrame* frame,
+      blink::WebLocalFrame* frame,
       blink::WebMediaPlayerClient* client,
       media::WebMediaPlayerDelegate* delegate,
-      media::MediaLog* media_log,
+      std::unique_ptr<media::MediaLog> media_log,
       std::unique_ptr<MediaStreamRendererFactory> factory,
       scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_,
       scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner,
@@ -106,8 +108,10 @@ class CONTENT_EXPORT WebMediaPlayerMS
   // Methods for painting.
   void Paint(blink::WebCanvas* canvas,
              const blink::WebRect& rect,
-             cc::PaintFlags& flags) override;
-  media::SkCanvasVideoRenderer* GetSkCanvasVideoRenderer();
+             cc::PaintFlags& flags,
+             int already_uploaded_id,
+             VideoFrameUploadMetadata* out_metadata) override;
+  media::PaintCanvasVideoRenderer* GetPaintCanvasVideoRenderer();
   void ResetCanvasCache();
 
   // Methods to trigger resize event.
@@ -119,6 +123,8 @@ class CONTENT_EXPORT WebMediaPlayerMS
 
   // Dimensions of the video.
   blink::WebSize NaturalSize() const override;
+
+  blink::WebSize VisibleRect() const override;
 
   // Getters of playback state.
   bool Paused() const override;
@@ -150,20 +156,28 @@ class CONTENT_EXPORT WebMediaPlayerMS
   void OnIdleTimeout() override;
   void OnPlay() override;
   void OnPause() override;
+  void OnSeekForward(double seconds) override;
+  void OnSeekBackward(double seconds) override;
   void OnVolumeMultiplierUpdate(double multiplier) override;
   void OnBecamePersistentVideo(bool value) override;
 
-  bool CopyVideoTextureToPlatformTexture(gpu::gles2::GLES2Interface* gl,
-                                         unsigned int texture,
-                                         unsigned internal_format,
-                                         unsigned format,
-                                         unsigned type,
-                                         bool premultiply_alpha,
-                                         bool flip_y) override;
+  bool CopyVideoTextureToPlatformTexture(
+      gpu::gles2::GLES2Interface* gl,
+      unsigned target,
+      unsigned int texture,
+      unsigned internal_format,
+      unsigned format,
+      unsigned type,
+      int level,
+      bool premultiply_alpha,
+      bool flip_y,
+      int already_uploaded_id,
+      VideoFrameUploadMetadata* out_metadata) override;
 
   bool TexImageImpl(TexImageFunctionID functionID,
                     unsigned target,
                     gpu::gles2::GLES2Interface* gl,
+                    unsigned int texture,
                     int level,
                     int internalformat,
                     unsigned format,
@@ -173,6 +187,10 @@ class CONTENT_EXPORT WebMediaPlayerMS
                     int zoffset,
                     bool flip_y,
                     bool premultiply_alpha) override;
+
+  // blink::WebMediaStreamObserver implementation
+  void TrackAdded(const blink::WebMediaStreamTrack& track) override;
+  void TrackRemoved(const blink::WebMediaStreamTrack& track) override;
 
  private:
   friend class WebMediaPlayerMSTest;
@@ -196,7 +214,12 @@ class CONTENT_EXPORT WebMediaPlayerMS
   // Getter method to |client_|.
   blink::WebMediaPlayerClient* get_client() { return client_; }
 
-  blink::WebFrame* const frame_;
+  // To be run when tracks are added or removed.
+  void Reload();
+  void ReloadVideo();
+  void ReloadAudio();
+
+  blink::WebLocalFrame* const frame_;
 
   blink::WebMediaPlayer::NetworkState network_state_;
   blink::WebMediaPlayer::ReadyState ready_state_;
@@ -210,7 +233,7 @@ class CONTENT_EXPORT WebMediaPlayerMS
   // WebMediaPlayer may also receive directives (play, pause) from the delegate
   // via the WebMediaPlayerDelegate::Observer interface after registration.
   //
-  // NOTE: HTMLMediaElement is a Blink::SuspendableObject, and will receive a
+  // NOTE: HTMLMediaElement is a Blink::PausableObject, and will receive a
   // call to contextDestroyed() when Blink::Document::shutdown() is called.
   // Document::shutdown() is called before the frame detaches (and before the
   // frame is destroyed). RenderFrameImpl owns of |delegate_|, and is guaranteed
@@ -228,12 +251,12 @@ class CONTENT_EXPORT WebMediaPlayerMS
   std::unique_ptr<cc_blink::WebLayerImpl> video_weblayer_;
 
   scoped_refptr<MediaStreamAudioRenderer> audio_renderer_; // Weak
-  media::SkCanvasVideoRenderer video_renderer_;
+  media::PaintCanvasVideoRenderer video_renderer_;
 
   bool paused_;
   media::VideoRotation video_rotation_;
 
-  scoped_refptr<media::MediaLog> media_log_;
+  std::unique_ptr<media::MediaLog> media_log_;
 
   std::unique_ptr<MediaStreamRendererFactory> renderer_factory_;
 
@@ -261,6 +284,10 @@ class CONTENT_EXPORT WebMediaPlayerMS
   // True if playback should be started upon the next call to OnShown(). Only
   // used on Android.
   bool should_play_upon_shown_;
+  blink::WebMediaStream web_stream_;
+  // IDs of the tracks currently played.
+  blink::WebString current_video_track_id_;
+  blink::WebString current_audio_track_id_;
 
   DISALLOW_COPY_AND_ASSIGN(WebMediaPlayerMS);
 };

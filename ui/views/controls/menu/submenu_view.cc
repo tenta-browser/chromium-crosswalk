@@ -61,6 +61,14 @@ SubmenuView::~SubmenuView() {
   delete scroll_view_container_;
 }
 
+bool SubmenuView::HasVisibleChildren() {
+  for (int i = 0, item_count = GetMenuItemCount(); i < item_count; i++) {
+    if (GetMenuItemAt(i)->visible())
+      return true;
+  }
+  return false;
+}
+
 int SubmenuView::GetMenuItemCount() {
   int count = 0;
   for (int i = 0; i < child_count(); ++i) {
@@ -127,7 +135,7 @@ void SubmenuView::Layout() {
   }
 }
 
-gfx::Size SubmenuView::GetPreferredSize() const {
+gfx::Size SubmenuView::CalculatePreferredSize() const {
   if (!has_children())
     return gfx::Size();
 
@@ -188,11 +196,11 @@ void SubmenuView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
     GetMenuItem()->GetAccessibleNodeData(node_data);
   node_data->role = ui::AX_ROLE_MENU_LIST_POPUP;
   // Menus in Chrome are always traversed in a vertical direction.
-  node_data->AddStateFlag(ui::AX_STATE_VERTICAL);
+  node_data->AddState(ui::AX_STATE_VERTICAL);
 }
 
-void SubmenuView::PaintChildren(const ui::PaintContext& context) {
-  View::PaintChildren(context);
+void SubmenuView::PaintChildren(const PaintInfo& paint_info) {
+  View::PaintChildren(paint_info);
 
   bool paint_drop_indicator = false;
   if (drop_item_) {
@@ -210,7 +218,7 @@ void SubmenuView::PaintChildren(const ui::PaintContext& context) {
 
   if (paint_drop_indicator) {
     gfx::Rect bounds = CalculateDropIndicatorBounds(drop_item_, drop_position_);
-    ui::PaintRecorder recorder(context, size());
+    ui::PaintRecorder recorder(paint_info.context(), size());
     recorder.canvas()->FillRect(bounds, kDropIndicatorColor);
   }
 }

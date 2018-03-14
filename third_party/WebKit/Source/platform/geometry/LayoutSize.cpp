@@ -8,9 +8,13 @@
 
 namespace blink {
 
+std::ostream& operator<<(std::ostream& ostream, const LayoutSize& size) {
+  return ostream << size.ToString();
+}
+
 String LayoutSize::ToString() const {
-  return String::Format("%sx%s", Width().ToString().Ascii().Data(),
-                        Height().ToString().Ascii().Data());
+  return String::Format("%sx%s", Width().ToString().Ascii().data(),
+                        Height().ToString().Ascii().data());
 }
 
 }  // namespace blink

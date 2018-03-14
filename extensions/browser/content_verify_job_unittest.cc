@@ -26,11 +26,11 @@ namespace {
 scoped_refptr<ContentHashReader> CreateContentHashReader(
     const Extension& extension,
     const base::FilePath& extension_resource_path) {
-  return make_scoped_refptr(new ContentHashReader(
+  return base::MakeRefCounted<ContentHashReader>(
       extension.id(), *extension.version(), extension.path(),
       extension_resource_path,
       ContentVerifierKey(kWebstoreSignaturesPublicKey,
-                         kWebstoreSignaturesPublicKeySize)));
+                         kWebstoreSignaturesPublicKeySize));
 }
 
 void DoNothingWithReasonParam(ContentVerifyJob::FailureReason reason) {}
@@ -76,16 +76,11 @@ class JobTestObserver : public ContentVerifyJob::TestObserver {
 
 class ContentVerifyJobUnittest : public ExtensionsTest {
  public:
-  ContentVerifyJobUnittest() {}
+  ContentVerifyJobUnittest()
+      // The TestBrowserThreadBundle is needed for ContentVerifyJob::Start().
+      : ExtensionsTest(std::make_unique<content::TestBrowserThreadBundle>(
+            content::TestBrowserThreadBundle::REAL_IO_THREAD)) {}
   ~ContentVerifyJobUnittest() override {}
-
-  void SetUp() override {
-    ExtensionsTest::SetUp();
-
-    // Needed for ContentVerifyJob::Start().
-    browser_threads_ = base::MakeUnique<content::TestBrowserThreadBundle>(
-        content::TestBrowserThreadBundle::REAL_IO_THREAD);
-  }
 
   // Helper to get files from our subdirectory in the general extensions test
   // data dir.
@@ -135,7 +130,6 @@ class ContentVerifyJobUnittest : public ExtensionsTest {
 
  private:
   base::ScopedTempDir temp_dir_;
-  std::unique_ptr<content::TestBrowserThreadBundle> browser_threads_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentVerifyJobUnittest);
 };
@@ -191,6 +185,37 @@ TEST_F(ContentVerifyJobUnittest, DeletedAndMissingFiles) {
     std::string empty_contents;
     EXPECT_EQ(ContentVerifyJob::NONE,
               RunContentVerifyJob(*extension.get(), non_existent_resource_path,
+                                  empty_contents));
+  }
+
+  {
+    // Now create a resource foo.js which exists on disk but is not in the
+    // extension's verified_contents.json. Verification should result in
+    // NO_HASHES_FOR_FILE since the extension is trying to load a file the
+    // extension should not have.
+    const base::FilePath::CharType kUnexpectedResource[] =
+        FILE_PATH_LITERAL("foo.js");
+    base::FilePath unexpected_resource_path(kUnexpectedResource);
+
+    base::FilePath full_path =
+        unzipped_path.Append(base::FilePath(unexpected_resource_path));
+    base::WriteFile(full_path, "42", sizeof("42"));
+
+    std::string contents;
+    base::ReadFileToString(full_path, &contents);
+    EXPECT_EQ(ContentVerifyJob::NO_HASHES_FOR_FILE,
+              RunContentVerifyJob(*extension.get(), unexpected_resource_path,
+                                  contents));
+  }
+
+  {
+    // Ask for the root path of the extension (i.e., chrome-extension://<id>/).
+    // Verification should skip this request as if the resource were
+    // non-existent. See https://crbug.com/791929.
+    base::FilePath empty_path_resource_path(FILE_PATH_LITERAL(""));
+    std::string empty_contents;
+    EXPECT_EQ(ContentVerifyJob::NONE,
+              RunContentVerifyJob(*extension.get(), empty_path_resource_path,
                                   empty_contents));
   }
 }
@@ -256,6 +281,40 @@ TEST_F(ContentVerifyJobUnittest, LegitimateZeroByteFile) {
     EXPECT_EQ(ContentVerifyJob::HASH_MISMATCH,
               RunContentVerifyJob(*extension.get(), resource_path,
                                   modified_contents));
+  }
+}
+
+// Tests that extension resources of different interesting sizes work properly.
+// Regression test for https://crbug.com/720597, where content verification
+// always failed for sizes multiple of content hash's block size (4096 bytes).
+TEST_F(ContentVerifyJobUnittest, DifferentSizedFiles) {
+  base::FilePath test_dir_base =
+      GetTestPath(base::FilePath(FILE_PATH_LITERAL("different_sized_files")));
+  base::FilePath unzipped_path;
+  scoped_refptr<Extension> extension = UnzipToTempDirAndLoad(
+      test_dir_base.AppendASCII("source.zip"), &unzipped_path);
+  ASSERT_TRUE(extension.get());
+  // Make sure there is a verified_contents.json file there as this test cannot
+  // fetch it.
+  EXPECT_TRUE(
+      base::PathExists(file_util::GetVerifiedContentsPath(extension->path())));
+
+  const struct {
+    const char* name;
+    size_t byte_size;
+  } kFilesToTest[] = {
+      {"1024.js", 1024}, {"4096.js", 4096}, {"8192.js", 8192},
+      {"8191.js", 8191}, {"8193.js", 8193},
+  };
+  for (const auto& file_to_test : kFilesToTest) {
+    base::FilePath resource_path =
+        base::FilePath::FromUTF8Unsafe(file_to_test.name);
+    std::string contents;
+    base::ReadFileToString(unzipped_path.AppendASCII(file_to_test.name),
+                           &contents);
+    EXPECT_EQ(file_to_test.byte_size, contents.size());
+    EXPECT_EQ(ContentVerifyJob::NONE,
+              RunContentVerifyJob(*extension.get(), resource_path, contents));
   }
 }
 

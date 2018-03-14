@@ -44,11 +44,13 @@ Resources.ApplicationPanelSidebar = class extends UI.VBox {
     this._sidebarTree.element.classList.add('resources-sidebar');
     this._sidebarTree.registerRequiredCSS('resources/resourcesSidebar.css');
     this._sidebarTree.element.classList.add('filter-all');
-    this.contentElement.appendChild(this._sidebarTree.element);
+    // Listener needs to have been set up before the elements are added
+    this._sidebarTree.addEventListener(UI.TreeOutline.Events.ElementAttached, this._treeElementAdded, this);
 
+    this.contentElement.appendChild(this._sidebarTree.element);
     this._applicationTreeElement = this._addSidebarSection(Common.UIString('Application'));
-    this._manifestTreeElement = new Resources.AppManifestTreeElement(panel);
-    this._applicationTreeElement.appendChild(this._manifestTreeElement);
+    var manifestTreeElement = new Resources.AppManifestTreeElement(panel);
+    this._applicationTreeElement.appendChild(manifestTreeElement);
     this.serviceWorkersTreeElement = new Resources.ServiceWorkersTreeElement(panel);
     this._applicationTreeElement.appendChild(this.serviceWorkersTreeElement);
     var clearStorageTreeElement = new Resources.ClearStorageTreeElement(panel);
@@ -109,6 +111,10 @@ Resources.ApplicationPanelSidebar = class extends UI.VBox {
     SDK.targetManager.observeTargets(this);
     SDK.targetManager.addModelListener(
         SDK.ResourceTreeModel, SDK.ResourceTreeModel.Events.FrameNavigated, this._frameNavigated, this);
+
+    var selection = this._panel.lastSelectedItemPath();
+    if (!selection.length)
+      manifestTreeElement.select();
   }
 
   /**
@@ -197,22 +203,6 @@ Resources.ApplicationPanelSidebar = class extends UI.VBox {
     this.indexedDBListTreeElement._initialize();
     var serviceWorkerCacheModel = this._target.model(SDK.ServiceWorkerCacheModel);
     this.cacheStorageListTreeElement._initialize(serviceWorkerCacheModel);
-    this._initDefaultSelection();
-  }
-
-  _initDefaultSelection() {
-    var itemURL = this._panel.lastSelectedItemURL();
-    if (itemURL) {
-      var rootElement = this._sidebarTree.rootElement();
-      for (var treeElement = rootElement.firstChild(); treeElement;
-           treeElement = treeElement.traverseNextTreeElement(false, rootElement, true)) {
-        if (treeElement.itemURL === itemURL) {
-          treeElement.revealAndSelect(true);
-          return;
-        }
-      }
-    }
-    this._manifestTreeElement.select();
   }
 
   _resetWithFrames() {
@@ -237,6 +227,24 @@ Resources.ApplicationPanelSidebar = class extends UI.VBox {
     for (var frameId of Object.keys(this._applicationCacheFrameElements))
       this._applicationCacheFrameManifestRemoved({data: frameId});
     this.applicationCacheListTreeElement.setExpandable(false);
+  }
+
+  /**
+   * @param {!Common.Event} event
+   */
+  _treeElementAdded(event) {
+    var selection = this._panel.lastSelectedItemPath();
+    if (!selection.length)
+      return;
+    var element = event.data;
+    var index = selection.indexOf(element.itemURL);
+    if (index < 0)
+      return;
+    for (var parent = element.parent; parent; parent = parent.parent)
+      parent.expand();
+    if (index > 0)
+      element.expand();
+    element.select();
   }
 
   _reset() {
@@ -342,30 +350,12 @@ Resources.ApplicationPanelSidebar = class extends UI.VBox {
    * @param {!SDK.Resource} resource
    * @param {number=} line
    * @param {number=} column
-   * @return {boolean}
+   * @return {!Promise}
    */
-  showResource(resource, line, column) {
+  async showResource(resource, line, column) {
     var resourceTreeElement = Resources.FrameResourceTreeElement.forResource(resource);
     if (resourceTreeElement)
-      resourceTreeElement.revealAndSelect(true);
-
-    if (typeof line === 'number') {
-      var resourceSourceFrame = this._resourceSourceFrameViewForResource(resource);
-      if (resourceSourceFrame)
-        resourceSourceFrame.revealPosition(line, column, true);
-    }
-    return true;
-  }
-
-  /**
-   * @param {!SDK.Resource} resource
-   * @return {?SourceFrame.ResourceSourceFrame}
-   */
-  _resourceSourceFrameViewForResource(resource) {
-    var resourceView = Resources.FrameResourceTreeElement.resourceViewForResource(resource);
-    if (resourceView && resourceView instanceof SourceFrame.ResourceSourceFrame)
-      return /** @type {!SourceFrame.ResourceSourceFrame} */ (resourceView);
-    return null;
+      await resourceTreeElement.revealResource(line, column);
   }
 
   /**
@@ -598,9 +588,16 @@ Resources.BaseStorageTreeElement = class extends UI.TreeElement {
   onselect(selectedByUser) {
     if (!selectedByUser)
       return false;
-    var itemURL = this.itemURL;
-    if (itemURL)
-      this._storagePanel.setLastSelectedItemURL(itemURL);
+
+    var path = [];
+    for (var el = this; el; el = el.parent) {
+      var url = el.itemURL;
+      if (!url)
+        break;
+      path.push(url);
+    }
+    this._storagePanel.setLastSelectedItemPath(path);
+
     return false;
   }
 
@@ -703,19 +700,10 @@ Resources.DatabaseTreeElement = class extends Resources.BaseStorageTreeElement {
     this._updateChildren();
   }
 
-  _updateChildren() {
-    this.removeChildren();
-
-    /**
-     * @param {!Array.<string>} tableNames
-     * @this {Resources.DatabaseTreeElement}
-     */
-    function tableNamesCallback(tableNames) {
-      var tableNamesLength = tableNames.length;
-      for (var i = 0; i < tableNamesLength; ++i)
-        this.appendChild(new Resources.DatabaseTableTreeElement(this._sidebar, this._database, tableNames[i]));
-    }
-    this._database.getTableNames(tableNamesCallback.bind(this));
+  async _updateChildren() {
+    var tableNames = await this._database.tableNames();
+    for (var tableName of tableNames)
+      this.appendChild(new Resources.DatabaseTableTreeElement(this._sidebar, this._database, tableName));
   }
 };
 
@@ -794,7 +782,7 @@ Resources.ServiceWorkerCacheTreeElement = class extends Resources.StorageCategor
 
   _handleContextMenuEvent(event) {
     var contextMenu = new UI.ContextMenu(event);
-    contextMenu.appendItem(Common.UIString('Refresh Caches'), this._refreshCaches.bind(this));
+    contextMenu.defaultSection().appendItem(Common.UIString('Refresh Caches'), this._refreshCaches.bind(this));
     contextMenu.show();
   }
 
@@ -833,7 +821,6 @@ Resources.ServiceWorkerCacheTreeElement = class extends Resources.StorageCategor
     if (!swCacheTreeElement)
       return;
 
-    swCacheTreeElement.clear();
     this.removeChild(swCacheTreeElement);
     this._swCacheTreeElements.remove(swCacheTreeElement);
     this.setExpandable(this.childCount() > 0);
@@ -858,9 +845,6 @@ Resources.ServiceWorkerCacheTreeElement = class extends Resources.StorageCategor
   }
 };
 
-/**
- * @unrestricted
- */
 Resources.SWCacheTreeElement = class extends Resources.BaseStorageTreeElement {
   /**
    * @param {!Resources.ResourcesPanel} storagePanel
@@ -871,6 +855,8 @@ Resources.SWCacheTreeElement = class extends Resources.BaseStorageTreeElement {
     super(storagePanel, cache.cacheName + ' - ' + cache.securityOrigin, false);
     this._model = model;
     this._cache = cache;
+    /** @type {?Resources.ServiceWorkerCacheView} */
+    this._view = null;
     var icon = UI.Icon.create('mediumicon-table', 'resource-tree-item');
     this.setLeadingIcons([icon]);
   }
@@ -890,7 +876,7 @@ Resources.SWCacheTreeElement = class extends Resources.BaseStorageTreeElement {
 
   _handleContextMenuEvent(event) {
     var contextMenu = new UI.ContextMenu(event);
-    contextMenu.appendItem(Common.UIString('Delete'), this._clearCache.bind(this));
+    contextMenu.defaultSection().appendItem(Common.UIString('Delete'), this._clearCache.bind(this));
     contextMenu.show();
   }
 
@@ -918,11 +904,6 @@ Resources.SWCacheTreeElement = class extends Resources.BaseStorageTreeElement {
 
     this.showView(this._view);
     return false;
-  }
-
-  clear() {
-    if (this._view)
-      this._view.clear();
   }
 };
 
@@ -1065,7 +1046,7 @@ Resources.IndexedDBTreeElement = class extends Resources.StorageCategoryTreeElem
 
   _handleContextMenuEvent(event) {
     var contextMenu = new UI.ContextMenu(event);
-    contextMenu.appendItem(Common.UIString('Refresh IndexedDB'), this.refreshIndexedDB.bind(this));
+    contextMenu.defaultSection().appendItem(Common.UIString('Refresh IndexedDB'), this.refreshIndexedDB.bind(this));
     contextMenu.show();
   }
 
@@ -1161,6 +1142,7 @@ Resources.IDBDatabaseTreeElement = class extends Resources.BaseStorageTreeElemen
     this._idbObjectStoreTreeElements = {};
     var icon = UI.Icon.create('mediumicon-database', 'resource-tree-item');
     this.setLeadingIcons([icon]);
+    this._model.addEventListener(Resources.IndexedDBModel.Events.DatabaseNamesRefreshed, this._refreshIndexedDB, this);
   }
 
   get itemURL() {
@@ -1177,12 +1159,12 @@ Resources.IDBDatabaseTreeElement = class extends Resources.BaseStorageTreeElemen
 
   _handleContextMenuEvent(event) {
     var contextMenu = new UI.ContextMenu(event);
-    contextMenu.appendItem(Common.UIString('Refresh IndexedDB'), this._refreshIndexedDB.bind(this));
+    contextMenu.defaultSection().appendItem(Common.UIString('Refresh IndexedDB'), this._refreshIndexedDB.bind(this));
     contextMenu.show();
   }
 
   _refreshIndexedDB() {
-    this._model.refreshDatabaseNames();
+    this._model.refreshDatabase(this._databaseId);
   }
 
   /**
@@ -1246,9 +1228,6 @@ Resources.IDBDatabaseTreeElement = class extends Resources.BaseStorageTreeElemen
   }
 };
 
-/**
- * @unrestricted
- */
 Resources.IDBObjectStoreTreeElement = class extends Resources.BaseStorageTreeElement {
   /**
    * @param {!Resources.ResourcesPanel} storagePanel
@@ -1261,6 +1240,9 @@ Resources.IDBObjectStoreTreeElement = class extends Resources.BaseStorageTreeEle
     this._model = model;
     this._databaseId = databaseId;
     this._idbIndexTreeElements = {};
+    this._objectStore = objectStore;
+    /** @type {?Resources.IDBDataView} */
+    this._view = null;
     var icon = UI.Icon.create('mediumicon-table', 'resource-tree-item');
     this.setLeadingIcons([icon]);
   }
@@ -1280,18 +1262,13 @@ Resources.IDBObjectStoreTreeElement = class extends Resources.BaseStorageTreeEle
 
   _handleContextMenuEvent(event) {
     var contextMenu = new UI.ContextMenu(event);
-    contextMenu.appendItem(Common.UIString('Clear'), this._clearObjectStore.bind(this));
+    contextMenu.defaultSection().appendItem(Common.UIString('Clear'), this._clearObjectStore.bind(this));
     contextMenu.show();
   }
 
-  _clearObjectStore() {
-    /**
-     * @this {Resources.IDBObjectStoreTreeElement}
-     */
-    function callback() {
-      this.update(this._objectStore);
-    }
-    this._model.clearObjectStore(this._databaseId, this._objectStore.name, callback.bind(this));
+  async _clearObjectStore() {
+    await this._model.clearObjectStore(this._databaseId, this._objectStore.name);
+    this.update(this._objectStore);
   }
 
   /**
@@ -1327,7 +1304,7 @@ Resources.IDBObjectStoreTreeElement = class extends Resources.BaseStorageTreeEle
       this.expand();
 
     if (this._view)
-      this._view.update(this._objectStore);
+      this._view.update(this._objectStore, null);
 
     this._updateTooltip();
   }
@@ -1477,7 +1454,7 @@ Resources.DOMStorageTreeElement = class extends Resources.BaseStorageTreeElement
 
   _handleContextMenuEvent(event) {
     var contextMenu = new UI.ContextMenu(event);
-    contextMenu.appendItem(Common.UIString('Clear'), () => this._domStorage.clear());
+    contextMenu.defaultSection().appendItem(Common.UIString('Clear'), () => this._domStorage.clear());
     contextMenu.show();
   }
 };
@@ -1513,7 +1490,7 @@ Resources.CookieTreeElement = class extends Resources.BaseStorageTreeElement {
    */
   _handleContextMenuEvent(event) {
     var contextMenu = new UI.ContextMenu(event);
-    contextMenu.appendItem(
+    contextMenu.defaultSection().appendItem(
         Common.UIString('Clear'), () => this._storagePanel.clearCookies(this._target, this._cookieDomain));
     contextMenu.show();
   }

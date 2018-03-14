@@ -9,8 +9,9 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/threading/thread.h"
+#include "components/sync/base/cancelation_signal.h"
 #include "components/sync/base/fake_encryptor.h"
 #include "components/sync/base/hash_util.h"
 #include "components/sync/engine/model_type_processor.h"
@@ -21,6 +22,12 @@
 #include "components/sync/test/engine/mock_nudge_handler.h"
 #include "components/sync/test/engine/single_type_mock_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using base::Time;
+using base::TimeDelta;
+using sync_pb::EntitySpecifics;
+using sync_pb::ModelTypeState;
+using sync_pb::SyncEntity;
 
 namespace syncer {
 
@@ -45,9 +52,9 @@ const std::string kHash1(GenerateTagHash(kTag1));
 const std::string kHash2(GenerateTagHash(kTag2));
 const std::string kHash3(GenerateTagHash(kTag3));
 
-sync_pb::EntitySpecifics GenerateSpecifics(const std::string& tag,
-                                           const std::string& value) {
-  sync_pb::EntitySpecifics specifics;
+EntitySpecifics GenerateSpecifics(const std::string& tag,
+                                  const std::string& value) {
+  EntitySpecifics specifics;
   specifics.mutable_preference()->set_name(tag);
   specifics.mutable_preference()->set_value(value);
   return specifics;
@@ -78,12 +85,11 @@ KeyParams GetNthKeyParams(int n) {
 
 // Modifies the input/output parameter |specifics| by encrypting it with
 // a Nigori intialized with the specified KeyParams.
-void EncryptUpdate(const KeyParams& params,
-                   sync_pb::EntitySpecifics* specifics) {
+void EncryptUpdate(const KeyParams& params, EntitySpecifics* specifics) {
   Nigori nigori;
   nigori.InitByDerivation(params.hostname, params.username, params.password);
 
-  sync_pb::EntitySpecifics original_specifics = *specifics;
+  EntitySpecifics original_specifics = *specifics;
   std::string plaintext;
   original_specifics.SerializeToString(&plaintext);
 
@@ -94,6 +100,12 @@ void EncryptUpdate(const KeyParams& params,
   AddDefaultFieldValue(kModelType, specifics);
   specifics->mutable_encrypted()->set_key_name(GetNigoriName(nigori));
   specifics->mutable_encrypted()->set_blob(encrypted);
+}
+
+void VerifyCommitCount(const DataTypeDebugInfoEmitter* emitter,
+                       int expected_count) {
+  EXPECT_EQ(expected_count, emitter->GetCommitCounters().num_commits_attempted);
+  EXPECT_EQ(expected_count, emitter->GetCommitCounters().num_commits_success);
 }
 
 }  // namespace
@@ -131,9 +143,11 @@ class ModelTypeWorkerTest : public ::testing::Test {
       : foreign_encryption_key_index_(0),
         update_encryption_filter_index_(0),
         mock_type_processor_(nullptr),
-        mock_server_(kModelType),
+        mock_server_(std::make_unique<SingleTypeMockServer>(kModelType)),
         is_processor_disconnected_(false),
-        preferences_emitter_(kModelType, &type_observers_) {}
+        emitter_(std::make_unique<NonBlockingTypeDebugInfoEmitter>(
+            kModelType,
+            &type_observers_)) {}
 
   ~ModelTypeWorkerTest() override {}
 
@@ -144,11 +158,11 @@ class ModelTypeWorkerTest : public ::testing::Test {
   // significant server action until we receive an update response that
   // contains the type root node for this type.
   void FirstInitialize() {
-    sync_pb::ModelTypeState initial_state;
+    ModelTypeState initial_state;
     initial_state.mutable_progress_marker()->set_data_type_id(
         GetSpecificsFieldNumberFromModelType(kModelType));
 
-    InitializeWithState(initial_state, UpdateResponseDataList());
+    InitializeWithState(kModelType, initial_state, UpdateResponseDataList());
   }
 
   // Initializes with some existing data type state. Allows us to start
@@ -160,7 +174,7 @@ class ModelTypeWorkerTest : public ::testing::Test {
   // Initialize with some saved pending updates from the model thread.
   void InitializeWithPendingUpdates(
       const UpdateResponseDataList& initial_pending_updates) {
-    sync_pb::ModelTypeState initial_state;
+    ModelTypeState initial_state;
     initial_state.mutable_progress_marker()->set_data_type_id(
         GetSpecificsFieldNumberFromModelType(kModelType));
     initial_state.mutable_progress_marker()->set_token(
@@ -168,39 +182,52 @@ class ModelTypeWorkerTest : public ::testing::Test {
 
     initial_state.set_initial_sync_done(true);
 
-    InitializeWithState(initial_state, initial_pending_updates);
+    InitializeWithState(kModelType, initial_state, initial_pending_updates);
 
-    mock_nudge_handler_.ClearCounters();
+    nudge_handler()->ClearCounters();
+  }
+
+  void InitializeCommitOnly() {
+    mock_server_ = std::make_unique<SingleTypeMockServer>(USER_EVENTS);
+    emitter_ = std::make_unique<NonBlockingTypeDebugInfoEmitter>(
+        USER_EVENTS, &type_observers_);
+
+    // Don't set progress marker, commit only types don't use them.
+    ModelTypeState initial_state;
+    initial_state.set_initial_sync_done(true);
+
+    InitializeWithState(USER_EVENTS, initial_state, UpdateResponseDataList());
   }
 
   // Initialize with a custom initial ModelTypeState and pending updates.
   void InitializeWithState(
-      const sync_pb::ModelTypeState& state,
+      const ModelType type,
+      const ModelTypeState& state,
       const UpdateResponseDataList& initial_pending_updates) {
-    DCHECK(!worker_);
+    DCHECK(!worker());
 
     // We don't get to own this object. The |worker_| keeps a unique_ptr to it.
-    auto processor = base::MakeUnique<MockModelTypeProcessor>();
+    auto processor = std::make_unique<MockModelTypeProcessor>();
     mock_type_processor_ = processor.get();
     processor->SetDisconnectCallback(base::Bind(
         &ModelTypeWorkerTest::DisconnectProcessor, base::Unretained(this)));
 
     std::unique_ptr<Cryptographer> cryptographer_copy;
     if (cryptographer_) {
-      cryptographer_copy = base::MakeUnique<Cryptographer>(*cryptographer_);
+      cryptographer_copy = std::make_unique<Cryptographer>(*cryptographer_);
     }
 
     // TODO(maxbogue): crbug.com/529498: Inject pending updates somehow.
-    worker_ = base::MakeUnique<ModelTypeWorker>(
-        kModelType, state, !state.initial_sync_done(),
-        std::move(cryptographer_copy), &mock_nudge_handler_,
-        std::move(processor), &preferences_emitter_);
+    worker_ = std::make_unique<ModelTypeWorker>(
+        type, state, !state.initial_sync_done(), std::move(cryptographer_copy),
+        &mock_nudge_handler_, std::move(processor), emitter_.get(),
+        &cancelation_signal_);
   }
 
   // Introduce a new key that the local cryptographer can't decrypt.
   void AddPendingKey() {
     if (!cryptographer_) {
-      cryptographer_ = base::MakeUnique<Cryptographer>(&fake_encryptor_);
+      cryptographer_ = std::make_unique<Cryptographer>(&fake_encryptor_);
     }
 
     foreign_encryption_key_index_++;
@@ -238,16 +265,16 @@ class ModelTypeWorkerTest : public ::testing::Test {
     cryptographer_->SetPendingKeys(encrypted);
 
     // Update the worker with the latest cryptographer.
-    if (worker_) {
-      worker_->UpdateCryptographer(
-          base::MakeUnique<Cryptographer>(*cryptographer_));
+    if (worker()) {
+      worker()->UpdateCryptographer(
+          std::make_unique<Cryptographer>(*cryptographer_));
     }
   }
 
   // Update the local cryptographer with all relevant keys.
   void DecryptPendingKey() {
     if (!cryptographer_) {
-      cryptographer_ = base::MakeUnique<Cryptographer>(&fake_encryptor_);
+      cryptographer_ = std::make_unique<Cryptographer>(&fake_encryptor_);
     }
 
     KeyParams params = GetNthKeyParams(foreign_encryption_key_index_);
@@ -255,9 +282,9 @@ class ModelTypeWorkerTest : public ::testing::Test {
     DCHECK(success);
 
     // Update the worker with the latest cryptographer.
-    if (worker_) {
-      worker_->UpdateCryptographer(
-          base::MakeUnique<Cryptographer>(*cryptographer_));
+    if (worker()) {
+      worker()->UpdateCryptographer(
+          std::make_unique<Cryptographer>(*cryptographer_));
     }
   }
 
@@ -267,33 +294,40 @@ class ModelTypeWorkerTest : public ::testing::Test {
 
   // Modifications on the model thread that get sent to the worker under test.
 
-  void CommitRequest(const std::string& name, const std::string& value) {
-    const std::string tag_hash = GenerateTagHash(name);
-    CommitRequestData data = mock_type_processor_->CommitRequest(
-        tag_hash, GenerateSpecifics(name, value));
-    worker_->EnqueueForCommit({data});
+  CommitRequestDataList GenerateCommitRequest(const std::string& name,
+                                              const std::string& value) {
+    return GenerateCommitRequest(GenerateTagHash(name),
+                                 GenerateSpecifics(name, value));
   }
 
-  void DeleteRequest(const std::string& tag) {
+  CommitRequestDataList GenerateCommitRequest(
+      const std::string& tag_hash,
+      const EntitySpecifics& specifics) {
+    CommitRequestDataList commit_request;
+    commit_request.push_back(processor()->CommitRequest(tag_hash, specifics));
+    return commit_request;
+  }
+
+  CommitRequestDataList GenerateDeleteRequest(const std::string& tag) {
+    CommitRequestDataList request;
     const std::string tag_hash = GenerateTagHash(tag);
-    CommitRequestData data = mock_type_processor_->DeleteRequest(tag_hash);
-    worker_->EnqueueForCommit({data});
+    request.push_back(processor()->DeleteRequest(tag_hash));
+    return request;
   }
 
   // Pretend to receive update messages from the server.
 
   void TriggerTypeRootUpdateFromServer() {
-    sync_pb::SyncEntity entity = mock_server_.TypeRootUpdate();
-    worker_->ProcessGetUpdatesResponse(mock_server_.GetProgress(),
-                                       mock_server_.GetContext(), {&entity},
-                                       nullptr);
-    worker_->PassiveApplyUpdates(nullptr);
+    SyncEntity entity = server()->TypeRootUpdate();
+    worker()->ProcessGetUpdatesResponse(
+        server()->GetProgress(), server()->GetContext(), {&entity}, nullptr);
+    worker()->PassiveApplyUpdates(nullptr);
   }
 
   void TriggerPartialUpdateFromServer(int64_t version_offset,
                                       const std::string& tag,
                                       const std::string& value) {
-    sync_pb::SyncEntity entity = mock_server_.UpdateFromServer(
+    SyncEntity entity = server()->UpdateFromServer(
         version_offset, GenerateTagHash(tag), GenerateSpecifics(tag, value));
 
     if (update_encryption_filter_index_ != 0) {
@@ -301,37 +335,35 @@ class ModelTypeWorkerTest : public ::testing::Test {
                     entity.mutable_specifics());
     }
 
-    worker_->ProcessGetUpdatesResponse(mock_server_.GetProgress(),
-                                       mock_server_.GetContext(), {&entity},
-                                       nullptr);
+    worker()->ProcessGetUpdatesResponse(
+        server()->GetProgress(), server()->GetContext(), {&entity}, nullptr);
   }
 
   void TriggerUpdateFromServer(int64_t version_offset,
                                const std::string& tag,
                                const std::string& value) {
     TriggerPartialUpdateFromServer(version_offset, tag, value);
-    worker_->ApplyUpdates(nullptr);
+    worker()->ApplyUpdates(nullptr);
   }
 
   void TriggerTombstoneFromServer(int64_t version_offset,
                                   const std::string& tag) {
-    sync_pb::SyncEntity entity =
-        mock_server_.TombstoneFromServer(version_offset, GenerateTagHash(tag));
+    SyncEntity entity =
+        server()->TombstoneFromServer(version_offset, GenerateTagHash(tag));
 
     if (update_encryption_filter_index_ != 0) {
       EncryptUpdate(GetNthKeyParams(update_encryption_filter_index_),
                     entity.mutable_specifics());
     }
 
-    worker_->ProcessGetUpdatesResponse(mock_server_.GetProgress(),
-                                       mock_server_.GetContext(), {&entity},
-                                       nullptr);
-    worker_->ApplyUpdates(nullptr);
+    worker()->ProcessGetUpdatesResponse(
+        server()->GetProgress(), server()->GetContext(), {&entity}, nullptr);
+    worker()->ApplyUpdates(nullptr);
   }
 
   // Simulates the end of a GU sync cycle and tells the worker to flush changes
   // to the processor.
-  void ApplyUpdates() { worker_->ApplyUpdates(nullptr); }
+  void ApplyUpdates() { worker()->ApplyUpdates(nullptr); }
 
   // Delivers specified protos as updates.
   //
@@ -339,9 +371,9 @@ class ModelTypeWorkerTest : public ::testing::Test {
   // writing test cases that require entities that don't fit the normal sync
   // protocol. Try to use the other, higher level methods if possible.
   void DeliverRawUpdates(const SyncEntityList& list) {
-    worker_->ProcessGetUpdatesResponse(
-        mock_server_.GetProgress(), mock_server_.GetContext(), list, nullptr);
-    worker_->ApplyUpdates(nullptr);
+    worker()->ProcessGetUpdatesResponse(server()->GetProgress(),
+                                        server()->GetContext(), list, nullptr);
+    worker()->ApplyUpdates(nullptr);
   }
 
   // By default, this harness behaves as if all tasks posted to the model
@@ -352,14 +384,14 @@ class ModelTypeWorkerTest : public ::testing::Test {
   //
   // If you want to test those race cases, then these functions are for you.
   void SetModelThreadIsSynchronous(bool is_synchronous) {
-    mock_type_processor_->SetSynchronousExecution(is_synchronous);
+    processor()->SetSynchronousExecution(is_synchronous);
   }
-  void PumpModelThread() { mock_type_processor_->RunQueuedTasks(); }
+  void PumpModelThread() { processor()->RunQueuedTasks(); }
 
   // Returns true if the |worker_| is ready to commit something.
   bool WillCommit() {
     std::unique_ptr<CommitContribution> contribution(
-        worker_->GetContribution(INT_MAX));
+        worker()->GetContribution(INT_MAX));
 
     if (contribution) {
       contribution->CleanUp();  // Gracefully abort the commit.
@@ -376,15 +408,15 @@ class ModelTypeWorkerTest : public ::testing::Test {
   // about other tasks being run between the time when the commit request is
   // issued and the time when the commit response is received.
   void DoSuccessfulCommit() {
-    DCHECK(WillCommit());
     std::unique_ptr<CommitContribution> contribution(
-        worker_->GetContribution(INT_MAX));
+        worker()->GetContribution(INT_MAX));
+    DCHECK(contribution);
 
     sync_pb::ClientToServerMessage message;
     contribution->AddToCommitMessage(&message);
 
     sync_pb::ClientToServerResponse response =
-        mock_server_.DoSuccessfulCommit(message);
+        server()->DoSuccessfulCommit(message);
 
     contribution->ProcessCommitResponse(response, nullptr);
     contribution->CleanUp();
@@ -400,18 +432,8 @@ class ModelTypeWorkerTest : public ::testing::Test {
 
   void ResetWorker() { worker_.reset(); }
 
-  // Returns the number of commit nudges sent to the mock nudge handler.
-  int GetNumCommitNudges() const {
-    return mock_nudge_handler_.GetNumCommitNudges();
-  }
-
-  // Returns the number of initial sync nudges sent to the mock nudge handler.
-  int GetNumInitialDownloadNudges() const {
-    return mock_nudge_handler_.GetNumInitialDownloadNudges();
-  }
-
   // Returns the name of the encryption key in the cryptographer last passed to
-  // the CommitQueue. Returns an empty string if no crypgorapher is
+  // the CommitQueue. Returns an empty string if no cryptographer is
   // in use. See also: DecryptPendingKey().
   std::string GetLocalCryptographerKeyName() const {
     if (!cryptographer_) {
@@ -422,8 +444,9 @@ class ModelTypeWorkerTest : public ::testing::Test {
 
   MockModelTypeProcessor* processor() { return mock_type_processor_; }
   ModelTypeWorker* worker() { return worker_.get(); }
-  SingleTypeMockServer* server() { return &mock_server_; }
-  NonBlockingTypeDebugInfoEmitter* emitter() { return &preferences_emitter_; }
+  SingleTypeMockServer* server() { return mock_server_.get(); }
+  NonBlockingTypeDebugInfoEmitter* emitter() { return emitter_.get(); }
+  MockNudgeHandler* nudge_handler() { return &mock_nudge_handler_; }
 
  private:
   // An encryptor for our cryptographer.
@@ -440,6 +463,8 @@ class ModelTypeWorkerTest : public ::testing::Test {
   // value implies no encryption.
   int update_encryption_filter_index_;
 
+  CancelationSignal cancelation_signal_;
+
   // The ModelTypeWorker being tested.
   std::unique_ptr<ModelTypeWorker> worker_;
 
@@ -450,7 +475,7 @@ class ModelTypeWorkerTest : public ::testing::Test {
   // A mock that emulates enough of the sync server that it can be used
   // a single UpdateHandler and CommitContributor pair. In this test
   // harness, the |worker_| is both of them.
-  SingleTypeMockServer mock_server_;
+  std::unique_ptr<SingleTypeMockServer> mock_server_;
 
   // A mock to track the number of times the CommitQueue requests to
   // sync.
@@ -460,7 +485,7 @@ class ModelTypeWorkerTest : public ::testing::Test {
 
   base::ObserverList<TypeDebugInfoObserver> type_observers_;
 
-  NonBlockingTypeDebugInfoEmitter preferences_emitter_;
+  std::unique_ptr<NonBlockingTypeDebugInfoEmitter> emitter_;
 };
 
 // Requests a commit and verifies the messages sent to the client and server as
@@ -474,17 +499,16 @@ class ModelTypeWorkerTest : public ::testing::Test {
 TEST_F(ModelTypeWorkerTest, SimpleCommit) {
   NormalInitialize();
 
-  EXPECT_FALSE(WillCommit());
+  EXPECT_EQ(0, nudge_handler()->GetNumCommitNudges());
+  EXPECT_EQ(nullptr, worker()->GetContribution(INT_MAX));
   EXPECT_EQ(0U, server()->GetNumCommitMessages());
   EXPECT_EQ(0U, processor()->GetNumCommitResponses());
-  EXPECT_EQ(0, emitter()->GetCommitCounters().num_commits_attempted);
-  EXPECT_EQ(0, emitter()->GetCommitCounters().num_commits_success);
+  VerifyCommitCount(emitter(), 0);
 
-  CommitRequest(kTag1, kValue1);
+  worker()->NudgeForCommit();
+  EXPECT_EQ(1, nudge_handler()->GetNumCommitNudges());
 
-  EXPECT_EQ(1, GetNumCommitNudges());
-
-  ASSERT_TRUE(WillCommit());
+  processor()->SetCommitRequest(GenerateCommitRequest(kTag1, kValue1));
   DoSuccessfulCommit();
 
   const std::string& client_tag_hash = GenerateTagHash(kTag1);
@@ -493,7 +517,7 @@ TEST_F(ModelTypeWorkerTest, SimpleCommit) {
   ASSERT_EQ(1U, server()->GetNumCommitMessages());
   EXPECT_EQ(1, server()->GetNthCommitMessage(0).commit().entries_size());
   ASSERT_TRUE(server()->HasCommitEntity(kHash1));
-  const sync_pb::SyncEntity& entity = server()->GetLastCommittedEntity(kHash1);
+  const SyncEntity& entity = server()->GetLastCommittedEntity(kHash1);
   EXPECT_FALSE(entity.id_string().empty());
   EXPECT_EQ(0, entity.version());
   EXPECT_NE(0, entity.mtime());
@@ -504,9 +528,7 @@ TEST_F(ModelTypeWorkerTest, SimpleCommit) {
   EXPECT_FALSE(entity.deleted());
   EXPECT_EQ(kValue1, entity.specifics().preference().value());
 
-  // Verify the counters update correctly.
-  EXPECT_EQ(1, emitter()->GetCommitCounters().num_commits_attempted);
-  EXPECT_EQ(1, emitter()->GetCommitCounters().num_commits_success);
+  VerifyCommitCount(emitter(), 1);
 
   // Exhaustively verify the commit response returned to the model thread.
   ASSERT_EQ(1U, processor()->GetNumCommitResponses());
@@ -530,16 +552,11 @@ TEST_F(ModelTypeWorkerTest, SimpleDelete) {
 
   // We can't delete an entity that was never committed.
   // Step 1 is to create and commit a new entity.
-  CommitRequest(kTag1, kValue1);
-  EXPECT_EQ(1, GetNumCommitNudges());
-  EXPECT_EQ(0, emitter()->GetCommitCounters().num_commits_attempted);
-  EXPECT_EQ(0, emitter()->GetCommitCounters().num_commits_success);
-  ASSERT_TRUE(WillCommit());
+  VerifyCommitCount(emitter(), 0);
+  processor()->SetCommitRequest(GenerateCommitRequest(kTag1, kValue1));
   DoSuccessfulCommit();
 
-  // Verify the counters update correctly.
-  EXPECT_EQ(1, emitter()->GetCommitCounters().num_commits_attempted);
-  EXPECT_EQ(1, emitter()->GetCommitCounters().num_commits_success);
+  VerifyCommitCount(emitter(), 1);
 
   ASSERT_TRUE(processor()->HasCommitResponse(kHash1));
   const CommitResponseData& initial_commit_response =
@@ -547,19 +564,16 @@ TEST_F(ModelTypeWorkerTest, SimpleDelete) {
   int64_t base_version = initial_commit_response.response_version;
 
   // Now that we have an entity, we can delete it.
-  DeleteRequest(kTag1);
-  ASSERT_TRUE(WillCommit());
+  processor()->SetCommitRequest(GenerateDeleteRequest(kTag1));
   DoSuccessfulCommit();
 
-  // Verify the counters update correctly.
-  EXPECT_EQ(2, emitter()->GetCommitCounters().num_commits_attempted);
-  EXPECT_EQ(2, emitter()->GetCommitCounters().num_commits_success);
+  VerifyCommitCount(emitter(), 2);
 
   // Verify the SyncEntity sent in the commit message.
   ASSERT_EQ(2U, server()->GetNumCommitMessages());
   EXPECT_EQ(1, server()->GetNthCommitMessage(1).commit().entries_size());
   ASSERT_TRUE(server()->HasCommitEntity(kHash1));
-  const sync_pb::SyncEntity& entity = server()->GetLastCommittedEntity(kHash1);
+  const SyncEntity& entity = server()->GetLastCommittedEntity(kHash1);
   EXPECT_FALSE(entity.id_string().empty());
   EXPECT_EQ(GenerateTagHash(kTag1), entity.client_defined_unique_tag());
   EXPECT_EQ(base_version, entity.version());
@@ -582,27 +596,11 @@ TEST_F(ModelTypeWorkerTest, SimpleDelete) {
   EXPECT_EQ(entity.version(), commit_response.response_version);
 }
 
-// The server doesn't like it when we try to delete an entity it's never heard
-// of before. This test helps ensure we avoid that scenario.
-TEST_F(ModelTypeWorkerTest, NoDeleteUncommitted) {
-  NormalInitialize();
-
-  // Request the commit of a new, never-before-seen item.
-  CommitRequest(kTag1, kValue1);
-  EXPECT_TRUE(WillCommit());
-  EXPECT_EQ(1, GetNumCommitNudges());
-
-  // Request a deletion of that item before we've had a chance to commit it.
-  DeleteRequest(kTag1);
-  EXPECT_FALSE(WillCommit());
-  EXPECT_EQ(2, GetNumCommitNudges());
-}
-
 // Verifies the sending of an "initial sync done" signal.
 TEST_F(ModelTypeWorkerTest, SendInitialSyncDone) {
   FirstInitialize();  // Initialize with no saved sync state.
   EXPECT_EQ(0U, processor()->GetNumUpdateResponses());
-  EXPECT_EQ(1, GetNumInitialDownloadNudges());
+  EXPECT_EQ(1, nudge_handler()->GetNumInitialDownloadNudges());
 
   EXPECT_FALSE(worker()->IsInitialSyncEnded());
 
@@ -616,7 +614,7 @@ TEST_F(ModelTypeWorkerTest, SendInitialSyncDone) {
   // The update contains no entities.
   EXPECT_EQ(0U, processor()->GetNthUpdateResponse(0).size());
 
-  const sync_pb::ModelTypeState& state = processor()->GetNthUpdateState(0);
+  const ModelTypeState& state = processor()->GetNthUpdateState(0);
   EXPECT_FALSE(state.progress_marker().token().empty());
   EXPECT_TRUE(state.initial_sync_done());
   EXPECT_TRUE(worker()->IsInitialSyncEnded());
@@ -627,26 +625,20 @@ TEST_F(ModelTypeWorkerTest, TwoNewItemsCommittedSeparately) {
   NormalInitialize();
 
   // Commit the first of two entities.
-  CommitRequest(kTag1, kValue1);
-  EXPECT_EQ(1, GetNumCommitNudges());
-  ASSERT_TRUE(WillCommit());
+  processor()->SetCommitRequest(GenerateCommitRequest(kTag1, kValue1));
   DoSuccessfulCommit();
   ASSERT_EQ(1U, server()->GetNumCommitMessages());
   EXPECT_EQ(1, server()->GetNthCommitMessage(0).commit().entries_size());
   ASSERT_TRUE(server()->HasCommitEntity(kHash1));
-  const sync_pb::SyncEntity& tag1_entity =
-      server()->GetLastCommittedEntity(kHash1);
+  const SyncEntity& tag1_entity = server()->GetLastCommittedEntity(kHash1);
 
   // Commit the second of two entities.
-  CommitRequest(kTag2, kValue2);
-  EXPECT_EQ(2, GetNumCommitNudges());
-  ASSERT_TRUE(WillCommit());
+  processor()->SetCommitRequest(GenerateCommitRequest(kTag2, kValue2));
   DoSuccessfulCommit();
   ASSERT_EQ(2U, server()->GetNumCommitMessages());
   EXPECT_EQ(1, server()->GetNthCommitMessage(1).commit().entries_size());
   ASSERT_TRUE(server()->HasCommitEntity(kHash2));
-  const sync_pb::SyncEntity& tag2_entity =
-      server()->GetLastCommittedEntity(kHash2);
+  const SyncEntity& tag2_entity = server()->GetLastCommittedEntity(kHash2);
 
   EXPECT_FALSE(WillCommit());
 
@@ -691,7 +683,6 @@ TEST_F(ModelTypeWorkerTest, ReceiveUpdates) {
   EXPECT_EQ(kTag1, entity.specifics.preference().name());
   EXPECT_EQ(kValue1, entity.specifics.preference().value());
 
-  // Verify the counters update correctly.
   EXPECT_EQ(1, emitter()->GetUpdateCounters().num_updates_received);
   EXPECT_EQ(1, emitter()->GetUpdateCounters().num_updates_applied);
 }
@@ -744,6 +735,7 @@ TEST_F(ModelTypeWorkerTest, EncryptedCommit) {
   // Tell the worker about the new encryption key but no ApplyUpdates yet.
   AddPendingKey();
   DecryptPendingKey();
+  EXPECT_EQ(0, nudge_handler()->GetNumCommitNudges());
   ASSERT_EQ(0U, processor()->GetNumUpdateResponses());
 
   // Now the information is allowed to reach the processor.
@@ -753,13 +745,12 @@ TEST_F(ModelTypeWorkerTest, EncryptedCommit) {
             processor()->GetNthUpdateState(0).encryption_key_name());
 
   // Normal commit request stuff.
-  CommitRequest(kTag1, kValue1);
+  processor()->SetCommitRequest(GenerateCommitRequest(kTag1, kValue1));
   DoSuccessfulCommit();
   ASSERT_EQ(1U, server()->GetNumCommitMessages());
   EXPECT_EQ(1, server()->GetNthCommitMessage(0).commit().entries_size());
   ASSERT_TRUE(server()->HasCommitEntity(kHash1));
-  const sync_pb::SyncEntity& tag1_entity =
-      server()->GetLastCommittedEntity(kHash1);
+  const SyncEntity& tag1_entity = server()->GetLastCommittedEntity(kHash1);
 
   EXPECT_TRUE(tag1_entity.specifics().has_encrypted());
 
@@ -796,30 +787,31 @@ TEST_F(ModelTypeWorkerTest, EncryptionBlocksUpdates) {
       processor()->GetNthUpdateState(0).progress_marker().SerializeAsString());
 }
 
-// Test items are not committed when encryption is required but unavailable.
+// Test that local changes are not committed when encryption is required but
+// unavailable.
 TEST_F(ModelTypeWorkerTest, EncryptionBlocksCommits) {
   NormalInitialize();
 
-  CommitRequest(kTag1, kValue1);
-  EXPECT_TRUE(WillCommit());
+  AddPendingKey();
 
   // We know encryption is in use on this account, but don't have the necessary
   // encryption keys. The worker should refuse to commit.
-  AddPendingKey();
+  worker()->NudgeForCommit();
+  EXPECT_EQ(0, nudge_handler()->GetNumCommitNudges());
   EXPECT_FALSE(WillCommit());
 
   // Once the cryptographer is returned to a normal state, we should be able to
   // commit again.
   DecryptPendingKey();
-  EXPECT_TRUE(WillCommit());
+  EXPECT_EQ(1, nudge_handler()->GetNumCommitNudges());
 
   // Verify the committed entity was properly encrypted.
+  processor()->SetCommitRequest(GenerateCommitRequest(kTag1, kValue1));
   DoSuccessfulCommit();
   ASSERT_EQ(1U, server()->GetNumCommitMessages());
   EXPECT_EQ(1, server()->GetNthCommitMessage(0).commit().entries_size());
   ASSERT_TRUE(server()->HasCommitEntity(kHash1));
-  const sync_pb::SyncEntity& tag1_entity =
-      server()->GetLastCommittedEntity(kHash1);
+  const SyncEntity& tag1_entity = server()->GetLastCommittedEntity(kHash1);
   EXPECT_TRUE(tag1_entity.specifics().has_encrypted());
   EXPECT_EQ(tag1_entity.name(), "encrypted");
   EXPECT_TRUE(tag1_entity.specifics().has_preference());
@@ -948,66 +940,14 @@ TEST_F(ModelTypeWorkerTest, ReceiveUndecryptableEntries) {
   EXPECT_EQ(GetLocalCryptographerKeyName(), update.encryption_key_name);
 }
 
-// Ensure that even encrypted updates can cause conflicts.
-TEST_F(ModelTypeWorkerTest, EncryptedUpdateOverridesPendingCommit) {
-  NormalInitialize();
-
-  // Prepare to commit an item.
-  CommitRequest(kTag1, kValue1);
-  EXPECT_TRUE(WillCommit());
-
-  // Receive an encrypted update for that item and the new key. The pending key
-  // needs to arrive during (or before) the sync cycle that contains the
-  // encrypted entity. This means before ApplyUpdates is called.
-  SetUpdateEncryptionFilter(1);
-  TriggerPartialUpdateFromServer(10, kTag1, kValue1);
-  AddPendingKey();
-  DecryptPendingKey();
-  ApplyUpdates();
-
-  // The pending commit state should be cleared.
-  EXPECT_FALSE(WillCommit());
-
-  // The encrypted update will be delivered to the model thread.
-  ASSERT_EQ(1U, processor()->GetNumUpdateResponses());
-  UpdateResponseDataList updates_list = processor()->GetNthUpdateResponse(0);
-  EXPECT_EQ(1U, updates_list.size());
-}
-
-// Commit twice, both times with the kUncommittedVersion base version. Then
-// verify the second time through that we see the correct version.
-TEST_F(ModelTypeWorkerTest, OldVersionCommit) {
-  NormalInitialize();
-  CommitRequest(kTag1, kValue1);
-  EXPECT_TRUE(WillCommit());
-  DoSuccessfulCommit();
-  int commit_version = processor()->GetCommitResponse(kHash1).response_version;
-  EXPECT_NE(kUncommittedVersion, commit_version);
-
-  // Create a custom commit request using the old base_version.
-  CommitRequestData data =
-      processor()->CommitRequest(kHash1, GenerateSpecifics(kTag1, kValue2));
-  data.base_version = kUncommittedVersion;
-  worker()->EnqueueForCommit({data});
-  EXPECT_TRUE(WillCommit());
-  DoSuccessfulCommit();
-  sync_pb::ClientToServerMessage message = server()->GetNthCommitMessage(1);
-  const google::protobuf::RepeatedPtrField<sync_pb::SyncEntity>& entries =
-      message.commit().entries();
-  ASSERT_EQ(1, entries.size());
-  EXPECT_EQ(entries.Get(0).version(), commit_version);
-}
-
 // Test decryption of pending updates saved across a restart.
 TEST_F(ModelTypeWorkerTest, RestorePendingEntries) {
   // Create a fake pending update.
   EntityData entity;
   entity.client_tag_hash = GenerateTagHash(kTag1);
   entity.id = "SomeID";
-  entity.creation_time =
-      base::Time::UnixEpoch() + base::TimeDelta::FromSeconds(10);
-  entity.modification_time =
-      base::Time::UnixEpoch() + base::TimeDelta::FromSeconds(11);
+  entity.creation_time = Time::UnixEpoch() + TimeDelta::FromSeconds(10);
+  entity.modification_time = Time::UnixEpoch() + TimeDelta::FromSeconds(11);
   entity.non_unique_name = "encrypted";
   entity.specifics = GenerateSpecifics(kTag1, kValue1);
   EncryptUpdate(GetNthKeyParams(1), &(entity.specifics));
@@ -1045,10 +985,8 @@ TEST_F(ModelTypeWorkerTest, RestoreApplicableEntries) {
   EntityData entity;
   entity.client_tag_hash = GenerateTagHash(kTag1);
   entity.id = "SomeID";
-  entity.creation_time =
-      base::Time::UnixEpoch() + base::TimeDelta::FromSeconds(10);
-  entity.modification_time =
-      base::Time::UnixEpoch() + base::TimeDelta::FromSeconds(11);
+  entity.creation_time = Time::UnixEpoch() + TimeDelta::FromSeconds(10);
+  entity.modification_time = Time::UnixEpoch() + TimeDelta::FromSeconds(11);
   entity.non_unique_name = "encrypted";
 
   entity.specifics = GenerateSpecifics(kTag1, kValue1);
@@ -1067,38 +1005,6 @@ TEST_F(ModelTypeWorkerTest, RestoreApplicableEntries) {
   // ASSERT_TRUE(processor()->HasUpdateResponse(kHash1));
 }
 
-// Test that undecryptable updates provide sufficient reason to not commit.
-//
-// This should be rare in practice. Usually the cryptographer will be in an
-// unusable state when we receive undecryptable updates, and that alone will be
-// enough to prevent all commits.
-TEST_F(ModelTypeWorkerTest, CommitBlockedByPending) {
-  NormalInitialize();
-
-  // Prepare to commit an item.
-  CommitRequest(kTag1, kValue1);
-  EXPECT_TRUE(WillCommit());
-
-  // Receive an encrypted update for that item and the new key. The pending key
-  // needs to arrive during (or before) the sync cycle that contains the
-  // encrypted entity. This means before ApplyUpdates is called.
-  SetUpdateEncryptionFilter(1);
-  TriggerPartialUpdateFromServer(10, kTag1, kValue1);
-  AddPendingKey();
-  ApplyUpdates();
-
-  // Update should not have made it to the processor.
-  ASSERT_FALSE(processor()->HasUpdateResponse(kHash1));
-
-  // The pending commit state should be cleared.
-  EXPECT_FALSE(WillCommit());
-
-  // Pretend the update arrived too late to prevent another commit request.
-  CommitRequest(kTag1, kValue2);
-
-  EXPECT_FALSE(WillCommit());
-}
-
 // Verify that corrupted encrypted updates don't cause crashes.
 TEST_F(ModelTypeWorkerTest, ReceiveCorruptEncryption) {
   // Initialize the worker with basic encryption state.
@@ -1107,7 +1013,7 @@ TEST_F(ModelTypeWorkerTest, ReceiveCorruptEncryption) {
   DecryptPendingKey();
 
   // Manually create an update.
-  sync_pb::SyncEntity entity;
+  SyncEntity entity;
   entity.set_client_defined_unique_tag(GenerateTagHash(kTag1));
   entity.set_id_string("SomeID");
   entity.set_version(1);
@@ -1129,7 +1035,7 @@ TEST_F(ModelTypeWorkerTest, ReceiveCorruptEncryption) {
 
   EXPECT_FALSE(processor()->HasUpdateResponse(kHash1));
 
-  // Deliver a non-corrupt update to see if the everything still works.
+  // Deliver a non-corrupt update to see if everything still works.
   SetUpdateEncryptionFilter(1);
   TriggerUpdateFromServer(10, kTag1, kValue1);
   EXPECT_TRUE(processor()->HasUpdateResponse(kHash1));
@@ -1150,31 +1056,155 @@ TEST_F(ModelTypeWorkerTest, RecreateDeletedEntity) {
   NormalInitialize();
 
   // Create, then delete entity.
-  CommitRequest(kTag1, kValue1);
-  ASSERT_TRUE(WillCommit());
+  processor()->SetCommitRequest(GenerateCommitRequest(kTag1, kValue1));
   DoSuccessfulCommit();
 
-  DeleteRequest(kTag1);
-  ASSERT_TRUE(WillCommit());
+  processor()->SetCommitRequest(GenerateDeleteRequest(kTag1));
   DoSuccessfulCommit();
 
   // Verify that entity got deleted from the server.
   {
-    const sync_pb::SyncEntity& entity =
-        server()->GetLastCommittedEntity(kHash1);
+    const SyncEntity& entity = server()->GetLastCommittedEntity(kHash1);
     EXPECT_TRUE(entity.deleted());
   }
 
   // Create the same entity again.
-  CommitRequest(kTag1, kValue1);
-  ASSERT_TRUE(WillCommit());
+  processor()->SetCommitRequest(GenerateCommitRequest(kTag1, kValue1));
   DoSuccessfulCommit();
   // Verify that there is a valid entity on the server.
   {
-    const sync_pb::SyncEntity& entity =
-        server()->GetLastCommittedEntity(kHash1);
+    const SyncEntity& entity = server()->GetLastCommittedEntity(kHash1);
     EXPECT_FALSE(entity.deleted());
   }
+}
+
+TEST_F(ModelTypeWorkerTest, CommitOnly) {
+  InitializeCommitOnly();
+
+  int id = 123456789;
+  EntitySpecifics specifics;
+  specifics.mutable_user_event()->set_event_time_usec(id);
+  processor()->SetCommitRequest(GenerateCommitRequest(kHash1, specifics));
+  DoSuccessfulCommit();
+
+  ASSERT_EQ(1U, server()->GetNumCommitMessages());
+  EXPECT_EQ(1, server()->GetNthCommitMessage(0).commit().entries_size());
+  const SyncEntity entity =
+      server()->GetNthCommitMessage(0).commit().entries(0);
+
+  EXPECT_EQ(0, entity.attachment_id_size());
+  EXPECT_FALSE(entity.has_ctime());
+  EXPECT_FALSE(entity.has_deleted());
+  EXPECT_FALSE(entity.has_folder());
+  EXPECT_FALSE(entity.has_id_string());
+  EXPECT_FALSE(entity.has_mtime());
+  EXPECT_FALSE(entity.has_version());
+  EXPECT_FALSE(entity.has_name());
+  EXPECT_TRUE(entity.specifics().has_user_event());
+  EXPECT_EQ(id, entity.specifics().user_event().event_time_usec());
+
+  VerifyCommitCount(emitter(), 1);
+
+  ASSERT_EQ(1U, processor()->GetNumCommitResponses());
+  EXPECT_EQ(1U, processor()->GetNthCommitResponse(0).size());
+  ASSERT_TRUE(processor()->HasCommitResponse(kHash1));
+  const CommitResponseData& commit_response =
+      processor()->GetCommitResponse(kHash1);
+  EXPECT_EQ(kHash1, commit_response.client_tag_hash);
+  EXPECT_FALSE(commit_response.specifics_hash.empty());
+}
+
+class GetLocalChangesRequestTest : public testing::Test {
+ public:
+  GetLocalChangesRequestTest();
+  ~GetLocalChangesRequestTest() override;
+
+  void SetUp() override;
+  void TearDown() override;
+
+  scoped_refptr<GetLocalChangesRequest> MakeRequest();
+
+  void BlockingWaitForResponse(scoped_refptr<GetLocalChangesRequest> request);
+  void ScheduleBlockingWait(scoped_refptr<GetLocalChangesRequest> request);
+
+ protected:
+  CancelationSignal cancelation_signal_;
+  base::Thread blocking_thread_;
+  base::WaitableEvent start_event_;
+  base::WaitableEvent done_event_;
+};
+
+GetLocalChangesRequestTest::GetLocalChangesRequestTest()
+    : blocking_thread_("BlockingThread"),
+      start_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                   base::WaitableEvent::InitialState::NOT_SIGNALED),
+      done_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                  base::WaitableEvent::InitialState::NOT_SIGNALED) {}
+
+GetLocalChangesRequestTest::~GetLocalChangesRequestTest() = default;
+
+void GetLocalChangesRequestTest::SetUp() {
+  blocking_thread_.Start();
+}
+
+void GetLocalChangesRequestTest::TearDown() {
+  blocking_thread_.Stop();
+}
+
+scoped_refptr<GetLocalChangesRequest>
+GetLocalChangesRequestTest::MakeRequest() {
+  return base::MakeRefCounted<GetLocalChangesRequest>(&cancelation_signal_);
+}
+
+void GetLocalChangesRequestTest::BlockingWaitForResponse(
+    scoped_refptr<GetLocalChangesRequest> request) {
+  start_event_.Signal();
+  request->WaitForResponse();
+  done_event_.Signal();
+}
+
+void GetLocalChangesRequestTest::ScheduleBlockingWait(
+    scoped_refptr<GetLocalChangesRequest> request) {
+  blocking_thread_.task_runner()->PostTask(
+      FROM_HERE,
+      base::Bind(&GetLocalChangesRequestTest::BlockingWaitForResponse,
+                 base::Unretained(this), request));
+}
+
+// Tests that request doesn't block when cancelation signal is already signaled.
+TEST_F(GetLocalChangesRequestTest, CancelationSignaledBeforeRequest) {
+  cancelation_signal_.Signal();
+  auto request = MakeRequest();
+  request->WaitForResponse();
+  EXPECT_TRUE(request->WasCancelled());
+}
+
+// Tests that signaling cancelation signal while request is blocked unblocks it.
+TEST_F(GetLocalChangesRequestTest, CancelationSignaledAfterRequest) {
+  auto request = MakeRequest();
+  ScheduleBlockingWait(request);
+  start_event_.Wait();
+  cancelation_signal_.Signal();
+  done_event_.Wait();
+  EXPECT_TRUE(request->WasCancelled());
+}
+
+// Tests that setting response unblocks request.
+TEST_F(GetLocalChangesRequestTest, SuccessfulRequest) {
+  auto request = MakeRequest();
+  ScheduleBlockingWait(request);
+  start_event_.Wait();
+  {
+    CommitRequestDataList response;
+    response.emplace_back();
+    response.back().specifics_hash = kHash1;
+    request->SetResponse(std::move(response));
+  }
+  done_event_.Wait();
+  EXPECT_FALSE(request->WasCancelled());
+  CommitRequestDataList response = request->ExtractResponse();
+  EXPECT_EQ(1U, response.size());
+  EXPECT_EQ(kHash1, response[0].specifics_hash);
 }
 
 }  // namespace syncer

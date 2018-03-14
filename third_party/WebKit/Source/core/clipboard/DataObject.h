@@ -31,15 +31,15 @@
 #ifndef DataObject_h
 #define DataObject_h
 
+#include "base/memory/scoped_refptr.h"
 #include "core/CoreExport.h"
 #include "core/clipboard/DataObjectItem.h"
 #include "platform/PasteMode.h"
 #include "platform/Supplementable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/Vector.h"
-#include "wtf/text/StringHash.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/Vector.h"
+#include "platform/wtf/text/StringHash.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -55,6 +55,13 @@ class CORE_EXPORT DataObject : public GarbageCollectedFinalized<DataObject>,
   USING_GARBAGE_COLLECTED_MIXIN(DataObject);
 
  public:
+  struct CORE_EXPORT Observer : public GarbageCollectedMixin {
+    // Called whenever |item_list_| is modified. Note it can be called multiple
+    // times for a single mutation. For example, DataObject::SetData() calls
+    // both ClearData() and Add(), each of which can call this method.
+    virtual void OnItemListChanged() = 0;
+  };
+
   static DataObject* CreateFromPasteboard(PasteMode);
   static DataObject* CreateFromString(const String&);
   static DataObject* Create();
@@ -81,7 +88,7 @@ class CORE_EXPORT DataObject : public GarbageCollectedFinalized<DataObject>,
   String GetData(const String& type) const;
   void SetData(const String& type, const String& data);
 
-  void UrlAndTitle(String& url, String* title = 0) const;
+  void UrlAndTitle(String& url, String* title = nullptr) const;
   void SetURLAndTitle(const String& url, const String& title);
   void HtmlAndBaseURL(String& html, KURL& base_url) const;
   void SetHTMLAndBaseURL(const String& html, const KURL& base_url);
@@ -98,12 +105,12 @@ class CORE_EXPORT DataObject : public GarbageCollectedFinalized<DataObject>,
     filesystem_id_ = file_system_id;
   }
   const String& FilesystemId() const {
-    ASSERT(!filesystem_id_.IsEmpty());
+    DCHECK(!filesystem_id_.IsEmpty());
     return filesystem_id_;
   }
 
   // Used to handle files (images) being dragged out.
-  void AddSharedBuffer(PassRefPtr<SharedBuffer>,
+  void AddSharedBuffer(scoped_refptr<SharedBuffer>,
                        const KURL&,
                        const String& filename_extension,
                        const AtomicString& content_disposition);
@@ -111,7 +118,11 @@ class CORE_EXPORT DataObject : public GarbageCollectedFinalized<DataObject>,
   int GetModifiers() const { return modifiers_; }
   void SetModifiers(int modifiers) { modifiers_ = modifiers; }
 
-  DECLARE_TRACE();
+  // Adds an observer (and retains a reference to it) that is notified
+  // whenever the underlying item_list_ changes.
+  void AddObserver(Observer*);
+
+  void Trace(blink::Visitor*);
 
   WebDragData ToWebDragData();
 
@@ -122,7 +133,10 @@ class CORE_EXPORT DataObject : public GarbageCollectedFinalized<DataObject>,
   bool InternalAddStringItem(DataObjectItem*);
   void InternalAddFileItem(DataObjectItem*);
 
+  void NotifyItemListChanged() const;
+
   HeapVector<Member<DataObjectItem>> item_list_;
+  HeapHashSet<Member<Observer>> observers_;
 
   // State of Shift/Ctrl/Alt/Meta keys and Left/Right/Middle mouse buttons
   int modifiers_;

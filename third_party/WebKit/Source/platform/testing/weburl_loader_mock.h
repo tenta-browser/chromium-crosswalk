@@ -7,13 +7,14 @@
 
 #include <memory>
 #include "base/macros.h"
+#include "platform/wtf/Optional.h"
 #include "platform/wtf/WeakPtr.h"
+#include "public/platform/WebURLError.h"
 #include "public/platform/WebURLLoader.h"
 
 namespace blink {
 
 class WebData;
-struct WebURLError;
 class WebURLLoaderClient;
 class WebURLLoaderMockFactoryImpl;
 class WebURLLoaderTestDelegate;
@@ -30,23 +31,23 @@ class WebURLLoaderMock : public WebURLLoader {
  public:
   // This object becomes the owner of |default_loader|.
   WebURLLoaderMock(WebURLLoaderMockFactoryImpl* factory,
-                   WebURLLoader* default_loader);
+                   std::unique_ptr<WebURLLoader> default_loader);
   ~WebURLLoaderMock() override;
 
   // Simulates the asynchronous request being served.
   void ServeAsynchronousRequest(WebURLLoaderTestDelegate* delegate,
                                 const WebURLResponse& response,
                                 const WebData& data,
-                                const WebURLError& error);
+                                const Optional<WebURLError>& error);
 
   // Simulates the redirect being served.
-  WebURLRequest ServeRedirect(const WebURLRequest& request,
-                              const WebURLResponse& redirect_response);
+  WebURL ServeRedirect(const WebURLRequest& request,
+                       const WebURLResponse& redirect_response);
 
   // WebURLLoader methods:
   void LoadSynchronously(const WebURLRequest& request,
                          WebURLResponse& response,
-                         WebURLError& error,
+                         Optional<WebURLError>& error,
                          WebData& data,
                          int64_t& encoded_data_length,
                          int64_t& encoded_body_length) override;
@@ -54,7 +55,8 @@ class WebURLLoaderMock : public WebURLLoader {
                           WebURLLoaderClient* client) override;
   void Cancel() override;
   void SetDefersLoading(bool defer) override;
-  void SetLoadingTaskRunner(base::SingleThreadTaskRunner*) override;
+  void DidChangePriority(WebURLRequest::Priority new_priority,
+                         int intra_priority_value) override;
 
   bool is_deferred() { return is_deferred_; }
   bool is_cancelled() { return !client_; }

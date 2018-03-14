@@ -5,16 +5,14 @@
 #ifndef USBIsochronousInTransferPacket_h
 #define USBIsochronousInTransferPacket_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "core/dom/DOMDataView.h"
+#include "core/typed_arrays/DOMDataView.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/GarbageCollected.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
-class USBIsochronousInTransferPacket final
-    : public GarbageCollectedFinalized<USBIsochronousInTransferPacket>,
-      public ScriptWrappable {
+class USBIsochronousInTransferPacket final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -32,7 +30,10 @@ class USBIsochronousInTransferPacket final
   String status() const { return status_; }
   DOMDataView* data() const { return data_; }
 
-  DEFINE_INLINE_TRACE() { visitor->Trace(data_); }
+  void Trace(blink::Visitor* visitor) override {
+    visitor->Trace(data_);
+    ScriptWrappable::Trace(visitor);
+  }
 
  private:
   USBIsochronousInTransferPacket(const String& status, DOMDataView* data)

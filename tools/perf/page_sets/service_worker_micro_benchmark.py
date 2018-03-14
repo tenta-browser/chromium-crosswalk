@@ -31,4 +31,5 @@ class ServiceWorkerMicroBenchmarkPageSet(story.StorySet):
     # Why: to measure performance of many concurrent fetches
     self.AddStory(ServiceWorkerBenchmarkPage(
         'http://localhost:8091/index.html', self,
-        make_javascript_deterministic=False))
+        make_javascript_deterministic=False,
+        name='http://localhost:8091/index.html'))

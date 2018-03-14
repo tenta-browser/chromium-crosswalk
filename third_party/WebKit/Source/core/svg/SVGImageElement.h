@@ -21,8 +21,8 @@
 #ifndef SVGImageElement_h
 #define SVGImageElement_h
 
-#include "core/SVGNames.h"
-#include "core/html/canvas/CanvasImageElementSource.h"
+#include "bindings/core/v8/ActiveScriptWrappable.h"
+#include "core/html/canvas/ImageElementBase.h"
 #include "core/svg/SVGAnimatedLength.h"
 #include "core/svg/SVGAnimatedPreserveAspectRatio.h"
 #include "core/svg/SVGGraphicsElement.h"
@@ -32,15 +32,17 @@
 
 namespace blink {
 
-class CORE_EXPORT SVGImageElement final : public SVGGraphicsElement,
-                                          public CanvasImageElementSource,
-                                          public SVGURIReference {
+class CORE_EXPORT SVGImageElement final
+    : public SVGGraphicsElement,
+      public ImageElementBase,
+      public SVGURIReference,
+      public ActiveScriptWrappable<SVGImageElement> {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(SVGImageElement);
 
  public:
   DECLARE_NODE_FACTORY(SVGImageElement);
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   bool CurrentFrameHasSingleSecurityOrigin() const;
 
@@ -52,9 +54,15 @@ class CORE_EXPORT SVGImageElement final : public SVGGraphicsElement,
     return preserve_aspect_ratio_.Get();
   }
 
+  bool HasPendingActivity() const final {
+    return GetImageLoader().HasPendingActivity();
+  }
+
+  ScriptPromise decode(ScriptState*, ExceptionState&);
+
   // Exposed for testing.
   ImageResourceContent* CachedImage() const {
-    return GetImageLoader().GetImage();
+    return GetImageLoader().GetContent();
   }
 
  private:
@@ -64,13 +72,15 @@ class CORE_EXPORT SVGImageElement final : public SVGGraphicsElement,
     return !HrefString().IsNull();
   }
 
-  void CollectStyleForPresentationAttribute(const QualifiedName&,
-                                            const AtomicString&,
-                                            MutableStylePropertySet*) override;
+  void CollectStyleForPresentationAttribute(
+      const QualifiedName&,
+      const AtomicString&,
+      MutableCSSPropertyValueSet*) override;
 
   void SvgAttributeChanged(const QualifiedName&) override;
+  void ParseAttribute(const AttributeModificationParams&) override;
 
-  void AttachLayoutTree(const AttachContext& = AttachContext()) override;
+  void AttachLayoutTree(AttachContext&) override;
   InsertionNotificationRequest InsertedInto(ContainerNode*) override;
 
   LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
@@ -91,7 +101,6 @@ class CORE_EXPORT SVGImageElement final : public SVGGraphicsElement,
   Member<SVGAnimatedPreserveAspectRatio> preserve_aspect_ratio_;
 
   Member<SVGImageLoader> image_loader_;
-  bool needs_loader_uri_update_ : 1;
 };
 
 }  // namespace blink

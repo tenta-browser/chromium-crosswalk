@@ -125,6 +125,7 @@
 // <include src="sort_menu_controller.js">
 // <include src="gear_menu_controller.js">
 // <include src="import_controller.js">
+// <include src="last_modified_controller.js">
 // <include src="launch_param.js">
 // <include src="metadata/content_metadata_provider.js">
 // <include src="metadata/external_metadata_provider.js">
@@ -138,15 +139,18 @@
 // <include src="metadata_update_controller.js">
 // <include src="naming_controller.js">
 // <include src="navigation_list_model.js">
+// <include src="navigation_uma.js">
 // <include src="progress_center_item_group.js">
 // <include src="quick_view_controller.js">
 // <include src="quick_view_model.js">
 // <include src="quick_view_uma.js">
 // <include src="scan_controller.js">
 // <include src="search_controller.js">
+// <include src="selection_menu_controller.js">
 // <include src="share_client.js">
 // <include src="spinner_controller.js">
 // <include src="task_controller.js">
+// <include src="task_history.js">
 // <include src="toolbar_controller.js">
 // <include src="thumbnail_loader.js">
 // <include src="list_thumbnail_loader.js">
@@ -165,6 +169,7 @@
 // <include src="ui/file_list_selection_model.js">
 // <include src="ui/file_table.js">
 // <include src="ui/file_table_list.js">
+// <include src="ui/file_tap_handler.js">
 // <include src="ui/files_alert_dialog.js">
 // <include src="ui/files_confirm_dialog.js">
 // <include src="ui/files_menu.js">
@@ -180,6 +185,7 @@
 // <include src="ui/suggest_apps_dialog.js">
 // <include src="main_window_component.js">
 // <include src="volume_manager_wrapper.js">
+// <include src="webui_command_extender.js">
 
 // // For accurate load performance tracking place main.js should be
 // // the last include to include.

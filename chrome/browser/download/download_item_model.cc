@@ -6,6 +6,7 @@
 
 #include "base/i18n/number_formatting.h"
 #include "base/i18n/rtl.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string16.h"
 #include "base/strings/sys_string_conversions.h"
@@ -13,21 +14,21 @@
 #include "base/supports_user_data.h"
 #include "base/time/time.h"
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
+#include "chrome/browser/download/download_core_service.h"
+#include "chrome/browser/download/download_core_service_factory.h"
 #include "chrome/browser/download/download_crx_util.h"
 #include "chrome/browser/download/download_history.h"
-#include "chrome/browser/download/download_service.h"
-#include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/download/download_stats.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/safe_browsing/download_feedback_service.h"
+#include "chrome/browser/safe_browsing/download_protection/download_feedback_service.h"
 #include "chrome/common/safe_browsing/download_file_types.pb.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/mime_util/mime_util.h"
 #include "content/public/browser/download_danger_type.h"
 #include "content/public/browser/download_interrupt_reasons.h"
 #include "content/public/browser/download_item.h"
 #include "net/base/mime_util.h"
+#include "third_party/WebKit/common/mime_util/mime_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/time_format.h"
 #include "ui/base/text/bytes_formatting.h"
@@ -44,6 +45,8 @@ namespace {
 // DownloadItem, and the lifetime of the model is shorter than the DownloadItem.
 class DownloadItemModelData : public base::SupportsUserData::Data {
  public:
+  ~DownloadItemModelData() override {}
+
   // Get the DownloadItemModelData object for |download|. Returns NULL if
   // there's no model data.
   static const DownloadItemModelData* Get(const DownloadItem* download);
@@ -72,7 +75,6 @@ class DownloadItemModelData : public base::SupportsUserData::Data {
 
  private:
   DownloadItemModelData();
-  ~DownloadItemModelData() override {}
 
   static const char kKey[];
 };
@@ -93,7 +95,8 @@ DownloadItemModelData* DownloadItemModelData::GetOrCreate(
       static_cast<DownloadItemModelData*>(download->GetUserData(kKey));
   if (data == NULL) {
     data = new DownloadItemModelData();
-    download->SetUserData(kKey, data);
+    data->should_show_in_shelf_ = !download->IsTransient();
+    download->SetUserData(kKey, base::WrapUnique(data));
   }
   return data;
 }
@@ -137,6 +140,9 @@ base::string16 InterruptReasonStatusMessage(
     case content::DOWNLOAD_INTERRUPT_REASON_FILE_TOO_SHORT:
       string_id = IDS_DOWNLOAD_INTERRUPTED_STATUS_FILE_TOO_SHORT;
       break;
+    case content::DOWNLOAD_INTERRUPT_REASON_FILE_SAME_AS_SOURCE:
+      string_id = IDS_DOWNLOAD_INTERRUPTED_STATUS_FILE_SAME_AS_SOURCE;
+      break;
     case content::DOWNLOAD_INTERRUPT_REASON_NETWORK_INVALID_REQUEST:
     case content::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED:
       string_id = IDS_DOWNLOAD_INTERRUPTED_STATUS_NETWORK_ERROR;
@@ -176,6 +182,9 @@ base::string16 InterruptReasonStatusMessage(
       break;
     case content::DOWNLOAD_INTERRUPT_REASON_SERVER_UNREACHABLE:
       string_id = IDS_DOWNLOAD_INTERRUPTED_STATUS_UNREACHABLE;
+      break;
+    case content::DOWNLOAD_INTERRUPT_REASON_SERVER_CONTENT_LENGTH_MISMATCH:
+      string_id = IDS_DOWNLOAD_INTERRUPTED_STATUS_CONTENT_LENGTH_MISMATCH;
       break;
 
     case content::DOWNLOAD_INTERRUPT_REASON_NONE:
@@ -222,6 +231,9 @@ base::string16 InterruptReasonMessage(content::DownloadInterruptReason reason) {
     case content::DOWNLOAD_INTERRUPT_REASON_FILE_TOO_SHORT:
       string_id = IDS_DOWNLOAD_INTERRUPTED_DESCRIPTION_FILE_TOO_SHORT;
       break;
+    case content::DOWNLOAD_INTERRUPT_REASON_FILE_SAME_AS_SOURCE:
+      string_id = IDS_DOWNLOAD_INTERRUPTED_DESCRIPTION_FILE_SAME_AS_SOURCE;
+      break;
     case content::DOWNLOAD_INTERRUPT_REASON_NETWORK_INVALID_REQUEST:
     case content::DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED:
       string_id = IDS_DOWNLOAD_INTERRUPTED_DESCRIPTION_NETWORK_ERROR;
@@ -261,6 +273,9 @@ base::string16 InterruptReasonMessage(content::DownloadInterruptReason reason) {
       break;
     case content::DOWNLOAD_INTERRUPT_REASON_SERVER_UNREACHABLE:
       string_id = IDS_DOWNLOAD_INTERRUPTED_DESCRIPTION_UNREACHABLE;
+      break;
+    case content::DOWNLOAD_INTERRUPT_REASON_SERVER_CONTENT_LENGTH_MISMATCH:
+      string_id = IDS_DOWNLOAD_INTERRUPTED_DESCRIPTION_CONTENT_LENGTH_MISMATCH;
       break;
     case content::DOWNLOAD_INTERRUPT_REASON_NONE:
       NOTREACHED();
@@ -516,16 +531,17 @@ bool DownloadItemModel::IsMalicious() const {
 }
 
 bool DownloadItemModel::HasSupportedImageMimeType() const {
-  if (mime_util::IsSupportedImageMimeType(download_->GetMimeType())) {
+  if (blink::IsSupportedImageMimeType(download_->GetMimeType())) {
     return true;
   }
 
   std::string mime;
   base::FilePath::StringType extension_with_dot =
       download_->GetTargetFilePath().FinalExtension();
-  if (!extension_with_dot.empty() && net::GetWellKnownMimeTypeFromExtension(
-                                         extension_with_dot.substr(1), &mime) &&
-      mime_util::IsSupportedImageMimeType(mime)) {
+  if (!extension_with_dot.empty() &&
+      net::GetWellKnownMimeTypeFromExtension(extension_with_dot.substr(1),
+                                             &mime) &&
+      blink::IsSupportedImageMimeType(mime)) {
     return true;
   }
 
@@ -586,7 +602,10 @@ bool DownloadItemModel::ShouldShowDownloadStartedAnimation() const {
 
 bool DownloadItemModel::ShouldShowInShelf() const {
   const DownloadItemModelData* data = DownloadItemModelData::Get(download_);
-  return !data || data->should_show_in_shelf_;
+  if (data)
+    return data->should_show_in_shelf_;
+
+  return !download_->IsTransient();
 }
 
 void DownloadItemModel::SetShouldShowInShelf(bool should_show) {
@@ -595,12 +614,16 @@ void DownloadItemModel::SetShouldShowInShelf(bool should_show) {
 }
 
 bool DownloadItemModel::ShouldNotifyUI() const {
+  if (download_->IsTransient())
+    return false;
+
   Profile* profile =
       Profile::FromBrowserContext(download_->GetBrowserContext());
-  DownloadService* download_service =
-      DownloadServiceFactory::GetForBrowserContext(profile);
+  DownloadCoreService* download_core_service =
+      DownloadCoreServiceFactory::GetForBrowserContext(profile);
   DownloadHistory* download_history =
-      (download_service ? download_service->GetDownloadHistory() : NULL);
+      (download_core_service ? download_core_service->GetDownloadHistory()
+                             : nullptr);
 
   // The browser is only interested in new downloads. Ones that were restored
   // from history are not displayed on the shelf. The downloads page
@@ -736,14 +759,14 @@ base::string16 DownloadItemModel::GetInProgressStatusString() const {
 }
 
 void DownloadItemModel::OpenUsingPlatformHandler() {
-  DownloadService* download_service =
-      DownloadServiceFactory::GetForBrowserContext(
+  DownloadCoreService* download_core_service =
+      DownloadCoreServiceFactory::GetForBrowserContext(
           download_->GetBrowserContext());
-  if (!download_service)
+  if (!download_core_service)
     return;
 
   ChromeDownloadManagerDelegate* delegate =
-      download_service->GetDownloadManagerDelegate();
+      download_core_service->GetDownloadManagerDelegate();
   if (!delegate)
     return;
   delegate->OpenDownloadUsingPlatformHandler(download_);

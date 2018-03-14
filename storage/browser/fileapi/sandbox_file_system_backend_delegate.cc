@@ -53,10 +53,8 @@ const char kTemporaryDirectoryName[] = "t";
 const char kPersistentDirectoryName[] = "p";
 const char kSyncableDirectoryName[] = "s";
 
-const char* kPrepopulateTypes[] = {
-  kPersistentDirectoryName,
-  kTemporaryDirectoryName
-};
+const char* const kPrepopulateTypes[] = {kPersistentDirectoryName,
+                                         kTemporaryDirectoryName};
 
 enum FileSystemError {
   kOK = 0,
@@ -97,7 +95,7 @@ class ObfuscatedOriginEnumerator
   explicit ObfuscatedOriginEnumerator(ObfuscatedFileUtil* file_util) {
     enum_.reset(file_util->CreateOriginEnumerator());
   }
-  ~ObfuscatedOriginEnumerator() override {}
+  ~ObfuscatedOriginEnumerator() override = default;
 
   GURL Next() override { return enum_->Next(); }
 
@@ -135,11 +133,14 @@ void OpenFileSystemOnFileTaskRunner(
 
 void DidOpenFileSystem(
     base::WeakPtr<SandboxFileSystemBackendDelegate> delegate,
-    const base::Callback<void(base::File::Error error)>& callback,
+    base::OnceClosure quota_callback,
+    base::OnceCallback<void(base::File::Error error)> callback,
     base::File::Error* error) {
-  if (delegate.get())
-    delegate.get()->CollectOpenFileSystemMetrics(*error);
-  callback.Run(*error);
+  if (delegate)
+    delegate->CollectOpenFileSystemMetrics(*error);
+  if (*error == base::File::FILE_OK)
+    std::move(quota_callback).Run();
+  std::move(callback).Run(*error);
 }
 
 template <typename T>
@@ -179,6 +180,7 @@ SandboxFileSystemBackendDelegate::SandboxFileSystemBackendDelegate(
     storage::SpecialStoragePolicy* special_storage_policy,
     const FileSystemOptions& file_system_options)
     : file_task_runner_(file_task_runner),
+      quota_manager_proxy_(quota_manager_proxy),
       sandbox_file_util_(new AsyncFileUtilAdapter(
           new ObfuscatedFileUtil(special_storage_policy,
                                  profile_path.Append(kFileSystemDirectory),
@@ -203,10 +205,10 @@ SandboxFileSystemBackendDelegate::SandboxFileSystemBackendDelegate(
       is_filesystem_opened_(false),
       weak_factory_(this) {
   // Prepopulate database only if it can run asynchronously (i.e. the current
-  // thread is not file_task_runner). Usually this is the case but may not
+  // sequence is not file_task_runner). Usually this is the case but may not
   // in test code.
   if (!file_system_options.is_incognito() &&
-      !file_task_runner_->RunsTasksOnCurrentThread()) {
+      !file_task_runner_->RunsTasksInCurrentSequence()) {
     std::vector<std::string> types_to_prepopulate(
         &kPrepopulateTypes[0],
         &kPrepopulateTypes[arraysize(kPrepopulateTypes)]);
@@ -221,7 +223,7 @@ SandboxFileSystemBackendDelegate::SandboxFileSystemBackendDelegate(
 SandboxFileSystemBackendDelegate::~SandboxFileSystemBackendDelegate() {
   io_thread_checker_.DetachFromThread();
 
-  if (!file_task_runner_->RunsTasksOnCurrentThread()) {
+  if (!file_task_runner_->RunsTasksInCurrentSequence()) {
     DeleteSoon(file_task_runner_.get(), quota_reservation_manager_.release());
     DeleteSoon(file_task_runner_.get(), sandbox_file_util_.release());
     DeleteSoon(file_task_runner_.get(), quota_observer_.release());
@@ -251,25 +253,34 @@ void SandboxFileSystemBackendDelegate::OpenFileSystem(
     const GURL& origin_url,
     FileSystemType type,
     OpenFileSystemMode mode,
-    const OpenFileSystemCallback& callback,
+    OpenFileSystemCallback callback,
     const GURL& root_url) {
   if (!IsAllowedScheme(origin_url)) {
-    callback.Run(GURL(), std::string(), base::File::FILE_ERROR_SECURITY);
+    std::move(callback).Run(GURL(), std::string(),
+                            base::File::FILE_ERROR_SECURITY);
     return;
   }
 
   std::string name = GetFileSystemName(origin_url, type);
 
+  // |quota_manager_proxy_| may be null in unit tests.
+  base::OnceClosure quota_callback =
+      (quota_manager_proxy_.get())
+          ? base::BindOnce(&QuotaManagerProxy::NotifyStorageAccessed,
+                           quota_manager_proxy_,
+                           storage::QuotaClient::kFileSystem, origin_url,
+                           FileSystemTypeToQuotaStorageType(type))
+          : base::BindOnce(&base::DoNothing);
+
   base::File::Error* error_ptr = new base::File::Error;
   file_task_runner_->PostTaskAndReply(
       FROM_HERE,
-      base::Bind(&OpenFileSystemOnFileTaskRunner,
-                 obfuscated_file_util(), origin_url, type, mode,
-                 base::Unretained(error_ptr)),
-      base::Bind(&DidOpenFileSystem,
-                 weak_factory_.GetWeakPtr(),
-                 base::Bind(callback, root_url, name),
-                 base::Owned(error_ptr)));
+      base::BindOnce(&OpenFileSystemOnFileTaskRunner, obfuscated_file_util(),
+                     origin_url, type, mode, base::Unretained(error_ptr)),
+      base::BindOnce(&DidOpenFileSystem, weak_factory_.GetWeakPtr(),
+                     std::move(quota_callback),
+                     base::BindOnce(std::move(callback), root_url, name),
+                     base::Owned(error_ptr)));
 
   io_thread_checker_.DetachFromThread();
   is_filesystem_opened_ = true;
@@ -331,13 +342,13 @@ SandboxFileSystemBackendDelegate::DeleteOriginDataOnFileTaskRunner(
     storage::QuotaManagerProxy* proxy,
     const GURL& origin_url,
     FileSystemType type) {
-  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
   int64_t usage =
       GetOriginUsageOnFileTaskRunner(file_system_context, origin_url, type);
   usage_cache()->CloseCacheFiles();
   bool result = obfuscated_file_util()->DeleteDirectoryForOriginAndType(
       origin_url, GetTypeString(type));
-  if (result && proxy) {
+  if (result && proxy && usage) {
     proxy->NotifyStorageModified(storage::QuotaClient::kFileSystem,
                                  origin_url,
                                  FileSystemTypeToQuotaStorageType(type),
@@ -351,7 +362,7 @@ SandboxFileSystemBackendDelegate::DeleteOriginDataOnFileTaskRunner(
 
 void SandboxFileSystemBackendDelegate::GetOriginsForTypeOnFileTaskRunner(
     FileSystemType type, std::set<GURL>* origins) {
-  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(origins);
   std::unique_ptr<OriginEnumerator> enumerator(CreateOriginEnumerator());
   GURL origin;
@@ -361,10 +372,10 @@ void SandboxFileSystemBackendDelegate::GetOriginsForTypeOnFileTaskRunner(
   }
   switch (type) {
     case kFileSystemTypeTemporary:
-      UMA_HISTOGRAM_COUNTS(kTemporaryOriginsCountLabel, origins->size());
+      UMA_HISTOGRAM_COUNTS_1M(kTemporaryOriginsCountLabel, origins->size());
       break;
     case kFileSystemTypePersistent:
-      UMA_HISTOGRAM_COUNTS(kPersistentOriginsCountLabel, origins->size());
+      UMA_HISTOGRAM_COUNTS_1M(kPersistentOriginsCountLabel, origins->size());
       break;
     default:
       break;
@@ -374,7 +385,7 @@ void SandboxFileSystemBackendDelegate::GetOriginsForTypeOnFileTaskRunner(
 void SandboxFileSystemBackendDelegate::GetOriginsForHostOnFileTaskRunner(
     FileSystemType type, const std::string& host,
     std::set<GURL>* origins) {
-  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(origins);
   std::unique_ptr<OriginEnumerator> enumerator(CreateOriginEnumerator());
   GURL origin;
@@ -389,7 +400,7 @@ int64_t SandboxFileSystemBackendDelegate::GetOriginUsageOnFileTaskRunner(
     FileSystemContext* file_system_context,
     const GURL& origin_url,
     FileSystemType type) {
-  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
 
   // Don't use usage cache and return recalculated usage for sticky invalidated
   // origins.
@@ -430,7 +441,7 @@ scoped_refptr<QuotaReservation>
 SandboxFileSystemBackendDelegate::CreateQuotaReservationOnFileTaskRunner(
     const GURL& origin,
     FileSystemType type) {
-  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(quota_reservation_manager_);
   return quota_reservation_manager_->CreateReservation(origin, type);
 }
@@ -658,7 +669,7 @@ void SandboxFileSystemBackendDelegate::CopyFileSystem(
     const GURL& origin_url,
     FileSystemType type,
     SandboxFileSystemBackendDelegate* destination) {
-  DCHECK(file_task_runner()->RunsTasksOnCurrentThread());
+  DCHECK(file_task_runner()->RunsTasksInCurrentSequence());
 
   base::FilePath base_path =
       GetBaseDirectoryForOriginAndType(origin_url, type, false /* create */);

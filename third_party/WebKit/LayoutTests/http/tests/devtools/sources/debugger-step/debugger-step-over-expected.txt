@@ -1,0 +1,21 @@
+Tests "step over" functionality in debugger.
+
+Set timer for test function.
+Script execution paused.
+Call stack:
+    0) d (debugger-step-over.js:22)
+    1) testFunction (debugger-step-over.js:28)
+Stepping over...
+Script execution resumed.
+Script execution paused.
+Call stack:
+    0) d (debugger-step-over.js:23)
+    1) testFunction (debugger-step-over.js:28)
+Stepping over...
+Script execution resumed.
+Script execution paused.
+Call stack:
+    0) d (debugger-step-over.js:24)
+    1) testFunction (debugger-step-over.js:28)
+Script execution resumed.
+

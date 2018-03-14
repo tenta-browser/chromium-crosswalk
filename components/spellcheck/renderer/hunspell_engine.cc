@@ -11,10 +11,12 @@
 
 #include "base/files/memory_mapped_file.h"
 #include "base/time/time.h"
+#include "components/spellcheck/common/spellcheck.mojom.h"
 #include "components/spellcheck/common/spellcheck_common.h"
-#include "components/spellcheck/common/spellcheck_messages.h"
 #include "components/spellcheck/spellcheck_build_features.h"
+#include "content/public/common/service_names.mojom.h"
 #include "content/public/renderer/render_thread.h"
+#include "services/service_manager/public/cpp/local_interface_provider.h"
 #include "third_party/hunspell/src/hunspell/hunspell.hxx"
 
 using content::RenderThread;
@@ -35,15 +37,18 @@ namespace {
 }  // namespace
 
 #if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
-SpellingEngine* CreateNativeSpellingEngine() {
-  return new HunspellEngine();
+SpellingEngine* CreateNativeSpellingEngine(
+    service_manager::LocalInterfaceProvider* embedder_provider) {
+  return new HunspellEngine(embedder_provider);
 }
 #endif
 
-HunspellEngine::HunspellEngine()
+HunspellEngine::HunspellEngine(
+    service_manager::LocalInterfaceProvider* embedder_provider)
     : hunspell_enabled_(false),
       initialized_(false),
-      dictionary_requested_(false) {
+      dictionary_requested_(false),
+      embedder_provider_(embedder_provider) {
   // Wait till we check the first word before doing any initializing.
 }
 
@@ -118,9 +123,12 @@ void HunspellEngine::FillSuggestionList(
 
 bool HunspellEngine::InitializeIfNeeded() {
   if (!initialized_ && !dictionary_requested_) {
-    // RenderThread will not exist in test.
-    if (RenderThread::Get())
-      RenderThread::Get()->Send(new SpellCheckHostMsg_RequestDictionary);
+    // |embedder_provider_| will be nullptr in tests.
+    if (embedder_provider_) {
+      spellcheck::mojom::SpellCheckHostPtr spell_check_host;
+      embedder_provider_->GetInterface(&spell_check_host);
+      spell_check_host->RequestDictionary();
+    }
     dictionary_requested_ = true;
     return true;
   }

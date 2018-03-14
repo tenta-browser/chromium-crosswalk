@@ -11,19 +11,22 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/ppapi/ppapi_test.h"
 #include "content/public/common/quarantine.h"
 #include "ppapi/shared_impl/test_utils.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 #include "ui/shell_dialogs/select_file_dialog_factory.h"
+#include "ui/shell_dialogs/select_file_policy.h"
 #include "ui/shell_dialogs/selected_file_info.h"
 
 #if defined(FULL_SAFE_BROWSING)
-#include "chrome/browser/safe_browsing/download_protection_service.h"
+#include "chrome/browser/safe_browsing/download_protection/download_protection_service.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
-#include "components/safe_browsing_db/test_database_manager.h"
+#include "components/safe_browsing/db/test_database_manager.h"
 #include "content/public/test/test_download_request_handler.h"
 
 using safe_browsing::DownloadProtectionService;
@@ -51,19 +54,21 @@ class TestSelectFileDialogFactory final : public ui::SelectFileDialogFactory {
   }
 
   // SelectFileDialogFactory
-  ui::SelectFileDialog* Create(ui::SelectFileDialog::Listener* listener,
-                               ui::SelectFilePolicy* policy) override {
-    return new SelectFileDialog(listener, policy, selected_file_info_, mode_);
+  ui::SelectFileDialog* Create(
+      ui::SelectFileDialog::Listener* listener,
+      std::unique_ptr<ui::SelectFilePolicy> policy) override {
+    return new SelectFileDialog(listener, std::move(policy),
+                                selected_file_info_, mode_);
   }
 
  private:
   class SelectFileDialog : public ui::SelectFileDialog {
    public:
     SelectFileDialog(Listener* listener,
-                     ui::SelectFilePolicy* policy,
+                     std::unique_ptr<ui::SelectFilePolicy> policy,
                      const SelectedFileInfoList& selected_file_info,
                      Mode mode)
-        : ui::SelectFileDialog(listener, policy),
+        : ui::SelectFileDialog(listener, std::move(policy)),
           selected_file_info_(selected_file_info),
           mode_(mode) {}
 
@@ -137,11 +142,10 @@ class PPAPIFileChooserTest : public OutOfProcessPPAPITest {};
 #if defined(FULL_SAFE_BROWSING)
 
 struct SafeBrowsingTestConfiguration {
-  std::map<base::FilePath::StringType,
-           DownloadProtectionService::DownloadCheckResult>
+  std::map<base::FilePath::StringType, safe_browsing::DownloadCheckResult>
       result_map;
-  DownloadProtectionService::DownloadCheckResult default_result =
-      DownloadProtectionService::SAFE;
+  safe_browsing::DownloadCheckResult default_result =
+      safe_browsing::DownloadCheckResult::SAFE;
 };
 
 class FakeDatabaseManager
@@ -172,7 +176,7 @@ class FakeDownloadProtectionService : public DownloadProtectionService {
       const base::FilePath& default_file_path,
       const std::vector<base::FilePath::StringType>& alternate_extensions,
       Profile* /* profile */,
-      const CheckDownloadCallback& callback) override {
+      const safe_browsing::CheckDownloadCallback& callback) override {
     const auto iter =
         test_configuration_->result_map.find(default_file_path.Extension());
     if (iter != test_configuration_->result_map.end()) {
@@ -270,6 +274,7 @@ class PPAPIFileChooserTestWithSBService : public PPAPIFileChooserTest {
 
 IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTest, FileChooser_Open_Success) {
   const char kContents[] = "Hello from browser";
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
 
@@ -294,6 +299,7 @@ IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTest, FileChooser_Open_Cancel) {
 }
 
 IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTest, FileChooser_SaveAs_Success) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   base::FilePath suggested_filename = temp_dir.GetPath().AppendASCII("foo");
@@ -310,6 +316,7 @@ IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTest, FileChooser_SaveAs_Success) {
 
 IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTest,
                        FileChooser_SaveAs_SafeDefaultName) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   base::FilePath suggested_filename = temp_dir.GetPath().AppendASCII("foo");
@@ -332,6 +339,7 @@ IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTest,
 
 IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTest,
                        FileChooser_SaveAs_UnsafeDefaultName) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   base::FilePath suggested_filename = temp_dir.GetPath().AppendASCII("foo");
@@ -344,7 +352,7 @@ IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTest,
 
   RunTestViaHTTP("FileChooser_SaveAsUnsafeDefaultName");
   base::FilePath actual_filename =
-      temp_dir.GetPath().AppendASCII("unsafe.txt-");
+      temp_dir.GetPath().AppendASCII("unsafe.txt_");
 
   ASSERT_TRUE(base::PathExists(actual_filename));
   std::string file_contents;
@@ -366,6 +374,7 @@ IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTest, FileChooser_SaveAs_Cancel) {
 // file is created. This MOTW prevents the file being opened without due
 // security warnings if the file is executable.
 IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTest, FileChooser_Quarantine) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   base::FilePath suggested_filename = temp_dir.GetPath().AppendASCII("foo");
@@ -392,11 +401,12 @@ IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTest, FileChooser_Quarantine) {
 
 IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTestWithSBService,
                        FileChooser_SaveAs_DangerousExecutable_Allowed) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   safe_browsing_test_configuration_.default_result =
-      DownloadProtectionService::DANGEROUS;
+      safe_browsing::DownloadCheckResult::DANGEROUS;
   safe_browsing_test_configuration_.result_map.insert(
       std::make_pair(base::FilePath::StringType(FILE_PATH_LITERAL(".exe")),
-                     DownloadProtectionService::SAFE));
+                     safe_browsing::DownloadCheckResult::SAFE));
 
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
@@ -421,10 +431,10 @@ IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTestWithSBService,
 IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTestWithSBService,
                        FileChooser_SaveAs_DangerousExecutable_Disallowed) {
   safe_browsing_test_configuration_.default_result =
-      DownloadProtectionService::SAFE;
+      safe_browsing::DownloadCheckResult::SAFE;
   safe_browsing_test_configuration_.result_map.insert(
       std::make_pair(base::FilePath::StringType(FILE_PATH_LITERAL(".exe")),
-                     DownloadProtectionService::DANGEROUS));
+                     safe_browsing::DownloadCheckResult::DANGEROUS));
 
   TestSelectFileDialogFactory test_dialog_factory(
       TestSelectFileDialogFactory::NOT_REACHED,
@@ -435,15 +445,38 @@ IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTestWithSBService,
 IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTestWithSBService,
                        FileChooser_SaveAs_DangerousExtensionList_Disallowed) {
   safe_browsing_test_configuration_.default_result =
-      DownloadProtectionService::SAFE;
+      safe_browsing::DownloadCheckResult::SAFE;
   safe_browsing_test_configuration_.result_map.insert(
       std::make_pair(base::FilePath::StringType(FILE_PATH_LITERAL(".exe")),
-                     DownloadProtectionService::DANGEROUS));
+                     safe_browsing::DownloadCheckResult::DANGEROUS));
 
   TestSelectFileDialogFactory test_dialog_factory(
       TestSelectFileDialogFactory::NOT_REACHED,
       TestSelectFileDialogFactory::SelectedFileInfoList());
   RunTestViaHTTP("FileChooser_SaveAsDangerousExtensionListDisallowed");
+}
+
+IN_PROC_BROWSER_TEST_F(PPAPIFileChooserTestWithSBService,
+                       FileChooser_Open_NotBlockedBySafeBrowsing) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  const char kContents[] = "Hello from browser";
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+
+  base::FilePath existing_filename = temp_dir.GetPath().AppendASCII("foo");
+  ASSERT_EQ(
+      static_cast<int>(sizeof(kContents) - 1),
+      base::WriteFile(existing_filename, kContents, sizeof(kContents) - 1));
+
+  safe_browsing_test_configuration_.default_result =
+      safe_browsing::DownloadCheckResult::DANGEROUS;
+
+  TestSelectFileDialogFactory::SelectedFileInfoList file_info_list;
+  file_info_list.push_back(
+      ui::SelectedFileInfo(existing_filename, existing_filename));
+  TestSelectFileDialogFactory test_dialog_factory(
+      TestSelectFileDialogFactory::RESPOND_WITH_FILE_LIST, file_info_list);
+  RunTestViaHTTP("FileChooser_OpenSimple");
 }
 
 #endif  // FULL_SAFE_BROWSING

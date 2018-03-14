@@ -23,7 +23,7 @@ const float kDefaultDimOpacity = 0.5f;
 
 WindowDimmer::WindowDimmer(aura::Window* parent)
     : parent_(parent),
-      window_(new aura::Window(nullptr, ui::wm::WINDOW_TYPE_NORMAL)) {
+      window_(new aura::Window(nullptr, aura::client::WINDOW_TYPE_NORMAL)) {
   window_->Init(ui::LAYER_SOLID_COLOR);
   ::wm::SetWindowVisibilityChangesAnimated(window_);
   ::wm::SetWindowVisibilityAnimationType(
@@ -59,7 +59,8 @@ void WindowDimmer::SetDimOpacity(float target_opacity) {
 
 void WindowDimmer::OnWindowBoundsChanged(aura::Window* window,
                                          const gfx::Rect& old_bounds,
-                                         const gfx::Rect& new_bounds) {
+                                         const gfx::Rect& new_bounds,
+                                         ui::PropertyChangeReason reason) {
   if (window == parent_)
     window_->SetBounds(gfx::Rect(new_bounds.size()));
 }

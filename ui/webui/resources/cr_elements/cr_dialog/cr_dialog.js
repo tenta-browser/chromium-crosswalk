@@ -38,11 +38,18 @@ Polymer({
       value: false,
     },
 
-    showScrollBorders: {
+    /**
+     * True if the dialog should not be able to be cancelled, which will hide
+     * the 'x' button and prevent 'Escape' key presses from closing the dialog.
+     */
+    noCancel: {
       type: Boolean,
       value: false,
-      reflectToAttribute: true,
     },
+  },
+
+  listeners: {
+    'pointerdown': 'onPointerdown_',
   },
 
   /** @private {?IntersectionObserver} */
@@ -62,25 +69,29 @@ Polymer({
 
     if (!this.ignoreEnterKey)
       this.addEventListener('keypress', this.onKeypress_.bind(this));
+
+    if (this.noCancel)
+      this.addEventListener('cancel', this.onCancel_.bind(this));
   },
 
   /** @override */
   attached: function() {
-    if (!this.showScrollBorders)
-      return;
-
-    this.mutationObserver_ = new MutationObserver(function() {
-      if (this.open) {
+    var mutationObserverCallback = function() {
+      if (this.open)
         this.addIntersectionObserver_();
-      } else {
+      else
         this.removeIntersectionObserver_();
-      }
-    }.bind(this));
+    }.bind(this);
+
+    this.mutationObserver_ = new MutationObserver(mutationObserverCallback);
 
     this.mutationObserver_.observe(this, {
       attributes: true,
       attributeFilter: ['open'],
     });
+
+    // In some cases dialog already has the 'open' attribute by this point.
+    mutationObserverCallback();
   },
 
   /** @override */
@@ -103,7 +114,8 @@ Polymer({
     var topMarker = this.$.bodyTopMarker;
 
     var callback = function(entries) {
-      assert(entries.length <= 2);
+      // In some rare cases, there could be more than one entry per observed
+      // element, in which case the last entry's result stands.
       for (var i = 0; i < entries.length; i++) {
         var target = entries[i].target;
         assert(target == bottomMarker || target == topMarker);
@@ -180,5 +192,39 @@ Polymer({
       actionButton.click();
       e.preventDefault();
     }
+  },
+
+  /**
+   * @param {!Event} e
+   * @private
+   */
+  onCancel_: function(e) {
+    if (this.noCancel)
+      e.preventDefault();
+  },
+
+  /** @param {!PointerEvent} e */
+  onPointerdown_: function(e) {
+    // Only show pulse animation if user left-clicked outside of the dialog
+    // contents.
+    if (e.button != 0 || e.composedPath()[0].tagName !== 'DIALOG')
+      return;
+
+    this.animate(
+        [
+          {transform: 'scale(1)', offset: 0},
+          {transform: 'scale(1.02)', offset: 0.4},
+          {transform: 'scale(1.02)', offset: 0.6},
+          {transform: 'scale(1)', offset: 1},
+        ],
+        /** @type {!KeyframeEffectOptions} */ ({
+          duration: 180,
+          easing: 'ease-in-out',
+          iterations: 1,
+        }));
+
+    // Prevent any text from being selected within the dialog when clicking in
+    // the backdrop area.
+    e.preventDefault();
   },
 });

@@ -6,12 +6,14 @@
 #include <windows.h>
 #include <unknwn.h>
 #include <intshcut.h>
+#include <objbase.h>
 #include <propvarutil.h>
 #include <shlguid.h>
 #include <shlobj.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <urlhist.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <vector>
@@ -22,13 +24,12 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/win/registry.h"
-#include "base/win/scoped_comptr.h"
 #include "base/win/scoped_propvariant.h"
 #include "base/win/windows_version.h"
 #include "chrome/browser/importer/external_process_importer_host.h"
@@ -168,13 +169,14 @@ bool CreateOrderBlob(const base::FilePath& favorites_folder,
 bool CreateUrlFileWithFavicon(const base::FilePath& file,
                               const base::string16& url,
                               const base::string16& favicon_url) {
-  base::win::ScopedComPtr<IUniformResourceLocator> locator;
-  HRESULT result = locator.CreateInstance(CLSID_InternetShortcut, NULL,
-                                          CLSCTX_INPROC_SERVER);
+  Microsoft::WRL::ComPtr<IUniformResourceLocator> locator;
+  HRESULT result =
+      ::CoCreateInstance(CLSID_InternetShortcut, NULL, CLSCTX_INPROC_SERVER,
+                         IID_PPV_ARGS(&locator));
   if (FAILED(result))
     return false;
-  base::win::ScopedComPtr<IPersistFile> persist_file;
-  result = persist_file.QueryFrom(locator.get());
+  Microsoft::WRL::ComPtr<IPersistFile> persist_file;
+  result = locator.CopyTo(persist_file.GetAddressOf());
   if (FAILED(result))
     return false;
   result = locator->SetURL(url.c_str(), 0);
@@ -183,13 +185,12 @@ bool CreateUrlFileWithFavicon(const base::FilePath& file,
 
   // Write favicon url if specified.
   if (!favicon_url.empty()) {
-    base::win::ScopedComPtr<IPropertySetStorage> property_set_storage;
-    if (FAILED(property_set_storage.QueryFrom(locator.get())))
+    Microsoft::WRL::ComPtr<IPropertySetStorage> property_set_storage;
+    if (FAILED(locator.CopyTo(property_set_storage.GetAddressOf())))
       return false;
-    base::win::ScopedComPtr<IPropertyStorage> property_storage;
-    if (FAILED(property_set_storage->Open(FMTID_Intshcut,
-                                          STGM_WRITE,
-                                          property_storage.Receive()))) {
+    Microsoft::WRL::ComPtr<IPropertyStorage> property_storage;
+    if (FAILED(property_set_storage->Open(FMTID_Intshcut, STGM_WRITE,
+                                          property_storage.GetAddressOf()))) {
       return false;
     }
     PROPSPEC properties[] = {{PRSPEC_PROPID, {PID_IS_ICONFILE}}};
@@ -243,7 +244,7 @@ class TestObserver : public ProfileWriter,
   void ImportItemStarted(importer::ImportItem item) override {}
   void ImportItemEnded(importer::ImportItem item) override {}
   void ImportEnded() override {
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
     if (importer_items_ & importer::FAVORITES) {
       EXPECT_EQ(arraysize(kIEBookmarks), bookmark_count_);
       EXPECT_EQ(arraysize(kIEFaviconGroup), favicon_count_);
@@ -383,7 +384,7 @@ class MalformedFavoritesRegistryTestObserver
   void ImportItemStarted(importer::ImportItem item) override {}
   void ImportItemEnded(importer::ImportItem item) override {}
   void ImportEnded() override {
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
     EXPECT_EQ(arraysize(kIESortedBookmarks), bookmark_count_);
   }
 
@@ -435,6 +436,7 @@ class IEImporterBrowserTest : public InProcessBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(IEImporterBrowserTest, IEImporter) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   // Sets up a favorites folder.
   base::FilePath path = temp_dir_.GetPath().AppendASCII("Favorites");
   CreateDirectory(path.value().c_str(), NULL);
@@ -486,9 +488,10 @@ IN_PROC_BROWSER_TEST_F(IEImporterBrowserTest, IEImporter) {
                                   root_links + arraysize(root_links))));
 
   // Sets up a special history link.
-  base::win::ScopedComPtr<IUrlHistoryStg2> url_history_stg2;
-  ASSERT_EQ(S_OK, url_history_stg2.CreateInstance(CLSID_CUrlHistory, NULL,
-                                                  CLSCTX_INPROC_SERVER));
+  Microsoft::WRL::ComPtr<IUrlHistoryStg2> url_history_stg2;
+  ASSERT_EQ(S_OK,
+            ::CoCreateInstance(CLSID_CUrlHistory, NULL, CLSCTX_INPROC_SERVER,
+                               IID_PPV_ARGS(&url_history_stg2)));
   // Usage of ADDURL_ADDTOHISTORYANDCACHE and ADDURL_ADDTOCACHE flags
   // is explained in the article:
   // http://msdn.microsoft.com/ru-ru/aa767730
@@ -647,4 +650,3 @@ IN_PROC_BROWSER_TEST_F(IEImporterBrowserTest, IEImporterHomePageTest) {
       observer);
   base::RunLoop().Run();
 }
-

@@ -19,11 +19,8 @@
 #include "storage/browser/blob/blob_reader.h"
 #include "storage/browser/storage_browser_export.h"
 
-namespace base {
-class SingleThreadTaskRunner;
-}
-
 namespace net {
+class HttpResponseHeaders;
 class IOBuffer;
 }
 
@@ -31,7 +28,6 @@ namespace storage {
 
 class BlobDataHandle;
 class FileStreamReader;
-class FileSystemContext;
 
 // A request job that handles reading blob URLs.
 class STORAGE_EXPORT BlobURLRequestJob
@@ -39,9 +35,7 @@ class STORAGE_EXPORT BlobURLRequestJob
  public:
   BlobURLRequestJob(net::URLRequest* request,
                     net::NetworkDelegate* network_delegate,
-                    BlobDataHandle* blob_handle,
-                    storage::FileSystemContext* file_system_context,
-                    base::SingleThreadTaskRunner* resolving_thread_task_runner);
+                    BlobDataHandle* blob_handle);
 
   // net::URLRequestJob methods.
   void Start() override;
@@ -50,6 +44,19 @@ class STORAGE_EXPORT BlobURLRequestJob
   bool GetMimeType(std::string* mime_type) const override;
   void GetResponseInfo(net::HttpResponseInfo* info) override;
   void SetExtraRequestHeaders(const net::HttpRequestHeaders& headers) override;
+
+  // Helper method to create the HTTP headers for the response.
+  // |blob_handles|, |total_size|, |byte_range| and |content_size| are only
+  // used if status_code isn't an error.
+  static scoped_refptr<net::HttpResponseHeaders> GenerateHeaders(
+      net::HttpStatusCode status_code,
+      BlobDataHandle* blob_handle,
+      net::HttpByteRange* byte_range,
+      uint64_t total_size,
+      uint64_t content_size);
+
+  // Helper method to map from a net error to an http status code.
+  static net::HttpStatusCode NetErrorToHttpStatusCode(int error_code);
 
  protected:
   ~BlobURLRequestJob() override;

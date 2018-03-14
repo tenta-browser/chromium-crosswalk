@@ -8,15 +8,15 @@ suite('<bookmarks-item>', function() {
   var TEST_ITEM = createItem('0');
 
   setup(function() {
+    var nodes = testTree(createFolder('1', [
+      createItem('2', {url: 'http://example.com/'}),
+      createItem('3'),
+    ]));
     store = new bookmarks.TestStore({
-      nodes: testTree(createFolder(
-          '1',
-          [
-            createItem(['2']),
-            createItem(['3']),
-          ])),
+      nodes: nodes,
+      folderOpenState: getAllFoldersOpenState(nodes),
     });
-    bookmarks.Store.instance_ = store;
+    store.replaceSingleton();
 
     item = document.createElement('bookmarks-item');
     item.itemId = '2';
@@ -32,20 +32,48 @@ suite('<bookmarks-item>', function() {
 
   test('changing to folder hides/unhides the folder/icon', function() {
     // Starts test as an item.
-    assertTrue(item.$['folder-icon'].hidden);
-    assertFalse(item.$.icon.hidden);
+    assertEquals('website-icon', item.$.icon.className);
 
     // Change to a folder.
     item.itemId = '1';
 
-    assertFalse(item.$['folder-icon'].hidden);
-    assertTrue(item.$.icon.hidden);
+    assertEquals('folder-icon', item.$.icon.className);
   });
 
   test('pressing the menu button selects the item', function() {
     MockInteractions.tap(item.$$('.more-vert-button'));
     assertDeepEquals(
-        bookmarks.actions.selectItem('2', false, false, store.data),
+        bookmarks.actions.selectItem('2', store.data, {
+          clear: true,
+          range: false,
+          toggle: false,
+        }),
         store.lastAction);
+  });
+
+  function testEventSelection(eventname) {
+    item.isSelectedItem_ = true;
+    item.dispatchEvent(new MouseEvent(eventname));
+    assertEquals(null, store.lastAction);
+
+    item.isSelectedItem_ = false;
+    item.dispatchEvent(new MouseEvent(eventname));
+    assertDeepEquals(
+        bookmarks.actions.selectItem('2', store.data, {
+          clear: true,
+          range: false,
+          toggle: false,
+        }),
+        store.lastAction);
+  }
+
+  test('context menu selects item if unselected', function() {
+    testEventSelection('contextmenu');
+  });
+
+  test('doubleclicking selects item if unselected', function() {
+    document.body.appendChild(
+        document.createElement('bookmarks-command-manager'));
+    testEventSelection('dblclick');
   });
 });

@@ -5,6 +5,7 @@
 #include "services/preferences/public/cpp/pref_service_factory.h"
 
 #include "base/callback_helpers.h"
+#include "components/prefs/overlay_user_pref_store.h"
 #include "components/prefs/persistent_pref_store.h"
 #include "components/prefs/pref_notifier_impl.h"
 #include "components/prefs/pref_registry.h"
@@ -38,16 +39,34 @@ class RefCountedInterfacePtr
 
 void DoNothingHandleReadError(PersistentPrefStore::PrefReadError error) {}
 
-scoped_refptr<PrefStore> CreatePrefStore(
+scoped_refptr<PrefStore> CreatePrefStoreClient(
     PrefValueStore::PrefStoreType store_type,
     std::unordered_map<PrefValueStore::PrefStoreType,
                        mojom::PrefStoreConnectionPtr>* connections) {
   auto pref_store_it = connections->find(store_type);
   if (pref_store_it != connections->end()) {
-    return make_scoped_refptr(
-        new PrefStoreClient(std::move(pref_store_it->second)));
+    return base::MakeRefCounted<PrefStoreClient>(
+        std::move(pref_store_it->second));
+  }
+  return nullptr;
+}
+
+void OnPrefServiceInit(std::unique_ptr<PrefService> pref_service,
+                       ConnectCallback callback,
+                       bool success) {
+  if (success) {
+    callback.Run(std::move(pref_service));
   } else {
-    return nullptr;
+    callback.Run(nullptr);
+  }
+}
+
+void RegisterRemoteDefaults(PrefRegistry* pref_registry,
+                            std::vector<mojom::PrefRegistrationPtr> defaults) {
+  for (auto& registration : defaults) {
+    pref_registry->SetDefaultForeignPrefValue(
+        registration->key, std::move(registration->default_value),
+        registration->flags);
   }
 }
 
@@ -57,31 +76,60 @@ void OnConnect(
     scoped_refptr<PrefRegistry> pref_registry,
     ConnectCallback callback,
     mojom::PersistentPrefStoreConnectionPtr persistent_pref_store_connection,
+    mojom::IncognitoPersistentPrefStoreConnectionPtr incognito_connection,
+    std::vector<mojom::PrefRegistrationPtr> defaults,
     std::unordered_map<PrefValueStore::PrefStoreType,
                        mojom::PrefStoreConnectionPtr> connections) {
   scoped_refptr<PrefStore> managed_prefs =
-      CreatePrefStore(PrefValueStore::MANAGED_STORE, &connections);
-  scoped_refptr<PrefStore> supervised_user_prefs =
-      CreatePrefStore(PrefValueStore::SUPERVISED_USER_STORE, &connections);
+      CreatePrefStoreClient(PrefValueStore::MANAGED_STORE, &connections);
+  scoped_refptr<PrefStore> supervised_user_prefs = CreatePrefStoreClient(
+      PrefValueStore::SUPERVISED_USER_STORE, &connections);
   scoped_refptr<PrefStore> extension_prefs =
-      CreatePrefStore(PrefValueStore::EXTENSION_STORE, &connections);
+      CreatePrefStoreClient(PrefValueStore::EXTENSION_STORE, &connections);
   scoped_refptr<PrefStore> command_line_prefs =
-      CreatePrefStore(PrefValueStore::COMMAND_LINE_STORE, &connections);
+      CreatePrefStoreClient(PrefValueStore::COMMAND_LINE_STORE, &connections);
   scoped_refptr<PrefStore> recommended_prefs =
-      CreatePrefStore(PrefValueStore::RECOMMENDED_STORE, &connections);
-  scoped_refptr<PrefStore> default_prefs =
-      CreatePrefStore(PrefValueStore::DEFAULT_STORE, &connections);
+      CreatePrefStoreClient(PrefValueStore::RECOMMENDED_STORE, &connections);
+  RegisterRemoteDefaults(pref_registry.get(), std::move(defaults));
   scoped_refptr<PersistentPrefStore> persistent_pref_store(
       new PersistentPrefStoreClient(
           std::move(persistent_pref_store_connection)));
+  if (incognito_connection) {
+    // If in incognito mode, |persistent_pref_store| above will be a connection
+    // to an in-memory pref store and |incognito_connection| will refer to the
+    // underlying profile's user pref store.
+    auto overlay_pref_store = base::MakeRefCounted<OverlayUserPrefStore>(
+        persistent_pref_store.get(),
+        new PersistentPrefStoreClient(
+            std::move(incognito_connection->pref_store_connection)));
+    for (const auto& overlay_pref_name :
+         incognito_connection->overlay_pref_names) {
+      overlay_pref_store->RegisterOverlayPref(overlay_pref_name);
+    }
+    persistent_pref_store = overlay_pref_store;
+  }
   PrefNotifierImpl* pref_notifier = new PrefNotifierImpl();
   auto* pref_value_store = new PrefValueStore(
       managed_prefs.get(), supervised_user_prefs.get(), extension_prefs.get(),
       command_line_prefs.get(), persistent_pref_store.get(),
-      recommended_prefs.get(), default_prefs.get(), pref_notifier);
-  callback.Run(base::MakeUnique<::PrefService>(
+      recommended_prefs.get(), pref_registry->defaults().get(), pref_notifier);
+  auto pref_service = std::make_unique<PrefService>(
       pref_notifier, pref_value_store, persistent_pref_store.get(),
-      pref_registry.get(), base::Bind(&DoNothingHandleReadError), true));
+      pref_registry.get(), base::Bind(&DoNothingHandleReadError), true);
+  switch (pref_service->GetAllPrefStoresInitializationStatus()) {
+    case PrefService::INITIALIZATION_STATUS_WAITING:
+      pref_service->AddPrefInitObserver(base::Bind(&OnPrefServiceInit,
+                                                   base::Passed(&pref_service),
+                                                   base::Passed(&callback)));
+      break;
+    case PrefService::INITIALIZATION_STATUS_SUCCESS:
+    case PrefService::INITIALIZATION_STATUS_CREATED_NEW_PREF_STORE:
+      callback.Run(std::move(pref_service));
+      break;
+    case PrefService::INITIALIZATION_STATUS_ERROR:
+      callback.Run(nullptr);
+      break;
+  }
   connector_ptr->reset();
 }
 
@@ -95,22 +143,29 @@ void OnConnectError(
 
 }  // namespace
 
-void ConnectToPrefService(
-    service_manager::Connector* connector,
-    scoped_refptr<PrefRegistry> pref_registry,
-    const std::vector<PrefValueStore::PrefStoreType>& already_connected_types,
-    ConnectCallback callback,
-    base::StringPiece service_name) {
-  auto connector_ptr = make_scoped_refptr(
-      new RefCountedInterfacePtr<mojom::PrefStoreConnector>());
-  connector->BindInterface(service_name.as_string(), &connector_ptr->get());
+void ConnectToPrefService(mojom::PrefStoreConnectorPtr connector,
+                          scoped_refptr<PrefRegistry> pref_registry,
+                          ConnectCallback callback) {
+  auto connector_ptr =
+      base::MakeRefCounted<RefCountedInterfacePtr<mojom::PrefStoreConnector>>();
+  connector_ptr->get() = std::move(connector);
   connector_ptr->get().set_connection_error_handler(base::Bind(
       &OnConnectError, connector_ptr, base::Passed(ConnectCallback{callback})));
   auto serialized_pref_registry = SerializePrefRegistry(*pref_registry);
   connector_ptr->get()->Connect(
-      std::move(serialized_pref_registry), already_connected_types,
-      base::Bind(&OnConnect, connector_ptr, base::Passed(&pref_registry),
-                 base::Passed(&callback)));
+      std::move(serialized_pref_registry),
+      base::BindOnce(&OnConnect, connector_ptr, std::move(pref_registry),
+                     std::move(callback)));
+}
+
+void ConnectToPrefService(service_manager::Connector* connector,
+                          scoped_refptr<PrefRegistry> pref_registry,
+                          ConnectCallback callback,
+                          base::StringPiece service_name) {
+  mojom::PrefStoreConnectorPtr pref_connector;
+  connector->BindInterface(service_name.as_string(), &pref_connector);
+  ConnectToPrefService(std::move(pref_connector), std::move(pref_registry),
+                       std::move(callback));
 }
 
 }  // namespace prefs

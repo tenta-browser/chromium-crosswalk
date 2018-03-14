@@ -29,24 +29,14 @@
 #include "core/layout/api/SelectionState.h"
 #include "core/layout/line/InlineBox.h"
 #include "platform/text/TextRun.h"
+#include "platform/text/Truncation.h"
 #include "platform/wtf/Forward.h"
 
 namespace blink {
 
 class DocumentMarker;
 class GraphicsContext;
-
-// The two truncation values below are used as tokens representing truncation
-// state for the text box, are intended to be relative to |m_start|, and are set
-// directly into |m_truncation|. In the case where there is some truncation of
-// the text but it is not full, |m_truncation| is set to the character offset
-// from |m_start| representing the characters that are not truncated.
-//
-// Thus the maximum possible length of the text displayed before an ellipsis in
-// a single InlineTextBox is |USHRT_MAX - 2| to allow for the no-truncation and
-// full-truncation states.
-const unsigned short kCNoTruncation = USHRT_MAX;
-const unsigned short kCFullTruncation = USHRT_MAX - 1;
+class TextMatchMarker;
 
 class CORE_EXPORT InlineTextBox : public InlineBox {
  public:
@@ -93,11 +83,14 @@ class CORE_EXPORT InlineTextBox : public InlineBox {
     return first->Start() < second->Start();
   }
 
-  int BaselinePosition(FontBaseline) const final;
+  LayoutUnit BaselinePosition(FontBaseline) const final;
   LayoutUnit LineHeight() const final;
 
   bool GetEmphasisMarkPosition(const ComputedStyle&,
                                TextEmphasisPosition&) const;
+
+  LayoutUnit OffsetTo(LineVerticalPositionType, FontBaseline) const;
+  LayoutUnit VerticalPosition(LineVerticalPositionType, FontBaseline) const;
 
   LayoutRect LogicalOverflowRect() const;
   void SetLogicalOverflowRect(const LayoutRect&);
@@ -133,7 +126,10 @@ class CORE_EXPORT InlineTextBox : public InlineBox {
     return LayoutRect(X(), Y(), Width(), Height());
   }
 
-  virtual LayoutRect LocalSelectionRect(int start_pos, int end_pos) const;
+  virtual LayoutRect LocalSelectionRect(
+      int start_pos,
+      int end_pos,
+      bool include_newline_space_width = true) const;
   bool IsSelected(int start_pos, int end_pos) const;
   void SelectionStartEnd(int& s_pos, int& e_pos) const;
 
@@ -145,12 +141,12 @@ class CORE_EXPORT InlineTextBox : public InlineBox {
                                    bool grammar) const;
   virtual void PaintTextMatchMarkerForeground(const PaintInfo&,
                                               const LayoutPoint& box_origin,
-                                              const DocumentMarker&,
+                                              const TextMatchMarker&,
                                               const ComputedStyle&,
                                               const Font&) const;
   virtual void PaintTextMatchMarkerBackground(const PaintInfo&,
                                               const LayoutPoint& box_origin,
-                                              const DocumentMarker&,
+                                              const TextMatchMarker&,
                                               const ComputedStyle&,
                                               const Font&) const;
 
@@ -186,7 +182,7 @@ class CORE_EXPORT InlineTextBox : public InlineBox {
                               LayoutUnit visible_right_edge,
                               LayoutUnit ellipsis_width,
                               LayoutUnit& truncated_width,
-                              bool& found_box,
+                              InlineBox** found_box,
                               LayoutUnit logical_left_offset) final;
 
  public:

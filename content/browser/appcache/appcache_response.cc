@@ -20,6 +20,7 @@
 #include "net/base/completion_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
+#include "storage/common/storage_histograms.h"
 
 namespace content {
 
@@ -80,8 +81,8 @@ HttpResponseInfoIOBuffer::~HttpResponseInfoIOBuffer() {}
 
 // AppCacheDiskCacheInterface ----------------------------------------
 
-AppCacheDiskCacheInterface::AppCacheDiskCacheInterface()
-    : weak_factory_(this) {}
+AppCacheDiskCacheInterface::AppCacheDiskCacheInterface(const char* uma_name)
+    : uma_name_(uma_name), weak_factory_(this) {}
 
 base::WeakPtr<AppCacheDiskCacheInterface>
 AppCacheDiskCacheInterface::GetWeakPtr() {
@@ -97,7 +98,7 @@ AppCacheResponseIO::AppCacheResponseIO(
     const base::WeakPtr<AppCacheDiskCacheInterface>& disk_cache)
     : response_id_(response_id),
       disk_cache_(disk_cache),
-      entry_(NULL),
+      entry_(nullptr),
       buffer_len_(0),
       weak_factory_(this) {}
 
@@ -108,18 +109,18 @@ AppCacheResponseIO::~AppCacheResponseIO() {
 
 void AppCacheResponseIO::ScheduleIOCompletionCallback(int result) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&AppCacheResponseIO::OnIOComplete,
-                            weak_factory_.GetWeakPtr(), result));
+      FROM_HERE, base::BindOnce(&AppCacheResponseIO::OnIOComplete,
+                                weak_factory_.GetWeakPtr(), result));
 }
 
 void AppCacheResponseIO::InvokeUserCompletionCallback(int result) {
   // Clear the user callback and buffers prior to invoking the callback
   // so the caller can schedule additional operations in the callback.
-  buffer_ = NULL;
-  info_buffer_ = NULL;
-  net::CompletionCallback cb = callback_;
+  buffer_ = nullptr;
+  info_buffer_ = nullptr;
+  OnceCompletionCallback cb = std::move(callback_);
   callback_.Reset();
-  cb.Run(result);
+  std::move(cb).Run(result);
 }
 
 void AppCacheResponseIO::ReadRaw(int index, int offset,
@@ -151,7 +152,7 @@ void AppCacheResponseIO::OnRawIOComplete(int result) {
 
 void AppCacheResponseIO::OpenEntryIfNeeded() {
   int rv;
-  AppCacheDiskCacheInterface::Entry** entry_ptr = NULL;
+  AppCacheDiskCacheInterface::Entry** entry_ptr = nullptr;
   if (entry_) {
     rv = net::OK;
   } else if (!disk_cache_) {
@@ -199,7 +200,7 @@ AppCacheResponseReader::~AppCacheResponseReader() {
 }
 
 void AppCacheResponseReader::ReadInfo(HttpResponseInfoIOBuffer* info_buf,
-                                      const net::CompletionCallback& callback) {
+                                      OnceCompletionCallback callback) {
   DCHECK(!callback.is_null());
   DCHECK(!IsReadPending());
   DCHECK(info_buf);
@@ -208,7 +209,7 @@ void AppCacheResponseReader::ReadInfo(HttpResponseInfoIOBuffer* info_buf,
   DCHECK(!info_buffer_.get());
 
   info_buffer_ = info_buf;
-  callback_ = callback;  // cleared on completion
+  callback_ = std::move(callback);  // cleared on completion
   OpenEntryIfNeeded();
 }
 
@@ -223,8 +224,9 @@ void AppCacheResponseReader::ContinueReadInfo() {
   ReadRaw(kResponseInfoIndex, 0, buffer_.get(), size);
 }
 
-void AppCacheResponseReader::ReadData(net::IOBuffer* buf, int buf_len,
-                                      const net::CompletionCallback& callback) {
+void AppCacheResponseReader::ReadData(net::IOBuffer* buf,
+                                      int buf_len,
+                                      OnceCompletionCallback callback) {
   DCHECK(!callback.is_null());
   DCHECK(!IsReadPending());
   DCHECK(buf);
@@ -234,7 +236,7 @@ void AppCacheResponseReader::ReadData(net::IOBuffer* buf, int buf_len,
 
   buffer_ = buf;
   buffer_len_ = buf_len;
-  callback_ = callback;  // cleared on completion
+  callback_ = std::move(callback);  // cleared on completion
   OpenEntryIfNeeded();
 }
 
@@ -293,7 +295,10 @@ void AppCacheResponseReader::OnIOComplete(int result) {
       read_position_ += result;
     }
   }
+  if (result > 0 && disk_cache_)
+    storage::RecordBytesRead(disk_cache_->uma_name(), result);
   InvokeUserCompletionCallback(result);
+  // Note: |this| may have been deleted by the completion callback.
 }
 
 void AppCacheResponseReader::OnOpenEntryComplete() {
@@ -322,9 +327,8 @@ AppCacheResponseWriter::AppCacheResponseWriter(
 AppCacheResponseWriter::~AppCacheResponseWriter() {
 }
 
-void AppCacheResponseWriter::WriteInfo(
-    HttpResponseInfoIOBuffer* info_buf,
-    const net::CompletionCallback& callback) {
+void AppCacheResponseWriter::WriteInfo(HttpResponseInfoIOBuffer* info_buf,
+                                       OnceCompletionCallback callback) {
   DCHECK(!callback.is_null());
   DCHECK(!IsWritePending());
   DCHECK(info_buf);
@@ -334,7 +338,7 @@ void AppCacheResponseWriter::WriteInfo(
   DCHECK(info_buf->http_info->headers.get());
 
   info_buffer_ = info_buf;
-  callback_ = callback;  // cleared on completion
+  callback_ = std::move(callback);  // cleared on completion
   CreateEntryIfNeededAndContinue();
 }
 
@@ -353,8 +357,9 @@ void AppCacheResponseWriter::ContinueWriteInfo() {
   WriteRaw(kResponseInfoIndex, 0, buffer_.get(), write_amount_);
 }
 
-void AppCacheResponseWriter::WriteData(
-    net::IOBuffer* buf, int buf_len, const net::CompletionCallback& callback) {
+void AppCacheResponseWriter::WriteData(net::IOBuffer* buf,
+                                       int buf_len,
+                                       OnceCompletionCallback callback) {
   DCHECK(!callback.is_null());
   DCHECK(!IsWritePending());
   DCHECK(buf);
@@ -364,7 +369,7 @@ void AppCacheResponseWriter::WriteData(
 
   buffer_ = buf;
   write_amount_ = buf_len;
-  callback_ = callback;  // cleared on completion
+  callback_ = std::move(callback);  // cleared on completion
   CreateEntryIfNeededAndContinue();
 }
 
@@ -385,12 +390,15 @@ void AppCacheResponseWriter::OnIOComplete(int result) {
     else
       info_size_ = result;
   }
+  if (result > 0 && disk_cache_)
+    storage::RecordBytesWritten(disk_cache_->uma_name(), result);
   InvokeUserCompletionCallback(result);
+  // Note: |this| may have been deleted by the completion callback.
 }
 
 void AppCacheResponseWriter::CreateEntryIfNeededAndContinue() {
   int rv;
-  AppCacheDiskCacheInterface::Entry** entry_ptr = NULL;
+  AppCacheDiskCacheInterface::Entry** entry_ptr = nullptr;
   if (entry_) {
     creation_phase_ = NO_ATTEMPT;
     rv = net::OK;
@@ -422,7 +430,7 @@ void AppCacheResponseWriter::OnCreateEntryComplete(
       creation_phase_ = DOOM_EXISTING;
       rv = disk_cache_->DoomEntry(response_id_, create_callback_);
       if (rv != net::ERR_IO_PENDING)
-        OnCreateEntryComplete(NULL, rv);
+        OnCreateEntryComplete(nullptr, rv);
       return;
     }
   } else if (creation_phase_ == DOOM_EXISTING) {
@@ -489,7 +497,10 @@ void AppCacheResponseMetadataWriter::OnOpenEntryComplete() {
 
 void AppCacheResponseMetadataWriter::OnIOComplete(int result) {
   DCHECK(result < 0 || write_amount_ == result);
+  if (result > 0 && disk_cache_)
+    storage::RecordBytesWritten(disk_cache_->uma_name(), result);
   InvokeUserCompletionCallback(result);
+  // Note: |this| may have been deleted by the completion callback.
 }
 
 }  // namespace content

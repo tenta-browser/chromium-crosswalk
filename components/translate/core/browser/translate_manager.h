@@ -18,13 +18,15 @@
 #include "components/translate/core/browser/language_state.h"
 #include "components/translate/core/common/translate_errors.h"
 
+namespace language {
+class LanguageModel;
+}  // namespace language
+
 namespace metrics {
 class TranslateEventProto;
-}
+}  // namespace metrics
 
 namespace translate {
-
-extern const base::Feature kTranslateLanguageByULP;
 
 class TranslateClient;
 class TranslateDriver;
@@ -44,11 +46,9 @@ struct TranslateErrorDetails;
 class TranslateManager {
  public:
   // |translate_client| is expected to outlive the TranslateManager.
-  // |accept_language_pref_name| is the path for the preference for the
-  // accept-languages.
   TranslateManager(TranslateClient* translate_client,
                    TranslateRanker* translate_ranker,
-                   const std::string& accept_language_pref_name);
+                   language::LanguageModel* language_model);
   virtual ~TranslateManager();
 
   // Returns a weak pointer to this instance.
@@ -65,14 +65,20 @@ class TranslateManager {
     return translate_event_.get();
   }
 
-  // Returns the language to translate to. The language returned is the
-  // first language found in the following list that is supported by the
-  // translation service:
+  // Returns the language to translate to.
+  //
+  // If provided a non-null |language_model|, returns the first language from
+  // the model that is supported by the translation service.
+  //
+  // Otherwise, returns the first language found in the following list that is
+  // supported by the translation service:
   //     High confidence and high probability reading language in ULP
   //     the UI language
   //     the accept-language list
+  //
   // If no language is found then an empty string is returned.
-  static std::string GetTargetLanguage(const TranslatePrefs* prefs);
+  static std::string GetTargetLanguage(const TranslatePrefs* prefs,
+                                       language::LanguageModel* language_model);
 
   // Returns the language to automatically translate to. |original_language| is
   // the webpage's original language.
@@ -124,6 +130,15 @@ class TranslateManager {
   // testing, set to true to offer anyway.
   static void SetIgnoreMissingKeyForTesting(bool ignore);
 
+  // Returns true if the decision should be overridden and logs the event
+  // appropriately. |event_type| must be one of the
+  // values defined by metrics::TranslateEventProto::EventType.
+  bool ShouldOverrideDecision(int event_type);
+
+  // Returns true if the BubbleUI should be suppressed.
+  bool ShouldSuppressBubbleUI(bool triggered_from_menu,
+                              const std::string& source_language);
+
  private:
   friend class translate::testing::TranslateManagerTest;
 
@@ -131,14 +146,6 @@ class TranslateManager {
   void DoTranslatePage(const std::string& translate_script,
                        const std::string& source_lang,
                        const std::string& target_lang);
-
-  // Returns the language to translate to by looking at ULP. Return empty string
-  // If it cannot conclude from ULP.
-  static std::string GetTargetLanguageFromULP(const TranslatePrefs* prefs);
-
-  // Return true if the language is in the ULP with high confidence and high
-  // probability.
-  bool LanguageInULP(const std::string& language) const;
 
   // Notifies all registered callbacks of translate errors.
   void NotifyTranslateError(TranslateErrors::Type error_type);
@@ -161,9 +168,10 @@ class TranslateManager {
   // Preference name for the Accept-Languages HTTP header.
   std::string accept_languages_pref_name_;
 
-  TranslateClient* translate_client_;  // Weak.
-  TranslateDriver* translate_driver_;  // Weak.
-  TranslateRanker* translate_ranker_;  // Weak.
+  TranslateClient* translate_client_;        // Weak.
+  TranslateDriver* translate_driver_;        // Weak.
+  TranslateRanker* translate_ranker_;        // Weak.
+  language::LanguageModel* language_model_;  // Weak.
 
   LanguageState language_state_;
 

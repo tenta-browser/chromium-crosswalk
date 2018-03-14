@@ -29,7 +29,7 @@
 #include "core/timing/PerformanceBase.h"
 #include "core/timing/PerformanceTiming.h"
 #include "platform/heap/Handle.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -61,7 +61,7 @@ class UserTiming final : public GarbageCollected<UserTiming> {
   PerformanceEntryVector GetMarks(const String& name) const;
   PerformanceEntryVector GetMeasures(const String& name) const;
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   explicit UserTiming(PerformanceBase&);

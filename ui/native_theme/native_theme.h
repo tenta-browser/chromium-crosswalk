@@ -319,10 +319,6 @@ class NATIVE_THEME_EXPORT NativeTheme {
     kColorId_MenuSeparatorColor,
     kColorId_MenuBackgroundColor,
     kColorId_MenuBorderColor,
-    // MenuButton - buttons in wrench menu
-    kColorId_EnabledMenuButtonBorderColor,
-    kColorId_FocusedMenuButtonBorderColor,
-    kColorId_HoverMenuButtonBorderColor,
     // Label
     kColorId_LabelEnabledColor,
     kColorId_LabelDisabledColor,
@@ -334,6 +330,10 @@ class NATIVE_THEME_EXPORT NativeTheme {
     kColorId_LinkPressed,
     // Separator
     kColorId_SeparatorColor,
+    // TabbedPane
+    kColorId_TabTitleColorActive,
+    kColorId_TabTitleColorInactive,
+    kColorId_TabBottomBorder,
     // Textfield
     kColorId_TextfieldDefaultColor,
     kColorId_TextfieldDefaultBackground,

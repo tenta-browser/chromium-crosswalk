@@ -68,7 +68,7 @@ void IndexedDBConnection::VersionChangeIgnored() {
 }
 
 bool IndexedDBConnection::IsConnected() {
-  return database_.get() != NULL;
+  return database_.get() != nullptr;
 }
 
 // The observers begin listening to changes only once they are activated.
@@ -114,11 +114,6 @@ IndexedDBTransaction* IndexedDBConnection::CreateTransaction(
   IndexedDBTransaction* transaction_ptr = transaction.get();
   transactions_[id] = std::move(transaction);
   return transaction_ptr;
-}
-
-void IndexedDBConnection::AbortTransaction(IndexedDBTransaction* transaction) {
-  IDB_TRACE1("IndexedDBDatabase::Abort", "txn.id", transaction->id());
-  transaction->Abort();
 }
 
 void IndexedDBConnection::AbortTransaction(

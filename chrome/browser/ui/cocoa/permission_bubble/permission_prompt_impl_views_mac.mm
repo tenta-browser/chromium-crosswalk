@@ -2,43 +2,52 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
-#import "chrome/browser/ui/cocoa/browser_window_controller.h"
-#import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
+#include "chrome/browser/ui/cocoa/browser_dialogs_views_mac.h"
+#include "chrome/browser/ui/cocoa/bubble_anchor_helper_views.h"
 #import "chrome/browser/ui/cocoa/permission_bubble/permission_bubble_cocoa.h"
-#import "chrome/browser/ui/cocoa/permission_bubble/permission_bubble_controller.h"
 #include "chrome/browser/ui/views/permission_bubble/permission_prompt_impl.h"
-#import "ui/base/cocoa/cocoa_base_utils.h"
-#include "ui/base/material_design/material_design_controller.h"
-#import "ui/gfx/mac/coordinate_conversion.h"
+#include "ui/views/widget/widget.h"
+#include "ui/views/widget/widget_delegate.h"
 
-// Implementation of PermissionPromptImpl's anchor methods for Cocoa
-// browsers. In Cocoa browsers there is no parent views::View for the permission
-// bubble, so these methods supply an anchor point instead.
+namespace {
 
-views::View* PermissionPromptImpl::GetAnchorView() {
-  return nullptr;
+constexpr base::Feature kCocoaPermissionBubbles = {
+    "CocoaPermissionBubbles", base::FEATURE_DISABLED_BY_DEFAULT};
+
+bool UseViewsBubbles() {
+  return chrome::ShowPilotDialogsWithViewsToolkit() ||
+         !base::FeatureList::IsEnabled(kCocoaPermissionBubbles);
 }
 
-gfx::Point PermissionPromptImpl::GetAnchorPoint() {
-  return gfx::ScreenPointFromNSPoint(
-      [PermissionBubbleController getAnchorPointForBrowser:browser_]);
+views::BubbleDialogDelegateView* BubbleForWindow(gfx::NativeWindow window) {
+  views::Widget* widget = views::Widget::GetWidgetForNativeWindow(window);
+  DCHECK(widget);
+  return widget->widget_delegate()->AsBubbleDialogDelegate();
 }
 
-views::BubbleBorder::Arrow PermissionPromptImpl::GetAnchorArrow() {
-  return views::BubbleBorder::TOP_LEFT;
-}
+}  // namespace
 
 // static
 std::unique_ptr<PermissionPrompt> PermissionPrompt::Create(
-    content::WebContents* web_contents) {
-  if (ui::MaterialDesignController::IsSecondaryUiMaterial()) {
-    return base::WrapUnique(new PermissionPromptImpl(
-        chrome::FindBrowserWithWebContents(web_contents)));
+    content::WebContents* web_contents,
+    Delegate* delegate) {
+  Browser* browser = chrome::FindBrowserWithWebContents(web_contents);
+  if (UseViewsBubbles()) {
+    auto prompt = base::MakeUnique<PermissionPromptImpl>(browser, delegate);
+    // Note the PermissionPromptImpl constructor always shows the bubble, which
+    // is necessary to call TrackBubbleState().
+    // Also note it's important to use BrowserWindow::GetNativeWindow() and not
+    // WebContents::GetTopLevelNativeWindow() below, since there's a brief
+    // period when attaching a dragged tab to a window that WebContents thinks
+    // it hasn't yet moved to the new window.
+    TrackBubbleState(
+        BubbleForWindow(prompt->GetNativeWindow()),
+        GetPageInfoDecoration(browser->window()->GetNativeWindow()));
+    return prompt;
   }
-  return base::MakeUnique<PermissionBubbleCocoa>(
-      chrome::FindBrowserWithWebContents(web_contents));
+  return base::MakeUnique<PermissionBubbleCocoa>(browser, delegate);
 }

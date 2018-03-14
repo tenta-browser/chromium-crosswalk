@@ -24,7 +24,7 @@ class WebContents;
 // Handles screen orientation lock/unlock. Platforms which wish to provide
 // custom implementations can provide a factory for ScreenOrientationDelegate.
 class CONTENT_EXPORT ScreenOrientationProvider
-    : NON_EXPORTED_BASE(public device::mojom::ScreenOrientation),
+    : public device::mojom::ScreenOrientation,
       public WebContentsObserver {
  public:
   ScreenOrientationProvider(WebContents* web_contents);
@@ -33,7 +33,7 @@ class CONTENT_EXPORT ScreenOrientationProvider
 
   // device::mojom::ScreenOrientation:
   void LockOrientation(blink::WebScreenOrientationLockType orientation,
-                       const LockOrientationCallback& callback) override;
+                       LockOrientationCallback callback) override;
   void UnlockOrientation() override;
 
   // Inform about a screen orientation update. It is called to let the provider

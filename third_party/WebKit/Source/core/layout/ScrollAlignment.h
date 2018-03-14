@@ -84,11 +84,20 @@ struct CORE_EXPORT ScrollAlignment {
   static const ScrollAlignment kAlignCenterAlways;
   static const ScrollAlignment kAlignTopAlways;
   static const ScrollAlignment kAlignBottomAlways;
+  static const ScrollAlignment kAlignLeftAlways;
+  static const ScrollAlignment kAlignRightAlways;
 
   ScrollAlignmentBehavior rect_visible_;
   ScrollAlignmentBehavior rect_hidden_;
   ScrollAlignmentBehavior rect_partial_;
 };
+
+inline bool CORE_EXPORT operator==(const ScrollAlignment& lhs,
+                                   const ScrollAlignment& rhs) {
+  return lhs.rect_visible_ == rhs.rect_visible_ &&
+         lhs.rect_hidden_ == rhs.rect_hidden_ &&
+         lhs.rect_partial_ == rhs.rect_partial_;
+}
 
 }  // namespace blink
 

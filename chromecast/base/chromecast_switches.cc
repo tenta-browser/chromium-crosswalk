@@ -91,6 +91,11 @@ const char kAlsaMuteDeviceName[] = "alsa-mute-device-name";
 // Calibrated max output volume dBa for voice content at 1 meter, if known.
 const char kMaxOutputVolumeDba1m[] = "max-output-volume-dba1m";
 
+// Number of audio output channels. This will be used to send audio buffer with
+// specific number of channels to ALSA and generate loopback audio. Default
+// value is 2.
+const char kAudioOutputChannels[] = "audio-output-channels";
+
 // Some platforms typically have very little 'free' memory, but plenty is
 // available in buffers+cached.  For such platforms, configure this amount
 // as the portion of buffers+cached memory that should be treated as
@@ -102,11 +107,14 @@ const char kMemPressureSystemReservedKb[] = "mem-pressure-system-reserved-kb";
 // screen size correctly (so no need to resize when first window is created).
 const char kCastInitialScreenWidth[] = "cast-initial-screen-width";
 const char kCastInitialScreenHeight[] = "cast-initial-screen-height";
-const char kUseDoubleBuffering[] = "use-double-buffering";
+const char kGraphicsBufferCount[] = "graphics-buffer-count";
 
 // When present, desktop cast_shell will create 1080p window (provided display
 // resolution is high enough).  Otherwise, cast_shell defaults to 720p.
 const char kDesktopWindow1080p[] = "desktop-window-1080p";
+
+// Enables input event handling by the window manager.
+const char kEnableInput[] = "enable-input";
 
 }  // namespace switches
 

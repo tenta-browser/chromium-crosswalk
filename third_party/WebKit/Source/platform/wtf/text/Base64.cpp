@@ -55,14 +55,14 @@ String Base64Encode(const char* data,
                     Base64EncodePolicy policy) {
   Vector<char> result;
   Base64Encode(data, length, result, policy);
-  return String(result.Data(), result.size());
+  return String(result.data(), result.size());
 }
 
 void Base64Encode(const char* data,
                   unsigned len,
                   Vector<char>& out,
                   Base64EncodePolicy policy) {
-  out.Clear();
+  out.clear();
   if (!len)
     return;
 
@@ -129,13 +129,13 @@ bool Base64Decode(const Vector<char>& in,
                   Vector<char>& out,
                   CharacterMatchFunctionPtr should_ignore_character,
                   Base64DecodePolicy policy) {
-  out.Clear();
+  out.clear();
 
   // If the input string is pathologically large, just return nothing.
   if (in.size() > UINT_MAX)
     return false;
 
-  return Base64Decode(in.Data(), in.size(), out, should_ignore_character,
+  return Base64Decode(in.data(), in.size(), out, should_ignore_character,
                       policy);
 }
 
@@ -146,7 +146,7 @@ static inline bool Base64DecodeInternal(
     Vector<char>& out,
     CharacterMatchFunctionPtr should_ignore_character,
     Base64DecodePolicy policy) {
-  out.Clear();
+  out.clear();
   if (!length)
     return true;
 
@@ -251,7 +251,7 @@ bool Base64Decode(const String& in,
                   CharacterMatchFunctionPtr should_ignore_character,
                   Base64DecodePolicy policy) {
   if (in.IsEmpty())
-    return Base64DecodeInternal<LChar>(0, 0, out, should_ignore_character,
+    return Base64DecodeInternal<LChar>(nullptr, 0, out, should_ignore_character,
                                        policy);
   if (in.Is8Bit())
     return Base64DecodeInternal<LChar>(in.Characters8(), in.length(), out,

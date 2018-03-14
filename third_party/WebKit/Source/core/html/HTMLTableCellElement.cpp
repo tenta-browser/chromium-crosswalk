@@ -26,11 +26,13 @@
 
 #include "core/CSSPropertyNames.h"
 #include "core/CSSValueKeywords.h"
-#include "core/HTMLNames.h"
 #include "core/dom/Attribute.h"
 #include "core/dom/ElementTraversal.h"
+#include "core/frame/UseCounter.h"
 #include "core/html/HTMLTableElement.h"
+#include "core/html/TableConstants.h"
 #include "core/html/parser/HTMLParserIdioms.h"
+#include "core/html_names.h"
 #include "core/layout/LayoutTableCell.h"
 
 namespace blink {
@@ -46,32 +48,32 @@ DEFINE_ELEMENT_FACTORY_WITH_TAGNAME(HTMLTableCellElement)
 unsigned HTMLTableCellElement::colSpan() const {
   const AtomicString& col_span_value = FastGetAttribute(colspanAttr);
   unsigned value = 0;
-  if (col_span_value.IsEmpty() ||
-      !ParseHTMLNonNegativeInteger(col_span_value, value))
-    return 1;
+  if (!ParseHTMLClampedNonNegativeInteger(col_span_value, kMinColSpan,
+                                          kMaxColSpan, value))
+    return kDefaultColSpan;
   // Counting for https://github.com/whatwg/html/issues/1198
-  UseCounter::Count(GetDocument(), UseCounter::kHTMLTableCellElementColspan);
+  UseCounter::Count(GetDocument(), WebFeature::kHTMLTableCellElementColspan);
   if (value > 8190) {
     UseCounter::Count(GetDocument(),
-                      UseCounter::kHTMLTableCellElementColspanGreaterThan8190);
+                      WebFeature::kHTMLTableCellElementColspanGreaterThan8190);
   } else if (value > 1000) {
     UseCounter::Count(GetDocument(),
-                      UseCounter::kHTMLTableCellElementColspanGreaterThan1000);
+                      WebFeature::kHTMLTableCellElementColspanGreaterThan1000);
   }
-  return std::max(1u, std::min(value, MaxColSpan()));
+  return value;
 }
 
 unsigned HTMLTableCellElement::rowSpan() const {
   const AtomicString& row_span_value = FastGetAttribute(rowspanAttr);
   unsigned value = 0;
-  if (row_span_value.IsEmpty() ||
-      !ParseHTMLNonNegativeInteger(row_span_value, value))
-    return 1;
-  return std::max(1u, std::min(value, MaxRowSpan()));
+  if (!ParseHTMLClampedNonNegativeInteger(row_span_value, kMinRowSpan,
+                                          kMaxRowSpan, value))
+    return kDefaultRowSpan;
+  return value;
 }
 
 int HTMLTableCellElement::cellIndex() const {
-  if (!isHTMLTableRowElement(parentElement()))
+  if (!IsHTMLTableRowElement(parentElement()))
     return -1;
 
   int index = 0;
@@ -94,7 +96,7 @@ bool HTMLTableCellElement::IsPresentationAttribute(
 void HTMLTableCellElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,
     const AtomicString& value,
-    MutableStylePropertySet* style) {
+    MutableCSSPropertyValueSet* style) {
   if (name == nowrapAttr) {
     AddPropertyToPresentationAttributeStyle(style, CSSPropertyWhiteSpace,
                                             CSSValueWebkitNowrap);
@@ -127,7 +129,7 @@ void HTMLTableCellElement::ParseAttribute(
   }
 }
 
-const StylePropertySet*
+const CSSPropertyValueSet*
 HTMLTableCellElement::AdditionalPresentationAttributeStyle() {
   if (HTMLTableElement* table = FindParentTable())
     return table->AdditionalCellStyle();
@@ -159,7 +161,7 @@ const AtomicString& HTMLTableCellElement::Axis() const {
 }
 
 void HTMLTableCellElement::setColSpan(unsigned n) {
-  SetUnsignedIntegralAttribute(colspanAttr, n);
+  SetUnsignedIntegralAttribute(colspanAttr, n, kDefaultColSpan);
 }
 
 const AtomicString& HTMLTableCellElement::Headers() const {
@@ -167,7 +169,7 @@ const AtomicString& HTMLTableCellElement::Headers() const {
 }
 
 void HTMLTableCellElement::setRowSpan(unsigned n) {
-  SetUnsignedIntegralAttribute(rowspanAttr, n);
+  SetUnsignedIntegralAttribute(rowspanAttr, n, kDefaultRowSpan);
 }
 
 }  // namespace blink

@@ -6,16 +6,18 @@
 
 #include <utility>
 
+#include "base/callback.h"
 #include "base/lazy_instance.h"
 #include "content/browser/bad_message.h"
+#include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/frame_host/cross_process_frame_connector.h"
 #include "content/browser/frame_host/frame_tree.h"
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/frame_host/navigator.h"
 #include "content/browser/frame_host/render_frame_host_delegate.h"
-#include "content/browser/frame_host/render_widget_host_view_child_frame.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
+#include "content/browser/renderer_host/render_widget_host_view_child_frame.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/common/frame_messages.h"
 #include "content/common/frame_owner_properties.h"
@@ -32,7 +34,8 @@ typedef base::hash_map<RenderFrameProxyHostID, RenderFrameProxyHost*>
     RoutingIDFrameProxyMap;
 base::LazyInstance<RoutingIDFrameProxyMap>::DestructorAtExit
     g_routing_id_frame_proxy_map = LAZY_INSTANCE_INITIALIZER;
-}
+
+}  // namespace
 
 // static
 RenderFrameProxyHost* RenderFrameProxyHost::FromID(int process_id,
@@ -89,6 +92,9 @@ RenderFrameProxyHost::RenderFrameProxyHost(SiteInstance* site_instance,
 }
 
 RenderFrameProxyHost::~RenderFrameProxyHost() {
+  if (!destruction_callback_.is_null())
+    std::move(destruction_callback_).Run();
+
   if (GetProcess()->HasConnection()) {
     // TODO(nasko): For now, don't send this IPC for top-level frames, as
     // the top-level RenderFrame will delete the RenderFrameProxy.
@@ -106,7 +112,7 @@ RenderFrameProxyHost::~RenderFrameProxyHost() {
 }
 
 void RenderFrameProxyHost::SetChildRWHView(RenderWidgetHostView* view) {
-  cross_process_frame_connector_->set_view(
+  cross_process_frame_connector_->SetView(
       static_cast<RenderWidgetHostViewChildFrame*>(view));
 }
 
@@ -220,6 +226,18 @@ void RenderFrameProxyHost::SetFocusedFrame() {
   Send(new FrameMsg_SetFocusedFrame(routing_id_));
 }
 
+void RenderFrameProxyHost::ScrollRectToVisible(
+    const gfx::Rect& rect_to_scroll,
+    const blink::WebRemoteScrollProperties properties) {
+  Send(new FrameMsg_ScrollRectToVisible(routing_id_, rect_to_scroll,
+                                        properties));
+}
+
+void RenderFrameProxyHost::SetDestructionCallback(
+    DestructionCallback destruction_callback) {
+  destruction_callback_ = std::move(destruction_callback);
+}
+
 void RenderFrameProxyHost::OnDetach() {
   if (frame_tree_node_->render_manager()->ForInnerDelegate()) {
     // Only main frame proxy can detach for inner WebContents.
@@ -249,6 +267,15 @@ void RenderFrameProxyHost::OnOpenURL(
   RenderFrameHostImpl* current_rfh = frame_tree_node_->current_frame_host();
   if (!site_instance_->IsRelatedSiteInstance(current_rfh->GetSiteInstance()))
     return;
+
+  // Verify if the request originator (*not* |current_rfh|) has access to the
+  // contents of the POST body.
+  if (!ChildProcessSecurityPolicyImpl::GetInstance()->CanReadRequestBody(
+          GetSiteInstance(), params.resource_request_body)) {
+    bad_message::ReceivedBadMessage(GetProcess(),
+                                    bad_message::RFPH_ILLEGAL_UPLOAD_PARAMS);
+    return;
+  }
 
   // Since this navigation targeted a specific RenderFrameProxy, it should stay
   // in the current tab.
@@ -345,6 +372,8 @@ void RenderFrameProxyHost::OnAdvanceFocus(blink::WebFocusType type,
           : nullptr;
 
   target_rfh->AdvanceFocus(type, source_proxy);
+  frame_tree_node_->current_frame_host()->delegate()->OnAdvanceFocus(
+      source_rfh);
 }
 
 void RenderFrameProxyHost::OnFrameFocused() {

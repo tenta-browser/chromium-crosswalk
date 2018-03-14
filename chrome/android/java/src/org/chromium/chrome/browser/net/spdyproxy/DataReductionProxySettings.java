@@ -5,9 +5,6 @@
 package org.chromium.chrome.browser.net.spdyproxy;
 
 import android.content.Context;
-import android.net.Uri;
-import android.text.TextUtils;
-import android.webkit.URLUtil;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
@@ -18,6 +15,7 @@ import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.preferences.datareduction.DataReductionDataUseItem;
 import org.chromium.chrome.browser.preferences.datareduction.DataReductionPromoUtils;
+import org.chromium.chrome.browser.preferences.datareduction.DataReductionStatsPreference;
 
 import java.text.NumberFormat;
 import java.util.ArrayList;
@@ -61,9 +59,10 @@ public class DataReductionProxySettings {
     @VisibleForTesting
     public static final String DATA_REDUCTION_PROXY_ENABLED_KEY = "Data Reduction Proxy Enabled";
 
-    private static DataReductionProxySettings sSettings;
+    // Visible for backup and restore
+    public static final String DATA_REDUCTION_ENABLED_PREF = "BANDWIDTH_REDUCTION_PROXY_ENABLED";
 
-    private static final String DATA_REDUCTION_ENABLED_PREF = "BANDWIDTH_REDUCTION_PROXY_ENABLED";
+    private static DataReductionProxySettings sSettings;
 
     private static final String DATA_REDUCTION_HAS_EVER_BEEN_ENABLED_PREF =
             "BANDWIDTH_REDUCTION_PROXY_HAS_EVER_BEEN_ENABLED";
@@ -71,10 +70,6 @@ public class DataReductionProxySettings {
             "BANDWIDTH_REDUCTION_FIRST_ENABLED_TIME";
 
     private static final String PARAM_PERSISTENT_MENU_ITEM_ENABLED = "persistent_menu_item_enabled";
-
-    private static final String WEBLITE_HOSTNAME = "googleweblight.com";
-
-    private static final String WEBLITE_QUERY_PARAM = "lite_url";
 
     private Callback<List<DataReductionDataUseItem>> mQueryDataUsageCallback;
 
@@ -101,6 +96,15 @@ public class DataReductionProxySettings {
     }
 
     /**
+     * Handles calls for data reduction proxy initialization that need to happen after the native
+     * library has been loaded.
+     */
+    public static void handlePostNativeInitialization() {
+        reconcileDataReductionProxyEnabledState();
+        DataReductionStatsPreference.initializeDataReductionSiteBreakdownPref();
+    }
+
+    /**
      * Reconciles the Java-side data reduction proxy state with the native one.
      *
      * The data reduction proxy state needs to be accessible before the native
@@ -109,10 +113,8 @@ public class DataReductionProxySettings {
      * Java preference has to be updated.
      * This method must be called early at startup, but once the native library
      * has been loaded.
-     *
-     * @param context The application context.
      */
-    public static void reconcileDataReductionProxyEnabledState(Context context) {
+    private static void reconcileDataReductionProxyEnabledState() {
         ThreadUtils.assertOnUiThread();
         boolean enabled = getInstance().isDataReductionProxyEnabled();
         ContextUtils.getAppSharedPreferences().edit()
@@ -132,9 +134,17 @@ public class DataReductionProxySettings {
         return sSettings;
     }
 
+    /**
+     * Sets a singleton instance of the settings object for testing.
+     */
+    @VisibleForTesting
+    public static void setInstanceForTesting(DataReductionProxySettings settings) {
+        sSettings = settings;
+    }
+
     private final long mNativeDataReductionProxySettings;
 
-    private DataReductionProxySettings() {
+    protected DataReductionProxySettings() {
         // Note that this technically leaks the native object, however,
         // DataReductionProxySettings is a singleton that lives forever and there's no clean
         // shutdown of Chrome on Android
@@ -144,6 +154,11 @@ public class DataReductionProxySettings {
     /** Returns true if the SPDY proxy promo is allowed to be shown. */
     public boolean isDataReductionProxyPromoAllowed() {
         return nativeIsDataReductionProxyPromoAllowed(mNativeDataReductionProxySettings);
+    }
+
+    /** Returns true if the data saver proxy promo is allowed to be shown as part of FRE. */
+    public boolean isDataReductionProxyFREPromoAllowed() {
+        return nativeIsDataReductionProxyFREPromoAllowed(mNativeDataReductionProxySettings);
     }
 
     /** Returns true if the snackbar promo is allowed to be shown. */
@@ -208,7 +223,7 @@ public class DataReductionProxySettings {
      * Returns the time that the data reduction statistics were last updated.
      * @return The last update time in milliseconds since the epoch.
      */
-    public long getDataReductionLastUpdateTime()  {
+    public long getDataReductionLastUpdateTime() {
         return nativeGetDataReductionLastUpdateTime(mNativeDataReductionProxySettings);
     }
 
@@ -279,6 +294,16 @@ public class DataReductionProxySettings {
     }
 
     /**
+     * Returns the header used to request a data reduction proxy pass through. When a request is
+     * sent to the data reduction proxy with this header, it will respond with the original
+     * uncompressed response.
+     * @return The data reduction proxy pass through header.
+     */
+    public String getDataReductionProxyPassThroughHeader() {
+        return nativeGetDataReductionProxyPassThroughHeader(mNativeDataReductionProxySettings);
+    }
+
+    /**
      * Determines if the data reduction proxy is currently unreachable.
      * @return true if the data reduction proxy is unreachable.
      */
@@ -320,28 +345,7 @@ public class DataReductionProxySettings {
      * @return The URL to be used. Returns null if the URL param is null.
      */
     public String maybeRewriteWebliteUrl(String url) {
-        if (url == null || !URLUtil.isValidUrl(url) || !areLoFiPreviewsEnabled()
-                || !isDataReductionProxyEnabled()) {
-            return url;
-        }
-        String rewritten = extractUrlFromWebliteQueryParams(url);
-        if (rewritten == null
-                || !TextUtils.equals(Uri.parse(rewritten).getScheme(),
-                        UrlConstants.HTTP_SCHEME)) {
-            return url;
-        }
-
-        return rewritten;
-    }
-
-    private String extractUrlFromWebliteQueryParams(String url) {
-        Uri uri = Uri.parse(url);
-        if (!TextUtils.equals(uri.getHost(), WEBLITE_HOSTNAME)) return null;
-        return uri.getQueryParameter(WEBLITE_QUERY_PARAM);
-    }
-
-    private boolean areLoFiPreviewsEnabled() {
-        return nativeAreLoFiPreviewsEnabled(mNativeDataReductionProxySettings);
+        return nativeMaybeRewriteWebliteUrl(mNativeDataReductionProxySettings, url);
     }
 
     /**
@@ -376,6 +380,8 @@ public class DataReductionProxySettings {
     private native long nativeInit();
     private native boolean nativeIsDataReductionProxyPromoAllowed(
             long nativeDataReductionProxySettingsAndroid);
+    private native boolean nativeIsDataReductionProxyFREPromoAllowed(
+            long nativeDataReductionProxySettingsAndroid);
     private native boolean nativeIsDataReductionProxyEnabled(
             long nativeDataReductionProxySettingsAndroid);
     private native boolean nativeIsDataReductionProxyManaged(
@@ -394,10 +400,12 @@ public class DataReductionProxySettings {
             long nativeDataReductionProxySettingsAndroid);
     private native long[] nativeGetDailyReceivedContentLengths(
             long nativeDataReductionProxySettingsAndroid);
+    private native String nativeGetDataReductionProxyPassThroughHeader(
+            long nativeDataReductionProxySettingsAndroid);
     private native boolean nativeIsDataReductionProxyUnreachable(
             long nativeDataReductionProxySettingsAndroid);
-    private native boolean nativeAreLoFiPreviewsEnabled(
-            long nativeDataReductionProxySettingsAndroid);
+    private native String nativeMaybeRewriteWebliteUrl(
+            long nativeDataReductionProxySettingsAndroid, String url);
     private native String nativeGetHttpProxyList(long nativeDataReductionProxySettingsAndroid);
     private native String nativeGetLastBypassEvent(long nativeDataReductionProxySettingsAndroid);
     private native void nativeQueryDataUsage(long nativeDataReductionProxySettingsAndroid,

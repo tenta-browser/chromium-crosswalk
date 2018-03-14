@@ -12,6 +12,8 @@ import android.media.MediaCodecInfo.CodecCapabilities;
 import android.media.MediaCodecInfo.CodecProfileLevel;
 import android.media.MediaCodecInfo.VideoCapabilities;
 import android.media.MediaCodecList;
+import android.media.MediaCrypto;
+import android.media.MediaFormat;
 import android.os.Build;
 
 import org.chromium.base.Log;
@@ -34,7 +36,7 @@ class MediaCodecUtil {
     private static final String TAG = "cr_MediaCodecUtil";
 
     /**
-     * Class to pass parameters from createDecoder()
+     * Information returned by createDecoder()
      */
     public static class CodecCreationInfo {
         public MediaCodec mediaCodec;
@@ -86,7 +88,13 @@ class MediaCodecUtil {
         @SuppressWarnings("deprecation")
         private int getCodecCount() {
             if (hasNewMediaCodecList()) return mCodecList.length;
-            return MediaCodecList.getCodecCount();
+            try {
+                return MediaCodecList.getCodecCount();
+            } catch (RuntimeException e) {
+                // Swallow the exception due to bad Android implementation and pretend
+                // MediaCodecList is not supported.
+                return 0;
+            }
         }
 
         @SuppressWarnings("deprecation")
@@ -197,7 +205,7 @@ class MediaCodecUtil {
     @CalledByNative
     private static boolean canDecode(String mime, boolean isSecure) {
         // TODO(liberato): Should we insist on software here?
-        CodecCreationInfo info = createDecoder(mime, isSecure, false);
+        CodecCreationInfo info = createDecoder(mime, isSecure ? CodecType.SECURE : CodecType.ANY);
         if (info.mediaCodec == null) return false;
 
         try {
@@ -228,7 +236,7 @@ class MediaCodecUtil {
             if (videoCapabilities.getBitrateRange().contains(bitrate)) {
                 // Assume all platforms before N only support VP9 profile 0.
                 profileLevels.addCodecProfileLevel(
-                        VideoCodec.kCodecVP9, VideoCodecProfile.VP9PROFILE_PROFILE0, level);
+                        VideoCodec.CODEC_VP9, VideoCodecProfile.VP9PROFILE_PROFILE0, level);
             }
         }
     }
@@ -242,13 +250,18 @@ class MediaCodecUtil {
         MediaCodecListHelper codecListHelper = new MediaCodecListHelper();
         for (MediaCodecInfo info : codecListHelper) {
             for (String mime : info.getSupportedTypes()) {
+                if (!isDecoderSupportedForDevice(mime)) {
+                    Log.w(TAG, "Decoder for type %s disabled on this device", mime);
+                    continue;
+                }
+
                 // On versions L and M, VP9 codecCapabilities do not advertise profile level
                 // support. In this case, estimate the level from MediaCodecInfo.VideoCapabilities
                 // instead. Assume VP9 is not supported before L. For more information, consult
                 // https://developer.android.com/reference/android/media/MediaCodecInfo.CodecProfileLevel.html
                 CodecCapabilities codecCapabilities = info.getCapabilitiesForType(mime);
                 if (mime.endsWith("vp9") && Build.VERSION_CODES.LOLLIPOP <= Build.VERSION.SDK_INT
-                        && Build.VERSION.SDK_INT <= 23) {
+                        && Build.VERSION.SDK_INT <= Build.VERSION_CODES.M) {
                     addVp9CodecProfileLevels(profileLevels, codecCapabilities);
                     continue;
                 }
@@ -263,21 +276,34 @@ class MediaCodecUtil {
     /**
      * Creates MediaCodec decoder.
      * @param mime MIME type of the media.
-     * @param secure Whether secure decoder is required.
-     * @param requireSoftwareCodec Whether a software decoder is required.
+     * @param codecType Type of codec to create.
      * @return CodecCreationInfo object
      */
-    static CodecCreationInfo createDecoder(
-            String mime, boolean isSecure, boolean requireSoftwareCodec) {
+    static CodecCreationInfo createDecoder(String mime, int codecType) {
+        return createDecoder(mime,codecType,null);
+    }
+
+    /**
+     * Creates MediaCodec decoder.
+     * @param mime MIME type of the media.
+     * @param codecType Type of codec to create.
+     * @param mediaCrypto Crypto of the media.
+     * @return CodecCreationInfo object
+     */
+    static CodecCreationInfo createDecoder(String mime, int codecType, MediaCrypto mediaCrypto) {
         // Always return a valid CodecCreationInfo, its |mediaCodec| field will be null
         // if we cannot create the codec.
+
         CodecCreationInfo result = new CodecCreationInfo();
 
         assert result.mediaCodec == null;
 
         // Creation of ".secure" codecs sometimes crash instead of throwing exceptions
         // on pre-JBMR2 devices.
-        if (isSecure && Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR2) return result;
+        if (codecType == CodecType.SECURE
+                && Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR2) {
+            return result;
+        }
 
         // Do not create codec for blacklisted devices.
         if (!isDecoderSupportedForDevice(mime)) {
@@ -286,28 +312,39 @@ class MediaCodecUtil {
         }
 
         try {
-            // |isSecure| only applies to video decoders.
-            if (mime.startsWith("video") && isSecure) {
-                String decoderName = getDefaultCodecName(
-                        mime, MediaCodecDirection.DECODER, requireSoftwareCodec);
+            // "SECURE" only applies to video decoders.
+            // Use MediaCrypto.requiresSecureDecoderComponent() for audio: crbug.com/727918
+            if ((mime.startsWith("video") && codecType == CodecType.SECURE)
+                    || (mime.startsWith("audio") && mediaCrypto != null
+                               && mediaCrypto.requiresSecureDecoderComponent(mime))) {
+                // Creating secure codecs is not supported directly on older
+                // versions of Android. Therefore, always get the non-secure
+                // codec name and append ".secure" to get the secure codec name.
+                // TODO(xhwang): Now b/15587335 is fixed, we should have better
+                // API support.
+                String decoderName = getDefaultCodecName(mime, MediaCodecDirection.DECODER, false);
                 if (decoderName.equals("")) return null;
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-                    // To work around an issue that we cannot get the codec info from the secure
-                    // decoder, create an insecure decoder first so that we can query its codec
-                    // info. http://b/15587335.
-                    // Futhermore, it is impossible to create an insecure decoder if the secure
-                    // one is already created.
+                    // To work around an issue that we cannot get the codec info
+                    // from the secure decoder, create an insecure decoder first
+                    // so that we can query its codec info. http://b/15587335.
+                    // Futhermore, it is impossible to create an insecure
+                    // decoder if the secure one is already created.
                     MediaCodec insecureCodec = MediaCodec.createByCodecName(decoderName);
                     result.supportsAdaptivePlayback =
                             codecSupportsAdaptivePlayback(insecureCodec, mime);
                     insecureCodec.release();
                 }
+
                 result.mediaCodec = MediaCodec.createByCodecName(decoderName + ".secure");
+
             } else {
-                if (requireSoftwareCodec) {
-                    String decoderName = getDefaultCodecName(
-                            mime, MediaCodecDirection.DECODER, requireSoftwareCodec);
+                if (codecType == CodecType.SOFTWARE) {
+                    String decoderName =
+                            getDefaultCodecName(mime, MediaCodecDirection.DECODER, true);
                     result.mediaCodec = MediaCodec.createByCodecName(decoderName);
+                } else if (mime.equals(MediaFormat.MIMETYPE_AUDIO_RAW)) {
+                    result.mediaCodec = MediaCodec.createByCodecName("OMX.google.raw.decoder");
                 } else {
                     result.mediaCodec = MediaCodec.createDecoderByType(mime);
                 }
@@ -315,8 +352,7 @@ class MediaCodecUtil {
                         codecSupportsAdaptivePlayback(result.mediaCodec, mime);
             }
         } catch (Exception e) {
-            Log.e(TAG, "Failed to create MediaCodec: %s, isSecure: %s, requireSoftwareCodec: %s",
-                    mime, isSecure, requireSoftwareCodec ? "yes" : "no", e);
+            Log.e(TAG, "Failed to create MediaCodec: %s, codecType: %d", mime, codecType, e);
             result.mediaCodec = null;
         }
         return result;
@@ -395,6 +431,11 @@ class MediaCodecUtil {
             // http://crbug.com/597836.
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP
                     && Build.HARDWARE.startsWith("mt")) {
+                return false;
+            }
+
+            // Nexus Player VP9 decoder performs poorly at >= 1080p resolution.
+            if (Build.MODEL.equals("Nexus Player")) {
                 return false;
             }
         } else if (mime.equals("audio/opus")
@@ -571,8 +612,11 @@ class MediaCodecUtil {
     static boolean isSetOutputSurfaceSupported() {
         // All Huawei devices based on this processor will immediately hang during
         // MediaCodec.setOutputSurface().  http://crbug.com/683401
+        // Huawei P9 lite will, eventually, get the decoder into a bad state if SetSurface is called
+        // enough times (https://crbug.com/792261).
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-                && !Build.HARDWARE.equalsIgnoreCase("hi6210sft");
+                && !Build.HARDWARE.equalsIgnoreCase("hi6210sft")
+                && !Build.HARDWARE.equalsIgnoreCase("hi6250");
     }
 
     /**
@@ -618,14 +662,14 @@ class MediaCodecUtil {
     }
 
     /**
-     * Returns true if and only if the platform we are running on supports the 'cbcs'
-     * encryption scheme, specifically AES CBC encryption with possibility of pattern
-     * encryption.
+     * Returns true if and only if a platform with the given SDK API level supports the 'cbcs'
+     * encryption scheme, specifically AES CBC encryption with possibility of pattern encryption.
      * While 'cbcs' scheme was originally implemented in N, there was a bug (in the
-     * DRM code) which means that it didn't really work properly until post-N).
+     * DRM code) which means that it didn't really work properly until N-MR1).
      */
-    static boolean platformSupportsCbcsEncryption() {
-        return Build.VERSION.SDK_INT > Build.VERSION_CODES.N;
+    @CalledByNative
+    static boolean platformSupportsCbcsEncryption(int sdk) {
+        return sdk >= Build.VERSION_CODES.N_MR1;
     }
 
     /**

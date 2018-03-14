@@ -23,15 +23,9 @@
 #ifndef Length_h
 #define Length_h
 
-#include <cstring>
+#include "platform/LayoutUnit.h"
 #include "platform/PlatformExport.h"
-#include "platform/animation/AnimationUtilities.h"
 #include "platform/wtf/Allocator.h"
-#include "platform/wtf/Assertions.h"
-#include "platform/wtf/Forward.h"
-#include "platform/wtf/HashMap.h"
-#include "platform/wtf/MathExtras.h"
-#include "platform/wtf/Vector.h"
 
 namespace blink {
 
@@ -72,22 +66,22 @@ class PLATFORM_EXPORT Length {
 
   Length(LengthType t)
       : int_value_(0), quirk_(false), type_(t), is_float_(false) {
-    ASSERT(t != kCalculated);
+    DCHECK_NE(t, kCalculated);
   }
 
   Length(int v, LengthType t, bool q = false)
       : int_value_(v), quirk_(q), type_(t), is_float_(false) {
-    ASSERT(t != kCalculated);
+    DCHECK_NE(t, kCalculated);
   }
 
   Length(LayoutUnit v, LengthType t, bool q = false)
       : float_value_(v.ToFloat()), quirk_(q), type_(t), is_float_(true) {
-    ASSERT(t != kCalculated);
+    DCHECK_NE(t, kCalculated);
   }
 
   Length(float v, LengthType t, bool q = false)
       : float_value_(v), quirk_(q), type_(t), is_float_(true) {
-    ASSERT(t != kCalculated);
+    DCHECK_NE(t, kCalculated);
   }
 
   Length(double v, LengthType t, bool q = false)
@@ -95,7 +89,7 @@ class PLATFORM_EXPORT Length {
     float_value_ = static_cast<float>(v);
   }
 
-  explicit Length(PassRefPtr<CalculationValue>);
+  explicit Length(scoped_refptr<CalculationValue>);
 
   Length(const Length& length) {
     memcpy(this, &length, sizeof(Length));
@@ -126,7 +120,7 @@ class PLATFORM_EXPORT Length {
 
   const Length& operator*=(float v) {
     if (IsCalculated()) {
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
       return *this;
     }
 
@@ -141,25 +135,25 @@ class PLATFORM_EXPORT Length {
   // FIXME: Make this private (if possible) or at least rename it
   // (http://crbug.com/432707).
   inline float Value() const {
-    ASSERT(!IsCalculated());
+    DCHECK(!IsCalculated());
     return GetFloatValue();
   }
 
   int IntValue() const {
     if (IsCalculated()) {
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
       return 0;
     }
     return GetIntValue();
   }
 
   float Pixels() const {
-    ASSERT(GetType() == kFixed);
+    DCHECK_EQ(GetType(), kFixed);
     return GetFloatValue();
   }
 
   float Percent() const {
-    ASSERT(GetType() == kPercent);
+    DCHECK_EQ(GetType(), kPercent);
     return GetFloatValue();
   }
 
@@ -180,7 +174,7 @@ class PLATFORM_EXPORT Length {
 
   void SetValue(int value) {
     if (IsCalculated()) {
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
       return;
     }
     SetValue(kFixed, value);
@@ -207,7 +201,7 @@ class PLATFORM_EXPORT Length {
   // functions it's impossible to determine the sign or zero-ness. We assume all
   // calc values are positive and non-zero for now.
   bool IsZero() const {
-    ASSERT(!IsMaxSizeNone());
+    DCHECK(!IsMaxSizeNone());
     if (IsCalculated())
       return false;
 
@@ -252,7 +246,8 @@ class PLATFORM_EXPORT Length {
   }
 
   Length Blend(const Length& from, double progress, ValueRange range) const {
-    ASSERT(IsSpecified() && from.IsSpecified());
+    DCHECK(IsSpecified());
+    DCHECK(from.IsSpecified());
 
     if (progress == 0.0)
       return from;
@@ -269,18 +264,11 @@ class PLATFORM_EXPORT Length {
     if (from.IsZero() && IsZero())
       return *this;
 
-    LengthType result_type = GetType();
-    if (IsZero())
-      result_type = from.GetType();
-
-    float blended_value = blink::Blend(from.Value(), Value(), progress);
-    if (range == kValueRangeNonNegative)
-      blended_value = clampTo<float>(blended_value, 0);
-    return Length(blended_value, result_type);
+    return BlendSameTypes(from, progress, range);
   }
 
   float GetFloatValue() const {
-    ASSERT(!IsMaxSizeNone());
+    DCHECK(!IsMaxSizeNone());
     return is_float_ ? float_value_ : int_value_;
   }
   float NonNanCalculatedValue(LayoutUnit max_value) const;
@@ -291,14 +279,16 @@ class PLATFORM_EXPORT Length {
 
  private:
   int GetIntValue() const {
-    ASSERT(!IsMaxSizeNone());
+    DCHECK(!IsMaxSizeNone());
     return is_float_ ? static_cast<int>(float_value_) : int_value_;
   }
 
   Length BlendMixedTypes(const Length& from, double progress, ValueRange) const;
 
+  Length BlendSameTypes(const Length& from, double progress, ValueRange) const;
+
   int CalculationHandle() const {
-    ASSERT(IsCalculated());
+    DCHECK(IsCalculated());
     return GetIntValue();
   }
   void IncrementCalculatedRef() const;

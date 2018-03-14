@@ -70,6 +70,7 @@ void NavigationObserver::PromptToEnableExtensionIfNecessary(
     return;
 
   const GURL& url = nav_entry->GetURL();
+
   // NOTE: We only consider chrome-extension:// urls, and deliberately don't
   // consider hosted app urls. This is because it's really annoying to visit the
   // site associated with a hosted app (like calendar.google.com or

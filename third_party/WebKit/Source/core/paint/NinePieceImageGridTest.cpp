@@ -6,7 +6,6 @@
 
 #include "core/css/CSSGradientValue.h"
 #include "core/layout/LayoutTestHelper.h"
-#include "core/style/ComputedStyle.h"
 #include "core/style/NinePieceImage.h"
 #include "core/style/StyleGeneratedImage.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -19,8 +18,9 @@ class NinePieceImageGridTest : public RenderingTest {
   NinePieceImageGridTest() {}
 
   StyleImage* GeneratedImage() {
-    CSSGradientValue* gradient = CSSLinearGradientValue::Create(
-        nullptr, nullptr, nullptr, nullptr, nullptr, kRepeating);
+    cssvalue::CSSGradientValue* gradient =
+        cssvalue::CSSLinearGradientValue::Create(
+            nullptr, nullptr, nullptr, nullptr, nullptr, cssvalue::kRepeating);
     return StyleGeneratedImage::Create(*gradient);
   }
 

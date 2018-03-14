@@ -20,9 +20,8 @@ namespace {
 const char* g_replacement_alias = "iso-2022-kr";
 
 TEST(TextCodecReplacement, Aliases) {
-  // "replacement" is not a valid alias for itself
-  EXPECT_FALSE(TextEncoding("replacement").IsValid());
-  EXPECT_FALSE(TextEncoding("rEpLaCeMeNt").IsValid());
+  EXPECT_TRUE(TextEncoding("replacement").IsValid());
+  EXPECT_TRUE(TextEncoding("rEpLaCeMeNt").IsValid());
 
   EXPECT_TRUE(TextEncoding(g_replacement_alias).IsValid());
   EXPECT_STREQ("replacement", TextEncoding(g_replacement_alias).GetName());
@@ -51,9 +50,9 @@ TEST(TextCodecReplacement, EncodesToUTF8) {
   const UChar kTestCase[] = {0x6F22, 0x5B57};
   size_t test_case_size = WTF_ARRAY_LENGTH(kTestCase);
   CString result =
-      codec->Encode(kTestCase, test_case_size, kQuestionMarksForUnencodables);
+      codec->Encode(kTestCase, test_case_size, kEntitiesForUnencodables);
 
-  EXPECT_STREQ("\xE6\xBC\xA2\xE5\xAD\x97", result.Data());
+  EXPECT_STREQ("\xE6\xBC\xA2\xE5\xAD\x97", result.data());
 }
 
 }  // namespace

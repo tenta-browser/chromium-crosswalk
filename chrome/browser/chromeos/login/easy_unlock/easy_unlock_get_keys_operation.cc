@@ -25,11 +25,9 @@ EasyUnlockGetKeysOperation::EasyUnlockGetKeysOperation(
     : user_context_(user_context),
       callback_(callback),
       key_index_(0),
-      weak_ptr_factory_(this) {
-}
+      weak_ptr_factory_(this) {}
 
-EasyUnlockGetKeysOperation::~EasyUnlockGetKeysOperation() {
-}
+EasyUnlockGetKeysOperation::~EasyUnlockGetKeysOperation() {}
 
 void EasyUnlockGetKeysOperation::Start() {
   // Register for asynchronous notification of cryptohome being ready.
@@ -53,9 +51,11 @@ void EasyUnlockGetKeysOperation::OnCryptohomeAvailable(bool available) {
 
 void EasyUnlockGetKeysOperation::GetKeyData() {
   const cryptohome::Identification id(user_context_.GetAccountId());
+  cryptohome::GetKeyDataRequest request;
+  request.mutable_key()->mutable_data()->set_label(
+      EasyUnlockKeyManager::GetKeyLabel(key_index_));
   cryptohome::HomedirMethods::GetInstance()->GetKeyDataEx(
-      id,
-      EasyUnlockKeyManager::GetKeyLabel(key_index_),
+      id, cryptohome::AuthorizationRequest(), request,
       base::Bind(&EasyUnlockGetKeysOperation::OnGetKeyData,
                  weak_ptr_factory_.GetWeakPtr()));
 }
@@ -125,8 +125,13 @@ void EasyUnlockGetKeysOperation::OnGetKeyData(
         device.wrapped_secret = *entry.bytes;
       else
         NOTREACHED();
+    } else if (entry.name == kEasyUnlockKeyMetaNameSerializedBeaconSeeds) {
+      if (entry.bytes)
+        device.serialized_beacon_seeds = *entry.bytes;
+      else
+        NOTREACHED();
     } else {
-      PA_LOG(WARNING) << "Unknown Easy unlock key data entry, name="
+      PA_LOG(WARNING) << "Unknown EasyUnlock key data entry, name="
                       << entry.name;
     }
   }

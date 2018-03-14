@@ -14,21 +14,23 @@
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/download/download_shelf.h"
-#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/tab_helper.h"
+#include "chrome/browser/metrics/browser_window_histogram_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/signin/chrome_signin_helper.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
+#include "chrome/browser/ui/bookmarks/bookmark_bar_constants.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window_state.h"
-#import "chrome/browser/ui/cocoa/autofill/save_card_bubble_view_bridge.h"
+#include "chrome/browser/ui/cocoa/autofill/save_card_bubble_view_views.h"
 #import "chrome/browser/ui/cocoa/browser/exclusive_access_controller_views.h"
+#include "chrome/browser/ui/cocoa/browser_dialogs_views_mac.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/browser_window_utils.h"
 #import "chrome/browser/ui/cocoa/chrome_event_processing_window.h"
@@ -40,7 +42,6 @@
 #include "chrome/browser/ui/cocoa/key_equivalent_constants.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
 #import "chrome/browser/ui/cocoa/nsmenuitem_additions.h"
-#import "chrome/browser/ui/cocoa/page_info/page_info_bubble_controller.h"
 #import "chrome/browser/ui/cocoa/profiles/avatar_base_controller.h"
 #include "chrome/browser/ui/cocoa/restart_browser.h"
 #include "chrome/browser/ui/cocoa/status_bubble_mac.h"
@@ -49,7 +50,6 @@
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/profile_chooser_constants.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/browser/web_applications/web_app.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
@@ -68,7 +68,6 @@
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/constants.h"
 #include "ui/base/l10n/l10n_util_mac.h"
-#include "ui/base/material_design/material_design_controller.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -78,58 +77,6 @@
 
 using content::NativeWebKeyboardEvent;
 using content::WebContents;
-
-namespace {
-
-// These UI constants are used in BrowserWindowCocoa::ShowBookmarkAppBubble.
-// Used for defining the layout of the NSAlert and NSTextField within the
-// accessory view.
-const int kAppTextFieldVerticalSpacing = 2;
-const int kAppTextFieldWidth = 200;
-const int kAppTextFieldHeight = 22;
-const int kBookmarkAppBubbleViewWidth = 200;
-const int kBookmarkAppBubbleViewHeight = 46;
-
-const int kIconPreviewTargetSize = 128;
-
-base::string16 TrimText(NSString* controlText) {
-  base::string16 text = base::SysNSStringToUTF16(controlText);
-  base::TrimWhitespace(text, base::TRIM_ALL, &text);
-  return text;
-}
-
-}  // namespace
-
-@interface TextRequiringDelegate : NSObject<NSTextFieldDelegate> {
- @private
-  // Disable |control_| when text changes to just whitespace or empty string.
-  NSControl* control_;
-}
-- (id)initWithControl:(NSControl*)control text:(NSString*)text;
-- (void)controlTextDidChange:(NSNotification*)notification;
-@end
-
-@interface TextRequiringDelegate ()
-- (void)validateText:(NSString*)text;
-@end
-
-@implementation TextRequiringDelegate
-- (id)initWithControl:(NSControl*)control text:(NSString*)text {
-  if ((self = [super init])) {
-    control_ = control;
-    [self validateText:text];
-  }
-  return self;
-}
-
-- (void)controlTextDidChange:(NSNotification*)notification {
-  [self validateText:[[notification object] stringValue]];
-}
-
-- (void)validateText:(NSString*)text {
-  [control_ setEnabled:TrimText(text).empty() ? NO : YES];
-}
-@end
 
 BrowserWindowCocoa::BrowserWindowCocoa(Browser* browser,
                                        BrowserWindowController* controller)
@@ -175,6 +122,12 @@ void BrowserWindowCocoa::Show() {
     // substantial part of startup time when any CALayers are part of the
     // window's NSView heirarchy.
     [window() makeKeyAndOrderFront:controller_];
+
+    // At this point all the Browser's UI is painted on the screen. There's no
+    // need to wait for the compositor, so pass the nullptr instead and don't
+    // store the returned instance.
+    BrowserWindowHistogramHelper::
+        MaybeRecordValueAndCreateInstanceOnBrowserPaint(nullptr);
   }
 
   // When creating windows from nibs it is necessary to |makeKeyAndOrderFront:|
@@ -326,10 +279,7 @@ bool BrowserWindowCocoa::IsToolbarShowing() const {
   if (!IsFullscreen())
     return true;
 
-  // TODO(zijiehe): Retrieve the visibility of toolbar from
-  // FullscreenToolbarController. See http://crbug.com/702251 and
-  // http://crbug.com/680809.
-  return true;
+  return [cocoa_controller() isToolbarShowing] == YES;
 }
 
 void BrowserWindowCocoa::BookmarkBarStateChanged(
@@ -538,7 +488,7 @@ void BrowserWindowCocoa::UpdateAlertState(TabAlertState alert_state) {
 }
 
 void BrowserWindowCocoa::ShowUpdateChromeDialog() {
-  if (ui::MaterialDesignController::IsSecondaryUiMaterial()) {
+  if (chrome::ShowPilotDialogsWithViewsToolkit()) {
     chrome::ShowUpdateChromeDialogViews(GetNativeWindow());
   } else {
     restart_browser::RequestRestart(window());
@@ -551,88 +501,12 @@ void BrowserWindowCocoa::ShowBookmarkBubble(const GURL& url,
                       alreadyBookmarked:(already_bookmarked ? YES : NO)];
 }
 
-void BrowserWindowCocoa::ShowBookmarkAppBubble(
-    const WebApplicationInfo& web_app_info,
-    const ShowBookmarkAppBubbleCallback& callback) {
-  base::scoped_nsobject<NSAlert> alert([[NSAlert alloc] init]);
-  [alert setMessageText:l10n_util::GetNSString(
-      IDS_ADD_TO_APPLICATIONS_BUBBLE_TITLE)];
-  [alert setAlertStyle:NSInformationalAlertStyle];
-
-  NSButton* continue_button =
-      [alert addButtonWithTitle:l10n_util::GetNSString(IDS_OK)];
-  [continue_button setKeyEquivalent:kKeyEquivalentReturn];
-  NSButton* cancel_button =
-      [alert addButtonWithTitle:l10n_util::GetNSString(IDS_CANCEL)];
-  [cancel_button setKeyEquivalent:kKeyEquivalentEscape];
-
-  base::scoped_nsobject<NSButton> open_as_window_checkbox(
-      [[NSButton alloc] initWithFrame:NSZeroRect]);
-  [open_as_window_checkbox setButtonType:NSSwitchButton];
-  [open_as_window_checkbox
-      setTitle:l10n_util::GetNSString(IDS_BOOKMARK_APP_BUBBLE_OPEN_AS_WINDOW)];
-  [open_as_window_checkbox setState:web_app_info.open_as_window];
-  [open_as_window_checkbox sizeToFit];
-
-  base::scoped_nsobject<NSTextField> app_title([[NSTextField alloc]
-      initWithFrame:NSMakeRect(0, kAppTextFieldHeight +
-                                      kAppTextFieldVerticalSpacing,
-                               kAppTextFieldWidth, kAppTextFieldHeight)]);
-  NSString* original_title = SysUTF16ToNSString(web_app_info.title);
-  [[app_title cell] setWraps:NO];
-  [[app_title cell] setScrollable:YES];
-  [app_title setStringValue:original_title];
-  base::scoped_nsobject<TextRequiringDelegate> delegate(
-      [[TextRequiringDelegate alloc] initWithControl:continue_button
-                                                text:[app_title stringValue]]);
-  [app_title setDelegate:delegate];
-
-  base::scoped_nsobject<NSView> view([[NSView alloc]
-      initWithFrame:NSMakeRect(0, 0, kBookmarkAppBubbleViewWidth,
-                               kBookmarkAppBubbleViewHeight)]);
-
-  // When CanHostedAppsOpenInWindows() returns false, do not show the open as
-  // window checkbox to avoid confusing users.
-  if (extensions::util::CanHostedAppsOpenInWindows())
-    [view addSubview:open_as_window_checkbox];
-  [view addSubview:app_title];
-  [alert setAccessoryView:view];
-
-  // Find the image with target size.
-  // Assumes that the icons are sorted in ascending order of size.
-  if (!web_app_info.icons.empty()) {
-    for (const WebApplicationInfo::IconInfo& info : web_app_info.icons) {
-      if (info.width == kIconPreviewTargetSize &&
-          info.height == kIconPreviewTargetSize) {
-        gfx::Image icon_image = gfx::Image::CreateFrom1xBitmap(info.data);
-        [alert setIcon:icon_image.ToNSImage()];
-        break;
-      }
-    }
-  }
-
-  NSInteger response = [alert runModal];
-
-  // Prevent |app_title| from accessing |delegate| after it's destroyed.
-  [app_title setDelegate:nil];
-
-  if (response == NSAlertFirstButtonReturn) {
-    WebApplicationInfo updated_info = web_app_info;
-    updated_info.open_as_window = [open_as_window_checkbox state] == NSOnState;
-    updated_info.title = TrimText([app_title stringValue]);
-
-    callback.Run(true, updated_info);
-    return;
-  }
-
-  callback.Run(false, web_app_info);
-}
-
 autofill::SaveCardBubbleView* BrowserWindowCocoa::ShowSaveCreditCardBubble(
     content::WebContents* web_contents,
     autofill::SaveCardBubbleController* controller,
     bool user_gesture) {
-  return new autofill::SaveCardBubbleViewBridge(controller, controller_);
+  return autofill::CreateSaveCardBubbleView(web_contents, controller,
+                                            controller_, user_gesture);
 }
 
 ShowTranslateBubbleResult BrowserWindowCocoa::ShowTranslateBubble(
@@ -692,15 +566,6 @@ void BrowserWindowCocoa::UserChangedTheme() {
   }
 }
 
-void BrowserWindowCocoa::ShowPageInfo(
-    Profile* profile,
-    content::WebContents* web_contents,
-    const GURL& virtual_url,
-    const security_state::SecurityInfo& security_info) {
-  PageInfoUIBridge::Show(window(), profile, web_contents, virtual_url,
-                         security_info);
-}
-
 void BrowserWindowCocoa::ShowAppMenu() {
   // No-op. Mac doesn't support showing the menus via alt keys.
 }
@@ -727,10 +592,11 @@ BrowserWindowCocoa::PreHandleKeyboardEvent(
     return content::KeyboardEventProcessingResult::NOT_HANDLED;
 
   if (browser_->command_controller()->IsReservedCommandOrKey(id, event)) {
+    using Result = content::KeyboardEventProcessingResult;
     return [BrowserWindowUtils handleKeyboardEvent:event.os_event
                                           inWindow:window()]
-               ? content::KeyboardEventProcessingResult::HANDLED
-               : content::KeyboardEventProcessingResult::NOT_HANDLED;
+               ? Result::HANDLED
+               : Result::NOT_HANDLED;
   }
 
   return content::KeyboardEventProcessingResult::NOT_HANDLED_IS_SHORTCUT;
@@ -816,13 +682,11 @@ void BrowserWindowCocoa::ShowAvatarBubbleFromAvatarButton(
     signin_metrics::AccessPoint access_point,
     bool is_source_keyboard) {
   profiles::BubbleViewMode bubble_view_mode;
-  profiles::TutorialMode tutorial_mode;
-  profiles::BubbleViewModeFromAvatarBubbleMode(mode, &bubble_view_mode,
-                                               &tutorial_mode);
+  profiles::BubbleViewModeFromAvatarBubbleMode(mode, &bubble_view_mode);
 
-  if (SigninViewController::ShouldShowModalSigninForMode(bubble_view_mode)) {
-    browser_->signin_view_controller()->ShowModalSignin(bubble_view_mode,
-                                                        browser_, access_point);
+  if (SigninViewController::ShouldShowSigninForMode(bubble_view_mode)) {
+    browser_->signin_view_controller()->ShowSignin(bubble_view_mode, browser_,
+                                                   access_point);
   } else {
     AvatarBaseController* controller = [controller_ avatarButtonController];
     NSView* anchor = [controller buttonView];
@@ -839,7 +703,7 @@ int
 BrowserWindowCocoa::GetRenderViewHeightInsetWithDetachedBookmarkBar() {
   if (browser_->bookmark_bar_state() != BookmarkBar::DETACHED)
     return 0;
-  return 40;
+  return chrome::kNTPBookmarkBarHeight;
 }
 
 void BrowserWindowCocoa::ExecuteExtensionCommand(

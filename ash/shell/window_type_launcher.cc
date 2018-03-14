@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "ash/content/shell_content_state.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
 #include "ash/session/session_controller.h"
@@ -24,10 +23,10 @@
 #include "ui/gfx/canvas.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/notification_types.h"
+#include "ui/views/border.h"
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/menu/menu_item_view.h"
 #include "ui/views/controls/menu/menu_runner.h"
-#include "ui/views/examples/examples_window_with_content.h"
 #include "ui/views/layout/grid_layout.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/shadow_types.h"
@@ -54,7 +53,7 @@ class ModalWindow : public views::WidgetDelegateView,
     ++g_color_index %= arraysize(g_colors);
     AddChildView(open_button_);
   }
-  ~ModalWindow() override {}
+  ~ModalWindow() override = default;
 
   static void OpenModalWindow(aura::Window* parent, ui::ModalType modal_type) {
     views::Widget* widget = views::Widget::CreateWindowWithParent(
@@ -67,7 +66,9 @@ class ModalWindow : public views::WidgetDelegateView,
   void OnPaint(gfx::Canvas* canvas) override {
     canvas->FillRect(GetLocalBounds(), color_);
   }
-  gfx::Size GetPreferredSize() const override { return gfx::Size(200, 200); }
+  gfx::Size CalculatePreferredSize() const override {
+    return gfx::Size(200, 200);
+  }
   void Layout() override {
     gfx::Size open_ps = open_button_->GetPreferredSize();
     gfx::Rect local_bounds = GetLocalBounds();
@@ -101,7 +102,7 @@ class NonModalTransient : public views::WidgetDelegateView {
   NonModalTransient() : color_(g_colors[g_color_index]) {
     ++g_color_index %= arraysize(g_colors);
   }
-  ~NonModalTransient() override {}
+  ~NonModalTransient() override = default;
 
   static void OpenNonModalTransient(aura::Window* parent) {
     views::Widget* widget =
@@ -126,7 +127,9 @@ class NonModalTransient : public views::WidgetDelegateView {
   void OnPaint(gfx::Canvas* canvas) override {
     canvas->FillRect(GetLocalBounds(), color_);
   }
-  gfx::Size GetPreferredSize() const override { return gfx::Size(250, 250); }
+  gfx::Size CalculatePreferredSize() const override {
+    return gfx::Size(250, 250);
+  }
 
   // Overridden from views::WidgetDelegate:
   bool CanResize() const override { return true; }
@@ -159,17 +162,18 @@ void AddViewToLayout(views::GridLayout* layout, views::View* view) {
 
 }  // namespace
 
-void InitWindowTypeLauncher() {
+void InitWindowTypeLauncher(const base::Closure& show_views_examples_callback) {
   views::Widget* widget = views::Widget::CreateWindowWithContextAndBounds(
-      new WindowTypeLauncher, Shell::GetPrimaryRootWindow(),
-      gfx::Rect(120, 150, 300, 410));
+      new WindowTypeLauncher(show_views_examples_callback),
+      Shell::GetPrimaryRootWindow(), gfx::Rect(120, 150, 300, 410));
   widget->GetNativeView()->SetName("WindowTypeLauncher");
   ::wm::SetShadowElevation(widget->GetNativeView(),
                            ::wm::ShadowElevation::MEDIUM);
   widget->Show();
 }
 
-WindowTypeLauncher::WindowTypeLauncher()
+WindowTypeLauncher::WindowTypeLauncher(
+    const base::Closure& show_views_examples_callback)
     : create_button_(
           MdTextButton::Create(this, base::ASCIIToUTF16("Create Window"))),
       panel_button_(
@@ -204,10 +208,10 @@ WindowTypeLauncher::WindowTypeLauncher()
           MdTextButton::Create(this, base::ASCIIToUTF16("Show/Hide a Window"))),
       show_web_notification_(MdTextButton::Create(
           this,
-          base::ASCIIToUTF16("Show a web/app notification"))) {
-  views::GridLayout* layout = new views::GridLayout(this);
-  layout->SetInsets(5, 5, 5, 5);
-  SetLayoutManager(layout);
+          base::ASCIIToUTF16("Show a web/app notification"))),
+      show_views_examples_callback_(show_views_examples_callback) {
+  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
+  SetBorder(views::CreateEmptyBorder(gfx::Insets(5)));
   views::ColumnSet* column_set = layout->AddColumnSet(0);
   column_set->AddColumn(views::GridLayout::LEADING, views::GridLayout::CENTER,
                         0, views::GridLayout::USE_PREF, 0, 0);
@@ -227,7 +231,7 @@ WindowTypeLauncher::WindowTypeLauncher()
   set_context_menu_controller(this);
 }
 
-WindowTypeLauncher::~WindowTypeLauncher() {}
+WindowTypeLauncher::~WindowTypeLauncher() = default;
 
 void WindowTypeLauncher::OnPaint(gfx::Canvas* canvas) {
   canvas->FillRect(GetLocalBounds(), SK_ColorWHITE);
@@ -300,16 +304,14 @@ void WindowTypeLauncher::ButtonPressed(views::Button* sender,
         ->message_center()
         ->AddNotification(std::move(notification));
   } else if (sender == examples_button_) {
-    views::examples::ShowExamplesWindowWithContent(
-        views::examples::DO_NOTHING_ON_CLOSE,
-        ShellContentState::GetInstance()->GetActiveBrowserContext(), NULL);
+    show_views_examples_callback_.Run();
   }
 }
 
 void WindowTypeLauncher::ExecuteCommand(int id, int event_flags) {
   switch (id) {
     case COMMAND_NEW_WINDOW:
-      InitWindowTypeLauncher();
+      InitWindowTypeLauncher(show_views_examples_callback_);
       break;
     case COMMAND_TOGGLE_FULLSCREEN:
       GetWidget()->SetFullscreen(!GetWidget()->IsFullscreen());
@@ -330,14 +332,10 @@ void WindowTypeLauncher::ShowContextMenuForView(
                        base::ASCIIToUTF16("Toggle FullScreen"),
                        MenuItemView::NORMAL);
   // MenuRunner takes ownership of root.
-  menu_runner_.reset(new MenuRunner(root, MenuRunner::HAS_MNEMONICS |
-                                              views::MenuRunner::CONTEXT_MENU |
-                                              views::MenuRunner::ASYNC));
-  if (menu_runner_->RunMenuAt(GetWidget(), NULL, gfx::Rect(point, gfx::Size()),
-                              views::MENU_ANCHOR_TOPLEFT,
-                              source_type) == MenuRunner::MENU_DELETED) {
-    return;
-  }
+  menu_runner_.reset(new MenuRunner(
+      root, MenuRunner::HAS_MNEMONICS | views::MenuRunner::CONTEXT_MENU));
+  menu_runner_->RunMenuAt(GetWidget(), NULL, gfx::Rect(point, gfx::Size()),
+                          views::MENU_ANCHOR_TOPLEFT, source_type);
 }
 
 }  // namespace shell

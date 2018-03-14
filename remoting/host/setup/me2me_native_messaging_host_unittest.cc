@@ -188,9 +188,9 @@ class MockDaemonControllerDelegate : public DaemonController::Delegate {
   DISALLOW_COPY_AND_ASSIGN(MockDaemonControllerDelegate);
 };
 
-MockDaemonControllerDelegate::MockDaemonControllerDelegate() {}
+MockDaemonControllerDelegate::MockDaemonControllerDelegate() = default;
 
-MockDaemonControllerDelegate::~MockDaemonControllerDelegate() {}
+MockDaemonControllerDelegate::~MockDaemonControllerDelegate() = default;
 
 DaemonController::State MockDaemonControllerDelegate::GetState() {
   return DaemonController::STATE_STARTED;
@@ -288,9 +288,9 @@ class Me2MeNativeMessagingHostTest : public testing::Test {
   DISALLOW_COPY_AND_ASSIGN(Me2MeNativeMessagingHostTest);
 };
 
-Me2MeNativeMessagingHostTest::Me2MeNativeMessagingHostTest() {}
+Me2MeNativeMessagingHostTest::Me2MeNativeMessagingHostTest() = default;
 
-Me2MeNativeMessagingHostTest::~Me2MeNativeMessagingHostTest() {}
+Me2MeNativeMessagingHostTest::~Me2MeNativeMessagingHostTest() = default;
 
 void Me2MeNativeMessagingHostTest::SetUp() {
   base::File input_read_file;
@@ -322,7 +322,7 @@ void Me2MeNativeMessagingHostTest::SetUp() {
 }
 
 void Me2MeNativeMessagingHostTest::StartHost() {
-  DCHECK(host_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(host_task_runner_->RunsTasksInCurrentSequence());
 
   base::File input_read_file;
   base::File output_write_file;
@@ -366,7 +366,7 @@ void Me2MeNativeMessagingHostTest::StartHost() {
 }
 
 void Me2MeNativeMessagingHostTest::StopHost() {
-  DCHECK(host_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(host_task_runner_->RunsTasksInCurrentSequence());
 
   native_messaging_pipe_.reset();
 
@@ -378,7 +378,7 @@ void Me2MeNativeMessagingHostTest::StopHost() {
 }
 
 void Me2MeNativeMessagingHostTest::ExitTest() {
-  if (!test_message_loop_->task_runner()->RunsTasksOnCurrentThread()) {
+  if (!test_message_loop_->task_runner()->RunsTasksInCurrentSequence()) {
     test_message_loop_->task_runner()->PostTask(
         FROM_HERE,
         base::Bind(&Me2MeNativeMessagingHostTest::ExitTest,

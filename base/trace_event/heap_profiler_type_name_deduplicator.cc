@@ -19,47 +19,12 @@
 namespace base {
 namespace trace_event {
 
-namespace {
-
-// If |type_name| is file name then extract directory name. Or if |type_name| is
-// category name, then disambiguate multple categories and remove
-// "disabled-by-default" prefix if present.
-StringPiece ExtractCategoryFromTypeName(const char* type_name) {
-  StringPiece result(type_name);
-  size_t last_seperator = result.find_last_of("\\/");
-
-  // If |type_name| was a not a file path, the seperator will not be found, so
-  // the whole type name is returned.
-  if (last_seperator == StringPiece::npos) {
-    // Use the first the category name if it has ",".
-    size_t first_comma_position = result.find(',');
-    if (first_comma_position != StringPiece::npos)
-      result = result.substr(0, first_comma_position);
-    if (result.starts_with(TRACE_DISABLED_BY_DEFAULT("")))
-      result.remove_prefix(sizeof(TRACE_DISABLED_BY_DEFAULT("")) - 1);
-    return result;
-  }
-
-  // Remove the file name from the path.
-  result.remove_suffix(result.length() - last_seperator);
-
-  // Remove the parent directory references.
-  const char kParentDirectory[] = "..";
-  const size_t kParentDirectoryLength = 3; // '../' or '..\'.
-  while (result.starts_with(kParentDirectory)) {
-    result.remove_prefix(kParentDirectoryLength);
-  }
-  return result;
-}
-
-}  // namespace
-
 TypeNameDeduplicator::TypeNameDeduplicator() {
   // A null pointer has type ID 0 ("unknown type");
   type_ids_.insert(std::make_pair(nullptr, 0));
 }
 
-TypeNameDeduplicator::~TypeNameDeduplicator() {}
+TypeNameDeduplicator::~TypeNameDeduplicator() = default;
 
 int TypeNameDeduplicator::Insert(const char* type_name) {
   auto result = type_ids_.insert(std::make_pair(type_name, 0));
@@ -76,6 +41,8 @@ int TypeNameDeduplicator::Insert(const char* type_name) {
 }
 
 void TypeNameDeduplicator::AppendAsTraceFormat(std::string* out) const {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("memory-infra"),
+               "TypeNameDeduplicator::AppendAsTraceFormat");
   out->append("{");  // Begin the type names dictionary.
 
   auto it = type_ids_.begin();
@@ -93,7 +60,7 @@ void TypeNameDeduplicator::AppendAsTraceFormat(std::string* out) const {
 
     // TODO(ssid): crbug.com/594803 the type name is misused for file name in
     // some cases.
-    StringPiece type_info = ExtractCategoryFromTypeName(it->first);
+    StringPiece type_info = it->first;
 
     // |EscapeJSONString| appends, it does not overwrite |buffer|.
     bool put_in_quotes = true;
@@ -107,7 +74,7 @@ void TypeNameDeduplicator::AppendAsTraceFormat(std::string* out) const {
 void TypeNameDeduplicator::EstimateTraceMemoryOverhead(
     TraceEventMemoryOverhead* overhead) {
   size_t memory_usage = EstimateMemoryUsage(type_ids_);
-  overhead->Add("TypeNameDeduplicator",
+  overhead->Add(TraceEventMemoryOverhead::kHeapProfilerTypeNameDeduplicator,
                 sizeof(TypeNameDeduplicator) + memory_usage);
 }
 

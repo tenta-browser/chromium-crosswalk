@@ -4,9 +4,9 @@
 
 #include "core/timing/PerformanceObserverEntryList.h"
 
-#include "core/timing/PerformanceEntry.h"
-#include "wtf/StdLibExtras.h"
 #include <algorithm>
+#include "core/timing/PerformanceEntry.h"
+#include "platform/wtf/StdLibExtras.h"
 
 namespace blink {
 
@@ -68,8 +68,9 @@ PerformanceEntryVector PerformanceObserverEntryList::getEntriesByName(
   return entries;
 }
 
-DEFINE_TRACE(PerformanceObserverEntryList) {
+void PerformanceObserverEntryList::Trace(blink::Visitor* visitor) {
   visitor->Trace(performance_entries_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

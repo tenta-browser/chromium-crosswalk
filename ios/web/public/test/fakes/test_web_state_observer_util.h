@@ -9,6 +9,7 @@
 
 #include "ios/web/public/favicon_url.h"
 #include "ios/web/public/load_committed_details.h"
+#include "ios/web/public/web_state/form_activity_params.h"
 #include "url/gurl.h"
 
 namespace web {
@@ -16,10 +17,22 @@ namespace web {
 class NavigationContext;
 class WebState;
 
-// Arguments passed to |ProvisionalNavigationStarted|.
-struct TestStartProvisionalNavigationInfo {
+// Arguments passed to |WasShown|.
+struct TestWasShownInfo {
   WebState* web_state;
-  GURL url;
+};
+
+// Arguments passed to |WasHidden|.
+struct TestWasHiddenInfo {
+  WebState* web_state;
+};
+
+// Arguments passed to |DidStartNavigation|.
+struct TestDidStartNavigationInfo {
+  TestDidStartNavigationInfo();
+  ~TestDidStartNavigationInfo();
+  WebState* web_state;
+  std::unique_ptr<web::NavigationContext> context;
 };
 
 // Arguments passed to |DidFinishNavigation|.
@@ -40,11 +53,6 @@ struct TestCommitNavigationInfo {
 struct TestLoadPageInfo {
   WebState* web_state;
   bool success;
-};
-
-// Arguments passed to |InterstitialDismissed|.
-struct TestDismissInterstitialInfo {
-  WebState* web_state;
 };
 
 // Arguments passed to |LoadProgressChanged|.
@@ -91,11 +99,7 @@ struct TestFormActivityInfo {
   TestFormActivityInfo();
   ~TestFormActivityInfo();
   WebState* web_state;
-  std::string form_name;
-  std::string field_name;
-  std::string type;
-  std::string value;
-  bool input_missing;
+  FormActivityParams form_activity;
 };
 
 // Arguments passed to |FaviconUrlUpdated|.

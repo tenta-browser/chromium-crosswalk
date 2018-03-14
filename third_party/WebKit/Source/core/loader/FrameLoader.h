@@ -42,7 +42,6 @@
 #include "core/loader/FrameLoaderTypes.h"
 #include "core/loader/HistoryItem.h"
 #include "core/loader/NavigationPolicy.h"
-#include "platform/Timer.h"
 #include "platform/heap/Handle.h"
 #include "platform/instrumentation/tracing/TracedValue.h"
 #include "platform/loader/fetch/ResourceLoaderOptions.h"
@@ -50,6 +49,7 @@
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/HashSet.h"
 #include "public/platform/WebInsecureRequestPolicy.h"
+#include "public/web/WebTriggeringEventInfo.h"
 
 #include <memory>
 
@@ -87,7 +87,7 @@ class CORE_EXPORT FrameLoader final {
 
   ProgressTracker& Progress() const { return *progress_tracker_; }
 
-  // Starts a load. It will eventually call startLoad() or loadInSameDocument().
+  // Starts a load. It will eventually call StartLoad() or LoadInSameDocument().
   // For history navigations or reloads, an appropriate FrameLoadType should be
   // given. Otherwise, FrameLoadTypeStandard should be used (and the final
   // FrameLoadType will be computed). For history navigations, a history item
@@ -97,16 +97,10 @@ class CORE_EXPORT FrameLoader final {
             HistoryItem* = nullptr,
             HistoryLoadType = kHistoryDifferentDocumentLoad);
 
-  static void ReportLocalLoadFailed(LocalFrame*, const String& url);
-
   // Warning: stopAllLoaders can and will detach the LocalFrame out from under
   // you. All callers need to either protect the LocalFrame or guarantee they
   // won't in any way access the LocalFrame after stopAllLoaders returns.
   void StopAllLoaders();
-
-  // FIXME: clear() is trying to do too many things. We should break it down
-  // into smaller functions.
-  void Clear();
 
   void ReplaceDocumentWhileExecutingJavaScriptURL(const String& source,
                                                   Document* owner_document);
@@ -117,7 +111,7 @@ class CORE_EXPORT FrameLoader final {
   void DidAccessInitialDocument();
 
   DocumentLoader* GetDocumentLoader() const { return document_loader_.Get(); }
-  DocumentLoader* ProvisionalDocumentLoader() const {
+  DocumentLoader* GetProvisionalDocumentLoader() const {
     return provisional_document_loader_.Get();
   }
 
@@ -127,8 +121,6 @@ class CORE_EXPORT FrameLoader final {
 
   bool ShouldTreatURLAsSameAsCurrent(const KURL&) const;
   bool ShouldTreatURLAsSrcdocDocument(const KURL&) const;
-
-  LocalFrameClient* Client() const;
 
   void SetDefersLoading(bool);
 
@@ -159,7 +151,7 @@ class CORE_EXPORT FrameLoader final {
   void Detach();
 
   void FinishedParsing();
-  void CheckCompleted();
+  void DidFinishNavigation();
 
   // This prepares the FrameLoader for the next commit. It will dispatch unload
   // events, abort XHR requests and detach the document. Returns true if the
@@ -170,8 +162,6 @@ class CORE_EXPORT FrameLoader final {
 
   FrameLoaderStateMachine* StateMachine() const { return &state_machine_; }
 
-  void ApplyUserAgent(ResourceRequest&);
-
   bool AllAncestorsAreComplete() const;  // including this
 
   bool ShouldClose(bool is_reload = false);
@@ -181,17 +171,34 @@ class CORE_EXPORT FrameLoader final {
 
   void UpdateForSameDocumentNavigation(const KURL&,
                                        SameDocumentNavigationSource,
-                                       PassRefPtr<SerializedScriptValue>,
+                                       scoped_refptr<SerializedScriptValue>,
                                        HistoryScrollRestorationType,
                                        FrameLoadType,
                                        Document*);
 
+  bool ShouldSerializeScrollAnchor();
+  void SaveScrollAnchor();
   void SaveScrollState();
   void RestoreScrollPositionAndViewState();
 
   // The navigation should only be continued immediately in this frame if this
   // returns NavigationPolicyCurrentTab.
   NavigationPolicy ShouldContinueForNavigationPolicy(
+      const ResourceRequest&,
+      Document* origin_document,
+      const SubstituteData&,
+      DocumentLoader*,
+      ContentSecurityPolicyDisposition,
+      NavigationType,
+      NavigationPolicy,
+      FrameLoadType,
+      bool is_client_redirect,
+      WebTriggeringEventInfo,
+      HTMLFormElement*);
+
+  // Like ShouldContinueForNavigationPolicy, but should be used when following
+  // redirects.
+  NavigationPolicy ShouldContinueForRedirectNavigationPolicy(
       const ResourceRequest&,
       const SubstituteData&,
       DocumentLoader*,
@@ -205,17 +212,19 @@ class CORE_EXPORT FrameLoader final {
   // Note: When a PlzNavigtate navigation is handled by the client, we will
   // have created a dummy provisional DocumentLoader, so this will return true
   // while the client handles the navigation.
-  bool HasProvisionalNavigation() const { return ProvisionalDocumentLoader(); }
+  bool HasProvisionalNavigation() const {
+    return GetProvisionalDocumentLoader();
+  }
 
   void DetachProvisionalDocumentLoader(DocumentLoader*);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
   static void SetReferrerForFrameRequest(FrameLoadRequest&);
 
- private:
-  void CheckTimerFired(TimerBase*);
+  void ClientDroppedNavigation();
 
+ private:
   bool PrepareRequestForThisFrame(FrameLoadRequest&);
   FrameLoadType DetermineFrameLoadType(const FrameLoadRequest&);
 
@@ -237,12 +246,15 @@ class CORE_EXPORT FrameLoader final {
                  HistoryItem*);
 
   void LoadInSameDocument(const KURL&,
-                          PassRefPtr<SerializedScriptValue> state_object,
+                          scoped_refptr<SerializedScriptValue> state_object,
                           FrameLoadType,
                           HistoryItem*,
                           ClientRedirectPolicy,
                           Document*);
-  void RestoreScrollPositionAndViewStateForLoadType(FrameLoadType);
+  void RestoreScrollPositionAndViewState(FrameLoadType,
+                                         HistoryLoadType,
+                                         HistoryItem::ViewState*,
+                                         HistoryScrollRestorationType);
 
   void ScheduleCheckCompleted();
 
@@ -253,10 +265,14 @@ class CORE_EXPORT FrameLoader final {
   std::unique_ptr<TracedValue> ToTracedValue() const;
   void TakeObjectSnapshot() const;
 
-  DocumentLoader* CreateDocumentLoader(const ResourceRequest&,
-                                       const FrameLoadRequest&,
-                                       FrameLoadType,
-                                       NavigationType);
+  DocumentLoader* CreateDocumentLoader(
+      const ResourceRequest&,
+      const FrameLoadRequest&,
+      FrameLoadType,
+      NavigationType,
+      const base::UnguessableToken& devtools_navigation_token);
+
+  LocalFrameClient* Client() const;
 
   Member<LocalFrame> frame_;
   AtomicString required_csp_;
@@ -276,41 +292,7 @@ class CORE_EXPORT FrameLoader final {
   Member<DocumentLoader> document_loader_;
   Member<DocumentLoader> provisional_document_loader_;
 
-  class DeferredHistoryLoad
-      : public GarbageCollectedFinalized<DeferredHistoryLoad> {
-    WTF_MAKE_NONCOPYABLE(DeferredHistoryLoad);
-
-   public:
-    static DeferredHistoryLoad* Create(ResourceRequest request,
-                                       HistoryItem* item,
-                                       FrameLoadType load_type,
-                                       HistoryLoadType history_load_type) {
-      return new DeferredHistoryLoad(request, item, load_type,
-                                     history_load_type);
-    }
-
-    DeferredHistoryLoad(ResourceRequest request,
-                        HistoryItem* item,
-                        FrameLoadType load_type,
-                        HistoryLoadType history_load_type)
-        : request_(request),
-          item_(item),
-          load_type_(load_type),
-          history_load_type_(history_load_type) {}
-
-    DEFINE_INLINE_TRACE() { visitor->Trace(item_); }
-
-    ResourceRequest request_;
-    Member<HistoryItem> item_;
-    FrameLoadType load_type_;
-    HistoryLoadType history_load_type_;
-  };
-
-  Member<DeferredHistoryLoad> deferred_history_load_;
-
   bool in_stop_all_loaders_;
-
-  TaskRunnerTimer<FrameLoader> check_timer_;
 
   SandboxFlags forced_sandbox_flags_;
 

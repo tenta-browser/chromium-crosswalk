@@ -82,7 +82,7 @@ void BadClockUI::PopulateClockStrings(base::DictionaryValue* load_time_data) {
       l10n_util::GetStringUTF16(IDS_CLOCK_ERROR_EXPLANATION));
 }
 
-void BadClockUI::HandleCommand(SecurityInterstitialCommands command) {
+void BadClockUI::HandleCommand(SecurityInterstitialCommand command) {
   switch (command) {
     case CMD_DONT_PROCEED:
       controller_->GoBack();
@@ -105,10 +105,10 @@ void BadClockUI::HandleCommand(SecurityInterstitialCommands command) {
       controller_->LaunchDateAndTimeSettings();
       break;
     case CMD_OPEN_REPORTING_PRIVACY:
-      controller_->OpenExtendedReportingPrivacyPolicy();
+      controller_->OpenExtendedReportingPrivacyPolicy(true);
       break;
     case CMD_OPEN_WHITEPAPER:
-      controller_->OpenExtendedReportingWhitepaper();
+      controller_->OpenExtendedReportingWhitepaper(true);
       break;
     case CMD_PROCEED:
     case CMD_OPEN_HELP_CENTER:

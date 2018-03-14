@@ -9,11 +9,13 @@
 #include "base/bind.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/webstore_data_fetcher_delegate.h"
-#include "components/safe_json/safe_json_parser.h"
+#include "content/public/common/service_manager_connection.h"
 #include "extensions/common/extension_urls.h"
 #include "net/base/load_flags.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request_status.h"
+#include "services/data_decoder/public/cpp/safe_json_parser.h"
 
 namespace {
 
@@ -45,8 +47,38 @@ void WebstoreDataFetcher::Start() {
   GURL webstore_data_url(extension_urls::GetWebstoreItemJsonDataURL(id_));
   net::URLFetcher::RequestType request_type =
       json_post_data_.empty() ? net::URLFetcher::GET : net::URLFetcher::POST;
-  webstore_data_url_fetcher_ =
-      net::URLFetcher::Create(webstore_data_url, request_type, this);
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("webstore_data_fetcher", R"(
+        semantics {
+          sender: "Webstore Data Fetcher"
+          description:
+            "Fetches metadata about an extension from the Chrome Web Store."
+          trigger:
+            "The user or another program triggers some action where Chrome "
+            "will show metadata about an extension. This includes extension "
+            "installation flows, triggering an install for a disabled "
+            "extension, and an extension being added to Chrome through "
+            "third-party sideloading. It also happens when a kiosk app account "
+            "whose metadata (app icon, name, required platform version) is not "
+            "cached locally is detected in device local accounts list. The "
+            "account can be set either by device policy or through extensions "
+            "web UI, by the device owner (user that was initially added to the "
+            "device; implies non managed device). The latter case is "
+            "deprecated and not supported on newer Chrome OS boards."
+          data:
+            "The extension id and referrer url. The referrer chain is also "
+            "included if the user has not opted out of SafeBrowsing."
+          destination: GOOGLE_OWNED_SERVICE
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "This feature cannot be disabled in settings. It will only be "
+            "triggered if the user uses extensions."
+          policy_exception_justification: "Not implemented."
+        })");
+  webstore_data_url_fetcher_ = net::URLFetcher::Create(
+      webstore_data_url, request_type, this, traffic_annotation);
   webstore_data_url_fetcher_->SetRequestContext(request_context_);
   webstore_data_url_fetcher_->SetReferrer(referrer_url_.spec());
   webstore_data_url_fetcher_->SetLoadFlags(net::LOAD_DO_NOT_SAVE_COOKIES |
@@ -67,7 +99,7 @@ void WebstoreDataFetcher::Start() {
 
 void WebstoreDataFetcher::OnJsonParseSuccess(
     std::unique_ptr<base::Value> parsed_json) {
-  if (!parsed_json->IsType(base::Value::Type::DICTIONARY)) {
+  if (!parsed_json->is_dict()) {
     OnJsonParseFailure(kInvalidWebstoreResponseError);
     return;
   }
@@ -98,7 +130,8 @@ void WebstoreDataFetcher::OnURLFetchComplete(const net::URLFetcher* source) {
   fetcher->GetResponseAsString(&webstore_json_data);
 
   // The parser will call us back via one of the callbacks.
-  safe_json::SafeJsonParser::Parse(
+  data_decoder::SafeJsonParser::Parse(
+      content::ServiceManagerConnection::GetForProcess()->GetConnector(),
       webstore_json_data,
       base::Bind(&WebstoreDataFetcher::OnJsonParseSuccess, AsWeakPtr()),
       base::Bind(&WebstoreDataFetcher::OnJsonParseFailure, AsWeakPtr()));

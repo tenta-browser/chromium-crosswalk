@@ -16,21 +16,17 @@ TEST(ResourceLoaderOptionsTest, DeepCopy) {
   // initiatorInfo and securityOrigin.
   static_assert(std::is_enum<DataBufferingPolicy>::value,
                 "DataBufferingPolicy should be an enum");
-  static_assert(std::is_enum<StoredCredentials>::value,
-                "StoredCredentials should be an enum");
-  static_assert(std::is_enum<CredentialRequest>::value,
-                "CredentialRequest should be an enum");
   static_assert(std::is_enum<ContentSecurityPolicyDisposition>::value,
                 "ContentSecurityPolicyDisposition should be an enum");
   static_assert(std::is_enum<RequestInitiatorContext>::value,
                 "RequestInitiatorContext should be an enum");
   static_assert(std::is_enum<SynchronousPolicy>::value,
                 "SynchronousPolicy should be an enum");
-  static_assert(std::is_enum<CORSEnabled>::value,
-                "CORSEnabled should be an enum");
+  static_assert(std::is_enum<CORSHandlingByResourceFetcher>::value,
+                "CORSHandlingByResourceFetcher should be an enum");
 
   ResourceLoaderOptions original;
-  RefPtr<SecurityOrigin> security_origin =
+  scoped_refptr<SecurityOrigin> security_origin =
       SecurityOrigin::CreateFromString("http://www.google.com");
   original.security_origin = security_origin;
   original.initiator_info.name = AtomicString("xmlhttprequest");
@@ -41,8 +37,6 @@ TEST(ResourceLoaderOptionsTest, DeepCopy) {
 
   // Check that contents are correctly copied to |copyData|
   EXPECT_EQ(original.data_buffering_policy, copy_data.data_buffering_policy);
-  EXPECT_EQ(original.allow_credentials, copy_data.allow_credentials);
-  EXPECT_EQ(original.credentials_requested, copy_data.credentials_requested);
   EXPECT_EQ(original.content_security_policy_option,
             copy_data.content_security_policy_option);
   EXPECT_EQ(original.initiator_info.name, copy_data.initiator_info.name);
@@ -53,7 +47,8 @@ TEST(ResourceLoaderOptionsTest, DeepCopy) {
   EXPECT_EQ(original.request_initiator_context,
             copy_data.request_initiator_context);
   EXPECT_EQ(original.synchronous_policy, copy_data.synchronous_policy);
-  EXPECT_EQ(original.cors_enabled, copy_data.cors_enabled);
+  EXPECT_EQ(original.cors_handling_by_resource_fetcher,
+            copy_data.cors_handling_by_resource_fetcher);
   EXPECT_EQ(original.security_origin->Protocol(),
             copy_data.security_origin->Protocol());
   EXPECT_EQ(original.security_origin->Host(),
@@ -64,7 +59,7 @@ TEST(ResourceLoaderOptionsTest, DeepCopy) {
   // Check that pointers are different between |original| and |copyData|
   EXPECT_NE(original.initiator_info.name.Impl(),
             copy_data.initiator_info.name.Impl());
-  EXPECT_NE(original.security_origin.Get(), copy_data.security_origin.Get());
+  EXPECT_NE(original.security_origin.get(), copy_data.security_origin.get());
   EXPECT_NE(original.security_origin->Protocol().Impl(),
             copy_data.security_origin->Protocol().Impl());
   EXPECT_NE(original.security_origin->Host().Impl(),
@@ -74,8 +69,6 @@ TEST(ResourceLoaderOptionsTest, DeepCopy) {
 
   // Check that contents are correctly copied to |copy|
   EXPECT_EQ(original.data_buffering_policy, copy.data_buffering_policy);
-  EXPECT_EQ(original.allow_credentials, copy.allow_credentials);
-  EXPECT_EQ(original.credentials_requested, copy.credentials_requested);
   EXPECT_EQ(original.content_security_policy_option,
             copy.content_security_policy_option);
   EXPECT_EQ(original.initiator_info.name, copy.initiator_info.name);
@@ -83,7 +76,8 @@ TEST(ResourceLoaderOptionsTest, DeepCopy) {
   EXPECT_EQ(original.initiator_info.start_time, copy.initiator_info.start_time);
   EXPECT_EQ(original.request_initiator_context, copy.request_initiator_context);
   EXPECT_EQ(original.synchronous_policy, copy.synchronous_policy);
-  EXPECT_EQ(original.cors_enabled, copy.cors_enabled);
+  EXPECT_EQ(original.cors_handling_by_resource_fetcher,
+            copy.cors_handling_by_resource_fetcher);
   EXPECT_EQ(original.security_origin->Protocol(),
             copy.security_origin->Protocol());
   EXPECT_EQ(original.security_origin->Host(), copy.security_origin->Host());
@@ -95,7 +89,7 @@ TEST(ResourceLoaderOptionsTest, DeepCopy) {
   //           copy.initiatorInfo.name.impl());
   // should pass. However, in the unit test here, these two pointers are the
   // same, because initiatorInfo.name is AtomicString.
-  EXPECT_NE(original.security_origin.Get(), copy.security_origin.Get());
+  EXPECT_NE(original.security_origin.get(), copy.security_origin.get());
   EXPECT_NE(original.security_origin->Protocol().Impl(),
             copy.security_origin->Protocol().Impl());
   EXPECT_NE(original.security_origin->Host().Impl(),

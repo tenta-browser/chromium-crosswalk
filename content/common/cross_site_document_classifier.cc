@@ -4,6 +4,9 @@
 
 #include "content/common/cross_site_document_classifier.h"
 
+#include <stddef.h>
+#include <string>
+
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
@@ -109,12 +112,16 @@ bool CrossSiteDocumentClassifier::IsValidCorsHeaderSet(
   // non-standard practice, and not supported by Chrome. Refer to
   // CrossOriginAccessControl::passesAccessControlCheck().
 
+  // Note that "null" offers no more protection than "*" because it matches any
+  // unique origin, such as data URLs. Any origin can thus access it, so don't
+  // bother trying to block this case.
+
   // TODO(dsjang): * is not allowed for the response from a request
   // with cookies. This allows for more than what the renderer will
   // eventually be able to receive, so we won't see illegal cross-site
   // documents allowed by this. We have to find a way to see if this
   // response is from a cookie-tagged request or not in the future.
-  if (access_control_origin == "*")
+  if (access_control_origin == "*" || access_control_origin == "null")
     return true;
 
   // TODO(dsjang): The CORS spec only treats a fully specified URL, except for
@@ -137,8 +144,6 @@ bool CrossSiteDocumentClassifier::SniffForHTML(StringPiece data) {
   // signatures. This can weaken our document block policy, but we can
   // break less websites.
   // TODO(dsjang): parameterize |net::SniffForHTML| with an option
-#include <stddef.h>
-
   // that decides whether to include <!-- or not, so that we can
   // remove this function.
   // TODO(dsjang): Once CrossSiteDocumentClassifier is moved into the browser

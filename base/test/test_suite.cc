@@ -4,6 +4,8 @@
 
 #include "base/test/test_suite.h"
 
+#include <signal.h>
+
 #include <memory>
 
 #include "base/at_exit.h"
@@ -135,8 +137,7 @@ int RunUnitTestsUsingBaseTestSuite(int argc, char **argv) {
                          Bind(&TestSuite::Run, Unretained(&test_suite)));
 }
 
-TestSuite::TestSuite(int argc, char** argv)
-    : initialized_command_line_(false), created_feature_list_(false) {
+TestSuite::TestSuite(int argc, char** argv) : initialized_command_line_(false) {
   PreInitialize();
   InitializeFromCommandLine(argc, argv);
   // Logging must be initialized before any thread has a chance to call logging
@@ -146,7 +147,7 @@ TestSuite::TestSuite(int argc, char** argv)
 
 #if defined(OS_WIN)
 TestSuite::TestSuite(int argc, wchar_t** argv)
-    : initialized_command_line_(false), created_feature_list_(false) {
+    : initialized_command_line_(false) {
   PreInitialize();
   InitializeFromCommandLine(argc, argv);
   // Logging must be initialized before any thread has a chance to call logging
@@ -238,11 +239,11 @@ void TestSuite::AddTestLauncherResultPrinter() {
     return;
   }
 
-  XmlUnitTestResultPrinter* printer = new XmlUnitTestResultPrinter;
-  CHECK(printer->Initialize(output_path));
+  printer_ = new XmlUnitTestResultPrinter;
+  CHECK(printer_->Initialize(output_path));
   testing::TestEventListeners& listeners =
       testing::UnitTest::GetInstance()->listeners();
-  listeners.Append(printer);
+  listeners.Append(printer_);
 }
 
 // Don't add additional code to this method.  Instead add it to
@@ -282,8 +283,10 @@ int TestSuite::Run() {
   return result;
 }
 
-// static
-void TestSuite::UnitTestAssertHandler(const std::string& str) {
+void TestSuite::UnitTestAssertHandler(const char* file,
+                                      int line,
+                                      const base::StringPiece summary,
+                                      const base::StringPiece stack_trace) {
 #if defined(OS_ANDROID)
   // Correlating test stdio with logcat can be difficult, so we emit this
   // helpful little hint about what was running.  Only do this for Android
@@ -298,10 +301,54 @@ void TestSuite::UnitTestAssertHandler(const std::string& str) {
   }
 #endif  // defined(OS_ANDROID)
 
+  // XmlUnitTestResultPrinter inherits gtest format, where assert has summary
+  // and message. In GTest, summary is just a logged text, and message is a
+  // logged text, concatenated with stack trace of assert.
+  // Concatenate summary and stack_trace here, to pass it as a message.
+  if (printer_) {
+    const std::string summary_str = summary.as_string();
+    const std::string stack_trace_str = summary_str + stack_trace.as_string();
+    printer_->OnAssert(file, line, summary_str, stack_trace_str);
+  }
+
   // The logging system actually prints the message before calling the assert
   // handler. Just exit now to avoid printing too many stack traces.
   _exit(1);
 }
+
+#if defined(OS_WIN)
+namespace {
+
+// Disable optimizations to prevent function folding or other transformations
+// that will make the call stacks on failures more confusing.
+#pragma optimize("", off)
+// Handlers for invalid parameter, pure call, and abort. They generate a
+// breakpoint to ensure that we get a call stack on these failures.
+void InvalidParameter(const wchar_t* expression,
+                      const wchar_t* function,
+                      const wchar_t* file,
+                      unsigned int line,
+                      uintptr_t reserved) {
+  // CRT printed message is sufficient.
+  __debugbreak();
+  _exit(1);
+}
+
+void PureCall() {
+  fprintf(stderr, "Pure-virtual function call. Terminating.\n");
+  __debugbreak();
+  _exit(1);
+}
+
+void AbortHandler(int signal) {
+  // Print EOL after the CRT abort message.
+  fprintf(stderr, "\n");
+  __debugbreak();
+}
+#pragma optimize("", on)
+
+}  // namespace
+#endif
 
 void TestSuite::SuppressErrorDialogs() {
 #if defined(OS_WIN)
@@ -314,29 +361,57 @@ void TestSuite::SuppressErrorDialogs() {
   UINT existing_flags = SetErrorMode(new_flags);
   SetErrorMode(existing_flags | new_flags);
 
-#if defined(_DEBUG) && defined(_HAS_EXCEPTIONS) && (_HAS_EXCEPTIONS == 1)
+#if defined(_DEBUG)
   // Suppress the "Debug Assertion Failed" dialog.
   // TODO(hbono): remove this code when gtest has it.
   // http://groups.google.com/d/topic/googletestframework/OjuwNlXy5ac/discussion
-  _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
   _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
-#endif  // defined(_DEBUG) && defined(_HAS_EXCEPTIONS) && (_HAS_EXCEPTIONS == 1)
+  _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
+  _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+  _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
+#endif  // defined(_DEBUG)
+
+  // See crbug.com/783040 for test code to trigger all of these failures.
+  _set_invalid_parameter_handler(InvalidParameter);
+  _set_purecall_handler(PureCall);
+  signal(SIGABRT, AbortHandler);
 #endif  // defined(OS_WIN)
 }
 
 void TestSuite::Initialize() {
+  const CommandLine* command_line = CommandLine::ForCurrentProcess();
 #if !defined(OS_IOS)
-  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kWaitForDebugger)) {
+  if (command_line->HasSwitch(switches::kWaitForDebugger)) {
     debug::WaitForDebugger(60, true);
   }
 #endif
-
   // Set up a FeatureList instance, so that code using that API will not hit a
-  // an error that it's not set. If a FeatureList was created in this way (i.e.
-  // one didn't exist previously), it will be cleared in Shutdown() via
-  // ClearInstanceForTesting().
-  created_feature_list_ =
-      FeatureList::InitializeInstance(std::string(), std::string());
+  // an error that it's not set. It will be cleared automatically.
+  // TestFeatureForBrowserTest1 and TestFeatureForBrowserTest2 used in
+  // ContentBrowserTestScopedFeatureListTest to ensure ScopedFeatureList keeps
+  // features from command line.
+  std::string enabled =
+      command_line->GetSwitchValueASCII(switches::kEnableFeatures);
+  std::string disabled =
+      command_line->GetSwitchValueASCII(switches::kDisableFeatures);
+  enabled += ",TestFeatureForBrowserTest1";
+  disabled += ",TestFeatureForBrowserTest2";
+  scoped_feature_list_.InitFromCommandLine(enabled, disabled);
+
+  // The enable-features and disable-features flags were just slurped into a
+  // FeatureList, so remove them from the command line. Tests should enable and
+  // disable features via the ScopedFeatureList API rather than command-line
+  // flags.
+  CommandLine new_command_line(command_line->GetProgram());
+  CommandLine::SwitchMap switches = command_line->GetSwitches();
+
+  switches.erase(switches::kEnableFeatures);
+  switches.erase(switches::kDisableFeatures);
+
+  for (const auto& iter : switches)
+    new_command_line.AppendSwitchNative(iter.first, iter.second);
+
+  *CommandLine::ForCurrentProcess() = new_command_line;
 
 #if defined(OS_IOS)
   InitIOSTestMessageLoop();
@@ -356,10 +431,11 @@ void TestSuite::Initialize() {
 
   // In some cases, we do not want to see standard error dialogs.
   if (!debug::BeingDebugged() &&
-      !CommandLine::ForCurrentProcess()->HasSwitch("show-error-dialogs")) {
+      !command_line->HasSwitch("show-error-dialogs")) {
     SuppressErrorDialogs();
     debug::SetSuppressDebugUI(true);
-    logging::SetLogAssertHandler(UnitTestAssertHandler);
+    assert_handler_ = std::make_unique<logging::ScopedLogAssertHandler>(
+        base::Bind(&TestSuite::UnitTestAssertHandler, base::Unretained(this)));
   }
 
   base::test::InitializeICUForTesting();
@@ -399,10 +475,6 @@ void TestSuite::Initialize() {
 
 void TestSuite::Shutdown() {
   base::debug::StopProfiling();
-
-  // Clear the FeatureList that was created by Initialize().
-  if (created_feature_list_)
-    FeatureList::ClearInstanceForTesting();
 }
 
 }  // namespace base

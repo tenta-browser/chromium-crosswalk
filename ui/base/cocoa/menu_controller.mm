@@ -4,8 +4,12 @@
 
 #import "ui/base/cocoa/menu_controller.h"
 
+#include "base/cancelable_callback.h"
 #include "base/logging.h"
+#include "base/mac/bind_objc_block.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/accelerators/platform_accelerator_cocoa.h"
 #include "ui/base/l10n/l10n_util_mac.h"
@@ -14,21 +18,72 @@
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/text_elider.h"
+#include "ui/strings/grit/ui_strings.h"
+
+namespace {
+
+// Called when an empty submenu is created. This inserts a menu item labeled
+// "(empty)" into the submenu. Matches Windows behavior.
+NSMenu* MakeEmptySubmenu() {
+  base::scoped_nsobject<NSMenu> submenu([[NSMenu alloc] initWithTitle:@""]);
+  NSString* empty_menu_title =
+      l10n_util::GetNSString(IDS_APP_MENU_EMPTY_SUBMENU);
+  [submenu addItemWithTitle:empty_menu_title action:NULL keyEquivalent:@""];
+  [[submenu itemAtIndex:0] setEnabled:NO];
+  return submenu.autorelease();
+}
+
+// Called when adding a submenu to the menu and checks if the submenu, via its
+// |model|, has visible child items.
+bool MenuHasVisibleItems(const ui::MenuModel* model) {
+  int count = model->GetItemCount();
+  for (int index = 0; index < count; index++) {
+    if (model->IsVisibleAt(index))
+      return true;
+  }
+  return false;
+}
+
+}  // namespace
 
 NSString* const kMenuControllerMenuWillOpenNotification =
     @"MenuControllerMenuWillOpen";
 NSString* const kMenuControllerMenuDidCloseNotification =
     @"MenuControllerMenuDidClose";
 
-@interface MenuController (Private)
-- (void)addSeparatorToMenu:(NSMenu*)menu
-                   atIndex:(int)index;
+// Internal methods.
+@interface MenuControllerCocoa ()
+// Adds a separator item at the given index. As the separator doesn't need
+// anything from the model, this method doesn't need the model index as the
+// other method below does.
+- (void)addSeparatorToMenu:(NSMenu*)menu atIndex:(int)index;
+
+// Called via a private API hook shortly after the event that selects a menu
+// item arrives.
+- (void)itemWillBeSelected:(NSMenuItem*)sender;
+
+// Called when the user chooses a particular menu item. AppKit sends this only
+// after the menu has fully faded out. |sender| is the menu item chosen.
+- (void)itemSelected:(id)sender;
+
+// Called by the posted task to selected an item during menu fade out.
+// |uiEventFlags| are the ui::EventFlags captured from the triggering NSEvent.
+- (void)itemSelected:(id)sender uiEventFlags:(int)uiEventFlags;
 @end
 
-@implementation MenuController
+@interface ResponsiveNSMenuItem : NSMenuItem
+@end
+
+@implementation MenuControllerCocoa {
+  BOOL useWithPopUpButtonCell_;  // If YES, 0th item is blank
+  BOOL isMenuOpen_;
+  BOOL postItemSelectedAsTask_;
+  std::unique_ptr<base::CancelableClosure> postedItemSelectedTask_;
+}
 
 @synthesize model = model_;
 @synthesize useWithPopUpButtonCell = useWithPopUpButtonCell_;
+@synthesize postItemSelectedAsTask = postItemSelectedAsTask_;
 
 + (base::string16)elideMenuTitle:(const base::string16&)title
                          toWidth:(int)width {
@@ -71,8 +126,6 @@ NSString* const kMenuControllerMenuDidCloseNotification =
   }
 }
 
-// Creates a NSMenu from the given model. If the model has submenus, this can
-// be invoked recursively.
 - (NSMenu*)menuFromModel:(ui::MenuModel*)model {
   NSMenu* menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
 
@@ -92,30 +145,25 @@ NSString* const kMenuControllerMenuDidCloseNotification =
   return -1;
 }
 
-// Adds a separator item at the given index. As the separator doesn't need
-// anything from the model, this method doesn't need the model index as the
-// other method below does.
 - (void)addSeparatorToMenu:(NSMenu*)menu
                    atIndex:(int)index {
   NSMenuItem* separator = [NSMenuItem separatorItem];
   [menu insertItem:separator atIndex:index];
 }
 
-// Adds an item or a hierarchical menu to the item at the |index|,
-// associated with the entry in the model identified by |modelIndex|.
 - (void)addItemToMenu:(NSMenu*)menu
               atIndex:(NSInteger)index
             fromModel:(ui::MenuModel*)model {
   base::string16 label16 = model->GetLabelAt(index);
   int maxWidth = [self maxWidthForMenuModel:model modelIndex:index];
   if (maxWidth != -1)
-    label16 = [MenuController elideMenuTitle:label16 toWidth:maxWidth];
+    label16 = [MenuControllerCocoa elideMenuTitle:label16 toWidth:maxWidth];
 
   NSString* label = l10n_util::FixUpWindowsStyleLabel(label16);
-  base::scoped_nsobject<NSMenuItem> item(
-      [[NSMenuItem alloc] initWithTitle:label
-                                 action:@selector(itemSelected:)
-                          keyEquivalent:@""]);
+  base::scoped_nsobject<NSMenuItem> item([[ResponsiveNSMenuItem alloc]
+      initWithTitle:label
+             action:@selector(itemSelected:)
+      keyEquivalent:@""]);
 
   // If the menu item has an icon, set it.
   gfx::Image icon;
@@ -123,13 +171,16 @@ NSString* const kMenuControllerMenuDidCloseNotification =
     [item setImage:icon.ToNSImage()];
 
   ui::MenuModel::ItemType type = model->GetTypeAt(index);
-  if (type == ui::MenuModel::TYPE_SUBMENU) {
-    // Recursively build a submenu from the sub-model at this index.
+  if (type == ui::MenuModel::TYPE_SUBMENU && model->IsVisibleAt(index)) {
+    ui::MenuModel* submenuModel = model->GetSubmenuModelAt(index);
+
+    // If there are visible items, recursively build the submenu.
+    NSMenu* submenu = MenuHasVisibleItems(submenuModel)
+                          ? [self menuFromModel:submenuModel]
+                          : MakeEmptySubmenu();
+
     [item setTarget:nil];
     [item setAction:nil];
-    ui::MenuModel* submenuModel = model->GetSubmenuModelAt(index);
-    NSMenu* submenu =
-        [self menuFromModel:(ui::SimpleMenuModel*)submenuModel];
     [item setSubmenu:submenu];
   } else {
     // The MenuModel works on indexes so we can't just set the command id as the
@@ -156,9 +207,6 @@ NSString* const kMenuControllerMenuDidCloseNotification =
   [menu insertItem:item atIndex:index];
 }
 
-// Called before the menu is to be displayed to update the state (enabled,
-// radio, etc) of each item in the menu. Also will update the title if
-// the item is marked as "dynamic".
 - (BOOL)validateUserInterfaceItem:(id<NSValidatedUserInterfaceItem>)item {
   SEL action = [item action];
   if (action != @selector(itemSelected:))
@@ -200,18 +248,67 @@ NSString* const kMenuControllerMenuDidCloseNotification =
   return NO;
 }
 
-// Called when the user chooses a particular menu item. |sender| is the menu
-// item chosen.
+- (void)itemWillBeSelected:(NSMenuItem*)sender {
+  if (postItemSelectedAsTask_ && [sender action] == @selector(itemSelected:) &&
+      [[sender target]
+          respondsToSelector:@selector(itemSelected:uiEventFlags:)]) {
+    const int uiEventFlags = ui::EventFlagsFromNative([NSApp currentEvent]);
+
+    // Take care here to retain |menu_| in the block, but not |self|. Since the
+    // block may run before -menuDidClose:, a release of the MenuControllerCocoa
+    // will think the menu is open, and invoke -cancel. So if the delegate is
+    // bad (see below), and decides to release the MenuControllerCocoa in its
+    // menu action, ensure the -dealloc happens there. To do otherwise risks
+    // |model_| being deleted when it is used in -cancel, whereas that is less
+    // likely if the -cancel happens in the delegate method.
+    NSMenu* menu = menu_;
+
+    postedItemSelectedTask_ =
+        std::make_unique<base::CancelableClosure>(base::BindBlock(^{
+          id target = [sender target];
+          if ([target respondsToSelector:@selector(itemSelected:uiEventFlags:)])
+            [target itemSelected:sender uiEventFlags:uiEventFlags];
+          else
+            NOTREACHED();
+
+          // Ensure consumers that use -postItemSelectedAsTask:YES have not
+          // destroyed the MenuControllerCocoa in the menu action. AppKit will
+          // still send messages to [item target] (the MenuControllerCocoa), and
+          // the target can not be set to nil here since that prevents re-use of
+          // the menu for well-behaved consumers.
+          CHECK([menu delegate]);  // Note: set to nil in -dealloc.
+        }));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, postedItemSelectedTask_->callback());
+  }
+}
+
 - (void)itemSelected:(id)sender {
+  // A task created in -itemWillBeSelected: may or may not have run. If not, put
+  // it on the stack before running it, in case it destroys |self|.
+  if (auto pendingTask = std::move(postedItemSelectedTask_)) {
+    if (!pendingTask->IsCancelled())
+      pendingTask->callback().Run();
+  } else {
+    [self itemSelected:sender
+          uiEventFlags:ui::EventFlagsFromNative([NSApp currentEvent])];
+  }
+}
+
+- (void)itemSelected:(id)sender uiEventFlags:(int)uiEventFlags {
+  // Cancel any posted task, but don't reset it, so that the correct path is
+  // taken in -itemSelected:.
+  if (postedItemSelectedTask_)
+    postedItemSelectedTask_->Cancel();
+
   NSInteger modelIndex = [sender tag];
   ui::MenuModel* model =
       static_cast<ui::MenuModel*>(
           [[sender representedObject] pointerValue]);
   DCHECK(model);
-  if (model) {
-    int event_flags = ui::EventFlagsFromNative([NSApp currentEvent]);
-    model->ActivatedAt(modelIndex, event_flags);
-  }
+  if (model)
+    model->ActivatedAt(modelIndex, uiEventFlags);
+  // Note: |self| may be destroyed by the call to ActivatedAt().
 }
 
 - (NSMenu*)menu {
@@ -253,4 +350,19 @@ NSString* const kMenuControllerMenuDidCloseNotification =
                     object:self];
 }
 
+@end
+
+@interface NSMenuItem (Private)
+// Private method which is invoked very soon after the event that activates a
+// menu item is received. AppKit then spends 300ms or so flashing the menu item,
+// and fading out the menu, in private run loop modes.
+- (void)_sendItemSelectedNote;
+@end
+
+@implementation ResponsiveNSMenuItem
+- (void)_sendItemSelectedNote {
+  if ([[self target] respondsToSelector:@selector(itemWillBeSelected:)])
+    [[self target] itemWillBeSelected:self];
+  [super _sendItemSelectedNote];
+}
 @end

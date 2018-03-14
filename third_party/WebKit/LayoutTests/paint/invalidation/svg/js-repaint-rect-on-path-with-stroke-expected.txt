@@ -4,16 +4,16 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGPath path id='path'",
-          "rect": [199, 49, 102, 52],
+          "rect": [29, 29, 142, 92],
           "reason": "subtree"
         },
         {
           "object": "LayoutSVGPath path id='path'",
-          "rect": [49, 49, 102, 52],
+          "rect": [179, 29, 122, 92],
           "reason": "subtree"
         }
       ]

@@ -31,7 +31,7 @@ EventPointerType GetToolType(int button_tool) {
 }  // namespace
 
 TabletEventConverterEvdev::TabletEventConverterEvdev(
-    ScopedInputDevice fd,
+    base::ScopedFD fd,
     base::FilePath path,
     int id,
     CursorDelegateEvdev* cursor,
@@ -57,6 +57,9 @@ TabletEventConverterEvdev::TabletEventConverterEvdev(
   tilt_x_range_ = info.GetAbsMaximum(ABS_TILT_X) - tilt_x_min_ + 1;
   tilt_y_range_ = info.GetAbsMaximum(ABS_TILT_Y) - tilt_y_min_ + 1;
   pressure_max_ = info.GetAbsMaximum(ABS_PRESSURE);
+
+  if (info.HasKeyEvent(BTN_STYLUS) && !info.HasKeyEvent(BTN_STYLUS2))
+    one_side_btn_pen_ = true;
 }
 
 TabletEventConverterEvdev::~TabletEventConverterEvdev() {
@@ -78,7 +81,7 @@ void TabletEventConverterEvdev::OnFileCanReadWithoutBlocking(int fd) {
     return;
   }
 
-  if (!enabled_)
+  if (!IsEnabled())
     return;
 
   DCHECK_EQ(read_size % sizeof(*inputs), 0u);
@@ -169,14 +172,18 @@ void TabletEventConverterEvdev::DispatchMouseButton(const input_event& input) {
 
   unsigned int button;
   // These are the same as X11 behaviour
-  if (input.code == BTN_TOUCH)
+  if (input.code == BTN_TOUCH) {
     button = BTN_LEFT;
-  else if (input.code == BTN_STYLUS2)
+  } else if (input.code == BTN_STYLUS2) {
     button = BTN_RIGHT;
-  else if (input.code == BTN_STYLUS)
-    button = BTN_MIDDLE;
-  else
+  } else if (input.code == BTN_STYLUS) {
+    if (one_side_btn_pen_)
+      button = BTN_RIGHT;
+    else
+      button = BTN_MIDDLE;
+  } else {
     return;
+  }
 
   if (abs_value_dirty_) {
     UpdateCursor();

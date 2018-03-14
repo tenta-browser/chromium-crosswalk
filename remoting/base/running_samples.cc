@@ -15,7 +15,9 @@ RunningSamples::RunningSamples(int window_size)
   DCHECK_GT(window_size, 0);
 }
 
-RunningSamples::~RunningSamples() {}
+RunningSamples::~RunningSamples() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+}
 
 void RunningSamples::Record(int64_t value) {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -24,7 +26,7 @@ void RunningSamples::Record(int64_t value) {
   sum_ += value;
 
   if (data_points_.size() > window_size_) {
-    sum_ -= data_points_[0];
+    sum_ -= data_points_.front();
     data_points_.pop_front();
   }
 }
@@ -44,6 +46,10 @@ int64_t RunningSamples::Max() const {
     return 0;
 
   return *std::max_element(data_points_.begin(), data_points_.end());
+}
+
+bool RunningSamples::IsEmpty() const {
+  return data_points_.empty();
 }
 
 }  // namespace remoting

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
@@ -34,6 +35,7 @@ namespace content {
 class CONTENT_EXPORT RenderMediaLog : public media::MediaLog {
  public:
   explicit RenderMediaLog(const GURL& security_origin);
+  ~RenderMediaLog() override;
 
   // MediaLog implementation.
   void AddEvent(std::unique_ptr<media::MediaLogEvent> event) override;
@@ -41,13 +43,11 @@ class CONTENT_EXPORT RenderMediaLog : public media::MediaLog {
   void RecordRapporWithSecurityOrigin(const std::string& metric) override;
 
   // Will reset |last_ipc_send_time_| with the value of NowTicks().
-  void SetTickClockForTesting(std::unique_ptr<base::TickClock> tick_clock);
+  void SetTickClockForTesting(base::TickClock* tick_clock);
   void SetTaskRunnerForTesting(
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner);
 
  private:
-  ~RenderMediaLog() override;
-
   // Posted as a delayed task on |task_runner_| to throttle ipc message
   // frequency.
   void SendQueuedMediaEvents();
@@ -62,7 +62,7 @@ class CONTENT_EXPORT RenderMediaLog : public media::MediaLog {
   // sequence for throttled send on |task_runner_| and coherent retrieval by
   // GetErrorMessage().
   mutable base::Lock lock_;
-  std::unique_ptr<base::TickClock> tick_clock_;
+  base::TickClock* tick_clock_;
   base::TimeTicks last_ipc_send_time_;
   std::vector<media::MediaLogEvent> queued_media_events_;
 
@@ -70,7 +70,6 @@ class CONTENT_EXPORT RenderMediaLog : public media::MediaLog {
   bool ipc_send_pending_;
 
   // Limits the number of events we send over IPC to one.
-  std::unique_ptr<media::MediaLogEvent> last_buffered_extents_changed_event_;
   std::unique_ptr<media::MediaLogEvent> last_duration_changed_event_;
 
   // Holds the earliest MEDIA_ERROR_LOG_ENTRY event added to this log. This is
@@ -82,6 +81,9 @@ class CONTENT_EXPORT RenderMediaLog : public media::MediaLog {
 
   // Holds a copy of the most recent PIPELINE_ERROR, if any.
   std::unique_ptr<media::MediaLogEvent> last_pipeline_error_;
+
+  base::WeakPtr<RenderMediaLog> weak_this_;
+  base::WeakPtrFactory<RenderMediaLog> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderMediaLog);
 };

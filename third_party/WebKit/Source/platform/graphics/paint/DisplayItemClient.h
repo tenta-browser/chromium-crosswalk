@@ -11,8 +11,6 @@
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/text/WTFString.h"
 
-#define CHECK_DISPLAY_ITEM_CLIENT_ALIVENESS DCHECK_IS_ON()
-
 namespace blink {
 
 // The class for objects that can be associated with display items. A
@@ -22,28 +20,14 @@ namespace blink {
 // dereferenced unless we can make sure the client is still valid.
 class PLATFORM_EXPORT DisplayItemClient {
  public:
-#if CHECK_DISPLAY_ITEM_CLIENT_ALIVENESS
+#if DCHECK_IS_ON()
   DisplayItemClient();
   virtual ~DisplayItemClient();
 
   // Tests if this DisplayItemClient object has been created and has not been
   // deleted yet.
   bool IsAlive() const;
-
-  // Called when any DisplayItem of this DisplayItemClient is added into
-  // PaintController using PaintController::createAndAppend() or into a cached
-  // subsequence.
-  void BeginShouldKeepAlive(const void* owner) const;
-
-  // Called when the DisplayItemClient is sure that it can safely die before its
-  // owners have chance to remove it from the aliveness control.
-  void EndShouldKeepAlive() const;
-
-  // Clears all should-keep-alive DisplayItemClients of a PaintController.
-  // Called after PaintController commits new display items or the subsequence
-  // owner is invalidated.
-  static void EndShouldKeepAliveAllClients(const void* owner);
-  static void EndShouldKeepAliveAllClients();
+  static String SafeDebugName(const DisplayItemClient&, bool known_to_be_safe);
 #else
   DisplayItemClient() {}
   virtual ~DisplayItemClient() {}
@@ -51,10 +35,26 @@ class PLATFORM_EXPORT DisplayItemClient {
 
   virtual String DebugName() const = 0;
 
-  // The visual rect of this DisplayItemClient, in the object space of the
-  // object that owns the GraphicsLayer, i.e. offset by
-  // offsetFromLayoutObjectWithSubpixelAccumulation().
+  // The visual rect of this DisplayItemClient. For SPv1, it's in the object
+  // space of the object that owns the GraphicsLayer, i.e. offset by
+  // GraphicsLayer::OffsetFromLayoutObjectWithSubpixelAccumulation().
+  // For SPv2, it's in the space of the parent transform node.
   virtual LayoutRect VisualRect() const = 0;
+
+  // The outset will be used to inflate visual rect after the visual rect is
+  // mapped into the space of the composited layer, for any special raster
+  // effects that might expand the rastered pixel area.
+  virtual LayoutUnit VisualRectOutsetForRasterEffects() const {
+    return LayoutUnit();
+  }
+
+  // The rect that needs to be invalidated partially in this client. It's in the
+  // same coordinate space as VisualRect().
+  virtual LayoutRect PartialInvalidationRect() const { return LayoutRect(); }
+
+  // Called by PaintController::CommitNewDisplayItems() for all clients after
+  // painting.
+  virtual void ClearPartialInvalidationRect() const {}
 
   // This is declared here instead of in LayoutObject for verifying the
   // condition in DrawingRecorder.
@@ -71,13 +71,8 @@ class PLATFORM_EXPORT DisplayItemClient {
   }
 
   void SetDisplayItemsUncached(
-      PaintInvalidationReason reason = kPaintInvalidationFull) const {
+      PaintInvalidationReason reason = PaintInvalidationReason::kFull) const {
     cache_generation_or_invalidation_reason_.Invalidate(reason);
-#if CHECK_DISPLAY_ITEM_CLIENT_ALIVENESS
-    // Clear should-keep-alive of DisplayItemClients in a subsequence if this
-    // object is a subsequence.
-    EndShouldKeepAliveAllClients(this);
-#endif
   }
 
   PaintInvalidationReason GetPaintInvalidationReason() const {
@@ -122,7 +117,8 @@ class PLATFORM_EXPORT DisplayItemClient {
    public:
     CacheGenerationOrInvalidationReason() : value_(kJustCreated) {}
 
-    void Invalidate(PaintInvalidationReason reason = kPaintInvalidationFull) {
+    void Invalidate(
+        PaintInvalidationReason reason = PaintInvalidationReason::kFull) {
       if (value_ != kJustCreated)
         value_ = static_cast<ValueType>(reason);
     }
@@ -140,14 +136,16 @@ class PLATFORM_EXPORT DisplayItemClient {
     }
 
     PaintInvalidationReason GetPaintInvalidationReason() const {
-      return value_ < kJustCreated
-                 ? static_cast<PaintInvalidationReason>(value_)
-                 : kPaintInvalidationNone;
+      if (value_ == kJustCreated)
+        return PaintInvalidationReason::kAppeared;
+      if (value_ < kJustCreated)
+        return static_cast<PaintInvalidationReason>(value_);
+      return PaintInvalidationReason::kNone;
     }
 
     bool IsJustCreated() const { return value_ == kJustCreated; }
     void ClearIsJustCreated() {
-      value_ = static_cast<ValueType>(kPaintInvalidationFull);
+      value_ = static_cast<ValueType>(PaintInvalidationReason::kFull);
     }
 
    private:
@@ -156,9 +154,9 @@ class PLATFORM_EXPORT DisplayItemClient {
         : value_(value) {}
 
     static const ValueType kJustCreated =
-        static_cast<ValueType>(kPaintInvalidationReasonMax) + 1;
+        static_cast<ValueType>(PaintInvalidationReason::kMax) + 1;
     static const ValueType kFirstValidGeneration =
-        static_cast<ValueType>(kPaintInvalidationReasonMax) + 2;
+        static_cast<ValueType>(PaintInvalidationReason::kMax) + 2;
     static ValueType next_generation_;
     ValueType value_;
   };

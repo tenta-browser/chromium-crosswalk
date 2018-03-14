@@ -11,6 +11,7 @@
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/compositor/dip_util.h"
+#include "ui/compositor/layer_animation_element.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -48,7 +49,7 @@ class SimpleRootWindowTransformer : public RootWindowTransformer {
   gfx::Insets GetHostInsets() const override { return gfx::Insets(); }
 
  private:
-  ~SimpleRootWindowTransformer() override {}
+  ~SimpleRootWindowTransformer() override = default;
 
   const aura::Window* root_window_;
   const gfx::Transform transform_;
@@ -61,7 +62,7 @@ class SimpleRootWindowTransformer : public RootWindowTransformer {
 TransformerHelper::TransformerHelper(AshWindowTreeHost* ash_host)
     : ash_host_(ash_host) {}
 
-TransformerHelper::~TransformerHelper() {}
+TransformerHelper::~TransformerHelper() = default;
 
 void TransformerHelper::Init() {
   SetTransform(gfx::Transform());
@@ -84,10 +85,12 @@ void TransformerHelper::SetRootWindowTransformer(
   aura::WindowTreeHost* host = ash_host_->AsWindowTreeHost();
   aura::Window* window = host->window();
   window->SetTransform(transformer_->GetTransform());
-  // If the layer is not animating, then we need to update the root window
-  // size immediately.
-  if (!window->layer()->GetAnimator()->is_animating())
+  // If the layer is not animating with a transform animation, then we need to
+  // update the root window size immediately.
+  if (!window->layer()->GetAnimator()->IsAnimatingProperty(
+          ui::LayerAnimationElement::TRANSFORM)) {
     host->UpdateRootWindowSizeInPixels(host->GetBoundsInPixels().size());
+  }
 }
 
 gfx::Transform TransformerHelper::GetTransform() const {

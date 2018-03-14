@@ -9,6 +9,7 @@
 #include "components/content_settings/core/browser/content_settings_utils.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
+#include "components/content_settings/core/common/content_settings_utils.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
@@ -68,6 +69,14 @@ bool CookieSettings::IsCookieSessionOnly(const GURL& origin) const {
   GetCookieSetting(origin, origin, nullptr, &setting);
   DCHECK(IsValidSetting(setting));
   return (setting == CONTENT_SETTING_SESSION_ONLY);
+}
+
+bool CookieSettings::IsCookieSessionOnlyOrBlocked(const GURL& origin) const {
+  ContentSetting setting;
+  GetCookieSetting(origin, origin, nullptr, &setting);
+  DCHECK(IsValidSetting(setting));
+  return (setting == CONTENT_SETTING_SESSION_ONLY) ||
+         (setting == CONTENT_SETTING_BLOCK);
 }
 
 void CookieSettings::GetCookieSettings(

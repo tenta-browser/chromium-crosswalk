@@ -27,9 +27,10 @@
 #include <unicode/unistr.h>
 #include <unicode/uvernum.h>
 #include "bindings/core/v8/ScriptRegexp.h"
-#include "core/InputTypeNames.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/frame/WebFeature.h"
+#include "core/html/forms/HTMLInputElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
+#include "core/input_type_names.h"
 #include "core/page/ChromeClient.h"
 #include "platform/text/PlatformLocale.h"
 #include "platform/wtf/text/StringBuilder.h"
@@ -58,8 +59,8 @@ static const int32_t kMaximumDomainNameLength = 255;
 static const int32_t kIdnaConversionOption = UIDNA_CHECK_BIDI;
 
 std::unique_ptr<ScriptRegexp> EmailInputType::CreateEmailRegexp() {
-  return std::unique_ptr<ScriptRegexp>(
-      new ScriptRegexp(kEmailPattern, kTextCaseUnicodeInsensitive));
+  return std::make_unique<ScriptRegexp>(kEmailPattern,
+                                        kTextCaseUnicodeInsensitive);
 }
 
 String EmailInputType::ConvertEmailAddressToASCII(const ScriptRegexp& regexp,
@@ -67,7 +68,7 @@ String EmailInputType::ConvertEmailAddressToASCII(const ScriptRegexp& regexp,
   if (address.ContainsOnlyASCII())
     return address;
 
-  size_t at_position = address.Find('@');
+  size_t at_position = address.find('@');
   if (at_position == kNotFound)
     return address;
   String host = address.Substring(at_position + 1);
@@ -93,7 +94,7 @@ String EmailInputType::ConvertEmailAddressToASCII(const ScriptRegexp& regexp,
   StringBuilder builder;
   builder.Append(address, 0, at_position + 1);
 #if U_ICU_VERSION_MAJOR_NUM >= 59
-  builder.append(icu::toUCharPtr(domainName.getBuffer()), domainName.length());
+  builder.Append(icu::toUCharPtr(domain_name.getBuffer()), domain_name.length());
 #else
   builder.Append(domain_name.getBuffer(), domain_name.length());
 #endif
@@ -106,7 +107,7 @@ String EmailInputType::ConvertEmailAddressToUnicode(
   if (!address.ContainsOnlyASCII())
     return address;
 
-  size_t at_position = address.Find('@');
+  size_t at_position = address.find('@');
   if (at_position == kNotFound)
     return address;
 
@@ -125,7 +126,7 @@ static bool IsInvalidLocalPartCharacter(UChar ch) {
   if (!IsASCII(ch))
     return true;
   DEFINE_STATIC_LOCAL(const String, valid_characters, (kLocalPartCharacters));
-  return valid_characters.Find(ToASCIILower(ch)) == kNotFound;
+  return valid_characters.find(ToASCIILower(ch)) == kNotFound;
 }
 
 static bool IsInvalidDomainCharacter(UChar ch) {
@@ -163,14 +164,14 @@ InputType* EmailInputType::Create(HTMLInputElement& element) {
 }
 
 void EmailInputType::CountUsage() {
-  CountUsageIfVisible(UseCounter::kInputTypeEmail);
+  CountUsageIfVisible(WebFeature::kInputTypeEmail);
   bool has_max_length = GetElement().FastHasAttribute(HTMLNames::maxlengthAttr);
   if (has_max_length)
-    CountUsageIfVisible(UseCounter::kInputTypeEmailMaxLength);
+    CountUsageIfVisible(WebFeature::kInputTypeEmailMaxLength);
   if (GetElement().Multiple()) {
-    CountUsageIfVisible(UseCounter::kInputTypeEmailMultiple);
+    CountUsageIfVisible(WebFeature::kInputTypeEmailMultiple);
     if (has_max_length)
-      CountUsageIfVisible(UseCounter::kInputTypeEmailMultipleMaxLength);
+      CountUsageIfVisible(WebFeature::kInputTypeEmailMultipleMaxLength);
   }
 }
 
@@ -218,7 +219,7 @@ String EmailInputType::TypeMismatchText() const {
     return GetLocale().QueryString(
         WebLocalizedString::kValidationTypeMismatchForEmailEmpty);
   String at_sign = String("@");
-  size_t at_index = invalid_address.Find('@');
+  size_t at_index = invalid_address.find('@');
   if (at_index == kNotFound)
     return GetLocale().QueryString(
         WebLocalizedString::kValidationTypeMismatchForEmailNoAtSign, at_sign,
@@ -251,7 +252,7 @@ String EmailInputType::TypeMismatchText() const {
         at_sign, domain.Substring(invalid_char_index, char_length));
   }
   if (!CheckValidDotUsage(domain)) {
-    size_t at_index_in_unicode = unicode_address.Find('@');
+    size_t at_index_in_unicode = unicode_address.find('@');
     DCHECK_NE(at_index_in_unicode, kNotFound);
     return GetLocale().QueryString(
         WebLocalizedString::kValidationTypeMismatchForEmailInvalidDots,

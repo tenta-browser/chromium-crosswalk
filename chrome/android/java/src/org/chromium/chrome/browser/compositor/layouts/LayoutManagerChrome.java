@@ -20,7 +20,6 @@ import org.chromium.chrome.browser.compositor.overlays.SceneOverlay;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutHelperManager;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchManagementDelegate;
 import org.chromium.chrome.browser.device.DeviceClassManager;
-import org.chromium.chrome.browser.dom_distiller.ReaderModeManagerDelegate;
 import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelObserver;
@@ -35,6 +34,7 @@ import org.chromium.chrome.browser.tabmodel.TabModelSelector.CloseAllTabsDelegat
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
+import org.chromium.chrome.browser.util.AccessibilityUtil;
 import org.chromium.chrome.browser.widget.OverviewListLayout;
 import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
@@ -43,10 +43,10 @@ import java.util.List;
 
 /**
  * A {@link Layout} controller for the more complicated Chrome browser.  This is currently a
- * superset of {@link LayoutManagerDocument}.
+ * superset of {@link LayoutManager}.
  */
 public class LayoutManagerChrome
-        extends LayoutManagerDocument implements OverviewModeBehavior, CloseAllTabsDelegate {
+        extends LayoutManager implements OverviewModeBehavior, CloseAllTabsDelegate {
     // Layouts
     /** An {@link Layout} that should be used as the accessibility tab switcher. */
     protected OverviewListLayout mOverviewListLayout;
@@ -195,7 +195,6 @@ public class LayoutManagerChrome
     public void init(TabModelSelector selector, TabCreatorManager creator,
             TabContentManager content, ViewGroup androidContentContainer,
             ContextualSearchManagementDelegate contextualSearchDelegate,
-            ReaderModeManagerDelegate readerModeDelegate,
             DynamicResourceLoader dynamicResourceLoader) {
         // TODO: TitleCache should be a part of the ResourceManager.
         mTitleCache = mHost.getTitleCache();
@@ -206,7 +205,7 @@ public class LayoutManagerChrome
         if (mOverviewLayout != null) mOverviewLayout.setTabModelSelector(selector, content);
 
         super.init(selector, creator, content, androidContentContainer, contextualSearchDelegate,
-                readerModeDelegate, dynamicResourceLoader);
+                dynamicResourceLoader);
 
         mTabModelSelectorObserver = new EmptyTabModelSelectorObserver() {
             @Override
@@ -545,20 +544,12 @@ public class LayoutManagerChrome
     }
 
     /**
-     * @return Whether or not to use the accessibility layout.
-     */
-    protected boolean useAccessibilityLayout() {
-        return DeviceClassManager.isAccessibilityModeEnabled(mHost.getContext())
-                || DeviceClassManager.enableAccessibilityLayout();
-    }
-
-    /**
      * Show the overview {@link Layout}.  This is generally a {@link Layout} that visibly represents
      * all of the {@link Tab}s opened by the user.
      * @param animate Whether or not to animate the transition to overview mode.
      */
     public void showOverview(boolean animate) {
-        boolean useAccessibility = useAccessibilityLayout();
+        boolean useAccessibility = DeviceClassManager.enableAccessibilityLayout();
 
         boolean accessibilityIsVisible =
                 useAccessibility && getActiveLayout() == mOverviewListLayout;
@@ -627,6 +618,15 @@ public class LayoutManagerChrome
      * A {@link EdgeSwipeHandler} meant to respond to edge events for the toolbar.
      */
     protected class ToolbarSwipeHandler extends EdgeSwipeHandlerLayoutDelegate {
+        /** The scroll direction of the current gesture. */
+        private ScrollDirection mScrollDirection;
+
+        /**
+         * The range in degrees that a swipe can be from a particular direction to be considered
+         * that direction.
+         */
+        private static final float SWIPE_RANGE_DEG = 25;
+
         /**
          * Creates an instance of the {@link ToolbarSwipeHandler}.
          * @param provider A {@link LayoutProvider} instance.
@@ -637,13 +637,54 @@ public class LayoutManagerChrome
 
         @Override
         public void swipeStarted(ScrollDirection direction, float x, float y) {
-            if (direction == ScrollDirection.DOWN) {
-                startShowing(mOverviewLayout, true);
-                super.swipeStarted(direction, x, y);
-            } else if (direction == ScrollDirection.LEFT || direction == ScrollDirection.RIGHT) {
-                startShowing(mToolbarSwipeLayout, true);
-                super.swipeStarted(direction, x, y);
+            mScrollDirection = ScrollDirection.UNKNOWN;
+        }
+
+        @Override
+        public void swipeUpdated(float x, float y, float dx, float dy, float tx, float ty) {
+            if (getActiveLayout() == null) return;
+
+            // If scroll direction has been computed, send the event to super.
+            if (mScrollDirection != ScrollDirection.UNKNOWN) {
+                super.swipeUpdated(x, y, dx, dy, tx, ty);
+                return;
             }
+
+            mScrollDirection = computeScrollDirection(dx, dy);
+            if (mScrollDirection == ScrollDirection.UNKNOWN) return;
+
+            if (mOverviewLayout != null && mScrollDirection == ScrollDirection.DOWN) {
+                startShowing(mOverviewLayout, true);
+            } else if (mToolbarSwipeLayout != null
+                    && (mScrollDirection == ScrollDirection.LEFT
+                               || mScrollDirection == ScrollDirection.RIGHT)) {
+                startShowing(mToolbarSwipeLayout, true);
+            }
+
+            super.swipeStarted(mScrollDirection, x, y);
+        }
+
+        /**
+         * Compute the direction of the scroll.
+         * @param dx The distance traveled on the X axis.
+         * @param dy The distance traveled on the Y axis.
+         * @return The direction of the scroll.
+         */
+        private ScrollDirection computeScrollDirection(float dx, float dy) {
+            ScrollDirection direction = ScrollDirection.UNKNOWN;
+
+            // Figure out the angle of the swipe. Invert 'dy' so 90 degrees is up.
+            double swipeAngle = (Math.toDegrees(Math.atan2(-dy, dx)) + 360) % 360;
+
+            if (swipeAngle < 180 + SWIPE_RANGE_DEG && swipeAngle > 180 - SWIPE_RANGE_DEG) {
+                direction = ScrollDirection.LEFT;
+            } else if (swipeAngle < SWIPE_RANGE_DEG || swipeAngle > 360 - SWIPE_RANGE_DEG) {
+                direction = ScrollDirection.RIGHT;
+            } else if (swipeAngle < 270 + SWIPE_RANGE_DEG && swipeAngle > 270 - SWIPE_RANGE_DEG) {
+                direction = ScrollDirection.DOWN;
+            }
+
+            return direction;
         }
 
         @Override
@@ -656,8 +697,7 @@ public class LayoutManagerChrome
             }
 
             if (direction == ScrollDirection.DOWN) {
-                boolean isAccessibility =
-                        DeviceClassManager.isAccessibilityModeEnabled(mHost.getContext());
+                boolean isAccessibility = AccessibilityUtil.isAccessibilityEnabled();
                 return mOverviewLayout != null && !isAccessibility;
             }
 

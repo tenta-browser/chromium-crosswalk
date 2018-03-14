@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "base/memory/ptr_util.h"
+#include "ui/app_list/app_list_features.h"
 #include "ui/app_list/presenter/app_list_presenter_delegate_factory.h"
 #include "ui/app_list/presenter/test/app_list_presenter_impl_test_api.h"
 #include "ui/app_list/test/app_list_test_view_delegate.h"
@@ -44,13 +45,20 @@ class AppListPresenterDelegateTest : public AppListPresenterDelegate {
             int current_apps_page) override {
     init_called_ = true;
     view_ = view;
-    view->InitAsBubble(container_, current_apps_page);
+    AppListView::InitParams params;
+    params.parent = container_;
+    params.initial_apps_page = current_apps_page;
+    view->Initialize(params);
   }
   void OnShown(int64_t display_id) override { on_shown_called_ = true; }
   void OnDismissed() override { on_dismissed_called_ = true; }
   void UpdateBounds() override { update_bounds_called_ = true; }
   gfx::Vector2d GetVisibilityAnimationOffset(aura::Window*) override {
     return gfx::Vector2d(0, 0);
+  }
+  base::TimeDelta GetVisibilityAnimationDuration(aura::Window* root_window,
+                                                 bool is_visible) override {
+    return base::TimeDelta::FromMilliseconds(0);
   }
 
  private:
@@ -78,7 +86,7 @@ class AppListPresenterDelegateFactoryTest
   // AppListPresenterDelegateFactory:
   std::unique_ptr<AppListPresenterDelegate> GetDelegate(
       AppListPresenterImpl* presenter) override {
-    return base::MakeUnique<AppListPresenterDelegateTest>(
+    return std::make_unique<AppListPresenterDelegateTest>(
         container_, &app_list_view_delegate_);
   }
 
@@ -127,10 +135,10 @@ void AppListPresenterImplTest::SetUp() {
   AuraTestBase::SetUp();
   new wm::DefaultActivationClient(root_window());
   container_.reset(CreateNormalWindow(0, root_window(), nullptr));
-  presenter_ = base::MakeUnique<AppListPresenterImpl>(
-      base::MakeUnique<AppListPresenterDelegateFactoryTest>(container_.get()));
+  presenter_ = std::make_unique<AppListPresenterImpl>(
+      std::make_unique<AppListPresenterDelegateFactoryTest>(container_.get()));
   presenter_test_api_ =
-      base::MakeUnique<test::AppListPresenterImplTestApi>(presenter());
+      std::make_unique<test::AppListPresenterImplTestApi>(presenter());
 }
 
 void AppListPresenterImplTest::TearDown() {
@@ -143,6 +151,11 @@ void AppListPresenterImplTest::TearDown() {
 // executed when the app launcher is shown and then when the app launcher is
 // dismissed.
 TEST_F(AppListPresenterImplTest, HideOnFocusOut) {
+  // TODO(newcomer): this test needs to be reevaluated for the fullscreen app
+  // list (http://crbug.com/759779).
+  if (features::IsFullscreenAppListEnabled())
+    return;
+
   aura::client::FocusClient* focus_client =
       aura::client::GetFocusClient(root_window());
   presenter()->Show(GetDisplayId());
@@ -166,6 +179,11 @@ TEST_F(AppListPresenterImplTest, HideOnFocusOut) {
 // is app list window's sibling and that appropriate delegate callbacks are
 // executed when the app launcher is shown.
 TEST_F(AppListPresenterImplTest, RemainVisibleWhenFocusingToSibling) {
+  // TODO(newcomer): this test needs to be reevaluated for the fullscreen app
+  // list (http://crbug.com/759779).
+  if (features::IsFullscreenAppListEnabled())
+    return;
+
   aura::client::FocusClient* focus_client =
       aura::client::GetFocusClient(root_window());
   presenter()->Show(GetDisplayId());
@@ -189,6 +207,11 @@ TEST_F(AppListPresenterImplTest, RemainVisibleWhenFocusingToSibling) {
 // Tests that UpdateBounds is called on the delegate when the root window
 // is resized.
 TEST_F(AppListPresenterImplTest, RootWindowResize) {
+  // TODO(newcomer): this test needs to be reevaluated for the fullscreen app
+  // list (http://crbug.com/759779).
+  if (features::IsFullscreenAppListEnabled())
+    return;
+
   presenter()->Show(GetDisplayId());
   EXPECT_FALSE(delegate()->update_bounds_called());
   gfx::Rect bounds = root_window()->bounds();
@@ -200,6 +223,11 @@ TEST_F(AppListPresenterImplTest, RootWindowResize) {
 // Tests that the app list is dismissed and the delegate is destroyed when the
 // app list's widget is destroyed.
 TEST_F(AppListPresenterImplTest, WidgetDestroyed) {
+  // TODO(newcomer): this test needs to be reevaluated for the fullscreen app
+  // list (http://crbug.com/759779).
+  if (features::IsFullscreenAppListEnabled())
+    return;
+
   presenter()->Show(GetDisplayId());
   EXPECT_TRUE(presenter()->GetTargetVisibility());
   presenter()->GetView()->GetWidget()->CloseNow();

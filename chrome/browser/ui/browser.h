@@ -36,7 +36,6 @@
 #include "components/sessions/core/session_id.h"
 #include "components/toolbar/toolbar_model.h"
 #include "components/translate/content/browser/content_translate_driver.h"
-#include "components/zoom/zoom_observer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/page_navigator.h"
@@ -54,6 +53,10 @@
 #include "chrome/browser/ui/signin_view_controller.h"
 #endif
 
+#if !defined(OS_ANDROID)
+#include "components/zoom/zoom_observer.h"
+#endif  // !defined(OS_ANDROID)
+
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/browser/extension_registry_observer.h"
 #endif
@@ -64,24 +67,20 @@ class BrowserSyncedWindowDelegate;
 class BrowserToolbarModelDelegate;
 class BrowserLiveTabContext;
 class BrowserWindow;
+class FastUnloadController;
 class FindBarController;
 class Profile;
 class ScopedKeepAlive;
-class SearchDelegate;
-class SearchModel;
 class StatusBubble;
 class TabStripModel;
 class TabStripModelDelegate;
-class ValidationMessageBubble;
+class UnloadController;
 
 namespace chrome {
 class BrowserCommandController;
-class FastUnloadController;
-class UnloadController;
 }
 
 namespace content {
-class PageState;
 class SessionStorageNamespace;
 }
 
@@ -94,7 +93,6 @@ class WindowController;
 
 namespace gfx {
 class Image;
-class Point;
 }
 
 namespace ui {
@@ -110,7 +108,9 @@ class Browser : public TabStripModelObserver,
                 public CoreTabHelperDelegate,
                 public ChromeWebModalDialogManagerDelegate,
                 public BookmarkTabHelperDelegate,
+#if !defined(OS_ANDROID)
                 public zoom::ZoomObserver,
+#endif  // !defined(OS_ANDROID)
                 public content::PageNavigator,
                 public content::NotificationObserver,
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -260,13 +260,6 @@ class Browser : public TabStripModelObserver,
   chrome::BrowserCommandController* command_controller() {
     return command_controller_.get();
   }
-  SearchModel* search_model() { return search_model_.get(); }
-  const SearchModel* search_model() const {
-      return search_model_.get();
-  }
-  SearchDelegate* search_delegate() {
-    return search_delegate_.get();
-  }
   const SessionID& session_id() const { return session_id_; }
   BrowserContentSettingBubbleModelDelegate*
       content_setting_bubble_model_delegate() {
@@ -308,15 +301,18 @@ class Browser : public TabStripModelObserver,
   gfx::Image GetCurrentPageIcon() const;
 
   // Gets the title of the window based on the selected tab's title.
-  // Disables additional formatting when |include_app_name| is false.
+  // Disables additional formatting when |include_app_name| is false or if the
+  // window is an app window.
   base::string16 GetWindowTitleForCurrentTab(bool include_app_name) const;
 
   // Gets the window title of the tab at |index|.
-  // Disables additional formatting when |include_app_name| is false.
+  // Disables additional formatting when |include_app_name| is false or if the
+  // window is an app window.
   base::string16 GetWindowTitleForTab(bool include_app_name, int index) const;
 
   // Gets the window title from the provided WebContents.
-  // Disables additional formatting when |include_app_name| is false.
+  // Disables additional formatting when |include_app_name| is false or if the
+  // window is an app window.
   base::string16 GetWindowTitleFromWebContents(
       bool include_app_name,
       content::WebContents* contents) const;
@@ -471,13 +467,6 @@ class Browser : public TabStripModelObserver,
   void HandleKeyboardEvent(
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event) override;
-  void ShowValidationMessage(content::WebContents* web_contents,
-                             const gfx::Rect& anchor_in_root_view,
-                             const base::string16& main_text,
-                             const base::string16& sub_text) override;
-  void HideValidationMessage(content::WebContents* web_contents) override;
-  void MoveValidationMessage(content::WebContents* web_contents,
-                             const gfx::Rect& anchor_in_root_view) override;
   bool PreHandleGestureEvent(content::WebContents* source,
                              const blink::WebGestureEvent& event) override;
   bool CanDragEnter(content::WebContents* source,
@@ -486,9 +475,6 @@ class Browser : public TabStripModelObserver,
   blink::WebSecurityStyle GetSecurityStyle(
       content::WebContents* web_contents,
       content::SecurityStyleExplanations* security_style_explanations) override;
-  void ShowCertificateViewerInDevTools(
-      content::WebContents* web_contents,
-      scoped_refptr<net::X509Certificate> certificate) override;
   std::unique_ptr<content::BluetoothChooser> RunBluetoothChooser(
       content::RenderFrameHost* frame,
       const content::BluetoothChooser::EventHandler& event_handler) override;
@@ -499,6 +485,8 @@ class Browser : public TabStripModelObserver,
                                          bool allowed_per_prefs,
                                          const url::Origin& origin,
                                          const GURL& resource_url) override;
+  void OnAudioStateChanged(content::WebContents* web_contents,
+                           bool is_audible) override;
 
   bool is_type_tabbed() const { return type_ == TYPE_TABBED; }
   bool is_type_popup() const { return type_ == TYPE_POPUP; }
@@ -534,11 +522,8 @@ class Browser : public TabStripModelObserver,
   FRIEND_TEST_ALL_PREFIXES(BrowserCommandControllerTest,
                            IsReservedCommandOrKeyIsApp);
   FRIEND_TEST_ALL_PREFIXES(BrowserCommandControllerTest, AppFullScreen);
-  FRIEND_TEST_ALL_PREFIXES(BrowserTest, NoTabsInPopups);
-  FRIEND_TEST_ALL_PREFIXES(BrowserTest, ConvertTabToAppShortcut);
   FRIEND_TEST_ALL_PREFIXES(BrowserTest, OpenAppWindowLikeNtp);
   FRIEND_TEST_ALL_PREFIXES(BrowserTest, AppIdSwitch);
-  FRIEND_TEST_ALL_PREFIXES(BrowserTest, ShouldShowLocationBar);
   FRIEND_TEST_ALL_PREFIXES(ExclusiveAccessBubbleWindowControllerTest,
                            DenyExitsFullscreen);
   FRIEND_TEST_ALL_PREFIXES(FullscreenControllerTest,
@@ -603,7 +588,6 @@ class Browser : public TabStripModelObserver,
   bool IsPopupOrPanel(const content::WebContents* source) const override;
   void UpdateTargetURL(content::WebContents* source, const GURL& url) override;
   void ContentsMouseEvent(content::WebContents* source,
-                          const gfx::Point& location,
                           bool motion,
                           bool exited) override;
   void ContentsZoomChange(bool zoom_in) override;
@@ -612,14 +596,10 @@ class Browser : public TabStripModelObserver,
                          bool proceed,
                          bool* proceed_to_fire_unload) override;
   bool ShouldFocusLocationBarByDefault(content::WebContents* source) override;
-  void ViewSourceForTab(content::WebContents* source,
-                        const GURL& page_url) override;
-  void ViewSourceForFrame(content::WebContents* source,
-                          const GURL& frame_url,
-                          const content::PageState& frame_page_state) override;
   void ShowRepostFormWarningDialog(content::WebContents* source) override;
   bool ShouldCreateWebContents(
       content::WebContents* web_contents,
+      content::RenderFrameHost* opener,
       content::SiteInstance* source_site_instance,
       int32_t route_id,
       int32_t main_frame_route_id,
@@ -715,9 +695,11 @@ class Browser : public TabStripModelObserver,
   void URLStarredChanged(content::WebContents* web_contents,
                          bool starred) override;
 
+#if !defined(OS_ANDROID)
   // Overridden from ZoomObserver:
   void OnZoomChanged(
       const zoom::ZoomController::ZoomChangedEventData& data) override;
+#endif  // !defined(OS_ANDROID)
 
   // Overridden from SelectFileDialog::Listener:
   void FileSelected(const base::FilePath& path,
@@ -736,10 +718,9 @@ class Browser : public TabStripModelObserver,
   // Overridden from extensions::ExtensionRegistryObserver:
   void OnExtensionLoaded(content::BrowserContext* browser_context,
                          const extensions::Extension* extension) override;
-  void OnExtensionUnloaded(
-      content::BrowserContext* browser_context,
-      const extensions::Extension* extension,
-      extensions::UnloadedExtensionInfo::Reason reason) override;
+  void OnExtensionUnloaded(content::BrowserContext* browser_context,
+                           const extensions::Extension* extension,
+                           extensions::UnloadedExtensionReason reason) override;
 #endif
 
   // Overridden from translate::ContentTranslateDriver::Observer:
@@ -823,15 +804,16 @@ class Browser : public TabStripModelObserver,
                          int index,
                          DetachType type);
 
+  // Updates the loading state for the window and tabstrip.
+  void UpdateWindowForLoadingStateChanged(content::WebContents* source,
+                                          bool to_different_document);
+
   // Shared code between Reload() and ReloadBypassingCache().
   void ReloadInternal(WindowOpenDisposition disposition, bool bypass_cache);
 
   // Returns true if the Browser window supports a location bar. Having support
   // for the location bar does not mean it will be visible.
   bool SupportsLocationBar() const;
-
-  // Returns true if the Browser window should show the location bar.
-  bool ShouldShowLocationBar() const;
 
   // Implementation of SupportsWindowFeature and CanSupportWindowFeature. If
   // |check_fullscreen| is true, the set of features reflect the actual state of
@@ -846,6 +828,10 @@ class Browser : public TabStripModelObserver,
 
   bool ShouldHideUIForFullscreen() const;
 
+  // Indicates if we have called BrowserList::NotifyBrowserCloseStarted for the
+  // browser.
+  bool IsBrowserClosing() const;
+
   // Returns true if we can start the shutdown sequence for the browser, i.e.
   // the last browser window is being closed.
   bool ShouldStartShutdown() const;
@@ -854,6 +840,7 @@ class Browser : public TabStripModelObserver,
   // created.
   bool MaybeCreateBackgroundContents(
       content::SiteInstance* source_site_instance,
+      content::RenderFrameHost* opener,
       const GURL& opener_url,
       int32_t route_id,
       int32_t main_frame_route_id,
@@ -908,13 +895,6 @@ class Browser : public TabStripModelObserver,
   // The model for the toolbar view.
   std::unique_ptr<ToolbarModel> toolbar_model_;
 
-  // The model for the "active" search state.  There are per-tab search models
-  // as well.  When a tab is active its model is kept in sync with this one.
-  // When a new tab is activated its model state is propagated to this active
-  // model.  This way, observers only have to attach to this single model for
-  // updates, and don't have to worry about active tab changes directly.
-  std::unique_ptr<SearchModel> search_model_;
-
   // UI update coalescing and handling ////////////////////////////////////////
 
   typedef std::map<const content::WebContents*, int> UpdateMap;
@@ -953,8 +933,8 @@ class Browser : public TabStripModelObserver,
   // Tracks when this browser is being created by session restore.
   bool is_session_restore_;
 
-  std::unique_ptr<chrome::UnloadController> unload_controller_;
-  std::unique_ptr<chrome::FastUnloadController> fast_unload_controller_;
+  std::unique_ptr<UnloadController> unload_controller_;
+  std::unique_ptr<FastUnloadController> fast_unload_controller_;
 
   std::unique_ptr<ChromeBubbleManager> bubble_manager_;
 
@@ -971,10 +951,6 @@ class Browser : public TabStripModelObserver,
 
   // Helper which implements the ToolbarModelDelegate interface.
   std::unique_ptr<BrowserToolbarModelDelegate> toolbar_model_delegate_;
-
-  // A delegate that handles the details of updating the "active"
-  // |search_model_| state with the tab's state.
-  std::unique_ptr<SearchDelegate> search_delegate_;
 
   // Helper which implements the LiveTabContext interface.
   std::unique_ptr<BrowserLiveTabContext> live_tab_context_;
@@ -998,8 +974,6 @@ class Browser : public TabStripModelObserver,
 
   // True if the browser window has been shown at least once.
   bool window_has_shown_;
-
-  base::WeakPtr<ValidationMessageBubble> validation_message_bubble_;
 
 #if !defined(OS_CHROMEOS)
   SigninViewController signin_view_controller_;

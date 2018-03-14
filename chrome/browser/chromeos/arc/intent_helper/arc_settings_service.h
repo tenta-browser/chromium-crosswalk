@@ -8,9 +8,13 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "components/arc/arc_service.h"
 #include "components/arc/common/intent_helper.mojom.h"
-#include "components/arc/instance_holder.h"
+#include "components/arc/connection_observer.h"
+#include "components/keyed_service/core/keyed_service.h"
+
+namespace content {
+class BrowserContext;
+}  // namespace content
 
 namespace arc {
 
@@ -18,17 +22,25 @@ class ArcBridgeService;
 class ArcSettingsServiceImpl;
 
 class ArcSettingsService
-    : public ArcService,
-      public InstanceHolder<mojom::IntentHelperInstance>::Observer {
+    : public KeyedService,
+      public ConnectionObserver<mojom::IntentHelperInstance> {
  public:
-  explicit ArcSettingsService(ArcBridgeService* bridge_service);
+  // Returns singleton instance for the given BrowserContext,
+  // or nullptr if the browser |context| is not allowed to use ARC.
+  static ArcSettingsService* GetForBrowserContext(
+      content::BrowserContext* context);
+
+  ArcSettingsService(content::BrowserContext* context,
+                     ArcBridgeService* bridge_service);
   ~ArcSettingsService() override;
 
-  // InstanceHolder<mojom::IntentHelperInstance>::Observer
-  void OnInstanceReady() override;
-  void OnInstanceClosed() override;
+  // ConnectionObserver<mojom::IntentHelperInstance>
+  void OnConnectionReady() override;
+  void OnConnectionClosed() override;
 
  private:
+  content::BrowserContext* const context_;
+  ArcBridgeService* const arc_bridge_service_;  // Owned by ArcServiceManager.
   std::unique_ptr<ArcSettingsServiceImpl> impl_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcSettingsService);

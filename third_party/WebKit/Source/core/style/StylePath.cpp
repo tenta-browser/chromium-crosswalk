@@ -21,9 +21,9 @@ StylePath::StylePath(std::unique_ptr<SVGPathByteStream> path_byte_stream)
 
 StylePath::~StylePath() {}
 
-PassRefPtr<StylePath> StylePath::Create(
+scoped_refptr<StylePath> StylePath::Create(
     std::unique_ptr<SVGPathByteStream> path_byte_stream) {
-  return AdoptRef(new StylePath(std::move(path_byte_stream)));
+  return base::AdoptRef(new StylePath(std::move(path_byte_stream)));
 }
 
 StylePath* StylePath::EmptyPath() {
@@ -51,11 +51,25 @@ bool StylePath::IsClosed() const {
 }
 
 CSSValue* StylePath::ComputedCSSValue() const {
-  return CSSPathValue::Create(const_cast<StylePath*>(this));
+  return cssvalue::CSSPathValue::Create(const_cast<StylePath*>(this));
 }
 
-bool StylePath::operator==(const StylePath& other) const {
+bool StylePath::operator==(const BasicShape& o) const {
+  if (!IsSameType(o))
+    return false;
+  const StylePath& other = ToStylePath(o);
   return *byte_stream_ == *other.byte_stream_;
+}
+
+void StylePath::GetPath(Path&, const FloatRect&) {
+  // Callers should use GetPath() overload, which avoids making a copy.
+  NOTREACHED();
+}
+
+scoped_refptr<BasicShape> StylePath::Blend(const BasicShape*, double) const {
+  // TODO(ericwilligers): Implement animation for offset-path.
+  NOTREACHED();
+  return nullptr;
 }
 
 }  // namespace blink

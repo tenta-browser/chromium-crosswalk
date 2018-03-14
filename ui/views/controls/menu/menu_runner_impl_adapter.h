@@ -20,8 +20,7 @@ namespace internal {
 class MenuRunnerImpl;
 
 // Given a MenuModel, adapts MenuRunnerImpl which expects a MenuItemView.
-class VIEWS_EXPORT MenuRunnerImplAdapter
-    : public NON_EXPORTED_BASE(MenuRunnerImplInterface) {
+class VIEWS_EXPORT MenuRunnerImplAdapter : public MenuRunnerImplInterface {
  public:
   MenuRunnerImplAdapter(ui::MenuModel* menu_model,
                         const base::Closure& on_menu_closed_callback);
@@ -29,11 +28,11 @@ class VIEWS_EXPORT MenuRunnerImplAdapter
   // MenuRunnerImplInterface:
   bool IsRunning() const override;
   void Release() override;
-  MenuRunner::RunResult RunMenuAt(Widget* parent,
-                                  MenuButton* button,
-                                  const gfx::Rect& bounds,
-                                  MenuAnchorPosition anchor,
-                                  int32_t types) override;
+  void RunMenuAt(Widget* parent,
+                 MenuButton* button,
+                 const gfx::Rect& bounds,
+                 MenuAnchorPosition anchor,
+                 int32_t types) override;
   void Cancel() override;
   base::TimeTicks GetClosingEventTime() const override;
 

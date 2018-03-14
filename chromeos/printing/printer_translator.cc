@@ -9,7 +9,6 @@
 #include <utility>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chromeos/printing/printer_configuration.h"
 
@@ -32,24 +31,16 @@ const char kUri[] = "uri";
 const char kUUID[] = "uuid";
 const char kPpdResource[] = "ppd_resource";
 
-// Converts |value| into a Printer object for the fields that are shared
-// between pref printers and policy printers.
-std::unique_ptr<Printer> DictionaryToPrinter(const DictionaryValue& value) {
-  std::string id;
-  if (!value.GetString(printing::kPrinterId, &id)) {
-    LOG(WARNING) << "Record id required";
-    return nullptr;
-  }
-
-  std::unique_ptr<Printer> printer = base::MakeUnique<Printer>(id);
-
+// Populates the |printer| object with corresponding fields from |value|.
+// Returns false if |value| is missing a required field.
+bool DictionaryToPrinter(const DictionaryValue& value, Printer* printer) {
   // Mandatory fields
   std::string display_name;
   if (value.GetString(kDisplayName, &display_name)) {
     printer->set_display_name(display_name);
   } else {
     LOG(WARNING) << "Display name required";
-    return nullptr;
+    return false;
   }
 
   std::string uri;
@@ -57,7 +48,7 @@ std::unique_ptr<Printer> DictionaryToPrinter(const DictionaryValue& value) {
     printer->set_uri(uri);
   } else {
     LOG(WARNING) << "Uri required";
-    return nullptr;
+    return false;
   }
 
   // Optional fields
@@ -73,23 +64,33 @@ std::unique_ptr<Printer> DictionaryToPrinter(const DictionaryValue& value) {
   if (value.GetString(kModel, &model))
     printer->set_model(model);
 
+  std::string make_and_model = manufacturer;
+  if (!manufacturer.empty() && !model.empty())
+    make_and_model.append(" ");
+  make_and_model.append(model);
+  printer->set_make_and_model(make_and_model);
+
   std::string uuid;
   if (value.GetString(kUUID, &uuid))
     printer->set_uuid(uuid);
 
-  return printer;
+  return true;
 }
 
 }  // namespace
-
-namespace printing {
 
 const char kPrinterId[] = "id";
 
 std::unique_ptr<Printer> RecommendedPrinterToPrinter(
     const base::DictionaryValue& pref) {
-  std::unique_ptr<Printer> printer = DictionaryToPrinter(pref);
-  if (!printer) {
+  std::string id;
+  if (!pref.GetString(kPrinterId, &id)) {
+    LOG(WARNING) << "Record id required";
+    return nullptr;
+  }
+
+  auto printer = std::make_unique<Printer>(id);
+  if (!DictionaryToPrinter(pref, printer.get())) {
     LOG(WARNING) << "Failed to parse policy printer.";
     return nullptr;
   }
@@ -110,5 +111,4 @@ std::unique_ptr<Printer> RecommendedPrinterToPrinter(
   return printer;
 }
 
-}  // namespace printing
 }  // namespace chromeos

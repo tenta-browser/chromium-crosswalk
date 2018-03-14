@@ -28,9 +28,9 @@ namespace policy {
 namespace {
 
 // Subdirectories that contain the mandatory and recommended policies.
-const base::FilePath::CharType kMandatoryConfigDir[] =
+constexpr base::FilePath::CharType kMandatoryConfigDir[] =
     FILE_PATH_LITERAL("managed");
-const base::FilePath::CharType kRecommendedConfigDir[] =
+constexpr base::FilePath::CharType kRecommendedConfigDir[] =
     FILE_PATH_LITERAL("recommended");
 
 PolicyLoadStatus JsonErrorToPolicyLoadStatus(int status) {
@@ -64,11 +64,15 @@ ConfigDirPolicyLoader::ConfigDirPolicyLoader(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     const base::FilePath& config_dir,
     PolicyScope scope)
-    : AsyncPolicyLoader(task_runner), config_dir_(config_dir), scope_(scope) {}
+    : AsyncPolicyLoader(task_runner),
+      task_runner_(task_runner),
+      config_dir_(config_dir),
+      scope_(scope) {}
 
 ConfigDirPolicyLoader::~ConfigDirPolicyLoader() {}
 
 void ConfigDirPolicyLoader::InitOnBackgroundThread() {
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   base::FilePathWatcher::Callback callback =
       base::Bind(&ConfigDirPolicyLoader::OnFileUpdated, base::Unretained(this));
   mandatory_watcher_.Watch(config_dir_.Append(kMandatoryConfigDir), false,
@@ -89,9 +93,8 @@ std::unique_ptr<PolicyBundle> ConfigDirPolicyLoader::Load() {
 }
 
 base::Time ConfigDirPolicyLoader::LastModificationTime() {
-  static const base::FilePath::CharType* kConfigDirSuffixes[] = {
-    kMandatoryConfigDir,
-    kRecommendedConfigDir,
+  static constexpr const base::FilePath::CharType* kConfigDirSuffixes[] = {
+      kMandatoryConfigDir, kRecommendedConfigDir,
   };
 
   base::Time last_modification = base::Time();
@@ -129,7 +132,7 @@ void ConfigDirPolicyLoader::LoadFromPath(const base::FilePath& path,
        !config_file_path.empty(); config_file_path = file_enumerator.Next())
     files.insert(config_file_path);
 
-  PolicyLoadStatusSample status;
+  PolicyLoadStatusUmaReporter status;
   if (files.empty()) {
     status.Add(POLICY_LOAD_STATUS_NO_POLICY);
     return;
@@ -154,7 +157,7 @@ void ConfigDirPolicyLoader::LoadFromPath(const base::FilePath& path,
       status.Add(JsonErrorToPolicyLoadStatus(error_code));
       continue;
     }
-    base::DictionaryValue* dictionary_value = NULL;
+    base::DictionaryValue* dictionary_value = nullptr;
     if (!value->GetAsDictionary(&dictionary_value)) {
       LOG(WARNING) << "Expected JSON dictionary in configuration file "
                    << config_file_iter->value();
@@ -229,6 +232,7 @@ void ConfigDirPolicyLoader::Merge3rdPartyPolicy(
 
 void ConfigDirPolicyLoader::OnFileUpdated(const base::FilePath& path,
                                           bool error) {
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   if (!error)
     Reload(false);
 }

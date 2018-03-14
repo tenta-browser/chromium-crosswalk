@@ -31,12 +31,12 @@
 #ifndef ScriptValue_h
 #define ScriptValue_h
 
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/NativeValueTraits.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/SharedPersistent.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/SharedPersistent.h"
 #include "platform/wtf/Allocator.h"
-#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/text/WTFString.h"
 #include "v8/include/v8.h"
 
@@ -75,7 +75,7 @@ class CORE_EXPORT ScriptValue final {
                                : SharedPersistent<v8::Value>::Create(
                                      value,
                                      script_state->GetIsolate())) {
-    ASSERT(IsEmpty() || script_state_);
+    DCHECK(IsEmpty() || script_state_);
   }
 
   template <typename T>
@@ -85,15 +85,15 @@ class CORE_EXPORT ScriptValue final {
                                : SharedPersistent<v8::Value>::Create(
                                      value.ToLocalChecked(),
                                      script_state->GetIsolate())) {
-    ASSERT(IsEmpty() || script_state_);
+    DCHECK(IsEmpty() || script_state_);
   }
 
   ScriptValue(const ScriptValue& value)
       : script_state_(value.script_state_), value_(value.value_) {
-    ASSERT(IsEmpty() || script_state_);
+    DCHECK(IsEmpty() || script_state_);
   }
 
-  ScriptState* GetScriptState() const { return script_state_.Get(); }
+  ScriptState* GetScriptState() const { return script_state_.get(); }
 
   v8::Isolate* GetIsolate() const {
     return script_state_ ? script_state_->GetIsolate()
@@ -101,7 +101,7 @@ class CORE_EXPORT ScriptValue final {
   }
 
   v8::Local<v8::Context> GetContext() const {
-    ASSERT(script_state_.Get());
+    DCHECK(script_state_.get());
     return script_state_->GetContext();
   }
 
@@ -126,7 +126,7 @@ class CORE_EXPORT ScriptValue final {
   // This creates a new local Handle; Don't use this in performance-sensitive
   // places.
   bool IsFunction() const {
-    ASSERT(!IsEmpty());
+    DCHECK(!IsEmpty());
     v8::Local<v8::Value> value = V8Value();
     return !value.IsEmpty() && value->IsFunction();
   }
@@ -134,7 +134,7 @@ class CORE_EXPORT ScriptValue final {
   // This creates a new local Handle; Don't use this in performance-sensitive
   // places.
   bool IsNull() const {
-    ASSERT(!IsEmpty());
+    DCHECK(!IsEmpty());
     v8::Local<v8::Value> value = V8Value();
     return !value.IsEmpty() && value->IsNull();
   }
@@ -142,7 +142,7 @@ class CORE_EXPORT ScriptValue final {
   // This creates a new local Handle; Don't use this in performance-sensitive
   // places.
   bool IsUndefined() const {
-    ASSERT(!IsEmpty());
+    DCHECK(!IsEmpty());
     v8::Local<v8::Value> value = V8Value();
     return !value.IsEmpty() && value->IsUndefined();
   }
@@ -150,12 +150,12 @@ class CORE_EXPORT ScriptValue final {
   // This creates a new local Handle; Don't use this in performance-sensitive
   // places.
   bool IsObject() const {
-    ASSERT(!IsEmpty());
+    DCHECK(!IsEmpty());
     v8::Local<v8::Value> value = V8Value();
     return !value.IsEmpty() && value->IsObject();
   }
 
-  bool IsEmpty() const { return !value_.Get() || value_->IsEmpty(); }
+  bool IsEmpty() const { return !value_.get() || value_->IsEmpty(); }
 
   void Clear() { value_ = nullptr; }
 
@@ -170,8 +170,18 @@ class CORE_EXPORT ScriptValue final {
   static ScriptValue CreateNull(ScriptState*);
 
  private:
-  RefPtr<ScriptState> script_state_;
-  RefPtr<SharedPersistent<v8::Value>> value_;
+  scoped_refptr<ScriptState> script_state_;
+  scoped_refptr<SharedPersistent<v8::Value>> value_;
+};
+
+template <>
+struct NativeValueTraits<ScriptValue>
+    : public NativeValueTraitsBase<ScriptValue> {
+  static inline ScriptValue NativeValue(v8::Isolate* isolate,
+                                        v8::Local<v8::Value> value,
+                                        ExceptionState& exception_state) {
+    return ScriptValue(ScriptState::Current(isolate), value);
+  }
 };
 
 }  // namespace blink

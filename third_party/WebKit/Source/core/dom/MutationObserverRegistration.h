@@ -31,10 +31,10 @@
 #ifndef MutationObserverRegistration_h
 #define MutationObserverRegistration_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/core/v8/TraceWrapperMember.h"
 #include "core/CoreExport.h"
 #include "core/dom/MutationObserver.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/HashSet.h"
 #include "platform/wtf/text/AtomicString.h"
@@ -83,8 +83,8 @@ class CORE_EXPORT MutationObserverRegistration final
 
   void Dispose();
 
-  DECLARE_TRACE();
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+  void Trace(blink::Visitor*);
+  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
 
  private:
   MutationObserverRegistration(MutationObserver&,

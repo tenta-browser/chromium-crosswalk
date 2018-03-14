@@ -46,7 +46,7 @@ static std::unique_ptr<TextCodec> NewStreamingTextDecoderUserDefined(
 }
 
 void TextCodecUserDefined::RegisterCodecs(TextCodecRegistrar registrar) {
-  registrar("x-user-defined", NewStreamingTextDecoderUserDefined, 0);
+  registrar("x-user-defined", NewStreamingTextDecoderUserDefined, nullptr);
 }
 
 String TextCodecUserDefined::Decode(const char* bytes,
@@ -71,7 +71,7 @@ static CString EncodeComplexUserDefined(const CharType* characters,
                                         UnencodableHandling handling) {
   size_t target_length = length;
   Vector<char> result(target_length);
-  char* bytes = result.Data();
+  char* bytes = result.data();
 
   size_t result_length = 0;
   for (size_t i = 0; i < length;) {
@@ -92,13 +92,11 @@ static CString EncodeComplexUserDefined(const CharType* characters,
           TextCodec::GetUnencodableReplacement(c, handling, replacement);
       DCHECK_GT(replacement_length, 0);
       // Only one char was initially reserved per input character, so grow if
-      // necessary. Note that in the case of surrogate pairs and
-      // QuestionMarksForUnencodables the result length may be shorter than
-      // the input length.
+      // necessary.
       target_length += replacement_length - 1;
       if (target_length > result.size()) {
         result.Grow(target_length);
-        bytes = result.Data();
+        bytes = result.data();
       }
       memcpy(bytes + result_length, replacement, replacement_length);
       result_length += replacement_length;

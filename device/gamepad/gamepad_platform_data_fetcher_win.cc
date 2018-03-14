@@ -16,8 +16,6 @@
 
 namespace device {
 
-using namespace blink;
-
 namespace {
 
 // See http://goo.gl/5VSJR. These are not available in all versions of the
@@ -38,7 +36,7 @@ float NormalizeXInputAxis(SHORT value) {
   return ((value + 32768.f) / 32767.5f) - 1.f;
 }
 
-const WebUChar* GamepadSubTypeName(BYTE sub_type) {
+const UChar* GamepadSubTypeName(BYTE sub_type) {
   switch (sub_type) {
     case kDeviceSubTypeGamepad:
       return L"GAMEPAD";
@@ -65,19 +63,15 @@ const WebUChar* GamepadSubTypeName(BYTE sub_type) {
   }
 }
 
-const WebUChar* XInputDllFileName() {
+const UChar* XInputDllFileName() {
   // Xinput.h defines filename (XINPUT_DLL) on different Windows versions, but
   // Xinput.h specifies it in build time. Approach here uses the same values
   // and it is resolving dll filename based on Windows version it is running on.
   if (base::win::GetVersion() >= base::win::VERSION_WIN8) {
-    // For Windows 8 and 10, XINPUT_DLL is xinput1_4.dll.
+    // For Windows 8+, XINPUT_DLL is xinput1_4.dll.
     return FILE_PATH_LITERAL("xinput1_4.dll");
-  } else if (base::win::GetVersion() >= base::win::VERSION_WIN7) {
-    return FILE_PATH_LITERAL("xinput9_1_0.dll");
-  } else {
-    NOTREACHED();
-    return nullptr;
   }
+  return FILE_PATH_LITERAL("xinput9_1_0.dll");
 }
 
 }  // namespace
@@ -114,16 +108,16 @@ void GamepadPlatformDataFetcherWin::EnumerateDevices() {
       if (!state)
         continue;  // No slot available for this gamepad.
 
-      WebGamepad& pad = state->data;
+      Gamepad& pad = state->data;
 
       if (state->active_state == GAMEPAD_NEWLY_ACTIVE) {
         // This is the first time we've seen this device, so do some one-time
         // initialization
         pad.connected = true;
-        swprintf(pad.id, WebGamepad::kIdLengthCap,
+        swprintf(pad.id, Gamepad::kIdLengthCap,
                  L"Xbox 360 Controller (XInput STANDARD %ls)",
                  GamepadSubTypeName(caps.SubType));
-        swprintf(pad.mapping, WebGamepad::kMappingLengthCap, L"standard");
+        swprintf(pad.mapping, Gamepad::kMappingLengthCap, L"standard");
       }
     }
   }
@@ -156,7 +150,7 @@ void GamepadPlatformDataFetcherWin::GetXInputPadData(int i) {
   if (!pad_state)
     return;
 
-  WebGamepad& pad = pad_state->data;
+  Gamepad& pad = pad_state->data;
 
   XINPUT_STATE state;
   memset(&state, 0, sizeof(XINPUT_STATE));

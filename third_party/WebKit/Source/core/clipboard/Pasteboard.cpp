@@ -30,6 +30,8 @@
 
 #include "core/clipboard/Pasteboard.h"
 
+#include "base/memory/scoped_refptr.h"
+#include "build/build_config.h"
 #include "core/clipboard/DataObject.h"
 #include "platform/clipboard/ClipboardUtilities.h"
 #include "platform/graphics/Image.h"
@@ -38,8 +40,6 @@
 #include "public/platform/WebDragData.h"
 #include "public/platform/WebString.h"
 #include "public/platform/WebURL.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefPtr.h"
 
 namespace blink {
 
@@ -61,7 +61,7 @@ void Pasteboard::SetSelectionMode(bool selection_mode) {
 
 void Pasteboard::WritePlainText(const String& text, SmartReplaceOption) {
 // FIXME: add support for smart replace
-#if OS(WIN)
+#if defined(OS_WIN)
   String plain_text(text);
   ReplaceNewlinesWithWindowsStyleNewlines(plain_text);
   Platform::Current()->Clipboard()->WritePlainText(plain_text);
@@ -73,7 +73,7 @@ void Pasteboard::WritePlainText(const String& text, SmartReplaceOption) {
 void Pasteboard::WriteImage(Image* image,
                             const KURL& url,
                             const String& title) {
-  ASSERT(image);
+  DCHECK(image);
 
   const WebImage web_image(image);
   if (web_image.IsNull())
@@ -124,7 +124,7 @@ void Pasteboard::WriteHTML(const String& markup,
                            const String& plain_text,
                            bool can_smart_copy_or_delete) {
   String text = plain_text;
-#if OS(WIN)
+#if defined(OS_WIN)
   ReplaceNewlinesWithWindowsStyleNewlines(text);
 #endif
   ReplaceNBSPWithSpace(text);

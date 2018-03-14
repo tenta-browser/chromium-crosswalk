@@ -8,6 +8,12 @@ import android.content.Context;
 import android.support.test.filters.SmallTest;
 import android.view.ViewGroup;
 
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
 import org.chromium.android_webview.AwBrowserContext;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContents.DependencyFactory;
@@ -17,7 +23,8 @@ import org.chromium.android_webview.AwContentsClient;
 import org.chromium.android_webview.AwRenderProcessGoneDetail;
 import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.AwSwitches;
-import org.chromium.android_webview.test.AwTestBase;
+import org.chromium.android_webview.test.AwActivityTestRule;
+import org.chromium.android_webview.test.AwJUnit4ClassRunner;
 import org.chromium.android_webview.test.AwTestContainerView;
 import org.chromium.android_webview.test.RenderProcessGoneHelper;
 import org.chromium.android_webview.test.TestAwContents;
@@ -26,7 +33,8 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.parameter.ParameterizedTest;
+import org.chromium.base.test.util.RetryOnFailure;
+import org.chromium.base.test.util.parameter.SkipCommandLineParameterization;
 import org.chromium.content_public.common.ContentUrlConstants;
 
 import java.util.concurrent.TimeUnit;
@@ -34,7 +42,11 @@ import java.util.concurrent.TimeUnit;
 /**
  * Test VisualStateCallback when render process is gone.
  */
-public class VisualStateCallbackTest extends AwTestBase {
+@RunWith(AwJUnit4ClassRunner.class)
+public class VisualStateCallbackTest {
+    @Rule
+    public AwActivityTestRule mActivityTestRule = new AwActivityTestRule();
+
     private static class VisualStateCallbackHelper extends CallbackHelper {
         // Indicates VisualStateCallback has been received by AwContents, but
         // not forwarded to app's callback class.
@@ -88,12 +100,7 @@ public class VisualStateCallbackTest extends AwTestBase {
 
         public void doInvokeVisualStateCallbackOnUiThread() {
             final VisualStateCallbackTestAwContents awContents = this;
-            ThreadUtils.runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    awContents.doInvokeVisualStateCallback();
-                }
-            });
+            ThreadUtils.runOnUiThread(() -> awContents.doInvokeVisualStateCallback());
         }
 
         private void doInvokeVisualStateCallback() {
@@ -101,7 +108,8 @@ public class VisualStateCallbackTest extends AwTestBase {
         }
     }
 
-    private static class CrashTestDependencyFactory extends AwTestBase.TestDependencyFactory {
+    private static class CrashTestDependencyFactory
+            extends AwActivityTestRule.TestDependencyFactory {
         @Override
         public AwContents createAwContents(AwBrowserContext browserContext, ViewGroup containerView,
                 Context context, InternalAccessDelegate internalAccessAdapter,
@@ -135,13 +143,11 @@ public class VisualStateCallbackTest extends AwTestBase {
     private VisualStateCallbackTestAwContents mAwContents;
     private RenderProcessGoneHelper mHelper;
 
-    @Override
-    protected void setUp() throws Exception {
-        super.setUp();
-
+    @Before
+    public void setUp() throws Exception {
         RenderProcessGoneTestAwContentsClient contentsClient =
                 new RenderProcessGoneTestAwContentsClient();
-        AwTestContainerView testView = createAwTestContainerViewOnMainSync(
+        AwTestContainerView testView = mActivityTestRule.createAwTestContainerViewOnMainSync(
                 contentsClient, false, new CrashTestDependencyFactory());
         mAwContents = (VisualStateCallbackTestAwContents) testView.getAwContents();
         mHelper = mAwContents.getRenderProcessGoneHelper();
@@ -149,54 +155,54 @@ public class VisualStateCallbackTest extends AwTestBase {
 
     // Tests the callback isn't invoked if insertVisualStateCallback() is called after render
     // process gone, but before the AwContentsClient knows about it.
+    @Test
     @Feature({"AndroidWebView"})
     @SmallTest
-    @CommandLineFlags
-            .Add(AwSwitches.WEBVIEW_SANDBOXED_RENDERER)
-            @ParameterizedTest.Set
-            public void testAddVisualStateCallbackAfterRendererGone() throws Throwable {
-        loadUrlAsync(mAwContents, "chrome://kill");
-        mHelper.waitForRenderProcessGone();
-
-        VisualStateCallbackImpl vsImpl = new VisualStateCallbackImpl();
-        insertVisualStateCallbackOnUIThread(mAwContents, vsImpl.requestId(), vsImpl);
+    @CommandLineFlags.Add(AwSwitches.WEBVIEW_SANDBOXED_RENDERER)
+    @SkipCommandLineParameterization
+    public void testAddVisualStateCallbackAfterRendererGone() throws Throwable {
+        final VisualStateCallbackImpl vsImpl = new VisualStateCallbackImpl();
+        mHelper.setOnRenderProcessGoneTask(
+                () -> mAwContents.insertVisualStateCallback(vsImpl.requestId(), vsImpl));
+        mActivityTestRule.loadUrlAsync(mAwContents, "chrome://kill");
 
         mHelper.waitForRenderProcessGoneNotifiedToAwContentsClient();
 
-        destroyAwContentsOnMainSync(mAwContents);
+        mActivityTestRule.destroyAwContentsOnMainSync(mAwContents);
 
         mHelper.waitForAwContentsDestroyed();
-        assertFalse(vsImpl.called());
+        Assert.assertFalse(vsImpl.called());
     }
 
     // Tests the callback isn't invoked when AwContents knows about render process being gone.
+    @Test
     @Feature({"AndroidWebView"})
     @SmallTest
-    @CommandLineFlags
-            .Add(AwSwitches.WEBVIEW_SANDBOXED_RENDERER)
-            @ParameterizedTest.Set
-            public void testVisualStateCallbackNotCalledAfterRendererGone() throws Throwable {
-
+    @RetryOnFailure
+    @CommandLineFlags.Add(AwSwitches.WEBVIEW_SANDBOXED_RENDERER)
+    @SkipCommandLineParameterization
+    public void testVisualStateCallbackNotCalledAfterRendererGone() throws Throwable {
         VisualStateCallbackImpl vsImpl = new VisualStateCallbackImpl();
-        insertVisualStateCallbackOnUIThread(mAwContents, vsImpl.requestId(), vsImpl);
+        mActivityTestRule.insertVisualStateCallbackOnUIThread(
+                mAwContents, vsImpl.requestId(), vsImpl);
         VisualStateCallbackHelper vsCallbackHelper = mAwContents.getVisualStateCallbackHelper();
         int callCount = vsCallbackHelper.getCallCount();
-        loadUrlAsync(mAwContents, ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
+        mActivityTestRule.loadUrlAsync(mAwContents, ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
         vsCallbackHelper.waitForCallback(
                 callCount, 1, CallbackHelper.WAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        assertEquals(callCount + 1, vsCallbackHelper.getCallCount());
-        assertTrue(vsCallbackHelper.visualStateCallbackArrived());
-        killRenderProcessOnUiThreadAsync(mAwContents);
+        Assert.assertEquals(callCount + 1, vsCallbackHelper.getCallCount());
+        Assert.assertTrue(vsCallbackHelper.visualStateCallbackArrived());
+        mActivityTestRule.killRenderProcessOnUiThreadAsync(mAwContents);
 
         mHelper.waitForRenderProcessGone();
         mAwContents.doInvokeVisualStateCallbackOnUiThread();
 
         mHelper.waitForRenderProcessGoneNotifiedToAwContentsClient();
-        assertFalse(vsImpl.called());
+        Assert.assertFalse(vsImpl.called());
 
-        destroyAwContentsOnMainSync(mAwContents);
+        mActivityTestRule.destroyAwContentsOnMainSync(mAwContents);
 
         mHelper.waitForAwContentsDestroyed();
-        assertFalse(vsImpl.called());
+        Assert.assertFalse(vsImpl.called());
     }
 }

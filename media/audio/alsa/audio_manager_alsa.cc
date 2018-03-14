@@ -7,14 +7,10 @@
 #include <stddef.h>
 
 #include "base/command_line.h"
-#include "base/environment.h"
-#include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/free_deleter.h"
 #include "base/metrics/histogram.h"
-#include "base/nix/xdg_util.h"
-#include "base/process/launch.h"
 #include "base/stl_util.h"
 #include "media/audio/audio_device_description.h"
 #include "media/audio/audio_output_dispatcher.h"
@@ -44,66 +40,25 @@ static const int kDefaultSampleRate = 48000;
 // real devices, we remove them from the list to avoiding duplicate counting.
 // In addition, note that we support no more than 2 channels for recording,
 // hence surround devices are not stored in the list.
-static const char* kInvalidAudioInputDevices[] = {
-  "default",
-  "dmix",
-  "null",
-  "pulse",
-  "surround",
+static const char* const kInvalidAudioInputDevices[] = {
+    "default", "dmix", "null", "pulse", "surround",
 };
 
-// static
-void AudioManagerAlsa::ShowLinuxAudioInputSettings() {
-  std::unique_ptr<base::Environment> env(base::Environment::Create());
-  base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
-  switch (base::nix::GetDesktopEnvironment(env.get())) {
-    case base::nix::DESKTOP_ENVIRONMENT_GNOME:
-      command_line.SetProgram(base::FilePath("gnome-volume-control"));
-      break;
-    case base::nix::DESKTOP_ENVIRONMENT_KDE3:
-    case base::nix::DESKTOP_ENVIRONMENT_KDE4:
-    case base::nix::DESKTOP_ENVIRONMENT_KDE5:
-      command_line.SetProgram(base::FilePath("kmix"));
-      break;
-    case base::nix::DESKTOP_ENVIRONMENT_UNITY:
-      command_line.SetProgram(base::FilePath("gnome-control-center"));
-      command_line.AppendArg("sound");
-      command_line.AppendArg("input");
-      break;
-    default:
-      LOG(ERROR) << "Failed to show audio input settings: we don't know "
-                 << "what command to use for your desktop environment.";
-      return;
-  }
-  base::LaunchProcess(command_line, base::LaunchOptions());
+AudioManagerAlsa::AudioManagerAlsa(std::unique_ptr<AudioThread> audio_thread,
+                                   AudioLogFactory* audio_log_factory)
+    : AudioManagerBase(std::move(audio_thread), audio_log_factory),
+      wrapper_(new AlsaWrapper()) {
+  SetMaxOutputStreamsAllowed(kMaxOutputStreams);
 }
 
-// Implementation of AudioManager.
+AudioManagerAlsa::~AudioManagerAlsa() = default;
+
 bool AudioManagerAlsa::HasAudioOutputDevices() {
   return HasAnyAlsaAudioDevice(kStreamPlayback);
 }
 
 bool AudioManagerAlsa::HasAudioInputDevices() {
   return HasAnyAlsaAudioDevice(kStreamCapture);
-}
-
-AudioManagerAlsa::AudioManagerAlsa(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
-    AudioLogFactory* audio_log_factory)
-    : AudioManagerBase(std::move(task_runner),
-                       std::move(worker_task_runner),
-                       audio_log_factory),
-      wrapper_(new AlsaWrapper()) {
-  SetMaxOutputStreamsAllowed(kMaxOutputStreams);
-}
-
-AudioManagerAlsa::~AudioManagerAlsa() {
-  Shutdown();
-}
-
-void AudioManagerAlsa::ShowAudioInputSettings() {
-  ShowLinuxAudioInputSettings();
 }
 
 void AudioManagerAlsa::GetAudioInputDeviceNames(
@@ -226,17 +181,16 @@ bool AudioManagerAlsa::IsAlsaDeviceAvailable(
         return false;
     }
     return true;
-  } else {
-    DCHECK_EQ(kStreamPlayback, type);
-    // We prefer the device type that maps straight to hardware but
-    // goes through software conversion if needed (e.g. incompatible
-    // sample rate).
-    // TODO(joi): Should we prefer "hw" instead?
-    static const char kDeviceTypeDesired[] = "plughw";
-    return strncmp(kDeviceTypeDesired,
-                   device_name,
-                   arraysize(kDeviceTypeDesired) - 1) == 0;
   }
+
+  DCHECK_EQ(kStreamPlayback, type);
+  // We prefer the device type that maps straight to hardware but
+  // goes through software conversion if needed (e.g. incompatible
+  // sample rate).
+  // TODO(joi): Should we prefer "hw" instead?
+  static const char kDeviceTypeDesired[] = "plughw";
+  return strncmp(kDeviceTypeDesired, device_name,
+                 arraysize(kDeviceTypeDesired) - 1) == 0;
 }
 
 // static

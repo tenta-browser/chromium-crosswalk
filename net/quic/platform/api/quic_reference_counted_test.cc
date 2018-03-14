@@ -4,7 +4,7 @@
 
 #include "net/quic/platform/api/quic_reference_counted.h"
 
-#include "testing/gtest/include/gtest/gtest.h"
+#include "net/quic/platform/api/quic_test.h"
 
 namespace net {
 namespace test {
@@ -15,8 +15,6 @@ class Base : public QuicReferenceCounted {
   explicit Base(bool* destroyed) : destroyed_(destroyed) {
     *destroyed_ = false;
   }
-
-  bool destroyed() const { return *destroyed_; }
 
  protected:
   ~Base() override { *destroyed_ = true; }
@@ -33,14 +31,16 @@ class Derived : public Base {
   ~Derived() override {}
 };
 
-TEST(QuicReferenceCountedTest, DefaultConstructor) {
+class QuicReferenceCountedTest : public QuicTest {};
+
+TEST_F(QuicReferenceCountedTest, DefaultConstructor) {
   QuicReferenceCountedPointer<Base> a;
   EXPECT_EQ(nullptr, a);
   EXPECT_EQ(nullptr, a.get());
   EXPECT_FALSE(a);
 }
 
-TEST(QuicReferenceCountedTest, ConstructFromRawPointer) {
+TEST_F(QuicReferenceCountedTest, ConstructFromRawPointer) {
   bool destroyed = false;
   {
     QuicReferenceCountedPointer<Base> a(new Base(&destroyed));
@@ -49,7 +49,7 @@ TEST(QuicReferenceCountedTest, ConstructFromRawPointer) {
   EXPECT_TRUE(destroyed);
 }
 
-TEST(QuicReferenceCountedTest, RawPointerAssignment) {
+TEST_F(QuicReferenceCountedTest, RawPointerAssignment) {
   bool destroyed = false;
   {
     QuicReferenceCountedPointer<Base> a;
@@ -60,7 +60,7 @@ TEST(QuicReferenceCountedTest, RawPointerAssignment) {
   EXPECT_TRUE(destroyed);
 }
 
-TEST(QuicReferenceCountedTest, PointerCopy) {
+TEST_F(QuicReferenceCountedTest, PointerCopy) {
   bool destroyed = false;
   {
     QuicReferenceCountedPointer<Base> a(new Base(&destroyed));
@@ -74,7 +74,7 @@ TEST(QuicReferenceCountedTest, PointerCopy) {
   EXPECT_TRUE(destroyed);
 }
 
-TEST(QuicReferenceCountedTest, PointerCopyAssignment) {
+TEST_F(QuicReferenceCountedTest, PointerCopyAssignment) {
   bool destroyed = false;
   {
     QuicReferenceCountedPointer<Base> a(new Base(&destroyed));
@@ -88,7 +88,7 @@ TEST(QuicReferenceCountedTest, PointerCopyAssignment) {
   EXPECT_TRUE(destroyed);
 }
 
-TEST(QuicReferenceCountedTest, PointerCopyFromOtherType) {
+TEST_F(QuicReferenceCountedTest, PointerCopyFromOtherType) {
   bool destroyed = false;
   {
     QuicReferenceCountedPointer<Derived> a(new Derived(&destroyed));
@@ -102,7 +102,7 @@ TEST(QuicReferenceCountedTest, PointerCopyFromOtherType) {
   EXPECT_TRUE(destroyed);
 }
 
-TEST(QuicReferenceCountedTest, PointerCopyAssignmentFromOtherType) {
+TEST_F(QuicReferenceCountedTest, PointerCopyAssignmentFromOtherType) {
   bool destroyed = false;
   {
     QuicReferenceCountedPointer<Derived> a(new Derived(&destroyed));
@@ -116,7 +116,7 @@ TEST(QuicReferenceCountedTest, PointerCopyAssignmentFromOtherType) {
   EXPECT_TRUE(destroyed);
 }
 
-TEST(QuicReferenceCountedTest, PointerMove) {
+TEST_F(QuicReferenceCountedTest, PointerMove) {
   bool destroyed = false;
   QuicReferenceCountedPointer<Base> a(new Derived(&destroyed));
   EXPECT_FALSE(destroyed);
@@ -129,7 +129,7 @@ TEST(QuicReferenceCountedTest, PointerMove) {
   EXPECT_TRUE(destroyed);
 }
 
-TEST(QuicReferenceCountedTest, PointerMoveAssignment) {
+TEST_F(QuicReferenceCountedTest, PointerMoveAssignment) {
   bool destroyed = false;
   QuicReferenceCountedPointer<Base> a(new Derived(&destroyed));
   EXPECT_FALSE(destroyed);
@@ -142,7 +142,7 @@ TEST(QuicReferenceCountedTest, PointerMoveAssignment) {
   EXPECT_TRUE(destroyed);
 }
 
-TEST(QuicReferenceCountedTest, PointerMoveFromOtherType) {
+TEST_F(QuicReferenceCountedTest, PointerMoveFromOtherType) {
   bool destroyed = false;
   QuicReferenceCountedPointer<Derived> a(new Derived(&destroyed));
   EXPECT_FALSE(destroyed);
@@ -155,7 +155,7 @@ TEST(QuicReferenceCountedTest, PointerMoveFromOtherType) {
   EXPECT_TRUE(destroyed);
 }
 
-TEST(QuicReferenceCountedTest, PointerMoveAssignmentFromOtherType) {
+TEST_F(QuicReferenceCountedTest, PointerMoveAssignmentFromOtherType) {
   bool destroyed = false;
   QuicReferenceCountedPointer<Derived> a(new Derived(&destroyed));
   EXPECT_FALSE(destroyed);

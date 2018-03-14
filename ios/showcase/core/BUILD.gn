@@ -13,7 +13,7 @@ source_set("core") {
   ]
   deps = [
     "//base",
-    "//ios/chrome/app/startup",
+    "//base:i18n",
     "//ios/showcase/common",
     "//ios/third_party/material_components_ios",
     "//ios/third_party/material_roboto_font_loader_ios",
@@ -49,7 +49,7 @@ source_set("eg_tests") {
   ]
   deps = [
     "//ios/showcase/test",
-    "//ios/third_party/earl_grey",
+    "//ios/third_party/earl_grey:earl_grey+link",
   ]
   configs += [ "//build/config/compiler:enable_arc" ]
 }

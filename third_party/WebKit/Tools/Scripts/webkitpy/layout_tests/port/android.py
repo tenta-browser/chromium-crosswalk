@@ -118,10 +118,11 @@ PERF_TEST_PATH_PREFIX = '/all-perf-tests'
 LAYOUT_TEST_PATH_PREFIX = '/all-tests'
 
 # All ports the Android forwarder to forward.
-# 8000, 8080 and 8443 are for http/https tests.
-# 8880 and 9323 are for websocket tests
-# (see http_server.py, apache_http_server.py and websocket_server.py).
-FORWARD_PORTS = '8000 8080 8443 8880 9323'
+# 8000, 8080 and 8443 are for http/https tests;
+# 8880 is for websocket tests (see apache_http.py and pywebsocket.py).
+# 8001, 8081 and 8444 are for http/https WPT;
+# 9001 and 9444 are for websocket WPT (see wptserve.py).
+FORWARD_PORTS = '8000 8001 8080 8081 8443 8444 8880 9001 9444'
 
 # We start netcat processes for each of the three stdio streams. In doing so,
 # we attempt to use ports starting from 10201. This starting value is
@@ -325,7 +326,7 @@ class AndroidPort(base.Port):
 
         devil_chromium.Initialize(
             output_directory=self._build_path(),
-            adb_path=self.path_from_chromium_base(
+            adb_path=self._path_from_chromium_base(
                 'third_party', 'android_tools', 'sdk', 'platform-tools', 'adb'))
         devil_env.config.InitializeLogging(
             logging.DEBUG
@@ -339,8 +340,8 @@ class AndroidPort(base.Port):
     def default_smoke_test_only(self):
         return True
 
-    def additional_driver_flag(self):
-        return super(AndroidPort, self).additional_driver_flag() + \
+    def additional_driver_flags(self):
+        return super(AndroidPort, self).additional_driver_flags() + \
             self._driver_details.additional_command_line_flags(use_breakpad=not self.get_option('disable_breakpad'))
 
     def default_timeout_ms(self):
@@ -458,7 +459,7 @@ class AndroidPort(base.Port):
         return True
 
     def start_http_server(self, additional_dirs, number_of_drivers):
-        additional_dirs[PERF_TEST_PATH_PREFIX] = self.perf_tests_dir()
+        additional_dirs[PERF_TEST_PATH_PREFIX] = self._perf_tests_dir()
         additional_dirs[LAYOUT_TEST_PATH_PREFIX] = self.layout_tests_dir()
         super(AndroidPort, self).start_http_server(additional_dirs, number_of_drivers)
 

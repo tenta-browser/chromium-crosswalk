@@ -48,7 +48,7 @@ class NetworkMenuWebUI : public NetworkMenu {
 
  private:
   // Converts menu model into the ListValue, ready for passing to WebUI.
-  base::ListValue* ConvertMenuModel(ui::MenuModel* model);
+  std::unique_ptr<base::ListValue> ConvertMenuModel(ui::MenuModel* model);
 
   // WebUI where network menu is located.
   content::WebUI* web_ui_;
@@ -81,8 +81,9 @@ void NetworkMenuWebUI::OnItemChosen(int id) {
   model->ActivatedAt(index);
 }
 
-base::ListValue* NetworkMenuWebUI::ConvertMenuModel(ui::MenuModel* model) {
-  base::ListValue* list = new base::ListValue();
+std::unique_ptr<base::ListValue> NetworkMenuWebUI::ConvertMenuModel(
+    ui::MenuModel* model) {
+  auto list = base::MakeUnique<base::ListValue>();
   for (int i = 0; i < model->GetItemCount(); ++i) {
     ui::MenuModel::ItemType type = model->GetTypeAt(i);
     int id;
@@ -124,7 +125,7 @@ NetworkDropdown::NetworkDropdown(View* view, content::WebUI* web_ui, bool oobe)
   network_menu_.reset(new NetworkMenuWebUI(this, web_ui));
   DCHECK(NetworkHandler::IsInitialized());
   NetworkStateHandler* handler = NetworkHandler::Get()->network_state_handler();
-  handler->RequestScan();
+  handler->RequestScan(NetworkTypePattern::WiFi());
   handler->AddObserver(this, FROM_HERE);
   Refresh();
   network_scan_timer_.Start(
@@ -150,7 +151,7 @@ gfx::NativeWindow NetworkDropdown::GetNativeWindow() const {
 }
 
 void NetworkDropdown::OpenButtonOptions() {
-  LoginDisplayHost::default_host()->OpenProxySettings();
+  LoginDisplayHost::default_host()->OpenInternetDetailDialog("");
 }
 
 bool NetworkDropdown::ShouldOpenButtonOptions() const {
@@ -207,7 +208,8 @@ void NetworkDropdown::SetNetworkIconAndText() {
 }
 
 void NetworkDropdown::RequestNetworkScan() {
-  NetworkHandler::Get()->network_state_handler()->RequestScan();
+  NetworkHandler::Get()->network_state_handler()->RequestScan(
+      NetworkTypePattern::WiFi());
   Refresh();
 }
 

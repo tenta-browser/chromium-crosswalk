@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -15,19 +17,38 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
-#include "content/public/browser/render_view_host.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
-#include "extensions/common/constants.h"
+#include "content/public/test/test_navigation_observer.h"
+#include "content/public/test/test_utils.h"
+#include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "testing/gmock/include/gmock/gmock.h"
+#include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+
+using testing::HasSubstr;
+using testing::ContainsRegex;
 
 namespace {
 const char kTestHtml[] = "/viewsource/test.html";
 const char kTestMedia[] = "/media/pink_noise_140ms.wav";
 }
 
-typedef InProcessBrowserTest ViewSourceTest;
+class ViewSourceTest : public InProcessBrowserTest {
+ public:
+  ViewSourceTest() {}
+
+ protected:
+  void SetUpOnMainThread() override {
+    InProcessBrowserTest::SetUpOnMainThread();
+    host_resolver()->AddRule("*", "127.0.0.1");
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ViewSourceTest);
+};
 
 // This test renders a page in view-source and then checks to see if the title
 // set in the html was set successfully (it shouldn't because we rendered the
@@ -187,72 +208,261 @@ IN_PROC_BROWSER_TEST_F(ViewSourceTest,
   EXPECT_FALSE(chrome::CanViewSource(browser()));
 }
 
-// Verify that restoring a view-source tab for a Chrome extension works
-// properly.  See https://crbug.com/699428.
-IN_PROC_BROWSER_TEST_F(ViewSourceTest, ViewSourceTabRestore) {
+// Tests that view-source mode of b.com subframe won't commit in an a.com (main
+// frame) process.  This is a regresion test for https://crbug.com/770946.
+IN_PROC_BROWSER_TEST_F(ViewSourceTest, CrossSiteSubframe) {
+  // Navigate to a page with a cross-site frame.
+  content::SetupCrossSiteRedirector(embedded_test_server());
   ASSERT_TRUE(embedded_test_server()->Start());
+  GURL main_url(
+      embedded_test_server()->GetURL("a.com", "/iframe_cross_site.html"));
+  ui_test_utils::NavigateToURL(browser(), main_url);
 
-  // Go to the Chrome bookmarks URL.  It should redirect to the bookmark
-  // manager Chrome extension.
-  GURL bookmarks_url(chrome::kChromeUIBookmarksURL);
-  ui_test_utils::NavigateToURL(browser(), bookmarks_url);
-  EXPECT_TRUE(chrome::CanViewSource(browser()));
-  content::WebContents* bookmarks_tab =
+  // Grab the original frames.
+  content::WebContents* original_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  GURL bookmarks_extension_url =
-      bookmarks_tab->GetMainFrame()->GetLastCommittedURL();
-  EXPECT_TRUE(bookmarks_extension_url.SchemeIs(extensions::kExtensionScheme));
+  content::RenderFrameHost* original_main_frame =
+      original_contents->GetMainFrame();
+  ASSERT_LE(2u, original_contents->GetAllFrames().size());
+  content::RenderFrameHost* original_child_frame =
+      original_contents->GetAllFrames()[1];
 
-  // Open a new view-source tab for that URL.
-  GURL view_source_url(content::kViewSourceScheme + std::string(":") +
-                       bookmarks_extension_url.spec());
-  AddTabAtIndex(1, view_source_url, ui::PAGE_TRANSITION_TYPED);
-  content::WebContents* view_source_tab =
+  // Do a sanity check that in this particular test page the main frame and the
+  // subframe are cross-site.
+  EXPECT_FALSE(content::SiteInstance::IsSameWebSite(
+      browser()->profile(), original_main_frame->GetLastCommittedURL(),
+      original_child_frame->GetLastCommittedURL()));
+  if (content::AreAllSitesIsolatedForTesting()) {
+    EXPECT_NE(original_main_frame->GetProcess()->GetID(),
+              original_child_frame->GetProcess()->GetID());
+  }
+
+  // Open view-source mode tab for the subframe.  This tries to mimic the
+  // behavior of RenderViewContextMenu::ExecuteCommand when it handles
+  // IDC_CONTENT_CONTEXT_VIEWFRAMESOURCE.
+  content::WebContentsAddedObserver view_source_contents_observer;
+  original_child_frame->ViewSource();
+
+  // Grab the view-source frame and wait for load stop.
+  content::WebContents* view_source_contents =
+      view_source_contents_observer.GetWebContents();
+  content::RenderFrameHost* view_source_frame =
+      view_source_contents->GetMainFrame();
+  EXPECT_TRUE(WaitForLoadStop(view_source_contents));
+
+  // Verify that the last committed URL is the same in the original and the
+  // view-source frames.
+  EXPECT_EQ(original_child_frame->GetLastCommittedURL(),
+            view_source_frame->GetLastCommittedURL());
+
+  // Verify that the original main frame and the view-source subframe are in a
+  // different process (e.g. if the main frame was malicious and the subframe
+  // was an isolated origin, then the malicious frame shouldn't be able to see
+  // the contents of the isolated document).  See https://crbug.com/770946.
+  EXPECT_NE(original_main_frame->GetSiteInstance(),
+            view_source_frame->GetSiteInstance());
+
+  // Verify that the original subframe and the view-source subframe are in a
+  // different process - see https://crbug.com/699493.
+  EXPECT_NE(original_child_frame->GetSiteInstance(),
+            view_source_frame->GetSiteInstance());
+
+  // Verify the contents of the view-source tab (should match title1.html).
+  std::string source_text;
+  std::string view_source_extraction_script = R"(
+      output = "";
+      document.querySelectorAll(".line-content").forEach(function(elem) {
+          output += elem.innerText;
+      });
+      domAutomationController.send(output); )";
+  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
+      view_source_contents, view_source_extraction_script, &source_text));
+  EXPECT_EQ("<html><head></head><body>This page has no title.</body></html>",
+            source_text);
+
+  // Verify the title is derived from the subframe URL.
+  GURL original_url = original_child_frame->GetLastCommittedURL();
+  std::string title = base::UTF16ToUTF8(view_source_contents->GetTitle());
+  EXPECT_THAT(title, HasSubstr(content::kViewSourceScheme));
+  EXPECT_THAT(title, HasSubstr(original_url.host()));
+  EXPECT_THAT(title, HasSubstr(original_url.port()));
+  EXPECT_THAT(title, HasSubstr(original_url.path()));
+}
+
+// Tests that "View Source" works fine for pages shown via HTTP POST.
+// This is a regression test for https://crbug.com/523.
+IN_PROC_BROWSER_TEST_F(ViewSourceTest, HttpPostInMainframe) {
+  // Navigate to a page with a form.
+  content::SetupCrossSiteRedirector(embedded_test_server());
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL form_url(embedded_test_server()->GetURL(
+      "a.com", "/form_that_posts_to_echoall.html"));
+  ui_test_utils::NavigateToURL(browser(), form_url);
+  content::WebContents* original_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  EXPECT_EQ(view_source_url, view_source_tab->GetVisibleURL());
-  EXPECT_EQ(view_source_url,
-            view_source_tab->GetController().GetActiveEntry()->GetVirtualURL());
-  EXPECT_EQ(bookmarks_extension_url,
-            view_source_tab->GetMainFrame()->GetLastCommittedURL());
-  EXPECT_FALSE(chrome::CanViewSource(browser()));
+  content::RenderFrameHost* original_main_frame =
+      original_contents->GetMainFrame();
 
-  // Close the view-source tab.
-  chrome::CloseTab(browser());
-  ASSERT_EQ(1, browser()->tab_strip_model()->count());
+  // Submit the form and verify that we arrived at the expected location.
+  content::TestNavigationObserver form_post_observer(original_contents, 1);
+  EXPECT_TRUE(ExecuteScript(original_main_frame,
+                            "document.getElementById('form').submit();"));
+  form_post_observer.Wait();
+  GURL target_url(embedded_test_server()->GetURL("a.com", "/echoall"));
+  EXPECT_EQ(target_url, original_main_frame->GetLastCommittedURL());
 
-  // Restore the tab.  In the bug, the restored navigation was blocked, and we
-  // ended up showing view-source of an about:blank page.
-  content::WindowedNotificationObserver tab_added_observer(
-      chrome::NOTIFICATION_TAB_PARENTED,
-      content::NotificationService::AllSources());
-  chrome::RestoreTab(browser());
-  tab_added_observer.Wait();
-  view_source_tab = browser()->tab_strip_model()->GetActiveWebContents();
-  WaitForLoadStop(view_source_tab);
-
-  // Verify the browser-side URLs.  Note that without view-source, the
-  // bookmarks extension visible URL would be rewritten to chrome://bookmarks,
-  // but with view-source, we should still see it as
-  // view-source:chrome-extension://.../.
-  EXPECT_EQ(view_source_url, view_source_tab->GetVisibleURL());
-  EXPECT_EQ(view_source_url,
-            view_source_tab->GetController().GetActiveEntry()->GetVirtualURL());
-  EXPECT_EQ(bookmarks_extension_url,
-            view_source_tab->GetMainFrame()->GetLastCommittedURL());
-  EXPECT_FALSE(chrome::CanViewSource(browser()));
-
-  // Verify that the view-source content is not empty, and that the
-  // renderer-side URL is correct.
-  int view_source_length;
-  EXPECT_TRUE(ExecuteScriptAndExtractInt(
-      view_source_tab,
-      "domAutomationController.send(document.body.innerText.length)",
-      &view_source_length));
-  EXPECT_GT(view_source_length, 0);
-
-  std::string location;
+  // Extract the response nonce.
+  std::string response_nonce;
+  std::string response_nonce_extraction_script = R"(
+      domAutomationController.send(
+          document.getElementById('response-nonce').innerText); )";
   EXPECT_TRUE(ExecuteScriptAndExtractString(
-      view_source_tab, "domAutomationController.send(location.href)",
-      &location));
-  EXPECT_EQ(bookmarks_extension_url, location);
+      original_main_frame, response_nonce_extraction_script, &response_nonce));
+
+  // Open view-source mode tab for the main frame.  This tries to mimic the
+  // behavior of RenderViewContextMenu::ExecuteCommand when it handles
+  // IDC_CONTENT_CONTEXT_VIEWFRAMESOURCE.
+  content::WebContentsAddedObserver view_source_contents_observer;
+  original_main_frame->ViewSource();
+  content::WebContents* view_source_contents =
+      view_source_contents_observer.GetWebContents();
+  EXPECT_TRUE(WaitForLoadStop(view_source_contents));
+
+  // Verify contents of the view-source tab.  In particular:
+  // 1) the sources should contain the POST data
+  // 2) the sources should contain the original response-nonce
+  //    (i.e. no new network request should be made - the data should be
+  //    retrieved from the cache)
+  std::string source_text;
+  std::string view_source_extraction_script = R"(
+      output = "";
+      document.querySelectorAll(".line-content").forEach(function(elem) {
+          output += elem.innerText;
+      });
+      domAutomationController.send(output); )";
+  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
+      view_source_contents, view_source_extraction_script, &source_text));
+  EXPECT_THAT(source_text,
+              HasSubstr("<h1>Request Body:</h1><pre>text=value</pre>"));
+  EXPECT_THAT(source_text,
+              HasSubstr("<h1>Request Headers:</h1><pre>POST /echoall HTTP"));
+  EXPECT_THAT(source_text,
+              ContainsRegex("Request Headers:.*Referer: " + form_url.spec()));
+  EXPECT_THAT(
+      source_text,
+      ContainsRegex(
+          "Request Headers:.*Content-Type: application/x-www-form-urlencoded"));
+  EXPECT_THAT(source_text, HasSubstr("<h1>Response nonce:</h1>"
+                                     "<pre id='response-nonce'>" +
+                                     response_nonce + "</pre>"));
+  EXPECT_THAT(source_text,
+              HasSubstr("<title>EmbeddedTestServer - EchoAll</title>"));
+
+  // Verify that the original contents and the view-source contents are in a
+  // different process - see https://crbug.com/699493.
+  EXPECT_NE(original_main_frame->GetSiteInstance(),
+            view_source_contents->GetMainFrame()->GetSiteInstance());
+
+  // Verify the title of view-source is derived from the URL (not from the title
+  // of the original contents).
+  std::string title = base::UTF16ToUTF8(view_source_contents->GetTitle());
+  EXPECT_EQ("EmbeddedTestServer - EchoAll",
+            base::UTF16ToUTF8(original_contents->GetTitle()));
+  EXPECT_THAT(title, Not(HasSubstr("EmbeddedTestServer - EchoAll")));
+  GURL original_url = original_main_frame->GetLastCommittedURL();
+  EXPECT_THAT(title, HasSubstr(content::kViewSourceScheme));
+  EXPECT_THAT(title, HasSubstr(original_url.host()));
+  EXPECT_THAT(title, HasSubstr(original_url.port()));
+  EXPECT_THAT(title, HasSubstr(original_url.path()));
+}
+
+// Tests that "View Source" works fine for *subframes* shown via HTTP POST.
+// This is a regression test for https://crbug.com/774691.
+IN_PROC_BROWSER_TEST_F(ViewSourceTest, HttpPostInSubframe) {
+  // Navigate to a page with multiple frames.
+  content::SetupCrossSiteRedirector(embedded_test_server());
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL main_url(
+      embedded_test_server()->GetURL("a.com", "/iframe_cross_site.html"));
+  ui_test_utils::NavigateToURL(browser(), main_url);
+  content::WebContents* original_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  // Navigate a child frame to a document with a form.
+  GURL form_url(embedded_test_server()->GetURL(
+      "b.com", "/form_that_posts_to_echoall.html"));
+  EXPECT_TRUE(
+      content::NavigateIframeToURL(original_contents, "frame1", form_url));
+  EXPECT_LE(2u, original_contents->GetAllFrames().size());
+  content::RenderFrameHost* original_child_frame =
+      original_contents->GetAllFrames()[1];
+
+  // Submit the form and verify that we arrived at the expected location.
+  content::TestNavigationObserver form_post_observer(original_contents, 1);
+  EXPECT_TRUE(ExecuteScript(original_child_frame,
+                            "document.getElementById('form').submit();"));
+  form_post_observer.Wait();
+  GURL target_url(embedded_test_server()->GetURL("b.com", "/echoall"));
+  EXPECT_EQ(target_url, original_child_frame->GetLastCommittedURL());
+
+  // Extract the response nonce.
+  std::string response_nonce;
+  std::string response_nonce_extraction_script = R"(
+      domAutomationController.send(
+          document.getElementById('response-nonce').innerText); )";
+  EXPECT_TRUE(ExecuteScriptAndExtractString(
+      original_child_frame, response_nonce_extraction_script, &response_nonce));
+
+  // Open view-source mode tab for the subframe.  This tries to mimic the
+  // behavior of RenderViewContextMenu::ExecuteCommand when it handles
+  // IDC_CONTENT_CONTEXT_VIEWFRAMESOURCE.
+  content::WebContentsAddedObserver view_source_contents_observer;
+  original_child_frame->ViewSource();
+  content::WebContents* view_source_contents =
+      view_source_contents_observer.GetWebContents();
+  EXPECT_TRUE(WaitForLoadStop(view_source_contents));
+
+  // Verify contents of the view-source tab.  In particular:
+  // 1) the sources should contain the POST data
+  // 2) the sources should contain the original response-nonce
+  //    (i.e. no new network request should be made - the data should be
+  //    retrieved from the cache)
+  std::string source_text;
+  std::string view_source_extraction_script = R"(
+      output = "";
+      document.querySelectorAll(".line-content").forEach(function(elem) {
+          output += elem.innerText;
+      });
+      domAutomationController.send(output); )";
+  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
+      view_source_contents, view_source_extraction_script, &source_text));
+  EXPECT_THAT(source_text,
+              HasSubstr("<h1>Request Body:</h1><pre>text=value</pre>"));
+  EXPECT_THAT(source_text,
+              HasSubstr("<h1>Request Headers:</h1><pre>POST /echoall HTTP"));
+  EXPECT_THAT(source_text,
+              ContainsRegex("Request Headers:.*Referer: " + form_url.spec()));
+  EXPECT_THAT(
+      source_text,
+      ContainsRegex(
+          "Request Headers:.*Content-Type: application/x-www-form-urlencoded"));
+  EXPECT_THAT(source_text, HasSubstr("<h1>Response nonce:</h1>"
+                                     "<pre id='response-nonce'>" +
+                                     response_nonce + "</pre>"));
+  EXPECT_THAT(source_text,
+              HasSubstr("<title>EmbeddedTestServer - EchoAll</title>"));
+
+  // Verify that view-source opens in a new process - https://crbug.com/699493.
+  EXPECT_NE(original_child_frame->GetSiteInstance(),
+            view_source_contents->GetMainFrame()->GetSiteInstance());
+  EXPECT_NE(original_contents->GetSiteInstance(),
+            view_source_contents->GetMainFrame()->GetSiteInstance());
+
+  // Verify the title is derived from the URL.
+  GURL original_url = original_child_frame->GetLastCommittedURL();
+  std::string title = base::UTF16ToUTF8(view_source_contents->GetTitle());
+  EXPECT_THAT(title, HasSubstr(content::kViewSourceScheme));
+  EXPECT_THAT(title, HasSubstr(original_url.host()));
+  EXPECT_THAT(title, HasSubstr(original_url.port()));
+  EXPECT_THAT(title, HasSubstr(original_url.path()));
 }

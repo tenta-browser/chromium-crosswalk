@@ -25,6 +25,7 @@
 #ifndef FirstLetterPseudoElement_h
 #define FirstLetterPseudoElement_h
 
+#include "base/macros.h"
 #include "core/dom/Document.h"
 #include "core/dom/PseudoElement.h"
 #include "platform/wtf/text/WTFString.h"
@@ -35,9 +36,7 @@ class Element;
 class LayoutObject;
 class LayoutTextFragment;
 
-class FirstLetterPseudoElement final : public PseudoElement {
-  WTF_MAKE_NONCOPYABLE(FirstLetterPseudoElement);
-
+class CORE_EXPORT FirstLetterPseudoElement final : public PseudoElement {
  public:
   static FirstLetterPseudoElement* Create(Element* parent) {
     return new FirstLetterPseudoElement(parent);
@@ -55,7 +54,7 @@ class FirstLetterPseudoElement final : public PseudoElement {
 
   void UpdateTextFragments();
 
-  void AttachLayoutTree(const AttachContext& = AttachContext()) override;
+  void AttachLayoutTree(AttachContext&) override;
   void DetachLayoutTree(const AttachContext& = AttachContext()) override;
 
  private:
@@ -67,6 +66,7 @@ class FirstLetterPseudoElement final : public PseudoElement {
   ComputedStyle* StyleForFirstLetter(LayoutObject*);
 
   LayoutTextFragment* remaining_text_layout_object_;
+  DISALLOW_COPY_AND_ASSIGN(FirstLetterPseudoElement);
 };
 
 DEFINE_ELEMENT_TYPE_CASTS(FirstLetterPseudoElement,

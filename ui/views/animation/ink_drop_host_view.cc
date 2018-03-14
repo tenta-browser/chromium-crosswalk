@@ -15,6 +15,7 @@
 #include "ui/views/animation/ink_drop_mask.h"
 #include "ui/views/animation/ink_drop_stub.h"
 #include "ui/views/animation/square_ink_drop_ripple.h"
+#include "ui/views/style/platform_style.h"
 
 namespace views {
 namespace {
@@ -75,6 +76,7 @@ class InkDropHostView::InkDropGestureHandler : public ui::EventHandler {
         break;
       case ui::ET_GESTURE_END:
       case ui::ET_GESTURE_SCROLL_BEGIN:
+      case ui::ET_GESTURE_TAP_CANCEL:
         if (current_ink_drop_state == InkDropState::ACTIVATED)
           return;
         ink_drop_state = InkDropState::HIDDEN;
@@ -86,7 +88,8 @@ class InkDropHostView::InkDropGestureHandler : public ui::EventHandler {
     if (ink_drop_state == InkDropState::HIDDEN &&
         (current_ink_drop_state == InkDropState::ACTION_TRIGGERED ||
          current_ink_drop_state == InkDropState::ALTERNATE_ACTION_TRIGGERED ||
-         current_ink_drop_state == InkDropState::DEACTIVATED)) {
+         current_ink_drop_state == InkDropState::DEACTIVATED ||
+         current_ink_drop_state == InkDropState::HIDDEN)) {
       // These InkDropStates automatically transition to the HIDDEN state so we
       // don't make an explicit call. Explicitly animating to HIDDEN in this
       // case would prematurely pre-empt these animations.
@@ -115,7 +118,8 @@ gfx::Size InkDropHostView::CalculateLargeInkDropSize(
 InkDropHostView::InkDropHostView()
     : ink_drop_mode_(InkDropMode::OFF),
       ink_drop_(nullptr),
-      ink_drop_visible_opacity_(kInkDropVisibleOpacity),
+      ink_drop_visible_opacity_(
+          PlatformStyle::kUseRipples ? kInkDropVisibleOpacity : 0),
       old_paint_to_layer_(false),
       destroying_(false) {}
 
@@ -131,9 +135,7 @@ void InkDropHostView::AddInkDropLayer(ui::Layer* ink_drop_layer) {
     SetPaintToLayer();
 
   layer()->SetFillsBoundsOpaquely(false);
-  ink_drop_mask_ = CreateInkDropMask();
-  if (ink_drop_mask_)
-    ink_drop_layer->SetMaskLayer(ink_drop_mask_->layer());
+  InstallInkDropMask(ink_drop_layer);
   layer()->Add(ink_drop_layer);
   layer()->StackAtBottom(ink_drop_layer);
 }
@@ -156,13 +158,14 @@ std::unique_ptr<InkDrop> InkDropHostView::CreateInkDrop() {
 }
 
 std::unique_ptr<InkDropRipple> InkDropHostView::CreateInkDropRipple() const {
-  return CreateDefaultInkDropRipple(GetLocalBounds().CenterPoint());
+  return CreateDefaultInkDropRipple(
+      GetMirroredRect(GetContentsBounds()).CenterPoint());
 }
 
 std::unique_ptr<InkDropHighlight> InkDropHostView::CreateInkDropHighlight()
     const {
   return CreateDefaultInkDropHighlight(
-      gfx::RectF(GetLocalBounds()).CenterPoint());
+      gfx::RectF(GetMirroredRect(GetContentsBounds())).CenterPoint());
 }
 
 std::unique_ptr<InkDropRipple> InkDropHostView::CreateDefaultInkDropRipple(
@@ -191,13 +194,13 @@ void InkDropHostView::SetInkDropMode(InkDropMode ink_drop_mode) {
   if (ink_drop_mode_ != InkDropMode::ON)
     gesture_handler_ = nullptr;
   else if (!gesture_handler_)
-    gesture_handler_ = base::MakeUnique<InkDropGestureHandler>(this);
+    gesture_handler_ = std::make_unique<InkDropGestureHandler>(this);
 }
 
 gfx::Point InkDropHostView::GetInkDropCenterBasedOnLastEvent() const {
   return last_ripple_triggering_event_
              ? last_ripple_triggering_event_->location()
-             : GetLocalBounds().CenterPoint();
+             : GetMirroredRect(GetContentsBounds()).CenterPoint();
 }
 
 void InkDropHostView::AnimateInkDrop(InkDropState state,
@@ -269,19 +272,37 @@ std::unique_ptr<views::InkDropMask> InkDropHostView::CreateInkDropMask() const {
   return nullptr;
 }
 
+bool InkDropHostView::HasInkDrop() const {
+  return !!ink_drop_;
+}
+
 InkDrop* InkDropHostView::GetInkDrop() {
   if (!ink_drop_) {
     if (ink_drop_mode_ == InkDropMode::OFF)
-      ink_drop_ = base::MakeUnique<InkDropStub>();
+      ink_drop_ = std::make_unique<InkDropStub>();
     else
       ink_drop_ = CreateInkDrop();
+    OnInkDropCreated();
   }
   return ink_drop_.get();
 }
 
+void InkDropHostView::InstallInkDropMask(ui::Layer* ink_drop_layer) {
+// Layer masks don't work on Windows. See crbug.com/713359
+#if !defined(OS_WIN)
+  ink_drop_mask_ = CreateInkDropMask();
+  if (ink_drop_mask_)
+    ink_drop_layer->SetMaskLayer(ink_drop_mask_->layer());
+#endif
+}
+
+void InkDropHostView::ResetInkDropMask() {
+  ink_drop_mask_.reset();
+}
+
 std::unique_ptr<InkDropImpl> InkDropHostView::CreateDefaultInkDropImpl() {
   std::unique_ptr<InkDropImpl> ink_drop =
-      base::MakeUnique<InkDropImpl>(this, size());
+      std::make_unique<InkDropImpl>(this, size());
   ink_drop->SetAutoHighlightMode(
       views::InkDropImpl::AutoHighlightMode::HIDE_ON_RIPPLE);
   return ink_drop;

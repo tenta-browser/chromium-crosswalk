@@ -27,6 +27,7 @@ import org.chromium.blink_public.platform.WebDisplayMode;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.chrome.browser.FullscreenActivity;
 import org.chromium.chrome.browser.RepostFormWarningDialog;
 import org.chromium.chrome.browser.document.DocumentUtils;
 import org.chromium.chrome.browser.document.DocumentWebContentsDelegate;
@@ -34,7 +35,6 @@ import org.chromium.chrome.browser.findinpage.FindMatchRectsDetails;
 import org.chromium.chrome.browser.findinpage.FindNotificationDetails;
 import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.media.MediaCaptureNotificationService;
-import org.chromium.chrome.browser.media.VideoPersister;
 import org.chromium.chrome.browser.policy.PolicyAuditor;
 import org.chromium.chrome.browser.policy.PolicyAuditor.AuditEvent;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager.TabCreator;
@@ -79,7 +79,7 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
 
     private FindMatchRectsListener mFindMatchRectsListener;
 
-    private int mDisplayMode = WebDisplayMode.kBrowser;
+    private @WebDisplayMode int mDisplayMode = WebDisplayMode.BROWSER;
 
     protected Handler mHandler;
 
@@ -118,14 +118,13 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
 
     /**
      * Sets the current display mode which can be queried using media queries.
-     * @param displayMode A value from {@link org.chromium.blink_public.platform.WebDisplayMode}.
      */
-    public void setDisplayMode(int displayMode) {
+    public void setDisplayMode(@WebDisplayMode int displayMode) {
         mDisplayMode = displayMode;
     }
 
     @CalledByNative
-    private int getDisplayMode() {
+    private @WebDisplayMode int getDisplayMode() {
         return mDisplayMode;
     }
 
@@ -218,7 +217,9 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
 
     @Override
     public void toggleFullscreenModeForTab(boolean enableFullscreen) {
-        if (!VideoPersister.getInstance().shouldDelayFullscreenModeChange(mTab, enableFullscreen)) {
+        if (FullscreenActivity.shouldUseFullscreenActivity(mTab)) {
+            FullscreenActivity.toggleFullscreenMode(enableFullscreen, mTab);
+        } else {
             mTab.toggleFullscreenMode(enableFullscreen);
         }
     }
@@ -447,7 +448,7 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
      */
     @TargetApi(19)
     private void handleMediaKey(KeyEvent e) {
-        if (Build.VERSION.SDK_INT < 19) return;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT) return;
         switch (e.getKeyCode()) {
             case KeyEvent.KEYCODE_MUTE:
             case KeyEvent.KEYCODE_HEADSETHOOK:
@@ -500,6 +501,30 @@ public class TabWebContentsDelegateAndroid extends WebContentsDelegateAndroid {
     public static void notifyStopped(int tabId) {
         final Tab tab = TabWindowManager.getInstance().getTabById(tabId);
         if (tab != null) nativeNotifyStopped(tab.getWebContents());
+    }
+
+    @CalledByNative
+    private void setOverlayMode(boolean useOverlayMode) {
+        mTab.getActivity().setOverlayMode(useOverlayMode);
+    }
+
+    @Override
+    public int getTopControlsHeight() {
+        return mTab.getTopControlsHeight();
+    }
+
+    @Override
+    public int getBottomControlsHeight() {
+        return mTab.getBottomControlsHeight();
+    }
+
+    @Override
+    public boolean controlsResizeView() {
+        return mTab.controlsResizeView();
+    }
+
+    private float getDipScale() {
+        return mTab.getWindowAndroid().getDisplay().getDipScale();
     }
 
     @Override

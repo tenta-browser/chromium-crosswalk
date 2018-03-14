@@ -43,7 +43,6 @@ class ScopedScrollbarPainter {
                          WebCanvas* canvas,
                          const WebRect& rect)
       : int_rect_(IntRect(IntPoint(), IntSize(rect.width, rect.height))),
-        builder_(int_rect_),
         canvas_(canvas),
         rect_(rect) {
     builder_.Context().SetDeviceScaleFactor(painter->DeviceScaleFactor());
@@ -54,7 +53,7 @@ class ScopedScrollbarPainter {
   ~ScopedScrollbarPainter() {
     canvas_->save();
     canvas_->translate(rect_.x, rect_.y);
-    canvas_->PlaybackPaintRecord(builder_.EndRecording());
+    canvas_->drawPicture(builder_.EndRecording());
     canvas_->restore();
   }
 

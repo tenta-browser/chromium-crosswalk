@@ -30,7 +30,7 @@
 
 #include "core/dom/DocumentLifecycle.h"
 
-#include "platform/RuntimeEnabledFeatures.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/wtf/Assertions.h"
 
 #if DCHECK_IS_ON()
@@ -40,7 +40,7 @@
 namespace blink {
 
 static DocumentLifecycle::DeprecatedTransition* g_deprecated_transition_stack =
-    0;
+    nullptr;
 
 // TODO(skyostil): Come up with a better way to store cross-frame lifecycle
 // related data to avoid this being a global setting.
@@ -134,10 +134,10 @@ bool DocumentLifecycle::CanAdvanceTo(LifecycleState next_state) const {
         return true;
       if (next_state == kLayoutClean)
         return true;
-      if (!RuntimeEnabledFeatures::slimmingPaintV2Enabled() &&
+      if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
           next_state == kInCompositingUpdate)
         return true;
-      if (RuntimeEnabledFeatures::slimmingPaintV2Enabled() &&
+      if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
           next_state == kInPrePaint)
         return true;
       break;
@@ -157,10 +157,10 @@ bool DocumentLifecycle::CanAdvanceTo(LifecycleState next_state) const {
         return true;
       if (next_state == kLayoutClean)
         return true;
-      if (!RuntimeEnabledFeatures::slimmingPaintV2Enabled() &&
+      if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
           next_state == kInCompositingUpdate)
         return true;
-      if (RuntimeEnabledFeatures::slimmingPaintV2Enabled() &&
+      if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
           next_state == kInPrePaint)
         return true;
       break;
@@ -197,36 +197,33 @@ bool DocumentLifecycle::CanAdvanceTo(LifecycleState next_state) const {
         return true;
       if (next_state == kStyleClean)
         return true;
-      if (!RuntimeEnabledFeatures::slimmingPaintV2Enabled() &&
+      if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
           next_state == kInCompositingUpdate)
         return true;
-      if (RuntimeEnabledFeatures::slimmingPaintV2Enabled() &&
+      if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
           next_state == kInPrePaint)
         return true;
       break;
     case kInCompositingUpdate:
-      DCHECK(!RuntimeEnabledFeatures::slimmingPaintV2Enabled());
-      return next_state == kCompositingClean;
-    case kCompositingClean:
-      DCHECK(!RuntimeEnabledFeatures::slimmingPaintV2Enabled());
+      DCHECK(!RuntimeEnabledFeatures::SlimmingPaintV2Enabled());
+      // Once we are in the compositing update, we can either just clean the
+      // inputs or do the whole of compositing.
+      return next_state == kCompositingInputsClean ||
+             next_state == kCompositingClean;
+    case kCompositingInputsClean:
+      DCHECK(!RuntimeEnabledFeatures::SlimmingPaintV2Enabled());
+      // We can return to style re-calc, layout, or the start of compositing.
       if (next_state == kInStyleRecalc)
         return true;
       if (next_state == kInPreLayout)
         return true;
       if (next_state == kInCompositingUpdate)
         return true;
-      if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled()) {
-        if (next_state == kInPrePaint)
-          return true;
-      } else if (next_state == kInPaintInvalidation) {
+      // Otherwise, we can continue onwards.
+      if (next_state == kCompositingClean)
         return true;
-      }
-      break;
-    case kInPaintInvalidation:
-      DCHECK(!RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled());
-      return next_state == kPaintInvalidationClean;
-    case kPaintInvalidationClean:
-      DCHECK(!RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled());
+    case kCompositingClean:
+      DCHECK(!RuntimeEnabledFeatures::SlimmingPaintV2Enabled());
       if (next_state == kInStyleRecalc)
         return true;
       if (next_state == kInPreLayout)
@@ -247,11 +244,10 @@ bool DocumentLifecycle::CanAdvanceTo(LifecycleState next_state) const {
         return true;
       if (next_state == kInPreLayout)
         return true;
-      if (!RuntimeEnabledFeatures::slimmingPaintV2Enabled() &&
+      if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
           next_state == kInCompositingUpdate)
         return true;
-      if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled() &&
-          next_state == kInPrePaint)
+      if (next_state == kInPrePaint)
         return true;
       break;
     case kInPaint:
@@ -263,11 +259,12 @@ bool DocumentLifecycle::CanAdvanceTo(LifecycleState next_state) const {
         return true;
       if (next_state == kInPreLayout)
         return true;
-      if (!RuntimeEnabledFeatures::slimmingPaintV2Enabled() &&
+      if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
           next_state == kInCompositingUpdate)
         return true;
-      if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled() &&
-          next_state == kInPrePaint)
+      if (next_state == kInPrePaint)
+        return true;
+      if (next_state == kInPaint)
         return true;
       break;
     case kStopping:
@@ -289,7 +286,7 @@ bool DocumentLifecycle::CanRewindTo(LifecycleState next_state) const {
     return true;
   return state_ == kStyleClean || state_ == kLayoutSubtreeChangeClean ||
          state_ == kAfterPerformLayout || state_ == kLayoutClean ||
-         state_ == kCompositingClean || state_ == kPaintInvalidationClean ||
+         state_ == kCompositingInputsClean || state_ == kCompositingClean ||
          state_ == kPrePaintClean || state_ == kPaintClean;
 }
 
@@ -312,9 +309,8 @@ static WTF::String StateAsDebugString(
     DEBUG_STRING_CASE(kAfterPerformLayout);
     DEBUG_STRING_CASE(kLayoutClean);
     DEBUG_STRING_CASE(kInCompositingUpdate);
+    DEBUG_STRING_CASE(kCompositingInputsClean);
     DEBUG_STRING_CASE(kCompositingClean);
-    DEBUG_STRING_CASE(kInPaintInvalidation);
-    DEBUG_STRING_CASE(kPaintInvalidationClean);
     DEBUG_STRING_CASE(kInPrePaint);
     DEBUG_STRING_CASE(kPrePaintClean);
     DEBUG_STRING_CASE(kInPaint);

@@ -11,10 +11,10 @@
 #include "core/page/DragActions.h"
 #include "core/page/EventWithHitTestResults.h"
 #include "platform/Timer.h"
+#include "platform/wtf/Allocator.h"
+#include "platform/wtf/Time.h"
 #include "public/platform/WebInputEventResult.h"
 #include "public/platform/WebMouseEvent.h"
-#include "wtf/Allocator.h"
-#include "wtf/Time.h"
 
 namespace blink {
 
@@ -41,7 +41,9 @@ class CORE_EXPORT MouseEventManager final
  public:
   MouseEventManager(LocalFrame&, ScrollManager&);
   virtual ~MouseEventManager();
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
+
+  enum FakeMouseMoveReason { kDuringScroll, kPerFrame };
 
   WebInputEventResult DispatchMouseEvent(EventTarget*,
                                          const AtomicString&,
@@ -64,6 +66,7 @@ class CORE_EXPORT MouseEventManager final
                                            const WebMouseEvent&);
   WebInputEventResult DispatchDragEvent(const AtomicString& event_type,
                                         Node* target,
+                                        Node* related_target,
                                         const WebMouseEvent&,
                                         DataTransfer*);
 
@@ -86,7 +89,7 @@ class CORE_EXPORT MouseEventManager final
   void FakeMouseMoveEventTimerFired(TimerBase*);
 
   void CancelFakeMouseMoveEvent();
-  void DispatchFakeMouseMoveEventSoon();
+  void DispatchFakeMouseMoveEventSoon(MouseEventManager::FakeMouseMoveReason);
   void DispatchFakeMouseMoveEventSoonInQuad(const FloatQuad&);
 
   void SetLastKnownMousePosition(const WebMouseEvent&);
@@ -114,6 +117,7 @@ class CORE_EXPORT MouseEventManager final
   void UpdateSelectionForMouseDrag();
 
   void HandleMousePressEventUpdateStates(const WebMouseEvent&);
+  void HandleMouseReleaseEventUpdateStates();
 
   // Returns whether pan is handled and resets the state on release.
   bool HandleSvgPanIfNeeded(bool is_release_event);
@@ -124,7 +128,9 @@ class CORE_EXPORT MouseEventManager final
   // refactoring to be able to remove the dependency from EventHandler.
   Node* GetNodeUnderMouse();
   bool IsMousePositionUnknown();
+  // TODO(aelias): Make LastKnownMousePosition return FloatPoint.
   IntPoint LastKnownMousePosition();
+  FloatPoint LastKnownMousePositionGlobal();
 
   bool MousePressed();
   void SetMousePressed(bool);
@@ -143,6 +149,8 @@ class CORE_EXPORT MouseEventManager final
   void SetClickCount(int);
 
   bool MouseDownMayStartDrag();
+
+  bool FakeMouseMovePending() const;
 
  private:
   class MouseEventBoundaryEventDispatcher : public BoundaryEventDispatcher {
@@ -209,8 +217,8 @@ class CORE_EXPORT MouseEventManager final
 
   // The last mouse movement position this frame has seen in root frame
   // coordinates.
-  IntPoint last_known_mouse_position_;
-  IntPoint last_known_mouse_global_position_;
+  FloatPoint last_known_mouse_position_;
+  FloatPoint last_known_mouse_global_position_;
 
   unsigned is_mouse_position_unknown_ : 1;
   // Current button-press state for mouse/mouse-like-stylus.
@@ -226,6 +234,10 @@ class CORE_EXPORT MouseEventManager final
 
   int click_count_;
   Member<Element> click_element_;
+  // This element should be mostly the same as click_element_. Only when
+  // click_element_ is set to null due to DOM manipulation mouse_down_element_
+  // remains unchanged.
+  Member<Element> mouse_down_element_;
 
   IntPoint mouse_down_pos_;  // In our view's coords.
   TimeTicks mouse_down_timestamp_;

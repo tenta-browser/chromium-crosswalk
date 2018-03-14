@@ -21,16 +21,22 @@ static_library("lib") {
     "access_policy_delegate.h",
     "accessibility_manager.cc",
     "accessibility_manager.h",
+    "compositor_frame_sink_client_binding.cc",
+    "compositor_frame_sink_client_binding.h",
     "cursor_location_manager.cc",
     "cursor_location_manager.h",
+    "cursor_state.cc",
+    "cursor_state.h",
+    "cursor_state_delegate.h",
+    "debug_utils.cc",
+    "debug_utils.h",
     "default_access_policy.cc",
     "default_access_policy.h",
     "display.cc",
     "display.h",
     "display_binding.cc",
     "display_binding.h",
-    "display_client_compositor_frame_sink.cc",
-    "display_client_compositor_frame_sink.h",
+    "display_creation_config.h",
     "display_manager.cc",
     "display_manager.h",
     "drag_controller.cc",
@@ -41,11 +47,14 @@ static_library("lib") {
     "event_dispatcher.cc",
     "event_dispatcher.h",
     "event_dispatcher_delegate.h",
+    "event_location.h",
     "event_matcher.cc",
     "event_matcher.h",
+    "event_targeter.cc",
+    "event_targeter.h",
+    "event_targeter_delegate.h",
     "focus_controller.cc",
     "focus_controller.h",
-    "focus_controller_delegate.h",
     "focus_controller_observer.h",
     "frame_generator.cc",
     "frame_generator.h",
@@ -64,16 +73,19 @@ static_library("lib") {
     "platform_display_default.h",
     "platform_display_delegate.h",
     "platform_display_factory.h",
+    "remote_event_dispatcher.cc",
+    "remote_event_dispatcher.h",
     "server_window.cc",
     "server_window.h",
-    "server_window_compositor_frame_sink_manager.cc",
-    "server_window_compositor_frame_sink_manager.h",
     "server_window_delegate.h",
     "server_window_drawn_tracker.cc",
     "server_window_drawn_tracker.h",
     "server_window_drawn_tracker_observer.h",
     "server_window_observer.h",
     "server_window_tracker.h",
+    "threaded_image_cursors.cc",
+    "threaded_image_cursors.h",
+    "threaded_image_cursors_factory.h",
     "user_activity_monitor.cc",
     "user_activity_monitor.h",
     "user_display_manager.cc",
@@ -83,6 +95,8 @@ static_library("lib") {
     "user_id_tracker.cc",
     "user_id_tracker.h",
     "user_id_tracker_observer.h",
+    "video_detector_impl.cc",
+    "video_detector_impl.h",
     "window_coordinate_conversions.cc",
     "window_coordinate_conversions.h",
     "window_finder.cc",
@@ -113,29 +127,28 @@ static_library("lib") {
   ]
 
   deps = [
+    "//components/viz/service/main",  # TODO(sad): Temporary until GPU process split.
     "//gpu/command_buffer/client",
     "//gpu/command_buffer/client:gles2_interface",
     "//gpu/ipc/client",
     "//gpu/ipc/common",
-    "//services/ui/gpu",  # TODO(sad): Temporary until GPU process split.
-    "//services/ui/gpu/interfaces",
+    "//services/viz/privileged/interfaces",
   ]
 
   public_deps = [
     "//base",
     "//cc",
-    "//cc/ipc:interfaces",
-    "//cc/surfaces",
-    "//cc/surfaces:surface_id",
+    "//components/viz/common",
+    "//components/viz/host",
+    "//components/viz/service",
     "//mojo/common:common_base",
     "//mojo/public/cpp/bindings",
     "//services/service_manager/public/cpp",
     "//services/service_manager/public/interfaces",
-    "//services/tracing/public/cpp",
     "//services/ui/common:mus_common",
-    "//services/ui/common:server_gpu",
     "//services/ui/display",
     "//services/ui/public/interfaces",
+    "//services/viz/privileged/interfaces/compositing",
     "//ui/base",
     "//ui/display",
     "//ui/events",
@@ -151,10 +164,17 @@ static_library("lib") {
   ]
 
   if (use_ozone) {
-    public_deps += [ "//ui/ozone:ozone" ]
+    public_deps += [ "//ui/ozone" ]
   }
   if (is_chromeos) {
+    sources += [
+      "arc_client.cc",
+      "arc_client.h",
+    ]
     public_deps += [ "//ui/chromeos/events" ]
+    if (use_ozone) {
+      public_deps += [ "//ui/events/ozone:events_ozone" ]
+    }
   }
 
   # ui service should not depend on below components.
@@ -204,10 +224,11 @@ static_library("test_support") {
   deps = [
     "//base",
     "//base/test:test_config",
+    "//components/viz/test:test_support",
     "//mojo/common",
     "//mojo/public/cpp/bindings:bindings",
+    "//services/service_manager/public/cpp",
     "//services/service_manager/public/cpp:service_test_support",
-    "//services/service_manager/public/cpp:sources",
     "//services/ui/common:mus_common",
     "//services/ui/public/cpp",
     "//services/ui/public/interfaces",
@@ -218,21 +239,18 @@ static_library("test_support") {
     "//ui/gl",
     "//ui/wm",
   ]
-}
 
-group("tests") {
-  testonly = true
-  deps = [
-    ":mus_ws_unittests",
+  data_deps = [
+    "//services/ui/ime/test_ime_driver",
   ]
-  if (!is_android) {
-    deps += [ "//services/ui/public/cpp/tests:mus_public_unittests" ]
-  }
 }
 
-service_test("mus_ws_unittests") {
+source_set("tests") {
+  testonly = true
+
   sources = [
     "cursor_location_manager_unittest.cc",
+    "cursor_state_unittest.cc",
     "cursor_unittest.cc",
     "display_unittest.cc",
     "drag_controller_unittest.cc",
@@ -241,7 +259,10 @@ service_test("mus_ws_unittests") {
     "focus_controller_unittest.cc",
     "frame_generator_unittest.cc",
     "gpu_host_unittest.cc",
+    "modal_window_controller_unittest.cc",
     "server_window_drawn_tracker_unittest.cc",
+    "test_gpu_host.cc",
+    "test_gpu_host.h",
     "test_server_window_delegate.cc",
     "test_server_window_delegate.h",
     "test_utils.cc",
@@ -268,8 +289,6 @@ service_test("mus_ws_unittests") {
     sources += [ "platform_display_default_unittest.cc" ]
   }
 
-  catalog = ":mus_ws_unittests_catalog"
-
   deps = [
     ":lib",
     ":test_support",
@@ -278,14 +297,15 @@ service_test("mus_ws_unittests") {
     "//base/test:test_support",
     "//cc:cc",
     "//cc:test_support",
+    "//components/viz/service/main",
+    "//components/viz/test:test_support",
     "//gpu/ipc/client",
     "//mojo/public/cpp/bindings:bindings",
+    "//services/service_manager/public/cpp",
     "//services/service_manager/public/cpp:service_test_support",
-    "//services/service_manager/public/cpp:sources",
     "//services/service_manager/public/interfaces",
     "//services/ui/common:mus_common",
     "//services/ui/common:task_runner_test_base",
-    "//services/ui/gpu:gpu",
     "//services/ui/public/cpp",
     "//services/ui/public/interfaces",
     "//testing/gtest",
@@ -301,13 +321,12 @@ service_test("mus_ws_unittests") {
   ]
 }
 
-service_manifest("mus_ws_unittests_app_manifest") {
-  name = "mus_ws_unittests_app"
-  source = "mus_ws_unittests_app_manifest.json"
+service_manifest("unittests_manifest") {
+  name = "ui_service_unittests"
+  source = "test_manifest.json"
 }
 
-catalog("mus_ws_unittests_catalog") {
-  embedded_services = [ ":mus_ws_unittests_app_manifest" ]
-
-  standalone_services = [ "//services/ui:manifest" ]
+catalog("tests_catalog") {
+  testonly = true
+  embedded_services = [ ":unittests_manifest" ]
 }

@@ -21,9 +21,9 @@
 #ifndef StyleSheetList_h
 #define StyleSheetList_h
 
-#include "bindings/core/v8/TraceWrapperMember.h"
 #include "core/css/CSSStyleSheet.h"
 #include "core/dom/TreeScope.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/Vector.h"
@@ -33,9 +33,7 @@ namespace blink {
 class HTMLStyleElement;
 class StyleSheet;
 
-class CORE_EXPORT StyleSheetList final
-    : public GarbageCollected<StyleSheetList>,
-      public ScriptWrappable {
+class CORE_EXPORT StyleSheetList final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -54,7 +52,7 @@ class CORE_EXPORT StyleSheetList final
 
   CSSStyleSheet* AnonymousNamedGetter(const AtomicString&);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   explicit StyleSheetList(TreeScope*);

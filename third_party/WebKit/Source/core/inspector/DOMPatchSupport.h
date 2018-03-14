@@ -31,10 +31,11 @@
 #ifndef DOMPatchSupport_h
 #define DOMPatchSupport_h
 
+#include "base/macros.h"
 #include "platform/heap/Handle.h"
-#include "wtf/HashMap.h"
-#include "wtf/Vector.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/HashMap.h"
+#include "platform/wtf/Vector.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -46,11 +47,8 @@ class Node;
 
 class DOMPatchSupport final {
   STACK_ALLOCATED();
-  WTF_MAKE_NONCOPYABLE(DOMPatchSupport);
 
  public:
-  static void PatchDocument(Document&, const String& markup);
-
   DOMPatchSupport(DOMEditor*, Document&);
 
   void PatchDocument(const String& markup);
@@ -60,7 +58,7 @@ class DOMPatchSupport final {
   class Digest : public GarbageCollectedFinalized<Digest> {
    public:
     explicit Digest(Node* node) : node_(node) {}
-    DECLARE_TRACE();
+    void Trace(blink::Visitor*);
 
     String sha1_;
     String attrs_sha1_;
@@ -86,15 +84,14 @@ class DOMPatchSupport final {
                                  ExceptionState&);
   bool RemoveChildAndMoveToNew(Digest*, ExceptionState&);
   void MarkNodeAsUsed(Digest*);
-#ifdef DEBUG_DOM_PATCH_SUPPORT
-  void dumpMap(const ResultMap&, const String& name);
-#endif
   Document& GetDocument() const { return *document_; }
 
   Member<DOMEditor> dom_editor_;
   Member<Document> document_;
 
   UnusedNodesMap unused_nodes_map_;
+
+  DISALLOW_COPY_AND_ASSIGN(DOMPatchSupport);
 };
 
 }  // namespace blink

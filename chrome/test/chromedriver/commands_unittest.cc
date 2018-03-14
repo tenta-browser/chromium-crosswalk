@@ -16,6 +16,7 @@
 #include "base/files/file_path.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
@@ -72,8 +73,8 @@ void ExecuteStubGetSession(int* count,
   std::unique_ptr<base::DictionaryValue> capabilities(
       new base::DictionaryValue());
 
-  capabilities->Set("capability1", new base::Value("test1"));
-  capabilities->Set("capability2", new base::Value("test2"));
+  capabilities->SetString("capability1", "test1");
+  capabilities->SetString("capability2", "test2");
 
   callback.Run(Status(kOk), std::move(capabilities), session_id, false);
 }
@@ -230,7 +231,7 @@ TEST(CommandsTest, ExecuteSessionCommand) {
   std::string id("id");
   thread->task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(&internal::CreateSessionOnSessionThreadForTesting, id));
+      base::BindOnce(&internal::CreateSessionOnSessionThreadForTesting, id));
   map[id] = thread;
 
   base::DictionaryValue params;
@@ -718,7 +719,7 @@ TEST(CommandsTest, SuccessNotifyingCommandListeners) {
   std::string id("id");
   thread->task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(&internal::CreateSessionOnSessionThreadForTesting, id));
+      base::BindOnce(&internal::CreateSessionOnSessionThreadForTesting, id));
 
   map[id] = thread;
 
@@ -809,7 +810,7 @@ TEST(CommandsTest, ErrorNotifyingCommandListeners) {
   std::string id("id");
   thread->task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(&internal::CreateSessionOnSessionThreadForTesting, id));
+      base::BindOnce(&internal::CreateSessionOnSessionThreadForTesting, id));
   map[id] = thread;
 
   // In SuccessNotifyingCommandListenersBeforeCommand, we verified BeforeCommand
@@ -817,8 +818,8 @@ TEST(CommandsTest, ErrorNotifyingCommandListeners) {
   // verify this again, so we can just add |listener| with PostTask.
   auto listener = base::MakeUnique<FailingCommandListener>();
   thread->task_runner()->PostTask(
-      FROM_HERE, base::Bind(&AddListenerToSessionIfSessionExists,
-                            base::Passed(&listener)));
+      FROM_HERE, base::BindOnce(&AddListenerToSessionIfSessionExists,
+                                base::Passed(&listener)));
 
   base::DictionaryValue params;
   // The command should never be executed if BeforeCommand fails for a listener.
@@ -837,5 +838,5 @@ TEST(CommandsTest, ErrorNotifyingCommandListeners) {
   run_loop.Run();
 
   thread->task_runner()->PostTask(FROM_HERE,
-                                  base::Bind(&VerifySessionWasDeleted));
+                                  base::BindOnce(&VerifySessionWasDeleted));
 }

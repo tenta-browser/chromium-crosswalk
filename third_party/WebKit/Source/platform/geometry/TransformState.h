@@ -95,7 +95,7 @@ class PLATFORM_EXPORT TransformState {
     // FIXME: this assumes that the quad being added is in the coordinate system
     // of the current state.  This breaks if we're simultaneously mapping a
     // point.  https://bugs.webkit.org/show_bug.cgi?id=106680
-    ASSERT(!map_point_);
+    DCHECK(!map_point_);
     accumulated_offset_ = LayoutSize();
     last_planar_quad_ = quad;
   }
@@ -117,19 +117,19 @@ class PLATFORM_EXPORT TransformState {
   }
   void ApplyTransform(const AffineTransform& transform_from_container,
                       TransformAccumulation = kFlattenTransform,
-                      bool* was_clamped = 0);
+                      bool* was_clamped = nullptr);
   void ApplyTransform(const TransformationMatrix& transform_from_container,
                       TransformAccumulation = kFlattenTransform,
-                      bool* was_clamped = 0);
-  void Flatten(bool* was_clamped = 0);
+                      bool* was_clamped = nullptr);
+  void Flatten(bool* was_clamped = nullptr);
 
   // Return the coords of the point or quad in the last flattened layer
   FloatPoint LastPlanarPoint() const { return last_planar_point_; }
   FloatQuad LastPlanarQuad() const { return last_planar_quad_; }
 
   // Return the point or quad mapped through the current transform
-  FloatPoint MappedPoint(bool* was_clamped = 0) const;
-  FloatQuad MappedQuad(bool* was_clamped = 0) const;
+  FloatPoint MappedPoint(bool* was_clamped = nullptr) const;
+  FloatQuad MappedQuad(bool* was_clamped = nullptr) const;
 
   // Return the accumulated transform.
   const TransformationMatrix& AccumulatedTransform() const;

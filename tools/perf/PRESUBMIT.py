@@ -9,16 +9,18 @@ for more details about the presubmit API built into depot_tools.
 """
 
 import os
-import sys
 
 
 def _CommonChecks(input_api, output_api):
   """Performs common checks, which includes running pylint."""
   results = []
 
+  _UpdatePerfData(input_api)
+  results.extend(_CheckNoUncommittedFiles(input_api, output_api))
+
   results.extend(_CheckWprShaFiles(input_api, output_api))
   results.extend(_CheckJson(input_api, output_api))
-  results.extend(_CheckPerfJsonUpToDate(input_api, output_api))
+  results.extend(_CheckExpectations(input_api, output_api))
   results.extend(input_api.RunTests(input_api.canned_checks.GetPylint(
       input_api, output_api, extra_paths_list=_GetPathsToPrepend(input_api),
       pylintrc='pylintrc')))
@@ -34,11 +36,17 @@ def _GetPathsToPrepend(input_api):
       chromium_src_dir, 'third_party', 'catapult', 'experimental')
   tracing_dir = input_api.os_path.join(
       chromium_src_dir, 'third_party', 'catapult', 'tracing')
+  py_utils_dir = input_api.os_path.join(
+      chromium_src_dir, 'third_party', 'catapult', 'common', 'py_utils')
+  android_pylib_dir = input_api.os_path.join(
+      chromium_src_dir, 'build', 'android')
   return [
       telemetry_dir,
       input_api.os_path.join(telemetry_dir, 'third_party', 'mock'),
       experimental_dir,
       tracing_dir,
+      py_utils_dir,
+      android_pylib_dir,
   ]
 
 
@@ -49,50 +57,46 @@ def _RunArgs(args, input_api):
   return (out, p.returncode)
 
 
-def _CheckPerfJsonUpToDate(input_api, output_api):
+def _CheckExpectations(input_api, output_api):
   results = []
   perf_dir = input_api.PresubmitLocalPath()
   out, return_code = _RunArgs([
       input_api.python_executable,
-      input_api.os_path.join(perf_dir, 'generate_perf_data'),
-      '--validate-only'], input_api)
+      input_api.os_path.join(perf_dir, 'validate_story_expectation_data')],
+      input_api)
   if return_code:
-      results.append(output_api.PresubmitError(
-          'Validating Perf JSON configs failed.', long_text=out))
+    results.append(output_api.PresubmitError(
+        'Validating story expectation data failed.', long_text=out))
   return results
+
+
+def _UpdatePerfData(input_api):
+  perf_dir = input_api.PresubmitLocalPath()
+  _RunArgs([
+      input_api.python_executable,
+      input_api.os_path.join(perf_dir, 'generate_perf_data')], input_api)
 
 
 def _CheckWprShaFiles(input_api, output_api):
   """Check whether the wpr sha files have matching URLs."""
-  old_sys_path = sys.path
-  try:
-    perf_dir = input_api.PresubmitLocalPath()
-    py_utils_path = os.path.abspath(os.path.join(
-        perf_dir, '..', '..', 'third_party', 'catapult', 'common', 'py_utils'))
-    sys.path.insert(1, py_utils_path)
-    from py_utils import cloud_storage  # pylint: disable=import-error
-  finally:
-    sys.path = old_sys_path
+  perf_dir = input_api.PresubmitLocalPath()
 
   results = []
+  wpr_archive_shas = []
   for affected_file in input_api.AffectedFiles(include_deletes=False):
     filename = affected_file.AbsoluteLocalPath()
-    if not filename.endswith('wpr.sha1'):
+    if not filename.endswith('.sha1'):
       continue
-    expected_hash = cloud_storage.ReadHash(filename)
-    is_wpr_file_uploaded = any(
-        cloud_storage.Exists(bucket, expected_hash)
-        for bucket in cloud_storage.BUCKET_ALIASES.itervalues())
-    if not is_wpr_file_uploaded:
-      wpr_filename = filename[:-5]
-      results.append(output_api.PresubmitError(
-          'The file matching %s is not in Cloud Storage yet.\n'
-          'You can upload your new WPR archive file with the command:\n'
-          'depot_tools/upload_to_google_storage.py --bucket '
-          '<Your pageset\'s bucket> %s.\nFor more info: see '
-          'http://www.chromium.org/developers/telemetry/'
-          'record_a_page_set#TOC-Upload-the-recording-to-Cloud-Storage' %
-          (filename, wpr_filename)))
+    wpr_archive_shas.append(filename)
+
+  out, return_code = _RunArgs([
+      input_api.python_executable,
+      input_api.os_path.join(perf_dir, 'validate_wpr_archives')] +
+      wpr_archive_shas,
+      input_api)
+  if return_code:
+    results.append(output_api.PresubmitError(
+        'Validating WPR archives failed:', long_text=out))
   return results
 
 
@@ -107,6 +111,18 @@ def _CheckJson(input_api, output_api):
     except ValueError:
       return [output_api.PresubmitError('Error parsing JSON in %s!' % filename)]
   return []
+
+
+def _CheckNoUncommittedFiles(input_api, output_api):
+  """Ensures that uncommitted updated files will block presubmit."""
+  results = []
+  diff_text = _RunArgs(['git', 'diff', '--name-only'], input_api)[0]
+
+  if diff_text != "":
+    results.append(output_api.PresubmitError(
+        ('Please add the following changed files to your git client: %s' %
+             diff_text)))
+  return results
 
 
 def CheckChangeOnUpload(input_api, output_api):

@@ -4,6 +4,7 @@
 
 import("//build/config/ui.gni")
 import("//chrome/common/features.gni")
+import("//components/nacl/features.gni")
 import("//ppapi/features/features.gni")
 import("//printing/features/features.gni")
 import("//services/catalog/public/tools/catalog.gni")
@@ -17,8 +18,7 @@ source_set("command_ids") {
   ]
 }
 
-# Shared by //chrome/browser and //chrome/app/mash. Not in //chrome/common
-# because it isn't shared with processes like renderer, utility, etc.
+# TODO: put back in chrome/browser if necessary. http://crbug.com/771801.
 source_set("shutdown_signal_handlers") {
   sources = [
     "shutdown_signal_handlers_posix.cc",
@@ -316,6 +316,7 @@ static_library("test_support") {
 
   deps = [
     "//base",
+    "//chrome/app:shutdown_signal_handlers",
     "//chrome/browser",
     "//chrome/browser/policy:path_parser",
     "//chrome/child",
@@ -323,16 +324,26 @@ static_library("test_support") {
     "//chrome/gpu",
     "//chrome/renderer",
     "//chrome/utility",
-    "//components/crash/content/app",
-    "//components/crash/content/app:lib",
+    "//components/nacl/common:features",
     "//components/startup_metric_utils/browser:lib",
     "//content/public/app:both",
     "//content/public/common",
+    "//content/public/common:service_names",
     "//pdf",
     "//ppapi/features",
     "//printing/features",
+    "//services/service_manager/embedder",
     "//ui/base",
+    "//v8:v8_headers",
   ]
+
+  if (!is_fuchsia) {
+    # TODO(crbug.com/753619): Enable crash reporting on Fuchsia.
+    deps += [
+      "//components/crash/content/app",
+      "//components/crash/content/app:test_support",
+    ]
+  }
 
   if (is_mac) {
     sources += [ "chrome_main_mac.mm" ]
@@ -344,6 +355,7 @@ static_library("test_support") {
     deps += [
       "//chrome:chrome_initial",
       "//chrome/install_static:install_static_util",
+      "//chrome_elf:test_stubs",
       "//sandbox/win:sandbox",
     ]
   }
@@ -361,13 +373,55 @@ static_library("test_support") {
       "//components/nacl/renderer/plugin:nacl_trusted_plugin",
     ]
   }
+
+  if (enable_mus) {
+    deps += [
+      "//mash/common",
+      "//mash/quick_launch/public/interfaces:constants",
+      "//services/ui/public/interfaces:constants",
+    ]
+  }
 }
 
-chrome_packaged_services = [ ":chrome_manifest" ]
+chrome_packaged_services = [
+  ":chrome_manifest",
+  "//chrome/profiling:manifest",
+  "//components/patch_service:manifest",
+  "//chrome/services/file_util:manifest",
+  "//services/metrics:manifest",
+  "//services/proxy_resolver:proxy_resolver_manifest",
+  "//services/preferences:local_state_manifest",
+]
+
+if (enable_print_preview) {
+  chrome_packaged_services +=
+      [ "//chrome/utility:pdf_to_pwg_raster_converter_manifest" ]
+}
+
+if (enable_basic_printing || enable_print_preview) {
+  chrome_packaged_services +=
+      [ "//components/printing/service:pdf_compositor_manifest" ]
+}
+
+if (enable_extensions) {
+  chrome_packaged_services +=
+      [ "//chrome/services/media_gallery_util:manifest" ]
+}
 
 if (is_chromeos) {
   chrome_packaged_services +=
-      [ "//chrome/browser:preferences_forwarder_manifest" ]
+      [ "//chrome/browser/chromeos:ash_pref_connector_manifest" ]
+}
+
+if (is_win) {
+  chrome_packaged_services += [
+    "//chrome/services/util_win:manifest",
+    "//chrome/services/wifi_util_win:manifest",
+  ]
+}
+
+if (!is_android) {
+  chrome_packaged_services += [ "//chrome/utility:profile_import_manifest" ]
 }
 
 service_manifest("chrome_manifest") {
@@ -384,8 +438,16 @@ service_manifest("chrome_content_packaged_services_manifest_overlay") {
   source =
       "//chrome/browser/chrome_content_packaged_services_manifest_overlay.json"
   packaged_services = chrome_packaged_services
+  if (enable_mus) {
+    packaged_services += [ "//mash/quick_launch:manifest" ]
+  }
   if (is_chromeos) {
-    packaged_services += [ "//ash/mus:manifest" ]
+    packaged_services += [
+      "//ash/autoclick/mus:manifest",
+      "//ash:manifest",
+      "//ash/touch_hud/mus:manifest",
+      "//components/font_service:manifest",
+    ]
   }
 }
 
@@ -395,6 +457,10 @@ service_manifest("chrome_content_browser_manifest_overlay") {
     "//services/identity:manifest",
     "//services/preferences:manifest",
   ]
+}
+
+service_manifest("chrome_test_browser_overlay") {
+  source = "//chrome/browser/chrome_test_browser_overlay.json"
 }
 
 service_manifest("chrome_content_gpu_manifest_overlay") {
@@ -423,7 +489,7 @@ group("chrome_content_manifest_overlays") {
     ":chrome_content_utility_manifest_overlay",
   ]
 
-  if (enable_package_mash_services) {
+  if (enable_mus) {
     deps += [ ":chrome_content_packaged_services_manifest_overlay_for_mash" ]
   }
 }
@@ -448,6 +514,11 @@ if (use_aura) {
   service_manifest("chrome_content_browser_manifest") {
     source_manifest = "//content/public/app:browser_manifest"
     overlays = [ ":chrome_content_browser_manifest_overlay" ]
+  }
+
+  service_manifest("chrome_test_browser_manifest") {
+    source_manifest = ":chrome_content_browser_manifest"
+    overlays = [ ":chrome_test_browser_overlay" ]
   }
 
   service_manifest("chrome_content_gpu_manifest") {
@@ -479,7 +550,7 @@ if (use_aura) {
       ":chrome_content_utility_manifest",
     ]
 
-    if (enable_package_mash_services) {
+    if (enable_mus) {
       deps += [ ":chrome_content_packaged_services_manifest_for_mash" ]
     }
   }
@@ -492,16 +563,22 @@ if (use_aura) {
     ":chrome_content_utility_manifest",
   ]
 
-  if (enable_package_mash_services) {
-    catalog("catalog_for_mus") {
-      embedded_services =
-          chrome_embedded_services +
-          [ ":chrome_content_packaged_services_manifest_for_mash" ]
-    }
-  }
-
   catalog("catalog") {
     embedded_services = chrome_embedded_services +
                         [ ":chrome_content_packaged_services_manifest" ]
+  }
+
+  catalog("catalog_for_mash") {
+    embedded_services =
+        chrome_embedded_services +
+        [ ":chrome_content_packaged_services_manifest_for_mash" ]
+  }
+
+  catalog("catalog_for_tests_mash") {
+    embedded_services = chrome_embedded_services + [
+                          ":chrome_content_packaged_services_manifest_for_mash",
+                          ":chrome_test_browser_manifest",
+                        ]
+    embedded_services -= [ ":chrome_content_browser_manifest" ]
   }
 }

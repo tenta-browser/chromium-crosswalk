@@ -4,9 +4,10 @@
 
 #include "modules/encryptedmedia/MediaKeyStatusMap.h"
 
-#include "bindings/core/v8/ArrayBufferOrArrayBufferView.h"
-#include "core/dom/DOMArrayBuffer.h"
-#include "core/dom/DOMArrayPiece.h"
+#include "bindings/core/v8/array_buffer_or_array_buffer_view.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
+#include "core/typed_arrays/DOMArrayPiece.h"
+#include "platform/SharedBuffer.h"
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/WebData.h"
 
@@ -56,11 +57,11 @@ class MediaKeyStatusMap::MapEntry final
     return a->KeyId()->ByteLength() < b->KeyId()->ByteLength();
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() { visitor->Trace(key_id_); }
+  virtual void Trace(blink::Visitor* visitor) { visitor->Trace(key_id_); }
 
  private:
   MapEntry(WebData key_id, const String& status)
-      : key_id_(DOMArrayBuffer::Create(key_id.Data(), key_id.size())),
+      : key_id_(DOMArrayBuffer::Create(scoped_refptr<SharedBuffer>(key_id))),
         status_(status) {}
 
   const Member<DOMArrayBuffer> key_id_;
@@ -84,12 +85,12 @@ class MapIterationSource final
       return false;
 
     const auto& entry = map_->at(current_++);
-    key.setArrayBuffer(entry.KeyId());
+    key.SetArrayBuffer(entry.KeyId());
     value = entry.Status();
     return true;
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(map_);
     PairIterable<ArrayBufferOrArrayBufferView, String>::IterationSource::Trace(
         visitor);
@@ -103,7 +104,7 @@ class MapIterationSource final
 };
 
 void MediaKeyStatusMap::Clear() {
-  entries_.Clear();
+  entries_.clear();
 }
 
 void MediaKeyStatusMap::AddEntry(WebData key_id, const String& status) {
@@ -123,7 +124,7 @@ const MediaKeyStatusMap::MapEntry& MediaKeyStatusMap::at(size_t index) const {
 
 size_t MediaKeyStatusMap::IndexOf(const DOMArrayPiece& key) const {
   for (size_t index = 0; index < entries_.size(); ++index) {
-    const auto& current = entries_.at(index)->KeyId();
+    auto* const current = entries_.at(index)->KeyId();
     if (key == *current)
       return index;
   }
@@ -151,8 +152,9 @@ MediaKeyStatusMap::StartIteration(ScriptState*, ExceptionState&) {
   return new MapIterationSource(this);
 }
 
-DEFINE_TRACE(MediaKeyStatusMap) {
+void MediaKeyStatusMap::Trace(blink::Visitor* visitor) {
   visitor->Trace(entries_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

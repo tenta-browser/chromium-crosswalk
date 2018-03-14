@@ -4,14 +4,21 @@
 
 #include "chromeos/components/tether/connect_tethering_operation.h"
 
-#include "chromeos/components/tether/host_scan_device_prioritizer.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/time/default_clock.h"
 #include "chromeos/components/tether/message_wrapper.h"
 #include "chromeos/components/tether/proto/tether.pb.h"
+#include "chromeos/components/tether/tether_host_response_recorder.h"
 #include "components/proximity_auth/logging/logging.h"
 
 namespace chromeos {
 
 namespace tether {
+
+// This value is quite large because first time
+// setup can take a long time.
+// static
+uint32_t ConnectTetheringOperation::kSetupRequiredResponseTimeoutSeconds = 90;
 
 // static
 ConnectTetheringOperation::Factory*
@@ -22,12 +29,14 @@ std::unique_ptr<ConnectTetheringOperation>
 ConnectTetheringOperation::Factory::NewInstance(
     const cryptauth::RemoteDevice& device_to_connect,
     BleConnectionManager* connection_manager,
-    HostScanDevicePrioritizer* host_scan_device_prioritizer) {
+    TetherHostResponseRecorder* tether_host_response_recorder,
+    bool setup_required) {
   if (!factory_instance_) {
     factory_instance_ = new Factory();
   }
   return factory_instance_->BuildInstance(device_to_connect, connection_manager,
-                                          host_scan_device_prioritizer);
+                                          tether_host_response_recorder,
+                                          setup_required);
 }
 
 // static
@@ -40,25 +49,30 @@ std::unique_ptr<ConnectTetheringOperation>
 ConnectTetheringOperation::Factory::BuildInstance(
     const cryptauth::RemoteDevice& device_to_connect,
     BleConnectionManager* connection_manager,
-    HostScanDevicePrioritizer* host_scan_device_prioritizer) {
+    TetherHostResponseRecorder* tether_host_response_recorder,
+    bool setup_required) {
   return base::MakeUnique<ConnectTetheringOperation>(
-      device_to_connect, connection_manager, host_scan_device_prioritizer);
+      device_to_connect, connection_manager, tether_host_response_recorder,
+      setup_required);
 }
 
 ConnectTetheringOperation::ConnectTetheringOperation(
     const cryptauth::RemoteDevice& device_to_connect,
     BleConnectionManager* connection_manager,
-    HostScanDevicePrioritizer* host_scan_device_prioritizer)
+    TetherHostResponseRecorder* tether_host_response_recorder,
+    bool setup_required)
     : MessageTransferOperation(
           std::vector<cryptauth::RemoteDevice>{device_to_connect},
           connection_manager),
       remote_device_(device_to_connect),
-      host_scan_device_prioritizer_(host_scan_device_prioritizer),
+      tether_host_response_recorder_(tether_host_response_recorder),
+      clock_(base::MakeUnique<base::DefaultClock>()),
+      setup_required_(setup_required),
       error_code_to_return_(
           ConnectTetheringResponse_ResponseCode::
               ConnectTetheringResponse_ResponseCode_UNKNOWN_ERROR) {}
 
-ConnectTetheringOperation::~ConnectTetheringOperation() {}
+ConnectTetheringOperation::~ConnectTetheringOperation() = default;
 
 void ConnectTetheringOperation::AddObserver(Observer* observer) {
   observer_list_.AddObserver(observer);
@@ -71,8 +85,10 @@ void ConnectTetheringOperation::RemoveObserver(Observer* observer) {
 void ConnectTetheringOperation::OnDeviceAuthenticated(
     const cryptauth::RemoteDevice& remote_device) {
   DCHECK(remote_devices().size() == 1u && remote_devices()[0] == remote_device);
-  SendMessageToDevice(remote_device, base::MakeUnique<MessageWrapper>(
-                                         ConnectTetheringRequest()));
+  connect_tethering_request_start_time_ = clock_->Now();
+  connect_message_sequence_number_ = SendMessageToDevice(
+      remote_device,
+      base::MakeUnique<MessageWrapper>(ConnectTetheringRequest()));
 }
 
 void ConnectTetheringOperation::OnMessageReceived(
@@ -101,7 +117,7 @@ void ConnectTetheringOperation::OnMessageReceived(
                    << response->ssid() << "\", password: \""
                    << response->password() << "\"}";
 
-      host_scan_device_prioritizer_->RecordSuccessfulConnectTetheringResponse(
+      tether_host_response_recorder_->RecordSuccessfulConnectTetheringResponse(
           remote_device);
 
       ssid_to_return_ = response->ssid();
@@ -118,6 +134,14 @@ void ConnectTetheringOperation::OnMessageReceived(
                  << "response_code == " << response->response_code() << ".";
     error_code_to_return_ = response->response_code();
   }
+
+  // UMA_HISTOGRAM_MEDIUM_TIMES is used because UMA_HISTOGRAM_TIMES has a max
+  // of 10 seconds, and it can take up to 90 seconds for a
+  // ConnectTetheringResponse.
+  DCHECK(!connect_tethering_request_start_time_.is_null());
+  UMA_HISTOGRAM_MEDIUM_TIMES(
+      "InstantTethering.Performance.ConnectTetheringResponseDuration",
+      clock_->Now() - connect_tethering_request_start_time_);
 
   // Now that a response has been received, the device can be unregistered.
   UnregisterDevice(remote_device);
@@ -143,6 +167,18 @@ MessageType ConnectTetheringOperation::GetMessageTypeForConnection() {
   return MessageType::CONNECT_TETHERING_REQUEST;
 }
 
+void ConnectTetheringOperation::OnMessageSent(int sequence_number) {
+  if (sequence_number != connect_message_sequence_number_)
+    return;
+
+  NotifyConnectTetheringRequestSent();
+}
+
+void ConnectTetheringOperation::NotifyConnectTetheringRequestSent() {
+  for (auto& observer : observer_list_)
+    observer.OnConnectTetheringRequestSent(remote_device_);
+}
+
 void ConnectTetheringOperation::NotifyObserversOfSuccessfulResponse(
     const std::string& ssid,
     const std::string& password) {
@@ -154,9 +190,19 @@ void ConnectTetheringOperation::NotifyObserversOfSuccessfulResponse(
 
 void ConnectTetheringOperation::NotifyObserversOfConnectionFailure(
     ConnectTetheringResponse_ResponseCode error_code) {
-  for (auto& observer : observer_list_) {
+  for (auto& observer : observer_list_)
     observer.OnConnectTetheringFailure(remote_device_, error_code);
-  }
+}
+
+uint32_t ConnectTetheringOperation::GetTimeoutSeconds() {
+  return (setup_required_)
+             ? ConnectTetheringOperation::kSetupRequiredResponseTimeoutSeconds
+             : MessageTransferOperation::GetTimeoutSeconds();
+}
+
+void ConnectTetheringOperation::SetClockForTest(
+    std::unique_ptr<base::Clock> clock_for_test) {
+  clock_ = std::move(clock_for_test);
 }
 
 }  // namespace tether

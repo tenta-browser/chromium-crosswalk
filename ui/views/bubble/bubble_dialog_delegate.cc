@@ -4,6 +4,8 @@
 
 #include "ui/views/bubble/bubble_dialog_delegate.h"
 
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/default_style.h"
@@ -13,10 +15,9 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/bubble/bubble_frame_view.h"
-#include "ui/views/focus/view_storage.h"
-#include "ui/views/layout/layout_constants.h"
 #include "ui/views/layout/layout_provider.h"
 #include "ui/views/style/platform_style.h"
+#include "ui/views/view_tracker.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
 #include "ui/views/window/dialog_client_view.h"
@@ -97,17 +98,17 @@ bool BubbleDialogDelegateView::ShouldShowCloseButton() const {
 
 ClientView* BubbleDialogDelegateView::CreateClientView(Widget* widget) {
   DialogClientView* client = new DialogClientView(widget, GetContentsView());
-  client->SetButtonRowInsets(gfx::Insets());
   widget->non_client_view()->set_mirror_client_in_rtl(mirror_arrow_in_rtl_);
   return client;
 }
 
 NonClientFrameView* BubbleDialogDelegateView::CreateNonClientFrameView(
     Widget* widget) {
-  BubbleFrameView* frame = new BubbleFrameView(title_margins_, margins_);
-  // Note: In CreateBubble, the call to SizeToContents() will cause
-  // the relayout that this call requires.
-  frame->SetTitleFontList(GetTitleFontList());
+  BubbleFrameView* frame = new BubbleFrameView(title_margins_, gfx::Insets());
+
+  // By default, assume the footnote only contains text.
+  frame->set_footnote_margins(
+      LayoutProvider::Get()->GetDialogInsetsForContentType(TEXT, TEXT));
   frame->SetFootnoteView(CreateFootnoteView());
 
   BubbleBorder::Arrow adjusted_arrow = arrow();
@@ -146,8 +147,17 @@ void BubbleDialogDelegateView::OnWidgetVisibilityChanged(Widget* widget,
 
 void BubbleDialogDelegateView::OnWidgetActivationChanged(Widget* widget,
                                                          bool active) {
-  if (close_on_deactivate() && widget == GetWidget() && !active)
-    GetWidget()->Close();
+#if defined(OS_MACOSX)
+  // Install |mac_bubble_closer_| the first time the widget becomes active.
+  if (active && !mac_bubble_closer_ && GetWidget()) {
+    mac_bubble_closer_ = std::make_unique<ui::BubbleCloser>(
+        GetWidget()->GetNativeWindow(),
+        base::BindRepeating(&BubbleDialogDelegateView::OnDeactivate,
+                            base::Unretained(this)));
+  }
+#endif
+  if (widget == GetWidget() && !active)
+    OnDeactivate();
 }
 
 void BubbleDialogDelegateView::OnWidgetBoundsChanged(
@@ -158,7 +168,7 @@ void BubbleDialogDelegateView::OnWidgetBoundsChanged(
 }
 
 View* BubbleDialogDelegateView::GetAnchorView() const {
-  return ViewStorage::GetInstance()->RetrieveView(anchor_view_storage_id_);
+  return anchor_view_tracker_->view();
 }
 
 gfx::Rect BubbleDialogDelegateView::GetAnchorRect() const {
@@ -176,7 +186,7 @@ void BubbleDialogDelegateView::OnBeforeBubbleWidgetInit(
 
 void BubbleDialogDelegateView::UseCompactMargins() {
   const int kCompactMargin = 6;
-  margins_.Set(kCompactMargin, kCompactMargin, kCompactMargin, kCompactMargin);
+  set_margins(gfx::Insets(kCompactMargin));
 }
 
 void BubbleDialogDelegateView::SetAlignment(
@@ -206,21 +216,24 @@ BubbleDialogDelegateView::BubbleDialogDelegateView()
 BubbleDialogDelegateView::BubbleDialogDelegateView(View* anchor_view,
                                                    BubbleBorder::Arrow arrow)
     : close_on_deactivate_(true),
-      anchor_view_storage_id_(ViewStorage::GetInstance()->CreateStorageID()),
-      anchor_widget_(NULL),
+      anchor_view_tracker_(std::make_unique<ViewTracker>()),
+      anchor_widget_(nullptr),
       arrow_(arrow),
       mirror_arrow_in_rtl_(PlatformStyle::kMirrorBubbleArrowInRTLByDefault),
-      shadow_(BubbleBorder::SMALL_SHADOW),
+      shadow_(BubbleBorder::DIALOG_SHADOW),
       color_explicitly_set_(false),
       accept_events_(true),
       adjust_if_offscreen_(true),
-      parent_window_(NULL) {
+      parent_window_(nullptr) {
   LayoutProvider* provider = LayoutProvider::Get();
-  margins_ = provider->GetInsetsMetric(INSETS_BUBBLE_CONTENTS);
+  // An individual bubble should override these margins if its layout differs
+  // from the typical title/text/buttons.
+  set_margins(provider->GetDialogInsetsForContentType(TEXT, TEXT));
   title_margins_ = provider->GetInsetsMetric(INSETS_DIALOG_TITLE);
   if (anchor_view)
     SetAnchorView(anchor_view);
   UpdateColorsFromTheme(GetNativeTheme());
+  UMA_HISTOGRAM_BOOLEAN("Dialog.BubbleDialogDelegateView.Create", true);
 }
 
 gfx::Rect BubbleDialogDelegateView::GetBubbleBounds() {
@@ -230,13 +243,6 @@ gfx::Rect BubbleDialogDelegateView::GetBubbleBounds() {
   return GetBubbleFrameView()->GetUpdatedWindowBounds(
       GetAnchorRect(), GetWidget()->client_view()->GetPreferredSize(),
       adjust_if_offscreen_ && !anchor_minimized);
-}
-
-const gfx::FontList& BubbleDialogDelegateView::GetTitleFontList() const {
-  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
-  if (ui::MaterialDesignController::IsSecondaryUiMaterial())
-    return rb.GetFontListWithDelta(ui::kTitleFontSizeDelta);
-  return rb.GetFontList(ui::ResourceBundle::MediumFont);
 }
 
 void BubbleDialogDelegateView::OnNativeThemeChanged(
@@ -261,12 +267,7 @@ void BubbleDialogDelegateView::SetAnchorView(View* anchor_view) {
     }
   }
 
-  // Remove the old storage item and set the new (if there is one).
-  ViewStorage* view_storage = ViewStorage::GetInstance();
-  if (view_storage->RetrieveView(anchor_view_storage_id_))
-    view_storage->RemoveView(anchor_view_storage_id_);
-  if (anchor_view)
-    view_storage->StoreView(anchor_view_storage_id_, anchor_view);
+  anchor_view_tracker_->SetView(anchor_view);
 
   // Do not update anchoring for NULL views; this could indicate that our
   // NativeWindow is being destroyed, so it would be dangerous for us to update
@@ -302,9 +303,9 @@ void BubbleDialogDelegateView::UpdateColorsFromTheme(
 
   // When there's an opaque layer, the bubble border background won't show
   // through, so explicitly paint a background color.
-  set_background(layer() && layer()->fills_bounds_opaquely()
-                     ? Background::CreateSolidBackground(color())
-                     : nullptr);
+  SetBackground(layer() && layer()->fills_bounds_opaquely()
+                    ? CreateSolidBackground(color())
+                    : nullptr);
 }
 
 void BubbleDialogDelegateView::HandleVisibilityChanged(Widget* widget,
@@ -319,11 +320,14 @@ void BubbleDialogDelegateView::HandleVisibilityChanged(Widget* widget,
   // than just its title and initially focused view.  See
   // http://crbug.com/474622 for details.
   if (widget == GetWidget() && visible) {
-    ui::AXNodeData node_data;
-    GetAccessibleNodeData(&node_data);
-    if (node_data.role == ui::AX_ROLE_ALERT_DIALOG)
-      NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, true);
+    if (GetAccessibleWindowRole() == ui::AX_ROLE_ALERT_DIALOG)
+      widget->GetRootView()->NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, true);
   }
+}
+
+void BubbleDialogDelegateView::OnDeactivate() {
+  if (close_on_deactivate() && GetWidget())
+    GetWidget()->Close();
 }
 
 }  // namespace views

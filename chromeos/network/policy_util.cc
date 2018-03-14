@@ -4,6 +4,7 @@
 
 #include "chromeos/network/policy_util.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/logging.h"
@@ -160,22 +161,15 @@ bool IsAutoConnectEnabledInPolicy(const base::DictionaryValue& policy) {
   return autoconnect;
 }
 
-base::DictionaryValue* GetOrCreateDictionary(const std::string& key,
-                                             base::DictionaryValue* dict) {
-  base::DictionaryValue* inner_dict = NULL;
-  if (!dict->GetDictionaryWithoutPathExpansion(key, &inner_dict)) {
-    inner_dict = new base::DictionaryValue;
-    dict->SetWithoutPathExpansion(key, inner_dict);
-  }
-  return inner_dict;
-}
-
-base::DictionaryValue* GetOrCreateNestedDictionary(
-    const std::string& key1,
-    const std::string& key2,
-    base::DictionaryValue* dict) {
-  base::DictionaryValue* inner_dict = GetOrCreateDictionary(key1, dict);
-  return GetOrCreateDictionary(key2, inner_dict);
+base::Value* GetOrCreateNestedDictionary(const std::string& key1,
+                                         const std::string& key2,
+                                         base::Value* dict) {
+  base::Value* inner_dict =
+      dict->FindPathOfType({key1, key2}, base::Value::Type::DICTIONARY);
+  if (inner_dict)
+    return inner_dict;
+  return dict->SetPath({key1, key2},
+                       base::Value(base::Value::Type::DICTIONARY));
 }
 
 void ApplyGlobalAutoconnectPolicy(
@@ -191,7 +185,7 @@ void ApplyGlobalAutoconnectPolicy(
 
   // Managed dictionaries don't contain empty dictionaries (see onc_merger.cc),
   // so add the Autoconnect dictionary in case Shill didn't report a value.
-  base::DictionaryValue* auto_connect_dictionary = NULL;
+  base::Value* auto_connect_dictionary = nullptr;
   if (type == ::onc::network_type::kWiFi) {
     auto_connect_dictionary =
         GetOrCreateNestedDictionary(::onc::network_config::kWiFi,
@@ -214,9 +208,9 @@ void ApplyGlobalAutoconnectPolicy(
   else
     NOTREACHED();
 
-  auto_connect_dictionary->SetBooleanWithoutPathExpansion(policy_source, false);
-  auto_connect_dictionary->SetStringWithoutPathExpansion(
-      ::onc::kAugmentationEffectiveSetting, policy_source);
+  auto_connect_dictionary->SetKey(policy_source, base::Value(false));
+  auto_connect_dictionary->SetKey(::onc::kAugmentationEffectiveSetting,
+                                  base::Value(policy_source));
 }
 
 }  // namespace
@@ -295,8 +289,8 @@ void SetShillPropertiesForGlobalPolicy(
 
   // If autoconnect is not explicitly set yet, it might automatically be enabled
   // by Shill. To prevent that, disable it explicitly.
-  shill_properties_to_update->SetBooleanWithoutPathExpansion(
-      shill::kAutoConnectProperty, false);
+  shill_properties_to_update->SetKey(shill::kAutoConnectProperty,
+                                     base::Value(false));
 }
 
 std::unique_ptr<base::DictionaryValue> CreateShillConfiguration(
@@ -337,7 +331,7 @@ std::unique_ptr<base::DictionaryValue> CreateShillConfiguration(
   RemoveFakeCredentials(onc::kNetworkConfigurationSignature,
                         effective.get());
 
-  effective->SetStringWithoutPathExpansion(::onc::network_config::kGUID, guid);
+  effective->SetKey(::onc::network_config::kGUID, base::Value(guid));
 
   // Remove irrelevant fields.
   onc::Normalizer normalizer(true /* remove recommended fields */);
@@ -348,8 +342,7 @@ std::unique_ptr<base::DictionaryValue> CreateShillConfiguration(
       onc::TranslateONCObjectToShill(&onc::kNetworkConfigurationSignature,
                                      *effective));
 
-  shill_dictionary->SetStringWithoutPathExpansion(shill::kProfileProperty,
-                                                  profile.path);
+  shill_dictionary->SetKey(shill::kProfileProperty, base::Value(profile.path));
 
   // If AutoConnect is enabled by policy, set the ManagedCredentials property to
   // indicate to Shill that this network can be used for autoconnect even
@@ -362,8 +355,8 @@ std::unique_ptr<base::DictionaryValue> CreateShillConfiguration(
   if (network_policy && IsAutoConnectEnabledInPolicy(*network_policy)) {
     VLOG(1) << "Enable ManagedCredentials for managed network with GUID "
             << guid;
-    shill_dictionary->SetBooleanWithoutPathExpansion(
-        shill::kManagedCredentialsProperty, true);
+    shill_dictionary->SetKey(shill::kManagedCredentialsProperty,
+                             base::Value(true));
   }
 
   if (!network_policy && global_policy) {

@@ -7,7 +7,6 @@
 
 #include <stddef.h>
 
-#include "base/android/jni_android.h"
 #include "base/macros.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/android/contextualsearch/contextual_search_context.h"
@@ -71,14 +70,13 @@ class ContextualSearchManager
   void OnSearchTermResolutionResponse(
       const ResolvedSearchTerm& resolved_search_term);
 
-  // Calls back to Java with the surrounding text to be displayed.
-  void OnSurroundingTextAvailable(const std::string& after_text);
-
-  // Calls back to Java with notification for Icing selection.
-  void OnIcingSelectionAvailable(const std::string& encoding,
-                                 const base::string16& surrounding_text,
-                                 size_t start_offset,
-                                 size_t end_offset);
+  // Calls back to Java with notification when a sample of text surrounding the
+  // selection is available.
+  void OnTextSurroundingSelectionAvailable(
+      const std::string& encoding,
+      const base::string16& surrounding_text,
+      size_t start_offset,
+      size_t end_offset);
 
   // Our global reference to the Java ContextualSearchManager.
   base::android::ScopedJavaGlobalRef<jobject> java_manager_;
@@ -88,7 +86,5 @@ class ContextualSearchManager
 
   DISALLOW_COPY_AND_ASSIGN(ContextualSearchManager);
 };
-
-bool RegisterContextualSearchManager(JNIEnv* env);
 
 #endif  // CHROME_BROWSER_ANDROID_CONTEXTUALSEARCH_CONTEXTUAL_SEARCH_MANAGER_H_

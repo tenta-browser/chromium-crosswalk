@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/dom_distiller/content/browser/distillable_page_utils_android.h"
-
 #include <memory>
 
 #include "base/bind.h"
@@ -35,11 +33,12 @@ void OnIsPageDistillableUpdate(const JavaRef<jobject>& callback,
 }
 }  // namespace
 
-static void IsPageDistillable(JNIEnv* env,
-                              const JavaParamRef<jclass>& jcaller,
-                              const JavaParamRef<jobject>& webContents,
-                              jboolean is_mobile_optimized,
-                              const JavaParamRef<jobject>& callback) {
+static void JNI_DistillablePageUtils_IsPageDistillable(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& jcaller,
+    const JavaParamRef<jobject>& webContents,
+    jboolean is_mobile_optimized,
+    const JavaParamRef<jobject>& callback) {
   content::WebContents* web_contents(
       content::WebContents::FromJavaWebContents(webContents));
 
@@ -55,10 +54,11 @@ static void IsPageDistillable(JNIEnv* env,
                                ScopedJavaGlobalRef<jobject>(env, callback)));
 }
 
-static void SetDelegate(JNIEnv* env,
-                        const JavaParamRef<jclass>& jcaller,
-                        const JavaParamRef<jobject>& webContents,
-                        const JavaParamRef<jobject>& callback) {
+static void JNI_DistillablePageUtils_SetDelegate(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& jcaller,
+    const JavaParamRef<jobject>& webContents,
+    const JavaParamRef<jobject>& callback) {
   content::WebContents* web_contents(
       content::WebContents::FromJavaWebContents(webContents));
   if (!web_contents) {
@@ -68,10 +68,6 @@ static void SetDelegate(JNIEnv* env,
   DistillabilityDelegate delegate = base::Bind(
       OnIsPageDistillableUpdate, ScopedJavaGlobalRef<jobject>(env, callback));
   setDelegate(web_contents, delegate);
-}
-
-bool RegisterDistillablePageUtils(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }

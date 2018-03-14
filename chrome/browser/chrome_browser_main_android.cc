@@ -7,7 +7,7 @@
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/files/file_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/task_scheduler/post_task.h"
 #include "base/trace_event/trace_event.h"
@@ -19,7 +19,9 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/descriptors_android.h"
 #include "components/crash/content/app/breakpad_linux.h"
-#include "components/crash/content/browser/crash_dump_manager_android.h"
+#include "components/crash/content/browser/child_process_crash_observer_android.h"
+#include "components/crash/content/browser/crash_dump_observer_android.h"
+#include "components/metrics/stability_metrics_helper.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "content/public/browser/android/compositor.h"
 #include "content/public/browser/browser_thread.h"
@@ -28,16 +30,6 @@
 #include "net/base/network_change_notifier.h"
 #include "ui/base/resource/resource_bundle_android.h"
 #include "ui/base/ui_base_paths.h"
-
-namespace {
-
-void DeleteFileTask(
-    const base::FilePath& file_path) {
-  if (base::PathExists(file_path))
-    base::DeleteFile(file_path, false);
-}
-
-} // namespace
 
 ChromeBrowserMainPartsAndroid::ChromeBrowserMainPartsAndroid(
     const content::MainFunctionParams& parameters)
@@ -50,11 +42,20 @@ ChromeBrowserMainPartsAndroid::~ChromeBrowserMainPartsAndroid() {
 int ChromeBrowserMainPartsAndroid::PreCreateThreads() {
   TRACE_EVENT0("startup", "ChromeBrowserMainPartsAndroid::PreCreateThreads")
 
-  // The CrashDumpManager must be registered before any child process is
-  // created (as it needs to be notified during child process
-  // creation). Such processes are created on the PROCESS_LAUNCHER
-  // thread, and so the observer is initialized and the manager
-  // registered before that thread is created.
+  // Auto-detect based on en-US whether secondary locale .pak files exist.
+  ui::SetLoadSecondaryLocalePaks(
+      !ui::GetPathForAndroidLocalePakWithinApk("en-US").empty());
+
+  // |g_browser_process| is created in PreCreateThreads(), this has to be done
+  // before accessing |g_browser_process| below when creating
+  // ChildProcessCrashObserver.
+  int result_code = ChromeBrowserMainParts::PreCreateThreads();
+
+  // The ChildProcessCrashObserver must be registered before any child
+  // process is created (as it needs to be notified during child
+  // process creation). Such processes are created on the
+  // PROCESS_LAUNCHER thread, and so the observer is initialized and
+  // the manager registered before that thread is created.
   breakpad::CrashDumpObserver::Create();
 
 #if defined(GOOGLE_CHROME_BUILD)
@@ -75,30 +76,15 @@ int ChromeBrowserMainPartsAndroid::PreCreateThreads() {
     base::FilePath crash_dump_dir;
     PathService::Get(chrome::DIR_CRASH_DUMPS, &crash_dump_dir);
     breakpad::CrashDumpObserver::GetInstance()->RegisterClient(
-        base::MakeUnique<breakpad::CrashDumpManager>(
+        base::MakeUnique<breakpad::ChildProcessCrashObserver>(
             crash_dump_dir, kAndroidMinidumpDescriptor));
   }
 
-  // Auto-detect based on en-US whether locale .pak files are store uncompressed
-  // (monochrome) vs extracted (non-monochrome).
-  ui::SetLocalePaksStoredInApk(
-      !ui::GetPathForAndroidLocalePakWithinApk("en-US").empty());
-
-  return ChromeBrowserMainParts::PreCreateThreads();
+  return result_code;
 }
 
 void ChromeBrowserMainPartsAndroid::PostProfileInit() {
   ChromeBrowserMainParts::PostProfileInit();
-
-  // Previously we stored information related to salient images for bookmarks
-  // in a local file. We replaced the salient images with favicons. As part
-  // of the clean up, the local file needs to be deleted. See crbug.com/499415.
-  base::FilePath bookmark_image_file_path =
-      profile()->GetPath().Append("BookmarkImageAndUrlStore.db");
-  content::BrowserThread::PostDelayedTask(
-      content::BrowserThread::FILE, FROM_HERE,
-      base::Bind(&DeleteFileTask, bookmark_image_file_path),
-      base::TimeDelta::FromMinutes(1));
 
   // Idempotent.  Needs to be called once on startup.  If
   // InitializeClipboardAndroidFromLocalState() is called multiple times (e.g.,
@@ -108,7 +94,7 @@ void ChromeBrowserMainPartsAndroid::PostProfileInit() {
 
   // Start watching the preferences that need to be backed up backup using
   // Android backup, so that we create a new backup if they change.
-  backup_watcher_.reset(new chrome::android::ChromeBackupWatcher(profile()));
+  backup_watcher_.reset(new android::ChromeBackupWatcher(profile()));
 }
 
 void ChromeBrowserMainPartsAndroid::PreEarlyInitialization() {
@@ -144,8 +130,7 @@ void ChromeBrowserMainPartsAndroid::PostBrowserStart() {
   ChromeBrowserMainParts::PostBrowserStart();
 
   base::PostDelayedTaskWithTraits(
-      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                     base::TaskPriority::BACKGROUND),
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
       base::Bind(&ReportSeccompSupport), base::TimeDelta::FromMinutes(1));
 
   RegisterChromeJavaMojoInterfaces();

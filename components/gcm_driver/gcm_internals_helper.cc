@@ -25,7 +25,7 @@ namespace {
 void SetCheckinInfo(const std::vector<gcm::CheckinActivity>& checkins,
                     base::ListValue* checkin_info) {
   for (const gcm::CheckinActivity& checkin : checkins) {
-    std::unique_ptr<base::ListValue> row(new base::ListValue());
+    auto row = std::make_unique<base::ListValue>();
     row->AppendDouble(checkin.time.ToJsTime());
     row->AppendString(checkin.event);
     row->AppendString(checkin.details);
@@ -36,7 +36,7 @@ void SetCheckinInfo(const std::vector<gcm::CheckinActivity>& checkins,
 void SetConnectionInfo(const std::vector<gcm::ConnectionActivity>& connections,
                        base::ListValue* connection_info) {
   for (const gcm::ConnectionActivity& connection : connections) {
-    std::unique_ptr<base::ListValue> row(new base::ListValue());
+    auto row = std::make_unique<base::ListValue>();
     row->AppendDouble(connection.time.ToJsTime());
     row->AppendString(connection.event);
     row->AppendString(connection.details);
@@ -48,7 +48,7 @@ void SetRegistrationInfo(
     const std::vector<gcm::RegistrationActivity>& registrations,
     base::ListValue* registration_info) {
   for (const gcm::RegistrationActivity& registration : registrations) {
-    std::unique_ptr<base::ListValue> row(new base::ListValue());
+    auto row = std::make_unique<base::ListValue>();
     row->AppendDouble(registration.time.ToJsTime());
     row->AppendString(registration.app_id);
     row->AppendString(registration.source);
@@ -61,7 +61,7 @@ void SetRegistrationInfo(
 void SetReceivingInfo(const std::vector<gcm::ReceivingActivity>& receives,
                       base::ListValue* receive_info) {
   for (const gcm::ReceivingActivity& receive : receives) {
-    std::unique_ptr<base::ListValue> row(new base::ListValue());
+    auto row = std::make_unique<base::ListValue>();
     row->AppendDouble(receive.time.ToJsTime());
     row->AppendString(receive.app_id);
     row->AppendString(receive.from);
@@ -75,7 +75,7 @@ void SetReceivingInfo(const std::vector<gcm::ReceivingActivity>& receives,
 void SetSendingInfo(const std::vector<gcm::SendingActivity>& sends,
                     base::ListValue* send_info) {
   for (const gcm::SendingActivity& send : sends) {
-    std::unique_ptr<base::ListValue> row(new base::ListValue());
+    auto row = std::make_unique<base::ListValue>();
     row->AppendDouble(send.time.ToJsTime());
     row->AppendString(send.app_id);
     row->AppendString(send.receiver_id);
@@ -90,7 +90,7 @@ void SetDecryptionFailureInfo(
     const std::vector<gcm::DecryptionFailureActivity>& failures,
     base::ListValue* failure_info) {
   for (const gcm::DecryptionFailureActivity& failure : failures) {
-    std::unique_ptr<base::ListValue> row(new base::ListValue());
+    auto row = std::make_unique<base::ListValue>();
     row->AppendDouble(failure.time.ToJsTime());
     row->AppendString(failure.app_id);
     row->AppendString(failure.details);
@@ -104,10 +104,9 @@ void SetGCMInternalsInfo(const gcm::GCMClient::GCMStatistics* stats,
                          gcm::GCMProfileService* profile_service,
                          PrefService* prefs,
                          base::DictionaryValue* results) {
-  base::DictionaryValue* device_info = new base::DictionaryValue();
-  results->Set(kDeviceInfo, device_info);
+  auto device_info = std::make_unique<base::DictionaryValue>();
 
-  device_info->SetBoolean(kProfileServiceCreated, profile_service != NULL);
+  device_info->SetBoolean(kProfileServiceCreated, profile_service != nullptr);
   device_info->SetBoolean(kGcmEnabled,
                           gcm::GCMProfileService::IsGCMEnabled(prefs));
   if (stats) {
@@ -136,43 +135,45 @@ void SetGCMInternalsInfo(const gcm::GCMClient::GCMStatistics* stats,
     }
     device_info->SetInteger(kSendQueueSize, stats->send_queue_size);
     device_info->SetInteger(kResendQueueSize, stats->resend_queue_size);
+    results->Set(kDeviceInfo, std::move(device_info));
 
     if (stats->recorded_activities.checkin_activities.size() > 0) {
-      base::ListValue* checkin_info = new base::ListValue();
-      results->Set(kCheckinInfo, checkin_info);
+      auto checkin_info = std::make_unique<base::ListValue>();
       SetCheckinInfo(stats->recorded_activities.checkin_activities,
-                     checkin_info);
+                     checkin_info.get());
+      results->Set(kCheckinInfo, std::move(checkin_info));
     }
     if (stats->recorded_activities.connection_activities.size() > 0) {
-      base::ListValue* connection_info = new base::ListValue();
-      results->Set(kConnectionInfo, connection_info);
+      auto connection_info = std::make_unique<base::ListValue>();
       SetConnectionInfo(stats->recorded_activities.connection_activities,
-                        connection_info);
+                        connection_info.get());
+      results->Set(kConnectionInfo, std::move(connection_info));
     }
     if (stats->recorded_activities.registration_activities.size() > 0) {
-      base::ListValue* registration_info = new base::ListValue();
-      results->Set(kRegistrationInfo, registration_info);
+      auto registration_info = std::make_unique<base::ListValue>();
       SetRegistrationInfo(stats->recorded_activities.registration_activities,
-                          registration_info);
+                          registration_info.get());
+      results->Set(kRegistrationInfo, std::move(registration_info));
     }
     if (stats->recorded_activities.receiving_activities.size() > 0) {
-      base::ListValue* receive_info = new base::ListValue();
-      results->Set(kReceiveInfo, receive_info);
+      auto receive_info = std::make_unique<base::ListValue>();
       SetReceivingInfo(stats->recorded_activities.receiving_activities,
-                       receive_info);
+                       receive_info.get());
+      results->Set(kReceiveInfo, std::move(receive_info));
     }
     if (stats->recorded_activities.sending_activities.size() > 0) {
-      base::ListValue* send_info = new base::ListValue();
-      results->Set(kSendInfo, send_info);
-      SetSendingInfo(stats->recorded_activities.sending_activities, send_info);
+      auto send_info = std::make_unique<base::ListValue>();
+      SetSendingInfo(stats->recorded_activities.sending_activities,
+                     send_info.get());
+      results->Set(kSendInfo, std::move(send_info));
     }
 
     if (stats->recorded_activities.decryption_failure_activities.size() > 0) {
-      base::ListValue* failure_info = new base::ListValue();
-      results->Set(kDecryptionFailureInfo, failure_info);
+      auto failure_info = std::make_unique<base::ListValue>();
       SetDecryptionFailureInfo(
           stats->recorded_activities.decryption_failure_activities,
-          failure_info);
+          failure_info.get());
+      results->Set(kDecryptionFailureInfo, std::move(failure_info));
     }
   }
 }

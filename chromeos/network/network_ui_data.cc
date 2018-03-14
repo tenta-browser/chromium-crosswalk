@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 
 namespace chromeos {
@@ -86,8 +87,7 @@ NetworkUIData::NetworkUIData(const base::DictionaryValue& dict) {
     user_settings_.reset(user_settings->DeepCopy());
 }
 
-NetworkUIData::~NetworkUIData() {
-}
+NetworkUIData::~NetworkUIData() = default;
 
 void NetworkUIData::set_user_settings(
     std::unique_ptr<base::DictionaryValue> dict) {
@@ -106,8 +106,7 @@ void NetworkUIData::FillDictionary(base::DictionaryValue* dict) const {
     dict->SetString(kKeyONCSource, source_string);
 
   if (user_settings_)
-    dict->SetWithoutPathExpansion(kKeyUserSettings,
-                                  user_settings_->DeepCopy());
+    dict->SetKey(kKeyUserSettings, user_settings_->Clone());
 }
 
 // static

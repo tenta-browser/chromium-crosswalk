@@ -40,7 +40,9 @@
 #include "core/css/CSSValuePair.h"
 #include "core/css/resolver/StyleBuilderConverter.h"
 #include "core/css/resolver/StyleResolverState.h"
+#include "core/frame/Deprecation.h"
 #include "core/style/BorderImageLengthBox.h"
+#include "core/style/ComputedStyle.h"
 #include "core/style/FillLayer.h"
 
 namespace blink {
@@ -406,9 +408,10 @@ CSSTransitionData::TransitionProperty CSSToStyleMap::MapAnimationProperty(
       CSSTransitionData::kTransitionNone);
 }
 
-PassRefPtr<TimingFunction> CSSToStyleMap::MapAnimationTimingFunction(
+scoped_refptr<TimingFunction> CSSToStyleMap::MapAnimationTimingFunction(
     const CSSValue& value,
-    bool allow_step_middle) {
+    bool allow_step_middle,
+    Document* document) {
   // FIXME: We should probably only call into this function with a valid
   // single timing function value which isn't initial or inherit. We can
   // currently get into here with initial since the parser expands unset
@@ -435,9 +438,15 @@ PassRefPtr<TimingFunction> CSSToStyleMap::MapAnimationTimingFunction(
         return StepsTimingFunction::Preset(
             StepsTimingFunction::StepPosition::START);
       case CSSValueStepMiddle:
-        if (allow_step_middle)
+        if (allow_step_middle) {
+          DCHECK(document);
+          if (document) {
+            Deprecation::CountDeprecation(
+                *document, WebFeature::kDeprecatedTimingFunctionStepMiddle);
+          }
           return StepsTimingFunction::Preset(
               StepsTimingFunction::StepPosition::MIDDLE);
+        }
         return CSSTimingData::InitialTimingFunction();
       case CSSValueStepEnd:
         return StepsTimingFunction::Preset(
@@ -459,12 +468,26 @@ PassRefPtr<TimingFunction> CSSToStyleMap::MapAnimationTimingFunction(
   if (value.IsInitialValue())
     return CSSTimingData::InitialTimingFunction();
 
+  if (value.IsFramesTimingFunctionValue()) {
+    const CSSFramesTimingFunctionValue& frames_timing_function =
+        ToCSSFramesTimingFunctionValue(value);
+    return FramesTimingFunction::Create(
+        frames_timing_function.NumberOfFrames());
+  }
+
   const CSSStepsTimingFunctionValue& steps_timing_function =
       ToCSSStepsTimingFunctionValue(value);
   if (steps_timing_function.GetStepPosition() ==
-          StepsTimingFunction::StepPosition::MIDDLE &&
-      !allow_step_middle)
-    return CSSTimingData::InitialTimingFunction();
+      StepsTimingFunction::StepPosition::MIDDLE) {
+    if (!allow_step_middle) {
+      return CSSTimingData::InitialTimingFunction();
+    }
+    DCHECK(document);
+    if (document) {
+      Deprecation::CountDeprecation(
+          *document, WebFeature::kDeprecatedTimingFunctionStepMiddle);
+    }
+  }
   return StepsTimingFunction::Create(steps_timing_function.NumberOfSteps(),
                                      steps_timing_function.GetStepPosition());
 }
@@ -554,8 +577,8 @@ void CSSToStyleMap::MapNinePieceImageSlice(StyleResolverState&,
     return;
 
   // Retrieve the border image value.
-  const CSSBorderImageSliceValue& border_image_slice =
-      ToCSSBorderImageSliceValue(value);
+  const cssvalue::CSSBorderImageSliceValue& border_image_slice =
+      cssvalue::ToCSSBorderImageSliceValue(value);
 
   // Set up a length box to represent our image slices.
   LengthBox box;

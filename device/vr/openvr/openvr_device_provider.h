@@ -14,17 +14,25 @@
 
 namespace device {
 
-class OpenVRDeviceProvider : public VRDeviceProvider {
+class OpenVRDevice;
+
+class DEVICE_VR_EXPORT OpenVRDeviceProvider : public VRDeviceProvider {
  public:
   OpenVRDeviceProvider();
   ~OpenVRDeviceProvider() override;
 
-  void GetDevices(std::vector<VRDevice*>* devices) override;
-  void Initialize() override;
+  void Initialize(base::Callback<void(VRDevice*)> add_device_callback,
+                  base::Callback<void(VRDevice*)> remove_device_callback,
+                  base::OnceClosure initialization_complete) override;
 
-  void SetListeningForActivate(bool listening) override;
+  bool Initialized() override;
 
  private:
+  void CreateDevice();
+
+  std::unique_ptr<OpenVRDevice> device_;
+  bool initialized_ = false;
+
   DISALLOW_COPY_AND_ASSIGN(OpenVRDeviceProvider);
 };
 

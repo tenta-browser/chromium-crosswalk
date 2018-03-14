@@ -29,34 +29,34 @@
 
 #include "core/html/track/TextTrackContainer.h"
 
-#include "core/dom/ResizeObserver.h"
-#include "core/dom/ResizeObserverCallback.h"
-#include "core/dom/ResizeObserverEntry.h"
-#include "core/html/HTMLVideoElement.h"
+#include "core/html/media/HTMLVideoElement.h"
 #include "core/html/track/CueTimeline.h"
+#include "core/html/track/TextTrack.h"
 #include "core/layout/LayoutBlockFlow.h"
 #include "core/layout/LayoutVideo.h"
+#include "core/resize_observer/ResizeObserver.h"
+#include "core/resize_observer/ResizeObserverEntry.h"
 
 namespace blink {
 
 namespace {
 
-class VideoElementResizeCallback final : public ResizeObserverCallback {
+class VideoElementResizeDelegate final : public ResizeObserver::Delegate {
  public:
-  VideoElementResizeCallback(TextTrackContainer& container)
-      : ResizeObserverCallback(), text_track_container_(container) {}
+  VideoElementResizeDelegate(TextTrackContainer& container)
+      : ResizeObserver::Delegate(), text_track_container_(container) {}
 
-  void handleEvent(const HeapVector<Member<ResizeObserverEntry>>& entries,
-                   ResizeObserver*) override {
+  void OnResize(
+      const HeapVector<Member<ResizeObserverEntry>>& entries) override {
     DCHECK_EQ(entries.size(), 1u);
-    DCHECK(isHTMLVideoElement(entries[0]->target()));
+    DCHECK(IsHTMLVideoElement(entries[0]->target()));
     text_track_container_->UpdateDefaultFontSize(
         entries[0]->target()->GetLayoutObject());
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  virtual void Trace(blink::Visitor* visitor) {
     visitor->Trace(text_track_container_);
-    ResizeObserverCallback::Trace(visitor);
+    ResizeObserver::Delegate::Trace(visitor);
   }
 
  private:
@@ -68,7 +68,7 @@ class VideoElementResizeCallback final : public ResizeObserverCallback {
 TextTrackContainer::TextTrackContainer(Document& document)
     : HTMLDivElement(document), default_font_size_(0) {}
 
-DEFINE_TRACE(TextTrackContainer) {
+void TextTrackContainer::Trace(blink::Visitor* visitor) {
   visitor->Trace(video_size_observer_);
   HTMLDivElement::Trace(visitor);
 }
@@ -79,7 +79,7 @@ TextTrackContainer* TextTrackContainer::Create(
       new TextTrackContainer(media_element.GetDocument());
   element->SetShadowPseudoId(
       AtomicString("-webkit-media-text-track-container"));
-  if (isHTMLVideoElement(media_element))
+  if (IsHTMLVideoElement(media_element))
     element->ObserveSizeChanges(media_element);
   return element;
 }
@@ -90,7 +90,7 @@ LayoutObject* TextTrackContainer::CreateLayoutObject(const ComputedStyle&) {
 
 void TextTrackContainer::ObserveSizeChanges(Element& element) {
   video_size_observer_ = ResizeObserver::Create(
-      GetDocument(), new VideoElementResizeCallback(*this));
+      GetDocument(), new VideoElementResizeDelegate(*this));
   video_size_observer_->observe(&element);
 }
 
@@ -134,11 +134,11 @@ void TextTrackContainer::UpdateDisplay(HTMLMediaElement& media_element,
   // 1. If the media element is an audio element, or is another playback
   // mechanism with no rendering area, abort these steps. There is nothing to
   // render.
-  if (isHTMLAudioElement(media_element))
+  if (IsHTMLAudioElement(media_element))
     return;
 
   // 2. Let video be the media element or other playback mechanism.
-  HTMLVideoElement& video = toHTMLVideoElement(media_element);
+  HTMLVideoElement& video = ToHTMLVideoElement(media_element);
 
   // 3. Let output be an empty list of absolutely positioned CSS block boxes.
 

@@ -58,12 +58,13 @@ class CORE_EXPORT ImageResource final
  public:
   using ClientType = ResourceClient;
 
-  // Use ImageResourceContent::fetch() unless ImageResource is required.
-  // TODO(hiroshige): Make fetch() private.
+  // Use ImageResourceContent::Fetch() unless ImageResource is required.
+  // TODO(hiroshige): Make Fetch() private.
   static ImageResource* Fetch(FetchParameters&, ResourceFetcher*);
 
-  // TODO(hiroshige): Make create() test-only by refactoring ImageDocument.
+  // TODO(hiroshige): Make Create() test-only by refactoring ImageDocument.
   static ImageResource* Create(const ResourceRequest&);
+  static ImageResource* CreateForTest(const KURL&);
 
   ~ImageResource() override;
 
@@ -71,7 +72,7 @@ class CORE_EXPORT ImageResource final
   const ImageResourceContent* GetContent() const;
 
   void ReloadIfLoFiOrPlaceholderImage(ResourceFetcher*,
-                                      ReloadLoFiOrPlaceholderPolicy);
+                                      ReloadLoFiOrPlaceholderPolicy) override;
 
   void DidAddClient(ResourceClient*) override;
 
@@ -80,18 +81,18 @@ class CORE_EXPORT ImageResource final
   void AllClientsAndObserversRemoved() override;
 
   bool CanReuse(const FetchParameters&) const override;
+  bool CanUseCacheValidator() const override;
 
-  PassRefPtr<const SharedBuffer> ResourceBuffer() const override;
-  void AppendData(const char*, size_t) override;
-  void GetError(const ResourceError&) override;
+  scoped_refptr<const SharedBuffer> ResourceBuffer() const override;
+  void NotifyStartLoad() override;
   void ResponseReceived(const ResourceResponse&,
                         std::unique_ptr<WebDataConsumerHandle>) override;
-  void Finish(double finish_time = 0.0) override;
+  void AppendData(const char*, size_t) override;
+  void Finish(double finish_time, WebTaskRunner*) override;
+  void FinishAsError(const ResourceError&, WebTaskRunner*) override;
 
   // For compatibility, images keep loading even if there are HTTP errors.
   bool ShouldIgnoreHTTPStatusCodeErrors() const override { return true; }
-
-  bool IsImage() const override { return true; }
 
   // MultipartImageResourceParser::Client
   void OnePartInMultipartReceived(const ResourceResponse&) final;
@@ -99,7 +100,7 @@ class CORE_EXPORT ImageResource final
 
   bool ShouldShowPlaceholder() const;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   enum class MultipartParsingState : uint8_t {
@@ -125,11 +126,11 @@ class CORE_EXPORT ImageResource final
   bool HasClientsOrObservers() const override;
 
   void UpdateImageAndClearBuffer();
-  void UpdateImage(PassRefPtr<SharedBuffer>,
+  void UpdateImage(scoped_refptr<SharedBuffer>,
                    ImageResourceContent::UpdateImageOption,
                    bool all_data_received);
 
-  void CheckNotify() override;
+  void NotifyFinished() override;
 
   void DestroyDecodedDataIfPossible() override;
   void DestroyDecodedDataForFailedRevalidation() override;
@@ -160,6 +161,11 @@ class CORE_EXPORT ImageResource final
     // Do not show or reload placeholder.
     kDoNotReloadPlaceholder,
 
+    // Show placeholder, and do not reload. The original image will still be
+    // loaded and shown if the image is explicitly reloaded, e.g. when
+    // ReloadIfLoFiOrPlaceholderImage is called with kReloadAlways.
+    kShowAndDoNotReloadPlaceholder,
+
     // Do not show placeholder, reload only when decode error occurs.
     kReloadPlaceholderOnDecodeError,
 
@@ -170,6 +176,8 @@ class CORE_EXPORT ImageResource final
 
   Timer<ImageResource> flush_timer_;
   double last_flush_time_ = 0.;
+
+  bool is_during_finish_as_error_ = false;
 };
 
 DEFINE_RESOURCE_TYPE_CASTS(Image);

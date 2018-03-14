@@ -10,7 +10,6 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/threading/non_thread_safe.h"
 #include "remoting/host/chromeos/point_transformer.h"
 #include "remoting/host/client_session_control.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
@@ -92,12 +91,17 @@ LocalInputMonitorChromeos::Core::Core(
 }
 
 void LocalInputMonitorChromeos::Core::Start() {
-  ui::PlatformEventSource::GetInstance()->AddPlatformEventObserver(this);
+  // TODO(erg): Need to handle the mus case where PlatformEventSource is null
+  // because we are in mus. This class looks like it can be rewritten with mus
+  // EventMatchers. (And if that doesn't work, maybe a PointerObserver.)
+  if (ui::PlatformEventSource::GetInstance())
+    ui::PlatformEventSource::GetInstance()->AddPlatformEventObserver(this);
   point_transformer_.reset(new PointTransformer());
 }
 
 LocalInputMonitorChromeos::Core::~Core() {
-  ui::PlatformEventSource::GetInstance()->RemovePlatformEventObserver(this);
+  if (ui::PlatformEventSource::GetInstance())
+    ui::PlatformEventSource::GetInstance()->RemovePlatformEventObserver(this);
 }
 
 void LocalInputMonitorChromeos::Core::WillProcessEvent(

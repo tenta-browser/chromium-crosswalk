@@ -10,7 +10,7 @@
 #include "base/run_loop.h"
 #include "dbus/message.h"
 #include "dbus/mock_bus.h"
-#include "third_party/cros_system_api/dbus/service_constants.h"
+#include "dbus/object_path.h"
 
 using ::testing::_;
 using ::testing::AllOf;
@@ -21,16 +21,17 @@ using ::testing::Unused;
 
 namespace chromeos {
 
-ServiceProviderTestHelper::ServiceProviderTestHelper()
-    : response_received_(false) {
+ServiceProviderTestHelper::ServiceProviderTestHelper() {
   if (!base::MessageLoop::current())
     message_loop_.reset(new base::MessageLoop());
 }
 
-ServiceProviderTestHelper::~ServiceProviderTestHelper() {
-}
+ServiceProviderTestHelper::~ServiceProviderTestHelper() = default;
 
 void ServiceProviderTestHelper::SetUp(
+    const std::string& service_name,
+    const dbus::ObjectPath& service_path,
+    const std::string& interface_name,
     const std::string& exported_method_name,
     CrosDBusService::ServiceProviderInterface* service_provider) {
   // Create a mock bus.
@@ -41,36 +42,31 @@ void ServiceProviderTestHelper::SetUp(
   // ShutdownAndBlock() will be called in TearDown().
   EXPECT_CALL(*mock_bus_.get(), ShutdownAndBlock()).WillOnce(Return());
 
-  // Create a mock exported object that behaves as
-  // org.chromium.CrosDBusService.
+  // Create a mock exported object that behaves as the service.
   mock_exported_object_ =
-      new dbus::MockExportedObject(mock_bus_.get(),
-                                   dbus::ObjectPath(kLibCrosServicePath));
+      new dbus::MockExportedObject(mock_bus_.get(), service_path);
 
   // |mock_exported_object_|'s ExportMethod() will use
   // |MockExportedObject().
-  EXPECT_CALL(
-      *mock_exported_object_.get(),
-      ExportMethod(kLibCrosServiceInterface, exported_method_name, _, _))
+  EXPECT_CALL(*mock_exported_object_.get(),
+              ExportMethod(interface_name, exported_method_name, _, _))
       .WillOnce(Invoke(this, &ServiceProviderTestHelper::MockExportMethod));
 
   // Create a mock object proxy, with which we call a method of
   // |mock_exported_object_|.
   mock_object_proxy_ =
-      new dbus::MockObjectProxy(mock_bus_.get(),
-                                kLibCrosServiceName,
-                                dbus::ObjectPath(kLibCrosServicePath));
-  // |mock_object_proxy_|'s MockCallMethodAndBlock() will use
-  // MockCallMethodAndBlock() to return responses.
+      new dbus::MockObjectProxy(mock_bus_.get(), service_name, service_path);
+  // |mock_object_proxy_|'s CallMethodAndBlock() will use CallMethodAndBlock()
+  // to return responses.
   EXPECT_CALL(*mock_object_proxy_.get(),
-              MockCallMethodAndBlock(
+              CallMethodAndBlock(
                   AllOf(ResultOf(std::mem_fun(&dbus::MethodCall::GetInterface),
-                                 kLibCrosServiceInterface),
+                                 interface_name),
                         ResultOf(std::mem_fun(&dbus::MethodCall::GetMember),
                                  exported_method_name)),
                   _))
       .WillOnce(
-           Invoke(this, &ServiceProviderTestHelper::MockCallMethodAndBlock));
+          Invoke(this, &ServiceProviderTestHelper::CallMethodAndBlock));
 
   service_provider->Start(mock_exported_object_.get());
 }
@@ -95,11 +91,12 @@ void ServiceProviderTestHelper::SetUpReturnSignal(
   // |mock_object_proxy_|'s ConnectToSignal will use
   // MockConnectToSignal().
   EXPECT_CALL(*mock_object_proxy_.get(),
-              ConnectToSignal(interface_name, signal_name, _, _))
+              DoConnectToSignal(interface_name, signal_name, _, _))
       .WillOnce(Invoke(this, &ServiceProviderTestHelper::MockConnectToSignal));
 
   mock_object_proxy_->ConnectToSignal(interface_name, signal_name,
-                                      signal_callback, on_connected_callback);
+                                      signal_callback,
+                                      std::move(on_connected_callback));
 }
 
 std::unique_ptr<dbus::Response> ServiceProviderTestHelper::CallMethod(
@@ -120,7 +117,7 @@ void ServiceProviderTestHelper::MockExportMethod(
   method_callback_ = method_callback;
 }
 
-dbus::Response* ServiceProviderTestHelper::MockCallMethodAndBlock(
+std::unique_ptr<dbus::Response> ServiceProviderTestHelper::CallMethodAndBlock(
     dbus::MethodCall* method_call,
     Unused) {
   // Set the serial number to non-zero, so
@@ -129,23 +126,24 @@ dbus::Response* ServiceProviderTestHelper::MockCallMethodAndBlock(
   // Run the callback captured in MockExportMethod(). In addition to returning
   // a response that the caller will ignore, this will send a signal, which
   // will be received by |on_signal_callback_|.
+  std::unique_ptr<dbus::Response> response;
   method_callback_.Run(method_call,
                        base::Bind(&ServiceProviderTestHelper::OnResponse,
-                                  base::Unretained(this)));
+                                  base::Unretained(this), &response));
   // Check for a response.
-  if (!response_received_)
+  if (!response)
     base::RunLoop().Run();
   // Return response.
-  return response_.release();
+  return response;
 }
 
 void ServiceProviderTestHelper::MockConnectToSignal(
     const std::string& interface_name,
     const std::string& signal_name,
     dbus::ObjectProxy::SignalCallback signal_callback,
-    dbus::ObjectProxy::OnConnectedCallback connected_callback) {
+    dbus::ObjectProxy::OnConnectedCallback* connected_callback) {
   // Tell the callback that the object proxy is connected to the signal.
-  connected_callback.Run(interface_name, signal_name, true);
+  std::move(*connected_callback).Run(interface_name, signal_name, true);
   // Capture the callback, so we can run this at a later time.
   on_signal_callback_ = signal_callback;
 }
@@ -157,11 +155,11 @@ void ServiceProviderTestHelper::MockSendSignal(dbus::Signal* signal) {
 }
 
 void ServiceProviderTestHelper::OnResponse(
+    std::unique_ptr<dbus::Response>* out_response,
     std::unique_ptr<dbus::Response> response) {
-  response_ = std::move(response);
-  response_received_ = true;
-  if (base::MessageLoop::current()->is_running())
-    base::MessageLoop::current()->QuitWhenIdle();
+  *out_response = std::move(response);
+  if (base::RunLoop::IsRunningOnCurrentThread())
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 }  // namespace chromeos

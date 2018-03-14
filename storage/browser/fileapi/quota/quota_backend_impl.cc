@@ -32,14 +32,13 @@ QuotaBackendImpl::QuotaBackendImpl(
       weak_ptr_factory_(this) {
 }
 
-QuotaBackendImpl::~QuotaBackendImpl() {
-}
+QuotaBackendImpl::~QuotaBackendImpl() = default;
 
 void QuotaBackendImpl::ReserveQuota(const GURL& origin,
                                     FileSystemType type,
                                     int64_t delta,
                                     const ReserveQuotaCallback& callback) {
-  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(origin.is_valid());
   if (!delta) {
     callback.Run(base::File::FILE_OK, 0);
@@ -59,7 +58,7 @@ void QuotaBackendImpl::ReserveQuota(const GURL& origin,
 void QuotaBackendImpl::ReleaseReservedQuota(const GURL& origin,
                                             FileSystemType type,
                                             int64_t size) {
-  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(origin.is_valid());
   DCHECK_LE(0, size);
   if (!size)
@@ -70,7 +69,7 @@ void QuotaBackendImpl::ReleaseReservedQuota(const GURL& origin,
 void QuotaBackendImpl::CommitQuotaUsage(const GURL& origin,
                                         FileSystemType type,
                                         int64_t delta) {
-  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(origin.is_valid());
   if (!delta)
     return;
@@ -84,7 +83,7 @@ void QuotaBackendImpl::CommitQuotaUsage(const GURL& origin,
 
 void QuotaBackendImpl::IncrementDirtyCount(const GURL& origin,
                                            FileSystemType type) {
-  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(origin.is_valid());
   base::FilePath path;
   if (GetUsageCachePath(origin, type, &path) != base::File::FILE_OK)
@@ -95,7 +94,7 @@ void QuotaBackendImpl::IncrementDirtyCount(const GURL& origin,
 
 void QuotaBackendImpl::DecrementDirtyCount(const GURL& origin,
                                            FileSystemType type) {
-  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(origin.is_valid());
   base::FilePath path;
   if (GetUsageCachePath(origin, type, &path) != base::File::FILE_OK)
@@ -110,7 +109,7 @@ void QuotaBackendImpl::DidGetUsageAndQuotaForReserveQuota(
     storage::QuotaStatusCode status,
     int64_t usage,
     int64_t quota) {
-  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(info.origin.is_valid());
   DCHECK_LE(0, usage);
   DCHECK_LE(0, quota);
@@ -140,7 +139,7 @@ void QuotaBackendImpl::DidGetUsageAndQuotaForReserveQuota(
 }
 
 void QuotaBackendImpl::ReserveQuotaInternal(const QuotaReservationInfo& info) {
-  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(info.origin.is_valid());
   DCHECK(quota_manager_proxy_.get());
   quota_manager_proxy_->NotifyStorageModified(
@@ -154,7 +153,7 @@ base::File::Error QuotaBackendImpl::GetUsageCachePath(
     const GURL& origin,
     FileSystemType type,
     base::FilePath* usage_file_path) {
-  DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(origin.is_valid());
   DCHECK(usage_file_path);
   base::File::Error error = base::File::FILE_OK;
@@ -170,7 +169,6 @@ QuotaBackendImpl::QuotaReservationInfo::QuotaReservationInfo(
     int64_t delta)
     : origin(origin), type(type), delta(delta) {}
 
-QuotaBackendImpl::QuotaReservationInfo::~QuotaReservationInfo() {
-}
+QuotaBackendImpl::QuotaReservationInfo::~QuotaReservationInfo() = default;
 
 }  // namespace storage

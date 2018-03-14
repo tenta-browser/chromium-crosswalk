@@ -36,12 +36,34 @@ Resources.DOMStorageItemsView = class extends Resources.StorageItemsView {
     this.element.classList.add('storage-view', 'table');
 
     var columns = /** @type {!Array<!DataGrid.DataGrid.ColumnDescriptor>} */ ([
-      {id: 'key', title: Common.UIString('Key'), sortable: false, editable: true, weight: 50},
-      {id: 'value', title: Common.UIString('Value'), sortable: false, editable: true, weight: 50}
+      {id: 'key', title: Common.UIString('Key'), sortable: false, editable: true, longText: true, weight: 50},
+      {id: 'value', title: Common.UIString('Value'), sortable: false, editable: true, longText: true, weight: 50}
     ]);
     this._dataGrid = new DataGrid.DataGrid(columns, this._editingCallback.bind(this), this._deleteCallback.bind(this));
+    this._dataGrid.addEventListener(
+        DataGrid.DataGrid.Events.SelectedNode,
+        event => this._previewEntry(/** @type {!DataGrid.DataGridNode} */ (event.data)));
+    this._dataGrid.addEventListener(DataGrid.DataGrid.Events.DeselectedNode, event => this._previewEntry(null));
+    this._dataGrid.setStriped(true);
     this._dataGrid.setName('DOMStorageItemsView');
-    this._dataGrid.asWidget().show(this.element);
+
+    this._splitWidget = new UI.SplitWidget(false, false);
+    this._splitWidget.show(this.element);
+    this._splitWidget.setSecondIsSidebar(true);
+
+    this._previewPanel = new UI.VBox();
+    var resizer = this._previewPanel.element.createChild('div', 'preview-panel-resizer');
+    this._splitWidget.setMainWidget(this._dataGrid.asWidget());
+    this._splitWidget.setSidebarWidget(this._previewPanel);
+    this._splitWidget.installResizer(resizer);
+
+    /** @type {?UI.Widget} */
+    this._preview = null;
+    /** @type {?string} */
+    this._previewValue = null;
+
+    this._showPreview(null, null);
+
     this._eventListeners = [];
     this.setStorage(domStorage);
   }
@@ -106,8 +128,6 @@ Resources.DOMStorageItemsView = class extends Resources.StorageItemsView {
     var rootNode = this._dataGrid.rootNode();
     var children = rootNode.children;
 
-    this.setCanDeleteSelected(true);
-
     for (var i = 0; i < children.length; ++i) {
       if (children[i].data.key === storageData.key)
         return;
@@ -125,36 +145,22 @@ Resources.DOMStorageItemsView = class extends Resources.StorageItemsView {
       return;
 
     var storageData = event.data;
-    var rootNode = this._dataGrid.rootNode();
-    var children = rootNode.children;
+    var childNode = this._dataGrid.rootNode().children.find(child => child.data.key === storageData.key);
+    if (!childNode || childNode.data.value === storageData.value)
+      return;
 
-    var keyFound = false;
-    for (var i = 0; i < children.length; ++i) {
-      var childNode = children[i];
-      if (childNode.data.key === storageData.key) {
-        if (keyFound) {
-          rootNode.removeChild(childNode);
-          return;
-        }
-        keyFound = true;
-        if (childNode.data.value !== storageData.value) {
-          childNode.data.value = storageData.value;
-          childNode.refresh();
-          childNode.select();
-          childNode.reveal();
-        }
-        this.setCanDeleteSelected(true);
-      }
-    }
+    childNode.data.value = storageData.value;
+    childNode.refresh();
+    if (!childNode.selected)
+      return;
+    this._previewEntry(childNode);
+    this.setCanDeleteSelected(true);
   }
 
   /**
-   * @param {?string} error
    * @param {!Array<!Array<string>>} items
    */
-  _showDOMStorageItems(error, items) {
-    if (error)
-      return;
+  _showDOMStorageItems(items) {
     var rootNode = this._dataGrid.rootNode();
     var selectedKey = null;
     for (var node of rootNode.children) {
@@ -195,7 +201,7 @@ Resources.DOMStorageItemsView = class extends Resources.StorageItemsView {
    * @override
    */
   refreshItems() {
-    this._domStorage.getItems((error, items) => this._showDOMStorageItems(error, items));
+    this._domStorage.getItems().then(items => items && this._showDOMStorageItems(items));
   }
 
   /**
@@ -238,5 +244,41 @@ Resources.DOMStorageItemsView = class extends Resources.StorageItemsView {
 
     if (this._domStorage)
       this._domStorage.removeItem(node.data.key);
+  }
+
+  /**
+   * @param {?UI.Widget} preview
+   * @param {?string} value
+   */
+  _showPreview(preview, value) {
+    if (this._preview && this._previewValue === value)
+      return;
+    if (this._preview)
+      this._preview.detach();
+    if (!preview)
+      preview = new UI.EmptyWidget(Common.UIString('Select a value to preview'));
+    this._previewValue = value;
+    this._preview = preview;
+    preview.show(this._previewPanel.contentElement);
+  }
+
+  /**
+   * @param {?DataGrid.DataGridNode} entry
+   */
+  async _previewEntry(entry) {
+    var value = entry && entry.data && entry.data.value;
+    if (!value) {
+      this._showPreview(null, value);
+      return;
+    }
+    var protocol = this._domStorage.isLocalStorage ? 'localstorage' : 'sessionstorage';
+    var url = `${protocol}://${entry.key}`;
+    var provider =
+        Common.StaticContentProvider.fromString(url, Common.resourceTypes.XHR, /** @type {string} */ (value));
+    var preview = await SourceFrame.PreviewFactory.createPreview(provider, 'text/plain');
+    // Selection could've changed while the preview was loaded
+    if (!entry.selected)
+      return;
+    this._showPreview(preview, value);
   }
 };

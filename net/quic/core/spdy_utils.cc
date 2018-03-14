@@ -7,47 +7,20 @@
 #include <memory>
 #include <vector>
 
+#include "net/quic/platform/api/quic_flag_utils.h"
+#include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_map_util.h"
 #include "net/quic/platform/api/quic_string_piece.h"
 #include "net/quic/platform/api/quic_text_utils.h"
 #include "net/quic/platform/api/quic_url_utils.h"
-#include "net/spdy/spdy_flags.h"
-#include "net/spdy/spdy_frame_builder.h"
-#include "net/spdy/spdy_framer.h"
-#include "net/spdy/spdy_protocol.h"
+#include "net/spdy/core/spdy_frame_builder.h"
+#include "net/spdy/core/spdy_framer.h"
+#include "net/spdy/core/spdy_protocol.h"
 
 using std::string;
 
 namespace net {
-
-// static
-string SpdyUtils::SerializeUncompressedHeaders(const SpdyHeaderBlock& headers) {
-  size_t length = SpdyFramer::GetSerializedLength(&headers);
-  SpdyFrameBuilder builder(length);
-  SpdyFramer framer(SpdyFramer::DISABLE_COMPRESSION);
-  framer.SerializeHeaderBlockWithoutCompression(&builder, headers);
-  SpdySerializedFrame block(builder.take());
-  return string(block.data(), length);
-}
-
-// static
-bool SpdyUtils::ParseHeaders(const char* data,
-                             uint32_t data_len,
-                             int64_t* content_length,
-                             SpdyHeaderBlock* headers) {
-  SpdyFramer framer(SpdyFramer::ENABLE_COMPRESSION);
-  if (!framer.ParseHeaderBlockInBuffer(data, data_len, headers) ||
-      headers->empty()) {
-    return false;  // Headers were invalid.
-  }
-
-  if (!QuicContainsKey(*headers, "content-length")) {
-    return true;
-  }
-
-  return ExtractContentLengthFromHeaders(content_length, headers);
-}
 
 // static
 bool SpdyUtils::ExtractContentLengthFromHeaders(int64_t* content_length,
@@ -81,47 +54,6 @@ bool SpdyUtils::ExtractContentLengthFromHeaders(int64_t* content_length,
     }
     return true;
   }
-}
-
-// static
-bool SpdyUtils::ParseTrailers(const char* data,
-                              uint32_t data_len,
-                              size_t* final_byte_offset,
-                              SpdyHeaderBlock* trailers) {
-  SpdyFramer framer(SpdyFramer::ENABLE_COMPRESSION);
-  if (!framer.ParseHeaderBlockInBuffer(data, data_len, trailers) ||
-      trailers->empty()) {
-    QUIC_DVLOG(1) << "Request Trailers are invalid.";
-    return false;  // Trailers were invalid.
-  }
-
-  // Pull out the final offset pseudo header which indicates the number of
-  // response body bytes expected.
-  auto it = trailers->find(kFinalOffsetHeaderKey);
-  if (it == trailers->end() ||
-      !QuicTextUtils::StringToSizeT(it->second, final_byte_offset)) {
-    QUIC_DLOG(ERROR) << "Required key '" << kFinalOffsetHeaderKey
-                     << "' not present";
-    return false;
-  }
-  // The final offset header is no longer needed.
-  trailers->erase(it->first);
-
-  // Trailers must not have empty keys, and must not contain pseudo headers.
-  for (const auto& trailer : *trailers) {
-    QuicStringPiece key = trailer.first;
-    QuicStringPiece value = trailer.second;
-    if (QuicTextUtils::StartsWith(key, ":")) {
-      QUIC_DVLOG(1) << "Trailers must not contain pseudo-header: '" << key
-                    << "','" << value << "'.";
-      return false;
-    }
-
-    // TODO(rjshade): Check for other forbidden keys, following the HTTP/2 spec.
-  }
-
-  QUIC_DVLOG(1) << "Successfully parsed Trailers: " << trailers->DebugString();
-  return true;
 }
 
 bool SpdyUtils::CopyAndValidateHeaders(const QuicHeaderList& header_list,
@@ -180,13 +112,7 @@ bool SpdyUtils::CopyAndValidateTrailers(const QuicHeaderList& header_list,
       return false;
     }
 
-    if (trailers->find(name) != trailers->end()) {
-      QUIC_DLOG(ERROR) << "Duplicate header '" << name
-                       << "' found in trailers.";
-      return false;
-    }
-
-    (*trailers)[name] = p.second;
+    trailers->AppendValueOrAddHeader(name, p.second);
   }
 
   if (!found_final_byte_offset) {
@@ -235,7 +161,7 @@ string SpdyUtils::GetHostNameFromHeaderBlock(const SpdyHeaderBlock& headers) {
 // static
 bool SpdyUtils::UrlIsValid(const SpdyHeaderBlock& headers) {
   string url(GetUrlFromHeaderBlock(headers));
-  return url != "" && QuicUrlUtils::IsValidUrl(url);
+  return !url.empty() && QuicUrlUtils::IsValidUrl(url);
 }
 
 // static

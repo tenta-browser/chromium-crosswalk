@@ -8,12 +8,12 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/test/scoped_task_environment.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
-class MessageLoop;
 class Thread;
 }
 
@@ -43,7 +43,7 @@ class ServiceTestClient : public Service {
 
  protected:
   void OnStart() override;
-  void OnBindInterface(const ServiceInfo& source_info,
+  void OnBindInterface(const BindSourceInfo& source_info,
                        const std::string& interface_name,
                        mojo::ScopedMessagePipeHandle interface_pipe) override;
 
@@ -60,14 +60,16 @@ class ServiceTest : public testing::Test {
   // Once set via this constructor, it cannot be changed later by calling
   // InitTestName(). The test executable must provide a manifest in the
   // appropriate location that specifies this name also.
-  explicit ServiceTest(const std::string& test_name, bool init_edk = false);
+  ServiceTest(const std::string& test_name,
+              base::test::ScopedTaskEnvironment::MainThreadType type =
+                  base::test::ScopedTaskEnvironment::MainThreadType::UI);
   ~ServiceTest() override;
 
  protected:
   // See constructor. Can only be called once.
   void InitTestName(const std::string& test_name);
 
-  Connector* connector() { return connector_; }
+  Connector* connector() const { return connector_; }
 
   // Instance information received from the Service Manager during OnStart().
   const std::string& test_name() const { return initialize_name_; }
@@ -79,8 +81,6 @@ class ServiceTest : public testing::Test {
   // call OnStartCalled() to forward the metadata so test_name() etc all
   // work.
   virtual std::unique_ptr<Service> CreateService();
-
-  virtual std::unique_ptr<base::MessageLoop> CreateMessageLoop();
 
   // Call to set OnStart() metadata when GetService() is overridden.
   void OnStartCalled(Connector* connector,
@@ -94,13 +94,12 @@ class ServiceTest : public testing::Test {
  private:
   friend ServiceTestClient;
 
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<ServiceContext> context_;
-  std::unique_ptr<base::MessageLoop> message_loop_;
   std::unique_ptr<BackgroundServiceManager> background_service_manager_;
 
   // See constructor.
   std::string test_name_;
-  bool init_edk_ = true;
   std::unique_ptr<base::Thread> ipc_thread_;
   std::unique_ptr<mojo::edk::ScopedIPCSupport> ipc_support_;
 

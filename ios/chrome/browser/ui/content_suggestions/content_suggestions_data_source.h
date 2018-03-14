@@ -5,16 +5,34 @@
 #ifndef IOS_CHROME_BROWSER_UI_CONTENT_SUGGESTIONS_CONTENT_SUGGESTIONS_DATA_SOURCE_H_
 #define IOS_CHROME_BROWSER_UI_CONTENT_SUGGESTIONS_CONTENT_SUGGESTIONS_DATA_SOURCE_H_
 
+#import <UIKit/UIKit.h>
+
+@class CollectionViewItem;
 @class ContentSuggestion;
 @class ContentSuggestionIdentifier;
 @class ContentSuggestionsSectionInformation;
 @class FaviconAttributes;
 @protocol ContentSuggestionsDataSink;
 @protocol ContentSuggestionsImageFetcher;
-class GURL;
+@protocol SuggestedContent;
 
-// Typedef for a block taking the fetched suggestions as parameter.
-typedef void (^MoreSuggestionsFetched)(NSArray<ContentSuggestion*>* _Nonnull);
+namespace content_suggestions {
+
+// Status code for the content suggestions fetches.
+typedef NS_ENUM(NSInteger, StatusCode) {
+  StatusCodeSuccess,
+  StatusCodeError,
+  StatusCodePermanentError,
+  StatusCodeNotRun,
+};
+
+}  // namespace content_suggestions
+
+// Typedef for a block taking the fetched suggestions and the fetch result
+// status as parameter.
+typedef void (^MoreSuggestionsFetched)(
+    NSArray<CollectionViewItem<SuggestedContent>*>* _Nullable,
+    content_suggestions::StatusCode status);
 
 // DataSource for the content suggestions. Provides the suggestions data in a
 // format compatible with Objective-C.
@@ -23,22 +41,12 @@ typedef void (^MoreSuggestionsFetched)(NSArray<ContentSuggestion*>* _Nonnull);
 // The data sink that will be notified when the data change.
 @property(nonatomic, nullable, weak) id<ContentSuggestionsDataSink> dataSink;
 
-// Returns all the data currently available.
-- (nonnull NSArray<ContentSuggestion*>*)allSuggestions;
+// Returns all the sections information in the order they should be displayed.
+- (nonnull NSArray<ContentSuggestionsSectionInformation*>*)sectionsInfo;
 
-// Returns the data currently available for the section identified by
-// |sectionInfo|.
-- (nonnull NSArray<ContentSuggestion*>*)suggestionsForSection:
+// Returns the items associated with the |sectionInfo|.
+- (nonnull NSArray<CollectionViewItem<SuggestedContent>*>*)itemsForSectionInfo:
     (nonnull ContentSuggestionsSectionInformation*)sectionInfo;
-
-// Returns an image updater for the suggestions provided by this data source.
-- (nullable id<ContentSuggestionsImageFetcher>)imageFetcher;
-
-// Fetches favicon attributes and calls the completion block.
-- (void)fetchFaviconAttributesForURL:(const GURL&)URL
-                          completion:
-                              (void (^_Nonnull)(FaviconAttributes* _Nonnull))
-                                  completion;
 
 // Fetches additional content. All the |knownSuggestions| must come from the
 // same |sectionInfo|. If the fetch was completed, the given |callback| is
@@ -48,7 +56,15 @@ typedef void (^MoreSuggestionsFetched)(NSArray<ContentSuggestion*>* _Nonnull);
                     fromSectionInfo:
                         (nonnull ContentSuggestionsSectionInformation*)
                             sectionInfo
-                           callback:(nullable MoreSuggestionsFetched)callback;
+                           callback:(nonnull MoreSuggestionsFetched)callback;
+
+// Dismisses the suggestion from the content suggestions service. It doesn't
+// change the UI.
+- (void)dismissSuggestion:
+    (nonnull ContentSuggestionIdentifier*)suggestionIdentifier;
+
+// Returns the header view containing the logo and omnibox to be displayed.
+- (nullable UIView*)headerViewForWidth:(CGFloat)width;
 
 @end
 

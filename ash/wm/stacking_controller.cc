@@ -5,24 +5,23 @@
 #include "ash/wm/stacking_controller.h"
 
 #include "ash/wm/container_finder.h"
-#include "ash/wm_window.h"
+#include "ui/aura/window.h"
 
 namespace ash {
 
 ////////////////////////////////////////////////////////////////////////////////
 // StackingController, public:
 
-StackingController::StackingController() {}
+StackingController::StackingController() = default;
 
-StackingController::~StackingController() {}
+StackingController::~StackingController() = default;
 
 ////////////////////////////////////////////////////////////////////////////////
 // StackingController, aura::client::WindowParentingClient implementation:
 
 aura::Window* StackingController::GetDefaultParent(aura::Window* window,
                                                    const gfx::Rect& bounds) {
-  return WmWindow::GetAuraWindow(
-      wm::GetDefaultParent(WmWindow::Get(window), bounds));
+  return wm::GetDefaultParent(window, bounds);
 }
 
 }  // namespace ash

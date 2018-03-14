@@ -20,16 +20,16 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/strings/stringprintf.h"
+#include "base/time/default_tick_clock.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "base/trace_event/trace_event.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
 #include "media/base/bind_to_current_loop.h"
-#include "media/renderers/gpu_video_accelerator_factories.h"
+#include "media/video/gpu_video_accelerator_factories.h"
 #include "third_party/libyuv/include/libyuv.h"
 #include "ui/gfx/buffer_format_util.h"
-#include "ui/gfx/gpu_memory_buffer_tracing.h"
 #include "ui/gl/trace_util.h"
 
 namespace media {
@@ -52,7 +52,9 @@ class GpuMemoryBufferVideoFramePool::PoolImpl
       : media_task_runner_(media_task_runner),
         worker_task_runner_(worker_task_runner),
         gpu_factories_(gpu_factories),
-        output_format_(GpuVideoAcceleratorFactories::OutputFormat::UNDEFINED) {
+        output_format_(GpuVideoAcceleratorFactories::OutputFormat::UNDEFINED),
+        tick_clock_(&default_tick_clock_),
+        in_shutdown_(false) {
     DCHECK(media_task_runner_);
     DCHECK(worker_task_runner_);
   }
@@ -69,6 +71,13 @@ class GpuMemoryBufferVideoFramePool::PoolImpl
   bool OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
                     base::trace_event::ProcessMemoryDump* pmd) override;
 
+  // Shuts down the frame pool and releases all frames in |frames_|.
+  // Once this is called frames will no longer be inserted back into
+  // |frames_|.
+  void Shutdown();
+
+  void SetTickClockForTesting(base::TickClock* tick_clock);
+
  private:
   friend class base::RefCountedThreadSafe<
       GpuMemoryBufferVideoFramePool::PoolImpl>;
@@ -84,16 +93,28 @@ class GpuMemoryBufferVideoFramePool::PoolImpl
   };
 
   // All the resources needed to compose a frame.
+  // TODO(dalecurtis): The method of use marking used is very brittle
+  // and prone to leakage. Switch this to pass around std::unique_ptr
+  // such that callers own resources explicitly.
   struct FrameResources {
     explicit FrameResources(const gfx::Size& size) : size(size) {}
-    void SetIsInUse(bool in_use) { in_use_ = in_use; }
-    bool IsInUse() const { return in_use_; }
+    void MarkUsed() {
+      is_used_ = true;
+      last_use_time_ = base::TimeTicks();
+    }
+    void MarkUnused(base::TimeTicks last_use_time) {
+      is_used_ = false;
+      last_use_time_ = last_use_time;
+    }
+    bool is_used() const { return is_used_; }
+    base::TimeTicks last_use_time() const { return last_use_time_; }
 
     const gfx::Size size;
     PlaneResource plane_resources[VideoFrame::kMaxPlanes];
 
    private:
-    bool in_use_ = true;
+    bool is_used_ = true;
+    base::TimeTicks last_use_time_;
   };
 
   // Copy |video_frame| data into |frame_resouces|
@@ -154,6 +175,12 @@ class GpuMemoryBufferVideoFramePool::PoolImpl
   std::list<FrameResources*> resources_pool_;
 
   GpuVideoAcceleratorFactories::OutputFormat output_format_;
+
+  // |tick_clock_| is always &|default_tick_clock_| outside of testing.
+  base::DefaultTickClock default_tick_clock_;
+  base::TickClock* tick_clock_;
+
+  bool in_shutdown_;
 
   DISALLOW_COPY_AND_ASSIGN(PoolImpl);
 };
@@ -244,17 +271,23 @@ VideoPixelFormat VideoFormat(
   return PIXEL_FORMAT_UNKNOWN;
 }
 
-VideoPixelFormat FinalVideoFormat(
-    GpuVideoAcceleratorFactories::OutputFormat format) {
-  // Consumers should sample from NV12 textures as if they're XRGB.
-  if (format == GpuVideoAcceleratorFactories::OutputFormat::NV12_SINGLE_GMB)
-    return PIXEL_FORMAT_XRGB;
-  return VideoFormat(format);
-}
-
 // The number of output planes to be copied in each iteration.
 size_t NumGpuMemoryBuffers(GpuVideoAcceleratorFactories::OutputFormat format) {
-  return VideoFrame::NumPlanes(FinalVideoFormat(format));
+  switch (format) {
+    case GpuVideoAcceleratorFactories::OutputFormat::I420:
+      return 3;
+    case GpuVideoAcceleratorFactories::OutputFormat::NV12_SINGLE_GMB:
+      return 1;
+    case GpuVideoAcceleratorFactories::OutputFormat::NV12_DUAL_GMB:
+      return 2;
+    case GpuVideoAcceleratorFactories::OutputFormat::UYVY:
+      return 1;
+    case GpuVideoAcceleratorFactories::OutputFormat::UNDEFINED:
+      NOTREACHED();
+      break;
+  }
+  NOTREACHED();
+  return 0;
 }
 
 // The number of output rows to be copied in each iteration.
@@ -471,12 +504,19 @@ bool GpuMemoryBufferVideoFramePool::PoolImpl::OnMemoryDump(
                         buffer_size_in_bytes);
         dump->AddScalar("free_size",
                         base::trace_event::MemoryAllocatorDump::kUnitsBytes,
-                        frame_resources->IsInUse() ? 0 : buffer_size_in_bytes);
-        base::trace_event::MemoryAllocatorDumpGuid shared_buffer_guid =
-            gfx::GetGpuMemoryBufferGUIDForTracing(tracing_process_id,
-                                                  buffer_id);
-        pmd->CreateSharedGlobalAllocatorDump(shared_buffer_guid);
-        pmd->AddOwnershipEdge(dump->guid(), shared_buffer_guid, kImportance);
+                        frame_resources->is_used() ? 0 : buffer_size_in_bytes);
+        auto shared_memory_guid =
+            plane_resource.gpu_memory_buffer->GetHandle().handle.GetGUID();
+        if (!shared_memory_guid.is_empty()) {
+          pmd->CreateSharedMemoryOwnershipEdge(dump->guid(), shared_memory_guid,
+                                               kImportance);
+        } else {
+          auto shared_buffer_guid =
+              plane_resource.gpu_memory_buffer->GetGUIDForTracing(
+                  tracing_process_id);
+          pmd->CreateSharedGlobalAllocatorDump(shared_buffer_guid);
+          pmd->AddOwnershipEdge(dump->guid(), shared_buffer_guid, kImportance);
+        }
       }
     }
   }
@@ -490,7 +530,7 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::OnCopiesDone(
   for (const auto& plane_resource : frame_resources->plane_resources) {
     if (plane_resource.gpu_memory_buffer) {
       plane_resource.gpu_memory_buffer->Unmap();
-      plane_resource.gpu_memory_buffer->SetColorSpaceForScanout(
+      plane_resource.gpu_memory_buffer->SetColorSpace(
           video_frame->ColorSpace());
     }
   }
@@ -535,6 +575,7 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::CopyVideoFrameToGpuMemoryBuffers(
 
     if (!buffer || !buffer->Map()) {
       DLOG(ERROR) << "Could not get or Map() buffer";
+      frame_resources->MarkUnused(tick_clock_->NowTicks());
       return;
     }
   }
@@ -606,6 +647,7 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::
   std::unique_ptr<GpuVideoAcceleratorFactories::ScopedGLContextLock> lock(
       gpu_factories_->GetGLContextLock());
   if (!lock) {
+    frame_resources->MarkUnused(tick_clock_->NowTicks());
     frame_ready_cb.Run(video_frame);
     return;
   }
@@ -652,7 +694,7 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::
   auto release_mailbox_callback = BindToCurrentLoop(
       base::Bind(&PoolImpl::MailboxHoldersReleased, this, frame_resources));
 
-  VideoPixelFormat frame_format = FinalVideoFormat(output_format_);
+  VideoPixelFormat frame_format = VideoFormat(output_format_);
 
   // Create the VideoFrame backed by native textures.
   gfx::Size visible_size = video_frame->visible_rect().size();
@@ -662,6 +704,7 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::
       video_frame->timestamp());
 
   if (!frame) {
+    frame_resources->MarkUnused(tick_clock_->NowTicks());
     release_mailbox_callback.Run(gpu::SyncToken());
     frame_ready_cb.Run(video_frame);
     return;
@@ -678,6 +721,11 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::
     case GpuVideoAcceleratorFactories::OutputFormat::NV12_SINGLE_GMB:
     case GpuVideoAcceleratorFactories::OutputFormat::UYVY:
       allow_overlay = true;
+      break;
+    case GpuVideoAcceleratorFactories::OutputFormat::NV12_DUAL_GMB:
+#if defined(OS_WIN)
+      allow_overlay = true;
+#endif
       break;
     default:
       break;
@@ -701,14 +749,27 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::
 // Destroy all the resources posting one task per FrameResources
 // to the |media_task_runner_|.
 GpuMemoryBufferVideoFramePool::PoolImpl::~PoolImpl() {
+  DCHECK(in_shutdown_);
+}
+
+void GpuMemoryBufferVideoFramePool::PoolImpl::Shutdown() {
   // Delete all the resources on the media thread.
-  while (!resources_pool_.empty()) {
-    FrameResources* frame_resources = resources_pool_.front();
-    resources_pool_.pop_front();
+  in_shutdown_ = true;
+  for (auto* frame_resources : resources_pool_) {
+    // Will be deleted later upon return to pool.
+    if (frame_resources->is_used())
+      continue;
+
     media_task_runner_->PostTask(
         FROM_HERE, base::Bind(&PoolImpl::DeleteFrameResources, gpu_factories_,
                               base::Owned(frame_resources)));
   }
+  resources_pool_.clear();
+}
+
+void GpuMemoryBufferVideoFramePool::PoolImpl::SetTickClockForTesting(
+    base::TickClock* tick_clock) {
+  tick_clock_ = tick_clock;
 }
 
 // Tries to find the resources in the pool or create them.
@@ -717,12 +778,14 @@ GpuMemoryBufferVideoFramePool::PoolImpl::FrameResources*
 GpuMemoryBufferVideoFramePool::PoolImpl::GetOrCreateFrameResources(
     const gfx::Size& size,
     GpuVideoAcceleratorFactories::OutputFormat format) {
+  DCHECK(!in_shutdown_);
+
   auto it = resources_pool_.begin();
   while (it != resources_pool_.end()) {
     FrameResources* frame_resources = *it;
-    if (!frame_resources->IsInUse()) {
+    if (!frame_resources->is_used()) {
       if (AreFrameResourcesCompatible(frame_resources, size)) {
-        frame_resources->SetIsInUse(true);
+        frame_resources->MarkUsed();
         return frame_resources;
       } else {
         resources_pool_.erase(it++);
@@ -798,17 +861,32 @@ void GpuMemoryBufferVideoFramePool::PoolImpl::MailboxHoldersReleased(
     FrameResources* frame_resources,
     const gpu::SyncToken& release_sync_token) {
   DCHECK(media_task_runner_->BelongsToCurrentThread());
-  auto it = std::find(resources_pool_.begin(), resources_pool_.end(),
-                      frame_resources);
-  DCHECK(it != resources_pool_.end());
-  // We want the pool to behave in a FIFO way.
-  // This minimizes the chances of locking the buffer that might be
-  // still needed for drawing.
-  std::swap(*it, resources_pool_.back());
-  frame_resources->SetIsInUse(false);
+  if (in_shutdown_) {
+    DeleteFrameResources(gpu_factories_, frame_resources);
+    delete frame_resources;
+    return;
+  }
+
+  const base::TimeTicks now = tick_clock_->NowTicks();
+  frame_resources->MarkUnused(now);
+  auto it = resources_pool_.begin();
+  while (it != resources_pool_.end()) {
+    FrameResources* frame_resources = *it;
+
+    constexpr base::TimeDelta kStaleFrameLimit =
+        base::TimeDelta::FromSeconds(10);
+    if (!frame_resources->is_used() &&
+        now - frame_resources->last_use_time() > kStaleFrameLimit) {
+      resources_pool_.erase(it++);
+      DeleteFrameResources(gpu_factories_, frame_resources);
+      delete frame_resources;
+    } else {
+      it++;
+    }
+  }
 }
 
-GpuMemoryBufferVideoFramePool::GpuMemoryBufferVideoFramePool() {}
+GpuMemoryBufferVideoFramePool::GpuMemoryBufferVideoFramePool() = default;
 
 GpuMemoryBufferVideoFramePool::GpuMemoryBufferVideoFramePool(
     const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner,
@@ -821,6 +899,11 @@ GpuMemoryBufferVideoFramePool::GpuMemoryBufferVideoFramePool(
 }
 
 GpuMemoryBufferVideoFramePool::~GpuMemoryBufferVideoFramePool() {
+  // May be nullptr in tests.
+  if (!pool_impl_)
+    return;
+
+  pool_impl_->Shutdown();
   base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
       pool_impl_.get());
 }
@@ -830,6 +913,11 @@ void GpuMemoryBufferVideoFramePool::MaybeCreateHardwareFrame(
     const FrameReadyCB& frame_ready_cb) {
   DCHECK(video_frame);
   pool_impl_->CreateHardwareFrame(video_frame, frame_ready_cb);
+}
+
+void GpuMemoryBufferVideoFramePool::SetTickClockForTesting(
+    base::TickClock* tick_clock) {
+  pool_impl_->SetTickClockForTesting(tick_clock);
 }
 
 }  // namespace media

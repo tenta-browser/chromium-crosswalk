@@ -15,85 +15,7 @@ namespace media {
 
 // A count of all MediaLogs created in the current process. Used to generate
 // unique IDs.
-static base::StaticAtomicSequenceNumber g_media_log_count;
-
-// Audio+video watch time metrics.
-const char MediaLog::kWatchTimeAudioVideoAll[] =
-    "Media.WatchTime.AudioVideo.All";
-const char MediaLog::kWatchTimeAudioVideoMse[] =
-    "Media.WatchTime.AudioVideo.MSE";
-const char MediaLog::kWatchTimeAudioVideoEme[] =
-    "Media.WatchTime.AudioVideo.EME";
-const char MediaLog::kWatchTimeAudioVideoSrc[] =
-    "Media.WatchTime.AudioVideo.SRC";
-const char MediaLog::kWatchTimeAudioVideoBattery[] =
-    "Media.WatchTime.AudioVideo.Battery";
-const char MediaLog::kWatchTimeAudioVideoAc[] = "Media.WatchTime.AudioVideo.AC";
-const char MediaLog::kWatchTimeAudioVideoEmbeddedExperience[] =
-    "Media.WatchTime.AudioVideo.EmbeddedExperience";
-
-// Audio only "watch time" metrics.
-const char MediaLog::kWatchTimeAudioAll[] = "Media.WatchTime.Audio.All";
-const char MediaLog::kWatchTimeAudioMse[] = "Media.WatchTime.Audio.MSE";
-const char MediaLog::kWatchTimeAudioEme[] = "Media.WatchTime.Audio.EME";
-const char MediaLog::kWatchTimeAudioSrc[] = "Media.WatchTime.Audio.SRC";
-const char MediaLog::kWatchTimeAudioBattery[] = "Media.WatchTime.Audio.Battery";
-const char MediaLog::kWatchTimeAudioAc[] = "Media.WatchTime.Audio.AC";
-const char MediaLog::kWatchTimeAudioEmbeddedExperience[] =
-    "Media.WatchTime.Audio.EmbeddedExperience";
-
-// Audio+video background watch time metrics.
-const char MediaLog::kWatchTimeAudioVideoBackgroundAll[] =
-    "Media.WatchTime.AudioVideo.Background.All";
-const char MediaLog::kWatchTimeAudioVideoBackgroundMse[] =
-    "Media.WatchTime.AudioVideo.Background.MSE";
-const char MediaLog::kWatchTimeAudioVideoBackgroundEme[] =
-    "Media.WatchTime.AudioVideo.Background.EME";
-const char MediaLog::kWatchTimeAudioVideoBackgroundSrc[] =
-    "Media.WatchTime.AudioVideo.Background.SRC";
-const char MediaLog::kWatchTimeAudioVideoBackgroundBattery[] =
-    "Media.WatchTime.AudioVideo.Background.Battery";
-const char MediaLog::kWatchTimeAudioVideoBackgroundAc[] =
-    "Media.WatchTime.AudioVideo.Background.AC";
-const char MediaLog::kWatchTimeAudioVideoBackgroundEmbeddedExperience[] =
-    "Media.WatchTime.AudioVideo.Background.EmbeddedExperience";
-
-const char MediaLog::kWatchTimeFinalize[] = "FinalizeWatchTime";
-const char MediaLog::kWatchTimeFinalizePower[] = "FinalizePowerWatchTime";
-
-base::flat_set<base::StringPiece> MediaLog::GetWatchTimeKeys() {
-  return base::flat_set<base::StringPiece>(
-      {kWatchTimeAudioAll,
-       kWatchTimeAudioMse,
-       kWatchTimeAudioEme,
-       kWatchTimeAudioSrc,
-       kWatchTimeAudioBattery,
-       kWatchTimeAudioAc,
-       kWatchTimeAudioEmbeddedExperience,
-       kWatchTimeAudioVideoAll,
-       kWatchTimeAudioVideoMse,
-       kWatchTimeAudioVideoEme,
-       kWatchTimeAudioVideoSrc,
-       kWatchTimeAudioVideoBattery,
-       kWatchTimeAudioVideoAc,
-       kWatchTimeAudioVideoEmbeddedExperience,
-       kWatchTimeAudioVideoBackgroundAll,
-       kWatchTimeAudioVideoBackgroundMse,
-       kWatchTimeAudioVideoBackgroundEme,
-       kWatchTimeAudioVideoBackgroundSrc,
-       kWatchTimeAudioVideoBackgroundBattery,
-       kWatchTimeAudioVideoBackgroundAc,
-       kWatchTimeAudioVideoBackgroundEmbeddedExperience},
-      base::KEEP_FIRST_OF_DUPES);
-}
-
-base::flat_set<base::StringPiece> MediaLog::GetWatchTimePowerKeys() {
-  return base::flat_set<base::StringPiece>(
-      {kWatchTimeAudioBattery, kWatchTimeAudioAc, kWatchTimeAudioVideoBattery,
-       kWatchTimeAudioVideoAc, kWatchTimeAudioVideoBackgroundBattery,
-       kWatchTimeAudioVideoBackgroundAc},
-      base::KEEP_FIRST_OF_DUPES);
-}
+static base::AtomicSequenceNumber g_media_log_count;
 
 std::string MediaLog::MediaLogLevelToString(MediaLogLevel level) {
   switch (level) {
@@ -143,16 +65,10 @@ std::string MediaLog::EventTypeToString(MediaLogEvent::Type type) {
       return "VIDEO_SIZE_SET";
     case MediaLogEvent::DURATION_SET:
       return "DURATION_SET";
-    case MediaLogEvent::TOTAL_BYTES_SET:
-      return "TOTAL_BYTES_SET";
-    case MediaLogEvent::NETWORK_ACTIVITY_SET:
-      return "NETWORK_ACTIVITY_SET";
     case MediaLogEvent::ENDED:
       return "ENDED";
     case MediaLogEvent::TEXT_ENDED:
       return "TEXT_ENDED";
-    case MediaLogEvent::BUFFERED_EXTENTS_CHANGED:
-      return "BUFFERED_EXTENTS_CHANGED";
     case MediaLogEvent::MEDIA_ERROR_LOG_ENTRY:
       return "MEDIA_ERROR_LOG_ENTRY";
     case MediaLogEvent::MEDIA_INFO_LOG_ENTRY:
@@ -161,8 +77,6 @@ std::string MediaLog::EventTypeToString(MediaLogEvent::Type type) {
       return "MEDIA_DEBUG_LOG_ENTRY";
     case MediaLogEvent::PROPERTY_CHANGE:
       return "PROPERTY_CHANGE";
-    case MediaLogEvent::WATCH_TIME_UPDATE:
-      return "WATCH_TIME_UPDATE";
   }
   NOTREACHED();
   return NULL;
@@ -186,6 +100,7 @@ std::string MediaLog::PipelineStatusToString(PipelineStatus status) {
     STRINGIFY_STATUS_CASE(DEMUXER_ERROR_COULD_NOT_OPEN);
     STRINGIFY_STATUS_CASE(DEMUXER_ERROR_COULD_NOT_PARSE);
     STRINGIFY_STATUS_CASE(DEMUXER_ERROR_NO_SUPPORTED_STREAMS);
+    STRINGIFY_STATUS_CASE(DEMUXER_ERROR_DETECTED_HLS);
     STRINGIFY_STATUS_CASE(DECODER_ERROR_NOT_SUPPORTED);
     STRINGIFY_STATUS_CASE(CHUNK_DEMUXER_ERROR_APPEND_FAILED);
     STRINGIFY_STATUS_CASE(CHUNK_DEMUXER_ERROR_EOS_STATUS_DECODE_ERROR);
@@ -249,7 +164,7 @@ std::string MediaLog::BufferingStateToString(BufferingState state) {
 
 MediaLog::MediaLog() : id_(g_media_log_count.GetNext()) {}
 
-MediaLog::~MediaLog() {}
+MediaLog::~MediaLog() = default;
 
 void MediaLog::AddEvent(std::unique_ptr<MediaLogEvent> event) {}
 
@@ -259,6 +174,14 @@ std::string MediaLog::GetErrorMessage() {
 
 void MediaLog::RecordRapporWithSecurityOrigin(const std::string& metric) {
   DVLOG(1) << "Default MediaLog doesn't support rappor reporting.";
+}
+
+std::unique_ptr<MediaLogEvent> MediaLog::CreateCreatedEvent(
+    const std::string& origin_url) {
+  std::unique_ptr<MediaLogEvent> event(
+      CreateEvent(MediaLogEvent::WEBMEDIAPLAYER_CREATED));
+  event->params.SetString("origin_url", origin_url);
+  return event;
 }
 
 std::unique_ptr<MediaLogEvent> MediaLog::CreateEvent(MediaLogEvent::Type type) {
@@ -339,20 +262,6 @@ std::unique_ptr<MediaLogEvent> MediaLog::CreateVideoSizeSetEvent(
   return event;
 }
 
-std::unique_ptr<MediaLogEvent> MediaLog::CreateBufferedExtentsChangedEvent(
-    int64_t start,
-    int64_t current,
-    int64_t end) {
-  std::unique_ptr<MediaLogEvent> event(
-      CreateEvent(MediaLogEvent::BUFFERED_EXTENTS_CHANGED));
-  // These values are headed to JS where there is no int64_t so we use a double
-  // and accept loss of precision above 2^53 bytes (8 Exabytes).
-  event->params.SetDouble("buffer_start", start);
-  event->params.SetDouble("buffer_current", current);
-  event->params.SetDouble("buffer_end", end);
-  return event;
-}
-
 std::unique_ptr<MediaLogEvent> MediaLog::CreateBufferingStateChangedEvent(
     const std::string& property,
     BufferingState state) {
@@ -391,10 +300,9 @@ void MediaLog::SetBooleanProperty(
   AddEvent(std::move(event));
 }
 
-LogHelper::LogHelper(MediaLog::MediaLogLevel level,
-                     const scoped_refptr<MediaLog>& media_log)
+LogHelper::LogHelper(MediaLog::MediaLogLevel level, MediaLog* media_log)
     : level_(level), media_log_(media_log) {
-  DCHECK(media_log_.get());
+  DCHECK(media_log_);
 }
 
 LogHelper::~LogHelper() {

@@ -20,13 +20,13 @@ std::unique_ptr<U2fApduResponse> U2fApduResponse::CreateFromMessage(
   response_status = static_cast<Status>(status_bytes);
   std::vector<uint8_t> data(message.begin(), message.end() - 2);
 
-  return base::MakeUnique<U2fApduResponse>(std::move(data), response_status);
+  return std::make_unique<U2fApduResponse>(std::move(data), response_status);
 }
 
 U2fApduResponse::U2fApduResponse(std::vector<uint8_t> message,
                                  Status response_status)
     : response_status_(response_status), data_(std::move(message)) {}
 
-U2fApduResponse::~U2fApduResponse() {}
+U2fApduResponse::~U2fApduResponse() = default;
 
 }  // namespace device

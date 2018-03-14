@@ -6,7 +6,9 @@
 
 #include "base/macros.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/browser/task_manager/mock_web_contents_task_manager.h"
 #include "chrome/browser/task_manager/providers/web_contents/web_contents_tags_manager.h"
 #include "chrome/browser/ui/browser.h"
@@ -294,8 +296,12 @@ IN_PROC_BROWSER_TEST_F(TabContentsTagTest, NavigateToPageNoFavicon) {
   base::FilePath test_dir;
   PathService::Get(chrome::DIR_TEST_DATA, &test_dir);
   std::string favicon_string;
-  base::ReadFileToString(
-      test_dir.AppendASCII("favicon").AppendASCII("icon.png"), &favicon_string);
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    base::ReadFileToString(
+        test_dir.AppendASCII("favicon").AppendASCII("icon.png"),
+        &favicon_string);
+  }
   SkBitmap favicon_bitmap;
   gfx::PNGCodec::Decode(
       reinterpret_cast<const unsigned char*>(favicon_string.data()),
@@ -310,7 +316,7 @@ IN_PROC_BROWSER_TEST_F(TabContentsTagTest, NavigateToPageNoFavicon) {
 
   // Check that the task manager uses the default favicon for the page.
   gfx::Image default_favicon_image =
-      ResourceBundle::GetSharedInstance().GetNativeImageNamed(
+      ui::ResourceBundle::GetSharedInstance().GetNativeImageNamed(
           IDR_DEFAULT_FAVICON);
   EXPECT_TRUE(gfx::test::AreImagesEqual(default_favicon_image,
                                         gfx::Image(task->icon())));

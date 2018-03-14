@@ -9,12 +9,11 @@
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/memory/ptr_util.h"
-#include "content/public/browser/browser_thread.h"
+#include "base/threading/thread_restrictions.h"
 #include "extensions/browser/value_store/leveldb_value_store.h"
 #include "extensions/common/constants.h"
 
 using base::AutoLock;
-using content::BrowserThread;
 
 namespace {
 
@@ -59,7 +58,7 @@ bool LegacyValueStoreFactory::ModelSettings::DataExists(
 
 std::set<ExtensionId>
 LegacyValueStoreFactory::ModelSettings::GetKnownExtensionIDs() const {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::AssertBlockingAllowed();
   std::set<ExtensionId> result;
 
   // Leveldb databases are directories inside |base_path_|.
@@ -128,7 +127,7 @@ LegacyValueStoreFactory::SettingsRoot::GetModel(ModelType model_type) {
 std::set<ExtensionId>
 LegacyValueStoreFactory::SettingsRoot::GetKnownExtensionIDs(
     ModelType model_type) const {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::AssertBlockingAllowed();
   switch (model_type) {
     case ValueStoreFactory::ModelType::APP:
       DCHECK(apps_ != nullptr);
@@ -168,12 +167,12 @@ bool LegacyValueStoreFactory::StateDBExists() const {
 }
 
 std::unique_ptr<ValueStore> LegacyValueStoreFactory::CreateRulesStore() {
-  return base::MakeUnique<LeveldbValueStore>(kRulesDatabaseUMAClientName,
+  return std::make_unique<LeveldbValueStore>(kRulesDatabaseUMAClientName,
                                              GetRulesDBPath());
 }
 
 std::unique_ptr<ValueStore> LegacyValueStoreFactory::CreateStateStore() {
-  return base::MakeUnique<LeveldbValueStore>(kStateDatabaseUMAClientName,
+  return std::make_unique<LeveldbValueStore>(kStateDatabaseUMAClientName,
                                              GetStateDBPath());
 }
 
@@ -184,7 +183,7 @@ std::unique_ptr<ValueStore> LegacyValueStoreFactory::CreateSettingsStore(
   const ModelSettings* settings_root =
       GetSettingsRoot(settings_namespace).GetModel(model_type);
   DCHECK(settings_root != nullptr);
-  return base::MakeUnique<LeveldbValueStore>(
+  return std::make_unique<LeveldbValueStore>(
       kSettingsDatabaseUMAClientName, settings_root->GetDBPath(extension_id));
 }
 
@@ -192,8 +191,7 @@ void LegacyValueStoreFactory::DeleteSettings(
     settings_namespace::Namespace settings_namespace,
     ModelType model_type,
     const ExtensionId& extension_id) {
-  // TODO(cmumford): Verify that we always need to be called on FILE thread.
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::AssertBlockingAllowed();
   ModelSettings* model_settings =
       GetSettingsRoot(settings_namespace).GetModel(model_type);
   if (model_settings == nullptr) {

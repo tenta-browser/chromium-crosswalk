@@ -85,6 +85,8 @@ class CONTENT_EXPORT DOMStorageNamespace
 
   void GetOriginsWithAreas(std::vector<GURL>* origins) const;
 
+  int GetAreaOpenCount(const GURL& origin) const;
+
  private:
   friend class base::RefCountedThreadSafe<DOMStorageNamespace>;
 
@@ -93,10 +95,12 @@ class CONTENT_EXPORT DOMStorageNamespace
   struct AreaHolder {
     scoped_refptr<DOMStorageArea> area_;
     int open_count_;
+
     AreaHolder();
     AreaHolder(DOMStorageArea* area, int count);
-    AreaHolder(const AreaHolder& other);
+    AreaHolder& operator=(AreaHolder&& other);
     ~AreaHolder();
+    DISALLOW_COPY_AND_ASSIGN(AreaHolder);
   };
   typedef std::map<GURL, AreaHolder> AreaMap;
 
@@ -105,12 +109,14 @@ class CONTENT_EXPORT DOMStorageNamespace
   // Returns a pointer to the area holder in our map or NULL.
   AreaHolder* GetAreaHolder(const GURL& origin);
 
+  void OnCloneStorageDone();
+
   int64_t namespace_id_;
-  std::string persistent_namespace_id_;
+  const std::string persistent_namespace_id_;
   base::FilePath directory_;
   AreaMap areas_;
-  scoped_refptr<DOMStorageTaskRunner> task_runner_;
-  scoped_refptr<SessionStorageDatabase> session_storage_database_;
+  const scoped_refptr<DOMStorageTaskRunner> task_runner_;
+  const scoped_refptr<SessionStorageDatabase> session_storage_database_;
 };
 
 }  // namespace content

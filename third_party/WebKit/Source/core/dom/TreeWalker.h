@@ -25,25 +25,23 @@
 #ifndef TreeWalker_h
 #define TreeWalker_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/NodeFilter.h"
 #include "core/dom/NodeIteratorBase.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
 class ExceptionState;
 
-class TreeWalker final : public GarbageCollected<TreeWalker>,
-                         public ScriptWrappable,
-                         public NodeIteratorBase {
+class TreeWalker final : public ScriptWrappable, public NodeIteratorBase {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(TreeWalker);
 
  public:
   static TreeWalker* Create(Node* root_node,
                             unsigned what_to_show,
-                            NodeFilter* filter) {
+                            V8NodeFilterCondition* filter) {
     return new TreeWalker(root_node, what_to_show, filter);
   }
 
@@ -58,14 +56,16 @@ class TreeWalker final : public GarbageCollected<TreeWalker>,
   Node* previousNode(ExceptionState&);
   Node* nextNode(ExceptionState&);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
 
  private:
-  TreeWalker(Node*, unsigned what_to_show, NodeFilter*);
+  TreeWalker(Node*, unsigned what_to_show, V8NodeFilterCondition*);
 
   Node* SetCurrent(Node*);
+  template <typename Strategy>
+  Node* TraverseSiblings(ExceptionState&);
 
   Member<Node> current_;
 };

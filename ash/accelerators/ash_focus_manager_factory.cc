@@ -4,30 +4,31 @@
 
 #include "ash/accelerators/ash_focus_manager_factory.h"
 
+#include <memory>
+
 #include "ash/accelerators/accelerator_controller.h"
 #include "ash/shell.h"
-#include "base/memory/ptr_util.h"
 #include "ui/views/focus/focus_manager.h"
 
 namespace ash {
 
-AshFocusManagerFactory::AshFocusManagerFactory() {}
-AshFocusManagerFactory::~AshFocusManagerFactory() {}
+AshFocusManagerFactory::AshFocusManagerFactory() = default;
+AshFocusManagerFactory::~AshFocusManagerFactory() = default;
 
-views::FocusManager* AshFocusManagerFactory::CreateFocusManager(
+std::unique_ptr<views::FocusManager> AshFocusManagerFactory::CreateFocusManager(
     views::Widget* widget,
     bool desktop_widget) {
-  return new views::FocusManager(
-      widget,
-      desktop_widget ? nullptr : base::WrapUnique<Delegate>(new Delegate));
+  return std::make_unique<views::FocusManager>(
+      widget, desktop_widget ? nullptr : std::make_unique<Delegate>());
 }
+
+AshFocusManagerFactory::Delegate::Delegate() = default;
+AshFocusManagerFactory::Delegate::~Delegate() = default;
 
 bool AshFocusManagerFactory::Delegate::ProcessAccelerator(
     const ui::Accelerator& accelerator) {
   AcceleratorController* controller = Shell::Get()->accelerator_controller();
-  if (controller)
-    return controller->Process(accelerator);
-  return false;
+  return controller && controller->Process(accelerator);
 }
 
 }  // namespace ash

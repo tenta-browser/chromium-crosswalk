@@ -31,15 +31,13 @@
 #include "platform/DragImage.h"
 
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "platform/fonts/FontDescription.h"
-#include "platform/fonts/FontTraits.h"
 #include "platform/geometry/IntSize.h"
 #include "platform/graphics/BitmapImage.h"
 #include "platform/graphics/Image.h"
 #include "platform/graphics/skia/SkiaUtils.h"
 #include "platform/weborigin/KURL.h"
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/RefPtr.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -51,21 +49,19 @@ namespace blink {
 
 class TestImage : public Image {
  public:
-  static PassRefPtr<TestImage> Create(sk_sp<SkImage> image) {
-    return AdoptRef(new TestImage(image));
+  static scoped_refptr<TestImage> Create(sk_sp<SkImage> image) {
+    return base::AdoptRef(new TestImage(image));
   }
 
-  static PassRefPtr<TestImage> Create(const IntSize& size) {
-    return AdoptRef(new TestImage(size));
+  static scoped_refptr<TestImage> Create(const IntSize& size) {
+    return base::AdoptRef(new TestImage(size));
   }
 
   IntSize Size() const override {
-    ASSERT(image_);
+    DCHECK(image_);
 
     return IntSize(image_->width(), image_->height());
   }
-
-  sk_sp<SkImage> ImageForCurrentFrame() override { return image_; }
 
   bool CurrentFrameKnownToBeOpaque(
       MetadataMode = kUseCurrentMetadata) override {
@@ -81,8 +77,13 @@ class TestImage : public Image {
             const FloatRect&,
             const FloatRect&,
             RespectImageOrientationEnum,
-            ImageClampingMode) override {
+            ImageClampingMode,
+            ImageDecodingMode) override {
     // Image pure virtual stub.
+  }
+
+  PaintImage PaintImageForCurrentFrame() override {
+    return CreatePaintImageBuilder().set_image(image_).TakePaintImage();
   }
 
  private:
@@ -106,15 +107,15 @@ class TestImage : public Image {
 };
 
 TEST(DragImageTest, NullHandling) {
-  EXPECT_FALSE(DragImage::Create(0));
+  EXPECT_FALSE(DragImage::Create(nullptr));
 
-  RefPtr<TestImage> null_test_image(TestImage::Create(IntSize()));
-  EXPECT_FALSE(DragImage::Create(null_test_image.Get()));
+  scoped_refptr<TestImage> null_test_image(TestImage::Create(IntSize()));
+  EXPECT_FALSE(DragImage::Create(null_test_image.get()));
 }
 
 TEST(DragImageTest, NonNullHandling) {
-  RefPtr<TestImage> test_image(TestImage::Create(IntSize(2, 2)));
-  std::unique_ptr<DragImage> drag_image = DragImage::Create(test_image.Get());
+  scoped_refptr<TestImage> test_image(TestImage::Create(IntSize(2, 2)));
+  std::unique_ptr<DragImage> drag_image = DragImage::Create(test_image.get());
   ASSERT_TRUE(drag_image);
 
   drag_image->Scale(0.5, 0.5);
@@ -127,12 +128,12 @@ TEST(DragImageTest, CreateDragImage) {
   // Tests that the DrageImage implementation doesn't choke on null values
   // of imageForCurrentFrame().
   // FIXME: how is this test any different from test NullHandling?
-  RefPtr<TestImage> test_image(TestImage::Create(IntSize()));
-  EXPECT_FALSE(DragImage::Create(test_image.Get()));
+  scoped_refptr<TestImage> test_image(TestImage::Create(IntSize()));
+  EXPECT_FALSE(DragImage::Create(test_image.get()));
 }
 
 TEST(DragImageTest, TrimWhitespace) {
-  KURL url(kParsedURLString, "http://www.example.com/");
+  KURL url("http://www.example.com/");
   String test_label = "          Example Example Example      \n    ";
   String expected_label = "Example Example Example";
   float device_scale_factor = 1.0f;
@@ -142,8 +143,8 @@ TEST(DragImageTest, TrimWhitespace) {
   font_description.SetSpecifiedSize(16);
   font_description.SetIsAbsoluteSize(true);
   font_description.SetGenericFamily(FontDescription::kNoFamily);
-  font_description.SetWeight(kFontWeightNormal);
-  font_description.SetStyle(kFontStyleNormal);
+  font_description.SetWeight(NormalWeightValue());
+  font_description.SetStyle(NormalSlopeValue());
 
   std::unique_ptr<DragImage> test_image =
       DragImage::Create(url, test_label, font_description, device_scale_factor);
@@ -156,38 +157,28 @@ TEST(DragImageTest, TrimWhitespace) {
 TEST(DragImageTest, InterpolationNone) {
   SkBitmap expected_bitmap;
   expected_bitmap.allocN32Pixels(4, 4);
-  {
-    SkAutoLockPixels lock(expected_bitmap);
-    expected_bitmap.eraseArea(SkIRect::MakeXYWH(0, 0, 2, 2), 0xFFFFFFFF);
-    expected_bitmap.eraseArea(SkIRect::MakeXYWH(0, 2, 2, 2), 0xFF000000);
-    expected_bitmap.eraseArea(SkIRect::MakeXYWH(2, 0, 2, 2), 0xFF000000);
-    expected_bitmap.eraseArea(SkIRect::MakeXYWH(2, 2, 2, 2), 0xFFFFFFFF);
-  }
+  expected_bitmap.eraseArea(SkIRect::MakeXYWH(0, 0, 2, 2), 0xFFFFFFFF);
+  expected_bitmap.eraseArea(SkIRect::MakeXYWH(0, 2, 2, 2), 0xFF000000);
+  expected_bitmap.eraseArea(SkIRect::MakeXYWH(2, 0, 2, 2), 0xFF000000);
+  expected_bitmap.eraseArea(SkIRect::MakeXYWH(2, 2, 2, 2), 0xFFFFFFFF);
 
   SkBitmap test_bitmap;
   test_bitmap.allocN32Pixels(2, 2);
-  {
-    SkAutoLockPixels lock(test_bitmap);
-    test_bitmap.eraseArea(SkIRect::MakeXYWH(0, 0, 1, 1), 0xFFFFFFFF);
-    test_bitmap.eraseArea(SkIRect::MakeXYWH(0, 1, 1, 1), 0xFF000000);
-    test_bitmap.eraseArea(SkIRect::MakeXYWH(1, 0, 1, 1), 0xFF000000);
-    test_bitmap.eraseArea(SkIRect::MakeXYWH(1, 1, 1, 1), 0xFFFFFFFF);
-  }
+  test_bitmap.eraseArea(SkIRect::MakeXYWH(0, 0, 1, 1), 0xFFFFFFFF);
+  test_bitmap.eraseArea(SkIRect::MakeXYWH(0, 1, 1, 1), 0xFF000000);
+  test_bitmap.eraseArea(SkIRect::MakeXYWH(1, 0, 1, 1), 0xFF000000);
+  test_bitmap.eraseArea(SkIRect::MakeXYWH(1, 1, 1, 1), 0xFFFFFFFF);
 
-  RefPtr<TestImage> test_image =
+  scoped_refptr<TestImage> test_image =
       TestImage::Create(SkImage::MakeFromBitmap(test_bitmap));
   std::unique_ptr<DragImage> drag_image = DragImage::Create(
-      test_image.Get(), kDoNotRespectImageOrientation, 1, kInterpolationNone);
+      test_image.get(), kDoNotRespectImageOrientation, 1, kInterpolationNone);
   ASSERT_TRUE(drag_image);
   drag_image->Scale(2, 2);
   const SkBitmap& drag_bitmap = drag_image->Bitmap();
-  {
-    SkAutoLockPixels lock1(drag_bitmap);
-    SkAutoLockPixels lock2(expected_bitmap);
-    for (int x = 0; x < drag_bitmap.width(); ++x)
-      for (int y = 0; y < drag_bitmap.height(); ++y)
-        EXPECT_EQ(expected_bitmap.getColor(x, y), drag_bitmap.getColor(x, y));
-  }
+  for (int x = 0; x < drag_bitmap.width(); ++x)
+    for (int y = 0; y < drag_bitmap.height(); ++y)
+      EXPECT_EQ(expected_bitmap.getColor(x, y), drag_bitmap.getColor(x, y));
 }
 
 }  // namespace blink

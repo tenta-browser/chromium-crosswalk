@@ -5,10 +5,14 @@
 cr.define('extensions', function() {
   'use strict';
 
-  var DetailView = Polymer({
+  const DetailView = Polymer({
     is: 'extensions-detail-view',
 
-    behaviors: [I18nBehavior, Polymer.NeonAnimatableBehavior],
+    behaviors: [
+      I18nBehavior,
+      CrContainerShadowBehavior,
+      extensions.ItemBehavior,
+    ],
 
     properties: {
       /**
@@ -17,6 +21,9 @@ cr.define('extensions', function() {
        */
       data: Object,
 
+      /** @private */
+      size_: String,
+
       /** @type {!extensions.ItemDelegate} */
       delegate: Object,
 
@@ -24,22 +31,50 @@ cr.define('extensions', function() {
       inDevMode: Boolean,
     },
 
-    ready: function() {
-      this.sharedElements = {hero: this.$.main};
-      /** @type {!extensions.AnimationHelper} */
-      this.animationHelper = new extensions.AnimationHelper(this, this.$.main);
+    observers: [
+      'onItemIdChanged_(data.id, delegate)',
+    ],
+
+    /** @private */
+    onItemIdChanged_: function() {
+      // Clear the size, since this view is reused, such that no obsolete size
+      // is displayed.:
+      this.size_ = '';
+      this.delegate.getExtensionSize(this.data.id).then(size => {
+        this.size_ = size;
+      });
+    },
+
+    /**
+     * @param {string} description
+     * @param {string} fallback
+     * @return {string}
+     * @private
+     */
+    getDescription_: function(description, fallback) {
+      return description || fallback;
     },
 
     /** @private */
     onCloseButtonTap_: function() {
-      this.fire('close');
+      extensions.navigation.navigateTo({page: Page.LIST});
     },
 
     /**
      * @return {boolean}
      * @private
      */
-    isEnabled_: function() { return extensions.isEnabled(this.data.state); },
+    isControlled_: function() {
+      return extensions.isControlled(this.data);
+    },
+
+    /**
+     * @return {boolean}
+     * @private
+     */
+    isEnabled_: function() {
+      return extensions.isEnabled(this.data.state);
+    },
 
     /**
      * @return {boolean}
@@ -61,8 +96,18 @@ cr.define('extensions', function() {
      * @return {boolean}
      * @private
      */
-    hasPermissions_: function() {
-      return this.data.permissions.length > 0;
+    hasWarnings_: function() {
+      return this.data.disableReasons.corruptInstall ||
+          this.data.disableReasons.suspiciousInstall ||
+          this.data.disableReasons.updateRequired || !!this.data.blacklistText;
+    },
+
+    /**
+     * @return {string}
+     * @private
+     */
+    computeEnabledStyle_: function() {
+      return this.isEnabled_() ? 'enabled-text' : '';
     },
 
     /**
@@ -87,18 +132,6 @@ cr.define('extensions', function() {
      * @return {boolean}
      * @private
      */
-    shouldShowHomepageButton_: function() {
-      // Note: we ignore |data.homePage.specified| - we use an extension's
-      // webstore entry as a homepage if the extension didn't explicitly specify
-      // a homepage. (|url| can still be unset in the case of unpacked
-      // extensions.)
-      return this.data.homePage.url.length > 0;
-    },
-
-    /**
-     * @return {boolean}
-     * @private
-     */
     shouldShowOptionsLink_: function() {
       return !!this.data.optionsPage;
     },
@@ -109,15 +142,14 @@ cr.define('extensions', function() {
      */
     shouldShowOptionsSection_: function() {
       return this.data.incognitoAccess.isEnabled ||
-             this.data.fileAccess.isEnabled ||
-             this.data.runOnAllUrls.isEnabled ||
-             this.data.errorCollection.isEnabled;
+          this.data.fileAccess.isEnabled || this.data.runOnAllUrls.isEnabled ||
+          this.data.errorCollection.isEnabled;
     },
 
     /** @private */
     onEnableChange_: function() {
-      this.delegate.setItemEnabled(this.data.id,
-                                   this.$['enable-toggle'].checked);
+      this.delegate.setItemEnabled(
+          this.data.id, this.$['enable-toggle'].checked);
     },
 
     /**
@@ -130,12 +162,22 @@ cr.define('extensions', function() {
 
     /** @private */
     onOptionsTap_: function() {
-      this.delegate.showItemOptionsPage(this.data.id);
+      this.delegate.showItemOptionsPage(this.data);
     },
 
     /** @private */
     onRemoveTap_: function() {
       this.delegate.deleteItem(this.data.id);
+    },
+
+    /** @private */
+    onRepairTap_: function() {
+      this.delegate.repairItem(this.data.id);
+    },
+
+    /** @private */
+    onLoadPathTap_: function() {
+      this.delegate.showInFolder(this.data.id);
     },
 
     /** @private */
@@ -162,19 +204,51 @@ cr.define('extensions', function() {
           this.data.id, this.$$('#collect-errors').checked);
     },
 
+    /** @private */
+    onDeveloperWebSiteTap_: function() {
+      this.delegate.openUrl(this.data.manifestHomePageUrl);
+    },
+
+    /** @private */
+    onViewInStoreTap_: function() {
+      this.delegate.openUrl(this.data.webStoreUrl);
+    },
+
     /**
      * @param {!chrome.developerPrivate.DependentExtension} item
+     * @return {string}
      * @private
      */
     computeDependentEntry_: function(item) {
       return loadTimeData.getStringF('itemDependentEntry', item.name, item.id);
     },
 
-    /** @private */
+    /**
+     * @return {string}
+     * @private
+     */
     computeSourceString_: function() {
-      return extensions.getItemSourceString(
-          extensions.getItemSource(this.data));
-    }
+      return this.data.locationText ||
+          extensions.getItemSourceString(extensions.getItemSource(this.data));
+    },
+
+    /**
+     * @param {chrome.developerPrivate.ControllerType} type
+     * @return {string}
+     * @private
+     */
+    getIndicatorIcon_: function(type) {
+      switch (type) {
+        case 'POLICY':
+          return 'cr20:domain';
+        case 'CHILD_CUSTODIAN':
+          return 'cr:account-child-invert';
+        case 'SUPERVISED_USER_CUSTODIAN':
+          return 'cr:supervisor-account';
+        default:
+          return '';
+      }
+    },
   });
 
   return {DetailView: DetailView};

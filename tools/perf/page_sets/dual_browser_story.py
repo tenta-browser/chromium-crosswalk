@@ -97,9 +97,9 @@ class MultiBrowserSharedState(story_module.SharedState):
       wpr_mode = wpr_modes.WPR_RECORD
     else:
       wpr_mode = wpr_modes.WPR_REPLAY
+    self._extra_wpr_args = browser_options.extra_wpr_args
 
-    self.platform.network_controller.Open(wpr_mode,
-                                          browser_options.extra_wpr_args)
+    self.platform.network_controller.Open(wpr_mode)
 
   @property
   def current_tab(self):
@@ -124,10 +124,6 @@ class MultiBrowserSharedState(story_module.SharedState):
 
     if self._platform is None:
       self._platform = possible_browser.platform
-      # TODO(nedn): Remove the if condition once
-      # https://codereview.chromium.org/2265593003/ is rolled to Chromium tree.
-      if hasattr(self._platform.network_controller, 'InitializeIfNeeded'):
-        self._platform.network_controller.InitializeIfNeeded()
     else:
       assert self._platform is possible_browser.platform
     self._possible_browsers[browser_type] = (possible_browser, options)
@@ -167,7 +163,8 @@ class MultiBrowserSharedState(story_module.SharedState):
 
     self.platform.network_controller.StartReplay(
         self._story_set.WprFilePathForStory(story),
-        story.make_javascript_deterministic)
+        story.make_javascript_deterministic,
+        self._extra_wpr_args)
 
     # Note: browsers need to be created after replay has been started.
     self._CreateAllBrowsersIfNeeeded()
@@ -179,6 +176,11 @@ class MultiBrowserSharedState(story_module.SharedState):
     self._current_story.Run(self)
 
   def DidRunStory(self, _):
+    if (not self._story_set.long_running and
+        self._story_set[-1] == self._current_story):
+      # In long_running mode we never close the browsers; otherwise we close
+      # them only after the last story in the set runs.
+      self._CloseAllBrowsers()
     self._current_story = None
 
   def TakeMemoryMeasurement(self):
@@ -197,8 +199,11 @@ class MultiBrowserSharedState(story_module.SharedState):
   def DumpStateUponFailure(self, unused_story, unused_results):
     if self._browsers:
       for browser_type, browser in self._browsers.iteritems():
-        logging.info('vvvvv BROWSER STATE BELOW FOR \'%s\' vvvvv', browser_type)
-        browser.DumpStateUponFailure()
+        if browser is not None:
+          logging.info("vvvvv BROWSER STATE BELOW FOR '%s' vvvvv", browser_type)
+          browser.DumpStateUponFailure()
+        else:
+          logging.info("browser '%s' not yet created", browser_type)
     else:
       logging.warning('Cannot dump browser states: No browsers.')
 
@@ -238,10 +243,11 @@ class SinglePage(story_module.Story):
 class DualBrowserStorySet(story_module.StorySet):
   """A story set that switches back and forth between two browsers."""
 
-  def __init__(self):
+  def __init__(self, long_running=False):
     super(DualBrowserStorySet, self).__init__(
         archive_data_file='data/dual_browser_story.json',
         cloud_storage_bucket=story_module.PARTNER_BUCKET)
+    self.long_running = long_running
 
     for query, url in zip(SEARCH_QUERIES, URL_LIST):
       # Stories that run on the android-webview browser.

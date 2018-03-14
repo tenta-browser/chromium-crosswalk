@@ -42,12 +42,11 @@ namespace blink {
 
 class V0CustomElementSyncMicrotaskQueue;
 class Document;
-class DocumentWriter;
 class HTMLImportChild;
 class HTMLImportsController;
 
 // Owning imported Document lifetime. It also implements ResourceClient through
-// ResourceOwner to feed fetched bytes to the DocumentWriter of the imported
+// ResourceOwner to feed fetched bytes to the DocumentParser of the imported
 // document.  HTMLImportLoader is owned by HTMLImportsController.
 class HTMLImportLoader final
     : public GarbageCollectedFinalized<HTMLImportLoader>,
@@ -68,7 +67,7 @@ class HTMLImportLoader final
     return new HTMLImportLoader(controller);
   }
 
-  ~HTMLImportLoader() override;
+  ~HTMLImportLoader() final;
   void Dispose();
 
   Document* GetDocument() const { return document_.Get(); }
@@ -96,24 +95,24 @@ class HTMLImportLoader final
 
   V0CustomElementSyncMicrotaskQueue* MicrotaskQueue() const;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   HTMLImportLoader(HTMLImportsController*);
 
-  // RawResourceClient
+  // RawResourceClient overrides:
   void ResponseReceived(Resource*,
                         const ResourceResponse&,
-                        std::unique_ptr<WebDataConsumerHandle>) override;
-  void DataReceived(Resource*, const char* data, size_t length) override;
-  void NotifyFinished(Resource*) override;
-  String DebugName() const override { return "HTMLImportLoader"; }
+                        std::unique_ptr<WebDataConsumerHandle>) final;
+  void DataReceived(Resource*, const char* data, size_t length) final;
+  void NotifyFinished(Resource*) final;
+  String DebugName() const final { return "HTMLImportLoader"; }
 
-  // DocumentParserClient
+  // DocumentParserClient overrides:
 
   // Called after document parse is complete after DOMContentLoaded was
   // dispatched.
-  void NotifyParserStopped() override;
+  void NotifyParserStopped() final;
 
   State StartWritingAndParsing(const ResourceResponse&);
   State FinishWriting();
@@ -128,7 +127,6 @@ class HTMLImportLoader final
   HeapVector<Member<HTMLImportChild>> imports_;
   State state_;
   Member<Document> document_;
-  Member<DocumentWriter> writer_;
   Member<V0CustomElementSyncMicrotaskQueue> microtask_queue_;
 };
 

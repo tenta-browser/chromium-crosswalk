@@ -4,7 +4,6 @@
 
 #include "ui/message_center/message_center.h"
 
-#include "base/observer_list.h"
 #include "ui/message_center/message_center_impl.h"
 
 namespace message_center {
@@ -12,12 +11,12 @@ namespace message_center {
 //------------------------------------------------------------------------------
 
 namespace {
-static MessageCenter* g_message_center = NULL;
+static MessageCenter* g_message_center = nullptr;
 }
 
 // static
 void MessageCenter::Initialize() {
-  DCHECK(g_message_center == NULL);
+  DCHECK(!g_message_center);
   g_message_center = new MessageCenterImpl();
 }
 
@@ -31,13 +30,11 @@ MessageCenter* MessageCenter::Get() {
 void MessageCenter::Shutdown() {
   DCHECK(g_message_center);
   delete g_message_center;
-  g_message_center = NULL;
+  g_message_center = nullptr;
 }
 
-MessageCenter::MessageCenter() {
-}
+MessageCenter::MessageCenter() {}
 
-MessageCenter::~MessageCenter() {
-}
+MessageCenter::~MessageCenter() {}
 
 }  // namespace message_center

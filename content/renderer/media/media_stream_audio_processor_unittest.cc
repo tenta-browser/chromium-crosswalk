@@ -5,10 +5,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <string>
 #include <vector>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/aligned_memory.h"
@@ -17,7 +19,6 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "content/common/media/media_stream_options.h"
 #include "content/public/common/media_stream_request.h"
 #include "content/renderer/media/media_stream_audio_processor.h"
 #include "content/renderer/media/media_stream_audio_processor_options.h"
@@ -28,6 +29,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/WebMediaConstraints.h"
 #include "third_party/webrtc/api/mediastreaminterface.h"
+#include "third_party/webrtc/rtc_base/refcountedobject.h"
 
 using ::testing::_;
 using ::testing::AnyNumber;
@@ -80,8 +82,10 @@ class MediaStreamAudioProcessorTest : public ::testing::Test {
  public:
   MediaStreamAudioProcessorTest()
       : params_(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                media::CHANNEL_LAYOUT_STEREO, 48000, 16, 512) {
-  }
+                media::CHANNEL_LAYOUT_STEREO,
+                48000,
+                16,
+                512) {}
 
  protected:
   // Helper method to save duplicated code.
@@ -211,7 +215,6 @@ class MediaStreamAudioProcessorTest : public ::testing::Test {
 
   base::MessageLoop main_thread_message_loop_;
   media::AudioParameters params_;
-  MediaStreamDevice::AudioDeviceParameters input_device_params_;
 };
 
 // Test crashing with ASAN on Android. crbug.com/468762
@@ -221,13 +224,12 @@ class MediaStreamAudioProcessorTest : public ::testing::Test {
 #define MAYBE_WithAudioProcessing WithAudioProcessing
 #endif
 TEST_F(MediaStreamAudioProcessorTest, MAYBE_WithAudioProcessing) {
-  MockConstraintFactory constraint_factory;
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
-      new WebRtcAudioDeviceImpl());
+      new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
+  AudioProcessingProperties properties;
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
-          constraint_factory.CreateWebMediaConstraints(), input_device_params_,
-          webrtc_audio_device.get()));
+          properties, webrtc_audio_device.get()));
   EXPECT_TRUE(audio_processor->has_audio_processing());
   audio_processor->OnCaptureFormatChanged(params_);
   VerifyDefaultComponents(audio_processor.get());
@@ -242,52 +244,15 @@ TEST_F(MediaStreamAudioProcessorTest, MAYBE_WithAudioProcessing) {
   audio_processor->Stop();
 }
 
-TEST_F(MediaStreamAudioProcessorTest, VerifyTabCaptureWithoutAudioProcessing) {
-  scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
-      new WebRtcAudioDeviceImpl());
-  // Create MediaStreamAudioProcessor instance for kMediaStreamSourceTab source.
-  MockConstraintFactory tab_constraint_factory;
-  const std::string tab_string = kMediaStreamSourceTab;
-  tab_constraint_factory.basic().media_stream_source.SetExact(
-      blink::WebString::FromUTF8(tab_string));
-  scoped_refptr<MediaStreamAudioProcessor> audio_processor(
-      new rtc::RefCountedObject<MediaStreamAudioProcessor>(
-          tab_constraint_factory.CreateWebMediaConstraints(),
-          input_device_params_, webrtc_audio_device.get()));
-  EXPECT_FALSE(audio_processor->has_audio_processing());
-  audio_processor->OnCaptureFormatChanged(params_);
-
-  ProcessDataAndVerifyFormat(audio_processor.get(),
-                             params_.sample_rate(),
-                             params_.channels(),
-                             params_.sample_rate() / 100);
-
-  // Create MediaStreamAudioProcessor instance for kMediaStreamSourceSystem
-  // source.
-  MockConstraintFactory system_constraint_factory;
-  const std::string system_string = kMediaStreamSourceSystem;
-  system_constraint_factory.basic().media_stream_source.SetExact(
-      blink::WebString::FromUTF8(system_string));
-  audio_processor = new rtc::RefCountedObject<MediaStreamAudioProcessor>(
-      system_constraint_factory.CreateWebMediaConstraints(),
-      input_device_params_, webrtc_audio_device.get());
-  EXPECT_FALSE(audio_processor->has_audio_processing());
-
-  // Stop |audio_processor| so that it removes itself from
-  // |webrtc_audio_device| and clears its pointer to it.
-  audio_processor->Stop();
-}
-
 TEST_F(MediaStreamAudioProcessorTest, TurnOffDefaultConstraints) {
+  AudioProcessingProperties properties;
   // Turn off the default constraints and pass it to MediaStreamAudioProcessor.
-  MockConstraintFactory constraint_factory;
-  constraint_factory.DisableDefaultAudioConstraints();
+  properties.DisableDefaultPropertiesForTesting();
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
-      new WebRtcAudioDeviceImpl());
+      new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
-          constraint_factory.CreateWebMediaConstraints(), input_device_params_,
-          webrtc_audio_device.get()));
+          properties, webrtc_audio_device.get()));
   EXPECT_FALSE(audio_processor->has_audio_processing());
   audio_processor->OnCaptureFormatChanged(params_);
 
@@ -299,153 +264,6 @@ TEST_F(MediaStreamAudioProcessorTest, TurnOffDefaultConstraints) {
   // Stop |audio_processor| so that it removes itself from
   // |webrtc_audio_device| and clears its pointer to it.
   audio_processor->Stop();
-}
-
-TEST_F(MediaStreamAudioProcessorTest, VerifyConstraints) {
-  {
-    // Verify that echo cancellation is off when platform aec effect is on.
-    MockConstraintFactory constraint_factory;
-    MediaAudioConstraints audio_constraints(
-        constraint_factory.CreateWebMediaConstraints(),
-        media::AudioParameters::ECHO_CANCELLER);
-    EXPECT_FALSE(audio_constraints.GetEchoCancellationProperty());
-  }
-
-  {
-    // Verify |kEchoCancellation| overwrite |kGoogEchoCancellation|.
-    MockConstraintFactory constraint_factory_1;
-    constraint_factory_1.AddAdvanced().echo_cancellation.SetExact(true);
-    constraint_factory_1.AddAdvanced().goog_echo_cancellation.SetExact(false);
-    blink::WebMediaConstraints constraints_1 =
-        constraint_factory_1.CreateWebMediaConstraints();
-    MediaAudioConstraints audio_constraints_1(constraints_1, 0);
-    EXPECT_TRUE(audio_constraints_1.GetEchoCancellationProperty());
-
-    MockConstraintFactory constraint_factory_2;
-    constraint_factory_2.AddAdvanced().echo_cancellation.SetExact(false);
-    constraint_factory_2.AddAdvanced().goog_echo_cancellation.SetExact(true);
-    blink::WebMediaConstraints constraints_2 =
-        constraint_factory_2.CreateWebMediaConstraints();
-    MediaAudioConstraints audio_constraints_2(constraints_2, 0);
-    EXPECT_FALSE(audio_constraints_2.GetEchoCancellationProperty());
-  }
-  {
-    // When |kEchoCancellation| is explicitly set to false, the default values
-    // for all the constraints are false.
-    MockConstraintFactory constraint_factory;
-    constraint_factory.AddAdvanced().echo_cancellation.SetExact(false);
-    blink::WebMediaConstraints constraints =
-        constraint_factory.CreateWebMediaConstraints();
-    MediaAudioConstraints audio_constraints(constraints, 0);
-  }
-}
-
-TEST_F(MediaStreamAudioProcessorTest, ValidateBadConstraints) {
-  MockConstraintFactory constraint_factory;
-  // Add a constraint that is not valid for audio.
-  constraint_factory.basic().width.SetExact(240);
-  MediaAudioConstraints audio_constraints(
-      constraint_factory.CreateWebMediaConstraints(), 0);
-  EXPECT_FALSE(audio_constraints.IsValid());
-}
-
-TEST_F(MediaStreamAudioProcessorTest, ValidateGoodConstraints) {
-  MockConstraintFactory constraint_factory;
-  // Check that the renderToAssociatedSink constraint is considered valid.
-  constraint_factory.basic().render_to_associated_sink.SetExact(true);
-  MediaAudioConstraints audio_constraints(
-      constraint_factory.CreateWebMediaConstraints(), 0);
-  EXPECT_TRUE(audio_constraints.IsValid());
-}
-
-TEST_F(MediaStreamAudioProcessorTest, NoEchoTurnsOffProcessing) {
-  {
-    MockConstraintFactory constraint_factory;
-    MediaAudioConstraints audio_constraints(
-        constraint_factory.CreateWebMediaConstraints(), 0);
-    // The default value for echo cancellation is true, except when all
-    // audio processing has been turned off.
-    EXPECT_TRUE(audio_constraints.default_audio_processing_constraint_value());
-  }
-  // Turning off audio processing via a mandatory constraint.
-  {
-    MockConstraintFactory constraint_factory;
-    constraint_factory.basic().echo_cancellation.SetExact(false);
-    MediaAudioConstraints audio_constraints(
-        constraint_factory.CreateWebMediaConstraints(), 0);
-    // The default value for echo cancellation is true, except when all
-    // audio processing has been turned off.
-    EXPECT_FALSE(audio_constraints.default_audio_processing_constraint_value());
-  }
-  // Turning off audio processing via an optional constraint.
-  {
-    MockConstraintFactory constraint_factory;
-    constraint_factory.AddAdvanced().echo_cancellation.SetExact(false);
-    MediaAudioConstraints audio_constraints(
-        constraint_factory.CreateWebMediaConstraints(), 0);
-    EXPECT_FALSE(audio_constraints.default_audio_processing_constraint_value());
-  }
-}
-
-MediaAudioConstraints MakeMediaAudioConstraints(
-    const MockConstraintFactory& constraint_factory) {
-  return MediaAudioConstraints(constraint_factory.CreateWebMediaConstraints(),
-                               AudioParameters::NO_EFFECTS);
-}
-
-TEST_F(MediaStreamAudioProcessorTest, SelectsConstraintsArrayGeometryIfExists) {
-  std::vector<webrtc::Point> constraints_geometry(1,
-                                                  webrtc::Point(-0.02f, 0, 0));
-  constraints_geometry.push_back(webrtc::Point(0.02f, 0, 0));
-
-  std::vector<webrtc::Point> input_device_geometry(1, webrtc::Point(0, 0, 0));
-  input_device_geometry.push_back(webrtc::Point(0, 0.05f, 0));
-
-  {
-    // Both geometries empty.
-    MockConstraintFactory constraint_factory;
-    MediaStreamDevice::AudioDeviceParameters input_params;
-
-    const auto& actual_geometry = GetArrayGeometryPreferringConstraints(
-        MakeMediaAudioConstraints(constraint_factory), input_params);
-    EXPECT_EQ(std::vector<webrtc::Point>(), actual_geometry);
-  }
-  {
-    // Constraints geometry empty.
-    MockConstraintFactory constraint_factory;
-    MediaStreamDevice::AudioDeviceParameters input_params;
-    input_params.mic_positions.push_back(media::Point(0, 0, 0));
-    input_params.mic_positions.push_back(media::Point(0, 0.05f, 0));
-
-    const auto& actual_geometry = GetArrayGeometryPreferringConstraints(
-        MakeMediaAudioConstraints(constraint_factory), input_params);
-    EXPECT_EQ(input_device_geometry, actual_geometry);
-  }
-  {
-    // Input device geometry empty.
-    MockConstraintFactory constraint_factory;
-    constraint_factory.AddAdvanced().goog_array_geometry.SetExact(
-        blink::WebString::FromUTF8("-0.02 0 0 0.02 0 0"));
-    MediaStreamDevice::AudioDeviceParameters input_params;
-
-    const auto& actual_geometry = GetArrayGeometryPreferringConstraints(
-        MakeMediaAudioConstraints(constraint_factory), input_params);
-    EXPECT_EQ(constraints_geometry, actual_geometry);
-  }
-  {
-    // Both geometries existing.
-    MockConstraintFactory constraint_factory;
-    constraint_factory.AddAdvanced().goog_array_geometry.SetExact(
-        blink::WebString::FromUTF8("-0.02 0 0 0.02 0 0"));
-    MediaStreamDevice::AudioDeviceParameters input_params;
-    input_params.mic_positions.push_back(media::Point(0, 0, 0));
-    input_params.mic_positions.push_back(media::Point(0, 0.05f, 0));
-
-    // Constraints geometry is preferred.
-    const auto& actual_geometry = GetArrayGeometryPreferringConstraints(
-        MakeMediaAudioConstraints(constraint_factory), input_params);
-    EXPECT_EQ(constraints_geometry, actual_geometry);
-  }
 }
 
 // Test crashing with ASAN on Android. crbug.com/468762
@@ -455,13 +273,12 @@ TEST_F(MediaStreamAudioProcessorTest, SelectsConstraintsArrayGeometryIfExists) {
 #define MAYBE_TestAllSampleRates TestAllSampleRates
 #endif
 TEST_F(MediaStreamAudioProcessorTest, MAYBE_TestAllSampleRates) {
-  MockConstraintFactory constraint_factory;
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
-      new WebRtcAudioDeviceImpl());
+      new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
+  AudioProcessingProperties properties;
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
-          constraint_factory.CreateWebMediaConstraints(), input_device_params_,
-          webrtc_audio_device.get()));
+          properties, webrtc_audio_device.get()));
   EXPECT_TRUE(audio_processor->has_audio_processing());
 
   static const int kSupportedSampleRates[] =
@@ -495,13 +312,12 @@ TEST_F(MediaStreamAudioProcessorTest, GetAecDumpMessageFilter) {
       new AecDumpMessageFilter(base::ThreadTaskRunnerHandle::Get(),
                                base::ThreadTaskRunnerHandle::Get()));
 
-  MockConstraintFactory constraint_factory;
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
-      new WebRtcAudioDeviceImpl());
+      new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
+  AudioProcessingProperties properties;
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
-          constraint_factory.CreateWebMediaConstraints(), input_device_params_,
-          webrtc_audio_device.get()));
+          properties, webrtc_audio_device.get()));
 
   EXPECT_TRUE(audio_processor->aec_dump_message_filter_.get());
 
@@ -510,18 +326,50 @@ TEST_F(MediaStreamAudioProcessorTest, GetAecDumpMessageFilter) {
   audio_processor->Stop();
 }
 
-TEST_F(MediaStreamAudioProcessorTest, TestStereoAudio) {
-  // Set up the correct constraints to turn off the audio processing and turn
-  // on the stereo channels mirroring.
-  MockConstraintFactory constraint_factory;
-  constraint_factory.basic().echo_cancellation.SetExact(false);
-  constraint_factory.basic().goog_audio_mirroring.SetExact(true);
+TEST_F(MediaStreamAudioProcessorTest, StartStopAecDump) {
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
-      new WebRtcAudioDeviceImpl());
+      new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
+  AudioProcessingProperties properties;
+
+  base::ScopedTempDir temp_directory;
+  ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
+  base::FilePath temp_file_path;
+  ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_directory.GetPath(),
+                                             &temp_file_path));
+  {
+    scoped_refptr<MediaStreamAudioProcessor> audio_processor(
+        new rtc::RefCountedObject<MediaStreamAudioProcessor>(
+            properties, webrtc_audio_device.get()));
+
+    // Start and stop recording.
+    audio_processor->OnAecDumpFile(IPC::TakePlatformFileForTransit(base::File(
+        temp_file_path, base::File::FLAG_WRITE | base::File::FLAG_OPEN)));
+    audio_processor->OnDisableAecDump();
+
+    // Start and wait for d-tor.
+    audio_processor->OnAecDumpFile(IPC::TakePlatformFileForTransit(base::File(
+        temp_file_path, base::File::FLAG_WRITE | base::File::FLAG_OPEN)));
+  }
+
+  // Check that dump file is non-empty after audio processor has been
+  // destroyed. Note that this test fails when compiling WebRTC
+  // without protobuf support, rtc_enable_protobuf=false.
+  std::string output;
+  ASSERT_TRUE(base::ReadFileToString(temp_file_path, &output));
+  ASSERT_FALSE(output.empty());
+  // The tempory file is deleted when temp_directory exists scope.
+}
+
+TEST_F(MediaStreamAudioProcessorTest, TestStereoAudio) {
+  scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
+      new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
+  AudioProcessingProperties properties;
+  // Turn off the audio processing and turn on the stereo channels mirroring.
+  properties.DisableDefaultPropertiesForTesting();
+  properties.goog_audio_mirroring = true;
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
-          constraint_factory.CreateWebMediaConstraints(), input_device_params_,
-          webrtc_audio_device.get()));
+          properties, webrtc_audio_device.get()));
   EXPECT_FALSE(audio_processor->has_audio_processing());
   const media::AudioParameters source_params(
       media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
@@ -577,14 +425,12 @@ TEST_F(MediaStreamAudioProcessorTest, TestStereoAudio) {
 #define MAYBE_TestWithKeyboardMicChannel TestWithKeyboardMicChannel
 #endif
 TEST_F(MediaStreamAudioProcessorTest, MAYBE_TestWithKeyboardMicChannel) {
-  MockConstraintFactory constraint_factory;
-  constraint_factory.basic().goog_experimental_noise_suppression.SetExact(true);
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
-      new WebRtcAudioDeviceImpl());
+      new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
+  AudioProcessingProperties properties;
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
-          constraint_factory.CreateWebMediaConstraints(), input_device_params_,
-          webrtc_audio_device.get()));
+          properties, webrtc_audio_device.get()));
   EXPECT_TRUE(audio_processor->has_audio_processing());
 
   media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
@@ -604,13 +450,12 @@ TEST_F(MediaStreamAudioProcessorTest, MAYBE_TestWithKeyboardMicChannel) {
 
 // Test that the OnAec3Enable method has the desired effect on the APM config.
 TEST_F(MediaStreamAudioProcessorTest, TestAec3Switch) {
-  MockConstraintFactory constraint_factory;
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
-      new WebRtcAudioDeviceImpl());
+      new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
+  AudioProcessingProperties properties;
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
-          constraint_factory.CreateWebMediaConstraints(), input_device_params_,
-          webrtc_audio_device.get()));
+          properties, webrtc_audio_device.get()));
 
   audio_processor->OnAec3Enable(true);
   EXPECT_TRUE(GetAec3ConfigState(audio_processor.get()));
@@ -626,15 +471,14 @@ TEST_F(MediaStreamAudioProcessorTest, TestAec3Switch) {
 // Same test as above, but when AEC is disabled in the constrants. The expected
 // outcome is that AEC3 should be disabled in all cases.
 TEST_F(MediaStreamAudioProcessorTest, TestAec3Switch_AecOff) {
-  MockConstraintFactory constraint_factory;
-  // Disable the AEC.
-  constraint_factory.DisableAecAudioConstraints();
   scoped_refptr<WebRtcAudioDeviceImpl> webrtc_audio_device(
-      new WebRtcAudioDeviceImpl());
+      new rtc::RefCountedObject<WebRtcAudioDeviceImpl>());
+  AudioProcessingProperties properties;
+  // Disable the AEC.
+  properties.enable_sw_echo_cancellation = false;
   scoped_refptr<MediaStreamAudioProcessor> audio_processor(
       new rtc::RefCountedObject<MediaStreamAudioProcessor>(
-          constraint_factory.CreateWebMediaConstraints(), input_device_params_,
-          webrtc_audio_device.get()));
+          properties, webrtc_audio_device.get()));
 
   EXPECT_FALSE(GetAec3ConfigState(audio_processor.get()));
 

@@ -11,8 +11,6 @@
 #include "base/threading/thread.h"
 #include "base/values.h"
 #include "chrome/browser/defaults.h"
-#include "chrome/browser/download/download_service.h"
-#include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/md_downloads/md_downloads_dom_handler.h"
 #include "chrome/browser/ui/webui/metrics_handler.h"
@@ -44,7 +42,7 @@ content::WebUIDataSource* CreateDownloadsUIHTMLSource(Profile* profile) {
       content::WebUIDataSource::Create(chrome::kChromeUIDownloadsHost);
 
   source->AddLocalizedString("title", IDS_DOWNLOAD_TITLE);
-  source->AddLocalizedString("searchResultsFor", IDS_DOWNLOAD_SEARCHRESULTSFOR);
+  source->AddLocalizedString("searchResultsFor", IDS_SEARCH_RESULTS);
   source->AddLocalizedString("downloads", IDS_DOWNLOAD_TITLE);
 
   source->AddLocalizedString("clearAll", IDS_DOWNLOAD_LINK_CLEAR_ALL);
@@ -57,8 +55,7 @@ content::WebUIDataSource* CreateDownloadsUIHTMLSource(Profile* profile) {
 
   // No results message that shows instead of the downloads list.
   source->AddLocalizedString("noDownloads", IDS_MD_DOWNLOAD_NO_DOWNLOADS);
-  source->AddLocalizedString("noSearchResults",
-                             IDS_DOWNLOAD_NO_SEARCH_RESULTS);
+  source->AddLocalizedString("noSearchResults", IDS_SEARCH_NO_RESULTS);
 
   // Status.
   source->AddLocalizedString("statusCancelled", IDS_DOWNLOAD_TAB_CANCELLED);
@@ -105,21 +102,17 @@ content::WebUIDataSource* CreateDownloadsUIHTMLSource(Profile* profile) {
   source->AddResourcePath("2x/no_downloads.png",
                           IDR_MD_DOWNLOADS_2X_NO_DOWNLOADS_PNG);
 
-#if BUILDFLAG(USE_VULCANIZE)
-  std::unordered_set<std::string> exclude_from_gzip;
-  exclude_from_gzip.insert("1x/incognito_marker.png");
-  exclude_from_gzip.insert("2x/incognito_marker.png");
-  exclude_from_gzip.insert("1x/no_downloads.png");
-  exclude_from_gzip.insert("2x/no_downloads.png");
-  source->UseGzip(exclude_from_gzip);
+#if BUILDFLAG(OPTIMIZE_WEBUI)
+  source->UseGzip({"1x/incognito_marker.png", "1x/no_downloads.png",
+                   "2x/incognito_marker.png", "2x/no_downloads.png"});
 
   source->AddResourcePath("crisper.js", IDR_MD_DOWNLOADS_CRISPER_JS);
   source->SetDefaultResource(IDR_MD_DOWNLOADS_VULCANIZED_HTML);
 #else
-  source->AddResourcePath("action_service.html",
-                          IDR_MD_DOWNLOADS_ACTION_SERVICE_HTML);
-  source->AddResourcePath("action_service.js",
-                          IDR_MD_DOWNLOADS_ACTION_SERVICE_JS);
+  source->AddResourcePath("browser_proxy.html",
+                          IDR_MD_DOWNLOADS_BROWSER_PROXY_HTML);
+  source->AddResourcePath("browser_proxy.js",
+                          IDR_MD_DOWNLOADS_BROWSER_PROXY_JS);
   source->AddResourcePath("constants.html", IDR_MD_DOWNLOADS_CONSTANTS_HTML);
   source->AddResourcePath("constants.js", IDR_MD_DOWNLOADS_CONSTANTS_JS);
   source->AddResourcePath("downloads.js", IDR_MD_DOWNLOADS_DOWNLOADS_JS);
@@ -129,6 +122,10 @@ content::WebUIDataSource* CreateDownloadsUIHTMLSource(Profile* profile) {
   source->AddResourcePath("item.js", IDR_MD_DOWNLOADS_ITEM_JS);
   source->AddResourcePath("manager.html", IDR_MD_DOWNLOADS_MANAGER_HTML);
   source->AddResourcePath("manager.js", IDR_MD_DOWNLOADS_MANAGER_JS);
+  source->AddResourcePath("search_service.html",
+                          IDR_MD_DOWNLOADS_SEARCH_SERVICE_HTML);
+  source->AddResourcePath("search_service.js",
+                          IDR_MD_DOWNLOADS_SEARCH_SERVICE_JS);
   source->AddResourcePath("toolbar.html", IDR_MD_DOWNLOADS_TOOLBAR_HTML);
   source->AddResourcePath("toolbar.js", IDR_MD_DOWNLOADS_TOOLBAR_JS);
   source->SetDefaultResource(IDR_MD_DOWNLOADS_DOWNLOADS_HTML);
@@ -165,6 +162,6 @@ MdDownloadsUI::MdDownloadsUI(content::WebUI* web_ui) : WebUIController(web_ui) {
 // static
 base::RefCountedMemory* MdDownloadsUI::GetFaviconResourceBytes(
     ui::ScaleFactor scale_factor) {
-  return ResourceBundle::GetSharedInstance().
-      LoadDataResourceBytesForScale(IDR_DOWNLOADS_FAVICON, scale_factor);
+  return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
+      IDR_DOWNLOADS_FAVICON, scale_factor);
 }

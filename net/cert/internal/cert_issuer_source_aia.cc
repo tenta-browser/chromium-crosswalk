@@ -4,7 +4,6 @@
 
 #include "net/cert/internal/cert_issuer_source_aia.h"
 
-#include "base/bind.h"
 #include "net/cert/cert_net_fetcher.h"
 #include "net/cert/internal/cert_errors.h"
 #include "net/cert/x509_util.h"
@@ -21,7 +20,7 @@ const int kMaxFetchesPerCert = 5;
 
 class AiaRequest : public CertIssuerSource::Request {
  public:
-  AiaRequest() {}
+  AiaRequest() = default;
   ~AiaRequest() override;
 
   // CertIssuerSource::Request implementation.
@@ -84,7 +83,7 @@ bool AiaRequest::AddCompletedFetchToResults(Error error,
   if (!ParsedCertificate::CreateAndAddToVector(
           x509_util::CreateCryptoBuffer(fetched_bytes.data(),
                                         fetched_bytes.size()),
-          {}, results, &errors)) {
+          x509_util::DefaultParseCertificateOptions(), results, &errors)) {
     // TODO(crbug.com/634443): propagate error info.
     LOG(ERROR) << "Error parsing cert retrieved from AIA:\n"
                << errors.ToDebugString();

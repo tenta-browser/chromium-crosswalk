@@ -36,9 +36,7 @@ class PLATFORM_EXPORT PaintArtifact final {
 
  public:
   PaintArtifact();
-  PaintArtifact(DisplayItemList,
-                Vector<PaintChunk>,
-                bool is_suitable_for_gpu_rasterization);
+  PaintArtifact(DisplayItemList, Vector<PaintChunk>);
   PaintArtifact(PaintArtifact&&);
   ~PaintArtifact();
 
@@ -59,10 +57,6 @@ class PLATFORM_EXPORT PaintArtifact final {
     return FindChunkInVectorByDisplayItemIndex(paint_chunks_, index);
   }
 
-  bool IsSuitableForGpuRasterization() const {
-    return is_suitable_for_gpu_rasterization_;
-  }
-
   // Resets to an empty paint artifact.
   void Reset();
 
@@ -71,25 +65,20 @@ class PLATFORM_EXPORT PaintArtifact final {
   size_t ApproximateUnsharedMemoryUsage() const;
 
   // Draws the paint artifact to a GraphicsContext.
-  // |bounds| is the bounding box of the paint artifact's display list.
-  void Replay(const FloatRect& bounds, GraphicsContext&) const;
+  // In SPv175+ mode, replays into the ancestor state given by |replay_state|.
+  void Replay(GraphicsContext&, const PropertyTreeState& replay_state) const;
 
-  // Draws the paint artifact to a PaintCanvas.
-  // |bounds| is the bounding box of the paint artifact's display list.
-  // SPv2 only.
-  // In SPv2 mode, replays into the ancestor state given by |replayState|.
-  void Replay(
-      const FloatRect& bounds,
-      PaintCanvas&,
-      const PropertyTreeState& replay_state = PropertyTreeState::Root()) const;
+  // Draws the paint artifact to a PaintCanvas, into the ancestor state given
+  // by |replay_state|. For SPv175+ only.
+  void Replay(PaintCanvas&, const PropertyTreeState& replay_state) const;
 
   // Writes the paint artifact into a WebDisplayItemList.
-  void AppendToWebDisplayItemList(WebDisplayItemList*) const;
+  void AppendToWebDisplayItemList(const LayoutSize& visual_rect_offset,
+                                  WebDisplayItemList*) const;
 
  private:
   DisplayItemList display_item_list_;
   Vector<PaintChunk> paint_chunks_;
-  bool is_suitable_for_gpu_rasterization_;
 };
 
 }  // namespace blink

@@ -34,13 +34,14 @@
 #include <stdint.h>
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/Vector.h"
+#include "public/platform/modules/websockets/websocket.mojom-blink.h"
 
 namespace blink {
 
-class InterfaceProvider;
 class KURL;
 class SecurityOrigin;
 class WebSocketHandleClient;
+class WebTaskRunner;
 
 // WebSocketHandle is an interface class designed to be a handle of WebSocket
 // connection.  WebSocketHandle will be used together with
@@ -60,17 +61,14 @@ class WebSocketHandle {
 
   virtual ~WebSocketHandle() {}
 
-  // This method may optionally be called before connect() to specify an
-  // InterfaceProvider to get a WebSocket instance. By default, connect() will
-  // use Platform::interfaceProvider().
-  virtual void Initialize(InterfaceProvider*) = 0;
-
+  virtual void Initialize(mojom::blink::WebSocketPtr) = 0;
   virtual void Connect(const KURL&,
                        const Vector<String>& protocols,
                        SecurityOrigin*,
-                       const KURL& first_party_for_cookies,
+                       const KURL& site_for_cookies,
                        const String& user_agent_override,
-                       WebSocketHandleClient*) = 0;
+                       WebSocketHandleClient*,
+                       WebTaskRunner*) = 0;
   virtual void Send(bool fin, MessageType, const char* data, size_t) = 0;
   virtual void FlowControl(int64_t quota) = 0;
   virtual void Close(unsigned short code, const String& reason) = 0;

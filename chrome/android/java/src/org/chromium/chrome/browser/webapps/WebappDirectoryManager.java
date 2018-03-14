@@ -7,7 +7,6 @@ package org.chromium.chrome.browser.webapps;
 import android.annotation.TargetApi;
 import android.app.ActivityManager;
 import android.app.ActivityManager.AppTask;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -20,8 +19,10 @@ import android.text.TextUtils;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.FileUtils;
 import org.chromium.base.Log;
+import org.chromium.base.PathUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.browser.document.DocumentUtils;
+import org.chromium.chrome.browser.metrics.WebApkUma;
 
 import java.io.File;
 import java.util.HashSet;
@@ -36,10 +37,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * which each WebappActivity using a directory named either for its Webapp's ID in Document mode,
  * or the index of the WebappActivity if it is a subclass of the WebappManagedActivity class (which
  * are used in pre-L devices to allow multiple WebappActivities launching).
+ *
+ * Also records metrics about files in the "WebAPK update" directory.
  */
 public class WebappDirectoryManager {
     protected static final String WEBAPP_DIRECTORY_NAME = "WebappActivity";
     private static final String TAG = "WebappDirectoryManag";
+
+    /** Path of subdirectory within cache directory which contains data for pending updates. */
+    private static final String UPDATE_DIRECTORY_PATH = "webapk/update";
 
     /** Whether or not the class has already started trying to clean up obsolete directories. */
     private static final AtomicBoolean sMustCleanUpOldDirectories = new AtomicBoolean(true);
@@ -57,13 +63,14 @@ public class WebappDirectoryManager {
      * @param currentWebappId ID for the currently running web app.
      * @return                AsyncTask doing the cleaning.
      */
-    public AsyncTask<Void, Void, Void> cleanUpDirectories(
-            final Context context, final String currentWebappId) {
-        if (mCleanupTask != null) return mCleanupTask;
+    public void cleanUpDirectories(final Context context, final String currentWebappId) {
+        if (mCleanupTask != null) return;
 
         mCleanupTask = new AsyncTask<Void, Void, Void>() {
             @Override
             protected final Void doInBackground(Void... params) {
+                recordNumberOfStaleWebApkUpdateRequestFiles();
+
                 Set<File> directoriesToDelete = new HashSet<File>();
                 directoriesToDelete.add(getWebappDirectory(context, currentWebappId));
 
@@ -82,12 +89,16 @@ public class WebappDirectoryManager {
             }
         };
         mCleanupTask.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
-        return mCleanupTask;
     }
 
     /** Cancels the cleanup task, if one exists. */
     public void cancelCleanup() {
         if (mCleanupTask != null) mCleanupTask.cancel(true);
+    }
+
+    /** Resets class' static state */
+    public void resetForTesting() {
+        sMustCleanUpOldDirectories.getAndSet(true);
     }
 
     /**
@@ -110,47 +121,51 @@ public class WebappDirectoryManager {
             if (data != null && TextUtils.equals(WebappActivity.WEBAPP_SCHEME, data.getScheme())) {
                 liveWebapps.add(data.getHost());
             }
+        }
 
-            // WebappManagedActivities have titles from "WebappActivity0" through "WebappActivity9".
-            ComponentName component = intent.getComponent();
-            if (component != null) {
-                String fullClassName = component.getClassName();
-                int lastPeriodIndex = fullClassName.lastIndexOf(".");
-                if (lastPeriodIndex != -1) {
-                    String className = fullClassName.substring(lastPeriodIndex + 1);
-                    if (className.startsWith(WEBAPP_DIRECTORY_NAME)
-                            && className.length() > WEBAPP_DIRECTORY_NAME.length()) {
-                        String activityIndex = className.substring(WEBAPP_DIRECTORY_NAME.length());
-                        liveWebapps.add(activityIndex);
-                    }
+        // Delete all web app directories in the main directory, which were for pre-L web apps.
+        File appDirectory = new File(context.getApplicationInfo().dataDir);
+        String webappDirectoryAppBaseName = webappBaseDirectory.getName();
+        File[] files = appDirectory.listFiles();
+        if (files != null) {
+            for (File file : files) {
+                String filename = file.getName();
+                if (!filename.startsWith(webappDirectoryAppBaseName)) continue;
+                if (filename.length() == webappDirectoryAppBaseName.length()) continue;
+                directoriesToDelete.add(file);
+            }
+        }
+
+        // Clean out web app directories no longer corresponding to tasks in Recents.
+        files = webappBaseDirectory.listFiles();
+        if (files != null) {
+            for (File file : files) {
+                if (!liveWebapps.contains(file.getName())) directoriesToDelete.add(file);
+            }
+        }
+    }
+
+    /** Records to UMA the count of old "WebAPK update request" files. */
+    private void recordNumberOfStaleWebApkUpdateRequestFiles() {
+        File updateDirectory = getWebApkUpdateDirectory();
+        int count = 0;
+        File[] children = updateDirectory.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                WebappDataStorage storage =
+                        WebappRegistry.getInstance().getWebappDataStorage(child.getName());
+                if (storage == null) {
+                    ++count;
+                    continue;
+                }
+
+                if (!storage.wasCheckForUpdatesDoneInLastMs(TimeUnit.DAYS.toMillis(1L))) {
+                    ++count;
                 }
             }
         }
 
-        if (webappBaseDirectory != null) {
-            // Delete all web app directories in the main directory, which were for pre-L web apps.
-            File appDirectory = new File(context.getApplicationInfo().dataDir);
-            String webappDirectoryAppBaseName = webappBaseDirectory.getName();
-            File[] files = appDirectory.listFiles();
-            if (files != null) {
-                for (File file : files) {
-                    String filename = file.getName();
-                    if (!filename.startsWith(webappDirectoryAppBaseName)) continue;
-                    if (filename.length() == webappDirectoryAppBaseName.length()) continue;
-                    directoriesToDelete.add(file);
-                }
-            }
-
-            // Clean out web app directories no longer corresponding to tasks in Recents.
-            if (webappBaseDirectory.exists()) {
-                files = webappBaseDirectory.listFiles();
-                if (files != null) {
-                    for (File file : files) {
-                        if (!liveWebapps.contains(file.getName())) directoriesToDelete.add(file);
-                    }
-                }
-            }
-        }
+        WebApkUma.recordNumberOfStaleWebApkUpdateRequestFiles(count);
     }
 
     /**
@@ -160,8 +175,7 @@ public class WebappDirectoryManager {
      */
     File getWebappDirectory(Context context, String webappId) {
         // Temporarily allowing disk access while fixing. TODO: http://crbug.com/525781
-        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
-        StrictMode.allowThreadDiskWrites();
+        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskWrites();
         try {
             long time = SystemClock.elapsedRealtime();
             File webappDirectory = new File(getBaseWebappDirectory(context), webappId);
@@ -179,6 +193,16 @@ public class WebappDirectoryManager {
     /** Returns the directory containing all of Chrome's web app data, creating it if needed. */
     final File getBaseWebappDirectory(Context context) {
         return context.getDir(WEBAPP_DIRECTORY_NAME, Context.MODE_PRIVATE);
+    }
+
+    /** Returns the directory for "WebAPK update" files. Does not create the directory. */
+    static final File getWebApkUpdateDirectory() {
+        return new File(PathUtils.getCacheDirectory(), UPDATE_DIRECTORY_PATH);
+    }
+
+    /** Returns the path for the "WebAPK update" file for the given {@link WebappDataStorage}. */
+    static final File getWebApkUpdateFilePathForStorage(WebappDataStorage storage) {
+        return new File(getWebApkUpdateDirectory(), storage.getId());
     }
 
     /** Returns a Set of Intents for all Chrome tasks currently known by the ActivityManager. */

@@ -11,6 +11,7 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_bypass_protocol.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_bypass_stats.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_compression_stats.h"
@@ -23,12 +24,12 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_network_delegate.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_service.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_settings.h"
-#include "components/data_reduction_proxy/core/browser/data_use_group.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_creator.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_storage_delegate.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
+#include "components/previews/core/previews_decider.h"
 #include "net/base/load_flags.h"
 #include "net/url_request/http_user_agent_settings.h"
 #include "net/url_request/static_http_user_agent_settings.h"
@@ -92,7 +93,6 @@ BasicHTTPURLRequestContextGetter::~BasicHTTPURLRequestContextGetter() {
 
 DataReductionProxyIOData::DataReductionProxyIOData(
     Client client,
-    int param_flags,
     net::NetLog* net_log,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
@@ -103,7 +103,7 @@ DataReductionProxyIOData::DataReductionProxyIOData(
       net_log_(net_log),
       io_task_runner_(io_task_runner),
       ui_task_runner_(ui_task_runner),
-      data_use_group_provider_(nullptr),
+      data_use_observer_(nullptr),
       enabled_(enabled),
       url_request_context_getter_(nullptr),
       basic_url_request_context_getter_(
@@ -114,7 +114,7 @@ DataReductionProxyIOData::DataReductionProxyIOData(
   DCHECK(io_task_runner_);
   DCHECK(ui_task_runner_);
   std::unique_ptr<DataReductionProxyParams> params(
-      new DataReductionProxyParams(param_flags));
+      new DataReductionProxyParams());
   event_creator_.reset(new DataReductionProxyEventCreator(this));
   configurator_.reset(
       new DataReductionProxyConfigurator(net_log, event_creator_.get()));
@@ -123,7 +123,7 @@ DataReductionProxyIOData::DataReductionProxyIOData(
   DataReductionProxyMutableConfigValues* raw_mutable_config = nullptr;
   if (use_config_client) {
     std::unique_ptr<DataReductionProxyMutableConfigValues> mutable_config =
-        DataReductionProxyMutableConfigValues::CreateFromParams(params.get());
+        base::MakeUnique<DataReductionProxyMutableConfigValues>();
     raw_mutable_config = mutable_config.get();
     config_.reset(new DataReductionProxyConfig(
         io_task_runner, net_log, std::move(mutable_config), configurator_.get(),
@@ -244,10 +244,6 @@ DataReductionProxyIOData::CreateNetworkDelegate(
           request_options_.get(), configurator_.get()));
   if (track_proxy_bypass_statistics)
     network_delegate->InitIODataAndUMA(this, bypass_stats_.get());
-  if (data_use_group_provider_) {
-    network_delegate->SetDataUseGroupProvider(
-        std::move(data_use_group_provider_));
-  }
 
   return network_delegate;
 }
@@ -291,27 +287,37 @@ void DataReductionProxyIOData::SetDataReductionProxyConfiguration(
 }
 
 bool DataReductionProxyIOData::ShouldEnableLoFi(
-    const net::URLRequest& request) {
+    const net::URLRequest& request,
+    previews::PreviewsDecider* previews_decider) {
+  DCHECK(previews_decider);
   DCHECK((request.load_flags() & net::LOAD_MAIN_FRAME_DEPRECATED) != 0);
   if (!config_ || (config_->IsBypassedByDataReductionProxyLocalRules(
                       request, configurator_->GetProxyConfig()))) {
     return false;
   }
-  return config_->ShouldEnableLoFi(request);
+  return config_->ShouldEnableLoFi(request, *previews_decider);
 }
 
 bool DataReductionProxyIOData::ShouldEnableLitePages(
-    const net::URLRequest& request) {
+    const net::URLRequest& request,
+    previews::PreviewsDecider* previews_decider) {
+  DCHECK(previews_decider);
   DCHECK((request.load_flags() & net::LOAD_MAIN_FRAME_DEPRECATED) != 0);
   if (!config_ || (config_->IsBypassedByDataReductionProxyLocalRules(
                       request, configurator_->GetProxyConfig()))) {
     return false;
   }
-  return config_->ShouldEnableLitePages(request);
+  return config_->ShouldEnableLitePages(request, *previews_decider);
 }
 
-void DataReductionProxyIOData::SetLoFiModeOff() {
-  config_->SetLoFiModeOff();
+void DataReductionProxyIOData::UpdateDataUseForHost(int64_t network_bytes,
+                                                    int64_t original_bytes,
+                                                    const std::string& host) {
+  DCHECK(io_task_runner_->BelongsToCurrentThread());
+
+  ui_task_runner_->PostTask(
+      FROM_HERE, base::Bind(&DataReductionProxyService::UpdateDataUseForHost,
+                            service_, network_bytes, original_bytes, host));
 }
 
 void DataReductionProxyIOData::UpdateContentLengths(
@@ -319,7 +325,6 @@ void DataReductionProxyIOData::UpdateContentLengths(
     int64_t original_size,
     bool data_reduction_proxy_enabled,
     DataReductionProxyRequestType request_type,
-    const scoped_refptr<DataUseGroup>& data_use_group,
     const std::string& mime_type) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
 
@@ -327,16 +332,7 @@ void DataReductionProxyIOData::UpdateContentLengths(
       FROM_HERE,
       base::Bind(&DataReductionProxyService::UpdateContentLengths, service_,
                  data_used, original_size, data_reduction_proxy_enabled,
-                 request_type, data_use_group, mime_type));
-}
-
-void DataReductionProxyIOData::SetLoFiModeActiveOnMainFrame(
-    bool lo_fi_mode_active) {
-  DCHECK(io_task_runner_->BelongsToCurrentThread());
-  ui_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&DataReductionProxyService::SetLoFiModeActiveOnMainFrame,
-                 service_, lo_fi_mode_active));
+                 request_type, mime_type));
 }
 
 void DataReductionProxyIOData::AddEvent(std::unique_ptr<base::Value> event) {
@@ -403,6 +399,23 @@ void DataReductionProxyIOData::StoreSerializedConfig(
     const std::string& serialized_config) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
   SetStringPref(prefs::kDataReductionProxyConfig, serialized_config);
+  SetInt64Pref(prefs::kDataReductionProxyLastConfigRetrievalTime,
+               (base::Time::Now() - base::Time()).InMicroseconds());
+}
+
+void DataReductionProxyIOData::SetDataUseAscriber(
+    data_use_measurement::DataUseAscriber* data_use_ascriber) {
+  DCHECK(io_task_runner_->BelongsToCurrentThread());
+  DCHECK(data_use_ascriber);
+  data_use_observer_.reset(
+      new DataReductionProxyDataUseObserver(this, data_use_ascriber));
+}
+
+void DataReductionProxyIOData::SetPreviewsDecider(
+    previews::PreviewsDecider* previews_decider) {
+  DCHECK(io_task_runner_->BelongsToCurrentThread());
+  DCHECK(previews_decider);
+  previews_decider_ = previews_decider;
 }
 
 }  // namespace data_reduction_proxy

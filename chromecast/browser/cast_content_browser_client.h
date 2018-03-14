@@ -10,13 +10,14 @@
 #include <string>
 #include <vector>
 
-#include "base/callback_forward.h"
 #include "base/macros.h"
+#include "base/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
 #include "chromecast/chromecast_features.h"
 #include "content/public/browser/certificate_request_result_type.h"
 #include "content/public/browser/content_browser_client.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 
 class PrefService;
 
@@ -29,17 +30,15 @@ class MetricsService;
 }
 
 namespace net {
+class SSLPrivateKey;
 class URLRequestContextGetter;
 class X509Certificate;
-}
-
-namespace service_manager {
-class BinderRegistry;
 }
 
 namespace chromecast {
 class CastService;
 class CastWindowManager;
+class MemoryPressureControllerImpl;
 
 namespace media {
 class MediaCapsImpl;
@@ -56,8 +55,6 @@ namespace shell {
 class CastBrowserMainParts;
 class CastResourceDispatcherHostDelegate;
 class URLRequestContextFactory;
-
-using DisableQuicClosure = base::OnceClosure;
 
 class CastContentBrowserClient : public content::ContentBrowserClient {
  public:
@@ -80,7 +77,6 @@ class CastContentBrowserClient : public content::ContentBrowserClient {
       content::BrowserContext* browser_context,
       PrefService* pref_service,
       net::URLRequestContextGetter* request_context_getter,
-      DisableQuicClosure disable_quic_closure,
       media::VideoPlaneController* video_plane_controller,
       CastWindowManager* window_manager);
 
@@ -100,7 +96,7 @@ class CastContentBrowserClient : public content::ContentBrowserClient {
 
   media::MediaPipelineBackendManager* media_pipeline_backend_manager();
 
-  ::media::ScopedAudioManagerPtr CreateAudioManager(
+  std::unique_ptr<::media::AudioManager> CreateAudioManager(
       ::media::AudioLogFactory* audio_log_factory) override;
   std::unique_ptr<::media::CdmFactory> CreateCdmFactory() override;
 #endif  // BUILDFLAG(IS_CAST_USING_CMA_BACKEND)
@@ -128,18 +124,20 @@ class CastContentBrowserClient : public content::ContentBrowserClient {
                            content::WebPreferences* prefs) override;
   void ResourceDispatcherHostCreated() override;
   std::string GetApplicationLocale() override;
+  void GetGeolocationRequestContext(
+      base::OnceCallback<void(scoped_refptr<net::URLRequestContextGetter>)>
+          callback) override;
   content::QuotaPermissionContext* CreateQuotaPermissionContext() override;
   void GetQuotaSettings(
       content::BrowserContext* context,
       content::StoragePartition* partition,
-      const storage::OptionalQuotaSettingsCallback& callback) override;
+      storage::OptionalQuotaSettingsCallback callback) override;
   void AllowCertificateError(
       content::WebContents* web_contents,
       int cert_error,
       const net::SSLInfo& ssl_info,
       const GURL& request_url,
       content::ResourceType resource_type,
-      bool overridable,
       bool strict_enforcement,
       bool expired_previous_decision,
       const base::Callback<void(content::CertificateRequestResultType)>&
@@ -147,9 +145,9 @@ class CastContentBrowserClient : public content::ContentBrowserClient {
   void SelectClientCertificate(
       content::WebContents* web_contents,
       net::SSLCertRequestInfo* cert_request_info,
+      net::ClientCertIdentityList client_certs,
       std::unique_ptr<content::ClientCertificateDelegate> delegate) override;
-  bool CanCreateWindow(int opener_render_process_id,
-                       int opener_render_frame_id,
+  bool CanCreateWindow(content::RenderFrameHost* opener,
                        const GURL& opener_url,
                        const GURL& opener_top_level_frame_url,
                        const GURL& source_origin,
@@ -161,18 +159,21 @@ class CastContentBrowserClient : public content::ContentBrowserClient {
                        const blink::mojom::WindowFeatures& features,
                        bool user_gesture,
                        bool opener_suppressed,
-                       content::ResourceContext* context,
                        bool* no_javascript_access) override;
   void ExposeInterfacesToRenderer(
       service_manager::BinderRegistry* registry,
+      blink::AssociatedInterfaceRegistry* associated_registry,
       content::RenderProcessHost* render_process_host) override;
+  void ExposeInterfacesToMediaService(
+      service_manager::BinderRegistry* registry,
+      content::RenderFrameHost* render_frame_host) override;
   void RegisterInProcessServices(StaticServiceMap* services) override;
   std::unique_ptr<base::Value> GetServiceManifestOverlay(
       base::StringPiece service_name) override;
   void GetAdditionalMappedFilesForChildProcess(
       const base::CommandLine& command_line,
       int child_process_id,
-      content::FileDescriptorInfo* mappings) override;
+      content::PosixFileDescriptorInfo* mappings) override;
   void GetAdditionalWebUISchemes(
       std::vector<std::string>* additional_schemes) override;
   content::DevToolsManagerDelegate* GetDevToolsManagerDelegate() override;
@@ -185,13 +186,20 @@ class CastContentBrowserClient : public content::ContentBrowserClient {
   }
 
  private:
+  // Create device cert/key
+  virtual scoped_refptr<net::X509Certificate> DeviceCert();
+  virtual scoped_refptr<net::SSLPrivateKey> DeviceKey();
+
   void AddNetworkHintsMessageFilter(int render_process_id,
                                     net::URLRequestContext* context);
 
-  net::X509Certificate* SelectClientCertificateOnIOThread(
+  void SelectClientCertificateOnIOThread(
       GURL requesting_url,
-      int render_process_id);
-
+      int render_process_id,
+      scoped_refptr<base::SequencedTaskRunner> original_runner,
+      const base::Callback<void(scoped_refptr<net::X509Certificate>,
+                                scoped_refptr<net::SSLPrivateKey>)>&
+          continue_callback);
 #if !defined(OS_ANDROID)
   // Returns the crash signal FD corresponding to the current process type.
   int GetCrashSignalFD(const base::CommandLine& command_line);
@@ -202,6 +210,10 @@ class CastContentBrowserClient : public content::ContentBrowserClient {
 
   // A static cache to hold crash_handlers for each process_type
   std::map<std::string, breakpad::CrashHandlerHostLinux*> crash_handlers_;
+
+  // Notify renderers of memory pressure (Android renderers register directly
+  // with OS for this).
+  std::unique_ptr<MemoryPressureControllerImpl> memory_pressure_controller_;
 #endif  // !defined(OS_ANDROID)
 
   // Created by CastContentBrowserClient but owned by BrowserMainLoop.

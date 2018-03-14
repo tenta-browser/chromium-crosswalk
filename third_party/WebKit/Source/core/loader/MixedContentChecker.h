@@ -42,12 +42,15 @@
 
 namespace blink {
 
+class ExecutionContext;
 class Frame;
 class LocalFrame;
 class KURL;
 class ResourceResponse;
 class SecurityOrigin;
 class SourceLocation;
+class WorkerOrWorkletGlobalScope;
+class WebWorkerFetchContext;
 
 // Checks resource loads for mixed content. If PlzNavigate is enabled then this
 // class only checks for sub-resource loads while frame-level loads are
@@ -69,15 +72,14 @@ class CORE_EXPORT MixedContentChecker final {
                                const KURL&,
                                SecurityViolationReportingPolicy =
                                    SecurityViolationReportingPolicy::kReport);
-  static bool ShouldBlockFetch(LocalFrame* frame,
-                               const ResourceRequest& request,
-                               const KURL& url,
-                               SecurityViolationReportingPolicy status =
-                                   SecurityViolationReportingPolicy::kReport) {
-    return ShouldBlockFetch(frame, request.GetRequestContext(),
-                            request.GetFrameType(), request.GetRedirectStatus(),
-                            url, status);
-  }
+
+  static bool ShouldBlockFetchOnWorker(WorkerOrWorkletGlobalScope*,
+                                       WebWorkerFetchContext*,
+                                       WebURLRequest::RequestContext,
+                                       WebURLRequest::FrameType,
+                                       ResourceRequest::RedirectStatus,
+                                       const KURL&,
+                                       SecurityViolationReportingPolicy);
 
   static bool ShouldBlockWebSocket(
       LocalFrame*,
@@ -122,9 +124,10 @@ class CORE_EXPORT MixedContentChecker final {
 
   static Frame* InWhichFrameIsContentMixed(Frame*,
                                            WebURLRequest::FrameType,
-                                           const KURL&);
+                                           const KURL&,
+                                           const LocalFrame*);
 
-  static void LogToConsoleAboutFetch(LocalFrame*,
+  static void LogToConsoleAboutFetch(ExecutionContext*,
                                      const KURL&,
                                      const KURL&,
                                      WebURLRequest::RequestContext,
@@ -134,7 +137,7 @@ class CORE_EXPORT MixedContentChecker final {
                                          const KURL&,
                                          const KURL&,
                                          bool allowed);
-  static void Count(Frame*, WebURLRequest::RequestContext);
+  static void Count(Frame*, WebURLRequest::RequestContext, const LocalFrame*);
 };
 
 }  // namespace blink

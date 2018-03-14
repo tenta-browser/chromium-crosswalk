@@ -8,13 +8,28 @@
 #include "chrome/common/pref_names.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/common/constants.h"
+
+namespace {
+
+blink::FeaturePolicyFeature GetFeaturePolicyFeature(ContentSettingsType type) {
+  if (type == CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC)
+    return blink::FeaturePolicyFeature::kMicrophone;
+
+  DCHECK_EQ(CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA, type);
+  return blink::FeaturePolicyFeature::kCamera;
+}
+
+}  // namespace
 
 MediaStreamDevicePermissionContext::MediaStreamDevicePermissionContext(
     Profile* profile,
     const ContentSettingsType content_settings_type)
-    : PermissionContextBase(profile, content_settings_type),
+    : PermissionContextBase(profile,
+                            content_settings_type,
+                            GetFeaturePolicyFeature(content_settings_type)),
       content_settings_type_(content_settings_type) {
   DCHECK(content_settings_type_ == CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC ||
          content_settings_type_ == CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA);
@@ -22,14 +37,16 @@ MediaStreamDevicePermissionContext::MediaStreamDevicePermissionContext(
 
 MediaStreamDevicePermissionContext::~MediaStreamDevicePermissionContext() {}
 
-void MediaStreamDevicePermissionContext::RequestPermission(
+void MediaStreamDevicePermissionContext::DecidePermission(
     content::WebContents* web_contents,
     const PermissionRequestID& id,
-    const GURL& requesting_frame,
+    const GURL& requesting_origin,
+    const GURL& embedding_origin,
     bool user_gesture,
     const BrowserPermissionCallback& callback) {
-  NOTREACHED() << "RequestPermission is not implemented";
-  callback.Run(CONTENT_SETTING_BLOCK);
+  PermissionContextBase::DecidePermission(web_contents, id, requesting_origin,
+                                          embedding_origin, user_gesture,
+                                          callback);
 }
 
 ContentSetting MediaStreamDevicePermissionContext::GetPermissionStatusInternal(
@@ -78,15 +95,6 @@ void MediaStreamDevicePermissionContext::ResetPermission(
   NOTREACHED() << "ResetPermission is not implemented";
 }
 
-void MediaStreamDevicePermissionContext::CancelPermissionRequest(
-    content::WebContents* web_contents,
-    const PermissionRequestID& id) {
-  NOTREACHED() << "CancelPermissionRequest is not implemented";
-}
-
 bool MediaStreamDevicePermissionContext::IsRestrictedToSecureOrigins() const {
-  // Flash currently doesn't require secure origin to use mic/camera. If we
-  // return true here, it'll break the use case like http://tinychat.com.
-  // TODO(raymes): Change this to true after crbug.com/526324 is fixed.
-  return false;
+  return true;
 }

@@ -5,6 +5,10 @@
 #ifndef CONTENT_BROWSER_DOWNLOAD_MOCK_DOWNLOAD_ITEM_IMPL_H_
 #define CONTENT_BROWSER_DOWNLOAD_MOCK_DOWNLOAD_ITEM_IMPL_H_
 
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "base/macros.h"
 #include "content/browser/download/download_create_info.h"
 #include "content/browser/download/download_file.h"
@@ -22,8 +26,6 @@ class MockDownloadItemImpl : public DownloadItemImpl {
  public:
   // Use history constructor for minimal base object.
   explicit MockDownloadItemImpl(DownloadItemImplDelegate* delegate);
-  MockDownloadItemImpl(DownloadItemImplDelegate* delegate,
-                       const DownloadItem::ReceivedSlices& received_slices);
   ~MockDownloadItemImpl() override;
 
   MOCK_METHOD5(OnDownloadTargetDetermined,
@@ -67,7 +69,8 @@ class MockDownloadItemImpl : public DownloadItemImpl {
   MOCK_CONST_METHOD0(GetFullPath, const base::FilePath&());
   MOCK_CONST_METHOD0(GetTargetFilePath, const base::FilePath&());
   MOCK_CONST_METHOD0(GetTargetDisposition, TargetDisposition());
-  MOCK_METHOD1(OnContentCheckCompleted, void(DownloadDangerType));
+  MOCK_METHOD2(OnContentCheckCompleted,
+               void(DownloadDangerType, DownloadInterruptReason));
   MOCK_CONST_METHOD0(GetState, DownloadState());
   MOCK_CONST_METHOD0(GetUrlChain, const std::vector<GURL>&());
   MOCK_METHOD1(SetTotalBytes, void(int64_t));
@@ -84,6 +87,7 @@ class MockDownloadItemImpl : public DownloadItemImpl {
   MOCK_CONST_METHOD0(GetRemoteAddress, std::string());
   MOCK_CONST_METHOD0(GetTotalBytes, int64_t());
   MOCK_CONST_METHOD0(GetReceivedBytes, int64_t());
+  MOCK_CONST_METHOD0(GetReceivedSlices, const std::vector<ReceivedSlice>&());
   MOCK_CONST_METHOD0(GetHashState, const std::string&());
   MOCK_CONST_METHOD0(GetHash, const std::string&());
   MOCK_CONST_METHOD0(GetId, uint32_t());
@@ -112,7 +116,6 @@ class MockDownloadItemImpl : public DownloadItemImpl {
   MOCK_CONST_METHOD0(GetWebContents, WebContents*());
   MOCK_CONST_METHOD0(GetFileNameToReportUser, base::FilePath());
   MOCK_METHOD1(SetDisplayName, void(const base::FilePath&));
-  MOCK_METHOD0(NotifyRemoved, void());
   // May be called when vlog is on.
   std::string DebugString(bool verbose) const override { return std::string(); }
 };

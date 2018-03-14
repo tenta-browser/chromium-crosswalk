@@ -8,6 +8,7 @@
 
 #include "base/logging.h"
 #include "base/sys_byteorder.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "net/base/address_list.h"
 #include "net/base/net_errors.h"
 #include "net/base/sys_addrinfo.h"
@@ -67,8 +68,7 @@ HostResolverProc::HostResolverProc(HostResolverProc* previous) {
     SetPreviousProc(default_proc_);
 }
 
-HostResolverProc::~HostResolverProc() {
-}
+HostResolverProc::~HostResolverProc() = default;
 
 int HostResolverProc::ResolveUsingPrevious(
     const std::string& host,
@@ -125,12 +125,9 @@ int SystemHostResolverCall(const std::string& host,
                            HostResolverFlags host_resolver_flags,
                            AddressList* addrlist,
                            int* os_error) {
-  // Make sure |host| is properly formed.
-  {
-    std::string out_ignored;
-    if (!DNSDomainFromDot(host, &out_ignored))
-      return ERR_NAME_NOT_RESOLVED;
-  }
+  // |host| should be a valid domain name. HostResolverImpl::Resolve has checks
+  // to fail early if this is not the case.
+  DCHECK(IsValidDNSDomain(host));
 
   if (os_error)
     *os_error = 0;
@@ -193,8 +190,13 @@ int SystemHostResolverCall(const std::string& host,
   // Restrict result set to only this socket type to avoid duplicates.
   hints.ai_socktype = SOCK_STREAM;
 
+  // This function can block for a long time. Use ScopedBlockingCall to increase
+  // the current thread pool's capacity and thus avoid reducing CPU usage by the
+  // current process during that time.
+  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::WILL_BLOCK);
+
 #if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_OPENBSD) && \
-    !defined(OS_ANDROID)
+    !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
   DnsReloaderMaybeReload();
 #endif
   int err = getaddrinfo(host.c_str(), NULL, &hints, &ai);
@@ -270,6 +272,6 @@ int SystemHostResolverProc::Resolve(const std::string& hostname,
                                 os_error);
 }
 
-SystemHostResolverProc::~SystemHostResolverProc() {}
+SystemHostResolverProc::~SystemHostResolverProc() = default;
 
 }  // namespace net

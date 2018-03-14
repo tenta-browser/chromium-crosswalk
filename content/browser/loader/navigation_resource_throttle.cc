@@ -48,9 +48,9 @@ typedef base::Callback<void(NavigationThrottle::ThrottleCheckResult)>
 void SendCheckResultToIOThread(UIChecksPerformedCallback callback,
                                NavigationThrottle::ThrottleCheckResult result) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK_NE(result, NavigationThrottle::DEFER);
+  DCHECK_NE(result.action(), NavigationThrottle::DEFER);
   BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                          base::Bind(callback, result));
+                          base::BindOnce(callback, result));
 }
 
 // Returns the NavigationHandle to use for a navigation in the frame specified
@@ -93,8 +93,7 @@ void CheckWillStartRequestOnUIThread(
     int render_process_id,
     int render_frame_host_id,
     const std::string& method,
-    const scoped_refptr<content::ResourceRequestBodyImpl>&
-        resource_request_body,
+    const scoped_refptr<content::ResourceRequestBody>& resource_request_body,
     const Referrer& sanitized_referrer,
     bool has_user_gesture,
     ui::PageTransition transition,
@@ -135,7 +134,7 @@ void CheckWillRedirectRequestOnUIThread(
       ->FilterURL(false, &new_validated_url);
   navigation_handle->WillRedirectRequest(
       new_validated_url, new_method, new_referrer_url, new_is_external_protocol,
-      headers, connection_info,
+      headers, connection_info, nullptr,
       base::Bind(&SendCheckResultToIOThread, callback));
 }
 
@@ -145,7 +144,8 @@ void WillProcessResponseOnUIThread(
     int render_frame_host_id,
     scoped_refptr<net::HttpResponseHeaders> headers,
     net::HttpResponseInfo::ConnectionInfo connection_info,
-    const SSLStatus& ssl_status,
+    const net::HostPortPair& socket_address,
+    const net::SSLInfo& ssl_info,
     const GlobalRequestID& request_id,
     bool should_replace_current_entry,
     bool is_download,
@@ -170,9 +170,9 @@ void WillProcessResponseOnUIThread(
       RenderFrameHostImpl::FromID(render_process_id, render_frame_host_id);
   DCHECK(render_frame_host);
   navigation_handle->WillProcessResponse(
-      render_frame_host, headers, connection_info, ssl_status, request_id,
-      should_replace_current_entry, is_download, is_stream, transfer_callback,
-      base::Bind(&SendCheckResultToIOThread, callback));
+      render_frame_host, headers, connection_info, socket_address, ssl_info,
+      request_id, should_replace_current_entry, is_download, is_stream,
+      transfer_callback, base::Bind(&SendCheckResultToIOThread, callback));
 }
 
 }  // namespace
@@ -215,14 +215,15 @@ void NavigationResourceThrottle::WillStartRequest(bool* defer) {
   DCHECK(request_->method() == "POST" || request_->method() == "GET");
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&CheckWillStartRequestOnUIThread, callback, render_process_id,
-                 render_frame_id, request_->method(), info->body(),
-                 Referrer::SanitizeForRequest(
-                     request_->url(), Referrer(GURL(request_->referrer()),
-                                               info->GetReferrerPolicy())),
-                 info->HasUserGesture(), info->GetPageTransition(),
-                 is_external_protocol, request_context_type_,
-                 mixed_content_context_type_));
+      base::BindOnce(
+          &CheckWillStartRequestOnUIThread, callback, render_process_id,
+          render_frame_id, request_->method(), info->body(),
+          Referrer::SanitizeForRequest(
+              request_->url(),
+              Referrer(GURL(request_->referrer()), info->GetReferrerPolicy())),
+          info->HasUserGesture(), info->GetPageTransition(),
+          is_external_protocol, request_context_type_,
+          mixed_content_context_type_));
   *defer = true;
 }
 
@@ -264,11 +265,11 @@ void NavigationResourceThrottle::WillRedirectRequest(
 
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&CheckWillRedirectRequestOnUIThread, callback,
-                 render_process_id, render_frame_id, redirect_info.new_url,
-                 redirect_info.new_method, GURL(redirect_info.new_referrer),
-                 new_is_external_protocol, response_headers,
-                 request_->response_info().connection_info));
+      base::BindOnce(&CheckWillRedirectRequestOnUIThread, callback,
+                     render_process_id, render_frame_id, redirect_info.new_url,
+                     redirect_info.new_method, GURL(redirect_info.new_referrer),
+                     new_is_external_protocol, response_headers,
+                     request_->response_info().connection_info));
   *defer = true;
 }
 
@@ -309,21 +310,16 @@ void NavigationResourceThrottle::WillProcessResponse(bool* defer) {
       base::Bind(&NavigationResourceThrottle::InitiateTransfer,
                  weak_ptr_factory_.GetWeakPtr());
 
-  SSLStatus ssl_status;
-  if (request_->ssl_info().cert.get()) {
-    NavigationResourceHandler::GetSSLStatusForRequest(
-        request_->url(), request_->ssl_info(), info->GetChildID(), &ssl_status);
-  }
-
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&WillProcessResponseOnUIThread, callback, render_process_id,
-                 render_frame_id, response_headers,
-                 request_->response_info().connection_info, ssl_status,
-                 info->GetGlobalRequestID(),
-                 info->should_replace_current_entry(), info->IsDownload(),
-                 info->is_stream(), transfer_callback,
-                 base::Passed(&cloned_data)));
+      base::BindOnce(&WillProcessResponseOnUIThread, callback,
+                     render_process_id, render_frame_id, response_headers,
+                     request_->response_info().connection_info,
+                     request_->response_info().socket_address,
+                     request_->ssl_info(), info->GetGlobalRequestID(),
+                     info->should_replace_current_entry(), info->IsDownload(),
+                     info->is_stream(), transfer_callback,
+                     base::Passed(&cloned_data)));
   *defer = true;
 }
 
@@ -344,19 +340,20 @@ void NavigationResourceThrottle::set_force_transfer_for_testing(
 void NavigationResourceThrottle::OnUIChecksPerformed(
     NavigationThrottle::ThrottleCheckResult result) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  DCHECK_NE(NavigationThrottle::DEFER, result);
+  DCHECK_NE(NavigationThrottle::DEFER, result.action());
   if (in_cross_site_transition_) {
     on_transfer_done_result_ = result;
     return;
   }
 
-  if (result == NavigationThrottle::CANCEL_AND_IGNORE) {
-    CancelAndIgnore();
-  } else if (result == NavigationThrottle::CANCEL) {
+  if (result.action() == NavigationThrottle::CANCEL_AND_IGNORE ||
+      result.action() == NavigationThrottle::CANCEL) {
     Cancel();
-  } else if (result == NavigationThrottle::BLOCK_REQUEST) {
+  } else if (result.action() == NavigationThrottle::BLOCK_REQUEST ||
+             result.action() ==
+                 NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE) {
     CancelWithError(net::ERR_BLOCKED_BY_CLIENT);
-  } else if (result == NavigationThrottle::BLOCK_RESPONSE) {
+  } else if (result.action() == NavigationThrottle::BLOCK_RESPONSE) {
     // TODO(mkwst): If we cancel the main frame request with anything other than
     // 'net::ERR_ABORTED', we'll trigger some special behavior that might not be
     // desirable here (non-POSTs will reload the page, while POST has some logic
@@ -389,7 +386,7 @@ void NavigationResourceThrottle::OnTransferComplete() {
 
   // If the results of the checks on the UI thread are known, unblock the
   // navigation. Otherwise, wait until the callback has executed.
-  if (on_transfer_done_result_ != NavigationThrottle::DEFER) {
+  if (on_transfer_done_result_.action() != NavigationThrottle::DEFER) {
     OnUIChecksPerformed(on_transfer_done_result_);
     on_transfer_done_result_ = NavigationThrottle::DEFER;
   }

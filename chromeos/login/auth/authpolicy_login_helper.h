@@ -27,14 +27,42 @@ class CHROMEOS_EXPORT AuthPolicyLoginHelper {
   AuthPolicyLoginHelper();
   ~AuthPolicyLoginHelper();
 
-  // See AuthPolicyClient::JoinAdDomain.
+  // Try to get Kerberos TGT. To get an error code of this call one should use
+  // last_auth_error_ returned from AuthPolicyClient::GetUserStatus afterwards.
+  // (see https://crbug.com/710452).
+  static void TryAuthenticateUser(const std::string& username,
+                                  const std::string& object_guid,
+                                  const std::string& password);
+
+  // Restarts AuthPolicy service.
+  static void Restart();
+
+  // Checks if device is locked for Active Directory management.
+  static bool IsAdLocked();
+
+  // Sets install attributes for Active Directory managed device. Persists it on
+  // disk.
+  static bool LockDeviceActiveDirectoryForTesting(const std::string& realm);
+
+  // Packs arguments and calls AuthPolicyClient::JoinAdDomain. Joins machine to
+  // Active directory domain. Then it calls RefreshDevicePolicy to cache the
+  // policy on the authpolicyd side. |machine_name| is a name for a local
+  // machine. |username|, |password| are credentials of the Active directory
+  // account which has right to join the machine to the domain. |callback| is
+  // called after getting (or failing to get) D-BUS response.
   void JoinAdDomain(const std::string& machine_name,
                     const std::string& username,
                     const std::string& password,
                     JoinCallback callback);
 
-  // See AuthPolicyClient::AuthenticateUser.
+  // Packs arguments and calls AuthPolicyClient::AuthenticateUser. Authenticates
+  // user against Active Directory server. |username|, |password| are
+  // credentials of the Active Directory account. |username| should be in the
+  // user@example.domain.com format. |object_guid| is the user's LDAP GUID. If
+  // specified, it is used instead of |username|. The GUID is guaranteed to be
+  // stable, the user's name can change on the server.
   void AuthenticateUser(const std::string& username,
+                        const std::string& object_guid,
                         const std::string& password,
                         AuthCallback callback);
 
@@ -45,11 +73,16 @@ class CHROMEOS_EXPORT AuthPolicyLoginHelper {
   // Called from AuthPolicyClient::JoinAdDomain.
   void OnJoinCallback(JoinCallback callback, authpolicy::ErrorType error);
 
+  // Called from AuthPolicyClient::RefreshDevicePolicy. This is used only once
+  // during device enrollment with the first device policy refresh.
+  void OnFirstPolicyRefreshCallback(JoinCallback callback,
+                                    authpolicy::ErrorType error);
+
   // Called from AuthPolicyClient::AuthenticateUser.
   void OnAuthCallback(
       AuthCallback callback,
       authpolicy::ErrorType error,
-      const authpolicy::ActiveDirectoryAccountData& account_data);
+      const authpolicy::ActiveDirectoryAccountInfo& account_info);
 
   base::WeakPtrFactory<AuthPolicyLoginHelper> weak_factory_;
   DISALLOW_COPY_AND_ASSIGN(AuthPolicyLoginHelper);

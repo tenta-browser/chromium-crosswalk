@@ -6,7 +6,7 @@
 
 #include <type_traits>
 
-#include "ash/accessibility_types.h"
+#include "ash/public/cpp/accessibility_types.h"
 #include "ash/shell.h"
 #include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
@@ -15,6 +15,7 @@
 #include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/chromeos/accessibility/magnification_manager.h"
 #include "chrome/browser/chromeos/events/keyboard_driven_event_rewriter.h"
+#include "chrome/browser/chromeos/login/enrollment/auto_enrollment_controller.h"
 #include "chrome/browser/chromeos/login/helper.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
 #include "chrome/browser/chromeos/login/lock/webui_screen_locker.h"
@@ -23,6 +24,8 @@
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/device_cloud_policy_manager_chromeos.h"
 #include "chrome/browser/chromeos/system/input_device_settings.h"
+#include "chrome/browser/chromeos/system/timezone_resolver_manager.h"
+#include "chrome/browser/chromeos/tpm_firmware_update.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/ui/ash/ash_util.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
@@ -46,13 +49,34 @@
 #include "ui/gfx/geometry/size.h"
 #include "ui/keyboard/keyboard_controller.h"
 
+namespace chromeos {
+
 namespace {
 
 const char kJsScreenPath[] = "cr.ui.Oobe";
 
-}  // namespace
+bool IsRemoraRequisition() {
+  policy::DeviceCloudPolicyManagerChromeOS* policy_manager =
+      g_browser_process->platform_part()
+          ->browser_policy_connector_chromeos()
+          ->GetDeviceCloudPolicyManager();
+  return policy_manager && policy_manager->IsRemoraRequisition();
+}
 
-namespace chromeos {
+void LaunchResetScreen() {
+  // Don't recreate WizardController if it already exists.
+  WizardController* const wizard_controller =
+      WizardController::default_controller();
+  if (wizard_controller && !wizard_controller->login_screen_started()) {
+    wizard_controller->AdvanceToScreen(OobeScreen::SCREEN_OOBE_RESET);
+  } else {
+    DCHECK(LoginDisplayHost::default_host());
+    LoginDisplayHost::default_host()->StartWizard(
+        OobeScreen::SCREEN_OOBE_RESET);
+  }
+}
+
+}  // namespace
 
 // Note that show_oobe_ui_ defaults to false because WizardController assumes
 // OOBE UI is not visible by default.
@@ -141,8 +165,6 @@ void CoreOobeHandler::RegisterMessages() {
               &CoreOobeHandler::HandleEnableLargeCursor);
   AddCallback("enableVirtualKeyboard",
               &CoreOobeHandler::HandleEnableVirtualKeyboard);
-  AddCallback("setForceDisableVirtualKeyboard",
-              &CoreOobeHandler::HandleSetForceDisableVirtualKeyboard);
   AddCallback("enableScreenMagnifier",
               &CoreOobeHandler::HandleEnableScreenMagnifier);
   AddCallback("enableSpokenFeedback",
@@ -180,19 +202,33 @@ void CoreOobeHandler::ShowTpmError() {
 }
 
 void CoreOobeHandler::ShowDeviceResetScreen() {
-  policy::BrowserPolicyConnectorChromeOS* connector =
-      g_browser_process->platform_part()->browser_policy_connector_chromeos();
-  if (!connector->IsEnterpriseManaged()) {
-    // Don't recreate WizardController if it already exists.
-    WizardController* wizard_controller =
-        WizardController::default_controller();
-    if (wizard_controller && !wizard_controller->login_screen_started()) {
-      wizard_controller->AdvanceToScreen(OobeScreen::SCREEN_OOBE_RESET);
-    } else {
-      DCHECK(LoginDisplayHost::default_host());
-      LoginDisplayHost::default_host()->StartWizard(
-          OobeScreen::SCREEN_OOBE_RESET);
-    }
+  // Powerwash is generally not available on enterprise devices. First, check
+  // the common case of a correctly enrolled device.
+  if (g_browser_process->platform_part()
+          ->browser_policy_connector_chromeos()
+          ->IsEnterpriseManaged()) {
+    // Powerwash not allowed, except if allowed by the admin specifically for
+    // the purpose of installing a TPM firmware update.
+    tpm_firmware_update::ShouldOfferUpdateViaPowerwash(
+        base::Bind([](bool offer_update) {
+          if (offer_update) {
+            // Force the TPM firmware update option to be enabled.
+            g_browser_process->local_state()->SetBoolean(
+                prefs::kFactoryResetTPMFirmwareUpdateRequested, true);
+            LaunchResetScreen();
+          }
+        }));
+    return;
+  }
+
+  // Devices that are still in OOBE may be subject to forced re-enrollment (FRE)
+  // and thus pending for enterprise management. These should not be allowed to
+  // powerwash either. Note that taking consumer device ownership has the side
+  // effect of dropping the FRE requirement if it was previously in effect.
+  const AutoEnrollmentController::FRERequirement requirement =
+      AutoEnrollmentController::GetFRERequirement();
+  if (requirement != AutoEnrollmentController::EXPLICITLY_REQUIRED) {
+    LaunchResetScreen();
   }
 }
 
@@ -261,8 +297,8 @@ void CoreOobeHandler::ShowControlBar(bool show) {
   CallJSOrDefer("showControlBar", show);
 }
 
-void CoreOobeHandler::ShowPinKeyboard(bool show) {
-  CallJSOrDefer("showPinKeyboard", show);
+void CoreOobeHandler::SetVirtualKeyboardShown(bool shown) {
+  CallJSOrDefer("setVirtualKeyboardShown", shown);
 }
 
 void CoreOobeHandler::SetClientAreaSize(int width, int height) {
@@ -304,10 +340,6 @@ void CoreOobeHandler::HandleEnableVirtualKeyboard(bool enabled) {
   AccessibilityManager::Get()->EnableVirtualKeyboard(enabled);
 }
 
-void CoreOobeHandler::HandleSetForceDisableVirtualKeyboard(bool disable) {
-  scoped_keyboard_disabler_.SetForceDisableVirtualKeyboard(disable);
-}
-
 void CoreOobeHandler::HandleEnableScreenMagnifier(bool enabled) {
   // TODO(nkostylev): Add support for partial screen magnifier.
   DCHECK(MagnificationManager::Get());
@@ -328,6 +360,15 @@ void CoreOobeHandler::HandleSetDeviceRequisition(
   std::string initial_requisition =
       connector->GetDeviceCloudPolicyManager()->GetDeviceRequisition();
   connector->GetDeviceCloudPolicyManager()->SetDeviceRequisition(requisition);
+
+  if (IsRemoraRequisition()) {
+    // CfM devices default to static timezone.
+    g_browser_process->local_state()->SetInteger(
+        prefs::kResolveDeviceTimezoneByGeolocationMethod,
+        static_cast<int>(chromeos::system::TimeZoneResolverManager::
+                             TimeZoneResolveMethod::DISABLED));
+  }
+
   // Exit Chrome to force the restart as soon as a new requisition is set.
   if (initial_requisition !=
           connector->GetDeviceCloudPolicyManager()->GetDeviceRequisition()) {
@@ -420,6 +461,10 @@ void CoreOobeHandler::OnEnterpriseInfoUpdated(
   CallJSOrDefer("setEnterpriseInfo", message_text, asset_id);
 }
 
+void CoreOobeHandler::OnDeviceInfoUpdated(const std::string& bluetooth_name) {
+  CallJSOrDefer("setBluetoothDeviceInfo", bluetooth_name);
+}
+
 ui::EventSink* CoreOobeHandler::GetEventSink() {
   return ash::Shell::GetPrimaryRootWindow()->GetHost()->event_sink();
 }
@@ -444,9 +489,9 @@ void CoreOobeHandler::UpdateKeyboardState() {
   keyboard::KeyboardController* keyboard_controller =
       keyboard::KeyboardController::GetInstance();
   if (keyboard_controller) {
-    gfx::Rect bounds = keyboard_controller->current_keyboard_bounds();
-    ShowControlBar(bounds.IsEmpty());
-    ShowPinKeyboard(bounds.IsEmpty());
+    const bool is_keyboard_shown = keyboard_controller->keyboard_visible();
+    ShowControlBar(!is_keyboard_shown);
+    SetVirtualKeyboardShown(is_keyboard_shown);
   }
 }
 
@@ -476,7 +521,7 @@ void CoreOobeHandler::HandleHeaderBarVisible() {
   if (login_display_host)
     login_display_host->SetStatusAreaVisible(true);
   if (ScreenLocker::default_screen_locker())
-    ScreenLocker::default_screen_locker()->web_ui()->OnHeaderBarVisible();
+    ScreenLocker::default_screen_locker()->delegate()->OnHeaderBarVisible();
 }
 
 void CoreOobeHandler::HandleRaiseTabKeyEvent(bool reverse) {

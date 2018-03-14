@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
@@ -22,8 +23,10 @@
 #include "base/time/time.h"
 #include "net/base/net_export.h"
 #include "net/base/network_change_notifier.h"
+#include "net/log/net_log_with_source.h"
 #include "net/nqe/cached_network_quality.h"
 #include "net/nqe/effective_connection_type.h"
+#include "net/nqe/effective_connection_type_observer.h"
 #include "net/nqe/event_creator.h"
 #include "net/nqe/external_estimate_provider.h"
 #include "net/nqe/network_id.h"
@@ -31,9 +34,11 @@
 #include "net/nqe/network_quality_estimator_params.h"
 #include "net/nqe/network_quality_observation.h"
 #include "net/nqe/network_quality_observation_source.h"
+#include "net/nqe/network_quality_provider.h"
 #include "net/nqe/network_quality_store.h"
 #include "net/nqe/observation_buffer.h"
-#include "net/socket/socket_performance_watcher_factory.h"
+#include "net/nqe/rtt_throughput_estimates_observer.h"
+#include "net/nqe/socket_watcher_factory.h"
 
 namespace base {
 class TickClock;
@@ -61,64 +66,9 @@ class URLRequest;
 // observed traffic characteristics.
 class NET_EXPORT NetworkQualityEstimator
     : public NetworkChangeNotifier::ConnectionTypeObserver,
-      public ExternalEstimateProvider::UpdatedEstimateDelegate {
+      public ExternalEstimateProvider::UpdatedEstimateDelegate,
+      public NetworkQualityProvider {
  public:
-  // Observes changes in effective connection type.
-  class NET_EXPORT EffectiveConnectionTypeObserver {
-   public:
-    // Notifies the observer of a change in the effective connection type.
-    // NetworkQualityEstimator computes the effective connection type once in
-    // every interval of duration
-    // |effective_connection_type_recomputation_interval_|. Additionally, when
-    // there is a change in the connection type of the device, then the
-    // effective connection type is immediately recomputed. The observer must
-    // register and unregister itself on the IO thread. All the observers would
-    // be notified on the IO thread.
-    //
-    // If the computed effective connection type is different from the
-    // previously notified effective connection type, then all the registered
-    // observers are notified of the new effective connection type.
-    virtual void OnEffectiveConnectionTypeChanged(
-        EffectiveConnectionType type) = 0;
-
-   protected:
-    EffectiveConnectionTypeObserver() {}
-    virtual ~EffectiveConnectionTypeObserver() {}
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(EffectiveConnectionTypeObserver);
-  };
-
-  // Observes changes in the network quality.
-  class NET_EXPORT RTTAndThroughputEstimatesObserver {
-   public:
-    // Notifies the observer when estimated HTTP RTT, estimated transport RTT or
-    // estimated downstream throughput is computed. NetworkQualityEstimator
-    // computes the RTT and throughput estimates at regular intervals.
-    // Additionally, when there is a change in the connection type of the
-    // device, then the estimates are immediately computed. The observer must
-    // register and unregister itself on the IO thread. All the observers would
-    // be notified on the IO thread.
-    //
-    // |http_rtt|, |transport_rtt| and |downstream_throughput_kbps| are the
-    // computed estimates of the HTTP RTT, transport RTT and downstream
-    // throughput (in kilobits per second), respectively. If an estimate of the
-    // HTTP or transport RTT is unavailable, it will be set to
-    // nqe::internal::InvalidRTT(). If the throughput estimate is unavailable,
-    // it will be set to nqe::internal::kInvalidThroughput.
-    virtual void OnRTTOrThroughputEstimatesComputed(
-        base::TimeDelta http_rtt,
-        base::TimeDelta transport_rtt,
-        int32_t downstream_throughput_kbps) = 0;
-
-   protected:
-    RTTAndThroughputEstimatesObserver() {}
-    virtual ~RTTAndThroughputEstimatesObserver() {}
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(RTTAndThroughputEstimatesObserver);
-  };
-
   // Observes measurements of round trip time.
   class NET_EXPORT_PRIVATE RTTObserver {
    public:
@@ -155,90 +105,16 @@ class NET_EXPORT NetworkQualityEstimator
     DISALLOW_COPY_AND_ASSIGN(ThroughputObserver);
   };
 
-  // Provides simple interface to obtain the effective connection type.
-  class NET_EXPORT NetworkQualityProvider {
-   public:
-    virtual ~NetworkQualityProvider() {}
-
-    // Returns the current effective connection type.
-    virtual EffectiveConnectionType GetEffectiveConnectionType() const = 0;
-
-    // Adds |observer| to a list of effective connection type observers.
-    virtual void AddEffectiveConnectionTypeObserver(
-        EffectiveConnectionTypeObserver* observer) = 0;
-
-    // Removes |observer| from a list of effective connection type observers.
-    virtual void RemoveEffectiveConnectionTypeObserver(
-        EffectiveConnectionTypeObserver* observer) = 0;
-
-    // Returns the current HTTP RTT estimate. If the estimate is unavailable,
-    // the returned optional value is null.
-    virtual base::Optional<base::TimeDelta> GetHttpRTT() const;
-
-    // Returns the current transport RTT estimate. If the estimate is
-    // unavailable, the returned optional value is null.
-    virtual base::Optional<base::TimeDelta> GetTransportRTT() const;
-
-    // Returns the current downstream throughput estimate (in kilobits per
-    // second). If the estimate is unavailable, the returned optional value is
-    // null.
-    virtual base::Optional<int32_t> GetDownstreamThroughputKbps() const;
-
-    // Adds |observer| to the list of RTT and throughput estimate observers.
-    // |observer| would be notified of the current RTT and throughput estimates
-    // in the next message pump.
-    virtual void AddRTTAndThroughputEstimatesObserver(
-        RTTAndThroughputEstimatesObserver* observer) = 0;
-
-    // Removes |observer| from the list of RTT and throughput estimate
-    // observers.
-    virtual void RemoveRTTAndThroughputEstimatesObserver(
-        RTTAndThroughputEstimatesObserver* observer) = 0;
-
-   protected:
-    NetworkQualityProvider() {}
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(NetworkQualityProvider);
-  };
-
   // Creates a new NetworkQualityEstimator.
-  // |variation_params| is the map containing all field trial parameters
-  // related to NetworkQualityEstimator field trial.
-  // |external_estimates_provider| may be NULL. The caller must guarantee that
-  // |net_log| outlives |this|.
+  // |external_estimates_provider| may be NULL. |params| contains the
+  // configuration parameters relevant to network quality estimator. The caller
+  // must guarantee that |net_log| outlives |this|.
   NetworkQualityEstimator(
       std::unique_ptr<ExternalEstimateProvider> external_estimates_provider,
-      const std::map<std::string, std::string>& variation_params,
-      NetLog* net_log);
-
-  // Construct a NetworkQualityEstimator instance allowing for test
-  // configuration. Registers for network type change notifications so estimates
-  // can be kept network specific.
-  // |external_estimates_provider| may be NULL.
-  // |variation_params| is the map containing all field trial parameters for the
-  // network quality estimator field trial.
-  // |use_local_host_requests_for_tests| should only be true when testing
-  // against local HTTP server and allows the requests to local host to be
-  // used for network quality estimation.
-  // |use_smaller_responses_for_tests| should only be true when testing.
-  // Allows the responses smaller than |kMinTransferSizeInBits| to be used for
-  // network quality estimation. The caller must guarantee that |net_log|
-  // outlives |this|.
-  NetworkQualityEstimator(
-      std::unique_ptr<ExternalEstimateProvider> external_estimates_provider,
-      const std::map<std::string, std::string>& variation_params,
-      bool use_local_host_requests_for_tests,
-      bool use_smaller_responses_for_tests,
+      std::unique_ptr<NetworkQualityEstimatorParams> params,
       NetLog* net_log);
 
   ~NetworkQualityEstimator() override;
-
-  // Returns the last computed effective type of the current connection. The
-  // effective connection type is computed by the network quality estimator at
-  // regular intervals and at certain events (e.g., connection change).
-  // Virtualized for testing.
-  virtual EffectiveConnectionType GetEffectiveConnectionType() const;
 
   // Returns the effective type of the current connection based on only the
   // samples observed after |start_time|. This should only be used for
@@ -246,31 +122,29 @@ class NET_EXPORT NetworkQualityEstimator
   virtual EffectiveConnectionType GetRecentEffectiveConnectionType(
       const base::TimeTicks& start_time) const;
 
-  // Adds |observer| to the list of effective connection type observers. Must be
-  // called on the IO thread. |observer| would be notified of the current
-  // effective connection type in the next message pump.
+  // NetworkQualityProvider implementation:
+  // Must be called on the IO thread.
+  EffectiveConnectionType GetEffectiveConnectionType() const override;
   void AddEffectiveConnectionTypeObserver(
-      EffectiveConnectionTypeObserver* observer);
-
-  // Removes |observer| from the list of effective connection type observers.
-  // Must be called on the IO thread.
+      EffectiveConnectionTypeObserver* observer) override;
   void RemoveEffectiveConnectionTypeObserver(
-      EffectiveConnectionTypeObserver* observer);
-
-  // Adds |observer| to the list of RTT and throughput estimate observers. Must
-  // be called on the IO thread. |observer| would be notified of the current RTT
-  // and throughput estimates in the next message pump.
+      EffectiveConnectionTypeObserver* observer) override;
+  base::Optional<base::TimeDelta> GetHttpRTT() const override;
+  base::Optional<base::TimeDelta> GetTransportRTT() const override;
+  base::Optional<int32_t> GetDownstreamThroughputKbps() const override;
+  base::Optional<int32_t> GetBandwidthDelayProductKbits() const override;
   void AddRTTAndThroughputEstimatesObserver(
-      RTTAndThroughputEstimatesObserver* observer);
-
-  // Removes |observer| from the list of RTT and throughput estimate observers.
-  // Must be called on the IO thread.
+      RTTAndThroughputEstimatesObserver* observer) override;
   void RemoveRTTAndThroughputEstimatesObserver(
-      RTTAndThroughputEstimatesObserver* observer);
+      RTTAndThroughputEstimatesObserver* observer) override;
 
   // Notifies NetworkQualityEstimator that the response header of |request| has
   // been received.
   void NotifyHeadersReceived(const URLRequest& request);
+
+  // Notifies NetworkQualityEstimator that unfiltered bytes have been read for
+  // |request|.
+  void NotifyBytesRead(const URLRequest& request);
 
   // Notifies NetworkQualityEstimator that the headers of |request| are about to
   // be sent.
@@ -306,7 +180,7 @@ class NET_EXPORT NetworkQualityEstimator
   // quality estimation.
   void SetUseLocalHostRequestsForTesting(bool use_localhost_requests);
 
-  // |use_smaller_responses_for_tests| should only be true when testing.
+  // |use_small_responses| should only be true when testing.
   // Allows the responses smaller than |kMinTransferSizeInBits| to be used for
   // network quality estimation.
   void SetUseSmallResponsesForTesting(bool use_small_responses);
@@ -340,24 +214,17 @@ class NET_EXPORT NetworkQualityEstimator
       const std::map<nqe::internal::NetworkID,
                      nqe::internal::CachedNetworkQuality> read_prefs);
 
- protected:
-  // A protected constructor for testing that allows setting the value of
-  // |add_default_platform_observations_|.
-  NetworkQualityEstimator(
-      std::unique_ptr<ExternalEstimateProvider> external_estimates_provider,
-      const std::map<std::string, std::string>& variation_params,
-      bool use_local_host_requests_for_tests,
-      bool use_smaller_responses_for_tests,
-      bool add_default_platform_observations,
-      const NetLogWithSource& net_log);
+  typedef nqe::internal::Observation Observation;
+  typedef nqe::internal::ObservationBuffer ObservationBuffer;
 
+ protected:
   // Different experimental statistic algorithms that can be used for computing
   // the predictions.
+  // TODO(tbansal): crbug.com/649887. Consider evaluating other statistical
+  // algorithms.
   enum Statistic {
-    STATISTIC_WEIGHTED_AVERAGE = 0,
-    STATISTIC_UNWEIGHTED_AVERAGE = 1,
     // Last statistic. Not to be used.
-    STATISTIC_LAST = 2
+    STATISTIC_LAST = 0
   };
 
   // NetworkChangeNotifier::ConnectionTypeObserver implementation:
@@ -366,8 +233,7 @@ class NET_EXPORT NetworkQualityEstimator
 
   // ExternalEstimateProvider::UpdatedEstimateObserver implementation.
   void OnUpdatedEstimateAvailable(const base::TimeDelta& rtt,
-                                  int32_t downstream_throughput_kbps,
-                                  int32_t upstream_throughput_kbps) override;
+                                  int32_t downstream_throughput_kbps) override;
 
   // Returns true if median RTT at the HTTP layer is available and sets |rtt|
   // to the median of RTT observations since |start_time|.
@@ -382,9 +248,13 @@ class NET_EXPORT NetworkQualityEstimator
   // Returns true if the median RTT at the transport layer is available and sets
   // |rtt| to the median of transport layer RTT observations since
   // |start_time|. |rtt| should not be null. Virtualized for testing.
+  // If |observations_count| is not null, then it is set to the number of
+  // transport RTT observations that are available when computing the RTT
+  // estimate.
   // TODO(tbansal): Change it to return transport RTT as base::TimeDelta.
   virtual bool GetRecentTransportRTT(const base::TimeTicks& start_time,
-                                     base::TimeDelta* rtt) const
+                                     base::TimeDelta* rtt,
+                                     size_t* observations_count) const
       WARN_UNUSED_RESULT;
 
   // Returns true if median downstream throughput is available and sets |kbps|
@@ -413,21 +283,25 @@ class NET_EXPORT NetworkQualityEstimator
   // and |downstream_throughput_kbps| are set to the expected HTTP RTT,
   // transport RTT and downstream throughput (in kilobits per second) based on
   // observations taken since |start_time|. Virtualized for testing.
+  // If |transport_rtt_observation_count| is not null, then it is set to the
+  // number of transport RTT observations that are available when computing the
+  // effective connection type.
   virtual EffectiveConnectionType
   GetRecentEffectiveConnectionTypeAndNetworkQuality(
       const base::TimeTicks& start_time,
       base::TimeDelta* http_rtt,
       base::TimeDelta* transport_rtt,
-      int32_t* downstream_throughput_kbps) const;
+      int32_t* downstream_throughput_kbps,
+      size_t* transport_rtt_observation_count) const;
 
   // Notifies |this| of a new transport layer RTT. Called by socket watchers.
   // Protected for testing.
-  void OnUpdatedRTTAvailable(SocketPerformanceWatcherFactory::Protocol protocol,
-                             const base::TimeDelta& rtt);
+  void OnUpdatedTransportRTTAvailable(
+      SocketPerformanceWatcherFactory::Protocol protocol,
+      const base::TimeDelta& rtt,
+      const base::Optional<nqe::internal::IPHash>& host);
 
   // Returns an estimate of network quality at the specified |percentile|.
-  // |disallowed_observation_sources| is the list of observation sources that
-  // should be excluded when computing the percentile.
   // Only the observations later than |start_time| are taken into account.
   // |percentile| must be between 0 and 100 (both inclusive) with higher
   // percentiles indicating less performant networks. For example, if
@@ -436,15 +310,52 @@ class NET_EXPORT NetworkQualityEstimator
   // be slower than the returned estimate with 0.1 probability. |statistic|
   // is the statistic that should be used for computing the estimate. If unset,
   // the default statistic is used. Virtualized for testing.
+  // |observation_category| is the category of observations which should be used
+  // for computing the RTT estimate.
+  // If |observations_count| is not null, then it is set to the number of RTT
+  // observations that were available when computing the RTT estimate.
   virtual base::TimeDelta GetRTTEstimateInternal(
-      const std::vector<NetworkQualityObservationSource>&
-          disallowed_observation_sources,
       base::TimeTicks start_time,
       const base::Optional<Statistic>& statistic,
-      int percentile) const;
+      nqe::internal::ObservationCategory observation_category,
+      int percentile,
+      size_t* observations_count) const;
   int32_t GetDownlinkThroughputKbpsEstimateInternal(
       const base::TimeTicks& start_time,
       int percentile) const;
+
+  // Notifies the observers of RTT or throughput estimates computation.
+  virtual void NotifyObserversOfRTTOrThroughputComputed() const;
+
+  // Notifies |observer| of the current RTT and throughput if |observer| is
+  // still registered as an observer.
+  virtual void NotifyRTTAndThroughputEstimatesObserverIfPresent(
+      RTTAndThroughputEstimatesObserver* observer) const;
+
+  // Adds |observation| to the buffer of RTT observations, and notifies RTT
+  // observers of |observation|. May also trigger recomputation of effective
+  // connection type.
+  void AddAndNotifyObserversOfRTT(const Observation& observation);
+
+  // Adds |observation| to the buffer of throughput observations, and notifies
+  // throughput observers of |observation|. May also trigger recomputation of
+  // effective connection type.
+  void AddAndNotifyObserversOfThroughput(const Observation& observation);
+
+  base::Optional<int32_t> ComputeIncreaseInTransportRTTForTests() {
+    return ComputeIncreaseInTransportRTT();
+  }
+
+  // Observer list for RTT or throughput estimates. Protected for testing.
+  base::ObserverList<RTTAndThroughputEstimatesObserver>
+      rtt_and_throughput_estimates_observer_list_;
+
+  // Observer list for changes in effective connection type.
+  base::ObserverList<EffectiveConnectionTypeObserver>
+      effective_connection_type_observer_list_;
+
+  // Params to configure the network quality estimator.
+  const std::unique_ptr<NetworkQualityEstimatorParams> params_;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(NetworkQualityEstimatorTest,
@@ -453,9 +364,6 @@ class NET_EXPORT NetworkQualityEstimator
   FRIEND_TEST_ALL_PREFIXES(NetworkQualityEstimatorTest, TestAddObservation);
   FRIEND_TEST_ALL_PREFIXES(NetworkQualityEstimatorTest,
                            DefaultObservationsOverridden);
-  FRIEND_TEST_ALL_PREFIXES(NetworkQualityEstimatorTest,
-                           ObtainAlgorithmToUseFromParams);
-  FRIEND_TEST_ALL_PREFIXES(NetworkQualityEstimatorTest, HalfLifeParam);
   FRIEND_TEST_ALL_PREFIXES(NetworkQualityEstimatorTest, ComputedPercentiles);
   FRIEND_TEST_ALL_PREFIXES(NetworkQualityEstimatorTest, TestGetMetricsSince);
   FRIEND_TEST_ALL_PREFIXES(NetworkQualityEstimatorTest,
@@ -466,23 +374,16 @@ class NET_EXPORT NetworkQualityEstimator
                            TypicalNetworkQualities);
   FRIEND_TEST_ALL_PREFIXES(NetworkQualityEstimatorTest,
                            OnPrefsReadWithReadingDisabled);
-
-  // Value of round trip time observations is in base::TimeDelta.
-  typedef nqe::internal::Observation<base::TimeDelta> RttObservation;
-  typedef nqe::internal::ObservationBuffer<base::TimeDelta>
-      RttObservationBuffer;
-
-  // Value of throughput observations is in kilobits per second.
-  typedef nqe::internal::Observation<int32_t> ThroughputObservation;
-  typedef nqe::internal::ObservationBuffer<int32_t> ThroughputObservationBuffer;
-
-  // Algorithms supported by network quality estimator for computing effective
-  // connection type.
-  enum class EffectiveConnectionTypeAlgorithm {
-    HTTP_RTT_AND_DOWNSTREAM_THROUGHOUT = 0,
-    TRANSPORT_RTT_OR_DOWNSTREAM_THROUGHOUT,
-    EFFECTIVE_CONNECTION_TYPE_ALGORITHM_LAST
-  };
+  FRIEND_TEST_ALL_PREFIXES(NetworkQualityEstimatorTest,
+                           ForceEffectiveConnectionTypeThroughFieldTrial);
+  FRIEND_TEST_ALL_PREFIXES(NetworkQualityEstimatorTest, TestBDPComputation);
+  FRIEND_TEST_ALL_PREFIXES(NetworkQualityEstimatorTest,
+                           TestComputeIncreaseInTransportRTTFullHostsOverlap);
+  FRIEND_TEST_ALL_PREFIXES(
+      NetworkQualityEstimatorTest,
+      TestComputeIncreaseInTransportRTTPartialHostsOverlap);
+  FRIEND_TEST_ALL_PREFIXES(NetworkQualityEstimatorTest,
+                           ObservationDiscardedIfCachedEstimateAvailable);
 
   // Defines how a metric (e.g, transport RTT) should be used when computing
   // the effective connection type.
@@ -498,17 +399,6 @@ class NET_EXPORT NetworkQualityEstimator
     // should be set to |EFFECTIVE_CONNECTION_TYPE_UNKNOWN|.
     MUST_BE_USED,
   };
-
-  // Map from algorithm names to EffectiveConnectionTypeAlgorithm.
-  // TODO(tbansal): Consider using an autogenerated enum using macros.
-  const std::map<std::string, EffectiveConnectionTypeAlgorithm>
-      algorithm_name_to_enum_;
-
-  // The default algorithm to be used if the algorithm value is not available
-  // through field trial parameters.
-  static const EffectiveConnectionTypeAlgorithm
-      kDefaultEffectiveConnectionTypeAlgorithm =
-          EffectiveConnectionTypeAlgorithm::HTTP_RTT_AND_DOWNSTREAM_THROUGHOUT;
 
   // Returns the RTT value to be used when the valid RTT is unavailable. Readers
   // should discard RTT if it is set to the value returned by |InvalidRTT()|.
@@ -533,12 +423,6 @@ class NET_EXPORT NetworkQualityEstimator
   // throughput in kilobits per second.
   void OnNewThroughputObservationAvailable(int32_t downstream_kbps);
 
-  // Obtains the model parameters for different effective connection types from
-  // the field trial parameters. For each effective connection type, a model
-  // (currently composed of a RTT threshold and a downlink throughput threshold)
-  // is provided by the field trial.
-  void ObtainOperatingParams();
-
   // Adds the default median RTT and downstream throughput estimate for the
   // current connection type to the observation buffer.
   void AddDefaultEstimates();
@@ -546,14 +430,6 @@ class NET_EXPORT NetworkQualityEstimator
   // Returns the current network ID checking by calling the platform APIs.
   // Virtualized for testing.
   virtual nqe::internal::NetworkID GetCurrentNetworkID() const;
-
-  // Notifies RTT observers of |observation|. May also trigger recomputation
-  // of effective connection type.
-  void NotifyObserversOfRTT(const RttObservation& observation);
-
-  // Notifies throughput observers of |observation|. May also trigger
-  // recomputation of effective connection type.
-  void NotifyObserversOfThroughput(const ThroughputObservation& observation);
 
   // Returns true only if the |request| can be used for RTT estimation.
   bool RequestProvidesRTTObservation(const URLRequest& request) const;
@@ -565,18 +441,10 @@ class NET_EXPORT NetworkQualityEstimator
   // Notifies observers of a change in effective connection type.
   void NotifyObserversOfEffectiveConnectionTypeChanged();
 
-  // Notifies the observers of RTT or throughput estimates computation.
-  void NotifyObserversOfRTTOrThroughputComputed() const;
-
   // Notifies |observer| of the current effective connection type if |observer|
   // is still registered as an observer.
   void NotifyEffectiveConnectionTypeObserverIfPresent(
       EffectiveConnectionTypeObserver* observer) const;
-
-  // Notifies |observer| of the current RTT and throughput if |observer| is
-  // still registered as an observer.
-  void NotifyRTTAndThroughputEstimatesObserverIfPresent(
-      RTTAndThroughputEstimatesObserver* observer) const;
 
   // Records NQE accuracy metrics. |measuring_duration| should belong to the
   // vector returned by AccuracyRecordingIntervals().
@@ -598,6 +466,9 @@ class NET_EXPORT NetworkQualityEstimator
   // |http_rtt|, |transport_rtt| and |downstream_throughput_kbps| are
   // set to the expected HTTP RTT, transport RTT and downstream throughput (in
   // kilobits per second) based on observations taken since |start_time|.
+  // If |transport_rtt_observation_count| is not null, then it is set to the
+  // number of transport RTT observations that were available when computing the
+  // effective connection type.
   EffectiveConnectionType GetRecentEffectiveConnectionTypeUsingMetrics(
       const base::TimeTicks& start_time,
       MetricUsage http_rtt_metric,
@@ -605,7 +476,8 @@ class NET_EXPORT NetworkQualityEstimator
       MetricUsage downstream_throughput_kbps_metric,
       base::TimeDelta* http_rtt,
       base::TimeDelta* transport_rtt,
-      int32_t* downstream_throughput_kbps) const;
+      int32_t* downstream_throughput_kbps,
+      size_t* transport_rtt_observation_count) const;
 
   // Values of external estimate provider status. This enum must remain
   // synchronized with the enum of the same name in
@@ -637,51 +509,53 @@ class NET_EXPORT NetworkQualityEstimator
   // connection type.
   bool UseTransportRTT() const;
 
+  // Computes the bandwidth delay product in kilobits. The computed value is
+  // stored in |bandwidth_delay_product_kbits_| and can be accessed using
+  // |GetBandwidthDelayProductKbits|.
+  void ComputeBandwidthDelayProduct();
+
+  // Computes the current increase in transport RTT in milliseconds over the
+  // baseline transport RTT due to congestion. This value can be interpreted as
+  // the additional delay caused due to an increase in queue length in the last
+  // mile. The baseline is computed using the transport RTT observations in the
+  // past 60 seconds. The current RTT is computed using the observations in the
+  // past 5 seconds. Returns an empty optional when there was no recent data.
+  base::Optional<int32_t> ComputeIncreaseInTransportRTT() const;
+
+  // Periodically updates |increase_in_transport_rtt_| by posting delayed tasks.
+  void IncreaseInTransportRTTUpdater();
+
   // Forces computation of effective connection type, and notifies observers
   // if there is a change in its value.
   void ComputeEffectiveConnectionType();
 
-  // May update the network quality of the current network if |network_id|
-  // matches the ID of the current network. |cached_network_quality| is the
-  // cached network quality of the network with id |network_id|.
-  void MaybeUpdateNetworkQualityFromCache(
-      const nqe::internal::NetworkID& network_id,
-      const nqe::internal::CachedNetworkQuality& cached_network_quality);
-
   const char* GetNameForStatistic(int i) const;
 
-  // Params to configure the network quality estimator.
-  const nqe::internal::NetworkQualityEstimatorParams params_;
+  // Gathers metrics for the next connection type. Called when there is a change
+  // in the connection type.
+  void GatherEstimatesForNextConnectionType();
+
+  // Updates the value of |cached_estimate_applied_| if |observation| is
+  // computed from a cached estimate. |buffer| is the observation buffer to
+  // which the cached estimate is being added to.
+  void MaybeUpdateCachedEstimateApplied(const Observation& observation,
+                                        ObservationBuffer* buffer);
+
+  // Returns true if |observation| should be added to the observation buffer.
+  bool ShouldAddObservation(const Observation& observation) const;
+
+  // Returns true if the socket watcher can run the callback to notify the RTT
+  // observations.
+  bool ShouldSocketWatcherNotifyRTT(base::TimeTicks now);
 
   // Determines if the requests to local host can be used in estimating the
   // network quality. Set to true only for tests.
   bool use_localhost_requests_;
 
-  // Determines if the responses smaller than |kMinTransferSizeInBytes|
-  // or shorter than |kMinTransferSizeInBytes| can be used in estimating the
-  // network quality. Set to true only for tests.
-  bool use_small_responses_;
-
   // When set to true, the device offline check is disabled when computing the
-  // effective connection type or when writing the prefs.
+  // effective connection type or when writing the prefs. Set to true only for
+  // testing.
   bool disable_offline_check_;
-
-  // If true, default values provided by the platform are used for estimation.
-  const bool add_default_platform_observations_;
-
-  // The factor by which the weight of an observation reduces every second.
-  const double weight_multiplier_per_second_;
-
-  // The factor by which the weight of an observation reduces for every dBm
-  // difference between the current signal strength (in dBm), and the signal
-  // strength at the time when the observation was taken.
-  const double weight_multiplier_per_dbm_;
-
-  // Algorithm to use for computing effective connection type. The value is
-  // obtained from field trial parameters. If the value from field trial
-  // parameters is unavailable, it is set to
-  // kDefaultEffectiveConnectionTypeAlgorithm.
-  const EffectiveConnectionTypeAlgorithm effective_connection_type_algorithm_;
 
   // Tick clock used by the network quality estimator.
   std::unique_ptr<base::TickClock> tick_clock_;
@@ -696,37 +570,17 @@ class NET_EXPORT NetworkQualityEstimator
   // ID of the current network.
   nqe::internal::NetworkID current_network_id_;
 
-  // Peak network quality (fastest round-trip-time (RTT) and highest
-  // downstream throughput) measured since last connectivity change. RTT is
-  // measured from time the request is sent until the first byte received.
-  // The accuracy is decreased by ignoring these factors:
-  // 1) Multiple URLRequests can occur concurrently.
-  // 2) Includes server processing time.
-  nqe::internal::NetworkQuality peak_network_quality_;
+  // Buffer that holds throughput observations from the HTTP layer (in kilobits
+  // per second) sorted by timestamp.
+  ObservationBuffer http_downstream_throughput_kbps_observations_;
 
-  // Buffer that holds throughput observations (in kilobits per second) sorted
-  // by timestamp.
-  ThroughputObservationBuffer downstream_throughput_kbps_observations_;
+  // Buffer that holds RTT observations from the HTTP layer (in milliseconds)
+  // sorted by timestamp.
+  ObservationBuffer http_rtt_ms_observations_;
 
-  // Buffer that holds RTT observations sorted by timestamp.
-  RttObservationBuffer rtt_observations_;
-
-  // Default network quality observations obtained from the network quality
-  // estimator field trial parameters. The observations are indexed by
-  // ConnectionType.
-  nqe::internal::NetworkQuality
-      default_observations_[NetworkChangeNotifier::CONNECTION_LAST + 1];
-
-  // Thresholds for different effective connection types obtained from field
-  // trial variation params. These thresholds encode how different connection
-  // types behave in general. In future, complex encodings (e.g., curve
-  // fitting) may be used.
-  nqe::internal::NetworkQuality connection_thresholds_
-      [EffectiveConnectionType::EFFECTIVE_CONNECTION_TYPE_LAST];
-
-  // Typical network quality for different effective connection types.
-  nqe::internal::NetworkQuality typical_network_quality_
-      [EffectiveConnectionType::EFFECTIVE_CONNECTION_TYPE_LAST];
+  // Buffer that holds RTT observations from the transport layer (in
+  // milliseconds) sorted by timestamp.
+  ObservationBuffer transport_rtt_ms_observations_;
 
   // Time when the transaction for the last main frame request was started.
   base::TimeTicks last_main_frame_request_;
@@ -736,10 +590,6 @@ class NET_EXPORT NetworkQualityEstimator
   nqe::internal::NetworkQuality estimated_quality_at_last_main_frame_;
   EffectiveConnectionType effective_connection_type_at_last_main_frame_;
 
-  // Estimated RTT at HTTP layer when the last main frame transaction was
-  // started. Computed using different statistics.
-  base::TimeDelta http_rtt_at_last_main_frame_[STATISTIC_LAST];
-
   // Estimated network quality obtained from external estimate provider when the
   // external estimate provider was last queried.
   nqe::internal::NetworkQuality external_estimate_provider_quality_;
@@ -748,19 +598,11 @@ class NET_EXPORT NetworkQualityEstimator
   // system APIs. May be NULL.
   const std::unique_ptr<ExternalEstimateProvider> external_estimate_provider_;
 
-  // Observer list for changes in effective connection type.
-  base::ObserverList<EffectiveConnectionTypeObserver>
-      effective_connection_type_observer_list_;
-
-  // Observer list for RTT or throughput estimates.
-  base::ObserverList<RTTAndThroughputEstimatesObserver>
-      rtt_and_throughput_estimates_observer_list_;
-
   // Observer lists for round trip times and throughput measurements.
   base::ObserverList<RTTObserver> rtt_observer_list_;
   base::ObserverList<ThroughputObserver> throughput_observer_list_;
 
-  std::unique_ptr<SocketPerformanceWatcherFactory> watcher_factory_;
+  std::unique_ptr<nqe::internal::SocketWatcherFactory> watcher_factory_;
 
   // Takes throughput measurements, and passes them back to |this| through the
   // provided callback. |this| stores the throughput observations in
@@ -780,8 +622,28 @@ class NET_EXPORT NetworkQualityEstimator
   size_t rtt_observations_size_at_last_ect_computation_;
   size_t throughput_observations_size_at_last_ect_computation_;
 
+  // Number of transport RTT samples available when the ECT was last computed.
+  size_t transport_rtt_observation_count_last_ect_computation_;
+
+  // Number of RTT observations received since the effective connection type was
+  // last computed.
+  size_t new_rtt_observations_since_last_ect_computation_;
+
+  // Number of throughput observations received since the effective connection
+  // type was last computed.
+  size_t new_throughput_observations_since_last_ect_computation_;
+
   // Current estimate of the network quality.
   nqe::internal::NetworkQuality network_quality_;
+
+  // Current estimate of the bandwidth delay product (BDP) in kilobits.
+  base::Optional<int32_t> bandwidth_delay_product_kbits_;
+
+  // Current estimate of the increase in the transport RTT due to congestion.
+  base::Optional<int32_t> increase_in_transport_rtt_;
+
+  // This is true if there is a task posted for |IncreaseInTransportRTTUpdater|.
+  bool increase_in_transport_rtt_updater_posted_;
 
   // Current effective connection type. It is updated on connection change
   // events. It is also updated every time there is network traffic (provided
@@ -789,49 +651,32 @@ class NET_EXPORT NetworkQualityEstimator
   // |effective_connection_type_recomputation_interval_| ago).
   EffectiveConnectionType effective_connection_type_;
 
-  // Last known value of the wireless signal strength. Set to INT32_MIN if
-  // unavailable. |signal_strength_dbm_| is reset to INT32_MIN on connection
-  // change events.
-  int32_t signal_strength_dbm_;
+  // Last known value of the wireless signal strength level. If the signal
+  // strength level is available, the value is set to between 0 and 4, both
+  // inclusive. If the value is unavailable, |signal_strength_| has null value.
+  base::Optional<int32_t> signal_strength_;
 
-  // Minimum and maximum signal strength (in dBm) observed since last connection
+  // Minimum and maximum signal strength level observed since last connection
   // change. Updated on connection change and main frame requests.
-  int32_t min_signal_strength_since_connection_change_;
-  int32_t max_signal_strength_since_connection_change_;
-
-  // It is costlier to add values to a sparse histogram. So, the correlation UMA
-  // is recorded with |correlation_uma_logging_probability_| since recording it
-  // in a sparse histogram for each request is unnecessary and cost-prohibitive.
-  // e.g., if it is 0.0, then the UMA will never be recorded. On the other hand,
-  // if it is 1.0, then it will be recorded for all valid HTTP requests.
-  const double correlation_uma_logging_probability_;
+  base::Optional<int32_t> min_signal_strength_since_connection_change_;
+  base::Optional<int32_t> max_signal_strength_since_connection_change_;
 
   // Stores the qualities of different networks.
   std::unique_ptr<nqe::internal::NetworkQualityStore> network_quality_store_;
 
-  // True if effective connection type value has been forced via variation
-  // parameters. If set to true, GetEffectiveConnectionType() will always return
-  // |forced_effective_connection_type_|.
-  const bool forced_effective_connection_type_set_;
-  const EffectiveConnectionType forced_effective_connection_type_;
-
-  // Set to true if reading of the network quality prefs is enabled.
-  const bool persistent_cache_reading_enabled_;
+  // True if a cached RTT or throughput estimate was available and the
+  // corresponding observation has been added on the current network.
+  bool cached_estimate_applied_;
 
   base::ThreadChecker thread_checker_;
+
+  NetLogWithSource net_log_;
 
   // Manages the writing of events to the net log.
   nqe::internal::EventCreator event_creator_;
 
-  // Vector that contains observation sources that should not be used when
-  // computing the estimate at HTTP layer.
-  const std::vector<NetworkQualityObservationSource>
-      disallowed_observation_sources_for_http_;
-
-  // Vector that contains observation sources that should not be used when
-  // computing the estimate at transport layer.
-  const std::vector<NetworkQualityObservationSource>
-      disallowed_observation_sources_for_transport_;
+  // Time when the last RTT observation from a socket watcher was received.
+  base::TimeTicks last_socket_watcher_rtt_notification_;
 
   base::WeakPtrFactory<NetworkQualityEstimator> weak_ptr_factory_;
 

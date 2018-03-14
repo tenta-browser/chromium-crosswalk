@@ -20,6 +20,7 @@
 #include <stdint.h>
 
 #include "base/base_export.h"
+#include "base/mac/availability.h"
 
 // ----------------------------------------------------------------------------
 // Define typedefs, enums, and protocols not available in the version of the
@@ -99,6 +100,7 @@ BASE_EXPORT extern NSString* const NSAppearanceNameVibrantLight;
 @property(readonly, copy) NSString* activityType;
 @property(copy) NSDictionary* userInfo;
 @property(copy) NSURL* webpageURL;
+@property(copy) NSString* title;
 - (instancetype)initWithActivityType:(NSString*)activityType;
 - (void)becomeCurrent;
 - (void)invalidate;
@@ -158,10 +160,6 @@ BASE_EXPORT extern NSString* const NSAppearanceNameVibrantLight;
 @property(readonly) NSInteger stage;
 @end
 
-@interface NSView (Yosemite_3_SDK)
-- (void)setPressureConfiguration:(NSPressureConfiguration*)aConfiguration;
-@end
-
 #endif  // MAC_OS_X_VERSION_10_10
 
 // ----------------------------------------------------------------------------
@@ -187,13 +185,20 @@ BASE_EXPORT extern NSString* const CIDetectorTypeText;
 
 @interface NSObject (ElCapitanSDK)
 - (NSLayoutConstraint*)constraintEqualToConstant:(CGFloat)c;
+- (NSLayoutConstraint*)constraintGreaterThanOrEqualToConstant:(CGFloat)c;
 @end
 
 @interface NSView (ElCapitanSDK)
-@property(readonly, strong) NSLayoutXAxisAnchor* leftAnchor;
-@property(readonly, strong) NSLayoutXAxisAnchor* rightAnchor;
-@property(readonly, strong) NSLayoutYAxisAnchor* bottomAnchor;
-@property(readonly, strong) NSLayoutDimension* widthAnchor;
+- (void)setPressureConfiguration:(NSPressureConfiguration*)aConfiguration
+    API_AVAILABLE(macos(10.11));
+@property(readonly, strong)
+    NSLayoutXAxisAnchor* leftAnchor API_AVAILABLE(macos(10.11));
+@property(readonly, strong)
+    NSLayoutXAxisAnchor* rightAnchor API_AVAILABLE(macos(10.11));
+@property(readonly, strong)
+    NSLayoutYAxisAnchor* bottomAnchor API_AVAILABLE(macos(10.11));
+@property(readonly, strong)
+    NSLayoutDimension* widthAnchor API_AVAILABLE(macos(10.11));
 @end
 
 @interface NSWindow (ElCapitanSDK)
@@ -244,6 +249,11 @@ BASE_EXPORT extern NSString* const CIDetectorTypeText;
                               trackingMode:(NSSegmentSwitchTracking)trackingMode
                                     target:(id)target
                                     action:(SEL)action;
+@end
+
+@interface NSTextField (SierraPointOneSDK)
++ (instancetype)labelWithAttributedString:
+    (NSAttributedString*)attributedStringValue;
 @end
 
 #endif  // MAC_OS_X_VERSION_10_12_1

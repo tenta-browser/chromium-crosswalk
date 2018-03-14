@@ -13,9 +13,8 @@
 #include "base/synchronization/lock.h"
 #include "components/sync/protocol/model_type_store_schema_descriptor.pb.h"
 #include "third_party/leveldatabase/env_chromium.h"
-#include "third_party/leveldatabase/src/helpers/memenv/memenv.h"
+#include "third_party/leveldatabase/leveldb_chrome.h"
 #include "third_party/leveldatabase/src/include/leveldb/db.h"
-#include "third_party/leveldatabase/src/include/leveldb/env.h"
 #include "third_party/leveldatabase/src/include/leveldb/iterator.h"
 #include "third_party/leveldatabase/src/include/leveldb/options.h"
 #include "third_party/leveldatabase/src/include/leveldb/slice.h"
@@ -76,8 +75,7 @@ class BackendMap {
   DISALLOW_COPY_AND_ASSIGN(BackendMap);
 };
 
-base::LazyInstance<BackendMap>::DestructorAtExit backend_map =
-    LAZY_INSTANCE_INITIALIZER;
+base::LazyInstance<BackendMap>::Leaky backend_map = LAZY_INSTANCE_INITIALIZER;
 
 scoped_refptr<ModelTypeStoreBackend> BackendMap::GetBackend(
     const std::string& path) const {
@@ -108,7 +106,7 @@ ModelTypeStoreBackend::~ModelTypeStoreBackend() {
 }
 
 std::unique_ptr<leveldb::Env> ModelTypeStoreBackend::CreateInMemoryEnv() {
-  return base::WrapUnique(leveldb::NewMemEnv(leveldb::Env::Default()));
+  return base::WrapUnique(leveldb_chrome::NewMemEnv(leveldb::Env::Default()));
 }
 
 // static
@@ -179,24 +177,18 @@ ModelTypeStore::Result ModelTypeStoreBackend::Init(
 
 leveldb::Status ModelTypeStoreBackend::OpenDatabase(const std::string& path,
                                                     leveldb::Env* env) {
-  leveldb::DB* db_raw = nullptr;
-  leveldb::Options options;
+  leveldb_env::Options options;
   options.create_if_missing = true;
-  options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
   options.paranoid_checks = true;
   if (env)
     options.env = env;
 
-  leveldb::Status status = leveldb::DB::Open(options, path, &db_raw);
-  DCHECK(status.ok() != (db_raw == nullptr));
-  if (status.ok())
-    db_.reset(db_raw);
-  return status;
+  return leveldb_env::OpenDB(options, path, &db_);
 }
 
 leveldb::Status ModelTypeStoreBackend::DestroyDatabase(const std::string& path,
                                                        leveldb::Env* env) {
-  leveldb::Options options;
+  leveldb_env::Options options;
   if (env)
     options.env = env;
   return leveldb::DestroyDB(path, options);

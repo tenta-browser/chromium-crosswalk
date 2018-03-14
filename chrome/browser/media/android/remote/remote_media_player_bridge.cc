@@ -8,9 +8,7 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
-#include "chrome/browser/media/android/remote/record_cast_action.h"
 #include "chrome/browser/media/android/remote/remote_media_player_manager.h"
-#include "content/public/browser/android/content_view_core.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/RemoteMediaPlayerBridge_jni.h"
@@ -45,16 +43,15 @@ RemoteMediaPlayerBridge::RemoteMediaPlayerBridge(
     int player_id,
     const std::string& user_agent,
     RemoteMediaPlayerManager* manager)
-    : MediaPlayerAndroid(
-          player_id,
-          manager,
-          base::Bind(&DoNothing),
-          manager->GetLocalPlayer(player_id)->frame_url()),
+    : MediaPlayerAndroid(player_id,
+                         manager,
+                         base::Bind(&DoNothing),
+                         manager->GetLocalPlayer(player_id)->frame_url()),
       width_(0),
       height_(0),
       url_(manager->GetLocalPlayer(player_id)->GetUrl()),
-      first_party_for_cookies_(
-          manager->GetLocalPlayer(player_id)->GetFirstPartyForCookies()),
+      site_for_cookies_(
+          manager->GetLocalPlayer(player_id)->GetSiteForCookies()),
       user_agent_(user_agent),
       weak_factory_(this) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -260,13 +257,6 @@ void RemoteMediaPlayerBridge::OnRouteAvailabilityChanged(
           static_cast<blink::WebRemotePlaybackAvailability>(availability));
 }
 
-// static
-bool RemoteMediaPlayerBridge::RegisterRemoteMediaPlayerBridge(JNIEnv* env) {
-  bool ret = RegisterNativesImpl(env);
-  DCHECK(g_RemoteMediaPlayerBridge_clazz);
-  return ret;
-}
-
 void RemoteMediaPlayerBridge::RequestRemotePlayback() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   MediaPlayerAndroid* local_player = GetLocalPlayer();
@@ -437,8 +427,8 @@ GURL RemoteMediaPlayerBridge::GetUrl() {
   return url_;
 }
 
-GURL RemoteMediaPlayerBridge::GetFirstPartyForCookies() {
-  return first_party_for_cookies_;
+GURL RemoteMediaPlayerBridge::GetSiteForCookies() {
+  return site_for_cookies_;
 }
 
 void RemoteMediaPlayerBridge::Initialize() {
@@ -446,7 +436,7 @@ void RemoteMediaPlayerBridge::Initialize() {
   media::MediaResourceGetter* resource_getter =
       manager()->GetMediaResourceGetter();
   resource_getter->GetCookies(
-      url_, first_party_for_cookies_,
+      url_, site_for_cookies_,
       base::Bind(&RemoteMediaPlayerBridge::OnCookiesRetrieved,
                  weak_factory_.GetWeakPtr()));
 }
@@ -455,14 +445,10 @@ base::android::ScopedJavaLocalRef<jstring> RemoteMediaPlayerBridge::GetTitle(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
   base::string16 title;
-  content::ContentViewCore* core =
-      static_cast<RemoteMediaPlayerManager*>(manager())->GetContentViewCore();
-  if (core) {
-    content::WebContents* contents = core->GetWebContents();
-    if (contents) {
-      title = contents->GetTitle();
-    }
-  }
+  auto* contents =
+      static_cast<RemoteMediaPlayerManager*>(manager())->web_contents();
+  if (contents)
+    title = contents->GetTitle();
   return base::android::ConvertUTF16ToJavaString(env, title);
 }
 

@@ -32,7 +32,8 @@ namespace extensions {
 namespace {
 
 base::LazyInstance<BrowserContextKeyedAPIFactory<SettingsOverridesAPI>>::
-    DestructorAtExit g_factory = LAZY_INSTANCE_INITIALIZER;
+    DestructorAtExit g_settings_overrides_api_factory =
+        LAZY_INSTANCE_INITIALIZER;
 
 const char kManyStartupPagesWarning[] = "* specifies more than 1 startup URL. "
     "All but the first will be ignored.";
@@ -72,10 +73,6 @@ std::unique_ptr<TemplateURLData> ConvertSearchProvider(
     data->suggestions_url =
         SubstituteInstallParam(*search_provider.suggest_url, install_parameter);
   }
-  if (search_provider.instant_url) {
-    data->instant_url =
-        SubstituteInstallParam(*search_provider.instant_url, install_parameter);
-  }
   if (search_provider.image_url) {
     data->image_url =
         SubstituteInstallParam(*search_provider.image_url, install_parameter);
@@ -85,8 +82,6 @@ std::unique_ptr<TemplateURLData> ConvertSearchProvider(
   if (search_provider.suggest_url_post_params)
     data->suggestions_url_post_params =
         *search_provider.suggest_url_post_params;
-  if (search_provider.instant_url_post_params)
-    data->instant_url_post_params = *search_provider.instant_url_post_params;
   if (search_provider.image_url_post_params)
     data->image_url_post_params = *search_provider.image_url_post_params;
   if (search_provider.favicon_url) {
@@ -126,7 +121,7 @@ SettingsOverridesAPI::~SettingsOverridesAPI() {
 
 BrowserContextKeyedAPIFactory<SettingsOverridesAPI>*
 SettingsOverridesAPI::GetFactoryInstance() {
-  return g_factory.Pointer();
+  return g_settings_overrides_api_factory.Pointer();
 }
 
 void SettingsOverridesAPI::SetPref(const std::string& extension_id,
@@ -197,7 +192,7 @@ void SettingsOverridesAPI::OnExtensionLoaded(
 void SettingsOverridesAPI::OnExtensionUnloaded(
     content::BrowserContext* browser_context,
     const Extension* extension,
-    UnloadedExtensionInfo::Reason reason) {
+    UnloadedExtensionReason reason) {
   const SettingsOverrides* settings = SettingsOverrides::Get(extension);
   if (settings) {
     if (settings->homepage) {
@@ -228,19 +223,17 @@ void SettingsOverridesAPI::RegisterSearchProvider(
   const SettingsOverrides* settings = SettingsOverrides::Get(extension);
   DCHECK(settings);
   DCHECK(settings->search_engine);
-  auto info =
-      base::MakeUnique<TemplateURL::AssociatedExtensionInfo>(extension->id());
-  info->wants_to_be_default_engine = settings->search_engine->is_default;
 
   ExtensionPrefs* prefs = ExtensionPrefs::Get(profile_);
-  info->install_time = prefs->GetInstallTime(extension->id());
   std::string install_parameter = prefs->GetInstallParam(extension->id());
   std::unique_ptr<TemplateURLData> data = ConvertSearchProvider(
       profile_->GetPrefs(), *settings->search_engine, install_parameter);
   auto turl = base::MakeUnique<TemplateURL>(
-      *data, TemplateURL::NORMAL_CONTROLLED_BY_EXTENSION);
+      *data, TemplateURL::NORMAL_CONTROLLED_BY_EXTENSION, extension->id(),
+      prefs->GetInstallTime(extension->id()),
+      settings->search_engine->is_default);
 
-  url_service_->AddExtensionControlledTURL(std::move(turl), std::move(info));
+  url_service_->Add(std::move(turl));
 
   if (settings->search_engine->is_default) {
     // Override current DSE pref to have extension overriden value.

@@ -24,11 +24,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/extensions/api/file_system/file_system_api.h"
-#include "chrome/browser/extensions/blob_reader.h"
 #include "chrome/browser/extensions/chrome_extension_function_details.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
-#include "chrome/browser/media_galleries/fileapi/safe_media_metadata_parser.h"
 #include "chrome/browser/media_galleries/gallery_watch_manager.h"
 #include "chrome/browser/media_galleries/media_file_system_registry.h"
 #include "chrome/browser/media_galleries/media_galleries_histograms.h"
@@ -40,6 +37,7 @@
 #include "chrome/common/extensions/api/media_galleries.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/services/media_gallery_util/public/cpp/safe_media_metadata_parser.h"
 #include "components/storage_monitor/storage_info.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/blob_handle.h"
@@ -50,9 +48,12 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/service_manager_connection.h"
+#include "extensions/browser/api/file_system/file_system_api.h"
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/blob_holder.h"
+#include "extensions/browser/blob_reader.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
@@ -170,24 +171,21 @@ base::ListValue* ConstructFileSystemList(
 
     // Send the file system id so the renderer can create a valid FileSystem
     // object.
-    file_system_dict_value->SetStringWithoutPathExpansion(
-        "fsid", filesystems[i].fsid);
+    file_system_dict_value->SetKey("fsid", base::Value(filesystems[i].fsid));
 
-    file_system_dict_value->SetStringWithoutPathExpansion(
-        kNameKey, filesystems[i].name);
-    file_system_dict_value->SetStringWithoutPathExpansion(
+    file_system_dict_value->SetKey(kNameKey, base::Value(filesystems[i].name));
+    file_system_dict_value->SetKey(
         kGalleryIdKey,
-        base::Uint64ToString(filesystems[i].pref_id));
+        base::Value(base::Uint64ToString(filesystems[i].pref_id)));
     if (!filesystems[i].transient_device_id.empty()) {
-      file_system_dict_value->SetStringWithoutPathExpansion(
-          kDeviceIdKey, filesystems[i].transient_device_id);
+      file_system_dict_value->SetKey(
+          kDeviceIdKey, base::Value(filesystems[i].transient_device_id));
     }
-    file_system_dict_value->SetBooleanWithoutPathExpansion(
-        kIsRemovableKey, filesystems[i].removable);
-    file_system_dict_value->SetBooleanWithoutPathExpansion(
-        kIsMediaDeviceKey, filesystems[i].media_device);
-    file_system_dict_value->SetBooleanWithoutPathExpansion(
-        kIsAvailableKey, true);
+    file_system_dict_value->SetKey(kIsRemovableKey,
+                                   base::Value(filesystems[i].removable));
+    file_system_dict_value->SetKey(kIsMediaDeviceKey,
+                                   base::Value(filesystems[i].media_device));
+    file_system_dict_value->SetKey(kIsAvailableKey, base::Value(true));
 
     list->Append(std::move(file_system_dict_value));
 
@@ -220,7 +218,7 @@ class SelectDirectoryDialog : public ui::SelectFileDialog::Listener,
       : web_contents_(web_contents),
         callback_(callback) {
     select_file_dialog_ = ui::SelectFileDialog::Create(
-        this, new ChromeSelectFilePolicy(web_contents));
+        this, std::make_unique<ChromeSelectFilePolicy>(web_contents));
   }
 
   void Show(const base::FilePath& default_path) {
@@ -317,12 +315,12 @@ void MediaGalleriesEventRouter::Shutdown() {
 
 static base::LazyInstance<
     BrowserContextKeyedAPIFactory<MediaGalleriesEventRouter>>::DestructorAtExit
-    g_factory = LAZY_INSTANCE_INITIALIZER;
+    g_media_galleries_api_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
 BrowserContextKeyedAPIFactory<MediaGalleriesEventRouter>*
 MediaGalleriesEventRouter::GetFactoryInstance() {
-  return g_factory.Pointer();
+  return g_media_galleries_api_factory.Pointer();
 }
 
 // static
@@ -586,7 +584,7 @@ void MediaGalleriesAddUserSelectedFolderFunction::ReturnGalleriesAndId(
   }
   std::unique_ptr<base::DictionaryValue> results(new base::DictionaryValue);
   results->SetWithoutPathExpansion("mediaFileSystems", std::move(list));
-  results->SetIntegerWithoutPathExpansion("selectedFileSystemIndex", index);
+  results->SetKey("selectedFileSystemIndex", base::Value(index));
   SetResult(std::move(results));
   SendResponse(true);
 }
@@ -664,7 +662,7 @@ void MediaGalleriesGetMetadataFunction::GetMetadata(
 
     std::unique_ptr<base::DictionaryValue> result_dictionary(
         new base::DictionaryValue);
-    result_dictionary->Set(kMetadataKey, metadata.ToValue().release());
+    result_dictionary->Set(kMetadataKey, metadata.ToValue());
     SetResult(std::move(result_dictionary));
     SendResponse(true);
     return;
@@ -676,12 +674,14 @@ void MediaGalleriesGetMetadataFunction::GetMetadata(
       metadata_type == MediaGalleries::GET_METADATA_TYPE_ALL ||
       metadata_type == MediaGalleries::GET_METADATA_TYPE_NONE;
 
-  scoped_refptr<metadata::SafeMediaMetadataParser> parser(
-      new metadata::SafeMediaMetadataParser(GetProfile(), blob_uuid,
-                                            total_blob_length, mime_type,
-                                            get_attached_images));
-  parser->Start(base::Bind(
-      &MediaGalleriesGetMetadataFunction::OnSafeMediaMetadataParserDone, this));
+  auto parser = base::MakeRefCounted<chrome::SafeMediaMetadataParser>(
+      GetProfile(), blob_uuid, total_blob_length, mime_type,
+      get_attached_images);
+  parser->Start(
+      content::ServiceManagerConnection::GetForProcess()->GetConnector(),
+      base::Bind(
+          &MediaGalleriesGetMetadataFunction::OnSafeMediaMetadataParserDone,
+          this));
 }
 
 void MediaGalleriesGetMetadataFunction::OnSafeMediaMetadataParserDone(
@@ -700,7 +700,7 @@ void MediaGalleriesGetMetadataFunction::OnSafeMediaMetadataParserDone(
 
   std::unique_ptr<base::DictionaryValue> result_dictionary(
       new base::DictionaryValue);
-  result_dictionary->Set(kMetadataKey, metadata_dictionary.release());
+  result_dictionary->Set(kMetadataKey, std::move(metadata_dictionary));
 
   if (attached_images->empty()) {
     SetResult(std::move(result_dictionary));
@@ -708,10 +708,11 @@ void MediaGalleriesGetMetadataFunction::OnSafeMediaMetadataParserDone(
     return;
   }
 
-  result_dictionary->Set(kAttachedImagesBlobInfoKey, new base::ListValue);
+  result_dictionary->Set(kAttachedImagesBlobInfoKey,
+                         base::MakeUnique<base::ListValue>());
   metadata::AttachedImage* first_image = &attached_images->front();
   content::BrowserContext::CreateMemoryBackedBlob(
-      GetProfile(), first_image->data.c_str(), first_image->data.size(),
+      GetProfile(), first_image->data.c_str(), first_image->data.size(), "",
       base::Bind(&MediaGalleriesGetMetadataFunction::ConstructNextBlob, this,
                  base::Passed(&result_dictionary),
                  base::Passed(&attached_images),
@@ -743,24 +744,22 @@ void MediaGalleriesGetMetadataFunction::ConstructNextBlob(
       &(*attached_images)[blob_uuids->size()];
   std::unique_ptr<base::DictionaryValue> attached_image(
       new base::DictionaryValue);
-  attached_image->Set(kBlobUUIDKey, new base::Value(current_blob->GetUUID()));
-  attached_image->Set(kTypeKey, new base::Value(current_image->type));
-  attached_image->Set(
-      kSizeKey,
-      new base::Value(base::checked_cast<int>(current_image->data.size())));
+  attached_image->SetString(kBlobUUIDKey, current_blob->GetUUID());
+  attached_image->SetString(kTypeKey, current_image->type);
+  attached_image->SetInteger(
+      kSizeKey, base::checked_cast<int>(current_image->data.size()));
   attached_images_list->Append(std::move(attached_image));
 
   blob_uuids->push_back(current_blob->GetUUID());
 
-  content::RenderProcessHost* render_process_host =
-      render_frame_host()->GetProcess();
-  if (!render_process_host) {
+  if (!render_frame_host() || !render_frame_host()->GetProcess()) {
     SendResponse(false);
     return;
   }
 
   extensions::BlobHolder* holder =
-      extensions::BlobHolder::FromRenderProcessHost(render_process_host);
+      extensions::BlobHolder::FromRenderProcessHost(
+          render_frame_host()->GetProcess());
   holder->HoldBlobReference(std::move(current_blob));
 
   // Construct the next Blob if necessary.
@@ -768,11 +767,9 @@ void MediaGalleriesGetMetadataFunction::ConstructNextBlob(
     metadata::AttachedImage* next_image =
         &(*attached_images)[blob_uuids->size()];
     content::BrowserContext::CreateMemoryBackedBlob(
-        GetProfile(),
-        next_image->data.c_str(),
-        next_image->data.size(),
-        base::Bind(&MediaGalleriesGetMetadataFunction::ConstructNextBlob,
-                   this, base::Passed(&result_dictionary),
+        GetProfile(), next_image->data.c_str(), next_image->data.size(), "",
+        base::Bind(&MediaGalleriesGetMetadataFunction::ConstructNextBlob, this,
+                   base::Passed(&result_dictionary),
                    base::Passed(&attached_images), base::Passed(&blob_uuids)));
     return;
   }

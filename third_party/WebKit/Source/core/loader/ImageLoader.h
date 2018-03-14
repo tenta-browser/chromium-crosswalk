@@ -24,6 +24,8 @@
 #define ImageLoader_h
 
 #include <memory>
+#include "bindings/core/v8/ScriptPromise.h"
+#include "bindings/core/v8/ScriptPromiseResolver.h"
 #include "core/CoreExport.h"
 #include "core/loader/resource/ImageResource.h"
 #include "core/loader/resource/ImageResourceContent.h"
@@ -32,17 +34,15 @@
 #include "platform/wtf/HashSet.h"
 #include "platform/wtf/WeakPtr.h"
 #include "platform/wtf/text/AtomicString.h"
+#include "public/platform/TaskType.h"
 
 namespace blink {
 
 class IncrementLoadEventDelayCount;
 class Element;
-class ImageLoader;
 class LayoutImageResource;
-
-template <typename T>
-class EventSender;
-using ImageEventSender = EventSender<ImageLoader>;
+class ExceptionState;
+class ScriptState;
 
 class CORE_EXPORT ImageLoader : public GarbageCollectedFinalized<ImageLoader>,
                                 public ImageResourceObserver {
@@ -52,7 +52,7 @@ class CORE_EXPORT ImageLoader : public GarbageCollectedFinalized<ImageLoader>,
   explicit ImageLoader(Element*);
   ~ImageLoader() override;
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
   enum UpdateFromElementBehavior {
     // This should be the update behavior when the element is attached to a
@@ -85,61 +85,82 @@ class CORE_EXPORT ImageLoader : public GarbageCollectedFinalized<ImageLoader>,
   Element* GetElement() const { return element_; }
   bool ImageComplete() const { return image_complete_ && !pending_task_; }
 
-  ImageResourceContent* GetImage() const { return image_.Get(); }
+  ImageResourceContent* GetContent() const { return image_content_.Get(); }
+
+  // Cancels pending load events, and doesn't dispatch new ones.
+  // Note: ClearImage/SetImage.*() are not a simple setter.
+  // Check the implementation to see what they do.
+  // TODO(hiroshige): Cleanup these methods.
+  void ClearImage();
+  void SetImageForTest(ImageResourceContent*);
+
+  // Image document loading:
+  // When |loading_image_document_| is true:
+  //   Loading via ImageDocument.
+  //   |image_resource_for_image_document_| points to a ImageResource that is
+  //   not associated with a ResourceLoader.
+  //   The corresponding ImageDocument is responsible for supplying the response
+  //   and data to |image_resource_for_image_document_| and thus
+  //   |image_content_|.
+  // Otherwise:
+  //   Normal loading via ResourceFetcher/ResourceLoader.
+  //   |image_resource_for_image_document_| is null.
+  bool IsLoadingImageDocument() { return loading_image_document_; }
+  void SetLoadingImageDocument() { loading_image_document_ = true; }
   ImageResource* ImageResourceForImageDocument() const {
     return image_resource_for_image_document_;
   }
-  // Cancels pending load events, and doesn't dispatch new ones.
-  void SetImage(ImageResourceContent*);
 
-  bool IsLoadingImageDocument() { return loading_image_document_; }
-  void SetLoadingImageDocument() { loading_image_document_ = true; }
+  bool HasPendingActivity() const { return HasPendingEvent() || pending_task_; }
 
-  bool HasPendingActivity() const {
-    return has_pending_load_event_ || has_pending_error_event_ || pending_task_;
-  }
-
-  bool HasPendingError() const { return has_pending_error_event_; }
+  bool HasPendingError() const { return pending_error_event_.IsActive(); }
 
   bool HadError() const { return !failed_load_url_.IsEmpty(); }
 
-  void DispatchPendingEvent(ImageEventSender*);
-
-  static void DispatchPendingLoadEvents();
-  static void DispatchPendingErrorEvents();
-
   bool GetImageAnimationPolicy(ImageAnimationPolicy&) final;
 
+  ScriptPromise Decode(ScriptState*, ExceptionState&);
+
  protected:
+  void ImageChanged(ImageResourceContent*,
+                    CanDeferInvalidation,
+                    const IntRect*) override;
   void ImageNotifyFinished(ImageResourceContent*) override;
 
  private:
   class Task;
 
+  enum class UpdateType { kAsync, kSync };
+
   // Called from the task or from updateFromElement to initiate the load.
   void DoUpdateFromElement(BypassMainWorldBehavior,
                            UpdateFromElementBehavior,
                            const KURL&,
-                           ReferrerPolicy = kReferrerPolicyDefault);
+                           ReferrerPolicy = kReferrerPolicyDefault,
+                           UpdateType = UpdateType::kAsync);
 
   virtual void DispatchLoadEvent() = 0;
   virtual void NoImageResourceToLoad() {}
 
-  void UpdatedHasPendingEvent();
+  bool HasPendingEvent() const;
 
-  void DispatchPendingLoadEvent();
-  void DispatchPendingErrorEvent();
+  void DispatchPendingLoadEvent(std::unique_ptr<IncrementLoadEventDelayCount>);
+  void DispatchPendingErrorEvent(std::unique_ptr<IncrementLoadEventDelayCount>);
 
   LayoutImageResource* GetLayoutImageResource();
   void UpdateLayoutObject();
 
+  // Note: SetImage.*() are not a simple setter.
+  // Check the implementation to see what they do.
+  // TODO(hiroshige): Cleanup these methods.
+  void SetImageForImageDocument(ImageResource*);
   void SetImageWithoutConsideringPendingLoadEvent(ImageResourceContent*);
+  void UpdateImageState(ImageResourceContent*);
+
   void ClearFailedLoadURL();
   void DispatchErrorEvent();
   void CrossSiteOrCSPViolationOccurred(AtomicString);
   void EnqueueImageLoadingMicroTask(UpdateFromElementBehavior, ReferrerPolicy);
-
-  void TimerFired(TimerBase*);
 
   KURL ImageSourceToKURL(AtomicString) const;
 
@@ -154,24 +175,94 @@ class CORE_EXPORT ImageLoader : public GarbageCollectedFinalized<ImageLoader>,
   // that have already been finalized in the current lazy sweeping.
   void Dispose();
 
-  Member<Element> element_;
-  Member<ImageResourceContent> image_;
-  Member<ImageResource> image_resource_for_image_document_;
-  // FIXME: Oilpan: We might be able to remove this Persistent hack when
-  // ImageResourceClient is traceable.
-  GC_PLUGIN_IGNORE("http://crbug.com/383741")
-  Persistent<Element> keep_alive_;
+  void DispatchDecodeRequestsIfComplete();
+  void RejectPendingDecodes(UpdateType = UpdateType::kAsync);
+  void DecodeRequestFinished(uint64_t request_id, bool success);
 
-  Timer<ImageLoader> deref_element_timer_;
+  Member<Element> element_;
+  Member<ImageResourceContent> image_content_;
+  Member<ImageResource> image_resource_for_image_document_;
+
   AtomicString failed_load_url_;
   WeakPtr<Task> pending_task_;  // owned by Microtask
-  std::unique_ptr<IncrementLoadEventDelayCount> load_delay_counter_;
-  bool has_pending_load_event_ : 1;
-  bool has_pending_error_event_ : 1;
+  std::unique_ptr<IncrementLoadEventDelayCount>
+      delay_until_do_update_from_element_;
+
+  // Delaying load event: the timeline should be:
+  // (0) ImageResource::Fetch() is called.
+  // (1) ResourceFetcher::StartLoad(): Resource loading is actually started.
+  // (2) ResourceLoader::DidFinishLoading() etc:
+  //         Resource loading is finished, but SVG document load might be
+  //         incomplete because of asynchronously loaded subresources.
+  // (3) ImageNotifyFinished(): Image is completely loaded.
+  // and we delay Document load event from (1) to (3):
+  // - |ResourceFetcher::loaders_| delays Document load event from (1) to (2).
+  // - |delay_until_image_notify_finished_| delays Document load event from
+  //   the first ImageChanged() (at some time between (1) and (2)) until (3).
+  // Ideally, we might want to delay Document load event from (1) to (3),
+  // but currently we piggyback on ImageChanged() because adding a callback
+  // hook at (1) might complicate the code.
+  std::unique_ptr<IncrementLoadEventDelayCount>
+      delay_until_image_notify_finished_;
+
+  TaskHandle pending_load_event_;
+  TaskHandle pending_error_event_;
+
   bool image_complete_ : 1;
   bool loading_image_document_ : 1;
-  bool element_is_protected_ : 1;
   bool suppress_error_events_ : 1;
+
+  // DecodeRequest represents a single request to the Decode() function. The
+  // decode requests have one of the following states:
+  //
+  // - kPendingMicrotask: This is the initial state. The caller is responsible
+  // for scheduling a microtask that would advance the state to the next value.
+  // Images invalidated by the pending mutations microtask (|pending_task_|) do
+  // not invalidate decode requests in this state. The exception is synchronous
+  // updates that do not go through |pending_task_|.
+  //
+  // - kPendingLoad: Once the microtask runs, it advances the state to
+  // kPendingLoad which waits for the image to be complete. If |pending_task_|
+  // runs and modifies the image, it invalidates any DecodeRequests in this
+  // state.
+  //
+  // - kDispatched: Once the image is loaded and the request to decode it is
+  // dispatched on behalf of this DecodeRequest, the state changes to
+  // kDispatched. If |pending_task_| runs and modifies the image, it invalidates
+  // any DecodeRequests in this state.
+  class DecodeRequest : public GarbageCollected<DecodeRequest> {
+   public:
+    enum State { kPendingMicrotask, kPendingLoad, kDispatched };
+
+    DecodeRequest(ImageLoader*, ScriptPromiseResolver*);
+    DecodeRequest(DecodeRequest&&) = default;
+    ~DecodeRequest() = default;
+
+    void Trace(blink::Visitor*);
+
+    DecodeRequest& operator=(DecodeRequest&&) = default;
+
+    uint64_t request_id() const { return request_id_; }
+    State state() const { return state_; }
+    ScriptPromise promise() { return resolver_->Promise(); }
+
+    void Resolve();
+    void Reject();
+
+    void ProcessForTask();
+    void NotifyDecodeDispatched();
+
+   private:
+    static uint64_t s_next_request_id_;
+
+    uint64_t request_id_ = 0;
+    State state_ = kPendingMicrotask;
+
+    Member<ScriptPromiseResolver> resolver_;
+    Member<ImageLoader> loader_;
+  };
+
+  HeapVector<Member<DecodeRequest>> decode_requests_;
 };
 
 }  // namespace blink

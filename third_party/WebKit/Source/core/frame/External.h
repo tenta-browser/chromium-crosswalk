@@ -5,12 +5,12 @@
 #ifndef External_h
 #define External_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
-class External : public GarbageCollected<External>, public ScriptWrappable {
+class External : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -18,8 +18,6 @@ class External : public GarbageCollected<External>, public ScriptWrappable {
 
   void AddSearchProvider() {}
   void IsSearchProviderInstalled() {}
-
-  DEFINE_INLINE_TRACE() {}
 };
 
 }  // namespace blink

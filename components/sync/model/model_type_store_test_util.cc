@@ -41,8 +41,15 @@ ModelTypeStoreTestUtil::CreateInMemoryStoreForTest() {
 }
 
 // static
+ModelTypeStoreFactory ModelTypeStoreTestUtil::FactoryForInMemoryStoreForTest() {
+  return base::Bind(&ModelTypeStoreTestUtil::MoveStoreToCallback,
+                    base::Passed(CreateInMemoryStoreForTest()));
+}
+
+// static
 void ModelTypeStoreTestUtil::MoveStoreToCallback(
     std::unique_ptr<ModelTypeStore> store,
+    ModelType type,
     const ModelTypeStore::InitCallback& callback) {
   ASSERT_TRUE(store);
   callback.Run(Result::SUCCESS, std::move(store));

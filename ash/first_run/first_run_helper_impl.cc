@@ -6,12 +6,11 @@
 
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shelf/app_list_button.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_widget.h"
-#include "ash/shelf/wm_shelf.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
 #include "ash/system/tray/system_tray.h"
-#include "ash/wm_window.h"
+#include "ash/system/tray/system_tray_bubble.h"
 #include "base/logging.h"
 #include "ui/app_list/views/app_list_view.h"
 #include "ui/aura/window.h"
@@ -56,7 +55,7 @@ views::Widget* FirstRunHelperImpl::GetOverlayWidget() {
 }
 
 gfx::Rect FirstRunHelperImpl::GetAppListButtonBounds() {
-  WmShelf* shelf = WmShelf::ForWindow(ShellPort::Get()->GetPrimaryRootWindow());
+  Shelf* shelf = Shelf::ForWindow(Shell::GetPrimaryRootWindow());
   AppListButton* app_button = shelf->shelf_widget()->GetAppListButton();
   return app_button->GetBoundsInScreen();
 }
@@ -82,7 +81,7 @@ void FirstRunHelperImpl::OpenTrayBubble() {
 void FirstRunHelperImpl::CloseTrayBubble() {
   SystemTray* tray = Shell::Get()->GetPrimarySystemTray();
   DCHECK(tray->HasSystemBubble()) << "Tray bubble is closed already.";
-  tray->CloseSystemBubble();
+  tray->CloseBubble();
 }
 
 bool FirstRunHelperImpl::IsTrayBubbleOpened() {

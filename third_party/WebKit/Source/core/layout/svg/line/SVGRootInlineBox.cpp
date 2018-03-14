@@ -84,8 +84,8 @@ void SVGRootInlineBox::ComputePerCharacterLayoutInformation() {
                             LogicalBottom());
 }
 
-LayoutRect SVGRootInlineBox::LayoutInlineBoxes(InlineBox& box) {
-  LayoutRect rect;
+FloatRect SVGRootInlineBox::LayoutInlineBoxes(InlineBox& box) {
+  FloatRect rect;
   if (box.IsSVGInlineTextBox()) {
     rect = ToSVGInlineTextBox(box).CalculateBoundaries();
   } else {
@@ -94,16 +94,19 @@ LayoutRect SVGRootInlineBox::LayoutInlineBoxes(InlineBox& box) {
       rect.Unite(LayoutInlineBoxes(*child));
   }
 
-  box.SetX(rect.X());
-  box.SetY(rect.Y());
-  box.SetLogicalWidth(box.IsHorizontal() ? rect.Width() : rect.Height());
-  LayoutUnit logical_height = box.IsHorizontal() ? rect.Height() : rect.Width();
+  LayoutRect logical_rect(rect);
+  if (!box.IsHorizontal())
+    logical_rect.SetSize(logical_rect.Size().TransposedSize());
+
+  box.SetX(logical_rect.X());
+  box.SetY(logical_rect.Y());
+  box.SetLogicalWidth(logical_rect.Width());
   if (box.IsSVGInlineTextBox())
-    ToSVGInlineTextBox(box).SetLogicalHeight(logical_height);
+    ToSVGInlineTextBox(box).SetLogicalHeight(logical_rect.Height());
   else if (box.IsSVGInlineFlowBox())
-    ToSVGInlineFlowBox(box).SetLogicalHeight(logical_height);
+    ToSVGInlineFlowBox(box).SetLogicalHeight(logical_rect.Height());
   else
-    ToSVGRootInlineBox(box).SetLogicalHeight(logical_height);
+    ToSVGRootInlineBox(box).SetLogicalHeight(logical_rect.Height());
 
   return rect;
 }
@@ -141,7 +144,7 @@ static inline void SwapPositioningValuesInTextBoxes(
   SVGCharacterDataMap& first_character_data_map =
       first_text_node.CharacterDataMap();
   SVGCharacterDataMap::iterator it_first =
-      first_character_data_map.Find(first_text_box->Start() + 1);
+      first_character_data_map.find(first_text_box->Start() + 1);
   if (it_first == first_character_data_map.end())
     return;
   LineLayoutSVGInlineText last_text_node =
@@ -149,7 +152,7 @@ static inline void SwapPositioningValuesInTextBoxes(
   SVGCharacterDataMap& last_character_data_map =
       last_text_node.CharacterDataMap();
   SVGCharacterDataMap::iterator it_last =
-      last_character_data_map.Find(last_text_box->Start() + 1);
+      last_character_data_map.find(last_text_box->Start() + 1);
   if (it_last == last_character_data_map.end())
     return;
   // We only want to perform the swap if both inline boxes are absolutely

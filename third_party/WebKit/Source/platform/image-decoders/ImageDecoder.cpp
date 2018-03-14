@@ -21,7 +21,6 @@
 #include "platform/image-decoders/ImageDecoder.h"
 
 #include <memory>
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/graphics/BitmapImageMetrics.h"
 #include "platform/image-decoders/FastSharedBufferReader.h"
 #include "platform/image-decoders/bmp/BMPImageDecoder.h"
@@ -63,60 +62,55 @@ inline bool MatchesBMPSignature(const char* contents) {
   return !memcmp(contents, "BM", 2);
 }
 
-// This needs to be updated if we ever add a matches*Signature() which requires
-// more characters.
 static constexpr size_t kLongestSignatureLength = sizeof("RIFF????WEBPVP") - 1;
 
 std::unique_ptr<ImageDecoder> ImageDecoder::Create(
-    RefPtr<SegmentReader> data,
+    scoped_refptr<SegmentReader> data,
     bool data_complete,
     AlphaOption alpha_option,
-    const ColorBehavior& color_behavior) {
-  // We need at least kLongestSignatureLength bytes to run the signature
-  // matcher.
+    const ColorBehavior& color_behavior,
+    const SkISize& desired_size) {
+  // At least kLongestSignatureLength bytes are needed to sniff the signature.
   if (data->size() < kLongestSignatureLength)
     return nullptr;
 
-  const size_t max_decoded_bytes =
-      Platform::Current() ? Platform::Current()->MaxDecodedImageBytes()
-                          : kNoDecodedImageByteLimit;
+  size_t max_decoded_bytes = Platform::Current()
+                                 ? Platform::Current()->MaxDecodedImageBytes()
+                                 : kNoDecodedImageByteLimit;
+  if (!desired_size.isEmpty()) {
+    static const size_t kBytesPerPixels = 4;
+    size_t requested_decoded_bytes =
+        kBytesPerPixels * desired_size.width() * desired_size.height();
+    DCHECK(requested_decoded_bytes <= max_decoded_bytes);
+    max_decoded_bytes = requested_decoded_bytes;
+  }
 
   // Access the first kLongestSignatureLength chars to sniff the signature.
   // (note: FastSharedBufferReader only makes a copy if the bytes are segmented)
   char buffer[kLongestSignatureLength];
   const FastSharedBufferReader fast_reader(data);
-  const ImageDecoder::SniffResult sniff_result = DetermineImageType(
-      fast_reader.GetConsecutiveData(0, kLongestSignatureLength, buffer),
-      kLongestSignatureLength);
+  const char* contents =
+      fast_reader.GetConsecutiveData(0, kLongestSignatureLength, buffer);
 
   std::unique_ptr<ImageDecoder> decoder;
-  switch (sniff_result) {
-    case SniffResult::JPEG:
-      decoder.reset(new JPEGImageDecoder(alpha_option, color_behavior,
-                                         max_decoded_bytes));
-      break;
-    case SniffResult::PNG:
-      decoder.reset(
-          new PNGImageDecoder(alpha_option, color_behavior, max_decoded_bytes));
-      break;
-    case SniffResult::GIF:
-      decoder.reset(
-          new GIFImageDecoder(alpha_option, color_behavior, max_decoded_bytes));
-      break;
-    case SniffResult::WEBP:
-      decoder.reset(new WEBPImageDecoder(alpha_option, color_behavior,
-                                         max_decoded_bytes));
-      break;
-    case SniffResult::ICO:
-      decoder.reset(
-          new ICOImageDecoder(alpha_option, color_behavior, max_decoded_bytes));
-      break;
-    case SniffResult::BMP:
-      decoder.reset(
-          new BMPImageDecoder(alpha_option, color_behavior, max_decoded_bytes));
-      break;
-    case SniffResult::kInvalid:
-      break;
+  if (MatchesJPEGSignature(contents)) {
+    decoder.reset(
+        new JPEGImageDecoder(alpha_option, color_behavior, max_decoded_bytes));
+  } else if (MatchesPNGSignature(contents)) {
+    decoder.reset(
+        new PNGImageDecoder(alpha_option, color_behavior, max_decoded_bytes));
+  } else if (MatchesGIFSignature(contents)) {
+    decoder.reset(
+        new GIFImageDecoder(alpha_option, color_behavior, max_decoded_bytes));
+  } else if (MatchesWebPSignature(contents)) {
+    decoder.reset(
+        new WEBPImageDecoder(alpha_option, color_behavior, max_decoded_bytes));
+  } else if (MatchesICOSignature(contents) || MatchesCURSignature(contents)) {
+    decoder.reset(
+        new ICOImageDecoder(alpha_option, color_behavior, max_decoded_bytes));
+  } else if (MatchesBMPSignature(contents)) {
+    decoder.reset(
+        new BMPImageDecoder(alpha_option, color_behavior, max_decoded_bytes));
   }
 
   if (decoder)
@@ -129,30 +123,11 @@ bool ImageDecoder::HasSufficientDataToSniffImageType(const SharedBuffer& data) {
   return data.size() >= kLongestSignatureLength;
 }
 
-ImageDecoder::SniffResult ImageDecoder::DetermineImageType(const char* contents,
-                                                           size_t length) {
-  DCHECK_GE(length, kLongestSignatureLength);
-
-  if (MatchesJPEGSignature(contents))
-    return SniffResult::JPEG;
-  if (MatchesPNGSignature(contents))
-    return SniffResult::PNG;
-  if (MatchesGIFSignature(contents))
-    return SniffResult::GIF;
-  if (MatchesWebPSignature(contents))
-    return SniffResult::WEBP;
-  if (MatchesICOSignature(contents) || MatchesCURSignature(contents))
-    return SniffResult::ICO;
-  if (MatchesBMPSignature(contents))
-    return SniffResult::BMP;
-  return SniffResult::kInvalid;
-}
-
 size_t ImageDecoder::FrameCount() {
   const size_t old_size = frame_buffer_cache_.size();
   const size_t new_size = DecodeFrameCount();
   if (old_size != new_size) {
-    frame_buffer_cache_.Resize(new_size);
+    frame_buffer_cache_.resize(new_size);
     for (size_t i = old_size; i < new_size; ++i) {
       frame_buffer_cache_[i].SetPremultiplyAlpha(premultiply_alpha_);
       InitializeNewFrame(i);
@@ -161,10 +136,9 @@ size_t ImageDecoder::FrameCount() {
   return new_size;
 }
 
-ImageFrame* ImageDecoder::FrameBufferAtIndex(size_t index) {
+ImageFrame* ImageDecoder::DecodeFrameBufferAtIndex(size_t index) {
   if (index >= FrameCount())
-    return 0;
-
+    return nullptr;
   ImageFrame* frame = &frame_buffer_cache_[index];
   if (frame->GetStatus() != ImageFrame::kFrameComplete) {
     PlatformInstrumentation::WillDecodeImage(FilenameExtension());
@@ -182,13 +156,19 @@ ImageFrame* ImageDecoder::FrameBufferAtIndex(size_t index) {
 }
 
 bool ImageDecoder::FrameHasAlphaAtIndex(size_t index) const {
-  return !FrameIsCompleteAtIndex(index) ||
+  return !FrameIsReceivedAtIndex(index) ||
          frame_buffer_cache_[index].HasAlpha();
 }
 
-bool ImageDecoder::FrameIsCompleteAtIndex(size_t index) const {
-  return (index < frame_buffer_cache_.size()) &&
-         (frame_buffer_cache_[index].GetStatus() == ImageFrame::kFrameComplete);
+bool ImageDecoder::FrameIsReceivedAtIndex(size_t index) const {
+  // Animated images override this method to return the status based on the data
+  // received for the queried frame.
+  return IsAllDataReceived();
+}
+
+bool ImageDecoder::FrameIsDecodedAtIndex(size_t index) const {
+  return index < frame_buffer_cache_.size() &&
+         frame_buffer_cache_[index].GetStatus() == ImageFrame::kFrameComplete;
 }
 
 size_t ImageDecoder::FrameBytesAtIndex(size_t index) const {
@@ -216,16 +196,17 @@ size_t ImageDecoder::ClearCacheExceptFrame(size_t clear_except_frame) {
   // We expect that after this call, we'll be asked to decode frames after this
   // one. So we want to avoid clearing frames such that those requests would
   // force re-decoding from the beginning of the image. There are two cases in
-  // which preserving |clearCacheExcept| frame is not enough to avoid that:
+  // which preserving |clear_except_frame| is not enough to avoid that:
   //
-  // 1. |clearExceptFrame| is not yet sufficiently decoded to decode subsequent
-  //    frames. We need the previous frame to sufficiently decode this frame.
-  // 2. The disposal method of |clearExceptFrame| is DisposeOverwritePrevious.
+  // 1. |clear_except_frame| is not yet sufficiently decoded to decode
+  //    subsequent frames. We need the previous frame to sufficiently decode
+  //    this frame.
+  // 2. The disposal method of |clear_except_frame| is DisposeOverwritePrevious.
   //    In that case, we need to keep the required previous frame in the cache
-  //    to prevent re-decoding that frame when |clearExceptFrame| is disposed.
+  //    to prevent re-decoding that frame when |clear_except_frame| is disposed.
   //
   // If either 1 or 2 is true, store the required previous frame in
-  // |clearExceptFrame2| so it won't be cleared.
+  // |clear_except_frame2| so it won't be cleared.
   size_t clear_except_frame2 = kNotFound;
   if (clear_except_frame < frame_buffer_cache_.size()) {
     const ImageFrame& frame = frame_buffer_cache_[clear_except_frame];
@@ -234,7 +215,7 @@ size_t ImageDecoder::ClearCacheExceptFrame(size_t clear_except_frame) {
       clear_except_frame2 = frame.RequiredPreviousFrameIndex();
   }
 
-  // Now |clearExceptFrame2| indicates the frame that |clearExceptFrame|
+  // Now |clear_except_frame2| indicates the frame that |clear_except_frame|
   // depends on, as described above. But if decoding is skipping forward past
   // intermediate frames, this frame may be insufficiently decoded. So we need
   // to keep traversing back through the required previous frames until we find
@@ -294,7 +275,7 @@ void ImageDecoder::CorrectAlphaWhenFrameBufferSawNoAlpha(size_t index) {
   DCHECK(index < frame_buffer_cache_.size());
   ImageFrame& buffer = frame_buffer_cache_[index];
 
-  // When this frame spans the entire image rect we can set hasAlpha to false,
+  // When this frame spans the entire image rect we can SetHasAlpha to false,
   // since there are logically no transparent pixels outside of the frame rect.
   if (buffer.OriginalFrameRect().Contains(IntRect(IntPoint(), Size()))) {
     buffer.SetHasAlpha(false);
@@ -302,7 +283,7 @@ void ImageDecoder::CorrectAlphaWhenFrameBufferSawNoAlpha(size_t index) {
   } else if (buffer.RequiredPreviousFrameIndex() != kNotFound) {
     // When the frame rect does not span the entire image rect, and it does
     // *not* have a required previous frame, the pixels outside of the frame
-    // rect will be fully transparent, so we shoudn't set hasAlpha to false.
+    // rect will be fully transparent, so we shoudn't SetHasAlpha to false.
     //
     // It is a tricky case when the frame does have a required previous frame.
     // The frame does not have alpha only if everywhere outside its rect
@@ -314,8 +295,8 @@ void ImageDecoder::CorrectAlphaWhenFrameBufferSawNoAlpha(size_t index) {
     // happen, since the required frame should in that case be the required
     // frame of this frame's required frame.
     //
-    // If |prevBuffer| is DisposeNotSpecified or DisposeKeep, |buffer| has no
-    // alpha if |prevBuffer| had no alpha. Since initFrameBuffer() already
+    // If |prev_buffer| is DisposeNotSpecified or DisposeKeep, |buffer| has no
+    // alpha if |prev_buffer| had no alpha. Since InitFrameBuffer() already
     // copied the alpha state, there's nothing to do here.
     //
     // The only remaining case is a DisposeOverwriteBgcolor frame.  If
@@ -323,10 +304,10 @@ void ImageDecoder::CorrectAlphaWhenFrameBufferSawNoAlpha(size_t index) {
     // rect, we know the current frame has no alpha.
     //
     // For DisposeNotSpecified, DisposeKeep and DisposeOverwriteBgcolor there
-    // is one situation that is not taken into account - when |prevBuffer|
+    // is one situation that is not taken into account - when |prev_buffer|
     // *does* have alpha, but only in the frame rect of |buffer|, we can still
     // say that this frame has no alpha. However, to determine this, we
-    // potentially need to analyze all image pixels of |prevBuffer|, which is
+    // potentially need to analyze all image pixels of |prev_buffer|, which is
     // too computationally expensive.
     const ImageFrame* prev_buffer =
         &frame_buffer_cache_[buffer.RequiredPreviousFrameIndex()];
@@ -363,9 +344,9 @@ bool ImageDecoder::InitFrameBuffer(size_t frame_index) {
         &frame_buffer_cache_[required_previous_frame_index];
     DCHECK(prev_buffer->GetStatus() == ImageFrame::kFrameComplete);
 
-    // We try to reuse |prevBuffer| as starting state to avoid copying.
-    // If canReusePreviousFrameBuffer returns false, we must copy the data since
-    // |prevBuffer| is necessary to decode this or later frames. In that case,
+    // We try to reuse |prev_buffer| as starting state to avoid copying.
+    // If CanReusePreviousFrameBuffer returns false, we must copy the data since
+    // |prev_buffer| is necessary to decode this or later frames. In that case,
     // copy the data instead.
     if ((!CanReusePreviousFrameBuffer(frame_index) ||
          !buffer->TakeBitmapDataIfWritable(prev_buffer)) &&
@@ -401,17 +382,17 @@ void ImageDecoder::UpdateAggressivePurging(size_t index) {
   // benefit and would consume more memory.
   // So instead, simply purge unused frames if caching all of the frames of
   // the image would use more memory than the image decoder is allowed
-  // (m_maxDecodedBytes) or would overflow 32 bits..
+  // (|max_decoded_bytes|) or would overflow 32 bits..
   //
   // As we decode we will learn the total number of frames, and thus total
   // possible image memory used.
 
-  const uint64_t frame_area = DecodedSize().Area();
-  const uint64_t frame_memory_usage = frame_area * 4;  // 4 bytes per pixel
-  if (frame_memory_usage / 4 != frame_area) {          // overflow occurred
-    purge_aggressively_ = true;
-    return;
-  }
+  const uint64_t frame_memory_usage =
+      DecodedSize().Area() * 4;  // 4 bytes per pixel
+
+  // This condition never fails in the current code. Our existing image decoders
+  // parse for the image size and SetFailed() if that size overflows
+  DCHECK_EQ(frame_memory_usage / 4, DecodedSize().Area());
 
   const uint64_t total_memory_usage = frame_memory_usage * index;
   if (total_memory_usage / frame_memory_usage != index) {  // overflow occurred
@@ -443,19 +424,25 @@ size_t ImageDecoder::FindRequiredPreviousFrame(size_t frame_index,
   size_t prev_frame = frame_index - 1;
   const ImageFrame* prev_buffer = &frame_buffer_cache_[prev_frame];
 
+  // Frames that use the DisposeOverwritePrevious method are effectively
+  // no-ops in terms of changing the starting state of a frame compared to
+  // the starting state of the previous frame, so skip over them.
+  while (prev_buffer->GetDisposalMethod() ==
+         ImageFrame::kDisposeOverwritePrevious) {
+    if (prev_frame == 0) {
+      return kNotFound;
+    }
+    prev_frame--;
+    prev_buffer = &frame_buffer_cache_[prev_frame];
+  }
+
   switch (prev_buffer->GetDisposalMethod()) {
     case ImageFrame::kDisposeNotSpecified:
     case ImageFrame::kDisposeKeep:
-      // prevFrame will be used as the starting state for this frame.
+      // |prev_frame| will be used as the starting state for this frame.
       // FIXME: Be even smarter by checking the frame sizes and/or
       // alpha-containing regions.
       return prev_frame;
-    case ImageFrame::kDisposeOverwritePrevious:
-      // Frames that use the DisposeOverwritePrevious method are effectively
-      // no-ops in terms of changing the starting state of a frame compared to
-      // the starting state of the previous frame, so skip over them and
-      // return the required previous frame of it.
-      return prev_buffer->RequiredPreviousFrameIndex();
     case ImageFrame::kDisposeOverwriteBgcolor:
       // If the previous frame fills the whole image, then the current frame
       // can be decoded alone. Likewise, if the previous frame could be
@@ -467,6 +454,7 @@ size_t ImageDecoder::FindRequiredPreviousFrame(size_t frame_index,
               (prev_buffer->RequiredPreviousFrameIndex() == kNotFound))
                  ? kNotFound
                  : prev_frame;
+    case ImageFrame::kDisposeOverwritePrevious:
     default:
       NOTREACHED();
       return kNotFound;
@@ -475,7 +463,7 @@ size_t ImageDecoder::FindRequiredPreviousFrame(size_t frame_index,
 
 ImagePlanes::ImagePlanes() {
   for (int i = 0; i < 3; ++i) {
-    planes_[i] = 0;
+    planes_[i] = nullptr;
     row_bytes_[i] = 0;
   }
 }
@@ -499,14 +487,6 @@ size_t ImagePlanes::RowBytes(int i) const {
   return row_bytes_[i];
 }
 
-void ImageDecoder::SetEmbeddedColorProfile(const char* icc_data,
-                                           unsigned icc_length) {
-  sk_sp<SkColorSpace> color_space = SkColorSpace::MakeICC(icc_data, icc_length);
-  if (!color_space)
-    DLOG(ERROR) << "Failed to parse image ICC profile";
-  SetEmbeddedColorSpace(std::move(color_space));
-}
-
 void ImageDecoder::SetEmbeddedColorSpace(sk_sp<SkColorSpace> color_space) {
   DCHECK(!IgnoresColorSpace());
   DCHECK(!has_histogrammed_color_space_);
@@ -527,13 +507,12 @@ SkColorSpaceXform* ImageDecoder::ColorTransform() {
 
   sk_sp<SkColorSpace> src_color_space = nullptr;
   sk_sp<SkColorSpace> dst_color_space = nullptr;
-  if (color_behavior_.IsTransformToTargetColorSpace()) {
+  if (color_behavior_.IsTransformToSRGB()) {
     if (!embedded_color_space_) {
       return nullptr;
     }
-
     src_color_space = embedded_color_space_;
-    dst_color_space = color_behavior_.TargetColorSpace().ToSkColorSpace();
+    dst_color_space = SkColorSpace::MakeSRGB();
   } else {
     DCHECK(color_behavior_.IsTag());
     src_color_space = embedded_color_space_;

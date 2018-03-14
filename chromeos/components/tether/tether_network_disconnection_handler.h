@@ -6,8 +6,13 @@
 #define CHROMEOS_COMPONENTS_TETHER_TETHER_NETWORK_DISCONNECTION_HANDLER_H_
 
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "chromeos/components/tether/active_host.h"
 #include "chromeos/network/network_state_handler_observer.h"
+
+namespace base {
+class TaskRunner;
+}  // namespace base
 
 namespace chromeos {
 
@@ -16,15 +21,21 @@ class NetworkStateHandler;
 namespace tether {
 
 class ActiveHost;
+class DisconnectTetheringRequestSender;
+class NetworkConfigurationRemover;
 
 // Handles lost Wi-Fi connections for ongoing tether sessions. When a tether
 // connection is in progress, the device is connected to an underlying Wi-Fi
-// network. If the Wi-Fi connection is disrupted (e.g., by the tether host going
-// out of Wi-Fi range), tether metadata must be updated accordingly. This class
-// tracks ongoing connections and updates this metadata when necessary.
+// network. If the tether network is disconnected, tether metadata is
+// updated accordingly, and a message is sent to the host to disable its
+// Wi-Fi hotspot.
 class TetherNetworkDisconnectionHandler : public NetworkStateHandlerObserver {
  public:
-  TetherNetworkDisconnectionHandler(ActiveHost* active_host);
+  TetherNetworkDisconnectionHandler(
+      ActiveHost* active_host,
+      NetworkStateHandler* network_state_handler,
+      NetworkConfigurationRemover* network_configuration_remover,
+      DisconnectTetheringRequestSender* disconnect_tethering_request_sender);
   ~TetherNetworkDisconnectionHandler() override;
 
   // NetworkStateHandlerObserver:
@@ -33,11 +44,18 @@ class TetherNetworkDisconnectionHandler : public NetworkStateHandlerObserver {
  private:
   friend class TetherNetworkDisconnectionHandlerTest;
 
-  TetherNetworkDisconnectionHandler(ActiveHost* active_host,
-                                    NetworkStateHandler* network_state_handler);
+  void HandleActiveWifiNetworkDisconnection(const std::string& network_guid);
+
+  void SetTaskRunnerForTesting(
+      scoped_refptr<base::TaskRunner> test_task_runner);
 
   ActiveHost* active_host_;
   NetworkStateHandler* network_state_handler_;
+  NetworkConfigurationRemover* network_configuration_remover_;
+  DisconnectTetheringRequestSender* disconnect_tethering_request_sender_;
+
+  scoped_refptr<base::TaskRunner> task_runner_;
+  base::WeakPtrFactory<TetherNetworkDisconnectionHandler> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(TetherNetworkDisconnectionHandler);
 };

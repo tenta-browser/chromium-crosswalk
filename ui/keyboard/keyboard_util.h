@@ -7,8 +7,7 @@
 
 #include <string>
 
-// TODO(beng): replace with forward decl once RootWindow is renamed.
-#include "ui/aura/window.h"
+#include "base/strings/string16.h"
 #include "ui/keyboard/keyboard_export.h"
 
 namespace aura {
@@ -19,12 +18,21 @@ class GURL;
 
 namespace keyboard {
 
-// Enumeration of swipe directions.
-enum CursorMoveDirection {
-  kCursorMoveRight = 0x01,
-  kCursorMoveLeft = 0x02,
-  kCursorMoveUp = 0x04,
-  kCursorMoveDown = 0x08
+// For virtual keyboard IME extension.
+struct KeyboardConfig {
+  bool auto_complete = true;
+  bool auto_correct = true;
+  bool handwriting = true;
+  bool spell_check = true;
+  // It denotes the preferred value, and can be true even if there is no actual
+  // audio input device.
+  bool voice_input = true;
+
+  bool operator==(const keyboard::KeyboardConfig& rhs) const {
+    return auto_complete == rhs.auto_complete &&
+           auto_correct == rhs.auto_correct && handwriting == rhs.handwriting &&
+           spell_check == rhs.spell_check && voice_input == rhs.voice_input;
+  }
 };
 
 // An enumeration of different keyboard control events that should be logged.
@@ -59,11 +67,13 @@ enum KeyboardState {
   KEYBOARD_STATE_DISABLED,
 };
 
-// Gets the calculated keyboard bounds from |root_bounds|. The keyboard height
-// is specified by |keyboard_height|. This should be only called when keyboard
-// is in FULL_WDITH mode.
-KEYBOARD_EXPORT gfx::Rect FullWidthKeyboardBoundsFromRootBounds(
-    const gfx::Rect& root_bounds, int keyboard_height);
+// Updates the current keyboard config with the given config is they are
+// different, notifying to observers. Returns whether update happened.
+KEYBOARD_EXPORT bool UpdateKeyboardConfig(
+    const keyboard::KeyboardConfig& keyboard_config);
+
+// Gets the current virtual keyboard IME config.
+KEYBOARD_EXPORT const keyboard::KeyboardConfig& GetKeyboardConfig();
 
 // Sets the state of the a11y onscreen keyboard.
 KEYBOARD_EXPORT void SetAccessibilityKeyboardEnabled(bool enabled);
@@ -97,9 +107,6 @@ KEYBOARD_EXPORT bool IsKeyboardEnabled();
 
 // Returns true if the virtual keyboard is currently visible.
 KEYBOARD_EXPORT bool IsKeyboardVisible();
-
-// Returns true if smart deployment of the virtual keyboard is enabled.
-KEYBOARD_EXPORT bool IsSmartDeployEnabled();
 
 // Returns true if keyboard overscroll mode is enabled.
 KEYBOARD_EXPORT bool IsKeyboardOverscrollEnabled();
@@ -143,12 +150,6 @@ KEYBOARD_EXPORT bool IsVoiceInputEnabled();
 // if |text| was successfully inserted.
 KEYBOARD_EXPORT bool InsertText(const base::string16& text);
 
-// Move cursor when swipe on the virtualkeyboard. Returns true if cursor was
-// successfully moved according to |swipe_direction|.
-KEYBOARD_EXPORT bool MoveCursor(int swipe_direction,
-                                int modifier_flags,
-                                aura::WindowTreeHost* host);
-
 // Sends a fabricated key event, where |type| is the event type, |key_value|
 // is the unicode value of the character, |key_code| is the legacy key code
 // value, |key_name| is the name of the key as defined in the DOM3 key event
@@ -156,11 +157,11 @@ KEYBOARD_EXPORT bool MoveCursor(int swipe_direction,
 // virtually pressed. The event is dispatched to the active TextInputClient
 // associated with |root_window|. The type may be "keydown" or "keyup".
 KEYBOARD_EXPORT bool SendKeyEvent(std::string type,
-                                   int key_value,
-                                   int key_code,
-                                   std::string key_name,
-                                   int modifiers,
-                                   aura::WindowTreeHost* host);
+                                  int key_value,
+                                  int key_code,
+                                  std::string key_name,
+                                  int modifiers,
+                                  aura::WindowTreeHost* host);
 
 // Marks that the keyboard load has started. This is used to measure the time it
 // takes to fully load the keyboard. This should be called before
@@ -180,10 +181,6 @@ KEYBOARD_EXPORT const GURL& GetOverrideContentUrl();
 
 // Logs the keyboard control event as a UMA stat.
 void LogKeyboardControlEvent(KeyboardControlEvent event);
-
-// Sets true if keyboard overscrolling is enabled with accessibility keyboard.
-KEYBOARD_EXPORT void SetOverscrollEnabledWithAccessibilityKeyboard(
-    bool enabled);
 
 }  // namespace keyboard
 

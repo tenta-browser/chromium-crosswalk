@@ -40,8 +40,10 @@ class ChromeBrowserState;
                                 timePeriod:(browsing_data::TimePeriod)timePeriod
                          completionHandler:(ProceduralBlock)completionHandler;
 
-// Dismisses all modal dialogs then call |completion|.
-- (void)dismissModalDialogsWithCompletion:(ProceduralBlock)completion;
+// Dismisses all modal dialogs, excluding the omnibox if |dismissOmnibox| is
+// NO, then call |completion|.
+- (void)dismissModalDialogsWithCompletion:(ProceduralBlock)completion
+                           dismissOmnibox:(BOOL)dismissOmnibox;
 
 @end
 
@@ -51,10 +53,6 @@ class ChromeBrowserState;
 @property(nonatomic, readonly) DeviceSharingManager* deviceSharingManager;
 @property(nonatomic, retain)
     UIViewController<TabSwitcher>* tabSwitcherController;
-@property(nonatomic, readonly)
-    SettingsNavigationController* settingsNavigationController;
-@property(nonatomic, readonly)
-    SigninInteractionController* signinInteractionController;
 
 // The top presented view controller that is not currently being dismissed.
 @property(nonatomic, readonly) UIViewController* topPresentedViewController;

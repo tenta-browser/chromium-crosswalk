@@ -5,9 +5,9 @@
 #include <stdint.h>
 
 #include <memory>
-#include <queue>
 
 #include "base/bind.h"
+#include "base/containers/queue.h"
 #include "base/memory/ptr_util.h"
 #include "gpu/command_buffer/service/sync_point_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -29,7 +29,7 @@ class SyncPointManagerTest : public testing::Test {
 struct SyncPointStream {
   scoped_refptr<SyncPointOrderData> order_data;
   scoped_refptr<SyncPointClientState> client_state;
-  std::queue<uint32_t> order_numbers;
+  base::queue<uint32_t> order_numbers;
 
   SyncPointStream(SyncPointManager* sync_point_manager,
                   CommandBufferNamespace namespace_id,
@@ -452,6 +452,32 @@ TEST_F(SyncPointManagerTest, NonExistentOrderNumRelease) {
   release_stream.client_state->ReleaseFenceSync(1);
   EXPECT_EQ(1, test_num);
   EXPECT_TRUE(sync_point_manager_->IsSyncTokenReleased(sync_token));
+}
+
+TEST_F(SyncPointManagerTest, WaitOnSameSequenceFails) {
+  CommandBufferNamespace kNamespaceId = gpu::CommandBufferNamespace::GPU_IO;
+  CommandBufferId kCmdBufferId = CommandBufferId::FromUnsafeValue(0x123);
+
+  SyncPointStream stream(sync_point_manager_.get(), kNamespaceId, kCmdBufferId);
+
+  // Dummy order number to avoid the wait_order_num <= processed_order_num + 1
+  // check in SyncPointOrderData::ValidateReleaseOrderNum.
+  sync_point_manager_->GenerateOrderNumber();
+
+  // Order number for the wait.
+  stream.AllocateOrderNum();
+
+  uint64_t release_count = 1;
+  SyncToken sync_token(kNamespaceId, 0, kCmdBufferId, release_count);
+
+  int test_num = 10;
+  bool valid_wait = sync_point_manager_->Wait(
+      sync_token, stream.order_data->sequence_id(),
+      stream.order_data->unprocessed_order_num(),
+      base::Bind(&SyncPointManagerTest::SetIntegerFunction, &test_num, 123));
+  EXPECT_FALSE(valid_wait);
+  EXPECT_EQ(10, test_num);
+  EXPECT_FALSE(sync_point_manager_->IsSyncTokenReleased(sync_token));
 }
 
 }  // namespace gpu

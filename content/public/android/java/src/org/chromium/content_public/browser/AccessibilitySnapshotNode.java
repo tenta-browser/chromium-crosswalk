@@ -4,17 +4,14 @@
 
 package org.chromium.content_public.browser;
 
-import org.chromium.base.annotations.SuppressFBWarnings;
-
 import java.util.ArrayList;
 
 /**
  * A light-weight data structure to encode key information from the accessibility
  * tree for operations that need a quick snapshot of the web content. This is different
- * from BrowserAccessibilityManager.java, which maintains a persistent Android
+ * from WebContentsAccessibility.java, which maintains a persistent Android
  * accessibility tree that can be queried synchronously by the Android framework.
  */
-@SuppressFBWarnings("URF_UNREAD_PUBLIC_OR_PROTECTED_FIELD")
 public class AccessibilitySnapshotNode {
     public int x, y, width, height;
     public boolean isRootNode;

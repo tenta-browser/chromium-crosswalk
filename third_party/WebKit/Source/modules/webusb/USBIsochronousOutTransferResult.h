@@ -5,17 +5,15 @@
 #ifndef USBIsochronousOutTransferResult_h
 #define USBIsochronousOutTransferResult_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "core/dom/DOMDataView.h"
+#include "core/typed_arrays/DOMDataView.h"
 #include "modules/webusb/USBIsochronousOutTransferPacket.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
-class USBIsochronousOutTransferResult final
-    : public GarbageCollectedFinalized<USBIsochronousOutTransferResult>,
-      public ScriptWrappable {
+class USBIsochronousOutTransferResult final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -34,7 +32,10 @@ class USBIsochronousOutTransferResult final
     return packets_;
   }
 
-  DEFINE_INLINE_TRACE() { visitor->Trace(packets_); }
+  void Trace(blink::Visitor* visitor) override {
+    visitor->Trace(packets_);
+    ScriptWrappable::Trace(visitor);
+  }
 
  private:
   const HeapVector<Member<USBIsochronousOutTransferPacket>> packets_;

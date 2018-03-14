@@ -44,7 +44,7 @@ XHRReplayData* XHRReplayData::Create(ExecutionContext* execution_context,
                                      const AtomicString& method,
                                      const KURL& url,
                                      bool async,
-                                     PassRefPtr<EncodedFormData> form_data,
+                                     scoped_refptr<EncodedFormData> form_data,
                                      bool include_credentials) {
   return new XHRReplayData(execution_context, method, url, async,
                            std::move(form_data), include_credentials);
@@ -59,7 +59,7 @@ XHRReplayData::XHRReplayData(ExecutionContext* execution_context,
                              const AtomicString& method,
                              const KURL& url,
                              bool async,
-                             PassRefPtr<EncodedFormData> form_data,
+                             scoped_refptr<EncodedFormData> form_data,
                              bool include_credentials)
     : execution_context_(execution_context),
       method_(method),
@@ -68,7 +68,7 @@ XHRReplayData::XHRReplayData(ExecutionContext* execution_context,
       form_data_(std::move(form_data)),
       include_credentials_(include_credentials) {}
 
-DEFINE_TRACE(XHRReplayData) {
+void XHRReplayData::Trace(blink::Visitor* visitor) {
   visitor->Trace(execution_context_);
 }
 
@@ -90,7 +90,7 @@ NetworkResourcesData::ResourceData::ResourceData(
       pending_encoded_data_length_(0),
       cached_resource_(nullptr) {}
 
-DEFINE_TRACE(NetworkResourcesData::ResourceData) {
+void NetworkResourcesData::ResourceData::Trace(blink::Visitor* visitor) {
   visitor->Trace(network_resources_data_);
   visitor->Trace(xhr_replay_data_);
   visitor->template RegisterWeakMembers<
@@ -100,8 +100,8 @@ DEFINE_TRACE(NetworkResourcesData::ResourceData) {
 
 void NetworkResourcesData::ResourceData::SetContent(const String& content,
                                                     bool base64_encoded) {
-  ASSERT(!HasData());
-  ASSERT(!HasContent());
+  DCHECK(!HasData());
+  DCHECK(!HasContent());
   content_ = content;
   base64_encoded_ = base64_encoded;
 }
@@ -109,13 +109,13 @@ void NetworkResourcesData::ResourceData::SetContent(const String& content,
 size_t NetworkResourcesData::ResourceData::RemoveContent() {
   size_t result = 0;
   if (HasData()) {
-    ASSERT(!HasContent());
+    DCHECK(!HasContent());
     result = data_buffer_->size();
     data_buffer_ = nullptr;
   }
 
   if (HasContent()) {
-    ASSERT(!HasData());
+    DCHECK(!HasData());
     result = content_.CharactersSizeInBytes();
     content_ = String();
   }
@@ -151,8 +151,7 @@ void NetworkResourcesData::ResourceData::ClearWeakMembers(Visitor* visitor) {
     // We could be evicting resource being loaded, save the loaded part, the
     // rest will be appended.
     network_resources_data_->MaybeAddResourceData(
-        RequestId(), cached_resource_->ResourceBuffer()->Data(),
-        cached_resource_->ResourceBuffer()->size());
+        RequestId(), cached_resource_->ResourceBuffer());
   }
   cached_resource_ = nullptr;
 }
@@ -163,7 +162,7 @@ size_t NetworkResourcesData::ResourceData::DataLength() const {
 
 void NetworkResourcesData::ResourceData::AppendData(const char* data,
                                                     size_t data_length) {
-  ASSERT(!HasContent());
+  DCHECK(!HasContent());
   if (!data_buffer_)
     data_buffer_ = SharedBuffer::Create(data, data_length);
   else
@@ -191,7 +190,7 @@ NetworkResourcesData::NetworkResourcesData(size_t total_buffer_size,
 
 NetworkResourcesData::~NetworkResourcesData() {}
 
-DEFINE_TRACE(NetworkResourcesData) {
+void NetworkResourcesData::Trace(blink::Visitor* visitor) {
   visitor->Trace(request_id_to_resource_data_map_);
 }
 
@@ -272,21 +271,48 @@ void NetworkResourcesData::SetResourceContent(const String& request_id,
   }
 }
 
-void NetworkResourcesData::MaybeAddResourceData(const String& request_id,
-                                                const char* data,
-                                                size_t data_length) {
+NetworkResourcesData::ResourceData*
+NetworkResourcesData::PrepareToAddResourceData(const String& request_id,
+                                               size_t data_length) {
   ResourceData* resource_data = ResourceDataForRequestId(request_id);
   if (!resource_data)
-    return;
+    return nullptr;
+
   if (resource_data->DataLength() + data_length >
       maximum_single_resource_content_size_)
     content_size_ -= resource_data->EvictContent();
   if (resource_data->IsContentEvicted())
-    return;
-  if (EnsureFreeSpace(data_length) && !resource_data->IsContentEvicted()) {
-    request_ids_deque_.push_back(request_id);
+    return nullptr;
+  if (!EnsureFreeSpace(data_length) || resource_data->IsContentEvicted())
+    return nullptr;
+
+  request_ids_deque_.push_back(request_id);
+  content_size_ += data_length;
+
+  return resource_data;
+}
+
+void NetworkResourcesData::MaybeAddResourceData(const String& request_id,
+                                                const char* data,
+                                                size_t data_length) {
+  if (ResourceData* resource_data =
+          PrepareToAddResourceData(request_id, data_length)) {
     resource_data->AppendData(data, data_length);
-    content_size_ += data_length;
+  }
+}
+
+void NetworkResourcesData::MaybeAddResourceData(
+    const String& request_id,
+    scoped_refptr<const SharedBuffer> data) {
+  DCHECK(data);
+  if (ResourceData* resource_data =
+          PrepareToAddResourceData(request_id, data->size())) {
+    data->ForEachSegment([&resource_data](const char* segment,
+                                          size_t segment_size,
+                                          size_t segment_offset) {
+      resource_data->AppendData(segment, segment_size);
+      return true;
+    });
   }
 }
 
@@ -321,7 +347,7 @@ XHRReplayData* NetworkResourcesData::XhrReplayData(const String& request_id) {
 
   ResourceData* resource_data = ResourceDataForRequestId(request_id);
   if (!resource_data)
-    return 0;
+    return nullptr;
   return resource_data->XhrReplayData();
 }
 
@@ -381,7 +407,7 @@ void NetworkResourcesData::AddPendingEncodedDataLength(
 void NetworkResourcesData::Clear(const String& preserved_loader_id) {
   if (!request_id_to_resource_data_map_.size())
     return;
-  request_ids_deque_.Clear();
+  request_ids_deque_.clear();
   content_size_ = 0;
 
   ResourceDataMap preserved_map;
@@ -392,9 +418,9 @@ void NetworkResourcesData::Clear(const String& preserved_loader_id) {
         resource_data->LoaderId() == preserved_loader_id)
       preserved_map.Set(resource.key, resource.value);
   }
-  request_id_to_resource_data_map_.Swap(preserved_map);
+  request_id_to_resource_data_map_.swap(preserved_map);
 
-  reused_xhr_replay_data_request_ids_.Clear();
+  reused_xhr_replay_data_request_ids_.clear();
 }
 
 void NetworkResourcesData::SetResourcesDataSizeLimits(
@@ -408,7 +434,7 @@ void NetworkResourcesData::SetResourcesDataSizeLimits(
 NetworkResourcesData::ResourceData*
 NetworkResourcesData::ResourceDataForRequestId(const String& request_id) {
   if (request_id.IsNull())
-    return 0;
+    return nullptr;
   return request_id_to_resource_data_map_.at(request_id);
 }
 

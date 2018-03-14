@@ -12,17 +12,25 @@
 void BrowserStateKeyedServiceFactory::SetTestingFactory(
     web::BrowserState* context,
     TestingFactoryFunction testing_factory) {
-  KeyedServiceFactory::SetTestingFactory(
-      context, reinterpret_cast<KeyedServiceFactory::TestingFactoryFunction>(
-                   testing_factory));
+  KeyedServiceFactory::TestingFactoryFunction func;
+  if (testing_factory) {
+    func = [=](base::SupportsUserData* context) {
+      return testing_factory(static_cast<web::BrowserState*>(context));
+    };
+  }
+  KeyedServiceFactory::SetTestingFactory(context, func);
 }
 
 KeyedService* BrowserStateKeyedServiceFactory::SetTestingFactoryAndUse(
     web::BrowserState* context,
     TestingFactoryFunction testing_factory) {
-  return KeyedServiceFactory::SetTestingFactoryAndUse(
-      context, reinterpret_cast<KeyedServiceFactory::TestingFactoryFunction>(
-                   testing_factory));
+  KeyedServiceFactory::TestingFactoryFunction func;
+  if (testing_factory) {
+    func = [=](base::SupportsUserData* context) {
+      return testing_factory(static_cast<web::BrowserState*>(context));
+    };
+  }
+  return KeyedServiceFactory::SetTestingFactoryAndUse(context, func);
 }
 
 BrowserStateKeyedServiceFactory::BrowserStateKeyedServiceFactory(
@@ -43,7 +51,7 @@ KeyedService* BrowserStateKeyedServiceFactory::GetServiceForBrowserState(
 web::BrowserState* BrowserStateKeyedServiceFactory::GetBrowserStateToUse(
     web::BrowserState* context) const {
   // TODO(crbug.com/701326): This DCHECK should be moved to GetContextToUse().
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Safe default for Incognito mode: no service.
   if (context->IsOffTheRecord())

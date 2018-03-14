@@ -6,8 +6,9 @@
 
 #include <stdint.h>
 
-#include <stack>
 #include <vector>
+
+#include "base/containers/stack.h"
 #include "base/logging.h"
 #include "base/synchronization/lock.h"
 #include "gpu/command_buffer/client/gles2_cmd_helper.h"
@@ -255,7 +256,7 @@ class StrictIdHandler : public IdHandlerInterface {
 
   base::Lock lock_;
   std::vector<uint8_t> id_states_;
-  std::stack<uint32_t> free_ids_;
+  base::stack<uint32_t> free_ids_;
 };
 
 // An id handler for ids that are never reused.
@@ -352,16 +353,20 @@ ShareGroup::ShareGroup(bool bind_generates_resource, uint64_t tracing_guid)
     : bind_generates_resource_(bind_generates_resource),
       tracing_guid_(tracing_guid) {
   if (bind_generates_resource) {
-    for (int i = 0; i < id_namespaces::kNumIdNamespaces; ++i) {
-      if (i == id_namespaces::kProgramsAndShaders) {
+    for (int i = 0;
+         i < static_cast<int>(SharedIdNamespaces::kNumSharedIdNamespaces);
+         ++i) {
+      if (i == static_cast<int>(SharedIdNamespaces::kProgramsAndShaders)) {
         id_handlers_[i].reset(new NonReusedIdHandler());
       } else {
         id_handlers_[i].reset(new IdHandler());
       }
     }
   } else {
-    for (int i = 0; i < id_namespaces::kNumIdNamespaces; ++i) {
-      if (i == id_namespaces::kProgramsAndShaders) {
+    for (int i = 0;
+         i < static_cast<int>(SharedIdNamespaces::kNumSharedIdNamespaces);
+         ++i) {
+      if (i == static_cast<int>(SharedIdNamespaces::kProgramsAndShaders)) {
         id_handlers_[i].reset(new NonReusedIdHandler());
       } else {
         id_handlers_[i].reset(new StrictIdHandler(i));

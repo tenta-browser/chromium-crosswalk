@@ -5,8 +5,12 @@
 package org.chromium.ui.base;
 
 import android.annotation.TargetApi;
+import android.content.ClipData;
+import android.content.ClipDescription;
 import android.os.Build;
+import android.view.DragEvent;
 import android.view.MotionEvent;
+import android.view.View;
 
 import org.chromium.base.TraceEvent;
 import org.chromium.base.annotations.CalledByNative;
@@ -17,6 +21,8 @@ import org.chromium.base.annotations.JNINamespace;
  */
 @JNINamespace("ui")
 public class EventForwarder {
+    private final boolean mIsDragDropEnabled;
+
     private long mNativeEventForwarder;
 
     // Offsets for the events that passes through.
@@ -26,12 +32,13 @@ public class EventForwarder {
     private int mLastMouseButtonState;
 
     @CalledByNative
-    private static EventForwarder create(long nativeEventForwarder) {
-        return new EventForwarder(nativeEventForwarder);
+    private static EventForwarder create(long nativeEventForwarder, boolean isDragDropEnabled) {
+        return new EventForwarder(nativeEventForwarder, isDragDropEnabled);
     }
 
-    private EventForwarder(long nativeEventForwarder) {
+    private EventForwarder(long nativeEventForwarder, boolean isDragDropEnabled) {
         mNativeEventForwarder = nativeEventForwarder;
+        mIsDragDropEnabled = isDragDropEnabled;
     }
 
     @CalledByNative
@@ -46,9 +53,17 @@ public class EventForwarder {
         // TODO(mustaq): Should we include MotionEvent.TOOL_TYPE_STYLUS here?
         // crbug.com/592082
         if (event.getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE) {
-            // Mouse button info is incomplete on L and below
-            int apiVersion = Build.VERSION.SDK_INT;
-            if (apiVersion >= android.os.Build.VERSION_CODES.M) {
+            // Skip firing mouse events in the follwoing cases:
+            // - In Android L and below, where mouse button info is incomplete.
+            // - A move w/o a button press, which represents a trackpad scroll. Real mouse moves w/o
+            //   buttons goes to onHoverEvent.
+            final int apiVersion = Build.VERSION.SDK_INT;
+            final boolean isTouchpadScroll = event.getButtonState() == 0
+                    && (event.getActionMasked() == MotionEvent.ACTION_DOWN
+                               || event.getActionMasked() == MotionEvent.ACTION_MOVE
+                               || event.getActionMasked() == MotionEvent.ACTION_UP);
+
+            if (apiVersion >= android.os.Build.VERSION_CODES.M && !isTouchpadScroll) {
                 return onMouseEvent(event);
             }
         }
@@ -71,6 +86,12 @@ public class EventForwarder {
 
         TraceEvent.begin("sendTouchEvent");
         try {
+            // Android may batch multiple events together for efficiency. We
+            // want to use the oldest event time as hardware time stamp.
+            final long oldestEventTime = event.getHistorySize() > 0
+                    ? event.getHistoricalEventTime(0)
+                    : event.getEventTime();
+
             int eventAction = event.getActionMasked();
 
             eventAction = SPenSupport.convertSPenEventAction(eventAction);
@@ -100,7 +121,7 @@ public class EventForwarder {
             }
 
             final boolean consumed = nativeOnTouchEvent(mNativeEventForwarder, event,
-                    event.getEventTime(), eventAction, pointerCount, event.getHistorySize(),
+                    oldestEventTime, eventAction, pointerCount, event.getHistorySize(),
                     event.getActionIndex(), event.getX(), event.getY(),
                     pointerCount > 1 ? event.getX(1) : 0, pointerCount > 1 ? event.getY(1) : 0,
                     event.getPointerId(0), pointerCount > 1 ? event.getPointerId(1) : -1,
@@ -148,9 +169,35 @@ public class EventForwarder {
                 || eventAction == MotionEvent.ACTION_POINTER_UP;
     }
 
+    /**
+     * @see View#onHoverEvent(MotionEvent)
+     */
+    public boolean onHoverEvent(MotionEvent event) {
+        TraceEvent.begin("onHoverEvent");
+        try {
+            return sendNativeMouseEvent(event);
+        } finally {
+            TraceEvent.end("onHoverEvent");
+        }
+    }
+
+    /**
+     * @see View#onMouseEvent(MotionEvent)
+     */
     public boolean onMouseEvent(MotionEvent event) {
         TraceEvent.begin("sendMouseEvent");
+        try {
+            return sendNativeMouseEvent(event);
+        } finally {
+            TraceEvent.end("sendMouseEvent");
+        }
+    }
 
+    /**
+     * Sends mouse event to native. Hover event is also converted to mouse event,
+     * only differentiated by an internal flag.
+     */
+    private boolean sendNativeMouseEvent(MotionEvent event) {
         assert mNativeEventForwarder != 0;
 
         MotionEvent offsetEvent = createOffsetMotionEvent(event);
@@ -204,7 +251,6 @@ public class EventForwarder {
             return true;
         } finally {
             offsetEvent.recycle();
-            TraceEvent.end("sendMouseEvent");
         }
     }
 
@@ -223,6 +269,67 @@ public class EventForwarder {
         return true;
     }
 
+    /**
+     * @see View#onDragEvent(DragEvent)
+     * @param event {@link DragEvent} instance.
+     * @param containerView A view on which the drag event is taking place.
+     */
+    @TargetApi(Build.VERSION_CODES.N)
+    public boolean onDragEvent(DragEvent event, View containerView) {
+        if (mNativeEventForwarder == 0 || Build.VERSION.SDK_INT <= Build.VERSION_CODES.M) {
+            return false;
+        }
+
+        ClipDescription clipDescription = event.getClipDescription();
+
+        // text/* will match text/uri-list, text/html, text/plain.
+        String[] mimeTypes =
+                clipDescription == null ? new String[0] : clipDescription.filterMimeTypes("text/*");
+
+        if (event.getAction() == DragEvent.ACTION_DRAG_STARTED) {
+            // TODO(hush): support dragging more than just text.
+            return mimeTypes != null && mimeTypes.length > 0 && mIsDragDropEnabled;
+        }
+
+        StringBuilder content = new StringBuilder("");
+        if (event.getAction() == DragEvent.ACTION_DROP) {
+            // TODO(hush): obtain dragdrop permissions, when dragging files into Chrome/WebView is
+            // supported. Not necessary to do so for now, because only text dragging is supported.
+            ClipData clipData = event.getClipData();
+            final int itemCount = clipData.getItemCount();
+            for (int i = 0; i < itemCount; i++) {
+                ClipData.Item item = clipData.getItemAt(i);
+                content.append(item.coerceToStyledText(containerView.getContext()));
+            }
+        }
+
+        int[] locationOnScreen = new int[2];
+        containerView.getLocationOnScreen(locationOnScreen);
+
+        // All coordinates are in device pixel. Conversion to DIP happens in the native.
+        int x = (int) (event.getX() + mCurrentTouchOffsetX);
+        int y = (int) (event.getY() + mCurrentTouchOffsetY);
+        int screenX = x + locationOnScreen[0];
+        int screenY = y + locationOnScreen[1];
+
+        nativeOnDragEvent(mNativeEventForwarder, event.getAction(), x, y, screenX, screenY,
+                mimeTypes, content.toString());
+        return true;
+    }
+
+    /**
+     * Forwards a gesture event.
+     *
+     * @param type Type of the gesture event.
+     * @param timeMs Time the event occurred in milliseconds.
+     * @param delta Scale factor for pinch gesture relative to the current state,
+     *        1.0 being 100%. If negative, has the effect of reverting
+     *        pinch scale to default.
+     */
+    public boolean onGestureEvent(@GestureEventType int type, long timeMs, float delta) {
+        return nativeOnGestureEvent(mNativeEventForwarder, type, timeMs, delta);
+    }
+
     // All touch events (including flings, scrolls etc) accept coordinates in physical pixels.
     private native boolean nativeOnTouchEvent(long nativeEventForwarder, MotionEvent event,
             long timeMs, int action, int pointerCount, int historySize, int actionIndex, float x0,
@@ -236,4 +343,8 @@ public class EventForwarder {
             int changedButton, int buttonState, int metaState, int toolType);
     private native void nativeOnMouseWheelEvent(long nativeEventForwarder, long timeMs, float x,
             float y, float ticksX, float ticksY, float pixelsPerTick);
+    private native void nativeOnDragEvent(long nativeEventForwarder, int action, int x, int y,
+            int screenX, int screenY, String[] mimeTypes, String content);
+    private native boolean nativeOnGestureEvent(
+            long nativeEventForwarder, int type, long timeMs, float delta);
 }

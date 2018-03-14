@@ -5,7 +5,7 @@
 #import <XCTest/XCTest.h>
 
 #include "components/strings/grit/components_strings.h"
-#include "ios/chrome/browser/ui/tools_menu/tools_menu_constants.h"
+#include "ios/chrome/browser/ui/tools_menu/public/tools_menu_constants.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
@@ -20,6 +20,7 @@
 using chrome_test_util::ButtonWithAccessibilityLabel;
 using chrome_test_util::ButtonWithAccessibilityLabelId;
 using chrome_test_util::NavigationBarDoneButton;
+using chrome_test_util::SettingsMenuPrivacyButton;
 
 @interface ClearBrowsingDataSettingsTestCase : ChromeTestCase
 @end
@@ -27,15 +28,8 @@ using chrome_test_util::NavigationBarDoneButton;
 @implementation ClearBrowsingDataSettingsTestCase
 
 - (void)openClearBrowsingDataDialog {
-  [ChromeEarlGreyUI openToolsMenu];
-  [[EarlGrey
-      selectElementWithMatcher:grey_accessibilityID(kToolsMenuSettingsId)]
-      performAction:grey_tap()];
-  NSString* settingsLabel =
-      l10n_util::GetNSString(IDS_OPTIONS_ADVANCED_SECTION_TITLE_PRIVACY);
-  [[EarlGrey
-      selectElementWithMatcher:ButtonWithAccessibilityLabel(settingsLabel)]
-      performAction:grey_tap()];
+  [ChromeEarlGreyUI openSettingsMenu];
+  [ChromeEarlGreyUI tapSettingsMenuButton:SettingsMenuPrivacyButton()];
 
   NSString* clearBrowsingDataDialogLabel =
       l10n_util::GetNSString(IDS_IOS_CLEAR_BROWSING_DATA_TITLE);
@@ -44,22 +38,17 @@ using chrome_test_util::NavigationBarDoneButton;
       performAction:grey_tap()];
 }
 
-- (void)exitSettingsMenu {
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
-      performAction:grey_tap()];
-  // Wait for UI components to finish loading.
-  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
-}
-
 // Test that opening the clear browsing data dialog does not cause a crash.
-- (void)testOpeningClearBrowsingData {
+// TODO(crbug.com/760084): Disabled as the user default do not longer exists
+- (void)DISABLED_testOpeningClearBrowsingData {
   NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
   NSString* oldSetting =
       [defaults stringForKey:@"EnableNewClearBrowsingDataUI"];
   [defaults setObject:@"Enabled" forKey:@"EnableNewClearBrowsingDataUI"];
 
   [self openClearBrowsingDataDialog];
-  [self exitSettingsMenu];
+  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+      performAction:grey_tap()];
 
   [defaults setObject:oldSetting forKey:@"EnableNewClearBrowsingDataUI"];
 }

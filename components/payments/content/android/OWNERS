@@ -1,2 +1,3 @@
-per-file *.mojom=set noparent
-per-file *.mojom=file://ipc/SECURITY_OWNERS
+gogerald@chromium.org
+
+# COMPONENT: UI>Browser>Payments

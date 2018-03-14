@@ -4,17 +4,22 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGContainer g id='content'",
           "rect": [0, 100, 800, 100],
-          "reason": "became visible"
+          "reason": "appeared"
         },
         {
           "object": "LayoutSVGRect rect",
           "rect": [0, 100, 800, 100],
           "reason": "style change"
+        },
+        {
+          "object": "LayoutSVGRect rect",
+          "rect": [0, 100, 800, 100],
+          "reason": "appeared"
         }
       ]
     }
@@ -22,23 +27,15 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutSVGContainer g id='content'",
-      "reason": "became visible"
+      "reason": "appeared"
     },
     {
       "object": "LayoutSVGRect rect",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     },
     {
       "object": "LayoutSVGRect rect",
       "reason": "style change"
-    },
-    {
-      "object": "LayoutSVGResourceMasker mask id='dynMask'",
-      "reason": "layoutObject insertion"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "layoutObject insertion"
     }
   ]
 }

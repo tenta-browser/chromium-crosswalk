@@ -34,7 +34,7 @@
 namespace blink {
 
 template <typename T, typename Observer>
-class LifecycleNotifier : public virtual GarbageCollectedMixin {
+class LifecycleNotifier : public GarbageCollectedMixin {
  public:
   virtual ~LifecycleNotifier();
 
@@ -50,7 +50,7 @@ class LifecycleNotifier : public virtual GarbageCollectedMixin {
   // and safe to use while handling the notification.
   virtual void NotifyContextDestroyed();
 
-  DEFINE_INLINE_VIRTUAL_TRACE() { visitor->Trace(observers_); }
+  virtual void Trace(blink::Visitor* visitor) { visitor->Trace(observers_); }
 
   bool IsIteratingOverObservers() const {
     return iteration_state_ != kNotIterating;
@@ -81,7 +81,7 @@ template <typename T, typename Observer>
 inline LifecycleNotifier<T, Observer>::~LifecycleNotifier() {
   // FIXME: Enable the following ASSERT. Also see a FIXME in
   // Document::detachLayoutTree().
-  // ASSERT(!m_observers.size());
+  // DCHECK(!m_observers.size());
 }
 
 // Determine if |contextDestroyed(Observer*) is a public method on
@@ -134,7 +134,7 @@ inline void LifecycleNotifier<T, Observer>::NotifyContextDestroyed() {
   // Observer unregistration is allowed, but effectively a no-op.
   AutoReset<IterationState> scope(&iteration_state_, kAllowingRemoval);
   ObserverSet observers;
-  observers_.Swap(observers);
+  observers_.swap(observers);
   for (Observer* observer : observers) {
     DCHECK(observer->LifecycleContext() == Context());
     ContextDestroyedNotifier<Observer, T>::Call(observer, Context());
@@ -144,7 +144,7 @@ inline void LifecycleNotifier<T, Observer>::NotifyContextDestroyed() {
 
 template <typename T, typename Observer>
 inline void LifecycleNotifier<T, Observer>::AddObserver(Observer* observer) {
-  RELEASE_ASSERT(iteration_state_ & kAllowingAddition);
+  CHECK(iteration_state_ & kAllowingAddition);
   observers_.insert(observer);
 }
 
@@ -156,7 +156,7 @@ inline void LifecycleNotifier<T, Observer>::RemoveObserver(Observer* observer) {
     observers_.insert(observer);
     return;
   }
-  RELEASE_ASSERT(iteration_state_ & kAllowingRemoval);
+  CHECK(iteration_state_ & kAllowingRemoval);
   observers_.erase(observer);
 }
 

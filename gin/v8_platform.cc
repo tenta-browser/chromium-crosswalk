@@ -4,13 +4,21 @@
 
 #include "gin/public/v8_platform.h"
 
+#include <algorithm>
+
+#include "base/allocator/partition_allocator/page_allocator.h"
 #include "base/bind.h"
+#include "base/bit_cast.h"
 #include "base/debug/stack_trace.h"
 #include "base/location.h"
+#include "base/rand_util.h"
 #include "base/sys_info.h"
-#include "base/threading/worker_pool.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/task_scheduler/task_scheduler.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "gin/per_isolate_data.h"
+#include "gin/v8_background_task_runner.h"
 
 namespace gin {
 
@@ -18,129 +26,12 @@ namespace {
 
 base::LazyInstance<V8Platform>::Leaky g_v8_platform = LAZY_INSTANCE_INITIALIZER;
 
-void RunWithLocker(v8::Isolate* isolate, v8::Task* task) {
-  v8::Locker lock(isolate);
-  task->Run();
-}
-
-class IdleTaskWithLocker : public v8::IdleTask {
- public:
-  IdleTaskWithLocker(v8::Isolate* isolate, v8::IdleTask* task)
-      : isolate_(isolate), task_(task) {}
-
-  ~IdleTaskWithLocker() override = default;
-
-  // v8::IdleTask implementation.
-  void Run(double deadline_in_seconds) override {
-    v8::Locker lock(isolate_);
-    task_->Run(deadline_in_seconds);
-  }
-
- private:
-  v8::Isolate* isolate_;
-  std::unique_ptr<v8::IdleTask> task_;
-
-  DISALLOW_COPY_AND_ASSIGN(IdleTaskWithLocker);
-};
-
 void PrintStackTrace() {
   base::debug::StackTrace trace;
   trace.Print();
 }
 
-}  // namespace
-
-// static
-V8Platform* V8Platform::Get() { return g_v8_platform.Pointer(); }
-
-V8Platform::V8Platform() {}
-
-V8Platform::~V8Platform() {}
-
-size_t V8Platform::NumberOfAvailableBackgroundThreads() {
-  // WorkerPool will currently always create additional threads for posted
-  // background tasks, unless there are threads sitting idle (on posix).
-  // Indicate that V8 should create no more than the number of cores available,
-  // reserving one core for the main thread.
-  const size_t available_cores =
-    static_cast<size_t>(base::SysInfo::NumberOfProcessors());
-  if (available_cores > 1) {
-    return available_cores - 1;
-  }
-  return 1;
-}
-
-void V8Platform::CallOnBackgroundThread(
-    v8::Task* task,
-    v8::Platform::ExpectedRuntime expected_runtime) {
-  base::WorkerPool::PostTask(
-      FROM_HERE,
-      base::Bind(&v8::Task::Run, base::Owned(task)),
-      expected_runtime == v8::Platform::kLongRunningTask);
-}
-
-void V8Platform::CallOnForegroundThread(v8::Isolate* isolate, v8::Task* task) {
-  PerIsolateData* data = PerIsolateData::From(isolate);
-  if (data->access_mode() == IsolateHolder::kUseLocker) {
-    data->task_runner()->PostTask(
-        FROM_HERE, base::Bind(RunWithLocker, base::Unretained(isolate),
-                              base::Owned(task)));
-  } else {
-    data->task_runner()->PostTask(
-        FROM_HERE, base::Bind(&v8::Task::Run, base::Owned(task)));
-  }
-}
-
-void V8Platform::CallDelayedOnForegroundThread(v8::Isolate* isolate,
-                                               v8::Task* task,
-                                               double delay_in_seconds) {
-  PerIsolateData* data = PerIsolateData::From(isolate);
-  if (data->access_mode() == IsolateHolder::kUseLocker) {
-    data->task_runner()->PostDelayedTask(
-        FROM_HERE,
-        base::Bind(RunWithLocker, base::Unretained(isolate), base::Owned(task)),
-        base::TimeDelta::FromSecondsD(delay_in_seconds));
-  } else {
-    data->task_runner()->PostDelayedTask(
-        FROM_HERE, base::Bind(&v8::Task::Run, base::Owned(task)),
-        base::TimeDelta::FromSecondsD(delay_in_seconds));
-  }
-}
-
-void V8Platform::CallIdleOnForegroundThread(v8::Isolate* isolate,
-                                            v8::IdleTask* task) {
-  PerIsolateData* data = PerIsolateData::From(isolate);
-  DCHECK(data->idle_task_runner());
-  if (data->access_mode() == IsolateHolder::kUseLocker) {
-    data->idle_task_runner()->PostIdleTask(
-        new IdleTaskWithLocker(isolate, task));
-  } else {
-    data->idle_task_runner()->PostIdleTask(task);
-  }
-}
-
-bool V8Platform::IdleTasksEnabled(v8::Isolate* isolate) {
-  return PerIsolateData::From(isolate)->idle_task_runner() != nullptr;
-}
-
-double V8Platform::MonotonicallyIncreasingTime() {
-  return base::TimeTicks::Now().ToInternalValue() /
-      static_cast<double>(base::Time::kMicrosecondsPerSecond);
-}
-
-const uint8_t* V8Platform::GetCategoryGroupEnabled(const char* name) {
-  return TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED(name);
-}
-
-const char* V8Platform::GetCategoryGroupName(
-    const uint8_t* category_enabled_flag) {
-  return base::trace_event::TraceLog::GetCategoryGroupName(
-      category_enabled_flag);
-}
-
-namespace {
-
-class ConvertableToTraceFormatWrapper
+class ConvertableToTraceFormatWrapper final
     : public base::trace_event::ConvertableToTraceFormat {
  public:
   explicit ConvertableToTraceFormatWrapper(
@@ -156,52 +47,6 @@ class ConvertableToTraceFormatWrapper
 
   DISALLOW_COPY_AND_ASSIGN(ConvertableToTraceFormatWrapper);
 };
-
-}  // namespace
-
-uint64_t V8Platform::AddTraceEvent(
-    char phase,
-    const uint8_t* category_enabled_flag,
-    const char* name,
-    const char* scope,
-    uint64_t id,
-    uint64_t bind_id,
-    int32_t num_args,
-    const char** arg_names,
-    const uint8_t* arg_types,
-    const uint64_t* arg_values,
-    std::unique_ptr<v8::ConvertableToTraceFormat>* arg_convertables,
-    unsigned int flags) {
-  std::unique_ptr<base::trace_event::ConvertableToTraceFormat> convertables[2];
-  if (num_args > 0 && arg_types[0] == TRACE_VALUE_TYPE_CONVERTABLE) {
-    convertables[0].reset(
-        new ConvertableToTraceFormatWrapper(arg_convertables[0]));
-  }
-  if (num_args > 1 && arg_types[1] == TRACE_VALUE_TYPE_CONVERTABLE) {
-    convertables[1].reset(
-        new ConvertableToTraceFormatWrapper(arg_convertables[1]));
-  }
-  DCHECK_LE(num_args, 2);
-  base::trace_event::TraceEventHandle handle =
-      TRACE_EVENT_API_ADD_TRACE_EVENT_WITH_BIND_ID(
-          phase, category_enabled_flag, name, scope, id, bind_id, num_args,
-          arg_names, arg_types, (const long long unsigned int*)arg_values,
-          convertables, flags);
-  uint64_t result;
-  memcpy(&result, &handle, sizeof(result));
-  return result;
-}
-
-void V8Platform::UpdateTraceEventDuration(const uint8_t* category_enabled_flag,
-                                          const char* name,
-                                          uint64_t handle) {
-  base::trace_event::TraceEventHandle traceEventHandle;
-  memcpy(&traceEventHandle, &handle, sizeof(handle));
-  TRACE_EVENT_API_UPDATE_TRACE_EVENT_DURATION(category_enabled_flag, name,
-                                              traceEventHandle);
-}
-
-namespace {
 
 class EnabledStateObserverImpl final
     : public base::trace_event::TraceLog::EnabledStateObserver {
@@ -222,7 +67,7 @@ class EnabledStateObserverImpl final
     }
   }
 
-  void AddObserver(v8::Platform::TraceStateObserver* observer) {
+  void AddObserver(v8::TracingController::TraceStateObserver* observer) {
     {
       base::AutoLock lock(mutex_);
       DCHECK(!observers_.count(observer));
@@ -237,7 +82,7 @@ class EnabledStateObserverImpl final
       observer->OnTraceEnabled();
   }
 
-  void RemoveObserver(v8::Platform::TraceStateObserver* observer) {
+  void RemoveObserver(v8::TracingController::TraceStateObserver* observer) {
     base::AutoLock lock(mutex_);
     DCHECK(observers_.count(observer) == 1);
     observers_.erase(observer);
@@ -249,7 +94,7 @@ class EnabledStateObserverImpl final
 
  private:
   base::Lock mutex_;
-  std::unordered_set<v8::Platform::TraceStateObserver*> observers_;
+  std::unordered_set<v8::TracingController::TraceStateObserver*> observers_;
 
   DISALLOW_COPY_AND_ASSIGN(EnabledStateObserverImpl);
 };
@@ -257,16 +102,191 @@ class EnabledStateObserverImpl final
 base::LazyInstance<EnabledStateObserverImpl>::Leaky g_trace_state_dispatcher =
     LAZY_INSTANCE_INITIALIZER;
 
+// TODO(skyostil): Deduplicate this with the clamper in Blink.
+class TimeClamper {
+ public:
+  static constexpr double kResolutionSeconds = 0.001;
+
+  TimeClamper() : secret_(base::RandUint64()) {}
+
+  double ClampTimeResolution(double time_seconds) const {
+    DCHECK_GE(time_seconds, 0);
+    // For each clamped time interval, compute a pseudorandom transition
+    // threshold. The reported time will either be the start of that interval or
+    // the next one depending on which side of the threshold |time_seconds| is.
+    double interval = floor(time_seconds / kResolutionSeconds);
+    double clamped_time = interval * kResolutionSeconds;
+    double tick_threshold = ThresholdFor(clamped_time);
+
+    if (time_seconds >= tick_threshold)
+      return (interval + 1) * kResolutionSeconds;
+    return clamped_time;
+  }
+
+ private:
+  inline double ThresholdFor(double clamped_time) const {
+    uint64_t time_hash = MurmurHash3(bit_cast<int64_t>(clamped_time) ^ secret_);
+    return clamped_time + kResolutionSeconds * ToDouble(time_hash);
+  }
+
+  static inline double ToDouble(uint64_t value) {
+    // Exponent for double values for [1.0 .. 2.0]
+    static const uint64_t kExponentBits = uint64_t{0x3FF0000000000000};
+    static const uint64_t kMantissaMask = uint64_t{0x000FFFFFFFFFFFFF};
+    uint64_t random = (value & kMantissaMask) | kExponentBits;
+    return bit_cast<double>(random) - 1;
+  }
+
+  static inline uint64_t MurmurHash3(uint64_t value) {
+    value ^= value >> 33;
+    value *= uint64_t{0xFF51AFD7ED558CCD};
+    value ^= value >> 33;
+    value *= uint64_t{0xC4CEB9FE1A85EC53};
+    value ^= value >> 33;
+    return value;
+  }
+
+  const uint64_t secret_;
+  DISALLOW_COPY_AND_ASSIGN(TimeClamper);
+};
+
+base::LazyInstance<TimeClamper>::Leaky g_time_clamper =
+    LAZY_INSTANCE_INITIALIZER;
+
 }  // namespace
 
-void V8Platform::AddTraceStateObserver(
-    v8::Platform::TraceStateObserver* observer) {
-  g_trace_state_dispatcher.Get().AddObserver(observer);
+class V8Platform::TracingControllerImpl : public v8::TracingController {
+ public:
+  TracingControllerImpl() = default;
+  ~TracingControllerImpl() override = default;
+
+  // TracingController implementation.
+  const uint8_t* GetCategoryGroupEnabled(const char* name) override {
+    return TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED(name);
+  }
+  uint64_t AddTraceEvent(
+      char phase,
+      const uint8_t* category_enabled_flag,
+      const char* name,
+      const char* scope,
+      uint64_t id,
+      uint64_t bind_id,
+      int32_t num_args,
+      const char** arg_names,
+      const uint8_t* arg_types,
+      const uint64_t* arg_values,
+      std::unique_ptr<v8::ConvertableToTraceFormat>* arg_convertables,
+      unsigned int flags) override {
+    std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
+        convertables[2];
+    if (num_args > 0 && arg_types[0] == TRACE_VALUE_TYPE_CONVERTABLE) {
+      convertables[0].reset(
+          new ConvertableToTraceFormatWrapper(arg_convertables[0]));
+    }
+    if (num_args > 1 && arg_types[1] == TRACE_VALUE_TYPE_CONVERTABLE) {
+      convertables[1].reset(
+          new ConvertableToTraceFormatWrapper(arg_convertables[1]));
+    }
+    DCHECK_LE(num_args, 2);
+    base::trace_event::TraceEventHandle handle =
+        TRACE_EVENT_API_ADD_TRACE_EVENT_WITH_BIND_ID(
+            phase, category_enabled_flag, name, scope, id, bind_id, num_args,
+            arg_names, arg_types, (const long long unsigned int*)arg_values,
+            convertables, flags);
+    uint64_t result;
+    memcpy(&result, &handle, sizeof(result));
+    return result;
+  }
+  void UpdateTraceEventDuration(const uint8_t* category_enabled_flag,
+                                const char* name,
+                                uint64_t handle) override {
+    base::trace_event::TraceEventHandle traceEventHandle;
+    memcpy(&traceEventHandle, &handle, sizeof(handle));
+    TRACE_EVENT_API_UPDATE_TRACE_EVENT_DURATION(category_enabled_flag, name,
+                                                traceEventHandle);
+  }
+  void AddTraceStateObserver(TraceStateObserver* observer) override {
+    g_trace_state_dispatcher.Get().AddObserver(observer);
+  }
+  void RemoveTraceStateObserver(TraceStateObserver* observer) override {
+    g_trace_state_dispatcher.Get().RemoveObserver(observer);
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(TracingControllerImpl);
+};
+
+// static
+V8Platform* V8Platform::Get() { return g_v8_platform.Pointer(); }
+
+V8Platform::V8Platform() : tracing_controller_(new TracingControllerImpl) {}
+
+V8Platform::~V8Platform() = default;
+
+void V8Platform::OnCriticalMemoryPressure() {
+#if defined(OS_WIN)
+  // Some configurations do not use page_allocator. Only 32 bit Windows systems
+  // reserve memory currently.
+  base::ReleaseReservation();
+#endif
 }
 
-void V8Platform::RemoveTraceStateObserver(
-    v8::Platform::TraceStateObserver* observer) {
-  g_trace_state_dispatcher.Get().RemoveObserver(observer);
+std::shared_ptr<v8::TaskRunner> V8Platform::GetForegroundTaskRunner(
+    v8::Isolate* isolate) {
+  PerIsolateData* data = PerIsolateData::From(isolate);
+  return data->task_runner();
+}
+
+std::shared_ptr<v8::TaskRunner> V8Platform::GetBackgroundTaskRunner(
+    v8::Isolate* isolate) {
+  return std::make_shared<V8BackgroundTaskRunner>();
+}
+
+size_t V8Platform::NumberOfAvailableBackgroundThreads() {
+  return V8BackgroundTaskRunner::NumberOfAvailableBackgroundThreads();
+}
+
+void V8Platform::CallOnBackgroundThread(
+    v8::Task* task,
+    v8::Platform::ExpectedRuntime expected_runtime) {
+  GetBackgroundTaskRunner(nullptr)->PostTask(std::unique_ptr<v8::Task>(task));
+}
+
+void V8Platform::CallOnForegroundThread(v8::Isolate* isolate, v8::Task* task) {
+  PerIsolateData* data = PerIsolateData::From(isolate);
+  data->task_runner()->PostTask(std::unique_ptr<v8::Task>(task));
+}
+
+void V8Platform::CallDelayedOnForegroundThread(v8::Isolate* isolate,
+                                               v8::Task* task,
+                                               double delay_in_seconds) {
+  PerIsolateData* data = PerIsolateData::From(isolate);
+  data->task_runner()->PostDelayedTask(std::unique_ptr<v8::Task>(task),
+                                       delay_in_seconds);
+}
+
+void V8Platform::CallIdleOnForegroundThread(v8::Isolate* isolate,
+                                            v8::IdleTask* task) {
+  PerIsolateData* data = PerIsolateData::From(isolate);
+  data->task_runner()->PostIdleTask(std::unique_ptr<v8::IdleTask>(task));
+}
+
+bool V8Platform::IdleTasksEnabled(v8::Isolate* isolate) {
+  return PerIsolateData::From(isolate)->task_runner()->IdleTasksEnabled();
+}
+
+double V8Platform::MonotonicallyIncreasingTime() {
+  return base::TimeTicks::Now().ToInternalValue() /
+      static_cast<double>(base::Time::kMicrosecondsPerSecond);
+}
+
+double V8Platform::CurrentClockTimeMillis() {
+  double now_seconds = base::Time::Now().ToJsTime() / 1000;
+  return g_time_clamper.Get().ClampTimeResolution(now_seconds) * 1000;
+}
+
+v8::TracingController* V8Platform::GetTracingController() {
+  return tracing_controller_.get();
 }
 
 v8::Platform::StackTracePrinter V8Platform::GetStackTracePrinter() {

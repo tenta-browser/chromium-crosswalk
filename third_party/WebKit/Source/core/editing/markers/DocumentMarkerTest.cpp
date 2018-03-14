@@ -4,6 +4,7 @@
 
 #include "core/editing/markers/DocumentMarker.h"
 
+#include "core/editing/markers/TextMatchMarker.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
@@ -13,8 +14,8 @@ using MarkerOffsets = DocumentMarker::MarkerOffsets;
 class DocumentMarkerTest : public ::testing::Test {
  protected:
   DocumentMarker* CreateMarker(unsigned startOffset, unsigned endOffset) {
-    return new DocumentMarker(startOffset, endOffset,
-                              DocumentMarker::MatchStatus::kInactive);
+    return new TextMatchMarker(startOffset, endOffset,
+                               TextMatchMarker::MatchStatus::kInactive);
   }
 };
 
@@ -71,7 +72,7 @@ TEST_F(DocumentMarkerTest, GetShiftedMarkerPosition_DeleteEndAndAfter) {
 TEST_F(DocumentMarkerTest, GetShiftedMarkerPosition_DeleteBeforeAndAfter) {
   DocumentMarker* marker = CreateMarker(20, 25);
   Optional<MarkerOffsets> result = marker->ComputeOffsetsAfterShift(13, 19, 0);
-  EXPECT_EQ(WTF::kNullopt, result);
+  EXPECT_EQ(WTF::nullopt, result);
 }
 
 TEST_F(DocumentMarkerTest, GetShiftedMarkerPosition_DeleteBeforeAndBeginning) {
@@ -91,19 +92,19 @@ TEST_F(DocumentMarkerTest, GetShiftedMarkerPosition_DeleteBefore) {
 TEST_F(DocumentMarkerTest, GetShiftedMarkerPosition_DeleteStartAndAfter) {
   DocumentMarker* marker = CreateMarker(0, 5);
   Optional<MarkerOffsets> result = marker->ComputeOffsetsAfterShift(0, 10, 0);
-  EXPECT_EQ(WTF::kNullopt, result);
+  EXPECT_EQ(WTF::nullopt, result);
 }
 
 TEST_F(DocumentMarkerTest, GetShiftedMarkerPosition_DeleteBeforeAndEnd) {
   DocumentMarker* marker = CreateMarker(5, 10);
   Optional<MarkerOffsets> result = marker->ComputeOffsetsAfterShift(0, 10, 0);
-  EXPECT_EQ(WTF::kNullopt, result);
+  EXPECT_EQ(WTF::nullopt, result);
 }
 
 TEST_F(DocumentMarkerTest, GetShiftedMarkerPosition_DeleteMarkerExactly) {
   DocumentMarker* marker = CreateMarker(5, 10);
   Optional<MarkerOffsets> result = marker->ComputeOffsetsAfterShift(5, 5, 0);
-  EXPECT_EQ(WTF::kNullopt, result);
+  EXPECT_EQ(WTF::nullopt, result);
 }
 
 TEST_F(DocumentMarkerTest, GetShiftedMarkerPosition_DeleteMiddleOfMarker) {
@@ -165,7 +166,7 @@ TEST_F(DocumentMarkerTest, GetShiftedMarkerPosition_ReplaceEndAndAfter) {
 TEST_F(DocumentMarkerTest, GetShiftedMarkerPosition_ReplaceBeforeAndAfter) {
   DocumentMarker* marker = CreateMarker(20, 25);
   Optional<MarkerOffsets> result = marker->ComputeOffsetsAfterShift(13, 19, 1);
-  EXPECT_EQ(WTF::kNullopt, result);
+  EXPECT_EQ(WTF::nullopt, result);
 }
 
 TEST_F(DocumentMarkerTest, GetShiftedMarkerPosition_ReplaceBeforeAndBeginning) {
@@ -206,13 +207,13 @@ TEST_F(DocumentMarkerTest, GetShiftedMarkerPosition_ReplaceExactly) {
 TEST_F(DocumentMarkerTest, GetShiftedMarkerPosition_ReplaceBeginningAndAfter) {
   DocumentMarker* marker = CreateMarker(0, 5);
   Optional<MarkerOffsets> result = marker->ComputeOffsetsAfterShift(0, 6, 1);
-  EXPECT_EQ(WTF::kNullopt, result);
+  EXPECT_EQ(WTF::nullopt, result);
 }
 
 TEST_F(DocumentMarkerTest, GetShiftedMarkerPosition_ReplaceBeforeAndEnd) {
   DocumentMarker* marker = CreateMarker(5, 10);
   Optional<MarkerOffsets> result = marker->ComputeOffsetsAfterShift(4, 6, 1);
-  EXPECT_EQ(WTF::kNullopt, result);
+  EXPECT_EQ(WTF::nullopt, result);
 }
 
 }  // namespace blink

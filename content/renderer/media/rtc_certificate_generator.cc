@@ -16,9 +16,9 @@
 #include "content/renderer/media/webrtc/peer_connection_dependency_factory.h"
 #include "content/renderer/render_thread_impl.h"
 #include "media/media_features.h"
-#include "third_party/webrtc/base/rtccertificate.h"
-#include "third_party/webrtc/base/rtccertificategenerator.h"
-#include "third_party/webrtc/base/scoped_ref_ptr.h"
+#include "third_party/webrtc/rtc_base/rtccertificate.h"
+#include "third_party/webrtc/rtc_base/rtccertificategenerator.h"
+#include "third_party/webrtc/rtc_base/scoped_ref_ptr.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -69,12 +69,11 @@ class RTCCertificateGeneratorRequest
     CertificateCallbackPtr transition(
         observer.release(),
         base::OnTaskRunnerDeleter(base::ThreadTaskRunnerHandle::Get()));
-    worker_thread_->PostTask(FROM_HERE, base::Bind(
-        &RTCCertificateGeneratorRequest::GenerateCertificateOnWorkerThread,
-        this,
-        key_params,
-        expires_ms,
-        base::Passed(&transition)));
+    worker_thread_->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            &RTCCertificateGeneratorRequest::GenerateCertificateOnWorkerThread,
+            this, key_params, expires_ms, base::Passed(&transition)));
   }
 
  private:
@@ -93,10 +92,10 @@ class RTCCertificateGeneratorRequest
 
     main_thread_->PostTask(
         FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &RTCCertificateGeneratorRequest::DoCallbackOnMainThread, this,
             base::Passed(std::move(observer)),
-            base::Passed(base::MakeUnique<RTCCertificate>(certificate))));
+            base::Passed(std::make_unique<RTCCertificate>(certificate))));
   }
 
   void DoCallbackOnMainThread(
@@ -169,7 +168,7 @@ std::unique_ptr<blink::WebRTCCertificate> RTCCertificateGenerator::FromPEM(
           pem_private_key.Utf8(), pem_certificate.Utf8()));
   if (!certificate)
     return nullptr;
-  return base::MakeUnique<RTCCertificate>(certificate);
+  return std::make_unique<RTCCertificate>(certificate);
 }
 
 }  // namespace content

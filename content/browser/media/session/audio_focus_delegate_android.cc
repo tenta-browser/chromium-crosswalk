@@ -4,7 +4,6 @@
 
 #include "content/browser/media/session/audio_focus_delegate_android.h"
 
-#include "base/android/context_utils.h"
 #include "base/android/jni_android.h"
 #include "content/browser/media/session/media_session_impl.h"
 #include "jni/AudioFocusDelegate_jni.h"
@@ -12,11 +11,6 @@
 using base::android::JavaParamRef;
 
 namespace content {
-
-// static
-bool AudioFocusDelegateAndroid::Register(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
 
 AudioFocusDelegateAndroid::AudioFocusDelegateAndroid(
     MediaSessionImpl* media_session)
@@ -31,9 +25,8 @@ AudioFocusDelegateAndroid::~AudioFocusDelegateAndroid() {
 void AudioFocusDelegateAndroid::Initialize() {
   JNIEnv* env = base::android::AttachCurrentThread();
   DCHECK(env);
-  j_media_session_delegate_.Reset(Java_AudioFocusDelegate_create(
-      env, base::android::GetApplicationContext(),
-      reinterpret_cast<intptr_t>(this)));
+  j_media_session_delegate_.Reset(
+      Java_AudioFocusDelegate_create(env, reinterpret_cast<intptr_t>(this)));
 }
 
 bool AudioFocusDelegateAndroid::RequestAudioFocus(

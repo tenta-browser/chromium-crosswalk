@@ -13,8 +13,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
-import org.chromium.base.annotations.UsedByReflection;
-
 /**
  * Manage multiple SurfaceViews for the compositor, so that transitions between
  * surfaces with and without an alpha channel can be visually smooth.
@@ -65,7 +63,7 @@ class CompositorSurfaceManager implements SurfaceHolder.Callback2 {
         public SurfaceState(Context context, int format, SurfaceHolder.Callback2 callback) {
             surfaceView = new SurfaceView(context);
             surfaceView.setZOrderMediaOverlay(true);
-            surfaceView.setVisibility(View.VISIBLE);
+            surfaceView.setVisibility(View.INVISIBLE);
             surfaceHolder().setFormat(format);
             surfaceHolder().addCallback(callback);
 
@@ -187,8 +185,8 @@ class CompositorSurfaceManager implements SurfaceHolder.Callback2 {
 
         // See if we're expecting a surfaceChanged.  If not, then send a synthetic one.
         if (mOwnedByClient.format != PixelFormat.UNKNOWN) {
-            mClient.surfaceChanged(mOwnedByClient.surfaceHolder(), mOwnedByClient.width,
-                    mOwnedByClient.height, mOwnedByClient.format);
+            mClient.surfaceChanged(mOwnedByClient.surfaceHolder(), mOwnedByClient.format,
+                    mOwnedByClient.width, mOwnedByClient.height);
         }
     }
 
@@ -267,8 +265,7 @@ class CompositorSurfaceManager implements SurfaceHolder.Callback2 {
         // Intentionally not implemented.
     }
 
-    // TODO(boliu): Mark this override instead.
-    @UsedByReflection("Android")
+    @Override
     public void surfaceRedrawNeededAsync(SurfaceHolder holder, Runnable drawingFinished) {
         mClient.surfaceRedrawNeededAsync(holder, drawingFinished);
     }

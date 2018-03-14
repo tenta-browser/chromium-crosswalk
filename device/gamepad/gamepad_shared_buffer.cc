@@ -14,16 +14,16 @@ GamepadSharedBuffer::GamepadSharedBuffer() {
   void* mem = shared_memory_.memory();
   DCHECK(mem);
   hardware_buffer_ = new (mem) GamepadHardwareBuffer();
-  memset(&(hardware_buffer_->data), 0, sizeof(blink::WebGamepads));
+  memset(&(hardware_buffer_->data), 0, sizeof(Gamepads));
 }
 
-GamepadSharedBuffer::~GamepadSharedBuffer() {}
+GamepadSharedBuffer::~GamepadSharedBuffer() = default;
 
 base::SharedMemory* GamepadSharedBuffer::shared_memory() {
   return &shared_memory_;
 }
 
-blink::WebGamepads* GamepadSharedBuffer::buffer() {
+Gamepads* GamepadSharedBuffer::buffer() {
   return &(hardware_buffer()->data);
 }
 

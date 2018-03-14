@@ -13,7 +13,7 @@ namespace storage_monitor {
 
 namespace {
 
-StorageMonitor* g_storage_monitor = NULL;
+StorageMonitor* g_storage_monitor = nullptr;
 
 }  // namespace
 
@@ -58,7 +58,7 @@ void StorageMonitor::Create() {
 // static
 void StorageMonitor::Destroy() {
   delete g_storage_monitor;
-  g_storage_monitor = NULL;
+  g_storage_monitor = nullptr;
 }
 
 StorageMonitor* StorageMonitor::GetInstance() {
@@ -84,7 +84,7 @@ std::vector<StorageInfo> StorageMonitor::GetAllAvailableStorages() const {
 }
 
 void StorageMonitor::EnsureInitialized(base::Closure callback) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (initialized_) {
     if (!callback.is_null())
       callback.Run();

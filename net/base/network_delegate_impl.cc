@@ -44,12 +44,7 @@ void NetworkDelegateImpl::OnBeforeRedirect(URLRequest* request,
                                            const GURL& new_location) {}
 
 void NetworkDelegateImpl::OnResponseStarted(URLRequest* request,
-                                            int net_error) {
-  OnResponseStarted(request);
-}
-
-// Deprecated.
-void NetworkDelegateImpl::OnResponseStarted(URLRequest* request) {}
+                                            int net_error) {}
 
 void NetworkDelegateImpl::OnNetworkBytesReceived(URLRequest* request,
                                                  int64_t bytes_received) {}
@@ -87,19 +82,21 @@ bool NetworkDelegateImpl::OnCanGetCookies(const URLRequest& request,
 }
 
 bool NetworkDelegateImpl::OnCanSetCookie(const URLRequest& request,
-                                         const std::string& cookie_line,
+                                         const net::CanonicalCookie& cookie,
                                          CookieOptions* options) {
   return true;
 }
 
-bool NetworkDelegateImpl::OnCanAccessFile(const URLRequest& request,
-                                          const base::FilePath& path) const {
+bool NetworkDelegateImpl::OnCanAccessFile(
+    const URLRequest& request,
+    const base::FilePath& original_path,
+    const base::FilePath& absolute_path) const {
   return false;
 }
 
 bool NetworkDelegateImpl::OnCanEnablePrivacyMode(
     const GURL& url,
-    const GURL& first_party_for_cookies) const {
+    const GURL& site_for_cookies) const {
   return false;
 }
 
@@ -112,6 +109,26 @@ bool NetworkDelegateImpl::OnCancelURLRequestWithPolicyViolatingReferrerHeader(
     const GURL& target_url,
     const GURL& referrer_url) const {
   return false;
+}
+
+bool NetworkDelegateImpl::OnCanQueueReportingReport(
+    const url::Origin& origin) const {
+  return true;
+}
+
+bool NetworkDelegateImpl::OnCanSendReportingReport(
+    const url::Origin& origin) const {
+  return true;
+}
+
+bool NetworkDelegateImpl::OnCanSetReportingClient(const url::Origin& origin,
+                                                  const GURL& endpoint) const {
+  return true;
+}
+
+bool NetworkDelegateImpl::OnCanUseReportingClient(const url::Origin& origin,
+                                                  const GURL& endpoint) const {
+  return true;
 }
 
 }  // namespace net

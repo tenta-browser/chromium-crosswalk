@@ -54,14 +54,6 @@ def ColorJavacOutput(output):
   return '\n'.join(map(ApplyColor, output.split('\n')))
 
 
-ERRORPRONE_OPTIONS = [
-  # These crash on lots of targets.
-  '-Xep:ParameterPackage:OFF',
-  '-Xep:OverridesGuiceInjectableMethod:OFF',
-  '-Xep:OverridesJavaxInjectableMethod:OFF',
-]
-
-
 def _FilterJavaFiles(paths, filters):
   return [f for f in paths
           if not filters or build_utils.MatchesGlob(f, filters)]
@@ -217,7 +209,7 @@ def _OnStaleMd5(changes, options, javac_cmd, java_files, classpath_inputs):
       jar_srcs = _FilterJavaFiles(jar_srcs, options.javac_includes)
       java_files.extend(jar_srcs)
       if changed_paths:
-        # Set the mtime of all sources to 0 since we use the absense of .class
+        # Set the mtime of all sources to 0 since we use the absence of .class
         # files to tell jmake which files are stale.
         for path in jar_srcs:
           os.utime(path, (0, 0))
@@ -333,6 +325,9 @@ def _ParseOptions(argv):
       action='append',
       help='Annotation processor to use.')
   parser.add_option(
+      '--processorpath',
+      help='Where javac should look for annotation processors.')
+  parser.add_option(
       '--processor-arg',
       dest='processor_args',
       action='append',
@@ -360,6 +355,11 @@ def _ParseOptions(argv):
       help='Use the Errorprone compiler at this path.')
   parser.add_option('--jar-path', help='Jar output path.')
   parser.add_option('--stamp', help='Path to touch on success.')
+  parser.add_option(
+      '--javac-arg',
+      action='append',
+      default=[],
+      help='Additional arguments to pass to javac.')
 
   options, args = parser.parse_args(argv)
   build_utils.CheckOptions(options, parser, required=('jar_path',))
@@ -371,8 +371,11 @@ def _ParseOptions(argv):
   if options.java_version == '1.8' and options.bootclasspath:
     # Android's boot jar doesn't contain all java 8 classes.
     # See: https://github.com/evant/gradle-retrolambda/issues/23.
-    javac_path = os.path.realpath(distutils.spawn.find_executable('javac'))
-    jdk_dir = os.path.dirname(os.path.dirname(javac_path))
+    # Get the path of the jdk folder by searching for the 'jar' executable. We
+    # cannot search for the 'javac' executable because goma provides a custom
+    # version of 'javac'.
+    jar_path = os.path.realpath(distutils.spawn.find_executable('jar'))
+    jdk_dir = os.path.dirname(os.path.dirname(jar_path))
     rt_jar = os.path.join(jdk_dir, 'jre', 'lib', 'rt.jar')
     options.bootclasspath.append(rt_jar)
 
@@ -423,10 +426,9 @@ def main(argv):
 
   if options.use_errorprone_path:
     javac_path = options.use_errorprone_path
-    javac_cmd = [javac_path] + ERRORPRONE_OPTIONS
   else:
     javac_path = distutils.spawn.find_executable('javac')
-    javac_cmd = [javac_path]
+  javac_cmd = [javac_path]
 
   javac_cmd.extend((
       '-g',
@@ -461,9 +463,13 @@ def main(argv):
 
   if options.processors:
     javac_cmd.extend(['-processor', ','.join(options.processors)])
+  if options.processorpath:
+    javac_cmd.extend(['-processorpath', options.processorpath])
   if options.processor_args:
     for arg in options.processor_args:
       javac_cmd.extend(['-A%s' % arg])
+
+  javac_cmd.extend(options.javac_arg)
 
   classpath_inputs = options.bootclasspath
   if options.classpath:

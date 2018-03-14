@@ -17,11 +17,13 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
+#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/task_scheduler/scheduler_worker_pool_params.h"
 #include "base/task_scheduler/task_scheduler.h"
 #include "base/threading/sequenced_worker_pool.h"
@@ -41,10 +43,12 @@
 #include "chrome/service/cloud_print/cloud_print_proxy.h"
 #include "chrome/service/net/service_url_request_context_getter.h"
 #include "chrome/service/service_process_prefs.h"
+#include "components/network_session_configurator/common/network_switches.h"
 #include "components/prefs/json_pref_store.h"
 #include "mojo/edk/embedder/embedder.h"
 #include "mojo/edk/embedder/named_platform_handle.h"
 #include "mojo/edk/embedder/named_platform_handle_utils.h"
+#include "mojo/edk/embedder/peer_connection.h"
 #include "mojo/edk/embedder/platform_handle_utils.h"
 #include "mojo/edk/embedder/scoped_ipc_support.h"
 #include "net/base/network_change_notifier.h"
@@ -151,20 +155,8 @@ bool ServiceProcess::Initialize(base::MessageLoopForUI* message_loop,
   main_message_loop_ = message_loop;
   service_process_state_.reset(state);
   network_change_notifier_.reset(net::NetworkChangeNotifier::Create());
-  base::Thread::Options options;
-  options.message_loop_type = base::MessageLoop::TYPE_IO;
-  io_thread_.reset(new ServiceIOThread("ServiceProcess_IO"));
-  file_thread_.reset(new base::Thread("ServiceProcess_File"));
-  if (!io_thread_->StartWithOptions(options) ||
-      !file_thread_->StartWithOptions(options)) {
-    NOTREACHED();
-    Teardown();
-    return false;
-  }
 
   // Initialize TaskScheduler and redirect SequencedWorkerPool tasks to it.
-  using StandbyThreadPolicy =
-      base::SchedulerWorkerPoolParams::StandbyThreadPolicy;
   constexpr int kMaxBackgroundThreads = 1;
   constexpr int kMaxBackgroundBlockingThreads = 1;
   constexpr int kMaxForegroundThreads = 3;
@@ -172,26 +164,25 @@ bool ServiceProcess::Initialize(base::MessageLoopForUI* message_loop,
   constexpr base::TimeDelta kSuggestedReclaimTime =
       base::TimeDelta::FromSeconds(30);
 
-  base::TaskScheduler::CreateAndSetDefaultTaskScheduler(
-      "CloudPrintServiceProcess",
-      {{StandbyThreadPolicy::LAZY, kMaxBackgroundThreads,
-        kSuggestedReclaimTime},
-       {StandbyThreadPolicy::LAZY, kMaxBackgroundBlockingThreads,
-        kSuggestedReclaimTime},
-       {StandbyThreadPolicy::LAZY, kMaxForegroundThreads,
-        kSuggestedReclaimTime},
-       {StandbyThreadPolicy::LAZY, kMaxForegroundBlockingThreads,
-        kSuggestedReclaimTime,
+  base::TaskScheduler::Create("CloudPrintServiceProcess");
+  base::TaskScheduler::GetInstance()->Start(
+      {{kMaxBackgroundThreads, kSuggestedReclaimTime},
+       {kMaxBackgroundBlockingThreads, kSuggestedReclaimTime},
+       {kMaxForegroundThreads, kSuggestedReclaimTime},
+       {kMaxForegroundBlockingThreads, kSuggestedReclaimTime,
         base::SchedulerBackwardCompatibility::INIT_COM_STA}});
 
   base::SequencedWorkerPool::EnableWithRedirectionToTaskSchedulerForProcess();
 
-  // Since SequencedWorkerPool is redirected to TaskScheduler, the value of
-  // |kMaxBlockingPoolThreads| is ignored.
-  constexpr int kMaxBlockingPoolThreads = 3;
-  blocking_pool_ =
-      new base::SequencedWorkerPool(kMaxBlockingPoolThreads, "ServiceBlocking",
-                                    base::TaskPriority::USER_VISIBLE);
+  // Initialize the IO and FILE threads.
+  base::Thread::Options options;
+  options.message_loop_type = base::MessageLoop::TYPE_IO;
+  io_thread_.reset(new ServiceIOThread("ServiceProcess_IO"));
+  if (!io_thread_->StartWithOptions(options)) {
+    NOTREACHED();
+    Teardown();
+    return false;
+  }
 
   // Initialize Mojo early so things can use it.
   mojo::edk::Init();
@@ -205,10 +196,11 @@ bool ServiceProcess::Initialize(base::MessageLoopForUI* message_loop,
   PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
   base::FilePath pref_path =
       user_data_dir.Append(chrome::kServiceStateFileName);
-  service_prefs_.reset(new ServiceProcessPrefs(
+  service_prefs_ = std::make_unique<ServiceProcessPrefs>(
       pref_path,
-      JsonPrefStore::GetTaskRunnerForFile(pref_path, blocking_pool_.get())
-          .get()));
+      base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskShutdownBehavior::BLOCK_SHUTDOWN})
+          .get());
   service_prefs_->ReadPrefs();
 
   // This switch it required to run connector with test gaia.
@@ -246,9 +238,8 @@ bool ServiceProcess::Initialize(base::MessageLoopForUI* message_loop,
 
   ipc_server_.reset(new ServiceIPCServer(this /* client */, io_task_runner(),
                                          &shutdown_event_));
-  ipc_server_->AddMessageHandler(
-      base::MakeUnique<cloud_print::CloudPrintMessageHandler>(ipc_server_.get(),
-                                                              this));
+  ipc_server_->binder_registry().AddInterface(
+      base::Bind(&cloud_print::CloudPrintMessageHandler::Create, this));
   ipc_server_->Init();
 
   // After the IPC server has started we signal that the service process is
@@ -280,17 +271,6 @@ bool ServiceProcess::Teardown() {
   // background threads can cleanup.
   shutdown_event_.Signal();
   io_thread_.reset();
-  file_thread_.reset();
-
-  if (blocking_pool_.get()) {
-    // The goal is to make it impossible for chrome to 'infinite loop' during
-    // shutdown, but to reasonably expect that all BLOCKING_SHUTDOWN tasks
-    // queued during shutdown get run. There's nothing particularly scientific
-    // about the number chosen.
-    const int kMaxNewShutdownBlockingTasks = 1000;
-    blocking_pool_->Shutdown(kMaxNewShutdownBlockingTasks);
-    blocking_pool_ = NULL;
-  }
 
   if (base::TaskScheduler::GetInstance())
     base::TaskScheduler::GetInstance()->Shutdown();
@@ -371,7 +351,9 @@ mojo::ScopedMessagePipeHandle ServiceProcess::CreateChannelMessagePipe() {
 #endif
   CHECK(channel_handle.is_valid());
 
-  return mojo::edk::ConnectToPeerProcess(std::move(channel_handle));
+  peer_connection_ = base::MakeUnique<mojo::edk::PeerConnection>();
+  return peer_connection_->Connect(mojo::edk::ConnectionParams(
+      mojo::edk::TransportProtocol::kLegacy, std::move(channel_handle)));
 }
 
 cloud_print::CloudPrintProxy* ServiceProcess::GetCloudPrintProxy() {

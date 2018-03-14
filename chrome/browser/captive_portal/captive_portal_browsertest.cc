@@ -17,8 +17,10 @@
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
+#include "base/scoped_observer.h"
+#include "base/sequence_checker.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/captive_portal/captive_portal_service.h"
@@ -37,6 +39,7 @@
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/tab_contents/tab_contents_iterator.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -133,8 +136,7 @@ const char* const kInternetConnectedTitle = "Title Of Awesomeness";
 // A URL request job that hangs until FailJobs() is called.  Started jobs
 // are stored in a static class variable containing a linked list so that
 // FailJobs() can locate them.
-class URLRequestTimeoutOnDemandJob : public net::URLRequestJob,
-                                     public base::NonThreadSafe {
+class URLRequestTimeoutOnDemandJob : public net::URLRequestJob {
  public:
   // net::URLRequestJob:
   void Start() override;
@@ -211,6 +213,8 @@ class URLRequestTimeoutOnDemandJob : public net::URLRequestJob,
   // The next job that had been started but not yet timed out.
   URLRequestTimeoutOnDemandJob* next_job_;
 
+  SEQUENCE_CHECKER(sequence_checker_);
+
   DISALLOW_COPY_AND_ASSIGN(URLRequestTimeoutOnDemandJob);
 };
 
@@ -220,7 +224,7 @@ int URLRequestTimeoutOnDemandJob::num_jobs_started_ = 0;
 URLRequestTimeoutOnDemandJob* URLRequestTimeoutOnDemandJob::job_list_ = NULL;
 
 void URLRequestTimeoutOnDemandJob::Start() {
-  EXPECT_TRUE(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Insert at start of the list.
   next_job_ = job_list_;
@@ -238,8 +242,8 @@ void URLRequestTimeoutOnDemandJob::Start() {
 void URLRequestTimeoutOnDemandJob::WaitForJobs(int num_jobs) {
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&URLRequestTimeoutOnDemandJob::WaitForJobsOnIOThread,
-                 num_jobs));
+      base::BindOnce(&URLRequestTimeoutOnDemandJob::WaitForJobsOnIOThread,
+                     num_jobs));
   content::RunMessageLoop();
 }
 
@@ -247,8 +251,8 @@ void URLRequestTimeoutOnDemandJob::WaitForJobs(int num_jobs) {
 void URLRequestTimeoutOnDemandJob::FailJobs(int expected_num_jobs) {
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&URLRequestTimeoutOnDemandJob::FailOrAbandonJobsOnIOThread,
-                 expected_num_jobs, FAIL_JOBS, net::SSLInfo()));
+      base::BindOnce(&URLRequestTimeoutOnDemandJob::FailOrAbandonJobsOnIOThread,
+                     expected_num_jobs, FAIL_JOBS, net::SSLInfo()));
 }
 
 // static
@@ -257,16 +261,16 @@ void URLRequestTimeoutOnDemandJob::FailJobsWithCertError(
     const net::SSLInfo& ssl_info) {
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&URLRequestTimeoutOnDemandJob::FailOrAbandonJobsOnIOThread,
-                 expected_num_jobs, FAIL_JOBS_WITH_CERT_ERROR, ssl_info));
+      base::BindOnce(&URLRequestTimeoutOnDemandJob::FailOrAbandonJobsOnIOThread,
+                     expected_num_jobs, FAIL_JOBS_WITH_CERT_ERROR, ssl_info));
 }
 
 // static
 void URLRequestTimeoutOnDemandJob::AbandonJobs(int expected_num_jobs) {
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&URLRequestTimeoutOnDemandJob::FailOrAbandonJobsOnIOThread,
-                 expected_num_jobs, ABANDON_JOBS, net::SSLInfo()));
+      base::BindOnce(&URLRequestTimeoutOnDemandJob::FailOrAbandonJobsOnIOThread,
+                     expected_num_jobs, ABANDON_JOBS, net::SSLInfo()));
 }
 
 URLRequestTimeoutOnDemandJob::URLRequestTimeoutOnDemandJob(
@@ -276,6 +280,7 @@ URLRequestTimeoutOnDemandJob::URLRequestTimeoutOnDemandJob(
 }
 
 URLRequestTimeoutOnDemandJob::~URLRequestTimeoutOnDemandJob() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // All hanging jobs should have failed or been abandoned before being
   // destroyed.
   EXPECT_FALSE(RemoveFromList());
@@ -429,7 +434,7 @@ class URLRequestMockCaptivePortalJobFactory {
 void URLRequestMockCaptivePortalJobFactory::AddUrlHandlers() {
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &URLRequestMockCaptivePortalJobFactory::AddUrlHandlersOnIOThread,
           base::Unretained(this)));
 }
@@ -438,9 +443,9 @@ void URLRequestMockCaptivePortalJobFactory::SetBehindCaptivePortal(
     bool behind_captive_portal) {
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&URLRequestMockCaptivePortalJobFactory::
-                     SetBehindCaptivePortalOnIOThread,
-                 base::Unretained(this), behind_captive_portal));
+      base::BindOnce(&URLRequestMockCaptivePortalJobFactory::
+                         SetBehindCaptivePortalOnIOThread,
+                     base::Unretained(this), behind_captive_portal));
 }
 
 std::unique_ptr<net::URLRequestInterceptor>
@@ -493,11 +498,8 @@ URLRequestMockCaptivePortalJobFactory::Interceptor::MaybeInterceptRequest(
     // Once logged in to the portal, HTTPS requests return the page that was
     // actually requested.
     return new URLRequestMockHTTPJob(
-        request,
-        network_delegate,
-        root_http.Append(FILE_PATH_LITERAL("title2.html")),
-        BrowserThread::GetBlockingPool()->GetTaskRunnerWithShutdownBehavior(
-            base::SequencedWorkerPool::SKIP_ON_SHUTDOWN));
+        request, network_delegate,
+        root_http.Append(FILE_PATH_LITERAL("title2.html")));
   } else if (request->url() == kMockHttpsQuickTimeoutUrl) {
     if (behind_captive_portal_)
       return new URLRequestFailedJob(
@@ -505,11 +507,8 @@ URLRequestMockCaptivePortalJobFactory::Interceptor::MaybeInterceptRequest(
     // Once logged in to the portal, HTTPS requests return the page that was
     // actually requested.
     return new URLRequestMockHTTPJob(
-        request,
-        network_delegate,
-        root_http.Append(FILE_PATH_LITERAL("title2.html")),
-        BrowserThread::GetBlockingPool()->GetTaskRunnerWithShutdownBehavior(
-            base::SequencedWorkerPool::SKIP_ON_SHUTDOWN));
+        request, network_delegate,
+        root_http.Append(FILE_PATH_LITERAL("title2.html")));
   } else {
     // The URL should be the captive portal test URL.
     EXPECT_TRUE(request->url() == kMockCaptivePortalTestUrl ||
@@ -520,27 +519,18 @@ URLRequestMockCaptivePortalJobFactory::Interceptor::MaybeInterceptRequest(
       // by the captive portal.
       if (request->url() == kMockCaptivePortal511Url) {
         return new URLRequestMockHTTPJob(
-            request,
-            network_delegate,
-            root_http.Append(FILE_PATH_LITERAL("captive_portal/page511.html")),
-            BrowserThread::GetBlockingPool()->GetTaskRunnerWithShutdownBehavior(
-                base::SequencedWorkerPool::SKIP_ON_SHUTDOWN));
+            request, network_delegate,
+            root_http.Append(FILE_PATH_LITERAL("captive_portal/page511.html")));
       }
       return new URLRequestMockHTTPJob(
-          request,
-          network_delegate,
-          root_http.Append(FILE_PATH_LITERAL("captive_portal/login.html")),
-          BrowserThread::GetBlockingPool()->GetTaskRunnerWithShutdownBehavior(
-              base::SequencedWorkerPool::SKIP_ON_SHUTDOWN));
+          request, network_delegate,
+          root_http.Append(FILE_PATH_LITERAL("captive_portal/login.html")));
     }
 
     // After logging in to the portal, the test URLs return a 204 response.
     return new URLRequestMockHTTPJob(
-        request,
-        network_delegate,
-        root_http.Append(FILE_PATH_LITERAL("captive_portal/page204.html")),
-        BrowserThread::GetBlockingPool()->GetTaskRunnerWithShutdownBehavior(
-            base::SequencedWorkerPool::SKIP_ON_SHUTDOWN));
+        request, network_delegate,
+        root_http.Append(FILE_PATH_LITERAL("captive_portal/page204.html")));
   }
 }
 
@@ -657,7 +647,7 @@ void MultiNavigationObserver::Observe(
   if (waiting_for_navigation_ &&
       num_navigations_to_wait_for_ == num_navigations_) {
     waiting_for_navigation_ = false;
-    base::MessageLoopForUI::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 }
 
@@ -747,7 +737,7 @@ void FailLoadsAfterLoginObserver::Observe(
       tabs_needing_navigation_.size() ==
           tabs_navigated_to_final_destination_.size()) {
     waiting_for_navigation_ = false;
-    base::MessageLoopForUI::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 }
 
@@ -841,7 +831,7 @@ void CaptivePortalObserver::Observe(
   if (waiting_for_result_ &&
       num_results_to_wait_for_ == num_results_received_) {
     waiting_for_result_ = false;
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 }
 
@@ -905,6 +895,48 @@ void AddHstsHost(net::URLRequestContextGetter* context_getter,
   bool include_subdomains = false;
   transport_security_state->AddHSTS(host, expiry, include_subdomains);
 }
+
+// Helper for waiting for a change of the active tab.
+// Users can wait for the change via WaitForActiveTabChange method.
+// DCHECKs ensure that only one change happens during the lifetime of a
+// TabActivationWaiter instance.
+class TabActivationWaiter : public TabStripModelObserver {
+ public:
+  explicit TabActivationWaiter(TabStripModel* tab_strip_model)
+      : number_of_unconsumed_active_tab_changes_(0), scoped_observer_(this) {
+    scoped_observer_.Add(tab_strip_model);
+  }
+
+  void WaitForActiveTabChange() {
+    if (number_of_unconsumed_active_tab_changes_ == 0) {
+      // Wait until TabStripModelObserver::ActiveTabChanged will get called.
+      message_loop_runner_ = new content::MessageLoopRunner;
+      message_loop_runner_->Run();
+    }
+
+    // "consume" one tab activation event.
+    DCHECK_EQ(1, number_of_unconsumed_active_tab_changes_);
+    number_of_unconsumed_active_tab_changes_--;
+  }
+
+  // TabStripModelObserver overrides.
+  void ActiveTabChanged(content::WebContents* old_contents,
+                        content::WebContents* new_contents,
+                        int index,
+                        int reason) override {
+    number_of_unconsumed_active_tab_changes_++;
+    DCHECK_EQ(1, number_of_unconsumed_active_tab_changes_);
+    if (message_loop_runner_)
+      message_loop_runner_->Quit();
+  }
+
+ private:
+  scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
+  int number_of_unconsumed_active_tab_changes_;
+  ScopedObserver<TabStripModel, TabActivationWaiter> scoped_observer_;
+
+  DISALLOW_COPY_AND_ASSIGN(TabActivationWaiter);
+};
 
 }  // namespace
 
@@ -1020,7 +1052,7 @@ class CaptivePortalBrowserTest : public InProcessBrowserTest {
   // Much as above, but accepts a URL parameter and can be used for errors that
   // trigger captive portal checks other than timeouts.  |error_url| should
   // result in an error rather than hanging.
-  // If |delay_portal_response_until_interstital| is true, captive portal probe
+  // If |delay_portal_response_until_interstitial| is true, captive portal probe
   // request are ignored until the interstitial is shown, at which point a
   // captive portal result is sent. This allows testing in conjunction with the
   // certificate error interstitial.
@@ -1028,7 +1060,7 @@ class CaptivePortalBrowserTest : public InProcessBrowserTest {
       Browser* browser,
       bool expect_open_login_tab,
       const GURL& error_url,
-      bool delay_portal_response_until_interstital);
+      bool delay_portal_response_until_interstitial);
 
   // Navigates the active tab to an SSL error page which triggers an
   // interstitial timer. Also disables captive portal checks indefinitely, so
@@ -1106,7 +1138,7 @@ void CaptivePortalBrowserTest::SetUpOnMainThread() {
   // Enable mock requests.
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&chrome_browser_net::SetUrlRequestMocksEnabled, true));
+      base::BindOnce(&chrome_browser_net::SetUrlRequestMocksEnabled, true));
   factory_.AddUrlHandlers();
 
   // Double-check that the captive portal service isn't enabled by default for
@@ -1430,7 +1462,7 @@ void CaptivePortalBrowserTest::FastErrorBehindCaptivePortal(
     Browser* browser,
     bool expect_open_login_tab,
     const GURL& error_url,
-    bool delay_portal_response_until_interstital) {
+    bool delay_portal_response_until_interstitial) {
   TabStripModel* tab_strip_model = browser->tab_strip_model();
   // Calling this on a tab that's waiting for a load to manually be timed out
   // will result in a hang.
@@ -1456,7 +1488,7 @@ void CaptivePortalBrowserTest::FastErrorBehindCaptivePortal(
 
   CaptivePortalService* captive_portal_service =
       CaptivePortalServiceFactory::GetForProfile(browser->profile());
-  if (delay_portal_response_until_interstital)
+  if (delay_portal_response_until_interstitial)
     RespondToProbeRequests(false);
 
   MultiNavigationObserver navigation_observer;
@@ -1465,7 +1497,7 @@ void CaptivePortalBrowserTest::FastErrorBehindCaptivePortal(
       browser, error_url, WindowOpenDisposition::CURRENT_TAB,
       ui_test_utils::BROWSER_TEST_NONE);
 
-  if (delay_portal_response_until_interstital) {
+  if (delay_portal_response_until_interstitial) {
     EXPECT_EQ(CaptivePortalTabReloader::STATE_NONE,
               GetStateOfTabReloaderAt(browser, initial_active_index));
     // Once the interstitial is attached, probe for captive portal.
@@ -1549,8 +1581,8 @@ void CaptivePortalBrowserTest::NavigateLoginTab(Browser* browser,
   ASSERT_TRUE(IsLoginTab(browser->tab_strip_model()->GetActiveWebContents()));
 
   // Do the navigation.
-  EXPECT_TRUE(content::ExecuteScript(tab_strip_model->GetActiveWebContents(),
-                                     "submitForm()"));
+  content::ExecuteScriptAsync(tab_strip_model->GetActiveWebContents(),
+                              "submitForm()");
 
   portal_observer.WaitForResults(1);
   navigation_observer.WaitForNavigations(1);
@@ -1595,8 +1627,8 @@ void CaptivePortalBrowserTest::Login(Browser* browser,
   ASSERT_TRUE(IsLoginTab(tab_strip_model->GetWebContentsAt(login_tab_index)));
 
   // Trigger a navigation.
-  EXPECT_TRUE(content::ExecuteScript(tab_strip_model->GetActiveWebContents(),
-                                     "submitForm()"));
+  content::ExecuteScriptAsync(tab_strip_model->GetActiveWebContents(),
+                              "submitForm()");
 
   portal_observer.WaitForResults(1);
 
@@ -1637,8 +1669,8 @@ void CaptivePortalBrowserTest::LoginCertError(Browser* browser) {
   ASSERT_TRUE(IsLoginTab(tab_strip_model->GetWebContentsAt(login_tab_index)));
 
   // Trigger a navigation.
-  EXPECT_TRUE(content::ExecuteScript(tab_strip_model->GetActiveWebContents(),
-                                     "submitForm()"));
+  content::ExecuteScriptAsync(tab_strip_model->GetActiveWebContents(),
+                              "submitForm()");
 
   // The captive portal tab navigation will trigger a captive portal check,
   // and reloading the original tab will bring up the interstitial page again,
@@ -1990,8 +2022,11 @@ IN_PROC_BROWSER_TEST_F(CaptivePortalBrowserTest,
   EXPECT_TRUE(WaitForRenderFrameReady(rfh));
   const char kClickConnectButtonJS[] =
       "document.getElementById('primary-button').click();";
-  EXPECT_TRUE(
-      content::ExecuteScript(rfh, kClickConnectButtonJS));
+  {
+    TabActivationWaiter tab_activation_waiter(tab_strip_model);
+    content::ExecuteScriptAsync(rfh, kClickConnectButtonJS);
+    tab_activation_waiter.WaitForActiveTabChange();
+  }
   EXPECT_EQ(login_tab_index, tab_strip_model->active_index());
 
   // For completeness, close the login tab and try clicking |Connect| again.
@@ -2003,8 +2038,7 @@ IN_PROC_BROWSER_TEST_F(CaptivePortalBrowserTest,
       tab_strip_model->CloseWebContentsAt(tab_strip_model->active_index(), 0));
   destroyed_watcher.Wait();
   MultiNavigationObserver navigation_observer;
-  EXPECT_TRUE(
-      content::ExecuteScript(rfh, kClickConnectButtonJS));
+  content::ExecuteScriptAsync(rfh, kClickConnectButtonJS);
   navigation_observer.WaitForNavigations(1);
   EXPECT_EQ(login_tab_index, tab_strip_model->active_index());
 
@@ -2302,7 +2336,7 @@ IN_PROC_BROWSER_TEST_F(
   // 1- For stopping the hanging page.
   // 2- For completing the load of the above navigation.
   // 3- For completing the load of the login tab.
-  // NOTE: for PlzNaviate the first one doesn't show up.
+  // NOTE: for PlzNavigate the first one doesn't show up.
   test_navigation_observer.WaitForNavigations(
       content::IsBrowserSideNavigationEnabled() ? 2 : 3);
   // Should end up with a captive portal interstitial and a new login tab.
@@ -2353,17 +2387,14 @@ IN_PROC_BROWSER_TEST_F(CaptivePortalBrowserTest, SSLCertErrorLogin) {
   // NOTE: this doesn't occur with PlzNavigate, since the SSL interstitial timer
   // is fired synchronously due to different timings when
   // CaptivePortalTabReloader gets the load start callback.
-  bool delay_portal_response_until_interstital =
+  bool delay_portal_response_until_interstitial =
       !content::IsBrowserSideNavigationEnabled();
 
   // The path does not matter.
   GURL cert_error_url = https_server.GetURL(kTestServerLoginPath);
   // A captive portal check is triggered in FastErrorBehindCaptivePortal.
-  FastErrorBehindCaptivePortal(
-      browser(),
-      true,
-      cert_error_url,
-      delay_portal_response_until_interstital);
+  FastErrorBehindCaptivePortal(browser(), true, cert_error_url,
+                               delay_portal_response_until_interstitial);
 
   EXPECT_EQ(SSLBlockingPage::kTypeForTesting,
             GetInterstitialType(broken_tab_contents));
@@ -2801,9 +2832,10 @@ IN_PROC_BROWSER_TEST_F(CaptivePortalBrowserTest, HstsLogin) {
   URLRequestFailedJob::GetMockHttpUrl(net::ERR_CONNECTION_TIMED_OUT);
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&AddHstsHost,
-                 base::RetainedRef(browser()->profile()->GetRequestContext()),
-                 http_timeout_url.host()));
+      base::BindOnce(
+          &AddHstsHost,
+          base::RetainedRef(browser()->profile()->GetRequestContext()),
+          http_timeout_url.host()));
 
   SlowLoadBehindCaptivePortal(browser(), true, http_timeout_url, 1, 1);
   Login(browser(), 1, 0);

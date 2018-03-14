@@ -30,31 +30,32 @@
 
 namespace blink {
 
-class Node;
+class HTMLPlugInElement;
 class PluginView;
 
 class CORE_EXPORT PluginDocument final : public HTMLDocument {
  public:
-  static PluginDocument* Create(
-      const DocumentInit& initializer = DocumentInit()) {
+  static PluginDocument* Create(const DocumentInit& initializer) {
     return new PluginDocument(initializer);
   }
 
-  void SetPluginNode(Node* plugin_node) { plugin_node_ = plugin_node; }
+  void SetPluginNode(HTMLPlugInElement* plugin_node) {
+    plugin_node_ = plugin_node;
+  }
+  HTMLPlugInElement* PluginNode() { return plugin_node_; }
 
   PluginView* GetPluginView();
-  Node* PluginNode();
 
   void Shutdown() override;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   explicit PluginDocument(const DocumentInit&);
 
   DocumentParser* CreateParser() override;
 
-  Member<Node> plugin_node_;
+  Member<HTMLPlugInElement> plugin_node_;
 };
 
 DEFINE_DOCUMENT_TYPE_CASTS(PluginDocument);

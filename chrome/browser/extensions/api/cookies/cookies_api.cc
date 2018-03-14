@@ -193,9 +193,8 @@ void CookiesEventRouter::DispatchEvent(
   EventRouter* router = context ? EventRouter::Get(context) : NULL;
   if (!router)
     return;
-  std::unique_ptr<Event> event(
-      new Event(histogram_value, event_name, std::move(event_args)));
-  event->restrict_to_browser_context = context;
+  auto event = base::MakeUnique<Event>(histogram_value, event_name,
+                                       std::move(event_args), context);
   event->event_url = cookie_domain;
   router->BroadcastEvent(std::move(event));
 }
@@ -228,7 +227,7 @@ bool CookiesGetFunction::RunAsync() {
 
   bool rv = BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&CookiesGetFunction::GetCookieOnIOThread, this));
+      base::BindOnce(&CookiesGetFunction::GetCookieOnIOThread, this));
   DCHECK(rv);
 
   // Will finish asynchronously.
@@ -241,7 +240,7 @@ void CookiesGetFunction::GetCookieOnIOThread() {
       store_browser_context_->GetURLRequestContext()->cookie_store();
   cookies_helpers::GetCookieListFromStore(
       cookie_store, url_,
-      base::Bind(&CookiesGetFunction::GetCookieCallback, this));
+      base::BindOnce(&CookiesGetFunction::GetCookieCallback, this));
 }
 
 void CookiesGetFunction::GetCookieCallback(const net::CookieList& cookie_list) {
@@ -263,7 +262,7 @@ void CookiesGetFunction::GetCookieCallback(const net::CookieList& cookie_list) {
 
   bool rv = BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&CookiesGetFunction::RespondOnUIThread, this));
+      base::BindOnce(&CookiesGetFunction::RespondOnUIThread, this));
   DCHECK(rv);
 }
 
@@ -299,7 +298,7 @@ bool CookiesGetAllFunction::RunAsync() {
 
   bool rv = BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&CookiesGetAllFunction::GetAllCookiesOnIOThread, this));
+      base::BindOnce(&CookiesGetAllFunction::GetAllCookiesOnIOThread, this));
   DCHECK(rv);
 
   // Will finish asynchronously.
@@ -312,7 +311,7 @@ void CookiesGetAllFunction::GetAllCookiesOnIOThread() {
       store_browser_context_->GetURLRequestContext()->cookie_store();
   cookies_helpers::GetCookieListFromStore(
       cookie_store, url_,
-      base::Bind(&CookiesGetAllFunction::GetAllCookiesCallback, this));
+      base::BindOnce(&CookiesGetAllFunction::GetAllCookiesCallback, this));
 }
 
 void CookiesGetAllFunction::GetAllCookiesCallback(
@@ -326,7 +325,7 @@ void CookiesGetAllFunction::GetAllCookiesCallback(
   }
   bool rv = BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&CookiesGetAllFunction::RespondOnUIThread, this));
+      base::BindOnce(&CookiesGetAllFunction::RespondOnUIThread, this));
   DCHECK(rv);
 }
 
@@ -361,7 +360,7 @@ bool CookiesSetFunction::RunAsync() {
 
   bool rv = BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&CookiesSetFunction::SetCookieOnIOThread, this));
+      base::BindOnce(&CookiesSetFunction::SetCookieOnIOThread, this));
   DCHECK(rv);
 
   // Will finish asynchronously.
@@ -397,26 +396,34 @@ void CookiesSetFunction::SetCookieOnIOThread() {
   }
 
   // clang-format off
-  cookie_store->SetCookieWithDetailsAsync(
-      url_, parsed_args_->details.name.get() ? *parsed_args_->details.name
+  std::unique_ptr<net::CanonicalCookie> cc(
+      net::CanonicalCookie::CreateSanitizedCookie(
+          url_, parsed_args_->details.name.get() ? *parsed_args_->details.name
+                                                 : std::string(),
+          parsed_args_->details.value.get() ? *parsed_args_->details.value
+                                                 : std::string(),
+          parsed_args_->details.domain.get() ? *parsed_args_->details.domain
                                              : std::string(),
-      parsed_args_->details.value.get() ? *parsed_args_->details.value
-                                        : std::string(),
-      parsed_args_->details.domain.get() ? *parsed_args_->details.domain
-                                         : std::string(),
-      parsed_args_->details.path.get() ? *parsed_args_->details.path
-                                       : std::string(),
-      base::Time(),
-      expiration_time,
-      base::Time(),
-      parsed_args_->details.secure.get() ? *parsed_args_->details.secure
-                                         : false,
-      parsed_args_->details.http_only.get() ? *parsed_args_->details.http_only
-                                            : false,
-      same_site,
-      net::COOKIE_PRIORITY_DEFAULT,
-      base::Bind(&CookiesSetFunction::PullCookie, this));
+          parsed_args_->details.path.get() ? *parsed_args_->details.path
+                                           : std::string(),
+          base::Time(),
+          expiration_time,
+          base::Time(),
+          parsed_args_->details.secure.get() ? *parsed_args_->details.secure
+                                             : false,
+          parsed_args_->details.http_only.get() ?
+              *parsed_args_->details.http_only :
+              false,
+          same_site,
+          net::COOKIE_PRIORITY_DEFAULT));
   // clang-format on
+  if (!cc) {
+    PullCookie(false);
+    return;
+  }
+  cookie_store->SetCanonicalCookieAsync(
+      std::move(cc), url_.SchemeIsCryptographic(), true /*modify_http_only*/,
+      base::BindOnce(&CookiesSetFunction::PullCookie, this));
 }
 
 void CookiesSetFunction::PullCookie(bool set_cookie_result) {
@@ -426,7 +433,7 @@ void CookiesSetFunction::PullCookie(bool set_cookie_result) {
   success_ = set_cookie_result;
   cookies_helpers::GetCookieListFromStore(
       cookie_store, url_,
-      base::Bind(&CookiesSetFunction::PullCookieCallback, this));
+      base::BindOnce(&CookiesSetFunction::PullCookieCallback, this));
 }
 
 void CookiesSetFunction::PullCookieCallback(
@@ -448,7 +455,7 @@ void CookiesSetFunction::PullCookieCallback(
 
   bool rv = BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&CookiesSetFunction::RespondOnUIThread, this));
+      base::BindOnce(&CookiesSetFunction::RespondOnUIThread, this));
   DCHECK(rv);
 }
 
@@ -490,7 +497,7 @@ bool CookiesRemoveFunction::RunAsync() {
   // Pass the work off to the IO thread.
   bool rv = BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&CookiesRemoveFunction::RemoveCookieOnIOThread, this));
+      base::BindOnce(&CookiesRemoveFunction::RemoveCookieOnIOThread, this));
   DCHECK(rv);
 
   // Will return asynchronously.
@@ -505,7 +512,7 @@ void CookiesRemoveFunction::RemoveCookieOnIOThread() {
       store_browser_context_->GetURLRequestContext()->cookie_store();
   cookie_store->DeleteCookieAsync(
       url_, parsed_args_->details.name,
-      base::Bind(&CookiesRemoveFunction::RemoveCookieCallback, this));
+      base::BindOnce(&CookiesRemoveFunction::RemoveCookieCallback, this));
 }
 
 void CookiesRemoveFunction::RemoveCookieCallback() {
@@ -519,7 +526,7 @@ void CookiesRemoveFunction::RemoveCookieCallback() {
   // Return to UI thread
   bool rv = BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&CookiesRemoveFunction::RespondOnUIThread, this));
+      base::BindOnce(&CookiesRemoveFunction::RespondOnUIThread, this));
   DCHECK(rv);
 }
 
@@ -580,13 +587,12 @@ void CookiesAPI::Shutdown() {
   EventRouter::Get(browser_context_)->UnregisterObserver(this);
 }
 
-static base::LazyInstance<
-    BrowserContextKeyedAPIFactory<CookiesAPI>>::DestructorAtExit g_factory =
-    LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<BrowserContextKeyedAPIFactory<CookiesAPI>>::
+    DestructorAtExit g_cookies_api_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
 BrowserContextKeyedAPIFactory<CookiesAPI>* CookiesAPI::GetFactoryInstance() {
-  return g_factory.Pointer();
+  return g_cookies_api_factory.Pointer();
 }
 
 void CookiesAPI::OnListenerAdded(const EventListenerInfo& details) {

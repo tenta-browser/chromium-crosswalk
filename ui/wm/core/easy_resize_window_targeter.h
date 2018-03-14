@@ -8,15 +8,17 @@
 #include "base/macros.h"
 #include "ui/aura/window_targeter.h"
 #include "ui/gfx/geometry/insets.h"
-#include "ui/wm/wm_export.h"
+#include "ui/wm/core/wm_core_export.h"
 
 namespace wm {
 
 // An EventTargeter for a container window that uses a slightly larger
 // hit-target region for easier resize.
-class WM_EXPORT EasyResizeWindowTargeter : public aura::WindowTargeter {
+// TODO(sky): make this class final.
+class WM_CORE_EXPORT EasyResizeWindowTargeter : public aura::WindowTargeter {
  public:
   // |container| window is the owner of this targeter.
+  // NOTE: the insets must be negative.
   EasyResizeWindowTargeter(aura::Window* container,
                            const gfx::Insets& mouse_extend,
                            const gfx::Insets& touch_extend);
@@ -24,26 +26,21 @@ class WM_EXPORT EasyResizeWindowTargeter : public aura::WindowTargeter {
   ~EasyResizeWindowTargeter() override;
 
  protected:
-  void set_mouse_extend(const gfx::Insets& mouse_extend) {
-    mouse_extend_ = mouse_extend;
-  }
-
-  void set_touch_extend(const gfx::Insets& touch_extend) {
-    touch_extend_ = touch_extend;
-  }
-
   // aura::WindowTargeter:
-  bool EventLocationInsideBounds(aura::Window* window,
-                                 const ui::LocatedEvent& event) const override;
+  void OnSetInsets(const gfx::Insets& last_mouse_extend,
+                   const gfx::Insets& last_touch_extend) override;
 
  private:
-  // Returns true if the hit testing (EventLocationInsideBounds()) should use
-  // the extended bounds.
-  bool ShouldUseExtendedBounds(const aura::Window* window) const;
+  // aura::WindowTargeter:
+  // Delegates to WindowTargeter's impl and prevents overriding in subclasses.
+  bool EventLocationInsideBounds(aura::Window* target,
+                                 const ui::LocatedEvent& event) const final;
+
+  // Returns true if the hit testing (GetHitTestRects()) should use the
+  // extended bounds.
+  bool ShouldUseExtendedBounds(const aura::Window* window) const override;
 
   aura::Window* container_;
-  gfx::Insets mouse_extend_;
-  gfx::Insets touch_extend_;
 
   DISALLOW_COPY_AND_ASSIGN(EasyResizeWindowTargeter);
 };

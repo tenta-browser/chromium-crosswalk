@@ -4,9 +4,9 @@
 
 #include <stddef.h>
 
-#include <deque>
-
 #include "base/bind.h"
+#include "base/containers/circular_deque.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
@@ -38,7 +38,8 @@ namespace braille_display_private {
 
 namespace {
 
-const char kTestUserName[] = "owner@invalid.domain";
+constexpr char kTestUserName[] = "owner@invalid.domain";
+constexpr char kTestUserGaiaId[] = "0123456789";
 
 // Used to make ReadKeys return an error.
 brlapi_keyCode_t kErrorKeyCode = BRLAPI_KEY_MAX;
@@ -56,7 +57,7 @@ struct MockBrlapiConnectionData {
   std::vector<std::string> written_content;
   // List of brlapi key codes.  A negative number makes the connection mock
   // return an error from ReadKey.
-  std::deque<brlapi_keyCode_t> pending_keys;
+  base::circular_deque<brlapi_keyCode_t> pending_keys;
   // Causes a new display to appear to appear on disconnect, that is the
   // display size doubles and the controller gets notified of a brltty
   // restart.
@@ -71,9 +72,10 @@ class MockBrlapiConnection : public BrlapiConnection {
     data_->connected = true;
     on_data_ready_ = on_data_ready;
     if (!data_->pending_keys.empty()) {
-      BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                              base::Bind(&MockBrlapiConnection::NotifyDataReady,
-                                        base::Unretained(this)));
+      BrowserThread::PostTask(
+          BrowserThread::IO, FROM_HERE,
+          base::BindOnce(&MockBrlapiConnection::NotifyDataReady,
+                         base::Unretained(this)));
     }
     return CONNECT_SUCCESS;
   }
@@ -84,8 +86,9 @@ class MockBrlapiConnection : public BrlapiConnection {
       data_->display_columns *= 2;
       BrowserThread::PostTask(
           BrowserThread::IO, FROM_HERE,
-          base::Bind(&BrailleControllerImpl::PokeSocketDirForTesting,
-                     base::Unretained(BrailleControllerImpl::GetInstance())));
+          base::BindOnce(
+              &BrailleControllerImpl::PokeSocketDirForTesting,
+              base::Unretained(BrailleControllerImpl::GetInstance())));
     }
   }
 
@@ -131,9 +134,10 @@ class MockBrlapiConnection : public BrlapiConnection {
   void NotifyDataReady() {
     on_data_ready_.Run();
     if (!data_->pending_keys.empty()) {
-      BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                              base::Bind(&MockBrlapiConnection::NotifyDataReady,
-                                        base::Unretained(this)));
+      BrowserThread::PostTask(
+          BrowserThread::IO, FROM_HERE,
+          base::BindOnce(&MockBrlapiConnection::NotifyDataReady,
+                         base::Unretained(this)));
     }
   }
 
@@ -335,7 +339,10 @@ IN_PROC_BROWSER_TEST_F(BrailleDisplayPrivateAPIUserTest,
   std::unique_ptr<ScreenLockerTester> tester(ScreenLocker::GetTester());
   // Log in.
   session_manager::SessionManager::Get()->CreateSession(
-      AccountId::FromUserEmail(kTestUserName), kTestUserName);
+      AccountId::FromUserEmailGaiaId(kTestUserName, kTestUserGaiaId),
+      kTestUserName, false);
+  g_browser_process->profile_manager()->GetProfile(
+      ProfileHelper::Get()->GetProfilePathByUserIdHash(kTestUserName));
   session_manager::SessionManager::Get()->SessionStarted();
   Profile* profile = ProfileManager::GetActiveUserProfile();
   ASSERT_FALSE(

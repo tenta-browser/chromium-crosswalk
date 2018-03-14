@@ -13,14 +13,17 @@
 #include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/task_runner_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/metrics/metrics_reporting_state.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/sessions/session_restore.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/harmony/chrome_typography.h"
 #include "chrome/browser/ui/views/toolbar/app_menu_button.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/grit/chromium_strings.h"
@@ -37,7 +40,6 @@
 #include "ui/views/controls/styled_label.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/layout/grid_layout.h"
-#include "ui/views/layout/layout_constants.h"
 #include "ui/views/widget/widget.h"
 
 using views::GridLayout;
@@ -49,9 +51,6 @@ const int kWidthOfDescriptionText = 320;
 
 // Distance between checkbox and the text to the right of it.
 const int kCheckboxTextDistance = 4;
-
-// The color of the text of the sub panel to offer UMA opt-in.
-const SkColor kTextColor = SkColorSetRGB(102, 102, 102);
 
 enum SessionCrashedBubbleHistogramValue {
   SESSION_CRASHED_BUBBLE_SHOWN,
@@ -118,11 +117,8 @@ bool SessionCrashedBubble::Show(Browser* browser) {
           new SessionCrashedBubbleView::BrowserRemovalObserver(browser));
 
   if (DoesSupportConsentCheck()) {
-    // Schedule a task to run GoogleUpdateSettings::GetCollectStatsConsent() on
-    // FILE thread, since it does IO. Then, call
-    // SessionCrashedBubbleView::ShowForReal with the result.
-    content::BrowserThread::PostTaskAndReplyWithResult(
-        content::BrowserThread::FILE, FROM_HERE,
+    base::PostTaskAndReplyWithResult(
+        GoogleUpdateSettings::CollectStatsConsentTaskRunner(), FROM_HERE,
         base::Bind(&GoogleUpdateSettings::GetCollectStatsConsent),
         base::Bind(&SessionCrashedBubbleView::ShowForReal,
                    base::Passed(&browser_observer)));
@@ -172,6 +168,7 @@ SessionCrashedBubbleView::SessionCrashedBubbleView(views::View* anchor_view,
       offer_uma_optin_(offer_uma_optin),
       ignored_(true) {
   set_close_on_deactivate(false);
+  chrome::RecordDialogCreation(chrome::DialogIdentifier::SESSION_CRASHED);
 }
 
 SessionCrashedBubbleView::~SessionCrashedBubbleView() {
@@ -230,13 +227,10 @@ views::View* SessionCrashedBubbleView::CreateFootnoteView() {
       link_text,
       &offset);
   views::StyledLabel* uma_label = new views::StyledLabel(uma_text, this);
-  views::StyledLabel::RangeStyleInfo link_style =
-      views::StyledLabel::RangeStyleInfo::CreateForLink();
-  link_style.font_style = gfx::Font::NORMAL;
   uma_label->AddStyleRange(gfx::Range(offset, offset + link_text.length()),
-                           link_style);
+                           views::StyledLabel::RangeStyleInfo::CreateForLink());
   views::StyledLabel::RangeStyleInfo uma_style;
-  uma_style.color = kTextColor;
+  uma_style.text_style = STYLE_SECONDARY;
   gfx::Range before_link_range(0, offset);
   if (!before_link_range.is_empty())
     uma_label->AddStyleRange(before_link_range, uma_style);
@@ -248,7 +242,7 @@ views::View* SessionCrashedBubbleView::CreateFootnoteView() {
 
   // Create a view to hold the checkbox and the text.
   views::View* uma_view = new views::View();
-  GridLayout* uma_layout = new GridLayout(uma_view);
+  GridLayout* uma_layout = GridLayout::CreateAndInstall(uma_view);
   uma_view->SetLayoutManager(uma_layout);
 
   const int kReportColumnSetId = 0;

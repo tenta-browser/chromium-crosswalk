@@ -76,19 +76,39 @@ inline char* string_as_array(std::string* str) {
   return str->empty() ? NULL : &*str->begin();
 }
 
-// Test to see if a set, map, hash_set or hash_map contains a particular key.
+// Test to see if a set or map contains a particular key.
 // Returns true if the key is in the collection.
 template <typename Collection, typename Key>
 bool ContainsKey(const Collection& collection, const Key& key) {
   return collection.find(key) != collection.end();
 }
 
+namespace internal {
+
+template <typename Collection>
+class HasKeyType {
+  template <typename C>
+  static std::true_type test(typename C::key_type*);
+  template <typename C>
+  static std::false_type test(...);
+
+ public:
+  static constexpr bool value = decltype(test<Collection>(nullptr))::value;
+};
+
+}  // namespace internal
+
 // Test to see if a collection like a vector contains a particular value.
 // Returns true if the value is in the collection.
-template <typename Collection, typename Value>
+// Don't use this on collections such as sets or maps. This is enforced by
+// disabling this method if the collection defines a key_type.
+template <typename Collection,
+          typename Value,
+          typename std::enable_if<!internal::HasKeyType<Collection>::value,
+                                  int>::type = 0>
 bool ContainsValue(const Collection& collection, const Value& value) {
-  return std::find(collection.begin(), collection.end(), value) !=
-      collection.end();
+  return std::find(std::begin(collection), std::end(collection), value) !=
+         std::end(collection);
 }
 
 // Returns true if the container is sorted.
@@ -286,6 +306,35 @@ void EraseIf(std::unordered_multiset<Key, Hash, KeyEqual, Allocator>& container,
              Predicate pred) {
   internal::IterateAndEraseIf(container, pred);
 }
+
+// A helper class to be used as the predicate with |EraseIf| to implement
+// in-place set intersection. Helps implement the algorithm of going through
+// each container an element at a time, erasing elements from the first
+// container if they aren't in the second container. Requires each container be
+// sorted. Note that the logic below appears inverted since it is returning
+// whether an element should be erased.
+template <class Collection>
+class IsNotIn {
+ public:
+  explicit IsNotIn(const Collection& collection)
+      : i_(collection.begin()), end_(collection.end()) {}
+
+  bool operator()(const typename Collection::value_type& x) {
+    while (i_ != end_ && *i_ < x)
+      ++i_;
+    if (i_ == end_)
+      return true;
+    if (*i_ == x) {
+      ++i_;
+      return false;
+    }
+    return true;
+  }
+
+ private:
+  typename Collection::const_iterator i_;
+  const typename Collection::const_iterator end_;
+};
 
 }  // namespace base
 

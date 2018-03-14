@@ -7,14 +7,17 @@
 #include <algorithm>
 #include <map>
 
+#include "base/feature_list.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
+#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/command_updater.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/extensions/api/omnibox/omnibox_api.h"
+#include "chrome/browser/extensions/extension_ui_util.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -27,6 +30,9 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
+#include "chrome/browser/ui/extensions/hosted_app_browser_controller.h"
+#include "chrome/browser/ui/find_bar/find_bar.h"
+#include "chrome/browser/ui/find_bar/find_bar_controller.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/omnibox/chrome_omnibox_client.h"
 #include "chrome/browser/ui/passwords/manage_passwords_ui_controller.h"
@@ -35,6 +41,7 @@
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/background_with_1_px_border.h"
 #include "chrome/browser/ui/views/location_bar/content_setting_image_view.h"
+#include "chrome/browser/ui/views/location_bar/find_bar_icon.h"
 #include "chrome/browser/ui/views/location_bar/keyword_hint_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_layout.h"
 #include "chrome/browser/ui/views/location_bar/location_icon_view.h"
@@ -48,16 +55,16 @@
 #include "chrome/browser/ui/views/translate/translate_icon_view.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/theme_resources.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/favicon/content/content_favicon_driver.h"
-#include "components/grit/components_scaled_resources.h"
+#include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/omnibox_popup_model.h"
 #include "components/omnibox/browser/omnibox_popup_view.h"
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/toolbar/toolbar_model.h"
+#include "components/toolbar/vector_icons.h"
 #include "components/translate/core/browser/language_state.h"
 #include "components/variations/variations_associated_data.h"
 #include "components/zoom/zoom_controller.h"
@@ -89,16 +96,27 @@
 #include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/button_drag_utils.h"
+#include "ui/views/controls/button/image_button.h"
+#include "ui/views/controls/button/image_button_factory.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/widget/widget.h"
 
-#if !defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/ui/views/location_bar/intent_picker_view.h"
+#else
 #include "chrome/browser/ui/views/first_run_bubble.h"
+#endif
+
+#if defined(USE_AURA)
+#include "ui/keyboard/keyboard_util.h"
+#endif
+
+#if defined(OS_WIN)
+#include "ui/base/win/osk_display_manager.h"
 #endif
 
 using content::WebContents;
 using views::View;
-
 
 // LocationBarView -----------------------------------------------------------
 
@@ -113,21 +131,8 @@ LocationBarView::LocationBarView(Browser* browser,
     : LocationBar(profile),
       ChromeOmniboxEditController(command_updater),
       browser_(browser),
-      omnibox_view_(nullptr),
       delegate_(delegate),
-      location_icon_view_(nullptr),
-      ime_inline_autocomplete_view_(nullptr),
-      selected_keyword_view_(nullptr),
-      keyword_hint_view_(nullptr),
-      zoom_view_(nullptr),
-      manage_passwords_icon_view_(nullptr),
-      save_credit_card_icon_view_(nullptr),
-      translate_icon_view_(nullptr),
-      star_view_(nullptr),
-      size_animation_(this),
-      is_popup_mode_(is_popup_mode),
-      show_focus_rect_(false),
-      template_url_service_(NULL) {
+      is_popup_mode_(is_popup_mode) {
   edit_bookmarks_enabled_.Init(
       bookmarks::prefs::kEditBookmarksEnabled, profile->GetPrefs(),
       base::Bind(&LocationBarView::UpdateWithoutTabRestore,
@@ -138,9 +143,6 @@ LocationBarView::LocationBarView(Browser* browser,
 }
 
 LocationBarView::~LocationBarView() {
-  if (template_url_service_)
-    template_url_service_->RemoveObserver(this);
-
   zoom::ZoomEventManager::GetForBrowserContext(profile())
       ->RemoveZoomEventManagerObserver(this);
 }
@@ -159,8 +161,8 @@ void LocationBarView::Init() {
   layer()->SetMasksToBounds(true);
 
   // Determine the main font.
-  gfx::FontList font_list = ResourceBundle::GetSharedInstance().GetFontList(
-      ResourceBundle::BaseFont);
+  gfx::FontList font_list = ui::ResourceBundle::GetSharedInstance().GetFontList(
+      ui::ResourceBundle::BaseFont);
   const int current_font_size = font_list.GetFontSize();
   constexpr int kDesiredFontSize = 14;
   if (current_font_size != kDesiredFontSize) {
@@ -176,7 +178,7 @@ void LocationBarView::Init() {
 
   // Determine the font for use inside the bubbles.
   const int bubble_padding =
-      kBubbleVerticalPadding +
+      GetLayoutConstant(LOCATION_BAR_BUBBLE_VERTICAL_PADDING) +
       GetLayoutConstant(LOCATION_BAR_BUBBLE_FONT_VERTICAL_PADDING);
   const int bubble_height = location_height - (bubble_padding * 2);
 
@@ -198,8 +200,8 @@ void LocationBarView::Init() {
       new views::Label(base::string16(), {font_list});
   ime_inline_autocomplete_view_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   ime_inline_autocomplete_view_->SetAutoColorReadabilityEnabled(false);
-  ime_inline_autocomplete_view_->set_background(
-      views::Background::CreateSolidBackground(GetNativeTheme()->GetSystemColor(
+  ime_inline_autocomplete_view_->SetBackground(
+      views::CreateSolidBackground(GetNativeTheme()->GetSystemColor(
           ui::NativeTheme::kColorId_TextfieldSelectionBackgroundFocused)));
   ime_inline_autocomplete_view_->SetEnabledColor(
       GetNativeTheme()->GetSystemColor(
@@ -213,7 +215,7 @@ void LocationBarView::Init() {
   gfx::FontList bubble_font_list =
       font_list.DeriveWithHeightUpperBound(bubble_height);
   keyword_hint_view_ = new KeywordHintView(
-      this, profile(), font_list, bubble_font_list, location_height,
+      this, profile(), font_list, bubble_font_list,
       GetColor(LocationBarView::DEEMPHASIZED_TEXT), background_color);
   AddChildView(keyword_hint_view_);
 
@@ -223,33 +225,34 @@ void LocationBarView::Init() {
     ContentSettingImageView* image_view =
         new ContentSettingImageView(std::move(model), this, font_list);
     content_setting_views_.push_back(image_view);
+    image_view->set_next_element_interior_padding(kIconInteriorPadding);
     image_view->SetVisible(false);
     AddChildView(image_view);
   }
 
-  zoom_view_ = new ZoomView(delegate_);
-  zoom_view_->Init();
-  AddChildView(zoom_view_);
+  auto add_icon = [this](BubbleIconView* icon_view) -> void {
+    icon_view->Init();
+    icon_view->SetVisible(false);
+    AddChildView(icon_view);
+  };
 
-  manage_passwords_icon_view_ = new ManagePasswordsIconViews(command_updater());
-  manage_passwords_icon_view_->Init();
-  AddChildView(manage_passwords_icon_view_);
+  add_icon(zoom_view_ = new ZoomView(delegate_));
+  add_icon(manage_passwords_icon_view_ =
+               new ManagePasswordsIconViews(command_updater()));
+  add_icon(save_credit_card_icon_view_ =
+               new autofill::SaveCardIconView(command_updater(), browser_));
+  add_icon(translate_icon_view_ = new TranslateIconView(command_updater()));
+#if defined(OS_CHROMEOS)
+  add_icon(intent_picker_view_ = new IntentPickerView(browser_));
+#endif
+  add_icon(find_bar_icon_ = new FindBarIcon());
+  add_icon(star_view_ = new StarView(command_updater(), browser_));
 
-  save_credit_card_icon_view_ =
-      new autofill::SaveCardIconView(command_updater(), browser_);
-  save_credit_card_icon_view_->Init();
-  save_credit_card_icon_view_->SetVisible(false);
-  AddChildView(save_credit_card_icon_view_);
-
-  translate_icon_view_ = new TranslateIconView(command_updater());
-  translate_icon_view_->Init();
-  translate_icon_view_->SetVisible(false);
-  AddChildView(translate_icon_view_);
-
-  star_view_ = new StarView(command_updater(), browser_);
-  star_view_->Init();
-  star_view_->SetVisible(false);
-  AddChildView(star_view_);
+  clear_all_button_ = views::CreateVectorImageButton(this);
+  clear_all_button_->SetTooltipText(
+      l10n_util::GetStringUTF16(IDS_OMNIBOX_CLEAR_ALL));
+  RefreshClearAllButtonIcon();
+  AddChildView(clear_all_button_);
 
   // Initialize the location entry. We do this to avoid a black flash which is
   // visible when the location entry has just been initialized.
@@ -320,8 +323,10 @@ void LocationBarView::ZoomChangedForActiveTab(bool can_show_bubble) {
   }
 
   WebContents* web_contents = GetWebContents();
-  if (can_show_bubble && zoom_view_->visible() && web_contents)
-    ZoomBubbleView::ShowBubble(web_contents, ZoomBubbleView::AUTOMATIC);
+  if (can_show_bubble && web_contents) {
+    ZoomBubbleView::ShowBubble(web_contents, gfx::Point(),
+                               ZoomBubbleView::AUTOMATIC);
+  }
 }
 
 void LocationBarView::SetStarToggled(bool on) {
@@ -370,12 +375,25 @@ void LocationBarView::GetOmniboxPopupPositioningInfo(
     int* left_margin,
     int* right_margin,
     int top_edge_overlap) {
-  *top_left_screen_coord = gfx::Point(0, parent()->height() - top_edge_overlap);
+  // The popup contents are always sized matching the location bar size.
+  const int popup_contents_left = x();
+  const int popup_contents_right = bounds().right();
+
+  // The popup itself may either be the same width as the contents, or as wide
+  // as the toolbar.
+  bool narrow_popup =
+      base::FeatureList::IsEnabled(omnibox::kUIExperimentNarrowDropdown);
+  const int popup_left = narrow_popup ? popup_contents_left : 0;
+  const int popup_right =
+      narrow_popup ? popup_contents_right : parent()->width();
+
+  *top_left_screen_coord =
+      gfx::Point(popup_left, parent()->height() - top_edge_overlap);
   views::View::ConvertPointToScreen(parent(), top_left_screen_coord);
 
-  *popup_width = parent()->width();
-  *left_margin = x();
-  *right_margin = *popup_width - bounds().right();
+  *popup_width = popup_right - popup_left;
+  *left_margin = popup_contents_left - popup_left;
+  *right_margin = popup_right - popup_contents_right;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -406,7 +424,7 @@ void LocationBarView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   node_data->role = ui::AX_ROLE_GROUP;
 }
 
-gfx::Size LocationBarView::GetPreferredSize() const {
+gfx::Size LocationBarView::CalculatePreferredSize() const {
   // Compute minimum height.
   gfx::Size min_size(0, GetLayoutConstant(LOCATION_BAR_HEIGHT));
 
@@ -436,6 +454,10 @@ gfx::Size LocationBarView::GetPreferredSize() const {
                     IncrementalMinimumWidth(save_credit_card_icon_view_) +
                     IncrementalMinimumWidth(manage_passwords_icon_view_) +
                     IncrementalMinimumWidth(zoom_view_);
+#if defined(OS_CHROMEOS)
+  if (intent_picker_view_)
+    trailing_width += IncrementalMinimumWidth(intent_picker_view_);
+#endif  // defined(OS_CHROMEOS)
   for (auto i = content_setting_views_.begin();
        i != content_setting_views_.end(); ++i) {
     trailing_width += IncrementalMinimumWidth((*i));
@@ -503,34 +525,28 @@ void LocationBarView::Layout() {
                                       location_icon_view_);
   }
 
-  if (star_view_->visible()) {
-    trailing_decorations.AddDecoration(vertical_padding, location_height,
-                                       star_view_);
-  }
-  if (translate_icon_view_->visible()) {
-    trailing_decorations.AddDecoration(vertical_padding, location_height,
-                                       translate_icon_view_);
-  }
-  if (save_credit_card_icon_view_->visible()) {
-    trailing_decorations.AddDecoration(vertical_padding, location_height,
-                                       save_credit_card_icon_view_);
-  }
-  if (manage_passwords_icon_view_->visible()) {
-    trailing_decorations.AddDecoration(vertical_padding, location_height,
-                                       manage_passwords_icon_view_);
-  }
-  if (zoom_view_->visible()) {
-    trailing_decorations.AddDecoration(vertical_padding, location_height,
-                                       zoom_view_);
-  }
-  for (ContentSettingViews::const_reverse_iterator i(
-           content_setting_views_.rbegin()); i != content_setting_views_.rend();
-       ++i) {
-    if ((*i)->visible()) {
+  auto add_trailing_decoration = [&trailing_decorations, vertical_padding,
+                                  location_height, item_padding](View* view) {
+    if (view->visible()) {
       trailing_decorations.AddDecoration(vertical_padding, location_height,
                                          false, 0, item_padding, item_padding,
-                                         *i);
+                                         view);
     }
+  };
+
+#if defined(OS_CHROMEOS)
+  add_trailing_decoration(intent_picker_view_);
+#endif
+  add_trailing_decoration(star_view_);
+  add_trailing_decoration(find_bar_icon_);
+  add_trailing_decoration(translate_icon_view_);
+  add_trailing_decoration(save_credit_card_icon_view_);
+  add_trailing_decoration(manage_passwords_icon_view_);
+  add_trailing_decoration(zoom_view_);
+  for (ContentSettingViews::const_reverse_iterator i(
+           content_setting_views_.rbegin());
+       i != content_setting_views_.rend(); ++i) {
+    add_trailing_decoration(*i);
   }
   // Because IMEs may eat the tab key, we don't show "press tab to search" while
   // IME composition is in progress.
@@ -540,9 +556,10 @@ void LocationBarView::Layout() {
     trailing_decorations.AddDecoration(vertical_padding, location_height, true,
                                        0, item_padding, item_padding,
                                        keyword_hint_view_);
-    if (keyword_hint_view_->keyword() != keyword)
-      keyword_hint_view_->SetKeyword(keyword);
+    keyword_hint_view_->SetKeyword(keyword);
   }
+
+  add_trailing_decoration(clear_all_button_);
 
   const int edge_thickness = GetHorizontalEdgeThickness();
 
@@ -587,14 +604,14 @@ void LocationBarView::Layout() {
 
 void LocationBarView::OnNativeThemeChanged(const ui::NativeTheme* theme) {
   RefreshLocationIcon();
+  RefreshClearAllButtonIcon();
   if (is_popup_mode_) {
-    set_background(
-        views::Background::CreateSolidBackground(GetColor(BACKGROUND)));
+    SetBackground(views::CreateSolidBackground(GetColor(BACKGROUND)));
   } else {
     // This border color will be blended on top of the toolbar (which may use an
     // image in the case of themes).
-    set_background(
-        new BackgroundWith1PxBorder(GetColor(BACKGROUND), GetBorderColor()));
+    SetBackground(base::MakeUnique<BackgroundWith1PxBorder>(
+        GetColor(BACKGROUND), GetBorderColor()));
   }
   SchedulePaint();
 }
@@ -605,6 +622,7 @@ void LocationBarView::Update(const WebContents* contents) {
   RefreshTranslateIcon();
   RefreshSaveCreditCardIconView();
   RefreshManagePasswordsIconView();
+  RefreshFindBarIcon();
 
   if (star_view_)
     UpdateBookmarkStarVisibility();
@@ -637,6 +655,18 @@ ToolbarModel* LocationBarView::GetToolbarModel() {
 
 WebContents* LocationBarView::GetWebContents() {
   return delegate_->GetWebContents();
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// LocationBarView, public ContentSettingImageView::Delegate implementation:
+
+content::WebContents* LocationBarView::GetContentSettingWebContents() {
+  return GetToolbarModel()->input_in_progress() ? nullptr : GetWebContents();
+}
+
+ContentSettingBubbleModelDelegate*
+LocationBarView::GetContentSettingBubbleModelDelegate() {
+  return delegate_->GetContentSettingBubbleModelDelegate();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -678,16 +708,22 @@ void LocationBarView::RefreshLocationIcon() {
                            : GetSecureTextColor(security_level);
   location_icon_view_->SetImage(gfx::CreateVectorIcon(
       omnibox_view_->GetVectorIcon(), kIconWidth, icon_color));
+  location_icon_view_->Update();
 }
 
 bool LocationBarView::RefreshContentSettingViews() {
+  if (extensions::HostedAppBrowserController::IsForExperimentalHostedAppBrowser(
+          browser_)) {
+    // For hosted apps, the location bar is normally hidden and icons appear in
+    // the window frame instead.
+    GetWidget()->non_client_view()->ResetWindowControls();
+  }
+
   bool visibility_changed = false;
-  for (ContentSettingViews::const_iterator i(content_setting_views_.begin());
-       i != content_setting_views_.end(); ++i) {
-    const bool was_visible = (*i)->visible();
-    (*i)->Update(GetToolbarModel()->input_in_progress() ? nullptr
-                                                        : GetWebContents());
-    if (was_visible != (*i)->visible())
+  for (auto* v : content_setting_views_) {
+    const bool was_visible = v->visible();
+    v->Update();
+    if (was_visible != v->visible())
       visibility_changed = true;
   }
   return visibility_changed;
@@ -700,8 +736,6 @@ bool LocationBarView::RefreshZoomView() {
     return false;
   const bool was_visible = zoom_view_->visible();
   zoom_view_->Update(zoom::ZoomController::FromWebContents(web_contents));
-  if (!zoom_view_->visible())
-    ZoomBubbleView::CloseCurrentBubble();
   return was_visible != zoom_view_->visible();
 }
 
@@ -711,11 +745,25 @@ void LocationBarView::OnDefaultZoomLevelChanged() {
 
 void LocationBarView::ButtonPressed(views::Button* sender,
                                     const ui::Event& event) {
-  DCHECK_EQ(keyword_hint_view_, sender);
   DCHECK(event.IsMouseEvent() || event.IsGestureEvent());
-  omnibox_view_->model()->AcceptKeyword(
-      event.IsMouseEvent() ? KeywordModeEntryMethod::CLICK_ON_VIEW
-                           : KeywordModeEntryMethod::TAP_ON_VIEW);
+  if (keyword_hint_view_ == sender) {
+    omnibox_view_->model()->AcceptKeyword(
+        event.IsMouseEvent() ? KeywordModeEntryMethod::CLICK_ON_VIEW
+                             : KeywordModeEntryMethod::TAP_ON_VIEW);
+  } else {
+    DCHECK_EQ(clear_all_button_, sender);
+    omnibox_view_->SetUserText(base::string16());
+  }
+}
+
+bool LocationBarView::IsVirtualKeyboardVisible() {
+#if defined(OS_WIN)
+  return ui::OnScreenKeyboardDisplayManager::GetInstance()->IsKeyboardVisible();
+#elif defined(USE_AURA)
+  return keyboard::IsKeyboardVisible();
+#else
+  return false;
+#endif
 }
 
 bool LocationBarView::RefreshSaveCreditCardIconView() {
@@ -728,11 +776,28 @@ bool LocationBarView::RefreshSaveCreditCardIconView() {
   autofill::SaveCardBubbleControllerImpl* controller =
       autofill::SaveCardBubbleControllerImpl::FromWebContents(web_contents);
   bool enabled = controller && controller->IsIconVisible();
-  command_updater()->UpdateCommandEnabled(IDC_SAVE_CREDIT_CARD_FOR_PAGE,
-                                          enabled);
+  if (!command_updater()->UpdateCommandEnabled(
+          IDC_SAVE_CREDIT_CARD_FOR_PAGE, enabled)) {
+    enabled = enabled && command_updater()->IsCommandEnabled(
+        IDC_SAVE_CREDIT_CARD_FOR_PAGE);
+  }
   save_credit_card_icon_view_->SetVisible(enabled);
 
   return was_visible != save_credit_card_icon_view_->visible();
+}
+
+bool LocationBarView::RefreshFindBarIcon() {
+  // |browser_| may be nullptr since some unit tests pass it in for the
+  // Browser*. |browser_->window()| may return nullptr because Update() is
+  // called while BrowserWindow is being constructed.
+  if (!find_bar_icon_ || !browser_ || !browser_->window() ||
+      !browser_->HasFindBarController()) {
+    return false;
+  }
+  const bool was_visible = find_bar_icon_->visible();
+  find_bar_icon_->SetVisible(
+      browser_->GetFindBarController()->find_bar()->IsFindBarVisible());
+  return was_visible != find_bar_icon_->visible();
 }
 
 void LocationBarView::RefreshTranslateIcon() {
@@ -742,7 +807,10 @@ void LocationBarView::RefreshTranslateIcon() {
   translate::LanguageState& language_state =
       ChromeTranslateClient::FromWebContents(web_contents)->GetLanguageState();
   bool enabled = language_state.translate_enabled();
-  command_updater()->UpdateCommandEnabled(IDC_TRANSLATE_PAGE, enabled);
+  if (!command_updater()->UpdateCommandEnabled(IDC_TRANSLATE_PAGE, enabled)) {
+    enabled = enabled && command_updater()->IsCommandEnabled(
+        IDC_TRANSLATE_PAGE);
+  }
   translate_icon_view_->SetVisible(enabled);
   if (!enabled)
     TranslateBubbleView::CloseCurrentBubble();
@@ -759,26 +827,32 @@ bool LocationBarView::RefreshManagePasswordsIconView() {
   return was_visible != manage_passwords_icon_view_->visible();
 }
 
-void LocationBarView::ShowFirstRunBubbleInternal() {
-  // First run bubble doesn't make sense for Chrome OS.
-#if !defined(OS_CHROMEOS)
-  WebContents* web_contents = delegate_->GetWebContents();
-  if (!web_contents)
+void LocationBarView::RefreshClearAllButtonIcon() {
+  if (!clear_all_button_)
     return;
-  Browser* browser = chrome::FindBrowserWithWebContents(web_contents);
-  if (browser)
-    FirstRunBubble::ShowBubble(browser, GetSecurityBubbleAnchorView());
-#endif
+
+  SetImageFromVectorIcon(clear_all_button_, kTabCloseNormalIcon,
+                         GetNativeTheme()->GetSystemColor(
+                             ui::NativeTheme::kColorId_TextfieldDefaultColor));
 }
 
 base::string16 LocationBarView::GetLocationIconText() const {
   if (GetToolbarModel()->GetURL().SchemeIs(content::kChromeUIScheme))
     return l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_NAME);
 
-  const base::string16 extension_name = GetExtensionName(
-      GetToolbarModel()->GetURL(), delegate_->GetWebContents());
-  if (!extension_name.empty())
-    return extension_name;
+  if (delegate_->GetWebContents()) {
+    // On ChromeOS, this can be called using web_contents from
+    // SimpleWebViewDialog::GetWebContents() which always returns null.
+    // TODO(crbug.com/680329) Remove the null check and make
+    // SimpleWebViewDialog::GetWebContents return the proper web contents
+    // instead.
+    const base::string16 extension_name =
+        extensions::ui_util::GetEnabledExtensionNameForUrl(
+            GetToolbarModel()->GetURL(),
+            delegate_->GetWebContents()->GetBrowserContext());
+    if (!extension_name.empty())
+      return extension_name;
+  }
 
   bool has_ev_cert =
       (GetToolbarModel()->GetSecurityLevel(false) == security_state::EV_SECURE);
@@ -815,19 +889,6 @@ bool LocationBarView::ShouldAnimateLocationIconTextVisibilityChange() const {
 
 ////////////////////////////////////////////////////////////////////////////////
 // LocationBarView, private LocationBar implementation:
-
-void LocationBarView::ShowFirstRunBubble() {
-  // Wait until search engines have loaded to show the first run bubble.
-  TemplateURLService* url_service =
-      TemplateURLServiceFactory::GetForProfile(profile());
-  if (!url_service->loaded()) {
-    template_url_service_ = url_service;
-    template_url_service_->AddObserver(this);
-    template_url_service_->Load();
-    return;
-  }
-  ShowFirstRunBubbleInternal();
-}
 
 GURL LocationBarView::GetDestinationURL() const {
   return destination_url();
@@ -872,6 +933,15 @@ void LocationBarView::UpdateSaveCreditCardIcon() {
   }
 }
 
+void LocationBarView::UpdateFindBarIconVisibility() {
+  const bool visibility_changed = RefreshFindBarIcon();
+  if (visibility_changed) {
+    Layout();
+    SchedulePaint();
+  }
+  find_bar_icon_->SetActive(find_bar_icon_->visible(), visibility_changed);
+}
+
 void LocationBarView::UpdateBookmarkStarVisibility() {
   if (star_view_) {
     star_view_->SetVisible(
@@ -880,6 +950,11 @@ void LocationBarView::UpdateBookmarkStarVisibility() {
         edit_bookmarks_enabled_.GetValue() &&
         !IsBookmarkStarHiddenByExtension());
   }
+}
+
+void LocationBarView::UpdateZoomViewVisibility() {
+  RefreshZoomView();
+  OnChanged();
 }
 
 void LocationBarView::UpdateLocationBarVisibility(bool visible, bool animate) {
@@ -918,9 +993,10 @@ bool LocationBarView::TestContentSettingImagePressed(size_t index) {
   if (index >= content_setting_views_.size())
     return false;
 
-  // This up-cast is necessary since the descendant class moved OnKeyPressed
-  // to the protected section.
   views::View* image_view = content_setting_views_[index];
+  image_view->SetSize(gfx::Size(24, 24));
+  image_view->OnKeyPressed(
+      ui::KeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_SPACE, ui::EF_NONE));
   image_view->OnKeyReleased(
       ui::KeyEvent(ui::ET_KEY_RELEASED, ui::VKEY_SPACE, ui::EF_NONE));
   return true;
@@ -1021,6 +1097,8 @@ void LocationBarView::AnimationEnded(const gfx::Animation* animation) {
 void LocationBarView::OnChanged() {
   RefreshLocationIcon();
   location_icon_view_->set_show_tooltip(!GetOmniboxView()->IsEditingOrEmpty());
+  clear_all_button_->SetVisible(GetToolbarModel()->input_in_progress() &&
+                                LocationBarView::IsVirtualKeyboardVisible());
   Layout();
   SchedulePaint();
 }
@@ -1034,16 +1112,4 @@ const ToolbarModel* LocationBarView::GetToolbarModel() const {
 
 void LocationBarView::SetFocusAndSelection(bool select_all) {
   FocusLocation(select_all);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// LocationBarView, private TemplateURLServiceObserver implementation:
-
-void LocationBarView::OnTemplateURLServiceChanged() {
-  template_url_service_->RemoveObserver(this);
-  template_url_service_ = nullptr;
-  // If the browser is no longer active, let's not show the info bubble, as this
-  // would make the browser the active window again.
-  if (omnibox_view_ && omnibox_view_->GetWidget()->IsActive())
-    ShowFirstRunBubble();
 }

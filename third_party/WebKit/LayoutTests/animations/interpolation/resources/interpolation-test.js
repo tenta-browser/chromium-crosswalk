@@ -86,8 +86,8 @@
       }
       cssAnimationsData.sharedStyle.textContent += '' +
         '@keyframes animation' + id + ' {' +
-          (isNeutralKeyframe(from) ? '' : `from {${property}: ${from};}`) +
-          (isNeutralKeyframe(to) ? '' : `to {${property}: ${to};}`) +
+          (isNeutralKeyframe(from) ? '' : `from {${property}:${from};}`) +
+          (isNeutralKeyframe(to) ? '' : `to {${property}:${to};}`) +
         '}';
       target.style.animationName = 'animation' + id;
       target.style.animationDuration = '2e10s';
@@ -112,6 +112,26 @@
       target.style.transitionDelay = '-1e10s';
       target.style.transitionTimingFunction = createEasing(at);
       target.style.transitionProperty = property;
+      target.style.setProperty(property, isNeutralKeyframe(to) ? '' : to);
+    },
+    rebaseline: false,
+  };
+
+  var cssTransitionAllInterpolation = {
+    name: 'CSS Transitions with transition: all',
+    supportsProperty: function(property) {return property.indexOf('--') !== 0;},
+    supportsValue: function() {return true;},
+    setup: function(property, from, target) {
+      target.style.setProperty(property, isNeutralKeyframe(from) ? '' : from);
+    },
+    nonInterpolationExpectations: function(from, to) {
+      return expectFlip(from, to, -Infinity);
+    },
+    interpolate: function(property, from, to, at, target) {
+      target.style.transitionDuration = '2e10s';
+      target.style.transitionDelay = '-1e10s';
+      target.style.transitionTimingFunction = createEasing(at);
+      target.style.transitionProperty = 'all';
       target.style.setProperty(property, isNeutralKeyframe(to) ? '' : to);
     },
     rebaseline: false,
@@ -276,12 +296,19 @@
     compositionTests.push({options, expectations});
   }
 
+  function stringify(text) {
+    if (!text.includes("'")) {
+      return `'${text}'`;
+    }
+    return `"${text.replace('"', '\\"')}"`;
+  }
+
   function keyframeText(keyframe) {
     return isNeutralKeyframe(keyframe) ? 'neutral' : `[${keyframe}]`;
   }
 
   function keyframeCode(keyframe) {
-    return isNeutralKeyframe(keyframe) ? 'neutralKeyframe' : `'${keyframe}'`;
+    return isNeutralKeyframe(keyframe) ? 'neutralKeyframe' : `${stringify(keyframe)}`;
   }
 
   function createInterpolationTestTargets(interpolationMethod, interpolationMethodContainer, interpolationTest, rebaselineContainer) {
@@ -316,7 +343,9 @@ assertInterpolation({
     return expectations.map(function(expectation) {
       var actualTargetContainer = createTargetContainer(testContainer, 'actual');
       var expectedTargetContainer = createTargetContainer(testContainer, 'expected');
-      expectedTargetContainer.target.style.setProperty(property, expectation.is);
+      if (!isNeutralKeyframe(expectation.is)) {
+        expectedTargetContainer.target.style.setProperty(property, expectation.is);
+      }
       var target = actualTargetContainer.target;
       interpolationMethod.setup(property, from, target);
       target.interpolate = function() {
@@ -330,7 +359,7 @@ assertInterpolation({
             normalizeValue(getComputedStyle(expectedTargetContainer.target).getPropertyValue(property)));
         }, `${testText} at (${expectation.at}) is [${sanitizeUrls(actualValue)}]`);
         if (rebaselineExpectation) {
-          rebaselineExpectation.textContent += `  {at: ${expectation.at}, is: '${actualValue}'},\n`;
+          rebaselineExpectation.textContent += `  {at: ${expectation.at}, is: ${stringify(actualValue)}},\n`;
         }
       };
       return target;
@@ -359,9 +388,9 @@ assertInterpolation({
       rebaseline.appendChild(document.createTextNode(`\
 assertComposition({
   property: '${property}',
-  underlying: '${underlying}',
-  ${fromComposite}From: '${from}',
-  ${toComposite}To: '${to}',
+  underlying: '${stringify(underlying)}',
+  ${fromComposite}From: '${stringify(from)}',
+  ${toComposite}To: '${stringify(to)}',
 }, [\n`));
       var rebaselineExpectation;
       rebaseline.appendChild(rebaselineExpectation = document.createTextNode(''));
@@ -387,7 +416,7 @@ assertComposition({
             normalizeValue(getComputedStyle(expectedTargetContainer.target).getPropertyValue(property)));
         }, `${testText} at (${expectation.at}) is [${sanitizeUrls(actualValue)}]`);
         if (rebaselineExpectation) {
-          rebaselineExpectation.textContent += `  {at: ${expectation.at}, is: '${actualValue}'},\n`;
+          rebaselineExpectation.textContent += `  {at: ${expectation.at}, is: ${stringify(actualValue)}},\n`;
         }
       };
       return target;
@@ -433,6 +462,7 @@ assertComposition({
   function runTests() {
     var interpolationMethods = [
       cssTransitionsInterpolation,
+      cssTransitionAllInterpolation,
       cssAnimationsInterpolation,
     ];
     if (webAnimationsEnabled) {

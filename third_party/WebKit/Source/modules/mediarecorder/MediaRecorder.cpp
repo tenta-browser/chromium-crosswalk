@@ -7,16 +7,17 @@
 #include <algorithm>
 #include <limits>
 #include "bindings/core/v8/Dictionary.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/fileapi/Blob.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "modules/EventTargetModules.h"
 #include "modules/mediarecorder/BlobEvent.h"
 #include "platform/blob/BlobData.h"
 #include "platform/network/mime/ContentType.h"
-#include "platform/wtf/CurrentTime.h"
 #include "platform/wtf/PtrUtil.h"
+#include "platform/wtf/Time.h"
 #include "public/platform/Platform.h"
+#include "public/platform/TaskType.h"
 #include "public/platform/WebMediaStream.h"
 
 namespace blink {
@@ -141,7 +142,7 @@ MediaRecorder* MediaRecorder::Create(ExecutionContext* context,
                                      ExceptionState& exception_state) {
   MediaRecorder* recorder = new MediaRecorder(
       context, stream, MediaRecorderOptions(), exception_state);
-  recorder->SuspendIfNeeded();
+  recorder->PauseIfNeeded();
 
   return recorder;
 }
@@ -152,7 +153,7 @@ MediaRecorder* MediaRecorder::Create(ExecutionContext* context,
                                      ExceptionState& exception_state) {
   MediaRecorder* recorder =
       new MediaRecorder(context, stream, options, exception_state);
-  recorder->SuspendIfNeeded();
+  recorder->PauseIfNeeded();
 
   return recorder;
 }
@@ -161,20 +162,22 @@ MediaRecorder::MediaRecorder(ExecutionContext* context,
                              MediaStream* stream,
                              const MediaRecorderOptions& options,
                              ExceptionState& exception_state)
-    : SuspendableObject(context),
+    : PausableObject(context),
       stream_(stream),
       mime_type_(options.hasMimeType() ? options.mimeType() : kDefaultMimeType),
       stopped_(true),
       audio_bits_per_second_(0),
       video_bits_per_second_(0),
       state_(State::kInactive),
+      // MediaStream recording should use DOM manipulation task source.
+      // https://www.w3.org/TR/mediastream-recording/
       dispatch_scheduled_event_runner_(AsyncMethodRunner<MediaRecorder>::Create(
           this,
-          &MediaRecorder::DispatchScheduledEvent)) {
+          &MediaRecorder::DispatchScheduledEvent,
+          context->GetTaskRunner(TaskType::kDOMManipulation))) {
   DCHECK(stream_->getTracks().size());
 
-  recorder_handler_ =
-      WTF::WrapUnique(Platform::Current()->CreateMediaRecorderHandler());
+  recorder_handler_ = Platform::Current()->CreateMediaRecorderHandler();
   DCHECK(recorder_handler_);
 
   if (!recorder_handler_) {
@@ -284,7 +287,7 @@ void MediaRecorder::requestData(ExceptionState& exception_state) {
 }
 
 bool MediaRecorder::isTypeSupported(const String& type) {
-  WebMediaRecorderHandler* handler =
+  std::unique_ptr<WebMediaRecorderHandler> handler =
       Platform::Current()->CreateMediaRecorderHandler();
   if (!handler)
     return false;
@@ -304,15 +307,15 @@ const AtomicString& MediaRecorder::InterfaceName() const {
 }
 
 ExecutionContext* MediaRecorder::GetExecutionContext() const {
-  return SuspendableObject::GetExecutionContext();
+  return PausableObject::GetExecutionContext();
 }
 
-void MediaRecorder::Suspend() {
-  dispatch_scheduled_event_runner_->Suspend();
+void MediaRecorder::Pause() {
+  dispatch_scheduled_event_runner_->Pause();
 }
 
-void MediaRecorder::Resume() {
-  dispatch_scheduled_event_runner_->Resume();
+void MediaRecorder::Unpause() {
+  dispatch_scheduled_event_runner_->Unpause();
 }
 
 void MediaRecorder::ContextDestroyed(ExecutionContext*) {
@@ -380,18 +383,18 @@ void MediaRecorder::ScheduleDispatchEvent(Event* event) {
 
 void MediaRecorder::DispatchScheduledEvent() {
   HeapVector<Member<Event>> events;
-  events.Swap(scheduled_events_);
+  events.swap(scheduled_events_);
 
   for (const auto& event : events)
     DispatchEvent(event);
 }
 
-DEFINE_TRACE(MediaRecorder) {
+void MediaRecorder::Trace(blink::Visitor* visitor) {
   visitor->Trace(stream_);
   visitor->Trace(dispatch_scheduled_event_runner_);
   visitor->Trace(scheduled_events_);
   EventTargetWithInlineData::Trace(visitor);
-  SuspendableObject::Trace(visitor);
+  PausableObject::Trace(visitor);
 }
 
 }  // namespace blink

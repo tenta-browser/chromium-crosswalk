@@ -109,7 +109,7 @@ void ExtensionAppModelBuilder::OnDownloadProgress(
 
 void ExtensionAppModelBuilder::OnInstallFailure(
     const std::string& extension_id) {
-  model()->DeleteItem(extension_id);
+  model_updater()->RemoveItem(extension_id);
 }
 
 void ExtensionAppModelBuilder::OnAppInstalled(
@@ -142,15 +142,6 @@ void ExtensionAppModelBuilder::OnAppInstalled(
                           extension->is_platform_app()));
 }
 
-void ExtensionAppModelBuilder::OnAppUpdated(
-    content::BrowserContext* browser_context,
-    const std::string& app_id) {
-  ExtensionAppItem* item = GetExtensionAppItem(app_id);
-  if (!item)
-    return;
-  item->UpdateIcon();
-}
-
 void ExtensionAppModelBuilder::OnAppUninstalled(
     content::BrowserContext* browser_context,
     const std::string& app_id) {
@@ -159,7 +150,7 @@ void ExtensionAppModelBuilder::OnAppUninstalled(
     service()->RemoveUninstalledItem(app_id);
     return;
   }
-  model()->DeleteUninstalledItem(app_id);
+  model_updater()->RemoveUninstalledItem(app_id);
 }
 
 void ExtensionAppModelBuilder::OnDisabledExtensionUpdated(

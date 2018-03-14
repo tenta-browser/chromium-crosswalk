@@ -25,12 +25,17 @@
 
 // https://svgwg.org/svg2-draft/embedded.html#InterfaceSVGImageElement
 
-interface SVGImageElement : SVGGraphicsElement {
+[
+    ActiveScriptWrappable
+] interface SVGImageElement : SVGGraphicsElement {
     [MeasureAs=SVG1DOMImageElement] readonly attribute SVGAnimatedLength x;
     [MeasureAs=SVG1DOMImageElement] readonly attribute SVGAnimatedLength y;
     [MeasureAs=SVG1DOMImageElement] readonly attribute SVGAnimatedLength width;
     [MeasureAs=SVG1DOMImageElement] readonly attribute SVGAnimatedLength height;
     [MeasureAs=SVG1DOMImageElement] readonly attribute SVGAnimatedPreserveAspectRatio preserveAspectRatio;
+    [RuntimeEnabled=ImageDecodingAttribute, CEReactions, Reflect, ReflectOnly=("async", "sync", "auto"), ReflectMissing="auto", ReflectInvalid="auto"] attribute DOMString decoding;
+
+    [RuntimeEnabled=JSImageDecode, CallWith=ScriptState, RaisesException] Promise decode();
 };
 
 SVGImageElement implements SVGURIReference;

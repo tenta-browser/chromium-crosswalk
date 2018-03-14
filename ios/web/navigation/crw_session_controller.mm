@@ -60,11 +60,6 @@
 // Redefine as readwrite.
 @property(nonatomic, readwrite, assign) NSInteger lastCommittedItemIndex;
 
-// Expose setters for serialization properties.  These are exposed in a category
-// in SessionStorageBuilder, and will be removed as ownership of
-// their backing ivars moves to NavigationManagerImpl.
-@property(nonatomic, readwrite, assign) NSInteger previousItemIndex;
-
 // Removes all items after lastCommittedItemIndex.
 - (void)clearForwardItems;
 // Discards the transient item, if any.
@@ -80,14 +75,14 @@ initiationType:(web::NavigationInitiationType)initiationType;
 - (BOOL)isRedirectTransitionForItemAtIndex:(size_t)index;
 
 // Should create a new pending item if the new pending item is not a duplicate
-// of the last added or commited item. Returns YES if one of the following rules
-// apply:
+// of the last added or committed item. Returns YES if one of the following
+// rules apply:
 // 1. There is no last added or committed item.
-// 2. The new item has different url from the last added or commited item.
+// 2. The new item has different url from the last added or committed item.
 // 3. Url is the same, but the new item is a form submission resulted from the
 //    last added or committed item.
 // 4. Url is the same, but new item is a reload with different user agent type
-//    resulted from last added or commited item.
+//    resulted from last added or committed item.
 - (BOOL)shouldCreatePendingItemWithURL:(const GURL&)URL
                             transition:(ui::PageTransition)transition
                userAgentOverrideOption:
@@ -156,11 +151,7 @@ initiationType:(web::NavigationInitiationType)initiationType;
 }
 
 - (web::NavigationItemImpl*)currentItem {
-  if (self.transientItem)
-    return self.transientItem;
-  if (self.pendingItem)
-    return self.pendingItem;
-  return self.lastCommittedItem;
+  return _navigationManager->GetCurrentItemImpl();
 }
 
 - (web::NavigationItemImpl*)visibleItem {
@@ -202,9 +193,22 @@ initiationType:(web::NavigationInitiationType)initiationType;
 
 - (web::NavigationItemList)backwardItems {
   web::NavigationItemList items;
-  for (size_t index = _lastCommittedItemIndex; index > 0; --index) {
-    if (![self isRedirectTransitionForItemAtIndex:index])
-      items.push_back(self.items[index - 1].get());
+
+  // This explicit check is necessary to protect the loop below which uses an
+  // unsafe signed (NSInteger) to unsigned (size_t) conversion.
+  if (_lastCommittedItemIndex > -1) {
+    // If the current navigation item is a transient item (e.g. SSL
+    // interstitial), the last committed item should also be considered part of
+    // the backward history.
+    DCHECK(self.lastCommittedItem);
+    if (self.transientItem) {
+      items.push_back(self.lastCommittedItem);
+    }
+
+    for (size_t index = _lastCommittedItemIndex; index > 0; --index) {
+      if (![self isRedirectTransitionForItemAtIndex:index])
+        items.push_back(self.items[index - 1].get());
+    }
   }
   return items;
 }
@@ -341,7 +345,7 @@ initiationType:(web::NavigationInitiationType)initiationType;
       currentItem->GetTransitionType(), ui::PAGE_TRANSITION_FORM_SUBMIT);
   if (isPendingTransitionFormSubmit && !isCurrentTransitionFormSubmit) {
     // |isPendingTransitionFormSubmit| indicates that the new item is a form
-    // submission resulted from the last added or commited item, and
+    // submission resulted from the last added or committed item, and
     // |!isCurrentTransitionFormSubmit| shows that the form submission is not
     // counted multiple times.
     return YES;
@@ -359,28 +363,6 @@ initiationType:(web::NavigationInitiationType)initiationType;
   }
 
   return NO;
-}
-
-- (void)updatePendingItem:(const GURL&)url {
-  // If there is no pending item, navigation is probably happening within the
-  // session history. Don't modify the item list.
-  web::NavigationItemImpl* item = self.pendingItem;
-  if (!item)
-    return;
-
-  if (url != item->GetURL()) {
-    // Assume a redirection, and discard any transient item.
-    // TODO(stuartmorgan): Once the current safe browsing code is gone,
-    // consider making this a DCHECK that there's no transient item.
-    [self discardTransientItem];
-
-    item->SetURL(url);
-    item->SetVirtualURL(url);
-    // Redirects (3xx response code), or client side navigation must change
-    // POST requests to GETs.
-    item->SetPostData(nil);
-    item->ResetHttpRequestHeaders();
-  }
 }
 
 - (void)clearForwardItems {
@@ -475,19 +457,6 @@ initiationType:(web::NavigationInitiationType)initiationType;
 
   if (_navigationManager)
     _navigationManager->OnNavigationItemCommitted();
-}
-
-- (void)updateCurrentItemWithURL:(const GURL&)url
-                     stateObject:(NSString*)stateObject {
-  DCHECK(!self.transientItem);
-  web::NavigationItemImpl* currentItem = self.currentItem;
-  currentItem->SetURL(url);
-  currentItem->SetSerializedStateObject(stateObject);
-  currentItem->SetHasStateBeenReplaced(true);
-  currentItem->SetPostData(nil);
-  // If the change is to a committed item, notify interested parties.
-  if (currentItem != self.pendingItem && _navigationManager)
-    _navigationManager->OnNavigationItemChanged();
 }
 
 - (void)discardNonCommittedItems {
@@ -586,14 +555,14 @@ initiationType:(web::NavigationInitiationType)initiationType;
                                     andItem:(web::NavigationItem*)secondItem {
   if (!firstItem || !secondItem || firstItem == secondItem)
     return NO;
-  NSUInteger firstIndex = [self indexOfItem:firstItem];
-  NSUInteger secondIndex = [self indexOfItem:secondItem];
-  if (firstIndex == NSNotFound || secondIndex == NSNotFound)
+  int firstIndex = [self indexOfItem:firstItem];
+  int secondIndex = [self indexOfItem:secondItem];
+  if (firstIndex == -1 || secondIndex == -1)
     return NO;
-  NSUInteger startIndex = firstIndex < secondIndex ? firstIndex : secondIndex;
-  NSUInteger endIndex = firstIndex < secondIndex ? secondIndex : firstIndex;
+  int startIndex = firstIndex < secondIndex ? firstIndex : secondIndex;
+  int endIndex = firstIndex < secondIndex ? secondIndex : firstIndex;
 
-  for (NSUInteger i = startIndex + 1; i <= endIndex; i++) {
+  for (int i = startIndex + 1; i <= endIndex; i++) {
     web::NavigationItemImpl* item = self.items[i].get();
     // Every item in the sequence has to be created from a hash change or
     // pushState() call.
@@ -608,13 +577,13 @@ initiationType:(web::NavigationInitiationType)initiationType;
   return YES;
 }
 
-- (NSInteger)indexOfItem:(const web::NavigationItem*)item {
+- (int)indexOfItem:(const web::NavigationItem*)item {
   DCHECK(item);
   for (size_t index = 0; index < self.items.size(); ++index) {
     if (self.items[index].get() == item)
       return index;
   }
-  return NSNotFound;
+  return -1;
 }
 
 - (web::NavigationItemImpl*)itemAtIndex:(NSInteger)index {
@@ -631,30 +600,9 @@ initiationType:(web::NavigationInitiationType)initiationType;
       referrer:(const web::Referrer&)referrer
     transition:(ui::PageTransition)transition
 initiationType:(web::NavigationInitiationType)initiationType {
-  GURL loaded_url(url);
-  BOOL urlWasRewritten = NO;
-  if (_navigationManager) {
-    std::unique_ptr<std::vector<web::BrowserURLRewriter::URLRewriter>>
-        transientRewriters = _navigationManager->GetTransientURLRewriters();
-    if (transientRewriters) {
-      urlWasRewritten = web::BrowserURLRewriter::RewriteURLWithWriters(
-          &loaded_url, _browserState, *transientRewriters.get());
-    }
-  }
-  if (!urlWasRewritten) {
-    web::BrowserURLRewriter::GetInstance()->RewriteURLIfNecessary(
-        &loaded_url, _browserState);
-  }
-
-  std::unique_ptr<web::NavigationItemImpl> item(new web::NavigationItemImpl());
-  item->SetOriginalRequestURL(loaded_url);
-  item->SetURL(loaded_url);
-  item->SetReferrer(referrer);
-  item->SetTransitionType(transition);
-  item->SetNavigationInitiationType(initiationType);
-  if (web::GetWebClient()->IsAppSpecificURL(loaded_url))
-    item->SetUserAgentType(web::UserAgentType::NONE);
-  return item;
+  DCHECK(_navigationManager);
+  return _navigationManager->CreateNavigationItem(url, referrer, transition,
+                                                  initiationType);
 }
 
 - (BOOL)isRedirectTransitionForItemAtIndex:(size_t)index {

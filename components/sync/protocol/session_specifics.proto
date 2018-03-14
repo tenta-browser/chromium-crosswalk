@@ -104,7 +104,7 @@ message TabNavigation {
   // The unique navigation id (within this client).
   optional int32 unique_id = 8;
   // Timestamp for when this navigation last occurred (in client time).
-  // If the user goes back/foward in history the timestamp may refresh.
+  // If the user goes back/forward in history the timestamp may refresh.
   optional int64 timestamp_msec = 9;
   // User used the Forward or Back button to navigate among browsing history.
   optional bool navigation_forward_back = 10;
@@ -120,7 +120,7 @@ message TabNavigation {
   // probability.
   optional int64 global_id = 15;
   // Search terms extracted from the URL.
-  optional string search_terms = 16;
+  optional string search_terms = 16 [deprecated = true];
   // The favicon url associated with this page.
   optional string favicon_url = 17;
   enum BlockedState {
@@ -134,8 +134,8 @@ message TabNavigation {
   // The status code from the last navigation.
   optional int32 http_status_code = 20;
 
-  // Referrer policy. Old, broken value.
-  optional int32 obsolete_referrer_policy = 21 [default = 1];
+  // Referrer policy. Old, broken value. Deprecated in M61.
+  optional int32 obsolete_referrer_policy = 21 [deprecated = true];
   // True if created from restored navigation entry that hasn't been loaded.
   optional bool is_restored = 22;
   // The chain of redirections for this navigation, from the original URL
@@ -155,6 +155,18 @@ message TabNavigation {
   }
   // Whether the Password Manager saw a password field on the page.
   optional PasswordState password_state = 26;
+
+  // The id for the task associated with this navigation, which is globally
+  // unique with high probability.
+  // Similar with global_id, but used to identify a navigation in Chrome Tasks,
+  // so navigations of a page have the same task_id if one is the first visit of
+  // the page, and others are its back/forward visits.
+  optional int64 task_id = 27;
+  // Task ids of all ancestor navigations, which can be from other tabs, from
+  // root to parent. We define navigation A is parent of navigation B if page of
+  // B is got by clicking a link on page of A. This relationship is used to
+  // define a Chrome Task as a tree rooted by a navigation.
+  repeated int64 ancestor_task_id = 28;
 }
 
 // Navigation information for a single redirection within a single navigation.

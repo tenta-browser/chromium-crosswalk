@@ -11,9 +11,9 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/chromeos/arc/arc_auth_context.h"
 #include "chrome/browser/chromeos/arc/arc_optin_uma.h"
-#include "chrome/browser/chromeos/arc/auth/arc_auth_info_fetcher.h"
+#include "chrome/browser/chromeos/arc/auth/arc_auth_code_fetcher.h"
+#include "chrome/browser/chromeos/arc/auth/arc_auth_context.h"
 #include "google_apis/gaia/oauth2_token_service.h"
 #include "net/url_request/url_fetcher_delegate.h"
 
@@ -22,20 +22,25 @@ class Profile;
 namespace net {
 class URLFetcher;
 class URLRequestContextGetter;
-}
+}  // namespace net
 
 namespace arc {
 
+// Exposed for testing.
+extern const char kAuthTokenExchangeEndPoint[];
+
 // The instance is not reusable, so for each Fetch(), the instance must be
 // re-created. Deleting the instance cancels inflight operation.
-class ArcBackgroundAuthCodeFetcher : public ArcAuthInfoFetcher,
+class ArcBackgroundAuthCodeFetcher : public ArcAuthCodeFetcher,
                                      public OAuth2TokenService::Consumer,
                                      public net::URLFetcherDelegate {
  public:
-  ArcBackgroundAuthCodeFetcher(Profile* profile, ArcAuthContext* context);
+  ArcBackgroundAuthCodeFetcher(Profile* profile,
+                               ArcAuthContext* context,
+                               bool initial_signin);
   ~ArcBackgroundAuthCodeFetcher() override;
 
-  // ArcAuthInfoFetcher:
+  // ArcAuthCodeFetcher:
   void Fetch(const FetchCallback& callback) override;
 
  private:
@@ -64,6 +69,10 @@ class ArcBackgroundAuthCodeFetcher : public ArcAuthInfoFetcher,
 
   std::unique_ptr<OAuth2TokenService::Request> login_token_request_;
   std::unique_ptr<net::URLFetcher> auth_code_fetcher_;
+
+  // Keeps context of account code request. |initial_signin_| is true if request
+  // is made for initial sign-in flow.
+  bool initial_signin_;
 
   base::WeakPtrFactory<ArcBackgroundAuthCodeFetcher> weak_ptr_factory_;
 

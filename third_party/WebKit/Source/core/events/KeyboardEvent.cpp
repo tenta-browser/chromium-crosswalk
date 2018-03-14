@@ -22,14 +22,15 @@
 
 #include "core/events/KeyboardEvent.h"
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "core/editing/InputMethodController.h"
+#include "build/build_config.h"
+#include "core/editing/ime/InputMethodController.h"
 #include "core/input/InputDeviceCapabilities.h"
 #include "platform/WindowsKeyboardCodes.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/wtf/PtrUtil.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebInputEvent.h"
-#include "wtf/PtrUtil.h"
 
 namespace blink {
 
@@ -101,7 +102,7 @@ KeyboardEvent::KeyboardEvent(const WebKeyboardEvent& key,
               ? dom_window->GetInputDeviceCapabilities()->FiresTouchEvents(
                     false)
               : nullptr),
-      key_event_(WTF::MakeUnique<WebKeyboardEvent>(key)),
+      key_event_(std::make_unique<WebKeyboardEvent>(key)),
       // TODO(crbug.com/482880): Fix this initialization to lazy initialization.
       code_(Platform::Current()->DomCodeStringFromEnum(key.dom_code)),
       key_(Platform::Current()->DomKeyStringFromEnum(key.dom_key)),
@@ -156,7 +157,7 @@ int KeyboardEvent::keyCode() const {
   if (!key_event_)
     return 0;
 
-#if OS(ANDROID)
+#if defined(OS_ANDROID)
   // FIXME: Check to see if this applies to other OS.
   // If the key event belongs to IME composition then propagate to JS.
   if (key_event_->native_key_code == 0xE5)  // VKEY_PROCESSKEY
@@ -187,11 +188,11 @@ bool KeyboardEvent::IsKeyboardEvent() const {
   return true;
 }
 
-int KeyboardEvent::which() const {
+unsigned KeyboardEvent::which() const {
   // Netscape's "which" returns a virtual key code for keydown and keyup, and a
   // character code for keypress.  That's exactly what IE's "keyCode" returns.
   // So they are the same for keyboard events.
-  return keyCode();
+  return (unsigned)keyCode();
 }
 
 void KeyboardEvent::InitLocationModifiers(unsigned location) {
@@ -208,7 +209,7 @@ void KeyboardEvent::InitLocationModifiers(unsigned location) {
   }
 }
 
-DEFINE_TRACE(KeyboardEvent) {
+void KeyboardEvent::Trace(blink::Visitor* visitor) {
   UIEventWithKeyState::Trace(visitor);
 }
 

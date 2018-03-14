@@ -45,6 +45,10 @@ class NavigationControllerDelegate {
   virtual void NotifyBeforeFormRepostWarningShow() = 0;
   virtual void NotifyNavigationEntryCommitted(
       const LoadCommittedDetails& load_details) = 0;
+  virtual void NotifyNavigationEntryChanged(
+      const EntryChangedDetails& change_details) = 0;
+  virtual void NotifyNavigationListPruned(
+      const PrunedDetails& pruned_details) = 0;
   virtual void SetHistoryOffsetAndLength(int history_offset,
                                          int history_length) = 0;
   virtual void ActivateAndShowRepostFormWarningDialog() = 0;
@@ -61,7 +65,7 @@ class NavigationControllerDelegate {
   virtual void AttachInterstitialPage(
       InterstitialPageImpl* interstitial_page) = 0;
   virtual void DidProceedOnInterstitial() = 0;
-  virtual void DetachInterstitialPage() = 0;
+  virtual void DetachInterstitialPage(bool has_focus) = 0;
 
   virtual void UpdateOverridingUserAgent() = 0;
 };

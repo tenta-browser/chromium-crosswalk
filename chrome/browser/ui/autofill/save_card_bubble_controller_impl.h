@@ -14,6 +14,8 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 
+class PrefService;
+
 namespace autofill {
 
 // Implementation of per-tab class to control the save credit card bubble and
@@ -23,6 +25,8 @@ class SaveCardBubbleControllerImpl
       public content::WebContentsObserver,
       public content::WebContentsUserData<SaveCardBubbleControllerImpl> {
  public:
+  ~SaveCardBubbleControllerImpl() override;
+
   // Sets up the controller for local save and shows the bubble.
   // |save_card_callback| will be invoked if and when the Save button is
   // pressed.
@@ -62,6 +66,7 @@ class SaveCardBubbleControllerImpl
   void OnBubbleClosed() override;
 
   const LegalMessageLines& GetLegalMessageLines() const override;
+  void ContinueToRequestCvcStage() override;
 
   // Used to check if an entered CVC value is a valid CVC for the current card.
   // Valid CVCs are a certain length for their card type (4 for AMEX, 3
@@ -70,7 +75,6 @@ class SaveCardBubbleControllerImpl
 
  protected:
   explicit SaveCardBubbleControllerImpl(content::WebContents* web_contents);
-  ~SaveCardBubbleControllerImpl() override;
 
   // Returns the time elapsed since |timer_| was initialized.
   // Exists for testing.
@@ -79,6 +83,8 @@ class SaveCardBubbleControllerImpl
   // content::WebContentsObserver:
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
+  void WasHidden() override;
+  void WebContentsDestroyed() override;
 
  private:
   friend class content::WebContentsUserData<SaveCardBubbleControllerImpl>;
@@ -93,22 +99,29 @@ class SaveCardBubbleControllerImpl
   // Weak reference. Will be nullptr if no bubble is currently shown.
   SaveCardBubbleView* save_card_bubble_view_;
 
+  // Weak reference to read & write |kAutofillAcceptSaveCreditCardPromptState|.
+  PrefService* pref_service_;
+
   // Callback to run if user presses Save button in the bubble.
   // If save_card_callback_.is_null() is true then no bubble is available to
   // show and the icon is not visible.
   base::Closure save_card_callback_;
 
   // Governs whether the upload or local save version of the UI should be shown.
-  bool is_uploading_{false};
+  bool is_uploading_ = false;
 
   // Whether ReshowBubble() has been called since ShowBubbleFor*() was called.
-  bool is_reshow_{false};
+  bool is_reshow_ = false;
 
   // Whether the upload save version of the UI should ask the user for CVC.
-  bool should_cvc_be_requested_{false};
+  bool should_cvc_be_requested_ = false;
 
   // The value of the CVC entered by the user (if it was requested).
   base::string16 cvc_entered_by_user_;
+
+  // When true, the upload save version of the UI is currently in its second
+  // stage, which asks the user for CVC in order to save.
+  bool is_currently_requesting_cvc_ = false;
 
   // Contains the details of the card that will be saved if the user accepts.
   CreditCard card_;

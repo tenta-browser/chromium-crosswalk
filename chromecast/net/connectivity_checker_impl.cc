@@ -69,9 +69,9 @@ ConnectivityCheckerImpl::ConnectivityCheckerImpl(
       network_changed_pending_(false) {
   DCHECK(task_runner_.get());
 
-  task_runner->PostTask(FROM_HERE,
-                        base::Bind(&ConnectivityCheckerImpl::Initialize, this,
-                                   url_request_context_getter));
+  task_runner->PostTask(
+      FROM_HERE, base::Bind(&ConnectivityCheckerImpl::Initialize, this,
+                            base::RetainedRef(url_request_context_getter)));
 }
 
 void ConnectivityCheckerImpl::Initialize(
@@ -173,10 +173,11 @@ void ConnectivityCheckerImpl::OnNetworkChangedInternal() {
   Check();
 }
 
-void ConnectivityCheckerImpl::OnResponseStarted(net::URLRequest* request) {
+void ConnectivityCheckerImpl::OnResponseStarted(net::URLRequest* request,
+                                                int net_error) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   int http_response_code =
-      (request->status().is_success() &&
+      (net_error == net::OK &&
        request->response_info().headers.get() != nullptr)
           ? request->response_info().headers->response_code()
           : net::HTTP_BAD_REQUEST;

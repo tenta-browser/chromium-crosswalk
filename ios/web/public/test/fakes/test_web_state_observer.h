@@ -8,22 +8,27 @@
 #include "ios/web/public/test/fakes/test_web_state_observer_util.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 
-class GURL;
-
 namespace web {
 
 class WebState;
 
 // Test observer to check that the WebStateObserver methods are called as
-// expected.
+// expected. Can only observe a single WebState.
+// TODO(crbug.com/775684): fix this to allow observing multiple WebStates.
 class TestWebStateObserver : public WebStateObserver {
  public:
   TestWebStateObserver(WebState* web_state);
   ~TestWebStateObserver() override;
 
-  // Arguments passed to |ProvisionalNavigationStarted|.
-  web::TestStartProvisionalNavigationInfo* start_provisional_navigation_info() {
-    return start_provisional_navigation_info_.get();
+  WebState* web_state() { return web_state_; }
+
+  // Arguments passed to |WasShown|.
+  web::TestWasShownInfo* was_shown_info() { return was_shown_info_.get(); }
+  // Arguments passed to |WasHidden|.
+  web::TestWasHiddenInfo* was_hidden_info() { return was_hidden_info_.get(); }
+  // Arguments passed to |DidStartNavigation|.
+  web::TestDidStartNavigationInfo* did_start_navigation_info() {
+    return did_start_navigation_info_.get();
   }
   // Arguments passed to |DidFinishNavigation|.
   web::TestDidFinishNavigationInfo* did_finish_navigation_info() {
@@ -35,10 +40,6 @@ class TestWebStateObserver : public WebStateObserver {
   }
   // Arguments passed to |PageLoaded|.
   web::TestLoadPageInfo* load_page_info() { return load_page_info_.get(); }
-  // Arguments passed to |InterstitialDismissed|.
-  web::TestDismissInterstitialInfo* dismiss_interstitial_info() {
-    return dismiss_interstitial_info_.get();
-  }
   // Arguments passed to |LoadProgressChanged|.
   web::TestChangeLoadingProgressInfo* change_loading_progress_info() {
     return change_loading_progress_info_.get();
@@ -96,41 +97,50 @@ class TestWebStateObserver : public WebStateObserver {
 
  private:
   // WebStateObserver implementation:
-  void ProvisionalNavigationStarted(const GURL& url) override;
-  void NavigationItemCommitted(const LoadCommittedDetails&) override;
-  void PageLoaded(PageLoadCompletionStatus load_completion_status) override;
-  void InterstitialDismissed() override;
-  void LoadProgressChanged(double progress) override;
-  void NavigationItemsPruned(size_t pruned_item_count) override;
-  void NavigationItemChanged() override;
-  void DidFinishNavigation(NavigationContext* context) override;
-  void TitleWasSet() override;
-  void DidChangeVisibleSecurityState() override;
-  void DidSuppressDialog() override;
-  void DocumentSubmitted(const std::string& form_name,
+  void WasShown(WebState* web_state) override;
+  void WasHidden(WebState* web_state) override;
+  void NavigationItemCommitted(WebState* web_state,
+                               const LoadCommittedDetails&) override;
+  void PageLoaded(WebState* web_state,
+                  PageLoadCompletionStatus load_completion_status) override;
+  void LoadProgressChanged(WebState* web_state, double progress) override;
+  void NavigationItemsPruned(WebState* web_state,
+                             size_t pruned_item_count) override;
+  void NavigationItemChanged(WebState* web_state) override;
+  void DidStartNavigation(WebState* web_state,
+                          NavigationContext* context) override;
+  void DidFinishNavigation(WebState* web_state,
+                           NavigationContext* context) override;
+  void TitleWasSet(WebState* web_state) override;
+  void DidChangeVisibleSecurityState(WebState* web_state) override;
+  void DidSuppressDialog(WebState* web_state) override;
+  void DocumentSubmitted(WebState* web_state,
+                         const std::string& form_name,
                          bool user_initiated) override;
-  void FormActivityRegistered(const std::string& form_name,
-                              const std::string& field_name,
-                              const std::string& type,
-                              const std::string& value,
-                              bool input_missing) override;
-  void FaviconUrlUpdated(const std::vector<FaviconURL>& candidates) override;
-  void RenderProcessGone() override;
-  void WebStateDestroyed() override;
-  void DidStartLoading() override;
-  void DidStopLoading() override;
+  void FormActivityRegistered(WebState* web_state,
+                              const FormActivityParams& params) override;
+  void FaviconUrlUpdated(WebState* web_state,
+                         const std::vector<FaviconURL>& candidates) override;
+  void RenderProcessGone(WebState* web_state) override;
+  void WebStateDestroyed(WebState* web_state) override;
+  void DidStartLoading(WebState* web_state) override;
+  void DidStopLoading(WebState* web_state) override;
 
-  std::unique_ptr<web::TestStartProvisionalNavigationInfo>
-      start_provisional_navigation_info_;
+  // The WebState this instance is observing. Will be null after
+  // WebStateDestroyed has been called.
+  web::WebState* web_state_ = nullptr;
+
+  std::unique_ptr<web::TestWasShownInfo> was_shown_info_;
+  std::unique_ptr<web::TestWasHiddenInfo> was_hidden_info_;
   std::unique_ptr<web::TestCommitNavigationInfo> commit_navigation_info_;
   std::unique_ptr<web::TestLoadPageInfo> load_page_info_;
-  std::unique_ptr<web::TestDismissInterstitialInfo> dismiss_interstitial_info_;
   std::unique_ptr<web::TestChangeLoadingProgressInfo>
       change_loading_progress_info_;
   std::unique_ptr<web::TestNavigationItemsPrunedInfo>
       navigation_items_pruned_info_;
   std::unique_ptr<web::TestNavigationItemChangedInfo>
       navigation_item_changed_info_;
+  std::unique_ptr<web::TestDidStartNavigationInfo> did_start_navigation_info_;
   std::unique_ptr<web::TestDidFinishNavigationInfo> did_finish_navigation_info_;
   std::unique_ptr<web::TestTitleWasSetInfo> title_was_set_info_;
   std::unique_ptr<web::TestDidChangeVisibleSecurityStateInfo>

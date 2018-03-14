@@ -7,6 +7,8 @@
 #include <string>
 
 #include "base/guid.h"
+#include "base/rand_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "components/autofill/core/browser/autofill_manager.h"
@@ -25,17 +27,36 @@
 #include "components/prefs/testing_pref_store.h"
 #include "components/signin/core/browser/account_fetcher_service.h"
 #include "components/signin/core/browser/account_tracker_service.h"
-#include "components/signin/core/common/signin_pref_names.h"
+#include "components/signin/core/browser/signin_pref_names.h"
+#include "testing/gtest/include/gtest/gtest.h"
 
 using base::ASCIIToUTF16;
 
 namespace autofill {
 namespace test {
 
+namespace {
+
+std::string GetRandomCardNumber() {
+  const size_t length = 16;
+  std::string value;
+  value.reserve(length);
+  for (size_t i = 0; i < length; ++i)
+    value.push_back(static_cast<char>(base::RandInt('0', '9')));
+  return value;
+}
+
+}  // namespace
+
 std::unique_ptr<PrefService> PrefServiceForTesting() {
   scoped_refptr<user_prefs::PrefRegistrySyncable> registry(
       new user_prefs::PrefRegistrySyncable());
-  AutofillManager::RegisterProfilePrefs(registry.get());
+  return PrefServiceForTesting(registry.get());
+}
+
+std::unique_ptr<PrefService> PrefServiceForTesting(
+    user_prefs::PrefRegistrySyncable* registry) {
+  AutofillManager::RegisterProfilePrefs(registry);
 
   // PDM depends on these prefs, which are normally registered in
   // SigninManagerFactory.
@@ -58,8 +79,8 @@ std::unique_ptr<PrefService> PrefServiceForTesting() {
   registry->RegisterInt64Pref(AccountFetcherService::kLastUpdatePref, 0);
 
   PrefServiceFactory factory;
-  factory.set_user_prefs(make_scoped_refptr(new TestingPrefStore()));
-  return factory.Create(registry.get());
+  factory.set_user_prefs(base::MakeRefCounted<TestingPrefStore>());
+  return factory.Create(registry);
 }
 
 void CreateTestFormField(const char* label,
@@ -111,6 +132,8 @@ void CreateTestAddressFormData(FormData* form,
   form->name = ASCIIToUTF16("MyForm");
   form->origin = GURL("http://myform.com/form.html");
   form->action = GURL("http://myform.com/submit.html");
+  form->main_frame_origin =
+      url::Origin::Create(GURL("https://myform_root.com/form.html"));
   types->clear();
 
   FormFieldData field;
@@ -178,6 +201,22 @@ inline void check_and_set(
     profile->SetRawInfo(type, base::UTF8ToUTF16(value));
 }
 
+AutofillProfile GetFullValidProfileForCanada() {
+  AutofillProfile profile(base::GenerateGUID(), "http://www.example.com/");
+  SetProfileInfo(&profile, "Alice", "", "Wonderland", "alice@wonderland.ca",
+                 "Fiction", "666 Notre-Dame Ouest", "Apt 8", "Montreal", "QC",
+                 "H3B 2T9", "CA", "15141112233");
+  return profile;
+}
+
+AutofillProfile GetFullValidProfileForChina() {
+  AutofillProfile profile(base::GenerateGUID(), "http://www.example.com/");
+  SetProfileInfo(&profile, "John", "H.", "Doe", "johndoe@google.cn", "Google",
+                 "100 Century Avenue", "", "赫章县", "毕节地区", "贵州省",
+                 "200120", "CN", "+86-21-6133-7666");
+  return profile;
+}
+
 AutofillProfile GetFullProfile() {
   AutofillProfile profile(base::GenerateGUID(), "http://www.example.com/");
   SetProfileInfo(&profile,
@@ -212,6 +251,29 @@ AutofillProfile GetFullProfile2() {
   return profile;
 }
 
+AutofillProfile GetFullCanadianProfile() {
+  AutofillProfile profile(base::GenerateGUID(), "http://www.example.com/");
+  SetProfileInfo(&profile, "Wayne", "", "Gretzky", "wayne@hockey.com", "NHL",
+                 "123 Hockey rd.", "Apt 8", "Moncton", "New Brunswick",
+                 "E1A 0A6", "CA", "15068531212");
+  return profile;
+}
+
+AutofillProfile GetIncompleteProfile1() {
+  AutofillProfile profile(base::GenerateGUID(), "https://www.example.com/");
+  SetProfileInfo(&profile, "John", "H.", "Doe", "jsmith@example.com", "ACME",
+                 "123 Main Street", "Unit 1", "Greensdale", "MI", "48838", "US",
+                 "");
+  return profile;
+}
+
+AutofillProfile GetIncompleteProfile2() {
+  AutofillProfile profile(base::GenerateGUID(), "https://www.example.com/");
+  SetProfileInfo(&profile, "", "", "", "jsmith@example.com", "", "", "", "", "",
+                 "", "", "");
+  return profile;
+}
+
 AutofillProfile GetVerifiedProfile() {
   AutofillProfile profile(GetFullProfile());
   profile.set_origin(kSettingsOrigin);
@@ -227,14 +289,14 @@ AutofillProfile GetVerifiedProfile2() {
 CreditCard GetCreditCard() {
   CreditCard credit_card(base::GenerateGUID(), "http://www.example.com");
   SetCreditCardInfo(&credit_card, "Test User", "4111111111111111" /* Visa */,
-                    "11", "2022");
+                    "11", "2022", "1");
   return credit_card;
 }
 
 CreditCard GetCreditCard2() {
   CreditCard credit_card(base::GenerateGUID(), "https://www.example.com");
   SetCreditCardInfo(&credit_card, "Someone Else", "378282246310005" /* AmEx */,
-                    "07", "2022");
+                    "07", "2022", "1");
   return credit_card;
 }
 
@@ -253,25 +315,94 @@ CreditCard GetVerifiedCreditCard2() {
 CreditCard GetMaskedServerCard() {
   CreditCard credit_card(CreditCard::MASKED_SERVER_CARD, "a123");
   test::SetCreditCardInfo(&credit_card, "Bonnie Parker",
-                          "2109" /* Mastercard */, "12", "2020");
-  credit_card.SetTypeForMaskedCard(kMasterCard);
+                          "2109" /* Mastercard */, "12", "2020", "1");
+  credit_card.SetNetworkForMaskedCard(kMasterCard);
   return credit_card;
 }
 
 CreditCard GetMaskedServerCardAmex() {
   CreditCard credit_card(CreditCard::MASKED_SERVER_CARD, "b456");
-  test::SetCreditCardInfo(&credit_card, "Justin Thyme",
-                          "8431" /* Amex */, "9", "2020");
-  credit_card.SetTypeForMaskedCard(kAmericanExpressCard);
+  test::SetCreditCardInfo(&credit_card, "Justin Thyme", "8431" /* Amex */, "9",
+                          "2020", "1");
+  credit_card.SetNetworkForMaskedCard(kAmericanExpressCard);
+  return credit_card;
+}
+
+CreditCard GetRandomCreditCard(CreditCard::RecordType record_type) {
+  static const char* const kNetworks[] = {
+      kAmericanExpressCard,
+      kDinersCard,
+      kDiscoverCard,
+      kEloCard,
+      kGenericCard,
+      kJCBCard,
+      kMasterCard,
+      kMirCard,
+      kUnionPay,
+      kVisaCard,
+  };
+  constexpr size_t kNumNetworks = sizeof(kNetworks) / sizeof(kNetworks[0]);
+  base::Time::Exploded now;
+  base::Time::Now().LocalExplode(&now);
+
+  CreditCard credit_card =
+      (record_type == CreditCard::LOCAL_CARD)
+          ? CreditCard(base::GenerateGUID(), "http://www.example.com")
+          : CreditCard(record_type, base::GenerateGUID().substr(24));
+  test::SetCreditCardInfo(
+      &credit_card, "Justin Thyme", GetRandomCardNumber().c_str(),
+      base::StringPrintf("%d", base::RandInt(1, 12)).c_str(),
+      base::StringPrintf("%d", now.year + base::RandInt(1, 4)).c_str(), "1");
+  if (record_type == CreditCard::MASKED_SERVER_CARD) {
+    credit_card.SetNetworkForMaskedCard(
+        kNetworks[base::RandInt(0, kNumNetworks - 1)]);
+  }
+
   return credit_card;
 }
 
 void SetProfileInfo(AutofillProfile* profile,
-    const char* first_name, const char* middle_name,
-    const char* last_name, const char* email, const char* company,
-    const char* address1, const char* address2, const char* city,
-    const char* state, const char* zipcode, const char* country,
-    const char* phone) {
+                    const char* first_name,
+                    const char* middle_name,
+                    const char* last_name,
+                    const char* email,
+                    const char* company,
+                    const char* address1,
+                    const char* address2,
+                    const char* dependent_locality,
+                    const char* city,
+                    const char* state,
+                    const char* zipcode,
+                    const char* country,
+                    const char* phone) {
+  check_and_set(profile, NAME_FIRST, first_name);
+  check_and_set(profile, NAME_MIDDLE, middle_name);
+  check_and_set(profile, NAME_LAST, last_name);
+  check_and_set(profile, EMAIL_ADDRESS, email);
+  check_and_set(profile, COMPANY_NAME, company);
+  check_and_set(profile, ADDRESS_HOME_LINE1, address1);
+  check_and_set(profile, ADDRESS_HOME_LINE2, address2);
+  check_and_set(profile, ADDRESS_HOME_DEPENDENT_LOCALITY, dependent_locality);
+  check_and_set(profile, ADDRESS_HOME_CITY, city);
+  check_and_set(profile, ADDRESS_HOME_STATE, state);
+  check_and_set(profile, ADDRESS_HOME_ZIP, zipcode);
+  check_and_set(profile, ADDRESS_HOME_COUNTRY, country);
+  check_and_set(profile, PHONE_HOME_WHOLE_NUMBER, phone);
+}
+
+void SetProfileInfo(AutofillProfile* profile,
+                    const char* first_name,
+                    const char* middle_name,
+                    const char* last_name,
+                    const char* email,
+                    const char* company,
+                    const char* address1,
+                    const char* address2,
+                    const char* city,
+                    const char* state,
+                    const char* zipcode,
+                    const char* country,
+                    const char* phone) {
   check_and_set(profile, NAME_FIRST, first_name);
   check_and_set(profile, NAME_MIDDLE, middle_name);
   check_and_set(profile, NAME_LAST, last_name);
@@ -300,17 +431,21 @@ void SetProfileInfoWithGuid(AutofillProfile* profile,
 }
 
 void SetCreditCardInfo(CreditCard* credit_card,
-    const char* name_on_card, const char* card_number,
-    const char* expiration_month, const char* expiration_year) {
+                       const char* name_on_card,
+                       const char* card_number,
+                       const char* expiration_month,
+                       const char* expiration_year,
+                       const std::string& billing_address_id) {
   check_and_set(credit_card, CREDIT_CARD_NAME_FULL, name_on_card);
   check_and_set(credit_card, CREDIT_CARD_NUMBER, card_number);
   check_and_set(credit_card, CREDIT_CARD_EXP_MONTH, expiration_month);
   check_and_set(credit_card, CREDIT_CARD_EXP_4_DIGIT_YEAR, expiration_year);
+  credit_card->set_billing_address_id(billing_address_id);
 }
 
 void DisableSystemServices(PrefService* prefs) {
   // Use a mock Keychain rather than the OS one to store credit card data.
-  OSCryptMocker::SetUpWithSingleton();
+  OSCryptMocker::SetUp();
 }
 
 void ReenableSystemServices() {
@@ -322,17 +457,15 @@ void SetServerCreditCards(AutofillTable* table,
   std::vector<CreditCard> as_masked_cards = cards;
   for (CreditCard& card : as_masked_cards) {
     card.set_record_type(CreditCard::MASKED_SERVER_CARD);
-    std::string type = card.type();
     card.SetNumber(card.LastFourDigits());
-    card.SetTypeForMaskedCard(type.c_str());
+    card.SetNetworkForMaskedCard(card.network());
   }
   table->SetServerCreditCards(as_masked_cards);
 
   for (const CreditCard& card : cards) {
     if (card.record_type() != CreditCard::FULL_SERVER_CARD)
       continue;
-
-    table->UnmaskServerCreditCard(card, card.number());
+    ASSERT_TRUE(table->UnmaskServerCreditCard(card, card.number()));
   }
 }
 

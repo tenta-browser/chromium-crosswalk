@@ -181,7 +181,7 @@ public class ContentView extends FrameLayout
 
     @Override
     public boolean onDragEvent(DragEvent event) {
-        return mContentViewCore.onDragEvent(event);
+        return getEventForwarder().onDragEvent(event, this);
     }
 
     @Override
@@ -196,7 +196,7 @@ public class ContentView extends FrameLayout
      */
     @Override
     public boolean onHoverEvent(MotionEvent event) {
-        boolean consumed = mContentViewCore.onHoverEvent(event);
+        boolean consumed = getEventForwarder().onHoverEvent(event);
         if (!mContentViewCore.isTouchExplorationEnabled()) super.onHoverEvent(event);
         return consumed;
     }
@@ -323,8 +323,7 @@ public class ContentView extends FrameLayout
     // Implements SmartClipProvider
     @Override
     public void extractSmartClipData(int x, int y, int width, int height) {
-        mContentViewCore.getWebContents().requestSmartClipExtract(
-                x, y, width, height, mContentViewCore.getRenderCoordinates());
+        mContentViewCore.getWebContents().requestSmartClipExtract(x, y, width, height);
     }
 
     // Implements SmartClipProvider

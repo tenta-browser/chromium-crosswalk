@@ -86,12 +86,12 @@ bool BluetoothAttributeInstanceMap::ContainsDescriptor(
 }
 
 void BluetoothAttributeInstanceMap::Clear() {
-  service_id_to_object_.Clear();
-  characteristic_id_to_object_.Clear();
-  descriptor_id_to_object_.Clear();
+  service_id_to_object_.clear();
+  characteristic_id_to_object_.clear();
+  descriptor_id_to_object_.clear();
 }
 
-DEFINE_TRACE(BluetoothAttributeInstanceMap) {
+void BluetoothAttributeInstanceMap::Trace(blink::Visitor* visitor) {
   visitor->Trace(device_);
   visitor->Trace(service_id_to_object_);
   visitor->Trace(characteristic_id_to_object_);

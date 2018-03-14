@@ -24,49 +24,48 @@ void FakeUsbDeviceHandle::Close() {
 }
 
 void FakeUsbDeviceHandle::SetConfiguration(int configuration_value,
-                                           const ResultCallback& callback) {
+                                           ResultCallback callback) {
   NOTIMPLEMENTED();
 }
 
 void FakeUsbDeviceHandle::ClaimInterface(int interface_number,
-                                         const ResultCallback& callback) {
+                                         ResultCallback callback) {
   NOTIMPLEMENTED();
 }
 
 void FakeUsbDeviceHandle::ReleaseInterface(int interface_number,
-                                           const ResultCallback& callback) {
+                                           ResultCallback callback) {
   NOTIMPLEMENTED();
 }
 
 void FakeUsbDeviceHandle::SetInterfaceAlternateSetting(
     int interface_number,
     int alternate_setting,
-    const ResultCallback& callback) {
+    ResultCallback callback) {
   NOTIMPLEMENTED();
 }
 
-void FakeUsbDeviceHandle::ResetDevice(const ResultCallback& callback) {
+void FakeUsbDeviceHandle::ResetDevice(ResultCallback callback) {
   NOTIMPLEMENTED();
 }
 
-void FakeUsbDeviceHandle::ClearHalt(uint8_t endpoint,
-                                    const ResultCallback& callback) {
+void FakeUsbDeviceHandle::ClearHalt(uint8_t endpoint, ResultCallback callback) {
   NOTIMPLEMENTED();
 }
 
 void FakeUsbDeviceHandle::ControlTransfer(
-    UsbEndpointDirection direction,
-    UsbDeviceHandle::TransferRequestType request_type,
-    UsbDeviceHandle::TransferRecipient recipient,
+    UsbTransferDirection direction,
+    UsbControlTransferType request_type,
+    UsbControlTransferRecipient recipient,
     uint8_t request,
     uint16_t value,
     uint16_t index,
     scoped_refptr<net::IOBuffer> buffer,
     size_t length,
     unsigned int timeout,
-    const UsbDeviceHandle::TransferCallback& callback) {
+    UsbDeviceHandle::TransferCallback callback) {
   if (position_ == size_) {
-    callback.Run(USB_TRANSFER_DISCONNECT, buffer, 0);
+    std::move(callback).Run(UsbTransferStatus::DISCONNECT, buffer, 0);
     return;
   }
 
@@ -79,14 +78,15 @@ void FakeUsbDeviceHandle::ControlTransfer(
       bytes_transferred = std::min(bytes_transferred, size_ - position_);
     }
 
-    if (direction == USB_DIRECTION_INBOUND) {
+    if (direction == UsbTransferDirection::INBOUND) {
       memcpy(buffer->data(), &data_[position_], bytes_transferred);
       position_ += bytes_transferred;
     }
 
-    callback.Run(USB_TRANSFER_COMPLETED, buffer, bytes_transferred);
+    std::move(callback).Run(UsbTransferStatus::COMPLETED, buffer,
+                            bytes_transferred);
   } else {
-    callback.Run(USB_TRANSFER_ERROR, buffer, 0);
+    std::move(callback).Run(UsbTransferStatus::TRANSFER_ERROR, buffer, 0);
   }
 }
 
@@ -94,7 +94,7 @@ void FakeUsbDeviceHandle::IsochronousTransferIn(
     uint8_t endpoint_number,
     const std::vector<uint32_t>& packet_lengths,
     unsigned int timeout,
-    const IsochronousTransferCallback& callback) {
+    IsochronousTransferCallback callback) {
   NOTIMPLEMENTED();
 }
 
@@ -103,16 +103,16 @@ void FakeUsbDeviceHandle::IsochronousTransferOut(
     scoped_refptr<net::IOBuffer> buffer,
     const std::vector<uint32_t>& packet_lengths,
     unsigned int timeout,
-    const IsochronousTransferCallback& callback) {
+    IsochronousTransferCallback callback) {
   NOTIMPLEMENTED();
 }
 
-void FakeUsbDeviceHandle::GenericTransfer(UsbEndpointDirection direction,
+void FakeUsbDeviceHandle::GenericTransfer(UsbTransferDirection direction,
                                           uint8_t endpoint_number,
                                           scoped_refptr<net::IOBuffer> buffer,
                                           size_t length,
                                           unsigned int timeout,
-                                          const TransferCallback& callback) {
+                                          TransferCallback callback) {
   NOTIMPLEMENTED();
 }
 
@@ -122,6 +122,6 @@ const UsbInterfaceDescriptor* FakeUsbDeviceHandle::FindInterfaceByEndpoint(
   return nullptr;
 }
 
-FakeUsbDeviceHandle::~FakeUsbDeviceHandle() {}
+FakeUsbDeviceHandle::~FakeUsbDeviceHandle() = default;
 
 }  // namespace device

@@ -12,12 +12,9 @@
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_tree_host.h"
 
-namespace base {
-class MessageLoopForUI;
-}
-
 namespace ui {
 class ContextFactory;
+class ContextFactoryPrivate;
 class ScopedAnimationDurationScaleMode;
 }
 
@@ -28,7 +25,9 @@ class WMState;
 namespace aura {
 class Env;
 class TestScreen;
+class TestWindowManagerDelegate;
 class TestWindowTree;
+class TestWindowTreeClientDelegate;
 class TestWindowTreeClientSetup;
 class Window;
 class WindowManagerDelegate;
@@ -41,6 +40,7 @@ class DefaultCaptureClient;
 class FocusClient;
 }
 namespace test {
+class EnvWindowTreeClientSetter;
 class TestWindowParentingClient;
 
 // A helper class owned by tests that does common initialization required for
@@ -48,7 +48,7 @@ class TestWindowParentingClient;
 // that are necessary to run test on Aura.
 class AuraTestHelper {
  public:
-  explicit AuraTestHelper(base::MessageLoopForUI* message_loop);
+  AuraTestHelper();
   ~AuraTestHelper();
 
   // Returns the current AuraTestHelper, or nullptr if it's not alive.
@@ -64,6 +64,11 @@ class AuraTestHelper {
   // before SetUp().
   void EnableMusWithWindowTreeClient(WindowTreeClient* window_tree_client);
 
+  // Deletes the WindowTreeClient now. Normally the WindowTreeClient is deleted
+  // at the right time and there is no need to call this. This is provided for
+  // testing shutdown ordering.
+  void DeleteWindowTreeClient();
+
   // Creates and initializes (shows and sizes) the RootWindow for use in tests.
   void SetUp(ui::ContextFactory* context_factory,
              ui::ContextFactoryPrivate* context_factory_private);
@@ -75,7 +80,7 @@ class AuraTestHelper {
   // Flushes message loop.
   void RunAllPendingInMessageLoop();
 
-  Window* root_window() { return host_->window(); }
+  Window* root_window() { return host_ ? host_->window() : nullptr; }
   ui::EventSink* event_sink() { return host_->event_sink(); }
   WindowTreeHost* host() { return host_.get(); }
 
@@ -113,7 +118,16 @@ class AuraTestHelper {
   Mode mode_ = Mode::LOCAL;
   bool setup_called_;
   bool teardown_called_;
+  ui::ContextFactory* context_factory_to_restore_ = nullptr;
+  ui::ContextFactoryPrivate* context_factory_private_to_restore_ = nullptr;
+  std::unique_ptr<EnvWindowTreeClientSetter> env_window_tree_client_setter_;
+  // This is only created if Env has already been created and it's Mode is MUS.
+  std::unique_ptr<TestWindowTreeClientDelegate>
+      test_window_tree_client_delegate_;
+  // This is only created if Env has already been created and it's Mode is MUS.
+  std::unique_ptr<TestWindowManagerDelegate> test_window_manager_delegate_;
   std::unique_ptr<TestWindowTreeClientSetup> window_tree_client_setup_;
+  Env::Mode env_mode_to_restore_ = Env::Mode::LOCAL;
   std::unique_ptr<aura::Env> env_;
   std::unique_ptr<wm::WMState> wm_state_;
   std::unique_ptr<WindowTreeHost> host_;

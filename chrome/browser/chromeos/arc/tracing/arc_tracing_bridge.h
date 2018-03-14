@@ -8,32 +8,43 @@
 #include <string>
 #include <vector>
 
+#include "base/files/scoped_file.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/trace_event/trace_event.h"
-#include "components/arc/arc_service.h"
 #include "components/arc/common/tracing.mojom.h"
-#include "components/arc/instance_holder.h"
-#include "content/browser/tracing/arc_tracing_agent.h"
+#include "components/arc/connection_observer.h"
+#include "components/keyed_service/core/keyed_service.h"
+#include "content/public/browser/arc_tracing_agent.h"
+
+namespace content {
+class BrowserContext;
+}  // namespace content
 
 namespace arc {
 
 class ArcBridgeService;
 
 // This class provides the interface to trigger tracing in the container.
-class ArcTracingBridge
-    : public ArcService,
-      public content::ArcTracingAgent::Delegate,
-      public InstanceHolder<mojom::TracingInstance>::Observer {
+class ArcTracingBridge : public KeyedService,
+                         public content::ArcTracingAgent::Delegate,
+                         public ConnectionObserver<mojom::TracingInstance> {
  public:
-  explicit ArcTracingBridge(ArcBridgeService* bridge_service);
+  // Returns singleton instance for the given BrowserContext,
+  // or nullptr if the browser |context| is not allowed to use ARC.
+  static ArcTracingBridge* GetForBrowserContext(
+      content::BrowserContext* context);
+
+  ArcTracingBridge(content::BrowserContext* context,
+                   ArcBridgeService* bridge_service);
   ~ArcTracingBridge() override;
 
-  // InstanceHolder<mojom::TracingInstance>::Observer overrides:
-  void OnInstanceReady() override;
+  // ConnectionObserver<mojom::TracingInstance> overrides:
+  void OnConnectionReady() override;
 
   // content::ArcTracingAgent::Delegate overrides:
-  void StartTracing(const base::trace_event::TraceConfig& trace_config,
+  bool StartTracing(const base::trace_event::TraceConfig& trace_config,
+                    base::ScopedFD write_fd,
                     const StartTracingCallback& callback) override;
   void StopTracing(const StopTracingCallback& callback) override;
 
@@ -42,6 +53,8 @@ class ArcTracingBridge
 
   // Callback for QueryAvailableCategories.
   void OnCategoriesReady(const std::vector<std::string>& categories);
+
+  ArcBridgeService* const arc_bridge_service_;  // Owned by ArcServiceManager.
 
   // List of available categories.
   std::vector<Category> categories_;

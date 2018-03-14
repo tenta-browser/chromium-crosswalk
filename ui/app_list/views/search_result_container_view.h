@@ -7,9 +7,10 @@
 
 #include <stddef.h>
 
+#include "ash/app_list/model/app_list_model.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "ui/app_list/app_list_model.h"
+#include "ui/app_list/app_list_export.h"
 #include "ui/views/view.h"
 
 namespace app_list {
@@ -67,6 +68,9 @@ class APP_LIST_EXPORT SearchResultContainerView : public views::View,
   // Returns whether an update is currently scheduled for this container.
   bool UpdateScheduled();
 
+  // Overridden from views::View:
+  const char* GetClassName() const override;
+
   // Overridden from ui::ListModelObserver:
   void ListItemsAdded(size_t start, size_t count) override;
   void ListItemsRemoved(size_t start, size_t count) override;
@@ -80,6 +84,13 @@ class APP_LIST_EXPORT SearchResultContainerView : public views::View,
   // Tab).
   virtual void OnContainerSelected(bool from_bottom,
                                    bool directional_movement) = 0;
+
+  // Returns selected view in this container view.
+  virtual views::View* GetSelectedView() const = 0;
+
+  // Sets the first result in this container view selected/unselected. Returns
+  // the result's view.
+  virtual views::View* SetFirstResultSelected(bool selected) = 0;
 
  private:
   // Schedules an Update call using |update_factory_|. Do nothing if there is a

@@ -19,7 +19,7 @@ namespace test_runner {
 // Test app banner service that is registered as a Mojo service for
 // BeforeInstallPromptEvents to look up when the test runner is executed.
 class TEST_RUNNER_EXPORT AppBannerService
-    : public NON_EXPORTED_BASE(blink::mojom::AppBannerService) {
+    : public blink::mojom::AppBannerService {
  public:
   AppBannerService();
   ~AppBannerService() override;
@@ -30,7 +30,7 @@ class TEST_RUNNER_EXPORT AppBannerService
                                const base::Callback<void(bool)>& callback);
 
   // blink::mojom::AppBannerService overrides.
-  void DisplayAppBanner() override;
+  void DisplayAppBanner(bool user_gesture) override;
 
  private:
   void OnBannerPromptReply(const base::Callback<void(bool)>& callback,

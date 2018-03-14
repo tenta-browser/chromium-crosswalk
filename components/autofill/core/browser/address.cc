@@ -7,11 +7,14 @@
 #include <stddef.h>
 #include <algorithm>
 
+#include "base/i18n/case_conversion.h"
 #include "base/logging.h"
+#include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_country.h"
+#include "components/autofill/core/browser/autofill_data_util.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_profile_comparator.h"
@@ -134,8 +137,8 @@ void Address::SetRawInfo(ServerFieldType type, const base::string16& value) {
 
     case ADDRESS_HOME_COUNTRY:
       DCHECK(value.empty() ||
-             (value.length() == 2u && base::IsStringASCII(value)));
-      country_code_ = base::UTF16ToASCII(value);
+             data_util::IsValidCountryCode(base::i18n::ToUpper(value)));
+      country_code_ = base::ToUpperASCII(base::UTF16ToASCII(value));
       break;
 
     case ADDRESS_HOME_ZIP:
@@ -155,55 +158,6 @@ void Address::SetRawInfo(ServerFieldType type, const base::string16& value) {
     default:
       NOTREACHED();
   }
-}
-
-base::string16 Address::GetInfo(const AutofillType& type,
-                                const std::string& app_locale) const {
-  if (type.html_type() == HTML_TYPE_COUNTRY_CODE)
-    return base::ASCIIToUTF16(country_code_);
-
-  ServerFieldType storable_type = type.GetStorableType();
-  if (storable_type == ADDRESS_HOME_COUNTRY && !country_code_.empty())
-    return AutofillCountry(country_code_, app_locale).name();
-
-  return GetRawInfo(storable_type);
-}
-
-bool Address::SetInfo(const AutofillType& type,
-                      const base::string16& value,
-                      const std::string& app_locale) {
-  if (type.html_type() == HTML_TYPE_COUNTRY_CODE) {
-    if (!value.empty() && (value.size() != 2u || !base::IsStringASCII(value))) {
-      country_code_ = std::string();
-      return false;
-    }
-
-    country_code_ = base::ToUpperASCII(base::UTF16ToASCII(value));
-    return true;
-  } else if (type.html_type() == HTML_TYPE_FULL_ADDRESS) {
-    // Parsing a full address is too hard.
-    return false;
-  }
-
-  ServerFieldType storable_type = type.GetStorableType();
-  if (storable_type == ADDRESS_HOME_COUNTRY && !value.empty()) {
-    country_code_ = CountryNames::GetInstance()->GetCountryCode(value);
-    return !country_code_.empty();
-  }
-
-  SetRawInfo(storable_type, value);
-
-  // Give up when importing addresses with any entirely blank lines.
-  // There's a good chance that this formatting is not intentional, but it's
-  // also not obviously safe to just strip the newlines.
-  if (storable_type == ADDRESS_HOME_STREET_ADDRESS &&
-      std::find(street_address_.begin(), street_address_.end(),
-                base::string16()) != street_address_.end()) {
-    street_address_.clear();
-    return false;
-  }
-
-  return true;
 }
 
 void Address::GetMatchingTypes(const base::string16& text,
@@ -226,9 +180,8 @@ void Address::GetMatchingTypes(const base::string16& text,
                                       &state_abbreviation);
   if (!state_name.empty() || !state_abbreviation.empty()) {
     l10n::CaseInsensitiveCompare compare;
-    base::string16 canon_profile_state =
-        comparator.NormalizeForComparison(
-            GetInfo(AutofillType(ADDRESS_HOME_STATE), app_locale));
+    base::string16 canon_profile_state = comparator.NormalizeForComparison(
+        GetInfo(AutofillType(ADDRESS_HOME_STATE), app_locale));
     if ((!state_name.empty() &&
          compare.StringsEqual(state_name, canon_profile_state)) ||
         (!state_abbreviation.empty() &&
@@ -249,6 +202,55 @@ void Address::GetSupportedTypes(ServerFieldTypeSet* supported_types) const {
   supported_types->insert(ADDRESS_HOME_ZIP);
   supported_types->insert(ADDRESS_HOME_SORTING_CODE);
   supported_types->insert(ADDRESS_HOME_COUNTRY);
+}
+
+base::string16 Address::GetInfoImpl(const AutofillType& type,
+                                    const std::string& app_locale) const {
+  if (type.html_type() == HTML_TYPE_COUNTRY_CODE)
+    return base::ASCIIToUTF16(country_code_);
+
+  ServerFieldType storable_type = type.GetStorableType();
+  if (storable_type == ADDRESS_HOME_COUNTRY && !country_code_.empty())
+    return AutofillCountry(country_code_, app_locale).name();
+
+  return GetRawInfo(storable_type);
+}
+
+bool Address::SetInfoImpl(const AutofillType& type,
+                          const base::string16& value,
+                          const std::string& app_locale) {
+  if (type.html_type() == HTML_TYPE_COUNTRY_CODE) {
+    if (!data_util::IsValidCountryCode(base::i18n::ToUpper(value))) {
+      country_code_ = std::string();
+      return false;
+    }
+
+    country_code_ = base::ToUpperASCII(base::UTF16ToASCII(value));
+    return true;
+  }
+  if (type.html_type() == HTML_TYPE_FULL_ADDRESS) {
+    // Parsing a full address is too hard.
+    return false;
+  }
+
+  ServerFieldType storable_type = type.GetStorableType();
+  if (storable_type == ADDRESS_HOME_COUNTRY && !value.empty()) {
+    country_code_ = CountryNames::GetInstance()->GetCountryCode(value);
+    return !country_code_.empty();
+  }
+
+  SetRawInfo(storable_type, value);
+
+  // Give up when importing addresses with any entirely blank lines.
+  // There's a good chance that this formatting is not intentional, but it's
+  // also not obviously safe to just strip the newlines.
+  if (storable_type == ADDRESS_HOME_STREET_ADDRESS &&
+      base::ContainsValue(street_address_, base::string16())) {
+    street_address_.clear();
+    return false;
+  }
+
+  return true;
 }
 
 void Address::TrimStreetAddress() {

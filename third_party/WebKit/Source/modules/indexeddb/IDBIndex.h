@@ -26,12 +26,12 @@
 #ifndef IDBIndex_h
 #define IDBIndex_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/indexeddb/IDBCursor.h"
 #include "modules/indexeddb/IDBKeyPath.h"
 #include "modules/indexeddb/IDBKeyRange.h"
 #include "modules/indexeddb/IDBMetadata.h"
 #include "modules/indexeddb/IDBRequest.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/modules/indexeddb/WebIDBCursor.h"
@@ -43,18 +43,17 @@ namespace blink {
 class ExceptionState;
 class IDBObjectStore;
 
-class IDBIndex final : public GarbageCollectedFinalized<IDBIndex>,
-                       public ScriptWrappable {
+class IDBIndex final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static IDBIndex* Create(RefPtr<IDBIndexMetadata> metadata,
+  static IDBIndex* Create(scoped_refptr<IDBIndexMetadata> metadata,
                           IDBObjectStore* object_store,
                           IDBTransaction* transaction) {
     return new IDBIndex(std::move(metadata), object_store, transaction);
   }
   ~IDBIndex();
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
   // Implement the IDL
   const String& name() const { return Metadata().name; }
@@ -108,29 +107,35 @@ class IDBIndex final : public GarbageCollectedFinalized<IDBIndex>,
     return Id() > old_object_store_metadata.max_index_id;
   }
 
-  void RevertMetadata(RefPtr<IDBIndexMetadata> old_metadata);
+  void RevertMetadata(scoped_refptr<IDBIndexMetadata> old_metadata);
 
   // Used internally and by InspectorIndexedDBAgent:
-  IDBRequest* openCursor(ScriptState*, IDBKeyRange*, WebIDBCursorDirection);
+  IDBRequest* openCursor(
+      ScriptState*,
+      IDBKeyRange*,
+      WebIDBCursorDirection,
+      IDBRequest::AsyncTraceState = IDBRequest::AsyncTraceState());
 
   WebIDBDatabase* BackendDB() const;
 
  private:
-  IDBIndex(RefPtr<IDBIndexMetadata>, IDBObjectStore*, IDBTransaction*);
+  IDBIndex(scoped_refptr<IDBIndexMetadata>, IDBObjectStore*, IDBTransaction*);
 
   const IDBIndexMetadata& Metadata() const { return *metadata_; }
 
   IDBRequest* GetInternal(ScriptState*,
                           const ScriptValue& key,
                           ExceptionState&,
-                          bool key_only);
+                          bool key_only,
+                          IDBRequest::AsyncTraceState metrics);
   IDBRequest* GetAllInternal(ScriptState*,
                              const ScriptValue& range,
                              unsigned long max_count,
                              ExceptionState&,
-                             bool key_only);
+                             bool key_only,
+                             IDBRequest::AsyncTraceState metrics);
 
-  RefPtr<IDBIndexMetadata> metadata_;
+  scoped_refptr<IDBIndexMetadata> metadata_;
   Member<IDBObjectStore> object_store_;
   Member<IDBTransaction> transaction_;
   bool deleted_ = false;

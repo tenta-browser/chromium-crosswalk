@@ -43,20 +43,17 @@ public class DownloadPage extends BasicNativePage {
         mManager = new DownloadManagerUi(activity, host.isIncognito(), activity.getComponentName(),
                 false, ((SnackbarManageable) activity).getSnackbarManager());
         mManager.setBasicNativePage(this);
-        mTitle = activity.getString(R.string.download_manager_ui_all_downloads);
+        mTitle = activity.getString(R.string.menu_downloads);
 
         // #destroy() unregisters the ActivityStateListener to avoid checking for externally removed
         // downloads after the downloads page is closed. This requires each DownloadPage to have its
         // own ActivityStateListener. If multiple tabs are showing the downloads page, multiple
         // requests to check for externally removed downloads will be issued when the activity is
         // resumed.
-        mActivityStateListener = new ActivityStateListener() {
-            @Override
-            public void onActivityStateChange(Activity activity, int newState) {
-                if (newState == ActivityState.RESUMED) {
-                    DownloadUtils.checkForExternallyRemovedDownloads(
-                            mManager.getBackendProvider(), host.isIncognito());
-                }
+        mActivityStateListener = (activity1, newState) -> {
+            if (newState == ActivityState.RESUMED) {
+                DownloadUtils.checkForExternallyRemovedDownloads(
+                        mManager.getBackendProvider(), host.isIncognito());
             }
         };
         ApplicationStatus.registerStateListenerForActivity(mActivityStateListener, activity);

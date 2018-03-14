@@ -39,7 +39,7 @@ void BluetoothRemoteGATTDescriptor::ReadValueCallback(
   // If the device is disconnected, reject.
   if (!GetGatt()->RemoveFromActiveAlgorithms(resolver)) {
     resolver->Reject(
-        BluetoothError::CreateNotConnectedException(BluetoothOperation::GATT));
+        BluetoothError::CreateNotConnectedException(BluetoothOperation::kGATT));
     return;
   }
 
@@ -59,7 +59,7 @@ ScriptPromise BluetoothRemoteGATTDescriptor::readValue(
   if (!GetGatt()->connected()) {
     return ScriptPromise::RejectWithDOMException(
         script_state,
-        BluetoothError::CreateNotConnectedException(BluetoothOperation::GATT));
+        BluetoothError::CreateNotConnectedException(BluetoothOperation::kGATT));
   }
 
   if (!GetGatt()->device()->IsValidDescriptor(descriptor_->instance_id)) {
@@ -91,7 +91,7 @@ void BluetoothRemoteGATTDescriptor::WriteValueCallback(
   // disconnected so we reject.
   if (!GetGatt()->RemoveFromActiveAlgorithms(resolver)) {
     resolver->Reject(
-        BluetoothError::CreateNotConnectedException(BluetoothOperation::GATT));
+        BluetoothError::CreateNotConnectedException(BluetoothOperation::kGATT));
     return;
   }
 
@@ -109,7 +109,7 @@ ScriptPromise BluetoothRemoteGATTDescriptor::writeValue(
   if (!GetGatt()->connected()) {
     return ScriptPromise::RejectWithDOMException(
         script_state,
-        BluetoothError::CreateNotConnectedException(BluetoothOperation::GATT));
+        BluetoothError::CreateNotConnectedException(BluetoothOperation::kGATT));
   }
 
   if (!GetGatt()->device()->IsValidDescriptor(descriptor_->instance_id)) {
@@ -153,9 +153,10 @@ DOMException* BluetoothRemoteGATTDescriptor::CreateInvalidDescriptorError() {
           "after reconnecting.");
 }
 
-DEFINE_TRACE(BluetoothRemoteGATTDescriptor) {
+void BluetoothRemoteGATTDescriptor::Trace(blink::Visitor* visitor) {
   visitor->Trace(characteristic_);
   visitor->Trace(value_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

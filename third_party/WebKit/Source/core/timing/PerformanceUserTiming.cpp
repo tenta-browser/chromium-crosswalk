@@ -32,8 +32,8 @@
 #include "core/timing/PerformanceMeasure.h"
 #include "platform/Histogram.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
+#include "platform/wtf/text/StringHash.h"
 #include "public/platform/Platform.h"
-#include "wtf/text/StringHash.h"
 
 namespace blink {
 
@@ -41,38 +41,34 @@ namespace {
 
 using RestrictedKeyMap = HashMap<String, NavigationTimingFunction>;
 
-RestrictedKeyMap* CreateRestrictedKeyMap() {
-  RestrictedKeyMap* map = new RestrictedKeyMap();
-  map->insert("navigationStart", &PerformanceTiming::navigationStart);
-  map->insert("unloadEventStart", &PerformanceTiming::unloadEventStart);
-  map->insert("unloadEventEnd", &PerformanceTiming::unloadEventEnd);
-  map->insert("redirectStart", &PerformanceTiming::redirectStart);
-  map->insert("redirectEnd", &PerformanceTiming::redirectEnd);
-  map->insert("fetchStart", &PerformanceTiming::fetchStart);
-  map->insert("domainLookupStart", &PerformanceTiming::domainLookupStart);
-  map->insert("domainLookupEnd", &PerformanceTiming::domainLookupEnd);
-  map->insert("connectStart", &PerformanceTiming::connectStart);
-  map->insert("connectEnd", &PerformanceTiming::connectEnd);
-  map->insert("secureConnectionStart",
-              &PerformanceTiming::secureConnectionStart);
-  map->insert("requestStart", &PerformanceTiming::requestStart);
-  map->insert("responseStart", &PerformanceTiming::responseStart);
-  map->insert("responseEnd", &PerformanceTiming::responseEnd);
-  map->insert("domLoading", &PerformanceTiming::domLoading);
-  map->insert("domInteractive", &PerformanceTiming::domInteractive);
-  map->insert("domContentLoadedEventStart",
-              &PerformanceTiming::domContentLoadedEventStart);
-  map->insert("domContentLoadedEventEnd",
-              &PerformanceTiming::domContentLoadedEventEnd);
-  map->insert("domComplete", &PerformanceTiming::domComplete);
-  map->insert("loadEventStart", &PerformanceTiming::loadEventStart);
-  map->insert("loadEventEnd", &PerformanceTiming::loadEventEnd);
-  return map;
-}
-
 const RestrictedKeyMap& GetRestrictedKeyMap() {
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(RestrictedKeyMap, map,
-                                  CreateRestrictedKeyMap());
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(
+      RestrictedKeyMap, map,
+      ({
+          {"navigationStart", &PerformanceTiming::navigationStart},
+          {"unloadEventStart", &PerformanceTiming::unloadEventStart},
+          {"unloadEventEnd", &PerformanceTiming::unloadEventEnd},
+          {"redirectStart", &PerformanceTiming::redirectStart},
+          {"redirectEnd", &PerformanceTiming::redirectEnd},
+          {"fetchStart", &PerformanceTiming::fetchStart},
+          {"domainLookupStart", &PerformanceTiming::domainLookupStart},
+          {"domainLookupEnd", &PerformanceTiming::domainLookupEnd},
+          {"connectStart", &PerformanceTiming::connectStart},
+          {"connectEnd", &PerformanceTiming::connectEnd},
+          {"secureConnectionStart", &PerformanceTiming::secureConnectionStart},
+          {"requestStart", &PerformanceTiming::requestStart},
+          {"responseStart", &PerformanceTiming::responseStart},
+          {"responseEnd", &PerformanceTiming::responseEnd},
+          {"domLoading", &PerformanceTiming::domLoading},
+          {"domInteractive", &PerformanceTiming::domInteractive},
+          {"domContentLoadedEventStart",
+           &PerformanceTiming::domContentLoadedEventStart},
+          {"domContentLoadedEventEnd",
+           &PerformanceTiming::domContentLoadedEventEnd},
+          {"domComplete", &PerformanceTiming::domComplete},
+          {"loadEventStart", &PerformanceTiming::loadEventStart},
+          {"loadEventEnd", &PerformanceTiming::loadEventEnd},
+      }));
   return map;
 }
 
@@ -83,7 +79,7 @@ UserTiming::UserTiming(PerformanceBase& performance)
 
 static void InsertPerformanceEntry(PerformanceEntryMap& performance_entry_map,
                                    PerformanceEntry& entry) {
-  PerformanceEntryMap::iterator it = performance_entry_map.Find(entry.name());
+  PerformanceEntryMap::iterator it = performance_entry_map.find(entry.name());
   if (it != performance_entry_map.end()) {
     it->value.push_back(&entry);
   } else {
@@ -96,7 +92,7 @@ static void InsertPerformanceEntry(PerformanceEntryMap& performance_entry_map,
 static void ClearPeformanceEntries(PerformanceEntryMap& performance_entry_map,
                                    const String& name) {
   if (name.IsNull()) {
-    performance_entry_map.Clear();
+    performance_entry_map.clear();
     return;
   }
 
@@ -114,13 +110,13 @@ PerformanceEntry* UserTiming::Mark(const String& mark_name,
     return nullptr;
   }
 
-  TRACE_EVENT_COPY_MARK("blink.user_timing", mark_name.Utf8().Data());
+  TRACE_EVENT_COPY_MARK("blink.user_timing", mark_name.Utf8().data());
   double start_time = performance_->now();
   PerformanceEntry* entry = PerformanceMark::Create(mark_name, start_time);
   InsertPerformanceEntry(marks_map_, *entry);
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(
-      CustomCountHistogram, user_timing_mark_histogram,
-      new CustomCountHistogram("PLT.UserTiming_Mark", 0, 600000, 100));
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(CustomCountHistogram,
+                                  user_timing_mark_histogram,
+                                  ("PLT.UserTiming_Mark", 0, 600000, 100));
   user_timing_mark_histogram.Count(static_cast<int>(start_time));
   return entry;
 }
@@ -180,15 +176,15 @@ PerformanceEntry* UserTiming::Measure(const String& measure_name,
   // navigation, whereas trace events accept double seconds based off of
   // CurrentTime::monotonicallyIncreasingTime().
   double start_time_monotonic =
-      performance_->TimeOrigin() + start_time / 1000.0;
-  double end_time_monotonic = performance_->TimeOrigin() + end_time / 1000.0;
+      performance_->GetTimeOrigin() + start_time / 1000.0;
+  double end_time_monotonic = performance_->GetTimeOrigin() + end_time / 1000.0;
 
   TRACE_EVENT_COPY_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
-      "blink.user_timing", measure_name.Utf8().Data(),
+      "blink.user_timing", measure_name.Utf8().data(),
       WTF::StringHash::GetHash(measure_name),
       TraceEvent::ToTraceTimestamp(start_time_monotonic));
   TRACE_EVENT_COPY_NESTABLE_ASYNC_END_WITH_TIMESTAMP0(
-      "blink.user_timing", measure_name.Utf8().Data(),
+      "blink.user_timing", measure_name.Utf8().data(),
       WTF::StringHash::GetHash(measure_name),
       TraceEvent::ToTraceTimestamp(end_time_monotonic));
 
@@ -198,8 +194,7 @@ PerformanceEntry* UserTiming::Measure(const String& measure_name,
   if (end_time >= start_time) {
     DEFINE_THREAD_SAFE_STATIC_LOCAL(
         CustomCountHistogram, measure_duration_histogram,
-        new CustomCountHistogram("PLT.UserTiming_MeasureDuration", 0, 600000,
-                                 100));
+        ("PLT.UserTiming_MeasureDuration", 0, 600000, 100));
     measure_duration_histogram.Count(static_cast<int>(end_time - start_time));
   }
   return entry;
@@ -224,7 +219,7 @@ static PerformanceEntryVector GetEntrySequenceByName(
     const String& name) {
   PerformanceEntryVector entries;
 
-  PerformanceEntryMap::const_iterator it = performance_entry_map.Find(name);
+  PerformanceEntryMap::const_iterator it = performance_entry_map.find(name);
   if (it != performance_entry_map.end())
     entries.AppendVector(it->value);
 
@@ -247,7 +242,7 @@ PerformanceEntryVector UserTiming::GetMeasures(const String& name) const {
   return GetEntrySequenceByName(measures_map_, name);
 }
 
-DEFINE_TRACE(UserTiming) {
+void UserTiming::Trace(blink::Visitor* visitor) {
   visitor->Trace(performance_);
   visitor->Trace(marks_map_);
   visitor->Trace(measures_map_);

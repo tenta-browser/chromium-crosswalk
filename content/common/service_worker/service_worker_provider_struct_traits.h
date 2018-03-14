@@ -6,6 +6,7 @@
 #define CONTENT_COMMON_SERVICE_WORKER_SERVICE_WORKER_PROVIDER_STRUCT_TRAITS_H_
 
 #include "content/common/service_worker/service_worker_provider.mojom.h"
+#include "third_party/WebKit/common/service_worker/service_worker_provider_type.mojom.h"
 
 namespace mojo {
 
@@ -21,7 +22,7 @@ struct StructTraits<content::mojom::ServiceWorkerProviderHostInfoDataView,
     return info.route_id;
   }
 
-  static content::ServiceWorkerProviderType type(
+  static blink::mojom::ServiceWorkerProviderType type(
       const content::ServiceWorkerProviderHostInfo& info) {
     return info.type;
   }
@@ -29,6 +30,16 @@ struct StructTraits<content::mojom::ServiceWorkerProviderHostInfoDataView,
   static bool is_parent_frame_secure(
       const content::ServiceWorkerProviderHostInfo& info) {
     return info.is_parent_frame_secure;
+  }
+
+  static content::mojom::ServiceWorkerContainerHostAssociatedRequest&
+  host_request(content::ServiceWorkerProviderHostInfo& info) {
+    return info.host_request;
+  }
+
+  static content::mojom::ServiceWorkerContainerAssociatedPtrInfo&
+  client_ptr_info(content::ServiceWorkerProviderHostInfo& info) {
+    return info.client_ptr_info;
   }
 
   static bool Read(content::mojom::ServiceWorkerProviderHostInfoDataView in,

@@ -5,6 +5,7 @@
 #include "chromecast/browser/cast_network_delegate.h"
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "url/gurl.h"
 
 namespace chromecast {
@@ -18,7 +19,7 @@ class CastNetworkDelegateSimple : public CastNetworkDelegate {
 
  private:
   // CastNetworkDelegate implementation:
-  void Initialize(bool use_sync_signing) override {}
+  void Initialize() override {}
   bool IsWhitelisted(const GURL& gurl, int render_process_id,
                      bool for_device_auth) const override {
     return false;
@@ -30,13 +31,8 @@ class CastNetworkDelegateSimple : public CastNetworkDelegate {
 }  // namespace
 
 // static
-CastNetworkDelegate* CastNetworkDelegate::Create() {
-  return new CastNetworkDelegateSimple();
-}
-
-// static
-net::X509Certificate* CastNetworkDelegate::DeviceCert() {
-  return NULL;
+std::unique_ptr<CastNetworkDelegate> CastNetworkDelegate::Create() {
+  return base::MakeUnique<CastNetworkDelegateSimple>();
 }
 
 }  // namespace shell

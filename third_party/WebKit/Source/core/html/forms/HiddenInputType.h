@@ -41,7 +41,7 @@ class HiddenInputType final : public InputType, private InputTypeView {
 
  public:
   static InputType* Create(HTMLInputElement&);
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
   using InputType::GetElement;
 
  private:
@@ -49,8 +49,7 @@ class HiddenInputType final : public InputType, private InputTypeView {
       : InputType(element), InputTypeView(element) {}
   InputTypeView* CreateView() override;
   const AtomicString& FormControlType() const override;
-  FormControlState SaveFormControlState() const override;
-  void RestoreFormControlState(const FormControlState&) override;
+  bool ShouldSaveAndRestoreFormControlState() const override;
   bool SupportsValidation() const override;
   LayoutObject* CreateLayoutObject(const ComputedStyle&) const override;
   void AccessKeyAction(bool send_mouse_events) override;
@@ -63,6 +62,7 @@ class HiddenInputType final : public InputType, private InputTypeView {
                 TextFieldEventBehavior,
                 TextControlSetValueSelection) override;
   void AppendToFormData(FormData&) const override;
+  bool NeedsShadowSubtree() const override { return false; }
 };
 
 }  // namespace blink

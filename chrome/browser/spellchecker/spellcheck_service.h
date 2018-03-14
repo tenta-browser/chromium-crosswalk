@@ -30,10 +30,13 @@ class SupportsUserData;
 }
 
 namespace content {
-class RenderProcessHost;
 class BrowserContext;
 class NotificationDetails;
 class NotificationSource;
+}
+
+namespace service_manager {
+class Identity;
 }
 
 // Encapsulates the browser side spellcheck service. There is one of these per
@@ -95,7 +98,7 @@ class SpellcheckService : public KeyedService,
 
   // Pass the renderer some basic initialization information. Note that the
   // renderer will not load Hunspell until it needs to.
-  void InitForRenderer(content::RenderProcessHost* process);
+  void InitForRenderer(const service_manager::Identity& renderer_identity);
 
   // Returns a metrics counter associated with this object,
   // or null when metrics recording is disabled.
@@ -130,7 +133,7 @@ class SpellcheckService : public KeyedService,
   // SpellcheckCustomDictionary::Observer implementation.
   void OnCustomDictionaryLoaded() override;
   void OnCustomDictionaryChanged(
-      const SpellcheckCustomDictionary::Change& dictionary_change) override;
+      const SpellcheckCustomDictionary::Change& change) override;
 
   // SpellcheckHunspellDictionary::Observer implementation.
   void OnHunspellDictionaryInitialized(const std::string& language) override;

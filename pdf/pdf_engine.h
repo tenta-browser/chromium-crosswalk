@@ -13,11 +13,13 @@
 #include <windows.h>
 #endif
 
+#include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "base/strings/string16.h"
-
+#include "base/time/time.h"
 #include "ppapi/c/dev/pp_cursor_type_dev.h"
 #include "ppapi/c/dev/ppp_printing_dev.h"
 #include "ppapi/c/ppb_input_event.h"
@@ -57,6 +59,48 @@ class PDFEngine {
     PERMISSION_PRINT_HIGH_QUALITY,
   };
 
+  // Values other then |kCount| are persisted to logs as part of metric
+  // collection, so should not be changed.
+  enum class FormType {
+    kNone = 0,
+    kAcroForm = 1,
+    kXFAFull = 2,
+    kXFAForeground = 3,
+    kCount = 4,
+  };
+
+  // Features in a document that are relevant to measure.
+  struct DocumentFeatures {
+    // Number of pages in document.
+    size_t page_count = 0;
+    // Whether any files are attached to document (see "File Attachment
+    // Annotations" on page 637 of PDF Reference 1.7).
+    bool has_attachments = false;
+    // Whether the document is linearized (see Appendix F "Linearized PDF" of
+    // PDF Reference 1.7).
+    bool is_linearized = false;
+    // Whether the PDF is Tagged (see 10.7 "Tagged PDF" in PDF Reference 1.7).
+    bool is_tagged = false;
+    // What type of form the document contains.
+    FormType form_type = FormType::kNone;
+  };
+
+  // Features in a page that are relevant to measure.
+  struct PageFeatures {
+    PageFeatures();
+    PageFeatures(const PageFeatures& other);
+    ~PageFeatures();
+
+    // Whether the instance has been initialized and filled.
+    bool IsInitialized() const;
+
+    // 0-based page index in the document. < 0 when uninitialized.
+    int index = -1;
+
+    // Set of annotation types found in page.
+    std::set<int> annotation_types;
+  };
+
   // The interface that's provided to the rendering engine.
   class Client {
    public:
@@ -72,8 +116,13 @@ class PDFEngine {
     virtual void Scroll(const pp::Point& point) = 0;
 
     // Scroll the horizontal/vertical scrollbars to a given position.
-    virtual void ScrollToX(int position) = 0;
-    virtual void ScrollToY(int position) = 0;
+    // Values are in screen coordinates, where 0 is the top/left of the document
+    // and a positive value is the distance in pixels from that line.
+    // For ScrollToY, setting |compensate_for_toolbar| will align the position
+    // with the bottom of the toolbar so the given position is always visible.
+    virtual void ScrollToX(int x_in_screen_coords) = 0;
+    virtual void ScrollToY(int y_in_screen_coords,
+                           bool compensate_for_toolbar) = 0;
 
     // Scroll to zero-based |page|.
     virtual void ScrollToPage(int page) = 0;
@@ -97,6 +146,10 @@ class PDFEngine {
 
     // Updates the index of the currently selected search item.
     virtual void NotifySelectedFindResultChanged(int current_find_index) = 0;
+
+    // Notifies a page became visible.
+    virtual void NotifyPageBecameVisible(
+        const PDFEngine::PageFeatures* page_features) = 0;
 
     // Prompts the user for a password to open this document. The callback is
     // called when the password is retrieved.
@@ -133,15 +186,14 @@ class PDFEngine {
                             const void* data,
                             int length) = 0;
 
-    // Pops up a file selection dialog and returns the result.
-    virtual std::string ShowFileSelectionDialog() = 0;
-
     // Creates and returns new URL loader for partial document requests.
     virtual pp::URLLoader CreateURLLoader() = 0;
 
-    // Calls the client's OnCallback() function in delay_in_ms with the given
-    // id.
-    virtual void ScheduleCallback(int id, int delay_in_ms) = 0;
+    // Calls the client's OnCallback() function in |delay| with the given |id|.
+    virtual void ScheduleCallback(int id, base::TimeDelta delay) = 0;
+    // Calls the client's OnTouchTimerCallback() function in |delay| with the
+    // given |id|.
+    virtual void ScheduleTouchTimerCallback(int id, base::TimeDelta delay) = 0;
 
     // Searches the given string for "term" and returns the results.  Unicode-
     // aware.
@@ -149,16 +201,17 @@ class PDFEngine {
       int start_index;
       int length;
     };
-    virtual void SearchString(const base::char16* string,
-                              const base::char16* term,
-                              bool case_sensitive,
-                              std::vector<SearchStringResult>* results) = 0;
+    virtual std::vector<SearchStringResult> SearchString(
+        const base::char16* string,
+        const base::char16* term,
+        bool case_sensitive) = 0;
 
     // Notifies the client that the engine has painted a page from the document.
     virtual void DocumentPaintOccurred() = 0;
 
     // Notifies the client that the document has finished loading.
-    virtual void DocumentLoadComplete(int page_count) = 0;
+    virtual void DocumentLoadComplete(
+        const DocumentFeatures& document_features) = 0;
 
     // Notifies the client that the document has failed to load.
     virtual void DocumentLoadFailed() = 0;
@@ -184,12 +237,21 @@ class PDFEngine {
     // Get the background color of the PDF.
     virtual uint32_t GetBackgroundColor() = 0;
 
+    // Cancel browser initiated document download.
+    virtual void CancelBrowserDownload() = 0;
+
     // Sets selection status.
     virtual void IsSelectingChanged(bool is_selecting) {}
+
+    virtual void SelectionChanged(const pp::Rect& left, const pp::Rect& right) {
+    }
+
+    // Sets edit mode state.
+    virtual void IsEditModeChanged(bool is_edit_mode) {}
   };
 
   // Factory method to create an instance of the PDF Engine.
-  static PDFEngine* Create(Client* client);
+  static std::unique_ptr<PDFEngine> Create(Client* client);
 
   virtual ~PDFEngine() {}
 
@@ -224,6 +286,13 @@ class PDFEngine {
   virtual void RotateClockwise() = 0;
   virtual void RotateCounterclockwise() = 0;
   virtual std::string GetSelectedText() = 0;
+  // Returns true if focus is within an editable form text area, and false
+  // otherwise.
+  virtual bool CanEditText() = 0;
+  // Replace selected text within an editable form text area with another
+  // string. If there is no selected text, append the replacement text after the
+  // current caret position.
+  virtual void ReplaceSelection(const std::string& text) = 0;
   virtual std::string GetLinkAtPosition(const pp::Point& point) = 0;
   // Checks the permissions associated with this document.
   virtual bool HasPermission(DocumentPermission permission) const = 0;
@@ -250,6 +319,8 @@ class PDFEngine {
   virtual void SetGrayscale(bool grayscale) = 0;
   // Callback for timer that's set with ScheduleCallback().
   virtual void OnCallback(int id) = 0;
+  // Callback for timer that's set with ScheduleTouchTimerCallback().
+  virtual void OnTouchTimerCallback(int id) = 0;
   // Get the number of characters on a given page.
   virtual int GetCharCount(int page_index) = 0;
   // Get the bounds in page pixels of a character on a given page.
@@ -296,9 +367,15 @@ class PDFEngine {
   virtual void SetScrollPosition(const pp::Point& position) = 0;
 #endif
 
-  virtual bool IsProgressiveLoad() = 0;
-
   virtual std::string GetMetadata(const std::string& key) = 0;
+
+  virtual void SetCaretPosition(const pp::Point& position) = 0;
+  virtual void MoveRangeSelectionExtent(const pp::Point& extent) = 0;
+  virtual void SetSelectionBounds(const pp::Point& base,
+                                  const pp::Point& extent) = 0;
+
+  // Remove focus from form widgets, consolidating the user input.
+  virtual void KillFormFocus() = 0;
 };
 
 // Interface for exports that wrap the PDF engine.
@@ -341,8 +418,7 @@ class PDFEngineExports {
       PDFEnsureTypefaceCharactersAccessible func) = 0;
 
   virtual void SetPDFUseGDIPrinting(bool enable) = 0;
-
-  virtual void SetPDFPostscriptPrintingLevel(int postscript_level) = 0;
+  virtual void SetPDFUsePrintMode(int mode) = 0;
 #endif  // defined(OS_WIN)
 
   // See the definition of RenderPDFPageToBitmap in pdf.cc for details.

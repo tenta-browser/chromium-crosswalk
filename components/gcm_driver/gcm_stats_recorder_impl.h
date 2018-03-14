@@ -7,13 +7,12 @@
 
 #include <stdint.h>
 
-#include <deque>
 #include <string>
 #include <vector>
 
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/time/time.h"
-#include "components/gcm_driver/crypto/gcm_encryption_provider.h"
 #include "components/gcm_driver/gcm_activity.h"
 #include "google_apis/gcm/engine/connection_factory.h"
 #include "google_apis/gcm/engine/mcs_client.h"
@@ -22,6 +21,8 @@
 #include "google_apis/gcm/monitoring/gcm_stats_recorder.h"
 
 namespace gcm {
+
+enum class GCMDecryptionResult;
 
 // Records GCM internal stats and activities for debugging purpose. Recording
 // can be turned on/off by calling set_is_recording(...) function. It is turned
@@ -41,7 +42,7 @@ class GCMStatsRecorderImpl : public GCMStatsRecorder {
 
   // Records a message decryption failure caused by |result| for |app_id|.
   void RecordDecryptionFailure(const std::string& app_id,
-                               GCMEncryptionProvider::DecryptionResult result);
+                               GCMDecryptionResult result);
 
   // GCMStatsRecorder implementation:
   void RecordCheckinInitiated(uint64_t android_id) override;
@@ -77,7 +78,6 @@ class GCMStatsRecorderImpl : public GCMStatsRecorder {
   void RecordDataMessageReceived(const std::string& app_id,
                                  const std::string& from,
                                  int message_byte_size,
-                                 bool to_registered_app,
                                  ReceivedMessageType message_type) override;
   void RecordDataSentToWire(const std::string& app_id,
                             const std::string& receiver_id,
@@ -99,23 +99,25 @@ class GCMStatsRecorderImpl : public GCMStatsRecorder {
   bool is_recording() const { return is_recording_; }
   void set_is_recording(bool recording) { is_recording_ = recording; }
 
-  const std::deque<CheckinActivity>& checkin_activities() const {
+  const base::circular_deque<CheckinActivity>& checkin_activities() const {
     return checkin_activities_;
   }
-  const std::deque<ConnectionActivity>& connection_activities() const {
+  const base::circular_deque<ConnectionActivity>& connection_activities()
+      const {
     return connection_activities_;
   }
-  const std::deque<RegistrationActivity>& registration_activities() const {
+  const base::circular_deque<RegistrationActivity>& registration_activities()
+      const {
     return registration_activities_;
   }
-  const std::deque<ReceivingActivity>& receiving_activities() const {
+  const base::circular_deque<ReceivingActivity>& receiving_activities() const {
     return receiving_activities_;
   }
-  const std::deque<SendingActivity>& sending_activities() const {
+  const base::circular_deque<SendingActivity>& sending_activities() const {
     return sending_activities_;
   }
-  const std::deque<DecryptionFailureActivity>& decryption_failure_activities()
-      const {
+  const base::circular_deque<DecryptionFailureActivity>&
+  decryption_failure_activities() const {
     return decryption_failure_activities_;
   }
 
@@ -150,12 +152,13 @@ class GCMStatsRecorderImpl : public GCMStatsRecorder {
   bool is_recording_;
   Delegate* delegate_;
 
-  std::deque<CheckinActivity> checkin_activities_;
-  std::deque<ConnectionActivity> connection_activities_;
-  std::deque<RegistrationActivity> registration_activities_;
-  std::deque<ReceivingActivity> receiving_activities_;
-  std::deque<SendingActivity> sending_activities_;
-  std::deque<DecryptionFailureActivity> decryption_failure_activities_;
+  base::circular_deque<CheckinActivity> checkin_activities_;
+  base::circular_deque<ConnectionActivity> connection_activities_;
+  base::circular_deque<RegistrationActivity> registration_activities_;
+  base::circular_deque<ReceivingActivity> receiving_activities_;
+  base::circular_deque<SendingActivity> sending_activities_;
+  base::circular_deque<DecryptionFailureActivity>
+      decryption_failure_activities_;
 
   base::TimeTicks last_connection_initiation_time_;
   base::TimeTicks last_connection_success_time_;

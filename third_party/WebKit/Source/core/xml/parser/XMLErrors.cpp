@@ -28,11 +28,11 @@
 
 #include "core/xml/parser/XMLErrors.h"
 
-#include "core/HTMLNames.h"
-#include "core/SVGNames.h"
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
 #include "core/dom/Text.h"
+#include "core/html_names.h"
+#include "core/svg_names.h"
 #include "core/xml/DocumentXSLT.h"
 #include "platform/wtf/text/WTFString.h"
 
@@ -47,7 +47,7 @@ XMLErrors::XMLErrors(Document* document)
       error_count_(0),
       last_error_position_(TextPosition::BelowRangePosition()) {}
 
-DEFINE_TRACE(XMLErrors) {
+void XMLErrors::Trace(blink::Visitor* visitor) {
   visitor->Trace(document_);
 }
 
@@ -179,7 +179,7 @@ void XMLErrors::InsertErrorMessageBlock() {
     report_element->ParserAppendChild(paragraph);
   }
 
-  Node* first_child = document_element->FirstChild();
+  Node* first_child = document_element->firstChild();
   if (first_child)
     document_element->ParserInsertBefore(report_element, *first_child);
   else

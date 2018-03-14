@@ -28,8 +28,8 @@
 #include "platform/weborigin/SecurityOriginHash.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/AutoReset.h"
-#include "platform/wtf/CurrentTime.h"
 #include "platform/wtf/MathExtras.h"
+#include "platform/wtf/Time.h"
 #include "platform/wtf/text/CString.h"
 #include "public/platform/Platform.h"
 
@@ -60,7 +60,7 @@ MemoryCache* ReplaceMemoryCacheForTesting(MemoryCache* cache) {
   return old_cache;
 }
 
-DEFINE_TRACE(MemoryCacheEntry) {
+void MemoryCacheEntry::Trace(blink::Visitor* visitor) {
   visitor->template RegisterWeakMembers<MemoryCacheEntry,
                                         &MemoryCacheEntry::ClearResourceWeak>(
       this);
@@ -97,7 +97,7 @@ MemoryCache::~MemoryCache() {
     Platform::Current()->CurrentThread()->RemoveTaskObserver(this);
 }
 
-DEFINE_TRACE(MemoryCache) {
+void MemoryCache::Trace(blink::Visitor* visitor) {
   visitor->Trace(resource_maps_);
   MemoryCacheDumpClient::Trace(visitor);
   MemoryCoordinatorClient::Trace(visitor);
@@ -150,7 +150,7 @@ void MemoryCache::AddInternal(ResourceMap* resource_map,
   DCHECK(resource->Url().IsValid());
 
   KURL url = RemoveFragmentIdentifierIfNeeded(resource->Url());
-  ResourceMap::iterator it = resource_map->Find(url);
+  ResourceMap::iterator it = resource_map->find(url);
   if (it != resource_map->end()) {
     Resource* old_resource = it->value->GetResource();
     CHECK_NE(old_resource, resource);
@@ -173,7 +173,7 @@ void MemoryCache::Remove(Resource* resource) {
     return;
 
   KURL url = RemoveFragmentIdentifierIfNeeded(resource->Url());
-  ResourceMap::iterator it = resources->Find(url);
+  ResourceMap::iterator it = resources->find(url);
   if (it == resources->end() || it->value->GetResource() != resource)
     return;
   RemoveInternal(resources, it);

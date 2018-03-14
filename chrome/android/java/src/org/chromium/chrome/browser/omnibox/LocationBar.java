@@ -78,6 +78,11 @@ public interface LocationBar extends UrlBarDelegate {
     void setToolbarDataProvider(ToolbarDataProvider model);
 
     /**
+     * Gets the {@link ToolbarDataProvider} to be used for accessing {@link Toolbar} state.
+     */
+    ToolbarDataProvider getToolbarDataProvider();
+
+    /**
      * Set the bottom sheet for Chrome Home.
      * @param sheet The bottom sheet for Chrome Home if it exists.
      */
@@ -91,10 +96,16 @@ public interface LocationBar extends UrlBarDelegate {
     void initializeControls(WindowDelegate windowDelegate, WindowAndroid windowAndroid);
 
     /**
-     * Sets the URL focus change listener that will be notified when the URL gains or loses focus.
+     * Adds a URL focus change listener that will be notified when the URL gains or loses focus.
      * @param listener The listener to be registered.
      */
-    void setUrlFocusChangeListener(UrlFocusChangeListener listener);
+    default void addUrlFocusChangeListener(UrlFocusChangeListener listener) {}
+
+    /**
+     * Removes a URL focus change listener that was previously added.
+     * @param listener The listener to be removed.
+     */
+    default void removeUrlFocusChangeListener(UrlFocusChangeListener listener) {}
 
     /**
      * Signal a {@link UrlBar} focus change request.
@@ -135,7 +146,7 @@ public interface LocationBar extends UrlBarDelegate {
     /**
      * Updates the security icon displayed in the LocationBar.
      */
-    void updateSecurityIcon(int securityLevel);
+    void updateSecurityIcon();
 
     /**
      * @return The {@link ViewGroup} that this container holds.
@@ -166,4 +177,9 @@ public interface LocationBar extends UrlBarDelegate {
      * @return Whether or not the {@link UrlBar} has to be explicitly checked for its location.
      */
     boolean mustQueryUrlBarLocationForSuggestions();
+
+    /**
+     * @return Whether suggestions are being shown for the location bar.
+     */
+    boolean isSuggestionsListShown();
 }

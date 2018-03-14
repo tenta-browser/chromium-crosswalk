@@ -29,24 +29,26 @@
 #include "core/css/CSSImageValue.h"
 #include "core/css/CSSPrimitiveValue.h"
 #include "core/dom/Document.h"
-#include "core/frame/Settings.h"
+#include "core/frame/LocalFrame.h"
 #include "core/loader/resource/ImageResourceContent.h"
 #include "core/style/StyleFetchedImageSet.h"
 #include "core/style/StyleInvalidImage.h"
-#include "platform/loader/fetch/FetchInitiatorTypeNames.h"
 #include "platform/loader/fetch/FetchParameters.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
 #include "platform/loader/fetch/ResourceLoaderOptions.h"
+#include "platform/loader/fetch/fetch_initiator_type_names.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SecurityPolicy.h"
 #include "platform/wtf/text/StringBuilder.h"
 
 namespace blink {
 
-CSSImageSetValue::CSSImageSetValue()
-    : CSSValueList(kImageSetClass, kCommaSeparator), cached_scale_factor_(1) {}
+CSSImageSetValue::CSSImageSetValue(CSSParserMode parser_mode)
+    : CSSValueList(kImageSetClass, kCommaSeparator),
+      cached_scale_factor_(1),
+      parser_mode_(parser_mode) {}
 
-CSSImageSetValue::~CSSImageSetValue() {}
+CSSImageSetValue::~CSSImageSetValue() = default;
 
 void CSSImageSetValue::FillImageSet() {
   size_t length = this->length();
@@ -64,8 +66,8 @@ void CSSImageSetValue::FillImageSet() {
     ImageWithScale image;
     image.image_url = image_url;
     image.referrer = SecurityPolicy::GenerateReferrer(
-        image_value.GetReferrer().referrer_policy,
-        KURL(kParsedURLString, image_url), image_value.GetReferrer().referrer);
+        image_value.GetReferrer().referrer_policy, KURL(image_url),
+        image_value.GetReferrer().referrer);
     image.scale_factor = scale_factor;
     images_in_set_.push_back(image);
     ++i;
@@ -101,6 +103,7 @@ StyleImage* CSSImageSetValue::CachedImage(float device_scale_factor) const {
 StyleImage* CSSImageSetValue::CacheImage(
     const Document& document,
     float device_scale_factor,
+    FetchParameters::PlaceholderImageRequestType placeholder_image_request_type,
     CrossOriginAttributeValue cross_origin) {
   if (!images_in_set_.size())
     FillImageSet();
@@ -113,15 +116,20 @@ StyleImage* CSSImageSetValue::CacheImage(
     ImageWithScale image = BestImageForScaleFactor(device_scale_factor);
     ResourceRequest resource_request(document.CompleteURL(image.image_url));
     resource_request.SetHTTPReferrer(image.referrer);
-    FetchParameters params(resource_request, FetchInitiatorTypeNames::css);
+    ResourceLoaderOptions options;
+    options.initiator_info.name = parser_mode_ == kUASheetMode
+                                      ? FetchInitiatorTypeNames::uacss
+                                      : FetchInitiatorTypeNames::css;
+    FetchParameters params(resource_request, options);
 
     if (cross_origin != kCrossOriginAttributeNotSet) {
       params.SetCrossOriginAccessControl(document.GetSecurityOrigin(),
                                          cross_origin);
     }
-    if (document.GetSettings() &&
-        document.GetSettings()->GetFetchImagePlaceholders())
-      params.SetAllowImagePlaceholder();
+
+    if (document.GetFrame() &&
+        placeholder_image_request_type == FetchParameters::kAllowPlaceholder)
+      document.GetFrame()->MaybeAllowImagePlaceholder(params);
 
     if (ImageResourceContent* cached_image =
             ImageResourceContent::Fetch(params, document.Fetcher())) {
@@ -131,6 +139,9 @@ StyleImage* CSSImageSetValue::CacheImage(
       cached_image_ = StyleInvalidImage::Create(image.image_url);
     }
     cached_scale_factor_ = device_scale_factor;
+
+    if (parser_mode_ == kUASheetMode)
+      cached_image_->FlagAsUserAgentResource();
   }
 
   return cached_image_.Get();
@@ -174,13 +185,13 @@ bool CSSImageSetValue::HasFailedOrCanceledSubresources() const {
   return true;
 }
 
-DEFINE_TRACE_AFTER_DISPATCH(CSSImageSetValue) {
+void CSSImageSetValue::TraceAfterDispatch(blink::Visitor* visitor) {
   visitor->Trace(cached_image_);
   CSSValueList::TraceAfterDispatch(visitor);
 }
 
 CSSImageSetValue* CSSImageSetValue::ValueWithURLsMadeAbsolute() {
-  CSSImageSetValue* value = CSSImageSetValue::Create();
+  CSSImageSetValue* value = CSSImageSetValue::Create(parser_mode_);
   for (auto& item : *this)
     item->IsImageValue()
         ? value->Append(*ToCSSImageValue(*item).ValueWithURLMadeAbsolute())

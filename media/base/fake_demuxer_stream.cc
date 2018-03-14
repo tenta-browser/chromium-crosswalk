@@ -52,7 +52,7 @@ FakeDemuxerStream::FakeDemuxerStream(int num_configs,
   UpdateVideoDecoderConfig();
 }
 
-FakeDemuxerStream::~FakeDemuxerStream() {}
+FakeDemuxerStream::~FakeDemuxerStream() = default;
 
 void FakeDemuxerStream::Initialize() {
   DCHECK_EQ(-1, read_to_hold_);
@@ -99,10 +99,6 @@ bool FakeDemuxerStream::SupportsConfigChanges() {
   return config_changes_;
 }
 
-VideoRotation FakeDemuxerStream::video_rotation() {
-  return VIDEO_ROTATION_0;
-}
-
 void FakeDemuxerStream::HoldNextRead() {
   DCHECK(task_runner_->BelongsToCurrentThread());
   read_to_hold_ = next_read_num_;
@@ -140,6 +136,13 @@ void FakeDemuxerStream::Reset() {
     base::ResetAndReturn(&read_cb_).Run(kAborted, NULL);
 }
 
+void FakeDemuxerStream::Error() {
+  read_to_hold_ = -1;
+
+  if (!read_cb_.is_null())
+    base::ResetAndReturn(&read_cb_).Run(kError, nullptr);
+}
+
 void FakeDemuxerStream::SeekToStart() {
   Reset();
   Initialize();
@@ -154,8 +157,8 @@ void FakeDemuxerStream::UpdateVideoDecoderConfig() {
   const gfx::Rect kVisibleRect(kStartWidth, kStartHeight);
   video_decoder_config_.Initialize(
       kCodecVP8, VIDEO_CODEC_PROFILE_UNKNOWN, PIXEL_FORMAT_YV12,
-      COLOR_SPACE_UNSPECIFIED, next_coded_size_, kVisibleRect, next_coded_size_,
-      EmptyExtraData(),
+      COLOR_SPACE_UNSPECIFIED, VIDEO_ROTATION_0, next_coded_size_, kVisibleRect,
+      next_coded_size_, EmptyExtraData(),
       is_encrypted_ ? AesCtrEncryptionScheme() : Unencrypted());
   next_coded_size_.Enlarge(kWidthDelta, kHeightDelta);
 }
@@ -209,7 +212,7 @@ FakeMediaResource::FakeMediaResource(int num_video_configs,
                          num_video_buffers_in_one_config,
                          is_video_encrypted) {}
 
-FakeMediaResource::~FakeMediaResource() {}
+FakeMediaResource::~FakeMediaResource() = default;
 
 std::vector<DemuxerStream*> FakeMediaResource::GetAllStreams() {
   std::vector<DemuxerStream*> result;

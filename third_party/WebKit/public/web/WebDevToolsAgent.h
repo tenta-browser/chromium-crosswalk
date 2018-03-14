@@ -31,8 +31,7 @@
 #ifndef WebDevToolsAgent_h
 #define WebDevToolsAgent_h
 
-#include "../platform/WebCommon.h"
-#include "../platform/WebVector.h"
+#include "public/platform/WebCommon.h"
 
 namespace blink {
 
@@ -43,11 +42,9 @@ class WebDevToolsAgent {
  public:
   virtual ~WebDevToolsAgent() {}
 
-  virtual void Attach(const WebString& host_id, int session_id) = 0;
-  virtual void Reattach(const WebString& host_id,
-                        int session_id,
-                        const WebString& saved_state) = 0;
-  virtual void Detach() = 0;
+  virtual void Attach(int session_id) = 0;
+  virtual void Reattach(int session_id, const WebString& saved_state) = 0;
+  virtual void Detach(int session_id) = 0;
 
   virtual void ContinueProgram() = 0;
 
@@ -57,7 +54,7 @@ class WebDevToolsAgent {
                                           const WebString& message) = 0;
 
   virtual void InspectElementAt(int session_id, const WebPoint&) = 0;
-  virtual void FailedToRequestDevTools() = 0;
+  virtual void FailedToRequestDevTools(int session_id) = 0;
 
   // Exposed for TestRunner.
   virtual WebString EvaluateInWebInspectorOverlay(const WebString& script) = 0;

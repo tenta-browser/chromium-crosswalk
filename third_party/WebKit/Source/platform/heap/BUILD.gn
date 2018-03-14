@@ -2,9 +2,10 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/jumbo.gni")
 import("//testing/test.gni")
 
-source_set("heap") {
+jumbo_source_set("heap") {
   # This target is a logical part of the platform and only the platform target
   # should depend on it.
   visibility = [ "//third_party/WebKit/Source/platform" ]
@@ -52,10 +53,7 @@ source_set("heap") {
     "Visitor.cpp",
     "Visitor.h",
     "VisitorImpl.h",
-    "WrapperVisitor.h",
   ]
-
-  defines = [ "BLINK_PLATFORM_IMPLEMENTATION=1" ]
 
   configs += [
     "//third_party/WebKit/Source:blink_pch",
@@ -63,6 +61,7 @@ source_set("heap") {
     "//third_party/WebKit/Source:non_test_config",
     "//third_party/WebKit/Source:inside_blink",
     "//third_party/WebKit/Source:features",
+    "//third_party/WebKit/Source/platform:blink_platform_implementation",
     "//build/config/compiler:no_size_t_to_int_warning",
   ]
 
@@ -76,16 +75,35 @@ source_set("heap") {
 }
 
 test("blink_heap_unittests") {
+  deps = [
+    ":blink_heap_unittests_sources",
+  ]
+  if (is_android) {
+    deps += [
+      "//base:base_java",
+      "//content/shell/android:content_shell_assets",
+      "//net/android:net_java",
+      "//ui/android:ui_full_java",
+    ]
+  }
+}
+
+jumbo_source_set("blink_heap_unittests_sources") {
+  testonly = true
   sources = [
     "BlinkGCMemoryDumpProviderTest.cpp",
     "HeapCompactTest.cpp",
     "HeapTest.cpp",
+    "HeapTestUtilities.cpp",
+    "HeapTestUtilities.h",
+    "IncrementalMarkingTest.cpp",
+    "ObjectStartBitmapTest.cpp",
     "PersistentTest.cpp",
     "RunAllTests.cpp",
   ]
 
   configs += [
-    "//third_party/WebKit/Source/wtf:wtf_config",
+    "//third_party/WebKit/Source/platform/wtf:wtf_config",
     "//third_party/WebKit/Source:config",
     "//third_party/WebKit/Source:inside_blink",
   ]
@@ -97,13 +115,6 @@ test("blink_heap_unittests") {
     "//testing/gmock",
     "//testing/gtest",
     "//third_party/WebKit/Source/platform:test_support",
-    "//third_party/WebKit/Source/wtf",
+    "//third_party/WebKit/Source/platform/wtf",
   ]
-  if (is_android) {
-    deps += [
-      "//base:base_java",
-      "//content/shell/android:content_shell_assets",
-      "//net/android:net_java",
-    ]
-  }
 }

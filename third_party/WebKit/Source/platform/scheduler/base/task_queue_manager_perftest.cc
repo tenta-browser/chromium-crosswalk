@@ -5,20 +5,23 @@
 #include "platform/scheduler/base/task_queue_manager.h"
 
 #include <stddef.h>
+#include <memory>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_tick_clock.h"
 #include "platform/scheduler/base/task_queue_impl.h"
-#include "platform/scheduler/base/task_queue_manager_delegate_for_test.h"
 #include "platform/scheduler/base/task_queue_selector.h"
 #include "platform/scheduler/base/test_task_time_observer.h"
 #include "platform/scheduler/base/virtual_time_domain.h"
 #include "platform/scheduler/base/work_queue_sets.h"
+#include "platform/scheduler/test/create_task_queue_manager_for_test.h"
+#include "platform/scheduler/test/test_task_queue.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/perf/perf_test.h"
 
@@ -58,7 +61,7 @@ class PerfTestTimeDomain : public VirtualTimeDomain {
   DISALLOW_COPY_AND_ASSIGN(PerfTestTimeDomain);
 };
 
-class TaskQueueManagerPerfTest : public testing::Test {
+class TaskQueueManagerPerfTest : public ::testing::Test {
  public:
   TaskQueueManagerPerfTest()
       : num_queues_(0),
@@ -81,20 +84,17 @@ class TaskQueueManagerPerfTest : public testing::Test {
   void Initialize(size_t num_queues) {
     num_queues_ = num_queues;
     message_loop_.reset(new base::MessageLoop());
-    manager_ = base::MakeUnique<TaskQueueManager>(
-        TaskQueueManagerDelegateForTest::Create(
-            message_loop_->task_runner(),
-            base::WrapUnique(new base::DefaultTickClock())),
-        "fake.category", "fake.category", "fake.category.debug");
+    manager_ = CreateTaskQueueManagerForTest(
+        message_loop_.get(), message_loop_->task_runner(),
+        std::make_unique<base::DefaultTickClock>());
     manager_->AddTaskTimeObserver(&test_task_time_observer_);
 
     virtual_time_domain_.reset(new PerfTestTimeDomain());
     manager_->RegisterTimeDomain(virtual_time_domain_.get());
 
     for (size_t i = 0; i < num_queues; i++) {
-      queues_.push_back(manager_->NewTaskQueue(
-          TaskQueue::Spec(TaskQueue::QueueType::TEST)
-              .SetTimeDomain(virtual_time_domain_.get())));
+      queues_.push_back(manager_->CreateTaskQueue<TestTaskQueue>(
+          TaskQueue::Spec("test").SetTimeDomain(virtual_time_domain_.get())));
     }
   }
 

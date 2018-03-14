@@ -41,13 +41,12 @@
 #include "modules/EventTargetModules.h"
 #include "modules/mediasource/SourceBuffer.h"
 #include "modules/mediasource/SourceBufferList.h"
-#include "platform/wtf/Vector.h"
 #include "public/platform/WebMediaSource.h"
 
 namespace blink {
 
 class ExceptionState;
-class GenericEventQueue;
+class MediaElementEventQueue;
 class WebSourceBuffer;
 
 class MediaSource final : public EventTargetWithInlineData,
@@ -119,12 +118,13 @@ class MediaSource final : public EventTargetWithInlineData,
   bool IsOpen() const;
   void SetSourceBufferActive(SourceBuffer*, bool);
   HTMLMediaElement* MediaElement() const;
+  void EndOfStreamAlgorithm(const WebMediaSource::EndOfStreamStatus);
 
   // Used by MediaSourceRegistry.
   void AddedToRegistry();
   void RemovedFromRegistry();
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   explicit MediaSource(ExecutionContext*);
@@ -138,8 +138,6 @@ class MediaSource final : public EventTargetWithInlineData,
                                                          const String& codecs,
                                                          ExceptionState&);
   void ScheduleEvent(const AtomicString& event_name);
-  void EndOfStreamInternal(const WebMediaSource::EndOfStreamStatus,
-                           ExceptionState&);
 
   // Implements the duration change algorithm.
   // http://w3c.github.io/media-source/#duration-change-algorithm
@@ -147,7 +145,7 @@ class MediaSource final : public EventTargetWithInlineData,
 
   std::unique_ptr<WebMediaSource> web_media_source_;
   AtomicString ready_state_;
-  Member<GenericEventQueue> async_event_queue_;
+  Member<MediaElementEventQueue> async_event_queue_;
   WeakMember<HTMLMediaElement> attached_element_;
 
   Member<SourceBufferList> source_buffers_;

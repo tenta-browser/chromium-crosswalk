@@ -5,6 +5,7 @@
 <script>
 var t = async_test('Test that preloaded non-cacheable resources get reused even after onload');
 var action;
+const URL = 'resources/timestamp.php?from=memcache_reuse_of_non_cacheable_preload.html';
 
 var test = t.step_func(function() {
     var entries = performance.getEntriesByType("resource");
@@ -20,7 +21,7 @@ var test = t.step_func(function() {
 var loadTimestampWithXHR = t.step_func(function() {
     var xhr = new XMLHttpRequest;
     xhr.withCredentials = true;
-    xhr.open("GET", "resources/timestamp.php");
+    xhr.open("GET", URL);
     xhr.send();
     xhr.onload = t.step_func(function() {
         setTimeout(test, 0);
@@ -30,7 +31,9 @@ var loadTimestampWithXHR = t.step_func(function() {
 var loadTimestampWithLink = (function() {
     var l = document.createElement('link');
     l.setAttribute('rel', 'preload');
-    l.setAttribute('href', "resources/timestamp.php");
+    l.setAttribute('crossorigin', 'use-credentials');
+    l.setAttribute('href', URL);
+    l.setAttribute('as', 'fetch');
     l.onload = loadTimestampWithXHR;
     document.body.appendChild(l);
 });

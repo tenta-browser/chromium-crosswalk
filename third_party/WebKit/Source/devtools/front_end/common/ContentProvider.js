@@ -44,6 +44,11 @@ Common.ContentProvider.prototype = {
   contentType() {},
 
   /**
+   * @return {!Promise<boolean>}
+   */
+  contentEncoded() {},
+
+  /**
    * @return {!Promise<?string>}
    */
   requestContent() {},
@@ -52,9 +57,9 @@ Common.ContentProvider.prototype = {
    * @param {string} query
    * @param {boolean} caseSensitive
    * @param {boolean} isRegex
-   * @param {function(!Array.<!Common.ContentProvider.SearchMatch>)} callback
+   * @return {!Promise<!Array<!Common.ContentProvider.SearchMatch>>}
    */
-  searchInContent(query, caseSensitive, isRegex, callback) {}
+  searchInContent(query, caseSensitive, isRegex) {}
 };
 
 /**

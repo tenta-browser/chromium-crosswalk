@@ -26,63 +26,108 @@
 
 #include "platform/loader/fetch/ResourceError.h"
 
+#include "net/base/net_errors.h"
 #include "platform/loader/fetch/ResourceRequest.h"
-#include "platform/weborigin/KURL.h"
 #include "public/platform/Platform.h"
+#include "public/platform/WebString.h"
 #include "public/platform/WebURL.h"
 #include "public/platform/WebURLError.h"
 
 namespace blink {
 
-const char kErrorDomainBlinkInternal[] = "BlinkInternal";
+namespace {
+constexpr char kThrottledErrorDescription[] =
+    "Request throttled. Visit http://dev.chromium.org/throttling for more "
+    "information.";
+}  // namespace
 
-ResourceError ResourceError::CancelledError(const String& failing_url) {
-  return Platform::Current()->CancelledError(
-      KURL(kParsedURLString, failing_url));
+int ResourceError::BlockedByXSSAuditorErrorCode() {
+  return net::ERR_BLOCKED_BY_XSS_AUDITOR;
+}
+
+ResourceError ResourceError::CancelledError(const KURL& url) {
+  return ResourceError(net::ERR_ABORTED, url, WTF::nullopt);
 }
 
 ResourceError ResourceError::CancelledDueToAccessCheckError(
-    const String& failing_url,
+    const KURL& url,
     ResourceRequestBlockedReason blocked_reason) {
-  ResourceError error = CancelledError(failing_url);
-  error.SetIsAccessCheck(true);
-  if (blocked_reason == ResourceRequestBlockedReason::kSubresourceFilter)
-    error.SetShouldCollapseInitiator(true);
+  ResourceError error = CancelledError(url);
+  error.is_access_check_ = true;
+  error.should_collapse_initiator_ =
+      blocked_reason == ResourceRequestBlockedReason::kSubresourceFilter;
   return error;
 }
 
-ResourceError ResourceError::CacheMissError(const String& failing_url) {
-  ResourceError error(kErrorDomainBlinkInternal, 0, failing_url, String());
-  error.SetIsCacheMiss(true);
+ResourceError ResourceError::CancelledDueToAccessCheckError(
+    const KURL& url,
+    ResourceRequestBlockedReason blocked_reason,
+    const String& localized_description) {
+  ResourceError error = CancelledDueToAccessCheckError(url, blocked_reason);
+  error.localized_description_ = localized_description;
   return error;
+}
+
+ResourceError ResourceError::CacheMissError(const KURL& url) {
+  return ResourceError(net::ERR_CACHE_MISS, url, WTF::nullopt);
+}
+
+ResourceError ResourceError::TimeoutError(const KURL& url) {
+  return ResourceError(net::ERR_TIMED_OUT, url, WTF::nullopt);
+}
+
+ResourceError ResourceError::Failure(const KURL& url) {
+  return ResourceError(net::ERR_FAILED, url, WTF::nullopt);
+}
+
+ResourceError::ResourceError(
+    int error_code,
+    const KURL& url,
+    WTF::Optional<network::CORSErrorStatus> cors_error_status)
+    : error_code_(error_code),
+      failing_url_(url),
+      cors_error_status_(cors_error_status) {
+  DCHECK_NE(error_code_, 0);
+  InitializeDescription();
+}
+
+ResourceError::ResourceError(const WebURLError& error)
+    : error_code_(error.reason()),
+      failing_url_(error.url()),
+      is_access_check_(error.is_web_security_violation()),
+      has_copy_in_cache_(error.has_copy_in_cache()),
+      cors_error_status_(error.cors_error_status()) {
+  DCHECK_NE(error_code_, 0);
+  InitializeDescription();
 }
 
 ResourceError ResourceError::Copy() const {
-  ResourceError error_copy;
-  error_copy.domain_ = domain_.IsolatedCopy();
-  error_copy.error_code_ = error_code_;
-  error_copy.failing_url_ = failing_url_.IsolatedCopy();
+  ResourceError error_copy(error_code_, failing_url_.Copy(),
+                           cors_error_status_);
+  error_copy.has_copy_in_cache_ = has_copy_in_cache_;
   error_copy.localized_description_ = localized_description_.IsolatedCopy();
-  error_copy.is_null_ = is_null_;
-  error_copy.is_cancellation_ = is_cancellation_;
   error_copy.is_access_check_ = is_access_check_;
-  error_copy.is_timeout_ = is_timeout_;
-  error_copy.stale_copy_in_cache_ = stale_copy_in_cache_;
-  error_copy.was_ignored_by_handler_ = was_ignored_by_handler_;
-  error_copy.is_cache_miss_ = is_cache_miss_;
   return error_copy;
 }
 
+ResourceError::operator WebURLError() const {
+  WebURLError::HasCopyInCache has_copy_in_cache =
+      has_copy_in_cache_ ? WebURLError::HasCopyInCache::kTrue
+                         : WebURLError::HasCopyInCache::kFalse;
+
+  if (cors_error_status_) {
+    DCHECK_EQ(net::ERR_FAILED, error_code_);
+    return WebURLError(*cors_error_status_, has_copy_in_cache, failing_url_);
+  }
+
+  return WebURLError(error_code_, has_copy_in_cache,
+                     is_access_check_
+                         ? WebURLError::IsWebSecurityViolation::kTrue
+                         : WebURLError::IsWebSecurityViolation::kFalse,
+                     failing_url_);
+}
+
 bool ResourceError::Compare(const ResourceError& a, const ResourceError& b) {
-  if (a.IsNull() && b.IsNull())
-    return true;
-
-  if (a.IsNull() || b.IsNull())
-    return false;
-
-  if (a.Domain() != b.Domain())
-    return false;
-
   if (a.ErrorCode() != b.ErrorCode())
     return false;
 
@@ -92,25 +137,41 @@ bool ResourceError::Compare(const ResourceError& a, const ResourceError& b) {
   if (a.LocalizedDescription() != b.LocalizedDescription())
     return false;
 
-  if (a.IsCancellation() != b.IsCancellation())
-    return false;
-
   if (a.IsAccessCheck() != b.IsAccessCheck())
     return false;
 
-  if (a.IsTimeout() != b.IsTimeout())
+  if (a.HasCopyInCache() != b.HasCopyInCache())
     return false;
 
-  if (a.StaleCopyInCache() != b.StaleCopyInCache())
-    return false;
-
-  if (a.WasIgnoredByHandler() != b.WasIgnoredByHandler())
-    return false;
-
-  if (a.IsCacheMiss() != b.IsCacheMiss())
+  if (a.CORSErrorStatus() != b.CORSErrorStatus())
     return false;
 
   return true;
+}
+
+bool ResourceError::IsTimeout() const {
+  return error_code_ == net::ERR_TIMED_OUT;
+}
+
+bool ResourceError::IsCancellation() const {
+  return error_code_ == net::ERR_ABORTED;
+}
+
+bool ResourceError::IsCacheMiss() const {
+  return error_code_ == net::ERR_CACHE_MISS;
+}
+
+bool ResourceError::WasBlockedByResponse() const {
+  return error_code_ == net::ERR_BLOCKED_BY_RESPONSE;
+}
+
+void ResourceError::InitializeDescription() {
+  if (error_code_ == net::ERR_TEMPORARILY_THROTTLED) {
+    localized_description_ = WebString::FromASCII(kThrottledErrorDescription);
+  } else {
+    localized_description_ =
+        WebString::FromASCII(net::ErrorToString(error_code_));
+  }
 }
 
 }  // namespace blink

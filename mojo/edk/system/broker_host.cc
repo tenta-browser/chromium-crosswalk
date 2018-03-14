@@ -12,25 +12,30 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "mojo/edk/embedder/named_platform_channel_pair.h"
 #include "mojo/edk/embedder/named_platform_handle.h"
-#include "mojo/edk/embedder/platform_handle_vector.h"
 #include "mojo/edk/embedder/platform_shared_buffer.h"
+#include "mojo/edk/embedder/scoped_platform_handle.h"
 #include "mojo/edk/system/broker_messages.h"
 
 namespace mojo {
 namespace edk {
 
 BrokerHost::BrokerHost(base::ProcessHandle client_process,
-                       ScopedPlatformHandle platform_handle)
+                       ScopedPlatformHandle platform_handle,
+                       const ProcessErrorCallback& process_error_callback)
+    : process_error_callback_(process_error_callback)
 #if defined(OS_WIN)
-    : client_process_(client_process)
+      ,
+      client_process_(client_process)
 #endif
 {
   CHECK(platform_handle.is_valid());
 
   base::MessageLoop::current()->AddDestructionObserver(this);
 
-  channel_ = Channel::Create(this, ConnectionParams(std::move(platform_handle)),
-                             base::ThreadTaskRunnerHandle::Get());
+  channel_ = Channel::Create(
+      this,
+      ConnectionParams(TransportProtocol::kLegacy, std::move(platform_handle)),
+      base::ThreadTaskRunnerHandle::Get());
   channel_->Start();
 }
 
@@ -42,10 +47,11 @@ BrokerHost::~BrokerHost() {
     channel_->ShutDown();
 }
 
-bool BrokerHost::PrepareHandlesForClient(PlatformHandleVector* handles) {
+bool BrokerHost::PrepareHandlesForClient(
+    std::vector<ScopedPlatformHandle>* handles) {
 #if defined(OS_WIN)
-  if (!Channel::Message::RewriteHandles(
-      base::GetCurrentProcessHandle(), client_process_, handles)) {
+  if (!Channel::Message::RewriteHandles(base::GetCurrentProcessHandle(),
+                                        client_process_, handles)) {
     // NOTE: We only log an error here. We do not signal a logical error or
     // prevent any message from being sent. The client should handle unexpected
     // invalid handles appropriately.
@@ -69,16 +75,15 @@ bool BrokerHost::SendChannel(ScopedPlatformHandle handle) {
   Channel::MessagePtr message =
       CreateBrokerMessage(BrokerMessageType::INIT, 1, nullptr);
 #endif
-  ScopedPlatformHandleVectorPtr handles;
-  handles.reset(new PlatformHandleVector(1));
-  handles->at(0) = handle.release();
+  std::vector<ScopedPlatformHandle> handles(1);
+  handles[0] = std::move(handle);
 
   // This may legitimately fail on Windows if the client process is in another
   // session, e.g., is an elevated process.
-  if (!PrepareHandlesForClient(handles.get()))
+  if (!PrepareHandlesForClient(&handles))
     return false;
 
-   message->SetHandles(std::move(handles));
+  message->SetHandles(std::move(handles));
   channel_->Write(std::move(message));
   return true;
 }
@@ -107,14 +112,17 @@ void BrokerHost::OnBufferRequest(uint32_t num_bytes) {
   if (!read_only_buffer)
     buffer = nullptr;
 
+  BufferResponseData* response;
   Channel::MessagePtr message = CreateBrokerMessage(
-      BrokerMessageType::BUFFER_RESPONSE, buffer ? 2 : 0, nullptr);
+      BrokerMessageType::BUFFER_RESPONSE, buffer ? 2 : 0, 0, &response);
   if (buffer) {
-    ScopedPlatformHandleVectorPtr handles;
-    handles.reset(new PlatformHandleVector(2));
-    handles->at(0) = buffer->PassPlatformHandle().release();
-    handles->at(1) = read_only_buffer->PassPlatformHandle().release();
-    PrepareHandlesForClient(handles.get());
+    base::UnguessableToken guid = buffer->GetGUID();
+    response->guid_high = guid.GetHighForSerialization();
+    response->guid_low = guid.GetLowForSerialization();
+    std::vector<ScopedPlatformHandle> handles(2);
+    handles[0] = buffer->PassPlatformHandle();
+    handles[1] = read_only_buffer->PassPlatformHandle();
+    PrepareHandlesForClient(&handles);
     message->SetHandles(std::move(handles));
   }
 
@@ -123,7 +131,7 @@ void BrokerHost::OnBufferRequest(uint32_t num_bytes) {
 
 void BrokerHost::OnChannelMessage(const void* payload,
                                   size_t payload_size,
-                                  ScopedPlatformHandleVectorPtr handles) {
+                                  std::vector<ScopedPlatformHandle> handles) {
   if (payload_size < sizeof(BrokerMessageHeader))
     return;
 
@@ -132,7 +140,7 @@ void BrokerHost::OnChannelMessage(const void* payload,
   switch (header->type) {
     case BrokerMessageType::BUFFER_REQUEST:
       if (payload_size ==
-            sizeof(BrokerMessageHeader) + sizeof(BufferRequestData)) {
+          sizeof(BrokerMessageHeader) + sizeof(BufferRequestData)) {
         const BufferRequestData* request =
             reinterpret_cast<const BufferRequestData*>(header + 1);
         OnBufferRequest(request->size);
@@ -140,14 +148,23 @@ void BrokerHost::OnChannelMessage(const void* payload,
       break;
 
     default:
-      LOG(ERROR) << "Unexpected broker message type: " << header->type;
+      DLOG(ERROR) << "Unexpected broker message type: " << header->type;
       break;
   }
 }
 
-void BrokerHost::OnChannelError() { delete this; }
+void BrokerHost::OnChannelError(Channel::Error error) {
+  if (process_error_callback_ &&
+      error == Channel::Error::kReceivedMalformedData) {
+    process_error_callback_.Run("Broker host received malformed message");
+  }
 
-void BrokerHost::WillDestroyCurrentMessageLoop() { delete this; }
+  delete this;
+}
+
+void BrokerHost::WillDestroyCurrentMessageLoop() {
+  delete this;
+}
 
 }  // namespace edk
 }  // namespace mojo

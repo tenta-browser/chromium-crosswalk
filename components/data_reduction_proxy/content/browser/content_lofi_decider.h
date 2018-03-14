@@ -8,9 +8,15 @@
 #include "components/data_reduction_proxy/core/common/lofi_decider.h"
 #include "base/macros.h"
 
+class GURL;
+
 namespace net {
 class HttpRequestHeaders;
 class URLRequest;
+}
+
+namespace previews {
+class PreviewsDecider;
 }
 
 namespace data_reduction_proxy {
@@ -30,7 +36,6 @@ class ContentLoFiDecider : public LoFiDecider {
   bool IsUsingLoFi(const net::URLRequest& request) const override;
   void MaybeSetAcceptTransformHeader(
       const net::URLRequest& request,
-      bool are_previews_disabled,
       net::HttpRequestHeaders* headers) const override;
   bool IsSlowPagePreviewRequested(
       const net::HttpRequestHeaders& headers) const override;
@@ -38,9 +43,15 @@ class ContentLoFiDecider : public LoFiDecider {
       const net::HttpRequestHeaders& headers) const override;
   void RemoveAcceptTransformHeader(
       net::HttpRequestHeaders* headers) const override;
-  void MaybeSetIgnorePreviewsBlacklistDirective(
-      net::HttpRequestHeaders* headers) const override;
   bool ShouldRecordLoFiUMA(const net::URLRequest& request) const override;
+  bool IsClientLoFiImageRequest(const net::URLRequest& request) const override;
+  bool IsClientLoFiAutoReloadRequest(
+      const net::URLRequest& request) const override;
+
+  void MaybeApplyAMPPreview(
+      net::URLRequest* request,
+      GURL* new_url,
+      previews::PreviewsDecider* previews_decider) const override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ContentLoFiDecider);

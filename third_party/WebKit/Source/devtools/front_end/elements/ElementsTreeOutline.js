@@ -192,7 +192,7 @@ Elements.ElementsTreeOutline = class extends UI.TreeOutline {
     var originalEvent = event['original'];
 
     // Don't prevent the normal copy if the user has a selection.
-    if (!originalEvent.target.isComponentSelectionCollapsed())
+    if (originalEvent.target.hasSelection())
       return;
 
     // Do not interfere with text editing.
@@ -550,38 +550,32 @@ Elements.ElementsTreeOutline = class extends UI.TreeOutline {
    * @param {!SDK.DOMNode} node
    * @return {!Promise<!Object|undefined>}
    */
-  _loadDimensionsForNode(node) {
+  async _loadDimensionsForNode(node) {
     if (!node.nodeName() || node.nodeName().toLowerCase() !== 'img')
-      return Promise.resolve();
+      return;
 
-    var fulfill;
-    var promise = new Promise(x => fulfill = x);
-    node.resolveToObject('', resolvedNode);
+    var object = await node.resolveToObject('');
+
+    if (!object)
+      return;
+
+    var promise = object.callFunctionJSONPromise(features, undefined);
+    object.release();
     return promise;
 
-    function resolvedNode(object) {
-      if (!object) {
-        fulfill();
-        return;
-      }
-
-      object.callFunctionJSON(features, undefined, fulfill);
-      object.release();
-
-      /**
-       * @return {!{offsetWidth: number, offsetHeight: number, naturalWidth: number, naturalHeight: number, currentSrc: (string|undefined)}}
-       * @suppressReceiverCheck
-       * @this {!Element}
-       */
-      function features() {
-        return {
-          offsetWidth: this.offsetWidth,
-          offsetHeight: this.offsetHeight,
-          naturalWidth: this.naturalWidth,
-          naturalHeight: this.naturalHeight,
-          currentSrc: this.currentSrc
-        };
-      }
+    /**
+     * @return {!{offsetWidth: number, offsetHeight: number, naturalWidth: number, naturalHeight: number, currentSrc: (string|undefined)}}
+     * @suppressReceiverCheck
+     * @this {!Element}
+     */
+    function features() {
+      return {
+        offsetWidth: this.offsetWidth,
+        offsetHeight: this.offsetHeight,
+        naturalWidth: this.naturalWidth,
+        naturalHeight: this.naturalHeight,
+        currentSrc: this.currentSrc
+      };
     }
   }
 
@@ -620,30 +614,30 @@ Elements.ElementsTreeOutline = class extends UI.TreeOutline {
     this.setHoverEffect(element);
 
     if (element instanceof Elements.ElementsTreeElement) {
-      this._domModel.highlightDOMNodeWithConfig(
+      this._domModel.overlayModel().highlightDOMNodeWithConfig(
           element.node().id, {mode: 'all', showInfo: !UI.KeyboardShortcut.eventHasCtrlOrMeta(event)});
       return;
     }
 
     if (element instanceof Elements.ElementsTreeOutline.ShortcutTreeElement) {
-      this._domModel.highlightDOMNodeWithConfig(
+      this._domModel.overlayModel().highlightDOMNodeWithConfig(
           undefined, {mode: 'all', showInfo: !UI.KeyboardShortcut.eventHasCtrlOrMeta(event)}, element.backendNodeId());
     }
   }
 
   _onmouseleave(event) {
     this.setHoverEffect(null);
-    SDK.DOMModel.hideDOMNodeHighlight();
+    SDK.OverlayModel.hideDOMNodeHighlight();
   }
 
   _ondragstart(event) {
-    if (!event.target.isComponentSelectionCollapsed())
+    if (event.target.hasSelection())
       return false;
     if (event.target.nodeName === 'A')
       return false;
 
-    var treeElement = this._treeElementFromEvent(event);
-    if (!this._isValidDragSourceOrTarget(treeElement))
+    var treeElement = this._validDragSourceOrTarget(this._treeElementFromEvent(event));
+    if (!treeElement)
       return false;
 
     if (treeElement.node().nodeName() === 'BODY' || treeElement.node().nodeName() === 'HEAD')
@@ -653,7 +647,7 @@ Elements.ElementsTreeOutline = class extends UI.TreeOutline {
     event.dataTransfer.effectAllowed = 'copyMove';
     this._treeElementBeingDragged = treeElement;
 
-    SDK.DOMModel.hideDOMNodeHighlight();
+    SDK.OverlayModel.hideDOMNodeHighlight();
 
     return true;
   }
@@ -662,8 +656,8 @@ Elements.ElementsTreeOutline = class extends UI.TreeOutline {
     if (!this._treeElementBeingDragged)
       return false;
 
-    var treeElement = this._treeElementFromEvent(event);
-    if (!this._isValidDragSourceOrTarget(treeElement))
+    var treeElement = this._validDragSourceOrTarget(this._treeElementFromEvent(event));
+    if (!treeElement)
       return false;
 
     var node = treeElement.node();
@@ -688,32 +682,32 @@ Elements.ElementsTreeOutline = class extends UI.TreeOutline {
 
   /**
    * @param {?UI.TreeElement} treeElement
-   * @return {boolean}
+   * @return {?Elements.ElementsTreeElement}
    */
-  _isValidDragSourceOrTarget(treeElement) {
+  _validDragSourceOrTarget(treeElement) {
     if (!treeElement)
-      return false;
+      return null;
 
     if (!(treeElement instanceof Elements.ElementsTreeElement))
-      return false;
+      return null;
     var elementsTreeElement = /** @type {!Elements.ElementsTreeElement} */ (treeElement);
 
     var node = elementsTreeElement.node();
     if (!node.parentNode || node.parentNode.nodeType() !== Node.ELEMENT_NODE)
-      return false;
+      return null;
 
-    return true;
+    return elementsTreeElement;
   }
 
   _ondrop(event) {
     event.preventDefault();
     var treeElement = this._treeElementFromEvent(event);
-    if (treeElement)
+    if (treeElement instanceof Elements.ElementsTreeElement)
       this._doMove(treeElement);
   }
 
   /**
-   * @param {!UI.TreeElement} treeElement
+   * @param {!Elements.ElementsTreeElement} treeElement
    */
   _doMove(treeElement) {
     if (!this._treeElementBeingDragged)
@@ -772,18 +766,14 @@ Elements.ElementsTreeOutline = class extends UI.TreeOutline {
     if (textNode && textNode.classList.contains('bogus'))
       textNode = null;
     var commentNode = event.target.enclosingNodeOrSelfWithClass('webkit-html-comment');
-    if (textNode) {
-      contextMenu.appendSeparator();
+    if (textNode)
       treeElement.populateTextContextMenu(contextMenu, textNode);
-    } else if (isTag) {
-      contextMenu.appendSeparator();
+    else if (isTag)
       treeElement.populateTagContextMenu(contextMenu, event);
-    } else if (commentNode) {
-      contextMenu.appendSeparator();
+    else if (commentNode)
       treeElement.populateNodeContextMenu(contextMenu);
-    } else if (isPseudoElement) {
+    else if (isPseudoElement)
       treeElement.populateScrollIntoView(contextMenu);
-    }
 
     contextMenu.appendApplicableItems(treeElement.node());
     contextMenu.show();
@@ -896,66 +886,63 @@ Elements.ElementsTreeOutline = class extends UI.TreeOutline {
    * ancestors.
    *
    * @param {!SDK.DOMNode} node
-   * @param {function(?SDK.RemoteObject, boolean=)=} userCallback
    */
-  toggleHideElement(node, userCallback) {
+  async toggleHideElement(node) {
     var pseudoType = node.pseudoType();
     var effectiveNode = pseudoType ? node.parentNode : node;
     if (!effectiveNode)
       return;
 
     var hidden = node.marker('hidden-marker');
+    var object = await effectiveNode.resolveToObject('');
 
-    function resolvedNode(object) {
-      if (!object)
+    if (!object)
+      return;
+
+    var result = object.callFunction(toggleClassAndInjectStyleRule, [{value: pseudoType}, {value: !hidden}]);
+    object.release();
+    node.setMarker('hidden-marker', hidden ? null : true);
+    return result;
+
+    /**
+     * @param {?string} pseudoType
+     * @param {boolean} hidden
+     * @suppressGlobalPropertiesCheck
+     * @suppressReceiverCheck
+     * @this {!Element}
+     */
+    function toggleClassAndInjectStyleRule(pseudoType, hidden) {
+      const classNamePrefix = '__web-inspector-hide';
+      const classNameSuffix = '-shortcut__';
+      const styleTagId = '__web-inspector-hide-shortcut-style__';
+      var selectors = [];
+      selectors.push('.__web-inspector-hide-shortcut__');
+      selectors.push('.__web-inspector-hide-shortcut__ *');
+      selectors.push('.__web-inspector-hidebefore-shortcut__::before');
+      selectors.push('.__web-inspector-hideafter-shortcut__::after');
+      var selector = selectors.join(', ');
+      var ruleBody = '    visibility: hidden !important;';
+      var rule = '\n' + selector + '\n{\n' + ruleBody + '\n}\n';
+      var className = classNamePrefix + (pseudoType || '') + classNameSuffix;
+      this.classList.toggle(className, hidden);
+
+      var localRoot = this;
+      while (localRoot.parentNode)
+        localRoot = localRoot.parentNode;
+      if (localRoot.nodeType === Node.DOCUMENT_NODE)
+        localRoot = document.head;
+
+      var style = localRoot.querySelector('style#' + styleTagId);
+      if (style)
         return;
 
-      /**
-       * @param {?string} pseudoType
-       * @param {boolean} hidden
-       * @suppressGlobalPropertiesCheck
-       * @suppressReceiverCheck
-       * @this {!Element}
-       */
-      function toggleClassAndInjectStyleRule(pseudoType, hidden) {
-        const classNamePrefix = '__web-inspector-hide';
-        const classNameSuffix = '-shortcut__';
-        const styleTagId = '__web-inspector-hide-shortcut-style__';
-        var selectors = [];
-        selectors.push('.__web-inspector-hide-shortcut__');
-        selectors.push('.__web-inspector-hide-shortcut__ *');
-        selectors.push('.__web-inspector-hidebefore-shortcut__::before');
-        selectors.push('.__web-inspector-hideafter-shortcut__::after');
-        var selector = selectors.join(', ');
-        var ruleBody = '    visibility: hidden !important;';
-        var rule = '\n' + selector + '\n{\n' + ruleBody + '\n}\n';
-        var className = classNamePrefix + (pseudoType || '') + classNameSuffix;
-        this.classList.toggle(className, hidden);
+      style = document.createElement('style');
+      style.id = styleTagId;
+      style.type = 'text/css';
+      style.textContent = rule;
 
-        var localRoot = this;
-        while (localRoot.parentNode)
-          localRoot = localRoot.parentNode;
-        if (localRoot.nodeType === Node.DOCUMENT_NODE)
-          localRoot = document.head;
-
-        var style = localRoot.querySelector('style#' + styleTagId);
-        if (style)
-          return;
-
-        style = document.createElement('style');
-        style.id = styleTagId;
-        style.type = 'text/css';
-        style.textContent = rule;
-
-        localRoot.appendChild(style);
-      }
-
-      object.callFunction(toggleClassAndInjectStyleRule, [{value: pseudoType}, {value: !hidden}], userCallback);
-      object.release();
-      node.setMarker('hidden-marker', hidden ? null : true);
+      localRoot.appendChild(style);
     }
-
-    effectiveNode.resolveToObject('', resolvedNode);
   }
 
   /**
@@ -971,7 +958,7 @@ Elements.ElementsTreeOutline = class extends UI.TreeOutline {
     this.selectDOMNode(null, false);
     this._popoverHelper.hidePopover();
     delete this._clipboardNodeData;
-    SDK.DOMModel.hideDOMNodeHighlight();
+    SDK.OverlayModel.hideDOMNodeHighlight();
     this._updateRecords.clear();
   }
 
@@ -1314,18 +1301,12 @@ Elements.ElementsTreeOutline = class extends UI.TreeOutline {
 
     console.assert(!treeElement.isClosingTag());
 
-    treeElement.node().getChildNodes(childNodesLoaded.bind(this));
-
-    /**
-     * @param {?Array.<!SDK.DOMNode>} children
-     * @this {Elements.ElementsTreeOutline}
-     */
-    function childNodesLoaded(children) {
+    treeElement.node().getChildNodes(children => {
       // FIXME: sort this out, it should not happen.
       if (!children)
         return;
       this._innerUpdateChildren(treeElement);
-    }
+    });
   }
 
   /**

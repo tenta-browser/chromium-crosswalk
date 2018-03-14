@@ -6,11 +6,12 @@
 #import <UIKit/UIKit.h>
 #import <XCTest/XCTest.h>
 
+#include "base/ios/ios_util.h"
 #import "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/ui/dialogs/dialog_presenter.h"
-#include "ios/chrome/browser/ui/tools_menu/tools_menu_constants.h"
+#include "ios/chrome/browser/ui/tools_menu/public/tools_menu_constants.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/chrome/test/app/chrome_test_util.h"
@@ -21,8 +22,9 @@
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 #import "ios/testing/earl_grey/matchers.h"
 #import "ios/testing/wait_util.h"
-#import "ios/web/public/test/http_server.h"
-#import "ios/web/public/test/http_server_util.h"
+#import "ios/web/public/test/earl_grey/web_view_matchers.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#include "ios/web/public/test/http_server/http_server_util.h"
 #include "ios/web/public/test/url_test_util.h"
 #include "ios/web/public/web_state/web_state.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -33,7 +35,9 @@
 #error "This file requires ARC support."
 #endif
 
+using chrome_test_util::ButtonWithAccessibilityLabel;
 using chrome_test_util::NavigationBarDoneButton;
+using chrome_test_util::OKButton;
 using web::test::HttpServer;
 
 namespace {
@@ -148,21 +152,21 @@ NSString* GetScriptForAlertWithType(JavaScriptAlertType type) {
 // HTTP server constants.
 
 // URL and response for a blank document.
-const char* kJavaScriptTestURL = "http://jsalerts";
-const char* kJavaScriptTestResponse =
+const char kJavaScriptTestURL[] = "http://jsalerts";
+const char kJavaScriptTestResponse[] =
     "<!DOCTYPE html><html><body></body></html>";
 
 // URL and response for a page with an onload alert.
-const char* kOnLoadAlertURL = "http://onloadalert";
-const char* kOnLoadAlertResponse =
+const char kOnLoadAlertURL[] = "http://onloadalert";
+const char kOnLoadAlertResponse[] =
     "<!DOCTYPE html><html><body onload=\"alert('alert')\"></body></html>";
 
 // URL and response for a page with a link to |kOnLoadAlertURL|.
-const char* kPageWithLinkURL = "http://pagewithlink";
-const char* kPageWithLinkResponseFormat =
+const char kPageWithLinkURL[] = "http://pagewithlink";
+const char kPageWithLinkResponseFormat[] =
     "<!DOCTYPE html><html><body><a id=\"%s\" href=\"%s\">%s</a></body></html>";
-const char* kPageWithLinkText = "LINK TO ONLOAD ALERT PAGE";
-const char* kLinkID = "link-id";
+const char kPageWithLinkText[] = "LINK TO ONLOAD ALERT PAGE";
+const char kLinkID[] = "link-id";
 std::string GetPageWithLinkResponse() {
   return base::SysNSStringToUTF8([NSString
       stringWithFormat:@(kPageWithLinkResponseFormat), kLinkID,
@@ -170,13 +174,6 @@ std::string GetPageWithLinkResponse() {
                        kPageWithLinkText]);
 }
 
-// Waits until |string| is displayed on the web view.
-void WaitForWebDisplay(const std::string& string) {
-  id<GREYMatcher> response1Matcher =
-      chrome_test_util::WebViewContainingText(string);
-  [[EarlGrey selectElementWithMatcher:response1Matcher]
-      assertWithMatcher:grey_notNil()];
-}
 
 // Display the javascript alert.
 void DisplayJavaScriptAlert(JavaScriptAlertType type) {
@@ -205,11 +202,14 @@ void WaitForAlertToBeShown(NSString* alert_label) {
              @"Alert with title was not present: %@", alert_label);
 }
 
-void WaitForJavaScripDialogToBeShown() {
-  NSString* alert_label = [DialogPresenter
-      localizedTitleForJavaScriptAlertFromPage:HttpServer::MakeUrl(
-                                                   kJavaScriptTestURL)];
-  WaitForAlertToBeShown(alert_label);
+void WaitForJavaScriptDialogToBeShown() {
+  GURL javaScriptURL = HttpServer::MakeUrl(kJavaScriptTestURL);
+
+  NSString* hostname = base::SysUTF8ToNSString(javaScriptURL.host());
+  NSString* expectedTitle = l10n_util::GetNSStringF(
+      IDS_JAVASCRIPT_MESSAGEBOX_TITLE, base::SysNSStringToUTF16(hostname));
+
+  WaitForAlertToBeShown(expectedTitle);
 }
 
 // Injects JavaScript to show a dialog with |type|, verifying that it was
@@ -217,7 +217,7 @@ void WaitForJavaScripDialogToBeShown() {
 void ShowJavaScriptDialog(JavaScriptAlertType type) {
   DisplayJavaScriptAlert(type);
 
-  WaitForJavaScripDialogToBeShown();
+  WaitForJavaScriptDialogToBeShown();
 
   // Check the message of the alert.
   id<GREYMatcher> messageLabel =
@@ -231,11 +231,13 @@ void ShowJavaScriptDialog(JavaScriptAlertType type) {
 void AssertJavaScriptAlertNotPresent() {
   ConditionBlock condition = ^{
     NSError* error = nil;
-    NSString* alertLabel = [DialogPresenter
-        localizedTitleForJavaScriptAlertFromPage:HttpServer::MakeUrl(
-                                                     kJavaScriptTestURL)];
+    GURL javaScriptURL = HttpServer::MakeUrl(kJavaScriptTestURL);
+    NSString* hostname = base::SysUTF8ToNSString(javaScriptURL.host());
+    NSString* expectedTitle = l10n_util::GetNSStringF(
+        IDS_JAVASCRIPT_MESSAGEBOX_TITLE, base::SysNSStringToUTF16(hostname));
+
     id<GREYMatcher> titleLabel =
-        chrome_test_util::StaticTextWithAccessibilityLabel(alertLabel);
+        chrome_test_util::StaticTextWithAccessibilityLabel(expectedTitle);
     [[EarlGrey selectElementWithMatcher:titleLabel] assertWithMatcher:grey_nil()
                                                                 error:&error];
     return !error;
@@ -256,12 +258,6 @@ void TypeInPrompt(NSString* input) {
                  grey_accessibilityID(
                      kJavaScriptDialogTextFieldAccessibiltyIdentifier)]
       performAction:grey_typeText(input)];
-}
-
-void TapOK() {
-  id<GREYMatcher> ok_button =
-      chrome_test_util::ButtonWithAccessibilityLabelId(IDS_OK);
-  [[EarlGrey selectElementWithMatcher:ok_button] performAction:grey_tap()];
 }
 
 void TapCancel() {
@@ -329,67 +325,44 @@ void TapSuppressDialogsButton() {
 
 - (void)loadBlankTestPage {
   [ChromeEarlGrey loadURL:HttpServer::MakeUrl(kJavaScriptTestURL)];
-  WaitForWebDisplay(std::string());
+  [ChromeEarlGrey waitForWebViewContainingText:std::string()];
 }
 
 - (void)loadPageWithLink {
   [ChromeEarlGrey loadURL:HttpServer::MakeUrl(kPageWithLinkURL)];
-  WaitForWebDisplay(kPageWithLinkText);
+  [ChromeEarlGrey waitForWebViewContainingText:kPageWithLinkText];
 }
 
 #pragma mark - Tests
 
 // Tests that an alert is shown, and that the completion block is called.
 - (void)testShowJavaScriptAlert {
-// TODO(crbug.com/663026): Reenable the test for devices.
-#if !TARGET_IPHONE_SIMULATOR
-  EARL_GREY_TEST_DISABLED(@"Disabled for devices because existing system "
-                          @"alerts would prevent app alerts to present "
-                          @"correctly.");
-#endif
-
   // Load the blank test page and show an alert.
   [self loadBlankTestPage];
   ShowJavaScriptDialog(JavaScriptAlertType::ALERT);
 
-  // Tap the OK button.
-  TapOK();
+  [[EarlGrey selectElementWithMatcher:OKButton()] performAction:grey_tap()];
 
   // Wait for the html body to be reset to the correct value.
-  WaitForWebDisplay(kAlertResultBody);
+  [ChromeEarlGrey waitForWebViewContainingText:kAlertResultBody];
 }
 
 // Tests that a confirmation dialog is shown, and that the completion block is
 // called with the correct value when the OK buton is tapped.
 - (void)testShowJavaScriptConfirmationOK {
-// TODO(crbug.com/663026): Reenable the test for devices.
-#if !TARGET_IPHONE_SIMULATOR
-  EARL_GREY_TEST_DISABLED(@"Disabled for devices because existing system "
-                          @"alerts would prevent app alerts to present "
-                          @"correctly.");
-#endif
-
   // Load the blank test page and show a confirmation dialog.
   [self loadBlankTestPage];
   ShowJavaScriptDialog(JavaScriptAlertType::CONFIRMATION);
 
-  // Tap the OK button.
-  TapOK();
+  [[EarlGrey selectElementWithMatcher:OKButton()] performAction:grey_tap()];
 
   // Wait for the html body to be reset to the correct value.
-  WaitForWebDisplay(kConfirmationResultBodyOK);
+  [ChromeEarlGrey waitForWebViewContainingText:kConfirmationResultBodyOK];
 }
 
 // Tests that a confirmation dialog is shown, and that the completion block is
 // called with the correct value when the Cancel buton is tapped.
 - (void)testShowJavaScriptConfirmationCancelled {
-// TODO(crbug.com/663026): Reenable the test for devices.
-#if !TARGET_IPHONE_SIMULATOR
-  EARL_GREY_TEST_DISABLED(@"Disabled for devices because existing system "
-                          @"alerts would prevent app alerts to present "
-                          @"correctly.");
-#endif
-
   // Load the blank test page and show a confirmation dialog.
   [self loadBlankTestPage];
   ShowJavaScriptDialog(JavaScriptAlertType::CONFIRMATION);
@@ -398,18 +371,18 @@ void TapSuppressDialogsButton() {
   TapCancel();
 
   // Wait for the html body to be reset to the correct value.
-  WaitForWebDisplay(kConfirmationResultBodyCancelled);
+  [ChromeEarlGrey
+      waitForWebViewContainingText:kConfirmationResultBodyCancelled];
 }
 
 // Tests that a prompt dialog is shown, and that the completion block is called
 // with the correct value when the OK buton is tapped.
 - (void)testShowJavaScriptPromptOK {
-// TODO(crbug.com/663026): Reenable the test for devices.
-#if !TARGET_IPHONE_SIMULATOR
-  EARL_GREY_TEST_DISABLED(@"Disabled for devices because existing system "
-                          @"alerts would prevent app alerts to present "
-                          @"correctly.");
-#endif
+  // TODO(crbug.com/753098): Re-enable this test on iOS 11 iPad once
+  // grey_typeText works on iOS 11.
+  if (base::ios::IsRunningOnIOS11OrLater() && IsIPadIdiom()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 11.");
+  }
 
   // Load the blank test page and show a prompt dialog.
   [self loadBlankTestPage];
@@ -418,22 +391,20 @@ void TapSuppressDialogsButton() {
   // Enter text into text field.
   TypeInPrompt(@(kPromptTestUserInput));
 
-  // Tap the OK button.
-  TapOK();
+  [[EarlGrey selectElementWithMatcher:OKButton()] performAction:grey_tap()];
 
   // Wait for the html body to be reset to the input text.
-  WaitForWebDisplay(kPromptTestUserInput);
+  [ChromeEarlGrey waitForWebViewContainingText:kPromptTestUserInput];
 }
 
 // Tests that a prompt dialog is shown, and that the completion block is called
 // with the correct value when the Cancel buton is tapped.
 - (void)testShowJavaScriptPromptCancelled {
-// TODO(crbug.com/663026): Reenable the test for devices.
-#if !TARGET_IPHONE_SIMULATOR
-  EARL_GREY_TEST_DISABLED(@"Disabled for devices because existing system "
-                          @"alerts would prevent app alerts to present "
-                          @"correctly.");
-#endif
+  // TODO(crbug.com/753098): Re-enable this test on iOS 11 iPad once
+  // grey_typeText works on iOS 11.
+  if (base::ios::IsRunningOnIOS11OrLater() && IsIPadIdiom()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 11.");
+  }
 
   // Load the blank test page and show a prompt dialog.
   [self loadBlankTestPage];
@@ -446,7 +417,7 @@ void TapSuppressDialogsButton() {
   TapCancel();
 
   // Wait for the html body to be reset to the cancel text.
-  WaitForWebDisplay(kPromptResultBodyCancelled);
+  [ChromeEarlGrey waitForWebViewContainingText:kPromptResultBodyCancelled];
 }
 
 // Tests that JavaScript alerts that are shown in a loop can be suppressed.
@@ -456,11 +427,10 @@ void TapSuppressDialogsButton() {
   web::WebState* webState = chrome_test_util::GetCurrentWebState();
   NSString* script = GetJavaScriptAlertLoopScript();
   webState->ExecuteJavaScript(base::SysNSStringToUTF16(script));
-  WaitForJavaScripDialogToBeShown();
+  WaitForJavaScriptDialogToBeShown();
 
-  // Tap the OK button and wait for another dialog to be shown.
-  TapOK();
-  WaitForJavaScripDialogToBeShown();
+  [[EarlGrey selectElementWithMatcher:OKButton()] performAction:grey_tap()];
+  WaitForJavaScriptDialogToBeShown();
 
   // Tap the suppress dialogs button.
   TapSuppressDialogsButton();
@@ -474,28 +444,18 @@ void TapSuppressDialogsButton() {
   TapSuppressDialogsButton();
 
   // Wait for the html body to be reset to the loop finished text.
-  WaitForWebDisplay(kAlertLoopFinishedText);
+  [ChromeEarlGrey waitForWebViewContainingText:kAlertLoopFinishedText];
 }
 
 // Tests to ensure crbug.com/658260 does not regress.
 // Tests that if an alert should be called when settings are displays, the alert
 // waits for the dismiss of the settings.
 - (void)testShowJavaScriptBehindSettings {
-// TODO(crbug.com/663026): Reenable the test for devices.
-#if !TARGET_IPHONE_SIMULATOR
-  EARL_GREY_TEST_DISABLED(@"Disabled for devices because existing system "
-                          @"alerts would prevent app alerts to present "
-                          @"correctly.");
-#endif
-
   // Load the blank test page.
   [self loadBlankTestPage];
 
   // Show settings.
-  [ChromeEarlGreyUI openToolsMenu];
-  [[EarlGrey
-      selectElementWithMatcher:grey_accessibilityID(kToolsMenuSettingsId)]
-      performAction:grey_tap()];
+  [ChromeEarlGreyUI openSettingsMenu];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::
                                           StaticTextWithAccessibilityLabelId(
                                               IDS_IOS_SETTINGS_TITLE)]
@@ -512,23 +472,21 @@ void TapSuppressDialogsButton() {
       performAction:grey_tap()];
 
   // Make sure the alert is present.
-  WaitForJavaScripDialogToBeShown();
+  WaitForJavaScriptDialogToBeShown();
 
-  // Tap the OK button.
-  TapOK();
+  [[EarlGrey selectElementWithMatcher:OKButton()] performAction:grey_tap()];
 
   // Wait for the html body to be reset to the correct value.
-  WaitForWebDisplay(kAlertResultBody);
+  [ChromeEarlGrey waitForWebViewContainingText:kAlertResultBody];
 }
 
 // Tests that an alert is presented after displaying the share menu.
 - (void)testShowJavaScriptAfterShareMenu {
-// TODO(crbug.com/663026): Reenable the test for devices.
-#if !TARGET_IPHONE_SIMULATOR
-  EARL_GREY_TEST_DISABLED(@"Disabled for devices because existing system "
-                          @"alerts would prevent app alerts to present "
-                          @"correctly.");
-#endif
+  // TODO(crbug.com/747622): re-enable this test on iOS 11 once earl grey can
+  // interact with the share menu.
+  if (base::ios::IsRunningOnIOS11OrLater()) {
+    EARL_GREY_TEST_DISABLED(@"Disabled on iOS 11.");
+  }
 
   // Load the blank test page.
   [self loadBlankTestPage];
@@ -544,32 +502,29 @@ void TapSuppressDialogsButton() {
   // Show an alert and assert it is present.
   ShowJavaScriptDialog(JavaScriptAlertType::ALERT);
 
-  // Tap the OK button.
-  TapOK();
+  [[EarlGrey selectElementWithMatcher:OKButton()] performAction:grey_tap()];
 
   // Wait for the html body to be reset to the correct value.
-  WaitForWebDisplay(kAlertResultBody);
+  [ChromeEarlGrey waitForWebViewContainingText:kAlertResultBody];
 }
 
 // Tests that an alert is presented after a new tab animation is finished.
 - (void)testShowJavaScriptAfterNewTabAnimation {
-// TODO(crbug.com/663026): Reenable the test for devices.
-#if !TARGET_IPHONE_SIMULATOR
-  EARL_GREY_TEST_DISABLED(@"Disabled for devices because existing system "
-                          @"alerts would prevent app alerts to present "
-                          @"correctly.");
-#endif
-
   // Load the test page with a link to kOnLoadAlertURL and long tap on the link.
   [self loadPageWithLink];
+
+  // TODO(crbug.com/712358): Use method LongPressElementAndTapOnButton once
+  // it is moved out of context_menu_egtests.mm and into a shared location.
+  [ChromeEarlGrey waitForWebViewContainingText:kPageWithLinkText];
   id<GREYMatcher> webViewMatcher =
-      chrome_test_util::WebViewContainingText(std::string(kPageWithLinkText));
+      web::WebViewInWebState(chrome_test_util::GetCurrentWebState());
+
   [[EarlGrey selectElementWithMatcher:webViewMatcher]
       performAction:chrome_test_util::LongPressElementForContextMenu(
                         kLinkID, true /* menu should appear */)];
 
   // Tap on the "Open In New Tab" button.
-  id<GREYMatcher> newTabMatcher = testing::ContextMenuItemWithText(
+  id<GREYMatcher> newTabMatcher = ButtonWithAccessibilityLabel(
       l10n_util::GetNSStringWithFixup(IDS_IOS_CONTENT_CONTEXT_OPENLINKNEWTAB));
   [[EarlGrey selectElementWithMatcher:newTabMatcher] performAction:grey_tap()];
 
@@ -588,10 +543,12 @@ void TapSuppressDialogsButton() {
   }
 
   // Wait for the alert to be shown.
-  NSString* alertLabel = [DialogPresenter
-      localizedTitleForJavaScriptAlertFromPage:HttpServer::MakeUrl(
-                                                   kJavaScriptTestURL)];
-  WaitForAlertToBeShown(alertLabel);
+  GURL javaScriptURL = HttpServer::MakeUrl(kJavaScriptTestURL);
+  NSString* hostname = base::SysUTF8ToNSString(javaScriptURL.host());
+  NSString* expectedTitle = l10n_util::GetNSStringF(
+      IDS_JAVASCRIPT_MESSAGEBOX_TITLE, base::SysNSStringToUTF16(hostname));
+
+  WaitForAlertToBeShown(expectedTitle);
 
   // Verify that the omnibox shows the correct URL when the dialog is visible.
   GURL onloadURL = HttpServer::MakeUrl(kOnLoadAlertURL);
@@ -599,8 +556,7 @@ void TapSuppressDialogsButton() {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(title)]
       assertWithMatcher:grey_notNil()];
 
-  // Close the alert.
-  TapOK();
+  [[EarlGrey selectElementWithMatcher:OKButton()] performAction:grey_tap()];
 
   // Reenable synchronization on iPads now that the dialog has been dismissed.
   if (IsIPadIdiom()) {

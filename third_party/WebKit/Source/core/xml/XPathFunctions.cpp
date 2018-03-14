@@ -27,13 +27,13 @@
 
 #include "core/xml/XPathFunctions.h"
 
-#include "core/XMLNames.h"
 #include "core/dom/Attr.h"
 #include "core/dom/Element.h"
 #include "core/dom/ProcessingInstruction.h"
 #include "core/dom/TreeScope.h"
 #include "core/xml/XPathUtil.h"
 #include "core/xml/XPathValue.h"
+#include "core/xml_names.h"
 #include "platform/wtf/MathExtras.h"
 #include "platform/wtf/text/StringBuilder.h"
 
@@ -362,7 +362,7 @@ Value FunId::Evaluate(EvaluationContext& context) const {
     // If there are several nodes with the same id, id() should return the first
     // one.  In WebKit, getElementById behaves so, too, although its behavior in
     // this case is formally undefined.
-    Node* node = context_scope.GetElementById(
+    Node* node = context_scope.getElementById(
         AtomicString(id_list.Substring(start_pos, end_pos - start_pos)));
     if (node && result_set.insert(node).is_new_entry)
       result->Append(node);
@@ -599,7 +599,7 @@ Value FunTranslate::Evaluate(EvaluationContext& context) const {
 
   for (unsigned i1 = 0; i1 < s1.length(); ++i1) {
     UChar ch = s1[i1];
-    size_t i2 = s2.Find(ch);
+    size_t i2 = s2.find(ch);
 
     if (i2 == kNotFound)
       result.Append(ch);
@@ -757,7 +757,7 @@ Function* CreateFunction(const String& name,
     CreateFunctionMap();
 
   HashMap<String, FunctionRec>::iterator function_map_iter =
-      g_function_map->Find(name);
+      g_function_map->find(name);
   FunctionRec* function_rec = nullptr;
 
   if (function_map_iter == g_function_map->end() ||

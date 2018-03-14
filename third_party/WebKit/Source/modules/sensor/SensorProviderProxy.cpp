@@ -6,9 +6,8 @@
 
 #include "modules/sensor/SensorProxy.h"
 #include "platform/mojo/MojoHelper.h"
-#include "public/platform/Platform.h"
 #include "services/device/public/interfaces/constants.mojom-blink.h"
-#include "services/service_manager/public/cpp/connector.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 
 namespace blink {
 
@@ -20,8 +19,8 @@ void SensorProviderProxy::InitializeIfNeeded() {
   if (IsInitialized())
     return;
 
-  Platform::Current()->GetConnector()->BindInterface(
-      device::mojom::blink::kServiceName, mojo::MakeRequest(&sensor_provider_));
+  GetSupplementable()->GetInterfaceProvider().GetInterface(
+      mojo::MakeRequest(&sensor_provider_));
   sensor_provider_.set_connection_error_handler(ConvertToBaseCallback(
       WTF::Bind(&SensorProviderProxy::OnSensorProviderConnectionError,
                 WrapWeakPersistent(this))));
@@ -46,7 +45,7 @@ SensorProviderProxy* SensorProviderProxy::From(LocalFrame* frame) {
 
 SensorProviderProxy::~SensorProviderProxy() {}
 
-DEFINE_TRACE(SensorProviderProxy) {
+void SensorProviderProxy::Trace(blink::Visitor* visitor) {
   visitor->Trace(sensor_proxies_);
   Supplement<LocalFrame>::Trace(visitor);
 }
@@ -66,7 +65,7 @@ SensorProxy* SensorProviderProxy::GetSensorProxy(
     device::mojom::blink::SensorType type) {
   for (SensorProxy* sensor : sensor_proxies_) {
     // TODO(Mikhail) : Hash sensors by type for efficiency.
-    if (sensor->GetType() == type)
+    if (sensor->type() == type)
       return sensor;
   }
 

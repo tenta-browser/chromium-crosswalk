@@ -5,17 +5,17 @@
 #ifndef CHROME_BROWSER_CHROMEOS_NET_NETWORK_PORTAL_DETECTOR_IMPL_H_
 #define CHROME_BROWSER_CHROMEOS_NET_NETWORK_PORTAL_DETECTOR_IMPL_H_
 
+#include <map>
 #include <memory>
 #include <string>
 
 #include "base/cancelable_callback.h"
 #include "base/compiler_specific.h"
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "chromeos/network/network_state_handler_observer.h"
 #include "chromeos/network/portal_detector/network_portal_detector.h"
@@ -28,6 +28,10 @@
 #include "url/gurl.h"
 
 class NetworkingConfigTest;
+
+namespace base {
+class Value;
+}
 
 namespace net {
 class URLRequestContextGetter;
@@ -42,24 +46,14 @@ class NetworkState;
 // NetworkStateHandler and delegates portal detection for the default
 // network to CaptivePortalService.
 class NetworkPortalDetectorImpl : public NetworkPortalDetector,
-                                  public base::NonThreadSafe,
                                   public chromeos::NetworkStateHandlerObserver,
                                   public content::NotificationObserver,
                                   public PortalDetectorStrategy::Delegate {
  public:
-  static const char kOobeDetectionResultHistogram[];
-  static const char kOobeDetectionDurationHistogram[];
-  static const char kOobeShillOnlineHistogram[];
-  static const char kOobeShillPortalHistogram[];
-  static const char kOobeShillOfflineHistogram[];
-  static const char kOobePortalToOnlineHistogram[];
-
-  static const char kSessionDetectionResultHistogram[];
-  static const char kSessionDetectionDurationHistogram[];
-  static const char kSessionShillOnlineHistogram[];
-  static const char kSessionShillPortalHistogram[];
-  static const char kSessionShillOfflineHistogram[];
-  static const char kSessionPortalToOnlineHistogram[];
+  // The delay since the default network shill reports a portal network, used to
+  // record UMA. Public for tests.
+  static constexpr base::TimeDelta kDelaySinceShillPortalForUMA =
+      base::TimeDelta::FromSeconds(60);
 
   NetworkPortalDetectorImpl(
       const scoped_refptr<net::URLRequestContextGetter>& request_context,
@@ -76,7 +70,7 @@ class NetworkPortalDetectorImpl : public NetworkPortalDetector,
   friend class NetworkPortalDetectorImplTest;
   friend class NetworkPortalDetectorImplBrowserTest;
 
-  using CaptivePortalStateMap = base::hash_map<std::string, CaptivePortalState>;
+  using CaptivePortalStateMap = std::map<std::string, CaptivePortalState>;
 
   enum State {
     // No portal check is running.
@@ -85,6 +79,8 @@ class NetworkPortalDetectorImpl : public NetworkPortalDetector,
     STATE_PORTAL_CHECK_PENDING,
     // Portal check is in progress.
     STATE_CHECKING_FOR_PORTAL,
+    // No portal check when successfully behind portal.
+    STATE_BEHIND_PORTAL_IDLE,
   };
 
   struct DetectionAttemptCompletedReport {
@@ -101,8 +97,8 @@ class NetworkPortalDetectorImpl : public NetworkPortalDetector,
 
     std::string network_name;
     std::string network_id;
-    captive_portal::CaptivePortalResult result;
-    int response_code;
+    captive_portal::CaptivePortalResult result = captive_portal::RESULT_COUNT;
+    int response_code = -1;
   };
 
   // Starts detection process.
@@ -171,6 +167,9 @@ class NetworkPortalDetectorImpl : public NetworkPortalDetector,
   bool is_checking_for_portal() const {
     return state_ == STATE_CHECKING_FOR_PORTAL;
   }
+  bool is_behind_portal_idle() const {
+    return state_ == STATE_BEHIND_PORTAL_IDLE;
+  }
 
   int same_detection_result_count_for_testing() const {
     return same_detection_result_count_;
@@ -221,6 +220,9 @@ class NetworkPortalDetectorImpl : public NetworkPortalDetector,
   // Connection state of the default network.
   std::string default_connection_state_;
 
+  // Proxy configuration of the default network.
+  std::unique_ptr<base::Value> default_proxy_config_;
+
   State state_ = STATE_IDLE;
   CaptivePortalStateMap portal_state_map_;
   base::ObserverList<Observer> observers_;
@@ -228,7 +230,8 @@ class NetworkPortalDetectorImpl : public NetworkPortalDetector,
   base::CancelableClosure attempt_task_;
   base::CancelableClosure attempt_timeout_;
 
-  // URL that returns a 204 response code when connected to the Internet.
+  // URL that returns a 204 response code when connected to the Internet. Used
+  // by tests.
   GURL portal_test_url_;
 
   // Detector for checking default network for a portal state.
@@ -247,6 +250,10 @@ class NetworkPortalDetectorImpl : public NetworkPortalDetector,
   // Delay before next portal detection.
   base::TimeDelta next_attempt_delay_;
 
+  // Saves the most recent timestamp that shill reports |default_network_id_|
+  // network is portal network.
+  base::TimeTicks last_shill_reports_portal_time_;
+
   // Current detection strategy.
   std::unique_ptr<PortalDetectorStrategy> strategy_;
 
@@ -258,6 +265,11 @@ class NetworkPortalDetectorImpl : public NetworkPortalDetector,
 
   // Number of detection attempts in a row with NO RESPONSE result.
   int no_response_result_count_ = 0;
+
+  // Must be declared before |notification_controller_| as
+  // ~NetworkPortalNotificationController() calls
+  // NetworkPortalDetectorImpl::RemoveObserver() which uses this.
+  SEQUENCE_CHECKER(sequence_checker_);
 
   // UI notification controller about captive portal state.
   std::unique_ptr<NetworkPortalNotificationController> notification_controller_;

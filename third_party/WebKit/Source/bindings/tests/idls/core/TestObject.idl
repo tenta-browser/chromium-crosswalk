@@ -104,10 +104,6 @@ interface TestObject {
     readonly attribute Window readonlyWindowAttribute;
     readonly attribute HTMLCollection htmlCollectionAttribute;
     readonly attribute HTMLElement htmlElementAttribute;
-    // Arrays
-    attribute DOMString[] stringArrayAttribute;
-    attribute TestInterfaceEmpty[] testInterfaceEmptyArrayAttribute;
-    attribute float[] floatArrayAttribute;
     // FrozenArrays
     attribute FrozenArray<DOMString> stringFrozenArrayAttribute;
     attribute FrozenArray<TestInterfaceEmpty> testInterfaceEmptyFrozenArrayAttribute;
@@ -138,7 +134,7 @@ interface TestObject {
     [LogActivity=GetterOnly, LogAllWorlds] attribute long activityLoggingGetterForAllWorldsLongAttribute;
     [LogActivity=SetterOnly, LogAllWorlds] attribute long activityLoggingSetterForAllWorldsLongAttribute;
     [CachedAttribute=isValueDirty] attribute any cachedAttributeAnyAttribute;
-    [CachedAttribute=isArrayDirty] attribute DOMString[] cachedArrayAttribute;
+    [CachedAttribute=isFrozenArrayDirty] attribute FrozenArray<DOMString> cachedArrayAttribute;
     [CachedAttribute=isStringDirty] attribute DOMString? cachedStringOrNoneAttribute;
     [CallWith=ExecutionContext] attribute any callWithExecutionContextAnyAttribute;
     [CallWith=ScriptState] attribute any callWithScriptStateAnyAttribute;
@@ -201,14 +197,16 @@ interface TestObject {
     [Reflect, ReflectOnly=("ltr","rtl","auto"), ReflectMissing="auto", ReflectInvalid="ltr"] attribute DOMString limitedWithInvalidMissingDefaultAttribute;
     [Reflect, ReflectOnly=("anonymous","use-credentials"), ReflectEmpty="anonymous", ReflectInvalid="anonymous"] readonly attribute DOMString corsSettingAttribute;
     [Reflect, ReflectOnly=("empty","missing","invalid","a-normal"), ReflectEmpty="empty", ReflectMissing="missing", ReflectInvalid="invalid"] readonly attribute DOMString limitedWithEmptyMissingInvalidAttribute;
+    [RuntimeCallStatsCounter=RuntimeCallStatsCounterAttribute] attribute long RuntimeCallStatsCounterAttribute;
+    [RuntimeCallStatsCounter=RuntimeCallStatsCounterReadOnlyAttribute] readonly attribute double RuntimeCallStatsCounterReadOnlyAttribute;
 
     [Replaceable] readonly attribute long replaceableReadonlyLongAttribute;
     [PutForwards=href] readonly attribute TestNode locationPutForwards;
     [RuntimeEnabled=FeatureName] attribute long runtimeEnabledLongAttribute;
     [SetterCallWith=(CurrentWindow,EnteredWindow)] attribute DOMString setterCallWithCurrentWindowAndEnteredWindowStringAttribute;
     [SetterCallWith=ExecutionContext] attribute DOMString setterCallWithExecutionContextStringAttribute;
-    [TreatNullAs=EmptyString] attribute DOMString treatNullAsEmptyStringStringAttribute;
-    [TreatNullAs=NullString] attribute DOMString treatNullAsNullStringStringAttribute;
+    attribute [TreatNullAs=EmptyString] DOMString treatNullAsEmptyStringStringAttribute;
+    attribute [TreatNullAs=NullString] DOMString treatNullAsNullStringStringAttribute;
     [LegacyInterfaceTypeChecking] attribute float legacyInterfaceTypeCheckingFloatAttribute; // nop for non-interface types
     [LegacyInterfaceTypeChecking] attribute TestInterface legacyInterfaceTypeCheckingTestInterfaceAttribute;
     [LegacyInterfaceTypeChecking] attribute TestInterface? legacyInterfaceTypeCheckingTestInterfaceOrNullAttribute;
@@ -218,6 +216,7 @@ interface TestObject {
     [Measure] attribute long measuredLongAttribute;
     [SameObject] readonly attribute TestInterface sameObjectAttribute;
     [SameObject, SaveSameObject] readonly attribute TestInterface saveSameObjectAttribute;
+    [SameObject, SaveSameObject] static readonly attribute TestInterface staticSaveSameObjectAttribute;
     [Unscopable] attribute long unscopableLongAttribute;
     [Unscopable, OriginTrialEnabled=FeatureName] attribute long unscopableOriginTrialEnabledLongAttribute;
     [Unscopable, RuntimeEnabled=FeatureName] attribute long unscopableRuntimeEnabledLongAttribute;
@@ -229,7 +228,7 @@ interface TestObject {
     // Naming convention:
     // ReturnType returnTypeMethodTypeName1ArgTypeName2Arg(Type1 typeName1Arg, Type2 typeName2Arg);
     // E.g.,
-    // void voidMethodStringArgLongArrayArg(DOMString stringArg, long[] longArrayArg);
+    // void voidMethodStringArgLongSequenceArg(DOMString stringArg, sequence<long> longSequenceArg);
     void voidMethod();
     static void staticVoidMethod();
 
@@ -297,14 +296,8 @@ interface TestObject {
     void voidMethodFloat32ArrayArg(Float32Array float32ArrayArg);
     void voidMethodInt32ArrayArg(Int32Array int32ArrayArg);
     void voidMethodUint8ArrayArg(Uint8Array uint8ArrayArg);
-    // Arrays
-    long[] longArrayMethod();
-    DOMString[] stringArrayMethod();
-    TestInterfaceEmpty[] testInterfaceEmptyArrayMethod();
-    void voidMethodArrayLongArg(long[] arrayLongArg);
-    void voidMethodArrayStringArg(DOMString[] arrayStringArg);
-    void voidMethodArrayTestInterfaceEmptyArg(TestInterfaceEmpty[] arrayTestInterfaceEmptyArg);
-    void voidMethodNullableArrayLongArg(long[]? arrayLongArg);
+    void voidMethodAllowSharedArrayBufferViewArg([AllowShared] ArrayBufferView arrayBufferViewArg);
+    void voidMethodAllowSharedUint8ArrayArg([AllowShared] Uint8Array uint8ArrayArg);
     // Sequences
     sequence<long> longSequenceMethod();
     sequence<DOMString> stringSequenceMethod();
@@ -416,7 +409,7 @@ interface TestObject {
     void overloadedMethodC(long longArg);
     void overloadedMethodC(TestInterfaceEmpty testInterfaceEmptyArg);
     void overloadedMethodD(long longArg);
-    void overloadedMethodD(long[] longArrayArg);
+    void overloadedMethodD(sequence<long> longArraySequence);
     void overloadedMethodE(long longArg);
     void overloadedMethodE(TestInterfaceEmpty? testInterfaceEmptyOrNullArg);
     void overloadedMethodF(optional DOMString stringArg);
@@ -497,6 +490,13 @@ interface TestObject {
     [MeasureAs=TestFeatureB] void measureAsOverloadedMethod(long arg);
     [MeasureAs=TestFeature] void measureAsSameValueOverloadedMethod();
     [MeasureAs=TestFeature] void measureAsSameValueOverloadedMethod(long arg);
+
+    // with [CEReactions] for not overloaded method
+    [CEReactions] void ceReactionsNotOverloadedMethod(boolean arg);
+    // with and without [CEReactions] for overloaded method
+    void ceReactionsOverloadedMethod();
+    [CEReactions] void ceReactionsOverloadedMethod(long arg);
+
     [DeprecateAs=TestFeatureA, MeasureAs=TestFeature] void deprecateAsMeasureAsSameValueOverloadedMethod();
     [DeprecateAs=TestFeatureB, MeasureAs=TestFeature] void deprecateAsMeasureAsSameValueOverloadedMethod(long arg);
     [DeprecateAs=TestFeature, MeasureAs=TestFeatureA] void deprecateAsSameValueMeasureAsOverloadedMethod();
@@ -516,7 +516,7 @@ interface TestObject {
     // [OriginTrialEnabled=FeatureName3] void partiallyOriginTrialEnabledOverloadedVoidMethod(long longArg, DOMString stringArg, TestInterface testInterfaceArg);
     [PerWorldBindings] void perWorldBindingsVoidMethod();
     [PerWorldBindings] void perWorldBindingsVoidMethodTestInterfaceEmptyArg(TestInterfaceEmpty testInterfaceEmptyArg);
-    [PostMessage, RaisesException] void postMessage(SerializedScriptValue message, optional sequence<Transferable> transfer);
+    [PostMessage, RaisesException] void postMessage(SerializedScriptValue message, optional sequence<object> transfer);
     [LogActivity, LogAllWorlds, PerWorldBindings] void activityLoggingForAllWorldsPerWorldBindingsVoidMethod();
     [LogActivity, PerWorldBindings] void activityLoggingForIsolatedWorldsPerWorldBindingsVoidMethod();
     [RaisesException] void raisesExceptionVoidMethod();
@@ -543,10 +543,11 @@ interface TestObject {
     void useToImpl4ArgumentsCheckingIfPossibleWithUndefinedArg(Node node1, [Default=Undefined] optional Node node2);
     [Unforgeable] void unforgeableVoidMethod();
     void voidMethodTestInterfaceGarbageCollectedSequenceArg(sequence<TestInterfaceGarbageCollected> testInterfaceGarbageCollectedSequenceArg);
-    void voidMethodTestInterfaceGarbageCollectedArrayArg(TestInterfaceGarbageCollected[] testInterfaceGarbageCollectedArrayArg);
     [NewObject] TestInterface newObjectTestInterfaceMethod();
+    [NewObject] Promise<TestInterface> newObjectTestInterfacePromiseMethod();
+    [RuntimeCallStatsCounter=RuntimeCallStatsCounterMethod] void RuntimeCallStatsCounterMethod();
 
-    serializer DOMString serializerMethod();
+    serializer = { attribute };
 
     // Extended attributes on referenced interfaces
     // (not self; self-reference tests at interface themselves)
@@ -554,6 +555,6 @@ interface TestObject {
     attribute TestInterfaceGarbageCollected testInterfaceGarbageCollectedAttribute; // [GarbageCollected]
     attribute TestInterfaceGarbageCollected? testInterfaceGarbageCollectedOrNullAttribute; // [GarbageCollected]
 
-    maplike<long, DOMStringOrDouble>;
+    maplike<[EnforceRange] long, DOMStringOrDouble>;
     [RuntimeEnabled=FeatureName, CallWith=ScriptState, RaisesException, ImplementedAs=myMaplikeClear] boolean clear();
 };

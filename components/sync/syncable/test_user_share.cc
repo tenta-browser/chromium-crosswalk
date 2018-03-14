@@ -4,9 +4,11 @@
 
 #include "components/sync/syncable/test_user_share.h"
 
+#include <utility>
+
 #include "base/compiler_specific.h"
-#include "base/memory/ptr_util.h"
 #include "components/sync/syncable/directory.h"
+#include "components/sync/syncable/directory_backing_store.h"
 #include "components/sync/syncable/mutable_entry.h"
 #include "components/sync/syncable/syncable_read_transaction.h"
 #include "components/sync/syncable/syncable_write_transaction.h"
@@ -25,7 +27,7 @@ TestUserShare::~TestUserShare() {
 }
 
 void TestUserShare::SetUp() {
-  user_share_ = base::MakeUnique<UserShare>();
+  user_share_ = std::make_unique<UserShare>();
   dir_maker_->SetUp();
 
   // The pointer is owned by dir_maker_, we should not be storing it in a
@@ -45,13 +47,13 @@ bool TestUserShare::Reload() {
   if (!user_share_->directory->SaveChanges())
     return false;
 
-  syncable::DirectoryBackingStore* saved_store =
-      user_share_->directory->store_.release();
+  std::unique_ptr<syncable::DirectoryBackingStore> saved_store =
+      std::move(user_share_->directory->store_);
 
   // Ensure the unique_ptr doesn't delete the memory we don't own.
   ignore_result(user_share_->directory.release());
-  user_share_ = base::MakeUnique<UserShare>();
-  dir_maker_->SetUpWith(saved_store);
+  user_share_ = std::make_unique<UserShare>();
+  dir_maker_->SetUpWith(std::move(saved_store));
   user_share_->directory.reset(dir_maker_->directory());
   return true;
 }

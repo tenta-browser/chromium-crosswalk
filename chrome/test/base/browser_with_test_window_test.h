@@ -51,6 +51,8 @@ namespace content {
 class NavigationController;
 }
 
+class TestingProfileManager;
+
 // Base class for browser based unit tests. BrowserWithTestWindowTest creates a
 // Browser with a TestingProfile and TestBrowserWindow. To add a tab use
 // AddTab. For example, the following adds a tab and navigates to
@@ -103,9 +105,15 @@ class BrowserWithTestWindowTest : public testing::Test {
 
   TestingProfile* GetProfile() { return profile_; }
 
+  TestingProfileManager* profile_manager() { return profile_manager_.get(); }
+
   BrowserWindow* release_browser_window() WARN_UNUSED_RESULT {
     return window_.release();
   }
+
+#if defined(OS_CHROMEOS)
+  ash::AshTestHelper* ash_test_helper() { return ash_test_helper_.get(); }
+#endif
 
   // The context to help determine desktop type when creating new Widgets.
   gfx::NativeWindow GetContext();
@@ -136,8 +144,10 @@ class BrowserWithTestWindowTest : public testing::Test {
   // Creates the profile used by this test. The caller owns the return value.
   virtual TestingProfile* CreateProfile();
 
-  // Destroys the profile which was created through |CreateProfile|.
-  virtual void DestroyProfile(TestingProfile* profile);
+  // Returns a vector of testing factories to be used when creating the profile.
+  // This is only used by CreateProfile(), and will be irrelevant if that
+  // method is overridden.
+  virtual TestingProfile::TestingFactories GetTestingFactories();
 
   // Creates the BrowserWindow used by this test. The caller owns the return
   // value. Can return NULL to use the default window created by Browser.
@@ -171,10 +181,9 @@ class BrowserWithTestWindowTest : public testing::Test {
   chromeos::ScopedTestUserManager test_user_manager_;
 #endif
 
-  // The profile will automatically be destroyed by TearDown using the
-  // |DestroyProfile()| function - which can be overwritten by derived testing
-  // frameworks.
   TestingProfile* profile_;
+
+  std::unique_ptr<TestingProfileManager> profile_manager_;
   std::unique_ptr<BrowserWindow> window_;  // Usually a TestBrowserWindow.
   std::unique_ptr<Browser> browser_;
 
@@ -183,8 +192,8 @@ class BrowserWithTestWindowTest : public testing::Test {
   content::RenderViewHostTestEnabler rvh_test_enabler_;
 
 #if defined(OS_CHROMEOS)
-  std::unique_ptr<ash::test::AshTestEnvironment> ash_test_environment_;
-  std::unique_ptr<ash::test::AshTestHelper> ash_test_helper_;
+  std::unique_ptr<ash::AshTestEnvironment> ash_test_environment_;
+  std::unique_ptr<ash::AshTestHelper> ash_test_helper_;
 #elif defined(TOOLKIT_VIEWS)
   std::unique_ptr<views::ScopedViewsTestHelper> views_test_helper_;
 #endif

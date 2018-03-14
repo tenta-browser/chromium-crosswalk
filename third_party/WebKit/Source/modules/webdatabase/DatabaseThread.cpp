@@ -43,7 +43,7 @@
 namespace blink {
 
 DatabaseThread::DatabaseThread()
-    : transaction_client_(WTF::MakeUnique<SQLTransactionClient>()),
+    : transaction_client_(std::make_unique<SQLTransactionClient>()),
       cleanup_sync_(nullptr),
       termination_requested_(false) {
   DCHECK(IsMainThread());
@@ -54,7 +54,7 @@ DatabaseThread::~DatabaseThread() {
   DCHECK(!thread_);
 }
 
-DEFINE_TRACE(DatabaseThread) {}
+void DatabaseThread::Trace(blink::Visitor* visitor) {}
 
 void DatabaseThread::Start() {
   DCHECK(IsMainThread());
@@ -67,7 +67,8 @@ void DatabaseThread::Start() {
 }
 
 void DatabaseThread::SetupDatabaseThread() {
-  thread_->Initialize();
+  DCHECK(thread_->IsCurrentThread());
+  thread_->InitializeOnThread();
   transaction_coordinator_ = new SQLTransactionCoordinator();
 }
 
@@ -106,7 +107,7 @@ void DatabaseThread::CleanupDatabaseThread() {
     // As the call to close will modify the original set, we must take a copy to
     // iterate over.
     HashSet<CrossThreadPersistent<Database>> open_set_copy;
-    open_set_copy.Swap(open_database_set_);
+    open_set_copy.swap(open_database_set_);
     HashSet<CrossThreadPersistent<Database>>::iterator end =
         open_set_copy.end();
     for (HashSet<CrossThreadPersistent<Database>>::iterator it =
@@ -114,7 +115,7 @@ void DatabaseThread::CleanupDatabaseThread() {
          it != end; ++it)
       (*it)->Close();
   }
-  open_database_set_.Clear();
+  open_database_set_.clear();
 
   thread_->PostTask(BLINK_FROM_HERE,
                     WTF::Bind(&DatabaseThread::CleanupDatabaseThreadCompleted,
@@ -122,7 +123,8 @@ void DatabaseThread::CleanupDatabaseThread() {
 }
 
 void DatabaseThread::CleanupDatabaseThreadCompleted() {
-  thread_->Shutdown();
+  DCHECK(thread_->IsCurrentThread());
+  thread_->ShutdownOnThread();
   if (cleanup_sync_)  // Someone wanted to know when we were done cleaning up.
     cleanup_sync_->Signal();
 }

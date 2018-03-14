@@ -24,6 +24,7 @@
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/events/event_utils.h"
+#include "ui/gfx/x/x11.h"
 #include "ui/gfx/x/x11_atom_cache.h"
 #include "ui/gfx/x/x11_types.h"
 #include "ui/views/widget/desktop_aura/desktop_drag_drop_client_aurax11.h"
@@ -32,23 +33,9 @@
 #include "ui/views/widget/desktop_aura/x11_move_loop.h"
 #include "ui/views/widget/widget.h"
 
-#include <X11/Xlib.h>
-
 namespace views {
 
 namespace {
-
-const char* kAtomsToCache[] = {
-  "XdndActionCopy",
-  "XdndDrop",
-  "XdndEnter",
-  "XdndFinished",
-  "XdndLeave",
-  "XdndPosition",
-  "XdndStatus",
-  "XdndTypeList",
-  NULL
-};
 
 class TestDragDropClient;
 
@@ -195,8 +182,6 @@ class TestDragDropClient : public SimpleTestDragDropClient {
   // for that window.
   std::map< ::Window, ClientMessageEventCollector*> collectors_;
 
-  ui::X11AtomCache atom_cache_;
-
   DISALLOW_COPY_AND_ASSIGN(TestDragDropClient);
 };
 
@@ -272,9 +257,8 @@ SimpleTestDragDropClient::SimpleTestDragDropClient(
                                    cursor_manager,
                                    gfx::GetXDisplay(),
                                    window->GetHost()->GetAcceleratedWidget()),
-      target_xid_(None),
-      loop_(NULL) {
-}
+      target_xid_(x11::None),
+      loop_(NULL) {}
 
 SimpleTestDragDropClient::~SimpleTestDragDropClient() {
 }
@@ -310,20 +294,18 @@ TestDragDropClient::TestDragDropClient(
     aura::Window* window,
     DesktopNativeCursorManager* cursor_manager)
     : SimpleTestDragDropClient(window, cursor_manager),
-      source_xid_(window->GetHost()->GetAcceleratedWidget()),
-      atom_cache_(gfx::GetXDisplay(), kAtomsToCache) {
-}
+      source_xid_(window->GetHost()->GetAcceleratedWidget()) {}
 
 TestDragDropClient::~TestDragDropClient() {
 }
 
 Atom TestDragDropClient::GetAtom(const char* name) {
-  return atom_cache_.GetAtom(name);
+  return gfx::GetAtom(name);
 }
 
 bool TestDragDropClient::MessageHasType(const XClientMessageEvent& event,
                                         const char* type) {
-  return event.message_type == atom_cache_.GetAtom(type);
+  return event.message_type == GetAtom(type);
 }
 
 void TestDragDropClient::SetEventCollectorFor(
@@ -339,7 +321,7 @@ void TestDragDropClient::OnStatus(XID target_window,
                                   bool will_accept_drop,
                                   ::Atom accepted_action) {
   XClientMessageEvent event;
-  event.message_type = atom_cache_.GetAtom("XdndStatus");
+  event.message_type = GetAtom("XdndStatus");
   event.format = 32;
   event.window = source_xid_;
   event.data.l[0] = target_window;
@@ -354,7 +336,7 @@ void TestDragDropClient::OnFinished(XID target_window,
                                     bool accepted_drop,
                                     ::Atom performed_action) {
   XClientMessageEvent event;
-  event.message_type = atom_cache_.GetAtom("XdndFinished");
+  event.message_type = GetAtom("XdndFinished");
   event.format = 32;
   event.window = source_xid_;
   event.data.l[0] = target_window;
@@ -746,7 +728,7 @@ void RejectAfterMouseReleaseStep2(TestDragDropClient* client) {
 
   client->OnMouseReleased();
   // Reject the drop.
-  client->OnStatus(toplevel, false, None);
+  client->OnStatus(toplevel, false, x11::None);
 
   events = collector.PopAllEvents();
   ASSERT_EQ(1u, events.size());
@@ -775,7 +757,7 @@ void RejectAfterMouseReleaseStep3(TestDragDropClient* client) {
   EXPECT_TRUE(client->MessageHasType(events[0], "XdndDrop"));
 
   EXPECT_TRUE(client->IsMoveLoopRunning());
-  client->OnFinished(toplevel, false, None);
+  client->OnFinished(toplevel, false, x11::None);
   EXPECT_FALSE(client->IsMoveLoopRunning());
 }
 

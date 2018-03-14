@@ -64,7 +64,7 @@ base::DictionaryValue* ParseDistributionPreferences(
     LOG(WARNING) << "Failed to parse master prefs file: " << error;
     return NULL;
   }
-  if (!root->IsType(base::Value::Type::DICTIONARY)) {
+  if (!root->is_dict()) {
     LOG(WARNING) << "Failed to parse master prefs file: "
                  << "Root item must be a dictionary.";
     return NULL;
@@ -293,10 +293,6 @@ bool MasterPreferences::GetExtensionsBlock(
 
 std::string MasterPreferences::GetCompressedVariationsSeed() const {
   return ExtractPrefString(variations::prefs::kVariationsCompressedSeed);
-}
-
-std::string MasterPreferences::GetVariationsSeed() const {
-  return ExtractPrefString(variations::prefs::kVariationsSeed);
 }
 
 std::string MasterPreferences::GetVariationsSeedSignature() const {

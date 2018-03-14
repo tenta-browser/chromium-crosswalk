@@ -10,6 +10,7 @@
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "ui/gfx/switches.h"
+#include "ui/gfx/x/x11.h"
 #include "ui/gfx/x/x11_types.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_egl_api_implementation.h"
@@ -81,23 +82,13 @@ bool InitializeStaticGLXInternal() {
   return true;
 }
 
-bool InitializeStaticEGLInternal() {
+bool InitializeStaticEGLInternal(GLImplementation implementation) {
   base::FilePath glesv2_path(kGLESv2LibraryName);
   base::FilePath egl_path(kEGLLibraryName);
 
-  const base::CommandLine* command_line =
-      base::CommandLine::ForCurrentProcess();
-  const std::string use_gl =
-      command_line->GetSwitchValueASCII(switches::kUseGL);
-  if (use_gl == kGLImplementationANGLEName) {
-    base::FilePath module_path;
-    if (!PathService::Get(base::DIR_MODULE, &module_path))
-      return false;
+  const base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
 
-    glesv2_path = module_path.Append(kGLESv2ANGLELibraryName);
-    egl_path = module_path.Append(kEGLANGLELibraryName);
-  } else if ((use_gl == kGLImplementationSwiftShaderName) ||
-             (use_gl == kGLImplementationSwiftShaderForWebGLName)) {
+  if (implementation == kGLImplementationSwiftShaderGL) {
 #if BUILDFLAG(ENABLE_SWIFTSHADER)
     base::FilePath module_path;
     if (!PathService::Get(base::DIR_MODULE, &module_path))
@@ -109,6 +100,14 @@ bool InitializeStaticEGLInternal() {
 #else
     return false;
 #endif
+  } else if (cmd->GetSwitchValueASCII(switches::kUseGL) ==
+             kGLImplementationANGLEName) {
+    base::FilePath module_path;
+    if (!PathService::Get(base::DIR_MODULE, &module_path))
+      return false;
+
+    glesv2_path = module_path.Append(kGLESv2ANGLELibraryName);
+    egl_path = module_path.Append(kEGLANGLELibraryName);
   }
 
   base::NativeLibrary gles_library = LoadLibraryAndPrintError(glesv2_path);
@@ -147,7 +146,9 @@ bool InitializeStaticEGLInternal() {
 bool InitializeGLOneOffPlatform() {
   const base::CommandLine* command_line =
       base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kHeadless))
+  if (command_line->HasSwitch(switches::kHeadless) &&
+      command_line->GetSwitchValueASCII(switches::kUseGL) ==
+          kGLImplementationOSMesaName)
     return true;
 
   switch (GetGLImplementation()) {
@@ -194,7 +195,7 @@ bool InitializeStaticGLBindings(GLImplementation implementation) {
       return InitializeStaticGLXInternal();
     case kGLImplementationSwiftShaderGL:
     case kGLImplementationEGLGLES2:
-      return InitializeStaticEGLInternal();
+      return InitializeStaticEGLInternal(implementation);
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
       SetGLImplementation(implementation);
@@ -216,6 +217,7 @@ void InitializeDebugGLBindings() {
 
 void ShutdownGLPlatform() {
   GLSurfaceEGL::ShutdownOneOff();
+  GLSurfaceGLX::ShutdownOneOff();
   ClearBindingsEGL();
   ClearBindingsGL();
   ClearBindingsGLX();

@@ -19,7 +19,7 @@ class StyleNonInheritedVariables {
     return WTF::WrapUnique(new StyleNonInheritedVariables);
   }
 
-  std::unique_ptr<StyleNonInheritedVariables> Copy() {
+  std::unique_ptr<StyleNonInheritedVariables> Clone() {
     return WTF::WrapUnique(new StyleNonInheritedVariables(*this));
   }
 
@@ -29,7 +29,7 @@ class StyleNonInheritedVariables {
   }
 
   void SetVariable(const AtomicString& name,
-                   PassRefPtr<CSSVariableData> value) {
+                   scoped_refptr<CSSVariableData> value) {
     data_.Set(name, std::move(value));
   }
   CSSVariableData* GetVariable(const AtomicString& name) const;
@@ -46,7 +46,7 @@ class StyleNonInheritedVariables {
 
   friend class CSSVariableResolver;
 
-  HashMap<AtomicString, RefPtr<CSSVariableData>> data_;
+  HashMap<AtomicString, scoped_refptr<CSSVariableData>> data_;
   HashMap<AtomicString, Persistent<CSSValue>> registered_data_;
 };
 

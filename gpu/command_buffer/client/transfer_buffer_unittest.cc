@@ -68,7 +68,8 @@ void TransferBufferTest::SetUp() {
   command_buffer_.reset(new StrictMock<MockClientCommandBufferMockFlush>());
 
   helper_.reset(new CommandBufferHelper(command_buffer()));
-  ASSERT_TRUE(helper_->Initialize(kCommandBufferSizeBytes));
+  ASSERT_EQ(helper_->Initialize(kCommandBufferSizeBytes),
+            gpu::ContextResult::kSuccess);
 
   transfer_buffer_id_ = command_buffer()->GetNextFreeTransferBufferId();
 
@@ -106,12 +107,16 @@ TEST_F(TransferBufferTest, Basic) {
   EXPECT_EQ(
       kTransferBufferSize - kStartingOffset,
       transfer_buffer_->GetCurrentMaxAllocationWithoutRealloc());
+  EXPECT_NE(base::UnguessableToken(),
+            transfer_buffer_->shared_memory_handle().GetGUID());
 }
 
 TEST_F(TransferBufferTest, Free) {
   Initialize(0);
   EXPECT_TRUE(transfer_buffer_->HaveBuffer());
   EXPECT_EQ(transfer_buffer_id_, transfer_buffer_->GetShmId());
+  EXPECT_NE(base::UnguessableToken(),
+            transfer_buffer_->shared_memory_handle().GetGUID());
 
   // Free buffer.
   EXPECT_CALL(*command_buffer(), DestroyTransferBuffer(_))
@@ -120,9 +125,13 @@ TEST_F(TransferBufferTest, Free) {
   transfer_buffer_->Free();
   // See it's freed.
   EXPECT_FALSE(transfer_buffer_->HaveBuffer());
+  EXPECT_EQ(base::UnguessableToken(),
+            transfer_buffer_->shared_memory_handle().GetGUID());
   // See that it gets reallocated.
   EXPECT_EQ(transfer_buffer_id_, transfer_buffer_->GetShmId());
   EXPECT_TRUE(transfer_buffer_->HaveBuffer());
+  EXPECT_NE(base::UnguessableToken(),
+            transfer_buffer_->shared_memory_handle().GetGUID());
 
   // Free buffer.
   EXPECT_CALL(*command_buffer(), DestroyTransferBuffer(_))
@@ -131,9 +140,14 @@ TEST_F(TransferBufferTest, Free) {
   transfer_buffer_->Free();
   // See it's freed.
   EXPECT_FALSE(transfer_buffer_->HaveBuffer());
+  EXPECT_EQ(base::UnguessableToken(),
+            transfer_buffer_->shared_memory_handle().GetGUID());
+
   // See that it gets reallocated.
   EXPECT_TRUE(transfer_buffer_->GetResultBuffer() != NULL);
   EXPECT_TRUE(transfer_buffer_->HaveBuffer());
+  EXPECT_NE(base::UnguessableToken(),
+            transfer_buffer_->shared_memory_handle().GetGUID());
 
   // Free buffer.
   EXPECT_CALL(*command_buffer(), DestroyTransferBuffer(_))
@@ -142,23 +156,40 @@ TEST_F(TransferBufferTest, Free) {
   transfer_buffer_->Free();
   // See it's freed.
   EXPECT_FALSE(transfer_buffer_->HaveBuffer());
+  EXPECT_EQ(base::UnguessableToken(),
+            transfer_buffer_->shared_memory_handle().GetGUID());
+
   // See that it gets reallocated.
   unsigned int size = 0;
   void* data = transfer_buffer_->AllocUpTo(1, &size);
   EXPECT_TRUE(data != NULL);
   EXPECT_TRUE(transfer_buffer_->HaveBuffer());
-  transfer_buffer_->FreePendingToken(data, 1);
+  EXPECT_NE(base::UnguessableToken(),
+            transfer_buffer_->shared_memory_handle().GetGUID());
+  int32_t token = helper_->InsertToken();
+  int32_t put_offset = helper_->GetPutOffsetForTest();
+  transfer_buffer_->FreePendingToken(data, token);
 
-  // Free buffer.
+  // Free buffer. Should cause a Flush.
+  EXPECT_CALL(*command_buffer(), Flush(_)).Times(AtMost(1));
   EXPECT_CALL(*command_buffer(), DestroyTransferBuffer(_))
       .Times(1)
       .RetiresOnSaturation();
   transfer_buffer_->Free();
   // See it's freed.
   EXPECT_FALSE(transfer_buffer_->HaveBuffer());
+  EXPECT_EQ(base::UnguessableToken(),
+            transfer_buffer_->shared_memory_handle().GetGUID());
+  // Free should have flushed.
+  EXPECT_EQ(put_offset, command_buffer_->GetServicePutOffset());
+  // However it shouldn't have caused a finish.
+  EXPECT_LT(command_buffer_->GetState().get_offset, put_offset);
+
   // See that it gets reallocated.
   transfer_buffer_->GetResultOffset();
   EXPECT_TRUE(transfer_buffer_->HaveBuffer());
+  EXPECT_NE(base::UnguessableToken(),
+            transfer_buffer_->shared_memory_handle().GetGUID());
 
   EXPECT_EQ(
       kTransferBufferSize - kStartingOffset,
@@ -190,11 +221,11 @@ TEST_F(TransferBufferTest, MemoryAlignmentAfterZeroAllocation) {
   Initialize(32u);
   void* ptr = transfer_buffer_->Alloc(0);
   EXPECT_EQ((reinterpret_cast<uintptr_t>(ptr) & (kAlignment - 1)), 0u);
-  transfer_buffer_->FreePendingToken(ptr, static_cast<unsigned int>(-1));
+  transfer_buffer_->FreePendingToken(ptr, helper_->InsertToken());
   // Check that the pointer is aligned on the following allocation.
   ptr = transfer_buffer_->Alloc(4);
   EXPECT_EQ((reinterpret_cast<uintptr_t>(ptr) & (kAlignment - 1)), 0u);
-  transfer_buffer_->FreePendingToken(ptr, 1);
+  transfer_buffer_->FreePendingToken(ptr, helper_->InsertToken());
 }
 
 TEST_F(TransferBufferTest, Flush) {
@@ -235,7 +266,7 @@ class MockClientCommandBufferCanFail : public MockClientCommandBufferMockFlush {
 
   scoped_refptr<gpu::Buffer> RealCreateTransferBuffer(size_t size,
                                                       int32_t* id) {
-    return MockCommandBufferBase::CreateTransferBuffer(size, id);
+    return MockClientCommandBufferMockFlush::CreateTransferBuffer(size, id);
   }
 };
 
@@ -278,7 +309,8 @@ void TransferBufferExpandContractTest::SetUp() {
       .RetiresOnSaturation();
 
   helper_.reset(new CommandBufferHelper(command_buffer()));
-  ASSERT_TRUE(helper_->Initialize(kCommandBufferSizeBytes));
+  ASSERT_EQ(helper_->Initialize(kCommandBufferSizeBytes),
+            gpu::ContextResult::kSuccess);
 
   transfer_buffer_id_ = command_buffer()->GetNextFreeTransferBufferId();
 
@@ -485,6 +517,34 @@ TEST_F(TransferBufferExpandContractTest, ReallocsToDefault) {
       transfer_buffer_->GetCurrentMaxAllocationWithoutRealloc());
 }
 
+TEST_F(TransferBufferExpandContractTest, Shrink) {
+  unsigned int alloc_size = transfer_buffer_->GetFreeSize();
+  EXPECT_EQ(kStartTransferBufferSize - kStartingOffset, alloc_size);
+  unsigned int size_allocated = 0;
+  void* ptr = transfer_buffer_->AllocUpTo(alloc_size, &size_allocated);
+
+  ASSERT_NE(ptr, nullptr);
+  EXPECT_EQ(alloc_size, size_allocated);
+  EXPECT_GT(alloc_size, 0u);
+  EXPECT_EQ(0u, transfer_buffer_->GetFreeSize());
+
+  // Shrink once.
+  const unsigned int shrink_size1 = 80;
+  EXPECT_LT(shrink_size1, alloc_size);
+  transfer_buffer_->ShrinkLastBlock(shrink_size1);
+  EXPECT_EQ(alloc_size - shrink_size1, transfer_buffer_->GetFreeSize());
+
+  // Shrink again.
+  const unsigned int shrink_size2 = 30;
+  EXPECT_LT(shrink_size2, shrink_size1);
+  transfer_buffer_->ShrinkLastBlock(shrink_size2);
+  EXPECT_EQ(alloc_size - shrink_size2, transfer_buffer_->GetFreeSize());
+
+  // Shrink to zero (minimum size is 1).
+  transfer_buffer_->ShrinkLastBlock(0);
+  EXPECT_EQ(alloc_size - 1, transfer_buffer_->GetFreeSize());
+
+  transfer_buffer_->FreePendingToken(ptr, 1);
+}
+
 }  // namespace gpu
-
-

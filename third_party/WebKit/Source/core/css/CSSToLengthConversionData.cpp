@@ -30,7 +30,7 @@
 
 #include "core/css/CSSToLengthConversionData.h"
 
-#include "core/css/CSSHelper.h"
+#include "core/css/CSSResolutionUnits.h"
 #include "core/layout/api/LayoutViewItem.h"
 #include "core/style/ComputedStyle.h"
 
@@ -100,24 +100,29 @@ double CSSToLengthConversionData::ViewportWidthPercent() const {
   // FIXME: Remove style_ from this class. Plumb viewport and rem unit
   // information through as output parameters on functions involved in length
   // resolution.
-  const_cast<ComputedStyle*>(style_)->SetHasViewportUnits(true);
+  if (style_)
+    const_cast<ComputedStyle*>(style_)->SetHasViewportUnits(true);
   return viewport_size_.Width() / 100;
 }
 double CSSToLengthConversionData::ViewportHeightPercent() const {
-  const_cast<ComputedStyle*>(style_)->SetHasViewportUnits(true);
+  if (style_)
+    const_cast<ComputedStyle*>(style_)->SetHasViewportUnits(true);
   return viewport_size_.Height() / 100;
 }
 double CSSToLengthConversionData::ViewportMinPercent() const {
-  const_cast<ComputedStyle*>(style_)->SetHasViewportUnits(true);
+  if (style_)
+    const_cast<ComputedStyle*>(style_)->SetHasViewportUnits(true);
   return std::min(viewport_size_.Width(), viewport_size_.Height()) / 100;
 }
 double CSSToLengthConversionData::ViewportMaxPercent() const {
-  const_cast<ComputedStyle*>(style_)->SetHasViewportUnits(true);
+  if (style_)
+    const_cast<ComputedStyle*>(style_)->SetHasViewportUnits(true);
   return std::max(viewport_size_.Width(), viewport_size_.Height()) / 100;
 }
 
 float CSSToLengthConversionData::RemFontSize() const {
-  const_cast<ComputedStyle*>(style_)->SetHasRemUnits();
+  if (style_)
+    const_cast<ComputedStyle*>(style_)->SetHasRemUnits();
   return font_sizes_.Rem();
 }
 
@@ -138,6 +143,9 @@ double CSSToLengthConversionData::ZoomedComputedPixels(
 
     case CSSPrimitiveValue::UnitType::kMillimeters:
       return value * kCssPixelsPerMillimeter * Zoom();
+
+    case CSSPrimitiveValue::UnitType::kQuarterMillimeters:
+      return value * kCssPixelsPerQuarterMillimeter * Zoom();
 
     case CSSPrimitiveValue::UnitType::kInches:
       return value * kCssPixelsPerInch * Zoom();

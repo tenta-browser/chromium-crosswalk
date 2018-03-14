@@ -55,6 +55,16 @@ public class BarOverlapTapSuppression extends ContextualSearchHeuristic {
     }
 
     @Override
+    protected void logPanelViewedDurations(long panelViewDurationMs, long panelOpenDurationMs) {
+        if (panelOpenDurationMs > 0) {
+            long panelPeekedDuration = panelViewDurationMs - panelOpenDurationMs;
+            assert panelPeekedDuration >= 0;
+            ContextualSearchUma.logBarOverlapPeekDuration(
+                    mIsConditionSatisfied, panelPeekedDuration);
+        }
+    }
+
+    @Override
     protected boolean shouldAggregateLogForTapSuppression() {
         return true;
     }
@@ -66,7 +76,8 @@ public class BarOverlapTapSuppression extends ContextualSearchHeuristic {
 
     @Override
     protected void logRankerTapSuppression(ContextualSearchRankerLogger logger) {
-        logger.log(ContextualSearchRankerLogger.Feature.WAS_SCREEN_BOTTOM, mIsConditionSatisfied);
+        logger.logFeature(
+                ContextualSearchRankerLogger.Feature.WAS_SCREEN_BOTTOM, mIsConditionSatisfied);
     }
 
     /**

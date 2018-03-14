@@ -47,6 +47,7 @@ class Event;
 class MouseWheelEvent;
 
 using ScopedEvent = std::unique_ptr<Event>;
+using PointerId = int32_t;
 
 class EVENTS_EXPORT Event {
  public:
@@ -113,6 +114,8 @@ class EVENTS_EXPORT Event {
   bool IsAltGrDown() const { return (flags_ & EF_ALTGR_DOWN) != 0; }
   bool IsCapsLockOn() const { return (flags_ & EF_CAPS_LOCK_ON) != 0; }
 
+  bool IsSynthesized() const { return (flags_ & EF_IS_SYNTHESIZED) != 0; }
+
   bool IsCancelModeEvent() const {
     return type_ == ET_CANCEL_MODE;
   }
@@ -151,6 +154,7 @@ class EVENTS_EXPORT Event {
   // |this| is not a PointerEvent.
   bool IsMousePointerEvent() const;
   bool IsTouchPointerEvent() const;
+  bool IsPenPointerEvent() const;
 
   bool IsGestureEvent() const {
     switch (type_) {
@@ -208,6 +212,11 @@ class EVENTS_EXPORT Event {
            ((type_ == ET_SCROLL_FLING_START ||
            type_ == ET_SCROLL_FLING_CANCEL) &&
            !(flags() & EF_FROM_TOUCH));
+  }
+
+  bool IsPinchEvent() const {
+    return type_ == ET_GESTURE_PINCH_BEGIN ||
+           type_ == ET_GESTURE_PINCH_UPDATE || type_ == ET_GESTURE_PINCH_END;
   }
 
   bool IsScrollGestureEvent() const {
@@ -362,10 +371,12 @@ class EVENTS_EXPORT LocatedEvent : public Event {
     return root_location_;
   }
 
-  // Transform the locations using |inverted_root_transform|.
-  // This is applied to both |location_| and |root_location_|.
+  // Transform the locations using |inverted_root_transform| and
+  // |inverted_local_transform|. |inverted_local_transform| is only used if
+  // the event has a target.
   virtual void UpdateForRootTransform(
-      const gfx::Transform& inverted_root_transform);
+      const gfx::Transform& inverted_root_transform,
+      const gfx::Transform& inverted_local_transform);
 
   template <class T> void ConvertLocationToTarget(T* source, T* target) {
     if (!target || target == source)
@@ -373,7 +384,7 @@ class EVENTS_EXPORT LocatedEvent : public Event {
     gfx::Point offset = gfx::ToFlooredPoint(location_);
     T::ConvertPointToTarget(source, target, &offset);
     gfx::Vector2d diff = gfx::ToFlooredPoint(location_) - offset;
-    location_= location_ - diff;
+    location_ = location_ - diff;
   }
 
  protected:
@@ -412,9 +423,9 @@ struct EVENTS_EXPORT PointerDetails {
  public:
   PointerDetails();
   explicit PointerDetails(EventPointerType pointer_type,
-                          int pointer_id = kUnknownPointerId);
+                          PointerId pointer_id = kUnknownPointerId);
   PointerDetails(EventPointerType pointer_type,
-                 int pointer_id,
+                 PointerId pointer_id,
                  float radius_x,
                  float radius_y,
                  float force,
@@ -424,7 +435,7 @@ struct EVENTS_EXPORT PointerDetails {
                  int twist = 0);
   PointerDetails(EventPointerType pointer_type,
                  const gfx::Vector2d& pointer_offset,
-                 int pointer_id = kUnknownPointerId);
+                 PointerId pointer_id = kUnknownPointerId);
   PointerDetails(const PointerDetails& other);
 
   bool operator==(const PointerDetails& other) const {
@@ -439,7 +450,7 @@ struct EVENTS_EXPORT PointerDetails {
 
   // A value for pointer id which means it needs to be initialized for all
   // pointer types.
-  static const int kUnknownPointerId;
+  static const PointerId kUnknownPointerId;
 
   // The type of pointer device.
   EventPointerType pointer_type = EventPointerType::POINTER_TYPE_UNKNOWN;
@@ -471,17 +482,19 @@ struct EVENTS_EXPORT PointerDetails {
   int twist = 0;
 
   // An identifier that uniquely identifies a pointer during its lifetime.
-  int id = 0;
+  PointerId id = 0;
 
   // Only used by mouse wheel events. The amount to scroll. This is in multiples
   // of kWheelDelta.
   // Note: offset_.x() > 0/offset_.y() > 0 means scroll left/up.
   gfx::Vector2d offset;
+
+  // If you add fields please update ui/events/mojo/event.mojom.
 };
 
 class EVENTS_EXPORT MouseEvent : public LocatedEvent {
  public:
-  static const int32_t kMousePointerId;
+  static const PointerId kMousePointerId;
 
   explicit MouseEvent(const base::NativeEvent& native_event);
 
@@ -651,6 +664,9 @@ class EVENTS_EXPORT MouseWheelEvent : public MouseEvent {
   gfx::Vector2d offset_;
 };
 
+// NOTE: Pen (stylus) events use TouchEvent with POINTER_TYPE_PEN. They were
+// originally implemented as MouseEvent but switched to TouchEvent when UX
+// decided not to show hover effects for pen.
 class EVENTS_EXPORT TouchEvent : public LocatedEvent {
  public:
   explicit TouchEvent(const base::NativeEvent& native_event);
@@ -697,7 +713,8 @@ class EVENTS_EXPORT TouchEvent : public LocatedEvent {
 
   // Overridden from LocatedEvent.
   void UpdateForRootTransform(
-      const gfx::Transform& inverted_root_transform) override;
+      const gfx::Transform& inverted_root_transform,
+      const gfx::Transform& inverted_local_transform) override;
 
   // Marks the event as not participating in synchronous gesture recognition.
   void DisableSynchronousHandling();
@@ -716,6 +733,8 @@ class EVENTS_EXPORT TouchEvent : public LocatedEvent {
   // A unique identifier for the touch event.
   uint32_t unique_event_id_;
 
+  // TODO(726824): Remove rotation_angle_ from ui::TouchEvent, just use twist
+  // in PointerDetails.
   // Clockwise angle (in degrees) of the major axis from the X axis. Must be
   // less than 180 and non-negative.
   float rotation_angle_;
@@ -959,6 +978,9 @@ class EVENTS_EXPORT KeyEvent : public Event {
   std::unique_ptr<Properties> properties_;
 
   static KeyEvent* last_key_event_;
+#if defined(USE_X11)
+  static KeyEvent* last_ibus_key_event_;
+#endif
 };
 
 class EVENTS_EXPORT ScrollEvent : public MouseEvent {

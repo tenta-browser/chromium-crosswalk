@@ -14,18 +14,16 @@
 namespace chromeos {
 namespace onc {
 
-Mapper::Mapper() {
-}
+Mapper::Mapper() = default;
 
-Mapper::~Mapper() {
-}
+Mapper::~Mapper() = default;
 
 std::unique_ptr<base::Value> Mapper::MapValue(
     const OncValueSignature& signature,
     const base::Value& onc_value,
     bool* error) {
   std::unique_ptr<base::Value> result_value;
-  switch (onc_value.GetType()) {
+  switch (onc_value.type()) {
     case base::Value::Type::DICTIONARY: {
       const base::DictionaryValue* dict = NULL;
       onc_value.GetAsDictionary(&dict);
@@ -82,7 +80,7 @@ void Mapper::MapFields(const OncValueSignature& object_signature,
     if (current_field_unknown)
       *found_unknown_field = true;
     else if (result_value.get() != NULL)
-      result->SetWithoutPathExpansion(it.key(), result_value.release());
+      result->SetWithoutPathExpansion(it.key(), std::move(result_value));
     else
       DCHECK(*nested_error);
   }

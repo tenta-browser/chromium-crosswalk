@@ -15,45 +15,47 @@ import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.SmallTest;
 
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.test.BaseJUnit4ClassRunner;
+import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.FlakyTest;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.accessibility.FontSizePrefs;
+import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
 import org.chromium.chrome.browser.preferences.website.ContentSetting;
 import org.chromium.chrome.browser.preferences.website.GeolocationInfo;
 import org.chromium.chrome.browser.preferences.website.WebsitePreferenceBridge;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService.LoadListener;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService.TemplateUrl;
-import org.chromium.content.browser.test.NativeLibraryTestRule;
+import org.chromium.chrome.browser.test.ChromeBrowserTestRule;
+import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.util.ActivityUtils;
+import org.chromium.content.browser.test.util.Criteria;
+import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.UiUtils;
+import org.chromium.policy.test.annotations.Policies;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.text.NumberFormat;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 
 /**
  * Tests for the Settings menu.
  */
-@RunWith(BaseJUnit4ClassRunner.class)
+@RunWith(ChromeJUnit4ClassRunner.class)
 public class PreferencesTest {
     @Rule
-    public NativeLibraryTestRule mActivityTestRule = new NativeLibraryTestRule();
-
-    @Before
-    public void setUp() throws Exception {
-        mActivityTestRule.loadNativeLibraryAndInitBrowserProcess();
-    }
+    public final ChromeBrowserTestRule mBrowserTestRule = new ChromeBrowserTestRule();
 
     /**
      * Launches the preferences menu and starts the preferences activity named fragmentName.
@@ -106,27 +108,19 @@ public class PreferencesTest {
                 SearchEnginePreference pref =
                         (SearchEnginePreference) prefActivity.getFragmentForTest();
                 pref.setValueForTesting("1");
-            }
-        });
 
-
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
                 // Ensure that the second search engine in the list is selected.
-                SearchEnginePreference pref =
-                        (SearchEnginePreference) prefActivity.getFragmentForTest();
                 Assert.assertNotNull(pref);
                 Assert.assertEquals("1", pref.getValueForTesting());
 
                 // Simulate selecting the third search engine, ensure that TemplateUrlService is
-                // updated, but location permission not granted for the new engine.
+                // updated, and location permission granted by default for the new engine.
                 String keyword2 = pref.setValueForTesting("2");
                 TemplateUrlService templateUrlService = TemplateUrlService.getInstance();
                 Assert.assertEquals(keyword2,
                         templateUrlService.getDefaultSearchEngineTemplateUrl().getKeyword());
                 Assert.assertEquals(
-                        ContentSetting.ASK, locationPermissionForSearchEngine(keyword2));
+                        ContentSetting.ALLOW, locationPermissionForSearchEngine(keyword2));
 
                 // Simulate selecting the fourth search engine and but set a blocked permission
                 // first and ensure that location permission is NOT granted.
@@ -145,7 +139,11 @@ public class PreferencesTest {
                         ContentSetting.ASK, locationPermissionForSearchEngine(keyword2));
 
                 // Make sure a pre-existing ALLOW value does not get deleted when switching away
-                // from a search engine.
+                // from a search engine. For this to work we need to change the DSE setting to true
+                // for search engine 3 before changing to search engine 2. Otherwise the false DSE
+                // setting will cause the content setting for search engine 2 to be reset when we
+                // switch to it.
+                WebsitePreferenceBridge.setDSEGeolocationSetting(true);
                 keyword2 = pref.getKeywordFromIndexForTesting(2);
                 url = templateUrlService.getSearchEngineUrlFromTemplateUrl(keyword2);
                 WebsitePreferenceBridge.nativeSetGeolocationSettingForOrigin(
@@ -161,6 +159,57 @@ public class PreferencesTest {
                 pref.setValueForTesting("3");
                 Assert.assertEquals(
                         ContentSetting.ALLOW, locationPermissionForSearchEngine(keyword2));
+            }
+        });
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @Policies.Add({ @Policies.Item(key = "DefaultSearchProviderEnabled", string = "false") })
+    public void testSearchEnginePreference_DisabledIfNoDefaultSearchEngine() throws Exception {
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    ChromeBrowserInitializer.getInstance(InstrumentationRegistry.getTargetContext())
+                            .handleSynchronousStartup();
+                } catch (ProcessInitException e) {
+                    Assert.fail("Unable to initialize process: " + e);
+                }
+            }
+        });
+
+        ensureTemplateUrlServiceLoaded();
+        CriteriaHelper.pollUiThread(Criteria.equals(true, new Callable<Boolean>() {
+            @Override
+            public Boolean call() throws Exception {
+                return TemplateUrlService.getInstance().isDefaultSearchManaged();
+            }
+        }));
+
+        Preferences preferenceActivity = ActivityUtils.waitForActivity(
+                InstrumentationRegistry.getInstrumentation(), Preferences.class);
+
+        final MainPreferences mainPreferences =
+                ActivityUtils.waitForFragmentToAttach(preferenceActivity, MainPreferences.class);
+
+        final Preference searchEnginePref =
+                waitForPreference(mainPreferences, MainPreferences.PREF_SEARCH_ENGINE);
+
+        CriteriaHelper.pollUiThread(Criteria.equals(null, new Callable<Object>() {
+            @Override
+            public Object call() throws Exception {
+                return searchEnginePref.getFragment();
+            }
+        }));
+        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+            @Override
+            public void run() {
+                ManagedPreferenceDelegate managedPrefDelegate =
+                        mainPreferences.getManagedPreferenceDelegateForTest();
+                Assert.assertTrue(
+                        managedPrefDelegate.isPreferenceControlledByPolicy(searchEnginePref));
             }
         });
     }
@@ -315,8 +364,7 @@ public class PreferencesTest {
 
     private void assertFontSizePrefs(final boolean expectedForceEnableZoom,
             final float expectedFontScale) {
-        final Context targetContext =
-                InstrumentationRegistry.getInstrumentation().getTargetContext();
+        final Context targetContext = InstrumentationRegistry.getTargetContext();
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
@@ -343,6 +391,23 @@ public class PreferencesTest {
             @Override
             public void run() {
                 accessibilityPref.onPreferenceChange(forceEnableZoomPref, enabled);
+            }
+        });
+    }
+
+    private static Preference waitForPreference(final PreferenceFragment prefFragment,
+            final String preferenceKey) throws ExecutionException {
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                return prefFragment.findPreference(preferenceKey) != null;
+            }
+        });
+
+        return ThreadUtils.runOnUiThreadBlocking(new Callable<Preference>() {
+            @Override
+            public Preference call() throws Exception {
+                return prefFragment.findPreference(preferenceKey);
             }
         });
     }

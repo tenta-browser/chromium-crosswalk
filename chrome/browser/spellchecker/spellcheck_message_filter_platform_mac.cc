@@ -196,10 +196,6 @@ bool SpellCheckMessageFilterPlatform::OnMessageReceived(
                         OnCheckSpelling)
     IPC_MESSAGE_HANDLER(SpellCheckHostMsg_FillSuggestionList,
                         OnFillSuggestionList)
-    IPC_MESSAGE_HANDLER(SpellCheckHostMsg_ShowSpellingPanel,
-                        OnShowSpellingPanel)
-    IPC_MESSAGE_HANDLER(SpellCheckHostMsg_UpdateSpellingPanelWithMisspelledWord,
-                        OnUpdateSpellingPanelWithMisspelledWord)
     IPC_MESSAGE_HANDLER(SpellCheckHostMsg_RequestTextCheck,
                         OnRequestTextCheck)
     IPC_MESSAGE_UNHANDLED(handled = false)
@@ -249,15 +245,6 @@ void SpellCheckMessageFilterPlatform::OnFillSuggestionList(
   spellcheck_platform::FillSuggestionList(word, suggestions);
 }
 
-void SpellCheckMessageFilterPlatform::OnShowSpellingPanel(bool show) {
-  spellcheck_platform::ShowSpellingPanel(show);
-}
-
-void SpellCheckMessageFilterPlatform::OnUpdateSpellingPanelWithMisspelledWord(
-    const base::string16& word) {
-  spellcheck_platform::UpdateSpellingPanelWithMisspelledWord(word);
-}
-
 void SpellCheckMessageFilterPlatform::OnRequestTextCheck(
     int route_id,
     int identifier,
@@ -269,7 +256,10 @@ void SpellCheckMessageFilterPlatform::OnRequestTextCheck(
   // language code for text breaking to the renderer. (Text breaking is required
   // for the context menu to show spelling suggestions.) Initialization must
   // happen on UI thread.
-  SpellcheckServiceFactory::GetForRenderProcessId(render_process_id_);
+  content::RenderProcessHost* host =
+      content::RenderProcessHost::FromID(render_process_id_);
+  if (host)
+    SpellcheckServiceFactory::GetForRenderer(host->GetChildIdentity());
 
   // SpellingRequest self-destructs.
   SpellingRequest* request =

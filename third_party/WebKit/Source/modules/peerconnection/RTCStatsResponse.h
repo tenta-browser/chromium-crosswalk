@@ -25,8 +25,8 @@
 #ifndef RTCStatsResponse_h
 #define RTCStatsResponse_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/peerconnection/RTCLegacyStatsReport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/peerconnection/RTCStatsResponseBase.h"
 #include "platform/wtf/HashMap.h"
@@ -35,8 +35,7 @@
 
 namespace blink {
 
-class RTCStatsResponse final : public RTCStatsResponseBase,
-                               public ScriptWrappable {
+class RTCStatsResponse final : public RTCStatsResponseBase {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -49,7 +48,7 @@ class RTCStatsResponse final : public RTCStatsResponseBase,
 
   void AddStats(const WebRTCLegacyStats&) override;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   RTCStatsResponse();

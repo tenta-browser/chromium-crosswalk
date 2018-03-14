@@ -49,17 +49,17 @@
 #include "core/css/CSSCustomPropertyDeclaration.h"
 #include "core/css/CSSFunctionValue.h"
 #include "core/css/CSSGridTemplateAreasValue.h"
-#include "core/css/CSSHelper.h"
 #include "core/css/CSSImageSetValue.h"
 #include "core/css/CSSPendingSubstitutionValue.h"
 #include "core/css/CSSPrimitiveValueMappings.h"
-#include "core/css/CSSPropertyMetadata.h"
+#include "core/css/CSSPropertyValueSet.h"
+#include "core/css/CSSResolutionUnits.h"
 #include "core/css/CSSValueIDMappings.h"
 #include "core/css/CSSVariableReferenceValue.h"
 #include "core/css/PropertyRegistration.h"
 #include "core/css/PropertyRegistry.h"
-#include "core/css/StylePropertySet.h"
 #include "core/css/StyleRule.h"
+#include "core/css/properties/CSSProperty.h"
 #include "core/css/resolver/CSSVariableResolver.h"
 #include "core/css/resolver/ElementStyleResources.h"
 #include "core/css/resolver/FilterOperationResolver.h"
@@ -111,26 +111,28 @@ static inline bool IsValidVisitedLinkProperty(CSSPropertyID id) {
 
 }  // namespace
 
-void StyleBuilder::ApplyProperty(CSSPropertyID id,
+void StyleBuilder::ApplyProperty(const CSSProperty& property,
                                  StyleResolverState& state,
                                  const CSSValue& value) {
+  CSSPropertyID id = property.PropertyID();
+  bool is_inherited = property.IsInherited();
   if (id != CSSPropertyVariable && (value.IsVariableReferenceValue() ||
                                     value.IsPendingSubstitutionValue())) {
     bool omit_animation_tainted =
         CSSAnimations::IsAnimationAffectingProperty(id);
     const CSSValue* resolved_value =
-        CSSVariableResolver::ResolveVariableReferences(state, id, value,
-                                                       omit_animation_tainted);
-    ApplyProperty(id, state, *resolved_value);
+        CSSVariableResolver(state).ResolveVariableReferences(
+            id, value, omit_animation_tainted);
+    ApplyProperty(property, state, *resolved_value);
 
     if (!state.Style()->HasVariableReferenceFromNonInheritedProperty() &&
-        !CSSPropertyMetadata::IsInheritedProperty(id))
+        !is_inherited)
       state.Style()->SetHasVariableReferenceFromNonInheritedProperty();
     return;
   }
 
-  DCHECK(!isShorthandProperty(id)) << "Shorthand property id = " << id
-                                   << " wasn't expanded at parsing time";
+  DCHECK(!property.IsShorthand())
+      << "Shorthand property id = " << id << " wasn't expanded at parsing time";
 
   bool is_inherit = state.ParentNode() && value.IsInheritedValue();
   bool is_initial = value.IsInitialValue() ||
@@ -150,22 +152,22 @@ void StyleBuilder::ApplyProperty(CSSPropertyID id,
   }
 
   if (is_inherit && !state.ParentStyle()->HasExplicitlyInheritedProperties() &&
-      !CSSPropertyMetadata::IsInheritedProperty(id)) {
+      !is_inherited) {
     state.ParentStyle()->SetHasExplicitlyInheritedProperties();
   } else if (value.IsUnsetValue()) {
     DCHECK(!is_inherit && !is_initial);
-    if (CSSPropertyMetadata::IsInheritedProperty(id))
+    if (is_inherited)
       is_inherit = true;
     else
       is_initial = true;
   }
 
-  StyleBuilder::ApplyProperty(id, state, value, is_initial, is_inherit);
+  StyleBuilder::ApplyProperty(property, state, value, is_initial, is_inherit);
 }
 
 void StyleBuilderFunctions::applyInitialCSSPropertyColor(
     StyleResolverState& state) {
-  Color color = ComputedStyle::InitialColor();
+  Color color = ComputedStyleInitialValues::InitialColor();
   if (state.ApplyPropertyToRegularStyle())
     state.Style()->SetColor(color);
   if (state.ApplyPropertyToVisitedLinkStyle())
@@ -201,7 +203,7 @@ void StyleBuilderFunctions::applyValueCSSPropertyColor(
 void StyleBuilderFunctions::applyInitialCSSPropertyCursor(
     StyleResolverState& state) {
   state.Style()->ClearCursorList();
-  state.Style()->SetCursor(ComputedStyle::InitialCursor());
+  state.Style()->SetCursor(ComputedStyleInitialValues::InitialCursor());
 }
 
 void StyleBuilderFunctions::applyInheritCSSPropertyCursor(
@@ -242,11 +244,12 @@ void StyleBuilderFunctions::applyValueCSSPropertyDirection(
 
 void StyleBuilderFunctions::applyInitialCSSPropertyGridTemplateAreas(
     StyleResolverState& state) {
-  state.Style()->SetNamedGridArea(ComputedStyle::InitialNamedGridArea());
+  state.Style()->SetNamedGridArea(
+      ComputedStyleInitialValues::InitialNamedGridArea());
   state.Style()->SetNamedGridAreaRowCount(
-      ComputedStyle::InitialNamedGridAreaCount());
+      ComputedStyleInitialValues::InitialNamedGridAreaRowCount());
   state.Style()->SetNamedGridAreaColumnCount(
-      ComputedStyle::InitialNamedGridAreaCount());
+      ComputedStyleInitialValues::InitialNamedGridAreaColumnCount());
 }
 
 void StyleBuilderFunctions::applyInheritCSSPropertyGridTemplateAreas(
@@ -301,8 +304,8 @@ void StyleBuilderFunctions::applyValueCSSPropertyListStyleImage(
 void StyleBuilderFunctions::applyInitialCSSPropertyOutlineStyle(
     StyleResolverState& state) {
   state.Style()->SetOutlineStyleIsAuto(
-      ComputedStyle::InitialOutlineStyleIsAuto());
-  state.Style()->SetOutlineStyle(ComputedStyle::InitialBorderStyle());
+      ComputedStyleInitialValues::InitialOutlineStyleIsAuto());
+  state.Style()->SetOutlineStyle(EBorderStyle::kNone);
 }
 
 void StyleBuilderFunctions::applyInheritCSSPropertyOutlineStyle(
@@ -317,7 +320,7 @@ void StyleBuilderFunctions::applyValueCSSPropertyOutlineStyle(
     const CSSValue& value) {
   const CSSIdentifierValue& identifier_value = ToCSSIdentifierValue(value);
   state.Style()->SetOutlineStyleIsAuto(
-      identifier_value.ConvertTo<OutlineIsAuto>());
+      static_cast<bool>(identifier_value.ConvertTo<OutlineIsAuto>()));
   state.Style()->SetOutlineStyle(identifier_value.ConvertTo<EBorderStyle>());
 }
 
@@ -326,10 +329,12 @@ void StyleBuilderFunctions::applyValueCSSPropertyResize(
     const CSSValue& value) {
   const CSSIdentifierValue& identifier_value = ToCSSIdentifierValue(value);
 
-  EResize r = RESIZE_NONE;
+  EResize r = EResize::kNone;
   if (identifier_value.GetValueID() == CSSValueAuto) {
-    if (Settings* settings = state.GetDocument().GetSettings())
-      r = settings->GetTextAreasAreResizable() ? RESIZE_BOTH : RESIZE_NONE;
+    if (Settings* settings = state.GetDocument().GetSettings()) {
+      r = settings->GetTextAreasAreResizable() ? EResize::kBoth
+                                               : EResize::kNone;
+    }
   } else {
     r = identifier_value.ConvertTo<EResize>();
   }
@@ -372,7 +377,7 @@ void StyleBuilderFunctions::applyValueCSSPropertySize(StyleResolverState& state,
                                                       const CSSValue& value) {
   state.Style()->ResetPageSizeType();
   FloatSize size;
-  PageSizeType page_size_type = PAGE_SIZE_AUTO;
+  EPageSizeType page_size_type = EPageSizeType::kAuto;
   const CSSValueList& list = ToCSSValueList(value);
   if (list.length() == 2) {
     // <length>{2} | <page-size> <orientation>
@@ -394,14 +399,14 @@ void StyleBuilderFunctions::applyValueCSSPropertySize(StyleResolverState& state,
       if (ToCSSIdentifierValue(second).GetValueID() == CSSValueLandscape)
         size = size.TransposedSize();
     }
-    page_size_type = PAGE_SIZE_RESOLVED;
+    page_size_type = EPageSizeType::kResolved;
   } else {
     DCHECK_EQ(list.length(), 1U);
     // <length> | auto | <page-size> | [ portrait | landscape]
     const CSSValue& first = list.Item(0);
     if (first.IsPrimitiveValue() && ToCSSPrimitiveValue(first).IsLength()) {
       // <length>
-      page_size_type = PAGE_SIZE_RESOLVED;
+      page_size_type = EPageSizeType::kResolved;
       float width = ToCSSPrimitiveValue(first).ComputeLength<float>(
           state.CssToLengthConversionData().CopyWithAdjustedZoom(1.0));
       size = FloatSize(width, width);
@@ -409,17 +414,17 @@ void StyleBuilderFunctions::applyValueCSSPropertySize(StyleResolverState& state,
       const CSSIdentifierValue& ident = ToCSSIdentifierValue(first);
       switch (ident.GetValueID()) {
         case CSSValueAuto:
-          page_size_type = PAGE_SIZE_AUTO;
+          page_size_type = EPageSizeType::kAuto;
           break;
         case CSSValuePortrait:
-          page_size_type = PAGE_SIZE_AUTO_PORTRAIT;
+          page_size_type = EPageSizeType::kPortrait;
           break;
         case CSSValueLandscape:
-          page_size_type = PAGE_SIZE_AUTO_LANDSCAPE;
+          page_size_type = EPageSizeType::kLandscape;
           break;
         default:
           // <page-size>
-          page_size_type = PAGE_SIZE_RESOLVED;
+          page_size_type = EPageSizeType::kResolved;
           size = GetPageSizeFromName(ident);
       }
     }
@@ -439,7 +444,7 @@ void StyleBuilderFunctions::applyValueCSSPropertyTextAlign(
     const CSSIdentifierValue& ident_value = ToCSSIdentifierValue(value);
     if (ident_value.GetValueID() == CSSValueInternalCenter &&
         state.ParentStyle()->GetTextAlign() !=
-            ComputedStyle::InitialTextAlign())
+            ComputedStyleInitialValues::InitialTextAlign())
       state.Style()->SetTextAlign(state.ParentStyle()->GetTextAlign());
     else
       state.Style()->SetTextAlign(ident_value.ConvertTo<ETextAlign>());
@@ -465,9 +470,11 @@ void StyleBuilderFunctions::applyInheritCSSPropertyTextIndent(
 
 void StyleBuilderFunctions::applyInitialCSSPropertyTextIndent(
     StyleResolverState& state) {
-  state.Style()->SetTextIndent(ComputedStyle::InitialTextIndent());
-  state.Style()->SetTextIndentLine(ComputedStyle::InitialTextIndentLine());
-  state.Style()->SetTextIndentType(ComputedStyle::InitialTextIndentType());
+  state.Style()->SetTextIndent(ComputedStyleInitialValues::InitialTextIndent());
+  state.Style()->SetTextIndentLine(
+      ComputedStyleInitialValues::InitialTextIndentLine());
+  state.Style()->SetTextIndentType(
+      ComputedStyleInitialValues::InitialTextIndentType());
 }
 
 void StyleBuilderFunctions::applyValueCSSPropertyTextIndent(
@@ -475,9 +482,9 @@ void StyleBuilderFunctions::applyValueCSSPropertyTextIndent(
     const CSSValue& value) {
   Length length_or_percentage_value;
   TextIndentLine text_indent_line_value =
-      ComputedStyle::InitialTextIndentLine();
+      ComputedStyleInitialValues::InitialTextIndentLine();
   TextIndentType text_indent_type_value =
-      ComputedStyle::InitialTextIndentType();
+      ComputedStyleInitialValues::InitialTextIndentType();
 
   for (auto& list_value : ToCSSValueList(value)) {
     if (list_value->IsPrimitiveValue()) {
@@ -486,10 +493,10 @@ void StyleBuilderFunctions::applyValueCSSPropertyTextIndent(
               .ConvertToLength(state.CssToLengthConversionData());
     } else if (ToCSSIdentifierValue(*list_value).GetValueID() ==
                CSSValueEachLine) {
-      text_indent_line_value = kTextIndentEachLine;
+      text_indent_line_value = TextIndentLine::kEachLine;
     } else if (ToCSSIdentifierValue(*list_value).GetValueID() ==
                CSSValueHanging) {
-      text_indent_type_value = kTextIndentHanging;
+      text_indent_type_value = TextIndentType::kHanging;
     } else {
       NOTREACHED();
     }
@@ -527,13 +534,13 @@ static void ResetEffectiveZoom(StyleResolverState& state) {
   // compute a new zoom in effect.
   state.SetEffectiveZoom(state.ParentStyle()
                              ? state.ParentStyle()->EffectiveZoom()
-                             : ComputedStyle::InitialZoom());
+                             : ComputedStyleInitialValues::InitialZoom());
 }
 
 void StyleBuilderFunctions::applyInitialCSSPropertyZoom(
     StyleResolverState& state) {
   ResetEffectiveZoom(state);
-  state.SetZoom(ComputedStyle::InitialZoom());
+  state.SetZoom(ComputedStyleInitialValues::InitialZoom());
 }
 
 void StyleBuilderFunctions::applyInheritCSSPropertyZoom(
@@ -550,7 +557,7 @@ void StyleBuilderFunctions::applyValueCSSPropertyZoom(StyleResolverState& state,
     const CSSIdentifierValue& identifier_value = ToCSSIdentifierValue(value);
     if (identifier_value.GetValueID() == CSSValueNormal) {
       ResetEffectiveZoom(state);
-      state.SetZoom(ComputedStyle::InitialZoom());
+      state.SetZoom(ComputedStyleInitialValues::InitialZoom());
     }
   } else if (value.IsPrimitiveValue()) {
     const CSSPrimitiveValue& primitive_value = ToCSSPrimitiveValue(value);
@@ -577,10 +584,12 @@ void StyleBuilderFunctions::applyValueCSSPropertyWebkitBorderImage(
 
 void StyleBuilderFunctions::applyInitialCSSPropertyWebkitTextEmphasisStyle(
     StyleResolverState& state) {
-  state.Style()->SetTextEmphasisFill(ComputedStyle::InitialTextEmphasisFill());
-  state.Style()->SetTextEmphasisMark(ComputedStyle::InitialTextEmphasisMark());
+  state.Style()->SetTextEmphasisFill(
+      ComputedStyleInitialValues::InitialTextEmphasisFill());
+  state.Style()->SetTextEmphasisMark(
+      ComputedStyleInitialValues::InitialTextEmphasisMark());
   state.Style()->SetTextEmphasisCustomMark(
-      ComputedStyle::InitialTextEmphasisCustomMark());
+      ComputedStyleInitialValues::InitialTextEmphasisCustomMark());
 }
 
 void StyleBuilderFunctions::applyInheritCSSPropertyWebkitTextEmphasisStyle(
@@ -612,8 +621,8 @@ void StyleBuilderFunctions::applyValueCSSPropertyWebkitTextEmphasisStyle(
   }
 
   if (value.IsStringValue()) {
-    state.Style()->SetTextEmphasisFill(kTextEmphasisFillFilled);
-    state.Style()->SetTextEmphasisMark(kTextEmphasisMarkCustom);
+    state.Style()->SetTextEmphasisFill(TextEmphasisFill::kFilled);
+    state.Style()->SetTextEmphasisMark(TextEmphasisMark::kCustom);
     state.Style()->SetTextEmphasisCustomMark(
         AtomicString(ToCSSStringValue(value).Value()));
     return;
@@ -627,9 +636,9 @@ void StyleBuilderFunctions::applyValueCSSPropertyWebkitTextEmphasisStyle(
       identifier_value.GetValueID() == CSSValueOpen) {
     state.Style()->SetTextEmphasisFill(
         identifier_value.ConvertTo<TextEmphasisFill>());
-    state.Style()->SetTextEmphasisMark(kTextEmphasisMarkAuto);
+    state.Style()->SetTextEmphasisMark(TextEmphasisMark::kAuto);
   } else {
-    state.Style()->SetTextEmphasisFill(kTextEmphasisFillFilled);
+    state.Style()->SetTextEmphasisFill(TextEmphasisFill::kFilled);
     state.Style()->SetTextEmphasisMark(
         identifier_value.ConvertTo<TextEmphasisMark>());
   }
@@ -805,9 +814,10 @@ void StyleBuilderFunctions::applyValueCSSPropertyWebkitAppRegion(
     StyleResolverState& state,
     const CSSValue& value) {
   const CSSIdentifierValue& identifier_value = ToCSSIdentifierValue(value);
-  state.Style()->SetDraggableRegionMode(
-      identifier_value.GetValueID() == CSSValueDrag ? kDraggableRegionDrag
-                                                    : kDraggableRegionNoDrag);
+  state.Style()->SetDraggableRegionMode(identifier_value.GetValueID() ==
+                                                CSSValueDrag
+                                            ? EDraggableRegionMode::kDrag
+                                            : EDraggableRegionMode::kNoDrag);
   state.GetDocument().SetHasAnnotatedRegions(true);
 }
 
@@ -827,14 +837,14 @@ void StyleBuilderFunctions::applyValueCSSPropertyTextOrientation(
     StyleResolverState& state,
     const CSSValue& value) {
   state.SetTextOrientation(
-      ToCSSIdentifierValue(value).ConvertTo<TextOrientation>());
+      ToCSSIdentifierValue(value).ConvertTo<ETextOrientation>());
 }
 
 void StyleBuilderFunctions::applyValueCSSPropertyWebkitTextOrientation(
     StyleResolverState& state,
     const CSSValue& value) {
   state.SetTextOrientation(
-      ToCSSIdentifierValue(value).ConvertTo<TextOrientation>());
+      ToCSSIdentifierValue(value).ConvertTo<ETextOrientation>());
 }
 
 void StyleBuilderFunctions::applyValueCSSPropertyVariable(
@@ -869,8 +879,8 @@ void StyleBuilderFunctions::applyValueCSSPropertyVariable(
       return;
     }
 
-    const CSSValue* parsed_value =
-        declaration.Value()->ParseForSyntax(registration->Syntax());
+    const CSSValue* parsed_value = declaration.Value()->ParseForSyntax(
+        registration->Syntax(), state.GetDocument().GetSecureContextMode());
     if (parsed_value) {
       DCHECK(parsed_value);
       if (is_inherited_property)

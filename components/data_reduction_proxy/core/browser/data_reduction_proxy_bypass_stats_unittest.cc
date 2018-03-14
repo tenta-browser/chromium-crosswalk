@@ -16,6 +16,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram.h"
 #include "base/test/histogram_tester.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config_test_utils.h"
@@ -40,6 +41,7 @@
 #include "net/http/http_util.h"
 #include "net/proxy/proxy_server.h"
 #include "net/socket/socket_test_util.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_context_storage.h"
@@ -80,14 +82,15 @@ class DataReductionProxyBypassStatsTest : public testing::Test {
 
     test_context_ =
         DataReductionProxyTestContext::Builder().WithMockConfig().Build();
-    mock_url_request_ = context_.CreateRequest(GURL(), net::IDLE, &delegate_);
+    mock_url_request_ = context_.CreateRequest(GURL(), net::IDLE, &delegate_,
+                                               TRAFFIC_ANNOTATION_FOR_TESTS);
   }
 
   std::unique_ptr<net::URLRequest> CreateURLRequestWithResponseHeaders(
       const GURL& url,
       const std::string& response_headers) {
-    std::unique_ptr<net::URLRequest> fake_request =
-        context_.CreateRequest(url, net::IDLE, &delegate_);
+    std::unique_ptr<net::URLRequest> fake_request = context_.CreateRequest(
+        url, net::IDLE, &delegate_, TRAFFIC_ANNOTATION_FOR_TESTS);
 
     // Create a test job that will fill in the given response headers for the
     // |fake_request|.
@@ -100,7 +103,7 @@ class DataReductionProxyBypassStatsTest : public testing::Test {
     fake_request->Start();
     test_context_->RunUntilIdle();
 
-    EXPECT_TRUE(fake_request->response_headers() != NULL);
+    EXPECT_TRUE(fake_request->response_headers() != nullptr);
     return fake_request;
   }
 
@@ -255,7 +258,6 @@ class DataReductionProxyBypassStatsEndToEndTest : public testing::Test {
 
   void SetUp() override {
     drp_test_context_ = DataReductionProxyTestContext::Builder()
-                            .WithParamsFlags(0)
                             .WithURLRequestContext(&context_)
                             .WithMockClientSocketFactory(&mock_socket_factory_)
                             .Build();
@@ -270,9 +272,9 @@ class DataReductionProxyBypassStatsEndToEndTest : public testing::Test {
     // fully bypassed.
     std::vector<DataReductionProxyServer> data_reduction_proxy_servers;
     data_reduction_proxy_servers.push_back(DataReductionProxyServer(
-        net::ProxyServer::FromURI(config()->test_params()->DefaultOrigin(),
-                                  net::ProxyServer::SCHEME_HTTP),
+        config()->test_params()->proxies_for_http().front().proxy_server(),
         ProxyServer::CORE));
+    config()->test_params()->UseNonSecureProxiesForHttp();
     config()->test_params()->SetProxiesForHttp(data_reduction_proxy_servers);
   }
 
@@ -326,8 +328,8 @@ class DataReductionProxyBypassStatsEndToEndTest : public testing::Test {
           retry_socket_data_provider.get());
     }
 
-    std::unique_ptr<net::URLRequest> request(
-        context_.CreateRequest(url, net::IDLE, &delegate_));
+    std::unique_ptr<net::URLRequest> request(context_.CreateRequest(
+        url, net::IDLE, &delegate_, TRAFFIC_ANNOTATION_FOR_TESTS));
     request->set_method("GET");
     request->SetLoadFlags(load_flags);
     request->Start();
@@ -385,7 +387,8 @@ class DataReductionProxyBypassStatsEndToEndTest : public testing::Test {
     mock_socket_factory_.AddSocketDataProvider(&response_socket_data_provider);
 
     std::unique_ptr<net::URLRequest> request(
-        context_.CreateRequest(GURL("http://foo.com"), net::IDLE, &delegate_));
+        context_.CreateRequest(GURL("http://foo.com"), net::IDLE, &delegate_,
+                               TRAFFIC_ANNOTATION_FOR_TESTS));
     request->set_method("GET");
     request->Start();
     drp_test_context_->RunUntilIdle();
@@ -418,6 +421,7 @@ class DataReductionProxyBypassStatsEndToEndTest : public testing::Test {
 
   void InitializeContext() {
     context_.Init();
+    drp_test_context_->DisableWarmupURLFetch();
     drp_test_context_->EnableDataReductionProxyWithSecureProxyCheckSuccess();
   }
 
@@ -793,11 +797,14 @@ TEST_F(DataReductionProxyBypassStatsEndToEndTest,
 
 TEST_F(DataReductionProxyBypassStatsEndToEndTest, BypassedBytesNetErrorOther) {
   // Make the data reduction proxy host fail to resolve.
-  net::ProxyServer origin =
-      config()->test_params()->proxies_for_http().front().proxy_server();
   std::unique_ptr<net::MockHostResolver> host_resolver(
       new net::MockHostResolver());
-  host_resolver->rules()->AddSimulatedFailure(origin.host_port_pair().host());
+
+  for (const auto& proxy_server : config()->test_params()->proxies_for_http()) {
+    host_resolver->rules()->AddSimulatedFailure(
+        proxy_server.proxy_server().host_port_pair().host());
+  }
+
   set_host_resolver(host_resolver.get());
   InitializeContext();
 
@@ -1056,27 +1063,6 @@ TEST_F(DataReductionProxyBypassStatsEndToEndTest, HttpProxyScheme) {
                           kNextBody.c_str(), nullptr, nullptr);
   histogram_tester.ExpectUniqueSample("DataReductionProxy.ProxySchemeUsed",
                                       1 /*PROXY_SCHEME_HTTP */, 1);
-}
-
-// Verifies that the scheme of the HTTPS data reduction proxy used is recorded
-// correctly.
-TEST_F(DataReductionProxyBypassStatsEndToEndTest, HttpsProxyScheme) {
-  net::ProxyServer origin =
-      net::ProxyServer::FromURI("test.com:443", net::ProxyServer::SCHEME_HTTPS);
-  std::vector<DataReductionProxyServer> data_reduction_proxy_servers;
-  data_reduction_proxy_servers.push_back(
-      DataReductionProxyServer(origin, ProxyServer::UNSPECIFIED_TYPE));
-  config()->test_params()->SetProxiesForHttp(data_reduction_proxy_servers);
-
-  InitializeContext();
-
-  base::HistogramTester histogram_tester;
-  CreateAndExecuteRequest(GURL("http://bar.com"), net::LOAD_NORMAL, net::OK,
-                          "HTTP/1.1 200 OK\r\n"
-                          "Via: 1.1 Chrome-Compression-Proxy\r\n\r\n",
-                          kNextBody.c_str(), nullptr, nullptr);
-  histogram_tester.ExpectUniqueSample("DataReductionProxy.ProxySchemeUsed",
-                                      2 /*PROXY_SCHEME_HTTPS */, 1);
 }
 
 }  // namespace data_reduction_proxy

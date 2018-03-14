@@ -124,16 +124,6 @@ bool IsControlCharacter(unsigned char c) {
   return c <= 31;
 }
 
-bool IsValidCookieAttributeValue(const std::string& value) {
-  // The greatest common denominator of cookie attribute values is
-  // <any CHAR except CTLs or ";"> according to RFC 6265.
-  for (std::string::const_iterator i = value.begin(); i != value.end(); ++i) {
-    if (IsControlCharacter(*i) || *i == ';')
-      return false;
-  }
-  return true;
-}
-
 }  // namespace
 
 namespace net {
@@ -157,8 +147,7 @@ ParsedCookie::ParsedCookie(const std::string& cookie_line)
     SetupAttributes();
 }
 
-ParsedCookie::~ParsedCookie() {
-}
+ParsedCookie::~ParsedCookie() = default;
 
 bool ParsedCookie::IsValid() const {
   return !pairs_.empty() && IsSameSiteAttributeValid();
@@ -240,6 +229,7 @@ std::string ParsedCookie::ToCookieLine() const {
   return out;
 }
 
+// static
 std::string::const_iterator ParsedCookie::FindFirstTerminator(
     const std::string& s) {
   std::string::const_iterator end = s.end();
@@ -251,6 +241,7 @@ std::string::const_iterator ParsedCookie::FindFirstTerminator(
   return end;
 }
 
+// static
 bool ParsedCookie::ParseToken(std::string::const_iterator* it,
                               const std::string::const_iterator& end,
                               std::string::const_iterator* token_start,
@@ -287,6 +278,7 @@ bool ParsedCookie::ParseToken(std::string::const_iterator* it,
   return true;
 }
 
+// static
 void ParsedCookie::ParseValue(std::string::const_iterator* it,
                               const std::string::const_iterator& end,
                               std::string::const_iterator* value_start,
@@ -313,6 +305,7 @@ void ParsedCookie::ParseValue(std::string::const_iterator* it,
   }
 }
 
+// static
 std::string ParsedCookie::ParseTokenString(const std::string& token) {
   std::string::const_iterator it = token.begin();
   std::string::const_iterator end = FindFirstTerminator(token);
@@ -323,6 +316,7 @@ std::string ParsedCookie::ParseTokenString(const std::string& token) {
   return std::string();
 }
 
+// static
 std::string ParsedCookie::ParseValueString(const std::string& value) {
   std::string::const_iterator it = value.begin();
   std::string::const_iterator end = FindFirstTerminator(value);
@@ -330,6 +324,17 @@ std::string ParsedCookie::ParseValueString(const std::string& value) {
   std::string::const_iterator value_start, value_end;
   ParseValue(&it, end, &value_start, &value_end);
   return std::string(value_start, value_end);
+}
+
+// static
+bool ParsedCookie::IsValidCookieAttributeValue(const std::string& value) {
+  // The greatest common denominator of cookie attribute values is
+  // <any CHAR except CTLs or ";"> according to RFC 6265.
+  for (std::string::const_iterator i = value.begin(); i != value.end(); ++i) {
+    if (IsControlCharacter(*i) || *i == ';')
+      return false;
+  }
+  return true;
 }
 
 // Parse all token/value pairs and populate pairs_.
@@ -353,7 +358,7 @@ void ParsedCookie::ParseTokenValuePairs(const std::string& cookie_line) {
     return;
   }
 
-  for (int pair_num = 0; pair_num < kMaxPairs && it != end; ++pair_num) {
+  for (int pair_num = 0; it != end; ++pair_num) {
     TokenValuePair pair;
 
     std::string::const_iterator token_start, token_end;
@@ -405,11 +410,6 @@ void ParsedCookie::ParseTokenValuePairs(const std::string& cookie_line) {
         !IsValidCookieAttributeValue(pair.second)) {
       pairs_.clear();
       break;
-    }
-
-    if (pair_num == 0) {
-      UMA_HISTOGRAM_BOOLEAN("Cookie.CookieLineCookieValueValidity",
-                            IsValidCookieValue(pair.second));
     }
 
     pairs_.push_back(pair);
@@ -505,4 +505,4 @@ bool ParsedCookie::IsSameSiteAttributeValid() const {
   return same_site_index_ == 0 || SameSite() != CookieSameSite::DEFAULT_MODE;
 }
 
-}  // namespace
+}  // namespace net

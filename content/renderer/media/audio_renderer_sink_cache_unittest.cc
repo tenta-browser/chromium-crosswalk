@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
+#include "base/message_loop/message_loop.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread.h"
@@ -203,6 +204,10 @@ TEST_F(AudioRendererSinkCacheTest, GetDeviceInfo) {
 // MockAudioRendererSink::Stop().
 TEST_F(AudioRendererSinkCacheTest, GarbageCollection) {
   EXPECT_EQ(0, sink_count());
+
+  base::Thread thread("timeout_thread");
+  thread.Start();
+
   media::OutputDeviceInfo device_info =
       cache_->GetSinkInfo(kRenderFrameId, 0, kDefaultDeviceId, url::Origin());
   EXPECT_EQ(1, sink_count());
@@ -210,9 +215,6 @@ TEST_F(AudioRendererSinkCacheTest, GarbageCollection) {
   media::OutputDeviceInfo another_device_info =
       cache_->GetSinkInfo(kRenderFrameId, 0, kAnotherDeviceId, url::Origin());
   EXPECT_EQ(2, sink_count());
-
-  base::Thread thread("timeout_thread");
-  thread.Start();
 
   // 100 ms more than garbage collection timeout.
   WaitOnAnotherThread(thread, kDeleteTimeoutMs + 100);
@@ -225,12 +227,13 @@ TEST_F(AudioRendererSinkCacheTest, GarbageCollection) {
 // the timeout.
 TEST_F(AudioRendererSinkCacheTest, NoGarbageCollectionForUsedSink) {
   EXPECT_EQ(0, sink_count());
-  media::OutputDeviceInfo device_info =
-      cache_->GetSinkInfo(kRenderFrameId, 0, kDefaultDeviceId, url::Origin());
-  EXPECT_EQ(1, sink_count());
 
   base::Thread thread("timeout_thread");
   thread.Start();
+
+  media::OutputDeviceInfo device_info =
+      cache_->GetSinkInfo(kRenderFrameId, 0, kDefaultDeviceId, url::Origin());
+  EXPECT_EQ(1, sink_count());
 
   // Wait significantly less than grabage collection timeout.
   int wait_a_bit = 100;
@@ -272,6 +275,9 @@ TEST_F(AudioRendererSinkCacheTest, UnhealthySinkIsNotCached) {
 TEST_F(AudioRendererSinkCacheTest, ReleaseSinkBeforeScheduledDeletion) {
   EXPECT_EQ(0, sink_count());
 
+  base::Thread thread("timeout_thread");
+  thread.Start();
+
   media::OutputDeviceInfo device_info =
       cache_->GetSinkInfo(kRenderFrameId, 0, kDefaultDeviceId, url::Origin());
   EXPECT_EQ(1, sink_count());  // This sink is scheduled for deletion now.
@@ -289,9 +295,6 @@ TEST_F(AudioRendererSinkCacheTest, ReleaseSinkBeforeScheduledDeletion) {
   media::OutputDeviceInfo another_device_info =
       cache_->GetSinkInfo(kRenderFrameId, 0, kAnotherDeviceId, url::Origin());
   EXPECT_EQ(1, sink_count());  // This sink is scheduled for deletion now.
-
-  base::Thread thread("timeout_thread");
-  thread.Start();
 
   // 100 ms more than garbage collection timeout.
   WaitOnAnotherThread(thread, kDeleteTimeoutMs + 100);
@@ -340,9 +343,9 @@ TEST_F(AudioRendererSinkCacheTest, MultithreadedAccess) {
   EXPECT_EQ(1, sink_count());
 
   // Release the sink on the second thread.
-  PostAndRunUntilDone(thread2,
-                      base::Bind(&AudioRendererSinkCache::ReleaseSink,
-                                 base::Unretained(cache_.get()), sink));
+  PostAndRunUntilDone(thread2, base::Bind(&AudioRendererSinkCache::ReleaseSink,
+                                          base::Unretained(cache_.get()),
+                                          base::RetainedRef(sink)));
 
   EXPECT_EQ(0, sink_count());
 }
@@ -369,12 +372,13 @@ TEST_F(AudioRendererSinkCacheTest, SmokeTest) {
   for (int i = 0; i < kExperimentSize; ++i) {
     for (auto& thread : threads) {
       thread->task_runner()->PostTask(
-          FROM_HERE, base::Bind(&AudioRendererSinkCacheTest::GetRandomSinkInfo,
-                                base::Unretained(this), rand() % kSinkCount));
+          FROM_HERE,
+          base::BindOnce(&AudioRendererSinkCacheTest::GetRandomSinkInfo,
+                         base::Unretained(this), rand() % kSinkCount));
       thread->task_runner()->PostTask(
-          FROM_HERE, base::Bind(&AudioRendererSinkCacheTest::GetRandomSink,
-                                base::Unretained(this), rand() % kSinkCount,
-                                kSleepTimeout));
+          FROM_HERE, base::BindOnce(&AudioRendererSinkCacheTest::GetRandomSink,
+                                    base::Unretained(this), rand() % kSinkCount,
+                                    kSleepTimeout));
     }
   }
 
@@ -382,7 +386,7 @@ TEST_F(AudioRendererSinkCacheTest, SmokeTest) {
   media::WaitableMessageLoopEvent loop_event(
       TestTimeouts::action_max_timeout());
   threads[kThreadCount - 1]->task_runner()->PostTaskAndReply(
-      FROM_HERE, base::Bind(&base::DoNothing), loop_event.GetClosure());
+      FROM_HERE, base::BindOnce(&base::DoNothing), loop_event.GetClosure());
   // Runs the loop and waits for the thread to call event's closure.
   loop_event.RunAndWait();
 }

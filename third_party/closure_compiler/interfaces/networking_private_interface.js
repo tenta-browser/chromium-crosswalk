@@ -132,6 +132,9 @@ NetworkingPrivate.prototype = {
    * list returned by $(ref:getVisibleNetworks). This is only a request: the
    * network subsystem can choose to ignore it.  If the list is updated, then
    * the $(ref:onNetworkListChanged) event will be fired.
+   * @param {!chrome.networkingPrivate.NetworkType=} networkType If provided,
+   *     requests a scan specific to the type.     For Cellular a mobile network
+   *     scan will be requested if supported.
    * @see https://developer.chrome.com/extensions/networkingPrivate#method-requestNetworkScan
    */
   requestNetworkScan: assertNotReached,
@@ -168,70 +171,6 @@ NetworkingPrivate.prototype = {
    * @see https://developer.chrome.com/extensions/networkingPrivate#method-startActivate
    */
   startActivate: assertNotReached,
-
-  /**
-   * Verifies that the device is a trusted device.
-   * @param {!chrome.networkingPrivate.VerificationProperties} properties
-   *     Properties of the destination to use in verifying that it     is a
-   *     trusted device.
-   * @param {function(boolean):void} callback A callback function that indicates
-   *     whether or not the device     is a trusted device.
-   * @see https://developer.chrome.com/extensions/networkingPrivate#method-verifyDestination
-   */
-  verifyDestination: assertNotReached,
-
-  /**
-   * Verifies that the device is a trusted device and retrieves encrypted
-   * network credentials.
-   * @param {!chrome.networkingPrivate.VerificationProperties} properties
-   *     Properties of the destination to use in verifying that it     is a
-   *     trusted device.
-   * @param {string} networkGuid The GUID of the Cellular network to activate.
-   * @param {function(string):void} callback A callback function that receives
-   *     base64-encoded encrypted     credential data to send to a trusted
-   *     device.
-   * @see https://developer.chrome.com/extensions/networkingPrivate#method-verifyAndEncryptCredentials
-   */
-  verifyAndEncryptCredentials: assertNotReached,
-
-  /**
-   * Verifies that the device is a trusted device and encrypts supplied data
-   * with device public key.
-   * @param {!chrome.networkingPrivate.VerificationProperties} properties
-   *     Properties of the destination to use in verifying that it     is a
-   *     trusted device.
-   * @param {string} data A string containing the base64-encoded data to
-   *     encrypt.
-   * @param {function(string):void} callback A callback function that receives
-   *     base64-encoded encrypted     data to send to a trusted device.
-   * @see https://developer.chrome.com/extensions/networkingPrivate#method-verifyAndEncryptData
-   */
-  verifyAndEncryptData: assertNotReached,
-
-  /**
-   * Enables TDLS for WiFi traffic with a specified peer if available.
-   * @param {string} ip_or_mac_address The IP or MAC address of the peer with
-   *     which to     enable a TDLS connection. |enabled| If true, enable TDLS,
-   *     otherwise disable TDLS.
-   * @param {boolean} enabled
-   * @param {function(string):void=} callback A callback function that receives
-   *     a string with an error or     the current TDLS status. 'Failed'
-   *     indicates that the request failed     (e.g. MAC address lookup failed).
-   *     'Timeout' indicates that the lookup     timed out. Otherwise a valid
-   *     status is returned (see     $(ref:getWifiTDLSStatus)).
-   * @see https://developer.chrome.com/extensions/networkingPrivate#method-setWifiTDLSEnabledState
-   */
-  setWifiTDLSEnabledState: assertNotReached,
-
-  /**
-   * Returns the current TDLS status for the specified peer.
-   * @param {string} ip_or_mac_address The IP or MAC address of the peer.
-   * @param {function(string):void} callback A callback function that receives a
-   *     string with the current     TDLS status which can be 'Connected',
-   *     'Disabled', 'Disconnected',     'Nonexistent', or 'Unknown'.
-   * @see https://developer.chrome.com/extensions/networkingPrivate#method-getWifiTDLSStatus
-   */
-  getWifiTDLSStatus: assertNotReached,
 
   /**
    * Returns captive portal status for the network matching 'networkGuid'.
@@ -278,12 +217,31 @@ NetworkingPrivate.prototype = {
   setCellularSimState: assertNotReached,
 
   /**
+   * Selects which Cellular Mobile Network to use. |networkId| must be the
+   * NetworkId property of a member of Cellular.FoundNetworks from the network
+   * properties for the specified Cellular network.
+   * @param {string} networkGuid The GUID of the cellular network to select the
+   *     network     for. If empty, the default cellular device will be used.
+   * @param {string} networkId The networkId to select.
+   * @param {function():void=} callback Called when the operation has completed.
+   * @see https://developer.chrome.com/extensions/networkingPrivate#method-selectCellularMobileNetwork
+   */
+  selectCellularMobileNetwork: assertNotReached,
+
+  /**
    * Gets the global policy properties. These properties are not expected to
    * change during a session.
    * @param {function(!chrome.networkingPrivate.GlobalPolicy):void} callback
    * @see https://developer.chrome.com/extensions/networkingPrivate#method-getGlobalPolicy
    */
   getGlobalPolicy: assertNotReached,
+
+  /**
+   * Gets the lists of certificates available for network configuration.
+   * @param {function(!chrome.networkingPrivate.CertificateLists):void} callback
+   * @see https://developer.chrome.com/extensions/networkingPrivate#method-getCertificateLists
+   */
+  getCertificateLists: assertNotReached,
 };
 
 /**
@@ -317,3 +275,10 @@ NetworkingPrivate.prototype.onDeviceStateListChanged;
  * @see https://developer.chrome.com/extensions/networkingPrivate#event-onPortalDetectionCompleted
  */
 NetworkingPrivate.prototype.onPortalDetectionCompleted;
+
+/**
+ * Fired when any certificate list has changed.
+ * @type {!ChromeEvent}
+ * @see https://developer.chrome.com/extensions/networkingPrivate#event-onCertificateListsChanged
+ */
+NetworkingPrivate.prototype.onCertificateListsChanged;

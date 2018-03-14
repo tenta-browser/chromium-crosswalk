@@ -4,21 +4,20 @@
 
 #include "ash/test/ash_test_environment_content.h"
 
+#include <memory>
+
 #include "ash/test/ash_test_views_delegate.h"
 #include "ash/test/content/test_shell_content_state.h"
-#include "base/memory/ptr_util.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/web_contents_tester.h"
 
 namespace ash {
-namespace test {
 namespace {
 
 class AshTestViewsDelegateContent : public AshTestViewsDelegate {
  public:
-  AshTestViewsDelegateContent() {}
-  ~AshTestViewsDelegateContent() override {}
+  AshTestViewsDelegateContent() = default;
+  ~AshTestViewsDelegateContent() override = default;
 
   // AshTestViewsDelegate:
   content::WebContents* CreateWebContents(
@@ -36,7 +35,7 @@ class AshTestViewsDelegateContent : public AshTestViewsDelegate {
 
 // static
 std::unique_ptr<AshTestEnvironment> AshTestEnvironment::Create() {
-  return base::MakeUnique<AshTestEnvironmentContent>();
+  return std::make_unique<AshTestEnvironmentContent>();
 }
 
 // static
@@ -45,9 +44,9 @@ std::string AshTestEnvironment::Get100PercentResourceFileName() {
 }
 
 AshTestEnvironmentContent::AshTestEnvironmentContent()
-    : thread_bundle_(base::MakeUnique<content::TestBrowserThreadBundle>()) {}
+    : thread_bundle_(std::make_unique<content::TestBrowserThreadBundle>()) {}
 
-AshTestEnvironmentContent::~AshTestEnvironmentContent() {}
+AshTestEnvironmentContent::~AshTestEnvironmentContent() = default;
 
 void AshTestEnvironmentContent::SetUp() {
   ShellContentState* content_state = content_state_;
@@ -62,14 +61,9 @@ void AshTestEnvironmentContent::TearDown() {
   ShellContentState::DestroyInstance();
 }
 
-base::SequencedWorkerPool* AshTestEnvironmentContent::GetBlockingPool() {
-  return content::BrowserThread::GetBlockingPool();
-}
-
 std::unique_ptr<AshTestViewsDelegate>
 AshTestEnvironmentContent::CreateViewsDelegate() {
-  return base::MakeUnique<AshTestViewsDelegateContent>();
+  return std::make_unique<AshTestViewsDelegateContent>();
 }
 
-}  // namespace test
 }  // namespace ash

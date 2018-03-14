@@ -9,6 +9,7 @@
 #include "base/android/jni_string.h"
 #include "base/callback.h"
 #include "base/memory/weak_ptr.h"
+#include "base/supports_user_data.h"
 #include "base/time/time.h"
 #include "chrome/browser/android/contextualsearch/contextual_search_delegate.h"
 #include "chrome/browser/android/contextualsearch/resolved_search_term.h"
@@ -22,14 +23,56 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_observer.h"
 #include "jni/ContextualSearchManager_jni.h"
 #include "net/url_request/url_fetcher_impl.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
 
 using base::android::JavaParamRef;
 using base::android::JavaRef;
 using content::WebContents;
+
+namespace {
+
+const char kContextualSearchObserverKey[] = "contextual_search_observer";
+
+class ContextualSearchObserver : public content::WebContentsObserver,
+                                 public base::SupportsUserData::Data {
+ public:
+  ContextualSearchObserver(
+      content::WebContents* contents,
+      contextual_search::ContextualSearchJsApiHandler* api_handler)
+      : content::WebContentsObserver(contents) {
+    registry_.AddInterface(base::Bind(
+        &contextual_search::CreateContextualSearchJsApiService, api_handler));
+  }
+  ~ContextualSearchObserver() override = default;
+
+  static void EnsureForWebContents(
+      content::WebContents* contents,
+      contextual_search::ContextualSearchJsApiHandler* api_handler) {
+    // Clobber any prior registered observer.
+    contents->SetUserData(
+        kContextualSearchObserverKey,
+        base::MakeUnique<ContextualSearchObserver>(contents, api_handler));
+  }
+
+ private:
+  // content::WebContentsObserver:
+  void OnInterfaceRequestFromFrame(
+      content::RenderFrameHost* render_frame_host,
+      const std::string& interface_name,
+      mojo::ScopedMessagePipeHandle* interface_pipe) override {
+    registry_.TryBindInterface(interface_name, interface_pipe);
+  }
+
+  service_manager::BinderRegistry registry_;
+
+  DISALLOW_COPY_AND_ASSIGN(ContextualSearchObserver);
+};
+
+}  // namespace
 
 // This class manages the native behavior of the Contextual Search feature.
 // Instances of this class are owned by the Java ContextualSearchManager.
@@ -46,9 +89,7 @@ ContextualSearchManager::ContextualSearchManager(JNIEnv* env,
       TemplateURLServiceFactory::GetForProfile(profile),
       base::Bind(&ContextualSearchManager::OnSearchTermResolutionResponse,
                  base::Unretained(this)),
-      base::Bind(&ContextualSearchManager::OnSurroundingTextAvailable,
-                 base::Unretained(this)),
-      base::Bind(&ContextualSearchManager::OnIcingSelectionAvailable,
+      base::Bind(&ContextualSearchManager::OnTextSurroundingSelectionAvailable,
                  base::Unretained(this))));
 }
 
@@ -148,16 +189,7 @@ void ContextualSearchManager::OnSearchTermResolutionResponse(
       resolved_search_term.quick_action_category);
 }
 
-void ContextualSearchManager::OnSurroundingTextAvailable(
-    const std::string& after_text) {
-  JNIEnv* env = base::android::AttachCurrentThread();
-  base::android::ScopedJavaLocalRef<jstring> j_after_text =
-      base::android::ConvertUTF8ToJavaString(env, after_text.c_str());
-  Java_ContextualSearchManager_onSurroundingTextAvailable(env, java_manager_,
-                                                          j_after_text);
-}
-
-void ContextualSearchManager::OnIcingSelectionAvailable(
+void ContextualSearchManager::OnTextSurroundingSelectionAvailable(
     const std::string& encoding,
     const base::string16& surrounding_text,
     size_t start_offset,
@@ -167,7 +199,7 @@ void ContextualSearchManager::OnIcingSelectionAvailable(
       base::android::ConvertUTF8ToJavaString(env, encoding.c_str());
   base::android::ScopedJavaLocalRef<jstring> j_surrounding_text =
       base::android::ConvertUTF16ToJavaString(env, surrounding_text.c_str());
-  Java_ContextualSearchManager_onIcingSelectionAvailable(
+  Java_ContextualSearchManager_onTextSurroundingSelectionAvailable(
       env, java_manager_, j_encoding, j_surrounding_text, start_offset,
       end_offset);
 }
@@ -189,16 +221,11 @@ void ContextualSearchManager::EnableContextualSearchJsApiForOverlay(
   DCHECK(page_notifier_service);
   page_notifier_service->NotifyIsContextualSearchOverlay();
 
-  // Also set up the backchannel to call into this class from the JS API.
-  render_frame_host->GetInterfaceRegistry()->AddInterface(
-      base::Bind(&contextual_search::CreateContextualSearchJsApiService, this));
+  ContextualSearchObserver::EnsureForWebContents(overlay_web_contents, this);
 }
 
-bool RegisterContextualSearchManager(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
-jlong Init(JNIEnv* env, const JavaParamRef<jobject>& obj) {
+jlong JNI_ContextualSearchManager_Init(JNIEnv* env,
+                                       const JavaParamRef<jobject>& obj) {
   ContextualSearchManager* manager = new ContextualSearchManager(env, obj);
   return reinterpret_cast<intptr_t>(manager);
 }

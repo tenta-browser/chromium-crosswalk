@@ -30,13 +30,17 @@ class CONTENT_EXPORT ParallelDownloadJob : public DownloadJobImpl,
   ~ParallelDownloadJob() override;
 
   // DownloadJobImpl implementation.
-  void Start() override;
   void Cancel(bool user_cancel) override;
   void Pause() override;
   void Resume(bool resume_request) override;
   void CancelRequestWithOffset(int64_t offset) override;
 
  protected:
+  // DownloadJobImpl implementation.
+  void OnDownloadFileInitialized(
+      const DownloadFile::InitializeCallback& callback,
+      DownloadInterruptReason result) override;
+
   // Virtual for testing.
   virtual int GetParallelRequestCount() const;
   virtual int64_t GetMinSliceSize() const;
@@ -74,6 +78,11 @@ class CONTENT_EXPORT ParallelDownloadJob : public DownloadJobImpl,
 
   // Information about the initial request when download is started.
   int64_t initial_request_offset_;
+
+  // A snapshot of received slices when creating the parallel download job.
+  // Download item's received slices may be different from this snapshot when
+  // |BuildParallelRequests| is called.
+  DownloadItem::ReceivedSlices initial_received_slices_;
 
   // The length of the response body of the original request.
   // Used to estimate the remaining size of the content when the initial

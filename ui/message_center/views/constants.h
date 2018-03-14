@@ -9,7 +9,7 @@
 
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/message_center/message_center_style.h"
+#include "ui/message_center/public/cpp/message_center_constants.h"
 
 namespace message_center {
 
@@ -22,7 +22,7 @@ const SkColor kContextTextBackgroundColor = SK_ColorWHITE;
 
 const int kTextBottomPadding = 12;
 const int kItemTitleToMessagePadding = 3;
-const int kButtonVecticalPadding = 0;
+const int kButtonVerticalPadding = 0;
 const int kButtonTitleTopPadding = 0;
 const int kNotificationSettingsPadding = 5;
 

@@ -4,54 +4,34 @@
 
 #include "ash/system/palette/palette_utils.h"
 
-#include "ash/ash_switches.h"
-#include "ash/shelf/wm_shelf.h"
-#include "ash/shell_port.h"
+#include "ash/public/cpp/stylus_utils.h"
+#include "ash/session/session_controller.h"
+#include "ash/shelf/shelf.h"
+#include "ash/shell.h"
 #include "ash/system/palette/palette_tray.h"
 #include "ash/system/status_area_widget.h"
-#include "ash/wm_window.h"
-#include "base/command_line.h"
-#include "ui/events/devices/input_device_manager.h"
-#include "ui/events/devices/touchscreen_device.h"
+#include "ui/display/display.h"
 #include "ui/gfx/geometry/point.h"
 
 namespace ash {
 namespace palette_utils {
 
-bool HasStylusInput() {
-  // Allow the user to force enable or disable by passing a switch. If both are
-  // present, enabling takes precedence over disabling.
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshForceEnablePalette)) {
-    return true;
-  }
-
-  // Check to see if the hardware reports it is stylus capable.
-  for (const ui::TouchscreenDevice& device :
-       ui::InputDeviceManager::GetInstance()->GetTouchscreenDevices()) {
-    if (device.is_stylus &&
-        device.type == ui::InputDeviceType::INPUT_DEVICE_INTERNAL) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool IsPaletteEnabledOnEveryDisplay() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kAshEnablePaletteOnAllDisplays);
-}
-
 bool PaletteContainsPointInScreen(const gfx::Point& point) {
-  for (WmWindow* window : ShellPort::Get()->GetAllRootWindows()) {
+  for (aura::Window* window : Shell::GetAllRootWindows()) {
     PaletteTray* palette_tray =
-        WmShelf::ForWindow(window)->GetStatusAreaWidget()->palette_tray();
+        Shelf::ForWindow(window)->GetStatusAreaWidget()->palette_tray();
     if (palette_tray && palette_tray->ContainsPointInScreen(point))
       return true;
   }
 
   return false;
+}
+
+bool IsInUserSession() {
+  SessionController* session_controller = Shell::Get()->session_controller();
+  return session_controller->GetSessionState() ==
+             session_manager::SessionState::ACTIVE &&
+         !session_controller->IsRunningInAppMode();
 }
 
 }  // namespace palette_utils

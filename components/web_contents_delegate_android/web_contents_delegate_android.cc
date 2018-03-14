@@ -10,8 +10,6 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "components/web_contents_delegate_android/color_chooser_android.h"
-#include "components/web_contents_delegate_android/validation_message_bubble_android.h"
-#include "content/public/browser/android/content_view_core.h"
 #include "content/public/browser/color_chooser.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/invalidate_type.h"
@@ -29,6 +27,7 @@
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::ConvertUTF16ToJavaString;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 using content::ColorChooser;
 using content::RenderWidgetHostView;
@@ -110,6 +109,7 @@ WebContents* WebContentsDelegateAndroid::OpenURLFromTab(
   load_params.should_replace_current_entry =
       params.should_replace_current_entry;
   load_params.is_renderer_initiated = params.is_renderer_initiated;
+  load_params.has_user_gesture = params.user_gesture;
 
   if (params.uses_post) {
     load_params.load_type = content::NavigationController::LOAD_TYPE_HTTP_POST;
@@ -185,6 +185,7 @@ void WebContentsDelegateAndroid::RendererResponsive(WebContents* source) {
 
 bool WebContentsDelegateAndroid::ShouldCreateWebContents(
     content::WebContents* web_contents,
+    content::RenderFrameHost* opener,
     content::SiteInstance* source_site_instance,
     int32_t route_id,
     int32_t main_frame_route_id,
@@ -203,14 +204,6 @@ bool WebContentsDelegateAndroid::ShouldCreateWebContents(
       ConvertUTF8ToJavaString(env, target_url.spec());
   return Java_WebContentsDelegateAndroid_shouldCreateWebContents(env, obj,
                                                                  java_url);
-}
-
-bool WebContentsDelegateAndroid::OnGoToEntryOffset(int offset) {
-  JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
-  if (obj.is_null())
-    return true;
-  return Java_WebContentsDelegateAndroid_onGoToEntryOffset(env, obj, offset);
 }
 
 void WebContentsDelegateAndroid::WebContentsCreated(
@@ -309,8 +302,8 @@ void WebContentsDelegateAndroid::UpdateTargetURL(WebContents* source,
 void WebContentsDelegateAndroid::HandleKeyboardEvent(
     WebContents* source,
     const content::NativeWebKeyboardEvent& event) {
-  jobject key_event = event.os_event;
-  if (key_event) {
+  const JavaRef<jobject>& key_event = event.os_event;
+  if (!key_event.is_null()) {
     JNIEnv* env = AttachCurrentThread();
     ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
     if (obj.is_null())
@@ -383,40 +376,36 @@ bool WebContentsDelegateAndroid::IsFullscreenForTabOrPending(
   return Java_WebContentsDelegateAndroid_isFullscreenForTabOrPending(env, obj);
 }
 
-void WebContentsDelegateAndroid::ShowValidationMessage(
-    WebContents* web_contents,
-    const gfx::Rect& anchor_in_root_view,
-    const base::string16& main_text,
-    const base::string16& sub_text) {
-  RenderWidgetHostView* rwhv = web_contents->GetRenderWidgetHostView();
-  if (rwhv) {
-    validation_message_bubble_.reset(
-        new ValidationMessageBubbleAndroid(rwhv->GetRenderWidgetHost(),
-                                           anchor_in_root_view,
-                                           main_text,
-                                           sub_text));
-  }
-}
-
-void WebContentsDelegateAndroid::HideValidationMessage(
-    WebContents* web_contents) {
-  validation_message_bubble_.reset();
-}
-
-void WebContentsDelegateAndroid::MoveValidationMessage(
-    WebContents* web_contents,
-    const gfx::Rect& anchor_in_root_view) {
-  if (!validation_message_bubble_)
-    return;
-  RenderWidgetHostView* rwhv = web_contents->GetRenderWidgetHostView();
-  if (rwhv) {
-    validation_message_bubble_->SetPositionRelativeToAnchor(
-        rwhv->GetRenderWidgetHost(), anchor_in_root_view);
-  }
-}
-
 void WebContentsDelegateAndroid::RequestAppBannerFromDevTools(
     content::WebContents* web_contents) {
+}
+
+void WebContentsDelegateAndroid::OnDidBlockFramebust(
+    content::WebContents* web_contents,
+    const GURL& url) {}
+
+int WebContentsDelegateAndroid::GetTopControlsHeight() const {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
+  if (obj.is_null())
+    return 0;
+  return Java_WebContentsDelegateAndroid_getTopControlsHeight(env, obj);
+}
+
+int WebContentsDelegateAndroid::GetBottomControlsHeight() const {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
+  if (obj.is_null())
+    return 0;
+  return Java_WebContentsDelegateAndroid_getBottomControlsHeight(env, obj);
+}
+
+bool WebContentsDelegateAndroid::DoBrowserControlsShrinkBlinkSize() const {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
+  if (obj.is_null())
+    return false;
+  return Java_WebContentsDelegateAndroid_controlsResizeView(env, obj);
 }
 
 }  // namespace web_contents_delegate_android

@@ -8,9 +8,13 @@
 #include <string>
 #include <vector>
 
-#include "components/wallpaper/wallpaper_layout.h"
+#include "components/wallpaper/wallpaper_info.h"
 #include "extensions/browser/extension_function.h"
 #include "ui/gfx/image/image_skia.h"
+
+namespace base {
+class SequencedTaskRunner;
+}
 
 namespace wallpaper_api_util {
 
@@ -29,6 +33,11 @@ void RecordCustomWallpaperLayout(const wallpaper::WallpaperLayout& layout);
 class WallpaperFunctionBase : public AsyncExtensionFunction {
  public:
   WallpaperFunctionBase();
+
+  // For tasks that are worth blocking shutdown, i.e. saving user's custom
+  // wallpaper.
+  static base::SequencedTaskRunner* GetBlockingTaskRunner();
+  static base::SequencedTaskRunner* GetNonBlockingTaskRunner();
 
  protected:
   ~WallpaperFunctionBase() override;

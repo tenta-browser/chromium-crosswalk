@@ -10,6 +10,7 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
+#include "base/message_loop/message_loop.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
 #include "base/run_loop.h"
@@ -101,10 +102,10 @@ void ServiceProcessStateTest::SetUp() {
 }
 
 void ServiceProcessStateTest::LaunchAndWait(const std::string& name) {
-  base::SpawnChildResult spawn_child = SpawnChild(name);
-  ASSERT_TRUE(spawn_child.process.IsValid());
+  base::Process process = SpawnChild(name);
+  ASSERT_TRUE(process.IsValid());
   int exit_code = 0;
-  ASSERT_TRUE(spawn_child.process.WaitForExit(&exit_code));
+  ASSERT_TRUE(process.WaitForExit(&exit_code));
   ASSERT_EQ(exit_code, 0);
 }
 
@@ -195,9 +196,8 @@ TEST_F(ServiceProcessStateTest, DISABLED_SharedMem) {
 }
 
 TEST_F(ServiceProcessStateTest, MAYBE_ForceShutdown) {
-  base::SpawnChildResult spawn_child =
-      SpawnChild("ServiceProcessStateTestShutdown");
-  ASSERT_TRUE(spawn_child.process.IsValid());
+  base::Process process = SpawnChild("ServiceProcessStateTestShutdown");
+  ASSERT_TRUE(process.IsValid());
   for (int i = 0; !CheckServiceProcessReady() && i < 10; ++i) {
     base::PlatformThread::Sleep(TestTimeouts::tiny_timeout());
   }
@@ -207,8 +207,8 @@ TEST_F(ServiceProcessStateTest, MAYBE_ForceShutdown) {
   ASSERT_TRUE(GetServiceProcessData(&version, &pid));
   ASSERT_TRUE(ForceServiceProcessShutdown(version, pid));
   int exit_code = 0;
-  ASSERT_TRUE(spawn_child.process.WaitForExitWithTimeout(
-      TestTimeouts::action_max_timeout(), &exit_code));
+  ASSERT_TRUE(process.WaitForExitWithTimeout(TestTimeouts::action_max_timeout(),
+                                             &exit_code));
   ASSERT_EQ(exit_code, 0);
 }
 

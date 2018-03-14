@@ -15,16 +15,18 @@
 #include "base/values.h"
 #include "cc/cc_export.h"
 #include "cc/input/browser_controls_state.h"
-#include "cc/scheduler/begin_frame_source.h"
 #include "cc/trees/task_runner_provider.h"
+#include "components/viz/common/frame_sinks/begin_frame_source.h"
+#include "services/metrics/public/cpp/ukm_source_id.h"
+#include "url/gurl.h"
 
 namespace gfx {
 class Rect;
 }
 
 namespace cc {
+class LayerTreeFrameSink;
 class LayerTreeMutator;
-class CompositorFrameSink;
 
 // Abstract interface responsible for proxying commands from the main-thread
 // side of the compositor over to the compositor implementation.
@@ -35,12 +37,9 @@ class CC_EXPORT Proxy {
   virtual bool IsStarted() const = 0;
   virtual bool CommitToActiveTree() const = 0;
 
-  // Will call LayerTreeHost::OnCreateAndInitializeCompositorFrameSinkAttempted
-  // with the result of this function.
-  virtual void SetCompositorFrameSink(
-      CompositorFrameSink* compositor_frame_sink) = 0;
-
-  virtual void ReleaseCompositorFrameSink() = 0;
+  virtual void SetLayerTreeFrameSink(
+      LayerTreeFrameSink* layer_tree_frame_sink) = 0;
+  virtual void ReleaseLayerTreeFrameSink() = 0;
 
   virtual void SetVisible(bool visible) = 0;
 
@@ -73,8 +72,12 @@ class CC_EXPORT Proxy {
                                           BrowserControlsState current,
                                           bool animate) = 0;
 
+  virtual void RequestBeginMainFrameNotExpected(bool new_state) = 0;
+
   // Testing hooks
   virtual bool MainFrameWillHappenForTesting() = 0;
+
+  virtual void SetURLForUkm(const GURL& url) = 0;
 };
 
 }  // namespace cc

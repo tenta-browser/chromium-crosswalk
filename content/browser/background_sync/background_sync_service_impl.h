@@ -10,7 +10,7 @@
 #include <memory>
 #include <vector>
 
-#include "base/id_map.h"
+#include "base/containers/id_map.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/browser/background_sync/background_sync_manager.h"
@@ -22,7 +22,7 @@ namespace content {
 class BackgroundSyncContext;
 
 class CONTENT_EXPORT BackgroundSyncServiceImpl
-    : public NON_EXPORTED_BASE(blink::mojom::BackgroundSyncService) {
+    : public blink::mojom::BackgroundSyncService {
  public:
   BackgroundSyncServiceImpl(
       BackgroundSyncContext* background_sync_context,
@@ -36,18 +36,17 @@ class CONTENT_EXPORT BackgroundSyncServiceImpl
   // blink::mojom::BackgroundSyncService methods:
   void Register(blink::mojom::SyncRegistrationPtr options,
                 int64_t sw_registration_id,
-                const RegisterCallback& callback) override;
+                RegisterCallback callback) override;
   void GetRegistrations(int64_t sw_registration_id,
-                        const GetRegistrationsCallback& callback) override;
+                        GetRegistrationsCallback callback) override;
 
-  void OnRegisterResult(const RegisterCallback& callback,
+  void OnRegisterResult(RegisterCallback callback,
                         BackgroundSyncStatus status,
                         std::unique_ptr<BackgroundSyncRegistration> result);
   void OnGetRegistrationsResult(
-      const GetRegistrationsCallback& callback,
+      GetRegistrationsCallback callback,
       BackgroundSyncStatus status,
-      std::unique_ptr<std::vector<std::unique_ptr<BackgroundSyncRegistration>>>
-          result);
+      std::vector<std::unique_ptr<BackgroundSyncRegistration>> result);
 
   // Called when an error is detected on binding_.
   void OnConnectionError();

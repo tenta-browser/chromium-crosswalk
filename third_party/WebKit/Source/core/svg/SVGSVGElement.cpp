@@ -23,18 +23,17 @@
 #include "core/svg/SVGSVGElement.h"
 
 #include "bindings/core/v8/ScriptEventListener.h"
-#include "core/HTMLNames.h"
-#include "core/SVGNames.h"
-#include "core/css/CSSHelper.h"
+#include "core/css/CSSResolutionUnits.h"
+#include "core/css/StyleChangeReason.h"
 #include "core/dom/Document.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/dom/StaticNodeList.h"
-#include "core/dom/StyleChangeReason.h"
+#include "core/dom/events/EventListener.h"
 #include "core/editing/FrameSelection.h"
-#include "core/events/EventListener.h"
 #include "core/frame/Deprecation.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
+#include "core/html_names.h"
 #include "core/layout/LayoutObject.h"
 #include "core/layout/svg/LayoutSVGModelObject.h"
 #include "core/layout/svg/LayoutSVGRoot.h"
@@ -53,6 +52,7 @@
 #include "core/svg/SVGViewElement.h"
 #include "core/svg/SVGViewSpec.h"
 #include "core/svg/animation/SMILTimeContainer.h"
+#include "core/svg_names.h"
 #include "platform/LengthFunctions.h"
 #include "platform/geometry/FloatRect.h"
 #include "platform/transforms/AffineTransform.h"
@@ -92,7 +92,7 @@ inline SVGSVGElement::SVGSVGElement(Document& doc)
   AddToPropertyMap(width_);
   AddToPropertyMap(height_);
 
-  UseCounter::Count(doc, UseCounter::kSVGSVGElement);
+  UseCounter::Count(doc, WebFeature::kSVGSVGElement);
 }
 
 DEFINE_NODE_FACTORY(SVGSVGElement)
@@ -123,14 +123,15 @@ class SVGCurrentTranslateTearOff : public SVGPointTearOff {
 
   void CommitChange() override {
     DCHECK(contextElement());
-    toSVGSVGElement(contextElement())->UpdateUserTransform();
+    ToSVGSVGElement(contextElement())->UpdateUserTransform();
   }
 
  private:
   SVGCurrentTranslateTearOff(SVGSVGElement* context_element)
       : SVGPointTearOff(context_element->translation_,
                         context_element,
-                        kPropertyIsNotAnimVal) {}
+                        kPropertyIsNotAnimVal,
+                        QualifiedName::Null()) {}
 };
 
 SVGPointTearOff* SVGSVGElement::currentTranslateFromJavascript() {
@@ -227,7 +228,7 @@ bool SVGSVGElement::IsPresentationAttributeWithSVGDOM(
 void SVGSVGElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,
     const AtomicString& value,
-    MutableStylePropertySet* style) {
+    MutableCSSPropertyValueSet* style) {
   SVGAnimatedPropertyBase* property = PropertyFromAttribute(name);
   if (property == x_) {
     AddPropertyToPresentationAttributeStyle(style, property->CssPropertyId(),
@@ -316,7 +317,7 @@ static bool IntersectsAllowingEmpty(const FloatRect& r1, const FloatRect& r2) {
 static bool IsIntersectionOrEnclosureTarget(LayoutObject* layout_object) {
   return layout_object->IsSVGShape() || layout_object->IsSVGText() ||
          layout_object->IsSVGImage() ||
-         isSVGUseElement(*layout_object->GetNode());
+         IsSVGUseElement(*layout_object->GetNode());
 }
 
 bool SVGSVGElement::CheckIntersectionOrEnclosure(
@@ -332,8 +333,8 @@ bool SVGSVGElement::CheckIntersectionOrEnclosure(
   if (!IsIntersectionOrEnclosureTarget(layout_object))
     return false;
 
-  AffineTransform ctm = ToSVGGraphicsElement(element).ComputeCTM(
-      kAncestorScope, kDisallowStyleUpdate, this);
+  AffineTransform ctm =
+      ToSVGGraphicsElement(element).ComputeCTM(kAncestorScope, this);
   FloatRect mapped_repaint_rect =
       ctm.MapRect(layout_object->VisualRectInLocalSVGCoordinates());
 
@@ -421,21 +422,19 @@ void SVGSVGElement::deselectAll() {
 }
 
 SVGNumberTearOff* SVGSVGElement::createSVGNumber() {
-  return SVGNumberTearOff::Create(SVGNumber::Create(0.0f), 0,
-                                  kPropertyIsNotAnimVal);
+  return SVGNumberTearOff::CreateDetached();
 }
 
 SVGLengthTearOff* SVGSVGElement::createSVGLength() {
-  return SVGLengthTearOff::Create(SVGLength::Create(), 0,
-                                  kPropertyIsNotAnimVal);
+  return SVGLengthTearOff::CreateDetached();
 }
 
 SVGAngleTearOff* SVGSVGElement::createSVGAngle() {
-  return SVGAngleTearOff::Create(SVGAngle::Create(), 0, kPropertyIsNotAnimVal);
+  return SVGAngleTearOff::CreateDetached();
 }
 
 SVGPointTearOff* SVGSVGElement::createSVGPoint() {
-  return SVGPointTearOff::Create(SVGPoint::Create(), 0, kPropertyIsNotAnimVal);
+  return SVGPointTearOff::CreateDetached(FloatPoint(0, 0));
 }
 
 SVGMatrixTearOff* SVGSVGElement::createSVGMatrix() {
@@ -443,12 +442,11 @@ SVGMatrixTearOff* SVGSVGElement::createSVGMatrix() {
 }
 
 SVGRectTearOff* SVGSVGElement::createSVGRect() {
-  return SVGRectTearOff::Create(SVGRect::Create(), 0, kPropertyIsNotAnimVal);
+  return SVGRectTearOff::CreateDetached(FloatRect(0, 0, 0, 0));
 }
 
 SVGTransformTearOff* SVGSVGElement::createSVGTransform() {
-  return SVGTransformTearOff::Create(SVGTransform::Create(kSvgTransformMatrix),
-                                     0, kPropertyIsNotAnimVal);
+  return SVGTransformTearOff::CreateDetached();
 }
 
 SVGTransformTearOff* SVGSVGElement::createSVGTransformFromMatrix(
@@ -474,7 +472,7 @@ AffineTransform SVGSVGElement::LocalCoordinateSpaceTransform(
       // performs the same operation as
       // Document::adjustFloatRectForScrollAndAbsoluteZoom, but in
       // transformation matrix form.)
-      if (FrameView* view = GetDocument().View()) {
+      if (LocalFrameView* view = GetDocument().View()) {
         LayoutRect visible_content_rect(view->VisibleContentRect());
         transform.Translate(-visible_content_rect.X(),
                             -visible_content_rect.Y());
@@ -504,8 +502,8 @@ AffineTransform SVGSVGElement::LocalCoordinateSpaceTransform(
 
 bool SVGSVGElement::LayoutObjectIsNeeded(const ComputedStyle& style) {
   // FIXME: We should respect display: none on the documentElement svg element
-  // but many things in FrameView and SVGImage depend on the LayoutSVGRoot when
-  // they should instead depend on the LayoutView.
+  // but many things in LocalFrameView and SVGImage depend on the LayoutSVGRoot
+  // when they should instead depend on the LayoutView.
   // https://bugs.webkit.org/show_bug.cgi?id=103493
   if (GetDocument().documentElement() == this)
     return true;
@@ -525,19 +523,19 @@ LayoutObject* SVGSVGElement::CreateLayoutObject(const ComputedStyle&) {
 Node::InsertionNotificationRequest SVGSVGElement::InsertedInto(
     ContainerNode* root_parent) {
   if (root_parent->isConnected()) {
-    UseCounter::Count(GetDocument(), UseCounter::kSVGSVGElementInDocument);
+    UseCounter::Count(GetDocument(), WebFeature::kSVGSVGElementInDocument);
     if (root_parent->GetDocument().IsXMLDocument())
-      UseCounter::Count(GetDocument(), UseCounter::kSVGSVGElementInXMLDocument);
+      UseCounter::Count(GetDocument(), WebFeature::kSVGSVGElementInXMLDocument);
 
-    if (RuntimeEnabledFeatures::smilEnabled()) {
+    if (RuntimeEnabledFeatures::SMILEnabled()) {
       GetDocument().AccessSVGExtensions().AddTimeContainer(this);
 
       // Animations are started at the end of document parsing and after firing
       // the load event, but if we miss that train (deferred programmatic
       // element insertion for example) we need to initialize the time container
       // here.
-      if (!GetDocument().Parsing() && !GetDocument().ProcessingLoadEvent() &&
-          GetDocument().LoadEventFinished() && !TimeContainer()->IsStarted())
+      if (!GetDocument().Parsing() && GetDocument().LoadEventFinished() &&
+          !TimeContainer()->IsStarted())
         TimeContainer()->Start();
     }
   }
@@ -561,7 +559,7 @@ void SVGSVGElement::pauseAnimations() {
 
 void SVGSVGElement::unpauseAnimations() {
   if (time_container_->IsPaused())
-    time_container_->Resume();
+    time_container_->Unpause();
 }
 
 bool SVGSVGElement::animationsPaused() const {
@@ -629,21 +627,19 @@ SVGPreserveAspectRatio* SVGSVGElement::CurrentPreserveAspectRatio() const {
 }
 
 FloatSize SVGSVGElement::CurrentViewportSize() const {
-  if (!GetLayoutObject())
+  const LayoutObject* layout_object = GetLayoutObject();
+  if (!layout_object)
     return FloatSize();
 
-  if (GetLayoutObject()->IsSVGRoot()) {
-    LayoutRect content_box_rect =
-        ToLayoutSVGRoot(GetLayoutObject())->ContentBoxRect();
-    return FloatSize(
-        content_box_rect.Width() / GetLayoutObject()->Style()->EffectiveZoom(),
-        content_box_rect.Height() /
-            GetLayoutObject()->Style()->EffectiveZoom());
+  if (layout_object->IsSVGRoot()) {
+    LayoutSize content_size = ToLayoutSVGRoot(layout_object)->ContentSize();
+    float zoom = layout_object->StyleRef().EffectiveZoom();
+    return FloatSize(content_size.Width() / zoom, content_size.Height() / zoom);
   }
 
   FloatRect viewport_rect =
       ToLayoutSVGViewportContainer(GetLayoutObject())->Viewport();
-  return FloatSize(viewport_rect.Width(), viewport_rect.Height());
+  return viewport_rect.Size();
 }
 
 bool SVGSVGElement::HasIntrinsicWidth() const {
@@ -710,7 +706,7 @@ void SVGSVGElement::SetupInitialView(const String& fragment_identifier,
     SVGViewSpec* view_spec = SVGViewSpec::CreateForElement(*this);
     if (view_spec->ParseViewSpec(fragment_identifier)) {
       UseCounter::Count(GetDocument(),
-                        UseCounter::kSVGSVGElementFragmentSVGView);
+                        WebFeature::kSVGSVGElementFragmentSVGView);
       SetViewSpec(view_spec);
       return;
     }
@@ -718,10 +714,10 @@ void SVGSVGElement::SetupInitialView(const String& fragment_identifier,
 
   SetViewSpec(nullptr);
 
-  if (!isSVGViewElement(anchor_node))
+  if (!IsSVGViewElement(anchor_node))
     return;
 
-  SVGViewElement& view_element = toSVGViewElement(*anchor_node);
+  SVGViewElement& view_element = ToSVGViewElement(*anchor_node);
 
   // Spec: If the SVG fragment identifier addresses a 'view' element
   // within an SVG document (e.g., MyDrawing.svg#MyView) then the
@@ -740,7 +736,7 @@ void SVGSVGElement::SetupInitialView(const String& fragment_identifier,
   SVGViewSpec* view_spec = SVGViewSpec::CreateForElement(*svg);
   view_spec->InheritViewAttributesFromElement(view_element);
   UseCounter::Count(svg->GetDocument(),
-                    UseCounter::kSVGSVGElementFragmentSVGViewElement);
+                    WebFeature::kSVGSVGElementFragmentSVGViewElement);
   svg->SetViewSpec(view_spec);
 }
 
@@ -758,7 +754,7 @@ void SVGSVGElement::FinishParsingChildren() {
   SendSVGLoadEventIfPossible();
 }
 
-DEFINE_TRACE(SVGSVGElement) {
+void SVGSVGElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(x_);
   visitor->Trace(y_);
   visitor->Trace(width_);

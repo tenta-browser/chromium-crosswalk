@@ -9,7 +9,7 @@
 #include <memory>
 #include <vector>
 
-#include "base/containers/small_map.h"
+#include "base/containers/flat_map.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/stringprintf.h"
@@ -27,10 +27,6 @@
 #include "ui/gl/gpu_timing.h"
 #include "ui/gl/init/gl_factory.h"
 #include "ui/gl/scoped_make_current.h"
-
-#if defined(USE_OZONE)
-#include "base/message_loop/message_loop.h"
-#endif
 
 namespace gpu {
 namespace {
@@ -179,13 +175,6 @@ class TextureUploadPerfTest : public testing::Test {
 
   // Overridden from testing::Test
   void SetUp() override {
-#if defined(USE_OZONE)
-    // On Ozone, the backend initializes the event system using a UI
-    // thread.
-    base::MessageLoopForUI main_loop;
-#endif
-    static bool gl_initialized = gl::init::InitializeGLOneOff();
-    DCHECK(gl_initialized);
     // Initialize an offscreen surface and a gl context.
     surface_ = gl::init::CreateOffscreenGLSurface(gfx::Size());
     gl_context_ =
@@ -401,8 +390,7 @@ class TextureUploadPerfTest : public testing::Test {
                                      const GLenum format,
                                      const bool subimage) {
     std::vector<uint8_t> pixels;
-    base::SmallMap<std::map<std::string, Measurement>>
-        aggregates;  // indexed by name
+    base::flat_map<std::string, Measurement> aggregates;  // indexed by name
     int successful_runs = 0;
     GLuint texture_id = CreateGLTexture(format, size, subimage);
     for (int i = 0; i < kUploadPerfWarmupRuns + kUploadPerfTestRuns; ++i) {

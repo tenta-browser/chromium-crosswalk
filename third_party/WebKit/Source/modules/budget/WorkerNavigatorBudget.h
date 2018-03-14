@@ -13,6 +13,7 @@
 namespace blink {
 
 class BudgetService;
+class ExecutionContext;
 class WorkerNavigator;
 
 // This exposes the budget object on the WorkerNavigator partial interface.
@@ -25,10 +26,10 @@ class WorkerNavigatorBudget final
  public:
   static WorkerNavigatorBudget& From(WorkerNavigator&);
 
-  static BudgetService* budget(WorkerNavigator&);
-  BudgetService* budget();
+  static BudgetService* budget(ExecutionContext*, WorkerNavigator&);
+  BudgetService* budget(ExecutionContext*);
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   explicit WorkerNavigatorBudget(WorkerNavigator&);

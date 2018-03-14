@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -22,7 +23,7 @@
 #include <Cocoa/Cocoa.h>
 
 using blink::WebFrameContentDumper;
-using blink::WebCompositionUnderline;
+using blink::WebImeTextSpan;
 
 namespace content {
 
@@ -55,40 +56,28 @@ NSEvent* CmdDeadKeyEvent(NSEventType type, unsigned short code) {
 // Test that cmd-up/down scrolls the page exactly if it is not intercepted by
 // javascript.
 TEST_F(RenderViewTest, MacTestCmdUp) {
-  // Some preprocessor trickery so that we can have literal html in our source,
-  // makes it easier to copy html to and from an html file for testing (the
-  // preprocessor will remove the newlines at the line ends, turning this into
-  // a single long line).
-  #define HTML(s) #s
-  const char* kRawHtml = HTML(
-  <!DOCTYPE html>
-  <style>
-    /* Add a vertical scrollbar */
-    body { height: 10128px; }
-  </style>
-  <div id='keydown'></div>
-  <div id='scroll'></div>
-  <script>
-    var allowKeyEvents = true;
-    var scroll = document.getElementById('scroll');
-    var result = document.getElementById('keydown');
-    onkeydown = function(event) {
-      result.textContent =
-        event.keyCode + ',' +
-        event.shiftKey + ',' +
-        event.ctrlKey + ',' +
-        event.metaKey + ',' +
-        event.altKey;
-      return allowKeyEvents;
-    }
-  </script>
-  <!--
-    TODO(esprehn): For some strange reason we need a non-empty document for
-    scrolling to work. This is not the case in a real browser only in the test.
-  -->
-  <p>p1
-  );
-  #undef HTML
+  const char* kRawHtml =
+      "<!DOCTYPE html>"
+      "<style>"
+      "  /* Add a vertical scrollbar */"
+      "  body { height: 10128px; }"
+      "</style>"
+      "<div id='keydown'></div>"
+      "<div id='scroll'></div>"
+      "<script>"
+      "  var allowKeyEvents = true;"
+      "  var scroll = document.getElementById('scroll');"
+      "  var result = document.getElementById('keydown');"
+      "  onkeydown = function(event) {"
+      "    result.textContent ="
+      "      event.keyCode + ',' +"
+      "      event.shiftKey + ',' +"
+      "      event.ctrlKey + ',' +"
+      "      event.metaKey + ',' +"
+      "      event.altKey;"
+      "    return allowKeyEvents;"
+      "  }"
+      "</script>";
 
   WebPreferences prefs;
   prefs.enable_scroll_animator = false;
@@ -107,22 +96,22 @@ TEST_F(RenderViewTest, MacTestCmdUp) {
   LoadHTML(kRawHtml);
   render_thread_->sink().ClearMessages();
 
-  const char* kArrowDownScrollDown = "40,false,false,true,false\n10144\np1";
+  const char* kArrowDownScrollDown = "40,false,false,true,false\n9844";
   view->OnSetEditCommandsForNextKeyEvent(
       EditCommands(1, EditCommand("moveToEndOfDocument", "")));
   SendNativeKeyEvent(NativeWebKeyboardEvent(arrowDownKeyDown));
-  ProcessPendingMessages();
+  base::RunLoop().RunUntilIdle();
   ExecuteJavaScriptForTests("scroll.textContent = window.pageYOffset");
   output = WebFrameContentDumper::DumpWebViewAsText(view->GetWebView(),
                                                     kMaxOutputCharacters)
                .Ascii();
   EXPECT_EQ(kArrowDownScrollDown, output);
 
-  const char* kArrowUpScrollUp = "38,false,false,true,false\n0\np1";
+  const char* kArrowUpScrollUp = "38,false,false,true,false\n0";
   view->OnSetEditCommandsForNextKeyEvent(
       EditCommands(1, EditCommand("moveToBeginningOfDocument", "")));
   SendNativeKeyEvent(NativeWebKeyboardEvent(arrowUpKeyDown));
-  ProcessPendingMessages();
+  base::RunLoop().RunUntilIdle();
   ExecuteJavaScriptForTests("scroll.textContent = window.pageYOffset");
   output = WebFrameContentDumper::DumpWebViewAsText(view->GetWebView(),
                                                     kMaxOutputCharacters)
@@ -134,22 +123,22 @@ TEST_F(RenderViewTest, MacTestCmdUp) {
   // move.
   ExecuteJavaScriptForTests("allowKeyEvents = false; window.scrollTo(0, 100)");
 
-  const char* kArrowDownNoScroll = "40,false,false,true,false\n100\np1";
+  const char* kArrowDownNoScroll = "40,false,false,true,false\n100";
   view->OnSetEditCommandsForNextKeyEvent(
       EditCommands(1, EditCommand("moveToEndOfDocument", "")));
   SendNativeKeyEvent(NativeWebKeyboardEvent(arrowDownKeyDown));
-  ProcessPendingMessages();
+  base::RunLoop().RunUntilIdle();
   ExecuteJavaScriptForTests("scroll.textContent = window.pageYOffset");
   output = WebFrameContentDumper::DumpWebViewAsText(view->GetWebView(),
                                                     kMaxOutputCharacters)
                .Ascii();
   EXPECT_EQ(kArrowDownNoScroll, output);
 
-  const char* kArrowUpNoScroll = "38,false,false,true,false\n100\np1";
+  const char* kArrowUpNoScroll = "38,false,false,true,false\n100";
   view->OnSetEditCommandsForNextKeyEvent(
       EditCommands(1, EditCommand("moveToBeginningOfDocument", "")));
   SendNativeKeyEvent(NativeWebKeyboardEvent(arrowUpKeyDown));
-  ProcessPendingMessages();
+  base::RunLoop().RunUntilIdle();
   ExecuteJavaScriptForTests("scroll.textContent = window.pageYOffset");
   output = WebFrameContentDumper::DumpWebViewAsText(view->GetWebView(),
                                                     kMaxOutputCharacters)
@@ -193,11 +182,11 @@ TEST_F(RenderViewTest, HandleIPCsInSwappedOutState) {
 
   // Simulate some IME related IPCs.
   using Text = base::string16;
-  using Underlines = std::vector<blink::WebCompositionUnderline>;
+  using ImeTextSpans = std::vector<blink::WebImeTextSpan>;
   view->OnMessageReceived(InputMsg_ImeSetComposition(
-      routing_id, Text(), Underlines(), Range(), 0, 0));
+      routing_id, Text(), ImeTextSpans(), Range(), 0, 0));
   view->OnMessageReceived(
-      InputMsg_ImeCommitText(routing_id, Text(), Underlines(), Range(), 0));
+      InputMsg_ImeCommitText(routing_id, Text(), ImeTextSpans(), Range(), 0));
   view->OnMessageReceived(InputMsg_ImeFinishComposingText(routing_id, false));
 }
 

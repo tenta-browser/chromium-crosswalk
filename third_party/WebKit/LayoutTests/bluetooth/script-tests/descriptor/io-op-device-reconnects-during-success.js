@@ -1,10 +1,10 @@
-promise_test(
+bluetooth_test(
     () => {
       let val = new Uint8Array([1]);
       return setBluetoothFakeAdapter(
                  'DisconnectingDuringSuccessGATTOperationAdapter')
           .then(
-              () => requestDeviceWithKeyDown(
+              () => requestDeviceWithTrustedClick(
                   {filters: [{services: ['health_thermometer']}]}))
           .then(device => device.gatt.connect())
           .then(gatt => gatt.getPrimaryService('health_thermometer'))

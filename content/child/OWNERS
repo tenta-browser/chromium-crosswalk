@@ -1,8 +1,7 @@
-# For Blink API usage
-esprehn@chromium.org
+haraken@chromium.org
 
-# For resource loading
-yhirano@chromium.org
+# For Blink API usage
+dglazkov@chromium.org
 
 # AppCache
 per-file appcache*=michaeln@chromium.org

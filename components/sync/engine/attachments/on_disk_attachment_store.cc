@@ -11,7 +11,6 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
 #include "components/sync/engine/attachments/attachment_util.h"
@@ -154,11 +153,13 @@ OnDiskAttachmentStore::OnDiskAttachmentStore(
     const base::FilePath& path)
     : AttachmentStoreBackend(callback_task_runner), path_(path) {}
 
-OnDiskAttachmentStore::~OnDiskAttachmentStore() {}
+OnDiskAttachmentStore::~OnDiskAttachmentStore() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+}
 
 void OnDiskAttachmentStore::Init(
     const AttachmentStore::InitCallback& callback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   AttachmentStore::Result result_code = OpenOrCreate(path_);
   UMA_HISTOGRAM_ENUMERATION("Sync.Attachments.StoreInitResult", result_code,
                             AttachmentStore::RESULT_SIZE);
@@ -169,7 +170,7 @@ void OnDiskAttachmentStore::Read(
     AttachmentStore::Component component,
     const AttachmentIdList& ids,
     const AttachmentStore::ReadCallback& callback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   std::unique_ptr<AttachmentMap> result_map(new AttachmentMap());
   std::unique_ptr<AttachmentIdList> unavailable_attachments(
       new AttachmentIdList());
@@ -203,7 +204,7 @@ void OnDiskAttachmentStore::Write(
     AttachmentStore::Component component,
     const AttachmentList& attachments,
     const AttachmentStore::WriteCallback& callback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   AttachmentStore::Result result_code =
       AttachmentStore::STORE_INITIALIZATION_FAILED;
 
@@ -221,7 +222,7 @@ void OnDiskAttachmentStore::Write(
 
 void OnDiskAttachmentStore::SetReference(AttachmentStore::Component component,
                                          const AttachmentIdList& ids) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!db_)
     return;
   attachment_store_pb::RecordMetadata::Component proto_component =
@@ -239,7 +240,7 @@ void OnDiskAttachmentStore::DropReference(
     AttachmentStore::Component component,
     const AttachmentIdList& ids,
     const AttachmentStore::DropCallback& callback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   AttachmentStore::Result result_code =
       AttachmentStore::STORE_INITIALIZATION_FAILED;
   if (db_) {
@@ -279,7 +280,7 @@ void OnDiskAttachmentStore::ReadMetadataById(
     AttachmentStore::Component component,
     const AttachmentIdList& ids,
     const AttachmentStore::ReadMetadataCallback& callback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   AttachmentStore::Result result_code =
       AttachmentStore::STORE_INITIALIZATION_FAILED;
   std::unique_ptr<AttachmentMetadataList> metadata_list(
@@ -306,7 +307,7 @@ void OnDiskAttachmentStore::ReadMetadataById(
 void OnDiskAttachmentStore::ReadMetadata(
     AttachmentStore::Component component,
     const AttachmentStore::ReadMetadataCallback& callback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   AttachmentStore::Result result_code =
       AttachmentStore::STORE_INITIALIZATION_FAILED;
   std::unique_ptr<AttachmentMetadataList> metadata_list(
@@ -357,22 +358,18 @@ AttachmentStore::Result OnDiskAttachmentStore::OpenOrCreate(
   DCHECK(!db_);
   base::FilePath leveldb_path = path.Append(kLeveldbDirectory);
 
-  leveldb::DB* db_raw;
   std::unique_ptr<leveldb::DB> db;
-  leveldb::Options options;
+  leveldb_env::Options options;
   options.create_if_missing = true;
-  options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
   // TODO(pavely): crbug/424287 Consider adding info_log, block_cache and
   // filter_policy to options.
   leveldb::Status status =
-      leveldb::DB::Open(options, leveldb_path.AsUTF8Unsafe(), &db_raw);
+      leveldb_env::OpenDB(options, leveldb_path.AsUTF8Unsafe(), &db);
   if (!status.ok()) {
-    DVLOG(1) << "DB::Open failed: status=" << status.ToString()
+    DVLOG(1) << "OpenDB failed: status=" << status.ToString()
              << ", path=" << path.AsUTF8Unsafe();
     return AttachmentStore::UNSPECIFIED_ERROR;
   }
-
-  db.reset(db_raw);
 
   attachment_store_pb::StoreMetadata metadata;
   status = ReadStoreMetadata(db.get(), &metadata);
@@ -435,7 +432,7 @@ std::unique_ptr<Attachment> OnDiskAttachmentStore::ReadSingleAttachment(
       return attachment;
     }
   }
-  attachment = base::MakeUnique<Attachment>(
+  attachment = std::make_unique<Attachment>(
       Attachment::CreateFromParts(attachment_id, data));
   return attachment;
 }

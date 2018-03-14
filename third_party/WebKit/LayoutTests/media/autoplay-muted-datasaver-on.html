@@ -1,16 +1,16 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Test muted autoplay videos interaction with data saver off</title>
+  <title>Test muted autoplay videos interaction with data saver on</title>
   <script src="../resources/testharness.js"></script>
   <script src="../resources/testharnessreport.js"></script>
   <script src="media-file.js"></script>
 </head>
 <body>
 <script>
-  window.internals.settings.setMediaPlaybackRequiresUserGesture(true);
+  window.internals.settings.setAutoplayPolicy('user-gesture-required');
   window.internals.runtimeFlags.autoplayMutedVideosEnabled = true;
-  window.internals.settings.setDataSaverEnabled(true);
+  internals.setSaveDataEnabled(true);
 
   promise_test(function(t)
   {

@@ -5,7 +5,8 @@
 #ifndef EXTENSIONS_BROWSER_API_DECLARATIVE_DECLARATIVE_API_H_
 #define EXTENSIONS_BROWSER_API_DECLARATIVE_DECLARATIVE_API_H_
 
-#include "base/compiler_specific.h"
+#include <string>
+
 #include "base/memory/ref_counted.h"
 #include "extensions/browser/api/declarative/rules_registry.h"
 #include "extensions/browser/extension_function.h"
@@ -28,6 +29,9 @@ class RulesFunction : public AsyncExtensionFunction {
   // Returns false in case of errors.
   virtual bool RunAsyncOnCorrectThread() = 0;
 
+  // Records UMA metrics for the kind of declarative API call.
+  virtual void RecordUMA(const std::string& event_name) const = 0;
+
   scoped_refptr<RulesRegistry> rules_registry_;
 };
 
@@ -40,6 +44,7 @@ class EventsEventAddRulesFunction : public RulesFunction {
 
   // RulesFunction:
   bool RunAsyncOnCorrectThread() override;
+  void RecordUMA(const std::string& event_name) const override;
 };
 
 class EventsEventRemoveRulesFunction : public RulesFunction {
@@ -51,6 +56,7 @@ class EventsEventRemoveRulesFunction : public RulesFunction {
 
   // RulesFunction:
   bool RunAsyncOnCorrectThread() override;
+  void RecordUMA(const std::string& event_name) const override;
 };
 
 class EventsEventGetRulesFunction : public RulesFunction {
@@ -62,6 +68,7 @@ class EventsEventGetRulesFunction : public RulesFunction {
 
   // RulesFunction:
   bool RunAsyncOnCorrectThread() override;
+  void RecordUMA(const std::string& event_name) const override;
 };
 
 }  // namespace extensions

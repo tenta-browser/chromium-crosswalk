@@ -30,15 +30,13 @@
 #include "platform/wtf/allocator/Partitions.h"
 #include <string.h>
 
-using namespace std;
-
 namespace WTF {
 
-PassRefPtr<CStringImpl> CStringImpl::CreateUninitialized(size_t length,
-                                                         char*& data) {
+scoped_refptr<CStringImpl> CStringImpl::CreateUninitialized(size_t length,
+                                                            char*& data) {
   // TODO(esprehn): This doesn't account for the NUL.
-  RELEASE_ASSERT(length <
-                 (numeric_limits<unsigned>::max() - sizeof(CStringImpl)));
+  CHECK_LT(length,
+           (std::numeric_limits<unsigned>::max() - sizeof(CStringImpl)));
 
   // The +1 is for the terminating NUL character.
   size_t size = sizeof(CStringImpl) + length + 1;
@@ -46,7 +44,7 @@ PassRefPtr<CStringImpl> CStringImpl::CreateUninitialized(size_t length,
       Partitions::BufferMalloc(size, WTF_HEAP_PROFILER_TYPE_NAME(CStringImpl)));
   data = reinterpret_cast<char*>(buffer + 1);
   data[length] = '\0';
-  return AdoptRef(new (buffer) CStringImpl(length));
+  return base::AdoptRef(new (buffer) CStringImpl(length));
 }
 
 void CStringImpl::operator delete(void* ptr) {
@@ -72,7 +70,7 @@ bool operator==(const CString& a, const CString& b) {
     return false;
   if (a.length() != b.length())
     return false;
-  return !memcmp(a.Data(), b.Data(), a.length());
+  return !memcmp(a.data(), b.data(), a.length());
 }
 
 bool operator==(const CString& a, const char* b) {
@@ -80,7 +78,7 @@ bool operator==(const CString& a, const char* b) {
     return false;
   if (!b)
     return true;
-  return !strcmp(a.Data(), b);
+  return !strcmp(a.data(), b);
 }
 
 std::ostream& operator<<(std::ostream& ostream, const CString& string) {
@@ -90,7 +88,7 @@ std::ostream& operator<<(std::ostream& ostream, const CString& string) {
   ostream << '"';
   for (size_t index = 0; index < string.length(); ++index) {
     // Print shorthands for select cases.
-    char character = string.Data()[index];
+    char character = string.data()[index];
     switch (character) {
       case '\t':
         ostream << "\\t";

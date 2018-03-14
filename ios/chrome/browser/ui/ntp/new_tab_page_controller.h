@@ -8,7 +8,7 @@
 #import <UIKit/UIKit.h>
 #include <string>
 
-#include "base/mac/scoped_nsobject.h"
+#import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
 #import "ios/chrome/browser/ui/native_content_controller.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_bar.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_panel_protocol.h"
@@ -21,27 +21,23 @@ class ChromeBrowserState;
 
 namespace NewTabPage {
 
-enum PanelIdentifier {
-  kNone,
-  kMostVisitedPanel,
-  kBookmarksPanel,
-  kOpenTabsPanel,
-  kIncognitoPanel,
-};
-
 // Converts from a NewTabPage::PanelIdentifier to a URL #fragment
 // and vice versa.
-PanelIdentifier IdentifierFromFragment(const std::string& fragment);
-std::string FragmentFromIdentifier(PanelIdentifier panel);
+ntp_home::PanelIdentifier IdentifierFromFragment(const std::string& fragment);
+std::string FragmentFromIdentifier(ntp_home::PanelIdentifier panel);
 
 }  // namespace NewTabPage
 
+@protocol ApplicationCommands;
+@class BookmarkHomeTabletNTPController;
+@protocol BrowserCommands;
 @protocol CRWSwipeRecognizerProvider;
-@class GoogleLandingController;
+@class GoogleLandingViewController;
+@protocol IncognitoViewControllerDelegate;
 @protocol NewTabPagePanelProtocol;
 @protocol OmniboxFocuser;
+@protocol SnackbarCommands;
 @class TabModel;
-@protocol WebToolbarDelegate;
 @protocol UrlLoader;
 
 // This protocol provides callbacks for when the NewTabPageController changes
@@ -54,15 +50,15 @@ std::string FragmentFromIdentifier(PanelIdentifier panel);
 // A controller for the New Tab Page user interface. Supports multiple "panels",
 // each with its own controller. The panels are created lazily.
 //
-// The scoped_nsobjects instance variables |*Controller_| are instances of
+// The strongly retained instance variables |*Controller_| are instances of
 // subclasses of NewTabPagePanelProtocol that are created lazily.
 // Each Panel is its own controller with the accessible views are added to the
-// |newTabPageView_|.
+// |ntpView_|.
 //
-// newTabPageView_ (aka |ntpView|) is a horizontally scrollable view that
-// contains the *PanelController instances available to the user at the moment.
-// A tab-page bar inside |ntpView| provides direct access to the
-// *PanelControllers on the scrollable view.
+// newTabPageView_ is a horizontally scrollable view that contains the
+// *PanelController instances available to the user at the moment. A tab-page
+// bar inside |ntpView| provides direct access to the *PanelControllers on the
+// scrollable view.
 //
 // The currently visible *PanelController is accessible through
 // |currentController_|.
@@ -73,16 +69,9 @@ std::string FragmentFromIdentifier(PanelIdentifier panel);
                               NewTabPagePanelControllerDelegate,
                               ToolbarOwner,
                               UIGestureRecognizerDelegate,
-                              UIScrollViewDelegate> {
- @private
-  base::scoped_nsprotocol<id<NewTabPagePanelProtocol>> bookmarkController_;
-  base::scoped_nsobject<GoogleLandingController> googleLandingController_;
-  base::scoped_nsprotocol<id<NewTabPagePanelProtocol>> incognitoController_;
-  // The currently visible controller, one of the above.
-  id<NewTabPagePanelProtocol> currentController_;  // weak
-}
+                              UIScrollViewDelegate>
 
-@property(nonatomic, assign) id<CRWSwipeRecognizerProvider>
+@property(nonatomic, weak) id<CRWSwipeRecognizerProvider>
     swipeRecognizerProvider;
 
 // Init with the given url (presumably "chrome://newtab") and loader object.
@@ -90,16 +79,23 @@ std::string FragmentFromIdentifier(PanelIdentifier panel);
 // Dominant color cache is passed to bookmark controller only, to optimize
 // favicon processing.
 - (id)initWithUrl:(const GURL&)url
-                loader:(id<UrlLoader>)loader
-               focuser:(id<OmniboxFocuser>)focuser
-           ntpObserver:(id<NewTabPageControllerObserver>)ntpObserver
-          browserState:(ios::ChromeBrowserState*)browserState
-            colorCache:(NSMutableDictionary*)colorCache
-    webToolbarDelegate:(id<WebToolbarDelegate>)webToolbarDelegate
-              tabModel:(TabModel*)tabModel;
+                  loader:(id<UrlLoader>)loader
+                 focuser:(id<OmniboxFocuser>)focuser
+             ntpObserver:(id<NewTabPageControllerObserver>)ntpObserver
+            browserState:(ios::ChromeBrowserState*)browserState
+              colorCache:(NSMutableDictionary*)colorCache
+         toolbarDelegate:(id<IncognitoViewControllerDelegate>)toolbarDelegate
+                tabModel:(TabModel*)tabModel
+    parentViewController:(UIViewController*)parentViewController
+              dispatcher:(id<ApplicationCommands,
+                             BrowserCommands,
+                             OmniboxFocuser,
+                             SnackbarCommands,
+                             UrlLoader>)dispatcher
+           safeAreaInset:(UIEdgeInsets)safeAreaInset;
 
 // Select a panel based on the given |panelType|.
-- (void)selectPanel:(NewTabPage::PanelIdentifier)panelType;
+- (void)selectPanel:(ntp_home::PanelIdentifier)panelType;
 
 // Returns |YES| if the current visible controller should show the keyboard
 // shield.
@@ -109,6 +105,16 @@ std::string FragmentFromIdentifier(PanelIdentifier panel);
 // bar hint text.
 - (BOOL)wantsLocationBarHintText;
 
+@end
+
+#pragma mark - Testing
+
+@class NewTabPageView;
+
+@interface NewTabPageController (TestSupport)
+- (id<NewTabPagePanelProtocol>)currentController;
+- (BookmarkHomeTabletNTPController*)bookmarkController;
+- (id<NewTabPagePanelProtocol>)incognitoController;
 @end
 
 #endif  // IOS_CHROME_BROWSER_UI_NTP_NEW_TAB_PAGE_CONTROLLER_H_

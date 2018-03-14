@@ -1,49 +1,42 @@
 <!DOCTYPE html>
 <script src="../../resources/testharness.js"></script>
 <script src="../../resources/testharnessreport.js"></script>
+<script src="../../resources/testdriver.js"></script>
+<script src="../../resources/testdriver-vendor.js"></script>
 <script src="../../resources/bluetooth/bluetooth-helpers.js"></script>
-<body>
-  <script>
-  "use strict";
+<script>
+'use strict';
+const test_desc = 'Concurrent requestDevice calls in iframes work.';
+const iframes = [];
+for (let i = 0; i < 5; i++) {
+  iframes.push(document.createElement('iframe'));
+}
 
-  const numIframes = 5;
-
-  async_test(test => {
-    let readiesReceived = 0;
-    window.onmessage = messageEvent => test.step(() => {
-      if (messageEvent.data === 'Ready') {
-        readiesReceived++;
+bluetooth_test(() => setUpHealthThermometerAndHeartRateDevices()
+  // 1. Load the iframes.
+  .then(() => {
+    let promises = [];
+    for (let iframe of iframes) {
+      iframe.src = '../../resources/bluetooth/requestDevice-in-iframe.html';
+      document.body.appendChild(iframe);
+      promises.push(new Promise(resolve =>
+        iframe.addEventListener('load', resolve)));
+    }
+    return Promise.all(promises);
+  })
+  // 2. Request the device from the iframes.
+  .then(() => new Promise(async (resolve) => {
+    let numMessages = 0;
+    window.onmessage = messageEvent => {
+      assert_equals(messageEvent.data, 'Success');
+      if (++numMessages === iframes.length) {
+        resolve();
       }
-      if (readiesReceived < numIframes) {
-        return;
-      }
+    }
 
-      let iframesFinished = 0;
-      window.onmessage = messageEvent => test.step(() => {
-        if (messageEvent.data !== 'Success') {
-          console.error(messageEvent.data);
-        }
-        iframesFinished++;
-        if (iframesFinished === numIframes) {
-          test.done();
-        }
-      });
-
-      Array.prototype.forEach.call(document.querySelectorAll('iframe'), iframe => {
-        callWithKeyDown(() => {
-          iframe.contentWindow.postMessage('Go', '*');
-        });
-      });
-    });
-
-    return setBluetoothFakeAdapter('HeartRateAdapter')
-      .then(() => {
-        for (let i = 0; i < numIframes; i++) {
-          let iframe = document.createElement('iframe');
-          iframe.src = '../../resources/bluetooth/requestDevice-in-iframe.html';
-          document.body.appendChild(iframe);
-        }
-      });
-  }, 'Concurrent requestDevice calls in iframes work.');
-  </script>
-</body>
+    for (let iframe of iframes) {
+      await callWithTrustedClick(
+          () => iframe.contentWindow.postMessage('Go', '*'));
+    }
+})), test_desc);
+</script>

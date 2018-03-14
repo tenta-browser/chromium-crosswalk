@@ -29,22 +29,23 @@ class SupervisedUserGoogleAuthNavigationThrottle
 
   ThrottleCheckResult WillStartRequest() override;
   ThrottleCheckResult WillRedirectRequest() override;
+  const char* GetNameForLogging() override;
 
  private:
   SupervisedUserGoogleAuthNavigationThrottle(
       Profile* profile,
       content::NavigationHandle* navigation_handle);
 
-  void OnGoogleAuthStateChanged(bool authenticated);
+  void OnGoogleAuthStateChanged();
 
   ThrottleCheckResult WillStartOrRedirectRequest();
 
-  ThrottleCheckResult ShouldProceed(bool authenticated);
+  ThrottleCheckResult ShouldProceed();
 
   void OnReauthenticationResult(bool reauth_successful);
 
   ChildAccountService* child_account_service_;
-  std::unique_ptr<base::CallbackList<void(bool)>::Subscription>
+  std::unique_ptr<base::CallbackList<void()>::Subscription>
       google_auth_state_subscription_;
 
 #if defined(OS_ANDROID)

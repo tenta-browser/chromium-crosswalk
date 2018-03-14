@@ -18,15 +18,14 @@ ShellURLRequestContextGetter::ShellURLRequestContextGetter(
     bool ignore_certificate_errors,
     const base::FilePath& base_path,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> file_task_runner,
     content::ProtocolHandlerMap* protocol_handlers,
     content::URLRequestInterceptorScopedVector request_interceptors,
     net::NetLog* net_log,
     InfoMap* extension_info_map)
     : content::ShellURLRequestContextGetter(ignore_certificate_errors,
+                                            false /* not incognito */,
                                             base_path,
                                             std::move(io_task_runner),
-                                            std::move(file_task_runner),
                                             protocol_handlers,
                                             std::move(request_interceptors),
                                             net_log),
@@ -38,7 +37,7 @@ ShellURLRequestContextGetter::~ShellURLRequestContextGetter() {
 
 std::unique_ptr<net::NetworkDelegate>
 ShellURLRequestContextGetter::CreateNetworkDelegate() {
-  return base::MakeUnique<ShellNetworkDelegate>(browser_context_,
+  return std::make_unique<ShellNetworkDelegate>(browser_context_,
                                                 extension_info_map_);
 }
 

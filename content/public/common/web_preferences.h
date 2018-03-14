@@ -66,6 +66,22 @@ enum class ProgressBarCompletion {
   LAST = RESOURCES_BEFORE_DCL_AND_SAME_ORIGIN_IFRAMES
 };
 
+enum class SavePreviousDocumentResources {
+  NEVER,
+  UNTIL_ON_DOM_CONTENT_LOADED,
+  UNTIL_ON_LOAD,
+  LAST = UNTIL_ON_LOAD
+};
+
+// Defines the autoplay policy to be used. Should match the class in
+// WebSettings.h.
+enum class AutoplayPolicy {
+  kNoUserGestureRequired,
+  kUserGestureRequired,
+  kUserGestureRequiredForCrossOrigin,
+  kDocumentUserActivationRequired,
+};
+
 // The ISO 15924 script code for undetermined script aka Common. It's the
 // default used on WebKit's side to get/set a font setting when no script is
 // specified.
@@ -93,11 +109,9 @@ struct CONTENT_EXPORT WebPreferences {
   bool context_menu_on_mouse_up;
   bool javascript_enabled;
   bool web_security_enabled;
-  bool javascript_can_open_windows_automatically;
   bool loads_images_automatically;
   bool images_enabled;
   bool plugins_enabled;
-  bool encrypted_media_enabled;
   bool dom_paste_enabled;
   bool shrinks_standalone_images_to_fit;
   bool text_areas_are_resizable;
@@ -121,7 +135,8 @@ struct CONTENT_EXPORT WebPreferences {
   bool hyperlink_auditing_enabled;
   bool allow_universal_access_from_file_urls;
   bool allow_file_access_from_file_urls;
-  bool experimental_webgl_enabled;
+  bool webgl1_enabled;
+  bool webgl2_enabled;
   bool pepper_3d_enabled;
   bool flash_3d_enabled;
   bool flash_stage3d_enabled;
@@ -132,7 +147,6 @@ struct CONTENT_EXPORT WebPreferences {
   bool hide_scrollbars;
   bool accelerated_2d_canvas_enabled;
   int minimum_accelerated_2d_canvas_size;
-  bool disable_2d_canvas_copy_on_write;
   bool antialiased_2d_canvas_disabled;
   bool antialiased_clips_2d_canvas_enabled;
   int accelerated_2d_canvas_msaa_sample_count;
@@ -166,9 +180,8 @@ struct CONTENT_EXPORT WebPreferences {
   ui::PointerType primary_pointer_type;
   int available_hover_types;
   ui::HoverType primary_hover_type;
+  bool barrel_button_for_drag_enabled = false;
   bool sync_xhr_in_documents_enabled;
-  bool color_correct_rendering_enabled = false;
-  bool color_correct_rendering_default_mode_enabled = false;
   bool should_respect_image_orientation;
   int number_of_cpu_cores;
   EditingBehavior editing_behavior;
@@ -185,8 +198,8 @@ struct CONTENT_EXPORT WebPreferences {
   bool use_solid_color_scrollbars;
   bool navigate_on_drag_drop;
   V8CacheOptions v8_cache_options;
-  bool inert_visual_viewport;
   bool record_whole_document;
+  SavePreviousDocumentResources save_previous_document_resources;
 
   // This flags corresponds to a Page's Settings' setCookieEnabled state. It
   // only controls whether or not the "document.cookie" field is properly
@@ -208,13 +221,7 @@ struct CONTENT_EXPORT WebPreferences {
   // Cues will not be placed in this margin area.
   float text_track_margin_percentage;
 
-  // Specifies aggressiveness of background tab throttling.
-  // expensive_background_throttling_cpu_budget is given in percentages,
-  // other values are in seconds.
-  float expensive_background_throttling_cpu_budget;
-  float expensive_background_throttling_initial_budget;
-  float expensive_background_throttling_max_budget;
-  float expensive_background_throttling_max_delay;
+  bool page_popups_suppressed;
 
 #if defined(OS_ANDROID)
   bool text_autosizing_enabled;
@@ -223,7 +230,6 @@ struct CONTENT_EXPORT WebPreferences {
   bool force_enable_zoom;
   bool fullscreen_supported;
   bool double_tap_to_zoom_enabled;
-  bool user_gesture_required_for_media_playback;
   std::string media_playback_gesture_whitelist_scope;
   GURL default_video_poster_url;
   bool support_deprecated_target_density_dpi;
@@ -247,11 +253,21 @@ struct CONTENT_EXPORT WebPreferences {
   bool spellcheck_enabled_by_default;
   // If enabled, when a video goes fullscreen, the orientation should be locked.
   bool video_fullscreen_orientation_lock_enabled;
+  // If enabled, fullscreen should be entered/exited when the device is rotated
+  // to/from the orientation of the video.
+  bool video_rotate_to_fullscreen_enabled;
   // If enabled, video fullscreen detection will be enabled.
   bool video_fullscreen_detection_enabled;
   bool embedded_media_experience_enabled;
+  // Enable 8 (#RRGGBBAA) and 4 (#RGBA) value hex colors in CSS Android
+  // WebView quirk (http://crbug.com/618472).
+  bool css_hex_alpha_color_enabled;
+  bool enable_media_download_in_product_help;
+  // Enable support for document.scrollingElement
+  // WebView sets this to false to retain old documentElement behaviour
+  // (http://crbug.com/761016).
+  bool scroll_top_left_interop_enabled;
 #else  // defined(OS_ANDROID)
-  bool cross_origin_media_playback_requires_user_gesture;
 #endif  // defined(OS_ANDROID)
 
   // Default (used if the page or UA doesn't override these) values for page
@@ -266,14 +282,6 @@ struct CONTENT_EXPORT WebPreferences {
   // If enabled, disabled video track when the video is in the background.
   bool background_video_track_optimization_enabled;
 
-  // When memory pressure based garbage collection is enabled for MSE, the
-  // |enable_instant_source_buffer_gc| flag controls whether the GC is done
-  // immediately on memory pressure notification or during the next SourceBuffer
-  // append (slower, but is MSE-spec compliant).
-  // TODO(servolk, asvitkine): Query the value directly when it is available in
-  // the renderer process. See https://crbug.com/681160.
-  bool enable_instant_source_buffer_gc;
-
   // Whether it is a presentation receiver.
   bool presentation_receiver;
 
@@ -285,6 +293,9 @@ struct CONTENT_EXPORT WebPreferences {
   // https://crbug.com/699943 for details.
   // TODO(changwan): remove this once we no longer support Android N.
   bool do_not_update_selection_on_mutating_selection_range;
+
+  // Defines the current autoplay policy.
+  AutoplayPolicy autoplay_policy;
 
   // We try to keep the default values the same as the default values in
   // chrome, except for the cases where it would require lots of extra work for

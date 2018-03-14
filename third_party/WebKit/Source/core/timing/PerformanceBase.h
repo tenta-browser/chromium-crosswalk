@@ -34,17 +34,18 @@
 
 #include "core/CoreExport.h"
 #include "core/dom/DOMHighResTimeStamp.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/loader/FrameLoaderTypes.h"
 #include "core/timing/PerformanceEntry.h"
 #include "core/timing/PerformanceNavigationTiming.h"
 #include "core/timing/PerformancePaintTiming.h"
+#include "core/timing/SubTaskAttribution.h"
 #include "platform/Timer.h"
 #include "platform/heap/Handle.h"
-#include "wtf/Forward.h"
-#include "wtf/HashSet.h"
-#include "wtf/ListHashSet.h"
-#include "wtf/Vector.h"
+#include "platform/wtf/Forward.h"
+#include "platform/wtf/HashSet.h"
+#include "platform/wtf/LinkedHashSet.h"
+#include "platform/wtf/Vector.h"
 
 namespace blink {
 
@@ -55,9 +56,9 @@ class ResourceResponse;
 class ResourceTimingInfo;
 class SecurityOrigin;
 class UserTiming;
+class SubTaskAttribution;
 
 using PerformanceEntryVector = HeapVector<Member<PerformanceEntry>>;
-using PerformanceObservers = HeapListHashSet<Member<PerformanceObserver>>;
 
 class CORE_EXPORT PerformanceBase : public EventTargetWithInlineData {
 
@@ -70,13 +71,14 @@ class CORE_EXPORT PerformanceBase : public EventTargetWithInlineData {
 
   virtual void UpdateLongTaskInstrumentation() {}
 
-  // Reduce the resolution to 5µs to prevent timing attacks. See:
+  // Reduce the resolution to prevent timing attacks. See:
   // http://www.w3.org/TR/hr-time-2/#privacy-security
   static double ClampTimeResolution(double time_seconds);
 
   static DOMHighResTimeStamp MonotonicTimeToDOMHighResTimeStamp(
       double time_origin,
-      double monotonic_time);
+      double monotonic_time,
+      bool allow_negative_value);
 
   // Translate given platform monotonic time in seconds into a high resolution
   // DOMHighResTimeStamp in milliseconds. The result timestamp is relative to
@@ -85,7 +87,12 @@ class CORE_EXPORT PerformanceBase : public EventTargetWithInlineData {
   DOMHighResTimeStamp MonotonicTimeToDOMHighResTimeStamp(double) const;
   DOMHighResTimeStamp now() const;
 
-  double TimeOrigin() const { return time_origin_; }
+  // High Resolution Time Level 3 timeOrigin.
+  // (https://www.w3.org/TR/hr-time-3/#dom-performance-timeorigin)
+  DOMHighResTimeStamp timeOrigin() const;
+
+  // Internal getter method for the time origin value.
+  double GetTimeOrigin() const { return time_origin_; }
 
   PerformanceEntryVector getEntries();
   PerformanceEntryVector getEntriesByType(const String& entry_type);
@@ -97,17 +104,14 @@ class CORE_EXPORT PerformanceBase : public EventTargetWithInlineData {
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(resourcetimingbufferfull);
 
-  void clearFrameTimings();
-  void setFrameTimingBufferSize(unsigned);
-
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(frametimingbufferfull);
-
-  void AddLongTaskTiming(double start_time,
-                         double end_time,
-                         const String& name,
-                         const String& culprit_frame_src,
-                         const String& culprit_frame_id,
-                         const String& culprit_frame_name);
+  void AddLongTaskTiming(
+      double start_time,
+      double end_time,
+      const String& name,
+      const String& culprit_frame_src,
+      const String& culprit_frame_id,
+      const String& culprit_frame_name,
+      const SubTaskAttribution::EntriesVector& sub_task_attributions);
 
   void AddResourceTiming(const ResourceTimingInfo&);
 
@@ -132,12 +136,59 @@ class CORE_EXPORT PerformanceBase : public EventTargetWithInlineData {
   void ActivateObserver(PerformanceObserver&);
   void ResumeSuspendedObservers();
 
+  // This enum is used to index different possible strings for for UMA enum
+  // histogram. New enum values can be added, but existing enums must never be
+  // renumbered or deleted and reused.
+  // This enum should be consistent with PerformanceMeasurePassedInParameterType
+  // in tools/metrics/histograms/enums.xml.
+  enum PerformanceMeasurePassedInParameterType {
+    kObjectObject = 0,
+    // 1 to 8 are navigation-timing types.
+    kUnloadEventStart = 1,
+    kUnloadEventEnd = 2,
+    kDomInteractive = 3,
+    kDomContentLoadedEventStart = 4,
+    kDomContentLoadedEventEnd = 5,
+    kDomComplete = 6,
+    kLoadEventStart = 7,
+    kLoadEventEnd = 8,
+    kOther = 9,
+    kPerformanceMeasurePassedInParameterCount
+  };
+
+  static PerformanceMeasurePassedInParameterType
+  ToPerformanceMeasurePassedInParameterType(const String& s) {
+    // All passed-in objects will be stringified into this type.
+    if (s == "[object Object]")
+      return kObjectObject;
+    // The following names come from
+    // https://w3c.github.io/navigation-timing/#sec-PerformanceNavigationTiming.
+    if (s == "unloadEventStart")
+      return kUnloadEventStart;
+    if (s == "unloadEventEnd")
+      return kUnloadEventEnd;
+    if (s == "domInteractive")
+      return kDomInteractive;
+    if (s == "domContentLoadedEventStart")
+      return kDomContentLoadedEventStart;
+    if (s == "domContentLoadedEventEnd")
+      return kDomContentLoadedEventEnd;
+    if (s == "domComplete")
+      return kDomComplete;
+    if (s == "loadEventStart")
+      return kLoadEventStart;
+    if (s == "loadEventEnd")
+      return kLoadEventEnd;
+    return kOther;
+  }
+
   static bool AllowsTimingRedirect(const Vector<ResourceResponse>&,
                                    const ResourceResponse&,
                                    const SecurityOrigin&,
                                    ExecutionContext*);
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
+  void TraceWrappers(const ScriptWrappableVisitor*) const override;
 
  private:
   static bool PassesTimingAllowCheck(const ResourceResponse&,
@@ -148,7 +199,7 @@ class CORE_EXPORT PerformanceBase : public EventTargetWithInlineData {
   void AddPaintTiming(PerformancePaintTiming::PaintType, double start_time);
 
  protected:
-  explicit PerformanceBase(double time_origin, RefPtr<WebTaskRunner>);
+  PerformanceBase(double time_origin, scoped_refptr<WebTaskRunner>);
 
   // Expect Performance to override this method,
   // WorkerPerformance doesn't have to override this.
@@ -159,10 +210,8 @@ class CORE_EXPORT PerformanceBase : public EventTargetWithInlineData {
   bool IsResourceTimingBufferFull();
   void AddResourceTimingBuffer(PerformanceEntry&);
 
-  bool IsFrameTimingBufferFull();
-  void AddFrameTimingBuffer(PerformanceEntry&);
-
-  void NotifyObserversOfEntry(PerformanceEntry&);
+  void NotifyObserversOfEntry(PerformanceEntry&) const;
+  void NotifyObserversOfEntries(PerformanceEntryVector&);
   bool HasObserverFor(PerformanceEntry::EntryType) const;
 
   void DeliverObservationsTimerFired(TimerBase*);
@@ -173,13 +222,15 @@ class CORE_EXPORT PerformanceBase : public EventTargetWithInlineData {
   unsigned resource_timing_buffer_size_;
   Member<PerformanceEntry> navigation_timing_;
   Member<UserTiming> user_timing_;
+  Member<PerformanceEntry> first_paint_timing_;
+  Member<PerformanceEntry> first_contentful_paint_timing_;
 
   double time_origin_;
 
   PerformanceEntryTypeMask observer_filter_options_;
-  PerformanceObservers observers_;
-  PerformanceObservers active_observers_;
-  PerformanceObservers suspended_observers_;
+  HeapLinkedHashSet<TraceWrapperMember<PerformanceObserver>> observers_;
+  HeapLinkedHashSet<Member<PerformanceObserver>> active_observers_;
+  HeapLinkedHashSet<Member<PerformanceObserver>> suspended_observers_;
   TaskRunnerTimer<PerformanceBase> deliver_observations_timer_;
 };
 

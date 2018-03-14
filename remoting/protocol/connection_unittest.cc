@@ -2,16 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#define _USE_MATH_DEFINES // For VC++ to get M_PI. This has to be first.
-
 #include <utility>
 
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/numerics/math_constants.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_scheduler.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_checker.h"
 #include "remoting/base/constants.h"
@@ -59,8 +57,8 @@ ACTION_P(QuitRunLoop, run_loop) {
 class MockConnectionToHostEventCallback
     : public ConnectionToHost::HostEventCallback {
  public:
-  MockConnectionToHostEventCallback() {}
-  ~MockConnectionToHostEventCallback() override {}
+  MockConnectionToHostEventCallback() = default;
+  ~MockConnectionToHostEventCallback() override = default;
 
   MOCK_METHOD2(OnConnectionState,
                void(ConnectionToHost::State state, ErrorCode error));
@@ -72,8 +70,8 @@ class MockConnectionToHostEventCallback
 
 class TestScreenCapturer : public webrtc::DesktopCapturer {
  public:
-  TestScreenCapturer() {}
-  ~TestScreenCapturer() override {}
+  TestScreenCapturer() = default;
+  ~TestScreenCapturer() override = default;
 
   // webrtc::DesktopCapturer interface.
   void Start(Callback* callback) override {
@@ -135,8 +133,8 @@ static const int kTestAudioSignalFrequencyRightHz = 2000;
 
 class TestAudioSource : public AudioSource {
  public:
-  TestAudioSource() {}
-  ~TestAudioSource() override {}
+  TestAudioSource() = default;
+  ~TestAudioSource() override = default;
 
   // AudioSource interface.
   bool Start(const PacketCapturedCallback& callback) override {
@@ -151,7 +149,8 @@ class TestAudioSource : public AudioSource {
   static int16_t GetSampleValue(double pos, int frequency) {
     const int kMaxSampleValue = 32767;
     return static_cast<int>(
-        sin(pos * 2 * M_PI * frequency / kAudioSampleRate) * kMaxSampleValue +
+        sin(pos * 2 * base::kPiDouble * frequency / kAudioSampleRate) *
+            kMaxSampleValue +
         0.5);
   }
 
@@ -183,7 +182,7 @@ class TestAudioSource : public AudioSource {
 class FakeAudioPlayer : public AudioStub {
  public:
   FakeAudioPlayer() : weak_factory_(this) {}
-  ~FakeAudioPlayer() override {}
+  ~FakeAudioPlayer() override = default;
 
   // AudioStub interface.
   void ProcessAudioPacket(std::unique_ptr<AudioPacket> packet,
@@ -261,7 +260,8 @@ class ConnectionTest : public testing::Test,
                        public testing::WithParamInterface<bool> {
  public:
   ConnectionTest()
-      : scoped_task_scheduler_(&message_loop_),
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::IO),
         video_encode_thread_("VideoEncode"),
         audio_encode_thread_("AudioEncode"),
         audio_decode_thread_("AudioDecode") {
@@ -289,14 +289,16 @@ class ConnectionTest : public testing::Test,
       host_connection_.reset(new WebrtcConnectionToClient(
           base::WrapUnique(host_session_),
           TransportContext::ForTests(protocol::TransportRole::SERVER),
-          message_loop_.task_runner(), message_loop_.task_runner()));
+          scoped_task_environment_.GetMainThreadTaskRunner(),
+          scoped_task_environment_.GetMainThreadTaskRunner()));
       client_connection_.reset(new WebrtcConnectionToHost());
 
     } else {
       host_connection_.reset(new IceConnectionToClient(
           base::WrapUnique(host_session_),
           TransportContext::ForTests(protocol::TransportRole::SERVER),
-          message_loop_.task_runner(), message_loop_.task_runner()));
+          scoped_task_environment_.GetMainThreadTaskRunner(),
+          scoped_task_environment_.GetMainThreadTaskRunner()));
       client_connection_.reset(new IceConnectionToHost());
     }
 
@@ -432,8 +434,7 @@ class ConnectionTest : public testing::Test,
                      .empty());
   }
 
-  base::MessageLoopForIO message_loop_;
-  base::test::ScopedTaskScheduler scoped_task_scheduler_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<base::RunLoop> run_loop_;
 
   MockConnectionToClientEventHandler host_event_handler_;
@@ -532,7 +533,10 @@ TEST_P(ConnectionTest, Video) {
       host_connection_->StartVideoStream(
           base::MakeUnique<TestScreenCapturer>());
 
-  WaitNextVideoFrame();
+  // Receive 5 frames.
+  for (int i = 0; i < 5; ++i) {
+    WaitNextVideoFrame();
+  }
 }
 
 // Verifies that the VideoStream doesn't loose any video frames while the

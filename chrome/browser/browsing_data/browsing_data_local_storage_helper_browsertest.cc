@@ -16,9 +16,12 @@
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/thread_test_helper.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/browser/browsing_data/browsing_data_helper_browsertest.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -32,35 +35,35 @@ using content::BrowserThread;
 using content::DOMStorageContext;
 
 namespace {
-typedef
-    BrowsingDataHelperCallback<BrowsingDataLocalStorageHelper::LocalStorageInfo>
-        TestCompletionCallback;
 
-const base::FilePath::CharType kTestFile0[] =
+using TestCompletionCallback = BrowsingDataHelperCallback<
+    BrowsingDataLocalStorageHelper::LocalStorageInfo>;
+
+constexpr base::FilePath::CharType kTestFile0[] =
     FILE_PATH_LITERAL("http_www.chromium.org_0.localstorage");
 
 const char kOriginOfTestFile0[] = "http://www.chromium.org/";
 
-const base::FilePath::CharType kTestFile1[] =
+constexpr base::FilePath::CharType kTestFile1[] =
     FILE_PATH_LITERAL("http_www.google.com_0.localstorage");
 
-const base::FilePath::CharType kTestFileInvalid[] =
+constexpr base::FilePath::CharType kTestFileInvalid[] =
     FILE_PATH_LITERAL("http_www.google.com_localstorage_0.foo");
 
 // This is only here to test that extension state is not listed by the helper.
-const base::FilePath::CharType kTestFileExtension[] = FILE_PATH_LITERAL(
+constexpr base::FilePath::CharType kTestFileExtension[] = FILE_PATH_LITERAL(
     "chrome-extension_behllobkkfkfnphdnhnkndlbkcpglgmj_0.localstorage");
 
 class BrowsingDataLocalStorageHelperTest : public InProcessBrowserTest {
  protected:
   void CreateLocalStorageFilesForTest() {
+    base::ScopedAllowBlockingForTesting allow_blocking;
     // Note: This helper depends on details of how the dom_storage library
     // stores data in the host file system.
     base::FilePath storage_path = GetLocalStoragePathForTestingProfile();
     base::CreateDirectory(storage_path);
-    const base::FilePath::CharType* kFilesToCreate[] = {
-        kTestFile0, kTestFile1, kTestFileInvalid, kTestFileExtension
-    };
+    static constexpr const base::FilePath::CharType* kFilesToCreate[] = {
+        kTestFile0, kTestFile1, kTestFileInvalid, kTestFileExtension};
     for (size_t i = 0; i < arraysize(kFilesToCreate); ++i) {
       base::FilePath file_path = storage_path.Append(kFilesToCreate[i]);
       base::WriteFile(file_path, nullptr, 0);
@@ -102,7 +105,7 @@ class StopTestOnCallback {
     for (size_t i = 0; i < arraysize(kTestHosts); ++i) {
       ASSERT_TRUE(test_hosts_found[i]) << kTestHosts[i];
     }
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
  private:
@@ -125,9 +128,10 @@ IN_PROC_BROWSER_TEST_F(BrowsingDataLocalStorageHelperTest, DeleteSingleFile) {
       new BrowsingDataLocalStorageHelper(browser()->profile()));
   CreateLocalStorageFilesForTest();
   local_storage_helper->DeleteOrigin(GURL(kOriginOfTestFile0));
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   // Ensure the file has been deleted.
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::FileEnumerator file_enumerator(
       GetLocalStoragePathForTestingProfile(),
       false,
@@ -187,4 +191,5 @@ IN_PROC_BROWSER_TEST_F(BrowsingDataLocalStorageHelperTest, CannedUnique) {
   ASSERT_EQ(1u, result.size());
   EXPECT_EQ(origin, result.begin()->origin_url);
 }
+
 }  // namespace

@@ -6,6 +6,7 @@ package org.chromium.base.metrics;
 
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.annotations.MainDex;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -24,6 +25,7 @@ import java.util.concurrent.TimeUnit;
  * code.
  */
 @JNINamespace("base::android")
+@MainDex
 public class RecordHistogram {
     private static Throwable sDisabledBy;
     private static Map<String, Long> sCache =
@@ -270,6 +272,15 @@ public class RecordHistogram {
     }
 
     /**
+     * Returns the number of samples recorded for the given histogram.
+     * @param name name of the histogram to look up.
+     */
+    @VisibleForTesting
+    public static int getHistogramTotalCountForTesting(String name) {
+        return nativeGetHistogramTotalCountForTesting(name);
+    }
+
+    /**
      * Initializes the metrics system.
      */
     public static void initialize() {
@@ -290,5 +301,6 @@ public class RecordHistogram {
     private static native long nativeRecordSparseHistogram(String name, long key, int sample);
 
     private static native int nativeGetHistogramValueCountForTesting(String name, int sample);
+    private static native int nativeGetHistogramTotalCountForTesting(String name);
     private static native void nativeInitialize();
 }

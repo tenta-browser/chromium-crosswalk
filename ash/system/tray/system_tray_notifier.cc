@@ -13,17 +13,15 @@
 #include "ash/system/network/network_portal_detector_observer.h"
 #include "ash/system/screen_security/screen_capture_observer.h"
 #include "ash/system/screen_security/screen_share_observer.h"
-#include "ash/system/session/last_window_closed_observer.h"
-#include "ash/system/session/logout_button_observer.h"
-#include "ash/system/session/session_length_limit_observer.h"
+#include "ash/system/system_tray_focus_observer.h"
 #include "ash/system/tray_tracing.h"
 #include "ash/system/virtual_keyboard/virtual_keyboard_observer.h"
 
 namespace ash {
 
-SystemTrayNotifier::SystemTrayNotifier() {}
+SystemTrayNotifier::SystemTrayNotifier() = default;
 
-SystemTrayNotifier::~SystemTrayNotifier() {}
+SystemTrayNotifier::~SystemTrayNotifier() = default;
 
 void SystemTrayNotifier::AddAccessibilityObserver(
     AccessibilityObserver* observer) {
@@ -35,10 +33,10 @@ void SystemTrayNotifier::RemoveAccessibilityObserver(
   accessibility_observers_.RemoveObserver(observer);
 }
 
-void SystemTrayNotifier::NotifyAccessibilityModeChanged(
+void SystemTrayNotifier::NotifyAccessibilityStatusChanged(
     AccessibilityNotificationVisibility notify) {
   for (auto& observer : accessibility_observers_)
-    observer.OnAccessibilityModeChanged(notify);
+    observer.OnAccessibilityStatusChanged(notify);
 }
 
 void SystemTrayNotifier::AddBluetoothObserver(BluetoothObserver* observer) {
@@ -120,42 +118,6 @@ void SystemTrayNotifier::NotifyRefreshIMEMenu(bool is_active) {
     observer.OnIMEMenuActivationChanged(is_active);
 }
 
-void SystemTrayNotifier::AddLastWindowClosedObserver(
-    LastWindowClosedObserver* observer) {
-  last_window_closed_observers_.AddObserver(observer);
-}
-
-void SystemTrayNotifier::RemoveLastWindowClosedObserver(
-    LastWindowClosedObserver* observer) {
-  last_window_closed_observers_.RemoveObserver(observer);
-}
-
-void SystemTrayNotifier::NotifyLastWindowClosed() {
-  for (auto& observer : last_window_closed_observers_)
-    observer.OnLastWindowClosed();
-}
-
-void SystemTrayNotifier::AddLogoutButtonObserver(
-    LogoutButtonObserver* observer) {
-  logout_button_observers_.AddObserver(observer);
-}
-
-void SystemTrayNotifier::RemoveLogoutButtonObserver(
-    LogoutButtonObserver* observer) {
-  logout_button_observers_.RemoveObserver(observer);
-}
-
-void SystemTrayNotifier::NotifyShowLoginButtonChanged(bool show_login_button) {
-  for (auto& observer : logout_button_observers_)
-    observer.OnShowLogoutButtonInTrayChanged(show_login_button);
-}
-
-void SystemTrayNotifier::NotifyLogoutDialogDurationChanged(
-    base::TimeDelta duration) {
-  for (auto& observer : logout_button_observers_)
-    observer.OnLogoutDialogDurationChanged(duration);
-}
-
 void SystemTrayNotifier::AddNetworkObserver(NetworkObserver* observer) {
   network_observers_.AddObserver(observer);
 }
@@ -228,24 +190,19 @@ void SystemTrayNotifier::NotifyScreenShareStop() {
     observer.OnScreenShareStop();
 }
 
-void SystemTrayNotifier::AddSessionLengthLimitObserver(
-    SessionLengthLimitObserver* observer) {
-  session_length_limit_observers_.AddObserver(observer);
+void SystemTrayNotifier::AddSystemTrayFocusObserver(
+    SystemTrayFocusObserver* observer) {
+  system_tray_focus_observers_.AddObserver(observer);
 }
 
-void SystemTrayNotifier::RemoveSessionLengthLimitObserver(
-    SessionLengthLimitObserver* observer) {
-  session_length_limit_observers_.RemoveObserver(observer);
+void SystemTrayNotifier::RemoveSystemTrayFocusObserver(
+    SystemTrayFocusObserver* observer) {
+  system_tray_focus_observers_.RemoveObserver(observer);
 }
 
-void SystemTrayNotifier::NotifySessionStartTimeChanged() {
-  for (auto& observer : session_length_limit_observers_)
-    observer.OnSessionStartTimeChanged();
-}
-
-void SystemTrayNotifier::NotifySessionLengthLimitChanged() {
-  for (auto& observer : session_length_limit_observers_)
-    observer.OnSessionLengthLimitChanged();
+void SystemTrayNotifier::NotifyFocusOut(bool reverse) {
+  for (auto& observer : system_tray_focus_observers_)
+    observer.OnFocusLeavingSystemTray(reverse);
 }
 
 void SystemTrayNotifier::AddTracingObserver(TracingObserver* observer) {

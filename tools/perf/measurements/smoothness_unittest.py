@@ -1,19 +1,12 @@
 # Copyright 2013 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-import sys
-import unittest
-
 from telemetry import decorators
-from telemetry.page import page
 from telemetry.testing import options_for_unittests
 from telemetry.testing import page_test_test_case
 from telemetry.util import wpr_modes
-from telemetry.value import scalar
 
 from measurements import smoothness
-
-import mock
 
 
 class FakeTracingController(object):
@@ -52,23 +45,6 @@ class FakeTab(object):
     pass
 
 
-class CustomResultsWrapperUnitTest(unittest.TestCase):
-
-  def testOnlyOneInteractionRecordPerPage(self):
-    test_page = page.Page('http://dummy', None)
-
-    # pylint: disable=protected-access
-    results_wrapper = smoothness._CustomResultsWrapper()
-    results_wrapper.SetResults(mock.Mock())
-
-    results_wrapper.SetTirLabel('foo')
-    results_wrapper.AddValue(scalar.ScalarValue(test_page, 'num', 'ms', 44))
-
-    results_wrapper.SetTirLabel('bar')
-    with self.assertRaises(AssertionError):
-      results_wrapper.AddValue(scalar.ScalarValue(test_page, 'num', 'ms', 42))
-
-
 class SmoothnessUnitTest(page_test_test_case.PageTestTestCase):
   """Smoke test for smoothness measurement
 
@@ -81,36 +57,8 @@ class SmoothnessUnitTest(page_test_test_case.PageTestTestCase):
     self._options = options_for_unittests.GetCopy()
     self._options.browser_options.wpr_mode = wpr_modes.WPR_OFF
 
-  def testSyntheticDelayConfiguration(self):
-    test_page = page.Page('http://dummy', None)
-    test_page.synthetic_delays = {
-        'cc.BeginMainFrame': {'target_duration': 0.012},
-        'cc.DrawAndSwap': {'target_duration': 0.012, 'mode': 'alternating'},
-        'gpu.PresentingFrame': {'target_duration': 0.012}
-    }
-
-    tab = FakeTab()
-    measurement = smoothness.Smoothness()
-    measurement.WillStartBrowser(tab.browser.platform)
-    measurement.WillNavigateToPage(test_page, tab)
-
-    expected_synthetic_delay = set([
-        'DELAY(cc.BeginMainFrame;0.012000;static)',
-        'DELAY(cc.DrawAndSwap;0.012000;alternating)',
-        'DELAY(gpu.PresentingFrame;0.012000;static)',
-    ])
-    config = tab.browser.platform.tracing_controller.config
-    actual_synthetic_delay = (
-        config.chrome_trace_config.category_filter.synthetic_delays)
-
-    if expected_synthetic_delay != actual_synthetic_delay:
-      sys.stderr.write('Expected category filter: %s\n' %
-                       repr(expected_synthetic_delay))
-      sys.stderr.write('Actual category filter filter: %s\n' %
-                       repr(actual_synthetic_delay))
-    self.assertEquals(expected_synthetic_delay, actual_synthetic_delay)
-
-  @decorators.Disabled('chromeos')  # crbug.com/483212
+  # crbug.com/483212
+  @decorators.Disabled('chromeos')
   def testSmoothness(self):
     ps = self.CreateStorySetFromFileInUnittestDataDir('scrollable_page.html')
     measurement = smoothness.Smoothness()

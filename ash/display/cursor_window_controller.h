@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "ash/ash_constants.h"
 #include "ash/ash_export.h"
 #include "base/macros.h"
 #include "ui/aura/window.h"
@@ -14,9 +15,6 @@
 #include "ui/display/display.h"
 
 namespace ash {
-namespace test {
-class MirrorWindowTestApi;
-}
 
 class CursorWindowControllerTest;
 class CursorWindowDelegate;
@@ -37,6 +35,11 @@ class ASH_EXPORT CursorWindowController {
 
   void SetLargeCursorSizeInDip(int large_cursor_size_in_dip);
 
+  // If at least one of the features that use cursor compositing is enabled, it
+  // should not be disabled. Future features that require cursor compositing
+  // should be added in this function.
+  bool ShouldEnableCursorCompositing();
+
   // Sets cursor compositing mode on/off.
   void SetCursorCompositingEnabled(bool enabled);
 
@@ -50,12 +53,12 @@ class ASH_EXPORT CursorWindowController {
   // Sets cursor location, shape, set and visibility.
   void UpdateLocation();
   void SetCursor(gfx::NativeCursor cursor);
-  void SetCursorSet(ui::CursorSetType);
+  void SetCursorSize(ui::CursorSize cursor_size);
   void SetVisibility(bool visible);
 
  private:
   friend class CursorWindowControllerTest;
-  friend class test::MirrorWindowTestApi;
+  friend class MirrorWindowTestApi;
 
   // Sets the container window for the cursor window controller.
   // Closes the cursor window if |container| is NULL.
@@ -72,23 +75,24 @@ class ASH_EXPORT CursorWindowController {
 
   const gfx::ImageSkia& GetCursorImageForTest() const;
 
-  bool is_cursor_compositing_enabled_;
-  aura::Window* container_;
+  aura::Window* container_ = nullptr;
+
+  // The current cursor-compositing state.
+  bool is_cursor_compositing_enabled_ = false;
 
   // The bounds of the container in screen coordinates.
   gfx::Rect bounds_in_screen_;
 
   // The native_type of the cursor, see definitions in cursor.h
-  int cursor_type_;
+  ui::CursorType cursor_type_ = ui::CursorType::kNone;
 
   // The last requested cursor visibility.
-  bool visible_;
+  bool visible_ = true;
 
-  ui::CursorSetType cursor_set_;
+  ui::CursorSize cursor_size_ = ui::CursorSize::kNormal;
   gfx::Point hot_point_;
 
-  bool enable_adjustable_large_cursor_;
-  int large_cursor_size_in_dip_;
+  int large_cursor_size_in_dip_ = ash::kDefaultLargeCursorSize;
 
   // The display on which the cursor is drawn.
   // For mirroring mode, the display is always the primary display.

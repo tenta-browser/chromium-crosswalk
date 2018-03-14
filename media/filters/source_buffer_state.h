@@ -18,6 +18,7 @@
 #include "media/base/stream_parser.h"
 #include "media/base/stream_parser_buffer.h"
 #include "media/base/video_codecs.h"
+#include "media/filters/source_buffer_parse_warnings.h"
 
 namespace media {
 
@@ -39,7 +40,7 @@ class MEDIA_EXPORT SourceBufferState {
   SourceBufferState(std::unique_ptr<StreamParser> stream_parser,
                     std::unique_ptr<FrameProcessor> frame_processor,
                     const CreateDemuxerStreamCB& create_demuxer_stream_cb,
-                    const scoped_refptr<MediaLog>& media_log);
+                    MediaLog* media_log);
 
   ~SourceBufferState();
 
@@ -134,6 +135,9 @@ class MEDIA_EXPORT SourceBufferState {
 
   void SetTracksWatcher(const Demuxer::MediaTracksUpdatedCB& tracks_updated_cb);
 
+  void SetParseWarningCallback(
+      const SourceBufferParseWarningCB& parse_warning_cb);
+
  private:
   // State advances through this list. The intent is to ensure at least one
   // config is received prior to parser calling initialization callback, and
@@ -167,6 +171,10 @@ class MEDIA_EXPORT SourceBufferState {
   // processing the buffers.
   bool OnNewBuffers(const StreamParser::BufferQueueMap& buffer_queue_map);
 
+  // Called when StreamParser encounters encrypted media init data.
+  void OnEncryptedMediaInitData(EmeInitDataType type,
+                                const std::vector<uint8_t>& init_data);
+
   void OnSourceInitDone(const StreamParser::InitParameters& params);
 
   // Sets memory limits for all demuxer streams.
@@ -175,9 +183,6 @@ class MEDIA_EXPORT SourceBufferState {
   // Tracks the number of MEDIA_LOGs emitted for segments missing expected audio
   // or video blocks. Useful to prevent log spam.
   int num_missing_track_logs_ = 0;
-
-  CreateDemuxerStreamCB create_demuxer_stream_cb_;
-  NewTextTrackCB new_text_track_cb_;
 
   // During Append(), if OnNewBuffers() coded frame processing updates the
   // timestamp offset then |*timestamp_offset_during_append_| is also updated
@@ -209,8 +214,12 @@ class MEDIA_EXPORT SourceBufferState {
   DemuxerStreamMap text_streams_;
 
   std::unique_ptr<FrameProcessor> frame_processor_;
-  scoped_refptr<MediaLog> media_log_;
+  CreateDemuxerStreamCB create_demuxer_stream_cb_;
+  MediaLog* media_log_;
+
   StreamParser::InitCB init_cb_;
+  StreamParser::EncryptedMediaInitDataCB encrypted_media_init_data_cb_;
+  NewTextTrackCB new_text_track_cb_;
 
   State state_;
 
@@ -223,6 +232,7 @@ class MEDIA_EXPORT SourceBufferState {
   Demuxer::MediaTracksUpdatedCB init_segment_received_cb_;
   bool append_in_progress_ = false;
   bool first_init_segment_received_ = false;
+  bool encrypted_media_init_data_reported_ = false;
 
   std::vector<AudioCodec> expected_audio_codecs_;
   std::vector<VideoCodec> expected_video_codecs_;

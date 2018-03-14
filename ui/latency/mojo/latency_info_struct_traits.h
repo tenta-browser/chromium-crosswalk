@@ -5,13 +5,23 @@
 #ifndef UI_LATENCY_MOJO_LATENCY_INFO_STRUCT_TRAITS_H_
 #define UI_LATENCY_MOJO_LATENCY_INFO_STRUCT_TRAITS_H_
 
+#include "mojo/common/common_custom_types_struct_traits.h"
 #include "ui/gfx/geometry/mojo/geometry_struct_traits.h"
 #include "ui/latency/latency_info.h"
 #include "ui/latency/mojo/latency_info.mojom-shared.h"
 
 namespace mojo {
 
-using InputCoordinateArray = CArray<gfx::PointF>;
+static_assert(
+    static_cast<int>(
+        ui::mojom::LatencyComponentType::LATENCY_COMPONENT_TYPE_LAST) ==
+        static_cast<int>(ui::LATENCY_COMPONENT_TYPE_LAST),
+    "Enum size mismatch");
+
+static_assert(
+    static_cast<int>(ui::mojom::SourceEventType::SOURCE_EVENT_TYPE_LAST) ==
+        static_cast<int>(ui::SOURCE_EVENT_TYPE_LAST),
+    "Enum size mismatch");
 
 template <>
 struct ArrayTraits<ui::LatencyInfo::LatencyMap> {
@@ -85,11 +95,15 @@ struct StructTraits<ui::mojom::LatencyInfoDataView, ui::LatencyInfo> {
   static const std::string& trace_name(const ui::LatencyInfo& info);
   static const ui::LatencyInfo::LatencyMap& latency_components(
       const ui::LatencyInfo& info);
-  static uint32_t input_coordinates_size(const ui::LatencyInfo& info);
-  static InputCoordinateArray input_coordinates(const ui::LatencyInfo& info);
   static int64_t trace_id(const ui::LatencyInfo& info);
+  static ukm::SourceId ukm_source_id(const ui::LatencyInfo& info);
   static bool coalesced(const ui::LatencyInfo& info);
+  static bool began(const ui::LatencyInfo& info);
   static bool terminated(const ui::LatencyInfo& info);
+  static ui::mojom::SourceEventType source_event_type(
+      const ui::LatencyInfo& info);
+  static base::TimeDelta expected_queueing_time_on_dispatch(
+      const ui::LatencyInfo& info);
   static bool Read(ui::mojom::LatencyInfoDataView data, ui::LatencyInfo* out);
 };
 

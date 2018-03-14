@@ -18,6 +18,7 @@
 #include "ui/events/ozone/evdev/event_factory_evdev.h"
 #include "ui/events/ozone/layout/keyboard_layout_engine_manager.h"
 #include "ui/events/ozone/layout/stub/stub_keyboard_layout_engine.h"
+#include "ui/events/system_input_injector.h"
 #include "ui/ozone/platform/cast/overlay_manager_cast.h"
 #include "ui/ozone/platform/cast/platform_window_cast.h"
 #include "ui/ozone/platform/cast/surface_factory_cast.h"
@@ -25,7 +26,6 @@
 #include "ui/ozone/public/gpu_platform_support_host.h"
 #include "ui/ozone/public/input_controller.h"
 #include "ui/ozone/public/ozone_platform.h"
-#include "ui/ozone/public/system_input_injector.h"
 
 using chromecast::CastEglPlatform;
 
@@ -53,6 +53,23 @@ class OzonePlatformCast : public OzonePlatform {
       // rendering because it failed to create a channel to the GPU process.
       // Returning a null pointer will crash via a null-pointer dereference,
       // so instead perform a controlled crash.
+
+      // TODO(servolk): Odroid EGL implementation says there are no valid
+      // configs when HDMI is not connected. This command-line switch will allow
+      // us to avoid crashes in this situation and work in headless mode when
+      // HDMI is disconnected. But this means that graphics won't work later, if
+      // HDMI is reconnected, until the device is rebooted. We'll need to look
+      // into better way to handle dynamic GPU process restarts on HDMI
+      // connect/disconnect events.
+      bool allow_dummy_software_rendering =
+          base::CommandLine::ForCurrentProcess()->HasSwitch(
+              "allow-dummy-software-rendering");
+      if (allow_dummy_software_rendering) {
+        LOG(INFO) << "Using dummy SurfaceFactoryCast";
+        surface_factory_.reset(new SurfaceFactoryCast());
+        return surface_factory_.get();
+      }
+
       LOG(FATAL) << "Unable to create a GPU graphics context, and Cast doesn't "
                     "support software compositing.";
     }
@@ -81,7 +98,7 @@ class OzonePlatformCast : public OzonePlatform {
   }
   std::unique_ptr<display::NativeDisplayDelegate> CreateNativeDisplayDelegate()
       override {
-    NOTREACHED();
+    // On Cast platform the display is initialized by low-level non-Ozone code.
     return nullptr;
   }
 
@@ -101,7 +118,7 @@ class OzonePlatformCast : public OzonePlatform {
 #endif  // BUILDFLAG(IS_CAST_AUDIO_ONLY)
 
     KeyboardLayoutEngineManager::SetKeyboardLayoutEngine(
-        base::MakeUnique<StubKeyboardLayoutEngine>());
+        std::make_unique<StubKeyboardLayoutEngine>());
     ui::KeyboardLayoutEngineManager::GetKeyboardLayoutEngine()
         ->SetCurrentLayoutByName("us");
     event_factory_ozone_.reset(new EventFactoryEvdev(

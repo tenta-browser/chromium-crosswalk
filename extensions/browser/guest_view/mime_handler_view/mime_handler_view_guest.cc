@@ -6,11 +6,8 @@
 
 #include <utility>
 
-#include "base/strings/stringprintf.h"
 #include "components/guest_view/common/guest_view_constants.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/host_zoom_map.h"
-#include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -26,12 +23,9 @@
 #include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_guest_delegate.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/common/constants.h"
-#include "extensions/common/extension_messages.h"
 #include "extensions/common/guest_view/extensions_guest_view_messages.h"
 #include "extensions/strings/grit/extensions_strings.h"
-#include "ipc/ipc_message_macros.h"
-#include "net/base/url_util.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 #include "third_party/WebKit/public/platform/WebGestureEvent.h"
 
 using content::WebContents;
@@ -138,13 +132,14 @@ int MimeHandlerViewGuest::GetTaskPrefix() const {
 void MimeHandlerViewGuest::CreateWebContents(
     const base::DictionaryValue& create_params,
     const WebContentsCreatedCallback& callback) {
-  create_params.GetString(mime_handler_view::kViewId, &view_id_);
-  if (view_id_.empty()) {
+  std::string view_id;
+  create_params.GetString(mime_handler_view::kViewId, &view_id);
+  if (view_id.empty()) {
     callback.Run(nullptr);
     return;
   }
   stream_ =
-      MimeHandlerStreamManager::Get(browser_context())->ReleaseStream(view_id_);
+      MimeHandlerStreamManager::Get(browser_context())->ReleaseStream(view_id);
   if (!stream_) {
     callback.Run(nullptr);
     return;
@@ -180,14 +175,15 @@ void MimeHandlerViewGuest::CreateWebContents(
                                    guest_site_instance.get());
   params.guest_delegate = this;
   callback.Run(WebContents::Create(params));
+
+  registry_.AddInterface(
+      base::Bind(&MimeHandlerServiceImpl::Create, stream_->GetWeakPtr()));
 }
 
 void MimeHandlerViewGuest::DidAttachToEmbedder() {
   web_contents()->GetController().LoadURL(
       stream_->handler_url(), content::Referrer(),
       ui::PAGE_TRANSITION_AUTO_TOPLEVEL, std::string());
-  web_contents()->GetMainFrame()->GetInterfaceRegistry()->AddInterface(
-      base::Bind(&MimeHandlerServiceImpl::Create, stream_->GetWeakPtr()));
 }
 
 void MimeHandlerViewGuest::DidInitialize(
@@ -195,12 +191,12 @@ void MimeHandlerViewGuest::DidInitialize(
   ExtensionsAPIClient::Get()->AttachWebContentsHelpers(web_contents());
 }
 
-bool MimeHandlerViewGuest::ShouldHandleFindRequestsForEmbedder() const {
-  return is_full_page_plugin();
-}
-
 bool MimeHandlerViewGuest::ZoomPropagatesFromEmbedderToGuest() const {
   return false;
+}
+
+bool MimeHandlerViewGuest::ShouldDestroyOnDetach() const {
+  return true;
 }
 
 WebContents* MimeHandlerViewGuest::OpenURLFromTab(
@@ -236,18 +232,13 @@ void MimeHandlerViewGuest::NavigationStateChanged(
 
 bool MimeHandlerViewGuest::HandleContextMenu(
     const content::ContextMenuParams& params) {
-  if (delegate_)
-    return delegate_->HandleContextMenu(web_contents(), params);
-
-  return false;
+  return delegate_ && delegate_->HandleContextMenu(web_contents(), params);
 }
 
 bool MimeHandlerViewGuest::PreHandleGestureEvent(
     WebContents* source,
     const blink::WebGestureEvent& event) {
-  if (event.GetType() == blink::WebGestureEvent::kGesturePinchBegin ||
-      event.GetType() == blink::WebGestureEvent::kGesturePinchUpdate ||
-      event.GetType() == blink::WebGestureEvent::kGesturePinchEnd) {
+  if (blink::WebInputEvent::IsPinchGestureEventType(event.GetType())) {
     // If we're an embedded plugin we drop pinch-gestures to avoid zooming the
     // guest.
     return !is_full_page_plugin();
@@ -284,8 +275,9 @@ bool MimeHandlerViewGuest::SaveFrame(const GURL& url,
 void MimeHandlerViewGuest::OnRenderFrameHostDeleted(int process_id,
                                                     int routing_id) {
   if (process_id == embedder_frame_process_id_ &&
-      routing_id == embedder_frame_routing_id_)
-    Destroy(true);
+      routing_id == embedder_frame_routing_id_) {
+    Destroy(/*also_delete=*/true);
+  }
 }
 
 void MimeHandlerViewGuest::DocumentOnLoadCompletedInMainFrame() {
@@ -301,10 +293,11 @@ void MimeHandlerViewGuest::DocumentOnLoadCompletedInMainFrame() {
   }
 }
 
-base::WeakPtr<StreamContainer> MimeHandlerViewGuest::GetStream() const {
-  if (!stream_)
-    return base::WeakPtr<StreamContainer>();
-  return stream_->GetWeakPtr();
+void MimeHandlerViewGuest::OnInterfaceRequestFromFrame(
+    content::RenderFrameHost* render_frame_host,
+    const std::string& interface_name,
+    mojo::ScopedMessagePipeHandle* interface_pipe) {
+  registry_.TryBindInterface(interface_name, interface_pipe);
 }
 
 }  // namespace extensions

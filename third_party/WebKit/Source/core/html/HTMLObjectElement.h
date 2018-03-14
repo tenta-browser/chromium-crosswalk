@@ -24,9 +24,9 @@
 #define HTMLObjectElement_h
 
 #include "core/CoreExport.h"
-#include "core/html/FormAssociated.h"
 #include "core/html/HTMLPlugInElement.h"
-#include "core/html/ListedElement.h"
+#include "core/html/forms/FormAssociated.h"
+#include "core/html/forms/ListedElement.h"
 
 namespace blink {
 
@@ -45,7 +45,7 @@ class CORE_EXPORT HTMLObjectElement final : public HTMLPlugInElement,
  public:
   static HTMLObjectElement* Create(Document&, bool created_by_parser);
   ~HTMLObjectElement() override;
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   const String& ClassId() const { return class_id_; }
 
@@ -78,15 +78,17 @@ class CORE_EXPORT HTMLObjectElement final : public HTMLPlugInElement,
 
   FormAssociated* ToFormAssociatedOrNull() override { return this; };
   void AssociateWith(HTMLFormElement*) override;
+  void AttachLayoutTree(AttachContext&) final;
 
  private:
   HTMLObjectElement(Document&, bool created_by_parser);
 
   void ParseAttribute(const AttributeModificationParams&) override;
   bool IsPresentationAttribute(const QualifiedName&) const override;
-  void CollectStyleForPresentationAttribute(const QualifiedName&,
-                                            const AtomicString&,
-                                            MutableStylePropertySet*) override;
+  void CollectStyleForPresentationAttribute(
+      const QualifiedName&,
+      const AtomicString&,
+      MutableCSSPropertyValueSet*) override;
 
   InsertionNotificationRequest InsertedInto(ContainerNode*) override;
   void RemovedFrom(ContainerNode*) override;
@@ -100,7 +102,7 @@ class CORE_EXPORT HTMLObjectElement final : public HTMLPlugInElement,
   const QualifiedName& SubResourceAttributeName() const override;
   const AtomicString ImageSourceURL() const override;
 
-  LayoutPart* ExistingLayoutPart() const override;
+  LayoutEmbeddedContent* ExistingLayoutEmbeddedContent() const override;
 
   void UpdatePluginInternal() override;
   void UpdateDocNamedItem();
@@ -110,54 +112,26 @@ class CORE_EXPORT HTMLObjectElement final : public HTMLPlugInElement,
   // FIXME: This function should not deal with url or serviceType
   // so that we can better share code between <object> and <embed>.
   void ParametersForPlugin(Vector<String>& param_names,
-                           Vector<String>& param_values,
-                           String& url,
-                           String& service_type);
+                           Vector<String>& param_values);
 
   bool HasValidClassId() const;
 
   void ReloadPluginOnAttributeChange(const QualifiedName&);
 
-  bool ShouldRegisterAsNamedItem() const override { return true; }
-  bool ShouldRegisterAsExtraNamedItem() const override { return true; }
+  NamedItemType GetNamedItemType() const override {
+    return NamedItemType::kNameOrId;
+  }
 
   String class_id_;
   bool use_fallback_content_ : 1;
 };
 
-// Intentionally left unimplemented, template specialization needs to be
-// provided for specific return types.
-template <typename T>
-inline const T& ToElement(const ListedElement&);
-template <typename T>
-inline const T* ToElement(const ListedElement*);
-
-// Make toHTMLObjectElement() accept a ListedElement as input instead of
-// a Node.
-template <>
-inline const HTMLObjectElement* ToElement<HTMLObjectElement>(
-    const ListedElement* element) {
-  SECURITY_DCHECK(!element || !element->IsFormControlElement());
-  const HTMLObjectElement* object_element =
-      static_cast<const HTMLObjectElement*>(element);
-  // We need to assert after the cast because ListedElement doesn't
-  // have hasTagName.
-  SECURITY_DCHECK(!object_element ||
-                  object_element->HasTagName(HTMLNames::objectTag));
-  return object_element;
-}
-
-template <>
-inline const HTMLObjectElement& ToElement<HTMLObjectElement>(
-    const ListedElement& element) {
-  SECURITY_DCHECK(!element.IsFormControlElement());
-  const HTMLObjectElement& object_element =
-      static_cast<const HTMLObjectElement&>(element);
-  // We need to assert after the cast because ListedElement doesn't
-  // have hasTagName.
-  SECURITY_DCHECK(object_element.HasTagName(HTMLNames::objectTag));
-  return object_element;
-}
+// Like ToHTMLObjectElement() but accepts a ListedElement as input
+// instead of a Node.
+const HTMLObjectElement* ToHTMLObjectElementFromListedElement(
+    const ListedElement*);
+const HTMLObjectElement& ToHTMLObjectElementFromListedElement(
+    const ListedElement&);
 
 }  // namespace blink
 

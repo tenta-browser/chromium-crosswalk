@@ -26,11 +26,10 @@
 #ifndef WebGLProgram_h
 #define WebGLProgram_h
 
-#include "bindings/core/v8/TraceWrapperMember.h"
+#include "base/memory/scoped_refptr.h"
 #include "modules/webgl/WebGLShader.h"
 #include "modules/webgl/WebGLSharedPlatform3DObject.h"
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/Vector.h"
+#include "platform/bindings/TraceWrapperMember.h"
 
 namespace blink {
 
@@ -62,8 +61,8 @@ class WebGLProgram final : public WebGLSharedPlatform3DObject {
   bool AttachShader(WebGLShader*);
   bool DetachShader(WebGLShader*);
 
-  DECLARE_VIRTUAL_TRACE();
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+  virtual void Trace(blink::Visitor*);
+  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
 
  protected:
   explicit WebGLProgram(WebGLRenderingContextBase*);

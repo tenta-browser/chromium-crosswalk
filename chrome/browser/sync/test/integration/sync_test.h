@@ -12,13 +12,13 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/process/process.h"
+#include "chrome/browser/extensions/install_verifier.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/protocol/sync_protocol_error.h"
 #include "components/sync/test/fake_server/fake_server.h"
 #include "components/sync/test/local_sync_test_server.h"
-#include "net/dns/mock_host_resolver.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/url_request_status.h"
 
@@ -62,7 +62,6 @@ class FakeServerInvalidationService;
 
 namespace net {
 class FakeURLFetcherFactory;
-class ScopedDefaultHostResolverProc;
 class URLFetcherImplFactory;
 }  // namespace net
 
@@ -264,17 +263,9 @@ class SyncTest : public InProcessBrowserTest {
   // on by default yet.
   virtual void AddOptionalTypesToCommandLine(base::CommandLine* cl);
 
-  // BrowserTestBase override. Destroys all the sync clients and sync
-  // profiles created by a test.
+  // BrowserTestBase implementation:
+  void SetUpOnMainThread() override;
   void TearDownOnMainThread() override;
-
-  // InProcessBrowserTest override. Changes behavior of the default host
-  // resolver to avoid DNS lookup errors.
-  void SetUpInProcessBrowserTestFixture() override;
-
-  // InProcessBrowserTest override. Resets the host resolver its default
-  // behavior.
-  void TearDownInProcessBrowserTestFixture() override;
 
   // Implementations of the EnableNotifications() and DisableNotifications()
   // functions defined above.
@@ -304,7 +295,7 @@ class SyncTest : public InProcessBrowserTest {
  private:
   // Handles Profile creation for given index. Profile's path and type is
   // determined at runtime based on server type.
-  void CreateProfile(int index);
+  bool CreateProfile(int index);
 
   // Callback for MakeProfileForUISignin() method. It runs the quit_closure once
   // profile is created successfully.
@@ -456,12 +447,6 @@ class SyncTest : public InProcessBrowserTest {
   // creation via http requests.
   bool create_gaia_account_at_runtime_;
 
-  // Sync integration tests need to make live DNS requests for access to
-  // GAIA and sync server URLs under google.com. We use a scoped version
-  // to override the default resolver while the test is active.
-  std::unique_ptr<net::ScopedDefaultHostResolverProc>
-      mock_host_resolver_override_;
-
   // Used to start and stop the local test server.
   base::Process test_server_;
 
@@ -474,6 +459,9 @@ class SyncTest : public InProcessBrowserTest {
   // The contents to be written to a profile's Preferences file before the
   // Profile object is created. If empty, no preexisting file will be written.
   std::string preexisting_preferences_file_contents_;
+
+  // Disable extension install verification.
+  extensions::ScopedInstallVerifierBypassForTest ignore_install_verification_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncTest);
 };

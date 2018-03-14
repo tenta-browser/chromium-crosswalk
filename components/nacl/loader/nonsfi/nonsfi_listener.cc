@@ -10,6 +10,7 @@
 #include "base/file_descriptor_posix.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
@@ -52,12 +53,12 @@ void NonSfiListener::Listen() {
   mojo::ScopedMessagePipeHandle channel_handle;
   std::unique_ptr<service_manager::ServiceContext> service_context =
       CreateNaClServiceContext(io_thread_.task_runner(), &channel_handle);
-  channel_ = IPC::SyncChannel::Create(channel_handle.release(),
-                                      IPC::Channel::MODE_CLIENT,
-                                      this,  // As a Listener.
-                                      io_thread_.task_runner(),
-                                      true,  // Create pipe now.
-                                      &shutdown_event_);
+  channel_ = IPC::SyncChannel::Create(
+      channel_handle.release(), IPC::Channel::MODE_CLIENT,
+      this,  // As a Listener.
+      io_thread_.task_runner(), base::ThreadTaskRunnerHandle::Get(),
+      true,  // Create pipe now.
+      &shutdown_event_);
   base::RunLoop().Run();
 }
 

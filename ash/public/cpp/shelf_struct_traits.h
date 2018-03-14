@@ -9,10 +9,57 @@
 #include "ash/public/cpp/shelf_item.h"
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/public/interfaces/shelf.mojom-shared.h"
+#include "ui/base/models/menu_model.h"
 
 using ash::ShelfItem;
 
 namespace mojo {
+
+template <>
+struct EnumTraits<ash::mojom::MenuItemType, ui::MenuModel::ItemType> {
+  static ash::mojom::MenuItemType ToMojom(ui::MenuModel::ItemType input) {
+    switch (input) {
+      case ui::MenuModel::TYPE_COMMAND:
+        return ash::mojom::MenuItemType::COMMAND;
+      case ui::MenuModel::TYPE_CHECK:
+        return ash::mojom::MenuItemType::CHECK;
+      case ui::MenuModel::TYPE_RADIO:
+        return ash::mojom::MenuItemType::RADIO;
+      case ui::MenuModel::TYPE_SEPARATOR:
+        return ash::mojom::MenuItemType::SEPARATOR;
+      case ui::MenuModel::TYPE_BUTTON_ITEM:
+        NOTREACHED() << "TYPE_BUTTON_ITEM is not yet supported.";
+        return ash::mojom::MenuItemType::COMMAND;
+      case ui::MenuModel::TYPE_SUBMENU:
+        return ash::mojom::MenuItemType::SUBMENU;
+    }
+    NOTREACHED();
+    return ash::mojom::MenuItemType::COMMAND;
+  }
+
+  static bool FromMojom(ash::mojom::MenuItemType input,
+                        ui::MenuModel::ItemType* out) {
+    switch (input) {
+      case ash::mojom::MenuItemType::COMMAND:
+        *out = ui::MenuModel::TYPE_COMMAND;
+        return true;
+      case ash::mojom::MenuItemType::CHECK:
+        *out = ui::MenuModel::TYPE_CHECK;
+        return true;
+      case ash::mojom::MenuItemType::RADIO:
+        *out = ui::MenuModel::TYPE_RADIO;
+        return true;
+      case ash::mojom::MenuItemType::SEPARATOR:
+        *out = ui::MenuModel::TYPE_SEPARATOR;
+        return true;
+      case ash::mojom::MenuItemType::SUBMENU:
+        *out = ui::MenuModel::TYPE_SUBMENU;
+        return true;
+    }
+    NOTREACHED();
+    return false;
+  }
+};
 
 template <>
 struct EnumTraits<ash::mojom::ShelfAction, ash::ShelfAction> {
@@ -57,79 +104,6 @@ struct EnumTraits<ash::mojom::ShelfAction, ash::ShelfAction> {
 };
 
 template <>
-struct EnumTraits<ash::mojom::ShelfAlignment, ash::ShelfAlignment> {
-  static ash::mojom::ShelfAlignment ToMojom(ash::ShelfAlignment input) {
-    switch (input) {
-      case ash::SHELF_ALIGNMENT_BOTTOM:
-        return ash::mojom::ShelfAlignment::BOTTOM;
-      case ash::SHELF_ALIGNMENT_LEFT:
-        return ash::mojom::ShelfAlignment::LEFT;
-      case ash::SHELF_ALIGNMENT_RIGHT:
-        return ash::mojom::ShelfAlignment::RIGHT;
-      case ash::SHELF_ALIGNMENT_BOTTOM_LOCKED:
-        return ash::mojom::ShelfAlignment::BOTTOM_LOCKED;
-    }
-    NOTREACHED();
-    return ash::mojom::ShelfAlignment::BOTTOM;
-  }
-
-  static bool FromMojom(ash::mojom::ShelfAlignment input,
-                        ash::ShelfAlignment* out) {
-    switch (input) {
-      case ash::mojom::ShelfAlignment::BOTTOM:
-        *out = ash::SHELF_ALIGNMENT_BOTTOM;
-        return true;
-      case ash::mojom::ShelfAlignment::LEFT:
-        *out = ash::SHELF_ALIGNMENT_LEFT;
-        return true;
-      case ash::mojom::ShelfAlignment::RIGHT:
-        *out = ash::SHELF_ALIGNMENT_RIGHT;
-        return true;
-      case ash::mojom::ShelfAlignment::BOTTOM_LOCKED:
-        *out = ash::SHELF_ALIGNMENT_BOTTOM_LOCKED;
-        return true;
-    }
-    NOTREACHED();
-    return false;
-  }
-};
-
-template <>
-struct EnumTraits<ash::mojom::ShelfAutoHideBehavior,
-                  ash::ShelfAutoHideBehavior> {
-  static ash::mojom::ShelfAutoHideBehavior ToMojom(
-      ash::ShelfAutoHideBehavior input) {
-    switch (input) {
-      case ash::SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS:
-        return ash::mojom::ShelfAutoHideBehavior::ALWAYS;
-      case ash::SHELF_AUTO_HIDE_BEHAVIOR_NEVER:
-        return ash::mojom::ShelfAutoHideBehavior::NEVER;
-      case ash::SHELF_AUTO_HIDE_ALWAYS_HIDDEN:
-        return ash::mojom::ShelfAutoHideBehavior::HIDDEN;
-    }
-    NOTREACHED();
-    return ash::mojom::ShelfAutoHideBehavior::NEVER;
-  }
-
-  static bool FromMojom(ash::mojom::ShelfAutoHideBehavior input,
-                        ash::ShelfAutoHideBehavior* out) {
-    switch (input) {
-      case ash::mojom::ShelfAutoHideBehavior::ALWAYS:
-        *out = ash::SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS;
-        return true;
-      case ash::mojom::ShelfAutoHideBehavior::NEVER:
-        *out = ash::SHELF_AUTO_HIDE_BEHAVIOR_NEVER;
-        return true;
-      case ash::mojom::ShelfAutoHideBehavior::HIDDEN:
-        *out = ash::SHELF_AUTO_HIDE_ALWAYS_HIDDEN;
-        return true;
-    }
-    NOTREACHED();
-    return false;
-  }
-};
-
-template <>
 struct EnumTraits<ash::mojom::ShelfItemStatus, ash::ShelfItemStatus> {
   static ash::mojom::ShelfItemStatus ToMojom(ash::ShelfItemStatus input) {
     switch (input) {
@@ -137,8 +111,6 @@ struct EnumTraits<ash::mojom::ShelfItemStatus, ash::ShelfItemStatus> {
         return ash::mojom::ShelfItemStatus::CLOSED;
       case ash::STATUS_RUNNING:
         return ash::mojom::ShelfItemStatus::RUNNING;
-      case ash::STATUS_ACTIVE:
-        return ash::mojom::ShelfItemStatus::ACTIVE;
       case ash::STATUS_ATTENTION:
         return ash::mojom::ShelfItemStatus::ATTENTION;
     }
@@ -154,9 +126,6 @@ struct EnumTraits<ash::mojom::ShelfItemStatus, ash::ShelfItemStatus> {
         return true;
       case ash::mojom::ShelfItemStatus::RUNNING:
         *out = ash::STATUS_RUNNING;
-        return true;
-      case ash::mojom::ShelfItemStatus::ACTIVE:
-        *out = ash::STATUS_ACTIVE;
         return true;
       case ash::mojom::ShelfItemStatus::ATTENTION:
         *out = ash::STATUS_ATTENTION;
@@ -255,17 +224,21 @@ struct EnumTraits<ash::mojom::ShelfLaunchSource, ash::ShelfLaunchSource> {
 
 template <>
 struct ASH_PUBLIC_EXPORT
+    StructTraits<ash::mojom::ShelfIDDataView, ash::ShelfID> {
+  static const std::string& app_id(const ash::ShelfID& i) { return i.app_id; }
+  static const std::string& launch_id(const ash::ShelfID& i) {
+    return i.launch_id;
+  }
+  static bool Read(ash::mojom::ShelfIDDataView data, ash::ShelfID* out);
+};
+
+template <>
+struct ASH_PUBLIC_EXPORT
     StructTraits<ash::mojom::ShelfItemDataView, ShelfItem> {
   static ash::ShelfItemType type(const ShelfItem& i) { return i.type; }
-  static const SkBitmap& image(const ShelfItem& i);
-  static ash::ShelfID shelf_id(const ShelfItem& i) { return i.id; }
+  static const gfx::ImageSkia& image(const ShelfItem& i) { return i.image; }
   static ash::ShelfItemStatus status(const ShelfItem& i) { return i.status; }
-  static const std::string& app_id(const ShelfItem& i) {
-    return i.app_launch_id.app_id();
-  }
-  static const std::string& launch_id(const ShelfItem& i) {
-    return i.app_launch_id.launch_id();
-  }
+  static const ash::ShelfID& shelf_id(const ShelfItem& i) { return i.id; }
   static const base::string16& title(const ShelfItem& i) { return i.title; }
   static bool shows_tooltip(const ShelfItem& i) { return i.shows_tooltip; }
   static bool pinned_by_policy(const ShelfItem& i) {

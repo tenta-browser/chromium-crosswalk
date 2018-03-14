@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/containers/queue.h"
 #include "base/strings/string_util.h"
 #include "google_apis/google_api_keys.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -56,12 +57,14 @@ OAuthTokenGetterImpl::OAuthTokenGetterImpl(
   }
 }
 
-OAuthTokenGetterImpl::~OAuthTokenGetterImpl() {}
+OAuthTokenGetterImpl::~OAuthTokenGetterImpl() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+}
 
 void OAuthTokenGetterImpl::OnGetTokensResponse(const std::string& refresh_token,
                                                const std::string& access_token,
                                                int expires_seconds) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(intermediate_credentials_);
   VLOG(1) << "Received OAuth tokens.";
 
@@ -85,7 +88,7 @@ void OAuthTokenGetterImpl::OnGetTokensResponse(const std::string& refresh_token,
 void OAuthTokenGetterImpl::OnRefreshTokenResponse(
     const std::string& access_token,
     int expires_seconds) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(authorization_credentials_);
   VLOG(1) << "Received OAuth token.";
 
@@ -104,7 +107,7 @@ void OAuthTokenGetterImpl::OnRefreshTokenResponse(
 
 void OAuthTokenGetterImpl::OnGetUserEmailResponse(
     const std::string& user_email) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(authorization_credentials_);
   VLOG(1) << "Received user info.";
 
@@ -148,9 +151,9 @@ void OAuthTokenGetterImpl::NotifyTokenCallbacks(
     Status status,
     const std::string& user_email,
     const std::string& access_token) {
-  DCHECK(CalledOnValidThread());
-  std::queue<TokenCallback> callbacks(pending_callbacks_);
-  pending_callbacks_ = std::queue<TokenCallback>();
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  base::queue<TokenCallback> callbacks(pending_callbacks_);
+  pending_callbacks_ = base::queue<TokenCallback>();
 
   while (!callbacks.empty()) {
     callbacks.front().Run(status, user_email, access_token);
@@ -161,14 +164,14 @@ void OAuthTokenGetterImpl::NotifyTokenCallbacks(
 void OAuthTokenGetterImpl::NotifyUpdatedCallbacks(
     const std::string& user_email,
     const std::string& refresh_token) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (credentials_updated_callback_) {
     credentials_updated_callback_.Run(user_email, refresh_token);
   }
 }
 
 void OAuthTokenGetterImpl::OnOAuthError() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   LOG(ERROR) << "OAuth: invalid credentials.";
   response_pending_ = false;
 
@@ -182,7 +185,7 @@ void OAuthTokenGetterImpl::OnOAuthError() {
 }
 
 void OAuthTokenGetterImpl::OnNetworkError(int response_code) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   LOG(ERROR) << "Network error when trying to update OAuth token: "
              << response_code;
   response_pending_ = false;
@@ -191,7 +194,7 @@ void OAuthTokenGetterImpl::OnNetworkError(int response_code) {
 }
 
 void OAuthTokenGetterImpl::CallWithToken(const TokenCallback& on_access_token) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (intermediate_credentials_) {
     pending_callbacks_.push(on_access_token);
     if (!response_pending_) {
@@ -216,12 +219,12 @@ void OAuthTokenGetterImpl::CallWithToken(const TokenCallback& on_access_token) {
 }
 
 void OAuthTokenGetterImpl::InvalidateCache() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   access_token_expiry_time_ = base::Time();
 }
 
 void OAuthTokenGetterImpl::GetOauthTokensFromAuthCode() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   VLOG(1) << "Fetching OAuth token from Auth Code.";
   DCHECK(!response_pending_);
 
@@ -254,7 +257,7 @@ void OAuthTokenGetterImpl::GetOauthTokensFromAuthCode() {
 }
 
 void OAuthTokenGetterImpl::RefreshAccessToken() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   VLOG(1) << "Refreshing OAuth Access token.";
   DCHECK(!response_pending_);
 

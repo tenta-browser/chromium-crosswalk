@@ -5,7 +5,7 @@
 #include "components/handoff/handoff_manager.h"
 
 #include "base/logging.h"
-#include "base/mac/objc_property_releaser.h"
+#include "base/mac/objc_release_properties.h"
 #include "base/mac/scoped_nsobject.h"
 #include "net/base/mac/url_conversions.h"
 
@@ -23,20 +23,20 @@
 @interface HandoffManager ()
 
 // The active user activity.
-@property(nonatomic, retain) NSUserActivity* userActivity;
+@property(nonatomic, retain)
+    NSUserActivity* userActivity API_AVAILABLE(macos(10.10));
 
 // Whether the URL of the current tab should be exposed for Handoff.
 - (BOOL)shouldUseActiveURL;
 
 // Updates the active NSUserActivity.
-- (void)updateUserActivity;
+- (void)updateUserActivity API_AVAILABLE(macos(10.10));
 
 @end
 
 @implementation HandoffManager {
-  base::mac::ObjCPropertyReleaser _propertyReleaser_HandoffManager;
   GURL _activeURL;
-  NSUserActivity* _userActivity;
+  NSUserActivity* _userActivity API_AVAILABLE(macos(10.10));
   handoff::Origin _origin;
 }
 
@@ -53,7 +53,6 @@
 - (instancetype)init {
   self = [super init];
   if (self) {
-    _propertyReleaser_HandoffManager.Init(self, [HandoffManager class]);
 #if defined(OS_MACOSX) && !defined(OS_IOS)
     _origin = handoff::ORIGIN_MAC;
 #elif defined(OS_IOS)
@@ -63,6 +62,11 @@
 #endif
   }
   return self;
+}
+
+- (void)dealloc {
+  base::mac::ReleaseProperties(self);
+  [super dealloc];
 }
 
 - (void)updateActiveURL:(const GURL&)url {
@@ -95,11 +99,9 @@
   // Invalidate the old user activity and make a new one.
   [self.userActivity invalidate];
 
-  Class aClass = NSClassFromString(@"NSUserActivity");
-  NSUserActivity* userActivity = [[aClass performSelector:@selector(alloc)]
-      performSelector:@selector(initWithActivityType:)
-           withObject:handoff::kChromeHandoffActivityType];
-  self.userActivity = base::scoped_nsobject<NSUserActivity>(userActivity);
+  base::scoped_nsobject<NSUserActivity> userActivity([[NSUserActivity alloc]
+      initWithActivityType:handoff::kChromeHandoffActivityType]);
+  self.userActivity = userActivity;
   self.userActivity.webpageURL = net::NSURLWithGURL(_activeURL);
   NSString* origin = handoff::StringFromOrigin(_origin);
   DCHECK(origin);
@@ -109,6 +111,7 @@
 
 @end
 
+#if defined(OS_IOS)
 @implementation HandoffManager (TestingOnly)
 
 - (NSURL*)userActivityWebpageURL {
@@ -116,3 +119,4 @@
 }
 
 @end
+#endif

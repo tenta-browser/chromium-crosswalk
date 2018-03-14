@@ -5,9 +5,9 @@
 #include "ash/system/tray/tray_details_view.h"
 
 #include "ash/ash_view_ids.h"
-#include "ash/resources/grit/ash_resources.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/tray/system_tray.h"
+#include "ash/system/tray/system_tray_bubble.h"
 #include "ash/system/tray/system_tray_item.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_popup_header_button.h"
@@ -23,7 +23,6 @@
 #include "ui/views/widget/widget.h"
 
 namespace ash {
-namespace test {
 
 namespace {
 
@@ -35,13 +34,17 @@ class TestDetailsView : public TrayDetailsView {
     CreateTitleRow(IDS_ASH_STATUS_TRAY_BLUETOOTH);
   }
 
-  ~TestDetailsView() override {}
+  ~TestDetailsView() override = default;
 
   TrayPopupHeaderButton* tray_popup_header_button() {
     return tray_popup_header_button_;
   }
 
   void CreateScrollerViews() { CreateScrollableList(); }
+
+  views::View* scroll_content() const {
+    return TrayDetailsView::scroll_content();
+  }
 
  private:
   TrayPopupHeaderButton* tray_popup_header_button_;
@@ -72,9 +75,9 @@ class TestItem : public SystemTrayItem {
     detailed_view_ = new TestDetailsView(this);
     return detailed_view_;
   }
-  void DestroyTrayView() override { tray_view_ = NULL; }
-  void DestroyDefaultView() override { default_view_ = NULL; }
-  void DestroyDetailedView() override { detailed_view_ = NULL; }
+  void OnTrayViewDestroyed() override { tray_view_ = NULL; }
+  void OnDefaultViewDestroyed() override { default_view_ = NULL; }
+  void OnDetailedViewDestroyed() override { detailed_view_ = NULL; }
 
   views::View* tray_view() const { return tray_view_; }
   views::View* default_view() const { return default_view_; }
@@ -92,16 +95,16 @@ class TestItem : public SystemTrayItem {
 
 class TrayDetailsViewTest : public AshTestBase {
  public:
-  TrayDetailsViewTest() {}
-  ~TrayDetailsViewTest() override {}
+  TrayDetailsViewTest() = default;
+  ~TrayDetailsViewTest() override = default;
 
   TrayPopupHeaderButton* CreateAndShowTrayPopupHeaderButton() {
     SystemTray* tray = GetPrimarySystemTray();
     TestItem* test_item = new TestItem;
     tray->AddTrayItem(base::WrapUnique(test_item));
-    tray->ShowDefaultView(BUBBLE_CREATE_NEW);
+    tray->ShowDefaultView(BUBBLE_CREATE_NEW, false /* show_by_click */);
     RunAllPendingInMessageLoop();
-    tray->ShowDetailedView(test_item, 0, true, BUBBLE_USE_EXISTING);
+    tray->ShowDetailedView(test_item, 0, BUBBLE_USE_EXISTING);
     RunAllPendingInMessageLoop();
 
     return test_item->detailed_view()->tray_popup_header_button();
@@ -121,7 +124,7 @@ class TrayDetailsViewTest : public AshTestBase {
   void SetUp() override {
     AshTestBase::SetUp();
     scoped_task_runner_ =
-        base::MakeUnique<base::ScopedMockTimeMessageLoopTaskRunner>();
+        std::make_unique<base::ScopedMockTimeMessageLoopTaskRunner>();
   }
 
   void TearDown() override {
@@ -151,11 +154,11 @@ TEST_F(TrayDetailsViewTest, TransitionToDefaultViewTest) {
   ASSERT_TRUE(test_item_2->tray_view() != NULL);
 
   // Show the default view.
-  tray->ShowDefaultView(BUBBLE_CREATE_NEW);
+  tray->ShowDefaultView(BUBBLE_CREATE_NEW, false /* show_by_click */);
   RunAllPendingInMessageLoop();
 
   // Show the detailed view of item 2.
-  tray->ShowDetailedView(test_item_2, 0, true, BUBBLE_USE_EXISTING);
+  tray->ShowDetailedView(test_item_2, 0, BUBBLE_USE_EXISTING);
   EXPECT_TRUE(test_item_2->detailed_view());
   RunAllPendingInMessageLoop();
   EXPECT_FALSE(test_item_2->default_view());
@@ -172,7 +175,7 @@ TEST_F(TrayDetailsViewTest, TransitionToDefaultViewTest) {
   EXPECT_TRUE(test_item_2->default_view()->HasFocus());
 
   // Show the detailed view of item 2 again.
-  tray->ShowDetailedView(test_item_2, 0, true, BUBBLE_USE_EXISTING);
+  tray->ShowDetailedView(test_item_2, 0, BUBBLE_USE_EXISTING);
   EXPECT_TRUE(test_item_2->detailed_view());
   RunAllPendingInMessageLoop();
   EXPECT_FALSE(test_item_2->default_view());
@@ -191,9 +194,9 @@ TEST_F(TrayDetailsViewTest, ScrollContentsTest) {
   SystemTray* tray = GetPrimarySystemTray();
   TestItem* test_item = new TestItem;
   tray->AddTrayItem(base::WrapUnique(test_item));
-  tray->ShowDefaultView(BUBBLE_CREATE_NEW);
+  tray->ShowDefaultView(BUBBLE_CREATE_NEW, false /* show_by_click */);
   RunAllPendingInMessageLoop();
-  tray->ShowDetailedView(test_item, 0, true, BUBBLE_USE_EXISTING);
+  tray->ShowDetailedView(test_item, 0, BUBBLE_USE_EXISTING);
   RunAllPendingInMessageLoop();
   test_item->detailed_view()->CreateScrollerViews();
 
@@ -227,5 +230,4 @@ TEST_F(TrayDetailsViewTest, ScrollContentsTest) {
   EXPECT_EQ(view2->layer(), layers[2]);
 }
 
-}  // namespace test
 }  // namespace ash

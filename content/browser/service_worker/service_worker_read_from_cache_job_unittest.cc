@@ -20,11 +20,13 @@
 #include "net/base/io_buffer.h"
 #include "net/base/test_completion_callback.h"
 #include "net/http/http_response_headers.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_job_factory_impl.h"
 #include "net/url_request/url_request_status.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
 
 namespace content {
 
@@ -85,13 +87,14 @@ class ServiceWorkerReadFromCacheJobTest : public testing::Test {
 
   void InitializeStorage() {
     base::RunLoop run_loop;
-    context()->storage()->LazyInitialize(run_loop.QuitClosure());
+    context()->storage()->LazyInitializeForTest(run_loop.QuitClosure());
     run_loop.Run();
 
     // Populate a registration in the storage.
-    registration_ =
-        new ServiceWorkerRegistration(GURL("http://example.com/scope"),
-                                      kRegistrationId, context()->AsWeakPtr());
+    registration_ = new ServiceWorkerRegistration(
+        blink::mojom::ServiceWorkerRegistrationOptions(
+            GURL("http://example.com/scope")),
+        kRegistrationId, context()->AsWeakPtr());
     version_ = new ServiceWorkerVersion(registration_.get(), main_script_.url,
                                         kVersionId, context()->AsWeakPtr());
     std::vector<ServiceWorkerDatabase::ResourceRecord> resources;
@@ -193,9 +196,10 @@ TEST_F(ServiceWorkerReadFromCacheJobTest, ReadMainScript) {
   // Read the main script from the diskcache.
   std::unique_ptr<net::URLRequest> request =
       url_request_context_->CreateRequest(main_script_.url,
-                                          net::DEFAULT_PRIORITY, &delegate_);
+                                          net::DEFAULT_PRIORITY, &delegate_,
+                                          TRAFFIC_ANNOTATION_FOR_TESTS);
   test_job_interceptor_->set_main_intercept_job(
-      base::MakeUnique<ServiceWorkerReadFromCacheJob>(
+      std::make_unique<ServiceWorkerReadFromCacheJob>(
           request.get(), nullptr /* NetworkDelegate */,
           RESOURCE_TYPE_SERVICE_WORKER, context()->AsWeakPtr(), version_,
           main_script_.resource_id));
@@ -211,9 +215,10 @@ TEST_F(ServiceWorkerReadFromCacheJobTest, ReadImportedScript) {
   // Read the imported script from the diskcache.
   std::unique_ptr<net::URLRequest> request =
       url_request_context_->CreateRequest(imported_script_.url,
-                                          net::DEFAULT_PRIORITY, &delegate_);
+                                          net::DEFAULT_PRIORITY, &delegate_,
+                                          TRAFFIC_ANNOTATION_FOR_TESTS);
   test_job_interceptor_->set_main_intercept_job(
-      base::MakeUnique<ServiceWorkerReadFromCacheJob>(
+      std::make_unique<ServiceWorkerReadFromCacheJob>(
           request.get(), nullptr /* NetworkDelegate */, RESOURCE_TYPE_SCRIPT,
           context()->AsWeakPtr(), version_, imported_script_.resource_id));
   StartAndWaitForRequest(request.get());
@@ -240,10 +245,11 @@ TEST_F(ServiceWorkerReadFromCacheJobTest, ResourceNotFound) {
   // Attempt to read it from the disk cache.
   std::unique_ptr<net::URLRequest> request =
       url_request_context_->CreateRequest(main_script_.url,
-                                          net::DEFAULT_PRIORITY, &delegate_);
+                                          net::DEFAULT_PRIORITY, &delegate_,
+                                          TRAFFIC_ANNOTATION_FOR_TESTS);
   const int64_t kNonexistentResourceId = 100;
   test_job_interceptor_->set_main_intercept_job(
-      base::MakeUnique<ServiceWorkerReadFromCacheJob>(
+      std::make_unique<ServiceWorkerReadFromCacheJob>(
           request.get(), nullptr /* NetworkDelegate */,
           RESOURCE_TYPE_SERVICE_WORKER, context()->AsWeakPtr(), version_,
           kNonexistentResourceId));

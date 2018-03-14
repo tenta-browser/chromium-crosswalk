@@ -14,9 +14,6 @@ const char kDisableVoiceInput[] = "disable-voice-input";
 const char kDisableGestureTyping[] = "disable-gesture-typing";
 const char kDisableGestureEditing[] = "disable-gesture-editing";
 const char kEnableVirtualKeyboard[] = "enable-virtual-keyboard";
-const char kEnableFloatingVirtualKeyboard[] =
-    "enable-floating-virtual-keyboard";
-const char kDisableSmartVirtualKeyboard[] = "disable-smart-virtual-keyboard";
 const char kDisableVirtualKeyboardOverscroll[] =
     "disable-virtual-keyboard-overscroll";
 

@@ -17,14 +17,15 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
-#include "cc/base/filter_operations.h"
 #include "cc/base/region.h"
 #include "cc/benchmarks/micro_benchmark.h"
 #include "cc/cc_export.h"
 #include "cc/input/input_handler.h"
+#include "cc/input/overscroll_behavior.h"
 #include "cc/layers/layer_collections.h"
 #include "cc/layers/layer_position_constraint.h"
-#include "cc/layers/paint_properties.h"
+#include "cc/layers/touch_action_region.h"
+#include "cc/paint/filter_operations.h"
 #include "cc/paint/paint_record.h"
 #include "cc/trees/element_id.h"
 #include "cc/trees/mutator_host_client.h"
@@ -43,9 +44,12 @@ class ConvertableToTraceFormat;
 }
 }
 
+namespace viz {
+class CopyOutputRequest;
+}
+
 namespace cc {
 
-class CopyOutputRequest;
 class LayerClient;
 class LayerImpl;
 class LayerTreeHost;
@@ -59,7 +63,6 @@ class ScrollbarLayerInterface;
 class CC_EXPORT Layer : public base::RefCounted<Layer> {
  public:
   using LayerListType = LayerList;
-  using LayerIdMap = std::unordered_map<int, scoped_refptr<Layer>>;
 
   enum LayerIdLabels {
     INVALID_ID = -1,
@@ -94,11 +97,14 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // first), then the callback is called with a nullptr/empty result. If the
   // request's source property is set, any prior uncommitted requests having the
   // same source will be aborted.
-  void RequestCopyOfOutput(std::unique_ptr<CopyOutputRequest> request);
+  void RequestCopyOfOutput(std::unique_ptr<viz::CopyOutputRequest> request);
   bool HasCopyRequest() const { return !inputs_.copy_requests.empty(); }
 
+  void SetSubtreeHasCopyRequest(bool subtree_has_copy_request);
+  bool SubtreeHasCopyRequest() const;
+
   void TakeCopyRequests(
-      std::vector<std::unique_ptr<CopyOutputRequest>>* requests);
+      std::vector<std::unique_ptr<viz::CopyOutputRequest>>* requests);
 
   virtual void SetBackgroundColor(SkColor background_color);
   SkColor background_color() const { return inputs_.background_color; }
@@ -111,6 +117,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // root layer's bounds are in physical pixels).
   void SetBounds(const gfx::Size& bounds);
   gfx::Size bounds() const { return inputs_.bounds; }
+
+  void SetOverscrollBehavior(const OverscrollBehavior& behavior);
+  OverscrollBehavior overscroll_behavior() const {
+    return inputs_.overscroll_behavior;
+  }
 
   void SetMasksToBounds(bool masks_to_bounds);
   bool masks_to_bounds() const { return inputs_.masks_to_bounds; }
@@ -127,8 +138,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   float EffectiveOpacity() const;
   virtual bool OpacityCanAnimateOnImplThread() const;
 
-  virtual bool AlwaysUseActiveTreeOpacity() const;
-
   void SetBlendMode(SkBlendMode blend_mode);
   SkBlendMode blend_mode() const { return inputs_.blend_mode; }
 
@@ -139,6 +148,12 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   void SetIsRootForIsolatedGroup(bool root);
   bool is_root_for_isolated_group() const {
     return inputs_.is_root_for_isolated_group;
+  }
+
+  // Make the layer hit testable even if |draws_content_| is false.
+  void SetHitTestableWithoutDrawsContent(bool should_hit_test);
+  bool hit_testable_without_draws_content() const {
+    return inputs_.hit_testable_without_draws_content;
   }
 
   void SetFilters(const FilterOperations& filters);
@@ -163,9 +178,8 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   void SetIsContainerForFixedPositionLayers(bool container);
   bool IsContainerForFixedPositionLayers() const;
 
-  gfx::Vector2dF FixedContainerSizeDelta() const {
-    return gfx::Vector2dF();
-  }
+  void SetIsResizedByBrowserControls(bool resized);
+  bool IsResizedByBrowserControls() const;
 
   void SetPositionConstraint(const LayerPositionConstraint& constraint);
   const LayerPositionConstraint& position_constraint() const {
@@ -178,6 +192,8 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
     return inputs_.sticky_position_constraint;
   }
 
+  TransformNode* GetTransformNode() const;
+
   void SetTransform(const gfx::Transform& transform);
   const gfx::Transform& transform() const { return inputs_.transform; }
 
@@ -187,11 +203,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   void SetScrollParent(Layer* parent);
 
   Layer* scroll_parent() { return inputs_.scroll_parent; }
-
-  std::set<Layer*>* scroll_children() { return scroll_children_.get(); }
-  const std::set<Layer*>* scroll_children() const {
-    return scroll_children_.get();
-  }
 
   void SetClipParent(Layer* ancestor);
 
@@ -216,9 +227,14 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   gfx::ScrollOffset scroll_offset() const { return inputs_.scroll_offset; }
   void SetScrollOffsetFromImplSide(const gfx::ScrollOffset& scroll_offset);
 
-  void SetScrollClipLayerId(int clip_layer_id);
-  bool scrollable() const { return inputs_.scroll_clip_layer_id != INVALID_ID; }
-  Layer* scroll_clip_layer() const;
+  // Marks this layer as being scrollable and needing an associated scroll node.
+  // The scroll node's bounds and container_bounds will be kept in sync
+  // with this layer. Once scrollable, a Layer cannot become un-scrollable.
+  void SetScrollable(const gfx::Size& scroll_container_bounds);
+  gfx::Size scroll_container_bounds() const {
+    return inputs_.scroll_container_bounds;
+  }
+  bool scrollable() const { return inputs_.scrollable; }
 
   void SetUserScrollable(bool horizontal, bool vertical);
   bool user_scrollable_horizontal() const {
@@ -243,15 +259,19 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
     return inputs_.non_fast_scrollable_region;
   }
 
-  void SetTouchEventHandlerRegion(const Region& touch_event_handler_region);
-  const Region& touch_event_handler_region() const {
-    return inputs_.touch_event_handler_region;
+  void SetTouchActionRegion(TouchActionRegion touch_action_region);
+  const TouchActionRegion& touch_action_region() const {
+    return inputs_.touch_action_region;
   }
 
   void set_did_scroll_callback(
-      const base::Callback<void(const gfx::ScrollOffset&)>& callback) {
-    inputs_.did_scroll_callback = callback;
+      base::Callback<void(const gfx::ScrollOffset&, const ElementId&)>
+          callback) {
+    inputs_.did_scroll_callback = std::move(callback);
   }
+
+  void SetCacheRenderSurface(bool cache_render_surface);
+  bool cache_render_surface() const { return cache_render_surface_; }
 
   void SetForceRenderSurfaceForTesting(bool force_render_surface);
   bool force_render_surface_for_testing() const {
@@ -277,11 +297,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
     return inputs_.use_parent_backface_visibility;
   }
 
-  void SetUseLocalTransformForBackfaceVisibility(bool use_local);
-  bool use_local_transform_for_backface_visibility() const {
-    return use_local_transform_for_backface_visibility_;
-  }
-
   void SetShouldCheckBackfaceVisibility(bool should_check_backface_visibility);
   bool should_check_backface_visibility() const {
     return should_check_backface_visibility_;
@@ -304,13 +319,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   virtual bool DrawsContent() const;
 
   // This methods typically need to be overwritten by derived classes.
-  // TODO(chrishtr): Blink no longer resizes anything during paint. We can
-  // remove this.
-  virtual void SavePaintProperties();
   // Returns true iff anything was updated that needs to be committed.
   virtual bool Update();
   virtual void SetLayerMaskType(Layer::LayerMaskType type) {}
-  virtual bool IsSuitableForGpuRasterization() const;
+  virtual bool HasSlowPaths() const;
+  virtual bool HasNonAAPaint() const;
 
   virtual std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
   TakeDebugInfo();
@@ -334,10 +347,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   bool NeedsDisplayForTesting() const { return !inputs_.update_rect.IsEmpty(); }
   void ResetNeedsDisplayForTesting() { inputs_.update_rect = gfx::Rect(); }
 
-  const PaintProperties& paint_properties() const {
-    return paint_properties_;
-  }
-
   // Mark the layer as needing to push its properties to the LayerImpl during
   // commit.
   void SetNeedsPushProperties();
@@ -351,7 +360,9 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   void set_property_tree_sequence_number(int sequence_number) {
     property_tree_sequence_number_ = sequence_number;
   }
-  int property_tree_sequence_number() { return property_tree_sequence_number_; }
+  int property_tree_sequence_number() const {
+    return property_tree_sequence_number_;
+  }
 
   void SetTransformTreeIndex(int index);
   int transform_tree_index() const;
@@ -401,13 +412,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
 
   void SetMayContainVideo(bool yes);
 
-  int num_copy_requests_in_target_subtree();
+  bool has_copy_requests_in_target_subtree();
 
+  // Stable identifier for clients. See comment in cc/trees/element_id.h.
   void SetElementId(ElementId id);
   ElementId element_id() const { return inputs_.element_id; }
-
-  void SetMutableProperties(uint32_t properties);
-  uint32_t mutable_properties() const { return inputs_.mutable_properties; }
 
   bool HasTickingAnimationForTesting() const;
 
@@ -416,13 +425,14 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
     return inputs_.has_will_change_transform_hint;
   }
 
+  void SetTrilinearFiltering(bool trilinear_filtering);
+  bool trilinear_filtering() const { return inputs_.trilinear_filtering; }
+
   MutatorHost* GetMutatorHost() const;
 
   ElementListType GetElementTypeForAnimation() const;
 
   void SetScrollbarsHiddenFromImplSide(bool hidden);
-
-  void set_is_scroll_clip_layer() { is_scroll_clip_layer_ = true; }
 
   const gfx::Rect& update_rect() const { return inputs_.update_rect; }
 
@@ -430,6 +440,9 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
 
   // Called on the scroll layer to trigger showing the overlay scrollbars.
   void ShowScrollbars() { needs_show_scrollbars_ = true; }
+
+  bool has_transform_node() { return has_transform_node_; }
+  void SetHasTransformNode(bool val) { has_transform_node_ = val; }
 
  protected:
   friend class LayerImpl;
@@ -474,19 +487,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   friend class LayerTreeHost;
 
   // Interactions with attached animations.
-  gfx::ScrollOffset ScrollOffsetForAnimation() const;
   void OnFilterAnimated(const FilterOperations& filters);
   void OnOpacityAnimated(float opacity);
   void OnTransformAnimated(const gfx::Transform& transform);
-  void OnScrollOffsetAnimated(const gfx::ScrollOffset& scroll_offset);
 
-  bool FilterIsAnimating() const;
-  bool TransformIsAnimating() const;
   bool ScrollOffsetAnimationWasInterrupted() const;
-  bool HasOnlyTranslationTransforms() const;
-
-  void AddScrollChild(Layer* child);
-  void RemoveScrollChild(Layer* child);
 
   void AddClipChild(Layer* child);
   void RemoveClipChild(Layer* child);
@@ -496,10 +501,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
 
   // This should only be called from RemoveFromParent().
   void RemoveChildOrDependent(Layer* child);
-
-  // If this layer has a scroll parent, it removes |this| from its list of
-  // scroll children.
-  void RemoveFromScrollTree();
 
   // If this layer has a clip parent, it removes |this| from its list of clip
   // children.
@@ -512,6 +513,12 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   // This is set whenever a property changed on layer that affects whether this
   // layer should own a property tree node or not.
   void SetPropertyTreesNeedRebuild();
+
+  // Fast-path for |SetScrollOffset| and |SetScrollOffsetFromImplSide| to
+  // directly update scroll offset values in the property tree without needing a
+  // full property tree update. If property trees do not exist yet, ensures
+  // they are marked as needing to be rebuilt.
+  void UpdateScrollOffset(const gfx::ScrollOffset&);
 
   // Encapsulates all data, callbacks or interfaces received from the embedder.
   // TODO(khushalsagar): This is only valid when PropertyTrees are built
@@ -542,6 +549,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
 
     bool is_root_for_isolated_group : 1;
 
+    // Hit testing depends on draws_content (see: |LayerImpl::should_hit_test|)
+    // and this bit can be set to cause the LayerImpl to be hit testable without
+    // draws_content.
+    bool hit_testable_without_draws_content : 1;
+
     bool contents_opaque : 1;
 
     gfx::PointF position;
@@ -568,18 +580,30 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
 
     gfx::ScrollOffset scroll_offset;
 
-    // This variable indicates which ancestor layer (if any) whose size,
-    // transformed relative to this layer, defines the maximum scroll offset
-    // for this layer.
-    int scroll_clip_layer_id;
+    // Size of the scroll container that this layer scrolls in.
+    gfx::Size scroll_container_bounds;
+
+    // Indicates that this layer will need a scroll property node and that this
+    // layer's bounds correspond to the scroll node's bounds (both |bounds| and
+    // |scroll_container_bounds|).
+    bool scrollable : 1;
+
     bool user_scrollable_horizontal : 1;
     bool user_scrollable_vertical : 1;
 
     uint32_t main_thread_scrolling_reasons;
     Region non_fast_scrollable_region;
 
-    Region touch_event_handler_region;
+    TouchActionRegion touch_action_region;
 
+    // When set, position: fixed children of this layer will be affected by URL
+    // bar movement. bottom-fixed element will be pushed down as the URL bar
+    // hides (and the viewport expands) so that the element stays fixed to the
+    // viewport bottom. This will always be set on the outer viewport scroll
+    // layer. In the case of a non-default rootScroller, all iframes in the
+    // rootScroller ancestor chain will also have it set on their scroll
+    // layers.
+    bool is_resized_by_browser_controls : 1;
     bool is_container_for_fixed_position_layers : 1;
     LayerPositionConstraint position_constraint;
 
@@ -587,19 +611,22 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
 
     ElementId element_id;
 
-    uint32_t mutable_properties;
-
     Layer* scroll_parent;
     Layer* clip_parent;
 
     bool has_will_change_transform_hint : 1;
 
+    bool trilinear_filtering : 1;
+
     bool hide_layer_and_subtree : 1;
 
     // The following elements can not and are not serialized.
     LayerClient* client;
-    base::Callback<void(const gfx::ScrollOffset&)> did_scroll_callback;
-    std::vector<std::unique_ptr<CopyOutputRequest>> copy_requests;
+    base::Callback<void(const gfx::ScrollOffset&, const ElementId&)>
+        did_scroll_callback;
+    std::vector<std::unique_ptr<viz::CopyOutputRequest>> copy_requests;
+
+    OverscrollBehavior overscroll_behavior;
   };
 
   Layer* parent_;
@@ -620,19 +647,22 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   gfx::Vector2dF offset_to_transform_parent_;
   bool should_flatten_transform_from_property_tree_ : 1;
   bool draws_content_ : 1;
-  bool use_local_transform_for_backface_visibility_ : 1;
   bool should_check_backface_visibility_ : 1;
+  // Force use of and cache render surface.
+  bool cache_render_surface_ : 1;
   bool force_render_surface_for_testing_ : 1;
   bool subtree_property_changed_ : 1;
   bool may_contain_video_ : 1;
-  bool is_scroll_clip_layer_ : 1;
   bool needs_show_scrollbars_ : 1;
+  // Whether the nodes referred to by *_tree_index_ "belong" to this
+  // layer. Only applicable if LayerTreeSettings.use_layer_lists is
+  // false.
+  bool has_transform_node_ : 1;
+  // This value is valid only when LayerTreeHost::has_copy_request() is true
+  bool subtree_has_copy_request_ : 1;
   SkColor safe_opaque_background_color_;
-  std::unique_ptr<std::set<Layer*>> scroll_children_;
 
   std::unique_ptr<std::set<Layer*>> clip_children_;
-
-  PaintProperties paint_properties_;
 
   // These all act like draw properties, so don't need push properties.
   gfx::Rect visible_layer_rect_;

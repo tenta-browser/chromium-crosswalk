@@ -188,7 +188,9 @@ void ParseHosts(const std::string& contents, DnsHosts* dns_hosts) {
   ParseHostsWithCommaMode(contents, dns_hosts, comma_mode);
 }
 
-bool ParseHostsFile(const base::FilePath& path, DnsHosts* dns_hosts) {
+bool ParseHostsFile(const base::FilePath& path,
+                    DnsHosts* dns_hosts,
+                    int64_t* file_size) {
   dns_hosts->clear();
   // Missing file indicates empty HOSTS.
   if (!base::PathExists(path))
@@ -198,8 +200,8 @@ bool ParseHostsFile(const base::FilePath& path, DnsHosts* dns_hosts) {
   if (!base::GetFileSize(path, &size))
     return false;
 
-  UMA_HISTOGRAM_COUNTS("AsyncDNS.HostsSize",
-                       static_cast<base::HistogramBase::Sample>(size));
+  UMA_HISTOGRAM_COUNTS_1M("AsyncDNS.HostsSize",
+                          static_cast<base::HistogramBase::Sample>(size));
 
   // Reject HOSTS files larger than |kMaxHostsSize| bytes.
   const int64_t kMaxHostsSize = 1 << 25;  // 32MB
@@ -211,6 +213,7 @@ bool ParseHostsFile(const base::FilePath& path, DnsHosts* dns_hosts) {
     return false;
 
   ParseHosts(contents, dns_hosts);
+  *file_size = size;
   return true;
 }
 

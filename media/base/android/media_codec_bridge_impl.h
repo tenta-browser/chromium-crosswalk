@@ -29,16 +29,17 @@ class MEDIA_EXPORT MediaCodecBridgeImpl : public MediaCodecBridge {
   // nullptr on failure.
   static std::unique_ptr<MediaCodecBridge> CreateVideoDecoder(
       VideoCodec codec,
-      bool is_secure,         // Will be used with encrypted content.
+      CodecType codec_type,
       const gfx::Size& size,  // Output frame size.
-      jobject surface,        // Output surface, optional.
-      jobject media_crypto,   // MediaCrypto object, optional.
+      const base::android::JavaRef<jobject>&
+          surface,  // Output surface, optional.
+      const base::android::JavaRef<jobject>&
+          media_crypto,  // MediaCrypto object, optional.
       // Codec specific data. See MediaCodec docs.
       const std::vector<uint8_t>& csd0,
       const std::vector<uint8_t>& csd1,
       // Should adaptive playback be allowed if supported.
-      bool allow_adaptive_playback = true,
-      bool require_software_codec = false);
+      bool allow_adaptive_playback = true);
 
   // Creates and starts a new MediaCodec configured for encoding. Returns
   // nullptr on failure.
@@ -54,9 +55,11 @@ class MEDIA_EXPORT MediaCodecBridgeImpl : public MediaCodecBridge {
   // nullptr on failure.
   static std::unique_ptr<MediaCodecBridge> CreateAudioDecoder(
       const AudioDecoderConfig& config,
-      jobject media_crypto);
+      const base::android::JavaRef<jobject>& media_crypto);
 
   ~MediaCodecBridgeImpl() override;
+
+  // MediaCodecBridge implementation.
   void Stop() override;
   MediaCodecStatus Flush() override;
   MediaCodecStatus GetOutputSize(gfx::Size* size) override;
@@ -95,16 +98,16 @@ class MEDIA_EXPORT MediaCodecBridgeImpl : public MediaCodecBridge {
                                         void* dst,
                                         size_t num) override;
   std::string GetName() override;
-  bool SetSurface(jobject surface) override;
+  bool SetSurface(const base::android::JavaRef<jobject>& surface) override;
   void SetVideoBitrate(int bps, int frame_rate) override;
   void RequestKeyFrameSoon() override;
   bool IsAdaptivePlaybackSupported() override;
 
  private:
   MediaCodecBridgeImpl(const std::string& mime,
-                       bool is_secure,
+                       CodecType codec_type,
                        MediaCodecDirection direction,
-                       bool require_software_codec);
+                       const base::android::JavaRef<jobject>& media_crypto);
 
   // Calls MediaCodec#start(). Returns whether it was successful.
   bool Start();

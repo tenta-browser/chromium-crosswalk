@@ -14,20 +14,20 @@
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_event_argument.h"
-#include "cc/debug/traced_value.h"
 #include "cc/raster/raster_source.h"
-#include "cc/resources/platform_color.h"
+#include "cc/resources/layer_tree_resource_provider.h"
 #include "cc/resources/resource.h"
+#include "components/viz/common/resources/platform_color.h"
 
 namespace cc {
 namespace {
 
-class RasterBufferImpl : public RasterBuffer {
+class BitmapRasterBufferImpl : public RasterBuffer {
  public:
-  RasterBufferImpl(ResourceProvider* resource_provider,
-                   const Resource* resource,
-                   uint64_t resource_content_id,
-                   uint64_t previous_content_id)
+  BitmapRasterBufferImpl(LayerTreeResourceProvider* resource_provider,
+                         const Resource* resource,
+                         uint64_t resource_content_id,
+                         uint64_t previous_content_id)
       : lock_(resource_provider, resource->id()),
         resource_(resource),
         resource_has_previous_content_(
@@ -62,20 +62,20 @@ class RasterBufferImpl : public RasterBuffer {
   const Resource* resource_;
   bool resource_has_previous_content_;
 
-  DISALLOW_COPY_AND_ASSIGN(RasterBufferImpl);
+  DISALLOW_COPY_AND_ASSIGN(BitmapRasterBufferImpl);
 };
 
 }  // namespace
 
 // static
 std::unique_ptr<RasterBufferProvider> BitmapRasterBufferProvider::Create(
-    ResourceProvider* resource_provider) {
+    LayerTreeResourceProvider* resource_provider) {
   return base::WrapUnique<RasterBufferProvider>(
       new BitmapRasterBufferProvider(resource_provider));
 }
 
 BitmapRasterBufferProvider::BitmapRasterBufferProvider(
-    ResourceProvider* resource_provider)
+    LayerTreeResourceProvider* resource_provider)
     : resource_provider_(resource_provider) {}
 
 BitmapRasterBufferProvider::~BitmapRasterBufferProvider() {}
@@ -85,20 +85,17 @@ BitmapRasterBufferProvider::AcquireBufferForRaster(
     const Resource* resource,
     uint64_t resource_content_id,
     uint64_t previous_content_id) {
-  return std::unique_ptr<RasterBuffer>(new RasterBufferImpl(
+  return std::unique_ptr<RasterBuffer>(new BitmapRasterBufferImpl(
       resource_provider_, resource, resource_content_id, previous_content_id));
-}
-
-void BitmapRasterBufferProvider::ReleaseBufferForRaster(
-    std::unique_ptr<RasterBuffer> buffer) {
-  // Nothing to do here. RasterBufferImpl destructor cleans up after itself.
 }
 
 void BitmapRasterBufferProvider::OrderingBarrier() {
   // No need to sync resources as this provider does not use GL context.
 }
 
-ResourceFormat BitmapRasterBufferProvider::GetResourceFormat(
+void BitmapRasterBufferProvider::Flush() {}
+
+viz::ResourceFormat BitmapRasterBufferProvider::GetResourceFormat(
     bool must_support_alpha) const {
   return resource_provider_->best_texture_format();
 }
@@ -113,7 +110,7 @@ bool BitmapRasterBufferProvider::CanPartialRasterIntoProvidedResource() const {
 }
 
 bool BitmapRasterBufferProvider::IsResourceReadyToDraw(
-    ResourceId resource_id) const {
+    viz::ResourceId resource_id) const {
   // Bitmap resources are immediately ready to draw.
   return true;
 }

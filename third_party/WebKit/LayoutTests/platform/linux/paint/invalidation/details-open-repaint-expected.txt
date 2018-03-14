@@ -4,12 +4,22 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow DIV id='details-content'",
           "rect": [8, 72, 784, 22],
-          "reason": "layoutObject insertion"
+          "reason": "appeared"
+        },
+        {
+          "object": "LayoutTextControl INPUT",
+          "rect": [8, 72, 154, 22],
+          "reason": "appeared"
+        },
+        {
+          "object": "LayoutBlockFlow DIV",
+          "rect": [10, 75, 150, 16],
+          "reason": "appeared"
         },
         {
           "object": "LayoutDetailsMarker DIV id='details-marker'",
@@ -26,35 +36,31 @@
     },
     {
       "object": "LayoutBlockFlow DIV id='details-content'",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     },
     {
       "object": "RootInlineBox",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     },
     {
       "object": "LayoutTextControl INPUT",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     },
     {
-      "object": "LayoutBlockFlow DIV id='inner-editor'",
-      "reason": "layoutObject insertion"
+      "object": "LayoutBlockFlow DIV",
+      "reason": "appeared"
     },
     {
-      "object": "LayoutBlockFlow DIV id='inner-editor'",
-      "reason": "scroll"
+      "object": "LayoutBlockFlow DIV",
+      "reason": "geometry"
     },
     {
       "object": "HorizontalScrollbar",
-      "reason": "scroll"
+      "reason": "scroll control"
     },
     {
       "object": "LayoutText #text",
-      "reason": "layoutObject insertion"
-    },
-    {
-      "object": "LayoutText #text",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     }
   ]
 }

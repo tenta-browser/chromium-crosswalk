@@ -76,11 +76,12 @@ class WindowSizer {
   // An interface implemented by an object to identify on which
   // display a new window should be located.
   class TargetDisplayProvider {
-    public:
-      virtual ~TargetDisplayProvider() {}
-      virtual display::Display GetTargetDisplay(
-          const display::Screen* screen,
-          const gfx::Rect& bounds) const = 0;
+   public:
+    virtual ~TargetDisplayProvider() {}
+
+    virtual display::Display GetTargetDisplay(
+        const display::Screen* screen,
+        const gfx::Rect& bounds) const = 0;
   };
 
   // Determines the position and size for a window as it is created as well
@@ -114,6 +115,9 @@ class WindowSizer {
   // How much horizontal and vertical offset there is between newly
   // opened windows.  This value may be different on each platform.
   static const int kWindowTilePixels;
+
+  // The maximum default window width. This value may differ between platforms.
+  static const int kWindowMaxDefaultWidth;
 
  private:
   // The edge of the screen to check for out-of-bounds.
@@ -158,7 +162,7 @@ class WindowSizer {
   // ash's the target root window.
   display::Display GetTargetDisplay(const gfx::Rect& bounds) const;
 
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
   // Ash specific logic for window placement. Returns true if |bounds| and
   // |show_state| have been fully determined, otherwise returns false (but
   // may still affect |show_state|).
@@ -186,7 +190,7 @@ class WindowSizer {
   display::Screen* screen_;  // not owned.
 
   // Note that this browser handle might be NULL.
-  const Browser* browser_;
+  const Browser* const browser_;
 
   DISALLOW_COPY_AND_ASSIGN(WindowSizer);
 };

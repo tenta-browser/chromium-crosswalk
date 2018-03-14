@@ -6,15 +6,15 @@
 
 #include <algorithm>
 
+#include "ash/app_list/model/app_list_folder_item.h"
+#include "ash/app_list/model/app_list_item.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/app_list/app_list_constants.h"
-#include "ui/app_list/app_list_folder_item.h"
-#include "ui/app_list/app_list_item.h"
+#include "ui/app_list/app_list_features.h"
 #include "ui/app_list/app_list_switches.h"
 #include "ui/app_list/views/apps_grid_view.h"
-#include "ui/base/dragdrop/drag_utils.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/compositor/layer.h"
@@ -39,21 +39,17 @@ namespace app_list {
 
 namespace {
 
-const int kTopPadding = 18;
-const int kIconTitleSpacing = 6;
-
 // Radius of the folder dropping preview circle.
-const int kFolderPreviewRadius = 40;
-
-const int kLeftRightPaddingChars = 1;
+constexpr int kFolderPreviewRadius = 40;
 
 // Delay in milliseconds of when the dragging UI should be shown for mouse drag.
-const int kMouseDragUIDelayInMs = 200;
+constexpr int kMouseDragUIDelayInMs = 200;
 
-gfx::FontList GetFontList() {
-  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
-  return rb.GetFontList(kItemTextFontStyle);
-}
+// Delay in milliseconds of when the dragging UI should be shown for touch drag.
+// Note: For better user experience, this is made shorter than
+// ET_GESTURE_LONG_PRESS delay, which is too long for this case, e.g., about
+// 650ms.
+constexpr int kTouchLongpressDelayInMs = 300;
 
 }  // namespace
 
@@ -62,33 +58,29 @@ const char AppListItemView::kViewClassName[] = "ui/app_list/AppListItemView";
 
 AppListItemView::AppListItemView(AppsGridView* apps_grid_view,
                                  AppListItem* item)
-    : CustomButton(apps_grid_view),
+    : Button(apps_grid_view),
       is_folder_(item->GetItemType() == AppListFolderItem::kItemType),
       is_in_folder_(item->IsInFolder()),
       item_weak_(item),
       apps_grid_view_(apps_grid_view),
       icon_(new views::ImageView),
       title_(new views::Label),
-      progress_bar_(new views::ProgressBar),
-      ui_state_(UI_STATE_NORMAL),
-      touch_dragging_(false),
-      shadow_animator_(this),
-      is_installing_(false),
-      is_highlighted_(false) {
-  shadow_animator_.animation()->SetTweenType(gfx::Tween::FAST_OUT_SLOW_IN);
-  shadow_animator_.SetStartAndEndShadows(IconStartShadows(), IconEndShadows());
+      progress_bar_(new views::ProgressBar) {
+  if (features::IsAppListFocusEnabled())
+    SetFocusBehavior(FocusBehavior::ALWAYS);
 
   icon_->set_can_process_events_within_subtree(false);
   icon_->SetVerticalAlignment(views::ImageView::LEADING);
 
-  title_->SetBackgroundColor(0);
+  title_->SetBackgroundColor(SK_ColorTRANSPARENT);
   title_->SetAutoColorReadabilityEnabled(false);
-  title_->SetEnabledColor(kGridTitleColor);
   title_->SetHandlesTooltips(false);
+  const gfx::FontList& font = AppListAppTitleFont();
+  title_->SetFontList(font);
+  title_->SetLineHeight(font.GetHeight());
+  title_->SetHorizontalAlignment(gfx::ALIGN_CENTER);
+  title_->SetEnabledColor(kGridTitleColor);
 
-  static const gfx::FontList font_list = GetFontList();
-  title_->SetFontList(font_list);
-  title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   SetTitleSubpixelAA();
 
   AddChildView(icon_);
@@ -120,10 +112,12 @@ void AppListItemView::SetIcon(const gfx::ImageSkia& icon) {
   }
 
   gfx::ImageSkia resized(gfx::ImageSkiaOperations::CreateResizedImage(
-      icon,
-      skia::ImageOperations::RESIZE_BEST,
+      icon, skia::ImageOperations::RESIZE_BEST,
       gfx::Size(kGridIconDimension, kGridIconDimension)));
-  shadow_animator_.SetOriginalImage(resized);
+  if (shadow_animator_)
+    shadow_animator_->SetOriginalImage(resized);
+  else
+    icon_->SetImage(resized);
 }
 
 void AppListItemView::SetUIState(UIState ui_state) {
@@ -136,10 +130,12 @@ void AppListItemView::SetUIState(UIState ui_state) {
     case UI_STATE_NORMAL:
       title_->SetVisible(!is_installing_);
       progress_bar_->SetVisible(is_installing_);
+      ScaleAppIcon(false);
       break;
     case UI_STATE_DRAGGING:
       title_->SetVisible(false);
       progress_bar_->SetVisible(false);
+      ScaleAppIcon(true);
       break;
     case UI_STATE_DROPPING_IN_FOLDER:
       break;
@@ -149,18 +145,57 @@ void AppListItemView::SetUIState(UIState ui_state) {
   SchedulePaint();
 }
 
+void AppListItemView::ScaleAppIcon(bool scale_up) {
+  const gfx::Rect bounds(layer()->bounds().size());
+  gfx::Transform transform =
+      gfx::GetScaleTransform(bounds.CenterPoint(), kDragDropAppIconScale);
+
+  ui::ScopedLayerAnimationSettings settings(layer()->GetAnimator());
+  settings.SetTransitionDuration(
+      base::TimeDelta::FromMilliseconds((kDragDropAppIconScaleTransitionInMs)));
+  if (scale_up)
+    layer()->SetTransform(transform);
+  else
+    layer()->SetTransform(gfx::Transform());
+}
+
 void AppListItemView::SetTouchDragging(bool touch_dragging) {
   if (touch_dragging_ == touch_dragging)
     return;
 
   touch_dragging_ = touch_dragging;
+
+  if (!touch_dragging)
+    apps_grid_view_->EndDrag(false);
+
   SetState(STATE_NORMAL);
   SetUIState(touch_dragging_ ? UI_STATE_DRAGGING : UI_STATE_NORMAL);
 }
 
+void AppListItemView::SetMouseDragging(bool mouse_dragging) {
+  mouse_dragging_ = mouse_dragging;
+
+  if (!mouse_dragging_) {
+    apps_grid_view_->EndDrag(false);
+    mouse_drag_proxy_created_ = false;
+  }
+
+  SetState(STATE_NORMAL);
+  SetUIState(mouse_dragging_ ? UI_STATE_DRAGGING : UI_STATE_NORMAL);
+}
+
 void AppListItemView::OnMouseDragTimer() {
-  DCHECK(apps_grid_view_->IsDraggedView(this));
-  SetUIState(UI_STATE_DRAGGING);
+  // Show scaled up app icon to indicate draggable state.
+  SetMouseDragging(true);
+}
+
+void AppListItemView::OnTouchDragTimer(
+    const gfx::Point& tap_down_location,
+    const gfx::Point& tap_down_root_location) {
+  // Show scaled up app icon to indicate draggable state.
+  apps_grid_view_->InitiateDrag(this, AppsGridView::TOUCH, tap_down_location,
+                                tap_down_root_location);
+  SetTouchDragging(true);
 }
 
 void AppListItemView::CancelContextMenu() {
@@ -174,6 +209,7 @@ gfx::ImageSkia AppListItemView::GetDragImage() {
 
 void AppListItemView::OnDragEnded() {
   mouse_drag_timer_.Stop();
+  touch_drag_timer_.Stop();
   SetUIState(UI_STATE_NORMAL);
 }
 
@@ -228,61 +264,12 @@ void AppListItemView::SetItemPercentDownloaded(int percent_downloaded) {
   progress_bar_->SetValue(percent_downloaded / 100.0);
 }
 
-const char* AppListItemView::GetClassName() const {
-  return kViewClassName;
-}
-
-void AppListItemView::Layout() {
-  gfx::Rect rect(GetContentsBounds());
-
-  const int left_right_padding =
-      title_->font_list().GetExpectedTextWidth(kLeftRightPaddingChars);
-  rect.Inset(left_right_padding, kTopPadding, left_right_padding, 0);
-  const int y = rect.y();
-
-  icon_->SetBoundsRect(GetIconBoundsForTargetViewBounds(GetContentsBounds()));
-
-  const gfx::Size title_size = title_->GetPreferredSize();
-  gfx::Rect title_bounds(rect.x() + (rect.width() - title_size.width()) / 2,
-                         y + kGridIconDimension + kIconTitleSpacing,
-                         title_size.width(),
-                         title_size.height());
-  title_bounds.Intersect(rect);
-  title_->SetBoundsRect(title_bounds);
-  SetTitleSubpixelAA();
-
-  gfx::Rect progress_bar_bounds(progress_bar_->GetPreferredSize());
-  progress_bar_bounds.set_x(
-      (GetContentsBounds().width() - progress_bar_bounds.width()) / 2);
-  progress_bar_bounds.set_y(title_bounds.y());
-  progress_bar_->SetBoundsRect(progress_bar_bounds);
-}
-
-void AppListItemView::OnPaint(gfx::Canvas* canvas) {
-  if (apps_grid_view_->IsDraggedView(this))
-    return;
-
-  gfx::Rect rect(GetContentsBounds());
-  if (apps_grid_view_->IsSelectedView(this))
-    canvas->FillRect(rect, kSelectedColor);
-
-  if (ui_state_ == UI_STATE_DROPPING_IN_FOLDER) {
-    DCHECK(apps_grid_view_->model()->folders_enabled());
-
-    // Draw folder dropping preview circle.
-    gfx::Point center = gfx::Point(icon_->x() + icon_->size().width() / 2,
-                                   icon_->y() + icon_->size().height() / 2);
-    cc::PaintFlags flags;
-    flags.setStyle(cc::PaintFlags::kFill_Style);
-    flags.setAntiAlias(true);
-    flags.setColor(kFolderBubbleColor);
-    canvas->DrawCircle(center, kFolderPreviewRadius, flags);
-  }
-}
-
 void AppListItemView::ShowContextMenuForView(views::View* source,
                                              const gfx::Point& point,
                                              ui::MenuSourceType source_type) {
+  if (context_menu_runner_ && context_menu_runner_->IsRunning())
+    return;
+
   ui::MenuModel* menu_model =
       item_weak_ ? item_weak_->GetContextMenuModel() : NULL;
   if (!menu_model)
@@ -290,8 +277,9 @@ void AppListItemView::ShowContextMenuForView(views::View* source,
 
   if (!apps_grid_view_->IsSelectedView(this))
     apps_grid_view_->ClearAnySelectedView();
-  context_menu_runner_.reset(new views::MenuRunner(
-      menu_model, views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::ASYNC));
+  int run_types = views::MenuRunner::HAS_MNEMONICS |
+                  views::MenuRunner::SEND_GESTURE_EVENTS_TO_OWNER;
+  context_menu_runner_.reset(new views::MenuRunner(menu_model, run_types));
   context_menu_runner_->RunMenuAt(GetWidget(), NULL,
                                   gfx::Rect(point, gfx::Size()),
                                   views::MENU_ANCHOR_TOPLEFT, source_type);
@@ -299,13 +287,15 @@ void AppListItemView::ShowContextMenuForView(views::View* source,
 
 void AppListItemView::StateChanged(ButtonState old_state) {
   if (state() == STATE_HOVERED || state() == STATE_PRESSED) {
-    shadow_animator_.animation()->Show();
+    if (shadow_animator_)
+      shadow_animator_->animation()->Show();
     // Show the hover/tap highlight: for tap, lighter highlight replaces darker
     // keyboard selection; for mouse hover, keyboard selection takes precedence.
     if (!apps_grid_view_->IsSelectedView(this) || state() == STATE_PRESSED)
       SetItemIsHighlighted(true);
   } else {
-    shadow_animator_.animation()->Hide();
+    if (shadow_animator_)
+      shadow_animator_->animation()->Hide();
     SetItemIsHighlighted(false);
     if (item_weak_)
       item_weak_->set_highlighted(false);
@@ -319,23 +309,83 @@ bool AppListItemView::ShouldEnterPushedState(const ui::Event& event) {
   if (event.type() == ui::ET_GESTURE_TAP_DOWN)
     return false;
 
-  return views::CustomButton::ShouldEnterPushedState(event);
+  return views::Button::ShouldEnterPushedState(event);
+}
+
+void AppListItemView::PaintButtonContents(gfx::Canvas* canvas) {
+  if (apps_grid_view_->IsDraggedView(this))
+    return;
+
+  gfx::Rect rect(GetContentsBounds());
+  if (apps_grid_view_->IsSelectedView(this)) {
+    rect.Inset((rect.width() - kGridSelectedSize) / 2,
+               (rect.height() - kGridSelectedSize) / 2);
+    cc::PaintFlags flags;
+    flags.setAntiAlias(true);
+    flags.setColor(kGridSelectedColor);
+    flags.setStyle(cc::PaintFlags::kFill_Style);
+    canvas->DrawRoundRect(gfx::RectF(rect), kGridSelectedCornerRadius, flags);
+  }
+
+  if (ui_state_ == UI_STATE_DROPPING_IN_FOLDER) {
+    DCHECK(apps_grid_view_->model()->folders_enabled());
+
+    // Draw folder dropping preview circle.
+    gfx::Point center = gfx::Point(icon_->x() + icon_->size().width() / 2,
+                                   icon_->y() + icon_->size().height() / 2);
+    cc::PaintFlags flags;
+    flags.setStyle(cc::PaintFlags::kFill_Style);
+    flags.setAntiAlias(true);
+    flags.setColor(FolderImage::kFolderBubbleColor);
+    canvas->DrawCircle(center, kFolderPreviewRadius, flags);
+  }
 }
 
 bool AppListItemView::OnMousePressed(const ui::MouseEvent& event) {
-  CustomButton::OnMousePressed(event);
+  Button::OnMousePressed(event);
 
   if (!ShouldEnterPushedState(event))
     return true;
 
-  apps_grid_view_->InitiateDrag(this, AppsGridView::MOUSE, event);
+  apps_grid_view_->InitiateDrag(this, AppsGridView::MOUSE, event.location(),
+                                event.root_location());
 
   if (apps_grid_view_->IsDraggedView(this)) {
-    mouse_drag_timer_.Start(FROM_HERE,
-        base::TimeDelta::FromMilliseconds(kMouseDragUIDelayInMs),
+    mouse_drag_timer_.Start(
+        FROM_HERE, base::TimeDelta::FromMilliseconds(kMouseDragUIDelayInMs),
         this, &AppListItemView::OnMouseDragTimer);
   }
   return true;
+}
+
+const char* AppListItemView::GetClassName() const {
+  return kViewClassName;
+}
+
+void AppListItemView::Layout() {
+  gfx::Rect rect(GetContentsBounds());
+  if (rect.IsEmpty())
+    return;
+
+  icon_->SetBoundsRect(GetIconBoundsForTargetViewBounds(GetContentsBounds()));
+
+  rect.Inset(kGridTitleHorizontalPadding,
+             kGridIconTopPadding + kGridIconDimension + kGridTitleSpacing,
+             kGridTitleHorizontalPadding, 0);
+  rect.set_height(title_->GetPreferredSize().height());
+  title_->SetBoundsRect(rect);
+  SetTitleSubpixelAA();
+
+  gfx::Rect progress_bar_bounds(progress_bar_->GetPreferredSize());
+  progress_bar_bounds.set_x(
+      (GetContentsBounds().width() - progress_bar_bounds.width()) / 2);
+  progress_bar_bounds.set_y(rect.y());
+  progress_bar_->SetBoundsRect(progress_bar_bounds);
+}
+
+gfx::Size AppListItemView::CalculatePreferredSize() const {
+  gfx::Size size = gfx::Size(kGridTileWidth, kGridTileHeight);
+  return size;
 }
 
 bool AppListItemView::OnKeyPressed(const ui::KeyEvent& event) {
@@ -346,17 +396,18 @@ bool AppListItemView::OnKeyPressed(const ui::KeyEvent& event) {
   if (event.key_code() == ui::VKEY_SPACE)
     return false;
 
-  return CustomButton::OnKeyPressed(event);
+  return Button::OnKeyPressed(event);
 }
 
 void AppListItemView::OnMouseReleased(const ui::MouseEvent& event) {
-  CustomButton::OnMouseReleased(event);
-  apps_grid_view_->EndDrag(false);
+  Button::OnMouseReleased(event);
+  SetMouseDragging(false);
 }
 
 bool AppListItemView::OnMouseDragged(const ui::MouseEvent& event) {
-  CustomButton::OnMouseDragged(event);
-  if (apps_grid_view_->IsDraggedView(this)) {
+  Button::OnMouseDragged(event);
+  if (apps_grid_view_->IsDraggedView(this) && mouse_dragging_) {
+    // Update the drag location of the drag proxy if it has been created.
     // If the drag is no longer happening, it could be because this item
     // got removed, in which case this item has been destroyed. So, bail out
     // now as there will be nothing else to do anyway as
@@ -368,9 +419,8 @@ bool AppListItemView::OnMouseDragged(const ui::MouseEvent& event) {
   if (!apps_grid_view_->IsSelectedView(this))
     apps_grid_view_->ClearAnySelectedView();
 
-  // Shows dragging UI when it's confirmed without waiting for the timer.
-  if (ui_state_ != UI_STATE_DRAGGING &&
-      apps_grid_view_->dragging() &&
+  // Show dragging UI when it's confirmed without waiting for the timer.
+  if (ui_state_ != UI_STATE_DRAGGING && apps_grid_view_->dragging() &&
       apps_grid_view_->IsDraggedView(this)) {
     mouse_drag_timer_.Stop();
     SetUIState(UI_STATE_DRAGGING);
@@ -378,12 +428,24 @@ bool AppListItemView::OnMouseDragged(const ui::MouseEvent& event) {
   return true;
 }
 
+void AppListItemView::OnFocus() {
+  apps_grid_view_->SetSelectedView(this);
+}
+
+void AppListItemView::OnBlur() {
+  apps_grid_view_->ClearSelectedView(this);
+}
+
 void AppListItemView::OnGestureEvent(ui::GestureEvent* event) {
   switch (event->type()) {
     case ui::ET_GESTURE_SCROLL_BEGIN:
       if (touch_dragging_) {
-        apps_grid_view_->InitiateDrag(this, AppsGridView::TOUCH, *event);
+        CancelContextMenu();
+        apps_grid_view_->StartDragAndDropHostDragAfterLongPress(
+            AppsGridView::TOUCH);
         event->SetHandled();
+      } else {
+        touch_drag_timer_.Stop();
       }
       break;
     case ui::ET_GESTURE_SCROLL_UPDATE:
@@ -396,36 +458,45 @@ void AppListItemView::OnGestureEvent(ui::GestureEvent* event) {
     case ui::ET_SCROLL_FLING_START:
       if (touch_dragging_) {
         SetTouchDragging(false);
-        apps_grid_view_->EndDrag(false);
         event->SetHandled();
       }
       break;
     case ui::ET_GESTURE_TAP_DOWN:
       if (state() != STATE_DISABLED) {
         SetState(STATE_PRESSED);
+        touch_drag_timer_.Start(
+            FROM_HERE,
+            base::TimeDelta::FromMilliseconds(kTouchLongpressDelayInMs),
+            base::Bind(&AppListItemView::OnTouchDragTimer,
+                       base::Unretained(this), event->location(),
+                       event->root_location()));
         event->SetHandled();
       }
       break;
     case ui::ET_GESTURE_TAP:
     case ui::ET_GESTURE_TAP_CANCEL:
-      if (state() != STATE_DISABLED)
+      if (state() != STATE_DISABLED) {
+        touch_drag_timer_.Stop();
         SetState(STATE_NORMAL);
-      break;
-    case ui::ET_GESTURE_LONG_PRESS:
-      if (!apps_grid_view_->has_dragged_view())
-        SetTouchDragging(true);
-      event->SetHandled();
+      }
       break;
     case ui::ET_GESTURE_LONG_TAP:
     case ui::ET_GESTURE_END:
-      if (touch_dragging_)
+      touch_drag_timer_.Stop();
+      SetTouchDragging(false);
+      break;
+    case ui::ET_GESTURE_TWO_FINGER_TAP:
+      if (touch_dragging_) {
         SetTouchDragging(false);
+      } else {
+        touch_drag_timer_.Stop();
+      }
       break;
     default:
       break;
   }
   if (!event->handled())
-    CustomButton::OnGestureEvent(event);
+    Button::OnGestureEvent(event);
 }
 
 bool AppListItemView::GetTooltipText(const gfx::Point& p,
@@ -462,7 +533,7 @@ void AppListItemView::SetDragUIState() {
 gfx::Rect AppListItemView::GetIconBoundsForTargetViewBounds(
     const gfx::Rect& target_bounds) {
   gfx::Rect rect(target_bounds);
-  rect.Inset(0, kTopPadding, 0, 0);
+  rect.Inset(0, kGridIconTopPadding, 0, 0);
   rect.set_height(icon_->GetImage().height());
   rect.ClampToCenteredSize(icon_->GetImage().size());
   return rect;
@@ -478,13 +549,13 @@ void AppListItemView::SetTitleSubpixelAA() {
   title_->SetSubpixelRenderingEnabled(enable_aa);
   if (enable_aa) {
     title_->SetBackgroundColor(app_list::kLabelBackgroundColor);
-    title_->set_background(views::Background::CreateSolidBackground(
-        app_list::kLabelBackgroundColor));
+    title_->SetBackground(
+        views::CreateSolidBackground(app_list::kLabelBackgroundColor));
   } else {
     // In other cases, keep the background transparent to ensure correct
     // interactions with animations. This will temporarily disable subpixel AA.
     title_->SetBackgroundColor(0);
-    title_->set_background(NULL);
+    title_->SetBackground(nullptr);
   }
   title_->SchedulePaint();
 }

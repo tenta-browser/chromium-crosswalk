@@ -35,9 +35,8 @@ class FakeContentTranslateDriver
   ~FakeContentTranslateDriver() override {}
 
   void BindHandle(mojo::ScopedMessagePipeHandle handle) {
-    bindings_.AddBinding(
-        this, mojo::MakeRequest<translate::mojom::ContentTranslateDriver>(
-                  std::move(handle)));
+    bindings_.AddBinding(this, translate::mojom::ContentTranslateDriverRequest(
+                                   std::move(handle)));
   }
 
   // translate::mojom::ContentTranslateDriver implementation.
@@ -69,7 +68,7 @@ class TestTranslateHelper : public translate::TranslateHelper {
  public:
   explicit TestTranslateHelper(content::RenderFrame* render_frame)
       : translate::TranslateHelper(render_frame,
-                                   chrome::ISOLATED_WORLD_ID_TRANSLATE,
+                                   ISOLATED_WORLD_ID_TRANSLATE,
                                    extensions::kExtensionScheme) {}
 
   base::TimeDelta AdjustDelay(int delayInMs) override {
@@ -113,12 +112,14 @@ class TestTranslateHelper : public translate::TranslateHelper {
   MOCK_METHOD0(HasTranslationFinished, bool());
   MOCK_METHOD0(HasTranslationFailed, bool());
   MOCK_METHOD0(GetOriginalPageLanguage, std::string());
+  MOCK_METHOD0(GetErrorCode, int64_t());
   MOCK_METHOD0(StartTranslation, bool());
   MOCK_METHOD1(ExecuteScript, void(const std::string&));
   MOCK_METHOD2(ExecuteScriptAndGetBoolResult, bool(const std::string&, bool));
   MOCK_METHOD1(ExecuteScriptAndGetStringResult,
                std::string(const std::string&));
   MOCK_METHOD1(ExecuteScriptAndGetDoubleResult, double(const std::string&));
+  MOCK_METHOD1(ExecuteScriptAndGetIntegerResult, int64_t(const std::string&));
 
  private:
   void OnPageTranslated(bool cancelled,
@@ -185,12 +186,16 @@ TEST_F(TranslateHelperBrowserTest, TranslateLibNeverReady) {
                           // translate_helper.cc
       .WillRepeatedly(Return(false));
 
+  EXPECT_CALL(*translate_helper_, GetErrorCode())
+      .Times(AtLeast(5))
+      .WillRepeatedly(Return(translate::TranslateErrors::NONE));
+
   translate_helper_->TranslatePage("en", "fr", std::string());
   base::RunLoop().RunUntilIdle();
 
   translate::TranslateErrors::Type error;
   ASSERT_TRUE(translate_helper_->GetPageTranslatedResult(NULL, NULL, &error));
-  EXPECT_EQ(translate::TranslateErrors::INITIALIZATION_ERROR, error);
+  EXPECT_EQ(translate::TranslateErrors::TRANSLATION_TIMEOUT, error);
 }
 
 // Tests that the browser gets notified of the translation success when the
@@ -205,6 +210,9 @@ TEST_F(TranslateHelperBrowserTest, TranslateSuccess) {
   EXPECT_CALL(*translate_helper_, IsTranslateLibReady())
       .WillOnce(Return(false))
       .WillOnce(Return(true));
+
+  EXPECT_CALL(*translate_helper_, GetErrorCode())
+      .WillOnce(Return(translate::TranslateErrors::NONE));
 
   EXPECT_CALL(*translate_helper_, StartTranslation()).WillOnce(Return(true));
 
@@ -259,6 +267,9 @@ TEST_F(TranslateHelperBrowserTest, TranslateFailure) {
   EXPECT_CALL(*translate_helper_, HasTranslationFinished())
       .Times(AtLeast(1))
       .WillRepeatedly(Return(false));
+
+  EXPECT_CALL(*translate_helper_, GetErrorCode())
+      .WillOnce(Return(translate::TranslateErrors::TRANSLATION_ERROR));
 
   // V8 call for performance monitoring should be ignored.
   EXPECT_CALL(*translate_helper_,
@@ -481,11 +492,11 @@ TEST_F(TranslateHelperBrowserTest, LanguageCommonMistakesAreCorrected) {
 
 // Tests that a back navigation gets a translate language message.
 TEST_F(TranslateHelperBrowserTest, BackToTranslatablePage) {
-  LoadHTML("<html><head><meta http-equiv=\"content-language\" content=\"zh\">"
-           "</head><body>This page is in Chinese.</body></html>");
+  LoadHTML("<html><head><meta http-equiv=\"content-language\" content=\"es\">"
+           "</head><body>This page is in Spanish.</body></html>");
   base::RunLoop().RunUntilIdle();
   ASSERT_TRUE(fake_translate_driver_.called_new_page_);
-  EXPECT_EQ("zh", fake_translate_driver_.details_->adopted_language);
+  EXPECT_EQ("es", fake_translate_driver_.details_->adopted_language);
   fake_translate_driver_.ResetNewPageValues();
 
   content::PageState back_state = GetCurrentPageState();
@@ -498,11 +509,11 @@ TEST_F(TranslateHelperBrowserTest, BackToTranslatablePage) {
   fake_translate_driver_.ResetNewPageValues();
 
   GoBack(GURL("data:text/html;charset=utf-8,<html><head>"
-              "<meta http-equiv=\"content-language\" content=\"zh\">"
-              "</head><body>This page is in Chinese.</body></html>"),
+              "<meta http-equiv=\"content-language\" content=\"es\">"
+              "</head><body>This page is in Spanish.</body></html>"),
          back_state);
 
   base::RunLoop().RunUntilIdle();
   ASSERT_TRUE(fake_translate_driver_.called_new_page_);
-  EXPECT_EQ("zh", fake_translate_driver_.details_->adopted_language);
+  EXPECT_EQ("es", fake_translate_driver_.details_->adopted_language);
 }

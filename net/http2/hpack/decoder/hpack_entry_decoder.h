@@ -10,20 +10,19 @@
 // must provide a non-empty decode buffer. Continue with calls to Resume() if
 // Start, and any subsequent calls to Resume, returns kDecodeInProgress.
 
-#include <string>
-
 #include "base/logging.h"
-#include "net/base/net_export.h"
 #include "net/http2/decoder/decode_buffer.h"
 #include "net/http2/decoder/decode_status.h"
 #include "net/http2/hpack/decoder/hpack_entry_decoder_listener.h"
 #include "net/http2/hpack/decoder/hpack_entry_type_decoder.h"
 #include "net/http2/hpack/decoder/hpack_string_decoder.h"
 #include "net/http2/hpack/http2_hpack_constants.h"
+#include "net/http2/platform/api/http2_export.h"
+#include "net/http2/platform/api/http2_string.h"
 
 namespace net {
 
-class NET_EXPORT_PRIVATE HpackEntryDecoder {
+class HTTP2_EXPORT_PRIVATE HpackEntryDecoder {
  public:
   enum class EntryDecoderState {
     // Have started decoding the type/varint, but didn't finish on the previous
@@ -56,45 +55,14 @@ class NET_EXPORT_PRIVATE HpackEntryDecoder {
 
   // Only call when the decode buffer has data (i.e. HpackBlockDecoder must
   // not call until there is data).
-  DecodeStatus Start(DecodeBuffer* db, HpackEntryDecoderListener* listener) {
-    DCHECK(db != nullptr);
-    DCHECK(listener != nullptr);
-    DCHECK(db->HasData());
-    DecodeStatus status = entry_type_decoder_.Start(db);
-    switch (status) {
-      case DecodeStatus::kDecodeDone:
-        // The type of the entry and its varint fit into the current decode
-        // buffer.
-        if (entry_type_decoder_.entry_type() ==
-            HpackEntryType::kIndexedHeader) {
-          // The entry consists solely of the entry type and varint. This
-          // is by far the most common case in practice.
-          listener->OnIndexedHeader(entry_type_decoder_.varint());
-          return DecodeStatus::kDecodeDone;
-        }
-        state_ = EntryDecoderState::kDecodedType;
-        return Resume(db, listener);
-      case DecodeStatus::kDecodeInProgress:
-        // Hit the end of the decode buffer before fully decoding the entry
-        // type and varint.
-        DCHECK_EQ(0u, db->Remaining());
-        state_ = EntryDecoderState::kResumeDecodingType;
-        return status;
-      case DecodeStatus::kDecodeError:
-        // The varint must have been invalid (too long).
-        return status;
-    }
-
-    NOTREACHED();
-    return DecodeStatus::kDecodeError;
-  }
+  DecodeStatus Start(DecodeBuffer* db, HpackEntryDecoderListener* listener);
 
   // Only call Resume if the previous call (Start or Resume) returned
   // kDecodeInProgress; Resume is also called from Start when it has succeeded
   // in decoding the entry type and its varint.
   DecodeStatus Resume(DecodeBuffer* db, HpackEntryDecoderListener* listener);
 
-  std::string DebugString() const;
+  Http2String DebugString() const;
   void OutputDebugString(std::ostream& out) const;
 
  private:
@@ -106,9 +74,9 @@ class NET_EXPORT_PRIVATE HpackEntryDecoder {
   EntryDecoderState state_ = EntryDecoderState();
 };
 
-NET_EXPORT_PRIVATE std::ostream& operator<<(std::ostream& out,
-                                            const HpackEntryDecoder& v);
-NET_EXPORT_PRIVATE std::ostream& operator<<(
+HTTP2_EXPORT_PRIVATE std::ostream& operator<<(std::ostream& out,
+                                              const HpackEntryDecoder& v);
+HTTP2_EXPORT_PRIVATE std::ostream& operator<<(
     std::ostream& out,
     HpackEntryDecoder::EntryDecoderState state);
 

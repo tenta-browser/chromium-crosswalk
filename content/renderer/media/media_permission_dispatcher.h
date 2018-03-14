@@ -26,12 +26,17 @@ namespace content {
 // MediaPermission implementation using content PermissionService.
 class CONTENT_EXPORT MediaPermissionDispatcher : public media::MediaPermission {
  public:
-  using ConnectToServiceCB = base::Callback<void(
+  using ConnectToServiceCB = base::RepeatingCallback<void(
       mojo::InterfaceRequest<blink::mojom::PermissionService>)>;
+  using IsEncryptedMediaEnabledCB = base::RepeatingCallback<bool()>;
 
-  explicit MediaPermissionDispatcher(
-      const ConnectToServiceCB& connect_to_service_cb);
+  MediaPermissionDispatcher(
+      const ConnectToServiceCB& connect_to_service_cb,
+      const IsEncryptedMediaEnabledCB& is_encrypted_media_enabled_cb);
   ~MediaPermissionDispatcher() override;
+
+  // Called when the frame owning this MediaPermissionDispatcher is navigated.
+  void OnNavigation();
 
   // media::MediaPermission implementation.
   // Note: Can be called on any thread. The |permission_status_cb| will always
@@ -43,6 +48,7 @@ class CONTENT_EXPORT MediaPermissionDispatcher : public media::MediaPermission {
       Type type,
       const GURL& security_origin,
       const PermissionStatusCB& permission_status_cb) override;
+  bool IsEncryptedMediaEnabled() override;
 
  private:
   // Map of request IDs and pending PermissionStatusCBs.
@@ -52,11 +58,18 @@ class CONTENT_EXPORT MediaPermissionDispatcher : public media::MediaPermission {
   // PermissionService calls.
   uint32_t RegisterCallback(const PermissionStatusCB& permission_status_cb);
 
+  // Ensure there is a connection to the permission service and return it.
+  blink::mojom::PermissionService* GetPermissionService();
+
   // Callback for |permission_service_| calls.
   void OnPermissionStatus(uint32_t request_id,
                           blink::mojom::PermissionStatus status);
 
+  // Callback for |permission_service_| connection errors.
+  void OnConnectionError();
+
   ConnectToServiceCB connect_to_service_cb_;
+  IsEncryptedMediaEnabledCB is_encrypted_media_enabled_cb_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   uint32_t next_request_id_;
   RequestMap requests_;

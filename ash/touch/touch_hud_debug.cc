@@ -22,19 +22,13 @@
 #include "ui/events/event.h"
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/transform.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/widget/widget.h"
-
-#if defined(USE_X11)
-#include <X11/extensions/XInput2.h>
-#include <X11/Xlib.h>
-
-#include "ui/events/devices/x11/device_data_manager_x11.h"  // nogncheck
-#endif
 
 namespace ash {
 
@@ -76,17 +70,6 @@ const char* GetTouchEventLabel(ui::EventType type) {
 }
 
 int GetTrackingId(const ui::TouchEvent& event) {
-  if (!event.HasNativeEvent())
-    return 0;
-#if defined(USE_X11)
-  ui::DeviceDataManagerX11* manager = ui::DeviceDataManagerX11::GetInstance();
-  double tracking_id;
-  if (manager->GetEventData(*event.native_event(),
-                            ui::DeviceDataManagerX11::DT_TOUCH_TRACKING_ID,
-                            &tracking_id)) {
-    return static_cast<int>(tracking_id);
-  }
-#endif
   return 0;
 }
 
@@ -143,7 +126,7 @@ class TouchTrace {
   typedef std::vector<TouchPointLog>::const_reverse_iterator
       const_reverse_iterator;
 
-  TouchTrace() {}
+  TouchTrace() = default;
 
   void AddTouchPoint(const ui::TouchEvent& touch) {
     log_.push_back(TouchPointLog(touch));
@@ -245,7 +228,7 @@ class TouchHudCanvas : public views::View {
     flags_.setStyle(cc::PaintFlags::kFill_Style);
   }
 
-  ~TouchHudCanvas() override {}
+  ~TouchHudCanvas() override = default;
 
   void SetScale(int scale) {
     if (scale_ == scale)
@@ -317,7 +300,7 @@ class TouchHudCanvas : public views::View {
 };
 
 TouchHudDebug::TouchHudDebug(aura::Window* initial_root)
-    : TouchObserverHUD(initial_root),
+    : TouchObserverHUD(initial_root, "TouchHudDebug"),
       mode_(FULLSCREEN),
       touch_log_(new TouchLog()),
       canvas_(NULL),
@@ -335,7 +318,7 @@ TouchHudDebug::TouchHudDebug(aura::Window* initial_root)
 
   label_container_ = new views::View;
   label_container_->SetLayoutManager(
-      new views::BoxLayout(views::BoxLayout::kVertical, 0, 0, 0));
+      new views::BoxLayout(views::BoxLayout::kVertical));
 
   for (int i = 0; i < kMaxTouchPoints; ++i) {
     touch_labels_[i] = new views::Label;
@@ -351,16 +334,14 @@ TouchHudDebug::TouchHudDebug(aura::Window* initial_root)
   content->AddChildView(label_container_);
 }
 
-TouchHudDebug::~TouchHudDebug() {}
+TouchHudDebug::~TouchHudDebug() = default;
 
 // static
 std::unique_ptr<base::DictionaryValue> TouchHudDebug::GetAllAsDictionary() {
   std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue());
   aura::Window::Windows roots = Shell::Get()->GetAllRootWindows();
-  for (aura::Window::Windows::iterator iter = roots.begin();
-       iter != roots.end(); ++iter) {
-    RootWindowController* controller = GetRootWindowController(*iter);
-    TouchHudDebug* hud = controller->touch_hud_debug();
+  for (RootWindowController* root : Shell::GetAllRootWindowControllers()) {
+    TouchHudDebug* hud = root->touch_hud_debug();
     if (hud) {
       std::unique_ptr<base::ListValue> list = hud->GetLogAsList();
       if (!list->empty())

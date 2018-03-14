@@ -6,11 +6,16 @@
 
 namespace switches {
 
+const char kEnableWebViewVariations[] = "enable-webview-variations";
 const char kSyncOnDrawHardware[] = "sync-on-draw-hardware";
 const char kWebViewSandboxedRenderer[] = "webview-sandboxed-renderer";
 
 // used to enable safebrowsing functionality in webview
 const char kWebViewEnableSafeBrowsingSupport[] =
     "webview-enable-safebrowsing-support";
+
+// used to disable safebrowsing functionality in webview
+const char kWebViewDisableSafeBrowsingSupport[] =
+    "webview-disable-safebrowsing-support";
 
 }  // namespace switches

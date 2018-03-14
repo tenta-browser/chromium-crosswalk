@@ -14,13 +14,15 @@ if (is_android) {
   # APK targets that depend on this indirectly, should also
   # depend on :media_java to get the corresponding Java classes.
   source_set("android") {
-    visibility = [ "//media/base:base" ]
+    visibility = [
+      "//media",
+      "//media/filters",
+    ]
     sources = [
       "android_cdm_factory.cc",
       "android_cdm_factory.h",
       "android_overlay.cc",
       "android_overlay.h",
-      "android_overlay_factory.h",
       "android_util.cc",
       "android_util.h",
       "media_codec_bridge.h",
@@ -33,8 +35,9 @@ if (is_android) {
       "media_codec_util.h",
       "media_drm_bridge.cc",
       "media_drm_bridge.h",
-      "media_drm_bridge_cdm_context.cc",
       "media_drm_bridge_cdm_context.h",
+      "media_drm_bridge_cdm_context_impl.cc",
+      "media_drm_bridge_cdm_context_impl.h",
       "media_drm_bridge_client.cc",
       "media_drm_bridge_client.h",
       "media_drm_bridge_delegate.cc",
@@ -43,8 +46,6 @@ if (is_android) {
       "media_drm_storage.h",
       "media_drm_storage_bridge.cc",
       "media_drm_storage_bridge.h",
-      "media_jni_registrar.cc",
-      "media_jni_registrar.h",
       "media_player_android.cc",
       "media_player_android.h",
       "media_player_bridge.cc",
@@ -61,23 +62,29 @@ if (is_android) {
       "media_url_interceptor.h",
       "stream_texture_wrapper.h",
     ]
-    configs += [
-      "//media:media_config",
-      "//media:media_implementation",
+    configs += [ "//media:subcomponent_config" ]
+    public_deps = [
+      ":media_jni_headers",
     ]
     deps = [
-      ":media_jni_headers",
-      "//media:media_features",
-      "//media:shared_memory_support",
+      "//media/audio",
+      "//media/base",
+      "//media/cdm",
+      "//media/formats",
       "//third_party/widevine/cdm:headers",
       "//ui/gl",
       "//url",
     ]
+    if (proprietary_codecs) {
+      sources += [
+        "extract_sps_and_pps.cc",
+        "extract_sps_and_pps.h",
+      ]
+    }
   }
 
   source_set("unit_tests") {
     testonly = true
-    visibility = [ "//media/base:unit_tests" ]
     sources = [
       "media_codec_bridge_impl_unittest.cc",
       "media_codec_loop_unittest.cc",
@@ -85,25 +92,44 @@ if (is_android) {
       "media_drm_bridge_unittest.cc",
       "media_player_bridge_unittest.cc",
       "media_service_throttler_unittest.cc",
-      "mock_media_codec_bridge.cc",
-      "mock_media_codec_bridge.h",
     ]
 
     deps = [
-      "//media",
-      "//media/base:test_support",
+      "//base/test:test_support",
+      "//media:test_support",
       "//testing/gmock",
       "//testing/gtest",
+      "//third_party/libyuv",
       "//third_party/widevine/cdm:headers",
       "//ui/gfx:color_space",
     ]
     configs += [ "//media:media_config" ]
   }
 
+  static_library("test_support") {
+    testonly = true
+    sources = [
+      "mock_android_overlay.cc",
+      "mock_android_overlay.h",
+      "mock_media_codec_bridge.cc",
+      "mock_media_codec_bridge.h",
+      "mock_media_drm_bridge_cdm_context.cc",
+      "mock_media_drm_bridge_cdm_context.h",
+      "test_destruction_observable.cc",
+      "test_destruction_observable.h",
+    ]
+    deps = [
+      "//media/base:test_support",
+      "//testing/gmock",
+      "//testing/gtest",
+    ]
+  }
+
   generate_jni("media_jni_headers") {
     sources = [
       "java/src/org/chromium/media/AudioManagerAndroid.java",
       "java/src/org/chromium/media/AudioRecordInput.java",
+      "java/src/org/chromium/media/AudioTrackOutputStream.java",
       "java/src/org/chromium/media/CodecProfileLevelList.java",
       "java/src/org/chromium/media/MediaCodecBridge.java",
       "java/src/org/chromium/media/MediaCodecUtil.java",
@@ -141,15 +167,35 @@ if (is_android) {
     java_files = [
       "java/src/org/chromium/media/AudioManagerAndroid.java",
       "java/src/org/chromium/media/AudioRecordInput.java",
+      "java/src/org/chromium/media/AudioTrackOutputStream.java",
       "java/src/org/chromium/media/CodecProfileLevelList.java",
       "java/src/org/chromium/media/MediaCodecBridge.java",
       "java/src/org/chromium/media/MediaCodecUtil.java",
+      "java/src/org/chromium/media/MediaCodecEncoder.java",
       "java/src/org/chromium/media/MediaDrmBridge.java",
       "java/src/org/chromium/media/MediaDrmSessionManager.java",
       "java/src/org/chromium/media/MediaDrmStorageBridge.java",
       "java/src/org/chromium/media/MediaPlayerBridge.java",
       "java/src/org/chromium/media/MediaPlayerListener.java",
       "java/src/org/chromium/media/MediaServerCrashListener.java",
+      "java/src/org/chromium/media/MediaSwitches.java",
     ]
+  }
+
+  junit_binary("media_base_junit_tests") {
+    java_files =
+        [ "java/src/test/org/chromium/media/AudioTrackOutputStreamTest.java" ]
+    deps = [
+      ":media_java",
+      "//base:base_java",
+      "//base:base_java_test_support",
+      "//third_party/junit",
+    ]
+  }
+} else {
+  source_set("android") {
+  }
+  source_set("test_support") {
+    testonly = true
   }
 }

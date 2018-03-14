@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/task_scheduler/task_scheduler.h"
 #include "build/build_config.h"
 #include "chrome/common/features.h"
 #include "chrome/test/base/testing_profile.h"
@@ -18,7 +19,6 @@
 #include "components/sync/driver/data_type_controller.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/app_list/app_list_switches.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/arc/arc_util.h"
@@ -28,6 +28,16 @@ using browser_sync::ProfileSyncService;
 using syncer::DataTypeController;
 
 class ProfileSyncServiceFactoryTest : public testing::Test {
+ public:
+  void SetUp() override {
+    // Some services will only be created if there is a WebDataService.
+    profile_->CreateWebDataService();
+  }
+
+  void TearDown() override {
+    base::TaskScheduler::GetInstance()->FlushForTesting();
+  }
+
  protected:
   ProfileSyncServiceFactoryTest() : profile_(new TestingProfile()) {}
 
@@ -39,8 +49,7 @@ class ProfileSyncServiceFactoryTest : public testing::Test {
 #if !defined(OS_ANDROID)
     datatypes.push_back(syncer::APPS);
 #if BUILDFLAG(ENABLE_APP_LIST)
-    if (app_list::switches::IsAppListSyncEnabled())
-      datatypes.push_back(syncer::APP_LIST);
+    datatypes.push_back(syncer::APP_LIST);
 #endif
     datatypes.push_back(syncer::APP_SETTINGS);
 #if defined(OS_LINUX) || defined(OS_WIN) || defined(OS_CHROMEOS)
@@ -78,6 +87,7 @@ class ProfileSyncServiceFactoryTest : public testing::Test {
     datatypes.push_back(syncer::SUPERVISED_USER_SETTINGS);
     datatypes.push_back(syncer::SUPERVISED_USER_WHITELISTS);
     datatypes.push_back(syncer::TYPED_URLS);
+    datatypes.push_back(syncer::USER_EVENTS);
 
     return datatypes;
   }
@@ -112,7 +122,7 @@ class ProfileSyncServiceFactoryTest : public testing::Test {
 
  private:
   content::TestBrowserThreadBundle thread_bundle_;
-  std::unique_ptr<Profile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
 };
 
 // Verify that the disable sync flag disables creation of the sync service.

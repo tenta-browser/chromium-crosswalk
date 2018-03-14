@@ -4,17 +4,17 @@
 
 #include "modules/mediasession/NavigatorMediaSession.h"
 
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/ExecutionContext.h"
 #include "modules/mediasession/MediaSession.h"
 #include "platform/Supplementable.h"
+#include "platform/bindings/ScriptState.h"
 
 namespace blink {
 
 NavigatorMediaSession::NavigatorMediaSession(Navigator& navigator)
     : Supplement<Navigator>(navigator) {}
 
-DEFINE_TRACE(NavigatorMediaSession) {
+void NavigatorMediaSession::Trace(blink::Visitor* visitor) {
   visitor->Trace(session_);
   Supplement<Navigator>::Trace(visitor);
 }

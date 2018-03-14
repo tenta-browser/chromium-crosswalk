@@ -160,8 +160,10 @@ function sendReport() {
   $('send-report-button').disabled = true;
   console.log('Feedback: Sending report');
   if (!feedbackInfo.attachedFile && attachedFileBlob) {
-    feedbackInfo.attachedFile = { name: $('attach-file').value,
-                                  data: attachedFileBlob };
+    feedbackInfo.attachedFile = {
+      name: $('attach-file').value,
+      data: attachedFileBlob
+    };
   }
 
   feedbackInfo.description = $('description-text').value;
@@ -170,17 +172,16 @@ function sendReport() {
 
   var useSystemInfo = false;
   var useHistograms = false;
-  if ($('sys-info-checkbox') != null &&
-      $('sys-info-checkbox').checked) {
+  if ($('sys-info-checkbox') != null && $('sys-info-checkbox').checked) {
     // Send histograms along with system info.
     useSystemInfo = useHistograms = true;
   }
-// <if expr="chromeos">
+  // <if expr="chromeos">
   if ($('performance-info-checkbox') == null ||
       !($('performance-info-checkbox').checked)) {
     feedbackInfo.traceId = null;
   }
-// </if>
+  // </if>
 
   feedbackInfo.sendHistograms = useHistograms;
 
@@ -201,7 +202,7 @@ function sendReport() {
   // this window right away. The FeedbackRequest object that represents this
   // report will take care of sending the report in the background.
   sendFeedbackReport(useSystemInfo);
-  window.close();
+  scheduleWindowClose();
   return true;
 }
 
@@ -211,22 +212,7 @@ function sendReport() {
  */
 function cancel(e) {
   e.preventDefault();
-  window.close();
-}
-
-/**
- * Converts a blob data URL to a blob object.
- * @param {string} url The data URL to convert.
- * @return {Blob} Blob object containing the data.
- */
-function dataUrlToBlob(url) {
-  var mimeString = url.split(',')[0].split(':')[1].split(';')[0];
-  var data = atob(url.split(',')[1]);
-  var dataArray = [];
-  for (var i = 0; i < data.length; ++i)
-    dataArray.push(data.charCodeAt(i));
-
-  return new Blob([new Uint8Array(dataArray)], {type: mimeString});
+  scheduleWindowClose();
 }
 
 // <if expr="chromeos">
@@ -256,11 +242,11 @@ function resizeAppWindow() {
   // We get the height by adding the titlebar height and the content height +
   // margins. We can't get the margins for the content-pane here by using
   // style.margin - the variable seems to not exist.
-  var height = $('title-bar').scrollHeight +
-      $('content-pane').scrollHeight + CONTENT_MARGIN_HEIGHT;
+  var height = $('title-bar').scrollHeight + $('content-pane').scrollHeight +
+      CONTENT_MARGIN_HEIGHT;
 
   var minHeight = FEEDBACK_MIN_HEIGHT;
-  if (feedbackInfo.flow == FeedbackFlow.LOGIN)
+  if (feedbackInfo.flow == chrome.feedbackPrivate.FeedbackFlow.LOGIN)
     minHeight = FEEDBACK_MIN_HEIGHT_LOGIN;
   height = Math.max(height, minHeight);
 
@@ -281,6 +267,15 @@ function onSystemInformation() {
 }
 
 /**
+ * Close the window after 100ms delay.
+ */
+function scheduleWindowClose() {
+  setTimeout(function() {
+    window.close();
+  }, 100);
+}
+
+/**
  * Initializes our page.
  * Flow:
  * .) DOMContent Loaded        -> . Request feedbackInfo object
@@ -296,9 +291,10 @@ function initialize() {
   chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
     if (request.sentFromEventPage) {
       if (!feedbackInfo.flow)
-        feedbackInfo.flow = FeedbackFlow.REGULAR;
+        feedbackInfo.flow = chrome.feedbackPrivate.FeedbackFlow.REGULAR;
 
-      if (feedbackInfo.flow == FeedbackFlow.SHOW_SRT_PROMPT) {
+      if (feedbackInfo.flow ==
+          chrome.feedbackPrivate.FeedbackFlow.SHOW_SRT_PROMPT) {
         isShowingSrtPrompt = true;
         $('content-pane').hidden = true;
 
@@ -312,7 +308,7 @@ function initialize() {
         $('srt-accept-button').onclick = function() {
           chrome.feedbackPrivate.logSrtPromptResult(SrtPromptResult.ACCEPTED);
           window.open(SRT_DOWNLOAD_PAGE, '_blank');
-          window.close();
+          scheduleWindowClose();
         };
 
         $('close-button').addEventListener('click', function() {
@@ -336,11 +332,17 @@ function initialize() {
         });
         chrome.app.window.current().show();
 
-        var screenshotDataUrl = screenshotCanvas.toDataURL('image/png');
-        $('screenshot-image').src = screenshotDataUrl;
-        $('screenshot-image').classList.toggle('wide-screen',
-            $('screenshot-image').width > MAX_SCREENSHOT_WIDTH);
-        feedbackInfo.screenshot = dataUrlToBlob(screenshotDataUrl);
+        screenshotCanvas.toBlob(function(blob) {
+          $('screenshot-image').src = URL.createObjectURL(blob);
+          // Only set the alt text when the src url is available, otherwise we'd
+          // get a broken image picture instead. crbug.com/773985.
+          $('screenshot-image').alt = 'screenshot';
+          $('screenshot-image')
+              .classList.toggle(
+                  'wide-screen',
+                  $('screenshot-image').width > MAX_SCREENSHOT_WIDTH);
+          feedbackInfo.screenshot = blob;
+        });
       });
 
       chrome.feedbackPrivate.getUserEmail(function(email) {
@@ -352,8 +354,8 @@ function initialize() {
         optionElement.text = email;
         optionElement.selected = true;
         // Make sure the "Report anonymously" option comes last.
-        $('user-email-drop-down').insertBefore(optionElement,
-            $('anonymous-user-option'));
+        $('user-email-drop-down')
+            .insertBefore(optionElement, $('anonymous-user-option'));
 
         // Now we can unhide the user email section:
         $('user-email').hidden = false;
@@ -373,21 +375,21 @@ function initialize() {
       }
 
       // No URL and file attachment for login screen feedback.
-      if (feedbackInfo.flow == FeedbackFlow.LOGIN) {
+      if (feedbackInfo.flow == chrome.feedbackPrivate.FeedbackFlow.LOGIN) {
         $('page-url').hidden = true;
         $('attach-file-container').hidden = true;
         $('attach-file-note').hidden = true;
       }
 
-// <if expr="chromeos">
+      // <if expr="chromeos">
       if (feedbackInfo.traceId && ($('performance-info-area'))) {
         $('performance-info-area').hidden = false;
         $('performance-info-checkbox').checked = true;
         performanceFeedbackChanged();
         $('performance-info-link').onclick = openSlowTraceWindow;
       }
-// </if>
-      chrome.feedbackPrivate.getStrings(function(strings) {
+      // </if>
+      chrome.feedbackPrivate.getStrings(feedbackInfo.flow, function(strings) {
         loadTimeData.data = strings;
         i18nTemplate.process(document, loadTimeData);
 
@@ -401,32 +403,33 @@ function initialize() {
               return;
             }
             chrome.app.window.create(
-              '/html/sys_info.html', {
-                frame: 'chrome',
-                id: SYSINFO_WINDOW_ID,
-                width: 640,
-                height: 400,
-                hidden: false,
-                resizable: true
-              }, function(appWindow) {
-                // Define functions for the newly created window.
+                '/html/sys_info.html', {
+                  frame: 'chrome',
+                  id: SYSINFO_WINDOW_ID,
+                  width: 640,
+                  height: 400,
+                  hidden: false,
+                  resizable: true
+                },
+                function(appWindow) {
+                  // Define functions for the newly created window.
 
-                // Gets the full system information for the new window.
-                appWindow.contentWindow.getFullSystemInfo =
-                    function(callback) {
-                      if (isSystemInfoReady) {
-                        callback(feedbackInfo.systemInformation);
-                        return;
-                      }
+                  // Gets the full system information for the new window.
+                  appWindow.contentWindow.getFullSystemInfo = function(
+                      callback) {
+                    if (isSystemInfoReady) {
+                      callback(feedbackInfo.systemInformation);
+                      return;
+                    }
 
-                      sysInfoPageOnSysInfoReadyCallback = callback;
-                    };
+                    sysInfoPageOnSysInfoReadyCallback = callback;
+                  };
 
-                // Returns the loadTimeData for the new window.
-                appWindow.contentWindow.getLoadTimeData = function() {
-                  return loadTimeData;
-                };
-            });
+                  // Returns the loadTimeData for the new window.
+                  appWindow.contentWindow.getLoadTimeData = function() {
+                    return loadTimeData;
+                  };
+                });
           };
         }
         if ($('histograms-url')) {
@@ -449,10 +452,10 @@ function initialize() {
     $('send-report-button').onclick = sendReport;
     $('cancel-button').onclick = cancel;
     $('remove-attached-file').onclick = clearAttachedFile;
-// <if expr="chromeos">
-    $('performance-info-checkbox').addEventListener(
-        'change', performanceFeedbackChanged);
-// </if>
+    // <if expr="chromeos">
+    $('performance-info-checkbox')
+        .addEventListener('change', performanceFeedbackChanged);
+    // </if>
   });
 }
 

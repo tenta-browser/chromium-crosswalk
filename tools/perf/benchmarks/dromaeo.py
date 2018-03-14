@@ -14,23 +14,11 @@ from telemetry.page import legacy_page_test
 from telemetry import story
 from telemetry.value import scalar
 
-from metrics import power
-
 
 class _DromaeoMeasurement(legacy_page_test.LegacyPageTest):
 
   def __init__(self):
     super(_DromaeoMeasurement, self).__init__()
-    self._power_metric = None
-
-  def CustomizeBrowserOptions(self, options):
-    power.PowerMetric.CustomizeBrowserOptions(options)
-
-  def WillStartBrowser(self, platform):
-    self._power_metric = power.PowerMetric(platform)
-
-  def DidNavigateToPage(self, page, tab):
-    self._power_metric.Start(page, tab)
 
   def ValidateAndMeasurePage(self, page, tab, results):
     tab.WaitForJavaScriptCondition(
@@ -58,9 +46,6 @@ class _DromaeoMeasurement(legacy_page_test.LegacyPageTest):
     tab.ExecuteJavaScript('window.document.getElementById("pause").click();')
 
     tab.WaitForJavaScriptCondition('!!window.results_', timeout=600)
-
-    self._power_metric.Stop(page, tab)
-    self._power_metric.AddResults(tab, results)
 
     score = json.loads(tab.EvaluateJavaScript('window.results_ || "[]"'))
 
@@ -104,10 +89,6 @@ class _DromaeoBenchmark(perf_benchmark.PerfBenchmark):
   """A base class for Dromaeo benchmarks."""
   test = _DromaeoMeasurement
 
-  @classmethod
-  def Name(cls):
-    return 'dromaeo'
-
   def CreateStorySet(self, options):
     """Makes a PageSet for Dromaeo benchmarks."""
     # Subclasses are expected to define class members called query_param and
@@ -121,263 +102,29 @@ class _DromaeoBenchmark(perf_benchmark.PerfBenchmark):
         cloud_storage_bucket=story.PUBLIC_BUCKET)
     url = 'http://dromaeo.com?%s' % self.query_param
     ps.AddStory(page_module.Page(
-        url, ps, ps.base_dir, make_javascript_deterministic=False))
+        url, ps, ps.base_dir, make_javascript_deterministic=False, name=url))
     return ps
 
 
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
+@benchmark.Owner(emails=['jbroman@chromium.org',
+                         'yukishiino@chromium.org',
                          'haraken@chromium.org'])
-class DromaeoDomCoreAttr(_DromaeoBenchmark):
-  """Dromaeo DOMCore attr JavaScript benchmark.
+class DromaeoBenchmark(_DromaeoBenchmark):
 
-  Tests setting and getting DOM node attributes.
-  """
-  tag = 'domcoreattr'
-  query_param = 'dom-attr'
+  test = _DromaeoMeasurement
 
   @classmethod
   def Name(cls):
-    return 'dromaeo.domcoreattr'
+    return 'dromaeo'
 
-
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
-                         'haraken@chromium.org'])
-class DromaeoDomCoreModify(_DromaeoBenchmark):
-  """Dromaeo DOMCore modify JavaScript benchmark.
-
-  Tests creating and injecting DOM nodes.
-  """
-  tag = 'domcoremodify'
-  query_param = 'dom-modify'
-
-  @classmethod
-  def Name(cls):
-    return 'dromaeo.domcoremodify'
-
-
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
-                         'haraken@chromium.org'])
-class DromaeoDomCoreQuery(_DromaeoBenchmark):
-  """Dromaeo DOMCore query JavaScript benchmark.
-
-  Tests querying DOM elements in a document.
-  """
-  tag = 'domcorequery'
-  query_param = 'dom-query'
-
-  @classmethod
-  def Name(cls):
-    return 'dromaeo.domcorequery'
-
-
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
-                         'haraken@chromium.org'])
-class DromaeoDomCoreTraverse(_DromaeoBenchmark):
-  """Dromaeo DOMCore traverse JavaScript benchmark.
-
-  Tests traversing a DOM structure.
-  """
-  tag = 'domcoretraverse'
-  query_param = 'dom-traverse'
-
-  @classmethod
-  def Name(cls):
-    return 'dromaeo.domcoretraverse'
-
-
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
-                         'haraken@chromium.org'])
-class DromaeoJslibAttrJquery(_DromaeoBenchmark):
-  """Dromaeo JSLib attr jquery JavaScript benchmark.
-
-  Tests setting and getting DOM node attributes using the jQuery JavaScript
-  Library.
-  """
-  tag = 'jslibattrjquery'
-  query_param = 'jslib-attr-jquery'
-
-  @classmethod
-  def Name(cls):
-    return 'dromaeo.jslibattrjquery'
-
-  @classmethod
-  def ShouldDisable(cls, possible_browser):
-    # http://crbug.com/634055 (Android One).
-    return cls.IsSvelte(possible_browser)
-
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
-                         'haraken@chromium.org'])
-class DromaeoJslibAttrPrototype(_DromaeoBenchmark):
-  """Dromaeo JSLib attr prototype JavaScript benchmark.
-
-  Tests setting and getting DOM node attributes using the jQuery JavaScript
-  Library.
-  """
-  tag = 'jslibattrprototype'
-  query_param = 'jslib-attr-prototype'
-
-  @classmethod
-  def Name(cls):
-    return 'dromaeo.jslibattrprototype'
-
-
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
-                         'haraken@chromium.org'])
-class DromaeoJslibEventJquery(_DromaeoBenchmark):
-  """Dromaeo JSLib event jquery JavaScript benchmark.
-
-  Tests binding, removing, and triggering DOM events using the jQuery JavaScript
-  Library.
-  """
-  tag = 'jslibeventjquery'
-  query_param = 'jslib-event-jquery'
-
-  @classmethod
-  def Name(cls):
-    return 'dromaeo.jslibeventjquery'
-
-
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
-                         'haraken@chromium.org'])
-class DromaeoJslibEventPrototype(_DromaeoBenchmark):
-  """Dromaeo JSLib event prototype JavaScript benchmark.
-
-  Tests binding, removing, and triggering DOM events using the Prototype
-  JavaScript Library.
-  """
-  tag = 'jslibeventprototype'
-  query_param = 'jslib-event-prototype'
-
-  @classmethod
-  def Name(cls):
-    return 'dromaeo.jslibeventprototype'
-
-
-# win-ref: http://crbug.com/598705
-# android: http://crbug.com/503138
-# linux: http://crbug.com/583075
-@benchmark.Disabled('win-reference', 'android', 'linux')
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
-                         'haraken@chromium.org'])
-class DromaeoJslibModifyJquery(_DromaeoBenchmark):
-  """Dromaeo JSLib modify jquery JavaScript benchmark.
-
-  Tests creating and injecting DOM nodes into a document using the jQuery
-  JavaScript Library.
-  """
-  tag = 'jslibmodifyjquery'
-  query_param = 'jslib-modify-jquery'
-
-  @classmethod
-  def Name(cls):
-    return 'dromaeo.jslibmodifyjquery'
-
-
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
-                         'haraken@chromium.org'])
-class DromaeoJslibModifyPrototype(_DromaeoBenchmark):
-  """Dromaeo JSLib modify prototype JavaScript benchmark.
-
-  Tests creating and injecting DOM nodes into a document using the Prototype
-  JavaScript Library.
-  """
-  tag = 'jslibmodifyprototype'
-  query_param = 'jslib-modify-prototype'
-
-  @classmethod
-  def Name(cls):
-    return 'dromaeo.jslibmodifyprototype'
-
-
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
-                         'haraken@chromium.org'])
-class DromaeoJslibStyleJquery(_DromaeoBenchmark):
-  """Dromaeo JSLib style jquery JavaScript benchmark.
-
-  Tests getting and setting CSS information on DOM elements using the jQuery
-  JavaScript Library.
-  """
-  tag = 'jslibstylejquery'
-  query_param = 'jslib-style-jquery'
-
-  @classmethod
-  def Name(cls):
-    return 'dromaeo.jslibstylejquery'
-
-
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
-                         'haraken@chromium.org'])
-class DromaeoJslibStylePrototype(_DromaeoBenchmark):
-  """Dromaeo JSLib style prototype JavaScript benchmark.
-
-  Tests getting and setting CSS information on DOM elements using the jQuery
-  JavaScript Library.
-  """
-  tag = 'jslibstyleprototype'
-  query_param = 'jslib-style-prototype'
-
-  @classmethod
-  def Name(cls):
-    return 'dromaeo.jslibstyleprototype'
-
-
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
-                         'haraken@chromium.org'])
-class DromaeoJslibTraverseJquery(_DromaeoBenchmark):
-  """Dromaeo JSLib traverse jquery JavaScript benchmark.
-
-
-  Tests getting and setting CSS information on DOM elements using the Prototype
-  JavaScript Library.
-  """
-  tag = 'jslibtraversejquery'
-  query_param = 'jslib-traverse-jquery'
-
-  @classmethod
-  def Name(cls):
-    return 'dromaeo.jslibtraversejquery'
-
-
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
-                         'haraken@chromium.org'])
-class DromaeoJslibTraversePrototype(_DromaeoBenchmark):
-  """Dromaeo JSLib traverse prototype JavaScript benchmark.
-
-  Tests traversing a DOM structure using the jQuery JavaScript Library.
-  """
-  tag = 'jslibtraverseprototype'
-  query_param = 'jslib-traverse-prototype'
-
-  @classmethod
-  def Name(cls):
-    return 'dromaeo.jslibtraverseprototype'
-
-
-@benchmark.Owner(emails=['yukishiino@chromium.org',
-                         'bashi@chromium.org',
-                         'haraken@chromium.org'])
-class DromaeoCSSQueryJquery(_DromaeoBenchmark):
-  """Dromaeo CSS Query jquery JavaScript benchmark.
-
-  Tests traversing a DOM structure using the Prototype JavaScript Library.
-  """
-  tag = 'cssqueryjquery'
-  query_param = 'cssquery-jquery'
-
-  @classmethod
-  def Name(cls):
-    return 'dromaeo.cssqueryjquery'
+  def CreateStorySet(self, options):
+    archive_data_file = '../page_sets/data/dromaeo.json'
+    ps = story.StorySet(
+        archive_data_file=archive_data_file,
+        base_dir=os.path.dirname(os.path.abspath(__file__)),
+        cloud_storage_bucket=story.PUBLIC_BUCKET)
+    for query_param in ['dom-attr', 'dom-modify', 'dom-query', 'dom-traverse']:
+      url = 'http://dromaeo.com?%s' % query_param
+      ps.AddStory(page_module.Page(
+          url, ps, ps.base_dir, make_javascript_deterministic=False, name=url))
+    return ps

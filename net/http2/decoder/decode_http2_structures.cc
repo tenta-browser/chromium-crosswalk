@@ -4,8 +4,6 @@
 
 #include "net/http2/decoder/decode_http2_structures.h"
 
-#include <string.h>
-
 #include "base/logging.h"
 #include "net/http2/decoder/decode_buffer.h"
 #include "net/http2/http2_constants.h"
@@ -76,7 +74,7 @@ void DoDecode(Http2PingFields* out, DecodeBuffer* b) {
   DCHECK_NE(nullptr, out);
   DCHECK_NE(nullptr, b);
   DCHECK_LE(Http2PingFields::EncodedSize(), b->Remaining());
-  memcpy(out->opaque_data, b->cursor(), Http2PingFields::EncodedSize());
+  memcpy(out->opaque_bytes, b->cursor(), Http2PingFields::EncodedSize());
   b->AdvanceCursor(Http2PingFields::EncodedSize());
 }
 

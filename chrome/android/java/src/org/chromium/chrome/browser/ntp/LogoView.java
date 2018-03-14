@@ -24,7 +24,8 @@ import android.widget.FrameLayout;
 
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ntp.LogoBridge.Logo;
-import org.chromium.chrome.browser.ntp.LogoBridge.LogoObserver;
+import org.chromium.chrome.browser.search_engines.TemplateUrlService;
+import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.widget.LoadingView;
 
 import java.lang.ref.WeakReference;
@@ -44,6 +45,9 @@ public class LogoView extends FrameLayout implements OnClickListener {
 
     // The default logo is shared across all NTPs.
     private static WeakReference<Bitmap> sDefaultLogo;
+
+    // The maximum internal bottom space for when the image is smaller than the view.
+    private final int mLogoMaxInternalSpaceBottom;
 
     // mLogo and mNewLogo are remembered for cross fading animation.
     private Bitmap mLogo;
@@ -96,17 +100,6 @@ public class LogoView extends FrameLayout implements OnClickListener {
          * @param isAnimatedLogoShowing Whether the animated GIF logo is playing.
          */
         void onLogoClicked(boolean isAnimatedLogoShowing);
-
-        /**
-         * Gets the default search provider's logo and calls logoObserver with the result.
-         * @param logoObserver The callback to notify when the logo is available.
-         */
-        void getSearchProviderLogo(LogoObserver logoObserver);
-
-        /**
-         * Should be called when the owning class is destroyed.
-         */
-        void destroy();
     }
 
     /**
@@ -115,7 +108,9 @@ public class LogoView extends FrameLayout implements OnClickListener {
     public LogoView(Context context, AttributeSet attrs) {
         super(context, attrs);
 
-        mLogo = getDefaultLogo();
+        mLogoMaxInternalSpaceBottom = getResources().getDimensionPixelSize(
+                R.dimen.ntp_logo_max_internal_space_bottom_modern);
+
         mLogoMatrix = new Matrix();
         mLogoIsDefault = true;
 
@@ -175,29 +170,53 @@ public class LogoView extends FrameLayout implements OnClickListener {
     }
 
     /**
-     * Lets logo view show a spinning progressbar.
+     * Show a spinning progressbar.
      */
     public void showLoadingView() {
+        mLogo = null;
+        invalidate();
         mLoadingView.showLoadingUI();
+    }
+
+    /**
+     * Show a loading indicator or a baked-in default search provider logo, based on what is
+     * available.
+     */
+    public void showSearchProviderInitialView() {
+        if (maybeShowDefaultLogo()) return;
+
+        showLoadingView();
     }
 
     /**
      * Fades in a new logo over the current logo.
      *
-     * @param logo The new logo to fade in. May be null to reset to the default logo.
+     * @param logo The new logo to fade in.
      */
     public void updateLogo(Logo logo) {
         if (logo == null) {
-            updateLogo(getDefaultLogo(), null, true);
-        } else {
-            String contentDescription = TextUtils.isEmpty(logo.altText) ? null
-                    : getResources().getString(R.string.accessibility_google_doodle, logo.altText);
-            updateLogo(logo.image, contentDescription, false);
+            if (maybeShowDefaultLogo()) return;
+
+            mLogo = null;
+            invalidate();
+            return;
         }
+
+        String contentDescription = TextUtils.isEmpty(logo.altText)
+                ? null
+                : getResources().getString(R.string.accessibility_google_doodle, logo.altText);
+        updateLogo(logo.image, contentDescription, false);
     }
 
     private void updateLogo(Bitmap logo, final String contentDescription, boolean isDefaultLogo) {
+        assert logo != null;
+
         if (mFadeAnimation != null) mFadeAnimation.end();
+
+        mLoadingView.hideLoadingUI();
+
+        // Don't crossfade if the new logo is the same as the old one.
+        if (mLogo != null && mLogo.sameAs(logo)) return;
 
         mNewLogo = logo;
         mNewLogoMatrix = new Matrix();
@@ -238,6 +257,19 @@ public class LogoView extends FrameLayout implements OnClickListener {
     }
 
     /**
+     * Shows the default search engine logo if available.
+     * @return Whether the default search engine logo is available.
+     */
+    private boolean maybeShowDefaultLogo() {
+        Bitmap defaultLogo = getDefaultLogo();
+        if (defaultLogo != null) {
+            updateLogo(defaultLogo, null, true);
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * @return Whether a new logo is currently fading in over the old logo.
      */
     private boolean isTransitioning() {
@@ -260,7 +292,14 @@ public class LogoView extends FrameLayout implements OnClickListener {
         if (preventUpscaling) scale = Math.min(1.0f, scale);
 
         int imageOffsetX = Math.round((width - imageWidth * scale) * 0.5f);
-        int imageOffsetY = Math.round((height - imageHeight * scale) * 0.5f);
+
+        final int imageOffsetY;
+        float whitespace = height - imageHeight * scale;
+        if (FeatureUtilities.isChromeHomeEnabled()) {
+            imageOffsetY = Math.max(0, (int) whitespace - mLogoMaxInternalSpaceBottom);
+        } else {
+            imageOffsetY = Math.round(whitespace * 0.5f);
+        }
 
         matrix.setScale(scale, scale);
         matrix.postTranslate(imageOffsetX, imageOffsetY);
@@ -270,6 +309,8 @@ public class LogoView extends FrameLayout implements OnClickListener {
      * @return The default logo.
      */
     private Bitmap getDefaultLogo() {
+        if (!TemplateUrlService.getInstance().isDefaultSearchEngineGoogle()) return null;
+
         Bitmap defaultLogo = sDefaultLogo == null ? null : sDefaultLogo.get();
         if (defaultLogo == null) {
             defaultLogo = BitmapFactory.decodeResource(getResources(), R.drawable.google_logo);

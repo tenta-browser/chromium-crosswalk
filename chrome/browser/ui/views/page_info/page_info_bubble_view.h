@@ -6,12 +6,13 @@
 #define CHROME_BROWSER_UI_VIEWS_PAGE_INFO_PAGE_INFO_BUBBLE_VIEW_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/page_info/page_info_ui.h"
-#include "chrome/browser/ui/views/page_info/chosen_object_row_observer.h"
+#include "chrome/browser/ui/views/page_info/chosen_object_view_observer.h"
 #include "chrome/browser/ui/views/page_info/permission_selector_row.h"
 #include "chrome/browser/ui/views/page_info/permission_selector_row_observer.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -22,7 +23,9 @@
 #include "ui/views/controls/styled_label_listener.h"
 
 class GURL;
+class Browser;
 class BubbleHeaderView;
+class HoverButton;
 class Profile;
 
 namespace content {
@@ -44,25 +47,23 @@ class PageInfoBubbleViewTestApi;
 namespace views {
 class Link;
 class Widget;
-}
-
-enum : int {
-  // Left icon margin.
-  kPermissionIconMarginLeft = 6,
-  // The width of the column that contains the permissions icons.
-  kPermissionIconColumnWidth = 16,
-};
+}  // namespace views
 
 // The views implementation of the page info UI.
 class PageInfoBubbleView : public content::WebContentsObserver,
                            public PermissionSelectorRowObserver,
-                           public ChosenObjectRowObserver,
+                           public ChosenObjectViewObserver,
                            public views::BubbleDialogDelegateView,
                            public views::ButtonListener,
                            public views::LinkListener,
                            public views::StyledLabelListener,
                            public PageInfoUI {
  public:
+  // The width of the column size for permissions and chosen object icons.
+  static constexpr int kIconColumnWidth = 16;
+  // The column set id of the permissions table for |permissions_view_|.
+  static constexpr int kPermissionColumnSetId = 0;
+
   ~PageInfoBubbleView() override;
 
   // Type of the bubble being displayed.
@@ -74,21 +75,37 @@ class PageInfoBubbleView : public content::WebContentsObserver,
     BUBBLE_INTERNAL_PAGE
   };
 
-  // If |anchor_view| is null, |anchor_rect| is used to anchor the bubble.
-  static void ShowBubble(views::View* anchor_view,
-                         const gfx::Rect& anchor_rect,
-                         Profile* profile,
-                         content::WebContents* web_contents,
-                         const GURL& url,
-                         const security_state::SecurityInfo& security_info);
+  enum PageInfoBubbleViewID {
+    VIEW_ID_NONE = 0,
+    VIEW_ID_PAGE_INFO_BUTTON_CLOSE,
+    VIEW_ID_PAGE_INFO_BUTTON_CHANGE_PASSWORD,
+    VIEW_ID_PAGE_INFO_BUTTON_WHITELIST_PASSWORD_REUSE,
+    VIEW_ID_PAGE_INFO_LABEL_SECURITY_DETAILS,
+    VIEW_ID_PAGE_INFO_LABEL_RESET_CERTIFICATE_DECISIONS,
+    VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_COOKIE_DIALOG,
+    VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_SITE_SETTINGS,
+    VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_CERTIFICATE_VIEWER,
+  };
+
+  // Creates the appropriate page info bubble for the given |url|.
+  static views::BubbleDialogDelegateView* CreatePageInfoBubble(
+      Browser* browser,
+      content::WebContents* web_contents,
+      const GURL& url,
+      const security_state::SecurityInfo& security_info);
 
   // Returns the type of the bubble being shown.
   static BubbleType GetShownBubbleType();
 
+  // Returns a weak reference to the page info bubble being shown.
+  static views::BubbleDialogDelegateView* GetPageInfoBubble();
+
  private:
+  friend class PageInfoBubbleViewBrowserTest;
   friend class test::PageInfoBubbleViewTestApi;
 
   PageInfoBubbleView(views::View* anchor_view,
+                     const gfx::Rect& anchor_rect,
                      gfx::NativeView parent_window,
                      Profile* profile,
                      content::WebContents* web_contents,
@@ -98,12 +115,14 @@ class PageInfoBubbleView : public content::WebContentsObserver,
   // WebContentsObserver implementation.
   void RenderFrameDeleted(content::RenderFrameHost* render_frame_host) override;
   void WebContentsDestroyed() override;
+  void WasHidden() override;
+  void DidStartNavigation(content::NavigationHandle* handle) override;
 
   // PermissionSelectorRowObserver implementation.
   void OnPermissionChanged(
       const PageInfoUI::PermissionInfo& permission) override;
 
-  // ChosenObjectRowObserver implementation.
+  // ChosenObjectViewObserver implementation.
   void OnChosenObjectDeleted(const PageInfoUI::ChosenObjectInfo& info) override;
 
   // views::BubbleDialogDelegateView implementation.
@@ -111,7 +130,6 @@ class PageInfoBubbleView : public content::WebContentsObserver,
   bool ShouldShowCloseButton() const override;
   void OnWidgetDestroying(views::Widget* widget) override;
   int GetDialogButtons() const override;
-  const gfx::FontList& GetTitleFontList() const override;
 
   // views::ButtonListener implementation.
   void ButtonPressed(views::Button* button, const ui::Event& event) override;
@@ -125,7 +143,7 @@ class PageInfoBubbleView : public content::WebContentsObserver,
                               int event_flags) override;
 
   // views::View implementation.
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
 
   // PageInfoUI implementations.
   void SetCookieInfo(const CookieInfoList& cookie_info_list) override;
@@ -135,15 +153,15 @@ class PageInfoBubbleView : public content::WebContentsObserver,
 
   // Creates the contents of the |site_settings_view_|. The ownership of the
   // returned view is transferred to the caller.
-  views::View* CreateSiteSettingsView(int side_margin) WARN_UNUSED_RESULT;
+  views::View* CreateSiteSettingsView() WARN_UNUSED_RESULT;
+
+  // Posts a task to HandleMoreInfoRequestAsync() below.
+  void HandleMoreInfoRequest(views::View* source);
 
   // Used to asynchronously handle clicks since these calls may cause the
   // destruction of the settings view and the base class window still needs to
   // be alive to finish handling the mouse or keyboard click.
-  void HandleLinkClickedAsync(views::Link* source);
-
-  // Whether DevTools is disabled for the relevant profile.
-  bool is_devtools_disabled_;
+  void HandleMoreInfoRequestAsync(int view_id);
 
   // The presenter that controls the Page Info UI.
   std::unique_ptr<PageInfo> presenter_;
@@ -156,17 +174,15 @@ class PageInfoBubbleView : public content::WebContentsObserver,
   // The security summary for the current page.
   base::string16 summary_text_;
 
-  // The separator between the header and the site settings view.
-  views::Separator* separator_;
-
-  // The view that contains the cookie and permissions sections.
+  // The view that contains the certificate, cookie, and permissions sections.
   views::View* site_settings_view_;
-  // The view that contains the contents of the "Cookies" part of the site
-  // settings view.
-  views::View* cookies_view_;
-  // The link that opens the "Cookies" dialog.
-  views::Link* cookie_dialog_link_;
-  // The view that contains the "Permissions" table of the site settings view.
+
+  // The link that opens the "Cookies" dialog. Non-harmony mode only.
+  views::Link* cookie_link_legacy_;
+  // The bubble that opens the "Cookies" dialog. Harmony mode only.
+  HoverButton* cookie_button_;
+
+  // The view that contains the "Permissions" table of the bubble.
   views::View* permissions_view_;
 
   // The certificate provided by the site, if one exists.

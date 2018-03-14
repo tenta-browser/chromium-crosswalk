@@ -39,6 +39,7 @@
 #include "media/base/video_frame.h"
 #include "media/base/video_renderer.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "url/origin.h"
 
 namespace media {
 
@@ -55,6 +56,8 @@ class MockPipelineClient : public Pipeline::Client {
   MOCK_METHOD2(OnAddTextTrack,
                void(const TextTrackConfig&, const AddTextTrackDoneCB&));
   MOCK_METHOD0(OnWaitingForDecryptionKey, void());
+  MOCK_METHOD1(OnAudioConfigChange, void(const AudioDecoderConfig&));
+  MOCK_METHOD1(OnVideoConfigChange, void(const VideoDecoderConfig&));
   MOCK_METHOD1(OnVideoNaturalSizeChange, void(const gfx::Size&));
   MOCK_METHOD1(OnVideoOpacityChange, void(bool));
   MOCK_METHOD0(OnVideoAverageKeyframeDistanceUpdate, void());
@@ -166,8 +169,6 @@ class MockDemuxerStream : public DemuxerStream {
   void set_video_decoder_config(const VideoDecoderConfig& config);
   void set_liveness(Liveness liveness);
 
-  VideoRotation video_rotation() override;
-
  private:
   Type type_;
   Liveness liveness_;
@@ -179,7 +180,8 @@ class MockDemuxerStream : public DemuxerStream {
 
 class MockVideoDecoder : public VideoDecoder {
  public:
-  MockVideoDecoder();
+  explicit MockVideoDecoder(
+      const std::string& decoder_name = "MockVideoDecoder");
   virtual ~MockVideoDecoder();
 
   // VideoDecoder implementation.
@@ -197,12 +199,14 @@ class MockVideoDecoder : public VideoDecoder {
   MOCK_CONST_METHOD0(CanReadWithoutStalling, bool());
 
  private:
+  std::string decoder_name_;
   DISALLOW_COPY_AND_ASSIGN(MockVideoDecoder);
 };
 
 class MockAudioDecoder : public AudioDecoder {
  public:
-  MockAudioDecoder();
+  explicit MockAudioDecoder(
+      const std::string& decoder_name = "MockAudioDecoder");
   virtual ~MockAudioDecoder();
 
   // AudioDecoder implementation.
@@ -218,6 +222,7 @@ class MockAudioDecoder : public AudioDecoder {
   MOCK_METHOD1(Reset, void(const base::Closure&));
 
  private:
+  std::string decoder_name_;
   DISALLOW_COPY_AND_ASSIGN(MockAudioDecoder);
 };
 
@@ -232,6 +237,8 @@ class MockRendererClient : public RendererClient {
   MOCK_METHOD1(OnStatisticsUpdate, void(const PipelineStatistics&));
   MOCK_METHOD1(OnBufferingStateChange, void(BufferingState));
   MOCK_METHOD0(OnWaitingForDecryptionKey, void());
+  MOCK_METHOD1(OnAudioConfigChange, void(const AudioDecoderConfig&));
+  MOCK_METHOD1(OnVideoConfigChange, void(const VideoDecoderConfig&));
   MOCK_METHOD1(OnVideoNaturalSizeChange, void(const gfx::Size&));
   MOCK_METHOD1(OnVideoOpacityChange, void(bool));
   MOCK_METHOD1(OnDurationChange, void(base::TimeDelta));
@@ -347,7 +354,7 @@ class MockCdmClient {
 
   MOCK_METHOD3(OnSessionMessage,
                void(const std::string& session_id,
-                    ContentDecryptionModule::MessageType message_type,
+                    CdmMessageType message_type,
                     const std::vector<uint8_t>& message));
   MOCK_METHOD1(OnSessionClosed, void(const std::string& session_id));
 
@@ -451,7 +458,9 @@ class MockCdmSessionPromise : public NewSessionCdmPromise {
 
 class MockCdm : public ContentDecryptionModule {
  public:
-  MockCdm(const SessionMessageCB& session_message_cb,
+  MockCdm(const std::string& key_system,
+          const url::Origin& security_origin,
+          const SessionMessageCB& session_message_cb,
           const SessionClosedCB& session_closed_cb,
           const SessionKeysChangeCB& session_keys_change_cb,
           const SessionExpirationUpdateCB& session_expiration_update_cb);
@@ -507,7 +516,7 @@ class MockCdm : public ContentDecryptionModule {
   MOCK_METHOD0(GetCdmContext, CdmContext*());
 
   void CallSessionMessageCB(const std::string& session_id,
-                            ContentDecryptionModule::MessageType message_type,
+                            CdmMessageType message_type,
                             const std::vector<uint8_t>& message);
   void CallSessionClosedCB(const std::string& session_id);
   void CallSessionKeysChangeCB(const std::string& session_id,
@@ -516,10 +525,16 @@ class MockCdm : public ContentDecryptionModule {
   void CallSessionExpirationUpdateCB(const std::string& session_id,
                                      base::Time new_expiry_time);
 
+  const std::string& GetKeySystem() const { return key_system_; }
+  const url::Origin& GetSecurityOrigin() const { return security_origin_; }
+
  protected:
   ~MockCdm() override;
 
  private:
+  std::string key_system_;
+  url::Origin security_origin_;
+
   // Callbacks.
   SessionMessageCB session_message_cb_;
   SessionClosedCB session_closed_cb_;
@@ -539,7 +554,7 @@ class MockCdmFactory : public CdmFactory {
   // created CDM is passed to |cdm_created_cb|, a copy is kept (and available
   // using Cdm()). If |key_system| is empty, no CDM will be created.
   void Create(const std::string& key_system,
-              const GURL& security_origin,
+              const url::Origin& security_origin,
               const CdmConfig& cdm_config,
               const SessionMessageCB& session_message_cb,
               const SessionClosedCB& session_closed_cb,
@@ -578,7 +593,7 @@ class MockStreamParser : public StreamParser {
            const EncryptedMediaInitDataCB& encrypted_media_init_data_cb,
            const NewMediaSegmentCB& new_segment_cb,
            const EndMediaSegmentCB& end_of_segment_cb,
-           const scoped_refptr<MediaLog>& media_log));
+           MediaLog* media_log));
   MOCK_METHOD0(Flush, void());
   MOCK_METHOD2(Parse, bool(const uint8_t*, int));
 

@@ -12,6 +12,7 @@
 
 #include "base/i18n/number_formatting.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/utf_string_conversions.h"
@@ -74,7 +75,7 @@ using bookmarks::BookmarkModel;
 using content::WebContents;
 using ui::ButtonMenuItemModel;
 using ui::MenuModel;
-using views::CustomButton;
+using views::Button;
 using views::ImageButton;
 using views::Label;
 using views::LabelButton;
@@ -115,8 +116,8 @@ class FullscreenButton : public ImageButton {
       : ImageButton(listener) { }
 
   // Overridden from ImageButton.
-  gfx::Size GetPreferredSize() const override {
-    gfx::Size pref = ImageButton::GetPreferredSize();
+  gfx::Size CalculatePreferredSize() const override {
+    gfx::Size pref = ImageButton::CalculatePreferredSize();
     if (border()) {
       gfx::Insets insets = border()->GetInsets();
       pref.Enlarge(insets.width(), insets.height());
@@ -153,9 +154,7 @@ class InMenuButtonBackground : public views::Background {
 
   // Overridden from views::Background.
   void Paint(gfx::Canvas* canvas, View* view) const override {
-    CustomButton* button = CustomButton::AsCustomButton(view);
-    views::Button::ButtonState state =
-        button ? button->state() : views::Button::STATE_NORMAL;
+    Button* button = Button::AsButton(view);
     int h = view->height();
 
     // Draw leading border if desired.
@@ -165,32 +164,25 @@ class InMenuButtonBackground : public views::Background {
       // already, so we end up flipping exactly once.
       gfx::ScopedRTLFlipCanvas scoped_canvas(
           canvas, view->width(), !view->flip_canvas_on_paint_for_rtl_ui());
-      canvas->FillRect(gfx::Rect(0, 0, 1, h),
-                       BorderColor(view, views::Button::STATE_NORMAL));
-      bounds.Inset(gfx::Insets(0, 1, 0, 0));
+      ui::NativeTheme::ExtraParams params;
+      gfx::Rect separator_bounds =
+          gfx::Rect(0, 0, MenuConfig::instance().separator_thickness, h);
+      params.menu_separator.paint_rect = &separator_bounds;
+      params.menu_separator.type = ui::VERTICAL_SEPARATOR;
+      view->GetNativeTheme()->Paint(
+          canvas->sk_canvas(), ui::NativeTheme::kMenuPopupSeparator,
+          ui::NativeTheme::kNormal, separator_bounds, params);
+      bounds.Inset(
+          gfx::Insets(0, MenuConfig::instance().separator_thickness, 0, 0));
     }
 
     // Fill in background for state.
-    bounds.set_x(view->GetMirroredXForRect(bounds));
-    DrawBackground(canvas, view, bounds, state);
+    views::Button::ButtonState state =
+        button ? button->state() : views::Button::STATE_NORMAL;
+    DrawBackground(canvas, view, view->GetMirroredRect(bounds), state);
   }
 
  private:
-  static SkColor BorderColor(View* view, views::Button::ButtonState state) {
-    ui::NativeTheme* theme = view->GetNativeTheme();
-    switch (state) {
-      case views::Button::STATE_HOVERED:
-        return theme->GetSystemColor(
-            ui::NativeTheme::kColorId_HoverMenuButtonBorderColor);
-      case views::Button::STATE_PRESSED:
-        return theme->GetSystemColor(
-            ui::NativeTheme::kColorId_FocusedMenuButtonBorderColor);
-      default:
-        return theme->GetSystemColor(
-            ui::NativeTheme::kColorId_EnabledMenuButtonBorderColor);
-    }
-  }
-
   static SkColor BackgroundColor(const View* view,
                                  views::Button::ButtonState state) {
     const ui::NativeTheme* theme = view->GetNativeTheme();
@@ -232,13 +224,15 @@ class InMenuButtonBackground : public views::Background {
 
 base::string16 GetAccessibleNameForAppMenuItem(ButtonMenuItemModel* model,
                                                int item_index,
-                                               int accessible_string_id) {
+                                               int accessible_string_id,
+                                               bool add_accelerator_text) {
   base::string16 accessible_name =
       l10n_util::GetStringUTF16(accessible_string_id);
   base::string16 accelerator_text;
 
   ui::Accelerator menu_accelerator;
-  if (model->GetAcceleratorAt(item_index, &menu_accelerator)) {
+  if (add_accelerator_text &&
+      model->GetAcceleratorAt(item_index, &menu_accelerator)) {
     accelerator_text =
         ui::Accelerator(menu_accelerator.key_code(),
                         menu_accelerator.modifiers()).GetShortcutText();
@@ -252,8 +246,12 @@ base::string16 GetAccessibleNameForAppMenuItem(ButtonMenuItemModel* model,
 class InMenuButton : public LabelButton {
  public:
   InMenuButton(views::ButtonListener* listener, const base::string16& text)
-      : LabelButton(listener, text), in_menu_background_(NULL) {}
+      : LabelButton(listener, text) {}
   ~InMenuButton() override {}
+
+  void set_role_is_button(bool role_is_button) {
+    role_is_button_ = role_is_button;
+  }
 
   void Init(InMenuButtonBackground::ButtonType type) {
     // An InMenuButton should always be focusable regardless of the platform.
@@ -261,16 +259,16 @@ class InMenuButton : public LabelButton {
     SetFocusBehavior(FocusBehavior::ALWAYS);
     SetHorizontalAlignment(gfx::ALIGN_CENTER);
 
-    in_menu_background_ = new InMenuButtonBackground(type);
-    set_background(in_menu_background_);
+    SetBackground(base::MakeUnique<InMenuButtonBackground>(type));
     SetBorder(
         views::CreateEmptyBorder(0, kHorizontalPadding, 0, kHorizontalPadding));
-    SetFontList(MenuConfig::instance().font_list);
+    label()->SetFontList(MenuConfig::instance().font_list);
   }
 
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
     LabelButton::GetAccessibleNodeData(node_data);
-    node_data->role = ui::AX_ROLE_MENU_ITEM;
+    if (!role_is_button_)
+      node_data->role = ui::AX_ROLE_MENU_ITEM;
   }
 
   // views::LabelButton
@@ -296,7 +294,9 @@ class InMenuButton : public LabelButton {
   }
 
  private:
-  InMenuButtonBackground* in_menu_background_;
+  // Indicates whether to expose this to accessibility as a Button.  If it is a
+  // button, the accelerator will not be added to the accessible label.
+  bool role_is_button_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(InMenuButton);
 };
@@ -330,13 +330,14 @@ class AppMenuView : public views::View,
       int string_id,
       InMenuButtonBackground::ButtonType type,
       int index) {
-    return CreateButtonWithAccName(string_id, type, index, string_id);
+    return CreateButtonWithAccName(string_id, type, index, string_id, false);
   }
 
   InMenuButton* CreateButtonWithAccName(int string_id,
                                         InMenuButtonBackground::ButtonType type,
                                         int index,
-                                        int acc_string_id) {
+                                        int acc_string_id,
+                                        bool role_is_button) {
     // Should only be invoked during construction when |menu_| is valid.
     DCHECK(menu_);
     InMenuButton* button = new InMenuButton(
@@ -344,15 +345,16 @@ class AppMenuView : public views::View,
         gfx::RemoveAcceleratorChar(
             l10n_util::GetStringUTF16(string_id), '&', NULL, NULL));
     button->Init(type);
-    button->SetAccessibleName(
-        GetAccessibleNameForAppMenuItem(menu_model_, index, acc_string_id));
+    button->SetAccessibleName(GetAccessibleNameForAppMenuItem(
+        menu_model_, index, acc_string_id, !role_is_button));
     button->set_tag(index);
     button->SetEnabled(menu_model_->IsEnabledAt(index));
+    button->set_role_is_button(role_is_button);
 
     AddChildView(button);
     // all buttons on menu should must be a custom button in order for
     // the keyboard nativigation work.
-    DCHECK(CustomButton::AsCustomButton(button));
+    DCHECK(Button::AsButton(button));
     return button;
   }
 
@@ -395,7 +397,6 @@ class HoveredImageSource : public gfx::ImageSkiaSource {
     SkBitmap white;
     white.allocN32Pixels(bitmap.width(), bitmap.height());
     white.eraseARGB(0, 0, 0, 0);
-    bitmap.lockPixels();
     for (int y = 0; y < bitmap.height(); ++y) {
       uint32_t* image_row = bitmap.getAddr32(0, y);
       uint32_t* dst_row = white.getAddr32(0, y);
@@ -405,7 +406,6 @@ class HoveredImageSource : public gfx::ImageSkiaSource {
         dst_row[x] = (image_pixel & 0xFF000000) == 0x0 ? 0x0 : color_;
       }
     }
-    bitmap.unlockPixels();
     return gfx::ImageSkiaRep(white, scale);
   }
 
@@ -437,7 +437,7 @@ class AppMenu::CutCopyPasteView : public AppMenuView {
   }
 
   // Overridden from View.
-  gfx::Size GetPreferredSize() const override {
+  gfx::Size CalculatePreferredSize() const override {
     // Returned height doesn't matter as MenuItemView forces everything to the
     // height of the menuitemview.
     return gfx::Size(GetMaxChildViewPreferredWidth() * child_count(), 0);
@@ -496,27 +496,26 @@ class AppMenu::ZoomView : public AppMenuView {
 
     decrement_button_ = CreateButtonWithAccName(
         IDS_ZOOM_MINUS2, InMenuButtonBackground::LEADING_BORDER,
-        decrement_index, IDS_ACCNAME_ZOOM_MINUS2);
+        decrement_index, IDS_ACCNAME_ZOOM_MINUS2, true);
 
     zoom_label_ = new Label(base::FormatPercent(100));
     zoom_label_->SetAutoColorReadabilityEnabled(false);
     zoom_label_->SetHorizontalAlignment(gfx::ALIGN_RIGHT);
 
-    InMenuButtonBackground* center_bg =
-        new InMenuButtonBackground(InMenuButtonBackground::NO_BORDER);
-    zoom_label_->set_background(center_bg);
+    zoom_label_->SetBackground(base::MakeUnique<InMenuButtonBackground>(
+        InMenuButtonBackground::NO_BORDER));
 
     AddChildView(zoom_label_);
     zoom_label_max_width_valid_ = false;
 
     increment_button_ = CreateButtonWithAccName(
         IDS_ZOOM_PLUS2, InMenuButtonBackground::NO_BORDER, increment_index,
-        IDS_ACCNAME_ZOOM_PLUS2);
+        IDS_ACCNAME_ZOOM_PLUS2, true);
 
     fullscreen_button_ = new FullscreenButton(this);
     // all buttons on menu should must be a custom button in order for
     // the keyboard navigation work.
-    DCHECK(CustomButton::AsCustomButton(fullscreen_button_));
+    DCHECK(Button::AsButton(fullscreen_button_));
     gfx::ImageSkia* full_screen_image =
         ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
             IDR_FULLSCREEN_MENU_BUTTON);
@@ -528,10 +527,10 @@ class AppMenu::ZoomView : public AppMenuView {
     fullscreen_button_->set_tag(fullscreen_index);
     fullscreen_button_->SetImageAlignment(
         ImageButton::ALIGN_CENTER, ImageButton::ALIGN_MIDDLE);
-    fullscreen_button_->set_background(
-        new InMenuButtonBackground(InMenuButtonBackground::LEADING_BORDER));
+    fullscreen_button_->SetBackground(base::MakeUnique<InMenuButtonBackground>(
+        InMenuButtonBackground::LEADING_BORDER));
     fullscreen_button_->SetAccessibleName(GetAccessibleNameForAppMenuItem(
-        menu_model, fullscreen_index, IDS_ACCNAME_FULLSCREEN));
+        menu_model, fullscreen_index, IDS_ACCNAME_FULLSCREEN, true));
     AddChildView(fullscreen_button_);
 
     // Need to set a font list for the zoom label width calculations.
@@ -542,7 +541,7 @@ class AppMenu::ZoomView : public AppMenuView {
   ~ZoomView() override {}
 
   // Overridden from View.
-  gfx::Size GetPreferredSize() const override {
+  gfx::Size CalculatePreferredSize() const override {
     // The increment/decrement button are forced to the same width.
     int button_width = std::max(increment_button_->GetPreferredSize().width(),
                                 decrement_button_->GetPreferredSize().width());
@@ -598,8 +597,8 @@ class AppMenu::ZoomView : public AppMenuView {
       SkColor fg_color = theme->GetSystemColor(
           ui::NativeTheme::kColorId_SelectedMenuItemForegroundColor);
       gfx::ImageSkia hovered_fullscreen_image(
-          new HoveredImageSource(*full_screen_image, fg_color),
-      full_screen_image->size());
+          base::MakeUnique<HoveredImageSource>(*full_screen_image, fg_color),
+          full_screen_image->size());
       fullscreen_button_->SetImage(
           ImageButton::STATE_HOVERED, &hovered_fullscreen_image);
       fullscreen_button_->SetImage(
@@ -641,6 +640,7 @@ class AppMenu::ZoomView : public AppMenuView {
                                     contents->GetMinimumZoomPercent());
     }
     zoom_label_->SetText(base::FormatPercent(zoom));
+    zoom_label_->NotifyAccessibilityEvent(ui::AX_EVENT_TEXT_CHANGED, true);
     zoom_label_max_width_valid_ = false;
   }
 
@@ -812,7 +812,7 @@ void AppMenu::Init(ui::MenuModel* model) {
                                // so we get the taller menu style.
   PopulateMenu(root_, model);
 
-  int32_t types = views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::ASYNC;
+  int32_t types = views::MenuRunner::HAS_MNEMONICS;
   if (for_drop()) {
     // We add NESTED_DRAG since currently the only operation to open the app
     // menu for is an extension action drag, which is controlled by the child
@@ -1045,8 +1045,7 @@ bool AppMenu::ShouldCloseOnDragComplete() {
   return false;
 }
 
-void AppMenu::OnMenuClosed(views::MenuItemView* menu,
-                           views::MenuRunner::RunResult result) {
+void AppMenu::OnMenuClosed(views::MenuItemView* menu) {
   if (bookmark_menu_delegate_.get()) {
     BookmarkModel* model =
         BookmarkModelFactory::GetForBrowserContext(browser_->profile());
@@ -1055,6 +1054,16 @@ void AppMenu::OnMenuClosed(views::MenuItemView* menu,
   }
   if (selected_menu_model_)
     selected_menu_model_->ActivatedAt(selected_index_);
+}
+
+bool AppMenu::ShouldExecuteCommandWithoutClosingMenu(int command_id,
+                                                     const ui::Event& event) {
+  if (IsRecentTabsCommand(command_id) && event.IsMouseEvent()) {
+    const auto disposition = ui::DispositionFromEventFlags(event.flags());
+    if (disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB)
+      return true;
+  }
+  return false;
 }
 
 void AppMenu::BookmarkModelChanged() {
@@ -1107,7 +1116,7 @@ void AppMenu::PopulateMenu(MenuItemView* parent, MenuModel* model) {
             new ExtensionToolbarMenuView(browser_, this, item));
         for (int i = 0; i < extension_toolbar->contents()->child_count(); ++i) {
           View* action_view = extension_toolbar->contents()->child_at(i);
-          action_view->set_background(new InMenuButtonBackground(
+          action_view->SetBackground(base::MakeUnique<InMenuButtonBackground>(
               InMenuButtonBackground::ROUNDED_BUTTON));
         }
         extension_toolbar_ = extension_toolbar.get();

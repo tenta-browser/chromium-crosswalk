@@ -14,36 +14,37 @@ namespace blink {
 
 namespace {
 
-std::unique_ptr<ImageDecoder> CreateDecoder() {
-  return WTF::WrapUnique(
-      new BMPImageDecoder(ImageDecoder::kAlphaNotPremultiplied,
-                          ColorBehavior::TransformToTargetForTesting(),
-                          ImageDecoder::kNoDecodedImageByteLimit));
+std::unique_ptr<ImageDecoder> CreateBMPDecoder() {
+  return WTF::WrapUnique(new BMPImageDecoder(
+      ImageDecoder::kAlphaNotPremultiplied, ColorBehavior::TransformToSRGB(),
+      ImageDecoder::kNoDecodedImageByteLimit));
 }
 
 }  // anonymous namespace
 
 TEST(BMPImageDecoderTest, isSizeAvailable) {
-  const char* bmp_file = "/LayoutTests/images/resources/lenna.bmp";  // 256x256
-  RefPtr<SharedBuffer> data = ReadFile(bmp_file);
-  ASSERT_TRUE(data.Get());
+  static constexpr char kBmpFile[] =
+      "/LayoutTests/images/resources/lenna.bmp";  // 256x256
+  scoped_refptr<SharedBuffer> data = ReadFile(kBmpFile);
+  ASSERT_TRUE(data.get());
 
-  std::unique_ptr<ImageDecoder> decoder = CreateDecoder();
-  decoder->SetData(data.Get(), true);
+  std::unique_ptr<ImageDecoder> decoder = CreateBMPDecoder();
+  decoder->SetData(data.get(), true);
   EXPECT_TRUE(decoder->IsSizeAvailable());
   EXPECT_EQ(256, decoder->Size().Width());
   EXPECT_EQ(256, decoder->Size().Height());
 }
 
 TEST(BMPImageDecoderTest, parseAndDecode) {
-  const char* bmp_file = "/LayoutTests/images/resources/lenna.bmp";  // 256x256
-  RefPtr<SharedBuffer> data = ReadFile(bmp_file);
-  ASSERT_TRUE(data.Get());
+  static constexpr char kBmpFile[] =
+      "/LayoutTests/images/resources/lenna.bmp";  // 256x256
+  scoped_refptr<SharedBuffer> data = ReadFile(kBmpFile);
+  ASSERT_TRUE(data.get());
 
-  std::unique_ptr<ImageDecoder> decoder = CreateDecoder();
-  decoder->SetData(data.Get(), true);
+  std::unique_ptr<ImageDecoder> decoder = CreateBMPDecoder();
+  decoder->SetData(data.get(), true);
 
-  ImageFrame* frame = decoder->FrameBufferAtIndex(0);
+  ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(0);
   ASSERT_TRUE(frame);
   EXPECT_EQ(ImageFrame::kFrameComplete, frame->GetStatus());
   EXPECT_EQ(256, frame->Bitmap().width());
@@ -53,37 +54,50 @@ TEST(BMPImageDecoderTest, parseAndDecode) {
 
 // Test if a BMP decoder returns a proper error while decoding an empty image.
 TEST(BMPImageDecoderTest, emptyImage) {
-  const char* bmp_file = "/LayoutTests/images/resources/0x0.bmp";  // 0x0
-  RefPtr<SharedBuffer> data = ReadFile(bmp_file);
-  ASSERT_TRUE(data.Get());
+  static constexpr char kBmpFile[] =
+      "/LayoutTests/images/resources/0x0.bmp";  // 0x0
+  scoped_refptr<SharedBuffer> data = ReadFile(kBmpFile);
+  ASSERT_TRUE(data.get());
 
-  std::unique_ptr<ImageDecoder> decoder = CreateDecoder();
-  decoder->SetData(data.Get(), true);
+  std::unique_ptr<ImageDecoder> decoder = CreateBMPDecoder();
+  decoder->SetData(data.get(), true);
 
-  ImageFrame* frame = decoder->FrameBufferAtIndex(0);
+  ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(0);
   ASSERT_TRUE(frame);
   EXPECT_EQ(ImageFrame::kFrameEmpty, frame->GetStatus());
   EXPECT_TRUE(decoder->Failed());
 }
 
 TEST(BMPImageDecoderTest, int32MinHeight) {
-  const char* bmp_file =
+  static constexpr char kBmpFile[] =
       "/LayoutTests/images/resources/1xint32_min.bmp";  // 0xINT32_MIN
-  RefPtr<SharedBuffer> data = ReadFile(bmp_file);
-  std::unique_ptr<ImageDecoder> decoder = CreateDecoder();
+  scoped_refptr<SharedBuffer> data = ReadFile(kBmpFile);
+  std::unique_ptr<ImageDecoder> decoder = CreateBMPDecoder();
   // Test when not all data is received.
-  decoder->SetData(data.Get(), false);
+  decoder->SetData(data.get(), false);
   EXPECT_FALSE(decoder->IsSizeAvailable());
   EXPECT_TRUE(decoder->Failed());
 }
 
-// This test verifies that calling SharedBuffer::mergeSegmentsIntoBuffer() does
+// This test verifies that calling SharedBuffer::MergeSegmentsIntoBuffer() does
 // not break BMP decoding at a critical point: in between a call to decode the
 // size (when BMPImageDecoder stops while it may still have input data to
 // read) and a call to do a full decode.
 TEST(BMPImageDecoderTest, mergeBuffer) {
-  const char* bmp_file = "/LayoutTests/images/resources/lenna.bmp";
-  TestMergeBuffer(&CreateDecoder, bmp_file);
+  static constexpr char kBmpFile[] = "/LayoutTests/images/resources/lenna.bmp";
+  TestMergeBuffer(&CreateBMPDecoder, kBmpFile);
+}
+
+// Verify that decoding this image does not crash.
+TEST(BMPImageDecoderTest, crbug752898) {
+  static constexpr char kBmpFile[] =
+      "/LayoutTests/images/resources/crbug752898.bmp";
+  scoped_refptr<SharedBuffer> data = ReadFile(kBmpFile);
+  ASSERT_TRUE(data.get());
+
+  std::unique_ptr<ImageDecoder> decoder = CreateBMPDecoder();
+  decoder->SetData(data.get(), true);
+  decoder->DecodeFrameBufferAtIndex(0);
 }
 
 }  // namespace blink

@@ -18,7 +18,8 @@ function offset(element) {
 
 function click(button) {
   const pos = offset(button);
-  eventSender.mouseMoveTo(Math.ceil(pos.left), Math.ceil(pos.top));
+  const rect = button.getBoundingClientRect();
+  eventSender.mouseMoveTo(Math.ceil(pos.left + rect.width / 2), Math.ceil(pos.top + rect.height / 2));
   eventSender.mouseDown();
   eventSender.mouseUp();
 }
@@ -43,10 +44,17 @@ for (const button of document.getElementsByTagName('button')) {
   click(button);
 }
 for (const iframe of document.getElementsByTagName('iframe')) {
-  observe(iframe.contentDocument);
-  iframe.addEventListener('load', () => {
+  try {
     observe(iframe.contentDocument);
-  });
+    iframe.addEventListener('load', () => {
+      observe(iframe.contentDocument);
+    });
+  } catch (e) {
+    // Skip cross-origin iframes, but report other errors
+    if (e.name != "SecurityError") {
+        throw e;
+    }
+  }
 }
 
 // Observe future changes.

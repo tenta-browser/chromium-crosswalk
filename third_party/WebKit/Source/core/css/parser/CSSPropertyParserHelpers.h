@@ -6,19 +6,25 @@
 #define CSSPropertyParserHelpers_h
 
 #include "core/css/CSSCustomIdentValue.h"
+#include "core/css/CSSFunctionValue.h"
 #include "core/css/CSSIdentifierValue.h"
 #include "core/css/CSSPrimitiveValue.h"
+#include "core/css/CSSValueList.h"
 #include "core/css/parser/CSSParserMode.h"
 #include "core/css/parser/CSSParserTokenRange.h"
+#include "core/frame/WebFeatureForward.h"
 #include "platform/Length.h"  // For ValueRange
 #include "platform/heap/Handle.h"
+#include "platform/wtf/Optional.h"
 
 namespace blink {
 
 class CSSParserContext;
+class CSSPropertyValue;
 class CSSStringValue;
 class CSSURIValue;
 class CSSValuePair;
+class StylePropertyShorthand;
 
 // When these functions are successful, they will consume all the relevant
 // tokens from the range and also consume any whitespace which follows. When
@@ -52,7 +58,10 @@ CSSPrimitiveValue* ConsumeLengthOrPercent(
     CSSParserMode,
     ValueRange,
     UnitlessQuirk = UnitlessQuirk::kForbid);
-CSSPrimitiveValue* ConsumeAngle(CSSParserTokenRange&);
+
+CSSPrimitiveValue* ConsumeAngle(CSSParserTokenRange&,
+                                const CSSParserContext*,
+                                WTF::Optional<WebFeature> unitlessZeroFeature);
 CSSPrimitiveValue* ConsumeTime(CSSParserTokenRange&, ValueRange);
 CSSPrimitiveValue* ConsumeResolution(CSSParserTokenRange&);
 
@@ -77,11 +86,13 @@ CSSValue* ConsumeColor(CSSParserTokenRange&,
 CSSValue* ConsumeLineWidth(CSSParserTokenRange&, CSSParserMode, UnitlessQuirk);
 
 CSSValuePair* ConsumePosition(CSSParserTokenRange&,
-                              CSSParserMode,
-                              UnitlessQuirk);
+                              const CSSParserContext&,
+                              UnitlessQuirk,
+                              WTF::Optional<WebFeature> threeValuePosition);
 bool ConsumePosition(CSSParserTokenRange&,
-                     CSSParserMode,
+                     const CSSParserContext&,
                      UnitlessQuirk,
+                     WTF::Optional<WebFeature> threeValuePosition,
                      CSSValue*& result_x,
                      CSSValue*& result_y);
 bool ConsumeOneOrTwoValuedPosition(CSSParserTokenRange&,
@@ -102,6 +113,50 @@ bool IsCSSWideKeyword(StringView);
 
 CSSIdentifierValue* ConsumeShapeBox(CSSParserTokenRange&);
 
+enum class IsImplicitProperty { kNotImplicit, kImplicit };
+
+void AddProperty(CSSPropertyID resolved_property,
+                 CSSPropertyID current_shorthand,
+                 const CSSValue&,
+                 bool important,
+                 IsImplicitProperty,
+                 HeapVector<CSSPropertyValue, 256>& properties);
+
+void CountKeywordOnlyPropertyUsage(CSSPropertyID,
+                                   const CSSParserContext&,
+                                   CSSValueID);
+
+const CSSValue* ParseLonghand(CSSPropertyID unresolved_property,
+                              CSSPropertyID current_shorthand,
+                              const CSSParserContext&,
+                              CSSParserTokenRange&);
+
+bool ConsumeShorthandVia2Longhands(
+    const StylePropertyShorthand&,
+    bool important,
+    const CSSParserContext&,
+    CSSParserTokenRange&,
+    HeapVector<CSSPropertyValue, 256>& properties);
+
+bool ConsumeShorthandVia4Longhands(
+    const StylePropertyShorthand&,
+    bool important,
+    const CSSParserContext&,
+    CSSParserTokenRange&,
+    HeapVector<CSSPropertyValue, 256>& properties);
+
+bool ConsumeShorthandGreedilyViaLonghands(
+    const StylePropertyShorthand&,
+    bool important,
+    const CSSParserContext&,
+    CSSParserTokenRange&,
+    HeapVector<CSSPropertyValue, 256>& properties);
+
+void AddExpandedPropertyForValue(CSSPropertyID prop_id,
+                                 const CSSValue&,
+                                 bool,
+                                 HeapVector<CSSPropertyValue, 256>& properties);
+
 // Template implementations are at the bottom of the file for readability.
 
 template <typename... emptyBaseCase>
@@ -120,6 +175,28 @@ CSSIdentifierValue* ConsumeIdent(CSSParserTokenRange& range) {
     return nullptr;
   return CSSIdentifierValue::Create(range.ConsumeIncludingWhitespace().Id());
 }
+
+// ConsumeCommaSeparatedList takes a callback function to call on each item in
+// the list, followed by the arguments to pass to this callback.
+// The first argument to the callback must be the CSSParserTokenRange
+template <typename Func, typename... Args>
+CSSValueList* ConsumeCommaSeparatedList(Func callback,
+                                        CSSParserTokenRange& range,
+                                        Args&&... args) {
+  CSSValueList* list = CSSValueList::CreateCommaSeparated();
+  do {
+    CSSValue* value = callback(range, std::forward<Args>(args)...);
+    if (!value)
+      return nullptr;
+    list->Append(*value);
+  } while (ConsumeCommaIncludingWhitespace(range));
+  DCHECK(list->length());
+  return list;
+}
+
+CSSValue* ConsumeTransformList(CSSParserTokenRange&, const CSSParserContext&);
+CSSValue* ConsumeFilterFunctionList(CSSParserTokenRange&,
+                                    const CSSParserContext&);
 
 }  // namespace CSSPropertyParserHelpers
 

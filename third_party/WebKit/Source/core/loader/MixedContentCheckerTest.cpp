@@ -6,13 +6,13 @@
 
 #include <base/macros.h>
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "core/frame/Settings.h"
 #include "core/loader/EmptyClients.h"
 #include "core/testing/DummyPageHolder.h"
 #include "platform/loader/fetch/ResourceResponse.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SecurityOrigin.h"
-#include "platform/wtf/RefPtr.h"
 #include "public/platform/WebMixedContent.h"
 #include "public/platform/WebMixedContentContextType.h"
 #include "testing/gmock/include/gmock/gmock-generated-function-mockers.h"
@@ -45,24 +45,26 @@ TEST(MixedContentCheckerTest, IsMixedContent) {
       {"https://example.com/foo", "blob:null/foo", false},
       {"https://example.com/foo", "filesystem:https://example.com/foo", false},
       {"https://example.com/foo", "filesystem:http://example.com/foo", false},
+      {"https://example.com/foo", "http://localhost/", false},
+      {"https://example.com/foo", "http://a.localhost/", false},
 
       {"https://example.com/foo", "http://example.com/foo", true},
       {"https://example.com/foo", "http://google.com/foo", true},
       {"https://example.com/foo", "ws://example.com/foo", true},
       {"https://example.com/foo", "ws://google.com/foo", true},
       {"https://example.com/foo", "http://192.168.1.1/", true},
-      {"https://example.com/foo", "http://localhost/", true},
   };
 
   for (const auto& test : cases) {
     SCOPED_TRACE(::testing::Message() << "Origin: " << test.origin
                                       << ", Target: " << test.target
                                       << ", Expectation: " << test.expectation);
-    KURL origin_url(KURL(), test.origin);
-    RefPtr<SecurityOrigin> security_origin(SecurityOrigin::Create(origin_url));
-    KURL target_url(KURL(), test.target);
+    KURL origin_url(NullURL(), test.origin);
+    scoped_refptr<SecurityOrigin> security_origin(
+        SecurityOrigin::Create(origin_url));
+    KURL target_url(NullURL(), test.target);
     EXPECT_EQ(test.expectation, MixedContentChecker::IsMixedContent(
-                                    security_origin.Get(), target_url));
+                                    security_origin.get(), target_url));
   }
 }
 
@@ -105,9 +107,9 @@ TEST(MixedContentCheckerTest, ContextTypeForInspector) {
 
 namespace {
 
-class MockLocalFrameClient : public EmptyLocalFrameClient {
+class MixedContentCheckerMockLocalFrameClient : public EmptyLocalFrameClient {
  public:
-  MockLocalFrameClient() : EmptyLocalFrameClient() {}
+  MixedContentCheckerMockLocalFrameClient() : EmptyLocalFrameClient() {}
   MOCK_METHOD0(DidContainInsecureFormAction, void());
   MOCK_METHOD1(DidDisplayContentWithCertificateErrors, void(const KURL&));
   MOCK_METHOD1(DidRunContentWithCertificateErrors, void(const KURL&));
@@ -116,13 +118,14 @@ class MockLocalFrameClient : public EmptyLocalFrameClient {
 }  // namespace
 
 TEST(MixedContentCheckerTest, HandleCertificateError) {
-  MockLocalFrameClient* client = new MockLocalFrameClient;
+  MixedContentCheckerMockLocalFrameClient* client =
+      new MixedContentCheckerMockLocalFrameClient;
   std::unique_ptr<DummyPageHolder> dummy_page_holder =
       DummyPageHolder::Create(IntSize(1, 1), nullptr, client);
 
-  KURL main_resource_url(KURL(), "https://example.test");
-  KURL displayed_url(KURL(), "https://example-displayed.test");
-  KURL ran_url(KURL(), "https://example-ran.test");
+  KURL main_resource_url(NullURL(), "https://example.test");
+  KURL displayed_url(NullURL(), "https://example-displayed.test");
+  KURL ran_url(NullURL(), "https://example-ran.test");
 
   dummy_page_holder->GetFrame().GetDocument()->SetURL(main_resource_url);
   ResourceResponse response1;
@@ -149,16 +152,17 @@ TEST(MixedContentCheckerTest, HandleCertificateError) {
 }
 
 TEST(MixedContentCheckerTest, DetectMixedForm) {
-  MockLocalFrameClient* client = new MockLocalFrameClient;
+  MixedContentCheckerMockLocalFrameClient* client =
+      new MixedContentCheckerMockLocalFrameClient;
   std::unique_ptr<DummyPageHolder> dummy_page_holder =
       DummyPageHolder::Create(IntSize(1, 1), nullptr, client);
 
-  KURL main_resource_url(KURL(), "https://example.test/");
+  KURL main_resource_url(NullURL(), "https://example.test/");
 
-  KURL http_form_action_url(KURL(), "http://example-action.test/");
-  KURL https_form_action_url(KURL(), "https://example-action.test/");
-  KURL javascript_form_action_url(KURL(), "javascript:void(0);");
-  KURL mailto_form_action_url(KURL(), "mailto:action@example-action.test");
+  KURL http_form_action_url(NullURL(), "http://example-action.test/");
+  KURL https_form_action_url(NullURL(), "https://example-action.test/");
+  KURL javascript_form_action_url(NullURL(), "javascript:void(0);");
+  KURL mailto_form_action_url(NullURL(), "mailto:action@example-action.test");
 
   dummy_page_holder->GetFrame().GetDocument()->SetSecurityOrigin(
       SecurityOrigin::Create(main_resource_url));

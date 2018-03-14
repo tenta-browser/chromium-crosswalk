@@ -6,47 +6,57 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
-#include "base/command_line.h"
+#include "ash/app_list/model/search_box_model.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "build/build_config.h"
+#include "base/test/icu_test_util.h"
+#include "base/test/scoped_feature_list.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/app_list/app_list_constants.h"
-#include "ui/app_list/app_list_switches.h"
+#include "ui/app_list/app_list_features.h"
 #include "ui/app_list/pagination_model.h"
-#include "ui/app_list/search_box_model.h"
 #include "ui/app_list/test/app_list_test_model.h"
 #include "ui/app_list/test/app_list_test_view_delegate.h"
 #include "ui/app_list/test/test_search_result.h"
 #include "ui/app_list/views/app_list_folder_view.h"
+#include "ui/app_list/views/app_list_item_view.h"
 #include "ui/app_list/views/app_list_main_view.h"
 #include "ui/app_list/views/apps_container_view.h"
 #include "ui/app_list/views/apps_grid_view.h"
 #include "ui/app_list/views/contents_view.h"
+#include "ui/app_list/views/expand_arrow_view.h"
+#include "ui/app_list/views/folder_header_view.h"
 #include "ui/app_list/views/search_box_view.h"
+#include "ui/app_list/views/search_result_answer_card_view.h"
+#include "ui/app_list/views/search_result_list_view.h"
 #include "ui/app_list/views/search_result_page_view.h"
+#include "ui/app_list/views/search_result_tile_item_list_view.h"
 #include "ui/app_list/views/search_result_tile_item_view.h"
-#include "ui/app_list/views/start_page_view.h"
-#include "ui/app_list/views/test/app_list_view_test_api.h"
+#include "ui/app_list/views/search_result_view.h"
+#include "ui/app_list/views/suggestions_container_view.h"
 #include "ui/app_list/views/test/apps_grid_view_test_api.h"
 #include "ui/app_list/views/tile_item_view.h"
+#include "ui/compositor/layer_animator.h"
 #include "ui/events/event_utils.h"
 #include "ui/views/controls/textfield/textfield.h"
-#include "ui/views/test/test_views_delegate.h"
 #include "ui/views/test/views_test_base.h"
-#include "ui/views/views_delegate.h"
-#include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
+#include "ui/views/view_model.h"
 
 namespace app_list {
 namespace test {
 
 namespace {
+
+constexpr int kInitialItems = 34;
+// Default peeking y value for the app list.
+constexpr int kPeekingYValue = 280;
 
 template <class T>
 size_t GetVisibleViews(const std::vector<T*>& tiles) {
@@ -58,18 +68,14 @@ size_t GetVisibleViews(const std::vector<T*>& tiles) {
   return count;
 }
 
-void SimulateClick(views::View* view) {
-  gfx::Point center = view->GetLocalBounds().CenterPoint();
-  view->OnMousePressed(ui::MouseEvent(
-      ui::ET_MOUSE_PRESSED, center, center, ui::EventTimeForNow(),
-      ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON));
-  view->OnMouseReleased(ui::MouseEvent(
-      ui::ET_MOUSE_RELEASED, center, center, ui::EventTimeForNow(),
-      ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON));
+// A standard set of checks on a view, e.g., ensuring it is drawn and visible.
+void CheckView(views::View* subview) {
+  ASSERT_TRUE(subview);
+  EXPECT_TRUE(subview->parent());
+  EXPECT_TRUE(subview->visible());
+  EXPECT_TRUE(subview->IsDrawn());
+  EXPECT_FALSE(subview->bounds().IsEmpty());
 }
-
-// Choose a set that is 3 regular app list pages and 2 landscape app list pages.
-const int kInitialItems = 34;
 
 class TestStartPageSearchResult : public TestSearchResult {
  public:
@@ -80,184 +86,1427 @@ class TestStartPageSearchResult : public TestSearchResult {
   DISALLOW_COPY_AND_ASSIGN(TestStartPageSearchResult);
 };
 
-// Allows the same tests to run with different contexts: either an Ash-style
-// root window or a desktop window tree host.
-class AppListViewTestContext {
+class AppListViewTest : public views::ViewsTestBase {
  public:
-  explicit AppListViewTestContext(gfx::NativeView parent);
-  ~AppListViewTestContext();
+  AppListViewTest() = default;
+  ~AppListViewTest() override = default;
 
-  // Test displaying the app list and performs a standard set of checks on its
-  // top level views. Then closes the window.
-  void RunDisplayTest();
-
-  // Hides and reshows the app list with a folder open, expecting the main grid
-  // view to be shown.
-  void RunReshowWithOpenFolderTest();
-
-  // Tests that pressing the search box's back button navigates correctly.
-  void RunBackTest();
-
-  // Tests displaying of the app list and shows the start page.
-  void RunStartPageTest();
-
-  // Tests switching rapidly between multiple pages of the launcher.
-  void RunPageSwitchingAnimationTest();
-
-  // Tests displaying of the search results.
-  void RunSearchResultsTest();
-
-  // Tests displaying the app list overlay.
-  void RunAppListOverlayTest();
-
-  // A standard set of checks on a view, e.g., ensuring it is drawn and visible.
-  static void CheckView(views::View* subview);
-
-  // Invoked when the Widget is closing, and the view it contains is about to
-  // be torn down. This only occurs in a run loop and will be used as a signal
-  // to quit.
-  void NativeWidgetClosing() {
-    view_ = NULL;
-    run_loop_->Quit();
+  void TearDown() override {
+    view_->GetWidget()->Close();
+    views::ViewsTestBase::TearDown();
   }
 
- private:
+ protected:
+  void Show() { view_->ShowWhenReady(); }
+
+  void Initialize(int initial_apps_page,
+                  bool is_tablet_mode,
+                  bool is_side_shelf) {
+    delegate_.reset(new AppListTestViewDelegate);
+    view_ = new AppListView(delegate_.get());
+    AppListView::InitParams params;
+    params.parent = GetContext();
+    params.initial_apps_page = initial_apps_page;
+    params.is_tablet_mode = is_tablet_mode;
+    params.is_side_shelf = is_side_shelf;
+    view_->Initialize(params);
+    EXPECT_FALSE(view_->GetWidget()->IsVisible());
+  }
+
   // Switches the launcher to |state| and lays out to ensure all launcher pages
   // are in the correct position. Checks that the state is where it should be
   // and returns false on failure.
-  bool SetAppListState(AppListModel::State state);
+  bool SetAppListState(AppListModel::State state) {
+    ContentsView* contents_view = view_->app_list_main_view()->contents_view();
+    contents_view->SetActiveState(state);
+    contents_view->Layout();
+    return IsStateShown(state);
+  }
 
   // Returns true if all of the pages are in their correct position for |state|.
-  bool IsStateShown(AppListModel::State state);
-
-  // Shows the app list and waits until a paint occurs.
-  void Show();
-
-  // Closes the app list. This sets |view_| to NULL.
-  void Close();
+  bool IsStateShown(AppListModel::State state) {
+    ContentsView* contents_view = view_->app_list_main_view()->contents_view();
+    bool success = true;
+    for (int i = 0; i < contents_view->NumLauncherPages(); ++i) {
+      success = success &&
+                (contents_view->GetPageView(i)->GetPageBoundsForState(state) ==
+                 contents_view->GetPageView(i)->bounds());
+    }
+    return success && state == delegate_->GetTestModel()->state();
+  }
 
   // Checks the search box widget is at |expected| in the contents view's
   // coordinate space.
-  bool CheckSearchBoxWidget(const gfx::Rect& expected);
+  bool CheckSearchBoxWidget(const gfx::Rect& expected) {
+    ContentsView* contents_view = view_->app_list_main_view()->contents_view();
+    // Adjust for the search box view's shadow.
+    gfx::Rect expected_with_shadow =
+        view_->app_list_main_view()
+            ->search_box_view()
+            ->GetViewBoundsForSearchBoxContentsBounds(expected);
+    gfx::Point point = expected_with_shadow.origin();
+    views::View::ConvertPointToScreen(contents_view, &point);
+
+    return gfx::Rect(point, expected_with_shadow.size()) ==
+           view_->search_box_widget()->GetWindowBoundsInScreen();
+  }
 
   // Gets the PaginationModel owned by |view_|.
-  PaginationModel* GetPaginationModel();
+  PaginationModel* GetPaginationModel() const {
+    return view_->GetAppsPaginationModel();
+  }
 
-  std::unique_ptr<base::RunLoop> run_loop_;
-  app_list::AppListView* view_;  // Owned by native widget.
-  std::unique_ptr<app_list::test::AppListTestViewDelegate> delegate_;
+  SearchBoxView* search_box_view() {
+    return view_->app_list_main_view()->search_box_view();
+  }
 
-  DISALLOW_COPY_AND_ASSIGN(AppListViewTestContext);
+  AppListView* view_ = nullptr;  // Owned by native widget.
+  std::unique_ptr<AppListTestViewDelegate> delegate_;
+
+  DISALLOW_COPY_AND_ASSIGN(AppListViewTest);
 };
 
-// Extend the regular AppListTestViewDelegate to communicate back to the test
-// context. Note the test context doesn't simply inherit this, because the
-// delegate is owned by the view.
-class UnitTestViewDelegate : public app_list::test::AppListTestViewDelegate {
+// TODO(weidongg/766807) Remove all old focus tests after the flag is enabled
+// by default.
+class AppListViewFocusTest : public views::ViewsTestBase,
+                             public testing::WithParamInterface<bool> {
  public:
-  explicit UnitTestViewDelegate(AppListViewTestContext* parent)
-      : parent_(parent) {}
+  AppListViewFocusTest() = default;
+  ~AppListViewFocusTest() override = default;
 
-  // Overridden from app_list::test::AppListTestViewDelegate:
-  void ViewClosing() override { parent_->NativeWidgetClosing(); }
+  // testing::Test
+  void SetUp() override {
+    views::ViewsTestBase::SetUp();
+
+    // Setup right to left environment if necessary.
+    if (testing::UnitTest::GetInstance()->current_test_info()->value_param()) {
+      is_rtl_ = GetParam();
+      if (is_rtl_)
+        base::i18n::SetICUDefaultLocale("he");
+    }
+
+    // Enable app list focus.
+    scoped_feature_list_.InitAndEnableFeature(features::kEnableAppListFocus);
+
+    // Initialize app list view.
+    delegate_.reset(new AppListTestViewDelegate);
+    view_ = new AppListView(delegate_.get());
+    AppListView::InitParams params;
+    params.parent = GetContext();
+    view_->Initialize(params);
+    test_api_.reset(new AppsGridViewTestApi(apps_grid_view()));
+
+    // Add suggestion apps, a folder with apps and other app list items.
+    const int kSuggestionAppNum = 3;
+    const int kItemNumInFolder = 8;
+    const int kAppListItemNum = test_api_->TilesPerPage(0) + 1;
+    AppListTestModel* model = delegate_->GetTestModel();
+    for (size_t i = 0; i < kSuggestionAppNum; i++)
+      model->results()->Add(std::make_unique<TestStartPageSearchResult>());
+    AppListFolderItem* folder_item =
+        model->CreateAndPopulateFolderWithApps(kItemNumInFolder);
+    model->PopulateApps(kAppListItemNum);
+    apps_grid_view()->ResetForShowApps();
+    EXPECT_EQ(static_cast<size_t>(kAppListItemNum + 1),
+              model->top_level_item_list()->item_count());
+    EXPECT_EQ(folder_item->id(),
+              model->top_level_item_list()->item_at(0)->id());
+
+    // Disable animation timer.
+    view_->GetWidget()->GetLayer()->GetAnimator()->set_disable_timer_for_test(
+        true);
+  }
+
+  void TearDown() override {
+    view_->GetWidget()->Close();
+    views::ViewsTestBase::TearDown();
+  }
+
+  void SetAppListState(AppListViewState state) {
+    if (state == AppListViewState::CLOSED) {
+      view_->Dismiss();
+      return;
+    }
+    view_->SetState(state);
+  }
+
+  void Show() { view_->ShowWhenReady(); }
+
+  void SimulateKeyPress(ui::KeyboardCode key_code,
+                        bool shift_down,
+                        bool ctrl_down = false) {
+    ui::KeyEvent key_event(ui::ET_KEY_PRESSED, key_code,
+                           shift_down
+                               ? ui::EF_SHIFT_DOWN
+                               : ctrl_down ? ui::EF_CONTROL_DOWN : ui::EF_NONE);
+    view_->GetWidget()->OnKeyEvent(&key_event);
+  }
+
+  // Add search results for test on focus movement.
+  void SetUpSearchResults(int tile_results_num,
+                          int list_results_num,
+                          bool card_result) {
+    std::vector<std::pair<SearchResult::DisplayType, int>> result_types;
+    result_types.push_back(
+        std::make_pair(SearchResult::DISPLAY_TILE, tile_results_num));
+    if (card_result)
+      result_types.push_back(std::make_pair(SearchResult::DISPLAY_CARD, 1));
+    result_types.push_back(
+        std::make_pair(SearchResult::DISPLAY_LIST, list_results_num));
+
+    AppListModel::SearchResults* results = delegate_->GetTestModel()->results();
+    results->DeleteAll();
+    double relevance = result_types.size();
+    for (const auto& data : result_types) {
+      // Set the relevance of the results in each group in decreasing order (so
+      // the earlier groups have higher relevance, and therefore appear first).
+      relevance -= 0.5;
+      for (int i = 0; i < data.second; ++i) {
+        std::unique_ptr<TestSearchResult> result =
+            std::make_unique<TestSearchResult>();
+        result->set_display_type(data.first);
+        result->set_relevance(relevance);
+        results->Add(std::move(result));
+      }
+    }
+
+    // Adding results will schedule Update().
+    RunPendingMessages();
+  }
+
+  int GetOpenFirstSearchResultCount() {
+    std::map<size_t, int>& counts = delegate_->open_search_result_counts();
+    if (counts.size() == 0)
+      return 0;
+    return counts[0];
+  }
+
+  int GetTotalOpenSearchResultCount() {
+    return delegate_->open_search_result_count();
+  }
+
+  // Test focus traversal across all the views in |view_list|. The initial focus
+  // is expected to be on the first view in |view_list|. The final focus is
+  // expected to be on the last view in |view_list| after |view_list.size()-1|
+  // key events are pressed.
+  void TestFocusTraversal(const std::vector<views::View*>& view_list,
+                          ui::KeyboardCode key_code,
+                          bool shift_down) {
+    EXPECT_EQ(view_list[0], focused_view());
+    for (size_t i = 1; i < view_list.size(); ++i) {
+      SimulateKeyPress(key_code, shift_down);
+      EXPECT_EQ(view_list[i], focused_view());
+    }
+  }
+
+  // Test the behavior triggered by left and right key when focus is on the
+  // |textfield|. |text_rtl| indicates whether to type RTL or non-RTL text in
+  // the |textfield| during the test.
+  void TestLeftAndRightKeyOnTextfield(views::Textfield* textfield,
+                                      bool text_rtl) {
+    EXPECT_TRUE(textfield->text().empty());
+    EXPECT_EQ(textfield, focused_view());
+
+    views::View* next_view =
+        view_->GetWidget()->GetFocusManager()->GetNextFocusableView(
+            textfield, view_->GetWidget(), false, false);
+    views::View* prev_view =
+        view_->GetWidget()->GetFocusManager()->GetNextFocusableView(
+            textfield, view_->GetWidget(), true, false);
+
+    // Only need to hit left or right key once to move focus outside the
+    // textfield when it is empty.
+    SimulateKeyPress(ui::VKEY_RIGHT, false);
+    EXPECT_EQ(is_rtl_ ? prev_view : next_view, focused_view());
+
+    SimulateKeyPress(ui::VKEY_LEFT, false);
+    EXPECT_EQ(textfield, focused_view());
+
+    SimulateKeyPress(ui::VKEY_LEFT, false);
+    EXPECT_EQ(is_rtl_ ? next_view : prev_view, focused_view());
+
+    SimulateKeyPress(ui::VKEY_RIGHT, false);
+    EXPECT_EQ(textfield, focused_view());
+
+    // Type something in textfield.
+    base::string16 text =
+        text_rtl
+            // Arabic word of "test".
+            ? base::UTF8ToUTF16(
+                  "\xd8\xa7\xd8\xae\xd8\xaa\xd8\xa8\xd8\xa7\xd8\xb1")
+            : base::UTF8ToUTF16("test");
+    textfield->InsertText(text);
+    next_view = view_->GetWidget()->GetFocusManager()->GetNextFocusableView(
+        textfield, view_->GetWidget(), false, false);
+    prev_view = view_->GetWidget()->GetFocusManager()->GetNextFocusableView(
+        textfield, view_->GetWidget(), true, false);
+    EXPECT_EQ(text.length(), textfield->GetCursorPosition());
+    EXPECT_FALSE(textfield->HasSelection());
+    EXPECT_EQ(textfield, focused_view());
+
+    const ui::KeyboardCode backward_key =
+        text_rtl ? ui::VKEY_RIGHT : ui::VKEY_LEFT;
+    const ui::KeyboardCode forward_key =
+        text_rtl ? ui::VKEY_LEFT : ui::VKEY_RIGHT;
+
+    // Move cursor backward.
+    SimulateKeyPress(backward_key, false);
+    EXPECT_EQ(text.length() - 1, textfield->GetCursorPosition());
+    EXPECT_EQ(textfield, focused_view());
+
+    // Move cursor forward.
+    SimulateKeyPress(forward_key, false);
+    EXPECT_EQ(text.length(), textfield->GetCursorPosition());
+    EXPECT_EQ(textfield, focused_view());
+
+    // Hit forward key to move focus outside the textfield.
+    SimulateKeyPress(forward_key, false);
+    EXPECT_EQ((!is_rtl_ && !text_rtl) || (is_rtl_ && text_rtl) ? next_view
+                                                               : prev_view,
+              focused_view());
+
+    // Hit backward key to move focus back to textfield and select all text.
+    SimulateKeyPress(backward_key, false);
+    EXPECT_EQ(text, textfield->GetSelectedText());
+    EXPECT_EQ(textfield, focused_view());
+
+    // Hit backward key to move cursor to the beginning.
+    SimulateKeyPress(backward_key, false);
+    EXPECT_EQ(0U, textfield->GetCursorPosition());
+    EXPECT_FALSE(textfield->HasSelection());
+    EXPECT_EQ(textfield, focused_view());
+
+    // Hit backward key to move focus outside the textfield.
+    SimulateKeyPress(backward_key, false);
+    EXPECT_EQ((!is_rtl_ && !text_rtl) || (is_rtl_ && text_rtl) ? prev_view
+                                                               : next_view,
+              focused_view());
+
+    // Hit forward key to move focus back to textfield and select all text.
+    SimulateKeyPress(forward_key, false);
+    EXPECT_EQ(text, textfield->GetSelectedText());
+    EXPECT_EQ(textfield, focused_view());
+
+    // Hit forward key to move cursor to the end.
+    SimulateKeyPress(forward_key, false);
+    EXPECT_EQ(text.length(), textfield->GetCursorPosition());
+    EXPECT_FALSE(textfield->HasSelection());
+    EXPECT_EQ(textfield, focused_view());
+
+    // Hitt forward key to move focus outside the textfield.
+    SimulateKeyPress(forward_key, false);
+    EXPECT_EQ((!is_rtl_ && !text_rtl) || (is_rtl_ && text_rtl) ? next_view
+                                                               : prev_view,
+              focused_view());
+
+    // Clean up
+    textfield->SetText(base::UTF8ToUTF16(""));
+    textfield->RequestFocus();
+  }
+
+  AppListView* app_list_view() { return view_; }
+
+  AppListMainView* main_view() { return view_->app_list_main_view(); }
+
+  ContentsView* contents_view() {
+    return view_->app_list_main_view()->contents_view();
+  }
+
+  AppsGridView* apps_grid_view() {
+    return main_view()
+        ->contents_view()
+        ->apps_container_view()
+        ->apps_grid_view();
+  }
+
+  AppListFolderView* app_list_folder_view() {
+    return main_view()
+        ->contents_view()
+        ->apps_container_view()
+        ->app_list_folder_view();
+  }
+
+  SuggestionsContainerView* suggestions_container_view() {
+    return apps_grid_view()->suggestions_container_for_test();
+  }
+
+  SearchBoxView* search_box_view() { return main_view()->search_box_view(); }
+
+  AppListItemView* folder_item_view() {
+    return apps_grid_view()->view_model_for_test()->view_at(0);
+  }
+
+  views::View* focused_view() {
+    return view_->GetWidget()->GetFocusManager()->GetFocusedView();
+  }
+
+ protected:
+  bool is_rtl_ = false;
 
  private:
-  AppListViewTestContext* parent_;
-
-  DISALLOW_COPY_AND_ASSIGN(UnitTestViewDelegate);
+  AppListView* view_ = nullptr;  // Owned by native widget.
+  std::unique_ptr<AppListTestViewDelegate> delegate_;
+  base::test::ScopedFeatureList scoped_feature_list_;
+  std::unique_ptr<AppsGridViewTestApi> test_api_;
+  // Restores the locale to default when destructor is called.
+  base::test::ScopedRestoreICUDefaultLocale restore_locale_;
+  DISALLOW_COPY_AND_ASSIGN(AppListViewFocusTest);
 };
 
-AppListViewTestContext::AppListViewTestContext(gfx::NativeView parent) {
-  delegate_.reset(new UnitTestViewDelegate(this));
-  view_ = new app_list::AppListView(delegate_.get());
+// Instantiate the Boolean which is used to toggle RTL in the parameterized
+// tests.
+INSTANTIATE_TEST_CASE_P(, AppListViewFocusTest, testing::Bool());
 
-  // Initialize centered around a point that ensures the window is wholly shown.
-  view_->InitAsBubble(parent, 0);
-  view_->SetAnchorPoint(gfx::Point(300, 300));
+}  // namespace
+
+// Tests that the initial focus is on search box.
+TEST_F(AppListViewFocusTest, InitialFocus) {
+  Show();
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
 }
 
-AppListViewTestContext::~AppListViewTestContext() {
-  // The view observes the PaginationModel which is about to get destroyed, so
-  // if the view is not already deleted by the time this destructor is called,
-  // there will be problems.
-  EXPECT_FALSE(view_);
+// Tests the linear focus traversal in PEEKING state.
+TEST_P(AppListViewFocusTest, LinearFocusTraversalInPeekingState) {
+  Show();
+  SetAppListState(AppListViewState::PEEKING);
+
+  std::vector<views::View*> forward_view_list;
+  forward_view_list.push_back(search_box_view()->search_box());
+  for (int i = 0; i < suggestions_container_view()->num_results(); ++i)
+    forward_view_list.push_back(suggestions_container_view()->tile_views()[i]);
+  forward_view_list.push_back(apps_grid_view()->expand_arrow_view_for_test());
+  forward_view_list.push_back(search_box_view()->search_box());
+  std::vector<views::View*> backward_view_list = forward_view_list;
+  std::reverse(backward_view_list.begin(), backward_view_list.end());
+
+  // Test traversal triggered by tab.
+  TestFocusTraversal(forward_view_list, ui::VKEY_TAB, false);
+
+  // Test traversal triggered by shift+tab.
+  TestFocusTraversal(backward_view_list, ui::VKEY_TAB, true);
+
+  // Test traversal triggered by right.
+  TestFocusTraversal(is_rtl_ ? backward_view_list : forward_view_list,
+                     ui::VKEY_RIGHT, false);
+
+  // Test traversal triggered by left.
+  TestFocusTraversal(is_rtl_ ? forward_view_list : backward_view_list,
+                     ui::VKEY_LEFT, false);
 }
 
-// static
-void AppListViewTestContext::CheckView(views::View* subview) {
-  ASSERT_TRUE(subview);
-  EXPECT_TRUE(subview->parent());
-  EXPECT_TRUE(subview->visible());
-  EXPECT_TRUE(subview->IsDrawn());
-  EXPECT_FALSE(subview->bounds().IsEmpty());
+// Tests the linear focus traversal in FULLSCREEN_ALL_APPS state.
+TEST_P(AppListViewFocusTest, LinearFocusTraversalInFullscreenAllAppsState) {
+  Show();
+  SetAppListState(AppListViewState::FULLSCREEN_ALL_APPS);
+
+  std::vector<views::View*> forward_view_list;
+  forward_view_list.push_back(search_box_view()->search_box());
+  for (int i = 0; i < suggestions_container_view()->num_results(); ++i)
+    forward_view_list.push_back(suggestions_container_view()->tile_views()[i]);
+  const views::ViewModelT<AppListItemView>* view_model =
+      apps_grid_view()->view_model_for_test();
+  for (int i = 0; i < view_model->view_size(); ++i)
+    forward_view_list.push_back(view_model->view_at(i));
+  forward_view_list.push_back(search_box_view()->search_box());
+  std::vector<views::View*> backward_view_list = forward_view_list;
+  std::reverse(backward_view_list.begin(), backward_view_list.end());
+
+  // Test traversal triggered by tab.
+  TestFocusTraversal(forward_view_list, ui::VKEY_TAB, false);
+
+  // Test traversal triggered by shift+tab.
+  TestFocusTraversal(backward_view_list, ui::VKEY_TAB, true);
+
+  // Test traversal triggered by right.
+  TestFocusTraversal(is_rtl_ ? backward_view_list : forward_view_list,
+                     ui::VKEY_RIGHT, false);
+
+  // Test traversal triggered by left.
+  TestFocusTraversal(is_rtl_ ? forward_view_list : backward_view_list,
+                     ui::VKEY_LEFT, false);
 }
 
-bool AppListViewTestContext::SetAppListState(AppListModel::State state) {
-  ContentsView* contents_view = view_->app_list_main_view()->contents_view();
-  contents_view->SetActiveState(state);
-  contents_view->Layout();
-  return IsStateShown(state);
+// Tests the linear focus traversal in HALF state with opened search box.
+TEST_P(AppListViewFocusTest, LinearFocusTraversalInHalfState) {
+  Show();
+
+  // Type something in search box to transition to HALF state and populate
+  // fake search results.
+  search_box_view()->search_box()->InsertText(base::UTF8ToUTF16("test"));
+  EXPECT_EQ(app_list_view()->app_list_state(), AppListViewState::HALF);
+  constexpr int kTileResults = 3;
+  constexpr int kListResults = 2;
+  SetUpSearchResults(kTileResults, kListResults, true);
+
+  std::vector<views::View*> forward_view_list;
+  forward_view_list.push_back(search_box_view()->search_box());
+  forward_view_list.push_back(search_box_view()->close_button());
+  const std::vector<SearchResultTileItemView*>& tile_views =
+      contents_view()
+          ->search_result_tile_item_list_view_for_test()
+          ->tile_views_for_test();
+  for (int i = 0; i < kTileResults; ++i)
+    forward_view_list.push_back(tile_views[i]);
+  forward_view_list.push_back(contents_view()
+                                  ->search_result_answer_card_view_for_test()
+                                  ->GetSearchAnswerContainerViewForTest());
+  views::View* results_container = contents_view()
+                                       ->search_result_list_view_for_test()
+                                       ->results_container_for_test();
+  for (int i = 0; i < kListResults; ++i)
+    forward_view_list.push_back(results_container->child_at(i));
+  forward_view_list.push_back(search_box_view()->search_box());
+  std::vector<views::View*> backward_view_list = forward_view_list;
+  std::reverse(backward_view_list.begin(), backward_view_list.end());
+
+  // Test traversal triggered by tab.
+  TestFocusTraversal(forward_view_list, ui::VKEY_TAB, false);
+
+  // Test traversal triggered by shift+tab.
+  TestFocusTraversal(backward_view_list, ui::VKEY_TAB, true);
+
+  // Test traversal triggered by right. When the search box is focused, all
+  // text are selected. Hitting right key will move the cursor to the right end
+  // and unselect the text. Hitting right key again will move the focus to the
+  // next view. Left key is handled in similar way.
+  forward_view_list.insert(forward_view_list.begin(),
+                           search_box_view()->search_box());
+  backward_view_list.insert(backward_view_list.begin(),
+                            search_box_view()->search_box());
+  TestFocusTraversal(is_rtl_ ? backward_view_list : forward_view_list,
+                     ui::VKEY_RIGHT, false);
+
+  // Test traversal triggered by left.
+  TestFocusTraversal(is_rtl_ ? forward_view_list : backward_view_list,
+                     ui::VKEY_LEFT, false);
 }
 
-bool AppListViewTestContext::IsStateShown(AppListModel::State state) {
-  ContentsView* contents_view = view_->app_list_main_view()->contents_view();
-  bool success = true;
-  for (int i = 0; i < contents_view->NumLauncherPages(); ++i) {
-    success = success &&
-              (contents_view->GetPageView(i)->GetPageBoundsForState(state) ==
-               contents_view->GetPageView(i)->bounds());
-  }
-  return success && state == delegate_->GetTestModel()->state();
+// Tests the linear focus traversal in FULLSCREEN_ALL_APPS state within folder.
+TEST_P(AppListViewFocusTest, LinearFocusTraversalInFolder) {
+  Show();
+
+  // Transition to FULLSCREEN_ALL_APPS state and open the folder.
+  SetAppListState(AppListViewState::FULLSCREEN_ALL_APPS);
+  folder_item_view()->RequestFocus();
+  SimulateKeyPress(ui::VKEY_RETURN, false);
+  EXPECT_TRUE(contents_view()->apps_container_view()->IsInFolderView());
+
+  std::vector<views::View*> forward_view_list;
+  forward_view_list.push_back(search_box_view()->search_box());
+  forward_view_list.push_back(
+      app_list_folder_view()->folder_header_view()->GetFolderNameViewForTest());
+  const views::ViewModelT<AppListItemView>* view_model =
+      app_list_folder_view()->items_grid_view()->view_model_for_test();
+  for (int i = 0; i < view_model->view_size(); ++i)
+    forward_view_list.push_back(view_model->view_at(i));
+  forward_view_list.push_back(search_box_view()->back_button());
+  forward_view_list.push_back(search_box_view()->search_box());
+  std::vector<views::View*> backward_view_list = forward_view_list;
+  std::reverse(backward_view_list.begin(), backward_view_list.end());
+
+  // Test traversal triggered by tab.
+  TestFocusTraversal(forward_view_list, ui::VKEY_TAB, false);
+
+  // Test traversal triggered by shift+tab.
+  TestFocusTraversal(backward_view_list, ui::VKEY_TAB, true);
+
+  // Test traversal triggered by right.
+  TestFocusTraversal(is_rtl_ ? backward_view_list : forward_view_list,
+                     ui::VKEY_RIGHT, false);
+
+  // Test traversal triggered by left.
+  TestFocusTraversal(is_rtl_ ? forward_view_list : backward_view_list,
+                     ui::VKEY_LEFT, false);
 }
 
-void AppListViewTestContext::Show() {
-  view_->GetWidget()->Show();
-  run_loop_.reset(new base::RunLoop);
-  AppListViewTestApi test_api(view_);
-  test_api.SetNextPaintCallback(run_loop_->QuitClosure());
-  run_loop_->Run();
+// Tests the vertical focus traversal by in PEEKING state.
+TEST_F(AppListViewFocusTest, VerticalFocusTraversalInPeekingState) {
+  Show();
+  SetAppListState(AppListViewState::PEEKING);
 
-  EXPECT_TRUE(view_->GetWidget()->IsVisible());
+  std::vector<views::View*> forward_view_list;
+  forward_view_list.push_back(search_box_view()->search_box());
+  const std::vector<SearchResultTileItemView*>& tile_views =
+      suggestions_container_view()->tile_views();
+  const int suggestions_num_results =
+      suggestions_container_view()->num_results();
+  forward_view_list.push_back(tile_views.front());
+  forward_view_list.push_back(apps_grid_view()->expand_arrow_view_for_test());
+  forward_view_list.push_back(search_box_view()->search_box());
+
+  // Test traversal triggered by down.
+  TestFocusTraversal(forward_view_list, ui::VKEY_DOWN, false);
+
+  std::vector<views::View*> backward_view_list;
+  backward_view_list.push_back(search_box_view()->search_box());
+  backward_view_list.push_back(apps_grid_view()->expand_arrow_view_for_test());
+  backward_view_list.push_back(tile_views[suggestions_num_results - 1]);
+  backward_view_list.push_back(search_box_view()->search_box());
+
+  // Test traversal triggered by up.
+  TestFocusTraversal(backward_view_list, ui::VKEY_UP, false);
 }
 
-void AppListViewTestContext::Close() {
+// Tests the vertical focus traversal in FULLSCREEN_ALL_APPS state.
+TEST_F(AppListViewFocusTest, VerticalFocusTraversalInFullscreenAllAppsState) {
+  Show();
+  SetAppListState(AppListViewState::FULLSCREEN_ALL_APPS);
+
+  std::vector<views::View*> forward_view_list;
+  forward_view_list.push_back(search_box_view()->search_box());
+  const std::vector<SearchResultTileItemView*>& tile_views =
+      suggestions_container_view()->tile_views();
+  const int suggestions_num_results =
+      suggestions_container_view()->num_results();
+  forward_view_list.push_back(tile_views.front());
+  const views::ViewModelT<AppListItemView>* view_model =
+      apps_grid_view()->view_model_for_test();
+  for (int i = 0; i < view_model->view_size(); i += apps_grid_view()->cols())
+    forward_view_list.push_back(view_model->view_at(i));
+  forward_view_list.push_back(search_box_view()->search_box());
+
+  // Test traversal triggered by down.
+  TestFocusTraversal(forward_view_list, ui::VKEY_DOWN, false);
+
+  std::vector<views::View*> backward_view_list;
+  backward_view_list.push_back(search_box_view()->search_box());
+  for (int i = view_model->view_size() - 1; i >= 0;
+       i -= apps_grid_view()->cols())
+    backward_view_list.push_back(view_model->view_at(i));
+  const int index = std::min(view_model->view_size() % apps_grid_view()->cols(),
+                             suggestions_num_results) -
+                    1;
+  backward_view_list.push_back(tile_views[index]);
+  backward_view_list.push_back(search_box_view()->search_box());
+
+  // Test traversal triggered by up.
+  TestFocusTraversal(backward_view_list, ui::VKEY_UP, false);
+}
+
+// Tests the vertical focus traversal in HALF state with opened search box.
+TEST_F(AppListViewFocusTest, VerticalFocusTraversalInHalfState) {
+  Show();
+
+  // Type something in search box to transition to HALF state and populate
+  // fake search results.
+  search_box_view()->search_box()->InsertText(base::UTF8ToUTF16("test"));
+  EXPECT_EQ(app_list_view()->app_list_state(), AppListViewState::HALF);
+  constexpr int kTileResults = 3;
+  constexpr int kListResults = 2;
+  SetUpSearchResults(kTileResults, kListResults, true);
+
+  std::vector<views::View*> forward_view_list;
+  forward_view_list.push_back(search_box_view()->search_box());
+  const std::vector<SearchResultTileItemView*>& tile_views =
+      contents_view()
+          ->search_result_tile_item_list_view_for_test()
+          ->tile_views_for_test();
+  forward_view_list.push_back(tile_views[0]);
+  forward_view_list.push_back(contents_view()
+                                  ->search_result_answer_card_view_for_test()
+                                  ->GetSearchAnswerContainerViewForTest());
+  views::View* results_container = contents_view()
+                                       ->search_result_list_view_for_test()
+                                       ->results_container_for_test();
+  for (int i = 0; i < kListResults; ++i)
+    forward_view_list.push_back(results_container->child_at(i));
+  forward_view_list.push_back(search_box_view()->search_box());
+
+  // Test traversal triggered by down.
+  TestFocusTraversal(forward_view_list, ui::VKEY_DOWN, false);
+
+  std::vector<views::View*> backward_view_list;
+  backward_view_list.push_back(search_box_view()->search_box());
+  for (int i = kListResults - 1; i >= 0; --i)
+    backward_view_list.push_back(results_container->child_at(i));
+  backward_view_list.push_back(contents_view()
+                                   ->search_result_answer_card_view_for_test()
+                                   ->GetSearchAnswerContainerViewForTest());
+  backward_view_list.push_back(tile_views[kTileResults - 1]);
+  backward_view_list.push_back(search_box_view()->search_box());
+
+  // Test traversal triggered by up.
+  TestFocusTraversal(backward_view_list, ui::VKEY_UP, false);
+}
+
+// Tests the vertical focus traversal in FULLSCREEN_ALL_APPS state within
+// folder.
+TEST_F(AppListViewFocusTest, VerticalFocusTraversalInFolder) {
+  Show();
+
+  // Transition to FULLSCREEN_ALL_APPS state and open the folder.
+  SetAppListState(AppListViewState::FULLSCREEN_ALL_APPS);
+  folder_item_view()->RequestFocus();
+  SimulateKeyPress(ui::VKEY_RETURN, false);
+  EXPECT_TRUE(contents_view()->apps_container_view()->IsInFolderView());
+
+  std::vector<views::View*> forward_view_list;
+  forward_view_list.push_back(search_box_view()->search_box());
+  forward_view_list.push_back(
+      app_list_folder_view()->folder_header_view()->GetFolderNameViewForTest());
+  const views::ViewModelT<AppListItemView>* view_model =
+      app_list_folder_view()->items_grid_view()->view_model_for_test();
+  for (int i = 0; i < view_model->view_size(); i += apps_grid_view()->cols())
+    forward_view_list.push_back(view_model->view_at(i));
+  forward_view_list.push_back(search_box_view()->search_box());
+
+  // Test traversal triggered by down.
+  TestFocusTraversal(forward_view_list, ui::VKEY_DOWN, false);
+
+  std::vector<views::View*> backward_view_list;
+  backward_view_list.push_back(search_box_view()->search_box());
+  for (int i = view_model->view_size() - 1; i >= 0;
+       i -= apps_grid_view()->cols())
+    backward_view_list.push_back(view_model->view_at(i));
+  backward_view_list.push_back(
+      app_list_folder_view()->folder_header_view()->GetFolderNameViewForTest());
+  backward_view_list.push_back(search_box_view()->search_box());
+
+  // Test traversal triggered by up.
+  TestFocusTraversal(backward_view_list, ui::VKEY_UP, false);
+}
+
+// Tests that the focus is set back onto search box after state transition.
+TEST_F(AppListViewFocusTest, FocusResetAfterStateTransition) {
+  Show();
+
+  // Type something in search box to transition to HALF state and populate
+  // fake search results.
+  search_box_view()->search_box()->InsertText(base::UTF8ToUTF16("test"));
+  const int kTileResults = 3;
+  const int kListResults = 2;
+  SetUpSearchResults(kTileResults, kListResults, true);
+  EXPECT_EQ(app_list_view()->app_list_state(), AppListViewState::HALF);
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
+
+  // Move focus to the first search result, then transition to PEEKING state.
+  SimulateKeyPress(ui::VKEY_TAB, false);
+  SimulateKeyPress(ui::VKEY_TAB, false);
+  SetAppListState(AppListViewState::PEEKING);
+  EXPECT_EQ(app_list_view()->app_list_state(), AppListViewState::PEEKING);
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
+
+  // Move focus to the first suggestion app, then transition to
+  // FULLSCREEN_ALL_APPS state.
+  SimulateKeyPress(ui::VKEY_TAB, false);
+  SetAppListState(AppListViewState::FULLSCREEN_ALL_APPS);
+  EXPECT_EQ(app_list_view()->app_list_state(),
+            AppListViewState::FULLSCREEN_ALL_APPS);
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
+
+  // Move focus to first suggestion app, then open the folder.
+  folder_item_view()->RequestFocus();
+  SimulateKeyPress(ui::VKEY_RETURN, false);
+  EXPECT_TRUE(contents_view()->apps_container_view()->IsInFolderView());
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
+
+  // Move focus to the first app, then transition to PEEKING state.
+  SimulateKeyPress(ui::VKEY_TAB, false);
+  SetAppListState(AppListViewState::PEEKING);
+  EXPECT_EQ(app_list_view()->app_list_state(), AppListViewState::PEEKING);
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
+}
+
+// Tests that key event which is not handled by focused view will be redirected
+// to search box.
+TEST_F(AppListViewFocusTest, RedirectFocusToSearchBox) {
+  Show();
+
+  // Set focus to first suggestion app and type a character.
+  suggestions_container_view()->tile_views()[0]->RequestFocus();
+  SimulateKeyPress(ui::VKEY_SPACE, false);
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
+  EXPECT_EQ(search_box_view()->search_box()->text(), base::UTF8ToUTF16(" "));
+  EXPECT_FALSE(search_box_view()->search_box()->HasSelection());
+
+  // Set focus to expand arrow and type a character.
+  apps_grid_view()->expand_arrow_view_for_test()->RequestFocus();
+  SimulateKeyPress(ui::VKEY_A, false);
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
+  EXPECT_EQ(search_box_view()->search_box()->text(), base::UTF8ToUTF16(" a"));
+  EXPECT_FALSE(search_box_view()->search_box()->HasSelection());
+
+  // Set focus to close button and type a character.
+  search_box_view()->close_button()->RequestFocus();
+  SimulateKeyPress(ui::VKEY_B, false);
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
+  EXPECT_EQ(search_box_view()->search_box()->text(), base::UTF8ToUTF16(" ab"));
+  EXPECT_FALSE(search_box_view()->search_box()->HasSelection());
+
+  // Set focus to close button and hitting backspace.
+  search_box_view()->close_button()->RequestFocus();
+  SimulateKeyPress(ui::VKEY_BACK, false);
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
+  EXPECT_EQ(search_box_view()->search_box()->text(), base::UTF8ToUTF16(" a"));
+  EXPECT_FALSE(search_box_view()->search_box()->HasSelection());
+}
+
+// Tests that the search box textfield has no selection when the focus moves
+// away from the SearchBoxView.
+TEST_F(AppListViewFocusTest, SearchBoxTextfieldHasNoSelectionWhenFocusLeaves) {
+  Show();
+
+  search_box_view()->search_box()->InsertText(base::UTF8ToUTF16("test"));
+  EXPECT_EQ(search_box_view()->search_box()->text(), base::UTF8ToUTF16("test"));
+
+  // Move selection away from the searchbox.
+  SimulateKeyPress(ui::VKEY_TAB, false);
+
+  EXPECT_FALSE(search_box_view()->search_box()->HasSelection());
+}
+
+// Tests that the search box selects the whole query when focus moves to the
+// SearchBoxTextfield.
+TEST_F(AppListViewFocusTest, SearchBoxSelectionCoversWholeQueryOnFocus) {
+  Show();
+  search_box_view()->search_box()->InsertText(base::UTF8ToUTF16("test"));
+  EXPECT_EQ(app_list_view()->app_list_state(), AppListViewState::HALF);
+  constexpr int kListResults = 1;
+  SetUpSearchResults(0, kListResults, false);
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
+  EXPECT_EQ(base::UTF8ToUTF16("test"), search_box_view()->search_box()->text());
+
+  // Hit Tab to move focus away from the searchbox.
+  SimulateKeyPress(ui::VKEY_TAB, false);
+  EXPECT_FALSE(search_box_view()->search_box()->HasSelection());
+
+  // Hit Shift+Tab to move focus back to the searchbox.
+  SimulateKeyPress(ui::VKEY_TAB, true);
+  EXPECT_EQ(gfx::Range(0, 4),
+            search_box_view()->search_box()->GetSelectedRange());
+
+  // Hit Shift+Tab to move focus away from the searchbox.
+  SimulateKeyPress(ui::VKEY_TAB, true);
+  EXPECT_FALSE(search_box_view()->search_box()->HasSelection());
+
+  // Hit Tab to move focus back to the searchbox.
+  SimulateKeyPress(ui::VKEY_TAB, false);
+  EXPECT_EQ(gfx::Range(0, 4),
+            search_box_view()->search_box()->GetSelectedRange());
+
+  // Hit Up to move focus away from the searchbox.
+  SimulateKeyPress(ui::VKEY_UP, false);
+  EXPECT_FALSE(search_box_view()->search_box()->HasSelection());
+
+  // Hit Down to move focus back to the searchbox.
+  SimulateKeyPress(ui::VKEY_DOWN, false);
+  EXPECT_EQ(gfx::Range(0, 4),
+            search_box_view()->search_box()->GetSelectedRange());
+
+  // Hit Down to move focus away from the searchbox.
+  SimulateKeyPress(ui::VKEY_DOWN, false);
+  EXPECT_FALSE(search_box_view()->search_box()->HasSelection());
+
+  // Hit Up to move focus back to the searchbox.
+  SimulateKeyPress(ui::VKEY_UP, false);
+  EXPECT_EQ(gfx::Range(0, 4),
+            search_box_view()->search_box()->GetSelectedRange());
+}
+
+// Tests that ctrl-A selects all text in the searchbox when the SearchBoxView is
+// not focused.
+TEST_F(AppListViewFocusTest, CtrlASelectsAllTextInSearchbox) {
+  Show();
+  search_box_view()->search_box()->InsertText(base::UTF8ToUTF16("test"));
+  EXPECT_EQ(app_list_view()->app_list_state(), AppListViewState::HALF);
+  constexpr int kTileResults = 3;
+  constexpr int kListResults = 2;
+  SetUpSearchResults(kTileResults, kListResults, false);
+
+  // Move focus to the first search result.
+  SimulateKeyPress(ui::VKEY_TAB, false);
+  SimulateKeyPress(ui::VKEY_TAB, false);
+
+  // Focus left the searchbox, so the selected range should be at the end of the
+  // search text.
+  EXPECT_FALSE(search_box_view()->search_box()->HasSelection());
+  EXPECT_EQ(gfx::Range(4, 4),
+            search_box_view()->search_box()->GetSelectedRange());
+
+  // Press Ctrl-A, everything should be selected and the selected range should
+  // include the whole text.
+  SimulateKeyPress(ui::VKEY_A, false, true);
+  EXPECT_TRUE(search_box_view()->search_box()->HasSelection());
+  EXPECT_EQ(gfx::Range(0, 4),
+            search_box_view()->search_box()->GetSelectedRange());
+
+  // Advance focus, Focus should leave the searchbox, and the selected range
+  // should be at the end of the search text.
+  SimulateKeyPress(ui::VKEY_TAB, false);
+  EXPECT_FALSE(search_box_view()->search_box()->HasSelection());
+  EXPECT_EQ(gfx::Range(4, 4),
+            search_box_view()->search_box()->GetSelectedRange());
+}
+
+// Tests that the first search result's view is always selected after search
+// results are updated, but the focus is always on search box.
+TEST_F(AppListViewFocusTest, FirstResultSelectedAfterSearchResultsUpdated) {
+  Show();
+
+  // Type something in search box to transition to HALF state and populate
+  // fake list results.
+  search_box_view()->search_box()->InsertText(base::UTF8ToUTF16("test"));
+  const int kListResults = 2;
+  SetUpSearchResults(0, kListResults, false);
+  const views::View* results_container =
+      contents_view()
+          ->search_result_list_view_for_test()
+          ->results_container_for_test();
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
+  EXPECT_EQ(results_container->child_at(0),
+            contents_view()->search_results_page_view()->first_result_view());
+
+  // Populate both fake list results and tile results.
+  const int kTileResults = 3;
+  SetUpSearchResults(kTileResults, kListResults, false);
+  const std::vector<SearchResultTileItemView*>& tile_views =
+      contents_view()
+          ->search_result_tile_item_list_view_for_test()
+          ->tile_views_for_test();
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
+  EXPECT_EQ(tile_views[0],
+            contents_view()->search_results_page_view()->first_result_view());
+
+  // Populate only answer card.
+  SetUpSearchResults(0, 0, true);
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
+  EXPECT_EQ(contents_view()
+                ->search_result_answer_card_view_for_test()
+                ->GetSearchAnswerContainerViewForTest(),
+            contents_view()->search_results_page_view()->first_result_view());
+
+  // Clear up all search results.
+  SetUpSearchResults(0, 0, false);
+  EXPECT_EQ(search_box_view()->search_box(), focused_view());
+  EXPECT_EQ(nullptr,
+            contents_view()->search_results_page_view()->first_result_view());
+}
+
+// Tests hitting Enter key when focus is on search box.
+// There are two behaviors:
+// 1. Activate the search box when it is inactive.
+// 2. Open the first result when query exists.
+TEST_F(AppListViewFocusTest, HittingEnterWhenFocusOnSearchBox) {
+  Show();
+
+  // Initially the search box is inactive, hitting Enter to activate it.
+  EXPECT_FALSE(search_box_view()->is_search_box_active());
+  SimulateKeyPress(ui::VKEY_RETURN, false);
+  EXPECT_TRUE(search_box_view()->is_search_box_active());
+
+  // Type something in search box to transition to HALF state and populate
+  // fake list results. Then hit Enter key.
+  search_box_view()->search_box()->InsertText(base::UTF8ToUTF16("test"));
+  const int kListResults = 2;
+  SetUpSearchResults(0, kListResults, false);
+  SimulateKeyPress(ui::VKEY_RETURN, false);
+  EXPECT_EQ(1, GetOpenFirstSearchResultCount());
+  EXPECT_EQ(1, GetTotalOpenSearchResultCount());
+
+  // Populate both fake list results and tile results. Then hit Enter key.
+  const int kTileResults = 3;
+  SetUpSearchResults(kTileResults, kListResults, false);
+  SimulateKeyPress(ui::VKEY_RETURN, false);
+  EXPECT_EQ(2, GetOpenFirstSearchResultCount());
+  EXPECT_EQ(2, GetTotalOpenSearchResultCount());
+
+  // Populate only answer card. Then hit Enter key.
+  SetUpSearchResults(0, 0, true);
+  SimulateKeyPress(ui::VKEY_RETURN, false);
+  EXPECT_EQ(3, GetOpenFirstSearchResultCount());
+  EXPECT_EQ(3, GetTotalOpenSearchResultCount());
+
+  // Clear up all search results. Then hit Enter key.
+  SetUpSearchResults(0, 0, false);
+  SimulateKeyPress(ui::VKEY_RETURN, false);
+  EXPECT_EQ(3, GetOpenFirstSearchResultCount());
+  EXPECT_EQ(3, GetTotalOpenSearchResultCount());
+}
+
+// Tests that search box becomes focused when it is activated.
+TEST_F(AppListViewFocusTest, SetFocusOnSearchboxWhenActivated) {
+  Show();
+
+  // Set focus to the first suggestion app.
+  suggestions_container_view()->tile_views()[0]->RequestFocus();
+  EXPECT_FALSE(search_box_view()->search_box()->HasFocus());
+
+  // Activate the search box.
+  search_box_view()->SetSearchBoxActive(true);
+  EXPECT_TRUE(search_box_view()->search_box()->HasFocus());
+
+  // Deactivate the search box won't move focus away.
+  search_box_view()->SetSearchBoxActive(false);
+  EXPECT_TRUE(search_box_view()->search_box()->HasFocus());
+}
+
+// Tests the left and right key when focus is on the textfield.
+TEST_P(AppListViewFocusTest, HittingLeftRightWhenFocusOnTextfield) {
+  Show();
+
+  // Transition to FULLSCREEN_ALL_APPS state and open the folder.
+  SetAppListState(AppListViewState::FULLSCREEN_ALL_APPS);
+  folder_item_view()->RequestFocus();
+  SimulateKeyPress(ui::VKEY_RETURN, false);
+
+  // Set focus on the folder name.
+  views::Textfield* folder_name_view = static_cast<views::Textfield*>(
+      app_list_folder_view()->folder_header_view()->GetFolderNameViewForTest());
+  folder_name_view->RequestFocus();
+
+  // Test folder name.
+  TestLeftAndRightKeyOnTextfield(folder_name_view, false);
+  TestLeftAndRightKeyOnTextfield(folder_name_view, true);
+
+  // Set focus on the search box.
+  search_box_view()->search_box()->RequestFocus();
+
+  // Test search box.
+  TestLeftAndRightKeyOnTextfield(search_box_view()->search_box(), false);
+  TestLeftAndRightKeyOnTextfield(search_box_view()->search_box(), true);
+}
+
+// Tests that opening the app list opens in peeking mode by default.
+TEST_F(AppListViewTest, ShowPeekingByDefault) {
+  Initialize(0, false, false);
+
+  Show();
+
+  ASSERT_EQ(AppListViewState::PEEKING, view_->app_list_state());
+}
+
+// Tests that in side shelf mode, the app list opens in fullscreen by default.
+TEST_F(AppListViewTest, ShowFullscreenWhenInSideShelfMode) {
+  Initialize(0, false, true);
+
+  Show();
+
+  ASSERT_EQ(AppListViewState::FULLSCREEN_ALL_APPS, view_->app_list_state());
+}
+
+// Tests that in tablet mode, the app list opens in fullscreen by default.
+TEST_F(AppListViewTest, ShowFullscreenWhenInTabletMode) {
+  Initialize(0, true, false);
+
+  Show();
+
+  ASSERT_EQ(AppListViewState::FULLSCREEN_ALL_APPS, view_->app_list_state());
+}
+
+// Tests that setting empty text in the search box does not change the state.
+TEST_F(AppListViewTest, EmptySearchTextStillPeeking) {
+  Initialize(0, false, false);
+  views::Textfield* search_box =
+      view_->app_list_main_view()->search_box_view()->search_box();
+
+  Show();
+  search_box->SetText(base::string16());
+
+  ASSERT_EQ(AppListViewState::PEEKING, view_->app_list_state());
+}
+
+TEST_F(AppListViewTest, MouseWheelScrollTransitionsToFullscreen) {
+  Initialize(0, false, false);
+  delegate_->GetTestModel()->PopulateApps(kInitialItems);
+  Show();
+
+  view_->HandleScroll(-30, ui::ET_MOUSEWHEEL);
+  EXPECT_EQ(AppListViewState::FULLSCREEN_ALL_APPS, view_->app_list_state());
+}
+
+TEST_F(AppListViewTest, GestureScrollTransitionsToFullscreen) {
+  Initialize(0, false, false);
+  delegate_->GetTestModel()->PopulateApps(kInitialItems);
+  Show();
+
+  view_->HandleScroll(-30, ui::ET_SCROLL);
+  EXPECT_EQ(AppListViewState::FULLSCREEN_ALL_APPS, view_->app_list_state());
+}
+
+// Tests that typing text after opening transitions from peeking to half.
+TEST_F(AppListViewTest, TypingPeekingToHalf) {
+  Initialize(0, false, false);
+  views::Textfield* search_box =
+      view_->app_list_main_view()->search_box_view()->search_box();
+
+  Show();
+  search_box->SetText(base::string16());
+  search_box->InsertText(base::UTF8ToUTF16("nice"));
+
+  ASSERT_EQ(AppListViewState::HALF, view_->app_list_state());
+}
+
+// Tests that typing when in fullscreen changes the state to fullscreen search.
+TEST_F(AppListViewTest, TypingFullscreenToFullscreenSearch) {
+  Initialize(0, false, false);
+  view_->SetState(AppListViewState::FULLSCREEN_ALL_APPS);
+  views::Textfield* search_box =
+      view_->app_list_main_view()->search_box_view()->search_box();
+
+  Show();
+  search_box->SetText(base::string16());
+  search_box->InsertText(base::UTF8ToUTF16("https://youtu.be/dQw4w9WgXcQ"));
+
+  ASSERT_EQ(AppListViewState::FULLSCREEN_SEARCH, view_->app_list_state());
+}
+
+// Tests that in tablet mode, typing changes the state to fullscreen search.
+TEST_F(AppListViewTest, TypingTabletModeFullscreenSearch) {
+  Initialize(0, true, false);
+  views::Textfield* search_box =
+      view_->app_list_main_view()->search_box_view()->search_box();
+
+  Show();
+  search_box->SetText(base::string16());
+  search_box->InsertText(base::UTF8ToUTF16("cool!"));
+
+  ASSERT_EQ(AppListViewState::FULLSCREEN_SEARCH, view_->app_list_state());
+}
+
+// Tests that pressing escape when in peeking closes the app list.
+TEST_F(AppListViewTest, EscapeKeyPeekingToClosed) {
+  Initialize(0, false, false);
+
+  Show();
+  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+
+  ASSERT_EQ(AppListViewState::CLOSED, view_->app_list_state());
+}
+
+// Tests that pressing escape when in half screen changes the state to peeking.
+TEST_F(AppListViewTest, EscapeKeyHalfToPeeking) {
+  Initialize(0, false, false);
+  views::Textfield* search_box =
+      view_->app_list_main_view()->search_box_view()->search_box();
+
+  Show();
+  search_box->SetText(base::string16());
+  search_box->InsertText(base::UTF8ToUTF16("doggie"));
+  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+
+  ASSERT_EQ(AppListViewState::PEEKING, view_->app_list_state());
+}
+
+// Tests that pressing escape when in fullscreen changes the state to closed.
+TEST_F(AppListViewTest, EscapeKeyFullscreenToClosed) {
+  Initialize(0, false, false);
+  view_->SetState(AppListViewState::FULLSCREEN_ALL_APPS);
+
+  Show();
+  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+
+  ASSERT_EQ(AppListViewState::CLOSED, view_->app_list_state());
+}
+
+// Tests that pressing escape when in fullscreen side-shelf closes the app list.
+TEST_F(AppListViewTest, EscapeKeySideShelfFullscreenToClosed) {
+  // Put into fullscreen by using side-shelf.
+  Initialize(0, false, true);
+
+  Show();
+  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+
+  ASSERT_EQ(AppListViewState::CLOSED, view_->app_list_state());
+}
+
+// Tests that pressing escape when in tablet mode closes the app list.
+TEST_F(AppListViewTest, EscapeKeyTabletModeFullscreenToClosed) {
+  // Put into fullscreen by using tablet mode.
+  Initialize(0, true, false);
+
+  Show();
+  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+
+  ASSERT_EQ(AppListViewState::CLOSED, view_->app_list_state());
+}
+
+// Tests that pressing escape when in fullscreen search changes to fullscreen.
+TEST_F(AppListViewTest, EscapeKeyFullscreenSearchToFullscreen) {
+  Initialize(0, false, false);
+  view_->SetState(AppListViewState::FULLSCREEN_ALL_APPS);
+  views::Textfield* search_box =
+      view_->app_list_main_view()->search_box_view()->search_box();
+
+  Show();
+  search_box->SetText(base::string16());
+  search_box->InsertText(base::UTF8ToUTF16("https://youtu.be/dQw4w9WgXcQ"));
+  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+
+  ASSERT_EQ(AppListViewState::FULLSCREEN_ALL_APPS, view_->app_list_state());
+}
+
+// Tests that pressing escape when in sideshelf search changes to fullscreen.
+TEST_F(AppListViewTest, EscapeKeySideShelfSearchToFullscreen) {
+  // Put into fullscreen using side-shelf.
+  Initialize(0, false, true);
+  views::Textfield* search_box =
+      view_->app_list_main_view()->search_box_view()->search_box();
+
+  Show();
+  search_box->SetText(base::string16());
+  search_box->InsertText(base::UTF8ToUTF16("kitty"));
+  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+
+  ASSERT_EQ(AppListViewState::FULLSCREEN_ALL_APPS, view_->app_list_state());
+}
+
+// Tests that in fullscreen, the app list has multiple pages with enough apps.
+TEST_F(AppListViewTest, PopulateAppsCreatesAnotherPage) {
+  Initialize(0, false, false);
+  delegate_->GetTestModel()->PopulateApps(kInitialItems);
+
+  Show();
+
+  ASSERT_EQ(2, GetPaginationModel()->total_pages());
+}
+
+// Tests that even if initialize is called again with a different initial page,
+// that for fullscreen we always select the first page.
+TEST_F(AppListViewTest, MultiplePagesAlwaysReinitializeOnFirstPage) {
+  Initialize(0, false, false);
+  delegate_->GetTestModel()->PopulateApps(kInitialItems);
+
+  // Show and close the widget once.
+  Show();
   view_->GetWidget()->Close();
-  run_loop_.reset(new base::RunLoop);
-  run_loop_->Run();
+  // Set it up again with a nonzero initial page.
+  view_ = new AppListView(delegate_.get());
+  AppListView::InitParams params;
+  params.parent = GetContext();
+  params.initial_apps_page = 1;
+  view_->Initialize(params);
+  const gfx::Size size = view_->bounds().size();
+  view_->MaybeSetAnchorPoint(gfx::Point(size.width() / 2, size.height() / 2));
+  Show();
 
-  // |view_| should have been deleted and set to NULL via ViewClosing().
-  EXPECT_FALSE(view_);
+  ASSERT_EQ(0, view_->GetAppsPaginationModel()->selected_page());
 }
 
-bool AppListViewTestContext::CheckSearchBoxWidget(const gfx::Rect& expected) {
+// Tests that pressing escape when in tablet search changes to fullscreen.
+TEST_F(AppListViewTest, EscapeKeyTabletModeSearchToFullscreen) {
+  // Put into fullscreen using tablet mode.
+  Initialize(0, true, false);
+  views::Textfield* search_box =
+      view_->app_list_main_view()->search_box_view()->search_box();
+
+  Show();
+  search_box->SetText(base::string16());
+  search_box->InsertText(base::UTF8ToUTF16("yay"));
+  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+
+  ASSERT_EQ(AppListViewState::FULLSCREEN_ALL_APPS, view_->app_list_state());
+}
+
+// Tests that leaving tablet mode when in tablet search causes no change.
+TEST_F(AppListViewTest, LeaveTabletModeNoChange) {
+  // Put into fullscreen using tablet mode.
+  Initialize(0, true, false);
+  views::Textfield* search_box =
+      view_->app_list_main_view()->search_box_view()->search_box();
+
+  Show();
+  search_box->SetText(base::string16());
+  search_box->InsertText(base::UTF8ToUTF16("something"));
+  view_->OnTabletModeChanged(false);
+
+  ASSERT_EQ(AppListViewState::FULLSCREEN_SEARCH, view_->app_list_state());
+}
+
+// Tests that escape works after leaving tablet mode from search.
+TEST_F(AppListViewTest, LeaveTabletModeEscapeKeyToFullscreen) {
+  // Put into fullscreen using tablet mode.
+  Initialize(0, true, false);
+  views::Textfield* search_box =
+      view_->app_list_main_view()->search_box_view()->search_box();
+
+  Show();
+  search_box->SetText(base::string16());
+  search_box->InsertText(base::UTF8ToUTF16("nothing"));
+  view_->OnTabletModeChanged(false);
+  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+
+  ASSERT_EQ(AppListViewState::FULLSCREEN_ALL_APPS, view_->app_list_state());
+}
+
+// Tests that escape twice closes after leaving tablet mode from search.
+TEST_F(AppListViewTest, LeaveTabletModeEscapeKeyTwiceToClosed) {
+  // Put into fullscreen using tablet mode.
+  Initialize(0, true, false);
+  views::Textfield* search_box =
+      view_->app_list_main_view()->search_box_view()->search_box();
+
+  Show();
+  search_box->SetText(base::string16());
+  search_box->InsertText(base::UTF8ToUTF16("nothing"));
+  view_->OnTabletModeChanged(false);
+  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+
+  ASSERT_EQ(AppListViewState::CLOSED, view_->app_list_state());
+}
+
+// Tests that opening in peeking mode sets the correct height.
+TEST_F(AppListViewTest, OpenInPeekingCorrectHeight) {
+  Initialize(0, false, false);
+
+  Show();
+  view_->SetState(AppListViewState::PEEKING);
+  const views::Widget* widget = view_->get_fullscreen_widget_for_test();
+  const int y = widget->GetWindowBoundsInScreen().y();
+
+  ASSERT_EQ(kPeekingYValue, y);
+}
+
+// Tests that opening in peeking mode sets the correct height.
+TEST_F(AppListViewTest, OpenInFullscreenCorrectHeight) {
+  Initialize(0, false, false);
+
+  Show();
+  view_->SetState(AppListViewState::FULLSCREEN_ALL_APPS);
+  const views::Widget* widget = view_->get_fullscreen_widget_for_test();
+  const int y = widget->GetWindowBoundsInScreen().y();
+
+  ASSERT_EQ(0, y);
+}
+
+// Tests that AppListView::SetState fails when the state has been set to CLOSED.
+TEST_F(AppListViewTest, SetStateFailsWhenClosing) {
+  Initialize(0, false, false);
+  Show();
+  view_->SetState(AppListViewState::CLOSED);
+
+  view_->SetState(AppListViewState::FULLSCREEN_ALL_APPS);
+
+  ASSERT_EQ(AppListViewState::CLOSED, view_->app_list_state());
+}
+
+// Tests that going into a folder view, then setting the AppListState to PEEKING
+// hides the folder view.
+TEST_F(AppListViewTest, FolderViewToPeeking) {
+  Initialize(0, false, false);
+  AppListTestModel* model = delegate_->GetTestModel();
+  model->PopulateApps(kInitialItems);
+  const std::string folder_id =
+      model->MergeItems(model->top_level_item_list()->item_at(0)->id(),
+                        model->top_level_item_list()->item_at(1)->id());
+  model->FindFolderItem(folder_id);
+  Show();
+  AppsGridViewTestApi test_api(view_->app_list_main_view()
+                                   ->contents_view()
+                                   ->apps_container_view()
+                                   ->apps_grid_view());
+  test_api.PressItemAt(0);
+  EXPECT_TRUE(view_->app_list_main_view()
+                  ->contents_view()
+                  ->apps_container_view()
+                  ->IsInFolderView());
+
+  view_->SetState(AppListViewState::PEEKING);
+
+  EXPECT_FALSE(view_->app_list_main_view()
+                   ->contents_view()
+                   ->apps_container_view()
+                   ->IsInFolderView());
+}
+
+// Tests that when a click or tap event propagates to the AppListView, if the
+// event location is within the bounds of AppsGridView, do not close the
+// AppListView.
+TEST_F(AppListViewTest, TapAndClickWithinAppsGridView) {
+  Initialize(0, false, false);
+  delegate_->GetTestModel()->PopulateApps(kInitialItems);
+  Show();
+  view_->SetState(AppListViewState::FULLSCREEN_ALL_APPS);
+  EXPECT_EQ(AppListViewState::FULLSCREEN_ALL_APPS, view_->app_list_state());
   ContentsView* contents_view = view_->app_list_main_view()->contents_view();
-  // Adjust for the search box view's shadow.
-  gfx::Rect expected_with_shadow =
-      view_->app_list_main_view()
-          ->search_box_view()
-          ->GetViewBoundsForSearchBoxContentsBounds(expected);
-  gfx::Point point = expected_with_shadow.origin();
-  views::View::ConvertPointToScreen(contents_view, &point);
+  AppsContainerView* container_view = contents_view->apps_container_view();
+  const gfx::Rect grid_view_bounds =
+      container_view->apps_grid_view()->GetBoundsInScreen();
+  gfx::Point target_point = grid_view_bounds.origin();
+  target_point.Offset(100, 100);
+  ASSERT_TRUE(grid_view_bounds.Contains(target_point));
 
-  return gfx::Rect(point, expected_with_shadow.size()) ==
-         view_->search_box_widget()->GetWindowBoundsInScreen();
+  // Tests gesture tap within apps grid view doesn't close app list view.
+  ui::GestureEvent tap(target_point.x(), target_point.y(), 0, base::TimeTicks(),
+                       ui::GestureEventDetails(ui::ET_GESTURE_TAP));
+  view_->OnGestureEvent(&tap);
+  EXPECT_EQ(AppListViewState::FULLSCREEN_ALL_APPS, view_->app_list_state());
+
+  // Tests mouse click within apps grid view doesn't close app list view.
+  ui::MouseEvent mouse_click(ui::ET_MOUSE_PRESSED, target_point, target_point,
+                             base::TimeTicks(), 0, 0);
+  view_->OnMouseEvent(&mouse_click);
+  EXPECT_EQ(AppListViewState::FULLSCREEN_ALL_APPS, view_->app_list_state());
 }
 
-PaginationModel* AppListViewTestContext::GetPaginationModel() {
-  return view_->GetAppsPaginationModel();
+// Tests that search box should not become a rectangle during drag.
+TEST_F(AppListViewTest, SearchBoxCornerRadiusDuringDragging) {
+  Initialize(0, false, false);
+  delegate_->GetTestModel()->PopulateApps(kInitialItems);
+  Show();
+  view_->SetState(AppListViewState::FULLSCREEN_ALL_APPS);
+  EXPECT_EQ(AppListViewState::FULLSCREEN_ALL_APPS, view_->app_list_state());
+
+  // Send SCROLL_START and SCROLL_UPDATE events, simulating dragging the
+  // launcher.
+  base::TimeTicks timestamp = base::TimeTicks::Now();
+  const gfx::Point start = view_->get_fullscreen_widget_for_test()
+                               ->GetWindowBoundsInScreen()
+                               .top_right();
+  int delta_y = 0;
+  ui::GestureEvent start_event = ui::GestureEvent(
+      start.x(), start.y(), ui::EF_NONE, timestamp,
+      ui::GestureEventDetails(ui::ET_GESTURE_SCROLL_BEGIN, 0, delta_y));
+  view_->OnGestureEvent(&start_event);
+
+  // Drag down the launcher.
+  timestamp += base::TimeDelta::FromMilliseconds(25);
+  delta_y += 10;
+  ui::GestureEvent update_event = ui::GestureEvent(
+      start.x(), start.y(), ui::EF_NONE, timestamp,
+      ui::GestureEventDetails(ui::ET_GESTURE_SCROLL_UPDATE, 0, delta_y));
+  view_->OnGestureEvent(&update_event);
+
+  EXPECT_TRUE(IsStateShown(AppListModel::STATE_APPS));
+  EXPECT_EQ(kSearchBoxBorderCornerRadius,
+            search_box_view()->GetSearchBoxBorderCornerRadiusForState(
+                AppListModel::STATE_APPS));
+
+  // Search box should keep |kSearchBoxCornerRadiusFullscreen| corner radius
+  // during drag.
+  EXPECT_TRUE(SetAppListState(AppListModel::STATE_SEARCH_RESULTS));
+  EXPECT_TRUE(view_->is_in_drag());
+  EXPECT_EQ(kSearchBoxBorderCornerRadius,
+            search_box_view()->GetSearchBoxBorderCornerRadiusForState(
+                AppListModel::STATE_SEARCH_RESULTS));
+
+  // Ends to drag the launcher.
+  EXPECT_TRUE(SetAppListState(AppListModel::STATE_APPS));
+  timestamp += base::TimeDelta::FromMilliseconds(25);
+  ui::GestureEvent end_event =
+      ui::GestureEvent(start.x(), start.y() + delta_y, ui::EF_NONE, timestamp,
+                       ui::GestureEventDetails(ui::ET_GESTURE_END));
+  view_->OnGestureEvent(&end_event);
+
+  // Search box should keep |kSearchBoxCornerRadiusFullscreen| corner radius
+  // if launcher drag finished.
+  EXPECT_FALSE(view_->is_in_drag());
+  EXPECT_EQ(kSearchBoxBorderCornerRadius,
+            search_box_view()->GetSearchBoxBorderCornerRadiusForState(
+                AppListModel::STATE_APPS));
 }
 
-void AppListViewTestContext::RunDisplayTest() {
-  EXPECT_FALSE(view_->GetWidget()->IsVisible());
+// Tests displaying the app list and performs a standard set of checks on its
+// top level views. Then closes the window.
+TEST_F(AppListViewTest, DisplayTest) {
+  Initialize(0, false, false);
   EXPECT_EQ(-1, GetPaginationModel()->total_pages());
   delegate_->GetTestModel()->PopulateApps(kInitialItems);
 
   Show();
 
-  // Explicitly enforce the exact dimensions of the app list. Feel free to
-  // change these if you need to (they are just here to prevent against
-  // accidental changes to the window size).
-  EXPECT_EQ("768x570", view_->bounds().size().ToString());
+  // |view_| bounds equal to the root window's size.
+  EXPECT_EQ("800x600", view_->bounds().size().ToString());
 
   EXPECT_EQ(2, GetPaginationModel()->total_pages());
   EXPECT_EQ(0, GetPaginationModel()->selected_page());
@@ -270,107 +1519,17 @@ void AppListViewTestContext::RunDisplayTest() {
   AppListModel::State expected = AppListModel::STATE_START;
   EXPECT_TRUE(main_view->contents_view()->IsStateActive(expected));
   EXPECT_EQ(expected, delegate_->GetTestModel()->state());
-
-  Close();
 }
 
-void AppListViewTestContext::RunReshowWithOpenFolderTest() {
-  EXPECT_FALSE(view_->GetWidget()->IsVisible());
-  EXPECT_EQ(-1, GetPaginationModel()->total_pages());
+// Tests that the start page view operates correctly.
+TEST_F(AppListViewTest, StartPageTest) {
+  Initialize(0, false, false);
+  // TODO(newcomer): this test needs to be reevaluated for the fullscreen app
+  // list (http://crbug.com/759779).
+  if (features::IsFullscreenAppListEnabled())
+    return;
 
-  AppListTestModel* model = delegate_->GetTestModel();
-  model->PopulateApps(kInitialItems);
-  const std::string folder_id =
-      model->MergeItems(model->top_level_item_list()->item_at(0)->id(),
-                        model->top_level_item_list()->item_at(1)->id());
-
-  AppListFolderItem* folder_item = model->FindFolderItem(folder_id);
-  EXPECT_TRUE(folder_item);
-
-  Show();
-
-  // The main grid view should be showing initially.
-  AppListMainView* main_view = view_->app_list_main_view();
-  AppsContainerView* container_view =
-      main_view->contents_view()->apps_container_view();
-  EXPECT_NO_FATAL_FAILURE(CheckView(main_view));
-  EXPECT_NO_FATAL_FAILURE(CheckView(container_view->apps_grid_view()));
-  EXPECT_FALSE(container_view->app_list_folder_view()->visible());
-
-  AppsGridViewTestApi test_api(container_view->apps_grid_view());
-  test_api.PressItemAt(0);
-
-  // After pressing the folder item, the folder view should be showing.
-  EXPECT_NO_FATAL_FAILURE(CheckView(main_view));
-  EXPECT_NO_FATAL_FAILURE(CheckView(container_view->app_list_folder_view()));
-  EXPECT_FALSE(container_view->apps_grid_view()->visible());
-
-  view_->GetWidget()->Hide();
-  EXPECT_FALSE(view_->GetWidget()->IsVisible());
-
-  Show();
-
-  // The main grid view should be showing after a reshow.
-  EXPECT_NO_FATAL_FAILURE(CheckView(main_view));
-  EXPECT_NO_FATAL_FAILURE(CheckView(container_view->apps_grid_view()));
-  EXPECT_FALSE(container_view->app_list_folder_view()->visible());
-
-  Close();
-}
-
-void AppListViewTestContext::RunBackTest() {
-  EXPECT_FALSE(view_->GetWidget()->IsVisible());
-  EXPECT_EQ(-1, GetPaginationModel()->total_pages());
-
-  Show();
-
-  AppListMainView* main_view = view_->app_list_main_view();
-  ContentsView* contents_view = main_view->contents_view();
-  SearchBoxView* search_box_view = main_view->search_box_view();
-
-  // Show the apps grid.
-  SetAppListState(AppListModel::STATE_APPS);
-  EXPECT_NO_FATAL_FAILURE(CheckView(search_box_view->back_button()));
-
-  // The back button should return to the start page.
-  EXPECT_TRUE(contents_view->Back());
-  contents_view->Layout();
-  EXPECT_TRUE(IsStateShown(AppListModel::STATE_START));
-  EXPECT_FALSE(search_box_view->back_button()->visible());
-
-  // Show the apps grid again.
-  SetAppListState(AppListModel::STATE_APPS);
-  EXPECT_NO_FATAL_FAILURE(CheckView(search_box_view->back_button()));
-
-  // Pressing ESC should return to the start page.
-  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
-  contents_view->Layout();
-  EXPECT_TRUE(IsStateShown(AppListModel::STATE_START));
-  EXPECT_FALSE(search_box_view->back_button()->visible());
-
-  // Pressing ESC from the start page should close the app list.
-  EXPECT_EQ(0, delegate_->dismiss_count());
-  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
-  EXPECT_EQ(1, delegate_->dismiss_count());
-
-  // Show the search results.
-  base::string16 new_search_text = base::UTF8ToUTF16("apple");
-  search_box_view->search_box()->SetText(base::string16());
-  search_box_view->search_box()->InsertText(new_search_text);
-  contents_view->Layout();
-  EXPECT_TRUE(IsStateShown(AppListModel::STATE_SEARCH_RESULTS));
-  EXPECT_NO_FATAL_FAILURE(CheckView(search_box_view->back_button()));
-
-  // The back button should return to the start page.
-  EXPECT_TRUE(contents_view->Back());
-  contents_view->Layout();
-  EXPECT_TRUE(IsStateShown(AppListModel::STATE_START));
-  EXPECT_FALSE(search_box_view->back_button()->visible());
-
-  Close();
-}
-
-void AppListViewTestContext::RunStartPageTest() {
+#if 0
   EXPECT_FALSE(view_->GetWidget()->IsVisible());
   EXPECT_EQ(-1, GetPaginationModel()->total_pages());
   AppListTestModel* model = delegate_->GetTestModel();
@@ -390,25 +1549,13 @@ void AppListViewTestContext::RunStartPageTest() {
   EXPECT_TRUE(SetAppListState(AppListModel::STATE_START));
   gfx::Size view_size(view_->GetPreferredSize());
 
-  // The "All apps" button should have its "parent background color" set
-  // to the tiles container's background color.
-  TileItemView* all_apps_button = start_page_view->all_apps_button();
-  EXPECT_TRUE(all_apps_button->visible());
-  EXPECT_EQ(kLabelBackgroundColor, all_apps_button->parent_background_color());
-
-  // Simulate clicking the "All apps" button. Check that we navigate to the
-  // apps grid view.
-  SimulateClick(all_apps_button);
-  main_view->contents_view()->Layout();
-  EXPECT_TRUE(IsStateShown(AppListModel::STATE_APPS));
-
   // Hiding and showing the search box should not affect the app list's
   // preferred size. This is a regression test for http://crbug.com/386912.
   EXPECT_EQ(view_size.ToString(), view_->GetPreferredSize().ToString());
 
   // Check tiles hide and show on deletion and addition.
   EXPECT_TRUE(SetAppListState(AppListModel::STATE_START));
-  model->results()->Add(base::MakeUnique<TestStartPageSearchResult>());
+  model->results()->Add(std::make_unique<TestStartPageSearchResult>());
   start_page_view->UpdateForTesting();
   EXPECT_EQ(1u, GetVisibleViews(start_page_view->tile_views()));
   model->results()->DeleteAll();
@@ -418,18 +1565,17 @@ void AppListViewTestContext::RunStartPageTest() {
   // Tiles should not update when the start page is not active but should be
   // correct once the start page is shown.
   EXPECT_TRUE(SetAppListState(AppListModel::STATE_APPS));
-  model->results()->Add(base::MakeUnique<TestStartPageSearchResult>());
+  model->results()->Add(std::make_unique<TestStartPageSearchResult>());
   start_page_view->UpdateForTesting();
   EXPECT_EQ(0u, GetVisibleViews(start_page_view->tile_views()));
   EXPECT_TRUE(SetAppListState(AppListModel::STATE_START));
   EXPECT_EQ(1u, GetVisibleViews(start_page_view->tile_views()));
-
-  Close();
+#endif
 }
 
-void AppListViewTestContext::RunPageSwitchingAnimationTest() {
-  Show();
-
+// Tests switching rapidly between multiple pages of the launcher.
+TEST_F(AppListViewTest, PageSwitchingAnimationTest) {
+  Initialize(0, false, false);
   AppListMainView* main_view = view_->app_list_main_view();
   // Checks on the main view.
   EXPECT_NO_FATAL_FAILURE(CheckView(main_view));
@@ -454,11 +1600,16 @@ void AppListViewTestContext::RunPageSwitchingAnimationTest() {
   // Call Layout(). Should jump to the third page.
   contents_view->Layout();
   IsStateShown(AppListModel::STATE_APPS);
-
-  Close();
 }
 
-void AppListViewTestContext::RunSearchResultsTest() {
+// Tests that the correct views are displayed for showing search results.
+TEST_F(AppListViewTest, SearchResultsTest) {
+  Initialize(0, false, false);
+  // TODO(newcomer): this test needs to be reevaluated for the fullscreen app
+  // list (http://crbug.com/759779).
+  if (features::IsFullscreenAppListEnabled())
+    return;
+
   EXPECT_FALSE(view_->GetWidget()->IsVisible());
   EXPECT_EQ(-1, GetPaginationModel()->total_pages());
   AppListTestModel* model = delegate_->GetTestModel();
@@ -515,11 +1666,73 @@ void AppListViewTestContext::RunSearchResultsTest() {
   contents_view->Layout();
   EXPECT_TRUE(IsStateShown(AppListModel::STATE_SEARCH_RESULTS));
   EXPECT_TRUE(CheckSearchBoxWidget(contents_view->GetDefaultSearchBoxBounds()));
-
-  Close();
 }
 
-void AppListViewTestContext::RunAppListOverlayTest() {
+// Tests that the back button navigates through the app list correctly.
+TEST_F(AppListViewTest, BackTest) {
+  Initialize(0, false, false);
+  // TODO(newcomer): this test needs to be reevaluated for the fullscreen app
+  // list (http://crbug.com/759779).
+  if (features::IsFullscreenAppListEnabled())
+    return;
+
+  EXPECT_FALSE(view_->GetWidget()->IsVisible());
+  EXPECT_EQ(-1, GetPaginationModel()->total_pages());
+
+  Show();
+
+  AppListMainView* main_view = view_->app_list_main_view();
+  ContentsView* contents_view = main_view->contents_view();
+  SearchBoxView* search_box_view = main_view->search_box_view();
+
+  // Show the apps grid.
+  SetAppListState(AppListModel::STATE_APPS);
+  EXPECT_NO_FATAL_FAILURE(CheckView(search_box_view->back_button()));
+
+  // The back button should return to the start page.
+  EXPECT_TRUE(contents_view->Back());
+  contents_view->Layout();
+  EXPECT_TRUE(IsStateShown(AppListModel::STATE_START));
+  EXPECT_FALSE(search_box_view->back_button()->visible());
+
+  // Show the apps grid again.
+  SetAppListState(AppListModel::STATE_APPS);
+  EXPECT_NO_FATAL_FAILURE(CheckView(search_box_view->back_button()));
+
+  // Pressing ESC should return to the start page.
+  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+  contents_view->Layout();
+  EXPECT_TRUE(IsStateShown(AppListModel::STATE_START));
+  EXPECT_FALSE(search_box_view->back_button()->visible());
+
+  // Pressing ESC from the start page should close the app list.
+  EXPECT_EQ(0, delegate_->dismiss_count());
+  view_->AcceleratorPressed(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+  EXPECT_EQ(1, delegate_->dismiss_count());
+
+  // Show the search results.
+  base::string16 new_search_text = base::UTF8ToUTF16("apple");
+  search_box_view->search_box()->SetText(base::string16());
+  search_box_view->search_box()->InsertText(new_search_text);
+  contents_view->Layout();
+  EXPECT_TRUE(IsStateShown(AppListModel::STATE_SEARCH_RESULTS));
+  EXPECT_NO_FATAL_FAILURE(CheckView(search_box_view->back_button()));
+
+  // The back button should return to the start page.
+  EXPECT_TRUE(contents_view->Back());
+  contents_view->Layout();
+  EXPECT_TRUE(IsStateShown(AppListModel::STATE_START));
+  EXPECT_FALSE(search_box_view->back_button()->visible());
+}
+
+// Tests that the correct views are displayed for showing search results.
+TEST_F(AppListViewTest, AppListOverlayTest) {
+  Initialize(0, false, false);
+  // TODO(newcomer): this test needs to be reevaluated for the fullscreen app
+  // list (http://crbug.com/759779).
+  if (features::IsFullscreenAppListEnabled())
+    return;
+
   Show();
 
   AppListMainView* main_view = view_->app_list_main_view();
@@ -534,159 +1747,33 @@ void AppListViewTestContext::RunAppListOverlayTest() {
   EXPECT_TRUE(search_box_view->enabled());
   EXPECT_EQ(search_box_view->search_box(),
             view_->GetWidget()->GetFocusManager()->GetFocusedView());
-
-  Close();
 }
 
-class AppListViewTestAura : public views::ViewsTestBase {
- public:
-  AppListViewTestAura() {}
-  ~AppListViewTestAura() override {}
+// Tests that even if initialize is called again with a different initial page,
+// that different initial page is respected.
+TEST_F(AppListViewTest, MultiplePagesReinitializeOnInputPage) {
+  Initialize(0, false, false);
+  // TODO(newcomer): this test needs to be reevaluated for the fullscreen app
+  // list (http://crbug.com/759779).
+  if (features::IsFullscreenAppListEnabled())
+    return;
 
-  // testing::Test overrides:
-  void SetUp() override {
-    views::ViewsTestBase::SetUp();
+  delegate_->GetTestModel()->PopulateApps(kInitialItems);
 
-    // On Ash (only) the app list is placed into an aura::Window "container",
-    // which is also used to determine the context. In tests, use the ash root
-    // window as the parent. This only works on aura where the root window is a
-    // NativeView as well as a NativeWindow.
-    gfx::NativeView container = NULL;
-    container = GetContext();
-    test_context_.reset(new AppListViewTestContext(container));
-  }
+  // Show and close the widget once.
+  Show();
+  view_->GetWidget()->Close();
+  // Set it up again with a nonzero initial page.
+  view_ = new AppListView(delegate_.get());
+  AppListView::InitParams params;
+  params.parent = GetContext();
+  params.initial_apps_page = 1;
+  view_->Initialize(params);
+  const gfx::Size size = view_->bounds().size();
+  view_->MaybeSetAnchorPoint(gfx::Point(size.width() / 2, size.height() / 2));
+  Show();
 
-  void TearDown() override {
-    test_context_.reset();
-    views::ViewsTestBase::TearDown();
-  }
-
- protected:
-  std::unique_ptr<AppListViewTestContext> test_context_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(AppListViewTestAura);
-};
-
-class AppListViewTestDesktop : public views::ViewsTestBase {
- public:
-  AppListViewTestDesktop() {}
-  ~AppListViewTestDesktop() override {}
-
-  // testing::Test overrides:
-  void SetUp() override {
-    set_views_delegate(base::MakeUnique<AppListViewTestViewsDelegate>(this));
-    views::ViewsTestBase::SetUp();
-    test_context_.reset(new AppListViewTestContext(NULL));
-  }
-
-  void TearDown() override {
-    test_context_.reset();
-    views::ViewsTestBase::TearDown();
-  }
-
- protected:
-  std::unique_ptr<AppListViewTestContext> test_context_;
-
- private:
-  class AppListViewTestViewsDelegate : public views::TestViewsDelegate {
-   public:
-    explicit AppListViewTestViewsDelegate(AppListViewTestDesktop* parent)
-        : parent_(parent)
-    {
-    }
-
-    // Overridden from views::ViewsDelegate:
-    void OnBeforeWidgetInit(
-        views::Widget::InitParams* params,
-        views::internal::NativeWidgetDelegate* delegate) override;
-
-   private:
-    AppListViewTestDesktop* parent_;
-
-    DISALLOW_COPY_AND_ASSIGN(AppListViewTestViewsDelegate);
-  };
-
-  DISALLOW_COPY_AND_ASSIGN(AppListViewTestDesktop);
-};
-
-void AppListViewTestDesktop::AppListViewTestViewsDelegate::OnBeforeWidgetInit(
-    views::Widget::InitParams* params,
-    views::internal::NativeWidgetDelegate* delegate) {
-// Mimic the logic in ChromeViewsDelegate::OnBeforeWidgetInit(). Except, for
-// ChromeOS, use the root window from the AuraTestHelper rather than depending
-// on ash::Shell:GetPrimaryRootWindow(). Also assume non-ChromeOS is never the
-// Ash desktop, as that is covered by AppListViewTestAura.
-  if (!params->parent && !params->context)
-    params->context = parent_->GetContext();
-}
-
-}  // namespace
-
-// Tests showing the app list with basic test model in an ash-style root window.
-TEST_F(AppListViewTestAura, Display) {
-  EXPECT_NO_FATAL_FAILURE(test_context_->RunDisplayTest());
-}
-
-// Tests showing the app list on the desktop. Note on ChromeOS, this will still
-// use the regular root window.
-TEST_F(AppListViewTestDesktop, Display) {
-  EXPECT_NO_FATAL_FAILURE(test_context_->RunDisplayTest());
-}
-
-// Tests that the main grid view is shown after hiding and reshowing the app
-// list with a folder view open. This is a regression test for crbug.com/357058.
-TEST_F(AppListViewTestAura, ReshowWithOpenFolder) {
-  EXPECT_NO_FATAL_FAILURE(test_context_->RunReshowWithOpenFolderTest());
-}
-
-TEST_F(AppListViewTestDesktop, ReshowWithOpenFolder) {
-  EXPECT_NO_FATAL_FAILURE(test_context_->RunReshowWithOpenFolderTest());
-}
-
-// Tests that the start page view operates correctly.
-TEST_F(AppListViewTestAura, StartPageTest) {
-  EXPECT_NO_FATAL_FAILURE(test_context_->RunStartPageTest());
-}
-
-TEST_F(AppListViewTestDesktop, StartPageTest) {
-  EXPECT_NO_FATAL_FAILURE(test_context_->RunStartPageTest());
-}
-
-// Tests that the start page view operates correctly.
-TEST_F(AppListViewTestAura, PageSwitchingAnimationTest) {
-  EXPECT_NO_FATAL_FAILURE(test_context_->RunPageSwitchingAnimationTest());
-}
-
-TEST_F(AppListViewTestDesktop, PageSwitchingAnimationTest) {
-  EXPECT_NO_FATAL_FAILURE(test_context_->RunPageSwitchingAnimationTest());
-}
-
-// Tests that the correct views are displayed for showing search results.
-TEST_F(AppListViewTestAura, SearchResultsTest) {
-  EXPECT_NO_FATAL_FAILURE(test_context_->RunSearchResultsTest());
-}
-
-TEST_F(AppListViewTestDesktop, SearchResultsTest) {
-  EXPECT_NO_FATAL_FAILURE(test_context_->RunSearchResultsTest());
-}
-
-// Tests that the back button navigates through the app list correctly.
-TEST_F(AppListViewTestAura, BackTest) {
-  EXPECT_NO_FATAL_FAILURE(test_context_->RunBackTest());
-}
-
-TEST_F(AppListViewTestDesktop, BackTest) {
-  EXPECT_NO_FATAL_FAILURE(test_context_->RunBackTest());
-}
-
-// Tests that the correct views are displayed for showing search results.
-TEST_F(AppListViewTestAura, AppListOverlayTest) {
-  EXPECT_NO_FATAL_FAILURE(test_context_->RunAppListOverlayTest());
-}
-
-TEST_F(AppListViewTestDesktop, AppListOverlayTest) {
-  EXPECT_NO_FATAL_FAILURE(test_context_->RunAppListOverlayTest());
+  ASSERT_EQ(1, view_->GetAppsPaginationModel()->selected_page());
 }
 
 }  // namespace test

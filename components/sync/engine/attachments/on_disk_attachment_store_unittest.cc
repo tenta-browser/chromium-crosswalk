@@ -10,7 +10,6 @@
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -19,6 +18,8 @@
 #include "components/sync/engine_impl/attachments/proto/attachment_store.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/leveldatabase/env_chromium.h"
+#include "third_party/leveldatabase/leveldb_chrome.h"
 #include "third_party/leveldatabase/src/include/leveldb/db.h"
 #include "third_party/leveldatabase/src/include/leveldb/options.h"
 #include "third_party/leveldatabase/src/include/leveldb/slice.h"
@@ -103,13 +104,13 @@ class OnDiskAttachmentStoreSpecificTest : public testing::Test {
   }
 
   std::unique_ptr<leveldb::DB> OpenLevelDB() {
-    leveldb::DB* db;
-    leveldb::Options options;
+    std::unique_ptr<leveldb::DB> db;
+    leveldb_env::Options options;
     options.create_if_missing = true;
     leveldb::Status s =
-        leveldb::DB::Open(options, db_path_.AsUTF8Unsafe(), &db);
+        leveldb_env::OpenDB(options, db_path_.AsUTF8Unsafe(), &db);
     EXPECT_TRUE(s.ok());
-    return base::WrapUnique(db);
+    return db;
   }
 
   void UpdateRecord(const std::string& key, const std::string& content) {
@@ -213,10 +214,8 @@ TEST_F(OnDiskAttachmentStoreSpecificTest, CloseAndReopen) {
 
 // Ensure loading corrupt attachment store fails.
 TEST_F(OnDiskAttachmentStoreSpecificTest, FailToOpen) {
-  // To simulate corrupt database write empty CURRENT file.
-  std::string current_file_content = "";
-  base::WriteFile(db_path_.Append(FILE_PATH_LITERAL("CURRENT")),
-                  current_file_content.c_str(), current_file_content.size());
+  EXPECT_TRUE(base::CreateDirectory(db_path_));
+  EXPECT_TRUE(leveldb_chrome::CorruptClosedDBForTesting(db_path_));
 
   AttachmentStore::Result result = AttachmentStore::SUCCESS;
   store_ = AttachmentStore::CreateOnDiskStore(
@@ -395,10 +394,8 @@ TEST_F(OnDiskAttachmentStoreSpecificTest, MismatchedCrcInId) {
 // Ensure that after store initialization failure ReadWrite/Drop operations fail
 // with correct error.
 TEST_F(OnDiskAttachmentStoreSpecificTest, OpsAfterInitializationFailed) {
-  // To simulate corrupt database write empty CURRENT file.
-  std::string current_file_content = "";
-  base::WriteFile(db_path_.Append(FILE_PATH_LITERAL("CURRENT")),
-                  current_file_content.c_str(), current_file_content.size());
+  EXPECT_TRUE(base::CreateDirectory(db_path_));
+  EXPECT_TRUE(leveldb_chrome::CorruptClosedDBForTesting(db_path_));
 
   AttachmentStore::Result create_result = AttachmentStore::SUCCESS;
   store_ = AttachmentStore::CreateOnDiskStore(

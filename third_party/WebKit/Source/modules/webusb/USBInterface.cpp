@@ -37,13 +37,13 @@ USBInterface::USBInterface(const USBDevice* device,
     : device_(device),
       configuration_index_(configuration_index),
       interface_index_(interface_index) {
-  ASSERT(configuration_index_ < device_->Info().configurations.size());
-  ASSERT(
-      interface_index_ <
+  DCHECK_LT(configuration_index_, device_->Info().configurations.size());
+  DCHECK_LT(
+      interface_index_,
       device_->Info().configurations[configuration_index_]->interfaces.size());
 }
 
-const device::usb::blink::InterfaceInfo& USBInterface::Info() const {
+const device::mojom::blink::UsbInterfaceInfo& USBInterface::Info() const {
   return *device_->Info()
               .configurations[configuration_index_]
               ->interfaces[interface_index_];
@@ -67,8 +67,9 @@ bool USBInterface::claimed() const {
   return device_->IsInterfaceClaimed(configuration_index_, interface_index_);
 }
 
-DEFINE_TRACE(USBInterface) {
+void USBInterface::Trace(blink::Visitor* visitor) {
   visitor->Trace(device_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

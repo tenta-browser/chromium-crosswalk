@@ -13,11 +13,13 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
+#include "base/test/scoped_task_environment.h"
+#include "base/threading/thread_checker.h"
 #include "base/time/time.h"
-#include "device/geolocation/access_token_store.h"
 #include "device/geolocation/fake_location_provider.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -32,34 +34,35 @@ namespace {
 
 class GeolocationObserver {
  public:
-  virtual ~GeolocationObserver() {}
-  virtual void OnLocationUpdate(const Geoposition& position) = 0;
+  virtual ~GeolocationObserver() = default;
+  virtual void OnLocationUpdate(const mojom::Geoposition& position) = 0;
 };
 
 class MockGeolocationObserver : public GeolocationObserver {
  public:
-  MOCK_METHOD1(OnLocationUpdate, void(const Geoposition& position));
+  MOCK_METHOD1(OnLocationUpdate, void(const mojom::Geoposition& position));
 };
 
 class AsyncMockGeolocationObserver : public MockGeolocationObserver {
  public:
-  void OnLocationUpdate(const Geoposition& position) override {
+  void OnLocationUpdate(const mojom::Geoposition& position) override {
     MockGeolocationObserver::OnLocationUpdate(position);
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 };
 
 class MockGeolocationCallbackWrapper {
  public:
-  MOCK_METHOD1(Callback, void(const Geoposition& position));
+  MOCK_METHOD1(Callback, void(const mojom::Geoposition& position));
 };
 
-class GeopositionEqMatcher : public MatcherInterface<const Geoposition&> {
+class GeopositionEqMatcher
+    : public MatcherInterface<const mojom::Geoposition&> {
  public:
-  explicit GeopositionEqMatcher(const Geoposition& expected)
+  explicit GeopositionEqMatcher(const mojom::Geoposition& expected)
       : expected_(expected) {}
 
-  bool MatchAndExplain(const Geoposition& actual,
+  bool MatchAndExplain(const mojom::Geoposition& actual,
                        MatchResultListener* listener) const override {
     return actual.latitude == expected_.latitude &&
            actual.longitude == expected_.longitude &&
@@ -82,27 +85,31 @@ class GeopositionEqMatcher : public MatcherInterface<const Geoposition&> {
   }
 
  private:
-  Geoposition expected_;
+  mojom::Geoposition expected_;
 
   DISALLOW_COPY_AND_ASSIGN(GeopositionEqMatcher);
 };
 
-Matcher<const Geoposition&> GeopositionEq(const Geoposition& expected) {
+Matcher<const mojom::Geoposition&> GeopositionEq(
+    const mojom::Geoposition& expected) {
   return MakeMatcher(new GeopositionEqMatcher(expected));
 }
 
 void DummyFunction(const LocationProvider* provider,
-                   const Geoposition& position) {}
+                   const mojom::Geoposition& position) {}
 
 }  // namespace
 
 class GeolocationProviderTest : public testing::Test {
  protected:
-  GeolocationProviderTest() : arbitrator_(new FakeLocationProvider) {
+  GeolocationProviderTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI),
+        arbitrator_(new FakeLocationProvider) {
     provider()->SetArbitratorForTesting(base::WrapUnique(arbitrator_));
   }
 
-  ~GeolocationProviderTest() override {}
+  ~GeolocationProviderTest() override = default;
 
   GeolocationProviderImpl* provider() {
     return GeolocationProviderImpl::GetInstance();
@@ -112,7 +119,7 @@ class GeolocationProviderTest : public testing::Test {
 
   // Called on test thread.
   bool ProvidersStarted();
-  void SendMockLocation(const Geoposition& position);
+  void SendMockLocation(const mojom::Geoposition& position);
 
  private:
   // Called on provider thread.
@@ -123,7 +130,9 @@ class GeolocationProviderTest : public testing::Test {
   // test completes.
   base::ShadowingAtExitManager at_exit_;
 
-  base::MessageLoopForUI message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
+
+  base::ThreadChecker thread_checker_;
 
   // Owned by the GeolocationProviderImpl class.
   FakeLocationProvider* arbitrator_;
@@ -136,7 +145,7 @@ class GeolocationProviderTest : public testing::Test {
 
 bool GeolocationProviderTest::ProvidersStarted() {
   DCHECK(provider()->IsRunning());
-  DCHECK(base::MessageLoop::current() == &message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
 
   provider()->task_runner()->PostTaskAndReply(
       FROM_HERE, base::Bind(&GeolocationProviderTest::GetProvidersStarted,
@@ -151,9 +160,10 @@ void GeolocationProviderTest::GetProvidersStarted() {
   is_started_ = arbitrator()->state() != FakeLocationProvider::STOPPED;
 }
 
-void GeolocationProviderTest::SendMockLocation(const Geoposition& position) {
+void GeolocationProviderTest::SendMockLocation(
+    const mojom::Geoposition& position) {
   DCHECK(provider()->IsRunning());
-  DCHECK(base::MessageLoop::current() == &message_loop_);
+  DCHECK(thread_checker_.CalledOnValidThread());
   provider()->task_runner()->PostTask(
       FROM_HERE,
       base::Bind(&GeolocationProviderImpl::OnLocationUpdate,
@@ -184,7 +194,7 @@ TEST_F(GeolocationProviderTest, StartStop) {
 }
 
 TEST_F(GeolocationProviderTest, StalePositionNotSent) {
-  Geoposition first_position;
+  mojom::Geoposition first_position;
   first_position.latitude = 12;
   first_position.longitude = 34;
   first_position.accuracy = 56;
@@ -202,7 +212,7 @@ TEST_F(GeolocationProviderTest, StalePositionNotSent) {
 
   subscription.reset();
 
-  Geoposition second_position;
+  mojom::Geoposition second_position;
   second_position.latitude = 13;
   second_position.longitude = 34;
   second_position.accuracy = 56;
@@ -231,8 +241,8 @@ TEST_F(GeolocationProviderTest, StalePositionNotSent) {
 }
 
 TEST_F(GeolocationProviderTest, OverrideLocationForTesting) {
-  Geoposition position;
-  position.error_code = Geoposition::ERROR_CODE_POSITION_UNAVAILABLE;
+  mojom::Geoposition position;
+  position.error_code = mojom::Geoposition::ErrorCode::POSITION_UNAVAILABLE;
   provider()->OverrideLocationForTesting(position);
   // Adding an observer when the location is overridden should synchronously
   // update the observer with our overridden position.

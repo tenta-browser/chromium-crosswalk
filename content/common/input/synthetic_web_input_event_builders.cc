@@ -28,8 +28,8 @@ WebMouseEvent SyntheticWebMouseEventBuilder::Build(
 
 WebMouseEvent SyntheticWebMouseEventBuilder::Build(
     blink::WebInputEvent::Type type,
-    int window_x,
-    int window_y,
+    float window_x,
+    float window_y,
     int modifiers,
     blink::WebPointerProperties::PointerType pointer_type) {
   DCHECK(WebInputEvent::IsMouseEventType(type));
@@ -196,8 +196,8 @@ int SyntheticWebTouchEvent::PressPoint(float x, float y) {
     return -1;
   WebTouchPoint& point = touches[index];
   point.id = index;
-  point.position.x = point.screen_position.x = x;
-  point.position.y = point.screen_position.y = y;
+  point.SetPositionInWidget(x, y);
+  point.SetPositionInScreen(x, y);
   point.state = WebTouchPoint::kStatePressed;
   point.radius_x = point.radius_y = 1.f;
   point.rotation_angle = 1.f;
@@ -216,8 +216,8 @@ void SyntheticWebTouchEvent::MovePoint(int index, float x, float y) {
   // The caller can opt-out explicitly, if necessary.
   moved_beyond_slop_region = true;
   WebTouchPoint& point = touches[index];
-  point.position.x = point.screen_position.x = x;
-  point.position.y = point.screen_position.y = y;
+  point.SetPositionInWidget(x, y);
+  point.SetPositionInScreen(x, y);
   touches[index].state = WebTouchPoint::kStateMoved;
   WebTouchEventTraits::ResetType(WebInputEvent::kTouchMove, TimeStampSeconds(),
                                  this);

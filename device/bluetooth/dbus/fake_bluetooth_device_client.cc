@@ -104,29 +104,29 @@ BluetoothDeviceClient::ServiceRecordList CreateFakeServiceRecords() {
   BluetoothDeviceClient::ServiceRecordList records;
 
   std::unique_ptr<BluetoothServiceRecordBlueZ> record1 =
-      base::MakeUnique<BluetoothServiceRecordBlueZ>();
+      std::make_unique<BluetoothServiceRecordBlueZ>();
   // ID 0 = handle.
   record1->AddRecordEntry(
       0x0, BluetoothServiceAttributeValueBlueZ(
                BluetoothServiceAttributeValueBlueZ::UINT, 4,
-               base::MakeUnique<base::Value>(static_cast<int32_t>(0x1337))));
+               std::make_unique<base::Value>(static_cast<int32_t>(0x1337))));
   // ID 1 = service class id list.
   std::unique_ptr<BluetoothServiceAttributeValueBlueZ::Sequence> class_id_list =
-      base::MakeUnique<BluetoothServiceAttributeValueBlueZ::Sequence>();
+      std::make_unique<BluetoothServiceAttributeValueBlueZ::Sequence>();
   class_id_list->emplace_back(BluetoothServiceAttributeValueBlueZ::UUID, 4,
-                              base::MakeUnique<base::Value>("1802"));
+                              std::make_unique<base::Value>("1802"));
   record1->AddRecordEntry(
       0x1, BluetoothServiceAttributeValueBlueZ(std::move(class_id_list)));
   records.emplace_back(*record1);
 
   std::unique_ptr<BluetoothServiceRecordBlueZ> record2 =
-      base::MakeUnique<BluetoothServiceRecordBlueZ>();
+      std::make_unique<BluetoothServiceRecordBlueZ>();
   // ID 0 = handle.
   record2->AddRecordEntry(
       0x0,
       BluetoothServiceAttributeValueBlueZ(
           BluetoothServiceAttributeValueBlueZ::UINT, 4,
-          base::MakeUnique<base::Value>(static_cast<int32_t>(0xffffffff))));
+          std::make_unique<base::Value>(static_cast<int32_t>(0xffffffff))));
   records.emplace_back(*record2);
 
   return records;
@@ -272,7 +272,7 @@ FakeBluetoothDeviceClient::Properties::Properties(
           bluetooth_device::kBluetoothDeviceInterface,
           callback) {}
 
-FakeBluetoothDeviceClient::Properties::~Properties() {}
+FakeBluetoothDeviceClient::Properties::~Properties() = default;
 
 void FakeBluetoothDeviceClient::Properties::Get(
     dbus::PropertyBase* property,
@@ -297,16 +297,17 @@ void FakeBluetoothDeviceClient::Properties::Set(
   }
 }
 
-FakeBluetoothDeviceClient::SimulatedPairingOptions::SimulatedPairingOptions() {}
+FakeBluetoothDeviceClient::SimulatedPairingOptions::SimulatedPairingOptions() =
+    default;
 
-FakeBluetoothDeviceClient::SimulatedPairingOptions::~SimulatedPairingOptions() {
-}
-
-FakeBluetoothDeviceClient::IncomingDeviceProperties::
-    IncomingDeviceProperties() {}
+FakeBluetoothDeviceClient::SimulatedPairingOptions::~SimulatedPairingOptions() =
+    default;
 
 FakeBluetoothDeviceClient::IncomingDeviceProperties::
-    ~IncomingDeviceProperties() {}
+    IncomingDeviceProperties() = default;
+
+FakeBluetoothDeviceClient::IncomingDeviceProperties::
+    ~IncomingDeviceProperties() = default;
 
 FakeBluetoothDeviceClient::FakeBluetoothDeviceClient()
     : simulation_interval_ms_(kSimulationIntervalMs),
@@ -363,7 +364,7 @@ FakeBluetoothDeviceClient::FakeBluetoothDeviceClient()
   device_list_.push_back(dbus::ObjectPath(kPairedUnconnectableDevicePath));
 }
 
-FakeBluetoothDeviceClient::~FakeBluetoothDeviceClient() {}
+FakeBluetoothDeviceClient::~FakeBluetoothDeviceClient() = default;
 
 void FakeBluetoothDeviceClient::Init(dbus::Bus* bus) {}
 
@@ -519,10 +520,8 @@ void FakeBluetoothDeviceClient::ConnectProfile(
   }
 
   base::PostTaskWithTraits(
-      FROM_HERE, base::TaskTraits()
-                     .WithShutdownBehavior(
-                         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-                     .MayBlock(),
+      FROM_HERE,
+      {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::Bind(&SimulatedProfileSocket, fds[0]));
 
   base::ScopedFD fd(fds[1]);
@@ -597,6 +596,21 @@ void FakeBluetoothDeviceClient::GetConnInfo(
   callback.Run(connection_rssi_, transmit_power_, max_transmit_power_);
 }
 
+void FakeBluetoothDeviceClient::SetLEConnectionParameters(
+    const dbus::ObjectPath& object_path,
+    const ConnectionParameters& conn_params,
+    const base::Closure& callback,
+    const ErrorCallback& error_callback) {
+  Properties* properties = GetProperties(object_path);
+  if (!properties->type.is_valid() || properties->type.value() == kTypeBredr) {
+    error_callback.Run(bluetooth_device::kErrorFailed,
+                       "BR/EDR devices not supported");
+    return;
+  }
+
+  callback.Run();
+}
+
 void FakeBluetoothDeviceClient::GetServiceRecords(
     const dbus::ObjectPath& object_path,
     const ServiceRecordsCallback& callback,
@@ -658,8 +672,7 @@ void FakeBluetoothDeviceClient::SetSimulationIntervalMs(int interval_ms) {
 void FakeBluetoothDeviceClient::CreateDevice(
     const dbus::ObjectPath& adapter_path,
     const dbus::ObjectPath& device_path) {
-  if (std::find(device_list_.begin(), device_list_.end(), device_path) !=
-      device_list_.end())
+  if (base::ContainsValue(device_list_, device_path))
     return;
 
   std::unique_ptr<Properties> properties(
@@ -794,8 +807,7 @@ void FakeBluetoothDeviceClient::CreateDeviceWithProperties(
     const dbus::ObjectPath& adapter_path,
     const IncomingDeviceProperties& props) {
   dbus::ObjectPath device_path(props.device_path);
-  if (std::find(device_list_.begin(), device_list_.end(), device_path) !=
-      device_list_.end())
+  if (base::ContainsValue(device_list_, device_path))
     return;
 
   std::unique_ptr<Properties> properties(
@@ -1808,8 +1820,7 @@ void FakeBluetoothDeviceClient::CreateTestDevice(
     base::Base64Encode(base::RandBytesAsString(10), &id);
     base::RemoveChars(id, "+/=", &id);
     device_path = dbus::ObjectPath(adapter_path.value() + "/dev" + id);
-  } while (std::find(device_list_.begin(), device_list_.end(), device_path) !=
-           device_list_.end());
+  } while (base::ContainsValue(device_list_, device_path));
 
   std::unique_ptr<Properties> properties(
       new Properties(base::Bind(&FakeBluetoothDeviceClient::OnPropertyChanged,

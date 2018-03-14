@@ -6,14 +6,14 @@
 #define NFC_h
 
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/modules/v8/StringOrArrayBufferOrNFCMessage.h"
+#include "bindings/modules/v8/string_or_array_buffer_or_nfc_message.h"
 #include "core/dom/ContextLifecycleObserver.h"
 #include "core/page/PageVisibilityObserver.h"
-#include "device/nfc/nfc.mojom-blink.h"
 #include "modules/nfc/MessageCallback.h"
 #include "mojo/public/cpp/bindings/binding.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/HashMap.h"
+#include "services/device/public/interfaces/nfc.mojom-blink.h"
 
 namespace blink {
 
@@ -22,11 +22,10 @@ class NFCPushOptions;
 using NFCPushMessage = StringOrArrayBufferOrNFCMessage;
 class NFCWatchOptions;
 
-class NFC final : public GarbageCollectedFinalized<NFC>,
-                  public ScriptWrappable,
+class NFC final : public ScriptWrappable,
                   public PageVisibilityObserver,
                   public ContextLifecycleObserver,
-                  public device::nfc::mojom::blink::NFCClient {
+                  public device::mojom::blink::NFCClient {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(NFC);
   USING_PRE_FINALIZER(NFC, Dispose);
@@ -62,29 +61,33 @@ class NFC final : public GarbageCollectedFinalized<NFC>,
   void PageVisibilityChanged() override;
 
   // Interface required by garbage collection.
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
+  // Returns boolean indicating whether NFC is supported in this context. If
+  // not, |error_message| gives a message indicating why not.
+  bool IsSupportedInContext(ExecutionContext*, String& error_message);
+
   // Returns promise with DOMException if feature is not supported
   // or when context is not secure. Otherwise, returns empty promise.
   ScriptPromise RejectIfNotSupported(ScriptState*);
 
   void OnRequestCompleted(ScriptPromiseResolver*,
-                          device::nfc::mojom::blink::NFCErrorPtr);
+                          device::mojom::blink::NFCErrorPtr);
   void OnConnectionError();
   void OnWatchRegistered(MessageCallback*,
                          ScriptPromiseResolver*,
                          uint32_t id,
-                         device::nfc::mojom::blink::NFCErrorPtr);
+                         device::mojom::blink::NFCErrorPtr);
 
-  // device::nfc::mojom::blink::NFCClient implementation.
-  void OnWatch(const WTF::Vector<uint32_t>& ids,
-               device::nfc::mojom::blink::NFCMessagePtr) override;
+  // device::mojom::blink::NFCClient implementation.
+  void OnWatch(const Vector<uint32_t>& ids,
+               device::mojom::blink::NFCMessagePtr) override;
 
  private:
   explicit NFC(LocalFrame*);
-  device::nfc::mojom::blink::NFCPtr nfc_;
-  mojo::Binding<device::nfc::mojom::blink::NFCClient> client_;
+  device::mojom::blink::NFCPtr nfc_;
+  mojo::Binding<device::mojom::blink::NFCClient> client_binding_;
   HeapHashSet<Member<ScriptPromiseResolver>> requests_;
   using WatchCallbacksMap = HeapHashMap<uint32_t, Member<MessageCallback>>;
   WatchCallbacksMap callbacks_;

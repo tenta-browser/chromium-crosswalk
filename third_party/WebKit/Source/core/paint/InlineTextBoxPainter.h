@@ -5,6 +5,7 @@
 #ifndef InlineTextBoxPainter_h
 #define InlineTextBoxPainter_h
 
+#include "core/editing/markers/DocumentMarker.h"
 #include "core/style/ComputedStyleConstants.h"
 #include "platform/geometry/LayoutRect.h"
 #include "platform/wtf/Allocator.h"
@@ -13,18 +14,16 @@ namespace blink {
 
 struct PaintInfo;
 
-class AppliedTextDecoration;
 class Color;
-class CompositionUnderline;
 class ComputedStyle;
-class DocumentMarker;
 class Font;
 class GraphicsContext;
 class InlineTextBox;
 class LayoutObject;
 class LayoutPoint;
 class LayoutTextCombine;
-class TextPainter;
+class StyleableMarker;
+class TextMatchMarker;
 
 enum class DocumentMarkerPaintPhase { kForeground, kBackground };
 
@@ -36,7 +35,15 @@ class InlineTextBoxPainter {
       : inline_text_box_(inline_text_box) {}
 
   void Paint(const PaintInfo&, const LayoutPoint&);
-  void PaintDocumentMarkers(const PaintInfo&,
+
+  // We don't paint composition or spelling markers that overlap a suggestion
+  // marker (to match the native Android behavior). This method lets us throw
+  // out the overlapping composition and spelling markers in O(N log N) time
+  // where N is the total number of DocumentMarkers in this node.
+  DocumentMarkerVector ComputeMarkersToPaint() const;
+
+  void PaintDocumentMarkers(const DocumentMarkerVector& markers_to_paint,
+                            const PaintInfo&,
                             const LayoutPoint& box_origin,
                             const ComputedStyle&,
                             const Font&,
@@ -49,12 +56,12 @@ class InlineTextBoxPainter {
                            bool grammar);
   void PaintTextMatchMarkerForeground(const PaintInfo&,
                                       const LayoutPoint& box_origin,
-                                      const DocumentMarker&,
+                                      const TextMatchMarker&,
                                       const ComputedStyle&,
                                       const Font&);
   void PaintTextMatchMarkerBackground(const PaintInfo&,
                                       const LayoutPoint& box_origin,
-                                      const DocumentMarker&,
+                                      const TextMatchMarker&,
                                       const ComputedStyle&,
                                       const Font&);
 
@@ -63,18 +70,13 @@ class InlineTextBoxPainter {
  private:
   enum class PaintOptions { kNormal, kCombinedText };
 
-  void PaintCompositionBackgrounds(GraphicsContext&,
-                                   const LayoutPoint& box_origin,
-                                   const ComputedStyle&,
-                                   const Font&,
-                                   bool use_custom_underlines);
-  void PaintSingleCompositionBackgroundRun(GraphicsContext&,
-                                           const LayoutPoint& box_origin,
-                                           const ComputedStyle&,
-                                           const Font&,
-                                           Color background_color,
-                                           int start_pos,
-                                           int end_pos);
+  void PaintSingleMarkerBackgroundRun(GraphicsContext&,
+                                      const LayoutPoint& box_origin,
+                                      const ComputedStyle&,
+                                      const Font&,
+                                      Color background_color,
+                                      int start_pos,
+                                      int end_pos);
   template <PaintOptions>
   void PaintSelection(GraphicsContext&,
                       const LayoutRect& box_rect,
@@ -82,15 +84,21 @@ class InlineTextBoxPainter {
                       const Font&,
                       Color text_color,
                       LayoutTextCombine* = nullptr);
-  void PaintDecorations(TextPainter&,
-                        const PaintInfo&,
-                        const LayoutPoint& box_origin,
-                        const Vector<AppliedTextDecoration>&);
-  void PaintCompositionUnderline(GraphicsContext&,
-                                 const LayoutPoint& box_origin,
-                                 const CompositionUnderline&);
-  unsigned UnderlinePaintStart(const CompositionUnderline&);
-  unsigned UnderlinePaintEnd(const CompositionUnderline&);
+
+  void PaintStyleableMarkerUnderline(GraphicsContext&,
+                                     const LayoutPoint& box_origin,
+                                     const StyleableMarker&,
+                                     const ComputedStyle&,
+                                     const Font&);
+  struct PaintOffsets {
+    unsigned start;
+    unsigned end;
+  };
+  PaintOffsets ApplyTruncationToPaintOffsets(const PaintOffsets&);
+  // For markers that shouldn't draw over a truncation ellipsis (i.e., not
+  // text match markers, which do draw over said ellipsis)
+  PaintOffsets MarkerPaintStartAndEnd(const DocumentMarker&);
+
   bool ShouldPaintTextBox(const PaintInfo&);
   void ExpandToIncludeNewlineForSelection(LayoutRect&);
   LayoutObject& InlineLayoutObject() const;

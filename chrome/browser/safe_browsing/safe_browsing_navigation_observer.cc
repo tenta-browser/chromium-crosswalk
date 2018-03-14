@@ -7,14 +7,16 @@
 #include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/safe_browsing_navigation_observer_manager.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
+#include "chrome/browser/ui/page_info/page_info_ui.h"
+#include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/resource_request_details.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/resource_type.h"
 
@@ -76,13 +78,12 @@ void SafeBrowsingNavigationObserver::MaybeCreateForWebContents(
     return;
 
   if (safe_browsing::SafeBrowsingNavigationObserverManager::IsEnabledAndReady(
-        Profile::FromBrowserContext(web_contents->GetBrowserContext()))) {
+          Profile::FromBrowserContext(web_contents->GetBrowserContext()))) {
     web_contents->SetUserData(
         kWebContentsUserDataKey,
-        new SafeBrowsingNavigationObserver(
-            web_contents,
-            g_browser_process->safe_browsing_service()
-                ->navigation_observer_manager()));
+        base::MakeUnique<SafeBrowsingNavigationObserver>(
+            web_contents, g_browser_process->safe_browsing_service()
+                              ->navigation_observer_manager()));
   }
 }
 
@@ -99,7 +100,11 @@ SafeBrowsingNavigationObserver::SafeBrowsingNavigationObserver(
     : content::WebContentsObserver(contents),
       manager_(manager),
       has_user_gesture_(false),
-      last_user_gesture_timestamp_(base::Time()) {}
+      last_user_gesture_timestamp_(base::Time()),
+      content_settings_observer_(this) {
+  content_settings_observer_.Add(HostContentSettingsMapFactory::GetForProfile(
+      Profile::FromBrowserContext(web_contents()->GetBrowserContext())));
+}
 
 SafeBrowsingNavigationObserver::~SafeBrowsingNavigationObserver() {}
 
@@ -144,20 +149,21 @@ void SafeBrowsingNavigationObserver::DidStartNavigation(
   // incorrect when another frame is targeting this frame. Need to refine this
   // logic after the true initiator details are added to NavigationHandle
   // (https://crbug.com/651895).
+  int current_process_id =
+      navigation_handle->GetStartingSiteInstance()->GetProcess()->GetID();
   content::RenderFrameHost* current_frame_host =
       navigation_handle->GetWebContents()->FindFrameByFrameTreeNodeId(
-          nav_event->frame_id);
+          nav_event->frame_id, current_process_id);
   // For browser initiated navigation (e.g. from address bar or bookmark), we
   // don't fill the source_url to prevent attributing navigation to the last
   // committed navigation.
   if (navigation_handle->IsRendererInitiated() && current_frame_host &&
       current_frame_host->GetLastCommittedURL().is_valid()) {
-    nav_event->source_url =
-        SafeBrowsingNavigationObserverManager::ClearEmptyRef(
-            current_frame_host->GetLastCommittedURL());
+    nav_event->source_url = SafeBrowsingNavigationObserverManager::ClearURLRef(
+        current_frame_host->GetLastCommittedURL());
   }
   nav_event->original_request_url =
-      SafeBrowsingNavigationObserverManager::ClearEmptyRef(
+      SafeBrowsingNavigationObserverManager::ClearURLRef(
           navigation_handle->GetURL());
 
   nav_event->source_tab_id =
@@ -167,7 +173,7 @@ void SafeBrowsingNavigationObserver::DidStartNavigation(
     nav_event->source_main_frame_url = nav_event->source_url;
   } else {
     nav_event->source_main_frame_url =
-        SafeBrowsingNavigationObserverManager::ClearEmptyRef(
+        SafeBrowsingNavigationObserverManager::ClearURLRef(
             navigation_handle->GetWebContents()->GetLastCommittedURL());
   }
   navigation_handle_map_[navigation_handle] = std::move(nav_event);
@@ -182,13 +188,20 @@ void SafeBrowsingNavigationObserver::DidRedirectNavigation(
   }
   NavigationEvent* nav_event = navigation_handle_map_[navigation_handle].get();
   nav_event->server_redirect_urls.push_back(
-      SafeBrowsingNavigationObserverManager::ClearEmptyRef(
+      SafeBrowsingNavigationObserverManager::ClearURLRef(
           navigation_handle->GetURL()));
   nav_event->last_updated = base::Time::Now();
 }
 
 void SafeBrowsingNavigationObserver::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
+  if ((navigation_handle->HasCommitted() || navigation_handle->IsDownload()) &&
+      !navigation_handle->GetSocketAddress().IsEmpty()) {
+    manager_->RecordHostToIpMapping(
+        navigation_handle->GetURL().host(),
+        navigation_handle->GetSocketAddress().host());
+  }
+
   if (navigation_handle_map_.find(navigation_handle) ==
       navigation_handle_map_.end()) {
     return;
@@ -209,21 +222,6 @@ void SafeBrowsingNavigationObserver::DidFinishNavigation(
   manager_->RecordNavigationEvent(
       std::move(navigation_handle_map_[navigation_handle]));
   navigation_handle_map_.erase(navigation_handle);
-}
-
-void SafeBrowsingNavigationObserver::DidGetResourceResponseStart(
-    const content::ResourceRequestDetails& details) {
-  // We only care about main frame and sub frame.
-  if (details.resource_type != content::RESOURCE_TYPE_MAIN_FRAME &&
-      details.resource_type != content::RESOURCE_TYPE_SUB_FRAME) {
-    return;
-  }
-  if (!details.url.is_valid() || details.socket_address.IsEmpty())
-    return;
-  if (!details.url.host().empty()) {
-    manager_->RecordHostToIpMapping(details.url.host(),
-                                    details.socket_address.host());
-  }
 }
 
 void SafeBrowsingNavigationObserver::DidGetUserInteraction(
@@ -253,6 +251,20 @@ void SafeBrowsingNavigationObserver::DidOpenRequestedURL(
       web_contents(), source_render_frame_host->GetProcess()->GetID(),
       source_render_frame_host->GetRoutingID(), url, new_contents,
       renderer_initiated);
+}
+
+void SafeBrowsingNavigationObserver::OnContentSettingChanged(
+    const ContentSettingsPattern& primary_pattern,
+    const ContentSettingsPattern& secondary_pattern,
+    ContentSettingsType content_type,
+    std::string resource_identifier) {
+  // For all the content settings that can be changed via page info UI, we
+  // assume there is a user gesture associated with the content setting change.
+  if (web_contents() &&
+      primary_pattern.Matches(web_contents()->GetLastCommittedURL()) &&
+      PageInfoUI::ContentSettingsTypeInPageInfo(content_type)) {
+    DidGetUserInteraction(blink::WebInputEvent::kMouseDown);
+  }
 }
 
 }  // namespace safe_browsing

@@ -20,7 +20,7 @@
 #ifndef DOMParser_h
 #define DOMParser_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 
@@ -28,8 +28,7 @@ namespace blink {
 
 class Document;
 
-class DOMParser final : public GarbageCollected<DOMParser>,
-                        public ScriptWrappable {
+class DOMParser final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -39,7 +38,7 @@ class DOMParser final : public GarbageCollected<DOMParser>,
 
   Document* parseFromString(const String&, const String& type);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   explicit DOMParser(Document&);

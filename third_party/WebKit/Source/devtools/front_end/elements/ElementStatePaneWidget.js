@@ -6,9 +6,10 @@
  */
 Elements.ElementStatePaneWidget = class extends UI.Widget {
   constructor() {
-    super();
-    this.element.className = 'styles-element-state-pane';
-    this.element.createChild('div').createTextChild(Common.UIString('Force element state'));
+    super(true);
+    this.registerRequiredCSS('elements/elementStatePaneWidget.css');
+    this.contentElement.className = 'styles-element-state-pane';
+    this.contentElement.createChild('div').createTextChild(Common.UIString('Force element state'));
     var table = createElementWithClass('table', 'source-code');
 
     var inputs = [];
@@ -47,7 +48,10 @@ Elements.ElementStatePaneWidget = class extends UI.Widget {
     tr.appendChild(createCheckbox.call(null, 'focus'));
     tr.appendChild(createCheckbox.call(null, 'visited'));
 
-    this.element.appendChild(table);
+    tr = table.createChild('tr');
+    tr.appendChild(createCheckbox.call(null, 'focus-within'));
+
+    this.contentElement.appendChild(table);
     UI.context.addFlavorChangeListener(SDK.DOMNode, this._update, this);
   }
 

@@ -14,10 +14,12 @@
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+#include "chromeos/audio/cras_audio_handler.h"
 #include "media/audio/audio_device_description.h"
 #include "media/audio/cras/audio_manager_cras.h"
 #include "media/audio/fake_audio_log_factory.h"
 #include "media/audio/mock_audio_source_callback.h"
+#include "media/audio/test_audio_thread.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -31,7 +33,7 @@ using testing::_;
 using testing::DoAll;
 using testing::InvokeWithoutArgs;
 using testing::Return;
-using testing::SetArgumentPointee;
+using testing::SetArgPointee;
 using testing::StrictMock;
 
 namespace media {
@@ -39,8 +41,7 @@ namespace media {
 class MockAudioManagerCras : public AudioManagerCras {
  public:
   MockAudioManagerCras()
-      : AudioManagerCras(base::ThreadTaskRunnerHandle::Get(),
-                         base::ThreadTaskRunnerHandle::Get(),
+      : AudioManagerCras(base::MakeUnique<TestAudioThread>(),
                          &fake_audio_log_factory_) {}
 
   // We need to override this function in order to skip the checking the number
@@ -59,11 +60,15 @@ class MockAudioManagerCras : public AudioManagerCras {
 class CrasUnifiedStreamTest : public testing::Test {
  protected:
   CrasUnifiedStreamTest() {
+    chromeos::CrasAudioHandler::InitializeForTesting();
     mock_manager_.reset(new StrictMock<MockAudioManagerCras>());
     base::RunLoop().RunUntilIdle();
   }
 
-  ~CrasUnifiedStreamTest() override {}
+  ~CrasUnifiedStreamTest() override {
+    chromeos::CrasAudioHandler::Shutdown();
+    mock_manager_->Shutdown();
+  }
 
   CrasUnifiedStream* CreateStream(ChannelLayout layout) {
     return CreateStream(layout, kTestFramesPerPacket);
@@ -88,8 +93,7 @@ class CrasUnifiedStreamTest : public testing::Test {
   static const uint32_t kTestFramesPerPacket;
 
   base::TestMessageLoop message_loop_;
-  std::unique_ptr<StrictMock<MockAudioManagerCras>, AudioManagerDeleter>
-      mock_manager_;
+  std::unique_ptr<StrictMock<MockAudioManagerCras>> mock_manager_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(CrasUnifiedStreamTest);

@@ -5,7 +5,6 @@
 #import "ios/chrome/browser/ui/commands/open_url_command.h"
 
 #include "base/logging.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
 #include "ios/web/public/referrer.h"
 #include "url/gurl.h"
 
@@ -33,7 +32,7 @@
                 inIncognito:(BOOL)inIncognito
                inBackground:(BOOL)inBackground
                    appendTo:(OpenPosition)appendTo {
-  if ((self = [super initWithTag:IDC_OPEN_URL])) {
+  if ((self = [super initWithTag:0])) {
     _url = url;
     _referrer = referrer;
     _inIncognito = inIncognito;

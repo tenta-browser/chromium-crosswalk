@@ -10,14 +10,15 @@
 #define COMPONENTS_OMNIBOX_BROWSER_ZERO_SUGGEST_PROVIDER_H_
 
 #include <memory>
+#include <string>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "components/history/core/browser/history_types.h"
-#include "components/metrics/proto/omnibox_event.pb.h"
 #include "components/omnibox/browser/base_search_provider.h"
 #include "components/omnibox/browser/search_provider.h"
 #include "net/url_request/url_fetcher_delegate.h"
+#include "third_party/metrics_proto/omnibox_event.pb.h"
 
 class AutocompleteProviderListener;
 class HistoryURLProvider;
@@ -98,9 +99,6 @@ class ZeroSuggestProvider : public BaseSearchProvider,
   AutocompleteMatch NavigationToMatch(
       const SearchSuggestionParser::NavigationResult& navigation);
 
-  // Fetches zero-suggest suggestions by sending a request using |suggest_url|.
-  void Run(const GURL& suggest_url);
-
   // Converts the parsed results to a set of AutocompleteMatches and adds them
   // to |matches_|.  Also update the histograms for how many results were
   // received.
@@ -112,21 +110,21 @@ class ZeroSuggestProvider : public BaseSearchProvider,
   AutocompleteMatch MatchForCurrentURL();
 
   // When the user is in the Most Visited field trial, we ask the TopSites
-  // service for the most visited URLs during Run().  It calls back to this
-  // function to return those |urls|.
+  // service for the most visited URLs. It then calls back to this function to
+  // return those |urls|.
   void OnMostVisitedUrlsAvailable(const history::MostVisitedURLList& urls);
 
-  // Whether we can show zero suggest without sending |current_page_url| to
-  // |suggest_url| search provider. Also checks that other conditions for
-  // non-contextual zero suggest are satisfied.
-  bool ShouldShowNonContextualZeroSuggest(const GURL& suggest_url,
-                                          const GURL& current_page_url) const;
+  // When the user is in the contextual omnibox suggestions field trial, we ask
+  // the ContextualSuggestionsService for a fetcher to retrieve recommendations.
+  // When the fetcher is ready, the contextual suggestion service then calls
+  // back to this function with the |fetcher| to use for the request.
+  void OnContextualSuggestionsFetcherAvailable(
+      std::unique_ptr<net::URLFetcher> fetcher);
 
-  // Returns a URL string that should be used to to request contextual
-  // suggestions from the default provider.  Does not take into account whether
-  // sending this request is prohibited (e.g., in an incognito window).  Returns
-  // an empty string in case of an error.
-  std::string GetContextualSuggestionsUrl() const;
+  // Whether we can show zero suggest suggestions that are not based on
+  // |current_page_url|. Also checks that other conditions for non-contextual
+  // zero suggest are satisfied.
+  bool ShouldShowNonContextualZeroSuggest(const GURL& current_page_url) const;
 
   // Checks whether we have a set of zero suggest results cached, and if so
   // populates |matches_| with cached results.
@@ -139,6 +137,9 @@ class ZeroSuggestProvider : public BaseSearchProvider,
 
   // The URL for which a suggestion fetch is pending.
   std::string current_query_;
+
+  // The title of the page for which a suggestion fetch is pending.
+  base::string16 current_title_;
 
   // The type of page the user is viewing (a search results page doing search
   // term replacement, an arbitrary URL, etc.).

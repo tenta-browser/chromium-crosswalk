@@ -46,13 +46,13 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_browser_thread.h"
+#include "content/public/test/test_utils.h"
 #include "content/public/test/web_contents_tester.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/login/users/scoped_test_user_manager.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
 #endif
@@ -202,8 +202,7 @@ class MockProfileSharedRenderProcessHostFactory
       content::BrowserContext* browser_context);
 
   content::RenderProcessHost* CreateRenderProcessHost(
-      content::BrowserContext* browser_context,
-      content::SiteInstance* site_instance) const override;
+      content::BrowserContext* browser_context) const override;
 
  private:
   mutable std::map<content::BrowserContext*,
@@ -215,8 +214,7 @@ class MockProfileSharedRenderProcessHostFactory
 
 class ProfileState {
  public:
-  explicit ProfileState(
-      MockProfileSharedRenderProcessHostFactory* rph_factory);
+  explicit ProfileState(MockProfileSharedRenderProcessHostFactory* rph_factory);
   ~ProfileState();
 
   MediaGalleriesPreferences* GetMediaGalleriesPrefs();
@@ -379,7 +377,6 @@ class MediaFileSystemRegistryTest : public ChromeRenderViewHostTestHarness {
 #if defined(OS_CHROMEOS)
   chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
   chromeos::ScopedTestCrosSettings test_cros_settings_;
-  std::unique_ptr<chromeos::ScopedTestUserManager> test_user_manager_;
 #endif
 
   MockProfileSharedRenderProcessHostFactory rph_factory_;
@@ -419,8 +416,7 @@ MockProfileSharedRenderProcessHostFactory::ReleaseRPH(
 
 content::RenderProcessHost*
 MockProfileSharedRenderProcessHostFactory::CreateRenderProcessHost(
-    content::BrowserContext* browser_context,
-    content::SiteInstance* site_instance) const {
+    content::BrowserContext* browser_context) const {
   auto existing = rph_map_.find(browser_context);
   if (existing != rph_map_.end())
     return existing->second.get();
@@ -435,8 +431,7 @@ MockProfileSharedRenderProcessHostFactory::CreateRenderProcessHost(
 
 ProfileState::ProfileState(
     MockProfileSharedRenderProcessHostFactory* rph_factory)
-    : num_comparisons_(0),
-      profile_(new TestingProfile()) {
+    : num_comparisons_(0), profile_(new TestingProfile()) {
   extensions::TestExtensionSystem* extension_system(
       static_cast<extensions::TestExtensionSystem*>(
           extensions::ExtensionSystem::Get(profile_.get())));
@@ -476,7 +471,7 @@ ProfileState::~ProfileState() {
   shared_web_contents2_.reset();
   profile_.reset();
 
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 }
 
 MediaGalleriesPreferences* ProfileState::GetMediaGalleriesPrefs() {
@@ -504,7 +499,7 @@ void ProfileState::CheckGalleries(
                  base::StringPrintf("%s (no permission)", test.c_str()),
                  base::ConstRef(empty_names),
                  base::ConstRef(empty_expectation)));
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
   EXPECT_EQ(1, GetAndClearComparisonCount());
 
   // Read permission only.
@@ -514,7 +509,7 @@ void ProfileState::CheckGalleries(
                  base::StringPrintf("%s (regular permission)", test.c_str()),
                  base::ConstRef(compare_names_read_),
                  base::ConstRef(regular_extension_galleries)));
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
   EXPECT_EQ(1, GetAndClearComparisonCount());
 
   // All galleries permission.
@@ -524,7 +519,7 @@ void ProfileState::CheckGalleries(
                  base::StringPrintf("%s (all permission)", test.c_str()),
                  base::ConstRef(compare_names_all_),
                  base::ConstRef(all_extension_galleries)));
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
   EXPECT_EQ(1, GetAndClearComparisonCount());
 }
 
@@ -535,7 +530,7 @@ FSInfoMap ProfileState::GetGalleriesInfo(extensions::Extension* extension) {
   registry->GetMediaFileSystemsForExtension(
       single_web_contents_.get(), extension,
       base::Bind(&GetGalleryInfoCallback, base::Unretained(&results)));
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
   return results;
 }
 
@@ -651,14 +646,14 @@ std::string MediaFileSystemRegistryTest::AttachDevice(
   DCHECK(StorageInfo::IsRemovableDevice(device_id));
   base::string16 label = location.BaseName().LossyDisplayName();
   ProcessAttach(device_id, label, location.value());
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
   return device_id;
 }
 
 void MediaFileSystemRegistryTest::DetachDevice(const std::string& device_id) {
   DCHECK(StorageInfo::IsRemovableDevice(device_id));
   ProcessDetach(device_id);
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 }
 
 void MediaFileSystemRegistryTest::SetGalleryPermission(
@@ -777,10 +772,6 @@ void MediaFileSystemRegistryTest::SetUp() {
   test_file_system_context_ = new TestMediaFileSystemContext(
       g_browser_process->media_file_system_registry());
 
-#if defined(OS_CHROMEOS)
-  test_user_manager_.reset(new chromeos::ScopedTestUserManager());
-#endif
-
   ASSERT_TRUE(galleries_dir_.CreateUniqueTempDir());
   empty_dir_ = galleries_dir_.GetPath().AppendASCII("empty");
   ASSERT_TRUE(base::CreateDirectory(empty_dir_));
@@ -795,10 +786,6 @@ void MediaFileSystemRegistryTest::TearDown() {
   MediaFileSystemRegistry* registry =
       g_browser_process->media_file_system_registry();
   EXPECT_EQ(0U, GetExtensionGalleriesHostCount(registry));
-
-#if defined(OS_CHROMEOS)
-  test_user_manager_.reset();
-#endif
 
   // The TestingProfile must be destroyed before the TestingBrowserProcess
   // because it uses it in its destructor.
@@ -909,7 +896,7 @@ TEST_F(MediaFileSystemRegistryTest,
       break;
     }
   }
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
   EXPECT_TRUE(forget_gallery);
   EXPECT_EQ(gallery_count, GetAutoAddedGalleries(profile_state).size());
 

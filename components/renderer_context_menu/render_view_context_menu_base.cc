@@ -333,10 +333,7 @@ void RenderViewContextMenuBase::MenuWillShow(ui::SimpleMenuModel* source) {
   if (source != &menu_model_)
     return;
 
-  content::RenderWidgetHostView* view =
-      source_web_contents_->GetRenderWidgetHostView();
-  if (view)
-    view->SetShowingContextMenu(true);
+  source_web_contents_->SetShowingContextMenu(true);
 
   NotifyMenuShown();
 }
@@ -346,10 +343,7 @@ void RenderViewContextMenuBase::MenuClosed(ui::SimpleMenuModel* source) {
   if (source != &menu_model_)
     return;
 
-  content::RenderWidgetHostView* view =
-      source_web_contents_->GetRenderWidgetHostView();
-  if (view)
-    view->SetShowingContextMenu(false);
+  source_web_contents_->SetShowingContextMenu(false);
   source_web_contents_->NotifyContextMenuClosed(params_.custom_context);
 }
 
@@ -363,8 +357,9 @@ void RenderViewContextMenuBase::OpenURL(const GURL& url,
                                         const GURL& referring_url,
                                         WindowOpenDisposition disposition,
                                         ui::PageTransition transition) {
-  OpenURLWithExtraHeaders(url, referring_url, disposition, transition, "",
-                          false);
+  OpenURLWithExtraHeaders(url, referring_url, disposition, transition,
+                          "" /* extra_headers */,
+                          false /* started_from_context_menu */);
 }
 
 void RenderViewContextMenuBase::OpenURLWithExtraHeaders(

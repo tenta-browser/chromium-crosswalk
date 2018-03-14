@@ -21,10 +21,13 @@
 #include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/notification_promo.h"
 #include "ios/chrome/browser/pref_names.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ui/base/l10n/l10n_util.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -35,10 +38,8 @@ struct PromoStringToIdsMapEntry {
 
 // A mapping from a string to a l10n message id.
 const PromoStringToIdsMapEntry kPromoStringToIdsMap[] = {
-    {"IDS_IOS_APP_RATING_PROMO_STRING", IDS_IOS_APP_RATING_PROMO_STRING},
-    {"IDS_IOS_MOVE_TO_DOCK_FASTER_ACCESS", IDS_IOS_MOVE_TO_DOCK_FASTER_ACCESS},
-    {"IDS_IOS_MOVE_TO_DOCK_LOVE_CHROME", IDS_IOS_MOVE_TO_DOCK_LOVE_CHROME},
-    {"IDS_IOS_MOVE_TO_DOCK_TIP", IDS_IOS_MOVE_TO_DOCK_TIP},
+    {"appRatingPromo", IDS_IOS_APP_RATING_PROMO_STRING},
+    {"moveToDockTip", IDS_IOS_MOVE_TO_DOCK_TIP},
 };
 
 // Returns a localized version of |promo_text| if it has an entry in the
@@ -69,23 +70,11 @@ bool NotificationPromoWhatsNew::Init() {
   if (forceEnabled != experimental_flags::WHATS_NEW_DEFAULT) {
     switch (forceEnabled) {
       case experimental_flags::WHATS_NEW_APP_RATING:
-        InjectFakePromo("1", "IDS_IOS_APP_RATING_PROMO_STRING",
-                        "chrome_command", "ratethisapp", "", "RateThisAppPromo",
-                        "logo");
-        break;
-      case experimental_flags::WHATS_NEW_MOVE_TO_DOCK_FASTER:
-        InjectFakePromo("2", "IDS_IOS_MOVE_TO_DOCK_FASTER_ACCESS", "url", "",
-                        "https://support.google.com/chrome/?p=iphone_dock",
-                        "MoveToDockFasterAccessPromo",
-                        "logoWithRoundedRectangle");
-        break;
-      case experimental_flags::WHATS_NEW_MOVE_TO_DOCK_LOVE:
-        InjectFakePromo("3", "IDS_IOS_MOVE_TO_DOCK_LOVE_CHROME", "url", "",
-                        "https://support.google.com/chrome/?p=iphone_dock",
-                        "MoveToDockLovePromo", "logoWithRoundedRectangle");
+        InjectFakePromo("1", "appRatingPromo", "chrome_command", "ratethisapp",
+                        "", "RateThisAppPromo", "logo");
         break;
       case experimental_flags::WHATS_NEW_MOVE_TO_DOCK_TIP:
-        InjectFakePromo("4", "IDS_IOS_MOVE_TO_DOCK_TIP", "url", "",
+        InjectFakePromo("2", "moveToDockTip", "url", "",
                         "https://support.google.com/chrome/?p=iphone_dock",
                         "MoveToDockTipPromo", "logoWithRoundedRectangle");
         break;
@@ -170,7 +159,7 @@ bool NotificationPromoWhatsNew::IsURLPromo() const {
   return promo_type_ == "url";
 }
 
-bool NotificationPromoWhatsNew::IsChromeCommand() const {
+bool NotificationPromoWhatsNew::IsChromeCommandPromo() const {
   return promo_type_ == "chrome_command";
 }
 
@@ -203,14 +192,9 @@ bool NotificationPromoWhatsNew::InitFromNotificationPromo() {
     if (url_.is_empty() || !url_.is_valid()) {
       return valid_;
     }
-  } else if (IsChromeCommand()) {
-    std::string command;
-    notification_promo_.promo_payload()->GetString("command", &command);
-    if (command == "bookmark") {
-      command_id_ = IDC_SHOW_BOOKMARK_MANAGER;
-    } else if (command == "ratethisapp") {
-      command_id_ = IDC_RATE_THIS_APP;
-    } else {
+  } else if (IsChromeCommandPromo()) {
+    notification_promo_.promo_payload()->GetString("command", &command_);
+    if ((command_ != "bookmark") && (command_ != "ratethisapp")) {
       return valid_;
     }
   } else {  // If |promo_type_| is not set to URL or Command, return early.

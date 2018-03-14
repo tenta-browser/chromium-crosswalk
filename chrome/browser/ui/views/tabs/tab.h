@@ -12,11 +12,12 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "cc/paint/paint_record.h"
 #include "chrome/browser/ui/views/tabs/tab_renderer_data.h"
 #include "ui/base/layout.h"
 #include "ui/gfx/animation/animation_delegate.h"
+#include "ui/gfx/animation/linear_animation.h"
 #include "ui/gfx/geometry/point.h"
-#include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/paint_throbber.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/controls/button/button.h"
@@ -25,7 +26,9 @@
 #include "ui/views/view.h"
 
 class AlertIndicatorButton;
+class TabCloseButton;
 class TabController;
+class TabIcon;
 
 namespace gfx {
 class Animation;
@@ -34,7 +37,6 @@ class LinearAnimation;
 class ThrobAnimation;
 }
 namespace views {
-class ImageButton;
 class Label;
 }
 
@@ -52,8 +54,8 @@ class Tab : public gfx::AnimationDelegate,
   // The Tab's class name.
   static const char kViewClassName[];
 
-  // The amount of overlap between two adjacent tabs.
-  static constexpr int kOverlap = 16;
+  // The combined width of the curves at the top and bottom of the endcap.
+  static constexpr float kMinimumEndcapWidth = 4;
 
   Tab(TabController* controller, gfx::AnimationContainer* container);
   ~Tab() override;
@@ -88,21 +90,24 @@ class Tab : public gfx::AnimationDelegate,
   // Returns true if the tab is selected.
   bool IsSelected() const;
 
-  // Sets the data this tabs displays. Invokes DataChanged. Should only be
-  // called after Tab is added to widget hierarchy.
-  void SetData(const TabRendererData& data);
+  // Sets the data this tabs displays. Should only be called after Tab is added
+  // to widget hierarchy.
+  void SetData(TabRendererData data);
   const TabRendererData& data() const { return data_; }
 
-  // Sets the network state.
-  void UpdateLoadingAnimation(TabRendererData::NetworkState state);
+  // Redraws the loading animation if one is visible. Otherwise, no-op.
+  void StepLoadingAnimation();
 
   // Starts/Stops a pulse animation.
   void StartPulse();
   void StopPulse();
 
-  // Sets the visibility of the indicator shown when the tab title changes of
-  // an inactive pinned tab.
-  void SetPinnedTabTitleChangedIndicatorVisible(bool value);
+  // Notifies the tab that its title changed outside of loading.
+  void TabTitleChangedNotLoading();
+
+  // Sets the visibility of the indicator shown when the tab needs to indicate
+  // to the user that it needs their attention.
+  void SetTabNeedsAttention(bool attention);
 
   // Set the background offset used to match the image in the inactive tab
   // to the frame image.
@@ -130,17 +135,6 @@ class Tab : public gfx::AnimationDelegate,
   // be updated.
   void HideCloseButtonForInactiveTabsChanged() { Layout(); }
 
-  // Returns the inset within the first dragged tab to use when calculating the
-  // "drag insertion point".  If we simply used the x-coordinate of the tab,
-  // we'd be calculating based on a point well before where the user considers
-  // the tab to "be".  The value here is chosen to "feel good" based on the
-  // widths of the tab images and the tab overlap.
-  //
-  // Note that this must return a value smaller than the midpoint of any tab's
-  // width, or else the user won't be able to drag a tab to the left of the
-  // first tab in the strip.
-  static int leading_width_for_drag() { return 16; }
-
   // Returns the minimum possible size of a single unselected Tab.
   static gfx::Size GetMinimumInactiveSize();
 
@@ -167,17 +161,14 @@ class Tab : public gfx::AnimationDelegate,
   // horizontal deltas from those.
   static float GetInverseDiagonalSlope();
 
+  // Returns the overlap between adjacent tabs.
+  static int GetOverlap();
+
  private:
   friend class AlertIndicatorButtonTest;
   friend class TabTest;
   friend class TabStripTest;
   FRIEND_TEST_ALL_PREFIXES(TabStripTest, TabCloseButtonVisibilityWhenStacked);
-
-  // The animation object used to swap the favicon with the sad tab icon.
-  class FaviconCrashAnimation;
-
-  class TabCloseButton;
-  class ThrobberView;
 
   // gfx::AnimationDelegate:
   void AnimationProgressed(const gfx::Animation* animation) override;
@@ -219,11 +210,9 @@ class Tab : public gfx::AnimationDelegate,
   void OnGestureEvent(ui::GestureEvent* event) override;
 
   // Invoked from Layout to adjust the position of the favicon or alert
-  // indicator for pinned tabs.
-  void MaybeAdjustLeftForPinnedTab(gfx::Rect* bounds) const;
-
-  // Invoked from SetData after |data_| has been updated to the new data.
-  void DataChanged(const TabRendererData& old);
+  // indicator for pinned tabs. The visual_width parameter is how wide the
+  // icon looks (rather than how wide the bounds are).
+  void MaybeAdjustLeftForPinnedTab(gfx::Rect* bounds, int visual_width) const;
 
   // Paints with the normal tab style.  If |clip| is non-empty, the tab border
   // should be clipped against it.
@@ -235,30 +224,33 @@ class Tab : public gfx::AnimationDelegate,
   // Paints a tab background using the image defined by |fill_id| at the
   // provided offset. If |fill_id| is 0, it will fall back to using the solid
   // color defined by the theme provider and ignore the offset.
-  void PaintTabBackgroundUsingFillId(gfx::Canvas* fill_canvas,
-                                     gfx::Canvas* stroke_canvas,
-                                     bool is_active,
-                                     int fill_id,
-                                     int y_offset);
+  void PaintTabBackground(gfx::Canvas* canvas,
+                          bool active,
+                          int fill_id,
+                          int y_offset,
+                          const gfx::Path* clip);
 
-  // Paints the pinned tab title changed indicator and |favicon_|. |favicon_|
-  // may be null. |favicon_draw_bounds| is |favicon_bounds_| adjusted for rtl
-  // and clipped to the bounds of the tab.
-  void PaintPinnedTabTitleChangedIndicatorAndIcon(
-      gfx::Canvas* canvas,
-      const gfx::Rect& favicon_draw_bounds);
-
-  // Paints the favicon, mirrored for RTL if needed.
-  void PaintIcon(gfx::Canvas* canvas);
-
-  // Invoked if data_.network_state changes, or the network_state is not none.
-  void AdvanceLoadingAnimation();
+  // Helper methods for PaintTabBackground.
+  void PaintTabBackgroundFill(gfx::Canvas* canvas,
+                              const gfx::Path& fill_path,
+                              bool active,
+                              bool hover,
+                              SkColor active_color,
+                              SkColor inactive_color,
+                              int fill_id,
+                              int y_offset);
+  void PaintTabBackgroundStroke(gfx::Canvas* canvas,
+                                const gfx::Path& fill_path,
+                                const gfx::Path& stroke_path,
+                                bool active,
+                                SkColor color);
 
   // Returns the number of favicon-size elements that can fit in the tab's
   // current size.
   int IconCapacity() const;
 
-  // Returns whether the Tab should display a favicon.
+  // Returns whether the Tab should display the icon view, which includes the
+  // favicon and loading animation.
   bool ShouldShowIcon() const;
 
   // Returns whether the Tab should display the alert indicator.
@@ -276,19 +268,10 @@ class Tab : public gfx::AnimationDelegate,
   // mini tab title change and pulsing.
   double GetThrobValue();
 
-  // Set the temporary offset for the favicon. This is used during the crash
-  // animation.
-  void SetFaviconHidingOffset(int offset);
-
-  void SetShouldDisplayCrashedFavicon(bool value);
-
   // Recalculates the correct |button_color_| and resets the title, alert
   // indicator, and close button colors if necessary.  This should be called any
   // time the theme or active state may have changed.
   void OnButtonColorMaybeChanged();
-
-  // Schedules repaint task for icon.
-  void ScheduleIconPaint();
 
   // The controller, never NULL.
   TabController* const controller_;
@@ -296,64 +279,95 @@ class Tab : public gfx::AnimationDelegate,
   TabRendererData data_;
 
   // True if the tab is being animated closed.
-  bool closing_;
+  bool closing_ = false;
 
   // True if the tab is being dragged.
-  bool dragging_;
+  bool dragging_ = false;
 
   // True if the tab has been detached.
-  bool detached_;
-
-  // The offset used to animate the favicon location. This is used when the tab
-  // crashes.
-  int favicon_hiding_offset_;
-
-  bool should_display_crashed_favicon_;
-
-  bool showing_pinned_tab_title_changed_indicator_ = false;
+  bool detached_ = false;
 
   // Whole-tab throbbing "pulse" animation.
-  std::unique_ptr<gfx::ThrobAnimation> pulse_animation_;
-
-  // Crash icon animation (in place of favicon).
-  std::unique_ptr<gfx::LinearAnimation> crash_icon_animation_;
+  gfx::ThrobAnimation pulse_animation_;
 
   scoped_refptr<gfx::AnimationContainer> animation_container_;
 
-  ThrobberView* throbber_;
-  AlertIndicatorButton* alert_indicator_button_;
-  views::ImageButton* close_button_;
-  views::Label* title_;
+  TabIcon* icon_ = nullptr;
+  AlertIndicatorButton* alert_indicator_button_ = nullptr;
+  TabCloseButton* close_button_ = nullptr;
 
-  bool tab_activated_with_last_tap_down_;
+  views::Label* title_;
+  // The title's bounds are animated when switching between showing and hiding
+  // the tab's favicon/throbber.
+  gfx::Rect start_title_bounds_;
+  gfx::Rect target_title_bounds_;
+  gfx::LinearAnimation title_animation_;
+
+  bool tab_activated_with_last_tap_down_ = false;
 
   views::GlowHoverController hover_controller_;
-
-  // The bounds of various sections of the display.
-  gfx::Rect favicon_bounds_;
 
   // The offset used to paint the inactive background image.
   gfx::Point background_offset_;
 
   // Whether we're showing the icon. It is cached so that we can detect when it
   // changes and layout appropriately.
-  bool showing_icon_;
+  bool showing_icon_ = false;
 
   // Whether we're showing the alert indicator. It is cached so that we can
   // detect when it changes and layout appropriately.
-  bool showing_alert_indicator_;
+  bool showing_alert_indicator_ = false;
 
   // Whether we are showing the close button. It is cached so that we can
   // detect when it changes and layout appropriately.
-  bool showing_close_button_;
+  bool showing_close_button_ = false;
 
   // The current color of the alert indicator and close button icons.
-  SkColor button_color_;
+  SkColor button_color_ = SK_ColorTRANSPARENT;
 
-  // The favicon for the tab. This might be the sad tab icon or a copy of
-  // data().favicon and may be modified for theming. It is created on demand
-  // and thus may be null.
-  gfx::ImageSkia favicon_;
+  class BackgroundCache {
+   public:
+    BackgroundCache();
+    ~BackgroundCache();
+
+    bool CacheKeyMatches(float scale,
+                         const gfx::Size& size,
+                         SkColor active_color,
+                         SkColor inactive_color,
+                         SkColor stroke_color) {
+      return scale_ == scale && size_ == size &&
+             active_color_ == active_color &&
+             inactive_color_ == inactive_color && stroke_color_ == stroke_color;
+    }
+
+    void SetCacheKey(float scale,
+                     const gfx::Size& size,
+                     SkColor active_color,
+                     SkColor inactive_color,
+                     SkColor stroke_color) {
+      scale_ = scale;
+      size_ = size;
+      active_color_ = active_color;
+      inactive_color_ = inactive_color;
+      stroke_color_ = stroke_color;
+    }
+
+    // The PaintRecords being cached based on the input parameters.
+    sk_sp<cc::PaintRecord> fill_record;
+    sk_sp<cc::PaintRecord> stroke_record;
+
+   private:
+    // Parameters used to construct the PaintRecords.
+    float scale_ = 0.f;
+    gfx::Size size_;
+    SkColor active_color_ = 0;
+    SkColor inactive_color_ = 0;
+    SkColor stroke_color_ = 0;
+  };
+
+  // Cache of the paint output for tab backgrounds.
+  BackgroundCache background_active_cache_;
+  BackgroundCache background_inactive_cache_;
 
   DISALLOW_COPY_AND_ASSIGN(Tab);
 };

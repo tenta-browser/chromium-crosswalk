@@ -15,6 +15,10 @@
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "ui/gfx/native_widget_types.h"
 
+#if !defined(OS_ANDROID)
+#include "ui/gfx/image/image_skia.h"
+#endif
+
 class GURL;
 class Profile;
 class PageInfo;
@@ -43,12 +47,15 @@ class PageInfoUI {
     NUM_TAB_IDS,
   };
 
-  // The security summary is styled depending on the security state. At the
-  // moment, the only styling we apply is color, but it could also include e.g.
-  // bolding.
-  enum SecuritySummaryStyle { STYLE_UNSTYLED = 0, STYLE_COLOR = 1 << 1 };
+  enum class SecuritySummaryColor {
+    RED,
+    GREEN,
+  };
 
   struct SecurityDescription {
+    // The text style for |summary| used to color it. This provides an
+    // opinionated guide to the user on the overall security state of the site.
+    SecuritySummaryColor summary_style;
     // A one-line summary of the security state.
     base::string16 summary;
     // A short paragraph with more details about the state, and how
@@ -129,6 +136,11 @@ class PageInfoUI {
     // connection area of the page info will include an option for the user to
     // revoke their decision to bypass the SSL error for this host.
     bool show_ssl_decision_revoke_button;
+    // Set when the user ignored the password reuse modal warning dialog. When
+    // |show_change_password_buttons| is true, the page identity area of the
+    // page info will include buttons to change corresponding password, and
+    // to whitelist current site.
+    bool show_change_password_buttons;
   };
 
   using CookieInfoList = std::vector<CookieInfo>;
@@ -139,11 +151,6 @@ class PageInfoUI {
 
   // Returns the UI string for the given permission |type|.
   static base::string16 PermissionTypeToUIString(ContentSettingsType type);
-
-  // Returns the UI string for the given permission |value|, used in the
-  // permission-changing menu. Generally this will be a verb in the imperative
-  // form, e.g. "ask", "allow", "block".
-  static base::string16 PermissionValueToUIString(ContentSetting value);
 
   // Returns the UI string describing the action taken for a permission,
   // including why that action was taken. E.g. "Allowed by you",
@@ -182,18 +189,22 @@ class PageInfoUI {
   static const gfx::Image& GetChosenObjectIcon(const ChosenObjectInfo& info,
                                                bool deleted);
 
+#if defined(OS_ANDROID)
   // Returns the identity icon ID for the given identity |status|.
   static int GetIdentityIconID(PageInfo::SiteIdentityStatus status);
 
-  // Returns the identity icon for the given identity |status|.
-  static const gfx::Image& GetIdentityIcon(PageInfo::SiteIdentityStatus status);
-
   // Returns the connection icon ID for the given connection |status|.
   static int GetConnectionIconID(PageInfo::SiteConnectionStatus status);
+#else
+  // Returns the icon for the page Certificate.
+  static const gfx::ImageSkia GetCertificateIcon();
 
-  // Returns the connection icon for the given connection |status|.
-  static const gfx::Image& GetConnectionIcon(
-      PageInfo::SiteConnectionStatus status);
+  // Returns the icon for the button / link to Site settings.
+  static const gfx::ImageSkia GetSiteSettingsIcon();
+#endif
+
+  // Return true if the given ContentSettingsType is in PageInfoUI.
+  static bool ContentSettingsTypeInPageInfo(ContentSettingsType type);
 
   // Sets cookie information.
   virtual void SetCookieInfo(const CookieInfoList& cookie_info_list) = 0;

@@ -4,39 +4,53 @@
 
 package org.chromium.chrome.browser;
 
+import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.MediumTest;
 import android.support.test.filters.SmallTest;
 
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.device.DeviceClassManager;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.ChromeTabCreator;
 import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
-import org.chromium.chrome.test.ChromeTabbedActivityTestBase;
+import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.net.test.EmbeddedTestServer;
-
-import java.util.concurrent.Callable;
 
 /**
  * Instrumentation tests for ChromeActivity.
  */
-public class ChromeActivityTest extends ChromeTabbedActivityTestBase {
+@RunWith(ChromeJUnit4ClassRunner.class)
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
+        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+public class ChromeActivityTest {
+    @Rule
+    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+
     private static final String FILE_PATH = "/chrome/test/data/android/test.html";
 
     private EmbeddedTestServer mTestServer;
 
-    @Override
-    protected void setUp() throws Exception {
-        super.setUp();
-        mTestServer = EmbeddedTestServer.createAndStartServer(getInstrumentation().getContext());
+    @Before
+    public void setUp() throws Exception {
+        mActivityTestRule.startMainActivityOnBlankPage();
+        mTestServer = EmbeddedTestServer.createAndStartServer(InstrumentationRegistry.getContext());
     }
 
-    @Override
-    protected void tearDown() throws Exception {
-        mTestServer.stopAndDestroyServer();
-        super.tearDown();
+    @After
+    public void tearDown() throws Exception {
+        if (mTestServer != null) mTestServer.stopAndDestroyServer();
     }
 
     /**
@@ -44,91 +58,55 @@ public class ChromeActivityTest extends ChromeTabbedActivityTestBase {
      * and that it receives the show() call when the activity is started again. This is a regression
      * test for http://crbug.com/319804 .
      */
+    @Test
     @MediumTest
     @RetryOnFailure
     public void testTabVisibility() {
         // Create two tabs - tab[0] in the foreground and tab[1] in the background.
         final Tab[] tabs = new Tab[2];
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                // Foreground tab.
-                ChromeTabCreator tabCreator = getActivity().getCurrentTabCreator();
-                tabs[0] = tabCreator.createNewTab(
-                        new LoadUrlParams(mTestServer.getURL(FILE_PATH)),
-                                TabLaunchType.FROM_CHROME_UI, null);
-                // Background tab.
-                tabs[1] = tabCreator.createNewTab(
-                        new LoadUrlParams(mTestServer.getURL(FILE_PATH)),
-                                TabLaunchType.FROM_LONGPRESS_BACKGROUND, null);
-            }
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            // Foreground tab.
+            ChromeTabCreator tabCreator =
+                    mActivityTestRule.getActivity().getCurrentTabCreator();
+            tabs[0] = tabCreator.createNewTab(
+                    new LoadUrlParams(mTestServer.getURL(FILE_PATH)),
+                    TabLaunchType.FROM_CHROME_UI, null);
+            // Background tab.
+            tabs[1] = tabCreator.createNewTab(
+                    new LoadUrlParams(mTestServer.getURL(FILE_PATH)),
+                    TabLaunchType.FROM_LONGPRESS_BACKGROUND, null);
         });
 
         // Verify that the front tab is in the 'visible' state.
-        assertFalse(tabs[0].isHidden());
-        assertTrue(tabs[1].isHidden());
+        Assert.assertFalse(tabs[0].isHidden());
+        Assert.assertTrue(tabs[1].isHidden());
 
         // Fake sending the activity to background.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                getActivity().onPause();
-            }
-        });
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                getActivity().onStop();
-            }
-        });
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                getActivity().onWindowFocusChanged(false);
-            }
-        });
+        ThreadUtils.runOnUiThreadBlocking(() -> mActivityTestRule.getActivity().onPause());
+        ThreadUtils.runOnUiThreadBlocking(() -> mActivityTestRule.getActivity().onStop());
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mActivityTestRule.getActivity().onWindowFocusChanged(false));
         // Verify that both Tabs are hidden.
-        assertTrue(tabs[0].isHidden());
-        assertTrue(tabs[1].isHidden());
+        Assert.assertTrue(tabs[0].isHidden());
+        Assert.assertTrue(tabs[1].isHidden());
 
         // Fake bringing the activity back to foreground.
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                getActivity().onWindowFocusChanged(true);
-            }
-        });
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                getActivity().onStart();
-            }
-        });
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                getActivity().onResume();
-            }
-        });
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mActivityTestRule.getActivity().onWindowFocusChanged(true));
+        ThreadUtils.runOnUiThreadBlocking(() -> mActivityTestRule.getActivity().onStart());
+        ThreadUtils.runOnUiThreadBlocking(() -> mActivityTestRule.getActivity().onResume());
         // Verify that the front tab is in the 'visible' state.
-        assertFalse(tabs[0].isHidden());
-        assertTrue(tabs[1].isHidden());
+        Assert.assertFalse(tabs[0].isHidden());
+        Assert.assertTrue(tabs[1].isHidden());
     }
 
+    @Test
     @SmallTest
     public void testTabAnimationsCorrectlyEnabled() {
         boolean animationsEnabled = ThreadUtils.runOnUiThreadBlockingNoException(
-                new Callable<Boolean>() {
-                    @Override
-                    public Boolean call() throws Exception {
-                        return getActivity().getLayoutManager().animationsEnabled();
-                    }
-                });
-        assertEquals(animationsEnabled, DeviceClassManager.enableAnimations(getActivity()));
-    }
-
-    @Override
-    public void startMainActivity() throws InterruptedException {
-        startMainActivityOnBlankPage();
+                () -> mActivityTestRule.getActivity()
+                        .getLayoutManager()
+                        .animationsEnabled());
+        Assert.assertEquals(animationsEnabled, DeviceClassManager.enableAnimations());
     }
 }

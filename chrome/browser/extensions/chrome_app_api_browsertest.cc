@@ -26,6 +26,12 @@
 using extensions::Extension;
 
 class ChromeAppAPITest : public ExtensionBrowserTest {
+  void SetUpOnMainThread() override {
+    ExtensionBrowserTest::SetUpOnMainThread();
+    host_resolver()->AddRule("*", "127.0.0.1");
+    ASSERT_TRUE(embedded_test_server()->Start());
+  }
+
  protected:
   bool IsAppInstalledInMainFrame() {
     return IsAppInstalledInFrame(
@@ -89,8 +95,6 @@ class ChromeAppAPITest : public ExtensionBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(ChromeAppAPITest, IsInstalled) {
-  host_resolver()->AddRule("*", "127.0.0.1");
-  ASSERT_TRUE(embedded_test_server()->Start());
   GURL app_url =
       embedded_test_server()->GetURL("app.com", "/extensions/test_file.html");
   GURL non_app_url = embedded_test_server()->GetURL(
@@ -168,8 +172,6 @@ IN_PROC_BROWSER_TEST_F(ChromeAppAPITest, IsInstalled) {
 }
 
 IN_PROC_BROWSER_TEST_F(ChromeAppAPITest, InstallAndRunningState) {
-  host_resolver()->AddRule("*", "127.0.0.1");
-  ASSERT_TRUE(embedded_test_server()->Start());
   GURL app_url = embedded_test_server()->GetURL(
       "app.com", "/extensions/get_app_details_for_frame.html");
   GURL non_app_url = embedded_test_server()->GetURL(
@@ -199,8 +201,9 @@ IN_PROC_BROWSER_TEST_F(ChromeAppAPITest, InstallAndRunningState) {
   // Disable the extension and verify the state.
   ExtensionService* service = extensions::ExtensionSystem::Get(
       browser()->profile())->extension_service();
-  service->DisableExtension(extension->id(),
-                            Extension::DISABLE_PERMISSIONS_INCREASE);
+  service->DisableExtension(
+      extension->id(),
+      extensions::disable_reason::DISABLE_PERMISSIONS_INCREASE);
   ui_test_utils::NavigateToURL(browser(), app_url);
 
   EXPECT_EQ("disabled", InstallStateInMainFrame());
@@ -221,12 +224,16 @@ IN_PROC_BROWSER_TEST_F(ChromeAppAPITest, InstallAndRunningState) {
 
   EXPECT_EQ("installed", InstallStateInIFrame());
   EXPECT_EQ("cannot_run", RunningStateInIFrame());
-  EXPECT_FALSE(IsAppInstalledInIFrame());
+
+  // With --site-per-process, the iframe on nonapp.com will currently swap
+  // processes and go into the hosted app process.
+  if (content::AreAllSitesIsolatedForTesting())
+    EXPECT_TRUE(IsAppInstalledInIFrame());
+  else
+    EXPECT_FALSE(IsAppInstalledInIFrame());
 }
 
 IN_PROC_BROWSER_TEST_F(ChromeAppAPITest, InstallAndRunningStateFrame) {
-  host_resolver()->AddRule("*", "127.0.0.1");
-  ASSERT_TRUE(embedded_test_server()->Start());
   GURL app_url = embedded_test_server()->GetURL(
       "app.com", "/extensions/get_app_details_for_frame_reversed.html");
 

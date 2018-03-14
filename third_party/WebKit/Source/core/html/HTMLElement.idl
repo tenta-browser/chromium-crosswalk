@@ -30,13 +30,13 @@ interface HTMLElement : Element {
 
     // user interaction
     [CEReactions, Reflect] attribute boolean hidden;
-    void click();
+    [RuntimeCallStatsCounter=HTMLElementClick] void click();
     [CEReactions, CustomElementCallbacks] attribute long tabIndex;
-    void focus();
+    [CEReactions, RuntimeEnabled=InertAttribute, Reflect] attribute boolean inert;
+    void focus(optional FocusOptions options);
     void blur();
     [CEReactions, Reflect] attribute DOMString accessKey;
     [CEReactions, CustomElementCallbacks] attribute boolean draggable;
-    [CEReactions, RuntimeEnabled=ContextMenu] attribute HTMLMenuElement? contextMenu;
     [CEReactions] attribute boolean spellcheck;
 
     // HTMLElement implements ElementContentEditable
@@ -46,7 +46,7 @@ interface HTMLElement : Element {
     [RuntimeEnabled=InputModeAttribute, CEReactions, Reflect] attribute DOMString inputMode;
 
     // CSSOM View Module
-    // https://dev.w3.org/csswg/cssom-view/#extensions-to-the-htmlelement-interface
+    // https://drafts.csswg.org/cssom-view/#extensions-to-the-htmlelement-interface
     [PerWorldBindings, ImplementedAs=unclosedOffsetParent] readonly attribute Element? offsetParent;
     [ImplementedAs=offsetTopForBinding] readonly attribute long offsetTop;
     [ImplementedAs=offsetLeftForBinding] readonly attribute long offsetLeft;
@@ -54,12 +54,13 @@ interface HTMLElement : Element {
     [ImplementedAs=offsetHeightForBinding] readonly attribute long offsetHeight;
 
     // CSS Object Model (CSSOM)
-    // https://dev.w3.org/csswg/cssom/#the-elementcssinlinestyle-interface
+    // https://drafts.csswg.org/cssom/#the-elementcssinlinestyle-interface
     [SameObject, PerWorldBindings, PutForwards=cssText] readonly attribute CSSStyleDeclaration style;
 
     // Non-standard APIs
-    [TreatNullAs=NullString, CEReactions, CustomElementCallbacks, RaisesException=Setter, MeasureAs=HTMLElementInnerText] attribute DOMString innerText;
-    [TreatNullAs=NullString, CEReactions, CustomElementCallbacks, RaisesException=Setter, MeasureAs=HTMLElementOuterText] attribute DOMString outerText;
+    [CEReactions, CustomElementCallbacks, RaisesException=Setter, MeasureAs=HTMLElementInnerText] attribute [TreatNullAs=NullString] DOMString innerText;
+    [CEReactions, CustomElementCallbacks, RaisesException=Setter, MeasureAs=HTMLElementOuterText] attribute [TreatNullAs=NullString] DOMString outerText;
 };
 
 HTMLElement implements GlobalEventHandlers;
+HTMLElement implements NoncedElement;

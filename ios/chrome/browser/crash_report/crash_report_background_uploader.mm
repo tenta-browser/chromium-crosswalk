@@ -13,8 +13,8 @@
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/time/time.h"
-#import "breakpad/src/client/ios/BreakpadController.h"
 #include "ios/chrome/browser/experimental_flags.h"
+#import "third_party/breakpad/breakpad/src/client/ios/BreakpadController.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -142,18 +142,6 @@ NSString* CreateSessionIdentifierFromTask(NSURLSessionTask* task) {
       [[NSUserDefaults standardUserDefaults] dictionaryForKey:identifier];
   [[NSUserDefaults standardUserDefaults] removeObjectForKey:identifier];
   _tasks++;
-
-  if (experimental_flags::IsAlertOnBackgroundUploadEnabled()) {
-    base::scoped_nsobject<UILocalNotification> localNotification(
-        [[UILocalNotification alloc] init]);
-    localNotification.get().fireDate = [NSDate date];
-    base::scoped_nsobject<NSString> reportId(
-        [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]);
-    localNotification.get().alertBody = [NSString
-        stringWithFormat:@"Crash report uploaded: %@", reportId.get()];
-    [[UIApplication sharedApplication]
-        scheduleLocalNotification:localNotification];
-  }
 
   [[BreakpadController sharedInstance] withBreakpadRef:^(BreakpadRef ref) {
     BreakpadHandleNetworkResponse(ref, configuration, data, nil);

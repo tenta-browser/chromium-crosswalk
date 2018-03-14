@@ -7,15 +7,12 @@
 
 #include <memory>
 
-#include "base/callback.h"
 #include "base/macros.h"
 #include "device/vr/vr_device_provider.h"
 #include "device/vr/vr_export.h"
-#include "device/vr/vr_service.mojom.h"
 
 namespace device {
 
-class GvrDelegateProvider;
 class GvrDevice;
 
 class DEVICE_VR_EXPORT GvrDeviceProvider : public VRDeviceProvider {
@@ -23,23 +20,15 @@ class DEVICE_VR_EXPORT GvrDeviceProvider : public VRDeviceProvider {
   GvrDeviceProvider();
   ~GvrDeviceProvider() override;
 
-  void GetDevices(std::vector<VRDevice*>* devices) override;
-  void Initialize() override;
+  void Initialize(base::Callback<void(VRDevice*)> add_device_callback,
+                  base::Callback<void(VRDevice*)> remove_device_callback,
+                  base::OnceClosure initialization_complete) override;
 
-  void SetListeningForActivate(bool listening) override;
-
-  // Called from GvrDevice.
-  void RequestPresent(mojom::VRSubmitFrameClientPtr submit_client,
-                      const base::Callback<void(bool)>& callback);
-  void ExitPresent();
-
-  device::GvrDelegateProvider* GetDelegateProvider();
-
-  GvrDevice* Device() { return vr_device_.get(); }
+  bool Initialized() override;
 
  private:
-  void Initialize(device::GvrDelegateProvider* provider);
   std::unique_ptr<GvrDevice> vr_device_;
+  bool initialized_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(GvrDeviceProvider);
 };

@@ -9,6 +9,7 @@
 
 #include "base/at_exit.h"
 #include "base/command_line.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
@@ -30,7 +31,7 @@
 #endif  // defined(OS_POSIX)
 
 #if defined(OS_WIN)
-#include "remoting/host/win/elevation_helpers.h"
+#include "base/process/process_info.h"
 #endif  // defined(OS_WIN)
 
 namespace remoting {
@@ -42,6 +43,9 @@ bool g_started = false;
 
 // The main message loop.
 base::MessageLoop* g_message_loop = nullptr;
+
+// The active RunLoop.
+base::RunLoop* g_active_run_loop = nullptr;
 
 // Lets us hide the PIN that a user types.
 void SetEcho(bool echo) {
@@ -108,7 +112,7 @@ void OnDone(HostStarter::Result result) {
       break;
   }
 
-  g_message_loop->QuitNow();
+  g_active_run_loop->Quit();
 }
 
 std::string GetAuthorizationCodeUri() {
@@ -131,7 +135,7 @@ int StartHostMain(int argc, char** argv) {
   settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
   logging::InitLogging(settings);
 
-  base::TaskScheduler::CreateAndSetSimpleTaskScheduler("RemotingHostSetup");
+  base::TaskScheduler::CreateAndStartWithDefaultParams("RemotingHostSetup");
 
   std::string host_name = command_line->GetSwitchValueASCII("name");
   std::string host_pin = command_line->GetSwitchValueASCII("pin");
@@ -150,20 +154,25 @@ int StartHostMain(int argc, char** argv) {
 #if defined(OS_WIN)
   // The tool must be run elevated on Windows so the host has access to the
   // directories used to store the configuration JSON files.
-  if (!remoting::IsProcessElevated()) {
+  if (!base::IsCurrentProcessElevated()) {
     fprintf(stderr, "Error: %s must be run as an elevated process.", argv[0]);
     return 1;
   }
 #endif  // defined(OS_WIN)
 
-  if (host_name.empty()) {
+  if (command_line->HasSwitch("help") || command_line->HasSwitch("h") ||
+      command_line->HasSwitch("?") || !command_line->GetArgs().empty()) {
     fprintf(stderr,
-            "Usage: %s --name=<hostname> [--code=<auth-code>] [--pin=<PIN>] "
+            "Usage: %s [--name=<hostname>] [--code=<auth-code>] [--pin=<PIN>] "
             "[--redirect-url=<redirectURL>]\n",
             argv[0]);
-    fprintf(stderr, "\nAuthorization URL for Production services:\n");
-    fprintf(stderr, "%s\n", GetAuthorizationCodeUri().c_str());
     return 1;
+  }
+
+  if (host_name.empty()) {
+    fprintf(stdout, "Enter a name for this computer: ");
+    fflush(stdout);
+    host_name = ReadString(false);
   }
 
   if (host_pin.empty()) {
@@ -196,6 +205,8 @@ int StartHostMain(int argc, char** argv) {
   }
 
   if (auth_code.empty()) {
+    fprintf(stdout, "\nAuthorization URL for Production services:\n");
+    fprintf(stdout, "%s\n\n", GetAuthorizationCodeUri().c_str());
     fprintf(stdout, "Enter an authorization code: ");
     fflush(stdout);
     auth_code = ReadString(true);
@@ -229,9 +240,11 @@ int StartHostMain(int argc, char** argv) {
 
   // Run the message loop until the StartHost completion callback.
   base::RunLoop run_loop;
+  g_active_run_loop = &run_loop;
   run_loop.Run();
 
   g_message_loop = nullptr;
+  g_active_run_loop = nullptr;
 
   // Destroy the HostStarter and URLRequestContextGetter before stopping the
   // IO thread.

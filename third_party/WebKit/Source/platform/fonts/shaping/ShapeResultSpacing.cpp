@@ -9,39 +9,104 @@
 
 namespace blink {
 
-ShapeResultSpacing::ShapeResultSpacing(const TextRun& run,
-                                       const FontDescription& font_description)
-    : text_run_(run),
-      letter_spacing_(font_description.LetterSpacing()),
-      word_spacing_(font_description.WordSpacing()),
-      expansion_(run.Expansion()),
+template <typename TextContainerType>
+ShapeResultSpacing<TextContainerType>::ShapeResultSpacing(
+    const TextContainerType& text)
+    : text_(text),
+      letter_spacing_(0),
+      word_spacing_(0),
+      expansion_(0),
       expansion_per_opportunity_(0),
       expansion_opportunity_count_(0),
-      text_justify_(TextJustify::kTextJustifyAuto),
+      text_justify_(TextJustify::kAuto),
       has_spacing_(false),
-      normalize_space_(run.NormalizeSpace()),
-      allow_tabs_(run.AllowTabs()),
-      is_after_expansion_(false),
-      is_vertical_offset_(font_description.IsVerticalAnyUpright()) {
-  if (text_run_.SpacingDisabled())
-    return;
+      normalize_space_(false),
+      allow_tabs_(false),
+      is_after_expansion_(false) {}
 
-  if (!letter_spacing_ && !word_spacing_ && !expansion_)
-    return;
+template <typename TextContainerType>
+bool ShapeResultSpacing<TextContainerType>::SetSpacing(
+    const FontDescription& font_description) {
+  if (!font_description.LetterSpacing() && !font_description.WordSpacing()) {
+    has_spacing_ = false;
+    return false;
+  }
 
+  letter_spacing_ = font_description.LetterSpacing();
+  word_spacing_ = font_description.WordSpacing();
+  DCHECK(!normalize_space_);
+  allow_tabs_ = true;
   has_spacing_ = true;
+  return true;
+}
 
-  if (!expansion_)
+template <typename TextContainerType>
+void ShapeResultSpacing<TextContainerType>::SetExpansion(
+    float expansion,
+    TextDirection direction,
+    TextJustify text_justify,
+    bool allows_leading_expansion,
+    bool allows_trailing_expansion) {
+  DCHECK_GT(expansion, 0);
+  expansion_ = expansion;
+  ComputeExpansion(allows_leading_expansion, allows_trailing_expansion,
+                   direction, text_justify);
+  has_spacing_ |= HasExpansion();
+}
+
+template <typename TextContainerType>
+void ShapeResultSpacing<TextContainerType>::SetSpacingAndExpansion(
+    const FontDescription& font_description) {
+  // Available only for TextRun since it has expansion data.
+  NOTREACHED();
+}
+
+template <>
+void ShapeResultSpacing<TextRun>::SetSpacingAndExpansion(
+    const FontDescription& font_description) {
+  letter_spacing_ = font_description.LetterSpacing();
+  word_spacing_ = font_description.WordSpacing();
+  expansion_ = text_.Expansion();
+  has_spacing_ = letter_spacing_ || word_spacing_ || expansion_;
+  if (!has_spacing_)
     return;
 
-  // Setup for justifications (expansions.)
-  text_justify_ = run.GetTextJustify();
-  is_after_expansion_ = !run.AllowsLeadingExpansion();
+  normalize_space_ = text_.NormalizeSpace();
+  allow_tabs_ = text_.AllowTabs();
 
+  if (expansion_) {
+    ComputeExpansion(text_.AllowsLeadingExpansion(),
+                     text_.AllowsTrailingExpansion(), text_.Direction(),
+                     text_.GetTextJustify());
+  }
+}
+
+template <typename TextContainerType>
+void ShapeResultSpacing<TextContainerType>::ComputeExpansion(
+    bool allows_leading_expansion,
+    bool allows_trailing_expansion,
+    TextDirection direction,
+    TextJustify text_justify) {
+  DCHECK_GT(expansion_, 0);
+
+  text_justify_ = text_justify;
+  if (text_justify_ == TextJustify::kNone) {
+    expansion_opportunity_count_ = 0;
+    return;
+  }
+
+  is_after_expansion_ = !allows_leading_expansion;
   bool is_after_expansion = is_after_expansion_;
-  expansion_opportunity_count_ =
-      Character::ExpansionOpportunityCount(run, is_after_expansion);
-  if (is_after_expansion && !run.AllowsTrailingExpansion()) {
+  if (text_.Is8Bit()) {
+    expansion_opportunity_count_ = Character::ExpansionOpportunityCount(
+        text_.Characters8(), text_.length(), direction, is_after_expansion,
+        text_justify_);
+  } else {
+    expansion_opportunity_count_ = Character::ExpansionOpportunityCount(
+        text_.Characters16(), text_.length(), direction, is_after_expansion,
+        text_justify_);
+  }
+  if (is_after_expansion && !allows_trailing_expansion) {
     DCHECK_GT(expansion_opportunity_count_, 0u);
     --expansion_opportunity_count_;
   }
@@ -50,7 +115,8 @@ ShapeResultSpacing::ShapeResultSpacing(const TextRun& run,
     expansion_per_opportunity_ = expansion_ / expansion_opportunity_count_;
 }
 
-float ShapeResultSpacing::NextExpansion() {
+template <typename TextContainerType>
+float ShapeResultSpacing<TextContainerType>::NextExpansion() {
   if (!expansion_opportunity_count_) {
     NOTREACHED();
     return 0;
@@ -68,17 +134,11 @@ float ShapeResultSpacing::NextExpansion() {
   return expansion_per_opportunity_;
 }
 
-bool ShapeResultSpacing::IsFirstRun(const TextRun& run) const {
-  if (&run == &text_run_)
-    return true;
-  return run.Is8Bit() ? run.Characters8() == text_run_.Characters8()
-                      : run.Characters16() == text_run_.Characters16();
-}
-
-float ShapeResultSpacing::ComputeSpacing(const TextRun& run,
-                                         size_t index,
-                                         float& offset) {
-  UChar32 character = run[index];
+template <typename TextContainerType>
+float ShapeResultSpacing<TextContainerType>::ComputeSpacing(unsigned index,
+                                                            float& offset) {
+  DCHECK(has_spacing_);
+  UChar32 character = text_[index];
   bool treat_as_space =
       (Character::TreatAsSpace(character) ||
        (normalize_space_ &&
@@ -91,8 +151,7 @@ float ShapeResultSpacing::ComputeSpacing(const TextRun& run,
   if (letter_spacing_ && !Character::TreatAsZeroWidthSpace(character))
     spacing += letter_spacing_;
 
-  if (treat_as_space &&
-      (index || !IsFirstRun(run) || character == kNoBreakSpaceCharacter))
+  if (treat_as_space && (index || character == kNoBreakSpaceCharacter))
     spacing += word_spacing_;
 
   if (!HasExpansion())
@@ -101,15 +160,15 @@ float ShapeResultSpacing::ComputeSpacing(const TextRun& run,
   if (treat_as_space)
     return spacing + NextExpansion();
 
-  if (run.Is8Bit() || text_justify_ != TextJustify::kTextJustifyAuto)
+  if (text_.Is8Bit() || text_justify_ != TextJustify::kAuto)
     return spacing;
 
   // isCJKIdeographOrSymbol() has expansion opportunities both before and
   // after each character.
   // http://www.w3.org/TR/jlreq/#line_adjustment
-  if (U16_IS_LEAD(character) && index + 1 < run.length() &&
-      U16_IS_TRAIL(run[index + 1]))
-    character = U16_GET_SUPPLEMENTARY(character, run[index + 1]);
+  if (U16_IS_LEAD(character) && index + 1 < text_.length() &&
+      U16_IS_TRAIL(text_[index + 1]))
+    character = U16_GET_SUPPLEMENTARY(character, text_[index + 1]);
   if (!Character::IsCJKIdeographOrSymbol(character)) {
     is_after_expansion_ = false;
     return spacing;
@@ -128,5 +187,9 @@ float ShapeResultSpacing::ComputeSpacing(const TextRun& run,
 
   return spacing + NextExpansion();
 }
+
+// Instantiate the template class.
+template class ShapeResultSpacing<TextRun>;
+template class ShapeResultSpacing<String>;
 
 }  // namespace blink

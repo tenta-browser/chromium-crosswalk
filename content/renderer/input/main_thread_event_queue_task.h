@@ -5,13 +5,13 @@
 #ifndef CONTENT_RENDERER_INPUT_MAIN_THREAD_EVENT_QUEUE_TASK_H_
 #define CONTENT_RENDERER_INPUT_MAIN_THREAD_EVENT_QUEUE_TASK_H_
 
-#include "content/common/input/input_event_ack_state.h"
+#include "content/public/common/input_event_ack_state.h"
 #include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/WebKit/public/platform/scheduler/renderer/renderer_scheduler.h"
 
 namespace content {
 
-class MainThreadEventQueueClient;
+class MainThreadEventQueue;
 
 // A work item to execute from the main thread event queue.
 // The MainThreadEventQueue supports 2 types of tasks (subclasses):
@@ -36,17 +36,9 @@ class MainThreadEventQueueTask {
   // Filter a new event that is about to be queued. Acceptable actions
   // are to coalesce event, stop iterating or keep iterating.
   // Iteration of the list begins at the end of the queue (newest to oldest).
-  virtual FilterResult FilterNewEvent(const MainThreadEventQueueTask&) = 0;
+  virtual FilterResult FilterNewEvent(MainThreadEventQueueTask*) = 0;
   virtual bool IsWebInputEvent() const = 0;
-  virtual void Dispatch(int routing_id, MainThreadEventQueueClient*) = 0;
-
-  virtual void EventHandled(
-      int routing_id,
-      blink::scheduler::RendererScheduler* renderer_scheduler,
-      MainThreadEventQueueClient* client,
-      blink::WebInputEvent::Type type,
-      blink::WebInputEventResult result,
-      InputEventAckState ack_result) = 0;
+  virtual void Dispatch(MainThreadEventQueue*) = 0;
 };
 
 }  // namespace content

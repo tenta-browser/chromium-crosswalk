@@ -20,7 +20,7 @@ syncer::ModelSafeGroup PasswordModelWorker::GetModelSafeGroup() {
   return syncer::GROUP_PASSWORD;
 }
 
-bool PasswordModelWorker::IsOnModelThread() {
+bool PasswordModelWorker::IsOnModelSequence() {
   // Ideally PasswordStore would expose a way to check whether this is the
   // thread it does work on. Since it doesn't, just return true to bypass a
   // CHECK in the sync code.
@@ -42,7 +42,7 @@ void PasswordModelWorker::RequestStop() {
   ModelSafeWorker::RequestStop();
 
   base::AutoLock lock(password_store_lock_);
-  password_store_ = NULL;
+  password_store_ = nullptr;
 }
 
 }  // namespace browser_sync

@@ -371,14 +371,12 @@ IN_PROC_BROWSER_TEST_F(KeyboardAccessTest,
   TestMenuKeyboardAccess(true, false, true);
 }
 
-IN_PROC_BROWSER_TEST_F(KeyboardAccessTest,
-                       DISABLED_TestSystemMenuWithKeyboard) {
+IN_PROC_BROWSER_TEST_F(KeyboardAccessTest, TestSystemMenuWithKeyboard) {
   TestSystemMenuWithKeyboard();
 }
 #endif
 
-#if !defined(OS_WIN) && defined(USE_AURA) && !defined(USE_OZONE)
-// ozone bringup - http://crbug.com/401304
+#if !defined(OS_WIN) && defined(USE_AURA)
 IN_PROC_BROWSER_TEST_F(KeyboardAccessTest, TestMenuKeyboardOpenDismiss) {
   TestMenuKeyboardAccessAndDismiss();
 }

@@ -51,10 +51,6 @@ struct WebLayerStickyPositionConstraint {
   float top_offset;
   float bottom_offset;
 
-  // This is the layout position of the sticky element before it has been
-  // shifted relative to the enclosing composited layer.
-  WebPoint parent_relative_sticky_box_offset;
-
   // The layout rectangle of the sticky element before it has been shifted
   // to stick.
   WebRect scroll_container_relative_sticky_box_rect;
@@ -63,10 +59,11 @@ struct WebLayerStickyPositionConstraint {
   // element should not be shifted beyond.
   WebRect scroll_container_relative_containing_block_rect;
 
-  // The nearest ancestor sticky layers that affect the sticky box constraint
-  // rect and the containing block constraint rect respectively.
-  int nearest_layer_shifting_sticky_box;
-  int nearest_layer_shifting_containing_block;
+  // The element ids of the nearest ancestor sticky layers which affect the
+  // sticky box constraint rect and the containing block constraint rect
+  // respectively.
+  cc::ElementId nearest_element_shifting_sticky_box;
+  cc::ElementId nearest_element_shifting_containing_block;
 
   WebLayerStickyPositionConstraint()
       : is_sticky(false),
@@ -77,9 +74,7 @@ struct WebLayerStickyPositionConstraint {
         left_offset(0.f),
         right_offset(0.f),
         top_offset(0.f),
-        bottom_offset(0.f),
-        nearest_layer_shifting_sticky_box(WebLayer::kInvalidLayerId),
-        nearest_layer_shifting_containing_block(WebLayer::kInvalidLayerId) {}
+        bottom_offset(0.f) {}
 };
 
 }  // namespace blink

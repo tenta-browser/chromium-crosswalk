@@ -54,27 +54,24 @@ class PLATFORM_EXPORT LayoutLocale : public RefCounted<LayoutLocale> {
   UScriptCode GetScriptForHan() const;
   bool HasScriptForHan() const;
   static const LayoutLocale* LocaleForHan(const LayoutLocale*);
-  static void InvalidateLocaleForHan() { default_for_han_computed_ = false; }
   const char* LocaleForHanForSkFontMgr() const;
 
   Hyphenation* GetHyphenation() const;
 
   AtomicString LocaleWithBreakKeyword(LineBreakIteratorMode) const;
 
-  static PassRefPtr<LayoutLocale> CreateForTesting(const AtomicString&);
-  static void ClearForTesting();
+  static scoped_refptr<LayoutLocale> CreateForTesting(const AtomicString&);
   static void SetHyphenationForTesting(const AtomicString&,
-                                       PassRefPtr<Hyphenation>);
+                                       scoped_refptr<Hyphenation>);
 
  private:
   explicit LayoutLocale(const AtomicString&);
 
   void ComputeScriptForHan() const;
-  static void ComputeLocaleForHan();
 
   AtomicString string_;
   mutable CString string_for_sk_font_mgr_;
-  mutable RefPtr<Hyphenation> hyphenation_;
+  mutable scoped_refptr<Hyphenation> hyphenation_;
 
   // hb_language_t is defined in hb.h, which not all files can include.
   const hb_language_impl_t* harfbuzz_language_;
@@ -84,11 +81,6 @@ class PLATFORM_EXPORT LayoutLocale : public RefCounted<LayoutLocale> {
 
   mutable unsigned has_script_for_han_ : 1;
   mutable unsigned hyphenation_computed_ : 1;
-
-  static const LayoutLocale* default_;
-  static const LayoutLocale* system_;
-  static const LayoutLocale* default_for_han_;
-  static bool default_for_han_computed_;
 };
 
 }  // namespace blink

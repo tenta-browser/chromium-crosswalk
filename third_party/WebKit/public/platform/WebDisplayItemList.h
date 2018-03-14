@@ -23,6 +23,7 @@ struct SkRect;
 class SkRRect;
 
 namespace cc {
+class DisplayItemList;
 class FilterOperations;
 }
 
@@ -48,6 +49,8 @@ class WebDisplayItemList {
   virtual void AppendEndFloatClipItem() {}
   virtual void AppendTransformItem(const SkMatrix44&) {}
   virtual void AppendEndTransformItem() {}
+  // If bounds is provided, the content will be explicitly clipped to those
+  // bounds.
   virtual void AppendCompositingItem(float opacity,
                                      SkBlendMode,
                                      SkRect* bounds,
@@ -66,7 +69,7 @@ class WebDisplayItemList {
                                 ScrollContainerId) {}
   virtual void AppendEndScrollItem() {}
 
-  virtual void SetIsSuitableForGpuRasterization(bool is_suitable) {}
+  virtual cc::DisplayItemList* GetCcDisplayItemList() { return nullptr; }
 };
 
 }  // namespace blink

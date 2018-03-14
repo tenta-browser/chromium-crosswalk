@@ -5,36 +5,35 @@
 #include "platform/graphics/RecordingImageBufferSurface.h"
 
 #include <memory>
+
+#include "base/memory/scoped_refptr.h"
 #include "platform/Histogram.h"
+#include "platform/graphics/CanvasHeuristicParameters.h"
 #include "platform/graphics/CanvasMetrics.h"
-#include "platform/graphics/ExpensiveCanvasHeuristicParameters.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/ImageBuffer.h"
+#include "platform/graphics/StaticBitmapImage.h"
+#include "platform/graphics/UnacceleratedImageBufferSurface.h"
 #include "platform/graphics/paint/PaintRecorder.h"
-#include "platform/wtf/PassRefPtr.h"
+#include "platform/wtf/CheckedNumeric.h"
 #include "platform/wtf/PtrUtil.h"
 
 namespace blink {
 
 RecordingImageBufferSurface::RecordingImageBufferSurface(
     const IntSize& size,
-    std::unique_ptr<RecordingImageBufferFallbackSurfaceFactory>
-        fallback_factory,
-    OpacityMode opacity_mode,
-    sk_sp<SkColorSpace> color_space,
-    SkColorType color_type)
-    : ImageBufferSurface(size,
-                         opacity_mode,
-                         std::move(color_space),
-                         color_type),
-      image_buffer_(0),
+    AllowFallback allow_fallback,
+    const CanvasColorParams& color_params)
+    : ImageBufferSurface(size, color_params),
+      allow_fallback_(allow_fallback),
+      image_buffer_(nullptr),
       current_frame_pixel_count_(0),
       previous_frame_pixel_count_(0),
       frame_was_cleared_(true),
       did_record_draw_commands_in_current_frame_(false),
       current_frame_has_expensive_op_(false),
       previous_frame_has_expensive_op_(false),
-      fallback_factory_(std::move(fallback_factory)) {
+      resource_host_(nullptr) {
   InitializeCurrentFrame();
 }
 
@@ -43,13 +42,13 @@ RecordingImageBufferSurface::~RecordingImageBufferSurface() {}
 void RecordingImageBufferSurface::InitializeCurrentFrame() {
   current_frame_ = WTF::WrapUnique(new PaintRecorder);
   PaintCanvas* canvas =
-      current_frame_->beginRecording(size().Width(), size().Height());
+      current_frame_->beginRecording(Size().Width(), Size().Height());
   // Always save an initial frame, to support resetting the top level matrix
   // and clip.
   canvas->save();
 
-  if (image_buffer_) {
-    image_buffer_->ResetCanvas(canvas);
+  if (resource_host_) {
+    resource_host_->RestoreCanvasMatrixClipStack(canvas);
   }
   did_record_draw_commands_in_current_frame_ = false;
   current_frame_has_expensive_op_ = false;
@@ -58,12 +57,6 @@ void RecordingImageBufferSurface::InitializeCurrentFrame() {
 
 void RecordingImageBufferSurface::SetImageBuffer(ImageBuffer* image_buffer) {
   image_buffer_ = image_buffer;
-  if (current_frame_ && image_buffer_) {
-    image_buffer_->ResetCanvas(current_frame_->getRecordingCanvas());
-  }
-  if (fallback_surface_) {
-    fallback_surface_->SetImageBuffer(image_buffer);
-  }
 }
 
 bool RecordingImageBufferSurface::WritePixels(const SkImageInfo& orig_info,
@@ -72,18 +65,19 @@ bool RecordingImageBufferSurface::WritePixels(const SkImageInfo& orig_info,
                                               int x,
                                               int y) {
   if (!fallback_surface_) {
-    if (x <= 0 && y <= 0 && x + orig_info.width() >= size().Width() &&
-        y + orig_info.height() >= size().Height()) {
+    IntRect write_rect(x, y, orig_info.width(), orig_info.height());
+    if (write_rect.Contains(IntRect(IntPoint(), Size())))
       WillOverwriteCanvas();
-    }
     FallBackToRasterCanvas(kFallbackReasonWritePixels);
+    if (!fallback_surface_->IsValid())
+      return false;
   }
   return fallback_surface_->WritePixels(orig_info, pixels, row_bytes, x, y);
 }
 
 void RecordingImageBufferSurface::FallBackToRasterCanvas(
     FallbackReason reason) {
-  DCHECK(fallback_factory_);
+  DCHECK(allow_fallback_ == kAllowFallback);
   CHECK(reason != kFallbackReasonUnknown);
 
   if (fallback_surface_) {
@@ -93,28 +87,29 @@ void RecordingImageBufferSurface::FallBackToRasterCanvas(
 
   DEFINE_THREAD_SAFE_STATIC_LOCAL(
       EnumerationHistogram, canvas_fallback_histogram,
-      new EnumerationHistogram("Canvas.DisplayListFallbackReason",
-                               kFallbackReasonCount));
+      ("Canvas.DisplayListFallbackReason", kFallbackReasonCount));
   canvas_fallback_histogram.Count(reason);
 
-  fallback_surface_ = fallback_factory_->CreateSurface(
-      size(), GetOpacityMode(), ColorSpace(), ColorType());
-  fallback_surface_->SetImageBuffer(image_buffer_);
+  fallback_surface_ = WTF::WrapUnique(new UnacceleratedImageBufferSurface(
+      Size(), kInitializeImagePixels, ColorParams()));
+  // If the fallback surface fails to be created, then early out.
+  if (!fallback_surface_->IsValid())
+    return;
 
   if (previous_frame_) {
-    fallback_surface_->Canvas()->PlaybackPaintRecord(previous_frame_);
+    fallback_surface_->Canvas()->drawPicture(previous_frame_);
     previous_frame_.reset();
   }
 
   if (current_frame_) {
     sk_sp<PaintRecord> record = current_frame_->finishRecordingAsPicture();
     if (record)
-      fallback_surface_->Canvas()->PlaybackPaintRecord(record);
+      fallback_surface_->Canvas()->drawPicture(record);
     current_frame_.reset();
   }
 
-  if (image_buffer_) {
-    image_buffer_->ResetCanvas(fallback_surface_->Canvas());
+  if (resource_host_) {
+    resource_host_->RestoreCanvasMatrixClipStack(fallback_surface_->Canvas());
   }
 
   CanvasMetrics::CountCanvasContextUsage(
@@ -124,6 +119,9 @@ void RecordingImageBufferSurface::FallBackToRasterCanvas(
 static RecordingImageBufferSurface::FallbackReason
 SnapshotReasonToFallbackReason(SnapshotReason reason) {
   switch (reason) {
+    case kSnapshotReasonLowLatencyFrame:
+      NOTREACHED();  // Low latency frames should not cause fallbacks
+    // No 'break' on purpose.
     case kSnapshotReasonUnknown:
       return RecordingImageBufferSurface::kFallbackReasonUnknown;
     case kSnapshotReasonGetImageData:
@@ -176,17 +174,21 @@ SnapshotReasonToFallbackReason(SnapshotReason reason) {
   return RecordingImageBufferSurface::kFallbackReasonUnknown;
 }
 
-sk_sp<SkImage> RecordingImageBufferSurface::NewImageSnapshot(
+scoped_refptr<StaticBitmapImage> RecordingImageBufferSurface::NewImageSnapshot(
     AccelerationHint hint,
     SnapshotReason reason) {
   if (!fallback_surface_)
     FallBackToRasterCanvas(SnapshotReasonToFallbackReason(reason));
+  if (!fallback_surface_->IsValid())
+    return nullptr;
   return fallback_surface_->NewImageSnapshot(hint, reason);
 }
 
 PaintCanvas* RecordingImageBufferSurface::Canvas() {
-  if (fallback_surface_)
+  if (fallback_surface_) {
+    DCHECK(fallback_surface_->IsValid());
     return fallback_surface_->Canvas();
+  }
 
   DCHECK(current_frame_->getRecordingCanvas());
   return current_frame_->getRecordingCanvas();
@@ -213,6 +215,8 @@ DisableDeferralReasonToFallbackReason(DisableDeferralReason reason) {
     case kDisableDeferralDrawImageWithTextureBackedSourceImage:
       return RecordingImageBufferSurface::
           kFallbackReasonDrawImageWithTextureBackedSourceImage;
+    // The LowEndDevice reason should only be used on Canvas2DLayerBridge.
+    case kDisableDeferralReasonLowEndDevice:
     case kDisableDeferralReasonCount:
       NOTREACHED();
       break;
@@ -234,8 +238,6 @@ sk_sp<PaintRecord> RecordingImageBufferSurface::GetRecord() {
   FallbackReason fallback_reason = kFallbackReasonUnknown;
   bool can_use_record = FinalizeFrameInternal(&fallback_reason);
 
-  DCHECK(can_use_record || fallback_factory_);
-
   if (can_use_record) {
     return previous_frame_;
   }
@@ -256,40 +258,13 @@ void RecordingImageBufferSurface::FinalizeFrame() {
     FallBackToRasterCanvas(fallback_reason);
 }
 
-void RecordingImageBufferSurface::DoPaintInvalidation(
-    const FloatRect& dirty_rect) {
-  if (fallback_surface_) {
-    fallback_surface_->DoPaintInvalidation(dirty_rect);
-  }
-}
-
-static RecordingImageBufferSurface::FallbackReason FlushReasonToFallbackReason(
-    FlushReason reason) {
-  switch (reason) {
-    case kFlushReasonUnknown:
-      return RecordingImageBufferSurface::kFallbackReasonUnknown;
-    case kFlushReasonInitialClear:
-      return RecordingImageBufferSurface::kFallbackReasonFlushInitialClear;
-    case kFlushReasonDrawImageOfWebGL:
-      return RecordingImageBufferSurface::
-          kFallbackReasonFlushForDrawImageOfWebGL;
-  }
-  NOTREACHED();
-  return RecordingImageBufferSurface::kFallbackReasonUnknown;
-}
-
-void RecordingImageBufferSurface::Flush(FlushReason reason) {
-  if (!fallback_surface_)
-    FallBackToRasterCanvas(FlushReasonToFallbackReason(reason));
-  fallback_surface_->Flush(reason);
-}
-
 void RecordingImageBufferSurface::WillOverwriteCanvas() {
   frame_was_cleared_ = true;
   previous_frame_.reset();
   previous_frame_has_expensive_op_ = false;
   previous_frame_pixel_count_ = 0;
-  if (did_record_draw_commands_in_current_frame_) {
+
+  if (did_record_draw_commands_in_current_frame_ && !fallback_surface_) {
     // Discard previous draw commands
     current_frame_->finishRecordingAsPicture();
     InitializeCurrentFrame();
@@ -299,7 +274,11 @@ void RecordingImageBufferSurface::WillOverwriteCanvas() {
 void RecordingImageBufferSurface::DidDraw(const FloatRect& rect) {
   did_record_draw_commands_in_current_frame_ = true;
   IntRect pixel_bounds = EnclosingIntRect(rect);
-  current_frame_pixel_count_ += pixel_bounds.Width() * pixel_bounds.Height();
+  CheckedNumeric<int> pixel_count = pixel_bounds.Width();
+  pixel_count *= pixel_bounds.Height();
+  pixel_count += current_frame_pixel_count_;
+  current_frame_pixel_count_ =
+      pixel_count.ValueOrDefault(std::numeric_limits<int>::max());
 }
 
 bool RecordingImageBufferSurface::FinalizeFrameInternal(
@@ -324,9 +303,9 @@ bool RecordingImageBufferSurface::FinalizeFrameInternal(
     return false;
   }
 
-  if (fallback_factory_ &&
+  if (allow_fallback_ == kAllowFallback &&
       current_frame_->getRecordingCanvas()->getSaveCount() - 1 >
-          ExpensiveCanvasHeuristicParameters::kExpensiveRecordingStackDepth) {
+          CanvasHeuristicParameters::kExpensiveRecordingStackDepth) {
     // (getSaveCount() decremented to account  for the intial recording canvas
     // save frame.)
     *fallback_reason = kFallbackReasonRunawayStateStack;
@@ -363,13 +342,18 @@ bool RecordingImageBufferSurface::IsExpensiveToPaint() {
   if (fallback_surface_)
     return fallback_surface_->IsExpensiveToPaint();
 
+  CheckedNumeric<int> overdraw_limit_checked = Size().Width();
+  overdraw_limit_checked *= Size().Height();
+  overdraw_limit_checked *=
+      CanvasHeuristicParameters::kExpensiveOverdrawThreshold;
+  int overdraw_limit =
+      overdraw_limit_checked.ValueOrDefault(std::numeric_limits<int>::max());
+
   if (did_record_draw_commands_in_current_frame_) {
     if (current_frame_has_expensive_op_)
       return true;
 
-    if (current_frame_pixel_count_ >=
-        (size().Width() * size().Height() *
-         ExpensiveCanvasHeuristicParameters::kExpensiveOverdrawThreshold))
+    if (current_frame_pixel_count_ >= overdraw_limit)
       return true;
 
     if (frame_was_cleared_)
@@ -380,9 +364,7 @@ bool RecordingImageBufferSurface::IsExpensiveToPaint() {
     if (previous_frame_has_expensive_op_)
       return true;
 
-    if (previous_frame_pixel_count_ >=
-        (size().Width() * size().Height() *
-         ExpensiveCanvasHeuristicParameters::kExpensiveOverdrawThreshold))
+    if (previous_frame_pixel_count_ >= overdraw_limit)
       return true;
   }
 
@@ -397,7 +379,7 @@ bool RecordingImageBufferSurface::Restore() {
   return ImageBufferSurface::Restore();
 }
 
-WebLayer* RecordingImageBufferSurface::Layer() const {
+WebLayer* RecordingImageBufferSurface::Layer() {
   if (fallback_surface_)
     return fallback_surface_->Layer();
   return ImageBufferSurface::Layer();

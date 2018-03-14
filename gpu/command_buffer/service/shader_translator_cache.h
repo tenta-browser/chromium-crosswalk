@@ -11,6 +11,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "gpu/command_buffer/service/gpu_preferences.h"
 #include "gpu/command_buffer/service/shader_translator.h"
 #include "third_party/angle/include/GLSLANG/ShaderLang.h"
 
@@ -27,10 +28,10 @@ namespace gles2 {
 // TODO(backer): Investigate using glReleaseShaderCompiler as an alternative to
 // to this cache.
 class GPU_EXPORT ShaderTranslatorCache
-    : public base::RefCounted<ShaderTranslatorCache>,
-      public NON_EXPORTED_BASE(ShaderTranslator::DestructionObserver) {
+    : public ShaderTranslator::DestructionObserver {
  public:
   explicit ShaderTranslatorCache(const GpuPreferences& gpu_preferences);
+  ~ShaderTranslatorCache() override;
 
   // ShaderTranslator::DestructionObserver implementation
   void OnDestruct(ShaderTranslator* translator) override;
@@ -43,9 +44,7 @@ class GPU_EXPORT ShaderTranslatorCache
       ShCompileOptions driver_bug_workarounds);
 
  private:
-  friend class base::RefCounted<ShaderTranslatorCache>;
   friend class ShaderTranslatorCacheTest_InitParamComparable_Test;
-  ~ShaderTranslatorCache() override;
 
   // Parameters passed into ShaderTranslator::Init
   struct ShaderTranslatorInitParams {
@@ -85,7 +84,7 @@ class GPU_EXPORT ShaderTranslatorCache
     ShaderTranslatorInitParams& operator=(const ShaderTranslatorInitParams&);
   };
 
-  const GpuPreferences& gpu_preferences_;
+  const GpuPreferences gpu_preferences_;
 
   typedef std::map<ShaderTranslatorInitParams, ShaderTranslator* > Cache;
   Cache cache_;

@@ -6,12 +6,13 @@
 
 #include "ash/focus_cycler.h"
 #include "ash/root_window_controller.h"
+#include "ash/session/session_controller.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_constants.h"
-#include "ash/shelf/wm_shelf.h"
-#include "ash/shelf/wm_shelf_util.h"
 #include "ash/shell.h"
+#include "ash/system/status_area_widget.h"
+#include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/tray_constants.h"
-#include "ash/wm_window.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/gfx/animation/tween.h"
@@ -20,6 +21,8 @@
 #include "ui/views/layout/grid_layout.h"
 
 namespace {
+
+using session_manager::SessionState;
 
 constexpr int kAnimationDurationMs = 250;
 
@@ -36,7 +39,7 @@ class StatusAreaWidgetDelegateAnimationSettings
     SetTweenType(gfx::Tween::EASE_IN_OUT);
   }
 
-  ~StatusAreaWidgetDelegateAnimationSettings() override {}
+  ~StatusAreaWidgetDelegateAnimationSettings() override = default;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(StatusAreaWidgetDelegateAnimationSettings);
@@ -46,8 +49,10 @@ class StatusAreaWidgetDelegateAnimationSettings
 
 namespace ash {
 
-StatusAreaWidgetDelegate::StatusAreaWidgetDelegate()
-    : focus_cycler_for_testing_(nullptr), alignment_(SHELF_ALIGNMENT_BOTTOM) {
+StatusAreaWidgetDelegate::StatusAreaWidgetDelegate(Shelf* shelf)
+    : shelf_(shelf), focus_cycler_for_testing_(nullptr) {
+  DCHECK(shelf_);
+
   // Allow the launcher to surrender the focus to another window upon
   // navigation completion by the user.
   set_allow_deactivate_on_esc(true);
@@ -55,15 +60,27 @@ StatusAreaWidgetDelegate::StatusAreaWidgetDelegate()
   layer()->SetFillsBoundsOpaquely(false);
 }
 
-StatusAreaWidgetDelegate::~StatusAreaWidgetDelegate() {}
+StatusAreaWidgetDelegate::~StatusAreaWidgetDelegate() = default;
 
 void StatusAreaWidgetDelegate::SetFocusCyclerForTesting(
     const FocusCycler* focus_cycler) {
   focus_cycler_for_testing_ = focus_cycler;
 }
 
+bool StatusAreaWidgetDelegate::ShouldFocusOut(bool reverse) {
+  if (Shell::Get()->session_controller()->GetSessionState() ==
+      SessionState::ACTIVE) {
+    return false;
+  }
+
+  views::View* focused_view = GetFocusManager()->GetFocusedView();
+  return (reverse && focused_view == GetFirstFocusableChild()) ||
+         (!reverse && focused_view == GetLastFocusableChild());
+}
+
 views::View* StatusAreaWidgetDelegate::GetDefaultFocusableChild() {
-  return child_at(0);
+  return default_last_focusable_child_ ? GetLastFocusableChild()
+                                       : GetFirstFocusableChild();
 }
 
 views::Widget* StatusAreaWidgetDelegate::GetWidget() {
@@ -77,9 +94,16 @@ const views::Widget* StatusAreaWidgetDelegate::GetWidget() const {
 void StatusAreaWidgetDelegate::OnGestureEvent(ui::GestureEvent* event) {
   views::Widget* target_widget =
       static_cast<views::View*>(event->target())->GetWidget();
-  WmWindow* target_window = WmWindow::Get(target_widget->GetNativeWindow());
-  WmShelf* shelf = target_window->GetRootWindowController()->GetShelf();
-  if (shelf->ProcessGestureEvent(*event))
+  Shelf* shelf = Shelf::ForWindow(target_widget->GetNativeWindow());
+
+  // Convert the event location from current view to screen, since swiping up on
+  // the shelf can open the fullscreen app list. Updating the bounds of the app
+  // list during dragging is based on screen coordinate space.
+  ui::GestureEvent event_in_screen(*event);
+  gfx::Point location_in_screen(event->location());
+  View::ConvertPointToScreen(this, &location_in_screen);
+  event_in_screen.set_location(location_in_screen);
+  if (shelf->ProcessGestureEvent(event_in_screen))
     event->StopPropagation();
   else
     views::AccessiblePaneView::OnGestureEvent(event);
@@ -106,8 +130,7 @@ void StatusAreaWidgetDelegate::AddTray(views::View* tray) {
 void StatusAreaWidgetDelegate::UpdateLayout() {
   // Use a grid layout so that the trays can be centered in each cell, and
   // so that the widget gets laid out correctly when tray sizes change.
-  views::GridLayout* layout = new views::GridLayout(this);
-  SetLayoutManager(layout);
+  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
 
   // Update tray border based on layout.
   bool is_child_on_edge = true;
@@ -121,7 +144,7 @@ void StatusAreaWidgetDelegate::UpdateLayout() {
 
   views::ColumnSet* columns = layout->AddColumnSet(0);
 
-  if (IsHorizontalAlignment(alignment_)) {
+  if (shelf_->IsHorizontalAlignment()) {
     for (int c = child_count() - 1; c >= 0; --c) {
       views::View* child = child_at(c);
       if (!child->visible())
@@ -174,8 +197,8 @@ void StatusAreaWidgetDelegate::UpdateWidgetSize() {
 void StatusAreaWidgetDelegate::SetBorderOnChild(views::View* child,
                                                 bool extend_border_to_edge) {
   // Tray views are laid out right-to-left or bottom-to-top.
-  const bool horizontal_alignment = IsHorizontalAlignment(alignment_);
-  const int padding = (GetShelfConstant(SHELF_SIZE) - kTrayItemSize) / 2;
+  const bool horizontal_alignment = shelf_->IsHorizontalAlignment();
+  const int padding = (kShelfSize - kTrayItemSize) / 2;
 
   const int top_edge = horizontal_alignment ? padding : 0;
   const int left_edge = horizontal_alignment ? 0 : padding;

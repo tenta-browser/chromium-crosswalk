@@ -39,9 +39,6 @@ class SettingsResetPromptDialog : public views::DialogDelegateView {
   bool ShouldShowWindowIcon() const override;
   base::string16 GetWindowTitle() const override;
 
-  // ui::DialogModel overrides.
-  bool ShouldDefaultButtonBeBlue() const override;
-
   // views::DialogDelegate overrides.
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   bool Accept() override;
@@ -52,7 +49,7 @@ class SettingsResetPromptDialog : public views::DialogDelegateView {
   bool Close() override;
 
   // views::View overrides.
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
 
  private:
   Browser* browser_;

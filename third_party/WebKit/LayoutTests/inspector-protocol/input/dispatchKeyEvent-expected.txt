@@ -1,3 +1,4 @@
+Tests Input.dispatchKeyEvent method.
 -----Event-----
 type: keydown
 keyCode: 65
@@ -18,5 +19,19 @@ key: A
 type: keypress
 keyCode: 1513
 charCode: 1513
+
+-----Event-----
+type: keydown
+shiftKey
+keyCode: 16
+location: 1
+code: ShiftLeft
+
+-----Event-----
+type: keydown
+shiftKey
+keyCode: 16
+location: 2
+code: ShiftRight
 
 

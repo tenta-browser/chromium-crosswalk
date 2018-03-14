@@ -54,12 +54,13 @@ MPEGAudioStreamParserBase::MPEGAudioStreamParserBase(uint32_t start_code_mask,
                                                      AudioCodec audio_codec,
                                                      int codec_delay)
     : state_(UNINITIALIZED),
+      media_log_(nullptr),
       in_media_segment_(false),
       start_code_mask_(start_code_mask),
       audio_codec_(audio_codec),
       codec_delay_(codec_delay) {}
 
-MPEGAudioStreamParserBase::~MPEGAudioStreamParserBase() {}
+MPEGAudioStreamParserBase::~MPEGAudioStreamParserBase() = default;
 
 void MPEGAudioStreamParserBase::Init(
     const InitCB& init_cb,
@@ -69,7 +70,7 @@ void MPEGAudioStreamParserBase::Init(
     const EncryptedMediaInitDataCB& encrypted_media_init_data_cb,
     const NewMediaSegmentCB& new_segment_cb,
     const EndMediaSegmentCB& end_of_segment_cb,
-    const scoped_refptr<MediaLog>& media_log) {
+    MediaLog* media_log) {
   DVLOG(1) << __func__;
   DCHECK_EQ(state_, UNINITIALIZED);
   init_cb_ = init_cb;
@@ -209,6 +210,8 @@ int MPEGAudioStreamParserBase::ParseFrame(const uint8_t* data,
     config_.Initialize(audio_codec_, kSampleFormatF32, channel_layout,
                        sample_rate, extra_data, Unencrypted(),
                        base::TimeDelta(), codec_delay_);
+    if (audio_codec_ == kCodecAAC)
+      config_.disable_discard_decoder_delay();
 
     base::TimeDelta base_timestamp;
     if (timestamp_helper_)
@@ -276,12 +279,15 @@ int MPEGAudioStreamParserBase::ParseIcecastHeader(const uint8_t* data,
 int MPEGAudioStreamParserBase::ParseID3v1(const uint8_t* data, int size) {
   DVLOG(1) << __func__ << "(" << size << ")";
 
-  if (size < kID3v1Size)
-    return 0;
-
   // TODO(acolwell): Add code to actually validate ID3v1 data and
   // expose it as a metadata text track.
-  return !memcmp(data, "TAG+", 4) ? kID3v1ExtendedSize : kID3v1Size;
+
+  if (size < 4)
+    return 0;
+
+  int needed_size = !memcmp(data, "TAG+", 4) ? kID3v1ExtendedSize : kID3v1Size;
+
+  return (size < needed_size) ? 0 : needed_size;
 }
 
 int MPEGAudioStreamParserBase::ParseID3v2(const uint8_t* data, int size) {
@@ -363,7 +369,7 @@ int MPEGAudioStreamParserBase::FindNextValidStartCode(const uint8_t* data,
         return 0;
 
       if (sync_bytes > 0) {
-        DCHECK_LT(sync_bytes, sync_size);
+        DCHECK_LE(sync_bytes, sync_size);
 
         // Skip over this frame so we can check the next one.
         sync += frame_size;

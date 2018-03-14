@@ -15,9 +15,9 @@
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.h"
 #include "chrome/browser/sync_file_system/drive_backend/metadata_database.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/leveldatabase/src/helpers/memenv/memenv.h"
+#include "third_party/leveldatabase/env_chromium.h"
+#include "third_party/leveldatabase/leveldb_chrome.h"
 #include "third_party/leveldatabase/src/include/leveldb/db.h"
-#include "third_party/leveldatabase/src/include/leveldb/env.h"
 
 namespace sync_file_system {
 namespace drive_backend {
@@ -69,7 +69,7 @@ std::unique_ptr<DatabaseContents> CreateTestDatabaseContents() {
 class MetadataDatabaseIndexTest : public testing::Test {
  public:
   void SetUp() override {
-    in_memory_env_.reset(leveldb::NewMemEnv(leveldb::Env::Default()));
+    in_memory_env_.reset(leveldb_chrome::NewMemEnv(leveldb::Env::Default()));
     InitializeLevelDB();
 
     contents_ = CreateTestDatabaseContents();
@@ -81,15 +81,15 @@ class MetadataDatabaseIndexTest : public testing::Test {
 
  private:
   void InitializeLevelDB() {
-    leveldb::DB* db = nullptr;
-    leveldb::Options options;
+    std::unique_ptr<leveldb::DB> db;
+    leveldb_env::Options options;
     options.create_if_missing = true;
     options.max_open_files = 0;  // Use minimum.
     options.env = in_memory_env_.get();
-    leveldb::Status status = leveldb::DB::Open(options, "", &db);
+    leveldb::Status status = leveldb_env::OpenDB(options, "", &db);
     ASSERT_TRUE(status.ok());
 
-    db_.reset(new LevelDBWrapper(base::WrapUnique(db)));
+    db_.reset(new LevelDBWrapper(std::move(db)));
   }
 
   std::unique_ptr<DatabaseContents> contents_;

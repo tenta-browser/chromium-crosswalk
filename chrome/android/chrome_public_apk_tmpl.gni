@@ -10,20 +10,6 @@ import("//third_party/leakcanary/config.gni")
 import("channel.gni")
 
 declare_args() {
-  # Whether chrome_public_apk should use the crazy linker.
-  chrome_public_apk_use_chromium_linker = chromium_linker_supported
-
-  # Whether chrome_public_apk should use the relocation packer.
-  chrome_public_apk_use_relocation_packer = chromium_linker_supported
-
-  # Whether native libraries should be loaded from within the apk.
-  # Only attempt loading the library from the APK for 64 bit devices
-  # until the number of 32 bit devices which don't support this
-  # approach falls to a minimal level -  http://crbug.com/390618.
-  chrome_public_apk_load_library_from_apk =
-      chromium_linker_supported &&
-      (current_cpu == "arm64" || current_cpu == "x64")
-
   # Enables ProGuard obfuscation of Chromium packages.
   enable_proguard_obfuscation = false
 
@@ -37,9 +23,25 @@ default_chrome_public_jinja_variables = [
   "enable_vr=$enable_vr",
 ]
 
+if (use_order_profiling) {
+  default_chrome_public_jinja_variables += [ "use_order_profiling=1" ]
+}
+
 template("chrome_public_apk_tmpl") {
   android_apk(target_name) {
     forward_variables_from(invoker, "*")
+    exclude_xxxhdpi = true
+
+    # Use zh-TW strings for zh-HK (https://crbug.com/780847).
+    support_zh_hk = true
+
+    # Whitelist rationale in https://crbug.com/691733.
+    xxxhdpi_whitelist = [
+      "*shadow*",  # Combination of gradient & transparency cause pixelation.
+      "*.9.*",  # Most nine-patches contain shadows.
+      "*ic_file_download_white*",  # Bottom edge seems misaligned.
+      "*ic_lock.*",  # Bottom edge seems misaligned.
+    ]
     _native_lib_file =
         rebase_path("$root_gen_dir/CHROME_VERSION.json", root_out_dir)
     native_lib_version_arg = "@FileArg($_native_lib_file:full-quoted)"
@@ -62,26 +64,36 @@ template("chrome_public_apk_tmpl") {
         "//base/android/proguard/chromium_code.flags",
       ]
       if (enable_proguard_obfuscation) {
-        proguard_configs += [ "//chrome/android/java/proguard-obfuscate.flags" ]
+        proguard_configs +=
+            [ "//base/android/proguard/enable_obfuscation.flags" ]
       } else {
         proguard_configs +=
-            [ "//chrome/android/java/proguard-dont-obfuscate.flags" ]
+            [ "//base/android/proguard/disable_chromium_obfuscation.flags" ]
       }
     }
 
     if (!defined(use_chromium_linker)) {
-      use_chromium_linker = chrome_public_apk_use_chromium_linker
+      use_chromium_linker = chromium_linker_supported
     }
 
     if (use_chromium_linker) {
       if (!defined(load_library_from_apk)) {
-        load_library_from_apk = chrome_public_apk_load_library_from_apk
-      }
-
-      if (!defined(enable_relocation_packing)) {
-        enable_relocation_packing = chrome_public_apk_use_relocation_packer
+        # Whether native libraries should be loaded from within the apk.
+        # Only attempt loading the library from the APK for 64 bit devices
+        # until the number of 32 bit devices which don't support this
+        # approach falls to a minimal level -  http://crbug.com/390618.
+        load_library_from_apk = chromium_linker_supported &&
+                                (current_cpu == "arm64" || current_cpu == "x64")
       }
     }
+    if (!defined(pack_relocations)) {
+      if (!defined(requires_sdk_api_level_23)) {
+        requires_sdk_api_level_23 = false
+      }
+      pack_relocations =
+          !use_lld && (use_chromium_linker || requires_sdk_api_level_23)
+    }
+    command_line_flags_file = "chrome-command-line"
   }
 }
 
@@ -103,8 +115,6 @@ template("monochrome_public_apk_tmpl") {
     app_as_shared_lib = true
     use_chromium_linker = false
     requires_sdk_api_level_23 = true
-    enable_relocation_packing = true
-    extensions_to_not_compress = ".lpak,.pak,.bin,.dat"
 
     # Webview supports all locales (has no omitted ones).
     aapt_locale_whitelist = locales
@@ -117,14 +127,19 @@ template("monochrome_public_apk_tmpl") {
 
     forward_variables_from(invoker, "*")
 
+    # Android N+ better supports multiple locales (https://crbug.com/780847).
+    support_zh_hk = false
+
     if (!defined(deps)) {
       deps = []
     }
     deps += [
       "//android_webview:monochrome_webview_assets",
+      "//android_webview/apk:webview_license_activity_java",
       "//android_webview/glue",
       "//chrome/android:chrome_public_non_pak_assets",
       "//chrome/android:monochrome_pak_assets",
+      "//chrome/android/monochrome:monochrome_license_provider_java",
     ]
 
     if (!is_java_debug) {
@@ -132,6 +147,7 @@ template("monochrome_public_apk_tmpl") {
         proguard_configs = []
       }
       proguard_configs += [ "//android_webview/apk/java/proguard.flags" ]
+      png_to_webp = true
     }
   }
 }

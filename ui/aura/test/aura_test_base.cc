@@ -4,10 +4,12 @@
 
 #include "ui/aura/test/aura_test_base.h"
 
+#include "base/memory/ptr_util.h"
 #include "ui/aura/client/window_parenting_client.h"
 #include "ui/aura/mus/property_utils.h"
 #include "ui/aura/mus/window_tree_client.h"
 #include "ui/aura/mus/window_tree_host_mus.h"
+#include "ui/aura/test/aura_test_context_factory.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window.h"
 #include "ui/base/ime/input_method_initializer.h"
@@ -22,7 +24,10 @@ namespace aura {
 namespace test {
 
 AuraTestBase::AuraTestBase()
-    : window_manager_delegate_(this), window_tree_client_delegate_(this) {}
+    : scoped_task_environment_(
+          base::test::ScopedTaskEnvironment::MainThreadType::UI),
+      window_manager_delegate_(this),
+      window_tree_client_delegate_(this) {}
 
 AuraTestBase::~AuraTestBase() {
   CHECK(setup_called_)
@@ -73,13 +78,18 @@ void AuraTestBase::SetUp() {
       ui::VelocityTracker::Strategy::LSQ2_RESTRICTED);
 
   // The ContextFactory must exist before any Compositors are created.
-  bool enable_pixel_output = false;
   ui::ContextFactory* context_factory = nullptr;
   ui::ContextFactoryPrivate* context_factory_private = nullptr;
-  ui::InitializeContextFactoryForTests(enable_pixel_output, &context_factory,
-                                       &context_factory_private);
+  if (use_mus_) {
+    mus_context_factory_ = std::make_unique<AuraTestContextFactory>();
+    context_factory = mus_context_factory_.get();
+  } else {
+    const bool enable_pixel_output = false;
+    ui::InitializeContextFactoryForTests(enable_pixel_output, &context_factory,
+                                         &context_factory_private);
+  }
 
-  helper_.reset(new AuraTestHelper(&message_loop_));
+  helper_ = std::make_unique<AuraTestHelper>();
   if (use_mus_) {
     helper_->EnableMusWithTestWindowTree(window_tree_client_delegate_,
                                          window_manager_delegate_);
@@ -94,9 +104,18 @@ void AuraTestBase::TearDown() {
   // and these tasks if un-executed would upset Valgrind.
   RunAllPendingInMessageLoop();
 
-  window_tree_hosts_.clear();
+  // AuraTestHelper may own a WindowTreeHost, don't delete it here else
+  // AuraTestHelper will have use after frees.
+  for (size_t i = window_tree_hosts_.size(); i > 0; --i) {
+    if (window_tree_hosts_[i - 1].get() == helper_->host()) {
+      window_tree_hosts_[i - 1].release();
+      window_tree_hosts_.erase(window_tree_hosts_.begin() + i - 1);
+      break;
+    }
+  }
 
   helper_->TearDown();
+  window_tree_hosts_.clear();
   ui::TerminateContextFactoryForTests();
   ui::ShutdownInputMethodForTesting();
   testing::Test::TearDown();
@@ -118,6 +137,11 @@ Window* AuraTestBase::CreateNormalWindow(int id, Window* parent,
 void AuraTestBase::EnableMusWithTestWindowTree() {
   DCHECK(!setup_called_);
   use_mus_ = true;
+}
+
+void AuraTestBase::DeleteWindowTreeClient() {
+  DCHECK(use_mus_);
+  helper_->DeleteWindowTreeClient();
 }
 
 void AuraTestBase::ConfigureBackend(BackendType type) {
@@ -153,9 +177,14 @@ void AuraTestBase::OnEmbedRootDestroyed(WindowTreeHostMus* window_tree_host) {}
 void AuraTestBase::OnLostConnection(WindowTreeClient* client) {}
 
 void AuraTestBase::OnPointerEventObserved(const ui::PointerEvent& event,
-                                          Window* target) {}
+                                          Window* target) {
+  observed_pointer_events_.push_back(std::unique_ptr<ui::PointerEvent>(
+      static_cast<ui::PointerEvent*>(ui::Event::Clone(event).release())));
+}
 
 void AuraTestBase::SetWindowManagerClient(WindowManagerClient* client) {}
+
+void AuraTestBase::OnWmConnected() {}
 
 void AuraTestBase::OnWmSetBounds(Window* window, const gfx::Rect& bounds) {}
 
@@ -211,6 +240,8 @@ ui::mojom::EventResult AuraTestBase::OnAccelerator(
     std::unordered_map<std::string, std::vector<uint8_t>>* properties) {
   return ui::mojom::EventResult::HANDLED;
 }
+
+void AuraTestBase::OnCursorTouchVisibleChanged(bool enabled) {}
 
 void AuraTestBase::OnWmPerformMoveLoop(
     Window* window,

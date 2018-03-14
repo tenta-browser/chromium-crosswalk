@@ -33,7 +33,6 @@
 #include "platform/wtf/text/ASCIIFastPath.h"
 #include "platform/wtf/text/StringImpl.h"
 #include "platform/wtf/text/StringView.h"
-#include <algorithm>
 #include <iosfwd>
 
 #ifdef __OBJC__
@@ -97,9 +96,9 @@ class WTF_EXPORT String {
 
   // Construct a string referencing an existing StringImpl.
   String(StringImpl* impl) : impl_(impl) {}
-  String(PassRefPtr<StringImpl> impl) : impl_(std::move(impl)) {}
+  String(scoped_refptr<StringImpl> impl) : impl_(std::move(impl)) {}
 
-  void Swap(String& o) { impl_.Swap(o.impl_); }
+  void swap(String& o) { impl_.swap(o.impl_); }
 
   template <typename CharType>
   static String Adopt(StringBuffer<CharType>& buffer) {
@@ -112,8 +111,8 @@ class WTF_EXPORT String {
   bool IsNull() const { return !impl_; }
   bool IsEmpty() const { return !impl_ || !impl_->length(); }
 
-  StringImpl* Impl() const { return impl_.Get(); }
-  PassRefPtr<StringImpl> ReleaseImpl() { return impl_.Release(); }
+  StringImpl* Impl() const { return impl_.get(); }
+  scoped_refptr<StringImpl> ReleaseImpl() { return std::move(impl_); }
 
   unsigned length() const {
     if (!impl_)
@@ -123,14 +122,14 @@ class WTF_EXPORT String {
 
   const LChar* Characters8() const {
     if (!impl_)
-      return 0;
+      return nullptr;
     DCHECK(impl_->Is8Bit());
     return impl_->Characters8();
   }
 
   const UChar* Characters16() const {
     if (!impl_)
-      return 0;
+      return nullptr;
     DCHECK(!impl_->Is8Bit());
     return impl_->Characters16();
   }
@@ -165,14 +164,14 @@ class WTF_EXPORT String {
   static String NumberToStringFixedWidth(double, unsigned decimal_places);
 
   // Find characters.
-  size_t Find(UChar c, unsigned start = 0) const {
+  size_t find(UChar c, unsigned start = 0) const {
     return impl_ ? impl_->Find(c, start) : kNotFound;
   }
-  size_t Find(LChar c, unsigned start = 0) const {
+  size_t find(LChar c, unsigned start = 0) const {
     return impl_ ? impl_->Find(c, start) : kNotFound;
   }
-  size_t Find(char c, unsigned start = 0) const {
-    return Find(static_cast<LChar>(c), start);
+  size_t find(char c, unsigned start = 0) const {
+    return find(static_cast<LChar>(c), start);
   }
   size_t Find(CharacterMatchFunctionPtr match_function,
               unsigned start = 0) const {
@@ -201,7 +200,7 @@ class WTF_EXPORT String {
     return impl_ ? impl_->FindIgnoringASCIICase(value, start) : kNotFound;
   }
 
-  bool Contains(char c) const { return Find(c) != kNotFound; }
+  bool Contains(char c) const { return find(c) != kNotFound; }
   bool Contains(
       const StringView& value,
       TextCaseSensitivity case_sensitivity = kTextCaseSensitive) const {
@@ -225,6 +224,13 @@ class WTF_EXPORT String {
                ? DISPATCH_CASE_OP(case_sensitivity, impl_->StartsWith, (prefix))
                : prefix.IsEmpty();
   }
+  bool StartsWithIgnoringCase(const StringView& prefix) const {
+    return impl_ ? impl_->StartsWithIgnoringCase(prefix) : prefix.IsEmpty();
+  }
+  bool StartsWithIgnoringASCIICase(const StringView& prefix) const {
+    return impl_ ? impl_->StartsWithIgnoringASCIICase(prefix)
+                 : prefix.IsEmpty();
+  }
   bool StartsWith(UChar character) const {
     return impl_ ? impl_->StartsWith(character) : false;
   }
@@ -235,14 +241,20 @@ class WTF_EXPORT String {
     return impl_ ? DISPATCH_CASE_OP(case_sensitivity, impl_->EndsWith, (suffix))
                  : suffix.IsEmpty();
   }
+  bool EndsWithIgnoringCase(const StringView& prefix) const {
+    return impl_ ? impl_->EndsWithIgnoringCase(prefix) : prefix.IsEmpty();
+  }
+  bool EndsWithIgnoringASCIICase(const StringView& prefix) const {
+    return impl_ ? impl_->EndsWithIgnoringASCIICase(prefix) : prefix.IsEmpty();
+  }
   bool EndsWith(UChar character) const {
     return impl_ ? impl_->EndsWith(character) : false;
   }
 
-  void Append(const StringView&);
-  void Append(LChar);
-  void Append(char c) { Append(static_cast<LChar>(c)); }
-  void Append(UChar);
+  void append(const StringView&);
+  void append(LChar);
+  void append(char c) { append(static_cast<LChar>(c)); }
+  void append(UChar);
   void insert(const StringView&, unsigned pos);
 
   // TODO(esprehn): replace strangely both modifies this String *and* return a
@@ -262,7 +274,7 @@ class WTF_EXPORT String {
       impl_ = impl_->Replace(pattern, replacement);
     return *this;
   }
-  String& Replace(unsigned index,
+  String& replace(unsigned index,
                   unsigned length_to_replace,
                   const StringView& replacement) {
     if (impl_)
@@ -284,16 +296,18 @@ class WTF_EXPORT String {
   String Left(unsigned len) const { return Substring(0, len); }
   String Right(unsigned len) const { return Substring(length() - len, len); }
 
-  // Returns a lowercase/uppercase version of the string. These functions might
-  // convert non-ASCII characters to ASCII characters. For example,
-  // DeprecatedLower() for U+212A is 'k', DeprecatedUpper() for U+017F is 'S'.
-  // These functions are rarely used to implement web platform features. See
+  // Returns a lowercase version of the string. This function might convert
+  // non-ASCII characters to ASCII characters. For example, DeprecatedLower()
+  // for U+212A is 'k'.
+  // This function is rarely used to implement web platform features. See
   // crbug.com/627682.
-  // These functions are deprecated. We should use UpperASCII(), or introduce
-  // UpperUnicode(), and should introduce LowerASCII() or LowerUnicode().
+  // This function is deprecated. We should use LowerASCII() or introduce
+  // LowerUnicode().
   String DeprecatedLower() const;
-  String DeprecatedUpper() const;
 
+  // |locale_identifier| is case-insensitive, and accepts either of "aa_aa" or
+  // "aa-aa". Empty/null |locale_identifier| indicates locale-independent
+  // Unicode case conversion.
   String LowerUnicode(const AtomicString& locale_identifier) const;
   String UpperUnicode(const AtomicString& locale_identifier) const;
 
@@ -318,6 +332,7 @@ class WTF_EXPORT String {
   String FoldCase() const;
 
   // Takes a printf format and args and prints into a String.
+  // This function supports Latin-1 characters only.
   PRINTF_FORMAT(1, 2) static String Format(const char* format, ...);
 
   // Returns an uninitialized string. The characters needs to be written
@@ -358,22 +373,70 @@ class WTF_EXPORT String {
 
   // Convert the string into a number.
 
-  int ToIntStrict(bool* ok = 0, int base = 10) const;
-  unsigned ToUIntStrict(bool* ok = 0, int base = 10) const;
-  int64_t ToInt64Strict(bool* ok = 0, int base = 10) const;
-  uint64_t ToUInt64Strict(bool* ok = 0, int base = 10) const;
+  // The following ToFooStrict functions accept:
+  //  - leading '+'
+  //  - leading Unicode whitespace
+  //  - trailing Unicode whitespace
+  //  - no "-0" (ToUIntStrict and ToUInt64Strict)
+  //  - no out-of-range numbers which the resultant type can't represent
+  //
+  // If the input string is not acceptable, 0 is returned and |*ok| becomes
+  // |false|.
+  //
+  // We can use these functions to implement a Web Platform feature only if the
+  // input string is already valid according to the specification of the
+  // feature.
+  int ToIntStrict(bool* ok = nullptr) const;
+  unsigned ToUIntStrict(bool* ok = nullptr) const;
+  unsigned HexToUIntStrict(bool* ok) const;
+  int64_t ToInt64Strict(bool* ok = nullptr) const;
+  uint64_t ToUInt64Strict(bool* ok = nullptr) const;
 
-  int ToInt(bool* ok = 0) const;
-  unsigned ToUInt(bool* ok = 0) const;
-  int64_t ToInt64(bool* ok = 0) const;
-  uint64_t ToUInt64(bool* ok = 0) const;
+  // The following ToFoo functions accept:
+  //  - leading '+'
+  //  - leading Unicode whitespace
+  //  - trailing garbage
+  //  - no "-0" (ToUInt and ToUInt64)
+  //  - no out-of-range numbers which the resultant type can't represent
+  //
+  // If the input string is not acceptable, 0 is returned and |*ok| becomes
+  // |false|.
+  //
+  // We can use these functions to implement a Web Platform feature only if the
+  // input string is already valid according to the specification of the
+  // feature.
+  int ToInt(bool* ok = nullptr) const;
+  unsigned ToUInt(bool* ok = nullptr) const;
 
+  // These functions accepts:
+  //  - leading '+'
+  //  - numbers without leading zeros such as ".5"
+  //  - numbers ending with "." such as "3."
+  //  - scientific notation
+  //  - leading whitespace (IsASCIISpace, not IsHTMLSpace)
+  //  - no trailing whitespace
+  //  - no trailing garbage
+  //  - no numbers such as "NaN" "Infinity"
+  //
+  // A huge absolute number which a double/float can't represent is accepted,
+  // and +Infinity or -Infinity is returned.
+  //
+  // A small absolute numbers which a double/float can't represent is accepted,
+  // and 0 is returned
+  //
+  // If the input string is not acceptable, 0.0 is returned and |*ok| becomes
+  // |false|.
+  //
+  // We can use these functions to implement a Web Platform feature only if the
+  // input string is already valid according to the specification of the
+  // feature.
+  //
   // FIXME: Like the strict functions above, these give false for "ok" when
   // there is trailing garbage.  Like the non-strict functions above, these
   // return the value when there is trailing garbage.  It would be better if
   // these were more consistent with the above functions instead.
-  double ToDouble(bool* ok = 0) const;
-  float ToFloat(bool* ok = 0) const;
+  double ToDouble(bool* ok = nullptr) const;
+  float ToFloat(bool* ok = nullptr) const;
 
   String IsolatedCopy() const;
   bool IsSafeToSendToAnotherThread() const;
@@ -395,7 +458,7 @@ class WTF_EXPORT String {
   template <size_t inlineCapacity>
   static String Make8BitFrom16BitSource(
       const Vector<UChar, inlineCapacity>& buffer) {
-    return Make8BitFrom16BitSource(buffer.Data(), buffer.size());
+    return Make8BitFrom16BitSource(buffer.data(), buffer.size());
   }
 
   static String Make16BitFrom8BitSource(const LChar*, size_t);
@@ -432,23 +495,18 @@ class WTF_EXPORT String {
     return impl_ ? impl_->CharactersSizeInBytes() : 0;
   }
 
-  // Hash table deleted values, which are only constructed and never copied or
-  // destroyed.
-  String(WTF::HashTableDeletedValueType) : impl_(WTF::kHashTableDeletedValue) {}
-  bool IsHashTableDeletedValue() const {
-    return impl_.IsHashTableDeletedValue();
-  }
-
 #ifndef NDEBUG
   // For use in the debugger.
   void Show() const;
 #endif
 
  private:
+  friend struct HashTraits<String>;
+
   template <typename CharacterType>
   void AppendInternal(CharacterType);
 
-  RefPtr<StringImpl> impl_;
+  scoped_refptr<StringImpl> impl_;
 };
 
 #undef DISPATCH_CASE_OP
@@ -486,14 +544,14 @@ inline bool EqualIgnoringNullity(const Vector<UChar, inlineCapacity>& a,
 }
 
 inline void swap(String& a, String& b) {
-  a.Swap(b);
+  a.swap(b);
 }
 
 // Definitions of string operations
 
 template <size_t inlineCapacity>
 String::String(const Vector<UChar, inlineCapacity>& vector)
-    : impl_(vector.size() ? StringImpl::Create(vector.Data(), vector.size())
+    : impl_(vector.size() ? StringImpl::Create(vector.data(), vector.size())
                           : StringImpl::empty_) {}
 
 template <>

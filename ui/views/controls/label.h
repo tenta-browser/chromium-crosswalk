@@ -31,9 +31,6 @@ class VIEWS_EXPORT Label : public View,
   // Internal class name.
   static const char kViewClassName[];
 
-  // The padding for the focus border when rendering focused text.
-  static const int kFocusBorderPadding;
-
   // Helper to construct a Label that doesn't use the views typography spec.
   // Using this causes Label to obtain colors from ui::NativeTheme and line
   // spacing from gfx::FontList::GetHeight().
@@ -76,6 +73,10 @@ class VIEWS_EXPORT Label : public View,
   const base::string16& text() const { return render_text_->text(); }
   virtual void SetText(const base::string16& text);
 
+  // Where the label appears in the UI. Passed in from the constructor. This is
+  // a value from views::style::TextContext or an enum that extends it.
+  int text_context() const { return text_context_; }
+
   // Enables or disables auto-color-readability (enabled by default).  If this
   // is enabled, then calls to set any foreground or background color will
   // trigger an automatic mapper that uses color_utils::GetReadableColor() to
@@ -85,10 +86,8 @@ class VIEWS_EXPORT Label : public View,
   // Sets the color.  This will automatically force the color to be readable
   // over the current background color, if auto color readability is enabled.
   virtual void SetEnabledColor(SkColor color);
-  void SetDisabledColor(SkColor color);
 
   SkColor enabled_color() const { return actual_enabled_color_; }
-  SkColor disabled_color() const { return actual_disabled_color_; }
 
   // Sets the background color. This won't be explicitly drawn, but the label
   // will force the text color to be readable over it.
@@ -132,6 +131,11 @@ class VIEWS_EXPORT Label : public View,
   // Get or set if the label text can wrap on multiple lines; default is false.
   bool multi_line() const { return multi_line_; }
   void SetMultiLine(bool multi_line);
+
+  // If multi-line, a non-zero value will cap the number of lines rendered, and
+  // elide the rest (currently only ELIDE_TAIL supported). See gfx::RenderText.
+  int max_lines() const { return max_lines_; }
+  void SetMaxLines(int max_lines);
 
   // Get or set if the label text should be obscured before rendering (e.g.
   // should "Password!" display as "*********"); default is false.
@@ -206,9 +210,8 @@ class VIEWS_EXPORT Label : public View,
   void SelectRange(const gfx::Range& range);
 
   // View:
-  gfx::Insets GetInsets() const override;
   int GetBaseline() const override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   gfx::Size GetMinimumSize() const override;
   int GetHeightForWidth(int w) const override;
   void Layout() override;
@@ -219,7 +222,6 @@ class VIEWS_EXPORT Label : public View,
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   bool GetTooltipText(const gfx::Point& p,
                       base::string16* tooltip) const override;
-  void OnEnabledChanged() override;
 
  protected:
   // Create a single RenderText instance to actually be painted.
@@ -229,13 +231,18 @@ class VIEWS_EXPORT Label : public View,
       gfx::DirectionalityMode directionality,
       gfx::ElideBehavior elide_behavior) const;
 
+  // Draw a focus ring. The default implementation does nothing.
+  virtual void PaintFocusRing(gfx::Canvas* canvas) const;
+  gfx::Rect GetFocusRingBounds() const;
+
   void PaintText(gfx::Canvas* canvas);
 
   // View:
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
   void VisibilityChanged(View* starting_from, bool is_visible) override;
   void OnPaint(gfx::Canvas* canvas) override;
-  void OnDeviceScaleFactorChanged(float device_scale_factor) override;
+  void OnDeviceScaleFactorChanged(float old_device_scale_factor,
+                                  float new_device_scale_factor) override;
   void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
   gfx::NativeCursor GetCursor(const ui::MouseEvent& event) override;
   void OnFocus() override;
@@ -253,7 +260,7 @@ class VIEWS_EXPORT Label : public View,
   FRIEND_TEST_ALL_PREFIXES(LabelTest, MultilineSupportedRenderText);
   FRIEND_TEST_ALL_PREFIXES(LabelTest, TextChangeWithoutLayout);
   FRIEND_TEST_ALL_PREFIXES(LabelTest, EmptyLabel);
-  FRIEND_TEST_ALL_PREFIXES(LabelTest, FocusBounds);
+  FRIEND_TEST_ALL_PREFIXES(MDLabelTest, FocusBounds);
   FRIEND_TEST_ALL_PREFIXES(LabelTest, MultiLineSizingWithElide);
   friend class LabelSelectionTest;
 
@@ -297,18 +304,16 @@ class VIEWS_EXPORT Label : public View,
   // Set up |lines_| to actually be painted.
   void MaybeBuildRenderTextLines() const;
 
-  gfx::Rect GetFocusBounds() const;
-
   // Get the text broken into lines as needed to fit the given |width|.
   std::vector<base::string16> GetLinesForWidth(int width) const;
 
   // Get the text size for the current layout.
   gfx::Size GetTextSize() const;
 
-  // Updates |actual_{enabled,disabled}_color_| from requested colors.
+  // Updates text and selection colors from requested colors.
   void RecalculateColors();
 
-  // Applies |actual_{enabled,disabled}_color_| to |lines_|.
+  // Applies the foreground color to |lines_|.
   void ApplyTextColors() const;
 
   // Updates any colors that have not been explicitly set from the theme.
@@ -328,6 +333,8 @@ class VIEWS_EXPORT Label : public View,
   // Builds |context_menu_contents_|.
   void BuildContextMenuContents();
 
+  const int text_context_;
+
   // An un-elided and single-line RenderText object used for preferred sizing.
   std::unique_ptr<gfx::RenderText> render_text_;
 
@@ -341,8 +348,6 @@ class VIEWS_EXPORT Label : public View,
 
   SkColor requested_enabled_color_ = SK_ColorRED;
   SkColor actual_enabled_color_ = SK_ColorRED;
-  SkColor requested_disabled_color_ = SK_ColorRED;
-  SkColor actual_disabled_color_ = SK_ColorRED;
   SkColor background_color_ = SK_ColorRED;
   SkColor requested_selection_text_color_ = SK_ColorRED;
   SkColor actual_selection_text_color_ = SK_ColorRED;
@@ -350,7 +355,6 @@ class VIEWS_EXPORT Label : public View,
 
   // Set to true once the corresponding setter is invoked.
   bool enabled_color_set_;
-  bool disabled_color_set_;
   bool background_color_set_;
   bool selection_text_color_set_;
   bool selection_background_color_set_;
@@ -361,6 +365,7 @@ class VIEWS_EXPORT Label : public View,
   bool auto_color_readability_;
   // TODO(mukai): remove |multi_line_| when all RenderText can render multiline.
   bool multi_line_;
+  int max_lines_;
   base::string16 tooltip_text_;
   bool handles_tooltips_;
   // Whether to collapse the label when it's not visible.

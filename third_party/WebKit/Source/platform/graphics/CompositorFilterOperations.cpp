@@ -64,7 +64,8 @@ void CompositorFilterOperations::AppendDropShadowFilter(IntPoint offset,
       gfx_offset, std_deviation, color.Rgb()));
 }
 
-void CompositorFilterOperations::AppendColorMatrixFilter(SkScalar matrix[20]) {
+void CompositorFilterOperations::AppendColorMatrixFilter(
+    const cc::FilterOperation::Matrix& matrix) {
   filter_operations_.Append(
       cc::FilterOperation::CreateColorMatrixFilter(matrix));
 }
@@ -81,7 +82,7 @@ void CompositorFilterOperations::AppendSaturatingBrightnessFilter(
 }
 
 void CompositorFilterOperations::AppendReferenceFilter(
-    sk_sp<SkImageFilter> image_filter) {
+    sk_sp<PaintFilter> image_filter) {
   filter_operations_.Append(
       cc::FilterOperation::CreateReferenceFilter(std::move(image_filter)));
 }

@@ -38,6 +38,11 @@
 
 namespace blink {
 
+// When URIs use the "cid" (Content-ID) scheme, the resource refers to a
+// specific body part in an MHTML multipart/related structure.
+// See RFC n°2557, section-8.3: "Use of the Content-ID header and CID URLs".
+const char kContentIdScheme[] = "cid";
+
 class ArchiveResource;
 class KURL;
 class SharedBuffer;
@@ -47,7 +52,7 @@ struct SerializedResource;
 class PLATFORM_EXPORT MHTMLArchive final
     : public GarbageCollected<MHTMLArchive> {
  public:
-  static MHTMLArchive* Create(const KURL&, PassRefPtr<const SharedBuffer>);
+  static MHTMLArchive* Create(const KURL&, scoped_refptr<const SharedBuffer>);
 
   // Binary encoding results in smaller MHTML files but they might not work in
   // other browsers.
@@ -59,6 +64,7 @@ class PLATFORM_EXPORT MHTMLArchive final
   // generateMHTMLPart and generateMHTMLFooter calls that belong to the same
   // MHTML document (see also rfc1341, section 7.2.1, "boundary" description).
   static void GenerateMHTMLHeader(const String& boundary,
+                                  const KURL&,
                                   const String& title,
                                   const String& mime_type,
                                   Vector<char>& output_buffer);
@@ -92,7 +98,7 @@ class PLATFORM_EXPORT MHTMLArchive final
   ArchiveResource* MainResource() { return main_resource_.Get(); }
   ArchiveResource* SubresourceForURL(const KURL&) const;
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   MHTMLArchive();

@@ -56,7 +56,7 @@ class FakeX11Keyboard : public X11Keyboard {
 
  private:
   std::unordered_map<uint32_t, MappingInfo> keycode_mapping_;
-  std::deque<uint32_t> expected_code_point_sequence_;
+  base::circular_deque<uint32_t> expected_code_point_sequence_;
   base::Closure keypress_finished_callback_;
 };
 
@@ -168,9 +168,8 @@ void X11CharacterInjectorTest::InjectAndRun(
     const std::vector<uint32_t>& code_points) {
   base::RunLoop run_loop;
   keyboard_->SetKeyPressFinishedCallback(run_loop.QuitClosure());
-  std::for_each(code_points.begin(), code_points.end(),
-                std::bind(&X11CharacterInjector::Inject, injector_.get(),
-                          std::placeholders::_1));
+  for (uint32_t code_point : code_points)
+    injector_->Inject(code_point);
   keyboard_->ExpectEnterCodePoints(code_points);
   run_loop.Run();
 }

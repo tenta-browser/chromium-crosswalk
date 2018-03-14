@@ -75,17 +75,28 @@ class NET_EXPORT LayeredNetworkDelegate : public NetworkDelegate {
   bool OnCanGetCookies(const URLRequest& request,
                        const CookieList& cookie_list) final;
   bool OnCanSetCookie(const URLRequest& request,
-                      const std::string& cookie_line,
+                      const net::CanonicalCookie& cookie,
                       CookieOptions* options) final;
   bool OnCanAccessFile(const URLRequest& request,
-                       const base::FilePath& path) const final;
+                       const base::FilePath& original_path,
+                       const base::FilePath& absolute_path) const final;
   bool OnCanEnablePrivacyMode(const GURL& url,
-                              const GURL& first_party_for_cookies) const final;
+                              const GURL& site_for_cookies) const final;
   bool OnAreExperimentalCookieFeaturesEnabled() const final;
   bool OnCancelURLRequestWithPolicyViolatingReferrerHeader(
       const URLRequest& request,
       const GURL& target_url,
       const GURL& referrer_url) const final;
+
+  bool OnCanQueueReportingReport(const url::Origin& origin) const final;
+
+  bool OnCanSendReportingReport(const url::Origin& origin) const final;
+
+  bool OnCanSetReportingClient(const url::Origin& origin,
+                               const GURL& endpoint) const final;
+
+  bool OnCanUseReportingClient(const url::Origin& origin,
+                               const GURL& endpoint) const final;
 
  protected:
   virtual void OnBeforeURLRequestInternal(URLRequest* request,
@@ -135,7 +146,7 @@ class NET_EXPORT LayeredNetworkDelegate : public NetworkDelegate {
                                        const CookieList& cookie_list);
 
   virtual void OnCanSetCookieInternal(const URLRequest& request,
-                                      const std::string& cookie_line,
+                                      const net::CanonicalCookie& cookie,
                                       CookieOptions* options);
 
   virtual void OnAuthRequiredInternal(URLRequest* request,
@@ -143,12 +154,14 @@ class NET_EXPORT LayeredNetworkDelegate : public NetworkDelegate {
                                       const AuthCallback& callback,
                                       AuthCredentials* credentials);
 
-  virtual void OnCanAccessFileInternal(const URLRequest& request,
-                                       const base::FilePath& path) const;
+  virtual void OnCanAccessFileInternal(
+      const URLRequest& request,
+      const base::FilePath& original_path,
+      const base::FilePath& absolute_path) const;
 
   virtual void OnCanEnablePrivacyModeInternal(
       const GURL& url,
-      const GURL& first_party_for_cookies) const;
+      const GURL& site_for_cookies) const;
 
   virtual void OnAreExperimentalCookieFeaturesEnabledInternal() const;
 
@@ -156,6 +169,18 @@ class NET_EXPORT LayeredNetworkDelegate : public NetworkDelegate {
       const URLRequest& request,
       const GURL& target_url,
       const GURL& referrer_url) const;
+
+  virtual void OnCanQueueReportingReportInternal(
+      const url::Origin& origin) const;
+
+  virtual void OnCanSendReportingReportInternal(
+      const url::Origin& origin) const;
+
+  virtual void OnCanSetReportingClientInternal(const url::Origin& origin,
+                                               const GURL& endpoint) const;
+
+  virtual void OnCanUseReportingClientInternal(const url::Origin& origin,
+                                               const GURL& endpoint) const;
 
  private:
   std::unique_ptr<NetworkDelegate> nested_network_delegate_;

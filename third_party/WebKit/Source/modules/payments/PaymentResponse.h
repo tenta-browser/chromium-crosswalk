@@ -7,13 +7,13 @@
 
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "components/payments/content/payment_request.mojom-blink.h"
 #include "modules/ModulesExport.h"
 #include "modules/payments/PaymentCurrencyAmount.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/text/WTFString.h"
+#include "public/platform/modules/payments/payment_request.mojom-blink.h"
 
 namespace blink {
 
@@ -22,19 +22,20 @@ class PaymentAddress;
 class PaymentCompleter;
 class ScriptState;
 
-class MODULES_EXPORT PaymentResponse final
-    : public GarbageCollectedFinalized<PaymentResponse>,
-      public ScriptWrappable {
+class MODULES_EXPORT PaymentResponse final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
   WTF_MAKE_NONCOPYABLE(PaymentResponse);
 
  public:
   PaymentResponse(payments::mojom::blink::PaymentResponsePtr,
-                  PaymentCompleter*);
+                  PaymentAddress* shipping_address_,
+                  PaymentCompleter*,
+                  const String& requestId);
   virtual ~PaymentResponse();
 
   ScriptValue toJSONForBinding(ScriptState*) const;
 
+  const String& requestId() const { return requestId_; }
   const String& methodName() const { return method_name_; }
   ScriptValue details(ScriptState*, ExceptionState&) const;
   PaymentAddress* shippingAddress() const { return shipping_address_.Get(); }
@@ -45,9 +46,10 @@ class MODULES_EXPORT PaymentResponse final
 
   ScriptPromise complete(ScriptState*, const String& result = "");
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
+  String requestId_;
   String method_name_;
   String stringified_details_;
   Member<PaymentAddress> shipping_address_;

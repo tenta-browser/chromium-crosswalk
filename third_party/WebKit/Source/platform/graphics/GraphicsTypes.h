@@ -28,13 +28,23 @@
 
 #include "platform/PlatformExport.h"
 #include "platform/wtf/Forward.h"
-#include "platform/wtf/build_config.h"
 #include "public/platform/WebBlendMode.h"
 #include "third_party/skia/include/core/SkFilterQuality.h"
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkPath.h"
 
 namespace blink {
+
+enum DataU8ColorType {
+  kRGBAColorType,
+  kN32ColorType,
+};
+
+enum ImageDataStorageFormat {
+  kUint8ClampedArrayStorageFormat,
+  kUint16ArrayStorageFormat,
+  kFloat32ArrayStorageFormat,
+};
 
 enum StrokeStyle {
   kNoStroke,
@@ -49,11 +59,10 @@ enum InterpolationQuality {
   kInterpolationNone = kNone_SkFilterQuality,
   kInterpolationLow = kLow_SkFilterQuality,
   kInterpolationMedium = kMedium_SkFilterQuality,
-  kInterpolationHigh = kHigh_SkFilterQuality,
-#if USE(LOW_QUALITY_IMAGE_INTERPOLATION)
+#if defined(WTF_USE_LOW_QUALITY_IMAGE_INTERPOLATION)
   kInterpolationDefault = kInterpolationLow,
 #else
-  kInterpolationDefault = kInterpolationHigh,
+  kInterpolationDefault = kInterpolationMedium,
 #endif
 };
 
@@ -104,6 +113,7 @@ enum SnapshotReason {
   kSnapshotReasonWebGLDrawImageIntoBuffer,
   kSnapshotReasonCopyToClipboard,
   kSnapshotReasonCreateImageBitmap,
+  kSnapshotReasonLowLatencyFrame,
 };
 
 // Note: enum used directly for histogram, values must not change
@@ -116,13 +126,20 @@ enum DisableDeferralReason {
   kDisableDeferralReasonDrawImageOfAnimated2dCanvas = 4,
   kDisableDeferralReasonSubPixelTextAntiAliasingSupport = 5,
   kDisableDeferralDrawImageWithTextureBackedSourceImage = 6,
+  kDisableDeferralReasonLowEndDevice = 7,
   kDisableDeferralReasonCount,
 };
 
-enum FlushReason {
-  kFlushReasonUnknown,
-  kFlushReasonInitialClear,
-  kFlushReasonDrawImageOfWebGL,
+enum MailboxSyncMode {
+  kVerifiedSyncToken,
+  kUnverifiedSyncToken,
+  kOrderingBarrier,
+};
+
+enum HighContrastClassification {
+  kNotClassified,
+  kApplyHighContrastFilter,
+  kDoNotApplyHighContrastFilter,
 };
 
 enum ImageInitializationMode {

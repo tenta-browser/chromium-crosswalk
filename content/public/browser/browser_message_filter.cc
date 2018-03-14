@@ -37,7 +37,12 @@ class BrowserMessageFilter::Internal : public IPC::MessageFilter {
     filter_->OnFilterAdded(channel);
   }
 
-  void OnFilterRemoved() override { filter_->OnFilterRemoved(); }
+  void OnFilterRemoved() override {
+    for (auto& callback : filter_->filter_removed_callbacks_)
+      std::move(callback).Run();
+    filter_->filter_removed_callbacks_.clear();
+    filter_->OnFilterRemoved();
+  }
 
   void OnChannelClosing() override {
     filter_->sender_ = nullptr;
@@ -59,8 +64,8 @@ class BrowserMessageFilter::Internal : public IPC::MessageFilter {
       if (runner.get()) {
         runner->PostTask(
             FROM_HERE,
-            base::Bind(
-                base::IgnoreResult(&Internal::DispatchMessage), this, message));
+            base::BindOnce(base::IgnoreResult(&Internal::DispatchMessage), this,
+                           message));
         return true;
       }
       return DispatchMessage(message);
@@ -68,8 +73,8 @@ class BrowserMessageFilter::Internal : public IPC::MessageFilter {
 
     BrowserThread::PostTask(
         thread, FROM_HERE,
-        base::Bind(
-            base::IgnoreResult(&Internal::DispatchMessage), this, message));
+        base::BindOnce(base::IgnoreResult(&Internal::DispatchMessage), this,
+                       message));
     return true;
   }
 
@@ -112,8 +117,10 @@ BrowserMessageFilter::BrowserMessageFilter(
 
 void BrowserMessageFilter::AddAssociatedInterface(
     const std::string& name,
-    const IPC::ChannelProxy::GenericAssociatedInterfaceFactory& factory) {
+    const IPC::ChannelProxy::GenericAssociatedInterfaceFactory& factory,
+    base::OnceClosure filter_removed_callback) {
   associated_interfaces_.emplace_back(name, factory);
+  filter_removed_callbacks_.emplace_back(std::move(filter_removed_callback));
 }
 
 base::ProcessHandle BrowserMessageFilter::PeerHandle() {
@@ -136,10 +143,9 @@ bool BrowserMessageFilter::Send(IPC::Message* message) {
 
   if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
     BrowserThread::PostTask(
-        BrowserThread::IO,
-        FROM_HERE,
-        base::Bind(base::IgnoreResult(&BrowserMessageFilter::Send), this,
-                   message));
+        BrowserThread::IO, FROM_HERE,
+        base::BindOnce(base::IgnoreResult(&BrowserMessageFilter::Send), this,
+                       message));
     return true;
   }
 

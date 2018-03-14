@@ -9,8 +9,8 @@
 #include "net/base/net_export.h"
 #include "net/base/request_priority.h"
 #include "net/quic/core/quic_packets.h"
-#include "net/spdy/spdy_header_block.h"
-#include "net/spdy/spdy_protocol.h"
+#include "net/spdy/core/spdy_header_block.h"
+#include "net/spdy/core/spdy_protocol.h"
 
 namespace net {
 
@@ -26,6 +26,13 @@ NET_EXPORT std::unique_ptr<base::Value> QuicRequestNetLogCallback(
     const SpdyHeaderBlock* headers,
     SpdyPriority priority,
     NetLogCaptureMode capture_mode);
+
+// Parses |alt_svc_versions| into a QuicTransportVersionVector and removes
+// all entries that aren't found in |supported_versions|.
+NET_EXPORT QuicTransportVersionVector FilterSupportedAltSvcVersions(
+    const SpdyAltSvcWireFormat::AlternativeService& quic_alt_svc,
+    const QuicTransportVersionVector& supported_versions,
+    bool support_ietf_format_quic_altsvc);
 
 }  // namespace net
 

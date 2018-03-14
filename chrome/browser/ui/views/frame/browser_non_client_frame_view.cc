@@ -4,23 +4,28 @@
 
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
 
+#include "base/metrics/histogram_macros.h"
 #include "build/build_config.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/avatar_menu.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/themes/theme_properties.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/grit/theme_resources.h"
-#include "components/signin/core/common/profile_management_switches.h"
+#include "components/signin/core/browser/profile_management_switches.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/theme_provider.h"
+#include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/gfx/scoped_canvas.h"
 #include "ui/views/background.h"
 
 #if defined(OS_WIN)
@@ -47,7 +52,11 @@ BrowserNonClientFrameView::~BrowserNonClientFrameView() {
   }
 }
 
-void BrowserNonClientFrameView::OnBrowserViewInitViewsComplete() {}
+void BrowserNonClientFrameView::OnBrowserViewInitViewsComplete() {
+  UpdateMinimumSize();
+}
+
+void BrowserNonClientFrameView::OnMaximizedStateChanged() {}
 
 gfx::ImageSkia BrowserNonClientFrameView::GetIncognitoAvatarIcon() const {
   const SkColor icon_color = color_utils::PickContrastingColor(
@@ -70,6 +79,16 @@ views::View* BrowserNonClientFrameView::GetProfileSwitcherView() const {
 }
 
 void BrowserNonClientFrameView::UpdateClientArea() {}
+
+void BrowserNonClientFrameView::UpdateMinimumSize() {}
+
+void BrowserNonClientFrameView::ChildPreferredSizeChanged(views::View* child) {
+  if (child == GetProfileSwitcherView()) {
+    // Perform a re-layout if the avatar button has changed, since that can
+    // affect the size of the tabs.
+    frame()->GetRootView()->Layout();
+  }
+}
 
 void BrowserNonClientFrameView::VisibilityChanged(views::View* starting_from,
                                                   bool is_visible) {
@@ -152,6 +171,47 @@ void BrowserNonClientFrameView::UpdateProfileIndicatorIcon() {
   }
 
   profile_indicator_icon_->SetIcon(icon);
+}
+
+void BrowserNonClientFrameView::PaintToolbarBackground(
+    gfx::Canvas* canvas) const {
+  gfx::Rect toolbar_bounds(browser_view()->GetToolbarBounds());
+  if (toolbar_bounds.IsEmpty())
+    return;
+  gfx::Point toolbar_origin(toolbar_bounds.origin());
+  ConvertPointToTarget(browser_view(), this, &toolbar_origin);
+  toolbar_bounds.set_origin(toolbar_origin);
+
+  const ui::ThemeProvider* tp = GetThemeProvider();
+  const int x = toolbar_bounds.x();
+  const int y = toolbar_bounds.y();
+  const int w = toolbar_bounds.width();
+
+  // Background.
+  if (tp->HasCustomImage(IDR_THEME_TOOLBAR)) {
+    canvas->TileImageInt(*tp->GetImageSkiaNamed(IDR_THEME_TOOLBAR),
+                         x + GetThemeBackgroundXInset(),
+                         y - GetTopInset(false) - GetLayoutInsets(TAB).top(), x,
+                         y, w, toolbar_bounds.height());
+  } else {
+    canvas->FillRect(toolbar_bounds,
+                     tp->GetColor(ThemeProperties::COLOR_TOOLBAR));
+  }
+
+  // Top stroke.
+  gfx::ScopedCanvas scoped_canvas(canvas);
+  gfx::Rect tabstrip_bounds =
+      GetMirroredRect(GetBoundsForTabStrip(browser_view()->tabstrip()));
+  canvas->ClipRect(tabstrip_bounds, SkClipOp::kDifference);
+  gfx::Rect separator_rect(x, y, w, 0);
+  separator_rect.set_y(tabstrip_bounds.bottom());
+  BrowserView::Paint1pxHorizontalLine(canvas, GetToolbarTopSeparatorColor(),
+                                      separator_rect, true);
+
+  // Toolbar/content separator.
+  BrowserView::Paint1pxHorizontalLine(
+      canvas, tp->GetColor(ThemeProperties::COLOR_TOOLBAR_BOTTOM_SEPARATOR),
+      toolbar_bounds, true);
 }
 
 void BrowserNonClientFrameView::ViewHierarchyChanged(
@@ -242,6 +302,11 @@ void BrowserNonClientFrameView::OnProfileAvatarChanged(
   UpdateProfileIcons();
 }
 
+void BrowserNonClientFrameView::OnProfileHighResAvatarLoaded(
+    const base::FilePath& profile_path) {
+  UpdateTaskbarDecoration();
+}
+
 const ui::ThemeProvider*
 BrowserNonClientFrameView::GetThemeProviderForProfile() const {
   // Because the frame's accessor reads the ThemeProvider from the profile and
@@ -270,11 +335,21 @@ void BrowserNonClientFrameView::UpdateTaskbarDecoration() {
   // with the default shortcut being pinned, we add the runtime badge for
   // safety. See crbug.com/313800.
   gfx::Image decoration;
-  AvatarMenu::GetImageForMenuButton(
+  AvatarMenu::ImageLoadStatus status = AvatarMenu::GetImageForMenuButton(
       browser_view()->browser()->profile()->GetPath(), &decoration);
-  // This can happen if the user deletes the current profile.
-  if (decoration.IsEmpty())
+
+  UMA_HISTOGRAM_ENUMERATION(
+      "Profile.AvatarLoadStatus", status,
+      static_cast<int>(AvatarMenu::ImageLoadStatus::MAX) + 1);
+
+  // If the user is using a Gaia picture and the picture is still being loaded,
+  // wait until the load finishes. This taskbar decoration will be triggered
+  // again upon the finish of the picture load.
+  if (status == AvatarMenu::ImageLoadStatus::LOADING ||
+      status == AvatarMenu::ImageLoadStatus::PROFILE_DELETED) {
     return;
+  }
+
   chrome::DrawTaskbarDecoration(frame_->GetNativeWindow(), &decoration);
 #endif
 }

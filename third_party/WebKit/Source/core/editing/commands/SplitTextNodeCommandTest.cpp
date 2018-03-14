@@ -4,10 +4,11 @@
 
 #include "core/editing/commands/SplitTextNodeCommand.h"
 
-#include "core/editing/EditingTestBase.h"
+#include "core/editing/EphemeralRange.h"
 #include "core/editing/PlainTextRange.h"
 #include "core/editing/commands/EditingState.h"
 #include "core/editing/markers/DocumentMarkerController.h"
+#include "core/editing/testing/EditingTestBase.h"
 
 namespace blink {
 
@@ -20,15 +21,15 @@ TEST_F(SplitTextNodeCommandTest, splitInMarkerInterior) {
 
   EphemeralRange range = PlainTextRange(0, 5).CreateRange(*div);
   GetDocument().Markers().AddTextMatchMarker(
-      range, DocumentMarker::MatchStatus::kInactive);
+      range, TextMatchMarker::MatchStatus::kInactive);
 
   range = PlainTextRange(6, 11).CreateRange(*div);
   GetDocument().Markers().AddTextMatchMarker(
-      range, DocumentMarker::MatchStatus::kInactive);
+      range, TextMatchMarker::MatchStatus::kInactive);
 
   range = PlainTextRange(12, 17).CreateRange(*div);
   GetDocument().Markers().AddTextMatchMarker(
-      range, DocumentMarker::MatchStatus::kInactive);
+      range, TextMatchMarker::MatchStatus::kInactive);
 
   SimpleEditCommand* command = SplitTextNodeCommand::Create(
       ToText(GetDocument().body()->firstChild()->firstChild()), 8);

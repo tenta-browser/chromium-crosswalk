@@ -9,7 +9,6 @@
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
@@ -25,7 +24,6 @@
 #include "components/invalidation/public/invalidation_service.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/fake_signin_manager.h"
-#include "components/strings/grit/components_strings.h"
 #include "components/sync/base/pref_names.h"
 #include "components/sync/driver/fake_data_type_controller.h"
 #include "components/sync/driver/sync_api_component_factory_mock.h"
@@ -33,12 +31,12 @@
 #include "components/sync/driver/sync_service_observer.h"
 #include "components/sync/driver/sync_util.h"
 #include "components/sync/engine/fake_sync_engine.h"
+#include "components/sync/model/model_type_store_test_util.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/version_info/version_info_values.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/base/l10n/l10n_util.h"
 
 using syncer::DataTypeController;
 using syncer::FakeSyncEngine;
@@ -60,7 +58,7 @@ class FakeDataTypeManager : public syncer::DataTypeManager {
   explicit FakeDataTypeManager(const ConfigureCalled& configure_called)
       : configure_called_(configure_called) {}
 
-  ~FakeDataTypeManager() override{};
+  ~FakeDataTypeManager() override {}
 
   void Configure(syncer::ModelTypeSet desired_types,
                  syncer::ConfigureReason reason) override {
@@ -72,7 +70,7 @@ class FakeDataTypeManager : public syncer::DataTypeManager {
   void ResetDataTypeErrors() override {}
   void PurgeForMigration(syncer::ModelTypeSet undesired_types,
                          syncer::ConfigureReason reason) override {}
-  void Stop() override{};
+  void Stop() override {}
   ModelTypeSet GetActiveDataTypes() const override { return ModelTypeSet(); }
   bool IsNigoriEnabled() const override { return true; }
   State state() const override { return syncer::DataTypeManager::CONFIGURED; }
@@ -205,10 +203,12 @@ class ProfileSyncServiceTest : public ::testing::Test {
     ProfileSyncService::InitParams init_params =
         profile_sync_service_bundle_.CreateBasicInitParams(behavior,
                                                            builder.Build());
+    init_params.model_type_store_factory =
+        syncer::ModelTypeStoreTestUtil::FactoryForInMemoryStoreForTest();
 
-    service_ = base::MakeUnique<ProfileSyncService>(std::move(init_params));
+    service_ = std::make_unique<ProfileSyncService>(std::move(init_params));
     service_->RegisterDataTypeController(
-        base::MakeUnique<syncer::FakeDataTypeController>(syncer::BOOKMARKS));
+        std::make_unique<syncer::FakeDataTypeController>(syncer::BOOKMARKS));
   }
 
   void CreateServiceWithLocalSyncBackend() {
@@ -222,10 +222,11 @@ class ProfileSyncServiceTest : public ::testing::Test {
     prefs()->SetBoolean(syncer::prefs::kEnableLocalSyncBackend, true);
     init_params.oauth2_token_service = nullptr;
     init_params.gaia_cookie_manager_service = nullptr;
+    init_params.signin_wrapper.reset();
 
-    service_ = base::MakeUnique<ProfileSyncService>(std::move(init_params));
+    service_ = std::make_unique<ProfileSyncService>(std::move(init_params));
     service_->RegisterDataTypeController(
-        base::MakeUnique<syncer::FakeDataTypeController>(syncer::BOOKMARKS));
+        std::make_unique<syncer::FakeDataTypeController>(syncer::BOOKMARKS));
   }
 
   void ShutdownAndDeleteService() {
@@ -372,7 +373,7 @@ TEST_F(ProfileSyncServiceTest, InitialState) {
 // Verify a successful initialization.
 TEST_F(ProfileSyncServiceTest, SuccessfulInitialization) {
   prefs()->SetManagedPref(syncer::prefs::kSyncManaged,
-                          base::MakeUnique<base::Value>(false));
+                          std::make_unique<base::Value>(false));
   IssueTestTokens();
   CreateService(ProfileSyncService::AUTO_START);
   ExpectDataTypeManagerCreation(1, GetDefaultConfigureCalledCallback());
@@ -385,29 +386,31 @@ TEST_F(ProfileSyncServiceTest, SuccessfulInitialization) {
 // Verify a successful initialization.
 TEST_F(ProfileSyncServiceTest, SuccessfulLocalBackendInitialization) {
   prefs()->SetManagedPref(syncer::prefs::kSyncManaged,
-                          base::MakeUnique<base::Value>(false));
-  IssueTestTokens();
+                          std::make_unique<base::Value>(false));
   CreateServiceWithLocalSyncBackend();
   ExpectDataTypeManagerCreation(1, GetDefaultConfigureCalledCallback());
   ExpectSyncEngineCreation(1);
   InitializeForNthSync();
   EXPECT_FALSE(service()->IsManaged());
   EXPECT_TRUE(service()->IsSyncActive());
+  EXPECT_FALSE(service()->IsSyncConfirmationNeeded());
 }
 
 // Verify that an initialization where first setup is not complete does not
 // start up the backend.
 TEST_F(ProfileSyncServiceTest, NeedsConfirmation) {
   prefs()->SetManagedPref(syncer::prefs::kSyncManaged,
-                          base::MakeUnique<base::Value>(false));
+                          std::make_unique<base::Value>(false));
   IssueTestTokens();
   CreateService(ProfileSyncService::MANUAL_START);
+
   syncer::SyncPrefs sync_prefs(prefs());
   base::Time now = base::Time::Now();
   sync_prefs.SetLastSyncedTime(now);
   sync_prefs.SetKeepEverythingSynced(true);
   service()->Initialize();
   EXPECT_FALSE(service()->IsSyncActive());
+  EXPECT_TRUE(service()->IsSyncConfirmationNeeded());
 
   // The last sync time shouldn't be cleared.
   // TODO(zea): figure out a way to check that the directory itself wasn't
@@ -435,7 +438,7 @@ TEST_F(ProfileSyncServiceTest, SetupInProgress) {
 // Verify that disable by enterprise policy works.
 TEST_F(ProfileSyncServiceTest, DisabledByPolicyBeforeInit) {
   prefs()->SetManagedPref(syncer::prefs::kSyncManaged,
-                          base::MakeUnique<base::Value>(true));
+                          std::make_unique<base::Value>(true));
   IssueTestTokens();
   CreateService(ProfileSyncService::AUTO_START);
   InitializeForNthSync();
@@ -456,7 +459,7 @@ TEST_F(ProfileSyncServiceTest, DisabledByPolicyAfterInit) {
   EXPECT_TRUE(service()->IsSyncActive());
 
   prefs()->SetManagedPref(syncer::prefs::kSyncManaged,
-                          base::MakeUnique<base::Value>(true));
+                          std::make_unique<base::Value>(true));
 
   EXPECT_TRUE(service()->IsManaged());
   EXPECT_FALSE(service()->IsSyncActive());
@@ -634,16 +637,15 @@ TEST_F(ProfileSyncServiceTest, ClearDataOnSignOut) {
   ExpectSyncEngineCreation(1);
   InitializeForNthSync();
   EXPECT_TRUE(service()->IsSyncActive());
-  EXPECT_EQ(l10n_util::GetStringUTF16(IDS_SYNC_TIME_JUST_NOW),
-            service()->GetLastSyncedTimeString());
+  EXPECT_LT(base::Time::Now() - service()->GetLastSyncedTime(),
+            base::TimeDelta::FromMinutes(1));
   EXPECT_TRUE(service()->GetLocalDeviceInfoProvider()->GetLocalDeviceInfo());
 
   // Sign out.
   service()->RequestStop(ProfileSyncService::CLEAR_DATA);
   PumpLoop();
 
-  EXPECT_EQ(l10n_util::GetStringUTF16(IDS_SYNC_TIME_NEVER),
-            service()->GetLastSyncedTimeString());
+  EXPECT_TRUE(service()->GetLastSyncedTime().is_null());
   EXPECT_FALSE(service()->GetLocalDeviceInfoProvider()->GetLocalDeviceInfo());
 }
 
@@ -922,8 +924,8 @@ TEST_F(ProfileSyncServiceTest, DisableSyncOnClient) {
   InitializeForNthSync();
 
   EXPECT_TRUE(service()->IsSyncActive());
-  EXPECT_EQ(l10n_util::GetStringUTF16(IDS_SYNC_TIME_JUST_NOW),
-            service()->GetLastSyncedTimeString());
+  EXPECT_LT(base::Time::Now() - service()->GetLastSyncedTime(),
+            base::TimeDelta::FromMinutes(1));
   EXPECT_TRUE(service()->GetLocalDeviceInfoProvider()->GetLocalDeviceInfo());
 
   syncer::SyncProtocolError client_cmd;
@@ -938,9 +940,36 @@ TEST_F(ProfileSyncServiceTest, DisableSyncOnClient) {
 #endif
 
   EXPECT_FALSE(service()->IsSyncActive());
-  EXPECT_EQ(l10n_util::GetStringUTF16(IDS_SYNC_TIME_NEVER),
-            service()->GetLastSyncedTimeString());
+  EXPECT_TRUE(service()->GetLastSyncedTime().is_null());
   EXPECT_FALSE(service()->GetLocalDeviceInfoProvider()->GetLocalDeviceInfo());
+}
+
+// Verify a that local sync mode resumes after the policy is lifted.
+TEST_F(ProfileSyncServiceTest, LocalBackendDisabledByPolicy) {
+  prefs()->SetManagedPref(syncer::prefs::kSyncManaged,
+                          std::make_unique<base::Value>(false));
+  CreateServiceWithLocalSyncBackend();
+  ExpectDataTypeManagerCreation(1, GetDefaultConfigureCalledCallback());
+  ExpectSyncEngineCreation(1);
+  InitializeForNthSync();
+  EXPECT_FALSE(service()->IsManaged());
+  EXPECT_TRUE(service()->IsSyncActive());
+
+  prefs()->SetManagedPref(syncer::prefs::kSyncManaged,
+                          std::make_unique<base::Value>(true));
+
+  EXPECT_TRUE(service()->IsManaged());
+  EXPECT_FALSE(service()->IsSyncActive());
+
+  prefs()->SetManagedPref(syncer::prefs::kSyncManaged,
+                          std::make_unique<base::Value>(false));
+
+  ExpectDataTypeManagerCreation(1, GetDefaultConfigureCalledCallback());
+  ExpectSyncEngineCreation(1);
+
+  service()->RequestStart();
+  EXPECT_FALSE(service()->IsManaged());
+  EXPECT_TRUE(service()->IsSyncActive());
 }
 
 // Regression test for crbug/555434. The issue is that check for sessions DTC in
@@ -960,7 +989,7 @@ TEST_F(ProfileSyncServiceTest, GetOpenTabsUIDelegate) {
   EXPECT_EQ(nullptr, service()->GetOpenTabsUIDelegate());
 
   auto controller =
-      base::MakeUnique<syncer::FakeDataTypeController>(syncer::PROXY_TABS);
+      std::make_unique<syncer::FakeDataTypeController>(syncer::PROXY_TABS);
   // Progress the controller to RUNNING first, which is how the service
   // determines whether a type is enabled.
   controller->StartAssociating(base::Bind(&DoNothing));

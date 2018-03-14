@@ -4,6 +4,8 @@
 
 #include "modules/screen_orientation/ScreenOrientation.h"
 
+#include <memory>
+
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
 #include "core/dom/DOMException.h"
@@ -13,13 +15,11 @@
 #include "modules/EventTargetModules.h"
 #include "modules/screen_orientation/LockOrientationCallback.h"
 #include "modules/screen_orientation/ScreenOrientationControllerImpl.h"
+#include "platform/wtf/Assertions.h"
 #include "public/platform/modules/screen_orientation/WebScreenOrientationType.h"
 
 // This code assumes that WebScreenOrientationType values are included in
 // WebScreenOrientationLockType.
-#define STATIC_ASSERT_ENUM(a, b)                            \
-  static_assert(static_cast<int>(a) == static_cast<int>(b), \
-                "mismatching enum: " #a)
 STATIC_ASSERT_ENUM(blink::kWebScreenOrientationPortraitPrimary,
                    blink::kWebScreenOrientationLockPortraitPrimary);
 STATIC_ASSERT_ENUM(blink::kWebScreenOrientationPortraitSecondary,
@@ -73,7 +73,7 @@ const AtomicString& ScreenOrientation::OrientationTypeToString(
       return orientation_map[i].name;
   }
 
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return g_null_atom;
 }
 
@@ -87,13 +87,13 @@ static WebScreenOrientationLockType StringToOrientationLock(
           orientation_map[i].orientation);
   }
 
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return kWebScreenOrientationLockDefault;
 }
 
 // static
 ScreenOrientation* ScreenOrientation::Create(LocalFrame* frame) {
-  ASSERT(frame);
+  DCHECK(frame);
 
   // Check if the ScreenOrientationController is supported for the
   // frame. It will not be for all LocalFrames, or the frame may
@@ -102,7 +102,7 @@ ScreenOrientation* ScreenOrientation::Create(LocalFrame* frame) {
     return nullptr;
 
   ScreenOrientation* orientation = new ScreenOrientation(frame);
-  ASSERT(orientation->Controller());
+  DCHECK(orientation->Controller());
   // FIXME: ideally, we would like to provide the ScreenOrientationController
   // the case where it is not defined but for the moment, it is eagerly
   // created when the LocalFrame is created so we shouldn't be in that
@@ -125,7 +125,7 @@ const WTF::AtomicString& ScreenOrientation::InterfaceName() const {
 
 ExecutionContext* ScreenOrientation::GetExecutionContext() const {
   if (!GetFrame())
-    return 0;
+    return nullptr;
   return GetFrame()->GetDocument();
 }
 
@@ -150,7 +150,7 @@ ScriptPromise ScreenOrientation::lock(ScriptState* state,
   ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(state);
   ScriptPromise promise = resolver->Promise();
 
-  Document* document = GetFrame() ? GetFrame()->GetDocument() : 0;
+  Document* document = GetFrame() ? GetFrame()->GetDocument() : nullptr;
 
   if (!document || !Controller()) {
     DOMException* exception = DOMException::Create(
@@ -170,7 +170,7 @@ ScriptPromise ScreenOrientation::lock(ScriptState* state,
   }
 
   Controller()->lock(StringToOrientationLock(lock_string),
-                     WTF::MakeUnique<LockOrientationCallback>(resolver));
+                     std::make_unique<LockOrientationCallback>(resolver));
   return promise;
 }
 
@@ -183,12 +183,12 @@ void ScreenOrientation::unlock() {
 
 ScreenOrientationControllerImpl* ScreenOrientation::Controller() {
   if (!GetFrame())
-    return 0;
+    return nullptr;
 
   return ScreenOrientationControllerImpl::From(*GetFrame());
 }
 
-DEFINE_TRACE(ScreenOrientation) {
+void ScreenOrientation::Trace(blink::Visitor* visitor) {
   EventTargetWithInlineData::Trace(visitor);
   ContextClient::Trace(visitor);
 }

@@ -8,6 +8,8 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/optional.h"
+#include "components/arc/arc_instance_mode.h"
 #include "components/arc/arc_session.h"
 #include "components/arc/arc_stop_reason.h"
 
@@ -20,8 +22,10 @@ class FakeArcSession : public ArcSession {
   ~FakeArcSession() override;
 
   // ArcSession overrides:
-  void Start() override;
+  void Start(ArcInstanceMode request_mode) override;
   void Stop() override;
+  base::Optional<ArcInstanceMode> GetTargetMode() override;
+  bool IsStopRequested() override;
   void OnShutdown() override;
 
   // To emulate unexpected stop, such as crash.
@@ -29,12 +33,15 @@ class FakeArcSession : public ArcSession {
 
   // The following control Start() behavior for testing various situations.
 
-  // Enables/disables boot failure emulation, in which OnStopped(reason) will
-  // be called when Start() is called.
+  // Enables/disables boot failure emulation, in which OnSessionStopped(reason)
+  // will be called when Start() or StartForLoginScreen() is called.
   void EnableBootFailureEmulation(ArcStopReason reason);
 
-  // Emulate Start() is suspended at some phase, before OnReady() is invoked.
+  // Emulate Start() is suspended at some phase.
   void SuspendBoot();
+
+  // Returns true if the session is considered as running.
+  bool is_running() const { return running_; }
 
   // Returns FakeArcSession instance. This can be used for a factory
   // in ArcBridgeServiceImpl.
@@ -45,6 +52,9 @@ class FakeArcSession : public ArcSession {
   ArcStopReason boot_failure_reason_;
 
   bool boot_suspended_ = false;
+  base::Optional<ArcInstanceMode> target_mode_;
+  bool running_ = false;
+  bool stop_requested_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(FakeArcSession);
 };

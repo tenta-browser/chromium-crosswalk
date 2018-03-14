@@ -9,21 +9,36 @@
 #include "base/strings/string_number_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/app/vector_icons/vector_icons.h"
+#include "chrome/browser/ui/cocoa/browser_dialogs_views_mac.h"
+#import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/l10n_util.h"
 #import "chrome/browser/ui/cocoa/location_bar/autocomplete_text_field.h"
 #import "chrome/browser/ui/cocoa/location_bar/autocomplete_text_field_cell.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
 #import "chrome/browser/ui/cocoa/omnibox/omnibox_view_mac.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/theme_resources.h"
 #include "components/zoom/zoom_controller.h"
 #include "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/base/l10n/l10n_util_mac.h"
+#import "ui/gfx/mac/coordinate_conversion.h"
+
+namespace {
+
+// Whether the toolkit-views zoom bubble should be used.
+bool UseViews() {
+  return chrome::ShowPilotDialogsWithViewsToolkit();
+}
+
+}  // namespace
 
 ZoomDecoration::ZoomDecoration(LocationBarViewMac* owner)
     : owner_(owner), bubble_(nullptr), vector_icon_(nullptr) {}
 
 ZoomDecoration::~ZoomDecoration() {
+  if (UseViews()) {
+    CloseBubble();
+    return;
+  }
   [bubble_ closeWithoutAnimation];
   bubble_.delegate = nil;
 }
@@ -32,7 +47,7 @@ bool ZoomDecoration::UpdateIfNecessary(zoom::ZoomController* zoom_controller,
                                        bool default_zoom_changed,
                                        bool location_bar_is_dark) {
   if (!ShouldShowDecoration()) {
-    if (!IsVisible() && !bubble_)
+    if (!IsVisible() && !IsBubbleShown())
       return false;
 
     HideUI();
@@ -40,7 +55,7 @@ bool ZoomDecoration::UpdateIfNecessary(zoom::ZoomController* zoom_controller,
   }
 
   BOOL old_visibility = IsVisible();
-  SetVisible(ShouldShowDecoration() && !zoom_controller->IsAtDefaultZoom());
+  SetVisible(true);
 
   base::string16 zoom_percent =
       base::FormatPercent(zoom_controller->GetZoomPercent());
@@ -77,6 +92,22 @@ void ZoomDecoration::ShowBubble(BOOL auto_close) {
   const NSRect frame =
       [[field cell] frameForDecoration:this inFrame:[field bounds]];
 
+  if (UseViews()) {
+    NSWindow* window = [web_contents->GetNativeView() window];
+    if (!window) {
+      // The tab isn't active right now.
+      return;
+    }
+    BrowserWindowController* browser_window_controller =
+        [BrowserWindowController browserWindowControllerForWindow:window];
+    NSPoint anchor = [browser_window_controller bookmarkBubblePoint];
+    gfx::Point anchor_point = gfx::ScreenPointFromNSPoint(
+        ui::ConvertPointFromWindowToScreen(window, anchor));
+    chrome::ShowZoomBubbleViewsAtPoint(
+        web_contents, anchor_point, auto_close == NO /* user_action */, this);
+    return;
+  }
+
   // Find point for bubble's arrow in screen coordinates.
   NSPoint anchor = GetBubblePointInFrame(frame);
   anchor = [field convertPoint:anchor toView:nil];
@@ -88,32 +119,34 @@ void ZoomDecoration::ShowBubble(BOOL auto_close) {
 }
 
 void ZoomDecoration::CloseBubble() {
+  if (UseViews()) {
+    chrome::CloseZoomBubbleViews();
+    return;
+  }
   [bubble_ close];
 }
 
 void ZoomDecoration::HideUI() {
-  [bubble_ close];
+  CloseBubble();
   SetVisible(false);
 }
 
 void ZoomDecoration::UpdateUI(zoom::ZoomController* zoom_controller,
                               NSString* tooltip_string,
                               bool location_bar_is_dark) {
-  vector_icon_ = nullptr;
-  zoom::ZoomController::RelativeZoom relative_zoom =
-      zoom_controller->GetZoomRelativeToDefault();
-  // There is no icon at the default zoom factor.
-  if (relative_zoom == zoom::ZoomController::ZOOM_BELOW_DEFAULT_ZOOM) {
-    vector_icon_ = &kZoomMinusIcon;
-  } else if (relative_zoom == zoom::ZoomController::ZOOM_ABOVE_DEFAULT_ZOOM) {
-    vector_icon_ = &kZoomPlusIcon;
-  }
+  vector_icon_ = zoom_controller->GetZoomRelativeToDefault() ==
+                         zoom::ZoomController::ZOOM_BELOW_DEFAULT_ZOOM
+                     ? &kZoomMinusIcon
+                     : &kZoomPlusIcon;
 
   SetImage(GetMaterialIcon(location_bar_is_dark));
 
   tooltip_.reset([tooltip_string retain]);
 
-  [bubble_ onZoomChanged];
+  if (UseViews())
+    chrome::RefreshZoomBubbleViews();
+  else
+    [bubble_ onZoomChanged];
 }
 
 NSPoint ZoomDecoration::GetBubblePointInFrame(NSRect frame) {
@@ -133,21 +166,29 @@ bool ZoomDecoration::IsAtDefaultZoom() const {
   return zoomController && zoomController->IsAtDefaultZoom();
 }
 
-bool ZoomDecoration::ShouldShowDecoration() const {
-  return owner_->GetWebContents() != NULL &&
-      !owner_->GetToolbarModel()->input_in_progress() &&
-      (bubble_ || !IsAtDefaultZoom());
+bool ZoomDecoration::IsBubbleShown() const {
+  return (UseViews() && chrome::IsZoomBubbleViewsShown()) || bubble_;
 }
 
-bool ZoomDecoration::AcceptsMousePress() {
-  return true;
+bool ZoomDecoration::ShouldShowDecoration() const {
+  return owner_->GetWebContents() != NULL &&
+         !owner_->GetToolbarModel()->input_in_progress() &&
+         (IsBubbleShown() || !IsAtDefaultZoom());
+}
+
+AcceptsPress ZoomDecoration::AcceptsMousePress() {
+  return AcceptsPress::ALWAYS;
 }
 
 bool ZoomDecoration::OnMousePressed(NSRect frame, NSPoint location) {
-  if (bubble_)
+  if (IsBubbleShown()) {
     CloseBubble();
-  else
-    ShowBubble(YES);
+  } else {
+    // With Material Design enabled the zoom bubble is no longer auto-closed
+    // when activated with a mouse click.
+    const BOOL auto_close = !UseViews();
+    ShowBubble(auto_close);
+  }
   return true;
 }
 
@@ -160,8 +201,10 @@ content::WebContents* ZoomDecoration::GetWebContents() {
 }
 
 void ZoomDecoration::OnClose() {
-  bubble_.delegate = nil;
-  bubble_ = nil;
+  if (!UseViews()) {
+    bubble_.delegate = nil;
+    bubble_ = nil;
+  }
 
   // If the page is at default zoom then hiding the zoom decoration
   // was suppressed while the bubble was open. Now that the bubble is

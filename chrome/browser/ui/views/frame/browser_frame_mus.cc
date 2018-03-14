@@ -12,12 +12,16 @@
 #include "chrome/common/extensions/extension_constants.h"
 #include "services/ui/public/cpp/property_type_converters.h"
 #include "services/ui/public/interfaces/window_tree.mojom.h"
+#include "ui/aura/mus/window_tree_host_mus_init_params.h"
 #include "ui/views/mus/desktop_window_tree_host_mus.h"
 #include "ui/views/mus/mus_client.h"
 #include "ui/views/mus/window_manager_frame_values.h"
 
 #if defined(OS_CHROMEOS)
+#include "ash/public/cpp/shelf_types.h"
+#include "ash/public/interfaces/window_properties.mojom.h"
 #include "ash/public/interfaces/window_style.mojom.h"
+#include "services/ui/public/interfaces/window_manager.mojom.h"
 #endif
 
 BrowserFrameMus::BrowserFrameMus(BrowserFrame* browser_frame,
@@ -40,16 +44,28 @@ views::Widget::InitParams BrowserFrameMus::GetWidgetParams() {
   // Indicates mash shouldn't handle immersive, rather we will.
   properties[ui::mojom::WindowManager::kDisableImmersive_InitProperty] =
       mojo::ConvertTo<std::vector<uint8_t>>(true);
-  properties[ui::mojom::WindowManager::kAppID_Property] =
-      mojo::ConvertTo<std::vector<uint8_t>>(chrome_app_id);
 #if defined(OS_CHROMEOS)
   properties[ash::mojom::kAshWindowStyle_InitProperty] =
       mojo::ConvertTo<std::vector<uint8_t>>(
           static_cast<int32_t>(ash::mojom::WindowStyle::BROWSER));
+  // ChromeLauncherController manages the browser shortcut shelf item; set the
+  // window's shelf item type property to be ignored by ash::ShelfWindowWatcher.
+  properties[ui::mojom::WindowManager::kShelfItemType_Property] =
+      mojo::ConvertTo<std::vector<uint8_t>>(
+          static_cast<int64_t>(ash::TYPE_BROWSER_SHORTCUT));
+  properties[ash::mojom::kWindowPositionManaged_Property] =
+      mojo::ConvertTo<std::vector<uint8_t>>(
+          static_cast<int64_t>(browser_view_->browser()->is_type_popup()));
+  properties[ash::mojom::kCanConsumeSystemKeys_Property] =
+      mojo::ConvertTo<std::vector<uint8_t>>(
+          static_cast<int64_t>(browser_view_->browser()->is_app()));
 #endif
+  aura::WindowTreeHostMusInitParams window_tree_host_init_params =
+      aura::CreateInitParamsForTopLevel(
+          views::MusClient::Get()->window_tree_client(), std::move(properties));
   std::unique_ptr<views::DesktopWindowTreeHostMus> desktop_window_tree_host =
       base::MakeUnique<views::DesktopWindowTreeHostMus>(
-          browser_frame_, this, cc::FrameSinkId(), &properties);
+          std::move(window_tree_host_init_params), browser_frame_, this);
   // BrowserNonClientFrameViewMus::OnBoundsChanged() takes care of updating
   // the insets.
   desktop_window_tree_host->set_auto_update_client_area(false);

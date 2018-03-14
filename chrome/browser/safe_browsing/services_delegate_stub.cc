@@ -6,7 +6,7 @@
 
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
-#include "components/safe_browsing_db/v4_local_database_manager.h"
+#include "components/safe_browsing/db/v4_local_database_manager.h"
 #include "services/preferences/public/interfaces/tracked_preference_validation_delegate.mojom.h"
 
 namespace safe_browsing {
@@ -70,5 +70,13 @@ void ServicesDelegateStub::StartOnIOThread(
     const V4ProtocolConfig& v4_config) {}
 
 void ServicesDelegateStub::StopOnIOThread(bool shutdown) {}
+
+void ServicesDelegateStub::CreatePasswordProtectionService(Profile* profile) {}
+void ServicesDelegateStub::RemovePasswordProtectionService(Profile* profile) {}
+PasswordProtectionService* ServicesDelegateStub::GetPasswordProtectionService(
+    Profile* profile) const {
+  NOTIMPLEMENTED();
+  return nullptr;
+}
 
 }  // namespace safe_browsing

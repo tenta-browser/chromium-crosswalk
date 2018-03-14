@@ -4,22 +4,20 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV",
-      "position": [8, 8],
       "bounds": [100, 5000],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#ADD8E6"
+      "backgroundColor": "#ADD8E6",
+      "transform": 1
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV",
       "position": [8, 25],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#D3D3D3"
     },
     {
@@ -27,7 +25,6 @@
       "position": [8, 50],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#FF0000",
       "paintInvalidations": [
         {
@@ -35,6 +32,17 @@
           "rect": [0, 0, 100, 100],
           "reason": "style change"
         }
+      ]
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [8, 8, 0, 1]
       ]
     }
   ],
@@ -51,22 +59,20 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV",
-      "position": [8, 8],
       "bounds": [100, 5000],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#ADD8E6"
+      "backgroundColor": "#ADD8E6",
+      "transform": 1
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV",
       "position": [8, 25],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#D3D3D3"
     },
     {
@@ -74,7 +80,6 @@
       "position": [8, 50],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#0000FF",
       "paintInvalidations": [
         {
@@ -82,6 +87,17 @@
           "rect": [0, 0, 100, 100],
           "reason": "style change"
         }
+      ]
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [8, 8, 0, 1]
       ]
     }
   ],

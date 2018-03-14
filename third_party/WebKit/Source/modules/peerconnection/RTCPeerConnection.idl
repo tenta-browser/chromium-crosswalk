@@ -62,11 +62,10 @@ enum RTCIceConnectionState {
 //  * VoidCallback -> VoidFunction
 [
     ActiveScriptWrappable,
-    DependentLifetime,
     // TODO(guidou): There should only be one constructor argument.
     Constructor(optional RTCConfiguration configuration, optional Dictionary mediaConstraints),
     ConstructorCallWith=ExecutionContext,
-    RaisesException=Constructor,
+    RaisesException=Constructor
 ] interface RTCPeerConnection : EventTarget {
     [CallWith=ScriptState] Promise<RTCSessionDescription> createOffer(optional RTCOfferOptions options);
     [CallWith=ScriptState] Promise<RTCSessionDescription> createAnswer(optional RTCAnswerOptions options);
@@ -85,8 +84,7 @@ enum RTCIceConnectionState {
     // readonly attribute boolean? canTrickleIceCandidates;
     // RTCConfiguration getConfiguration();
     [CallWith=ScriptState, RaisesException] void setConfiguration(RTCConfiguration configuration);
-    // TODO(guidou): close() should never throw an exception.
-    [RaisesException] void close();
+    void close();
     attribute EventHandler onnegotiationneeded;
     attribute EventHandler onicecandidate;
     attribute EventHandler onsignalingstatechange;
@@ -112,13 +110,20 @@ enum RTCIceConnectionState {
     // spec, remove it or change it?): https://github.com/w3c/webrtc-stats/issues/116
     [CallWith=ScriptState] Promise<RTCStatsReport> getStats();
 
+    // RTP Media API
+    // https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-getsenders
+    [Measure] sequence<RTCRtpSender> getSenders();
     // https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-getreceivers
-    sequence<RTCRtpReceiver> getReceivers();
+    [Measure] sequence<RTCRtpReceiver> getReceivers();
+    // https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-addtrack
+    [Measure, RaisesException] RTCRtpSender addTrack(MediaStreamTrack track, MediaStream... streams);
+    // https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-removetrack
+    [Measure, RaisesException] void removeTrack(RTCRtpSender sender);
+    // https://w3c.github.io/webrtc-pc/#dom-rtcpeerconnection-ontrack
+    attribute EventHandler ontrack;
 
     // https://w3c.github.io/webrtc-pc/#peer-to-peer-data-api
-    // TODO(guidou): The label argument should have [TreatNullAs=EmptyString]
-    // and be non-nullable.
-    [CallWith=ScriptState, RaisesException] RTCDataChannel createDataChannel(DOMString? label, optional Dictionary options);
+    [CallWith=ScriptState, RaisesException] RTCDataChannel createDataChannel(USVString label, optional RTCDataChannelInit dataChannelDict);
     attribute EventHandler ondatachannel;
 
     // Certificate management
@@ -128,7 +133,6 @@ enum RTCIceConnectionState {
     // Non-standard or removed from the spec:
     [Measure] sequence<MediaStream> getLocalStreams();
     [Measure] sequence<MediaStream> getRemoteStreams();
-    [Measure] MediaStream getStreamById(DOMString streamId);
     [Measure, CallWith=ScriptState, RaisesException] void addStream(MediaStream? stream, optional Dictionary mediaConstraints);
     [Measure, RaisesException] void removeStream(MediaStream? stream);
     [Measure, RaisesException] RTCDTMFSender createDTMFSender(MediaStreamTrack track);

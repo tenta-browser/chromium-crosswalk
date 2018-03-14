@@ -18,6 +18,7 @@ var FileTask;
  * @typedef {{
  *   size: (number|undefined),
  *   modificationTime: (number|undefined),
+ *   modificationByMeTime: (number|undefined),
  *   thumbnailUrl: (string|undefined),
  *   croppedThumbnailUrl: (string|undefined),
  *   externalFileUrl: (string|undefined),
@@ -74,7 +75,8 @@ var ProfileInfo;
  *   configurable: boolean,
  *   watchable: boolean,
  *   mountCondition: (string|undefined),
- *   mountContext: (string|undefined)
+ *   mountContext: (string|undefined),
+ *   diskFileSystemType: (string|undefined)
  * }}
  */
 var VolumeMetadata;
@@ -177,7 +179,7 @@ var SearchMetadataParams;
 
 /**
  * @typedef {{
- *   entry: Object,
+ *   entry: Entry,
  *   highlightedBaseName: string
  * }}
  */
@@ -439,6 +441,14 @@ chrome.fileManagerPrivate.getSizeStats = function(volumeId, callback) {};
 chrome.fileManagerPrivate.formatVolume = function(volumeId) {};
 
 /**
+ * Renames a mounted volume. |volumeId| ID of the volume to be renamed to
+ * |newName|.
+ * @param {string} volumeId
+ * @param {string} newName
+ */
+chrome.fileManagerPrivate.renameVolume = function(volumeId, newName) {};
+
+/**
  * Retrieves file manager preferences. |callback|
  * @param {function((!Preferences|undefined))} callback
  */
@@ -659,6 +669,13 @@ chrome.fileManagerPrivate.getCustomActions = function(entries, callback) {};
 chrome.fileManagerPrivate.getDirectorySize = function(entry, callback) {};
 
 /**
+ * Gets recently modified files across file systems.
+ * @param {string} restriction
+ * @param {function((!Array<!FileEntry>))} callback
+ */
+chrome.fileManagerPrivate.getRecentFiles = function(restriction, callback) {};
+
+/**
  * Executes the action on the specified set of entries. If not possible, then
  * returns an error via chrome.runtime.lastError.
  * @param {!Array<!Entry>} entries
@@ -701,4 +718,11 @@ chrome.fileManagerPrivate.Verb = {
   ADD_TO: 'add_to',
   PACK_WITH: 'pack_with',
   SHARE_WITH: 'share_with',
+};
+
+/** @enum {string} */
+chrome.fileManagerPrivate.SourceRestriction = {
+  ANY_SOURCE: 'any_source',
+  NATIVE_SOURCE: 'native_source',
+  NATIVE_OR_DRIVE_SOURCE: 'native_or_drive_source',
 };

@@ -82,6 +82,7 @@ class CORE_EXPORT PagePopupClient {
   // Helper functions to be used in PagePopupClient::writeDocument().
   static void AddString(const String&, SharedBuffer*);
   static void AddJavaScriptString(const String&, SharedBuffer*);
+  static void AddHTMLString(const String&, SharedBuffer*);
   static void AddProperty(const char* name, const String& value, SharedBuffer*);
   static void AddProperty(const char* name, int value, SharedBuffer*);
   static void AddProperty(const char* name, unsigned value, SharedBuffer*);
@@ -95,7 +96,7 @@ class CORE_EXPORT PagePopupClient {
 
 inline void PagePopupClient::AddString(const String& str, SharedBuffer* data) {
   CString str8 = str.Utf8();
-  data->Append(str8.Data(), str8.length());
+  data->Append(str8.data(), str8.length());
 }
 
 }  // namespace blink

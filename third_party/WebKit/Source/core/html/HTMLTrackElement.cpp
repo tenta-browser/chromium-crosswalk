@@ -25,14 +25,14 @@
 
 #include "core/html/HTMLTrackElement.h"
 
-#include "core/HTMLNames.h"
 #include "core/dom/Document.h"
-#include "core/dom/TaskRunnerHelper.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/csp/ContentSecurityPolicy.h"
 #include "core/html/CrossOriginAttribute.h"
-#include "core/html/HTMLMediaElement.h"
+#include "core/html/media/HTMLMediaElement.h"
 #include "core/html/track/LoadableTextTrack.h"
+#include "core/html_names.h"
+#include "public/platform/TaskType.h"
 
 #define TRACK_LOG_LEVEL 3
 
@@ -50,7 +50,7 @@ static String UrlForLoggingTrack(const KURL& url) {
 
 inline HTMLTrackElement::HTMLTrackElement(Document& document)
     : HTMLElement(trackTag, document),
-      load_timer_(TaskRunnerHelper::Get(TaskType::kNetworking, &document),
+      load_timer_(document.GetTaskRunner(TaskType::kNetworking),
                   this,
                   &HTMLTrackElement::LoadTimerFired) {
   DVLOG(TRACK_LOG_LEVEL) << "HTMLTrackElement - " << (void*)this;
@@ -84,16 +84,13 @@ void HTMLTrackElement::ParseAttribute(
     const AttributeModificationParams& params) {
   const QualifiedName& name = params.name;
   if (name == srcAttr) {
-    if (!params.new_value.IsEmpty())
-      ScheduleLoad();
-    else if (track_)
-      track_->RemoveAllCues();
+    ScheduleLoad();
 
     // 4.8.10.12.3 Sourcing out-of-band text tracks
     // As the kind, label, and srclang attributes are set, changed, or removed,
     // the text track must update accordingly...
   } else if (name == kindAttr) {
-    AtomicString lower_case_value = params.new_value.DeprecatedLower();
+    AtomicString lower_case_value = params.new_value.LowerASCII();
     // 'missing value default' ("subtitles")
     if (lower_case_value.IsNull())
       lower_case_value = TextTrack::SubtitlesKeyword();
@@ -160,7 +157,7 @@ void HTMLTrackElement::ScheduleLoad() {
 
   // 4. Run the remainder of these steps in parallel, allowing whatever caused
   // these steps to run to continue.
-  load_timer_.StartOneShot(0, BLINK_FROM_HERE);
+  load_timer_.StartOneShot(TimeDelta(), BLINK_FROM_HERE);
 
   // 5. Top: Await a stable state. The synchronous section consists of the
   // following steps. (The steps in the synchronous section are marked with [X])
@@ -171,11 +168,30 @@ void HTMLTrackElement::ScheduleLoad() {
 void HTMLTrackElement::LoadTimerFired(TimerBase*) {
   DVLOG(TRACK_LOG_LEVEL) << "loadTimerFired";
 
-  // 6. [X] Set the text track readiness state to loading.
-  SetReadyState(kLoading);
-
   // 7. [X] Let URL be the track URL of the track element.
   KURL url = GetNonEmptyURLAttribute(srcAttr);
+
+  // Whenever a track element has its src attribute set, changed,
+  // or removed, the user agent must immediately empty the
+  // element's text track's text track list of cues.
+  // Currently there are no other implementations clearing cues
+  // list _immediately_, so we are trying to align with what they are
+  // doing and remove cues as part of the synchronous section.
+  // Also we will first check if the new URL is not equal with
+  // the previous URL (there is an unclarified issue in spec
+  // about it, see: https://github.com/whatwg/html/issues/2916)
+  if (url == url_)
+    return;
+
+  if (track_)
+    track_->RemoveAllCues();
+
+  url_ = url;
+
+  // 6. [X] Set the text track readiness state to loading.
+  // Step 7 does not depend on step 6, so they were reordered to grant
+  // setting kLoading state after the equality check
+  SetReadyState(kLoading);
 
   // 8. [X] If the track element's parent is a media element then let CORS mode
   // be the state of the parent media element's crossorigin content attribute.
@@ -192,28 +208,6 @@ void HTMLTrackElement::LoadTimerFired(TimerBase*) {
     DidCompleteLoad(kFailure);
     return;
   }
-
-  if (url == url_) {
-    DCHECK(loader_);
-    switch (loader_->LoadState()) {
-      case TextTrackLoader::kIdle:
-      case TextTrackLoader::kLoading:
-        // If loading of the resource from this URL is in progress, return
-        // early.
-        break;
-      case TextTrackLoader::kFinished:
-        DidCompleteLoad(kSuccess);
-        break;
-      case TextTrackLoader::kFailed:
-        DidCompleteLoad(kFailure);
-        break;
-      default:
-        NOTREACHED();
-    }
-    return;
-  }
-
-  url_ = url;
 
   if (loader_)
     loader_->CancelLoad();
@@ -339,7 +333,7 @@ HTMLMediaElement* HTMLTrackElement::MediaElement() const {
   return nullptr;
 }
 
-DEFINE_TRACE(HTMLTrackElement) {
+void HTMLTrackElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(track_);
   visitor->Trace(loader_);
   HTMLElement::Trace(visitor);

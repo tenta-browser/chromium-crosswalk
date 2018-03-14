@@ -12,6 +12,10 @@
 #import "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #include "net/url_request/url_request_context_getter.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 TestingApplicationContext::TestingApplicationContext()
     : application_locale_("en"),
       local_state_(nullptr),
@@ -105,7 +109,7 @@ metrics::MetricsService* TestingApplicationContext::GetMetricsService() {
   return nullptr;
 }
 
-ukm::UkmService* TestingApplicationContext::GetUkmService() {
+ukm::UkmRecorder* TestingApplicationContext::GetUkmRecorder() {
   DCHECK(thread_checker_.CalledOnValidThread());
   return nullptr;
 }
@@ -151,11 +155,6 @@ gcm::GCMDriver* TestingApplicationContext::GetGCMDriver() {
 
 component_updater::ComponentUpdateService*
 TestingApplicationContext::GetComponentUpdateService() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  return nullptr;
-}
-
-CRLSetFetcher* TestingApplicationContext::GetCRLSetFetcher() {
   DCHECK(thread_checker_.CalledOnValidThread());
   return nullptr;
 }

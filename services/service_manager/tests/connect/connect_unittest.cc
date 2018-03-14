@@ -17,7 +17,6 @@
 #include "base/test/test_suite.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
-#include "services/service_manager/public/cpp/interface_factory.h"
 #include "services/service_manager/public/cpp/service_test.h"
 #include "services/service_manager/public/interfaces/service_manager.mojom.h"
 #include "services/service_manager/tests/connect/connect_test.mojom.h"
@@ -35,6 +34,8 @@ const char kTestPackageName[] = "connect_test_package";
 const char kTestAppName[] = "connect_test_app";
 const char kTestAppAName[] = "connect_test_a";
 const char kTestAppBName[] = "connect_test_b";
+const char kTestNonexistentAppName[] = "connect_test_nonexistent_app";
+const char kTestSandboxedAppName[] = "connect_test_sandboxed_app";
 const char kTestClassAppName[] = "connect_test_class_app";
 const char kTestSingletonAppName[] = "connect_test_singleton_app";
 
@@ -52,6 +53,16 @@ void ReceiveTwoStrings(std::string* out_string_1,
                        const std::string& in_string_2) {
   *out_string_1 = in_string_1;
   *out_string_2 = in_string_2;
+  loop->Quit();
+}
+
+void ReceiveQueryResult(mojom::ConnectResult* out_result,
+                        std::string* out_string,
+                        base::RunLoop* loop,
+                        mojom::ConnectResult in_result,
+                        const std::string& in_string) {
+  *out_result = in_result;
+  *out_string = in_string;
   loop->Quit();
 }
 
@@ -85,7 +96,6 @@ void QuitLoop(base::RunLoop* loop) {
 }  // namespace
 
 class ConnectTest : public test::ServiceTest,
-                    public InterfaceFactory<test::mojom::ExposedInterface>,
                     public test::mojom::ExposedInterface {
  public:
   ConnectTest() : ServiceTest("connect_unittests") {}
@@ -111,17 +121,17 @@ class ConnectTest : public test::ServiceTest,
    public:
     explicit TestService(ConnectTest* connect_test)
         : test::ServiceTestClient(connect_test), connect_test_(connect_test) {
-      registry_.AddInterface<test::mojom::ExposedInterface>(connect_test_);
+      registry_.AddInterface<test::mojom::ExposedInterface>(
+          base::Bind(&ConnectTest::Create, base::Unretained(connect_test_)));
     }
     ~TestService() override {}
 
    private:
     void OnBindInterface(
-        const ServiceInfo& source_info,
+        const BindSourceInfo& source_info,
         const std::string& interface_name,
         mojo::ScopedMessagePipeHandle interface_pipe) override {
-      registry_.BindInterface(source_info.identity, interface_name,
-                              std::move(interface_pipe));
+      registry_.BindInterface(interface_name, std::move(interface_pipe));
     }
 
     ConnectTest* connect_test_;
@@ -146,12 +156,10 @@ class ConnectTest : public test::ServiceTest,
     run_loop.Run();
   }
   std::unique_ptr<Service> CreateService() override {
-    return base::MakeUnique<TestService>(this);
+    return std::make_unique<TestService>(this);
   }
 
-  // InterfaceFactory<test::mojom::ExposedInterface>:
-  void Create(const Identity& remote_identity,
-              test::mojom::ExposedInterfaceRequest request) override {
+  void Create(test::mojom::ExposedInterfaceRequest request) {
     bindings_.AddBinding(this, std::move(request));
   }
 
@@ -208,6 +216,30 @@ TEST_F(ConnectTest, Instances) {
   }
 
   EXPECT_NE(instance_a1, instance_b);
+}
+
+TEST_F(ConnectTest, QueryService) {
+  mojom::ConnectResult result;
+  std::string sandbox_type;
+  base::RunLoop run_loop;
+  connector()->QueryService(
+      Identity(kTestSandboxedAppName, mojom::kInheritUserID, "A"),
+      base::BindOnce(&ReceiveQueryResult, &result, &sandbox_type, &run_loop));
+  run_loop.Run();
+  EXPECT_EQ(mojom::ConnectResult::SUCCEEDED, result);
+  EXPECT_EQ("superduper", sandbox_type);
+}
+
+TEST_F(ConnectTest, QueryNonexistentService) {
+  mojom::ConnectResult result;
+  std::string sandbox_type;
+  base::RunLoop run_loop;
+  connector()->QueryService(
+      Identity(kTestNonexistentAppName, mojom::kInheritUserID, "A"),
+      base::BindOnce(&ReceiveQueryResult, &result, &sandbox_type, &run_loop));
+  run_loop.Run();
+  EXPECT_EQ(mojom::ConnectResult::INVALID_ARGUMENT, result);
+  EXPECT_EQ("", sandbox_type);
 }
 
 // BlockedInterface should not be exposed to this application because it is not

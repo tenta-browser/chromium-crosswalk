@@ -8,16 +8,18 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller_test.h"
+#include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
 #include "chrome/test/base/in_process_browser_test.h"
 
-typedef InProcessBrowserTest ZoomBubbleBrowserTest;
-
-#if defined(USE_ASH)
-#include "ash/test/immersive_fullscreen_controller_test_api.h"
+#if defined(OS_CHROMEOS)
+#include "ash/public/cpp/immersive/immersive_fullscreen_controller_test_api.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller_ash.h"
+#include "ui/aura/test/env_test_helper.h"
 #endif
+
+using ZoomBubbleBrowserTest = InProcessBrowserTest;
 
 // TODO(linux_aura) http://crbug.com/163931
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS) && defined(USE_AURA)
@@ -32,7 +34,8 @@ IN_PROC_BROWSER_TEST_F(ZoomBubbleBrowserTest, MAYBE_NonImmersiveFullscreen) {
   content::WebContents* web_contents = browser_view->GetActiveWebContents();
 
   // The zoom bubble should be anchored when not in fullscreen.
-  ZoomBubbleView::ShowBubble(web_contents, ZoomBubbleView::AUTOMATIC);
+  ZoomBubbleView::ShowBubble(web_contents, gfx::Point(),
+                             ZoomBubbleView::AUTOMATIC);
   ASSERT_TRUE(ZoomBubbleView::GetZoomBubble());
   const ZoomBubbleView* zoom_bubble = ZoomBubbleView::GetZoomBubble();
   EXPECT_TRUE(zoom_bubble->GetAnchorView());
@@ -55,7 +58,8 @@ IN_PROC_BROWSER_TEST_F(ZoomBubbleBrowserTest, MAYBE_NonImmersiveFullscreen) {
 
   // The bubble should not be anchored when it is shown in non-immersive
   // fullscreen.
-  ZoomBubbleView::ShowBubble(web_contents, ZoomBubbleView::AUTOMATIC);
+  ZoomBubbleView::ShowBubble(web_contents, gfx::Point(),
+                             ZoomBubbleView::AUTOMATIC);
   ASSERT_TRUE(ZoomBubbleView::GetZoomBubble());
   zoom_bubble = ZoomBubbleView::GetZoomBubble();
   EXPECT_FALSE(zoom_bubble->GetAnchorView());
@@ -69,11 +73,11 @@ IN_PROC_BROWSER_TEST_F(ZoomBubbleBrowserTest, MAYBE_NonImmersiveFullscreen) {
   }
 }
 
-// TODO(zturner): Change this to USE_ASH after fixing the test on Windows.
 #if defined(OS_CHROMEOS)
 // Test whether the zoom bubble is anchored and whether it is visible when in
 // immersive fullscreen.
 IN_PROC_BROWSER_TEST_F(ZoomBubbleBrowserTest, ImmersiveFullscreen) {
+  aura::test::EnvTestHelper().SetAlwaysUseLastMouseLocation(true);
   BrowserView* browser_view = static_cast<BrowserView*>(browser()->window());
   content::WebContents* web_contents = browser_view->GetActiveWebContents();
 
@@ -97,7 +101,8 @@ IN_PROC_BROWSER_TEST_F(ZoomBubbleBrowserTest, ImmersiveFullscreen) {
 
   // The zoom bubble should not be anchored when it is shown in immersive
   // fullscreen and the top-of-window views are not revealed.
-  ZoomBubbleView::ShowBubble(web_contents, ZoomBubbleView::AUTOMATIC);
+  ZoomBubbleView::ShowBubble(web_contents, gfx::Point(),
+                             ZoomBubbleView::AUTOMATIC);
   ASSERT_TRUE(ZoomBubbleView::GetZoomBubble());
   const ZoomBubbleView* zoom_bubble = ZoomBubbleView::GetZoomBubble();
   EXPECT_FALSE(zoom_bubble->GetAnchorView());
@@ -111,7 +116,8 @@ IN_PROC_BROWSER_TEST_F(ZoomBubbleBrowserTest, ImmersiveFullscreen) {
 
   // The zoom bubble should be anchored when it is shown in immersive fullscreen
   // and the top-of-window views are revealed.
-  ZoomBubbleView::ShowBubble(web_contents, ZoomBubbleView::AUTOMATIC);
+  ZoomBubbleView::ShowBubble(web_contents, gfx::Point(),
+                             ZoomBubbleView::AUTOMATIC);
   zoom_bubble = ZoomBubbleView::GetZoomBubble();
   ASSERT_TRUE(zoom_bubble);
   EXPECT_TRUE(zoom_bubble->GetAnchorView());
@@ -135,3 +141,41 @@ IN_PROC_BROWSER_TEST_F(ZoomBubbleBrowserTest, ImmersiveFullscreen) {
   }
 }
 #endif  // OS_CHROMEOS
+
+// Tests that trying to open zoom bubble with stale WebContents is safe.
+IN_PROC_BROWSER_TEST_F(ZoomBubbleBrowserTest, NoWebContentsIsSafe) {
+  BrowserView* browser_view = static_cast<BrowserView*>(browser()->window());
+  content::WebContents* web_contents = browser_view->GetActiveWebContents();
+
+  ZoomBubbleView::ShowBubble(web_contents, gfx::Point(),
+                             ZoomBubbleView::AUTOMATIC);
+
+  // Close the current tab and try opening the zoom bubble with stale
+  // |web_contents|.
+  chrome::CloseTab(browser());
+  ZoomBubbleView::ShowBubble(web_contents, gfx::Point(),
+                             ZoomBubbleView::AUTOMATIC);
+}
+
+class ZoomBubbleDialogTest : public DialogBrowserTest {
+ public:
+  ZoomBubbleDialogTest() {}
+
+  // DialogBrowserTest:
+  void ShowDialog(const std::string& name) override {
+    BrowserView* browser_view = static_cast<BrowserView*>(browser()->window());
+    content::WebContents* web_contents = browser_view->GetActiveWebContents();
+    ZoomBubbleView::ShowBubble(web_contents, gfx::Point(),
+                               ZoomBubbleView::USER_GESTURE);
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ZoomBubbleDialogTest);
+};
+
+// Test that calls ShowDialog("default"). Interactive when run via
+// browser_tests --gtest_filter=BrowserDialogTest.Invoke --interactive
+// --dialog=ZoomBubbleDialogTest.InvokeDialog_default
+IN_PROC_BROWSER_TEST_F(ZoomBubbleDialogTest, InvokeDialog_default) {
+  RunDialog();
+}

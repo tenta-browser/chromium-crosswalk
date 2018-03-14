@@ -5,7 +5,8 @@
 #include "core/animation/TimingInput.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/UnrestrictedDoubleOrKeyframeEffectOptions.h"
+#include "bindings/core/v8/unrestricted_double_or_keyframe_animation_options.h"
+#include "bindings/core/v8/unrestricted_double_or_keyframe_effect_options.h"
 #include "core/animation/AnimationInputHelpers.h"
 #include "core/animation/KeyframeEffectOptions.h"
 
@@ -68,8 +69,8 @@ bool TimingInput::SetIterationDuration(
     ExceptionState& exception_state) {
   static const char* error_message = "duration must be non-negative or auto.";
 
-  if (iteration_duration.isUnrestrictedDouble()) {
-    double duration_number = iteration_duration.getAsUnrestrictedDouble();
+  if (iteration_duration.IsUnrestrictedDouble()) {
+    double duration_number = iteration_duration.GetAsUnrestrictedDouble();
     if (std::isnan(duration_number) || duration_number < 0) {
       exception_state.ThrowTypeError(error_message);
       return false;
@@ -78,7 +79,7 @@ bool TimingInput::SetIterationDuration(
     return true;
   }
 
-  if (iteration_duration.getAsString() != "auto") {
+  if (iteration_duration.GetAsString() != "auto") {
     exception_state.ThrowTypeError(error_message);
     return false;
   }
@@ -111,7 +112,7 @@ bool TimingInput::SetTimingFunction(Timing& timing,
                                     const String& timing_function_string,
                                     Document* document,
                                     ExceptionState& exception_state) {
-  if (RefPtr<TimingFunction> timing_function =
+  if (scoped_refptr<TimingFunction> timing_function =
           AnimationInputHelpers::ParseTimingFunction(
               timing_function_string, document, exception_state)) {
     timing.timing_function = timing_function;
@@ -125,13 +126,31 @@ bool TimingInput::Convert(
     Timing& timing_output,
     Document* document,
     ExceptionState& exception_state) {
-  if (options.isKeyframeEffectOptions()) {
-    return Convert(options.getAsKeyframeEffectOptions(), timing_output,
+  if (options.IsKeyframeEffectOptions()) {
+    return Convert(options.GetAsKeyframeEffectOptions(), timing_output,
                    document, exception_state);
-  } else if (options.isUnrestrictedDouble()) {
-    return Convert(options.getAsUnrestrictedDouble(), timing_output,
+  } else if (options.IsUnrestrictedDouble()) {
+    return Convert(options.GetAsUnrestrictedDouble(), timing_output,
                    exception_state);
-  } else if (options.isNull()) {
+  } else if (options.IsNull()) {
+    return true;
+  }
+  NOTREACHED();
+  return false;
+}
+
+bool TimingInput::Convert(
+    const UnrestrictedDoubleOrKeyframeAnimationOptions& options,
+    Timing& timing_output,
+    Document* document,
+    ExceptionState& exception_state) {
+  if (options.IsKeyframeAnimationOptions()) {
+    return Convert(options.GetAsKeyframeAnimationOptions(), timing_output,
+                   document, exception_state);
+  } else if (options.IsUnrestrictedDouble()) {
+    return Convert(options.GetAsUnrestrictedDouble(), timing_output,
+                   exception_state);
+  } else if (options.IsNull()) {
     return true;
   }
   NOTREACHED();
@@ -170,13 +189,22 @@ bool TimingInput::Convert(const KeyframeEffectOptions& timing_input,
   return true;
 }
 
+bool TimingInput::Convert(const KeyframeAnimationOptions& timing_input,
+                          Timing& timing_output,
+                          Document* document,
+                          ExceptionState& exception_state) {
+  // The "id" field isn't used, so upcast to KeyframeEffectOptions.
+  const KeyframeEffectOptions* const timing_input_ptr = &timing_input;
+  return Convert(*timing_input_ptr, timing_output, document, exception_state);
+}
+
 bool TimingInput::Convert(double duration,
                           Timing& timing_output,
                           ExceptionState& exception_state) {
   DCHECK(timing_output == Timing::Defaults());
   return SetIterationDuration(
       timing_output,
-      UnrestrictedDoubleOrString::fromUnrestrictedDouble(duration),
+      UnrestrictedDoubleOrString::FromUnrestrictedDouble(duration),
       exception_state);
 }
 

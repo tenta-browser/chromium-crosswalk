@@ -16,6 +16,7 @@
 #include "base/value_conversions.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/notification_service.h"
+#include "extensions/browser/api/file_system/saved_file_entry.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_system.h"
@@ -30,6 +31,7 @@ using extensions::APIPermission;
 using extensions::Extension;
 using extensions::ExtensionHost;
 using extensions::ExtensionPrefs;
+using extensions::SavedFileEntry;
 
 namespace {
 
@@ -60,9 +62,7 @@ void AddSavedFileEntry(ExtensionPrefs* prefs,
                        const SavedFileEntry& file_entry) {
   ExtensionPrefs::ScopedDictionaryUpdate update(
       prefs, extension_id, kFileEntries);
-  base::DictionaryValue* file_entries = update.Get();
-  if (!file_entries)
-    file_entries = update.Create();
+  auto file_entries = update.Create();
   DCHECK(!file_entries->GetDictionaryWithoutPathExpansion(file_entry.id, NULL));
 
   std::unique_ptr<base::DictionaryValue> file_entry_dict =
@@ -81,9 +81,9 @@ void UpdateSavedFileEntry(ExtensionPrefs* prefs,
                           const SavedFileEntry& file_entry) {
   ExtensionPrefs::ScopedDictionaryUpdate update(
       prefs, extension_id, kFileEntries);
-  base::DictionaryValue* file_entries = update.Get();
+  auto file_entries = update.Get();
   DCHECK(file_entries);
-  base::DictionaryValue* file_entry_dict = NULL;
+  std::unique_ptr<prefs::DictionaryValueUpdate> file_entry_dict;
   file_entries->GetDictionaryWithoutPathExpansion(file_entry.id,
                                                   &file_entry_dict);
   DCHECK(file_entry_dict);
@@ -97,9 +97,7 @@ void RemoveSavedFileEntry(ExtensionPrefs* prefs,
                           const std::string& file_entry_id) {
   ExtensionPrefs::ScopedDictionaryUpdate update(
       prefs, extension_id, kFileEntries);
-  base::DictionaryValue* file_entries = update.Get();
-  if (!file_entries)
-    file_entries = update.Create();
+  auto file_entries = update.Create();
   file_entries->RemoveWithoutPathExpansion(file_entry_id, NULL);
 }
 
@@ -143,17 +141,6 @@ std::vector<SavedFileEntry> GetSavedFileEntries(
 }
 
 }  // namespace
-
-SavedFileEntry::SavedFileEntry() : is_directory(false), sequence_number(0) {}
-
-SavedFileEntry::SavedFileEntry(const std::string& id,
-                               const base::FilePath& path,
-                               bool is_directory,
-                               int sequence_number)
-    : id(id),
-      path(path),
-      is_directory(is_directory),
-      sequence_number(sequence_number) {}
 
 class SavedFilesService::SavedFiles {
  public:
@@ -203,7 +190,7 @@ SavedFilesService::SavedFilesService(content::BrowserContext* context)
                  content::NotificationService::AllSources());
 }
 
-SavedFilesService::~SavedFilesService() {}
+SavedFilesService::~SavedFilesService() = default;
 
 void SavedFilesService::Observe(int type,
                                 const content::NotificationSource& source,
@@ -300,7 +287,7 @@ SavedFilesService::SavedFiles::SavedFiles(content::BrowserContext* context,
   LoadSavedFileEntriesFromPreferences();
 }
 
-SavedFilesService::SavedFiles::~SavedFiles() {}
+SavedFilesService::SavedFiles::~SavedFiles() = default;
 
 void SavedFilesService::SavedFiles::RegisterFileEntry(
     const std::string& id,

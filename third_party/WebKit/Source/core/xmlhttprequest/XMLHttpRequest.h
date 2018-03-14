@@ -24,27 +24,26 @@
 #define XMLHttpRequest_h
 
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ScriptString.h"
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/core/v8/TraceWrapperMember.h"
 #include "core/dom/DocumentParserClient.h"
 #include "core/dom/ExceptionCode.h"
-#include "core/dom/SuspendableObject.h"
+#include "core/dom/PausableObject.h"
 #include "core/loader/ThreadableLoaderClient.h"
 #include "core/xmlhttprequest/XMLHttpRequestEventTarget.h"
 #include "core/xmlhttprequest/XMLHttpRequestProgressEventThrottle.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/heap/Handle.h"
 #include "platform/loader/fetch/ResourceResponse.h"
 #include "platform/network/EncodedFormData.h"
 #include "platform/network/HTTPHeaderMap.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SecurityOrigin.h"
-#include "wtf/Forward.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefPtr.h"
-#include "wtf/text/AtomicString.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/Forward.h"
+#include "platform/wtf/text/AtomicString.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -71,7 +70,7 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
                              private ThreadableLoaderClient,
                              public DocumentParserClient,
                              public ActiveScriptWrappable<XMLHttpRequest>,
-                             public SuspendableObject {
+                             public PausableObject {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(XMLHttpRequest);
 
@@ -104,11 +103,11 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
     kResponseTypeArrayBuffer,
   };
 
-  // SuspendableObject
+  // PausableObject
   void ContextDestroyed(ExecutionContext*) override;
   ExecutionContext* GetExecutionContext() const override;
-  void Suspend() override;
-  void Resume() override;
+  void Pause() override;
+  void Unpause() override;
 
   // ScriptWrappable
   bool HasPendingActivity() const final;
@@ -121,7 +120,7 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   String statusText() const;
   int status() const;
   State readyState() const;
-  bool withCredentials() const { return include_credentials_; }
+  bool withCredentials() const { return with_credentials_; }
   void setWithCredentials(bool, ExceptionState&);
   void open(const AtomicString& method, const String& url, ExceptionState&);
   void open(const AtomicString& method,
@@ -158,21 +157,23 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   String responseURL();
 
   // For Inspector.
-  void SendForInspectorXHRReplay(PassRefPtr<EncodedFormData>, ExceptionState&);
+  void SendForInspectorXHRReplay(scoped_refptr<EncodedFormData>,
+                                 ExceptionState&);
 
   XMLHttpRequestUpload* upload();
   bool IsAsync() { return async_; }
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(readystatechange);
 
-  DECLARE_VIRTUAL_TRACE();
-  DECLARE_TRACE_WRAPPERS();
+  virtual void Trace(blink::Visitor*);
+  void TraceWrappers(const ScriptWrappableVisitor*) const;
 
  private:
   class BlobLoader;
   XMLHttpRequest(ExecutionContext*,
+                 v8::Isolate*,
                  bool is_isolated_world,
-                 PassRefPtr<SecurityOrigin>);
+                 scoped_refptr<SecurityOrigin>);
 
   Document* GetDocument() const;
 
@@ -199,14 +200,14 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   void DidFinishLoadingFromBlob();
   void DidFailLoadingFromBlob();
 
-  PassRefPtr<BlobDataHandle> CreateBlobDataHandleFromResponse();
+  scoped_refptr<BlobDataHandle> CreateBlobDataHandleFromResponse();
 
   // DocumentParserClient
   void NotifyParserStopped() override;
 
   void EndLoading();
 
-  // Returns the MIME type part of m_mimeTypeOverride if present and
+  // Returns the MIME type part of mime_type_override_ if present and
   // successfully parsed, or returns one of the "Content-Type" header value
   // of the received response.
   //
@@ -218,6 +219,9 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   // The same as finalResponseMIMEType() but fallbacks to "text/xml" if
   // finalResponseMIMEType() returns an empty string.
   AtomicString FinalResponseMIMETypeWithFallback() const;
+  // Returns the "final charset" defined in
+  // https://xhr.spec.whatwg.org/#final-charset.
+  String FinalResponseCharset() const;
   bool ResponseIsXML() const;
   bool ResponseIsHTML() const;
 
@@ -240,7 +244,7 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   void send(DOMArrayBuffer*, ExceptionState&);
   void send(DOMArrayBufferView*, ExceptionState&);
 
-  const AtomicString& GetRequestHeader(const AtomicString& name) const;
+  bool HasContentTypeRequestHeader() const;
   void SetRequestHeaderInternal(const AtomicString& name,
                                 const AtomicString& value);
 
@@ -258,7 +262,7 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   void ClearResponse();
   void ClearRequest();
 
-  void CreateRequest(PassRefPtr<EncodedFormData>, ExceptionState&);
+  void CreateRequest(scoped_refptr<EncodedFormData>, ExceptionState&);
 
   // Dispatches a response ProgressEvent.
   void DispatchProgressEvent(const AtomicString&, long long, long long);
@@ -285,6 +289,17 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
 
   XMLHttpRequestProgressEventThrottle& ProgressEventThrottle();
 
+  // Report the memory usage associated with this object to V8 so that V8 can
+  // schedule GC accordingly.  This function should be called whenever the
+  // internal memory usage changes except for the following members.
+  // - response_text_ of type ScriptString
+  //   ScriptString internally creates and holds a v8::String, so V8 is aware of
+  //   its memory usage.
+  // - response_array_buffer_ of type DOMArrayBuffer
+  //   DOMArrayBuffer supports the memory usage reporting system on their own,
+  //   so there is no need.
+  void ReportMemoryUsageToV8();
+
   Member<XMLHttpRequestUpload> upload_;
 
   KURL url_;
@@ -300,7 +315,6 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   State state_;
 
   ResourceResponse response_;
-  String final_response_charset_;
 
   std::unique_ptr<TextResourceDecoder> decoder_;
 
@@ -308,8 +322,10 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   TraceWrapperMember<Document> response_document_;
   Member<DocumentParser> response_document_parser_;
 
-  RefPtr<SharedBuffer> binary_response_builder_;
+  scoped_refptr<SharedBuffer> binary_response_builder_;
+  size_t binary_response_builder_last_reported_size_ = 0;
   long long length_downloaded_to_file_;
+  long long length_downloaded_to_file_last_reported_ = 0;
 
   TraceWrapperMember<DOMArrayBuffer> response_array_buffer_;
 
@@ -327,10 +343,11 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   // attribute.
   ResponseTypeCode response_type_code_;
 
+  v8::Isolate* const isolate_;
   // Set to true if the XMLHttpRequest was created in an isolated world.
   bool is_isolated_world_;
   // Stores the SecurityOrigin associated with the isolated world if any.
-  RefPtr<SecurityOrigin> isolated_world_security_origin_;
+  scoped_refptr<SecurityOrigin> isolated_world_security_origin_;
 
   // This blob loader will be used if |m_downloadingToFile| is true and
   // |m_responseTypeCode| is NOT ResponseTypeBlob.
@@ -342,7 +359,9 @@ class XMLHttpRequest final : public XMLHttpRequestEventTarget,
   int event_dispatch_recursion_level_;
 
   bool async_;
-  bool include_credentials_;
+
+  bool with_credentials_;
+
   // Used to skip m_responseDocument creation if it's done previously. We need
   // this separate flag since m_responseDocument can be 0 for some cases.
   bool parsed_response_;

@@ -11,7 +11,6 @@
 #include <utility>
 
 #include "base/compiler_specific.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "components/sync/base/attachment_id_proto.h"
 #include "components/sync/engine_impl/cycle/directory_type_debug_info_emitter.h"
@@ -299,6 +298,128 @@ TEST_F(DirectoryUpdateHandlerProcessUpdateTest, GarbageCollectionByVersion) {
   EXPECT_TRUE(EntryExists(e2->id_string()));
 }
 
+// Create 2 entries, one is 15-days-old, another is 5-days-old. Check if sync
+// will delete 15-days-old entry when server set expired age is 10 days.
+TEST_F(DirectoryUpdateHandlerProcessUpdateTest, GarbageCollectionByAge) {
+  DirectoryTypeDebugInfoEmitter emitter(SYNCED_NOTIFICATIONS, &type_observers_);
+  DirectoryUpdateHandler handler(dir(), SYNCED_NOTIFICATIONS, ui_worker(),
+                                 &emitter);
+  StatusController status;
+
+  sync_pb::DataTypeProgressMarker progress;
+  progress.set_data_type_id(
+      GetSpecificsFieldNumberFromModelType(SYNCED_NOTIFICATIONS));
+  progress.set_token("token");
+  progress.mutable_gc_directive()->set_age_watermark_in_days(20);
+
+  sync_pb::DataTypeContext context;
+  context.set_data_type_id(
+      GetSpecificsFieldNumberFromModelType(SYNCED_NOTIFICATIONS));
+  context.set_context("context");
+  context.set_version(1);
+
+  std::unique_ptr<sync_pb::SyncEntity> e1 =
+      CreateUpdate(SyncableIdToProto(Id::CreateFromServerId("e1")), "",
+                   SYNCED_NOTIFICATIONS);
+  e1->set_mtime(
+      TimeToProtoTime(base::Time::Now() - base::TimeDelta::FromDays(15)));
+
+  std::unique_ptr<sync_pb::SyncEntity> e2 =
+      CreateUpdate(SyncableIdToProto(Id::CreateFromServerId("e2")), "",
+                   SYNCED_NOTIFICATIONS);
+  e2->set_mtime(
+      TimeToProtoTime(base::Time::Now() - base::TimeDelta::FromDays(5)));
+
+  // Add to the applicable updates list.
+  SyncEntityList updates;
+  updates.push_back(e1.get());
+  updates.push_back(e2.get());
+
+  // Process and apply updates.
+  EXPECT_EQ(SYNCER_OK, handler.ProcessGetUpdatesResponse(progress, context,
+                                                         updates, &status));
+  handler.ApplyUpdates(&status);
+
+  // Verify none is deleted because they are unapplied during GC.
+  EXPECT_TRUE(TypeRootExists(SYNCED_NOTIFICATIONS));
+  EXPECT_TRUE(EntryExists(e1->id_string()));
+  EXPECT_TRUE(EntryExists(e2->id_string()));
+
+  // Process and apply again. 15-days-old entry is deleted but not 5-days-old
+  // entry.
+  progress.mutable_gc_directive()->set_age_watermark_in_days(10);
+  EXPECT_EQ(SYNCER_OK, handler.ProcessGetUpdatesResponse(
+                           progress, context, SyncEntityList(), &status));
+  handler.ApplyUpdates(&status);
+  EXPECT_FALSE(EntryExists(e1->id_string()));
+  EXPECT_TRUE(EntryExists(e2->id_string()));
+}
+
+// Create 3 entries, one is 15-days-old, one is 10-days-old, another is
+// 5-days-old. Check if sync will delete 15-days-old entry when server set
+// max_number_of_items is 2.
+TEST_F(DirectoryUpdateHandlerProcessUpdateTest, GarbageCollectionByItemLimit) {
+  DirectoryTypeDebugInfoEmitter emitter(SYNCED_NOTIFICATIONS, &type_observers_);
+  DirectoryUpdateHandler handler(dir(), SYNCED_NOTIFICATIONS, ui_worker(),
+                                 &emitter);
+  StatusController status;
+
+  sync_pb::DataTypeProgressMarker progress;
+  progress.set_data_type_id(
+      GetSpecificsFieldNumberFromModelType(SYNCED_NOTIFICATIONS));
+  progress.set_token("token");
+  progress.mutable_gc_directive()->set_max_number_of_items(3);
+
+  sync_pb::DataTypeContext context;
+  context.set_data_type_id(
+      GetSpecificsFieldNumberFromModelType(SYNCED_NOTIFICATIONS));
+  context.set_context("context");
+  context.set_version(1);
+
+  std::unique_ptr<sync_pb::SyncEntity> e1 =
+      CreateUpdate(SyncableIdToProto(Id::CreateFromServerId("e1")), "",
+                   SYNCED_NOTIFICATIONS);
+  e1->set_mtime(
+      TimeToProtoTime(base::Time::Now() - base::TimeDelta::FromDays(15)));
+
+  std::unique_ptr<sync_pb::SyncEntity> e2 =
+      CreateUpdate(SyncableIdToProto(Id::CreateFromServerId("e2")), "",
+                   SYNCED_NOTIFICATIONS);
+  e2->set_mtime(
+      TimeToProtoTime(base::Time::Now() - base::TimeDelta::FromDays(5)));
+
+  std::unique_ptr<sync_pb::SyncEntity> e3 =
+      CreateUpdate(SyncableIdToProto(Id::CreateFromServerId("e3")), "",
+                   SYNCED_NOTIFICATIONS);
+  e3->set_mtime(
+      TimeToProtoTime(base::Time::Now() - base::TimeDelta::FromDays(10)));
+
+  // Add to the applicable updates list.
+  SyncEntityList updates;
+  updates.push_back(e1.get());
+  updates.push_back(e2.get());
+  updates.push_back(e3.get());
+
+  // Process and apply updates.
+  EXPECT_EQ(SYNCER_OK, handler.ProcessGetUpdatesResponse(progress, context,
+                                                         updates, &status));
+  handler.ApplyUpdates(&status);
+
+  // Verify none is deleted because they are unapplied during GC.
+  EXPECT_TRUE(TypeRootExists(SYNCED_NOTIFICATIONS));
+  EXPECT_TRUE(EntryExists(e1->id_string()));
+  EXPECT_TRUE(EntryExists(e2->id_string()));
+
+  // Process and apply again. 15-days-old entry is deleted.
+  progress.mutable_gc_directive()->set_max_number_of_items(2);
+  EXPECT_EQ(SYNCER_OK, handler.ProcessGetUpdatesResponse(
+                           progress, context, SyncEntityList(), &status));
+  handler.ApplyUpdates(&status);
+  EXPECT_FALSE(EntryExists(e1->id_string()));
+  EXPECT_TRUE(EntryExists(e2->id_string()));
+  EXPECT_TRUE(EntryExists(e3->id_string()));
+}
+
 TEST_F(DirectoryUpdateHandlerProcessUpdateTest, ContextVersion) {
   DirectoryTypeDebugInfoEmitter emitter(SYNCED_NOTIFICATIONS, &type_observers_);
   DirectoryUpdateHandler handler(dir(), SYNCED_NOTIFICATIONS, ui_worker(),
@@ -477,18 +598,18 @@ class DirectoryUpdateHandlerApplyUpdateTest : public ::testing::Test {
 
   void SetUp() override {
     dir_maker_.SetUp();
-    entry_factory_ = base::MakeUnique<TestEntryFactory>(directory());
+    entry_factory_ = std::make_unique<TestEntryFactory>(directory());
 
     update_handler_map_.insert(std::make_pair(
         BOOKMARKS,
-        base::MakeUnique<DirectoryUpdateHandler>(
+        std::make_unique<DirectoryUpdateHandler>(
             directory(), BOOKMARKS, ui_worker_, &bookmarks_emitter_)));
     update_handler_map_.insert(std::make_pair(
         PASSWORDS,
-        base::MakeUnique<DirectoryUpdateHandler>(
+        std::make_unique<DirectoryUpdateHandler>(
             directory(), PASSWORDS, password_worker_, &passwords_emitter_)));
     update_handler_map_.insert(std::make_pair(
-        ARTICLES, base::MakeUnique<DirectoryUpdateHandler>(
+        ARTICLES, std::make_unique<DirectoryUpdateHandler>(
                       directory(), ARTICLES, ui_worker_, &articles_emitter_)));
   }
 

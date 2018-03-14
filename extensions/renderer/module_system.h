@@ -41,6 +41,8 @@ class SourceMap;
 // Note that a ModuleSystem must be used only in conjunction with a single
 // v8::Context.
 // TODO(koz): Rename this to JavaScriptModuleSystem.
+// TODO(yzshen): crbug.com/718047 Remove all gin-related things. Mojo no longer
+// relies on gin.
 class ModuleSystem : public ObjectBackedNativeHandler,
                      public gin::ModuleRegistryObserver {
  public:
@@ -84,15 +86,10 @@ class ModuleSystem : public ObjectBackedNativeHandler,
                                  v8::Local<v8::String> name);
 
   // Calls the specified method exported by the specified module. This is
-  // equivalent to calling require('module_name').method_name() from JS.
-  // DEPRECATED: see crbug.com/629431
-  // TODO(devlin): Remove these.
-  v8::Local<v8::Value> CallModuleMethod(const std::string& module_name,
-                                        const std::string& method_name,
-                                        int argc,
-                                        v8::Local<v8::Value> argv[]);
-
-  // Same as the above, but allows for blocking execution.
+  // equivalent to calling require('module_name').method_name() from JS. Note:
+  // this may result in asynchronous execution if javascript is presently
+  // disabled.
+  // TODO(devlin): Rename this to just CallModuleMethod()?
   void CallModuleMethodSafe(const std::string& module_name,
                             const std::string& method_name);
   void CallModuleMethodSafe(const std::string& module_name,
@@ -188,7 +185,12 @@ class ModuleSystem : public ObjectBackedNativeHandler,
   void HandleException(const v8::TryCatch& try_catch);
 
   void RequireForJs(const v8::FunctionCallbackInfo<v8::Value>& args);
-  v8::Local<v8::Value> RequireForJsInner(v8::Local<v8::String> module_name);
+
+  // Returns the module with the given |module_name|. If |create| is true, the
+  // module will be loaded if it hasn't been already. Otherwise, the module
+  // will only be returned if it has already been loaded.
+  v8::Local<v8::Value> RequireForJsInner(v8::Local<v8::String> module_name,
+                                         bool create);
 
   typedef v8::MaybeLocal<v8::Object>(ModuleSystem::*RequireFunction)(
       const std::string&);
@@ -213,6 +215,10 @@ class ModuleSystem : public ObjectBackedNativeHandler,
   // Return a promise for a requested module.
   // |args[0]| - the name of a module.
   void RequireAsync(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  // |args[0]| - the name of a module.
+  // This method directly executes the script in the current scope.
+  void LoadScript(const v8::FunctionCallbackInfo<v8::Value>& args);
 
   // Wraps |source| in a (function(define, require, requireNative, ...) {...}).
   v8::Local<v8::String> WrapSource(v8::Local<v8::String> source);
@@ -242,6 +248,7 @@ class ModuleSystem : public ObjectBackedNativeHandler,
   void ClobberExistingNativeHandler(const std::string& name);
 
   // Returns the v8::Function associated with the given module and method name.
+  // This will *not* load a module if it hasn't been loaded already.
   v8::Local<v8::Function> GetModuleFunction(const std::string& module_name,
                                             const std::string& method_name);
 
@@ -276,6 +283,9 @@ class ModuleSystem : public ObjectBackedNativeHandler,
   v8::Eternal<v8::FunctionTemplate> get_internal_api_;
 
   JSBindingUtilGetter js_binding_util_getter_;
+
+  // The set of modules that we've attempted to load.
+  std::set<std::string> loaded_modules_;
 
   base::WeakPtrFactory<ModuleSystem> weak_factory_;
 

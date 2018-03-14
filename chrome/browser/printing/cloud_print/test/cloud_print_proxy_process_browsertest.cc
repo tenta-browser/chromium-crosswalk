@@ -34,15 +34,15 @@
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/common/chrome_content_client.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/cloud_print/cloud_print_proxy_info.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/common/service_messages.h"
 #include "chrome/common/service_process_util.h"
+#include "chrome/service/cloud_print/cloud_print_message_handler.h"
 #include "chrome/service/service_ipc_server.h"
 #include "chrome/service/service_process.h"
 #include "chrome/test/base/chrome_unit_test_suite.h"
 #include "chrome/test/base/test_launcher_utils.h"
 #include "chrome/test/base/testing_browser_process.h"
-#include "chrome/test/base/testing_io_thread_state.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
@@ -50,10 +50,13 @@
 #include "content/public/common/content_paths.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
+#include "ipc/ipc.mojom.h"
 #include "ipc/ipc_channel_mojo.h"
+#include "ipc/ipc_channel_proxy.h"
 #include "mojo/edk/embedder/embedder.h"
 #include "mojo/edk/embedder/named_platform_handle.h"
 #include "mojo/edk/embedder/named_platform_handle_utils.h"
+#include "mojo/edk/embedder/peer_connection.h"
 #include "mojo/edk/embedder/scoped_ipc_support.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -101,14 +104,16 @@ class TestStartupClientChannelListener : public IPC::Listener {
 };
 
 void ConnectAsync(mojo::ScopedMessagePipeHandle handle,
-                  mojo::edk::NamedPlatformHandle os_pipe) {
+                  mojo::edk::NamedPlatformHandle os_pipe,
+                  mojo::edk::PeerConnection* peer_connection) {
   mojo::edk::ScopedPlatformHandle os_pipe_handle =
       mojo::edk::CreateClientHandle(os_pipe);
   if (!os_pipe_handle.is_valid())
     return;
 
   mojo::FuseMessagePipes(
-      mojo::edk::ConnectToPeerProcess(std::move(os_pipe_handle)),
+      peer_connection->Connect(mojo::edk::ConnectionParams(
+          mojo::edk::TransportProtocol::kLegacy, std::move(os_pipe_handle))),
       std::move(handle));
 }
 
@@ -146,25 +151,16 @@ class MockServiceIPCServer : public ServiceIPCServer {
       ServiceIPCServer::Client* client,
       const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
       base::WaitableEvent* shutdown_event)
-      : ServiceIPCServer(client, io_task_runner, shutdown_event),
-        enabled_(true) {}
+      : ServiceIPCServer(client, io_task_runner, shutdown_event) {}
 
-  MOCK_METHOD1(OnMessageReceived, bool(const IPC::Message& message));
   MOCK_METHOD1(OnChannelConnected, void(int32_t peer_pid));
   MOCK_METHOD0(OnChannelError, void());
+  MOCK_METHOD0(ShutDown, void());
 
   void SetServiceEnabledExpectations();
-  void SetWillBeDisabledExpectations();
-
-  void CallServiceOnChannelConnected(int32_t peer_pid) {
-    ServiceIPCServer::OnChannelConnected(peer_pid);
-  }
-
-  bool SendInfo();
 
  private:
   cloud_print::CloudPrintProxyInfo info_;
-  bool enabled_;
 };
 
 // static
@@ -173,53 +169,12 @@ std::string MockServiceIPCServer::EnabledUserId() {
 }
 
 void MockServiceIPCServer::SetServiceEnabledExpectations() {
-  EXPECT_CALL(*this, OnChannelConnected(_)).Times(1)
-      .WillRepeatedly(
-          Invoke(this, &MockServiceIPCServer::CallServiceOnChannelConnected));
-
   EXPECT_CALL(*this, OnChannelError()).Times(0);
-  EXPECT_CALL(*this, OnMessageReceived(_)).Times(0);
-
-  EXPECT_CALL(*this,
-              OnMessageReceived(Property(
-                  &IPC::Message::type,
-                  static_cast<int32_t>(ServiceMsg_GetCloudPrintProxyInfo::ID))))
-      .Times(AnyNumber())
-      .WillRepeatedly(
-          WithoutArgs(Invoke(this, &MockServiceIPCServer::SendInfo)));
-
-  EXPECT_CALL(*this, OnMessageReceived(Property(
-                         &IPC::Message::type,
-                         static_cast<int32_t>(ServiceMsg_Shutdown::ID))))
+  EXPECT_CALL(*this, ShutDown())
       .Times(1)
       .WillOnce(DoAll(
           Assign(&g_good_shutdown, true),
-          WithoutArgs(Invoke(g_service_process, &ServiceProcess::Shutdown)),
-          Return(true)));
-}
-
-void MockServiceIPCServer::SetWillBeDisabledExpectations() {
-  SetServiceEnabledExpectations();
-
-  EXPECT_CALL(*this,
-              OnMessageReceived(Property(
-                  &IPC::Message::type,
-                  static_cast<int32_t>(ServiceMsg_DisableCloudPrintProxy::ID))))
-      .Times(AtLeast(1))
-      .WillRepeatedly(DoAll(Assign(&enabled_, false), Return(true)));
-}
-
-bool MockServiceIPCServer::SendInfo() {
-  if (enabled_) {
-    info_.enabled = true;
-    info_.email = EnabledUserId();
-    EXPECT_TRUE(Send(new ServiceHostMsg_CloudPrintProxy_Info(info_)));
-  } else {
-    info_.enabled = false;
-    info_.email = std::string();
-    EXPECT_TRUE(Send(new ServiceHostMsg_CloudPrintProxy_Info(info_)));
-  }
-  return true;
+          WithoutArgs(Invoke(g_service_process, &::ServiceProcess::Shutdown))));
 }
 
 typedef base::Callback<void(MockServiceIPCServer* server)>
@@ -272,6 +227,8 @@ int CloudPrintMockService_Main(SetExpectationsCallback set_expectations) {
   MockServiceIPCServer server(&service_process,
                               service_process.io_task_runner(),
                               service_process.GetShutdownEventForTesting());
+  server.binder_registry().AddInterface(base::Bind(
+      &cloud_print::CloudPrintMessageHandler::Create, &service_process));
 
   // Here is where the expectations/mock responses need to be set up.
   set_expectations.Run(&server);
@@ -291,14 +248,18 @@ int CloudPrintMockService_Main(SetExpectationsCallback set_expectations) {
   std::string startup_channel_name =
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           kProcessChannelID);
+  mojo::edk::PeerConnection peer_connection;
   std::unique_ptr<IPC::ChannelProxy> startup_channel =
       IPC::ChannelProxy::Create(
-          mojo::edk::ConnectToPeerProcess(
-              mojo::edk::CreateClientHandle(
-                  mojo::edk::NamedPlatformHandle(startup_channel_name)))
+          peer_connection
+              .Connect(mojo::edk::ConnectionParams(
+                  mojo::edk::TransportProtocol::kLegacy,
+                  mojo::edk::CreateClientHandle(
+                      mojo::edk::NamedPlatformHandle(startup_channel_name))))
               .release(),
           IPC::Channel::MODE_CLIENT, &listener,
-          service_process.io_task_runner());
+          service_process.io_task_runner(),
+          base::ThreadTaskRunnerHandle::Get());
 
   base::RunLoop().Run();
   if (!Mock::VerifyAndClearExpectations(&server))
@@ -317,15 +278,6 @@ MULTIPROCESS_TEST_MAIN(CloudPrintMockService_StartEnabledWaitForQuit) {
       base::Bind(&SetServiceEnabledExpectations));
 }
 
-void SetServiceWillBeDisabledExpectations(MockServiceIPCServer* server) {
-  server->SetWillBeDisabledExpectations();
-}
-
-MULTIPROCESS_TEST_MAIN(CloudPrintMockService_StartEnabledExpectDisabled) {
-  return CloudPrintMockService_Main(
-      base::Bind(&SetServiceWillBeDisabledExpectations));
-}
-
 class CloudPrintProxyPolicyStartupTest : public base::MultiProcessTest,
                                          public IPC::Listener {
  public:
@@ -339,8 +291,7 @@ class CloudPrintProxyPolicyStartupTest : public base::MultiProcessTest,
     return BrowserThread::GetTaskRunnerForThread(BrowserThread::IO);
   }
   base::Process Launch(const std::string& name);
-  void WaitForConnect();
-  bool Send(IPC::Message* message);
+  void WaitForConnect(mojo::edk::PeerConnection* peer_connection);
   void ShutdownAndWaitForExitWithTimeout(base::Process process);
 
   // IPC::Listener implementation
@@ -362,6 +313,7 @@ class CloudPrintProxyPolicyStartupTest : public base::MultiProcessTest,
   base::ScopedTempDir temp_user_data_dir_;
 
   mojo::edk::NamedPlatformHandle startup_channel_handle_;
+  mojo::edk::PeerConnection peer_connection_;
   std::unique_ptr<IPC::ChannelProxy> startup_channel_;
   std::unique_ptr<ChromeContentClient> content_client_;
   std::unique_ptr<ChromeContentBrowserClient> browser_content_client_;
@@ -390,7 +342,7 @@ class CloudPrintProxyPolicyStartupTest : public base::MultiProcessTest,
     void Notify() {
       seen_ = true;
       if (running_)
-        base::MessageLoopForUI::current()->QuitWhenIdle();
+        base::RunLoop::QuitCurrentWhenIdleDeprecated();
     }
 
    private:
@@ -463,50 +415,50 @@ base::Process CloudPrintProxyPolicyStartupTest::Launch(
   EXPECT_FALSE(CheckServiceProcessReady());
 
   startup_channel_handle_ = mojo::edk::NamedPlatformHandle(
-      base::StringPrintf("%d.%p.%d", base::GetCurrentProcId(), this,
+      base::StringPrintf("%" CrPRIdPid ".%p.%d", base::GetCurrentProcId(), this,
                          base::RandInt(0, std::numeric_limits<int>::max())));
   startup_channel_ = IPC::ChannelProxy::Create(
-      mojo::edk::ConnectToPeerProcess(
-          mojo::edk::CreateServerHandle(startup_channel_handle_))
+      peer_connection_
+          .Connect(mojo::edk::ConnectionParams(
+              mojo::edk::TransportProtocol::kLegacy,
+              mojo::edk::CreateServerHandle(startup_channel_handle_)))
           .release(),
-      IPC::Channel::MODE_SERVER, this, IOTaskRunner());
+      IPC::Channel::MODE_SERVER, this, IOTaskRunner(),
+      base::ThreadTaskRunnerHandle::Get());
 
-  base::SpawnChildResult spawn_result = SpawnChild(name);
-  EXPECT_TRUE(spawn_result.process.IsValid());
-  return std::move(spawn_result.process);
+  base::Process process = SpawnChild(name);
+  EXPECT_TRUE(process.IsValid());
+  return process;
 }
 
-void CloudPrintProxyPolicyStartupTest::WaitForConnect() {
+void CloudPrintProxyPolicyStartupTest::WaitForConnect(
+    mojo::edk::PeerConnection* peer_connection) {
   observer_.Wait();
   EXPECT_TRUE(CheckServiceProcessReady());
   EXPECT_TRUE(base::ThreadTaskRunnerHandle::Get().get());
 
   mojo::MessagePipe pipe;
   base::PostTaskWithTraits(
-      FROM_HERE,
-      base::TaskTraits().MayBlock().WithPriority(
-          base::TaskPriority::BACKGROUND),
-      base::Bind(&ConnectAsync, base::Passed(&pipe.handle1),
-                 GetServiceProcessChannel()));
-  ServiceProcessControl::GetInstance()->SetChannel(
-      IPC::ChannelProxy::Create(IPC::ChannelMojo::CreateClientFactory(
-                                    std::move(pipe.handle0), IOTaskRunner()),
-                                this, IOTaskRunner()));
-}
-
-bool CloudPrintProxyPolicyStartupTest::Send(IPC::Message* message) {
-  return ServiceProcessControl::GetInstance()->Send(message);
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      base::BindOnce(&ConnectAsync, base::Passed(&pipe.handle1),
+                     GetServiceProcessChannel(), peer_connection));
+  ServiceProcessControl::GetInstance()->SetMojoHandle(
+      mojo::MakeProxy(service_manager::mojom::InterfaceProviderPtrInfo(
+          std::move(pipe.handle0), 0U)));
 }
 
 void CloudPrintProxyPolicyStartupTest::ShutdownAndWaitForExitWithTimeout(
     base::Process process) {
-  ASSERT_TRUE(Send(new ServiceMsg_Shutdown()));
+  chrome::mojom::ServiceProcessPtr service_process;
+  ServiceProcessControl::GetInstance()->remote_interfaces().GetInterface(
+      &service_process);
+  service_process->ShutDown();
 
   int exit_code = -100;
   bool exited = process.WaitForExitWithTimeout(TestTimeouts::action_timeout(),
                                                &exit_code);
   EXPECT_TRUE(exited);
-  EXPECT_EQ(exit_code, 0);
+  EXPECT_EQ(0, exit_code);
 }
 
 void CloudPrintProxyPolicyStartupTest::OnChannelConnected(int32_t peer_pid) {
@@ -534,14 +486,10 @@ TEST_F(CloudPrintProxyPolicyStartupTest, StartAndShutdown) {
   TestingProfileManager profile_manager(browser_process);
   ASSERT_TRUE(profile_manager.SetUp());
 
-  // Must be created after the TestingProfileManager since that creates the
-  // LocalState for the BrowserProcess.  Must be created before profiles are
-  // constructed.
-  chrome::TestingIOThreadState testing_io_thread_state;
-
   base::Process process =
       Launch("CloudPrintMockService_StartEnabledWaitForQuit");
-  WaitForConnect();
+  mojo::edk::PeerConnection peer_connection;
+  WaitForConnect(&peer_connection);
   ShutdownAndWaitForExitWithTimeout(std::move(process));
   ServiceProcessControl::GetInstance()->Disconnect();
   content::RunAllPendingInMessageLoop();

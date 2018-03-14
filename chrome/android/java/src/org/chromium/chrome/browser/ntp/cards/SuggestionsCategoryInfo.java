@@ -90,6 +90,11 @@ public class SuggestionsCategoryInfo {
         return mShowIfEmpty;
     }
 
+    /** Returns whether the current category holds suggestions from a remote server. */
+    public boolean isRemote() {
+        return mCategory > KnownCategories.REMOTE_CATEGORIES_OFFSET;
+    }
+
     /**
      * Returns the string to use as description for the status card that is displayed when there are
      * no suggestions available for the provided category.
@@ -138,5 +143,13 @@ public class SuggestionsCategoryInfo {
                 Log.wtf(TAG, "'Empty State' action called for unsupported category: %d", mCategory);
                 break;
         }
+    }
+
+    /**
+     * Whether the Category supports fetching more content. Only Articles supports this at this
+     * time.
+     */
+    public boolean isFetchMoreSupported() {
+        return mCategory == KnownCategories.ARTICLES;
     }
 }

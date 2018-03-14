@@ -13,7 +13,7 @@
 #include "gpu/command_buffer/common/mailbox_holder.h"
 #include "ui/compositor/compositor.h"
 
-namespace display_compositor {
+namespace viz {
 class GLHelper;
 }
 
@@ -26,7 +26,7 @@ namespace content {
 class CONTENT_EXPORT OwnedMailbox : public base::RefCounted<OwnedMailbox>,
                                     public ui::ContextFactoryObserver {
  public:
-  explicit OwnedMailbox(display_compositor::GLHelper* gl_helper);
+  explicit OwnedMailbox(viz::GLHelper* gl_helper);
 
   const gpu::MailboxHolder& holder() const { return mailbox_holder_; }
   const gpu::Mailbox& mailbox() const { return mailbox_holder_.mailbox; }
@@ -34,7 +34,6 @@ class CONTENT_EXPORT OwnedMailbox : public base::RefCounted<OwnedMailbox>,
     return mailbox_holder_.sync_token;
   }
   uint32_t texture_id() const { return texture_id_; }
-  uint32_t target() const { return mailbox_holder_.texture_target; }
   void UpdateSyncToken(const gpu::SyncToken& sync_token);
   void Destroy();
 
@@ -49,7 +48,7 @@ class CONTENT_EXPORT OwnedMailbox : public base::RefCounted<OwnedMailbox>,
 
   uint32_t texture_id_;
   gpu::MailboxHolder mailbox_holder_;
-  display_compositor::GLHelper* gl_helper_;
+  viz::GLHelper* gl_helper_;
 };
 
 }  // namespace content

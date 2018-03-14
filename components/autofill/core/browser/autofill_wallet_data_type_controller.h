@@ -6,6 +6,7 @@
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_WALLET_DATA_TYPE_CONTROLLER_H_
 
 #include "base/macros.h"
+#include "base/single_thread_task_runner.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/sync/driver/async_directory_type_controller.h"
 
@@ -40,6 +41,9 @@ class AutofillWalletDataTypeController
 
   // Returns true if the prefs are set such that wallet sync should be enabled.
   bool IsEnabled();
+
+  // Report an error (which will stop the datatype asynchronously).
+  void DisableForPolicy();
 
   // Whether the database loaded callback has been registered.
   bool callback_registered_;

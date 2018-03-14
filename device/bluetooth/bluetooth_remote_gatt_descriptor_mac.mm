@@ -9,6 +9,7 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #import "device/bluetooth/bluetooth_adapter_mac.h"
+#include "device/bluetooth/bluetooth_adapter_mac_metrics.h"
 #import "device/bluetooth/bluetooth_remote_gatt_characteristic_mac.h"
 
 using base::mac::ObjCCast;
@@ -51,7 +52,7 @@ BluetoothRemoteGattDescriptorMac::BluetoothRemoteGattDescriptorMac(
   uuid_ = BluetoothAdapterMac::BluetoothUUIDWithCBUUID([cb_descriptor_ UUID]);
   identifier_ = base::SysNSStringToUTF8(
       [NSString stringWithFormat:@"%s-%p", uuid_.canonical_value().c_str(),
-                                 (void*)cb_descriptor_]);
+                                 cb_descriptor_.get()]);
 }
 
 std::string BluetoothRemoteGattDescriptorMac::GetIdentifier() const {
@@ -139,6 +140,7 @@ void BluetoothRemoteGattDescriptorMac::DidUpdateValueForDescriptor(
   std::pair<ValueCallback, ErrorCallback> callbacks;
   callbacks.swap(read_value_callbacks_);
   value_read_or_write_in_progress_ = false;
+  RecordDidUpdateValueForDescriptorResult(error);
   if (error) {
     BluetoothGattService::GattErrorCode error_code =
         BluetoothDeviceMac::GetGattErrorCodeFromNSError(error);
@@ -162,6 +164,7 @@ void BluetoothRemoteGattDescriptorMac::DidWriteValueForDescriptor(
   std::pair<base::Closure, ErrorCallback> callbacks;
   callbacks.swap(write_value_callbacks_);
   value_read_or_write_in_progress_ = false;
+  RecordDidWriteValueForDescriptorResult(error);
   if (error) {
     BluetoothGattService::GattErrorCode error_code =
         BluetoothDeviceMac::GetGattErrorCodeFromNSError(error);
@@ -189,7 +192,7 @@ DEVICE_BLUETOOTH_EXPORT std::ostream& operator<<(
   const BluetoothRemoteGattCharacteristicMac* characteristic_mac =
       static_cast<const BluetoothRemoteGattCharacteristicMac*>(
           descriptor.GetCharacteristic());
-  return out << "<BluetoothRemoteGattServiceMac "
+  return out << "<BluetoothRemoteGattDescriptorMac "
              << descriptor.GetUUID().canonical_value() << "/" << &descriptor
              << ", characteristic: "
              << characteristic_mac->GetUUID().canonical_value() << "/"

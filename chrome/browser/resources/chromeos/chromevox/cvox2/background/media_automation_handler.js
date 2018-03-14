@@ -5,7 +5,7 @@
 /**
  * @fileoverview Handles media automation events.  Note that to perform any of
  * the actions below such as ducking, and suspension of media sessions, the
- * --enable-default-media-session flag must be passed at the command line.
+ * --enable-audio-focus flag must be passed at the command line.
  */
 
 goog.provide('MediaAutomationHandler');
@@ -36,10 +36,10 @@ MediaAutomationHandler = function() {
   chrome.automation.getDesktop(function(node) {
     BaseAutomationHandler.call(this, node);
 
-    this.addListener_(EventType.MEDIA_STARTED_PLAYING,
-                      this.onMediaStartedPlaying);
-    this.addListener_(EventType.MEDIA_STOPPED_PLAYING,
-                      this.onMediaStoppedPlaying);
+    this.addListener_(
+        EventType.MEDIA_STARTED_PLAYING, this.onMediaStartedPlaying);
+    this.addListener_(
+        EventType.MEDIA_STOPPED_PLAYING, this.onMediaStoppedPlaying);
   }.bind(this));
 };
 

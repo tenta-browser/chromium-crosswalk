@@ -116,7 +116,7 @@ bool SVGPaintContext::ApplyClipMaskAndFilterIfNecessary() {
 }
 
 void SVGPaintContext::ApplyPaintPropertyState() {
-  if (!RuntimeEnabledFeatures::slimmingPaintV2Enabled())
+  if (!RuntimeEnabledFeatures::SlimmingPaintV175Enabled())
     return;
 
   // SVGRoot works like normal CSS replaced element and its effects are
@@ -124,17 +124,17 @@ void SVGPaintContext::ApplyPaintPropertyState() {
   if (object_.IsSVGRoot())
     return;
 
-  const auto* paint_properties = object_.PaintProperties();
-  const EffectPaintPropertyNode* effect =
-      paint_properties ? paint_properties->Effect() : nullptr;
-  if (!effect)
-    return;
-
-  auto& paint_controller = GetPaintInfo().context.GetPaintController();
-  PaintChunkProperties properties(
-      paint_controller.CurrentPaintChunkProperties());
-  properties.property_tree_state.SetEffect(effect);
-  scoped_paint_chunk_properties_.emplace(paint_controller, object_, properties);
+  if (const auto* properties = object_.FirstFragment().PaintProperties()) {
+    if (const auto* effect = properties->Effect()) {
+      auto& paint_controller = GetPaintInfo().context.GetPaintController();
+      PropertyTreeState state(
+          paint_controller.CurrentPaintChunkProperties().property_tree_state);
+      state.SetEffect(effect);
+      if (const auto* mask_clip = properties->MaskClip())
+        state.SetClip(mask_clip);
+      scoped_paint_chunk_properties_.emplace(paint_controller, state, object_);
+    }
+  }
 }
 
 void SVGPaintContext::ApplyCompositingIfNecessary() {
@@ -144,8 +144,8 @@ void SVGPaintContext::ApplyCompositingIfNecessary() {
   float opacity = style.Opacity();
   WebBlendMode blend_mode = style.HasBlendMode() && object_.IsBlendingAllowed()
                                 ? style.BlendMode()
-                                : kWebBlendModeNormal;
-  if (opacity < 1 || blend_mode != kWebBlendModeNormal) {
+                                : WebBlendMode::kNormal;
+  if (opacity < 1 || blend_mode != WebBlendMode::kNormal) {
     const FloatRect compositing_bounds =
         object_.VisualRectInLocalSVGCoordinates();
     compositing_recorder_ = WTF::WrapUnique(new CompositingRecorder(
@@ -159,7 +159,7 @@ void SVGPaintContext::ApplyClipIfNecessary() {
   ClipPathOperation* clip_path_operation = object_.StyleRef().ClipPath();
   if (!clip_path_operation)
     return;
-  if (!RuntimeEnabledFeatures::slimmingPaintV2Enabled()) {
+  if (!RuntimeEnabledFeatures::SlimmingPaintV175Enabled()) {
     clip_path_clipper_.emplace(GetPaintInfo().context, *clip_path_operation,
                                object_, object_.ObjectBoundingBox(),
                                FloatPoint());
@@ -217,7 +217,7 @@ bool SVGPaintContext::IsIsolationInstalled() const {
     return true;
   if (masker_ || filter_)
     return true;
-  if (!RuntimeEnabledFeatures::slimmingPaintV2Enabled() && clip_path_clipper_ &&
+  if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled() && clip_path_clipper_ &&
       clip_path_clipper_->UsingMask())
     return true;
   return false;
@@ -228,8 +228,8 @@ void SVGPaintContext::PaintResourceSubtree(GraphicsContext& context,
   DCHECK(item);
   DCHECK(!item->NeedsLayout());
 
-  PaintInfo info(context, LayoutRect::InfiniteIntRect(), kPaintPhaseForeground,
-                 kGlobalPaintNormalPhase,
+  PaintInfo info(context, LayoutRect::InfiniteIntRect(),
+                 PaintPhase::kForeground, kGlobalPaintNormalPhase,
                  kPaintLayerPaintingRenderingResourceSubtree);
   item->Paint(info, IntPoint());
 }

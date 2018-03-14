@@ -10,7 +10,7 @@
 #include "base/unguessable_token.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
-#include "media/gpu/ipc/service/gpu_jpeg_decode_accelerator.h"
+#include "media/base/android_overlay_mojo_factory.h"
 #include "media/video/video_decode_accelerator.h"
 
 namespace media {
@@ -24,11 +24,13 @@ class GpuChannel;
 namespace media {
 
 class MediaGpuChannelDispatchHelper;
+class MediaGpuChannelFilter;
 
 class MediaGpuChannel : public IPC::Listener, public IPC::Sender {
  public:
   MediaGpuChannel(gpu::GpuChannel* channel,
-                  const base::UnguessableToken& channel_token);
+                  const base::UnguessableToken& channel_token,
+                  const AndroidOverlayMojoFactoryCB& overlay_factory_cb);
   ~MediaGpuChannel() override;
 
   // IPC::Sender implementation:
@@ -41,7 +43,6 @@ class MediaGpuChannel : public IPC::Listener, public IPC::Sender {
   bool OnMessageReceived(const IPC::Message& message) override;
 
   // Message handlers.
-  void OnCreateJpegDecoder(int32_t route_id, IPC::Message* reply_msg);
   void OnCreateVideoDecoder(int32_t command_buffer_route_id,
                             const VideoDecodeAccelerator::Config& config,
                             int32_t route_id,
@@ -51,8 +52,9 @@ class MediaGpuChannel : public IPC::Listener, public IPC::Sender {
                             IPC::Message* reply_message);
 
   gpu::GpuChannel* const channel_;
-  base::UnguessableToken channel_token_;
-  std::unique_ptr<GpuJpegDecodeAccelerator> jpeg_decoder_;
+  scoped_refptr<MediaGpuChannelFilter> filter_;
+  AndroidOverlayMojoFactoryCB overlay_factory_cb_;
+
   DISALLOW_COPY_AND_ASSIGN(MediaGpuChannel);
 };
 

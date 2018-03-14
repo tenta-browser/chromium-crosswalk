@@ -104,82 +104,82 @@ void UsbDeviceHandleWin::Close() {
 }
 
 void UsbDeviceHandleWin::SetConfiguration(int configuration_value,
-                                          const ResultCallback& callback) {
+                                          ResultCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!device_) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 }
 
 void UsbDeviceHandleWin::ClaimInterface(int interface_number,
-                                        const ResultCallback& callback) {
+                                        ResultCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!device_) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 }
 
 void UsbDeviceHandleWin::ReleaseInterface(int interface_number,
-                                          const ResultCallback& callback) {
+                                          ResultCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!device_) {
-    task_runner_->PostTask(FROM_HERE, base::Bind(callback, false));
+    task_runner_->PostTask(FROM_HERE,
+                           base::BindOnce(std::move(callback), false));
     return;
   }
 }
 
-void UsbDeviceHandleWin::SetInterfaceAlternateSetting(
-    int interface_number,
-    int alternate_setting,
-    const ResultCallback& callback) {
+void UsbDeviceHandleWin::SetInterfaceAlternateSetting(int interface_number,
+                                                      int alternate_setting,
+                                                      ResultCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!device_) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 }
 
-void UsbDeviceHandleWin::ResetDevice(const ResultCallback& callback) {
+void UsbDeviceHandleWin::ResetDevice(ResultCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!device_) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 }
 
-void UsbDeviceHandleWin::ClearHalt(uint8_t endpoint,
-                                   const ResultCallback& callback) {
+void UsbDeviceHandleWin::ClearHalt(uint8_t endpoint, ResultCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!device_) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 }
 
-void UsbDeviceHandleWin::ControlTransfer(UsbEndpointDirection direction,
-                                         TransferRequestType request_type,
-                                         TransferRecipient recipient,
+void UsbDeviceHandleWin::ControlTransfer(UsbTransferDirection direction,
+                                         UsbControlTransferType request_type,
+                                         UsbControlTransferRecipient recipient,
                                          uint8_t request,
                                          uint16_t value,
                                          uint16_t index,
                                          scoped_refptr<net::IOBuffer> buffer,
                                          size_t length,
                                          unsigned int timeout,
-                                         const TransferCallback& callback) {
+                                         TransferCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (!device_) {
     task_runner_->PostTask(
-        FROM_HERE, base::Bind(callback, USB_TRANSFER_DISCONNECT, nullptr, 0));
+        FROM_HERE, base::BindOnce(std::move(callback),
+                                  UsbTransferStatus::DISCONNECT, nullptr, 0));
     return;
   }
 
   if (hub_handle_.IsValid()) {
-    if (direction == USB_DIRECTION_INBOUND &&
-        request_type == TransferRequestType::STANDARD &&
-        recipient == TransferRecipient::DEVICE &&
+    if (direction == UsbTransferDirection::INBOUND &&
+        request_type == UsbControlTransferType::STANDARD &&
+        recipient == UsbControlTransferRecipient::DEVICE &&
         request == USB_REQUEST_GET_DESCRIPTOR) {
       if ((value >> 8) == USB_DEVICE_DESCRIPTOR_TYPE) {
         auto* node_connection_info = new USB_NODE_CONNECTION_INFORMATION_EX;
@@ -192,9 +192,9 @@ void UsbDeviceHandleWin::ControlTransfer(UsbEndpointDirection direction,
                             node_connection_info, sizeof(*node_connection_info),
                             node_connection_info, sizeof(*node_connection_info),
                             nullptr, request->overlapped()),
-            base::Bind(&UsbDeviceHandleWin::GotNodeConnectionInformation,
-                       weak_factory_.GetWeakPtr(), callback,
-                       base::Owned(node_connection_info), buffer, length));
+            base::BindOnce(&UsbDeviceHandleWin::GotNodeConnectionInformation,
+                           weak_factory_.GetWeakPtr(), std::move(callback),
+                           base::Owned(node_connection_info), buffer, length));
         return;
       } else if (((value >> 8) == USB_CONFIGURATION_DESCRIPTOR_TYPE) ||
                  ((value >> 8) == USB_STRING_DESCRIPTOR_TYPE)) {
@@ -216,29 +216,32 @@ void UsbDeviceHandleWin::ControlTransfer(UsbEndpointDirection direction,
                             request_buffer->data(), size,
                             request_buffer->data(), size, nullptr,
                             request->overlapped()),
-            base::Bind(&UsbDeviceHandleWin::GotDescriptorFromNodeConnection,
-                       weak_factory_.GetWeakPtr(), callback, request_buffer,
-                       buffer, length));
+            base::BindOnce(&UsbDeviceHandleWin::GotDescriptorFromNodeConnection,
+                           weak_factory_.GetWeakPtr(), std::move(callback),
+                           request_buffer, buffer, length));
         return;
       }
     }
 
     // Unsupported transfer for hub.
     task_runner_->PostTask(
-        FROM_HERE, base::Bind(callback, USB_TRANSFER_ERROR, nullptr, 0));
+        FROM_HERE,
+        base::BindOnce(std::move(callback), UsbTransferStatus::TRANSFER_ERROR,
+                       nullptr, 0));
     return;
   }
 
   // Regular control transfers unimplemented.
-  task_runner_->PostTask(FROM_HERE,
-                         base::Bind(callback, USB_TRANSFER_ERROR, nullptr, 0));
+  task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback),
+                                UsbTransferStatus::TRANSFER_ERROR, nullptr, 0));
 }
 
 void UsbDeviceHandleWin::IsochronousTransferIn(
     uint8_t endpoint_number,
     const std::vector<uint32_t>& packet_lengths,
     unsigned int timeout,
-    const IsochronousTransferCallback& callback) {
+    IsochronousTransferCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
 }
 
@@ -247,16 +250,16 @@ void UsbDeviceHandleWin::IsochronousTransferOut(
     scoped_refptr<net::IOBuffer> buffer,
     const std::vector<uint32_t>& packet_lengths,
     unsigned int timeout,
-    const IsochronousTransferCallback& callback) {
+    IsochronousTransferCallback callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
 }
 
-void UsbDeviceHandleWin::GenericTransfer(UsbEndpointDirection direction,
+void UsbDeviceHandleWin::GenericTransfer(UsbTransferDirection direction,
                                          uint8_t endpoint_number,
                                          scoped_refptr<net::IOBuffer> buffer,
                                          size_t length,
                                          unsigned int timeout,
-                                         const TransferCallback& callback) {
+                                         TransferCallback callback) {
   // This one must be callable from any thread.
 }
 
@@ -279,7 +282,7 @@ UsbDeviceHandleWin::UsbDeviceHandleWin(
 UsbDeviceHandleWin::~UsbDeviceHandleWin() {}
 
 UsbDeviceHandleWin::Request* UsbDeviceHandleWin::MakeRequest(HANDLE handle) {
-  auto request = base::MakeUnique<Request>(hub_handle_.Get());
+  auto request = std::make_unique<Request>(hub_handle_.Get());
   Request* request_ptr = request.get();
   requests_[request_ptr] = std::move(request);
   return request_ptr;
@@ -295,7 +298,7 @@ std::unique_ptr<UsbDeviceHandleWin::Request> UsbDeviceHandleWin::UnlinkRequest(
 }
 
 void UsbDeviceHandleWin::GotNodeConnectionInformation(
-    const TransferCallback& callback,
+    TransferCallback callback,
     void* node_connection_info_ptr,
     scoped_refptr<net::IOBuffer> buffer,
     size_t buffer_length,
@@ -310,7 +313,7 @@ void UsbDeviceHandleWin::GotNodeConnectionInformation(
   if (win32_result != ERROR_SUCCESS) {
     SetLastError(win32_result);
     USB_PLOG(ERROR) << "Failed to get node connection information";
-    callback.Run(USB_TRANSFER_ERROR, nullptr, 0);
+    std::move(callback).Run(UsbTransferStatus::TRANSFER_ERROR, nullptr, 0);
     return;
   }
 
@@ -318,11 +321,12 @@ void UsbDeviceHandleWin::GotNodeConnectionInformation(
   bytes_transferred = std::min(sizeof(USB_DEVICE_DESCRIPTOR), buffer_length);
   memcpy(buffer->data(), &node_connection_info->DeviceDescriptor,
          bytes_transferred);
-  callback.Run(USB_TRANSFER_COMPLETED, buffer, bytes_transferred);
+  std::move(callback).Run(UsbTransferStatus::COMPLETED, buffer,
+                          bytes_transferred);
 }
 
 void UsbDeviceHandleWin::GotDescriptorFromNodeConnection(
-    const TransferCallback& callback,
+    TransferCallback callback,
     scoped_refptr<net::IOBuffer> request_buffer,
     scoped_refptr<net::IOBuffer> original_buffer,
     size_t original_buffer_length,
@@ -334,7 +338,7 @@ void UsbDeviceHandleWin::GotDescriptorFromNodeConnection(
   if (win32_result != ERROR_SUCCESS) {
     SetLastError(win32_result);
     USB_PLOG(ERROR) << "Failed to read descriptor from node connection";
-    callback.Run(USB_TRANSFER_ERROR, nullptr, 0);
+    std::move(callback).Run(UsbTransferStatus::TRANSFER_ERROR, nullptr, 0);
     return;
   }
 
@@ -343,7 +347,8 @@ void UsbDeviceHandleWin::GotDescriptorFromNodeConnection(
   memcpy(original_buffer->data(),
          request_buffer->data() + sizeof(USB_DESCRIPTOR_REQUEST),
          bytes_transferred);
-  callback.Run(USB_TRANSFER_COMPLETED, original_buffer, bytes_transferred);
+  std::move(callback).Run(UsbTransferStatus::COMPLETED, original_buffer,
+                          bytes_transferred);
 }
 
 }  // namespace device

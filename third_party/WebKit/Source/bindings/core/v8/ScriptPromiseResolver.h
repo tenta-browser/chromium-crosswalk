@@ -5,15 +5,15 @@
 #ifndef ScriptPromiseResolver_h
 #define ScriptPromiseResolver_h
 
-#include "bindings/core/v8/ScopedPersistent.h"
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/ToV8ForCore.h"
 #include "core/CoreExport.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/dom/SuspendableObject.h"
-#include "platform/ScriptForbiddenScope.h"
+#include "core/dom/PausableObject.h"
 #include "platform/Timer.h"
+#include "platform/bindings/ScopedPersistent.h"
+#include "platform/bindings/ScriptForbiddenScope.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/heap/Handle.h"
 #include "platform/heap/SelfKeepAlive.h"
 #include "v8/include/v8.h"
@@ -24,20 +24,20 @@ namespace blink {
 // functionalities.
 //  - A ScriptPromiseResolver retains a ScriptState. A caller
 //    can call resolve or reject from outside of a V8 context.
-//  - This class is an SuspendableObject and keeps track of the associated
+//  - This class is an PausableObject and keeps track of the associated
 //    ExecutionContext state. When the ExecutionContext is suspended,
 //    resolve or reject will be delayed. When it is stopped, resolve or reject
 //    will be ignored.
 class CORE_EXPORT ScriptPromiseResolver
     : public GarbageCollectedFinalized<ScriptPromiseResolver>,
-      public SuspendableObject {
+      public PausableObject {
   USING_GARBAGE_COLLECTED_MIXIN(ScriptPromiseResolver);
   WTF_MAKE_NONCOPYABLE(ScriptPromiseResolver);
 
  public:
   static ScriptPromiseResolver* Create(ScriptState* script_state) {
     ScriptPromiseResolver* resolver = new ScriptPromiseResolver(script_state);
-    resolver->SuspendIfNeeded();
+    resolver->PauseIfNeeded();
     return resolver;
   }
 
@@ -52,7 +52,7 @@ class CORE_EXPORT ScriptPromiseResolver
     //  - this resolver is destructed before it is resolved, rejected,
     //    detached, the V8 isolate is terminated or the associated
     //    ExecutionContext is stopped.
-    ASSERT(state_ == kDetached || !is_promise_called_ ||
+    DCHECK(state_ == kDetached || !is_promise_called_ ||
            !GetScriptState()->ContextIsValid() || !GetExecutionContext() ||
            GetExecutionContext()->IsContextDestroyed());
   }
@@ -73,7 +73,7 @@ class CORE_EXPORT ScriptPromiseResolver
   void Resolve() { Resolve(ToV8UndefinedGenerator()); }
   void Reject() { Reject(ToV8UndefinedGenerator()); }
 
-  ScriptState* GetScriptState() { return script_state_.Get(); }
+  ScriptState* GetScriptState() { return script_state_.get(); }
 
   // Note that an empty ScriptPromise will be returned after resolve or
   // reject is called.
@@ -84,11 +84,11 @@ class CORE_EXPORT ScriptPromiseResolver
     return resolver_.Promise();
   }
 
-  ScriptState* GetScriptState() const { return script_state_.Get(); }
+  ScriptState* GetScriptState() const { return script_state_.get(); }
 
-  // SuspendableObject implementation.
-  void Suspend() override;
-  void Resume() override;
+  // PausableObject implementation.
+  void Pause() override;
+  void Unpause() override;
   void ContextDestroyed(ExecutionContext*) override { Detach(); }
 
   // Calling this function makes the resolver release its internal resources.
@@ -101,11 +101,11 @@ class CORE_EXPORT ScriptPromiseResolver
   // promise is pending and the associated ExecutionContext isn't stopped.
   void KeepAliveWhilePending();
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  protected:
   // You need to call suspendIfNeeded after the construction because
-  // this is an SuspendableObject.
+  // this is an PausableObject.
   explicit ScriptPromiseResolver(ScriptState*);
 
  private:
@@ -122,12 +122,12 @@ class CORE_EXPORT ScriptPromiseResolver
     if (state_ != kPending || !GetScriptState()->ContextIsValid() ||
         !GetExecutionContext() || GetExecutionContext()->IsContextDestroyed())
       return;
-    ASSERT(new_state == kResolving || new_state == kRejecting);
+    DCHECK(new_state == kResolving || new_state == kRejecting);
     state_ = new_state;
 
-    ScriptState::Scope scope(script_state_.Get());
+    ScriptState::Scope scope(script_state_.get());
 
-    // Calling ToV8 in a ScriptForbiddenScope will trigger a RELEASE_ASSERT and
+    // Calling ToV8 in a ScriptForbiddenScope will trigger a CHECK and
     // cause a crash. ToV8 just invokes a constructor for wrapper creation,
     // which is safe (no author script can be run). Adding AllowUserAgentScript
     // directly inside createWrapper could cause a perf impact (calling
@@ -140,19 +140,19 @@ class CORE_EXPORT ScriptPromiseResolver
                       script_state_->GetIsolate()));
     }
 
-    if (GetExecutionContext()->IsContextSuspended()) {
+    if (GetExecutionContext()->IsContextPaused()) {
       // Retain this object until it is actually resolved or rejected.
       KeepAliveWhilePending();
       return;
     }
-    // TODO(esprehn): This is a hack, instead we should RELEASE_ASSERT that
+    // TODO(esprehn): This is a hack, instead we should CHECK that
     // script is allowed, and v8 should be running the entry hooks below and
     // crashing if script is forbidden. We should then audit all users of
     // ScriptPromiseResolver and the related specs and switch to an async
     // resolve.
     // See: http://crbug.com/663476
     if (ScriptForbiddenScope::IsScriptForbidden()) {
-      timer_.StartOneShot(0, BLINK_FROM_HERE);
+      timer_.StartOneShot(TimeDelta(), BLINK_FROM_HERE);
       return;
     }
     ResolveOrRejectImmediately();
@@ -162,7 +162,7 @@ class CORE_EXPORT ScriptPromiseResolver
   void OnTimerFired(TimerBase*);
 
   ResolutionState state_;
-  const RefPtr<ScriptState> script_state_;
+  const scoped_refptr<ScriptState> script_state_;
   TaskRunnerTimer<ScriptPromiseResolver> timer_;
   Resolver resolver_;
   ScopedPersistent<v8::Value> value_;

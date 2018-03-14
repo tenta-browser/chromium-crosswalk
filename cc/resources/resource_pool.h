@@ -8,18 +8,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <deque>
 #include <map>
 #include <memory>
 
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/memory_coordinator_client.h"
 #include "base/memory/ptr_util.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "cc/cc_export.h"
 #include "cc/resources/resource.h"
-#include "cc/resources/resource_format.h"
 #include "cc/resources/scoped_resource.h"
+#include "components/viz/common/resources/resource_format.h"
 
 namespace cc {
 
@@ -27,31 +27,36 @@ class CC_EXPORT ResourcePool : public base::trace_event::MemoryDumpProvider,
                                public base::MemoryCoordinatorClient {
  public:
   // Delay before a resource is considered expired.
-  static base::TimeDelta kDefaultExpirationDelay;
+  static constexpr base::TimeDelta kDefaultExpirationDelay =
+      base::TimeDelta::FromSeconds(5);
 
   static std::unique_ptr<ResourcePool> CreateForGpuMemoryBufferResources(
       ResourceProvider* resource_provider,
       base::SingleThreadTaskRunner* task_runner,
       gfx::BufferUsage usage,
-      const base::TimeDelta& expiration_delay) {
+      const base::TimeDelta& expiration_delay,
+      bool disallow_non_exact_reuse) {
     return base::WrapUnique(new ResourcePool(resource_provider, task_runner,
-                                             usage, expiration_delay));
+                                             usage, expiration_delay,
+                                             disallow_non_exact_reuse));
   }
 
   static std::unique_ptr<ResourcePool> Create(
       ResourceProvider* resource_provider,
       base::SingleThreadTaskRunner* task_runner,
-      ResourceProvider::TextureHint hint,
-      const base::TimeDelta& expiration_delay) {
+      viz::ResourceTextureHint hint,
+      const base::TimeDelta& expiration_delay,
+      bool disallow_non_exact_reuse) {
     return base::WrapUnique(new ResourcePool(resource_provider, task_runner,
-                                             hint, expiration_delay));
+                                             hint, expiration_delay,
+                                             disallow_non_exact_reuse));
   }
 
   ~ResourcePool() override;
 
   // Tries to reuse a resource. If none are available, makes a new one.
   Resource* AcquireResource(const gfx::Size& size,
-                            ResourceFormat format,
+                            viz::ResourceFormat format,
                             const gfx::ColorSpace& color_space);
 
   // Tries to acquire the resource with |previous_content_id| for us in partial
@@ -65,7 +70,7 @@ class CC_EXPORT ResourcePool : public base::trace_event::MemoryDumpProvider,
 
   // Called when a resource's content has been fully replaced (and is completely
   // valid). Updates the resource's content ID to its new value.
-  void OnContentReplaced(ResourceId resource_id, uint64_t content_id);
+  void OnContentReplaced(viz::ResourceId resource_id, uint64_t content_id);
   void ReleaseResource(Resource* resource);
 
   void SetResourceUsageLimits(size_t max_memory_usage_bytes,
@@ -96,22 +101,28 @@ class CC_EXPORT ResourcePool : public base::trace_event::MemoryDumpProvider,
   size_t GetBusyResourceCountForTesting() const {
     return busy_resources_.size();
   }
+  bool AllowsNonExactReUseForTesting() const {
+    return !disallow_non_exact_reuse_;
+  }
 
  protected:
   // Constructor for creating GPU memory buffer resources.
   ResourcePool(ResourceProvider* resource_provider,
                base::SingleThreadTaskRunner* task_runner,
                gfx::BufferUsage usage,
-               const base::TimeDelta& expiration_delay);
+               const base::TimeDelta& expiration_delay,
+               bool disallow_non_exact_reuse);
 
   // Constructor for creating standard resources.
   ResourcePool(ResourceProvider* resource_provider,
                base::SingleThreadTaskRunner* task_runner,
-               ResourceProvider::TextureHint hint,
-               const base::TimeDelta& expiration_delay);
+               viz::ResourceTextureHint hint,
+               const base::TimeDelta& expiration_delay,
+               bool disallow_non_exact_reuse);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ResourcePoolTest, ReuseResource);
+  FRIEND_TEST_ALL_PREFIXES(ResourcePoolTest, ExactRequestsRespected);
   class PoolResource : public ScopedResource {
    public:
     static std::unique_ptr<PoolResource> Create(
@@ -143,12 +154,12 @@ class CC_EXPORT ResourcePool : public base::trace_event::MemoryDumpProvider,
 
   // Tries to reuse a resource. Returns |nullptr| if none are available.
   Resource* ReuseResource(const gfx::Size& size,
-                          ResourceFormat format,
+                          viz::ResourceFormat format,
                           const gfx::ColorSpace& color_space);
 
   // Creates a new resource without trying to reuse an old one.
   Resource* CreateResource(const gfx::Size& size,
-                           ResourceFormat format,
+                           viz::ResourceFormat format,
                            const gfx::ColorSpace& color_space);
 
   void DidFinishUsingResource(std::unique_ptr<PoolResource> resource);
@@ -168,7 +179,7 @@ class CC_EXPORT ResourcePool : public base::trace_event::MemoryDumpProvider,
   ResourceProvider* resource_provider_ = nullptr;
   bool use_gpu_memory_buffers_ = false;
   gfx::BufferUsage usage_ = gfx::BufferUsage::GPU_READ_CPU_READ_WRITE;
-  ResourceProvider::TextureHint hint_ = ResourceProvider::TEXTURE_HINT_DEFAULT;
+  viz::ResourceTextureHint hint_ = viz::ResourceTextureHint::kDefault;
   size_t max_memory_usage_bytes_ = 0;
   size_t max_resource_count_ = 0;
   size_t in_use_memory_usage_bytes_ = 0;
@@ -176,16 +187,18 @@ class CC_EXPORT ResourcePool : public base::trace_event::MemoryDumpProvider,
   size_t total_resource_count_ = 0;
 
   // Holds most recently used resources at the front of the queue.
-  using ResourceDeque = std::deque<std::unique_ptr<PoolResource>>;
+  using ResourceDeque = base::circular_deque<std::unique_ptr<PoolResource>>;
   ResourceDeque unused_resources_;
   ResourceDeque busy_resources_;
 
-  using InUseResourceMap = std::map<ResourceId, std::unique_ptr<PoolResource>>;
+  using InUseResourceMap =
+      std::map<viz::ResourceId, std::unique_ptr<PoolResource>>;
   InUseResourceMap in_use_resources_;
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   bool evict_expired_resources_pending_ = false;
   const base::TimeDelta resource_expiration_delay_;
+  bool disallow_non_exact_reuse_ = false;
 
   base::WeakPtrFactory<ResourcePool> weak_ptr_factory_;
 

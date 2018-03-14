@@ -5,11 +5,13 @@
 #ifndef PerformanceObserver_h
 #define PerformanceObserver_h
 
-#include "bindings/core/v8/TraceWrapperMember.h"
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "core/CoreExport.h"
+#include "core/dom/ContextLifecycleObserver.h"
 #include "core/timing/PerformanceEntry.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/heap/Handle.h"
-#include "wtf/Vector.h"
+#include "platform/wtf/Vector.h"
 
 namespace blink {
 
@@ -17,23 +19,24 @@ class ExecutionContext;
 class ExceptionState;
 class PerformanceBase;
 class PerformanceObserver;
-class PerformanceObserverCallback;
 class PerformanceObserverInit;
+class V8PerformanceObserverCallback;
 
 using PerformanceEntryVector = HeapVector<Member<PerformanceEntry>>;
 
 class CORE_EXPORT PerformanceObserver final
-    : public GarbageCollected<PerformanceObserver>,
-      public ScriptWrappable {
+    : public ScriptWrappable,
+      public ActiveScriptWrappable<PerformanceObserver>,
+      public ContextClient {
   DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(PerformanceObserver);
   friend class PerformanceBase;
   friend class PerformanceBaseTest;
   friend class PerformanceObserverTest;
 
  public:
-  static PerformanceObserver* Create(ExecutionContext*,
-                                     PerformanceBase*,
-                                     PerformanceObserverCallback*);
+  static PerformanceObserver* Create(ScriptState*,
+                                     V8PerformanceObserverCallback*);
   static void ResumeSuspendedObservers();
 
   void observe(const PerformanceObserverInit&, ExceptionState&);
@@ -41,18 +44,21 @@ class CORE_EXPORT PerformanceObserver final
   void EnqueuePerformanceEntry(PerformanceEntry&);
   PerformanceEntryTypeMask FilterOptions() const { return filter_options_; }
 
-  DECLARE_TRACE();
-  DECLARE_TRACE_WRAPPERS();
+  // ScriptWrappable
+  bool HasPendingActivity() const final;
+
+  void Trace(blink::Visitor*) override;
+  void TraceWrappers(const ScriptWrappableVisitor*) const override;
 
  private:
   PerformanceObserver(ExecutionContext*,
                       PerformanceBase*,
-                      PerformanceObserverCallback*);
+                      V8PerformanceObserverCallback*);
   void Deliver();
   bool ShouldBeSuspended() const;
 
   Member<ExecutionContext> execution_context_;
-  TraceWrapperMember<PerformanceObserverCallback> callback_;
+  TraceWrapperMember<V8PerformanceObserverCallback> callback_;
   WeakMember<PerformanceBase> performance_;
   PerformanceEntryVector performance_entries_;
   PerformanceEntryTypeMask filter_options_;

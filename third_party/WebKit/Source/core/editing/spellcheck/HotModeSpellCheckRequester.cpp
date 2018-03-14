@@ -6,6 +6,9 @@
 
 #include "core/editing/EditingUtilities.h"
 #include "core/editing/Editor.h"
+#include "core/editing/EphemeralRange.h"
+#include "core/editing/FrameSelection.h"
+#include "core/editing/SelectionTemplate.h"
 #include "core/editing/VisiblePosition.h"
 #include "core/editing/commands/CompositeEditCommand.h"
 #include "core/editing/commands/TypingCommand.h"
@@ -19,6 +22,7 @@ namespace blink {
 
 namespace {
 
+const int kHotModeCheckAllThreshold = 128;
 const int kHotModeChunkSize = 1024;
 
 EphemeralRange AdjacentWordIfExists(const Position& pos) {
@@ -43,11 +47,12 @@ EphemeralRange CurrentWordIfTypingInPartialWord(const Element& editable) {
   if (RootEditableElementOf(selection.Base()) != &editable)
     return EphemeralRange();
 
-  CompositeEditCommand* typing_command =
-      frame.GetEditor().LastTypingCommandIfStillOpenForTyping();
-  if (!typing_command)
+  CompositeEditCommand* last_command = frame.GetEditor().LastEditCommand();
+  if (!last_command || !last_command->IsTypingCommand())
     return EphemeralRange();
-  if (typing_command->EndingSelection().AsSelection() != selection)
+  if (!last_command->EndingSelection().IsValidFor(*frame.GetDocument()))
+    return EphemeralRange();
+  if (last_command->EndingSelection().AsSelection() != selection)
     return EphemeralRange();
   return AdjacentWordIfExists(selection.Base());
 }
@@ -65,17 +70,28 @@ bool IsUnderActiveEditing(const Element& editable, const Position& position) {
 
 EphemeralRange CalculateHotModeCheckingRange(const Element& editable,
                                              const Position& position) {
+  // Check everything in |editable| if its total length is short.
   const EphemeralRange& full_range = EphemeralRange::RangeOfContents(editable);
-  const int full_length = TextIterator::RangeLength(full_range.StartPosition(),
-                                                    full_range.EndPosition());
-  if (full_length <= kHotModeChunkSize)
+  const int full_length = TextIterator::RangeLength(full_range);
+  // TODO(xiaochengh): There is no need to check if |full_length <= 2|, since
+  // we don't consider two characters as misspelled. However, a lot of layout
+  // tests depend on "zz" as misspelled, which should be changed.
+  if (full_length <= kHotModeCheckAllThreshold)
     return full_range;
 
+  // Otherwise, if |position| is in a short paragraph, check the paragraph.
+  const EphemeralRange& paragraph_range =
+      ExpandToParagraphBoundary(EphemeralRange(position));
+  const int paragraph_length = TextIterator::RangeLength(paragraph_range);
+  if (paragraph_length <= kHotModeChunkSize)
+    return paragraph_range;
+
+  // Otherwise, check a chunk of text centered at |position|.
   TextIteratorBehavior behavior = TextIteratorBehavior::Builder()
                                       .SetEmitsObjectReplacementCharacter(true)
                                       .Build();
-  BackwardsCharacterIterator backward_iterator(full_range.StartPosition(),
-                                               position, behavior);
+  BackwardsCharacterIterator backward_iterator(
+      EphemeralRange(full_range.StartPosition(), position), behavior);
   if (!backward_iterator.AtEnd())
     backward_iterator.Advance(kHotModeChunkSize / 2);
   const Position& chunk_start = backward_iterator.EndPosition();
@@ -108,7 +124,7 @@ void HotModeSpellCheckRequester::CheckSpellingAt(const Position& position) {
   const EphemeralRange& current_word =
       CurrentWordIfTypingInPartialWord(*root_editable);
   if (current_word.IsNotNull()) {
-    root_editable->GetDocument().Markers().RemoveMarkers(
+    root_editable->GetDocument().Markers().RemoveMarkersInRange(
         current_word, DocumentMarker::MisspellingMarkers());
     return;
   }

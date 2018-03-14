@@ -305,11 +305,12 @@
 #define glProduceTextureCHROMIUM GLES2_GET_FUN(ProduceTextureCHROMIUM)
 #define glProduceTextureDirectCHROMIUM \
   GLES2_GET_FUN(ProduceTextureDirectCHROMIUM)
-#define glConsumeTextureCHROMIUM GLES2_GET_FUN(ConsumeTextureCHROMIUM)
 #define glCreateAndConsumeTextureCHROMIUM \
   GLES2_GET_FUN(CreateAndConsumeTextureCHROMIUM)
 #define glBindUniformLocationCHROMIUM GLES2_GET_FUN(BindUniformLocationCHROMIUM)
 #define glBindTexImage2DCHROMIUM GLES2_GET_FUN(BindTexImage2DCHROMIUM)
+#define glBindTexImage2DWithInternalformatCHROMIUM \
+  GLES2_GET_FUN(BindTexImage2DWithInternalformatCHROMIUM)
 #define glReleaseTexImage2DCHROMIUM GLES2_GET_FUN(ReleaseTexImage2DCHROMIUM)
 #define glTraceBeginCHROMIUM GLES2_GET_FUN(TraceBeginCHROMIUM)
 #define glTraceEndCHROMIUM GLES2_GET_FUN(TraceEndCHROMIUM)
@@ -389,5 +390,24 @@
   GLES2_GET_FUN(SwapBuffersWithBoundsCHROMIUM)
 #define glSetDrawRectangleCHROMIUM GLES2_GET_FUN(SetDrawRectangleCHROMIUM)
 #define glSetEnableDCLayersCHROMIUM GLES2_GET_FUN(SetEnableDCLayersCHROMIUM)
+#define glInitializeDiscardableTextureCHROMIUM \
+  GLES2_GET_FUN(InitializeDiscardableTextureCHROMIUM)
+#define glUnlockDiscardableTextureCHROMIUM \
+  GLES2_GET_FUN(UnlockDiscardableTextureCHROMIUM)
+#define glLockDiscardableTextureCHROMIUM \
+  GLES2_GET_FUN(LockDiscardableTextureCHROMIUM)
+#define glBeginRasterCHROMIUM GLES2_GET_FUN(BeginRasterCHROMIUM)
+#define glRasterCHROMIUM GLES2_GET_FUN(RasterCHROMIUM)
+#define glEndRasterCHROMIUM GLES2_GET_FUN(EndRasterCHROMIUM)
+#define glCreateTransferCacheEntryCHROMIUM \
+  GLES2_GET_FUN(CreateTransferCacheEntryCHROMIUM)
+#define glDeleteTransferCacheEntryCHROMIUM \
+  GLES2_GET_FUN(DeleteTransferCacheEntryCHROMIUM)
+#define glUnlockTransferCacheEntryCHROMIUM \
+  GLES2_GET_FUN(UnlockTransferCacheEntryCHROMIUM)
+#define glTexStorage2DImageCHROMIUM GLES2_GET_FUN(TexStorage2DImageCHROMIUM)
+#define glSetColorSpaceMetadataCHROMIUM \
+  GLES2_GET_FUN(SetColorSpaceMetadataCHROMIUM)
+#define glWindowRectanglesEXT GLES2_GET_FUN(WindowRectanglesEXT)
 
 #endif  // GPU_GLES2_GL2CHROMIUM_AUTOGEN_H_

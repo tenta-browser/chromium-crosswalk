@@ -198,31 +198,48 @@ SK_API void SkDebugf_FileLine(const char* file, int line, bool fatal,
 #   define SK_SUPPORT_LEGACY_ANISOTROPIC_MIPMAP_SCALE
 #endif
 
-#ifndef    SK_IGNORE_ETC1_SUPPORT
-#   define SK_IGNORE_ETC1_SUPPORT
-#endif
-
-#ifndef    SK_IGNORE_GPU_DITHER
-#   define SK_IGNORE_GPU_DITHER
-#endif
-
-#ifndef    SK_DISABLE_COLOR_XFORM_PIPELINE
-#   define SK_DISABLE_COLOR_XFORM_PIPELINE
-#endif
-
 // Remove this after we fixed all the issues related to the new SDF algorithm
 // (https://codereview.chromium.org/1643143002)
-#ifndef    SK_USE_LEGACY_DISTANCE_FIELDS
-#   define SK_USE_LEGACY_DISTANCE_FIELDS
+#ifndef SK_USE_LEGACY_DISTANCE_FIELDS
+#define SK_USE_LEGACY_DISTANCE_FIELDS
 #endif
 
-#ifndef SK_DISABLE_DEFERRED_PROXIES
-#define SK_DISABLE_DEFERRED_PROXIES
+#ifndef SK_SUPPORT_LEGACY_BLUR_IMAGE
+#define SK_SUPPORT_LEGACY_BLUR_IMAGE
 #endif
 
-#ifndef SK_LEGACY_SWEEP_GRADIENT
-#define SK_LEGACY_SWEEP_GRADIENT
+// Skia is enabling this feature soon. Chrome probably does
+// not want it for M64
+#ifndef SK_DISABLE_EXPLICIT_GPU_RESOURCE_ALLOCATION
+#define SK_DISABLE_EXPLICIT_GPU_RESOURCE_ALLOCATION
 #endif
+
+// Skia is enabling this feature soon. Chrome probably does
+// not want it for M64
+#ifndef SK_DISABLE_RENDER_TARGET_SORTING
+#define SK_DISABLE_RENDER_TARGET_SORTING
+#endif
+
+#ifndef SK_SUPPORT_LEGACY_DELTA_AA
+#define SK_SUPPORT_LEGACY_DELTA_AA
+#endif
+
+#ifndef SK_USE_LEGACY_INTERP_BLUR
+#define SK_USE_LEGACY_INTERP_BLUR
+#endif
+
+#ifndef SK_SUPPORT_LEGACY_SMALLRECT_AA
+#define SK_SUPPORT_LEGACY_SMALLRECT_AA
+#endif
+
+#ifndef SK_SUPPORT_LEGACY_TILED_BITMAPS
+#define SK_SUPPORT_LEGACY_TILED_BITMAPS
+#endif
+
+#ifndef SK_COLOR_SPACE_XFORM_LEGACY_PIPELINE
+#define SK_COLOR_SPACE_XFORM_LEGACY_PIPELINE
+#endif
+
 
 ///////////////////////// Imported from BUILD.gn and skia_common.gypi
 
@@ -231,25 +248,17 @@ SK_API void SkDebugf_FileLine(const char* file, int line, bool fatal,
  */
 #define SK_ALLOW_STATIC_GLOBAL_INITIALIZERS 0
 
-/* This flag forces Skia not to use typographic metrics with GDI.
- */
-#define SK_GDI_ALWAYS_USE_TEXTMETRICS_FOR_FONT_METRICS
-
 /* Restrict formats for Skia font matching to SFNT type fonts. */
 #define SK_FONT_CONFIG_INTERFACE_ONLY_ALLOW_SFNT_FONTS
 
 #define SK_IGNORE_BLURRED_RRECT_OPT
 #define SK_USE_DISCARDABLE_SCALEDIMAGECACHE
-#define SK_WILL_NEVER_DRAW_PERSPECTIVE_TEXT
 
 #define SK_ATTR_DEPRECATED          SK_NOTHING_ARG1
-#define SK_ENABLE_INST_COUNT        0
 #define GR_GL_CUSTOM_SETUP_HEADER   "GrGLConfig_chrome.h"
 
 // mtklein's fiddling with Src / SrcOver.  Will rebaseline these only once when done.
 #define SK_SUPPORT_LEGACY_X86_BLITS
-
-#define SK_DISABLE_TILE_IMAGE_FILTER_OPTIMIZATION
 
 // ===== End Chrome-specific definitions =====
 

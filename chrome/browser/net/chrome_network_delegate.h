@@ -114,6 +114,10 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
     domain_reliability_monitor_ = std::move(monitor);
   }
 
+  domain_reliability::DomainReliabilityMonitor* domain_reliability_monitor() {
+    return domain_reliability_monitor_.get();
+  }
+
   void set_data_use_aggregator(
       data_usage::DataUseAggregator* data_use_aggregator,
       bool is_data_usage_off_the_record);
@@ -133,6 +137,17 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
   // locate certain paths on Chrome OS. See set_profile_path() for details.
   static bool IsAccessAllowed(const base::FilePath& path,
                               const base::FilePath& profile_path);
+
+  // Like above, but also takes |path|'s absolute path in |absolute_path| to
+  // further validate access.
+  static bool IsAccessAllowed(const base::FilePath& path,
+                              const base::FilePath& absolute_path,
+                              const base::FilePath& profile_path);
+
+  // Enables access to all files for testing purposes. This function is used
+  // to bypass the access control for file: scheme. Calling this function
+  // with false brings back the original (production) behaviors.
+  static void EnableAccessToAllFilesForTesting(bool enabled);
 
  private:
   // NetworkDelegate implementation.
@@ -170,18 +185,24 @@ class ChromeNetworkDelegate : public net::NetworkDelegateImpl {
   bool OnCanGetCookies(const net::URLRequest& request,
                        const net::CookieList& cookie_list) override;
   bool OnCanSetCookie(const net::URLRequest& request,
-                      const std::string& cookie_line,
+                      const net::CanonicalCookie& cookie,
                       net::CookieOptions* options) override;
   bool OnCanAccessFile(const net::URLRequest& request,
-                       const base::FilePath& path) const override;
-  bool OnCanEnablePrivacyMode(
-      const GURL& url,
-      const GURL& first_party_for_cookies) const override;
+                       const base::FilePath& original_path,
+                       const base::FilePath& absolute_path) const override;
+  bool OnCanEnablePrivacyMode(const GURL& url,
+                              const GURL& site_for_cookies) const override;
   bool OnAreExperimentalCookieFeaturesEnabled() const override;
   bool OnCancelURLRequestWithPolicyViolatingReferrerHeader(
       const net::URLRequest& request,
       const GURL& target_url,
       const GURL& referrer_url) const override;
+  bool OnCanQueueReportingReport(const url::Origin& origin) const override;
+  bool OnCanSendReportingReport(const url::Origin& origin) const override;
+  bool OnCanSetReportingClient(const url::Origin& origin,
+                               const GURL& endpoint) const override;
+  bool OnCanUseReportingClient(const url::Origin& origin,
+                               const GURL& endpoint) const override;
 
   // Convenience function for reporting network usage to the
   // |data_use_aggregator_|.

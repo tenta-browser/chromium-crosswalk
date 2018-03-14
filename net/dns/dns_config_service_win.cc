@@ -23,7 +23,8 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/threading/scoped_blocking_call.h"
+#include "base/threading/thread_checker.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
@@ -69,16 +70,18 @@ enum HostsParseWinResult {
 };
 
 // Convenience for reading values using RegKey.
-class RegistryReader : public base::NonThreadSafe {
+class RegistryReader {
  public:
   explicit RegistryReader(const wchar_t* key) {
     // Ignoring the result. |key_.Valid()| will catch failures.
     key_.Open(HKEY_LOCAL_MACHINE, key, KEY_QUERY_VALUE);
   }
 
+  ~RegistryReader() { DCHECK_CALLED_ON_VALID_THREAD(thread_checker_); }
+
   bool ReadString(const wchar_t* name,
                   DnsSystemSettings::RegString* out) const {
-    DCHECK(CalledOnValidThread());
+    DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
     out->set = false;
     if (!key_.Valid()) {
       // Assume that if the |key_| is invalid then the key is missing.
@@ -94,7 +97,7 @@ class RegistryReader : public base::NonThreadSafe {
 
   bool ReadDword(const wchar_t* name,
                  DnsSystemSettings::RegDword* out) const {
-    DCHECK(CalledOnValidThread());
+    DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
     out->set = false;
     if (!key_.Valid()) {
       // Assume that if the |key_| is invalid then the key is missing.
@@ -111,13 +114,15 @@ class RegistryReader : public base::NonThreadSafe {
  private:
   base::win::RegKey key_;
 
+  THREAD_CHECKER(thread_checker_);
+
   DISALLOW_COPY_AND_ASSIGN(RegistryReader);
 };
 
 // Wrapper for GetAdaptersAddresses. Returns NULL if failed.
 std::unique_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> ReadIpHelper(
     ULONG flags) {
-  base::ThreadRestrictions::AssertIOAllowed();
+  base::AssertBlockingAllowed();
 
   std::unique_ptr<IP_ADAPTER_ADDRESSES, base::FreeDeleter> out;
   ULONG len = 15000;  // As recommended by MSDN for GetAdaptersAddresses.
@@ -171,6 +176,7 @@ bool ReadDevolutionSetting(const RegistryReader& reader,
 
 // Reads DnsSystemSettings from IpHelper and registry.
 ConfigParseWinResult ReadSystemSettings(DnsSystemSettings* settings) {
+  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
   settings->addresses = ReadIpHelper(GAA_FLAG_SKIP_ANYCAST |
                                      GAA_FLAG_SKIP_UNICAST |
                                      GAA_FLAG_SKIP_MULTICAST |
@@ -287,13 +293,15 @@ HostsParseWinResult AddLocalhostEntries(DnsHosts* hosts) {
 }
 
 // Watches a single registry key for changes.
-class RegistryWatcher : public base::NonThreadSafe {
+class RegistryWatcher {
  public:
   typedef base::Callback<void(bool succeeded)> CallbackType;
   RegistryWatcher() {}
 
+  ~RegistryWatcher() { DCHECK_CALLED_ON_VALID_THREAD(thread_checker_); }
+
   bool Watch(const wchar_t* key, const CallbackType& callback) {
-    DCHECK(CalledOnValidThread());
+    DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
     DCHECK(!callback.is_null());
     DCHECK(callback_.is_null());
     callback_ = callback;
@@ -305,7 +313,7 @@ class RegistryWatcher : public base::NonThreadSafe {
   }
 
   void OnObjectSignaled() {
-    DCHECK(CalledOnValidThread());
+    DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
     DCHECK(!callback_.is_null());
     if (key_.StartWatching(base::Bind(&RegistryWatcher::OnObjectSignaled,
                                       base::Unretained(this)))) {
@@ -319,6 +327,8 @@ class RegistryWatcher : public base::NonThreadSafe {
  private:
   CallbackType callback_;
   base::win::RegKey key_;
+
+  THREAD_CHECKER(thread_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(RegistryWatcher);
 };
@@ -626,7 +636,7 @@ class DnsConfigServiceWin::Watcher
   DISALLOW_COPY_AND_ASSIGN(Watcher);
 };
 
-// Reads config from registry and IpHelper. All work performed on WorkerPool.
+// Reads config from registry and IpHelper. All work performed in TaskScheduler.
 class DnsConfigServiceWin::ConfigReader : public SerialWorker {
  public:
   explicit ConfigReader(DnsConfigServiceWin* service)
@@ -637,7 +647,6 @@ class DnsConfigServiceWin::ConfigReader : public SerialWorker {
   ~ConfigReader() override {}
 
   void DoWork() override {
-    // Should be called on WorkerPool.
     base::TimeTicks start_time = base::TimeTicks::Now();
     DnsSystemSettings settings = {};
     ConfigParseWinResult result = ReadSystemSettings(&settings);
@@ -647,13 +656,12 @@ class DnsConfigServiceWin::ConfigReader : public SerialWorker {
                 result == CONFIG_PARSE_WIN_UNHANDLED_OPTIONS);
     UMA_HISTOGRAM_ENUMERATION("AsyncDNS.ConfigParseWin",
                               result, CONFIG_PARSE_WIN_MAX);
-    UMA_HISTOGRAM_BOOLEAN("AsyncDNS.ConfigParseResult", success_);
     UMA_HISTOGRAM_TIMES("AsyncDNS.ConfigParseDuration",
                         base::TimeTicks::Now() - start_time);
   }
 
   void OnWorkFinished() override {
-    DCHECK(loop()->BelongsToCurrentThread());
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     DCHECK(!IsCancelled());
     if (success_) {
       service_->OnConfigRead(dns_config_);
@@ -673,7 +681,7 @@ class DnsConfigServiceWin::ConfigReader : public SerialWorker {
 };
 
 // Reads hosts from HOSTS file and fills in localhost and local computer name if
-// necessary. All work performed on WorkerPool.
+// necessary. All work performed in TaskScheduler.
 class DnsConfigServiceWin::HostsReader : public SerialWorker {
  public:
   explicit HostsReader(DnsConfigServiceWin* service)
@@ -687,8 +695,11 @@ class DnsConfigServiceWin::HostsReader : public SerialWorker {
 
   void DoWork() override {
     base::TimeTicks start_time = base::TimeTicks::Now();
+    base::ScopedBlockingCall scoped_blocking_call(
+        base::BlockingType::MAY_BLOCK);
     HostsParseWinResult result = HOSTS_PARSE_WIN_UNREADABLE_HOSTS_FILE;
-    if (ParseHostsFile(path_, &hosts_))
+    int64_t file_size;
+    if (ParseHostsFile(path_, &hosts_, &file_size))
       result = AddLocalhostEntries(&hosts_);
     success_ = (result == HOSTS_PARSE_WIN_OK);
     UMA_HISTOGRAM_ENUMERATION("AsyncDNS.HostsParseWin",
@@ -699,7 +710,7 @@ class DnsConfigServiceWin::HostsReader : public SerialWorker {
   }
 
   void OnWorkFinished() override {
-    DCHECK(loop()->BelongsToCurrentThread());
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     if (success_) {
       service_->OnHostsRead(hosts_);
     } else {

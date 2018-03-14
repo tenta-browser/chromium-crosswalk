@@ -58,29 +58,36 @@ class TestLauncherDelegate {
       base::CommandLine* command_line,
       base::TestLauncher::LaunchOptions* test_launch_options);
 
-  // Allows a TestLauncherDelegate to adjust the number of |default_jobs| used
-  // when --test-launcher-jobs isn't specified on the command-line.
-  virtual void AdjustDefaultParallelJobs(int* default_jobs) {}
+  // Allows a TestLauncherDelegate to do work before the launcher shards test
+  // jobs.
+  virtual void PreSharding() {}
+
+  // Invoked when a child process times out immediately before it is terminated.
+  // |command_line| is the command line of the child process.
+  virtual void OnTestTimedOut(const base::CommandLine& command_line) {}
 
   // Called prior to returning from LaunchTests(). Gives the delegate a chance
   // to do cleanup before state created by TestLauncher has been destroyed (such
   // as the AtExitManager).
-  virtual void OnDoneRunningTests();
+  virtual void OnDoneRunningTests() {}
 
  protected:
-  virtual ~TestLauncherDelegate();
+  virtual ~TestLauncherDelegate() = default;
 };
 
-// Launches tests using |launcher_delegate|. |default_jobs| is number
-// of test jobs to be run in parallel, unless overridden from the command line.
-// Returns exit code.
+// Launches tests using |launcher_delegate|. |parallel_jobs| is the number
+// of test jobs to be run in parallel.
 int LaunchTests(TestLauncherDelegate* launcher_delegate,
-                int default_jobs,
+                size_t parallel_jobs,
                 int argc,
                 char** argv) WARN_UNUSED_RESULT;
 
 TestLauncherDelegate* GetCurrentTestLauncherDelegate();
 ContentMainParams* GetContentMainParams();
+
+// Returns true if the currently running test has a prefix that indicates it
+// should run before a test of the same name without the prefix.
+bool IsPreTest();
 
 }  // namespace content
 

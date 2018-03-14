@@ -5,28 +5,28 @@
 #ifndef PaintControllerPaintTest_h
 #define PaintControllerPaintTest_h
 
-#include "core/frame/FrameView.h"
+#include "core/editing/FrameSelection.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/layout/LayoutTestHelper.h"
 #include "core/layout/LayoutView.h"
 #include "core/paint/PaintLayer.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/GraphicsLayer.h"
 #include "platform/graphics/paint/CullRect.h"
-#include "platform/testing/RuntimeEnabledFeaturesTestHelpers.h"
-#include <gtest/gtest.h>
+#include "platform/graphics/paint/PaintControllerTest.h"
+#include "platform/testing/PaintTestConfigurations.h"
 
 namespace blink {
 
-class PaintControllerPaintTestBase : private ScopedSlimmingPaintV2ForTest,
-                                     public RenderingTest {
+class PaintControllerPaintTestBase : public RenderingTest {
  public:
-  PaintControllerPaintTestBase(bool enable_slimming_paint_v2)
-      : ScopedSlimmingPaintV2ForTest(enable_slimming_paint_v2) {}
+  PaintControllerPaintTestBase(LocalFrameClient* local_frame_client = nullptr)
+      : RenderingTest(local_frame_client) {}
 
  protected:
-  LayoutView& GetLayoutView() { return *GetDocument().GetLayoutView(); }
-  PaintController& RootPaintController() {
-    if (RuntimeEnabledFeatures::slimmingPaintV2Enabled())
+  LayoutView& GetLayoutView() const { return *GetDocument().GetLayoutView(); }
+  PaintController& RootPaintController() const {
+    if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
       return *GetDocument().View()->GetPaintController();
     return GetLayoutView()
         .Layer()
@@ -41,10 +41,10 @@ class PaintControllerPaintTestBase : private ScopedSlimmingPaintV2ForTest,
 
   bool PaintWithoutCommit(const IntRect* interest_rect = nullptr) {
     GetDocument().View()->Lifecycle().AdvanceTo(DocumentLifecycle::kInPaint);
-    if (RuntimeEnabledFeatures::slimmingPaintV2Enabled()) {
+    if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
       if (GetLayoutView().Layer()->NeedsRepaint()) {
         GraphicsContext graphics_context(RootPaintController());
-        GetDocument().View()->Paint(graphics_context,
+        GetDocument().View()->Paint(graphics_context, kGlobalPaintNormalPhase,
                                     CullRect(LayoutRect::InfiniteIntRect()));
         return true;
       }
@@ -76,7 +76,7 @@ class PaintControllerPaintTestBase : private ScopedSlimmingPaintV2ForTest,
 
   bool DisplayItemListContains(const DisplayItemList& display_item_list,
                                DisplayItemClient& client,
-                               DisplayItem::Type type) {
+                               DisplayItem::Type type) const {
     for (auto& item : display_item_list) {
       if (item.Client() == client && item.GetType() == type)
         return true;
@@ -84,76 +84,28 @@ class PaintControllerPaintTestBase : private ScopedSlimmingPaintV2ForTest,
     return false;
   }
 
-  int NumCachedNewItems() {
+  int NumCachedNewItems() const {
     return RootPaintController().num_cached_new_items_;
   }
-};
 
-class PaintControllerPaintTest : public PaintControllerPaintTestBase {
- public:
-  PaintControllerPaintTest() : PaintControllerPaintTestBase(false) {}
-};
+  const DisplayItemClient& CaretDisplayItemClientForTesting() const {
+    return GetDocument()
+        .GetFrame()
+        ->Selection()
+        .CaretDisplayItemClientForTesting();
+  }
 
-class PaintControllerPaintTestForSlimmingPaintV2
-    : public PaintControllerPaintTestBase,
-      public testing::WithParamInterface<bool>,
-      private ScopedRootLayerScrollingForTest {
- public:
-  PaintControllerPaintTestForSlimmingPaintV2()
-      : PaintControllerPaintTestBase(true),
-        ScopedRootLayerScrollingForTest(GetParam()) {}
-};
-
-class PaintControllerPaintTestForSlimmingPaintV1AndV2
-    : public PaintControllerPaintTestBase,
-      public testing::WithParamInterface<bool> {
- public:
-  PaintControllerPaintTestForSlimmingPaintV1AndV2()
-      : PaintControllerPaintTestBase(GetParam()) {}
-};
-
-class TestDisplayItem final : public DisplayItem {
- public:
-  TestDisplayItem(const DisplayItemClient& client, Type type)
-      : DisplayItem(client, type, sizeof(*this)) {}
-
-  void Replay(GraphicsContext&) const final { ASSERT_NOT_REACHED(); }
-  void AppendToWebDisplayItemList(const IntRect&,
-                                  WebDisplayItemList*) const final {
-    ASSERT_NOT_REACHED();
+  void InvalidateAll(PaintController& paint_controller) {
+    paint_controller.InvalidateAllForTesting();
   }
 };
 
-#ifndef NDEBUG
-#define TRACE_DISPLAY_ITEMS(i, expected, actual)             \
-  String trace = String::Format("%d: ", (int)i) +            \
-                 "Expected: " + (expected).AsDebugString() + \
-                 " Actual: " + (actual).AsDebugString();     \
-  SCOPED_TRACE(trace.Utf8().Data());
-#else
-#define TRACE_DISPLAY_ITEMS(i, expected, actual)
-#endif
-
-#define EXPECT_DISPLAY_LIST(actual, expectedSize, ...)                     \
-  do {                                                                     \
-    EXPECT_EQ((size_t)expectedSize, actual.size());                        \
-    if (expectedSize != actual.size())                                     \
-      break;                                                               \
-    const TestDisplayItem expected[] = {__VA_ARGS__};                      \
-    for (size_t index = 0;                                                 \
-         index < std::min<size_t>(actual.size(), expectedSize); index++) { \
-      TRACE_DISPLAY_ITEMS(index, expected[index], actual[index]);          \
-      EXPECT_EQ(expected[index].Client(), actual[index].Client());         \
-      EXPECT_EQ(expected[index].GetType(), actual[index].GetType());       \
-    }                                                                      \
-  } while (false);
-
-// Shorter names for frequently used display item types in tests.
-const DisplayItem::Type kBackgroundType = DisplayItem::kBoxDecorationBackground;
-const DisplayItem::Type kForegroundType =
-    DisplayItem::PaintPhaseToDrawingType(kPaintPhaseForeground);
-const DisplayItem::Type kDocumentBackgroundType =
-    DisplayItem::kDocumentBackground;
+class PaintControllerPaintTest : public PaintTestConfigurations,
+                                 public PaintControllerPaintTestBase {
+ public:
+  PaintControllerPaintTest(LocalFrameClient* local_frame_client = nullptr)
+      : PaintControllerPaintTestBase(local_frame_client) {}
+};
 
 }  // namespace blink
 

@@ -6,12 +6,13 @@
 
 #include <stddef.h>
 
-#include <deque>
 #include <limits>
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/containers/circular_deque.h"
 #include "base/memory/ref_counted.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/test_simple_task_runner.h"
 #include "net/base/io_buffer.h"
@@ -93,8 +94,8 @@ class ByteStreamTest : public testing::Test {
  private:
   int producing_seed_key_;
   int consuming_seed_key_;
-  std::deque<char*> pointer_queue_;
-  std::deque<size_t> length_queue_;
+  base::circular_deque<char*> pointer_queue_;
+  base::circular_deque<size_t> length_queue_;
 };
 
 ByteStreamTest::ByteStreamTest()

@@ -16,6 +16,7 @@ class Browser;
 class BrowserWindow;
 class DevToolsWindowTesting;
 class DevToolsEventForwarder;
+class DevToolsEyeDropper;
 
 namespace content {
 class DevToolsAgentHost;
@@ -101,11 +102,6 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   // Node frontend is always undocked.
   static void OpenNodeFrontendWindow(Profile* profile);
 
-  // Worker frontend is always undocked.
-  static void OpenDevToolsWindowForWorker(
-      Profile* profile,
-      const scoped_refptr<content::DevToolsAgentHost>& worker_agent);
-
   static void InspectElement(content::RenderFrameHost* inspected_frame_host,
                              int x,
                              int y);
@@ -125,8 +121,6 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   content::WebContents* OpenURLFromTab(
       content::WebContents* source,
       const content::OpenURLParams& params) override;
-
-  void ShowCertificateViewer(scoped_refptr<net::X509Certificate> certificate);
 
   // BeforeUnload interception ////////////////////////////////////////////////
 
@@ -215,6 +209,9 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   static void OpenDevToolsWindowForFrame(
       Profile* profile,
       const scoped_refptr<content::DevToolsAgentHost>& agent_host);
+  static void OpenDevToolsWindowForWorker(
+      Profile* profile,
+      const scoped_refptr<content::DevToolsAgentHost>& worker_agent);
 
   // DevTools lifecycle typically follows this way:
   // - Toggle/Open: client call;
@@ -245,7 +242,8 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
     kFrontendNode
   };
 
-  DevToolsWindow(Profile* profile,
+  DevToolsWindow(FrontendType frontend_type,
+                 Profile* profile,
                  content::WebContents* main_web_contents,
                  DevToolsUIBindings* bindings,
                  content::WebContents* inspected_web_contents,
@@ -264,14 +262,15 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
                                 const std::string& frontend_url,
                                 bool can_dock,
                                 const std::string& settings,
-                                const std::string& panel);
+                                const std::string& panel,
+                                bool has_other_clients);
   static GURL GetDevToolsURL(Profile* profile,
                              FrontendType frontend_type,
                              const std::string& frontend_url,
                              bool can_dock,
-                             const std::string& panel);
+                             const std::string& panel,
+                             bool has_other_clients);
 
-  static DevToolsWindow* CreateDevToolsWindowForWorker(Profile* profile);
   static void ToggleDevToolsWindow(
       content::WebContents* web_contents,
       bool force_open,
@@ -313,9 +312,6 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
                       const content::FileChooserParams& params) override;
   bool PreHandleGestureEvent(content::WebContents* source,
                              const blink::WebGestureEvent& event) override;
-  void ShowCertificateViewerInDevTools(
-      content::WebContents* web_contents,
-      scoped_refptr<net::X509Certificate> certificate) override;
 
   // content::DevToolsUIBindings::Delegate overrides
   void ActivateWindow() override;
@@ -326,13 +322,16 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   void SetIsDocked(bool is_docked) override;
   void OpenInNewTab(const std::string& url) override;
   void SetWhitelistedShortcuts(const std::string& message) override;
+  void SetEyeDropperActive(bool active) override;
   void OpenNodeFrontend() override;
   void InspectedContentsClosing() override;
   void OnLoadCompleted() override;
   void ReadyForTest() override;
   InfoBarService* GetInfoBarService() override;
   void RenderProcessGone(bool crashed) override;
+  void ShowCertificateViewer(const std::string& cert_viewer) override;
 
+  void ColorPickedInEyeDropper(int r, int g, int b, int a);
   void CreateDevToolsBrowser();
   BrowserWindow* GetInspectedBrowserWindow();
   void ScheduleShow(const DevToolsToggleAction& action);
@@ -344,6 +343,7 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
 
   std::unique_ptr<ObserverWithAccessor> inspected_contents_observer_;
 
+  FrontendType frontend_type_;
   Profile* profile_;
   content::WebContents* main_web_contents_;
   content::WebContents* toolbox_web_contents_;
@@ -365,6 +365,7 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
 
   base::TimeTicks inspect_element_start_time_;
   std::unique_ptr<DevToolsEventForwarder> event_forwarder_;
+  std::unique_ptr<DevToolsEyeDropper> eye_dropper_;
 
   friend class DevToolsEventForwarder;
   DISALLOW_COPY_AND_ASSIGN(DevToolsWindow);

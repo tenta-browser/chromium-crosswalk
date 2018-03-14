@@ -27,22 +27,22 @@
 #ifndef FloatPoint_h
 #define FloatPoint_h
 
-#include <algorithm>
 #include <iosfwd>
+#include "build/build_config.h"
 #include "platform/geometry/FloatSize.h"
 #include "platform/geometry/IntPoint.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Forward.h"
-#include "platform/wtf/MathExtras.h"
-#include "third_party/skia/include/core/SkPoint.h"
 
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
 typedef struct CGPoint CGPoint;
 
 #ifdef __OBJC__
 #import <Foundation/Foundation.h>
 #endif
 #endif
+
+struct SkPoint;
 
 namespace blink {
 
@@ -59,7 +59,7 @@ class PLATFORM_EXPORT FloatPoint {
   FloatPoint() : x_(0), y_(0) {}
   FloatPoint(float x, float y) : x_(x), y_(y) {}
   FloatPoint(const IntPoint&);
-  explicit FloatPoint(const SkPoint& point) : x_(point.x()), y_(point.y()) {}
+  explicit FloatPoint(const SkPoint&);
   explicit FloatPoint(const DoublePoint&);
   explicit FloatPoint(const LayoutPoint&);
   explicit FloatPoint(const FloatSize& size)
@@ -114,13 +114,8 @@ class PLATFORM_EXPORT FloatPoint {
   float length() const;
   float LengthSquared() const { return x_ * x_ + y_ * y_; }
 
-  FloatPoint ExpandedTo(const FloatPoint& other) const {
-    return FloatPoint(std::max(x_, other.x_), std::max(y_, other.y_));
-  }
-
-  FloatPoint ShrunkTo(const FloatPoint& other) const {
-    return FloatPoint(std::min(x_, other.x_), std::min(y_, other.y_));
-  }
+  FloatPoint ExpandedTo(const FloatPoint& other) const;
+  FloatPoint ShrunkTo(const FloatPoint& other) const;
 
   FloatPoint TransposedPoint() const { return FloatPoint(y_, x_); }
 
@@ -128,19 +123,15 @@ class PLATFORM_EXPORT FloatPoint {
     return FloatPoint(x_ * scale, y_ * scale);
   }
 
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
   FloatPoint(const CGPoint&);
   operator CGPoint() const;
-#if defined(__OBJC__) && !defined(NSGEOMETRY_TYPES_SAME_AS_CGGEOMETRY_TYPES)
-  FloatPoint(const NSPoint&);
-  operator NSPoint() const;
-#endif
 #endif
 
   // Can we remove this one?
   SkPoint Data() const;
 
-  operator SkPoint() const { return SkPoint::Make(x_, y_); }
+  operator SkPoint() const;
 
   String ToString() const;
 
@@ -243,6 +234,8 @@ PLATFORM_EXPORT bool FindIntersection(const FloatPoint& p1,
                                       const FloatPoint& d1,
                                       const FloatPoint& d2,
                                       FloatPoint& intersection);
+
+PLATFORM_EXPORT std::ostream& operator<<(std::ostream&, const FloatPoint&);
 
 // Redeclared here to avoid ODR issues.
 // See platform/testing/GeometryPrinters.h.

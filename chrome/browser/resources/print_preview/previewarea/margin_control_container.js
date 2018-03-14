@@ -20,9 +20,9 @@ cr.define('print_preview', function() {
    * @constructor
    * @extends {print_preview.Component}
    */
-  function MarginControlContainer(documentInfo, marginsTypeTicketItem,
-                                  customMarginsTicketItem, measurementSystem,
-                                  dragChangedCallback) {
+  function MarginControlContainer(
+      documentInfo, marginsTypeTicketItem, customMarginsTicketItem,
+      measurementSystem, dragChangedCallback) {
     print_preview.Component.call(this);
 
     /**
@@ -63,15 +63,15 @@ cr.define('print_preview', function() {
     /**
      * Convenience array that contains all of the margin controls.
      * @type {!Object<
-     *     !print_preview.ticket_items.CustomMargins.Orientation,
+     *     !print_preview.ticket_items.CustomMarginsOrientation,
      *     !print_preview.MarginControl>}
      * @private
      */
     this.controls_ = {};
-    for (var key in print_preview.ticket_items.CustomMargins.Orientation) {
-      var orientation = print_preview.ticket_items.CustomMargins.Orientation[
-          key];
-      var control = new print_preview.MarginControl(orientation);
+    for (const key in print_preview.ticket_items.CustomMarginsOrientation) {
+      const orientation =
+          print_preview.ticket_items.CustomMarginsOrientation[key];
+      const control = new print_preview.MarginControl(orientation);
       this.controls_[orientation] = control;
       this.addChild(control);
     }
@@ -108,7 +108,7 @@ cr.define('print_preview', function() {
      * @private
      */
     this.clippingSize_ = null;
-  };
+  }
 
   /**
    * CSS classes used by the custom margins component.
@@ -121,16 +121,16 @@ cr.define('print_preview', function() {
   };
 
   /**
-   * @param {!print_preview.ticket_items.CustomMargins.Orientation} orientation
+   * @param {!print_preview.ticket_items.CustomMarginsOrientation} orientation
    *     Orientation value to test.
    * @return {boolean} Whether the given orientation is TOP or BOTTOM.
    * @private
    */
   MarginControlContainer.isTopOrBottom_ = function(orientation) {
     return orientation ==
-        print_preview.ticket_items.CustomMargins.Orientation.TOP ||
+        print_preview.ticket_items.CustomMarginsOrientation.TOP ||
         orientation ==
-            print_preview.ticket_items.CustomMargins.Orientation.BOTTOM;
+        print_preview.ticket_items.CustomMarginsOrientation.BOTTOM;
   };
 
   MarginControlContainer.prototype = {
@@ -145,7 +145,7 @@ cr.define('print_preview', function() {
     updateTranslationTransform: function(translateTransform) {
       if (!translateTransform.equals(this.translateTransform_)) {
         this.translateTransform_ = translateTransform;
-        for (var orientation in this.controls_) {
+        for (const orientation in this.controls_) {
           this.controls_[orientation].setTranslateTransform(translateTransform);
         }
       }
@@ -158,7 +158,7 @@ cr.define('print_preview', function() {
     updateScaleTransform: function(scaleTransform) {
       if (scaleTransform != this.scaleTransform_) {
         this.scaleTransform_ = scaleTransform;
-        for (var orientation in this.controls_) {
+        for (const orientation in this.controls_) {
           this.controls_[orientation].setScaleTransform(scaleTransform);
         }
       }
@@ -173,20 +173,19 @@ cr.define('print_preview', function() {
         return;
       }
       this.clippingSize_ = clipSize;
-      for (var orientation in this.controls_) {
-        var el = this.controls_[orientation].getElement();
-        el.style.clip = 'rect(' +
-            (-el.offsetTop) + 'px, ' +
+      for (const orientation in this.controls_) {
+        const el = this.controls_[orientation].getElement();
+        el.style.clip = 'rect(' + (-el.offsetTop) + 'px, ' +
             (clipSize.width - el.offsetLeft) + 'px, ' +
-            (clipSize.height - el.offsetTop) + 'px, ' +
-            (-el.offsetLeft) + 'px)';
+            (clipSize.height - el.offsetTop) + 'px, ' + (-el.offsetLeft) +
+            'px)';
       }
     },
 
     /** Shows the margin controls if the need to be shown. */
     showMarginControlsIfNeeded: function() {
       if (this.marginsTypeTicketItem_.getValue() ==
-          print_preview.ticket_items.MarginsType.Value.CUSTOM) {
+          print_preview.ticket_items.MarginsTypeValue.CUSTOM) {
         this.setIsMarginControlsVisible_(true);
       }
     },
@@ -205,8 +204,7 @@ cr.define('print_preview', function() {
           this.getElement(), 'mouseout', this.onMouseOut_.bind(this));
 
       this.tracker.add(
-          this.documentInfo_,
-          print_preview.DocumentInfo.EventType.CHANGE,
+          this.documentInfo_, print_preview.DocumentInfo.EventType.CHANGE,
           this.onTicketChange_.bind(this));
       this.tracker.add(
           this.marginsTypeTicketItem_,
@@ -217,7 +215,7 @@ cr.define('print_preview', function() {
           print_preview.ticket_items.TicketItem.EventType.CHANGE,
           this.onTicketChange_.bind(this));
 
-      for (var orientation in this.controls_) {
+      for (const orientation in this.controls_) {
         this.tracker.add(
             this.controls_[orientation],
             print_preview.MarginControl.EventType.DRAG_START,
@@ -231,7 +229,7 @@ cr.define('print_preview', function() {
 
     /** @override */
     decorateInternal: function() {
-      for (var orientation in this.controls_) {
+      for (const orientation in this.controls_) {
         this.controls_[orientation].render(this.getElement());
       }
     },
@@ -241,7 +239,7 @@ cr.define('print_preview', function() {
      * @private
      */
     setIsMarginControlsVisible_: function(isVisible) {
-      for (var orientation in this.controls_) {
+      for (const orientation in this.controls_) {
         this.controls_[orientation].setIsVisible(isVisible);
       }
     },
@@ -255,15 +253,15 @@ cr.define('print_preview', function() {
      * @private
      */
     moveControlWithConstraints_: function(control, posInPixels) {
-      var newPosInPts;
+      let newPosInPts;
       if (MarginControlContainer.isTopOrBottom_(control.getOrientation())) {
         newPosInPts = control.convertPixelsToPts(posInPixels.y);
       } else {
         newPosInPts = control.convertPixelsToPts(posInPixels.x);
       }
-      newPosInPts = Math.min(this.customMarginsTicketItem_.getMarginMax(
-                                 control.getOrientation()),
-                             newPosInPts);
+      newPosInPts = Math.min(
+          this.customMarginsTicketItem_.getMarginMax(control.getOrientation()),
+          newPosInPts);
       newPosInPts = Math.max(0, newPosInPts);
       newPosInPts = Math.round(newPosInPts);
       control.setPositionInPts(newPosInPts);
@@ -272,7 +270,7 @@ cr.define('print_preview', function() {
 
     /**
      * @param {string} value Value to parse to points. E.g. '3.40"' or '200mm'.
-     * @return {number} Value in points represented by the input value.
+     * @return {?number} Value in points represented by the input value.
      * @private
      */
     parseValueToPts_: function(value) {
@@ -281,14 +279,14 @@ cr.define('print_preview', function() {
       if (value.length == 0) {
         return null;
       }
-      var validationRegex = new RegExp('^(^-?)(\\d)+(\\' +
-          this.measurementSystem_.thousandsDelimeter + '\\d{3})*(\\' +
-          this.measurementSystem_.decimalDelimeter + '\\d*)?' +
+      const validationRegex = new RegExp(
+          '^(^-?)(\\d)+(\\' + this.measurementSystem_.thousandsDelimeter +
+          '\\d{3})*(\\' + this.measurementSystem_.decimalDelimeter + '\\d*)?' +
           '(' + this.measurementSystem_.unitSymbol + ')?$');
       if (validationRegex.test(value)) {
         // Replacing decimal point with the dot symbol in order to use
         // parseFloat() properly.
-        var replacementRegex =
+        const replacementRegex =
             new RegExp('\\' + this.measurementSystem_.decimalDelimeter + '{1}');
         value = value.replace(replacementRegex, '.');
         return this.measurementSystem_.convertToPoints(parseFloat(value));
@@ -352,7 +350,7 @@ cr.define('print_preview', function() {
         this.getElement().classList.remove(
             MarginControlContainer.Classes_.DRAGGING_HORIZONTAL);
         if (event) {
-          var posInPixels =
+          const posInPixels =
               this.draggedControl_.translateMouseToPositionInPixels(
                   new print_preview.Coordinate2d(event.x, event.y));
           this.moveControlWithConstraints_(this.draggedControl_, posInPixels);
@@ -369,10 +367,11 @@ cr.define('print_preview', function() {
     /**
      * Called when the mouse moves onto the component. Shows the margin
      * controls.
+     * @param {!Event} event Contains element mouse moved from.
      * @private
      */
-    onMouseOver_: function() {
-      var fromElement = event.fromElement;
+    onMouseOver_: function(event) {
+      let fromElement = event.fromElement;
       while (fromElement != null) {
         if (fromElement == this.getElement()) {
           return;
@@ -381,7 +380,7 @@ cr.define('print_preview', function() {
       }
       if (this.marginsTypeTicketItem_.isCapabilityAvailable() &&
           this.marginsTypeTicketItem_.getValue() ==
-              print_preview.ticket_items.MarginsType.Value.CUSTOM) {
+              print_preview.ticket_items.MarginsTypeValue.CUSTOM) {
         this.setIsMarginControlsVisible_(true);
       }
     },
@@ -389,10 +388,11 @@ cr.define('print_preview', function() {
     /**
      * Called when the mouse moves off of the component. Hides the margin
      * controls.
+     * @param {!Event} event Contains element mouse moved to.
      * @private
      */
     onMouseOut_: function(event) {
-      var toElement = event.toElement;
+      let toElement = event.toElement;
       while (toElement != null) {
         if (toElement == this.getElement()) {
           return;
@@ -402,7 +402,7 @@ cr.define('print_preview', function() {
       if (this.draggedControl_ != null) {
         return;
       }
-      for (var orientation in this.controls_) {
+      for (const orientation in this.controls_) {
         if (this.controls_[orientation].getIsFocused() ||
             this.controls_[orientation].getIsInError()) {
           return;
@@ -417,9 +417,9 @@ cr.define('print_preview', function() {
      * @private
      */
     onTicketChange_: function() {
-      var margins = this.customMarginsTicketItem_.getValue();
-      for (var orientation in this.controls_) {
-        var control = this.controls_[orientation];
+      const margins = this.customMarginsTicketItem_.getValue();
+      for (const orientation in this.controls_) {
+        const control = this.controls_[orientation];
         control.setPageSize(this.documentInfo_.pageSize);
         control.setTextboxValue(
             this.serializeValueFromPts_(margins.get(orientation)));
@@ -429,7 +429,7 @@ cr.define('print_preview', function() {
       }
       this.updateClippingMask(this.clippingSize_);
       if (this.marginsTypeTicketItem_.getValue() !=
-          print_preview.ticket_items.MarginsType.Value.CUSTOM) {
+          print_preview.ticket_items.MarginsTypeValue.CUSTOM) {
         this.setIsMarginControlsVisible_(false);
       }
     },
@@ -442,17 +442,17 @@ cr.define('print_preview', function() {
      * @private
      */
     onControlTextChange_: function(control) {
-      var marginValue = this.parseValueToPts_(control.getTextboxValue());
+      const marginValue = this.parseValueToPts_(control.getTextboxValue());
       if (marginValue != null) {
         this.customMarginsTicketItem_.updateMargin(
             control.getOrientation(), marginValue);
         // Enable all controls.
-        for (var o in this.controls_) {
+        for (const o in this.controls_) {
           this.controls_[o].setIsEnabled(true);
         }
         control.setIsInError(false);
       } else {
-        var enableOtherControls;
+        let enableOtherControls;
         if (!control.getIsFocused()) {
           // If control no longer in focus, revert to previous valid value.
           control.setTextboxValue(
@@ -464,7 +464,7 @@ cr.define('print_preview', function() {
           enableOtherControls = false;
         }
         // Enable other controls.
-        for (var o in this.controls_) {
+        for (const o in this.controls_) {
           if (control.getOrientation() != o) {
             this.controls_[o].setIsEnabled(enableOtherControls);
           }
@@ -474,7 +474,5 @@ cr.define('print_preview', function() {
   };
 
   // Export
-  return {
-    MarginControlContainer: MarginControlContainer
-  };
+  return {MarginControlContainer: MarginControlContainer};
 });

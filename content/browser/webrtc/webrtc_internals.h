@@ -6,10 +6,10 @@
 #define CONTENT_BROWSER_WEBRTC_WEBRTC_INTERNALS_H_
 
 #include <memory>
-#include <queue>
 #include <string>
 
 #include "base/containers/hash_tables.h"
+#include "base/containers/queue.h"
 #include "base/gtest_prod_util.h"
 #include "base/lazy_instance.h"
 #include "base/memory/weak_ptr.h"
@@ -20,11 +20,8 @@
 #include "content/common/content_export.h"
 #include "content/public/browser/render_process_host_observer.h"
 #include "media/media_features.h"
+#include "services/device/public/interfaces/wake_lock.mojom.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
-
-namespace device {
-class PowerSaveBlocker;
-}  // namespace device
 
 namespace content {
 
@@ -111,7 +108,6 @@ class CONTENT_EXPORT WebRTCInternals : public RenderProcessHostObserver,
   const base::FilePath& GetEventLogFilePath() const;
 
   int num_open_connections() const { return num_open_connections_; }
-  bool IsPowerSavingBlocked() const { return !!power_save_blocker_; }
 
  protected:
   // Constructor/Destructor are protected to allow tests to derive from the
@@ -121,6 +117,8 @@ class CONTENT_EXPORT WebRTCInternals : public RenderProcessHostObserver,
   WebRTCInternals();
   WebRTCInternals(int aggregate_updates_ms, bool should_block_power_saving);
   ~WebRTCInternals() override;
+
+  device::mojom::WakeLockPtr wake_lock_;
 
  private:
   friend struct base::LazyInstanceTraitsBase<WebRTCInternals>;
@@ -165,9 +163,11 @@ class CONTENT_EXPORT WebRTCInternals : public RenderProcessHostObserver,
   void MaybeClosePeerConnection(base::DictionaryValue* record);
 
   // Called whenever a PeerConnection is created or stopped in order to
-  // impose/release a block on suspending the current application for power
+  // request/cancel a wake lock on suspending the current application for power
   // saving.
-  void CreateOrReleasePowerSaveBlocker();
+  void UpdateWakeLock();
+
+  device::mojom::WakeLock* GetWakeLock();
 
   // Called on a timer to deliver updates to javascript.
   // We throttle and bulk together updates to avoid DOS like scenarios where
@@ -208,6 +208,10 @@ class CONTENT_EXPORT WebRTCInternals : public RenderProcessHostObserver,
 
   // For managing select file dialog.
   scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
+  enum class SelectionType {
+    kRtcEventLogs,
+    kAudioDebugRecordings
+  } selection_type_;
 
   // Diagnostic audio recording state.
   bool audio_debug_recordings_;
@@ -215,14 +219,11 @@ class CONTENT_EXPORT WebRTCInternals : public RenderProcessHostObserver,
 
   // Diagnostic event log recording state.
   bool event_log_recordings_;
-  bool selecting_event_log_;
   base::FilePath event_log_recordings_file_path_;
 
-  // While |num_open_connections_| is greater than zero, hold an instance of
-  // PowerSaveBlocker.  This prevents the application from being suspended while
-  // remoting.
+  // While |num_open_connections_| is greater than zero, request a wake lock
+  // service. This prevents the application from being suspended while remoting.
   int num_open_connections_;
-  std::unique_ptr<device::PowerSaveBlocker> power_save_blocker_;
   const bool should_block_power_saving_;
 
   // Set of render process hosts that |this| is registered as an observer on.
@@ -253,7 +254,7 @@ class CONTENT_EXPORT WebRTCInternals : public RenderProcessHostObserver,
     DISALLOW_COPY_AND_ASSIGN(PendingUpdate);
   };
 
-  std::queue<PendingUpdate> pending_updates_;
+  base::queue<PendingUpdate> pending_updates_;
   const int aggregate_updates_ms_;
 
   // Weak factory for this object that we use for bulking up updates.

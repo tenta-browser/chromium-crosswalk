@@ -8,19 +8,25 @@
 #include <stdint.h>
 
 #include <memory>
-#include <queue>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "base/containers/queue.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
 #include "services/ui/public/interfaces/display_manager.mojom.h"
+#include "services/ui/ws/cursor_state.h"
+#include "services/ui/ws/cursor_state_delegate.h"
 #include "services/ui/ws/event_dispatcher.h"
 #include "services/ui/ws/event_dispatcher_delegate.h"
 #include "services/ui/ws/server_window_observer.h"
 #include "services/ui/ws/user_id.h"
 #include "services/ui/ws/window_server.h"
+
+namespace viz {
+class HitTestQuery;
+}
 
 namespace ui {
 namespace ws {
@@ -38,7 +44,8 @@ class WindowManagerStateTestApi;
 // WindowManagerState is owned by the WindowTree the window manager is
 // associated with.
 class WindowManagerState : public EventDispatcherDelegate,
-                           public ServerWindowObserver {
+                           public ServerWindowObserver,
+                           public CursorStateDelegate {
  public:
   explicit WindowManagerState(WindowTree* window_tree);
   ~WindowManagerState() override;
@@ -64,8 +71,15 @@ class WindowManagerState : public EventDispatcherDelegate,
     return event_dispatcher_.capture_window();
   }
 
-  void ReleaseCaptureBlockedByModalWindow(const ServerWindow* modal_window);
   void ReleaseCaptureBlockedByAnyModalWindow();
+
+  // Sets the location of the cursor to a location on display |display_id|.
+  void SetCursorLocation(const gfx::Point& display_pixels, int64_t display_id);
+
+  void SetKeyEventsThatDontHideCursor(
+      std::vector<::ui::mojom::EventMatcherPtr> dont_hide_cursor_list);
+
+  void SetCursorTouchVisible(bool enabled);
 
   void SetDragDropSourceWindow(
       DragSource* drag_source,
@@ -90,24 +104,18 @@ class WindowManagerState : public EventDispatcherDelegate,
   // not be exposed.
   EventDispatcher* event_dispatcher() { return &event_dispatcher_; }
 
+  CursorState& cursor_state() { return cursor_state_; }
+
   // Returns true if this is the WindowManager of the active user.
   bool IsActive() const;
 
-  void Activate(const gfx::Point& mouse_location_on_screen);
+  void Activate(const gfx::Point& mouse_location_on_display,
+                int64_t display_id);
   void Deactivate();
 
-  // Processes an event from PlatformDisplay.
-  void ProcessEvent(const Event& event, int64_t display_id);
-
-  // Called when the ack from an event dispatched to WindowTree |tree| is
-  // received.
-  // TODO(sky): make this private and use a callback.
-  void OnEventAck(mojom::WindowTree* tree, mojom::EventResult result);
-
-  // Called when the WindowManager acks an accelerator.
-  void OnAcceleratorAck(
-      mojom::EventResult result,
-      const std::unordered_map<std::string, std::vector<uint8_t>>& properties);
+  // Processes an event from PlatformDisplay. This doesn't take ownership of
+  // |event|, but it may modify it.
+  void ProcessEvent(ui::Event* event, int64_t display_id);
 
  private:
   class ProcessedEventTarget;
@@ -150,28 +158,25 @@ class WindowManagerState : public EventDispatcherDelegate,
   //   |processed_target| are valid.
   // The second case happens if EventDispatcher generates more than one event
   // at a time.
-  struct QueuedEvent {
-    QueuedEvent();
-    ~QueuedEvent();
-
-    std::unique_ptr<Event> event;
-    std::unique_ptr<ProcessedEventTarget> processed_target;
-    int64_t display_id;
-  };
+  struct QueuedEvent;
 
   // Tracks state associated with an event being dispatched to a client.
-  struct InFlightEventDetails {
-    InFlightEventDetails(WindowTree* tree,
-                         int64_t display_id,
-                         const Event& event,
-                         EventDispatchPhase phase);
-    ~InFlightEventDetails();
+  struct InFlightEventDispatchDetails {
+    InFlightEventDispatchDetails(WindowManagerState* window_manager_state,
+                                 WindowTree* tree,
+                                 int64_t display_id,
+                                 const Event& event,
+                                 EventDispatchPhase phase);
+    ~InFlightEventDispatchDetails();
 
     base::OneShotTimer timer;
     WindowTree* tree;
     int64_t display_id;
     std::unique_ptr<Event> event;
     EventDispatchPhase phase;
+    base::WeakPtr<Accelerator> post_target_accelerator;
+    // Used for callbacks/timer specific to processing |event|.
+    base::WeakPtrFactory<WindowManagerState> weak_factory;
   };
 
   const WindowServer* window_server() const;
@@ -193,7 +198,15 @@ class WindowManagerState : public EventDispatcherDelegate,
 
   // Returns the ServerWindow that is the root of the WindowManager for
   // |window|. |window| corresponds to the root of a Display.
-  ServerWindow* GetWindowManagerRoot(ServerWindow* window);
+  ServerWindow* GetWindowManagerRootForDisplayRoot(ServerWindow* window);
+
+  // Called from the callback supplied to WindowTree::OnAccelerator().
+  void OnAcceleratorAck(
+      mojom::EventResult result,
+      const std::unordered_map<std::string, std::vector<uint8_t>>& properties);
+
+  // Called from the callback supplied to WindowTree::DispatchInputEvent().
+  void OnEventAck(mojom::WindowTree* tree, mojom::EventResult result);
 
   // Called if the client doesn't ack an event in the appropriate amount of
   // time.
@@ -201,21 +214,18 @@ class WindowManagerState : public EventDispatcherDelegate,
 
   // Implemenation of processing an event with a match phase of all. This
   // handles debug accelerators and forwards to EventDispatcher.
-  void ProcessEventImpl(const Event& event, int64_t display_id);
+  void ProcessEventImpl(const Event& event,
+                        const EventLocation& event_location);
 
   // Schedules an event to be processed later.
   void QueueEvent(const Event& event,
                   std::unique_ptr<ProcessedEventTarget> processed_event_target,
-                  int64_t display_id);
-
-  // Processes the next valid event in |event_queue_|. If the event has already
-  // been processed it is dispatched, otherwise the event is passed to the
-  // EventDispatcher for processing.
-  void ProcessNextEventFromQueue();
+                  const EventLocation& event_location);
 
   // Dispatches the event to the appropriate client and starts the ack timer.
   void DispatchInputEventToWindowImpl(ServerWindow* target,
                                       ClientSpecificId client_id,
+                                      const EventLocation& event_location,
                                       const Event& event,
                                       base::WeakPtr<Accelerator> accelerator);
 
@@ -224,40 +234,73 @@ class WindowManagerState : public EventDispatcherDelegate,
 
   // Finds the debug accelerator for |event| and if one is found calls
   // HandleDebugAccelerator().
-  void ProcessDebugAccelerator(const Event& event);
+  void ProcessDebugAccelerator(const Event& event, int64_t display_id);
 
   // Runs the specified debug accelerator.
-  void HandleDebugAccelerator(DebugAcceleratorType type);
+  void HandleDebugAccelerator(DebugAcceleratorType type, int64_t display_id);
 
   // Called when waiting for an event or accelerator to be processed by |tree|.
   void ScheduleInputEventTimeout(WindowTree* tree,
                                  ServerWindow* target,
+                                 int64_t display_id,
                                  const Event& event,
                                  EventDispatchPhase phase);
 
+  // Helper function to convert |point| to be in screen coordinates. |point| as
+  // the input should be in display-physical-pixel space, and the output is in
+  // screen-dip space. Returns true if the |point| is successfully converted,
+  // false otherwise.
+  bool ConvertPointToScreen(int64_t display_id, gfx::Point* point);
+
+  Display* FindDisplayContainingPixelLocation(const gfx::Point& screen_pixels);
+
+  void AdjustEventLocation(int64_t display_id, LocatedEvent* event);
+
   // EventDispatcherDelegate:
   void OnAccelerator(uint32_t accelerator_id,
+                     int64_t display_id,
                      const Event& event,
                      AcceleratorPhase phase) override;
   void SetFocusedWindowFromEventDispatcher(ServerWindow* window) override;
-  ServerWindow* GetFocusedWindowForEventDispatcher() override;
+  ServerWindow* GetFocusedWindowForEventDispatcher(int64_t display_id) override;
   void SetNativeCapture(ServerWindow* window) override;
   void ReleaseNativeCapture() override;
   void UpdateNativeCursorFromDispatcher() override;
   void OnCaptureChanged(ServerWindow* new_capture,
                         ServerWindow* old_capture) override;
-  void OnMouseCursorLocationChanged(const gfx::Point& point) override;
+  void OnMouseCursorLocationChanged(const gfx::PointF& point,
+                                    int64_t display_id) override;
+  void OnEventChangesCursorVisibility(const ui::Event& event,
+                                      bool visible) override;
+  void OnEventChangesCursorTouchVisibility(const ui::Event& event,
+                                           bool visible) override;
   void DispatchInputEventToWindow(ServerWindow* target,
                                   ClientSpecificId client_id,
+                                  const EventLocation& event_location,
                                   const Event& event,
                                   Accelerator* accelerator) override;
+  // Processes the next valid event in |event_queue_|. If the event has already
+  // been processed it is dispatched, otherwise the event is passed to the
+  // EventDispatcher for processing.
+  void ProcessNextAvailableEvent() override;
   ClientSpecificId GetEventTargetClientId(const ServerWindow* window,
                                           bool in_nonclient_area) override;
-  ServerWindow* GetRootWindowContaining(gfx::Point* location) override;
-  void OnEventTargetNotFound(const Event& event) override;
+  ServerWindow* GetRootWindowForDisplay(int64_t display_id) override;
+  ServerWindow* GetRootWindowForEventDispatch(ServerWindow* window) override;
+  bool IsWindowInDisplayRoot(const ServerWindow* window) override;
+  void OnEventTargetNotFound(const Event& event, int64_t display_id) override;
+  ServerWindow* GetFallbackTargetForEventBlockedByModal(
+      ServerWindow* window) override;
+  void OnEventOccurredOutsideOfModalWindow(ServerWindow* modal_window) override;
+  viz::HitTestQuery* GetHitTestQueryForDisplay(int64_t display_id) override;
+  ServerWindow* GetWindowFromFrameSinkId(
+      const viz::FrameSinkId& frame_sink_id) override;
 
   // ServerWindowObserver:
   void OnWindowEmbeddedAppDisconnected(ServerWindow* window) override;
+
+  // CursorStateDelegate:
+  void OnCursorTouchVisibleChanged(bool enabled) override;
 
   // The single WindowTree this WindowManagerState is associated with.
   // |window_tree_| owns this.
@@ -267,14 +310,16 @@ class WindowManagerState : public EventDispatcherDelegate,
   bool got_frame_decoration_values_ = false;
   mojom::FrameDecorationValuesPtr frame_decoration_values_;
 
-  base::WeakPtr<Accelerator> post_target_accelerator_;
-  std::queue<std::unique_ptr<QueuedEvent>> event_queue_;
+  // Events can go into this queue if there's a hit-test in flight in
+  // EventDispatcher or if we are actively dispatching an event.
+  base::queue<std::unique_ptr<QueuedEvent>> event_queue_;
 
   std::vector<DebugAccelerator> debug_accelerators_;
 
   // If non-null we're actively waiting for a response from a client for an
   // event.
-  std::unique_ptr<InFlightEventDetails> in_flight_event_details_;
+  std::unique_ptr<InFlightEventDispatchDetails>
+      in_flight_event_dispatch_details_;
 
   EventDispatcher event_dispatcher_;
 
@@ -284,9 +329,6 @@ class WindowManagerState : public EventDispatcherDelegate,
   // All the active WindowManagerDisplayRoots.
   WindowManagerDisplayRoots window_manager_display_roots_;
 
-  // Id of the display the current event being processed originated from.
-  int64_t event_processing_display_id_ = 0;
-
   // Set of WindowManagerDisplayRoots corresponding to Displays that have been
   // destroyed. WindowManagerDisplayRoots are not destroyed immediately when
   // the Display is destroyed to allow the client to destroy the window when it
@@ -294,7 +336,8 @@ class WindowManagerState : public EventDispatcherDelegate,
   // destroyed.
   WindowManagerDisplayRoots orphaned_window_manager_display_roots_;
 
-  base::WeakPtrFactory<WindowManagerState> weak_factory_;
+  // All state regarding what the current cursor is.
+  CursorState cursor_state_;
 
   DISALLOW_COPY_AND_ASSIGN(WindowManagerState);
 };

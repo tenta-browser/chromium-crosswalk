@@ -64,10 +64,15 @@ void RecordFailureResult(ServiceWorkerMetrics::EventType event,
 }  // namespace
 
 BackgroundFetchEventDispatcher::BackgroundFetchEventDispatcher(
-    const scoped_refptr<ServiceWorkerContextWrapper>& service_worker_context)
-    : service_worker_context_(service_worker_context) {}
+    scoped_refptr<ServiceWorkerContextWrapper> service_worker_context)
+    : service_worker_context_(std::move(service_worker_context)) {
+  // Constructed on the UI thread, then lives on the IO thread.
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+}
 
-BackgroundFetchEventDispatcher::~BackgroundFetchEventDispatcher() = default;
+BackgroundFetchEventDispatcher::~BackgroundFetchEventDispatcher() {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+}
 
 void BackgroundFetchEventDispatcher::DispatchBackgroundFetchAbortEvent(
     const BackgroundFetchRegistrationId& registration_id,
@@ -78,16 +83,17 @@ void BackgroundFetchEventDispatcher::DispatchBackgroundFetchAbortEvent(
       std::move(finished_closure),
       base::Bind(
           &BackgroundFetchEventDispatcher::DoDispatchBackgroundFetchAbortEvent,
-          registration_id.tag()));
+          registration_id.developer_id()));
 }
 
 void BackgroundFetchEventDispatcher::DoDispatchBackgroundFetchAbortEvent(
-    const std::string& tag,
+    const std::string& developer_id,
     scoped_refptr<ServiceWorkerVersion> service_worker_version,
     int request_id) {
   DCHECK(service_worker_version);
   service_worker_version->event_dispatcher()->DispatchBackgroundFetchAbortEvent(
-      tag, service_worker_version->CreateSimpleEventCallback(request_id));
+      developer_id,
+      service_worker_version->CreateSimpleEventCallback(request_id));
 }
 
 void BackgroundFetchEventDispatcher::DispatchBackgroundFetchClickEvent(
@@ -100,17 +106,17 @@ void BackgroundFetchEventDispatcher::DispatchBackgroundFetchClickEvent(
       std::move(finished_closure),
       base::Bind(
           &BackgroundFetchEventDispatcher::DoDispatchBackgroundFetchClickEvent,
-          registration_id.tag(), state));
+          registration_id.developer_id(), state));
 }
 
 void BackgroundFetchEventDispatcher::DoDispatchBackgroundFetchClickEvent(
-    const std::string& tag,
+    const std::string& developer_id,
     mojom::BackgroundFetchState state,
     scoped_refptr<ServiceWorkerVersion> service_worker_version,
     int request_id) {
   DCHECK(service_worker_version);
   service_worker_version->event_dispatcher()->DispatchBackgroundFetchClickEvent(
-      tag, state,
+      developer_id, state,
       service_worker_version->CreateSimpleEventCallback(request_id));
 }
 
@@ -124,17 +130,17 @@ void BackgroundFetchEventDispatcher::DispatchBackgroundFetchFailEvent(
       std::move(finished_closure),
       base::Bind(
           &BackgroundFetchEventDispatcher::DoDispatchBackgroundFetchFailEvent,
-          registration_id.tag(), fetches));
+          registration_id.developer_id(), fetches));
 }
 
 void BackgroundFetchEventDispatcher::DoDispatchBackgroundFetchFailEvent(
-    const std::string& tag,
+    const std::string& developer_id,
     const std::vector<BackgroundFetchSettledFetch>& fetches,
     scoped_refptr<ServiceWorkerVersion> service_worker_version,
     int request_id) {
   DCHECK(service_worker_version);
   service_worker_version->event_dispatcher()->DispatchBackgroundFetchFailEvent(
-      tag, fetches,
+      developer_id, fetches,
       service_worker_version->CreateSimpleEventCallback(request_id));
 }
 
@@ -148,17 +154,19 @@ void BackgroundFetchEventDispatcher::DispatchBackgroundFetchedEvent(
       std::move(finished_closure),
       base::Bind(
           &BackgroundFetchEventDispatcher::DoDispatchBackgroundFetchedEvent,
-          registration_id.tag(), fetches));
+          registration_id.developer_id(), registration_id.unique_id(),
+          fetches));
 }
 
 void BackgroundFetchEventDispatcher::DoDispatchBackgroundFetchedEvent(
-    const std::string& tag,
+    const std::string& developer_id,
+    const std::string& unique_id,
     const std::vector<BackgroundFetchSettledFetch>& fetches,
     scoped_refptr<ServiceWorkerVersion> service_worker_version,
     int request_id) {
   DCHECK(service_worker_version);
   service_worker_version->event_dispatcher()->DispatchBackgroundFetchedEvent(
-      tag, fetches,
+      developer_id, unique_id, fetches,
       service_worker_version->CreateSimpleEventCallback(request_id));
 }
 
@@ -192,11 +200,11 @@ void BackgroundFetchEventDispatcher::StartActiveWorkerForDispatch(
 
   service_worker_version->RunAfterStartWorker(
       event,
-      base::Bind(&BackgroundFetchEventDispatcher::DispatchEvent, event,
-                 finished_closure, loaded_callback,
-                 make_scoped_refptr(service_worker_version)),
-      base::Bind(&BackgroundFetchEventDispatcher::DidDispatchEvent, event,
-                 finished_closure, DispatchPhase::STARTING));
+      base::BindOnce(&BackgroundFetchEventDispatcher::DispatchEvent, event,
+                     finished_closure, loaded_callback,
+                     base::WrapRefCounted(service_worker_version)),
+      base::BindOnce(&BackgroundFetchEventDispatcher::DidDispatchEvent, event,
+                     finished_closure, DispatchPhase::STARTING));
 }
 
 void BackgroundFetchEventDispatcher::DispatchEvent(
@@ -206,8 +214,8 @@ void BackgroundFetchEventDispatcher::DispatchEvent(
     scoped_refptr<ServiceWorkerVersion> service_worker_version) {
   int request_id = service_worker_version->StartRequest(
       event,
-      base::Bind(&BackgroundFetchEventDispatcher::DidDispatchEvent, event,
-                 std::move(finished_closure), DispatchPhase::DISPATCHING));
+      base::BindOnce(&BackgroundFetchEventDispatcher::DidDispatchEvent, event,
+                     std::move(finished_closure), DispatchPhase::DISPATCHING));
 
   loaded_callback.Run(std::move(service_worker_version), request_id);
 }

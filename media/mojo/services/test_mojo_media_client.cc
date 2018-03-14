@@ -11,6 +11,7 @@
 #include "media/audio/audio_device_description.h"
 #include "media/audio/audio_manager.h"
 #include "media/audio/audio_output_stream_sink.h"
+#include "media/audio/audio_thread_impl.h"
 #include "media/base/cdm_factory.h"
 #include "media/base/media.h"
 #include "media/base/media_log.h"
@@ -18,23 +19,24 @@
 #include "media/base/renderer_factory.h"
 #include "media/cdm/default_cdm_factory.h"
 #include "media/renderers/default_renderer_factory.h"
-#include "media/renderers/gpu_video_accelerator_factories.h"
+#include "media/video/gpu_video_accelerator_factories.h"
 
 namespace media {
 
-TestMojoMediaClient::TestMojoMediaClient() {}
+TestMojoMediaClient::TestMojoMediaClient() = default;
 
 TestMojoMediaClient::~TestMojoMediaClient() {
   DVLOG(1) << __func__;
-  // AudioManager destructor requires MessageLoop.
-  // Destroy it before the message loop goes away.
-  audio_manager_.reset();
-  // Flush the message loop to ensure that the audio manager is destroyed.
-  base::RunLoop().RunUntilIdle();
+
+  if (audio_manager_) {
+    audio_manager_->Shutdown();
+    audio_manager_.reset();
+  }
 }
 
 void TestMojoMediaClient::Initialize(
-    service_manager::Connector* /* connector */) {
+    service_manager::Connector* /* connector */,
+    service_manager::ServiceContextRefFactory* /* context_ref_factory */) {
   InitializeMediaLibrary();
   // TODO(dalecurtis): We should find a single owner per process for the audio
   // manager or make it a lazy instance.  It's not safe to call Get()/Create()
@@ -42,8 +44,7 @@ void TestMojoMediaClient::Initialize(
   AudioManager* audio_manager = AudioManager::Get();
   if (!audio_manager) {
     audio_manager_ = media::AudioManager::CreateForTesting(
-        base::ThreadTaskRunnerHandle::Get());
-    audio_manager = audio_manager_.get();
+        base::MakeUnique<AudioThreadImpl>());
     // Flush the message loop to ensure that the audio manager is initialized.
     base::RunLoop().RunUntilIdle();
   }
@@ -62,10 +63,9 @@ std::unique_ptr<VideoRendererSink> TestMojoMediaClient::CreateVideoRendererSink(
 }
 
 std::unique_ptr<RendererFactory> TestMojoMediaClient::CreateRendererFactory(
-    const scoped_refptr<MediaLog>& media_log) {
+    MediaLog* media_log) {
   return base::MakeUnique<DefaultRendererFactory>(
-      std::move(media_log), nullptr,
-      DefaultRendererFactory::GetGpuFactoriesCB());
+      media_log, nullptr, DefaultRendererFactory::GetGpuFactoriesCB());
 }
 
 std::unique_ptr<CdmFactory> TestMojoMediaClient::CreateCdmFactory(

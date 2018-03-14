@@ -32,26 +32,43 @@ class PLATFORM_EXPORT DisplayItemList
   DisplayItemList(size_t initial_size_bytes)
       : ContiguousContainer(kMaximumDisplayItemSize, initial_size_bytes) {}
   DisplayItemList(DisplayItemList&& source)
-      : ContiguousContainer(std::move(source)),
-        visual_rects_(std::move(source.visual_rects_)) {}
+      : ContiguousContainer(std::move(source)) {}
 
   DisplayItemList& operator=(DisplayItemList&& source) {
     ContiguousContainer::operator=(std::move(source));
-    visual_rects_ = std::move(source.visual_rects_);
     return *this;
   }
 
-  DisplayItem& AppendByMoving(DisplayItem&);
-
-  bool HasVisualRect(size_t index) const {
-    return index < visual_rects_.size();
+  DisplayItem& AppendByMoving(DisplayItem& item) {
+    SECURITY_CHECK(!item.IsTombstone());
+    DisplayItem& result =
+        ContiguousContainer::AppendByMoving(item, item.DerivedSize());
+    // ContiguousContainer::AppendByMoving() calls an in-place constructor
+    // on item which replaces it with a tombstone/"dead display item" that
+    // can be safely destructed but should never be used except for debugging.
+    DCHECK(item.IsTombstone());
+    DCHECK(item.GetId() == result.GetId());
+    // We need |visual_rect_| and |outset_for_raster_effects_| of the old
+    // display item for raster invalidation. As their values were initialized
+    // to default values in DisplayItem's default constructor, now copy their
+    // original values back from |result|.
+    item.visual_rect_ = result.visual_rect_;
+    item.outset_for_raster_effects_ = result.outset_for_raster_effects_;
+    return result;
   }
-  IntRect VisualRect(size_t index) const {
-    DCHECK(HasVisualRect(index));
-    return visual_rects_[index];
-  }
 
-  void AppendVisualRect(const IntRect& visual_rect);
+  // This is used by PaintUnderInvalidationChecking in SPv1 to restore a
+  // paired-begin display item that was moved to the new display item list then
+  // was removed because the pair is a no-op. This ensures that we won't compare
+  // the next new display item against the tombstone display item.
+  void RestoreTombstone(size_t index, DisplayItem& item) {
+    DCHECK(!RuntimeEnabledFeatures::SlimmingPaintV175Enabled());
+    DCHECK((*this)[index].IsTombstone());
+    SECURITY_CHECK((*this)[index].DerivedSize() == item.DerivedSize());
+    memcpy(static_cast<void*>(&(*this)[index]), static_cast<void*>(&item),
+           item.DerivedSize());
+    new (&item) DisplayItem;
+  }
 
   // Useful for iterating with a range-based for loop.
   template <typename Iterator>
@@ -69,21 +86,24 @@ class PLATFORM_EXPORT DisplayItemList
   Range<iterator> ItemsInPaintChunk(const PaintChunk&);
   Range<const_iterator> ItemsInPaintChunk(const PaintChunk&) const;
 
+#if DCHECK_IS_ON()
   enum JsonOptions {
     kDefault = 0,
     kShowPaintRecords = 1,
     kSkipNonDrawings = 1 << 1,
-    kShowClientDebugName = 1 << 2,
+    kClientKnownToBeAlive = 1 << 2,
     kShownOnlyDisplayItemTypes = 1 << 3
   };
   typedef unsigned JsonFlags;
 
   std::unique_ptr<JSONArray> SubsequenceAsJSON(size_t begin_index,
                                                size_t end_index,
-                                               JsonFlags options) const;
-
- private:
-  Vector<IntRect> visual_rects_;
+                                               JsonFlags) const;
+  void AppendSubsequenceAsJSON(size_t begin_index,
+                               size_t end_index,
+                               JsonFlags,
+                               JSONArray&) const;
+#endif  // DCHECK_IS_ON()
 };
 
 }  // namespace blink

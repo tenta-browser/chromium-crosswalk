@@ -2,6 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//tools/grit/grit_rule.gni")
+
 interfaces_bindings_gen_dir = "$root_gen_dir/mojo/public/interfaces/bindings"
 
 source_set("js") {
@@ -35,9 +37,8 @@ group("bindings") {
     "validator.js",
   ]
 
-  deps = [
-    ":new_bindings",
-    "//mojo/public/interfaces/bindings:bindings__generator",
+  public_deps = [
+    "//mojo/public/interfaces/bindings:bindings_js__generator",
   ]
 }
 
@@ -47,7 +48,6 @@ action("new_bindings") {
     # variable |mojoBindings| that the others need to refer to.
     "new_bindings/base.js",
 
-    "$interfaces_bindings_gen_dir/new_bindings/interface_control_messages.mojom.js",
     "new_bindings/bindings.js",
     "new_bindings/buffer.js",
     "new_bindings/codec.js",
@@ -55,9 +55,17 @@ action("new_bindings") {
     "new_bindings/interface_types.js",
     "new_bindings/lib/control_message_handler.js",
     "new_bindings/lib/control_message_proxy.js",
+    "new_bindings/lib/interface_endpoint_client.js",
+    "new_bindings/lib/interface_endpoint_handle.js",
+    "new_bindings/lib/pipe_control_message_handler.js",
+    "new_bindings/lib/pipe_control_message_proxy.js",
     "new_bindings/router.js",
     "new_bindings/unicode.js",
     "new_bindings/validator.js",
+
+    # These two needs to refer to codec.js.
+    "$interfaces_bindings_gen_dir/new_bindings/interface_control_messages.mojom.js",
+    "$interfaces_bindings_gen_dir/new_bindings/pipe_control_messages.mojom.js",
   ]
   compiled_file = "$target_gen_dir/mojo_bindings.js"
 
@@ -70,11 +78,11 @@ action("new_bindings") {
     compiled_file,
   ]
 
-  args = rebase_path(new_bindings_js_files)
-  args += [ rebase_path(compiled_file) ]
+  args = rebase_path(new_bindings_js_files, root_build_dir)
+  args += [ rebase_path(compiled_file, root_build_dir) ]
 
   deps = [
-    "//mojo/public/interfaces/bindings:new_bindings__generator",
+    "//mojo/public/interfaces/bindings:new_bindings_js__generator",
   ]
 }
 
@@ -82,13 +90,29 @@ group("tests") {
   testonly = true
 
   data = [
-    "//mojo/public/interfaces/bindings/tests/data/validation/",
     "tests/core_unittest.js",
-    "tests/validation_test_input_parser.js",
-    "tests/validation_unittest.js",
   ]
 
   public_deps = [
     ":bindings",
+  ]
+}
+
+grit("resources") {
+  source = "mojo_bindings_resources.grd"
+
+  # The .grd contains references to generated files.
+  source_is_generated = true
+
+  outputs = [
+    "grit/mojo_bindings_resources.h",
+    "mojo_bindings_resources.pak",
+  ]
+  grit_flags = [
+    "-E",
+    "root_gen_dir=" + rebase_path(root_gen_dir, root_build_dir),
+  ]
+  deps = [
+    ":new_bindings",
   ]
 }

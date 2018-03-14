@@ -13,6 +13,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/driver/data_type_encryption_handler.h"
 #include "components/sync/driver/sync_service_observer.h"
@@ -20,6 +21,7 @@
 #include "google_apis/gaia/google_service_auth_error.h"
 
 class GoogleServiceAuthError;
+class SigninManagerBase;
 
 namespace sync_sessions {
 class OpenTabsUIDelegate;
@@ -31,6 +33,7 @@ class BaseTransaction;
 class DataTypeController;
 class JsController;
 class LocalDeviceInfoProvider;
+class GlobalIdMapper;
 class ProtocolEventObserver;
 class SyncClient;
 class SyncCycleSnapshot;
@@ -71,7 +74,7 @@ class SyncSetupInProgressHandle {
   base::Closure on_destroy_;
 };
 
-class SyncService : public DataTypeEncryptionHandler {
+class SyncService : public DataTypeEncryptionHandler, public KeyedService {
  public:
   // Used to specify the kind of passphrase with which sync data is encrypted.
   enum PassphraseType {
@@ -302,8 +305,8 @@ class SyncService : public DataTypeEncryptionHandler {
   // the struct will be filled with default data.
   virtual bool QueryDetailedSyncStatus(SyncStatus* result) = 0;
 
-  // Returns a user-friendly string form of last synced time (in minutes).
-  virtual base::string16 GetLastSyncedTimeString() const = 0;
+  // Returns the last synced time.
+  virtual base::Time GetLastSyncedTime() const = 0;
 
   // Returns a human readable string describing engine initialization state.
   virtual std::string GetEngineInitializationStateString() const = 0;
@@ -326,7 +329,7 @@ class SyncService : public DataTypeEncryptionHandler {
   virtual const GURL& sync_service_url() const = 0;
 
   virtual std::string unrecoverable_error_message() const = 0;
-  virtual tracked_objects::Location unrecoverable_error_location() const = 0;
+  virtual base::Location unrecoverable_error_location() const = 0;
 
   virtual void AddProtocolEventObserver(ProtocolEventObserver* observer) = 0;
   virtual void RemoveProtocolEventObserver(ProtocolEventObserver* observer) = 0;
@@ -346,6 +349,12 @@ class SyncService : public DataTypeEncryptionHandler {
   virtual void GetAllNodes(
       const base::Callback<void(std::unique_ptr<base::ListValue>)>&
           callback) = 0;
+
+  // Non-owning pointer to sign in logic that can be used to fetch information
+  // about the currently signed in user.
+  virtual SigninManagerBase* signin() const = 0;
+
+  virtual GlobalIdMapper* GetGlobalIdMapper() const = 0;
 
  protected:
   SyncService() {}

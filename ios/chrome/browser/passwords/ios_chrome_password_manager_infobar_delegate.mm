@@ -6,18 +6,21 @@
 
 #include <utility>
 
-#include "base/mac/scoped_nsobject.h"
 #include "base/strings/string16.h"
 #include "components/password_manager/core/browser/password_form_manager.h"
 #include "components/password_manager/core/browser/password_manager_constants.h"
 #include "components/strings/grit/components_strings.h"
-#import "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
+#import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/commands/open_url_command.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
 #include "ios/web/public/referrer.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 IOSChromePasswordManagerInfoBarDelegate::
     ~IOSChromePasswordManagerInfoBarDelegate() {
@@ -49,13 +52,12 @@ int IOSChromePasswordManagerInfoBarDelegate::GetIconId() const {
 
 bool IOSChromePasswordManagerInfoBarDelegate::LinkClicked(
     WindowOpenDisposition disposition) {
-  base::scoped_nsobject<OpenUrlCommand> command([[OpenUrlCommand alloc]
+  OpenUrlCommand* command = [[OpenUrlCommand alloc]
        initWithURL:GURL(password_manager::kPasswordManagerHelpCenterSmartLock)
           referrer:web::Referrer()
        inIncognito:NO
       inBackground:NO
-          appendTo:kCurrentTab]);
-  UIWindow* mainWindow = [[UIApplication sharedApplication] keyWindow];
-  [mainWindow chromeExecuteCommand:command];
+          appendTo:kCurrentTab];
+  [dispatcher_ openURL:command];
   return true;
 };

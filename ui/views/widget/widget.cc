@@ -28,7 +28,6 @@
 #include "ui/views/event_monitor.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/focus/focus_manager_factory.h"
-#include "ui/views/focus/view_storage.h"
 #include "ui/views/focus/widget_focus_manager.h"
 #include "ui/views/views_delegate.h"
 #include "ui/views/widget/native_widget_private.h"
@@ -269,14 +268,14 @@ void Widget::ReparentNativeView(gfx::NativeView native_view,
 // static
 int Widget::GetLocalizedContentsWidth(int col_resource_id) {
   return ui::GetLocalizedContentsWidthForFont(
-      col_resource_id, ResourceBundle::GetSharedInstance().GetFontWithDelta(
+      col_resource_id, ui::ResourceBundle::GetSharedInstance().GetFontWithDelta(
                            ui::kMessageFontSizeDelta));
 }
 
 // static
 int Widget::GetLocalizedContentsHeight(int row_resource_id) {
   return ui::GetLocalizedContentsHeightForFont(
-      row_resource_id, ResourceBundle::GetSharedInstance().GetFontWithDelta(
+      row_resource_id, ui::ResourceBundle::GetSharedInstance().GetFontWithDelta(
                            ui::kMessageFontSizeDelta));
 }
 
@@ -426,7 +425,6 @@ void Widget::ViewHierarchyChanged(
     FocusManager* focus_manager = GetFocusManager();
     if (focus_manager)
       focus_manager->ViewRemoved(details.child);
-    ViewStorage::GetInstance()->ViewRemoved(details.child);
     native_widget_->ViewRemoved(details.child);
   }
 }
@@ -569,7 +567,7 @@ void Widget::StackAtTop() {
   native_widget_->StackAtTop();
 }
 
-void Widget::SetShape(std::unique_ptr<SkRegion> shape) {
+void Widget::SetShape(std::unique_ptr<ShapeRects> shape) {
   native_widget_->SetShape(std::move(shape));
 }
 
@@ -581,26 +579,26 @@ void Widget::Close() {
     return;
   }
 
-  bool can_close = true;
-  if (non_client_view_)
-    can_close = non_client_view_->CanClose();
-  if (can_close) {
-    SaveWindowPlacement();
+  if (non_client_view_ && !non_client_view_->CanClose())
+    return;
 
-    // During tear-down the top-level focus manager becomes unavailable to
-    // GTK tabbed panes and their children, so normal deregistration via
-    // |FormManager::ViewRemoved()| calls are fouled.  We clear focus here
-    // to avoid these redundant steps and to avoid accessing deleted views
-    // that may have been in focus.
-    if (is_top_level() && focus_manager_.get())
-      focus_manager_->SetFocusedView(NULL);
+  // The actions below can cause this function to be called again, so mark
+  // |this| as closed early. See crbug.com/714334
+  widget_closed_ = true;
+  SaveWindowPlacement();
 
-    for (WidgetObserver& observer : observers_)
-      observer.OnWidgetClosing(this);
+  // During tear-down the top-level focus manager becomes unavailable to
+  // GTK tabbed panes and their children, so normal deregistration via
+  // |FocusManager::ViewRemoved()| calls are fouled.  We clear focus here
+  // to avoid these redundant steps and to avoid accessing deleted views
+  // that may have been in focus.
+  if (is_top_level() && focus_manager_)
+    focus_manager_->SetFocusedView(nullptr);
 
-    native_widget_->Close();
-    widget_closed_ = true;
-  }
+  for (WidgetObserver& observer : observers_)
+    observer.OnWidgetClosing(this);
+
+  native_widget_->Close();
 }
 
 void Widget::CloseNow() {
@@ -859,12 +857,10 @@ void Widget::ThemeChanged() {
   root_view_->ThemeChanged();
 }
 
-void Widget::LocaleChanged() {
-  root_view_->LocaleChanged();
-}
-
-void Widget::DeviceScaleFactorChanged(float device_scale_factor) {
-  root_view_->DeviceScaleFactorChanged(device_scale_factor);
+void Widget::DeviceScaleFactorChanged(float old_device_scale_factor,
+                                      float new_device_scale_factor) {
+  root_view_->DeviceScaleFactorChanged(old_device_scale_factor,
+                                       new_device_scale_factor);
 }
 
 void Widget::SetFocusTraversableParent(FocusTraversable* parent) {
@@ -1071,7 +1067,7 @@ void Widget::OnNativeWidgetVisibilityChanged(bool visible) {
 
 void Widget::OnNativeWidgetCreated(bool desktop_widget) {
   if (is_top_level())
-    focus_manager_.reset(FocusManagerFactory::Create(this, desktop_widget));
+    focus_manager_ = FocusManagerFactory::Create(this, desktop_widget);
 
   native_widget_->InitModalType(widget_delegate_->GetModalType());
 
@@ -1435,6 +1431,8 @@ internal::RootView* Widget::CreateRootView() {
 }
 
 void Widget::DestroyRootView() {
+  if (is_top_level() && focus_manager_)
+    focus_manager_->SetFocusedView(nullptr);
   NotifyWillRemoveView(root_view_.get());
   non_client_view_ = NULL;
   root_view_.reset();

@@ -7,14 +7,19 @@
 #import <QuartzCore/QuartzCore.h>
 
 #include "base/logging.h"
-#include "base/mac/scoped_nsobject.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
+#import "ios/chrome/browser/ui/commands/application_commands.h"
+#import "ios/chrome/browser/ui/popup_menu/popup_menu_view.h"
 #include "ios/chrome/browser/ui/rtl_geometry.h"
+#import "ios/chrome/browser/ui/tools_menu/public/tools_menu_constants.h"
+#import "ios/chrome/browser/ui/tools_menu/tools_menu_configuration.h"
 #import "ios/chrome/browser/ui/tools_menu/tools_menu_view_controller.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
-#import "ios/shared/chrome/browser/ui/tools_menu/tools_menu_configuration.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 using base::UserMetricsAction;
 
@@ -33,21 +38,33 @@ NS_INLINE UIEdgeInsets TabHistoryPopupMenuInsets() {
 }  // namespace
 
 @interface ToolsPopupController ()<ToolsPopupTableDelegate> {
-  base::scoped_nsobject<ToolsMenuViewController> _toolsMenuViewController;
+  ToolsMenuViewController* _toolsMenuViewController;
   // Container view of the menu items table.
-  base::scoped_nsobject<UIView> _toolsTableViewContainer;
+  UIView* _toolsTableViewContainer;
+  // The view controller from which to present other view controllers.
+  __weak UIViewController* _baseViewController;
 }
 @end
 
 @implementation ToolsPopupController
 @synthesize isCurrentPageBookmarked = _isCurrentPageBookmarked;
 
-- (instancetype)initWithConfiguration:(ToolsMenuConfiguration*)configuration {
+- (instancetype)
+initAndPresentWithConfiguration:(ToolsMenuConfiguration*)configuration
+                     dispatcher:
+                         (id<ApplicationCommands, BrowserCommands>)dispatcher
+                     completion:(ProceduralBlock)completion {
   DCHECK(configuration.displayView);
   self = [super initWithParentView:configuration.displayView];
   if (self) {
-    _toolsMenuViewController.reset([[ToolsMenuViewController alloc] init]);
-    _toolsTableViewContainer.reset([[_toolsMenuViewController view] retain]);
+    // Set superclass dispatcher property.
+    self.dispatcher = dispatcher;
+    _toolsMenuViewController = [[ToolsMenuViewController alloc] init];
+    _toolsMenuViewController.dispatcher = self.dispatcher;
+
+    _baseViewController = configuration.baseViewController;
+
+    _toolsTableViewContainer = [_toolsMenuViewController view];
     [_toolsTableViewContainer layer].cornerRadius = 2;
     [_toolsTableViewContainer layer].masksToBounds = YES;
     [_toolsMenuViewController initializeMenuWithConfiguration:configuration];
@@ -61,11 +78,19 @@ NS_INLINE UIEdgeInsets TabHistoryPopupMenuInsets() {
     CGRect containerBounds = [configuration.displayView bounds];
     CGFloat minY = CGRectGetMinY(configuration.sourceRect) - popupInsets.top;
 
+    UIEdgeInsets safeAreaInsets = UIEdgeInsetsZero;
+    if (@available(iOS 11.0, *)) {
+      safeAreaInsets = configuration.displayView.safeAreaInsets;
+    }
+
     // The tools popup appears trailing- aligned, but because
     // kToolsPopupMenuTrailingOffset is smaller than the popupInsets's trailing
     // value, destination needs to be shifted a bit.
     CGFloat trailingShift =
         UIEdgeInsetsGetTrailing(popupInsets) - kToolsPopupMenuTrailingOffset;
+    // The tools popup needs to be displayed inside the safe area.
+    trailingShift -= UIEdgeInsetsGetTrailing(safeAreaInsets);
+
     if (UseRTLLayout())
       trailingShift = -trailingShift;
 
@@ -87,7 +112,9 @@ NS_INLINE UIEdgeInsets TabHistoryPopupMenuInsets() {
     [[self popupContainer] addSubview:_toolsTableViewContainer];
 
     [_toolsMenuViewController setDelegate:self];
-    [self fadeInPopupFromSource:origin toDestination:destination];
+    [self fadeInPopupFromSource:origin
+                  toDestination:destination
+                     completion:completion];
 
     // Insert |toolsButton| above |popupContainer| so it appears stationary.
     // Otherwise the tools button will animate with the tools popup.
@@ -114,13 +141,15 @@ NS_INLINE UIEdgeInsets TabHistoryPopupMenuInsets() {
 - (void)dealloc {
   [_toolsTableViewContainer removeFromSuperview];
   [_toolsMenuViewController setDelegate:nil];
-  [super dealloc];
 }
 
 - (void)fadeInPopupFromSource:(CGPoint)source
-                toDestination:(CGPoint)destination {
+                toDestination:(CGPoint)destination
+                   completion:(ProceduralBlock)completion {
   [_toolsMenuViewController animateContentIn];
-  [super fadeInPopupFromSource:source toDestination:destination];
+  [super fadeInPopupFromSource:source
+                 toDestination:destination
+                    completion:completion];
 }
 
 - (void)dismissAnimatedWithCompletion:(void (^)(void))completion {
@@ -131,10 +160,6 @@ NS_INLINE UIEdgeInsets TabHistoryPopupMenuInsets() {
 - (void)setIsCurrentPageBookmarked:(BOOL)value {
   _isCurrentPageBookmarked = value;
   [_toolsMenuViewController setIsCurrentPageBookmarked:value];
-}
-
-- (void)setCanUseReaderMode:(BOOL)enabled {
-  [_toolsMenuViewController setCanUseReaderMode:enabled];
 }
 
 - (void)setCanShowFindBar:(BOOL)enabled {
@@ -154,78 +179,71 @@ NS_INLINE UIEdgeInsets TabHistoryPopupMenuInsets() {
 - (void)commandWasSelected:(int)commandID {
   // Record the corresponding metric.
   switch (commandID) {
-    case IDC_TEMP_EDIT_BOOKMARK:
+    case TOOLS_BOOKMARK_EDIT:
       base::RecordAction(UserMetricsAction("MobileMenuEditBookmark"));
       break;
-    case IDC_BOOKMARK_PAGE:
+    case TOOLS_BOOKMARK_ITEM:
       base::RecordAction(UserMetricsAction("MobileMenuAddToBookmarks"));
       break;
-    case IDC_CLOSE_ALL_TABS:
+    case TOOLS_CLOSE_ALL_TABS:
       base::RecordAction(UserMetricsAction("MobileMenuCloseAllTabs"));
       break;
-    case IDC_CLOSE_ALL_INCOGNITO_TABS:
+    case TOOLS_CLOSE_ALL_INCOGNITO_TABS:
       base::RecordAction(UserMetricsAction("MobileMenuCloseAllIncognitoTabs"));
       break;
-    case IDC_FIND:
+    case TOOLS_SHOW_FIND_IN_PAGE:
       base::RecordAction(UserMetricsAction("MobileMenuFindInPage"));
       break;
-    case IDC_HELP_PAGE_VIA_MENU:
+    case TOOLS_SHOW_HELP_PAGE:
       base::RecordAction(UserMetricsAction("MobileMenuHelp"));
       break;
-    case IDC_NEW_INCOGNITO_TAB:
+    case TOOLS_NEW_INCOGNITO_TAB_ITEM:
       base::RecordAction(UserMetricsAction("MobileMenuNewIncognitoTab"));
       break;
-    case IDC_NEW_TAB:
+    case TOOLS_NEW_TAB_ITEM:
       base::RecordAction(UserMetricsAction("MobileMenuNewTab"));
       break;
-    case IDC_OPTIONS:
+    case TOOLS_SETTINGS_ITEM:
       base::RecordAction(UserMetricsAction("MobileMenuSettings"));
+      [self.dispatcher showSettingsFromViewController:_baseViewController];
       break;
-    case IDC_RELOAD:
+    case TOOLS_RELOAD_ITEM:
       base::RecordAction(UserMetricsAction("MobileMenuReload"));
       break;
-    case IDC_SHARE_PAGE:
+    case TOOLS_SHARE_ITEM:
       base::RecordAction(UserMetricsAction("MobileMenuShare"));
       break;
-    case IDC_REQUEST_DESKTOP_SITE:
+    case TOOLS_REQUEST_DESKTOP_SITE:
       base::RecordAction(UserMetricsAction("MobileMenuRequestDesktopSite"));
       break;
-    case IDC_REQUEST_MOBILE_SITE:
+    case TOOLS_REQUEST_MOBILE_SITE:
       base::RecordAction(UserMetricsAction("MobileMenuRequestMobileSite"));
       break;
-    case IDC_READER_MODE:
-      base::RecordAction(UserMetricsAction("MobileMenuRequestReaderMode"));
-      break;
-    case IDC_SHOW_BOOKMARK_MANAGER:
+    case TOOLS_SHOW_BOOKMARKS:
       base::RecordAction(UserMetricsAction("MobileMenuAllBookmarks"));
       break;
-    case IDC_SHOW_HISTORY:
+    case TOOLS_SHOW_HISTORY:
       base::RecordAction(UserMetricsAction("MobileMenuHistory"));
       break;
-    case IDC_SHOW_OTHER_DEVICES:
+    case TOOLS_SHOW_RECENT_TABS:
       base::RecordAction(UserMetricsAction("MobileMenuRecentTabs"));
       break;
-    case IDC_STOP:
+    case TOOLS_STOP_ITEM:
       base::RecordAction(UserMetricsAction("MobileMenuStop"));
       break;
-    case IDC_PRINT:
-      base::RecordAction(UserMetricsAction("MobileMenuPrint"));
-      break;
-    case IDC_REPORT_AN_ISSUE:
+    case TOOLS_REPORT_AN_ISSUE:
       self.containerView.hidden = YES;
       base::RecordAction(UserMetricsAction("MobileMenuReportAnIssue"));
+      [self.dispatcher showReportAnIssueFromViewController:_baseViewController];
       break;
-    case IDC_VIEW_SOURCE:
+    case TOOLS_VIEW_SOURCE:
       // Debug only; no metric.
       break;
-    case IDC_SHOW_TOOLS_MENU:
+    case TOOLS_MENU_ITEM:
       // Do nothing when tapping the tools menu a second time.
       break;
-    case IDC_SHOW_READING_LIST:
+    case TOOLS_READING_LIST:
       base::RecordAction(UserMetricsAction("MobileMenuReadingList"));
-      break;
-    case IDC_SHOW_SUGGESTIONS:
-      // TODO(crbug.com/682174): Move it out of the tool menu or add metrics.
       break;
     default:
       NOTREACHED();

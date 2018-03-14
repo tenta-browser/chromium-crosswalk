@@ -16,9 +16,6 @@
 #include <set>
 #include <vector>
 
-// Xlib defines RootWindow
-#undef RootWindow
-
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_util.h"
@@ -70,13 +67,14 @@ static const int kPreviewHeight = 512;
 
 SelectFileDialogImpl* SelectFileDialogImpl::NewSelectFileDialogImplGTK(
     Listener* listener,
-    ui::SelectFilePolicy* policy) {
-  return new SelectFileDialogImplGTK(listener, policy);
+    std::unique_ptr<ui::SelectFilePolicy> policy) {
+  return new SelectFileDialogImplGTK(listener, std::move(policy));
 }
 
-SelectFileDialogImplGTK::SelectFileDialogImplGTK(Listener* listener,
-                                                 ui::SelectFilePolicy* policy)
-    : SelectFileDialogImpl(listener, policy), preview_(nullptr) {}
+SelectFileDialogImplGTK::SelectFileDialogImplGTK(
+    Listener* listener,
+    std::unique_ptr<ui::SelectFilePolicy> policy)
+    : SelectFileDialogImpl(listener, std::move(policy)), preview_(nullptr) {}
 
 SelectFileDialogImplGTK::~SelectFileDialogImplGTK() {
   for (std::set<aura::Window*>::iterator iter = parents_.begin();
@@ -172,6 +170,10 @@ void SelectFileDialogImplGTK::SelectFileImpl(
   if (owning_window) {
     aura::WindowTreeHost* host = owning_window->GetHost();
     if (host) {
+      // In some circumstances (e.g. dialog from flash plugin) the mouse has
+      // been captured and by turning off event listening, it is never
+      // released. So we manually ensure there is no current capture.
+      host->ReleaseCapture();
       std::unique_ptr<base::Closure> callback =
           views::DesktopWindowTreeHostX11::GetHostForXID(
               host->GetAcceleratedWidget())

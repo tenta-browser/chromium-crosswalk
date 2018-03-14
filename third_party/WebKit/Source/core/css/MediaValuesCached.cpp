@@ -9,7 +9,7 @@
 #include "core/frame/LocalFrame.h"
 #include "core/layout/LayoutObject.h"
 #include "core/layout/api/LayoutViewItem.h"
-#include "platform/graphics/ColorSpace.h"
+#include "platform/graphics/ColorSpaceGamut.h"
 
 namespace blink {
 
@@ -36,7 +36,7 @@ MediaValuesCached::MediaValuesCachedData::MediaValuesCachedData(
     Document& document)
     : MediaValuesCached::MediaValuesCachedData() {
   DCHECK(IsMainThread());
-  LocalFrame* frame = MediaValues::FrameFrom(document);
+  LocalFrame* frame = document.GetFrameOfMasterDocument();
   // TODO(hiroshige): Clean up |frame->view()| conditions.
   DCHECK(!frame || frame->View());
   if (frame && frame->View()) {
@@ -80,7 +80,7 @@ MediaValuesCached* MediaValuesCached::Create(
   return new MediaValuesCached(data);
 }
 
-MediaValuesCached::MediaValuesCached() {}
+MediaValuesCached::MediaValuesCached() = default;
 
 MediaValuesCached::MediaValuesCached(const MediaValuesCachedData& data)
     : data_(data) {}

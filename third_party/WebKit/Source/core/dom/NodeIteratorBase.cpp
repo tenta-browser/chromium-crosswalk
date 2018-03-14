@@ -25,18 +25,16 @@
 #include "core/dom/NodeIteratorBase.h"
 
 #include "bindings/core/v8/ExceptionState.h"
+#include "bindings/core/v8/V8NodeFilterCondition.h"
 #include "core/dom/Node.h"
 #include "core/dom/NodeFilter.h"
 
 namespace blink {
 
-NodeIteratorBase::NodeIteratorBase(void* child_this,
-                                   Node* root_node,
+NodeIteratorBase::NodeIteratorBase(Node* root_node,
                                    unsigned what_to_show,
-                                   NodeFilter* node_filter)
-    : root_(root_node),
-      what_to_show_(what_to_show),
-      filter_(child_this, node_filter) {}
+                                   V8NodeFilterCondition* node_filter)
+    : root_(root_node), what_to_show_(what_to_show), filter_(node_filter) {}
 
 unsigned NodeIteratorBase::AcceptNode(Node* node,
                                       ExceptionState& exception_state) const {
@@ -49,12 +47,13 @@ unsigned NodeIteratorBase::AcceptNode(Node* node,
   return filter_->acceptNode(node, exception_state);
 }
 
-DEFINE_TRACE(NodeIteratorBase) {
+void NodeIteratorBase::Trace(blink::Visitor* visitor) {
   visitor->Trace(root_);
   visitor->Trace(filter_);
 }
 
-DEFINE_TRACE_WRAPPERS(NodeIteratorBase) {
+void NodeIteratorBase::TraceWrappers(
+    const ScriptWrappableVisitor* visitor) const {
   visitor->TraceWrappers(filter_);
 }
 

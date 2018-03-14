@@ -208,10 +208,8 @@ bool AutofillProfileComparator::MergeCJKNames(
     const AutofillProfile& p1,
     const AutofillProfile& p2,
     NameInfo* info) const {
-  DCHECK(data_util::IsCJKName(p1.GetInfo(AutofillType(NAME_FULL),
-                                         app_locale_)));
-  DCHECK(data_util::IsCJKName(p2.GetInfo(AutofillType(NAME_FULL),
-                                         app_locale_)));
+  DCHECK(data_util::IsCJKName(p1.GetInfo(NAME_FULL, app_locale_)));
+  DCHECK(data_util::IsCJKName(p2.GetInfo(NAME_FULL, app_locale_)));
 
   struct Name {
     base::string16 given;
@@ -274,6 +272,49 @@ bool AutofillProfileComparator::MergeCJKNames(
   }
 
   return true;
+}
+
+bool AutofillProfileComparator::IsNameVariantOf(
+    const base::string16& full_name_1,
+    const base::string16& full_name_2) const {
+  data_util::NameParts name_1_parts = data_util::SplitName(full_name_1);
+
+  // Build the variants of full_name_1`s given, middle and family names.
+  //
+  // TODO(rogerm): Figure out whether or not we should break apart a compound
+  // family name into variants (crbug/619051)
+  const std::set<base::string16> given_name_variants =
+      GetNamePartVariants(name_1_parts.given);
+  const std::set<base::string16> middle_name_variants =
+      GetNamePartVariants(name_1_parts.middle);
+  base::StringPiece16 family_name = name_1_parts.family;
+
+  // Iterate over all full name variants of profile 2 and see if any of them
+  // match the full name from profile 1.
+  for (const auto& given_name : given_name_variants) {
+    for (const auto& middle_name : middle_name_variants) {
+      base::string16 candidate = base::CollapseWhitespace(
+          base::JoinString({given_name, middle_name, family_name}, kSpace),
+          true);
+      if (candidate == full_name_2)
+        return true;
+    }
+  }
+
+  // Also check if the name is just composed of the user's initials. For
+  // example, "thomas jefferson miller" could be composed as "tj miller".
+  if (!name_1_parts.given.empty() && !name_1_parts.middle.empty()) {
+    base::string16 initials;
+    initials.push_back(name_1_parts.given[0]);
+    initials.push_back(name_1_parts.middle[0]);
+    base::string16 candidate = base::CollapseWhitespace(
+        base::JoinString({initials, family_name}, kSpace), true);
+    if (candidate == full_name_2)
+      return true;
+  }
+
+  // There was no match found.
+  return false;
 }
 
 bool AutofillProfileComparator::MergeEmailAddresses(
@@ -707,56 +748,13 @@ std::set<base::string16> AutofillProfileComparator::GetNamePartVariants(
   return variants;
 }
 
-bool AutofillProfileComparator::IsNameVariantOf(
-    const base::string16& full_name_1,
-    const base::string16& full_name_2) const {
-  data_util::NameParts name_1_parts = data_util::SplitName(full_name_1);
-
-  // Build the variants of full_name_1`s given, middle and family names.
-  //
-  // TODO(rogerm): Figure out whether or not we should break apart a compound
-  // family name into variants (crbug/619051)
-  const std::set<base::string16> given_name_variants =
-      GetNamePartVariants(name_1_parts.given);
-  const std::set<base::string16> middle_name_variants =
-      GetNamePartVariants(name_1_parts.middle);
-  base::StringPiece16 family_name = name_1_parts.family;
-
-  // Iterate over all full name variants of profile 2 and see if any of them
-  // match the full name from profile 1.
-  for (const auto& given_name : given_name_variants) {
-    for (const auto& middle_name : middle_name_variants) {
-      base::string16 candidate = base::CollapseWhitespace(
-          base::JoinString({given_name, middle_name, family_name}, kSpace),
-          true);
-      if (candidate == full_name_2)
-        return true;
-    }
-  }
-
-  // Also check if the name is just composed of the user's initials. For
-  // example, "thomas jefferson miller" could be composed as "tj miller".
-  if (!name_1_parts.given.empty() && !name_1_parts.middle.empty()) {
-    base::string16 initials;
-    initials.push_back(name_1_parts.given[0]);
-    initials.push_back(name_1_parts.middle[0]);
-    base::string16 candidate = base::CollapseWhitespace(
-        base::JoinString({initials, family_name}, kSpace), true);
-    if (candidate == full_name_2)
-      return true;
-  }
-
-  // There was no match found.
-  return false;
-}
-
 bool AutofillProfileComparator::HaveMergeableNames(
     const AutofillProfile& p1,
     const AutofillProfile& p2) const {
   base::string16 full_name_1 =
-      NormalizeForComparison(p1.GetInfo(AutofillType(NAME_FULL), app_locale_));
+      NormalizeForComparison(p1.GetInfo(NAME_FULL, app_locale_));
   base::string16 full_name_2 =
-      NormalizeForComparison(p2.GetInfo(AutofillType(NAME_FULL), app_locale_));
+      NormalizeForComparison(p2.GetInfo(NAME_FULL, app_locale_));
 
   if (full_name_1.empty() || full_name_2.empty() ||
       full_name_1 == full_name_2) {
@@ -775,22 +773,18 @@ bool AutofillProfileComparator::HaveMergeableNames(
 bool AutofillProfileComparator::HaveMergeableCJKNames(
     const AutofillProfile& p1,
     const AutofillProfile& p2) const {
-  base::string16 name_1 =
-      NormalizeForComparison(p1.GetInfo(AutofillType(NAME_FULL), app_locale_),
-                             DISCARD_WHITESPACE);
-  base::string16 name_2 =
-      NormalizeForComparison(p2.GetInfo(AutofillType(NAME_FULL), app_locale_),
-                             DISCARD_WHITESPACE);
+  base::string16 name_1 = NormalizeForComparison(
+      p1.GetInfo(NAME_FULL, app_locale_), DISCARD_WHITESPACE);
+  base::string16 name_2 = NormalizeForComparison(
+      p2.GetInfo(NAME_FULL, app_locale_), DISCARD_WHITESPACE);
   return name_1 == name_2;
 }
 
 bool AutofillProfileComparator::HaveMergeableEmailAddresses(
     const AutofillProfile& p1,
     const AutofillProfile& p2) const {
-  const base::string16& email_1 =
-      p1.GetInfo(AutofillType(EMAIL_ADDRESS), app_locale_);
-  const base::string16& email_2 =
-      p2.GetInfo(AutofillType(EMAIL_ADDRESS), app_locale_);
+  const base::string16& email_1 = p1.GetInfo(EMAIL_ADDRESS, app_locale_);
+  const base::string16& email_2 = p2.GetInfo(EMAIL_ADDRESS, app_locale_);
   return email_1.empty() || email_2.empty() ||
          case_insensitive_compare_.StringsEqual(email_1, email_2);
 }
@@ -798,10 +792,10 @@ bool AutofillProfileComparator::HaveMergeableEmailAddresses(
 bool AutofillProfileComparator::HaveMergeableCompanyNames(
     const AutofillProfile& p1,
     const AutofillProfile& p2) const {
-  const base::string16& company_name_1 = NormalizeForComparison(
-      p1.GetInfo(AutofillType(COMPANY_NAME), app_locale_));
-  const base::string16& company_name_2 = NormalizeForComparison(
-      p2.GetInfo(AutofillType(COMPANY_NAME), app_locale_));
+  const base::string16& company_name_1 =
+      NormalizeForComparison(p1.GetInfo(COMPANY_NAME, app_locale_));
+  const base::string16& company_name_2 =
+      NormalizeForComparison(p2.GetInfo(COMPANY_NAME, app_locale_));
   return company_name_1.empty() || company_name_2.empty() ||
          CompareTokens(company_name_1, company_name_2) != DIFFERENT_TOKENS;
 }
@@ -946,9 +940,9 @@ bool AutofillProfileComparator::HaveMergeableAddresses(
   // Heuristic: Street addresses are mergeable if one is a (possibly empty) bag
   // of words subset of the other.
   const base::string16& address1 = rewriter.Rewrite(NormalizeForComparison(
-      p1.GetInfo(AutofillType(ADDRESS_HOME_STREET_ADDRESS), app_locale_)));
+      p1.GetInfo(ADDRESS_HOME_STREET_ADDRESS, app_locale_)));
   const base::string16& address2 = rewriter.Rewrite(NormalizeForComparison(
-      p2.GetInfo(AutofillType(ADDRESS_HOME_STREET_ADDRESS), app_locale_)));
+      p2.GetInfo(ADDRESS_HOME_STREET_ADDRESS, app_locale_)));
   if (CompareTokens(address1, address2) == DIFFERENT_TOKENS) {
     return false;
   }

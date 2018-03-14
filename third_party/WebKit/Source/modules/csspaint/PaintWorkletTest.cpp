@@ -4,6 +4,7 @@
 
 #include "modules/csspaint/PaintWorklet.h"
 
+#include <memory>
 #include "bindings/core/v8/ScriptSourceCode.h"
 #include "bindings/core/v8/V8GCController.h"
 #include "bindings/core/v8/WorkerOrWorkletScriptController.h"
@@ -11,37 +12,105 @@
 #include "core/testing/DummyPageHolder.h"
 #include "modules/csspaint/CSSPaintDefinition.h"
 #include "modules/csspaint/PaintWorkletGlobalScope.h"
-#include "modules/csspaint/WindowPaintWorklet.h"
+#include "modules/csspaint/PaintWorkletGlobalScopeProxy.h"
+#include "platform/wtf/CryptographicallyRandomNumber.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include <memory>
 
 namespace blink {
+class TestPaintWorklet : public PaintWorklet {
+ public:
+  explicit TestPaintWorklet(LocalFrame* frame) : PaintWorklet(frame) {}
 
-class PaintWorkletTest : public testing::Test {
+  void SetPaintsToSwitch(size_t num) { paints_to_switch_ = num; }
+
+  int GetPaintsBeforeSwitching() override { return paints_to_switch_; }
+
+  // We always switch to another global scope so that we can tell how often it
+  // was switched in the test.
+  size_t SelectNewGlobalScope() override {
+    return (GetActiveGlobalScopeForTesting() + 1) %
+           PaintWorklet::kNumGlobalScopes;
+  }
+
+  size_t GetActiveGlobalScope() { return GetActiveGlobalScopeForTesting(); }
+
+ private:
+  size_t paints_to_switch_;
+};
+
+class PaintWorkletTest : public ::testing::Test {
  public:
   PaintWorkletTest() : page_(DummyPageHolder::Create()) {}
 
-  PaintWorklet* GetPaintWorklet() {
-    return WindowPaintWorklet::From(*page_->GetFrame().DomWindow())
-        .paintWorklet();
+  void SetUp() override {
+    test_paint_worklet_ =
+        new TestPaintWorklet(page_->GetDocument().domWindow()->GetFrame());
+    proxy_ = test_paint_worklet_->CreateGlobalScope();
   }
 
- protected:
+  TestPaintWorklet* GetTestPaintWorklet() { return test_paint_worklet_.Get(); }
+
+  size_t SelectGlobalScope(TestPaintWorklet* paint_worklet) {
+    return paint_worklet->SelectGlobalScope();
+  }
+
+  PaintWorkletGlobalScopeProxy* GetProxy() {
+    return PaintWorkletGlobalScopeProxy::From(proxy_.Get());
+  }
+
+  // Helper function used in GlobalScopeSelection test.
+  void ExpectSwitchGlobalScope(bool expect_switch_within_frame,
+                               size_t num_paint_calls,
+                               size_t paint_cnt_to_switch,
+                               size_t expected_num_paints_before_switch,
+                               TestPaintWorklet* paint_worklet_to_test) {
+    paint_worklet_to_test->GetFrame()->View()->UpdateAllLifecyclePhases();
+    paint_worklet_to_test->SetPaintsToSwitch(paint_cnt_to_switch);
+    size_t previously_selected_global_scope =
+        paint_worklet_to_test->GetActiveGlobalScope();
+    size_t global_scope_switch_count = 0u;
+
+    // How many paint calls are there before we switch to another global scope.
+    // Because the first paint call in each frame doesn't count as switching,
+    // a result of 0 means there is not switching in that frame.
+    size_t num_paints_before_switch = 0u;
+    for (size_t j = 0; j < num_paint_calls; j++) {
+      size_t selected_global_scope = SelectGlobalScope(paint_worklet_to_test);
+      if (j == 0) {
+        EXPECT_NE(selected_global_scope, previously_selected_global_scope);
+      } else if (selected_global_scope != previously_selected_global_scope) {
+        num_paints_before_switch = j + 1;
+        global_scope_switch_count++;
+      }
+      previously_selected_global_scope = selected_global_scope;
+    }
+    EXPECT_LT(global_scope_switch_count, 2u);
+    EXPECT_EQ(num_paints_before_switch, expected_num_paints_before_switch);
+  }
+
+  void Terminate() {
+    page_.reset();
+    proxy_->TerminateWorkletGlobalScope();
+    proxy_ = nullptr;
+  }
+
+ private:
   std::unique_ptr<DummyPageHolder> page_;
+  Persistent<WorkletGlobalScopeProxy> proxy_;
+  Persistent<TestPaintWorklet> test_paint_worklet_;
 };
 
 TEST_F(PaintWorkletTest, GarbageCollectionOfCSSPaintDefinition) {
-  PaintWorkletGlobalScope* global_scope =
-      GetPaintWorklet()->GetWorkletGlobalScopeProxy();
+  PaintWorkletGlobalScope* global_scope = GetProxy()->global_scope();
   global_scope->ScriptController()->Evaluate(
       ScriptSourceCode("registerPaint('foo', class { paint() { } });"));
 
   CSSPaintDefinition* definition = global_scope->FindDefinition("foo");
-  ASSERT(definition);
+  DCHECK(definition);
 
   v8::Isolate* isolate =
       global_scope->ScriptController()->GetScriptState()->GetIsolate();
-  ASSERT(isolate);
+  DCHECK(isolate);
 
   // Set our ScopedPersistent to the paint function, and make weak.
   ScopedPersistent<v8::Function> handle;
@@ -50,21 +119,37 @@ TEST_F(PaintWorkletTest, GarbageCollectionOfCSSPaintDefinition) {
     handle.Set(isolate, definition->PaintFunctionForTesting(isolate));
     handle.SetPhantom();
   }
-  ASSERT(!handle.IsEmpty());
-  ASSERT(handle.IsWeak());
+  DCHECK(!handle.IsEmpty());
+  DCHECK(handle.IsWeak());
 
   // Run a GC, persistent shouldn't have been collected yet.
   ThreadState::Current()->CollectAllGarbage();
   V8GCController::CollectAllGarbageForTesting(isolate);
-  ASSERT(!handle.IsEmpty());
+  DCHECK(!handle.IsEmpty());
 
   // Delete the page & associated objects.
-  page_.reset();
+  Terminate();
 
   // Run a GC, the persistent should have been collected.
   ThreadState::Current()->CollectAllGarbage();
   V8GCController::CollectAllGarbageForTesting(isolate);
-  ASSERT(handle.IsEmpty());
+  DCHECK(handle.IsEmpty());
+}
+
+// In this test, we set a list of "paints_to_switch" numbers, and in each frame,
+// we switch to a new global scope when the number of paint calls is >= the
+// corresponding number.
+TEST_F(PaintWorkletTest, GlobalScopeSelection) {
+  TestPaintWorklet* paint_worklet_to_test = GetTestPaintWorklet();
+
+  ExpectSwitchGlobalScope(false, 5, 1, 0, paint_worklet_to_test);
+  ExpectSwitchGlobalScope(true, 15, 10, 10, paint_worklet_to_test);
+  // In the last one where |paints_to_switch| is 20, there is no switching after
+  // the first paint call.
+  ExpectSwitchGlobalScope(false, 10, 20, 0, paint_worklet_to_test);
+
+  // Delete the page & associated objects.
+  Terminate();
 }
 
 }  // namespace blink

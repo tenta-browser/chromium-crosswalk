@@ -7,14 +7,16 @@
 
 #include <stdint.h>
 
-#include <deque>
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
+#include "base/strings/string16.h"
 #include "content/shell/test_runner/layout_test_runtime_flags.h"
 #include "content/shell/test_runner/test_runner_export.h"
 #include "content/shell/test_runner/web_test_runner.h"
@@ -25,10 +27,6 @@
 
 class GURL;
 class SkBitmap;
-
-namespace base {
-class NullableString16;
-}
 
 namespace blink {
 class WebContentSettingsClient;
@@ -49,7 +47,6 @@ class MockContentSettingsClient;
 class MockCredentialManagerClient;
 class MockScreenOrientationClient;
 class MockWebSpeechRecognizer;
-class MockWebUserMediaClient;
 class SpellCheckClient;
 class TestInterfaces;
 class TestRunnerForSpecificView;
@@ -93,8 +90,8 @@ class TestRunner : public WebTestRunner {
   bool IsRecursiveLayoutDumpRequested() override;
   std::string DumpLayout(blink::WebLocalFrame* frame) override;
   void DumpPixelsAsync(
-      blink::WebView* web_view,
-      const base::Callback<void(const SkBitmap&)>& callback) override;
+      blink::WebLocalFrame* frame,
+      base::OnceCallback<void(const SkBitmap&)> callback) override;
   void ReplicateLayoutTestRuntimeFlagsChanges(
       const base::DictionaryValue& changed_values) override;
   bool HasCustomTextDump(std::string* custom_text_dump) const override;
@@ -105,12 +102,9 @@ class TestRunner : public WebTestRunner {
   void SetFocus(blink::WebView* web_view, bool focus) override;
 
   // Methods used by WebViewTestClient and WebFrameTestClient.
-  void OnNavigationBegin(blink::WebFrame* frame);
-  void OnNavigationEnd() { will_navigate_ = false; }
   std::string GetAcceptLanguages() const;
   bool shouldStayOnPageAfterHandlingBeforeUnload() const;
   MockScreenOrientationClient* getMockScreenOrientationClient();
-  MockWebUserMediaClient* getMockWebUserMediaClient();
   MockWebSpeechRecognizer* getMockWebSpeechRecognizer();
   bool isPrinting() const;
   bool shouldDumpAsCustomText() const;
@@ -135,7 +129,6 @@ class TestRunner : public WebTestRunner {
   bool canOpenWindows() const;
   bool shouldDumpResourceLoadCallbacks() const;
   bool shouldDumpResourceResponseMIMETypes() const;
-  bool shouldDumpStatusCallbacks() const;
   bool shouldDumpSpellCheckCallbacks() const;
   bool shouldWaitUntilExternalURLLoad() const;
   const std::set<std::string>* httpHeadersToClear() const;
@@ -211,7 +204,7 @@ class TestRunner : public WebTestRunner {
    private:
     void ProcessWork();
 
-    std::deque<WorkItem*> queue_;
+    base::circular_deque<WorkItem*> queue_;
     bool frozen_;
     TestRunner* controller_;
 
@@ -284,8 +277,6 @@ class TestRunner : public WebTestRunner {
                             int max_height);
   bool DisableAutoResizeMode(int new_width, int new_height);
 
-  void SetMockDeviceLight(double value);
-  void ResetDeviceLight();
   // Device Motion / Device Orientation related functions
   void SetMockDeviceMotion(bool has_acceleration_x,
                            double acceleration_x,
@@ -429,11 +420,6 @@ class TestRunner : public WebTestRunner {
   void SetDisallowedSubresourcePathSuffixes(
       const std::vector<std::string>& suffixes);
 
-  // This function sets a flag that tells the test_shell to dump all calls
-  // to window.status().
-  // It takes no arguments, and ignores any that may be present.
-  void DumpWindowStatusChanges();
-
   // This function sets a flag that tells the test_shell to dump all
   // the lines of descriptive text about spellcheck execution.
   void DumpSpellCheckCallbacks();
@@ -540,9 +526,10 @@ class TestRunner : public WebTestRunner {
   void SetMIDIAccessorResult(midi::mojom::Result result);
 
   // Simulates a click on a Web Notification.
-  void SimulateWebNotificationClick(const std::string& title,
-                                    int action_index,
-                                    const base::NullableString16& reply);
+  void SimulateWebNotificationClick(
+      const std::string& title,
+      const base::Optional<int>& action_index,
+      const base::Optional<base::string16>& reply);
 
   // Simulates closing a Web Notification.
   void SimulateWebNotificationClose(const std::string& title, bool by_user);
@@ -560,6 +547,7 @@ class TestRunner : public WebTestRunner {
                                         const std::string& avatar,
                                         const std::string& password);
   void ClearMockCredentialManagerResponse();
+
   void SetMockCredentialManagerError(const std::string& error);
 
   // Takes care of notifying the delegate after a change to layout test runtime
@@ -634,16 +622,9 @@ class TestRunner : public WebTestRunner {
 
   bool use_mock_theme_;
 
-  // This is true in the period between the start of a navigation and when the
-  // provisional load for that navigation is started. Note that when
-  // browser-side navigation is enabled there is an arbitrary gap between these
-  // two events.
-  bool will_navigate_;
-
   std::unique_ptr<MockCredentialManagerClient> credential_manager_client_;
   std::unique_ptr<MockScreenOrientationClient> mock_screen_orientation_client_;
   std::unique_ptr<MockWebSpeechRecognizer> speech_recognizer_;
-  std::unique_ptr<MockWebUserMediaClient> user_media_client_;
   std::unique_ptr<SpellCheckClient> spellcheck_;
 
   // Number of currently active color choosers.

@@ -6,7 +6,9 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <set>
+#include <utility>
 #include <vector>
 
 #include "base/files/file_path.h"
@@ -19,9 +21,10 @@
 #include "chrome/browser/chromeos/extensions/file_manager/private_api_util.h"
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
 #include "chrome/browser/chromeos/file_manager/volume_manager.h"
-#include "chrome/browser/chromeos/file_manager/zip_file_creator.h"
 #include "chrome/browser/chromeos/file_system_provider/mount_path_util.h"
 #include "chrome/browser/chromeos/file_system_provider/service.h"
+#include "chrome/browser/chromeos/fileapi/recent_file.h"
+#include "chrome/browser/chromeos/fileapi/recent_model.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/devtools/devtools_window.h"
@@ -34,10 +37,10 @@
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
-#include "chrome/common/extensions/api/file_manager_private.h"
 #include "chrome/common/extensions/api/file_manager_private_internal.h"
 #include "chrome/common/extensions/api/manifest_types.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/services/file_util/public/cpp/zip_file_creator.h"
 #include "chromeos/settings/timezone_settings.h"
 #include "components/drive/drive_pref_names.h"
 #include "components/drive/event_logger.h"
@@ -49,10 +52,12 @@
 #include "components/zoom/page_zoom.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/page_zoom.h"
+#include "content/public/common/service_manager_connection.h"
 #include "extensions/browser/api/file_handlers/mime_util.h"
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "google_apis/drive/auth_service.h"
+#include "storage/common/fileapi/file_system_types.h"
 #include "ui/base/webui/web_ui_util.h"
 #include "url/gurl.h"
 
@@ -94,7 +99,7 @@ std::vector<ProfileInfo> GetLoggedInProfileInfoList() {
     ProfileInfo profile_info;
     profile_info.profile_id =
         multi_user_util::GetAccountIdFromProfile(profile).GetUserEmail();
-    profile_info.display_name = UTF16ToUTF8(user->GetDisplayName());
+    profile_info.display_name = base::UTF16ToUTF8(user->GetDisplayName());
     // TODO(hirono): Remove the property from the profile_info.
     profile_info.is_current_profile = true;
 
@@ -151,6 +156,25 @@ bool ConvertURLsToProvidedInfo(
   return true;
 }
 
+bool IsAllowedSource(storage::FileSystemType type,
+                     api::file_manager_private::SourceRestriction restriction) {
+  switch (restriction) {
+    case api::file_manager_private::SOURCE_RESTRICTION_NONE:
+      NOTREACHED();
+      return false;
+
+    case api::file_manager_private::SOURCE_RESTRICTION_ANY_SOURCE:
+      return true;
+
+    case api::file_manager_private::SOURCE_RESTRICTION_NATIVE_SOURCE:
+      return type == storage::kFileSystemTypeNativeLocal;
+
+    case api::file_manager_private::SOURCE_RESTRICTION_NATIVE_OR_DRIVE_SOURCE:
+      return type == storage::kFileSystemTypeNativeLocal ||
+             type == storage::kFileSystemTypeDrive;
+  }
+}
+
 }  // namespace
 
 ExtensionFunction::ResponseAction
@@ -188,8 +212,8 @@ FileManagerPrivateGetPreferencesFunction::Run() {
     result.allow_redeem_offers = true;
   }
   result.timezone =
-      UTF16ToUTF8(chromeos::system::TimezoneSettings::GetInstance()
-                      ->GetCurrentTimezoneID());
+      base::UTF16ToUTF8(chromeos::system::TimezoneSettings::GetInstance()
+                            ->GetCurrentTimezoneID());
 
   drive::EventLogger* logger = file_manager::util::GetLogger(profile);
   if (logger)
@@ -275,11 +299,12 @@ bool FileManagerPrivateInternalZipSelectionFunction::RunAsync() {
     src_relative_paths.push_back(relative_path);
   }
 
-  (new file_manager::ZipFileCreator(
+  (new ZipFileCreator(
        base::Bind(&FileManagerPrivateInternalZipSelectionFunction::OnZipDone,
                   this),
        src_dir, src_relative_paths, dest_file))
-      ->Start();
+      ->Start(
+          content::ServiceManagerConnection::GetForProcess()->GetConnector());
   return true;
 }
 
@@ -383,8 +408,8 @@ ExtensionFunction::ResponseAction FileManagerPrivateGetProfilesFunction::Run() {
 
   // Obtains the display profile ID.
   AppWindow* const app_window = GetCurrentAppWindow(this);
-  chrome::MultiUserWindowManager* const window_manager =
-      chrome::MultiUserWindowManager::GetInstance();
+  MultiUserWindowManager* const window_manager =
+      MultiUserWindowManager::GetInstance();
   const AccountId current_profile_id = multi_user_util::GetAccountIdFromProfile(
       Profile::FromBrowserContext(browser_context()));
   const AccountId display_profile_id =
@@ -536,9 +561,11 @@ FileManagerPrivateAddProvidedFileSystemFunction::Run() {
 
   using chromeos::file_system_provider::Service;
   using chromeos::file_system_provider::ProvidingExtensionInfo;
+  using chromeos::file_system_provider::ProviderId;
   Service* const service = Service::Get(chrome_details_.GetProfile());
 
-  if (!service->RequestMount(params->extension_id))
+  if (!service->RequestMount(
+          ProviderId::CreateFromExtensionId(params->extension_id)))
     return RespondNow(Error("Failed to request a new mount."));
 
   return RespondNow(NoArguments());
@@ -574,7 +601,7 @@ FileManagerPrivateConfigureVolumeFunction::Run() {
 
       using chromeos::file_system_provider::ProvidedFileSystemInterface;
       ProvidedFileSystemInterface* const file_system =
-          service->GetProvidedFileSystem(volume->extension_id(),
+          service->GetProvidedFileSystem(volume->provider_id(),
                                          volume->file_system_id());
       if (file_system)
         file_system->Configure(base::Bind(
@@ -696,6 +723,88 @@ void FileManagerPrivateInternalExecuteCustomActionFunction::OnCompleted(
   }
 
   Respond(NoArguments());
+}
+
+FileManagerPrivateInternalGetRecentFilesFunction::
+    FileManagerPrivateInternalGetRecentFilesFunction()
+    : chrome_details_(this) {}
+
+ExtensionFunction::ResponseAction
+FileManagerPrivateInternalGetRecentFilesFunction::Run() {
+  using extensions::api::file_manager_private_internal::GetRecentFiles::Params;
+  const std::unique_ptr<Params> params(Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+
+  const scoped_refptr<storage::FileSystemContext> file_system_context =
+      file_manager::util::GetFileSystemContextForRenderFrameHost(
+          chrome_details_.GetProfile(), render_frame_host());
+
+  chromeos::RecentModel* model =
+      chromeos::RecentModel::GetForProfile(chrome_details_.GetProfile());
+
+  model->GetRecentFiles(
+      file_system_context.get(),
+      Extension::GetBaseURLFromExtensionId(extension_id()),
+      base::BindOnce(
+          &FileManagerPrivateInternalGetRecentFilesFunction::OnGetRecentFiles,
+          this, params->restriction));
+  return RespondLater();
+}
+
+void FileManagerPrivateInternalGetRecentFilesFunction::OnGetRecentFiles(
+    api::file_manager_private::SourceRestriction restriction,
+    const std::vector<chromeos::RecentFile>& files) {
+  file_manager::util::FileDefinitionList file_definition_list;
+  for (const auto& file : files) {
+    // Filter out files from non-allowed sources.
+    // We do this filtering here rather than in RecentModel so that the set of
+    // files returned with some restriction is a subset of what would be
+    // returned without restriction. Anyway, the maximum number of files
+    // returned from RecentModel is large enough.
+    if (!IsAllowedSource(file.url().type(), restriction))
+      continue;
+
+    file_manager::util::FileDefinition file_definition;
+    const bool result =
+        file_manager::util::ConvertAbsoluteFilePathToRelativeFileSystemPath(
+            chrome_details_.GetProfile(), extension_id(), file.url().path(),
+            &file_definition.virtual_path);
+    if (!result)
+      continue;
+
+    // Recent file system only lists regular files, not directories.
+    file_definition.is_directory = false;
+    file_definition_list.emplace_back(std::move(file_definition));
+  }
+
+  file_manager::util::ConvertFileDefinitionListToEntryDefinitionList(
+      chrome_details_.GetProfile(), extension_id(),
+      file_definition_list,  // Safe, since copied internally.
+      base::Bind(&FileManagerPrivateInternalGetRecentFilesFunction::
+                     OnConvertFileDefinitionListToEntryDefinitionList,
+                 this));
+}
+
+void FileManagerPrivateInternalGetRecentFilesFunction::
+    OnConvertFileDefinitionListToEntryDefinitionList(
+        std::unique_ptr<file_manager::util::EntryDefinitionList>
+            entry_definition_list) {
+  DCHECK(entry_definition_list);
+
+  auto entries = base::MakeUnique<base::ListValue>();
+
+  for (const auto& definition : *entry_definition_list) {
+    if (definition.error != base::File::FILE_OK)
+      continue;
+    auto entry = base::MakeUnique<base::DictionaryValue>();
+    entry->SetString("fileSystemName", definition.file_system_name);
+    entry->SetString("fileSystemRoot", definition.file_system_root_url);
+    entry->SetString("fileFullPath", "/" + definition.full_path.AsUTF8Unsafe());
+    entry->SetBoolean("fileIsDirectory", definition.is_directory);
+    entries->Append(std::move(entry));
+  }
+
+  Respond(OneArgument(std::move(entries)));
 }
 
 }  // namespace extensions

@@ -4,8 +4,6 @@
 
 #include "ui/views/widget/desktop_aura/x11_desktop_window_move_client.h"
 
-#include <X11/Xlib.h>
-
 #include "base/debug/stack_trace.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -14,6 +12,7 @@
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/events/event.h"
+#include "ui/gfx/x/x11.h"
 
 namespace views {
 
@@ -41,18 +40,18 @@ void X11DesktopWindowMoveClient::OnMoveLoopEnded() {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// DesktopWindowTreeHostLinux, aura::client::WindowMoveClient implementation:
+// DesktopWindowTreeHostLinux, wm::WindowMoveClient implementation:
 
-aura::client::WindowMoveResult X11DesktopWindowMoveClient::RunMoveLoop(
+wm::WindowMoveResult X11DesktopWindowMoveClient::RunMoveLoop(
     aura::Window* source,
     const gfx::Vector2d& drag_offset,
-    aura::client::WindowMoveSource move_source) {
+    wm::WindowMoveSource move_source) {
   window_offset_ = drag_offset;
   host_ = source->GetHost();
 
   source->SetCapture();
   bool success = move_loop_.RunMoveLoop(source, host_->last_cursor());
-  return success ? aura::client::MOVE_SUCCESSFUL : aura::client::MOVE_CANCELED;
+  return success ? wm::MOVE_SUCCESSFUL : wm::MOVE_CANCELED;
 }
 
 void X11DesktopWindowMoveClient::EndMoveLoop() {

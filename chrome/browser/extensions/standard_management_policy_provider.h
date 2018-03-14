@@ -33,13 +33,15 @@ class StandardManagementPolicyProvider : public ManagementPolicy::Provider {
   bool MustRemainEnabled(const Extension* extension,
                          base::string16* error) const override;
   bool MustRemainDisabled(const Extension* extension,
-                          Extension::DisableReason* reason,
+                          disable_reason::DisableReason* reason,
                           base::string16* error) const override;
   bool MustRemainInstalled(const Extension* extension,
                            base::string16* error) const override;
 
  private:
   const ExtensionManagement* settings_;
+  bool ReturnLoadError(const extensions::Extension* extension,
+                       base::string16* error) const;
 };
 
 }  // namespace extensions

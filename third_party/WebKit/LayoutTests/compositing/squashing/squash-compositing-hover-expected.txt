@@ -7,31 +7,50 @@ Case 1, original layer tree:
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow DIV class='composited'",
-      "position": [8, 8],
-      "transformOrigin": [392, 0],
-      "contentsOpaque": true
+      "contentsOpaque": true,
+      "drawsContent": false,
+      "transform": 1
     },
     {
       "name": "Squashing Containment Layer",
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='composited box behind'",
-      "position": [100, 100],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#0000FF"
+      "backgroundColor": "#0000FF",
+      "transform": 2
     },
     {
       "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV class='box middle')",
       "position": [180, 180],
-      "bounds": [260, 260],
-      "drawsContent": true
+      "bounds": [260, 260]
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [8, 8, 0, 1]
+      ]
+    },
+    {
+      "id": 2,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [100, 100, 0, 1]
+      ],
+      "flattenInheritedTransform": false
     }
   ]
 }
@@ -42,39 +61,66 @@ Case 2: hovering over the "middle" element (causes that div to become its own co
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow DIV class='composited'",
-      "position": [8, 8],
-      "transformOrigin": [392, 0],
-      "contentsOpaque": true
+      "contentsOpaque": true,
+      "drawsContent": false,
+      "transform": 1
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='composited box behind'",
-      "position": [100, 100],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#0000FF"
+      "backgroundColor": "#0000FF",
+      "transform": 2
     },
     {
       "name": "Squashing Containment Layer",
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='box middle'",
-      "position": [180, 180],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#008000"
+      "backgroundColor": "#008000",
+      "transform": 3
     },
     {
       "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV class='box middle2')",
       "position": [260, 260],
-      "bounds": [180, 180],
-      "drawsContent": true
+      "bounds": [180, 180]
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [8, 8, 0, 1]
+      ]
+    },
+    {
+      "id": 2,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [100, 100, 0, 1]
+      ]
+    },
+    {
+      "id": 3,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [180, 180, 0, 1]
+      ],
+      "flattenInheritedTransform": false
     }
   ]
 }
@@ -85,49 +131,76 @@ Case 3: hovering over the "middle2" element (causes that div to become its own c
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow DIV class='composited'",
-      "position": [8, 8],
-      "transformOrigin": [392, 0],
-      "contentsOpaque": true
+      "contentsOpaque": true,
+      "drawsContent": false,
+      "transform": 1
     },
     {
       "name": "Squashing Containment Layer",
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='composited box behind'",
-      "position": [100, 100],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#0000FF"
+      "backgroundColor": "#0000FF",
+      "transform": 2
     },
     {
       "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV class='box middle')",
       "position": [180, 180],
-      "bounds": [100, 100],
-      "drawsContent": true
+      "bounds": [100, 100]
     },
     {
       "name": "Squashing Containment Layer",
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='box middle2'",
-      "position": [260, 260],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#008000"
+      "backgroundColor": "#008000",
+      "transform": 3
     },
     {
       "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV class='box top')",
       "position": [340, 340],
-      "bounds": [100, 100],
-      "drawsContent": true
+      "bounds": [100, 100]
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [8, 8, 0, 1]
+      ]
+    },
+    {
+      "id": 2,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [100, 100, 0, 1]
+      ],
+      "flattenInheritedTransform": false
+    },
+    {
+      "id": 3,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [260, 260, 0, 1]
+      ],
+      "flattenInheritedTransform": false
     }
   ]
 }
@@ -138,39 +211,66 @@ Case 4: hovering over the "top" element (causes that div to become its own compo
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow DIV class='composited'",
-      "position": [8, 8],
-      "transformOrigin": [392, 0],
-      "contentsOpaque": true
+      "contentsOpaque": true,
+      "drawsContent": false,
+      "transform": 1
     },
     {
       "name": "Squashing Containment Layer",
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='composited box behind'",
-      "position": [100, 100],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#0000FF"
+      "backgroundColor": "#0000FF",
+      "transform": 2
     },
     {
       "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV class='box middle')",
       "position": [180, 180],
-      "bounds": [180, 180],
-      "drawsContent": true
+      "bounds": [180, 180]
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='box top'",
-      "position": [340, 340],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#008000"
+      "backgroundColor": "#008000",
+      "transform": 3
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [8, 8, 0, 1]
+      ]
+    },
+    {
+      "id": 2,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [100, 100, 0, 1]
+      ],
+      "flattenInheritedTransform": false
+    },
+    {
+      "id": 3,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [340, 340, 0, 1]
+      ]
     }
   ]
 }
@@ -181,31 +281,50 @@ Case 5: back to situation in case 1
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow DIV class='composited'",
-      "position": [8, 8],
-      "transformOrigin": [392, 0],
-      "contentsOpaque": true
+      "contentsOpaque": true,
+      "drawsContent": false,
+      "transform": 1
     },
     {
       "name": "Squashing Containment Layer",
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='composited box behind'",
-      "position": [100, 100],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#0000FF"
+      "backgroundColor": "#0000FF",
+      "transform": 2
     },
     {
       "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV class='box middle')",
       "position": [180, 180],
-      "bounds": [260, 260],
-      "drawsContent": true
+      "bounds": [260, 260]
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [8, 8, 0, 1]
+      ]
+    },
+    {
+      "id": 2,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [100, 100, 0, 1]
+      ],
+      "flattenInheritedTransform": false
     }
   ]
 }

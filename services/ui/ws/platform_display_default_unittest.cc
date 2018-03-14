@@ -4,15 +4,17 @@
 
 #include "services/ui/ws/platform_display_default.h"
 
+#include "base/message_loop/message_loop.h"
 #include "base/time/time.h"
+#include "services/ui/common/image_cursors_set.h"
+#include "services/ui/ws/threaded_image_cursors.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/base/cursor/image_cursors.h"
 #include "ui/display/types/native_display_delegate.h"
 #include "ui/events/event.h"
 #include "ui/events/event_sink.h"
+#include "ui/events/system_input_injector.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/ozone/public/ozone_platform.h"
-#include "ui/ozone/public/system_input_injector.h"
 #include "ui/platform_window/platform_window.h"
 #include "ui/platform_window/stub/stub_window.h"
 
@@ -56,6 +58,7 @@ class TestPlatformDisplayDelegate : public PlatformDisplayDelegate {
   void OnAcceleratedWidgetAvailable() override {}
   void OnNativeCaptureLost() override {}
   OzonePlatform* GetOzonePlatform() override { return ozone_platform_; }
+  bool IsHostingViz() const override { return true; }
 
  private:
   TestEventSink* event_sink_;
@@ -85,7 +88,7 @@ class TestOzonePlatform : public OzonePlatform {
   std::unique_ptr<PlatformWindow> CreatePlatformWindow(
       PlatformWindowDelegate* delegate,
       const gfx::Rect& bounds) override {
-    return base::MakeUnique<StubWindow>(
+    return std::make_unique<StubWindow>(
         delegate, false /* use_default_accelerated_widget */);
   }
   std::unique_ptr<display::NativeDisplayDelegate> CreateNativeDisplayDelegate()
@@ -99,7 +102,13 @@ class TestOzonePlatform : public OzonePlatform {
   DISALLOW_COPY_AND_ASSIGN(TestOzonePlatform);
 };
 
-TEST(PlatformDisplayDefaultTest, EventDispatch) {
+// Test fails in part because services_unittests appears to have its own ozone
+// platform that it initializes. For some reason, this only started failing
+// locally and on the trybots on 06/13/2017, while passing when run on the CQ
+// and the builders. crbug.com/732987
+TEST(PlatformDisplayDefaultTest, DISABLED_EventDispatch) {
+  // ThreadTaskRunnerHandle needed required by ThreadedImageCursors.
+  base::MessageLoop loop;
   // Setup ozone so the display can be initialized.
   TestOzonePlatform platform;
 
@@ -108,8 +117,14 @@ TEST(PlatformDisplayDefaultTest, EventDispatch) {
   metrics.bounds_in_pixels = gfx::Rect(1024, 768);
   metrics.device_scale_factor = 1.f;
   metrics.ui_scale_factor = 1.f;
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+      base::ThreadTaskRunnerHandle::Get();
+  ImageCursorsSet image_cursors_set;
+  std::unique_ptr<ThreadedImageCursors> threaded_image_cursors =
+      std::make_unique<ThreadedImageCursors>(task_runner,
+                                             image_cursors_set.GetWeakPtr());
   PlatformDisplayDefault display(nullptr, metrics,
-                                 std::unique_ptr<ImageCursors>());
+                                 std::move(threaded_image_cursors));
 
   // Initialize the display with a test EventSink so we can sense events.
   TestEventSink event_sink;

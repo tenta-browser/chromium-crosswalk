@@ -16,22 +16,31 @@
 #include "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/infobars/infobar.h"
+#include "ios/chrome/browser/infobars/infobar_manager_impl.h"
 #include "ios/chrome/browser/signin/authentication_service.h"
 #include "ios/chrome/browser/signin/authentication_service_factory.h"
 #include "ios/chrome/browser/tabs/tab.h"
-#import "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
 #import "ios/chrome/browser/ui/commands/show_signin_command.h"
+#import "ios/chrome/browser/ui/signin_interaction/public/signin_presenter.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 // static
 bool ReSignInInfoBarDelegate::Create(ios::ChromeBrowserState* browser_state,
-                                     Tab* tab) {
-  infobars::InfoBarManager* infobar_manager = [tab infoBarManager];
+                                     Tab* tab,
+                                     id<SigninPresenter> presenter) {
+  DCHECK(tab.webState);
+  infobars::InfoBarManager* infobar_manager =
+      InfoBarManagerImpl::FromWebState(tab.webState);
   DCHECK(infobar_manager);
 
   std::unique_ptr<infobars::InfoBar> infobar =
-      ReSignInInfoBarDelegate::CreateInfoBar(infobar_manager, browser_state);
+      ReSignInInfoBarDelegate::CreateInfoBar(infobar_manager, browser_state,
+                                             presenter);
   if (!infobar)
     return false;
   return !!infobar_manager->AddInfoBar(std::move(infobar));
@@ -40,10 +49,11 @@ bool ReSignInInfoBarDelegate::Create(ios::ChromeBrowserState* browser_state,
 // static
 std::unique_ptr<infobars::InfoBar> ReSignInInfoBarDelegate::CreateInfoBar(
     infobars::InfoBarManager* infobar_manager,
-    ios::ChromeBrowserState* browser_state) {
+    ios::ChromeBrowserState* browser_state,
+    id<SigninPresenter> presenter) {
   DCHECK(infobar_manager);
   std::unique_ptr<ReSignInInfoBarDelegate> delegate =
-      ReSignInInfoBarDelegate::CreateInfoBarDelegate(browser_state);
+      ReSignInInfoBarDelegate::CreateInfoBarDelegate(browser_state, presenter);
   if (!delegate)
     return nullptr;
   return infobar_manager->CreateConfirmInfoBar(std::move(delegate));
@@ -52,7 +62,8 @@ std::unique_ptr<infobars::InfoBar> ReSignInInfoBarDelegate::CreateInfoBar(
 // static
 std::unique_ptr<ReSignInInfoBarDelegate>
 ReSignInInfoBarDelegate::CreateInfoBarDelegate(
-    ios::ChromeBrowserState* browser_state) {
+    ios::ChromeBrowserState* browser_state,
+    id<SigninPresenter> presenter) {
   DCHECK(browser_state);
   // Do not ask user to sign in if current profile is incognito.
   if (browser_state->IsOffTheRecord())
@@ -71,13 +82,15 @@ ReSignInInfoBarDelegate::CreateInfoBarDelegate(
       base::UserMetricsAction("Signin_Impression_FromReSigninInfobar"));
   // User needs to be reminded to sign in again. Creates a new infobar delegate
   // and returns it.
-  return base::MakeUnique<ReSignInInfoBarDelegate>(browser_state);
+  return base::MakeUnique<ReSignInInfoBarDelegate>(browser_state, presenter);
 }
 
 ReSignInInfoBarDelegate::ReSignInInfoBarDelegate(
-    ios::ChromeBrowserState* browser_state)
+    ios::ChromeBrowserState* browser_state,
+    id<SigninPresenter> presenter)
     : browser_state_(browser_state),
-      icon_([UIImage imageNamed:@"infobar_warning"]) {
+      icon_([UIImage imageNamed:@"infobar_warning"]),
+      presenter_(presenter) {
   DCHECK(browser_state_);
   DCHECK(!browser_state_->IsOffTheRecord());
 }
@@ -112,11 +125,11 @@ bool ReSignInInfoBarDelegate::Accept() {
       base::UserMetricsAction("Signin_Signin_FromReSigninInfobar"));
   UIView* infobarView = static_cast<InfoBarIOS*>(infobar())->view();
   DCHECK(infobarView);
-  base::scoped_nsobject<ShowSigninCommand> command([[ShowSigninCommand alloc]
+  ShowSigninCommand* command = [[ShowSigninCommand alloc]
       initWithOperation:AUTHENTICATION_OPERATION_REAUTHENTICATE
-      signInAccessPoint:signin_metrics::AccessPoint::
-                            ACCESS_POINT_RESIGNIN_INFOBAR]);
-  [infobarView chromeExecuteCommand:command];
+            accessPoint:signin_metrics::AccessPoint::
+                            ACCESS_POINT_RESIGNIN_INFOBAR];
+  [presenter_ showSignin:command];
 
   // Stop displaying the infobar once user interacted with it.
   AuthenticationServiceFactory::GetForBrowserState(browser_state_)

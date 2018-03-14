@@ -19,10 +19,10 @@
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/ui/passwords/manage_passwords_view_utils.h"
 #include "chrome/browser/ui/passwords/passwords_model_delegate.h"
-#include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/browser_sync/profile_sync_service.h"
 #include "components/password_manager/core/browser/password_bubble_experiment.h"
+#include "components/password_manager/core/browser/password_form_metrics_recorder.h"
 #include "components/password_manager/core/browser/password_manager_constants.h"
 #include "components/password_manager/core/browser/password_store.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
@@ -111,11 +111,16 @@ class ManagePasswordsBubbleModel::InteractionKeeper {
   }
 
  private:
+  static password_manager::metrics_util::UIDismissalReason
+  ToNearestUIDismissalReason(
+      password_manager::metrics_util::UpdatePasswordSubmissionEvent
+          update_password_submission_event);
+
   // The way the bubble appeared.
   const password_manager::metrics_util::UIDisplayDisposition
   display_disposition_;
 
-  // Dismissal reason for a bubble.
+  // Dismissal reason for a save bubble. Not filled for update bubbles.
   password_manager::metrics_util::UIDismissalReason dismissal_reason_;
 
   // Dismissal reason for the update bubble.
@@ -217,13 +222,55 @@ void ManagePasswordsBubbleModel::InteractionKeeper::ReportInteractions(
     if (update_password_submission_event_ != metrics_util::NO_UPDATE_SUBMISSION)
       LogUpdatePasswordSubmissionEvent(update_password_submission_event_);
   }
+
+  // Record UKM statistics on dismissal reason.
+  if (model->metrics_recorder_) {
+    model->metrics_recorder_->RecordUIDismissalReason(
+        model->state() != password_manager::ui::PENDING_PASSWORD_UPDATE_STATE
+            ? dismissal_reason_
+            : ToNearestUIDismissalReason(update_password_submission_event_));
+  }
+}
+
+// static
+password_manager::metrics_util::UIDismissalReason
+ManagePasswordsBubbleModel::InteractionKeeper::ToNearestUIDismissalReason(
+    password_manager::metrics_util::UpdatePasswordSubmissionEvent
+        update_password_submission_event) {
+  switch (update_password_submission_event) {
+    case password_manager::metrics_util::NO_ACCOUNTS_CLICKED_UPDATE:
+    case password_manager::metrics_util::ONE_ACCOUNT_CLICKED_UPDATE:
+    case password_manager::metrics_util::MULTIPLE_ACCOUNTS_CLICKED_UPDATE:
+    case password_manager::metrics_util::PASSWORD_OVERRIDDEN_CLICKED_UPDATE:
+      return password_manager::metrics_util::CLICKED_SAVE;
+
+    case password_manager::metrics_util::NO_ACCOUNTS_CLICKED_NOPE:
+    case password_manager::metrics_util::ONE_ACCOUNT_CLICKED_NOPE:
+    case password_manager::metrics_util::MULTIPLE_ACCOUNTS_CLICKED_NOPE:
+    case password_manager::metrics_util::PASSWORD_OVERRIDDEN_CLICKED_NOPE:
+      return password_manager::metrics_util::CLICKED_CANCEL;
+
+    case password_manager::metrics_util::NO_ACCOUNTS_NO_INTERACTION:
+    case password_manager::metrics_util::ONE_ACCOUNT_NO_INTERACTION:
+    case password_manager::metrics_util::MULTIPLE_ACCOUNTS_NO_INTERACTION:
+    case password_manager::metrics_util::PASSWORD_OVERRIDDEN_NO_INTERACTION:
+    case password_manager::metrics_util::NO_UPDATE_SUBMISSION:
+      return password_manager::metrics_util::NO_DIRECT_INTERACTION;
+
+    case password_manager::metrics_util::UPDATE_PASSWORD_EVENT_COUNT:
+      // Not reached.
+      break;
+  }
+  NOTREACHED();
+  return password_manager::metrics_util::NO_DIRECT_INTERACTION;
 }
 
 ManagePasswordsBubbleModel::ManagePasswordsBubbleModel(
     base::WeakPtr<PasswordsModelDelegate> delegate,
     DisplayReason display_reason)
     : password_overridden_(false),
-      delegate_(std::move(delegate)) {
+      delegate_(std::move(delegate)),
+      metrics_recorder_(delegate_->GetPasswordFormMetricsRecorder()) {
   origin_ = delegate_->GetOrigin();
   state_ = delegate_->GetState();
   password_manager::InteractionsStats interaction_stats;
@@ -244,6 +291,13 @@ ManagePasswordsBubbleModel::ManagePasswordsBubbleModel(
         interaction_stats.dismissal_count = stats->dismissal_count;
       }
     }
+    hide_eye_icon_ = delegate_->BubbleIsManualFallbackForSaving()
+                         ? pending_password_.form_has_autofilled_value
+                         : display_reason == USER_ACTION;
+    enable_editing_ = delegate_->GetCredentialSource() !=
+                      password_manager::metrics_util::CredentialSourceType::
+                          kCredentialManagementAPI;
+
     UpdatePendingStateTitle();
   } else if (state_ == password_manager::ui::CONFIRMATION_STATE) {
     title_ =
@@ -253,8 +307,7 @@ ManagePasswordsBubbleModel::ManagePasswordsBubbleModel(
   } else if (state_ == password_manager::ui::MANAGE_STATE) {
     local_credentials_ = DeepCopyForms(delegate_->GetCurrentForms());
     UpdateManageStateTitle();
-    manage_link_ =
-        l10n_util::GetStringUTF16(IDS_OPTIONS_PASSWORDS_MANAGE_PASSWORDS_LINK);
+    manage_link_ = l10n_util::GetStringUTF16(IDS_MANAGE_PASSWORDS_BUBBLE_LINK);
   }
 
   if (state_ == password_manager::ui::CONFIRMATION_STATE) {
@@ -286,6 +339,9 @@ ManagePasswordsBubbleModel::ManagePasswordsBubbleModel(
         display_disposition = metrics_util::MANUAL_MANAGE_PASSWORDS;
         break;
       case password_manager::ui::CONFIRMATION_STATE:
+        display_disposition =
+            metrics_util::MANUAL_GENERATED_PASSWORD_CONFIRMATION;
+        break;
       case password_manager::ui::CREDENTIAL_REQUEST_STATE:
       case password_manager::ui::AUTO_SIGNIN_STATE:
       case password_manager::ui::CHROME_SIGN_IN_PROMO_STATE:
@@ -319,6 +375,11 @@ ManagePasswordsBubbleModel::ManagePasswordsBubbleModel(
         break;
     }
   }
+
+  if (metrics_recorder_) {
+    metrics_recorder_->RecordPasswordBubbleShown(
+        delegate_->GetCredentialSource(), display_disposition);
+  }
   metrics_util::LogUIDisplayDisposition(display_disposition);
   interaction_keeper_.reset(new InteractionKeeper(std::move(interaction_stats),
                                                   display_disposition));
@@ -337,8 +398,18 @@ void ManagePasswordsBubbleModel::OnNeverForThisSiteClicked() {
   interaction_keeper_->set_dismissal_reason(metrics_util::CLICKED_NEVER);
   interaction_keeper_->set_update_password_submission_event(
       GetUpdateDismissalReason(NOPE_CLICKED));
-  CleanStatisticsForSite(GetProfile(), origin_);
-  delegate_->NeverSavePassword();
+  if (delegate_) {
+    CleanStatisticsForSite(GetProfile(), origin_);
+    delegate_->NeverSavePassword();
+  }
+}
+
+void ManagePasswordsBubbleModel::OnCredentialEdited(
+    base::string16 new_username,
+    base::string16 new_password) {
+  DCHECK_EQ(password_manager::ui::PENDING_PASSWORD_STATE, state_);
+  pending_password_.username_value = std::move(new_username);
+  pending_password_.password_value = std::move(new_password);
 }
 
 void ManagePasswordsBubbleModel::OnSaveClicked() {
@@ -346,21 +417,26 @@ void ManagePasswordsBubbleModel::OnSaveClicked() {
   interaction_keeper_->set_dismissal_reason(metrics_util::CLICKED_SAVE);
   interaction_keeper_->set_update_password_submission_event(
       GetUpdateDismissalReason(UPDATE_CLICKED));
-  CleanStatisticsForSite(GetProfile(), origin_);
-  delegate_->SavePassword();
+  if (delegate_) {
+    CleanStatisticsForSite(GetProfile(), origin_);
+    delegate_->SavePassword(pending_password_.username_value,
+                            pending_password_.password_value);
+  }
 }
 
 void ManagePasswordsBubbleModel::OnNopeUpdateClicked() {
   interaction_keeper_->set_update_password_submission_event(
       GetUpdateDismissalReason(NOPE_CLICKED));
-  delegate_->OnNopeUpdateClicked();
+  if (delegate_)
+    delegate_->OnNopeUpdateClicked();
 }
 
 void ManagePasswordsBubbleModel::OnUpdateClicked(
     const autofill::PasswordForm& password_form) {
   interaction_keeper_->set_update_password_submission_event(
       GetUpdateDismissalReason(UPDATE_CLICKED));
-  delegate_->UpdatePassword(password_form);
+  if (delegate_)
+    delegate_->UpdatePassword(password_form);
 }
 
 void ManagePasswordsBubbleModel::OnDoneClicked() {
@@ -375,19 +451,22 @@ void ManagePasswordsBubbleModel::OnOKClicked() {
 
 void ManagePasswordsBubbleModel::OnManageLinkClicked() {
   interaction_keeper_->set_dismissal_reason(metrics_util::CLICKED_MANAGE);
-  delegate_->NavigateToPasswordManagerSettingsPage();
+  if (delegate_)
+    delegate_->NavigateToPasswordManagerSettingsPage();
 }
 
 void ManagePasswordsBubbleModel::
     OnNavigateToPasswordManagerAccountDashboardLinkClicked() {
   interaction_keeper_->set_dismissal_reason(
       metrics_util::CLICKED_PASSWORDS_DASHBOARD);
-  delegate_->NavigateToPasswordManagerAccountDashboard();
+  if (delegate_)
+    delegate_->NavigateToPasswordManagerAccountDashboard();
 }
 
 void ManagePasswordsBubbleModel::OnBrandLinkClicked() {
   interaction_keeper_->set_dismissal_reason(metrics_util::CLICKED_BRAND_NAME);
-  delegate_->NavigateToSmartLockHelpPage();
+  if (delegate_)
+    delegate_->NavigateToSmartLockHelpPage();
 }
 
 void ManagePasswordsBubbleModel::OnAutoSignInToastTimeout() {
@@ -416,7 +495,8 @@ void ManagePasswordsBubbleModel::OnSignInToChromeClicked() {
       metrics_util::CHROME_SIGNIN_OK);
   GetProfile()->GetPrefs()->SetBoolean(
       password_manager::prefs::kWasSignInPasswordPromoClicked, true);
-  delegate_->NavigateToChromeSignIn();
+  if (delegate_)
+    delegate_->NavigateToChromeSignIn();
 }
 
 void ManagePasswordsBubbleModel::OnSkipSignInClicked() {
@@ -462,7 +542,7 @@ bool ManagePasswordsBubbleModel::ReplaceToShowPromotionIfNeeded() {
 #if defined(OS_WIN)
   // Desktop to mobile promotion only enabled on windows.
   if (desktop_ios_promotion::IsEligibleForIOSPromotion(
-          prefs, sync_service,
+          GetProfile(),
           desktop_ios_promotion::PromotionEntryPoint::SAVE_PASSWORD_BUBBLE)) {
     interaction_keeper_->ReportInteractions(this);
     title_brand_link_range_ = gfx::Range();

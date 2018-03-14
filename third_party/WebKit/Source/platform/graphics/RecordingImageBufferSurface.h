@@ -6,6 +6,7 @@
 #define RecordingImageBufferSurface_h
 
 #include <memory>
+#include "platform/graphics/CanvasResourceHost.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/ImageBufferSurface.h"
 #include "platform/wtf/Allocator.h"
@@ -16,46 +17,33 @@
 namespace blink {
 
 class ImageBuffer;
-class RecordingImageBufferSurfaceTest;
-
-class RecordingImageBufferFallbackSurfaceFactory {
-  USING_FAST_MALLOC(RecordingImageBufferFallbackSurfaceFactory);
-  WTF_MAKE_NONCOPYABLE(RecordingImageBufferFallbackSurfaceFactory);
-
- public:
-  virtual std::unique_ptr<ImageBufferSurface> CreateSurface(const IntSize&,
-                                                            OpacityMode,
-                                                            sk_sp<SkColorSpace>,
-                                                            SkColorType) = 0;
-  virtual ~RecordingImageBufferFallbackSurfaceFactory() {}
-
- protected:
-  RecordingImageBufferFallbackSurfaceFactory() {}
-};
+class UnacceleratedImageBufferSurface;
 
 class PLATFORM_EXPORT RecordingImageBufferSurface : public ImageBufferSurface {
   WTF_MAKE_NONCOPYABLE(RecordingImageBufferSurface);
   USING_FAST_MALLOC(RecordingImageBufferSurface);
 
  public:
-  // If the fallbackFactory is null the buffer surface should only be used
-  // for one frame and should not be used for any operations which need a
-  // raster surface, (i.e. writePixels).
-  // Only #getRecord should be used to access the resulting frame.
-  RecordingImageBufferSurface(
-      const IntSize&,
-      std::unique_ptr<RecordingImageBufferFallbackSurfaceFactory>
-          fallback_factory = nullptr,
-      OpacityMode = kNonOpaque,
-      sk_sp<SkColorSpace> = nullptr,
-      SkColorType = kN32_SkColorType);
+  enum AllowFallback : bool { kDisallowFallback, kAllowFallback };
+
+  // If |AllowFallback| is kDisallowFallback the buffer surface should only be
+  // used for one frame and should not be used for any operations which need a
+  // raster surface, (i.e. WritePixels()).
+  // Only GetRecord() should be used to access the resulting frame.
+  RecordingImageBufferSurface(const IntSize&,
+                              AllowFallback,
+                              const CanvasColorParams& = CanvasColorParams());
   ~RecordingImageBufferSurface() override;
 
   // Implementation of ImageBufferSurface interfaces
   PaintCanvas* Canvas() override;
   void DisableDeferral(DisableDeferralReason) override;
   sk_sp<PaintRecord> GetRecord() override;
-  void Flush(FlushReason) override;
+  void SetCanvasResourceHost(CanvasResourceHost* host) {
+    resource_host_ = host;
+  }
+  CanvasResourceHost* GetCanvasResourceHost() { return resource_host_; }
+
   void DidDraw(const FloatRect&) override;
   bool IsValid() const override { return true; }
   bool IsRecording() const override { return !fallback_surface_; }
@@ -66,9 +54,9 @@ class PLATFORM_EXPORT RecordingImageBufferSurface : public ImageBufferSurface {
                    int y) override;
   void WillOverwriteCanvas() override;
   void FinalizeFrame() override;
-  void DoPaintInvalidation(const FloatRect&) override;
   void SetImageBuffer(ImageBuffer*) override;
-  sk_sp<SkImage> NewImageSnapshot(AccelerationHint, SnapshotReason) override;
+  scoped_refptr<StaticBitmapImage> NewImageSnapshot(AccelerationHint,
+                                                    SnapshotReason) override;
   void Draw(GraphicsContext&,
             const FloatRect& dest_rect,
             const FloatRect& src_rect,
@@ -78,7 +66,7 @@ class PLATFORM_EXPORT RecordingImageBufferSurface : public ImageBufferSurface {
 
   // Passthroughs to fallback surface
   bool Restore() override;
-  WebLayer* Layer() const override;
+  WebLayer* Layer() override;
   bool IsAccelerated() const override;
   void SetIsHidden(bool) override;
 
@@ -89,8 +77,8 @@ class PLATFORM_EXPORT RecordingImageBufferSurface : public ImageBufferSurface {
     kFallbackReasonCanvasNotClearedBetweenFrames = 1,
     kFallbackReasonRunawayStateStack = 2,
     kFallbackReasonWritePixels = 3,
-    kFallbackReasonFlushInitialClear = 4,
-    kFallbackReasonFlushForDrawImageOfWebGL = 5,
+    // kFallbackReasonFlushInitialClear = 4,
+    // kFallbackReasonFlushForDrawImageOfWebGL = 5,
     kFallbackReasonSnapshotForGetImageData = 6,
     kFallbackReasonSnapshotForPaint = 8,
     kFallbackReasonSnapshotForToDataURL = 9,
@@ -119,15 +107,15 @@ class PLATFORM_EXPORT RecordingImageBufferSurface : public ImageBufferSurface {
   };
 
  private:
-  friend class RecordingImageBufferSurfaceTest;  // for unit testing
   void FallBackToRasterCanvas(FallbackReason);
   void InitializeCurrentFrame();
   bool FinalizeFrameInternal(FallbackReason*);
   int ApproximateOpCount();
 
+  const AllowFallback allow_fallback_;
   std::unique_ptr<PaintRecorder> current_frame_;
   sk_sp<PaintRecord> previous_frame_;
-  std::unique_ptr<ImageBufferSurface> fallback_surface_;
+  std::unique_ptr<UnacceleratedImageBufferSurface> fallback_surface_;
   ImageBuffer* image_buffer_;
   int initial_save_count_;
   int current_frame_pixel_count_;
@@ -136,7 +124,8 @@ class PLATFORM_EXPORT RecordingImageBufferSurface : public ImageBufferSurface {
   bool did_record_draw_commands_in_current_frame_;
   bool current_frame_has_expensive_op_;
   bool previous_frame_has_expensive_op_;
-  std::unique_ptr<RecordingImageBufferFallbackSurfaceFactory> fallback_factory_;
+
+  CanvasResourceHost* resource_host_;
 };
 
 }  // namespace blink

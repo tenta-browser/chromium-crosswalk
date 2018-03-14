@@ -26,15 +26,14 @@
 #ifndef Node_h
 #define Node_h
 
-#include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/TraceWrapperMember.h"
+#include "base/macros.h"
 #include "core/CoreExport.h"
 #include "core/dom/MutationObserver.h"
-#include "core/dom/SimulatedClickOptions.h"
 #include "core/dom/TreeScope.h"
-#include "core/editing/EditingBoundary.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
+#include "core/dom/events/SimulatedClickOptions.h"
 #include "core/style/ComputedStyleConstants.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/geometry/LayoutRect.h"
 #include "public/platform/WebFocusType.h"
 
@@ -43,36 +42,36 @@
 
 namespace blink {
 
+class ComputedStyle;
 class ContainerNode;
 class Document;
 class Element;
 class ElementShadow;
 class Event;
+class EventDispatchHandlingState;
 class ExceptionState;
 class GetRootNodeOptions;
 class HTMLQualifiedName;
 class HTMLSlotElement;
 class IntRect;
-class EventDispatchHandlingState;
-class NodeList;
-class NodeListsNodeData;
-class NodeOrString;
-class NodeLayoutData;
-class NodeRareData;
-class QualifiedName;
-class RegisteredEventListener;
+class KURL;
 class LayoutBox;
 class LayoutBoxModelObject;
 class LayoutObject;
-class ComputedStyle;
+class NodeList;
+class NodeListsNodeData;
+class NodeOrString;
+class NodeRareData;
+class QualifiedName;
+class RegisteredEventListener;
 class SVGQualifiedName;
 class ShadowRoot;
 template <typename NodeType>
 class StaticNodeTypeList;
 using StaticNodeList = StaticNodeTypeList<Node>;
 class StyleChangeReasonForTracing;
-class Text;
 class WebMouseEvent;
+class WebPluginContainerImpl;
 
 const int kNodeStyleChangeShift = 18;
 const int kNodeCustomElementShift = 20;
@@ -95,41 +94,46 @@ enum class CustomElementState {
 };
 
 enum class SlotChangeType {
-  kInitial,
-  kChained,
+  kSignalSlotChangeEvent,
+  kSuppressSlotChangeEvent,
 };
 
-class NodeLayoutData {
+class NodeRenderingData {
  public:
-  explicit NodeLayoutData(LayoutObject* layout_object)
-      : layout_object_(layout_object) {}
-  ~NodeLayoutData() { CHECK(!layout_object_); }
+  explicit NodeRenderingData(LayoutObject* layout_object,
+                             scoped_refptr<ComputedStyle> non_attached_style);
+  ~NodeRenderingData();
 
   LayoutObject* GetLayoutObject() const { return layout_object_; }
   void SetLayoutObject(LayoutObject* layout_object) {
     DCHECK_NE(&SharedEmptyData(), this);
     layout_object_ = layout_object;
   }
-  static NodeLayoutData& SharedEmptyData() {
-    DEFINE_STATIC_LOCAL(NodeLayoutData, shared_empty_data, (nullptr));
-    return shared_empty_data;
+
+  ComputedStyle* GetNonAttachedStyle() const {
+    return non_attached_style_.get();
   }
+  void SetNonAttachedStyle(scoped_refptr<ComputedStyle> non_attached_style);
+
+  static NodeRenderingData& SharedEmptyData();
   bool IsSharedEmptyData() { return this == &SharedEmptyData(); }
 
  private:
   LayoutObject* layout_object_;
+  scoped_refptr<ComputedStyle> non_attached_style_;
+  DISALLOW_COPY_AND_ASSIGN(NodeRenderingData);
 };
 
 class NodeRareDataBase {
  public:
-  NodeLayoutData* GetNodeLayoutData() const { return node_layout_data_; }
-  void SetNodeLayoutData(NodeLayoutData* node_layout_data) {
+  NodeRenderingData* GetNodeRenderingData() const { return node_layout_data_; }
+  void SetNodeRenderingData(NodeRenderingData* node_layout_data) {
     DCHECK(node_layout_data);
     node_layout_data_ = node_layout_data;
   }
 
  protected:
-  NodeRareDataBase(NodeLayoutData* node_layout_data)
+  explicit NodeRareDataBase(NodeRenderingData* node_layout_data)
       : node_layout_data_(node_layout_data) {}
   ~NodeRareDataBase() {
     if (node_layout_data_ && !node_layout_data_->IsSharedEmptyData())
@@ -137,13 +141,14 @@ class NodeRareDataBase {
   }
 
  protected:
-  NodeLayoutData* node_layout_data_;
+  NodeRenderingData* node_layout_data_;
 };
 
 class Node;
 WILL_NOT_BE_EAGERLY_TRACED_CLASS(Node);
 
-// This class represents a DOM node in the DOM tree.
+// A Node is a base class for all objects in the DOM tree.
+// The spec governing this interface can be found here:
 // https://dom.spec.whatwg.org/#interface-node
 class CORE_EXPORT Node : public EventTarget {
   DEFINE_WRAPPERTYPEINFO();
@@ -192,7 +197,7 @@ class CORE_EXPORT Node : public EventTarget {
     ThreadState* state =
         ThreadStateFor<ThreadingTrait<Node>::kAffinity>::GetState();
     const char* type_name = "blink::Node";
-    return ThreadHeap::AllocateOnArenaIndex(
+    return state->Heap().AllocateOnArenaIndex(
         state, size,
         is_eager ? BlinkGC::kEagerSweepArenaIndex : BlinkGC::kNodeArenaIndex,
         GCInfoTrait<EventTarget>::Index(), type_name);
@@ -231,7 +236,8 @@ class CORE_EXPORT Node : public EventTarget {
   void Before(const HeapVector<NodeOrString>&, ExceptionState&);
   void After(const HeapVector<NodeOrString>&, ExceptionState&);
   void ReplaceWith(const HeapVector<NodeOrString>&, ExceptionState&);
-  void remove(ExceptionState& = ASSERT_NO_EXCEPTION);
+  void remove(ExceptionState&);
+  void remove();
 
   Node* PseudoAwareNextSibling() const;
   Node* PseudoAwarePreviousSibling() const;
@@ -240,17 +246,18 @@ class CORE_EXPORT Node : public EventTarget {
 
   const KURL& baseURI() const;
 
-  Node* insertBefore(Node* new_child,
-                     Node* ref_child,
-                     ExceptionState& = ASSERT_NO_EXCEPTION);
-  Node* replaceChild(Node* new_child,
-                     Node* old_child,
-                     ExceptionState& = ASSERT_NO_EXCEPTION);
-  Node* removeChild(Node* child, ExceptionState& = ASSERT_NO_EXCEPTION);
-  Node* appendChild(Node* new_child, ExceptionState& = ASSERT_NO_EXCEPTION);
+  Node* insertBefore(Node* new_child, Node* ref_child, ExceptionState&);
+  Node* insertBefore(Node* new_child, Node* ref_child);
+  Node* replaceChild(Node* new_child, Node* old_child, ExceptionState&);
+  Node* replaceChild(Node* new_child, Node* old_child);
+  Node* removeChild(Node* child, ExceptionState&);
+  Node* removeChild(Node* child);
+  Node* appendChild(Node* new_child, ExceptionState&);
+  Node* appendChild(Node* new_child);
 
   bool hasChildren() const { return firstChild(); }
-  virtual Node* cloneNode(bool deep, ExceptionState& = ASSERT_NO_EXCEPTION) = 0;
+  virtual Node* cloneNode(bool deep, ExceptionState&) = 0;
+  Node* cloneNode(bool deep);
   void normalize();
 
   bool isEqualNode(Node*) const;
@@ -263,6 +270,14 @@ class CORE_EXPORT Node : public EventTarget {
   void setTextContent(const String&);
 
   bool SupportsAltText();
+
+  void SetNonAttachedStyle(scoped_refptr<ComputedStyle> non_attached_style);
+
+  ComputedStyle* GetNonAttachedStyle() const {
+    return HasRareData()
+               ? data_.rare_data_->GetNodeRenderingData()->GetNonAttachedStyle()
+               : data_.node_layout_data_->GetNonAttachedStyle();
+  }
 
   // Other methods (not part of DOM)
 
@@ -314,19 +329,23 @@ class CORE_EXPORT Node : public EventTarget {
   virtual bool IsFrameOwnerElement() const { return false; }
   virtual bool IsMediaRemotingInterstitial() const { return false; }
 
+  // Traverses the ancestors of this node and returns true if any of them are
+  // either a MediaControlElement or MediaControls.
+  bool HasMediaControlAncestor() const;
+
   bool IsStyledElement() const;
 
   bool IsDocumentNode() const;
   bool IsTreeScope() const;
   bool IsDocumentFragment() const { return GetFlag(kIsDocumentFragmentFlag); }
   bool IsShadowRoot() const { return IsDocumentFragment() && IsTreeScope(); }
-  bool IsInsertionPoint() const { return GetFlag(kIsInsertionPointFlag); }
+  bool IsV0InsertionPoint() const { return GetFlag(kIsV0InsertionPointFlag); }
 
   bool CanParticipateInFlatTree() const;
-  bool IsActiveSlotOrActiveInsertionPoint() const;
+  bool IsActiveSlotOrActiveV0InsertionPoint() const;
   // A re-distribution across v0 and v1 shadow trees is not supported.
   bool IsSlotable() const {
-    return IsTextNode() || (IsElementNode() && !IsInsertionPoint());
+    return IsTextNode() || (IsElementNode() && !IsV0InsertionPoint());
   }
   AtomicString SlotName() const;
 
@@ -368,11 +387,9 @@ class CORE_EXPORT Node : public EventTarget {
   // integrity of the tree.
   void SetPreviousSibling(Node* previous) {
     previous_ = previous;
-    ScriptWrappableVisitor::WriteBarrier(this, previous_);
   }
   void SetNextSibling(Node* next) {
     next_ = next;
-    ScriptWrappableVisitor::WriteBarrier(this, next_);
   }
 
   virtual bool CanContainRangeEndPoint() const { return false; }
@@ -498,6 +515,7 @@ class CORE_EXPORT Node : public EventTarget {
   void SetNeedsStyleInvalidation();
 
   void UpdateDistribution();
+  bool MayContainLegacyNodeTreeWhereDistributionShouldBeSupported() const;
 
   void SetIsLink(bool f);
 
@@ -514,12 +532,15 @@ class CORE_EXPORT Node : public EventTarget {
 
   virtual int tabIndex() const;
 
-  virtual Node* FocusDelegate();
+  virtual const Node* FocusDelegate() const;
   // This is called only when the node is focused.
   virtual bool ShouldHaveFocusAppearance() const;
 
-  // Whether the node is inert. This can't be in Element because text nodes
-  // must be recognized as inert to prevent text selection.
+  // Whether the node is inert:
+  // https://html.spec.whatwg.org/multipage/interaction.html#inert
+  // https://github.com/WICG/inert/blob/master/README.md
+  // This can't be in Element because text nodes must be recognized as
+  // inert to prevent text selection.
   bool IsInert() const;
 
   virtual LayoutRect BoundingBox() const;
@@ -595,7 +616,7 @@ class CORE_EXPORT Node : public EventTarget {
   // have one as well.
   LayoutObject* GetLayoutObject() const {
     return HasRareData()
-               ? data_.rare_data_->GetNodeLayoutData()->GetLayoutObject()
+               ? data_.rare_data_->GetNodeRenderingData()->GetLayoutObject()
                : data_.node_layout_data_->GetLayoutObject();
   }
   void SetLayoutObject(LayoutObject*);
@@ -606,8 +627,14 @@ class CORE_EXPORT Node : public EventTarget {
   struct AttachContext {
     STACK_ALLOCATED();
     ComputedStyle* resolved_style = nullptr;
+    // Keep track of previously attached in-flow box during attachment so that
+    // we don't need to backtrack past display:none/contents and out of flow
+    // objects when we need to do whitespace re-attachment.
+    LayoutObject* previous_in_flow = nullptr;
     bool performing_reattach = false;
     bool clear_invalidation = false;
+    // True if the previous_in_flow member is up-to-date, even if it is nullptr.
+    bool use_previous_in_flow = false;
 
     AttachContext() {}
   };
@@ -615,15 +642,19 @@ class CORE_EXPORT Node : public EventTarget {
   // Attaches this node to the layout tree. This calculates the style to be
   // applied to the node and creates an appropriate LayoutObject which will be
   // inserted into the tree (except when the style has display: none). This
-  // makes the node visible in the FrameView.
-  virtual void AttachLayoutTree(const AttachContext& = AttachContext());
+  // makes the node visible in the LocalFrameView.
+  virtual void AttachLayoutTree(AttachContext&);
 
   // Detaches the node from the layout tree, making it invisible in the rendered
   // view. This method will remove the node's layout object from the layout tree
   // and delete it.
   virtual void DetachLayoutTree(const AttachContext& = AttachContext());
 
-  void ReattachLayoutTree(const AttachContext& = AttachContext());
+  void ReattachLayoutTree() {
+    AttachContext context;
+    ReattachLayoutTree(context);
+  }
+  void ReattachLayoutTree(AttachContext&);
   void LazyReattachIfAttached();
 
   // Returns true if recalcStyle should be called on the object, if there is
@@ -759,6 +790,9 @@ class CORE_EXPORT Node : public EventTarget {
   // Perform the default action for an event.
   virtual void DefaultEventHandler(Event*);
   virtual void WillCallDefaultEventHandler(const Event&);
+  // Should return true if this Node has activation behavior.
+  // https://dom.spec.whatwg.org/#eventtarget-activation-behavior
+  virtual bool HasActivationBehavior() const;
 
   EventTargetData* GetEventTargetData() override;
   EventTargetData& EnsureEventTargetData() override;
@@ -781,6 +815,7 @@ class CORE_EXPORT Node : public EventTarget {
 
   StaticNodeList* getDestinationInsertionPoints();
   HTMLSlotElement* AssignedSlot() const;
+  HTMLSlotElement* FinalDestinationSlot() const;
   HTMLSlotElement* assignedSlotForBinding();
 
   bool IsFinishedParsingChildren() const {
@@ -789,15 +824,23 @@ class CORE_EXPORT Node : public EventTarget {
 
   void CheckSlotChange(SlotChangeType);
   void CheckSlotChangeAfterInserted() {
-    CheckSlotChange(SlotChangeType::kInitial);
+    CheckSlotChange(SlotChangeType::kSignalSlotChangeEvent);
   }
   void CheckSlotChangeBeforeRemoved() {
-    CheckSlotChange(SlotChangeType::kInitial);
+    CheckSlotChange(SlotChangeType::kSignalSlotChangeEvent);
   }
 
-  DECLARE_VIRTUAL_TRACE();
+  void SetHasDuplicateAttributes() { SetFlag(kHasDuplicateAttributes); }
+  bool HasDuplicateAttribute() const {
+    return GetFlag(kHasDuplicateAttributes);
+  }
 
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+  // If the node is a plugin, then this returns its WebPluginContainer.
+  WebPluginContainerImpl* GetWebPluginContainer() const;
+
+  virtual void Trace(blink::Visitor*);
+
+  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
 
  private:
   enum NodeFlags {
@@ -810,7 +853,7 @@ class CORE_EXPORT Node : public EventTarget {
     kIsHTMLFlag = 1 << 4,
     kIsSVGFlag = 1 << 5,
     kIsDocumentFragmentFlag = 1 << 6,
-    kIsInsertionPointFlag = 1 << 7,
+    kIsV0InsertionPointFlag = 1 << 7,
 
     // Changes based on if the element should be treated like a link,
     // ex. When setting the href attribute on an <a>.
@@ -847,6 +890,8 @@ class CORE_EXPORT Node : public EventTarget {
     kNeedsReattachLayoutTree = 1 << 26,
     kChildNeedsReattachLayoutTree = 1 << 27,
 
+    kHasDuplicateAttributes = 1 << 28,
+
     kDefaultNodeFlags =
         kIsFinishedParsingChildrenFlag | kNeedsReattachStyleChange
   };
@@ -871,8 +916,8 @@ class CORE_EXPORT Node : public EventTarget {
   enum ConstructionType {
     kCreateOther = kDefaultNodeFlags,
     kCreateText = kDefaultNodeFlags | kIsTextFlag,
-    kCreateContainer = kDefaultNodeFlags | kChildNeedsStyleRecalcFlag |
-                       kIsContainerFlag,
+    kCreateContainer =
+        kDefaultNodeFlags | kChildNeedsStyleRecalcFlag | kIsContainerFlag,
     kCreateElement = kCreateContainer | kIsElementFlag,
     kCreateShadowRoot =
         kCreateContainer | kIsDocumentFragmentFlag | kIsInShadowTreeFlag,
@@ -880,8 +925,10 @@ class CORE_EXPORT Node : public EventTarget {
     kCreateHTMLElement = kCreateElement | kIsHTMLFlag,
     kCreateSVGElement = kCreateElement | kIsSVGFlag,
     kCreateDocument = kCreateContainer | kIsConnectedFlag,
-    kCreateInsertionPoint = kCreateHTMLElement | kIsInsertionPointFlag,
+    kCreateV0InsertionPoint = kCreateHTMLElement | kIsV0InsertionPointFlag,
     kCreateEditingText = kCreateText | kHasNameOrIsEditingTextFlag,
+    kCreatePseudoElement = kDefaultNodeFlags | kIsContainerFlag |
+                           kIsElementFlag | kNeedsReattachLayoutTree,
   };
 
   Node(TreeScope*, ConstructionType);
@@ -895,8 +942,6 @@ class CORE_EXPORT Node : public EventTarget {
   void RemovedEventListener(const AtomicString& event_type,
                             const RegisteredEventListener&) override;
   DispatchEventResult DispatchEventInternal(Event*) override;
-
-  static void ReattachWhitespaceSiblingsIfNeeded(Text* start);
 
   bool HasRareData() const { return GetFlag(kHasRareDataFlag); }
 
@@ -945,30 +990,28 @@ class CORE_EXPORT Node : public EventTarget {
   TransientMutationObserverRegistry();
 
   uint32_t node_flags_;
-  Member<ContainerNode> parent_or_shadow_host_node_;
+  TraceWrapperMember<Node> parent_or_shadow_host_node_;
   Member<TreeScope> tree_scope_;
-  Member<Node> previous_;
-  Member<Node> next_;
+  TraceWrapperMember<Node> previous_;
+  TraceWrapperMember<Node> next_;
   // When a node has rare data we move the layoutObject into the rare data.
   union DataUnion {
-    DataUnion() : node_layout_data_(&NodeLayoutData::SharedEmptyData()) {}
+    DataUnion() : node_layout_data_(&NodeRenderingData::SharedEmptyData()) {}
     // LayoutObjects are fully owned by their DOM node. See LayoutObject's
     // LIFETIME documentation section.
-    NodeLayoutData* node_layout_data_;
+    NodeRenderingData* node_layout_data_;
     NodeRareDataBase* rare_data_;
   } data_;
 };
 
 inline void Node::SetParentOrShadowHostNode(ContainerNode* parent) {
   DCHECK(IsMainThread());
-  parent_or_shadow_host_node_ = parent;
-  ScriptWrappableVisitor::WriteBarrier(
-      this, reinterpret_cast<Node*>(parent_or_shadow_host_node_.Get()));
+  parent_or_shadow_host_node_ = reinterpret_cast<Node*>(parent);
 }
 
 inline ContainerNode* Node::ParentOrShadowHostNode() const {
   DCHECK(IsMainThread());
-  return parent_or_shadow_host_node_;
+  return reinterpret_cast<ContainerNode*>(parent_or_shadow_host_node_.Get());
 }
 
 inline ContainerNode* Node::parentNode() const {
@@ -991,12 +1034,6 @@ inline void Node::LazyReattachIfAttached() {
 inline bool Node::ShouldCallRecalcStyle(StyleRecalcChange change) {
   return change >= kIndependentInherit || NeedsStyleRecalc() ||
          ChildNeedsStyleRecalc();
-}
-
-// See the comment at the declaration of ScriptWrappable::fromNode in
-// bindings/core/v8/ScriptWrappable.h about why this method is defined here.
-inline ScriptWrappable* ScriptWrappable::FromNode(Node* node) {
-  return node;
 }
 
 // Allow equality comparisons of Nodes by reference or pointer, interchangeably.

@@ -5,23 +5,37 @@
 #include "core/paint/BoxDecorationData.h"
 
 #include "core/layout/LayoutBox.h"
+#include "core/layout/ng/ng_physical_fragment.h"
 #include "core/paint/BoxPainter.h"
 #include "core/style/BorderEdge.h"
 #include "core/style/ComputedStyle.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/graphics/GraphicsContext.h"
 
 namespace blink {
 
-BoxDecorationData::BoxDecorationData(const LayoutBox& layout_box) {
-  background_color =
-      layout_box.Style()->VisitedDependentColor(CSSPropertyBackgroundColor);
-  has_background =
-      background_color.Alpha() || layout_box.Style()->HasBackgroundImage();
-  DCHECK(has_background == layout_box.Style()->HasBackground());
-  has_border_decoration = layout_box.Style()->HasBorderDecoration();
-  has_appearance = layout_box.Style()->HasAppearance();
-  bleed_avoidance = DetermineBackgroundBleedAvoidance(layout_box);
+BoxDecorationData::BoxDecorationData(const LayoutBox& layout_box)
+    : BoxDecorationData(layout_box.StyleRef()) {
+  if (layout_box.IsDocumentElement()) {
+    bleed_avoidance = kBackgroundBleedNone;
+  } else {
+    bleed_avoidance = DetermineBackgroundBleedAvoidance(
+        layout_box.GetDocument(), layout_box.StyleRef(),
+        layout_box.BackgroundShouldAlwaysBeClipped());
+  }
+}
+
+BoxDecorationData::BoxDecorationData(const NGPhysicalFragment& fragment)
+    : BoxDecorationData(fragment.Style()) {
+  // TODO(layout-dev): Implement
+  bleed_avoidance = kBackgroundBleedClipLayer;
+}
+
+BoxDecorationData::BoxDecorationData(const ComputedStyle& style) {
+  background_color = style.VisitedDependentColor(CSSPropertyBackgroundColor);
+  has_background = background_color.Alpha() || style.HasBackgroundImage();
+  DCHECK(has_background == style.HasBackground());
+  has_border_decoration = style.HasBorderDecoration();
+  has_appearance = style.HasAppearance();
 }
 
 namespace {
@@ -41,36 +55,34 @@ bool BorderObscuresBackgroundEdge(const ComputedStyle& style) {
 }  // anonymous namespace
 
 BackgroundBleedAvoidance BoxDecorationData::DetermineBackgroundBleedAvoidance(
-    const LayoutBox& layout_box) {
-  if (layout_box.IsDocumentElement())
-    return kBackgroundBleedNone;
-
+    const Document& document,
+    const ComputedStyle& style,
+    bool background_should_always_be_clipped) {
   if (!has_background)
     return kBackgroundBleedNone;
 
-  const ComputedStyle& box_style = layout_box.StyleRef();
-  const bool has_border_radius = box_style.HasBorderRadius();
+  const bool has_border_radius = style.HasBorderRadius();
   if (!has_border_decoration || !has_border_radius ||
-      layout_box.CanRenderBorderImage()) {
-    if (layout_box.BackgroundShouldAlwaysBeClipped())
+      style.CanRenderBorderImage()) {
+    if (background_should_always_be_clipped)
       return kBackgroundBleedClipOnly;
     // Border radius clipping may require layer bleed avoidance if we are going
     // to draw an image over something else, because we do not want the
     // antialiasing to lead to bleeding
-    if (box_style.HasBackgroundImage() && has_border_radius) {
+    if (style.HasBackgroundImage() && has_border_radius) {
       // But if the top layer is opaque for the purposes of background painting,
       // we do not need the bleed avoidance because we will not paint anything
       // behind the top layer.  But only if we need to draw something
       // underneath.
-      const FillLayer& fill_layer = layout_box.Style()->BackgroundLayers();
+      const FillLayer& fill_layer = style.BackgroundLayers();
       if ((background_color.Alpha() || fill_layer.Next()) &&
-          !fill_layer.ImageOccludesNextLayers(layout_box))
+          !fill_layer.ImageOccludesNextLayers(document, style))
         return kBackgroundBleedClipLayer;
     }
     return kBackgroundBleedNone;
   }
 
-  if (BorderObscuresBackgroundEdge(box_style))
+  if (BorderObscuresBackgroundEdge(style))
     return kBackgroundBleedShrinkBackground;
 
   return kBackgroundBleedClipLayer;

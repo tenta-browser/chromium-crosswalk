@@ -21,10 +21,8 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/render_text.h"
-#include "ui/resources/grit/ui_resources.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/controls/textfield/textfield_test_api.h"
-#include "ui/views/resources/grit/views_resources.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/touchui/touch_selection_controller_impl.h"
 #include "ui/views/views_touch_selection_controller_factory.h"
@@ -132,8 +130,7 @@ class TouchSelectionControllerImplTest : public ViewsTestBase {
   }
 
   gfx::Point GetCursorPosition(const gfx::SelectionModel& sel) {
-    gfx::Rect cursor_bounds = GetCursorRect(sel);
-    return gfx::Point(cursor_bounds.x(), cursor_bounds.y());
+    return GetCursorRect(sel).origin();
   }
 
   TouchSelectionControllerImpl* GetSelectionController() {
@@ -240,7 +237,7 @@ class TouchSelectionControllerImplTest : public ViewsTestBase {
   // handle 1's position is matched against the start of selection or the end.
   void VerifyHandlePositions(bool cursor_at_selection_handle_1,
                              bool check_direction,
-                             const tracked_objects::Location& from_here) {
+                             const base::Location& from_here) {
     gfx::SelectionBound anchor, focus;
     textfield_->GetSelectionEndPoints(&anchor, &focus);
     std::string from_str = from_here.ToString();

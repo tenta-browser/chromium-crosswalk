@@ -4,7 +4,6 @@
 
 #include "modules/device_orientation/DeviceOrientationController.h"
 
-#include "core/dom/Document.h"
 #include "core/frame/Deprecation.h"
 #include "core/frame/HostsUsingFeatures.h"
 #include "core/frame/Settings.h"
@@ -55,11 +54,11 @@ void DeviceOrientationController::DidAddEventListener(
   if (GetDocument().GetFrame()) {
     if (GetDocument().IsSecureContext()) {
       UseCounter::Count(GetDocument().GetFrame(),
-                        UseCounter::kDeviceOrientationSecureOrigin);
+                        WebFeature::kDeviceOrientationSecureOrigin);
     } else {
       Deprecation::CountDeprecation(
           GetDocument().GetFrame(),
-          UseCounter::kDeviceOrientationInsecureOrigin);
+          WebFeature::kDeviceOrientationInsecureOrigin);
       HostsUsingFeatures::CountAnyWorld(
           GetDocument(),
           HostsUsingFeatures::Feature::kDeviceOrientationInsecureHost);
@@ -136,7 +135,7 @@ DeviceOrientationDispatcher& DeviceOrientationController::DispatcherInstance()
   return DeviceOrientationDispatcher::Instance(false);
 }
 
-DEFINE_TRACE(DeviceOrientationController) {
+void DeviceOrientationController::Trace(blink::Visitor* visitor) {
   visitor->Trace(override_orientation_data_);
   DeviceSingleWindowEventController::Trace(visitor);
   Supplement<Document>::Trace(visitor);

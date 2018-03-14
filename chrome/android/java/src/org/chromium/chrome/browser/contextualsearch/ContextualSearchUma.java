@@ -10,7 +10,6 @@ import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel.PanelState;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel.StateChangeReason;
-import org.chromium.chrome.browser.contextualsearch.ContextualSearchBlacklist.BlacklistReason;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 
 import java.util.Collections;
@@ -153,13 +152,6 @@ public class ContextualSearchUma {
     private static final int RESULTS_SEEN_SUPPRESSION_HEURSTIC_NOT_SATISFIED = 2;
     private static final int RESULTS_NOT_SEEN_SUPPRESSION_HEURSTIC_NOT_SATISFIED = 3;
     private static final int RESULTS_SEEN_SUPPRESSION_BOUNDARY = 4;
-
-    // Constants used to log UMA "enum" histograms with details about the Peek Promo Outcome.
-    private static final int PEEK_PROMO_OUTCOME_SEEN_OPENED = 0;
-    private static final int PEEK_PROMO_OUTCOME_SEEN_NOT_OPENED = 1;
-    private static final int PEEK_PROMO_OUTCOME_NOT_SEEN_OPENED = 2;
-    private static final int PEEK_PROMO_OUTCOME_NOT_SEEN_NOT_OPENED = 3;
-    private static final int PEEK_PROMO_OUTCOME_BOUNDARY = 4;
 
     // Constants used to log UMA "enum" histograms with details about whether search results
     // were seen, and what the original triggering gesture was.
@@ -561,42 +553,6 @@ public class ContextualSearchUma {
     }
 
     /**
-     * Logs the number of times the Peek Promo was seen.
-     * @param count Number of times the Peek Promo was seen.
-     * @param hasOpenedPanel Whether the Panel was opened.
-     */
-    public static void logPeekPromoShowCount(int count, boolean hasOpenedPanel) {
-        RecordHistogram.recordCountHistogram("Search.ContextualSearchPeekPromoCount", count);
-        if (hasOpenedPanel) {
-            RecordHistogram.recordCountHistogram(
-                    "Search.ContextualSearchPeekPromoCountUntilOpened", count);
-        }
-    }
-
-    /**
-     * Logs the Peek Promo Outcome.
-     * @param wasPromoSeen Whether the Peek Promo was seen.
-     * @param wouldHaveShownPromo Whether the Promo would have shown.
-     * @param hasOpenedPanel Whether the Panel was opened.
-     */
-    public static void logPeekPromoOutcome(boolean wasPromoSeen, boolean wouldHaveShownPromo,
-            boolean hasOpenedPanel) {
-        int outcome = -1;
-        if (wasPromoSeen) {
-            outcome = hasOpenedPanel
-                    ? PEEK_PROMO_OUTCOME_SEEN_OPENED : PEEK_PROMO_OUTCOME_SEEN_NOT_OPENED;
-        } else if (wouldHaveShownPromo) {
-            outcome = hasOpenedPanel
-                    ? PEEK_PROMO_OUTCOME_NOT_SEEN_OPENED : PEEK_PROMO_OUTCOME_NOT_SEEN_NOT_OPENED;
-        }
-
-        if (outcome != -1) {
-            RecordHistogram.recordEnumeratedHistogram("Search.ContextualSearchPeekPromoOutcome",
-                    outcome, PEEK_PROMO_OUTCOME_BOUNDARY);
-        }
-    }
-
-    /**
      * Logs the outcome of the Promo.
      * Logs multiple histograms; with and without the originating gesture.
      * @param wasTap Whether the gesture that originally caused the panel to show was a Tap.
@@ -670,6 +626,34 @@ public class ContextualSearchUma {
     }
 
     /**
+     * When Contextual Search panel is opened, logs whether In-Product Help for opening the panel
+     * was ever shown.
+     * @param wasIPHShown Whether In-Product help was shown.
+     */
+    public static void logPanelOpenedIPH(boolean wasIPHShown) {
+        RecordHistogram.recordBooleanHistogram(
+                "Search.ContextualSearchPanelOpenedIPHShown", wasIPHShown);
+    }
+
+    /**
+     * When Contextual Search panel is opened, logs whether In-Product Help for Contextual Search
+     * was ever shown.
+     * @param wasIPHShown Whether In-Product help was shown.
+     */
+    public static void logContextualSearchIPH(boolean wasIPHShown) {
+        RecordHistogram.recordBooleanHistogram("Search.ContextualSearchIPHShown", wasIPHShown);
+    }
+
+    /**
+     * When Contextual Search is triggered by tapping, logs whether In-Product Help for tapping was
+     * ever shown.
+     * @param wasIPHShown Whether In-Product help was shown.
+     */
+    public static void logTapIPH(boolean wasIPHShown) {
+        RecordHistogram.recordBooleanHistogram("Search.ContextualSearchTapIPHShown", wasIPHShown);
+    }
+
+    /**
      * Logs a user action for the duration of viewing the panel that describes the amount of time
      * the user viewed the bar and panel overall.
      * @param durationMs The duration to record.
@@ -711,22 +695,9 @@ public class ContextualSearchUma {
     }
 
     /**
-     * Logs whether search results were seen when the selection was part of a URL.
-     * Unlike ContextualSearchResultsSeen, this histogram is logged for both decided and undecided
-     * users.
-     * @param wasPanelSeen Whether the panel was seen.
-     * @param wasTap Whether the gesture that originally caused the panel to show was a Tap.
-     */
-    public static void logResultsSeenSelectionIsUrl(boolean wasPanelSeen, boolean wasTap) {
-        int result = wasPanelSeen ? (wasTap ? RESULTS_SEEN_FROM_TAP : RESULTS_SEEN_FROM_LONG_PRESS)
-                : (wasTap ? RESULTS_NOT_SEEN_FROM_TAP : RESULTS_NOT_SEEN_FROM_LONG_PRESS);
-        RecordHistogram.recordEnumeratedHistogram(
-                "Search.ContextualSearchResultsSeenSelectionWasUrl", result,
-                RESULTS_BY_GESTURE_BOUNDARY);
-    }
-
-    /**
      * Logs the whether the panel was seen and the type of the trigger and if Bar nearly overlapped.
+     * If the panel was seen, logs the duration of the panel view into a BarOverlap or BarNoOverlap
+     * duration histogram.
      * @param wasPanelSeen Whether the panel was seen.
      * @param wasTap Whether the gesture was a Tap or not.
      * @param wasBarOverlap Whether the trigger location overlapped the Bar area.
@@ -736,6 +707,19 @@ public class ContextualSearchUma {
         RecordHistogram.recordEnumeratedHistogram("Search.ContextualSearchBarOverlapSeen",
                 getBarOverlapEnum(wasBarOverlap, wasPanelSeen, wasTap),
                 BAR_OVERLAP_RESULTS_BOUNDARY);
+    }
+
+    /**
+     * Logs the duration of the panel viewed in its Peeked state before being opened.
+     * @param wasBarOverlap Whether the trigger location overlapped the Bar area.
+     * @param panelPeekDurationMs The duration that the panel was peeking before being opened
+     *        by the user.
+     */
+    public static void logBarOverlapPeekDuration(boolean wasBarOverlap, long panelPeekDurationMs) {
+        String histogram = wasBarOverlap ? "Search.ContextualSearchBarOverlap.DurationSeen"
+                                         : "Search.ContextualSearchBarNoOverlap.DurationSeen";
+        RecordHistogram.recordMediumTimesHistogram(
+                histogram, panelPeekDurationMs, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -801,43 +785,106 @@ public class ContextualSearchUma {
     }
 
     /**
-     * Log whether results were seen due to a Tap with broad signals.
+     * Log whether results were seen due to a Tap that was allowed to override an ML suppression.
      * @param wasSearchContentViewSeen If the panel was opened.
-     * @param isSecondTap Whether this was the second tap after an initial suppressed tap.
      */
-    public static void logTapSuppressionResultsSeen(
-            boolean wasSearchContentViewSeen, boolean isSecondTap) {
-        if (isSecondTap) {
-            RecordHistogram.recordEnumeratedHistogram("Search.ContextualSearchSecondTapSeen",
+    static void logSecondTapMlOverrideResultsSeen(boolean wasSearchContentViewSeen) {
+        RecordHistogram.recordBooleanHistogram(
+                "Search.ContextualSearchSecondTapMlOverrideSeen", wasSearchContentViewSeen);
+    }
+
+    /**
+     * Logs whether results were seen based on the duration of the Tap, for both short and long
+     * durations.
+     * @param wasSearchContentViewSeen If the panel was opened.
+     * @param isTapShort Whether this tap was "short" in duration.
+     */
+    public static void logTapDurationSeen(boolean wasSearchContentViewSeen, boolean isTapShort) {
+        if (isTapShort) {
+            RecordHistogram.recordEnumeratedHistogram("Search.ContextualSearchTapShortDurationSeen",
                     wasSearchContentViewSeen ? RESULTS_SEEN : RESULTS_NOT_SEEN,
                     RESULTS_SEEN_BOUNDARY);
         } else {
-            RecordHistogram.recordEnumeratedHistogram("Search.ContextualSearchTapSuppressionSeen",
+            RecordHistogram.recordEnumeratedHistogram("Search.ContextualSearchTapLongDurationSeen",
                     wasSearchContentViewSeen ? RESULTS_SEEN : RESULTS_NOT_SEEN,
                     RESULTS_SEEN_BOUNDARY);
         }
     }
 
     /**
-     * Logs whether results were seen when the selected text consisted of all capital letters.
-     * @param wasSearchContentViewSeen If the panel was opened.
+     * Logs the duration of a Tap in ms into custom histograms to profile the duration of seen
+     * and not seen taps.
+     * @param wasPanelSeen Whether the panel was seen.
+     * @param durationMs The duration of the tap gesture.
      */
-    public static void logAllCapsResultsSeen(boolean wasSearchContentViewSeen) {
-        RecordHistogram.recordEnumeratedHistogram("Search.ContextualSearchAllCapsResultsSeen",
-                wasSearchContentViewSeen ? RESULTS_SEEN : RESULTS_NOT_SEEN,
-                RESULTS_SEEN_BOUNDARY);
+    public static void logTapDuration(boolean wasPanelSeen, int durationMs) {
+        int min = 1;
+        int max = 1000;
+        int numBuckets = 100;
+
+        if (wasPanelSeen) {
+            RecordHistogram.recordCustomCountHistogram(
+                    "Search.ContextualSearchTapDurationSeen", durationMs, min, max, numBuckets);
+        } else {
+            RecordHistogram.recordCustomCountHistogram(
+                    "Search.ContextualSearchTapDurationNotSeen", durationMs, min, max, numBuckets);
+        }
     }
 
     /**
-     * Logs whether results were seen when the selected text started with a capital letter but was
-     * not all capital letters.
+     * Log whether results were seen due to a Tap on a short word.
      * @param wasSearchContentViewSeen If the panel was opened.
+     * @param isTapOnShortWord Whether this tap was on a "short" word.
      */
-    public static void logStartedWithCapitalResultsSeen(boolean wasSearchContentViewSeen) {
-        RecordHistogram.recordEnumeratedHistogram(
-                "Search.ContextualSearchStartedWithCapitalResultsSeen",
-                wasSearchContentViewSeen ? RESULTS_SEEN : RESULTS_NOT_SEEN,
-                RESULTS_SEEN_BOUNDARY);
+    public static void logTapShortWordSeen(
+            boolean wasSearchContentViewSeen, boolean isTapOnShortWord) {
+        if (!isTapOnShortWord) return;
+
+        // We just record CTR of short words.
+        RecordHistogram.recordEnumeratedHistogram("Search.ContextualSearchTapShortWordSeen",
+                wasSearchContentViewSeen ? RESULTS_SEEN : RESULTS_NOT_SEEN, RESULTS_SEEN_BOUNDARY);
+    }
+
+    /**
+     * Log whether results were seen due to a Tap on a long word.
+     * @param wasSearchContentViewSeen If the panel was opened.
+     * @param isTapOnLongWord Whether this tap was on a long word.
+     */
+    public static void logTapLongWordSeen(
+            boolean wasSearchContentViewSeen, boolean isTapOnLongWord) {
+        if (!isTapOnLongWord) return;
+
+        RecordHistogram.recordEnumeratedHistogram("Search.ContextualSearchTapLongWordSeen",
+                wasSearchContentViewSeen ? RESULTS_SEEN : RESULTS_NOT_SEEN, RESULTS_SEEN_BOUNDARY);
+    }
+
+    /**
+     * Log whether results were seen due to a Tap that was on the middle of a word.
+     * @param wasSearchContentViewSeen If the panel was opened.
+     * @param isTapOnWordMiddle Whether this tap was on the middle of a word.
+     */
+    public static void logTapOnWordMiddleSeen(
+            boolean wasSearchContentViewSeen, boolean isTapOnWordMiddle) {
+        if (!isTapOnWordMiddle) return;
+
+        // We just record CTR of words tapped in the "middle".
+        RecordHistogram.recordEnumeratedHistogram("Search.ContextualSearchTapOnWordMiddleSeen",
+                wasSearchContentViewSeen ? RESULTS_SEEN : RESULTS_NOT_SEEN, RESULTS_SEEN_BOUNDARY);
+    }
+
+    /**
+     * Log whether results were seen due to a Tap on what we've recognized as a probable entity.
+     * @param wasSearchContentViewSeen If the panel was opened.
+     * @param isWordAnEntity Whether this tap was on a word that's an entity.
+     */
+    public static void logTapOnEntitySeen(
+            boolean wasSearchContentViewSeen, boolean isWordAnEntity) {
+        if (isWordAnEntity) {
+            // We just record CTR of probable entity words.
+            RecordHistogram.recordEnumeratedHistogram("Search.ContextualSearchEntitySeen",
+                    wasSearchContentViewSeen ? RESULTS_SEEN : RESULTS_NOT_SEEN,
+                    RESULTS_SEEN_BOUNDARY);
+        }
     }
 
     /**
@@ -1161,16 +1208,12 @@ public class ContextualSearchUma {
     }
 
     /**
-     * Logs whether a certain category of a blacklisted term resulted in the search results
-     * being seen.
-     * @param reason The given reason.
-     * @param wasSeen Whether the search results were seen.
+     * Logs that whether or not the conditions are met to perform a translation.
+     * @param isConditionMet Whether the translation conditions were met.
      */
-    public static void logBlacklistSeen(BlacklistReason reason, boolean wasSeen) {
-        if (reason == null) reason = BlacklistReason.NONE;
-        int code = ContextualSearchBlacklist.getBlacklistMetricsCode(reason, wasSeen);
-        RecordHistogram.recordEnumeratedHistogram("Search.ContextualSearchBlacklistSeen",
-                code, ContextualSearchBlacklist.BLACKLIST_BOUNDARY);
+    public static void logTranslateCondition(boolean isConditionMet) {
+        RecordHistogram.recordBooleanHistogram(
+                "Search.ContextualSearchTranslateCondition", isConditionMet);
     }
 
     /**
@@ -1247,6 +1290,28 @@ public class ContextualSearchUma {
                 "Search.ContextualSearchQuickActions.Clicked."
                         + getLabelForQuickActionCategory(quickActionCategory),
                  wasClicked);
+    }
+
+    /**
+     * Logs Ranker's prediction and whether the panel was actually seen when not suppressed.
+     * @param wasPanelSeen Whether the panel was seen.
+     * @param predictionKind An integer reflecting the Ranker prediction, e.g. that this is a good
+     *        time to suppress triggering because the likelihood of opening the panel is relatively
+     *        low.
+     */
+    public static void logRankerInference(
+            boolean wasPanelSeen, @AssistRankerPrediction int predictionKind) {
+        RecordHistogram.recordBooleanHistogram("Search.ContextualSearch.Ranker.Suppressed",
+                predictionKind == AssistRankerPrediction.SUPPRESS);
+        if (predictionKind == AssistRankerPrediction.SHOW) {
+            RecordHistogram.recordEnumeratedHistogram(
+                    "Search.ContextualSearch.Ranker.NotSuppressed.ResultsSeen",
+                    wasPanelSeen ? RESULTS_SEEN : RESULTS_NOT_SEEN, RESULTS_SEEN_BOUNDARY);
+        } else if (predictionKind == AssistRankerPrediction.SUPPRESS) {
+            RecordHistogram.recordEnumeratedHistogram(
+                    "Search.ContextualSearch.Ranker.WouldSuppress.ResultsSeen",
+                    wasPanelSeen ? RESULTS_SEEN : RESULTS_NOT_SEEN, RESULTS_SEEN_BOUNDARY);
+        }
     }
 
     /**

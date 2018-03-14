@@ -5,6 +5,7 @@
 #include "content/browser/webrtc/webrtc_content_browsertest_base.h"
 
 #include "base/command_line.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -112,7 +113,8 @@ void WebRtcContentBrowserTestBase::ExecuteJavascriptAndWaitForOk(
 bool WebRtcContentBrowserTestBase::HasAudioOutputDevices() {
   bool has_devices = false;
   base::RunLoop run_loop;
-  media::AudioSystem::Get()->HasOutputDevices(base::Bind(
+  auto audio_system = media::AudioSystem::CreateInstance();
+  audio_system->HasOutputDevices(base::BindOnce(
       [](base::Closure finished_callback, bool* result, bool received) {
         *result = received;
         finished_callback.Run();

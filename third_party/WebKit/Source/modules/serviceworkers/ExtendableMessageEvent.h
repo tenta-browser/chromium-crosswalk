@@ -23,36 +23,38 @@ class MODULES_EXPORT ExtendableMessageEvent final : public ExtendableEvent {
       const AtomicString& type,
       const ExtendableMessageEventInit& initializer,
       WaitUntilObserver*);
-  static ExtendableMessageEvent* Create(PassRefPtr<SerializedScriptValue> data,
-                                        const String& origin,
-                                        MessagePortArray* ports,
-                                        WaitUntilObserver*);
-  static ExtendableMessageEvent* Create(PassRefPtr<SerializedScriptValue> data,
-                                        const String& origin,
-                                        MessagePortArray* ports,
-                                        ServiceWorkerClient* source,
-                                        WaitUntilObserver*);
-  static ExtendableMessageEvent* Create(PassRefPtr<SerializedScriptValue> data,
-                                        const String& origin,
-                                        MessagePortArray* ports,
-                                        ServiceWorker* source,
-                                        WaitUntilObserver*);
+  static ExtendableMessageEvent* Create(
+      scoped_refptr<SerializedScriptValue> data,
+      const String& origin,
+      MessagePortArray* ports,
+      WaitUntilObserver*);
+  static ExtendableMessageEvent* Create(
+      scoped_refptr<SerializedScriptValue> data,
+      const String& origin,
+      MessagePortArray* ports,
+      ServiceWorkerClient* source,
+      WaitUntilObserver*);
+  static ExtendableMessageEvent* Create(
+      scoped_refptr<SerializedScriptValue> data,
+      const String& origin,
+      MessagePortArray* ports,
+      ServiceWorker* source,
+      WaitUntilObserver*);
 
   SerializedScriptValue* SerializedData() const {
-    return serialized_data_.Get();
+    return serialized_data_.get();
   }
-  void SetSerializedData(PassRefPtr<SerializedScriptValue> serialized_data) {
+  void SetSerializedData(scoped_refptr<SerializedScriptValue> serialized_data) {
     serialized_data_ = std::move(serialized_data);
   }
   const String& origin() const { return origin_; }
   const String& lastEventId() const { return last_event_id_; }
-  MessagePortArray ports(bool& is_null) const;
   MessagePortArray ports() const;
   void source(ClientOrServiceWorkerOrMessagePort& result) const;
 
   const AtomicString& InterfaceName() const override;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   ExtendableMessageEvent(const AtomicString& type,
@@ -60,12 +62,12 @@ class MODULES_EXPORT ExtendableMessageEvent final : public ExtendableEvent {
   ExtendableMessageEvent(const AtomicString& type,
                          const ExtendableMessageEventInit& initializer,
                          WaitUntilObserver*);
-  ExtendableMessageEvent(PassRefPtr<SerializedScriptValue> data,
+  ExtendableMessageEvent(scoped_refptr<SerializedScriptValue> data,
                          const String& origin,
                          MessagePortArray* ports,
                          WaitUntilObserver*);
 
-  RefPtr<SerializedScriptValue> serialized_data_;
+  scoped_refptr<SerializedScriptValue> serialized_data_;
   String origin_;
   String last_event_id_;
   Member<ServiceWorkerClient> source_as_client_;

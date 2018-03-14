@@ -21,6 +21,10 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/views/widget/widget_observer.h"
 
+namespace ui {
+class AnimationMetricsReporter;
+}
+
 namespace app_list {
 class AppListView;
 class AppListViewDelegate;
@@ -53,12 +57,10 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
   // Returns app list view if one exists, or NULL otherwise.
   AppListView* GetView() { return view_; }
 
-  // Show/hide app list window. The |window| is used to deterime in which
-  // display (in which the |window| exists) the app list should be shown.
+  // Show the app list window on the display with the given id.
   void Show(int64_t display_id);
 
-  // Invoked to dismiss app list. This may leave the view open but hidden from
-  // the user.
+  // Hide the open app list window. This may leave the view open but hidden.
   void Dismiss();
 
   // Show the app list if it is visible, hide it if it is hidden.
@@ -73,6 +75,16 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
 
   // Sets the app list interface pointer; used to report visibility changes.
   void SetAppList(mojom::AppListPtr app_list);
+
+  // Updates y position and opacity of app list.
+  void UpdateYPositionAndOpacity(int y_position_in_screen,
+                                 float background_opacity);
+
+  // Ends the drag of app list from shelf.
+  void EndDragFromShelf(mojom::AppListState app_list_state);
+
+  // Passes a MouseWheelEvent from the shelf to the AppListView.
+  void ProcessMouseWheelOffset(int y_scroll_offset);
 
  private:
   friend class test::AppListPresenterImplTestApi;
@@ -97,7 +109,8 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
   // aura::WindowObserver overrides:
   void OnWindowBoundsChanged(aura::Window* root,
                              const gfx::Rect& old_bounds,
-                             const gfx::Rect& new_bounds) override;
+                             const gfx::Rect& new_bounds,
+                             ui::PropertyChangeReason reason) override;
 
   // ui::ImplicitAnimationObserver overrides:
   void OnImplicitAnimationsCompleted() override;
@@ -111,6 +124,7 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
   void SelectedPageChanged(int old_selected, int new_selected) override;
   void TransitionStarted() override;
   void TransitionChanged() override;
+  void TransitionEnded() override;
 
   // The factory for the presenter's delegate.
   std::unique_ptr<AppListPresenterDelegateFactory> factory_;
@@ -136,6 +150,10 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
 
   // The app list interface pointer; used for reporting visibility changes.
   mojom::AppListPtr app_list_;
+
+  // Metric reporter for state change animations.
+  const std::unique_ptr<ui::AnimationMetricsReporter>
+      state_animation_metrics_reporter_;
 
   DISALLOW_COPY_AND_ASSIGN(AppListPresenterImpl);
 };

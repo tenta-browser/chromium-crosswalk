@@ -6,12 +6,12 @@
 
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/DOMException.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
+#include "modules/mediastream/MediaDevicesRequest.h"
 #include "modules/mediastream/MediaErrorState.h"
 #include "modules/mediastream/MediaStream.h"
 #include "modules/mediastream/MediaStreamConstraints.h"
@@ -19,6 +19,9 @@
 #include "modules/mediastream/NavigatorUserMediaErrorCallback.h"
 #include "modules/mediastream/NavigatorUserMediaSuccessCallback.h"
 #include "modules/mediastream/UserMediaController.h"
+#include "modules/mediastream/UserMediaRequest.h"
+#include "platform/bindings/ScriptState.h"
+#include "public/platform/TaskType.h"
 
 namespace blink {
 
@@ -33,7 +36,7 @@ class PromiseSuccessCallback final : public NavigatorUserMediaSuccessCallback {
 
   void handleEvent(MediaStream* stream) { resolver_->Resolve(stream); }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  virtual void Trace(blink::Visitor* visitor) {
     visitor->Trace(resolver_);
     NavigatorUserMediaSuccessCallback::Trace(visitor);
   }
@@ -49,9 +52,11 @@ class PromiseErrorCallback final : public NavigatorUserMediaErrorCallback {
 
   ~PromiseErrorCallback() {}
 
-  void handleEvent(NavigatorUserMediaError* error) { resolver_->Reject(error); }
+  void handleEvent(DOMExceptionOrOverconstrainedError error) {
+    resolver_->Reject(error);
+  }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  virtual void Trace(blink::Visitor* visitor) {
     visitor->Trace(resolver_);
     NavigatorUserMediaErrorCallback::Trace(visitor);
   }
@@ -64,17 +69,20 @@ class PromiseErrorCallback final : public NavigatorUserMediaErrorCallback {
 
 MediaDevices* MediaDevices::Create(ExecutionContext* context) {
   MediaDevices* media_devices = new MediaDevices(context);
-  media_devices->SuspendIfNeeded();
+  media_devices->PauseIfNeeded();
   return media_devices;
 }
 
 MediaDevices::MediaDevices(ExecutionContext* context)
-    : SuspendableObject(context),
+    : PausableObject(context),
       observing_(false),
       stopped_(false),
-      dispatch_scheduled_event_runner_(AsyncMethodRunner<MediaDevices>::Create(
-          this,
-          &MediaDevices::DispatchScheduledEvent)) {}
+      dispatch_scheduled_event_runner_(
+          context ? AsyncMethodRunner<MediaDevices>::Create(
+                        this,
+                        &MediaDevices::DispatchScheduledEvent,
+                        context->GetTaskRunner(TaskType::kMediaElementEvent))
+                  : nullptr) {}
 
 MediaDevices::~MediaDevices() {}
 
@@ -134,16 +142,16 @@ ScriptPromise MediaDevices::getUserMedia(ScriptState* script_state,
     return ScriptPromise::RejectWithDOMException(
         script_state, DOMException::Create(kNotSupportedError, error_message));
   }
-
+  auto promise = resolver->Promise();
   request->Start();
-  return resolver->Promise();
+  return promise;
 }
 
 void MediaDevices::DidChangeMediaDevices() {
   Document* document = ToDocument(GetExecutionContext());
   DCHECK(document);
 
-  if (RuntimeEnabledFeatures::onDeviceChangeEnabled())
+  if (RuntimeEnabledFeatures::OnDeviceChangeEnabled())
     ScheduleDispatchEvent(Event::Create(EventTypeNames::devicechange));
 }
 
@@ -152,7 +160,7 @@ const AtomicString& MediaDevices::InterfaceName() const {
 }
 
 ExecutionContext* MediaDevices::GetExecutionContext() const {
-  return SuspendableObject::GetExecutionContext();
+  return PausableObject::GetExecutionContext();
 }
 
 void MediaDevices::RemoveAllEventListeners() {
@@ -191,22 +199,25 @@ void MediaDevices::ContextDestroyed(ExecutionContext*) {
   StopObserving();
 }
 
-void MediaDevices::Suspend() {
-  dispatch_scheduled_event_runner_->Suspend();
+void MediaDevices::Pause() {
+  DCHECK(dispatch_scheduled_event_runner_);
+  dispatch_scheduled_event_runner_->Pause();
 }
 
-void MediaDevices::Resume() {
-  dispatch_scheduled_event_runner_->Resume();
+void MediaDevices::Unpause() {
+  DCHECK(dispatch_scheduled_event_runner_);
+  dispatch_scheduled_event_runner_->Unpause();
 }
 
 void MediaDevices::ScheduleDispatchEvent(Event* event) {
   scheduled_events_.push_back(event);
+  DCHECK(dispatch_scheduled_event_runner_);
   dispatch_scheduled_event_runner_->RunAsync();
 }
 
 void MediaDevices::DispatchScheduledEvent() {
   HeapVector<Member<Event>> events;
-  events.Swap(scheduled_events_);
+  events.swap(scheduled_events_);
 
   for (const auto& event : events)
     DispatchEvent(event);
@@ -248,11 +259,11 @@ void MediaDevices::Dispose() {
   StopObserving();
 }
 
-DEFINE_TRACE(MediaDevices) {
+void MediaDevices::Trace(blink::Visitor* visitor) {
   visitor->Trace(dispatch_scheduled_event_runner_);
   visitor->Trace(scheduled_events_);
   EventTargetWithInlineData::Trace(visitor);
-  SuspendableObject::Trace(visitor);
+  PausableObject::Trace(visitor);
 }
 
 }  // namespace blink

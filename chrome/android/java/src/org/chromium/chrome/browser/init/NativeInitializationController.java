@@ -36,7 +36,7 @@ class NativeInitializationController {
     private List<Intent> mPendingNewIntents;
     private List<ActivityResult> mPendingActivityResults;
 
-    private boolean mBackgroundTasksComplete;
+    private Boolean mBackgroundTasksComplete;
     private boolean mHasDoneFirstDraw;
     private boolean mHasSignaledLibraryLoaded;
     private boolean mInitializationComplete;
@@ -76,11 +76,9 @@ class NativeInitializationController {
      */
     public void startBackgroundTasks(final boolean allocateChildConnection) {
         ThreadUtils.assertOnUiThread();
-
+        assert mBackgroundTasksComplete == null;
         boolean fetchVariationsSeed = FirstRunFlowSequencer.checkIfFirstRunIsNecessary(
-                                              ContextUtils.getApplicationContext(),
-                                              mActivityDelegate.getInitialIntent(), false)
-                != null;
+                ContextUtils.getApplicationContext(), mActivityDelegate.getInitialIntent(), false);
 
         mBackgroundTasksComplete = false;
         new AsyncInitTaskRunner() {
@@ -108,7 +106,7 @@ class NativeInitializationController {
         ThreadUtils.assertOnUiThread();
 
         // Called on UI thread when any of the booleans below have changed.
-        if (mHasDoneFirstDraw && mBackgroundTasksComplete) {
+        if (mHasDoneFirstDraw && (mBackgroundTasksComplete != null && mBackgroundTasksComplete)) {
             // This block should only be hit once.
             assert !mHasSignaledLibraryLoaded;
             mHasSignaledLibraryLoaded = true;

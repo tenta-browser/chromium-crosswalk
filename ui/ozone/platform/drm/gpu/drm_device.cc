@@ -26,15 +26,13 @@
 #include "ui/ozone/platform/drm/gpu/hardware_display_plane_manager_atomic.h"
 #include "ui/ozone/platform/drm/gpu/hardware_display_plane_manager_legacy.h"
 
-
 namespace ui {
 
 namespace {
 
-typedef base::Callback<void(uint32_t /* frame */,
-                            uint32_t /* seconds */,
-                            uint32_t /* useconds */,
-                            uint64_t /* id */)> DrmEventHandler;
+using DrmEventHandler = base::Callback<void(uint32_t /* frame */,
+                                            base::TimeTicks /* timestamp */,
+                                            uint64_t /* id */)>;
 
 bool DrmCreateDumbBuffer(int fd,
                          const SkImageInfo& info,
@@ -55,7 +53,7 @@ bool DrmCreateDumbBuffer(int fd,
   // The driver may choose to align the last row as well. We don't care about
   // the last alignment bits since they aren't used for display purposes, so
   // just check that the expected size is <= to what the driver allocated.
-  DCHECK_LE(info.getSafeSize(request.pitch), request.size);
+  DCHECK_LE(info.computeByteSize(request.pitch), request.size);
 
   *handle = request.handle;
   *stride = request.pitch;
@@ -98,8 +96,17 @@ bool ProcessDrmEvent(int fd, const DrmEventHandler& callback) {
         TRACE_EVENT_INSTANT1("benchmark,drm", "DrmEventFlipComplete",
                              TRACE_EVENT_SCOPE_THREAD, "data",
                              std::move(drm_data));
-        callback.Run(vblank.sequence, vblank.tv_sec, vblank.tv_usec,
-                     vblank.user_data);
+        // Warning: It is generally unsafe to manufacture TimeTicks values; but
+        // here it is required for interfacing with libdrm. Assumption: libdrm
+        // is providing the timestamp from the CLOCK_MONOTONIC POSIX clock.
+        DCHECK_EQ(base::TimeTicks::GetClock(),
+                  base::TimeTicks::Clock::LINUX_CLOCK_MONOTONIC);
+        const base::TimeTicks timestamp =
+            base::TimeTicks() + base::TimeDelta::FromMicroseconds(
+                                    static_cast<int64_t>(vblank.tv_sec) *
+                                        base::Time::kMicrosecondsPerSecond +
+                                    vblank.tv_usec);
+        callback.Run(vblank.sequence, timestamp, vblank.user_data);
       } break;
       case DRM_EVENT_VBLANK:
         break;
@@ -299,10 +306,7 @@ class DrmDevice::PageFlipManager {
   PageFlipManager() : next_id_(0) {}
   ~PageFlipManager() {}
 
-  void OnPageFlip(uint32_t frame,
-                  uint32_t seconds,
-                  uint32_t useconds,
-                  uint64_t id) {
+  void OnPageFlip(uint32_t frame, base::TimeTicks timestamp, uint64_t id) {
     auto it =
         std::find_if(callbacks_.begin(), callbacks_.end(), FindCallback(id));
     if (it == callbacks_.end()) {
@@ -316,7 +320,7 @@ class DrmDevice::PageFlipManager {
       return;
 
     callbacks_.erase(it);
-    callback.Run(frame, seconds, useconds);
+    callback.Run(frame, timestamp);
   }
 
   uint64_t GetNextId() { return next_id_++; }

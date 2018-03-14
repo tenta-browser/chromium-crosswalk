@@ -27,7 +27,7 @@
 (function() {
 'use strict';
 
-/** @const */ var PASSWORD_ACTIVE_DURATION_MS = 10 * 60 * 1000; // Ten minutes.
+/** @const */ var PASSWORD_ACTIVE_DURATION_MS = 10 * 60 * 1000;  // Ten minutes.
 
 Polymer({
   is: 'settings-password-prompt-dialog',
@@ -41,7 +41,7 @@ Polymer({
      */
     setModes: {
       type: Object,
-      notify: true
+      notify: true,
     },
 
     /**
@@ -53,7 +53,7 @@ Polymer({
      */
     password_: {
       type: String,
-      observer: 'onPasswordChanged_'
+      observer: 'onPasswordChanged_',
     },
 
     /**
@@ -68,7 +68,7 @@ Polymer({
      */
     quickUnlockPrivate_: {
       type: Object,
-      value: chrome.quickUnlockPrivate
+      value: chrome.quickUnlockPrivate,
     },
 
     /**
@@ -80,7 +80,9 @@ Polymer({
      */
     writeUma_: {
       type: Object,
-      value: function() { return settings.recordLockScreenProgress; }
+      value: function() {
+        return settings.recordLockScreenProgress;
+      }
     },
 
     /**
@@ -89,27 +91,17 @@ Polymer({
      */
     passwordActiveDurationMs_: {
       type: Number,
-      value: PASSWORD_ACTIVE_DURATION_MS
+      value: PASSWORD_ACTIVE_DURATION_MS,
     },
   },
 
-  /**
-   * Open up the dialog. This will wait until the dialog has loaded before
-   * opening it.
-   */
-  open: function() {
-    // Wait until the dialog is attached to the DOM before trying to open it.
-    var dialog = /** @type {{isConnected: boolean}} */ (this.$.dialog);
-    if (!dialog.isConnected) {
-      setTimeout(this.open.bind(this));
-      return;
-    }
-
-    if (this.$.dialog.open)
-      return;
-
+  /** @override */
+  attached: function() {
     this.writeUma_(LockScreenProgress.START_SCREEN_LOCK);
     this.$.dialog.showModal();
+    this.async(() => {
+      this.$.passwordInput.focus();
+    });
   },
 
   /** @private */
@@ -144,6 +136,12 @@ Polymer({
       // The password might have been cleared during the duration of the
       // getActiveModes call.
       this.passwordInvalid_ = !valid && !!this.password_;
+      // Return focus to the password input if it lost focus while being checked
+      // (user pressed confirm button).
+      if (this.passwordInvalid_ &&
+          this.shadowRoot.activeElement != this.$.passwordInput) {
+        this.$.passwordInput.focus();
+      }
 
       if (valid) {
         // Create the |this.setModes| closure and automatically clear it after
@@ -151,10 +149,10 @@ Polymer({
         var password = this.password_;
         this.password_ = '';
 
-        this.setModes = function(modes, credentials, onComplete) {
+        this.setModes = (modes, credentials, onComplete) => {
           this.quickUnlockPrivate_.setModes(
               password, modes, credentials, onComplete);
-        }.bind(this);
+        };
 
         function clearSetModes() {
           // Reset the password so that any cached references to this.setModes
@@ -164,7 +162,7 @@ Polymer({
         }
 
         this.clearAccountPasswordTimeout_ = setTimeout(
-          clearSetModes.bind(this), this.passwordActiveDurationMs_);
+            clearSetModes.bind(this), this.passwordActiveDurationMs_);
 
         // Clear stored password state and close the dialog.
         this.password_ = '';
@@ -189,18 +187,18 @@ Polymer({
   },
 
   /**
-  * Helper method that checks if the current password is valid.
-  * @param {function(boolean):void} onCheck
-  */
+   * Helper method that checks if the current password is valid.
+   * @param {function(boolean):void} onCheck
+   */
   checkAccountPassword_: function(onCheck) {
     // We check the account password by trying to update the active set of quick
     // unlock modes without changing any credentials.
-    this.quickUnlockPrivate_.getActiveModes(function(modes) {
+    this.quickUnlockPrivate_.getActiveModes(modes => {
       var credentials =
           /** @type {!Array<string>} */ (Array(modes.length).fill(''));
       this.quickUnlockPrivate_.setModes(
           this.password_, modes, credentials, onCheck);
-    }.bind(this));
+    });
   }
 });
 

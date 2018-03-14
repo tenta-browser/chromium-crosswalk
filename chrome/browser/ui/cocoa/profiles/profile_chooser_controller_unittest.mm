@@ -24,20 +24,26 @@
 #include "chrome/browser/signin/fake_profile_oauth2_token_service_builder.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/sync/profile_sync_service_factory.h"
+#include "chrome/browser/sync/profile_sync_test_util.h"
 #include "chrome/browser/ui/browser.h"
 #import "chrome/browser/ui/cocoa/info_bubble_view.h"
 #include "chrome/browser/ui/cocoa/l10n_util.h"
 #include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
 #include "chrome/browser/ui/cocoa/test/scoped_force_rtl_mac.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "components/signin/core/browser/fake_account_fetcher_service.h"
 #include "components/signin/core/browser/fake_profile_oauth2_token_service.h"
+#include "components/signin/core/browser/profile_management_switches.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
+#include "components/signin/core/browser/scoped_account_consistency.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/signin/core/common/profile_management_switches.h"
-#include "components/signin/core/common/signin_pref_names.h"
+#include "components/signin/core/browser/signin_pref_names.h"
 #include "components/sync_preferences/pref_service_syncable.h"
+
+using ::testing::Return;
 
 const std::string kGaiaId = "gaiaid-user@gmail.com";
 const std::string kEmail = "user@gmail.com";
@@ -48,6 +54,10 @@ const std::string kLoginToken = "oauth2_login_token";
 class ProfileChooserControllerTest : public CocoaProfileTest {
  public:
   ProfileChooserControllerTest() {
+    // This file only tests Cocoa UI and can be deleted when
+    // kViewsProfileChooser is removed.
+    scoped_feature_list_.InitAndDisableFeature(features::kViewsProfileChooser);
+
     TestingProfile::TestingFactories factories;
     factories.push_back(
         std::make_pair(ProfileOAuth2TokenServiceFactory::GetInstance(),
@@ -55,6 +65,8 @@ class ProfileChooserControllerTest : public CocoaProfileTest {
     factories.push_back(
         std::make_pair(AccountFetcherServiceFactory::GetInstance(),
                        FakeAccountFetcherServiceBuilder::BuildForTests));
+    factories.push_back(std::make_pair(ProfileSyncServiceFactory::GetInstance(),
+                                       BuildMockProfileSyncService));
     AddTestingFactories(factories);
   }
 
@@ -74,6 +86,10 @@ class ProfileChooserControllerTest : public CocoaProfileTest {
         base::ASCIIToUTF16("Test 2"), 1, std::string(),
         TestingProfile::TestingFactories());
 
+    mock_sync_service_ = static_cast<browser_sync::ProfileSyncServiceMock*>(
+        ProfileSyncServiceFactory::GetInstance()->GetForProfile(
+            browser()->profile()));
+
     menu_ = new AvatarMenu(
         testing_profile_manager()->profile_attributes_storage(), NULL, NULL);
     menu_->RebuildMenu();
@@ -89,18 +105,12 @@ class ProfileChooserControllerTest : public CocoaProfileTest {
   }
 
   void StartProfileChooserController() {
-    StartProfileChooserControllerWithTutorialMode(profiles::TUTORIAL_MODE_NONE);
-  }
-
-  void StartProfileChooserControllerWithTutorialMode(
-      profiles::TutorialMode mode) {
     NSRect frame = [test_window() frame];
     NSPoint point = NSMakePoint(NSMidX(frame), NSMidY(frame));
     controller_.reset([[ProfileChooserController alloc]
         initWithBrowser:browser()
              anchoredAt:point
                viewMode:profiles::BUBBLE_VIEW_MODE_PROFILE_CHOOSER
-           tutorialMode:mode
             serviceType:signin::GAIA_SERVICE_TYPE_NONE
             accessPoint:signin_metrics::AccessPoint::
                             ACCESS_POINT_AVATAR_BUBBLE_SIGN_IN]);
@@ -108,18 +118,71 @@ class ProfileChooserControllerTest : public CocoaProfileTest {
   }
 
   void SignInFirstProfile() {
-    std::vector<ProfileAttributesEntry*> entries = testing_profile_manager()->
-        profile_attributes_storage()->GetAllProfilesAttributes();
+    std::vector<ProfileAttributesEntry*> entries =
+        testing_profile_manager()
+            ->profile_attributes_storage()
+            ->GetAllProfilesAttributesSortedByName();
     ASSERT_LE(1U, entries.size());
     ProfileAttributesEntry* entry = entries.front();
     entry->SetAuthInfo(kGaiaId, base::ASCIIToUTF16(kEmail));
   }
 
+  void SuppressSyncConfirmationError() {
+    EXPECT_CALL(*mock_sync_service_, IsFirstSetupComplete())
+        .WillRepeatedly(Return(false));
+    EXPECT_CALL(*mock_sync_service_, IsFirstSetupInProgress())
+        .WillRepeatedly(Return(true));
+    EXPECT_CALL(*mock_sync_service_, IsSyncConfirmationNeeded())
+        .WillRepeatedly(Return(false));
+  }
+
   ProfileChooserController* controller() { return controller_; }
   AvatarMenu* menu() { return menu_; }
 
+  void ExpectGuestButton(NSButton* guest_button) {
+    ASSERT_TRUE(guest_button);
+    EXPECT_EQ(@selector(switchToGuest:), [guest_button action]);
+    EXPECT_EQ(controller(), [guest_button target]);
+    EXPECT_TRUE([guest_button isEnabled]);
+  }
+
+  void ExpectManagePeopleButton(NSButton* manage_people_button) {
+    ASSERT_TRUE(manage_people_button);
+    EXPECT_EQ(@selector(showUserManager:), [manage_people_button action]);
+    EXPECT_EQ(controller(), [manage_people_button target]);
+    EXPECT_TRUE([manage_people_button isEnabled]);
+  }
+
+  void ExpectCloseAllWindowsButton(NSButton* close_all_windows_button) {
+    ASSERT_TRUE(close_all_windows_button);
+    EXPECT_EQ(@selector(closeAllWindows:), [close_all_windows_button action]);
+    EXPECT_EQ(controller(), [close_all_windows_button target]);
+    EXPECT_TRUE([close_all_windows_button isEnabled]);
+  }
+
+  void ExpectRegularProfileButtons(NSArray* buttonSubviews) {
+    // There are 3 buttons for a regular profile: "Guest", "Manage People" and
+    // "Close all your windows".
+    ASSERT_EQ(3U, [buttonSubviews count]);
+
+    // There should be a "Close all your windows" button.
+    NSButton* close_all_windows_button =
+        base::mac::ObjCCast<NSButton>([buttonSubviews objectAtIndex:0]);
+    ExpectCloseAllWindowsButton(close_all_windows_button);
+    // There should be a "Manage People" button.
+    NSButton* manage_people_button =
+        base::mac::ObjCCast<NSButton>([buttonSubviews objectAtIndex:1]);
+    ExpectManagePeopleButton(manage_people_button);
+    // There should be a "Guest" button.
+    NSButton* guest_button =
+        base::mac::ObjCCast<NSButton>([buttonSubviews objectAtIndex:2]);
+    ExpectGuestButton(guest_button);
+  }
+
  private:
+  base::test::ScopedFeatureList scoped_feature_list_;
   base::scoped_nsobject<ProfileChooserController> controller_;
+  browser_sync::ProfileSyncServiceMock* mock_sync_service_ = nullptr;
 
   // Weak; owned by |controller_|.
   AvatarMenu* menu_;
@@ -143,15 +206,7 @@ TEST_F(ProfileChooserControllerTest, InitialLayoutWithNewMenu) {
 
   // There should be one button in the option buttons view.
   NSArray* buttonSubviews = [[subviews objectAtIndex:0] subviews];
-  NSButton* userSwitcherButton;
-  // There are 2 buttons in the initial layout: "Manage People" and "Guest".
-  ASSERT_EQ(2U, [buttonSubviews count]);
-  // There should be a user switcher button.
-  userSwitcherButton =
-      base::mac::ObjCCast<NSButton>([buttonSubviews objectAtIndex:0]);
-
-  EXPECT_EQ(@selector(showUserManager:), [userSwitcherButton action]);
-  EXPECT_EQ(controller(), [userSwitcherButton target]);
+  ExpectRegularProfileButtons(buttonSubviews);
 
   NSUInteger lastSubviewIndex = 4;
   NSArray* activeCardSubviews =
@@ -194,29 +249,6 @@ TEST_F(ProfileChooserControllerTest, BubbleAlignment) {
   [controller() close];
 }
 
-TEST_F(ProfileChooserControllerTest, RightClickTutorialShownAfterWelcome) {
-  // The welcome upgrade tutorial takes precedence so show it then dismiss it.
-  // The right click tutorial should be shown right away.
-  StartProfileChooserControllerWithTutorialMode(
-      profiles::TUTORIAL_MODE_WELCOME_UPGRADE);
-
-  [controller() dismissTutorial:nil];
-}
-
-TEST_F(ProfileChooserControllerTest, RightClickTutorialShownAfterReopen) {
-  // The welcome upgrade tutorial takes precedence so show it then close the
-  // menu. Reopening the menu should show the tutorial.
-  StartProfileChooserController();
-
-  [controller() close];
-  StartProfileChooserController();
-
-  // The tutorial must be manually dismissed so it should still be shown after
-  // closing and reopening the menu,
-  [controller() close];
-  StartProfileChooserController();
-}
-
 TEST_F(ProfileChooserControllerTest,
     LocalProfileActiveCardLinksWithNewMenu) {
   StartProfileChooserController();
@@ -246,8 +278,7 @@ TEST_F(ProfileChooserControllerTest,
 
 TEST_F(ProfileChooserControllerTest,
        SignedInProfileActiveCardLinksWithAccountConsistency) {
-  switches::EnableAccountConsistencyForTesting(
-      base::CommandLine::ForCurrentProcess());
+  signin::ScopedAccountConsistencyMirror scoped_mirror;
 
   SignInFirstProfile();
 
@@ -290,8 +321,7 @@ TEST_F(ProfileChooserControllerTest,
 }
 
 TEST_F(ProfileChooserControllerTest, AccountManagementLayout) {
-  switches::EnableAccountConsistencyForTesting(
-      base::CommandLine::ForCurrentProcess());
+  signin::ScopedAccountConsistencyMirror scoped_mirror;
 
   SignInFirstProfile();
 
@@ -319,9 +349,11 @@ TEST_F(ProfileChooserControllerTest, AccountManagementLayout) {
   ProfileOAuth2TokenServiceFactory::GetForProfile(profile)
       ->UpdateCredentials(account_id, kLoginToken);
 
+  SuppressSyncConfirmationError();
+
   StartProfileChooserController();
-  [controller() initMenuContentsWithView:
-      profiles::BUBBLE_VIEW_MODE_ACCOUNT_MANAGEMENT];
+  [controller()
+      showMenuWithViewMode:profiles::BUBBLE_VIEW_MODE_ACCOUNT_MANAGEMENT];
 
   NSArray* subviews = [[[controller() window] contentView] subviews];
   ASSERT_EQ(2U, [subviews count]);
@@ -333,15 +365,7 @@ TEST_F(ProfileChooserControllerTest, AccountManagementLayout) {
   ASSERT_EQ(viewsCount, [subviews count]);
 
   NSArray* buttonSubviews = [[subviews objectAtIndex:0] subviews];
-  NSButton* userSwitcherButton;
-  // There should be two buttons in the option buttons view.
-  ASSERT_EQ(2U, [buttonSubviews count]);
-  // There should be a user switcher button.
-  userSwitcherButton =
-      base::mac::ObjCCast<NSButton>([buttonSubviews objectAtIndex:0]);
-
-  EXPECT_EQ(@selector(showUserManager:), [userSwitcherButton action]);
-  EXPECT_EQ(controller(), [userSwitcherButton target]);
+  ExpectRegularProfileButtons(buttonSubviews);
 
   NSUInteger accountsViewIndex = 4;
   // In the accounts view, there should be the account list container
@@ -399,14 +423,7 @@ TEST_F(ProfileChooserControllerTest, SignedInProfileLockDisabled) {
   subviews = [[subviews objectAtIndex:0] subviews];
 
   NSArray* buttonSubviews = [[subviews objectAtIndex:0] subviews];
-  // There will be two buttons in the option buttons view.
-  ASSERT_EQ(2U, [buttonSubviews count]);
-
-  // The last button should not be the lock button.
-  NSButton* lastButton =
-      base::mac::ObjCCast<NSButton>([buttonSubviews objectAtIndex:0]);
-  ASSERT_TRUE(lastButton);
-  EXPECT_NE(@selector(lockProfile:), [lastButton action]);
+  ExpectRegularProfileButtons(buttonSubviews);
 }
 
 TEST_F(ProfileChooserControllerTest, SignedInProfileLockEnabled) {
@@ -426,7 +443,8 @@ TEST_F(ProfileChooserControllerTest, SignedInProfileLockEnabled) {
   subviews = [[subviews objectAtIndex:0] subviews];
 
   NSArray* buttonSubviews = [[subviews objectAtIndex:0] subviews];
-  // There will be two buttons and one separator in the option buttons view.
+  // There are 3 buttons for a lockable profile: "Guest", "Manage People" and
+  // "Close all your windows".
   ASSERT_EQ(3U, [buttonSubviews count]);
 
   // There should be a lock button.
@@ -436,4 +454,38 @@ TEST_F(ProfileChooserControllerTest, SignedInProfileLockEnabled) {
   EXPECT_EQ(@selector(lockProfile:), [lockButton action]);
   EXPECT_EQ(controller(), [lockButton target]);
   EXPECT_TRUE([lockButton isEnabled]);
+}
+
+TEST_F(ProfileChooserControllerTest, RegularProfileWithManagePeopleAndGuest) {
+  StartProfileChooserController();
+  NSArray* subviews = [[[controller() window] contentView] subviews];
+  ASSERT_EQ(2U, [subviews count]);
+  subviews = [[subviews objectAtIndex:0] subviews];
+
+  NSArray* buttonSubviews = [[subviews objectAtIndex:0] subviews];
+  ExpectRegularProfileButtons(buttonSubviews);
+}
+
+TEST_F(ProfileChooserControllerTest, SupervisedProfileWithManagePeopleOnly) {
+  TestingProfile* test = static_cast<TestingProfile*>(browser()->profile());
+  test->SetSupervisedUserId(kSecondaryGaiaId);
+
+  StartProfileChooserController();
+  NSArray* subviews = [[[controller() window] contentView] subviews];
+  ASSERT_EQ(2U, [subviews count]);
+  subviews = [[subviews objectAtIndex:0] subviews];
+
+  NSArray* buttonSubviews = [[subviews objectAtIndex:0] subviews];
+  // There are 3 buttons for a lockable profile: "Guest", "Manage People" and
+  // "Close all your windows".
+  ASSERT_EQ(2U, [buttonSubviews count]);
+
+  // There should be a "Close all your windows" button.
+  NSButton* close_all_windows_button =
+      base::mac::ObjCCast<NSButton>([buttonSubviews objectAtIndex:0]);
+  ExpectCloseAllWindowsButton(close_all_windows_button);
+  // There should be a "Manage People" button.
+  NSButton* manage_people_button =
+      base::mac::ObjCCast<NSButton>([buttonSubviews objectAtIndex:1]);
+  ExpectManagePeopleButton(manage_people_button);
 }

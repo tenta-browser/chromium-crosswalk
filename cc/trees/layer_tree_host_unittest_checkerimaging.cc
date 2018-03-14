@@ -3,14 +3,14 @@
 // found in the LICENSE file.
 
 #include "cc/base/completion_event.h"
-#include "cc/test/begin_frame_args_test.h"
 #include "cc/test/fake_content_layer_client.h"
-#include "cc/test/fake_external_begin_frame_source.h"
 #include "cc/test/fake_picture_layer.h"
 #include "cc/test/layer_tree_test.h"
 #include "cc/test/skia_common.h"
-#include "cc/test/test_compositor_frame_sink.h"
 #include "cc/trees/layer_tree_impl.h"
+#include "components/viz/test/begin_frame_args_test.h"
+#include "components/viz/test/fake_external_begin_frame_source.h"
+#include "components/viz/test/test_layer_tree_frame_sink.h"
 
 namespace cc {
 namespace {
@@ -21,8 +21,8 @@ class LayerTreeHostCheckerImagingTest : public LayerTreeTest {
   void AfterTest() override {}
 
   void InitializeSettings(LayerTreeSettings* settings) override {
-    settings->image_decode_tasks_enabled = true;
     settings->enable_checker_imaging = true;
+    settings->min_image_bytes_to_checker = 512 * 1024;
   }
 
   void SetupTree() override {
@@ -36,8 +36,8 @@ class LayerTreeHostCheckerImagingTest : public LayerTreeTest {
     gfx::Size layer_size(1000, 500);
     content_layer_client_.set_bounds(layer_size);
     content_layer_client_.set_fill_with_nonsolid_color(true);
-    sk_sp<SkImage> checkerable_image =
-        CreateDiscardableImage(gfx::Size(450, 450));
+    PaintImage checkerable_image =
+        CreateDiscardablePaintImage(gfx::Size(450, 450));
     content_layer_client_.add_draw_image(checkerable_image, gfx::Point(0, 0),
                                          PaintFlags());
 
@@ -47,15 +47,6 @@ class LayerTreeHostCheckerImagingTest : public LayerTreeTest {
     LayerTreeTest::SetupTree();
   }
 
-  void FlushImageDecodeTasks() {
-    CompletionEvent completion_event;
-    image_worker_task_runner()->PostTask(
-        FROM_HERE,
-        base::BindOnce([](CompletionEvent* event) { event->Signal(); },
-                       base::Unretained(&completion_event)));
-    completion_event.Wait();
-  }
-
  private:
   // Accessed only on the main thread.
   FakeContentLayerClient content_layer_client_;
@@ -63,7 +54,7 @@ class LayerTreeHostCheckerImagingTest : public LayerTreeTest {
 
 class LayerTreeHostCheckerImagingTestMergeWithMainFrame
     : public LayerTreeHostCheckerImagingTest {
-  void BeginMainFrame(const BeginFrameArgs& args) override {
+  void BeginMainFrame(const viz::BeginFrameArgs& args) override {
     if (layer_tree_host()->SourceFrameNumber() == 1) {
       // The first commit has happened, invalidate a tile outside the region
       // for the image to ensure that the final invalidation on the pending
@@ -74,26 +65,24 @@ class LayerTreeHostCheckerImagingTestMergeWithMainFrame
     }
   }
 
-  void ReadyToCommitOnThread(LayerTreeHostImpl* host_impl) override {
-    if (num_of_commits_ == 1) {
-      // Send the blocked invalidation request before notifying that we're ready
-      // to commit, since the invalidation will be merged with the commit.
-      host_impl->BlockImplSideInvalidationRequestsForTesting(false);
-    }
+  void DidReceiveImplSideInvalidationRequest(
+      LayerTreeHostImpl* host_impl) override {
+    if (invalidation_requested_)
+      return;
+    invalidation_requested_ = true;
+
+    // Request a commit.
+    host_impl->SetNeedsCommit();
   }
 
   void CommitCompleteOnThread(LayerTreeHostImpl* host_impl) override {
     switch (++num_of_commits_) {
-      case 1: {
-        // The first commit has happened. Run all tasks on the image worker to
-        // ensure that the decode completion triggers an impl-side invalidation
-        // request.
-        FlushImageDecodeTasks();
-
-        // Block notifying the scheduler of this request until we get a commit.
+      case 1:
+        // Block notifying the scheduler of this request until we've had a
+        // chance to make sure that the decode work was scheduled, flushed and
+        // the commit requested after it is received.
         host_impl->BlockImplSideInvalidationRequestsForTesting(true);
-        host_impl->SetNeedsCommit();
-      } break;
+        break;
       case 2: {
         // Ensure that the expected tiles are invalidated on the sync tree.
         PictureLayerImpl* sync_layer_impl = static_cast<PictureLayerImpl*>(
@@ -103,7 +92,9 @@ class LayerTreeHostCheckerImagingTestMergeWithMainFrame
                 ->FindTilingWithResolution(TileResolution::HIGH_RESOLUTION);
 
         for (int i = 0; i < 4; i++) {
+          SCOPED_TRACE(i);
           for (int j = 0; j < 2; j++) {
+            SCOPED_TRACE(j);
             Tile* tile =
                 sync_tiling->TileAt(i, j) ? sync_tiling->TileAt(i, j) : nullptr;
 
@@ -111,14 +102,22 @@ class LayerTreeHostCheckerImagingTestMergeWithMainFrame
             // exist and have a raster task. If its the active tree, then only
             // the invalidated tiles have a raster task.
             if (i < 3) {
+              ASSERT_TRUE(tile);
               EXPECT_TRUE(tile->HasRasterTask());
             } else if (host_impl->pending_tree()) {
               EXPECT_EQ(tile, nullptr);
             } else {
+              ASSERT_TRUE(tile);
               EXPECT_FALSE(tile->HasRasterTask());
             }
           }
         }
+
+        // Insetting of image is included in the update rect.
+        gfx::Rect expected_update_rect(-1, -1, 452, 452);
+        expected_update_rect.Union(gfx::Rect(600, 0, 50, 500));
+        EXPECT_EQ(sync_layer_impl->update_rect(), expected_update_rect);
+
         EndTest();
       } break;
       default:
@@ -128,11 +127,14 @@ class LayerTreeHostCheckerImagingTestMergeWithMainFrame
 
   void AfterTest() override { EXPECT_EQ(num_of_commits_, 2); }
 
+  // Use only on impl thread.
   int num_of_commits_ = 0;
+  bool invalidation_requested_ = false;
 };
 
-SINGLE_AND_MULTI_THREAD_TEST_F(
-    LayerTreeHostCheckerImagingTestMergeWithMainFrame);
+// Checkering of content is only done on the pending tree which does not exist
+// in single-threaded mode.
+MULTI_THREAD_TEST_F(LayerTreeHostCheckerImagingTestMergeWithMainFrame);
 
 class LayerTreeHostCheckerImagingTestImplSideTree
     : public LayerTreeHostCheckerImagingTest {
@@ -159,14 +161,19 @@ class LayerTreeHostCheckerImagingTestImplSideTree
         // exist and have a raster task. If its the active tree, then only
         // the invalidated tiles have a raster task.
         if (i < 2) {
+          ASSERT_TRUE(tile);
           EXPECT_TRUE(tile->HasRasterTask());
         } else if (host_impl->pending_tree()) {
           EXPECT_EQ(tile, nullptr);
         } else {
+          ASSERT_TRUE(tile);
           EXPECT_FALSE(tile->HasRasterTask());
         }
       }
     }
+
+    // Insetting of image is included in the update rect.
+    EXPECT_EQ(sync_layer_impl->update_rect(), gfx::Rect(-1, -1, 452, 452));
   }
 
   void CommitCompleteOnThread(LayerTreeHostImpl* host_impl) override {
@@ -190,7 +197,9 @@ class LayerTreeHostCheckerImagingTestImplSideTree
   int num_of_impl_side_invalidations_ = 0;
 };
 
-SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostCheckerImagingTestImplSideTree);
+// Checkering of content is only done on the pending tree which does not exist
+// in single-threaded mode.
+MULTI_THREAD_TEST_F(LayerTreeHostCheckerImagingTestImplSideTree);
 
 }  // namespace
 }  // namespace cc

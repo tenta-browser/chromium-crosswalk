@@ -5,18 +5,18 @@
 #include "chrome/browser/ui/views/location_bar/content_setting_image_view.h"
 
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
 #include "chrome/browser/ui/content_settings/content_setting_image_model.h"
 #include "chrome/browser/ui/views/content_setting_bubble_contents.h"
-#include "chrome/browser/ui/views/location_bar/location_bar_view.h"
-#include "chrome/grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/theme_provider.h"
 #include "ui/events/event_utils.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/color_utils.h"
+#include "ui/views/animation/ink_drop.h"
 #include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
@@ -33,17 +33,16 @@ const int ContentSettingImageView::kAnimationDurationMS =
 
 ContentSettingImageView::ContentSettingImageView(
     std::unique_ptr<ContentSettingImageModel> image_model,
-    LocationBarView* parent,
+    Delegate* delegate,
     const gfx::FontList& font_list)
-    : IconLabelBubbleView(font_list, false),
-      parent_(parent),
+    : IconLabelBubbleView(font_list),
+      delegate_(delegate),
       content_setting_image_model_(std::move(image_model)),
       slide_animator_(this),
       pause_animation_(false),
       pause_animation_state_(0.0),
-      bubble_view_(nullptr),
-      suppress_mouse_released_action_(false) {
-  set_next_element_interior_padding(LocationBarView::kIconInteriorPadding);
+      bubble_view_(nullptr) {
+  DCHECK(delegate_);
   SetInkDropMode(InkDropMode::ON);
   SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
   image()->EnableCanvasFlippingForRTLUI(true);
@@ -59,7 +58,9 @@ ContentSettingImageView::~ContentSettingImageView() {
     bubble_view_->GetWidget()->RemoveObserver(this);
 }
 
-void ContentSettingImageView::Update(content::WebContents* web_contents) {
+void ContentSettingImageView::Update() {
+  content::WebContents* web_contents =
+      delegate_->GetContentSettingWebContents();
   // Note: We explicitly want to call this even if |web_contents| is NULL, so we
   // get hidden properly while the user is editing the omnibox.
   content_setting_image_model_->UpdateFromWebContents(web_contents);
@@ -74,21 +75,29 @@ void ContentSettingImageView::Update(content::WebContents* web_contents) {
 
   // If the content usage or blockage should be indicated to the user, start the
   // animation and record that the icon has been shown.
-  if (!content_setting_image_model_->ShouldRunAnimation(web_contents))
+  if (!can_animate_ ||
+      !content_setting_image_model_->ShouldRunAnimation(web_contents)) {
     return;
+  }
 
   // We just ignore this blockage if we're already showing some other string to
   // the user.  If this becomes a problem, we could design some sort of queueing
   // mechanism to show one after the other, but it doesn't seem important now.
   int string_id = content_setting_image_model_->explanatory_string_id();
+  AnimateInkDrop(views::InkDropState::HIDDEN, nullptr /* event */);
   if (string_id && !label()->visible()) {
-    AnimateInkDrop(views::InkDropState::HIDDEN, nullptr /* event */);
     SetLabel(l10n_util::GetStringUTF16(string_id));
     label()->SetVisible(true);
-    slide_animator_.Show();
+    AnimateIn();
   }
 
   content_setting_image_model_->SetAnimationHasRun(web_contents);
+}
+
+void ContentSettingImageView::SetIconColor(SkColor color) {
+  icon_color_ = color;
+  if (content_setting_image_model_->is_visible())
+    UpdateImage();
 }
 
 const char* ContentSettingImageView::GetClassName() const {
@@ -99,40 +108,7 @@ void ContentSettingImageView::OnBoundsChanged(
     const gfx::Rect& previous_bounds) {
   if (bubble_view_)
     bubble_view_->OnAnchorBoundsChanged();
-}
-
-bool ContentSettingImageView::OnMousePressed(const ui::MouseEvent& event) {
-  // If the bubble is showing then don't reshow it when the mouse is released.
-  suppress_mouse_released_action_ = bubble_view_ != nullptr;
-  if (!suppress_mouse_released_action_ && !label()->visible())
-    AnimateInkDrop(views::InkDropState::ACTION_PENDING, &event);
-
-  // We want to show the bubble on mouse release; that is the standard behavior
-  // for buttons.
-  return true;
-}
-
-void ContentSettingImageView::OnMouseReleased(const ui::MouseEvent& event) {
-  // If this is the second click on this view then the bubble was showing on the
-  // mouse pressed event and is hidden now. Prevent the bubble from reshowing by
-  // doing nothing here.
-  if (suppress_mouse_released_action_) {
-    suppress_mouse_released_action_ = false;
-    return;
-  }
-  const bool activated = HitTestPoint(event.location());
-  if (!label()->visible() && !activated)
-    AnimateInkDrop(views::InkDropState::HIDDEN, &event);
-  if (activated)
-    OnActivate(event);
-}
-
-void ContentSettingImageView::OnGestureEvent(ui::GestureEvent* event) {
-  if (event->type() == ui::ET_GESTURE_TAP)
-    OnActivate(*event);
-  if ((event->type() == ui::ET_GESTURE_TAP) ||
-      (event->type() == ui::ET_GESTURE_TAP_DOWN))
-    event->SetHandled();
+  IconLabelBubbleView::OnBoundsChanged(previous_bounds);
 }
 
 bool ContentSettingImageView::GetTooltipText(const gfx::Point& p,
@@ -145,12 +121,6 @@ void ContentSettingImageView::OnNativeThemeChanged(
     const ui::NativeTheme* native_theme) {
   UpdateImage();
   IconLabelBubbleView::OnNativeThemeChanged(native_theme);
-}
-
-std::unique_ptr<views::InkDrop> ContentSettingImageView::CreateInkDrop() {
-  std::unique_ptr<views::InkDropImpl> ink_drop = CreateDefaultInkDropImpl();
-  ink_drop->SetShowHighlightOnFocus(true);
-  return std::move(ink_drop);
 }
 
 SkColor ContentSettingImageView::GetTextColor() const {
@@ -186,7 +156,7 @@ bool ContentSettingImageView::IsShrinking() const {
           slide_animator_.GetCurrentValue() > (1.0 - kOpenFraction));
 }
 
-bool ContentSettingImageView::OnActivate(const ui::Event& event) {
+bool ContentSettingImageView::ShowBubble(const ui::Event& event) {
   if (slide_animator_.is_animating()) {
     // If the user clicks while we're animating, the bubble arrow will be
     // pointing to the image, and if we allow the animation to keep running, the
@@ -204,16 +174,17 @@ bool ContentSettingImageView::OnActivate(const ui::Event& event) {
     slide_animator_.Reset();
   }
 
-  content::WebContents* web_contents = parent_->GetWebContents();
+  content::WebContents* web_contents =
+      delegate_->GetContentSettingWebContents();
   if (web_contents && !bubble_view_) {
     views::View* anchor = this;
     if (ui::MaterialDesignController::IsSecondaryUiMaterial())
-      anchor = parent_;
+      anchor = parent();
     bubble_view_ = new ContentSettingBubbleContents(
-                content_setting_image_model_->CreateBubbleModel(
-                    parent_->delegate()->GetContentSettingBubbleModelDelegate(),
-                    web_contents, parent_->profile()),
-                web_contents, anchor, views::BubbleBorder::TOP_RIGHT);
+        content_setting_image_model_->CreateBubbleModel(
+            delegate_->GetContentSettingBubbleModelDelegate(), web_contents,
+            Profile::FromBrowserContext(web_contents->GetBrowserContext())),
+        web_contents, anchor, views::BubbleBorder::TOP_RIGHT);
     views::Widget* bubble_widget =
         views::BubbleDialogDelegateView::CreateBubble(bubble_view_);
     bubble_widget->AddObserver(this);
@@ -233,20 +204,32 @@ bool ContentSettingImageView::OnActivate(const ui::Event& event) {
   return true;
 }
 
+bool ContentSettingImageView::IsBubbleShowing() const {
+  return bubble_view_ != nullptr;
+}
+
+SkColor ContentSettingImageView::GetInkDropBaseColor() const {
+  return icon_color_ ? icon_color_.value()
+                     : IconLabelBubbleView::GetInkDropBaseColor();
+}
+
 void ContentSettingImageView::AnimationEnded(const gfx::Animation* animation) {
   slide_animator_.Reset();
   if (!pause_animation_) {
     label()->SetVisible(false);
-    parent_->Layout();
-    parent_->SchedulePaint();
+    parent()->Layout();
+    parent()->SchedulePaint();
   }
+
+  GetInkDrop()->SetShowHighlightOnHover(true);
+  GetInkDrop()->SetShowHighlightOnFocus(true);
 }
 
 void ContentSettingImageView::AnimationProgressed(
     const gfx::Animation* animation) {
   if (!pause_animation_) {
-    parent_->Layout();
-    parent_->SchedulePaint();
+    parent()->Layout();
+    parent()->SchedulePaint();
   }
 }
 
@@ -264,17 +247,27 @@ void ContentSettingImageView::OnWidgetDestroying(views::Widget* widget) {
   if (pause_animation_) {
     slide_animator_.Reset(pause_animation_state_);
     pause_animation_ = false;
-    slide_animator_.Show();
+    AnimateIn();
   }
 }
 
 void ContentSettingImageView::OnWidgetVisibilityChanged(views::Widget* widget,
                                                         bool visible) {
   // |widget| is a bubble that has just got shown / hidden.
-  if (!visible && !label()->visible())
+  if (!visible)
     AnimateInkDrop(views::InkDropState::DEACTIVATED, nullptr /* event */);
 }
 
 void ContentSettingImageView::UpdateImage() {
-  SetImage(content_setting_image_model_->GetIcon(GetTextColor()).AsImageSkia());
+  SetImage(content_setting_image_model_
+               ->GetIcon(icon_color_ ? icon_color_.value()
+                                     : color_utils::DeriveDefaultIconColor(
+                                           GetTextColor()))
+               .AsImageSkia());
+}
+
+void ContentSettingImageView::AnimateIn() {
+  slide_animator_.Show();
+  GetInkDrop()->SetShowHighlightOnHover(false);
+  GetInkDrop()->SetShowHighlightOnFocus(false);
 }

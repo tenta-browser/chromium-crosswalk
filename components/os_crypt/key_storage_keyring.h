@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "components/os_crypt/key_storage_linux.h"
 
 namespace base {
@@ -22,12 +23,10 @@ class KeyStorageKeyring : public KeyStorageLinux {
       scoped_refptr<base::SingleThreadTaskRunner> main_thread_runner);
   ~KeyStorageKeyring() override;
 
-  // KeyStorageLinux
-  std::string GetKey() override;
-
  protected:
   // KeyStorageLinux
   bool Init() override;
+  std::string GetKeyImpl() override;
 
  private:
   // Gnome keyring requires calls to originate from the main thread.

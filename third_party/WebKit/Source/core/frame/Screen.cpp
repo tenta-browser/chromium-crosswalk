@@ -28,8 +28,8 @@
 
 #include "core/frame/Screen.h"
 
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/page/ChromeClient.h"
 #include "core/page/Page.h"
@@ -138,7 +138,8 @@ int Screen::availWidth() const {
   return page->GetChromeClient().GetScreenInfo().available_rect.width;
 }
 
-DEFINE_TRACE(Screen) {
+void Screen::Trace(blink::Visitor* visitor) {
+  ScriptWrappable::Trace(visitor);
   DOMWindowClient::Trace(visitor);
   Supplementable<Screen>::Trace(visitor);
 }

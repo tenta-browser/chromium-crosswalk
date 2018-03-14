@@ -29,16 +29,20 @@
 
 #include "platform/fonts/SimpleFontData.h"
 
-#include <unicode/unorm.h>
 #include <unicode/utf16.h>
+
 #include <memory>
+
 #include "SkPath.h"
 #include "SkTypeface.h"
 #include "SkTypes.h"
+
+#include "build/build_config.h"
+#include "platform/font_family_names.h"
 #include "platform/fonts/FontDescription.h"
-#include "platform/fonts/VDMXParser.h"
 #include "platform/fonts/skia/SkiaTextMetrics.h"
 #include "platform/geometry/FloatRect.h"
+#include "platform/wtf/ByteOrder.h"
 #include "platform/wtf/MathExtras.h"
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/allocator/Partitions.h"
@@ -50,41 +54,18 @@ namespace blink {
 const float kSmallCapsFontSizeMultiplier = 0.7f;
 const float kEmphasisMarkFontSizeMultiplier = 0.5f;
 
-#if OS(LINUX) || OS(ANDROID)
-// This is the largest VDMX table which we'll try to load and parse.
-static const size_t kMaxVDMXTableSize = 1024 * 1024;  // 1 MB
-#endif
-
 SimpleFontData::SimpleFontData(const FontPlatformData& platform_data,
-                               PassRefPtr<CustomFontData> custom_data,
-                               bool is_text_orientation_fallback,
+                               scoped_refptr<CustomFontData> custom_data,
                                bool subpixel_ascent_descent)
     : max_char_width_(-1),
       avg_char_width_(-1),
       platform_data_(platform_data),
-      vertical_data_(nullptr),
       custom_font_data_(std::move(custom_data)),
-      is_text_orientation_fallback_(is_text_orientation_fallback),
-      has_vertical_glyphs_(false),
       visual_overflow_inflation_for_ascent_(0),
       visual_overflow_inflation_for_descent_(0) {
   PlatformInit(subpixel_ascent_descent);
   PlatformGlyphInit();
-  if (platform_data.IsVerticalAnyUpright() && !is_text_orientation_fallback) {
-    vertical_data_ = platform_data.VerticalData();
-    has_vertical_glyphs_ =
-        vertical_data_.Get() && vertical_data_->HasVerticalMetrics();
-  }
 }
-
-SimpleFontData::SimpleFontData(const FontPlatformData& platform_data,
-                               PassRefPtr<OpenTypeVerticalData> vertical_data)
-    : platform_data_(platform_data),
-      vertical_data_(vertical_data),
-      is_text_orientation_fallback_(false),
-      has_vertical_glyphs_(false),
-      visual_overflow_inflation_for_ascent_(0),
-      visual_overflow_inflation_for_descent_(0) {}
 
 void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
   if (!platform_data_.size()) {
@@ -96,97 +77,19 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
 
   SkPaint::FontMetrics metrics;
 
-  platform_data_.SetupPaint(&paint_);
-  paint_.setTextEncoding(SkPaint::kGlyphID_TextEncoding);
+  PaintFont font;
+  platform_data_.SetupPaintFont(&font);
+  font.SetTextEncoding(SkPaint::kGlyphID_TextEncoding);
+  paint_ = font.ToSkPaint();
   paint_.getFontMetrics(&metrics);
-  SkTypeface* face = paint_.getTypeface();
-  DCHECK(face);
-
-  int vdmx_ascent = 0, vdmx_descent = 0;
-  bool is_vdmx_valid = false;
-
-#if OS(LINUX) || OS(ANDROID)
-  // Manually digging up VDMX metrics is only applicable when bytecode hinting
-  // using FreeType.  With DirectWrite or CoreText, no bytecode hinting is ever
-  // done.  This code should be pushed into FreeType (hinted font metrics).
-  static const uint32_t kVdmxTag = SkSetFourByteTag('V', 'D', 'M', 'X');
-  int pixel_size = platform_data_.size() + 0.5;
-  if (!paint_.isAutohinted() &&
-      (paint_.getHinting() == SkPaint::kFull_Hinting ||
-       paint_.getHinting() == SkPaint::kNormal_Hinting)) {
-    size_t vdmx_size = face->getTableSize(kVdmxTag);
-    if (vdmx_size && vdmx_size < kMaxVDMXTableSize) {
-      uint8_t* vdmx_table = (uint8_t*)WTF::Partitions::FastMalloc(
-          vdmx_size, WTF_HEAP_PROFILER_TYPE_NAME(SimpleFontData));
-      if (vdmx_table &&
-          face->getTableData(kVdmxTag, 0, vdmx_size, vdmx_table) == vdmx_size &&
-          ParseVDMX(&vdmx_ascent, &vdmx_descent, vdmx_table, vdmx_size,
-                    pixel_size))
-        is_vdmx_valid = true;
-      WTF::Partitions::FastFree(vdmx_table);
-    }
-  }
-#endif
 
   float ascent;
   float descent;
 
-  // Beware those who step here: This code is designed to match Win32 font
-  // metrics *exactly* except:
-  // - the adjustment of ascent/descent on Linux/Android
-  // - metrics.fAscent and .fDesscent are not rounded to int for tiny fonts
-  if (is_vdmx_valid) {
-    ascent = vdmx_ascent;
-    descent = -vdmx_descent;
-  } else if (subpixel_ascent_descent &&
-             (-metrics.fAscent < 3 ||
-              -metrics.fAscent + metrics.fDescent < 2)) {
-    // For tiny fonts, the rounding of fAscent and fDescent results in equal
-    // baseline for different types of text baselines (crbug.com/338908).
-    // Please see CanvasRenderingContext2D::getFontBaseline for the heuristic.
-    ascent = -metrics.fAscent;
-    descent = metrics.fDescent;
-  } else {
-    ascent = SkScalarRoundToScalar(-metrics.fAscent);
-    descent = SkScalarRoundToScalar(metrics.fDescent);
-
-    if (ascent < -metrics.fAscent)
-      visual_overflow_inflation_for_ascent_ = 1;
-    if (descent < metrics.fDescent) {
-      visual_overflow_inflation_for_descent_ = 1;
-#if OS(LINUX) || OS(ANDROID)
-      // When subpixel positioning is enabled, if the descent is rounded down,
-      // the descent part of the glyph may be truncated when displayed in a
-      // 'overflow: hidden' container.  To avoid that, borrow 1 unit from the
-      // ascent when possible.
-      if (PlatformData().GetFontRenderStyle().use_subpixel_positioning &&
-          ascent >= 1) {
-        ++descent;
-        --ascent;
-        // We should inflate overflow 1 more pixel for ascent instead.
-        visual_overflow_inflation_for_descent_ = 0;
-        ++visual_overflow_inflation_for_ascent_;
-      }
-#endif
-    }
-  }
-
-#if OS(MACOSX)
-  // We are preserving this ascent hack to match Safari's ascent adjustment
-  // in their SimpleFontDataMac.mm, for details see crbug.com/445830.
-  // We need to adjust Times, Helvetica, and Courier to closely match the
-  // vertical metrics of their Microsoft counterparts that are the de facto
-  // web standard. The AppKit adjustment of 20% is too big and is
-  // incorrectly added to line spacing, so we use a 15% adjustment instead
-  // and add it to the ascent.
-  DEFINE_STATIC_LOCAL(AtomicString, times_name, ("Times"));
-  DEFINE_STATIC_LOCAL(AtomicString, helvetica_name, ("Helvetica"));
-  DEFINE_STATIC_LOCAL(AtomicString, courier_name, ("Courier"));
-  String family_name = platform_data_.FontFamilyName();
-  if (family_name == times_name || family_name == helvetica_name ||
-      family_name == courier_name)
-    ascent += floorf(((ascent + descent) * 0.15f) + 0.5f);
-#endif
+  FontMetrics::AscentDescentWithHacks(
+      ascent, descent, visual_overflow_inflation_for_ascent_,
+      visual_overflow_inflation_for_descent_, platform_data_, paint_,
+      subpixel_ascent_descent);
 
   font_metrics_.SetAscent(ascent);
   font_metrics_.SetDescent(descent);
@@ -194,7 +97,7 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
   float x_height;
   if (metrics.fXHeight) {
     x_height = metrics.fXHeight;
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
     // Mac OS CTFontGetXHeight reports the bounding box height of x,
     // including parts extending below the baseline and apparently no x-height
     // value from the OS/2 table. However, the CSS ex unit
@@ -219,19 +122,10 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
   font_metrics_.SetLineSpacing(lroundf(ascent) + lroundf(descent) +
                                lroundf(line_gap));
 
-  if (PlatformData().IsVerticalAnyUpright() && !IsTextOrientationFallback()) {
-    static const uint32_t kVheaTag = SkSetFourByteTag('v', 'h', 'e', 'a');
-    static const uint32_t kVorgTag = SkSetFourByteTag('V', 'O', 'R', 'G');
-    size_t vhea_size = face->getTableSize(kVheaTag);
-    size_t vorg_size = face->getTableSize(kVorgTag);
-    if ((vhea_size > 0) || (vorg_size > 0))
-      has_vertical_glyphs_ = true;
-  }
-
 // In WebKit/WebCore/platform/graphics/SimpleFontData.cpp, m_spaceWidth is
 // calculated for us, but we need to calculate m_maxCharWidth and
 // m_avgCharWidth in order for text entry widgets to be sized correctly.
-#if OS(WIN)
+#if defined(OS_WIN)
   max_char_width_ = SkScalarRoundToInt(metrics.fMaxCharWidth);
 
   // Older version of the DirectWrite API doesn't implement support for max
@@ -239,7 +133,7 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
   // arbitrary but comes pretty close to the expected value in most cases.
   if (max_char_width_ < 1)
     max_char_width_ = ascent * 2;
-#elif OS(MACOSX)
+#elif defined(OS_MACOSX)
   // FIXME: The current avg/max character width calculation is not ideal,
   // it should check either the OS2 table or, better yet, query FontMetrics.
   // Sadly FontMetrics provides incorrect data on Mac at the moment.
@@ -252,7 +146,7 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
 
 #endif
 
-#if !OS(MACOSX)
+#if !defined(OS_MACOSX)
   if (metrics.fAvgCharWidth) {
     avg_char_width_ = SkScalarRoundToInt(metrics.fAvgCharWidth);
   } else {
@@ -262,10 +156,12 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
     if (x_glyph) {
       avg_char_width_ = WidthForGlyph(x_glyph);
     }
-#if !OS(MACOSX)
+#if !defined(OS_MACOSX)
   }
 #endif
 
+  SkTypeface* face = paint_.getTypeface();
+  DCHECK(face);
   if (int units_per_em = face->getUnitsPerEm())
     font_metrics_.SetUnitsPerEm(units_per_em);
 }
@@ -276,8 +172,6 @@ void SimpleFontData::PlatformGlyphInit() {
     space_glyph_ = 0;
     space_width_ = 0;
     zero_glyph_ = 0;
-    missing_glyph_data_.font_data = this;
-    missing_glyph_data_.glyph = 0;
     return;
   }
 
@@ -289,9 +183,6 @@ void SimpleFontData::PlatformGlyphInit() {
   space_width_ = width;
   zero_glyph_ = GlyphForCharacter('0');
   font_metrics_.SetZeroWidth(WidthForGlyph(zero_glyph_));
-
-  missing_glyph_data_.font_data = this;
-  missing_glyph_data_.glyph = 0;
 }
 
 const SimpleFontData* SimpleFontData::FontDataForCharacter(UChar32) const {
@@ -310,31 +201,7 @@ bool SimpleFontData::IsSegmented() const {
   return false;
 }
 
-PassRefPtr<SimpleFontData> SimpleFontData::VerticalRightOrientationFontData()
-    const {
-  if (!derived_font_data_)
-    derived_font_data_ = DerivedFontData::Create();
-  if (!derived_font_data_->vertical_right_orientation) {
-    FontPlatformData vertical_right_platform_data(platform_data_);
-    vertical_right_platform_data.SetOrientation(FontOrientation::kHorizontal);
-    derived_font_data_->vertical_right_orientation =
-        Create(vertical_right_platform_data,
-               IsCustomFont() ? CustomFontData::Create() : nullptr, true);
-  }
-  return derived_font_data_->vertical_right_orientation;
-}
-
-PassRefPtr<SimpleFontData> SimpleFontData::UprightOrientationFontData() const {
-  if (!derived_font_data_)
-    derived_font_data_ = DerivedFontData::Create();
-  if (!derived_font_data_->upright_orientation)
-    derived_font_data_->upright_orientation =
-        Create(platform_data_,
-               IsCustomFont() ? CustomFontData::Create() : nullptr, true);
-  return derived_font_data_->upright_orientation;
-}
-
-PassRefPtr<SimpleFontData> SimpleFontData::SmallCapsFontData(
+scoped_refptr<SimpleFontData> SimpleFontData::SmallCapsFontData(
     const FontDescription& font_description) const {
   if (!derived_font_data_)
     derived_font_data_ = DerivedFontData::Create();
@@ -345,7 +212,7 @@ PassRefPtr<SimpleFontData> SimpleFontData::SmallCapsFontData(
   return derived_font_data_->small_caps;
 }
 
-PassRefPtr<SimpleFontData> SimpleFontData::EmphasisMarkFontData(
+scoped_refptr<SimpleFontData> SimpleFontData::EmphasisMarkFontData(
     const FontDescription& font_description) const {
   if (!derived_font_data_)
     derived_font_data_ = DerivedFontData::Create();
@@ -356,20 +223,12 @@ PassRefPtr<SimpleFontData> SimpleFontData::EmphasisMarkFontData(
   return derived_font_data_->emphasis_mark;
 }
 
-bool SimpleFontData::IsTextOrientationFallbackOf(
-    const SimpleFontData* font_data) const {
-  if (!IsTextOrientationFallback() || !font_data->derived_font_data_)
-    return false;
-  return font_data->derived_font_data_->upright_orientation == this ||
-         font_data->derived_font_data_->vertical_right_orientation == this;
-}
-
 std::unique_ptr<SimpleFontData::DerivedFontData>
 SimpleFontData::DerivedFontData::Create() {
   return WTF::WrapUnique(new DerivedFontData());
 }
 
-PassRefPtr<SimpleFontData> SimpleFontData::CreateScaledFontData(
+scoped_refptr<SimpleFontData> SimpleFontData::CreateScaledFontData(
     const FontDescription& font_description,
     float scale_factor) const {
   const float scaled_size =
@@ -377,6 +236,90 @@ PassRefPtr<SimpleFontData> SimpleFontData::CreateScaledFontData(
   return SimpleFontData::Create(
       FontPlatformData(platform_data_, scaled_size),
       IsCustomFont() ? CustomFontData::Create() : nullptr);
+}
+
+// Internal leadings can be distributed to ascent and descent.
+// -------------------------------------------
+//           | - Internal Leading (in ascent)
+//           |--------------------------------
+//  Ascent - |              |
+//           |              |
+//           |              | - Em height
+// ----------|--------------|
+//           |              |
+// Descent - |--------------------------------
+//           | - Internal Leading (in descent)
+// -------------------------------------------
+LayoutUnit SimpleFontData::EmHeightAscent(FontBaseline baseline_type) const {
+  if (baseline_type == kAlphabeticBaseline) {
+    if (!em_height_ascent_)
+      ComputeEmHeightMetrics();
+    return em_height_ascent_;
+  }
+  LayoutUnit em_height = LayoutUnit::FromFloatRound(PlatformData().size());
+  return em_height - em_height / 2;
+}
+
+LayoutUnit SimpleFontData::EmHeightDescent(FontBaseline baseline_type) const {
+  if (baseline_type == kAlphabeticBaseline) {
+    if (!em_height_descent_)
+      ComputeEmHeightMetrics();
+    return em_height_descent_;
+  }
+  LayoutUnit em_height = LayoutUnit::FromFloatRound(PlatformData().size());
+  return em_height / 2;
+}
+
+static std::pair<int16_t, int16_t> TypoAscenderAndDescender(
+    SkTypeface* typeface) {
+  // TODO(kojii): This should move to Skia once finalized. We can then move
+  // EmHeightAscender/Descender to FontMetrics.
+  int16_t buffer[2];
+  size_t size = typeface->getTableData(SkSetFourByteTag('O', 'S', '/', '2'), 68,
+                                       sizeof(buffer), buffer);
+  if (size == sizeof(buffer)) {
+    return std::make_pair(static_cast<int16_t>(ntohs(buffer[0])),
+                          -static_cast<int16_t>(ntohs(buffer[1])));
+  }
+  return std::make_pair(0, 0);
+}
+
+void SimpleFontData::ComputeEmHeightMetrics() const {
+  // Compute em height metrics from OS/2 sTypoAscender and sTypoDescender.
+  SkTypeface* typeface = platform_data_.Typeface();
+  int16_t typo_ascender, typo_descender;
+  std::tie(typo_ascender, typo_descender) = TypoAscenderAndDescender(typeface);
+  if (typo_ascender > 0 &&
+      NormalizeEmHeightMetrics(typo_ascender, typo_ascender + typo_descender)) {
+    return;
+  }
+
+  // As the last resort, compute em height metrics from our ascent/descent.
+  const FontMetrics& font_metrics = GetFontMetrics();
+  if (NormalizeEmHeightMetrics(font_metrics.FloatAscent(),
+                               font_metrics.FloatHeight())) {
+    return;
+  }
+  NOTREACHED();
+}
+
+bool SimpleFontData::NormalizeEmHeightMetrics(float ascent,
+                                              float height) const {
+  if (height <= 0 || ascent < 0 || ascent > height)
+    return false;
+  // While the OpenType specification recommends the sum of sTypoAscender and
+  // sTypoDescender to equal 1em, most fonts do not follow. Most Latin fonts
+  // set to smaller than 1em, and many tall scripts set to larger than 1em.
+  // https://www.microsoft.com/typography/otspec/recom.htm#OS2
+  // To ensure the sum of ascent and descent is the "em height", normalize by
+  // keeping the ratio of sTypoAscender:sTypoDescender.
+  // This matches to how Gecko computes "em height":
+  // https://github.com/whatwg/html/issues/2470#issuecomment-291425136
+  float em_height = PlatformData().size();
+  em_height_ascent_ = LayoutUnit::FromFloatRound(ascent * em_height / height);
+  em_height_descent_ =
+      LayoutUnit::FromFloatRound(em_height) - em_height_ascent_;
+  return true;
 }
 
 FloatRect SimpleFontData::PlatformBoundsForGlyph(Glyph glyph) const {

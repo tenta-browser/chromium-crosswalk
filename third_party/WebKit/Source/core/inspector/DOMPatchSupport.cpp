@@ -30,6 +30,8 @@
 
 #include "core/inspector/DOMPatchSupport.h"
 
+#include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/dom/Attribute.h"
 #include "core/dom/ContextFeatures.h"
@@ -42,42 +44,35 @@
 #include "core/html/HTMLDocument.h"
 #include "core/html/HTMLHeadElement.h"
 #include "core/html/parser/HTMLDocumentParser.h"
+#include "core/inspector/AddStringToDigestor.h"
 #include "core/inspector/DOMEditor.h"
 #include "core/inspector/InspectorHistory.h"
 #include "core/xml/parser/XMLDocumentParser.h"
 #include "platform/Crypto.h"
+#include "platform/wtf/Deque.h"
+#include "platform/wtf/HashTraits.h"
+#include "platform/wtf/text/Base64.h"
+#include "platform/wtf/text/CString.h"
 #include "public/platform/Platform.h"
-#include "wtf/Deque.h"
-#include "wtf/HashTraits.h"
-#include "wtf/RefPtr.h"
-#include "wtf/text/Base64.h"
-#include "wtf/text/CString.h"
-#include <memory>
 
 namespace blink {
-
-void DOMPatchSupport::PatchDocument(Document& document, const String& markup) {
-  InspectorHistory history;
-  DOMEditor dom_editor(&history);
-  DOMPatchSupport patch_support(&dom_editor, document);
-  patch_support.PatchDocument(markup);
-}
 
 DOMPatchSupport::DOMPatchSupport(DOMEditor* dom_editor, Document& document)
     : dom_editor_(dom_editor), document_(document) {}
 
 void DOMPatchSupport::PatchDocument(const String& markup) {
   Document* new_document = nullptr;
+  DocumentInit init = DocumentInit::Create();
   if (GetDocument().IsHTMLDocument())
-    new_document = HTMLDocument::Create();
+    new_document = HTMLDocument::Create(init);
   else if (GetDocument().IsSVGDocument())
-    new_document = XMLDocument::CreateSVG();
+    new_document = XMLDocument::CreateSVG(init);
   else if (GetDocument().IsXHTMLDocument())
-    new_document = XMLDocument::CreateXHTML();
+    new_document = XMLDocument::CreateXHTML(init);
   else if (GetDocument().IsXMLDocument())
-    new_document = XMLDocument::Create();
+    new_document = XMLDocument::Create(init);
 
-  ASSERT(new_document);
+  DCHECK(new_document);
   new_document->SetContextFeatures(GetDocument().GetContextFeatures());
   if (!GetDocument().IsHTMLDocument()) {
     DocumentParser* parser = XMLDocumentParser::Create(*new_document, nullptr);
@@ -132,24 +127,24 @@ Node* DOMPatchSupport::PatchNode(Node* node,
   // Compose the old list.
   ContainerNode* parent_node = node->parentNode();
   HeapVector<Member<Digest>> old_list;
-  for (Node* child = parent_node->FirstChild(); child;
+  for (Node* child = parent_node->firstChild(); child;
        child = child->nextSibling())
-    old_list.push_back(CreateDigest(child, 0));
+    old_list.push_back(CreateDigest(child, nullptr));
 
   // Compose the new list.
   String markup_copy = markup.DeprecatedLower();
   HeapVector<Member<Digest>> new_list;
-  for (Node* child = parent_node->FirstChild(); child != node;
+  for (Node* child = parent_node->firstChild(); child != node;
        child = child->nextSibling())
-    new_list.push_back(CreateDigest(child, 0));
-  for (Node* child = fragment->FirstChild(); child;
+    new_list.push_back(CreateDigest(child, nullptr));
+  for (Node* child = fragment->firstChild(); child;
        child = child->nextSibling()) {
-    if (isHTMLHeadElement(*child) && !child->hasChildren() &&
+    if (IsHTMLHeadElement(*child) && !child->hasChildren() &&
         markup_copy.Find("</head>") == kNotFound) {
       // HTML5 parser inserts empty <head> tag whenever it parses <body>
       continue;
     }
-    if (isHTMLBodyElement(*child) && !child->hasChildren() &&
+    if (IsHTMLBodyElement(*child) && !child->hasChildren() &&
         markup_copy.Find("</body>") == kNotFound) {
       // HTML5 parser inserts empty <body> tag whenever it parses </head>
       continue;
@@ -157,7 +152,7 @@ Node* DOMPatchSupport::PatchNode(Node* node,
     new_list.push_back(CreateDigest(child, &unused_nodes_map_));
   }
   for (Node* child = node->nextSibling(); child; child = child->nextSibling())
-    new_list.push_back(CreateDigest(child, 0));
+    new_list.push_back(CreateDigest(child, nullptr));
 
   if (!InnerPatchChildren(parent_node, old_list, new_list, exception_state)) {
     // Fall back to total replace.
@@ -166,7 +161,7 @@ Node* DOMPatchSupport::PatchNode(Node* node,
       return nullptr;
   }
   return previous_sibling ? previous_sibling->nextSibling()
-                          : parent_node->FirstChild();
+                          : parent_node->firstChild();
 }
 
 bool DOMPatchSupport::InnerPatchNode(Digest* old_digest,
@@ -228,12 +223,12 @@ DOMPatchSupport::Diff(const HeapVector<Member<Digest>>& old_list,
   ResultMap old_map(old_list.size());
 
   for (size_t i = 0; i < old_map.size(); ++i) {
-    old_map[i].first = 0;
+    old_map[i].first = nullptr;
     old_map[i].second = 0;
   }
 
   for (size_t i = 0; i < new_map.size(); ++i) {
-    new_map[i].first = 0;
+    new_map[i].first = nullptr;
     new_map[i].second = 0;
   }
 
@@ -276,7 +271,7 @@ DOMPatchSupport::Diff(const HeapVector<Member<Digest>>& old_list,
     if (new_it.value.size() != 1)
       continue;
 
-    DiffTable::iterator old_it = old_table.Find(new_it.key);
+    DiffTable::iterator old_it = old_table.find(new_it.key);
     if (old_it == old_table.end() || old_it->value.size() != 1)
       continue;
 
@@ -309,11 +304,6 @@ DOMPatchSupport::Diff(const HeapVector<Member<Digest>>& old_list,
     }
   }
 
-#ifdef DEBUG_DOM_PATCH_SUPPORT
-  dumpMap(oldMap, "OLD");
-  dumpMap(newMap, "NEW");
-#endif
-
   return std::make_pair(old_map, new_map);
 }
 
@@ -339,17 +329,17 @@ bool DOMPatchSupport::InnerPatchChildren(
     if (old_map[i].first) {
       if (used_new_ordinals.insert(old_map[i].second).is_new_entry)
         continue;
-      old_map[i].first = 0;
+      old_map[i].first = nullptr;
       old_map[i].second = 0;
     }
 
     // Always match <head> and <body> tags with each other - we can't remove
     // them from the DOM upon patching.
-    if (isHTMLHeadElement(*old_list[i]->node_)) {
+    if (IsHTMLHeadElement(*old_list[i]->node_)) {
       old_head = old_list[i].Get();
       continue;
     }
-    if (isHTMLBodyElement(*old_list[i]->node_)) {
+    if (IsHTMLBodyElement(*old_list[i]->node_)) {
       old_body = old_list[i].Get();
       continue;
     }
@@ -385,7 +375,7 @@ bool DOMPatchSupport::InnerPatchChildren(
     size_t old_ordinal = new_map[i].second;
     if (used_old_ordinals.Contains(old_ordinal)) {
       // Do not map node more than once
-      new_map[i].first = 0;
+      new_map[i].first = nullptr;
       new_map[i].second = 0;
       continue;
     }
@@ -396,9 +386,9 @@ bool DOMPatchSupport::InnerPatchChildren(
   // Mark <head> and <body> nodes for merge.
   if (old_head || old_body) {
     for (size_t i = 0; i < new_list.size(); ++i) {
-      if (old_head && isHTMLHeadElement(*new_list[i]->node_))
+      if (old_head && IsHTMLHeadElement(*new_list[i]->node_))
         merges.Set(new_list[i].Get(), old_head);
-      if (old_body && isHTMLBodyElement(*new_list[i]->node_))
+      if (old_body && IsHTMLBodyElement(*new_list[i]->node_))
         merges.Set(new_list[i].Get(), old_body);
     }
   }
@@ -427,7 +417,7 @@ bool DOMPatchSupport::InnerPatchChildren(
     Node* anchor_node = NodeTraversal::ChildAt(*parent_node, old_map[i].second);
     if (node == anchor_node)
       continue;
-    if (isHTMLBodyElement(*node) || isHTMLHeadElement(*node)) {
+    if (IsHTMLBodyElement(*node) || IsHTMLHeadElement(*node)) {
       // Never move head or body, move the rest of the nodes around them.
       continue;
     }
@@ -437,13 +427,6 @@ bool DOMPatchSupport::InnerPatchChildren(
       return false;
   }
   return true;
-}
-
-static void AddStringToDigestor(WebCryptoDigestor* digestor,
-                                const String& string) {
-  digestor->Consume(
-      reinterpret_cast<const unsigned char*>(string.Utf8().Data()),
-      string.length());
 }
 
 DOMPatchSupport::Digest* DOMPatchSupport::CreateDigest(
@@ -463,7 +446,7 @@ DOMPatchSupport::Digest* DOMPatchSupport::CreateDigest(
 
   if (node->IsElementNode()) {
     Element& element = ToElement(*node);
-    Node* child = element.FirstChild();
+    Node* child = element.firstChild();
     while (child) {
       Digest* child_info = CreateDigest(child, unused_nodes_map);
       AddStringToDigestor(digestor.get(), child_info->sha1_);
@@ -483,14 +466,14 @@ DOMPatchSupport::Digest* DOMPatchSupport::CreateDigest(
       }
       FinishDigestor(attrs_digestor.get(), digest_result);
       digest->attrs_sha1_ =
-          Base64Encode(reinterpret_cast<const char*>(digest_result.Data()), 10);
+          Base64Encode(reinterpret_cast<const char*>(digest_result.data()), 10);
       AddStringToDigestor(digestor.get(), digest->attrs_sha1_);
-      digest_result.Clear();
+      digest_result.clear();
     }
   }
   FinishDigestor(digestor.get(), digest_result);
   digest->sha1_ =
-      Base64Encode(reinterpret_cast<const char*>(digest_result.Data()), 10);
+      Base64Encode(reinterpret_cast<const char*>(digest_result.data()), 10);
 
   if (unused_nodes_map)
     unused_nodes_map->insert(digest->sha1_, digest);
@@ -521,7 +504,7 @@ bool DOMPatchSupport::RemoveChildAndMoveToNew(Digest* old_digest,
   // whether new DOM has a digest with matching sha1. If it does, replace it
   // with the original DOM chunk.  Chances are high that it will get merged back
   // into the original DOM during the further patching.
-  UnusedNodesMap::iterator it = unused_nodes_map_.Find(old_digest->sha1_);
+  UnusedNodesMap::iterator it = unused_nodes_map_.find(old_digest->sha1_);
   if (it != unused_nodes_map_.end()) {
     Digest* new_digest = it->value;
     Node* new_node = new_digest->node_;
@@ -552,23 +535,7 @@ void DOMPatchSupport::MarkNodeAsUsed(Digest* digest) {
   }
 }
 
-#ifdef DEBUG_DOM_PATCH_SUPPORT
-static String nodeName(Node* node) {
-  if (node->document().isXHTMLDocument())
-    return node->nodeName();
-  return node->nodeName().lower();
-}
-
-void DOMPatchSupport::dumpMap(const ResultMap& map, const String& name) {
-  fprintf(stderr, "\n\n");
-  for (size_t i = 0; i < map.size(); ++i)
-    fprintf(stderr, "%s[%lu]: %s (%p) - [%lu]\n", name.utf8().data(), i,
-            map[i].first ? nodeName(map[i].first->m_node).utf8().data() : "",
-            map[i].first, map[i].second);
-}
-#endif
-
-DEFINE_TRACE(DOMPatchSupport::Digest) {
+void DOMPatchSupport::Digest::Trace(blink::Visitor* visitor) {
   visitor->Trace(node_);
   visitor->Trace(children_);
 }

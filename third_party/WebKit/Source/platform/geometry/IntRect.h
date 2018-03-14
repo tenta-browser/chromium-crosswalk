@@ -26,14 +26,14 @@
 #ifndef IntRect_h
 #define IntRect_h
 
+#include <iosfwd>
+#include "build/build_config.h"
 #include "platform/geometry/IntPoint.h"
 #include "platform/geometry/IntRectOutsets.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Forward.h"
-#include "platform/wtf/Vector.h"
-#include "platform/wtf/VectorTraits.h"
 
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
 typedef struct CGRect CGRect;
 
 #ifdef __OBJC__
@@ -112,24 +112,10 @@ class PLATFORM_EXPORT IntRect {
   void Contract(const IntSize& size) { size_ -= size; }
   void Contract(int dw, int dh) { size_.Expand(-dw, -dh); }
 
-  void ShiftXEdgeTo(int edge) {
-    int delta = edge - X();
-    SetX(edge);
-    SetWidth(std::max(0, Width() - delta));
-  }
-  void ShiftMaxXEdgeTo(int edge) {
-    int delta = edge - MaxX();
-    SetWidth(std::max(0, Width() + delta));
-  }
-  void ShiftYEdgeTo(int edge) {
-    int delta = edge - Y();
-    SetY(edge);
-    SetHeight(std::max(0, Height() - delta));
-  }
-  void ShiftMaxYEdgeTo(int edge) {
-    int delta = edge - MaxY();
-    SetHeight(std::max(0, Height() + delta));
-  }
+  void ShiftXEdgeTo(int);
+  void ShiftMaxXEdgeTo(int);
+  void ShiftYEdgeTo(int);
+  void ShiftMaxYEdgeTo(int);
 
   IntPoint MinXMinYCorner() const { return location_; }  // typically topLeft
   IntPoint MaxXMinYCorner() const {
@@ -188,11 +174,8 @@ class PLATFORM_EXPORT IntRect {
     return IntRect(location_.TransposedPoint(), size_.TransposedSize());
   }
 
-#if OS(MACOSX)
-  operator CGRect() const;
-#if defined(__OBJC__) && !defined(NSGEOMETRY_TYPES_SAME_AS_CGGEOMETRY_TYPES)
-  operator NSRect() const;
-#endif
+#if defined(OS_MACOSX)
+  explicit operator CGRect() const;
 #endif
 
   operator SkRect() const;
@@ -201,6 +184,9 @@ class PLATFORM_EXPORT IntRect {
   operator gfx::Rect() const;
 
   String ToString() const;
+
+  // Return false if x + width or y + height overflows.
+  bool IsValid() const;
 
  private:
   IntPoint location_;
@@ -237,12 +223,7 @@ inline bool operator!=(const IntRect& a, const IntRect& b) {
   return a.Location() != b.Location() || a.Size() != b.Size();
 }
 
-#if OS(MACOSX)
-PLATFORM_EXPORT IntRect EnclosingIntRect(const CGRect&);
-#if defined(__OBJC__) && !defined(NSGEOMETRY_TYPES_SAME_AS_CGGEOMETRY_TYPES)
-PLATFORM_EXPORT IntRect enclosingIntRect(const NSRect&);
-#endif
-#endif
+PLATFORM_EXPORT std::ostream& operator<<(std::ostream&, const IntRect&);
 
 // Redeclared here to avoid ODR issues.
 // See platform/testing/GeometryPrinters.h.

@@ -14,7 +14,7 @@
 #include "base/power_monitor/power_monitor_device_source.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
-#include "cc/surfaces/surface_manager.h"
+#include "components/viz/host/host_frame_sink_manager.h"
 #include "third_party/skia/include/core/SkBlendMode.h"
 #include "ui/aura/client/default_capture_client.h"
 #include "ui/aura/client/window_parenting_client.h"
@@ -82,7 +82,8 @@ class DemoWindowDelegate : public aura::WindowDelegate {
       recorder.canvas()->FillRect(r, color_, SkBlendMode::kXor);
     }
   }
-  void OnDeviceScaleFactorChanged(float device_scale_factor) override {}
+  void OnDeviceScaleFactorChanged(float old_device_scale_factor,
+                                  float new_device_scale_factor) override {}
   void OnWindowDestroying(aura::Window* window) override {}
   void OnWindowDestroyed(aura::Window* window) override {}
   void OnWindowTargetVisibilityChanged(bool visible) override {}
@@ -138,11 +139,10 @@ int DemoMain() {
 #endif
 
   // The ContextFactory must exist before any Compositors are created.
-  bool context_factory_for_test = false;
-  cc::SurfaceManager surface_manager;
-  std::unique_ptr<ui::InProcessContextFactory> context_factory(
-      new ui::InProcessContextFactory(context_factory_for_test,
-                                      &surface_manager));
+  viz::HostFrameSinkManager host_frame_sink_manager;
+  viz::FrameSinkManagerImpl frame_sink_manager;
+  auto context_factory = std::make_unique<ui::InProcessContextFactory>(
+      &host_frame_sink_manager, &frame_sink_manager);
   context_factory->set_use_test_surface(false);
 
   // Create the message-loop here before creating the root window.

@@ -5,11 +5,12 @@
 #ifndef WebLayerTreeViewImplForTesting_h
 #define WebLayerTreeViewImplForTesting_h
 
+#include <memory>
 #include "cc/test/test_task_graph_runner.h"
 #include "cc/trees/layer_tree_host_client.h"
 #include "cc/trees/layer_tree_host_single_thread_client.h"
+#include "platform/wtf/Noncopyable.h"
 #include "public/platform/WebLayerTreeView.h"
-#include <memory>
 
 namespace cc {
 class AnimationHost;
@@ -36,14 +37,12 @@ class WebLayerTreeViewImplForTesting
   static cc::LayerTreeSettings DefaultLayerTreeSettings();
   cc::LayerTreeHost* GetLayerTreeHost() { return layer_tree_host_.get(); }
   bool HasLayer(const WebLayer&);
+  void SetViewportSize(const blink::WebSize&);
 
   // blink::WebLayerTreeView implementation.
   void SetRootLayer(const blink::WebLayer&) override;
   void ClearRootLayer() override;
   cc::AnimationHost* CompositorAnimationHost() override;
-  virtual void SetViewportSize(const blink::WebSize& unused_deprecated,
-                               const blink::WebSize& device_viewport_size);
-  void SetViewportSize(const blink::WebSize&) override;
   WebSize GetViewportSize() const override;
   void SetDeviceScaleFactor(float) override;
   void SetBackgroundColor(blink::WebColor) override;
@@ -58,11 +57,7 @@ class WebLayerTreeViewImplForTesting
   void SetNeedsBeginFrame() override;
   void DidStopFlinging() override;
   void SetDeferCommits(bool) override;
-  void RegisterViewportLayers(
-      const blink::WebLayer* overscroll_elasticity_layer,
-      const blink::WebLayer* page_scale_layer_layer,
-      const blink::WebLayer* inner_viewport_scroll_layer,
-      const blink::WebLayer* outer_viewport_scroll_layer) override;
+  void RegisterViewportLayers(const WebLayerTreeView::ViewportLayers&) override;
   void ClearViewportLayers() override;
   void RegisterSelection(const blink::WebSelection&) override;
   void ClearSelection() override;
@@ -76,8 +71,9 @@ class WebLayerTreeViewImplForTesting
   // cc::LayerTreeHostClient implementation.
   void WillBeginMainFrame() override {}
   void DidBeginMainFrame() override {}
-  void BeginMainFrame(const cc::BeginFrameArgs& args) override {}
+  void BeginMainFrame(const viz::BeginFrameArgs& args) override {}
   void BeginMainFrameNotExpectedSoon() override {}
+  void BeginMainFrameNotExpectedUntil(base::TimeTicks) override {}
   void UpdateLayerTreeHost() override;
   void ApplyViewportDeltas(const gfx::Vector2dF& inner_delta,
                            const gfx::Vector2dF& outer_delta,
@@ -86,9 +82,9 @@ class WebLayerTreeViewImplForTesting
                            float browser_controls_delta) override;
   void RecordWheelAndTouchScrollingCount(bool has_scrolled_by_wheel,
                                          bool has_scrolled_by_touch) override;
-  void RequestNewCompositorFrameSink() override;
-  void DidInitializeCompositorFrameSink() override {}
-  void DidFailToInitializeCompositorFrameSink() override;
+  void RequestNewLayerTreeFrameSink() override;
+  void DidInitializeLayerTreeFrameSink() override {}
+  void DidFailToInitializeLayerTreeFrameSink() override;
   void WillCommit() override {}
   void DidCommit() override {}
   void DidCommitAndDrawFrame() override {}
@@ -99,7 +95,7 @@ class WebLayerTreeViewImplForTesting
 
   // cc::LayerTreeHostSingleThreadClient implementation.
   void DidSubmitCompositorFrame() override {}
-  void DidLoseCompositorFrameSink() override {}
+  void DidLoseLayerTreeFrameSink() override {}
 
  private:
   cc::TestTaskGraphRunner task_graph_runner_;

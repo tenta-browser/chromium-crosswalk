@@ -9,13 +9,10 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/metrics/histogram_macros.h"
-#include "base/profiler/scoped_tracker.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#include "base/tracked_objects.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
@@ -47,8 +44,8 @@ namespace net {
 
 // URLFetcherCore::Registry ---------------------------------------------------
 
-URLFetcherCore::Registry::Registry() {}
-URLFetcherCore::Registry::~Registry() {}
+URLFetcherCore::Registry::Registry() = default;
+URLFetcherCore::Registry::~Registry() = default;
 
 void URLFetcherCore::Registry::AddURLFetcherCore(URLFetcherCore* core) {
   DCHECK(!base::ContainsKey(fetchers_, core));
@@ -71,10 +68,12 @@ void URLFetcherCore::Registry::CancelAll() {
 base::LazyInstance<URLFetcherCore::Registry>::DestructorAtExit
     URLFetcherCore::g_registry = LAZY_INSTANCE_INITIALIZER;
 
-URLFetcherCore::URLFetcherCore(URLFetcher* fetcher,
-                               const GURL& original_url,
-                               URLFetcher::RequestType request_type,
-                               URLFetcherDelegate* d)
+URLFetcherCore::URLFetcherCore(
+    URLFetcher* fetcher,
+    const GURL& original_url,
+    URLFetcher::RequestType request_type,
+    URLFetcherDelegate* d,
+    net::NetworkTrafficAnnotationTag traffic_annotation)
     : fetcher_(fetcher),
       original_url_(original_url),
       request_type_(request_type),
@@ -103,7 +102,8 @@ URLFetcherCore::URLFetcherCore(URLFetcher* fetcher,
       max_retries_on_network_changes_(0),
       current_upload_bytes_(-1),
       current_response_bytes_(0),
-      total_response_bytes_(-1) {
+      total_response_bytes_(-1),
+      traffic_annotation_(traffic_annotation) {
   CHECK(original_url_.is_valid());
 }
 
@@ -124,13 +124,13 @@ void URLFetcherCore::Start() {
 
 void URLFetcherCore::Stop() {
   if (delegate_task_runner_)  // May be NULL in tests.
-    DCHECK(delegate_task_runner_->RunsTasksOnCurrentThread());
+    DCHECK(delegate_task_runner_->RunsTasksInCurrentSequence());
 
   delegate_ = NULL;
   fetcher_ = NULL;
   if (!network_task_runner_.get())
     return;
-  if (network_task_runner_->RunsTasksOnCurrentThread()) {
+  if (network_task_runner_->RunsTasksInCurrentSequence()) {
     CancelURLRequest(ERR_ABORTED);
   } else {
     network_task_runner_->PostTask(
@@ -288,21 +288,21 @@ void URLFetcherCore::SetAutomaticallyRetryOnNetworkChanges(int max_retries) {
 void URLFetcherCore::SaveResponseToFileAtPath(
     const base::FilePath& file_path,
     scoped_refptr<base::SequencedTaskRunner> file_task_runner) {
-  DCHECK(delegate_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(delegate_task_runner_->RunsTasksInCurrentSequence());
   SaveResponseWithWriter(std::unique_ptr<URLFetcherResponseWriter>(
       new URLFetcherFileWriter(file_task_runner, file_path)));
 }
 
 void URLFetcherCore::SaveResponseToTemporaryFile(
     scoped_refptr<base::SequencedTaskRunner> file_task_runner) {
-  DCHECK(delegate_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(delegate_task_runner_->RunsTasksInCurrentSequence());
   SaveResponseWithWriter(std::unique_ptr<URLFetcherResponseWriter>(
       new URLFetcherFileWriter(file_task_runner, base::FilePath())));
 }
 
 void URLFetcherCore::SaveResponseWithWriter(
     std::unique_ptr<URLFetcherResponseWriter> response_writer) {
-  DCHECK(delegate_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(delegate_task_runner_->RunsTasksInCurrentSequence());
   response_writer_ = std::move(response_writer);
 }
 
@@ -315,6 +315,10 @@ HttpResponseHeaders* URLFetcherCore::GetResponseHeaders() const {
 // Same for response_headers_ above and was_fetched_via_proxy_ below.
 HostPortPair URLFetcherCore::GetSocketAddress() const {
   return socket_address_;
+}
+
+const ProxyServer& URLFetcherCore::ProxyServerUsed() const {
+  return proxy_server_;
 }
 
 bool URLFetcherCore::WasFetchedViaProxy() const {
@@ -350,7 +354,7 @@ int URLFetcherCore::GetResponseCode() const {
 }
 
 void URLFetcherCore::ReceivedContentWasMalformed() {
-  DCHECK(delegate_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(delegate_task_runner_->RunsTasksInCurrentSequence());
   if (network_task_runner_.get()) {
     network_task_runner_->PostTask(
         FROM_HERE, base::Bind(&URLFetcherCore::NotifyMalformedContent, this));
@@ -365,14 +369,12 @@ bool URLFetcherCore::GetResponseAsString(
     return false;
 
   *out_response_string = string_writer->data();
-  UMA_HISTOGRAM_MEMORY_KB("UrlFetcher.StringResponseSize",
-                          (string_writer->data().length() / 1024));
   return true;
 }
 
 bool URLFetcherCore::GetResponseAsFilePath(bool take_ownership,
                                            base::FilePath* out_response_path) {
-  DCHECK(delegate_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(delegate_task_runner_->RunsTasksInCurrentSequence());
 
   URLFetcherFileWriter* file_writer =
       response_writer_ ? response_writer_->AsFileWriter() : NULL;
@@ -405,6 +407,7 @@ void URLFetcherCore::OnReceivedRedirect(URLRequest* request,
     stopped_on_redirect_ = true;
     url_ = redirect_info.new_url;
     response_code_ = request_->GetResponseCode();
+    proxy_server_ = request_->proxy_server();
     was_fetched_via_proxy_ = request_->was_fetched_via_proxy();
     was_cached_ = request_->was_cached();
     total_received_bytes_ += request_->GetTotalReceivedBytes();
@@ -422,6 +425,7 @@ void URLFetcherCore::OnResponseStarted(URLRequest* request, int net_error) {
     response_code_ = request_->GetResponseCode();
     response_headers_ = request_->response_headers();
     socket_address_ = request_->GetSocketAddress();
+    proxy_server_ = request_->proxy_server();
     was_fetched_via_proxy_ = request_->was_fetched_via_proxy();
     was_cached_ = request_->was_cached();
     total_response_bytes_ = request_->GetExpectedContentSize();
@@ -552,7 +556,7 @@ void URLFetcherCore::StartURLRequest() {
   current_response_bytes_ = 0;
   request_context_getter_->AddObserver(this);
   request_ = request_context_getter_->GetURLRequestContext()->CreateRequest(
-      original_url_, DEFAULT_PRIORITY, this);
+      original_url_, DEFAULT_PRIORITY, this, traffic_annotation_);
   int flags = request_->load_flags() | load_flags_;
 
   // TODO(mmenke): This should really be with the other code to set the upload
@@ -563,10 +567,10 @@ void URLFetcherCore::StartURLRequest() {
   request_->SetLoadFlags(flags);
   request_->SetReferrer(referrer_);
   request_->set_referrer_policy(referrer_policy_);
-  request_->set_first_party_for_cookies(initiator_.has_value() &&
-                                                !initiator_.value().unique()
-                                            ? initiator_.value().GetURL()
-                                            : original_url_);
+  request_->set_site_for_cookies(initiator_.has_value() &&
+                                         !initiator_.value().unique()
+                                     ? initiator_.value().GetURL()
+                                     : original_url_);
   request_->set_initiator(initiator_);
   if (url_request_data_key_ && !url_request_create_data_callback_.is_null()) {
     request_->SetUserData(url_request_data_key_,
@@ -712,7 +716,7 @@ void URLFetcherCore::CancelURLRequest(int error) {
 
 void URLFetcherCore::OnCompletedURLRequest(
     base::TimeDelta backoff_delay) {
-  DCHECK(delegate_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(delegate_task_runner_->RunsTasksInCurrentSequence());
 
   // Save the status and backoff_delay so that delegates can read it.
   if (delegate_) {
@@ -722,7 +726,7 @@ void URLFetcherCore::OnCompletedURLRequest(
 }
 
 void URLFetcherCore::InformDelegateFetchIsComplete() {
-  DCHECK(delegate_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(delegate_task_runner_->RunsTasksInCurrentSequence());
   if (delegate_)
     delegate_->OnURLFetchComplete(fetcher_);
 }
@@ -923,19 +927,13 @@ void URLFetcherCore::InformDelegateUploadProgress() {
 void URLFetcherCore::InformDelegateUploadProgressInDelegateSequence(
     int64_t current,
     int64_t total) {
-  DCHECK(delegate_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(delegate_task_runner_->RunsTasksInCurrentSequence());
   if (delegate_)
     delegate_->OnURLFetchUploadProgress(fetcher_, current, total);
 }
 
 void URLFetcherCore::InformDelegateDownloadProgress() {
   DCHECK(network_task_runner_->BelongsToCurrentThread());
-
-  // TODO(pkasting): Remove ScopedTracker below once crbug.com/455952 is fixed.
-  tracked_objects::ScopedTracker tracking_profile2(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "455952 delegate_task_runner_->PostTask()"));
-
   delegate_task_runner_->PostTask(
       FROM_HERE,
       base::Bind(
@@ -948,7 +946,7 @@ void URLFetcherCore::InformDelegateDownloadProgressInDelegateSequence(
     int64_t current,
     int64_t total,
     int64_t current_network_bytes) {
-  DCHECK(delegate_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(delegate_task_runner_->RunsTasksInCurrentSequence());
   if (delegate_)
     delegate_->OnURLFetchDownloadProgress(fetcher_, current, total,
                                           current_network_bytes);

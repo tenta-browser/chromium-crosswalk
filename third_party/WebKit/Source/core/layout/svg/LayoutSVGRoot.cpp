@@ -26,7 +26,8 @@
 #include "core/frame/LocalFrame.h"
 #include "core/layout/HitTestResult.h"
 #include "core/layout/LayoutAnalyzer.h"
-#include "core/layout/api/LayoutPartItem.h"
+#include "core/layout/LayoutView.h"
+#include "core/layout/api/LayoutEmbeddedContentItem.h"
 #include "core/layout/svg/LayoutSVGText.h"
 #include "core/layout/svg/SVGLayoutSupport.h"
 #include "core/layout/svg/SVGResourcesCache.h"
@@ -48,7 +49,7 @@ LayoutSVGRoot::LayoutSVGRoot(SVGElement* node)
       has_box_decoration_background_(false),
       has_non_isolated_blending_descendants_(false),
       has_non_isolated_blending_descendants_dirty_(false) {
-  SVGSVGElement* svg = toSVGSVGElement(node);
+  SVGSVGElement* svg = ToSVGSVGElement(node);
   DCHECK(svg);
 
   LayoutSize intrinsic_size(svg->IntrinsicWidth(), svg->IntrinsicHeight());
@@ -65,7 +66,7 @@ void LayoutSVGRoot::ComputeIntrinsicSizingInfo(
     IntrinsicSizingInfo& intrinsic_sizing_info) const {
   // https://www.w3.org/TR/SVG/coords.html#IntrinsicSizing
 
-  SVGSVGElement* svg = toSVGSVGElement(GetNode());
+  SVGSVGElement* svg = ToSVGSVGElement(GetNode());
   DCHECK(svg);
 
   intrinsic_sizing_info.size =
@@ -88,7 +89,7 @@ void LayoutSVGRoot::ComputeIntrinsicSizingInfo(
 }
 
 bool LayoutSVGRoot::IsEmbeddedThroughSVGImage() const {
-  return SVGImage::IsInSVGImage(toSVGSVGElement(GetNode()));
+  return SVGImage::IsInSVGImage(ToSVGSVGElement(GetNode()));
 }
 
 bool LayoutSVGRoot::IsEmbeddedThroughFrameContainingSVGDocument() const {
@@ -134,6 +135,13 @@ LayoutUnit LayoutSVGRoot::ComputeReplacedLogicalHeight(
     return ContainingBlock()->AvailableLogicalHeight(
         kIncludeMarginBorderPadding);
 
+  const Length& logical_height = Style()->LogicalHeight();
+  if (IsDocumentElement() && logical_height.IsPercentOrCalc()) {
+    return ValueForLength(
+        logical_height,
+        GetDocument().GetLayoutView()->ViewLogicalHeightForPercentages());
+  }
+
   return LayoutReplaced::ComputeReplacedLogicalHeight(estimated_used_width);
 }
 
@@ -177,11 +185,10 @@ void LayoutSVGRoot::UpdateLayout() {
   if (transform_change != SVGTransformChange::kNone ||
       viewport_may_have_changed) {
     SetMayNeedPaintInvalidationSubtree();
-    if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-      SetNeedsPaintPropertyUpdate();
+    SetNeedsPaintPropertyUpdate();
   }
 
-  SVGSVGElement* svg = toSVGSVGElement(GetNode());
+  SVGSVGElement* svg = ToSVGSVGElement(GetNode());
   DCHECK(svg);
   // When hasRelativeLengths() is false, no descendants have relative lengths
   // (hence no one is interested in viewport size changes).
@@ -207,7 +214,7 @@ void LayoutSVGRoot::UpdateLayout() {
     AddContentsVisualOverflow(EnclosingLayoutRect(content_visual_rect));
   }
 
-  UpdateLayerTransformAfterLayout();
+  UpdateAfterLayout();
   has_box_decoration_background_ = IsDocumentElement()
                                        ? StyleRef().HasBoxDecorationBackground()
                                        : HasBoxDecorationBackground();
@@ -223,8 +230,7 @@ bool LayoutSVGRoot::ShouldApplyViewportClip() const {
   // scrollbars should be hidden if overflow=hidden.
   return Style()->OverflowX() == EOverflow::kHidden ||
          Style()->OverflowX() == EOverflow::kAuto ||
-         Style()->OverflowX() == EOverflow::kScroll ||
-         this->IsDocumentElement();
+         Style()->OverflowX() == EOverflow::kScroll || IsDocumentElement();
 }
 
 LayoutRect LayoutSVGRoot::VisualOverflowRect() const {
@@ -232,12 +238,6 @@ LayoutRect LayoutSVGRoot::VisualOverflowRect() const {
   if (!ShouldApplyViewportClip())
     rect.Unite(ContentsVisualOverflowRect());
   return rect;
-}
-
-LayoutRect LayoutSVGRoot::OverflowClipRect(const LayoutPoint& location,
-                                           OverlayScrollbarClipBehavior) const {
-  return LayoutRect(PixelSnappedIntRect(LayoutReplaced::OverflowClipRect(
-      location, kIgnorePlatformOverlayScrollbarSize)));
 }
 
 void LayoutSVGRoot::PaintReplaced(const PaintInfo& paint_info,
@@ -265,8 +265,7 @@ void LayoutSVGRoot::StyleDidChange(StyleDifference diff,
 
 bool LayoutSVGRoot::IsChildAllowed(LayoutObject* child,
                                    const ComputedStyle&) const {
-  return child->IsSVG() && !(child->IsSVGInline() || child->IsSVGInlineText() ||
-                             child->IsSVGGradientStop());
+  return child->IsSVG() && !(child->IsSVGInline() || child->IsSVGInlineText());
 }
 
 void LayoutSVGRoot::AddChild(LayoutObject* child, LayoutObject* before_child) {
@@ -311,8 +310,7 @@ void LayoutSVGRoot::DescendantIsolationRequirementsChanged(
       has_non_isolated_blending_descendants_dirty_ = true;
       break;
   }
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    SetNeedsPaintPropertyUpdate();
+  SetNeedsPaintPropertyUpdate();
 }
 
 void LayoutSVGRoot::InsertedIntoTree() {
@@ -355,7 +353,7 @@ PositionWithAffinity LayoutSVGRoot::PositionForPoint(const LayoutPoint& point) {
 // relative to our borderBox origin.  This method gives us exactly that.
 SVGTransformChange LayoutSVGRoot::BuildLocalToBorderBoxTransform() {
   SVGTransformChangeDetector change_detector(local_to_border_box_transform_);
-  SVGSVGElement* svg = toSVGSVGElement(GetNode());
+  SVGSVGElement* svg = ToSVGSVGElement(GetNode());
   DCHECK(svg);
   float scale = Style()->EffectiveZoom();
   local_to_border_box_transform_ = svg->ViewBoxToViewTransform(
@@ -378,7 +376,7 @@ AffineTransform LayoutSVGRoot::LocalToSVGParentTransform() const {
          local_to_border_box_transform_;
 }
 
-LayoutRect LayoutSVGRoot::LocalVisualRect() const {
+LayoutRect LayoutSVGRoot::LocalVisualRectIgnoringVisibility() const {
   // This is an open-coded aggregate of SVGLayoutSupport::localVisualRect
   // and LayoutReplaced::localVisualRect. The reason for this is to optimize/
   // minimize the visual rect when the box is not "decorated" (does not have
@@ -386,8 +384,7 @@ LayoutRect LayoutSVGRoot::LocalVisualRect() const {
   // LayoutSVGRootTest.VisualRectMappingWithViewportClipWithoutBorder).
 
   // Return early for any cases where we don't actually paint.
-  if (Style()->Visibility() != EVisibility::kVisible &&
-      !EnclosingLayer()->HasVisibleContent())
+  if (!EnclosingLayer()->HasVisibleContent())
     return LayoutRect();
 
   // Compute the visual rect of the content of the SVG in the border-box
@@ -455,7 +452,7 @@ bool LayoutSVGRoot::NodeAtPoint(HitTestResult& result,
       (!ShouldApplyViewportClip() &&
        VisualOverflowRect().Contains(point_in_border_box))) {
     const AffineTransform& local_to_parent_transform =
-        this->LocalToSVGParentTransform();
+        LocalToSVGParentTransform();
     if (local_to_parent_transform.IsInvertible()) {
       FloatPoint local_point = local_to_parent_transform.Inverse().MapPoint(
           FloatPoint(point_in_parent));

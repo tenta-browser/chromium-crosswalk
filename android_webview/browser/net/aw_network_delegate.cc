@@ -5,7 +5,7 @@
 #include "android_webview/browser/net/aw_network_delegate.h"
 
 #include "android_webview/browser/aw_browser_context.h"
-#include "android_webview/browser/aw_contents_client_bridge_base.h"
+#include "android_webview/browser/aw_contents_client_bridge.h"
 #include "android_webview/browser/aw_contents_io_thread_client.h"
 #include "android_webview/browser/aw_cookie_access_policy.h"
 #include "android_webview/browser/net/aw_web_resource_request.h"
@@ -30,8 +30,8 @@ void OnReceivedHttpErrorOnUiThread(
     const content::ResourceRequestInfo::WebContentsGetter& web_contents_getter,
     const AwWebResourceRequest& request,
     scoped_refptr<const net::HttpResponseHeaders> original_response_headers) {
-  AwContentsClientBridgeBase* client =
-      AwContentsClientBridgeBase::FromWebContentsGetter(web_contents_getter);
+  AwContentsClientBridge* client =
+      AwContentsClientBridge::FromWebContentsGetter(web_contents_getter);
   if (!client) {
     DLOG(WARNING) << "client is null, onReceivedHttpError dropped for "
                   << request.url;
@@ -56,14 +56,8 @@ int AwNetworkDelegate::OnBeforeURLRequest(
     url_blacklist_manager_ =
         AwBrowserContext::GetDefault()->GetURLBlacklistManager();
   }
-  // Ignore blob scheme for two reasons:
-  // 1) PlzNavigate uses it to deliver the response to the renderer.
-  // 2) A whitelisted page can use blob URLs internally.
-  if (!request->url().SchemeIs(url::kBlobScheme) &&
-      url_blacklist_manager_->IsURLBlocked(request->url())) {
+  if (url_blacklist_manager_->IsURLBlocked(request->url()))
     return net::ERR_BLOCKED_BY_ADMINISTRATOR;
-  }
-
   return net::OK;
 }
 
@@ -140,15 +134,16 @@ bool AwNetworkDelegate::OnCanGetCookies(const net::URLRequest& request,
 }
 
 bool AwNetworkDelegate::OnCanSetCookie(const net::URLRequest& request,
-                                       const std::string& cookie_line,
+                                       const net::CanonicalCookie& cookie,
                                        net::CookieOptions* options) {
-  return AwCookieAccessPolicy::GetInstance()->OnCanSetCookie(request,
-                                                             cookie_line,
+  return AwCookieAccessPolicy::GetInstance()->OnCanSetCookie(request, cookie,
                                                              options);
 }
 
-bool AwNetworkDelegate::OnCanAccessFile(const net::URLRequest& request,
-                                        const base::FilePath& path) const {
+bool AwNetworkDelegate::OnCanAccessFile(
+    const net::URLRequest& request,
+    const base::FilePath& original_path,
+    const base::FilePath& absolute_path) const {
   return true;
 }
 

@@ -18,7 +18,7 @@
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
-#include "components/safe_browsing_db/test_database_manager.h"
+#include "components/safe_browsing/db/test_database_manager.h"
 
 namespace {
 
@@ -836,7 +836,7 @@ TEST_F(PermissionDecisionAutoBlockerUnitTest,
   {
     scoped_refptr<HostContentSettingsMap> temp_map(new HostContentSettingsMap(
         profile()->GetPrefs(), false /* is_incognito_profile */,
-        false /* is_guest_profile */));
+        false /* is_guest_profile */, false /* store_last_modified */));
     temp_map->ShutdownOnUIThread();
   }
 
@@ -868,7 +868,7 @@ TEST_F(PermissionDecisionAutoBlockerUnitTest,
   {
     scoped_refptr<HostContentSettingsMap> temp_map(new HostContentSettingsMap(
         profile()->GetPrefs(), false /* is_incognito_profile */,
-        false /* is_guest_profile */));
+        false /* is_guest_profile */, false /* store_last_modified */));
     temp_map->ShutdownOnUIThread();
   }
 

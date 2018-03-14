@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/sequenced_task_runner.h"
 #include "content/browser/renderer_host/p2p/socket_host_throttler.h"
 #include "content/common/p2p_socket_type.h"
 #include "content/public/browser/browser_message_filter.h"
@@ -38,7 +39,7 @@ class ResourceContext;
 
 class P2PSocketDispatcherHost
     : public content::BrowserMessageFilter,
-      public net::NetworkChangeNotifier::IPAddressObserver {
+      public net::NetworkChangeNotifier::NetworkChangeObserver {
  public:
   P2PSocketDispatcherHost(content::ResourceContext* resource_context,
                           net::URLRequestContextGetter* url_context);
@@ -48,9 +49,9 @@ class P2PSocketDispatcherHost
   void OnDestruct() const override;
   bool OnMessageReceived(const IPC::Message& message) override;
 
-  // net::NetworkChangeNotifier::IPAddressObserver interface.
-  void OnIPAddressChanged() override;
-
+  // net::NetworkChangeNotifier::NetworkChangeObserver interface.
+  void OnNetworkChanged(
+      net::NetworkChangeNotifier::ConnectionType type) override;
   // Starts the RTP packet header dumping. Must be called on the IO thread.
   void StartRtpDump(
       bool incoming,
@@ -125,6 +126,10 @@ class P2PSocketDispatcherHost
   bool dump_incoming_rtp_packet_;
   bool dump_outgoing_rtp_packet_;
   RenderProcessHost::WebRtcRtpPacketCallback packet_callback_;
+
+  // Used to call DoGetNetworkList, which may briefly block since getting the
+  // default local address involves creating a dummy socket.
+  const scoped_refptr<base::SequencedTaskRunner> network_list_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(P2PSocketDispatcherHost);
 };

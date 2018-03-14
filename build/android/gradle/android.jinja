@@ -4,29 +4,37 @@
 {% macro expand_sourceset(variables, prefix) %}
 {% if variables is defined %}
         {{ prefix }} {
+{% if variables.android_manifest is defined %}
             manifest.srcFile "{{ variables.android_manifest }}"
+{% endif %}
+{% if variables.java_dirs is defined %}
             java.srcDirs = [
 {% for path in variables.java_dirs %}
                 "{{ path }}",
 {% endfor %}
             ]
-{% if variables.java_excludes %}
+{% endif %}
+{% if variables.java_excludes is defined %}
             java.filter.exclude(
 {% for path in variables.java_excludes %}
                 "{{ path }}",
 {% endfor %}
             )
 {% endif %}
+{% if variables.jni_libs is defined %}
             jniLibs.srcDirs = [
 {% for path in variables.jni_libs %}
                 "{{ path }}",
 {% endfor %}
             ]
+{% endif %}
+{% if variables.res_dirs is defined %}
             res.srcDirs = [
 {% for path in variables.res_dirs %}
                 "{{ path }}",
 {% endfor %}
             ]
+{% endif %}
         }
 {% endif %}
 {% endmacro %}
@@ -41,13 +49,10 @@ apply plugin: "com.android.application"
 android {
     compileSdkVersion "{{ compile_sdk_version }}"
     buildToolsVersion "{{ build_tools_version }}"
-    publishNonDefault true
-    // Multiple targets use the package name "dummy.package"
-    enforceUniquePackageName false
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_7
-        targetCompatibility JavaVersion.VERSION_1_7
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 
     sourceSets {
@@ -67,21 +72,20 @@ android {
 {{ expand_sourceset(test, 'test') }}
 {{ expand_sourceset(android_test, 'androidTest') }}
     }
+
+    defaultConfig {
+        vectorDrawables.useSupportLibrary = true
+    }
 }
 
 {% include 'dependencies.jinja' %}
-
-android.variantFilter { variant ->
-    if (variant.buildType.name.equals('release')) {
-        variant.setIgnore(true);
-    }
-}
 
 afterEvaluate {
     def tasksToDisable = tasks.findAll {
         return (it.name.equals('generateDebugSources')  // causes unwanted AndroidManifest.java
                 || it.name.equals('generateReleaseSources')
                 || it.name.endsWith('BuildConfig')  // causes unwanted BuildConfig.java
+                || it.name.equals('preDebugAndroidTestBuild')
 {% if not use_gradle_process_resources %}
                 || it.name.endsWith('Assets')
                 || it.name.endsWith('Resources')

@@ -41,8 +41,7 @@ class SVGTransformTearOff;
 
 class SVGTransformListTearOff final
     : public SVGListPropertyTearOffHelper<SVGTransformListTearOff,
-                                          SVGTransformList>,
-      public ScriptWrappable {
+                                          SVGTransformList> {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -50,7 +49,7 @@ class SVGTransformListTearOff final
       SVGTransformList* target,
       SVGElement* context_element,
       PropertyIsAnimValType property_is_anim_val,
-      const QualifiedName& attribute_name = QualifiedName::Null()) {
+      const QualifiedName& attribute_name) {
     return new SVGTransformListTearOff(target, context_element,
                                        property_is_anim_val, attribute_name);
   }
@@ -59,8 +58,6 @@ class SVGTransformListTearOff final
 
   SVGTransformTearOff* createSVGTransformFromMatrix(SVGMatrixTearOff*) const;
   SVGTransformTearOff* consolidate(ExceptionState&);
-
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
 
  private:
   SVGTransformListTearOff(SVGTransformList*,

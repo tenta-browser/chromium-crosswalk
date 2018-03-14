@@ -4,166 +4,89 @@
 
 #include "chrome/browser/page_load_metrics/observers/page_load_metrics_observer_test_harness.h"
 
-#include <memory>
 #include <string>
 
-#include "base/macros.h"
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/memory/ptr_util.h"
-#include "chrome/browser/page_load_metrics/page_load_metrics_embedder_interface.h"
-#include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
-#include "chrome/common/page_load_metrics/page_load_metrics_messages.h"
-#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_data.h"
-#include "content/public/browser/navigation_entry.h"
+#include "chrome/test/base/testing_browser_process.h"
+#include "components/ukm/content/source_url_recorder.h"
+#include "content/public/browser/global_request_id.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/browser/web_contents_observer.h"
+#include "content/public/common/referrer.h"
+#include "content/public/test/navigation_simulator.h"
 #include "content/public/test/web_contents_tester.h"
 #include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "url/gurl.h"
+#include "url/url_constants.h"
 
 namespace page_load_metrics {
-
-namespace {
-
-class TestPageLoadMetricsEmbedderInterface
-    : public PageLoadMetricsEmbedderInterface {
- public:
-  explicit TestPageLoadMetricsEmbedderInterface(
-      PageLoadMetricsObserverTestHarness* test)
-      : test_(test) {}
-
-  bool IsNewTabPageUrl(const GURL& url) override { return false; }
-
-  // Forward the registration logic to the test class so that derived classes
-  // can override the logic there without depending on the embedder interface.
-  void RegisterObservers(PageLoadTracker* tracker) override {
-    test_->RegisterObservers(tracker);
-  }
-
- private:
-  PageLoadMetricsObserverTestHarness* test_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestPageLoadMetricsEmbedderInterface);
-};
-
-}  // namespace
 
 PageLoadMetricsObserverTestHarness::PageLoadMetricsObserverTestHarness()
     : ChromeRenderViewHostTestHarness() {}
 
 PageLoadMetricsObserverTestHarness::~PageLoadMetricsObserverTestHarness() {}
 
-// static
-void PageLoadMetricsObserverTestHarness::PopulateRequiredTimingFields(
-    PageLoadTiming* inout_timing) {
-  if (inout_timing->first_meaningful_paint &&
-      !inout_timing->first_contentful_paint) {
-    inout_timing->first_contentful_paint = inout_timing->first_meaningful_paint;
-  }
-  if ((inout_timing->first_text_paint || inout_timing->first_image_paint ||
-       inout_timing->first_contentful_paint) &&
-      !inout_timing->first_paint) {
-    inout_timing->first_paint =
-        OptionalMin(OptionalMin(inout_timing->first_text_paint,
-                                inout_timing->first_image_paint),
-                    inout_timing->first_contentful_paint);
-  }
-  if (inout_timing->first_paint && !inout_timing->first_layout) {
-    inout_timing->first_layout = inout_timing->first_paint;
-  }
-  if (inout_timing->load_event_start &&
-      !inout_timing->dom_content_loaded_event_start) {
-    inout_timing->dom_content_loaded_event_start =
-        inout_timing->load_event_start;
-  }
-  if (inout_timing->first_layout && !inout_timing->parse_start) {
-    inout_timing->parse_start = inout_timing->first_layout;
-  }
-  if (inout_timing->dom_content_loaded_event_start &&
-      !inout_timing->parse_stop) {
-    inout_timing->parse_stop = inout_timing->dom_content_loaded_event_start;
-  }
-  if (inout_timing->parse_stop && !inout_timing->parse_start) {
-    inout_timing->parse_start = inout_timing->parse_stop;
-  }
-  if (inout_timing->parse_start && !inout_timing->response_start) {
-    inout_timing->response_start = inout_timing->parse_start;
-  }
-  if (inout_timing->parse_start) {
-    if (!inout_timing->parse_blocked_on_script_load_duration)
-      inout_timing->parse_blocked_on_script_load_duration = base::TimeDelta();
-    if (!inout_timing->parse_blocked_on_script_execution_duration) {
-      inout_timing->parse_blocked_on_script_execution_duration =
-          base::TimeDelta();
-    }
-    if (!inout_timing
-             ->parse_blocked_on_script_load_from_document_write_duration) {
-      inout_timing->parse_blocked_on_script_load_from_document_write_duration =
-          base::TimeDelta();
-    }
-    if (!inout_timing
-             ->parse_blocked_on_script_execution_from_document_write_duration) {
-      inout_timing
-          ->parse_blocked_on_script_execution_from_document_write_duration =
-          base::TimeDelta();
-    }
-  }
-}
-
 void PageLoadMetricsObserverTestHarness::SetUp() {
   ChromeRenderViewHostTestHarness::SetUp();
   SetContents(CreateTestWebContents());
   NavigateAndCommit(GURL("http://www.google.com"));
-  observer_ = MetricsWebContentsObserver::CreateForWebContents(
+  // Page load metrics depends on UKM source URLs being recorded, so make sure
+  // the SourceUrlRecorderWebContentsObserver is instantiated.
+  ukm::InitializeSourceUrlRecorderForWebContents(web_contents());
+  tester_ = base::MakeUnique<PageLoadMetricsObserverTester>(
       web_contents(),
-      base::MakeUnique<TestPageLoadMetricsEmbedderInterface>(this));
+      base::BindRepeating(
+          &PageLoadMetricsObserverTestHarness::RegisterObservers,
+          base::Unretained(this)));
   web_contents()->WasShown();
 }
 
 void PageLoadMetricsObserverTestHarness::StartNavigation(const GURL& gurl) {
-  content::WebContentsTester* web_contents_tester =
-      content::WebContentsTester::For(web_contents());
-  web_contents_tester->StartNavigation(gurl);
+  std::unique_ptr<content::NavigationSimulator> navigation =
+      content::NavigationSimulator::CreateBrowserInitiated(gurl,
+                                                           web_contents());
+  navigation->Start();
 }
 
 void PageLoadMetricsObserverTestHarness::SimulateTimingUpdate(
-    const PageLoadTiming& timing) {
-  SimulateTimingAndMetadataUpdate(timing, PageLoadMetadata());
+    const mojom::PageLoadTiming& timing) {
+  tester_->SimulateTimingAndMetadataUpdate(timing, mojom::PageLoadMetadata());
 }
 
 void PageLoadMetricsObserverTestHarness::SimulateTimingAndMetadataUpdate(
-    const PageLoadTiming& timing,
-    const PageLoadMetadata& metadata) {
-  observer_->OnMessageReceived(PageLoadMetricsMsg_TimingUpdated(
-                                   observer_->routing_id(), timing, metadata),
-                               web_contents()->GetMainFrame());
+    const mojom::PageLoadTiming& timing,
+    const mojom::PageLoadMetadata& metadata) {
+  tester_->SimulateTimingAndMetadataUpdate(timing, metadata);
+}
+
+void PageLoadMetricsObserverTestHarness::SimulateFeaturesUpdate(
+    const mojom::PageLoadFeatures& new_features) {
+  tester_->SimulateFeaturesUpdate(new_features);
 }
 
 void PageLoadMetricsObserverTestHarness::SimulateLoadedResource(
-    const ExtraRequestInfo& info) {
-  observer_->OnRequestComplete(content::GlobalRequestID(),
-                               content::RESOURCE_TYPE_SCRIPT, info.was_cached,
-                               info.data_reduction_proxy_data
-                                   ? info.data_reduction_proxy_data->DeepCopy()
-                                   : nullptr,
-                               info.raw_body_bytes,
-                               info.original_network_content_length,
-                               base::TimeTicks::Now());
+    const ExtraRequestCompleteInfo& info) {
+  tester_->SimulateLoadedResource(info, content::GlobalRequestID());
+}
+
+void PageLoadMetricsObserverTestHarness::SimulateLoadedResource(
+    const ExtraRequestCompleteInfo& info,
+    const content::GlobalRequestID& request_id) {
+  tester_->SimulateLoadedResource(info, request_id);
 }
 
 void PageLoadMetricsObserverTestHarness::SimulateInputEvent(
     const blink::WebInputEvent& event) {
-  observer_->OnInputEvent(event);
+  tester_->SimulateInputEvent(event);
 }
 
 void PageLoadMetricsObserverTestHarness::SimulateAppEnterBackground() {
-  observer_->FlushMetricsOnAppEnterBackground();
+  tester_->SimulateAppEnterBackground();
 }
 
 void PageLoadMetricsObserverTestHarness::SimulateMediaPlayed() {
-  content::WebContentsObserver::MediaPlayerInfo video_type(
-      true /* in_has_video*/);
-  content::RenderFrameHost* render_frame_host = web_contents()->GetMainFrame();
-  observer_->MediaStartedPlaying(video_type,
-                                 std::make_pair(render_frame_host, 0));
+  tester_->SimulateMediaPlayed();
 }
 
 const base::HistogramTester&
@@ -171,9 +94,14 @@ PageLoadMetricsObserverTestHarness::histogram_tester() const {
   return histogram_tester_;
 }
 
+MetricsWebContentsObserver* PageLoadMetricsObserverTestHarness::observer()
+    const {
+  return tester_->observer();
+}
+
 const PageLoadExtraInfo
 PageLoadMetricsObserverTestHarness::GetPageLoadExtraInfoForCommittedLoad() {
-  return observer_->GetPageLoadExtraInfoForCommittedLoad();
+  return tester_->GetPageLoadExtraInfoForCommittedLoad();
 }
 
 void PageLoadMetricsObserverTestHarness::NavigateWithPageTransitionAndCommit(
@@ -182,5 +110,12 @@ void PageLoadMetricsObserverTestHarness::NavigateWithPageTransitionAndCommit(
   controller().LoadURL(url, content::Referrer(), transition, std::string());
   content::WebContentsTester::For(web_contents())->CommitPendingNavigation();
 }
+
+void PageLoadMetricsObserverTestHarness::NavigateToUntrackedUrl() {
+  NavigateAndCommit(GURL(url::kAboutBlankURL));
+}
+
+const char PageLoadMetricsObserverTestHarness::kResourceUrl[] =
+    "https://www.example.com/resource";
 
 }  // namespace page_load_metrics

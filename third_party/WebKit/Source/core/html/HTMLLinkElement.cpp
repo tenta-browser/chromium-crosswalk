@@ -26,20 +26,21 @@
 #include "core/html/HTMLLinkElement.h"
 
 #include "bindings/core/v8/ScriptEventListener.h"
-#include "core/HTMLNames.h"
+#include "core/CoreInitializer.h"
 #include "core/dom/Attribute.h"
 #include "core/dom/Document.h"
-#include "core/dom/TaskRunnerHelper.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/LocalFrameClient.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/CrossOriginAttribute.h"
 #include "core/html/LinkManifest.h"
 #include "core/html/imports/LinkImport.h"
+#include "core/html_names.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "core/loader/NetworkHintsInterface.h"
-#include "core/origin_trials/OriginTrials.h"
+#include "core/origin_trials/origin_trials.h"
 #include "platform/weborigin/SecurityPolicy.h"
+#include "public/platform/TaskType.h"
 #include "public/platform/WebIconSizesParser.h"
 #include "public/platform/WebSize.h"
 
@@ -51,8 +52,9 @@ inline HTMLLinkElement::HTMLLinkElement(Document& document,
                                         bool created_by_parser)
     : HTMLElement(linkTag, document),
       link_loader_(LinkLoader::Create(this)),
-      sizes_(DOMTokenList::Create(this)),
-      rel_list_(this, RelList::Create(this)),
+      referrer_policy_(kReferrerPolicyDefault),
+      sizes_(DOMTokenList::Create(*this, HTMLNames::sizesAttr)),
+      rel_list_(RelList::Create(this)),
       created_by_parser_(created_by_parser) {}
 
 HTMLLinkElement* HTMLLinkElement::Create(Document& document,
@@ -68,7 +70,7 @@ void HTMLLinkElement::ParseAttribute(
   const AtomicString& value = params.new_value;
   if (name == relAttr) {
     rel_attribute_ = LinkRelAttribute(value);
-    rel_list_->SetRelValues(value);
+    rel_list_->DidUpdateAttributeValue(params.old_value, value);
     Process();
   } else if (name == hrefAttr) {
     // Log href attribute before logging resource fetching in process().
@@ -81,23 +83,30 @@ void HTMLLinkElement::ParseAttribute(
     as_ = value;
     Process();
   } else if (name == referrerpolicyAttr) {
-    referrer_policy_ = kReferrerPolicyDefault;
     if (!value.IsNull()) {
       SecurityPolicy::ReferrerPolicyFromString(
           value, kDoNotSupportReferrerPolicyLegacyKeywords, &referrer_policy_);
       UseCounter::Count(GetDocument(),
-                        UseCounter::kHTMLLinkElementReferrerPolicyAttribute);
+                        WebFeature::kHTMLLinkElementReferrerPolicyAttribute);
     }
   } else if (name == sizesAttr) {
-    sizes_->setValue(value);
+    sizes_->DidUpdateAttributeValue(params.old_value, value);
+    WebVector<WebSize> web_icon_sizes =
+        WebIconSizesParser::ParseIconSizes(value);
+    icon_sizes_.resize(web_icon_sizes.size());
+    for (size_t i = 0; i < web_icon_sizes.size(); ++i)
+      icon_sizes_[i] = web_icon_sizes[i];
+    Process();
   } else if (name == mediaAttr) {
     media_ = value.DeprecatedLower();
     Process();
   } else if (name == scopeAttr) {
     scope_ = value;
     Process();
+  } else if (name == integrityAttr) {
+    integrity_ = value;
   } else if (name == disabledAttr) {
-    UseCounter::Count(GetDocument(), UseCounter::kHTMLLinkElementDisabled);
+    UseCounter::Count(GetDocument(), WebFeature::kHTMLLinkElementDisabled);
     if (LinkStyle* link = GetLinkStyle())
       link->SetDisabledState(!value.IsNull());
   } else {
@@ -111,24 +120,31 @@ void HTMLLinkElement::ParseAttribute(
 }
 
 bool HTMLLinkElement::ShouldLoadLink() {
-  return IsInDocumentTree() || (isConnected() && rel_attribute_.IsStyleSheet());
+  const KURL& href = GetNonEmptyURLAttribute(hrefAttr);
+  return (IsInDocumentTree() ||
+          (isConnected() && rel_attribute_.IsStyleSheet())) &&
+         !href.PotentiallyDanglingMarkup();
 }
 
 bool HTMLLinkElement::LoadLink(const String& type,
                                const String& as,
                                const String& media,
+                               const String& nonce,
+                               const String& integrity,
                                ReferrerPolicy referrer_policy,
                                const KURL& url) {
-  return link_loader_->LoadLink(rel_attribute_,
-                                GetCrossOriginAttributeValue(FastGetAttribute(
-                                    HTMLNames::crossoriginAttr)),
-                                type, as, media, referrer_policy, url,
-                                GetDocument(), NetworkHintsInterfaceImpl());
+  return link_loader_->LoadLink(
+      rel_attribute_,
+      GetCrossOriginAttributeValue(
+          FastGetAttribute(HTMLNames::crossoriginAttr)),
+      type, as, media, nonce, integrity, referrer_policy, url, GetDocument(),
+      NetworkHintsInterfaceImpl());
 }
 
 LinkResource* HTMLLinkElement::LinkResourceToProcess() {
   if (!ShouldLoadLink()) {
     DCHECK(!GetLinkStyle() || !GetLinkStyle()->HasSheet());
+    // TODO(yoav): Ideally, the element's error event would be fired here.
     return nullptr;
   }
 
@@ -137,18 +153,10 @@ LinkResource* HTMLLinkElement::LinkResourceToProcess() {
       link_ = LinkImport::Create(this);
     } else if (rel_attribute_.IsManifest()) {
       link_ = LinkManifest::Create(this);
-    } else if (rel_attribute_.IsServiceWorker() &&
-               OriginTrials::linkServiceWorkerEnabled(GetExecutionContext())) {
-      if (GetDocument().GetFrame())
-        link_ = GetDocument()
-                    .GetFrame()
-                    ->Loader()
-                    .Client()
-                    ->CreateServiceWorkerLinkResource(this);
     } else {
       LinkStyle* link = LinkStyle::Create(this);
       if (FastHasAttribute(disabledAttr)) {
-        UseCounter::Count(GetDocument(), UseCounter::kHTMLLinkElementDisabled);
+        UseCounter::Count(GetDocument(), WebFeature::kHTMLLinkElementDisabled);
         link->SetDisabledState(true);
       }
       link_ = link;
@@ -188,8 +196,7 @@ Node::InsertionNotificationRequest HTMLLinkElement::InsertedInto(
   if (!insertion_point->isConnected())
     return kInsertionDone;
   DCHECK(isConnected());
-  if (!ShouldLoadLink()) {
-    DCHECK(IsInShadowTree());
+  if (!ShouldLoadLink() && IsInShadowTree()) {
     String message = "HTML element <link> is ignored in shadow tree.";
     GetDocument().AddConsoleMessage(ConsoleMessage::Create(
         kJSMessageSource, kWarningMessageLevel, message));
@@ -214,7 +221,7 @@ void HTMLLinkElement::RemovedFrom(ContainerNode* insertion_point) {
   if (!insertion_point->isConnected())
     return;
 
-  link_loader_->Released();
+  link_loader_->Abort();
 
   if (!was_connected) {
     DCHECK(!GetLinkStyle() || !GetLinkStyle()->HasSheet());
@@ -229,6 +236,11 @@ void HTMLLinkElement::RemovedFrom(ContainerNode* insertion_point) {
 void HTMLLinkElement::FinishParsingChildren() {
   created_by_parser_ = false;
   HTMLElement::FinishParsingChildren();
+}
+
+bool HTMLLinkElement::HasActivationBehavior() const {
+  // TODO(tkent): Implement activation behavior. crbug.com/422732.
+  return false;
 }
 
 bool HTMLLinkElement::StyleSheetIsLoading() const {
@@ -259,18 +271,8 @@ void HTMLLinkElement::DidSendDOMContentLoadedForLinkPrerender() {
   DispatchEvent(Event::Create(EventTypeNames::webkitprerenderdomcontentloaded));
 }
 
-RefPtr<WebTaskRunner> HTMLLinkElement::GetLoadingTaskRunner() {
-  return TaskRunnerHelper::Get(TaskType::kNetworking, &GetDocument());
-}
-
-void HTMLLinkElement::ValueWasSet() {
-  SetSynchronizedLazyAttribute(HTMLNames::sizesAttr, sizes_->value());
-  WebVector<WebSize> web_icon_sizes =
-      WebIconSizesParser::ParseIconSizes(sizes_->value());
-  icon_sizes_.Resize(web_icon_sizes.size());
-  for (size_t i = 0; i < web_icon_sizes.size(); ++i)
-    icon_sizes_[i] = web_icon_sizes[i];
-  Process();
+scoped_refptr<WebTaskRunner> HTMLLinkElement::GetLoadingTaskRunner() {
+  return GetDocument().GetTaskRunner(TaskType::kNetworking);
 }
 
 bool HTMLLinkElement::SheetLoaded() {
@@ -298,7 +300,8 @@ void HTMLLinkElement::DispatchPendingEvent(
 }
 
 void HTMLLinkElement::ScheduleEvent() {
-  TaskRunnerHelper::Get(TaskType::kDOMManipulation, &GetDocument())
+  GetDocument()
+      .GetTaskRunner(TaskType::kDOMManipulation)
       ->PostTask(BLINK_FROM_HERE,
                  WTF::Bind(&HTMLLinkElement::DispatchPendingEvent,
                            WrapPersistent(this),
@@ -361,17 +364,17 @@ DOMTokenList* HTMLLinkElement::sizes() const {
   return sizes_.Get();
 }
 
-DEFINE_TRACE(HTMLLinkElement) {
+void HTMLLinkElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(link_);
   visitor->Trace(sizes_);
   visitor->Trace(link_loader_);
   visitor->Trace(rel_list_);
   HTMLElement::Trace(visitor);
   LinkLoaderClient::Trace(visitor);
-  DOMTokenListObserver::Trace(visitor);
 }
 
-DEFINE_TRACE_WRAPPERS(HTMLLinkElement) {
+void HTMLLinkElement::TraceWrappers(
+    const ScriptWrappableVisitor* visitor) const {
   visitor->TraceWrappers(rel_list_);
   HTMLElement::TraceWrappers(visitor);
 }

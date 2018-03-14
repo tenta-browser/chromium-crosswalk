@@ -9,6 +9,10 @@
 #include "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace {
 // Sanitizes |JSONString| and wraps it in quotes so it can be injected safely in
 // JavaScript.
@@ -55,29 +59,6 @@ NSString* JSONEscape(NSString* JSONString) {
                        JSONEscape(username), JSONEscape(password)];
   [self executeJavaScript:script completionHandler:^(id result, NSError*) {
     completionHandler([result isEqual:@YES]);
-  }];
-}
-
-- (void)clearAutofilledPasswordsInForm:(NSString*)formName
-                     completionHandler:(void (^)(BOOL))completionHandler {
-  NSString* script =
-      [NSString stringWithFormat:@"__gCrWeb.clearAutofilledPasswords(%@)",
-                                 JSONEscape(formName)];
-  [self executeJavaScript:script completionHandler:^(id result, NSError*) {
-    completionHandler([result isEqual:@YES]);
-  }];
-}
-
-- (void)fillPasswordForm:(NSString*)formName
-   withGeneratedPassword:(NSString*)password
-       completionHandler:(void (^)(BOOL))completionHandler {
-  NSString* script =
-      [NSString stringWithFormat:
-                    @"__gCrWeb.fillPasswordFormWithGeneratedPassword(%@, %@)",
-                    JSONEscape(formName), JSONEscape(password)];
-  [self executeJavaScript:script completionHandler:^(id result, NSError*) {
-    if (completionHandler)
-      completionHandler([result isEqual:@YES]);
   }];
 }
 

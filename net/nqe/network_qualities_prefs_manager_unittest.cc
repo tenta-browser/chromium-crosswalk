@@ -89,52 +89,28 @@ TEST(NetworkQualitiesPrefManager, Write) {
   estimator.SimulateNetworkChange(
       NetworkChangeNotifier::ConnectionType::CONNECTION_UNKNOWN, "test");
   EXPECT_EQ(0u, prefs_delegate_ptr->write_count());
+  // Network quality generated from the default observation must be written.
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(1u, prefs_delegate_ptr->write_count());
 
   estimator.set_recent_effective_connection_type(EFFECTIVE_CONNECTION_TYPE_2G);
   // Run a request so that effective connection type is recomputed, and
   // observers are notified of change in the network quality.
   estimator.RunOneRequest();
   base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(1u, prefs_delegate_ptr->write_count());
+  EXPECT_EQ(2u, prefs_delegate_ptr->write_count());
 
   estimator.set_recent_effective_connection_type(EFFECTIVE_CONNECTION_TYPE_3G);
   // Run a request so that effective connection type is recomputed, and
   // observers are notified of change in the network quality..
   estimator.RunOneRequest();
   base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(2u, prefs_delegate_ptr->write_count());
+  EXPECT_EQ(3u, prefs_delegate_ptr->write_count());
 
   // Prefs should not be read again.
   EXPECT_EQ(1u, prefs_delegate_ptr->read_count());
 
-  manager.ShutdownOnPrefThread();
-}
-
-// Verify that the pref is not written if the network ID contains a period.
-TEST(NetworkQualitiesPrefManager, WriteWithPeriodInNetworkID) {
-  TestNetworkQualityEstimator estimator;
-
-  std::unique_ptr<TestPrefDelegate> prefs_delegate(new TestPrefDelegate());
-  TestPrefDelegate* prefs_delegate_ptr = prefs_delegate.get();
-
-  NetworkQualitiesPrefsManager manager(std::move(prefs_delegate));
-  manager.InitializeOnNetworkThread(&estimator);
-  base::RunLoop().RunUntilIdle();
-
-  EXPECT_EQ(1u, prefs_delegate_ptr->read_count());
-
-  estimator.SimulateNetworkChange(
-      NetworkChangeNotifier::ConnectionType::CONNECTION_UNKNOWN, "te.st");
-  EXPECT_EQ(0u, prefs_delegate_ptr->write_count());
-
-  estimator.set_recent_effective_connection_type(EFFECTIVE_CONNECTION_TYPE_2G);
-  // Run a request so that effective connection type is recomputed, and
-  // observers are notified of change in the network quality.
-  estimator.RunOneRequest();
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(0u, prefs_delegate_ptr->write_count());
-
-  manager.ShutdownOnPrefThread();
+  manager.ShutdownOnPrefSequence();
 }
 
 TEST(NetworkQualitiesPrefManager, WriteAndReadWithMultipleNetworkIDs) {
@@ -194,7 +170,7 @@ TEST(NetworkQualitiesPrefManager, WriteAndReadWithMultipleNetworkIDs) {
   estimator.OnPrefsRead(read_prefs);
   histogram_tester.ExpectUniqueSample("NQE.Prefs.ReadSize", kMaxCacheSize, 1);
 
-  manager.ShutdownOnPrefThread();
+  manager.ShutdownOnPrefSequence();
 }
 
 // Verifies that the prefs are cleared correctly.
@@ -233,7 +209,7 @@ TEST(NetworkQualitiesPrefManager, ClearPrefs) {
   // Verify that the observer was notified, and the updated network quality was
   // written to the prefs.
   EXPECT_EQ(1u, manager.ForceReadPrefsForTesting().size());
-  manager.ShutdownOnPrefThread();
+  manager.ShutdownOnPrefSequence();
 }
 
 }  // namespace

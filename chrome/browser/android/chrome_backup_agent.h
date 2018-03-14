@@ -5,19 +5,14 @@
 #ifndef CHROME_BROWSER_ANDROID_CHROME_BACKUP_AGENT_H_
 #define CHROME_BROWSER_ANDROID_CHROME_BACKUP_AGENT_H_
 
-#include <jni.h>
-
 #include <string>
 #include <vector>
 
 #include "base/android/jni_android.h"
 
-namespace chrome {
 namespace android {
 
 std::vector<std::string> GetBackupPrefNames();
-
-bool RegisterBackupAgent(JNIEnv* env);
 
 // Test interface wrapping the static functions that are only called from Java.
 base::android::ScopedJavaLocalRef<jobjectArray> GetBoolBackupNamesForTesting(
@@ -33,6 +28,5 @@ void SetBoolBackupPrefsForTesting(
     const base::android::JavaParamRef<jbooleanArray>& values);
 
 }  //  namespace android
-}  //  namespace chrome
 
 #endif  // CHROME_BROWSER_ANDROID_CHROME_BACKUP_AGENT_H_

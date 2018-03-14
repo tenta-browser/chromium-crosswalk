@@ -27,19 +27,20 @@
 
 #include <algorithm>
 #include "bindings/core/v8/ScriptEventListener.h"
-#include "core/XLinkNames.h"
 #include "core/dom/Document.h"
 #include "core/dom/IdTargetObserver.h"
-#include "core/dom/TaskRunnerHelper.h"
-#include "core/events/Event.h"
-#include "core/events/EventListener.h"
+#include "core/dom/events/Event.h"
+#include "core/dom/events/EventListener.h"
+#include "core/frame/UseCounter.h"
 #include "core/svg/SVGSVGElement.h"
 #include "core/svg/SVGURIReference.h"
 #include "core/svg/animation/SMILTimeContainer.h"
+#include "core/xlink_names.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/MathExtras.h"
 #include "platform/wtf/StdLibExtras.h"
 #include "platform/wtf/Vector.h"
+#include "public/platform/TaskType.h"
 
 namespace blink {
 
@@ -53,7 +54,7 @@ class RepeatEvent final : public Event {
 
   int Repeat() const { return repeat_; }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() { Event::Trace(visitor); }
+  virtual void Trace(blink::Visitor* visitor) { Event::Trace(visitor); }
 
  protected:
   RepeatEvent(const AtomicString& type,
@@ -91,7 +92,7 @@ class ConditionEventListener final : public EventListener {
 
   void DisconnectAnimation() { animation_ = nullptr; }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  virtual void Trace(blink::Visitor* visitor) {
     visitor->Trace(animation_);
     visitor->Trace(condition_);
     EventListener::Trace(visitor);
@@ -143,7 +144,7 @@ SVGSMILElement::Condition::Condition(Type type,
 
 SVGSMILElement::Condition::~Condition() = default;
 
-DEFINE_TRACE(SVGSMILElement::Condition) {
+void SVGSMILElement::Condition::Trace(blink::Visitor* visitor) {
   visitor->Trace(base_element_);
   visitor->Trace(base_id_observer_);
   visitor->Trace(event_listener_);
@@ -152,7 +153,7 @@ DEFINE_TRACE(SVGSMILElement::Condition) {
 void SVGSMILElement::Condition::ConnectSyncBase(SVGSMILElement& timed_element) {
   DCHECK(!base_id_.IsEmpty());
   DCHECK_EQ(type_, kSyncbase);
-  Element* element = timed_element.GetTreeScope().GetElementById(base_id_);
+  Element* element = timed_element.GetTreeScope().getElementById(base_id_);
   if (!element || !IsSVGSMILElement(*element)) {
     base_element_ = nullptr;
     return;
@@ -238,7 +239,7 @@ void SVGSMILElement::ClearResourceAndEventBaseReferences() {
 void SVGSMILElement::ClearConditions() {
   DisconnectSyncBaseConditions();
   DisconnectEventBaseConditions();
-  conditions_.Clear();
+  conditions_.clear();
 }
 
 void SVGSMILElement::BuildPendingResource() {
@@ -280,7 +281,7 @@ static inline void ClearTimesWithDynamicOrigins(
     Vector<SMILTimeWithOrigin>& time_list) {
   for (int i = time_list.size() - 1; i >= 0; --i) {
     if (time_list[i].OriginIsScript())
-      time_list.erase(i);
+      time_list.EraseAt(i);
   }
 }
 
@@ -305,10 +306,11 @@ Node::InsertionNotificationRequest SVGSMILElement::InsertedInto(
   if (!root_parent->isConnected())
     return kInsertionDone;
 
-  UseCounter::Count(GetDocument(), UseCounter::kSVGSMILElementInDocument);
-  if (GetDocument().IsLoadCompleted())
+  UseCounter::Count(GetDocument(), WebFeature::kSVGSMILElementInDocument);
+  if (GetDocument().IsLoadCompleted()) {
     UseCounter::Count(&GetDocument(),
-                      UseCounter::kSVGSMILElementInsertedAfterLoad);
+                      WebFeature::kSVGSMILElementInsertedAfterLoad);
+  }
 
   SVGSVGElement* owner = ownerSVGElement();
   if (!owner)
@@ -377,8 +379,8 @@ SMILTime SVGSMILElement::ParseClockValue(const String& data) {
 
   double result = 0;
   bool ok;
-  size_t double_point_one = parse.Find(':');
-  size_t double_point_two = parse.Find(':', double_point_one + 1);
+  size_t double_point_one = parse.find(':');
+  size_t double_point_two = parse.find(':', double_point_one + 1);
   if (double_point_one == 2 && double_point_two == 5 && parse.length() >= 8) {
     result += parse.Substring(0, 2).ToUIntStrict(&ok) * 60 * 60;
     if (!ok)
@@ -411,9 +413,9 @@ bool SVGSMILElement::ParseCondition(const String& value,
 
   double sign = 1.;
   bool ok;
-  size_t pos = parse_string.Find('+');
+  size_t pos = parse_string.find('+');
   if (pos == kNotFound) {
-    pos = parse_string.Find('-');
+    pos = parse_string.find('-');
     if (pos != kNotFound)
       sign = -1.;
   }
@@ -431,7 +433,7 @@ bool SVGSMILElement::ParseCondition(const String& value,
   }
   if (condition_string.IsEmpty())
     return false;
-  pos = condition_string.Find('.');
+  pos = condition_string.find('.');
 
   String base_id;
   String name_string;
@@ -457,13 +459,13 @@ bool SVGSMILElement::ParseCondition(const String& value,
     if (base_id.IsEmpty())
       return false;
     UseCounter::Count(&GetDocument(),
-                      UseCounter::kSVGSMILBeginOrEndSyncbaseValue);
+                      WebFeature::kSVGSMILBeginOrEndSyncbaseValue);
     type = Condition::kSyncbase;
   } else if (name_string.StartsWith("accesskey(")) {
     // FIXME: accesskey() support.
     type = Condition::kAccessKey;
   } else {
-    UseCounter::Count(&GetDocument(), UseCounter::kSVGSMILBeginOrEndEventValue);
+    UseCounter::Count(&GetDocument(), WebFeature::kSVGSMILBeginOrEndEventValue);
     type = Condition::kEventBase;
   }
 
@@ -1030,8 +1032,15 @@ float SVGSMILElement::CalculateAnimationPercentAndRepeat(
     if (!fmod(repeating_duration.Value(), simple_duration.Value()))
       repeat--;
 
-    double percent = (interval_.end.Value() - interval_.begin.Value()) /
-                     simple_duration.Value();
+    // Use the interval to compute the interval position if we've passed the
+    // interval end, otherwise use the "repeating duration". This prevents a
+    // stale interval (with for instance an 'indefinite' end) from yielding an
+    // invalid interval position.
+    double last_active_duration =
+        elapsed >= interval_.end
+            ? interval_.end.Value() - interval_.begin.Value()
+            : repeating_duration.Value();
+    double percent = last_active_duration / simple_duration.Value();
     percent = percent - floor(percent);
     if (percent < std::numeric_limits<float>::epsilon() ||
         1 - percent < std::numeric_limits<float>::epsilon())
@@ -1048,7 +1057,7 @@ SMILTime SVGSMILElement::CalculateNextProgressTime(double elapsed) const {
     // If duration is indefinite the value does not actually change over time.
     // Same is true for <set>.
     SMILTime simple_duration = this->SimpleDuration();
-    if (simple_duration.IsIndefinite() || isSVGSetElement(*this)) {
+    if (simple_duration.IsIndefinite() || IsSVGSetElement(*this)) {
       SMILTime repeating_duration_end = interval_.begin + RepeatingDuration();
       // We are supposed to do freeze semantics when repeating ends, even if the
       // element is still active.
@@ -1237,7 +1246,8 @@ void SVGSMILElement::ScheduleRepeatEvents(unsigned count) {
 }
 
 void SVGSMILElement::ScheduleEvent(const AtomicString& event_type) {
-  TaskRunnerHelper::Get(TaskType::kDOMManipulation, &GetDocument())
+  GetDocument()
+      .GetTaskRunner(TaskType::kDOMManipulation)
       ->PostTask(BLINK_FROM_HERE,
                  WTF::Bind(&SVGSMILElement::DispatchPendingEvent,
                            WrapPersistent(this), event_type));
@@ -1249,7 +1259,7 @@ void SVGSMILElement::DispatchPendingEvent(const AtomicString& event_type) {
          event_type == EventTypeNames::repeatEvent || event_type == "repeatn");
   if (event_type == "repeatn") {
     unsigned repeat_event_count = repeat_event_count_list_.front();
-    repeat_event_count_list_.erase(0);
+    repeat_event_count_list_.EraseAt(0);
     DispatchEvent(RepeatEvent::Create(event_type, repeat_event_count));
   } else {
     DispatchEvent(Event::Create(event_type));
@@ -1277,7 +1287,7 @@ void SVGSMILElement::DidChangeAnimationTarget() {
   is_scheduled_ = true;
 }
 
-DEFINE_TRACE(SVGSMILElement) {
+void SVGSMILElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(target_element_);
   visitor->Trace(target_id_observer_);
   visitor->Trace(time_container_);

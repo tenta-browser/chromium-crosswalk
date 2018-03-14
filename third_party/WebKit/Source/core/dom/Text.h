@@ -31,6 +31,7 @@ namespace blink {
 
 class ExceptionState;
 class LayoutText;
+class WhitespaceAttacher;
 
 class CORE_EXPORT Text : public CharacterData {
   DEFINE_WRAPPERTYPEINFO();
@@ -54,20 +55,21 @@ class CORE_EXPORT Text : public CharacterData {
   Text* ReplaceWholeText(const String&);
 
   void RecalcTextStyle(StyleRecalcChange);
-  void RebuildTextLayoutTree(Text* next_text_sibling);
-  bool TextLayoutObjectIsNeeded(const ComputedStyle&,
+  void RebuildTextLayoutTree(WhitespaceAttacher&);
+  bool TextLayoutObjectIsNeeded(const AttachContext&,
+                                const ComputedStyle&,
                                 const LayoutObject& parent) const;
   LayoutText* CreateTextLayoutObject(const ComputedStyle&);
   void UpdateTextLayoutObject(unsigned offset_of_replaced_data,
                               unsigned length_of_replaced_data);
 
-  void AttachLayoutTree(const AttachContext& = AttachContext()) final;
-  void ReattachLayoutTreeIfNeeded(const AttachContext& = AttachContext());
+  void AttachLayoutTree(AttachContext&) final;
+  void ReattachLayoutTreeIfNeeded(const AttachContext&);
 
   bool CanContainRangeEndPoint() const final { return true; }
   NodeType getNodeType() const override;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  protected:
   Text(TreeScope& tree_scope, const String& data, ConstructionType type)

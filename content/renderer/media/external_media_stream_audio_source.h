@@ -17,8 +17,8 @@ namespace content {
 // MediaStream framework. Audio data is transported directly to the tracks
 // (i.e., there is no audio processing).
 class CONTENT_EXPORT ExternalMediaStreamAudioSource final
-    : NON_EXPORTED_BASE(public MediaStreamAudioSource),
-      NON_EXPORTED_BASE(public media::AudioCapturerSource::CaptureCallback) {
+    : public MediaStreamAudioSource,
+      public media::AudioCapturerSource::CaptureCallback {
  public:
   ExternalMediaStreamAudioSource(
       scoped_refptr<media::AudioCapturerSource> source,
@@ -40,6 +40,7 @@ class CONTENT_EXPORT ExternalMediaStreamAudioSource final
                double volume,
                bool key_pressed) final;
   void OnCaptureError(const std::string& message) final;
+  void OnCaptureMuted(bool is_muted) final;
 
   // The external source provided to the constructor.
   scoped_refptr<media::AudioCapturerSource> source_;

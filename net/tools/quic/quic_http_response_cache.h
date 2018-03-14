@@ -9,16 +9,16 @@
 #include <map>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "net/quic/core/spdy_utils.h"
+#include "net/quic/platform/api/quic_containers.h"
 #include "net/quic/platform/api/quic_mutex.h"
 #include "net/quic/platform/api/quic_string_piece.h"
 #include "net/quic/platform/api/quic_url.h"
-#include "net/spdy/spdy_framer.h"
+#include "net/spdy/core/spdy_framer.h"
 
 namespace net {
 
@@ -65,7 +65,9 @@ class QuicHttpResponseCache {
     void set_trailers(SpdyHeaderBlock trailers) {
       trailers_ = std::move(trailers);
     }
-    void set_body(QuicStringPiece body) { body.CopyToString(&body_); }
+    void set_body(QuicStringPiece body) {
+      body_.assign(body.data(), body.size());
+    }
 
    private:
     SpecialResponseType response_type_;
@@ -201,7 +203,7 @@ class QuicHttpResponseCache {
                                  ServerPushInfo resource);
 
   // Cached responses.
-  std::unordered_map<std::string, std::unique_ptr<Response>> responses_
+  QuicUnorderedMap<std::string, std::unique_ptr<Response>> responses_
       GUARDED_BY(response_mutex_);
 
   // The default response for cache misses, if set.

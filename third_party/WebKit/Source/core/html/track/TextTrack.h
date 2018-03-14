@@ -27,10 +27,10 @@
 #ifndef TextTrack_h
 #define TextTrack_h
 
-#include "bindings/core/v8/TraceWrapperMember.h"
 #include "core/CoreExport.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/html/track/TrackBase.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
 
@@ -100,7 +100,7 @@ class CORE_EXPORT TextTrack : public EventTargetWithInlineData,
   void removeCue(TextTrackCue*, ExceptionState&);
 
   void CueWillChange(TextTrackCue*);
-  void CueDidChange(TextTrackCue*);
+  void CueDidChange(TextTrackCue*, bool update_cue_index);
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(cuechange);
 
@@ -125,9 +125,9 @@ class CORE_EXPORT TextTrack : public EventTargetWithInlineData,
   const AtomicString& InterfaceName() const override;
   ExecutionContext* GetExecutionContext() const override;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
 
  protected:
   TextTrack(const AtomicString& kind,

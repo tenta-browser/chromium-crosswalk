@@ -9,7 +9,7 @@
 Polymer({
   is: 'settings-basic-page',
 
-  behaviors: [SettingsPageVisibility, MainPageBehavior],
+  behaviors: [MainPageBehavior, WebUIListenerBehavior],
 
   properties: {
     /** Preferences state. */
@@ -18,13 +18,42 @@ Polymer({
       notify: true,
     },
 
+    // <if expr="chromeos">
     showAndroidApps: Boolean,
+
+    showMultidevice: Boolean,
+
+    havePlayStoreApp: Boolean,
+    // </if>
+
+    /** @type {!AndroidAppsInfo|undefined} */
+    androidAppsInfo: Object,
+
+    // <if expr="_google_chrome and is_win">
+    showChromeCleanup: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('chromeCleanupEnabled') &&
+            !loadTimeData.getBoolean('userInitiatedCleanupsEnabled');
+      },
+    },
+    // </if>
+
+    showChangePassword: {
+      type: Boolean,
+      value: false,
+    },
 
     /**
      * Dictionary defining page visibility.
      * @type {!GuestModePageVisibility}
      */
-    pageVisibility: Object,
+    pageVisibility: {
+      type: Object,
+      value: function() {
+        return {};
+      },
+    },
 
     advancedToggleExpanded: {
       type: Boolean,
@@ -53,7 +82,7 @@ Polymer({
       },
     },
 
-// <if expr="chromeos">
+    // <if expr="chromeos">
     /**
      * Whether the user is a secondary user. Computed so that it is calculated
      * correctly after loadTimeData is available.
@@ -63,10 +92,14 @@ Polymer({
       type: Boolean,
       computed: 'computeShowSecondaryUserBanner_(hasExpandedSection_)',
     },
-// </if>
+    // </if>
 
     /** @private {!settings.Route|undefined} */
     currentRoute_: Object,
+  },
+
+  hostAttributes: {
+    role: 'main',
   },
 
   listeners: {
@@ -76,6 +109,29 @@ Polymer({
   /** @override */
   attached: function() {
     this.currentRoute_ = settings.getCurrentRoute();
+
+    // <if expr="_google_chrome and is_win">
+    this.addEventListener('chrome-cleanup-dismissed', () => {
+      this.showChromeCleanup = false;
+    });
+    // </if>
+
+    this.addEventListener('change-password-dismissed', () => {
+      this.showChangePassword = false;
+    });
+
+    this.addWebUIListener('change-password-visibility', visibility => {
+      this.showChangePassword = visibility;
+    });
+    settings.ChangePasswordBrowserProxyImpl.getInstance()
+        .initializeChangePasswordHandler();
+
+    if (settings.AndroidAppsBrowserProxyImpl) {
+      this.addWebUIListener(
+          'android-apps-info-update', this.androidAppsInfoUpdate_.bind(this));
+      settings.AndroidAppsBrowserProxyImpl.getInstance()
+          .requestAndroidAppsInfo();
+    }
   },
 
   /**
@@ -86,7 +142,7 @@ Polymer({
   currentRouteChanged: function(newRoute, oldRoute) {
     this.currentRoute_ = newRoute;
 
-    if (settings.Route.ADVANCED.contains(newRoute))
+    if (settings.routes.ADVANCED && settings.routes.ADVANCED.contains(newRoute))
       this.advancedToggleExpanded = true;
 
     if (oldRoute && oldRoute.isSubpage()) {
@@ -102,6 +158,15 @@ Polymer({
   },
 
   /**
+   * @param {boolean|undefined} visibility
+   * @return {boolean}
+   * @private
+   */
+  showPage_: function(visibility) {
+    return visibility !== false;
+  },
+
+  /**
    * Queues a task to search the basic sections, then another for the advanced
    * sections.
    * @param {string} query The text to search for.
@@ -114,8 +179,8 @@ Polymer({
     ];
 
     if (this.pageVisibility.advancedSettings !== false) {
-      whenSearchDone.push(this.$$('#advancedPageTemplate').get().then(
-          function(advancedPage) {
+      whenSearchDone.push(
+          this.$$('#advancedPageTemplate').get().then(function(advancedPage) {
             return settings.getSearchManager().search(query, advancedPage);
           }));
     }
@@ -123,9 +188,11 @@ Polymer({
     return Promise.all(whenSearchDone).then(function(requests) {
       // Combine the SearchRequests results to a single SearchResult object.
       return {
-        canceled: requests.some(function(r) { return r.canceled; }),
-        didFindMatches: requests.every(function(r) {
-          return !r.didFindMatches();
+        canceled: requests.some(function(r) {
+          return r.canceled;
+        }),
+        didFindMatches: requests.some(function(r) {
+          return r.didFindMatches();
         }),
         // All requests correspond to the same user query, so only need to check
         // one of them.
@@ -134,7 +201,7 @@ Polymer({
     });
   },
 
-// <if expr="chromeos">
+  // <if expr="chromeos">
   /**
    * @return {boolean}
    * @private
@@ -143,11 +210,19 @@ Polymer({
     return !this.hasExpandedSection_ &&
         loadTimeData.getBoolean('isSecondaryUser');
   },
-// </if>
+  // </if>
 
   /** @private */
   onResetProfileBannerClosed_: function() {
     this.showResetProfileBanner_ = false;
+  },
+
+  /**
+   * @param {!AndroidAppsInfo} info
+   * @private
+   */
+  androidAppsInfoUpdate_: function(info) {
+    this.androidAppsInfo = info;
   },
 
   /**
@@ -157,7 +232,28 @@ Polymer({
   shouldShowAndroidApps_: function() {
     var visibility = /** @type {boolean|undefined} */ (
         this.get('pageVisibility.androidApps'));
-    return this.showAndroidApps && this.showPage(visibility);
+    if (!this.showAndroidApps || !this.showPage_(visibility)) {
+      return false;
+    }
+
+    // Section is invisible in case we don't have the Play Store app and
+    // settings app is not yet available.
+    if (!this.havePlayStoreApp &&
+        (!this.androidAppsInfo || !this.androidAppsInfo.settingsAppAvailable)) {
+      return false;
+    }
+
+    return true;
+  },
+
+  /**
+   * @return {boolean} Whether to show the multidevice settings page.
+   * @private
+   */
+  shouldShowMultidevice_: function() {
+    var visibility = /** @type {boolean|undefined} */ (
+        this.get('pageVisibility.multidevice'));
+    return this.showMultidevice && this.showPage_(visibility);
   },
 
   /**
@@ -174,9 +270,9 @@ Polymer({
    */
   advancedToggleExpandedChanged_: function() {
     if (this.advancedToggleExpanded) {
-      this.async(function() {
+      this.async(() => {
         this.$$('#advancedPageTemplate').get();
-      }.bind(this));
+      });
     }
   },
 
@@ -199,7 +295,7 @@ Polymer({
    * @private
    */
   showBasicPage_: function(currentRoute, inSearchMode, hasExpandedSection) {
-    return !hasExpandedSection || settings.Route.BASIC.contains(currentRoute);
+    return !hasExpandedSection || settings.routes.BASIC.contains(currentRoute);
   },
 
   /**
@@ -214,7 +310,8 @@ Polymer({
   showAdvancedPage_: function(
       currentRoute, inSearchMode, hasExpandedSection, advancedToggleExpanded) {
     return hasExpandedSection ?
-        settings.Route.ADVANCED.contains(currentRoute) :
+        (settings.routes.ADVANCED &&
+         settings.routes.ADVANCED.contains(currentRoute)) :
         advancedToggleExpanded || inSearchMode;
   },
 

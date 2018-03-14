@@ -33,15 +33,14 @@ class CONTENT_EXPORT DOMStorageTaskRunner
 
   // The PostTask() and PostDelayedTask() methods defined by TaskRunner
   // post shutdown-blocking tasks on the primary sequence.
-  bool PostDelayedTask(const tracked_objects::Location& from_here,
+  bool PostDelayedTask(const base::Location& from_here,
                        base::OnceClosure task,
                        base::TimeDelta delay) override = 0;
 
   // Posts a shutdown blocking task to |sequence_id|.
-  virtual bool PostShutdownBlockingTask(
-      const tracked_objects::Location& from_here,
-      SequenceID sequence_id,
-      base::OnceClosure task) = 0;
+  virtual bool PostShutdownBlockingTask(const base::Location& from_here,
+                                        SequenceID sequence_id,
+                                        base::OnceClosure task) = 0;
 
   virtual void AssertIsRunningOnPrimarySequence() const = 0;
   virtual void AssertIsRunningOnCommitSequence() const = 0;
@@ -63,13 +62,13 @@ class CONTENT_EXPORT DOMStorageWorkerPoolTaskRunner :
       scoped_refptr<base::SequencedTaskRunner> primary_sequence,
       scoped_refptr<base::SequencedTaskRunner> commit_sequence);
 
-  bool RunsTasksOnCurrentThread() const override;
+  bool RunsTasksInCurrentSequence() const override;
 
-  bool PostDelayedTask(const tracked_objects::Location& from_here,
+  bool PostDelayedTask(const base::Location& from_here,
                        base::OnceClosure task,
                        base::TimeDelta delay) override;
 
-  bool PostShutdownBlockingTask(const tracked_objects::Location& from_here,
+  bool PostShutdownBlockingTask(const base::Location& from_here,
                                 SequenceID sequence_id,
                                 base::OnceClosure task) override;
 
@@ -100,13 +99,13 @@ class CONTENT_EXPORT MockDOMStorageTaskRunner :
   explicit MockDOMStorageTaskRunner(
       scoped_refptr<base::SequencedTaskRunner> task_runner);
 
-  bool RunsTasksOnCurrentThread() const override;
+  bool RunsTasksInCurrentSequence() const override;
 
-  bool PostDelayedTask(const tracked_objects::Location& from_here,
+  bool PostDelayedTask(const base::Location& from_here,
                        base::OnceClosure task,
                        base::TimeDelta delay) override;
 
-  bool PostShutdownBlockingTask(const tracked_objects::Location& from_here,
+  bool PostShutdownBlockingTask(const base::Location& from_here,
                                 SequenceID sequence_id,
                                 base::OnceClosure task) override;
 

@@ -1,5 +1,6 @@
 android.webkit.WebView focusable focused scrollable
-++android.widget.Spinner role_description='combo box' name='autocomplete=inline'
-++android.widget.Spinner role_description='combo box' name='autocomplete=list'
-++android.widget.Spinner role_description='combo box' name='autocomplete=both'
-++android.widget.Spinner role_description='combo box' name='autocomplete=none'
+++android.view.View
+++++android.widget.EditText clickable editable_text focusable has_non_empty_value name='autocomplete=inline' input_type=1 text_change_added_count=19
+++++android.widget.EditText clickable editable_text focusable has_non_empty_value name='autocomplete=list' input_type=1 text_change_added_count=17
+++++android.widget.EditText clickable editable_text focusable has_non_empty_value name='autocomplete=both' input_type=1 text_change_added_count=17
+++++android.widget.EditText clickable editable_text focusable has_non_empty_value name='autocomplete=none' input_type=1 text_change_added_count=17

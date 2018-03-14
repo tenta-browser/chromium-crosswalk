@@ -5,38 +5,30 @@
 #include "core/css/CSSVariableData.h"
 
 #include "core/css/CSSSyntaxDescriptor.h"
-#include "core/css/parser/CSSParser.h"
-#include "core/css/parser/CSSParserTokenRange.h"
+#include "core/css/parser/CSSParserContext.h"
 #include "platform/wtf/text/StringBuilder.h"
 #include "platform/wtf/text/StringView.h"
 
 namespace blink {
 
-StylePropertySet* CSSVariableData::PropertySet() {
-  DCHECK(!needs_variable_resolution_);
-  if (!cached_property_set_) {
-    property_set_ = CSSParser::ParseCustomPropertySet(tokens_);
-    cached_property_set_ = true;
-  }
-  return property_set_.Get();
-}
-
 template <typename CharacterType>
-void CSSVariableData::UpdateTokens(const CSSParserTokenRange& range) {
+static void UpdateTokens(const CSSParserTokenRange& range,
+                         const String& backing_string,
+                         Vector<CSSParserToken>& result) {
   const CharacterType* current_offset =
-      backing_string_.GetCharacters<CharacterType>();
+      backing_string.GetCharacters<CharacterType>();
   for (const CSSParserToken& token : range) {
     if (token.HasStringBacking()) {
       unsigned length = token.Value().length();
       StringView string(current_offset, length);
-      tokens_.push_back(token.CopyWithUpdatedString(string));
+      result.push_back(token.CopyWithUpdatedString(string));
       current_offset += length;
     } else {
-      tokens_.push_back(token);
+      result.push_back(token);
     }
   }
-  DCHECK(current_offset == backing_string_.GetCharacters<CharacterType>() +
-                               backing_string_.length());
+  DCHECK(current_offset == backing_string.GetCharacters<CharacterType>() +
+                               backing_string.length());
 }
 
 bool CSSVariableData::operator==(const CSSVariableData& other) const {
@@ -44,6 +36,8 @@ bool CSSVariableData::operator==(const CSSVariableData& other) const {
 }
 
 void CSSVariableData::ConsumeAndUpdateTokens(const CSSParserTokenRange& range) {
+  DCHECK_EQ(tokens_.size(), 0u);
+  DCHECK_EQ(backing_strings_.size(), 0u);
   StringBuilder string_builder;
   CSSParserTokenRange local_range = range;
 
@@ -52,29 +46,30 @@ void CSSVariableData::ConsumeAndUpdateTokens(const CSSParserTokenRange& range) {
     if (token.HasStringBacking())
       string_builder.Append(token.Value());
   }
-  backing_string_ = string_builder.ToString();
-  if (backing_string_.Is8Bit())
-    UpdateTokens<LChar>(range);
+  String backing_string = string_builder.ToString();
+  backing_strings_.push_back(backing_string);
+  if (backing_string.Is8Bit())
+    UpdateTokens<LChar>(range, backing_string, tokens_);
   else
-    UpdateTokens<UChar>(range);
+    UpdateTokens<UChar>(range, backing_string, tokens_);
 }
 
 CSSVariableData::CSSVariableData(const CSSParserTokenRange& range,
                                  bool is_animation_tainted,
                                  bool needs_variable_resolution)
     : is_animation_tainted_(is_animation_tainted),
-      needs_variable_resolution_(needs_variable_resolution),
-      cached_property_set_(false) {
+      needs_variable_resolution_(needs_variable_resolution) {
   DCHECK(!range.AtEnd());
   ConsumeAndUpdateTokens(range);
 }
 
 const CSSValue* CSSVariableData::ParseForSyntax(
-    const CSSSyntaxDescriptor& syntax) const {
+    const CSSSyntaxDescriptor& syntax,
+    SecureContextMode secure_context_mode) const {
   DCHECK(!NeedsVariableResolution());
   // TODO(timloh): This probably needs a proper parser context for
   // relative URL resolution.
-  return syntax.Parse(TokenRange(), StrictCSSParserContext(),
+  return syntax.Parse(TokenRange(), StrictCSSParserContext(secure_context_mode),
                       is_animation_tainted_);
 }
 

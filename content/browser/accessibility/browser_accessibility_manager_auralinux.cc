@@ -42,18 +42,30 @@ ui::AXTreeUpdate
   ui::AXNodeData empty_document;
   empty_document.id = 0;
   empty_document.role = ui::AX_ROLE_ROOT_WEB_AREA;
-  empty_document.state = 1 << ui::AX_STATE_READ_ONLY;
   ui::AXTreeUpdate update;
   update.root_id = empty_document.id;
   update.nodes.push_back(empty_document);
   return update;
 }
 
-void BrowserAccessibilityManagerAuraLinux::NotifyAccessibilityEvent(
-    BrowserAccessibilityEvent::Source source,
+void BrowserAccessibilityManagerAuraLinux::FireFocusEvent(
+    BrowserAccessibility* node) {
+  BrowserAccessibilityManager::FireFocusEvent(node);
+  // Need to implement.
+}
+
+void BrowserAccessibilityManagerAuraLinux::FireBlinkEvent(
     ui::AXEvent event_type,
     BrowserAccessibility* node) {
-  // TODO(shreeram.k) : Implement.
+  BrowserAccessibilityManager::FireBlinkEvent(event_type, node);
+  // Need to implement.
+}
+
+void BrowserAccessibilityManagerAuraLinux::FireGeneratedEvent(
+    AXEventGenerator::Event event_type,
+    BrowserAccessibility* node) {
+  BrowserAccessibilityManager::FireGeneratedEvent(event_type, node);
+  // Need to implement.
 }
 
 }  // namespace content

@@ -5,6 +5,7 @@
 #import "chrome/browser/ui/cocoa/base_bubble_controller.h"
 
 #include "base/logging.h"
+#import "base/mac/bind_objc_block.h"
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
@@ -45,6 +46,7 @@
 @synthesize anchorPoint = anchor_;
 @synthesize bubble = bubble_;
 @synthesize shouldOpenAsKeyWindow = shouldOpenAsKeyWindow_;
+@synthesize shouldActivateOnOpen = shouldActivateOnOpen_;
 @synthesize shouldCloseOnResignKey = shouldCloseOnResignKey_;
 @synthesize bubbleReference = bubbleReference_;
 
@@ -57,6 +59,7 @@
     [self setParentWindow:parentWindow];
     anchor_ = anchoredAt;
     shouldOpenAsKeyWindow_ = YES;
+    shouldActivateOnOpen_ = YES;
     shouldCloseOnResignKey_ = YES;
   }
   return self;
@@ -83,6 +86,7 @@
   if ((self = [super initWithWindow:theWindow])) {
     [self setParentWindow:parentWindow];
     shouldOpenAsKeyWindow_ = YES;
+    shouldActivateOnOpen_ = YES;
     shouldCloseOnResignKey_ = YES;
 
     DCHECK(![[self window] delegate]);
@@ -248,10 +252,7 @@
 }
 
 - (void)closeCleanup {
-  if (eventTap_) {
-    [NSEvent removeMonitor:eventTap_];
-    eventTap_ = nil;
-  }
+  bubbleCloser_ = nullptr;
   if (resignationObserver_) {
     [[NSNotificationCenter defaultCenter]
         removeObserver:resignationObserver_
@@ -291,10 +292,15 @@
   NSWindow* window = [self window];  // Completes nib load.
   [self updateOriginFromAnchor];
   [parentWindow_ addChildWindow:window ordered:NSWindowAbove];
-  if (shouldOpenAsKeyWindow_)
-    [window makeKeyAndOrderFront:self];
-  else
-    [window orderFront:nil];
+  if (parentWindow_ == [NSApp mainWindow] || shouldActivateOnOpen_) {
+    if (shouldOpenAsKeyWindow_) {
+      [window makeKeyAndOrderFront:self];
+    } else {
+      [window orderFront:nil];
+    }
+  } else {
+    [window orderWindow:NSWindowAbove relativeTo:[parentWindow_ windowNumber]];
+  }
   [self registerKeyStateEventTap];
   [self recordAnchorOffset];
 }
@@ -353,40 +359,14 @@
       [NSNotification notificationWithName:NSWindowDidResignKeyNotification
                                     object:window];
 
-  // The eventTap_ catches clicks within the application that are outside the
-  // window.
-  eventTap_ = [NSEvent
-      addLocalMonitorForEventsMatchingMask:NSLeftMouseDownMask |
-                                           NSRightMouseDownMask
-      handler:^NSEvent* (NSEvent* event) {
-          NSWindow* eventWindow = [event window];
-          if ([eventWindow isSheet])
-            return event;
-
-          // Do not close the bubble if the event happened on a window with a
-          // higher level.  For example, the content of a browser action bubble
-          // opens a calendar picker window with NSPopUpMenuWindowLevel, and a
-          // date selection closes the picker window, but it should not close
-          // the bubble.
-          if ([eventWindow level] > [window level])
-            return event;
-
-          // If the event is in |window|'s hierarchy, do not close the bubble.
-          NSWindow* tempWindow = eventWindow;
-          while (tempWindow) {
-            if (tempWindow == window)
-              return event;
-            tempWindow = [tempWindow parentWindow];
-          }
-
-          // Do it right now, because if this event is right mouse event,
-          // it may pop up a menu. windowDidResignKey: will not run until
-          // the menu is closed.
-          if ([self respondsToSelector:@selector(windowDidResignKey:)]) {
-            [self windowDidResignKey:note];
-          }
-          return event;
-      }];
+  bubbleCloser_ = std::make_unique<ui::BubbleCloser>(
+      window, base::BindBlock(^{
+        // Do it right now, because if this event is right mouse event, it may
+        // pop up a menu. windowDidResignKey: will not run until the menu is
+        // closed.
+        if ([self respondsToSelector:@selector(windowDidResignKey:)])
+          [self windowDidResignKey:note];
+      }));
 
   // The resignationObserver_ watches for when a window resigns key state,
   // meaning the key window has changed and the bubble should be dismissed.

@@ -38,7 +38,7 @@
     reset.
   </description>
 
-  <interface name="zcr_remote_shell_v1" version="4">
+  <interface name="zcr_remote_shell_v1" version="9">
     <description summary="remote_shell">
       The global interface that allows clients to turn a wl_surface into a
       "real window" which is remotely managed but can be stacked, activated
@@ -65,12 +65,13 @@
       <entry name="pinned" value="5" summary="pinned window state"/>
       <entry name="trusted_pinned" value="6" summary="trusted pinned window state"/>
       <entry name="moving" value="7" summary="moving window state"/>
+      <entry name="resizing" value="8" summary="resizing window state"/>
     </enum>
 
     <enum name="error">
       <entry name="role" value="0" summary="given wl_surface has another role"/>
-      <entry name="invalid_notification_id" value="1"
-       summary="invalid notification id"/>
+      <entry name="invalid_notification_key" value="1"
+       summary="invalid notification key"/>
     </enum>
 
     <enum name="layout_mode">
@@ -122,7 +123,7 @@
       </description>
       <arg name="id" type="new_id" interface="zcr_notification_surface_v1"/>
       <arg name="surface" type="object" interface="wl_surface"/>
-      <arg name="notification_id" type="string" />
+      <arg name="notification_key" type="string" />
     </request>
 
     <event name="configuration_changed">
@@ -140,9 +141,9 @@
       <arg name="layout_mode" type="uint"/>
     </event>
 
-    <!-- Version 4 additions -->
+    <!-- Version 5 additions -->
 
-    <event name="workspace" since="4">
+    <event name="workspace" since="5">
       <description summary="area of remote shell">
 	Defines an area of the remote shell used for layout. Each series of
 	"workspace" events must be terminated by a "configure" event.
@@ -159,18 +160,28 @@
       <arg name="inset_bottom" type="int"/>
       <arg name="transform" type="int"/>
       <arg name="scale_factor" type="fixed"/>
+      <arg name="is_internal" type="uint" summary="1 if screen is built-in"/>
     </event>
 
-    <event name="configure" since="4">
+    <event name="configure" since="5">
       <description summary="suggests configuration of remote shell">
 	Suggests a new configuration of the remote shell. Preceded by a series
 	of "workspace" events.
       </description>
       <arg name="layout_mode" type="uint"/>
     </event>
+
+    <!-- Version 8 additions -->
+
+    <event name="default_device_scale_factor" since="8">
+      <description summary="initialize scale configuration">
+	Sends the default device scale factor.
+      </description>
+      <arg name="scale" type="int" summary="DP to pixels ratio, in 8.24 fixed point format"/>
+    </event>
   </interface>
 
-  <interface name="zcr_remote_surface_v1" version="4">
+  <interface name="zcr_remote_surface_v1" version="9">
     <description summary="A desktop window">
       An interface that may be implemented by a wl_surface, for
       implementations that provide a desktop-style user interface
@@ -193,6 +204,22 @@
       <entry name="visible" value="1" summary="system ui is visible"/>
       <entry name="autohide_non_sticky" value="2" summary="system ui autohides and is not sticky"/>
       <entry name="autohide_sticky" value="3" summary="system ui autohides and is sticky"/>
+    </enum>
+
+    <enum name="orientation">
+      <description summary="window orientation">
+         The orientation of the window.
+      </description>
+      <entry name="portrait" value="1" summary="portrait"/>
+      <entry name="landscape" value="2" summary="landscape"/>
+    </enum>
+
+    <enum name="window_type">
+      <description summary="window type">
+        The type of the window.
+      </description>
+      <entry name="normal" value="1" summary="normal app window"/>
+      <entry name="system_ui" value="2" summary="window is treated as systemui"/>
     </enum>
 
     <request name="destroy" type="destructor">
@@ -265,7 +292,7 @@
 
     <request name="set_rectangular_shadow_background_opacity">
       <description summary="suggests the window's background opacity">
-	Suggests the window's background opacity when the shadow is requested.
+	[Deprecated] Suggests the window's background opacity when the shadow is requested.
       </description>
       <arg name="opacity" type="fixed"/>
     </request>
@@ -448,7 +475,28 @@
 
     <!-- Version 4 additions -->
 
-    <event name="configure" since="4">
+    <request name="set_always_on_top" since="4">
+      <description summary="set always on top">
+	Request that surface is made to be always on top.
+
+	This is only a request that the window should be always on top.
+	The compositor may choose to ignore this request.
+
+      </description>
+    </request>
+
+    <request name="unset_always_on_top" since="4">
+      <description summary="unset always on top">
+	Request that surface is made to be not always on top.
+
+	This is only a request that the window should be not always on top.
+	The compositor may choose to ignore this request.
+      </description>
+    </request>
+
+    <!-- Version 5 additions -->
+
+    <event name="configure" since="5">
       <description summary="suggest a surface change">
 	The configure event asks the client to change surface state.
 
@@ -471,7 +519,7 @@
       <arg name="serial" type="uint"/>
     </event>
 
-    <request name="ack_configure" since="4">
+    <request name="ack_configure" since="5">
       <description summary="ack a configure event">
 	When a configure event is received, if a client commits the
 	surface in response to the configure event, then the client
@@ -496,7 +544,7 @@
       <arg name="serial" type="uint" summary="the serial from the configure event"/>
     </request>
 
-    <request name="move" since="4">
+    <request name="move" since="5">
       <description summary="start an interactive move">
 	Start an interactive, user-driven move of the surface.
 
@@ -510,6 +558,68 @@
 	surface, e.g. fullscreen or maximized.
       </description>
     </request>
+
+    <!-- Version 6 additions -->
+
+    <request name="set_orientation" since="6">
+      <description summary="set orientation">
+	Set an orientation for the surface.
+      </description>
+      <arg name="orientation" type="int"/>
+    </request>
+
+    <!-- Version 7 additions -->
+
+    <request name="set_window_type" since="7">
+      <description summary="set the type of the window">
+	Set the type of window. This is only a hint to the compositor and the
+	compositor is free to ignore it.
+      </description>
+      <arg name="type" type="uint" summary="type of the window"/>
+    </request>
+
+    <!-- Version 9 additions -->
+
+    <request name="resize" since="9">
+      <description summary="start an interactive resize">
+	Start an interactive, user-driven resize of the surface.
+
+	The compositor responds to this request with a configure event that
+	transitions to the "resizing" state. The client must only initiate
+	resizing after acknowledging the state change. The compositor can assume
+	that subsequent set_window_geometry requests are resizes until the next
+	state transition is acknowledged.
+
+	The compositor may ignore resize requests depending on the state of the
+	surface, e.g. fullscreen or maximized.
+      </description>
+    </request>
+
+    <request name="set_resize_outset" since="9">
+      <description summary="expand input region for resizing">
+	Expand input region of surface with resize outset.
+
+	The compositor clips the input region of each surface to its bounds,
+	unless the client requests a resize outset. In that case, the input
+	region of the root surface is expanded to allow for some leeway around
+	visible bounds when starting a user-driven resize.
+      </description>
+      <arg name="outset" type="int"/>
+    </request>
+
+    <event name="window_geometry_changed" since="9">
+      <description summary="announce window geometry commit">
+	Notify the client of committed window geometry.
+
+	The compositor sends this event when it commits window geometry. The
+	client may use this information to convert coordinates of input events
+	using the latest committed geometry.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </event>
 
   </interface>
 

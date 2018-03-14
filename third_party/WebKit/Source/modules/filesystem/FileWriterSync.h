@@ -31,9 +31,9 @@
 #ifndef FileWriterSync_h
 #define FileWriterSync_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/fileapi/FileError.h"
 #include "modules/filesystem/FileWriterBase.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "public/platform/WebFileWriterClient.h"
 
@@ -42,9 +42,8 @@ namespace blink {
 class Blob;
 class ExceptionState;
 
-class FileWriterSync final : public GarbageCollectedFinalized<FileWriterSync>,
+class FileWriterSync final : public ScriptWrappable,
                              public FileWriterBase,
-                             public ScriptWrappable,
                              public WebFileWriterClient {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(FileWriterSync);
@@ -52,7 +51,7 @@ class FileWriterSync final : public GarbageCollectedFinalized<FileWriterSync>,
  public:
   static FileWriterSync* Create() { return new FileWriterSync(); }
   ~FileWriterSync() override;
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
   // FileWriterBase
   void write(Blob*, ExceptionState&);

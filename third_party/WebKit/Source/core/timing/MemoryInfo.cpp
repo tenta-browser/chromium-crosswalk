@@ -34,11 +34,11 @@
 
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Settings.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "platform/runtime_enabled_features.h"
+#include "platform/wtf/MathExtras.h"
+#include "platform/wtf/ThreadSpecific.h"
+#include "platform/wtf/Time.h"
 #include "v8/include/v8.h"
-#include "wtf/CurrentTime.h"
-#include "wtf/MathExtras.h"
-#include "wtf/ThreadSpecific.h"
 
 namespace blink {
 
@@ -68,8 +68,7 @@ class HeapSizeCache {
 
   static HeapSizeCache& ForCurrentThread() {
     DEFINE_THREAD_SAFE_STATIC_LOCAL(ThreadSpecific<HeapSizeCache>,
-                                    heap_size_cache,
-                                    new ThreadSpecific<HeapSizeCache>);
+                                    heap_size_cache, ());
     return *heap_size_cache;
   }
 
@@ -106,7 +105,7 @@ size_t QuantizeMemorySize(size_t size) {
   DEFINE_STATIC_LOCAL(Vector<size_t>, bucket_size_list, ());
 
   if (bucket_size_list.IsEmpty()) {
-    bucket_size_list.Resize(kNumberOfBuckets);
+    bucket_size_list.resize(kNumberOfBuckets);
 
     float size_of_next_bucket =
         10000000.0;  // First bucket size is roughly 10M.
@@ -150,7 +149,7 @@ size_t QuantizeMemorySize(size_t size) {
 }
 
 MemoryInfo::MemoryInfo() {
-  if (RuntimeEnabledFeatures::preciseMemoryInfoEnabled())
+  if (RuntimeEnabledFeatures::PreciseMemoryInfoEnabled())
     GetHeapSize(info_);
   else
     HeapSizeCache::ForCurrentThread().GetCachedHeapSize(info_);

@@ -24,7 +24,7 @@
 #include <assert.h>
 
 /*
-** This structure is used to encapsulate the global state variables used 
+** This structure is used to encapsulate the global state variables used
 ** by malloc() fault simulation.
 */
 static struct MemFault {
@@ -68,7 +68,7 @@ static int faultsimStep(void){
   if( memfault.nRepeat<=0 ){
     memfault.enable = 0;
   }
-  return 1;  
+  return 1;
 }
 
 /*
@@ -96,7 +96,7 @@ static void *faultsimRealloc(void *pOld, int n){
   return p;
 }
 
-/* 
+/*
 ** The following method calls are passed directly through to the underlying
 ** malloc system:
 **
@@ -135,7 +135,7 @@ static void faultsimConfig(int nDelay, int nRepeat){
   memfault.nFail = 0;
   memfault.enable = nDelay>=0;
 
-  /* Sometimes, when running multi-threaded tests, the isBenignMode 
+  /* Sometimes, when running multi-threaded tests, the isBenignMode
   ** variable is not properly incremented/decremented so that it is
   ** 0 when not inside a benign malloc block. This doesn't affect
   ** the multi-threaded tests, as they do not use this system. But
@@ -183,7 +183,7 @@ static void faultsimEndBenign(void){
 
 /*
 ** Add or remove the fault-simulation layer using sqlite3_config(). If
-** the argument is non-zero, the 
+** the argument is non-zero, the
 */
 static int faultsimInstall(int install){
   static struct sqlite3_mem_methods m = {
@@ -211,7 +211,7 @@ static int faultsimInstall(int install){
     if( rc==SQLITE_OK ){
       rc = sqlite3_config(SQLITE_CONFIG_MALLOC, &m);
     }
-    sqlite3_test_control(SQLITE_TESTCTRL_BENIGN_MALLOC_HOOKS, 
+    sqlite3_test_control(SQLITE_TESTCTRL_BENIGN_MALLOC_HOOKS,
         faultsimBeginBenign, faultsimEndBenign
     );
   }else{
@@ -516,8 +516,8 @@ static int SQLITE_TCLAPI test_memory_highwater(
   }
   if( objc==2 ){
     if( Tcl_GetBooleanFromObj(interp, objv[1], &resetFlag) ) return TCL_ERROR;
-  } 
-  Tcl_SetObjResult(interp, 
+  }
+  Tcl_SetObjResult(interp,
      Tcl_NewWideIntObj(sqlite3_memory_highwater(resetFlag)));
   return TCL_OK;
 }
@@ -666,7 +666,7 @@ static int SQLITE_TCLAPI test_memdebug_fail(
       return TCL_ERROR;
     }
   }
-  
+
   nBenign = faultsimBenignFailures();
   nFail = faultsimFailures();
   faultsimConfig(iFail, nRepeat);
@@ -681,7 +681,7 @@ static int SQLITE_TCLAPI test_memdebug_fail(
 /*
 ** Usage:    sqlite3_memdebug_pending
 **
-** Return the number of malloc() calls that will succeed before a 
+** Return the number of malloc() calls that will succeed before a
 ** simulated failure occurs. A negative return value indicates that
 ** no malloc() failure is scheduled.
 */
@@ -740,7 +740,7 @@ static int SQLITE_TCLAPI test_memdebug_settitle(
   return TCL_OK;
 }
 
-#define MALLOC_LOG_FRAMES  10 
+#define MALLOC_LOG_FRAMES  10
 #define MALLOC_LOG_KEYINTS (                                              \
     10 * ((sizeof(int)>=sizeof(void*)) ? 1 : sizeof(void*)/sizeof(int))   \
 )
@@ -809,8 +809,8 @@ static int SQLITE_TCLAPI test_memdebug_log(
   int iSub;
 
   static const char *MB_strs[] = { "start", "stop", "dump", "clear", "sync" };
-  enum MB_enum { 
-      MB_LOG_START, MB_LOG_STOP, MB_LOG_DUMP, MB_LOG_CLEAR, MB_LOG_SYNC 
+  enum MB_enum {
+      MB_LOG_START, MB_LOG_STOP, MB_LOG_DUMP, MB_LOG_CLEAR, MB_LOG_SYNC
   };
 
   if( !isInit ){
@@ -853,7 +853,7 @@ static int SQLITE_TCLAPI test_memdebug_log(
         MallocLog *pLog = (MallocLog *)Tcl_GetHashValue(pEntry);
         Tcl_WideInt *aKey = (Tcl_WideInt *)Tcl_GetHashKey(&aMallocLog, pEntry);
         int ii;
-  
+
         apElem[0] = Tcl_NewIntObj(pLog->nCall);
         apElem[1] = Tcl_NewIntObj(pLog->nByte);
         for(ii=0; ii<MALLOC_LOG_FRAMES; ii++){
@@ -884,46 +884,6 @@ static int SQLITE_TCLAPI test_memdebug_log(
     }
   }
 
-  return TCL_OK;
-}
-
-/*
-** Usage:    sqlite3_config_scratch SIZE N
-**
-** Set the scratch memory buffer using SQLITE_CONFIG_SCRATCH.
-** The buffer is static and is of limited size.  N might be
-** adjusted downward as needed to accommodate the requested size.
-** The revised value of N is returned.
-**
-** A negative SIZE causes the buffer pointer to be NULL.
-*/
-static int SQLITE_TCLAPI test_config_scratch(
-  void * clientData,
-  Tcl_Interp *interp,
-  int objc,
-  Tcl_Obj *CONST objv[]
-){
-  int sz, N, rc;
-  Tcl_Obj *pResult;
-  static char *buf = 0;
-  if( objc!=3 ){
-    Tcl_WrongNumArgs(interp, 1, objv, "SIZE N");
-    return TCL_ERROR;
-  }
-  if( Tcl_GetIntFromObj(interp, objv[1], &sz) ) return TCL_ERROR;
-  if( Tcl_GetIntFromObj(interp, objv[2], &N) ) return TCL_ERROR;
-  free(buf);
-  if( sz<0 ){
-    buf = 0;
-    rc = sqlite3_config(SQLITE_CONFIG_SCRATCH, (void*)0, 0, 0);
-  }else{
-    buf = malloc( sz*N + 1 );
-    rc = sqlite3_config(SQLITE_CONFIG_SCRATCH, buf, sz, N);
-  }
-  pResult = Tcl_NewObj();
-  Tcl_ListObjAppendElement(0, pResult, Tcl_NewIntObj(rc));
-  Tcl_ListObjAppendElement(0, pResult, Tcl_NewIntObj(N));
-  Tcl_SetObjResult(interp, pResult);
   return TCL_OK;
 }
 
@@ -992,7 +952,7 @@ static int SQLITE_TCLAPI test_alt_pcache(
   int highStress = 0;
   extern void installTestPCache(int,unsigned,unsigned,unsigned);
   if( objc<2 || objc>5 ){
-    Tcl_WrongNumArgs(interp, 1, objv, 
+    Tcl_WrongNumArgs(interp, 1, objv,
         "INSTALLFLAG DISCARDCHANCE PRNGSEEED HIGHSTRESS");
     return TCL_ERROR;
   }
@@ -1112,7 +1072,7 @@ static int SQLITE_TCLAPI test_db_config_lookaside(
 ** Usage:    sqlite3_config_heap NBYTE NMINALLOC
 */
 static int SQLITE_TCLAPI test_config_heap(
-  void * clientData, 
+  void * clientData,
   Tcl_Interp *interp,
   int objc,
   Tcl_Obj *CONST objv[]
@@ -1149,7 +1109,7 @@ static int SQLITE_TCLAPI test_config_heap(
 ** Usage:    sqlite3_config_heap_size NBYTE
 */
 static int SQLITE_TCLAPI test_config_heap_size(
-  void * clientData, 
+  void * clientData,
   Tcl_Interp *interp,
   int objc,
   Tcl_Obj *CONST objv[]
@@ -1179,7 +1139,7 @@ static int SQLITE_TCLAPI test_config_heap_size(
 ** opcodes and verify that they return errors.
 */
 static int SQLITE_TCLAPI test_config_error(
-  void * clientData, 
+  void * clientData,
   Tcl_Interp *interp,
   int objc,
   Tcl_Obj *CONST objv[]
@@ -1194,14 +1154,14 @@ static int SQLITE_TCLAPI test_config_error(
   if( objc==2 ){
     if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ) return TCL_ERROR;
     if( sqlite3_db_config(db, 99999)!=SQLITE_ERROR ){
-      Tcl_AppendResult(interp, 
+      Tcl_AppendResult(interp,
             "sqlite3_db_config(db, 99999) does not return SQLITE_ERROR",
             (char*)0);
       return TCL_ERROR;
     }
   }else{
     if( sqlite3_config(99999)!=SQLITE_ERROR ){
-      Tcl_AppendResult(interp, 
+      Tcl_AppendResult(interp,
           "sqlite3_config(99999) does not return SQLITE_ERROR",
           (char*)0);
       return TCL_ERROR;
@@ -1217,7 +1177,7 @@ static int SQLITE_TCLAPI test_config_error(
 ** SQLITE_CONFIG_URI.
 */
 static int SQLITE_TCLAPI test_config_uri(
-  void * clientData, 
+  void * clientData,
   Tcl_Interp *interp,
   int objc,
   Tcl_Obj *CONST objv[]
@@ -1246,7 +1206,7 @@ static int SQLITE_TCLAPI test_config_uri(
 ** SQLITE_CONFIG_COVERING_INDEX_SCAN.
 */
 static int SQLITE_TCLAPI test_config_cis(
-  void * clientData, 
+  void * clientData,
   Tcl_Interp *interp,
   int objc,
   Tcl_Obj *CONST objv[]
@@ -1274,7 +1234,7 @@ static int SQLITE_TCLAPI test_config_cis(
 ** Set the minimum PMA size.
 */
 static int SQLITE_TCLAPI test_config_pmasz(
-  void * clientData, 
+  void * clientData,
   Tcl_Interp *interp,
   int objc,
   Tcl_Obj *CONST objv[]
@@ -1538,7 +1498,6 @@ int Sqlitetest_malloc_Init(Tcl_Interp *interp){
      { "sqlite3_memdebug_settitle",  test_memdebug_settitle        ,0 },
      { "sqlite3_memdebug_malloc_count", test_memdebug_malloc_count ,0 },
      { "sqlite3_memdebug_log",       test_memdebug_log             ,0 },
-     { "sqlite3_config_scratch",     test_config_scratch           ,0 },
      { "sqlite3_config_pagecache",   test_config_pagecache         ,0 },
      { "sqlite3_config_alt_pcache",  test_alt_pcache               ,0 },
      { "sqlite3_status",             test_status                   ,0 },

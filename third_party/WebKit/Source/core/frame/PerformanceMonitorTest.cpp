@@ -6,6 +6,7 @@
 
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Location.h"
+#include "core/probe/CoreProbes.h"
 #include "core/testing/DummyPageHolder.h"
 #include "platform/wtf/PtrUtil.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -36,15 +37,27 @@ class PerformanceMonitorTest : public ::testing::Test {
   }
 
   // scheduler::TaskTimeObserver implementation
-  void WillProcessTask(scheduler::TaskQueue* queue, double start_time) {
-    monitor_->WillProcessTask(queue, start_time);
+  void WillProcessTask(double start_time) {
+    monitor_->WillProcessTask(start_time);
   }
 
-  void DidProcessTask(scheduler::TaskQueue* queue,
-                      double start_time,
-                      double end_time) {
-    monitor_->DidProcessTask(queue, start_time, end_time);
+  void DidProcessTask(double start_time, double end_time) {
+    monitor_->DidProcessTask(start_time, end_time);
   }
+  void UpdateTaskAttribution(ExecutionContext* execution_context) {
+    monitor_->UpdateTaskAttribution(execution_context);
+  }
+  void RecalculateStyle(Document* document) {
+    probe::RecalculateStyle probe(document);
+    monitor_->Will(probe);
+    monitor_->Did(probe);
+  }
+  void UpdateLayout(Document* document) {
+    probe::UpdateLayout probe(document);
+    monitor_->Will(probe);
+    monitor_->Did(probe);
+  }
+  bool TaskShouldBeReported() { return monitor_->task_should_be_reported_; }
 
   String FrameContextURL();
   int NumUniqueFrameContextsSeen();
@@ -56,13 +69,14 @@ class PerformanceMonitorTest : public ::testing::Test {
 
 void PerformanceMonitorTest::SetUp() {
   page_holder_ = DummyPageHolder::Create(IntSize(800, 600));
-  page_holder_->GetDocument().SetURL(KURL(KURL(), "https://example.com/foo"));
+  page_holder_->GetDocument().SetURL(
+      KURL(NullURL(), "https://example.com/foo"));
   monitor_ = new PerformanceMonitor(GetFrame());
 
   // Create another dummy page holder and pretend this is the iframe.
   another_page_holder_ = DummyPageHolder::Create(IntSize(400, 300));
   another_page_holder_->GetDocument().SetURL(
-      KURL(KURL(), "https://iframed.com/bar"));
+      KURL(NullURL(), "https://iframed.com/bar"));
 }
 
 void PerformanceMonitorTest::TearDown() {
@@ -74,7 +88,7 @@ String PerformanceMonitorTest::FrameContextURL() {
   if (monitor_->task_has_multiple_contexts_)
     return "";
   Frame* frame = ToDocument(monitor_->task_execution_context_)->GetFrame();
-  return ToLocalFrame(frame)->GetDocument()->location()->href();
+  return ToLocalFrame(frame)->GetDocument()->location()->toString();
 }
 
 int PerformanceMonitorTest::NumUniqueFrameContextsSeen() {
@@ -86,17 +100,17 @@ int PerformanceMonitorTest::NumUniqueFrameContextsSeen() {
 }
 
 TEST_F(PerformanceMonitorTest, SingleScriptInTask) {
-  WillProcessTask(nullptr, 3719349.445172);
+  WillProcessTask(3719349.445172);
   EXPECT_EQ(0, NumUniqueFrameContextsSeen());
   WillExecuteScript(GetExecutionContext());
   EXPECT_EQ(1, NumUniqueFrameContextsSeen());
-  DidProcessTask(nullptr, 3719349.445172, 3719349.5561923);  // Long task
+  DidProcessTask(3719349.445172, 3719349.5561923);  // Long task
   EXPECT_EQ(1, NumUniqueFrameContextsSeen());
   EXPECT_EQ("https://example.com/foo", FrameContextURL());
 }
 
 TEST_F(PerformanceMonitorTest, MultipleScriptsInTask_SingleContext) {
-  WillProcessTask(nullptr, 3719349.445172);
+  WillProcessTask(3719349.445172);
   EXPECT_EQ(0, NumUniqueFrameContextsSeen());
   WillExecuteScript(GetExecutionContext());
   EXPECT_EQ(1, NumUniqueFrameContextsSeen());
@@ -104,13 +118,13 @@ TEST_F(PerformanceMonitorTest, MultipleScriptsInTask_SingleContext) {
 
   WillExecuteScript(GetExecutionContext());
   EXPECT_EQ(1, NumUniqueFrameContextsSeen());
-  DidProcessTask(nullptr, 3719349.445172, 3719349.5561923);  // Long task
+  DidProcessTask(3719349.445172, 3719349.5561923);  // Long task
   EXPECT_EQ(1, NumUniqueFrameContextsSeen());
   EXPECT_EQ("https://example.com/foo", FrameContextURL());
 }
 
 TEST_F(PerformanceMonitorTest, MultipleScriptsInTask_MultipleContexts) {
-  WillProcessTask(nullptr, 3719349.445172);
+  WillProcessTask(3719349.445172);
   EXPECT_EQ(0, NumUniqueFrameContextsSeen());
   WillExecuteScript(GetExecutionContext());
   EXPECT_EQ(1, NumUniqueFrameContextsSeen());
@@ -118,20 +132,79 @@ TEST_F(PerformanceMonitorTest, MultipleScriptsInTask_MultipleContexts) {
 
   WillExecuteScript(AnotherExecutionContext());
   EXPECT_EQ(2, NumUniqueFrameContextsSeen());
-  DidProcessTask(nullptr, 3719349.445172, 3719349.5561923);  // Long task
+  DidProcessTask(3719349.445172, 3719349.5561923);  // Long task
   EXPECT_EQ(2, NumUniqueFrameContextsSeen());
   EXPECT_EQ("", FrameContextURL());
 }
 
 TEST_F(PerformanceMonitorTest, NoScriptInLongTask) {
-  WillProcessTask(nullptr, 3719349.445172);
+  WillProcessTask(3719349.445172);
   WillExecuteScript(GetExecutionContext());
-  DidProcessTask(nullptr, 3719349.445172, 3719349.445182);
+  DidProcessTask(3719349.445172, 3719349.445182);
 
-  WillProcessTask(nullptr, 3719349.445172);
-  DidProcessTask(nullptr, 3719349.445172, 3719349.5561923);  // Long task
+  WillProcessTask(3719349.445172);
+  DidProcessTask(3719349.445172, 3719349.5561923);  // Long task
   // Without presence of Script, FrameContext URL is not available
   EXPECT_EQ(0, NumUniqueFrameContextsSeen());
+}
+
+TEST_F(PerformanceMonitorTest, TaskWithoutLocalRoot) {
+  WillProcessTask(1234.5678);
+  UpdateTaskAttribution(AnotherExecutionContext());
+  DidProcessTask(1234.5678, 2345.6789);
+  EXPECT_FALSE(TaskShouldBeReported());
+  EXPECT_EQ(1, NumUniqueFrameContextsSeen());
+}
+
+TEST_F(PerformanceMonitorTest, TaskWithLocalRoot) {
+  WillProcessTask(1234.5678);
+  UpdateTaskAttribution(GetExecutionContext());
+  EXPECT_TRUE(TaskShouldBeReported());
+  EXPECT_EQ(1, NumUniqueFrameContextsSeen());
+  UpdateTaskAttribution(AnotherExecutionContext());
+  DidProcessTask(1234.5678, 2345.6789);
+  EXPECT_TRUE(TaskShouldBeReported());
+  EXPECT_EQ(2, NumUniqueFrameContextsSeen());
+}
+
+TEST_F(PerformanceMonitorTest, RecalculateStyleWithDocument) {
+  WillProcessTask(1234.5678);
+  RecalculateStyle(&another_page_holder_->GetDocument());
+  DidProcessTask(1234.5678, 2345.6789);
+  // Task from unrelated context should not be reported.
+  EXPECT_FALSE(TaskShouldBeReported());
+
+  WillProcessTask(3234.5678);
+  RecalculateStyle(&page_holder_->GetDocument());
+  DidProcessTask(3234.5678, 4345.6789);
+  EXPECT_TRUE(TaskShouldBeReported());
+
+  WillProcessTask(3234.5678);
+  RecalculateStyle(&another_page_holder_->GetDocument());
+  RecalculateStyle(&page_holder_->GetDocument());
+  DidProcessTask(3234.5678, 4345.6789);
+  // This task involves the current context, so it should be reported.
+  EXPECT_TRUE(TaskShouldBeReported());
+}
+
+TEST_F(PerformanceMonitorTest, UpdateLayoutWithDocument) {
+  WillProcessTask(1234.5678);
+  UpdateLayout(&another_page_holder_->GetDocument());
+  DidProcessTask(1234.5678, 2345.6789);
+  // Task from unrelated context should not be reported.
+  EXPECT_FALSE(TaskShouldBeReported());
+
+  WillProcessTask(3234.5678);
+  UpdateLayout(&page_holder_->GetDocument());
+  DidProcessTask(3234.5678, 4345.6789);
+  EXPECT_TRUE(TaskShouldBeReported());
+
+  WillProcessTask(3234.5678);
+  UpdateLayout(&another_page_holder_->GetDocument());
+  UpdateLayout(&page_holder_->GetDocument());
+  DidProcessTask(3234.5678, 4345.6789);
+  // This task involves the current context, so it should be reported.
+  EXPECT_TRUE(TaskShouldBeReported());
 }
 
 }  // namespace blink

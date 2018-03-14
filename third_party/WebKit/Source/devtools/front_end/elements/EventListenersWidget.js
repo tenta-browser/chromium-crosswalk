@@ -33,7 +33,6 @@
 Elements.EventListenersWidget = class extends UI.ThrottledWidget {
   constructor() {
     super();
-    this.element.classList.add('events-pane');
     this._toolbarItems = [];
 
     this._showForAncestorsSetting = Common.settings.moduleSetting('showEventListenersForAncestors');
@@ -46,7 +45,8 @@ Elements.EventListenersWidget = class extends UI.ThrottledWidget {
     this._showFrameworkListenersSetting = Common.settings.createSetting('showFrameowkrListeners', true);
     this._showFrameworkListenersSetting.setTitle(Common.UIString('Framework listeners'));
     this._showFrameworkListenersSetting.addChangeListener(this._showFrameworkListenersChanged.bind(this));
-    this._eventListenersView = new EventListeners.EventListenersView(this.element, this.update.bind(this));
+    this._eventListenersView = new EventListeners.EventListenersView(this.update.bind(this));
+    this._eventListenersView.show(this.element);
 
     var refreshButton = new UI.ToolbarButton(Common.UIString('Refresh'), 'largeicon-refresh');
     refreshButton.addEventListener(UI.ToolbarButton.Events.Click, this.update.bind(this));
@@ -100,11 +100,11 @@ Elements.EventListenersWidget = class extends UI.ThrottledWidget {
     this._lastRequestedNode = node;
     var selectedNodeOnly = !this._showForAncestorsSetting.get();
     var promises = [];
-    promises.push(node.resolveToObjectPromise(Elements.EventListenersWidget._objectGroupName));
+    promises.push(node.resolveToObject(Elements.EventListenersWidget._objectGroupName));
     if (!selectedNodeOnly) {
       var currentNode = node.parentNode;
       while (currentNode) {
-        promises.push(currentNode.resolveToObjectPromise(Elements.EventListenersWidget._objectGroupName));
+        promises.push(currentNode.resolveToObject(Elements.EventListenersWidget._objectGroupName));
         currentNode = currentNode.parentNode;
       }
       promises.push(this._windowObjectInNodeContext(node));
@@ -141,30 +141,33 @@ Elements.EventListenersWidget = class extends UI.ThrottledWidget {
 
   /**
    * @param {!SDK.DOMNode} node
-   * @return {!Promise<!SDK.RemoteObject>}
+   * @return {!Promise<?SDK.RemoteObject>}
    */
   _windowObjectInNodeContext(node) {
-    return new Promise(windowObjectInNodeContext);
-
-    /**
-     * @param {function(?)} fulfill
-     * @param {function(*)} reject
-     */
-    function windowObjectInNodeContext(fulfill, reject) {
-      var executionContexts = node.domModel().runtimeModel().executionContexts();
-      var context = null;
-      if (node.frameId()) {
-        for (var i = 0; i < executionContexts.length; ++i) {
-          var executionContext = executionContexts[i];
-          if (executionContext.frameId === node.frameId() && executionContext.isDefault)
-            context = executionContext;
-        }
-      } else {
-        context = executionContexts[0];
+    var executionContexts = node.domModel().runtimeModel().executionContexts();
+    var context = null;
+    if (node.frameId()) {
+      for (var i = 0; i < executionContexts.length; ++i) {
+        var executionContext = executionContexts[i];
+        if (executionContext.frameId === node.frameId() && executionContext.isDefault)
+          context = executionContext;
       }
-      context.evaluate(
-          'self', Elements.EventListenersWidget._objectGroupName, false, true, false, false, false, fulfill);
+    } else {
+      context = executionContexts[0];
     }
+    return context
+        .evaluate(
+            {
+              expression: 'self',
+              objectGroup: Elements.EventListenersWidget._objectGroupName,
+              includeCommandLineAPI: false,
+              silent: true,
+              returnByValue: false,
+              generatePreview: false
+            },
+            /* userGesture */ false,
+            /* awaitPromise */ false)
+        .then(result => result.object || null);
   }
 
   _eventListenersArrivedForTest() {

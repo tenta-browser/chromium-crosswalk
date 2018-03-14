@@ -25,19 +25,18 @@
 
 #include "core/layout/LayoutBoxModelObject.h"
 
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/HTMLBodyElement.h"
-#include "core/layout/ImageQualityController.h"
 #include "core/layout/LayoutBlock.h"
 #include "core/layout/LayoutFlexibleBox.h"
 #include "core/layout/LayoutGeometryMap.h"
 #include "core/layout/LayoutInline.h"
 #include "core/layout/LayoutView.h"
-#include "core/layout/compositing/CompositedLayerMapping.h"
-#include "core/layout/compositing/PaintLayerCompositor.h"
 #include "core/paint/ObjectPaintInvalidator.h"
 #include "core/paint/PaintLayer.h"
+#include "core/paint/compositing/CompositedLayerMapping.h"
+#include "core/paint/compositing/PaintLayerCompositor.h"
 #include "core/style/ShadowList.h"
 #include "platform/LengthFunctions.h"
 #include "platform/geometry/TransformState.h"
@@ -54,28 +53,12 @@ inline bool IsOutOfFlowPositionedWithImplicitHeight(
          !child->Style()->LogicalBottom().IsAuto();
 }
 
-StickyPositionScrollingConstraints* StickyConstraintsForLayoutObject(
-    const LayoutBoxModelObject* obj,
-    const PaintLayer* ancestor_overflow_layer) {
-  if (!obj)
-    return nullptr;
-
-  PaintLayerScrollableArea* scrollable_area =
-      ancestor_overflow_layer->GetScrollableArea();
-  auto it = scrollable_area->GetStickyConstraintsMap().Find(obj->Layer());
-  if (it == scrollable_area->GetStickyConstraintsMap().end())
-    return nullptr;
-
-  return &it->value;
-}
-
 // Inclusive of |from|, exclusive of |to|.
-LayoutBoxModelObject* FindFirstStickyBetween(LayoutObject* from,
-                                             LayoutObject* to) {
+PaintLayer* FindFirstStickyBetween(LayoutObject* from, LayoutObject* to) {
   LayoutObject* maybe_sticky_ancestor = from;
   while (maybe_sticky_ancestor && maybe_sticky_ancestor != to) {
-    if (maybe_sticky_ancestor->IsStickyPositioned()) {
-      return ToLayoutBoxModelObject(maybe_sticky_ancestor);
+    if (maybe_sticky_ancestor->Style()->HasStickyConstrainedPosition()) {
+      return ToLayoutBoxModelObject(maybe_sticky_ancestor)->Layer();
     }
 
     maybe_sticky_ancestor =
@@ -87,28 +70,6 @@ LayoutBoxModelObject* FindFirstStickyBetween(LayoutObject* from,
 }
 }  // namespace
 
-class FloatStateForStyleChange {
- public:
-  static void SetWasFloating(LayoutBoxModelObject* box_model_object,
-                             bool was_floating) {
-    was_floating_ = was_floating;
-    box_model_object_ = box_model_object;
-  }
-
-  static bool WasFloating(LayoutBoxModelObject* box_model_object) {
-    DCHECK_EQ(box_model_object, box_model_object_);
-    return was_floating_;
-  }
-
- private:
-  // Used to store state between styleWillChange and styleDidChange
-  static bool was_floating_;
-  static LayoutBoxModelObject* box_model_object_;
-};
-
-bool FloatStateForStyleChange::was_floating_ = false;
-LayoutBoxModelObject* FloatStateForStyleChange::box_model_object_ = nullptr;
-
 // The HashMap for storing continuation pointers.
 // The continuation chain is a singly linked list. As such, the HashMap's value
 // is the next pointer associated with the key.
@@ -117,19 +78,22 @@ typedef HashMap<const LayoutBoxModelObject*, LayoutBoxModelObject*>
 static ContinuationMap* g_continuation_map = nullptr;
 
 void LayoutBoxModelObject::SetSelectionState(SelectionState state) {
-  if (state == SelectionInside && GetSelectionState() != SelectionNone)
+  if (state == SelectionState::kInside &&
+      GetSelectionState() != SelectionState::kNone)
     return;
 
-  if ((state == SelectionStart && GetSelectionState() == SelectionEnd) ||
-      (state == SelectionEnd && GetSelectionState() == SelectionStart))
-    LayoutObject::SetSelectionState(SelectionBoth);
+  if ((state == SelectionState::kStart &&
+       GetSelectionState() == SelectionState::kEnd) ||
+      (state == SelectionState::kEnd &&
+       GetSelectionState() == SelectionState::kStart))
+    LayoutObject::SetSelectionState(SelectionState::kStartAndEnd);
   else
     LayoutObject::SetSelectionState(state);
 
   // FIXME: We should consider whether it is OK propagating to ancestor
   // LayoutInlines. This is a workaround for http://webkit.org/b/32123
   // The containing block can be null in case of an orphaned tree.
-  LayoutBlock* containing_block = this->ContainingBlock();
+  LayoutBlock* containing_block = ContainingBlock();
   if (containing_block && !containing_block->IsLayoutView())
     containing_block->SetSelectionState(state);
 }
@@ -239,17 +203,16 @@ LayoutBoxModelObject::~LayoutBoxModelObject() {
 }
 
 void LayoutBoxModelObject::WillBeDestroyed() {
-  ImageQualityController::Remove(*this);
-
   // A continuation of this LayoutObject should be destroyed at subclasses.
   DCHECK(!Continuation());
 
   if (IsPositioned()) {
-    // Don't use this->view() because the document's layoutView has been set to
+    // Don't use view() because the document's layoutView has been set to
     // 0 during destruction.
-    if (LocalFrame* frame = this->GetFrame()) {
-      if (FrameView* frame_view = frame->View()) {
-        if (Style()->HasViewportConstrainedPosition())
+    if (LocalFrame* frame = GetFrame()) {
+      if (LocalFrameView* frame_view = frame->View()) {
+        if (Style()->HasViewportConstrainedPosition() ||
+            Style()->HasStickyConstrainedPosition())
           frame_view->RemoveViewportConstrainedObject(*this);
       }
     }
@@ -263,29 +226,37 @@ void LayoutBoxModelObject::WillBeDestroyed() {
 
 void LayoutBoxModelObject::StyleWillChange(StyleDifference diff,
                                            const ComputedStyle& new_style) {
-  // This object's layer may begin or cease to be a stacking context, in which
-  // case the paint invalidation container of this object and descendants may
-  // change. Thus we need to invalidate paint eagerly for all such children.
-  // PaintLayerCompositor::paintInvalidationOnCompositingChange() doesn't work
-  // for the case because we can only see the new paintInvalidationContainer
-  // during compositing update.
+  // SPv1:
+  // This object's layer may begin or cease to be stacked or stacking context,
+  // in which case the paint invalidation container of this object and
+  // descendants may change. Thus we need to invalidate paint eagerly for all
+  // such children. PaintLayerCompositor::paintInvalidationOnCompositingChange()
+  // doesn't work for the case because we can only see the new
+  // paintInvalidationContainer during compositing update.
+  // SPv1 and v2:
+  // Change of stacked/stacking context status may cause change of this or
+  // descendant PaintLayer's CompositingContainer, so we need to eagerly
+  // invalidate the current compositing container chain which may have painted
+  // cached subsequences containing this object or descendant objects.
   if (Style() &&
-      (Style()->IsStackingContext() != new_style.IsStackingContext())) {
-    // The following disablers are valid because we need to invalidate based on
-    // the current status.
-    DisableCompositingQueryAsserts compositing_disabler;
-    DisablePaintInvalidationStateAsserts paint_disabler;
-    ObjectPaintInvalidator(*this)
-        .InvalidatePaintIncludingNonCompositingDescendants();
+      (Style()->IsStacked() != new_style.IsStacked() ||
+       Style()->IsStackingContext() != new_style.IsStackingContext()) &&
+      // ObjectPaintInvalidator requires this.
+      IsRooted()) {
+    if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
+      ObjectPaintInvalidator(*this).SlowSetPaintingLayerNeedsRepaint();
+    } else {
+      // The following disablers are valid because we need to invalidate based
+      // on the current status.
+      DisableCompositingQueryAsserts compositing_disabler;
+      DisablePaintInvalidationStateAsserts paint_disabler;
+      ObjectPaintInvalidator(*this)
+          .InvalidatePaintIncludingNonCompositingDescendants();
+    }
   }
 
-  FloatStateForStyleChange::SetWasFloating(this, IsFloating());
-
-  if (HasLayer() && diff.CssClipChanged()) {
-    Layer()
-        ->Clipper(PaintLayer::kDoNotUseGeometryMapper)
-        .ClearClipRectsIncludingDescendants();
-  }
+  if (HasLayer() && diff.CssClipChanged())
+    Layer()->ClearClipRects();
 
   LayoutObject::StyleWillChange(diff, new_style);
 }
@@ -296,8 +267,6 @@ void LayoutBoxModelObject::StyleDidChange(StyleDifference diff,
   bool had_transform_related_property = HasTransformRelatedProperty();
   bool had_layer = HasLayer();
   bool layer_was_self_painting = had_layer && Layer()->IsSelfPaintingLayer();
-  bool was_floating_before_style_changed =
-      FloatStateForStyleChange::WasFloating(this);
   bool was_horizontal_writing_mode = IsHorizontalWritingMode();
 
   LayoutObject::StyleDidChange(diff, old_style);
@@ -326,14 +295,16 @@ void LayoutBoxModelObject::StyleDidChange(StyleDifference diff,
 
   PaintLayerType type = LayerTypeRequired();
   if (type != kNoPaintLayer) {
-    if (!Layer() && LayerCreationAllowedForSubtree()) {
-      if (was_floating_before_style_changed && IsFloating())
+    if (!Layer()) {
+      // In order to update this object properly, we need to lay it out again.
+      // However, if we have never laid it out, don't mark it for layout. If
+      // this is a new object, it may not yet have been inserted into the tree,
+      // and if we mark it for layout then, we risk upsetting the tree
+      // insertion machinery.
+      if (EverHadLayout())
         SetChildNeedsLayout();
+
       CreateLayerAfterStyleChange();
-      if (Parent() && !NeedsLayout()) {
-        // FIXME: We should call a specialized version of this function.
-        Layer()->UpdateLayerPositionsAfterLayout();
-      }
     }
   } else if (Layer() && Layer()->Parent()) {
     PaintLayer* parent_layer = Layer()->Parent();
@@ -345,7 +316,7 @@ void LayoutBoxModelObject::StyleDidChange(StyleDifference diff,
     Layer()->UpdateClipPath(old_style, StyleRef());
     // Calls DestroyLayer() which clears the layer.
     Layer()->RemoveOnlyThisLayerAfterStyleChange();
-    if (was_floating_before_style_changed && IsFloating())
+    if (EverHadLayout())
       SetChildNeedsLayout();
     if (had_transform_related_property) {
       SetNeedsLayoutAndPrefWidthsRecalcAndFullPaintInvalidation(
@@ -357,18 +328,17 @@ void LayoutBoxModelObject::StyleDidChange(StyleDifference diff,
     }
   }
 
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled()) {
-    if ((old_style && old_style->GetPosition() != StyleRef().GetPosition()) ||
-        had_layer != HasLayer()) {
-      // This may affect paint properties of the current object, and descendants
-      // even if paint properties of the current object won't change. E.g. the
-      // stacking context and/or containing block of descendants may change.
-      SetSubtreeNeedsPaintPropertyUpdate();
-    } else if (had_transform_related_property !=
-               HasTransformRelatedProperty()) {
-      // This affects whether to create transform node.
-      SetNeedsPaintPropertyUpdate();
-    }
+  if (old_style && (old_style->CanContainFixedPositionObjects() !=
+                        StyleRef().CanContainFixedPositionObjects() ||
+                    old_style->GetPosition() != StyleRef().GetPosition() ||
+                    had_layer != HasLayer())) {
+    // This may affect paint properties of the current object, and descendants
+    // even if paint properties of the current object won't change. E.g. the
+    // stacking context and/or containing block of descendants may change.
+    SetSubtreeNeedsPaintPropertyUpdate();
+  } else if (had_transform_related_property != HasTransformRelatedProperty()) {
+    // This affects whether to create transform node.
+    SetNeedsPaintPropertyUpdate();
   }
 
   if (Layer()) {
@@ -397,15 +367,17 @@ void LayoutBoxModelObject::StyleDidChange(StyleDifference diff,
   // gets the same layout after changing position property, although no
   // re-raster (rect-based invalidation) is needed, display items should
   // still update their paint offset.
-  if (old_style) {
+  // For SPv2, invalidation for paint offset change is done during PrePaint.
+  if (old_style && !RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
     bool new_style_is_fixed_position =
         Style()->GetPosition() == EPosition::kFixed;
     bool old_style_is_fixed_position =
         old_style->GetPosition() == EPosition::kFixed;
-    if (new_style_is_fixed_position != old_style_is_fixed_position)
+    if (new_style_is_fixed_position != old_style_is_fixed_position) {
       ObjectPaintInvalidator(*this)
           .InvalidateDisplayItemClientsIncludingNonCompositingDescendants(
-              kPaintInvalidationStyleChange);
+              PaintInvalidationReason::kStyle);
+    }
   }
 
   // The used style for body background may change due to computed style change
@@ -429,14 +401,14 @@ void LayoutBoxModelObject::StyleDidChange(StyleDifference diff,
     }
   }
 
-  if (FrameView* frame_view = View()->GetFrameView()) {
+  if (LocalFrameView* frame_view = View()->GetFrameView()) {
     bool new_style_is_viewport_constained =
         Style()->GetPosition() == EPosition::kFixed;
     bool old_style_is_viewport_constrained =
         old_style && old_style->GetPosition() == EPosition::kFixed;
-    bool new_style_is_sticky = Style()->GetPosition() == EPosition::kSticky;
+    bool new_style_is_sticky = Style()->HasStickyConstrainedPosition();
     bool old_style_is_sticky =
-        old_style && old_style->GetPosition() == EPosition::kSticky;
+        old_style && old_style->HasStickyConstrainedPosition();
 
     if (new_style_is_sticky != old_style_is_sticky) {
       if (new_style_is_sticky) {
@@ -478,6 +450,14 @@ void LayoutBoxModelObject::StyleDidChange(StyleDifference diff,
         frame_view->RemoveViewportConstrainedObject(*this);
     }
   }
+
+  if (old_style && RuntimeEnabledFeatures::SlimmingPaintV175Enabled() &&
+      old_style->BackfaceVisibility() != StyleRef().BackfaceVisibility() &&
+      HasLayer()) {
+    // We need to repaint the layer to update the backface visibility value of
+    // the paint chunk.
+    Layer()->SetNeedsRepaint();
+  }
 }
 
 void LayoutBoxModelObject::InvalidateStickyConstraints() {
@@ -498,14 +478,17 @@ void LayoutBoxModelObject::InvalidateStickyConstraints() {
   // previous frame.
   DisableCompositingQueryAsserts disabler;
   if (const PaintLayer* ancestor_overflow_layer =
-          enclosing->AncestorOverflowLayer())
-    ancestor_overflow_layer->GetScrollableArea()
-        ->InvalidateAllStickyConstraints();
+          enclosing->AncestorOverflowLayer()) {
+    if (PaintLayerScrollableArea* ancestor_scrollable_area =
+            ancestor_overflow_layer->GetScrollableArea())
+      ancestor_scrollable_area->InvalidateAllStickyConstraints();
+  }
 }
 
 void LayoutBoxModelObject::CreateLayerAfterStyleChange() {
   DCHECK(!HasLayer() && !Layer());
-  EnsureRarePaintData().SetLayer(WTF::MakeUnique<PaintLayer>(*this));
+  GetMutableForPainting().FirstFragment().EnsureRarePaintData().SetLayer(
+      std::make_unique<PaintLayer>(*this));
   SetHasLayer(true);
   Layer()->InsertOnlyThisLayerAfterStyleChange();
 }
@@ -513,7 +496,7 @@ void LayoutBoxModelObject::CreateLayerAfterStyleChange() {
 void LayoutBoxModelObject::DestroyLayer() {
   DCHECK(HasLayer() && Layer());
   SetHasLayer(false);
-  GetRarePaintData()->SetLayer(nullptr);
+  FirstFragment().GetRarePaintData()->SetLayer(nullptr);
 }
 
 bool LayoutBoxModelObject::HasSelfPaintingLayer() const {
@@ -528,69 +511,28 @@ void LayoutBoxModelObject::AddLayerHitTestRects(
     LayerHitTestRects& rects,
     const PaintLayer* current_layer,
     const LayoutPoint& layer_offset,
-    const LayoutRect& container_rect) const {
+    TouchAction supported_fast_actions,
+    const LayoutRect& container_rect,
+    TouchAction container_whitelisted_touch_action) const {
   if (HasLayer()) {
     if (IsLayoutView()) {
       // LayoutView is handled with a special fast-path, but it needs to know
       // the current layer.
       LayoutObject::AddLayerHitTestRects(rects, Layer(), LayoutPoint(),
-                                         LayoutRect());
+                                         supported_fast_actions, LayoutRect(),
+                                         TouchAction::kTouchActionAuto);
     } else {
       // Since a LayoutObject never lives outside it's container Layer, we can
       // switch to marking entire layers instead. This may sometimes mark more
       // than necessary (when a layer is made of disjoint objects) but in
       // practice is a significant performance savings.
-      Layer()->AddLayerHitTestRects(rects);
+      Layer()->AddLayerHitTestRects(rects, supported_fast_actions);
     }
   } else {
     LayoutObject::AddLayerHitTestRects(rects, current_layer, layer_offset,
-                                       container_rect);
+                                       supported_fast_actions, container_rect,
+                                       container_whitelisted_touch_action);
   }
-}
-
-DISABLE_CFI_PERF
-void LayoutBoxModelObject::InvalidateTreeIfNeeded(
-    const PaintInvalidationState& paint_invalidation_state) {
-  DCHECK(!RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled());
-  EnsureIsReadyForPaintInvalidation();
-
-  PaintInvalidationState new_paint_invalidation_state(paint_invalidation_state,
-                                                      *this);
-  if (!ShouldCheckForPaintInvalidationWithPaintInvalidationState(
-          new_paint_invalidation_state))
-    return;
-
-  if (MayNeedPaintInvalidationSubtree())
-    new_paint_invalidation_state
-        .SetForceSubtreeInvalidationCheckingWithinContainer();
-
-  ObjectPaintInvalidator paint_invalidator(*this);
-  LayoutRect previous_visual_rect = VisualRect();
-  LayoutPoint previous_location = paint_invalidator.LocationInBacking();
-  PaintInvalidationReason reason =
-      InvalidatePaintIfNeeded(new_paint_invalidation_state);
-
-  if (previous_location != paint_invalidator.LocationInBacking()) {
-    new_paint_invalidation_state
-        .SetForceSubtreeInvalidationCheckingWithinContainer();
-  }
-
-  // TODO(wangxianzhu): This is a workaround for crbug.com/490725. We don't have
-  // enough saved information to do accurate check of clipping change. Will
-  // remove when we remove rect-based paint invalidation.
-  if (previous_visual_rect != VisualRect() &&
-      !UsesCompositedScrolling()
-      // Note that isLayoutView() below becomes unnecessary after the launch of
-      // root layer scrolling.
-      && (HasOverflowClip() || IsLayoutView())) {
-    new_paint_invalidation_state
-        .SetForceSubtreeInvalidationRectUpdateWithinContainer();
-  }
-
-  new_paint_invalidation_state.UpdateForChildren(reason);
-  InvalidatePaintOfSubtreesIfNeeded(new_paint_invalidation_state);
-
-  ClearPaintInvalidationFlags();
 }
 
 void LayoutBoxModelObject::AddOutlineRectsForNormalChildren(
@@ -662,7 +604,7 @@ bool LayoutBoxModelObject::HasNonEmptyLayoutSize() const {
   for (const LayoutBoxModelObject* root = this; root;
        root = root->Continuation()) {
     for (const LayoutObject* object = root; object;
-         object = object->NextInPreOrder(object)) {
+         object = object->NextInPreOrder(root)) {
       if (object->IsBox()) {
         const LayoutBox& box = ToLayoutBox(*object);
         if (box.LogicalHeight() && box.LogicalWidth())
@@ -672,7 +614,7 @@ bool LayoutBoxModelObject::HasNonEmptyLayoutSize() const {
         if (!layout_inline.LinesBoundingBox().IsEmpty())
           return true;
       } else {
-        DCHECK(object->IsText());
+        DCHECK(object->IsText() || object->IsSVG());
       }
     }
   }
@@ -691,7 +633,7 @@ void LayoutBoxModelObject::AbsoluteQuads(Vector<FloatQuad>& quads,
 
   // Iterate over continuations, avoiding recursion in case there are
   // many of them. See crbug.com/653767.
-  for (const LayoutBoxModelObject* continuation_object = this->Continuation();
+  for (const LayoutBoxModelObject* continuation_object = Continuation();
        continuation_object;
        continuation_object = continuation_object->Continuation()) {
     DCHECK(continuation_object->IsLayoutInline() ||
@@ -777,9 +719,10 @@ bool LayoutBoxModelObject::HasAutoHeightOrContainingBlockWithAutoHeight()
 }
 
 LayoutSize LayoutBoxModelObject::RelativePositionOffset() const {
+  DCHECK(IsRelPositioned());
   LayoutSize offset = AccumulateInFlowPositionOffsets();
 
-  LayoutBlock* containing_block = this->ContainingBlock();
+  LayoutBlock* containing_block = ContainingBlock();
 
   // Objects that shrink to avoid floats normally use available line width when
   // computing containing block width. However in the case of relative
@@ -817,6 +760,9 @@ LayoutSize LayoutBoxModelObject::RelativePositionOffset() const {
       break;
     case WritingMode::kVerticalLr:
       offset.Expand(left.value(), LayoutUnit());
+      break;
+    // TODO(layout-dev): Sideways-lr and sideways-rl are not yet supported.
+    default:
       break;
   }
 
@@ -866,6 +812,9 @@ LayoutSize LayoutBoxModelObject::RelativePositionOffset() const {
       else
         offset.SetHeight(-bottom.value());
       break;
+    // TODO(layout-dev): Sideways-lr and sideways-rl are not yet supported.
+    default:
+      break;
   }
   return offset;
 }
@@ -873,11 +822,9 @@ LayoutSize LayoutBoxModelObject::RelativePositionOffset() const {
 void LayoutBoxModelObject::UpdateStickyPositionConstraints() const {
   const FloatSize constraining_size = ComputeStickyConstrainingRect().Size();
 
-  PaintLayerScrollableArea* scrollable_area =
-      Layer()->AncestorOverflowLayer()->GetScrollableArea();
   StickyPositionScrollingConstraints constraints;
   FloatSize skipped_containers_offset;
-  LayoutBlock* containing_block = this->ContainingBlock();
+  LayoutBlock* containing_block = ContainingBlock();
   // The location container for boxes is not always the containing block.
   LayoutObject* location_container =
       IsLayoutInline() ? Container() : ToLayoutBox(this)->LocationContainer();
@@ -893,7 +840,8 @@ void LayoutBoxModelObject::UpdateStickyPositionConstraints() const {
                       .BoundingBox()
                       .Location());
   LayoutBox* scroll_ancestor =
-      Layer()->AncestorOverflowLayer()->IsRootLayer()
+      Layer()->AncestorOverflowLayer()->IsRootLayer() &&
+              !RuntimeEnabledFeatures::RootLayerScrollingEnabled()
           ? nullptr
           : &ToLayoutBox(Layer()->AncestorOverflowLayer()->GetLayoutObject());
 
@@ -992,12 +940,14 @@ void LayoutBoxModelObject::UpdateStickyPositionConstraints() const {
   //
   // The respective search ranges are [container, containingBlock) and
   // [containingBlock, scrollAncestor).
-  constraints.SetNearestStickyBoxShiftingStickyBox(
+  constraints.SetNearestStickyLayerShiftingStickyBox(
       FindFirstStickyBetween(location_container, containing_block));
   // We cannot use |scrollAncestor| here as it disregards the root
   // ancestorOverflowLayer(), which we should include.
-  constraints.SetNearestStickyBoxShiftingContainingBlock(FindFirstStickyBetween(
-      containing_block, &Layer()->AncestorOverflowLayer()->GetLayoutObject()));
+  constraints.SetNearestStickyLayerShiftingContainingBlock(
+      FindFirstStickyBetween(
+          containing_block,
+          &Layer()->AncestorOverflowLayer()->GetLayoutObject()));
 
   // We skip the right or top sticky offset if there is not enough space to
   // honor both the left/right or top/bottom offsets.
@@ -1063,12 +1013,47 @@ void LayoutBoxModelObject::UpdateStickyPositionConstraints() const {
     constraints.AddAnchorEdge(
         StickyPositionScrollingConstraints::kAnchorEdgeBottom);
   }
+  // At least one edge should be anchored if we are calculating constraints.
+  DCHECK(constraints.GetAnchorEdges());
+  PaintLayerScrollableArea* scrollable_area =
+      Layer()->AncestorOverflowLayer()->GetScrollableArea();
   scrollable_area->GetStickyConstraintsMap().Set(Layer(), constraints);
 }
 
+bool LayoutBoxModelObject::IsSlowRepaintConstrainedObject() const {
+  if (!HasLayer() || (Style()->GetPosition() != EPosition::kFixed &&
+                      Style()->GetPosition() != EPosition::kSticky)) {
+    return false;
+  }
+
+  PaintLayer* layer = Layer();
+
+  // Whether the Layer sticks to the viewport is a tree-depenent
+  // property and our viewportConstrainedObjects collection is maintained
+  // with only LayoutObject-level information.
+  if (!layer->FixedToViewport() && !layer->SticksToScroller())
+    return false;
+
+  // If the whole subtree is invisible, there's no reason to scroll on
+  // the main thread because we don't need to generate invalidations
+  // for invisible content.
+  if (layer->SubtreeIsInvisible())
+    return false;
+
+  // We're only smart enough to scroll viewport-constrainted objects
+  // in the compositor if they have their own backing or they paint
+  // into a grouped back (which necessarily all have the same viewport
+  // constraints).
+  return (layer->GetCompositingState() == kNotComposited);
+}
+
 FloatRect LayoutBoxModelObject::ComputeStickyConstrainingRect() const {
-  if (Layer()->AncestorOverflowLayer()->IsRootLayer())
-    return View()->GetFrameView()->VisibleContentRect();
+  if (Layer()->AncestorOverflowLayer()->IsRootLayer()) {
+    return View()
+        ->GetFrameView()
+        ->LayoutViewportScrollableArea()
+        ->VisibleContentRect();
+  }
 
   LayoutBox* enclosing_clipping_box =
       Layer()->AncestorOverflowLayer()->GetLayoutBox();
@@ -1093,30 +1078,21 @@ LayoutSize LayoutBoxModelObject::StickyPositionOffset() const {
   const PaintLayer* ancestor_overflow_layer = Layer()->AncestorOverflowLayer();
   // TODO: Force compositing input update if we ask for offset before
   // compositing inputs have been computed?
-  if (!ancestor_overflow_layer)
+  if (!ancestor_overflow_layer || !ancestor_overflow_layer->GetScrollableArea())
     return LayoutSize();
 
-  StickyPositionScrollingConstraints* constraints =
-      StickyConstraintsForLayoutObject(this, ancestor_overflow_layer);
-  if (!constraints)
+  StickyConstraintsMap& constraints_map =
+      ancestor_overflow_layer->GetScrollableArea()->GetStickyConstraintsMap();
+  auto it = constraints_map.find(Layer());
+  if (it == constraints_map.end())
     return LayoutSize();
-
-  StickyPositionScrollingConstraints* shifting_sticky_box_constraints =
-      StickyConstraintsForLayoutObject(
-          constraints->NearestStickyBoxShiftingStickyBox(),
-          ancestor_overflow_layer);
-
-  StickyPositionScrollingConstraints* shifting_containing_block_constraints =
-      StickyConstraintsForLayoutObject(
-          constraints->NearestStickyBoxShiftingContainingBlock(),
-          ancestor_overflow_layer);
+  StickyPositionScrollingConstraints* constraints = &it->value;
 
   // The sticky offset is physical, so we can just return the delta computed in
   // absolute coords (though it may be wrong with transforms).
   FloatRect constraining_rect = ComputeStickyConstrainingRect();
-  return LayoutSize(constraints->ComputeStickyOffset(
-      constraining_rect, shifting_sticky_box_constraints,
-      shifting_containing_block_constraints));
+  return LayoutSize(
+      constraints->ComputeStickyOffset(constraining_rect, constraints_map));
 }
 
 LayoutPoint LayoutBoxModelObject::AdjustedPositionRelativeTo(
@@ -1244,20 +1220,21 @@ void LayoutBoxModelObject::SetContinuation(LayoutBoxModelObject* continuation) {
 }
 
 void LayoutBoxModelObject::ComputeLayerHitTestRects(
-    LayerHitTestRects& rects) const {
-  LayoutObject::ComputeLayerHitTestRects(rects);
+    LayerHitTestRects& rects,
+    TouchAction supported_fast_actions) const {
+  LayoutObject::ComputeLayerHitTestRects(rects, supported_fast_actions);
 
   // If there is a continuation then we need to consult it here, since this is
   // the root of the tree walk and it wouldn't otherwise get picked up.
   // Continuations should always be siblings in the tree, so any others should
   // get picked up already by the tree walk.
   if (Continuation())
-    Continuation()->ComputeLayerHitTestRects(rects);
+    Continuation()->ComputeLayerHitTestRects(rects, supported_fast_actions);
 }
 
 LayoutRect LayoutBoxModelObject::LocalCaretRectForEmptyElement(
     LayoutUnit width,
-    LayoutUnit text_indent_offset) {
+    LayoutUnit text_indent_offset) const {
   DCHECK(!SlowFirstChild() || SlowFirstChild()->IsPseudoElement());
 
   // FIXME: This does not take into account either :first-line or :first-letter
@@ -1342,7 +1319,7 @@ const LayoutObject* LayoutBoxModelObject::PushMappingToContainer(
   DCHECK_NE(ancestor_to_stop_at, this);
 
   AncestorSkipInfo skip_info(ancestor_to_stop_at);
-  LayoutObject* container = this->Container(&skip_info);
+  LayoutObject* container = Container(&skip_info);
   if (!container)
     return nullptr;
 
@@ -1350,14 +1327,31 @@ const LayoutObject* LayoutBoxModelObject::PushMappingToContainer(
   bool is_fixed_pos = !is_inline && Style()->GetPosition() == EPosition::kFixed;
   bool contains_fixed_position = CanContainFixedPositionObjects();
 
-  LayoutSize adjustment_for_skipped_ancestor;
+  TransformationMatrix adjustment_for_skipped_ancestor;
+  bool adjustment_for_skipped_ancestor_is_translate2D = true;
   if (skip_info.AncestorSkipped()) {
-    // There can't be a transform between paintInvalidationContainer and
-    // ancestorToStopAt, because transforms create containers, so it should be
-    // safe to just subtract the delta between the ancestor and
-    // ancestorToStopAt.
-    adjustment_for_skipped_ancestor =
-        -ancestor_to_stop_at->OffsetFromAncestorContainer(container);
+    // There can't be a transform between container and ancestor_to_stop_at,
+    // because transforms create containers, so it should be safe to just
+    // subtract the delta between the container and ancestor_to_stop_at.
+    // But if ancestor_to_stop_at is a table section with a transform, we
+    // must apply the transform to the offset because the table section is
+    // not the container (it is not a LayoutBlock).
+    LayoutSize ancestor_offset =
+        ancestor_to_stop_at->OffsetFromAncestorContainer(container);
+    if (ancestor_to_stop_at->IsTableSection() &&
+        ancestor_to_stop_at->StyleRef().HasTransform() &&
+        ancestor_to_stop_at->ShouldUseTransformFromContainer(container)) {
+      TransformationMatrix t;
+      ancestor_to_stop_at->GetTransformFromContainer(container, ancestor_offset,
+                                                     t);
+      adjustment_for_skipped_ancestor = t.Inverse();
+      adjustment_for_skipped_ancestor_is_translate2D =
+          adjustment_for_skipped_ancestor.IsIdentityOr2DTranslation();
+    } else {
+      adjustment_for_skipped_ancestor.Translate(
+          -ancestor_offset.Width().ToFloat(),
+          -ancestor_offset.Height().ToFloat());
+    }
   }
 
   LayoutSize container_offset = OffsetFromContainer(container);
@@ -1383,12 +1377,22 @@ const LayoutObject* LayoutBoxModelObject::PushMappingToContainer(
   if (ShouldUseTransformFromContainer(container)) {
     TransformationMatrix t;
     GetTransformFromContainer(container, container_offset, t);
-    t.PostTranslate(adjustment_for_skipped_ancestor.Width().ToFloat(),
-                    adjustment_for_skipped_ancestor.Height().ToFloat());
-    geometry_map.Push(this, t, flags, LayoutSize());
-  } else {
-    container_offset += adjustment_for_skipped_ancestor;
+    adjustment_for_skipped_ancestor.Multiply(t);
+    geometry_map.Push(this, adjustment_for_skipped_ancestor, flags,
+                      LayoutSize());
+  } else if (adjustment_for_skipped_ancestor_is_translate2D) {
+    container_offset.SetWidth(
+        container_offset.Width() +
+        LayoutUnit(adjustment_for_skipped_ancestor.M41()));
+    container_offset.SetHeight(
+        container_offset.Height() +
+        LayoutUnit(adjustment_for_skipped_ancestor.M42()));
     geometry_map.Push(this, container_offset, flags, LayoutSize());
+  } else {
+    adjustment_for_skipped_ancestor.Translate(container_offset.Width(),
+                                              container_offset.Height());
+    geometry_map.Push(this, adjustment_for_skipped_ancestor, flags,
+                      LayoutSize());
   }
 
   return skip_info.AncestorSkipped() ? ancestor_to_stop_at : container;
@@ -1473,7 +1477,7 @@ bool LayoutBoxModelObject::BackgroundStolenForBeingBody(
     return false;
 
   Element* root_element = GetDocument().documentElement();
-  if (!isHTMLHtmlElement(root_element))
+  if (!IsHTMLHtmlElement(root_element))
     return false;
 
   if (!root_element_style)

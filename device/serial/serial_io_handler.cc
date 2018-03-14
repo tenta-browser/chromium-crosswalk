@@ -11,6 +11,8 @@
 #include "base/files/file_path.h"
 #include "base/location.h"
 #include "base/strings/string_util.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/task_scheduler/task_traits.h"
 #include "build/build_config.h"
 
 #if defined(OS_CHROMEOS)
@@ -21,30 +23,27 @@
 namespace device {
 
 SerialIoHandler::SerialIoHandler(
-    scoped_refptr<base::SingleThreadTaskRunner> file_thread_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> ui_thread_task_runner)
-    : file_thread_task_runner_(file_thread_task_runner),
-      ui_thread_task_runner_(ui_thread_task_runner) {
+    : ui_thread_task_runner_(ui_thread_task_runner) {
   options_.bitrate = 9600;
-  options_.data_bits = serial::DataBits::EIGHT;
-  options_.parity_bit = serial::ParityBit::NO_PARITY;
-  options_.stop_bits = serial::StopBits::ONE;
+  options_.data_bits = mojom::SerialDataBits::EIGHT;
+  options_.parity_bit = mojom::SerialParityBit::NO_PARITY;
+  options_.stop_bits = mojom::SerialStopBits::ONE;
   options_.cts_flow_control = false;
   options_.has_cts_flow_control = true;
 }
 
 SerialIoHandler::~SerialIoHandler() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   Close();
 }
 
 void SerialIoHandler::Open(const std::string& port,
-                           const serial::ConnectionOptions& options,
-                           const OpenCompleteCallback& callback) {
-  DCHECK(CalledOnValidThread());
-  DCHECK(open_complete_.is_null());
-  open_complete_ = callback;
-  DCHECK(file_thread_task_runner_.get());
+                           const mojom::SerialConnectionOptions& options,
+                           OpenCompleteCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(!open_complete_);
+  open_complete_ = std::move(callback);
   DCHECK(ui_thread_task_runner_.get());
   MergeConnectionOptions(options);
   port_ = port;
@@ -58,14 +57,16 @@ void SerialIoHandler::Open(const std::string& port,
       base::ThreadTaskRunnerHandle::Get();
   ui_thread_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &chromeos::PermissionBrokerClient::OpenPath, base::Unretained(client),
           port, base::Bind(&SerialIoHandler::OnPathOpened, this, task_runner),
           base::Bind(&SerialIoHandler::OnPathOpenError, this, task_runner)));
 #else
-  file_thread_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&SerialIoHandler::StartOpen, this, port,
-                            base::ThreadTaskRunnerHandle::Get()));
+  base::PostTaskWithTraits(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::BindOnce(&SerialIoHandler::StartOpen, this, port,
+                     base::ThreadTaskRunnerHandle::Get()));
 #endif  // defined(OS_CHROMEOS)
 }
 
@@ -77,7 +78,7 @@ void SerialIoHandler::OnPathOpened(
   base::File file(fd.release());
   io_thread_task_runner->PostTask(
       FROM_HERE,
-      base::Bind(&SerialIoHandler::FinishOpen, this, base::Passed(&file)));
+      base::BindOnce(&SerialIoHandler::FinishOpen, this, std::move(file)));
 }
 
 void SerialIoHandler::OnPathOpenError(
@@ -85,35 +86,33 @@ void SerialIoHandler::OnPathOpenError(
     const std::string& error_name,
     const std::string& error_message) {
   io_thread_task_runner->PostTask(
-      FROM_HERE, base::Bind(&SerialIoHandler::ReportPathOpenError, this,
-                            error_name, error_message));
+      FROM_HERE, base::BindOnce(&SerialIoHandler::ReportPathOpenError, this,
+                                error_name, error_message));
 }
 
 void SerialIoHandler::ReportPathOpenError(const std::string& error_name,
                                           const std::string& error_message) {
-  DCHECK(CalledOnValidThread());
-  DCHECK(!open_complete_.is_null());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(open_complete_);
   LOG(ERROR) << "Permission broker failed to open '" << port_
              << "': " << error_name << ": " << error_message;
-  OpenCompleteCallback callback = open_complete_;
-  open_complete_.Reset();
-  callback.Run(false);
+  std::move(open_complete_).Run(false);
 }
 
 #endif
 
 void SerialIoHandler::MergeConnectionOptions(
-    const serial::ConnectionOptions& options) {
+    const mojom::SerialConnectionOptions& options) {
   if (options.bitrate) {
     options_.bitrate = options.bitrate;
   }
-  if (options.data_bits != serial::DataBits::NONE) {
+  if (options.data_bits != mojom::SerialDataBits::NONE) {
     options_.data_bits = options.data_bits;
   }
-  if (options.parity_bit != serial::ParityBit::NONE) {
+  if (options.parity_bit != mojom::SerialParityBit::NONE) {
     options_.parity_bit = options.parity_bit;
   }
-  if (options.stop_bits != serial::StopBits::NONE) {
+  if (options.stop_bits != mojom::SerialStopBits::NONE) {
     options_.stop_bits = options.stop_bits;
   }
   if (options.has_cts_flow_control) {
@@ -125,8 +124,7 @@ void SerialIoHandler::MergeConnectionOptions(
 void SerialIoHandler::StartOpen(
     const std::string& port,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner) {
-  DCHECK(!open_complete_.is_null());
-  DCHECK(file_thread_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(open_complete_);
   DCHECK(!file_.IsValid());
   // It's the responsibility of the API wrapper around SerialIoHandler to
   // validate the supplied path against the set of valid port names, and
@@ -138,20 +136,19 @@ void SerialIoHandler::StartOpen(
               base::File::FLAG_EXCLUSIVE_WRITE | base::File::FLAG_ASYNC |
               base::File::FLAG_TERMINAL_DEVICE;
   base::File file(path, flags);
-  io_task_runner->PostTask(FROM_HERE, base::Bind(&SerialIoHandler::FinishOpen,
-                                                 this, base::Passed(&file)));
+  io_task_runner->PostTask(
+      FROM_HERE,
+      base::BindOnce(&SerialIoHandler::FinishOpen, this, std::move(file)));
 }
 
 void SerialIoHandler::FinishOpen(base::File file) {
-  DCHECK(CalledOnValidThread());
-  DCHECK(!open_complete_.is_null());
-  OpenCompleteCallback callback = open_complete_;
-  open_complete_.Reset();
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(open_complete_);
 
   if (!file.IsValid()) {
     LOG(ERROR) << "Failed to open serial port: "
                << base::File::ErrorToString(file.error_details());
-    callback.Run(false);
+    std::move(open_complete_).Run(false);
     return;
   }
 
@@ -161,7 +158,7 @@ void SerialIoHandler::FinishOpen(base::File file) {
   if (!success)
     Close();
 
-  callback.Run(success);
+  std::move(open_complete_).Run(success);
 }
 
 bool SerialIoHandler::PostOpen() {
@@ -170,10 +167,10 @@ bool SerialIoHandler::PostOpen() {
 
 void SerialIoHandler::Close() {
   if (file_.IsValid()) {
-    DCHECK(file_thread_task_runner_.get());
-    file_thread_task_runner_->PostTask(
+    base::PostTaskWithTraits(
         FROM_HERE,
-        base::Bind(&SerialIoHandler::DoClose, Passed(std::move(file_))));
+        {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+        base::BindOnce(&SerialIoHandler::DoClose, std::move(file_)));
   }
 }
 
@@ -183,7 +180,7 @@ void SerialIoHandler::DoClose(base::File port) {
 }
 
 void SerialIoHandler::Read(std::unique_ptr<WritableBuffer> buffer) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!IsReadPending());
   pending_read_buffer_ = std::move(buffer);
   read_canceled_ = false;
@@ -192,7 +189,7 @@ void SerialIoHandler::Read(std::unique_ptr<WritableBuffer> buffer) {
 }
 
 void SerialIoHandler::Write(std::unique_ptr<ReadOnlyBuffer> buffer) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!IsWritePending());
   pending_write_buffer_ = std::move(buffer);
   write_canceled_ = false;
@@ -201,12 +198,12 @@ void SerialIoHandler::Write(std::unique_ptr<ReadOnlyBuffer> buffer) {
 }
 
 void SerialIoHandler::ReadCompleted(int bytes_read,
-                                    serial::ReceiveError error) {
-  DCHECK(CalledOnValidThread());
+                                    mojom::SerialReceiveError error) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(IsReadPending());
   std::unique_ptr<WritableBuffer> pending_read_buffer =
       std::move(pending_read_buffer_);
-  if (error == serial::ReceiveError::NONE) {
+  if (error == mojom::SerialReceiveError::NONE) {
     pending_read_buffer->Done(bytes_read);
   } else {
     pending_read_buffer->DoneWithError(bytes_read, static_cast<int32_t>(error));
@@ -215,12 +212,12 @@ void SerialIoHandler::ReadCompleted(int bytes_read,
 }
 
 void SerialIoHandler::WriteCompleted(int bytes_written,
-                                     serial::SendError error) {
-  DCHECK(CalledOnValidThread());
+                                     mojom::SerialSendError error) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(IsWritePending());
   std::unique_ptr<ReadOnlyBuffer> pending_write_buffer =
       std::move(pending_write_buffer_);
-  if (error == serial::SendError::NONE) {
+  if (error == mojom::SerialSendError::NONE) {
     pending_write_buffer->Done(bytes_written);
   } else {
     pending_write_buffer->DoneWithError(bytes_written,
@@ -230,17 +227,17 @@ void SerialIoHandler::WriteCompleted(int bytes_written,
 }
 
 bool SerialIoHandler::IsReadPending() const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return pending_read_buffer_ != NULL;
 }
 
 bool SerialIoHandler::IsWritePending() const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return pending_write_buffer_ != NULL;
 }
 
-void SerialIoHandler::CancelRead(serial::ReceiveError reason) {
-  DCHECK(CalledOnValidThread());
+void SerialIoHandler::CancelRead(mojom::SerialReceiveError reason) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (IsReadPending() && !read_canceled_) {
     read_canceled_ = true;
     read_cancel_reason_ = reason;
@@ -248,8 +245,8 @@ void SerialIoHandler::CancelRead(serial::ReceiveError reason) {
   }
 }
 
-void SerialIoHandler::CancelWrite(serial::SendError reason) {
-  DCHECK(CalledOnValidThread());
+void SerialIoHandler::CancelWrite(mojom::SerialSendError reason) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (IsWritePending() && !write_canceled_) {
     write_canceled_ = true;
     write_cancel_reason_ = reason;
@@ -257,23 +254,24 @@ void SerialIoHandler::CancelWrite(serial::SendError reason) {
   }
 }
 
-bool SerialIoHandler::ConfigurePort(const serial::ConnectionOptions& options) {
+bool SerialIoHandler::ConfigurePort(
+    const mojom::SerialConnectionOptions& options) {
   MergeConnectionOptions(options);
   return ConfigurePortImpl();
 }
 
 void SerialIoHandler::QueueReadCompleted(int bytes_read,
-                                         serial::ReceiveError error) {
+                                         mojom::SerialReceiveError error) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&SerialIoHandler::ReadCompleted, this, bytes_read, error));
+      base::BindOnce(&SerialIoHandler::ReadCompleted, this, bytes_read, error));
 }
 
 void SerialIoHandler::QueueWriteCompleted(int bytes_written,
-                                          serial::SendError error) {
+                                          mojom::SerialSendError error) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&SerialIoHandler::WriteCompleted, this, bytes_written, error));
+      FROM_HERE, base::BindOnce(&SerialIoHandler::WriteCompleted, this,
+                                bytes_written, error));
 }
 
 }  // namespace device

@@ -6,13 +6,14 @@
 #define CHROME_BROWSER_EXTENSIONS_API_MESSAGING_NATIVE_MESSAGE_PROCESS_HOST_H_
 
 #include <memory>
-#include <queue>
 #include <string>
 
+#include "base/containers/queue.h"
 #include "base/files/file.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
+#include "base/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/messaging/native_process_launcher.h"
 #include "extensions/browser/api/messaging/native_message_host.h"
@@ -53,10 +54,6 @@ class NativeMessageProcessHost : public NativeMessageHost {
   void OnMessage(const std::string& message) override;
   void Start(Client* client) override;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner() const override;
-
-  // Try and read a single message from |read_file_|. This should only be called
-  // in unittests when you know there is data in the file.
-  void ReadNowForTesting();
 
  private:
   NativeMessageProcessHost(const std::string& source_extension_id,
@@ -127,7 +124,7 @@ class NativeMessageProcessHost : public NativeMessageHost {
   std::string incoming_data_;
 
   // Queue for outgoing messages.
-  std::queue<scoped_refptr<net::IOBufferWithSize> > write_queue_;
+  base::queue<scoped_refptr<net::IOBufferWithSize>> write_queue_;
 
   // The message that's currently being sent.
   scoped_refptr<net::DrainableIOBuffer> current_write_buffer_;

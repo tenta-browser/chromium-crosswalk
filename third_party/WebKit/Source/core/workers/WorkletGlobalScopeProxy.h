@@ -6,20 +6,39 @@
 #define WorkletGlobalScopeProxy_h
 
 #include "core/CoreExport.h"
+#include "platform/WebTaskRunner.h"
+#include "platform/heap/GarbageCollected.h"
 #include "platform/weborigin/KURL.h"
-#include "platform/wtf/text/WTFString.h"
+#include "public/platform/WebURLRequest.h"
 
 namespace blink {
 
-class ScriptSourceCode;
+class WorkletModuleResponsesMap;
+class WorkletPendingTasks;
 
-// A proxy to talk to the worklet global scope. The global scope may exist in
-// the main thread or on a different thread.
-class CORE_EXPORT WorkletGlobalScopeProxy {
+// Abstracts communication from (Main/Threaded)Worklet on the main thread to
+// (Main/Threaded)WorkletGlobalScope so that Worklet class doesn't have to care
+// about the thread WorkletGlobalScope runs on.
+class CORE_EXPORT WorkletGlobalScopeProxy : public GarbageCollectedMixin {
  public:
   virtual ~WorkletGlobalScopeProxy() {}
 
-  virtual void EvaluateScript(const ScriptSourceCode&) = 0;
+  // Runs the "fetch and invoke a worklet script" algorithm:
+  // https://drafts.css-houdini.org/worklets/#fetch-and-invoke-a-worklet-script
+  virtual void FetchAndInvokeScript(
+      const KURL& module_url_record,
+      WorkletModuleResponsesMap*,
+      network::mojom::FetchCredentialsMode,
+      scoped_refptr<WebTaskRunner> outside_settings_task_runner,
+      WorkletPendingTasks*) = 0;
+
+  // Notifies that the Worklet object is destroyed. This should be called in the
+  // destructor of the Worklet object. This may call
+  // ThreadedMessagingProxy::ParentObjectDestroyed() and cause deletion of
+  // |this|. See comments on ParentObjectDestroyed() for details.
+  virtual void WorkletObjectDestroyed() = 0;
+
+  // Terminates the worklet global scope from the main thread.
   virtual void TerminateWorkletGlobalScope() = 0;
 };
 

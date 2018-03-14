@@ -33,7 +33,7 @@ base::string16 DefaultTabTitle() {
 class TabbedPaneTest : public ViewsTestBase {
  public:
   TabbedPaneTest() {
-    tabbed_pane_ = base::MakeUnique<TabbedPane>();
+    tabbed_pane_ = std::make_unique<TabbedPane>();
     tabbed_pane_->set_owned_by_client();
   }
 
@@ -159,18 +159,12 @@ TEST_F(TabbedPaneTest, SelectTabWithAccessibleAction) {
   // Check the a11y information for each tab.
   for (int i = 0; i < kNumTabs; ++i) {
     ui::AXNodeData data;
-
-    // AXViewObjWrapper::Serialize() and NativeViewAccessibilityBase::GetData()
-    // are normally responsible for clearing the state from the default
-    // AXNodeData constructor. Do the same here.
-    data.state = 0;
-
     GetTabAt(i)->GetAccessibleNodeData(&data);
     SCOPED_TRACE(testing::Message() << "Tab at index: " << i);
     EXPECT_EQ(ui::AX_ROLE_TAB, data.role);
     EXPECT_EQ(DefaultTabTitle(), data.GetString16Attribute(ui::AX_ATTR_NAME));
-    EXPECT_TRUE(data.HasStateFlag(ui::AX_STATE_SELECTABLE));
-    EXPECT_EQ(i == 0, data.HasStateFlag(ui::AX_STATE_SELECTED));
+    EXPECT_TRUE(data.HasState(ui::AX_STATE_SELECTABLE));
+    EXPECT_EQ(i == 0, data.HasState(ui::AX_STATE_SELECTED));
   }
 
   ui::AXActionData action;

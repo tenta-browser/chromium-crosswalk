@@ -35,11 +35,12 @@
 
 namespace blink {
 
+class ImageResourceObserver;
+
 // StylePendingImage is a placeholder StyleImage that is entered into the
 // ComputedStyle during style resolution, in order to avoid loading images that
 // are not referenced by the final style.  They should never exist in a
 // ComputedStyle after it has been returned from the style selector.
-
 class StylePendingImage final : public StyleImage {
  public:
   static StylePendingImage* Create(const CSSValue& value) {
@@ -56,38 +57,42 @@ class StylePendingImage final : public StyleImage {
   }
 
   CSSImageValue* CssImageValue() const {
-    return value_->IsImageValue() ? ToCSSImageValue(value_.Get()) : 0;
+    return value_->IsImageValue() ? ToCSSImageValue(value_.Get()) : nullptr;
   }
   CSSPaintValue* CssPaintValue() const {
-    return value_->IsPaintValue() ? ToCSSPaintValue(value_.Get()) : 0;
+    return value_->IsPaintValue() ? ToCSSPaintValue(value_.Get()) : nullptr;
   }
   CSSImageGeneratorValue* CssImageGeneratorValue() const {
     return value_->IsImageGeneratorValue()
                ? ToCSSImageGeneratorValue(value_.Get())
-               : 0;
+               : nullptr;
   }
   CSSImageSetValue* CssImageSetValue() const {
-    return value_->IsImageSetValue() ? ToCSSImageSetValue(value_.Get()) : 0;
+    return value_->IsImageSetValue() ? ToCSSImageSetValue(value_.Get())
+                                     : nullptr;
   }
 
-  LayoutSize ImageSize(const LayoutObject&,
+  LayoutSize ImageSize(const Document&,
                        float /*multiplier*/,
                        const LayoutSize& /*defaultObjectSize*/) const override {
     return LayoutSize();
   }
   bool ImageHasRelativeSize() const override { return false; }
   bool UsesImageContainerSize() const override { return false; }
-  void AddClient(LayoutObject*) override {}
-  void RemoveClient(LayoutObject*) override {}
-  PassRefPtr<Image> GetImage(const LayoutObject&,
-                             const IntSize&,
-                             float) const override {
+  void AddClient(ImageResourceObserver*) override {}
+  void RemoveClient(ImageResourceObserver*) override {}
+  scoped_refptr<Image> GetImage(const ImageResourceObserver&,
+                                const Document&,
+                                const ComputedStyle&,
+                                const IntSize& container_size) const override {
     NOTREACHED();
     return nullptr;
   }
-  bool KnownToBeOpaque(const LayoutObject&) const override { return false; }
+  bool KnownToBeOpaque(const Document&, const ComputedStyle&) const override {
+    return false;
+  }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  virtual void Trace(blink::Visitor* visitor) {
     visitor->Trace(value_);
     StyleImage::Trace(visitor);
   }

@@ -7,41 +7,72 @@
  * to interact with the browser.
  */
 
+/**
+ * An ImportantSite represents a domain with data that the user might want
+ * to protect from being deleted. ImportantSites are determined based on
+ * various engagement factors, such as whether a site is bookmarked or receives
+ * notifications.
+ *
+ * @typedef {{
+ *   registerableDomain: string,
+ *   reasonBitfield: number,
+ *   exampleOrigin: string,
+ *   isChecked: boolean,
+ *   storageSize: number,
+ *   hasNotifications: boolean
+ * }}
+ */
+var ImportantSite;
+
 cr.define('settings', function() {
   /** @interface */
-  function ClearBrowsingDataBrowserProxy() {}
-
-  ClearBrowsingDataBrowserProxy.prototype = {
+  class ClearBrowsingDataBrowserProxy {
     /**
-     * @return {!Promise} A promise resolved when data clearing has completed.
+     * @param {!Array<string>} dataTypes
+     * @param {number} timePeriod
+     * @param {!Array<!ImportantSite>} importantSites
+     * @return {!Promise<boolean>}
+     *     A promise resolved when data clearing has completed. The boolean
+     *     indicates whether an additional dialog should be shown, informing the
+     *     user about other forms of browsing history.
      */
-    clearBrowsingData: function() {},
+    clearBrowsingData(dataTypes, timePeriod, importantSites) {}
+
+    /**
+     * @return {!Promise<!Array<!ImportantSite>>}
+     *     A promise resolved when imporant sites are retrieved.
+     */
+    getImportantSites() {}
 
     /**
      * Kick off counter updates and return initial state.
      * @return {!Promise<void>} Signal when the setup is complete.
      */
-    initialize: function() {},
-  };
+    initialize() {}
+  }
 
   /**
-   * @constructor
    * @implements {settings.ClearBrowsingDataBrowserProxy}
    */
-  function ClearBrowsingDataBrowserProxyImpl() {}
-  cr.addSingletonGetter(ClearBrowsingDataBrowserProxyImpl);
-
-  ClearBrowsingDataBrowserProxyImpl.prototype = {
+  class ClearBrowsingDataBrowserProxyImpl {
     /** @override */
-    clearBrowsingData: function() {
-      return cr.sendWithPromise('clearBrowsingData');
-    },
+    clearBrowsingData(dataTypes, timePeriod, importantSites) {
+      return cr.sendWithPromise(
+          'clearBrowsingData', dataTypes, timePeriod, importantSites);
+    }
 
     /** @override */
-    initialize: function() {
+    getImportantSites() {
+      return cr.sendWithPromise('getImportantSites');
+    }
+
+    /** @override */
+    initialize() {
       return cr.sendWithPromise('initializeClearBrowsingData');
-    },
-  };
+    }
+  }
+
+  cr.addSingletonGetter(ClearBrowsingDataBrowserProxyImpl);
 
   return {
     ClearBrowsingDataBrowserProxy: ClearBrowsingDataBrowserProxy,

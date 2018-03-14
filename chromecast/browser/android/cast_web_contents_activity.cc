@@ -4,6 +4,7 @@
 
 #include "chromecast/browser/android/cast_web_contents_activity.h"
 
+#include "base/memory/ptr_util.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/CastWebContentsActivity_jni.h"
 
@@ -21,21 +22,17 @@ const void* kCastWebContentsActivityKey =
 }  // namespace
 
 // static
-void SetContentVideoViewEmbedder(JNIEnv* env,
-                                 const JavaParamRef<jobject>& jcaller,
-                                 const JavaParamRef<jobject>& webContents,
-                                 const JavaParamRef<jobject>& embedder) {
+void JNI_CastWebContentsActivity_SetContentVideoViewEmbedder(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& jcaller,
+    const JavaParamRef<jobject>& webContents,
+    const JavaParamRef<jobject>& embedder) {
   content::WebContents* web_contents =
       content::WebContents::FromJavaWebContents(webContents);
   DCHECK(web_contents);
   CastWebContentsActivity* activity =
       CastWebContentsActivity::Get(web_contents);
   activity->SetContentVideoViewEmbedder(embedder);
-}
-
-// static
-bool CastWebContentsActivity::RegisterJni(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 // static
@@ -46,7 +43,8 @@ CastWebContentsActivity* CastWebContentsActivity::Get(
       web_contents->GetUserData(kCastWebContentsActivityKey));
   if (!instance) {
     instance = new CastWebContentsActivity(web_contents);
-    web_contents->SetUserData(kCastWebContentsActivityKey, instance);
+    web_contents->SetUserData(kCastWebContentsActivityKey,
+                              base::WrapUnique(instance));
   }
   return instance;
 }

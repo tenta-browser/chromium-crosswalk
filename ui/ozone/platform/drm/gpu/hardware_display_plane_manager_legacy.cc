@@ -98,6 +98,25 @@ bool HardwareDisplayPlaneManagerLegacy::Commit(
   return ret;
 }
 
+bool HardwareDisplayPlaneManagerLegacy::DisableOverlayPlanes(
+    HardwareDisplayPlaneList* plane_list) {
+  // We're never going to ship legacy pageflip with overlays enabled.
+  DCHECK(std::find_if(plane_list->old_plane_list.begin(),
+                      plane_list->old_plane_list.end(),
+                      [](HardwareDisplayPlane* plane) {
+                        return plane->type() == HardwareDisplayPlane::kOverlay;
+                      }) == plane_list->old_plane_list.end());
+  return true;
+}
+
+bool HardwareDisplayPlaneManagerLegacy::ValidatePrimarySize(
+    const OverlayPlane& primary,
+    const drmModeModeInfo& mode) {
+  DCHECK(primary.buffer.get());
+
+  return primary.buffer->GetSize() == gfx::Size(mode.hdisplay, mode.vdisplay);
+}
+
 bool HardwareDisplayPlaneManagerLegacy::SetPlaneData(
     HardwareDisplayPlaneList* plane_list,
     HardwareDisplayPlane* hw_plane,
@@ -105,6 +124,9 @@ bool HardwareDisplayPlaneManagerLegacy::SetPlaneData(
     uint32_t crtc_id,
     const gfx::Rect& src_rect,
     CrtcController* crtc) {
+  // Legacy modesetting rejects transforms.
+  if (overlay.plane_transform != gfx::OVERLAY_TRANSFORM_NONE)
+    return false;
   if ((hw_plane->type() == HardwareDisplayPlane::kDummy) ||
       plane_list->legacy_page_flips.empty() ||
       plane_list->legacy_page_flips.back().crtc_id != crtc_id) {

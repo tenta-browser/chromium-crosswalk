@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <X11/XKBlib.h>
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include <X11/extensions/XInput2.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -13,10 +9,6 @@
 #include <memory>
 #include <set>
 #include <utility>
-
-// Generically-named #defines from Xlib that conflict with symbols in GTest.
-#undef Bool
-#undef None
 
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
@@ -31,6 +23,7 @@
 #include "ui/events/test/events_test_utils_x11.h"
 #include "ui/events/x/events_x_utils.h"
 #include "ui/gfx/geometry/point.h"
+#include "ui/gfx/x/x11.h"
 
 namespace ui {
 
@@ -189,6 +182,7 @@ TEST_F(EventsXTest, EnterLeaveEvent) {
   // the way views handle mouse enter. See comments for EnterNotify case in
   // ui::EventTypeFromNative for more details.
   EXPECT_EQ(ui::ET_MOUSE_MOVED, ui::EventTypeFromNative(&event));
+  EXPECT_TRUE(ui::EventFlagsFromNative(&event) & ui::EF_IS_SYNTHESIZED);
   EXPECT_EQ(
       "10,20",
       gfx::ToFlooredPoint(ui::EventLocationFromNative(&event)).ToString());
@@ -210,7 +204,7 @@ TEST_F(EventsXTest, ClickCount) {
   XEvent event;
   gfx::Point location(5, 10);
 
-  base::TimeDelta time_stamp = base::TimeTicks::Now() - base::TimeTicks() -
+  base::TimeDelta time_stamp = base::TimeTicks::Now().since_origin() -
                                base::TimeDelta::FromMilliseconds(10);
   for (int i = 1; i <= 3; ++i) {
     InitButtonEvent(&event, true, location, 1, 0);
@@ -539,15 +533,22 @@ TEST_F(EventsXTest, IgnoresMotionEventForMouseWheelScroll) {
 }
 
 namespace {
+
+// Returns a fake TimeTicks based on the given millisecond offset.
+base::TimeTicks TimeTicksFromMillis(int64_t millis) {
+  return base::TimeTicks() + base::TimeDelta::FromMilliseconds(millis);
+}
+
 class MockTickClock : public base::TickClock {
  public:
-  explicit MockTickClock(uint64_t milliseconds)
-      : ticks_(base::TimeTicks::FromInternalValue(milliseconds * 1000)) {}
+  explicit MockTickClock(int64_t milliseconds)
+      : ticks_(TimeTicksFromMillis(milliseconds)) {}
   base::TimeTicks NowTicks() override { return ticks_; }
 
  private:
   base::TimeTicks ticks_;
 };
+
 }  // namespace
 
 TEST_F(EventsXTest, TimestampRolloverAndAdjustWhenDecreasing) {
@@ -555,40 +556,35 @@ TEST_F(EventsXTest, TimestampRolloverAndAdjustWhenDecreasing) {
   InitButtonEvent(&event, true, gfx::Point(5, 10), 1, 0);
 
   ResetTimestampRolloverCountersForTesting(
-      base::MakeUnique<MockTickClock>(0x100000001LL));
+      std::make_unique<MockTickClock>(0x100000001));
 
   event.xbutton.time = 0xFFFFFFFF;
-  EXPECT_EQ(base::TimeDelta::FromMilliseconds(0xFFFFFFFF).ToInternalValue(),
-            ui::EventTimeFromNative(&event).ToInternalValue());
+  EXPECT_EQ(TimeTicksFromMillis(0xFFFFFFFF), ui::EventTimeFromNative(&event));
 
   ResetTimestampRolloverCountersForTesting(
-      base::MakeUnique<MockTickClock>(0x100000007LL));
+      std::make_unique<MockTickClock>(0x100000007));
 
   event.xbutton.time = 3;
-  EXPECT_EQ(
-      base::TimeDelta::FromMilliseconds(0x100000000LL + 3).ToInternalValue(),
-      ui::EventTimeFromNative(&event).ToInternalValue());
+  EXPECT_EQ(TimeTicksFromMillis(0x100000000 + 3),
+            ui::EventTimeFromNative(&event));
 }
 
 TEST_F(EventsXTest, NoTimestampRolloverWhenMonotonicIncreasing) {
   XEvent event;
   InitButtonEvent(&event, true, gfx::Point(5, 10), 1, 0);
 
-  ResetTimestampRolloverCountersForTesting(base::MakeUnique<MockTickClock>(10));
+  ResetTimestampRolloverCountersForTesting(std::make_unique<MockTickClock>(10));
 
   event.xbutton.time = 6;
-  EXPECT_EQ(base::TimeDelta::FromMilliseconds(6).ToInternalValue(),
-            ui::EventTimeFromNative(&event).ToInternalValue());
+  EXPECT_EQ(TimeTicksFromMillis(6), ui::EventTimeFromNative(&event));
   event.xbutton.time = 7;
-  EXPECT_EQ(base::TimeDelta::FromMilliseconds(7).ToInternalValue(),
-            ui::EventTimeFromNative(&event).ToInternalValue());
+  EXPECT_EQ(TimeTicksFromMillis(7), ui::EventTimeFromNative(&event));
 
   ResetTimestampRolloverCountersForTesting(
-      base::MakeUnique<MockTickClock>(0x100000005));
+      std::make_unique<MockTickClock>(0x100000005));
 
   event.xbutton.time = 0xFFFFFFFF;
-  EXPECT_EQ(base::TimeDelta::FromMilliseconds(0xFFFFFFFF).ToInternalValue(),
-            ui::EventTimeFromNative(&event).ToInternalValue());
+  EXPECT_EQ(TimeTicksFromMillis(0xFFFFFFFF), ui::EventTimeFromNative(&event));
 }
 
 }  // namespace ui

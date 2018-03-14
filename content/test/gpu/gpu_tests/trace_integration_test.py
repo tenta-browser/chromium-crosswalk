@@ -30,8 +30,6 @@ test_harness_script = r"""
 
   domAutomationController._finished = false;
 
-  domAutomationController.setAutomationId = function(id) {}
-
   domAutomationController.send = function(msg) {
     // Issue a read pixel to synchronize the gpu process to ensure
     // the asynchronous category enabling is finished.
@@ -62,12 +60,6 @@ class TraceIntegrationTest(gpu_integration_test.GpuIntegrationTest):
   @classmethod
   def Name(cls):
     return 'trace_test'
-
-  @classmethod
-  def CustomizeOptions(cls):
-    options = cls._finder_options.browser_options
-    options.AppendExtraBrowserArgs('--enable-logging')
-    options.AppendExtraBrowserArgs('--enable-experimental-canvas-features')
 
   @classmethod
   def GenerateGpuTests(cls, options):
@@ -103,6 +95,13 @@ class TraceIntegrationTest(gpu_integration_test.GpuIntegrationTest):
     # Stop tracing.
     timeline_data = tab.browser.platform.tracing_controller.StopTracing()
 
+    # TODO(charliea): This is part of a three-sided Chromium/Telemetry patch
+    # where we're changing the return type of StopTracing from a TraceValue to a
+    # (TraceValue, nonfatal_exception_list) tuple. Once the tuple return value
+    # lands in Chromium, the non-tuple logic should be deleted.
+    if isinstance(timeline_data, tuple):
+      timeline_data = timeline_data[0]
+
     # Evaluate success.
     timeline_model = model_module.TimelineModel(timeline_data)
     category_name = args[0]
@@ -125,10 +124,11 @@ class TraceIntegrationTest(gpu_integration_test.GpuIntegrationTest):
 
   @classmethod
   def SetUpProcess(cls):
-    super(cls, TraceIntegrationTest).SetUpProcess()
+    super(TraceIntegrationTest, cls).SetUpProcess()
     path_util.SetupTelemetryPaths()
-    cls.CustomizeOptions()
-    cls.SetBrowserOptions(cls._finder_options)
+    cls.CustomizeBrowserArgs([
+      '--enable-logging',
+      '--enable-experimental-canvas-features'])
     cls.StartBrowser()
     cls.SetStaticServerDirs(data_paths)
 

@@ -6,10 +6,10 @@
 
 #include <memory>
 #include "core/dom/Document.h"
-#include "core/dom/FrameRequestCallback.h"
-#include "core/events/Event.h"
-#include "core/events/EventListener.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/FrameRequestCallbackCollection.h"
+#include "core/dom/events/Event.h"
+#include "core/dom/events/EventListener.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/testing/DummyPageHolder.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Functional.h"
@@ -44,7 +44,7 @@ namespace {
 
 class TaskOrderObserver {
  public:
-  std::unique_ptr<WTF::Closure> CreateTask(int id) {
+  WTF::Closure CreateTask(int id) {
     return WTF::Bind(&TaskOrderObserver::RunTask, WTF::Unretained(this), id);
   }
   const Vector<int>& Order() const { return order_; }
@@ -118,15 +118,15 @@ namespace {
 
 class RunTaskEventListener final : public EventListener {
  public:
-  RunTaskEventListener(std::unique_ptr<WTF::Closure> task)
+  RunTaskEventListener(WTF::RepeatingClosure task)
       : EventListener(kCPPEventListenerType), task_(std::move(task)) {}
-  void handleEvent(ExecutionContext*, Event*) override { (*task_)(); }
+  void handleEvent(ExecutionContext*, Event*) override { task_.Run(); }
   bool operator==(const EventListener& other) const override {
     return this == &other;
   }
 
  private:
-  std::unique_ptr<WTF::Closure> task_;
+  WTF::RepeatingClosure task_;
 };
 
 }  // anonymous namespace
@@ -152,14 +152,14 @@ TEST_F(ScriptedAnimationControllerTest, EnqueueTaskAndEvent) {
 
 namespace {
 
-class RunTaskCallback final : public FrameRequestCallback {
+class RunTaskCallback final
+    : public FrameRequestCallbackCollection::FrameCallback {
  public:
-  RunTaskCallback(std::unique_ptr<WTF::Closure> task)
-      : task_(std::move(task)) {}
-  void handleEvent(double) override { (*task_)(); }
+  RunTaskCallback(WTF::RepeatingClosure task) : task_(std::move(task)) {}
+  void Invoke(double) override { task_.Run(); }
 
  private:
-  std::unique_ptr<WTF::Closure> task_;
+  WTF::RepeatingClosure task_;
 };
 
 }  // anonymous namespace

@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_reg_util_win.h"
 #include "base/test/test_simple_task_runner.h"
@@ -68,7 +69,7 @@ class PlatformStateStoreWinTest : public ::testing::Test {
             new TestingPrefStore(), new TestingPrefStore(), user_pref_store,
             new TestingPrefStore(), new user_prefs::PrefRegistrySyncable(),
             new PrefNotifierImpl()));
-    chrome::RegisterUserProfilePrefs(prefs->registry());
+    RegisterUserProfilePrefs(prefs->registry());
     profile_ = profile_manager_.CreateTestingProfile(
         kProfileName_, std::move(prefs), base::UTF8ToUTF16(kProfileName_), 0,
         std::string(), TestingProfile::TestingFactories());

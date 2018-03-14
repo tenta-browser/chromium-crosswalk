@@ -38,7 +38,7 @@ class ContentSettingDecoration : public ImageDecoration {
   bool UpdateFromWebContents(content::WebContents* web_contents);
 
   // Overridden from |LocationBarDecoration|
-  bool AcceptsMousePress() override;
+  AcceptsPress AcceptsMousePress() override;
   bool OnMousePressed(NSRect frame, NSPoint location) override;
   NSString* GetToolTip() override;
   CGFloat GetWidthForSpace(CGFloat width) override;
@@ -48,6 +48,9 @@ class ContentSettingDecoration : public ImageDecoration {
   // Called from internal animator. Only public because ObjC objects can't
   // be friends.
   virtual void AnimationTimerFired();
+
+ protected:
+  CGFloat DividerPadding() const override;
 
  private:
   friend class ContentSettingDecorationTest;

@@ -14,6 +14,7 @@ namespace ui {
 
 struct AXActionData;
 struct AXNodeData;
+struct AXTreeData;
 class AXPlatformNode;
 
 // An object that wants to be accessible should derive from this class.
@@ -36,12 +37,18 @@ class AX_EXPORT AXPlatformNodeDelegate {
   // is mostly to implement support for walking the accessibility tree.
   virtual const AXNodeData& GetData() const = 0;
 
+  // Get the accessibility tree data for this node.
+  virtual const AXTreeData& GetTreeData() const = 0;
+
   // Get the window the node is contained in.
   virtual gfx::NativeWindow GetTopLevelWidget() = 0;
 
   // Get the parent of the node, which may be an AXPlatformNode or it may
   // be a native accessible object implemented by another class.
   virtual gfx::NativeViewAccessible GetParent() = 0;
+
+  // Get the index in parent. Typically this is the AXNode's index_in_parent_.
+  virtual int GetIndexInParent() const = 0;
 
   // Get the number of children of this node.
   virtual int GetChildCount() = 0;
@@ -69,6 +76,11 @@ class AX_EXPORT AXPlatformNodeDelegate {
   // has focus.
   virtual gfx::NativeViewAccessible GetFocus() = 0;
 
+  // Get whether this node is offscreen.
+  virtual bool IsOffscreen() const = 0;
+
+  virtual AXPlatformNode* GetFromNodeID(int32_t id) = 0;
+
   //
   // Events.
   //
@@ -81,9 +93,19 @@ class AX_EXPORT AXPlatformNodeDelegate {
   // Actions.
   //
 
-  // Perform an accessibility action, switching on the ui::AXAction
+  // Perform an accessibility action, switching on the AXAction
   // provided in |data|.
-  virtual bool AccessibilityPerformAction(const ui::AXActionData& data) = 0;
+  virtual bool AccessibilityPerformAction(const AXActionData& data) = 0;
+
+  //
+  // Testing.
+  //
+
+  // Accessibility objects can have the "hot tracked" state set when
+  // the mouse is hovering over them, but this makes tests flaky because
+  // the test behaves differently when the mouse happens to be over an
+  // element. The default value should be falses if not in testing mode.
+  virtual bool ShouldIgnoreHoveredStateForTesting() = 0;
 };
 
 }  // namespace ui

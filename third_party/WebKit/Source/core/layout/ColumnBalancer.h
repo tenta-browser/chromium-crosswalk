@@ -55,9 +55,11 @@ class ColumnBalancer {
       // in a previous fragmentainer group.
       return false;
     }
+    const auto& group = GroupAtOffset(flow_thread_offset);
+    if (!group.IsLogicalHeightKnown())
+      return false;
     return flow_thread_offset ==
-           GroupAtOffset(flow_thread_offset)
-               .ColumnLogicalTopForOffset(flow_thread_offset);
+           group.ColumnLogicalTopForOffset(flow_thread_offset);
   }
 
   bool IsLogicalTopWithinBounds(LayoutUnit logical_top_in_flow_thread) const {
@@ -136,12 +138,13 @@ class InitialColumnHeightFinder final : public ColumnBalancer {
   }
 
  private:
-  void ExamineBoxAfterEntering(const LayoutBox&,
-                               LayoutUnit child_logical_height,
-                               EBreakBetween previous_break_after_value);
+  void ExamineBoxAfterEntering(
+      const LayoutBox&,
+      LayoutUnit child_logical_height,
+      EBreakBetween previous_break_after_value) override;
   void ExamineBoxBeforeLeaving(const LayoutBox&,
-                               LayoutUnit child_logical_height);
-  void ExamineLine(const RootInlineBox&);
+                               LayoutUnit child_logical_height) override;
+  void ExamineLine(const RootInlineBox&) override;
 
   // Record that there's a pagination strut that ends at the specified
   // |offsetInFlowThread|, which is an offset exactly at the top of some column.
@@ -251,12 +254,13 @@ class MinimumSpaceShortageFinder final : public ColumnBalancer {
   unsigned ForcedBreaksCount() const { return forced_breaks_count_; }
 
  private:
-  void ExamineBoxAfterEntering(const LayoutBox&,
-                               LayoutUnit child_logical_height,
-                               EBreakBetween previous_break_after_value);
+  void ExamineBoxAfterEntering(
+      const LayoutBox&,
+      LayoutUnit child_logical_height,
+      EBreakBetween previous_break_after_value) override;
   void ExamineBoxBeforeLeaving(const LayoutBox&,
-                               LayoutUnit child_logical_height);
-  void ExamineLine(const RootInlineBox&);
+                               LayoutUnit child_logical_height) override;
+  void ExamineLine(const RootInlineBox&) override;
 
   void RecordSpaceShortage(LayoutUnit shortage) {
     // Only positive values are interesting (and allowed) here. Zero space

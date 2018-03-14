@@ -33,6 +33,11 @@
 
 namespace blink {
 
+template <typename Enum>
+inline bool EnumHasFlags(Enum v, Enum mask) {
+  return static_cast<unsigned>(v) & static_cast<unsigned>(mask);
+}
+
 // Some enums are automatically generated in ComputedStyleBaseConstants
 
 // TODO(sashab): Change these enums to enum classes with an unsigned underlying
@@ -86,51 +91,7 @@ enum PseudoId {
                          (1 << (kPseudoIdBackdrop - kFirstPublicPseudoId))
 };
 
-enum ColumnFill { kColumnFillBalance, kColumnFillAuto };
-
-enum ColumnSpan { kColumnSpanNone = 0, kColumnSpanAll };
-
-// These have been defined in the order of their precedence for
-// border-collapsing. Do not change this order! This order also must match the
-// order in CSSValueKeywords.in.
-enum EBorderStyle {
-  kBorderStyleNone,
-  kBorderStyleHidden,
-  kBorderStyleInset,
-  kBorderStyleGroove,
-  kBorderStyleOutset,
-  kBorderStyleRidge,
-  kBorderStyleDotted,
-  kBorderStyleDashed,
-  kBorderStyleSolid,
-  kBorderStyleDouble
-};
-
-enum EBorderPrecedence {
-  kBorderPrecedenceOff,
-  kBorderPrecedenceTable,
-  kBorderPrecedenceColumnGroup,
-  kBorderPrecedenceColumn,
-  kBorderPrecedenceRowGroup,
-  kBorderPrecedenceRow,
-  kBorderPrecedenceCell
-};
-
-enum OutlineIsAuto { kOutlineIsAutoOff = 0, kOutlineIsAutoOn };
-
-enum EMarginCollapse {
-  kMarginCollapseCollapse,
-  kMarginCollapseSeparate,
-  kMarginCollapseDiscard
-};
-
-// Box decoration attributes. Not inherited.
-
-enum EBoxDecorationBreak { kBoxDecorationBreakSlice, kBoxDecorationBreakClone };
-
-// Box attributes. Not inherited.
-
-enum class EBoxSizing : unsigned { kContentBox, kBorderBox };
+enum class OutlineIsAuto : bool { kOff = false, kOn = true };
 
 // Random visual rendering model attributes. Not inherited.
 
@@ -146,8 +107,6 @@ enum class EVerticalAlign : unsigned {
   kBaselineMiddle,
   kLength
 };
-
-enum TextCombine { kTextCombineNone, kTextCombineAll };
 
 enum EFillAttachment {
   kScrollBackgroundAttachment,
@@ -185,183 +144,12 @@ enum BackgroundEdgeOrigin { kTopEdge, kRightEdge, kBottomEdge, kLeftEdge };
 // CSS Mask Source Types
 enum EMaskSourceType { kMaskAlpha, kMaskLuminance };
 
-// Deprecated Flexible Box Properties
-
-enum EBoxPack { kBoxPackStart, kBoxPackCenter, kBoxPackEnd, kBoxPackJustify };
-enum EBoxAlignment { BSTRETCH, BSTART, BCENTER, BEND, BBASELINE };
-enum EBoxOrient { HORIZONTAL, VERTICAL };
-enum EBoxLines { SINGLE, MULTIPLE };
-
-// CSS3 Flexbox Properties
-
-enum EFlexDirection {
-  kFlowRow,
-  kFlowRowReverse,
-  kFlowColumn,
-  kFlowColumnReverse
-};
-enum EFlexWrap { kFlexNoWrap, kFlexWrap, kFlexWrapReverse };
-
-enum ETextSecurity { TSNONE, TSDISC, TSCIRCLE, TSSQUARE };
-
-// CSS3 User Modify Properties
-
-enum EUserModify { READ_ONLY, READ_WRITE, READ_WRITE_PLAINTEXT_ONLY };
-
-// CSS3 User Drag Values
-
-enum EUserDrag { DRAG_AUTO, DRAG_NONE, DRAG_ELEMENT };
-
-// CSS3 User Select Values
-
-enum EUserSelect { SELECT_NONE, SELECT_TEXT, SELECT_ALL };
-
 // CSS3 Image Values
-enum ObjectFit {
-  kObjectFitFill,
-  kObjectFitContain,
-  kObjectFitCover,
-  kObjectFitNone,
-  kObjectFitScaleDown
-};
-
-// Word Break Values. Matches WinIE and CSS3
-
-enum EWordBreak {
-  kNormalWordBreak,
-  kBreakAllWordBreak,
-  kKeepAllWordBreak,
-  kBreakWordBreak
-};
-
-enum EOverflowWrap { kNormalOverflowWrap, kBreakOverflowWrap };
-
-enum LineBreak {
-  kLineBreakAuto,
-  kLineBreakLoose,
-  kLineBreakNormal,
-  kLineBreakStrict,
-  kLineBreakAfterWhiteSpace
-};
-
-enum EResize { RESIZE_NONE, RESIZE_BOTH, RESIZE_HORIZONTAL, RESIZE_VERTICAL };
-
 enum QuoteType { OPEN_QUOTE, CLOSE_QUOTE, NO_OPEN_QUOTE, NO_CLOSE_QUOTE };
 
 enum EAnimPlayState { kAnimPlayStatePlaying, kAnimPlayStatePaused };
 
-static const size_t kTextDecorationBits = 4;
-enum TextDecoration {
-  kTextDecorationNone = 0x0,
-  kTextDecorationUnderline = 0x1,
-  kTextDecorationOverline = 0x2,
-  kTextDecorationLineThrough = 0x4,
-  kTextDecorationBlink = 0x8
-};
-inline TextDecoration operator|(TextDecoration a, TextDecoration b) {
-  return TextDecoration(int(a) | int(b));
-}
-inline TextDecoration& operator|=(TextDecoration& a, TextDecoration b) {
-  return a = a | b;
-}
-
-enum TextDecorationStyle {
-  kTextDecorationStyleSolid,
-  kTextDecorationStyleDouble,
-  kTextDecorationStyleDotted,
-  kTextDecorationStyleDashed,
-  kTextDecorationStyleWavy
-};
-
-static const size_t kTextDecorationSkipBits = 3;
-enum TextDecorationSkip {
-  kTextDecorationSkipNone = 0x0,
-  kTextDecorationSkipObjects = 0x1,
-  kTextDecorationSkipInk = 0x2
-};
-inline TextDecorationSkip operator|(TextDecorationSkip a,
-                                    TextDecorationSkip b) {
-  return TextDecorationSkip(static_cast<unsigned>(a) |
-                            static_cast<unsigned>(b));
-}
-inline TextDecorationSkip& operator|=(TextDecorationSkip& a,
-                                      TextDecorationSkip b) {
-  return a = a | b;
-}
-
-enum TextAlignLast {
-  kTextAlignLastAuto,
-  kTextAlignLastStart,
-  kTextAlignLastEnd,
-  kTextAlignLastLeft,
-  kTextAlignLastRight,
-  kTextAlignLastCenter,
-  kTextAlignLastJustify
-};
-
-enum TextUnderlinePosition {
-  // FIXME: Implement support for 'under left' and 'under right' values.
-  kTextUnderlinePositionAuto,
-  kTextUnderlinePositionUnder
-};
-
-enum ETransformStyle3D { kTransformStyle3DFlat, kTransformStyle3DPreserve3D };
-
 enum OffsetRotationType { kOffsetRotationAuto, kOffsetRotationFixed };
-
-enum EBackfaceVisibility {
-  kBackfaceVisibilityVisible,
-  kBackfaceVisibilityHidden
-};
-
-enum ELineClampType { kLineClampLineCount, kLineClampPercentage };
-
-enum Hyphens { kHyphensNone, kHyphensManual, kHyphensAuto };
-
-enum ESpeak {
-  kSpeakNone,
-  kSpeakNormal,
-  kSpeakSpellOut,
-  kSpeakDigits,
-  kSpeakLiteralPunctuation,
-  kSpeakNoPunctuation
-};
-
-enum TextEmphasisFill { kTextEmphasisFillFilled, kTextEmphasisFillOpen };
-
-enum TextEmphasisMark {
-  kTextEmphasisMarkNone,
-  kTextEmphasisMarkAuto,
-  kTextEmphasisMarkDot,
-  kTextEmphasisMarkCircle,
-  kTextEmphasisMarkDoubleCircle,
-  kTextEmphasisMarkTriangle,
-  kTextEmphasisMarkSesame,
-  kTextEmphasisMarkCustom
-};
-
-enum TextEmphasisPosition {
-  kTextEmphasisPositionOver,
-  kTextEmphasisPositionUnder
-};
-
-enum TextOrientation {
-  kTextOrientationMixed,
-  kTextOrientationUpright,
-  kTextOrientationSideways
-};
-
-enum TextOverflow { kTextOverflowClip = 0, kTextOverflowEllipsis };
-
-enum EImageRendering {
-  kImageRenderingAuto,
-  kImageRenderingOptimizeSpeed,
-  kImageRenderingOptimizeQuality,
-  kImageRenderingOptimizeContrast,
-  kImageRenderingPixelated
-};
-
-enum RubyPosition { kRubyPositionBefore, kRubyPositionAfter };
 
 static const size_t kGridAutoFlowBits = 4;
 enum InternalGridAutoFlowAlgorithm {
@@ -385,42 +173,6 @@ enum GridAutoFlow {
       kInternalAutoFlowAlgorithmDense | kInternalAutoFlowDirectionColumn
 };
 
-enum DraggableRegionMode {
-  kDraggableRegionNone,
-  kDraggableRegionDrag,
-  kDraggableRegionNoDrag
-};
-
-static const size_t kTouchActionBits = 6;
-enum TouchAction {
-  kTouchActionNone = 0x0,
-  kTouchActionPanLeft = 0x1,
-  kTouchActionPanRight = 0x2,
-  kTouchActionPanX = kTouchActionPanLeft | kTouchActionPanRight,
-  kTouchActionPanUp = 0x4,
-  kTouchActionPanDown = 0x8,
-  kTouchActionPanY = kTouchActionPanUp | kTouchActionPanDown,
-  kTouchActionPan = kTouchActionPanX | kTouchActionPanY,
-  kTouchActionPinchZoom = 0x10,
-  kTouchActionManipulation = kTouchActionPan | kTouchActionPinchZoom,
-  kTouchActionDoubleTapZoom = 0x20,
-  kTouchActionAuto = kTouchActionManipulation | kTouchActionDoubleTapZoom
-};
-inline TouchAction operator|(TouchAction a, TouchAction b) {
-  return static_cast<TouchAction>(int(a) | int(b));
-}
-inline TouchAction& operator|=(TouchAction& a, TouchAction b) {
-  return a = a | b;
-}
-inline TouchAction operator&(TouchAction a, TouchAction b) {
-  return static_cast<TouchAction>(int(a) & int(b));
-}
-inline TouchAction& operator&=(TouchAction& a, TouchAction b) {
-  return a = a & b;
-}
-
-enum EIsolation { kIsolationAuto, kIsolationIsolate };
-
 static const size_t kContainmentBits = 4;
 enum Containment {
   kContainsNone = 0x0,
@@ -440,8 +192,7 @@ inline Containment& operator|=(Containment& a, Containment b) {
 }
 
 enum ItemPosition {
-  kItemPositionAuto,  // It will mean 'normal' after running the StyleAdjuster
-                      // to avoid resolving the initial values.
+  kItemPositionAuto,
   kItemPositionNormal,
   kItemPositionStretch,
   kItemPositionBaseline,
@@ -490,9 +241,6 @@ enum ContentDistributionType {
 // platforms (such as Windows).
 static const float kMaximumAllowedFontSize = 10000.0f;
 
-enum TextIndentLine { kTextIndentFirstLine, kTextIndentEachLine };
-enum TextIndentType { kTextIndentNormal, kTextIndentHanging };
-
 enum CSSBoxType {
   kBoxMissing = 0,
   kMarginBox,
@@ -501,13 +249,24 @@ enum CSSBoxType {
   kContentBox
 };
 
-enum ScrollSnapType {
-  kScrollSnapTypeNone,
-  kScrollSnapTypeMandatory,
-  kScrollSnapTypeProximity
+enum class SnapAxis : unsigned {
+  kBoth,
+  kX,
+  kY,
+  kBlock,
+  kInline,
 };
 
-enum AutoRepeatType { kNoAutoRepeat, kAutoFill, kAutoFit };
+enum class SnapStrictness { kProximity, kMandatory };
+
+enum class SnapAlignment : unsigned { kNone, kStart, kEnd, kCenter };
+
+enum TextEmphasisPosition {
+  kOverRight,
+  kOverLeft,
+  kUnderRight,
+  kUnderLeft,
+};
 
 }  // namespace blink
 

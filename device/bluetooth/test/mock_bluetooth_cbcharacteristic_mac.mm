@@ -94,8 +94,7 @@ CBCharacteristicProperties GattCharacteristicPropertyToCBCharacteristicProperty(
   CBService* _service;
   scoped_nsobject<CBUUID> _UUID;
   CBCharacteristicProperties _cb_properties;
-  scoped_nsobject<NSMutableArray> _simulatedDescriptors;
-  scoped_nsobject<NSArray> _descriptors;
+  scoped_nsobject<NSMutableArray> _descriptors;
   scoped_nsobject<NSObject> _value;
   BOOL _notifying;
 }
@@ -113,7 +112,7 @@ CBCharacteristicProperties GattCharacteristicPropertyToCBCharacteristicProperty(
     _cb_properties =
         device::GattCharacteristicPropertyToCBCharacteristicProperty(
             properties);
-    _simulatedDescriptors.reset([[NSMutableArray alloc] init]);
+    _descriptors.reset([[NSMutableArray alloc] init]);
   }
   return self;
 }
@@ -189,19 +188,15 @@ CBCharacteristicProperties GattCharacteristicPropertyToCBCharacteristicProperty(
                                 error:nil];
 }
 
-- (void)simulateDescriptorWithUUID:(CBUUID*)uuid {
+- (void)addDescriptorWithUUID:(CBUUID*)uuid {
   scoped_nsobject<MockCBDescriptor> descriptor_mock([[MockCBDescriptor alloc]
       initWithCharacteristic:self.characteristic
                       CBUUID:uuid]);
-  [_simulatedDescriptors.get() addObject:descriptor_mock];
-}
-
-- (void)discoverDescriptors {
-  _descriptors.reset([_simulatedDescriptors copy]);
+  [_descriptors addObject:descriptor_mock];
 }
 
 - (CBUUID*)UUID {
-  return _UUID.get();
+  return _UUID;
 }
 
 - (CBCharacteristic*)characteristic {
@@ -221,7 +216,7 @@ CBCharacteristicProperties GattCharacteristicPropertyToCBCharacteristicProperty(
 }
 
 - (id)value {
-  return _value.get();
+  return _value;
 }
 
 - (BOOL)isNotifying {

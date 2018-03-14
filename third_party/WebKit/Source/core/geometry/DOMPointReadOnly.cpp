@@ -39,10 +39,12 @@ DOMPoint* DOMPointReadOnly::matrixTransform(DOMMatrixInit& other,
                                             ExceptionState& exception_state) {
   DOMMatrixReadOnly* matrix =
       DOMMatrixReadOnly::fromMatrix(other, exception_state);
+  if (exception_state.HadException())
+    return nullptr;
 
   if (matrix->is2D() && z() == 0 && w() == 1) {
     double transformed_x =
-        x() * matrix->m11() + y() * matrix->m12() + matrix->m41();
+        x() * matrix->m11() + y() * matrix->m21() + matrix->m41();
     double transformed_y =
         x() * matrix->m12() + y() * matrix->m22() + matrix->m42();
     return DOMPoint::Create(transformed_x, transformed_y, 0, 1);

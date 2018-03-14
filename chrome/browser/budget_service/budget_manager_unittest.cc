@@ -29,7 +29,7 @@ const double kTestSES = 48.0;
 
 class BudgetManagerTest : public testing::Test {
  public:
-  BudgetManagerTest() : origin_(url::Origin(GURL(kTestOrigin))) {}
+  BudgetManagerTest() : origin_(url::Origin::Create(GURL(kTestOrigin))) {}
   ~BudgetManagerTest() override {}
 
   BudgetManager* GetManager(Profile* profile) {
@@ -85,9 +85,9 @@ class BudgetManagerTest : public testing::Test {
   bool GetBudget(Profile* profile, double* out_budget_value) {
     base::RunLoop run_loop;
     GetManager(profile)->GetBudget(
-        origin(), base::Bind(&BudgetManagerTest::GetBudgetCallback,
-                             base::Unretained(this), out_budget_value,
-                             run_loop.QuitClosure()));
+        origin(), base::BindOnce(&BudgetManagerTest::GetBudgetCallback,
+                                 base::Unretained(this), out_budget_value,
+                                 run_loop.QuitClosure()));
     run_loop.Run();
     return success_;
   }
@@ -96,8 +96,8 @@ class BudgetManagerTest : public testing::Test {
     base::RunLoop run_loop;
     GetManager(profile)->Reserve(
         origin(), type,
-        base::Bind(&BudgetManagerTest::ReserveCallback, base::Unretained(this),
-                   run_loop.QuitClosure()));
+        base::BindOnce(&BudgetManagerTest::ReserveCallback,
+                       base::Unretained(this), run_loop.QuitClosure()));
     run_loop.Run();
     return success_;
   }
@@ -106,8 +106,8 @@ class BudgetManagerTest : public testing::Test {
     base::RunLoop run_loop;
     GetManager(profile)->Consume(
         origin(), type,
-        base::Bind(&BudgetManagerTest::ConsumeCallback, base::Unretained(this),
-                   run_loop.QuitClosure()));
+        base::BindOnce(&BudgetManagerTest::ConsumeCallback,
+                       base::Unretained(this), run_loop.QuitClosure()));
     run_loop.Run();
     return success_;
   }
@@ -182,7 +182,7 @@ TEST_F(BudgetManagerTest, TestInsecureOrigin) {
 
   const blink::mojom::BudgetOperationType type =
       blink::mojom::BudgetOperationType::SILENT_PUSH;
-  SetOrigin(url::Origin(GURL("http://example.com")));
+  SetOrigin(url::Origin::Create(GURL("http://example.com")));
   SetSiteEngagementScore(&profile, kTestSES);
 
   // Methods on the BudgetManager should only be allowed for secure origins.
@@ -196,7 +196,7 @@ TEST_F(BudgetManagerTest, TestUniqueOrigin) {
 
   const blink::mojom::BudgetOperationType type =
       blink::mojom::BudgetOperationType::SILENT_PUSH;
-  SetOrigin(url::Origin(GURL("file://example.com:443/etc/passwd")));
+  SetOrigin(url::Origin::Create(GURL("file://example.com:443/etc/passwd")));
 
   // Methods on the BudgetManager should not be allowed for unique origins.
   ASSERT_FALSE(ReserveBudget(&profile, type));
@@ -216,26 +216,11 @@ TEST_F(BudgetManagerTest, TestIncognitoBehaviour) {
   ASSERT_EQ(GetSiteEngagementScore(&profile), kTestSES);
   ASSERT_EQ(GetSiteEngagementScore(incognito), kTestSES);
 
-  // Budget for the |profile| and the |incognito| profile should be identical.
-  {
-    double profile_budget, incognito_budget;
-    ASSERT_TRUE(GetBudget(&profile, &profile_budget));
-    ASSERT_TRUE(GetBudget(incognito, &incognito_budget));
+  // Budget for the |profile| and the |incognito| profile should not be
+  // identical, given that the |incognito| profile will get a fixed value.
+  double profile_budget, incognito_budget;
+  ASSERT_TRUE(GetBudget(&profile, &profile_budget));
+  ASSERT_TRUE(GetBudget(incognito, &incognito_budget));
 
-    EXPECT_EQ(profile_budget, incognito_budget);
-  }
-
-  // Consume some budget from the |incognito| profile.
-  ASSERT_TRUE(
-      ConsumeBudget(incognito, blink::mojom::BudgetOperationType::SILENT_PUSH));
-
-  // The budget available to |incognito| should have decreased, but the budget
-  // available to the |profile| should've been untouched.
-  {
-    double profile_budget, incognito_budget;
-    ASSERT_TRUE(GetBudget(&profile, &profile_budget));
-    ASSERT_TRUE(GetBudget(incognito, &incognito_budget));
-
-    EXPECT_GT(profile_budget, incognito_budget);
-  }
+  EXPECT_NE(profile_budget, incognito_budget);
 }

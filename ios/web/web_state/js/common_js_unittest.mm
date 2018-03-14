@@ -11,6 +11,10 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace {
 
 // Struct for isTextField() test data.
@@ -132,6 +136,57 @@ TEST_F(CommonJsTest, Stringify) {
     // |webController_| will also inject web_bundle.js.
     LoadHtml(@"<p>");
     id result = ExecuteJavaScript(data.test_script);
+    EXPECT_NSEQ(data.expected_value, result)
+        << " in test " << i << ": "
+        << base::SysNSStringToUTF8(data.test_script);
+  }
+}
+
+TEST_F(CommonJsTest, RemoveQueryAndReferenceFromURL) {
+  struct TestData {
+    NSString* input_url;
+    NSString* expected_output;
+  } test_data[] = {
+      {@"http://foo1.com/bar", @"http://foo1.com/bar"},
+      {@"http://foo2.com/bar#baz", @"http://foo2.com/bar"},
+      {@"http://foo3.com/bar?baz", @"http://foo3.com/bar"},
+      // Order of fragment and query string does not matter.
+      {@"http://foo4.com/bar#baz?blech", @"http://foo4.com/bar"},
+      {@"http://foo5.com/bar?baz#blech", @"http://foo5.com/bar"},
+      // Truncates on the first fragment mark.
+      {@"http://foo6.com/bar/#baz#blech", @"http://foo6.com/bar/"},
+      // Poorly formed URLs are normalized.
+      {@"http:///foo7.com//bar?baz", @"http://foo7.com//bar"},
+      // Non-http protocols.
+      {@"data:abc", @"data:abc"},
+      {@"javascript:login()", @"javascript:login()"},
+  };
+  for (size_t i = 0; i < arraysize(test_data); i++) {
+    LoadHtml(@"<p>");
+    TestData& data = test_data[i];
+    id result = ExecuteJavaScript(
+        [NSString stringWithFormat:
+                      @"__gCrWeb.common.removeQueryAndReferenceFromURL('%@')",
+                      data.input_url]);
+    EXPECT_NSEQ(data.expected_output, result)
+        << " in test " << i << ": " << base::SysNSStringToUTF8(data.input_url);
+  }
+}
+
+TEST_F(CommonJsTest, IsSameOrigin) {
+  TestScriptAndExpectedValue test_data[] = {
+      {@"'http://abc.com', 'http://abc.com'", @YES},
+      {@"'http://abc.com',  'https://abc.com'", @NO},
+      {@"'http://abc.com', 'http://abc.com:123'", @NO},
+      {@"'http://abc.com', 'http://def.com'", @NO},
+      {@"'http://abc.com/def', 'http://abc.com/xyz'", @YES}};
+
+  for (size_t i = 0; i < arraysize(test_data); i++) {
+    TestScriptAndExpectedValue& data = test_data[i];
+    LoadHtml(@"<p>");
+    id result = ExecuteJavaScript(
+        [NSString stringWithFormat:@"__gCrWeb.common.isSameOrigin(%@)",
+                                   data.test_script]);
     EXPECT_NSEQ(data.expected_value, result)
         << " in test " << i << ": "
         << base::SysNSStringToUTF8(data.test_script);

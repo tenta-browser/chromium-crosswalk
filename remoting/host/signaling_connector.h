@@ -7,7 +7,7 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
 #include "base/timer/timer.h"
 #include "net/base/network_change_notifier.h"
 #include "remoting/base/oauth_token_getter.h"
@@ -24,11 +24,8 @@ class DnsBlackholeChecker;
 // backoff. It also monitors network state and reconnects signalling
 // whenever connection type changes or IP address changes.
 class SignalingConnector
-    : public base::SupportsWeakPtr<SignalingConnector>,
-      public base::NonThreadSafe,
-      public SignalStrategy::Listener,
-      public net::NetworkChangeNotifier::ConnectionTypeObserver,
-      public net::NetworkChangeNotifier::IPAddressObserver {
+    : public SignalStrategy::Listener,
+      public net::NetworkChangeNotifier::NetworkChangeObserver {
  public:
   // The |auth_failed_callback| is called when authentication fails.
   SignalingConnector(XmppSignalStrategy* signal_strategy,
@@ -46,12 +43,9 @@ class SignalingConnector
   void OnSignalStrategyStateChange(SignalStrategy::State state) override;
   bool OnSignalStrategyIncomingStanza(const buzz::XmlElement* stanza) override;
 
-  // NetworkChangeNotifier::ConnectionTypeObserver interface.
-  void OnConnectionTypeChanged(
+  // NetworkChangeNotifier::NetworkChangeObserver interface.
+  void OnNetworkChanged(
       net::NetworkChangeNotifier::ConnectionType type) override;
-
-  // NetworkChangeNotifier::IPAddressObserver interface.
-  void OnIPAddressChanged() override;
 
  private:
   void OnNetworkError();
@@ -70,6 +64,10 @@ class SignalingConnector
   int reconnect_attempts_;
 
   base::OneShotTimer timer_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
+
+  base::WeakPtrFactory<SignalingConnector> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(SignalingConnector);
 };

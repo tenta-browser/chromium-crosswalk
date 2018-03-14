@@ -30,31 +30,52 @@
 
 #include "core/css/resolver/StyleAdjuster.h"
 
-#include "core/HTMLNames.h"
-#include "core/SVGNames.h"
+#include "core/css/StyleChangeReason.h"
+#include "core/css/resolver/StyleResolver.h"
+#include "core/css/resolver/StyleResolverState.h"
 #include "core/dom/ContainerNode.h"
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
-#include "core/frame/FrameView.h"
+#include "core/dom/NodeComputedStyle.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLIFrameElement.h"
 #include "core/html/HTMLImageElement.h"
-#include "core/html/HTMLInputElement.h"
 #include "core/html/HTMLPlugInElement.h"
 #include "core/html/HTMLTableCellElement.h"
-#include "core/html/HTMLTextAreaElement.h"
+#include "core/html/forms/HTMLInputElement.h"
+#include "core/html/forms/HTMLTextAreaElement.h"
+#include "core/html_names.h"
+#include "core/layout/LayoutObject.h"
 #include "core/layout/LayoutTheme.h"
 #include "core/style/ComputedStyle.h"
 #include "core/style/ComputedStyleConstants.h"
 #include "core/svg/SVGSVGElement.h"
+#include "core/svg_names.h"
 #include "platform/Length.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/transforms/TransformOperations.h"
 #include "platform/wtf/Assertions.h"
 
 namespace blink {
 
 using namespace HTMLNames;
+
+namespace {
+
+TouchAction AdjustTouchActionForElement(TouchAction touch_action,
+                                        const ComputedStyle& style,
+                                        Element* element) {
+  bool is_child_document =
+      element && element == element->GetDocument().documentElement() &&
+      element->GetDocument().LocalOwner();
+  if (style.ScrollsOverflow() || is_child_document)
+    return touch_action | TouchAction::kTouchActionPan;
+  return touch_action;
+}
+
+}  // namespace
 
 static EDisplay EquivalentBlockDisplay(EDisplay display) {
   switch (display) {
@@ -111,7 +132,7 @@ static bool DoesNotInheritTextDecoration(const ComputedStyle& style,
          style.Display() == EDisplay::kWebkitInlineBox ||
          IsAtShadowBoundary(element) || style.IsFloating() ||
          style.HasOutOfFlowPosition() || IsOutermostSVGElement(element) ||
-         isHTMLRTElement(element);
+         IsHTMLRTElement(element);
 }
 
 // Certain elements (<a>, <font>) override text decoration colors.  "The font
@@ -121,7 +142,7 @@ static bool DoesNotInheritTextDecoration(const ComputedStyle& style,
 // The <a> behavior is non-standard.
 static bool OverridesTextDecorationColors(const Element* element) {
   return element &&
-         (isHTMLFontElement(element) || isHTMLAnchorElement(element));
+         (IsHTMLFontElement(element) || IsHTMLAnchorElement(element));
 }
 
 // FIXME: This helper is only needed because pseudoStyleForElement passes a null
@@ -137,7 +158,7 @@ static bool LayoutParentStyleForcesZIndexToCreateStackingContext(
 }
 
 void StyleAdjuster::AdjustStyleForEditing(ComputedStyle& style) {
-  if (style.UserModify() != READ_WRITE_PLAINTEXT_ONLY)
+  if (style.UserModify() != EUserModify::kReadWritePlaintextOnly)
     return;
   // Collapsing whitespace is harmful in plain-text editing.
   if (style.WhiteSpace() == EWhiteSpace::kNormal)
@@ -159,43 +180,11 @@ static void AdjustStyleForFirstLetter(ComputedStyle& style) {
   style.SetPosition(EPosition::kStatic);
 }
 
-void StyleAdjuster::AdjustStyleForAlignment(
-    ComputedStyle& style,
-    const ComputedStyle& layout_parent_style) {
-  // To avoid needing to copy the RareNonInheritedData, we repurpose the 'auto'
-  // flag to not just mean 'auto' prior to running the StyleAdjuster but also
-  // mean 'normal' after running it.
-
-  // If the inherited value of justify-items includes the 'legacy' keyword,
-  // 'auto' computes to the the inherited value.  Otherwise, 'auto' computes to
-  // 'normal'.
-  if (style.JustifyItemsPosition() == kItemPositionAuto) {
-    if (layout_parent_style.JustifyItemsPositionType() == kLegacyPosition)
-      style.SetJustifyItems(layout_parent_style.JustifyItems());
-  }
-
-  // The 'auto' keyword computes the computed value of justify-items on the
-  // parent (minus any legacy keywords), or 'normal' if the box has no parent.
-  if (style.JustifySelfPosition() == kItemPositionAuto) {
-    if (layout_parent_style.JustifyItemsPositionType() == kLegacyPosition)
-      style.SetJustifySelfPosition(layout_parent_style.JustifyItemsPosition());
-    else if (layout_parent_style.JustifyItemsPosition() != kItemPositionAuto)
-      style.SetJustifySelf(layout_parent_style.JustifyItems());
-  }
-
-  // The 'auto' keyword computes the computed value of align-items on the parent
-  // or 'normal' if the box has no parent.
-  if (style.AlignSelfPosition() == kItemPositionAuto &&
-      layout_parent_style.AlignItemsPosition() !=
-          ComputedStyle::InitialDefaultAlignment().GetPosition())
-    style.SetAlignSelf(layout_parent_style.AlignItems());
-}
-
 static void AdjustStyleForHTMLElement(ComputedStyle& style,
                                       HTMLElement& element) {
   // <div> and <span> are the most common elements on the web, we skip all the
   // work for them.
-  if (isHTMLDivElement(element) || isHTMLSpanElement(element))
+  if (IsHTMLDivElement(element) || IsHTMLSpanElement(element))
     return;
 
   if (IsHTMLTableCellElement(element)) {
@@ -211,13 +200,13 @@ static void AdjustStyleForHTMLElement(ComputedStyle& style,
     return;
   }
 
-  if (isHTMLImageElement(element)) {
-    if (toHTMLImageElement(element).IsCollapsed())
+  if (auto* image = ToHTMLImageElementOrNull(element)) {
+    if (image->IsCollapsed())
       style.SetDisplay(EDisplay::kNone);
     return;
   }
 
-  if (isHTMLTableElement(element)) {
+  if (IsHTMLTableElement(element)) {
     // Tables never support the -webkit-* values for text-align and will reset
     // back to the default.
     if (style.GetTextAlign() == ETextAlign::kWebkitLeft ||
@@ -227,7 +216,7 @@ static void AdjustStyleForHTMLElement(ComputedStyle& style,
     return;
   }
 
-  if (isHTMLFrameElement(element) || isHTMLFrameSetElement(element)) {
+  if (IsHTMLFrameElement(element) || IsHTMLFrameSetElement(element)) {
     // Frames and framesets never honor position:relative or position:absolute.
     // This is necessary to fix a crash where a site tries to position these
     // objects. They also never honor display.
@@ -244,7 +233,7 @@ static void AdjustStyleForHTMLElement(ComputedStyle& style,
     return;
   }
 
-  if (isHTMLRTElement(element)) {
+  if (IsHTMLRTElement(element)) {
     // Ruby text does not support float or position. This might change with
     // evolution of the specification.
     style.SetPosition(EPosition::kStatic);
@@ -252,19 +241,19 @@ static void AdjustStyleForHTMLElement(ComputedStyle& style,
     return;
   }
 
-  if (isHTMLLegendElement(element)) {
+  if (IsHTMLLegendElement(element)) {
     style.SetDisplay(EDisplay::kBlock);
     return;
   }
 
-  if (isHTMLMarqueeElement(element)) {
+  if (IsHTMLMarqueeElement(element)) {
     // For now, <marquee> requires an overflow clip to work properly.
     style.SetOverflowX(EOverflow::kHidden);
     style.SetOverflowY(EOverflow::kHidden);
     return;
   }
 
-  if (isHTMLTextAreaElement(element)) {
+  if (IsHTMLTextAreaElement(element)) {
     // Textarea considers overflow visible as auto.
     style.SetOverflowX(style.OverflowX() == EOverflow::kVisible
                            ? EOverflow::kAuto
@@ -389,24 +378,115 @@ static void AdjustStyleForDisplay(ComputedStyle& style,
     // because our current behavior is different from the spec and we want to
     // gather compatibility data.
     if (style.PaddingBefore().IsPercentOrCalc() ||
-        style.PaddingAfter().IsPercentOrCalc())
+        style.PaddingAfter().IsPercentOrCalc()) {
       UseCounter::Count(document,
-                        UseCounter::kFlexboxPercentagePaddingVertical);
+                        WebFeature::kFlexboxPercentagePaddingVertical);
+    }
     if (style.MarginBefore().IsPercentOrCalc() ||
-        style.MarginAfter().IsPercentOrCalc())
-      UseCounter::Count(document, UseCounter::kFlexboxPercentageMarginVertical);
+        style.MarginAfter().IsPercentOrCalc()) {
+      UseCounter::Count(document, WebFeature::kFlexboxPercentageMarginVertical);
+    }
   }
 }
 
-void StyleAdjuster::AdjustComputedStyle(
-    ComputedStyle& style,
-    const ComputedStyle& parent_style,
-    const ComputedStyle& layout_parent_style,
-    Element* element) {
-  if (style.Display() != EDisplay::kNone) {
-    if (element && element->IsHTMLElement())
-      AdjustStyleForHTMLElement(style, ToHTMLElement(*element));
+static void AdjustEffectiveTouchAction(ComputedStyle& style,
+                                       const ComputedStyle& parent_style,
+                                       Element* element) {
+  TouchAction inherited_action = parent_style.GetEffectiveTouchAction();
 
+  bool is_svg_root = element && element->IsSVGElement() &&
+                     IsSVGSVGElement(*element) && element->parentNode() &&
+                     !element->parentNode()->IsSVGElement();
+  bool is_replaced_canvas =
+      element && IsHTMLCanvasElement(element) &&
+      element->GetDocument().GetFrame() &&
+      element->GetDocument().CanExecuteScripts(kNotAboutToExecuteScript);
+  bool is_non_replaced_inline_elements =
+      style.IsDisplayInlineType() &&
+      !(style.IsDisplayReplacedType() || is_svg_root ||
+        IsHTMLImageElement(element) || is_replaced_canvas);
+  bool is_table_row_or_column = style.IsDisplayTableRowOrColumnType();
+  bool is_layout_object_needed =
+      element && element->LayoutObjectIsNeeded(style);
+
+  TouchAction element_touch_action = TouchAction::kTouchActionAuto;
+  // Touch actions are only supported by elements that support both the CSS
+  // width and height properties.
+  // See https://www.w3.org/TR/pointerevents/#the-touch-action-css-property.
+  if (!is_non_replaced_inline_elements && !is_table_row_or_column &&
+      is_layout_object_needed) {
+    element_touch_action = style.GetTouchAction();
+  }
+
+  bool is_child_document =
+      element && element == element->GetDocument().documentElement() &&
+      element->GetDocument().LocalOwner();
+
+  if (is_child_document) {
+    const ComputedStyle* frame_style =
+        element->GetDocument().LocalOwner()->GetComputedStyle();
+    if (frame_style)
+      inherited_action = frame_style->GetEffectiveTouchAction();
+  }
+
+  // The effective touch action is the intersection of the touch-action values
+  // of the current element and all of its ancestors up to the one that
+  // implements the gesture. Since panning is implemented by the scroller it is
+  // re-enabled for scrolling elements.
+  // The panning-restricted cancellation should also apply to iframes, so we
+  // allow (panning & local touch action) on the first descendant element of a
+  // iframe element.
+  inherited_action =
+      AdjustTouchActionForElement(inherited_action, style, element);
+
+  // Apply the adjusted parent effective touch actions.
+  style.SetEffectiveTouchAction(element_touch_action & inherited_action);
+
+  // Touch action is inherited across frames.
+  if (element && element->IsFrameOwnerElement() &&
+      ToHTMLFrameOwnerElement(element)->contentDocument()) {
+    Element* content_document_element =
+        ToHTMLFrameOwnerElement(element)->contentDocument()->documentElement();
+    if (content_document_element) {
+      // Actively trigger recalc for child document if the document does not
+      // have computed style created, or its effective touch action is out of
+      // date.
+      bool child_document_needs_recalc = true;
+      if (const ComputedStyle* content_document_style =
+              content_document_element->GetComputedStyle()) {
+        TouchAction document_touch_action =
+            content_document_style->GetEffectiveTouchAction();
+        TouchAction expected_document_touch_action =
+            AdjustTouchActionForElement(style.GetEffectiveTouchAction(),
+                                        *content_document_style,
+                                        content_document_element) &
+            content_document_style->GetTouchAction();
+        child_document_needs_recalc =
+            document_touch_action != expected_document_touch_action;
+      }
+      if (child_document_needs_recalc) {
+        content_document_element->SetNeedsStyleRecalc(
+            kSubtreeStyleChange,
+            StyleChangeReasonForTracing::Create(
+                StyleChangeReason::kInheritedStyleChangeFromParentFrame));
+      }
+    }
+  }
+}
+
+void StyleAdjuster::AdjustComputedStyle(StyleResolverState& state,
+                                        Element* element) {
+  DCHECK(state.LayoutParentStyle());
+  DCHECK(state.ParentStyle());
+  ComputedStyle& style = state.MutableStyleRef();
+  const ComputedStyle& parent_style = *state.ParentStyle();
+  const ComputedStyle& layout_parent_style = *state.LayoutParentStyle();
+
+  if (style.Display() != EDisplay::kNone && element &&
+      element->IsHTMLElement()) {
+    AdjustStyleForHTMLElement(style, ToHTMLElement(*element));
+  }
+  if (style.Display() != EDisplay::kNone) {
     // Per the spec, position 'static' and 'relative' in the top layer compute
     // to 'absolute'.
     if (IsInTopLayer(element, style) &&
@@ -428,7 +508,7 @@ void StyleAdjuster::AdjustComputedStyle(
     AdjustStyleForFirstLetter(style);
 
     AdjustStyleForDisplay(style, layout_parent_style,
-                          element ? &element->GetDocument() : 0);
+                          element ? &element->GetDocument() : nullptr);
 
     // Paint containment forces a block formatting context, so we must coerce
     // from inline.  https://drafts.csswg.org/css-containment/#containment-paint
@@ -437,9 +517,6 @@ void StyleAdjuster::AdjustComputedStyle(
   } else {
     AdjustStyleForFirstLetter(style);
   }
-
-  if (element && element->HasCompositorProxy())
-    style.SetHasCompositorProxy(true);
 
   // Make sure our z-index value is only applied if the object is positioned.
   if (style.GetPosition() == EPosition::kStatic &&
@@ -498,20 +575,56 @@ void StyleAdjuster::AdjustComputedStyle(
 
     // Only the root <svg> element in an SVG document fragment tree honors css
     // position.
-    if (!(isSVGSVGElement(*element) && element->parentNode() &&
+    if (!(IsSVGSVGElement(*element) && element->parentNode() &&
           !element->parentNode()->IsSVGElement()))
-      style.SetPosition(ComputedStyle::InitialPosition());
+      style.SetPosition(ComputedStyleInitialValues::InitialPosition());
 
     // SVG text layout code expects us to be a block-level style element.
-    if ((isSVGForeignObjectElement(*element) || isSVGTextElement(*element)) &&
+    if ((IsSVGForeignObjectElement(*element) || IsSVGTextElement(*element)) &&
         style.IsDisplayInlineType())
       style.SetDisplay(EDisplay::kBlock);
 
     // Columns don't apply to svg text elements.
-    if (isSVGTextElement(*element))
+    if (IsSVGTextElement(*element))
       style.ClearMultiCol();
   }
-  AdjustStyleForAlignment(style, layout_parent_style);
-}
 
+  // If this node is sticky it marks the creation of a sticky subtree, which we
+  // must track to properly handle document lifecycle in some cases.
+  //
+  // It is possible that this node is already in a sticky subtree (i.e. we have
+  // nested sticky nodes) - in that case the bit will already be set via
+  // inheritance from the ancestor and there is no harm to setting it again.
+  if (style.GetPosition() == EPosition::kSticky)
+    style.SetSubtreeIsSticky(true);
+
+  // If the inherited value of justify-items includes the 'legacy' keyword,
+  // 'auto' computes to the the inherited value.  Otherwise, 'auto' computes to
+  // 'normal'.
+  if (style.JustifyItemsPosition() == kItemPositionAuto) {
+    if (parent_style.JustifyItemsPositionType() == kLegacyPosition)
+      style.SetJustifyItems(parent_style.JustifyItems());
+  }
+
+  AdjustEffectiveTouchAction(style, parent_style, element);
+
+  bool is_media_control =
+      element && element->ShadowPseudoId().StartsWith("-webkit-media-controls");
+  if (is_media_control && style.Appearance() == kNoControlPart) {
+    // For compatibility reasons if the element is a media control and the
+    // -webkit-appearance is none then we should clear the background image.
+    if (!StyleResolver::HasAuthorBackground(state)) {
+      style.MutableBackgroundInternal().ClearImage();
+    }
+  }
+
+  // TODO(layout-dev): Once LayoutnG handles inline content editable, we should
+  // get rid of following code fragment.
+  if (RuntimeEnabledFeatures::LayoutNGEnabled() &&
+      style.UserModify() != EUserModify::kReadOnly &&
+      style.Display() == EDisplay::kInline &&
+      parent_style.UserModify() == EUserModify::kReadOnly) {
+    style.SetDisplay(EDisplay::kInlineBlock);
+  }
+}
 }  // namespace blink

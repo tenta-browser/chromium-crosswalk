@@ -15,10 +15,8 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
-import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.chrome.browser.ChromeBackgroundService;
 import org.chromium.chrome.browser.externalauth.ExternalAuthUtils;
-import org.chromium.chrome.browser.externalauth.UserRecoverableErrorHandler;
 
 /**
  * The {@link SnippetsLauncher} singleton is created and owned by the C++ browser.
@@ -31,11 +29,6 @@ public class SnippetsLauncher {
     // Task tags for fetching snippets.
     public static final String TASK_TAG_WIFI = "FetchSnippetsWifi";
     public static final String TASK_TAG_FALLBACK = "FetchSnippetsFallback";
-    // TODO(treib): Remove this after M55.
-    private static final String OBSOLETE_TASK_TAG_WIFI_CHARGING = "FetchSnippetsWifiCharging";
-
-    // TODO(treib): Remove this after M55.
-    private static final String OBSOLETE_TASK_TAG_RESCHEDULE = "RescheduleSnippets";
 
     // The amount of "flex" to add around the fetching periods, as a ratio of the period.
     private static final double FLEX_FACTOR = 0.1;
@@ -69,7 +62,6 @@ public class SnippetsLauncher {
      * Called when the C++ counterpart is deleted.
      */
     @VisibleForTesting
-    @SuppressFBWarnings("ST_WRITE_TO_STATIC_FROM_INSTANCE_METHOD")
     @CalledByNative
     public void destroy() {
         assert sInstance == this;
@@ -89,14 +81,9 @@ public class SnippetsLauncher {
         mScheduler = GcmNetworkManager.getInstance(ContextUtils.getApplicationContext());
     }
 
-    private boolean canUseGooglePlayServices() {
-        return ExternalAuthUtils.getInstance().canUseGooglePlayServices(
-                ContextUtils.getApplicationContext(), new UserRecoverableErrorHandler.Silent());
-    }
-
     private void checkGCM() {
         // Check to see if Play Services is up to date, and disable GCM if not.
-        if (!canUseGooglePlayServices()) {
+        if (!ExternalAuthUtils.canUseGooglePlayServices()) {
             mGCMEnabled = false;
             Log.i(TAG, "Disabling SnippetsLauncher because Play Services is not up to date.");
         }
@@ -144,12 +131,10 @@ public class SnippetsLauncher {
         // Google Play Services may not be up to date, if the application was not installed through
         // the Play Store. In this case, scheduling the task will fail silently.
         try {
-            mScheduler.cancelTask(OBSOLETE_TASK_TAG_WIFI_CHARGING, ChromeBackgroundService.class);
             scheduleOrCancelFetchTask(
                     TASK_TAG_WIFI, periodWifiSeconds, Task.NETWORK_STATE_UNMETERED);
             scheduleOrCancelFetchTask(
                     TASK_TAG_FALLBACK, periodFallbackSeconds, Task.NETWORK_STATE_CONNECTED);
-            mScheduler.cancelTask(OBSOLETE_TASK_TAG_RESCHEDULE, ChromeBackgroundService.class);
         } catch (IllegalArgumentException e) {
             // Disable GCM for the remainder of this session.
             mGCMEnabled = false;
@@ -176,8 +161,8 @@ public class SnippetsLauncher {
         return !manager.isActiveNetworkMetered();
     }
 
-    public static boolean shouldRescheduleTasksOnUpgrade() {
-        // Reschedule the periodic tasks if they were enabled previously.
+    public static boolean shouldNotifyOnBrowserUpgraded() {
+        // If there was no schedule previously, we do not need to react to upgrades.
         return ContextUtils.getAppSharedPreferences().getBoolean(PREF_IS_SCHEDULED, false);
     }
 }

@@ -5,6 +5,7 @@
 #include "modules/payments/PaymentResponse.h"
 
 #include "bindings/core/v8/ExceptionState.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8ObjectBuilder.h"
 #include "modules/payments/PaymentAddress.h"
 #include "modules/payments/PaymentCompleter.h"
@@ -14,13 +15,13 @@ namespace blink {
 
 PaymentResponse::PaymentResponse(
     payments::mojom::blink::PaymentResponsePtr response,
-    PaymentCompleter* payment_completer)
-    : method_name_(response->method_name),
+    PaymentAddress* shipping_address,
+    PaymentCompleter* payment_completer,
+    const String& requestId)
+    : requestId_(requestId),
+      method_name_(response->method_name),
       stringified_details_(response->stringified_details),
-      shipping_address_(
-          response->shipping_address
-              ? new PaymentAddress(std::move(response->shipping_address))
-              : nullptr),
+      shipping_address_(shipping_address),
       shipping_option_(response->shipping_option),
       payer_name_(response->payer_name),
       payer_email_(response->payer_email),
@@ -33,6 +34,7 @@ PaymentResponse::~PaymentResponse() {}
 
 ScriptValue PaymentResponse::toJSONForBinding(ScriptState* script_state) const {
   V8ObjectBuilder result(script_state);
+  result.AddString("requestId", requestId());
   result.AddString("methodName", methodName());
   result.Add("details", details(script_state, ASSERT_NO_EXCEPTION));
 
@@ -68,9 +70,10 @@ ScriptPromise PaymentResponse::complete(ScriptState* script_state,
   return payment_completer_->Complete(script_state, converted_result);
 }
 
-DEFINE_TRACE(PaymentResponse) {
+void PaymentResponse::Trace(blink::Visitor* visitor) {
   visitor->Trace(shipping_address_);
   visitor->Trace(payment_completer_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

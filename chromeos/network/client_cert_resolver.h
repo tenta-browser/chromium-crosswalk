@@ -12,6 +12,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "chromeos/cert_loader.h"
 #include "chromeos/chromeos_export.h"
@@ -79,7 +80,7 @@ class CHROMEOS_EXPORT ClientCertResolver : public NetworkStateHandlerObserver,
   // expiration.
   static bool ResolveCertificatePatternSync(
       const client_cert::ConfigType client_cert_type,
-      const CertificatePattern& pattern,
+      const client_cert::ClientCertConfig& client_cert_config,
       base::DictionaryValue* shill_properties);
 
  private:
@@ -88,8 +89,8 @@ class CHROMEOS_EXPORT ClientCertResolver : public NetworkStateHandlerObserver,
   void NetworkConnectionStateChanged(const NetworkState* network) override;
 
   // CertLoader::Observer overrides
-  void OnCertificatesLoaded(const net::CertificateList& cert_list,
-                            bool initial_load) override;
+  void OnCertificatesLoaded(
+      const net::ScopedCERTCertificateList& cert_list) override;
 
   // NetworkPolicyObserver overrides
   void PolicyAppliedToNetwork(const std::string& service_path) override;
@@ -105,7 +106,8 @@ class CHROMEOS_EXPORT ClientCertResolver : public NetworkStateHandlerObserver,
 
   // |matches| contains networks for which a matching certificate was found.
   // Configures these networks.
-  void ConfigureCertificates(std::vector<NetworkAndMatchingCert>* matches);
+  void ConfigureCertificates(
+      std::unique_ptr<std::vector<NetworkAndMatchingCert>> matches);
 
   // Trigger a ResolveRequestCompleted event on all observers.
   void NotifyResolveRequestCompleted();
@@ -139,6 +141,8 @@ class CHROMEOS_EXPORT ClientCertResolver : public NetworkStateHandlerObserver,
 
   // Can be set for testing.
   base::Clock* testing_clock_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   base::WeakPtrFactory<ClientCertResolver> weak_ptr_factory_;
 

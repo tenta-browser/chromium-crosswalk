@@ -52,8 +52,7 @@ ImageDecodingStore::~ImageDecodingStore() {
 }
 
 ImageDecodingStore& ImageDecodingStore::Instance() {
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(ImageDecodingStore, store,
-                                  ImageDecodingStore::Create().release());
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(ImageDecodingStore, store, ());
   return store;
 }
 
@@ -64,7 +63,7 @@ bool ImageDecodingStore::LockDecoder(const ImageFrameGenerator* generator,
   DCHECK(decoder);
 
   MutexLocker lock(mutex_);
-  DecoderCacheMap::iterator iter = decoder_cache_map_.Find(
+  DecoderCacheMap::iterator iter = decoder_cache_map_.find(
       DecoderCacheEntry::MakeCacheKey(generator, scaled_size, alpha_option));
   if (iter == decoder_cache_map_.end())
     return false;
@@ -81,7 +80,7 @@ bool ImageDecodingStore::LockDecoder(const ImageFrameGenerator* generator,
 void ImageDecodingStore::UnlockDecoder(const ImageFrameGenerator* generator,
                                        const ImageDecoder* decoder) {
   MutexLocker lock(mutex_);
-  DecoderCacheMap::iterator iter = decoder_cache_map_.Find(
+  DecoderCacheMap::iterator iter = decoder_cache_map_.find(
       DecoderCacheEntry::MakeCacheKey(generator, decoder));
   SECURITY_DCHECK(iter != decoder_cache_map_.end());
 
@@ -112,7 +111,7 @@ void ImageDecodingStore::RemoveDecoder(const ImageFrameGenerator* generator,
   Vector<std::unique_ptr<CacheEntry>> cache_entries_to_delete;
   {
     MutexLocker lock(mutex_);
-    DecoderCacheMap::iterator iter = decoder_cache_map_.Find(
+    DecoderCacheMap::iterator iter = decoder_cache_map_.find(
         DecoderCacheEntry::MakeCacheKey(generator, decoder));
     SECURITY_DCHECK(iter != decoder_cache_map_.end());
 
@@ -247,7 +246,7 @@ void ImageDecodingStore::RemoveFromCacheInternal(
   heap_memory_usage_in_bytes_ -= cache_entry_bytes;
 
   // Remove entry from identifier map.
-  typename V::iterator iter = identifier_map->Find(cache_entry->Generator());
+  typename V::iterator iter = identifier_map->find(cache_entry->Generator());
   DCHECK(iter != identifier_map->end());
   iter->value.erase(cache_entry->CacheKey());
   if (!iter->value.size())
@@ -281,7 +280,7 @@ void ImageDecodingStore::RemoveCacheIndexedByGeneratorInternal(
     V* identifier_map,
     const ImageFrameGenerator* generator,
     Vector<std::unique_ptr<CacheEntry>>* deletion_list) {
-  typename V::iterator iter = identifier_map->Find(generator);
+  typename V::iterator iter = identifier_map->find(generator);
   if (iter == identifier_map->end())
     return;
 

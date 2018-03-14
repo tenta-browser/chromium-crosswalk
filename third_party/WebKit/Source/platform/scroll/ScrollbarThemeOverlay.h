@@ -53,16 +53,12 @@ class PLATFORM_EXPORT ScrollbarThemeOverlay : public ScrollbarTheme {
       float old_position,
       float new_position) const override;
 
-  ScrollbarPart InvalidateOnEnabledChange() const override;
-
   int ScrollbarThickness(ScrollbarControlSize) override;
   int ScrollbarMargin() const override;
   bool UsesOverlayScrollbars() const override;
   double OverlayScrollbarFadeOutDelaySeconds() const override;
   double OverlayScrollbarFadeOutDurationSeconds() const override;
 
-  int ThumbPosition(const ScrollbarThemeClient&,
-                    float scroll_position) override;
   int ThumbLength(const ScrollbarThemeClient&) override;
 
   bool HasButtons(const ScrollbarThemeClient&) override { return false; }
@@ -88,6 +84,8 @@ class PLATFORM_EXPORT ScrollbarThemeOverlay : public ScrollbarTheme {
 
   int MinimumThumbLength(const ScrollbarThemeClient&) override;
 
+  bool IsMobileTheme() const;
+
   static ScrollbarThemeOverlay& MobileTheme();
 
  private:
@@ -95,6 +93,7 @@ class PLATFORM_EXPORT ScrollbarThemeOverlay : public ScrollbarTheme {
   int scrollbar_margin_;
   HitTestBehavior allow_hit_test_;
   Color color_;
+  bool is_mobile_theme_;
   const bool use_solid_color_;
 };
 

@@ -7,10 +7,9 @@
 #include "content/public/test/test_browser_context.h"
 
 namespace ash {
-namespace test {
 
-TestShellContentState::TestShellContentState() {}
-TestShellContentState::~TestShellContentState() {}
+TestShellContentState::TestShellContentState() = default;
+TestShellContentState::~TestShellContentState() = default;
 
 content::BrowserContext* TestShellContentState::GetActiveBrowserContext() {
   active_browser_context_.reset(new content::TestBrowserContext());
@@ -33,5 +32,4 @@ TestShellContentState::GetUserPresentingBrowserContextForWindow(
   return nullptr;
 }
 
-}  // namespace test
 }  // namespace ash

@@ -4,8 +4,8 @@
 
 #include "cc/tiles/prioritized_tile.h"
 
-#include "cc/debug/traced_value.h"
 #include "cc/tiles/picture_layer_tiling.h"
+#include "components/viz/common/traced_value.h"
 
 namespace cc {
 
@@ -15,19 +15,22 @@ PrioritizedTile::PrioritizedTile(Tile* tile,
                                  const PictureLayerTiling* source_tiling,
                                  const TilePriority& priority,
                                  bool is_occluded,
-                                 bool is_process_for_images_only)
+                                 bool is_process_for_images_only,
+                                 bool should_decode_checkered_images_for_tile)
     : tile_(tile),
       source_tiling_(source_tiling),
       priority_(priority),
       is_occluded_(is_occluded),
-      is_process_for_images_only_(is_process_for_images_only) {}
+      is_process_for_images_only_(is_process_for_images_only),
+      should_decode_checkered_images_for_tile_(
+          should_decode_checkered_images_for_tile) {}
 
 PrioritizedTile::~PrioritizedTile() = default;
 
 void PrioritizedTile::AsValueInto(base::trace_event::TracedValue* value) const {
   tile_->AsValueInto(value);
 
-  TracedValue::SetIDRef(raster_source().get(), value, "picture_pile");
+  viz::TracedValue::SetIDRef(raster_source().get(), value, "picture_pile");
 
   value->BeginDictionary("combined_priority");
   priority().AsValueInto(value);

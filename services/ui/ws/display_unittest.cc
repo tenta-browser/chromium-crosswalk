@@ -25,6 +25,7 @@
 #include "services/ui/ws/window_tree.h"
 #include "services/ui/ws/window_tree_binding.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/cursor/cursor.h"
 #include "ui/display/display.h"
 #include "ui/events/event.h"
 #include "ui/gfx/geometry/rect.h"
@@ -103,6 +104,7 @@ class DisplayTest : public testing::Test {
     return ws_test_helper_.window_server_delegate();
   }
   TestScreenManager& screen_manager() { return screen_manager_; }
+  const ui::CursorData& cursor() { return ws_test_helper_.cursor(); }
 
  protected:
   // testing::Test:
@@ -275,7 +277,7 @@ TEST_F(DisplayTest, EventStateResetOnUserSwitch) {
 
   EXPECT_TRUE(EventDispatcherTestApi(active_wms->event_dispatcher())
                   .AreAnyPointersDown());
-  EXPECT_EQ(gfx::Point(20, 25),
+  EXPECT_EQ(gfx::PointF(20, 25),
             active_wms->event_dispatcher()->mouse_pointer_last_location());
 
   // Switch the user. Should trigger resetting state in old event dispatcher
@@ -289,7 +291,7 @@ TEST_F(DisplayTest, EventStateResetOnUserSwitch) {
   active_wms =
       display->GetActiveWindowManagerDisplayRoot()->window_manager_state();
   EXPECT_EQ(kTestId2, active_wms->user_id());
-  EXPECT_EQ(gfx::Point(20, 25),
+  EXPECT_EQ(gfx::PointF(20, 25),
             active_wms->event_dispatcher()->mouse_pointer_last_location());
   EXPECT_FALSE(EventDispatcherTestApi(active_wms->event_dispatcher())
                    .AreAnyPointersDown());

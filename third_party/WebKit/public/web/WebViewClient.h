@@ -31,13 +31,13 @@
 #ifndef WebViewClient_h
 #define WebViewClient_h
 
-#include "../platform/WebPageVisibilityState.h"
-#include "../platform/WebString.h"
 #include "WebAXEnums.h"
 #include "WebFrame.h"
 #include "WebPopupType.h"
 #include "WebTextDirection.h"
 #include "WebWidgetClient.h"
+#include "public/platform/WebString.h"
+#include "third_party/WebKit/common/page/page_visibility_state.mojom-shared.h"
 
 namespace blink {
 
@@ -45,13 +45,12 @@ class WebDateTimeChooserCompletion;
 class WebFileChooserCompletion;
 class WebNode;
 class WebSpeechRecognizer;
-class WebStorageNamespace;
 class WebURL;
 class WebURLRequest;
 class WebView;
 class WebWidget;
+enum class WebSandboxFlags;
 struct WebDateTimeChooserParams;
-struct WebPoint;
 struct WebRect;
 struct WebSize;
 struct WebWindowFeatures;
@@ -76,15 +75,16 @@ class WebViewClient : protected WebWidgetClient {
                               const WebWindowFeatures& features,
                               const WebString& name,
                               WebNavigationPolicy policy,
-                              bool suppress_opener) {
-    return 0;
+                              bool suppress_opener,
+                              WebSandboxFlags) {
+    return nullptr;
   }
 
   // Create a new popup WebWidget.
-  virtual WebWidget* CreatePopupMenu(WebPopupType) { return 0; }
+  virtual WebWidget* CreatePopup(WebPopupType) { return nullptr; }
 
-  // Create a session storage namespace object associated with this WebView.
-  virtual WebStorageNamespace* CreateSessionStorageNamespace() { return 0; }
+  // Returns the session storage namespace id associated with this WebView.
+  virtual int64_t GetSessionStorageNamespaceId() { return 0; }
 
   // Misc ----------------------------------------------------------------
 
@@ -128,25 +128,7 @@ class WebViewClient : protected WebWidgetClient {
     return false;
   }
 
-  // Show a notification popup for the specified form validation messages
-  // besides the anchor rectangle. An implementation of this function should
-  // not hide the popup until hideValidationMessage call.
-  virtual void ShowValidationMessage(const WebRect& anchor_in_viewport,
-                                     const WebString& main_text,
-                                     WebTextDirection main_text_dir,
-                                     const WebString& supplemental_text,
-                                     WebTextDirection supplemental_text_dir) {}
-
-  // Hide notifation popup for form validation messages.
-  virtual void HideValidationMessage() {}
-
-  // Move the existing notifation popup to the new anchor position.
-  virtual void MoveValidationMessage(const WebRect& anchor_in_viewport) {}
-
   // UI ------------------------------------------------------------------
-
-  // Called when script modifies window.status
-  virtual void SetStatusText(const WebString&) {}
 
   // Called when hovering over an anchor with the given URL.
   virtual void SetMouseOverURL(const WebURL&) {}
@@ -219,7 +201,7 @@ class WebViewClient : protected WebWidgetClient {
   // Speech --------------------------------------------------------------
 
   // Access the embedder API for speech recognition services.
-  virtual WebSpeechRecognizer* SpeechRecognizer() { return 0; }
+  virtual WebSpeechRecognizer* SpeechRecognizer() { return nullptr; }
 
   // Zoom ----------------------------------------------------------------
 
@@ -230,10 +212,7 @@ class WebViewClient : protected WebWidgetClient {
   // Informs the browser that the page scale has changed.
   virtual void PageScaleFactorChanged() {}
 
-  // Draggable regions ----------------------------------------------------
-
-  // Informs the browser that the draggable regions have been updated.
-  virtual void DraggableRegionsChanged() {}
+  // Gestures -------------------------------------------------------------
 
   virtual bool CanHandleGestureEvent() { return false; }
 
@@ -248,14 +227,13 @@ class WebViewClient : protected WebWidgetClient {
   void DidOverscroll(const WebFloatSize& overscroll_delta,
                      const WebFloatSize& accumulated_overscroll,
                      const WebFloatPoint& position_in_viewport,
-                     const WebFloatSize& velocity_in_viewport) override {}
+                     const WebFloatSize& velocity_in_viewport,
+                     const WebOverscrollBehavior& behavior) override {}
   void HasTouchEventHandlers(bool) override {}
   WebLayerTreeView* InitializeLayerTreeView() override { return nullptr; }
   WebScreenInfo GetScreenInfo() override { return WebScreenInfo(); }
   void SetTouchAction(WebTouchAction touch_action) override {}
-  void ShowUnhandledTapUIIfNeeded(const WebPoint& tapped_position,
-                                  const WebNode& tapped_node,
-                                  bool page_changed) override {}
+  void ShowUnhandledTapUIIfNeeded(const WebTappedInfo& tapped_info) override {}
   void Show(WebNavigationPolicy) override {}
   virtual WebWidgetClient* WidgetClient() { return this; }
 

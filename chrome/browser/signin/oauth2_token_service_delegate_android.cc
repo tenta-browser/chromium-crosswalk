@@ -25,6 +25,7 @@ using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::JavaParamRef;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 using content::BrowserThread;
 
@@ -181,8 +182,7 @@ OAuth2TokenServiceDelegateAndroid::~OAuth2TokenServiceDelegateAndroid() {
 // static
 ScopedJavaLocalRef<jobject> OAuth2TokenServiceDelegateAndroid::GetForProfile(
     JNIEnv* env,
-    jclass clazz,
-    jobject j_profile_android) {
+    const JavaRef<jobject>& j_profile_android) {
   Profile* profile = ProfileAndroid::FromProfileAndroid(j_profile_android);
   ProfileOAuth2TokenService* service =
       ProfileOAuth2TokenServiceFactory::GetForProfile(profile);
@@ -191,11 +191,11 @@ ScopedJavaLocalRef<jobject> OAuth2TokenServiceDelegateAndroid::GetForProfile(
       static_cast<OAuth2TokenServiceDelegateAndroid*>(delegate)->java_ref_);
 }
 
-static ScopedJavaLocalRef<jobject> GetForProfile(
+static ScopedJavaLocalRef<jobject> JNI_OAuth2TokenService_GetForProfile(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& j_profile_android) {
-  return OAuth2TokenServiceDelegateAndroid::GetForProfile(env, clazz,
+  return OAuth2TokenServiceDelegateAndroid::GetForProfile(env,
                                                           j_profile_android);
 }
 
@@ -540,11 +540,12 @@ std::string OAuth2TokenServiceDelegateAndroid::MapAccountNameToAccountId(
 
 // Called from Java when fetching of an OAuth2 token is finished. The
 // |authToken| param is only valid when |result| is true.
-void OAuth2TokenFetched(JNIEnv* env,
-                        const JavaParamRef<jclass>& clazz,
-                        const JavaParamRef<jstring>& authToken,
-                        jboolean isTransientError,
-                        jlong nativeCallback) {
+void JNI_OAuth2TokenService_OAuth2TokenFetched(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    const JavaParamRef<jstring>& authToken,
+    jboolean isTransientError,
+    jlong nativeCallback) {
   std::string token;
   if (authToken)
     token = ConvertJavaStringToUTF8(env, authToken);
@@ -557,9 +558,4 @@ void OAuth2TokenFetched(JNIEnv* env,
                     ? GoogleServiceAuthError::CONNECTION_FAILED
                     : GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS);
   heap_callback->Run(err, token, base::Time());
-}
-
-// static
-bool OAuth2TokenServiceDelegateAndroid::Register(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }

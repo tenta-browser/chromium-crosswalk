@@ -52,6 +52,10 @@ public class BookmarkActionBar extends SelectableListToolbar<BookmarkId>
                 .setTitle(R.string.bookmark_action_bar_move);
         getMenu().findItem(R.id.selection_mode_delete_menu_id)
                 .setTitle(R.string.bookmark_action_bar_delete);
+
+        // Wait to enable the selection mode group until the BookmarkDelegate is set. The
+        // SelectionDelegate is retrieved from the BookmarkDelegate.
+        getMenu().setGroupEnabled(R.id.selection_mode_menu_group, false);
     }
 
     @Override
@@ -68,7 +72,6 @@ public class BookmarkActionBar extends SelectableListToolbar<BookmarkId>
     public boolean onMenuItemClick(MenuItem menuItem) {
         hideOverflowMenu();
 
-        SelectionDelegate<BookmarkId> selectionDelegate = mDelegate.getSelectionDelegate();
         if (menuItem.getItemId() == R.id.edit_menu_id) {
             BookmarkAddEditFolderActivity.startEditFolderActivity(getContext(),
                     mCurrentFolder.getId());
@@ -79,7 +82,10 @@ public class BookmarkActionBar extends SelectableListToolbar<BookmarkId>
         } else if (menuItem.getItemId() == R.id.search_menu_id) {
             mDelegate.openSearchUI();
             return true;
-        } else if (menuItem.getItemId() == R.id.selection_mode_edit_menu_id) {
+        }
+
+        SelectionDelegate<BookmarkId> selectionDelegate = mDelegate.getSelectionDelegate();
+        if (menuItem.getItemId() == R.id.selection_mode_edit_menu_id) {
             List<BookmarkId> list = selectionDelegate.getSelectedItems();
             assert list.size() == 1;
             BookmarkItem item = mDelegate.getModel().getBookmarkById(list.get(0));
@@ -123,18 +129,35 @@ public class BookmarkActionBar extends SelectableListToolbar<BookmarkId>
         getMenu().findItem(R.id.edit_menu_id).setVisible(false);
     }
 
-    // BookmarkUIObserver implementations.
-
     @Override
+    protected void showNormalView() {
+        super.showNormalView();
+
+        if (mDelegate == null) {
+            getMenu().findItem(R.id.search_menu_id).setVisible(false);
+            getMenu().findItem(R.id.edit_menu_id).setVisible(false);
+        }
+    }
+
+    /**
+     * Sets the delegate to use to handle UI actions related to this action bar.
+     * @param delegate A {@link BookmarkDelegate} instance to handle all backend interaction.
+     */
     public void onBookmarkDelegateInitialized(BookmarkDelegate delegate) {
         mDelegate = delegate;
         mDelegate.addUIObserver(this);
         if (!delegate.isDialogUi()) getMenu().removeItem(R.id.close_menu_id);
         delegate.getModel().addObserver(mBookmarkModelObserver);
+
+        getMenu().setGroupEnabled(R.id.selection_mode_menu_group, true);
     }
+
+    // BookmarkUIObserver implementations.
 
     @Override
     public void onDestroy() {
+        if (mDelegate == null) return;
+
         mDelegate.removeUIObserver(this);
         mDelegate.getModel().removeObserver(mBookmarkModelObserver);
     }
@@ -146,19 +169,21 @@ public class BookmarkActionBar extends SelectableListToolbar<BookmarkId>
         getMenu().findItem(R.id.search_menu_id).setVisible(true);
         getMenu().findItem(R.id.edit_menu_id).setVisible(mCurrentFolder.isEditable());
 
-        // If the parent folder is a top level node, we don't go up anymore.
-        if (mDelegate.getModel().getTopLevelFolderParentIDs().contains(
-                mCurrentFolder.getParentId())) {
-            if (TextUtils.isEmpty(mCurrentFolder.getTitle())) {
-                setTitle(R.string.bookmarks);
-            } else {
-                setTitle(mCurrentFolder.getTitle());
-            }
-            setNavigationButton(NAVIGATION_BUTTON_MENU);
+        // If this is the root folder, we can't go up anymore.
+        if (folder.equals(mDelegate.getModel().getRootFolderId())) {
+            setTitle(R.string.bookmarks);
+            setNavigationButton(NAVIGATION_BUTTON_NONE);
+            return;
+        }
+
+        if (mDelegate.getModel().getTopLevelFolderParentIDs().contains(mCurrentFolder.getParentId())
+                && TextUtils.isEmpty(mCurrentFolder.getTitle())) {
+            setTitle(R.string.bookmarks);
         } else {
             setTitle(mCurrentFolder.getTitle());
-            setNavigationButton(NAVIGATION_BUTTON_BACK);
         }
+
+        setNavigationButton(NAVIGATION_BUTTON_BACK);
     }
 
     @Override

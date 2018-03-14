@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef CONTENT_COMMON_FILEAPI_WEBBLOB_MESSAGES_H_
+#define CONTENT_COMMON_FILEAPI_WEBBLOB_MESSAGES_H_
+
 // IPC messages for HTML5 Blob and Stream.
-// Multiply-included message file, hence no include guard.
 
 #include <stddef.h>
 
@@ -97,41 +99,4 @@ IPC_SYNC_MESSAGE_CONTROL2_0(BlobHostMsg_RegisterPublicURL,
 IPC_MESSAGE_CONTROL1(BlobHostMsg_RevokePublicURL,
                      GURL)
 
-// Stream messages sent from the renderer to the browser.
-
-// Registers a stream as being built.
-IPC_MESSAGE_CONTROL2(StreamHostMsg_StartBuilding,
-                     GURL /* url */,
-                     std::string /* content_type */)
-
-// Appends data to a stream being built.
-IPC_MESSAGE_CONTROL2(StreamHostMsg_AppendBlobDataItem,
-                     GURL /* url */,
-                     storage::DataElement)
-
-// Appends data to a stream being built.
-IPC_SYNC_MESSAGE_CONTROL3_0(StreamHostMsg_SyncAppendSharedMemory,
-                            GURL /* url */,
-                            base::SharedMemoryHandle,
-                            uint32_t /* buffer size */)
-
-// Flushes contents buffered in the stream.
-IPC_MESSAGE_CONTROL1(StreamHostMsg_Flush,
-                     GURL /* url */)
-
-// Finishes building a stream.
-IPC_MESSAGE_CONTROL1(StreamHostMsg_FinishBuilding,
-                     GURL /* url */)
-
-// Aborts building a stream.
-IPC_MESSAGE_CONTROL1(StreamHostMsg_AbortBuilding,
-                     GURL /* url */)
-
-// Creates a new stream that's a clone of an existing src stream.
-IPC_MESSAGE_CONTROL2(StreamHostMsg_Clone,
-                     GURL /* url */,
-                     GURL /* src_url */)
-
-// Removes a stream.
-IPC_MESSAGE_CONTROL1(StreamHostMsg_Remove,
-                     GURL /* url */)
+#endif  // CONTENT_COMMON_FILEAPI_WEBBLOB_MESSAGES_H_

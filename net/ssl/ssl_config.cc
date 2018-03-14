@@ -12,12 +12,13 @@ const uint16_t kDefaultSSLVersionMin = SSL_PROTOCOL_VERSION_TLS1;
 
 const uint16_t kDefaultSSLVersionMax = SSL_PROTOCOL_VERSION_TLS1_2;
 
+const TLS13Variant kDefaultTLS13Variant = kTLS13VariantDraft;
+
 SSLConfig::CertAndStatus::CertAndStatus() = default;
 SSLConfig::CertAndStatus::CertAndStatus(scoped_refptr<X509Certificate> cert_arg,
                                         CertStatus status)
     : cert(std::move(cert_arg)), cert_status(status) {}
-SSLConfig::CertAndStatus::CertAndStatus(const CertAndStatus& other)
-    : cert(other.cert), cert_status(other.cert_status) {}
+SSLConfig::CertAndStatus::CertAndStatus(const CertAndStatus& other) = default;
 SSLConfig::CertAndStatus::~CertAndStatus() = default;
 
 SSLConfig::SSLConfig()
@@ -27,7 +28,7 @@ SSLConfig::SSLConfig()
       common_name_fallback_local_anchors_enabled(true),
       version_min(kDefaultSSLVersionMin),
       version_max(kDefaultSSLVersionMax),
-      deprecated_cipher_suites_enabled(false),
+      tls13_variant(kDefaultTLS13Variant),
       version_interference_probe(false),
       channel_id_enabled(true),
       false_start_enabled(true),
@@ -40,7 +41,7 @@ SSLConfig::SSLConfig()
 
 SSLConfig::SSLConfig(const SSLConfig& other) = default;
 
-SSLConfig::~SSLConfig() {}
+SSLConfig::~SSLConfig() = default;
 
 bool SSLConfig::IsAllowedBadCert(X509Certificate* cert,
                                  CertStatus* cert_status) const {

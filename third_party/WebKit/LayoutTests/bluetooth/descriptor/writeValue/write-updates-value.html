@@ -1,12 +1,14 @@
 <!DOCTYPE html>
 <script src="../../../resources/testharness.js"></script>
 <script src="../../../resources/testharnessreport.js"></script>
+<script src="../../../resources/testdriver.js"></script>
+<script src="../../../resources/testdriver-vendor.js"></script>
 <script src="../../../resources/bluetooth/bluetooth-helpers.js"></script>
 <script>
 'use strict';
-promise_test(() => {
+bluetooth_test(() => {
   return setBluetoothFakeAdapter('DisconnectingHealthThermometerAdapter')
-    .then(() => requestDeviceWithKeyDown({
+    .then(() => requestDeviceWithTrustedClick({
       filters: [{services: ['health_thermometer']}]}))
     .then(device => device.gatt.connect())
     .then(gattServer => gattServer.getPrimaryService('health_thermometer'))
@@ -16,8 +18,10 @@ promise_test(() => {
       assert_equals(descriptor.value, null);
       let textEncoder = new TextEncoder();
       let newValue = textEncoder.encode('foo');
+      assert_true(newValue instanceof Uint8Array, 'newValue is Uint8Array');
       return descriptor.writeValue(newValue).then(() => {
-        assert_array_equals(descriptor.value.buffer, newValue.buffer);
+        assert_true(descriptor.value instanceof DataView, 'descriptor.value is DataView');
+        assert_array_equals(Array.from(descriptor.value.getUint8()), Array.from(newValue.buffer));
       })
     })
 }, 'Succesful read should update descriptor\'s value.');

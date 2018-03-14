@@ -53,23 +53,22 @@ ModelSafeGroup GetGroupForModelType(const ModelType type,
 std::string ModelSafeGroupToString(ModelSafeGroup group) {
   switch (group) {
     case GROUP_UI:
-      return "GROUP_UI";
+      return "Group UI";
     case GROUP_DB:
-      return "GROUP_DB";
+      return "Group DB";
     case GROUP_FILE:
-      return "GROUP_FILE";
+      return "Group File";
     case GROUP_HISTORY:
-      return "GROUP_HISTORY";
+      return "Group History";
     case GROUP_PASSIVE:
-      return "GROUP_PASSIVE";
+      return "Group Passive";
     case GROUP_PASSWORD:
-      return "GROUP_PASSWORD";
+      return "Group Password";
     case GROUP_NON_BLOCKING:
-      return "GROUP_NON_BLOCKING";
-    default:
-      NOTREACHED();
-      return "INVALID";
+      return "Group Non Blocking";
   }
+  NOTREACHED();
+  return "Invalid";
 }
 
 ModelSafeWorker::ModelSafeWorker()
@@ -119,7 +118,7 @@ SyncerError ModelSafeWorker::DoWorkAndWaitUntilDone(WorkCallback work) {
           [](scoped_refptr<ModelSafeWorker> worker) {
             worker->work_done_or_abandoned_.Signal();
           },
-          make_scoped_refptr(this)))),
+          base::WrapRefCounted(this)))),
       base::Unretained(&error), base::Unretained(&did_run)));
 
   // Unblocked when the task runs or is deleted or when RequestStop() is called

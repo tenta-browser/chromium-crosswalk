@@ -65,7 +65,7 @@ class CryptAuthDeviceManager : public SyncScheduler::Delegate,
   // |pref_service|: Stores syncing metadata and unlock key information to
   //                 persist across browser restarts. Must already be registered
   //                 with RegisterPrefs().
-  CryptAuthDeviceManager(std::unique_ptr<base::Clock> clock,
+  CryptAuthDeviceManager(base::Clock* clock,
                          std::unique_ptr<CryptAuthClientFactory> client_factory,
                          CryptAuthGCMManager* gcm_manager,
                          PrefService* pref_service);
@@ -110,17 +110,28 @@ class CryptAuthDeviceManager : public SyncScheduler::Delegate,
 
   // Returns a list of remote devices that can unlock the user's other devices.
   virtual std::vector<ExternalDeviceInfo> GetUnlockKeys() const;
+  // Like GetUnlockKeys(), but only returns Pixel devices.
+  virtual std::vector<ExternalDeviceInfo> GetPixelUnlockKeys() const;
 
   // Returns a list of remote devices that can host tether hotspots.
   virtual std::vector<ExternalDeviceInfo> GetTetherHosts() const;
+  // Like GetTetherHosts(), but only returns Pixel devices.
+  virtual std::vector<ExternalDeviceInfo> GetPixelTetherHosts() const;
 
  protected:
   // Empty constructor, to be used by tests to mock the device manager. Do not
   // use this constructor outside of tests.
   CryptAuthDeviceManager();
 
-  // Creates a new SyncScheduler instance. Exposed for testing.
-  virtual std::unique_ptr<SyncScheduler> CreateSyncScheduler();
+  void SetSyncSchedulerForTest(std::unique_ptr<SyncScheduler> sync_scheduler);
+
+  // Invokes OnSyncStarted() on all observers.
+  void NotifySyncStarted();
+
+  // Invokes OnSyncFinished(|sync_result|, |device_change_result|) on all
+  // observers.
+  void NotifySyncFinished(SyncResult sync_result,
+                          DeviceChangeResult device_change_result);
 
  private:
   // CryptAuthGCMManager::Observer:
@@ -138,7 +149,7 @@ class CryptAuthDeviceManager : public SyncScheduler::Delegate,
   void OnGetMyDevicesFailure(const std::string& error);
 
   // Used to determine the time.
-  std::unique_ptr<base::Clock> clock_;
+  base::Clock* clock_;
 
   // Creates CryptAuthClient instances for each sync attempt.
   std::unique_ptr<CryptAuthClientFactory> client_factory_;

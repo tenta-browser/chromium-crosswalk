@@ -51,17 +51,17 @@ typedef Vector<ShadowData, 1> ShadowDataVector;
 class ShadowList : public RefCounted<ShadowList> {
  public:
   // This consumes passed in vector.
-  static PassRefPtr<ShadowList> Adopt(ShadowDataVector& shadows) {
-    return AdoptRef(new ShadowList(shadows));
+  static scoped_refptr<ShadowList> Adopt(ShadowDataVector& shadows) {
+    return base::AdoptRef(new ShadowList(shadows));
   }
   const ShadowDataVector& Shadows() const { return shadows_; }
   bool operator==(const ShadowList& o) const { return shadows_ == o.shadows_; }
   bool operator!=(const ShadowList& o) const { return !(*this == o); }
 
-  static PassRefPtr<ShadowList> Blend(const ShadowList* from,
-                                      const ShadowList* to,
-                                      double progress,
-                                      const Color& current_color);
+  static scoped_refptr<ShadowList> Blend(const ShadowList* from,
+                                         const ShadowList* to,
+                                         double progress,
+                                         const Color& current_color);
 
   // Outsets needed to include all shadows in this list, as well as the
   // source (i.e. no outsets will be negative).
@@ -77,7 +77,7 @@ class ShadowList : public RefCounted<ShadowList> {
   ShadowList(ShadowDataVector& shadows) {
     // If we have no shadows, we use a null ShadowList
     DCHECK(!shadows.IsEmpty());
-    shadows_.Swap(shadows);
+    shadows_.swap(shadows);
     shadows_.ShrinkToFit();
   }
   ShadowDataVector shadows_;

@@ -12,14 +12,14 @@
 #include <stddef.h>
 
 #include <algorithm>
-#include <string>
 
 #include "base/logging.h"
 #include "base/macros.h"
-#include "net/base/net_export.h"
 #include "net/http2/decoder/decode_buffer.h"
 #include "net/http2/decoder/decode_status.h"
 #include "net/http2/hpack/decoder/hpack_varint_decoder.h"
+#include "net/http2/platform/api/http2_export.h"
+#include "net/http2/platform/api/http2_string.h"
 
 namespace net {
 
@@ -32,12 +32,7 @@ namespace net {
 // Resume() when more input is available, repeating until kDecodeInProgress is
 // not returned. If kDecodeDone or kDecodeError is returned, then Resume() must
 // not be called until Start() has been called to start decoding a new string.
-//
-// There are 3 variants of Start in this class, participants in a performance
-// experiment. Perflab experiments show it is generally fastest to call
-// StartSpecialCaseShort rather than StartOnly (~9% slower) or
-// StartAndDecodeLength (~10% slower).
-class NET_EXPORT_PRIVATE HpackStringDecoder {
+class HTTP2_EXPORT_PRIVATE HpackStringDecoder {
  public:
   enum StringDecoderState {
     kStartDecodingLength,
@@ -45,31 +40,8 @@ class NET_EXPORT_PRIVATE HpackStringDecoder {
     kResumeDecodingLength,
   };
 
-  // TODO(jamessynge): Get rid of all but one of the Start and Resume methods
-  // after all of the HPACK decoder is checked in and has been perf tested.
   template <class Listener>
   DecodeStatus Start(DecodeBuffer* db, Listener* cb) {
-    return StartSpecialCaseShort(db, cb);
-  }
-
-  template <class Listener>
-  DecodeStatus StartOnly(DecodeBuffer* db, Listener* cb) {
-    state_ = kStartDecodingLength;
-    return Resume(db, cb);
-  }
-
-  template <class Listener>
-  DecodeStatus StartAndDecodeLength(DecodeBuffer* db, Listener* cb) {
-    DecodeStatus status;
-    if (StartDecodingLength(db, cb, &status)) {
-      state_ = kDecodingString;
-      return DecodeString(db, cb);
-    }
-    return status;
-  }
-
-  template <class Listener>
-  DecodeStatus StartSpecialCaseShort(DecodeBuffer* db, Listener* cb) {
     // Fast decode path is used if the string is under 127 bytes and the
     // entire length of the string is in the decode buffer. More than 83% of
     // string lengths are encoded in just one byte.
@@ -140,10 +112,10 @@ class NET_EXPORT_PRIVATE HpackStringDecoder {
     }
   }
 
-  std::string DebugString() const;
+  Http2String DebugString() const;
 
  private:
-  static std::string StateToString(StringDecoderState v);
+  static Http2String StateToString(StringDecoderState v);
 
   // Returns true if the length is fully decoded and the listener wants the
   // decoding to continue, false otherwise; status is set to the status from
@@ -198,7 +170,6 @@ class NET_EXPORT_PRIVATE HpackStringDecoder {
     remaining_ = length_decoder_.value();
     // Make callback so consumer knows what is coming.
     cb->OnStringStart(huffman_encoded_, remaining_);
-    return;
   }
 
   // Passes the available portion of the string to the listener, and signals
@@ -229,8 +200,8 @@ class NET_EXPORT_PRIVATE HpackStringDecoder {
   bool huffman_encoded_ = false;
 };
 
-NET_EXPORT_PRIVATE std::ostream& operator<<(std::ostream& out,
-                                            const HpackStringDecoder& v);
+HTTP2_EXPORT_PRIVATE std::ostream& operator<<(std::ostream& out,
+                                              const HpackStringDecoder& v);
 
 }  // namespace net
 #endif  // NET_HTTP2_HPACK_DECODER_HPACK_STRING_DECODER_H_

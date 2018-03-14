@@ -11,6 +11,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/histogram_tester.h"
 #include "components/subresource_filter/content/browser/async_document_subresource_filter.h"
 #include "components/subresource_filter/content/browser/async_document_subresource_filter_test_utils.h"
 #include "components/subresource_filter/core/common/activation_level.h"
@@ -18,6 +19,7 @@
 #include "components/subresource_filter/core/common/test_ruleset_creator.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_renderer_host.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -43,6 +45,10 @@ class SubframeNavigationFilteringThrottleTest
     parent_filter_.reset();
     RunUntilIdle();
     content::RenderViewHostTestHarness::TearDown();
+  }
+
+  content::NavigationSimulator* navigation_simulator() {
+    return navigation_simulator_.get();
   }
 
   // content::WebContentsObserver:
@@ -98,7 +104,7 @@ class SubframeNavigationFilteringThrottleTest
   }
 
   void SimulateStartAndExpectResult(
-      content::NavigationThrottle::ThrottleCheckResult expect_result) {
+      content::NavigationThrottle::ThrottleAction expect_result) {
     navigation_simulator_->Start();
     EXPECT_EQ(expect_result,
               navigation_simulator_->GetLastThrottleCheckResult());
@@ -106,17 +112,22 @@ class SubframeNavigationFilteringThrottleTest
 
   void SimulateRedirectAndExpectResult(
       const GURL& new_url,
-      content::NavigationThrottle::ThrottleCheckResult expect_result) {
+      content::NavigationThrottle::ThrottleAction expect_result) {
     navigation_simulator_->Redirect(new_url);
     EXPECT_EQ(expect_result,
               navigation_simulator_->GetLastThrottleCheckResult());
   }
 
   void SimulateCommitAndExpectResult(
-      content::NavigationThrottle::ThrottleCheckResult expect_result) {
+      content::NavigationThrottle::ThrottleAction expect_result) {
     navigation_simulator_->Commit();
     EXPECT_EQ(expect_result,
               navigation_simulator_->GetLastThrottleCheckResult());
+  }
+
+  void SimulateCommitErrorPage() {
+    DCHECK(content::IsBrowserSideNavigationEnabled());
+    navigation_simulator_->CommitErrorPage();
   }
 
  private:
@@ -137,7 +148,8 @@ TEST_F(SubframeNavigationFilteringThrottleTest, FilterOnStart) {
   InitializeDocumentSubresourceFilter(GURL("https://example.test"));
   CreateTestSubframeAndInitNavigation(
       GURL("https://example.test/disallowed.html"), main_rfh());
-  SimulateStartAndExpectResult(content::NavigationThrottle::CANCEL);
+  SimulateStartAndExpectResult(
+      content::NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE);
 }
 
 TEST_F(SubframeNavigationFilteringThrottleTest, FilterOnRedirect) {
@@ -146,8 +158,12 @@ TEST_F(SubframeNavigationFilteringThrottleTest, FilterOnRedirect) {
                                       main_rfh());
 
   SimulateStartAndExpectResult(content::NavigationThrottle::PROCEED);
+  content::NavigationThrottle::ThrottleAction expected_result =
+      content::IsBrowserSideNavigationEnabled()
+          ? content::NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE
+          : content::NavigationThrottle::CANCEL;
   SimulateRedirectAndExpectResult(GURL("https://example.test/disallowed.html"),
-                                  content::NavigationThrottle::CANCEL);
+                                  expected_result);
 }
 
 TEST_F(SubframeNavigationFilteringThrottleTest, FilterOnSecondRedirect) {
@@ -158,8 +174,12 @@ TEST_F(SubframeNavigationFilteringThrottleTest, FilterOnSecondRedirect) {
   SimulateStartAndExpectResult(content::NavigationThrottle::PROCEED);
   SimulateRedirectAndExpectResult(GURL("https://example.test/allowed2.html"),
                                   content::NavigationThrottle::PROCEED);
+  content::NavigationThrottle::ThrottleAction expected_result =
+      content::IsBrowserSideNavigationEnabled()
+          ? content::NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE
+          : content::NavigationThrottle::CANCEL;
   SimulateRedirectAndExpectResult(GURL("https://example.test/disallowed.html"),
-                                  content::NavigationThrottle::CANCEL);
+                                  expected_result);
 }
 
 TEST_F(SubframeNavigationFilteringThrottleTest, NeverFilterNonMatchingRule) {
@@ -179,15 +199,48 @@ TEST_F(SubframeNavigationFilteringThrottleTest, FilterSubsubframe) {
       content::RenderFrameHostTester::For(main_rfh())
           ->AppendChild("parent-sub");
   GURL test_url = GURL("https://example.test");
-  content::RenderFrameHostTester::For(parent_subframe)
-      ->SimulateNavigationStart(test_url);
+  auto navigation = content::NavigationSimulator::CreateRendererInitiated(
+      test_url, parent_subframe);
+  navigation->Start();
   InitializeDocumentSubresourceFilter(GURL("https://example.test"));
-  content::RenderFrameHostTester::For(parent_subframe)
-      ->SimulateNavigationCommit(test_url);
+  navigation->Commit();
 
   CreateTestSubframeAndInitNavigation(
       GURL("https://example.test/disallowed.html"), parent_subframe);
-  SimulateStartAndExpectResult(content::NavigationThrottle::CANCEL);
+  SimulateStartAndExpectResult(
+      content::NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE);
+}
+
+TEST_F(SubframeNavigationFilteringThrottleTest, DelayMetrics) {
+  base::HistogramTester histogram_tester;
+  InitializeDocumentSubresourceFilter(GURL("https://example.test"));
+  CreateTestSubframeAndInitNavigation(GURL("https://example.test/allowed.html"),
+                                      main_rfh());
+  if (content::IsBrowserSideNavigationEnabled())
+    navigation_simulator()->SetTransition(ui::PAGE_TRANSITION_MANUAL_SUBFRAME);
+  SimulateStartAndExpectResult(content::NavigationThrottle::PROCEED);
+  content::NavigationThrottle::ThrottleAction expected_result =
+      content::IsBrowserSideNavigationEnabled()
+          ? content::NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE
+          : content::NavigationThrottle::CANCEL;
+  SimulateRedirectAndExpectResult(GURL("https://example.test/disallowed.html"),
+                                  expected_result);
+  if (content::IsBrowserSideNavigationEnabled())
+    SimulateCommitErrorPage();
+
+  const char kFilterDelayDisallowed[] =
+      "SubresourceFilter.DocumentLoad.SubframeFilteringDelay.Disallowed";
+  const char kFilterDelayAllowed[] =
+      "SubresourceFilter.DocumentLoad.SubframeFilteringDelay.Allowed";
+  histogram_tester.ExpectTotalCount(kFilterDelayDisallowed, 1);
+  histogram_tester.ExpectTotalCount(kFilterDelayAllowed, 0);
+
+  CreateTestSubframeAndInitNavigation(GURL("https://example.test/allowed.html"),
+                                      main_rfh());
+  SimulateStartAndExpectResult(content::NavigationThrottle::PROCEED);
+  SimulateCommitAndExpectResult(content::NavigationThrottle::PROCEED);
+  histogram_tester.ExpectTotalCount(kFilterDelayDisallowed, 1);
+  histogram_tester.ExpectTotalCount(kFilterDelayAllowed, 1);
 }
 
 }  // namespace subresource_filter

@@ -5,16 +5,22 @@
 #include "chrome/browser/media/android/router/media_router_dialog_controller_android.h"
 
 #include "base/android/jni_android.h"
+#include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/strings/string16.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/media/android/router/media_router_android.h"
 #include "chrome/browser/media/router/media_router.h"
 #include "chrome/browser/media/router/media_router_factory.h"
-#include "chrome/browser/media/router/media_source.h"
-#include "chrome/browser/media/router/presentation_request.h"
+#include "chrome/browser/vr/vr_tab_helper.h"
+#include "chrome/common/media_router/media_source.h"
+#include "chrome/common/media_router/media_source_helper.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/presentation_request.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
+#include "device/vr/features/features.h"
 #include "jni/ChromeMediaRouterDialogController_jni.h"
 
 DEFINE_WEB_CONTENTS_USER_DATA_KEY(
@@ -40,30 +46,43 @@ MediaRouterDialogControllerAndroid::GetOrCreateForWebContents(
 void MediaRouterDialogControllerAndroid::OnSinkSelected(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
+    const JavaParamRef<jstring>& jsource_id,
     const JavaParamRef<jstring>& jsink_id) {
-  std::unique_ptr<CreatePresentationConnectionRequest>
-      create_connection_request = TakeCreateConnectionRequest();
-  if (!create_connection_request)
+  auto start_presentation_context = std::move(start_presentation_context_);
+  if (!start_presentation_context)
     return;
 
-  const PresentationRequest& presentation_request =
-      create_connection_request->presentation_request();
+  const auto& presentation_request =
+      start_presentation_context->presentation_request();
 
-  // TODO(crbug.com/627655): Support multiple URLs.
-  const MediaSource::Id source_id =
-      presentation_request.GetMediaSources()[0].id();
-  const auto& origin = presentation_request.frame_origin();
+  const MediaSource::Id source_id = ConvertJavaStringToUTF8(env, jsource_id);
+
+#ifndef NDEBUG
+  // Verify that there was a request containing the source id the sink was
+  // selected for.
+  auto sources =
+      MediaSourcesForPresentationUrls(presentation_request.presentation_urls);
+  bool is_source_from_request = false;
+  for (const auto& source : sources) {
+    if (source.id() == source_id) {
+      is_source_from_request = true;
+      break;
+    }
+  }
+  DCHECK(is_source_from_request);
+#endif  // NDEBUG
 
   std::vector<MediaRouteResponseCallback> route_response_callbacks;
   route_response_callbacks.push_back(
-      base::Bind(&CreatePresentationConnectionRequest::HandleRouteResponse,
-                 base::Passed(&create_connection_request)));
+      base::BindOnce(&StartPresentationContext::HandleRouteResponse,
+                     std::move(start_presentation_context)));
 
   content::BrowserContext* browser_context = initiator()->GetBrowserContext();
   MediaRouter* router = MediaRouterFactory::GetApiForBrowserContext(
       browser_context);
-  router->CreateRoute(source_id, ConvertJavaStringToUTF8(env, jsink_id), origin,
-                      initiator(), route_response_callbacks, base::TimeDelta(),
+  router->CreateRoute(source_id, ConvertJavaStringToUTF8(env, jsink_id),
+                      presentation_request.frame_origin, initiator(),
+                      std::move(route_response_callbacks), base::TimeDelta(),
                       browser_context->IsOffTheRecord());
 }
 
@@ -90,8 +109,7 @@ void MediaRouterDialogControllerAndroid::OnDialogCancelled(
 void MediaRouterDialogControllerAndroid::OnMediaSourceNotSupported(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
-  std::unique_ptr<CreatePresentationConnectionRequest> request =
-      TakeCreateConnectionRequest();
+  auto request = std::move(start_presentation_context_);
   if (!request)
     return;
 
@@ -100,8 +118,7 @@ void MediaRouterDialogControllerAndroid::OnMediaSourceNotSupported(
 }
 
 void MediaRouterDialogControllerAndroid::CancelPresentationRequest() {
-  std::unique_ptr<CreatePresentationConnectionRequest> request =
-      TakeCreateConnectionRequest();
+  auto request = std::move(start_presentation_context_);
   if (!request)
     return;
 
@@ -118,24 +135,20 @@ MediaRouterDialogControllerAndroid::MediaRouterDialogControllerAndroid(
       env, reinterpret_cast<jlong>(this)));
 }
 
-// static
-bool MediaRouterDialogControllerAndroid::Register(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
 MediaRouterDialogControllerAndroid::~MediaRouterDialogControllerAndroid() {
 }
 
 void MediaRouterDialogControllerAndroid::CreateMediaRouterDialog() {
+  // TODO(crbug.com/736568): Re-enable dialog in VR.
+  if (vr::VrTabHelper::IsInVr(initiator())) {
+    CancelPresentationRequest();
+    return;
+  }
+
   JNIEnv* env = base::android::AttachCurrentThread();
 
-  // TODO(crbug.com/627655): Support multiple URLs.
-  const MediaSource::Id source_id = create_connection_request()
-                                        ->presentation_request()
-                                        .GetMediaSources()[0]
-                                        .id();
-  ScopedJavaLocalRef<jstring> jsource_urn =
-      base::android::ConvertUTF8ToJavaString(env, source_id);
+  auto sources = MediaSourcesForPresentationUrls(
+      start_presentation_context_->presentation_request().presentation_urls);
 
   // If it's a single route with the same source, show the controller dialog
   // instead of the device picker.
@@ -145,19 +158,31 @@ void MediaRouterDialogControllerAndroid::CreateMediaRouterDialog() {
   MediaRouterAndroid* router = static_cast<MediaRouterAndroid*>(
       MediaRouterFactory::GetApiForBrowserContext(
           initiator()->GetBrowserContext()));
-  const MediaRoute* matching_route = router->FindRouteBySource(source_id);
-  if (matching_route) {
+  for (const auto& source : sources) {
+    const MediaSource::Id& source_id = source.id();
+    const MediaRoute* matching_route = router->FindRouteBySource(source_id);
+    if (!matching_route)
+      continue;
+
+    ScopedJavaLocalRef<jstring> jsource_id =
+        base::android::ConvertUTF8ToJavaString(env, source_id);
     ScopedJavaLocalRef<jstring> jmedia_route_id =
         base::android::ConvertUTF8ToJavaString(
             env, matching_route->media_route_id());
 
     Java_ChromeMediaRouterDialogController_openRouteControllerDialog(
-        env, java_dialog_controller_, jsource_urn, jmedia_route_id);
+        env, java_dialog_controller_, jsource_id, jmedia_route_id);
     return;
   }
 
+  std::vector<base::string16> source_ids;
+  source_ids.reserve(sources.size());
+  for (const auto& source : sources)
+    source_ids.push_back(base::UTF8ToUTF16(source.id()));
+  ScopedJavaLocalRef<jobjectArray> jsource_ids =
+      base::android::ToJavaArrayOfStrings(env, source_ids);
   Java_ChromeMediaRouterDialogController_openRouteChooserDialog(
-      env, java_dialog_controller_, jsource_urn);
+      env, java_dialog_controller_, jsource_ids);
 }
 
 void MediaRouterDialogControllerAndroid::CloseMediaRouterDialog() {
@@ -174,4 +199,3 @@ bool MediaRouterDialogControllerAndroid::IsShowingMediaRouterDialog() const {
 }
 
 }  // namespace media_router
-

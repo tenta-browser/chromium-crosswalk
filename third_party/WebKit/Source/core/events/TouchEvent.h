@@ -28,10 +28,11 @@
 #define TouchEvent_h
 
 #include "core/CoreExport.h"
-#include "core/dom/TouchList.h"
-#include "core/events/EventDispatchMediator.h"
 #include "core/events/TouchEventInit.h"
 #include "core/events/UIEventWithKeyState.h"
+#include "core/input/TouchList.h"
+#include "platform/graphics/TouchAction.h"
+#include "public/platform/WebCoalescedInputEvent.h"
 #include "public/platform/WebTouchEvent.h"
 
 namespace blink {
@@ -45,7 +46,7 @@ class CORE_EXPORT TouchEvent final : public UIEventWithKeyState {
   // We only initialize sourceCapabilities when we create TouchEvent from
   // EventHandler, null if it is from JavaScript.
   static TouchEvent* Create() { return new TouchEvent; }
-  static TouchEvent* Create(const WebTouchEvent& event,
+  static TouchEvent* Create(const WebCoalescedInputEvent& event,
                             TouchList* touches,
                             TouchList* target_touches,
                             TouchList* changed_touches,
@@ -81,15 +82,17 @@ class CORE_EXPORT TouchEvent final : public UIEventWithKeyState {
 
   void DoneDispatchingEventAtCurrentTarget() override;
 
-  EventDispatchMediator* CreateMediator() override;
+  const WebCoalescedInputEvent* NativeEvent() const {
+    return native_event_.get();
+  }
 
-  const WebTouchEvent* NativeEvent() const { return native_event_.get(); }
+  DispatchEventResult DispatchEvent(EventDispatcher&) override;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   TouchEvent();
-  TouchEvent(const WebTouchEvent&,
+  TouchEvent(const WebCoalescedInputEvent&,
              TouchList* touches,
              TouchList* target_touches,
              TouchList* changed_touches,
@@ -109,17 +112,7 @@ class CORE_EXPORT TouchEvent final : public UIEventWithKeyState {
   // touchstart event is generated. It is used for UMA histograms.
   TouchAction current_touch_action_;
 
-  std::unique_ptr<WebTouchEvent> native_event_;
-};
-
-class TouchEventDispatchMediator final : public EventDispatchMediator {
- public:
-  static TouchEventDispatchMediator* Create(TouchEvent*);
-
- private:
-  explicit TouchEventDispatchMediator(TouchEvent*);
-  TouchEvent& Event() const;
-  DispatchEventResult DispatchEvent(EventDispatcher&) const override;
+  std::unique_ptr<WebCoalescedInputEvent> native_event_;
 };
 
 DEFINE_EVENT_TYPE_CASTS(TouchEvent);

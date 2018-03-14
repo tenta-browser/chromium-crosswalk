@@ -4,38 +4,20 @@
 
 #include "ui/gfx/mojo/buffer_types_struct_traits.h"
 
+#include "build/build_config.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 
 namespace mojo {
 
-void* StructTraits<gfx::mojom::NativePixmapHandleDataView,
-                   gfx::NativePixmapHandle>::
-    SetUpContext(const gfx::NativePixmapHandle& pixmap_handle) {
-  return new PixmapHandleFdList();
-}
-
-void StructTraits<gfx::mojom::NativePixmapHandleDataView,
-                  gfx::NativePixmapHandle>::
-    TearDownContext(const gfx::NativePixmapHandle& handle, void* context) {
-  delete static_cast<PixmapHandleFdList*>(context);
-}
-
-std::vector<mojo::ScopedHandle> StructTraits<
-    gfx::mojom::NativePixmapHandleDataView,
-    gfx::NativePixmapHandle>::fds(const gfx::NativePixmapHandle& pixmap_handle,
-                                  void* context) {
-  PixmapHandleFdList* handles = static_cast<PixmapHandleFdList*>(context);
+std::vector<mojo::ScopedHandle>
+StructTraits<gfx::mojom::NativePixmapHandleDataView, gfx::NativePixmapHandle>::
+    fds(const gfx::NativePixmapHandle& pixmap_handle) {
+  std::vector<mojo::ScopedHandle> handles;
 #if defined(OS_LINUX)
-  if (handles->empty()) {
-    // Generate the handles here, but do not send them yet.
-    for (const base::FileDescriptor& fd : pixmap_handle.fds) {
-      base::PlatformFile platform_file = fd.fd;
-      handles->push_back(mojo::WrapPlatformFile(platform_file));
-    }
-    return PixmapHandleFdList(handles->size());
-  }
+  for (const base::FileDescriptor& fd : pixmap_handle.fds)
+    handles.emplace_back(mojo::WrapPlatformFile(fd.fd));
 #endif  // defined(OS_LINUX)
-  return std::move(*handles);
+  return handles;
 }
 
 bool StructTraits<
@@ -60,29 +42,16 @@ bool StructTraits<
 #endif
 }
 
-mojo::ScopedHandle StructTraits<gfx::mojom::GpuMemoryBufferHandleDataView,
-                                gfx::GpuMemoryBufferHandle>::
+mojo::ScopedSharedBufferHandle
+StructTraits<gfx::mojom::GpuMemoryBufferHandleDataView,
+             gfx::GpuMemoryBufferHandle>::
     shared_memory_handle(const gfx::GpuMemoryBufferHandle& handle) {
-  if (handle.type != gfx::SHARED_MEMORY_BUFFER)
-    return mojo::ScopedHandle();
-#if defined(OS_MACOSX)
-  base::SharedMemoryHandle shm_handle = handle.handle;
-  size_t num_bytes = 0;
-  if (!shm_handle.GetSize(&num_bytes))
-    return mojo::ScopedHandle();
-  mojo::ScopedSharedBufferHandle scoped_handle =
-      mojo::WrapSharedMemoryHandle(shm_handle, num_bytes, false);
-  mojo::Handle mojo_handle = scoped_handle.release();
-  return mojo::MakeScopedHandle(mojo_handle);
-#else  // defined(OS_MACOSX)
-  base::PlatformFile platform_file = base::kInvalidPlatformFile;
-#if defined(OS_WIN)
-  platform_file = handle.handle.GetHandle();
-#else
-  platform_file = handle.handle.fd;
-#endif
-  return mojo::WrapPlatformFile(platform_file);
-#endif  // defined(OS_MACOSX)
+  if (handle.type != gfx::SHARED_MEMORY_BUFFER &&
+      handle.type != gfx::DXGI_SHARED_HANDLE &&
+      handle.type != gfx::ANDROID_HARDWARE_BUFFER)
+    return mojo::ScopedSharedBufferHandle();
+  return mojo::WrapSharedMemoryHandle(handle.handle, handle.handle.GetSize(),
+                                      false);
 }
 
 const gfx::NativePixmapHandle&
@@ -116,30 +85,15 @@ bool StructTraits<gfx::mojom::GpuMemoryBufferHandleDataView,
   if (!data.ReadType(&out->type) || !data.ReadId(&out->id))
     return false;
 
-  if (out->type == gfx::SHARED_MEMORY_BUFFER) {
-    mojo::ScopedHandle handle = data.TakeSharedMemoryHandle();
+  if (out->type == gfx::SHARED_MEMORY_BUFFER ||
+      out->type == gfx::DXGI_SHARED_HANDLE ||
+      out->type == gfx::ANDROID_HARDWARE_BUFFER) {
+    mojo::ScopedSharedBufferHandle handle = data.TakeSharedMemoryHandle();
     if (handle.is_valid()) {
-#if defined(OS_MACOSX)
-      mojo::Handle mojo_handle = handle.release();
-      mojo::ScopedSharedBufferHandle buffer_handle =
-          mojo::MakeScopedHandle(mojo::SharedBufferHandle(mojo_handle.value()));
       MojoResult unwrap_result = mojo::UnwrapSharedMemoryHandle(
-          std::move(buffer_handle), &out->handle, nullptr, nullptr);
+          std::move(handle), &out->handle, nullptr, nullptr);
       if (unwrap_result != MOJO_RESULT_OK)
         return false;
-#else  // defined(OS_MACOSX)
-      base::PlatformFile platform_file;
-      MojoResult unwrap_result =
-          mojo::UnwrapPlatformFile(std::move(handle), &platform_file);
-      if (unwrap_result != MOJO_RESULT_OK)
-        return false;
-#if defined(OS_WIN)
-      out->handle =
-          base::SharedMemoryHandle(platform_file, base::GetCurrentProcId());
-#else
-      out->handle = base::SharedMemoryHandle(platform_file, true);
-#endif
-#endif  // defined(OS_MACOSX)
     }
 
     out->offset = data.offset();

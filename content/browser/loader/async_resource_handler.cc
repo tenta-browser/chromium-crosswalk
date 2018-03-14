@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <vector>
 
-#include "base/command_line.h"
 #include "base/containers/hash_tables.h"
 #include "base/debug/alias.h"
 #include "base/logging.h"
@@ -15,24 +14,22 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/shared_memory.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
-#include "content/browser/loader/netlog_observer.h"
 #include "content/browser/loader/resource_buffer.h"
 #include "content/browser/loader/resource_controller.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/loader/resource_message_filter.h"
 #include "content/browser/loader/resource_request_info_impl.h"
-#include "content/browser/loader/upload_progress_tracker.h"
 #include "content/common/resource_messages.h"
-#include "content/common/resource_request_completion_status.h"
 #include "content/common/view_messages.h"
+#include "content/network/upload_progress_tracker.h"
 #include "content/public/common/resource_response.h"
 #include "ipc/ipc_message_macros.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
 #include "net/base/upload_progress.h"
 #include "net/url_request/redirect_info.h"
+#include "services/network/public/cpp/url_loader_completion_status.h"
 
 using base::TimeDelta;
 using base::TimeTicks;
@@ -40,49 +37,22 @@ using base::TimeTicks;
 namespace content {
 namespace {
 
-static int kBufferSize = 1024 * 512;
-static int kMinAllocationSize = 1024 * 4;
-static int kMaxAllocationSize = 1024 * 32;
-
-void GetNumericArg(const std::string& name, int* result) {
-  const std::string& value =
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(name);
-  if (!value.empty())
-    base::StringToInt(value, result);
-}
-
-void InitializeResourceBufferConstants() {
-  static bool did_init = false;
-  if (did_init)
-    return;
-  did_init = true;
-
-  GetNumericArg("resource-buffer-size", &kBufferSize);
-  GetNumericArg("resource-buffer-min-allocation-size", &kMinAllocationSize);
-  GetNumericArg("resource-buffer-max-allocation-size", &kMaxAllocationSize);
-}
-
-// This enum is used for logging a histogram and should not be reordered.
-enum ExpectedContentSizeResult {
-  EQ_RESPONSE_BODY = 0,
-  EQ_RESPONSE_BODY_GT_EQ_BUFFER_SIZE = 1,
-  GT_EQ_BUFFER_SIZE = 2,
-  LT_RESPONSE_BODY = 3,
-  GT_RESPONSE_BODY = 4,
-  UNKNOWN = 5,
-  EXPECTED_CONTENT_MAX,
-};
+static int g_async_loader_buffer_size = 1024 * 512;
+static int g_async_loader_min_buffer_allocation_size = 1024 * 4;
+static int g_async_loader_max_buffer_allocation_size = 1024 * 32;
 
 }  // namespace
 
-class DependentIOBuffer : public net::WrappedIOBuffer {
+// Used to write into an existing IOBuffer at a given offset. This is
+// very similar to DependentIOBufferForRedirectToFile and
+// DependentIOBufferForMimeSniffing but not identical.
+class DependentIOBufferForAsyncLoading : public net::WrappedIOBuffer {
  public:
-  DependentIOBuffer(ResourceBuffer* backing, char* memory)
-      : net::WrappedIOBuffer(memory),
-        backing_(backing) {
-  }
+  DependentIOBufferForAsyncLoading(ResourceBuffer* backing, char* memory)
+      : net::WrappedIOBuffer(memory), backing_(backing) {}
+
  private:
-  ~DependentIOBuffer() override {}
+  ~DependentIOBufferForAsyncLoading() override {}
   scoped_refptr<ResourceBuffer> backing_;
 };
 
@@ -105,6 +75,19 @@ AsyncResourceHandler::AsyncResourceHandler(net::URLRequest* request,
 AsyncResourceHandler::~AsyncResourceHandler() {
   if (has_checked_for_sufficient_resources_)
     rdh_->FinishedWithResourcesForRequest(request());
+}
+
+void AsyncResourceHandler::InitializeResourceBufferConstants() {
+  static bool did_init = false;
+  if (did_init)
+    return;
+  did_init = true;
+
+  GetNumericArg("resource-buffer-size", &g_async_loader_buffer_size);
+  GetNumericArg("resource-buffer-min-allocation-size",
+                &g_async_loader_min_buffer_allocation_size);
+  GetNumericArg("resource-buffer-max-allocation-size",
+                &g_async_loader_max_buffer_allocation_size);
 }
 
 bool AsyncResourceHandler::OnMessageReceived(const IPC::Message& message) {
@@ -152,7 +135,6 @@ void AsyncResourceHandler::OnRequestRedirected(
     return;
   }
 
-  NetLogObserver::PopulateResponseInfo(request(), response);
   response->head.encoded_data_length = request()->GetTotalReceivedBytes();
   reported_transfer_size_ = 0;
   response->head.request_start = request()->creation_time();
@@ -196,7 +178,6 @@ void AsyncResourceHandler::OnResponseStarted(
     return;
   }
 
-  NetLogObserver::PopulateResponseInfo(request(), response);
   response->head.encoded_data_length = request()->raw_header_size();
 
   // If the parent handler downloaded the resource to a file, grant the child
@@ -234,7 +215,7 @@ void AsyncResourceHandler::OnWillStart(
 
   if (GetRequestInfo()->is_upload_progress_enabled() &&
       request()->has_upload()) {
-    upload_progress_tracker_ = base::MakeUnique<UploadProgressTracker>(
+    upload_progress_tracker_ = std::make_unique<UploadProgressTracker>(
         FROM_HERE,
         base::BindRepeating(&AsyncResourceHandler::SendUploadProgress,
                             base::Unretained(this)),
@@ -263,7 +244,7 @@ void AsyncResourceHandler::OnWillRead(
   char* memory = buffer_->Allocate(&allocation_size_);
   CHECK(memory);
 
-  *buf = new DependentIOBuffer(buffer_.get(), memory);
+  *buf = new DependentIOBufferForAsyncLoading(buffer_.get(), memory);
   *buf_size = allocation_size_;
 
   controller->Resume();
@@ -304,8 +285,7 @@ void AsyncResourceHandler::OnReadCompleted(
       return;
     }
     filter->Send(new ResourceMsg_SetDataBuffer(
-        GetRequestID(), handle, buffer_->GetSharedMemory().mapped_size(),
-        filter->peer_pid()));
+        GetRequestID(), handle, buffer_->GetSharedMemory().mapped_size()));
     sent_data_buffer_msg_ = true;
   }
 
@@ -333,7 +313,7 @@ void AsyncResourceHandler::OnDataDownloaded(int bytes_downloaded) {
 }
 
 void AsyncResourceHandler::OnResponseCompleted(
-    const net::URLRequestStatus& status,
+    const net::URLRequestStatus& request_status,
     std::unique_ptr<ResourceController> controller) {
   ResourceMessageFilter* filter = GetFilter();
   if (!filter) {
@@ -360,31 +340,23 @@ void AsyncResourceHandler::OnResponseCompleted(
   // WebURLLoaderImpl::OnCompletedRequest that routes this message to a WebCore
   // ResourceHandleInternal which asserts on its state and crashes. By crashing
   // when the message is sent, we should get better crash reports.
-  CHECK(status.status() != net::URLRequestStatus::SUCCESS ||
+  CHECK(request_status.status() != net::URLRequestStatus::SUCCESS ||
         sent_received_response_msg_);
 
-  int error_code = status.error();
-  const ResourceRequestInfoImpl* info = GetRequestInfo();
-  bool was_ignored_by_handler = info->WasIgnoredByHandler();
+  int error_code = request_status.error();
 
-  DCHECK(status.status() != net::URLRequestStatus::IO_PENDING);
-  // If this check fails, then we're in an inconsistent state because all
-  // requests ignored by the handler should be canceled (which should result in
-  // the ERR_ABORTED error code).
-  DCHECK(!was_ignored_by_handler || error_code == net::ERR_ABORTED);
+  DCHECK(request_status.status() != net::URLRequestStatus::IO_PENDING);
 
-  ResourceRequestCompletionStatus request_complete_data;
-  request_complete_data.error_code = error_code;
-  request_complete_data.was_ignored_by_handler = was_ignored_by_handler;
-  request_complete_data.exists_in_cache = request()->response_info().was_cached;
-  request_complete_data.completion_time = TimeTicks::Now();
-  request_complete_data.encoded_data_length =
-      request()->GetTotalReceivedBytes();
-  request_complete_data.encoded_body_length = request()->GetRawBodyBytes();
-  filter->Send(
-      new ResourceMsg_RequestComplete(GetRequestID(), request_complete_data));
+  network::URLLoaderCompletionStatus loader_status;
+  loader_status.error_code = error_code;
+  loader_status.exists_in_cache = request()->response_info().was_cached;
+  loader_status.completion_time = TimeTicks::Now();
+  loader_status.encoded_data_length = request()->GetTotalReceivedBytes();
+  loader_status.encoded_body_length = request()->GetRawBodyBytes();
+  loader_status.decoded_body_length = total_read_body_bytes_;
+  filter->Send(new ResourceMsg_RequestComplete(GetRequestID(), loader_status));
 
-  if (status.is_success())
+  if (request_status.is_success())
     RecordHistogram();
   controller->Resume();
 }
@@ -396,9 +368,9 @@ bool AsyncResourceHandler::EnsureResourceBufferIsInitialized() {
     return true;
 
   buffer_ = new ResourceBuffer();
-  return buffer_->Initialize(kBufferSize,
-                             kMinAllocationSize,
-                             kMaxAllocationSize);
+  return buffer_->Initialize(g_async_loader_buffer_size,
+                             g_async_loader_min_buffer_allocation_size,
+                             g_async_loader_max_buffer_allocation_size);
 }
 
 void AsyncResourceHandler::ResumeIfDeferred() {
@@ -454,34 +426,6 @@ void AsyncResourceHandler::RecordHistogram() {
         "Net.ResourceLoader.ResponseStartToEnd.Over_512kB",
         elapsed_time, 1, 100000, 100);
   }
-
-  // Record if content size was known in advance.
-  int64_t expected_content_size = request()->GetExpectedContentSize();
-  ExpectedContentSizeResult expected_content_size_result =
-      ExpectedContentSizeResult::UNKNOWN;
-  if (expected_content_size >= 0) {
-    // Compare response body size to expected content size.
-    if (expected_content_size == total_read_body_bytes_ &&
-        expected_content_size >= kBufferSize) {
-      expected_content_size_result =
-          ExpectedContentSizeResult::EQ_RESPONSE_BODY_GT_EQ_BUFFER_SIZE;
-    } else if (expected_content_size >= kBufferSize) {
-      expected_content_size_result =
-          ExpectedContentSizeResult::GT_EQ_BUFFER_SIZE;
-    } else if (expected_content_size == total_read_body_bytes_) {
-      expected_content_size_result =
-          ExpectedContentSizeResult::EQ_RESPONSE_BODY;
-    } else if (expected_content_size < total_read_body_bytes_) {
-      expected_content_size_result =
-          ExpectedContentSizeResult::LT_RESPONSE_BODY;
-    } else {
-      expected_content_size_result =
-          ExpectedContentSizeResult::GT_RESPONSE_BODY;
-    }
-  }
-  UMA_HISTOGRAM_ENUMERATION("Net.ResourceLoader.ExpectedContentSizeResult",
-                            expected_content_size_result,
-                            ExpectedContentSizeResult::EXPECTED_CONTENT_MAX);
 }
 
 void AsyncResourceHandler::SendUploadProgress(

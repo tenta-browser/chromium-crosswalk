@@ -29,18 +29,17 @@
 #ifndef Screen_h
 #define Screen_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
 #include "core/dom/ContextLifecycleObserver.h"
 #include "platform/Supplementable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
 class LocalFrame;
 
-class CORE_EXPORT Screen final : public GarbageCollected<Screen>,
-                                 public ScriptWrappable,
+class CORE_EXPORT Screen final : public ScriptWrappable,
                                  public DOMWindowClient,
                                  public Supplementable<Screen> {
   DEFINE_WRAPPERTYPEINFO();
@@ -58,7 +57,7 @@ class CORE_EXPORT Screen final : public GarbageCollected<Screen>,
   int availHeight() const;
   int availWidth() const;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   explicit Screen(LocalFrame*);

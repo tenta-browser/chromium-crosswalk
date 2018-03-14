@@ -29,17 +29,15 @@
 #ifndef BarProp_h
 #define BarProp_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/ContextLifecycleObserver.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
 class LocalFrame;
 
-class BarProp final : public GarbageCollected<BarProp>,
-                      public ScriptWrappable,
-                      public DOMWindowClient {
+class BarProp final : public ScriptWrappable, public DOMWindowClient {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(BarProp);
 
@@ -59,7 +57,7 @@ class BarProp final : public GarbageCollected<BarProp>,
 
   bool visible() const;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   BarProp(LocalFrame*, Type);

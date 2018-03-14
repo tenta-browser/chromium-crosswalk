@@ -32,7 +32,7 @@ bool IsSparseType(unsigned type) {
          type == SimpleEntryOperation::TYPE_WRITE_SPARSE;
 }
 
-}
+}  // anonymous namespace
 
 SimpleEntryOperation::SimpleEntryOperation(const SimpleEntryOperation& other)
     : entry_(other.entry_.get()),
@@ -51,7 +51,7 @@ SimpleEntryOperation::SimpleEntryOperation(const SimpleEntryOperation& other)
       alone_in_queue_(other.alone_in_queue_) {
 }
 
-SimpleEntryOperation::~SimpleEntryOperation() {}
+SimpleEntryOperation::~SimpleEntryOperation() = default;
 
 // static
 SimpleEntryOperation SimpleEntryOperation::OpenOperation(

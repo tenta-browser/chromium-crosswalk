@@ -15,7 +15,11 @@
 Polymer({
   is: 'settings-user-list',
 
-  behaviors: [I18nBehavior, settings.RouteObserverBehavior],
+  behaviors: [
+    CrScrollableBehavior,
+    I18nBehavior,
+    settings.RouteObserverBehavior,
+  ],
 
   properties: {
     /**
@@ -43,23 +47,23 @@ Polymer({
 
   /** @override */
   ready: function() {
-    chrome.settingsPrivate.onPrefsChanged.addListener(function(prefs) {
+    chrome.settingsPrivate.onPrefsChanged.addListener(prefs => {
       prefs.forEach(function(pref) {
         if (pref.key == 'cros.accounts.users') {
-          chrome.usersPrivate.getWhitelistedUsers(function(users) {
+          chrome.usersPrivate.getWhitelistedUsers(users => {
             this.setUsers_(users);
-          }.bind(this));
+          });
         }
       }, this);
-    }.bind(this));
+    });
   },
 
   /** @protected */
   currentRouteChanged: function() {
-    if (settings.getCurrentRoute() == settings.Route.ACCOUNTS) {
-      chrome.usersPrivate.getWhitelistedUsers(function(users) {
+    if (settings.getCurrentRoute() == settings.routes.ACCOUNTS) {
+      chrome.usersPrivate.getWhitelistedUsers(users => {
         this.setUsers_(users);
-      }.bind(this));
+      });
     }
   },
 
@@ -84,6 +88,7 @@ Polymer({
       else
         return -1;
     });
+    this.requestUpdateScroll();
   },
 
   /**
@@ -105,6 +110,15 @@ Polymer({
    * @private
    */
   getProfilePictureUrl_: function(user) {
-    return 'chrome://userimage/' + user.email + '?id=' + Date.now();
-  }
+    return 'chrome://userimage/' + user.email + '?id=' + Date.now() +
+        '&frame=0';
+  },
+
+  /**
+   * @param {chrome.usersPrivate.User} user
+   * @private
+   */
+  shouldShowEmail_: function(user) {
+    return !user.isSupervised && user.name != user.displayEmail;
+  },
 });

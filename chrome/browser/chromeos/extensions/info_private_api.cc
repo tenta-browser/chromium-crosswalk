@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "ash/public/cpp/ash_pref_names.h"
 #include "base/memory/ptr_util.h"
 #include "base/sys_info.h"
 #include "base/values.h"
@@ -168,24 +169,27 @@ const struct {
   const char* api_name;
   const char* preference_name;
 } kPreferencesMap[] = {
-    {kPropertyLargeCursorEnabled, prefs::kAccessibilityLargeCursorEnabled},
-    {kPropertyStickyKeysEnabled, prefs::kAccessibilityStickyKeysEnabled},
+    {kPropertyLargeCursorEnabled, ash::prefs::kAccessibilityLargeCursorEnabled},
+    {kPropertyStickyKeysEnabled, ash::prefs::kAccessibilityStickyKeysEnabled},
     {kPropertySpokenFeedbackEnabled,
-     prefs::kAccessibilitySpokenFeedbackEnabled},
-    {kPropertyHighContrastEnabled, prefs::kAccessibilityHighContrastEnabled},
+     ash::prefs::kAccessibilitySpokenFeedbackEnabled},
+    {kPropertyHighContrastEnabled,
+     ash::prefs::kAccessibilityHighContrastEnabled},
     {kPropertyScreenMagnifierEnabled,
-     prefs::kAccessibilityScreenMagnifierEnabled},
-    {kPropertyAutoclickEnabled, prefs::kAccessibilityAutoclickEnabled},
+     ash::prefs::kAccessibilityScreenMagnifierEnabled},
+    {kPropertyAutoclickEnabled, ash::prefs::kAccessibilityAutoclickEnabled},
     {kPropertyVirtualKeyboardEnabled,
-     prefs::kAccessibilityVirtualKeyboardEnabled},
+     ash::prefs::kAccessibilityVirtualKeyboardEnabled},
     {kPropertyCaretHighlightEnabled,
-     prefs::kAccessibilityCaretHighlightEnabled},
+     ash::prefs::kAccessibilityCaretHighlightEnabled},
     {kPropertyCursorHighlightEnabled,
-     prefs::kAccessibilityCursorHighlightEnabled},
+     ash::prefs::kAccessibilityCursorHighlightEnabled},
     {kPropertyFocusHighlightEnabled,
-     prefs::kAccessibilityFocusHighlightEnabled},
-    {kPropertySelectToSpeakEnabled, prefs::kAccessibilitySelectToSpeakEnabled},
-    {kPropertySwitchAccessEnabled, prefs::kAccessibilitySwitchAccessEnabled},
+     ash::prefs::kAccessibilityFocusHighlightEnabled},
+    {kPropertySelectToSpeakEnabled,
+     ash::prefs::kAccessibilitySelectToSpeakEnabled},
+    {kPropertySwitchAccessEnabled,
+     ash::prefs::kAccessibilitySwitchAccessEnabled},
     {kPropertySendFunctionsKeys, prefs::kLanguageSendFunctionKeys}};
 
 const char* GetBoolPrefNameForApiProperty(const char* api_name) {
@@ -262,8 +266,15 @@ std::unique_ptr<base::Value> ChromeosInfoPrivateGetFunction::GetValue(
         NetworkHandler::Get()->network_state_handler()->GetDeviceStateByType(
             chromeos::NetworkTypePattern::Cellular());
     std::string home_provider_id;
-    if (cellular_device)
-      home_provider_id = cellular_device->home_provider_id();
+    if (cellular_device) {
+      if (!cellular_device->country_code().empty()) {
+        home_provider_id = base::StringPrintf(
+            "%s (%s)", cellular_device->operator_name().c_str(),
+            cellular_device->country_code().c_str());
+      } else {
+        home_provider_id = cellular_device->operator_name();
+      }
+    }
     return base::MakeUnique<base::Value>(home_provider_id);
   }
 
@@ -326,6 +337,12 @@ std::unique_ptr<base::Value> ChromeosInfoPrivateGetFunction::GetValue(
   }
 
   if (property_name == kPropertyTimezone) {
+    if (chromeos::system::PerUserTimezoneEnabled()) {
+      const PrefService::Preference* timezone =
+          Profile::FromBrowserContext(context_)->GetPrefs()->FindPreference(
+              prefs::kUserTimezone);
+      return base::MakeUnique<base::Value>(timezone->GetValue()->Clone());
+    }
     // TODO(crbug.com/697817): Convert CrosSettings::Get to take a unique_ptr.
     return base::WrapUnique<base::Value>(
         chromeos::CrosSettings::Get()
@@ -334,10 +351,7 @@ std::unique_ptr<base::Value> ChromeosInfoPrivateGetFunction::GetValue(
   }
 
   if (property_name == kPropertySupportedTimezones) {
-    std::unique_ptr<base::ListValue> values =
-        chromeos::system::GetTimezoneList();
-    // TODO(crbug.com/703565): remove std::move() once Xcode 9.0+ is required.
-    return std::move(values);
+    return chromeos::system::GetTimezoneList();
   }
 
   const char* pref_name = GetBoolPrefNameForApiProperty(property_name.c_str());
@@ -363,8 +377,13 @@ ExtensionFunction::ResponseAction ChromeosInfoPrivateSetFunction::Run() {
   if (param_name == kPropertyTimezone) {
     std::string param_value;
     EXTENSION_FUNCTION_VALIDATE(args_->GetString(1, &param_value));
-    chromeos::CrosSettings::Get()->Set(chromeos::kSystemTimezone,
-                                       base::Value(param_value));
+    if (chromeos::system::PerUserTimezoneEnabled()) {
+      Profile::FromBrowserContext(context_)->GetPrefs()->SetString(
+          prefs::kUserTimezone, param_value);
+    } else {
+      chromeos::CrosSettings::Get()->Set(chromeos::kSystemTimezone,
+                                         base::Value(param_value));
+    }
   } else {
     const char* pref_name = GetBoolPrefNameForApiProperty(param_name.c_str());
     if (pref_name) {

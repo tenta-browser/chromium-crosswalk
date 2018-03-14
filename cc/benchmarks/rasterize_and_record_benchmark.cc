@@ -139,6 +139,7 @@ void RasterizeAndRecordBenchmark::RunOnLayer(PictureLayer* layer) {
     return;
 
   ContentLayerClient* painter = layer->client();
+  RecordingSource recording_source;
 
   for (int mode_index = 0; mode_index < RecordingSource::RECORDING_MODE_COUNT;
        mode_index++) {
@@ -158,17 +159,15 @@ void RasterizeAndRecordBenchmark::RunOnLayer(PictureLayer* layer) {
 
       do {
         display_list = painter->PaintContentsToDisplayList(painting_control);
-        if (display_list->ShouldBeAnalyzedForSolidColor()) {
-          gfx::Size layer_size = layer->paint_properties().bounds;
-          skia::AnalysisCanvas canvas(layer_size.width(), layer_size.height());
-          display_list->Raster(&canvas, nullptr, gfx::Rect(layer_size), 1.f);
-        }
+        recording_source.UpdateDisplayItemList(
+            display_list, painter->GetApproximateUnsharedMemoryUsage(),
+            layer_tree_host_->recording_scale_factor());
 
         if (memory_used) {
           // Verify we are recording the same thing each time.
-          DCHECK_EQ(memory_used, display_list->ApproximateMemoryUsage());
+          DCHECK_EQ(memory_used, display_list->BytesUsed());
         } else {
-          memory_used = display_list->ApproximateMemoryUsage();
+          memory_used = display_list->BytesUsed();
         }
 
         timer.NextLap();

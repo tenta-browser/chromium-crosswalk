@@ -7,18 +7,15 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/json/json_file_value_serializer.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/version.h"
 #include "build/build_config.h"
 #include "chrome/browser/component_updater/pepper_flash_component_installer.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/pepper_flash.h"
-#include "content/public/test/test_browser_thread.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "ppapi/shared_impl/test_globals.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-using content::BrowserThread;
 
 namespace component_updater {
 
@@ -64,8 +61,7 @@ const base::FilePath::CharType kDataPath[] =
 
 // TODO(viettrungluu): Separate out into two separate tests; use a test fixture.
 TEST(ComponentInstallerTest, PepperFlashCheck) {
-  base::MessageLoop message_loop;
-  content::TestBrowserThread ui_thread(BrowserThread::UI, &message_loop);
+  content::TestBrowserThreadBundle test_browser_thread_bundle;
 
   ppapi::PpapiGlobals::PerThreadForTest per_thread_for_test;
   ppapi::TestGlobals test_globals(per_thread_for_test);
@@ -89,11 +85,11 @@ TEST(ComponentInstallerTest, PepperFlashCheck) {
       base::DictionaryValue::From(deserializer.Deserialize(NULL, &error));
 
   ASSERT_TRUE(root);
-  ASSERT_TRUE(root->IsType(base::Value::Type::DICTIONARY));
+  ASSERT_TRUE(root->is_dict());
 
   // This checks that the whole manifest is compatible.
   base::Version version;
-  EXPECT_TRUE(chrome::CheckPepperFlashManifest(*root, &version));
+  EXPECT_TRUE(CheckPepperFlashManifest(*root, &version));
   EXPECT_TRUE(version.IsValid());
 }
 

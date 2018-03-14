@@ -17,7 +17,8 @@ AudioDecoderConfig::AudioDecoderConfig()
       channel_layout_(CHANNEL_LAYOUT_UNSUPPORTED),
       samples_per_second_(0),
       bytes_per_frame_(0),
-      codec_delay_(0) {}
+      codec_delay_(0),
+      should_discard_decoder_delay_(true) {}
 
 AudioDecoderConfig::AudioDecoderConfig(
     AudioCodec codec,
@@ -51,11 +52,15 @@ void AudioDecoderConfig::Initialize(AudioCodec codec,
   seek_preroll_ = seek_preroll;
   codec_delay_ = codec_delay;
 
-  int channels = ChannelLayoutToChannelCount(channel_layout_);
-  bytes_per_frame_ = channels * bytes_per_channel_;
+  // If |channel_layout_| is CHANNEL_LAYOUT_DISCRETE, |channels_| and
+  // |bytes_per_frame_| will be overwritten in SetChannelsForDiscrete()
+  channels_ = ChannelLayoutToChannelCount(channel_layout_);
+  bytes_per_frame_ = channels_ * bytes_per_channel_;
+
+  should_discard_decoder_delay_ = true;
 }
 
-AudioDecoderConfig::~AudioDecoderConfig() {}
+AudioDecoderConfig::~AudioDecoderConfig() = default;
 
 bool AudioDecoderConfig::IsValidConfig() const {
   return codec_ != kUnknownAudioCodec &&
@@ -65,8 +70,7 @@ bool AudioDecoderConfig::IsValidConfig() const {
          samples_per_second_ > 0 &&
          samples_per_second_ <= limits::kMaxSampleRate &&
          sample_format_ != kUnknownSampleFormat &&
-         seek_preroll_ >= base::TimeDelta() &&
-         codec_delay_ >= 0;
+         seek_preroll_ >= base::TimeDelta() && codec_delay_ >= 0;
 }
 
 bool AudioDecoderConfig::Matches(const AudioDecoderConfig& config) const {
@@ -78,22 +82,36 @@ bool AudioDecoderConfig::Matches(const AudioDecoderConfig& config) const {
           (encryption_scheme().Matches(config.encryption_scheme())) &&
           (sample_format() == config.sample_format()) &&
           (seek_preroll() == config.seek_preroll()) &&
-          (codec_delay() == config.codec_delay()));
+          (codec_delay() == config.codec_delay()) &&
+          (should_discard_decoder_delay() ==
+           config.should_discard_decoder_delay()));
 }
 
 std::string AudioDecoderConfig::AsHumanReadableString() const {
   std::ostringstream s;
   s << "codec: " << GetCodecName(codec())
     << " bytes_per_channel: " << bytes_per_channel()
-    << " channel_layout: " << channel_layout()
+    << " channel_layout: " << channel_layout() << " channels: " << channels()
     << " samples_per_second: " << samples_per_second()
     << " sample_format: " << sample_format()
     << " bytes_per_frame: " << bytes_per_frame()
     << " seek_preroll: " << seek_preroll().InMilliseconds() << "ms"
     << " codec_delay: " << codec_delay() << " has extra data? "
     << (extra_data().empty() ? "false" : "true") << " encrypted? "
-    << (is_encrypted() ? "true" : "false");
+    << (is_encrypted() ? "true" : "false") << " discard decoder delay? "
+    << (should_discard_decoder_delay() ? "true" : "false");
   return s.str();
+}
+
+void AudioDecoderConfig::SetChannelsForDiscrete(int channels) {
+  DCHECK(channel_layout_ == CHANNEL_LAYOUT_DISCRETE ||
+         channels == ChannelLayoutToChannelCount(channel_layout_));
+  if (channels <= 0 || channels >= limits::kMaxChannels) {
+    DVLOG(1) << __func__ << ": Unsupported number of channels: " << channels;
+    return;
+  }
+  channels_ = channels;
+  bytes_per_frame_ = channels_ * bytes_per_channel_;
 }
 
 void AudioDecoderConfig::SetIsEncrypted(bool is_encrypted) {

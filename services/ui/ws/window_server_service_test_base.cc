@@ -18,7 +18,7 @@ namespace ui {
 
 namespace {
 
-const char kTestAppName[] = "mus_ws_unittests_app";
+const char kTestAppName[] = "ui_service_unittests";
 
 class WindowServerServiceTestClient
     : public service_manager::test::ServiceTestClient {
@@ -29,7 +29,7 @@ class WindowServerServiceTestClient
 
  private:
   // service_manager::test::ServiceTestClient:
-  void OnBindInterface(const service_manager::ServiceInfo& source_info,
+  void OnBindInterface(const service_manager::BindSourceInfo& source_info,
                        const std::string& interface_name,
                        mojo::ScopedMessagePipeHandle interface_pipe) override {
     test_->OnBindInterface(source_info, interface_name,
@@ -59,7 +59,7 @@ WindowServerServiceTestBase::~WindowServerServiceTestBase() {}
 
 std::unique_ptr<service_manager::Service>
 WindowServerServiceTestBase::CreateService() {
-  return base::MakeUnique<WindowServerServiceTestClient>(this);
+  return std::make_unique<WindowServerServiceTestClient>(this);
 }
 
 }  // namespace ui

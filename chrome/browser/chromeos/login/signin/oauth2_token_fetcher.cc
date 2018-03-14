@@ -36,8 +36,7 @@ OAuth2TokenFetcher::OAuth2TokenFetcher(
   DCHECK(delegate);
 }
 
-OAuth2TokenFetcher::~OAuth2TokenFetcher() {
-}
+OAuth2TokenFetcher::~OAuth2TokenFetcher() {}
 
 void OAuth2TokenFetcher::StartExchangeFromCookies(
     const std::string& session_index,
@@ -53,16 +52,13 @@ void OAuth2TokenFetcher::StartExchangeFromCookies(
     // If network is offline, defer the token fetching until online.
     VLOG(1) << "Network is offline.  Deferring OAuth2 token fetch.";
     BrowserThread::PostDelayedTask(
-        BrowserThread::UI,
-        FROM_HERE,
-        base::Bind(&OAuth2TokenFetcher::StartExchangeFromCookies,
-                   AsWeakPtr(),
-                   session_index,
-                   signin_scoped_device_id),
+        BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&OAuth2TokenFetcher::StartExchangeFromCookies,
+                       AsWeakPtr(), session_index, signin_scoped_device_id),
         base::TimeDelta::FromMilliseconds(kRequestRestartDelay));
     return;
   }
-  auth_fetcher_.StartCookieForOAuthLoginTokenExchangeWithDeviceId(
+  auth_fetcher_.DeprecatedStartCookieForOAuthLoginTokenExchangeWithDeviceId(
       session_index, signin_scoped_device_id);
 }
 
@@ -81,8 +77,7 @@ void OAuth2TokenFetcher::OnClientOAuthSuccess(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   VLOG(1) << "Got OAuth2 tokens!";
   retry_count_ = 0;
-  oauth_tokens_ = oauth_tokens;
-  delegate_->OnOAuth2TokensAvailable(oauth_tokens_);
+  delegate_->OnOAuth2TokensAvailable(oauth_tokens);
 }
 
 void OAuth2TokenFetcher::OnClientOAuthFailure(

@@ -205,6 +205,9 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::
   glDisable(GL_STENCIL_TEST);
   glDisable(GL_CULL_FACE);
   glDisable(GL_BLEND);
+  if (decoder->GetFeatureInfo()->feature_flags().ext_window_rectangles) {
+    glWindowRectanglesEXT(GL_EXCLUSIVE_EXT, 0, nullptr);
+  }
 
   // Process each color attachment of the current draw framebuffer.
   uint32_t max_draw_buffers = decoder->GetContextGroup()->max_draw_buffers();
@@ -272,10 +275,14 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::
         if (method == DIRECT_DRAW && !color_renderable)
           method = DRAW_AND_COPY;
 
-        copier->DoCopySubTexture(
-            decoder, GL_TEXTURE_2D, rgba8_texture_, 0, GL_RGBA8, GL_TEXTURE_2D,
-            source_texture, 0, internal_format, 0, 0, 0, 0, width_, height_,
-            width_, height_, width_, height_, false, false, false, method);
+        // LUMINANCE, LUMINANCE_ALPHA and ALPHA textures aren't
+        // renderable, so we don't need to pass in the luma emulation
+        // blitter to this point.
+        copier->DoCopySubTexture(decoder, GL_TEXTURE_2D, rgba8_texture_, 0,
+                                 GL_RGBA8, GL_TEXTURE_2D, source_texture, 0,
+                                 internal_format, 0, 0, 0, 0, width_, height_,
+                                 width_, height_, width_, height_, false, false,
+                                 false, method, nullptr);
       } else {
         ApplyCMAAEffectTexture(source_texture, source_texture, do_copy);
       }

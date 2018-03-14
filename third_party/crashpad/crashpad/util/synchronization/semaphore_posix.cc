@@ -15,11 +15,12 @@
 #include "util/synchronization/semaphore.h"
 
 #include <errno.h>
-
-#include <cmath>
+#include <math.h>
+#include <time.h>
 
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
+#include "util/misc/time.h"
 
 namespace crashpad {
 
@@ -39,9 +40,21 @@ void Semaphore::Wait() {
 
 bool Semaphore::TimedWait(double seconds) {
   DCHECK_GE(seconds, 0.0);
+
+  if (isinf(seconds)) {
+    Wait();
+    return true;
+  }
+
+  timespec current_time;
+  if (clock_gettime(CLOCK_REALTIME, &current_time) != 0) {
+    PLOG(ERROR) << "clock_gettime";
+    return false;
+  }
   timespec timeout;
   timeout.tv_sec = seconds;
   timeout.tv_nsec = (seconds - trunc(seconds)) * 1E9;
+  AddTimespec(current_time, timeout, &timeout);
 
   int rv = HANDLE_EINTR(sem_timedwait(&semaphore_, &timeout));
   PCHECK(rv == 0 || errno == ETIMEDOUT) << "sem_timedwait";

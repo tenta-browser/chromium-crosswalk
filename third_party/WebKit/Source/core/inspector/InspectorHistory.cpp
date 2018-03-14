@@ -56,7 +56,7 @@ InspectorHistory::Action::Action(const String& name) : name_(name) {}
 
 InspectorHistory::Action::~Action() {}
 
-DEFINE_TRACE(InspectorHistory::Action) {}
+void InspectorHistory::Action::Trace(blink::Visitor* visitor) {}
 
 String InspectorHistory::Action::ToString() {
   return name_;
@@ -88,9 +88,9 @@ void InspectorHistory::AppendPerformedAction(Action* action) {
     history_[after_last_action_index_ - 1]->Merge(action);
     if (history_[after_last_action_index_ - 1]->IsNoop())
       --after_last_action_index_;
-    history_.Resize(after_last_action_index_);
+    history_.resize(after_last_action_index_);
   } else {
-    history_.Resize(after_last_action_index_);
+    history_.resize(after_last_action_index_);
     history_.push_back(action);
     ++after_last_action_index_;
   }
@@ -139,10 +139,10 @@ bool InspectorHistory::Redo(ExceptionState& exception_state) {
 
 void InspectorHistory::Reset() {
   after_last_action_index_ = 0;
-  history_.Clear();
+  history_.clear();
 }
 
-DEFINE_TRACE(InspectorHistory) {
+void InspectorHistory::Trace(blink::Visitor* visitor) {
   visitor->Trace(history_);
 }
 

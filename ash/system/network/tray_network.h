@@ -18,7 +18,7 @@
 namespace ash {
 namespace tray {
 class NetworkDefaultView;
-class NetworkDetailedView;
+class NetworkListView;
 class NetworkTrayView;
 }
 
@@ -30,15 +30,15 @@ class TrayNetwork : public SystemTrayItem,
   explicit TrayNetwork(SystemTray* system_tray);
   ~TrayNetwork() override;
 
-  tray::NetworkDetailedView* detailed() { return detailed_; }
+  tray::NetworkListView* detailed() { return detailed_; }
 
   // SystemTrayItem
   views::View* CreateTrayView(LoginStatus status) override;
   views::View* CreateDefaultView(LoginStatus status) override;
   views::View* CreateDetailedView(LoginStatus status) override;
-  void DestroyTrayView() override;
-  void DestroyDefaultView() override;
-  void DestroyDetailedView() override;
+  void OnTrayViewDestroyed() override;
+  void OnDefaultViewDestroyed() override;
+  void OnDetailedViewDestroyed() override;
 
   // NetworkObserver
   void RequestToggleWifi() override;
@@ -47,13 +47,12 @@ class TrayNetwork : public SystemTrayItem,
   void OnCaptivePortalDetected(const std::string& guid) override;
 
   // TrayNetworkStateObserver::Delegate
-  void NetworkStateChanged() override;
+  void NetworkStateChanged(bool notify_a11y) override;
 
  private:
   tray::NetworkTrayView* tray_;
   tray::NetworkDefaultView* default_;
-  tray::NetworkDetailedView* detailed_;
-  bool request_wifi_view_;
+  tray::NetworkListView* detailed_;
   std::unique_ptr<TrayNetworkStateObserver> network_state_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(TrayNetwork);

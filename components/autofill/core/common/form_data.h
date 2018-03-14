@@ -10,6 +10,7 @@
 #include "base/strings/string16.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace autofill {
 
@@ -22,6 +23,10 @@ struct FormData {
   // Returns true if two forms are the same, not counting the values of the
   // form elements.
   bool SameFormAs(const FormData& other) const;
+
+  // Same as SameFormAs() except calling FormFieldData.SimilarFieldAs() to
+  // compare fields.
+  bool SimilarFormAs(const FormData& other) const;
 
   // Note: operator==() performs a full-field-comparison(byte by byte), this is
   // different from SameFormAs(), which ignores comparison for those "values" of
@@ -37,6 +42,8 @@ struct FormData {
   GURL origin;
   // The action target of the form.
   GURL action;
+  // The URL of main frame containing this form.
+  url::Origin main_frame_origin;
   // True if this form is a form tag.
   bool is_form_tag;
   // True if the form is made of unowned fields in a non checkout flow.

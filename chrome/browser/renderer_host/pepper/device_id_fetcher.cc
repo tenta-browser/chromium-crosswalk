@@ -35,8 +35,6 @@ using content::BrowserPpapiHost;
 using content::BrowserThread;
 using content::RenderProcessHost;
 
-namespace chrome {
-
 namespace {
 
 const char kDRMIdentifierFile[] = "Pepper DRM ID.0";
@@ -127,8 +125,7 @@ void DeviceIDFetcher::CheckPrefsOnUIThread() {
   // Try the legacy path first for ChromeOS. We pass the new salt in as well
   // in case the legacy id doesn't exist.
   base::PostTaskWithTraits(FROM_HERE,
-                           base::TaskTraits().MayBlock().WithPriority(
-                               base::TaskPriority::BACKGROUND),
+                           {base::MayBlock(), base::TaskPriority::BACKGROUND},
                            base::Bind(&DeviceIDFetcher::LegacyComputeAsync,
                                       this, profile->GetPath(), salt));
 #else
@@ -212,5 +209,3 @@ void DeviceIDFetcher::RunCallbackOnIOThread(const std::string& id,
   in_progress_ = false;
   callback_.Run(id, result);
 }
-
-}  // namespace chrome

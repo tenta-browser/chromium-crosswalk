@@ -7,9 +7,8 @@ goog.provide('__crWeb.webBundle');
 
 goog.require('__crWeb.console');
 goog.require('__crWeb.contextMenu');
-goog.require('__crWeb.dialogOverrides');
 goog.require('__crWeb.error');
 goog.require('__crWeb.form');
 goog.require('__crWeb.legacy');
-goog.require('__crWeb.navigation');
 goog.require('__crWeb.scrollWorkaround');
+goog.require('__crWeb.navigation');

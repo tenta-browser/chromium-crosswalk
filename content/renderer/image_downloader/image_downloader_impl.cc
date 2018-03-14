@@ -50,7 +50,7 @@ void FilterAndResizeImagesForMaximalSize(
   if (max_image_size == 0)
     max_image_size = std::numeric_limits<uint32_t>::max();
 
-  const SkBitmap* min_image = NULL;
+  const SkBitmap* min_image = nullptr;
   uint32_t min_image_size = std::numeric_limits<uint32_t>::max();
   // Filter the images by |max_image_size|, and also identify the smallest image
   // in case all the images are bigger than |max_image_size|.
@@ -91,7 +91,7 @@ ImageDownloaderImpl::ImageDownloaderImpl(RenderFrame* render_frame,
     : ImageDownloaderBase(render_frame), binding_(this, std::move(request)) {
   DCHECK(render_frame);
   binding_.set_connection_error_handler(
-      base::Bind(&ImageDownloaderImpl::OnDestruct, base::Unretained(this)));
+      base::BindOnce(&ImageDownloaderImpl::OnDestruct, base::Unretained(this)));
 }
 
 ImageDownloaderImpl::~ImageDownloaderImpl() {}
@@ -113,19 +113,19 @@ void ImageDownloaderImpl::DownloadImage(const GURL& image_url,
                                         bool is_favicon,
                                         uint32_t max_bitmap_size,
                                         bool bypass_cache,
-                                        const DownloadImageCallback& callback) {
+                                        DownloadImageCallback callback) {
   std::vector<SkBitmap> result_images;
   std::vector<gfx::Size> result_original_image_sizes;
 
   ImageDownloaderBase::DownloadImage(
       image_url, is_favicon, bypass_cache,
       base::Bind(&ImageDownloaderImpl::DidDownloadImage, base::Unretained(this),
-                 max_bitmap_size, callback));
+                 max_bitmap_size, base::Passed(&callback)));
 }
 
 void ImageDownloaderImpl::DidDownloadImage(
     uint32_t max_image_size,
-    const DownloadImageCallback& callback,
+    DownloadImageCallback callback,
     int32_t http_status_code,
     const std::vector<SkBitmap>& images) {
   std::vector<SkBitmap> result_images;
@@ -133,7 +133,8 @@ void ImageDownloaderImpl::DidDownloadImage(
   FilterAndResizeImagesForMaximalSize(images, max_image_size, &result_images,
                                       &result_original_image_sizes);
 
-  callback.Run(http_status_code, result_images, result_original_image_sizes);
+  std::move(callback).Run(http_status_code, result_images,
+                          result_original_image_sizes);
 }
 
 void ImageDownloaderImpl::OnDestruct() {

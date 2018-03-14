@@ -32,18 +32,15 @@ class USER_MANAGER_EXPORT FakeUserManager : public UserManagerBase {
       const AccountId& account_id,
       bool is_affiliated);
 
-  // Calculates the user name hash and calls UserLoggedIn to login a user.
-  void LoginUser(const AccountId& account_id);
-
   // UserManager overrides.
   const user_manager::UserList& GetUsers() const override;
   user_manager::UserList GetUsersAllowedForMultiProfile() const override;
-  const user_manager::UserList& GetLoggedInUsers() const override;
 
   // Set the user as logged in.
   void UserLoggedIn(const AccountId& account_id,
                     const std::string& username_hash,
-                    bool browser_restart) override;
+                    bool browser_restart,
+                    bool is_child) override;
 
   const user_manager::User* GetActiveUser() const override;
   user_manager::User* GetActiveUser() override;
@@ -102,6 +99,9 @@ class USER_MANAGER_EXPORT FakeUserManager : public UserManagerBase {
   void RemoveSessionStateObserver(UserSessionStateObserver* obs) override {}
   void NotifyLocalStateChanged() override {}
   bool AreSupervisedUsersAllowed() const override;
+  bool IsGuestSessionAllowed() const override;
+  bool IsGaiaUserAllowed(const user_manager::User& user) const override;
+  bool IsUserAllowed(const user_manager::User& user) const override;
   void UpdateLoginState(const user_manager::User* active_user,
                         const user_manager::User* primary_user,
                         bool is_current_user_owner) const override;
@@ -119,6 +119,7 @@ class USER_MANAGER_EXPORT FakeUserManager : public UserManagerBase {
 
   // UserManagerBase overrides:
   bool AreEphemeralUsersEnabled() const override;
+  void SetEphemeralUsersEnabled(bool enabled) override;
   const std::string& GetApplicationLocale() const override;
   PrefService* GetLocalState() const override;
   void HandleUserOAuthTokenStatusChange(

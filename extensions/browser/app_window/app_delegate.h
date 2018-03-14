@@ -52,8 +52,7 @@ class AppDelegate {
                               content::WebContents* new_contents,
                               WindowOpenDisposition disposition,
                               const gfx::Rect& initial_rect,
-                              bool user_gesture,
-                              bool* was_blocked) = 0;
+                              bool user_gesture) = 0;
 
   // Feature support.
   virtual content::ColorChooser* ShowColorChooser(
@@ -70,7 +69,7 @@ class AppDelegate {
                                           const GURL& security_origin,
                                           content::MediaStreamType type,
                                           const Extension* extension) = 0;
-  virtual int PreferredIconSize() = 0;
+  virtual int PreferredIconSize() const = 0;
 
   // Web contents modal dialog support.
   virtual void SetWebContentsBlocked(content::WebContents* web_contents,
@@ -83,6 +82,11 @@ class AppDelegate {
   // Called when the app is hidden or shown.
   virtual void OnHide() = 0;
   virtual void OnShow() = 0;
+
+  // Called when app web contents finishes focus traversal - gives the delegate
+  // a chance to handle the focus change.
+  // Return whether focus has been handled.
+  virtual bool TakeFocus(content::WebContents* web_contents, bool reverse) = 0;
 };
 
 }  // namespace extensions

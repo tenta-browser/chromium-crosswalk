@@ -27,6 +27,7 @@
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
+#include "chrome/common/cache_stats_recorder.mojom.h"
 #include "chrome/common/child_process_logging.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/media/media_resource_provider.h"
@@ -38,20 +39,25 @@
 #include "chrome/renderer/content_settings_observer.h"
 #include "chrome/renderer/security_filter_peer.h"
 #include "components/visitedlink/renderer/visitedlink_slave.h"
-#include "content/public/child/resource_dispatcher_delegate.h"
-#include "content/public/common/associated_interface_registry.h"
+#include "content/public/child/child_thread.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/resource_response.h"
+#include "content/public/common/service_manager_connection.h"
 #include "content/public/common/service_names.mojom.h"
+#include "content/public/common/simple_connection_filter.h"
 #include "content/public/renderer/render_thread.h"
 #include "content/public/renderer/render_view.h"
 #include "content/public/renderer/render_view_visitor.h"
+#include "content/public/renderer/resource_dispatcher_delegate.h"
 #include "extensions/features/features.h"
+#include "ipc/ipc_sync_channel.h"
 #include "media/base/localized_strings.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_module.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
+#include "third_party/WebKit/common/associated_interfaces/associated_interface_registry.h"
 #include "third_party/WebKit/public/platform/WebCache.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
@@ -102,11 +108,22 @@ class RendererResourceDelegate : public content::ResourceDispatcherDelegate {
 
   std::unique_ptr<content::RequestPeer> OnReceivedResponse(
       std::unique_ptr<content::RequestPeer> current_peer,
-      const std::string& mime_type,
-      const GURL& url) override {
+      int render_frame_id,
+      const GURL& url,
+      const GURL& referrer,
+      const std::string& method,
+      content::ResourceType resource_type,
+      const content::ResourceResponseHead& response_head) override {
+#if defined(FULL_SAFE_BROWSING)
+    RenderThread::Get()->Send(
+        new SafeBrowsingHostMsg_SubresourceResponseStarted(
+            render_frame_id, response_head.socket_address.host(), url, method,
+            referrer, resource_type));
+#endif
 #if BUILDFLAG(ENABLE_EXTENSIONS)
     return ExtensionLocalizationPeer::CreateExtensionLocalizationPeer(
-        std::move(current_peer), RenderThread::Get(), mime_type, url);
+        std::move(current_peer), RenderThread::Get(), response_head.mime_type,
+        url);
 #else
     return current_peer;
 #endif
@@ -116,10 +133,14 @@ class RendererResourceDelegate : public content::ResourceDispatcherDelegate {
   void InformHostOfCacheStats() {
     WebCache::UsageStats stats;
     WebCache::GetUsageStats(&stats);
-    RenderThread::Get()->Send(new ChromeViewHostMsg_UpdatedCacheStats(
-        static_cast<uint64_t>(stats.capacity),
-        static_cast<uint64_t>(stats.size)));
+    if (!cache_stats_recorder_) {
+      RenderThread::Get()->GetChannel()->GetRemoteAssociatedInterface(
+          &cache_stats_recorder_);
+    }
+    cache_stats_recorder_->RecordCacheStats(stats.capacity, stats.size);
   }
+
+  chrome::mojom::CacheStatsRecorderAssociatedPtr cache_stats_recorder_;
 
   base::WeakPtrFactory<RendererResourceDelegate> weak_factory_;
 
@@ -225,7 +246,7 @@ class ResourceUsageReporterImpl : public chrome::mojom::ResourceUsageReporter {
 
 void CreateResourceUsageReporter(
     base::WeakPtr<ChromeRenderThreadObserver> observer,
-    mojo::InterfaceRequest<chrome::mojom::ResourceUsageReporter> request) {
+    chrome::mojom::ResourceUsageReporterRequest request) {
   mojo::MakeStrongBinding(base::MakeUnique<ResourceUsageReporterImpl>(observer),
                           std::move(request));
 }
@@ -240,9 +261,6 @@ ChromeRenderThreadObserver::ChromeRenderThreadObserver()
   RenderThread* thread = RenderThread::Get();
   resource_delegate_.reset(new RendererResourceDelegate());
   thread->SetResourceDispatcherDelegate(resource_delegate_.get());
-
-  thread->GetInterfaceRegistry()->AddInterface(
-      base::Bind(CreateResourceUsageReporter, weak_factory_.GetWeakPtr()));
 
   // Configure modules that need access to resources.
   net::NetModule::SetResourceProvider(chrome_common_net::NetResourceProvider);
@@ -261,30 +279,33 @@ ChromeRenderThreadObserver::ChromeRenderThreadObserver()
   WebSecurityPolicy::RegisterURLSchemeAsNotAllowingJavascriptURLs(
       native_scheme);
 
-  thread->GetInterfaceRegistry()->AddInterface(
-      visited_link_slave_->GetBindCallback());
+  auto registry = base::MakeUnique<service_manager::BinderRegistry>();
+  registry->AddInterface(
+      base::Bind(CreateResourceUsageReporter, weak_factory_.GetWeakPtr()),
+      base::ThreadTaskRunnerHandle::Get());
+  registry->AddInterface(visited_link_slave_->GetBindCallback(),
+                         base::ThreadTaskRunnerHandle::Get());
+  if (content::ChildThread::Get()) {
+    content::ChildThread::Get()
+        ->GetServiceManagerConnection()
+        ->AddConnectionFilter(base::MakeUnique<content::SimpleConnectionFilter>(
+            std::move(registry)));
+  }
 }
 
 ChromeRenderThreadObserver::~ChromeRenderThreadObserver() {}
 
 void ChromeRenderThreadObserver::RegisterMojoInterfaces(
-    content::AssociatedInterfaceRegistry* associated_interfaces) {
+    blink::AssociatedInterfaceRegistry* associated_interfaces) {
   associated_interfaces->AddInterface(base::Bind(
       &ChromeRenderThreadObserver::OnRendererConfigurationAssociatedRequest,
       base::Unretained(this)));
 }
 
 void ChromeRenderThreadObserver::UnregisterMojoInterfaces(
-    content::AssociatedInterfaceRegistry* associated_interfaces) {
+    blink::AssociatedInterfaceRegistry* associated_interfaces) {
   associated_interfaces->RemoveInterface(
       chrome::mojom::RendererConfiguration::Name_);
-}
-
-void ChromeRenderThreadObserver::OnRenderProcessShutdown() {
-  visited_link_slave_.reset();
-
-  // Workaround for http://crbug.com/672646
-  renderer_configuration_bindings_.CloseAllBindings();
 }
 
 void ChromeRenderThreadObserver::SetInitialConfiguration(

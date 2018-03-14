@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/android/field_trial_list.h"
-
 #include <jni.h>
+
+#include <map>
+#include <string>
 
 #include "base/android/jni_string.h"
 #include "base/metrics/field_trial.h"
+#include "base/metrics/field_trial_params.h"
 #include "jni/FieldTrialList_jni.h"
 
 using base::android::ConvertJavaStringToUTF8;
@@ -15,7 +17,7 @@ using base::android::ConvertUTF8ToJavaString;
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
 
-static ScopedJavaLocalRef<jstring> FindFullName(
+static ScopedJavaLocalRef<jstring> JNI_FieldTrialList_FindFullName(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& jtrial_name) {
@@ -24,19 +26,22 @@ static ScopedJavaLocalRef<jstring> FindFullName(
       env, base::FieldTrialList::FindFullName(trial_name));
 }
 
-static jboolean TrialExists(JNIEnv* env,
-                            const JavaParamRef<jclass>& clazz,
-                            const JavaParamRef<jstring>& jtrial_name) {
+static jboolean JNI_FieldTrialList_TrialExists(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    const JavaParamRef<jstring>& jtrial_name) {
   std::string trial_name(ConvertJavaStringToUTF8(env, jtrial_name));
   return base::FieldTrialList::TrialExists(trial_name);
 }
 
-namespace base {
-namespace android {
-
-bool RegisterFieldTrialList(JNIEnv* env) {
-  return RegisterNativesImpl(env);
+static ScopedJavaLocalRef<jstring> JNI_FieldTrialList_GetVariationParameter(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    const JavaParamRef<jstring>& jtrial_name,
+    const JavaParamRef<jstring>& jparameter_key) {
+  std::map<std::string, std::string> parameters;
+  base::GetFieldTrialParams(ConvertJavaStringToUTF8(env, jtrial_name),
+                            &parameters);
+  return ConvertUTF8ToJavaString(
+      env, parameters[ConvertJavaStringToUTF8(env, jparameter_key)]);
 }
-
-}  // namespace android
-}  // namespace base

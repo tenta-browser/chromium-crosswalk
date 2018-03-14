@@ -5,6 +5,8 @@
 #include "core/page/ChromeClient.h"
 
 #include "core/dom/Document.h"
+#include "core/html/HTMLElement.h"
+#include "core/html_names.h"
 #include "core/layout/HitTestResult.h"
 #include "core/loader/EmptyClients.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -32,14 +34,14 @@ class ChromeClientToolTipLogger : public EmptyChromeClient {
 
 }  // anonymous namespace
 
-class ChromeClientTest : public testing::Test {};
+class ChromeClientTest : public ::testing::Test {};
 
 TEST_F(ChromeClientTest, SetToolTipFlood) {
   ChromeClientToolTipLogger logger;
   ChromeClient* client = &logger;
   HitTestResult result(HitTestRequest(HitTestRequest::kMove),
                        LayoutPoint(10, 20));
-  Document* doc = Document::Create();
+  Document* doc = Document::CreateForTest();
   Element* element = HTMLElement::Create(HTMLNames::divTag, *doc);
   element->setAttribute(HTMLNames::titleAttr, "tooltip");
   result.SetInnerNode(element);

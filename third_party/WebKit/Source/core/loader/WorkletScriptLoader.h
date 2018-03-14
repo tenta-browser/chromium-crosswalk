@@ -19,9 +19,9 @@ class ScriptSourceCode;
 // classic script. You can access this class only on the main thread.
 // A client of this class receives notifications via Client interface.
 // TODO(nhiroki): Switch to module script loading (https://crbug.com/627945)
-class WorkletScriptLoader final
+class CORE_EXPORT WorkletScriptLoader final
     : public GarbageCollectedFinalized<WorkletScriptLoader>,
-      public ResourceOwner<ScriptResource, ScriptResourceClient> {
+      public ResourceOwner<ScriptResource> {
   USING_GARBAGE_COLLECTED_MIXIN(WorkletScriptLoader);
   WTF_MAKE_NONCOPYABLE(WorkletScriptLoader);
 
@@ -44,7 +44,7 @@ class WorkletScriptLoader final
 
   // Fetches an URL and loads it as a classic script. Synchronously calls
   // Client::notifyWorkletScriptLoadingFinished() if there is an error.
-  void FetchScript(const String& script_url);
+  void FetchScript(const KURL& module_url_record);
 
   // Cancels resource loading and synchronously calls
   // Client::notifyWorkletScriptLoadingFinished().
@@ -54,7 +54,7 @@ class WorkletScriptLoader final
   // after Client::notifyWorkletScriptLoadingFinished() is called.
   bool WasScriptLoadSuccessful() const;
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   WorkletScriptLoader(ResourceFetcher*, Client*);

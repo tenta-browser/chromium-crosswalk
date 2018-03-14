@@ -54,6 +54,8 @@ class NET_EXPORT HttpResponseHeaders
 
   static const char kContentRange[];
 
+  HttpResponseHeaders() = delete;
+
   // Parses the given raw_headers.  raw_headers should be formatted thus:
   // includes the http status response line, each line is \0-terminated, and
   // it's terminated by an empty line (ie, 2 \0s in a row).
@@ -276,15 +278,6 @@ class NET_EXPORT HttpResponseHeaders
   std::unique_ptr<base::Value> NetLogCallback(
       NetLogCaptureMode capture_mode) const;
 
-  // Takes in a Value created by the above function, and attempts to create a
-  // copy of the original headers.  Returns true on success.  On failure,
-  // clears |http_response_headers|.
-  // TODO(mmenke):  Long term, we want to remove this, and migrate external
-  //                consumers to be NetworkDelegates.
-  static bool FromNetLogParam(
-      const base::Value* event_param,
-      scoped_refptr<HttpResponseHeaders>* http_response_headers);
-
   // Returns the HTTP response code.  This is 0 if the response code text seems
   // to exist but could not be parsed.  Otherwise, it defaults to 200 if the
   // response code is not found in the raw headers.
@@ -302,7 +295,6 @@ class NET_EXPORT HttpResponseHeaders
   struct ParsedHeader;
   typedef std::vector<ParsedHeader> HeaderList;
 
-  HttpResponseHeaders();
   ~HttpResponseHeaders();
 
   // Initializes from the given raw headers.
@@ -397,6 +389,9 @@ class NET_EXPORT HttpResponseHeaders
 
   DISALLOW_COPY_AND_ASSIGN(HttpResponseHeaders);
 };
+
+using ResponseHeadersCallback =
+    base::Callback<void(scoped_refptr<const HttpResponseHeaders>)>;
 
 }  // namespace net
 

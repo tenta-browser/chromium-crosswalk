@@ -27,6 +27,8 @@ class Value;
 
 namespace content {
 
+class NavigationHandle;
+
 class ShellDevToolsDelegate {
  public:
   virtual void Close() = 0;
@@ -51,19 +53,20 @@ class ShellDevToolsBindings : public WebContentsObserver,
                           const base::Value* arg3);
   ~ShellDevToolsBindings() override;
 
+  WebContents* inspected_contents() { return inspected_contents_; }
+
  protected:
   // content::DevToolsAgentHostClient implementation.
-  void AgentHostClosed(DevToolsAgentHost* agent_host, bool replaced) override;
+  void AgentHostClosed(DevToolsAgentHost* agent_host) override;
   void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
                                const std::string& message) override;
 
   void SetPreferences(const std::string& json);
   virtual void HandleMessageFromDevToolsFrontend(const std::string& message);
-  void CreateFrontendHost();
 
  private:
   // WebContentsObserver overrides
-  void RenderViewCreated(RenderViewHost* render_view_host) override;
+  void ReadyToCommitNavigation(NavigationHandle* navigation_handle) override;
   void DocumentAvailableInMainFrame() override;
   void WebContentsDestroyed() override;
 
@@ -83,6 +86,8 @@ class ShellDevToolsBindings : public WebContentsObserver,
   using PendingRequestsMap = std::map<const net::URLFetcher*, int>;
   PendingRequestsMap pending_requests_;
   base::DictionaryValue preferences_;
+  using ExtensionsAPIs = std::map<std::string, std::string>;
+  ExtensionsAPIs extensions_api_;
   base::WeakPtrFactory<ShellDevToolsBindings> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellDevToolsBindings);

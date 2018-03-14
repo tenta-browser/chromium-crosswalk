@@ -2,56 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-bundle_data("resources") {
-  sources = [
-    "resources/border_frame_bottom.png",
-    "resources/border_frame_bottom@2x.png",
-    "resources/border_frame_bottom@3x.png",
-    "resources/border_frame_incognito_bottom.png",
-    "resources/border_frame_incognito_bottom@2x.png",
-    "resources/border_frame_incognito_bottom@3x.png",
-    "resources/border_frame_incognito_left.png",
-    "resources/border_frame_incognito_left@2x.png",
-    "resources/border_frame_incognito_left@3x.png",
-    "resources/border_frame_incognito_right.png",
-    "resources/border_frame_incognito_right@2x.png",
-    "resources/border_frame_incognito_right@3x.png",
-    "resources/border_frame_incognito_top.png",
-    "resources/border_frame_incognito_top@2x.png",
-    "resources/border_frame_incognito_top@3x.png",
-    "resources/border_frame_left.png",
-    "resources/border_frame_left@2x.png",
-    "resources/border_frame_left@3x.png",
-    "resources/border_frame_right.png",
-    "resources/border_frame_right@2x.png",
-    "resources/border_frame_right@3x.png",
-    "resources/border_frame_top.png",
-    "resources/border_frame_top@2x.png",
-    "resources/border_frame_top@3x.png",
-    "resources/card_close_button.png",
-    "resources/card_close_button@2x.png",
-    "resources/card_close_button@3x.png",
-    "resources/card_close_button_incognito.png",
-    "resources/card_close_button_incognito@2x.png",
-    "resources/card_close_button_incognito@3x.png",
-    "resources/card_close_button_pressed.png",
-    "resources/card_close_button_pressed@2x.png",
-    "resources/card_close_button_pressed@3x.png",
-    "resources/card_frame_shadow.png",
-    "resources/card_frame_shadow@2x.png",
-    "resources/card_frame_shadow@3x.png",
-    "resources/stack_view_background_noise.jpg",
-    "resources/stack_view_background_noise@2x.jpg",
-    "resources/stack_view_background_noise@2x~ipad.jpg",
-    "resources/stack_view_background_noise@3x.jpg",
-    "resources/stack_view_background_noise~ipad.jpg",
-  ]
-  outputs = [
-    "{{bundle_resources_dir}}/{{source_file_part}}",
-  ]
-}
-
 source_set("stack_view") {
+  configs += [ "//build/config/compiler:enable_arc" ]
   sources = [
     "card_set.h",
     "card_set.mm",
@@ -76,11 +28,26 @@ source_set("stack_view") {
     "title_label.mm",
   ]
   deps = [
-    ":resources",
+    "resources:border_frame_bottom",
+    "resources:border_frame_incognito_bottom",
+    "resources:border_frame_incognito_left",
+    "resources:border_frame_incognito_right",
+    "resources:border_frame_incognito_top",
+    "resources:border_frame_left",
+    "resources:border_frame_right",
+    "resources:border_frame_top",
+    "resources:card_close_button",
+    "resources:card_close_button_incognito",
+    "resources:card_close_button_pressed",
+    "resources:card_frame_shadow",
+    "resources:stack_view_background_noise",
     "//base",
+    "//components/favicon/ios",
+    "//components/feature_engagement",
     "//components/strings",
     "//ios/chrome/app/strings",
     "//ios/chrome/browser",
+    "//ios/chrome/browser/feature_engagement",
     "//ios/chrome/browser/tabs",
     "//ios/chrome/browser/ui",
     "//ios/chrome/browser/ui/commands",
@@ -88,11 +55,13 @@ source_set("stack_view") {
     "//ios/chrome/browser/ui/ntp",
     "//ios/chrome/browser/ui/ntp:ntp_internal",
     "//ios/chrome/browser/ui/tab_switcher",
-    "//ios/chrome/browser/ui/tabs",
     "//ios/chrome/browser/ui/toolbar",
+    "//ios/chrome/browser/ui/toolbar/public",
+    "//ios/chrome/browser/ui/toolbar/public:toolbar_base_feature",
     "//ios/chrome/browser/ui/tools_menu",
+    "//ios/chrome/browser/ui/tools_menu:configuration",
+    "//ios/chrome/browser/ui/tools_menu/public",
     "//ios/chrome/common",
-    "//ios/shared/chrome/browser/ui/tools_menu",
     "//ios/third_party/material_components_ios",
     "//ios/web",
     "//net",
@@ -122,6 +91,7 @@ source_set("unit_tests") {
     "//ios/chrome/browser/ui",
     "//ios/chrome/test:test_support",
     "//ios/testing:ocmock_support",
+    "//ios/web/public/test/fakes",
     "//testing/gtest",
     "//third_party/ocmock",
   ]
@@ -141,17 +111,19 @@ source_set("eg_tests") {
     "//ios/chrome/browser/browser_state",
     "//ios/chrome/browser/tabs",
     "//ios/chrome/browser/ui:ui_internal",
-    "//ios/chrome/browser/ui/toolbar",
-    "//ios/chrome/browser/ui/tools_menu",
+    "//ios/chrome/browser/ui/toolbar/public",
+    "//ios/chrome/browser/ui/tools_menu/public",
     "//ios/chrome/test/app:test_support",
     "//ios/chrome/test/earl_grey:test_support",
     "//ios/testing:ios_test_support",
     "//ios/testing/earl_grey:earl_grey_support",
+    "//ios/web/public/test/http_server",
   ]
   libs = [ "XCTest.framework" ]
 }
 
 source_set("perf_tests") {
+  configs += [ "//build/config/compiler:enable_arc" ]
   testonly = true
   sources = [
     "stack_view_controller_perftest.mm",
@@ -165,6 +137,8 @@ source_set("perf_tests") {
     "//ios/chrome/browser/test:perf_test_support",
     "//ios/chrome/browser/ui",
     "//ios/chrome/browser/ui:ui_internal",
+    "//ios/chrome/browser/ui/fullscreen",
+    "//ios/chrome/browser/ui/fullscreen:legacy_fullscreen",
     "//ios/web",
     "//net",
   ]

@@ -14,9 +14,11 @@
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+#include "chromeos/audio/cras_audio_handler.h"
 #include "media/audio/audio_device_description.h"
 #include "media/audio/cras/audio_manager_cras.h"
 #include "media/audio/fake_audio_log_factory.h"
+#include "media/audio/test_audio_thread.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -36,16 +38,14 @@ namespace media {
 
 class MockAudioInputCallback : public AudioInputStream::AudioInputCallback {
  public:
-  MOCK_METHOD4(OnData,
-               void(AudioInputStream*, const AudioBus*, uint32_t, double));
-  MOCK_METHOD1(OnError, void(AudioInputStream*));
+  MOCK_METHOD3(OnData, void(const AudioBus*, base::TimeTicks, double));
+  MOCK_METHOD0(OnError, void());
 };
 
 class MockAudioManagerCrasInput : public AudioManagerCras {
  public:
   MockAudioManagerCrasInput()
-      : AudioManagerCras(base::ThreadTaskRunnerHandle::Get(),
-                         base::ThreadTaskRunnerHandle::Get(),
+      : AudioManagerCras(base::MakeUnique<TestAudioThread>(),
                          &fake_audio_log_factory_) {}
 
   // We need to override this function in order to skip checking the number
@@ -64,11 +64,15 @@ class MockAudioManagerCrasInput : public AudioManagerCras {
 class CrasInputStreamTest : public testing::Test {
  protected:
   CrasInputStreamTest() {
+    chromeos::CrasAudioHandler::InitializeForTesting();
     mock_manager_.reset(new StrictMock<MockAudioManagerCrasInput>());
     base::RunLoop().RunUntilIdle();
   }
 
-  ~CrasInputStreamTest() override {}
+  ~CrasInputStreamTest() override {
+    chromeos::CrasAudioHandler::Shutdown();
+    mock_manager_->Shutdown();
+  }
 
   CrasInputStream* CreateStream(ChannelLayout layout) {
     return CreateStream(layout, kTestFramesPerPacket);
@@ -105,7 +109,7 @@ class CrasInputStreamTest : public testing::Test {
     base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                               base::WaitableEvent::InitialState::NOT_SIGNALED);
 
-    EXPECT_CALL(mock_callback, OnData(test_stream, _, _, _))
+    EXPECT_CALL(mock_callback, OnData(_, _, _))
         .WillOnce(InvokeWithoutArgs(&event, &base::WaitableEvent::Signal));
 
     test_stream->Start(&mock_callback);
@@ -125,8 +129,7 @@ class CrasInputStreamTest : public testing::Test {
   static const int kTestSampleRate;
 
   base::TestMessageLoop message_loop_;
-  std::unique_ptr<StrictMock<MockAudioManagerCrasInput>, AudioManagerDeleter>
-      mock_manager_;
+  std::unique_ptr<StrictMock<MockAudioManagerCrasInput>> mock_manager_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(CrasInputStreamTest);

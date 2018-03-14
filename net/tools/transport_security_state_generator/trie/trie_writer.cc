@@ -7,9 +7,6 @@
 #include <algorithm>
 
 #include "base/logging.h"
-#include "base/strings/string_piece.h"
-#include "base/strings/string_split.h"
-#include "base/strings/string_util.h"
 #include "net/tools/transport_security_state_generator/trie/trie_bit_buffer.h"
 
 namespace net {
@@ -23,22 +20,12 @@ bool CompareReversedEntries(const std::unique_ptr<ReversedEntry>& lhs,
   return lhs->reversed_name < rhs->reversed_name;
 }
 
-std::string DomainConstant(base::StringPiece input) {
-  std::vector<base::StringPiece> parts = base::SplitStringPiece(
-      input, ".", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-  if (parts.empty()) {
-    return std::string();
-  }
-
-  std::string gtld = parts[parts.size() - 1].as_string();
-  if (parts.size() == 1) {
-    return base::ToUpperASCII(gtld);
-  }
-
-  std::string domain = base::ToUpperASCII(parts[parts.size() - 2].as_string());
-  base::ReplaceChars(domain, "-", "_", &domain);
-
-  return base::ToUpperASCII(domain + "_" + gtld);
+// Returns true if the entry only configures HSTS with includeSubdomains.
+// Such entries, when written, can be represented more compactly, and thus
+// reduce the overall size of the trie.
+bool IsSimpleEntry(const TransportSecurityStateEntry* entry) {
+  return entry->force_https && entry->include_subdomains &&
+         entry->pinset.empty() && !entry->expect_ct && !entry->expect_staple;
 }
 
 }  // namespace
@@ -47,22 +34,20 @@ ReversedEntry::ReversedEntry(std::vector<uint8_t> reversed_name,
                              const TransportSecurityStateEntry* entry)
     : reversed_name(reversed_name), entry(entry) {}
 
-ReversedEntry::~ReversedEntry() {}
+ReversedEntry::~ReversedEntry() = default;
 
 TrieWriter::TrieWriter(const HuffmanRepresentationTable& huffman_table,
-                       const NameIDMap& domain_ids_map,
                        const NameIDMap& expect_ct_report_uri_map,
                        const NameIDMap& expect_staple_report_uri_map,
                        const NameIDMap& pinsets_map,
                        HuffmanBuilder* huffman_builder)
     : huffman_table_(huffman_table),
-      domain_ids_map_(domain_ids_map),
       expect_ct_report_uri_map_(expect_ct_report_uri_map),
       expect_staple_report_uri_map_(expect_staple_report_uri_map),
       pinsets_map_(pinsets_map),
       huffman_builder_(huffman_builder) {}
 
-TrieWriter::~TrieWriter() {}
+TrieWriter::~TrieWriter() = default;
 
 bool TrieWriter::WriteEntries(const TransportSecurityStateEntries& entries,
                               uint32_t* root_position) {
@@ -147,6 +132,13 @@ bool TrieWriter::WriteDispatchTables(ReversedEntries::iterator start,
 
 bool TrieWriter::WriteEntry(const TransportSecurityStateEntry* entry,
                             TrieBitBuffer* writer) {
+  if (IsSimpleEntry(entry)) {
+    writer->WriteBit(1);
+    return true;
+  } else {
+    writer->WriteBit(0);
+  }
+
   uint8_t include_subdomains = 0;
   if (entry->include_subdomains) {
     include_subdomains = 1;
@@ -173,19 +165,6 @@ bool TrieWriter::WriteEntry(const TransportSecurityStateEntry* entry,
     }
 
     writer->WriteBits(pin_id, 4);
-
-    NameIDMap::const_iterator domain_id_it =
-        domain_ids_map_.find(DomainConstant(entry->hostname));
-    if (domain_id_it == domain_ids_map_.cend()) {
-      return false;
-    }
-
-    uint32_t domain_id = domain_id_it->second;
-    if (domain_id > 511) {
-      return false;
-    }
-
-    writer->WriteBits(domain_id, 9);
 
     if (!entry->include_subdomains) {
       uint8_t include_subdomains_for_pinning = 0;

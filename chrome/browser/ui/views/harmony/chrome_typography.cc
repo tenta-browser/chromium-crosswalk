@@ -4,19 +4,39 @@
 
 #include "chrome/browser/ui/views/harmony/chrome_typography.h"
 
+#include "build/build_config.h"
 #include "ui/base/default_style.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/gfx/platform_font.h"
 
-const gfx::FontList& LegacyTypographyProvider::GetFont(int text_context,
-                                                       int text_style) const {
+void ApplyCommonFontStyles(int context,
+                           int style,
+                           int* size_delta,
+                           gfx::Font::Weight* weight) {
+#if defined(OS_WIN)
+  if (context == CONTEXT_WINDOWS10_NATIVE) {
+    // Adjusts default font size up to match Win10 modern UI.
+    *size_delta = 15 - gfx::PlatformFont::kDefaultBaseFontSize;
+  }
+#endif
+}
+
+const gfx::FontList& LegacyTypographyProvider::GetFont(int context,
+                                                       int style) const {
   constexpr int kHeadlineDelta = 8;
   constexpr int kDialogMessageDelta = 1;
 
   int size_delta;
   gfx::Font::Weight font_weight;
-  GetDefaultFont(text_context, text_style, &size_delta, &font_weight);
+  GetDefaultFont(context, style, &size_delta, &font_weight);
 
-  switch (text_context) {
+#if defined(OS_CHROMEOS)
+  ash::ApplyAshFontStyles(context, style, &size_delta, &font_weight);
+#endif
+
+  ApplyCommonFontStyles(context, style, &size_delta, &font_weight);
+
+  switch (context) {
     case CONTEXT_HEADLINE:
       size_delta = kHeadlineDelta;
       break;
@@ -32,7 +52,7 @@ const gfx::FontList& LegacyTypographyProvider::GetFont(int text_context,
       break;
   }
 
-  switch (text_style) {
+  switch (style) {
     case STYLE_EMPHASIZED:
       font_weight = gfx::Font::Weight::BOLD;
       break;
@@ -40,4 +60,14 @@ const gfx::FontList& LegacyTypographyProvider::GetFont(int text_context,
   constexpr gfx::Font::FontStyle kFontStyle = gfx::Font::NORMAL;
   return ui::ResourceBundle::GetSharedInstance().GetFontListWithDelta(
       size_delta, kFontStyle, font_weight);
+}
+
+SkColor LegacyTypographyProvider::GetColor(const views::View& view,
+                                           int context,
+                                           int style) const {
+  // Use "disabled grey" for HINT and SECONDARY when Harmony is disabled.
+  if (style == STYLE_HINT || style == STYLE_SECONDARY)
+    style = views::style::STYLE_DISABLED;
+
+  return DefaultTypographyProvider::GetColor(view, context, style);
 }

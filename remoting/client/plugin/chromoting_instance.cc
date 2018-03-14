@@ -38,11 +38,12 @@
 #include "ppapi/cpp/var_array_buffer.h"
 #include "ppapi/cpp/var_dictionary.h"
 #include "remoting/base/constants.h"
+#include "remoting/base/service_urls.h"
 #include "remoting/base/util.h"
 #include "remoting/client/chromoting_client.h"
-#include "remoting/client/normalizing_input_filter_cros.h"
-#include "remoting/client/normalizing_input_filter_mac.h"
-#include "remoting/client/normalizing_input_filter_win.h"
+#include "remoting/client/input/normalizing_input_filter_cros.h"
+#include "remoting/client/input/normalizing_input_filter_mac.h"
+#include "remoting/client/input/normalizing_input_filter_win.h"
 #include "remoting/client/plugin/pepper_audio_player.h"
 #include "remoting/client/plugin/pepper_main_thread_task_runner.h"
 #include "remoting/client/plugin/pepper_mouse_locker.h"
@@ -56,8 +57,8 @@
 #include "remoting/protocol/host_stub.h"
 #include "remoting/protocol/transport_context.h"
 #include "remoting/signaling/delegating_signal_strategy.h"
-#include "third_party/webrtc/base/helpers.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_region.h"
+#include "third_party/webrtc/rtc_base/helpers.h"
 #include "url/gurl.h"
 
 namespace remoting {
@@ -139,9 +140,9 @@ std::string ConnectionErrorToString(protocol::ErrorCode error) {
     case protocol::SIGNALING_TIMEOUT:
     case protocol::UNKNOWN_ERROR:
       return "NETWORK_FAILURE";
+    default:
+      return "UNKNOWN";
   }
-  DLOG(FATAL) << "Unknown error code" << error;
-  return std::string();
 }
 
 PP_Instance g_logging_instance = 0;
@@ -285,6 +286,8 @@ void ChromotingInstance::HandleMessage(const pp::Var& message) {
     HandleEnableDebugRegion(*data);
   } else if (method == "enableTouchEvents") {
     HandleEnableTouchEvents(*data);
+  } else if (method == "enableStuckModifierKeyDetection") {
+    HandleEnableStuckModifierKeyDetection(*data);
   }
 }
 
@@ -360,7 +363,7 @@ void ChromotingInstance::OnVideoFrameDirtyRegion(
   }
 
   std::unique_ptr<base::DictionaryValue> data(new base::DictionaryValue());
-  data->Set("rects", rects_value.release());
+  data->Set("rects", std::move(rects_value));
   PostLegacyJsonMessage("onDebugRegion", std::move(data));
 }
 
@@ -564,6 +567,7 @@ void ChromotingInstance::HandleConnect(const base::DictionaryValue& data) {
   std::string local_jid;
   std::string host_jid;
   std::string host_public_key;
+  std::string directory_bot_jid;
   if (!data.GetString("hostJid", &host_jid) ||
       !data.GetString("hostPublicKey", &host_public_key) ||
       !data.GetString("localJid", &local_jid) ||
@@ -574,6 +578,12 @@ void ChromotingInstance::HandleConnect(const base::DictionaryValue& data) {
 
   data.GetString("clientPairingId", &client_auth_config.pairing_client_id);
   data.GetString("clientPairedSecret", &client_auth_config.pairing_secret);
+
+#if !defined(NDEBUG)
+  if (data.GetString("directoryBotJid", &directory_bot_jid)) {
+    ServiceUrls::GetInstance()->set_directory_bot_jid(directory_bot_jid);
+  }
+#endif
 
   if (use_async_pin_dialog_) {
     client_auth_config.fetch_secret_callback = base::Bind(
@@ -694,6 +704,10 @@ void ChromotingInstance::HandleConnect(const base::DictionaryValue& data) {
   if (std::find(experiments_list.begin(), experiments_list.end(), "vp9") !=
       experiments_list.end()) {
     config->set_vp9_experiment_enabled(true);
+  }
+  if (std::find(experiments_list.begin(), experiments_list.end(), "h264") !=
+      experiments_list.end()) {
+    config->set_h264_experiment_enabled(true);
   }
   client_->set_protocol_config(std::move(config));
 
@@ -965,7 +979,7 @@ void ChromotingInstance::HandleEnableTouchEvents(
     const base::DictionaryValue& data) {
   bool enable = false;
   if (!data.GetBoolean("enable", &enable)) {
-    LOG(ERROR) << "Invalid handleTouchEvents.";
+    LOG(ERROR) << "Invalid enableTouchEvents.";
     return;
   }
 
@@ -974,6 +988,17 @@ void ChromotingInstance::HandleEnableTouchEvents(
   } else {
     ClearInputEventRequest(PP_INPUTEVENT_CLASS_TOUCH);
   }
+}
+
+void ChromotingInstance::HandleEnableStuckModifierKeyDetection(
+    const base::DictionaryValue& data) {
+  bool enable = false;
+  if (!data.GetBoolean("enable", &enable)) {
+    LOG(ERROR) << "Invalid enableStuckModifierKeyDetection.";
+    return;
+  }
+
+  input_handler_.set_detect_stuck_modifiers(enable);
 }
 
 void ChromotingInstance::Disconnect() {
@@ -1002,7 +1027,7 @@ void ChromotingInstance::PostLegacyJsonMessage(
     std::unique_ptr<base::DictionaryValue> data) {
   base::DictionaryValue message;
   message.SetString("method", method);
-  message.Set("data", data.release());
+  message.Set("data", std::move(data));
 
   std::string message_json;
   base::JSONWriter::Write(message, &message_json);

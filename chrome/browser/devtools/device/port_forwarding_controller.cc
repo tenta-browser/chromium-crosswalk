@@ -15,7 +15,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/threading/non_thread_safe.h"
 #include "chrome/browser/devtools/devtools_protocol.h"
 #include "chrome/browser/devtools/devtools_protocol_constants.h"
 #include "chrome/browser/profiles/profile.h"
@@ -47,9 +46,7 @@ enum {
 
 namespace tethering = ::chrome::devtools::Tethering;
 
-static const char kDevToolsRemoteBrowserTarget[] = "/devtools/browser";
-
-class SocketTunnel : public base::NonThreadSafe {
+class SocketTunnel {
  public:
   static void StartTunnel(const std::string& host,
                           int port,
@@ -260,9 +257,8 @@ PortForwardingController::Connection::Connection(
       forwarding_map_(forwarding_map) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   (*registry_)[device_->serial()] = this;
-  web_socket_.reset(
-      device_->CreateWebSocket(browser->socket(),
-                               kDevToolsRemoteBrowserTarget, this));
+  web_socket_.reset(device_->CreateWebSocket(
+      browser->socket(), browser->browser_target_id(), this));
 }
 
 PortForwardingController::Connection::~Connection() {

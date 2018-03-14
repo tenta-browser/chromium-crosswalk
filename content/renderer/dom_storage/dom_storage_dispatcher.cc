@@ -36,7 +36,7 @@ class MessageThrottlingFilter : public IPC::MessageFilter {
       : pending_count_(0), sender_(sender) {}
 
   void SendThrottled(IPC::Message* message);
-  void Shutdown() { sender_ = NULL; }
+  void Shutdown() { sender_ = nullptr; }
 
  private:
   ~MessageThrottlingFilter() override {}
@@ -114,10 +114,12 @@ class DomStorageDispatcher::ProxyImpl : public DOMStorageProxy {
   void SetItem(int connection_id,
                const base::string16& key,
                const base::string16& value,
+               const base::NullableString16& old_value,
                const GURL& page_url,
                const CompletionCallback& callback) override;
   void RemoveItem(int connection_id,
                   const base::string16& key,
+                  const base::NullableString16& old_value,
                   const GURL& page_url,
                   const CompletionCallback& callback) override;
   void ClearArea(int connection_id,
@@ -139,9 +141,17 @@ class DomStorageDispatcher::ProxyImpl : public DOMStorageProxy {
 
   ~ProxyImpl() override {}
 
-  // Sudden termination is disabled when there are callbacks pending
-  // to more reliably commit changes during shutdown.
   void PushPendingCallback(const CompletionCallback& callback) {
+    // Terminate the renderer if an excessive number of calls are made,
+    // This is indicative of script in an infinite loop or being malicious.
+    // It's better to crash intentionally than by running the system OOM
+    // and interfering with everything else running in the system.
+    const int kMaxPendingCompletionCallbacks = 1000000;
+    if (pending_callbacks_.size() > kMaxPendingCompletionCallbacks)
+      CHECK(false) << "Too many pending DOMStorage calls.";
+
+    // Sudden termination is disabled when there are callbacks pending
+    // to more reliably commit changes during shutdown.
     if (pending_callbacks_.empty())
       blink::Platform::Current()->SuddenTerminationChanged(false);
     pending_callbacks_.push_back(callback);
@@ -162,7 +172,7 @@ class DomStorageDispatcher::ProxyImpl : public DOMStorageProxy {
   CachedAreaHolder* GetAreaHolder(const std::string& key) {
     CachedAreaMap::iterator found = cached_areas_.find(key);
     if (found == cached_areas_.end())
-      return NULL;
+      return nullptr;
     return &(found->second);
   }
 
@@ -186,8 +196,9 @@ DOMStorageCachedArea* DomStorageDispatcher::ProxyImpl::OpenCachedArea(
     ++(holder->open_count_);
     return holder->area_.get();
   }
-  scoped_refptr<DOMStorageCachedArea> area =
-      new DOMStorageCachedArea(namespace_id, origin, this);
+  scoped_refptr<DOMStorageCachedArea> area = new DOMStorageCachedArea(
+      namespace_id, origin, this,
+      content::RenderThreadImpl::current()->GetRendererScheduler());
   cached_areas_[key] = CachedAreaHolder(area.get(), 1);
   return area.get();
 }
@@ -210,7 +221,7 @@ DOMStorageCachedArea* DomStorageDispatcher::ProxyImpl::LookupCachedArea(
   std::string key = GetCachedAreaKey(namespace_id, origin);
   CachedAreaHolder* holder = GetAreaHolder(key);
   if (!holder)
-    return NULL;
+    return nullptr;
   return holder->area_.get();
 }
 
@@ -221,7 +232,7 @@ void DomStorageDispatcher::ProxyImpl::CompleteOnePendingCallback(bool success) {
 void DomStorageDispatcher::ProxyImpl::Shutdown() {
   throttling_filter_->Shutdown();
   sender_->RemoveFilter(throttling_filter_.get());
-  sender_ = NULL;
+  sender_ = nullptr;
   cached_areas_.clear();
   pending_callbacks_.clear();
 }
@@ -235,20 +246,26 @@ void DomStorageDispatcher::ProxyImpl::LoadArea(
 }
 
 void DomStorageDispatcher::ProxyImpl::SetItem(
-    int connection_id, const base::string16& key,
-    const base::string16& value, const GURL& page_url,
+    int connection_id,
+    const base::string16& key,
+    const base::string16& value,
+    const base::NullableString16& old_value,
+    const GURL& page_url,
     const CompletionCallback& callback) {
   PushPendingCallback(callback);
   throttling_filter_->SendThrottled(new DOMStorageHostMsg_SetItem(
-      connection_id, key, value, page_url));
+      connection_id, key, value, old_value, page_url));
 }
 
 void DomStorageDispatcher::ProxyImpl::RemoveItem(
-    int connection_id, const base::string16& key,  const GURL& page_url,
+    int connection_id,
+    const base::string16& key,
+    const base::NullableString16& old_value,
+    const GURL& page_url,
     const CompletionCallback& callback) {
   PushPendingCallback(callback);
   throttling_filter_->SendThrottled(new DOMStorageHostMsg_RemoveItem(
-      connection_id, key, page_url));
+      connection_id, key, old_value, page_url));
 }
 
 void DomStorageDispatcher::ProxyImpl::ClearArea(int connection_id,
@@ -299,7 +316,7 @@ bool DomStorageDispatcher::OnMessageReceived(const IPC::Message& msg) {
 
 void DomStorageDispatcher::OnStorageEvent(
     const DOMStorageMsg_Event_Params& params) {
-  WebStorageAreaImpl* originating_area = NULL;
+  WebStorageAreaImpl* originating_area = nullptr;
   if (params.connection_id) {
     originating_area = WebStorageAreaImpl::FromConnectionId(
         params.connection_id);

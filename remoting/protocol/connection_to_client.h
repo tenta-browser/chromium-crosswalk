@@ -9,6 +9,8 @@
 
 #include <string>
 
+#include "remoting/base/session_options.h"
+#include "remoting/protocol/message_pipe.h"
 #include "remoting/protocol/transport.h"
 
 namespace webrtc {
@@ -19,8 +21,8 @@ namespace remoting {
 
 namespace protocol {
 
-class AudioStream;
 class AudioSource;
+class AudioStream;
 class ClientStub;
 class ClipboardStub;
 class HostStub;
@@ -56,12 +58,16 @@ class ConnectionToClient {
     virtual void OnRouteChange(const std::string& channel_name,
                                const TransportRoute& route) = 0;
 
+    // Called when a new Data Channel has been created by the client.
+    virtual void OnIncomingDataChannel(const std::string& channel_name,
+                                       std::unique_ptr<MessagePipe> pipe) = 0;
+
    protected:
-    virtual ~EventHandler() {}
+    virtual ~EventHandler() = default;
   };
 
-  ConnectionToClient() {}
-  virtual ~ConnectionToClient() {}
+  ConnectionToClient() = default;
+  virtual ~ConnectionToClient() = default;
 
   // Set |event_handler| for connection events. Must be called once when this
   // object is created.
@@ -94,6 +100,11 @@ class ConnectionToClient {
   virtual void set_clipboard_stub(ClipboardStub* clipboard_stub) = 0;
   virtual void set_host_stub(HostStub* host_stub) = 0;
   virtual void set_input_stub(InputStub* input_stub) = 0;
+
+  // Applies the |options| to current session. SessionOptions usually controls
+  // experimental behaviors, implementations can ignore this function if no
+  // control logic can be applied.
+  virtual void ApplySessionOptions(const SessionOptions& options) {}
 };
 
 }  // namespace protocol

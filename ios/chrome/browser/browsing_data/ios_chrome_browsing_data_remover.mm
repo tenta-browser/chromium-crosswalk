@@ -19,6 +19,7 @@
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/keyed_service/core/service_access_type.h"
+#include "components/language/core/browser/url_language_histogram.h"
 #include "components/omnibox/browser/omnibox_pref_names.h"
 #include "components/password_manager/core/browser/password_store.h"
 #include "components/prefs/pref_service.h"
@@ -30,6 +31,7 @@
 #include "ios/chrome/browser/history/history_service_factory.h"
 #include "ios/chrome/browser/history/web_history_service_factory.h"
 #include "ios/chrome/browser/ios_chrome_io_thread.h"
+#include "ios/chrome/browser/language/url_language_histogram_factory.h"
 #include "ios/chrome/browser/passwords/ios_chrome_password_store_factory.h"
 #include "ios/chrome/browser/search_engines/template_url_service_factory.h"
 #include "ios/chrome/browser/sessions/ios_chrome_tab_restore_service_factory.h"
@@ -110,6 +112,10 @@ IOSChromeBrowsingDataRemover* IOSChromeBrowsingDataRemover::CreateForPeriod(
       break;
     case browsing_data::TimePeriod::ALL_TIME:
       base::RecordAction(UserMetricsAction("ClearBrowsingData_Everything"));
+      break;
+    case browsing_data::TimePeriod::OLDER_THAN_30_DAYS:
+      base::RecordAction(
+          UserMetricsAction("ClearBrowsingData_OlderThan30Days"));
       break;
   }
   return new IOSChromeBrowsingDataRemover(
@@ -231,10 +237,9 @@ void IOSChromeBrowsingDataRemover::RemoveImpl(int remove_mask) {
       waiting_for_clear_autofill_origin_urls_ = true;
       web_data_service->RemoveOriginURLsModifiedBetween(delete_begin_,
                                                         delete_end_);
-      // The above calls are done on the UI thread but do their work on the DB
-      // thread. So wait for it.
-      WebThread::PostTaskAndReply(
-          WebThread::DB, FROM_HERE, base::Bind(&base::DoNothing),
+      // Ask for a call back when the above call is finished.
+      web_data_service->GetDBTaskRunner()->PostTaskAndReply(
+          FROM_HERE, base::Bind(&base::DoNothing),
           base::Bind(&IOSChromeBrowsingDataRemover::OnClearedAutofillOriginURLs,
                      base::Unretained(this)));
 
@@ -245,6 +250,12 @@ void IOSChromeBrowsingDataRemover::RemoveImpl(int remove_mask) {
         data_manager->Refresh();
     }
 
+    // Remove language histogram history.
+    language::UrlLanguageHistogram* language_histogram =
+        UrlLanguageHistogramFactory::GetForBrowserState(browser_state_);
+    if (language_histogram) {
+      language_histogram->ClearHistory(delete_begin_, delete_end_);
+    }
   }
 
   if (remove_mask & REMOVE_COOKIES) {
@@ -299,10 +310,9 @@ void IOSChromeBrowsingDataRemover::RemoveImpl(int remove_mask) {
                                                        delete_end_);
       web_data_service->RemoveAutofillDataModifiedBetween(delete_begin_,
                                                           delete_end_);
-      // The above calls are done on the UI thread but do their work on the DB
-      // thread. So wait for it.
-      WebThread::PostTaskAndReply(
-          WebThread::DB, FROM_HERE, base::Bind(&base::DoNothing),
+      // Ask for a call back when the above calls are finished.
+      web_data_service->GetDBTaskRunner()->PostTaskAndReply(
+          FROM_HERE, base::Bind(&base::DoNothing),
           base::Bind(&IOSChromeBrowsingDataRemover::OnClearedFormData,
                      base::Unretained(this)));
 
@@ -439,7 +449,7 @@ void IOSChromeBrowsingDataRemover::OnClearedPasswords() {
   NotifyAndDeleteIfDone();
 }
 
-void IOSChromeBrowsingDataRemover::OnClearedCookies(int num_deleted) {
+void IOSChromeBrowsingDataRemover::OnClearedCookies(uint32_t num_deleted) {
   if (!WebThread::CurrentlyOn(WebThread::UI)) {
     WebThread::PostTask(
         WebThread::UI, FROM_HERE,

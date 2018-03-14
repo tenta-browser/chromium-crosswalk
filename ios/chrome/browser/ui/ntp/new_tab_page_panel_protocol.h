@@ -40,9 +40,6 @@ extern const int kNewTabPageDistanceToFadeShadow;
 // Alpha value to use for the NewTabPageBar shadow.
 @property(nonatomic, readonly) CGFloat alphaForBottomShadow;
 
-// Main view.
-@property(nonatomic, readonly) UIView* view;
-
 // Reload any displayed data to ensure the view is up to date.
 - (void)reload;
 
@@ -60,6 +57,11 @@ extern const int kNewTabPageDistanceToFadeShadow;
 
 // Disable and enable scrollToTop
 - (void)setScrollsToTop:(BOOL)enable;
+
+@optional
+
+// Returns the scroll offset associated with this panel.
+- (CGPoint)scrollOffset;
 
 @end
 

@@ -7,7 +7,8 @@
 
 #import <UIKit/UIKit.h>
 
-#import "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
+#import "ios/chrome/browser/ui/commands/application_commands.h"
+#import "ios/chrome/browser/ui/commands/browser_commands.h"
 #include "ios/chrome/browser/ui/tab_switcher/tab_switcher_transition_context.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
@@ -19,7 +20,7 @@
 
 // This delegate is used to drive the TabSwitcher dismissal and execute code
 // when the presentation and dismmiss animations finishes. The main controller
-// is a good exemple of the implementation of this delegate.
+// is a good example of the implementation of this delegate.
 @protocol TabSwitcherDelegate<NSObject>
 
 // Informs the delegate the stack controller is starting to be dismissed with
@@ -41,6 +42,18 @@
 
 @end
 
+// This delegate is used to inform a transition animator object when the
+// presentation and dismissal animations finish.
+@protocol TabSwitcherAnimationDelegate<NSObject>
+
+// Informs the delegate that a TabSwitcher presentation animation has completed.
+- (void)tabSwitcherPresentationAnimationDidEnd:(id<TabSwitcher>)tabSwitcher;
+
+// Informs the delegate that a TabSwitcher dismissal animation has completed.
+- (void)tabSwitcherDismissalAnimationDidEnd:(id<TabSwitcher>)tabSwitcher;
+
+@end
+
 // This protocol describes the common interface between the two implementations
 // of the tab switcher. StackViewController for iPhone and TabSwitcherController
 // for iPad are examples of implementers of this protocol.
@@ -49,6 +62,11 @@
 // This delegate must be set on the tab switcher in order to drive the tab
 // switcher.
 @property(nonatomic, assign) id<TabSwitcherDelegate> delegate;
+@property(nonatomic, assign) id<TabSwitcherAnimationDelegate> animationDelegate;
+
+// Dispatcher for anything that acts in a "browser" role.
+@property(nonatomic, readonly) id<ApplicationCommands, BrowserCommands>
+    dispatcher;
 
 // Restores the internal state of the tab switcher with the given tab models,
 // which must not be nil. |activeTabModel| is the model which starts active,
@@ -60,6 +78,9 @@
 
 // Returns the root view of the tab switcher.
 - (UIView*)view;
+
+// Tells the tab switcher to prepare to be displayed at |size|.
+- (void)prepareForDisplayAtSize:(CGSize)size;
 
 // Performs an animation of the selected tab from its presented state to its
 // place in the tab switcher. Should be called after the tab switcher's view has

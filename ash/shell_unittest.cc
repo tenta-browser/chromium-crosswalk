@@ -5,6 +5,7 @@
 #include "ash/shell.h"
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 #include "ash/display/mouse_cursor_event_filter.h"
@@ -13,19 +14,22 @@
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
 #include "ash/session/session_controller.h"
+#include "ash/session/test_session_controller_client.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shelf/shelf_widget.h"
-#include "ash/shelf/wm_shelf.h"
-#include "ash/shell_port.h"
+#include "ash/shell_test_api.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/shell_test_api.h"
-#include "ash/test/test_session_controller_client.h"
+#include "ash/test/ash_test_helper.h"
+#include "ash/test_shell_delegate.h"
 #include "ash/wallpaper/wallpaper_widget_controller.h"
 #include "ash/wm/window_util.h"
-#include "ash/wm_window.h"
+#include "base/command_line.h"
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "components/prefs/testing_pref_service.h"
+#include "components/signin/core/account_id/account_id.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
@@ -35,6 +39,9 @@
 #include "ui/events/test/events_test_utils.h"
 #include "ui/events/test/test_event_handler.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/keyboard/keyboard_controller.h"
+#include "ui/keyboard/keyboard_switches.h"
+#include "ui/keyboard/keyboard_util.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/widget/widget.h"
@@ -94,12 +101,16 @@ void ExpectAllContainers() {
                                   kShellWindowId_ImeWindowParentContainer));
   EXPECT_TRUE(
       Shell::GetContainer(root_window, kShellWindowId_MouseCursorContainer));
+
+  // Phantom window is not a container.
+  EXPECT_EQ(0u, container_ids.count(kShellWindowId_PhantomWindow));
+  EXPECT_FALSE(Shell::GetContainer(root_window, kShellWindowId_PhantomWindow));
 }
 
 class ModalWindow : public views::WidgetDelegateView {
  public:
-  ModalWindow() {}
-  ~ModalWindow() override {}
+  ModalWindow() = default;
+  ~ModalWindow() override = default;
 
   // Overridden from views::WidgetDelegate:
   bool CanResize() const override { return true; }
@@ -114,8 +125,8 @@ class ModalWindow : public views::WidgetDelegateView {
 
 class SimpleMenuDelegate : public ui::SimpleMenuModel::Delegate {
  public:
-  SimpleMenuDelegate() {}
-  ~SimpleMenuDelegate() override {}
+  SimpleMenuDelegate() = default;
+  ~SimpleMenuDelegate() override = default;
 
   bool IsCommandIdChecked(int command_id) const override { return false; }
 
@@ -127,9 +138,25 @@ class SimpleMenuDelegate : public ui::SimpleMenuModel::Delegate {
   DISALLOW_COPY_AND_ASSIGN(SimpleMenuDelegate);
 };
 
+class TestShellObserver : public ShellObserver {
+ public:
+  TestShellObserver() = default;
+  ~TestShellObserver() override = default;
+
+  // ShellObserver:
+  void OnLocalStatePrefServiceInitialized(PrefService* pref_service) override {
+    last_local_state_ = pref_service;
+  }
+
+  PrefService* last_local_state_ = nullptr;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(TestShellObserver);
+};
+
 }  // namespace
 
-class ShellTest : public test::AshTestBase {
+class ShellTest : public AshTestBase {
  public:
   views::Widget* CreateTestWindow(views::Widget::InitParams params) {
     views::Widget* widget = new views::Widget;
@@ -264,7 +291,7 @@ TEST_F(ShellTest, CreateModalWindow) {
 
 class TestModalDialogDelegate : public views::DialogDelegateView {
  public:
-  TestModalDialogDelegate() {}
+  TestModalDialogDelegate() = default;
 
   // Overridden from views::WidgetDelegate:
   ui::ModalType GetModalType() const override { return ui::MODAL_TYPE_SYSTEM; }
@@ -352,19 +379,14 @@ TEST_F(ShellTest, LockScreenClosesActiveMenu) {
   std::unique_ptr<ui::SimpleMenuModel> menu_model(
       new ui::SimpleMenuModel(&menu_delegate));
   menu_model->AddItem(0, base::ASCIIToUTF16("Menu item"));
-  views::Widget* widget = ShellPort::Get()
-                              ->GetPrimaryRootWindow()
-                              ->GetRootWindowController()
+  views::Widget* widget = Shell::GetPrimaryRootWindowController()
                               ->wallpaper_widget_controller()
                               ->widget();
-  std::unique_ptr<views::MenuRunner> menu_runner(new views::MenuRunner(
-      menu_model.get(),
-      views::MenuRunner::CONTEXT_MENU | views::MenuRunner::ASYNC));
+  std::unique_ptr<views::MenuRunner> menu_runner(
+      new views::MenuRunner(menu_model.get(), views::MenuRunner::CONTEXT_MENU));
 
-  EXPECT_EQ(views::MenuRunner::NORMAL_EXIT,
-            menu_runner->RunMenuAt(widget, NULL, gfx::Rect(),
-                                   views::MENU_ANCHOR_TOPLEFT,
-                                   ui::MENU_SOURCE_MOUSE));
+  menu_runner->RunMenuAt(widget, NULL, gfx::Rect(), views::MENU_ANCHOR_TOPLEFT,
+                         ui::MENU_SOURCE_MOUSE);
   LockScreenAndVerifyMenuClosed();
 }
 
@@ -437,13 +459,13 @@ TEST_F(ShellTest, FullscreenWindowHidesShelf) {
 TEST_F(ShellTest, ToggleAutoHide) {
   std::unique_ptr<aura::Window> window(new aura::Window(NULL));
   window->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_NORMAL);
-  window->SetType(ui::wm::WINDOW_TYPE_NORMAL);
+  window->SetType(aura::client::WINDOW_TYPE_NORMAL);
   window->Init(ui::LAYER_TEXTURED);
   ParentWindowInPrimaryRootWindow(window.get());
   window->Show();
   wm::ActivateWindow(window.get());
 
-  WmShelf* shelf = GetPrimaryShelf();
+  Shelf* shelf = GetPrimaryShelf();
   shelf->SetAutoHideBehavior(SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS);
   EXPECT_EQ(SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS, shelf->auto_hide_behavior());
 
@@ -469,7 +491,7 @@ TEST_F(ShellTest, TestPreTargetHandlerOrder) {
 
   Shell* shell = Shell::Get();
   ui::EventTargetTestApi test_api(shell);
-  test::ShellTestApi shell_test_api(shell);
+  ShellTestApi shell_test_api(shell);
 
   const ui::EventHandlerList& handlers = test_api.pre_target_handlers();
   ui::EventHandlerList::const_iterator cursor_filter =
@@ -491,6 +513,23 @@ TEST_F(ShellTest, EnvPreTargetHandler) {
   aura::Env::GetInstance()->RemovePreTargetHandler(&event_handler);
 }
 
+// Verifies keyboard is re-created on proper timing.
+TEST_F(ShellTest, KeyboardCreation) {
+  if (Shell::GetAshConfig() == Config::MASH)
+    return;
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      keyboard::switches::kEnableVirtualKeyboard);
+
+  ASSERT_TRUE(keyboard::IsKeyboardEnabled());
+
+  SessionObserver* shell = Shell::Get();
+  EXPECT_FALSE(keyboard::KeyboardController::GetInstance());
+  shell->OnSessionStateChanged(
+      session_manager::SessionState::LOGGED_IN_NOT_ACTIVE);
+
+  EXPECT_TRUE(keyboard::KeyboardController::GetInstance());
+}
+
 // This verifies WindowObservers are removed when a window is destroyed after
 // the Shell is destroyed. This scenario (aura::Windows being deleted after the
 // Shell) occurs if someone is holding a reference to an unparented Window, as
@@ -498,10 +537,10 @@ TEST_F(ShellTest, EnvPreTargetHandler) {
 // everything is ok, we won't crash. If there is a bug, window's destructor will
 // notify some deleted object (say VideoDetector or ActivationController) and
 // this will crash.
-class ShellTest2 : public test::AshTestBase {
+class ShellTest2 : public AshTestBase {
  public:
-  ShellTest2() {}
-  ~ShellTest2() override {}
+  ShellTest2() = default;
+  ~ShellTest2() override = default;
 
  protected:
   std::unique_ptr<aura::Window> window_;
@@ -511,15 +550,30 @@ class ShellTest2 : public test::AshTestBase {
 };
 
 TEST_F(ShellTest2, DontCrashWhenWindowDeleted) {
-  // TODO: delete this test when conversion to mash is done. This test isn't
-  // applicable to mash as all windows must be destroyed before ash, that isn't
-  // the case with classic-ash where embedders can separately create
-  // aura::Windows.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
   window_.reset(new aura::Window(NULL));
   window_->Init(ui::LAYER_NOT_DRAWN);
+}
+
+// Tests the local state code path.
+class ShellLocalStateTest : public AshTestBase {
+ public:
+  ShellLocalStateTest() { disable_provide_local_state(); }
+};
+
+TEST_F(ShellLocalStateTest, LocalState) {
+  TestShellObserver observer;
+  Shell::Get()->AddShellObserver(&observer);
+
+  // Prefs service wrapper code creates a PrefService.
+  std::unique_ptr<TestingPrefServiceSimple> local_state =
+      std::make_unique<TestingPrefServiceSimple>();
+  Shell::RegisterLocalStatePrefs(local_state->registry());
+  TestingPrefServiceSimple* local_state_ptr = local_state.get();
+  ShellTestApi().OnLocalStatePrefServiceInitialized(std::move(local_state));
+  EXPECT_EQ(local_state_ptr, observer.last_local_state_);
+  EXPECT_EQ(local_state_ptr, Shell::Get()->GetLocalStatePrefService());
+
+  Shell::Get()->RemoveShellObserver(&observer);
 }
 
 }  // namespace ash

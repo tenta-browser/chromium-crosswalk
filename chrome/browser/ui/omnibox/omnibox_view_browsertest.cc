@@ -5,9 +5,10 @@
 #include <stddef.h>
 #include <stdio.h>
 
-#include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/scoped_observer.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
@@ -27,7 +28,6 @@
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
@@ -54,6 +54,10 @@
 #include "ui/events/event_constants.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/geometry/point.h"
+
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/ui/settings_window_manager_chromeos.h"
+#endif
 
 using base::ASCIIToUTF16;
 using base::UTF16ToUTF8;
@@ -154,7 +158,7 @@ class OmniboxViewTest : public InProcessBrowserTest,
   // history::HisoryServiceObserver
   void OnHistoryServiceLoaded(
       history::HistoryService* history_service) override {
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
  protected:
@@ -367,12 +371,12 @@ class OmniboxViewTest : public InProcessBrowserTest,
       default:
         FAIL() << "Unexpected notification type";
     }
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   void OnURLsModified(history::HistoryService* history_service,
                       const history::URLRows& changed_urls) override {
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
  private:
@@ -380,6 +384,8 @@ class OmniboxViewTest : public InProcessBrowserTest,
 
   DISALLOW_COPY_AND_ASSIGN(OmniboxViewTest);
 };
+
+// Currently all OmniboxViewTests are flaky (see https://crbug.com/751031).
 
 // Test if ctrl-* accelerators are workable in omnibox.
 // See http://crbug.com/19193: omnibox blocks ctrl-* commands
@@ -452,7 +458,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_BrowserAccelerators) {
 #define MAYBE_PopupAccelerators PopupAccelerators
 #endif
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_PopupAccelerators) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_PopupAccelerators) {
   // Create a popup.
   Browser* popup = CreateBrowserForPopup(browser()->profile());
   ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(popup));
@@ -508,7 +514,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_PopupAccelerators) {
 #define MAYBE_BackspaceInKeywordMode BackspaceInKeywordMode
 #endif
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_BackspaceInKeywordMode) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_BackspaceInKeywordMode) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
 
@@ -562,7 +568,13 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_BackspaceInKeywordMode) {
             UTF16ToUTF8(omnibox_view->GetText()));
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, Escape) {
+// Flaky on Windows and Linux. http://crbug.com/751543
+#if defined(OS_WIN) || defined(OS_LINUX)
+#define MAYBE_Escape DISABLED_Escape
+#else
+#define MAYBE_Escape Escape
+#endif
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_Escape) {
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIHistoryURL));
   chrome::FocusLocationBar(browser());
 
@@ -589,7 +601,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, Escape) {
 #define MAYBE_DesiredTLD DesiredTLD
 #endif
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_DesiredTLD) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_DesiredTLD) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   OmniboxPopupModel* popup_model = omnibox_view->model()->popup_model();
@@ -621,7 +633,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_DesiredTLD) {
 #define MAYBE_DesiredTLDWithTemporaryText DesiredTLDWithTemporaryText
 #endif
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_DesiredTLDWithTemporaryText) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_DesiredTLDWithTemporaryText) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   OmniboxPopupModel* popup_model = omnibox_view->model()->popup_model();
@@ -672,7 +684,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_DesiredTLDWithTemporaryText) {
 }
 
 // See http://crbug.com/431575.
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, ClearUserTextAfterBackgroundCommit) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
+                       DISABLED_ClearUserTextAfterBackgroundCommit) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
 
@@ -701,7 +714,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, ClearUserTextAfterBackgroundCommit) {
   EXPECT_EQ(ASCIIToUTF16(url2.spec()), omnibox_view->GetText());
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, AltEnter) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_AltEnter) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
 
@@ -762,7 +775,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_EnterToSearch) {
   EXPECT_EQ("http://www.foo.com/search?q=z", url.spec());
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, EscapeToDefaultMatch) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_EscapeToDefaultMatch) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   OmniboxPopupModel* popup_model = omnibox_view->model()->popup_model();
@@ -798,7 +811,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, EscapeToDefaultMatch) {
   EXPECT_EQ(old_selected_line, popup_model->selected_line());
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BasicTextOperations) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_BasicTextOperations) {
   ui_test_utils::NavigateToURL(browser(), GURL(url::kAboutBlankURL));
   chrome::FocusLocationBar(browser());
 
@@ -832,13 +845,11 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BasicTextOperations) {
   EXPECT_EQ(old_text.size(), start);
   EXPECT_EQ(old_text.size(), end);
 
-  // Insert one character at the end. Make sure we won't insert
-  // anything after the special ZWS mark used in gtk implementation.
+  // Insert one character at the end.
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_A, 0));
   EXPECT_EQ(old_text + base::char16('a'), omnibox_view->GetText());
 
-  // Delete one character from the end. Make sure we won't delete the special
-  // ZWS mark used in gtk implementation.
+  // Delete one character from the end.
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_BACK, 0));
   EXPECT_EQ(old_text, omnibox_view->GetText());
 
@@ -854,25 +865,47 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BasicTextOperations) {
 
   // Delete the content
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_DELETE, 0));
-  EXPECT_TRUE(omnibox_view->IsSelectAll());
+  EXPECT_FALSE(omnibox_view->IsSelectAll());
   omnibox_view->GetSelectionBounds(&start, &end);
   EXPECT_EQ(0U, start);
   EXPECT_EQ(0U, end);
   EXPECT_TRUE(omnibox_view->GetText().empty());
 
-  // Check if RevertAll() can set text and cursor correctly.
+  // Add a small amount of text to move the cursor past offset 0.
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_A, 0));
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_B, 0));
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_C, 0));
+
+  // Check if RevertAll() resets the text and preserves the cursor position.
   omnibox_view->RevertAll();
   EXPECT_FALSE(omnibox_view->IsSelectAll());
   EXPECT_EQ(old_text, omnibox_view->GetText());
   omnibox_view->GetSelectionBounds(&start, &end);
-  EXPECT_EQ(old_text.size(), start);
-  EXPECT_EQ(old_text.size(), end);
+  EXPECT_EQ(3U, start);
+  EXPECT_EQ(3U, end);
+
+  // Check that reverting clamps the cursor to the bounds of the new text.
+  // Move the cursor to the end.
+#if defined(OS_MACOSX)
+  // End doesn't work on Mac trybot.
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_E, ui::EF_CONTROL_DOWN));
+#else
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_END, 0));
+#endif
+  // Add a small amount of text to push the cursor past where the text end
+  // will be once we revert.
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_A, 0));
+  omnibox_view->RevertAll();
+  // Cursor should be no further than original text.
+  omnibox_view->GetSelectionBounds(&start, &end);
+  EXPECT_EQ(11U, start);
+  EXPECT_EQ(11U, end);
 }
 
 // Make sure the cursor position doesn't get set past the last character of
 // user input text when the URL is longer than the keyword.
 // (http://crbug.com/656209)
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FocusSearchLongUrl) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_FocusSearchLongUrl) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
 
@@ -886,7 +919,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FocusSearchLongUrl) {
 
 // Make sure the display text is preserved when calling FocusSearch() when the
 // display text is not the permanent text.
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, PreserveDisplayTextOnFocusSearch) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
+                       DISABLED_PreserveDisplayTextOnFocusSearch) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
 
@@ -938,7 +972,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, PreserveDisplayTextOnFocusSearch) {
   EXPECT_EQ(19U, std::max(start, end));
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, AcceptKeywordByTypingQuestionMark) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
+                       DISABLED_AcceptKeywordByTypingQuestionMark) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
 
@@ -960,7 +995,13 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, AcceptKeywordByTypingQuestionMark) {
   EXPECT_FALSE(omnibox_view->model()->is_keyword_selected());
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, AcceptKeywordBySpace) {
+// Flaky on Windows and Linux. http://crbug.com/751543
+#if defined(OS_WIN) || defined(OS_LINUX)
+#define MAYBE_AcceptKeywordBySpace DISABLED_AcceptKeywordBySpace
+#else
+#define MAYBE_AcceptKeywordBySpace AcceptKeywordBySpace
+#endif
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_AcceptKeywordBySpace) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
 
@@ -1167,7 +1208,13 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, AcceptKeywordBySpace) {
   ASSERT_TRUE(omnibox_view->GetText().empty());
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, NonSubstitutingKeywordTest) {
+#if defined(OS_WIN)
+#define MAYBE_NonSubstitutingKeywordTest NonSubstitutingKeywordTest
+#else
+// https://crbug.com/751031.
+#define MAYBE_NonSubstitutingKeywordTest DISABLED_NonSubstitutingKeywordTest
+#endif
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_NonSubstitutingKeywordTest) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   OmniboxPopupModel* popup_model = omnibox_view->model()->popup_model();
@@ -1218,7 +1265,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, NonSubstitutingKeywordTest) {
             popup_model->result().default_match()->destination_url.spec());
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DeleteItem) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_DeleteItem) {
   // Disable the search provider, to make sure the popup contains only history
   // items.
   TemplateURLService* model =
@@ -1263,7 +1310,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DeleteItem) {
   ASSERT_FALSE(omnibox_view->IsSelectAll());
 
   // Delete the item.
-  popup_model->TryDeletingCurrentItem();
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_DELETE, ui::EF_SHIFT_DOWN));
   ASSERT_NO_FATAL_FAILURE(WaitForAutocompleteControllerDone());
   // The selected line shouldn't be changed, because we have more than two
   // items.
@@ -1324,7 +1371,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DeleteItem) {
 #define MAYBE_TabAcceptKeyword TabAcceptKeyword
 #endif
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_TabAcceptKeyword) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_TabAcceptKeyword) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
 
@@ -1379,7 +1426,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_TabAcceptKeyword) {
 #define MAYBE_TabTraverseResultsTest TabTraverseResultsTest
 #endif
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_TabTraverseResultsTest) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_TabTraverseResultsTest) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   OmniboxPopupModel* popup_model = omnibox_view->model()->popup_model();
@@ -1473,7 +1520,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, MAYBE_TabTraverseResultsTest) {
 #endif
 
 IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
-                       MAYBE_PersistKeywordModeOnTabSwitch) {
+                       DISABLED_PersistKeywordModeOnTabSwitch) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
 
@@ -1521,7 +1568,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
 #endif
 
 IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
-                       MAYBE_CtrlKeyPressedWithInlineAutocompleteTest) {
+                       DISABLED_CtrlKeyPressedWithInlineAutocompleteTest) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   OmniboxPopupModel* popup_model = omnibox_view->model()->popup_model();
@@ -1544,7 +1591,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
   EXPECT_EQ(old_text, omnibox_view->GetText());
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, UndoRedo) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_UndoRedo) {
   ui_test_utils::NavigateToURL(browser(), GURL(url::kAboutBlankURL));
   chrome::FocusLocationBar(browser());
 
@@ -1613,7 +1660,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, UndoRedo) {
   EXPECT_EQ(old_text, omnibox_view->GetText());
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BackspaceDeleteHalfWidthKatakana) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
+                       DISABLED_BackspaceDeleteHalfWidthKatakana) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   // Insert text: ﾀﾞ. This is two, 3-byte UTF-8 characters:
@@ -1639,7 +1687,6 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BackspaceDeleteHalfWidthKatakana) {
 #endif
 }
 
-// Flaky test. crbug.com/356850
 IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
                        DISABLED_DoesNotUpdateAutocompleteOnBlur) {
   OmniboxView* omnibox_view = NULL;
@@ -1657,19 +1704,15 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
   base::string16 old_autocomplete_text =
       omnibox_view->model()->autocomplete_controller()->input_.text();
 
-  // Unfocus the omnibox. This should clear the text field selection and
-  // close the popup, but should not run autocomplete.
-  // Note: GTK preserves the selection when the omnibox is unfocused.
+  // Unfocus the omnibox. This should close the popup but should not run
+  // autocomplete.
   ui_test_utils::ClickOnView(browser(), VIEW_ID_TAB_CONTAINER);
   ASSERT_FALSE(popup_model->IsOpen());
-  omnibox_view->GetSelectionBounds(&start, &end);
-  EXPECT_TRUE(start == end);
-
   EXPECT_EQ(old_autocomplete_text,
       omnibox_view->model()->autocomplete_controller()->input_.text());
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, Paste) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_Paste) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   OmniboxPopupModel* popup_model = omnibox_view->model()->popup_model();
@@ -1710,18 +1753,14 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, Paste) {
   // TODO(msw): Test that AltGr+V does not paste.
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CopyURLToClipboard) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_CopyURLToClipboard) {
   // Set permanent text thus making sure that omnibox treats 'google.com'
   // as URL (not as ordinary user input).
-  TestToolbarModel* test_toolbar_model = new TestToolbarModel;
-  std::unique_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
-  test_toolbar_model->set_text(ASCIIToUTF16("http://www.google.com/"));
-  browser()->swap_toolbar_models(&toolbar_model);
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   OmniboxEditModel* edit_model = omnibox_view->model();
   ASSERT_NE(static_cast<OmniboxEditModel*>(NULL), edit_model);
-  edit_model->UpdatePermanentText();
+  edit_model->SetPermanentText(ASCIIToUTF16("http://www.google.com/"));
 
   const char* target_url = "http://www.google.com/calendar";
   omnibox_view->SetUserText(ASCIIToUTF16(target_url));
@@ -1757,18 +1796,14 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CopyURLToClipboard) {
   EXPECT_EQ(target_url, url);
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CutURLToClipboard) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_CutURLToClipboard) {
   // Set permanent text thus making sure that omnibox treats 'google.com'
   // as URL (not as ordinary user input).
-  TestToolbarModel* test_toolbar_model = new TestToolbarModel;
-  std::unique_ptr<ToolbarModel> toolbar_model(test_toolbar_model);
-  test_toolbar_model->set_text(ASCIIToUTF16("http://www.google.com/"));
-  browser()->swap_toolbar_models(&toolbar_model);
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   OmniboxEditModel* edit_model = omnibox_view->model();
   ASSERT_NE(static_cast<OmniboxEditModel*>(NULL), edit_model);
-  edit_model->UpdatePermanentText();
+  edit_model->SetPermanentText(ASCIIToUTF16("http://www.google.com/"));
 
   const char* target_url = "http://www.google.com/calendar";
   omnibox_view->SetUserText(ASCIIToUTF16(target_url));
@@ -1804,7 +1839,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CutURLToClipboard) {
   EXPECT_EQ(target_url, url);
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CopyTextToClipboard) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_CopyTextToClipboard) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   const char* target_text = "foo";
@@ -1827,7 +1862,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CopyTextToClipboard) {
   EXPECT_EQ(ASCIIToUTF16(target_text), omnibox_view->GetText());
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CutTextToClipboard) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_CutTextToClipboard) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   const char* target_text = "foo";
@@ -1850,43 +1885,30 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CutTextToClipboard) {
   EXPECT_EQ(base::string16(), omnibox_view->GetText());
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, EditSearchEngines) {
-  // Disable settings-in-a-window to simplify test.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      ::switches::kDisableSettingsWindow);
-  OmniboxView* omnibox_view = NULL;
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_EditSearchEngines) {
+  OmniboxView* omnibox_view = nullptr;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
+#if defined(OS_CHROMEOS)
+  EXPECT_FALSE(
+      chrome::SettingsWindowManager::GetInstance()->FindBrowserForProfile(
+          browser()->profile()));
+#endif
   EXPECT_TRUE(chrome::ExecuteCommand(browser(), IDC_EDIT_SEARCH_ENGINES));
   ASSERT_NO_FATAL_FAILURE(WaitForAutocompleteControllerDone());
+#if defined(OS_CHROMEOS)
+  EXPECT_TRUE(
+      chrome::SettingsWindowManager::GetInstance()->FindBrowserForProfile(
+          browser()->profile()));
+#else
   const std::string target_url =
       std::string(chrome::kChromeUISettingsURL) + chrome::kSearchEnginesSubPage;
   EXPECT_EQ(ASCIIToUTF16(target_url), omnibox_view->GetText());
+#endif
   EXPECT_FALSE(omnibox_view->model()->popup_model()->IsOpen());
 }
 
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BeginningShownAfterBlur) {
-  OmniboxView* omnibox_view = NULL;
-  ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
-
-  omnibox_view->OnBeforePossibleChange();
-  omnibox_view->SetWindowTextAndCaretPos(ASCIIToUTF16("data:text/plain,test"),
-      5U, false, false);
-  omnibox_view->OnAfterPossibleChange(true);
-  EXPECT_TRUE(ui_test_utils::IsViewFocused(browser(), VIEW_ID_OMNIBOX));
-  size_t start, end;
-  omnibox_view->GetSelectionBounds(&start, &end);
-  EXPECT_EQ(5U, start);
-  EXPECT_EQ(5U, end);
-
-  ui_test_utils::FocusView(browser(), VIEW_ID_TAB_CONTAINER);
-  EXPECT_FALSE(ui_test_utils::IsViewFocused(browser(), VIEW_ID_OMNIBOX));
-
-  omnibox_view->GetSelectionBounds(&start, &end);
-  EXPECT_EQ(0U, start);
-  EXPECT_EQ(0U, end);
-}
-
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, CtrlArrowAfterArrowSuggestions) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest,
+                       DISABLED_CtrlArrowAfterArrowSuggestions) {
   OmniboxView* omnibox_view = NULL;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   OmniboxPopupModel* popup_model = omnibox_view->model()->popup_model();
@@ -1936,7 +1958,7 @@ size_t GetSelectionSize(OmniboxView* omnibox_view) {
 
 // Test that if the Omnibox has focus, and had everything selected before a
 // non-user-initiated update, then it retains the selection after the update.
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, SelectAllStaysAfterUpdate) {
+IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_SelectAllStaysAfterUpdate) {
   OmniboxView* omnibox_view = nullptr;
   ASSERT_NO_FATAL_FAILURE(GetOmniboxView(&omnibox_view));
   TestToolbarModel* test_toolbar_model = new TestToolbarModel;
@@ -1958,18 +1980,18 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, SelectAllStaysAfterUpdate) {
   EXPECT_EQ(url_b, omnibox_view->GetText());
   EXPECT_TRUE(omnibox_view->IsSelectAll());
 
-  // Select nothing, then switch back. Shouldn't gain a selection.
+  // Select nothing, then update. Should gain SelectAll().
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_RIGHT, 0));
   test_toolbar_model->set_text(url_a);
   omnibox_view->Update();
   EXPECT_EQ(url_a, omnibox_view->GetText());
-  EXPECT_FALSE(omnibox_view->IsSelectAll());
+  EXPECT_TRUE(omnibox_view->IsSelectAll());
 
   // Test behavior of the "reversed" attribute of OmniboxView::SelectAll().
   test_toolbar_model->set_text(ASCIIToUTF16("AB"));
   omnibox_view->Update();
-  // Should be at the end already. Shift+Left to select "reversed".
-  EXPECT_EQ(0u, GetSelectionSize(omnibox_view));
+  // Should be at beginning. Shift+left should do nothing.
+  EXPECT_EQ(2u, GetSelectionSize(omnibox_view));
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_LEFT, ui::EF_SHIFT_DOWN));
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_LEFT, ui::EF_SHIFT_DOWN));
   EXPECT_EQ(2u, GetSelectionSize(omnibox_view));
@@ -1996,12 +2018,12 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, SelectAllStaysAfterUpdate) {
   omnibox_view->Update();
   EXPECT_EQ(2u, GetSelectionSize(omnibox_view));
 
-  // Now Shift+Right should do nothing, and Shift+Left should reduce.
-  // At the end, so Shift+Right should do nothing.
-  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_RIGHT, ui::EF_SHIFT_DOWN));
+  // We reverse select all on Update() so shift-left won't do anything.
+  // On Cocoa, shift-left will just anchor it on the left.
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_LEFT, ui::EF_SHIFT_DOWN));
   EXPECT_EQ(2u, GetSelectionSize(omnibox_view));
 
-  // And Left should reduce by one character.
-  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_LEFT, ui::EF_SHIFT_DOWN));
+  // And shift-right should reduce by one character.
+  ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_RIGHT, ui::EF_SHIFT_DOWN));
   EXPECT_EQ(1u, GetSelectionSize(omnibox_view));
 }

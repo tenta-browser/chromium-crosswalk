@@ -14,67 +14,26 @@ namespace cc {
 ClipNode::ClipNode()
     : id(ClipTree::kInvalidNodeId),
       parent_id(ClipTree::kInvalidNodeId),
-      owning_layer_id(Layer::INVALID_ID),
       clip_type(ClipType::APPLIES_LOCAL_CLIP),
       transform_id(TransformTree::kInvalidNodeId) {
-  cached_clip_rects = std::vector<ClipRectData>(defaultCachedClipsSize);
 }
 
-ClipNode::ClipNode(const ClipNode& other)
-    : id(other.id),
-      parent_id(other.parent_id),
-      owning_layer_id(other.owning_layer_id),
-      clip_type(other.clip_type),
-      clip(other.clip),
-      transform_id(other.transform_id) {
-  if (other.clip_expander) {
-    DCHECK_EQ(clip_type, ClipType::EXPANDS_CLIP);
-    clip_expander = base::MakeUnique<ClipExpander>(*other.clip_expander);
-  }
-  cached_clip_rects = other.cached_clip_rects;
-  cached_accumulated_rect_in_screen_space =
-      other.cached_accumulated_rect_in_screen_space;
-}
+ClipNode::ClipNode(const ClipNode& other) = default;
 
-ClipNode& ClipNode::operator=(const ClipNode& other) {
-  id = other.id;
-  parent_id = other.parent_id;
-  owning_layer_id = other.owning_layer_id;
-  clip_type = other.clip_type;
-  clip = other.clip;
-  transform_id = other.transform_id;
-
-  if (other.clip_expander) {
-    DCHECK_EQ(clip_type, ClipType::EXPANDS_CLIP);
-    clip_expander = base::MakeUnique<ClipExpander>(*other.clip_expander);
-  } else {
-    clip_expander.reset();
-  }
-  cached_clip_rects = other.cached_clip_rects;
-  cached_accumulated_rect_in_screen_space =
-      other.cached_accumulated_rect_in_screen_space;
-  return *this;
-}
+ClipNode& ClipNode::operator=(const ClipNode& other) = default;
 
 ClipNode::~ClipNode() {}
 
 bool ClipNode::operator==(const ClipNode& other) const {
-  if (clip_expander && other.clip_expander &&
-      *clip_expander != *other.clip_expander)
-    return false;
-  if ((clip_expander && !other.clip_expander) ||
-      (!clip_expander && other.clip_expander))
-    return false;
   return id == other.id && parent_id == other.parent_id &&
-         owning_layer_id == other.owning_layer_id &&
          clip_type == other.clip_type && clip == other.clip &&
+         clip_expander == other.clip_expander &&
          transform_id == other.transform_id;
 }
 
 void ClipNode::AsValueInto(base::trace_event::TracedValue* value) const {
   value->SetInteger("id", id);
   value->SetInteger("parent_id", parent_id);
-  value->SetInteger("owning_layer_id", owning_layer_id);
   value->SetInteger("clip_type", static_cast<int>(clip_type));
   MathUtil::AddToTracedValue("clip", clip, value);
   value->SetInteger("transform_id", transform_id);

@@ -68,12 +68,13 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
     return true;
   }
   bool OnCanSetCookie(const URLRequest& request,
-                      const std::string& cookie_line,
+                      const net::CanonicalCookie& cookie,
                       CookieOptions* options) override {
     return true;
   }
   bool OnCanAccessFile(const URLRequest& request,
-                       const base::FilePath& path) const override {
+                       const base::FilePath& original_path,
+                       const base::FilePath& absolute_path) const override {
     return true;
   }
 

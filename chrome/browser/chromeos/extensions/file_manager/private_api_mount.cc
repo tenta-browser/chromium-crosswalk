@@ -101,13 +101,12 @@ bool FileManagerPrivateAddMountFunction::RunAsync() {
       // For files under downloads, change the file permission and make it
       // readable from avfs/fuse if needed.
       base::PostTaskWithTraits(
-          FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                         base::TaskPriority::USER_BLOCKING),
-          base::Bind(&EnsureReadableFilePermissionAsync, path,
-                     google_apis::CreateRelayCallback(
-                         base::Bind(&FileManagerPrivateAddMountFunction::
-                                        RunAfterMarkCacheFileAsMounted,
-                                    this, path.BaseName()))));
+          FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
+          base::BindOnce(&EnsureReadableFilePermissionAsync, path,
+                         google_apis::CreateRelayCallback(
+                             base::Bind(&FileManagerPrivateAddMountFunction::
+                                            RunAfterMarkCacheFileAsMounted,
+                                        this, path.BaseName()))));
     } else {
       RunAfterMarkCacheFileAsMounted(
           path.BaseName(), drive::FILE_ERROR_OK, path);
@@ -205,7 +204,7 @@ bool FileManagerPrivateRemoveMountFunction::RunAsync() {
           chromeos::file_system_provider::Service::Get(GetProfile());
       DCHECK(service);
       // TODO(mtomasz): Pass a more detailed error than just a bool.
-      if (!service->RequestUnmount(volume->extension_id(),
+      if (!service->RequestUnmount(volume->provider_id(),
                                    volume->file_system_id())) {
         return false;
       }

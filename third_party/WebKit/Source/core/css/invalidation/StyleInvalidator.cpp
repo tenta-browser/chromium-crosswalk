@@ -4,13 +4,13 @@
 
 #include "core/css/invalidation/StyleInvalidator.h"
 
+#include "core/css/StyleChangeReason.h"
 #include "core/css/invalidation/InvalidationSet.h"
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
+#include "core/dom/ElementShadow.h"
 #include "core/dom/ElementTraversal.h"
-#include "core/dom/StyleChangeReason.h"
-#include "core/dom/shadow/ElementShadow.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/html/HTMLSlotElement.h"
 #include "core/inspector/InspectorTraceEvents.h"
 #include "core/layout/LayoutObject.h"
@@ -40,7 +40,7 @@ void StyleInvalidator::Invalidate(Document& document) {
     Invalidate(*document_element, recursion_data, sibling_data);
   document.ClearChildNeedsStyleInvalidation();
   document.ClearNeedsStyleInvalidation();
-  pending_invalidation_map_.Clear();
+  pending_invalidation_map_.clear();
 }
 
 void StyleInvalidator::ScheduleInvalidationSetsForNode(
@@ -167,7 +167,7 @@ PendingInvalidations& StyleInvalidator::EnsurePendingInvalidations(
   PendingInvalidationMap::AddResult add_result =
       pending_invalidation_map_.insert(&node, nullptr);
   if (add_result.is_new_entry)
-    add_result.stored_value->value = WTF::MakeUnique<PendingInvalidations>();
+    add_result.stored_value->value = std::make_unique<PendingInvalidations>();
   return *add_result.stored_value->value;
 }
 
@@ -178,7 +178,7 @@ StyleInvalidator::StyleInvalidator() {
   InvalidationSet::CacheTracingFlag();
 }
 
-StyleInvalidator::~StyleInvalidator() {}
+StyleInvalidator::~StyleInvalidator() = default;
 
 void StyleInvalidator::RecursionData::PushInvalidationSet(
     const InvalidationSet& invalidation_set) {
@@ -205,7 +205,7 @@ StyleInvalidator::RecursionData::MatchesCurrentInvalidationSets(
     return true;
   }
 
-  if (insertion_point_crossing_ && element.IsInsertionPoint())
+  if (insertion_point_crossing_ && element.IsV0InsertionPoint())
     return true;
 
   for (const auto& invalidation_set : invalidation_sets_) {
@@ -390,39 +390,24 @@ bool StyleInvalidator::Invalidate(Element& element,
   bool this_element_needs_style_recalc = CheckInvalidationSetsAgainstElement(
       element, recursion_data, sibling_data);
 
-  bool some_children_need_style_recalc = false;
   if (recursion_data.HasInvalidationSets() ||
-      element.ChildNeedsStyleInvalidation())
-    some_children_need_style_recalc =
-        InvalidateChildren(element, recursion_data);
+      element.ChildNeedsStyleInvalidation()) {
+    InvalidateChildren(element, recursion_data);
+  }
 
   if (this_element_needs_style_recalc) {
     DCHECK(!recursion_data.WholeSubtreeInvalid());
     element.SetNeedsStyleRecalc(kLocalStyleChange,
                                 StyleChangeReasonForTracing::Create(
                                     StyleChangeReason::kStyleInvalidator));
-  } else if (recursion_data.HasInvalidationSets() &&
-             some_children_need_style_recalc) {
-    // Clone the ComputedStyle in order to preserve correct style sharing, if
-    // possible. Otherwise recalc style.
-    if (LayoutObject* layout_object = element.GetLayoutObject()) {
-      layout_object->SetStyleInternal(
-          ComputedStyle::Clone(layout_object->StyleRef()));
-    } else {
-      TRACE_STYLE_INVALIDATOR_INVALIDATION_IF_ENABLED(
-          element, kPreventStyleSharingForParent);
-      element.SetNeedsStyleRecalc(kLocalStyleChange,
-                                  StyleChangeReasonForTracing::Create(
-                                      StyleChangeReason::kStyleInvalidator));
-    }
   }
 
-  if (recursion_data.InsertionPointCrossing() && element.IsInsertionPoint())
+  if (recursion_data.InsertionPointCrossing() && element.IsV0InsertionPoint())
     element.SetNeedsStyleRecalc(kSubtreeStyleChange,
                                 StyleChangeReasonForTracing::Create(
                                     StyleChangeReason::kStyleInvalidator));
-  if (recursion_data.InvalidatesSlotted() && isHTMLSlotElement(element))
-    InvalidateSlotDistributedElements(toHTMLSlotElement(element),
+  if (recursion_data.InvalidatesSlotted() && IsHTMLSlotElement(element))
+    InvalidateSlotDistributedElements(ToHTMLSlotElement(element),
                                       recursion_data);
 
   element.ClearChildNeedsStyleInvalidation();

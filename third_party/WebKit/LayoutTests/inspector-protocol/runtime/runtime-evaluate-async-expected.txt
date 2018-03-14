@@ -1,10 +1,8 @@
-CONSOLE ERROR: Uncaught (in promise) 239
 Tests that Runtime.evaluate works with awaitPromise flag.
 
 Running test: testResolvedPromise
 {
     result : {
-        description : 239
         type : number
         value : 239
     }
@@ -15,18 +13,16 @@ Running test: testRejectedPromise
     exceptionDetails : {
         columnNumber : 0
         exception : {
-            description : 239
-            objectId : 0
+            objectId : <number>
             type : number
             value : 239
         }
         exceptionId : 0
         lineNumber : 0
-        scriptId : 
+        scriptId : <string>
         text : Uncaught (in promise)
     }
     result : {
-        description : 239
         type : number
         value : 239
     }
@@ -34,14 +30,19 @@ Running test: testRejectedPromise
 
 Running test: testPrimitiveValueInsteadOfPromise
 {
-    code : -32000
-    message : Result of the evaluation is not a promise
+    result : {
+        type : boolean
+        value : true
+    }
 }
 
 Running test: testObjectInsteadOfPromise
 {
-    code : -32000
-    message : Result of the evaluation is not a promise
+    result : {
+        type : object
+        value : {
+        }
+    }
 }
 
 Running test: testPendingPromise
@@ -59,18 +60,16 @@ Running test: testExceptionInEvaluate
     exceptionDetails : {
         columnNumber : 0
         exception : {
-            description : 239
-            objectId : 0
+            objectId : <number>
             type : number
             value : 239
         }
         exceptionId : 0
         lineNumber : 0
-        scriptId : 
+        scriptId : <string>
         text : Uncaught
     }
     result : {
-        description : 239
         type : number
         value : 239
     }

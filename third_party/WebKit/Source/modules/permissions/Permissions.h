@@ -6,7 +6,7 @@
 #define Permissions_h
 
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "public/platform/modules/permissions/permission.mojom-blink.h"
 
@@ -17,20 +17,17 @@ class ExecutionContext;
 class ScriptPromiseResolver;
 class ScriptState;
 
-class Permissions final : public GarbageCollectedFinalized<Permissions>,
-                          public ScriptWrappable {
+class Permissions final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  DEFINE_INLINE_TRACE() {}
-
   ScriptPromise query(ScriptState*, const Dictionary&);
   ScriptPromise request(ScriptState*, const Dictionary&);
   ScriptPromise revoke(ScriptState*, const Dictionary&);
   ScriptPromise requestAll(ScriptState*, const Vector<Dictionary>&);
 
  private:
-  mojom::blink::PermissionService* GetService(ExecutionContext*);
+  mojom::blink::PermissionService& GetService(ExecutionContext*);
   void ServiceConnectionError();
   void TaskComplete(ScriptPromiseResolver*,
                     mojom::blink::PermissionDescriptorPtr,

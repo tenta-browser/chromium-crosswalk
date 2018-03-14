@@ -6,11 +6,12 @@
 
 #include <memory>
 
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "services/shape_detection/public/interfaces/constants.mojom.h"
 #include "services/shape_detection/shape_detection_service.h"
 
-#if defined(ENABLE_MOJO_MEDIA_IN_GPU_PROCESS)
+#if BUILDFLAG(ENABLE_MOJO_MEDIA_IN_GPU_PROCESS)
 #include "base/bind.h"
 #include "media/mojo/services/media_service_factory.h"  // nogncheck
 #endif
@@ -18,25 +19,35 @@
 namespace content {
 
 GpuServiceFactory::GpuServiceFactory(
-    base::WeakPtr<media::MediaGpuChannelManager> media_gpu_channel_manager) {
-#if defined(ENABLE_MOJO_MEDIA_IN_GPU_PROCESS)
+    const gpu::GpuPreferences& gpu_preferences,
+    base::WeakPtr<media::MediaGpuChannelManager> media_gpu_channel_manager,
+    media::AndroidOverlayMojoFactoryCB android_overlay_factory_cb) {
+#if BUILDFLAG(ENABLE_MOJO_MEDIA_IN_GPU_PROCESS)
+  gpu_preferences_ = gpu_preferences;
   task_runner_ = base::ThreadTaskRunnerHandle::Get();
   media_gpu_channel_manager_ = std::move(media_gpu_channel_manager);
+  android_overlay_factory_cb_ = std::move(android_overlay_factory_cb);
 #endif
 }
 
 GpuServiceFactory::~GpuServiceFactory() {}
 
 void GpuServiceFactory::RegisterServices(ServiceMap* services) {
-#if defined(ENABLE_MOJO_MEDIA_IN_GPU_PROCESS)
-  ServiceInfo info;
-  info.factory = base::Bind(&media::CreateGpuMediaService, task_runner_,
-                            media_gpu_channel_manager_);
-  info.use_own_thread = true;
+#if BUILDFLAG(ENABLE_MOJO_MEDIA_IN_GPU_PROCESS)
+  service_manager::EmbeddedServiceInfo info;
+  info.factory =
+      base::Bind(&media::CreateGpuMediaService, gpu_preferences_, task_runner_,
+                 media_gpu_channel_manager_, android_overlay_factory_cb_);
+  // This service will host audio/video decoders, and if these decoding
+  // operations are blocked, user may hear audio glitch or see video freezing,
+  // hence "user blocking".
+  // TODO(crbug.com/786169): Check whether this needs to be single threaded.
+  info.task_runner = base::CreateSingleThreadTaskRunnerWithTraits(
+      {base::TaskPriority::USER_BLOCKING});
   services->insert(std::make_pair("media", info));
 #endif
 
-  ServiceInfo shape_detection_info;
+  service_manager::EmbeddedServiceInfo shape_detection_info;
   shape_detection_info.factory =
       base::Bind(&shape_detection::ShapeDetectionService::Create);
   services->insert(std::make_pair(shape_detection::mojom::kServiceName,

@@ -21,12 +21,14 @@
 #include "gpu/command_buffer/common/capabilities.h"
 #include "gpu/command_buffer/common/command_buffer_id.h"
 #include "gpu/command_buffer/common/constants.h"
+#include "gpu/command_buffer/common/context_result.h"
 #include "gpu/command_buffer/service/common_decoder.h"
 #include "gpu/gpu_export.h"
 
 namespace gl {
 class GLContext;
 class GLSurface;
+class GLImage;
 }
 
 namespace gfx {
@@ -43,12 +45,15 @@ namespace gles2 {
 class ContextGroup;
 class ErrorState;
 class FeatureInfo;
+class FramebufferManager;
 class GLES2Util;
 class ImageManager;
 class Logger;
+class Outputter;
 class QueryManager;
 class ShaderTranslatorInterface;
 class Texture;
+class TextureBase;
 class TransformFeedbackManager;
 class VertexArrayManager;
 struct ContextCreationAttribHelper;
@@ -76,18 +81,45 @@ struct DisallowedFeatures {
   bool oes_texture_half_float_linear = false;
 };
 
-typedef base::Callback<void(const std::string& key,
-                            const std::string& shader)> ShaderCacheCallback;
+class GPU_EXPORT GLES2DecoderClient {
+ public:
+  virtual ~GLES2DecoderClient() {}
+
+  // Prints a message (error/warning) to the console.
+  virtual void OnConsoleMessage(int32_t id, const std::string& message) = 0;
+
+  // Cache a newly linked shader.
+  virtual void CacheShader(const std::string& key,
+                           const std::string& shader) = 0;
+
+  // Called when the decoder releases a fence sync. Allows the client to
+  // reschedule waiting decoders.
+  virtual void OnFenceSyncRelease(uint64_t release) = 0;
+
+  // Called when the decoder needs to wait on a sync token. If the wait is valid
+  // (fence sync is not released yet), the client must unschedule the command
+  // buffer and return true. The client is responsible for rescheduling the
+  // command buffer when the fence is released.  If the wait is a noop (fence is
+  // already released) or invalid, the client must leave the command buffer
+  // scheduled, and return false.
+  virtual bool OnWaitSyncToken(const gpu::SyncToken&) = 0;
+
+  // Called when the decoder needs to be descheduled while waiting for a fence
+  // completion. The client is responsible for descheduling the command buffer
+  // before returning, and then calling PerformPollingWork periodically to test
+  // for the fence completion and possibly reschedule.
+  virtual void OnDescheduleUntilFinished() = 0;
+
+  // Called from PerformPollingWork when the decoder needs to be rescheduled
+  // because the fence completed.
+  virtual void OnRescheduleAfterFinished() = 0;
+};
 
 // This class implements the AsyncAPIInterface interface, decoding GLES2
 // commands and calling GL.
-class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
-                                public CommonDecoder {
+class GPU_EXPORT GLES2Decoder : public CommonDecoder, public AsyncAPIInterface {
  public:
   typedef error::Error Error;
-  typedef base::Callback<void(uint64_t release)> FenceSyncReleaseCallback;
-  typedef base::Callback<bool(const gpu::SyncToken&)> WaitSyncTokenCallback;
-  typedef base::Callback<void(void)> NoParamCallback;
 
   // The default stencil mask, which has all bits set.  This really should be a
   // GLuint, but we can't #include gl_bindings.h in this file without causing
@@ -95,7 +127,10 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   static const unsigned int kDefaultStencilMask;
 
   // Creates a decoder.
-  static GLES2Decoder* Create(ContextGroup* group);
+  static GLES2Decoder* Create(GLES2DecoderClient* client,
+                              CommandBufferServiceBase* command_buffer_service,
+                              Outputter* outputter,
+                              ContextGroup* group);
 
   ~GLES2Decoder() override;
 
@@ -125,6 +160,10 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
     log_commands_ = log_commands;
   }
 
+  Outputter* outputter() const { return outputter_; }
+
+  virtual base::WeakPtr<GLES2Decoder> AsWeakPtr() = 0;
+
   // Initializes the graphics context. Can create an offscreen
   // decoder with a frame buffer that can be referenced from the parent.
   // Takes ownership of GLContext.
@@ -137,11 +176,12 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   //  offscreen_size: the size if the GL context is offscreen.
   // Returns:
   //   true if successful.
-  virtual bool Initialize(const scoped_refptr<gl::GLSurface>& surface,
-                          const scoped_refptr<gl::GLContext>& context,
-                          bool offscreen,
-                          const DisallowedFeatures& disallowed_features,
-                          const ContextCreationAttribHelper& attrib_helper) = 0;
+  virtual gpu::ContextResult Initialize(
+      const scoped_refptr<gl::GLSurface>& surface,
+      const scoped_refptr<gl::GLContext>& context,
+      bool offscreen,
+      const DisallowedFeatures& disallowed_features,
+      const ContextCreationAttribHelper& attrib_helper) = 0;
 
   // Destroys the graphics context.
   virtual void Destroy(bool have_context) = 0;
@@ -178,7 +218,7 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
 
   // Restore States.
   virtual void RestoreActiveTexture() const = 0;
-  virtual void RestoreAllTextureUnitBindings(
+  virtual void RestoreAllTextureUnitAndSamplerBindings(
       const ContextState* prev_state) const = 0;
   virtual void RestoreActiveTextureUnitBinding(unsigned int target) const = 0;
   virtual void RestoreBufferBinding(unsigned int target) = 0;
@@ -191,6 +231,7 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   virtual void RestoreTextureUnitBindings(unsigned unit) const = 0;
   virtual void RestoreVertexAttribArray(unsigned index) = 0;
   virtual void RestoreAllExternalTextureBindingsIfNeeded() = 0;
+  virtual void RestoreDeviceWindowRectangles() const = 0;
 
   virtual void ClearAllAttributes() const = 0;
   virtual void RestoreAllAttributes() const = 0;
@@ -204,6 +245,9 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   // Gets the QueryManager for this context.
   virtual QueryManager* GetQueryManager() = 0;
 
+  // Gets the FramebufferManager for this context.
+  virtual FramebufferManager* GetFramebufferManager() = 0;
+
   // Gets the TransformFeedbackManager for this context.
   virtual TransformFeedbackManager* GetTransformFeedbackManager() = 0;
 
@@ -211,7 +255,7 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   virtual VertexArrayManager* GetVertexArrayManager() = 0;
 
   // Gets the ImageManager for this context.
-  virtual ImageManager* GetImageManager() = 0;
+  virtual ImageManager* GetImageManagerForTest() = 0;
 
   // Returns false if there are no pending queries.
   virtual bool HasPendingQueries() const = 0;
@@ -236,8 +280,9 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   virtual bool GetServiceTextureId(uint32_t client_texture_id,
                                    uint32_t* service_texture_id);
 
-  // Provides detail about a lost context if one occurred.
-  virtual error::ContextLostReason GetContextLostReason() = 0;
+  // Gets the texture object associated with the client ID.  null is returned on
+  // failure or if the texture has not been bound yet.
+  virtual TextureBase* GetTextureBase(uint32_t client_id);
 
   // Clears a level sub area of a 2D texture.
   // Returns false if a GL error should be generated.
@@ -277,29 +322,7 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
 
   virtual ErrorState* GetErrorState() = 0;
 
-  // A callback for messages from the decoder.
-  virtual void SetShaderCacheCallback(const ShaderCacheCallback& callback) = 0;
-
-  // Sets the callback for fence sync release and wait calls. The wait call
-  // returns false if the wait was a nop or invalid and the command buffer is
-  // still scheduled.
-  virtual void SetFenceSyncReleaseCallback(
-      const FenceSyncReleaseCallback& callback) = 0;
-  virtual void SetWaitSyncTokenCallback(
-      const WaitSyncTokenCallback& callback) = 0;
-
-  // Sets the callback for the DescheduleUntilFinished and
-  // RescheduleAfterFinished calls.
-  virtual void SetDescheduleUntilFinishedCallback(
-      const NoParamCallback& callback) = 0;
-  virtual void SetRescheduleAfterFinishedCallback(
-      const NoParamCallback& callback) = 0;
-
   virtual void WaitForReadPixels(base::Closure callback) = 0;
-  virtual uint32_t GetTextureUploadCount() = 0;
-  virtual base::TimeDelta GetTotalTextureUploadTime() = 0;
-  virtual base::TimeDelta GetTotalProcessingCommandsTime() = 0;
-  virtual void AddProcessingCommandsTime(base::TimeDelta) = 0;
 
   // Returns true if the context was lost either by GL_ARB_robustness, forced
   // context loss or command buffer parse error.
@@ -311,30 +334,39 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   // Lose this context.
   virtual void MarkContextLost(error::ContextLostReason reason) = 0;
 
+  // Updates context lost state and returns true if lost. Most callers can use
+  // WasContextLost() as the GLES2Decoder will update the state internally. But
+  // if making GL calls directly, to the context then this state would not be
+  // updated and the caller can use this to determine if their calls failed due
+  // to context loss.
+  virtual bool CheckResetStatus() = 0;
+
   virtual Logger* GetLogger() = 0;
 
-  virtual void BeginDecoding();
-  virtual void EndDecoding();
+  void BeginDecoding() override;
+  void EndDecoding() override;
 
   virtual const ContextState* GetContextState() = 0;
   virtual scoped_refptr<ShaderTranslatorInterface> GetTranslator(
       unsigned int type) = 0;
 
- protected:
-  GLES2Decoder();
+  virtual void BindImage(uint32_t client_texture_id,
+                         uint32_t texture_target,
+                         gl::GLImage* image,
+                         bool can_bind_to_sampler) = 0;
 
-  // Decode a command, and call the corresponding GL functions.
-  // NOTE: DoCommand() is slower than calling DoCommands() on larger batches
-  // of commands at once, and is now only used for tests that need to track
-  // individual commands.
-  error::Error DoCommand(unsigned int command,
-                         unsigned int arg_count,
-                         const volatile void* cmd_data) override;
+ protected:
+  GLES2Decoder(CommandBufferServiceBase* command_buffer_service,
+               Outputter* outputter);
+
+  base::StringPiece GetLogPrefix() override;
 
  private:
-  bool initialized_;
-  bool debug_;
-  bool log_commands_;
+  bool initialized_ = false;
+  bool debug_ = false;
+  bool log_commands_ = false;
+  Outputter* outputter_ = nullptr;
+
   DISALLOW_COPY_AND_ASSIGN(GLES2Decoder);
 };
 

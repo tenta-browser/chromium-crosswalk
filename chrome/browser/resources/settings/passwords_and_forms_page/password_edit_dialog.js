@@ -13,72 +13,16 @@
 Polymer({
   is: 'password-edit-dialog',
 
-  properties: {
-    /**
-     * The password that is being displayed.
-     * @type {!chrome.passwordsPrivate.PasswordUiEntry}
-     */
-    item: Object,
-
-    /** Holds the plaintext password when requested. */
-    password: String,
-  },
+  behaviors: [ShowPasswordBehavior],
 
   /** @override */
   attached: function() {
-    this.password = '';
     this.$.dialog.showModal();
   },
 
   /** Closes the dialog. */
   close: function() {
     this.$.dialog.close();
-  },
-
-  /**
-   * Gets the password input's type. Should be 'text' when password is visible
-   * and 'password' when it's not.
-   * @param {string} password
-   * @private
-   */
-  getPasswordInputType_: function(password) {
-    return password ? 'text' : 'password';
-  },
-
-  /**
-   * Gets the title text for the show/hide icon.
-   * @param {string} password
-   * @param {string} hide The i18n text to use for 'Hide'
-   * @param {string} show The i18n text to use for 'Show'
-   * @private
-   */
-  showPasswordTitle_: function(password, hide, show) {
-    return password ? hide : show;
-  },
-
-  /**
-   * Gets the text of the password. Will use the value of |password| unless it
-   * cannot be shown, in which case it will be spaces.
-   * @param {!chrome.passwordsPrivate.PasswordUiEntry} item
-   * @param {string} password
-   * @private
-   */
-  getPassword_: function(item, password) {
-    if (password)
-      return password;
-    return item ? ' '.repeat(item.numCharactersInPassword) : '';
-  },
-
-  /**
-   * Handler for tapping the show/hide button. Will fire an event to request the
-   * password for this login pair.
-   * @private
-   */
-  onShowPasswordButtonTap_: function() {
-    if (this.password)
-      this.password = '';
-    else
-      this.fire('show-password', this.item.loginPair);  // Request the password.
   },
 
   /**

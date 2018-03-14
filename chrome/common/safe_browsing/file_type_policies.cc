@@ -253,4 +253,22 @@ DownloadFileType::DangerLevel FileTypePolicies::GetFileDangerLevel(
   return PolicyForExtension(ext).platform_settings(0).danger_level();
 }
 
+uint64_t FileTypePolicies::GetMaxFileSizeToAnalyze(
+    const std::string& ascii_ext) const {
+  AutoLock lock(lock_);
+  return PolicyForExtension(ascii_ext)
+      .platform_settings(0)
+      .max_file_size_to_analyze();
+}
+
+uint64_t FileTypePolicies::GetMaxArchivedBinariesToReport() const {
+  AutoLock lock(lock_);
+  if (!config_ || !config_->has_max_archived_binaries_to_report()) {
+    // The resource bundle may be corrupted.
+    DCHECK(false);
+    return 10;  // reasonable default
+  }
+  return config_->max_archived_binaries_to_report();
+}
+
 }  // namespace safe_browsing

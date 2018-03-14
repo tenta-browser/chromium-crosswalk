@@ -6,9 +6,9 @@
 #define DocumentOrShadowRoot_h
 
 #include "core/dom/Document.h"
-#include "core/dom/Fullscreen.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/frame/UseCounter.h"
+#include "core/fullscreen/Fullscreen.h"
 
 namespace blink {
 
@@ -34,18 +34,18 @@ class DocumentOrShadowRoot {
     return tree_scope.GetSelection();
   }
 
-  static Element* elementFromPoint(TreeScope& tree_scope, int x, int y) {
+  static Element* elementFromPoint(TreeScope& tree_scope, double x, double y) {
     return tree_scope.ElementFromPoint(x, y);
   }
 
   static HeapVector<Member<Element>> elementsFromPoint(TreeScope& tree_scope,
-                                                       int x,
-                                                       int y) {
+                                                       double x,
+                                                       double y) {
     return tree_scope.ElementsFromPoint(x, y);
   }
 
   static Element* pointerLockElement(Document& document) {
-    UseCounter::Count(document, UseCounter::kDocumentPointerLockElement);
+    UseCounter::Count(document, WebFeature::kDocumentPointerLockElement);
     const Element* target = document.PointerLockElement();
     if (!target)
       return nullptr;
@@ -55,7 +55,7 @@ class DocumentOrShadowRoot {
     // unnecessary.
     if (target && target->IsInV0ShadowTree()) {
       UseCounter::Count(document,
-                        UseCounter::kDocumentPointerLockElementInV0Shadow);
+                        WebFeature::kDocumentPointerLockElementInV0Shadow);
       return const_cast<Element*>(target);
     }
     return document.AdjustedElement(*target);
@@ -68,7 +68,7 @@ class DocumentOrShadowRoot {
     if (!shadow_root.IsV1())
       return nullptr;
     UseCounter::Count(shadow_root.GetDocument(),
-                      UseCounter::kShadowRootPointerLockElement);
+                      WebFeature::kShadowRootPointerLockElement);
     const Element* target = shadow_root.GetDocument().PointerLockElement();
     if (!target)
       return nullptr;

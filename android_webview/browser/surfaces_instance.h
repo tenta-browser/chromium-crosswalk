@@ -9,19 +9,11 @@
 #include <vector>
 
 #include "base/memory/ref_counted.h"
-#include "cc/surfaces/compositor_frame_sink_support_client.h"
-#include "cc/surfaces/display_client.h"
-#include "cc/surfaces/frame_sink_id.h"
-#include "cc/surfaces/frame_sink_id_allocator.h"
-#include "cc/surfaces/surface_id.h"
-
-namespace cc {
-class BeginFrameSource;
-class CompositorFrameSinkSupport;
-class Display;
-class LocalSurfaceIdAllocator;
-class SurfaceManager;
-}
+#include "components/viz/common/surfaces/frame_sink_id.h"
+#include "components/viz/common/surfaces/frame_sink_id_allocator.h"
+#include "components/viz/common/surfaces/surface_id.h"
+#include "components/viz/service/display/display_client.h"
+#include "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom.h"
 
 namespace gfx {
 class Rect;
@@ -29,27 +21,36 @@ class Size;
 class Transform;
 }
 
+namespace viz {
+class BeginFrameSource;
+class CompositorFrameSinkSupport;
+class Display;
+class FrameSinkManagerImpl;
+class LocalSurfaceIdAllocator;
+}  // namespace viz
+
 namespace android_webview {
 
 class ParentOutputSurface;
 
 class SurfacesInstance : public base::RefCounted<SurfacesInstance>,
-                         public cc::DisplayClient,
-                         public cc::CompositorFrameSinkSupportClient {
+                         public viz::DisplayClient,
+                         public viz::mojom::CompositorFrameSinkClient {
  public:
   static scoped_refptr<SurfacesInstance> GetOrCreateInstance();
 
-  cc::FrameSinkId AllocateFrameSinkId();
-  cc::SurfaceManager* GetSurfaceManager();
+  viz::FrameSinkId AllocateFrameSinkId();
+  viz::FrameSinkManagerImpl* GetFrameSinkManager();
 
   void DrawAndSwap(const gfx::Size& viewport,
                    const gfx::Rect& clip,
                    const gfx::Transform& transform,
                    const gfx::Size& frame_size,
-                   const cc::SurfaceId& child_id);
+                   const viz::SurfaceId& child_id,
+                   float device_scale_factor);
 
-  void AddChildId(const cc::SurfaceId& child_id);
-  void RemoveChildId(const cc::SurfaceId& child_id);
+  void AddChildId(const viz::SurfaceId& child_id);
+  void RemoveChildId(const viz::SurfaceId& child_id);
 
  private:
   friend class base::RefCounted<SurfacesInstance>;
@@ -57,38 +58,48 @@ class SurfacesInstance : public base::RefCounted<SurfacesInstance>,
   SurfacesInstance();
   ~SurfacesInstance() override;
 
-  // cc::DisplayClient overrides.
+  // viz::DisplayClient overrides.
   void DisplayOutputSurfaceLost() override;
   void DisplayWillDrawAndSwap(
       bool will_draw_and_swap,
-      const cc::RenderPassList& render_passes) override {}
+      const viz::RenderPassList& render_passes) override {}
   void DisplayDidDrawAndSwap() override {}
 
-  // cc::CompositorFrameSinkSupportClient implementation.
+  // viz::mojom::CompositorFrameSinkClient implementation.
   void DidReceiveCompositorFrameAck(
-      const cc::ReturnedResourceArray& resources) override;
-  void OnBeginFrame(const cc::BeginFrameArgs& args) override;
-  void WillDrawSurface(const cc::LocalSurfaceId& local_surface_id,
-                       const gfx::Rect& damage_rect) override;
-  void ReclaimResources(const cc::ReturnedResourceArray& resources) override;
+      const std::vector<viz::ReturnedResource>& resources) override;
+  void DidPresentCompositorFrame(uint32_t presentation_token,
+                                 base::TimeTicks time,
+                                 base::TimeDelta refresh,
+                                 uint32_t flags) override;
+  void DidDiscardCompositorFrame(uint32_t presentation_token) override;
+  void OnBeginFrame(const viz::BeginFrameArgs& args) override;
+  void OnBeginFramePausedChanged(bool paused) override;
+  void ReclaimResources(
+      const std::vector<viz::ReturnedResource>& resources) override;
 
-  void SetEmptyRootFrame();
+  void SetSolidColorRootFrame();
 
-  cc::FrameSinkIdAllocator frame_sink_id_allocator_;
+  viz::FrameSinkIdAllocator frame_sink_id_allocator_;
 
-  cc::FrameSinkId frame_sink_id_;
+  viz::FrameSinkId frame_sink_id_;
 
-  std::unique_ptr<cc::SurfaceManager> surface_manager_;
-  std::unique_ptr<cc::BeginFrameSource> begin_frame_source_;
-  std::unique_ptr<cc::Display> display_;
-  std::unique_ptr<cc::LocalSurfaceIdAllocator> local_surface_id_allocator_;
-  std::unique_ptr<cc::CompositorFrameSinkSupport> support_;
+  std::unique_ptr<viz::FrameSinkManagerImpl> frame_sink_manager_;
+  std::unique_ptr<viz::BeginFrameSource> begin_frame_source_;
+  std::unique_ptr<viz::Display> display_;
+  std::unique_ptr<viz::LocalSurfaceIdAllocator> local_surface_id_allocator_;
+  std::unique_ptr<viz::CompositorFrameSinkSupport> support_;
 
-  cc::LocalSurfaceId root_id_;
-  std::vector<cc::SurfaceId> child_ids_;
+  viz::LocalSurfaceId root_id_;
+  float device_scale_factor_ = 1.0f;
+  std::vector<viz::SurfaceId> child_ids_;
 
   // This is owned by |display_|.
   ParentOutputSurface* output_surface_;
+
+  gfx::Size surface_size_;
+
+  uint64_t swap_id_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(SurfacesInstance);
 };

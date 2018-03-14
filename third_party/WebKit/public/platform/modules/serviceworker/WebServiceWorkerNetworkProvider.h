@@ -31,13 +31,22 @@
 #ifndef WebServiceWorkerNetworkProvider_h
 #define WebServiceWorkerNetworkProvider_h
 
+#include <memory>
+
+#include "base/memory/scoped_refptr.h"
+#include "public/platform/WebURLLoader.h"
+
+namespace base {
+class SingleThreadTaskRunner;
+}
+
 namespace blink {
 
 class WebURLRequest;
 
 // This interface is implemented by the client and is only called on the main
-// thread. isControlledByServiceWorker() and serviceWorkerID() are to be
-// implemented only by Frame and SharedWorker's provider as they are needed
+// thread. HasControllerServiceWorker() and ControllerServiceWorkerID() are to
+// be implemented only by Frame and SharedWorker's provider as they are needed
 // only for controllee contexts (but not in controller context).
 //
 // An instance of this class is owned by the associated loading context, e.g.
@@ -51,13 +60,26 @@ class WebServiceWorkerNetworkProvider {
   // made.
   virtual void WillSendRequest(WebURLRequest&) {}
 
-  // Whether the document associated with WebDataSource is controlled by the
-  // ServiceWorker.
-  virtual bool IsControlledByServiceWorker() { return false; }
+  // Returns an identifier of this provider.
+  virtual int ProviderID() const { return -1; }
+
+  // Whether the document associated with WebDocumentLoader is controlled by a
+  // service worker.
+  virtual bool HasControllerServiceWorker() { return false; }
 
   // Returns an identifier of the service worker controlling the document
-  // associated with the WebDataSource.
-  virtual int64_t ServiceWorkerID() { return -1; }
+  // associated with the WebDocumentLoader.
+  virtual int64_t ControllerServiceWorkerID() { return -1; }
+
+  // Returns a URLLoader for the associated context. May return nullptr
+  // if this doesn't provide a ServiceWorker specific URLLoader.
+  // Currently this returns non-null only for a controller worker case
+  // and only if servicification is enabled.
+  virtual std::unique_ptr<WebURLLoader> CreateURLLoader(
+      const WebURLRequest& request,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+    return nullptr;
+  }
 };
 
 }  // namespace blink

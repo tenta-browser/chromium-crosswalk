@@ -26,15 +26,15 @@ class PLATFORM_EXPORT BeginTransform3DDisplayItem final
   }
 
   void Replay(GraphicsContext&) const override;
-  void AppendToWebDisplayItemList(const IntRect&,
+  void AppendToWebDisplayItemList(const LayoutSize&,
                                   WebDisplayItemList*) const override;
 
   const TransformationMatrix& Transform() const { return transform_; }
   const FloatPoint3D& TransformOrigin() const { return transform_origin_; }
 
  private:
-#ifndef NDEBUG
-  void DumpPropertiesAsDebugString(WTF::StringBuilder&) const final;
+#if DCHECK_IS_ON()
+  void PropertiesAsJSON(JSONObject&) const final;
 #endif
   bool Equals(const DisplayItem& other) const final {
     return DisplayItem::Equals(other) &&
@@ -58,7 +58,7 @@ class PLATFORM_EXPORT EndTransform3DDisplayItem final
   }
 
   void Replay(GraphicsContext&) const override;
-  void AppendToWebDisplayItemList(const IntRect&,
+  void AppendToWebDisplayItemList(const LayoutSize&,
                                   WebDisplayItemList*) const override;
 
  private:

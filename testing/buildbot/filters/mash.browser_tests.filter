@@ -1,13 +1,70 @@
-BrowserTest.*
+# Tests from //chrome/browser/chromeos.
+ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest.*
+ArcAuthServiceTest.*
+ArcCertStoreBridgeTest.*
+ArcKioskAppManagerTest.*
+ArcRobotAuthCodeFetcherBrowserTest.*
+ArcSessionManagerTest.*
+ArcSettingsServiceTest.*
+ArcUserSessionServiceTest.*
+ArcVoiceInteractionArcHomeServiceTest.*
+AttestationDevicePolicyTest.*
+AutoLaunchedKioskTest.*
+BrowserLoginTest.*
+CrashRestoreComplexTest.*
+CrashRestoreSimpleTest.*
+DriveIntegrationServiceBrowserTest.*
+EnterpriseEnrollmentTest.*
+KioskAppManagerTest.*
+KioskAppUpdateServiceTest.*
+LoginPromptBrowserTest.*
+LoginUtilsTest.*
+MultiProfileFileManagerBrowserTest.*
+NetworkScreenTest.*
+PowerPolicyInSessionBrowserTest.*
+PowerPolicyLoginScreenBrowserTest.*
+QuirksBrowserTest.*
+ResetTest.*
+SAMLEnrollmentTest.*
+ShutdownPolicyLockerTest.*
+UpdateScreenTest.*
+UserImageManagerTest.*
+UserSelectionScreenTest.*
+WebviewLoginTest.*
 
-# Failing test
--BrowserTest.FullscreenBookmarkBar
+# Tests from //chrome/browser/ui/ash.
+AcceleratorCommandsFullscreenBrowserTest.*
+AcceleratorCommandsPlatformAppFullscreenBrowserTest.*
+ArcAppLauncherBrowserTest.*
+ShelfBrowserTest.*
+ShelfGuestSessionBrowserTest.*
+SoundsManagerTestImpl.*
+SystemTrayClientClockTest.*
+SystemTrayClientEnterpriseTest.*
+SystemTrayClientTest.*
+VolumeControllerTest.*
 
-# Flaky tests - crbug.com/707195
--BrowserTest.CanDuplicateTab
--BrowserTest.ClearPendingOnFailUnlessNT
--BrowserTest.DefaultMediaDevices
--BrowserTest.GetSizeForNewRenderView
--BrowserTest.JavascriptAlertActivatesTab
--BrowserTest.Title
--BrowserTest.AboutVersion
+# Tests from elsewhere.
+BrowserDialogTest.*
+CastSessionBrowserTest.*
+ChromeContentBrowserClientMashTest.*
+ChromeContentRendererClientSearchBoxTest.*
+ChromeRenderFrameObserverTest.*
+ChromeRenderViewTest.*
+DeviceStatusCollectorNetworkInterfacesTest.*
+DeviceStatusCollectorTest.*
+DownloadInterruptReasonEnumsSynced.*
+ExperimentalAppWindowApiTest.*
+ExtensionDetermineDownloadFilenameInternal.*
+ExtensionsLoadTestWithLoginScreenApps.*
+FormAutocompleteTest.*
+FormClassifierTest.*
+InstantProcessNavigationTest.*
+PageClickTrackerTest.*
+PasswordGenerationAgentTest.*
+PhishingClassifierDelegateTest.*
+PhishingDOMFeatureExtractorTest.*
+PnaclHeaderTest.*
+PolicyCertVerifierTest.*
+ScriptContextTest.*
+SiteEngagementUiBrowserTest.*

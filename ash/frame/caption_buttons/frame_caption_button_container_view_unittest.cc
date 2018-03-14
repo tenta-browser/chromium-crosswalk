@@ -6,11 +6,10 @@
 
 #include "ash/ash_layout_constants.h"
 #include "ash/frame/caption_buttons/frame_caption_button.h"
-#include "ash/resources/grit/ash_resources.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/wm/maximize_mode/maximize_mode_controller.h"
+#include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -23,7 +22,7 @@ class TestWidgetDelegate : public views::WidgetDelegateView {
  public:
   TestWidgetDelegate(bool can_maximize, bool can_minimize)
       : can_maximize_(can_maximize), can_minimize_(can_minimize) {}
-  ~TestWidgetDelegate() override {}
+  ~TestWidgetDelegate() override = default;
 
   bool CanMaximize() const override { return can_maximize_; }
 
@@ -38,15 +37,15 @@ class TestWidgetDelegate : public views::WidgetDelegateView {
 
 }  // namespace
 
-class FrameCaptionButtonContainerViewTest : public ash::test::AshTestBase {
+class FrameCaptionButtonContainerViewTest : public AshTestBase {
  public:
   enum MaximizeAllowed { MAXIMIZE_ALLOWED, MAXIMIZE_DISALLOWED };
 
   enum MinimizeAllowed { MINIMIZE_ALLOWED, MINIMIZE_DISALLOWED };
 
-  FrameCaptionButtonContainerViewTest() {}
+  FrameCaptionButtonContainerViewTest() = default;
 
-  ~FrameCaptionButtonContainerViewTest() override {}
+  ~FrameCaptionButtonContainerViewTest() override = default;
 
   // Creates a widget which allows maximizing based on |maximize_allowed|.
   // The caller takes ownership of the returned widget.
@@ -73,6 +72,7 @@ class FrameCaptionButtonContainerViewTest : public ash::test::AshTestBase {
       container->SetButtonImage(static_cast<CaptionButtonIcon>(icon),
                                 ash::kWindowControlCloseIcon);
     }
+    container->SizeToPreferredSize();
   }
 
   // Tests that |leftmost| and |rightmost| are at |container|'s edges.
@@ -149,7 +149,6 @@ TEST_F(FrameCaptionButtonContainerViewTest,
   FrameCaptionButtonContainerView container(
       CreateTestWidget(MAXIMIZE_ALLOWED, MINIMIZE_ALLOWED));
   InitContainer(&container);
-  container.SetBoundsRect(gfx::Rect(container.GetPreferredSize()));
   container.Layout();
 
   FrameCaptionButtonContainerView::TestApi test(&container);
@@ -165,8 +164,7 @@ TEST_F(FrameCaptionButtonContainerViewTest,
 
   // Hidden size button should result in minimize button animating to the
   // right. The size button should not be visible, but should not have moved.
-  Shell::Get()->maximize_mode_controller()->EnableMaximizeModeWindowManager(
-      true);
+  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(true);
   container.UpdateSizeButtonVisibility();
   test.EndAnimations();
   // Parent needs to layout in response to size change.
@@ -185,8 +183,7 @@ TEST_F(FrameCaptionButtonContainerViewTest,
 
   // Revealing the size button should cause the minimize button to return to its
   // original position.
-  Shell::Get()->maximize_mode_controller()->EnableMaximizeModeWindowManager(
-      false);
+  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(false);
   container.UpdateSizeButtonVisibility();
   // Calling code needs to layout in response to size change.
   container.Layout();

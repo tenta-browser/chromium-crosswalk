@@ -31,8 +31,8 @@
 #ifndef WebDevToolsAgentClient_h
 #define WebDevToolsAgentClient_h
 
-#include "../platform/WebCommon.h"
-#include "../platform/WebString.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebString.h"
 
 namespace blink {
 
@@ -69,7 +69,9 @@ class WebDevToolsAgentClient {
   virtual void WillEnterDebugLoop() {}
   virtual void DidExitDebugLoop() {}
 
-  virtual bool RequestDevToolsForFrame(WebLocalFrame*) { return false; }
+  virtual bool RequestDevToolsForFrame(int session_id, WebLocalFrame*) {
+    return false;
+  }
 
   virtual void EnableTracing(const WebString& category_filter) {}
   virtual void DisableTracing() {}

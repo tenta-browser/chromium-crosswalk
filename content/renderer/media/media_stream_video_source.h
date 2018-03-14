@@ -13,7 +13,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/optional.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
 #include "content/common/content_export.h"
 #include "content/common/media/video_capture.h"
 #include "content/renderer/media/media_stream_source.h"
@@ -30,8 +30,6 @@ class MediaStreamVideoTrack;
 class VideoTrackAdapter;
 struct VideoTrackAdapterSettings;
 
-CONTENT_EXPORT bool IsOldVideoConstraints();
-
 // MediaStreamVideoSource is an interface used for sending video frames to a
 // MediaStreamVideoTrack.
 // http://dev.w3.org/2011/webrtc/editor/getusermedia.html
@@ -39,16 +37,7 @@ CONTENT_EXPORT bool IsOldVideoConstraints();
 // MediaStreaVideoSources such as local video capture, video sources received
 // on a PeerConnection or a source created in NaCl.
 // All methods calls will be done from the main render thread.
-//
-// When the first track is added to the source by calling AddTrack, the
-// MediaStreamVideoSource implementation calls GetCurrentSupportedFormats.
-// The source implementation must call OnSupportedFormats.
-// MediaStreamVideoSource then match the constraints provided in AddTrack with
-// the formats and call StartSourceImpl. The source implementation must call
-// OnStartDone when the underlying source has been started or failed to start.
-class CONTENT_EXPORT MediaStreamVideoSource
-    : public MediaStreamSource,
-      NON_EXPORTED_BASE(public base::NonThreadSafe) {
+class CONTENT_EXPORT MediaStreamVideoSource : public MediaStreamSource {
  public:
   enum {
     // Default resolution. If no constraints are specified and the delegate
@@ -60,8 +49,10 @@ class CONTENT_EXPORT MediaStreamVideoSource
     kUnknownFrameRate = 0,
   };
 
-  static constexpr double kDefaultAspectRatio =
-      static_cast<double>(kDefaultWidth) / static_cast<double>(kDefaultHeight);
+  enum class RestartResult { IS_RUNNING, IS_STOPPED, INVALID_STATE };
+  // RestartCallback is used for both the StopForRestart and Restart operations.
+  using RestartCallback = base::OnceCallback<void(RestartResult)>;
+
 
   MediaStreamVideoSource();
   ~MediaStreamVideoSource() override;
@@ -75,12 +66,48 @@ class CONTENT_EXPORT MediaStreamVideoSource
                 const VideoTrackAdapterSettings& track_adapter_settings,
                 const VideoCaptureDeliverFrameCB& frame_callback,
                 const ConstraintsCallback& callback);
-  // TODO(guidou): Remove this method. http://crbug.com/706408
-  void AddTrackLegacy(MediaStreamVideoTrack* track,
-                      const VideoCaptureDeliverFrameCB& frame_callback,
-                      const blink::WebMediaConstraints& constraints,
-                      const ConstraintsCallback& callback);
-  void RemoveTrack(MediaStreamVideoTrack* track);
+  void RemoveTrack(MediaStreamVideoTrack* track, base::OnceClosure callback);
+
+  // Reconfigures this MediaStreamVideoSource to use |adapter_settings| on
+  // |track|, as long as |track| is connected to this source.
+  // Do not invoke if |track| is connected to a different source, as the
+  // internal state of |track| might become inconsistent with that of its
+  // source.
+  void ReconfigureTrack(MediaStreamVideoTrack* track,
+                        const VideoTrackAdapterSettings& adapter_settings);
+
+  // Tries to temporarily stop this source so that it can be later restarted
+  // with a different video format. Unlike MediaStreamVideoSource::StopSource(),
+  // a temporary stop for restart does not change the ready state of the source.
+  // Once the attempt to temporarily stop the source is completed, |callback|
+  // is invoked with IS_STOPPED if the source actually stopped, or IS_RUNNING
+  // if the source did not stop and is still running.
+  // This method can only be called after a source has started. This can be
+  // verified by checking that the IsRunning() method returns true.
+  // Any attempt to invoke StopForRestart() before the source has started
+  // results in no action and |callback| invoked with INVALID_STATE.
+  void StopForRestart(RestartCallback callback);
+
+  // Tries to restart a source that was previously temporarily stopped using the
+  // supplied |new_format|. This method can be invoked only after a successful
+  // call to StopForRestart().
+  // Once the attempt to restart the source is completed, |callback| is invoked
+  // with IS_RUNNING if the source restarted and IS_STOPPED if the source
+  // remained stopped. Note that it is not guaranteed that the source actually
+  // restarts using |new_format| as its configuration. After a successful
+  // restart, the actual configured format for the source (if available) can be
+  // obtained with a call to GetCurrentFormat().
+  // Note also that, since frames are delivered on a different thread, it is
+  // possible that frames using the old format are delivered for a while after
+  // a successful restart. Code relying on Restart() cannot assume that new
+  // frames are guaranteed to arrive in the new format until the first frame in
+  // the new format is received.
+  // This method can only be called after a successful stop for restart (i.e.,
+  // after the callback passed to StopForRestart() is invoked with a value of
+  // IS_STOPPED). Any attempt to invoke Restart() when the source is not in this
+  // state results in no action and |callback| invoked with INVALID_STATE.
+  void Restart(const media::VideoCaptureFormat& new_format,
+               RestartCallback callback);
 
   // Called by |track| to notify the source whether it has any paths to a
   // consuming endpoint.
@@ -91,10 +118,30 @@ class CONTENT_EXPORT MediaStreamVideoSource
   // Request underlying source to capture a new frame.
   virtual void RequestRefreshFrame() {}
 
+  // Enables or disables an heuristic to detect frames from rotated devices.
+  void SetDeviceRotationDetection(bool enabled);
+
   // Returns the task runner where video frames will be delivered on.
   base::SingleThreadTaskRunner* io_task_runner() const;
 
-  base::Optional<media::VideoCaptureFormat> GetCurrentFormat() const;
+  // Implementations must return the capture format if available.
+  // Implementations supporting devices of type MEDIA_DEVICE_VIDEO_CAPTURE
+  // must return a value.
+  virtual base::Optional<media::VideoCaptureFormat> GetCurrentFormat() const;
+
+  // Implementations must return the capture parameters if available.
+  // Implementations supporting devices of type MEDIA_DEVICE_VIDEO_CAPTURE
+  // must return a value. The format in the returned VideoCaptureParams must
+  // coincide with the value returned by GetCurrentFormat().
+  virtual base::Optional<media::VideoCaptureParams> GetCurrentCaptureParams()
+      const;
+
+  bool IsRunning() const { return state_ == STARTED; }
+
+  size_t NumTracks() const {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    return tracks_.size();
+  }
 
   base::WeakPtr<MediaStreamVideoSource> GetWeakPtr() {
     return weak_factory_.GetWeakPtr();
@@ -109,41 +156,61 @@ class CONTENT_EXPORT MediaStreamVideoSource
   // Sets muted state and notifies it to all registered tracks.
   virtual void SetMutedState(bool state);
 
-  // An implementation must fetch the formats that can currently be used by
-  // the source and call OnSupportedFormats when done.
-  // |max_requested_height| and |max_requested_width| is the max height and
-  // width set as a mandatory constraint if set when calling
-  // MediaStreamVideoSource::AddTrack. If max height and max width is not set
-  // |max_requested_height| and |max_requested_width| are 0.
-  // TODO(guidou): Remove when the standard constraints code stabilizes.
-  // http://crbug.com/706408
-  virtual void GetCurrentSupportedFormats(
-      int max_requested_width,
-      int max_requested_height,
-      double max_requested_frame_rate,
-      const VideoCaptureDeviceFormatsCB& callback) = 0;
-
-  // TODO(guidou): Rename to GetCurrentFormat. http://crbug.com/706804
-  virtual base::Optional<media::VideoCaptureFormat> GetCurrentFormatImpl()
-      const;
-
-  // An implementation must start capturing frames using the requested
-  // |format|. The fulfilled |constraints| are provided as additional context,
-  // and may be used to modify the behavior of the source. When the source has
-  // started or the source failed to start OnStartDone must be called. An
-  // implementation must call |frame_callback| on the IO thread with the
+  // An implementation must start capturing frames after this method is called.
+  // When the source has started or failed to start OnStartDone must be called.
+  // An implementation must call |frame_callback| on the IO thread with the
   // captured frames.
-  // TODO(guidou): Remove |format| and |constraints| parameters.
-  // http://crbug.com/706408
   virtual void StartSourceImpl(
-      const media::VideoCaptureFormat& format,
-      const blink::WebMediaConstraints& constraints,
       const VideoCaptureDeliverFrameCB& frame_callback) = 0;
   void OnStartDone(MediaStreamRequestResult result);
 
-  // An implementation must immediately stop capture video frames and must not
-  // call OnSupportedFormats after this method has been called. After this
-  // method has been called, MediaStreamVideoSource may be deleted.
+  // A subclass that supports restart must override this method such that it
+  // immediately stop producing video frames after this method is called.
+  // The stop is intended to be temporary and to be followed by a restart. Thus,
+  // connected tracks should not be disconnected or notified about the source no
+  // longer producing frames. Once the source is stopped, the implementation
+  // must invoke OnStopForRestartDone() with true. If the source cannot stop,
+  // OnStopForRestartDone() must invoked with false.
+  // It can be assumed that this method is invoked only when the source is
+  // running.
+  // Note that if this method is overridden, RestartSourceImpl() must also be
+  // overridden following the respective contract. Otherwise, behavior is
+  // undefined.
+  // The default implementation does not support restart and just calls
+  // OnStopForRestartDone() with false.
+  virtual void StopSourceForRestartImpl();
+
+  // This method should be called by implementations once an attempt to stop
+  // for restart using StopSourceForRestartImpl() is completed.
+  // |did_stop_for_restart| must true if the source is stopped and false if
+  // the source is running.
+  void OnStopForRestartDone(bool did_stop_for_restart);
+
+  // A subclass that supports restart must override this method such that it
+  // tries to start producing frames after this method is called. If successful,
+  // the source should return to the same state as if it was started normally
+  // and invoke OnRestartDone() with true. The implementation should preferably
+  // restart to produce frames with the format specified in |new_format|.
+  // However, if this is not possible, the implementation is allowed to restart
+  // using a different format. In this case OnRestartDone() should be invoked
+  // with true as well. If it is impossible to restart the source with any
+  // format, the source should remain stopped and OnRestartDone() should be
+  // invoked with false.
+  // This method can only be invoked when the source is temporarily stopped
+  // after a successful OnStopForRestartDone(). Otherwise behavior is undefined.
+  // Note that if this method is overridden, StopSourceForRestartImpl() must
+  // also be overridden following the respective contract. Otherwise, behavior
+  // is undefined.
+  virtual void RestartSourceImpl(const media::VideoCaptureFormat& new_format);
+
+  // This method should be called by implementations once an attempt to restart
+  // the source completes. |did_restart| must be true if the source is running
+  // and false if the source is stopped.
+  void OnRestartDone(bool did_restart);
+
+  // An implementation must immediately stop producing video frames after this
+  // method has been called. After this method has been called,
+  // MediaStreamVideoSource may be deleted.
   virtual void StopSourceImpl() = 0;
 
   // Optionally overridden by subclasses to act on whether there are any
@@ -158,26 +225,18 @@ class CONTENT_EXPORT MediaStreamVideoSource
 
   enum State {
     NEW,
-    // TODO(guidou): Remove this state. http://crbug.com/706408
-    RETRIEVING_CAPABILITIES,
     STARTING,
+    STOPPING_FOR_RESTART,
+    STOPPED_FOR_RESTART,
+    RESTARTING,
     STARTED,
     ENDED
   };
   State state() const { return state_; }
 
+  SEQUENCE_CHECKER(sequence_checker_);
+
  private:
-  void OnSupportedFormats(const media::VideoCaptureFormats& formats);
-
-  // Finds the first WebMediaConstraints in |track_descriptors_| that allows
-  // the use of one of the |formats|.  |best_format| and |fulfilled_constraints|
-  // are set to the results of this search-and-match operation.  Returns false
-  // if no WebMediaConstraints allow the use any of the |formats|.
-  bool FindBestFormatWithConstraints(
-      const media::VideoCaptureFormats& formats,
-      media::VideoCaptureFormat* best_format,
-      blink::WebMediaConstraints* fulfilled_constraints);
-
   // Trigger all cached callbacks from AddTrack. AddTrack is successful
   // if the capture delegate has started and the constraints provided in
   // AddTrack match the format that was used to start the device.
@@ -185,40 +244,42 @@ class CONTENT_EXPORT MediaStreamVideoSource
   // in the context of the callback. If gUM fails, the implementation will
   // simply drop the references to the blink source and track which will lead
   // to this object being deleted.
-  void FinalizeAddTrack();
-  // TODO(guidou): Remove this method. http://crbug.com/706408
-  void FinalizeAddTrackLegacy();
+  void FinalizeAddPendingTracks();
+
+  // Actually adds |track| to this source, provided the source has started.
+  void FinalizeAddTrack(MediaStreamVideoTrack* track,
+                        const VideoCaptureDeliverFrameCB& frame_callback,
+                        const VideoTrackAdapterSettings& adapter_settings);
+  void StartFrameMonitoring();
+  void UpdateTrackSettings(MediaStreamVideoTrack* track,
+                           const VideoTrackAdapterSettings& adapter_settings);
+  void DidRemoveLastTrack(base::OnceClosure callback, RestartResult result);
 
   State state_;
 
-  // TODO(guidou): Remove this field. http://crbug.com/706408
-  media::VideoCaptureFormat current_format_;
-
-  struct TrackDescriptor {
-    TrackDescriptor(MediaStreamVideoTrack* track,
-                    const VideoCaptureDeliverFrameCB& frame_callback,
-                    const blink::WebMediaConstraints& constraints,
-                    const ConstraintsCallback& callback);
-    TrackDescriptor(MediaStreamVideoTrack* track,
-                    const VideoCaptureDeliverFrameCB& frame_callback,
-                    std::unique_ptr<VideoTrackAdapterSettings> adapter_settings,
-                    const ConstraintsCallback& callback);
-    TrackDescriptor(TrackDescriptor&& other);
-    TrackDescriptor& operator=(TrackDescriptor&& other);
-    ~TrackDescriptor();
+  struct PendingTrackInfo {
+    PendingTrackInfo(
+        MediaStreamVideoTrack* track,
+        const VideoCaptureDeliverFrameCB& frame_callback,
+        std::unique_ptr<VideoTrackAdapterSettings> adapter_settings,
+        const ConstraintsCallback& callback);
+    PendingTrackInfo(PendingTrackInfo&& other);
+    PendingTrackInfo& operator=(PendingTrackInfo&& other);
+    ~PendingTrackInfo();
 
     MediaStreamVideoTrack* track;
     VideoCaptureDeliverFrameCB frame_callback;
-    // TODO(guidou): remove this field. http://crbug.com/706408
-    blink::WebMediaConstraints constraints;
     // TODO(guidou): Make |adapter_settings| a regular field instead of a
     // unique_ptr.
     std::unique_ptr<VideoTrackAdapterSettings> adapter_settings;
     ConstraintsCallback callback;
   };
-  std::vector<TrackDescriptor> track_descriptors_;
+  std::vector<PendingTrackInfo> pending_tracks_;
 
-  media::VideoCaptureFormats supported_formats_;
+  // |restart_callback_| is used for notifying both StopForRestart and Restart,
+  // since it is impossible to have a situation where there can be callbacks
+  // for both at the same time.
+  RestartCallback restart_callback_;
 
   // |track_adapter_| delivers video frames to the tracks on the IO-thread.
   const scoped_refptr<VideoTrackAdapter> track_adapter_;
@@ -232,6 +293,10 @@ class CONTENT_EXPORT MediaStreamVideoSource
 
   // This is used for tracking if all connected video sinks are secure.
   SecureDisplayLinkTracker<MediaStreamVideoTrack> secure_tracker_;
+
+  // This flag enables a heuristic to detect device rotation based on frame
+  // size.
+  bool enable_device_rotation_detection_ = false;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
   base::WeakPtrFactory<MediaStreamVideoSource> weak_factory_;

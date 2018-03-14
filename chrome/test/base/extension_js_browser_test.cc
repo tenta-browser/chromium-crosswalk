@@ -32,15 +32,16 @@ bool ExtensionJSBrowserTest::RunJavascriptTestF(bool is_async,
   EXPECT_TRUE(load_waiter_->browser_context());
   if (!load_waiter_->browser_context())
     return false;
-  ConstValueVector args;
-  args.push_back(new base::Value(test_fixture));
-  args.push_back(new base::Value(test_name));
+  std::vector<base::Value> args;
+  args.push_back(base::Value(test_fixture));
+  args.push_back(base::Value(test_name));
   std::vector<base::string16> scripts;
   if (!libs_loaded_) {
     BuildJavascriptLibraries(&scripts);
     libs_loaded_ = true;
   }
-  scripts.push_back(BuildRunTestJSCall(is_async, "RUN_TEST_F", args));
+  scripts.push_back(
+      BuildRunTestJSCall(is_async, "RUN_TEST_F", std::move(args)));
 
   base::string16 script_16 =
       base::JoinString(scripts, base::ASCIIToUTF16("\n"));
@@ -53,7 +54,7 @@ bool ExtensionJSBrowserTest::RunJavascriptTestF(bool is_async,
           script);
 
   std::unique_ptr<base::Value> value_result = base::JSONReader::Read(result);
-  CHECK_EQ(base::Value::Type::DICTIONARY, value_result->GetType());
+  CHECK_EQ(base::Value::Type::DICTIONARY, value_result->type());
   base::DictionaryValue* dict_value =
       static_cast<base::DictionaryValue*>(value_result.get());
   bool test_result;

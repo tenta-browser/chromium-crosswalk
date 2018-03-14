@@ -224,6 +224,7 @@ base::Optional<VideoCodec> ToMediaVideoCodec(
     CASE_RETURN_OTHER(kCodecVP9);
     CASE_RETURN_OTHER(kCodecHEVC);
     CASE_RETURN_OTHER(kCodecDolbyVision);
+    CASE_RETURN_OTHER(kCodecAV1);
   }
   return base::nullopt;  // Not a 'default' to ensure compile-time checks.
 }
@@ -243,6 +244,7 @@ base::Optional<pb::VideoDecoderConfig::Codec> ToProtoVideoDecoderConfigCodec(
     CASE_RETURN_OTHER(kCodecVP9);
     CASE_RETURN_OTHER(kCodecHEVC);
     CASE_RETURN_OTHER(kCodecDolbyVision);
+    CASE_RETURN_OTHER(kCodecAV1);
   }
   return base::nullopt;  // Not a 'default' to ensure compile-time checks.
 }
@@ -276,6 +278,8 @@ base::Optional<VideoCodecProfile> ToMediaVideoCodecProfile(
     CASE_RETURN_OTHER(DOLBYVISION_PROFILE4);
     CASE_RETURN_OTHER(DOLBYVISION_PROFILE5);
     CASE_RETURN_OTHER(DOLBYVISION_PROFILE7);
+    CASE_RETURN_OTHER(THEORAPROFILE_ANY);
+    CASE_RETURN_OTHER(AV1PROFILE_PROFILE0);
   }
   return base::nullopt;  // Not a 'default' to ensure compile-time checks.
 }
@@ -309,6 +313,8 @@ ToProtoVideoDecoderConfigProfile(VideoCodecProfile value) {
     CASE_RETURN_OTHER(DOLBYVISION_PROFILE4);
     CASE_RETURN_OTHER(DOLBYVISION_PROFILE5);
     CASE_RETURN_OTHER(DOLBYVISION_PROFILE7);
+    CASE_RETURN_OTHER(THEORAPROFILE_ANY);
+    CASE_RETURN_OTHER(AV1PROFILE_PROFILE0);
   }
   return base::nullopt;  // Not a 'default' to ensure compile-time checks.
 }
@@ -470,39 +476,40 @@ base::Optional<pb::CdmKeyInformation::KeyStatus> ToProtoCdmKeyInformation(
 base::Optional<CdmPromise::Exception> ToCdmPromiseException(
     pb::CdmException value) {
   using OriginType = pb::CdmException;
-  using OtherType = CdmPromise;
+  using OtherType = CdmPromise::Exception;
   switch (value) {
     CASE_RETURN_OTHER(NOT_SUPPORTED_ERROR);
     CASE_RETURN_OTHER(INVALID_STATE_ERROR);
-    CASE_RETURN_OTHER(INVALID_ACCESS_ERROR);
     CASE_RETURN_OTHER(QUOTA_EXCEEDED_ERROR);
-    CASE_RETURN_OTHER(UNKNOWN_ERROR);
-    CASE_RETURN_OTHER(CLIENT_ERROR);
-    CASE_RETURN_OTHER(OUTPUT_ERROR);
+    CASE_RETURN_OTHER(TYPE_ERROR);
+
+    // The following were generated with previous versions of the CDM and are
+    // no longer used by CdmPromise.
+    case OriginType::INVALID_ACCESS_ERROR:
+    case OriginType::UNKNOWN_ERROR:
+    case OriginType::CLIENT_ERROR:
+    case OriginType::OUTPUT_ERROR:
+      return OtherType::NOT_SUPPORTED_ERROR;
   }
   return base::nullopt;  // Not a 'default' to ensure compile-time checks.
 }
 
 base::Optional<pb::CdmException> ToProtoCdmException(
     CdmPromise::Exception value) {
-  using OriginType = CdmPromise;
+  using OriginType = CdmPromise::Exception;
   using OtherType = pb::CdmException;
   switch (value) {
     CASE_RETURN_OTHER(NOT_SUPPORTED_ERROR);
     CASE_RETURN_OTHER(INVALID_STATE_ERROR);
-    CASE_RETURN_OTHER(INVALID_ACCESS_ERROR);
     CASE_RETURN_OTHER(QUOTA_EXCEEDED_ERROR);
-    CASE_RETURN_OTHER(UNKNOWN_ERROR);
-    CASE_RETURN_OTHER(CLIENT_ERROR);
-    CASE_RETURN_OTHER(OUTPUT_ERROR);
+    CASE_RETURN_OTHER(TYPE_ERROR);
   }
   return base::nullopt;  // Not a 'default' to ensure compile-time checks.
 }
 
-base::Optional<ContentDecryptionModule::MessageType> ToMediaCdmMessageType(
-    pb::CdmMessageType value) {
+base::Optional<CdmMessageType> ToMediaCdmMessageType(pb::CdmMessageType value) {
   using OriginType = pb::CdmMessageType;
-  using OtherType = ContentDecryptionModule;
+  using OtherType = CdmMessageType;
   switch (value) {
     CASE_RETURN_OTHER(LICENSE_REQUEST);
     CASE_RETURN_OTHER(LICENSE_RENEWAL);
@@ -511,9 +518,8 @@ base::Optional<ContentDecryptionModule::MessageType> ToMediaCdmMessageType(
   return base::nullopt;  // Not a 'default' to ensure compile-time checks.
 }
 
-base::Optional<pb::CdmMessageType> ToProtoCdmMessageType(
-    ContentDecryptionModule::MessageType value) {
-  using OriginType = ContentDecryptionModule;
+base::Optional<pb::CdmMessageType> ToProtoCdmMessageType(CdmMessageType value) {
+  using OriginType = CdmMessageType;
   using OtherType = pb::CdmMessageType;
   switch (value) {
     CASE_RETURN_OTHER(LICENSE_REQUEST);
@@ -579,6 +585,7 @@ base::Optional<DemuxerStream::Status> ToDemuxerStreamStatus(
     CASE_RETURN_OTHER(kOk);
     CASE_RETURN_OTHER(kAborted);
     CASE_RETURN_OTHER(kConfigChanged);
+    CASE_RETURN_OTHER(kError);
   }
   return base::nullopt;  // Not a 'default' to ensure compile-time checks.
 }
@@ -591,6 +598,7 @@ ToProtoDemuxerStreamStatus(DemuxerStream::Status value) {
     CASE_RETURN_OTHER(kOk);
     CASE_RETURN_OTHER(kAborted);
     CASE_RETURN_OTHER(kConfigChanged);
+    CASE_RETURN_OTHER(kError);
   }
   return base::nullopt;  // Not a 'default' to ensure compile-time checks.
 }

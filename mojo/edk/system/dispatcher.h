@@ -17,6 +17,7 @@
 #include "base/synchronization/lock.h"
 #include "mojo/edk/embedder/platform_handle.h"
 #include "mojo/edk/embedder/platform_shared_buffer.h"
+#include "mojo/edk/embedder/scoped_platform_handle.h"
 #include "mojo/edk/system/handle_signals_state.h"
 #include "mojo/edk/system/ports/name.h"
 #include "mojo/edk/system/system_impl_export.h"
@@ -29,8 +30,11 @@
 namespace mojo {
 namespace edk {
 
+namespace ports {
+class UserMessageEvent;
+}
+
 class Dispatcher;
-class MessageForTransit;
 
 using DispatcherVector = std::vector<scoped_refptr<Dispatcher>>;
 
@@ -69,6 +73,7 @@ class MOJO_SYSTEM_IMPL_EXPORT Dispatcher
 
   virtual MojoResult WatchDispatcher(scoped_refptr<Dispatcher> dispatcher,
                                      MojoHandleSignals signals,
+                                     MojoWatchCondition condition,
                                      uintptr_t context);
   virtual MojoResult CancelWatch(uintptr_t context);
   virtual MojoResult Arm(uint32_t* num_ready_contexts,
@@ -78,15 +83,12 @@ class MOJO_SYSTEM_IMPL_EXPORT Dispatcher
 
   ///////////// Message pipe API /////////////
 
-  virtual MojoResult WriteMessage(std::unique_ptr<MessageForTransit> message,
-                                  MojoWriteMessageFlags flags);
+  virtual MojoResult WriteMessage(
+      std::unique_ptr<ports::UserMessageEvent> message,
+      MojoWriteMessageFlags flags);
 
-  virtual MojoResult ReadMessage(std::unique_ptr<MessageForTransit>* message,
-                                 uint32_t* num_bytes,
-                                 MojoHandle* handles,
-                                 uint32_t* num_handles,
-                                 MojoReadMessageFlags flags,
-                                 bool read_any_size);
+  virtual MojoResult ReadMessage(
+      std::unique_ptr<ports::UserMessageEvent>* message);
 
   ///////////// Shared buffer API /////////////
 
@@ -198,7 +200,7 @@ class MOJO_SYSTEM_IMPL_EXPORT Dispatcher
   // condition.
   virtual bool EndSerialize(void* destination,
                             ports::PortName* ports,
-                            PlatformHandle* handles);
+                            ScopedPlatformHandle* handles);
 
   // Does whatever is necessary to begin transit of the dispatcher.  This
   // should return |true| if transit is OK, or false if the underlying resource
@@ -221,8 +223,8 @@ class MOJO_SYSTEM_IMPL_EXPORT Dispatcher
       size_t num_bytes,
       const ports::PortName* ports,
       size_t num_ports,
-      PlatformHandle* platform_handles,
-      size_t num_platform_handles);
+      ScopedPlatformHandle* platform_handles,
+      size_t platform_handle_count);
 
  protected:
   friend class base::RefCountedThreadSafe<Dispatcher>;

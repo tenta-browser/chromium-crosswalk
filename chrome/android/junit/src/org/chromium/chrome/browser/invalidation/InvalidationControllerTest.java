@@ -12,6 +12,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.os.Bundle;
 
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -19,9 +20,9 @@ import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
-import org.robolectric.res.builder.RobolectricPackageManager;
 import org.robolectric.shadows.ShadowActivity;
 import org.robolectric.shadows.ShadowLooper;
+import org.robolectric.shadows.ShadowPackageManager;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationState;
@@ -30,7 +31,9 @@ import org.chromium.base.CollectionUtil;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
+import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
+import org.chromium.components.signin.SystemAccountManagerDelegate;
 import org.chromium.components.sync.AndroidSyncSettings;
 import org.chromium.components.sync.ModelType;
 import org.chromium.components.sync.ModelTypeHelper;
@@ -96,8 +99,7 @@ public class InvalidationControllerTest {
         mShadowActivity = Shadows.shadowOf(activity);
         mContext = activity;
 
-        RobolectricPackageManager packageManager =
-                (RobolectricPackageManager) mContext.getPackageManager();
+        ShadowPackageManager packageManager = Shadows.shadowOf(mContext.getPackageManager());
         Bundle metaData = new Bundle();
         metaData.putString(
                 "ipc.invalidation.ticl.listener_service_class",
@@ -110,6 +112,9 @@ public class InvalidationControllerTest {
         packageManager.addPackage(packageInfo);
 
         ContextUtils.initApplicationContextForTests(mContext.getApplicationContext());
+
+        AccountManagerFacade.overrideAccountManagerFacadeForTests(
+                new SystemAccountManagerDelegate());
 
         ModelTypeHelper.setTestDelegate(new ModelTypeHelper.TestDelegate() {
             @Override
@@ -132,11 +137,16 @@ public class InvalidationControllerTest {
         MockSyncContentResolverDelegate delegate = new MockSyncContentResolverDelegate();
         // Android master sync can safely always be on.
         delegate.setMasterSyncAutomatically(true);
-        AndroidSyncSettings.overrideForTests(mContext, delegate);
+        AndroidSyncSettings.overrideForTests(mContext, delegate, null);
 
         ChromeSigninController.get().setSignedInAccountName("test@example.com");
         AndroidSyncSettings.updateAccount(mContext, ChromeSigninController.get().getSignedInUser());
         AndroidSyncSettings.enableChromeSync(mContext);
+    }
+
+    @After
+    public void tearDown() {
+        AccountManagerFacade.resetAccountManagerFacadeForTests();
     }
 
     /**

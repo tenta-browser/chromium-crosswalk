@@ -13,21 +13,27 @@
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/ios/block_types.h"
+#include "base/ios/callback_counter.h"
 #import "base/mac/bind_objc_block.h"
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
-#include "base/mac/objc_property_releaser.h"
-#import "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/time/time.h"
 #include "components/component_updater/component_updater_service.h"
+#include "components/component_updater/crl_set_remover.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/feature_engagement/public/event_constants.h"
+#include "components/feature_engagement/public/tracker.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_service.h"
+#include "components/ntp_snippets/content_suggestions_service.h"
+#include "components/payments/core/features.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "components/url_formatter/url_formatter.h"
@@ -37,16 +43,15 @@
 #import "ios/chrome/app/application_delegate/metrics_mediator.h"
 #import "ios/chrome/app/application_delegate/url_opener.h"
 #include "ios/chrome/app/application_mode.h"
-#include "ios/chrome/app/chrome_app_startup_parameters.h"
 #import "ios/chrome/app/deferred_initialization_runner.h"
 #import "ios/chrome/app/main_controller_private.h"
 #import "ios/chrome/app/memory_monitor.h"
-#import "ios/chrome/app/safe_mode_crashing_modules_config.h"
 #import "ios/chrome/app/spotlight/spotlight_manager.h"
 #import "ios/chrome/app/spotlight/spotlight_util.h"
-#include "ios/chrome/app/startup/background_upload_alert.h"
+#include "ios/chrome/app/startup/chrome_app_startup_parameters.h"
 #include "ios/chrome/app/startup/chrome_main_starter.h"
 #include "ios/chrome/app/startup/client_registration.h"
+#import "ios/chrome/app/startup/content_suggestions_scheduler_notifications.h"
 #include "ios/chrome/app/startup/ios_chrome_main.h"
 #include "ios/chrome/app/startup/network_stack_setup.h"
 #include "ios/chrome/app/startup/provider_registration.h"
@@ -61,7 +66,6 @@
 #include "ios/chrome/browser/browser_state/chrome_browser_state_removal_controller.h"
 #import "ios/chrome/browser/browsing_data/browsing_data_removal_controller.h"
 #include "ios/chrome/browser/browsing_data/ios_chrome_browsing_data_remover.h"
-#include "ios/chrome/browser/callback_counter.h"
 #include "ios/chrome/browser/chrome_paths.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #import "ios/chrome/browser/chrome_url_util.h"
@@ -71,6 +75,7 @@
 #import "ios/chrome/browser/crash_report/crash_report_background_uploader.h"
 #import "ios/chrome/browser/crash_report/crash_restore_helper.h"
 #include "ios/chrome/browser/experimental_flags.h"
+#include "ios/chrome/browser/feature_engagement/tracker_factory.h"
 #include "ios/chrome/browser/file_metadata_util.h"
 #import "ios/chrome/browser/first_run/first_run.h"
 #include "ios/chrome/browser/geolocation/omnibox_geolocation_controller.h"
@@ -79,7 +84,10 @@
 #include "ios/chrome/browser/metrics/first_user_action_recorder.h"
 #import "ios/chrome/browser/metrics/previous_session_info.h"
 #import "ios/chrome/browser/net/cookie_util.h"
-#include "ios/chrome/browser/net/crl_set_fetcher.h"
+#include "ios/chrome/browser/ntp_snippets/ios_chrome_content_suggestions_service_factory.h"
+#include "ios/chrome/browser/payments/ios_payment_instrument_launcher.h"
+#include "ios/chrome/browser/payments/ios_payment_instrument_launcher_factory.h"
+#import "ios/chrome/browser/payments/payment_request_constants.h"
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/prefs/pref_observer_bridge.h"
 #import "ios/chrome/browser/reading_list/reading_list_download_service.h"
@@ -92,59 +100,66 @@
 #include "ios/chrome/browser/signin/authentication_service_factory.h"
 #include "ios/chrome/browser/signin/signin_manager_factory.h"
 #import "ios/chrome/browser/snapshots/snapshot_cache.h"
+#import "ios/chrome/browser/snapshots/snapshot_cache_factory.h"
 #import "ios/chrome/browser/tabs/tab.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/tabs/tab_model_observer.h"
 #import "ios/chrome/browser/ui/authentication/signed_in_accounts_view_controller.h"
-#import "ios/chrome/browser/ui/authentication/signin_interaction_controller.h"
 #import "ios/chrome/browser/ui/browser_view_controller.h"
 #import "ios/chrome/browser/ui/chrome_web_view_factory.h"
+#import "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
 #import "ios/chrome/browser/ui/commands/clear_browsing_data_command.h"
 #include "ios/chrome/browser/ui/commands/ios_command_ids.h"
+#import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/ui/commands/open_url_command.h"
 #import "ios/chrome/browser/ui/commands/show_signin_command.h"
-#import "ios/chrome/browser/ui/contextual_search/contextual_search_metrics.h"
-#import "ios/chrome/browser/ui/contextual_search/touch_to_search_permissions_mediator.h"
-#import "ios/chrome/browser/ui/downloads/download_manager_controller.h"
+#import "ios/chrome/browser/ui/commands/start_voice_search_command.h"
+#import "ios/chrome/browser/ui/download/download_manager_controller.h"
+#import "ios/chrome/browser/ui/external_file_remover_factory.h"
+#import "ios/chrome/browser/ui/external_file_remover_impl.h"
 #import "ios/chrome/browser/ui/first_run/first_run_util.h"
 #import "ios/chrome/browser/ui/first_run/welcome_to_chrome_view_controller.h"
-#import "ios/chrome/browser/ui/fullscreen_controller.h"
+#import "ios/chrome/browser/ui/fullscreen/legacy_fullscreen_controller.h"
 #import "ios/chrome/browser/ui/history/history_panel_view_controller.h"
 #import "ios/chrome/browser/ui/main/browser_view_wrangler.h"
 #import "ios/chrome/browser/ui/main/main_coordinator.h"
-#import "ios/chrome/browser/ui/main/main_view_controller.h"
+#import "ios/chrome/browser/ui/main/main_feature_flags.h"
+#import "ios/chrome/browser/ui/main/view_controller_swapping.h"
 #import "ios/chrome/browser/ui/orientation_limiting_navigation_controller.h"
 #import "ios/chrome/browser/ui/promos/signin_promo_view_controller.h"
 #import "ios/chrome/browser/ui/settings/settings_navigation_controller.h"
+#import "ios/chrome/browser/ui/signin_interaction/signin_interaction_coordinator.h"
 #import "ios/chrome/browser/ui/stack_view/stack_view_controller.h"
 #import "ios/chrome/browser/ui/tab_switcher/tab_switcher_controller.h"
-#import "ios/chrome/browser/ui/tabs/tab_strip_controller+tab_switcher_animation.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #import "ios/chrome/browser/ui/util/top_view_controller.h"
 #import "ios/chrome/browser/ui/webui/chrome_web_ui_ios_controller_factory.h"
-#include "ios/chrome/browser/xcallback_parameters.h"
+#include "ios/chrome/common/app_group/app_group_utils.h"
 #include "ios/net/cookies/cookie_store_ios.h"
 #import "ios/net/crn_http_protocol_handler.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #include "ios/public/provider/chrome/browser/distribution/app_distribution_provider.h"
-#import "ios/public/provider/chrome/browser/native_app_launcher/native_app_whitelist_manager.h"
 #include "ios/public/provider/chrome/browser/signin/chrome_identity_service.h"
 #import "ios/public/provider/chrome/browser/user_feedback/user_feedback_provider.h"
 #import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
-#import "ios/third_party/material_roboto_font_loader_ios/src/src/MaterialRobotoFontLoader.h"
 #import "ios/third_party/material_roboto_font_loader_ios/src/src/MDCTypographyAdditions/MDFRobotoFontLoader+MDCTypographyAdditions.h"
+#import "ios/third_party/material_roboto_font_loader_ios/src/src/MaterialRobotoFontLoader.h"
 #include "ios/web/net/request_tracker_factory_impl.h"
 #include "ios/web/net/request_tracker_impl.h"
 #include "ios/web/net/web_http_protocol_handler_delegate.h"
 #import "ios/web/public/navigation_manager.h"
 #include "ios/web/public/web_capabilities.h"
-#include "ios/web/public/web_state/web_state.h"
+#import "ios/web/public/web_state/web_state.h"
 #import "ios/web/public/web_view_creation_util.h"
 #include "ios/web/public/webui/web_ui_ios_controller_factory.h"
 #include "mojo/edk/embedder/embedder.h"
 #import "net/base/mac/url_conversions.h"
 #include "net/url_request/url_request_context.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -171,7 +186,7 @@ NSString* const kMemoryDebuggingToolsStartup = @"MemoryDebuggingToolsStartup";
 NSString* const kSendInstallPingIfNecessary = @"SendInstallPingIfNecessary";
 
 // Constants for deferring check of native iOS apps installed.
-NSString* const kCheckNativeApps = @"CheckNativeApps";
+NSString* const kCheckForFirstPartyApps = @"CheckForFirstPartyApps";
 
 // Constants for deferred deletion of leftover user downloaded files.
 NSString* const kDeleteDownloads = @"DeleteDownloads";
@@ -205,14 +220,9 @@ void RegisterComponentsForUpdate() {
   base::FilePath path;
   const bool success = PathService::Get(ios::DIR_USER_DATA, &path);
   DCHECK(success);
-  // CRLSetFetcher attempts to load a CRL set from either the local disk or
-  // network.
-  GetApplicationContext()->GetCRLSetFetcher()->StartInitialLoad(cus, path);
-}
-
-// Returns YES if |url| matches chrome://newtab.
-BOOL IsURLNtp(const GURL& url) {
-  return UrlHasChromeScheme(url) && url.host() == kChromeUINewTabHost;
+  // Clean up any legacy CRLSet on the local disk - CRLSet used to be shipped
+  // as a component on iOS but is not anymore.
+  component_updater::DeleteLegacyCRLSet(path);
 }
 
 // Used to update the current BVC mode if a new tab is added while the stack
@@ -220,10 +230,12 @@ BOOL IsURLNtp(const GURL& url) {
 // can be set to |NONE| when not in use.
 enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
+// The delay, in seconds, for cleaning external files.
+const int kExternalFilesCleanupDelaySeconds = 60;
+
 }  // namespace
 
 @interface MainController ()<BrowserStateStorageSwitching,
-                             BrowsingDataRemovalControllerDelegate,
                              PrefObserverDelegate,
                              SettingsNavigationControllerDelegate,
                              TabModelObserver,
@@ -240,39 +252,20 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   // The ChromeBrowserState associated with the main (non-OTR) browsing mode.
   ios::ChromeBrowserState* _mainBrowserState;  // Weak.
 
-  // Coordinators used to run the Chrome UI; there will be one of these active
-  // at any given time, usually |_mainCoordinator|.
-  // Main coordinator, backing object for the property of the same name, which
-  // lazily initializes on access.
-  base::scoped_nsobject<MainCoordinator> _mainCoordinator;
-
   // Wrangler to handle BVC and tab model creation, access, and related logic.
   // Implements faetures exposed from this object through the
   // BrowserViewInformation protocol.
-  base::scoped_nsobject<BrowserViewWrangler> _browserViewWrangler;
+  BrowserViewWrangler* _browserViewWrangler;
 
   // Parameters received at startup time when the app is launched from another
   // app.
-  base::scoped_nsobject<AppStartupParameters> _startupParameters;
+  AppStartupParameters* _startupParameters;
 
   // Navigation View controller for the settings.
-  base::scoped_nsobject<SettingsNavigationController>
-      _settingsNavigationController;
+  SettingsNavigationController* _settingsNavigationController;
 
   // View controller for switching tabs.
-  base::scoped_nsobject<UIViewController<TabSwitcher>> _tabSwitcherController;
-
-  // Controller to display the re-authentication flow.
-  base::scoped_nsobject<SigninInteractionController>
-      _signinInteractionController;
-
-  // The number of memory warnings that have been received in this
-  // foreground session.
-  int _foregroundMemoryWarningCount;
-
-  // The time at which to reset the OOM crash flag in the user defaults. This
-  // is used to handle receiving multiple memory warnings in short succession.
-  CFAbsoluteTime _outOfMemoryResetTime;
+  UIViewController<TabSwitcher>* _tabSwitcherController;
 
   // YES while animating the dismissal of stack view.
   BOOL _dismissingStackView;
@@ -289,7 +282,7 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   BOOL _isColdStart;
 
   // Keeps track of the restore state during startup.
-  base::scoped_nsobject<CrashRestoreHelper> _restoreHelper;
+  CrashRestoreHelper* _restoreHelper;
 
   // An object to record metrics related to the user's first action.
   std::unique_ptr<FirstUserActionRecorder> _firstUserActionRecorder;
@@ -324,48 +317,49 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   PrefChangeRegistrar _localStatePrefChangeRegistrar;
 
   // Clears browsing data from ChromeBrowserStates.
-  base::scoped_nsobject<BrowsingDataRemovalController>
-      _browsingDataRemovalController;
+  BrowsingDataRemovalController* _browsingDataRemovalController;
 
   // The class in charge of showing/hiding the memory debugger when the
   // appropriate pref changes.
-  base::scoped_nsobject<MemoryDebuggerManager> _memoryDebuggerManager;
-
-  base::mac::ObjCPropertyReleaser _propertyReleaser_MainController;
+  MemoryDebuggerManager* _memoryDebuggerManager;
 
   // Responsible for indexing chrome links (such as bookmarks, most likely...)
   // in system Spotlight index.
-  base::scoped_nsobject<SpotlightManager> _spotlightManager;
+  SpotlightManager* _spotlightManager;
 
   // Cached launchOptions from -didFinishLaunchingWithOptions.
-  base::scoped_nsobject<NSDictionary> _launchOptions;
+  NSDictionary* _launchOptions;
 
   // View controller for displaying the history panel.
-  base::scoped_nsobject<UIViewController> _historyPanelViewController;
+  UIViewController* _historyPanelViewController;
 
   // Variable backing metricsMediator property.
-  base::WeakNSObject<MetricsMediator> _metricsMediator;
+  __weak MetricsMediator* _metricsMediator;
 
   // Hander for the startup tasks, deferred or not.
-  base::scoped_nsobject<StartupTasks> _startupTasks;
+  StartupTasks* _startupTasks;
 }
 
 // Pointer to the main view controller, always owned by the main window.
-@property(nonatomic, readonly) MainViewController* mainViewController;
+@property(weak, nonatomic, readonly)
+    UIViewController<ViewControllerSwapping>* mainViewController;
 
 // The main coordinator, lazily created the first time it is accessed. Manages
-// the MainViewController. This property should not be accessed before the
+// the main view controller. This property should not be accessed before the
 // browser has started up to the FOREGROUND stage.
 @property(nonatomic, readonly) MainCoordinator* mainCoordinator;
 
 // A property to track whether the QR Scanner should be started upon tab
 // switcher dismissal. It can only be YES if the QR Scanner experiment is
 // enabled.
-@property(nonatomic, readwrite) BOOL startQRScannerAfterTabSwitcherDismissal;
-// Whether the QR Scanner should be started upon tab switcher dismissal.
-@property(nonatomic, readwrite) BOOL startVoiceSearchAfterTabSwitcherDismissal;
-// Whether the omnibox should be focused upon tab switcher dismissal.
-@property(nonatomic, readwrite) BOOL startFocusOmniboxAfterTabSwitcherDismissal;
+@property(nonatomic, readwrite)
+    NTPTabOpeningPostOpeningAction NTPActionAfterTabSwitcherDismissal;
+
+// The SigninInteractionCoordinator to present Sign In UI. It is created the
+// first time Sign In UI is needed to be presented and should not be destroyed
+// while the UI is presented.
+@property(nonatomic, strong)
+    SigninInteractionCoordinator* signinInteractionCoordinator;
 
 // Activates browsing and enables web views if |enabled| is YES.
 // Disables browsing and purges web views if |enabled| is NO.
@@ -376,39 +370,14 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 - (void)activateBVCAndMakeCurrentBVCPrimary;
 // Sets |currentBVC| as the root view controller for the window.
 - (void)displayCurrentBVC;
-// Shows the settings UI.
-- (void)showSettings;
-// Shows the accounts settings UI.
-- (void)showAccountsSettings;
-// Shows the Sync settings UI.
-- (void)showSyncSettings;
-// Shows the Save Passwords settings.
-- (void)showSavePasswordsSettings;
-// Invokes the sign in flow with the specified authentication operation and
-// invokes |callback| when finished.
-- (void)showSignInWithOperation:(AuthenticationOperation)operation
-              signInAccessPoint:(signin_metrics::AccessPoint)signInAccessPoint
-                       callback:(ShowSigninCommandCompletionCallback)callback;
-// Wraps a callback with one that first checks if sign-in was completed
-// successfully and the profile wasn't swapped before invoking.
-- (ShowSigninCommandCompletionCallback)successfulSigninCompletion:
-    (ProceduralBlock)callback;
-// Shows the Sync encryption passphrase (part of Settings).
-- (void)showSyncEncryptionPassphrase;
-// Shows the Native Apps Settings UI (part of Settings).
-- (void)showNativeAppsSettings;
-// Shows the Clear Browsing Data Settings UI (part of Settings).
-- (void)showClearBrowsingDataSettingsController;
-// Shows the Contextual search UI (part of Settings).
-- (void)showContextualSearchSettingsController;
 // Shows the tab switcher UI.
 - (void)showTabSwitcher;
 // Starts a voice search on the current BVC.
-- (void)startVoiceSearch;
+- (void)startVoiceSearchInCurrentBVCWithOriginView:(UIView*)originView;
 // Dismisses the tab switcher UI without animation into the given model.
 - (void)dismissTabSwitcherWithoutAnimationInModel:(TabModel*)tabModel;
-// Dismisses and clears |signinInteractionController|.
-- (void)dismissSigninInteractionController;
+// Dismisses |signinInteractionCoordinator|.
+- (void)dismissSigninInteractionCoordinator;
 // Called when the last incognito tab was closed.
 - (void)lastIncognitoTabClosed;
 // Called when the last regular tab was closed.
@@ -424,15 +393,19 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 // out if it is showing, the target BVC will become active, and the new tab will
 // be shown.
 // If the current tab in |targetMode| is a NTP, it can be reused to open URL.
+// |completion| is executed after the tab is opened.
 - (Tab*)openSelectedTabInMode:(ApplicationMode)targetMode
                       withURL:(const GURL&)url
-                   transition:(ui::PageTransition)transition;
+                   transition:(ui::PageTransition)transition
+                   completion:(ProceduralBlock)completion;
 // Checks the target BVC's current tab's URL. If this URL is chrome://newtab,
 // loads |url| in this tab. Otherwise, open |url| in a new tab in the target
 // BVC.
+// |tabDisplayedCompletion| will be called on the new tab (if not nil).
 - (Tab*)openOrReuseTabInMode:(ApplicationMode)targetMode
                      withURL:(const GURL&)url
-                  transition:(ui::PageTransition)transition;
+                  transition:(ui::PageTransition)transition
+         tabOpenedCompletion:(ProceduralBlock)tabOpenedCompletion;
 // Returns whether the restore infobar should be displayed.
 - (bool)mustShowRestoreInfobar;
 // Begins the process of dismissing the stack view with the given current model,
@@ -443,8 +416,6 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 - (void)finishDismissingStackView;
 // Sets up self.currentBVC for testing by closing existing tabs.
 - (void)setUpCurrentBVCForTesting;
-// Opens an url.
-- (void)openUrl:(OpenUrlCommand*)command;
 // Opens an url from a link in the settings UI.
 - (void)openUrlFromSettings:(OpenUrlCommand*)command;
 // Switch all global states for the given mode (normal or incognito).
@@ -468,8 +439,9 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 // Asynchronously creates the pref observers.
 - (void)schedulePrefObserverInitialization;
 // Asynchronously schedules a check for what other native iOS apps are currently
-// installed.
-- (void)scheduleCheckNativeApps;
+// installed. Note that there may be App Store restrictions around checking for
+// native iOS apps not owned by the browser vendor.
+- (void)scheduleCheckForFirstPartyApps;
 // Asynchronously schedules pings to distribution services.
 - (void)scheduleAppDistributionPings;
 // Asynchronously schedule the init of the memoryDebuggerManager.
@@ -532,25 +504,26 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
 @implementation MainController
 
+@synthesize mainCoordinator = _mainCoordinator;
 @synthesize appState = _appState;
 @synthesize appLaunchTime = _appLaunchTime;
 @synthesize browserInitializationStage = _browserInitializationStage;
 @synthesize window = _window;
 @synthesize isPresentingFirstRunUI = _isPresentingFirstRunUI;
 @synthesize isColdStart = _isColdStart;
-@synthesize startVoiceSearchAfterTabSwitcherDismissal =
-    _startVoiceSearchAfterTabSwitcherDismissal;
-@synthesize startQRScannerAfterTabSwitcherDismissal =
-    _startQRScannerAfterTabSwitcherDismissal;
-@synthesize startFocusOmniboxAfterTabSwitcherDismissal =
-    _startFocusOmniboxAfterTabSwitcherDismissal;
+@synthesize NTPActionAfterTabSwitcherDismissal =
+    _NTPActionAfterTabSwitcherDismissal;
+@synthesize launchOptions = _launchOptions;
+@synthesize startupParameters = _startupParameters;
+@synthesize metricsMediator = _metricsMediator;
+@synthesize settingsNavigationController = _settingsNavigationController;
+@synthesize signinInteractionCoordinator = _signinInteractionCoordinator;
 
 #pragma mark - Application lifecycle
 
 - (instancetype)init {
   if ((self = [super init])) {
-    _propertyReleaser_MainController.Init(self, [MainController class]);
-    _startupTasks.reset([[StartupTasks alloc] init]);
+    _startupTasks = [[StartupTasks alloc] init];
   }
   return self;
 }
@@ -560,7 +533,6 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   net::HTTPProtocolHandlerDelegate::SetInstance(nullptr);
   net::RequestTracker::SetRequestTrackerFactory(nullptr);
   [NSObject cancelPreviousPerformRequestsWithTarget:self];
-  [super dealloc];
 }
 
 // This function starts up to only what is needed at each stage of the
@@ -664,9 +636,14 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   // uploading crash reports.
   [self crashIfRequested];
 
-  RegisterComponentsForUpdate();
+  if (experimental_flags::MustClearApplicationGroupSandbox()) {
+    // Clear the Application group sandbox if requested. This operation take
+    // some time and will access the file system synchronously as the rest of
+    // the startup sequence requires it to be completed before continuing.
+    app_group::ClearAppGroupSandbox();
+  }
 
-  [BackgroundUploadAlert setupBackgroundUploadAlert];
+  RegisterComponentsForUpdate();
 
   // Remove the extra browser states as Chrome iOS is single profile in M48+.
   ChromeBrowserStateRemovalController::GetInstance()
@@ -682,22 +659,30 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   // until the BVC receives the browser state and tab model.
   BOOL postCrashLaunch = [self mustShowRestoreInfobar];
   if (postCrashLaunch) {
-    _restoreHelper.reset(
-        [[CrashRestoreHelper alloc] initWithBrowserState:chromeBrowserState]);
+    _restoreHelper =
+        [[CrashRestoreHelper alloc] initWithBrowserState:chromeBrowserState];
     [_restoreHelper moveAsideSessionInformation];
   }
 
   // Initialize and set the main browser state.
   [self initializeBrowserState:chromeBrowserState];
   _mainBrowserState = chromeBrowserState;
-  _browserViewWrangler.reset([[BrowserViewWrangler alloc]
-      initWithBrowserState:_mainBrowserState
-          tabModelObserver:self]);
+  [_browserViewWrangler shutdown];
+  _browserViewWrangler =
+      [[BrowserViewWrangler alloc] initWithBrowserState:_mainBrowserState
+                                       tabModelObserver:self
+                             applicationCommandEndpoint:self];
+
+  // Send "Chrome Opened" event to the feature_engagement::Tracker on cold
+  // start.
+  feature_engagement::TrackerFactory::GetForBrowserState(chromeBrowserState)
+      ->NotifyEvent(feature_engagement::events::kChromeOpened);
+
   // Ensure the main tab model is created.
   ignore_result([_browserViewWrangler mainTabModel]);
 
-  _spotlightManager.reset([[SpotlightManager
-      spotlightManagerWithBrowserState:_mainBrowserState] retain]);
+  _spotlightManager =
+      [SpotlightManager spotlightManagerWithBrowserState:_mainBrowserState];
 
   ShareExtensionService* service =
       ShareExtensionServiceFactory::GetForBrowserState(_mainBrowserState);
@@ -718,12 +703,24 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
   [MDCTypography setFontLoader:[MDFRobotoFontLoader sharedInstance]];
 
+  if ([PreviousSessionInfo sharedInstance].isFirstSessionAfterLanguageChange) {
+    IOSChromeContentSuggestionsServiceFactory::GetForBrowserState(
+        chromeBrowserState)
+        ->ClearAllCachedSuggestions();
+  }
+
   [self createInitialUI:(startInIncognito ? ApplicationMode::INCOGNITO
                                           : ApplicationMode::NORMAL)];
 
   [self scheduleStartupCleanupTasks];
   [MetricsMediator logLaunchMetricsWithStartupInformation:self
                                    browserViewInformation:_browserViewWrangler];
+  if (self.isColdStart) {
+    [ContentSuggestionsSchedulerNotifications
+        notifyColdStart:_mainBrowserState];
+    [ContentSuggestionsSchedulerNotifications
+        notifyForeground:_mainBrowserState];
+  }
 
   [self scheduleLowPriorityStartupTasks];
 
@@ -732,16 +729,14 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   [self openTabFromLaunchOptions:_launchOptions
               startupInformation:self
                         appState:self.appState];
-  _launchOptions.reset();
-
-  mojo::edk::Init();
+  _launchOptions = nil;
 
   if (!_startupParameters) {
     // The startup parameters may create new tabs or navigations. If the restore
     // infobar is displayed now, it may be dismissed immediately and the user
     // will never be able to restore the session.
     [_restoreHelper showRestoreIfNeeded:[self currentTabModel]];
-    _restoreHelper.reset();
+    _restoreHelper = nil;
   }
 
   [self scheduleTasksRequiringBVCWithBrowserState];
@@ -755,17 +750,6 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   search_engines::UpdateSearchEnginesIfNeeded(
       browserState->GetPrefs(),
       ios::TemplateURLServiceFactory::GetForBrowserState(browserState));
-
-  if ([TouchToSearchPermissionsMediator isTouchToSearchAvailableOnDevice]) {
-    base::scoped_nsobject<TouchToSearchPermissionsMediator>
-        touchToSearchPermissions([[TouchToSearchPermissionsMediator alloc]
-            initWithBrowserState:browserState]);
-    if (experimental_flags::IsForceResetContextualSearchEnabled()) {
-      [touchToSearchPermissions setPreferenceState:TouchToSearch::UNDECIDED];
-    }
-    ContextualSearch::RecordPreferenceState(
-        [touchToSearchPermissions preferenceState]);
-  }
 }
 
 - (void)handleFirstRunUIWillFinish {
@@ -778,12 +762,14 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
   [self markEulaAsAccepted];
 
-  if (_startupParameters.get()) {
+  if (_startupParameters) {
     [self dismissModalsAndOpenSelectedTabInMode:ApplicationMode::NORMAL
                                         withURL:[_startupParameters externalURL]
+                                 dismissOmnibox:YES
                                      transition:ui::PAGE_TRANSITION_LINK
-                                     completion:nil];
-    _startupParameters.reset();
+                                     completion:^{
+                                       [self setStartupParameters:nil];
+                                     }];
   }
 }
 
@@ -840,8 +826,8 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
 - (BrowsingDataRemovalController*)browsingDataRemovalController {
   if (!_browsingDataRemovalController) {
-    _browsingDataRemovalController.reset(
-        [[BrowsingDataRemovalController alloc] initWithDelegate:self]);
+    _browsingDataRemovalController =
+        [[BrowsingDataRemovalController alloc] init];
   }
   return _browsingDataRemovalController;
 }
@@ -868,31 +854,13 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   }
 }
 
-#pragma mark - BrowserLauncher implementation.
-
-- (NSDictionary*)launchOptions {
-  return _launchOptions;
-}
-
-- (void)setLaunchOptions:(NSDictionary*)launchOptions {
-  _launchOptions.reset([launchOptions retain]);
-}
-
 #pragma mark - Property implementation.
 
 - (id<BrowserViewInformation>)browserViewInformation {
   return _browserViewWrangler;
 }
 
-- (AppStartupParameters*)startupParameters {
-  return _startupParameters;
-}
-
-- (void)setStartupParameters:(AppStartupParameters*)startupParameters {
-  _startupParameters.reset([startupParameters retain]);
-}
-
-- (MainViewController*)mainViewController {
+- (UIViewController<ViewControllerSwapping>*)mainViewController {
   return self.mainCoordinator.mainViewController;
 }
 
@@ -903,31 +871,13 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   }
   if (!_mainCoordinator) {
     // Lazily create the main coordinator.
-    _mainCoordinator.reset(
-        [[MainCoordinator alloc] initWithWindow:self.window]);
+    _mainCoordinator = [[MainCoordinator alloc] initWithWindow:self.window];
   }
   return _mainCoordinator;
 }
 
 - (BOOL)isFirstLaunchAfterUpgrade {
   return [[PreviousSessionInfo sharedInstance] isFirstSessionAfterUpgrade];
-}
-
-- (MetricsMediator*)metricsMediator {
-  return _metricsMediator;
-}
-
-- (void)setMetricsMediator:(MetricsMediator*)metricsMediator {
-  _metricsMediator.reset(metricsMediator);
-}
-
-- (SettingsNavigationController*)settingsNavigationController {
-  return _settingsNavigationController;
-}
-
-- (void)setSettingsNavigationController:
-    (SettingsNavigationController*)settingsNavigationController {
-  _settingsNavigationController.reset([settingsNavigationController retain]);
 }
 
 #pragma mark - StartupInformation implementation.
@@ -953,6 +903,12 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 }
 
 - (void)stopChromeMain {
+  [_spotlightManager shutdown];
+  _spotlightManager = nil;
+
+  [_browserViewWrangler shutdown];
+  _browserViewWrangler = nil;
+
   _chromeMain.reset();
 }
 
@@ -968,22 +924,6 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
 - (void)cleanDeviceSharingManager {
   [_browserViewWrangler cleanDeviceSharingManager];
-}
-
-#pragma mark - BrowsingDataRemovalControllerDelegate methods
-
-- (void)removeExternalFilesForBrowserState:
-            (ios::ChromeBrowserState*)browserState
-                         completionHandler:(ProceduralBlock)completionHandler {
-  // TODO(crbug.com/648940): Move this logic from BVC into
-  // BrowsingDataRemovalController thereby eliminating the need for
-  // BrowsingDataRemovalControllerDelegate. .
-  if (_mainBrowserState == browserState) {
-    [self.mainBVC removeExternalFilesImmediately:YES
-                               completionHandler:completionHandler];
-  } else if (completionHandler) {
-    dispatch_async(dispatch_get_main_queue(), completionHandler);
-  }
 }
 
 #pragma mark - Startup tasks
@@ -1045,14 +985,12 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
                   }];
 }
 
-- (void)scheduleCheckNativeApps {
-  void (^checkInstalledApps)(void) = ^{
-    [ios::GetChromeBrowserProvider()->GetNativeAppWhitelistManager()
-            checkInstalledApps];
-  };
+- (void)scheduleCheckForFirstPartyApps {
   [[DeferredInitializationRunner sharedInstance]
-      enqueueBlockNamed:kCheckNativeApps
-                  block:checkInstalledApps];
+      enqueueBlockNamed:kCheckForFirstPartyApps
+                  block:^{
+                    ios::GetChromeBrowserProvider()->CheckForFirstPartyApps();
+                  }];
 }
 
 - (void)scheduleAppDistributionPings {
@@ -1151,18 +1089,18 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
     [[DeferredInitializationRunner sharedInstance]
         enqueueBlockNamed:kMemoryDebuggingToolsStartup
                     block:^{
-                      _memoryDebuggerManager.reset(
-                          [[MemoryDebuggerManager alloc]
-                              initWithView:self.window
-                                     prefs:GetApplicationContext()
-                                               ->GetLocalState()]);
+                      _memoryDebuggerManager = [[MemoryDebuggerManager alloc]
+                          initWithView:self.window
+                                 prefs:GetApplicationContext()
+                                           ->GetLocalState()];
                     }];
   }
 }
 
 - (void)startFreeMemoryMonitoring {
-  web::WebThread::PostBlockingPoolTask(
-      FROM_HERE, base::Bind(&ios_internal::AsynchronousFreeMemoryMonitor));
+  // No need for a post-task or a deferred initialisation as the memory
+  // monitoring already happens on a background sequence.
+  StartFreeMemoryMonitor();
 }
 
 - (void)scheduleLowPriorityStartupTasks {
@@ -1173,7 +1111,7 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   // Deferred tasks.
   [self schedulePrefObserverInitialization];
   [self scheduleMemoryDebuggingTools];
-  [_startupTasks scheduleDeferredBrowserStateInitialization:_mainBrowserState];
+  [StartupTasks scheduleDeferredBrowserStateInitialization:_mainBrowserState];
   [self scheduleAuthenticationServiceNotification];
   [self sendQueuedFeedback];
   [self scheduleSpotlightResync];
@@ -1181,13 +1119,18 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   [self scheduleStartupAttemptReset];
   [self startFreeMemoryMonitoring];
   [self scheduleAppDistributionPings];
-  [self scheduleCheckNativeApps];
+  [self scheduleCheckForFirstPartyApps];
 }
 
 - (void)scheduleTasksRequiringBVCWithBrowserState {
-  if (GetApplicationContext()->WasLastShutdownClean())
-    [self.mainBVC removeExternalFilesImmediately:NO completionHandler:nil];
-
+  if (GetApplicationContext()->WasLastShutdownClean()) {
+    // Delay the cleanup of the unreferenced files to not impact startup
+    // performance.
+    ExternalFileRemoverFactory::GetForBrowserState(_mainBrowserState)
+        ->RemoveAfterDelay(
+            base::TimeDelta::FromSeconds(kExternalFilesCleanupDelaySeconds),
+            base::OnceClosure());
+  }
   [self scheduleShowPromo];
 }
 
@@ -1283,13 +1226,16 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   if (_tabSwitcherIsActive)
     [self dismissTabSwitcherWithoutAnimationInModel:self.mainTabModel];
   if (firstRun || [self shouldOpenNTPTabOnActivationOfTabModel:tabModel]) {
-    [self.currentBVC newTab:nil];
+    OpenNewTabCommand* command = [OpenNewTabCommand
+        commandWithIncognito:(self.currentBVC == self.otrBVC)];
+    command.userInitiated = NO;
+    [self.currentBVC.dispatcher openNewTab:command];
   }
 
   if (firstRun) {
     [self showFirstRunUI];
     // Do not ever show the 'restore' infobar during first run.
-    _restoreHelper.reset();
+    _restoreHelper = nil;
   }
 }
 
@@ -1308,13 +1254,15 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
              name:kChromeFirstRunUIDidFinishNotification
            object:nil];
 
-  base::scoped_nsobject<WelcomeToChromeViewController> welcomeToChrome(
+  WelcomeToChromeViewController* welcomeToChrome =
       [[WelcomeToChromeViewController alloc]
           initWithBrowserState:_mainBrowserState
-                      tabModel:self.mainTabModel]);
-  base::scoped_nsobject<UINavigationController> navController(
+                      tabModel:self.mainTabModel
+                     presenter:self.mainBVC
+                    dispatcher:self.mainBVC.dispatcher];
+  UINavigationController* navController =
       [[OrientationLimitingNavigationController alloc]
-          initWithRootViewController:welcomeToChrome]);
+          initWithRootViewController:welcomeToChrome];
   [navController setModalTransitionStyle:UIModalTransitionStyleCrossDissolve];
   CGRect appFrame = [[UIScreen mainScreen] bounds];
   [[navController view] setFrame:appFrame];
@@ -1324,8 +1272,7 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
 - (void)crashIfRequested {
   if (experimental_flags::IsStartupCrashEnabled()) {
-    // Flush out the value cached for
-    // ios_internal::breakpad::SetUploadingEnabled().
+    // Flush out the value cached for breakpad::SetUploadingEnabled().
     [[NSUserDefaults standardUserDefaults] synchronize];
 
     int* x = NULL;
@@ -1348,31 +1295,18 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   if (_startupParameters)
     return;
 
-  // This array should contain Class objects - one for each promo class.
-  // New PromoViewController subclasses should be added here.
-  // Note that ordering matters -- only the first promo in the array that
-  // returns true to +shouldBePresentedForProfile: will be shown.
-  // TODO(crbug.com/516154): Now that there's only one promo class, this
-  // implementation is overkill.
-  NSArray* possiblePromos = @[ [SigninPromoViewController class] ];
-  for (id promoController in possiblePromos) {
-    Class promoClass = (Class)promoController;
-    DCHECK(class_isMetaClass(object_getClass(promoClass)));
-    DCHECK(class_getClassMethod(object_getClass(promoClass),
-                                @selector(shouldBePresentedForBrowserState:)));
-    if ([promoClass shouldBePresentedForBrowserState:_mainBrowserState]) {
-      UIViewController* promoController =
-          [promoClass controllerToPresentForBrowserState:_mainBrowserState];
+  // Show the sign-in promo if needed
+  if ([SigninPromoViewController
+          shouldBePresentedForBrowserState:_mainBrowserState]) {
+    UIViewController* promoController = [[SigninPromoViewController alloc]
+        initWithBrowserState:_mainBrowserState
+                  dispatcher:self.mainBVC.dispatcher];
 
-      dispatch_after(
-          dispatch_time(DISPATCH_TIME_NOW,
-                        (int64_t)(kDisplayPromoDelay * NSEC_PER_SEC)),
-          dispatch_get_main_queue(), ^{
-            [self showPromo:promoController];
-          });
-
-      break;
-    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 (int64_t)(kDisplayPromoDelay * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                     [self showPromo:promoController];
+                   });
   }
 }
 
@@ -1380,9 +1314,9 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   // Make sure we have the BVC here with a valid profile.
   DCHECK([self.currentBVC browserState]);
 
-  base::scoped_nsobject<OrientationLimitingNavigationController> navController(
+  OrientationLimitingNavigationController* navController =
       [[OrientationLimitingNavigationController alloc]
-          initWithRootViewController:promo]);
+          initWithRootViewController:promo];
 
   // Avoid presenting the promo if the current device orientation is not
   // supported. The promo will be presented at a later moment, when the device
@@ -1403,83 +1337,255 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
                            completion:nil];
 }
 
+#pragma mark - ApplicationCommands
+
+- (void)dismissModalDialogs {
+  [self dismissModalDialogsWithCompletion:nil dismissOmnibox:YES];
+}
+
+- (void)switchModesAndOpenNewTab:(OpenNewTabCommand*)command {
+  BrowserViewController* bvc = command.incognito ? self.otrBVC : self.mainBVC;
+  DCHECK(bvc);
+  [bvc expectNewForegroundTab];
+  self.currentBVC = bvc;
+  [self.currentBVC.dispatcher openNewTab:command];
+}
+
+- (void)startVoiceSearch:(StartVoiceSearchCommand*)command {
+  if (!_isProcessingTabSwitcherCommand) {
+    [self startVoiceSearchInCurrentBVCWithOriginView:command.originView];
+    _isProcessingVoiceSearchCommand = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 kExpectedTransitionDurationInNanoSeconds),
+                   dispatch_get_main_queue(), ^{
+                     _isProcessingVoiceSearchCommand = NO;
+                   });
+  }
+}
+
+- (void)showHistory {
+  _historyPanelViewController = [[HistoryPanelViewController alloc]
+      initWithLoader:self.currentBVC
+        browserState:_mainBrowserState
+          dispatcher:self.mainBVC.dispatcher];
+  [self.currentBVC presentViewController:_historyPanelViewController
+                                animated:YES
+                              completion:nil];
+}
+
+- (void)closeSettingsUIAndOpenURL:(OpenUrlCommand*)command {
+  [self openUrlFromSettings:command];
+}
+
+- (void)closeSettingsUI {
+  [self closeSettingsAnimated:YES completion:NULL];
+}
+
+- (void)displayTabSwitcher {
+  DCHECK(!_tabSwitcherIsActive);
+  if (!_isProcessingVoiceSearchCommand) {
+    [self.currentBVC userEnteredTabSwitcher];
+    [self showTabSwitcher];
+    _isProcessingTabSwitcherCommand = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 kExpectedTransitionDurationInNanoSeconds),
+                   dispatch_get_main_queue(), ^{
+                     _isProcessingTabSwitcherCommand = NO;
+                   });
+  }
+}
+
+- (void)dismissTabSwitcher {
+  if (!IsIPadIdiom()) {
+    StackViewController* stackViewController =
+        base::mac::ObjCCastStrict<StackViewController>(
+            self.tabSwitcherController);
+    [stackViewController dismissWithSelectedTabAnimation];
+  }
+}
+
+- (void)showClearBrowsingDataSettingsFromViewController:
+    (UIViewController*)baseViewController {
+  if (_settingsNavigationController)
+    return;
+  _settingsNavigationController = [SettingsNavigationController
+      newClearBrowsingDataController:_mainBrowserState
+                            delegate:self];
+  [baseViewController presentViewController:_settingsNavigationController
+                                   animated:YES
+                                 completion:nil];
+}
+
+// TODO(crbug.com/779791) : Remove showing settings from MainController.
+- (void)showAutofillSettingsFromViewController:
+    (UIViewController*)baseViewController {
+  if (_settingsNavigationController)
+    return;
+  _settingsNavigationController =
+      [SettingsNavigationController newAutofillController:_mainBrowserState
+                                                 delegate:self];
+  [baseViewController presentViewController:_settingsNavigationController
+                                   animated:YES
+                                 completion:nil];
+}
+
+- (void)showReportAnIssueFromViewController:
+    (UIViewController*)baseViewController {
+  DCHECK(baseViewController);
+  DCHECK(![baseViewController presentedViewController]);
+  // This dispatch is necessary to give enough time for the tools menu to
+  // disappear before taking a screenshot.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (_settingsNavigationController)
+      return;
+    _settingsNavigationController = [SettingsNavigationController
+        newUserFeedbackController:_mainBrowserState
+                         delegate:self
+               feedbackDataSource:self];
+    [baseViewController presentViewController:_settingsNavigationController
+                                     animated:YES
+                                   completion:nil];
+  });
+}
+
+- (void)openURL:(OpenUrlCommand*)command {
+  if ([command fromChrome]) {
+    [self dismissModalsAndOpenSelectedTabInMode:ApplicationMode::NORMAL
+                                        withURL:[command url]
+                                 dismissOmnibox:YES
+                                     transition:ui::PAGE_TRANSITION_TYPED
+                                     completion:nil];
+  } else {
+    [self dismissModalDialogsWithCompletion:^{
+      self.currentBVC = [command inIncognito] ? self.otrBVC : self.mainBVC;
+      [self.currentBVC webPageOrderedOpen:[command url]
+                                 referrer:[command referrer]
+                             inBackground:[command inBackground]
+                                 appendTo:[command appendTo]];
+    }
+                             dismissOmnibox:YES];
+  }
+}
+
+// TODO(crbug.com/779791) : Do not pass |baseViewController| through dispatcher.
+- (void)showSignin:(ShowSigninCommand*)command
+    baseViewController:(UIViewController*)baseViewController {
+  if (command.operation == AUTHENTICATION_OPERATION_DISMISS) {
+    [self dismissSigninInteractionCoordinator];
+    return;
+  }
+
+  if (!self.signinInteractionCoordinator) {
+    self.signinInteractionCoordinator = [[SigninInteractionCoordinator alloc]
+        initWithBrowserState:_mainBrowserState
+                  dispatcher:self.mainBVC.dispatcher];
+  }
+
+  switch (command.operation) {
+    case AUTHENTICATION_OPERATION_DISMISS:
+      // Special case handled above.
+      NOTREACHED();
+      break;
+    case AUTHENTICATION_OPERATION_REAUTHENTICATE:
+      [self.signinInteractionCoordinator
+          reAuthenticateWithAccessPoint:command.accessPoint
+                            promoAction:command.promoAction
+               presentingViewController:baseViewController
+                             completion:command.callback];
+      break;
+    case AUTHENTICATION_OPERATION_SIGNIN:
+      [self.signinInteractionCoordinator signInWithIdentity:command.identity
+                                                accessPoint:command.accessPoint
+                                                promoAction:command.promoAction
+                                   presentingViewController:baseViewController
+                                                 completion:command.callback];
+      break;
+  }
+}
+
+// TODO(crbug.com/779791) : Remove settings commands from MainController.
+- (void)showAddAccountFromViewController:(UIViewController*)baseViewController {
+  if (!self.signinInteractionCoordinator) {
+    self.signinInteractionCoordinator = [[SigninInteractionCoordinator alloc]
+        initWithBrowserState:_mainBrowserState
+                  dispatcher:self.mainBVC.dispatcher];
+  }
+
+  [self.signinInteractionCoordinator
+      addAccountWithAccessPoint:signin_metrics::AccessPoint::
+                                    ACCESS_POINT_UNKNOWN
+                    promoAction:signin_metrics::PromoAction::
+                                    PROMO_ACTION_NO_SIGNIN_PROMO
+       presentingViewController:baseViewController
+                     completion:nil];
+}
+
+#pragma mark - ApplicationSettingsCommands
+
+// TODO(crbug.com/779791) : Remove show settings from MainController.
+- (void)showAccountsSettingsFromViewController:
+    (UIViewController*)baseViewController {
+  if (!baseViewController) {
+    DCHECK_EQ(self.currentBVC, self.mainViewController.activeViewController);
+    baseViewController = self.currentBVC;
+  }
+  DCHECK(![baseViewController presentedViewController]);
+  if ([self currentBrowserState]->IsOffTheRecord()) {
+    NOTREACHED();
+    return;
+  }
+  if (_settingsNavigationController) {
+    [_settingsNavigationController
+        showAccountsSettingsFromViewController:baseViewController];
+    return;
+  }
+  _settingsNavigationController = [SettingsNavigationController
+      newAccountsController:self.currentBrowserState
+                   delegate:self];
+  [baseViewController presentViewController:_settingsNavigationController
+                                   animated:YES
+                                 completion:nil];
+}
+
+// TODO(crbug.com/779791) : Remove show settings commands from MainController.
+- (void)showSyncSettingsFromViewController:
+    (UIViewController*)baseViewController {
+  if (_settingsNavigationController) {
+    [_settingsNavigationController
+        showSyncSettingsFromViewController:baseViewController];
+    return;
+  }
+  _settingsNavigationController =
+      [SettingsNavigationController newSyncController:_mainBrowserState
+                               allowSwitchSyncAccount:YES
+                                             delegate:self];
+  [baseViewController presentViewController:_settingsNavigationController
+                                   animated:YES
+                                 completion:nil];
+}
+
+// TODO(crbug.com/779791) : Remove show settings commands from MainController.
+- (void)showSyncPassphraseSettingsFromViewController:
+    (UIViewController*)baseViewController {
+  if (_settingsNavigationController) {
+    [_settingsNavigationController
+        showSyncPassphraseSettingsFromViewController:baseViewController];
+    return;
+  }
+  _settingsNavigationController = [SettingsNavigationController
+      newSyncEncryptionPassphraseController:_mainBrowserState
+                                   delegate:self];
+  [baseViewController presentViewController:_settingsNavigationController
+                                   animated:YES
+                                 completion:nil];
+}
+
 #pragma mark - chromeExecuteCommand
 
 - (IBAction)chromeExecuteCommand:(id)sender {
   NSInteger command = [sender tag];
 
   switch (command) {
-    case IDC_NEW_TAB:
-      [self createNewTabInBVC:self.mainBVC sender:sender];
-      break;
-    case IDC_NEW_INCOGNITO_TAB:
-      [self createNewTabInBVC:self.otrBVC sender:sender];
-      break;
-    case IDC_OPEN_URL:
-      [self openUrl:base::mac::ObjCCast<OpenUrlCommand>(sender)];
-      break;
-    case IDC_OPTIONS:
-      [self showSettings];
-      break;
-    case IDC_REPORT_AN_ISSUE:
-      dispatch_async(dispatch_get_main_queue(), ^{
-        [self showReportAnIssue];
-      });
-      break;
-    case IDC_SHOW_SIGNIN_IOS: {
-      ShowSigninCommand* command =
-          base::mac::ObjCCastStrict<ShowSigninCommand>(sender);
-      if (command.operation == AUTHENTICATION_OPERATION_DISMISS) {
-        [self dismissSigninInteractionController];
-      } else {
-        [self showSignInWithOperation:command.operation
-                    signInAccessPoint:command.signInAccessPoint
-                             callback:command.callback];
-      }
-      break;
-    }
-    case IDC_SHOW_ACCOUNTS_SETTINGS: {
-      [self showAccountsSettings];
-      break;
-    }
-    case IDC_SHOW_SYNC_SETTINGS:
-      [self showSyncSettings];
-      break;
-    case IDC_SHOW_SYNC_PASSPHRASE_SETTINGS:
-      [self showSyncEncryptionPassphrase];
-      break;
-    case IDC_SHOW_SAVE_PASSWORDS_SETTINGS:
-      [self showSavePasswordsSettings];
-      break;
-    case IDC_SHOW_HISTORY:
-      [self showHistory];
-      break;
-    case IDC_TOGGLE_TAB_SWITCHER:
-      DCHECK(!_tabSwitcherIsActive);
-      if (!_isProcessingVoiceSearchCommand) {
-        [self showTabSwitcher];
-        _isProcessingTabSwitcherCommand = YES;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
-                                     kExpectedTransitionDurationInNanoSeconds),
-                       dispatch_get_main_queue(), ^{
-                         _isProcessingTabSwitcherCommand = NO;
-                       });
-      }
-      break;
-    case IDC_PRELOAD_VOICE_SEARCH:
-      [self.currentBVC chromeExecuteCommand:sender];
-      break;
-    case IDC_VOICE_SEARCH:
-      if (!_isProcessingTabSwitcherCommand) {
-        [self startVoiceSearch];
-        _isProcessingVoiceSearchCommand = YES;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
-                                     kExpectedTransitionDurationInNanoSeconds),
-                       dispatch_get_main_queue(), ^{
-                         _isProcessingVoiceSearchCommand = NO;
-                       });
-      }
-      break;
     case IDC_CLEAR_BROWSING_DATA_IOS: {
       // Clear both the main browser state and the associated incognito
       // browser state.
@@ -1503,27 +1609,6 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
       }
       break;
     }
-    case IDC_RESET_ALL_WEBVIEWS:
-      [self.currentBVC resetAllWebViews];
-      break;
-    case IDC_SHOW_GOOGLE_APPS_SETTINGS:
-      [self showNativeAppsSettings];
-      break;
-    case IDC_SHOW_CLEAR_BROWSING_DATA_SETTINGS:
-      [self showClearBrowsingDataSettingsController];
-      break;
-    case IDC_SHOW_CONTEXTUAL_SEARCH_SETTINGS:
-      [self showContextualSearchSettingsController];
-      break;
-    case IDC_CLOSE_MODALS:
-      [self dismissModalDialogsWithCompletion:nil];
-      break;
-    case IDC_SHOW_ADD_ACCOUNT:
-      [self showAddAccount];
-      break;
-    case IDC_SHOW_AUTOFILL_SETTINGS:
-      [self showAutofillSettings];
-      break;
     default:
       // Unknown commands get dropped with a warning.
       NOTREACHED() << "Unknown command id " << command;
@@ -1534,43 +1619,27 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
 #pragma mark - chromeExecuteCommand helpers
 
-- (void)openUrl:(OpenUrlCommand*)command {
-  if ([command fromChrome]) {
-    [self dismissModalsAndOpenSelectedTabInMode:ApplicationMode::NORMAL
-                                        withURL:[command url]
-                                     transition:ui::PAGE_TRANSITION_TYPED
-                                     completion:nil];
-  } else {
-    [self dismissModalDialogsWithCompletion:^{
-      self.currentBVC = [command inIncognito] ? self.otrBVC : self.mainBVC;
-      [self.currentBVC webPageOrderedOpen:[command url]
-                                 referrer:[command referrer]
-                             inBackground:[command inBackground]
-                                 appendTo:[command appendTo]];
-    }];
-  }
-}
-
 - (void)openUrlFromSettings:(OpenUrlCommand*)command {
   DCHECK([command fromChrome]);
   ProceduralBlock completion = ^{
     [self dismissModalsAndOpenSelectedTabInMode:ApplicationMode::NORMAL
                                         withURL:[command url]
+                                 dismissOmnibox:YES
                                      transition:ui::PAGE_TRANSITION_TYPED
                                      completion:nil];
   };
   [self closeSettingsAnimated:YES completion:completion];
 }
 
-- (void)startVoiceSearch {
+- (void)startVoiceSearchInCurrentBVCWithOriginView:(UIView*)originView {
   // If the background (non-current) BVC is playing TTS audio, call
   // -startVoiceSearch on it to stop the TTS.
   BrowserViewController* backgroundBVC =
       self.mainBVC == self.currentBVC ? self.otrBVC : self.mainBVC;
   if (backgroundBVC.playingTTS)
-    [backgroundBVC startVoiceSearch];
+    [backgroundBVC startVoiceSearchWithOriginView:originView];
   else
-    [self.currentBVC startVoiceSearch];
+    [self.currentBVC startVoiceSearchWithOriginView:originView];
 }
 
 #pragma mark - Preferences Management
@@ -1659,7 +1728,7 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   // deleted. All of the request trackers associated with the closed OTR tabs
   // will have posted CancelRequest calls to the IO thread by now; this just
   // waits for those calls to run before calling |deleteIncognitoBrowserState|.
-  web::RequestTrackerImpl::RunAfterRequestsCancel(base::BindBlock(^{
+  web::RequestTrackerImpl::RunAfterRequestsCancel(base::BindBlockArc(^{
     [self deleteIncognitoBrowserState];
   }));
 
@@ -1717,16 +1786,9 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   [self switchGlobalStateToMode:mode];
 }
 
-// Set |bvc| as the current BVC and then creates a new tab.
-- (void)createNewTabInBVC:(BrowserViewController*)bvc sender:(id)sender {
-  DCHECK(bvc);
-  [bvc expectNewForegroundTab];
-  self.currentBVC = bvc;
-  [self.currentBVC newTab:sender];
-}
-
 - (void)displayCurrentBVC {
-  self.mainViewController.activeViewController = self.currentBVC;
+  [self.mainViewController showTabViewController:self.currentBVC
+                                      completion:nil];
 }
 
 - (TabModel*)currentTabModel {
@@ -1751,24 +1813,26 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   // which will cache the first snapshot for the tab and reuse it instead of
   // regenerating a new one each time.
   [currentTab setSnapshotCoalescingEnabled:YES];
-  base::ScopedClosureRunner runner(base::BindBlock(^{
+  base::ScopedClosureRunner runner(base::BindBlockArc(^{
     [currentTab setSnapshotCoalescingEnabled:NO];
   }));
 
-  [currentBVC prepareToEnterTabSwitcher:nil];
+  [currentTab updateSnapshotWithOverlay:YES visibleFrameOnly:YES];
 
-  if (!_tabSwitcherController.get()) {
+  if (!_tabSwitcherController) {
     if (IsIPadIdiom()) {
-      _tabSwitcherController.reset([[TabSwitcherController alloc]
-          initWithBrowserState:_mainBrowserState
-                  mainTabModel:self.mainTabModel
-                   otrTabModel:self.otrTabModel
-                activeTabModel:self.currentTabModel]);
+      _tabSwitcherController = [[TabSwitcherController alloc]
+                initWithBrowserState:_mainBrowserState
+                        mainTabModel:self.mainTabModel
+                         otrTabModel:self.otrTabModel
+                      activeTabModel:self.currentTabModel
+          applicationCommandEndpoint:self];
     } else {
-      _tabSwitcherController.reset([[StackViewController alloc]
-          initWithMainTabModel:self.mainTabModel
-                   otrTabModel:self.otrTabModel
-                activeTabModel:self.currentTabModel]);
+      _tabSwitcherController =
+          [[StackViewController alloc] initWithMainTabModel:self.mainTabModel
+                                                otrTabModel:self.otrTabModel
+                                             activeTabModel:self.currentTabModel
+                                 applicationCommandEndpoint:self];
     }
   } else {
     // The StackViewController is kept in memory to avoid the performance hit of
@@ -1788,14 +1852,13 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
                                             mainBVC:self.mainBVC
                                              otrBVC:self.otrBVC];
     [_tabSwitcherController setTransitionContext:transitionContext];
-    self.mainViewController.activeViewController = _tabSwitcherController;
-    [_tabSwitcherController showWithSelectedTabAnimation];
   } else {
     // User interaction is disabled when the stack controller is dismissed.
     [[_tabSwitcherController view] setUserInteractionEnabled:YES];
-    self.mainViewController.activeViewController = _tabSwitcherController;
-    [_tabSwitcherController showWithSelectedTabAnimation];
   }
+
+  [self.mainViewController showTabSwitcher:_tabSwitcherController
+                                completion:nil];
 }
 
 - (BOOL)shouldOpenNTPTabOnActivationOfTabModel:(TabModel*)tabModel {
@@ -1844,7 +1907,7 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   if ([_tabSwitcherController
           respondsToSelector:@selector(tabSwitcherDismissWithModel:
                                                           animated:)]) {
-    [self dismissModalDialogsWithCompletion:nil];
+    [self dismissModalDialogsWithCompletion:nil dismissOmnibox:YES];
     [_tabSwitcherController tabSwitcherDismissWithModel:tabModel animated:NO];
   } else {
     [self beginDismissingStackViewWithCurrentModel:tabModel];
@@ -1873,11 +1936,32 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   BrowserViewController* targetBVC =
       (tabModel == self.mainTabModel) ? self.mainBVC : self.otrBVC;
   self.currentBVC = targetBVC;
+
+  // The call to set currentBVC above does not actually display the BVC, because
+  // _dismissingStackView is YES.  When the presentation experiment is enabled,
+  // force the BVC transition to start.
+  if (TabSwitcherPresentsBVCEnabled()) {
+    [self displayCurrentBVC];
+  }
 }
 
 - (void)finishDismissingStackView {
-  DCHECK_EQ(self.mainViewController.activeViewController,
-            _tabSwitcherController.get());
+  // The tab switcher presentation experiment modifies the app's VC hierarchy.
+  // As a result, the "active" VC when the animation completes differs based on
+  // the experiment state.
+  if (TabSwitcherPresentsBVCEnabled()) {
+    // When the experiment is enabled, the tab switcher dismissal animation runs
+    // as part of the BVC presentation process.  The BVC is presented before the
+    // animations begin, so it is the current active VC at this point.
+    DCHECK_EQ(self.mainViewController.activeViewController, self.currentBVC);
+  } else {
+    // Without the experiment, the BVC is added as a child and made visible in
+    // the call to |displayCurrentBVC| below, after the tab switcher dismissal
+    // animation is complete.  At this point in the process, the tab switcher is
+    // still the active VC.
+    DCHECK_EQ(self.mainViewController.activeViewController,
+              _tabSwitcherController);
+  }
 
   if (_modeToDisplayOnStackViewDismissal == StackViewDismissalMode::NORMAL) {
     self.currentBVC = self.mainBVC;
@@ -1888,20 +1972,16 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
   _modeToDisplayOnStackViewDismissal = StackViewDismissalMode::NONE;
 
-  // Displaying the current BVC dismisses the stack view.
+  // Displaying the current BVC dismisses the stack view.  When the tabswitcher
+  // presentation experiment is enabled, this call does nothing because the BVC
+  // is already presented.
   [self displayCurrentBVC];
 
-  // Start Voice Search or QR Scanner now that they can be presented from the
-  // current BVC.
-  if (self.startVoiceSearchAfterTabSwitcherDismissal) {
-    self.startVoiceSearchAfterTabSwitcherDismissal = NO;
-    [self.currentBVC startVoiceSearch];
-  } else if (self.startQRScannerAfterTabSwitcherDismissal) {
-    self.startQRScannerAfterTabSwitcherDismissal = NO;
-    [self.currentBVC showQRScanner];
-  } else if (self.startFocusOmniboxAfterTabSwitcherDismissal) {
-    self.startFocusOmniboxAfterTabSwitcherDismissal = NO;
-    [self.currentBVC focusOmnibox];
+  ProceduralBlock action = [self completionBlockForTriggeringAction:
+                                     self.NTPActionAfterTabSwitcherDismissal];
+  self.NTPActionAfterTabSwitcherDismissal = NO_ACTION;
+  if (action) {
+    action();
   }
 
   [_tabSwitcherController setDelegate:nil];
@@ -1916,7 +1996,7 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 - (id<ToolbarOwner>)tabSwitcherTransitionToolbarOwner {
   // Request the view to ensure that the view has been loaded and initialized,
   // since it may never have been loaded (or have been swapped out).
-  [self.currentBVC ensureViewCreated];
+  [self.currentBVC loadViewIfNeeded];
   return self.currentBVC;
 }
 
@@ -1932,7 +2012,6 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   if (mask & IOSChromeBrowsingDataRemover::REMOVE_SITE_DATA) {
     [self setWebUsageEnabled:NO];
   }
-
   ProceduralBlock browsingDataRemoved = ^{
     [self setWebUsageEnabled:YES];
     if (completionHandler) {
@@ -1950,242 +2029,34 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
 - (void)presentSignedInAccountsViewControllerForBrowserState:
     (ios::ChromeBrowserState*)browserState {
-  base::scoped_nsobject<UIViewController> accountsViewController(
+  UIViewController* accountsViewController =
       [[SignedInAccountsViewController alloc]
-          initWithBrowserState:browserState]);
+          initWithBrowserState:browserState
+                    dispatcher:self.mainBVC.dispatcher];
   [[self topPresentedViewController]
       presentViewController:accountsViewController
                    animated:YES
                  completion:nil];
 }
 
-- (void)showSettings {
+- (void)showSettingsFromViewController:(UIViewController*)baseViewController {
   if (_settingsNavigationController)
     return;
   [[DeferredInitializationRunner sharedInstance]
       runBlockIfNecessary:kPrefObserverInit];
   DCHECK(_localStatePrefObserverBridge);
-  _settingsNavigationController.reset([SettingsNavigationController
-      newSettingsMainControllerWithMainBrowserState:_mainBrowserState
-                                currentBrowserState:self.currentBrowserState
-                                           delegate:self]);
-  [[self topPresentedViewController]
-      presentViewController:_settingsNavigationController
-                   animated:YES
-                 completion:nil];
+  _settingsNavigationController = [SettingsNavigationController
+      newSettingsMainControllerWithBrowserState:_mainBrowserState
+                                       delegate:self];
+  [baseViewController presentViewController:_settingsNavigationController
+                                   animated:YES
+                                 completion:nil];
 }
 
-- (void)showAccountsSettings {
-  if (_settingsNavigationController)
-    return;
-  if ([self currentBrowserState]->IsOffTheRecord()) {
-    NOTREACHED();
-    return;
-  }
-  _settingsNavigationController.reset([SettingsNavigationController
-      newAccountsController:self.currentBrowserState
-                   delegate:self]);
-  [[self topPresentedViewController]
-      presentViewController:_settingsNavigationController
-                   animated:YES
-                 completion:nil];
-}
-
-- (void)showSyncSettings {
-  if (_settingsNavigationController)
-    return;
-  _settingsNavigationController.reset([SettingsNavigationController
-           newSyncController:_mainBrowserState
-      allowSwitchSyncAccount:YES
-                    delegate:self]);
-  [[self topPresentedViewController]
-      presentViewController:_settingsNavigationController
-                   animated:YES
-                 completion:nil];
-}
-
-- (void)showSavePasswordsSettings {
-  if (_settingsNavigationController)
-    return;
-  _settingsNavigationController.reset([SettingsNavigationController
-      newSavePasswordsController:_mainBrowserState
-                        delegate:self]);
-  [[self topPresentedViewController]
-      presentViewController:_settingsNavigationController
-                   animated:YES
-                 completion:nil];
-}
-
-- (void)showAutofillSettings {
-  if (_settingsNavigationController)
-    return;
-  _settingsNavigationController.reset([SettingsNavigationController
-      newAutofillController:_mainBrowserState
-                   delegate:self]);
-  [[self topPresentedViewController]
-      presentViewController:_settingsNavigationController
-                   animated:YES
-                 completion:nil];
-}
-
-- (void)showReportAnIssue {
-  if (_settingsNavigationController)
-    return;
-  _settingsNavigationController.reset([SettingsNavigationController
-      newUserFeedbackController:_mainBrowserState
-                       delegate:self
-             feedbackDataSource:self]);
-  [[self topPresentedViewController]
-      presentViewController:_settingsNavigationController
-                   animated:YES
-                 completion:nil];
-}
-
-- (void)showSyncEncryptionPassphrase {
-  if (_settingsNavigationController)
-    return;
-  _settingsNavigationController.reset([SettingsNavigationController
-      newSyncEncryptionPassphraseController:_mainBrowserState
-                                   delegate:self]);
-  [[self topPresentedViewController]
-      presentViewController:_settingsNavigationController
-                   animated:YES
-                 completion:nil];
-}
-
-- (void)showClearBrowsingDataSettingsController {
-  if (_settingsNavigationController)
-    return;
-  _settingsNavigationController.reset([SettingsNavigationController
-      newClearBrowsingDataController:_mainBrowserState
-                            delegate:self]);
-  [[self topPresentedViewController]
-      presentViewController:_settingsNavigationController
-                   animated:YES
-                 completion:nil];
-}
-
-- (void)showContextualSearchSettingsController {
-  if (_settingsNavigationController)
-    return;
-  _settingsNavigationController.reset([SettingsNavigationController
-      newContextualSearchController:_mainBrowserState
-                           delegate:self]);
-  [[self topPresentedViewController]
-      presentViewController:_settingsNavigationController
-                   animated:YES
-                 completion:nil];
-}
-
-- (void)showSignInWithOperation:(AuthenticationOperation)operation
-              signInAccessPoint:(signin_metrics::AccessPoint)signInAccessPoint
-                       callback:(ShowSigninCommandCompletionCallback)callback {
-  DCHECK_NE(AUTHENTICATION_OPERATION_DISMISS, operation);
-
-  if (_signinInteractionController) {
-    // Avoid showing the sign in screen if there is already a sign-in operation
-    // in progress.
-    return;
-  }
-
-  BOOL areSettingsPresented = _settingsNavigationController != NULL;
-  _signinInteractionController.reset([[SigninInteractionController alloc]
-          initWithBrowserState:_mainBrowserState
-      presentingViewController:[self topPresentedViewController]
-         isPresentedOnSettings:areSettingsPresented
-             signInAccessPoint:signInAccessPoint]);
-
-  signin_ui::CompletionCallback completion = ^(BOOL success) {
-    _signinInteractionController.reset();
-    if (callback)
-      callback(success);
-  };
-
-  switch (operation) {
-    case AUTHENTICATION_OPERATION_DISMISS:
-      // Special case handled above.
-      NOTREACHED();
-      break;
-    case AUTHENTICATION_OPERATION_REAUTHENTICATE:
-      [_signinInteractionController
-          reAuthenticateWithCompletion:completion
-                        viewController:self.mainViewController];
-      break;
-    case AUTHENTICATION_OPERATION_SIGNIN:
-      [_signinInteractionController
-          signInWithViewController:self.mainViewController
-                          identity:nil
-                        completion:completion];
-      break;
-  }
-}
-
-- (void)showAddAccount {
-  if (_signinInteractionController) {
-    // Avoid showing the sign in screen if there is already a sign-in operation
-    // in progress.
-    return;
-  }
-
-  BOOL areSettingsPresented = _settingsNavigationController != NULL;
-  _signinInteractionController.reset([[SigninInteractionController alloc]
-          initWithBrowserState:_mainBrowserState
-      presentingViewController:[self topPresentedViewController]
-         isPresentedOnSettings:areSettingsPresented
-             signInAccessPoint:signin_metrics::AccessPoint::
-                                   ACCESS_POINT_UNKNOWN]);
-
-  [_signinInteractionController
-      addAccountWithCompletion:^(BOOL success) {
-        _signinInteractionController.reset();
-      }
-                viewController:self.mainViewController];
-}
-
-- (void)showHistory {
-  _historyPanelViewController.reset([[HistoryPanelViewController
-      controllerToPresentForBrowserState:_mainBrowserState
-                                  loader:self.currentBVC] retain]);
-  [self.currentBVC presentViewController:_historyPanelViewController
-                                animated:YES
-                              completion:nil];
-}
-
-- (void)dismissSigninInteractionController {
-  // The sign-in interaction controller is destroyed as a result of calling
-  // |cancelAndDismiss|. Destroying it here may lead to a missing call of the
-  // |ShowSigninCommandCompletionCallback| passed when starting a show sign-in
-  // operation.
-  [_signinInteractionController cancelAndDismiss];
-}
-
-- (ShowSigninCommandCompletionCallback)successfulSigninCompletion:
-    (ProceduralBlock)callback {
-  return [[^(BOOL successful) {
-    ios::ChromeBrowserState* browserState = [self currentBrowserState];
-    if (browserState->IsOffTheRecord()) {
-      NOTREACHED()
-          << "Ignore call to |handleSignInFinished| when in incognito.";
-      return;
-    }
-    DCHECK_EQ(self.mainBVC, self.currentBVC);
-    SigninManager* signinManager =
-        ios::SigninManagerFactory::GetForBrowserState(browserState);
-    if (signinManager->IsAuthenticated())
-      callback();
-  } copy] autorelease];
-}
-
-- (void)showNativeAppsSettings {
-  if (_settingsNavigationController)
-    return;
-  _settingsNavigationController.reset([SettingsNavigationController
-      newNativeAppsController:_mainBrowserState
-                     delegate:self]);
-  [[self topPresentedViewController]
-      presentViewController:_settingsNavigationController
-                   animated:YES
-                 completion:nil];
+- (void)dismissSigninInteractionCoordinator {
+  // The SigninInteractionCoordinator must not be destroyed at this point, as
+  // it may dismiss the sign in UI in a future callback.
+  [self.signinInteractionCoordinator cancelAndDismiss];
 }
 
 - (void)closeSettingsAnimated:(BOOL)animated
@@ -2200,7 +2071,7 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
                                                  if (completion)
                                                    completion();
                                                }];
-  _settingsNavigationController.reset();
+  _settingsNavigationController = nil;
 }
 
 #pragma mark - TabModelObserver
@@ -2226,19 +2097,18 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
 - (Tab*)openOrReuseTabInMode:(ApplicationMode)targetMode
                      withURL:(const GURL&)URL
-                  transition:(ui::PageTransition)transition {
+                  transition:(ui::PageTransition)transition
+         tabOpenedCompletion:(ProceduralBlock)tabOpenedCompletion {
   BrowserViewController* targetBVC =
       targetMode == ApplicationMode::NORMAL ? self.mainBVC : self.otrBVC;
-  GURL currentURL;
 
   Tab* currentTabInTargetBVC = [[targetBVC tabModel] currentTab];
-  if (currentTabInTargetBVC)
-    currentURL = [currentTabInTargetBVC url];
-
-  if (!(currentTabInTargetBVC && IsURLNtp(currentURL))) {
+  if (!(currentTabInTargetBVC.webState &&
+        IsURLNtp(currentTabInTargetBVC.webState->GetVisibleURL()))) {
     return [targetBVC addSelectedTabWithURL:URL
                                     atIndex:NSNotFound
-                                 transition:transition];
+                                 transition:transition
+                         tabAddedCompletion:tabOpenedCompletion];
   }
 
   Tab* newTab = currentTabInTargetBVC;
@@ -2247,15 +2117,80 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
     web::NavigationManager::WebLoadParams params(URL);
     [newTab webState]->GetNavigationManager()->LoadURLWithParams(params);
   }
+  if (tabOpenedCompletion) {
+    tabOpenedCompletion();
+  }
   return newTab;
+}
+
+- (ProceduralBlock)completionBlockForTriggeringAction:
+    (NTPTabOpeningPostOpeningAction)action {
+  switch (action) {
+    case START_VOICE_SEARCH:
+      if (@available(iOS 11, *)) {
+        return ^{
+          [self startVoiceSearchInCurrentBVCWithOriginView:nil];
+        };
+      } else {
+        return ^{
+          // On iOS10.3.X, the launching the application using an external URL
+          // sometimes triggers notifications
+          // applicationDidBecomeActive
+          // applicationWillResignActive
+          // applicationDidBecomeActive.
+          // Triggering voiceSearch immediatley will cause its dismiss on
+          // applicationWillResignActive.
+          // Add a timer here and hope this will be enough so that voice search
+          // is triggered after second applicationDidBecomeActive.
+          // TODO(crbug.com/766951): remove this workaround.
+          dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC),
+                         dispatch_get_main_queue(), ^{
+                           [self
+                               startVoiceSearchInCurrentBVCWithOriginView:nil];
+                         });
+
+        };
+      }
+    case START_QR_CODE_SCANNER:
+      return ^{
+        [self.currentBVC.dispatcher showQRScanner];
+      };
+    case FOCUS_OMNIBOX:
+      return ^{
+        [self.currentBVC focusOmnibox];
+      };
+    default:
+      return nil;
+  }
 }
 
 - (Tab*)openSelectedTabInMode:(ApplicationMode)targetMode
                       withURL:(const GURL&)url
-                   transition:(ui::PageTransition)transition {
+                   transition:(ui::PageTransition)transition
+                   completion:(ProceduralBlock)completion {
   BrowserViewController* targetBVC =
       targetMode == ApplicationMode::NORMAL ? self.mainBVC : self.otrBVC;
   NSUInteger tabIndex = NSNotFound;
+
+  ProceduralBlock startupCompletion =
+      [self completionBlockForTriggeringAction:[_startupParameters
+                                                   postOpeningAction]];
+  // Commands are only allowed on NTP.
+  DCHECK(IsURLNtp(url) || !startupCompletion);
+
+  ProceduralBlock tabOpenedCompletion = nil;
+  if (startupCompletion && completion) {
+    tabOpenedCompletion = ^{
+      // Order is important here. |completion| may do cleaning tasks that will
+      // invalidate |startupCompletion|.
+      startupCompletion();
+      completion();
+    };
+  } else if (startupCompletion) {
+    tabOpenedCompletion = startupCompletion;
+  } else {
+    tabOpenedCompletion = completion;
+  }
 
   Tab* tab = nil;
   if (_tabSwitcherIsActive) {
@@ -2269,8 +2204,14 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
               : StackViewDismissalMode::INCOGNITO;
       tab = [targetBVC addSelectedTabWithURL:url
                                      atIndex:tabIndex
-                                  transition:transition];
+                                  transition:transition
+                          tabAddedCompletion:tabOpenedCompletion];
     } else {
+      // Voice search, QRScanner and the omnibox are presented by the BVC.
+      // They must be started after the BVC view is added in the hierarchy.
+      self.NTPActionAfterTabSwitcherDismissal =
+          [_startupParameters postOpeningAction];
+      [self setStartupParameters:nil];
       tab = [_tabSwitcherController
           dismissWithNewTabAnimationToModel:targetBVC.tabModel
                                     withURL:url
@@ -2284,45 +2225,8 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
     self.currentBVC = targetBVC;
     tab = [self openOrReuseTabInMode:targetMode
                              withURL:url
-                          transition:transition];
-  }
-
-  if ([_startupParameters launchVoiceSearch]) {
-    if (_tabSwitcherIsActive || _dismissingStackView) {
-      // Since VoiceSearch is presented by the BVC, it must be started after the
-      // Tab Switcher dismissal completes and the BVC's view is in the
-      // hierarchy.
-      self.startVoiceSearchAfterTabSwitcherDismissal = YES;
-    } else {
-      // When starting the application from the Notification center,
-      // ApplicationWillResignActive is sent just after startup.
-      // If the voice search is triggered synchronously, it is immediately
-      // dismissed. Start it asynchronously instead.
-      dispatch_async(dispatch_get_main_queue(), ^{
-        [self startVoiceSearch];
-      });
-    }
-  } else if ([_startupParameters launchQRScanner]) {
-    if (_tabSwitcherIsActive || _dismissingStackView) {
-      // QR Scanner is presented by the BVC, similarly to VoiceSearch. It must
-      // also be started after the BVC's view is in the hierarchy.
-      self.startQRScannerAfterTabSwitcherDismissal = YES;
-    } else {
-      // Start the QR Scanner asynchronously to prevent the application from
-      // dismissing the modal view if QR Scanner is started from the
-      // Notification center.
-      dispatch_async(dispatch_get_main_queue(), ^{
-        [self.currentBVC showQRScanner];
-      });
-    }
-  } else if ([_startupParameters launchFocusOmnibox]) {
-    if (_tabSwitcherIsActive || _dismissingStackView) {
-      self.startFocusOmniboxAfterTabSwitcherDismissal = YES;
-    } else {
-      dispatch_async(dispatch_get_main_queue(), ^{
-        [self.currentBVC focusOmnibox];
-      });
-    }
+                          transition:transition
+                 tabOpenedCompletion:tabOpenedCompletion];
   }
 
   if (_restoreHelper) {
@@ -2330,14 +2234,15 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
     // restore infobar if needed.
     dispatch_async(dispatch_get_main_queue(), ^{
       [_restoreHelper showRestoreIfNeeded:[self currentTabModel]];
-      _restoreHelper.reset();
+      _restoreHelper = nil;
     });
   }
 
   return tab;
 }
 
-- (void)dismissModalDialogsWithCompletion:(ProceduralBlock)completion {
+- (void)dismissModalDialogsWithCompletion:(ProceduralBlock)completion
+                           dismissOmnibox:(BOOL)dismissOmnibox {
   // Immediately hide modals from the provider (alert views, action sheets,
   // popovers). They will be ultimately dismissed by their owners, but at least,
   // they are not visible.
@@ -2349,17 +2254,18 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
   // Cancel interaction with SSO.
   // First, cancel the signin interaction.
-  [_signinInteractionController cancel];
+  [self.signinInteractionCoordinator cancel];
 
   // Then, depending on what the SSO view controller is presented on, dismiss
   // it.
   ProceduralBlock completionWithBVC = ^{
     // This will dismiss the SSO view controller.
-    [self.currentBVC clearPresentedStateWithCompletion:completion];
+    [self.currentBVC clearPresentedStateWithCompletion:completion
+                                        dismissOmnibox:dismissOmnibox];
   };
   ProceduralBlock completionWithoutBVC = ^{
     // This will dismiss the SSO view controller.
-    [self dismissSigninInteractionController];
+    [self dismissSigninInteractionCoordinator];
     if (completion)
       completion();
   };
@@ -2421,10 +2327,13 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 - (void)purgeSnapshots {
   NSMutableSet* liveSessions = [self liveSessionsForTabModel:self.mainTabModel];
   [liveSessions unionSet:[self liveSessionsForTabModel:self.otrTabModel]];
+
   // Keep snapshots that are less than one minute old, to prevent a concurrency
   // issue if they are created while the purge is running.
-  [[SnapshotCache sharedInstance]
-      purgeCacheOlderThan:(base::Time::Now() - base::TimeDelta::FromMinutes(1))
+  const base::Time oneMinuteAgo =
+      base::Time::Now() - base::TimeDelta::FromMinutes(1);
+  [SnapshotCacheFactory::GetForBrowserState([self currentBrowserState])
+      purgeCacheOlderThan:oneMinuteAgo
                   keeping:liveSessions];
 }
 
@@ -2439,16 +2348,17 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
 - (void)dismissModalsAndOpenSelectedTabInMode:(ApplicationMode)targetMode
                                       withURL:(const GURL&)url
+                               dismissOmnibox:(BOOL)dismissOmnibox
                                    transition:(ui::PageTransition)transition
-                                   completion:(ProceduralBlock)handler {
+                                   completion:(ProceduralBlock)completion {
   GURL copyOfURL = url;
   [self dismissModalDialogsWithCompletion:^{
     [self openSelectedTabInMode:targetMode
                         withURL:copyOfURL
-                     transition:transition];
-    if (handler)
-      handler();
-  }];
+                     transition:transition
+                     completion:completion];
+  }
+                           dismissOmnibox:dismissOmnibox];
 }
 
 - (void)openTabFromLaunchOptions:(NSDictionary*)launchOptions
@@ -2467,22 +2377,49 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   }
 }
 
+- (BOOL)shouldCompletePaymentRequestOnCurrentTab:
+    (id<StartupInformation>)startupInformation {
+  if (!startupInformation.startupParameters)
+    return NO;
+
+  if (!startupInformation.startupParameters.completePaymentRequest)
+    return NO;
+
+  if (!base::FeatureList::IsEnabled(payments::features::kWebPaymentsNativeApps))
+    return NO;
+
+  payments::IOSPaymentInstrumentLauncher* paymentAppLauncher =
+      payments::IOSPaymentInstrumentLauncherFactory::GetInstance()
+          ->GetForBrowserState(_mainBrowserState);
+
+  if (!paymentAppLauncher->delegate())
+    return NO;
+
+  std::string payment_id =
+      startupInformation.startupParameters.externalURLParams
+          .find(payments::kPaymentRequestIDExternal)
+          ->second;
+  if (paymentAppLauncher->payment_request_id() != payment_id)
+    return NO;
+
+  std::string payment_response =
+      startupInformation.startupParameters.externalURLParams
+          .find(payments::kPaymentRequestDataExternal)
+          ->second;
+  paymentAppLauncher->ReceiveResponseFromIOSPaymentInstrument(payment_response);
+  [startupInformation setStartupParameters:nil];
+  return YES;
+}
+
 #pragma mark - SettingsNavigationControllerDelegate
 
 - (void)closeSettings {
-  [self closeSettingsAnimated:YES completion:NULL];
+  [self closeSettingsUI];
 }
 
-// Handle a close settings and open URL command.
-- (void)closeSettingsAndOpenUrl:(OpenUrlCommand*)command {
-  [self openUrlFromSettings:command];
-}
-
-- (void)closeSettingsAndOpenNewIncognitoTab {
-  [self closeSettingsAnimated:NO
-                   completion:^{
-                     [self createNewTabInBVC:self.otrBVC sender:nil];
-                   }];
+- (id<ApplicationCommands, BrowserCommands>)dispatcherForSettings {
+  // Assume that settings always wants the dispatcher from the main BVC.
+  return self.mainBVC.dispatcher;
 }
 
 #pragma mark - UserFeedbackDataSource
@@ -2549,18 +2486,16 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 }
 
 - (UIViewController<TabSwitcher>*)tabSwitcherController {
-  return _tabSwitcherController.get();
+  return _tabSwitcherController;
 }
 
 - (void)setTabSwitcherController:(UIViewController<TabSwitcher>*)controller {
-  _tabSwitcherController.reset([controller retain]);
-}
-
-- (SigninInteractionController*)signinInteractionController {
-  return _signinInteractionController.get();
+  _tabSwitcherController = controller;
 }
 
 - (UIViewController*)topPresentedViewController {
+  // TODO(crbug.com/754642): Implement TopPresentedViewControllerFrom()
+  // privately.
   return top_view_controller::TopPresentedViewControllerFrom(
       self.mainViewController);
 }
@@ -2575,9 +2510,9 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
 - (void)setStartupParametersWithURL:(const GURL&)launchURL {
   NSString* sourceApplication = @"Fake App";
-  _startupParameters.reset([[ChromeAppStartupParameters
+  _startupParameters = [ChromeAppStartupParameters
       newChromeAppStartupParametersWithURL:net::NSURLWithGURL(launchURL)
-                     fromSourceApplication:sourceApplication] retain]);
+                     fromSourceApplication:sourceApplication];
 }
 
 - (void)setUpAsForegrounded {
@@ -2586,9 +2521,11 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
   // Create a BrowserViewWrangler with a null browser state. This will trigger
   // assertions if the BrowserViewWrangler is asked to create any BVC or
   // tabModel objects, but it will accept assignments to them.
-  _browserViewWrangler.reset([[BrowserViewWrangler alloc]
-      initWithBrowserState:nullptr
-          tabModelObserver:self]);
+  [_browserViewWrangler shutdown];
+  _browserViewWrangler =
+      [[BrowserViewWrangler alloc] initWithBrowserState:nullptr
+                                       tabModelObserver:self
+                             applicationCommandEndpoint:self];
   // This is a test utility method that bypasses the ususal setup steps, so
   // verify that the main coordinator hasn't been created yet, then start it
   // via lazy initialization.
@@ -2602,7 +2539,7 @@ enum class StackViewDismissalMode { NONE, NORMAL, INCOGNITO };
 
   int removeAllMask = ~0;
   scoped_refptr<CallbackCounter> callbackCounter =
-      new CallbackCounter(base::BindBlock(^{
+      new CallbackCounter(base::BindBlockArc(^{
         [self setUpCurrentBVCForTesting];
         if (completionHandler) {
           completionHandler();

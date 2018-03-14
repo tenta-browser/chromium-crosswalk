@@ -6,7 +6,7 @@
 
 namespace blink {
 
-PassRefPtr<Hyphenation> Hyphenation::PlatformGetHyphenation(
+scoped_refptr<Hyphenation> Hyphenation::PlatformGetHyphenation(
     const AtomicString&) {
   return nullptr;
 }

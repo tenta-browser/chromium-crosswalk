@@ -12,10 +12,10 @@ namespace media {
 MediaUrlDemuxer::MediaUrlDemuxer(
     const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
     const GURL& media_url,
-    const GURL& first_party_for_cookies)
-    : params_{media_url, first_party_for_cookies}, task_runner_(task_runner) {}
+    const GURL& site_for_cookies)
+    : params_{media_url, site_for_cookies}, task_runner_(task_runner) {}
 
-MediaUrlDemuxer::~MediaUrlDemuxer() {}
+MediaUrlDemuxer::~MediaUrlDemuxer() = default;
 
 // Should never be called since MediaResource::Type is URL.
 std::vector<DemuxerStream*> MediaUrlDemuxer::GetAllStreams() {
@@ -75,13 +75,9 @@ int64_t MediaUrlDemuxer::GetMemoryUsage() const {
 
 void MediaUrlDemuxer::OnEnabledAudioTracksChanged(
     const std::vector<MediaTrack::Id>& track_ids,
-    base::TimeDelta curr_time) {
-  NOTIMPLEMENTED();
-}
+    base::TimeDelta curr_time) {}
 void MediaUrlDemuxer::OnSelectedVideoTrackChanged(
     base::Optional<MediaTrack::Id> selected_track_id,
-    base::TimeDelta curr_time) {
-  NOTIMPLEMENTED();
-}
+    base::TimeDelta curr_time) {}
 
 }  // namespace media

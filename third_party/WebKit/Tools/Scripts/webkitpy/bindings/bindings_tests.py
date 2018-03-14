@@ -31,8 +31,8 @@ import tempfile
 
 from webkitpy.common.system.executive import Executive
 
-from webkitpy.common import webkit_finder
-webkit_finder.add_bindings_scripts_dir_to_sys_path()
+from webkitpy.common import path_finder
+path_finder.add_bindings_scripts_dir_to_sys_path()
 
 from code_generator_v8 import CodeGeneratorDictionaryImpl
 from code_generator_v8 import CodeGeneratorV8
@@ -42,12 +42,16 @@ from code_generator_web_agent_api import CodeGeneratorWebAgentAPI
 from compute_interfaces_info_individual import InterfaceInfoCollector
 from compute_interfaces_info_overall import (compute_interfaces_info_overall,
                                              interfaces_info)
+from generate_origin_trial_features import generate_origin_trial_features
 from idl_compiler import (generate_bindings,
                           generate_union_type_containers,
                           generate_dictionary_impl,
                           generate_callback_function_impl)
 from utilities import ComponentInfoProviderCore
 from utilities import ComponentInfoProviderModules
+from utilities import get_file_contents
+from utilities import get_first_interface_name_from_idl
+from utilities import to_snake_case
 
 
 PASS_MESSAGE = 'All tests PASS!'
@@ -62,7 +66,20 @@ NOTRY=true
 TBR=(someone in Source/bindings/OWNERS or WATCHLISTS:bindings)
 """
 
+SOURCE_PATH = path_finder.get_source_dir()
+IS_SNAKE_CASE = path_finder.is_source_in_blink()
 DEPENDENCY_IDL_FILES = frozenset([
+    'test_implements.idl',
+    'test_implements_2.idl',
+    'test_implements_3.idl',
+    'test_interface_partial.idl',
+    'test_interface_partial_2.idl',
+    'test_interface_partial_3.idl',
+    'test_interface_partial_4.idl',
+    'test_interface_partial_secure_context.idl',
+    'test_interface_2_partial.idl',
+    'test_interface_2_partial_2.idl',
+]) if IS_SNAKE_CASE else frozenset([
     'TestImplements.idl',
     'TestImplements2.idl',
     'TestImplements3.idl',
@@ -76,8 +93,6 @@ DEPENDENCY_IDL_FILES = frozenset([
 ])
 
 COMPONENT_DIRECTORY = frozenset(['core', 'modules'])
-
-SOURCE_PATH = webkit_finder.get_source_dir()
 TEST_INPUT_DIRECTORY = os.path.join(SOURCE_PATH, 'bindings', 'tests', 'idls')
 REFERENCE_DIRECTORY = os.path.join(SOURCE_PATH, 'bindings', 'tests', 'results')
 
@@ -187,10 +202,11 @@ class IdlCompilerOptions(object):
         self.output_directory = output_directory
         self.cache_directory = cache_directory
         self.impl_output_directory = impl_output_directory
+        self.snake_case_generated_files = IS_SNAKE_CASE
         self.target_component = target_component
 
 
-def bindings_tests(output_directory, verbose):
+def bindings_tests(output_directory, verbose, suppress_diff):
     executive = Executive()
 
     def list_files(directory):
@@ -239,7 +255,8 @@ def bindings_tests(output_directory, verbose):
             # cmp is much faster than diff, and usual case is "no difference",
             # so only run diff if cmp detects a difference
             print 'FAIL: %s' % reference_basename
-            print diff(reference_filename, output_filename)
+            if not suppress_diff:
+                print diff(reference_filename, output_filename)
             return False
 
         if verbose:
@@ -259,6 +276,9 @@ def bindings_tests(output_directory, verbose):
         excess_files = []
         for path in list_files(REFERENCE_DIRECTORY):
             relpath = os.path.relpath(path, REFERENCE_DIRECTORY)
+            # Ignore backup files made by a VCS.
+            if os.path.splitext(relpath)[1] == '.orig':
+                continue
             if relpath not in generated_files:
                 excess_files.append(relpath)
         if excess_files:
@@ -305,8 +325,14 @@ def bindings_tests(output_directory, verbose):
                         os.path.join(input_directory, filename))
                     idl_filenames.append(idl_path)
                     idl_basename = os.path.basename(idl_path)
-                    definition_name, _ = os.path.splitext(idl_basename)
-                    if definition_name in interfaces_info:
+                    name_from_basename, _ = os.path.splitext(idl_basename)
+                    definition_name = get_first_interface_name_from_idl(get_file_contents(idl_path))
+                    is_partial_interface_idl = False
+                    if IS_SNAKE_CASE:
+                        is_partial_interface_idl = to_snake_case(definition_name) != name_from_basename
+                    else:
+                        is_partial_interface_idl = definition_name != name_from_basename
+                    if not is_partial_interface_idl:
                         interface_info = interfaces_info[definition_name]
                         if interface_info['is_dictionary']:
                             dictionary_impl_filenames.append(idl_path)
@@ -341,6 +367,11 @@ def bindings_tests(output_directory, verbose):
                 info_provider,
                 options,
                 dictionary_impl_filenames)
+            generate_origin_trial_features(
+                info_provider,
+                options,
+                [filename for filename in idl_filenames
+                 if filename not in dictionary_impl_filenames])
 
     finally:
         delete_cache_files()
@@ -360,11 +391,11 @@ def bindings_tests(output_directory, verbose):
     return 1
 
 
-def run_bindings_tests(reset_results, verbose):
+def run_bindings_tests(reset_results, verbose, suppress_diff):
     # Generate output into the reference directory if resetting results, or
     # a temp directory if not.
     if reset_results:
         print 'Resetting results'
-        return bindings_tests(REFERENCE_DIRECTORY, verbose)
+        return bindings_tests(REFERENCE_DIRECTORY, verbose, suppress_diff)
     with TemporaryDirectory() as temp_dir:
-        return bindings_tests(temp_dir, verbose)
+        return bindings_tests(temp_dir, verbose, suppress_diff)

@@ -13,6 +13,7 @@
 #include "base/json/json_reader.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
@@ -84,10 +85,10 @@ NativeMessagingReader::Core::Core(
       read_task_runner_(read_task_runner) {
 }
 
-NativeMessagingReader::Core::~Core() {}
+NativeMessagingReader::Core::~Core() = default;
 
 void NativeMessagingReader::Core::ReadMessage() {
-  DCHECK(read_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(read_task_runner_->RunsTasksInCurrentSequence());
 
   // Keep reading messages until the stream is closed or an error occurs.
   while (true) {
@@ -135,7 +136,7 @@ void NativeMessagingReader::Core::ReadMessage() {
 }
 
 void NativeMessagingReader::Core::NotifyEof() {
-  DCHECK(read_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(read_task_runner_->RunsTasksInCurrentSequence());
   caller_task_runner_->PostTask(
       FROM_HERE,
       base::Bind(&NativeMessagingReader::InvokeEofCallback, reader_));

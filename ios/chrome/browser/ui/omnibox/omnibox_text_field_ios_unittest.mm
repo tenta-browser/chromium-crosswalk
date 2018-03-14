@@ -27,7 +27,7 @@
 
 namespace {
 
-class OmniboxTextFieldIOSTest : public PlatformTest {
+class OmniboxTextFieldTest : public PlatformTest {
  protected:
   void SetUp() override {
     PlatformTest::SetUp();
@@ -39,16 +39,6 @@ class OmniboxTextFieldIOSTest : public PlatformTest {
   };
 
   void TearDown() override { [textfield_ removeFromSuperview]; }
-
-  BOOL IsCopyUrlInMenu() {
-    UIMenuController* menuController = [UIMenuController sharedMenuController];
-    NSString* const kTitle = l10n_util::GetNSString(IDS_IOS_COPY_URL);
-    for (UIMenuItem* item in menuController.menuItems) {
-      if ([item.title isEqual:kTitle])
-        return YES;
-    }
-    return NO;
-  };
 
   void ExpectRectEqual(CGRect expectedRect, CGRect actualRect) {
     EXPECT_EQ(expectedRect.origin.x, actualRect.origin.x);
@@ -122,37 +112,7 @@ class OmniboxTextFieldIOSTest : public PlatformTest {
   OmniboxTextFieldIOS* textfield_;
 };
 
-TEST_F(OmniboxTextFieldIOSTest, BecomeFirstResponderAddsCopyURLMenuItem) {
-  // The 'Copy URL' menu item should not be present before this test runs.
-  EXPECT_FALSE(IsCopyUrlInMenu());
-
-  // Call |becomeFirstResponder| and verify the Copy URL menu item was added.
-  UIMenuController* menuController = [UIMenuController sharedMenuController];
-  NSUInteger expectedItems = [menuController.menuItems count] + 1;
-  [textfield_ becomeFirstResponder];
-  EXPECT_EQ(expectedItems, [menuController.menuItems count]);
-  EXPECT_TRUE(IsCopyUrlInMenu());
-
-  // Call |becomeFirstResponder| again and verify the Copy URL menu item is not
-  // added again.
-  [textfield_ becomeFirstResponder];
-  EXPECT_EQ(expectedItems, [menuController.menuItems count]);
-  EXPECT_TRUE(IsCopyUrlInMenu());
-}
-
-TEST_F(OmniboxTextFieldIOSTest, ResignFirstResponderRemovesCopyURLMenuItem) {
-  // Call |becomeFirstResponder| to add the 'Copy URL' menu item so this test
-  // can remove it.
-  [textfield_ becomeFirstResponder];
-
-  UIMenuController* menuController = [UIMenuController sharedMenuController];
-  NSUInteger expectedItems = [menuController.menuItems count] - 1;
-  [textfield_ resignFirstResponder];
-  EXPECT_EQ(expectedItems, [menuController.menuItems count]);
-  EXPECT_FALSE(IsCopyUrlInMenu());
-}
-
-TEST_F(OmniboxTextFieldIOSTest, enterPreEditState_preEditTextAlignment_short) {
+TEST_F(OmniboxTextFieldTest, enterPreEditState_preEditTextAlignment_short) {
   [textfield_ setText:@"s"];
   [textfield_ becomeFirstResponder];
   [textfield_ enterPreEditState];
@@ -161,7 +121,7 @@ TEST_F(OmniboxTextFieldIOSTest, enterPreEditState_preEditTextAlignment_short) {
   [textfield_ resignFirstResponder];
 }
 
-TEST_F(OmniboxTextFieldIOSTest, enterPreEditState_preEditTextAlignment_long) {
+TEST_F(OmniboxTextFieldTest, enterPreEditState_preEditTextAlignment_long) {
   [textfield_ setText:@"some really long text that is wider than the omnibox"];
   [textfield_ becomeFirstResponder];
   [textfield_ enterPreEditState];
@@ -170,7 +130,7 @@ TEST_F(OmniboxTextFieldIOSTest, enterPreEditState_preEditTextAlignment_long) {
   [textfield_ resignFirstResponder];
 }
 
-TEST_F(OmniboxTextFieldIOSTest, enterPreEditState_preEditTextAlignment_change) {
+TEST_F(OmniboxTextFieldTest, enterPreEditState_preEditTextAlignment_change) {
   [textfield_ setText:@"s"];
   [textfield_ becomeFirstResponder];
   [textfield_ enterPreEditState];
@@ -182,7 +142,7 @@ TEST_F(OmniboxTextFieldIOSTest, enterPreEditState_preEditTextAlignment_change) {
   [textfield_ resignFirstResponder];
 }
 
-TEST_F(OmniboxTextFieldIOSTest, rectForDrawTextInRect_entireURLFits) {
+TEST_F(OmniboxTextFieldTest, rectForDrawTextInRect_entireURLFits) {
   NSString* text = @"http://www.google.com";
   [textfield_ setText:text];
   CGSize textSize = [[textfield_ attributedText] size];
@@ -193,7 +153,7 @@ TEST_F(OmniboxTextFieldIOSTest, rectForDrawTextInRect_entireURLFits) {
   ExpectRectEqual(inputRect, actualRect);
 }
 
-TEST_F(OmniboxTextFieldIOSTest, rectForDrawTextInRect_clippedPrefix) {
+TEST_F(OmniboxTextFieldTest, rectForDrawTextInRect_clippedPrefix) {
   NSString* text = @"http://www.google.com";
   [textfield_ setText:text];
   CGSize textSize = [[textfield_ attributedText] size];
@@ -207,7 +167,7 @@ TEST_F(OmniboxTextFieldIOSTest, rectForDrawTextInRect_clippedPrefix) {
   ExpectRectEqual(expectedRect, actualRect);
 }
 
-TEST_F(OmniboxTextFieldIOSTest, rectForDrawTextInRect_clippedSuffix) {
+TEST_F(OmniboxTextFieldTest, rectForDrawTextInRect_clippedSuffix) {
   NSString* text = @"http://www.google.com/somelongpath";
   [textfield_ setText:text];
   CGSize textSize = [[textfield_ attributedText] size];
@@ -219,7 +179,7 @@ TEST_F(OmniboxTextFieldIOSTest, rectForDrawTextInRect_clippedSuffix) {
   ExpectRectEqual(expectedRect, actualRect);
 }
 
-TEST_F(OmniboxTextFieldIOSTest, rectForDrawTextInRect_noScheme) {
+TEST_F(OmniboxTextFieldTest, rectForDrawTextInRect_noScheme) {
   NSString* text = @"www.google.com";
   [textfield_ setText:text];
   CGSize textSize = [[textfield_ attributedText] size];
@@ -231,7 +191,7 @@ TEST_F(OmniboxTextFieldIOSTest, rectForDrawTextInRect_noScheme) {
 
 // When the text doesn't contain a host the method bails early and returns
 // the |rect| passed in.
-TEST_F(OmniboxTextFieldIOSTest, rectForDrawTextInRect_noHost) {
+TEST_F(OmniboxTextFieldTest, rectForDrawTextInRect_noHost) {
   NSString* text = @"http://";
   [textfield_ setText:text];
   CGSize textSize = [[textfield_ attributedText] size];
@@ -241,7 +201,7 @@ TEST_F(OmniboxTextFieldIOSTest, rectForDrawTextInRect_noHost) {
   ExpectRectEqual(inputRect, actualRect);
 }
 
-TEST_F(OmniboxTextFieldIOSTest, SelectedRanges) {
+TEST_F(OmniboxTextFieldTest, SelectedRanges) {
   base::FilePath test_data_directory;
   ASSERT_TRUE(PathService::Get(ios::DIR_TEST_DATA, &test_data_directory));
   base::FilePath test_file = test_data_directory.Append(
@@ -260,14 +220,14 @@ TEST_F(OmniboxTextFieldIOSTest, SelectedRanges) {
   }
 }
 
-TEST_F(OmniboxTextFieldIOSTest, SelectExitsPreEditState) {
+TEST_F(OmniboxTextFieldTest, SelectExitsPreEditState) {
   [textfield_ enterPreEditState];
   EXPECT_TRUE([textfield_ isPreEditing]);
   [textfield_ select:nil];
   EXPECT_FALSE([textfield_ isPreEditing]);
 }
 
-TEST_F(OmniboxTextFieldIOSTest, SelectAllExitsPreEditState) {
+TEST_F(OmniboxTextFieldTest, SelectAllExitsPreEditState) {
   [textfield_ enterPreEditState];
   EXPECT_TRUE([textfield_ isPreEditing]);
   [textfield_ selectAll:nil];

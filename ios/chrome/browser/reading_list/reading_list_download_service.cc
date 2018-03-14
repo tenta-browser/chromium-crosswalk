@@ -13,11 +13,12 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/threading/thread_restrictions.h"
 #include "components/reading_list/core/offline_url_utils.h"
 #include "components/reading_list/core/reading_list_entry.h"
 #include "components/reading_list/core/reading_list_model.h"
 #include "ios/chrome/browser/reading_list/reading_list_distiller_page_factory.h"
-#include "ios/web/public/web_thread.h"
 
 namespace {
 // Status of the download when it ends, for UMA report.
@@ -39,6 +40,23 @@ const int kNumberOfFailsBeforeWifiOnly = 5;
 // Number of time the download must fail before we give up trying to download
 // it.
 const int kNumberOfFailsBeforeStop = 7;
+
+// Scans |root| directory and deletes all subdirectories not listed
+// in |directories_to_keep|.
+// Must be called on File thread.
+void CleanUpFiles(base::FilePath root,
+                  const std::set<std::string>& processed_directories) {
+  base::AssertBlockingAllowed();
+  base::FileEnumerator file_enumerator(root, false,
+                                       base::FileEnumerator::DIRECTORIES);
+  for (base::FilePath sub_directory = file_enumerator.Next();
+       !sub_directory.empty(); sub_directory = file_enumerator.Next()) {
+    std::string directory_name = sub_directory.BaseName().value();
+    if (!processed_directories.count(directory_name)) {
+      base::DeleteFile(sub_directory, true);
+    }
+  }
+}
 }  // namespace
 
 ReadingListDownloadService::ReadingListDownloadService(
@@ -64,11 +82,11 @@ ReadingListDownloadService::ReadingListDownloadService(
                  base::Unretained(this)),
       base::Bind(&ReadingListDownloadService::OnDeleteEnd,
                  base::Unretained(this)));
-  net::NetworkChangeNotifier::AddConnectionTypeObserver(this);
+  net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
 }
 
 ReadingListDownloadService::~ReadingListDownloadService() {
-  net::NetworkChangeNotifier::RemoveConnectionTypeObserver(this);
+  net::NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
 }
 
 void ReadingListDownloadService::Initialize() {
@@ -144,25 +162,13 @@ void ReadingListDownloadService::SyncWithModel() {
         break;
     }
   }
-  web::WebThread::PostTaskAndReply(
-      web::WebThread::FILE, FROM_HERE,
-      base::Bind(&ReadingListDownloadService::CleanUpFiles,
-                 base::Unretained(this), processed_directories),
+  base::PostTaskWithTraitsAndReply(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+      base::Bind(&::CleanUpFiles, OfflineRoot(), processed_directories),
       base::Bind(&ReadingListDownloadService::DownloadUnprocessedEntries,
                  base::Unretained(this), unprocessed_entries));
-}
-
-void ReadingListDownloadService::CleanUpFiles(
-    const std::set<std::string>& processed_directories) {
-  base::FileEnumerator file_enumerator(OfflineRoot(), false,
-                                       base::FileEnumerator::DIRECTORIES);
-  for (base::FilePath sub_directory = file_enumerator.Next();
-       !sub_directory.empty(); sub_directory = file_enumerator.Next()) {
-    std::string directory_name = sub_directory.BaseName().value();
-    if (!processed_directories.count(directory_name)) {
-      base::DeleteFile(sub_directory, true);
-    }
-  }
 }
 
 void ReadingListDownloadService::DownloadUnprocessedEntries(
@@ -180,8 +186,8 @@ void ReadingListDownloadService::ScheduleDownloadEntry(const GURL& url) {
       entry->DistilledState() == ReadingListEntry::PROCESSED || entry->IsRead())
     return;
   GURL local_url(url);
-  web::WebThread::PostDelayedTask(
-      web::WebThread::UI, FROM_HERE,
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE,
       base::Bind(&ReadingListDownloadService::DownloadEntry,
                  weak_ptr_factory_.GetWeakPtr(), local_url),
       entry->TimeUntilNextTry());
@@ -289,7 +295,7 @@ void ReadingListDownloadService::OnDeleteEnd(const GURL& url, bool success) {
   // Nothing to update as this is only called when deleting reading list entries
 }
 
-void ReadingListDownloadService::OnConnectionTypeChanged(
+void ReadingListDownloadService::OnNetworkChanged(
     net::NetworkChangeNotifier::ConnectionType type) {
   if (type == net::NetworkChangeNotifier::CONNECTION_NONE) {
     had_connection_ = false;

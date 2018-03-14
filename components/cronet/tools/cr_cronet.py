@@ -22,11 +22,10 @@ def build(out_dir, test_target, extra_options=''):
              extra_options)
 
 
-def install(out_dir, release_arg):
-  cmd = 'BUILDTYPE={0} build/android/adb_install_apk.py {1} --apk={2}'
-  build_dir = out_dir.split('/', 1)[1] # the 'Foo' part of 'out/Foo'
-  return run(cmd.format(build_dir, release_arg, 'CronetTest.apk')) or \
-    run(cmd.format(build_dir, release_arg, 'ChromiumNetTestSupport.apk'))
+def install(out_dir):
+  cmd = 'build/android/adb_install_apk.py ' + out_dir + '/apks/{0}'
+  return run(cmd.format('CronetTest.apk')) or \
+    run(cmd.format('ChromiumNetTestSupport.apk'))
 
 
 def test(out_dir, extra_options):
@@ -80,7 +79,8 @@ def main():
   if is_os:
     target_os = 'ios'
     test_target = 'cronet_test'
-    gn_args = 'is_cronet_build=true is_component_build=false '
+    gn_args = 'is_cronet_build=true is_component_build=false ' \
+        'use_xcode_clang=true ios_deployment_target="9.0" '
     gn_extra = '--ide=xcode'
     if options.iphoneos:
       gn_args += ' target_cpu="arm64" '
@@ -100,9 +100,12 @@ def main():
 
   gn_args += 'target_os="' + target_os + '" enable_websockets=false '+ \
       'disable_file_support=true disable_ftp_support=true '+ \
+      'disable_brotli_filter=false ' + \
       'use_platform_icu_alternatives=true '+ \
-      'disable_brotli_filter=true is_component_build=false ' + \
-      'ignore_elf32_limitations=true use_partition_alloc=false'
+      'enable_reporting=false '+ \
+      'is_component_build=false ' + \
+      'ignore_elf32_limitations=true use_partition_alloc=false ' + \
+      'include_transport_security_state_preload_list=false'
 
   extra_options = ' '.join(extra_options_list)
   if options.gn:
@@ -110,11 +113,9 @@ def main():
 
   if options.release:
     out_dir = 'out/Release' + out_dir_suffix
-    release_arg = ' --release'
-    gn_args += ' is_debug=false '
+    gn_args += ' is_debug=false is_official_build=true '
   else:
     out_dir = 'out/Debug' + out_dir_suffix
-    release_arg = ''
 
   if options.out_dir:
     out_dir = options.out_dir
@@ -127,20 +128,20 @@ def main():
     return build(out_dir, test_target, extra_options)
   if (not is_os):
     if (options.command=='install'):
-      return install(out_dir, release_arg)
+      return install(out_dir)
     if (options.command=='proguard'):
       return run ('ninja -C ' + out_dir + ' cronet_sample_proguard_apk')
     if (options.command=='test'):
-      return install(out_dir, release_arg) or test(out_dir, extra_options)
+      return install(out_dir) or test(out_dir, extra_options)
     if (options.command=='build-test'):
-      return build(out_dir, test_target) or install(out_dir, release_arg) or \
+      return build(out_dir, test_target) or install(out_dir) or \
           test(out_dir, extra_options)
     if (options.command=='stack'):
       return stack(out_dir)
     if (options.command=='debug'):
-      return install(out_dir, release_arg) or debug(extra_options)
+      return install(out_dir) or debug(extra_options)
     if (options.command=='build-debug'):
-      return build(out_dir, test_target) or install(out_dir, release_arg) or \
+      return build(out_dir, test_target) or install(out_dir) or \
           debug(extra_options)
   else:
     if (options.command=='test'):

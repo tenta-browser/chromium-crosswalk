@@ -2,6 +2,11 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file. */
 
+body {
+  display: flex;
+  flex-direction: column;
+}
+
 div {
   margin: 10px 0;
 }
@@ -12,12 +17,17 @@ paper-button[raised].colored {
 }
 
 #select-div {
+  display: flex;
   height: 100px;
   width: 500px;
 }
 
 .state-table {
   border-collapse: collapse;
+}
+
+.state-table tr {
+  min-width: 800px;
 }
 
 .state-table tr td {
@@ -44,10 +54,15 @@ paper-button[raised].colored {
 }
 
 .state-table-expanded-cell {
+  min-width: 400px;
   white-space: pre-wrap;
 }
 
 .state-table-icon-cell {
   height: 32px;
   width: 32px;
+}
+
+cr-network-select {
+  flex: 1;
 }

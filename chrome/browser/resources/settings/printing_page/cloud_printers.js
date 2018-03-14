@@ -4,7 +4,7 @@
 
 /**
  * @fileoverview 'settings-cloud-printers' is a component for showing Google
- * Cloud Printer settings subpage (chrome://md-settings/cloudPrinters).
+ * Cloud Printer settings subpage (chrome://settings/cloudPrinters).
  */
 // TODO(xdai): Rename it to 'settings-cloud-printers-page'.
 Polymer({
@@ -15,10 +15,5 @@ Polymer({
       type: Object,
       notify: true,
     },
-  },
-
-  /** @private */
-  onManageTap_: function() {
-    window.open(loadTimeData.getString('devicesUrl'));
   },
 });

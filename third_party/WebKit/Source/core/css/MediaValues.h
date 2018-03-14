@@ -21,8 +21,8 @@ enum class ColorSpaceGamut;
 
 class CORE_EXPORT MediaValues : public GarbageCollectedFinalized<MediaValues> {
  public:
-  virtual ~MediaValues() {}
-  DEFINE_INLINE_VIRTUAL_TRACE() {}
+  virtual ~MediaValues() = default;
+  virtual void Trace(blink::Visitor* visitor) {}
 
   static MediaValues* CreateDynamicIfFrameExists(LocalFrame*);
   virtual MediaValues* Copy() const = 0;
@@ -95,7 +95,6 @@ class CORE_EXPORT MediaValues : public GarbageCollectedFinalized<MediaValues> {
   static int CalculateAvailableHoverTypes(LocalFrame*);
   static DisplayShape CalculateDisplayShape(LocalFrame*);
   static ColorSpaceGamut CalculateColorGamut(LocalFrame*);
-  static LocalFrame* FrameFrom(Document&);
 };
 
 }  // namespace blink

@@ -26,8 +26,7 @@ class MojoDecoderBufferWriter;
 
 // A mojom::Decryptor implementation. This object is owned by the creator,
 // and uses a weak binding across the mojo interface.
-class MEDIA_MOJO_EXPORT MojoDecryptorService
-    : NON_EXPORTED_BASE(public mojom::Decryptor) {
+class MEDIA_MOJO_EXPORT MojoDecryptorService : public mojom::Decryptor {
  public:
   using StreamType = media::Decryptor::StreamType;
   using Status = media::Decryptor::Status;
@@ -42,64 +41,68 @@ class MEDIA_MOJO_EXPORT MojoDecryptorService
   ~MojoDecryptorService() final;
 
   // mojom::Decryptor implementation.
-  void Initialize(mojo::ScopedDataPipeConsumerHandle receive_pipe,
-                  mojo::ScopedDataPipeProducerHandle transmit_pipe) final;
+  void Initialize(mojo::ScopedDataPipeConsumerHandle audio_pipe,
+                  mojo::ScopedDataPipeConsumerHandle video_pipe,
+                  mojo::ScopedDataPipeConsumerHandle decrypt_pipe,
+                  mojo::ScopedDataPipeProducerHandle decrypted_pipe) final;
   void Decrypt(StreamType stream_type,
                mojom::DecoderBufferPtr encrypted,
-               const DecryptCallback& callback) final;
+               DecryptCallback callback) final;
   void CancelDecrypt(StreamType stream_type) final;
-  void InitializeAudioDecoder(
-      mojom::AudioDecoderConfigPtr config,
-      const InitializeAudioDecoderCallback& callback) final;
-  void InitializeVideoDecoder(
-      mojom::VideoDecoderConfigPtr config,
-      const InitializeVideoDecoderCallback& callback) final;
-  void DecryptAndDecodeAudio(
-      mojom::DecoderBufferPtr encrypted,
-      const DecryptAndDecodeAudioCallback& callback) final;
-  void DecryptAndDecodeVideo(
-      mojom::DecoderBufferPtr encrypted,
-      const DecryptAndDecodeVideoCallback& callback) final;
+  void InitializeAudioDecoder(const AudioDecoderConfig& config,
+                              InitializeAudioDecoderCallback callback) final;
+  void InitializeVideoDecoder(const VideoDecoderConfig& config,
+                              InitializeVideoDecoderCallback callback) final;
+  void DecryptAndDecodeAudio(mojom::DecoderBufferPtr encrypted,
+                             DecryptAndDecodeAudioCallback callback) final;
+  void DecryptAndDecodeVideo(mojom::DecoderBufferPtr encrypted,
+                             DecryptAndDecodeVideoCallback callback) final;
   void ResetDecoder(StreamType stream_type) final;
   void DeinitializeDecoder(StreamType stream_type) final;
 
  private:
   void OnReadDone(StreamType stream_type,
-                  const DecryptCallback& callback,
+                  DecryptCallback callback,
                   scoped_refptr<DecoderBuffer> buffer);
 
   // Callback executed once Decrypt() is done.
-  void OnDecryptDone(const DecryptCallback& callback,
+  void OnDecryptDone(DecryptCallback callback,
                      Status status,
                      const scoped_refptr<DecoderBuffer>& buffer);
 
   // Callbacks executed once decoder initialized.
-  void OnAudioDecoderInitialized(const InitializeAudioDecoderCallback& callback,
+  void OnAudioDecoderInitialized(InitializeAudioDecoderCallback callback,
                                  bool success);
-  void OnVideoDecoderInitialized(const InitializeVideoDecoderCallback& callback,
+  void OnVideoDecoderInitialized(InitializeVideoDecoderCallback callback,
                                  bool success);
 
-  void OnAudioRead(const DecryptAndDecodeAudioCallback& callback,
+  void OnAudioRead(DecryptAndDecodeAudioCallback callback,
                    scoped_refptr<DecoderBuffer> buffer);
-  void OnVideoRead(const DecryptAndDecodeVideoCallback& callback,
+  void OnVideoRead(DecryptAndDecodeVideoCallback callback,
                    scoped_refptr<DecoderBuffer> buffer);
+  void OnReaderFlushDone(StreamType stream_type);
 
   // Callbacks executed when DecryptAndDecode are done.
-  void OnAudioDecoded(const DecryptAndDecodeAudioCallback& callback,
+  void OnAudioDecoded(DecryptAndDecodeAudioCallback callback,
                       Status status,
                       const media::Decryptor::AudioFrames& frames);
-  void OnVideoDecoded(const DecryptAndDecodeVideoCallback& callback,
+  void OnVideoDecoded(DecryptAndDecodeVideoCallback callback,
                       Status status,
                       const scoped_refptr<VideoFrame>& frame);
+
+  // Returns audio/video buffer reader according to the |stream_type|.
+  MojoDecoderBufferReader* GetBufferReader(StreamType stream_type) const;
 
   // A weak binding is used to connect to the MojoDecryptor.
   mojo::Binding<mojom::Decryptor> binding_;
 
-  // Helper class to send decrypted DecoderBuffer to the client.
-  std::unique_ptr<MojoDecoderBufferWriter> mojo_decoder_buffer_writer_;
+  // Helper classes to receive encrypted DecoderBuffer from the client.
+  std::unique_ptr<MojoDecoderBufferReader> audio_buffer_reader_;
+  std::unique_ptr<MojoDecoderBufferReader> video_buffer_reader_;
+  std::unique_ptr<MojoDecoderBufferReader> decrypt_buffer_reader_;
 
-  // Helper class to receive encrypted DecoderBuffer from the client.
-  std::unique_ptr<MojoDecoderBufferReader> mojo_decoder_buffer_reader_;
+  // Helper class to send decrypted DecoderBuffer to the client.
+  std::unique_ptr<MojoDecoderBufferWriter> decrypted_buffer_writer_;
 
   media::Decryptor* decryptor_;
 

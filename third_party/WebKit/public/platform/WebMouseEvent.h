@@ -6,6 +6,7 @@
 #define WebMouseEvent_h
 
 #include "WebInputEvent.h"
+#include "WebMenuSourceType.h"
 
 namespace blink {
 
@@ -21,22 +22,12 @@ class WebGestureEvent;
 //   on. crbug.com/456625
 class WebMouseEvent : public WebInputEvent, public WebPointerProperties {
  public:
+  static constexpr PointerId kMousePointerId = std::numeric_limits<int>::max();
+
   int click_count;
 
-  WebMouseEvent(Type type_param,
-                int x_param,
-                int y_param,
-                int global_x_param,
-                int global_y_param,
-                int modifiers_param,
-                double time_stamp_seconds_param)
-      : WebInputEvent(sizeof(WebMouseEvent),
-                      type_param,
-                      modifiers_param,
-                      time_stamp_seconds_param),
-        WebPointerProperties(),
-        position_in_widget_(x_param, y_param),
-        position_in_screen_(global_x_param, global_y_param) {}
+  // Only used for contextmenu events.
+  WebMenuSourceType menu_source_type;
 
   WebMouseEvent(Type type_param,
                 WebFloatPoint position,
@@ -44,26 +35,36 @@ class WebMouseEvent : public WebInputEvent, public WebPointerProperties {
                 Button button_param,
                 int click_count_param,
                 int modifiers_param,
-                double time_stamp_seconds_param)
+                double time_stamp_seconds_param,
+                WebMenuSourceType menu_source_type_param = kMenuSourceNone,
+                PointerId id_param = kMousePointerId)
       : WebInputEvent(sizeof(WebMouseEvent),
                       type_param,
                       modifiers_param,
                       time_stamp_seconds_param),
-        WebPointerProperties(button_param, PointerType::kMouse),
+        WebPointerProperties(
+            id_param,
+            PointerType::kMouse,
+            button_param,
+            WebFloatPoint(floor(position.x), floor(position.y)),
+            WebFloatPoint(floor(global_position.x), floor(global_position.y))),
         click_count(click_count_param),
-        position_in_widget_(floor(position.x), floor(position.y)),
-        position_in_screen_(floor(global_position.x),
-                            floor(global_position.y)) {}
+        menu_source_type(menu_source_type_param) {
+    DCHECK_GE(type_param, kMouseTypeFirst);
+    DCHECK_LE(type_param, kMouseTypeLast);
+  }
 
   WebMouseEvent(Type type_param,
                 int modifiers_param,
-                double time_stamp_seconds_param)
+                double time_stamp_seconds_param,
+                PointerId id_param = kMousePointerId)
       : WebMouseEvent(sizeof(WebMouseEvent),
                       type_param,
                       modifiers_param,
-                      time_stamp_seconds_param) {}
+                      time_stamp_seconds_param,
+                      id_param) {}
 
-  WebMouseEvent() : WebMouseEvent(sizeof(WebMouseEvent)) {}
+  WebMouseEvent() : WebMouseEvent(sizeof(WebMouseEvent), kMousePointerId) {}
 
   bool FromTouch() const {
     return (GetModifiers() & kIsCompatibilityEventForTouch) != 0;
@@ -75,47 +76,41 @@ class WebMouseEvent : public WebInputEvent, public WebPointerProperties {
                                       Button button_param,
                                       int click_count_param,
                                       int modifiers_param,
-                                      double time_stamp_seconds_param);
+                                      double time_stamp_seconds_param,
+                                      PointerId id_param = kMousePointerId);
 
   BLINK_PLATFORM_EXPORT WebFloatPoint MovementInRootFrame() const;
   BLINK_PLATFORM_EXPORT WebFloatPoint PositionInRootFrame() const;
 
-  // Sets any scaled values to be their computed values and sets |frameScale|
-  // back to 1 and |translateX|, |translateY| back to 0.
+  // Sets any scaled values to be their computed values and sets |frame_scale_|
+  // back to 1 and |frame_translate_| X and Y coordinates back to 0.
   BLINK_PLATFORM_EXPORT WebMouseEvent FlattenTransform() const;
 #endif
 
-  WebFloatPoint PositionInWidget() const { return position_in_widget_; }
   void SetPositionInWidget(float x, float y) {
-    position_in_widget_ = WebFloatPoint(floor(x), floor(y));
+    position_in_widget_ = WebFloatPoint(x, y);
   }
 
-  WebFloatPoint PositionInScreen() const { return position_in_screen_; }
   void SetPositionInScreen(float x, float y) {
-    position_in_screen_ = WebFloatPoint(floor(x), floor(y));
+    position_in_screen_ = WebFloatPoint(x, y);
   }
 
  protected:
-  explicit WebMouseEvent(unsigned size_param)
-      : WebInputEvent(size_param), WebPointerProperties() {}
+  WebMouseEvent(unsigned size_param, PointerId id_param)
+      : WebInputEvent(size_param), WebPointerProperties(id_param) {}
 
   WebMouseEvent(unsigned size_param,
                 Type type,
                 int modifiers,
-                double time_stamp_seconds)
+                double time_stamp_seconds,
+                PointerId id_param)
       : WebInputEvent(size_param, type, modifiers, time_stamp_seconds),
-        WebPointerProperties() {}
+        WebPointerProperties(id_param) {}
 
   void FlattenTransformSelf();
 
  private:
-  // Widget coordinate, which is relative to the bound of current RenderWidget
-  // (e.g. a plugin or OOPIF inside a RenderView). Similar to viewport
-  // coordinates but without DevTools emulation transform or overscroll applied.
-  WebFloatPoint position_in_widget_;
-
-  // Screen coordinate
-  WebFloatPoint position_in_screen_;
+  void SetMenuSourceType(WebInputEvent::Type);
 };
 
 #pragma pack(pop)

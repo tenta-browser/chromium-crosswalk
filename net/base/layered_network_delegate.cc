@@ -12,8 +12,7 @@ LayeredNetworkDelegate::LayeredNetworkDelegate(
     std::unique_ptr<NetworkDelegate> nested_network_delegate)
     : nested_network_delegate_(std::move(nested_network_delegate)) {}
 
-LayeredNetworkDelegate::~LayeredNetworkDelegate() {
-}
+LayeredNetworkDelegate::~LayeredNetworkDelegate() = default;
 
 int LayeredNetworkDelegate::OnBeforeURLRequest(
     URLRequest* request,
@@ -191,41 +190,41 @@ void LayeredNetworkDelegate::OnCanGetCookiesInternal(
 }
 
 bool LayeredNetworkDelegate::OnCanSetCookie(const URLRequest& request,
-                                            const std::string& cookie_line,
+                                            const net::CanonicalCookie& cookie,
                                             CookieOptions* options) {
-  OnCanSetCookieInternal(request, cookie_line, options);
-  return nested_network_delegate_->CanSetCookie(request, cookie_line, options);
+  OnCanSetCookieInternal(request, cookie, options);
+  return nested_network_delegate_->CanSetCookie(request, cookie, options);
 }
 
 void LayeredNetworkDelegate::OnCanSetCookieInternal(
     const URLRequest& request,
-    const std::string& cookie_line,
-    CookieOptions* options) {
-}
+    const net::CanonicalCookie& cookie,
+    CookieOptions* options) {}
 
-bool LayeredNetworkDelegate::OnCanAccessFile(const URLRequest& request,
-                                             const base::FilePath& path) const {
-  OnCanAccessFileInternal(request, path);
-  return nested_network_delegate_->CanAccessFile(request, path);
+bool LayeredNetworkDelegate::OnCanAccessFile(
+    const URLRequest& request,
+    const base::FilePath& original_path,
+    const base::FilePath& absolute_path) const {
+  OnCanAccessFileInternal(request, original_path, absolute_path);
+  return nested_network_delegate_->CanAccessFile(request, original_path,
+                                                 absolute_path);
 }
 
 void LayeredNetworkDelegate::OnCanAccessFileInternal(
     const URLRequest& request,
-    const base::FilePath& path) const {
-}
+    const base::FilePath& original_path,
+    const base::FilePath& absolute_path) const {}
 
 bool LayeredNetworkDelegate::OnCanEnablePrivacyMode(
     const GURL& url,
-    const GURL& first_party_for_cookies) const {
-  OnCanEnablePrivacyModeInternal(url, first_party_for_cookies);
-  return nested_network_delegate_->CanEnablePrivacyMode(
-      url, first_party_for_cookies);
+    const GURL& site_for_cookies) const {
+  OnCanEnablePrivacyModeInternal(url, site_for_cookies);
+  return nested_network_delegate_->CanEnablePrivacyMode(url, site_for_cookies);
 }
 
 void LayeredNetworkDelegate::OnCanEnablePrivacyModeInternal(
     const GURL& url,
-    const GURL& first_party_for_cookies) const {
-}
+    const GURL& site_for_cookies) const {}
 
 bool LayeredNetworkDelegate::OnAreExperimentalCookieFeaturesEnabled() const {
   OnAreExperimentalCookieFeaturesEnabledInternal();
@@ -253,5 +252,45 @@ void LayeredNetworkDelegate::
         const GURL& target_url,
         const GURL& referrer_url) const {
 }
+
+bool LayeredNetworkDelegate::OnCanQueueReportingReport(
+    const url::Origin& origin) const {
+  OnCanQueueReportingReportInternal(origin);
+  return nested_network_delegate_->CanQueueReportingReport(origin);
+}
+
+void LayeredNetworkDelegate::OnCanQueueReportingReportInternal(
+    const url::Origin& origin) const {}
+
+bool LayeredNetworkDelegate::OnCanSendReportingReport(
+    const url::Origin& origin) const {
+  OnCanSendReportingReportInternal(origin);
+  return nested_network_delegate_->CanSendReportingReport(origin);
+}
+
+void LayeredNetworkDelegate::OnCanSendReportingReportInternal(
+    const url::Origin& origin) const {}
+
+bool LayeredNetworkDelegate::OnCanSetReportingClient(
+    const url::Origin& origin,
+    const GURL& endpoint) const {
+  OnCanSetReportingClientInternal(origin, endpoint);
+  return nested_network_delegate_->CanSetReportingClient(origin, endpoint);
+}
+
+void LayeredNetworkDelegate::OnCanSetReportingClientInternal(
+    const url::Origin& origin,
+    const GURL& endpoint) const {}
+
+bool LayeredNetworkDelegate::OnCanUseReportingClient(
+    const url::Origin& origin,
+    const GURL& endpoint) const {
+  OnCanUseReportingClientInternal(origin, endpoint);
+  return nested_network_delegate_->CanUseReportingClient(origin, endpoint);
+}
+
+void LayeredNetworkDelegate::OnCanUseReportingClientInternal(
+    const url::Origin& origin,
+    const GURL& endpoint) const {}
 
 }  // namespace net

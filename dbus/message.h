@@ -158,9 +158,8 @@ class CHROME_DBUS_EXPORT MethodCall : public Message {
              const std::string& method_name);
 
   // Returns a newly created MethodCall from the given raw message of the
-  // type DBUS_MESSAGE_TYPE_METHOD_CALL. The caller must delete the
-  // returned object. Takes the ownership of |raw_message|.
-  static MethodCall* FromRawMessage(DBusMessage* raw_message);
+  // type DBUS_MESSAGE_TYPE_METHOD_CALL. Takes the ownership of |raw_message|.
+  static std::unique_ptr<MethodCall> FromRawMessage(DBusMessage* raw_message);
 
  private:
   // Creates a method call message. The internal raw message is NULL.
@@ -187,9 +186,8 @@ class CHROME_DBUS_EXPORT Signal : public Message {
          const std::string& method_name);
 
   // Returns a newly created SIGNAL from the given raw message of the type
-  // DBUS_MESSAGE_TYPE_SIGNAL. The caller must delete the returned
-  // object. Takes the ownership of |raw_message|.
-  static Signal* FromRawMessage(DBusMessage* raw_message);
+  // DBUS_MESSAGE_TYPE_SIGNAL. Takes the ownership of |raw_message|.
+  static std::unique_ptr<Signal> FromRawMessage(DBusMessage* raw_message);
 
  private:
   // Creates a signal message. The internal raw message is NULL.
@@ -334,8 +332,8 @@ class CHROME_DBUS_EXPORT MessageWriter {
   // into an array of bytes before communication, since protocol buffers are not
   // a native dbus type. On the receiving size the array of bytes needs to be
   // read and deserialized into a protocol buffer of the correct type. There are
-  // methods in MessageReader to assist in this.  Return true on succes and fail
-  // when serialization is not successful.
+  // methods in MessageReader to assist in this.  Return true on success and
+  // false when serialization fails.
   bool AppendProtoAsArrayOfBytes(const google::protobuf::MessageLite& protobuf);
 
   // Appends the byte wrapped in a variant data container. Variants are

@@ -132,10 +132,12 @@ void NativeWidgetMac::InitNativeWidget(const Widget::InitParams& params) {
 
   delegate_->OnNativeWidgetCreated(true);
 
-  bridge_->SetFocusManager(GetWidget()->GetFocusManager());
-
   DCHECK(GetWidget()->GetRootView());
   bridge_->SetRootView(GetWidget()->GetRootView());
+  if (auto* focus_manager = GetWidget()->GetFocusManager()) {
+    [window makeFirstResponder:bridge_->ns_view()];
+    bridge_->SetFocusManager(focus_manager);
+  }
 
   // "Infer" must be handled by ViewsDelegate::OnBeforeWidgetInit().
   DCHECK_NE(Widget::InitParams::INFER_OPACITY, params.opacity);
@@ -145,6 +147,7 @@ void NativeWidgetMac::InitNativeWidget(const Widget::InitParams& params) {
 
 void NativeWidgetMac::OnWidgetInitDone() {
   OnSizeConstraintsChanged();
+  bridge_->OnWidgetInitDone();
 }
 
 NonClientFrameView* NativeWidgetMac::CreateNonClientFrameView() {
@@ -268,7 +271,7 @@ void NativeWidgetMac::GetWindowPlacement(
 bool NativeWidgetMac::SetWindowTitle(const base::string16& title) {
   NSWindow* window = GetNativeWindow();
   NSString* current_title = [window title];
-  NSString* new_title = SysUTF16ToNSString(title);
+  NSString* new_title = base::SysUTF16ToNSString(title);
   if ([current_title isEqualToString:new_title])
     return false;
 
@@ -278,7 +281,9 @@ bool NativeWidgetMac::SetWindowTitle(const base::string16& title) {
 
 void NativeWidgetMac::SetWindowIcons(const gfx::ImageSkia& window_icon,
                                      const gfx::ImageSkia& app_icon) {
-  NOTIMPLEMENTED();
+  // Per-window icons are not really a thing on Mac, so do nothing.
+  // TODO(tapted): Investigate whether to use NSWindowDocumentIconButton to set
+  // an icon next to the window title. See http://crbug.com/766897.
 }
 
 void NativeWidgetMac::InitModalType(ui::ModalType modal_type) {
@@ -326,14 +331,18 @@ void NativeWidgetMac::SetSize(const gfx::Size& size) {
 }
 
 void NativeWidgetMac::StackAbove(gfx::NativeView native_view) {
-  NOTIMPLEMENTED();
+  // NativeWidgetMac currently only has machinery for stacking windows, and only
+  // stacks child windows above parents. That's currently all this is used for.
+  // DCHECK if a new use case comes along.
+  DCHECK(bridge_ && bridge_->parent());
+  DCHECK_EQ([native_view window], bridge_->parent()->GetNSWindow());
 }
 
 void NativeWidgetMac::StackAtTop() {
   NOTIMPLEMENTED();
 }
 
-void NativeWidgetMac::SetShape(std::unique_ptr<SkRegion> shape) {
+void NativeWidgetMac::SetShape(std::unique_ptr<Widget::ShapeRects> shape) {
   NOTIMPLEMENTED();
 }
 
@@ -355,7 +364,7 @@ void NativeWidgetMac::Close() {
   }
 
   // For other modal types, animate the close.
-  if (delegate_->IsModal()) {
+  if (bridge_->animate() && delegate_->IsModal()) {
     [ViewsNSWindowCloseAnimator closeWindowWithAnimation:window];
     return;
   }
@@ -579,7 +588,8 @@ void NativeWidgetMac::EndMoveLoop() {
 }
 
 void NativeWidgetMac::SetVisibilityChangedAnimationsEnabled(bool value) {
-  NOTIMPLEMENTED();
+  if (bridge_)
+    bridge_->set_animate(value);
 }
 
 void NativeWidgetMac::SetVisibilityAnimationDuration(
@@ -622,6 +632,19 @@ NativeWidgetMacNSWindow* NativeWidgetMac::CreateNSWindow(
 
 ////////////////////////////////////////////////////////////////////////////////
 // Widget, public:
+
+// static
+void Widget::CloseAllSecondaryWidgets() {
+  // Create a copy of [NSApp windows] to increase every window's retain count.
+  // -[NSWindow dealloc] won't be invoked on any windows until this array goes
+  // out of scope.
+  base::scoped_nsobject<NSArray> starting_windows([[NSApp windows] copy]);
+  for (NSWindow* window in starting_windows.get()) {
+    Widget* widget = GetWidgetForNativeWindow(window);
+    if (widget && widget->is_secondary_widget())
+      [window close];
+  }
+}
 
 bool Widget::ConvertRect(const Widget* source,
                          const Widget* target,
@@ -742,14 +765,34 @@ void NativeWidgetPrivate::GetAllOwnedWidgets(gfx::NativeView native_view,
 // static
 void NativeWidgetPrivate::ReparentNativeView(gfx::NativeView native_view,
                                              gfx::NativeView new_parent) {
+  DCHECK_NE(native_view, new_parent);
+  if (!new_parent || [native_view superview] == new_parent) {
+    NOTREACHED();
+    return;
+  }
+
   BridgedNativeWidget* bridge =
       NativeWidgetMac::GetBridgeForNativeWindow([native_view window]);
-  if (bridge && bridge->parent() &&
-      bridge->parent()->GetNSWindow() == [new_parent window])
-    return;  // Nothing to do.
+  BridgedNativeWidget* parent_bridge =
+      NativeWidgetMac::GetBridgeForNativeWindow([new_parent window]);
+  DCHECK(bridge);
+  if (Widget::GetWidgetForNativeView(native_view)->is_top_level() &&
+      bridge->parent() == parent_bridge)
+    return;
 
-  // Not supported. See http://crbug.com/514920.
-  NOTREACHED();
+  Widget::Widgets widgets;
+  GetAllChildWidgets(native_view, &widgets);
+
+  // First notify all the widgets that they are being disassociated
+  // from their previous parent.
+  for (auto* child : widgets)
+    child->NotifyNativeViewHierarchyWillChange();
+
+  bridge->ReparentNativeView(native_view, new_parent);
+
+  // And now, notify them that they have a brand new parent.
+  for (auto* child : widgets)
+    child->NotifyNativeViewHierarchyChanged();
 }
 
 // static

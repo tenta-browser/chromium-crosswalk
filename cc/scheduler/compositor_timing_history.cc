@@ -33,12 +33,29 @@ class CompositorTimingHistory::UMAReporter {
       base::TimeDelta duration) = 0;
   virtual void AddBeginMainFrameStartToCommitDuration(
       base::TimeDelta duration) = 0;
-  virtual void AddCommitToReadyToActivateDuration(base::TimeDelta duration) = 0;
+  virtual void AddCommitToReadyToActivateDuration(base::TimeDelta duration,
+                                                  TreePriority priority) = 0;
+  virtual void AddInvalidationToReadyToActivateDuration(
+      base::TimeDelta duration,
+      TreePriority priority) = 0;
+  virtual void AddReadyToActivateToWillActivateDuration(
+      base::TimeDelta duration,
+      bool pending_tree_is_impl_side) = 0;
   virtual void AddPrepareTilesDuration(base::TimeDelta duration) = 0;
   virtual void AddActivateDuration(base::TimeDelta duration) = 0;
   virtual void AddDrawDuration(base::TimeDelta duration) = 0;
   virtual void AddSubmitToAckLatency(base::TimeDelta duration) = 0;
   virtual void AddSubmitAckWasFast(bool was_fast) = 0;
+
+  // crbug.com/758439: the following 3 functions are used to report timing in
+  // certain conditions targeting blink / compositor animations.
+  // Only the renderer would get the meaningful data.
+  virtual void AddDrawIntervalWithCompositedAnimations(
+      base::TimeDelta duration) = 0;
+  virtual void AddDrawIntervalWithMainThreadAnimations(
+      base::TimeDelta duration) = 0;
+  virtual void AddDrawIntervalWithMainThreadCompositableAnimations(
+      base::TimeDelta duration) = 0;
 
   // Synchronization measurements
   virtual void AddMainAndImplFrameTimeDelta(base::TimeDelta delta) = 0;
@@ -114,13 +131,34 @@ const int kUMADurationBuckets[] = {
                          kUMAVSyncBuckets + arraysize(kUMAVSyncBuckets))); \
   } while (false)
 
-#define UMA_HISTOGRAM_CUSTOM_TIMES_DURATION(name, sample)           \
-  do {                                                              \
-    UMA_HISTOGRAM_CUSTOM_ENUMERATION(                               \
-        name "2", sample.InMicroseconds(),                          \
-        std::vector<int>(                                           \
-            kUMADurationBuckets,                                    \
-            kUMADurationBuckets + arraysize(kUMADurationBuckets))); \
+#define UMA_HISTOGRAM_CUSTOM_TIMES_DURATION_SUFFIX(name, suffix, sample) \
+  do {                                                                   \
+    UMA_HISTOGRAM_CUSTOM_ENUMERATION(                                    \
+        name "2" suffix, sample.InMicroseconds(),                        \
+        std::vector<int>(                                                \
+            kUMADurationBuckets,                                         \
+            kUMADurationBuckets + arraysize(kUMADurationBuckets)));      \
+  } while (false)
+
+#define UMA_HISTOGRAM_CUSTOM_TIMES_DURATION(name, sample) \
+  UMA_HISTOGRAM_CUSTOM_TIMES_DURATION_SUFFIX(name, "", sample)
+
+#define UMA_HISTOGRAM_READY_TO_ACTIVATE(name, sample, priority)            \
+  do {                                                                     \
+    UMA_HISTOGRAM_CUSTOM_TIMES_DURATION(name, sample);                     \
+    switch (priority) {                                                    \
+      case SAME_PRIORITY_FOR_BOTH_TREES:                                   \
+        UMA_HISTOGRAM_CUSTOM_TIMES_DURATION_SUFFIX(name, ".Same", sample); \
+        break;                                                             \
+      case SMOOTHNESS_TAKES_PRIORITY:                                      \
+        UMA_HISTOGRAM_CUSTOM_TIMES_DURATION_SUFFIX(name, ".Smoothness",    \
+                                                   sample);                \
+        break;                                                             \
+      case NEW_CONTENT_TAKES_PRIORITY:                                     \
+        UMA_HISTOGRAM_CUSTOM_TIMES_DURATION_SUFFIX(name, ".NewContent",    \
+                                                   sample);                \
+        break;                                                             \
+    }                                                                      \
   } while (false)
 
 class RendererUMAReporter : public CompositorTimingHistory::UMAReporter {
@@ -147,6 +185,25 @@ class RendererUMAReporter : public CompositorTimingHistory::UMAReporter {
                                              interval);
   }
 
+  void AddDrawIntervalWithCompositedAnimations(
+      base::TimeDelta interval) override {
+    UMA_HISTOGRAM_CUSTOM_TIMES_VSYNC_ALIGNED(
+        "Scheduling.Renderer.DrawIntervalWithCompositedAnimations", interval);
+  }
+
+  void AddDrawIntervalWithMainThreadAnimations(
+      base::TimeDelta interval) override {
+    UMA_HISTOGRAM_CUSTOM_TIMES_VSYNC_ALIGNED(
+        "Scheduling.Renderer.DrawIntervalWithMainThreadAnimations", interval);
+  }
+
+  void AddDrawIntervalWithMainThreadCompositableAnimations(
+      base::TimeDelta interval) override {
+    UMA_HISTOGRAM_CUSTOM_TIMES_VSYNC_ALIGNED(
+        "Scheduling.Renderer.DrawIntervalWithMainThreadCompositableAnimations",
+        interval);
+  }
+
   void AddBeginImplFrameLatency(base::TimeDelta delta) override {
     UMA_HISTOGRAM_CUSTOM_TIMES_DURATION(
         "Scheduling.Renderer.BeginImplFrameLatency", delta);
@@ -170,9 +227,33 @@ class RendererUMAReporter : public CompositorTimingHistory::UMAReporter {
         "Scheduling.Renderer.BeginMainFrameStartToCommitDuration", duration);
   }
 
-  void AddCommitToReadyToActivateDuration(base::TimeDelta duration) override {
-    UMA_HISTOGRAM_CUSTOM_TIMES_DURATION(
-        "Scheduling.Renderer.CommitToReadyToActivateDuration", duration);
+  void AddCommitToReadyToActivateDuration(base::TimeDelta duration,
+                                          TreePriority priority) override {
+    UMA_HISTOGRAM_READY_TO_ACTIVATE(
+        "Scheduling.Renderer.CommitToReadyToActivateDuration", duration,
+        priority);
+  }
+
+  void AddInvalidationToReadyToActivateDuration(
+      base::TimeDelta duration,
+      TreePriority priority) override {
+    UMA_HISTOGRAM_READY_TO_ACTIVATE(
+        "Scheduling.Renderer.InvalidationToReadyToActivateDuration", duration,
+        priority);
+  }
+
+  void AddReadyToActivateToWillActivateDuration(
+      base::TimeDelta duration,
+      bool pending_tree_is_impl_side) override {
+    if (pending_tree_is_impl_side) {
+      UMA_HISTOGRAM_CUSTOM_TIMES_DURATION_SUFFIX(
+          "Scheduling.Renderer.ReadyToActivateToActivationDuration", ".Impl",
+          duration);
+    } else {
+      UMA_HISTOGRAM_CUSTOM_TIMES_DURATION_SUFFIX(
+          "Scheduling.Renderer.ReadyToActivateToActivationDuration", ".Main",
+          duration);
+    }
   }
 
   void AddPrepareTilesDuration(base::TimeDelta duration) override {
@@ -229,6 +310,29 @@ class BrowserUMAReporter : public CompositorTimingHistory::UMAReporter {
                                              interval);
   }
 
+  void AddDrawIntervalWithCompositedAnimations(
+      base::TimeDelta interval) override {
+    // Still report, but the data is not meaningful.
+    UMA_HISTOGRAM_CUSTOM_TIMES_VSYNC_ALIGNED(
+        "Scheduling.Browser.DrawIntervalWithCompositedAnimations", interval);
+  }
+
+  void AddDrawIntervalWithMainThreadAnimations(
+      base::TimeDelta interval) override {
+    // Still report, but the data is not meaningful.
+    UMA_HISTOGRAM_CUSTOM_TIMES_VSYNC_ALIGNED(
+        "Scheduling.Browser.DrawIntervalWithMainThreadAnimations", interval);
+  }
+
+  void AddDrawIntervalWithMainThreadCompositableAnimations(
+      base::TimeDelta interval) override {
+    // Still report, but the data is not meaningful.
+    UMA_HISTOGRAM_CUSTOM_TIMES_VSYNC_ALIGNED(
+        "Scheduling.Browser."
+        "DrawIntervalWithMainThreadCompositableAnimations",
+        interval);
+  }
+
   void AddBeginImplFrameLatency(base::TimeDelta delta) override {
     UMA_HISTOGRAM_CUSTOM_TIMES_DURATION(
         "Scheduling.Browser.BeginImplFrameLatency", delta);
@@ -252,9 +356,33 @@ class BrowserUMAReporter : public CompositorTimingHistory::UMAReporter {
         "Scheduling.Browser.BeginMainFrameStartToCommitDuration", duration);
   }
 
-  void AddCommitToReadyToActivateDuration(base::TimeDelta duration) override {
-    UMA_HISTOGRAM_CUSTOM_TIMES_DURATION(
-        "Scheduling.Browser.CommitToReadyToActivateDuration", duration);
+  void AddCommitToReadyToActivateDuration(base::TimeDelta duration,
+                                          TreePriority priority) override {
+    UMA_HISTOGRAM_READY_TO_ACTIVATE(
+        "Scheduling.Browser.CommitToReadyToActivateDuration", duration,
+        priority);
+  }
+
+  void AddInvalidationToReadyToActivateDuration(
+      base::TimeDelta duration,
+      TreePriority priority) override {
+    UMA_HISTOGRAM_READY_TO_ACTIVATE(
+        "Scheduling.Browser.InvalidationToReadyToActivateDuration", duration,
+        priority);
+  }
+
+  void AddReadyToActivateToWillActivateDuration(
+      base::TimeDelta duration,
+      bool pending_tree_is_impl_side) override {
+    if (pending_tree_is_impl_side) {
+      UMA_HISTOGRAM_CUSTOM_TIMES_DURATION_SUFFIX(
+          "Scheduling.Browser.ReadyToActivateToActivationDuration", ".Impl",
+          duration);
+    } else {
+      UMA_HISTOGRAM_CUSTOM_TIMES_DURATION_SUFFIX(
+          "Scheduling.Browser.ReadyToActivateToActivationDuration", ".Main",
+          duration);
+    }
   }
 
   void AddPrepareTilesDuration(base::TimeDelta duration) override {
@@ -295,6 +423,12 @@ class NullUMAReporter : public CompositorTimingHistory::UMAReporter {
   }
   void AddCommitInterval(base::TimeDelta interval) override {}
   void AddDrawInterval(base::TimeDelta interval) override {}
+  void AddDrawIntervalWithCompositedAnimations(
+      base::TimeDelta inverval) override {}
+  void AddDrawIntervalWithMainThreadAnimations(
+      base::TimeDelta inverval) override {}
+  void AddDrawIntervalWithMainThreadCompositableAnimations(
+      base::TimeDelta interval) override {}
   void AddBeginImplFrameLatency(base::TimeDelta delta) override {}
   void AddBeginMainFrameQueueDurationCriticalDuration(
       base::TimeDelta duration) override {}
@@ -302,7 +436,14 @@ class NullUMAReporter : public CompositorTimingHistory::UMAReporter {
       base::TimeDelta duration) override {}
   void AddBeginMainFrameStartToCommitDuration(
       base::TimeDelta duration) override {}
-  void AddCommitToReadyToActivateDuration(base::TimeDelta duration) override {}
+  void AddCommitToReadyToActivateDuration(base::TimeDelta duration,
+                                          TreePriority priority) override {}
+  void AddInvalidationToReadyToActivateDuration(
+      base::TimeDelta duration,
+      TreePriority priority) override {}
+  void AddReadyToActivateToWillActivateDuration(
+      base::TimeDelta duration,
+      bool pending_tree_is_impl_side) override {}
   void AddPrepareTilesDuration(base::TimeDelta duration) override {}
   void AddActivateDuration(base::TimeDelta duration) override {}
   void AddDrawDuration(base::TimeDelta duration) override {}
@@ -398,7 +539,8 @@ void CompositorTimingHistory::SetBeginMainFrameCommittingContinuously(
     bool active) {
   if (active == begin_main_frame_committing_continuously_)
     return;
-  new_active_tree_draw_end_time_prev_ = base::TimeTicks();
+  new_active_tree_draw_end_time_prev_committing_continuously_ =
+      base::TimeTicks();
   begin_main_frame_committing_continuously_ = active;
 }
 
@@ -459,7 +601,7 @@ base::TimeDelta CompositorTimingHistory::DrawDurationEstimate() const {
   return draw_duration_history_.Percentile(kDrawEstimationPercentile);
 }
 
-void CompositorTimingHistory::DidCreateAndInitializeCompositorFrameSink() {
+void CompositorTimingHistory::DidCreateAndInitializeLayerTreeFrameSink() {
   // After we get a new output surface, we won't get a spurious
   // CompositorFrameAck from the old output surface.
   submit_start_time_ = base::TimeTicks();
@@ -469,7 +611,7 @@ void CompositorTimingHistory::DidCreateAndInitializeCompositorFrameSink() {
 void CompositorTimingHistory::WillBeginImplFrame(
     bool new_active_tree_is_likely,
     base::TimeTicks frame_time,
-    BeginFrameArgs::BeginFrameArgsType frame_type,
+    viz::BeginFrameArgs::BeginFrameArgsType frame_type,
     base::TimeTicks now) {
   // The check for whether a BeginMainFrame was sent anytime between two
   // BeginImplFrames protects us from not detecting a fast main thread that
@@ -491,7 +633,7 @@ void CompositorTimingHistory::WillBeginImplFrame(
     }
   }
 
-  if (frame_type == BeginFrameArgs::NORMAL)
+  if (frame_type == viz::BeginFrameArgs::NORMAL)
     uma_reporter_->AddBeginImplFrameLatency(now - frame_time);
 
   did_send_begin_main_frame_ = false;
@@ -531,22 +673,28 @@ void CompositorTimingHistory::BeginMainFrameStarted(
 
 void CompositorTimingHistory::BeginMainFrameAborted() {
   SetBeginMainFrameCommittingContinuously(false);
-  DidBeginMainFrame();
+  base::TimeTicks begin_main_frame_end_time = Now();
+  DidBeginMainFrame(begin_main_frame_end_time);
   begin_main_frame_frame_time_ = base::TimeTicks();
 }
 
 void CompositorTimingHistory::DidCommit() {
   DCHECK_EQ(base::TimeTicks(), pending_tree_main_frame_time_);
+  DCHECK_EQ(pending_tree_creation_time_, base::TimeTicks());
+
   SetBeginMainFrameCommittingContinuously(true);
-  DidBeginMainFrame();
+  base::TimeTicks begin_main_frame_end_time = Now();
+  DidBeginMainFrame(begin_main_frame_end_time);
+
+  pending_tree_is_impl_side_ = false;
+  pending_tree_creation_time_ = begin_main_frame_end_time;
   pending_tree_main_frame_time_ = begin_main_frame_frame_time_;
   begin_main_frame_frame_time_ = base::TimeTicks();
 }
 
-void CompositorTimingHistory::DidBeginMainFrame() {
+void CompositorTimingHistory::DidBeginMainFrame(
+    base::TimeTicks begin_main_frame_end_time) {
   DCHECK_NE(base::TimeTicks(), begin_main_frame_sent_time_);
-
-  begin_main_frame_end_time_ = Now();
 
   // If the BeginMainFrame start time isn't know, assume it was immediate
   // for scheduling purposes, but don't report it for UMA to avoid skewing
@@ -557,11 +705,11 @@ void CompositorTimingHistory::DidBeginMainFrame() {
     begin_main_frame_start_time_ = begin_main_frame_sent_time_;
 
   base::TimeDelta begin_main_frame_sent_to_commit_duration =
-      begin_main_frame_end_time_ - begin_main_frame_sent_time_;
+      begin_main_frame_end_time - begin_main_frame_sent_time_;
   base::TimeDelta begin_main_frame_queue_duration =
       begin_main_frame_start_time_ - begin_main_frame_sent_time_;
   base::TimeDelta begin_main_frame_start_to_commit_duration =
-      begin_main_frame_end_time_ - begin_main_frame_start_time_;
+      begin_main_frame_end_time - begin_main_frame_start_time_;
 
   rendering_stats_instrumentation_->AddBeginMainFrameToCommitDuration(
       begin_main_frame_sent_to_commit_duration);
@@ -596,17 +744,25 @@ void CompositorTimingHistory::DidBeginMainFrame() {
   if (begin_main_frame_needed_continuously_) {
     if (!begin_main_frame_end_time_prev_.is_null()) {
       base::TimeDelta commit_interval =
-          begin_main_frame_end_time_ - begin_main_frame_end_time_prev_;
+          begin_main_frame_end_time - begin_main_frame_end_time_prev_;
       if (begin_main_frame_on_critical_path_)
         uma_reporter_->AddBeginMainFrameIntervalCritical(commit_interval);
       else
         uma_reporter_->AddBeginMainFrameIntervalNotCritical(commit_interval);
     }
-    begin_main_frame_end_time_prev_ = begin_main_frame_end_time_;
+    begin_main_frame_end_time_prev_ = begin_main_frame_end_time;
   }
 
   begin_main_frame_sent_time_ = base::TimeTicks();
   begin_main_frame_start_time_ = base::TimeTicks();
+}
+
+void CompositorTimingHistory::WillInvalidateOnImplSide() {
+  DCHECK(!pending_tree_is_impl_side_);
+  DCHECK_EQ(pending_tree_creation_time_, base::TimeTicks());
+
+  pending_tree_is_impl_side_ = true;
+  pending_tree_creation_time_ = base::TimeTicks::Now();
 }
 
 void CompositorTimingHistory::WillPrepareTiles() {
@@ -626,34 +782,55 @@ void CompositorTimingHistory::DidPrepareTiles() {
 }
 
 void CompositorTimingHistory::ReadyToActivate() {
-  // We only care about the first ready to activate signal
-  // after a commit.
-  if (begin_main_frame_end_time_ == base::TimeTicks())
-    return;
+  DCHECK_NE(pending_tree_creation_time_, base::TimeTicks());
+  DCHECK_EQ(pending_tree_ready_to_activate_time_, base::TimeTicks());
 
-  base::TimeDelta time_since_commit = Now() - begin_main_frame_end_time_;
+  pending_tree_ready_to_activate_time_ = Now();
+  if (pending_tree_is_impl_side_) {
+    base::TimeDelta time_since_invalidation =
+        pending_tree_ready_to_activate_time_ - pending_tree_creation_time_;
+    uma_reporter_->AddInvalidationToReadyToActivateDuration(
+        time_since_invalidation, tree_priority_);
+  } else {
+    base::TimeDelta time_since_commit =
+        pending_tree_ready_to_activate_time_ - pending_tree_creation_time_;
 
-  // Before adding the new data point to the timing history, see what we would
-  // have predicted for this frame. This allows us to keep track of the accuracy
-  // of our predictions.
+    // Before adding the new data point to the timing history, see what we would
+    // have predicted for this frame. This allows us to keep track of the
+    // accuracy of our predictions.
 
-  base::TimeDelta commit_to_ready_to_activate_estimate =
-      CommitToReadyToActivateDurationEstimate();
-  uma_reporter_->AddCommitToReadyToActivateDuration(time_since_commit);
-  rendering_stats_instrumentation_->AddCommitToActivateDuration(
-      time_since_commit, commit_to_ready_to_activate_estimate);
+    base::TimeDelta commit_to_ready_to_activate_estimate =
+        CommitToReadyToActivateDurationEstimate();
+    uma_reporter_->AddCommitToReadyToActivateDuration(time_since_commit,
+                                                      tree_priority_);
+    rendering_stats_instrumentation_->AddCommitToActivateDuration(
+        time_since_commit, commit_to_ready_to_activate_estimate);
 
-  if (enabled_) {
-    commit_to_ready_to_activate_duration_history_.InsertSample(
-        time_since_commit);
+    if (enabled_) {
+      commit_to_ready_to_activate_duration_history_.InsertSample(
+          time_since_commit);
+    }
   }
-
-  begin_main_frame_end_time_ = base::TimeTicks();
 }
 
 void CompositorTimingHistory::WillActivate() {
   DCHECK_EQ(base::TimeTicks(), activate_start_time_);
+
   activate_start_time_ = Now();
+
+  // Its possible to activate the pending tree before it is ready for
+  // activation, for instance in the case of a context loss or visibility
+  // changes.
+  if (pending_tree_ready_to_activate_time_ != base::TimeTicks()) {
+    base::TimeDelta time_since_ready =
+        activate_start_time_ - pending_tree_ready_to_activate_time_;
+    uma_reporter_->AddReadyToActivateToWillActivateDuration(
+        time_since_ready, pending_tree_is_impl_side_);
+  }
+
+  pending_tree_is_impl_side_ = false;
+  pending_tree_creation_time_ = base::TimeTicks();
+  pending_tree_ready_to_activate_time_ = base::TimeTicks();
 }
 
 void CompositorTimingHistory::DidActivate() {
@@ -682,9 +859,12 @@ void CompositorTimingHistory::DrawAborted() {
   active_tree_main_frame_time_ = base::TimeTicks();
 }
 
-void CompositorTimingHistory::DidDraw(bool used_new_active_tree,
-                                      bool main_thread_missed_last_deadline,
-                                      base::TimeTicks impl_frame_time) {
+void CompositorTimingHistory::DidDraw(
+    bool used_new_active_tree,
+    base::TimeTicks impl_frame_time,
+    size_t composited_animations_count,
+    size_t main_thread_animations_count,
+    size_t main_thread_compositable_animations_count) {
   DCHECK_NE(base::TimeTicks(), draw_start_time_);
   base::TimeTicks draw_end_time = Now();
   base::TimeDelta draw_duration = draw_end_time - draw_start_time_;
@@ -706,7 +886,11 @@ void CompositorTimingHistory::DidDraw(bool used_new_active_tree,
   if (!draw_end_time_prev_.is_null()) {
     base::TimeDelta draw_interval = draw_end_time - draw_end_time_prev_;
     uma_reporter_->AddDrawInterval(draw_interval);
+    if (composited_animations_count > 0 &&
+        previous_frame_had_composited_animations_)
+      uma_reporter_->AddDrawIntervalWithCompositedAnimations(draw_interval);
   }
+  previous_frame_had_composited_animations_ = composited_animations_count > 0;
   draw_end_time_prev_ = draw_end_time;
 
   if (used_new_active_tree) {
@@ -714,19 +898,45 @@ void CompositorTimingHistory::DidDraw(bool used_new_active_tree,
     base::TimeDelta main_and_impl_delta =
         impl_frame_time - active_tree_main_frame_time_;
     DCHECK_GE(main_and_impl_delta, base::TimeDelta());
+    TRACE_EVENT2(TRACE_DISABLED_BY_DEFAULT("cc.debug.scheduler.frames"),
+                 "CompositorTimingHistory::DidDraw",
+                 "active_tree_main_frame_time", active_tree_main_frame_time_,
+                 "impl_frame_time", impl_frame_time);
     uma_reporter_->AddMainAndImplFrameTimeDelta(main_and_impl_delta);
     active_tree_main_frame_time_ = base::TimeTicks();
 
+    if (main_thread_animations_count > 0 &&
+        previous_frame_had_main_thread_animations_) {
+      base::TimeDelta draw_interval =
+          draw_end_time - new_active_tree_draw_end_time_prev_;
+      uma_reporter_->AddDrawIntervalWithMainThreadAnimations(draw_interval);
+    }
+    if (main_thread_compositable_animations_count > 0 &&
+        previous_frame_had_main_thread_compositable_animations_) {
+      base::TimeDelta draw_interval =
+          draw_end_time - new_active_tree_draw_end_time_prev_;
+      uma_reporter_->AddDrawIntervalWithMainThreadCompositableAnimations(
+          draw_interval);
+    }
+    previous_frame_had_main_thread_animations_ =
+        main_thread_animations_count > 0;
+    previous_frame_had_main_thread_compositable_animations_ =
+        main_thread_compositable_animations_count > 0;
+
+    new_active_tree_draw_end_time_prev_ = draw_end_time;
+
     if (begin_main_frame_committing_continuously_) {
-      if (!new_active_tree_draw_end_time_prev_.is_null()) {
+      if (!new_active_tree_draw_end_time_prev_committing_continuously_
+               .is_null()) {
         base::TimeDelta draw_interval =
-            draw_end_time - new_active_tree_draw_end_time_prev_;
+            draw_end_time -
+            new_active_tree_draw_end_time_prev_committing_continuously_;
         uma_reporter_->AddCommitInterval(draw_interval);
       }
-      new_active_tree_draw_end_time_prev_ = draw_end_time;
+      new_active_tree_draw_end_time_prev_committing_continuously_ =
+          draw_end_time;
     }
   }
-
   draw_start_time_ = base::TimeTicks();
 }
 
@@ -746,6 +956,10 @@ void CompositorTimingHistory::DidReceiveCompositorFrameAck() {
     submit_ack_watchdog_enabled_ = false;
   }
   submit_start_time_ = base::TimeTicks();
+}
+
+void CompositorTimingHistory::SetTreePriority(TreePriority priority) {
+  tree_priority_ = priority;
 }
 
 }  // namespace cc

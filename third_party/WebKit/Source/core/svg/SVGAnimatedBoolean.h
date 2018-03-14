@@ -31,15 +31,16 @@
 #ifndef SVGAnimatedBoolean_h
 #define SVGAnimatedBoolean_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGBoolean.h"
 #include "core/svg/properties/SVGAnimatedProperty.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
-class SVGAnimatedBoolean final : public SVGAnimatedProperty<SVGBoolean>,
-                                 public ScriptWrappable {
+class SVGAnimatedBoolean final : public ScriptWrappable,
+                                 public SVGAnimatedProperty<SVGBoolean> {
   DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(SVGAnimatedBoolean);
 
  public:
   static SVGAnimatedBoolean* Create(SVGElement* context_element,
@@ -47,8 +48,14 @@ class SVGAnimatedBoolean final : public SVGAnimatedProperty<SVGBoolean>,
     return new SVGAnimatedBoolean(context_element, attribute_name);
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE_WRAPPERS() {
-    visitor->TraceWrappers(contextElement());
+  void Trace(blink::Visitor* visitor) override {
+    SVGAnimatedProperty<SVGBoolean>::Trace(visitor);
+    ScriptWrappable::Trace(visitor);
+  }
+
+  void TraceWrappers(const ScriptWrappableVisitor* visitor) const override {
+    SVGAnimatedProperty<SVGBoolean>::TraceWrappers(visitor);
+    ScriptWrappable::TraceWrappers(visitor);
   }
 
  protected:

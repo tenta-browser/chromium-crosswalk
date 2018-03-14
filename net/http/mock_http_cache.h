@@ -27,6 +27,12 @@ namespace net {
 class MockDiskEntry : public disk_cache::Entry,
                       public base::RefCounted<MockDiskEntry> {
  public:
+  enum DeferOp {
+    DEFER_NONE,
+    DEFER_CREATE,
+    DEFER_READ,
+  };
+
   explicit MockDiskEntry(const std::string& key);
 
   bool is_doomed() const { return doomed_; }
@@ -64,6 +70,9 @@ class MockDiskEntry : public disk_cache::Entry,
   void CancelSparseIO() override;
   int ReadyForSparseIO(const CompletionCallback& completion_callback) override;
 
+  uint8_t in_memory_data() const { return in_memory_data_; }
+  void set_in_memory_data(uint8_t val) { in_memory_data_ = val; }
+
   // Fail most subsequent requests.
   void set_fail_requests() { fail_requests_ = true; }
 
@@ -73,6 +82,14 @@ class MockDiskEntry : public disk_cache::Entry,
   // again with |value| set to false.  Caution: remember to enable callbacks
   // again or all subsequent tests will fail.
   static void IgnoreCallbacks(bool value);
+
+  // Defers invoking the callback for the given operation. Calling code should
+  // invoke ResumeDiskEntryOperation to resume.
+  void SetDefer(DeferOp defer_op) { defer_op_ = defer_op; }
+
+  // Resumes deferred cache operation by posting |resume_callback_| with
+  // |resume_return_code_|.
+  void ResumeDiskEntryOperation();
 
  private:
   friend class base::RefCounted<MockDiskEntry>;
@@ -98,6 +115,7 @@ class MockDiskEntry : public disk_cache::Entry,
 
   std::string key_;
   std::vector<char> data_[kNumCacheEntryDataIndices];
+  uint8_t in_memory_data_;
   int test_mode_;
   bool doomed_;
   bool sparse_;
@@ -106,6 +124,12 @@ class MockDiskEntry : public disk_cache::Entry,
   bool busy_;
   bool delayed_;
   bool cancel_;
+
+  // Used for pause and restart.
+  DeferOp defer_op_;
+  CompletionCallback resume_callback_;
+  int resume_return_code_;
+
   static bool ignore_callbacks_;
 };
 
@@ -137,12 +161,17 @@ class MockDiskCache : public disk_cache::Backend {
   size_t DumpMemoryStats(
       base::trace_event::ProcessMemoryDump* pmd,
       const std::string& parent_absolute_name) const override;
+  uint8_t GetEntryInMemoryData(const std::string& key) override;
+  void SetEntryInMemoryData(const std::string& key, uint8_t data) override;
 
   // Returns number of times a cache entry was successfully opened.
   int open_count() const { return open_count_; }
 
   // Returns number of times a cache entry was successfully created.
   int create_count() const { return create_count_; }
+
+  // Returns number of doomed entries.
+  int doomed_count() const { return doomed_count_; }
 
   // Fail any subsequent CreateEntry and OpenEntry.
   void set_fail_requests() { fail_requests_ = true; }
@@ -153,10 +182,30 @@ class MockDiskCache : public disk_cache::Backend {
   // Makes sure that CreateEntry is not called twice for a given key.
   void set_double_create_check(bool value) { double_create_check_ = value; }
 
+  // Determines whether to provide the GetEntryInMemoryData/SetEntryInMemoryData
+  // interface.  Default is true.
+  void set_support_in_memory_entry_data(bool value) {
+    support_in_memory_entry_data_ = value;
+  }
+
   // Makes all requests for data ranges to fail as not implemented.
   void set_fail_sparse_requests() { fail_sparse_requests_ = true; }
 
   void ReleaseAll();
+
+  // Returns true if a doomed entry exists with this key.
+  bool IsDiskEntryDoomed(const std::string& key);
+
+  // Defers invoking the callback for the given operation. Calling code should
+  // invoke ResumeCacheOperation to resume.
+  void SetDefer(MockDiskEntry::DeferOp defer_op) { defer_op_ = defer_op; }
+
+  // Resume deferred cache operation by posting |resume_callback_| with
+  // |resume_return_code_|.
+  void ResumeCacheOperation();
+
+  // Returns a reference to the disk entry with the given |key|.
+  scoped_refptr<MockDiskEntry> GetDiskEntryRef(const std::string& key);
 
  private:
   using EntryMap = std::unordered_map<std::string, MockDiskEntry*>;
@@ -167,10 +216,17 @@ class MockDiskCache : public disk_cache::Backend {
   EntryMap entries_;
   int open_count_;
   int create_count_;
+  int doomed_count_;
   bool fail_requests_;
   bool soft_failures_;
   bool double_create_check_;
   bool fail_sparse_requests_;
+  bool support_in_memory_entry_data_;
+
+  // Used for pause and restart.
+  MockDiskEntry::DeferOp defer_op_;
+  CompletionCallback resume_callback_;
+  int resume_return_code_;
 };
 
 class MockBackendFactory : public HttpCache::BackendFactory {
@@ -205,6 +261,9 @@ class MockHttpCache {
   // Wrapper to simulate cache lock timeout for new transactions.
   void SimulateCacheLockTimeout();
 
+  // Wrapper to simulate cache lock timeout for new transactions.
+  void SimulateCacheLockTimeoutAfterHeaders();
+
   // Wrapper to fail request conditionalization for new transactions.
   void FailConditionalizations();
 
@@ -233,6 +292,14 @@ class MockHttpCache {
   // Overrides the test mode for a given operation. Remember to reset it after
   // the test! (by setting test_mode to zero).
   static void SetTestMode(int test_mode);
+
+  // Functions to test the state of ActiveEntry.
+  bool IsWriterPresent(const std::string& key);
+  bool IsHeadersTransactionPresent(const std::string& key);
+  int GetCountReaders(const std::string& key);
+  int GetCountAddToEntryQueue(const std::string& key);
+  int GetCountDoneHeadersQueue(const std::string& key);
+  int GetCountWriterTransactions(const std::string& key);
 
  private:
   HttpCache http_cache_;

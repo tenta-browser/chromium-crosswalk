@@ -4,6 +4,8 @@
 
 #include "device/bluetooth/bluetooth_adapter_mac.h"
 
+#import <Foundation/Foundation.h>
+
 #include <memory>
 
 #include "base/bind.h"
@@ -15,11 +17,11 @@
 #include "device/bluetooth/bluetooth_common.h"
 #include "device/bluetooth/bluetooth_discovery_session.h"
 #include "device/bluetooth/bluetooth_discovery_session_outcome.h"
-#include "device/bluetooth/bluetooth_low_energy_device_mac.h"
-#include "device/bluetooth/test/mock_bluetooth_cbperipheral_mac.h"
-#include "device/bluetooth/test/mock_bluetooth_central_manager_mac.h"
+#import "device/bluetooth/bluetooth_low_energy_device_mac.h"
+#import "device/bluetooth/test/mock_bluetooth_cbperipheral_mac.h"
+#import "device/bluetooth/test/mock_bluetooth_central_manager_mac.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/ocmock/OCMock/OCMock.h"
+#import "third_party/ocmock/OCMock/OCMock.h"
 
 #if defined(OS_IOS)
 #import <CoreBluetooth/CoreBluetooth.h>
@@ -27,12 +29,10 @@
 #import <IOBluetooth/IOBluetooth.h>
 #endif  // defined(OS_IOS)
 
-#import <Foundation/Foundation.h>
-
 namespace {
 // |kTestHashAddress| is the hash corresponding to identifier |kTestNSUUID|.
-const char* const kTestNSUUID = "00000000-1111-2222-3333-444444444444";
-const std::string kTestHashAddress = "D1:6F:E3:22:FD:5B";
+const char kTestNSUUID[] = "00000000-1111-2222-3333-444444444444";
+const char kTestHashAddress[] = "D1:6F:E3:22:FD:5B";
 const int kTestRssi = 0;
 }  // namespace
 
@@ -69,7 +69,7 @@ class BluetoothAdapterMacTest : public testing::Test {
     }
     base::scoped_nsobject<MockCBPeripheral> mock_peripheral(
         [[MockCBPeripheral alloc] initWithUTF8StringIdentifier:identifier]);
-    return [mock_peripheral.get().peripheral retain];
+    return [[mock_peripheral peripheral] retain];
   }
 
   NSDictionary* AdvertisementData() {
@@ -100,7 +100,7 @@ class BluetoothAdapterMacTest : public testing::Test {
     mock_central_manager_.reset([[MockCentralManager alloc] init]);
     [mock_central_manager_ setState:desired_state];
     CBCentralManager* centralManager =
-        (CBCentralManager*)mock_central_manager_.get();
+        static_cast<CBCentralManager*>(mock_central_manager_.get());
     adapter_mac_->SetCentralManagerForTesting(centralManager);
     return true;
   }
@@ -234,7 +234,7 @@ TEST_F(BluetoothAdapterMacTest, CheckGetPeripheralHashAddress) {
     return;
   base::scoped_nsobject<CBPeripheral> mock_peripheral(
       CreateMockPeripheral(kTestNSUUID));
-  if (mock_peripheral.get() == nil)
+  if (!mock_peripheral)
     return;
   EXPECT_EQ(kTestHashAddress, GetHashAddress(mock_peripheral));
 }
@@ -244,7 +244,7 @@ TEST_F(BluetoothAdapterMacTest, LowEnergyDeviceUpdatedNewDevice) {
     return;
   base::scoped_nsobject<CBPeripheral> mock_peripheral(
       CreateMockPeripheral(kTestNSUUID));
-  if (mock_peripheral.get() == nil)
+  if (!mock_peripheral)
     return;
   base::scoped_nsobject<NSDictionary> advertisement_data(AdvertisementData());
 

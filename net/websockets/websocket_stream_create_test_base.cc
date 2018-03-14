@@ -98,14 +98,13 @@ class WebSocketStreamCreateTestBase::TestConnectDelegate
 WebSocketStreamCreateTestBase::WebSocketStreamCreateTestBase()
     : has_failed_(false), ssl_fatal_(false), url_request_(nullptr) {}
 
-WebSocketStreamCreateTestBase::~WebSocketStreamCreateTestBase() {
-}
+WebSocketStreamCreateTestBase::~WebSocketStreamCreateTestBase() = default;
 
 void WebSocketStreamCreateTestBase::CreateAndConnectStream(
     const GURL& socket_url,
     const std::vector<std::string>& sub_protocols,
     const url::Origin& origin,
-    const GURL& first_party_for_cookies,
+    const GURL& site_for_cookies,
     const std::string& additional_headers,
     std::unique_ptr<base::Timer> timer) {
   for (size_t i = 0; i < ssl_data_.size(); ++i) {
@@ -119,7 +118,7 @@ void WebSocketStreamCreateTestBase::CreateAndConnectStream(
       new DeterministicKeyWebSocketHandshakeStreamCreateHelper(delegate,
                                                                sub_protocols));
   stream_request_ = WebSocketStream::CreateAndConnectStreamForTesting(
-      socket_url, std::move(create_helper), origin, first_party_for_cookies,
+      socket_url, std::move(create_helper), origin, site_for_cookies,
       additional_headers, url_request_context_host_.GetURLRequestContext(),
       NetLogWithSource(), std::move(connect_delegate),
       timer ? std::move(timer)

@@ -12,6 +12,7 @@
 #include "base/metrics/field_trial.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "chrome/browser/banners/app_banner_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_sync_service.h"
 #include "chrome/browser/extensions/permissions_updater.h"
@@ -28,6 +29,7 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
+#include "extensions/common/disable_reason.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_icon_set.h"
 #include "extensions/common/manifest.h"
@@ -36,6 +38,7 @@
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/grit/extensions_browser_resources.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "url/gurl.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/file_manager/app_id.h"
@@ -170,7 +173,9 @@ void SetWasInstalledByCustodian(const std::string& extension_id,
   if (installed_by_custodian == WasInstalledByCustodian(extension_id, context))
     return;
 
-  ExtensionPrefs::Get(context)->UpdateExtensionPref(
+  ExtensionPrefs* prefs = ExtensionPrefs::Get(context);
+
+  prefs->UpdateExtensionPref(
       extension_id, kWasInstalledByCustodianPrefName,
       installed_by_custodian ? base::MakeUnique<base::Value>(true) : nullptr);
   ExtensionService* service =
@@ -188,11 +193,15 @@ void SetWasInstalledByCustodian(const std::string& extension_id,
   if (registry->enabled_extensions().Contains(extension_id))
     return;
 
-  // If the extension is not loaded, it may need to be reloaded.
-  // Example is a pre-installed extension that was unloaded when a
+  // If the extension was disabled due to management policy, try to re-enable
+  // it. Example is a pre-installed extension that was disabled when a
   // supervised user flag has been received.
-  if (!registry->GetInstalledExtension(extension_id)) {
-    service->ReloadExtension(extension_id);
+  // Note: EnableExtension will fail if the extension still needs to be disabled
+  // due to manangement policy.
+  if (registry->disabled_extensions().Contains(extension_id) &&
+      prefs->GetDisableReasons(extension_id) ==
+          disable_reason::DISABLE_BLOCKED_BY_POLICY) {
+    service->EnableExtension(extension_id);
   }
 }
 
@@ -208,8 +217,8 @@ bool WasInstalledByCustodian(const std::string& extension_id,
 bool IsAppLaunchable(const std::string& extension_id,
                      content::BrowserContext* context) {
   int reason = ExtensionPrefs::Get(context)->GetDisableReasons(extension_id);
-  return !((reason & Extension::DISABLE_UNSUPPORTED_REQUIREMENT) ||
-           (reason & Extension::DISABLE_CORRUPTED));
+  return !((reason & disable_reason::DISABLE_UNSUPPORTED_REQUIREMENT) ||
+           (reason & disable_reason::DISABLE_CORRUPTED));
 }
 
 bool IsAppLaunchableWithoutEnabling(const std::string& extension_id,
@@ -268,12 +277,6 @@ bool IsExtensionIdle(const std::string& extension_id,
   return true;
 }
 
-GURL GetSiteForExtensionId(const std::string& extension_id,
-                           content::BrowserContext* context) {
-  return content::SiteInstance::GetSiteForURL(
-      context, Extension::GetBaseURLFromExtensionId(extension_id));
-}
-
 std::unique_ptr<base::DictionaryValue> GetExtensionInfo(
     const Extension* extension) {
   DCHECK(extension);
@@ -292,18 +295,20 @@ std::unique_ptr<base::DictionaryValue> GetExtensionInfo(
 }
 
 const gfx::ImageSkia& GetDefaultAppIcon() {
-  return *ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+  return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
       IDR_APP_DEFAULT_ICON);
 }
 
 const gfx::ImageSkia& GetDefaultExtensionIcon() {
-  return *ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+  return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
       IDR_EXTENSION_DEFAULT_ICON);
 }
 
 bool IsNewBookmarkAppsEnabled() {
 #if defined(OS_MACOSX)
-  return base::FeatureList::IsEnabled(features::kBookmarkApps);
+  return base::FeatureList::IsEnabled(features::kBookmarkApps) ||
+         base::FeatureList::IsEnabled(features::kAppBanners) ||
+         banners::AppBannerManager::IsExperimentalAppBannersEnabled();
 #else
   return true;
 #endif
@@ -312,7 +317,8 @@ bool IsNewBookmarkAppsEnabled() {
 bool CanHostedAppsOpenInWindows() {
 #if defined(OS_MACOSX)
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnableHostedAppsInWindows);
+             switches::kEnableHostedAppsInWindows) ||
+         base::FeatureList::IsEnabled(features::kDesktopPWAWindowing);
 #else
   return true;
 #endif

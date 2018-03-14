@@ -19,6 +19,7 @@ import argparse
 import cgi
 import os
 import shutil
+import re
 import subprocess
 import sys
 import tempfile
@@ -106,7 +107,6 @@ ADDITIONAL_PATHS = (
     os.path.join('chrome', 'test', 'chromeos', 'autotest'),
     os.path.join('chrome', 'test', 'data'),
     os.path.join('native_client'),
-    os.path.join('sdch', 'open-vcdiff'),
     os.path.join('testing', 'gmock'),
     os.path.join('testing', 'gtest'),
     os.path.join('tools', 'gyp'),
@@ -127,12 +127,6 @@ SPECIAL_CASES = {
         "Name": "native client",
         "URL": "http://code.google.com/p/nativeclient",
         "License": "BSD",
-    },
-    os.path.join('sdch', 'open-vcdiff'): {
-        "Name": "open-vcdiff",
-        "URL": "https://github.com/google/open-vcdiff",
-        "License": "Apache 2.0, MIT, GPL v2 and custom licenses",
-        "License Android Compatible": "yes",
     },
     os.path.join('testing', 'gmock'): {
         "Name": "gmock",
@@ -290,7 +284,6 @@ KNOWN_NON_IOS_LIBRARIES = set([
     os.path.join('third_party', 'libevent'),
     os.path.join('third_party', 'libjpeg'),
     os.path.join('third_party', 'libusb'),
-    os.path.join('third_party', 'libva'),
     os.path.join('third_party', 'libxslt'),
     os.path.join('third_party', 'lss'),
     os.path.join('third_party', 'lzma_sdk'),
@@ -315,6 +308,7 @@ KNOWN_NON_IOS_LIBRARIES = set([
     os.path.join('third_party', 'usb_ids'),
     os.path.join('third_party', 'v8-i18n'),
     os.path.join('third_party', 'wtl'),
+    os.path.join('third_party', 'yara'),
     os.path.join('third_party', 'yasm'),
     os.path.join('v8', 'strongtalk'),
 ])
@@ -480,6 +474,22 @@ def _GnBinary():
     return os.path.join(_REPOSITORY_ROOT, 'buildtools', subdir, exe)
 
 
+def GetThirdPartyDepsFromGNDepsOutput(gn_deps):
+    """Returns third_party/foo directories given the output of "gn desc deps".
+
+    Note that it always returns the direct sub-directory of third_party
+    where README.chromium and LICENSE files are, so that it can be passed to
+    ParseDir(). e.g.:
+        .../third_party/cld_3/src/src/BUILD.gn -> .../third_party/cld_3
+    """
+    third_party_deps = set()
+    for build_dep in gn_deps.split():
+        m = re.search(r'^(.+/third_party/[^/]+)/(.+/)?BUILD\.gn$', build_dep)
+        if m and not os.path.join('build', 'secondary') in build_dep:
+            third_party_deps.add(m.group(1))
+    return third_party_deps
+
+
 def FindThirdPartyDeps(gn_out_dir, gn_target):
     if not gn_out_dir:
         raise RuntimeError("--gn-out-dir is required if --gn-target is used.")
@@ -500,12 +510,7 @@ def FindThirdPartyDeps(gn_out_dir, gn_target):
         if tmp_dir and os.path.exists(tmp_dir):
             shutil.rmtree(tmp_dir)
 
-    third_party_deps = set()
-    for build_dep in gn_deps.split():
-        if ("third_party" in build_dep and
-                os.path.basename(build_dep) == "BUILD.gn"):
-            third_party_deps.add(os.path.dirname(build_dep))
-    return third_party_deps
+    return GetThirdPartyDepsFromGNDepsOutput(gn_deps)
 
 
 def ScanThirdPartyDirs(root=None):
@@ -542,6 +547,18 @@ def GenerateCredits(
             template = template.replace('{{%s}}' % key, val)
         return template
 
+    def MetadataToTemplateEntry(metadata, entry_template):
+        env = {
+            'name': metadata['Name'],
+            'url': metadata['URL'],
+            'license': open(metadata['License File'], 'rb').read(),
+        }
+        return {
+            'name': metadata['Name'],
+            'content': EvaluateTemplate(entry_template, env),
+            'license_file': metadata['License File'],
+        }
+
     if gn_target:
         third_party_dirs = FindThirdPartyDeps(gn_out_dir, gn_target)
 
@@ -563,6 +580,14 @@ def GenerateCredits(
 
     entry_template = open(entry_template_file).read()
     entries = []
+    # Start from Chromium's LICENSE file
+    chromium_license_metadata = {
+        'Name': 'The Chromium Project',
+        'URL': 'http://www.chromium.org',
+        'License File': os.path.join(_REPOSITORY_ROOT, 'LICENSE') }
+    entries.append(MetadataToTemplateEntry(chromium_license_metadata,
+        entry_template))
+
     for path in third_party_dirs:
         try:
             metadata = ParseDir(path, _REPOSITORY_ROOT)
@@ -579,19 +604,12 @@ def GenerateCredits(
             # updated to provide --gn-target to this script.
             if path in KNOWN_NON_IOS_LIBRARIES:
                 continue
-        env = {
-            'name': metadata['Name'],
-            'url': metadata['URL'],
-            'license': open(metadata['License File'], 'rb').read(),
-        }
-        entry = {
-            'name': metadata['Name'],
-            'content': EvaluateTemplate(entry_template, env),
-            'license_file': metadata['License File'],
-        }
-        entries.append(entry)
+        entries.append(MetadataToTemplateEntry(metadata, entry_template))
 
     entries.sort(key=lambda entry: (entry['name'], entry['content']))
+    for entry_id, entry in enumerate(entries):
+        entry['content'] = entry['content'].replace('{{id}}', str(entry_id))
+
     entries_contents = '\n'.join([entry['content'] for entry in entries])
     file_template = open(file_template_file).read()
     template_contents = "<!-- Generated by licenses.py; do not edit. -->"

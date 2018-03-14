@@ -10,6 +10,7 @@
 #include "base/json/json_file_value_serializer.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -18,11 +19,11 @@
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident.h"
 #include "chrome/browser/safe_browsing/incident_reporting/platform_state_store.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "components/sync_preferences/pref_service_syncable_factory.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -112,7 +113,7 @@ class StateStoreTest : public PlatformStateStoreTestBase {
     factory.SetUserPrefsFile(GetPrefsPath(), task_runner_.get());
     user_prefs::PrefRegistrySyncable* pref_registry =
         new user_prefs::PrefRegistrySyncable();
-    chrome::RegisterUserProfilePrefs(pref_registry);
+    RegisterUserProfilePrefs(pref_registry);
     profile_ = profile_manager_.CreateTestingProfile(
         kProfileName_, factory.CreateSyncable(pref_registry),
         base::UTF8ToUTF16(kProfileName_), 0, std::string(),
@@ -145,7 +146,6 @@ const StateStoreTest::TestData StateStoreTest::kTestData_[] = {
     {IncidentType::TRACKED_PREFERENCE, "tp_two", 2},
     {IncidentType::TRACKED_PREFERENCE, "tp_three", 3},
     {IncidentType::BINARY_INTEGRITY, "bi", 0},
-    {IncidentType::BLACKLIST_LOAD, "bl", 0x47},
 };
 
 TEST_F(StateStoreTest, MarkAsAndHasBeenReported) {

@@ -8,10 +8,13 @@
 #include <unordered_map>
 #include <vector>
 
+#include "base/files/file_path.h"
 #include "base/macros.h"
-#include "chrome/browser/media/router/issue.h"
+#include "base/optional.h"
 #include "chrome/browser/ui/webui/media_router/media_cast_mode.h"
 #include "chrome/browser/ui/webui/media_router/media_sink_with_cast_modes.h"
+#include "chrome/common/media_router/issue.h"
+#include "chrome/common/media_router/media_status.h"
 #include "components/signin/core/browser/account_info.h"
 #include "content/public/browser/web_ui_message_handler.h"
 #include "ui/gfx/geometry/size.h"
@@ -43,18 +46,31 @@ class MediaRouterWebUIMessageHandler : public content::WebUIMessageHandler {
                     const std::vector<MediaRoute::Id>& joinable_route_ids,
                     const std::unordered_map<MediaRoute::Id, MediaCastMode>&
                         current_cast_modes);
-  void UpdateCastModes(const CastModeSet& cast_modes,
-                       const std::string& source_host);
+  // Overridden in tests.
+  virtual void UpdateCastModes(const CastModeSet& cast_modes,
+                               const std::string& source_host,
+                               base::Optional<MediaCastMode> forced_cast_mode);
   void OnCreateRouteResponseReceived(const MediaSink::Id& sink_id,
                                      const MediaRoute* route);
   void ReturnSearchResult(const std::string& sink_id);
 
-  void UpdateIssue(const Issue& issue);
+  virtual void UpdateIssue(const Issue& issue);
   void ClearIssue();
 
   // Updates the maximum dialog height to allow the WebUI properly scale when
   // the browser window changes.
   void UpdateMaxDialogHeight(int height);
+
+  // Notifies the WebUI with an updated MediaStatus. Overridden in tests.
+  virtual void UpdateMediaRouteStatus(const MediaStatus& status);
+
+  // Notifies the WebUI that the controller for the selected route has been
+  // invalidated.
+  void OnRouteControllerInvalidated();
+
+  // Called when the user has selected a file and the name should be relayed to
+  // the UI.
+  void UserSelectedLocalMediaFile(base::FilePath::StringType file_name);
 
   void SetWebUIForTest(content::WebUI* webui);
   void set_incognito_for_test(bool incognito) { incognito_ = incognito; }
@@ -64,6 +80,14 @@ class MediaRouterWebUIMessageHandler : public content::WebUIMessageHandler {
                            RecordCastModeSelection);
   FRIEND_TEST_ALL_PREFIXES(MediaRouterWebUIMessageHandlerTest,
                            RetrieveCastModeSelection);
+  FRIEND_TEST_ALL_PREFIXES(MediaRouterWebUIMessageHandlerTest,
+                           OnRouteDetailsOpenedAndClosed);
+  FRIEND_TEST_ALL_PREFIXES(MediaRouterWebUIMessageHandlerTest,
+                           OnMediaCommandsReceived);
+  FRIEND_TEST_ALL_PREFIXES(MediaRouterWebUIMessageHandlerTest,
+                           OnInvalidMediaCommandsReceived);
+  FRIEND_TEST_ALL_PREFIXES(MediaRouterWebUIMessageHandlerTest,
+                           OnSetMediaRemotingEnabled);
 
   // WebUIMessageHandler implementation.
   void RegisterMessages() override;
@@ -88,9 +112,22 @@ class MediaRouterWebUIMessageHandler : public content::WebUIMessageHandler {
   void OnReportSelectedCastMode(const base::ListValue* args);
   void OnReportSinkCount(const base::ListValue* args);
   void OnReportTimeToClickSink(const base::ListValue* args);
+  void OnReportWebUIRouteControllerLoaded(const base::ListValue* args);
   void OnReportTimeToInitialActionClose(const base::ListValue* args);
+  void OnMediaControllerAvailable(const base::ListValue* args);
+  void OnMediaControllerClosed(const base::ListValue* args);
   void OnSearchSinksAndCreateRoute(const base::ListValue* args);
+  void OnSelectLocalMediaFile(const base::ListValue* args);
   void OnInitialDataReceived(const base::ListValue* args);
+
+  // Handlers for JavaScript messages to control the media.
+  void OnPlayCurrentMedia(const base::ListValue* args);
+  void OnPauseCurrentMedia(const base::ListValue* args);
+  void OnSeekCurrentMedia(const base::ListValue* args);
+  void OnSetCurrentMediaMute(const base::ListValue* args);
+  void OnSetCurrentMediaVolume(const base::ListValue* args);
+  void OnSetHangoutsLocalPresent(const base::ListValue* args);
+  void OnSetMediaRemotingEnabled(const base::ListValue* args);
 
   // Performs an action for an Issue of |type|.
   // |args| contains additional parameter that varies based on |type|.
@@ -128,6 +165,12 @@ class MediaRouterWebUIMessageHandler : public content::WebUIMessageHandler {
 
   // Keeps track of whether a command to close the dialog has been issued.
   bool dialog_closing_;
+
+  // Whether the WebUI version of route controller is available for use.
+  const bool is_web_ui_route_controller_available_;
+
+  // The media status currently shown in the UI.
+  base::Optional<MediaStatus> current_media_status_;
 
   MediaRouterUI* media_router_ui_;
 

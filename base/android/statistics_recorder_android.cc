@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/android/statistics_recorder_android.h"
-
 #include <string>
 
 #include "base/android/jni_string.h"
+#include "base/metrics/histogram_base.h"
 #include "base/metrics/statistics_recorder.h"
+#include "base/sys_info.h"
 #include "jni/StatisticsRecorderAndroid_jni.h"
 
 using base::android::JavaParamRef;
@@ -16,14 +16,13 @@ using base::android::ConvertUTF8ToJavaString;
 namespace base {
 namespace android {
 
-static ScopedJavaLocalRef<jstring> ToJson(JNIEnv* env,
-                                          const JavaParamRef<jclass>& clazz) {
+static ScopedJavaLocalRef<jstring> JNI_StatisticsRecorderAndroid_ToJson(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    jint verbosityLevel) {
   return ConvertUTF8ToJavaString(
-      env, base::StatisticsRecorder::ToJSON(std::string()));
-}
-
-bool RegisterStatisticsRecorderAndroid(JNIEnv* env) {
-  return RegisterNativesImpl(env);
+      env, base::StatisticsRecorder::ToJSON(
+               static_cast<JSONVerbosityLevel>(verbosityLevel)));
 }
 
 }  // namespace android

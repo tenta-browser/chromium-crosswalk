@@ -4,6 +4,8 @@
 
 #include "chrome/install_static/install_util.h"
 
+#include <objbase.h>
+
 #include <tuple>
 
 #include "base/macros.h"
@@ -261,7 +263,7 @@ TEST(InstallStaticTest, SpacesAndQuotesWindowsInspired) {
 }
 
 TEST(InstallStaticTest, BrowserProcessTest) {
-  EXPECT_EQ(ProcessType::UNINITIALIZED, g_process_type);
+  EXPECT_FALSE(IsProcessTypeInitialized());
   InitializeProcessType();
   EXPECT_FALSE(IsNonBrowserProcess());
 }
@@ -348,7 +350,8 @@ TEST_P(InstallStaticUtilTest, GetChromeInstallSubDirectory) {
   // The directory strings for the brand's install modes; parallel to
   // kInstallModes.
   static constexpr const wchar_t* kInstallDirs[] = {
-      L"Google\\Chrome", L"Google\\Chrome SxS",
+      L"Google\\Chrome", L"Google\\Chrome Beta", L"Google\\Chrome Dev",
+      L"Google\\Chrome SxS",
   };
 #else
   // The directory strings for the brand's install modes; parallel to
@@ -368,7 +371,8 @@ TEST_P(InstallStaticUtilTest, GetRegistryPath) {
   // The registry path strings for the brand's install modes; parallel to
   // kInstallModes.
   static constexpr const wchar_t* kRegistryPaths[] = {
-      L"Software\\Google\\Chrome", L"Software\\Google\\Chrome SxS",
+      L"Software\\Google\\Chrome", L"Software\\Google\\Chrome Beta",
+      L"Software\\Google\\Chrome Dev", L"Software\\Google\\Chrome SxS",
   };
 #else
   // The registry path strings for the brand's install modes; parallel to
@@ -389,6 +393,10 @@ TEST_P(InstallStaticUtilTest, GetUninstallRegistryPath) {
   // to kInstallModes.
   static constexpr const wchar_t* kUninstallRegistryPaths[] = {
       L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Google Chrome",
+      L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"  // (cont'd)
+      L"Google Chrome Beta",
+      L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"  // (cont'd)
+      L"Google Chrome Dev",
       L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"  // (cont'd)
       L"Google Chrome SxS",
   };
@@ -417,6 +425,8 @@ TEST_P(InstallStaticUtilTest, GetAppGuid) {
   // The app guids for the brand's install modes; parallel to kInstallModes.
   static constexpr const wchar_t* kAppGuids[] = {
       L"{8A69D345-D564-463c-AFF1-A69D9E530F96}",  // Google Chrome.
+      L"{8237E44A-0054-442C-B6B6-EA0509993955}",  // Google Chrome Beta.
+      L"{401C381F-E0DE-4B85-8BD8-3F3F14FBDA57}",  // Google Chrome Dev.
       L"{4EA16AC7-FD5A-47C3-875B-DBF4A2008C20}",  // Google Chrome SxS (Canary).
   };
   static_assert(arraysize(kAppGuids) == NUM_INSTALL_MODES,
@@ -431,7 +441,7 @@ TEST_P(InstallStaticUtilTest, GetBaseAppId) {
 #if defined(GOOGLE_CHROME_BUILD)
   // The base app ids for the brand's install modes; parallel to kInstallModes.
   static constexpr const wchar_t* kBaseAppIds[] = {
-      L"Chrome", L"ChromeCanary",
+      L"Chrome", L"ChromeBeta", L"ChromeDev", L"ChromeCanary",
   };
 #else
   // The base app ids for the brand's install modes; parallel to kInstallModes.
@@ -442,6 +452,67 @@ TEST_P(InstallStaticUtilTest, GetBaseAppId) {
   static_assert(arraysize(kBaseAppIds) == NUM_INSTALL_MODES,
                 "kBaseAppIds out of date.");
   EXPECT_THAT(GetBaseAppId(), StrCaseEq(kBaseAppIds[std::get<0>(GetParam())]));
+}
+
+TEST_P(InstallStaticUtilTest, GetToastActivatorClsid) {
+#if defined(GOOGLE_CHROME_BUILD)
+  // The toast activator CLSIDs for the brand's install modes; parallel to
+  // kInstallModes.
+  static constexpr CLSID kToastActivatorClsids[] = {
+      {0xA2C6CB58,
+       0xC076,
+       0x425C,
+       {0xAC, 0xB7, 0x6D, 0x19, 0xD6, 0x44, 0x28, 0xCD}},  // Google Chrome.
+      {0xB89B137F,
+       0x96AA,
+       0x4AE2,
+       {0x98, 0xC4, 0x63, 0x73, 0xEA, 0xA1, 0xEA,
+        0x4D}},  // Google Chrome Beta.
+      {0xF01C03EB,
+       0xD431,
+       0x4C83,
+       {0x8D, 0x7A, 0x90, 0x27, 0x71, 0xE7, 0x32, 0xFA}},  // Google Chrome Dev.
+      {0xFA372A6E,
+       0x149F,
+       0x4E95,
+       {0x83, 0x2D, 0x8F, 0x69, 0x8D, 0x40, 0xAD,
+        0x7F}}  // Google Chrome SxS (Canary).
+  };
+
+  // The string representation of the CLSIDs above.
+  static constexpr const wchar_t* kToastActivatorClsidsString[] = {
+      L"{A2C6CB58-C076-425C-ACB7-6D19D64428CD}",  // Google Chrome.
+      L"{B89B137F-96AA-4AE2-98C4-6373EAA1EA4D}",  // Google Chrome Beta.
+      L"{F01C03EB-D431-4C83-8D7A-902771E732FA}",  // Google Chrome Dev.
+      L"{FA372A6E-149F-4E95-832D-8F698D40AD7F}",  // Google Chrome SxS (Canary).
+  };
+#else
+  // The toast activator CLSIDs for the brand's install modes; parallel to
+  // kInstallModes.
+  static constexpr CLSID kToastActivatorClsids[] = {
+      {0x635EFA6F,
+       0x08D6,
+       0x4EC9,
+       {0xBD, 0x14, 0x8A, 0x0F, 0xDE, 0x97, 0x51, 0x59}}  // Chromium.
+  };
+
+  // The string representation of the CLSIDs above.
+  static constexpr const wchar_t* kToastActivatorClsidsString[] = {
+      L"{635EFA6F-08D6-4EC9-BD14-8A0FDE975159}"  // Chromium.
+  };
+#endif
+  static_assert(arraysize(kToastActivatorClsids) == NUM_INSTALL_MODES,
+                "kToastActivatorClsids out of date.");
+
+  EXPECT_EQ(GetToastActivatorClsid(),
+            kToastActivatorClsids[std::get<0>(GetParam())]);
+
+  const int kCLSIDSize = 39;
+  wchar_t clsid_str[kCLSIDSize];
+  ASSERT_EQ(::StringFromGUID2(GetToastActivatorClsid(), clsid_str, kCLSIDSize),
+            kCLSIDSize);
+  EXPECT_THAT(clsid_str,
+              StrCaseEq(kToastActivatorClsidsString[std::get<0>(GetParam())]));
 }
 
 TEST_P(InstallStaticUtilTest, UsageStatsAbsent) {
@@ -512,6 +583,16 @@ TEST_P(InstallStaticUtilTest, GetChromeChannelName) {
 INSTANTIATE_TEST_CASE_P(Stable,
                         InstallStaticUtilTest,
                         testing::Combine(testing::Values(STABLE_INDEX),
+                                         testing::Values("user", "system")));
+// Beta supports user and system levels.
+INSTANTIATE_TEST_CASE_P(Beta,
+                        InstallStaticUtilTest,
+                        testing::Combine(testing::Values(BETA_INDEX),
+                                         testing::Values("user", "system")));
+// Dev supports user and system levels.
+INSTANTIATE_TEST_CASE_P(Dev,
+                        InstallStaticUtilTest,
+                        testing::Combine(testing::Values(DEV_INDEX),
                                          testing::Values("user", "system")));
 // Canary is only at user level.
 INSTANTIATE_TEST_CASE_P(Canary,

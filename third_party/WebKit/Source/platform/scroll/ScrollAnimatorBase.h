@@ -43,6 +43,13 @@ class CompositorAnimationTimeline;
 class ScrollableArea;
 class Scrollbar;
 
+// ScrollAnimatorBase is the common base class for all user scroll animators.
+// Every scrollable area has a lazily-created animator for user-input scrolls
+// (ScrollableArea::scroll_animator_).
+//
+// ScrollAnimatorBase is directly instantiated when scroll animations are
+// disabled.  In this case, all scrolls are instantaneous.
+
 class PLATFORM_EXPORT ScrollAnimatorBase
     : public ScrollAnimatorCompositorCoordinator {
  public:
@@ -74,14 +81,14 @@ class PLATFORM_EXPORT ScrollAnimatorBase
   ScrollableArea* GetScrollableArea() const override {
     return scrollable_area_;
   }
-  void TickAnimation(double monotonic_time) override{};
+  void TickAnimation(double monotonic_time) override {}
   void CancelAnimation() override {}
   void TakeOverCompositorAnimation() override {}
-  void UpdateCompositorAnimations() override{};
-  void NotifyCompositorAnimationFinished(int group_id) override{};
-  void NotifyCompositorAnimationAborted(int group_id) override{};
+  void UpdateCompositorAnimations() override {}
+  void NotifyCompositorAnimationFinished(int group_id) override {}
+  void NotifyCompositorAnimationAborted(int group_id) override {}
   void LayerForCompositedScrollingDidChange(
-      CompositorAnimationTimeline*) override{};
+      CompositorAnimationTimeline*) override {}
 
   virtual void ContentAreaWillPaint() const {}
   virtual void MouseEnteredContentArea() const {}
@@ -100,11 +107,11 @@ class PLATFORM_EXPORT ScrollAnimatorBase
   virtual void DidAddHorizontalScrollbar(Scrollbar&) {}
   virtual void WillRemoveHorizontalScrollbar(Scrollbar&) {}
 
-  virtual void NotifyContentAreaScrolled(const ScrollOffset&) {}
+  virtual void NotifyContentAreaScrolled(const ScrollOffset&, ScrollType) {}
 
   virtual bool SetScrollbarsVisibleForTesting(bool) { return false; }
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  protected:
   explicit ScrollAnimatorBase(ScrollableArea*);

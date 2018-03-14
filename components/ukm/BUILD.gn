@@ -11,12 +11,10 @@ static_library("ukm") {
   sources = [
     "persisted_logs_metrics_impl.cc",
     "persisted_logs_metrics_impl.h",
-    "ukm_entry.cc",
-    "ukm_entry.h",
-    "ukm_entry_builder.cc",
-    "ukm_entry_builder.h",
     "ukm_pref_names.cc",
     "ukm_pref_names.h",
+    "ukm_recorder_impl.cc",
+    "ukm_recorder_impl.h",
     "ukm_reporting_service.cc",
     "ukm_reporting_service.h",
     "ukm_rotation_scheduler.cc",
@@ -25,6 +23,12 @@ static_library("ukm") {
     "ukm_service.h",
     "ukm_source.cc",
     "ukm_source.h",
+  ]
+
+  public_deps = [
+    "//services/metrics/public/cpp:metrics_cpp",
+    "//services/metrics/public/interfaces",
+    "//third_party/metrics_proto",
   ]
 
   deps = [
@@ -56,17 +60,19 @@ static_library("observers") {
 static_library("test_support") {
   testonly = true
   sources = [
-    "test_ukm_service.cc",
-    "test_ukm_service.h",
+    "test_ukm_recorder.cc",
+    "test_ukm_recorder.h",
   ]
 
   public_deps = [
     ":ukm",
+    "//third_party/metrics_proto",
   ]
   deps = [
     "//base",
     "//components/metrics:test_support",
     "//components/prefs:test_support",
+    "//testing/gtest:gtest",
   ]
 }
 
@@ -89,8 +95,9 @@ source_set("unit_tests") {
     "//components/sync:test_support_driver",
     "//components/variations",
     "//net:test_support",
+    "//services/metrics/public/cpp:ukm_builders",
     "//testing/gtest",
-    "//third_party/zlib:compression_utils",
+    "//third_party/zlib/google:compression_utils",
     "//url",
   ]
 }

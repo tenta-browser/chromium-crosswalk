@@ -92,7 +92,9 @@ class MEDIA_EXPORT AUAudioInputStream
   bool IsRunning();
 
   AudioDeviceID device_id() const { return input_device_id_; }
-  size_t requested_buffer_size() const { return number_of_frames_; }
+  size_t requested_buffer_size() const {
+    return input_params_.frames_per_buffer();
+  }
 
  private:
   static const AudioObjectPropertyAddress kDeviceChangePropertyAddress;
@@ -130,21 +132,14 @@ class MEDIA_EXPORT AUAudioInputStream
   // (CrBrowserMain) which is the same thread as this instance is created on.
   void DevicePropertyChangedOnMainThread(const std::vector<UInt32>& properties);
 
-  // Updates |last_callback_time_| on the main browser thread.
-  void UpdateDataCallbackTimeOnMainThread(base::TimeTicks now_tick);
-
   // Registers OnDevicePropertyChanged() to receive notifications when device
   // properties changes.
   void RegisterDeviceChangeListener();
   // Stop listening for changes in device properties.
   void DeRegisterDeviceChangeListener();
 
-  // Gets the fixed capture hardware latency and store it during initialization.
-  // Returns 0 if not available.
-  double GetHardwareLatency();
-
-  // Gets the current capture delay value.
-  double GetCaptureLatency(const AudioTimeStamp* input_time_stamp);
+  // Gets the current capture time.
+  base::TimeTicks GetCaptureTime(const AudioTimeStamp* input_time_stamp);
 
   // Gets the number of channels for a stream of audio data.
   int GetNumberOfChannelsFromStream();
@@ -162,21 +157,11 @@ class MEDIA_EXPORT AUAudioInputStream
 
   // Checks if a stream was started successfully and the audio unit also starts
   // to call InputProc() as it should. This method is called once when a timer
-  // expires 5 seconds after calling Start().
+  // expires some time after calling Start().
   void CheckInputStartupSuccess();
-
-  // Checks (periodically) if a stream is alive by comparing the current time
-  // with the last timestamp stored in a data callback. Calls RestartAudio()
-  // when a restart is required.
-  void CheckIfInputStreamIsAlive();
 
   // Uninitializes the audio unit if needed.
   void CloseAudioUnit();
-
-  // Called by CheckIfInputStreamIsAlive() on the main thread when an audio
-  // restarts is required. Restarts the existing audio stream reusing the
-  // current audio parameters.
-  void RestartAudio();
 
   // Adds extra UMA stats when it has been detected that startup failed.
   void AddHistogramsForFailedStartup();
@@ -199,8 +184,8 @@ class MEDIA_EXPORT AUAudioInputStream
   // Our creator, the audio manager needs to be notified when we close.
   AudioManagerMac* const manager_;
 
-  // Contains the desired number of audio frames in each callback.
-  const size_t number_of_frames_;
+  // The audio parameters requested when creating the stream.
+  const AudioParameters input_params_;
 
   // Stores the number of frames that we actually get callbacks for.
   // This may be different from what we ask for, so we use this for stats in
@@ -233,8 +218,8 @@ class MEDIA_EXPORT AUAudioInputStream
   // array as soon as a frame of the desired buffer size has been recorded.
   std::unique_ptr<uint8_t[]> audio_data_buffer_;
 
-  // Fixed capture hardware latency in frames.
-  double hardware_latency_frames_;
+  // Fixed capture hardware latency.
+  base::TimeDelta hardware_latency_;
 
   // The number of channels in each frame of audio data, which is used
   // when querying the volume of each channel.
@@ -252,8 +237,14 @@ class MEDIA_EXPORT AUAudioInputStream
   // if length of error sequence is above a certain limit.
   base::TimeTicks last_success_time_;
 
-  // Is set to true on the internal AUHAL IO thread in the first input callback
-  // after Start() has bee called.
+  // Flags to indicate if we have gotten an input callback.
+  // |got_input_callback_| is only accessed on the OS audio thread in
+  // OnDataIsAvailable() and is set to true when the first callback comes. It
+  // acts as a gate to only set |input_callback_is_active_| atomically once.
+  // |got_input_callback_| is reset to false in Stop() on the main thread. This
+  // is safe since after stopping the audio unit there is no current callback
+  // ongoing and no further callbacks coming.
+  bool got_input_callback_;
   base::subtle::Atomic32 input_callback_is_active_;
 
   // Timer which triggers CheckInputStartupSuccess() to verify that input
@@ -287,6 +278,10 @@ class MEDIA_EXPORT AUAudioInputStream
   // Only touched on the creating thread.
   bool device_listener_is_active_;
 
+  // Set to true when we've successfully called SuppressNoiseReduction to
+  // disable ambient noise reduction.
+  bool noise_reduction_suppressed_;
+
   // Stores the timestamp of the previous audio buffer provided by the OS.
   // We use this in combination with |last_number_of_frames_| to detect when
   // the OS has decided to skip providing frames (i.e. a glitch).
@@ -300,30 +295,6 @@ class MEDIA_EXPORT AUAudioInputStream
   UInt32 total_lost_frames_;
   UInt32 largest_glitch_frames_;
   int glitches_detected_;
-
-  // Timer that provides periodic callbacks used to monitor if the input stream
-  // is alive or not.
-  std::unique_ptr<base::RepeatingTimer> check_alive_timer_;
-
-  // Time tick set once in each input data callback. The time is measured on
-  // the real-time priority I/O thread but this member is modified and read
-  // on the main thread only.
-  base::TimeTicks last_callback_time_;
-
-  // Counts number of times we get a signal of that a restart seems required.
-  // If it is above a threshold (kNumberOfIndicationsToTriggerRestart), the
-  // current audio stream is closed and a new (using same audio parameters) is
-  // started.
-  size_t number_of_restart_indications_;
-
-  // Counts number of times RestartAudio() has been called. The max number of
-  // attempts is restricted by |kMaxNumberOfRestartAttempts|.
-  // Note that this counter is reset to zero after each successful restart.
-  size_t number_of_restart_attempts_;
-
-  // Counts the total number of times RestartAudio() has been called. It is
-  // set to zero once in the constructor and then never reset again.
-  size_t total_number_of_restart_attempts_;
 
   // Callback to send statistics info.
   AudioManager::LogCallback log_callback_;

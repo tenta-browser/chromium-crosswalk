@@ -8,6 +8,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
+#include "base/time/time.h"
 #include "ui/accessibility/ax_enums.h"
 #include "ui/base/models/dialog_model.h"
 #include "ui/base/ui_base_types.h"
@@ -17,6 +18,7 @@
 namespace views {
 
 class DialogClientView;
+class DialogObserver;
 class LabelButton;
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -88,10 +90,13 @@ class VIEWS_EXPORT DialogDelegate : public ui::DialogModel,
   // the typical.
   virtual void UpdateButton(LabelButton* button, ui::DialogButton type);
 
+  // Returns true if this dialog should snap the frame width based on the
+  // LayoutProvider's snapping.
+  virtual bool ShouldSnapFrameWidth() const;
+
   // Overridden from ui::DialogModel:
   int GetDialogButtons() const override;
   int GetDefaultDialogButton() const override;
-  bool ShouldDefaultButtonBeBlue() const override;
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   bool IsDialogButtonEnabled(ui::DialogButton button) const override;
 
@@ -101,22 +106,27 @@ class VIEWS_EXPORT DialogDelegate : public ui::DialogModel,
   ClientView* CreateClientView(Widget* widget) override;
   NonClientFrameView* CreateNonClientFrameView(Widget* widget) override;
 
-  // Create a frame view using the new dialog style.
-  // |content_margins|: margins between the content and the inside of the
-  // border, in pixels.
-  static NonClientFrameView* CreateDialogFrameView(
-      Widget* widget,
-      const gfx::Insets& content_margins);
+  static NonClientFrameView* CreateDialogFrameView(Widget* widget);
 
   // Returns true if this particular dialog should use a Chrome-styled frame
   // like the one used for bubbles. The alternative is a more platform-native
   // frame.
   virtual bool ShouldUseCustomFrame() const;
 
+  const gfx::Insets& margins() const { return margins_; }
+  void set_margins(const gfx::Insets& margins) { margins_ = margins; }
+
   // A helper for accessing the DialogClientView object contained by this
   // delegate's Window.
   const DialogClientView* GetDialogClientView() const;
   DialogClientView* GetDialogClientView();
+
+  // Add or remove an observer notified by calls to DialogModelChanged().
+  void AddObserver(DialogObserver* observer);
+  void RemoveObserver(DialogObserver* observer);
+
+  // Notifies observers when the result of the DialogModel overrides changes.
+  void DialogModelChanged();
 
  protected:
   // Overridden from WidgetDelegate:
@@ -126,6 +136,17 @@ class VIEWS_EXPORT DialogDelegate : public ui::DialogModel,
   // A flag indicating whether this dialog is able to use the custom frame
   // style for dialogs.
   bool supports_custom_frame_;
+
+  // The margins between the content and the inside of the border.
+  gfx::Insets margins_;
+
+  // The time the dialog is created.
+  base::TimeTicks creation_time_;
+
+  // Observers for DialogModel changes.
+  base::ObserverList<DialogObserver> observer_list_;
+
+  DISALLOW_COPY_AND_ASSIGN(DialogDelegate);
 };
 
 // A DialogDelegate implementation that is-a View. Used to override GetWidget()
@@ -145,7 +166,6 @@ class VIEWS_EXPORT DialogDelegateView : public DialogDelegate,
   View* GetContentsView() override;
 
   // Overridden from View:
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;
 

@@ -4,11 +4,9 @@
 
 #include "ash/accelerators/accelerator_commands.h"
 
-#include "ash/accelerators/accelerator_commands_aura.h"
+#include "ash/accelerators/accelerator_commands_classic.h"
 #include "ash/shell.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm/window_state_aura.h"
-#include "ash/wm_window.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "build/build_config.h"
@@ -23,6 +21,7 @@
 #include "extensions/browser/app_window/native_app_window.h"
 #include "services/ui/public/interfaces/window_manager_constants.mojom.h"
 #include "ui/aura/client/aura_constants.h"
+#include "ui/aura/window.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
 
@@ -51,7 +50,7 @@ class MaximizableWidgetDelegate : public views::WidgetDelegateView {
 // fullscreen.)
 bool IsInImmersiveFullscreen(ash::wm::WindowState* window_state) {
   return window_state->IsFullscreen() &&
-         !window_state->hide_shelf_when_fullscreen();
+         !window_state->GetHideShelfWhenFullscreen();
 }
 
 }  // namespace
@@ -73,8 +72,7 @@ IN_PROC_BROWSER_TEST_F(AcceleratorCommandsBrowserTest, ToggleMaximized) {
 
   // When in fullscreen accelerators::ToggleMaximized gets out of fullscreen.
   EXPECT_FALSE(window_state->IsFullscreen());
-  Browser* browser = chrome::FindBrowserWithWindow(
-      ash::WmWindow::GetAuraWindow(window_state->window()));
+  Browser* browser = chrome::FindBrowserWithWindow(window_state->window());
   ASSERT_TRUE(browser);
   chrome::ToggleFullscreenMode(browser);
   EXPECT_TRUE(window_state->IsFullscreen());
@@ -91,10 +89,8 @@ class AcceleratorCommandsFullscreenBrowserTest
       public InProcessBrowserTest {
  public:
   AcceleratorCommandsFullscreenBrowserTest()
-      : initial_show_state_(GetParam()) {
-  }
-  virtual ~AcceleratorCommandsFullscreenBrowserTest() {
-  }
+      : initial_show_state_(GetParam()) {}
+  virtual ~AcceleratorCommandsFullscreenBrowserTest() {}
 
   // Sets |window_state|'s show state to |initial_show_state_|.
   void SetToInitialShowState(ash::wm::WindowState* window_state) {
@@ -140,9 +136,8 @@ IN_PROC_BROWSER_TEST_P(AcceleratorCommandsFullscreenBrowserTest,
 
   // 2) ToggleFullscreen() should have no effect on windows which cannot be
   // maximized.
-  ash::WmWindow::GetAuraWindow(window_state->window())
-      ->SetProperty(aura::client::kResizeBehaviorKey,
-                    ui::mojom::kResizeBehaviorNone);
+  window_state->window()->SetProperty(aura::client::kResizeBehaviorKey,
+                                      ui::mojom::kResizeBehaviorNone);
   ash::accelerators::ToggleFullscreen();
   EXPECT_TRUE(IsInitialShowState(window_state));
 
@@ -223,10 +218,8 @@ class AcceleratorCommandsPlatformAppFullscreenBrowserTest
       public extensions::PlatformAppBrowserTest {
  public:
   AcceleratorCommandsPlatformAppFullscreenBrowserTest()
-      : initial_show_state_(GetParam()) {
-  }
-  virtual ~AcceleratorCommandsPlatformAppFullscreenBrowserTest() {
-  }
+      : initial_show_state_(GetParam()) {}
+  virtual ~AcceleratorCommandsPlatformAppFullscreenBrowserTest() {}
 
   // Sets |app_window|'s show state to |initial_show_state_|.
   void SetToInitialShowState(extensions::AppWindow* app_window) {
@@ -254,8 +247,8 @@ class AcceleratorCommandsPlatformAppFullscreenBrowserTest
 IN_PROC_BROWSER_TEST_P(AcceleratorCommandsPlatformAppFullscreenBrowserTest,
                        ToggleFullscreen) {
   ASSERT_TRUE(ash::Shell::HasInstance()) << "No Instance";
-  const extensions::Extension* extension = LoadAndLaunchPlatformApp("minimal",
-                                                                    "Launched");
+  const extensions::Extension* extension =
+      LoadAndLaunchPlatformApp("minimal", "Launched");
 
   {
     // Test that ToggleFullscreen() toggles a platform's app's fullscreen

@@ -5,8 +5,8 @@
 #ifndef IIRFilterNode_h
 #define IIRFilterNode_h
 
-#include "core/dom/DOMTypedArray.h"
-#include "core/dom/NotShared.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
+#include "core/typed_arrays/DOMTypedArray.h"
 #include "modules/webaudio/AudioNode.h"
 #include "modules/webaudio/IIRProcessor.h"
 
@@ -29,7 +29,7 @@ class IIRFilterNode : public AudioNode {
                                const IIRFilterOptions&,
                                ExceptionState&);
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   // Get the magnitude and phase response of the filter at the given
   // set of frequencies (in Hz). The phase response is in radians.

@@ -12,21 +12,25 @@ namespace scheduler {
 
 class RendererSchedulerImpl;
 
-class BLINK_PLATFORM_EXPORT RendererWebSchedulerImpl : public WebSchedulerImpl {
+class PLATFORM_EXPORT RendererWebSchedulerImpl : public WebSchedulerImpl {
  public:
   explicit RendererWebSchedulerImpl(RendererSchedulerImpl* renderer_scheduler);
 
   ~RendererWebSchedulerImpl() override;
 
   // WebScheduler implementation:
-  void SuspendTimerQueue() override;
-  void ResumeTimerQueue() override;
+  WebTaskRunner* CompositorTaskRunner() override;
+  std::unique_ptr<RendererPauseHandle> PauseScheduler() override
+      WARN_UNUSED_RESULT;
   std::unique_ptr<WebViewScheduler> CreateWebViewScheduler(
       InterventionReporter* intervention_reporter,
-      WebViewScheduler::WebViewSchedulerSettings* settings) override;
+      WebViewScheduler::WebViewSchedulerDelegate* delegate) override;
+
+  RendererScheduler* GetRendererSchedulerForTest() override;
 
  private:
   RendererSchedulerImpl* renderer_scheduler_;  // NOT OWNED
+  scoped_refptr<WebTaskRunnerImpl> compositor_task_runner_;
 };
 
 }  // namespace scheduler

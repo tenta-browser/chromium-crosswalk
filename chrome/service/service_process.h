@@ -10,6 +10,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "chrome/service/cloud_print/cloud_print_proxy.h"
 #include "chrome/service/service_ipc_server.h"
@@ -23,12 +24,12 @@ class ServiceProcessState;
 
 namespace base {
 class CommandLine;
-class SequencedWorkerPool;
 class WaitableEvent;
 }
 
 namespace mojo {
 namespace edk {
+class PeerConnection;
 class ScopedIPCSupport;
 }
 }
@@ -61,14 +62,6 @@ class ServiceProcess : public ServiceIPCServer::Client,
   // called and after Teardown is called.
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner() {
     return io_thread_ ? io_thread_->task_runner() : nullptr;
-  }
-
-  // Returns the SingleThreadTaskRunner for the service process file thread.
-  // Used to do I/O operations (not network requests or even file: URL requests)
-  // to avoid blocking the main thread. Returns null before Initialize is
-  // called and after Teardown is called.
-  scoped_refptr<base::SingleThreadTaskRunner> file_task_runner() {
-    return file_thread_ ? file_thread_->task_runner() : nullptr;
   }
 
   // A global event object that is signalled when the main thread's message
@@ -119,13 +112,12 @@ class ServiceProcess : public ServiceIPCServer::Client,
 
   std::unique_ptr<net::NetworkChangeNotifier> network_change_notifier_;
   std::unique_ptr<base::Thread> io_thread_;
-  std::unique_ptr<base::Thread> file_thread_;
-  scoped_refptr<base::SequencedWorkerPool> blocking_pool_;
   std::unique_ptr<cloud_print::CloudPrintProxy> cloud_print_proxy_;
   std::unique_ptr<ServiceProcessPrefs> service_prefs_;
   std::unique_ptr<ServiceIPCServer> ipc_server_;
   std::unique_ptr<ServiceProcessState> service_process_state_;
   std::unique_ptr<mojo::edk::ScopedIPCSupport> mojo_ipc_support_;
+  std::unique_ptr<mojo::edk::PeerConnection> peer_connection_;
 
   // An event that will be signalled when we shutdown.
   base::WaitableEvent shutdown_event_;

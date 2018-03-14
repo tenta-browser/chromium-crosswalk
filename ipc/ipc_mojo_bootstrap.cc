@@ -8,16 +8,17 @@
 
 #include <map>
 #include <memory>
-#include <queue>
 #include <utility>
 #include <vector>
 
 #include "base/callback.h"
+#include "base/containers/queue.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
+#include "base/threading/thread_checker.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "mojo/public/cpp/bindings/associated_group.h"
 #include "mojo/public/cpp/bindings/associated_group_controller.h"
@@ -43,9 +44,10 @@ class ChannelAssociatedGroupController
  public:
   ChannelAssociatedGroupController(
       bool set_interface_id_namespace_bit,
-      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner)
+      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
+      const scoped_refptr<base::SingleThreadTaskRunner>& proxy_task_runner)
       : task_runner_(ipc_task_runner),
-        proxy_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+        proxy_task_runner_(proxy_task_runner),
         set_interface_id_namespace_bit_(set_interface_id_namespace_bit),
         filters_(this),
         control_message_handler_(this),
@@ -116,7 +118,7 @@ class ChannelAssociatedGroupController
         CreateScopedInterfaceEndpointHandle(receiver_id);
 
     sender->Bind(mojom::ChannelAssociatedPtrInfo(std::move(sender_handle), 0));
-    receiver->Bind(std::move(receiver_handle));
+    *receiver = mojom::ChannelAssociatedRequest(std::move(receiver_handle));
   }
 
   void ShutDown() {
@@ -171,6 +173,15 @@ class ChannelAssociatedGroupController
     if (!mojo::IsValidInterfaceId(id))
       return mojo::ScopedInterfaceEndpointHandle();
 
+    // Unless it is the master ID, |id| is from the remote side and therefore
+    // its namespace bit is supposed to be different than the value that this
+    // router would use.
+    if (!mojo::IsMasterInterfaceId(id) &&
+        set_interface_id_namespace_bit_ ==
+            mojo::HasInterfaceIdNamespaceBitSet(id)) {
+      return mojo::ScopedInterfaceEndpointHandle();
+    }
+
     base::AutoLock locker(lock_);
     bool inserted = false;
     Endpoint* endpoint = FindOrInsertEndpoint(id, &inserted);
@@ -208,7 +219,7 @@ class ChannelAssociatedGroupController
   mojo::InterfaceEndpointController* AttachEndpointClient(
       const mojo::ScopedInterfaceEndpointHandle& handle,
       mojo::InterfaceEndpointClient* client,
-      scoped_refptr<base::SingleThreadTaskRunner> runner) override {
+      scoped_refptr<base::SequencedTaskRunner> runner) override {
     const mojo::InterfaceId id = handle.id();
 
     DCHECK(mojo::IsValidInterfaceId(id));
@@ -248,6 +259,8 @@ class ChannelAssociatedGroupController
           base::Bind(&ChannelAssociatedGroupController::RaiseError, this));
     }
   }
+
+  bool PrefersSerializedMessages() override { return true; }
 
  private:
   class Endpoint;
@@ -343,7 +356,7 @@ class ChannelAssociatedGroupController
       disconnect_reason_ = disconnect_reason;
     }
 
-    base::SingleThreadTaskRunner* task_runner() const {
+    base::SequencedTaskRunner* task_runner() const {
       return task_runner_.get();
     }
 
@@ -353,11 +366,11 @@ class ChannelAssociatedGroupController
     }
 
     void AttachClient(mojo::InterfaceEndpointClient* client,
-                      scoped_refptr<base::SingleThreadTaskRunner> runner) {
+                      scoped_refptr<base::SequencedTaskRunner> runner) {
       controller_->lock_.AssertAcquired();
       DCHECK(!client_);
       DCHECK(!closed_);
-      DCHECK(runner->BelongsToCurrentThread());
+      DCHECK(runner->RunsTasksInCurrentSequence());
 
       task_runner_ = std::move(runner);
       client_ = client;
@@ -366,7 +379,7 @@ class ChannelAssociatedGroupController
     void DetachClient() {
       controller_->lock_.AssertAcquired();
       DCHECK(client_);
-      DCHECK(task_runner_->BelongsToCurrentThread());
+      DCHECK(task_runner_->RunsTasksInCurrentSequence());
       DCHECK(!closed_);
 
       task_runner_ = nullptr;
@@ -400,20 +413,20 @@ class ChannelAssociatedGroupController
 
     // mojo::InterfaceEndpointController:
     bool SendMessage(mojo::Message* message) override {
-      DCHECK(task_runner_->BelongsToCurrentThread());
+      DCHECK(task_runner_->RunsTasksInCurrentSequence());
       message->set_interface_id(id_);
       return controller_->SendMessage(message);
     }
 
     void AllowWokenUpBySyncWatchOnSameThread() override {
-      DCHECK(task_runner_->BelongsToCurrentThread());
+      DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
       EnsureSyncWatcherExists();
       sync_watcher_->AllowWokenUpBySyncWatchOnSameThread();
     }
 
     bool SyncWatch(const bool* should_stop) override {
-      DCHECK(task_runner_->BelongsToCurrentThread());
+      DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
       // It's not legal to make sync calls from the master endpoint's thread,
       // and in fact they must only happen from the proxy task runner.
@@ -436,7 +449,7 @@ class ChannelAssociatedGroupController
     }
 
     void OnSyncMessageEventReady() {
-      DCHECK(task_runner_->BelongsToCurrentThread());
+      DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
       scoped_refptr<Endpoint> keepalive(this);
       scoped_refptr<AssociatedGroupController> controller_keepalive(
@@ -483,14 +496,14 @@ class ChannelAssociatedGroupController
     }
 
     void EnsureSyncWatcherExists() {
-      DCHECK(task_runner_->BelongsToCurrentThread());
+      DCHECK(task_runner_->RunsTasksInCurrentSequence());
       if (sync_watcher_)
         return;
 
       {
         base::AutoLock locker(controller_->lock_);
         if (!sync_message_event_) {
-          sync_message_event_ = base::MakeUnique<base::WaitableEvent>(
+          sync_message_event_ = std::make_unique<base::WaitableEvent>(
               base::WaitableEvent::ResetPolicy::MANUAL,
               base::WaitableEvent::InitialState::NOT_SIGNALED);
           if (peer_closed_ || !sync_messages_.empty())
@@ -498,7 +511,7 @@ class ChannelAssociatedGroupController
         }
       }
 
-      sync_watcher_ = base::MakeUnique<mojo::SyncEventWatcher>(
+      sync_watcher_ = std::make_unique<mojo::SyncEventWatcher>(
           sync_message_event_.get(),
           base::Bind(&Endpoint::OnSyncMessageEventReady,
                      base::Unretained(this)));
@@ -519,10 +532,10 @@ class ChannelAssociatedGroupController
     bool handle_created_ = false;
     base::Optional<mojo::DisconnectReason> disconnect_reason_;
     mojo::InterfaceEndpointClient* client_ = nullptr;
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+    scoped_refptr<base::SequencedTaskRunner> task_runner_;
     std::unique_ptr<mojo::SyncEventWatcher> sync_watcher_;
     std::unique_ptr<base::WaitableEvent> sync_message_event_;
-    std::queue<std::pair<uint32_t, MessageWrapper>> sync_messages_;
+    base::queue<std::pair<uint32_t, MessageWrapper>> sync_messages_;
     uint32_t next_sync_message_id_ = 0;
 
     DISALLOW_COPY_AND_ASSIGN(Endpoint);
@@ -626,7 +639,7 @@ class ChannelAssociatedGroupController
   void NotifyEndpointOfError(Endpoint* endpoint, bool force_async) {
     lock_.AssertAcquired();
     DCHECK(endpoint->task_runner() && endpoint->client());
-    if (endpoint->task_runner()->BelongsToCurrentThread() && !force_async) {
+    if (endpoint->task_runner()->RunsTasksInCurrentSequence() && !force_async) {
       mojo::InterfaceEndpointClient* client = endpoint->client();
       base::Optional<mojo::DisconnectReason> reason(
           endpoint->disconnect_reason());
@@ -636,9 +649,9 @@ class ChannelAssociatedGroupController
     } else {
       endpoint->task_runner()->PostTask(
           FROM_HERE,
-          base::Bind(&ChannelAssociatedGroupController
-                ::NotifyEndpointOfErrorOnEndpointThread, this, endpoint->id(),
-                endpoint));
+          base::Bind(&ChannelAssociatedGroupController::
+                         NotifyEndpointOfErrorOnEndpointThread,
+                     this, endpoint->id(), base::Unretained(endpoint)));
     }
   }
 
@@ -651,7 +664,7 @@ class ChannelAssociatedGroupController
     if (!endpoint->client())
       return;
 
-    DCHECK(endpoint->task_runner()->BelongsToCurrentThread());
+    DCHECK(endpoint->task_runner()->RunsTasksInCurrentSequence());
     NotifyEndpointOfError(endpoint, false /* force_async */);
   }
 
@@ -709,7 +722,7 @@ class ChannelAssociatedGroupController
       return true;
 
     mojo::InterfaceEndpointClient* client = endpoint->client();
-    if (!client || !endpoint->task_runner()->BelongsToCurrentThread()) {
+    if (!client || !endpoint->task_runner()->RunsTasksInCurrentSequence()) {
       // No client has been bound yet or the client runs tasks on another
       // thread. We assume the other thread must always be the one on which
       // |proxy_task_runner_| runs tasks, since that's the only valid scenario.
@@ -765,7 +778,7 @@ class ChannelAssociatedGroupController
     if (!client)
       return;
 
-    DCHECK(endpoint->task_runner()->BelongsToCurrentThread());
+    DCHECK(endpoint->task_runner()->RunsTasksInCurrentSequence());
 
     // Sync messages should never make their way to this method.
     DCHECK(!message.has_flag(mojo::Message::kFlagIsSync));
@@ -788,16 +801,18 @@ class ChannelAssociatedGroupController
     if (!endpoint)
       return;
 
-    DCHECK(endpoint->task_runner()->BelongsToCurrentThread());
+    // Careful, if the endpoint is detached its members are cleared. Check for
+    // that before dereferencing.
+    mojo::InterfaceEndpointClient* client = endpoint->client();
+    if (!client)
+      return;
+
+    DCHECK(endpoint->task_runner()->RunsTasksInCurrentSequence());
     MessageWrapper message_wrapper = endpoint->PopSyncMessage(message_id);
 
     // The message must have already been dequeued by the endpoint waking up
     // from a sync wait. Nothing to do.
     if (message_wrapper.value().IsNull())
-      return;
-
-    mojo::InterfaceEndpointClient* client = endpoint->client();
-    if (!client)
       return;
 
     bool result = false;
@@ -815,8 +830,6 @@ class ChannelAssociatedGroupController
       mojo::InterfaceId id,
       const base::Optional<mojo::DisconnectReason>& reason) override {
     DCHECK(thread_checker_.CalledOnValidThread());
-
-    DCHECK(!mojo::IsMasterInterfaceId(id) || reason);
 
     scoped_refptr<ChannelAssociatedGroupController> keepalive(this);
     base::AutoLock locker(lock_);
@@ -915,10 +928,12 @@ class MojoBootstrapImpl : public MojoBootstrap {
 std::unique_ptr<MojoBootstrap> MojoBootstrap::Create(
     mojo::ScopedMessagePipeHandle handle,
     Channel::Mode mode,
-    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner) {
-  return base::MakeUnique<MojoBootstrapImpl>(
-      std::move(handle), new ChannelAssociatedGroupController(
-                             mode == Channel::MODE_SERVER, ipc_task_runner));
+    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
+    const scoped_refptr<base::SingleThreadTaskRunner>& proxy_task_runner) {
+  return std::make_unique<MojoBootstrapImpl>(
+      std::move(handle),
+      new ChannelAssociatedGroupController(mode == Channel::MODE_SERVER,
+                                           ipc_task_runner, proxy_task_runner));
 }
 
 }  // namespace IPC

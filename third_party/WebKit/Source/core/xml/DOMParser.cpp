@@ -27,7 +27,8 @@ namespace blink {
 
 Document* DOMParser::parseFromString(const String& str, const String& type) {
   Document* doc = DOMImplementation::createDocument(
-      type, DocumentInit(KURL(), nullptr, context_document_), false);
+      type, DocumentInit::Create().WithContextDocument(context_document_),
+      false);
   doc->SetContent(str);
   doc->SetMimeType(AtomicString(type));
   if (context_document_) {
@@ -40,8 +41,9 @@ Document* DOMParser::parseFromString(const String& str, const String& type) {
 DOMParser::DOMParser(Document& document)
     : context_document_(document.ContextDocument()) {}
 
-DEFINE_TRACE(DOMParser) {
+void DOMParser::Trace(blink::Visitor* visitor) {
   visitor->Trace(context_document_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

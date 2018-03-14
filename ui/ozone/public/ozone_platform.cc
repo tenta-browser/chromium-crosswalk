@@ -26,16 +26,7 @@ OzonePlatform::OzonePlatform() {
   g_platform_initialized_gpu = false;
 }
 
-OzonePlatform::~OzonePlatform() {
-  DCHECK_EQ(instance_, this);
-  instance_ = NULL;
-}
-
-// static
-void OzonePlatform::InitializeForUI() {
-  const InitParams params;
-  OzonePlatform::InitializeForUI(params);
-}
+OzonePlatform::~OzonePlatform() = default;
 
 // static
 void OzonePlatform::InitializeForUI(const InitParams& args) {
@@ -60,8 +51,9 @@ void OzonePlatform::InitializeForGPU(const InitParams& args) {
 
 // static
 void OzonePlatform::Shutdown() {
-  delete instance_;
-  // Destructor resets pointer.
+  auto* tmp = instance_;
+  instance_ = nullptr;
+  delete tmp;
 }
 
 // static
@@ -98,6 +90,8 @@ base::MessageLoop::Type OzonePlatform::GetMessageLoopTypeForGpu() {
   return base::MessageLoop::TYPE_DEFAULT;
 }
 
-void OzonePlatform::AddInterfaces(service_manager::BinderRegistry* registry) {}
+void OzonePlatform::AddInterfaces(
+    service_manager::BinderRegistryWithArgs<
+        const service_manager::BindSourceInfo&>* registry) {}
 
 }  // namespace ui

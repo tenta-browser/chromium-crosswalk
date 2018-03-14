@@ -38,6 +38,8 @@
 #include "components/history/core/browser/page_usage_data.h"
 #include "components/history/core/test/history_backend_db_base_test.h"
 #include "components/history/core/test/test_history_database.h"
+#include "testing/gmock/include/gmock/gmock.h"
+#include "testing/gtest/include/gtest/gtest.h"
 
 namespace history {
 namespace {
@@ -533,13 +535,13 @@ bool IsValidRFC4122Ver4GUID(const std::string& guid) {
   //   => guid[14] == '4'
   //
   // * Bits 6-7 of clk_seq_hi_res should be set to 0b10
-  //   => guid[19] in {'8','9','A','B'}
+  //   => guid[19] in {'8','9','A','B','a','b'}
   //
   // * All other bits should be random or pseudo random.
   //   => http://dilbert.com/strip/2001-10-25
   return base::IsValidGUID(guid) && guid[14] == '4' &&
          (guid[19] == '8' || guid[19] == '9' || guid[19] == 'A' ||
-          guid[19] == 'B');
+          guid[19] == 'B' || guid[19] == 'a' || guid[19] == 'b');
 }
 
 TEST_F(HistoryBackendDBTest, MigrateHashHttpMethodAndGenerateGuids) {
@@ -608,7 +610,6 @@ TEST_F(HistoryBackendDBTest, MigrateHashHttpMethodAndGenerateGuids) {
         std::string guid = s.ColumnString(0);
         uint32_t id = static_cast<uint32_t>(s.ColumnInt64(1));
         EXPECT_TRUE(IsValidRFC4122Ver4GUID(guid));
-        EXPECT_EQ(guid, base::ToUpperASCII(guid));
         // Id is used as time_low in RFC 4122 to guarantee unique GUIDs
         EXPECT_EQ(guid.substr(0, 8), base::StringPrintf("%08" PRIX32, id));
         guids.insert(guid);
@@ -1329,6 +1330,118 @@ TEST_F(HistoryBackendDBTest, CheckLastCompatibleVersion) {
       EXPECT_EQ(28, meta.GetVersionNumber());
     }
   }
+}
+
+// Tests that visit segment names are recomputed and segments merged when
+// migrating to version 37.
+TEST_F(HistoryBackendDBTest, MigrateVisitSegmentNames) {
+  ASSERT_NO_FATAL_FAILURE(CreateDBVersion(32));
+
+  const SegmentID segment_id1 = 7;
+  const SegmentID segment_id2 = 8;
+  const URLID url_id1 = 3;
+  const URLID url_id2 = 4;
+  const GURL url1("http://www.foo.com");
+  const GURL url2("http://m.foo.com");
+  const std::string legacy_segment_name1("http://foo.com/");
+  const std::string legacy_segment_name2("http://m.foo.com/");
+  const base::string16 title1(base::ASCIIToUTF16("Title1"));
+  const base::string16 title2(base::ASCIIToUTF16("Title2"));
+  const base::Time segment_time(base::Time::Now());
+
+  {
+    // Open the db for manual manipulation.
+    sql::Connection db;
+    ASSERT_TRUE(db.Open(history_dir_.Append(kHistoryFilename)));
+
+    // Add first entry to urls.
+    {
+      sql::Statement s(
+          db.GetUniqueStatement("INSERT INTO urls "
+                                "(id, url, title, last_visit_time) VALUES "
+                                "(?, ?, ?, ?)"));
+      s.BindInt64(0, url_id1);
+      s.BindString(1, url1.spec());
+      s.BindString16(2, title1);
+      s.BindInt64(3, segment_time.ToInternalValue());
+      ASSERT_TRUE(s.Run());
+    }
+
+    // Add first entry to segments.
+    {
+      sql::Statement s(
+          db.GetUniqueStatement("INSERT INTO segments "
+                                "(id, name, url_id) VALUES "
+                                "(?, ?, ?)"));
+      s.BindInt64(0, segment_id1);
+      s.BindString(1, legacy_segment_name1);
+      s.BindInt64(2, url_id1);
+      ASSERT_TRUE(s.Run());
+    }
+
+    // And first to segment_usage.
+    {
+      sql::Statement s(db.GetUniqueStatement(
+          "INSERT INTO segment_usage "
+          "(id, segment_id, time_slot, visit_count) VALUES "
+          "(?, ?, ?, ?)"));
+      s.BindInt64(0, 4);  // id.
+      s.BindInt64(1, segment_id1);
+      s.BindInt64(2, segment_time.ToInternalValue());
+      s.BindInt(3, 11);  // visit count.
+      ASSERT_TRUE(s.Run());
+    }
+
+    // Add second entry to urls.
+    {
+      sql::Statement s(
+          db.GetUniqueStatement("INSERT INTO urls "
+                                "(id, url, title, last_visit_time) VALUES "
+                                "(?, ?, ?, ?)"));
+      s.BindInt64(0, url_id2);
+      s.BindString(1, url2.spec());
+      s.BindString16(2, title2);
+      s.BindInt64(3, segment_time.ToInternalValue());
+      ASSERT_TRUE(s.Run());
+    }
+
+    // Add second entry to segments.
+    {
+      sql::Statement s(
+          db.GetUniqueStatement("INSERT INTO segments "
+                                "(id, name, url_id) VALUES "
+                                "(?, ?, ?)"));
+      s.BindInt64(0, segment_id2);
+      s.BindString(1, legacy_segment_name2);
+      s.BindInt64(2, url_id2);
+      ASSERT_TRUE(s.Run());
+    }
+
+    // And second to segment_usage.
+    {
+      sql::Statement s(db.GetUniqueStatement(
+          "INSERT INTO segment_usage "
+          "(id, segment_id, time_slot, visit_count) VALUES "
+          "(?, ?, ?, ?)"));
+      s.BindInt64(0, 5);  // id.
+      s.BindInt64(1, segment_id2);
+      s.BindInt64(2, segment_time.ToInternalValue());
+      s.BindInt(3, 13);  // visit count.
+      ASSERT_TRUE(s.Run());
+    }
+  }
+
+  // Re-open the db, triggering migration.
+  CreateBackendAndDatabase();
+
+  std::vector<std::unique_ptr<PageUsageData>> results =
+      db_->QuerySegmentUsage(segment_time, /*max_result_count=*/10,
+                             base::Callback<bool(const GURL&)>());
+  ASSERT_EQ(1u, results.size());
+  EXPECT_THAT(results[0]->GetURL(), testing::AnyOf(url1, url2));
+  EXPECT_THAT(results[0]->GetTitle(), testing::AnyOf(title1, title2));
+  EXPECT_EQ(segment_id1, db_->GetSegmentNamed(legacy_segment_name1));
+  EXPECT_EQ(0u, db_->GetSegmentNamed(legacy_segment_name2));
 }
 
 bool FilterURL(const GURL& url) {

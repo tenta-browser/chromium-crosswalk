@@ -26,7 +26,7 @@
 #include "ipc/ipc_channel_proxy.h"
 #include "ipc/ipc_message.h"
 #include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/pending_process_connection.h"
+#include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
 #include "mojo/edk/embedder/platform_channel_pair.h"
 #include "remoting/base/typed_buffer.h"
 #include "remoting/host/switches.h"
@@ -155,8 +155,7 @@ bool CreateWindowStationAndDesktop(ScopedSid logon_sid,
 
   // Generate a unique window station name.
   std::string window_station_name = base::StringPrintf(
-      "chromoting-%d-%d",
-      base::GetCurrentProcId(),
+      "chromoting-%" CrPRIdPid "-%d", base::GetCurrentProcId(),
       base::RandInt(1, std::numeric_limits<int>::max()));
 
   // Make sure that a new window station will be created instead of opening
@@ -228,14 +227,14 @@ UnprivilegedProcessDelegate::UnprivilegedProcessDelegate(
       event_handler_(nullptr) {}
 
 UnprivilegedProcessDelegate::~UnprivilegedProcessDelegate() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!channel_);
   DCHECK(!worker_process_.IsValid());
 }
 
 void UnprivilegedProcessDelegate::LaunchProcess(
     WorkerProcessLauncher* event_handler) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!event_handler_);
 
   event_handler_ = event_handler;
@@ -284,11 +283,12 @@ void UnprivilegedProcessDelegate::LaunchProcess(
     return;
   }
 
-  mojo::edk::PendingProcessConnection process;
-  std::string mojo_message_pipe_token;
+  mojo::edk::OutgoingBrokerClientInvitation invitation;
+  std::string mojo_message_pipe_token = mojo::edk::GenerateRandomToken();
   std::unique_ptr<IPC::ChannelProxy> server = IPC::ChannelProxy::Create(
-      process.CreateMessagePipe(&mojo_message_pipe_token).release(),
-      IPC::Channel::MODE_SERVER, this, io_task_runner_);
+      invitation.AttachMessagePipe(mojo_message_pipe_token).release(),
+      IPC::Channel::MODE_SERVER, this, io_task_runner_,
+      base::ThreadTaskRunnerHandle::Get());
   base::CommandLine command_line(target_command_->argv());
   command_line.AppendSwitchASCII(kMojoPipeToken, mojo_message_pipe_token);
 
@@ -311,8 +311,10 @@ void UnprivilegedProcessDelegate::LaunchProcess(
     ReportFatalError();
     return;
   }
-  process.Connect(worker_process.Get(),
-                  mojo::edk::ConnectionParams(mojo_channel.PassServerHandle()));
+  invitation.Send(
+      worker_process.Get(),
+      mojo::edk::ConnectionParams(mojo::edk::TransportProtocol::kLegacy,
+                                  mojo_channel.PassServerHandle()));
 
   channel_ = std::move(server);
 
@@ -320,7 +322,7 @@ void UnprivilegedProcessDelegate::LaunchProcess(
 }
 
 void UnprivilegedProcessDelegate::Send(IPC::Message* message) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (channel_) {
     channel_->Send(message);
@@ -330,12 +332,12 @@ void UnprivilegedProcessDelegate::Send(IPC::Message* message) {
 }
 
 void UnprivilegedProcessDelegate::CloseChannel() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   channel_.reset();
 }
 
 void UnprivilegedProcessDelegate::KillProcess() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   CloseChannel();
   event_handler_ = nullptr;
@@ -348,13 +350,13 @@ void UnprivilegedProcessDelegate::KillProcess() {
 
 bool UnprivilegedProcessDelegate::OnMessageReceived(
     const IPC::Message& message) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   return event_handler_->OnMessageReceived(message);
 }
 
 void UnprivilegedProcessDelegate::OnChannelConnected(int32_t peer_pid) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   DWORD pid = GetProcessId(worker_process_.Get());
   if (pid != static_cast<DWORD>(peer_pid)) {
@@ -369,13 +371,13 @@ void UnprivilegedProcessDelegate::OnChannelConnected(int32_t peer_pid) {
 }
 
 void UnprivilegedProcessDelegate::OnChannelError() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   event_handler_->OnChannelError();
 }
 
 void UnprivilegedProcessDelegate::ReportFatalError() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   CloseChannel();
 
@@ -386,7 +388,7 @@ void UnprivilegedProcessDelegate::ReportFatalError() {
 
 void UnprivilegedProcessDelegate::ReportProcessLaunched(
     base::win::ScopedHandle worker_process) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!worker_process_.IsValid());
 
   worker_process_ = std::move(worker_process);

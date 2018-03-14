@@ -20,6 +20,7 @@
 
 #include "modules/accessibility/AXProgressIndicator.h"
 
+#include "core/dom/AccessibleNode.h"
 #include "core/html/HTMLProgressElement.h"
 #include "core/layout/LayoutProgress.h"
 #include "modules/accessibility/AXObjectCacheImpl.h"
@@ -50,31 +51,44 @@ bool AXProgressIndicator::ComputeAccessibilityIsIgnored(
   return AccessibilityIsIgnoredByDefault(ignored_reasons);
 }
 
-float AXProgressIndicator::ValueForRange() const {
-  if (HasAttribute(aria_valuenowAttr))
-    return GetAttribute(aria_valuenowAttr).ToFloat();
+bool AXProgressIndicator::ValueForRange(float* out_value) const {
+  float value_now;
+  if (HasAOMPropertyOrARIAAttribute(AOMFloatProperty::kValueNow, value_now)) {
+    *out_value = value_now;
+    return true;
+  }
 
-  if (GetElement()->position() >= 0)
-    return clampTo<float>(GetElement()->value());
-  // Indeterminate progress bar should return 0.
-  return 0.0f;
+  if (GetProgressElement()->position() >= 0) {
+    *out_value = clampTo<float>(GetProgressElement()->value());
+    return true;
+  }
+  // Indeterminate progress bar has no value.
+  return false;
 }
 
-float AXProgressIndicator::MaxValueForRange() const {
-  if (HasAttribute(aria_valuemaxAttr))
-    return GetAttribute(aria_valuemaxAttr).ToFloat();
+bool AXProgressIndicator::MaxValueForRange(float* out_value) const {
+  float value_max;
+  if (HasAOMPropertyOrARIAAttribute(AOMFloatProperty::kValueMax, value_max)) {
+    *out_value = value_max;
+    return true;
+  }
 
-  return clampTo<float>(GetElement()->max());
+  *out_value = clampTo<float>(GetProgressElement()->max());
+  return true;
 }
 
-float AXProgressIndicator::MinValueForRange() const {
-  if (HasAttribute(aria_valueminAttr))
-    return GetAttribute(aria_valueminAttr).ToFloat();
+bool AXProgressIndicator::MinValueForRange(float* out_value) const {
+  float value_min;
+  if (HasAOMPropertyOrARIAAttribute(AOMFloatProperty::kValueMin, value_min)) {
+    *out_value = value_min;
+    return true;
+  }
 
-  return 0.0f;
+  *out_value = 0.0f;
+  return true;
 }
 
-HTMLProgressElement* AXProgressIndicator::GetElement() const {
+HTMLProgressElement* AXProgressIndicator::GetProgressElement() const {
   return ToLayoutProgress(layout_object_)->ProgressElement();
 }
 

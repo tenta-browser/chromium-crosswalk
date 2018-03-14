@@ -33,21 +33,20 @@
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ScriptController.h"
 #include "core/CSSPropertyNames.h"
-#include "core/InputTypeNames.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
+#include "core/dom/events/ScopedEventQueue.h"
 #include "core/events/MouseEvent.h"
-#include "core/events/ScopedEventQueue.h"
-#include "core/frame/FrameView.h"
-#include "core/html/HTMLDataListElement.h"
-#include "core/html/HTMLDataListOptionsCollection.h"
+#include "core/frame/LocalFrameView.h"
+#include "core/frame/WebFeature.h"
 #include "core/html/HTMLDivElement.h"
-#include "core/html/HTMLInputElement.h"
-#include "core/html/HTMLOptionElement.h"
 #include "core/html/forms/ColorChooser.h"
+#include "core/html/forms/HTMLDataListElement.h"
+#include "core/html/forms/HTMLDataListOptionsCollection.h"
+#include "core/html/forms/HTMLInputElement.h"
+#include "core/html/forms/HTMLOptionElement.h"
+#include "core/input_type_names.h"
 #include "core/layout/LayoutTheme.h"
 #include "core/page/ChromeClient.h"
-#include "platform/RuntimeEnabledFeatures.h"
-#include "platform/UserGestureIndicator.h"
 #include "platform/graphics/Color.h"
 #include "platform/wtf/text/WTFString.h"
 
@@ -82,7 +81,7 @@ InputType* ColorInputType::Create(HTMLInputElement& element) {
 
 ColorInputType::~ColorInputType() {}
 
-DEFINE_TRACE(ColorInputType) {
+void ColorInputType::Trace(blink::Visitor* visitor) {
   visitor->Trace(chooser_);
   KeyboardClickableInputTypeView::Trace(visitor);
   ColorChooserClient::Trace(visitor);
@@ -98,7 +97,7 @@ InputType::ValueMode ColorInputType::GetValueMode() const {
 }
 
 void ColorInputType::CountUsage() {
-  CountUsageIfVisible(UseCounter::kInputTypeColor);
+  CountUsageIfVisible(WebFeature::kInputTypeColor);
 }
 
 const AtomicString& ColorInputType::FormControlType() const {
@@ -149,7 +148,7 @@ void ColorInputType::HandleDOMActivateEvent(Event* event) {
   if (GetElement().IsDisabledFormControl())
     return;
 
-  if (!UserGestureIndicator::UtilizeUserGesture())
+  if (!Frame::HasTransientUserActivation(GetElement().GetDocument().GetFrame()))
     return;
 
   ChromeClient* chrome_client = this->GetChromeClient();
@@ -218,7 +217,7 @@ void ColorInputType::UpdateView() {
 
 HTMLElement* ColorInputType::ShadowColorSwatch() const {
   ShadowRoot* shadow = GetElement().UserAgentShadowRoot();
-  return shadow ? ToHTMLElementOrDie(shadow->FirstChild()->firstChild())
+  return shadow ? ToHTMLElementOrDie(shadow->firstChild()->firstChild())
                 : nullptr;
 }
 

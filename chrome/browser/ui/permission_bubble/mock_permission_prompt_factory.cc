@@ -17,7 +17,6 @@ MockPermissionPromptFactory::MockPermissionPromptFactory(
     : can_update_ui_(false),
       show_count_(0),
       requests_count_(0),
-      total_requests_count_(0),
       response_type_(PermissionRequestManager::NONE),
       manager_(manager) {
   manager->view_factory_ =
@@ -33,9 +32,23 @@ MockPermissionPromptFactory::~MockPermissionPromptFactory() {
 }
 
 std::unique_ptr<PermissionPrompt> MockPermissionPromptFactory::Create(
-    content::WebContents* web_contents) {
-  MockPermissionPrompt* prompt = new MockPermissionPrompt(this, manager_);
-  prompt->can_update_ui_ = can_update_ui_;
+    content::WebContents* web_contents,
+    PermissionPrompt::Delegate* delegate) {
+  MockPermissionPrompt* prompt =
+      new MockPermissionPrompt(this, delegate, can_update_ui_);
+
+  prompts_.push_back(prompt);
+  show_count_++;
+  requests_count_ = delegate->Requests().size();
+  for (const PermissionRequest* request : delegate->Requests()) {
+    request_types_seen_.push_back(request->GetPermissionRequestType());
+    request_origins_seen_.push_back(request->GetOrigin());
+  }
+
+  if (!show_bubble_quit_closure_.is_null())
+    show_bubble_quit_closure_.Run();
+
+  manager_->set_auto_response_for_test(response_type_);
   return base::WrapUnique(prompt);
 }
 
@@ -48,7 +61,8 @@ void MockPermissionPromptFactory::SetCanUpdateUi(bool can_update_ui) {
 void MockPermissionPromptFactory::ResetCounts() {
   show_count_ = 0;
   requests_count_ = 0;
-  total_requests_count_ = 0;
+  request_types_seen_.clear();
+  request_origins_seen_.clear();
 }
 
 void MockPermissionPromptFactory::DocumentOnLoadCompletedInMainFrame() {
@@ -56,11 +70,19 @@ void MockPermissionPromptFactory::DocumentOnLoadCompletedInMainFrame() {
 }
 
 bool MockPermissionPromptFactory::is_visible() {
-  for (auto* prompt : prompts_) {
-    if (prompt->IsVisible())
-      return true;
-  }
-  return false;
+  return !prompts_.empty();
+}
+
+int MockPermissionPromptFactory::TotalRequestCount() {
+  return request_types_seen_.size();
+}
+
+bool MockPermissionPromptFactory::RequestTypeSeen(PermissionRequestType type) {
+  return base::ContainsValue(request_types_seen_, type);
+}
+
+bool MockPermissionPromptFactory::RequestOriginSeen(const GURL& origin) {
+  return base::ContainsValue(request_origins_seen_, origin);
 }
 
 void MockPermissionPromptFactory::WaitForPermissionBubble() {
@@ -75,22 +97,10 @@ void MockPermissionPromptFactory::WaitForPermissionBubble() {
 
 // static
 std::unique_ptr<PermissionPrompt> MockPermissionPromptFactory::DoNotCreate(
-    content::WebContents* web_contents) {
+    content::WebContents* web_contents,
+    PermissionPrompt::Delegate* delegate) {
   NOTREACHED();
-  return base::WrapUnique(new MockPermissionPrompt(nullptr, nullptr));
-}
-
-void MockPermissionPromptFactory::UpdateResponseType() {
-  manager_->set_auto_response_for_test(response_type_);
-}
-
-void MockPermissionPromptFactory::ShowView(MockPermissionPrompt* prompt) {
-  if (base::ContainsValue(prompts_, prompt))
-    return;
-  prompts_.push_back(prompt);
-
-  if (!show_bubble_quit_closure_.is_null())
-    show_bubble_quit_closure_.Run();
+  return base::WrapUnique(new MockPermissionPrompt(nullptr, nullptr, false));
 }
 
 void MockPermissionPromptFactory::HideView(MockPermissionPrompt* prompt) {

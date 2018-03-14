@@ -8,6 +8,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
@@ -30,7 +31,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if !defined(OS_ANDROID)
-#include "components/safe_json/testing_json_parser.h"
+#include "services/data_decoder/public/cpp/testing_json_parser.h"
 #endif
 
 namespace {
@@ -110,11 +111,11 @@ class SupervisedUserWhitelistServiceTest : public testing::Test {
     std::unique_ptr<base::DictionaryValue> whitelist_dict(
         new base::DictionaryValue);
     whitelist_dict->SetString("name", "Whitelist A");
-    dict->Set("aaaa", whitelist_dict.release());
+    dict->Set("aaaa", std::move(whitelist_dict));
 
     whitelist_dict.reset(new base::DictionaryValue);
     whitelist_dict->SetString("name", "Whitelist B");
-    dict->Set("bbbb", whitelist_dict.release());
+    dict->Set("bbbb", std::move(whitelist_dict));
 
     installer_->RegisterWhitelist(kClientId, "aaaa", "Whitelist A");
     installer_->RegisterWhitelist(kClientId, "bbbb", "Whitelist B");
@@ -161,7 +162,7 @@ class SupervisedUserWhitelistServiceTest : public testing::Test {
   TestingProfile profile_;
 
 #if !defined(OS_ANDROID)
-  safe_json::TestingJsonParser::ScopedFactoryOverride factory_override_;
+  data_decoder::TestingJsonParser::ScopedFactoryOverride factory_override_;
 #endif
 
   std::unique_ptr<MockSupervisedUserWhitelistInstaller> installer_;

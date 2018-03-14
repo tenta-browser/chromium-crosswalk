@@ -12,13 +12,16 @@
 #include "core/css/CSSIdentifierValue.h"
 #include "core/css/resolver/StyleBuilder.h"
 #include "core/css/resolver/StyleResolverState.h"
+#include "core/style/ComputedStyle.h"
 #include "platform/LengthFunctions.h"
 #include "platform/wtf/PtrUtil.h"
 
 namespace blink {
 
-CSSLengthInterpolationType::CSSLengthInterpolationType(PropertyHandle property)
-    : CSSInterpolationType(property),
+CSSLengthInterpolationType::CSSLengthInterpolationType(
+    PropertyHandle property,
+    const PropertyRegistration* registration)
+    : CSSInterpolationType(property, registration),
       value_range_(LengthPropertyFunctions::GetValueRange(CssProperty())) {}
 
 float CSSLengthInterpolationType::EffectiveZoom(
@@ -28,7 +31,8 @@ float CSSLengthInterpolationType::EffectiveZoom(
              : 1;
 }
 
-class InheritedLengthChecker : public InterpolationType::ConversionChecker {
+class InheritedLengthChecker
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<InheritedLengthChecker> Create(CSSPropertyID property,
                                                         const Length& length) {
@@ -39,11 +43,11 @@ class InheritedLengthChecker : public InterpolationType::ConversionChecker {
   InheritedLengthChecker(CSSPropertyID property, const Length& length)
       : property_(property), length_(length) {}
 
-  bool IsValid(const InterpolationEnvironment& environment,
+  bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
     Length parent_length;
-    if (!LengthPropertyFunctions::GetLength(
-            property_, *environment.GetState().ParentStyle(), parent_length))
+    if (!LengthPropertyFunctions::GetLength(property_, *state.ParentStyle(),
+                                            parent_length))
       return false;
     return parent_length == length_;
   }
@@ -135,7 +139,7 @@ void CSSLengthInterpolationType::Composite(
   LengthInterpolationFunctions::Composite(
       underlying.interpolable_value, underlying.non_interpolable_value,
       underlying_fraction, *value.interpolable_value,
-      value.non_interpolable_value.Get());
+      value.non_interpolable_value.get());
 }
 
 void CSSLengthInterpolationType::ApplyStandardPropertyValue(
@@ -155,7 +159,7 @@ void CSSLengthInterpolationType::ApplyStandardPropertyValue(
     Length before;
     Length after;
     DCHECK(LengthPropertyFunctions::GetLength(CssProperty(), style, before));
-    StyleBuilder::ApplyProperty(CssProperty(), state,
+    StyleBuilder::ApplyProperty(GetProperty().GetCSSProperty(), state,
                                 *CSSValue::Create(length, zoom));
     DCHECK(LengthPropertyFunctions::GetLength(CssProperty(), style, after));
     DCHECK(before.IsSpecified());
@@ -167,7 +171,7 @@ void CSSLengthInterpolationType::ApplyStandardPropertyValue(
 #endif
     return;
   }
-  StyleBuilder::ApplyProperty(CssProperty(), state,
+  StyleBuilder::ApplyProperty(GetProperty().GetCSSProperty(), state,
                               *CSSValue::Create(length, zoom));
 }
 

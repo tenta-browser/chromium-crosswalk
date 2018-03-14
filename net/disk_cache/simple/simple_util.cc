@@ -16,34 +16,12 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "net/disk_cache/simple/simple_entry_format.h"
+#include "third_party/zlib/zlib.h"
 
 namespace {
 
 // Size of the uint64_t hash_key number in Hex format in a string.
 const size_t kEntryHashKeyAsHexStringSize = 2 * sizeof(uint64_t);
-
-#if defined(OS_POSIX)
-// TODO(clamy, gavinp): this should go in base
-bool GetNanoSecsFromStat(const struct stat& st,
-                         time_t* out_sec,
-                         long* out_nsec) {
-#if defined(OS_ANDROID)
-  *out_sec = st.st_mtime;
-  *out_nsec = st.st_mtime_nsec;
-  return true;
-#elif defined(OS_LINUX)
-  *out_sec = st.st_mtim.tv_sec;
-  *out_nsec = st.st_mtim.tv_nsec;
-  return true;
-#elif defined(OS_MACOSX) || defined(OS_IOS) || defined(OS_BSD)
-  *out_sec = st.st_mtimespec.tv_sec;
-  *out_nsec = st.st_mtimespec.tv_nsec;
-  return true;
-#else
-  return false;
-#endif
-}
-#endif  // defined(OS_POSIX)
 
 }  // namespace
 
@@ -82,13 +60,21 @@ uint64_t GetEntryHashKey(const std::string& key) {
   return u.key_hash;
 }
 
-std::string GetFilenameFromEntryHashAndFileIndex(uint64_t entry_hash,
-                                                 int file_index) {
-  return base::StringPrintf("%016" PRIx64 "_%1d", entry_hash, file_index);
+std::string GetFilenameFromEntryFileKeyAndFileIndex(
+    const SimpleFileTracker::EntryFileKey& key,
+    int file_index) {
+  // TODO(morlovich): create a todelete_..._ file for a non-zero
+  // doom_generation.
+  DCHECK_EQ(0u, key.doom_generation);
+  return base::StringPrintf("%016" PRIx64 "_%1d", key.entry_hash, file_index);
 }
 
-std::string GetSparseFilenameFromEntryHash(uint64_t entry_hash) {
-  return base::StringPrintf("%016" PRIx64 "_s", entry_hash);
+std::string GetSparseFilenameFromEntryFileKey(
+    const SimpleFileTracker::EntryFileKey& key) {
+  // TODO(morlovich): create a todelete_..._ file for a non-zero
+  // doom_generation.
+  DCHECK_EQ(0u, key.doom_generation);
+  return base::StringPrintf("%016" PRIx64 "_s", key.entry_hash);
 }
 
 std::string GetFilenameFromKeyAndFileIndex(const std::string& key,
@@ -116,23 +102,8 @@ int GetFileIndexFromStreamIndex(int stream_index) {
   return (stream_index == 2) ? 1 : 0;
 }
 
-// TODO(clamy, gavinp): this should go in base
 bool GetMTime(const base::FilePath& path, base::Time* out_mtime) {
   DCHECK(out_mtime);
-#if defined(OS_POSIX)
-  base::ThreadRestrictions::AssertIOAllowed();
-  struct stat file_stat;
-  if (stat(path.value().c_str(), &file_stat) != 0)
-    return false;
-  time_t sec;
-  long nsec;
-  if (GetNanoSecsFromStat(file_stat, &sec, &nsec)) {
-    int64_t usec = (nsec / base::Time::kNanosecondsPerMicrosecond);
-    *out_mtime = base::Time::FromTimeT(sec)
-        + base::TimeDelta::FromMicroseconds(usec);
-    return true;
-  }
-#endif
   base::File::Info file_info;
   if (!base::GetFileInfo(path, &file_info))
     return false;
@@ -140,6 +111,17 @@ bool GetMTime(const base::FilePath& path, base::Time* out_mtime) {
   return true;
 }
 
-}  // namespace simple_backend
+uint32_t Crc32(const char* data, int length) {
+  uint32_t empty_crc = crc32(0, Z_NULL, 0);
+  if (length == 0)
+    return empty_crc;
+  return crc32(empty_crc, reinterpret_cast<const Bytef*>(data), length);
+}
+
+uint32_t IncrementalCrc32(uint32_t previous_crc, const char* data, int length) {
+  return crc32(previous_crc, reinterpret_cast<const Bytef*>(data), length);
+}
+
+}  // namespace simple_util
 
 }  // namespace disk_cache

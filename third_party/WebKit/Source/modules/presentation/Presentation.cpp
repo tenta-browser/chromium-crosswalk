@@ -19,17 +19,18 @@ Presentation::Presentation(LocalFrame* frame) : ContextClient(frame) {}
 
 // static
 Presentation* Presentation::Create(LocalFrame* frame) {
-  ASSERT(frame);
+  DCHECK(frame);
   Presentation* presentation = new Presentation(frame);
   PresentationController* controller = PresentationController::From(*frame);
-  ASSERT(controller);
+  DCHECK(controller);
   controller->SetPresentation(presentation);
   return presentation;
 }
 
-DEFINE_TRACE(Presentation) {
+void Presentation::Trace(blink::Visitor* visitor) {
   visitor->Trace(default_request_);
   visitor->Trace(receiver_);
+  ScriptWrappable::Trace(visitor);
   ContextClient::Trace(visitor);
 }
 

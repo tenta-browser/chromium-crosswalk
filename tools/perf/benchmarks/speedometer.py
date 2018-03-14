@@ -20,8 +20,6 @@ import os
 
 from core import perf_benchmark
 
-from benchmarks import v8_helper
-
 from telemetry import benchmark
 from telemetry import page as page_module
 from telemetry.page import legacy_page_test
@@ -74,6 +72,12 @@ class SpeedometerMeasurement(legacy_page_test.LegacyPageTest):
         page, 'Total', 'ms',
         tab.EvaluateJavaScript('benchmarkClient._timeValues'),
         important=True))
+    results.AddValue(list_of_scalar_values.ListOfScalarValues(
+        page, 'RunsPerMinute', 'score',
+        tab.EvaluateJavaScript(
+            '[parseFloat(document.getElementById("result-number").innerText)];'
+        ),
+        important=True))
 
     # Extract the timings for each suite
     for suite_name in self.enabled_suites:
@@ -91,7 +95,7 @@ class SpeedometerMeasurement(legacy_page_test.LegacyPageTest):
     keychain_metric.KeychainMetric().AddResults(tab, results)
 
 
-@benchmark.Owner(emails=['bmeurer@chromium.org', 'mvstanton@chromium.org'])
+@benchmark.Owner(emails=['hablich@chromium.org'])
 class Speedometer(perf_benchmark.PerfBenchmark):
   test = SpeedometerMeasurement
 
@@ -106,28 +110,27 @@ class Speedometer(perf_benchmark.PerfBenchmark):
         cloud_storage_bucket=story.PUBLIC_BUCKET)
     ps.AddStory(page_module.Page(
         'http://browserbench.org/Speedometer/', ps, ps.base_dir,
-        make_javascript_deterministic=False))
+        make_javascript_deterministic=False,
+        name='http://browserbench.org/Speedometer/'))
     return ps
 
-
-@benchmark.Owner(emails=['hablich@chromium.org'])
-@benchmark.Disabled('all')
-class SpeedometerTurbo(Speedometer):
-  def SetExtraBrowserOptions(self, options):
-    super(SpeedometerTurbo, self).SetExtraBrowserOptions(options)
-    v8_helper.EnableTurbo(options)
-
-  @classmethod
-  def Name(cls):
-    return 'speedometer-turbo'
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        pass # http://browserbench.org/Speedometer/ not disabled.
+    return StoryExpectations()
 
 
 @benchmark.Owner(emails=['hablich@chromium.org'])
-class SpeedometerClassic(Speedometer):
-  def SetExtraBrowserOptions(self, options):
-    super(SpeedometerClassic, self).SetExtraBrowserOptions(options)
-    v8_helper.EnableClassic(options)
+class V8SpeedometerFuture(Speedometer):
+  """Speedometer benchmark with the V8 flag --future.
+
+  Shows the performance of upcoming V8 VM features.
+  """
 
   @classmethod
   def Name(cls):
-    return 'speedometer-classic'
+    return 'speedometer-future'
+
+  def SetExtraBrowserOptions(self, options):
+    options.AppendExtraBrowserArgs('--enable-features=V8VmFuture')

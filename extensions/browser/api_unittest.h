@@ -19,7 +19,6 @@ class ListValue;
 }
 
 namespace content {
-class TestBrowserThreadBundle;
 class WebContents;
 }
 
@@ -86,11 +85,10 @@ class ApiUnitTest : public ExtensionsTest {
                    const std::string& args);
 
  private:
-  std::unique_ptr<content::TestBrowserThreadBundle> thread_bundle_;
   sync_preferences::TestingPrefServiceSyncable testing_pref_service_;
 
-  // The WebContents used to associate a RenderViewHost with API function calls,
-  // or null.
+  // The WebContents used to associate a RenderFrameHost with API function
+  // calls, or null.
   std::unique_ptr<content::WebContents> contents_;
 
   // The Extension used when running API function calls.

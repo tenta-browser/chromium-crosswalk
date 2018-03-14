@@ -4,21 +4,23 @@
 
 #include "device/gamepad/public/interfaces/gamepad_struct_traits.h"
 
+#include "base/containers/span.h"
+
 namespace mojo {
 
 // static
 void StructTraits<
     device::mojom::GamepadQuaternionDataView,
-    blink::WebGamepadQuaternion>::SetToNull(blink::WebGamepadQuaternion* out) {
-  memset(out, 0, sizeof(blink::WebGamepadQuaternion));
+    device::GamepadQuaternion>::SetToNull(device::GamepadQuaternion* out) {
+  memset(out, 0, sizeof(device::GamepadQuaternion));
   out->not_null = false;
 }
 
 // static
 bool StructTraits<device::mojom::GamepadQuaternionDataView,
-                  blink::WebGamepadQuaternion>::
+                  device::GamepadQuaternion>::
     Read(device::mojom::GamepadQuaternionDataView data,
-         blink::WebGamepadQuaternion* out) {
+         device::GamepadQuaternion* out) {
   out->not_null = true;
   out->x = data.x();
   out->y = data.y();
@@ -29,17 +31,16 @@ bool StructTraits<device::mojom::GamepadQuaternionDataView,
 
 // static
 void StructTraits<device::mojom::GamepadVectorDataView,
-                  blink::WebGamepadVector>::SetToNull(blink::WebGamepadVector*
-                                                          out) {
-  memset(out, 0, sizeof(blink::WebGamepadVector));
+                  device::GamepadVector>::SetToNull(device::GamepadVector*
+                                                        out) {
+  memset(out, 0, sizeof(device::GamepadVector));
   out->not_null = false;
 }
 
 // static
-bool StructTraits<
-    device::mojom::GamepadVectorDataView,
-    blink::WebGamepadVector>::Read(device::mojom::GamepadVectorDataView data,
-                                   blink::WebGamepadVector* out) {
+bool StructTraits<device::mojom::GamepadVectorDataView, device::GamepadVector>::
+    Read(device::mojom::GamepadVectorDataView data,
+         device::GamepadVector* out) {
   out->not_null = true;
   out->x = data.x();
   out->y = data.y();
@@ -48,10 +49,9 @@ bool StructTraits<
 }
 
 // static
-bool StructTraits<
-    device::mojom::GamepadButtonDataView,
-    blink::WebGamepadButton>::Read(device::mojom::GamepadButtonDataView data,
-                                   blink::WebGamepadButton* out) {
+bool StructTraits<device::mojom::GamepadButtonDataView, device::GamepadButton>::
+    Read(device::mojom::GamepadButtonDataView data,
+         device::GamepadButton* out) {
   out->pressed = data.pressed();
   out->touched = data.touched();
   out->value = data.value();
@@ -59,16 +59,72 @@ bool StructTraits<
 }
 
 // static
-void StructTraits<device::mojom::GamepadPoseDataView,
-                  blink::WebGamepadPose>::SetToNull(blink::WebGamepadPose*
-                                                        out) {
-  memset(out, 0, sizeof(blink::WebGamepadPose));
+device::mojom::GamepadHapticActuatorType
+EnumTraits<device::mojom::GamepadHapticActuatorType,
+           device::GamepadHapticActuatorType>::
+    ToMojom(device::GamepadHapticActuatorType input) {
+  switch (input) {
+    case device::GamepadHapticActuatorType::kVibration:
+      return device::mojom::GamepadHapticActuatorType::
+          GamepadHapticActuatorTypeVibration;
+    case device::GamepadHapticActuatorType::kDualRumble:
+      return device::mojom::GamepadHapticActuatorType::
+          GamepadHapticActuatorTypeDualRumble;
+  }
+
+  NOTREACHED();
+  return device::mojom::GamepadHapticActuatorType::
+      GamepadHapticActuatorTypeVibration;
+}
+
+// static
+bool EnumTraits<device::mojom::GamepadHapticActuatorType,
+                device::GamepadHapticActuatorType>::
+    FromMojom(device::mojom::GamepadHapticActuatorType input,
+              device::GamepadHapticActuatorType* output) {
+  switch (input) {
+    case device::mojom::GamepadHapticActuatorType::
+        GamepadHapticActuatorTypeVibration:
+      *output = device::GamepadHapticActuatorType::kVibration;
+      return true;
+    case device::mojom::GamepadHapticActuatorType::
+        GamepadHapticActuatorTypeDualRumble:
+      *output = device::GamepadHapticActuatorType::kDualRumble;
+      return true;
+  }
+
+  NOTREACHED();
+  return false;
+}
+
+// static
+void StructTraits<device::mojom::GamepadHapticActuatorDataView,
+                  device::GamepadHapticActuator>::
+    SetToNull(device::GamepadHapticActuator* out) {
+  memset(out, 0, sizeof(device::GamepadHapticActuator));
   out->not_null = false;
 }
 
 // static
-bool StructTraits<device::mojom::GamepadPoseDataView, blink::WebGamepadPose>::
-    Read(device::mojom::GamepadPoseDataView data, blink::WebGamepadPose* out) {
+bool StructTraits<device::mojom::GamepadHapticActuatorDataView,
+                  device::GamepadHapticActuator>::
+    Read(device::mojom::GamepadHapticActuatorDataView data,
+         device::GamepadHapticActuator* out) {
+  if (!data.ReadType(&out->type))
+    return false;
+  return true;
+}
+
+// static
+void StructTraits<device::mojom::GamepadPoseDataView,
+                  device::GamepadPose>::SetToNull(device::GamepadPose* out) {
+  memset(out, 0, sizeof(device::GamepadPose));
+  out->not_null = false;
+}
+
+// static
+bool StructTraits<device::mojom::GamepadPoseDataView, device::GamepadPose>::
+    Read(device::mojom::GamepadPoseDataView data, device::GamepadPose* out) {
   out->not_null = true;
   if (!data.ReadOrientation(&out->orientation)) {
     return false;
@@ -97,14 +153,14 @@ bool StructTraits<device::mojom::GamepadPoseDataView, blink::WebGamepadPose>::
 
 // static
 device::mojom::GamepadHand
-EnumTraits<device::mojom::GamepadHand, blink::WebGamepadHand>::ToMojom(
-    blink::WebGamepadHand input) {
+EnumTraits<device::mojom::GamepadHand, device::GamepadHand>::ToMojom(
+    device::GamepadHand input) {
   switch (input) {
-    case blink::WebGamepadHand::kGamepadHandNone:
+    case device::GamepadHand::kNone:
       return device::mojom::GamepadHand::GamepadHandNone;
-    case blink::WebGamepadHand::kGamepadHandLeft:
+    case device::GamepadHand::kLeft:
       return device::mojom::GamepadHand::GamepadHandLeft;
-    case blink::WebGamepadHand::kGamepadHandRight:
+    case device::GamepadHand::kRight:
       return device::mojom::GamepadHand::GamepadHandRight;
   }
 
@@ -113,18 +169,18 @@ EnumTraits<device::mojom::GamepadHand, blink::WebGamepadHand>::ToMojom(
 }
 
 // static
-bool EnumTraits<device::mojom::GamepadHand, blink::WebGamepadHand>::FromMojom(
+bool EnumTraits<device::mojom::GamepadHand, device::GamepadHand>::FromMojom(
     device::mojom::GamepadHand input,
-    blink::WebGamepadHand* output) {
+    device::GamepadHand* output) {
   switch (input) {
     case device::mojom::GamepadHand::GamepadHandNone:
-      *output = blink::WebGamepadHand::kGamepadHandNone;
+      *output = device::GamepadHand::kNone;
       return true;
     case device::mojom::GamepadHand::GamepadHandLeft:
-      *output = blink::WebGamepadHand::kGamepadHandLeft;
+      *output = device::GamepadHand::kLeft;
       return true;
     case device::mojom::GamepadHand::GamepadHandRight:
-      *output = blink::WebGamepadHand::kGamepadHandRight;
+      *output = device::GamepadHand::kRight;
       return true;
   }
 
@@ -133,63 +189,64 @@ bool EnumTraits<device::mojom::GamepadHand, blink::WebGamepadHand>::FromMojom(
 }
 
 // static
-ConstCArray<uint16_t>
-StructTraits<device::mojom::GamepadDataView, blink::WebGamepad>::id(
-    const blink::WebGamepad& r) {
+base::span<const uint16_t>
+StructTraits<device::mojom::GamepadDataView, device::Gamepad>::id(
+    const device::Gamepad& r) {
   size_t id_length = 0;
-  while (id_length < blink::WebGamepad::kIdLengthCap && r.id[id_length] != 0) {
+  while (id_length < device::Gamepad::kIdLengthCap && r.id[id_length] != 0) {
     id_length++;
   }
-  return {id_length, reinterpret_cast<const uint16_t*>(&r.id[0])};
+  return base::make_span(reinterpret_cast<const uint16_t*>(r.id), id_length);
 }
 
 // static
-ConstCArray<uint16_t>
-StructTraits<device::mojom::GamepadDataView, blink::WebGamepad>::mapping(
-    const blink::WebGamepad& r) {
+base::span<const uint16_t>
+StructTraits<device::mojom::GamepadDataView, device::Gamepad>::mapping(
+    const device::Gamepad& r) {
   size_t mapping_length = 0;
-  while (mapping_length < blink::WebGamepad::kMappingLengthCap &&
+  while (mapping_length < device::Gamepad::kMappingLengthCap &&
          r.mapping[mapping_length] != 0) {
     mapping_length++;
   }
-  return {mapping_length, reinterpret_cast<const uint16_t*>(&r.mapping[0])};
+  return base::make_span(reinterpret_cast<const uint16_t*>(r.mapping),
+                         mapping_length);
 }
 
 // static
-bool StructTraits<device::mojom::GamepadDataView, blink::WebGamepad>::Read(
+bool StructTraits<device::mojom::GamepadDataView, device::Gamepad>::Read(
     device::mojom::GamepadDataView data,
-    blink::WebGamepad* out) {
+    device::Gamepad* out) {
   out->connected = data.connected();
 
-  memset(&out->id[0], 0,
-         blink::WebGamepad::kIdLengthCap * sizeof(blink::WebUChar));
-  CArray<uint16_t> id = {0, blink::WebGamepad::kIdLengthCap,
-                         reinterpret_cast<uint16_t*>(&out->id[0])};
+  memset(out->id, 0, sizeof(out->id));
+  base::span<uint16_t> id(reinterpret_cast<uint16_t*>(out->id),
+                          device::Gamepad::kIdLengthCap);
   if (!data.ReadId(&id)) {
     return false;
   }
 
   out->timestamp = data.timestamp();
 
-  CArray<double> axes = {0, blink::WebGamepad::kAxesLengthCap, &out->axes[0]};
+  base::span<double> axes(out->axes);
   if (!data.ReadAxes(&axes)) {
     return false;
   }
   // static_cast is safe when "data.ReadAxes(&axes)" above returns true.
-  out->axes_length = static_cast<unsigned>(axes.size);
+  out->axes_length = static_cast<unsigned>(axes.size());
 
-  CArray<blink::WebGamepadButton> buttons = {
-      0, blink::WebGamepad::kButtonsLengthCap, &out->buttons[0]};
+  base::span<device::GamepadButton> buttons(out->buttons);
   if (!data.ReadButtons(&buttons)) {
     return false;
   }
   // static_cast is safe when "data.ReadButtons(&buttons)" above returns true.
-  out->buttons_length = static_cast<unsigned>(buttons.size);
+  out->buttons_length = static_cast<unsigned>(buttons.size());
 
-  memset(&out->mapping[0], 0,
-         blink::WebGamepad::kMappingLengthCap * sizeof(blink::WebUChar));
-  CArray<uint16_t> mapping = {0, blink::WebGamepad::kMappingLengthCap,
-                              reinterpret_cast<uint16_t*>(&out->mapping[0])};
+  if (!data.ReadVibrationActuator(&out->vibration_actuator))
+    return false;
+
+  memset(out->mapping, 0, sizeof(out->mapping));
+  base::span<uint16_t> mapping(reinterpret_cast<uint16_t*>(out->mapping),
+                               device::Gamepad::kMappingLengthCap);
   if (!data.ReadMapping(&mapping)) {
     return false;
   }
@@ -198,7 +255,7 @@ bool StructTraits<device::mojom::GamepadDataView, blink::WebGamepad>::Read(
     return false;
   }
 
-  blink::WebGamepadHand hand;
+  device::GamepadHand hand;
   if (!data.ReadHand(&hand)) {
     return false;
   }

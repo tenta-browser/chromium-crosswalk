@@ -5,28 +5,41 @@
 #ifndef MediaControlsOrientationLockDelegate_h
 #define MediaControlsOrientationLockDelegate_h
 
-#include "core/events/EventListener.h"
+#include "core/dom/events/EventListener.h"
+#include "device/screen_orientation/public/interfaces/screen_orientation.mojom-blink.h"
 #include "modules/ModulesExport.h"
+#include "platform/WebTaskRunner.h"
+#include "platform/wtf/Optional.h"
 #include "public/platform/modules/screen_orientation/WebScreenOrientationLockType.h"
 
 namespace blink {
 
+class DeviceOrientationData;
+class DeviceOrientationEvent;
 class Document;
 class HTMLVideoElement;
 
 // MediaControlsOrientationLockDelegate is implementing the orientation lock
 // feature when a <video> is fullscreen. It is meant to be created by
-// `MediaControls` when the feature applies. Once created, it will use events to
-// change state.
+// `MediaControlsImpl` when the feature applies. Once created, it will use
+// events to change state.
+//
+// The behavior depends on whether MediaControlsRotateToFullscreenDelegate is
+// enabled. If it is enabled and the user has not locked the screen orientation
+// at the OS level, then the orientation lock is only held until the user
+// rotates their device to match the orientation of the video; otherwise it is
+// held until fullscreen is exited.
 //
 // The different states of the class are:
-// - PendingFullscreen: the object is created and is waiting for the associated
-//   <video> to go fullscreen in order to apply an orientation lock;
+// - PendingFullscreen: the object is created and it is either waiting for the
+//   associated <video> to go fullscreen in order to apply an orientation lock,
+//   or it already went fullscreen then the lock was unlocked since the user
+//   rotated their device, and now it is waiting until fullscreen is re-entered;
 // - PendingMetadata: the <video> is fullscreen but the metadata have not been
 //   downloaded yet. It can happen because of network latency or because the
 //   <video> went fullscreen before playback and download started;
 // - MaybeLockedFullscreen: the <video> is fullscreen and a screen orientation
-//   lock was applied.
+//   lock is applied.
 //
 // The possible state transitions are:
 // - PendingFullscreen => PendingMetadata: on fullscreenchange event (entering
@@ -34,19 +47,20 @@ class HTMLVideoElement;
 // - PendingFullscreen => MaybeLockedFullscreen: on fullscreenchange event
 //   (entering fullscreen) when metadata are available;
 // - PendingMetadata => MaybeLockedFullscreen: on loadedmetadata;
-// - PendingMetadata => PendingFullscreen: on fullscreenchange event (leaving
+// - PendingMetadata => PendingFullscreen: on fullscreenchange event (exiting
 //   fullscreen);
 // - MaybeLockedFullscreen => PendingFullscreen: on fullscreenchange event
-//   (leaving fullscreen).
+//   (exiting fullscreen) or on deviceorientation event (rotated to match the
+//   orientation of the video).
 class MediaControlsOrientationLockDelegate final : public EventListener {
  public:
   explicit MediaControlsOrientationLockDelegate(HTMLVideoElement&);
 
-  // Called by MediaControls when the HTMLMediaElement is added to a document
+  // Called by MediaControlsImpl when the HTMLMediaElement is added to a
   // document. All event listeners should be added.
   void Attach();
 
-  // Called by MediaControls when the HTMLMediaElement is no longer in the
+  // Called by MediaControlsImpl when the HTMLMediaElement is no longer in the
   // document. All event listeners should be removed in order to prepare the
   // object to be garbage collected.
   void Detach();
@@ -54,15 +68,24 @@ class MediaControlsOrientationLockDelegate final : public EventListener {
   // EventListener implementation.
   bool operator==(const EventListener&) const override;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   friend class MediaControlsOrientationLockDelegateTest;
+  friend class MediaControlsOrientationLockAndRotateToFullscreenDelegateTest;
 
   enum class State {
     kPendingFullscreen,
     kPendingMetadata,
     kMaybeLockedFullscreen,
+  };
+
+  enum class DeviceOrientationType {
+    kUnknown,
+    kFlat,
+    kDiagonal,
+    kPortrait,
+    kLandscape
   };
 
   // EventListener implementation.
@@ -80,19 +103,45 @@ class MediaControlsOrientationLockDelegate final : public EventListener {
   // otherwise.
   void MaybeLockOrientation();
 
+  // Changes a previously locked screen orientation to instead be locked to
+  // the "any" orientation that allows accelerometer-based rotation. This is
+  // not the same as unlocking (which returns to the "default" orientation,
+  // which may in fact be more restrictive).
+  void ChangeLockToAnyOrientation();
+
   // Unlocks the screen orientation if the screen orientation was previously
   // locked.
   void MaybeUnlockOrientation();
+
+  void MaybeListenToDeviceOrientation();
+  void GotIsAutoRotateEnabledByUser(bool enabled);
+
+  MODULES_EXPORT DeviceOrientationType
+  ComputeDeviceOrientation(DeviceOrientationData*) const;
+
+  void MaybeLockToAnyIfDeviceOrientationMatchesVideo(DeviceOrientationEvent*);
+
+  // Delay before `MaybeLockToAnyIfDeviceOrientationMatchesVideo` changes lock.
+  // Emprically, 200ms is too short, but 250ms avoids glitches. 500ms gives us
+  // a 2x margin in case the device is running slow, without being noticeable.
+  MODULES_EXPORT static constexpr TimeDelta kLockToAnyDelay =
+      TimeDelta::FromMilliseconds(500);
 
   // Current state of the object. See comment at the top of the file for a
   // detailed description.
   State state_ = State::kPendingFullscreen;
 
-  // Whether the controls should unlock the screen orientation when possible.
-  // In other words, whether the orientation was locked.
-  bool should_unlock_orientation_ = false;
+  // Which lock is currently applied by this delegate.
+  WebScreenOrientationLockType locked_orientation_ =
+      kWebScreenOrientationLockDefault /* unlocked */;
 
-  // `m_videoElement` owns MediaControls that owns |this|.
+  TaskHandle lock_to_any_task_;
+
+  device::mojom::blink::ScreenOrientationListenerPtr monitor_;
+
+  WTF::Optional<bool> is_auto_rotate_enabled_by_user_override_for_testing_;
+
+  // `video_element_` owns MediaControlsImpl that owns |this|.
   Member<HTMLVideoElement> video_element_;
 };
 

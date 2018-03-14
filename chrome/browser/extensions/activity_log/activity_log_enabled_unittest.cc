@@ -6,6 +6,7 @@
 #include "base/run_loop.h"
 #include "base/test/scoped_command_line.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
+#include "chrome/browser/extensions/activity_log/activity_log_task_runner.h"
 #include "chrome/browser/extensions/api/activity_log_private/activity_log_private_api.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
@@ -17,12 +18,6 @@
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/extension_builder.h"
 
-#if defined OS_CHROMEOS
-#include "chrome/browser/chromeos/login/users/scoped_test_user_manager.h"
-#include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/device_settings_service.h"
-#endif
-
 namespace extensions {
 
 const char kExtensionID[] = "eplckmlabaanikjjcgnigddmagoglhmp";
@@ -31,23 +26,14 @@ class ActivityLogEnabledTest : public ChromeRenderViewHostTestHarness {
  protected:
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
-#if defined OS_CHROMEOS
-    test_user_manager_.reset(new chromeos::ScopedTestUserManager());
-#endif
+    SetActivityLogTaskRunnerForTesting(
+        base::ThreadTaskRunnerHandle::Get().get());
   }
 
   void TearDown() override {
-#if defined OS_CHROMEOS
-    test_user_manager_.reset();
-#endif
     ChromeRenderViewHostTestHarness::TearDown();
+    SetActivityLogTaskRunnerForTesting(nullptr);
   }
-
-#if defined OS_CHROMEOS
-  chromeos::ScopedTestDeviceSettingsService test_device_settings_service_;
-  chromeos::ScopedTestCrosSettings test_cros_settings_;
-  std::unique_ptr<chromeos::ScopedTestUserManager> test_user_manager_;
-#endif
 };
 
 TEST_F(ActivityLogEnabledTest, NoSwitch) {
@@ -170,7 +156,7 @@ TEST_F(ActivityLogEnabledTest, WatchdogSwitch) {
   EXPECT_FALSE(activity_log2->IsDatabaseEnabled());
 
   extension_service1->DisableExtension(kExtensionID,
-                                       Extension::DISABLE_USER_ACTION);
+                                       disable_reason::DISABLE_USER_ACTION);
 
   EXPECT_EQ(0,
       profile1->GetPrefs()->GetInteger(prefs::kWatchdogExtensionActive));
@@ -195,7 +181,6 @@ TEST_F(ActivityLogEnabledTest, WatchdogSwitch) {
   extension_service1->UninstallExtension(
       kExtensionID,
       extensions::UNINSTALL_REASON_FOR_TESTING,
-      base::Bind(&base::DoNothing),
       NULL);
 
   EXPECT_EQ(0,
@@ -222,9 +207,9 @@ TEST_F(ActivityLogEnabledTest, WatchdogSwitch) {
       profile1->GetPrefs()->GetInteger(prefs::kWatchdogExtensionActive));
   EXPECT_TRUE(activity_log1->IsDatabaseEnabled());
   extension_service1->DisableExtension(kExtensionID,
-                                       Extension::DISABLE_USER_ACTION);
+                                       disable_reason::DISABLE_USER_ACTION);
   extension_service1->DisableExtension("fpofdchlamddhnajleknffcbmnjfahpg",
-                                       Extension::DISABLE_USER_ACTION);
+                                       disable_reason::DISABLE_USER_ACTION);
   EXPECT_EQ(0,
       profile1->GetPrefs()->GetInteger(prefs::kWatchdogExtensionActive));
   EXPECT_FALSE(activity_log1->IsDatabaseEnabled());
@@ -274,7 +259,6 @@ TEST_F(ActivityLogEnabledTest, AppAndCommandLine) {
   extension_service->UninstallExtension(
       kExtensionID,
       extensions::UNINSTALL_REASON_FOR_TESTING,
-      base::Bind(&base::DoNothing),
       NULL);
 
   EXPECT_TRUE(activity_log->IsDatabaseEnabled());

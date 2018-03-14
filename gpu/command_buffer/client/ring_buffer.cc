@@ -11,28 +11,27 @@
 #include <algorithm>
 
 #include "base/logging.h"
+#include "base/numerics/safe_conversions.h"
 #include "gpu/command_buffer/client/cmd_buffer_helper.h"
 
 namespace gpu {
 
 RingBuffer::RingBuffer(unsigned int alignment,
                        Offset base_offset,
-                       unsigned int size,
+                       size_t size,
                        CommandBufferHelper* helper,
                        void* base)
     : helper_(helper),
       base_offset_(base_offset),
-      size_(size),
+      size_(base::checked_cast<unsigned int>(size)),
       free_offset_(0),
       in_use_offset_(0),
       alignment_(alignment),
       base_(static_cast<int8_t*>(base) - base_offset) {}
 
 RingBuffer::~RingBuffer() {
-  // Free blocks pending tokens.
-  while (!blocks_.empty()) {
-    FreeOldestBlock();
-  }
+  for (const auto& block : blocks_)
+    DCHECK(block.state != IN_USE);
 }
 
 void RingBuffer::FreeOldestBlock() {
@@ -177,6 +176,20 @@ unsigned int RingBuffer::GetTotalFreeSizeNoWaiting() {
   } else {
     return largest_free_size;
   }
+}
+
+void RingBuffer::ShrinkLastBlock(unsigned int new_size) {
+  if (blocks_.empty())
+    return;
+  auto& block = blocks_.back();
+  DCHECK_LT(new_size, block.size);
+  DCHECK_EQ(block.state, IN_USE);
+
+  // Can't shrink to size 0, see comments in Alloc.
+  new_size = std::max(new_size, 1u);
+
+  free_offset_ = block.offset + new_size;
+  block.size = new_size;
 }
 
 }  // namespace gpu

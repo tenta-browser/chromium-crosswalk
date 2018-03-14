@@ -17,9 +17,10 @@
 using base::android::ConvertJavaStringToUTF8;
 using base::android::JavaParamRef;
 
-static jlong Init(JNIEnv* env,
-                  const JavaParamRef<jclass>& clazz,
-                  const JavaParamRef<jobject>& profile) {
+static jlong JNI_RecentTabsPagePrefs_Init(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    const JavaParamRef<jobject>& profile) {
   RecentTabsPagePrefs* recent_tabs_page_prefs =
       new RecentTabsPagePrefs(ProfileAndroid::FromProfileAndroid(profile));
   return reinterpret_cast<intptr_t>(recent_tabs_page_prefs);
@@ -109,9 +110,4 @@ void RecentTabsPagePrefs::RegisterProfilePrefs(
   registry->RegisterBooleanPref(prefs::kNtpCollapsedRecentlyClosedTabs, false);
   registry->RegisterBooleanPref(prefs::kNtpCollapsedSyncPromo, false);
   registry->RegisterDictionaryPref(prefs::kNtpCollapsedForeignSessions);
-}
-
-// static
-bool RecentTabsPagePrefs::RegisterJni(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }

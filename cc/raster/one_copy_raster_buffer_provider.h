@@ -8,10 +8,10 @@
 #include <stdint.h>
 
 #include "base/macros.h"
-#include "cc/output/context_provider.h"
 #include "cc/raster/raster_buffer_provider.h"
 #include "cc/raster/staging_buffer_pool.h"
-#include "cc/resources/resource_provider.h"
+#include "cc/resources/layer_tree_resource_provider.h"
+#include "components/viz/common/gpu/context_provider.h"
 #include "gpu/command_buffer/common/sync_token.h"
 
 namespace cc {
@@ -21,13 +21,13 @@ class StagingBufferPool;
 class CC_EXPORT OneCopyRasterBufferProvider : public RasterBufferProvider {
  public:
   OneCopyRasterBufferProvider(base::SequencedTaskRunner* task_runner,
-                              ContextProvider* compositor_context_provider,
-                              ContextProvider* worker_context_provider,
-                              ResourceProvider* resource_provider,
+                              viz::ContextProvider* compositor_context_provider,
+                              viz::ContextProvider* worker_context_provider,
+                              LayerTreeResourceProvider* resource_provider,
                               int max_copy_texture_chromium_size,
                               bool use_partial_raster,
                               int max_staging_buffer_usage_in_bytes,
-                              ResourceFormat preferred_tile_format,
+                              viz::ResourceFormat preferred_tile_format,
                               bool async_worker_context_enabled);
   ~OneCopyRasterBufferProvider() override;
 
@@ -36,12 +36,12 @@ class CC_EXPORT OneCopyRasterBufferProvider : public RasterBufferProvider {
       const Resource* resource,
       uint64_t resource_content_id,
       uint64_t previous_content_id) override;
-  void ReleaseBufferForRaster(std::unique_ptr<RasterBuffer> buffer) override;
   void OrderingBarrier() override;
-  ResourceFormat GetResourceFormat(bool must_support_alpha) const override;
+  void Flush() override;
+  viz::ResourceFormat GetResourceFormat(bool must_support_alpha) const override;
   bool IsResourceSwizzleRequired(bool must_support_alpha) const override;
   bool CanPartialRasterIntoProvidedResource() const override;
-  bool IsResourceReadyToDraw(ResourceId id) const override;
+  bool IsResourceReadyToDraw(viz::ResourceId id) const override;
   uint64_t SetReadyToDrawCallback(
       const ResourceProvider::ResourceIdArray& resource_ids,
       const base::Closure& callback,
@@ -65,10 +65,9 @@ class CC_EXPORT OneCopyRasterBufferProvider : public RasterBufferProvider {
   class RasterBufferImpl : public RasterBuffer {
    public:
     RasterBufferImpl(OneCopyRasterBufferProvider* client,
-                     ResourceProvider* resource_provider,
+                     LayerTreeResourceProvider* resource_provider,
                      const Resource* resource,
-                     uint64_t previous_content_id,
-                     bool async_worker_context_enabled);
+                     uint64_t previous_content_id);
     ~RasterBufferImpl() override;
 
     // Overridden from RasterBuffer:
@@ -95,6 +94,7 @@ class CC_EXPORT OneCopyRasterBufferProvider : public RasterBufferProvider {
     DISALLOW_COPY_AND_ASSIGN(RasterBufferImpl);
   };
 
+  void WaitSyncToken(const gpu::SyncToken& sync_token);
   void PlaybackToStagingBuffer(
       StagingBuffer* staging_buffer,
       const Resource* resource,
@@ -108,22 +108,20 @@ class CC_EXPORT OneCopyRasterBufferProvider : public RasterBufferProvider {
       uint64_t new_content_id);
   void CopyOnWorkerThread(StagingBuffer* staging_buffer,
                           ResourceProvider::ScopedWriteLockGL* resource_lock,
-                          const gpu::SyncToken& sync_token,
                           const RasterSource* raster_source,
-                          uint64_t previous_content_id,
-                          uint64_t new_content_id);
+                          const gfx::Rect& rect_to_copy);
   gfx::BufferUsage StagingBufferUsage() const;
 
-  ContextProvider* const compositor_context_provider_;
-  ContextProvider* const worker_context_provider_;
-  ResourceProvider* const resource_provider_;
+  viz::ContextProvider* const compositor_context_provider_;
+  viz::ContextProvider* const worker_context_provider_;
+  LayerTreeResourceProvider* const resource_provider_;
   const int max_bytes_per_copy_operation_;
   const bool use_partial_raster_;
 
   // Context lock must be acquired when accessing this member.
   int bytes_scheduled_since_last_flush_;
 
-  const ResourceFormat preferred_tile_format_;
+  const viz::ResourceFormat preferred_tile_format_;
   StagingBufferPool staging_pool_;
 
   const bool async_worker_context_enabled_;

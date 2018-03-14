@@ -13,11 +13,12 @@
 
 #include "base/macros.h"
 #include "cc/cc_export.h"
+#include "cc/layers/draw_mode.h"
 #include "cc/layers/layer_collections.h"
-#include "cc/quads/render_pass.h"
-#include "cc/quads/shared_quad_state.h"
 #include "cc/trees/occlusion.h"
 #include "cc/trees/property_tree.h"
+#include "components/viz/common/quads/render_pass.h"
+#include "components/viz/common/quads/shared_quad_state.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/transform.h"
@@ -33,7 +34,7 @@ class LayerTreeImpl;
 
 class CC_EXPORT RenderSurfaceImpl {
  public:
-  RenderSurfaceImpl(LayerTreeImpl* layer_tree_impl, int stable_effect_id);
+  RenderSurfaceImpl(LayerTreeImpl* layer_tree_impl, uint64_t stable_id);
   virtual ~RenderSurfaceImpl();
 
   // Returns the RenderSurfaceImpl that this render surface contributes to. Root
@@ -104,6 +105,13 @@ class CC_EXPORT RenderSurfaceImpl {
     return has_contributing_layer_that_escapes_clip_;
   }
 
+  void set_is_render_surface_list_member(bool is_render_surface_list_member) {
+    is_render_surface_list_member_ = is_render_surface_list_member;
+  }
+  bool is_render_surface_list_member() const {
+    return is_render_surface_list_member_;
+  }
+
   void CalculateContentRectFromAccumulatedContentRect(int max_texture_size);
   void SetContentRectToViewport();
   void SetContentRectForTesting(const gfx::Rect& rect);
@@ -119,6 +127,14 @@ class CC_EXPORT RenderSurfaceImpl {
     return accumulated_content_rect_;
   }
 
+  void increment_num_contributors() { num_contributors_++; }
+  void decrement_num_contributors() {
+    num_contributors_--;
+    DCHECK_GE(num_contributors_, 0);
+  }
+  void reset_num_contributors() { num_contributors_ = 0; }
+  int num_contributors() const { return num_contributors_; }
+
   const Occlusion& occlusion_in_content_space() const {
     return occlusion_in_content_space_;
   }
@@ -126,34 +142,37 @@ class CC_EXPORT RenderSurfaceImpl {
     occlusion_in_content_space_ = occlusion;
   }
 
-  LayerImplList& layer_list() { return layer_list_; }
-  void ClearLayerLists();
-
-  int id() const { return stable_effect_id_; }
+  uint64_t id() const { return stable_id_; }
 
   LayerImpl* MaskLayer();
   bool HasMask() const;
+  bool HasMaskingContributingSurface() const;
 
   const FilterOperations& Filters() const;
   const FilterOperations& BackgroundFilters() const;
   gfx::PointF FiltersOrigin() const;
   gfx::Transform SurfaceScale() const;
 
+  bool TrilinearFiltering() const;
+
   bool HasCopyRequest() const;
+
+  bool ShouldCacheRenderSurface() const;
 
   void ResetPropertyChangedFlags();
   bool SurfacePropertyChanged() const;
   bool SurfacePropertyChangedOnlyFromDescendant() const;
   bool AncestorPropertyChanged() const;
   void NoteAncestorPropertyChanged();
+  bool HasDamageFromeContributingContent() const;
 
   DamageTracker* damage_tracker() const { return damage_tracker_.get(); }
-  gfx::Rect GetDamageRect();
+  gfx::Rect GetDamageRect() const;
 
-  int GetRenderPassId();
-
-  std::unique_ptr<RenderPass> CreateRenderPass();
-  void AppendQuads(RenderPass* render_pass, AppendQuadsData* append_quads_data);
+  std::unique_ptr<viz::RenderPass> CreateRenderPass();
+  void AppendQuads(DrawMode draw_mode,
+                   viz::RenderPass* render_pass,
+                   AppendQuadsData* append_quads_data);
 
   int TransformTreeIndex() const;
   int ClipTreeIndex() const;
@@ -168,12 +187,12 @@ class CC_EXPORT RenderSurfaceImpl {
   gfx::Rect CalculateClippedAccumulatedContentRect();
   gfx::Rect CalculateExpandedClipForFilters(
       const gfx::Transform& target_to_surface);
-  void TileMaskLayer(RenderPass* render_pass,
-                     SharedQuadState* shared_quad_state,
+  void TileMaskLayer(viz::RenderPass* render_pass,
+                     viz::SharedQuadState* shared_quad_state,
                      const gfx::Rect& visible_layer_rect);
 
   LayerTreeImpl* layer_tree_impl_;
-  int stable_effect_id_;
+  uint64_t stable_id_;
   int effect_tree_index_;
 
   // Container for properties that render surfaces need to compute before they
@@ -204,14 +223,15 @@ class CC_EXPORT RenderSurfaceImpl {
 
   // Is used to calculate the content rect from property trees.
   gfx::Rect accumulated_content_rect_;
+  int num_contributors_;
   // Is used to decide if the surface is clipped.
   bool has_contributing_layer_that_escapes_clip_ : 1;
   bool surface_property_changed_ : 1;
   bool ancestor_property_changed_ : 1;
 
   bool contributes_to_drawn_surface_ : 1;
+  bool is_render_surface_list_member_ : 1;
 
-  LayerImplList layer_list_;
   Occlusion occlusion_in_content_space_;
 
   // The nearest ancestor target surface that will contain the contents of this

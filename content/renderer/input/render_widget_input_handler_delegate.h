@@ -17,7 +17,6 @@ class WebMouseEvent;
 }
 
 namespace gfx {
-class Point;
 class Vector2dF;
 }
 
@@ -32,10 +31,6 @@ class CONTENT_EXPORT RenderWidgetInputHandlerDelegate {
   // Called when animations due to focus change have completed (if any).
   virtual void FocusChangeComplete() = 0;
 
-  // Check whether the WebWidget has any touch event handlers registered
-  // at the given point.
-  virtual bool HasTouchEventHandlersAt(const gfx::Point& point) const = 0;
-
   // Called to forward a gesture event to the compositor thread, to effect
   // the elastic overscroll effect.
   virtual void ObserveGestureEventAndResult(
@@ -48,17 +43,6 @@ class CONTENT_EXPORT RenderWidgetInputHandlerDelegate {
 
   // Notifies that an overscroll was completed from Blink.
   virtual void OnDidOverscroll(const ui::DidOverscrollParams& params) = 0;
-
-  // Called when an ACK is ready to be sent to the input event provider.
-  virtual void OnInputEventAck(
-      std::unique_ptr<InputEventAck> input_event_ack) = 0;
-
-  // Called when an event with a notify dispatch type
-  // (DISPATCH_TYPE_*_NOTIFY_MAIN) of |handled_type| has been processed
-  // by the main thread.
-  virtual void NotifyInputEventHandled(blink::WebInputEvent::Type handled_type,
-                                       blink::WebInputEventResult result,
-                                       InputEventAckState ack_result) = 0;
 
   // Notifies the delegate of the |input_handler| managing it.
   virtual void SetInputHandler(RenderWidgetInputHandler* input_handler) = 0;

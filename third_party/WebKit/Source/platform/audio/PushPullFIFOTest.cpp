@@ -6,51 +6,57 @@
 
 #include <memory>
 #include <vector>
+#include "platform/CrossThreadFunctional.h"
+#include "platform/WebTaskRunner.h"
 #include "platform/audio/AudioUtilities.h"
 #include "platform/testing/TestingPlatformSupport.h"
+#include "platform/wtf/Functional.h"
 #include "platform/wtf/PtrUtil.h"
+#include "public/platform/Platform.h"
+#include "public/platform/WebThread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
 
 namespace {
 
-// Check the basic contract of FIFO.
+// Check the basic contract of FIFO. This test only covers the single thread
+// scenario.
 TEST(PushPullFIFOBasicTest, BasicTests) {
   // This suppresses the multi-thread warning for GTest. Potently it increases
   // the test execution time, but this specific test is very short and simple.
   ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
   // FIFO length exceeding the maximum length allowed will cause crash.
-  // i.e.) m_fifoLength <= kMaxFIFOLength
+  // i.e.) fifo_length_ <= kMaxFIFOLength
   EXPECT_DEATH(new PushPullFIFO(2, PushPullFIFO::kMaxFIFOLength + 1), "");
 
   std::unique_ptr<PushPullFIFO> test_fifo =
       WTF::WrapUnique(new PushPullFIFO(2, 1024));
 
   // The input bus length must be |AudioUtilities::kRenderQuantumFrames|.
-  // i.e.) inputBus->length() == kRenderQuantumFrames
-  RefPtr<AudioBus> input_bus_of129_frames =
+  // i.e.) input_bus->length() == kRenderQuantumFrames
+  scoped_refptr<AudioBus> input_bus_129_frames =
       AudioBus::Create(2, AudioUtilities::kRenderQuantumFrames + 1);
-  EXPECT_DEATH(test_fifo->Push(input_bus_of129_frames.Get()), "");
-  RefPtr<AudioBus> input_bus_of127_frames =
+  EXPECT_DEATH(test_fifo->Push(input_bus_129_frames.get()), "");
+  scoped_refptr<AudioBus> input_bus_127_frames =
       AudioBus::Create(2, AudioUtilities::kRenderQuantumFrames - 1);
-  EXPECT_DEATH(test_fifo->Push(input_bus_of127_frames.Get()), "");
+  EXPECT_DEATH(test_fifo->Push(input_bus_127_frames.get()), "");
 
   // Pull request frames cannot exceed the length of output bus.
-  // i.e.) framesRequested <= outputBus->length()
-  RefPtr<AudioBus> output_bus_of512_frames = AudioBus::Create(2, 512);
-  EXPECT_DEATH(test_fifo->Pull(output_bus_of512_frames.Get(), 513), "");
+  // i.e.) frames_requested <= output_bus->length()
+  scoped_refptr<AudioBus> output_bus_512_frames = AudioBus::Create(2, 512);
+  EXPECT_DEATH(test_fifo->Pull(output_bus_512_frames.get(), 513), "");
 
   // Pull request frames cannot exceed the length of FIFO.
-  // i.e.) framesRequested <= m_fifoLength
-  RefPtr<AudioBus> output_bus_of1025_frames = AudioBus::Create(2, 1025);
-  EXPECT_DEATH(test_fifo->Pull(output_bus_of1025_frames.Get(), 1025), "");
+  // i.e.) frames_requested <= fifo_length_
+  scoped_refptr<AudioBus> output_bus_1025_frames = AudioBus::Create(2, 1025);
+  EXPECT_DEATH(test_fifo->Pull(output_bus_1025_frames.get(), 1025), "");
 }
 
 // Fills each AudioChannel in an AudioBus with a series of linearly increasing
-// values starting from |startingValue| and incrementing by 1. Then return value
-// will be |startingValue| + |bus_length|.
+// values starting from |starting_value| and incrementing by 1. Then return
+// value will be |starting_value| + |bus_length|.
 size_t FillBusWithLinearRamp(AudioBus* target_bus, size_t starting_value) {
   for (unsigned c = 0; c < target_bus->NumberOfChannels(); ++c) {
     float* bus_channel = target_bus->Channel(c)->MutableData();
@@ -138,22 +144,22 @@ TEST_P(PushPullFIFOFeatureTest, FeatureTests) {
   std::unique_ptr<PushPullFIFO> fifo = WTF::WrapUnique(
       new PushPullFIFO(setup.number_of_channels, setup.fifo_length));
 
-  RefPtr<AudioBus> output_bus;
+  scoped_refptr<AudioBus> output_bus;
 
   // Iterate all the scheduled push/pull actions.
   size_t frame_counter = 0;
   for (const auto& action : setup.fifo_actions) {
     if (strcmp(action.action, "PUSH") == 0) {
-      RefPtr<AudioBus> input_bus =
+      scoped_refptr<AudioBus> input_bus =
           AudioBus::Create(setup.number_of_channels, action.number_of_frames);
-      frame_counter = FillBusWithLinearRamp(input_bus.Get(), frame_counter);
-      fifo->Push(input_bus.Get());
+      frame_counter = FillBusWithLinearRamp(input_bus.get(), frame_counter);
+      fifo->Push(input_bus.get());
       LOG(INFO) << "PUSH " << action.number_of_frames
                 << " frames (frameCounter=" << frame_counter << ")";
     } else {
       output_bus =
           AudioBus::Create(setup.number_of_channels, action.number_of_frames);
-      fifo->Pull(output_bus.Get(), action.number_of_frames);
+      fifo->Pull(output_bus.get(), action.number_of_frames);
       LOG(INFO) << "PULL " << action.number_of_frames << " frames";
     }
   }
@@ -169,13 +175,14 @@ TEST_P(PushPullFIFOFeatureTest, FeatureTests) {
 
   // Verify in-FIFO samples.
   for (const auto& sample : expected_state.fifo_samples) {
-    EXPECT_TRUE(VerifyBusValueAtIndex(fifo->Bus(), sample.index, sample.value));
+    EXPECT_TRUE(VerifyBusValueAtIndex(fifo->GetFIFOBusForTest(),
+                                      sample.index, sample.value));
   }
 
   // Verify samples from the most recent output bus.
   for (const auto& sample : expected_state.output_samples) {
     EXPECT_TRUE(
-        VerifyBusValueAtIndex(output_bus.Get(), sample.index, sample.value));
+        VerifyBusValueAtIndex(output_bus.get(), sample.index, sample.value));
   }
 }
 

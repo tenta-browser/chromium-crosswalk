@@ -18,7 +18,11 @@ PaletteToolManager::PaletteToolManager(Delegate* delegate)
   DCHECK(delegate_);
 }
 
-PaletteToolManager::~PaletteToolManager() {}
+PaletteToolManager::~PaletteToolManager() = default;
+
+bool PaletteToolManager::HasTool(PaletteToolId tool_id) {
+  return FindToolById(tool_id);
+}
 
 void PaletteToolManager::AddTool(std::unique_ptr<PaletteTool> tool) {
   // The same PaletteToolId cannot be registered twice.
@@ -86,14 +90,14 @@ std::vector<PaletteToolView> PaletteToolManager::CreateViews() {
   std::vector<PaletteToolView> views;
   views.reserve(tools_.size());
 
-  for (size_t i = 0; i < tools_.size(); ++i) {
-    views::View* tool_view = tools_[i]->CreateView();
+  for (const auto& tool : tools_) {
+    views::View* tool_view = tool->CreateView();
     if (!tool_view)
       continue;
 
     PaletteToolView view;
-    view.group = tools_[i]->GetGroup();
-    view.tool_id = tools_[i]->GetToolId();
+    view.group = tool->GetGroup();
+    view.tool_id = tool->GetToolId();
     view.view = tool_view;
     views.push_back(view);
   }
@@ -128,12 +132,14 @@ void PaletteToolManager::HidePaletteImmediately() {
   delegate_->HidePaletteImmediately();
 }
 
-WmWindow* PaletteToolManager::GetWindow() {
+aura::Window* PaletteToolManager::GetWindow() {
   return delegate_->GetWindow();
 }
 
-void PaletteToolManager::RecordPaletteOptionsUsage(PaletteTrayOptions option) {
-  return delegate_->RecordPaletteOptionsUsage(option);
+void PaletteToolManager::RecordPaletteOptionsUsage(
+    PaletteTrayOptions option,
+    PaletteInvocationMethod method) {
+  return delegate_->RecordPaletteOptionsUsage(option, method);
 }
 
 void PaletteToolManager::RecordPaletteModeCancellation(

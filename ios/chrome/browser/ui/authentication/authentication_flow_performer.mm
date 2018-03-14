@@ -7,10 +7,8 @@
 #include <memory>
 
 #include "base/ios/block_types.h"
-#include "base/ios/weak_nsobject.h"
 #include "base/logging.h"
 #include "base/mac/bind_objc_block.h"
-#include "base/mac/scoped_nsobject.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/time/time.h"
@@ -18,7 +16,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/signin/core/common/signin_pref_names.h"
+#include "components/signin/core/browser/signin_pref_names.h"
 #include "components/strings/grit/components_strings.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
@@ -40,6 +38,10 @@
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #import "ios/public/provider/chrome/browser/signin/chrome_identity.h"
 #include "ui/base/l10n/l10n_util.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 using signin_ui::CompletionCallback;
 
@@ -68,21 +70,21 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
 @end
 
 @implementation AuthenticationFlowPerformer {
-  base::WeakNSProtocol<id<AuthenticationFlowPerformerDelegate>> _delegate;
-  base::scoped_nsobject<AlertCoordinator> _alertCoordinator;
-  base::scoped_nsobject<SettingsNavigationController> _navigationController;
+  __weak id<AuthenticationFlowPerformerDelegate> _delegate;
+  AlertCoordinator* _alertCoordinator;
+  SettingsNavigationController* _navigationController;
   std::unique_ptr<base::Timer> _watchdogTimer;
 }
 
 - (id<AuthenticationFlowPerformerDelegate>)delegate {
-  return _delegate.get();
+  return _delegate;
 }
 
 - (instancetype)initWithDelegate:
     (id<AuthenticationFlowPerformerDelegate>)delegate {
   self = [super init];
   if (self)
-    _delegate.reset(delegate);
+    _delegate = delegate;
   return self;
 }
 
@@ -91,7 +93,7 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
   [_alertCoordinator stop];
   if (_navigationController) {
     [_navigationController settingsWillBeDismissed];
-    _navigationController.reset();
+    _navigationController = nil;
     [[_delegate presentingViewController] dismissViewControllerAnimated:NO
                                                              completion:nil];
   }
@@ -103,22 +105,22 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
 }
 
 - (void)startWatchdogTimerForManagedStatus {
-  base::WeakNSObject<AuthenticationFlowPerformer> weakSelf(self);
+  __weak AuthenticationFlowPerformer* weakSelf = self;
   ProceduralBlock onTimeout = ^{
-    base::scoped_nsobject<AuthenticationFlowPerformer> strongSelf(
-        [weakSelf retain]);
+    AuthenticationFlowPerformer* strongSelf = weakSelf;
     if (!strongSelf)
       return;
     [strongSelf stopWatchdogTimer];
     NSError* error = [NSError errorWithDomain:kAuthenticationErrorDomain
                                          code:TIMED_OUT_FETCH_POLICY
                                      userInfo:nil];
-    [strongSelf.get()->_delegate didFailFetchManagedStatus:error];
+    [strongSelf->_delegate didFailFetchManagedStatus:error];
   };
   _watchdogTimer.reset(new base::Timer(false, false));
-  _watchdogTimer->Start(FROM_HERE, base::TimeDelta::FromSeconds(
-                                       kAuthenticationFlowTimeoutSeconds),
-                        base::BindBlock(onTimeout));
+  _watchdogTimer->Start(
+      FROM_HERE,
+      base::TimeDelta::FromSeconds(kAuthenticationFlowTimeoutSeconds),
+      base::BindBlockArc(onTimeout));
 }
 
 - (BOOL)stopWatchdogTimer {
@@ -132,10 +134,6 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
 
 - (void)fetchManagedStatus:(ios::ChromeBrowserState*)browserState
                forIdentity:(ChromeIdentity*)identity {
-  if (!experimental_flags::IsMDMIntegrationEnabled()) {
-    [_delegate didFetchManagedStatus:nil];
-    return;
-  }
   if (gaia::ExtractDomainName(gaia::CanonicalizeEmail(
           base::SysNSStringToUTF8(identity.userEmail))) == "gmail.com") {
     // Do nothing for @gmail.com addresses as they can't have a hosted domain.
@@ -145,7 +143,7 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
   }
 
   [self startWatchdogTimerForManagedStatus];
-  base::WeakNSObject<AuthenticationFlowPerformer> weakSelf(self);
+  __weak AuthenticationFlowPerformer* weakSelf = self;
   ios::GetChromeBrowserProvider()
       ->GetChromeIdentityService()
       ->GetHostedDomainForIdentity(
@@ -204,16 +202,15 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
       l10n_util::GetNSString(IDS_IOS_MANAGED_SWITCH_ACCEPT_BUTTON);
   NSString* cancelLabel = l10n_util::GetNSString(IDS_CANCEL);
 
-  _alertCoordinator.reset([[AlertCoordinator alloc]
-      initWithBaseViewController:viewController
-                           title:title
-                         message:subtitle]);
+  _alertCoordinator =
+      [[AlertCoordinator alloc] initWithBaseViewController:viewController
+                                                     title:title
+                                                   message:subtitle];
 
-  base::WeakNSObject<AuthenticationFlowPerformer> weakSelf(self);
-  base::WeakNSObject<AlertCoordinator> weakAlert(_alertCoordinator);
+  __weak AuthenticationFlowPerformer* weakSelf = self;
+  __weak AlertCoordinator* weakAlert = _alertCoordinator;
   ProceduralBlock acceptBlock = ^{
-    base::scoped_nsobject<AuthenticationFlowPerformer> strongSelf(
-        [weakSelf retain]);
+    AuthenticationFlowPerformer* strongSelf = weakSelf;
     if (!strongSelf)
       return;
     [[strongSelf delegate]
@@ -221,8 +218,7 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
     [strongSelf alertControllerDidDisappear:weakAlert];
   };
   ProceduralBlock cancelBlock = ^{
-    base::scoped_nsobject<AuthenticationFlowPerformer> strongSelf(
-        [weakSelf retain]);
+    AuthenticationFlowPerformer* strongSelf = weakSelf;
     if (!strongSelf)
       return;
     [[strongSelf delegate] didChooseCancel];
@@ -265,13 +261,13 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
                         viewController:viewController];
     return;
   }
-  _navigationController.reset([SettingsNavigationController
-      newImportDataController:browserState
-                     delegate:self
-           importDataDelegate:self
-                    fromEmail:lastSignedInEmail
-                      toEmail:[identity userEmail]
-                   isSignedIn:isSignedIn]);
+  _navigationController =
+      [SettingsNavigationController newImportDataController:browserState
+                                                   delegate:self
+                                         importDataDelegate:self
+                                                  fromEmail:lastSignedInEmail
+                                                    toEmail:[identity userEmail]
+                                                 isSignedIn:isSignedIn];
   [_navigationController setShouldCommitSyncChangesOnDismissal:NO];
   [[_delegate presentingViewController]
       presentViewController:_navigationController
@@ -324,24 +320,22 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
       l10n_util::GetNSString(IDS_IOS_MANAGED_SIGNIN_ACCEPT_BUTTON);
   NSString* cancelLabel = l10n_util::GetNSString(IDS_CANCEL);
 
-  _alertCoordinator.reset([[AlertCoordinator alloc]
-      initWithBaseViewController:viewController
-                           title:title
-                         message:subtitle]);
+  _alertCoordinator =
+      [[AlertCoordinator alloc] initWithBaseViewController:viewController
+                                                     title:title
+                                                   message:subtitle];
 
-  base::WeakNSObject<AuthenticationFlowPerformer> weakSelf(self);
-  base::WeakNSObject<AlertCoordinator> weakAlert(_alertCoordinator);
+  __weak AuthenticationFlowPerformer* weakSelf = self;
+  __weak AlertCoordinator* weakAlert = _alertCoordinator;
   ProceduralBlock acceptBlock = ^{
-    base::scoped_nsobject<AuthenticationFlowPerformer> strongSelf(
-        [weakSelf retain]);
+    AuthenticationFlowPerformer* strongSelf = weakSelf;
     if (!strongSelf)
       return;
     [[strongSelf delegate] didAcceptManagedConfirmation];
     [strongSelf alertControllerDidDisappear:weakAlert];
   };
   ProceduralBlock cancelBlock = ^{
-    base::scoped_nsobject<AuthenticationFlowPerformer> strongSelf(
-        [weakSelf retain]);
+    AuthenticationFlowPerformer* strongSelf = weakSelf;
     if (!strongSelf)
       return;
     [[strongSelf delegate] didCancelManagedConfirmation];
@@ -363,11 +357,10 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
                  viewController:(UIViewController*)viewController {
   DCHECK(!_alertCoordinator);
 
-  _alertCoordinator.reset(
-      [ios_internal::ErrorCoordinatorNoItem(error, viewController) retain]);
+  _alertCoordinator = ErrorCoordinatorNoItem(error, viewController);
 
-  base::WeakNSObject<AuthenticationFlowPerformer> weakSelf(self);
-  base::WeakNSObject<AlertCoordinator> weakAlert(_alertCoordinator);
+  __weak AuthenticationFlowPerformer* weakSelf = self;
+  __weak AlertCoordinator* weakAlert = _alertCoordinator;
   ProceduralBlock dismissAction = ^{
     if (callback)
       callback();
@@ -385,14 +378,14 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
 }
 
 - (void)alertControllerDidDisappear:(AlertCoordinator*)alertCoordinator {
-  if (_alertCoordinator.get() != alertCoordinator) {
+  if (_alertCoordinator != alertCoordinator) {
     // Do not reset the |_alertCoordinator| if it has changed. This typically
     // happens when the user taps on any of the actions on "Clear Data Before
     // Syncing?" dialog, as the sign-in confirmation dialog is created before
     // the "Clear Data Before Syncing?" dialog is dismissed.
     return;
   }
-  _alertCoordinator.reset();
+  _alertCoordinator = nil;
 }
 
 #pragma mark - ImportDataControllerDelegate
@@ -408,13 +401,12 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
         base::UserMetricsAction("Signin_ImportDataPrompt_ImportData"));
   }
 
-  base::WeakNSObject<AuthenticationFlowPerformer> weakSelf(self);
+  __weak AuthenticationFlowPerformer* weakSelf = self;
   ProceduralBlock block = ^{
-    base::scoped_nsobject<AuthenticationFlowPerformer> strongSelf(
-        [weakSelf retain]);
+    AuthenticationFlowPerformer* strongSelf = weakSelf;
     if (!strongSelf)
       return;
-    strongSelf.get()->_navigationController.reset();
+    strongSelf->_navigationController = nil;
     [[strongSelf delegate] didChooseClearDataPolicy:shouldClearData];
   };
   [_navigationController settingsWillBeDismissed];
@@ -427,13 +419,12 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
 - (void)closeSettings {
   base::RecordAction(base::UserMetricsAction("Signin_ImportDataPrompt_Cancel"));
 
-  base::WeakNSObject<AuthenticationFlowPerformer> weakSelf(self);
+  __weak AuthenticationFlowPerformer* weakSelf = self;
   ProceduralBlock block = ^{
-    base::scoped_nsobject<AuthenticationFlowPerformer> strongSelf(
-        [weakSelf retain]);
+    AuthenticationFlowPerformer* strongSelf = weakSelf;
     if (!strongSelf)
       return;
-    strongSelf.get()->_navigationController.reset();
+    strongSelf->_navigationController = nil;
     [[strongSelf delegate] didChooseCancel];
   };
   [_navigationController settingsWillBeDismissed];
@@ -441,12 +432,9 @@ const int64_t kAuthenticationFlowTimeoutSeconds = 10;
                                                            completion:block];
 }
 
-- (void)closeSettingsAndOpenNewIncognitoTab {
+- (id<ApplicationCommands, BrowserCommands>)dispatcherForSettings {
   NOTREACHED();
-}
-
-- (void)closeSettingsAndOpenUrl:(OpenUrlCommand*)command {
-  NOTREACHED();
+  return nil;
 }
 
 @end

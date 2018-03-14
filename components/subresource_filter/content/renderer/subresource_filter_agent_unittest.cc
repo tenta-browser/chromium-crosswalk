@@ -51,6 +51,8 @@ class SubresourceFilterAgentUnderTest : public SubresourceFilterAgent {
   MOCK_METHOD0(SignalFirstSubresourceDisallowedForCommittedLoad, void());
   MOCK_METHOD1(SendDocumentLoadStatistics, void(const DocumentLoadStatistics&));
 
+  bool IsMainFrame() override { return true; }
+
   void SetSubresourceFilterForCommittedLoad(
       std::unique_ptr<blink::WebDocumentSubresourceFilter> filter) override {
     last_injected_filter_ = std::move(filter);
@@ -249,6 +251,10 @@ TEST_F(SubresourceFilterAgentTest,
   histogram_tester.ExpectTotalCount(kEvaluationTotalCPUDuration, 0);
 }
 
+// Never inject a filter for main frame about:blank loads, even though we do for
+// subframe loads. Those are tested via browser tests.
+// TODO(csharrison): Refactor these unit tests so it is easier to test with
+// real backing RenderFrames.
 TEST_F(SubresourceFilterAgentTest, EmptyDocumentLoad_NoFilterIsInjected) {
   base::HistogramTester histogram_tester;
   ExpectNoSubresourceFilterGetsInjected();
@@ -414,7 +420,8 @@ TEST_F(SubresourceFilterAgentTest,
   state.measure_performance = true;
   EXPECT_TRUE(agent_as_rfo()->OnMessageReceived(
       SubresourceFilterMsg_ActivateForNextCommittedLoad(0, state)));
-  agent_as_rfo()->DidFailProvisionalLoad(blink::WebURLError());
+  agent_as_rfo()->DidFailProvisionalLoad(
+      blink::WebURLError(net::ERR_FAILED, blink::WebURL()));
   agent_as_rfo()->DidStartProvisionalLoad(nullptr);
   agent_as_rfo()->DidCommitProvisionalLoad(
       true /* is_new_navigation */, false /* is_same_document_navigation */);

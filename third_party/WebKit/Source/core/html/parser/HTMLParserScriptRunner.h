@@ -26,13 +26,16 @@
 #ifndef HTMLParserScriptRunner_h
 #define HTMLParserScriptRunner_h
 
+#include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/ScriptStreamer.h"
 #include "core/dom/PendingScript.h"
 #include "core/html/parser/HTMLParserReentryPermit.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/heap/Handle.h"
 #include "platform/loader/fetch/ResourceClient.h"
 #include "platform/wtf/Deque.h"
-#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/text/TextPosition.h"
 
 namespace blink {
@@ -40,6 +43,7 @@ namespace blink {
 class Document;
 class Element;
 class HTMLParserScriptRunnerHost;
+class ScriptLoader;
 
 // HTMLParserScriptRunner is responsible for for arranging the execution of
 // script elements inserted by the parser, according to the rules for
@@ -52,10 +56,9 @@ class HTMLParserScriptRunnerHost;
 // An HTMLParserScriptRunner is owned by its host, an HTMLDocumentParser.
 class HTMLParserScriptRunner final
     : public GarbageCollectedFinalized<HTMLParserScriptRunner>,
-      private PendingScriptClient {
-  WTF_MAKE_NONCOPYABLE(HTMLParserScriptRunner);
+      public PendingScriptClient,
+      public TraceWrapperBase {
   USING_GARBAGE_COLLECTED_MIXIN(HTMLParserScriptRunner);
-  USING_PRE_FINALIZER(HTMLParserScriptRunner, Detach);
 
  public:
   static HTMLParserScriptRunner* Create(HTMLParserReentryPermit* reentry_permit,
@@ -63,10 +66,12 @@ class HTMLParserScriptRunner final
                                         HTMLParserScriptRunnerHost* host) {
     return new HTMLParserScriptRunner(reentry_permit, document, host);
   }
-  ~HTMLParserScriptRunner();
+  ~HTMLParserScriptRunner() override;
 
-  // Prepares this object to be destroyed. Invoked when the parser is detached,
-  // or failing that, as a pre-finalizer.
+  // Invoked when the parser is detached.
+  //
+  // We don't need to call Detach() as a prefinalizer, because PendingScripts
+  // are Dispose()d in PendingScripts' prefinalizers.
   void Detach();
 
   // Processes the passed in script and any pending scripts if possible.
@@ -92,7 +97,8 @@ class HTMLParserScriptRunner final
     return !!reentry_permit_->ScriptNestingLevel();
   }
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*) override;
+  void TraceWrappers(const ScriptWrappableVisitor*) const override;
 
  private:
   HTMLParserScriptRunner(HTMLParserReentryPermit*,
@@ -106,9 +112,8 @@ class HTMLParserScriptRunner final
                                             ScriptStreamer::Type);
   void ExecuteParsingBlockingScripts();
 
-  void RequestParsingBlockingScript(Element*);
-  void RequestDeferredScript(Element*);
-  PendingScript* RequestPendingScript(Element*) const;
+  void RequestParsingBlockingScript(ScriptLoader*);
+  void RequestDeferredScript(ScriptLoader*);
 
   // Processes the provided script element, but does not execute any
   // parsing-blocking scripts that may remain after execution.
@@ -123,15 +128,18 @@ class HTMLParserScriptRunner final
 
   void PossiblyFetchBlockedDocWriteScript(PendingScript*);
 
-  RefPtr<HTMLParserReentryPermit> reentry_permit_;
+  scoped_refptr<HTMLParserReentryPermit> reentry_permit_;
   Member<Document> document_;
   Member<HTMLParserScriptRunnerHost> host_;
 
   // https://html.spec.whatwg.org/#pending-parsing-blocking-script
-  Member<PendingScript> parser_blocking_script_;
+  TraceWrapperMember<PendingScript> parser_blocking_script_;
 
   // https://html.spec.whatwg.org/#list-of-scripts-that-will-execute-when-the-document-has-finished-parsing
-  HeapDeque<Member<PendingScript>> scripts_to_execute_after_parsing_;
+  HeapDeque<TraceWrapperMember<PendingScript>>
+      scripts_to_execute_after_parsing_;
+
+  DISALLOW_COPY_AND_ASSIGN(HTMLParserScriptRunner);
 };
 
 }  // namespace blink

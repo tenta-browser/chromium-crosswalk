@@ -155,9 +155,13 @@ class BASE_EXPORT WeakPtrBase {
   WeakPtrBase& operator=(WeakPtrBase&& other) = default;
 
  protected:
-  explicit WeakPtrBase(const WeakReference& ref);
+  WeakPtrBase(const WeakReference& ref, uintptr_t ptr);
 
   WeakReference ref_;
+
+  // This pointer is only valid when ref_.is_valid() is true.  Otherwise, its
+  // value is undefined (as opposed to nullptr).
+  uintptr_t ptr_;
 };
 
 // This class provides a common implementation of common functions that would
@@ -169,12 +173,14 @@ class SupportsWeakPtrBase {
   // conversion will only compile if there is exists a Base which inherits
   // from SupportsWeakPtr<Base>. See base::AsWeakPtr() below for a helper
   // function that makes calling this easier.
+  //
+  // Precondition: t != nullptr
   template<typename Derived>
   static WeakPtr<Derived> StaticAsWeakPtr(Derived* t) {
     static_assert(
         std::is_base_of<internal::SupportsWeakPtrBase, Derived>::value,
         "AsWeakPtr argument must inherit from SupportsWeakPtr");
-    return AsWeakPtrImpl<Derived>(t, *t);
+    return AsWeakPtrImpl<Derived>(t);
   }
 
  private:
@@ -182,10 +188,10 @@ class SupportsWeakPtrBase {
   // which is an instance of SupportsWeakPtr<Base>. We can then safely
   // static_cast the Base* to a Derived*.
   template <typename Derived, typename Base>
-  static WeakPtr<Derived> AsWeakPtrImpl(
-      Derived* t, const SupportsWeakPtr<Base>&) {
-    WeakPtr<Base> ptr = t->Base::AsWeakPtr();
-    return WeakPtr<Derived>(ptr.ref_, static_cast<Derived*>(ptr.ptr_));
+  static WeakPtr<Derived> AsWeakPtrImpl(SupportsWeakPtr<Base>* t) {
+    WeakPtr<Base> ptr = t->AsWeakPtr();
+    return WeakPtr<Derived>(
+        ptr.ref_, static_cast<Derived*>(reinterpret_cast<Base*>(ptr.ptr_)));
   }
 };
 
@@ -209,20 +215,30 @@ template <typename T> class WeakPtrFactory;
 template <typename T>
 class WeakPtr : public internal::WeakPtrBase {
  public:
-  WeakPtr() : ptr_(nullptr) {}
+  WeakPtr() {}
 
-  WeakPtr(std::nullptr_t) : ptr_(nullptr) {}
+  WeakPtr(std::nullptr_t) {}
 
   // Allow conversion from U to T provided U "is a" T. Note that this
   // is separate from the (implicit) copy and move constructors.
   template <typename U>
-  WeakPtr(const WeakPtr<U>& other) : WeakPtrBase(other), ptr_(other.ptr_) {
+  WeakPtr(const WeakPtr<U>& other) : WeakPtrBase(other) {
+    // Need to cast from U* to T* to do pointer adjustment in case of multiple
+    // inheritance. This also enforces the "U is a T" rule.
+    T* t = reinterpret_cast<U*>(other.ptr_);
+    ptr_ = reinterpret_cast<uintptr_t>(t);
   }
   template <typename U>
-  WeakPtr(WeakPtr<U>&& other)
-      : WeakPtrBase(std::move(other)), ptr_(other.ptr_) {}
+  WeakPtr(WeakPtr<U>&& other) : WeakPtrBase(std::move(other)) {
+    // Need to cast from U* to T* to do pointer adjustment in case of multiple
+    // inheritance. This also enforces the "U is a T" rule.
+    T* t = reinterpret_cast<U*>(other.ptr_);
+    ptr_ = reinterpret_cast<uintptr_t>(t);
+  }
 
-  T* get() const { return ref_.is_valid() ? ptr_ : nullptr; }
+  T* get() const {
+    return ref_.is_valid() ? reinterpret_cast<T*>(ptr_) : nullptr;
+  }
 
   T& operator*() const {
     DCHECK(get() != nullptr);
@@ -235,7 +251,7 @@ class WeakPtr : public internal::WeakPtrBase {
 
   void reset() {
     ref_ = internal::WeakReference();
-    ptr_ = nullptr;
+    ptr_ = 0;
   }
 
   // Allow conditionals to test validity, e.g. if (weak_ptr) {...};
@@ -248,13 +264,7 @@ class WeakPtr : public internal::WeakPtrBase {
   friend class WeakPtrFactory<T>;
 
   WeakPtr(const internal::WeakReference& ref, T* ptr)
-      : WeakPtrBase(ref),
-        ptr_(ptr) {
-  }
-
-  // This pointer is only valid when ref_.is_valid() is true.  Otherwise, its
-  // value is undefined (as opposed to nullptr).
-  T* ptr_;
+      : WeakPtrBase(ref, reinterpret_cast<uintptr_t>(ptr)) {}
 };
 
 // Allow callers to compare WeakPtrs against nullptr to test validity.
@@ -275,22 +285,33 @@ bool operator==(std::nullptr_t, const WeakPtr<T>& weak_ptr) {
   return weak_ptr == nullptr;
 }
 
+namespace internal {
+class BASE_EXPORT WeakPtrFactoryBase {
+ protected:
+  WeakPtrFactoryBase(uintptr_t ptr);
+  ~WeakPtrFactoryBase();
+  internal::WeakReferenceOwner weak_reference_owner_;
+  uintptr_t ptr_;
+};
+}  // namespace internal
+
 // A class may be composed of a WeakPtrFactory and thereby
 // control how it exposes weak pointers to itself.  This is helpful if you only
 // need weak pointers within the implementation of a class.  This class is also
 // useful when working with primitive types.  For example, you could have a
 // WeakPtrFactory<bool> that is used to pass around a weak reference to a bool.
 template <class T>
-class WeakPtrFactory {
+class WeakPtrFactory : public internal::WeakPtrFactoryBase {
  public:
-  explicit WeakPtrFactory(T* ptr) : ptr_(ptr) {
-  }
+  explicit WeakPtrFactory(T* ptr)
+      : WeakPtrFactoryBase(reinterpret_cast<uintptr_t>(ptr)) {}
 
-  ~WeakPtrFactory() { ptr_ = nullptr; }
+  ~WeakPtrFactory() {}
 
   WeakPtr<T> GetWeakPtr() {
     DCHECK(ptr_);
-    return WeakPtr<T>(weak_reference_owner_.GetRef(), ptr_);
+    return WeakPtr<T>(weak_reference_owner_.GetRef(),
+                      reinterpret_cast<T*>(ptr_));
   }
 
   // Call this method to invalidate all existing weak pointers.
@@ -306,8 +327,6 @@ class WeakPtrFactory {
   }
 
  private:
-  internal::WeakReferenceOwner weak_reference_owner_;
-  T* ptr_;
   DISALLOW_IMPLICIT_CONSTRUCTORS(WeakPtrFactory);
 };
 

@@ -7,6 +7,7 @@
 #include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/sequenced_task_runner.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "content/browser/byte_stream.h"
 #include "content/browser/download/download_create_info.h"
@@ -43,15 +44,15 @@ class UrlDownloader::RequestHandle : public DownloadRequestHandleInterface {
   DownloadManager* GetDownloadManager() const override { return nullptr; }
   void PauseRequest() const override {
     downloader_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&UrlDownloader::PauseRequest, downloader_));
+        FROM_HERE, base::BindOnce(&UrlDownloader::PauseRequest, downloader_));
   }
   void ResumeRequest() const override {
     downloader_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&UrlDownloader::ResumeRequest, downloader_));
+        FROM_HERE, base::BindOnce(&UrlDownloader::ResumeRequest, downloader_));
   }
-  void CancelRequest() const override {
+  void CancelRequest(bool user_cancel) const override {
     downloader_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&UrlDownloader::CancelRequest, downloader_));
+        FROM_HERE, base::BindOnce(&UrlDownloader::CancelRequest, downloader_));
   }
 
  private:
@@ -63,10 +64,13 @@ class UrlDownloader::RequestHandle : public DownloadRequestHandleInterface {
 
 // static
 std::unique_ptr<UrlDownloader> UrlDownloader::BeginDownload(
-    base::WeakPtr<UrlDownloader::Delegate> delegate,
+    base::WeakPtr<UrlDownloadHandler::Delegate> delegate,
     std::unique_ptr<net::URLRequest> request,
-    const Referrer& referrer) {
-  Referrer::SetReferrerForRequest(request.get(), referrer);
+    const Referrer& referrer,
+    bool is_parallel_request) {
+  Referrer sanitized_referrer =
+      Referrer::SanitizeForRequest(request->url(), referrer);
+  Referrer::SetReferrerForRequest(request.get(), sanitized_referrer);
 
   if (request->url().SchemeIs(url::kBlobScheme))
     return nullptr;
@@ -74,17 +78,19 @@ std::unique_ptr<UrlDownloader> UrlDownloader::BeginDownload(
   // From this point forward, the |UrlDownloader| is responsible for
   // |started_callback|.
   std::unique_ptr<UrlDownloader> downloader(
-      new UrlDownloader(std::move(request), delegate));
+      new UrlDownloader(std::move(request), delegate, is_parallel_request));
   downloader->Start();
 
   return downloader;
 }
 
-UrlDownloader::UrlDownloader(std::unique_ptr<net::URLRequest> request,
-                             base::WeakPtr<Delegate> delegate)
+UrlDownloader::UrlDownloader(
+    std::unique_ptr<net::URLRequest> request,
+    base::WeakPtr<UrlDownloadHandler::Delegate> delegate,
+    bool is_parallel_request)
     : request_(std::move(request)),
       delegate_(delegate),
-      core_(request_.get(), this),
+      core_(request_.get(), this, is_parallel_request),
       weak_ptr_factory_(this) {}
 
 UrlDownloader::~UrlDownloader() {
@@ -138,8 +144,8 @@ void UrlDownloader::StartReading(bool is_continuation) {
   if (!core_.OnWillRead(&buf, &buf_size)) {
     int result = request_->CancelWithError(net::ERR_ABORTED);
     base::SequencedTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&UrlDownloader::ResponseCompleted,
-                              weak_ptr_factory_.GetWeakPtr(), result));
+        FROM_HERE, base::BindOnce(&UrlDownloader::ResponseCompleted,
+                                  weak_ptr_factory_.GetWeakPtr(), result));
     return;
   }
 
@@ -158,9 +164,9 @@ void UrlDownloader::StartReading(bool is_continuation) {
     // Else, trigger OnReadCompleted asynchronously to avoid starving the IO
     // thread in case the URLRequest can provide data synchronously.
     base::SequencedTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::Bind(&UrlDownloader::OnReadCompleted,
-                   weak_ptr_factory_.GetWeakPtr(), request_.get(), bytes_read));
+        FROM_HERE, base::BindOnce(&UrlDownloader::OnReadCompleted,
+                                  weak_ptr_factory_.GetWeakPtr(),
+                                  request_.get(), bytes_read));
   }
 }
 
@@ -210,9 +216,11 @@ void UrlDownloader::OnStart(
 
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&UrlDownloader::Delegate::OnUrlDownloaderStarted, delegate_,
-                 base::Passed(&create_info), base::Passed(&stream_reader),
-                 callback));
+      base::BindOnce(&UrlDownloadHandler::Delegate::OnUrlDownloadStarted,
+                     delegate_, std::move(create_info),
+                     std::make_unique<DownloadManager::InputStream>(
+                         std::move(stream_reader)),
+                     callback));
 }
 
 void UrlDownloader::OnReadyToRead() {
@@ -234,8 +242,8 @@ void UrlDownloader::CancelRequest() {
 void UrlDownloader::Destroy() {
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&UrlDownloader::Delegate::OnUrlDownloaderStopped, delegate_,
-                 this));
+      base::BindOnce(&UrlDownloadHandler::Delegate::OnUrlDownloadStopped,
+                     delegate_, this));
 }
 
 }  // namespace content

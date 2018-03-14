@@ -5,12 +5,12 @@
 #ifndef Bluetooth_h
 #define Bluetooth_h
 
+#include <memory>
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/bluetooth/BluetoothDevice.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "public/platform/modules/bluetooth/web_bluetooth.mojom-blink.h"
-#include <memory>
 
 namespace blink {
 
@@ -18,8 +18,7 @@ class RequestDeviceOptions;
 class ScriptPromise;
 class ScriptState;
 
-class Bluetooth final : public GarbageCollectedFinalized<Bluetooth>,
-                        public ScriptWrappable {
+class Bluetooth final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -33,7 +32,7 @@ class Bluetooth final : public GarbageCollectedFinalized<Bluetooth>,
   mojom::blink::WebBluetoothService* Service() { return service_.get(); }
 
   // Interface required by Garbage Collection:
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   Bluetooth();

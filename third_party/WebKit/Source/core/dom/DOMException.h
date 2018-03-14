@@ -29,18 +29,16 @@
 #ifndef DOMException_h
 #define DOMException_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
 #include "core/dom/ExceptionCode.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
-class CORE_EXPORT DOMException final
-    : public GarbageCollectedFinalized<DOMException>,
-      public ScriptWrappable {
+class CORE_EXPORT DOMException final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -57,7 +55,6 @@ class CORE_EXPORT DOMException final
   // This is the message that's exposed to JavaScript: never return unsanitized
   // data.
   String message() const { return sanitized_message_; }
-  String toString() const;
 
   // This is the message that's exposed to the console: if an unsanitized
   // message is present, we prefer it.
@@ -69,8 +66,6 @@ class CORE_EXPORT DOMException final
 
   static String GetErrorName(ExceptionCode);
   static String GetErrorMessage(ExceptionCode);
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   DOMException(unsigned short code,

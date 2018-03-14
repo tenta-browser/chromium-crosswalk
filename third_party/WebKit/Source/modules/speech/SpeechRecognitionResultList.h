@@ -26,15 +26,13 @@
 #ifndef SpeechRecognitionResultList_h
 #define SpeechRecognitionResultList_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/speech/SpeechRecognitionResult.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
-class SpeechRecognitionResultList
-    : public GarbageCollected<SpeechRecognitionResultList>,
-      public ScriptWrappable {
+class SpeechRecognitionResultList : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -44,7 +42,7 @@ class SpeechRecognitionResultList
   unsigned length() { return results_.size(); }
   SpeechRecognitionResult* item(unsigned index);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   explicit SpeechRecognitionResultList(

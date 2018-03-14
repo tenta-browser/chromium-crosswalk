@@ -26,11 +26,10 @@
 
 #include "core/CSSValueKeywords.h"
 #include "core/layout/LayoutThemeFontProvider.h"
-#include "core/paint/MediaControlsPainter.h"
 #include "core/style/ComputedStyle.h"
-#include "platform/HostWindow.h"
+#include "platform/DataResourceHelper.h"
 #include "platform/LayoutTestSupport.h"
-#include "platform/PlatformResourceLoader.h"
+#include "platform/PlatformChromeClient.h"
 #include "platform/graphics/Color.h"
 #include "platform/wtf/text/StringBuilder.h"
 #include "public/platform/Platform.h"
@@ -53,7 +52,7 @@ unsigned LayoutThemeDefault::active_selection_foreground_color_ = Color::kBlack;
 unsigned LayoutThemeDefault::inactive_selection_background_color_ = 0xffc8c8c8;
 unsigned LayoutThemeDefault::inactive_selection_foreground_color_ = 0xff323232;
 
-double LayoutThemeDefault::caret_blink_interval_;
+TimeDelta LayoutThemeDefault::caret_blink_interval_;
 
 LayoutThemeDefault::LayoutThemeDefault()
     : LayoutTheme(nullptr), painter_(*this) {
@@ -92,10 +91,10 @@ Color LayoutThemeDefault::SystemColor(CSSValueID css_value_id) const {
 String LayoutThemeDefault::ExtraDefaultStyleSheet() {
   String extra_style_sheet = LayoutTheme::ExtraDefaultStyleSheet();
   String multiple_fields_style_sheet =
-      RuntimeEnabledFeatures::inputMultipleFieldsUIEnabled()
-          ? LoadResourceAsASCIIString("themeInputMultipleFields.css")
+      RuntimeEnabledFeatures::InputMultipleFieldsUIEnabled()
+          ? GetDataResourceAsASCIIString("themeInputMultipleFields.css")
           : String();
-  String windows_style_sheet = LoadResourceAsASCIIString("themeWin.css");
+  String windows_style_sheet = GetDataResourceAsASCIIString("themeWin.css");
   StringBuilder builder;
   builder.ReserveCapacity(extra_style_sheet.length() +
                           multiple_fields_style_sheet.length() +
@@ -107,7 +106,7 @@ String LayoutThemeDefault::ExtraDefaultStyleSheet() {
 }
 
 String LayoutThemeDefault::ExtraQuirksStyleSheet() {
-  return LoadResourceAsASCIIString("themeWinQuirks.css");
+  return GetDataResourceAsASCIIString("themeWinQuirks.css");
 }
 
 Color LayoutThemeDefault::ActiveListBoxSelectionBackgroundColor() const {
@@ -174,8 +173,6 @@ void LayoutThemeDefault::AdjustSliderThumbSize(ComputedStyle& style) const {
   } else if (style.Appearance() == kSliderThumbVerticalPart) {
     style.SetWidth(Length(size.Height() * zoom_level, kFixed));
     style.SetHeight(Length(size.Width() * zoom_level, kFixed));
-  } else {
-    MediaControlsPainter::AdjustMediaSliderThumbSize(style);
   }
 }
 
@@ -200,6 +197,7 @@ void LayoutThemeDefault::SetCheckboxSize(ComputedStyle& style) const {
   float zoom_level = style.EffectiveZoom();
   size.SetWidth(size.Width() * zoom_level);
   size.SetHeight(size.Height() * zoom_level);
+  SetMinimumSizeIfAuto(style, size);
   SetSizeIfAuto(style, size);
 }
 
@@ -213,6 +211,7 @@ void LayoutThemeDefault::SetRadioSize(ComputedStyle& style) const {
   float zoom_level = style.EffectiveZoom();
   size.SetWidth(size.Width() * zoom_level);
   size.SetHeight(size.Height() * zoom_level);
+  SetMinimumSizeIfAuto(style, size);
   SetSizeIfAuto(style, size);
 }
 
@@ -252,11 +251,11 @@ Color LayoutThemeDefault::PlatformFocusRingColor() const {
 }
 
 void LayoutThemeDefault::SystemFont(CSSValueID system_font_id,
-                                    FontStyle& font_style,
-                                    FontWeight& font_weight,
+                                    FontSelectionValue& font_slope,
+                                    FontSelectionValue& font_weight,
                                     float& font_size,
                                     AtomicString& font_family) const {
-  LayoutThemeFontProvider::SystemFont(system_font_id, font_style, font_weight,
+  LayoutThemeFontProvider::SystemFont(system_font_id, font_slope, font_weight,
                                       font_size, font_family);
 }
 
@@ -278,13 +277,13 @@ IntRect Center(const IntRect& original, int width, int height) {
 void LayoutThemeDefault::AdjustButtonStyle(ComputedStyle& style) const {
   if (style.Appearance() == kPushButtonPart) {
     // Ignore line-height.
-    style.SetLineHeight(ComputedStyle::InitialLineHeight());
+    style.SetLineHeight(ComputedStyleInitialValues::InitialLineHeight());
   }
 }
 
 void LayoutThemeDefault::AdjustSearchFieldStyle(ComputedStyle& style) const {
   // Ignore line-height.
-  style.SetLineHeight(ComputedStyle::InitialLineHeight());
+  style.SetLineHeight(ComputedStyleInitialValues::InitialLineHeight());
 }
 
 void LayoutThemeDefault::AdjustSearchFieldCancelButtonStyle(
@@ -301,7 +300,7 @@ void LayoutThemeDefault::AdjustSearchFieldCancelButtonStyle(
 void LayoutThemeDefault::AdjustMenuListStyle(ComputedStyle& style,
                                              Element*) const {
   // Height is locked to auto on all browsers.
-  style.SetLineHeight(ComputedStyle::InitialLineHeight());
+  style.SetLineHeight(ComputedStyleInitialValues::InitialLineHeight());
 }
 
 void LayoutThemeDefault::AdjustMenuListButtonStyle(ComputedStyle& style,
@@ -318,12 +317,12 @@ int LayoutThemeDefault::PopupInternalPaddingStart(
 }
 
 int LayoutThemeDefault::PopupInternalPaddingEnd(
-    const HostWindow* host,
+    const PlatformChromeClient* client,
     const ComputedStyle& style) const {
   if (style.Appearance() == kNoControlPart)
     return 0;
   return 1 * style.EffectiveZoom() +
-         ClampedMenuListArrowPaddingSize(host, style);
+         ClampedMenuListArrowPaddingSize(client, style);
 }
 
 int LayoutThemeDefault::PopupInternalPaddingTop(
@@ -345,7 +344,7 @@ int LayoutThemeDefault::MenuListArrowWidthInDIP() const {
 }
 
 float LayoutThemeDefault::ClampedMenuListArrowPaddingSize(
-    const HostWindow* host,
+    const PlatformChromeClient* client,
     const ComputedStyle& style) const {
   if (cached_menu_list_arrow_padding_size_ > 0 &&
       style.EffectiveZoom() == cached_menu_list_arrow_zoom_level_)
@@ -353,7 +352,7 @@ float LayoutThemeDefault::ClampedMenuListArrowPaddingSize(
   cached_menu_list_arrow_zoom_level_ = style.EffectiveZoom();
   int original_size = MenuListArrowWidthInDIP();
   int scaled_size =
-      host ? host->WindowToViewportScalar(original_size) : original_size;
+      client ? client->WindowToViewportScalar(original_size) : original_size;
   // The result should not be samller than the scrollbar thickness in order to
   // secure space for scrollbar in popup.
   float device_scale = 1.0f * scaled_size / original_size;

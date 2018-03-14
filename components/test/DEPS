@@ -6,5 +6,12 @@ include_rules = [
   "+jni",
   "+media",
   "+net",
+  "+services/catalog",
   "+ui",
 ]
+
+specific_include_rules = {
+  "components_test_suite\.cc": [
+    "+mojo/edk/embedder",
+  ],
+}

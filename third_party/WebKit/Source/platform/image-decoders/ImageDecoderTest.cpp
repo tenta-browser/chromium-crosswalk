@@ -32,7 +32,6 @@
 
 #include <memory>
 #include "platform/image-decoders/ImageFrame.h"
-#include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/Vector.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -42,7 +41,7 @@ class TestImageDecoder : public ImageDecoder {
  public:
   TestImageDecoder()
       : ImageDecoder(kAlphaNotPremultiplied,
-                     ColorBehavior::TransformToTargetForTesting(),
+                     ColorBehavior::TransformToSRGB(),
                      kNoDecodedImageByteLimit) {}
 
   String FilenameExtension() const override { return ""; }
@@ -59,7 +58,7 @@ class TestImageDecoder : public ImageDecoder {
                   unsigned width = 100,
                   unsigned height = 100) {
     SetSize(width, height);
-    frame_buffer_cache_.Resize(num_frames);
+    frame_buffer_cache_.resize(num_frames);
     for (size_t i = 0; i < num_frames; ++i)
       frame_buffer_cache_[i].SetOriginalFrameRect(IntRect(0, 0, width, height));
   }
@@ -71,7 +70,7 @@ class TestImageDecoder : public ImageDecoder {
 
 TEST(ImageDecoderTest, sizeCalculationMayOverflow) {
   std::unique_ptr<TestImageDecoder> decoder(
-      WTF::MakeUnique<TestImageDecoder>());
+      std::make_unique<TestImageDecoder>());
   EXPECT_FALSE(decoder->SetSize(1 << 29, 1));
   EXPECT_FALSE(decoder->SetSize(1, 1 << 29));
   EXPECT_FALSE(decoder->SetSize(1 << 15, 1 << 15));
@@ -82,7 +81,7 @@ TEST(ImageDecoderTest, sizeCalculationMayOverflow) {
 
 TEST(ImageDecoderTest, requiredPreviousFrameIndex) {
   std::unique_ptr<TestImageDecoder> decoder(
-      WTF::MakeUnique<TestImageDecoder>());
+      std::make_unique<TestImageDecoder>());
   decoder->InitFrames(6);
   Vector<ImageFrame, 1>& frame_buffers = decoder->FrameBufferCache();
 
@@ -107,7 +106,7 @@ TEST(ImageDecoderTest, requiredPreviousFrameIndex) {
 
 TEST(ImageDecoderTest, requiredPreviousFrameIndexDisposeOverwriteBgcolor) {
   std::unique_ptr<TestImageDecoder> decoder(
-      WTF::MakeUnique<TestImageDecoder>());
+      std::make_unique<TestImageDecoder>());
   decoder->InitFrames(3);
   Vector<ImageFrame, 1>& frame_buffers = decoder->FrameBufferCache();
 
@@ -126,7 +125,7 @@ TEST(ImageDecoderTest, requiredPreviousFrameIndexDisposeOverwriteBgcolor) {
 
 TEST(ImageDecoderTest, requiredPreviousFrameIndexForFrame1) {
   std::unique_ptr<TestImageDecoder> decoder(
-      WTF::MakeUnique<TestImageDecoder>());
+      std::make_unique<TestImageDecoder>());
   decoder->InitFrames(2);
   Vector<ImageFrame, 1>& frame_buffers = decoder->FrameBufferCache();
 
@@ -155,7 +154,7 @@ TEST(ImageDecoderTest, requiredPreviousFrameIndexForFrame1) {
 
 TEST(ImageDecoderTest, requiredPreviousFrameIndexBlendAtopBgcolor) {
   std::unique_ptr<TestImageDecoder> decoder(
-      WTF::MakeUnique<TestImageDecoder>());
+      std::make_unique<TestImageDecoder>());
   decoder->InitFrames(3);
   Vector<ImageFrame, 1>& frame_buffers = decoder->FrameBufferCache();
 
@@ -188,7 +187,7 @@ TEST(ImageDecoderTest, requiredPreviousFrameIndexBlendAtopBgcolor) {
 
 TEST(ImageDecoderTest, requiredPreviousFrameIndexKnownOpaque) {
   std::unique_ptr<TestImageDecoder> decoder(
-      WTF::MakeUnique<TestImageDecoder>());
+      std::make_unique<TestImageDecoder>());
   decoder->InitFrames(3);
   Vector<ImageFrame, 1>& frame_buffers = decoder->FrameBufferCache();
 
@@ -218,7 +217,7 @@ TEST(ImageDecoderTest, requiredPreviousFrameIndexKnownOpaque) {
 
 TEST(ImageDecoderTest, clearCacheExceptFrameDoNothing) {
   std::unique_ptr<TestImageDecoder> decoder(
-      WTF::MakeUnique<TestImageDecoder>());
+      std::make_unique<TestImageDecoder>());
   decoder->ClearCacheExceptFrame(0);
 
   // This should not crash.
@@ -229,7 +228,7 @@ TEST(ImageDecoderTest, clearCacheExceptFrameDoNothing) {
 TEST(ImageDecoderTest, clearCacheExceptFrameAll) {
   const size_t kNumFrames = 10;
   std::unique_ptr<TestImageDecoder> decoder(
-      WTF::MakeUnique<TestImageDecoder>());
+      std::make_unique<TestImageDecoder>());
   decoder->InitFrames(kNumFrames);
   Vector<ImageFrame, 1>& frame_buffers = decoder->FrameBufferCache();
   for (size_t i = 0; i < kNumFrames; ++i)
@@ -239,7 +238,7 @@ TEST(ImageDecoderTest, clearCacheExceptFrameAll) {
   decoder->ClearCacheExceptFrame(kNotFound);
 
   for (size_t i = 0; i < kNumFrames; ++i) {
-    SCOPED_TRACE(testing::Message() << i);
+    SCOPED_TRACE(::testing::Message() << i);
     EXPECT_EQ(ImageFrame::kFrameEmpty, frame_buffers[i].GetStatus());
   }
 }
@@ -247,7 +246,7 @@ TEST(ImageDecoderTest, clearCacheExceptFrameAll) {
 TEST(ImageDecoderTest, clearCacheExceptFramePreverveClearExceptFrame) {
   const size_t kNumFrames = 10;
   std::unique_ptr<TestImageDecoder> decoder(
-      WTF::MakeUnique<TestImageDecoder>());
+      std::make_unique<TestImageDecoder>());
   decoder->InitFrames(kNumFrames);
   Vector<ImageFrame, 1>& frame_buffers = decoder->FrameBufferCache();
   for (size_t i = 0; i < kNumFrames; ++i)
@@ -256,7 +255,7 @@ TEST(ImageDecoderTest, clearCacheExceptFramePreverveClearExceptFrame) {
   decoder->ResetRequiredPreviousFrames();
   decoder->ClearCacheExceptFrame(5);
   for (size_t i = 0; i < kNumFrames; ++i) {
-    SCOPED_TRACE(testing::Message() << i);
+    SCOPED_TRACE(::testing::Message() << i);
     if (i == 5)
       EXPECT_EQ(ImageFrame::kFrameComplete, frame_buffers[i].GetStatus());
     else

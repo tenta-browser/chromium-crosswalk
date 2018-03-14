@@ -5,7 +5,9 @@
 #include "cc/tiles/software_image_decode_cache.h"
 
 #include "cc/paint/draw_image.h"
-#include "cc/resources/resource_format.h"
+#include "cc/paint/paint_image_builder.h"
+#include "cc/test/fake_paint_image_generator.h"
+#include "cc/test/skia_common.h"
 #include "cc/test/test_tile_task_runner.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
@@ -21,22 +23,8 @@ size_t kLockedMemoryLimitBytes = 128 * 1024 * 1024;
 class TestSoftwareImageDecodeCache : public SoftwareImageDecodeCache {
  public:
   TestSoftwareImageDecodeCache()
-      : SoftwareImageDecodeCache(ResourceFormat::RGBA_8888,
-                                 kLockedMemoryLimitBytes) {}
+      : SoftwareImageDecodeCache(kN32_SkColorType, kLockedMemoryLimitBytes) {}
 };
-
-sk_sp<SkImage> CreateImageWithColorSpace(int width,
-                                         int height,
-                                         const gfx::ColorSpace& color_space) {
-  SkBitmap bitmap;
-  bitmap.allocPixels(
-      SkImageInfo::MakeN32Premul(width, height, color_space.ToSkColorSpace()));
-  return SkImage::MakeFromBitmap(bitmap);
-}
-
-sk_sp<SkImage> CreateImage(int width, int height) {
-  return CreateImageWithColorSpace(width, height, DefaultColorSpace());
-}
 
 SkMatrix CreateMatrix(const SkSize& scale, bool is_decomposable) {
   SkMatrix matrix;
@@ -50,59 +38,157 @@ SkMatrix CreateMatrix(const SkSize& scale, bool is_decomposable) {
   return matrix;
 }
 
-TEST(SoftwareImageDecodeCacheTest, ImageKeyLowQuality) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  bool is_decomposable = true;
-  SkFilterQuality qualities[] = {kNone_SkFilterQuality, kLow_SkFilterQuality};
-  for (auto quality : qualities) {
-    DrawImage draw_image(
-        image, SkIRect::MakeWH(image->width(), image->height()), quality,
-        CreateMatrix(SkSize::Make(0.5f, 1.5f), is_decomposable),
-        DefaultColorSpace());
-
-    auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-    EXPECT_EQ(image->uniqueID(), key.image_id());
-    EXPECT_EQ(quality, key.filter_quality());
-    EXPECT_EQ(100, key.target_size().width());
-    EXPECT_EQ(100, key.target_size().height());
-    EXPECT_TRUE(key.can_use_original_size_decode());
-    // Since the original decode will be used, the locked_bytes is that of the
-    // original image.
-    EXPECT_EQ(100u * 100u * 4u, key.locked_bytes());
-  }
+PaintImage CreatePaintImage(int width,
+                            int height,
+                            gfx::ColorSpace color_space = DefaultColorSpace()) {
+  return CreateDiscardablePaintImage(gfx::Size(width, height),
+                                     color_space.ToSkColorSpace());
 }
 
-TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQuality) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+TEST(SoftwareImageDecodeCacheTest, ImageKeyNoneQuality) {
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
-  SkFilterQuality quality = kMedium_SkFilterQuality;
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      kNone_SkFilterQuality,
+      CreateMatrix(SkSize::Make(0.5f, 1.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 1.5f), is_decomposable),
-                       DefaultColorSpace());
-
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
-  EXPECT_EQ(quality, key.filter_quality());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
+  EXPECT_EQ(kNone_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(100, key.target_size().width());
   EXPECT_EQ(100, key.target_size().height());
-  EXPECT_FALSE(key.can_use_original_size_decode());
+  EXPECT_TRUE(key.can_use_original_size_decode());
+  // Since the original decode will be used, the locked_bytes is that of the
+  // original image.
   EXPECT_EQ(100u * 100u * 4u, key.locked_bytes());
 }
 
-TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityDropToLowIfEnlarging) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+TEST(SoftwareImageDecodeCacheTest,
+     ImageKeyLowQualityIncreasedToMediumIfDownscale) {
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  bool is_decomposable = true;
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      kLow_SkFilterQuality,
+      CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
+  EXPECT_EQ(kMedium_SkFilterQuality, key.filter_quality());
+  EXPECT_EQ(50, key.target_size().width());
+  EXPECT_EQ(50, key.target_size().height());
+  EXPECT_FALSE(key.can_use_original_size_decode());
+  EXPECT_EQ(50u * 50u * 4u, key.locked_bytes());
+}
+
+TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityDropsToLowIfMipLevel0) {
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  bool is_decomposable = true;
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      kMedium_SkFilterQuality,
+      CreateMatrix(SkSize::Make(0.75f, 0.75f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
+  EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
+  EXPECT_EQ(100, key.target_size().width());
+  EXPECT_EQ(100, key.target_size().height());
+  EXPECT_TRUE(key.can_use_original_size_decode());
+  EXPECT_EQ(100u * 100u * 4u, key.locked_bytes());
+}
+
+TEST(SoftwareImageDecodeCacheTest, LowUnscalableFormatStaysLow) {
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  bool is_decomposable = true;
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      kLow_SkFilterQuality,
+      CreateMatrix(SkSize::Make(0.5f, 1.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+
+  auto key =
+      ImageDecodeCacheKey::FromDrawImage(draw_image, kARGB_4444_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
+  EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
+  EXPECT_EQ(100, key.target_size().width());
+  EXPECT_EQ(100, key.target_size().height());
+  EXPECT_TRUE(key.can_use_original_size_decode());
+  EXPECT_EQ(100u * 100u * 4u, key.locked_bytes());
+}
+
+TEST(SoftwareImageDecodeCacheTest, HighUnscalableFormatBecomesLow) {
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  bool is_decomposable = true;
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      kHigh_SkFilterQuality,
+      CreateMatrix(SkSize::Make(1.5f, 1.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+
+  auto key =
+      ImageDecodeCacheKey::FromDrawImage(draw_image, kARGB_4444_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
+  EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
+  EXPECT_EQ(100, key.target_size().width());
+  EXPECT_EQ(100, key.target_size().height());
+  EXPECT_TRUE(key.can_use_original_size_decode());
+  EXPECT_EQ(100u * 100u * 4u, key.locked_bytes());
+}
+
+TEST(SoftwareImageDecodeCacheTest, ImageKeyLowQualityKeptLowIfUpscale) {
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  bool is_decomposable = true;
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      kLow_SkFilterQuality,
+      CreateMatrix(SkSize::Make(1.5f, 1.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
+  EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
+  EXPECT_EQ(100, key.target_size().width());
+  EXPECT_EQ(100, key.target_size().height());
+  EXPECT_TRUE(key.can_use_original_size_decode());
+  EXPECT_EQ(100u * 100u * 4u, key.locked_bytes());
+}
+
+TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQuality) {
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(1.5f, 1.5f), is_decomposable),
-                       DefaultColorSpace());
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.4f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
+  EXPECT_EQ(quality, key.filter_quality());
+  EXPECT_EQ(50, key.target_size().width());
+  EXPECT_EQ(50, key.target_size().height());
+  EXPECT_FALSE(key.can_use_original_size_decode());
+  EXPECT_EQ(50u * 50u * 4u, key.locked_bytes());
+}
+
+TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityDropToLowIfEnlarging) {
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  bool is_decomposable = true;
+  SkFilterQuality quality = kMedium_SkFilterQuality;
+
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.5f, 1.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(100, key.target_size().width());
   EXPECT_EQ(100, key.target_size().height());
@@ -111,17 +197,17 @@ TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityDropToLowIfEnlarging) {
 }
 
 TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityDropToLowIfIdentity) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(1.f, 1.f), is_decomposable),
-                       DefaultColorSpace());
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.f, 1.f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(100, key.target_size().width());
   EXPECT_EQ(100, key.target_size().height());
@@ -131,17 +217,17 @@ TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityDropToLowIfIdentity) {
 
 TEST(SoftwareImageDecodeCacheTest,
      ImageKeyMediumQualityDropToLowIfNearlyIdentity) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
   DrawImage draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(1.001f, 1.001f), is_decomposable),
-      DefaultColorSpace());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.001f, 1.001f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(100, key.target_size().width());
   EXPECT_EQ(100, key.target_size().height());
@@ -151,17 +237,17 @@ TEST(SoftwareImageDecodeCacheTest,
 
 TEST(SoftwareImageDecodeCacheTest,
      ImageKeyMediumQualityDropToLowIfNearlyIdentity2) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
   DrawImage draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(0.999f, 0.999f), is_decomposable),
-      DefaultColorSpace());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.999f, 0.999f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(100, key.target_size().width());
   EXPECT_EQ(100, key.target_size().height());
@@ -171,17 +257,18 @@ TEST(SoftwareImageDecodeCacheTest,
 
 TEST(SoftwareImageDecodeCacheTest,
      ImageKeyMediumQualityDropToLowIfNotDecomposable) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = false;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 1.5f), is_decomposable),
-                       DefaultColorSpace());
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 1.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
+
   EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(100, key.target_size().width());
   EXPECT_EQ(100, key.target_size().height());
@@ -190,17 +277,17 @@ TEST(SoftwareImageDecodeCacheTest,
 }
 
 TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityAt1_5Scale) {
-  sk_sp<SkImage> image = CreateImage(500, 200);
+  PaintImage paint_image = CreatePaintImage(500, 200);
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(1.5f, 1.5f), is_decomposable),
-                       DefaultColorSpace());
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.5f, 1.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(500, key.target_size().width());
   EXPECT_EQ(200, key.target_size().height());
@@ -209,17 +296,17 @@ TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityAt1_5Scale) {
 }
 
 TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityAt1_0cale) {
-  sk_sp<SkImage> image = CreateImage(500, 200);
+  PaintImage paint_image = CreatePaintImage(500, 200);
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(1.f, 1.f), is_decomposable),
-                       DefaultColorSpace());
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.f, 1.f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(500, key.target_size().width());
   EXPECT_EQ(200, key.target_size().height());
@@ -227,37 +314,37 @@ TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityAt1_0cale) {
   EXPECT_EQ(500u * 200u * 4u, key.locked_bytes());
 }
 
-TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityAt0_75Scale) {
-  sk_sp<SkImage> image = CreateImage(500, 200);
+TEST(SoftwareImageDecodeCacheTest, ImageKeyLowQualityAt0_75Scale) {
+  PaintImage paint_image = CreatePaintImage(500, 200);
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
   DrawImage draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(0.75f, 0.75f), is_decomposable),
-      DefaultColorSpace());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.75f, 0.75f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
-  EXPECT_EQ(quality, key.filter_quality());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
+  EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(500, key.target_size().width());
   EXPECT_EQ(200, key.target_size().height());
-  EXPECT_FALSE(key.can_use_original_size_decode());
+  EXPECT_TRUE(key.can_use_original_size_decode());
   EXPECT_EQ(500u * 200u * 4u, key.locked_bytes());
 }
 
 TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityAt0_5Scale) {
-  sk_sp<SkImage> image = CreateImage(500, 200);
+  PaintImage paint_image = CreatePaintImage(500, 200);
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-                       DefaultColorSpace());
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(quality, key.filter_quality());
   EXPECT_EQ(250, key.target_size().width());
   EXPECT_EQ(100, key.target_size().height());
@@ -266,17 +353,17 @@ TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityAt0_5Scale) {
 }
 
 TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityAt0_49Scale) {
-  sk_sp<SkImage> image = CreateImage(500, 200);
+  PaintImage paint_image = CreatePaintImage(500, 200);
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
   DrawImage draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(0.49f, 0.49f), is_decomposable),
-      DefaultColorSpace());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.49f, 0.49f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(quality, key.filter_quality());
   EXPECT_EQ(250, key.target_size().width());
   EXPECT_EQ(100, key.target_size().height());
@@ -285,17 +372,17 @@ TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityAt0_49Scale) {
 }
 
 TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityAt0_1Scale) {
-  sk_sp<SkImage> image = CreateImage(500, 200);
+  PaintImage paint_image = CreatePaintImage(500, 200);
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.1f, 0.1f), is_decomposable),
-                       DefaultColorSpace());
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.1f, 0.1f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(quality, key.filter_quality());
   EXPECT_EQ(62, key.target_size().width());
   EXPECT_EQ(25, key.target_size().height());
@@ -304,17 +391,17 @@ TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityAt0_1Scale) {
 }
 
 TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityAt0_01Scale) {
-  sk_sp<SkImage> image = CreateImage(500, 200);
+  PaintImage paint_image = CreatePaintImage(500, 200);
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
   DrawImage draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(0.01f, 0.01f), is_decomposable),
-      DefaultColorSpace());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.01f, 0.01f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(quality, key.filter_quality());
   EXPECT_EQ(7, key.target_size().width());
   EXPECT_EQ(3, key.target_size().height());
@@ -323,38 +410,18 @@ TEST(SoftwareImageDecodeCacheTest, ImageKeyMediumQualityAt0_01Scale) {
 }
 
 TEST(SoftwareImageDecodeCacheTest,
-     ImageKeyPartialDowscalesDropsHighQualityToMedium) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  bool is_decomposable = true;
-  SkFilterQuality quality = kHigh_SkFilterQuality;
-
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 1.5f), is_decomposable),
-                       DefaultColorSpace());
-
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
-  EXPECT_EQ(kMedium_SkFilterQuality, key.filter_quality());
-  EXPECT_EQ(100, key.target_size().width());
-  EXPECT_EQ(100, key.target_size().height());
-  EXPECT_FALSE(key.can_use_original_size_decode());
-  EXPECT_EQ(100u * 100u * 4u, key.locked_bytes());
-}
-
-TEST(SoftwareImageDecodeCacheTest,
      ImageKeyFullDowscalesDropsHighQualityToMedium) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 0.2f), is_decomposable),
-                       DefaultColorSpace());
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.2f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(kMedium_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(50, key.target_size().width());
   EXPECT_EQ(50, key.target_size().height());
@@ -362,60 +429,60 @@ TEST(SoftwareImageDecodeCacheTest,
   EXPECT_EQ(50u * 50u * 4u, key.locked_bytes());
 }
 
-TEST(SoftwareImageDecodeCacheTest, ImageKeyDowscalesHighQuality) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+TEST(SoftwareImageDecodeCacheTest, ImageKeyUpscaleIsLowQuality) {
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(2.5f, 1.5f), is_decomposable),
-                       DefaultColorSpace());
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(2.5f, 1.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
-  EXPECT_EQ(quality, key.filter_quality());
-  EXPECT_EQ(250, key.target_size().width());
-  EXPECT_EQ(150, key.target_size().height());
-  EXPECT_FALSE(key.can_use_original_size_decode());
-  EXPECT_EQ(250u * 150u * 4u, key.locked_bytes());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
+  EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
+  EXPECT_EQ(100, key.target_size().width());
+  EXPECT_EQ(100, key.target_size().height());
+  EXPECT_TRUE(key.can_use_original_size_decode());
+  EXPECT_EQ(100u * 100u * 4u, key.locked_bytes());
 }
 
 TEST(SoftwareImageDecodeCacheTest, ImageKeyHighQualityDropToMediumIfTooLarge) {
   // Just over 64MB when scaled.
-  sk_sp<SkImage> image = CreateImage(4555, 2048);
+  PaintImage paint_image = CreatePaintImage(4555, 2048);
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
   // At least one dimension should scale down, so that medium quality doesn't
   // become low.
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.9f, 2.f), is_decomposable),
-                       DefaultColorSpace());
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.45f, 0.45f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(kMedium_SkFilterQuality, key.filter_quality());
-  EXPECT_EQ(4555, key.target_size().width());
-  EXPECT_EQ(2048, key.target_size().height());
+  EXPECT_EQ(2277, key.target_size().width());
+  EXPECT_EQ(1024, key.target_size().height());
   EXPECT_FALSE(key.can_use_original_size_decode());
-  EXPECT_EQ(4555u * 2048u * 4u, key.locked_bytes());
+  EXPECT_EQ(2277u * 1024u * 4u, key.locked_bytes());
 }
 
 TEST(SoftwareImageDecodeCacheTest,
      ImageKeyHighQualityDropToLowIfNotDecomposable) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = false;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 1.5f), is_decomposable),
-                       DefaultColorSpace());
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 1.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(100, key.target_size().width());
   EXPECT_EQ(100, key.target_size().height());
@@ -424,17 +491,17 @@ TEST(SoftwareImageDecodeCacheTest,
 }
 
 TEST(SoftwareImageDecodeCacheTest, ImageKeyHighQualityDropToLowIfIdentity) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(1.f, 1.f), is_decomposable),
-                       DefaultColorSpace());
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.f, 1.f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(100, key.target_size().width());
   EXPECT_EQ(100, key.target_size().height());
@@ -444,17 +511,17 @@ TEST(SoftwareImageDecodeCacheTest, ImageKeyHighQualityDropToLowIfIdentity) {
 
 TEST(SoftwareImageDecodeCacheTest,
      ImageKeyHighQualityDropToLowIfNearlyIdentity) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
   DrawImage draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(1.001f, 1.001f), is_decomposable),
-      DefaultColorSpace());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.001f, 1.001f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(100, key.target_size().width());
   EXPECT_EQ(100, key.target_size().height());
@@ -464,17 +531,17 @@ TEST(SoftwareImageDecodeCacheTest,
 
 TEST(SoftwareImageDecodeCacheTest,
      ImageKeyHighQualityDropToLowIfNearlyIdentity2) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
   DrawImage draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(0.999f, 0.999f), is_decomposable),
-      DefaultColorSpace());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.999f, 0.999f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(100, key.target_size().width());
   EXPECT_EQ(100, key.target_size().height());
@@ -483,31 +550,32 @@ TEST(SoftwareImageDecodeCacheTest,
 }
 
 TEST(SoftwareImageDecodeCacheTest, OriginalDecodesAreEqual) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
-  SkFilterQuality quality = kLow_SkFilterQuality;
+  SkFilterQuality quality = kNone_SkFilterQuality;
 
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 0.5), is_decomposable),
-                       DefaultColorSpace());
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
-  EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
+  EXPECT_EQ(kNone_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(100, key.target_size().width());
   EXPECT_EQ(100, key.target_size().height());
   EXPECT_TRUE(key.can_use_original_size_decode());
   EXPECT_EQ(100u * 100u * 4u, key.locked_bytes());
 
   DrawImage another_draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(1.5f, 1.5), is_decomposable),
-      DefaultColorSpace());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.5f, 1.5), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto another_key = ImageDecodeCacheKey::FromDrawImage(another_draw_image);
-  EXPECT_EQ(image->uniqueID(), another_key.image_id());
-  EXPECT_EQ(kLow_SkFilterQuality, another_key.filter_quality());
+  auto another_key =
+      ImageDecodeCacheKey::FromDrawImage(another_draw_image, kN32_SkColorType);
+  EXPECT_EQ(another_draw_image.frame_key(), another_key.frame_key());
+  EXPECT_EQ(kNone_SkFilterQuality, another_key.filter_quality());
   EXPECT_EQ(100, another_key.target_size().width());
   EXPECT_EQ(100, another_key.target_size().height());
   EXPECT_TRUE(another_key.can_use_original_size_decode());
@@ -517,17 +585,18 @@ TEST(SoftwareImageDecodeCacheTest, OriginalDecodesAreEqual) {
 }
 
 TEST(SoftwareImageDecodeCacheTest, ImageRectDoesNotContainSrcRect) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
   DrawImage draw_image(
-      image, SkIRect::MakeXYWH(25, 35, image->width(), image->height()),
+      paint_image,
+      SkIRect::MakeXYWH(25, 35, paint_image.width(), paint_image.height()),
       quality, CreateMatrix(SkSize::Make(1.f, 1.f), is_decomposable),
-      DefaultColorSpace());
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(kLow_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(100, key.target_size().width());
   EXPECT_EQ(100, key.target_size().height());
@@ -536,17 +605,18 @@ TEST(SoftwareImageDecodeCacheTest, ImageRectDoesNotContainSrcRect) {
 }
 
 TEST(SoftwareImageDecodeCacheTest, ImageRectDoesNotContainSrcRectWithScale) {
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
   DrawImage draw_image(
-      image, SkIRect::MakeXYWH(20, 30, image->width(), image->height()),
+      paint_image,
+      SkIRect::MakeXYWH(20, 30, paint_image.width(), paint_image.height()),
       quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-      DefaultColorSpace());
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image);
-  EXPECT_EQ(image->uniqueID(), key.image_id());
+  auto key = ImageDecodeCacheKey::FromDrawImage(draw_image, kN32_SkColorType);
+  EXPECT_EQ(draw_image.frame_key(), key.frame_key());
   EXPECT_EQ(kMedium_SkFilterQuality, key.filter_quality());
   EXPECT_EQ(40, key.target_size().width());
   EXPECT_EQ(35, key.target_size().height());
@@ -556,31 +626,29 @@ TEST(SoftwareImageDecodeCacheTest, ImageRectDoesNotContainSrcRectWithScale) {
 
 TEST(SoftwareImageDecodeCacheTest, GetTaskForImageSameImage) {
   TestSoftwareImageDecodeCache cache;
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-                       DefaultColorSpace());
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(task);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.need_unref);
+  EXPECT_TRUE(result.task);
 
   DrawImage another_draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-      DefaultColorSpace());
-  scoped_refptr<TileTask> another_task;
-  need_unref = cache.GetTaskForImageAndRef(
-      another_draw_image, ImageDecodeCache::TracingInfo(), &another_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(task.get() == another_task.get());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+  ImageDecodeCache::TaskResult another_result = cache.GetTaskForImageAndRef(
+      another_draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(another_result.need_unref);
+  EXPECT_TRUE(result.task.get() == another_result.task.get());
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   cache.UnrefImage(draw_image);
   cache.UnrefImage(draw_image);
@@ -588,71 +656,67 @@ TEST(SoftwareImageDecodeCacheTest, GetTaskForImageSameImage) {
 
 TEST(SoftwareImageDecodeCacheTest, GetTaskForImageSameImageDifferentQuality) {
   TestSoftwareImageDecodeCache cache;
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
 
   DrawImage high_quality_draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()),
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
       kHigh_SkFilterQuality,
       CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-      DefaultColorSpace());
-  scoped_refptr<TileTask> high_quality_task;
-  bool need_unref = cache.GetTaskForImageAndRef(high_quality_draw_image,
-                                                ImageDecodeCache::TracingInfo(),
-                                                &high_quality_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(high_quality_task);
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+  ImageDecodeCache::TaskResult high_quality_result =
+      cache.GetTaskForImageAndRef(high_quality_draw_image,
+                                  ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(high_quality_result.need_unref);
+  EXPECT_TRUE(high_quality_result.task);
 
-  DrawImage low_quality_draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()),
-      kLow_SkFilterQuality,
+  DrawImage none_quality_draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      kNone_SkFilterQuality,
       CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-      DefaultColorSpace());
-  scoped_refptr<TileTask> low_quality_task;
-  need_unref = cache.GetTaskForImageAndRef(low_quality_draw_image,
-                                           ImageDecodeCache::TracingInfo(),
-                                           &low_quality_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(low_quality_task);
-  EXPECT_TRUE(high_quality_task.get() != low_quality_task.get());
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+  ImageDecodeCache::TaskResult none_quality_result =
+      cache.GetTaskForImageAndRef(none_quality_draw_image,
+                                  ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(none_quality_result.need_unref);
+  EXPECT_TRUE(none_quality_result.task);
+  EXPECT_TRUE(high_quality_result.task.get() != none_quality_result.task.get());
 
-  TestTileTaskRunner::ProcessTask(high_quality_task.get());
-  TestTileTaskRunner::ProcessTask(low_quality_task.get());
+  TestTileTaskRunner::ProcessTask(high_quality_result.task.get());
+  TestTileTaskRunner::ProcessTask(none_quality_result.task.get());
 
   cache.UnrefImage(high_quality_draw_image);
-  cache.UnrefImage(low_quality_draw_image);
+  cache.UnrefImage(none_quality_draw_image);
 }
 
 TEST(SoftwareImageDecodeCacheTest, GetTaskForImageSameImageDifferentSize) {
   TestSoftwareImageDecodeCache cache;
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
   DrawImage half_size_draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-      DefaultColorSpace());
-  scoped_refptr<TileTask> half_size_task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      half_size_draw_image, ImageDecodeCache::TracingInfo(), &half_size_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(half_size_task);
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+  ImageDecodeCache::TaskResult half_size_result = cache.GetTaskForImageAndRef(
+      half_size_draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(half_size_result.need_unref);
+  EXPECT_TRUE(half_size_result.task);
 
   DrawImage quarter_size_draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(0.25f, 0.25f), is_decomposable),
-      DefaultColorSpace());
-  scoped_refptr<TileTask> quarter_size_task;
-  need_unref = cache.GetTaskForImageAndRef(quarter_size_draw_image,
-                                           ImageDecodeCache::TracingInfo(),
-                                           &quarter_size_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(quarter_size_task);
-  EXPECT_TRUE(half_size_task.get() != quarter_size_task.get());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.25f, 0.25f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+  ImageDecodeCache::TaskResult quarter_size_result =
+      cache.GetTaskForImageAndRef(quarter_size_draw_image,
+                                  ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(quarter_size_result.need_unref);
+  EXPECT_TRUE(quarter_size_result.task);
+  EXPECT_TRUE(half_size_result.task.get() != quarter_size_result.task.get());
 
-  TestTileTaskRunner::ProcessTask(half_size_task.get());
-  TestTileTaskRunner::ProcessTask(quarter_size_task.get());
+  TestTileTaskRunner::ProcessTask(half_size_result.task.get());
+  TestTileTaskRunner::ProcessTask(quarter_size_result.task.get());
 
   cache.UnrefImage(half_size_draw_image);
   cache.UnrefImage(quarter_size_draw_image);
@@ -663,38 +727,45 @@ TEST(SoftwareImageDecodeCacheTest, GetTaskForImageDifferentImage) {
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  sk_sp<SkImage> first_image = CreateImage(100, 100);
+  PaintImage first_paint_image = CreatePaintImage(100, 100);
   DrawImage first_draw_image(
-      first_image, SkIRect::MakeWH(first_image->width(), first_image->height()),
+      first_paint_image,
+      SkIRect::MakeWH(first_paint_image.width(), first_paint_image.height()),
       quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-      DefaultColorSpace());
-  scoped_refptr<TileTask> first_task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      first_draw_image, ImageDecodeCache::TracingInfo(), &first_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(first_task);
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+  ImageDecodeCache::TaskResult first_result = cache.GetTaskForImageAndRef(
+      first_draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(first_result.need_unref);
+  EXPECT_TRUE(first_result.task);
 
-  sk_sp<SkImage> second_image = CreateImage(100, 100);
+  PaintImage second_paint_image = CreatePaintImage(100, 100);
   DrawImage second_draw_image(
-      second_image,
-      SkIRect::MakeWH(second_image->width(), second_image->height()), quality,
-      CreateMatrix(SkSize::Make(0.25f, 0.25f), is_decomposable),
-      DefaultColorSpace());
-  scoped_refptr<TileTask> second_task;
-  need_unref = cache.GetTaskForImageAndRef(
-      second_draw_image, ImageDecodeCache::TracingInfo(), &second_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(second_task);
-  EXPECT_TRUE(first_task.get() != second_task.get());
+      second_paint_image,
+      SkIRect::MakeWH(second_paint_image.width(), second_paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.25f, 0.25f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+  ImageDecodeCache::TaskResult second_result = cache.GetTaskForImageAndRef(
+      second_draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(second_result.need_unref);
+  EXPECT_TRUE(second_result.task);
+  EXPECT_TRUE(first_result.task.get() != second_result.task.get());
 
-  TestTileTaskRunner::ProcessTask(first_task.get());
-  TestTileTaskRunner::ProcessTask(second_task.get());
+  TestTileTaskRunner::ProcessTask(first_result.task.get());
+  TestTileTaskRunner::ProcessTask(second_result.task.get());
 
   cache.UnrefImage(first_draw_image);
   cache.UnrefImage(second_draw_image);
 }
 
-TEST(SoftwareImageDecodeCacheTest, GetTaskForImageDifferentColorSpace) {
+// crbug.com/709341
+#if defined(MEMORY_SANITIZER)
+#define MAYBE_GetTaskForImageDifferentColorSpace \
+  DISABLED_GetTaskForImageDifferentColorSpace
+#else
+#define MAYBE_GetTaskForImageDifferentColorSpace \
+  GetTaskForImageDifferentColorSpace
+#endif
+TEST(SoftwareImageDecodeCacheTest, MAYBE_GetTaskForImageDifferentColorSpace) {
   TestSoftwareImageDecodeCache cache;
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
@@ -705,38 +776,38 @@ TEST(SoftwareImageDecodeCacheTest, GetTaskForImageDifferentColorSpace) {
                                 gfx::ColorSpace::TransferID::IEC61966_2_1);
   gfx::ColorSpace color_space_c = gfx::ColorSpace::CreateSRGB();
 
-  sk_sp<SkImage> image = CreateImageWithColorSpace(100, 100, color_space_a);
+  PaintImage paint_image = CreatePaintImage(100, 100, color_space_a);
   DrawImage first_draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(1.0f, 1.0f), is_decomposable), color_space_b);
-  scoped_refptr<TileTask> first_task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      first_draw_image, ImageDecodeCache::TracingInfo(), &first_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(first_task);
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.0f, 1.0f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, color_space_b);
+  ImageDecodeCache::TaskResult first_result = cache.GetTaskForImageAndRef(
+      first_draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(first_result.need_unref);
+  EXPECT_TRUE(first_result.task);
 
   DrawImage second_draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(1.0f, 1.0f), is_decomposable), color_space_c);
-  scoped_refptr<TileTask> second_task;
-  need_unref = cache.GetTaskForImageAndRef(
-      second_draw_image, ImageDecodeCache::TracingInfo(), &second_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(second_task);
-  EXPECT_TRUE(first_task.get() != second_task.get());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.0f, 1.0f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, color_space_c);
+  ImageDecodeCache::TaskResult second_result = cache.GetTaskForImageAndRef(
+      second_draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(second_result.need_unref);
+  EXPECT_TRUE(second_result.task);
+  EXPECT_TRUE(first_result.task.get() != second_result.task.get());
 
   DrawImage third_draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(1.0f, 1.0f), is_decomposable), color_space_b);
-  scoped_refptr<TileTask> third_task;
-  need_unref = cache.GetTaskForImageAndRef(
-      third_draw_image, ImageDecodeCache::TracingInfo(), &third_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(third_task);
-  EXPECT_TRUE(first_task.get() == third_task.get());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.0f, 1.0f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, color_space_b);
+  ImageDecodeCache::TaskResult third_result = cache.GetTaskForImageAndRef(
+      third_draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(third_result.need_unref);
+  EXPECT_TRUE(third_result.task);
+  EXPECT_TRUE(first_result.task.get() == third_result.task.get());
 
-  TestTileTaskRunner::ProcessTask(first_task.get());
-  TestTileTaskRunner::ProcessTask(second_task.get());
+  TestTileTaskRunner::ProcessTask(first_result.task.get());
+  TestTileTaskRunner::ProcessTask(second_result.task.get());
 
   cache.UnrefImage(first_draw_image);
   cache.UnrefImage(second_draw_image);
@@ -748,27 +819,25 @@ TEST(SoftwareImageDecodeCacheTest, GetTaskForImageAlreadyDecoded) {
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-                       DefaultColorSpace());
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(task);
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.need_unref);
+  EXPECT_TRUE(result.task);
 
-  TestTileTaskRunner::ScheduleTask(task.get());
-  TestTileTaskRunner::RunTask(task.get());
+  TestTileTaskRunner::ScheduleTask(result.task.get());
+  TestTileTaskRunner::RunTask(result.task.get());
 
-  scoped_refptr<TileTask> another_task;
-  need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &another_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_FALSE(another_task);
+  ImageDecodeCache::TaskResult another_result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(another_result.need_unref);
+  EXPECT_FALSE(another_result.task);
 
-  TestTileTaskRunner::CompleteTask(task.get());
+  TestTileTaskRunner::CompleteTask(result.task.get());
 
   cache.UnrefImage(draw_image);
   cache.UnrefImage(draw_image);
@@ -779,33 +848,30 @@ TEST(SoftwareImageDecodeCacheTest, GetTaskForImageAlreadyPrerolled) {
   bool is_decomposable = true;
   SkFilterQuality quality = kLow_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(1.f, 1.f), is_decomposable),
-                       DefaultColorSpace());
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(task);
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.f, 1.f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.need_unref);
+  EXPECT_TRUE(result.task);
 
-  TestTileTaskRunner::ScheduleTask(task.get());
-  TestTileTaskRunner::RunTask(task.get());
+  TestTileTaskRunner::ScheduleTask(result.task.get());
+  TestTileTaskRunner::RunTask(result.task.get());
 
-  scoped_refptr<TileTask> another_task;
-  need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &another_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_FALSE(another_task);
+  ImageDecodeCache::TaskResult another_result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(another_result.need_unref);
+  EXPECT_FALSE(another_result.task);
 
-  TestTileTaskRunner::CompleteTask(task.get());
+  TestTileTaskRunner::CompleteTask(result.task.get());
 
-  scoped_refptr<TileTask> third_task;
-  need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &third_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_FALSE(third_task);
+  ImageDecodeCache::TaskResult third_result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(third_result.need_unref);
+  EXPECT_FALSE(third_result.task);
 
   cache.UnrefImage(draw_image);
   cache.UnrefImage(draw_image);
@@ -817,40 +883,37 @@ TEST(SoftwareImageDecodeCacheTest, GetTaskForImageCanceledGetsNewTask) {
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-                       DefaultColorSpace());
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(task);
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.need_unref);
+  EXPECT_TRUE(result.task);
 
-  scoped_refptr<TileTask> another_task;
-  need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &another_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(another_task.get() == task.get());
+  ImageDecodeCache::TaskResult another_result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(another_result.need_unref);
+  EXPECT_TRUE(another_result.task.get() == result.task.get());
 
   // Didn't run the task, complete it (it was canceled).
-  TestTileTaskRunner::CancelTask(task.get());
-  TestTileTaskRunner::CompleteTask(task.get());
+  TestTileTaskRunner::CancelTask(result.task.get());
+  TestTileTaskRunner::CompleteTask(result.task.get());
 
   // Fully cancel everything (so the raster would unref things).
   cache.UnrefImage(draw_image);
   cache.UnrefImage(draw_image);
 
   // Here a new task is created.
-  scoped_refptr<TileTask> third_task;
-  need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &third_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(third_task);
-  EXPECT_FALSE(third_task.get() == task.get());
+  ImageDecodeCache::TaskResult third_result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(third_result.need_unref);
+  EXPECT_TRUE(third_result.task);
+  EXPECT_FALSE(third_result.task.get() == result.task.get());
 
-  TestTileTaskRunner::ProcessTask(third_task.get());
+  TestTileTaskRunner::ProcessTask(third_result.task.get());
 
   cache.UnrefImage(draw_image);
 }
@@ -861,39 +924,36 @@ TEST(SoftwareImageDecodeCacheTest,
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-                       DefaultColorSpace());
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(task);
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.need_unref);
+  EXPECT_TRUE(result.task);
 
-  scoped_refptr<TileTask> another_task;
-  need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &another_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(another_task.get() == task.get());
+  ImageDecodeCache::TaskResult another_result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(another_result.need_unref);
+  EXPECT_TRUE(another_result.task.get() == result.task.get());
 
   // Didn't run the task, complete it (it was canceled).
-  TestTileTaskRunner::CancelTask(task.get());
-  TestTileTaskRunner::CompleteTask(task.get());
+  TestTileTaskRunner::CancelTask(result.task.get());
+  TestTileTaskRunner::CompleteTask(result.task.get());
 
   // Note that here, everything is reffed, but a new task is created. This is
   // possible with repeated schedule/cancel operations.
-  scoped_refptr<TileTask> third_task;
-  need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &third_task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(third_task);
-  EXPECT_FALSE(third_task.get() == task.get());
+  ImageDecodeCache::TaskResult third_result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(third_result.need_unref);
+  EXPECT_TRUE(third_result.task);
+  EXPECT_FALSE(third_result.task.get() == result.task.get());
 
-  TestTileTaskRunner::ProcessTask(third_task.get());
+  TestTileTaskRunner::ProcessTask(third_result.task.get());
 
-  // 3 Unrefs!
+  // 3 Unrefs!!!
   cache.UnrefImage(draw_image);
   cache.UnrefImage(draw_image);
   cache.UnrefImage(draw_image);
@@ -904,18 +964,17 @@ TEST(SoftwareImageDecodeCacheTest, GetDecodedImageForDraw) {
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-                       DefaultColorSpace());
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(task);
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.need_unref);
+  EXPECT_TRUE(result.task);
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
@@ -938,18 +997,18 @@ TEST(SoftwareImageDecodeCacheTest,
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   DrawImage draw_image(
-      image, SkIRect::MakeXYWH(20, 30, image->width(), image->height()),
+      paint_image,
+      SkIRect::MakeXYWH(20, 30, paint_image.width(), paint_image.height()),
       quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-      DefaultColorSpace());
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(task);
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.need_unref);
+  EXPECT_TRUE(result.task);
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
@@ -971,11 +1030,11 @@ TEST(SoftwareImageDecodeCacheTest, GetDecodedImageForDrawAtRasterDecode) {
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-                       DefaultColorSpace());
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
@@ -997,15 +1056,15 @@ TEST(SoftwareImageDecodeCacheTest,
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-                       DefaultColorSpace());
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
-  EXPECT_TRUE(decoded_draw_image.image());
+  ASSERT_TRUE(decoded_draw_image.image());
   EXPECT_EQ(50, decoded_draw_image.image()->width());
   EXPECT_EQ(50, decoded_draw_image.image()->height());
   EXPECT_FLOAT_EQ(0.5f, decoded_draw_image.scale_adjustment().width());
@@ -1029,11 +1088,11 @@ TEST(SoftwareImageDecodeCacheTest,
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-                       DefaultColorSpace());
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
@@ -1046,13 +1105,12 @@ TEST(SoftwareImageDecodeCacheTest,
   EXPECT_FALSE(decoded_draw_image.is_scale_adjustment_identity());
   EXPECT_TRUE(decoded_draw_image.is_at_raster_decode());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(task);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.need_unref);
+  EXPECT_TRUE(result.task);
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   DecodedDrawImage another_decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
@@ -1075,11 +1133,11 @@ TEST(SoftwareImageDecodeCacheTest,
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-                       DefaultColorSpace());
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
@@ -1092,17 +1150,16 @@ TEST(SoftwareImageDecodeCacheTest,
   EXPECT_FALSE(decoded_draw_image.is_scale_adjustment_identity());
   EXPECT_TRUE(decoded_draw_image.is_at_raster_decode());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(need_unref);
-  EXPECT_TRUE(task);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.need_unref);
+  EXPECT_TRUE(result.task);
 
   // If we finish the draw here, then we will use it for the locked decode
   // instead of decoding again.
   cache.DrawWithImageFinished(draw_image, decoded_draw_image);
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   DecodedDrawImage another_decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
@@ -1121,17 +1178,16 @@ TEST(SoftwareImageDecodeCacheTest, ZeroSizedImagesAreSkipped) {
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.f, 0.f), is_decomposable),
-                       DefaultColorSpace());
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.f, 0.f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_FALSE(task);
-  EXPECT_FALSE(need_unref);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_FALSE(result.task);
+  EXPECT_FALSE(result.need_unref);
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
@@ -1145,17 +1201,17 @@ TEST(SoftwareImageDecodeCacheTest, NonOverlappingSrcRectImagesAreSkipped) {
   bool is_decomposable = true;
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
+  PaintImage paint_image = CreatePaintImage(100, 100);
   DrawImage draw_image(
-      image, SkIRect::MakeXYWH(150, 150, image->width(), image->height()),
+      paint_image,
+      SkIRect::MakeXYWH(150, 150, paint_image.width(), paint_image.height()),
       quality, CreateMatrix(SkSize::Make(1.f, 1.f), is_decomposable),
-      DefaultColorSpace());
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_FALSE(task);
-  EXPECT_FALSE(need_unref);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_FALSE(result.task);
+  EXPECT_FALSE(result.need_unref);
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
@@ -1169,26 +1225,25 @@ TEST(SoftwareImageDecodeCacheTest, LowQualityFilterIsHandled) {
   bool is_decomposable = true;
   SkFilterQuality quality = kLow_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(1.f, 1.f), is_decomposable),
-                       DefaultColorSpace());
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.f, 1.f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(task);
-  EXPECT_TRUE(need_unref);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.task);
+  EXPECT_TRUE(result.need_unref);
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
   EXPECT_TRUE(decoded_draw_image.image());
   // If we decoded the image and cached it, it would be stored in a different
   // SkImage object.
-  EXPECT_TRUE(decoded_draw_image.image() != image);
+  EXPECT_FALSE(decoded_draw_image.image()->isLazyGenerated());
 
   cache.DrawWithImageFinished(draw_image, decoded_draw_image);
   cache.UnrefImage(draw_image);
@@ -1199,27 +1254,29 @@ TEST(SoftwareImageDecodeCacheTest, LowQualityScaledSubrectIsHandled) {
   bool is_decomposable = true;
   SkFilterQuality quality = kLow_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  DrawImage draw_image(image, SkIRect::MakeXYWH(10, 10, 80, 80), quality,
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  DrawImage draw_image(paint_image, SkIRect::MakeXYWH(10, 10, 80, 80), quality,
                        CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-                       DefaultColorSpace());
+                       PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(task);
-  EXPECT_TRUE(need_unref);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.task);
+  EXPECT_TRUE(result.need_unref);
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
   EXPECT_TRUE(decoded_draw_image.image());
   // If we decoded the image and cached it, it would be stored in a different
   // SkImage object.
-  EXPECT_TRUE(decoded_draw_image.image() != image);
+  EXPECT_FALSE(decoded_draw_image.image()->isLazyGenerated());
   EXPECT_EQ(kLow_SkFilterQuality, decoded_draw_image.filter_quality());
-  EXPECT_TRUE(decoded_draw_image.is_scale_adjustment_identity());
+  // Low quality will be upgraded to medium and mip-mapped.
+  EXPECT_FALSE(decoded_draw_image.is_scale_adjustment_identity());
+  EXPECT_EQ(0.5f, decoded_draw_image.scale_adjustment().width());
+  EXPECT_EQ(0.5f, decoded_draw_image.scale_adjustment().height());
 
   cache.DrawWithImageFinished(draw_image, decoded_draw_image);
   cache.UnrefImage(draw_image);
@@ -1230,25 +1287,24 @@ TEST(SoftwareImageDecodeCacheTest, NoneQualityScaledSubrectIsHandled) {
   bool is_decomposable = true;
   SkFilterQuality quality = kNone_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(100, 100);
-  DrawImage draw_image(image, SkIRect::MakeXYWH(10, 10, 80, 80), quality,
+  PaintImage paint_image = CreatePaintImage(100, 100);
+  DrawImage draw_image(paint_image, SkIRect::MakeXYWH(10, 10, 80, 80), quality,
                        CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-                       DefaultColorSpace());
+                       PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(task);
-  EXPECT_TRUE(need_unref);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.task);
+  EXPECT_TRUE(result.need_unref);
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
   EXPECT_TRUE(decoded_draw_image.image());
   // If we decoded the image and cached it, it would be stored in a different
   // SkImage object.
-  EXPECT_TRUE(decoded_draw_image.image() != image);
+  EXPECT_FALSE(decoded_draw_image.image()->isLazyGenerated());
   EXPECT_EQ(kNone_SkFilterQuality, decoded_draw_image.filter_quality());
   EXPECT_TRUE(decoded_draw_image.is_scale_adjustment_identity());
 
@@ -1261,26 +1317,24 @@ TEST(SoftwareImageDecodeCacheTest, MediumQualityAt01_5ScaleIsHandled) {
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(500, 200);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(1.5f, 1.5f), is_decomposable),
-                       DefaultColorSpace());
+  PaintImage paint_image = CreatePaintImage(500, 200);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.5f, 1.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(task);
-  EXPECT_TRUE(need_unref);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.task);
+  EXPECT_TRUE(result.need_unref);
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
   EXPECT_TRUE(decoded_draw_image.image());
-  // If we decoded the image and cached it, it would be stored in a different
-  // SkImageObject.
-  EXPECT_TRUE(decoded_draw_image.image() != image);
+  // Decoded image should not be lazy generated.
+  EXPECT_FALSE(decoded_draw_image.image()->isLazyGenerated());
   EXPECT_EQ(kLow_SkFilterQuality, decoded_draw_image.filter_quality());
   EXPECT_EQ(500, decoded_draw_image.image()->width());
   EXPECT_EQ(200, decoded_draw_image.image()->height());
@@ -1294,26 +1348,24 @@ TEST(SoftwareImageDecodeCacheTest, MediumQualityAt1_0ScaleIsHandled) {
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(500, 200);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(1.f, 1.f), is_decomposable),
-                       DefaultColorSpace());
+  PaintImage paint_image = CreatePaintImage(500, 200);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(1.f, 1.f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(task);
-  EXPECT_TRUE(need_unref);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.task);
+  EXPECT_TRUE(result.need_unref);
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
   EXPECT_TRUE(decoded_draw_image.image());
-  // If we decoded the image and cached it, it would be stored in a different
-  // SkImageObject.
-  EXPECT_TRUE(decoded_draw_image.image() != image);
+  // Decoded image should not be lazy generated.
+  EXPECT_FALSE(decoded_draw_image.image()->isLazyGenerated());
   EXPECT_EQ(kLow_SkFilterQuality, decoded_draw_image.filter_quality());
   EXPECT_EQ(500, decoded_draw_image.image()->width());
   EXPECT_EQ(200, decoded_draw_image.image()->height());
@@ -1327,26 +1379,24 @@ TEST(SoftwareImageDecodeCacheTest, MediumQualityAt0_75ScaleIsHandled) {
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(500, 200);
+  PaintImage paint_image = CreatePaintImage(500, 200);
   DrawImage draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(0.75f, 0.75f), is_decomposable),
-      DefaultColorSpace());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.75f, 0.75f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(task);
-  EXPECT_TRUE(need_unref);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.task);
+  EXPECT_TRUE(result.need_unref);
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
   EXPECT_TRUE(decoded_draw_image.image());
-  // If we decoded the image and cached it, it would be stored in a different
-  // SkImageObject.
-  EXPECT_TRUE(decoded_draw_image.image() != image);
+  // Decoded image should not be lazy generated.
+  EXPECT_FALSE(decoded_draw_image.image()->isLazyGenerated());
   EXPECT_EQ(kLow_SkFilterQuality, decoded_draw_image.filter_quality());
   EXPECT_EQ(500, decoded_draw_image.image()->width());
   EXPECT_EQ(200, decoded_draw_image.image()->height());
@@ -1360,26 +1410,24 @@ TEST(SoftwareImageDecodeCacheTest, MediumQualityAt0_5ScaleIsHandled) {
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(500, 200);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-                       DefaultColorSpace());
+  PaintImage paint_image = CreatePaintImage(500, 200);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(task);
-  EXPECT_TRUE(need_unref);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.task);
+  EXPECT_TRUE(result.need_unref);
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
   EXPECT_TRUE(decoded_draw_image.image());
-  // If we decoded the image and cached it, it would be stored in a different
-  // SkImageObject.
-  EXPECT_TRUE(decoded_draw_image.image() != image);
+  // Decoded image should not be lazy generated.
+  EXPECT_FALSE(decoded_draw_image.image()->isLazyGenerated());
   EXPECT_EQ(kLow_SkFilterQuality, decoded_draw_image.filter_quality());
   EXPECT_EQ(250, decoded_draw_image.image()->width());
   EXPECT_EQ(100, decoded_draw_image.image()->height());
@@ -1393,26 +1441,24 @@ TEST(SoftwareImageDecodeCacheTest, MediumQualityAt0_49ScaleIsHandled) {
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(500, 200);
+  PaintImage paint_image = CreatePaintImage(500, 200);
   DrawImage draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(0.49f, 0.49f), is_decomposable),
-      DefaultColorSpace());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.49f, 0.49f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(task);
-  EXPECT_TRUE(need_unref);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.task);
+  EXPECT_TRUE(result.need_unref);
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
   EXPECT_TRUE(decoded_draw_image.image());
-  // If we decoded the image and cached it, it would be stored in a different
-  // SkImageObject.
-  EXPECT_TRUE(decoded_draw_image.image() != image);
+  // Decoded image should not be lazy generated.
+  EXPECT_FALSE(decoded_draw_image.image()->isLazyGenerated());
   EXPECT_EQ(kLow_SkFilterQuality, decoded_draw_image.filter_quality());
   EXPECT_EQ(250, decoded_draw_image.image()->width());
   EXPECT_EQ(100, decoded_draw_image.image()->height());
@@ -1426,26 +1472,24 @@ TEST(SoftwareImageDecodeCacheTest, MediumQualityAt0_1ScaleIsHandled) {
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(500, 200);
-  DrawImage draw_image(image, SkIRect::MakeWH(image->width(), image->height()),
-                       quality,
-                       CreateMatrix(SkSize::Make(0.1f, 0.1f), is_decomposable),
-                       DefaultColorSpace());
+  PaintImage paint_image = CreatePaintImage(500, 200);
+  DrawImage draw_image(
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.1f, 0.1f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(task);
-  EXPECT_TRUE(need_unref);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.task);
+  EXPECT_TRUE(result.need_unref);
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
   EXPECT_TRUE(decoded_draw_image.image());
-  // If we decoded the image and cached it, it would be stored in a different
-  // SkImageObject.
-  EXPECT_TRUE(decoded_draw_image.image() != image);
+  // Decoded image should not be lazy generated.
+  EXPECT_FALSE(decoded_draw_image.image()->isLazyGenerated());
   EXPECT_EQ(kLow_SkFilterQuality, decoded_draw_image.filter_quality());
   EXPECT_EQ(62, decoded_draw_image.image()->width());
   EXPECT_EQ(25, decoded_draw_image.image()->height());
@@ -1459,26 +1503,24 @@ TEST(SoftwareImageDecodeCacheTest, MediumQualityAt0_01ScaleIsHandled) {
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(500, 200);
+  PaintImage paint_image = CreatePaintImage(500, 200);
   DrawImage draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(0.01f, 0.01f), is_decomposable),
-      DefaultColorSpace());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.01f, 0.01f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_TRUE(task);
-  EXPECT_TRUE(need_unref);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result.task);
+  EXPECT_TRUE(result.need_unref);
 
-  TestTileTaskRunner::ProcessTask(task.get());
+  TestTileTaskRunner::ProcessTask(result.task.get());
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
   EXPECT_TRUE(decoded_draw_image.image());
-  // If we decoded the image and cached it, it would be stored in a different
-  // SkImageObject.
-  EXPECT_TRUE(decoded_draw_image.image() != image);
+  // Decoded image should not be lazy generated.
+  EXPECT_FALSE(decoded_draw_image.image()->isLazyGenerated());
   EXPECT_EQ(kLow_SkFilterQuality, decoded_draw_image.filter_quality());
   EXPECT_EQ(7, decoded_draw_image.image()->width());
   EXPECT_EQ(3, decoded_draw_image.image()->height());
@@ -1492,17 +1534,16 @@ TEST(SoftwareImageDecodeCacheTest, MediumQualityAt0_001ScaleIsHandled) {
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(500, 200);
+  PaintImage paint_image = CreatePaintImage(500, 200);
   DrawImage draw_image(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(0.001f, 0.001f), is_decomposable),
-      DefaultColorSpace());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.001f, 0.001f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  scoped_refptr<TileTask> task;
-  bool need_unref = cache.GetTaskForImageAndRef(
-      draw_image, ImageDecodeCache::TracingInfo(), &task);
-  EXPECT_FALSE(task);
-  EXPECT_FALSE(need_unref);
+  ImageDecodeCache::TaskResult result =
+      cache.GetTaskForImageAndRef(draw_image, ImageDecodeCache::TracingInfo());
+  EXPECT_FALSE(result.task);
+  EXPECT_FALSE(result.need_unref);
 
   DecodedDrawImage decoded_draw_image =
       cache.GetDecodedImageForDraw(draw_image);
@@ -1517,28 +1558,26 @@ TEST(SoftwareImageDecodeCacheTest,
   bool is_decomposable = true;
   SkFilterQuality quality = kMedium_SkFilterQuality;
 
-  sk_sp<SkImage> image = CreateImage(500, 200);
+  PaintImage paint_image = CreatePaintImage(500, 200);
   DrawImage draw_image_50(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
-      DefaultColorSpace());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.5f, 0.5f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
   DrawImage draw_image_49(
-      image, SkIRect::MakeWH(image->width(), image->height()), quality,
-      CreateMatrix(SkSize::Make(0.49f, 0.49f), is_decomposable),
-      DefaultColorSpace());
+      paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+      quality, CreateMatrix(SkSize::Make(0.49f, 0.49f), is_decomposable),
+      PaintImage::kDefaultFrameIndex, DefaultColorSpace());
 
-  scoped_refptr<TileTask> task_50;
-  bool need_unref_50 = cache.GetTaskForImageAndRef(
-      draw_image_50, ImageDecodeCache::TracingInfo(), &task_50);
-  EXPECT_TRUE(task_50);
-  EXPECT_TRUE(need_unref_50);
-  scoped_refptr<TileTask> task_49;
-  bool need_unref_49 = cache.GetTaskForImageAndRef(
-      draw_image_49, ImageDecodeCache::TracingInfo(), &task_49);
-  EXPECT_TRUE(task_49);
-  EXPECT_TRUE(need_unref_49);
+  ImageDecodeCache::TaskResult result_50 = cache.GetTaskForImageAndRef(
+      draw_image_50, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result_50.task);
+  EXPECT_TRUE(result_50.need_unref);
+  ImageDecodeCache::TaskResult result_49 = cache.GetTaskForImageAndRef(
+      draw_image_49, ImageDecodeCache::TracingInfo());
+  EXPECT_TRUE(result_49.task);
+  EXPECT_TRUE(result_49.need_unref);
 
-  TestTileTaskRunner::ProcessTask(task_49.get());
+  TestTileTaskRunner::ProcessTask(result_49.task.get());
 
   DecodedDrawImage decoded_draw_image_50 =
       cache.GetDecodedImageForDraw(draw_image_50);
@@ -1546,10 +1585,9 @@ TEST(SoftwareImageDecodeCacheTest,
   DecodedDrawImage decoded_draw_image_49 =
       cache.GetDecodedImageForDraw(draw_image_49);
   EXPECT_TRUE(decoded_draw_image_49.image());
-  // If we decoded the image and cached it, it would be stored in a different
-  // SkImageObject.
-  EXPECT_TRUE(decoded_draw_image_50.image() != image);
-  EXPECT_TRUE(decoded_draw_image_49.image() != image);
+  // Decoded image should not be lazy generated.
+  EXPECT_FALSE(decoded_draw_image_50.image()->isLazyGenerated());
+  EXPECT_FALSE(decoded_draw_image_49.image()->isLazyGenerated());
   EXPECT_EQ(kLow_SkFilterQuality, decoded_draw_image_50.filter_quality());
   EXPECT_EQ(kLow_SkFilterQuality, decoded_draw_image_49.filter_quality());
   EXPECT_EQ(250, decoded_draw_image_50.image()->width());
@@ -1571,17 +1609,16 @@ TEST(SoftwareImageDecodeCacheTest, ClearCache) {
   SkFilterQuality quality = kHigh_SkFilterQuality;
 
   for (int i = 0; i < 10; ++i) {
-    sk_sp<SkImage> image = CreateImage(100, 100);
+    PaintImage paint_image = CreatePaintImage(100, 100);
     DrawImage draw_image(
-        image, SkIRect::MakeWH(image->width(), image->height()), quality,
-        CreateMatrix(SkSize::Make(1.0f, 1.0f), is_decomposable),
-        DefaultColorSpace());
-    scoped_refptr<TileTask> task;
-    bool need_unref = cache.GetTaskForImageAndRef(
-        draw_image, ImageDecodeCache::TracingInfo(), &task);
-    EXPECT_TRUE(need_unref);
-    EXPECT_TRUE(task);
-    TestTileTaskRunner::ProcessTask(task.get());
+        paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+        quality, CreateMatrix(SkSize::Make(1.0f, 1.0f), is_decomposable),
+        PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+    ImageDecodeCache::TaskResult result = cache.GetTaskForImageAndRef(
+        draw_image, ImageDecodeCache::TracingInfo());
+    EXPECT_TRUE(result.need_unref);
+    EXPECT_TRUE(result.task);
+    TestTileTaskRunner::ProcessTask(result.task.get());
     cache.UnrefImage(draw_image);
   }
 
@@ -1591,6 +1628,94 @@ TEST(SoftwareImageDecodeCacheTest, ClearCache) {
   cache.ClearCache();
 
   EXPECT_EQ(0u, cache.GetNumCacheEntriesForTesting());
+}
+
+TEST(SoftwareImageDecodeCacheTest, RemoveUnusedImage) {
+  TestSoftwareImageDecodeCache cache;
+  bool is_decomposable = true;
+  SkFilterQuality quality = kHigh_SkFilterQuality;
+
+  std::vector<PaintImage::FrameKey> frame_keys;
+
+  for (int i = 0; i < 10; ++i) {
+    PaintImage paint_image = CreatePaintImage(100, 100);
+    DrawImage draw_image(
+        paint_image, SkIRect::MakeWH(paint_image.width(), paint_image.height()),
+        quality, CreateMatrix(SkSize::Make(1.0f, 1.0f), is_decomposable),
+        PaintImage::kDefaultFrameIndex, DefaultColorSpace());
+    frame_keys.push_back(draw_image.frame_key());
+    DecodedDrawImage decoded_draw_image =
+        cache.GetDecodedImageForDraw(draw_image);
+    ImageDecodeCache::TaskResult result = cache.GetTaskForImageAndRef(
+        draw_image, ImageDecodeCache::TracingInfo());
+    EXPECT_TRUE(result.need_unref);
+    EXPECT_TRUE(result.task);
+    TestTileTaskRunner::ProcessTask(result.task.get());
+    cache.DrawWithImageFinished(draw_image, decoded_draw_image);
+    cache.UnrefImage(draw_image);
+  }
+
+  // We should now have data image in our cache.
+  EXPECT_EQ(cache.GetNumCacheEntriesForTesting(), 10u);
+
+  // Remove unused ids.
+  for (uint32_t i = 0; i < 10; ++i) {
+    cache.NotifyImageUnused(frame_keys[i]);
+    EXPECT_EQ(cache.GetNumCacheEntriesForTesting(), (10 - i - 1));
+  }
+}
+
+TEST(SoftwareImageDecodeCacheTest, CacheDecodesExpectedFrames) {
+  TestSoftwareImageDecodeCache cache;
+  std::vector<FrameMetadata> frames = {
+      FrameMetadata(true, base::TimeDelta::FromMilliseconds(2)),
+      FrameMetadata(true, base::TimeDelta::FromMilliseconds(3)),
+      FrameMetadata(true, base::TimeDelta::FromMilliseconds(4)),
+      FrameMetadata(true, base::TimeDelta::FromMilliseconds(5)),
+  };
+  sk_sp<FakePaintImageGenerator> generator =
+      sk_make_sp<FakePaintImageGenerator>(
+          SkImageInfo::MakeN32Premul(10, 10, SkColorSpace::MakeSRGB()), frames);
+  PaintImage image = PaintImageBuilder::WithDefault()
+                         .set_id(PaintImage::GetNextId())
+                         .set_paint_image_generator(generator)
+                         .set_frame_index(0u)
+                         .TakePaintImage();
+
+  bool is_decomposable = true;
+  SkFilterQuality quality = kHigh_SkFilterQuality;
+  DrawImage draw_image(image, SkIRect::MakeWH(image.width(), image.height()),
+                       quality,
+                       CreateMatrix(SkSize::Make(1.0f, 1.0f), is_decomposable),
+                       1u, DefaultColorSpace());
+  auto decoded_image = cache.GetDecodedImageForDraw(draw_image);
+  ASSERT_TRUE(decoded_image.image());
+  ASSERT_EQ(generator->frames_decoded().size(), 1u);
+  EXPECT_EQ(generator->frames_decoded().count(1u), 1u);
+  generator->reset_frames_decoded();
+  cache.DrawWithImageFinished(draw_image, decoded_image);
+
+  // Scaled.
+  DrawImage scaled_draw_image(draw_image, 0.5f, 2u,
+                              draw_image.target_color_space());
+  decoded_image = cache.GetDecodedImageForDraw(scaled_draw_image);
+  ASSERT_TRUE(decoded_image.image());
+  ASSERT_EQ(generator->frames_decoded().size(), 1u);
+  EXPECT_EQ(generator->frames_decoded().count(2u), 1u);
+  generator->reset_frames_decoded();
+  cache.DrawWithImageFinished(scaled_draw_image, decoded_image);
+
+  // Subset.
+  DrawImage subset_draw_image(
+      image, SkIRect::MakeWH(5, 5), quality,
+      CreateMatrix(SkSize::Make(1.0f, 1.0f), is_decomposable), 3u,
+      DefaultColorSpace());
+  decoded_image = cache.GetDecodedImageForDraw(subset_draw_image);
+  ASSERT_TRUE(decoded_image.image());
+  ASSERT_EQ(generator->frames_decoded().size(), 1u);
+  EXPECT_EQ(generator->frames_decoded().count(3u), 1u);
+  generator->reset_frames_decoded();
+  cache.DrawWithImageFinished(subset_draw_image, decoded_image);
 }
 
 }  // namespace

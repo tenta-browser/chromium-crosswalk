@@ -5,8 +5,6 @@
 #ifndef CHROME_BROWSER_SYNC_PROFILE_SYNC_SERVICE_ANDROID_H_
 #define CHROME_BROWSER_SYNC_PROFILE_SYNC_SERVICE_ANDROID_H_
 
-#include <jni.h>
-
 #include <map>
 #include <memory>
 
@@ -170,11 +168,6 @@ class ProfileSyncServiceAndroid : public syncer::SyncServiceObserver {
 
   // Functionality only available for testing purposes.
 
-  // Returns sync internals in a JSON-formatted Java string.
-  base::android::ScopedJavaLocalRef<jstring> GetAboutInfoForTest(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-
   // Returns a timestamp for when a sync was last executed. The return value is
   // the internal value of base::Time.
   jlong GetLastSyncedTimeForTest(
@@ -189,9 +182,6 @@ class ProfileSyncServiceAndroid : public syncer::SyncServiceObserver {
       jlong network_resources);
 
   static ProfileSyncServiceAndroid* GetProfileSyncServiceAndroid();
-
-  // Registers the ProfileSyncServiceAndroid's native methods through JNI.
-  static bool Register(JNIEnv* env);
 
  private:
   // Returns whether sync is allowed by Android.

@@ -33,10 +33,12 @@ namespace ui {
 namespace test {
 class InputHandlerProxyTest;
 class InputHandlerProxyEventQueueTest;
+class TestInputHandlerProxy;
 }
 
 class CompositorThreadEventQueue;
 class EventWithCallback;
+class FlingBooster;
 class InputHandlerProxyClient;
 class InputScrollElasticityController;
 class SynchronousInputHandler;
@@ -47,10 +49,9 @@ struct DidOverscrollParams;
 // the compositor's input handling logic. InputHandlerProxy instances live
 // entirely on the compositor thread. Each InputHandler instance handles input
 // events intended for a specific WebWidget.
-class InputHandlerProxy
-    : public cc::InputHandlerClient,
-      public SynchronousInputHandlerProxy,
-      public NON_EXPORTED_BASE(blink::WebGestureCurveTarget) {
+class InputHandlerProxy : public cc::InputHandlerClient,
+                          public SynchronousInputHandlerProxy,
+                          public blink::WebGestureCurveTarget {
  public:
   InputHandlerProxy(cc::InputHandler* input_handler,
                     InputHandlerProxyClient* client,
@@ -68,17 +69,21 @@ class InputHandlerProxy
     DID_NOT_HANDLE,
     DID_NOT_HANDLE_NON_BLOCKING_DUE_TO_FLING,
     DID_HANDLE_NON_BLOCKING,
-    DROP_EVENT
+    DROP_EVENT,
+    // The compositor did handle the scroll event (so it wouldn't forward the
+    // event to the main thread.) but it didn't consume the scroll so it should
+    // pass it to the next consumer (either overscrolling or bubbling the event
+    // to the next renderer).
+    DID_HANDLE_SHOULD_BUBBLE,
   };
   using EventDispositionCallback =
-      base::Callback<void(EventDisposition,
-                          WebScopedInputEvent WebInputEvent,
-                          const LatencyInfo&,
-                          std::unique_ptr<ui::DidOverscrollParams>)>;
-  void HandleInputEventWithLatencyInfo(
-      WebScopedInputEvent event,
-      const LatencyInfo& latency_info,
-      const EventDispositionCallback& callback);
+      base::OnceCallback<void(EventDisposition,
+                              WebScopedInputEvent WebInputEvent,
+                              const LatencyInfo&,
+                              std::unique_ptr<ui::DidOverscrollParams>)>;
+  void HandleInputEventWithLatencyInfo(WebScopedInputEvent event,
+                                       const LatencyInfo& latency_info,
+                                       EventDispositionCallback callback);
   EventDisposition HandleInputEvent(const blink::WebInputEvent& event);
 
   // cc::InputHandlerClient implementation.
@@ -119,6 +124,7 @@ class InputHandlerProxy
                                    uint32_t reasons);
 
  private:
+  friend class test::TestInputHandlerProxy;
   friend class test::InputHandlerProxyTest;
   friend class test::InputHandlerProxyEventQueueTest;
 
@@ -143,14 +149,6 @@ class InputHandlerProxy
   EventDisposition HandleTouchStart(const blink::WebTouchEvent& event);
   EventDisposition HandleTouchMove(const blink::WebTouchEvent& event);
   EventDisposition HandleTouchEnd(const blink::WebTouchEvent& event);
-
-  // Returns true if the event should be suppressed due to to an active,
-  // boost-enabled fling, in which case further processing should cease.
-  bool FilterInputEventForFlingBoosting(const blink::WebInputEvent& event);
-
-  // Schedule a time in the future after which a boost-enabled fling will
-  // terminate without further momentum from the user (see |Animate()|).
-  void ExtendBoostedFlingTimeout(const blink::WebGestureEvent& event);
 
   // Returns true if we scrolled by the increment.
   bool TouchpadFlingScroll(const blink::WebFloatSize& increment);
@@ -185,6 +183,18 @@ class InputHandlerProxy
 
   void SetTickClockForTesting(std::unique_ptr<base::TickClock> tick_clock);
 
+  // |is_touching_scrolling_layer| indicates if one of the points that has
+  // been touched hits a currently scrolling layer.
+  // |white_listed_touch_action| is the touch_action we are sure will be
+  // allowed for the given touch event.
+  EventDisposition HitTestTouchEvent(
+      const blink::WebTouchEvent& touch_event,
+      bool* is_touching_scrolling_layer,
+      cc::TouchAction* white_listed_touch_action);
+
+  void UpdateCurrentFlingState(const blink::WebGestureEvent& fling_start_event,
+                               const gfx::Vector2dF& velocity);
+
   std::unique_ptr<blink::WebGestureCurve> fling_curve_;
   // Parameters for the active fling animation, stored in case we need to
   // transfer it out later.
@@ -192,15 +202,6 @@ class InputHandlerProxy
 
   InputHandlerProxyClient* client_;
   cc::InputHandler* input_handler_;
-
-  // Time at which an active fling should expire due to a deferred cancellation
-  // event. A call to |Animate()| after this time will end the fling.
-  double deferred_fling_cancel_time_seconds_;
-
-  // The last event that extended the lifetime of the boosted fling. If the
-  // event was a scroll gesture, a GestureScrollBegin will be inserted if the
-  // fling terminates (via |CancelCurrentFling()|).
-  blink::WebGestureEvent last_fling_boost_event_;
 
   // When present, Animates are not requested to the InputHandler, but to this
   // SynchronousInputHandler instead. And all Animate() calls are expected to
@@ -214,6 +215,7 @@ class InputHandlerProxy
 #endif
   bool gesture_scroll_on_impl_thread_;
   bool gesture_pinch_on_impl_thread_;
+  bool scroll_sequence_ignored_;
   // This is always false when there are no flings on the main thread, but
   // conservative in the sense that we might not be actually flinging when it is
   // true.
@@ -236,13 +238,12 @@ class InputHandlerProxy
       scroll_elasticity_controller_;
 
   bool smooth_scroll_enabled_;
-  bool uma_latency_reporting_enabled_;
   const bool touchpad_and_wheel_scroll_latching_enabled_;
 
-  // The merged result of the last touch start with previous touch starts.
+  // The merged result of the last touch event with previous touch events.
   // This value will get returned for subsequent TouchMove events to allow
   // passive events not to block scrolling.
-  int32_t touch_start_result_;
+  int32_t touch_result_;
 
   // The result of the last mouse wheel event. This value is used to determine
   // whether the next wheel scroll is blocked on the Main thread or not.
@@ -260,6 +261,8 @@ class InputHandlerProxy
   bool has_ongoing_compositor_scroll_fling_pinch_;
 
   std::unique_ptr<base::TickClock> tick_clock_;
+
+  std::unique_ptr<FlingBooster> fling_booster_;
 
   DISALLOW_COPY_AND_ASSIGN(InputHandlerProxy);
 };

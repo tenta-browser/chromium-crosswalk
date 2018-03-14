@@ -1,5 +1,6 @@
 main frame - didStartProvisionalLoadForFrame
 main frame - didCommitLoadForFrame
+main frame - didReceiveTitle: 
 main frame - didFinishDocumentLoadForFrame
 main frame - didHandleOnloadEventsForFrame
 main frame - didFinishLoadForFrame
@@ -36,7 +37,7 @@ PASS internals.isPreloaded('resources/base-image3.png?7'); is false
 PASS successfullyParsed is true
 
 TEST COMPLETE
-
+  
 
   bla 
  

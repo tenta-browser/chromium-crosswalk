@@ -14,7 +14,6 @@
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/profiler/scoped_tracker.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
@@ -31,8 +30,9 @@ namespace IPC {
 
 ChannelProxy::Context::Context(
     Listener* listener,
-    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner)
-    : listener_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
+    const scoped_refptr<base::SingleThreadTaskRunner>& listener_task_runner)
+    : listener_task_runner_(listener_task_runner),
       listener_(listener),
       ipc_task_runner_(ipc_task_runner),
       channel_connected_called_(false),
@@ -50,8 +50,7 @@ ChannelProxy::Context::Context(
   DCHECK(!listener || (ipc_task_runner_.get() != listener_task_runner_.get()));
 }
 
-ChannelProxy::Context::~Context() {
-}
+ChannelProxy::Context::~Context() = default;
 
 void ChannelProxy::Context::ClearIPCTaskRunner() {
   ipc_task_runner_ = NULL;
@@ -78,7 +77,7 @@ void ChannelProxy::Context::CreateChannel(
 
 bool ChannelProxy::Context::TryFilters(const Message& message) {
   DCHECK(message_filter_router_);
-#ifdef IPC_MESSAGE_LOG_ENABLED
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   Logging* logger = Logging::GetInstance();
   if (logger->Enabled())
     logger->OnPreDispatchMessage(message);
@@ -89,7 +88,7 @@ bool ChannelProxy::Context::TryFilters(const Message& message) {
       listener_task_runner_->PostTask(
           FROM_HERE, base::Bind(&Context::OnDispatchBadMessage, this, message));
     }
-#ifdef IPC_MESSAGE_LOG_ENABLED
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
     if (logger->Enabled())
       logger->OnPostDispatchMessage(message);
 #endif
@@ -188,10 +187,6 @@ void ChannelProxy::Context::OnChannelOpened() {
 
 // Called on the IPC::Channel thread
 void ChannelProxy::Context::OnChannelClosed() {
-  // TODO(pkasting): Remove ScopedTracker below once crbug.com/477117 is fixed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "477117 ChannelProxy::Context::OnChannelClosed"));
   // It's okay for IPC::ChannelProxy::Close to be called more than once, which
   // would result in this branch being taken.
   if (!channel_)
@@ -226,10 +221,6 @@ void ChannelProxy::Context::Clear() {
 
 // Called on the IPC::Channel thread
 void ChannelProxy::Context::OnSendMessage(std::unique_ptr<Message> message) {
-  // TODO(pkasting): Remove ScopedTracker below once crbug.com/477117 is fixed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "477117 ChannelProxy::Context::OnSendMessage"));
   if (!channel_) {
     OnChannelClosed();
     return;
@@ -303,7 +294,7 @@ void ChannelProxy::Context::OnRemoveFilter(MessageFilter* filter) {
 // Called on the listener's thread
 void ChannelProxy::Context::AddFilter(MessageFilter* filter) {
   base::AutoLock auto_lock(pending_filters_lock_);
-  pending_filters_.push_back(make_scoped_refptr(filter));
+  pending_filters_.push_back(base::WrapRefCounted(filter));
   ipc_task_runner_->PostTask(
       FROM_HERE, base::Bind(&Context::OnAddFilter, this));
 }
@@ -315,7 +306,7 @@ void ChannelProxy::Context::OnDispatchMessage(const Message& message) {
 
   OnDispatchConnected();
 
-#ifdef IPC_MESSAGE_LOG_ENABLED
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   Logging* logger = Logging::GetInstance();
   if (message.type() == IPC_LOGGING_ID) {
     logger->OnReceivedLoggingMessage(message);
@@ -330,7 +321,7 @@ void ChannelProxy::Context::OnDispatchMessage(const Message& message) {
   if (message.dispatch_error())
     listener_->OnBadMessageReceived(message);
 
-#ifdef IPC_MESSAGE_LOG_ENABLED
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   if (logger->Enabled())
     logger->OnPostDispatchMessage(message);
 #endif
@@ -404,9 +395,10 @@ std::unique_ptr<ChannelProxy> ChannelProxy::Create(
     const IPC::ChannelHandle& channel_handle,
     Channel::Mode mode,
     Listener* listener,
-    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner) {
+    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
+    const scoped_refptr<base::SingleThreadTaskRunner>& listener_task_runner) {
   std::unique_ptr<ChannelProxy> channel(
-      new ChannelProxy(listener, ipc_task_runner));
+      new ChannelProxy(listener, ipc_task_runner, listener_task_runner));
   channel->Init(channel_handle, mode, true);
   return channel;
 }
@@ -415,9 +407,10 @@ std::unique_ptr<ChannelProxy> ChannelProxy::Create(
 std::unique_ptr<ChannelProxy> ChannelProxy::Create(
     std::unique_ptr<ChannelFactory> factory,
     Listener* listener,
-    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner) {
+    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
+    const scoped_refptr<base::SingleThreadTaskRunner>& listener_task_runner) {
   std::unique_ptr<ChannelProxy> channel(
-      new ChannelProxy(listener, ipc_task_runner));
+      new ChannelProxy(listener, ipc_task_runner, listener_task_runner));
   channel->Init(std::move(factory), true);
   return channel;
 }
@@ -431,15 +424,17 @@ ChannelProxy::ChannelProxy(Context* context)
 
 ChannelProxy::ChannelProxy(
     Listener* listener,
-    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner)
-    : context_(new Context(listener, ipc_task_runner)), did_init_(false) {
+    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner,
+    const scoped_refptr<base::SingleThreadTaskRunner>& listener_task_runner)
+    : context_(new Context(listener, ipc_task_runner, listener_task_runner)),
+      did_init_(false) {
 #if defined(ENABLE_IPC_FUZZER)
   outgoing_message_filter_ = NULL;
 #endif
 }
 
 ChannelProxy::~ChannelProxy() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   Close();
 }
@@ -463,7 +458,7 @@ void ChannelProxy::Init(const IPC::ChannelHandle& channel_handle,
 
 void ChannelProxy::Init(std::unique_ptr<ChannelFactory> factory,
                         bool create_pipe_now) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!did_init_);
 
   if (create_pipe_now) {
@@ -503,7 +498,7 @@ void ChannelProxy::Flush() {
 }
 
 void ChannelProxy::Close() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Clear the backpointer to the listener so that any pending calls to
   // Context::OnDispatchMessage or OnDispatchError will be ignored.  It is
@@ -517,6 +512,12 @@ void ChannelProxy::Close() {
 }
 
 bool ChannelProxy::Send(Message* message) {
+  DCHECK(!message->is_sync()) << "Need to use IPC::SyncChannel";
+  SendInternal(message);
+  return true;
+}
+
+void ChannelProxy::SendInternal(Message* message) {
   DCHECK(did_init_);
 
   // TODO(alexeypa): add DCHECK(CalledOnValidThread()) here. Currently there are
@@ -530,22 +531,25 @@ bool ChannelProxy::Send(Message* message) {
     message = outgoing_message_filter()->Rewrite(message);
 #endif
 
-#ifdef IPC_MESSAGE_LOG_ENABLED
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   Logging::GetInstance()->OnSendMessage(message);
 #endif
 
+  // See https://crbug.com/766032. This is to ensure that senders of oversized
+  // messages can be caught more easily in the wild.
+  CHECK_LE(message->size(), Channel::kMaximumMessageSize);
+
   context_->Send(message);
-  return true;
 }
 
 void ChannelProxy::AddFilter(MessageFilter* filter) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   context_->AddFilter(filter);
 }
 
 void ChannelProxy::RemoveFilter(MessageFilter* filter) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   context_->ipc_task_runner()->PostTask(
       FROM_HERE, base::Bind(&Context::OnRemoveFilter, context_,
@@ -562,14 +566,12 @@ void ChannelProxy::GetGenericRemoteAssociatedInterface(
     const std::string& name,
     mojo::ScopedInterfaceEndpointHandle handle) {
   DCHECK(did_init_);
-  mojom::GenericInterfaceAssociatedRequest request;
-  request.Bind(std::move(handle));
-  context()->thread_safe_channel().GetAssociatedInterface(name,
-                                                          std::move(request));
+  context()->thread_safe_channel().GetAssociatedInterface(
+      name, mojom::GenericInterfaceAssociatedRequest(std::move(handle)));
 }
 
 void ChannelProxy::ClearIPCTaskRunner() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   context()->ClearIPCTaskRunner();
 }
 

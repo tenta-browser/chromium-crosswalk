@@ -12,7 +12,7 @@
 #include "chrome/browser/ui/views/tab_icon_view.h"
 #include "chrome/browser/ui/views/tabs/tab.h"
 #include "chrome/common/chrome_switches.h"
-#include "components/signin/core/common/profile_management_switches.h"
+#include "components/signin/core/browser/profile_management_switches.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_rep.h"
 #include "ui/gfx/text_constants.h"
@@ -74,6 +74,7 @@ class TestLayoutDelegate : public OpaqueBrowserFrameViewLayoutDelegate {
   gfx::Size GetTabstripPreferredSize() const override {
     return IsTabStripVisible() ? gfx::Size(78, 29) : gfx::Size();
   }
+  int GetTopAreaHeight() const override { return 0; }
 
  private:
   base::string16 window_title_;
@@ -94,9 +95,10 @@ class OpaqueBrowserFrameViewLayoutTest : public views::ViewsTestBase {
     views::ViewsTestBase::SetUp();
 
     delegate_.reset(new TestLayoutDelegate);
-    layout_manager_ = new OBFVL(delegate_.get());
+    layout_manager_ = new OBFVL();
+    layout_manager_->set_delegate(delegate_.get());
     layout_manager_->set_extra_caption_y(0);
-    layout_manager_->set_window_caption_spacing(0);
+    layout_manager_->set_forced_window_caption_spacing_for_test(0);
     widget_ = new views::Widget;
     widget_->Init(CreateParams(views::Widget::InitParams::TYPE_POPUP));
     root_view_ = widget_->GetRootView();
@@ -136,7 +138,7 @@ class OpaqueBrowserFrameViewLayoutTest : public views::ViewsTestBase {
     views::ImageButton* button = new views::ImageButton(nullptr);
     gfx::ImageSkiaRep rep(size, 1.0f);
     gfx::ImageSkia image(rep);
-    button->SetImage(views::CustomButton::STATE_NORMAL, &image);
+    button->SetImage(views::Button::STATE_NORMAL, &image);
     button->set_id(view_id);
     root_view_->AddChildView(button);
     return button;

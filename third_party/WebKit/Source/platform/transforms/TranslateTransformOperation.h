@@ -34,17 +34,21 @@ namespace blink {
 class PLATFORM_EXPORT TranslateTransformOperation final
     : public TransformOperation {
  public:
-  static PassRefPtr<TranslateTransformOperation> Create(const Length& tx,
-                                                        const Length& ty,
-                                                        OperationType type) {
-    return AdoptRef(new TranslateTransformOperation(tx, ty, 0, type));
+  static scoped_refptr<TranslateTransformOperation> Create(const Length& tx,
+                                                           const Length& ty,
+                                                           OperationType type) {
+    return base::AdoptRef(new TranslateTransformOperation(tx, ty, 0, type));
   }
 
-  static PassRefPtr<TranslateTransformOperation> Create(const Length& tx,
-                                                        const Length& ty,
-                                                        double tz,
-                                                        OperationType type) {
-    return AdoptRef(new TranslateTransformOperation(tx, ty, tz, type));
+  static scoped_refptr<TranslateTransformOperation> Create(const Length& tx,
+                                                           const Length& ty,
+                                                           double tz,
+                                                           OperationType type) {
+    return base::AdoptRef(new TranslateTransformOperation(tx, ty, tz, type));
+  }
+
+  bool operator==(const TranslateTransformOperation& other) const {
+    return *this == static_cast<const TransformOperation&>(other);
   }
 
   bool CanBlendWith(const TransformOperation& other) const override;
@@ -73,7 +77,7 @@ class PLATFORM_EXPORT TranslateTransformOperation final
            type == kTranslateZ || type == kTranslate3D;
   }
 
-  PassRefPtr<TranslateTransformOperation> ZoomTranslate(double factor);
+  scoped_refptr<TranslateTransformOperation> ZoomTranslate(double factor);
 
  private:
   OperationType GetType() const override { return type_; }
@@ -87,10 +91,11 @@ class PLATFORM_EXPORT TranslateTransformOperation final
     return x_ == t->x_ && y_ == t->y_ && z_ == t->z_;
   }
 
-  PassRefPtr<TransformOperation> Blend(const TransformOperation* from,
-                                       double progress,
-                                       bool blend_to_identity = false) override;
-  PassRefPtr<TransformOperation> Zoom(double factor) final {
+  scoped_refptr<TransformOperation> Blend(
+      const TransformOperation* from,
+      double progress,
+      bool blend_to_identity = false) override;
+  scoped_refptr<TransformOperation> Zoom(double factor) final {
     return ZoomTranslate(factor);
   }
 
@@ -99,7 +104,7 @@ class PLATFORM_EXPORT TranslateTransformOperation final
                               double tz,
                               OperationType type)
       : x_(tx), y_(ty), z_(tz), type_(type) {
-    ASSERT(IsMatchingOperationType(type));
+    DCHECK(IsMatchingOperationType(type));
   }
 
   Length x_;

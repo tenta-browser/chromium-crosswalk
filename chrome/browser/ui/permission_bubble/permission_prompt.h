@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/strings/string16.h"
 #include "ui/gfx/native_widget_types.h"
 
 class PermissionRequest;
@@ -23,54 +24,46 @@ class WebContents;
 // to the manager for the visible tab.
 class PermissionPrompt {
  public:
+  // Holds the string to be displayed as the origin of the permission prompt,
+  // and whether or not that string is an origin.
+  struct DisplayNameOrOrigin {
+    base::string16 name_or_origin;
+    bool is_origin;
+  };
+
   // The delegate will receive events caused by user action which need to
   // be persisted in the per-tab UI state.
   class Delegate {
    public:
     virtual ~Delegate() {}
 
-    virtual void ToggleAccept(int index, bool new_value) = 0;
-    virtual void TogglePersist(bool new_value) = 0;
+    // These pointers should not be stored as the actual request objects may be
+    // deleted upon navigation and so on.
+    virtual const std::vector<PermissionRequest*>& Requests() = 0;
+
+    // Returns the origin to be displayed in the permission prompt. May return
+    // a non-origin, e.g. extension URLs use the name of the extension.
+    virtual DisplayNameOrOrigin GetDisplayNameOrOrigin() = 0;
+
     virtual void Accept() = 0;
     virtual void Deny() = 0;
     virtual void Closing() = 0;
   };
 
-  typedef base::Callback<std::unique_ptr<PermissionPrompt>(
-      content::WebContents*)>
+  typedef base::Callback<
+      std::unique_ptr<PermissionPrompt>(content::WebContents*, Delegate*)>
       Factory;
 
-  // Create a platform specific instance.
+  // Create and display a platform specific prompt.
   static std::unique_ptr<PermissionPrompt> Create(
-      content::WebContents* web_contents);
+      content::WebContents* web_contents,
+      Delegate* delegate);
   virtual ~PermissionPrompt() {}
-
-  // Sets the delegate which will receive UI events forwarded from the prompt.
-  virtual void SetDelegate(Delegate* delegate) = 0;
-
-  // Causes the request UI to show up with the given contents. This method may
-  // be called with mostly-identical contents to the existing contents. This can
-  // happen, for instance, if a new permission is requested and
-  // CanAcceptRequestUpdate() is true.
-  // Important: the view must not store any of the request objects it receives
-  // in this call.
-  virtual void Show(const std::vector<PermissionRequest*>& requests,
-                    const std::vector<bool>& accept_state) = 0;
 
   // Returns true if the view can accept a new Show() command to coalesce
   // requests. Currently the policy is that this should return true if the view
   // is being shown and the mouse is not over the view area (!IsMouseHovered).
   virtual bool CanAcceptRequestUpdate() = 0;
-
-  // Returns true if the prompt UI will manage hiding itself when the user
-  // resolves the prompt, on page navigation/destruction, and on tab switching.
-  virtual bool HidesAutomatically() = 0;
-
-  // Hides the permission prompt.
-  virtual void Hide() = 0;
-
-  // Returns true if there is a prompt currently showing.
-  virtual bool IsVisible() = 0;
 
   // Updates where the prompt should be anchored. ex: fullscreen toggle.
   virtual void UpdateAnchorPosition() = 0;

@@ -4,12 +4,12 @@
 
 #include "core/testing/DictionaryTest.h"
 
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/V8ObjectBuilder.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/testing/InternalDictionary.h"
 #include "core/testing/InternalDictionaryDerived.h"
 #include "core/testing/InternalDictionaryDerivedDerived.h"
+#include "platform/bindings/ScriptState.h"
 
 namespace blink {
 
@@ -54,8 +54,6 @@ void DictionaryTest::set(const InternalDictionary& testing_dictionary) {
   enum_member_ = testing_dictionary.enumMember();
   enum_member_with_default_ = testing_dictionary.enumMemberWithDefault();
   enum_or_null_member_ = testing_dictionary.enumOrNullMember();
-  if (testing_dictionary.hasEnumArrayMember())
-    enum_array_member_ = testing_dictionary.enumArrayMember();
   if (testing_dictionary.hasElementMember())
     element_member_ = testing_dictionary.elementMember();
   if (testing_dictionary.hasElementOrNullMember())
@@ -75,7 +73,6 @@ void DictionaryTest::set(const InternalDictionary& testing_dictionary) {
         testing_dictionary.dictionaryMember().GetOwnPropertiesAsStringHashMap(
             exception_state);
   }
-  prefix_get_member_ = testing_dictionary.getPrefixGetMember();
 }
 
 void DictionaryTest::get(InternalDictionary& result) {
@@ -110,21 +107,18 @@ void DictionaryTest::get(InternalDictionary& result) {
   result.setEnumMember(enum_member_);
   result.setEnumMemberWithDefault(enum_member_with_default_);
   result.setEnumOrNullMember(enum_or_null_member_);
-  if (enum_array_member_)
-    result.setEnumArrayMember(enum_array_member_.Get());
   if (element_member_)
     result.setElementMember(element_member_);
   if (element_or_null_member_)
     result.setElementOrNullMember(element_or_null_member_);
   result.setObjectMember(object_member_);
   result.setObjectOrNullMemberWithDefault(object_or_null_member_with_default_);
-  if (!double_or_string_member_.isNull())
+  if (!double_or_string_member_.IsNull())
     result.setDoubleOrStringMember(double_or_string_member_);
   if (!double_or_string_sequence_member_.IsNull())
     result.setDoubleOrStringSequenceMember(
         double_or_string_sequence_member_.Get());
   result.setEventTargetOrNullMember(event_target_or_null_member_);
-  result.setPrefixGetMember(prefix_get_member_);
 }
 
 ScriptValue DictionaryTest::getDictionaryMemberProperties(
@@ -190,7 +184,7 @@ String DictionaryTest::stringFromIterable(
       result.Append(',');
 
     v8::Local<v8::Value> value;
-    if (V8Call(iterator.GetValue(), value))
+    if (iterator.GetValue().ToLocal(&value))
       result.Append(ToCoreString(value->ToString()));
   }
 
@@ -215,7 +209,6 @@ void DictionaryTest::Reset() {
   enum_member_ = String();
   enum_member_with_default_ = String();
   enum_or_null_member_ = String();
-  enum_array_member_ = nullptr;
   element_member_ = nullptr;
   element_or_null_member_ = nullptr;
   object_member_ = ScriptValue();
@@ -226,14 +219,14 @@ void DictionaryTest::Reset() {
   derived_string_member_with_default_ = String();
   required_boolean_member_ = false;
   dictionary_member_properties_ = nullptr;
-  prefix_get_member_ = ScriptValue();
 }
 
-DEFINE_TRACE(DictionaryTest) {
+void DictionaryTest::Trace(blink::Visitor* visitor) {
   visitor->Trace(element_member_);
   visitor->Trace(element_or_null_member_);
   visitor->Trace(double_or_string_sequence_member_);
   visitor->Trace(event_target_or_null_member_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

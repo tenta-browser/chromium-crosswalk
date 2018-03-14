@@ -4,9 +4,12 @@
 
 #include "ui/message_center/views/message_view_factory.h"
 
+#include "base/command_line.h"
+#include "base/lazy_instance.h"
 #include "ui/message_center/notification_types.h"
-#include "ui/message_center/views/custom_notification_view.h"
+#include "ui/message_center/public/cpp/message_center_switches.h"
 #include "ui/message_center/views/notification_view.h"
+#include "ui/message_center/views/notification_view_md.h"
 
 #if defined(OS_WIN)
 #include "ui/base/win/shell.h"
@@ -14,8 +17,15 @@
 
 namespace message_center {
 
+namespace {
+
+base::LazyInstance<MessageViewFactory::CustomMessageViewFactoryFunction>::Leaky
+    g_custom_view_factory = LAZY_INSTANCE_INITIALIZER;
+
+}  // namespace
+
 // static
-MessageView* MessageViewFactory::Create(MessageCenterController* controller,
+MessageView* MessageViewFactory::Create(MessageViewDelegate* controller,
                                         const Notification& notification,
                                         bool top_level) {
   MessageView* notification_view = nullptr;
@@ -26,10 +36,14 @@ MessageView* MessageViewFactory::Create(MessageCenterController* controller,
     case NOTIFICATION_TYPE_SIMPLE:
     case NOTIFICATION_TYPE_PROGRESS:
       // All above roads lead to the generic NotificationView.
-      notification_view = new NotificationView(controller, notification);
+      if (IsNewStyleNotificationEnabled())
+        notification_view = new NotificationViewMD(controller, notification);
+      else
+        notification_view = new NotificationView(controller, notification);
       break;
     case NOTIFICATION_TYPE_CUSTOM:
-      notification_view = new CustomNotificationView(controller, notification);
+      notification_view =
+          g_custom_view_factory.Get().Run(controller, notification).release();
       break;
     default:
       // If the caller asks for an unrecognized kind of view (entirely possible
@@ -37,9 +51,9 @@ MessageView* MessageViewFactory::Create(MessageCenterController* controller,
       // doesn't have the requested kind of notification template), we'll fall
       // back to a notification instance that will provide at least basic
       // functionality.
-      LOG(WARNING) << "Unable to fulfill request for unrecognized "
-                   << "notification type " << notification.type() << ". "
-                   << "Falling back to simple notification type.";
+      LOG(WARNING) << "Unable to fulfill request for unrecognized or"
+                   << "unsupported notification type " << notification.type()
+                   << ". Falling back to simple notification type.";
       notification_view = new NotificationView(controller, notification);
   }
 
@@ -58,6 +72,17 @@ MessageView* MessageViewFactory::Create(MessageCenterController* controller,
 
   notification_view->SetIsNested();
   return notification_view;
+}
+
+// static
+void MessageViewFactory::SetCustomNotificationViewFactory(
+    const CustomMessageViewFactoryFunction& factory_function) {
+  g_custom_view_factory.Get() = factory_function;
+}
+
+// static
+bool MessageViewFactory::HasCustomNotificationViewFactory() {
+  return !g_custom_view_factory.Get().is_null();
 }
 
 }  // namespace message_center

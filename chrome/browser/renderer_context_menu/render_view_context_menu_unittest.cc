@@ -89,8 +89,8 @@ std::unique_ptr<TestRenderViewContextMenu> CreateContextMenu(
     ProtocolHandlerRegistry* registry) {
   content::ContextMenuParams params = CreateParams(MenuItem::LINK);
   params.unfiltered_link_url = params.link_url;
-  std::unique_ptr<TestRenderViewContextMenu> menu(
-      new TestRenderViewContextMenu(web_contents->GetMainFrame(), params));
+  auto menu = base::MakeUnique<TestRenderViewContextMenu>(
+      web_contents->GetMainFrame(), params);
   menu->set_protocol_handler_registry(registry);
   menu->Init();
   return menu;
@@ -101,6 +101,12 @@ std::unique_ptr<TestRenderViewContextMenu> CreateContextMenu(
 class RenderViewContextMenuTest : public testing::Test {
  protected:
   RenderViewContextMenuTest() = default;
+  // If the test uses a TestExtensionEnvironment, which provides a MessageLoop,
+  // it needs to be passed to the constructor so that it exists before the
+  // RenderViewHostTestEnabler which needs to use the MessageLoop.
+  explicit RenderViewContextMenuTest(
+      std::unique_ptr<extensions::TestExtensionEnvironment> env)
+      : environment_(std::move(env)) {}
 
   // Proxy defined here to minimize friend classes in RenderViewContextMenu
   static bool ExtensionContextAndPatternMatch(
@@ -121,8 +127,11 @@ class RenderViewContextMenuTest : public testing::Test {
     MenuItem::Id id(incognito, key);
     id.uid = uid;
     return base::MakeUnique<MenuItem>(id, "Added by an extension", false, true,
-                                      type, contexts);
+                                      true, type, contexts);
   }
+
+ protected:
+  std::unique_ptr<extensions::TestExtensionEnvironment> environment_;
 
  private:
   content::RenderViewHostTestEnabler rvh_test_enabler_;
@@ -301,12 +310,14 @@ TEST_F(RenderViewContextMenuTest, TargetIgnoredForSelectionOnImage) {
 
 class RenderViewContextMenuExtensionsTest : public RenderViewContextMenuTest {
  protected:
-  RenderViewContextMenuExtensionsTest() = default;
+  RenderViewContextMenuExtensionsTest()
+      : RenderViewContextMenuTest(
+            base::MakeUnique<extensions::TestExtensionEnvironment>()) {}
 
   void SetUp() override {
     RenderViewContextMenuTest::SetUp();
     // TestingProfile does not provide a protocol registry.
-    registry_.reset(new ProtocolHandlerRegistry(profile(), nullptr));
+    registry_ = base::MakeUnique<ProtocolHandlerRegistry>(profile(), nullptr);
   }
 
   void TearDown() override {
@@ -314,14 +325,11 @@ class RenderViewContextMenuExtensionsTest : public RenderViewContextMenuTest {
     RenderViewContextMenuTest::TearDown();
   }
 
-  TestingProfile* profile() const { return environment_.profile(); }
+  TestingProfile* profile() const { return environment_->profile(); }
 
-  extensions::TestExtensionEnvironment& environment() {
-    return environment_;
-  }
+  extensions::TestExtensionEnvironment& environment() { return *environment_; }
 
  protected:
-  extensions::TestExtensionEnvironment environment_;
   std::unique_ptr<ProtocolHandlerRegistry> registry_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderViewContextMenuExtensionsTest);
@@ -368,7 +376,7 @@ class RenderViewContextMenuPrefsTest : public ChromeRenderViewHostTestHarness {
 
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
-    registry_.reset(new ProtocolHandlerRegistry(profile(), nullptr));
+    registry_ = base::MakeUnique<ProtocolHandlerRegistry>(profile(), nullptr);
   }
 
   void TearDown() override {
@@ -380,6 +388,18 @@ class RenderViewContextMenuPrefsTest : public ChromeRenderViewHostTestHarness {
     return ::CreateContextMenu(web_contents(), registry_.get());
   }
 
+  // Returns a test context menu for a chrome:// url not permitted to open in
+  // incognito mode.
+  std::unique_ptr<TestRenderViewContextMenu> CreateContextMenuOnChromeLink() {
+    content::ContextMenuParams params = CreateParams(MenuItem::LINK);
+    params.unfiltered_link_url = params.link_url = GURL("chrome://settings");
+    auto menu = base::MakeUnique<TestRenderViewContextMenu>(
+        web_contents()->GetMainFrame(), params);
+    menu->set_protocol_handler_registry(registry_.get());
+    menu->Init();
+    return menu;
+  }
+
   void AppendImageItems(TestRenderViewContextMenu* menu) {
     menu->AppendImageItems();
   }
@@ -387,8 +407,6 @@ class RenderViewContextMenuPrefsTest : public ChromeRenderViewHostTestHarness {
   void SetupDataReductionProxy(bool enable_data_reduction_proxy) {
     drp_test_context_ =
         data_reduction_proxy::DataReductionProxyTestContext::Builder()
-            .WithParamsFlags(
-                 data_reduction_proxy::DataReductionProxyParams::kPromoAllowed)
             .WithMockConfig()
             .SkipSettingsInitialization()
             .Build();
@@ -455,6 +473,17 @@ TEST_F(RenderViewContextMenuPrefsTest,
       menu->IsCommandIdEnabled(IDC_CONTENT_CONTEXT_OPENLINKOFFTHERECORD));
 }
 
+// Verifies Incognito Mode is not enabled for links disallowed in Incognito.
+TEST_F(RenderViewContextMenuPrefsTest,
+       DisableOpenInIncognitoWindowForDisallowedUrls) {
+  std::unique_ptr<TestRenderViewContextMenu> menu(
+      CreateContextMenuOnChromeLink());
+
+  ASSERT_TRUE(menu->IsItemPresent(IDC_CONTENT_CONTEXT_OPENLINKOFFTHERECORD));
+  EXPECT_FALSE(
+      menu->IsCommandIdEnabled(IDC_CONTENT_CONTEXT_OPENLINKOFFTHERECORD));
+}
+
 // Make sure the checking custom command id that is not enabled will not
 // cause DCHECK failure.
 TEST_F(RenderViewContextMenuPrefsTest,
@@ -472,9 +501,8 @@ TEST_F(RenderViewContextMenuPrefsTest, DataSaverEnabledSaveImageAs) {
 
   content::ContextMenuParams params = CreateParams(MenuItem::IMAGE);
   params.unfiltered_link_url = params.link_url;
-  content::WebContents* wc = web_contents();
-  std::unique_ptr<TestRenderViewContextMenu> menu(
-      new TestRenderViewContextMenu(wc->GetMainFrame(), params));
+  auto menu = base::MakeUnique<TestRenderViewContextMenu>(
+      web_contents()->GetMainFrame(), params);
 
   menu->ExecuteCommand(IDC_CONTENT_CONTEXT_SAVEIMAGEAS, 0);
 
@@ -494,9 +522,8 @@ TEST_F(RenderViewContextMenuPrefsTest, DataSaverDisabledSaveImageAs) {
 
   content::ContextMenuParams params = CreateParams(MenuItem::IMAGE);
   params.unfiltered_link_url = params.link_url;
-  content::WebContents* wc = web_contents();
-  std::unique_ptr<TestRenderViewContextMenu> menu(
-      new TestRenderViewContextMenu(wc->GetMainFrame(), params));
+  auto menu = base::MakeUnique<TestRenderViewContextMenu>(
+      web_contents()->GetMainFrame(), params);
 
   menu->ExecuteCommand(IDC_CONTENT_CONTEXT_SAVEIMAGEAS, 0);
 
@@ -518,9 +545,8 @@ TEST_F(RenderViewContextMenuPrefsTest, DataSaverLoadImage) {
       data_reduction_proxy::chrome_proxy_content_transform_header()] =
           data_reduction_proxy::empty_image_directive();
   params.unfiltered_link_url = params.link_url;
-  content::WebContents* wc = web_contents();
-  std::unique_ptr<TestRenderViewContextMenu> menu(
-      new TestRenderViewContextMenu(wc->GetMainFrame(), params));
+  auto menu = base::MakeUnique<TestRenderViewContextMenu>(
+      web_contents()->GetMainFrame(), params);
   AppendImageItems(menu.get());
 
   ASSERT_TRUE(menu->IsItemPresent(IDC_CONTENT_CONTEXT_LOAD_ORIGINAL_IMAGE));

@@ -34,11 +34,6 @@ DataReductionPromoInfoBarDelegateAndroid::
 }
 
 // static
-bool DataReductionPromoInfoBarDelegateAndroid::Register(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
-// static
 void DataReductionPromoInfoBarDelegateAndroid::Launch(
     JNIEnv* env,
     const JavaRef<jobject>& jweb_contents) {
@@ -71,8 +66,9 @@ bool DataReductionPromoInfoBarDelegateAndroid::Accept() {
 }
 
 // JNI for DataReductionPromoInfoBarDelegate.
-void Launch(JNIEnv* env,
-            const JavaParamRef<jclass>& clazz,
-            const JavaParamRef<jobject>& jweb_contents) {
+void JNI_DataReductionPromoInfoBarDelegate_Launch(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    const JavaParamRef<jobject>& jweb_contents) {
   DataReductionPromoInfoBarDelegateAndroid::Launch(env, jweb_contents);
 }

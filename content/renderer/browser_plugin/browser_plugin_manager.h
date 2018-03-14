@@ -5,7 +5,7 @@
 #ifndef CONTENT_RENDERER_BROWSER_PLUGIN_BROWSER_PLUGIN_MANAGER_H_
 #define CONTENT_RENDERER_BROWSER_PLUGIN_BROWSER_PLUGIN_MANAGER_H_
 
-#include "base/id_map.h"
+#include "base/containers/id_map.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/renderer/render_thread_observer.h"
@@ -16,6 +16,7 @@ namespace content {
 class BrowserPlugin;
 class BrowserPluginDelegate;
 class RenderFrame;
+struct ScreenInfo;
 
 // BrowserPluginManager manages the routing of messages to the appropriate
 // BrowserPlugin object based on its instance ID. There is one BrowserPlugin
@@ -49,6 +50,8 @@ class CONTENT_EXPORT BrowserPluginManager : public RenderThreadObserver {
 
   void UpdateFocusState();
 
+  void ScreenInfoChanged(const ScreenInfo& screen_info);
+
   // Returns a new instance ID to be used by BrowserPlugin. Instance IDs are
   // unique per process.
   int GetNextInstanceID();
@@ -61,7 +64,7 @@ class CONTENT_EXPORT BrowserPluginManager : public RenderThreadObserver {
 
  private:
   // This map is keyed by guest instance IDs.
-  IDMap<BrowserPlugin*> instances_;
+  base::IDMap<BrowserPlugin*> instances_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserPluginManager);
 };

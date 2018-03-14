@@ -5,11 +5,14 @@
 #include <stdint.h>
 
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/supervised_user/legacy/supervised_user_sync_service.h"
 #include "chrome/browser/supervised_user/legacy/supervised_user_sync_service_factory.h"
@@ -47,7 +50,7 @@ class MockChangeProcessor : public SyncChangeProcessor {
   ~MockChangeProcessor() override {}
 
   // SyncChangeProcessor implementation:
-  SyncError ProcessSyncChanges(const tracked_objects::Location& from_here,
+  SyncError ProcessSyncChanges(const base::Location& from_here,
                                const SyncChangeList& change_list) override;
 
   SyncDataList GetAllSyncData(syncer::ModelType type) const override {
@@ -62,7 +65,7 @@ class MockChangeProcessor : public SyncChangeProcessor {
 };
 
 SyncError MockChangeProcessor::ProcessSyncChanges(
-    const tracked_objects::Location& from_here,
+    const base::Location& from_here,
     const SyncChangeList& change_list) {
   change_list_ = change_list;
   return SyncError();
@@ -195,13 +198,13 @@ TEST_F(SupervisedUserSyncServiceTest, MergeExisting) {
   {
     DictionaryPrefUpdate update(prefs(), prefs::kSupervisedUsers);
     base::DictionaryValue* supervised_users = update.Get();
-    base::DictionaryValue* dict = new base::DictionaryValue;
+    auto dict = base::MakeUnique<base::DictionaryValue>();
     dict->SetString(kNameKey, kName1);
-    supervised_users->Set(kUserId1, dict);
-    dict = new base::DictionaryValue;
+    supervised_users->Set(kUserId1, std::move(dict));
+    dict = base::MakeUnique<base::DictionaryValue>();
     dict->SetString(kNameKey, kName2);
     dict->SetBoolean(kAcknowledgedKey, true);
-    supervised_users->Set(kUserId2, dict);
+    supervised_users->Set(kUserId2, std::move(dict));
   }
 
   const base::DictionaryValue* async_supervised_users = NULL;

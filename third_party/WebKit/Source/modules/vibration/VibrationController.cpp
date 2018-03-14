@@ -19,15 +19,15 @@
 
 #include "modules/vibration/VibrationController.h"
 
-#include "bindings/modules/v8/UnsignedLongOrUnsignedLongSequence.h"
+#include "bindings/modules/v8/unsigned_long_or_unsigned_long_sequence.h"
 #include "core/dom/Document.h"
-#include "core/dom/TaskRunnerHelper.h"
+#include "core/frame/LocalFrame.h"
 #include "core/frame/Navigator.h"
 #include "core/page/Page.h"
 #include "platform/mojo/MojoHelper.h"
 #include "public/platform/Platform.h"
-#include "services/device/public/interfaces/constants.mojom-blink.h"
-#include "services/service_manager/public/cpp/connector.h"
+#include "public/platform/TaskType.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 
 // Maximum number of entries in a vibration pattern.
 const unsigned kVibrationPatternLengthMax = 99;
@@ -67,26 +67,25 @@ VibrationController::SanitizeVibrationPattern(
     const UnsignedLongOrUnsignedLongSequence& pattern) {
   VibrationPattern sanitized;
 
-  if (pattern.isUnsignedLong())
-    sanitized.push_back(pattern.getAsUnsignedLong());
-  else if (pattern.isUnsignedLongSequence())
-    sanitized = pattern.getAsUnsignedLongSequence();
+  if (pattern.IsUnsignedLong())
+    sanitized.push_back(pattern.GetAsUnsignedLong());
+  else if (pattern.IsUnsignedLongSequence())
+    sanitized = pattern.GetAsUnsignedLongSequence();
 
   return sanitizeVibrationPatternInternal(sanitized);
 }
 
-VibrationController::VibrationController(Document& document)
-    : ContextLifecycleObserver(&document),
-      PageVisibilityObserver(document.GetPage()),
+VibrationController::VibrationController(LocalFrame& frame)
+    : ContextLifecycleObserver(frame.GetDocument()),
+      PageVisibilityObserver(frame.GetDocument()->GetPage()),
       timer_do_vibrate_(
-          TaskRunnerHelper::Get(TaskType::kMiscPlatformAPI, &document),
+          frame.GetDocument()->GetTaskRunner(TaskType::kMiscPlatformAPI),
           this,
           &VibrationController::DoVibrate),
       is_running_(false),
       is_calling_cancel_(false),
       is_calling_vibrate_(false) {
-  Platform::Current()->GetConnector()->BindInterface(
-      device::mojom::blink::kServiceName,
+  frame.GetInterfaceProvider().GetInterface(
       mojo::MakeRequest(&vibration_manager_));
 }
 
@@ -102,7 +101,7 @@ bool VibrationController::Vibrate(const VibrationPattern& pattern) {
     return true;
 
   if (pattern_.size() == 1 && !pattern_[0]) {
-    pattern_.Clear();
+    pattern_.clear();
     return true;
   }
 
@@ -112,7 +111,7 @@ bool VibrationController::Vibrate(const VibrationPattern& pattern) {
   // it also starts the timer. This is not a problem as calling |startOneShot|
   // repeatedly will just update the time at which to run |doVibrate|, it will
   // not be called more than once.
-  timer_do_vibrate_.StartOneShot(0, BLINK_FROM_HERE);
+  timer_do_vibrate_.StartOneShot(TimeDelta(), BLINK_FROM_HERE);
 
   return true;
 }
@@ -146,19 +145,19 @@ void VibrationController::DidVibrate() {
 
   // Use the current vibration entry of the pattern as the initial interval.
   unsigned interval = pattern_[0];
-  pattern_.erase(0);
+  pattern_.EraseAt(0);
 
   // If there is another entry it is for a pause.
   if (!pattern_.IsEmpty()) {
     interval += pattern_[0];
-    pattern_.erase(0);
+    pattern_.EraseAt(0);
   }
 
   timer_do_vibrate_.StartOneShot(interval / 1000.0, BLINK_FROM_HERE);
 }
 
 void VibrationController::Cancel() {
-  pattern_.Clear();
+  pattern_.clear();
   timer_do_vibrate_.Stop();
 
   if (is_running_ && !is_calling_cancel_ && vibration_manager_) {
@@ -176,7 +175,7 @@ void VibrationController::DidCancel() {
   // A new vibration pattern may have been set while the mojo call for
   // |cancel| was in flight, so kick the timer to let |doVibrate| process the
   // pattern.
-  timer_do_vibrate_.StartOneShot(0, BLINK_FROM_HERE);
+  timer_do_vibrate_.StartOneShot(TimeDelta(), BLINK_FROM_HERE);
 }
 
 void VibrationController::ContextDestroyed(ExecutionContext*) {
@@ -191,7 +190,7 @@ void VibrationController::PageVisibilityChanged() {
     Cancel();
 }
 
-DEFINE_TRACE(VibrationController) {
+void VibrationController::Trace(blink::Visitor* visitor) {
   ContextLifecycleObserver::Trace(visitor);
   PageVisibilityObserver::Trace(visitor);
 }

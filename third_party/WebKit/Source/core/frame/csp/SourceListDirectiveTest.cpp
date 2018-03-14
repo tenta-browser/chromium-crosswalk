@@ -29,17 +29,19 @@ class SourceListDirectiveTest : public ::testing::Test {
   };
 
   virtual void SetUp() {
-    KURL secure_url(kParsedURLString, "https://example.test/image.png");
-    RefPtr<SecurityOrigin> secure_origin(SecurityOrigin::Create(secure_url));
-    document = Document::Create();
+    KURL secure_url("https://example.test/image.png");
+    scoped_refptr<SecurityOrigin> secure_origin(
+        SecurityOrigin::Create(secure_url));
+    document = Document::CreateForTest();
     document->SetSecurityOrigin(secure_origin);
     csp->BindToExecutionContext(document.Get());
   }
 
   ContentSecurityPolicy* SetUpWithOrigin(const String& origin) {
-    KURL secure_url(kParsedURLString, origin);
-    RefPtr<SecurityOrigin> secure_origin(SecurityOrigin::Create(secure_url));
-    Document* document = Document::Create();
+    KURL secure_url(origin);
+    scoped_refptr<SecurityOrigin> secure_origin(
+        SecurityOrigin::Create(secure_url));
+    Document* document = Document::CreateForTest();
     document->SetSecurityOrigin(secure_origin);
     ContentSecurityPolicy* csp = ContentSecurityPolicy::Create();
     csp->BindToExecutionContext(document);
@@ -105,7 +107,7 @@ TEST_F(SourceListDirectiveTest, StarallowsSelf) {
   SourceListDirective source_list("script-src", sources, csp.Get());
 
   // With a protocol of 'file', '*' allows 'file:':
-  RefPtr<SecurityOrigin> origin = SecurityOrigin::Create("file", "", 0);
+  scoped_refptr<SecurityOrigin> origin = SecurityOrigin::Create("file", "", 0);
   csp->SetupSelf(*origin);
   EXPECT_TRUE(source_list.Allows(KURL(base, "file:///etc/hosts")));
 
@@ -949,6 +951,14 @@ TEST_F(SourceListDirectiveTest, SubsumesNoncesAndHashes) {
        "'strict-dynamic'",
        {"'nonce-yay' https://example1.com/foo/"},
        true},
+      {true,
+       "http://example1.com/foo/ 'nonce-abc'",
+       {"http://example1.com/foo/ 'nonce-xyz'"},
+       true},
+      {false,
+       "http://example1.com/foo/ 'nonce-abc'",
+       {"http://example1.com/foo/ 'nonce-xyz'"},
+       true},
       // Check hashes.
       {true,
        "http://example1.com/foo/ 'self' 'unsafe-inline' 'sha512-321cba'",
@@ -1004,12 +1014,29 @@ TEST_F(SourceListDirectiveTest, SubsumesNoncesAndHashes) {
        "'nonce-abc'",
        {"'unsafe-inline' 'sha512-321abc' 'self' 'nonce-xyz'",
         "unsafe-inline' 'sha512-321abc' https://example.test/ 'nonce-xyz'"},
-       false},
+       true},
       {true,
        "http://example1.com/foo/ 'self' 'unsafe-inline' 'sha512-321abc' "
        "'nonce-abc'",
        {"'unsafe-inline' 'sha512-321abc' 'self' 'sha512-xyz'",
         "unsafe-inline' 'sha512-321abc' https://example.test/ 'sha512-xyz'"},
+       false},
+      {true,
+       "http://example1.com/foo/ 'nonce-abc' 'sha512-321abc'",
+       {"http://example1.com/foo/ 'nonce-xyz' 'sha512-321abc'"},
+       true},
+      {false,
+       "http://example1.com/foo/ 'nonce-abc' 'sha512-321abc'",
+       {"http://example1.com/foo/ 'nonce-xyz' 'sha512-321abc'"},
+       true},
+      {true,
+       "http://example1.com/foo/ 'nonce-abc' 'sha512-321abc'",
+       {"http://example1.com/foo/ 'nonce-xyz' 'sha512-xyz'"},
+       false},
+      {false,
+       "http://example1.com/foo/ 'nonce-abc' 'sha512-321abc'",
+       {"http://example1.com/foo/ 'nonce-xyz' 'sha512-xyz'",
+        "http://example1.com/foo/ 'nonce-zyx' 'nonce-xyz' 'sha512-xyz'"},
        false},
 
   };
@@ -1344,7 +1371,7 @@ TEST_F(SourceListDirectiveTest, ParseHost) {
     CSPSource::WildcardDisposition disposition = CSPSource::kNoWildcard;
     Vector<UChar> characters;
     test.sources.AppendTo(characters);
-    const UChar* start = characters.Data();
+    const UChar* start = characters.data();
     const UChar* end = start + characters.size();
     EXPECT_EQ(test.expected,
               SourceListDirective::ParseHost(start, end, host, disposition))

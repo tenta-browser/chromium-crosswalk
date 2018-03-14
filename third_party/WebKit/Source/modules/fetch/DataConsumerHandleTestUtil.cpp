@@ -5,13 +5,11 @@
 #include "modules/fetch/DataConsumerHandleTestUtil.h"
 
 #include <memory>
-#include "bindings/core/v8/DOMWrapperWorld.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/wtf/PtrUtil.h"
-#include "public/platform/WebScheduler.h"
 
 namespace blink {
-
-using Result = WebDataConsumerHandle::Result;
 
 namespace {
 
@@ -19,14 +17,16 @@ class WaitingHandle final : public WebDataConsumerHandle {
  private:
   class ReaderImpl final : public WebDataConsumerHandle::Reader {
    public:
-    Result BeginRead(const void** buffer,
-                     WebDataConsumerHandle::Flags,
-                     size_t* available) override {
+    WebDataConsumerHandle::Result BeginRead(const void** buffer,
+                                            WebDataConsumerHandle::Flags,
+                                            size_t* available) override {
       *available = 0;
       *buffer = nullptr;
       return kShouldWait;
     }
-    Result EndRead(size_t) override { return kUnexpectedError; }
+    WebDataConsumerHandle::Result EndRead(size_t) override {
+      return kUnexpectedError;
+    }
   };
   std::unique_ptr<Reader> ObtainReader(Client*) override {
     return WTF::WrapUnique(new ReaderImpl);
@@ -42,7 +42,7 @@ DataConsumerHandleTestUtil::Thread::Thread(
     InitializationPolicy initialization_policy)
     : thread_(WebThreadSupportingGC::Create(name)),
       initialization_policy_(initialization_policy),
-      waitable_event_(WTF::MakeUnique<WaitableEvent>()) {
+      waitable_event_(std::make_unique<WaitableEvent>()) {
   thread_->PostTask(
       BLINK_FROM_HERE,
       CrossThreadBind(&Thread::Initialize, CrossThreadUnretained(this)));
@@ -57,16 +57,13 @@ DataConsumerHandleTestUtil::Thread::~Thread() {
 }
 
 void DataConsumerHandleTestUtil::Thread::Initialize() {
+  DCHECK(thread_->IsCurrentThread());
   if (initialization_policy_ >= kScriptExecution) {
-    isolate_holder_ =
-        WTF::MakeUnique<gin::IsolateHolder>(Platform::Current()
-                                                ->CurrentThread()
-                                                ->Scheduler()
-                                                ->LoadingTaskRunner()
-                                                ->ToSingleThreadTaskRunner());
+    isolate_holder_ = std::make_unique<gin::IsolateHolder>(
+        Platform::Current()->CurrentThread()->Scheduler()->LoadingTaskRunner());
     GetIsolate()->Enter();
   }
-  thread_->Initialize();
+  thread_->InitializeOnThread();
   if (initialization_policy_ >= kScriptExecution) {
     v8::HandleScope handle_scope(GetIsolate());
     script_state_ = ScriptState::Create(
@@ -81,12 +78,13 @@ void DataConsumerHandleTestUtil::Thread::Initialize() {
 }
 
 void DataConsumerHandleTestUtil::Thread::Shutdown() {
+  DCHECK(thread_->IsCurrentThread());
   execution_context_ = nullptr;
   if (script_state_) {
     script_state_->DisposePerContextData();
   }
   script_state_ = nullptr;
-  thread_->Shutdown();
+  thread_->ShutdownOnThread();
   if (isolate_holder_) {
     GetIsolate()->Exit();
     GetIsolate()->RequestGarbageCollectionForTesting(
@@ -99,22 +97,23 @@ void DataConsumerHandleTestUtil::Thread::Shutdown() {
 class DataConsumerHandleTestUtil::ReplayingHandle::ReaderImpl final
     : public Reader {
  public:
-  ReaderImpl(PassRefPtr<Context> context, Client* client) : context_(context) {
+  ReaderImpl(scoped_refptr<Context> context, Client* client)
+      : context_(std::move(context)) {
     context_->AttachReader(client);
   }
-  ~ReaderImpl() { context_->DetachReader(); }
+  ~ReaderImpl() override { context_->DetachReader(); }
 
-  Result BeginRead(const void** buffer,
-                   Flags flags,
-                   size_t* available) override {
+  WebDataConsumerHandle::Result BeginRead(const void** buffer,
+                                          Flags flags,
+                                          size_t* available) override {
     return context_->BeginRead(buffer, flags, available);
   }
-  Result EndRead(size_t read_size) override {
+  WebDataConsumerHandle::Result EndRead(size_t read_size) override {
     return context_->EndRead(read_size);
   }
 
  private:
-  RefPtr<Context> context_;
+  scoped_refptr<Context> context_;
 };
 
 void DataConsumerHandleTestUtil::ReplayingHandle::Context::Add(
@@ -163,12 +162,12 @@ DataConsumerHandleTestUtil::ReplayingHandle::Context::BeginRead(
     return result_;
 
   const Command& command = Top();
-  Result result = kOk;
+  WebDataConsumerHandle::Result result = kOk;
   switch (command.GetName()) {
     case Command::kData: {
       auto& body = command.Body();
       *available = body.size() - Offset();
-      *buffer = body.Data() + Offset();
+      *buffer = body.data() + Offset();
       result = kOk;
       break;
     }
@@ -203,7 +202,7 @@ DataConsumerHandleTestUtil::ReplayingHandle::Context::Context()
       client_(nullptr),
       result_(kShouldWait),
       is_handle_attached_(true),
-      detached_(WTF::MakeUnique<WaitableEvent>()) {}
+      detached_(std::make_unique<WaitableEvent>()) {}
 
 const DataConsumerHandleTestUtil::Command&
 DataConsumerHandleTestUtil::ReplayingHandle::Context::Top() {
@@ -230,7 +229,7 @@ void DataConsumerHandleTestUtil::ReplayingHandle::Context::Notify() {
   DCHECK(reader_thread_);
   reader_thread_->GetWebTaskRunner()->PostTask(
       BLINK_FROM_HERE,
-      CrossThreadBind(&Context::NotifyInternal, WrapPassRefPtr(this)));
+      CrossThreadBind(&Context::NotifyInternal, WrapRefCounted(this)));
 }
 
 void DataConsumerHandleTestUtil::ReplayingHandle::Context::NotifyInternal() {
@@ -254,88 +253,11 @@ DataConsumerHandleTestUtil::ReplayingHandle::~ReplayingHandle() {
 
 std::unique_ptr<WebDataConsumerHandle::Reader>
 DataConsumerHandleTestUtil::ReplayingHandle::ObtainReader(Client* client) {
-  return WTF::MakeUnique<ReaderImpl>(context_, client);
+  return std::make_unique<ReaderImpl>(context_, client);
 }
 
 void DataConsumerHandleTestUtil::ReplayingHandle::Add(const Command& command) {
   context_->Add(command);
-}
-
-DataConsumerHandleTestUtil::HandleReader::HandleReader(
-    std::unique_ptr<WebDataConsumerHandle> handle,
-    std::unique_ptr<OnFinishedReading> on_finished_reading)
-    : reader_(handle->ObtainReader(this)),
-      on_finished_reading_(std::move(on_finished_reading)) {}
-
-void DataConsumerHandleTestUtil::HandleReader::DidGetReadable() {
-  WebDataConsumerHandle::Result r = WebDataConsumerHandle::kUnexpectedError;
-  char buffer[3];
-  while (true) {
-    size_t size;
-    r = reader_->Read(buffer, sizeof(buffer), WebDataConsumerHandle::kFlagNone,
-                      &size);
-    if (r == WebDataConsumerHandle::kShouldWait)
-      return;
-    if (r != WebDataConsumerHandle::kOk)
-      break;
-    data_.Append(buffer, size);
-  }
-  std::unique_ptr<HandleReadResult> result =
-      WTF::MakeUnique<HandleReadResult>(r, data_);
-  data_.Clear();
-  Platform::Current()->CurrentThread()->GetWebTaskRunner()->PostTask(
-      BLINK_FROM_HERE,
-      WTF::Bind(&HandleReader::RunOnFinishedReading, WTF::Unretained(this),
-                WTF::Passed(std::move(result))));
-  reader_ = nullptr;
-}
-
-void DataConsumerHandleTestUtil::HandleReader::RunOnFinishedReading(
-    std::unique_ptr<HandleReadResult> result) {
-  DCHECK(on_finished_reading_);
-  std::unique_ptr<OnFinishedReading> on_finished_reading(
-      std::move(on_finished_reading_));
-  (*on_finished_reading)(std::move(result));
-}
-
-DataConsumerHandleTestUtil::HandleTwoPhaseReader::HandleTwoPhaseReader(
-    std::unique_ptr<WebDataConsumerHandle> handle,
-    std::unique_ptr<OnFinishedReading> on_finished_reading)
-    : reader_(handle->ObtainReader(this)),
-      on_finished_reading_(std::move(on_finished_reading)) {}
-
-void DataConsumerHandleTestUtil::HandleTwoPhaseReader::DidGetReadable() {
-  WebDataConsumerHandle::Result r = WebDataConsumerHandle::kUnexpectedError;
-  while (true) {
-    const void* buffer = nullptr;
-    size_t size;
-    r = reader_->BeginRead(&buffer, WebDataConsumerHandle::kFlagNone, &size);
-    if (r == WebDataConsumerHandle::kShouldWait)
-      return;
-    if (r != WebDataConsumerHandle::kOk)
-      break;
-    // Read smaller than available in order to test |endRead|.
-    size_t read_size =
-        std::min(size, std::max(size * 2 / 3, static_cast<size_t>(1)));
-    data_.Append(static_cast<const char*>(buffer), read_size);
-    reader_->EndRead(read_size);
-  }
-  std::unique_ptr<HandleReadResult> result =
-      WTF::MakeUnique<HandleReadResult>(r, data_);
-  data_.Clear();
-  Platform::Current()->CurrentThread()->GetWebTaskRunner()->PostTask(
-      BLINK_FROM_HERE,
-      WTF::Bind(&HandleTwoPhaseReader::RunOnFinishedReading,
-                WTF::Unretained(this), WTF::Passed(std::move(result))));
-  reader_ = nullptr;
-}
-
-void DataConsumerHandleTestUtil::HandleTwoPhaseReader::RunOnFinishedReading(
-    std::unique_ptr<HandleReadResult> result) {
-  DCHECK(on_finished_reading_);
-  std::unique_ptr<OnFinishedReading> on_finished_reading(
-      std::move(on_finished_reading_));
-  (*on_finished_reading)(std::move(result));
 }
 
 std::unique_ptr<WebDataConsumerHandle>

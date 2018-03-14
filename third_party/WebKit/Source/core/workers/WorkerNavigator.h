@@ -26,21 +26,20 @@
 #ifndef WorkerNavigator_h
 #define WorkerNavigator_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
-#include "core/frame/NavigatorCPU.h"
+#include "core/frame/NavigatorConcurrentHardware.h"
 #include "core/frame/NavigatorID.h"
 #include "core/frame/NavigatorOnLine.h"
 #include "platform/Supplementable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
 class CORE_EXPORT WorkerNavigator final
-    : public GarbageCollectedFinalized<WorkerNavigator>,
-      public ScriptWrappable,
-      public NavigatorCPU,
+    : public ScriptWrappable,
+      public NavigatorConcurrentHardware,
       public NavigatorID,
       public NavigatorOnLine,
       public Supplementable<WorkerNavigator> {
@@ -55,7 +54,7 @@ class CORE_EXPORT WorkerNavigator final
 
   String userAgent() const override;
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   explicit WorkerNavigator(const String&);

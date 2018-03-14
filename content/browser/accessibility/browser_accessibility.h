@@ -15,7 +15,8 @@
 #include "base/strings/string16.h"
 #include "base/strings/string_split.h"
 #include "build/build_config.h"
-#include "content/browser/accessibility/ax_platform_position.h"
+#include "content/browser/accessibility/accessibility_flags.h"
+#include "content/browser/accessibility/browser_accessibility_position.h"
 #include "content/common/content_export.h"
 #include "third_party/WebKit/public/web/WebAXEnums.h"
 #include "ui/accessibility/ax_node.h"
@@ -42,7 +43,7 @@
 #define PLATFORM_HAS_NATIVE_ACCESSIBILITY_IMPL 1
 #endif
 
-#if defined(OS_LINUX) && defined(USE_X11) && !defined(OS_CHROMEOS)
+#if BUILDFLAG(USE_ATK)
 #define PLATFORM_HAS_NATIVE_ACCESSIBILITY_IMPL 1
 #endif
 
@@ -74,8 +75,6 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
 
   virtual ~BrowserAccessibility();
 
-  static BrowserAccessibility* GetFromUniqueID(int32_t unique_id);
-
   // Called only once, immediately after construction. The constructor doesn't
   // take any arguments because in the Windows subclass we use a special
   // function to construct a COM object.
@@ -97,6 +96,10 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
 
   // Return true if this object is equal to or a descendant of |ancestor|.
   bool IsDescendantOf(const BrowserAccessibility* ancestor) const;
+
+  bool IsDocument() const;
+
+  bool IsEditField() const;
 
   // Returns true if this object is used only for representing text.
   bool IsTextOnlyObject() const;
@@ -149,7 +152,10 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
 
   // Returns the bounds of this object in coordinates relative to the
   // page (specifically, the top-left corner of the topmost web contents).
-  gfx::Rect GetPageBoundsRect() const;
+  // Optionally updates |offscreen| to be true if the element is offscreen
+  // within its page. Clips bounds by default unless |clip_bounds| is false.
+  gfx::Rect GetPageBoundsRect(bool* offscreen = nullptr,
+                              bool clip_bounds = true) const;
 
   // Returns the bounds of the given range in coordinates relative to the
   // top-left corner of the overall web area. Only valid when the
@@ -163,8 +169,12 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   // (which is relative to its nearest scrollable ancestor) to
   // absolute bounds, either in page coordinates (when |frameOnly| is
   // false), or in frame coordinates (when |frameOnly| is true).
+  // Updates optional |offscreen| to be true if the node is offscreen.
+  // If |clip_bounds| is set to false, will return unclipped bounds.
   virtual gfx::Rect RelativeToAbsoluteBounds(gfx::RectF bounds,
-                                             bool frame_only) const;
+                                             bool frame_only,
+                                             bool* offscreen = nullptr,
+                                             bool clip_bounds = true) const;
 
   // This is to handle the cases such as ARIA textbox, where the value should
   // be calculated from the object's inner text.
@@ -202,7 +212,6 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   BrowserAccessibilityManager* manager() const { return manager_; }
   bool instance_active() const { return node_ && manager_; }
   ui::AXNode* node() const { return node_; }
-  int32_t unique_id() const { return unique_id_; }
 
   // These access the internal accessibility tree, which doesn't necessarily
   // reflect the accessibility tree that should be exposed on each platform.
@@ -211,9 +220,7 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   uint32_t InternalChildCount() const;
   BrowserAccessibility* InternalGetChild(uint32_t child_index) const;
   BrowserAccessibility* InternalGetParent() const;
-
   BrowserAccessibility* PlatformGetParent() const;
-  int32_t GetIndexInParent() const;
 
   int32_t GetId() const;
   gfx::RectF GetLocation() const;
@@ -285,84 +292,17 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
 
   // Retrieve the value of a html attribute from the attribute map and
   // returns true if found.
-  bool GetHtmlAttribute(const char* attr, base::string16* value) const;
   bool GetHtmlAttribute(const char* attr, std::string* value) const;
-
-  // Utility method to handle special cases for ARIA booleans, tristates and
-  // booleans which have a "mixed" state.
-  //
-  // Warning: the term "Tristate" is used loosely by the spec and here,
-  // as some attributes support a 4th state.
-  //
-  // The following attributes are appropriate to use with this method:
-  // aria-selected  (selectable)
-  // aria-grabbed   (grabbable)
-  // aria-expanded  (expandable)
-  // aria-pressed   (toggleable/pressable) -- supports 4th "mixed" state
-  // aria-checked   (checkable) -- supports 4th "mixed state"
-  bool GetAriaTristate(const char* attr_name,
-                       bool* is_defined,
-                       bool* is_mixed) const;
+  bool GetHtmlAttribute(const char* attr, base::string16* value) const;
 
   base::string16 GetFontFamily() const;
   base::string16 GetLanguage() const;
 
-  // Returns the table or ARIA grid if inside one.
-  BrowserAccessibility* GetTable() const;
-
-  // If inside a table or ARIA grid, returns the cell found at the given index.
-  // Indices are in row major order and each cell is counted once regardless of
-  // its span.
-  BrowserAccessibility* GetTableCell(int index) const;
-
-  // If inside a table or ARIA grid, returns the cell at the given row and
-  // column (0-based). Works correctly with cells that span multiple rows or
-  // columns.
-  BrowserAccessibility* GetTableCell(int row, int column) const;
-
-  // If inside a table or ARIA grid, returns the zero-based index of the cell.
-  // Indices are in row major order and each cell is counted once regardless of
-  // its span. Returns -1 if the cell is not found or if not inside a table.
-  int GetTableCellIndex() const;
-
-  // If inside a table or ARIA grid, returns the physical column number for the
-  // current cell. In contrast to logical columns, physical columns always start
-  // from 0 and have no gaps in their numbering. Logical columns can be set
-  // using aria-colindex.
-  int GetTableColumn() const;
-
-  // If inside a table or ARIA grid, returns the number of physical columns,
-  // otherwise returns 0.
-  int GetTableColumnCount() const;
-
-  // If inside a table or ARIA grid, returns the number of physical columns that
-  // this cell spans. If not a cell, returns 0.
-  int GetTableColumnSpan() const;
-
-  // If inside a table or ARIA grid, returns the physical row number for the
-  // current cell. In contrast to logical rows, physical rows always start from
-  // 0 and have no gaps in their numbering. Logical rows can be set using
-  // aria-rowindex.
-  int GetTableRow() const;
-
-  // If inside a table or ARIA grid, returns the number of physical rows,
-  // otherwise returns 0.
-  int GetTableRowCount() const;
-
-  // If inside a table or ARIA grid, returns the number of physical rows that
-  // this cell spans. If not a cell, returns 0.
-  int GetTableRowSpan() const;
-
   virtual base::string16 GetText() const;
 
-  // Returns true if the bit corresponding to the given state enum is 1.
+  // Returns true if the bit corresponding to the given enum is 1.
   bool HasState(ui::AXState state_enum) const;
-
-  // Returns true if this node is a cell or a table header.
-  bool IsCellOrTableHeaderRole() const;
-
-  // Returns true if this node is a table, a grid or a treegrid.
-  bool IsTableOrGridOrTreeGridRole() const;
+  bool HasAction(ui::AXAction action_enum) const;
 
   // Returns true if the caret is active on this object.
   bool HasCaret() const;
@@ -371,27 +311,29 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   bool IsWebAreaForPresentationalIframe() const;
 
   virtual bool IsClickable() const;
-  bool IsControl() const;
-  bool IsMenuRelated() const;
-  bool IsNativeTextControl() const;
-  bool IsSimpleTextControl() const;
-  // Indicates if this object is at the root of a rich edit text control.
-  bool IsRichTextControl() const;
+  bool IsPlainTextField() const;
+  bool IsRichTextField() const;
+
+  // Return true if the accessible name was explicitly set to "" by the author
+  bool HasExplicitlyEmptyName() const;
 
   // If an object is focusable but has no accessible name, use this
   // to compute a name from its descendants.
-  std::string ComputeAccessibleNameFromDescendants();
+  std::string ComputeAccessibleNameFromDescendants() const;
 
   // Creates a text position rooted at this object.
-  AXPlatformPosition::AXPositionInstance CreatePositionAt(
+  BrowserAccessibilityPosition::AXPositionInstance CreatePositionAt(
       int offset,
       ui::AXTextAffinity affinity = ui::AX_TEXT_AFFINITY_DOWNSTREAM) const;
 
   // Gets the text offsets where new lines start.
   std::vector<int> GetLineStartOffsets() const;
 
+  virtual gfx::NativeViewAccessible GetNativeViewAccessible();
+
   // AXPlatformNodeDelegate.
   const ui::AXNodeData& GetData() const override;
+  const ui::AXTreeData& GetTreeData() const override;
   gfx::NativeWindow GetTopLevelWidget() override;
   gfx::NativeViewAccessible GetParent() override;
   int GetChildCount() override;
@@ -399,12 +341,18 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   gfx::Rect GetScreenBoundsRect() const override;
   gfx::NativeViewAccessible HitTestSync(int x, int y) override;
   gfx::NativeViewAccessible GetFocus() override;
+  ui::AXPlatformNode* GetFromNodeID(int32_t id) override;
+  int GetIndexInParent() const override;
   gfx::AcceleratedWidget GetTargetForNativeAccessibilityEvent() override;
   bool AccessibilityPerformAction(const ui::AXActionData& data) override;
+  bool ShouldIgnoreHoveredStateForTesting() override;
+  bool IsOffscreen() const override;
 
  protected:
-  using AXPlatformPositionInstance = AXPlatformPosition::AXPositionInstance;
-  using AXPlatformRange = ui::AXRange<AXPlatformPositionInstance::element_type>;
+  using BrowserAccessibilityPositionInstance =
+      BrowserAccessibilityPosition::AXPositionInstance;
+  using AXPlatformRange =
+      ui::AXRange<BrowserAccessibilityPositionInstance::element_type>;
 
   BrowserAccessibility();
 
@@ -417,25 +365,12 @@ class CONTENT_EXPORT BrowserAccessibility : public ui::AXPlatformNodeDelegate {
   // A unique ID, since node IDs are frame-local.
   int32_t unique_id_;
 
-  // The platform-specific object that implements the accessibility APIs for
-  // this node. Currently some of the platform-specific code is implemented by
-  // subclasses of BrowserAccessibility and some by |platform_node_|, but
-  // eventually we want all of that code to be in AXPlatformNode.  See
-  // http://crbug.com/703369
-  ui::AXPlatformNode* platform_node_;
-
  private:
   // |GetInnerText| recursively includes all the text from descendants such as
   // text found in any embedded object. In contrast, |GetText| might include a
   // special character in the place of every embedded object instead of its
   // text, depending on the platform.
   base::string16 GetInnerText() const;
-
-  // If a bounding rectangle is empty, compute it based on the union of its
-  // children, since most accessibility APIs don't like elements with no
-  // bounds, but "virtual" elements in the accessibility tree that don't
-  // correspond to a layed-out element sometimes don't have bounds.
-  void FixEmptyBounds(gfx::RectF* bounds) const;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserAccessibility);
 };

@@ -27,7 +27,7 @@
 #define DragController_h
 
 #include "core/CoreExport.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/page/DragActions.h"
 #include "platform/geometry/IntPoint.h"
 #include "platform/heap/Handle.h"
@@ -43,6 +43,7 @@ class DragImage;
 struct DragSession;
 class DragState;
 class LocalFrame;
+class FloatRect;
 class FrameSelection;
 class HTMLInputElement;
 class Node;
@@ -58,7 +59,7 @@ class CORE_EXPORT DragController final
 
   DragSession DragEnteredOrUpdated(DragData*, LocalFrame& local_root);
   void DragExited(DragData*, LocalFrame& local_root);
-  bool PerformDrag(DragData*, LocalFrame& local_root);
+  void PerformDrag(DragData*, LocalFrame& local_root);
 
   enum SelectionDragPolicy {
     kImmediateSelectionDragResolution,
@@ -81,7 +82,13 @@ class CORE_EXPORT DragController final
 
   DragState& GetDragState();
 
-  DECLARE_TRACE();
+  static std::unique_ptr<DragImage> DragImageForSelection(const LocalFrame&,
+                                                          float);
+
+  // Return the selection in the frame's coords, clipped to the visual viewport.
+  static FloatRect ClippedSelection(const LocalFrame&);
+
+  void Trace(blink::Visitor*);
 
  private:
   explicit DragController(Page*);
@@ -102,6 +109,8 @@ class CORE_EXPORT DragController final
 
   void MouseMovedIntoDocument(Document*);
 
+  // drag_location and drag_origin should be in the coordinate space of the
+  // LocalFrame's contents.
   void DoSystemDrag(DragImage*,
                     const IntPoint& drag_location,
                     const IntPoint& drag_origin,

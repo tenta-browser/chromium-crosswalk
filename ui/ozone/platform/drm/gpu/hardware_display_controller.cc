@@ -72,47 +72,54 @@ void HardwareDisplayController::Disable() {
   for (const auto& controller : crtc_controllers_)
     controller->Disable();
 
+  for (const auto& planes : owned_hardware_planes_) {
+    DrmDevice* drm = planes.first;
+    HardwareDisplayPlaneList* plane_list = planes.second.get();
+    bool ret = drm->plane_manager()->DisableOverlayPlanes(plane_list);
+    LOG_IF(ERROR, !ret) << "Can't disable overlays when disabling HDC.";
+  }
+
   is_disabled_ = true;
 }
 
-void HardwareDisplayController::SchedulePageFlip(
+bool HardwareDisplayController::SchedulePageFlip(
     const OverlayPlaneList& plane_list,
-    const PageFlipCallback& callback) {
-  ActualSchedulePageFlip(plane_list, false /* test_only */, callback);
+    SwapCompletionOnceCallback callback) {
+  return ActualSchedulePageFlip(plane_list, false /* test_only */,
+                                std::move(callback));
 }
 
 bool HardwareDisplayController::TestPageFlip(
     const OverlayPlaneList& plane_list) {
   return ActualSchedulePageFlip(plane_list, true /* test_only */,
-                                base::Bind(&EmptyFlipCallback));
+                                base::BindOnce(&EmptyFlipCallback));
 }
 
 bool HardwareDisplayController::ActualSchedulePageFlip(
     const OverlayPlaneList& plane_list,
     bool test_only,
-    const PageFlipCallback& callback) {
+    SwapCompletionOnceCallback callback) {
   TRACE_EVENT0("drm", "HDC::SchedulePageFlip");
 
   DCHECK(!is_disabled_);
 
   // Ignore requests with no planes to schedule.
   if (plane_list.empty()) {
-    callback.Run(gfx::SwapResult::SWAP_ACK);
+    std::move(callback).Run(gfx::SwapResult::SWAP_ACK);
     return true;
   }
-
-  scoped_refptr<PageFlipRequest> page_flip_request =
-      new PageFlipRequest(crtc_controllers_.size(), callback);
 
   OverlayPlaneList pending_planes = plane_list;
   std::sort(pending_planes.begin(), pending_planes.end(),
             [](const OverlayPlane& l, const OverlayPlane& r) {
               return l.z_order < r.z_order;
             });
-  if (pending_planes.front().z_order != 0) {
-    callback.Run(gfx::SwapResult::SWAP_FAILED);
+  if (pending_planes.front().z_order < 0) {
+    std::move(callback).Run(gfx::SwapResult::SWAP_FAILED);
     return false;
   }
+  scoped_refptr<PageFlipRequest> page_flip_request =
+      new PageFlipRequest(crtc_controllers_.size(), std::move(callback));
 
   for (const auto& planes : owned_hardware_planes_)
     planes.first->plane_manager()->BeginFrame(planes.second.get());
@@ -283,8 +290,8 @@ gfx::Size HardwareDisplayController::GetModeSize() const {
                    crtc_controllers_[0]->mode().vdisplay);
 }
 
-uint64_t HardwareDisplayController::GetTimeOfLastFlip() const {
-  uint64_t time = 0;
+base::TimeTicks HardwareDisplayController::GetTimeOfLastFlip() const {
+  base::TimeTicks time;
   for (const auto& controller : crtc_controllers_) {
     if (time < controller->time_of_last_flip())
       time = controller->time_of_last_flip();

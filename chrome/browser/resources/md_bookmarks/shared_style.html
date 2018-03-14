@@ -1,16 +1,11 @@
 <link rel="import" href="chrome://bookmarks/shared_vars.html">
+<link rel="import" href="chrome://resources/cr_elements/shared_style_css.html">
 
 <dom-module id="shared-style">
   <template>
-    <style>
-      [hidden] {
-        display: none !important;
-      }
-
+    <style include="cr-shared-style">
       button.more-vert-button {
-        height: 36px;
         padding: 8px;
-        width: 36px;
       }
 
       button.more-vert-button div {
@@ -28,11 +23,6 @@
         margin: 8px 0;
       }
 
-      paper-button {
-        height: 32px;
-        margin: 0;
-      }
-
       .drag-above::before,
       .drag-below::after {
         background-clip: padding-box;
@@ -48,7 +38,7 @@
         left: 0;
         position: absolute;
         right: 0;
-        z-index: 10;
+        z-index: 1;
       }
 
       .drag-above::before {
@@ -62,7 +52,30 @@
       }
 
       .drag-on {
-        background-color: rgba(66, 133, 244, 0.16);
+        background-color: var(--highlight-color);
+      }
+
+      :host-context([hide-focus-ring]) [tabindex]:focus {
+        outline: none;
+      }
+
+      .folder-icon {
+        background-image: url(chrome://bookmarks/images/folder.svg);
+        background-size: contain;
+        height: 20px;
+        min-width: 20px;
+        width: 20px;
+      }
+
+      .folder-icon[open] {
+        background-image: url(chrome://bookmarks/images/folder_open.svg);
+      }
+
+      .website-icon {
+        background-repeat: no-repeat;
+        height: 16px;
+        margin: 2px;
+        width: 16px;
       }
     </style>
   </template>

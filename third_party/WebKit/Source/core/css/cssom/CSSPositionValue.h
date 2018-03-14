@@ -5,44 +5,48 @@
 #ifndef CSSPositionValue_h
 #define CSSPositionValue_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "base/macros.h"
 #include "core/CoreExport.h"
 #include "core/css/cssom/CSSStyleValue.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
-class CSSLengthValue;
+class CSSNumericValue;
+class ExceptionState;
 
 class CORE_EXPORT CSSPositionValue final : public CSSStyleValue {
-  WTF_MAKE_NONCOPYABLE(CSSPositionValue);
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static CSSPositionValue* Create(const CSSLengthValue* x,
-                                  const CSSLengthValue* y) {
-    return new CSSPositionValue(x, y);
-  }
+  // Constructor defined in the IDL.
+  static CSSPositionValue* Create(CSSNumericValue* x,
+                                  CSSNumericValue* y,
+                                  ExceptionState&);
 
-  // Bindings require a non const return value.
-  CSSLengthValue* x() const { return const_cast<CSSLengthValue*>(x_.Get()); }
-  CSSLengthValue* y() const { return const_cast<CSSLengthValue*>(y_.Get()); }
+  // Getters and setters defined in the IDL.
+  CSSNumericValue* x() { return x_.Get(); }
+  CSSNumericValue* y() { return y_.Get(); }
+  void setX(CSSNumericValue* x, ExceptionState&);
+  void setY(CSSNumericValue* x, ExceptionState&);
 
-  StyleValueType GetType() const override { return kPositionType; }
+  // Internal methods - from CSSStyleValue.
+  StyleValueType GetType() const final { return kPositionType; }
 
-  CSSValue* ToCSSValue() const override;
+  const CSSValue* ToCSSValue(SecureContextMode) const final;
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  virtual void Trace(blink::Visitor* visitor) {
     visitor->Trace(x_);
     visitor->Trace(y_);
     CSSStyleValue::Trace(visitor);
   }
 
  protected:
-  CSSPositionValue(const CSSLengthValue* x, const CSSLengthValue* y)
-      : x_(x), y_(y) {}
+  CSSPositionValue(CSSNumericValue* x, CSSNumericValue* y) : x_(x), y_(y) {}
 
-  Member<const CSSLengthValue> x_;
-  Member<const CSSLengthValue> y_;
+  Member<CSSNumericValue> x_;
+  Member<CSSNumericValue> y_;
+  DISALLOW_COPY_AND_ASSIGN(CSSPositionValue);
 };
 
 }  // namespace blink

@@ -27,6 +27,8 @@
 #define BackgroundHTMLParser_h
 
 #include <memory>
+
+#include "base/macros.h"
 #include "core/dom/DocumentEncodingData.h"
 #include "core/html/parser/BackgroundHTMLInputStream.h"
 #include "core/html/parser/CompactHTMLToken.h"
@@ -47,7 +49,6 @@ class WebTaskRunner;
 
 class BackgroundHTMLParser {
   USING_FAST_MALLOC(BackgroundHTMLParser);
-  WTF_MAKE_NONCOPYABLE(BackgroundHTMLParser);
 
  public:
   struct Configuration {
@@ -59,7 +60,7 @@ class BackgroundHTMLParser {
     WeakPtr<HTMLDocumentParser> parser;
     std::unique_ptr<XSSAuditor> xss_auditor;
     std::unique_ptr<TextResourceDecoder> decoder;
-    RefPtr<TokenizedChunkQueue> tokenized_chunk_queue;
+    scoped_refptr<TokenizedChunkQueue> tokenized_chunk_queue;
     // outstandingTokenLimit must be greater than or equal to
     // pendingTokenLimit
     size_t outstanding_token_limit;
@@ -71,7 +72,7 @@ class BackgroundHTMLParser {
   // thread: it must first be initialized by calling init(), and free by
   // calling stop().
   static WeakPtr<BackgroundHTMLParser> Create(std::unique_ptr<Configuration>,
-                                              RefPtr<WebTaskRunner>);
+                                              scoped_refptr<WebTaskRunner>);
   void Init(const KURL& document_url,
             std::unique_ptr<CachedDocumentParameters>,
             const MediaValuesCached::MediaValuesCachedData&);
@@ -89,8 +90,7 @@ class BackgroundHTMLParser {
     String unparsed_input;
   };
 
-  void AppendRawBytesFromMainThread(std::unique_ptr<Vector<char>>,
-                                    double bytes_received_time);
+  void AppendRawBytesFromMainThread(std::unique_ptr<Vector<char>>);
   void SetDecoder(std::unique_ptr<TextResourceDecoder>);
   void Flush();
   void ResumeFrom(std::unique_ptr<Checkpoint>);
@@ -101,7 +101,8 @@ class BackgroundHTMLParser {
   void ForcePlaintextForTextDocument();
 
  private:
-  BackgroundHTMLParser(std::unique_ptr<Configuration>, RefPtr<WebTaskRunner>);
+  BackgroundHTMLParser(std::unique_ptr<Configuration>,
+                       scoped_refptr<WebTaskRunner>);
   ~BackgroundHTMLParser();
 
   void AppendDecodedBytes(const String&);
@@ -130,8 +131,6 @@ class BackgroundHTMLParser {
   std::unique_ptr<CompactHTMLTokenStream> pending_tokens_;
   const size_t pending_token_limit_;
   PreloadRequestStream pending_preloads_;
-  // Indices into |m_pendingTokens|.
-  Vector<int> likely_document_write_script_indices_;
   ViewportDescriptionWrapper viewport_description_;
   XSSInfoStream pending_xss_infos_;
 
@@ -139,16 +138,17 @@ class BackgroundHTMLParser {
   std::unique_ptr<TokenPreloadScanner> preload_scanner_;
   std::unique_ptr<TextResourceDecoder> decoder_;
   DocumentEncodingData last_seen_encoding_data_;
-  RefPtr<WebTaskRunner> loading_task_runner_;
-  RefPtr<TokenizedChunkQueue> tokenized_chunk_queue_;
+  scoped_refptr<WebTaskRunner> loading_task_runner_;
+  scoped_refptr<TokenizedChunkQueue> tokenized_chunk_queue_;
 
   // Index into |m_pendingTokens| of the last <meta> csp token found. Will be
   // |TokenizedChunk::noPendingToken| if none have been found.
   int pending_csp_meta_token_index_;
 
   bool starting_script_;
-  double last_bytes_received_time_;
   bool should_coalesce_chunks_;
+
+  DISALLOW_COPY_AND_ASSIGN(BackgroundHTMLParser);
 };
 
 }  // namespace blink

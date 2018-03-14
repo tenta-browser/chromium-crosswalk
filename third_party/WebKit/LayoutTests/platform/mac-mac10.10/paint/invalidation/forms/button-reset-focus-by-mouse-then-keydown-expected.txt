@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutButton BUTTON",
@@ -14,6 +14,11 @@
         {
           "object": "LayoutText #text",
           "rect": [16, 11, 29, 14],
+          "reason": "subtree"
+        },
+        {
+          "object": "LayoutBlockFlow (anonymous)",
+          "rect": [16, 11, 29, 13],
           "reason": "subtree"
         }
       ]

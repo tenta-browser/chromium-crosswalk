@@ -7,7 +7,6 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "services/ui/public/interfaces/window_manager.mojom.h"
-#include "services/ui/ws/focus_controller_delegate.h"
 #include "services/ui/ws/focus_controller_observer.h"
 #include "services/ui/ws/server_window.h"
 #include "services/ui/ws/server_window_drawn_tracker.h"
@@ -58,14 +57,11 @@ class WindowTreeIterator {
 
 }  // namespace
 
-FocusController::FocusController(FocusControllerDelegate* delegate,
-                                 ServerWindow* root)
-    : delegate_(delegate),
-      root_(root),
+FocusController::FocusController(ServerWindow* root)
+    : root_(root),
       focused_window_(nullptr),
       active_window_(nullptr),
-      activation_reason_(ActivationChangeReason::UNKNONW) {
-  DCHECK(delegate_);
+      activation_reason_(ActivationChangeReason::UNKNOWN) {
   DCHECK(root_);
 }
 
@@ -83,47 +79,6 @@ ServerWindow* FocusController::GetFocusedWindow() {
   return focused_window_;
 }
 
-void FocusController::ActivateNextWindow() {
-  WindowTreeIterator iter(root_);
-  ServerWindow* activate = active_window_;
-  while (true) {
-    activate = iter.GetNext(activate);
-    if (activation_reason_ == ActivationChangeReason::CYCLE) {
-      if (activate == active_window_) {
-        // We have cycled over all the activatable windows. Remove the oldest
-        // window that was cycled.
-        if (!cycle_windows_->windows().empty()) {
-          cycle_windows_->Remove(cycle_windows_->windows().front());
-          continue;
-        }
-      } else if (cycle_windows_->Contains(activate)) {
-        // We are cycling between activated windows, and this window has already
-        // been through the cycle. So skip over it.
-        continue;
-      }
-    }
-    if (activate == active_window_ || CanBeActivated(activate))
-      break;
-  }
-  SetActiveWindow(activate, ActivationChangeReason::CYCLE);
-
-  if (active_window_) {
-    // Do not shift focus if the focused window already lives in the active
-    // window.
-    if (focused_window_ && active_window_->Contains(focused_window_))
-      return;
-    // Focus the first focusable window in the tree.
-    WindowTreeIterator iter(active_window_);
-    ServerWindow* focus = nullptr;
-    do {
-      focus = iter.GetNext(focus);
-    } while (focus != active_window_ && !CanBeFocused(focus));
-    SetFocusedWindow(focus);
-  } else {
-    SetFocusedWindow(nullptr);
-  }
-}
-
 void FocusController::AddObserver(FocusControllerObserver* observer) {
   observers_.AddObserver(observer);
 }
@@ -137,22 +92,12 @@ void FocusController::SetActiveWindow(ServerWindow* window,
   DCHECK(!window || CanBeActivated(window));
   if (active_window_ == window)
     return;
-  if (reason != ActivationChangeReason::CYCLE) {
-    cycle_windows_.reset();
-  } else if (activation_reason_ != ActivationChangeReason::CYCLE) {
-    DCHECK(!cycle_windows_);
-    cycle_windows_ = base::MakeUnique<ServerWindowTracker>();
-    if (active_window_)
-      cycle_windows_->Add(active_window_);
-  }
 
   ServerWindow* old_active = active_window_;
   active_window_ = window;
   activation_reason_ = reason;
   for (auto& observer : observers_)
     observer.OnActivationChanged(old_active, active_window_);
-  if (active_window_ && activation_reason_ == ActivationChangeReason::CYCLE)
-    cycle_windows_->Add(active_window_);
 }
 
 bool FocusController::CanBeFocused(ServerWindow* window) const {
@@ -175,24 +120,16 @@ bool FocusController::CanBeActivated(ServerWindow* window) const {
     return false;
 
   // The parent window must be allowed to have active children.
-  if (!delegate_->CanHaveActiveChildren(window->parent()))
+  if (!window->parent() || !window->parent()->is_activation_parent())
     return false;
 
   if (!window->can_focus())
     return false;
 
   // The window must be drawn, or if it's not drawn, it must be minimized.
-  if (!window->IsDrawn()) {
-    bool is_minimized = false;
-    const ServerWindow::Properties& props = window->properties();
-    if (props.count(mojom::WindowManager::kShowState_Property)) {
-      // The type must match that of PropertyConverter::PrimitiveType.
-      is_minimized =
-          props.find(mojom::WindowManager::kShowState_Property)->second[0] ==
-          static_cast<int64_t>(ui::mojom::ShowState::MINIMIZED);
-    }
-    if (!is_minimized)
-      return false;
+  if (!window->IsDrawn() &&
+      window->GetShowState() != mojom::ShowState::MINIMIZED) {
+    return false;
   }
 
   // TODO(sad): If there's a transient modal window, then this cannot be
@@ -239,19 +176,15 @@ bool FocusController::SetFocusedWindowImpl(
     track_window = active_window_;
   if (track_window) {
     drawn_tracker_ =
-        base::MakeUnique<ServerWindowDrawnTracker>(track_window, this);
+        std::make_unique<ServerWindowDrawnTracker>(track_window, this);
   } else {
     drawn_tracker_.reset();
   }
   return true;
 }
 
-void FocusController::OnDrawnStateWillChange(ServerWindow* ancestor,
-                                             ServerWindow* window,
-                                             bool is_drawn) {
-  DCHECK(!is_drawn);
-  DCHECK_NE(ancestor, window);
-  DCHECK(root_->Contains(window));
+void FocusController::ProcessDrawnOrRootChange(ServerWindow* ancestor,
+                                               ServerWindow* window) {
   drawn_tracker_.reset();
 
   // Find the window that triggered this state-change notification.
@@ -305,10 +238,24 @@ void FocusController::OnDrawnStateWillChange(ServerWindow* ancestor,
   SetFocusedWindowImpl(FocusControllerChangeSource::DRAWN_STATE_CHANGED, focus);
 }
 
+void FocusController::OnDrawnStateWillChange(ServerWindow* ancestor,
+                                             ServerWindow* window,
+                                             bool is_drawn) {
+  DCHECK(!is_drawn);
+  DCHECK_NE(ancestor, window);
+  DCHECK(root_->Contains(window));
+  ProcessDrawnOrRootChange(ancestor, window);
+}
+
 void FocusController::OnDrawnStateChanged(ServerWindow* ancestor,
                                           ServerWindow* window,
                                           bool is_drawn) {
   // DCHECK(false);  TODO(sadrul):
+}
+
+void FocusController::OnRootWillChange(ServerWindow* ancestor,
+                                       ServerWindow* window) {
+  ProcessDrawnOrRootChange(ancestor, window);
 }
 
 }  // namespace ws

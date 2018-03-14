@@ -5,7 +5,7 @@
 #ifndef SyncManager_h
 #define SyncManager_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/modules/background_sync/background_sync.mojom-blink.h"
@@ -17,8 +17,7 @@ class ScriptPromiseResolver;
 class ScriptState;
 class ServiceWorkerRegistration;
 
-class SyncManager final : public GarbageCollectedFinalized<SyncManager>,
-                          public ScriptWrappable {
+class SyncManager final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -29,7 +28,7 @@ class SyncManager final : public GarbageCollectedFinalized<SyncManager>,
   ScriptPromise registerFunction(ScriptState*, const String& tag);
   ScriptPromise getTags(ScriptState*);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
   enum { kUnregisteredSyncID = -1 };
 

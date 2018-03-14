@@ -7,24 +7,24 @@
 
 #include <string>
 
+#include "ash/public/cpp/shelf_model_observer.h"
 #include "base/macros.h"
 #include "ui/wm/public/activation_change_observer.h"
-
-namespace aura {
-
-class Window;
-
-namespace client {
-class ActivationClient;
-}
-}
 
 class AppWindowLauncherItemController;
 class ChromeLauncherController;
 class Profile;
 
-class AppWindowLauncherController
-    : public aura::client::ActivationChangeObserver {
+namespace aura {
+class Window;
+}
+
+namespace wm {
+class ActivationClient;
+}
+
+class AppWindowLauncherController : public wm::ActivationChangeObserver,
+                                    public ash::ShelfModelObserver {
  public:
   ~AppWindowLauncherController() override;
 
@@ -37,10 +37,9 @@ class AppWindowLauncherController
   virtual void AdditionalUserAddedToSession(Profile* profile) {}
 
   // Overriden from client::ActivationChangeObserver:
-  void OnWindowActivated(
-      aura::client::ActivationChangeObserver::ActivationReason reason,
-      aura::Window* gained_active,
-      aura::Window* lost_active) override;
+  void OnWindowActivated(wm::ActivationChangeObserver::ActivationReason reason,
+                         aura::Window* gained_active,
+                         aura::Window* lost_active) override;
 
  protected:
   explicit AppWindowLauncherController(ChromeLauncherController* owner);
@@ -50,10 +49,19 @@ class AppWindowLauncherController
   virtual AppWindowLauncherItemController* ControllerForWindow(
       aura::Window* window) = 0;
 
+  // Called to update local caches when the item |delegate| is replaced. Note,
+  // |delegate| might not belong to current launcher controller.
+  virtual void OnItemDelegateDiscarded(ash::ShelfItemDelegate* delegate) = 0;
+
  private:
   // Unowned pointers.
   ChromeLauncherController* owner_;
-  aura::client::ActivationClient* activation_client_ = nullptr;
+  wm::ActivationClient* activation_client_ = nullptr;
+
+  // ash::ShelfModelObserver:
+  void ShelfItemDelegateChanged(const ash::ShelfID& id,
+                                ash::ShelfItemDelegate* old_delegate,
+                                ash::ShelfItemDelegate* delegate) override;
 
   DISALLOW_COPY_AND_ASSIGN(AppWindowLauncherController);
 };

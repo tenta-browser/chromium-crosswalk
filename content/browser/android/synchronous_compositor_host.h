@@ -14,9 +14,9 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
-#include "cc/output/compositor_frame.h"
-#include "content/common/input/input_event_ack_state.h"
+#include "components/viz/common/quads/compositor_frame.h"
 #include "content/public/browser/android/synchronous_compositor.h"
+#include "content/public/common/input_event_ack_state.h"
 #include "ui/gfx/geometry/scroll_offset.h"
 #include "ui/gfx/geometry/size_f.h"
 
@@ -54,8 +54,9 @@ class SynchronousCompositorHost : public SynchronousCompositor {
       const gfx::Rect& viewport_rect_for_tile_priority,
       const gfx::Transform& transform_for_tile_priority) override;
   bool DemandDrawSw(SkCanvas* canvas) override;
-  void ReturnResources(uint32_t compositor_frame_sink_id,
-                       const cc::ReturnedResourceArray& resources) override;
+  void ReturnResources(
+      uint32_t layer_tree_frame_sink_id,
+      const std::vector<viz::ReturnedResource>& resources) override;
   void SetMemoryPolicy(size_t bytes_limit) override;
   void DidChangeRootLayerScrollOffset(
       const gfx::ScrollOffset& root_offset) override;
@@ -68,7 +69,7 @@ class SynchronousCompositorHost : public SynchronousCompositor {
 
   // Called by SynchronousCompositorBrowserFilter.
   int routing_id() const { return routing_id_; }
-  void UpdateFrameMetaData(cc::CompositorFrameMetadata frame_metadata);
+  void UpdateFrameMetaData(viz::CompositorFrameMetadata frame_metadata);
   void ProcessCommonParams(const SyncCompositorCommonRendererParams& params);
 
   SynchronousCompositorClient* client() { return client_; }
@@ -81,7 +82,7 @@ class SynchronousCompositorHost : public SynchronousCompositor {
 
   SynchronousCompositorHost(RenderWidgetHostViewAndroid* rwhva,
                             bool use_in_proc_software_draw);
-  void CompositorFrameSinkCreated();
+  void LayerTreeFrameSinkCreated();
   bool DemandDrawSwInProc(SkCanvas* canvas);
   void SetSoftwareDrawSharedMemoryIfNeeded(size_t stride, size_t buffer_size);
   void SendZeroMemory();

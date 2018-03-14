@@ -4,6 +4,7 @@
 
 package org.chromium.ui.base;
 
+import android.annotation.SuppressLint;
 import android.content.ClipData;
 import android.content.ClipDescription;
 import android.content.ClipboardManager;
@@ -14,10 +15,10 @@ import android.text.style.CharacterStyle;
 import android.text.style.ParagraphStyle;
 import android.text.style.UpdateAppearance;
 
+import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.ui.R;
 import org.chromium.ui.widget.Toast;
@@ -27,6 +28,7 @@ import org.chromium.ui.widget.Toast;
  */
 @JNINamespace("ui")
 public class Clipboard implements ClipboardManager.OnPrimaryClipChangedListener {
+    @SuppressLint("StaticFieldLeak")
     private static Clipboard sInstance;
 
     // Necessary for coercing clipboard contents to text if they require
@@ -72,7 +74,7 @@ public class Clipboard implements ClipboardManager.OnPrimaryClipChangedListener 
      */
     @SuppressWarnings("javadoc")
     @CalledByNative
-    public String getCoercedText() {
+    private String getCoercedText() {
         // getPrimaryClip() has been observed to throw unexpected exceptions for some devices (see
         // crbug.com/654802 and b/31501780)
         try {
@@ -85,7 +87,6 @@ public class Clipboard implements ClipboardManager.OnPrimaryClipChangedListener 
         }
     }
 
-    // TODO(ctzsm): Remove this method after Android API is updated
     private boolean hasStyleSpan(Spanned spanned) {
         Class<?>[] styleClasses = {
                 CharacterStyle.class, ParagraphStyle.class, UpdateAppearance.class};
@@ -97,6 +98,24 @@ public class Clipboard implements ClipboardManager.OnPrimaryClipChangedListener 
         return false;
     }
 
+    public String clipDataToHtmlText(ClipData clipData) {
+        ClipDescription description = clipData.getDescription();
+        if (description.hasMimeType(ClipDescription.MIMETYPE_TEXT_HTML)) {
+            return clipData.getItemAt(0).getHtmlText();
+        }
+
+        if (description.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN)) {
+            CharSequence text = clipData.getItemAt(0).getText();
+            if (!(text instanceof Spanned)) return null;
+            Spanned spanned = (Spanned) text;
+            if (hasStyleSpan(spanned)) {
+                return ApiCompatibilityUtils.toHtml(
+                        spanned, Html.TO_HTML_PARAGRAPH_LINES_CONSECUTIVE);
+            }
+        }
+        return null;
+    }
+
     /**
      * Gets the HTML text of top item on the primary clip on the Android clipboard.
      *
@@ -104,26 +123,15 @@ public class Clipboard implements ClipboardManager.OnPrimaryClipChangedListener 
      *         text or no entries on the primary clip.
      */
     @CalledByNative
-    public String getHTMLText() {
+    private String getHTMLText() {
         // getPrimaryClip() has been observed to throw unexpected exceptions for some devices (see
         // crbug/654802 and b/31501780)
         try {
             ClipData clipData = mClipboardManager.getPrimaryClip();
-            ClipDescription description = clipData.getDescription();
-            if (description.hasMimeType(ClipDescription.MIMETYPE_TEXT_HTML)) {
-                return clipData.getItemAt(0).getHtmlText();
-            }
-
-            if (description.hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN)) {
-                Spanned spanned = (Spanned) clipData.getItemAt(0).getText();
-                if (hasStyleSpan(spanned)) {
-                    return Html.toHtml(spanned);
-                }
-            }
+            return clipDataToHtmlText(clipData);
         } catch (Exception e) {
             return null;
         }
-        return null;
     }
 
     /**
@@ -133,7 +141,6 @@ public class Clipboard implements ClipboardManager.OnPrimaryClipChangedListener 
      * the specified string.
      * @param text  will become the content of the clipboard's primary clip
      */
-    @SuppressFBWarnings("UPM_UNCALLED_PRIVATE_METHOD")
     @CalledByNative
     public void setText(final String text) {
         setPrimaryClipNoException(ClipData.newPlainText("text", text));
@@ -146,7 +153,6 @@ public class Clipboard implements ClipboardManager.OnPrimaryClipChangedListener 
      * @param html  The HTML content to be pasted to the clipboard.
      * @param text  Plain-text representation of the HTML content.
      */
-    @SuppressFBWarnings("UPM_UNCALLED_PRIVATE_METHOD")
     @CalledByNative
     private void setHTMLText(final String html, final String text) {
         setPrimaryClipNoException(ClipData.newHtmlText("html", text, html));
@@ -156,7 +162,6 @@ public class Clipboard implements ClipboardManager.OnPrimaryClipChangedListener 
      * Clears the Clipboard Primary clip.
      *
      */
-    @SuppressFBWarnings("UPM_UNCALLED_PRIVATE_METHOD")
     @CalledByNative
     private void clear() {
         setPrimaryClipNoException(ClipData.newPlainText(null, null));

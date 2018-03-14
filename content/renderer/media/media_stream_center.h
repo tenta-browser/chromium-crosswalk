@@ -10,7 +10,6 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "content/common/content_export.h"
-#include "content/common/media/media_stream_options.h"
 #include "third_party/WebKit/public/platform/WebMediaStream.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamCenter.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
@@ -23,8 +22,7 @@ class WebMediaStreamCenterClient;
 namespace content {
 class PeerConnectionDependencyFactory;
 
-class CONTENT_EXPORT MediaStreamCenter
-    : NON_EXPORTED_BASE(public blink::WebMediaStreamCenter) {
+class CONTENT_EXPORT MediaStreamCenter : public blink::WebMediaStreamCenter {
  public:
   // TODO(miu): Remove these constructor args. They are no longer used.
   // http://crbug.com/577874
@@ -48,22 +46,11 @@ class CONTENT_EXPORT MediaStreamCenter
   void DidDisableMediaStreamTrack(
       const blink::WebMediaStreamTrack& track) override;
 
-  void DidStopLocalMediaStream(const blink::WebMediaStream& stream) override;
-
-  bool DidStopMediaStreamTrack(
-      const blink::WebMediaStreamTrack& track) override;
-
   blink::WebAudioSourceProvider* CreateWebAudioSourceFromMediaStreamTrack(
       const blink::WebMediaStreamTrack& track) override;
 
-  void DidCreateMediaStream(blink::WebMediaStream& stream) override;
-
-  bool DidAddMediaStreamTrack(const blink::WebMediaStream& stream,
-                              const blink::WebMediaStreamTrack& track) override;
-
-  bool DidRemoveMediaStreamTrack(
-      const blink::WebMediaStream& stream,
-      const blink::WebMediaStreamTrack& track) override;
+  void DidStopMediaStreamSource(
+      const blink::WebMediaStreamSource& web_source) override;
 
   DISALLOW_COPY_AND_ASSIGN(MediaStreamCenter);
 };

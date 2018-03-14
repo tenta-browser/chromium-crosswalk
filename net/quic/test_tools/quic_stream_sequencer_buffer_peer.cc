@@ -4,8 +4,9 @@
 
 #include "net/quic/test_tools/quic_stream_sequencer_buffer_peer.h"
 
-#include "net/quic/core/quic_flags.h"
+#include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_logging.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/test/gtest_util.h"
 
 typedef net::QuicStreamSequencerBuffer::BufferBlock BufferBlock;
@@ -138,5 +139,8 @@ bool QuicStreamSequencerBufferPeer::IsBufferAllocated() {
   return buffer_->blocks_ != nullptr;
 }
 
+size_t QuicStreamSequencerBufferPeer::block_count() {
+  return buffer_->blocks_count_;
+}
 }  // namespace test
 }  // namespace net

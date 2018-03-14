@@ -34,8 +34,10 @@ QuickOpen.FilteredListWidget = class extends UI.VBox {
     this._progressElement = this._bottomElementsContainer.createChild('div', 'filtered-list-widget-progress');
     this._progressBarElement = this._progressElement.createChild('div', 'filtered-list-widget-progress-bar');
 
+    /** @type {!UI.ListModel<number>} */
+    this._items = new UI.ListModel();
     /** @type {!UI.ListControl<number>} */
-    this._list = new UI.ListControl(this, UI.ListMode.EqualHeightItems);
+    this._list = new UI.ListControl(this._items, this, UI.ListMode.EqualHeightItems);
     this._itemElementsContainer = this._list.element;
     this._itemElementsContainer.classList.add('container');
     this._bottomElementsContainer.appendChild(this._itemElementsContainer);
@@ -49,24 +51,6 @@ QuickOpen.FilteredListWidget = class extends UI.VBox {
     this._prefix = '';
     this._provider = provider;
     this._queryChangedCallback = queryChangedCallback;
-  }
-
-  /**
-   * @param {string} query
-   * @return {!RegExp}
-   */
-  static filterRegex(query) {
-    const toEscape = String.regexSpecialCharacters();
-    var regexString = '';
-    for (var i = 0; i < query.length; ++i) {
-      var c = query.charAt(i);
-      if (toEscape.indexOf(c) !== -1)
-        c = '\\' + c;
-      if (i)
-        regexString += '[^\\0' + c + ']*';
-      regexString += c;
-    }
-    return new RegExp(regexString, 'i');
   }
 
   /**
@@ -150,6 +134,8 @@ QuickOpen.FilteredListWidget = class extends UI.VBox {
   }
 
   _attachProvider() {
+    this._items.replaceAll([]);
+    this._list.invalidateItemHeight();
     if (this._provider) {
       this._provider.setRefreshCallback(this._itemsLoaded.bind(this, this._provider));
       this._provider.attach();
@@ -172,7 +158,6 @@ QuickOpen.FilteredListWidget = class extends UI.VBox {
    * @override
    */
   wasShown() {
-    this._list.invalidateItemHeight();
     this._attachProvider();
   }
 
@@ -199,7 +184,6 @@ QuickOpen.FilteredListWidget = class extends UI.VBox {
    * @param {!Event} event
    */
   _onEnter(event) {
-    event.preventDefault();
     if (!this._provider)
       return;
     var selectedIndexInProvider = this._provider.itemCount() ? this._list.selectedItem() : null;
@@ -344,7 +328,7 @@ QuickOpen.FilteredListWidget = class extends UI.VBox {
     var query = this._provider.rewriteQuery(this._cleanValue());
     this._query = query;
 
-    var filterRegex = query ? QuickOpen.FilteredListWidget.filterRegex(query) : null;
+    var filterRegex = query ? String.filterRegex(query) : null;
 
     var filteredItems = [];
 
@@ -432,7 +416,7 @@ QuickOpen.FilteredListWidget = class extends UI.VBox {
     filteredItems = [].concat(bestItems, overflowItems, filteredItems);
     this._updateNotFoundMessage(!!filteredItems.length);
     var oldHeight = this._list.element.offsetHeight;
-    this._list.replaceAllItems(filteredItems);
+    this._items.replaceAll(filteredItems);
     if (filteredItems.length)
       this._list.selectItem(filteredItems[0]);
     if (this._list.element.offsetHeight !== oldHeight)

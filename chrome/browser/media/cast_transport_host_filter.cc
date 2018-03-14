@@ -8,12 +8,17 @@
 
 #include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/browser/browser_process.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/common/cast_messages.h"
 #include "components/net_log/chrome_net_log.h"
 #include "content/public/browser/browser_thread.h"
-#include "device/power_save_blocker/power_save_blocker.h"
+#include "content/public/common/service_manager_connection.h"
 #include "media/cast/net/cast_transport.h"
+#include "mojo/public/cpp/bindings/interface_request.h"
+#include "net/url_request/url_request_context.h"
+#include "services/device/public/interfaces/constants.mojom.h"
+#include "services/device/public/interfaces/wake_lock_provider.mojom.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 namespace {
 
@@ -100,12 +105,23 @@ class RtcpClient : public media::cast::RtcpObserver {
   DISALLOW_COPY_AND_ASSIGN(RtcpClient);
 };
 
+void BindConnectorRequest(
+    service_manager::mojom::ConnectorRequest connector_request) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  DCHECK(content::ServiceManagerConnection::GetForProcess());
+
+  content::ServiceManagerConnection::GetForProcess()
+      ->GetConnector()
+      ->BindConnectorRequest(std::move(connector_request));
+}
+
 }  // namespace
 
 namespace cast {
 
-CastTransportHostFilter::CastTransportHostFilter()
+CastTransportHostFilter::CastTransportHostFilter(Profile* profile)
     : BrowserMessageFilter(CastMsgStart),
+      url_request_context_getter_(profile->GetRequestContext()),
       weak_factory_(this) {}
 
 CastTransportHostFilter::~CastTransportHostFilter() {}
@@ -148,17 +164,10 @@ void CastTransportHostFilter::OnNew(int32_t channel_id,
                                     const net::IPEndPoint& local_end_point,
                                     const net::IPEndPoint& remote_end_point,
                                     const base::DictionaryValue& options) {
-  if (!power_save_blocker_) {
+  if (id_map_.IsEmpty()) {
     DVLOG(1) << ("Preventing the application from being suspended while one or "
                  "more transports are active for Cast Streaming.");
-    power_save_blocker_.reset(new device::PowerSaveBlocker(
-        device::PowerSaveBlocker::kPowerSaveBlockPreventAppSuspension,
-        device::PowerSaveBlocker::kReasonOther,
-        "Cast is streaming content to a remote receiver",
-        content::BrowserThread::GetTaskRunnerForThread(
-            content::BrowserThread::UI),
-        content::BrowserThread::GetTaskRunnerForThread(
-            content::BrowserThread::FILE)));
+    GetWakeLock()->RequestWakeLock();
   }
 
   if (id_map_.Lookup(channel_id)) {
@@ -167,8 +176,9 @@ void CastTransportHostFilter::OnNew(int32_t channel_id,
 
   std::unique_ptr<media::cast::UdpTransport> udp_transport(
       new media::cast::UdpTransport(
-          g_browser_process->net_log(), base::ThreadTaskRunnerHandle::Get(),
-          local_end_point, remote_end_point,
+          url_request_context_getter_->GetURLRequestContext()->net_log(),
+          base::ThreadTaskRunnerHandle::Get(), local_end_point,
+          remote_end_point,
           base::Bind(&CastTransportHostFilter::OnStatusChanged,
                      weak_factory_.GetWeakPtr(), channel_id)));
   udp_transport->SetUdpOptions(options);
@@ -201,10 +211,10 @@ void CastTransportHostFilter::OnDelete(int32_t channel_id) {
   stream_id_map_.erase(channel_id);
 
   if (id_map_.IsEmpty()) {
-    DVLOG_IF(1, power_save_blocker_) <<
-        ("Releasing the block on application suspension since no transports "
-         "are active anymore for Cast Streaming.");
-    power_save_blocker_.reset();
+    DVLOG(1)
+        << ("Releasing the block on application suspension since no transports "
+            "are active anymore for Cast Streaming.");
+    GetWakeLock()->CancelWakeLock();
   }
 }
 
@@ -388,6 +398,37 @@ void CastTransportHostFilter::OnCastRemotingSenderEvents(
   // interface.
   Send(new CastMsg_RawEvents(channel_id,
                              std::vector<media::cast::PacketEvent>(), events));
+}
+
+device::mojom::WakeLock* CastTransportHostFilter::GetWakeLock() {
+  // Here is a lazy binding, and will not reconnect after connection error.
+  if (wake_lock_)
+    return wake_lock_.get();
+
+  device::mojom::WakeLockRequest request = mojo::MakeRequest(&wake_lock_);
+
+  DCHECK(content::ServiceManagerConnection::GetForProcess());
+
+  service_manager::mojom::ConnectorRequest connector_request;
+  auto connector = service_manager::Connector::Create(&connector_request);
+  content::BrowserThread::PostTask(
+      content::BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&BindConnectorRequest, std::move(connector_request)));
+
+  device::mojom::WakeLockProviderPtr wake_lock_provider;
+  connector->BindInterface(device::mojom::kServiceName,
+                           mojo::MakeRequest(&wake_lock_provider));
+  wake_lock_provider->GetWakeLockWithoutContext(
+      device::mojom::WakeLockType::kPreventAppSuspension,
+      device::mojom::WakeLockReason::kOther,
+      "Cast is streaming content to a remote receiver", std::move(request));
+  return wake_lock_.get();
+}
+
+void CastTransportHostFilter::InitializeNoOpWakeLockForTesting() {
+  // Initializes |wake_lock_| to make GetWakeLock() short-circuit out of its
+  // own lazy initialization process.
+  mojo::MakeRequest(&wake_lock_);
 }
 
 }  // namespace cast

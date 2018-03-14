@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "public/platform/modules/media_capabilities/WebMediaCapabilitiesInfo.h"
 
 namespace blink {
@@ -15,9 +15,7 @@ namespace blink {
 class ScriptPromiseResolver;
 
 // Implementation of the MediaCapabilitiesInfo interface.
-class MediaCapabilitiesInfo final
-    : public GarbageCollectedFinalized<MediaCapabilitiesInfo>,
-      public ScriptWrappable {
+class MediaCapabilitiesInfo final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -28,8 +26,6 @@ class MediaCapabilitiesInfo final
   bool supported() const;
   bool smooth() const;
   bool powerEfficient() const;
-
-  DECLARE_VIRTUAL_TRACE();
 
  private:
   MediaCapabilitiesInfo() = delete;

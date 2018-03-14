@@ -2,12 +2,54 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import fnmatch
 import json
 import os
 import re
 import subprocess
 import sys
 
+# TODO(dcheng): It's kind of horrible that this is copy and pasted from
+# presubmit_canned_checks.py, but it's far easier than any of the alternatives.
+def _ReportErrorFileAndLine(filename, line_num, dummy_line):
+  """Default error formatter for _FindNewViolationsOfRule."""
+  return '%s:%s' % (filename, line_num)
+
+
+class MockCannedChecks(object):
+  def _FindNewViolationsOfRule(self, callable_rule, input_api,
+                               source_file_filter=None,
+                               error_formatter=_ReportErrorFileAndLine):
+    """Find all newly introduced violations of a per-line rule (a callable).
+
+    Arguments:
+      callable_rule: a callable taking a file extension and line of input and
+        returning True if the rule is satisfied and False if there was a
+        problem.
+      input_api: object to enumerate the affected files.
+      source_file_filter: a filter to be passed to the input api.
+      error_formatter: a callable taking (filename, line_number, line) and
+        returning a formatted error string.
+
+    Returns:
+      A list of the newly-introduced violations reported by the rule.
+    """
+    errors = []
+    for f in input_api.AffectedFiles(include_deletes=False,
+                                     file_filter=source_file_filter):
+      # For speed, we do two passes, checking first the full file.  Shelling out
+      # to the SCM to determine the changed region can be quite expensive on
+      # Win32.  Assuming that most files will be kept problem-free, we can
+      # skip the SCM operations most of the time.
+      extension = str(f.LocalPath()).rsplit('.', 1)[-1]
+      if all(callable_rule(extension, line) for line in f.NewContents()):
+        continue  # No violation found in full text: can skip considering diff.
+
+      for line_num, line in f.ChangedContents():
+        if not callable_rule(extension, line):
+          errors.append(error_formatter(f.LocalPath(), line_num, line))
+
+    return errors
 
 class MockInputApi(object):
   """Mock class for the InputApi class.
@@ -17,6 +59,8 @@ class MockInputApi(object):
   """
 
   def __init__(self):
+    self.canned_checks = MockCannedChecks()
+    self.fnmatch = fnmatch
     self.json = json
     self.re = re
     self.os_path = os.path
@@ -27,6 +71,7 @@ class MockInputApi(object):
     self.files = []
     self.is_committing = False
     self.change = MockChange([])
+    self.presubmit_local_path = os.path.dirname(__file__)
 
   def AffectedFiles(self, file_filter=None, include_deletes=False):
     return self.files
@@ -38,7 +83,7 @@ class MockInputApi(object):
     return self.files
 
   def PresubmitLocalPath(self):
-    return os.path.dirname(__file__)
+    return self.presubmit_local_path
 
   def ReadFile(self, filename, mode='rU'):
     if hasattr(filename, 'AbsoluteLocalPath'):
@@ -86,6 +131,12 @@ class MockOutputApi(object):
       MockOutputApi.PresubmitResult.__init__(self, message, items, long_text)
       self.type = 'promptOrNotify'
 
+  def __init__(self):
+    self.more_cc = []
+
+  def AppendCC(self, more_cc):
+    self.more_cc.extend(more_cc)
+
 
 class MockFile(object):
   """Mock class for the File class.
@@ -94,13 +145,14 @@ class MockFile(object):
   MockInputApi for presubmit unittests.
   """
 
-  def __init__(self, local_path, new_contents, action='A'):
+  def __init__(self, local_path, new_contents, old_contents=None, action='A'):
     self._local_path = local_path
     self._new_contents = new_contents
     self._changed_contents = [(i + 1, l) for i, l in enumerate(new_contents)]
     self._action = action
     self._scm_diff = "--- /dev/null\n+++ %s\n@@ -0,0 +1,%d @@\n" % (local_path,
       len(new_contents))
+    self._old_contents = old_contents
     for l in new_contents:
       self._scm_diff += "+%s\n" % l
 
@@ -121,6 +173,9 @@ class MockFile(object):
 
   def GenerateScmDiff(self):
     return self._scm_diff
+
+  def OldContents(self):
+    return self._old_contents
 
   def rfind(self, p):
     """os.path.basename is called on MockFile so we need an rfind method."""

@@ -26,46 +26,65 @@
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "net/http/http_request_headers.h"
 
+namespace policy {
+
 namespace {
+
 // The maximum number of successive retries.
 const int kMaxNumRetries = 1;
 
 // String constant defining the url tail we upload system logs to.
-const char* kSystemLogUploadUrlTail = "/upload";
+constexpr char kSystemLogUploadUrlTail[] = "/upload";
+
+// The cutoff point (in bytes) after which log contents are ignored.
+const size_t kLogCutoffSize = 50 * 1024 * 1024;  // 50 MiB.
 
 // The file names of the system logs to upload.
 // Note: do not add anything to this list without checking for PII in the file.
 const char* const kSystemLogFileNames[] = {
-    "/var/log/bios_info.txt", "/var/log/chrome/chrome",
+    "/var/log/bios_info.txt",
+    "/var/log/chrome/chrome", "/var/log/chrome/chrome.PREVIOUS",
     "/var/log/eventlog.txt",  "/var/log/platform_info.txt",
     "/var/log/messages",      "/var/log/messages.1",
     "/var/log/net.log",       "/var/log/net.1.log",
     "/var/log/ui/ui.LATEST",  "/var/log/update_engine.log"};
 
+std::string ReadAndAnonymizeLogFile(feedback::AnonymizerTool* anonymizer,
+                                    const base::FilePath& file_path) {
+  std::string data;
+  if (!base::ReadFileToStringWithMaxSize(file_path, &data, kLogCutoffSize) &&
+      data.empty()) {
+    SYSLOG(ERROR) << "Failed to read the system log file from the disk "
+                  << file_path.value();
+  }
+  // We want to remove the last line completely because PII data might be cut in
+  // half (anonymizer might not recognize it).
+  if (!data.empty() && data.back() != '\n') {
+    size_t pos = data.find_last_of('\n');
+    data.erase(pos != std::string::npos ? pos + 1 : 0);
+    data += "... [truncated]\n";
+  }
+  return SystemLogUploader::RemoveSensitiveData(anonymizer, data);
+}
+
 // Reads the system log files as binary files, anonymizes data, stores the files
 // as pairs (file name, data) and returns. Called on blocking thread.
-std::unique_ptr<policy::SystemLogUploader::SystemLogs> ReadFiles() {
-  std::unique_ptr<policy::SystemLogUploader::SystemLogs> system_logs(
-      new policy::SystemLogUploader::SystemLogs());
+std::unique_ptr<SystemLogUploader::SystemLogs> ReadFiles() {
+  auto system_logs = std::make_unique<SystemLogUploader::SystemLogs>();
   feedback::AnonymizerTool anonymizer;
-  for (auto* file_path : kSystemLogFileNames) {
+  for (const char* file_path : kSystemLogFileNames) {
     if (!base::PathExists(base::FilePath(file_path)))
       continue;
-    std::string data = std::string();
-    if (!base::ReadFileToString(base::FilePath(file_path), &data)) {
-      SYSLOG(ERROR) << "Failed to read the system log file from the disk "
-                    << file_path << std::endl;
-    }
     system_logs->push_back(std::make_pair(
         file_path,
-        policy::SystemLogUploader::RemoveSensitiveData(&anonymizer, data)));
+        ReadAndAnonymizeLogFile(&anonymizer, base::FilePath(file_path))));
   }
   return system_logs;
 }
 
 // An implementation of the |SystemLogUploader::Delegate|, that is used to
 // create an upload job and load system logs from the disk.
-class SystemLogDelegate : public policy::SystemLogUploader::Delegate {
+class SystemLogDelegate : public SystemLogUploader::Delegate {
  public:
   explicit SystemLogDelegate(
       scoped_refptr<base::SequencedTaskRunner> task_runner);
@@ -74,9 +93,9 @@ class SystemLogDelegate : public policy::SystemLogUploader::Delegate {
   // SystemLogUploader::Delegate:
   void LoadSystemLogs(const LogUploadCallback& upload_callback) override;
 
-  std::unique_ptr<policy::UploadJob> CreateUploadJob(
+  std::unique_ptr<UploadJob> CreateUploadJob(
       const GURL& upload_url,
-      policy::UploadJob::Delegate* delegate) override;
+      UploadJob::Delegate* delegate) override;
 
  private:
   // TaskRunner used for scheduling upload the upload task.
@@ -96,14 +115,13 @@ void SystemLogDelegate::LoadSystemLogs(
   // Run ReadFiles() in the thread that interacts with the file system and
   // return system logs to |upload_callback| on the current thread.
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                     base::TaskPriority::BACKGROUND),
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
       base::Bind(&ReadFiles), upload_callback);
 }
 
-std::unique_ptr<policy::UploadJob> SystemLogDelegate::CreateUploadJob(
+std::unique_ptr<UploadJob> SystemLogDelegate::CreateUploadJob(
     const GURL& upload_url,
-    policy::UploadJob::Delegate* delegate) {
+    UploadJob::Delegate* delegate) {
   chromeos::DeviceOAuth2TokenService* device_oauth2_token_service =
       chromeos::DeviceOAuth2TokenServiceFactory::Get();
 
@@ -113,17 +131,17 @@ std::unique_ptr<policy::UploadJob> SystemLogDelegate::CreateUploadJob(
       device_oauth2_token_service->GetRobotAccountId();
 
   SYSLOG(INFO) << "Creating upload job for system log";
-  return std::unique_ptr<policy::UploadJob>(new policy::UploadJobImpl(
+  return std::make_unique<UploadJobImpl>(
       upload_url, robot_account_id, device_oauth2_token_service,
       system_request_context, delegate,
-      base::WrapUnique(new policy::UploadJobImpl::RandomMimeBoundaryGenerator),
-      task_runner_));
+      std::make_unique<UploadJobImpl::RandomMimeBoundaryGenerator>(),
+      task_runner_);
 }
 
 // Returns the system log upload frequency.
 base::TimeDelta GetUploadFrequency() {
   base::TimeDelta upload_frequency(base::TimeDelta::FromMilliseconds(
-      policy::SystemLogUploader::kDefaultUploadDelayMs));
+      SystemLogUploader::kDefaultUploadDelayMs));
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kSystemLogUploadFrequency)) {
     std::string string_value =
@@ -138,13 +156,11 @@ base::TimeDelta GetUploadFrequency() {
 }
 
 std::string GetUploadUrl() {
-  return policy::BrowserPolicyConnector::GetDeviceManagementUrl() +
+  return BrowserPolicyConnector::GetDeviceManagementUrl() +
          kSystemLogUploadUrlTail;
 }
 
 }  // namespace
-
-namespace policy {
 
 // Determines the time between log uploads.
 const int64_t SystemLogUploader::kDefaultUploadDelayMs =
@@ -177,7 +193,7 @@ SystemLogUploader::SystemLogUploader(
       upload_enabled_(false),
       weak_factory_(this) {
   if (!syslog_delegate_)
-    syslog_delegate_.reset(new SystemLogDelegate(task_runner));
+    syslog_delegate_ = std::make_unique<SystemLogDelegate>(task_runner);
   DCHECK(syslog_delegate_);
   SYSLOG(INFO) << "Creating system log uploader.";
 
@@ -234,7 +250,7 @@ void SystemLogUploader::OnFailure(UploadJob::ErrorCode error_code) {
 
 // static
 std::string SystemLogUploader::RemoveSensitiveData(
-    feedback::AnonymizerTool* const anonymizer,
+    feedback::AnonymizerTool* anonymizer,
     const std::string& data) {
   return anonymizer->Anonymize(data);
 }
@@ -248,18 +264,17 @@ void SystemLogUploader::RefreshUploadSettings() {
   // If trusted values are not available, register this function to be called
   // back when they are available.
   chromeos::CrosSettings* settings = chromeos::CrosSettings::Get();
-  if (chromeos::CrosSettingsProvider::TRUSTED !=
-      settings->PrepareTrustedValues(
-          base::Bind(&SystemLogUploader::RefreshUploadSettings,
-                     weak_factory_.GetWeakPtr()))) {
+  auto trust_status = settings->PrepareTrustedValues(base::Bind(
+      &SystemLogUploader::RefreshUploadSettings, weak_factory_.GetWeakPtr()));
+  if (trust_status != chromeos::CrosSettingsProvider::TRUSTED)
     return;
-  }
 
   // CrosSettings are trusted - we want to use the last trusted values, by
   // default do not upload system logs.
   if (!settings->GetBoolean(chromeos::kSystemLogUploadEnabled,
-                            &upload_enabled_))
+                            &upload_enabled_)) {
     upload_enabled_ = false;
+  }
 }
 
 void SystemLogUploader::UploadSystemLogs(
@@ -326,10 +341,11 @@ void SystemLogUploader::ScheduleNextSystemLogUpload(base::TimeDelta frequency) {
   // Ensure that we never have more than one pending delayed task
   // (InvalidateWeakPtrs() will cancel any pending log uploads).
   weak_factory_.InvalidateWeakPtrs();
-  task_runner_->PostDelayedTask(FROM_HERE,
-                                base::Bind(&SystemLogUploader::StartLogUpload,
-                                           weak_factory_.GetWeakPtr()),
-                                delay);
+  task_runner_->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&SystemLogUploader::StartLogUpload,
+                     weak_factory_.GetWeakPtr()),
+      delay);
 }
 
 }  // namespace policy

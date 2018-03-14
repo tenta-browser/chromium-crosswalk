@@ -4,23 +4,28 @@
 
 #include "chrome/browser/ui/views/frame/immersive_mode_controller_ash.h"
 
+#include "ash/frame/caption_buttons/frame_caption_button.h"
+#include "ash/frame/caption_buttons/frame_caption_button_container_view.h"
+#include "ash/public/cpp/immersive/immersive_fullscreen_controller_test_api.h"
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/root_window_controller.h"
 #include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/immersive_fullscreen_controller_test_api.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller_test.h"
+#include "chrome/browser/ui/tabs/tab_features.h"
+#include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
+#include "chrome/browser/ui/views/frame/browser_non_client_frame_view_ash.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller_ash.h"
 #include "chrome/browser/ui/views/frame/test_with_browser_view.h"
 #include "chrome/browser/ui/views/frame/top_container_view.h"
-#include "chrome/browser/ui/views/tabs/tab_strip.h"
+#include "chrome/browser/ui/views/tabs/tab_strip_impl.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "ui/aura/window.h"
 #include "ui/views/controls/webview/webview.h"
@@ -259,7 +264,10 @@ TEST_F(ImmersiveModeControllerAshTest, TabAndBrowserFullscreen) {
 TEST_F(ImmersiveModeControllerAshTest, LayeredSpinners) {
   AddTab(browser(), GURL("about:blank"));
 
-  TabStrip* tabstrip = browser_view()->tabstrip();
+  // This test only works with the TabStripImpl.
+  TabStripImpl* tabstrip = browser_view()->tabstrip()->AsTabStripImpl();
+  if (!tabstrip)
+    return;
 
   // Immersive fullscreen starts out disabled; layers are OK.
   EXPECT_FALSE(browser_view()->GetWidget()->IsFullscreen());
@@ -273,77 +281,4 @@ TEST_F(ImmersiveModeControllerAshTest, LayeredSpinners) {
 
   ToggleFullscreen();
   EXPECT_TRUE(tabstrip->CanPaintThrobberToLayer());
-}
-
-class ImmersiveModeControllerAshTestHostedApp
-    : public ImmersiveModeControllerAshTest {
- public:
-  ImmersiveModeControllerAshTestHostedApp()
-      : ImmersiveModeControllerAshTest(Browser::TYPE_POPUP, true) {}
-  ~ImmersiveModeControllerAshTestHostedApp() override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ImmersiveModeControllerAshTestHostedApp);
-};
-
-// Test the layout and visibility of the TopContainerView and web contents when
-// a hosted app is put into immersive fullscreen.
-TEST_F(ImmersiveModeControllerAshTestHostedApp, Layout) {
-  // Add a tab because the browser starts out without any tabs at all.
-  AddTab(browser(), GURL("about:blank"));
-
-  TabStrip* tabstrip = browser_view()->tabstrip();
-  ToolbarView* toolbar = browser_view()->toolbar();
-  views::WebView* contents_web_view =
-      browser_view()->GetContentsWebViewForTest();
-  views::View* top_container = browser_view()->top_container();
-
-  // Immersive fullscreen starts out disabled.
-  ASSERT_FALSE(browser_view()->GetWidget()->IsFullscreen());
-  ASSERT_FALSE(controller()->IsEnabled());
-
-  // The tabstrip and toolbar are not visible for hosted apps.
-  EXPECT_FALSE(tabstrip->visible());
-  EXPECT_FALSE(toolbar->visible());
-
-  // The window header should be above the web contents.
-  int header_height = GetBoundsInWidget(contents_web_view).y();
-
-  ToggleFullscreen();
-  EXPECT_TRUE(browser_view()->GetWidget()->IsFullscreen());
-  EXPECT_TRUE(controller()->IsEnabled());
-  EXPECT_FALSE(controller()->IsRevealed());
-
-  // Entering immersive fullscreen should make the web contents flush with the
-  // top of the widget. The popup browser type doesn't support tabstrip and
-  // toolbar feature, thus invisible.
-  EXPECT_FALSE(tabstrip->visible());
-  EXPECT_FALSE(toolbar->visible());
-  EXPECT_TRUE(top_container->GetVisibleBounds().IsEmpty());
-  EXPECT_EQ(0, GetBoundsInWidget(contents_web_view).y());
-
-  // Reveal the window header.
-  AttemptReveal();
-
-  // The tabstrip and toolbar should still be hidden and the web contents should
-  // still be flush with the top of the screen.
-  EXPECT_FALSE(tabstrip->visible());
-  EXPECT_FALSE(toolbar->visible());
-  EXPECT_EQ(0, GetBoundsInWidget(contents_web_view).y());
-
-  // During an immersive reveal, the window header should be painted to the
-  // TopContainerView. The TopContainerView should be flush with the top of the
-  // widget and have |header_height|.
-  gfx::Rect top_container_bounds_in_widget(GetBoundsInWidget(top_container));
-  EXPECT_EQ(0, top_container_bounds_in_widget.y());
-  EXPECT_EQ(header_height, top_container_bounds_in_widget.height());
-
-  // Exit immersive fullscreen. The web contents should be back below the window
-  // header.
-  ToggleFullscreen();
-  EXPECT_FALSE(browser_view()->GetWidget()->IsFullscreen());
-  EXPECT_FALSE(controller()->IsEnabled());
-  EXPECT_FALSE(tabstrip->visible());
-  EXPECT_FALSE(toolbar->visible());
-  EXPECT_EQ(header_height, GetBoundsInWidget(contents_web_view).y());
 }

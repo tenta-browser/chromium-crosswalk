@@ -6,12 +6,14 @@
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -20,9 +22,11 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
+#include "components/autofill/core/browser/autofill_experiments.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/data_driven_test.h"
 #include "components/autofill/core/browser/form_structure.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "content/public/common/content_switches.h"
 #include "url/gurl.h"
 
@@ -39,20 +43,35 @@ const base::FilePath::CharType kTestName[] = FILE_PATH_LITERAL("heuristics");
 GURL HTMLToDataURI(const std::string& html) {
   // GURL requires data URLs to be UTF-8 and will fail below if it's not.
   CHECK(base::IsStringUTF8(html)) << "Input file is not UTF-8.";
-  return GURL(std::string("data:text/html;charset=utf-8,") + html);
+
+  // Strip `\n`, `\t`, `\r` from |html| to match old `data:` URL behavior.
+  std::string stripped_html;
+  for (const auto& character : html) {
+    if (character == '\n' || character == '\t' || character == '\r')
+      continue;
+    stripped_html.push_back(character);
+  }
+  return GURL(std::string("data:text/html;charset=utf-8,") + stripped_html);
 }
 
 const base::FilePath& GetTestDataDir() {
   CR_DEFINE_STATIC_LOCAL(base::FilePath, dir, ());
-  if (dir.empty())
-    PathService::Get(chrome::DIR_TEST_DATA, &dir);
+  if (dir.empty()) {
+    PathService::Get(base::DIR_SOURCE_ROOT, &dir);
+    dir = dir.AppendASCII("components");
+    dir = dir.AppendASCII("test");
+    dir = dir.AppendASCII("data");
+  }
   return dir;
 }
 
 const std::vector<base::FilePath> GetTestFiles() {
   base::FilePath dir;
   CHECK(PathService::Get(base::DIR_SOURCE_ROOT, &dir));
-  dir = dir.AppendASCII("chrome/test/data/autofill")
+  dir = dir.AppendASCII("components")
+            .AppendASCII("test")
+            .AppendASCII("data")
+            .AppendASCII("autofill")
             .Append(kTestName)
             .AppendASCII("input");
   base::FileEnumerator input_files(dir, false, base::FileEnumerator::FILES);
@@ -68,6 +87,16 @@ const std::vector<base::FilePath> GetTestFiles() {
 #endif  // defined(OS_MACOSX)
 
   return files;
+}
+
+const std::set<base::FilePath::StringType>& GetFailingTestNames() {
+  // TODO(crbug.com/789944): Reenable these tests.
+  static std::set<base::FilePath::StringType>* failing_test_names =
+      new std::set<base::FilePath::StringType>{
+          FILE_PATH_LITERAL("067_register_rei.com.html"),
+          FILE_PATH_LITERAL("074_register_threadless.com.html"),
+      };
+  return *failing_test_names;
 }
 
 }  // namespace
@@ -87,7 +116,7 @@ class FormStructureBrowserTest
   void SetUpCommandLine(base::CommandLine* command_line) override {
     // Suppress most output logs because we can't really control the output for
     // arbitrary test sites.
-    command_line->AppendSwitch(switches::kDisableLogging);
+    command_line->AppendSwitchASCII(switches::kLoggingLevel, "2");
   }
 
   // DataDrivenTest:
@@ -98,11 +127,14 @@ class FormStructureBrowserTest
       const std::vector<std::unique_ptr<FormStructure>>& forms);
 
  private:
+  base::test::ScopedFeatureList feature_list_;
   DISALLOW_COPY_AND_ASSIGN(FormStructureBrowserTest);
 };
 
 FormStructureBrowserTest::FormStructureBrowserTest()
     : DataDrivenTest(GetTestDataDir()) {
+  feature_list_.InitAndDisableFeature(
+      autofill::features::kAutofillEnforceMinRequiredFieldsForUpload);
 }
 
 FormStructureBrowserTest::~FormStructureBrowserTest() {
@@ -145,7 +177,10 @@ std::string FormStructureBrowserTest::FormStructuresToString(
 IN_PROC_BROWSER_TEST_P(FormStructureBrowserTest, DataDrivenHeuristics) {
   // Prints the path of the test to be executed.
   LOG(INFO) << GetParam().MaybeAsASCII();
-  RunOneDataDrivenTest(GetParam(), GetOutputDirectory(kTestName));
+  bool is_expected_to_pass =
+      !base::ContainsKey(GetFailingTestNames(), GetParam().BaseName().value());
+  RunOneDataDrivenTest(GetParam(), GetOutputDirectory(kTestName),
+                       is_expected_to_pass);
 }
 
 INSTANTIATE_TEST_CASE_P(AllForms,

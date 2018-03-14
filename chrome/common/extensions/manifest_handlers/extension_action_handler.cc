@@ -13,7 +13,6 @@
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/feature_switch.h"
 #include "extensions/common/file_util.h"
 #include "extensions/common/manifest_constants.h"
 
@@ -27,16 +26,26 @@ ExtensionActionHandler::~ExtensionActionHandler() {
 
 bool ExtensionActionHandler::Parse(Extension* extension,
                                    base::string16* error) {
-  const char* key = NULL;
-  const char* error_key = NULL;
+  const char* key = nullptr;
+  const char* error_key = nullptr;
+  if (extension->manifest()->HasKey(manifest_keys::kAction)) {
+    key = manifest_keys::kAction;
+    error_key = manifest_errors::kInvalidAction;
+  }
+
   if (extension->manifest()->HasKey(manifest_keys::kPageAction)) {
+    if (key != nullptr) {
+      // An extension can only have one action.
+      *error = base::ASCIIToUTF16(manifest_errors::kOneUISurfaceOnly);
+      return false;
+    }
     key = manifest_keys::kPageAction;
     error_key = manifest_errors::kInvalidPageAction;
   }
 
   if (extension->manifest()->HasKey(manifest_keys::kBrowserAction)) {
-    if (key != NULL) {
-      // An extension cannot have both browser and page actions.
+    if (key != nullptr) {
+      // An extension can only have one action.
       *error = base::ASCIIToUTF16(manifest_errors::kOneUISurfaceOnly);
       return false;
     }
@@ -45,7 +54,7 @@ bool ExtensionActionHandler::Parse(Extension* extension,
   }
 
   if (key) {
-    const base::DictionaryValue* dict = NULL;
+    const base::DictionaryValue* dict = nullptr;
     if (!extension->manifest()->GetDictionary(key, &dict)) {
       *error = base::ASCIIToUTF16(error_key);
       return false;
@@ -56,13 +65,21 @@ bool ExtensionActionHandler::Parse(Extension* extension,
     if (!action_info)
       return false;  // Failed to parse extension action definition.
 
-    if (key == manifest_keys::kPageAction)
-      ActionInfo::SetPageActionInfo(extension, action_info.release());
-    else
-      ActionInfo::SetBrowserActionInfo(extension, action_info.release());
+    if (key == manifest_keys::kAction) {
+      ActionInfo::SetExtensionActionInfo(extension, action_info.release());
+    } else {
+      if (dict->HasKey(manifest_keys::kActionDefaultState)) {
+        *error =
+            base::ASCIIToUTF16(manifest_errors::kDefaultStateShouldNotBeSet);
+        return false;
+      }
+
+      if (key == manifest_keys::kPageAction)
+        ActionInfo::SetPageActionInfo(extension, action_info.release());
+      else
+        ActionInfo::SetBrowserActionInfo(extension, action_info.release());
+    }
   } else {  // No key, used for synthesizing an action for extensions with none.
-    if (!FeatureSwitch::extension_action_redesign()->IsEnabled())
-      return true;  // Do nothing if the switch is off.
     if (Manifest::IsComponentLocation(extension->location()))
       return true;  // Don't synthesize actions for component extensions.
     if (extension->was_installed_by_default())

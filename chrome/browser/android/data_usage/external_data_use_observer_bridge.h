@@ -24,8 +24,6 @@ class Time;
 class TimeTicks;
 }
 
-namespace chrome {
-
 namespace android {
 
 class DataUseTabModel;
@@ -127,10 +125,6 @@ class ExternalDataUseObserverBridge {
   DISALLOW_COPY_AND_ASSIGN(ExternalDataUseObserverBridge);
 };
 
-bool RegisterExternalDataUseObserver(JNIEnv* env);
-
 }  // namespace android
-
-}  // namespace chrome
 
 #endif  // CHROME_BROWSER_ANDROID_DATA_USAGE_EXTERNAL_DATA_USE_OBSERVER_BRIDGE_H_

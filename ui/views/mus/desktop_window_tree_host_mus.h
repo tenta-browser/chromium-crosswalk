@@ -16,7 +16,6 @@
 #include "ui/views/mus/mus_export.h"
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host.h"
 #include "ui/views/widget/widget.h"
-#include "ui/views/widget/widget_observer.h"
 
 namespace wm {
 class CursorManager;
@@ -27,16 +26,14 @@ namespace views {
 class VIEWS_MUS_EXPORT DesktopWindowTreeHostMus
     : public DesktopWindowTreeHost,
       public MusClientObserver,
-      public WidgetObserver,
       public aura::FocusSynchronizerObserver,
       public aura::WindowObserver,
       public aura::WindowTreeHostMus {
  public:
   DesktopWindowTreeHostMus(
+      aura::WindowTreeHostMusInitParams init_params,
       internal::NativeWidgetDelegate* native_widget_delegate,
-      DesktopNativeWidgetAura* desktop_native_widget_aura,
-      const cc::FrameSinkId& frame_sink_id,
-      const std::map<std::string, std::vector<uint8_t>>* mus_properties);
+      DesktopNativeWidgetAura* desktop_native_widget_aura);
   ~DesktopWindowTreeHostMus() override;
 
   // Called when the window was deleted on the server.
@@ -51,6 +48,10 @@ class VIEWS_MUS_EXPORT DesktopWindowTreeHostMus
   void SendClientAreaToServer();
   void SendHitTestMaskToServer();
 
+  // Returns true if the FocusClient associated with our window is installed on
+  // the FocusSynchronizer.
+  bool IsFocusClientInstalledOnFocusSynchronizer() const;
+
   // Helper function to get the scale factor.
   float GetScaleFactor() const;
 
@@ -63,7 +64,7 @@ class VIEWS_MUS_EXPORT DesktopWindowTreeHostMus
   void Init(aura::Window* content_window,
             const Widget::InitParams& params) override;
   void OnNativeWidgetCreated(const Widget::InitParams& params) override;
-  void OnNativeWidgetActivationChanged(bool active) override;
+  void OnActiveWindowChanged(bool active) override;
   void OnWidgetInitDone() override;
   std::unique_ptr<corewm::Tooltip> CreateTooltip() override;
   std::unique_ptr<aura::client::DragDropClient> CreateDragDropClient(
@@ -85,7 +86,7 @@ class VIEWS_MUS_EXPORT DesktopWindowTreeHostMus
   gfx::Rect GetRestoredBounds() const override;
   std::string GetWorkspace() const override;
   gfx::Rect GetWorkAreaBoundsInScreen() const override;
-  void SetShape(std::unique_ptr<SkRegion> native_region) override;
+  void SetShape(std::unique_ptr<Widget::ShapeRects> native_shape) override;
   void Activate() override;
   void Deactivate() override;
   bool IsActive() const override;
@@ -127,9 +128,6 @@ class VIEWS_MUS_EXPORT DesktopWindowTreeHostMus
 
   // MusClientObserver:
   void OnWindowManagerFrameValuesChanged() override;
-
-  // WidgetObserver:
-  void OnWidgetActivationChanged(Widget* widget, bool active) override;
 
   // aura::FocusSynchronizerObserver:
   void OnActiveFocusClientChanged(aura::client::FocusClient* focus_client,

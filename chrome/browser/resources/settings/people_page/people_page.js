@@ -10,12 +10,10 @@ Polymer({
   is: 'settings-people-page',
 
   behaviors: [
-    settings.RouteObserverBehavior,
-    I18nBehavior,
-    WebUIListenerBehavior,
-// <if expr="chromeos">
-    LockStateBehavior,
-// </if>
+    settings.RouteObserverBehavior, I18nBehavior, WebUIListenerBehavior,
+    // <if expr="chromeos">
+    CrPngBehavior, LockStateBehavior,
+    // </if>
   ],
 
   properties: {
@@ -65,26 +63,18 @@ Polymer({
      */
     deleteProfile_: Boolean,
 
-// <if expr="not chromeos">
+    // <if expr="not chromeos">
     /** @private */
     showImportDataDialog_: {
       type: Boolean,
       value: false,
     },
-// </if>
-
-    /** @private {!settings.SyncBrowserProxy} */
-    syncBrowserProxy_: {
-      type: Object,
-      value: function() {
-        return settings.SyncBrowserProxyImpl.getInstance();
-      },
-    },
+    // </if>
 
     /** @private */
     showDisconnectDialog_: Boolean,
 
-// <if expr="chromeos">
+    // <if expr="chromeos">
     /**
      * True if fingerprint settings should be displayed on this machine.
      * @private
@@ -96,62 +86,79 @@ Polymer({
       },
       readOnly: true,
     },
-// </if>
+    // </if>
 
     /** @private {!Map<string, string>} */
     focusConfig_: {
       type: Object,
       value: function() {
         var map = new Map();
-        map.set(
-            settings.Route.SYNC.path, '#sync-status .subpage-arrow');
-// <if expr="not chromeos">
-        map.set(
-            settings.Route.MANAGE_PROFILE.path,
-            '#picture-subpage-trigger .subpage-arrow');
-// </if>
-// <if expr="chromeos">
-        map.set(
-            settings.Route.CHANGE_PICTURE.path,
-            '#picture-subpage-trigger .subpage-arrow');
-        map.set(
-            settings.Route.LOCK_SCREEN.path, '#lockScreenSubpageTrigger');
-        map.set(
-            settings.Route.ACCOUNTS.path,
-            '#manage-other-people-subpage-trigger .subpage-arrow');
-// </if>
+        if (settings.routes.SYNC)
+          map.set(settings.routes.SYNC.path, '#sync-status .subpage-arrow');
+        // <if expr="not chromeos">
+        if (settings.routes.MANAGE_PROFILE) {
+          map.set(
+              settings.routes.MANAGE_PROFILE.path,
+              '#picture-subpage-trigger .subpage-arrow');
+        }
+        // </if>
+        // <if expr="chromeos">
+        if (settings.routes.CHANGE_PICTURE) {
+          map.set(
+              settings.routes.CHANGE_PICTURE.path,
+              '#picture-subpage-trigger .subpage-arrow');
+        }
+        if (settings.routes.LOCK_SCREEN) {
+          map.set(
+              settings.routes.LOCK_SCREEN.path,
+              '#lock-screen-subpage-trigger .subpage-arrow');
+        }
+        if (settings.routes.ACCOUNTS) {
+          map.set(
+              settings.routes.ACCOUNTS.path,
+              '#manage-other-people-subpage-trigger .subpage-arrow');
+        }
+        // </if>
         return map;
       },
     },
   },
 
+  /** @private {?settings.SyncBrowserProxy} */
+  syncBrowserProxy_: null,
+
   /** @override */
   attached: function() {
     var profileInfoProxy = settings.ProfileInfoBrowserProxyImpl.getInstance();
     profileInfoProxy.getProfileInfo().then(this.handleProfileInfo_.bind(this));
-    this.addWebUIListener('profile-info-changed',
-                          this.handleProfileInfo_.bind(this));
+    this.addWebUIListener(
+        'profile-info-changed', this.handleProfileInfo_.bind(this));
 
     profileInfoProxy.getProfileManagesSupervisedUsers().then(
         this.handleProfileManagesSupervisedUsers_.bind(this));
-    this.addWebUIListener('profile-manages-supervised-users-changed',
-                          this.handleProfileManagesSupervisedUsers_.bind(this));
+    this.addWebUIListener(
+        'profile-manages-supervised-users-changed',
+        this.handleProfileManagesSupervisedUsers_.bind(this));
 
-    this.addWebUIListener('profile-stats-count-ready',
-                          this.handleProfileStatsCount_.bind(this));
+    this.addWebUIListener(
+        'profile-stats-count-ready', this.handleProfileStatsCount_.bind(this));
 
+    this.syncBrowserProxy_ = settings.SyncBrowserProxyImpl.getInstance();
     this.syncBrowserProxy_.getSyncStatus().then(
         this.handleSyncStatus_.bind(this));
-    this.addWebUIListener('sync-status-changed',
-                          this.handleSyncStatus_.bind(this));
+    this.addWebUIListener(
+        'sync-status-changed', this.handleSyncStatus_.bind(this));
   },
 
   /** @protected */
   currentRouteChanged: function() {
     this.showImportDataDialog_ =
-        settings.getCurrentRoute() == settings.Route.IMPORT_DATA;
+        settings.getCurrentRoute() == settings.routes.IMPORT_DATA;
 
-    if (settings.getCurrentRoute() == settings.Route.SIGN_OUT) {
+    if (settings.getCurrentRoute() == settings.routes.SIGN_OUT) {
+      // <if expr="not chromeos">
+      settings.ProfileInfoBrowserProxyImpl.getInstance().getProfileStatsCount();
+      // </if>
       // If the sync status has not been fetched yet, optimistically display
       // the disconnect dialog. There is another check when the sync status is
       // fetched. The dialog will be closed then the user is not signed in.
@@ -159,16 +166,16 @@ Polymer({
         settings.navigateToPreviousRoute();
       } else {
         this.showDisconnectDialog_ = true;
-        this.async(function() {
+        this.async(() => {
           this.$$('#disconnectDialog').showModal();
-        }.bind(this));
+        });
       }
     } else if (this.showDisconnectDialog_) {
       this.$$('#disconnectDialog').close();
     }
   },
 
-// <if expr="chromeos">
+  // <if expr="chromeos">
   /** @private */
   getPasswordState_: function(hasPin, enableScreenLock) {
     if (!enableScreenLock)
@@ -177,7 +184,7 @@ Polymer({
       return this.i18n('lockScreenPinOrPassword');
     return this.i18n('lockScreenPasswordOnly');
   },
-// </if>
+  // </if>
 
   /**
    * Handler for when the profile's icon and name is updated.
@@ -186,6 +193,18 @@ Polymer({
    */
   handleProfileInfo_: function(info) {
     this.profileName_ = info.name;
+    /**
+     * Extract first frame from image by creating a single frame PNG using
+     * url as input if base64 encoded and potentially animated.
+     */
+    // <if expr="chromeos">
+    if (info.iconUrl.startsWith('data:image/png;base64')) {
+      this.profileIconUrl_ =
+          CrPngBehavior.convertImageSequenceToPng([info.iconUrl]);
+      return;
+    }
+    // </if>
+
     this.profileIconUrl_ = info.iconUrl;
   },
 
@@ -205,13 +224,15 @@ Polymer({
    */
   handleProfileStatsCount_: function(count) {
     this.deleteProfileWarning_ = (count > 0) ?
-        (count == 1) ?
-            loadTimeData.getStringF('deleteProfileWarningWithCountsSingular',
-                                    this.syncStatus.signedInUsername) :
-            loadTimeData.getStringF('deleteProfileWarningWithCountsPlural',
-                                    count, this.syncStatus.signedInUsername) :
-        loadTimeData.getStringF('deleteProfileWarningWithoutCounts',
-                                this.syncStatus.signedInUsername);
+        (count == 1) ? loadTimeData.getStringF(
+                           'deleteProfileWarningWithCountsSingular',
+                           this.syncStatus.signedInUsername) :
+                       loadTimeData.getStringF(
+                           'deleteProfileWarningWithCountsPlural', count,
+                           this.syncStatus.signedInUsername) :
+        loadTimeData.getStringF(
+            'deleteProfileWarningWithoutCounts',
+            this.syncStatus.signedInUsername);
   },
 
   /**
@@ -223,11 +244,6 @@ Polymer({
     if (!this.syncStatus && syncStatus && !syncStatus.signedIn)
       chrome.metricsPrivate.recordUserAction('Signin_Impression_FromSettings');
 
-// <if expr="not chromeos">
-    if (syncStatus.signedIn)
-      settings.ProfileInfoBrowserProxyImpl.getInstance().getProfileStatsCount();
-// </if>
-
     if (!syncStatus.signedIn && this.showDisconnectDialog_)
       this.$$('#disconnectDialog').close();
 
@@ -236,20 +252,20 @@ Polymer({
 
   /** @private */
   onPictureTap_: function() {
-// <if expr="chromeos">
-    settings.navigateTo(settings.Route.CHANGE_PICTURE);
-// </if>
-// <if expr="not chromeos">
-    settings.navigateTo(settings.Route.MANAGE_PROFILE);
-// </if>
+    // <if expr="chromeos">
+    settings.navigateTo(settings.routes.CHANGE_PICTURE);
+    // </if>
+    // <if expr="not chromeos">
+    settings.navigateTo(settings.routes.MANAGE_PROFILE);
+    // </if>
   },
 
-// <if expr="not chromeos">
+  // <if expr="not chromeos">
   /** @private */
   onProfileNameTap_: function() {
-    settings.navigateTo(settings.Route.MANAGE_PROFILE);
+    settings.navigateTo(settings.routes.MANAGE_PROFILE);
   },
-// </if>
+  // </if>
 
   /** @private */
   onSigninTap_: function() {
@@ -259,16 +275,16 @@ Polymer({
   /** @private */
   onDisconnectClosed_: function() {
     this.showDisconnectDialog_ = false;
-    this.$$('#disconnectButton').focus();
+    cr.ui.focusWithoutInk(assert(this.$$('#disconnectButton')));
 
-    if (settings.getCurrentRoute() == settings.Route.SIGN_OUT)
+    if (settings.getCurrentRoute() == settings.routes.SIGN_OUT)
       settings.navigateToPreviousRoute();
     this.fire('signout-dialog-closed');
   },
 
   /** @private */
   onDisconnectTap_: function() {
-    settings.navigateTo(settings.Route.SIGN_OUT);
+    settings.navigateTo(settings.routes.SIGN_OUT);
   },
 
   /** @private */
@@ -285,9 +301,9 @@ Polymer({
     // browser is closed after the sign out. Otherwise, the navigation will be
     // finshed during session restore if the browser is closed before the async
     // callback executed.
-    listenOnce(this, 'signout-dialog-closed', function() {
+    listenOnce(this, 'signout-dialog-closed', () => {
       this.syncBrowserProxy_.signOut(deleteProfile);
-    }.bind(this));
+    });
 
     this.$$('#disconnectDialog').close();
   },
@@ -305,75 +321,77 @@ Polymer({
         this.syncBrowserProxy_.startSignIn();
         break;
       case settings.StatusAction.SIGNOUT_AND_SIGNIN:
-// <if expr="chromeos">
+        // <if expr="chromeos">
         this.syncBrowserProxy_.attemptUserExit();
-// </if>
-// <if expr="not chromeos">
+        // </if>
+        // <if expr="not chromeos">
         if (this.syncStatus.domain)
-          settings.navigateTo(settings.Route.SIGN_OUT);
+          settings.navigateTo(settings.routes.SIGN_OUT);
         else {
           // Silently sign the user out without deleting their profile and
           // prompt them to sign back in.
           this.syncBrowserProxy_.signOut(false);
           this.syncBrowserProxy_.startSignIn();
         }
-// </if>
+        // </if>
         break;
       case settings.StatusAction.UPGRADE_CLIENT:
-        settings.navigateTo(settings.Route.ABOUT);
+        settings.navigateTo(settings.routes.ABOUT);
         break;
       case settings.StatusAction.ENTER_PASSPHRASE:
+      case settings.StatusAction.CONFIRM_SYNC_SETTINGS:
       case settings.StatusAction.NO_ACTION:
       default:
-        settings.navigateTo(settings.Route.SYNC);
+        settings.navigateTo(settings.routes.SYNC);
     }
   },
 
-// <if expr="chromeos">
-  /** @private */
-  onConfigureLockTap_: function() {
-    settings.navigateTo(settings.Route.LOCK_SCREEN);
+  // <if expr="chromeos">
+  /**
+   * @param {!Event} e
+   * @private
+   */
+  onConfigureLockTap_: function(e) {
+    // Navigating to the lock screen will always open the password prompt
+    // dialog, so prevent the end of the tap event to focus what is underneath
+    // it, which takes focus from the dialog.
+    e.preventDefault();
+    settings.navigateTo(settings.routes.LOCK_SCREEN);
   },
-// </if>
+  // </if>
 
   /** @private */
   onManageOtherPeople_: function() {
-// <if expr="not chromeos">
+    // <if expr="not chromeos">
     this.syncBrowserProxy_.manageOtherPeople();
-// </if>
-// <if expr="chromeos">
-    settings.navigateTo(settings.Route.ACCOUNTS);
-// </if>
+    // </if>
+    // <if expr="chromeos">
+    settings.navigateTo(settings.routes.ACCOUNTS);
+    // </if>
   },
 
-  /** @private */
-  onManageSupervisedUsers_: function() {
-    window.open(loadTimeData.getString('supervisedUsersUrl'));
-  },
-
-// <if expr="not chromeos">
+  // <if expr="not chromeos">
   /**
    * @private
    * @param {string} domain
    * @return {string}
    */
   getDomainHtml_: function(domain) {
-    var innerSpan =
-        '<span id="managed-by-domain-name">' + domain + '</span>';
+    var innerSpan = '<span id="managed-by-domain-name">' + domain + '</span>';
     return loadTimeData.getStringF('domainManagedProfile', innerSpan);
   },
 
   /** @private */
   onImportDataTap_: function() {
-    settings.navigateTo(settings.Route.IMPORT_DATA);
+    settings.navigateTo(settings.routes.IMPORT_DATA);
   },
 
   /** @private */
   onImportDataDialogClosed_: function() {
     settings.navigateToPreviousRoute();
-    this.$.importDataDialogTrigger.focus();
+    cr.ui.focusWithoutInk(assert(this.$.importDataDialogTrigger));
   },
-// </if>
+  // </if>
 
   /**
    * @private
@@ -381,13 +399,13 @@ Polymer({
    * @return {string}
    */
   getDisconnectExplanationHtml_: function(domain) {
-// <if expr="not chromeos">
+    // <if expr="not chromeos">
     if (domain) {
       return loadTimeData.getStringF(
           'syncDisconnectManagedProfileExplanation',
           '<span id="managed-by-domain-name">' + domain + '</span>');
     }
-// </if>
+    // </if>
     return loadTimeData.getString('syncDisconnectExplanation');
   },
 
@@ -409,8 +427,9 @@ Polymer({
    *     error, there is an action associated with it.
    */
   isSyncStatusActionable_: function(syncStatus) {
-    return !!syncStatus && !syncStatus.managed && (!syncStatus.hasError ||
-        syncStatus.statusAction != settings.StatusAction.NO_ACTION);
+    return !!syncStatus && !syncStatus.managed &&
+        (!syncStatus.hasError ||
+         syncStatus.statusAction != settings.StatusAction.NO_ACTION);
   },
 
   /**
@@ -445,10 +464,10 @@ Polymer({
 
   /**
    * @param {string} iconUrl
-   * @return {string} A CSS imageset for multiple scale factors.
+   * @return {string} A CSS image-set for multiple scale factors.
    * @private
    */
-  getIconImageset_: function(iconUrl) {
+  getIconImageSet_: function(iconUrl) {
     return cr.icon.getImage(iconUrl);
   },
 

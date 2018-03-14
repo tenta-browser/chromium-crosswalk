@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/android/important_file_writer_android.h"
-
 #include <string>
 
 #include "base/android/jni_string.h"
@@ -14,10 +12,11 @@
 namespace base {
 namespace android {
 
-static jboolean WriteFileAtomically(JNIEnv* env,
-                                    const JavaParamRef<jclass>& /* clazz */,
-                                    const JavaParamRef<jstring>& file_name,
-                                    const JavaParamRef<jbyteArray>& data) {
+static jboolean JNI_ImportantFileWriterAndroid_WriteFileAtomically(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& /* clazz */,
+    const JavaParamRef<jstring>& file_name,
+    const JavaParamRef<jbyteArray>& data) {
   // This is called on the UI thread during shutdown to save tab data, so
   // needs to enable IO.
   base::ThreadRestrictions::ScopedAllowIO allow_io;
@@ -32,10 +31,6 @@ static jboolean WriteFileAtomically(JNIEnv* env,
       path, native_data_string);
   env->ReleaseByteArrayElements(data, native_data, JNI_ABORT);
   return result;
-}
-
-bool RegisterImportantFileWriterAndroid(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace android

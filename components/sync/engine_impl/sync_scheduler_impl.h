@@ -15,7 +15,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "components/sync/engine/polling_constants.h"
@@ -32,7 +32,7 @@ namespace syncer {
 class BackoffDelayProvider;
 struct ModelNeutralState;
 
-class SyncSchedulerImpl : public SyncScheduler, public base::NonThreadSafe {
+class SyncSchedulerImpl : public SyncScheduler {
  public:
   // |name| is a display string to identify the syncer thread.  Takes
   // |ownership of |syncer| and |delay_provider|.
@@ -49,28 +49,28 @@ class SyncSchedulerImpl : public SyncScheduler, public base::NonThreadSafe {
   void ScheduleConfiguration(const ConfigurationParams& params) override;
   void ScheduleClearServerData(const ClearParams& params) override;
   void Stop() override;
-  void ScheduleLocalNudge(
-      ModelTypeSet types,
-      const tracked_objects::Location& nudge_location) override;
+  void ScheduleLocalNudge(ModelTypeSet types,
+                          const base::Location& nudge_location) override;
   void ScheduleLocalRefreshRequest(
       ModelTypeSet types,
-      const tracked_objects::Location& nudge_location) override;
+      const base::Location& nudge_location) override;
   void ScheduleInvalidationNudge(
       ModelType type,
       std::unique_ptr<InvalidationInterface> invalidation,
-      const tracked_objects::Location& nudge_location) override;
+      const base::Location& nudge_location) override;
   void ScheduleInitialSyncNudge(ModelType model_type) override;
   void SetNotificationsEnabled(bool notifications_enabled) override;
 
   void OnCredentialsUpdated() override;
-  void OnConnectionStatusChange() override;
+  void OnConnectionStatusChange(
+      net::NetworkChangeNotifier::ConnectionType type) override;
 
   // SyncCycle::Delegate implementation.
   void OnThrottled(const base::TimeDelta& throttle_duration) override;
   void OnTypesThrottled(ModelTypeSet types,
                         const base::TimeDelta& throttle_duration) override;
   void OnTypesBackedOff(ModelTypeSet types) override;
-  bool IsCurrentlyThrottled() override;
+  bool IsAnyThrottleOrBackoff() override;
   void OnReceivedShortPollIntervalUpdate(
       const base::TimeDelta& new_interval) override;
   void OnReceivedLongPollIntervalUpdate(
@@ -83,8 +83,8 @@ class SyncSchedulerImpl : public SyncScheduler, public base::NonThreadSafe {
   void OnReceivedGuRetryDelay(const base::TimeDelta& delay) override;
   void OnReceivedMigrationRequest(ModelTypeSet types) override;
 
-  // Returns true if the client is currently in exponential backoff.
-  bool IsBackingOff() const;
+  bool IsGlobalThrottle() const;
+  bool IsGlobalBackoff() const;
 
   // Changes the default delay between nudge cycles. Model-type specific
   // overrides will still apply. This is made public so that nudge cycles can be
@@ -148,6 +148,13 @@ class SyncSchedulerImpl : public SyncScheduler, public base::NonThreadSafe {
   void AdjustPolling(PollAdjustType type);
 
   // Helper to restart pending_wakeup_timer_.
+  // This function need to be called in 3 conditions, backoff/throttling
+  // happens, unbackoff/unthrottling happens and after |PerformDelayedNudge|
+  // runs.
+  // This function is for scheduling unbackoff/unthrottling jobs, and the
+  // poriority is, global unbackoff/unthrottling job first, if there is no
+  //  global backoff/throttling, then try to schedule types
+  // unbackoff/unthrottling job.
   void RestartWaiting();
 
   // Determines if we're allowed to contact the server right now.
@@ -161,13 +168,13 @@ class SyncSchedulerImpl : public SyncScheduler, public base::NonThreadSafe {
   // then post a delayed task to run it.  It may also choose to drop the job or
   // save it for later, depending on the scheduler's current state.
   void ScheduleNudgeImpl(const base::TimeDelta& delay,
-                         const tracked_objects::Location& nudge_location);
+                         const base::Location& nudge_location);
 
   // Helper to signal listeners about changed retry time.
   void NotifyRetryTime(base::Time retry_time);
 
   // Helper to signal listeners about changed throttled or backed off types.
-  void NotifyBlockedTypesChanged(ModelTypeSet types);
+  void NotifyBlockedTypesChanged();
 
   // Looks for pending work and, if it finds any, run this work at "canary"
   // priority.
@@ -216,6 +223,8 @@ class SyncSchedulerImpl : public SyncScheduler, public base::NonThreadSafe {
   // is the most flexible place to do this bookkeeping.
   void UpdateNudgeTimeRecords(ModelTypeSet types);
 
+  bool IsEarlierThanCurrentPendingJob(const base::TimeDelta& delay);
+
   // Used for logging.
   const std::string name_;
 
@@ -240,6 +249,8 @@ class SyncSchedulerImpl : public SyncScheduler, public base::NonThreadSafe {
 
   std::unique_ptr<BackoffDelayProvider> delay_provider_;
 
+  // TODO(gangwu): http://crbug.com/714868 too many timers in this class, try to
+  // reduce them.
   // The event that will wake us up.
   // When the whole client got throttling or backoff, we will delay this timer
   // as well.
@@ -282,6 +293,8 @@ class SyncSchedulerImpl : public SyncScheduler, public base::NonThreadSafe {
 
   // Dictates if the scheduler should wait for authentication to happen or not.
   bool ignore_auth_credentials_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   base::WeakPtrFactory<SyncSchedulerImpl> weak_ptr_factory_;
 

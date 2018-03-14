@@ -4,7 +4,6 @@
 
 #include "components/sync/model/model_type_store.h"
 
-#include "base/memory/ptr_util.h"
 #include "components/sync/model_impl/accumulating_metadata_change_list.h"
 #include "components/sync/model_impl/model_type_store_impl.h"
 #include "components/sync/model_impl/passthrough_metadata_change_list.h"
@@ -18,12 +17,10 @@ void ModelTypeStore::CreateInMemoryStoreForTest(ModelType type,
 }
 
 // static
-void ModelTypeStore::CreateStore(
-    ModelType type,
-    const std::string& path,
-    scoped_refptr<base::SequencedTaskRunner> blocking_task_runner,
-    const InitCallback& callback) {
-  ModelTypeStoreImpl::CreateStore(type, path, blocking_task_runner, callback);
+void ModelTypeStore::CreateStore(const std::string& path,
+                                 ModelType type,
+                                 const InitCallback& callback) {
+  ModelTypeStoreImpl::CreateStore(type, path, callback);
 }
 
 ModelTypeStore::~ModelTypeStore() {}
@@ -31,7 +28,7 @@ ModelTypeStore::~ModelTypeStore() {}
 // static
 std::unique_ptr<MetadataChangeList>
 ModelTypeStore::WriteBatch::CreateMetadataChangeList() {
-  return base::MakeUnique<AccumulatingMetadataChangeList>();
+  return std::make_unique<AccumulatingMetadataChangeList>();
 }
 
 ModelTypeStore::WriteBatch::WriteBatch(ModelTypeStore* store) : store_(store) {}
@@ -50,7 +47,7 @@ void ModelTypeStore::WriteBatch::DeleteData(const std::string& id) {
 MetadataChangeList* ModelTypeStore::WriteBatch::GetMetadataChangeList() {
   if (!metadata_change_list_) {
     metadata_change_list_ =
-        base::MakeUnique<PassthroughMetadataChangeList>(store_, this);
+        std::make_unique<PassthroughMetadataChangeList>(store_, this);
   }
   return metadata_change_list_.get();
 }

@@ -58,6 +58,11 @@ import copy
 import os
 import os.path
 import re
+import sys
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', '..',
+                             'third_party', 'blink', 'tools'))
+from blinkpy.common.name_style_converter import NameStyleConverter
 
 
 def _json5_load(lines):
@@ -89,6 +94,14 @@ def _merge_doc(doc, doc2):
         _merge_dict("data")
 
 
+def _is_valid(valid_values, value):
+    if type(value) == str and all([type(i) == str for i in valid_values]):
+        return any([(value == valid) or (re.match("^" + valid + "$", value) is not None)
+                    for valid in valid_values])
+    else:
+        return value in valid_values
+
+
 class Json5File(object):
     def __init__(self, file_paths, doc, default_metadata=None, default_parameters=None):
         self.file_paths = file_paths
@@ -99,7 +112,7 @@ class Json5File(object):
         self._process(doc)
 
     @classmethod
-    def load_from_files(cls, file_paths, default_metadata, default_parameters=None):
+    def load_from_files(cls, file_paths, default_metadata=None, default_parameters=None):
         merged_doc = dict()
         for path in file_paths:
             assert path.endswith(".json5")
@@ -155,6 +168,7 @@ class Json5File(object):
         if not self.parameters:
             entry.update(item)
             return entry
+        assert "name" not in self.parameters, "The parameter 'name' is reserved, use a different name."
         entry["name"] = item.pop("name")
         # Validate parameters if it's specified.
         for key, value in item.items():
@@ -162,8 +176,9 @@ class Json5File(object):
                 raise Exception(
                     "Unknown parameter: '%s'\nKnown params: %s" %
                     (key, self.parameters.keys()))
-            if self.parameters[key]:
-                self._validate_parameter(self.parameters[key], value)
+            assert self.parameters[key] is not None, \
+                "Specification for parameter 'key' cannot be None. Use {} instead."
+            self._validate_parameter(self.parameters[key], value)
             entry[key] = value
         return entry
 
@@ -179,12 +194,12 @@ class Json5File(object):
         # validate each item in the value list against valid_values.
         if valid_type == "list" and type(valid_values[0]) is not list:
             for item in value:
-                if item not in valid_values:
-                    raise Exception("Unknown value: '%s'\nKnown values: %s" %
-                                    (item, valid_values))
-        elif value not in valid_values:
-            raise Exception("Unknown value: '%s'\nKnown values: %s" %
-                            (value, valid_values))
+                if not _is_valid(valid_values, item):
+                    raise Exception("Unknown value: '%s'\nValid values: %s, \
+                        Please change your value to a valid value" % (item, valid_values))
+        elif not _is_valid(valid_values, value):
+            raise Exception("Unknown value: '%s'\nValid values: %s, \
+                Please change your value to a valid value" % (value, valid_values))
 
 
 class Writer(object):
@@ -192,12 +207,12 @@ class Writer(object):
     class_name = None
     default_metadata = None
     default_parameters = None
+    snake_case_source_files = False
 
     def __init__(self, json5_files):
+        self._input_files = copy.copy(json5_files)
         self._outputs = {}  # file_name -> generator
         self.gperf_path = None
-        if isinstance(json5_files, basestring):
-            json5_files = [json5_files]
         if json5_files:
             self.json5_file = Json5File.load_from_files(json5_files,
                                                         self.default_metadata,
@@ -227,6 +242,12 @@ class Writer(object):
     def set_gperf_path(self, gperf_path):
         self.gperf_path = gperf_path
 
+    def get_file_basename(self, name):
+        # Use NameStyleConverter instead of name_utilities for consistency.
+        if self.snake_case_source_files:
+            return NameStyleConverter(name).to_snake_case()
+        return name
+
 
 class Maker(object):
     def __init__(self, writer_class):
@@ -240,10 +261,17 @@ class Maker(object):
         parser.add_argument("--gperf", default="gperf")
         parser.add_argument("--developer_dir", help="Path to Xcode.")
         parser.add_argument("--output_dir", default=os.getcwd())
+        # TODO(tkent): Remove the option after the great mv. crbug.com/760462
+        parser.add_argument("--snake-case-source-files",
+                            action="store_true", default=False)
         args = parser.parse_args()
 
         if args.developer_dir:
             os.environ["DEVELOPER_DIR"] = args.developer_dir
+
+        # TODO(tkent): This is an ugly hack. Remove the hack after the great mv.
+        # crbug.com/760462
+        Writer.snake_case_source_files = args.snake_case_source_files
 
         writer = self._writer_class(args.files)
         writer.set_gperf_path(args.gperf)

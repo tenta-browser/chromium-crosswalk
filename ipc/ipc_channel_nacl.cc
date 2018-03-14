@@ -67,6 +67,9 @@ bool ReadDataOnReaderThread(int pipe, MessageContents* contents) {
 
 }  // namespace
 
+// static
+constexpr size_t Channel::kMaximumMessageSize;
+
 class ChannelNacl::ReaderThreadRunner
     : public base::DelegateSimpleThread::Delegate {
  public:
@@ -199,9 +202,9 @@ bool ChannelNacl::Send(Message* message) {
            << " with type " << message->type();
   std::unique_ptr<Message> message_ptr(message);
 
-#ifdef IPC_MESSAGE_LOG_ENABLED
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   Logging::GetInstance()->OnSendMessage(message_ptr.get());
-#endif  // IPC_MESSAGE_LOG_ENABLED
+#endif  // BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
 
   TRACE_EVENT_WITH_FLOW0(TRACE_DISABLED_BY_DEFAULT("ipc.flow"),
                          "ChannelNacl::Send",
@@ -220,7 +223,7 @@ void ChannelNacl::DidRecvMsg(std::unique_ptr<MessageContents> contents) {
   if (pipe_ == -1)
     return;
 
-  auto data = base::MakeUnique<std::vector<char>>();
+  auto data = std::make_unique<std::vector<char>>();
   data->swap(contents->data);
   read_queue_.push_back(std::move(data));
 
@@ -386,7 +389,7 @@ std::unique_ptr<Channel> Channel::Create(
     const IPC::ChannelHandle& channel_handle,
     Mode mode,
     Listener* listener) {
-  return base::MakeUnique<ChannelNacl>(channel_handle, mode, listener);
+  return std::make_unique<ChannelNacl>(channel_handle, mode, listener);
 }
 
 }  // namespace IPC

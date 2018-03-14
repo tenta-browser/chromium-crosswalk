@@ -10,11 +10,12 @@ import("//ui/ozone/ozone.gni")
 import("//testing/test.gni")
 
 declare_args() {
-  enable_swiftshader = (is_win || (is_linux && !is_chromeos && use_x11)) &&
+  enable_swiftshader = (is_win || (is_linux && use_x11) ||
+                        (is_chromeos && ozone_platform_x11)) &&
                        (target_cpu == "x86" || target_cpu == "x64")
 }
 
-use_egl = is_win || is_android || is_linux
+use_egl = is_win || is_android || is_linux || is_fuchsia
 use_glx = use_x11 || ozone_platform_x11
 
 if (is_android) {
@@ -44,8 +45,6 @@ component("gl") {
   output_name = "gl_wrapper"  # Avoid colliding with OS X"s libGL.dylib.
 
   sources = [
-    "android/gl_jni_registrar.cc",
-    "android/gl_jni_registrar.h",
     "android/scoped_java_surface.cc",
     "android/scoped_java_surface.h",
     "android/surface_texture.cc",
@@ -56,6 +55,8 @@ component("gl") {
     "ca_renderer_layer_params.h",
     "dc_renderer_layer_params.cc",
     "dc_renderer_layer_params.h",
+    "extension_set.cc",
+    "extension_set.h",
     "gl_bindings.cc",
     "gl_bindings.h",
     "gl_bindings_autogen_gl.cc",
@@ -117,8 +118,11 @@ component("gl") {
     "gl_surface_stub.h",
     "gl_switches.cc",
     "gl_switches.h",
+    "gl_utils.cc",
+    "gl_utils.h",
     "gl_version_info.cc",
     "gl_version_info.h",
+    "gl_workarounds.h",
     "gpu_switching_manager.cc",
     "gpu_switching_manager.h",
     "gpu_timing.cc",
@@ -144,6 +148,9 @@ component("gl") {
 
   deps = [
     "//base/third_party/dynamic_annotations",
+
+    # ANGLE includes are used cross-platform.
+    "//third_party/angle:includes",
   ]
   public_deps = [
     "//base",
@@ -153,6 +160,10 @@ component("gl") {
     "//ui/gfx/geometry",
   ]
 
+  data_deps = []
+  if (enable_swiftshader) {
+    data_deps += [ "//third_party/swiftshader" ]
+  }
   if (use_egl) {
     sources += [
       "angle_platform_impl.cc",
@@ -179,6 +190,13 @@ component("gl") {
         "gl_image_native_pixmap.h",
       ]
     }
+
+    if (is_android) {
+      sources += [
+        "gl_image_ahardwarebuffer.cc",
+        "gl_image_ahardwarebuffer.h",
+      ]
+    }
   }
   if (is_android || is_linux) {
     sources += [
@@ -198,7 +216,7 @@ component("gl") {
 
     deps += [ "//ui/base/x" ]
 
-    data_deps = [
+    data_deps += [
       "//third_party/angle:libEGL",
       "//third_party/angle:libGLESv2",
     ]
@@ -250,13 +268,12 @@ component("gl") {
     libs = [ "dwmapi.lib" ]
     ldflags = [ "/DELAYLOAD:dwmapi.dll" ]
 
-    data_deps = [
+    data_deps += [
       "//third_party/angle:libEGL",
       "//third_party/angle:libGLESv2",
       "//third_party/mesa:osmesa",
+      "//third_party/swiftshader",
     ]
-
-    deps += [ "//third_party/angle:includes" ]
   }
   if (is_mac) {
     sources += [
@@ -367,7 +384,11 @@ source_set("run_all_unittests") {
   ]
 
   if (use_ozone) {
-    deps += [ "//ui/ozone" ]
+    deps += [
+      "//mojo/edk/system",
+      "//services/service_manager/public/cpp/test:test_support",
+      "//ui/ozone",
+    ]
   }
 }
 
@@ -402,7 +423,14 @@ test("gl_unittests") {
   }
 
   if (is_win) {
-    sources += [ "wgl_api_unittest.cc" ]
+    sources += [
+      "gl_image_dxgi_unittest.cc",
+      "wgl_api_unittest.cc",
+    ]
+  }
+
+  if (is_android) {
+    sources += [ "gl_image_ahardwarebuffer_unittest.cc" ]
   }
 
   include_dirs = [ "//third_party/khronos" ]
@@ -416,13 +444,22 @@ test("gl_unittests") {
     "//testing/gmock",
     "//testing/gtest",
     "//ui/gfx",
+    "//ui/gfx:test_support",
     "//ui/gfx/geometry",
     "//ui/gl/init",
+    "//ui/platform_window",
+    "//ui/platform_window:platform_impls",
   ]
 
   data_deps = [
     "//third_party/mesa:osmesa",
   ]
+
+  if (use_x11) {
+    sources += [ "gl_context_glx_unittest.cc" ]
+    deps += [ "//ui/gfx/x" ]
+    configs += [ "//build/config/linux:x11" ]
+  }
 }
 
 # We can't run this test on real Chrome OS hardware for Ozone, so new target.
@@ -430,15 +467,6 @@ group("gl_unittests_ozone") {
   testonly = true
   data_deps = [
     ":gl_unittests",
-  ]
-}
-
-# TODO(GYP_GONE): Delete this after we've converted everything to GN.
-# The _run targets exist only for compatibility w/ GYP.
-group("gl_unittests_ozone_run") {
-  testonly = true
-  deps = [
-    ":gl_unittests_ozone",
   ]
 }
 

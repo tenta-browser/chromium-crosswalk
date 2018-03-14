@@ -8,7 +8,7 @@
 
 #include "bindings/core/v8/ScriptFunction.h"
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/DOMException.h"
 #include "core/dom/Document.h"
 #include "core/testing/DummyPageHolder.h"
@@ -19,20 +19,20 @@ namespace blink {
 
 namespace {
 
-class Function : public ScriptFunction {
+class TestHelperFunction : public ScriptFunction {
  public:
   static v8::Local<v8::Function> CreateFunction(ScriptState* script_state,
                                                 String* value) {
-    Function* self = new Function(script_state, value);
+    TestHelperFunction* self = new TestHelperFunction(script_state, value);
     return self->BindToV8Function();
   }
 
  private:
-  Function(ScriptState* script_state, String* value)
+  TestHelperFunction(ScriptState* script_state, String* value)
       : ScriptFunction(script_state), value_(value) {}
 
   ScriptValue Call(ScriptValue value) override {
-    ASSERT(!value.IsEmpty());
+    DCHECK(!value.IsEmpty());
     *value_ = ToCoreString(value.V8Value()
                                ->ToString(GetScriptState()->GetContext())
                                .ToLocalChecked());
@@ -80,8 +80,9 @@ TEST_F(ScriptPromiseResolverTest, resolve) {
   ASSERT_FALSE(promise.IsEmpty());
   {
     ScriptState::Scope scope(GetScriptState());
-    promise.Then(Function::CreateFunction(GetScriptState(), &on_fulfilled),
-                 Function::CreateFunction(GetScriptState(), &on_rejected));
+    promise.Then(
+        TestHelperFunction::CreateFunction(GetScriptState(), &on_fulfilled),
+        TestHelperFunction::CreateFunction(GetScriptState(), &on_rejected));
   }
 
   EXPECT_EQ(String(), on_fulfilled);
@@ -128,8 +129,9 @@ TEST_F(ScriptPromiseResolverTest, reject) {
   ASSERT_FALSE(promise.IsEmpty());
   {
     ScriptState::Scope scope(GetScriptState());
-    promise.Then(Function::CreateFunction(GetScriptState(), &on_fulfilled),
-                 Function::CreateFunction(GetScriptState(), &on_rejected));
+    promise.Then(
+        TestHelperFunction::CreateFunction(GetScriptState(), &on_fulfilled),
+        TestHelperFunction::CreateFunction(GetScriptState(), &on_rejected));
   }
 
   EXPECT_EQ(String(), on_fulfilled);
@@ -176,8 +178,9 @@ TEST_F(ScriptPromiseResolverTest, stop) {
   ASSERT_FALSE(promise.IsEmpty());
   {
     ScriptState::Scope scope(GetScriptState());
-    promise.Then(Function::CreateFunction(GetScriptState(), &on_fulfilled),
-                 Function::CreateFunction(GetScriptState(), &on_rejected));
+    promise.Then(
+        TestHelperFunction::CreateFunction(GetScriptState(), &on_fulfilled),
+        TestHelperFunction::CreateFunction(GetScriptState(), &on_rejected));
   }
 
   GetExecutionContext()->NotifyContextDestroyed();
@@ -198,7 +201,7 @@ class ScriptPromiseResolverKeepAlive : public ScriptPromiseResolver {
   static ScriptPromiseResolverKeepAlive* Create(ScriptState* script_state) {
     ScriptPromiseResolverKeepAlive* resolver =
         new ScriptPromiseResolverKeepAlive(script_state);
-    resolver->SuspendIfNeeded();
+    resolver->PauseIfNeeded();
     return resolver;
   }
 
@@ -289,7 +292,7 @@ TEST_F(ScriptPromiseResolverTest, suspend) {
                                          BlinkGC::kForcedGC);
   ASSERT_TRUE(ScriptPromiseResolverKeepAlive::IsAlive());
 
-  GetExecutionContext()->SuspendSuspendableObjects();
+  GetExecutionContext()->PausePausableObjects();
   resolver->Resolve("hello");
   ThreadState::Current()->CollectGarbage(BlinkGC::kNoHeapPointersOnStack,
                                          BlinkGC::kGCWithSweep,
@@ -316,8 +319,9 @@ TEST_F(ScriptPromiseResolverTest, resolveVoid) {
   ASSERT_FALSE(promise.IsEmpty());
   {
     ScriptState::Scope scope(GetScriptState());
-    promise.Then(Function::CreateFunction(GetScriptState(), &on_fulfilled),
-                 Function::CreateFunction(GetScriptState(), &on_rejected));
+    promise.Then(
+        TestHelperFunction::CreateFunction(GetScriptState(), &on_fulfilled),
+        TestHelperFunction::CreateFunction(GetScriptState(), &on_rejected));
   }
 
   resolver->Resolve();
@@ -340,8 +344,9 @@ TEST_F(ScriptPromiseResolverTest, rejectVoid) {
   ASSERT_FALSE(promise.IsEmpty());
   {
     ScriptState::Scope scope(GetScriptState());
-    promise.Then(Function::CreateFunction(GetScriptState(), &on_fulfilled),
-                 Function::CreateFunction(GetScriptState(), &on_rejected));
+    promise.Then(
+        TestHelperFunction::CreateFunction(GetScriptState(), &on_fulfilled),
+        TestHelperFunction::CreateFunction(GetScriptState(), &on_rejected));
   }
 
   resolver->Reject();

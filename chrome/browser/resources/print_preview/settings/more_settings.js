@@ -9,7 +9,7 @@ cr.define('print_preview', function() {
    * Toggles visibility of the specified printing options sections.
    * @param {!print_preview.DestinationStore} destinationStore To listen for
    *     destination changes.
-   * @param {!Array<print_preview.SettingsSection>} settingsSections Sections
+   * @param {!Array<!print_preview.SettingsSection>} settingsSections Sections
    *     to toggle by this component.
    * @constructor
    * @extends {print_preview.Component}
@@ -20,11 +20,11 @@ cr.define('print_preview', function() {
     /** @private {!print_preview.DestinationStore} */
     this.destinationStore_ = destinationStore;
 
-    /** @private {!Array<print_preview.SettingsSection>} */
+    /** @private {!Array<!print_preview.SettingsSection>} */
     this.settingsSections_ = settingsSections;
 
-    /** @private {MoreSettings.SettingsToShow} */
-    this.settingsToShow_ = MoreSettings.SettingsToShow.MOST_POPULAR;
+    /** @private {boolean} */
+    this.showAll_ = false;
 
     /** @private {boolean} */
     this.capabilitiesReady_ = false;
@@ -37,23 +37,14 @@ cr.define('print_preview', function() {
      * @private {!print_preview.PrintSettingsUiMetricsContext}
      */
     this.metrics_ = new print_preview.PrintSettingsUiMetricsContext();
-  };
-
-  /**
-   * Which settings are visible to the user.
-   * @enum {number}
-   */
-  MoreSettings.SettingsToShow = {
-    MOST_POPULAR: 1,
-    ALL: 2
-  };
+  }
 
   MoreSettings.prototype = {
     __proto__: print_preview.Component.prototype,
 
-    /** @return {boolean} Returns {@code true} if settings are expanded. */
+    /** @return {boolean} Whether the settings are expanded. */
     get isExpanded() {
-      return this.settingsToShow_ == MoreSettings.SettingsToShow.ALL;
+      return this.showAll_;
     },
 
     /** @override */
@@ -67,15 +58,15 @@ cr.define('print_preview', function() {
           this.onDestinationChanged_.bind(this));
       this.tracker.add(
           this.destinationStore_,
-          print_preview.DestinationStore.EventType.
-              SELECTED_DESTINATION_CAPABILITIES_READY,
+          print_preview.DestinationStore.EventType
+              .SELECTED_DESTINATION_CAPABILITIES_READY,
           this.onDestinationCapabilitiesReady_.bind(this));
-      this.settingsSections_.forEach(function(section) {
+      this.settingsSections_.forEach(section => {
         this.tracker.add(
             section,
             print_preview.SettingsSection.EventType.COLLAPSIBLE_CONTENT_CHANGED,
             this.updateState_.bind(this));
-      }.bind(this));
+      });
 
       this.updateState_(true);
     },
@@ -86,14 +77,13 @@ cr.define('print_preview', function() {
      * @private
      */
     onClick_: function() {
-      this.settingsToShow_ =
-          this.settingsToShow_ == MoreSettings.SettingsToShow.MOST_POPULAR ?
-              MoreSettings.SettingsToShow.ALL :
-              MoreSettings.SettingsToShow.MOST_POPULAR;
+      this.showAll_ = !this.showAll_;
       this.updateState_(false);
-      this.metrics_.record(this.isExpanded ?
-          print_preview.Metrics.PrintSettingsUiBucket.MORE_SETTINGS_CLICKED :
-          print_preview.Metrics.PrintSettingsUiBucket.LESS_SETTINGS_CLICKED);
+      this.metrics_.record(
+          this.isExpanded ? print_preview.Metrics.PrintSettingsUiBucket
+                                .MORE_SETTINGS_CLICKED :
+                            print_preview.Metrics.PrintSettingsUiBucket
+                                .LESS_SETTINGS_CLICKED);
     },
 
     /**
@@ -131,22 +121,21 @@ cr.define('print_preview', function() {
       if (!this.capabilitiesReady_)
         return;
 
-      var all = this.settingsToShow_ == MoreSettings.SettingsToShow.ALL;
       this.getChildElement('.more-settings-label').textContent =
-          loadTimeData.getString(all ? 'lessOptionsLabel' : 'moreOptionsLabel');
-      var iconEl = this.getChildElement('.more-settings-icon');
-      iconEl.classList.toggle('more-settings-icon-plus', !all);
-      iconEl.classList.toggle('more-settings-icon-minus', all);
+          loadTimeData.getString(
+              this.isExpanded ? 'lessOptionsLabel' : 'moreOptionsLabel');
+      const iconEl = this.getChildElement('.more-settings-icon');
+      iconEl.classList.toggle('more-settings-icon-plus', !this.isExpanded);
+      iconEl.classList.toggle('more-settings-icon-minus', this.isExpanded);
 
-      var availableSections = this.settingsSections_.reduce(
-          function(count, section) {
+      const availableSections =
+          this.settingsSections_.reduce(function(count, section) {
             return count + (section.isAvailable() ? 1 : 0);
           }, 0);
 
       // Magic 6 is chosen as the number of sections when it still feels like
       // manageable and not too crowded.
-      var hasSectionsToToggle =
-          availableSections > 6 &&
+      const hasSectionsToToggle = availableSections > 6 &&
           this.settingsSections_.some(function(section) {
             return section.hasCollapsibleContent();
           });
@@ -156,9 +145,7 @@ cr.define('print_preview', function() {
       else
         fadeOutElement(this.getElement());
 
-      var collapseContent =
-          this.settingsToShow_ == MoreSettings.SettingsToShow.MOST_POPULAR &&
-          hasSectionsToToggle;
+      const collapseContent = !this.isExpanded && hasSectionsToToggle;
       this.settingsSections_.forEach(function(section) {
         section.setCollapseContent(collapseContent, noAnimation);
       });
@@ -166,7 +153,5 @@ cr.define('print_preview', function() {
   };
 
   // Export
-  return {
-    MoreSettings: MoreSettings
-  };
+  return {MoreSettings: MoreSettings};
 });

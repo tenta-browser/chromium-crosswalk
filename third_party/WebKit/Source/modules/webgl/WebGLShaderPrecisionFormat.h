@@ -27,15 +27,13 @@
 #ifndef WebGLShaderPrecisionFormat_h
 #define WebGLShaderPrecisionFormat_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "third_party/khronos/GLES2/gl2.h"
 
 namespace blink {
 
-class WebGLShaderPrecisionFormat final
-    : public GarbageCollected<WebGLShaderPrecisionFormat>,
-      public ScriptWrappable {
+class WebGLShaderPrecisionFormat final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -46,8 +44,6 @@ class WebGLShaderPrecisionFormat final
   GLint rangeMin() const;
   GLint rangeMax() const;
   GLint precision() const;
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   WebGLShaderPrecisionFormat(GLint range_min, GLint range_max, GLint precision);

@@ -94,10 +94,6 @@ class PLATFORM_EXPORT ScrollbarTheme {
     return kAllParts;
   }
 
-  // Returns parts of the scrollbar which must be repainted following a change
-  // in enabled state.
-  virtual ScrollbarPart InvalidateOnEnabledChange() const { return kAllParts; }
-
   virtual void PaintScrollCorner(GraphicsContext&,
                                  const DisplayItemClient&,
                                  const IntRect& corner_rect);
@@ -203,7 +199,10 @@ class PLATFORM_EXPORT ScrollbarTheme {
     return IntRect();
   }
 
-  static ScrollbarTheme& GetTheme();
+  // Warning: Please call Page::GetScrollbarTheme instead of call this method
+  // directly since we support different native scrollbar theme base on page
+  // settings. See crrev.com/c/646727, this function will eventually be removed.
+  static ScrollbarTheme& DeprecatedStaticGetTheme();
 
   static void SetMockScrollbarsEnabled(bool flag);
   static bool MockScrollbarsEnabled();

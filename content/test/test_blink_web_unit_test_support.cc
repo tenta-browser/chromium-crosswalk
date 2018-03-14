@@ -21,24 +21,26 @@
 #include "cc/test/test_shared_bitmap_manager.h"
 #include "cc/trees/layer_tree_settings.h"
 #include "content/app/mojo/mojo_init.h"
-#include "content/child/web_url_loader_impl.h"
+#include "content/renderer/loader/web_url_loader_impl.h"
 #include "content/test/mock_webclipboard_impl.h"
 #include "content/test/web_gesture_curve_mock.h"
 #include "media/base/media.h"
 #include "media/media_features.h"
 #include "net/cookies/cookie_monster.h"
-#include "storage/browser/database/vfs_backend.h"
+#include "third_party/WebKit/public/platform/InterfaceRegistry.h"
 #include "third_party/WebKit/public/platform/WebConnectionType.h"
 #include "third_party/WebKit/public/platform/WebData.h"
 #include "third_party/WebKit/public/platform/WebNetworkStateNotifier.h"
 #include "third_party/WebKit/public/platform/WebPluginListBuilder.h"
+#include "third_party/WebKit/public/platform/WebRTCCertificateGenerator.h"
+#include "third_party/WebKit/public/platform/WebRuntimeFeatures.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebThread.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
+#include "third_party/WebKit/public/platform/WebURLLoaderFactory.h"
 #include "third_party/WebKit/public/platform/scheduler/renderer/renderer_scheduler.h"
 #include "third_party/WebKit/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/WebRuntimeFeatures.h"
 #include "v8/include/v8.h"
 
 #if defined(OS_MACOSX)
@@ -52,8 +54,7 @@
 
 #if BUILDFLAG(ENABLE_WEBRTC)
 #include "content/renderer/media/rtc_certificate.h"
-#include "third_party/WebKit/public/platform/WebRTCCertificateGenerator.h"
-#include "third_party/webrtc/base/rtccertificate.h"  // nogncheck
+#include "third_party/webrtc/rtc_base/rtccertificate.h"  // nogncheck
 #endif
 
 using blink::WebString;
@@ -64,21 +65,21 @@ class DummyTaskRunner : public base::SingleThreadTaskRunner {
  public:
   DummyTaskRunner() : thread_id_(base::PlatformThread::CurrentId()) {}
 
-  bool PostDelayedTask(const tracked_objects::Location& from_here,
+  bool PostDelayedTask(const base::Location& from_here,
                        base::OnceClosure task,
                        base::TimeDelta delay) override {
     // Drop the delayed task.
     return false;
   }
 
-  bool PostNonNestableDelayedTask(const tracked_objects::Location& from_here,
+  bool PostNonNestableDelayedTask(const base::Location& from_here,
                                   base::OnceClosure task,
                                   base::TimeDelta delay) override {
     // Drop the delayed task.
     return false;
   }
 
-  bool RunsTasksOnCurrentThread() const override {
+  bool RunsTasksInCurrentSequence() const override {
     return thread_id_ == base::PlatformThread::CurrentId();
   }
 
@@ -90,11 +91,37 @@ class DummyTaskRunner : public base::SingleThreadTaskRunner {
   DISALLOW_COPY_AND_ASSIGN(DummyTaskRunner);
 };
 
+// TODO(kinuko,toyoshim): Deprecate this, all Blink tests should not rely
+// on this //content implementation.
+class WebURLLoaderFactoryWithMock : public blink::WebURLLoaderFactory {
+ public:
+  explicit WebURLLoaderFactoryWithMock(base::WeakPtr<blink::Platform> platform)
+      : platform_(std::move(platform)) {}
+  ~WebURLLoaderFactoryWithMock() override = default;
+
+  std::unique_ptr<blink::WebURLLoader> CreateURLLoader(
+      const blink::WebURLRequest& request,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner) override {
+    DCHECK(platform_);
+    // This loader should be used only for process-local resources such as
+    // data URLs.
+    auto default_loader = std::make_unique<content::WebURLLoaderImpl>(
+        nullptr, task_runner, nullptr);
+    return platform_->GetURLLoaderMockFactory()->CreateURLLoader(
+        std::move(default_loader));
+  }
+
+ private:
+  base::WeakPtr<blink::Platform> platform_;
+  DISALLOW_COPY_AND_ASSIGN(WebURLLoaderFactoryWithMock);
+};
+
 }  // namespace
 
 namespace content {
 
-TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport() {
+TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport()
+    : weak_factory_(this) {
 #if defined(OS_MACOSX)
   base::mac::ScopedNSAutoreleasePool autorelease_pool;
 #endif
@@ -102,9 +129,13 @@ TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport() {
   url_loader_factory_ = blink::WebURLLoaderMockFactory::Create();
   mock_clipboard_.reset(new MockWebClipboardImpl());
 
-#ifdef V8_USE_EXTERNAL_STARTUP_DATA
+#if defined(V8_USE_EXTERNAL_STARTUP_DATA)
   gin::V8Initializer::LoadV8Snapshot();
   gin::V8Initializer::LoadV8Natives();
+#endif
+
+#if defined(USE_V8_CONTEXT_SNAPSHOT)
+  gin::V8Initializer::LoadV8ContextSnapshot();
 #endif
 
   scoped_refptr<base::SingleThreadTaskRunner> dummy_task_runner;
@@ -117,7 +148,7 @@ TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport() {
     // of message loops, and their types are not known upfront. Some tests also
     // create their own thread bundles or message loops, and doing the same in
     // TestBlinkWebUnitTestSupport would introduce a conflict.
-    dummy_task_runner = make_scoped_refptr(new DummyTaskRunner());
+    dummy_task_runner = base::MakeRefCounted<DummyTaskRunner>();
     dummy_task_runner_handle.reset(
         new base::ThreadTaskRunnerHandle(dummy_task_runner));
   }
@@ -132,7 +163,8 @@ TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport() {
   // Initialize mojo firstly to enable Blink initialization to use it.
   InitializeMojo();
 
-  blink::Initialize(this);
+  blink::Initialize(this,
+                    blink::InterfaceRegistry::GetEmptyInterfaceRegistry());
   blink::SetLayoutTestMode(true);
   blink::WebRuntimeFeatures::EnableDatabase(true);
   blink::WebRuntimeFeatures::EnableNotifications(true);
@@ -186,21 +218,20 @@ blink::WebFileUtilities* TestBlinkWebUnitTestSupport::GetFileUtilities() {
 blink::WebIDBFactory* TestBlinkWebUnitTestSupport::IdbFactory() {
   NOTREACHED() <<
       "IndexedDB cannot be tested with in-process harnesses.";
-  return NULL;
+  return nullptr;
 }
 
-blink::WebURLLoader* TestBlinkWebUnitTestSupport::CreateURLLoader() {
-  // This loader should be used only for process-local resources such as
-  // data URLs.
-  blink::WebURLLoader* default_loader = new WebURLLoaderImpl(nullptr, nullptr);
-  return url_loader_factory_->CreateURLLoader(default_loader);
+std::unique_ptr<blink::WebURLLoaderFactory>
+TestBlinkWebUnitTestSupport::CreateDefaultURLLoaderFactory() {
+  return std::make_unique<WebURLLoaderFactoryWithMock>(
+      weak_factory_.GetWeakPtr());
 }
 
 blink::WebString TestBlinkWebUnitTestSupport::UserAgent() {
   return blink::WebString::FromUTF8("test_runner/0.0.0.0");
 }
 
-std::unique_ptr<cc::SharedBitmap>
+std::unique_ptr<viz::SharedBitmap>
 TestBlinkWebUnitTestSupport::AllocateSharedBitmap(const blink::WebSize& size) {
   return shared_bitmap_manager_
       ->AllocateSharedBitmap(gfx::Size(size.width, size.height));
@@ -214,8 +245,6 @@ blink::WebString TestBlinkWebUnitTestSupport::QueryLocalizedString(
       return WebString::FromASCII("<<OtherDateLabel>>");
     case blink::WebLocalizedString::kOtherMonthLabel:
       return WebString::FromASCII("<<OtherMonthLabel>>");
-    case blink::WebLocalizedString::kOtherTimeLabel:
-      return WebString::FromASCII("<<OtherTimeLabel>>");
     case blink::WebLocalizedString::kOtherWeekLabel:
       return WebString::FromASCII("<<OtherWeekLabel>>");
     case blink::WebLocalizedString::kCalendarClear:
@@ -268,12 +297,12 @@ blink::WebCompositorSupport* TestBlinkWebUnitTestSupport::CompositorSupport() {
   return &compositor_support_;
 }
 
-blink::WebGestureCurve* TestBlinkWebUnitTestSupport::CreateFlingAnimationCurve(
+std::unique_ptr<blink::WebGestureCurve>
+TestBlinkWebUnitTestSupport::CreateFlingAnimationCurve(
     blink::WebGestureDevice device_source,
     const blink::WebFloatPoint& velocity,
     const blink::WebSize& cumulative_scroll) {
-  // Caller will retain and release.
-  return new WebGestureCurveMock(velocity, cumulative_scroll);
+  return std::make_unique<WebGestureCurveMock>(velocity, cumulative_scroll);
 }
 
 blink::WebURLLoaderMockFactory*
@@ -322,17 +351,17 @@ class TestWebRTCCertificateGenerator
             pem_private_key.Utf8(), pem_certificate.Utf8()));
     if (!certificate)
       return nullptr;
-    return base::MakeUnique<RTCCertificate>(certificate);
+    return std::make_unique<RTCCertificate>(certificate);
   }
 };
 
 }  // namespace
 #endif  // BUILDFLAG(ENABLE_WEBRTC)
 
-blink::WebRTCCertificateGenerator*
+std::unique_ptr<blink::WebRTCCertificateGenerator>
 TestBlinkWebUnitTestSupport::CreateRTCCertificateGenerator() {
 #if BUILDFLAG(ENABLE_WEBRTC)
-  return new TestWebRTCCertificateGenerator();
+  return std::make_unique<TestWebRTCCertificateGenerator>();
 #else
   return nullptr;
 #endif

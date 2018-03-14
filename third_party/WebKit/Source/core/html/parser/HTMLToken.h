@@ -27,6 +27,8 @@
 #define HTMLToken_h
 
 #include <memory>
+
+#include "base/macros.h"
 #include "core/dom/Attribute.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "platform/wtf/Forward.h"
@@ -36,7 +38,6 @@ namespace blink {
 
 class DoctypeData {
   USING_FAST_MALLOC(DoctypeData);
-  WTF_MAKE_NONCOPYABLE(DoctypeData);
 
  public:
   DoctypeData()
@@ -49,6 +50,8 @@ class DoctypeData {
   WTF::Vector<UChar> public_identifier_;
   WTF::Vector<UChar> system_identifier_;
   bool force_quirks_;
+
+  DISALLOW_COPY_AND_ASSIGN(DoctypeData);
 };
 
 static inline Attribute* FindAttributeInVector(Vector<Attribute>& attributes,
@@ -57,11 +60,10 @@ static inline Attribute* FindAttributeInVector(Vector<Attribute>& attributes,
     if (attributes.at(i).GetName().Matches(name))
       return &attributes.at(i);
   }
-  return 0;
+  return nullptr;
 }
 
 class HTMLToken {
-  WTF_MAKE_NONCOPYABLE(HTMLToken);
   USING_FAST_MALLOC(HTMLToken);
 
  public:
@@ -115,17 +117,18 @@ class HTMLToken {
       return AttemptStaticStringCreation(name_, kLikely8Bit);
     }
     const Vector<UChar, 32>& NameAsVector() const { return name_; }
+    const Vector<UChar, 32>& ValueAsVector() const { return value_; }
 
     void AppendToName(UChar c) { name_.push_back(c); }
 
-    PassRefPtr<StringImpl> Value8BitIfNecessary() const {
+    scoped_refptr<StringImpl> Value8BitIfNecessary() const {
       return StringImpl::Create8BitIfPossible(value_);
     }
     String Value() const { return String(value_); }
 
     void AppendToValue(UChar c) { value_.push_back(c); }
     void AppendToValue(const String& value) { value.AppendTo(value_); }
-    void ClearValue() { value_.Clear(); }
+    void ClearValue() { value_.clear(); }
 
     const Range& NameRange() const { return name_range_; }
     const Range& ValueRange() const { return value_range_; }
@@ -239,13 +242,13 @@ class HTMLToken {
   void SetPublicIdentifierToEmptyString() {
     DCHECK_EQ(type_, DOCTYPE);
     doctype_data_->has_public_identifier_ = true;
-    doctype_data_->public_identifier_.Clear();
+    doctype_data_->public_identifier_.clear();
   }
 
   void SetSystemIdentifierToEmptyString() {
     DCHECK_EQ(type_, DOCTYPE);
     doctype_data_->has_system_identifier_ = true;
-    doctype_data_->system_identifier_.Clear();
+    doctype_data_->system_identifier_.clear();
   }
 
   void AppendToPublicIdentifier(UChar character) {
@@ -283,8 +286,8 @@ class HTMLToken {
     DCHECK_EQ(type_, kUninitialized);
     type_ = kStartTag;
     self_closing_ = false;
-    current_attribute_ = 0;
-    attributes_.Clear();
+    current_attribute_ = nullptr;
+    attributes_.clear();
 
     data_.push_back(character);
     or_all_data_ |= character;
@@ -294,8 +297,8 @@ class HTMLToken {
     DCHECK_EQ(type_, kUninitialized);
     type_ = kEndTag;
     self_closing_ = false;
-    current_attribute_ = 0;
-    attributes_.Clear();
+    current_attribute_ = nullptr;
+    attributes_.clear();
 
     data_.push_back(character);
   }
@@ -304,8 +307,8 @@ class HTMLToken {
     DCHECK_EQ(type_, kUninitialized);
     type_ = kEndTag;
     self_closing_ = false;
-    current_attribute_ = 0;
-    attributes_.Clear();
+    current_attribute_ = nullptr;
+    attributes_.clear();
 
     data_.AppendVector(characters);
   }
@@ -372,7 +375,7 @@ class HTMLToken {
       if (attributes_.at(i).GetName() == name.LocalName())
         return &attributes_.at(i);
     }
-    return 0;
+    return nullptr;
   }
 
   // Used by the XSSAuditor to nuke XSS-laden attributes.
@@ -433,7 +436,7 @@ class HTMLToken {
   // Only for XSSAuditor
   void EraseCharacters() {
     DCHECK_EQ(type_, kCharacter);
-    data_.Clear();
+    data_.clear();
     or_all_data_ = 0;
   }
 
@@ -453,6 +456,8 @@ class HTMLToken {
 
   // For DOCTYPE
   std::unique_ptr<DoctypeData> doctype_data_;
+
+  DISALLOW_COPY_AND_ASSIGN(HTMLToken);
 };
 
 #ifndef NDEBUG

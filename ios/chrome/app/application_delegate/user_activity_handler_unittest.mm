@@ -166,10 +166,12 @@ class UserActivityHandlerTest : public PlatformTest {
 
 #pragma mark - Tests.
 
+using UserActivityHandlerNoFixtureTest = PlatformTest;
+
 // Tests that Chrome notifies the user if we are passing a correct
 // userActivityType.
-TEST(UserActivityHandlerNoFixtureTest,
-     willContinueUserActivityCorrectActivity) {
+TEST_F(UserActivityHandlerNoFixtureTest,
+       willContinueUserActivityCorrectActivity) {
   EXPECT_TRUE([UserActivityHandler
       willContinueUserActivityWithType:handoff::kChromeHandoffActivityType]);
 
@@ -181,8 +183,8 @@ TEST(UserActivityHandlerNoFixtureTest,
 
 // Tests that Chrome does not notifies the user if we are passing an incorrect
 // userActivityType.
-TEST(UserActivityHandlerNoFixtureTest,
-     willContinueUserActivityIncorrectActivity) {
+TEST_F(UserActivityHandlerNoFixtureTest,
+       willContinueUserActivityIncorrectActivity) {
   EXPECT_FALSE([UserActivityHandler
       willContinueUserActivityWithType:[handoff::kChromeHandoffActivityType
                                            stringByAppendingString:@"test"]]);
@@ -195,9 +197,11 @@ TEST(UserActivityHandlerNoFixtureTest,
   EXPECT_FALSE([UserActivityHandler willContinueUserActivityWithType:nil]);
 }
 
+using UserActivityHandlerNoFixtureTest = PlatformTest;
+
 // Tests that Chrome does not continue the activity is the activity type is
 // random.
-TEST(UserActivityHandlerNoFixtureTest, continueUserActivityFromGarbage) {
+TEST_F(UserActivityHandlerNoFixtureTest, continueUserActivityFromGarbage) {
   // Setup.
   NSString* handoffWithSuffix =
       [handoff::kChromeHandoffActivityType stringByAppendingString:@"test"];
@@ -230,7 +234,7 @@ TEST(UserActivityHandlerNoFixtureTest, continueUserActivityFromGarbage) {
 
 // Tests that Chrome does not continue the activity if the webpage url is not
 // set.
-TEST(UserActivityHandlerNoFixtureTest, continueUserActivityNoWebpage) {
+TEST_F(UserActivityHandlerNoFixtureTest, continueUserActivityNoWebpage) {
   // Setup.
   NSUserActivity* userActivity = [[NSUserActivity alloc]
       initWithActivityType:handoff::kChromeHandoffActivityType];
@@ -253,8 +257,8 @@ TEST(UserActivityHandlerNoFixtureTest, continueUserActivityNoWebpage) {
 
 // Tests that Chrome does not continue the activity if the activity is a
 // Spotlight action of an unknown type.
-TEST(UserActivityHandlerNoFixtureTest,
-     continueUserActivitySpotlightActionFromGarbage) {
+TEST_F(UserActivityHandlerNoFixtureTest,
+       continueUserActivitySpotlightActionFromGarbage) {
   // Only test Spotlight if it is enabled and available on the device.
   if (!spotlight::IsSpotlightAvailable()) {
     return;
@@ -292,7 +296,7 @@ TEST(UserActivityHandlerNoFixtureTest,
 
 // Tests that Chrome continues the activity if the application is in background
 // by saving the url to startupParameters.
-TEST(UserActivityHandlerNoFixtureTest, continueUserActivityBackground) {
+TEST_F(UserActivityHandlerNoFixtureTest, continueUserActivityBackground) {
   // Setup.
   NSUserActivity* userActivity = [[NSUserActivity alloc]
       initWithActivityType:handoff::kChromeHandoffActivityType];
@@ -327,7 +331,7 @@ TEST(UserActivityHandlerNoFixtureTest, continueUserActivityBackground) {
 
 // Tests that Chrome continues the activity if the application is in foreground
 // by opening a new tab.
-TEST(UserActivityHandlerNoFixtureTest, continueUserActivityForeground) {
+TEST_F(UserActivityHandlerNoFixtureTest, continueUserActivityForeground) {
   // Setup.
   NSUserActivity* userActivity = [[NSUserActivity alloc]
       initWithActivityType:handoff::kChromeHandoffActivityType];
@@ -403,19 +407,19 @@ TEST_F(UserActivityHandlerTest, continueUserActivityShortcutActions) {
 
   NSArray* parametersToTest = @[
     @[
-      base::SysUTF8ToNSString(spotlight::kSpotlightActionNewTab), @NO, @NO, @NO
+      base::SysUTF8ToNSString(spotlight::kSpotlightActionNewTab), @(NO_ACTION)
     ],
     @[
-      base::SysUTF8ToNSString(spotlight::kSpotlightActionNewIncognitoTab), @YES,
-      @NO, @NO
+      base::SysUTF8ToNSString(spotlight::kSpotlightActionNewIncognitoTab),
+      @(NO_ACTION)
     ],
     @[
-      base::SysUTF8ToNSString(spotlight::kSpotlightActionVoiceSearch), @NO,
-      @YES, @NO
+      base::SysUTF8ToNSString(spotlight::kSpotlightActionVoiceSearch),
+      @(START_VOICE_SEARCH)
     ],
     @[
-      base::SysUTF8ToNSString(spotlight::kSpotlightActionQRScanner), @NO, @NO,
-      @YES
+      base::SysUTF8ToNSString(spotlight::kSpotlightActionQRScanner),
+      @(START_QR_CODE_SCANNER)
     ]
   ];
 
@@ -447,17 +451,13 @@ TEST_F(UserActivityHandlerTest, continueUserActivityShortcutActions) {
     EXPECT_TRUE(result);
     EXPECT_EQ(gurlNewTab,
               [fakeStartupInformation startupParameters].externalURL);
-    EXPECT_EQ([parameters[1] boolValue],
-              [fakeStartupInformation startupParameters].launchInIncognito);
-    EXPECT_EQ([parameters[2] boolValue],
-              [fakeStartupInformation startupParameters].launchVoiceSearch);
-    EXPECT_EQ([parameters[3] boolValue],
-              [fakeStartupInformation startupParameters].launchQRScanner);
+    EXPECT_EQ([parameters[1] intValue],
+              [fakeStartupInformation startupParameters].postOpeningAction);
   }
 }
 
 // Tests that handleStartupParameters with a non-U2F url opens a new tab.
-TEST(UserActivityHandlerNoFixtureTest, handleStartupParamsNonU2F) {
+TEST_F(UserActivityHandlerNoFixtureTest, handleStartupParamsNonU2F) {
   // Setup.
   GURL gurl("http://www.google.com");
 
@@ -491,7 +491,7 @@ TEST(UserActivityHandlerNoFixtureTest, handleStartupParamsNonU2F) {
 }
 
 // Tests that handleStartupParameters with a U2F url opens in the correct tab.
-TEST(UserActivityHandlerNoFixtureTest, handleStartupParamsU2F) {
+TEST_F(UserActivityHandlerNoFixtureTest, handleStartupParamsU2F) {
   // Setup.
   GURL gurl("chromium://u2f-callback?isU2F=1&tabID=B05B1860");
   NSString* tabID = [U2FController tabIDFromResponseURL:gurl];
@@ -546,9 +546,10 @@ TEST_F(UserActivityHandlerTest, performActionForShortcutItemWithRealShortcut) {
   [fakeStartupInformation setIsPresentingFirstRunUI:NO];
 
   NSArray* parametersToTest = @[
-    @[ @"OpenNewTab", @NO, @NO, @NO ], @[ @"OpenIncognitoTab", @YES, @NO, @NO ],
-    @[ @"OpenVoiceSearch", @NO, @YES, @NO ],
-    @[ @"OpenQRScanner", @NO, @NO, @YES ]
+    @[ @"OpenNewTab", @NO, @(NO_ACTION) ],
+    @[ @"OpenIncognitoTab", @YES, @(NO_ACTION) ],
+    @[ @"OpenVoiceSearch", @NO, @(START_VOICE_SEARCH) ],
+    @[ @"OpenQRScanner", @NO, @(START_QR_CODE_SCANNER) ]
   ];
 
   swizzleHandleStartupParameters();
@@ -578,10 +579,8 @@ TEST_F(UserActivityHandlerTest, performActionForShortcutItemWithRealShortcut) {
               [fakeStartupInformation startupParameters].externalURL);
     EXPECT_EQ([[parameters objectAtIndex:1] boolValue],
               [fakeStartupInformation startupParameters].launchInIncognito);
-    EXPECT_EQ([[parameters objectAtIndex:2] boolValue],
-              [fakeStartupInformation startupParameters].launchVoiceSearch);
-    EXPECT_EQ([[parameters objectAtIndex:3] boolValue],
-              [fakeStartupInformation startupParameters].launchQRScanner);
+    EXPECT_EQ([[parameters objectAtIndex:2] intValue],
+              [fakeStartupInformation startupParameters].postOpeningAction);
     EXPECT_TRUE(completionHandlerExecuted());
     EXPECT_TRUE(completionHandlerArgument());
     EXPECT_TRUE(getHandleStartupParametersHasBeenCalled());

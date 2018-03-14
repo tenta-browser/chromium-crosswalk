@@ -144,12 +144,10 @@ class AutoEnrollmentClientTest : public testing::Test {
   void VerifyCachedResult(bool should_enroll, int power_limit) {
     base::Value value_should_enroll(should_enroll);
     base::Value value_power_limit(power_limit);
-    EXPECT_TRUE(base::Value::Equals(
-        &value_should_enroll,
-        local_state_->GetUserPref(prefs::kShouldAutoEnroll)));
-    EXPECT_TRUE(base::Value::Equals(
-        &value_power_limit,
-        local_state_->GetUserPref(prefs::kAutoEnrollmentPowerLimit)));
+    EXPECT_EQ(value_should_enroll,
+              *local_state_->GetUserPref(prefs::kShouldAutoEnroll));
+    EXPECT_EQ(value_power_limit,
+              *local_state_->GetUserPref(prefs::kAutoEnrollmentPowerLimit));
   }
 
   bool HasServerBackedState() {
@@ -345,6 +343,25 @@ TEST_F(AutoEnrollmentClientTest, ForcedReEnrollment) {
   // the server.
   client_->OnNetworkChanged(net::NetworkChangeNotifier::CONNECTION_ETHERNET);
   EXPECT_EQ(AUTO_ENROLLMENT_STATE_TRIGGER_ENROLLMENT, state_);
+}
+
+TEST_F(AutoEnrollmentClientTest, ForcedReEnrollmentZeroTouch) {
+  ServerWillReply(-1, true, true);
+  ServerWillSendState(
+      "example.com",
+      em::DeviceStateRetrievalResponse::RESTORE_MODE_REENROLLMENT_ZERO_TOUCH,
+      kDisabledMessage);
+  client_->Start();
+  EXPECT_EQ(AUTO_ENROLLMENT_STATE_TRIGGER_ZERO_TOUCH, state_);
+  VerifyCachedResult(true, 8);
+  VerifyServerBackedState("example.com",
+                          kDeviceStateRestoreModeReEnrollmentZeroTouch,
+                          kDisabledMessage);
+
+  // Network changes don't trigger retries after obtaining a response from
+  // the server.
+  client_->OnNetworkChanged(net::NetworkChangeNotifier::CONNECTION_ETHERNET);
+  EXPECT_EQ(AUTO_ENROLLMENT_STATE_TRIGGER_ZERO_TOUCH, state_);
 }
 
 TEST_F(AutoEnrollmentClientTest, RequestedReEnrollment) {

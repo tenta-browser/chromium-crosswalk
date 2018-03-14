@@ -112,29 +112,6 @@ TEST(HTTPParsersTest, CommaDelimitedHeaderSet) {
   EXPECT_TRUE(set2.Contains("fo\to"));
 }
 
-TEST(HTTPParsersTest, HTTPFieldContent) {
-  const UChar kHiraganaA[2] = {0x3042, 0};
-
-  EXPECT_TRUE(blink::IsValidHTTPFieldContentRFC7230("\xd0\xa1"));
-  EXPECT_TRUE(blink::IsValidHTTPFieldContentRFC7230("t t"));
-  EXPECT_TRUE(blink::IsValidHTTPFieldContentRFC7230("t\tt"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(" "));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(""));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230("\x7f"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230("t\rt"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230("t\nt"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230("t\bt"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230("t\vt"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(" t"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230("t "));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(String("t\0t", 3)));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(String("\0", 1)));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(String("test \0, 6")));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(String("test ")));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230("test\r\n data"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(String(kHiraganaA)));
-}
-
 TEST(HTTPParsersTest, HTTPToken) {
   const UChar kHiraganaA[2] = {0x3042, 0};
   const UChar kLatinCapitalAWithMacron[2] = {0x100, 0};
@@ -416,6 +393,9 @@ TEST(HTTPParsersTest, ParseHTTPRefresh) {
   String url;
   EXPECT_FALSE(ParseHTTPRefresh("", nullptr, delay, url));
   EXPECT_FALSE(ParseHTTPRefresh(" ", nullptr, delay, url));
+  EXPECT_FALSE(ParseHTTPRefresh("1.3xyz url=foo", nullptr, delay, url));
+  EXPECT_FALSE(ParseHTTPRefresh("1.3.4xyz url=foo", nullptr, delay, url));
+  EXPECT_FALSE(ParseHTTPRefresh("1e1 url=foo", nullptr, delay, url));
 
   EXPECT_TRUE(ParseHTTPRefresh("123 ", nullptr, delay, url));
   EXPECT_EQ(123.0, delay);
@@ -439,6 +419,19 @@ TEST(HTTPParsersTest, ParseHTTPRefresh) {
   EXPECT_TRUE(
       ParseHTTPRefresh("10\nurl=dest", IsASCIISpace<UChar>, delay, url));
   EXPECT_EQ(10, delay);
+  EXPECT_EQ("dest", url);
+
+  EXPECT_TRUE(
+      ParseHTTPRefresh("1.5; url=dest", IsASCIISpace<UChar>, delay, url));
+  EXPECT_EQ(1.5, delay);
+  EXPECT_EQ("dest", url);
+  EXPECT_TRUE(
+      ParseHTTPRefresh("1.5.9; url=dest", IsASCIISpace<UChar>, delay, url));
+  EXPECT_EQ(1.5, delay);
+  EXPECT_EQ("dest", url);
+  EXPECT_TRUE(
+      ParseHTTPRefresh("7..; url=dest", IsASCIISpace<UChar>, delay, url));
+  EXPECT_EQ(7, delay);
   EXPECT_EQ("dest", url);
 }
 
@@ -498,6 +491,227 @@ TEST(HTTPParsersTest, ParseMultipartHeadersContentCharset) {
   EXPECT_EQ("text/html; charset=utf-8",
             response.HttpHeaderField("content-type"));
   EXPECT_EQ("utf-8", response.TextEncodingName());
+}
+
+void testServerTimingHeader(const char* headerValue,
+                            Vector<Vector<String>> expectedResults) {
+  std::unique_ptr<ServerTimingHeaderVector> results =
+      ParseServerTimingHeader(headerValue);
+  EXPECT_EQ((*results).size(), expectedResults.size());
+  unsigned i = 0;
+  for (const auto& header : *results) {
+    Vector<String> expectedResult = expectedResults[i++];
+    EXPECT_EQ(header->Name(), expectedResult[0]);
+    EXPECT_EQ(header->Duration(), expectedResult[1].ToDouble());
+    EXPECT_EQ(header->Description(), expectedResult[2]);
+  }
+}
+
+TEST(HTTPParsersTest, ParseServerTimingHeader) {
+  testServerTimingHeader("", {});
+  testServerTimingHeader("metric", {{"metric", "0", ""}});
+  testServerTimingHeader("metric;dur", {{"metric", "0", ""}});
+  testServerTimingHeader("metric;dur=123.4", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric;dur=\"123.4\"", {{"metric", "123.4", ""}});
+
+  testServerTimingHeader("metric;desc", {{"metric", "0", ""}});
+  testServerTimingHeader("metric;desc=description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric;desc=\"description\"",
+                         {{"metric", "0", "description"}});
+
+  testServerTimingHeader("metric;dur;desc", {{"metric", "0", ""}});
+  testServerTimingHeader("metric;dur=123.4;desc", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric;dur;desc=description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric;dur=123.4;desc=description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric;desc;dur", {{"metric", "0", ""}});
+  testServerTimingHeader("metric;desc;dur=123.4", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric;desc=description;dur",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric;desc=description;dur=123.4",
+                         {{"metric", "123.4", "description"}});
+
+  // special chars in name
+  testServerTimingHeader("aB3!#$%&'*+-.^_`|~",
+                         {{"aB3!#$%&'*+-.^_`|~", "0", ""}});
+
+  // delimiter chars in quoted description
+  testServerTimingHeader("metric;desc=\"descr;,=iption\";dur=123.4",
+                         {{"metric", "123.4", "descr;,=iption"}});
+
+  // whitespace
+  testServerTimingHeader("metric ; ", {{"metric", "0", ""}});
+  testServerTimingHeader("metric , ", {{"metric", "0", ""}});
+  testServerTimingHeader("metric ; dur = 123.4 ; desc = description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric ; desc = description ; dur = 123.4",
+                         {{"metric", "123.4", "description"}});
+
+  // multiple entries
+  testServerTimingHeader(
+      "metric1;dur=12.3;desc=description1,metric2;dur=45.6;"
+      "desc=description2,metric3;dur=78.9;desc=description3",
+      {{"metric1", "12.3", "description1"},
+       {"metric2", "45.6", "description2"},
+       {"metric3", "78.9", "description3"}});
+  testServerTimingHeader("metric1,metric2 ,metric3, metric4 , metric5",
+                         {{"metric1", "0", ""},
+                          {"metric2", "0", ""},
+                          {"metric3", "0", ""},
+                          {"metric4", "0", ""},
+                          {"metric5", "0", ""}});
+
+  // quoted-strings
+  // metric;desc=\ --> ''
+  testServerTimingHeader("metric;desc=\\", {{"metric", "0", ""}});
+  // metric;desc=" --> ''
+  testServerTimingHeader("metric;desc=\"", {{"metric", "0", ""}});
+  // metric;desc=\\ --> ''
+  testServerTimingHeader("metric;desc=\\\\", {{"metric", "0", ""}});
+  // metric;desc=\" --> ''
+  testServerTimingHeader("metric;desc=\\\"", {{"metric", "0", ""}});
+  // metric;desc="\ --> ''
+  testServerTimingHeader("metric;desc=\"\\", {{"metric", "0", ""}});
+  // metric;desc="" --> ''
+  testServerTimingHeader("metric;desc=\"\"", {{"metric", "0", ""}});
+  // metric;desc=\\\ --> ''
+  testServerTimingHeader("metric;desc=\\\\\\", {{"metric", "0", ""}});
+  // metric;desc=\\" --> ''
+  testServerTimingHeader("metric;desc=\\\\\"", {{"metric", "0", ""}});
+  // metric;desc=\"\ --> ''
+  testServerTimingHeader("metric;desc=\\\"\\", {{"metric", "0", ""}});
+  // metric;desc=\"" --> ''
+  testServerTimingHeader("metric;desc=\\\"\"", {{"metric", "0", ""}});
+  // metric;desc="\\ --> ''
+  testServerTimingHeader("metric;desc=\"\\\\", {{"metric", "0", ""}});
+  // metric;desc="\" --> ''
+  testServerTimingHeader("metric;desc=\"\\\"", {{"metric", "0", ""}});
+  // metric;desc=""\ --> ''
+  testServerTimingHeader("metric;desc=\"\"\\", {{"metric", "0", ""}});
+  // metric;desc=""" --> ''
+  testServerTimingHeader("metric;desc=\"\"\"", {{"metric", "0", ""}});
+  // metric;desc=\\\\ --> ''
+  testServerTimingHeader("metric;desc=\\\\\\\\", {{"metric", "0", ""}});
+  // metric;desc=\\\" --> ''
+  testServerTimingHeader("metric;desc=\\\\\\\"", {{"metric", "0", ""}});
+  // metric;desc=\\"\ --> ''
+  testServerTimingHeader("metric;desc=\\\\\"\\", {{"metric", "0", ""}});
+  // metric;desc=\\"" --> ''
+  testServerTimingHeader("metric;desc=\\\\\"\"", {{"metric", "0", ""}});
+  // metric;desc=\"\\ --> ''
+  testServerTimingHeader("metric;desc=\\\"\\\\", {{"metric", "0", ""}});
+  // metric;desc=\"\" --> ''
+  testServerTimingHeader("metric;desc=\\\"\\\"", {{"metric", "0", ""}});
+  // metric;desc=\""\ --> ''
+  testServerTimingHeader("metric;desc=\\\"\"\\", {{"metric", "0", ""}});
+  // metric;desc=\""" --> ''
+  testServerTimingHeader("metric;desc=\\\"\"\"", {{"metric", "0", ""}});
+  // metric;desc="\\\ --> ''
+  testServerTimingHeader("metric;desc=\"\\\\\\", {{"metric", "0", ""}});
+  // metric;desc="\\" --> '\'
+  testServerTimingHeader("metric;desc=\"\\\\\"", {{"metric", "0", "\\"}});
+  // metric;desc="\"\ --> ''
+  testServerTimingHeader("metric;desc=\"\\\"\\", {{"metric", "0", ""}});
+  // metric;desc="\"" --> '"'
+  testServerTimingHeader("metric;desc=\"\\\"\"", {{"metric", "0", "\""}});
+  // metric;desc=""\\ --> ''
+  testServerTimingHeader("metric;desc=\"\"\\\\", {{"metric", "0", ""}});
+  // metric;desc=""\" --> ''
+  testServerTimingHeader("metric;desc=\"\"\\\"", {{"metric", "0", ""}});
+  // metric;desc="""\ --> ''
+  testServerTimingHeader("metric;desc=\"\"\"\\", {{"metric", "0", ""}});
+  // metric;desc="""" --> ''
+  testServerTimingHeader("metric;desc=\"\"\"\"", {{"metric", "0", ""}});
+
+  // duplicate entry names
+  testServerTimingHeader(
+      "metric;dur=12.3;desc=description1,metric;dur=45.6;"
+      "desc=description2",
+      {{"metric", "12.3", "description1"}, {"metric", "45.6", "description2"}});
+
+  // non-numeric durations
+  testServerTimingHeader("metric;dur=foo", {{"metric", "0", ""}});
+  testServerTimingHeader("metric;dur=\"foo\"", {{"metric", "0", ""}});
+
+  // unrecognized param names
+  testServerTimingHeader(
+      "metric;foo=bar;desc=description;foo=bar;dur=123.4;foo=bar",
+      {{"metric", "123.4", "description"}});
+
+  // duplicate param names
+  testServerTimingHeader("metric;dur=123.4;dur=567.8",
+                         {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric;desc=description1;desc=description2",
+                         {{"metric", "0", "description1"}});
+  testServerTimingHeader("metric;dur=foo;dur=567.8", {{"metric", "", ""}});
+
+  // unspecified param values
+  testServerTimingHeader("metric;dur;dur=123.4", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric;desc;desc=description",
+                         {{"metric", "0", "description"}});
+
+  // param name case
+  testServerTimingHeader("metric;DuR=123.4;DeSc=description",
+                         {{"metric", "123.4", "description"}});
+
+  // nonsense
+  testServerTimingHeader("metric=foo;dur;dur=123.4,metric2",
+                         {{"metric", "0", ""}});
+  testServerTimingHeader("metric\"foo;dur;dur=123.4,metric2",
+                         {{"metric", "0", ""}});
+
+  // TODO(cvazac) the following tests should actually NOT pass
+  // According to the definition of token/tchar
+  // (https://tools.ietf.org/html/rfc7230#appendix-B),
+  // HeaderFieldTokenizer.IsTokenCharacter is being too permissive for the
+  // following chars (decimal):
+  // 123 '{', 125 '}', and 127 (not defined)
+  testServerTimingHeader("{", {{"{", "0", ""}});
+  testServerTimingHeader("}", {{"}", "0", ""}});
+  testServerTimingHeader("{}", {{"{}", "0", ""}});
+  testServerTimingHeader("{\"foo\":\"bar\"},metric", {{"{", "0", ""}});
+
+  // nonsense - return zero entries
+  testServerTimingHeader(" ", {});
+  testServerTimingHeader("=", {});
+  testServerTimingHeader("[", {});
+  testServerTimingHeader("]", {});
+  testServerTimingHeader(";", {});
+  testServerTimingHeader(",", {});
+  testServerTimingHeader("=;", {});
+  testServerTimingHeader(";=", {});
+  testServerTimingHeader("=,", {});
+  testServerTimingHeader(",=", {});
+  testServerTimingHeader(";,", {});
+  testServerTimingHeader(",;", {});
+  testServerTimingHeader("=;,", {});
+}
+
+TEST(HTTPParsersTest, ParseContentTypeOptionsTest) {
+  struct {
+    const char* value;
+    ContentTypeOptionsDisposition result;
+  } cases[] = {{"nosniff", kContentTypeOptionsNosniff},
+               {"NOSNIFF", kContentTypeOptionsNosniff},
+               {"NOsniFF", kContentTypeOptionsNosniff},
+               {"nosniff, nosniff", kContentTypeOptionsNosniff},
+               {"nosniff, not-nosniff", kContentTypeOptionsNosniff},
+               {"nosniff, none", kContentTypeOptionsNosniff},
+               {" nosniff", kContentTypeOptionsNosniff},
+               {"NOSNIFF ", kContentTypeOptionsNosniff},
+               {" NOsniFF ", kContentTypeOptionsNosniff},
+               {" nosniff, nosniff", kContentTypeOptionsNosniff},
+               {"nosniff , not-nosniff", kContentTypeOptionsNosniff},
+               {" nosniff , none", kContentTypeOptionsNosniff},
+               {"", kContentTypeOptionsNone},
+               {"none", kContentTypeOptionsNone},
+               {"none, nosniff", kContentTypeOptionsNone}};
+  for (const auto& test : cases) {
+    SCOPED_TRACE(test.value);
+    EXPECT_EQ(test.result, ParseContentTypeOptionsHeader(test.value));
+  }
 }
 
 }  // namespace blink

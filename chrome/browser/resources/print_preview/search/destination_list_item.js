@@ -38,15 +38,7 @@ cr.define('print_preview', function() {
      * @private
      */
     this.query_ = query;
-
-    /**
-     * FedEx terms-of-service widget or {@code null} if this list item does not
-     * render the FedEx Office print destination.
-     * @type {print_preview.FedexTos}
-     * @private
-     */
-    this.fedexTos_ = null;
-  };
+  }
 
   /**
    * Event types dispatched by the destination list item.
@@ -66,8 +58,8 @@ cr.define('print_preview', function() {
 
     /** @override */
     createDom: function() {
-      this.setElementInternal(this.cloneTemplateInternal(
-          'destination-list-item-template'));
+      this.setElementInternal(
+          this.cloneTemplateInternal('destination-list-item-template'));
       this.updateUi_();
     },
 
@@ -78,12 +70,11 @@ cr.define('print_preview', function() {
       this.tracker.add(
           this.getElement(), 'keydown', this.onKeyDown_.bind(this));
       this.tracker.add(
-          this.getChildElement('.register-promo-button'),
-          'click',
+          this.getChildElement('.register-promo-button'), 'click',
           this.onRegisterPromoClicked_.bind(this));
     },
 
-    /** @return {!print_preiew.Destination} */
+    /** @return {!print_preview.Destination} */
     get destination() {
       return this.destination_;
     },
@@ -107,7 +98,7 @@ cr.define('print_preview', function() {
     onConfigureRequestAccepted: function() {
       // It must be a Chrome OS CUPS printer which hasn't been set up before.
       assert(
-          this.destination_.origin == print_preview.Destination.Origin.CROS &&
+          this.destination_.origin == print_preview.DestinationOrigin.CROS &&
           !this.destination_.capabilities);
       this.updateConfiguringMessage_(true);
     },
@@ -138,8 +129,7 @@ cr.define('print_preview', function() {
         this.onDestinationActivated_();
       } else {
         this.updateConfiguringMessage_(false);
-        setIsVisible(
-            this.getChildElement('.configuring-failed-text'), true);
+        setIsVisible(this.getChildElement('.configuring-failed-text'), true);
       }
     },
 
@@ -148,11 +138,12 @@ cr.define('print_preview', function() {
      * @private
      */
     updateUi_: function() {
-      var iconImg = this.getChildElement('.destination-list-item-icon');
+      const iconImg = this.getChildElement('.destination-list-item-icon');
       iconImg.src = this.destination_.iconUrl;
+      iconImg.srcset = this.destination_.srcSet;
 
-      var nameEl = this.getChildElement('.destination-list-item-name');
-      var textContent = this.destination_.displayName;
+      const nameEl = this.getChildElement('.destination-list-item-name');
+      let textContent = this.destination_.displayName;
       if (this.query_) {
         nameEl.textContent = '';
         // When search query is specified, make it obvious why this particular
@@ -162,7 +153,7 @@ cr.define('print_preview', function() {
         // Show the first matching property.
         this.destination_.extraPropertiesToMatch.some(function(property) {
           if (property.match(this.query_)) {
-            var hintSpan = document.createElement('span');
+            const hintSpan = document.createElement('span');
             hintSpan.className = 'search-hint';
             nameEl.appendChild(hintSpan);
             this.addTextWithHighlight_(hintSpan, property);
@@ -178,8 +169,8 @@ cr.define('print_preview', function() {
       nameEl.title = textContent;
 
       if (this.destination_.isExtension) {
-        var extensionNameEl = this.getChildElement('.extension-name');
-        var extensionName = this.destination_.extensionName;
+        const extensionNameEl = this.getChildElement('.extension-name');
+        const extensionName = this.destination_.extensionName;
         extensionNameEl.title = this.destination_.extensionName;
         if (this.query_) {
           extensionNameEl.textContent = '';
@@ -188,26 +179,26 @@ cr.define('print_preview', function() {
           extensionNameEl.textContent = this.destination_.extensionName;
         }
 
-        var extensionIconEl = this.getChildElement('.extension-icon');
+        const extensionIconEl = this.getChildElement('.extension-icon');
         extensionIconEl.style.backgroundImage = '-webkit-image-set(' +
-             'url(chrome://extension-icon/' +
-                  this.destination_.extensionId + '/24/1) 1x,' +
-             'url(chrome://extension-icon/' +
-                  this.destination_.extensionId + '/48/1) 2x)';
+            'url(chrome://extension-icon/' + this.destination_.extensionId +
+            '/24/1) 1x,' +
+            'url(chrome://extension-icon/' + this.destination_.extensionId +
+            '/48/1) 2x)';
         extensionIconEl.title = loadTimeData.getStringF(
-            'extensionDestinationIconTooltip',
-            this.destination_.extensionName);
+            'extensionDestinationIconTooltip', this.destination_.extensionName);
         extensionIconEl.onclick = this.onExtensionIconClicked_.bind(this);
-        extensionIconEl.onkeydown = this.onExtensionIconKeyDown_.bind(this);
+        extensionIconEl.onkeydown = /** @type {function(Event)} */ (
+            this.onExtensionIconKeyDown_.bind(this));
       }
 
-      var extensionIndicatorEl =
+      const extensionIndicatorEl =
           this.getChildElement('.extension-controlled-indicator');
       setIsVisible(extensionIndicatorEl, this.destination_.isExtension);
 
       // Initialize the element which renders the destination's offline status.
       this.getElement().classList.toggle('stale', this.destination_.isOffline);
-      var offlineStatusEl = this.getChildElement('.offline-status');
+      const offlineStatusEl = this.getChildElement('.offline-status');
       offlineStatusEl.textContent = this.destination_.offlineStatusText;
       setIsVisible(offlineStatusEl, this.destination_.isOffline);
 
@@ -215,13 +206,12 @@ cr.define('print_preview', function() {
       setIsVisible(
           this.getChildElement('.register-promo'),
           this.destination_.connectionStatus ==
-              print_preview.Destination.ConnectionStatus.UNREGISTERED);
+              print_preview.DestinationConnectionStatus.UNREGISTERED);
 
       if (cr.isChromeOS) {
         // Reset the configuring messages for CUPS printers.
         this.updateConfiguringMessage_(false);
-        setIsVisible(
-            this.getChildElement('.configuring-failed-text'), false);
+        setIsVisible(this.getChildElement('.configuring-failed-text'), false);
       }
     },
 
@@ -233,12 +223,12 @@ cr.define('print_preview', function() {
      * @private
      */
     addTextWithHighlight_: function(parent, text) {
-      var sections = text.split(this.query_);
-      for (var i = 0; i < sections.length; ++i) {
+      const sections = text.split(this.query_);
+      for (let i = 0; i < sections.length; ++i) {
         if (i % 2 == 0) {
           parent.appendChild(document.createTextNode(sections[i]));
         } else {
-          var span = document.createElement('span');
+          const span = document.createElement('span');
           span.className = 'destination-list-item-query-highlight';
           span.textContent = sections[i];
           parent.appendChild(span);
@@ -249,12 +239,11 @@ cr.define('print_preview', function() {
     /**
      * Shows/Hides the configuring in progress message and starts/stops its
      * animation accordingly.
-     * @param {bool} show If the message and animation should be shown.
+     * @param {boolean} show If the message and animation should be shown.
      * @private
      */
     updateConfiguringMessage_: function(show) {
-      setIsVisible(
-          this.getChildElement('.configuring-in-progress-text'), show);
+      setIsVisible(this.getChildElement('.configuring-in-progress-text'), show);
       this.getChildElement('.configuring-text-jumping-dots')
           .classList.toggle('jumping-dots', show);
     },
@@ -272,7 +261,7 @@ cr.define('print_preview', function() {
 
       // Check if the printer needs configuration before using. The user is only
       // allowed to set up one printer at one time.
-      var configureEvent = new CustomEvent(
+      const configureEvent = new CustomEvent(
           DestinationListItem.EventType.CONFIGURE_REQUEST,
           {detail: {destination: this.destination_}});
       this.eventTarget_.dispatchEvent(configureEvent);
@@ -284,21 +273,9 @@ cr.define('print_preview', function() {
      * @private
      */
     onDestinationActivated_: function() {
-      if (this.destination_.id ==
-              print_preview.Destination.GooglePromotedId.FEDEX &&
-          !this.destination_.isTosAccepted) {
-        if (!this.fedexTos_) {
-          this.fedexTos_ = new print_preview.FedexTos();
-          this.fedexTos_.render(this.getElement());
-          this.tracker.add(
-              this.fedexTos_,
-              print_preview.FedexTos.EventType.AGREE,
-              this.onTosAgree_.bind(this));
-        }
-        this.fedexTos_.setIsVisible(true);
-      } else if (this.destination_.connectionStatus !=
-                     print_preview.Destination.ConnectionStatus.UNREGISTERED) {
-        var selectEvt = new Event(DestinationListItem.EventType.SELECT);
+      if (this.destination_.connectionStatus !=
+          print_preview.DestinationConnectionStatus.UNREGISTERED) {
+        const selectEvt = new Event(DestinationListItem.EventType.SELECT);
         selectEvt.destination = this.destination_;
         this.eventTarget_.dispatchEvent(selectEvt);
       }
@@ -307,14 +284,15 @@ cr.define('print_preview', function() {
     /**
      * Called when the key is pressed on the destination item. Dispatches a
      * SELECT event when Enter is pressed.
-     * @param {KeyboardEvent} e Keyboard event to process.
+     * @param {!KeyboardEvent} e Keyboard event to process.
      * @private
      */
     onKeyDown_: function(e) {
       if (!hasKeyModifiers(e)) {
         if (e.keyCode == 13) {
-          var activeElementTag = document.activeElement ?
-              document.activeElement.tagName.toUpperCase() : '';
+          const activeElementTag = document.activeElement ?
+              document.activeElement.tagName.toUpperCase() :
+              '';
           if (activeElementTag == 'LI') {
             e.stopPropagation();
             e.preventDefault();
@@ -325,23 +303,12 @@ cr.define('print_preview', function() {
     },
 
     /**
-     * Called when the user agrees to the print destination's terms-of-service.
-     * Selects the print destination that was agreed to.
-     * @private
-     */
-    onTosAgree_: function() {
-      var selectEvt = new Event(DestinationListItem.EventType.SELECT);
-      selectEvt.destination = this.destination_;
-      this.eventTarget_.dispatchEvent(selectEvt);
-    },
-
-    /**
      * Called when the registration promo is clicked.
      * @private
      */
     onRegisterPromoClicked_: function() {
-      var promoClickedEvent = new Event(
-          DestinationListItem.EventType.REGISTER_PROMO_CLICKED);
+      const promoClickedEvent =
+          new Event(DestinationListItem.EventType.REGISTER_PROMO_CLICKED);
       promoClickedEvent.destination = this.destination_;
       this.eventTarget_.dispatchEvent(promoClickedEvent);
     },
@@ -350,7 +317,7 @@ cr.define('print_preview', function() {
      * Handles click and 'Enter' key down events for the extension icon element.
      * It opens extensions page with the extension associated with the
      * destination highlighted.
-     * @param {MouseEvent|KeyboardEvent} e The event to handle.
+     * @param {Event} e The event to handle.
      * @private
      */
     onExtensionIconClicked_: function(e) {
@@ -361,7 +328,7 @@ cr.define('print_preview', function() {
     /**
      * Handles key down event for the extensin icon element. Keys different than
      * 'Enter' are ignored.
-     * @param {KeyboardEvent} e The event to handle.
+     * @param {!Event} e The event to handle.
      * @private
      */
     onExtensionIconKeyDown_: function(e) {
@@ -369,12 +336,10 @@ cr.define('print_preview', function() {
         return;
       if (e.keyCode != 13 /* Enter */)
         return;
-      this.onExtensionIconClicked_(event);
+      this.onExtensionIconClicked_(e);
     }
   };
 
   // Export
-  return {
-    DestinationListItem: DestinationListItem
-  };
+  return {DestinationListItem: DestinationListItem};
 });

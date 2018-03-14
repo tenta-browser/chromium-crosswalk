@@ -8,7 +8,6 @@
 
 #include "base/ios/ios_util.h"
 #include "base/json/json_reader.h"
-#include "base/mac/scoped_nsobject.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #import "base/test/ios/wait_util.h"
@@ -26,6 +25,10 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 // Unit tests for the resources/contextualsearch.js JavaScript file.
 
@@ -223,17 +226,13 @@ class ContextualSearchJsTest : public ChromeWebTest {
 
   void SetUp() override {
     ChromeWebTest::SetUp();
-    mockDelegate_.reset([[OCMockObject
-        niceMockForProtocol:@protocol(ContextualSearchControllerDelegate)]
-        retain]);
     jsUnittestsAdditions_ = static_cast<JsContextualSearchAdditionsManager*>(
         [web_state()->GetJSInjectionReceiver()
             instanceOfClass:[JsContextualSearchAdditionsManager class]]);
     TestChromeBrowserState::Builder test_cbs_builder;
     chrome_browser_state_ = test_cbs_builder.Build();
-    controller_.reset([[ContextualSearchController alloc]
-        initWithBrowserState:chrome_browser_state_.get()
-                    delegate:mockDelegate_]);
+    controller_ = [[ContextualSearchController alloc]
+        initWithBrowserState:chrome_browser_state_.get()];
     [controller_
         setPermissions:[[MockTouchToSearchPermissionsMediator alloc]
                            initWithBrowserState:chrome_browser_state_.get()]];
@@ -245,15 +244,13 @@ class ContextualSearchJsTest : public ChromeWebTest {
     [controller_ close];
     // Need to tear down the controller so it deregisters its JS handlers
     // before |webController_| is destroyed.
-    controller_.reset();
+    controller_ = nil;
     ChromeWebTest::TearDown();
   }
 
   std::unique_ptr<TestChromeBrowserState> chrome_browser_state_;
-  __unsafe_unretained JsContextualSearchAdditionsManager* jsUnittestsAdditions_;
-  base::scoped_nsobject<ContextualSearchController> controller_;
-  base::scoped_nsobject<id> mockDelegate_;
-  base::scoped_nsobject<id> mockToolbarDelegate_;
+  __weak JsContextualSearchAdditionsManager* jsUnittestsAdditions_ = nil;
+  ContextualSearchController* controller_;
 };
 
 // Test that ignored elements do not trigger CS when tapped.
@@ -299,7 +296,7 @@ TEST_F(ContextualSearchJsTest, TestHighlightThroughBlock) {
   EXPECT_NSEQ(highlighted, @"Left cell right cell");
 };
 
-// Test that blocks add spaces if there are not arround it.
+// Test that blocks add spaces if there are not around it.
 TEST_F(ContextualSearchJsTest, TestHighlightBlockAddsSpace) {
   LoadHtml(kHTMLWithDiv);
   ContextualSearchStruct searchContext;
@@ -317,6 +314,9 @@ TEST_F(ContextualSearchJsTest, TestHighlightBlockDontAddsSpace) {
 
 // Test that related DOM mutation cancels contextual search.
 TEST_F(ContextualSearchJsTest, TestHighlightRelatedDOMMutation) {
+  // TODO(crbug.com/736989): Test failures in GetMutatedNodeCount.
+  if (base::ios::IsRunningOnIOS11OrLater())
+    return;
   LoadHtml(kHTMLWithRelatedDOMMutation);
   ExecuteJavaScript(
       @"document.getElementById('test').setAttribute('attr', 'after');");
@@ -374,6 +374,9 @@ TEST_F(ContextualSearchJsTest, TestHighlightIgnoreDOMMutationSameText) {
 
 // Test that related text DOM mutation prevents contextual search.
 TEST_F(ContextualSearchJsTest, TestHighlightRelatedDOMMutationText) {
+  // TODO(crbug.com/736989): Test failures in GetMutatedNodeCount.
+  if (base::ios::IsRunningOnIOS11OrLater())
+    return;
   LoadHtml(kHTMLWithRelatedTextMutation);
   ExecuteJavaScript(@"document.getElementById('test').innerText = 'mutated';");
   ASSERT_EQ(1, GetMutatedNodeCount());
@@ -384,6 +387,9 @@ TEST_F(ContextualSearchJsTest, TestHighlightRelatedDOMMutationText) {
 
 // Test that unrelated text DOM mutation doesn't prevent contextual search.
 TEST_F(ContextualSearchJsTest, TestHighlightUnrelatedDOMMutationTextIgnored) {
+  // TODO(crbug.com/736989): Test failures in GetMutatedNodeCount.
+  if (base::ios::IsRunningOnIOS11OrLater())
+    return;
   LoadHtml(kHTMLWithUnrelatedDOMMutation);
   ExecuteJavaScript(@"document.getElementById('test').innerText = 'mutated';");
   ASSERT_EQ(1, GetMutatedNodeCount());
@@ -394,6 +400,10 @@ TEST_F(ContextualSearchJsTest, TestHighlightUnrelatedDOMMutationTextIgnored) {
 
 // Test that two related DOM mutations prevent contextual search.
 TEST_F(ContextualSearchJsTest, TestHighlightTwoDOMMutations) {
+  // TODO(crbug.com/736989): Test failures in GetMutatedNodeCount.
+  if (base::ios::IsRunningOnIOS11OrLater())
+    return;
+
   LoadHtml(kHTMLWithRelatedDOMMutation);
   ASSERT_EQ(0, GetMutatedNodeCount());
   ExecuteJavaScript(
@@ -408,6 +418,10 @@ TEST_F(ContextualSearchJsTest, TestHighlightTwoDOMMutations) {
 // Test that two related DOM mutations with only one change prevent contextual
 // search.
 TEST_F(ContextualSearchJsTest, TestHighlightTwoDOMMutationOneChanging) {
+  // TODO(crbug.com/736989): Test failures in GetMutatedNodeCount.
+  if (base::ios::IsRunningOnIOS11OrLater())
+    return;
+
   LoadHtml(kHTMLWithRelatedDOMMutation);
   ExecuteJavaScript(
       @"document.getElementById('taphere').innerText = 'mutated';"

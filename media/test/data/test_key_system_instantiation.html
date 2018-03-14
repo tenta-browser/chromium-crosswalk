@@ -5,8 +5,7 @@
       // of the result.
       function setResultInTitle(title) {
         if (title == "" || title == "success" ||
-            title == "Unsupported keySystem" ||
-            title == "None of the requested configurations were supported.") {
+            title == "Unsupported keySystem or supportedConfigurations.") {
           document.title = title;
         } else {
           console.log("Unexpected result: " + title);
@@ -32,11 +31,13 @@
       // Calls navigator.requestMediaKeySystemAccess() using the supplied codec
       // lists, and then verifies the result. Sets page title when done.
       function requestMediaKeySystemAccessAndVerifyConfiguration(
-          keySystem, initDataType, audioCodecList, videoCodecList) {
+          keySystem, initDataType, audioCodecList, videoCodecList,
+          sessionType) {
         var configuration = {
             initDataTypes: [initDataType],
             audioCapabilities: [],
-            videoCapabilities: []
+            videoCapabilities: [],
+            sessionTypes: [sessionType]
         };
         if (audioCodecList !== null) {
           for (entry of audioCodecList) {
@@ -89,10 +90,10 @@
       };
 
       function checkKeySystemWithMediaMimeType(keySystem, initDataType,
-                                               audioCodecList, videoCodecList) {
+          audioCodecList, videoCodecList, sessionType) {
         setResultInTitle("");
-        requestMediaKeySystemAccessAndVerifyConfiguration(
-            keySystem, initDataType, audioCodecList, videoCodecList);
+        requestMediaKeySystemAccessAndVerifyConfiguration(keySystem,
+            initDataType, audioCodecList, videoCodecList, sessionType);
       };
     </script>
   </body>

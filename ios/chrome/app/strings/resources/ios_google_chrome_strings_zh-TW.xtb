@@ -6,6 +6,7 @@
 <translation id="1759842336958782510">Chrome</translation>
 <translation id="2147651015520127414">Chrome 已驗證這個網站的憑證是由「<ph name="ISSUER" />」所核發。</translation>
 <translation id="2334084861041072223">Copyright <ph name="YEAR" /> Google Inc. 版權所有。</translation>
+<translation id="2342981853652716282">無論使用任何裝置，只要登入 Chrome，即可取得你的書籤、密碼，並沿用其他設定。</translation>
 <translation id="2347208864470321755">開啟這項功能後，Chrome 會使用 Google 翻譯來翻譯其他語言的網頁。<ph name="BEGIN_LINK" />瞭解詳情<ph name="END_LINK" /></translation>
 <translation id="2441696206556358796">如要儲存圖片，請輕觸 [設定] 並允許 Chrome 使用你的相片</translation>
 <translation id="2576431527583832481">Chrome 現在變得更進步了！歡迎你升級使用新版本。</translation>
@@ -16,8 +17,6 @@
 <translation id="3196546062792660320">Chrome 會將你的所有帳戶同步到網路上，為你節省時間。你可以在「設定」中新增或移除帳戶。</translation>
 <translation id="3282568296779691940">登入 Chrome</translation>
 <translation id="3345341804167540816">隨時隨地使用 Chrome</translation>
-<translation id="3531621179462011934">如要在所有裝置上取得並套用你的設定，請登入 Chrome。</translation>
-<translation id="3601960512121168237">喜歡 Chrome 嗎？建議您<ph name="BEGIN_LINK" />將 Chrome 移至 Dock<ph name="END_LINK" /></translation>
 <translation id="3678774398092457402">要讓 Chrome 儲存你在這個網站設定的密碼嗎？</translation>
 <translation id="384394811301901750">Google Chrome 目前無法使用你的相機</translation>
 <translation id="3870154837782082782">Google Inc.</translation>
@@ -43,7 +42,6 @@
 <translation id="7172660552945675509">提示：<ph name="BEGIN_LINK" />將 Chrome 移至 Dock<ph name="END_LINK" /></translation>
 <translation id="7265369419224458312">只要在電腦上開啟 Chrome 並前往選單中選取 [登入 Chrome...]，即可直接在這裡使用您在電腦上開啟的所有分頁。</translation>
 <translation id="728488472449859922">開啟 Google Chrome QR 掃描器</translation>
-<translation id="7311395200710390977">如要更快存取 Chrome，請<ph name="BEGIN_LINK" />將 Chrome 移至 Dock<ph name="END_LINK" /></translation>
 <translation id="7400722733683201933">關於 Google Chrome</translation>
 <translation id="7437998757836447326">登出 Chrome</translation>
 <translation id="756809126120519699">已清除 Chrome 資料</translation>

@@ -10,19 +10,15 @@
 #include "chrome/browser/ui/views/frame/contents_layout_manager.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
 #include "chrome/browser/ui/views/infobars/infobar_container_view.h"
-#include "chrome/browser/ui/views/tabs/tab_strip.h"
+#include "chrome/browser/ui/views/tabs/tab_strip_controller.h"
+#include "chrome/browser/ui/views/tabs/tab_strip_impl.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 class MockBrowserViewLayoutDelegate : public BrowserViewLayoutDelegate {
  public:
   explicit MockBrowserViewLayoutDelegate(views::View* contents_web_view)
-      : contents_web_view_(contents_web_view),
-        tab_strip_visible_(true),
-        toolbar_visible_(true),
-        bookmark_bar_visible_(true),
-        download_shelf_needs_layout_(false) {
-  }
+      : contents_web_view_(contents_web_view) {}
   ~MockBrowserViewLayoutDelegate() override {}
 
   void set_download_shelf_needs_layout(bool layout) {
@@ -60,33 +56,22 @@ class MockBrowserViewLayoutDelegate : public BrowserViewLayoutDelegate {
 
  private:
   views::View* contents_web_view_;
-  bool tab_strip_visible_;
-  bool toolbar_visible_;
-  bool bookmark_bar_visible_;
-  bool download_shelf_needs_layout_;
+  bool tab_strip_visible_ = true;
+  bool toolbar_visible_ = true;
+  bool bookmark_bar_visible_ = true;
+  bool download_shelf_needs_layout_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(MockBrowserViewLayoutDelegate);
 };
 
 ///////////////////////////////////////////////////////////////////////////////
 
-// A simple view that prefers an initial size.
-class MockView : public views::View {
- public:
-  explicit MockView(gfx::Size initial_size)
-      : size_(initial_size) {
-    SetBoundsRect(gfx::Rect(gfx::Point(), size_));
-  }
-  ~MockView() override {}
-
-  // views::View overrides:
-  gfx::Size GetPreferredSize() const override { return size_; }
-
- private:
-  gfx::Size size_;
-
-  DISALLOW_COPY_AND_ASSIGN(MockView);
-};
+views::View* CreateFixedSizeView(const gfx::Size& size) {
+  auto* view = new views::View;
+  view->SetPreferredSize(size);
+  view->SizeToPreferredSize();
+  return view;
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -111,7 +96,9 @@ class MockImmersiveModeController : public ImmersiveModeController {
   }
   void OnFindBarVisibleBoundsChanged(
       const gfx::Rect& new_visible_bounds) override {}
+  bool ShouldStayImmersiveAfterExitingFullscreen() override { return true; }
   views::Widget* GetRevealWidget() override { return nullptr; }
+  void OnWidgetActivationChanged(views::Widget* widget, bool active) override {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockImmersiveModeController);
@@ -134,36 +121,36 @@ class BrowserViewLayoutTest : public BrowserWithTestWindowTest {
 
   BrowserViewLayout* layout() { return layout_.get(); }
   MockBrowserViewLayoutDelegate* delegate() { return delegate_; }
-  MockView* root_view() { return root_view_.get(); }
-  MockView* top_container() { return top_container_; }
+  views::View* root_view() { return root_view_.get(); }
+  views::View* top_container() { return top_container_; }
   TabStrip* tab_strip() { return tab_strip_; }
-  MockView* toolbar() { return toolbar_; }
+  views::View* toolbar() { return toolbar_; }
   InfoBarContainerView* infobar_container() { return infobar_container_; }
-  MockView* contents_container() { return contents_container_; }
+  views::View* contents_container() { return contents_container_; }
 
   // BrowserWithTestWindowTest overrides:
   void SetUp() override {
     BrowserWithTestWindowTest::SetUp();
 
-    root_view_.reset(new MockView(gfx::Size(800, 600)));
+    root_view_.reset(CreateFixedSizeView(gfx::Size(800, 600)));
 
     immersive_mode_controller_.reset(new MockImmersiveModeController);
 
-    top_container_ = new MockView(gfx::Size(800, 60));
-    tab_strip_ = new TabStrip(nullptr);
+    top_container_ = CreateFixedSizeView(gfx::Size(800, 60));
+    tab_strip_ = new TabStripImpl(std::unique_ptr<TabStripController>());
     top_container_->AddChildView(tab_strip_);
-    toolbar_ = new MockView(gfx::Size(800, 30));
+    toolbar_ = CreateFixedSizeView(gfx::Size(800, 30));
     top_container_->AddChildView(toolbar_);
     root_view_->AddChildView(top_container_);
 
     infobar_container_ = new InfoBarContainerView(nullptr);
     root_view_->AddChildView(infobar_container_);
 
-    contents_web_view_ = new MockView(gfx::Size(800, 600));
-    devtools_web_view_ = new MockView(gfx::Size(800, 600));
+    contents_web_view_ = CreateFixedSizeView(gfx::Size(800, 600));
+    devtools_web_view_ = CreateFixedSizeView(gfx::Size(800, 600));
     devtools_web_view_->SetVisible(false);
 
-    contents_container_ = new MockView(gfx::Size(800, 600));
+    contents_container_ = CreateFixedSizeView(gfx::Size(800, 600));
     contents_container_->AddChildView(devtools_web_view_);
     contents_container_->AddChildView(contents_web_view_);
     ContentsLayoutManager* contents_layout_manager =
@@ -190,16 +177,16 @@ class BrowserViewLayoutTest : public BrowserWithTestWindowTest {
  private:
   std::unique_ptr<BrowserViewLayout> layout_;
   MockBrowserViewLayoutDelegate* delegate_;  // Owned by |layout_|.
-  std::unique_ptr<MockView> root_view_;
+  std::unique_ptr<views::View> root_view_;
 
   // Views owned by |root_view_|.
-  MockView* top_container_;
+  views::View* top_container_;
   TabStrip* tab_strip_;
-  MockView* toolbar_;
+  views::View* toolbar_;
   InfoBarContainerView* infobar_container_;
-  MockView* contents_container_;
-  MockView* contents_web_view_;
-  MockView* devtools_web_view_;
+  views::View* contents_container_;
+  views::View* contents_web_view_;
+  views::View* devtools_web_view_;
 
   std::unique_ptr<MockImmersiveModeController> immersive_mode_controller_;
 
@@ -242,7 +229,8 @@ TEST_F(BrowserViewLayoutTest, Layout) {
 }
 
 TEST_F(BrowserViewLayoutTest, LayoutDownloadShelf) {
-  std::unique_ptr<MockView> download_shelf(new MockView(gfx::Size(800, 50)));
+  std::unique_ptr<views::View> download_shelf(
+      CreateFixedSizeView(gfx::Size(800, 50)));
   layout()->set_download_shelf(download_shelf.get());
 
   // If download shelf doesn't need layout, it doesn't move the bottom edge.

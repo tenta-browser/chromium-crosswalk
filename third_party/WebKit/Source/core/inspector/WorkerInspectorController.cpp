@@ -32,14 +32,19 @@
 
 #include "core/CoreProbeSink.h"
 #include "core/inspector/InspectorLogAgent.h"
+#include "core/inspector/InspectorNetworkAgent.h"
 #include "core/inspector/InspectorTraceEvents.h"
 #include "core/inspector/WorkerThreadDebugger.h"
 #include "core/inspector/protocol/Protocol.h"
+#include "core/loader/WorkerFetchContext.h"
 #include "core/probe/CoreProbes.h"
 #include "core/workers/WorkerBackingThread.h"
+#include "core/workers/WorkerGlobalScope.h"
 #include "core/workers/WorkerReportingProxy.h"
 #include "core/workers/WorkerThread.h"
+#include "platform/LayoutTestSupport.h"
 #include "platform/WebThreadSupportingGC.h"
+#include "platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -53,76 +58,92 @@ WorkerInspectorController* WorkerInspectorController::Create(
 WorkerInspectorController::WorkerInspectorController(
     WorkerThread* thread,
     WorkerThreadDebugger* debugger)
-    : debugger_(debugger),
-      thread_(thread),
-      instrumenting_agents_(new CoreProbeSink()) {
-  instrumenting_agents_->addInspectorTraceEvents(new InspectorTraceEvents());
+    : debugger_(debugger), thread_(thread), probe_sink_(new CoreProbeSink()) {
+  probe_sink_->addInspectorTraceEvents(new InspectorTraceEvents());
 }
 
 WorkerInspectorController::~WorkerInspectorController() {
   DCHECK(!thread_);
 }
 
-void WorkerInspectorController::ConnectFrontend() {
-  if (session_)
+void WorkerInspectorController::ConnectFrontend(
+    int session_id,
+    const String& parent_instrumentation_token) {
+  if (sessions_.find(session_id) != sessions_.end())
     return;
 
-  // sessionId will be overwritten by WebDevToolsAgent::sendProtocolNotification
-  // call.
-  session_ = new InspectorSession(this, instrumenting_agents_.Get(), 0,
-                                  debugger_->GetV8Inspector(),
-                                  debugger_->ContextGroupId(thread_), nullptr);
-  session_->Append(
-      new InspectorLogAgent(thread_->GetConsoleMessageStorage(), nullptr));
-  thread_->GetWorkerBackingThread().BackingThread().AddTaskObserver(this);
+  InspectorSession* session = new InspectorSession(
+      this, probe_sink_.Get(), session_id, debugger_->GetV8Inspector(),
+      debugger_->ContextGroupId(thread_), nullptr);
+  session->Append(new InspectorLogAgent(thread_->GetConsoleMessageStorage(),
+                                        nullptr, session->V8Session()));
+  if (thread_->GlobalScope()->IsWorkerGlobalScope() &&
+      RuntimeEnabledFeatures::OffMainThreadFetchEnabled()) {
+    DCHECK(ToWorkerGlobalScope(thread_->GlobalScope())->EnsureFetcher());
+    session->Append(new InspectorNetworkAgent(
+        new InspectedFrames(nullptr, parent_instrumentation_token),
+        ToWorkerGlobalScope(thread_->GlobalScope()), session->V8Session()));
+  }
+  if (sessions_.IsEmpty())
+    thread_->GetWorkerBackingThread().BackingThread().AddTaskObserver(this);
+  sessions_.insert(session_id, session);
 }
 
-void WorkerInspectorController::DisconnectFrontend() {
-  if (!session_)
+void WorkerInspectorController::DisconnectFrontend(int session_id) {
+  auto it = sessions_.find(session_id);
+  if (it == sessions_.end())
     return;
-  session_->Dispose();
-  session_.Clear();
-  thread_->GetWorkerBackingThread().BackingThread().RemoveTaskObserver(this);
+  it->value->Dispose();
+  sessions_.erase(it);
+  if (sessions_.IsEmpty())
+    thread_->GetWorkerBackingThread().BackingThread().RemoveTaskObserver(this);
 }
 
 void WorkerInspectorController::DispatchMessageFromFrontend(
+    int session_id,
     const String& message) {
-  if (!session_)
+  auto it = sessions_.find(session_id);
+  if (it == sessions_.end())
     return;
-  String method;
-  if (!protocol::DispatcherBase::getCommandName(message, &method))
-    return;
-  session_->DispatchProtocolMessage(method, message);
+  it->value->DispatchProtocolMessage(message);
 }
 
 void WorkerInspectorController::Dispose() {
-  DisconnectFrontend();
+  Vector<int> ids;
+  CopyKeysToVector(sessions_, ids);
+  for (int session_id : ids)
+    DisconnectFrontend(session_id);
   thread_ = nullptr;
 }
 
 void WorkerInspectorController::FlushProtocolNotifications() {
-  if (session_)
-    session_->flushProtocolNotifications();
+  for (auto& it : sessions_)
+    it.value->flushProtocolNotifications();
 }
 
 void WorkerInspectorController::SendProtocolMessage(int session_id,
                                                     int call_id,
                                                     const String& response,
                                                     const String& state) {
+  // Make tests more predictable by flushing all sessions before sending
+  // protocol response in any of them.
+  if (LayoutTestSupport::IsRunningLayoutTest() && call_id)
+    FlushProtocolNotifications();
   // Worker messages are wrapped, no need to handle callId or state.
-  thread_->GetWorkerReportingProxy().PostMessageToPageInspector(response);
+  thread_->GetWorkerReportingProxy().PostMessageToPageInspector(session_id,
+                                                                response);
 }
 
 void WorkerInspectorController::WillProcessTask() {}
 
 void WorkerInspectorController::DidProcessTask() {
-  if (session_)
-    session_->flushProtocolNotifications();
+  for (auto& it : sessions_)
+    it.value->flushProtocolNotifications();
 }
 
-DEFINE_TRACE(WorkerInspectorController) {
-  visitor->Trace(instrumenting_agents_);
-  visitor->Trace(session_);
+void WorkerInspectorController::Trace(blink::Visitor* visitor) {
+  visitor->Trace(probe_sink_);
+  visitor->Trace(sessions_);
 }
 
 }  // namespace blink

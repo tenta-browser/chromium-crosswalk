@@ -228,6 +228,19 @@ void NetworkConfigurationHandler::GetShillProperties(
     const network_handler::DictionaryResultCallback& callback,
     const network_handler::ErrorCallback& error_callback) {
   NET_LOG(USER) << "GetShillProperties: " << service_path;
+
+  const NetworkState* network_state =
+      network_state_handler_->GetNetworkState(service_path);
+  if (network_state &&
+      (NetworkTypePattern::Tether().MatchesType(network_state->type()) ||
+       network_state->IsDefaultCellular())) {
+    // This is a Tether network or a Cellular network with no Service.
+    // Provide properties from NetworkState.
+    base::DictionaryValue dictionary;
+    network_state->GetStateProperties(&dictionary);
+    callback.Run(service_path, dictionary);
+    return;
+  }
   DBusThreadManager::Get()->GetShillServiceClient()->GetProperties(
       dbus::ObjectPath(service_path),
       base::Bind(&NetworkConfigurationHandler::GetPropertiesCallback,
@@ -258,8 +271,7 @@ void NetworkConfigurationHandler::SetShillProperties(
     const NetworkState* network_state =
         network_state_handler_->GetNetworkState(service_path);
     guid = network_state ? network_state->guid() : base::GenerateGUID();
-    properties_to_set->SetStringWithoutPathExpansion(shill::kGuidProperty,
-                                                     guid);
+    properties_to_set->SetKey(shill::kGuidProperty, base::Value(guid));
   }
 
   LogConfigProperties("SetProperty", service_path, *properties_to_set);
@@ -338,8 +350,7 @@ void NetworkConfigurationHandler::CreateShillConfiguration(
   properties_to_set->GetStringWithoutPathExpansion(shill::kGuidProperty, &guid);
   if (guid.empty()) {
     guid = base::GenerateGUID();
-    properties_to_set->SetStringWithoutPathExpansion(
-        ::onc::network_config::kGUID, guid);
+    properties_to_set->SetKey(shill::kGuidProperty, base::Value(guid));
   }
 
   LogConfigProperties("Configure", type, *properties_to_set);
@@ -457,8 +468,7 @@ void NetworkConfigurationHandler::OnShuttingDown() {
 NetworkConfigurationHandler::NetworkConfigurationHandler()
     : network_state_handler_(nullptr), weak_ptr_factory_(this) {}
 
-NetworkConfigurationHandler::~NetworkConfigurationHandler() {
-}
+NetworkConfigurationHandler::~NetworkConfigurationHandler() = default;
 
 void NetworkConfigurationHandler::Init(
     NetworkStateHandler* network_state_handler,
@@ -545,7 +555,7 @@ void NetworkConfigurationHandler::GetPropertiesCallback(
   std::string name =
       shill_property_util::GetNameFromProperties(service_path, properties);
   if (!name.empty())
-    properties_copy->SetStringWithoutPathExpansion(shill::kNameProperty, name);
+    properties_copy->SetKey(shill::kNameProperty, base::Value(name));
 
   // Get the GUID property from NetworkState if it is not set in Shill.
   std::string guid;
@@ -554,8 +564,8 @@ void NetworkConfigurationHandler::GetPropertiesCallback(
     const NetworkState* network_state =
         network_state_handler_->GetNetworkState(service_path);
     if (network_state) {
-      properties_copy->SetStringWithoutPathExpansion(
-          ::onc::network_config::kGUID, network_state->guid());
+      properties_copy->SetKey(::onc::network_config::kGUID,
+                              base::Value(network_state->guid()));
     }
   }
 

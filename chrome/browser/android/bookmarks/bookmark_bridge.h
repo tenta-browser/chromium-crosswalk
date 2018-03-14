@@ -5,8 +5,6 @@
 #ifndef CHROME_BROWSER_ANDROID_BOOKMARKS_BOOKMARK_BRIDGE_H_
 #define CHROME_BROWSER_ANDROID_BOOKMARKS_BOOKMARK_BRIDGE_H_
 
-#include <jni.h>
-
 #include "base/android/jni_android.h"
 #include "base/android/jni_weak_ref.h"
 #include "base/compiler_specific.h"
@@ -30,10 +28,10 @@ class Profile;
 class BookmarkBridge : public bookmarks::BaseBookmarkModelObserver,
                         public PartnerBookmarksShim::Observer {
  public:
-  BookmarkBridge(JNIEnv* env, jobject obj, jobject j_profile);
+  BookmarkBridge(JNIEnv* env,
+                 const base::android::JavaRef<jobject>& obj,
+                 const base::android::JavaRef<jobject>& j_profile);
   void Destroy(JNIEnv*, const base::android::JavaParamRef<jobject>&);
-
-  static bool RegisterBookmarkBridge(JNIEnv* env);
 
   bool IsDoingExtensiveChanges(JNIEnv* env,
                                const base::android::JavaParamRef<jobject>& obj);
@@ -198,8 +196,9 @@ class BookmarkBridge : public bookmarks::BaseBookmarkModelObserver,
 
   base::android::ScopedJavaLocalRef<jobject> CreateJavaBookmark(
       const bookmarks::BookmarkNode* node);
-  void ExtractBookmarkNodeInformation(const bookmarks::BookmarkNode* node,
-                                      jobject j_result_obj);
+  void ExtractBookmarkNodeInformation(
+      const bookmarks::BookmarkNode* node,
+      const base::android::JavaRef<jobject>& j_result_obj);
   const bookmarks::BookmarkNode* GetNodeByID(long node_id, int type);
   const bookmarks::BookmarkNode* GetFolderWithFallback(long folder_id,
                                                        int type);

@@ -1,3 +1,4 @@
+Tests DOM.getNodeForLocation method.
 Node: {
     attributes : [
         [0] : style
@@ -6,9 +7,10 @@ Node: {
     backendNodeId : <number>
     childNodeCount : 0
     localName : div
+    nodeId : <number>
     nodeName : DIV
     nodeType : 1
     nodeValue : 
-    parentId : 4
+    parentId : <number>
 }
 

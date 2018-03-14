@@ -50,8 +50,8 @@ RenderViewHost* RenderViewHostFactory::Create(
   }
   return new RenderViewHostImpl(
       instance,
-      base::MakeUnique<RenderWidgetHostImpl>(
-          widget_delegate, instance->GetProcess(), routing_id, hidden),
+      std::make_unique<RenderWidgetHostImpl>(
+          widget_delegate, instance->GetProcess(), routing_id, nullptr, hidden),
       delegate, main_frame_routing_id, swapped_out,
       true /* has_initialized_audio_host */);
 }

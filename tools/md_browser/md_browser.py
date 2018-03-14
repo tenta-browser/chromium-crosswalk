@@ -9,6 +9,7 @@ from __future__ import print_function
 import SimpleHTTPServer
 import SocketServer
 import argparse
+import cgi
 import codecs
 import os
 import re
@@ -16,6 +17,7 @@ import socket
 import sys
 import threading
 import time
+import urllib
 import webbrowser
 from xml.etree import ElementTree
 
@@ -31,15 +33,22 @@ def main(argv):
   parser.add_argument('-p', '--port', type=int, default=8080,
                       help='port to run on (default = %(default)s)')
   parser.add_argument('-d', '--directory', type=str, default=SRC_DIR)
+  parser.add_argument('-e', '--external', action='store_true',
+                      help='whether to bind to external port')
   parser.add_argument('file', nargs='?',
                       help='open file in browser')
   args = parser.parse_args(argv)
 
   top_level = os.path.realpath(args.directory)
+  hostname = '0.0.0.0' if args.external else 'localhost'
+  server_address = (hostname, args.port)
+  s = Server(server_address, top_level)
 
-  s = Server(args.port, top_level)
+  origin = 'http://' + hostname
+  if args.port != 80:
+    origin += ':%s' % args.port
+  print('Listening on %s/' % origin)
 
-  print('Listening on http://localhost:%s/' % args.port)
   thread = None
   if args.file:
     path = os.path.realpath(args.file)
@@ -47,15 +56,15 @@ def main(argv):
       print('%s is not under %s' % (args.file, args.directory))
       return 1
     rpath = os.path.relpath(path, top_level)
-    url = 'http://localhost:%d/%s' % (args.port, rpath)
+    url = '%s/%s' % (origin, rpath)
     print('Opening %s' % url)
     thread = threading.Thread(target=_open_url, args=(url,))
     thread.start()
 
   elif os.path.isfile(os.path.join(top_level, 'docs', 'README.md')):
-    print(' Try loading http://localhost:%d/docs/README.md' % args.port)
+    print(' Try loading %s/docs/README.md' % origin)
   elif os.path.isfile(os.path.join(args.directory, 'README.md')):
-    print(' Try loading http://localhost:%d/README.md' % args.port)
+    print(' Try loading %s/README.md' % origin)
 
   retcode = 1
   try:
@@ -106,11 +115,9 @@ def _gitiles_slugify(value, _separator):
 
 
 class Server(SocketServer.TCPServer):
-  def __init__(self, port, top_level):
-    SocketServer.TCPServer.__init__(self, ('0.0.0.0', port), Handler)
-    self.port = port
+  def __init__(self, server_address, top_level):
+    SocketServer.TCPServer.__init__(self, server_address, Handler)
     self.top_level = top_level
-    self.retcode = None
 
   def server_bind(self):
     self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -119,6 +126,7 @@ class Server(SocketServer.TCPServer):
 
 class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
   def do_GET(self):
+    self.path = urllib.unquote(self.path)
     path = self.path
 
     # strip off the repo and branch info, if present, for compatibility
@@ -137,11 +145,16 @@ class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
     elif path.lower().endswith('.md'):
       self._DoMD(path)
     elif os.path.exists(full_path + '/README.md'):
-      self._DoMD(path + '/README.md')
+      separator = '/'
+      if path.endswith('/'):
+        separator = ''
+      self._DoMD(path + separator + 'README.md')
     elif path.lower().endswith('.png'):
       self._DoImage(full_path, 'image/png')
     elif path.lower().endswith('.jpg'):
       self._DoImage(full_path, 'image/jpeg')
+    elif path.lower().endswith('.svg'):
+      self._DoImage(full_path, 'image/svg+xml')
     elif os.path.isdir(full_path):
       self._DoDirListing(full_path)
     elif os.path.exists(full_path):
@@ -169,7 +182,7 @@ class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
 
     md = markdown.Markdown(extensions=extensions,
                            extension_configs=extension_configs,
-                           tab_length=2,
+                           tab_length=4,
                            output_format='html4')
 
     has_a_single_h1 = (len([line for line in contents.splitlines()
@@ -191,29 +204,29 @@ class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
       raise
 
   def _DoRawSourceFile(self, full_path):
-      self._WriteHeader('text/html')
-      self._WriteTemplate('header.html')
+    self._WriteHeader('text/html')
+    self._WriteTemplate('header.html')
 
-      self.wfile.write('<table class="FileContents">')
-      with open(full_path) as fp:
-          # Escape html over the entire file at once.
-          data = fp.read().replace(
-              '&', '&amp;').replace(
-              '<', '&lt;').replace(
-              '>', '&gt;').replace(
-              '"', '&quot;')
-          for i, line in enumerate(data.splitlines()):
-              self.wfile.write(
-                  ('<tr class="u-pre u-monospace FileContents-line">'
-                   '<td class="u-lineNum u-noSelect FileContents-lineNum">'
-                   '<a name="%(num)s" '
-                   'onclick="window.location.hash=%(quot)s#%(num)s%(quot)s">'
-                   '%(num)s</a></td>'
-                   '<td class="FileContents-lineContents">%(line)s</td></tr>')
-                  % {'num': i, 'quot': "'", 'line': line})
-      self.wfile.write('</table>')
+    self.wfile.write('<table class="FileContents">')
+    with open(full_path) as fp:
+      # Escape html over the entire file at once.
+      data = fp.read().replace(
+          '&', '&amp;').replace(
+          '<', '&lt;').replace(
+          '>', '&gt;').replace(
+          '"', '&quot;')
+      for i, line in enumerate(data.splitlines(), start=1):
+        self.wfile.write(
+          ('<tr class="u-pre u-monospace FileContents-line">'
+           '<td class="u-lineNum u-noSelect FileContents-lineNum">'
+           '<a name="%(num)s" '
+           'onclick="window.location.hash=%(quot)s#%(num)s%(quot)s">'
+           '%(num)s</a></td>'
+           '<td class="FileContents-lineContents">%(line)s</td></tr>')
+          % {'num': i, 'quot': "'", 'line': line})
+    self.wfile.write('</table>')
 
-      self._WriteTemplate('footer.html')
+    self._WriteTemplate('footer.html')
 
   def _DoCSS(self, template):
     self._WriteHeader('text/css')
@@ -221,12 +234,13 @@ class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
 
   def _DoNotFound(self):
     self._WriteHeader('text/html', status_code=404)
-    self.wfile.write('<html><body>%s not found</body></html>' % self.path)
+    self.wfile.write(
+        '<html><body>%s not found</body></html>' % cgi.escape(self.path))
 
   def _DoUnknown(self):
     self._WriteHeader('text/html', status_code=501)
     self.wfile.write('<html><body>I do not know how to serve %s.</body>'
-                       '</html>' % self.path)
+                     '</html>' % cgi.escape(self.path))
 
   def _DoDirListing(self, full_path):
     self._WriteHeader('text/html')
@@ -234,27 +248,32 @@ class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
     self.wfile.write('<div class="doc">')
 
     self.wfile.write('<div class="Breadcrumbs">\n')
-    self.wfile.write('<a class="Breadcrumbs-crumb">%s</a>\n' % self.path)
+    self.wfile.write(
+        '<a class="Breadcrumbs-crumb">%s</a>\n' % cgi.escape(self.path))
     self.wfile.write('</div>\n')
+
+    escaped_dir = cgi.escape(self.path.rstrip('/'), quote=True)
 
     for _, dirs, files in os.walk(full_path):
       for f in sorted(files):
         if f.startswith('.'):
           continue
+        f = cgi.escape(f, quote=True)
         if f.endswith('.md'):
           bold = ('<b>', '</b>')
         else:
           bold = ('', '')
         self.wfile.write('<a href="%s/%s">%s%s%s</a><br/>\n' %
-                         (self.path.rstrip('/'), f, bold[0], f, bold[1]))
+                         (escaped_dir, f, bold[0], f, bold[1]))
 
       self.wfile.write('<br/>\n')
 
       for d in sorted(dirs):
         if d.startswith('.'):
           continue
+        d = cgi.escape(d, quote=True)
         self.wfile.write('<a href="%s/%s">%s/</a><br/>\n' %
-                         (self.path.rstrip('/'), d, d))
+                         (escaped_dir, d, d))
 
       break
 

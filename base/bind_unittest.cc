@@ -31,7 +31,7 @@ class IncompleteType;
 
 class NoRef {
  public:
-  NoRef() {}
+  NoRef() = default;
 
   MOCK_METHOD0(VoidMethod0, void());
   MOCK_CONST_METHOD0(VoidConstMethod0, void());
@@ -49,7 +49,7 @@ class NoRef {
 
 class HasRef : public NoRef {
  public:
-  HasRef() {}
+  HasRef() = default;
 
   MOCK_CONST_METHOD0(AddRef, void());
   MOCK_CONST_METHOD0(Release, bool());
@@ -61,7 +61,7 @@ class HasRef : public NoRef {
 
 class HasRefPrivateDtor : public HasRef {
  private:
-  ~HasRefPrivateDtor() {}
+  ~HasRefPrivateDtor() = default;
 };
 
 static const int kParentValue = 1;
@@ -196,11 +196,8 @@ class CopyCounter {
  public:
   CopyCounter(int* copies, int* assigns)
       : counter_(copies, assigns, nullptr, nullptr) {}
-  CopyCounter(const CopyCounter& other) : counter_(other.counter_) {}
-  CopyCounter& operator=(const CopyCounter& other) {
-    counter_ = other.counter_;
-    return *this;
-  }
+  CopyCounter(const CopyCounter& other) = default;
+  CopyCounter& operator=(const CopyCounter& other) = default;
 
   explicit CopyCounter(const DerivedCopyMoveCounter& other) : counter_(other) {}
 
@@ -321,8 +318,7 @@ class BindTest : public ::testing::Test {
     static_func_mock_ptr = &static_func_mock_;
   }
 
-  virtual ~BindTest() {
-  }
+  virtual ~BindTest() = default;
 
   static void VoidFunc0() {
     static_func_mock_ptr->VoidMethod0();
@@ -803,8 +799,8 @@ TYPED_TEST(BindVariantsTest, FunctionTypeSupport) {
   EXPECT_EQ(&no_ref, std::move(normal_non_refcounted_cb).Run());
 
   ClosureType method_cb = TypeParam::Bind(&HasRef::VoidMethod0, &has_ref);
-  ClosureType method_refptr_cb = TypeParam::Bind(&HasRef::VoidMethod0,
-                                                 make_scoped_refptr(&has_ref));
+  ClosureType method_refptr_cb =
+      TypeParam::Bind(&HasRef::VoidMethod0, WrapRefCounted(&has_ref));
   ClosureType const_method_nonconst_obj_cb =
       TypeParam::Bind(&HasRef::VoidConstMethod0, &has_ref);
   ClosureType const_method_const_obj_cb =
@@ -846,7 +842,7 @@ TYPED_TEST(BindVariantsTest, ReturnValues) {
       .WillOnce(Return(41337))
       .WillOnce(Return(51337));
   EXPECT_CALL(has_ref, UniquePtrMethod0())
-      .WillOnce(Return(ByMove(MakeUnique<int>(42))));
+      .WillOnce(Return(ByMove(std::make_unique<int>(42))));
 
   CallbackType<TypeParam, int()> normal_cb = TypeParam::Bind(&IntFunc0);
   CallbackType<TypeParam, int()> method_cb =
@@ -1370,8 +1366,9 @@ TEST_F(BindTest, OnceCallback) {
 
   cb = std::move(cb2);
 
-  OnceCallback<void(int)> cb4 = BindOnce(
-      &VoidPolymorphic<std::unique_ptr<int>, int>::Run, MakeUnique<int>(0));
+  OnceCallback<void(int)> cb4 =
+      BindOnce(&VoidPolymorphic<std::unique_ptr<int>, int>::Run,
+               std::make_unique<int>(0));
   BindOnce(std::move(cb4), 1).Run();
 }
 

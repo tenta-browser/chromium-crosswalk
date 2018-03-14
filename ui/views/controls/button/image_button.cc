@@ -29,11 +29,11 @@ const char ImageButton::kViewClassName[] = "ImageButton";
 // ImageButton, public:
 
 ImageButton::ImageButton(ButtonListener* listener)
-    : CustomButton(listener),
+    : Button(listener),
       h_alignment_(ALIGN_LEFT),
       v_alignment_(ALIGN_TOP),
-      draw_image_mirrored_(false),
-      focus_painter_(Painter::CreateDashedFocusPainter()) {
+      draw_image_mirrored_(false) {
+  SetFocusPainter(Painter::CreateDashedFocusPainter());
   // By default, we request that the gfx::Canvas passed to our View::OnPaint()
   // implementation is flipped horizontally so that the button's images are
   // mirrored when the UI directionality is right-to-left.
@@ -64,9 +64,9 @@ void ImageButton::SetImage(ButtonState for_state, const gfx::ImageSkia& image) {
     SchedulePaint();
 }
 
-void ImageButton::SetBackground(SkColor color,
-                                const gfx::ImageSkia* image,
-                                const gfx::ImageSkia* mask) {
+void ImageButton::SetBackgroundImage(SkColor color,
+                                     const gfx::ImageSkia* image,
+                                     const gfx::ImageSkia* mask) {
   if (image == NULL || mask == NULL) {
     background_image_ = gfx::ImageSkia();
     return;
@@ -83,10 +83,6 @@ void ImageButton::SetImageAlignment(HorizontalAlignment h_align,
   SchedulePaint();
 }
 
-void ImageButton::SetFocusPainter(std::unique_ptr<Painter> focus_painter) {
-  focus_painter_ = std::move(focus_painter);
-}
-
 void ImageButton::SetMinimumImageSize(const gfx::Size& size) {
   if (minimum_image_size_ == size)
     return;
@@ -98,7 +94,11 @@ void ImageButton::SetMinimumImageSize(const gfx::Size& size) {
 ////////////////////////////////////////////////////////////////////////////////
 // ImageButton, View overrides:
 
-gfx::Size ImageButton::GetPreferredSize() const {
+const char* ImageButton::GetClassName() const {
+  return kViewClassName;
+}
+
+gfx::Size ImageButton::CalculatePreferredSize() const {
   gfx::Size size(kDefaultWidth, kDefaultHeight);
   if (!images_[STATE_NORMAL].isNull()) {
     size = gfx::Size(images_[STATE_NORMAL].width(),
@@ -112,14 +112,20 @@ gfx::Size ImageButton::GetPreferredSize() const {
   return size;
 }
 
-const char* ImageButton::GetClassName() const {
-  return kViewClassName;
+views::PaintInfo::ScaleType ImageButton::GetPaintScaleType() const {
+  // ImageButton contains an image which is rastered at the device scale factor.
+  // By default, the paint commands are recorded at a scale factor slighlty
+  // different from the device scale factor. Re-rastering the image at this
+  // paint recording scale will result in a distorted image. Paint recording
+  // scale might also not be uniform along the x and y axis, thus resulting in
+  // further distortion in the aspect ratio of the final image.
+  // |kUniformScaling| ensures that the paint recording scale is uniform along
+  // the x & y axis and keeps the scale equal to the device scale factor.
+  // See http://crbug.com/754010 for more details.
+  return views::PaintInfo::ScaleType::kUniformScaling;
 }
 
-void ImageButton::OnPaint(gfx::Canvas* canvas) {
-  // Call the base class first to paint any background/borders.
-  View::OnPaint(canvas);
-
+void ImageButton::PaintButtonContents(gfx::Canvas* canvas) {
   // TODO(estade|tdanderson|bruthig): The ink drop layer should be positioned
   // behind the button's image which means the image needs to be painted to its
   // own layer instead of to the Canvas.
@@ -138,24 +144,10 @@ void ImageButton::OnPaint(gfx::Canvas* canvas) {
 
     canvas->DrawImageInt(img, position.x(), position.y());
   }
-
-  Painter::PaintFocusPainter(this, canvas, focus_painter());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // ImageButton, protected:
-
-void ImageButton::OnFocus() {
-  CustomButton::OnFocus();
-  if (focus_painter_.get())
-    SchedulePaint();
-}
-
-void ImageButton::OnBlur() {
-  CustomButton::OnBlur();
-  if (focus_painter_.get())
-    SchedulePaint();
-}
 
 gfx::ImageSkia ImageButton::GetImageToPaint() {
   gfx::ImageSkia img;
@@ -288,8 +280,9 @@ void ToggleImageButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   if ((toggled_ && !images_[ButtonState::STATE_NORMAL].isNull()) ||
       (!toggled_ && !alternate_images_[ButtonState::STATE_NORMAL].isNull())) {
     node_data->role = ui::AX_ROLE_TOGGLE_BUTTON;
-    if (toggled_)
-      node_data->AddStateFlag(ui::AX_STATE_PRESSED);
+    node_data->AddIntAttribute(
+        ui::AX_ATTR_CHECKED_STATE,
+        toggled_ ? ui::AX_CHECKED_STATE_TRUE : ui::AX_CHECKED_STATE_FALSE);
   }
 }
 

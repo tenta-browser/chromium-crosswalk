@@ -293,9 +293,11 @@ cr.define('value_control', function() {
      */
     redraw: function() {
       this.readBtn_.hidden =
-          (this.properties_ & interfaces.BluetoothDevice.Property.READ) === 0;
+          (this.properties_ & bluetooth.mojom.Property.READ) === 0;
       this.writeBtn_.hidden =
-          (this.properties_ & interfaces.BluetoothDevice.Property.WRITE) === 0;
+          (this.properties_ & bluetooth.mojom.Property.WRITE) === 0 &&
+          (this.properties_ &
+           bluetooth.mojom.Property.WRITE_WITHOUT_RESPONSE) === 0;
 
       var isAvailable = !this.readBtn_.hidden || !this.writeBtn_.hidden;
       this.unavailableMessage_.hidden = isAvailable;
@@ -319,13 +321,13 @@ cr.define('value_control', function() {
 
     /**
      * Gets an error string describing the given |result| code.
-     * @param {!interfaces.BluetoothDevice.GattResult} result
+     * @param {!bluetooth.mojom.GattResult} result
      * @private
      */
     getErrorString_: function(result) {
       // TODO(crbug.com/663394): Replace with more descriptive error
       // messages.
-      var GattResult = interfaces.BluetoothDevice.GattResult;
+      var GattResult = bluetooth.mojom.GattResult;
       return Object.keys(GattResult).find(function(key) {
         return GattResult[key] === result;
       });
@@ -341,29 +343,32 @@ cr.define('value_control', function() {
     readValue_: function() {
       this.readBtn_.disabled = true;
 
-      device_broker.connectToDevice(this.deviceAddress_).then(function(device) {
-        if (this.descriptorId_) {
-          return device.readValueForDescriptor(
-              this.serviceId_, this.characteristicId_, this.descriptorId_);
-        }
+      device_broker.connectToDevice(this.deviceAddress_)
+          .then(function(device) {
+            if (this.descriptorId_) {
+              return device.readValueForDescriptor(
+                  this.serviceId_, this.characteristicId_, this.descriptorId_);
+            }
 
-        return device.readValueForCharacteristic(
-            this.serviceId_, this.characteristicId_);
-      }.bind(this)).then(function(response) {
-        this.readBtn_.disabled = false;
+            return device.readValueForCharacteristic(
+                this.serviceId_, this.characteristicId_);
+          }.bind(this))
+          .then(function(response) {
+            this.readBtn_.disabled = false;
 
-        if (response.result === interfaces.BluetoothDevice.GattResult.SUCCESS) {
-          this.setValue(response.value);
-          Snackbar.show(
-              this.deviceAddress_ + ': Read succeeded', SnackbarType.SUCCESS);
-          return;
-        }
+            if (response.result === bluetooth.mojom.GattResult.SUCCESS) {
+              this.setValue(response.value);
+              Snackbar.show(
+                  this.deviceAddress_ + ': Read succeeded',
+                  SnackbarType.SUCCESS);
+              return;
+            }
 
-        var errorString = this.getErrorString_(response.result);
-        Snackbar.show(
-            this.deviceAddress_ + ': ' + errorString, SnackbarType.ERROR,
-            'Retry', this.readValue_.bind(this));
-      }.bind(this));
+            var errorString = this.getErrorString_(response.result);
+            Snackbar.show(
+                this.deviceAddress_ + ': ' + errorString, SnackbarType.ERROR,
+                'Retry', this.readValue_.bind(this));
+          }.bind(this));
     },
 
     /**
@@ -376,31 +381,35 @@ cr.define('value_control', function() {
     writeValue_: function() {
       this.writeBtn_.disabled = true;
 
-      device_broker.connectToDevice(this.deviceAddress_).then(function(device) {
-        if (this.descriptorId_) {
-          return device.writeValueForDescriptor(
-              this.serviceId_, this.characteristicId_, this.descriptorId_,
-              this.value_.getArray());
-        }
+      device_broker.connectToDevice(this.deviceAddress_)
+          .then(function(device) {
+            if (this.descriptorId_) {
+              return device.writeValueForDescriptor(
+                  this.serviceId_, this.characteristicId_, this.descriptorId_,
+                  this.value_.getArray());
+            }
 
-        return device.writeValueForCharacteristic(
-            this.serviceId_, this.characteristicId_, this.value_.getArray());
-      }.bind(this)).then(function(response) {
-        this.writeBtn_.disabled = false;
+            return device.writeValueForCharacteristic(
+                this.serviceId_, this.characteristicId_,
+                this.value_.getArray());
+          }.bind(this))
+          .then(function(response) {
+            this.writeBtn_.disabled = false;
 
-        if (response.result === interfaces.BluetoothDevice.GattResult.SUCCESS) {
-          Snackbar.show(
-              this.deviceAddress_ + ': Write succeeded', SnackbarType.SUCCESS);
-          return;
-        }
+            if (response.result === bluetooth.mojom.GattResult.SUCCESS) {
+              Snackbar.show(
+                  this.deviceAddress_ + ': Write succeeded',
+                  SnackbarType.SUCCESS);
+              return;
+            }
 
-        var errorString = this.getErrorString_(response.result);
-        Snackbar.show(
-            this.deviceAddress_ + ': ' + errorString, SnackbarType.ERROR,
-            'Retry', this.writeValue_.bind(this));
-      }.bind(this));
+            var errorString = this.getErrorString_(response.result);
+            Snackbar.show(
+                this.deviceAddress_ + ': ' + errorString, SnackbarType.ERROR,
+                'Retry', this.writeValue_.bind(this));
+          }.bind(this));
     },
-  }
+  };
 
   return {
     ValueControl: ValueControl,

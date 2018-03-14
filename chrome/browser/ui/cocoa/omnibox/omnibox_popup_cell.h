@@ -20,21 +20,18 @@ class OmniboxPopupViewMac;
 // Right hand side of the separator (e.g. a hyphen).
 @property(readonly, retain, nonatomic) NSAttributedString* description;
 
-// NOTE: While |prefix_| is used only for postfix suggestions, it still needs
+// NOTE: While |prefix_| is used only for tail suggestions, it still needs
 // to be a member of the class. This allows the |NSAttributedString| instance
 // to stay alive between the call to |drawTitle| and the actual paint event
 // which accesses the |NSAttributedString| instance.
 @property(readonly, retain, nonatomic) NSAttributedString* prefix;
 
 // Common icon that shows next to most rows in the list.
-@property(readonly, retain, nonatomic) NSImage* image;
-@property(retain, nonatomic) NSImage* incognitoImage;
+@property(retain, nonatomic) NSImage* image;
 
 // Uncommon icon that only shows on answer rows (e.g. weather).
 @property(readonly, retain, nonatomic) NSImage* answerImage;
 
-// The offset at which the infinite suggestion contents should be displayed.
-@property(readonly, nonatomic) CGFloat contentsOffset;
 @property(readonly, nonatomic) BOOL isContentsRTL;
 
 // Is this suggestion an answer or calculator result.
@@ -43,7 +40,6 @@ class OmniboxPopupViewMac;
 @property(readonly, nonatomic) int maxLines;
 
 - (instancetype)initWithMatch:(const AutocompleteMatch&)match
-               contentsOffset:(CGFloat)contentsOffset
                         image:(NSImage*)image
                   answerImage:(NSImage*)answerImage
                  forDarkTheme:(BOOL)isDarkTheme;
@@ -66,10 +62,10 @@ class OmniboxPopupViewMac;
 
 + (NSAttributedString*)createSeparatorStringForDarkTheme:(BOOL)isDarkTheme;
 
-+ (CGFloat)getContentAreaWidth:(NSRect)cellFrame;
++ (CGFloat)getTextContentAreaWidth:(CGFloat)cellContentMaxWidth;
+
++ (CGFloat)getContentTextHeightForDoubleLine:(BOOL)isDoubleLine;
 
 @end
-
-const CGFloat kContentLineHeight = 25.0;
 
 #endif  // CHROME_BROWSER_UI_COCOA_OMNIBOX_OMNIBOX_POPUP_CELL_H_

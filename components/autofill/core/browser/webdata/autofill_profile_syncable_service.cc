@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <utility>
 
 #include "base/guid.h"
@@ -63,7 +64,7 @@ AutofillProfileSyncableService::AutofillProfileSyncableService(
 }
 
 AutofillProfileSyncableService::~AutofillProfileSyncableService() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
 
 // static
@@ -72,8 +73,8 @@ void AutofillProfileSyncableService::CreateForWebDataServiceAndBackend(
     AutofillWebDataBackend* webdata_backend,
     const std::string& app_locale) {
   web_data_service->GetDBUserData()->SetUserData(
-      UserDataKey(),
-      new AutofillProfileSyncableService(webdata_backend, app_locale));
+      UserDataKey(), base::WrapUnique(new AutofillProfileSyncableService(
+                         webdata_backend, app_locale)));
 }
 
 // static
@@ -85,9 +86,7 @@ AutofillProfileSyncableService::FromWebDataService(
 }
 
 AutofillProfileSyncableService::AutofillProfileSyncableService()
-    : webdata_backend_(NULL),
-      scoped_observer_(this) {
-}
+    : webdata_backend_(nullptr), scoped_observer_(this) {}
 
 syncer::SyncMergeResult
 AutofillProfileSyncableService::MergeDataAndStartSyncing(
@@ -95,7 +94,7 @@ AutofillProfileSyncableService::MergeDataAndStartSyncing(
     const syncer::SyncDataList& initial_sync_data,
     std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
     std::unique_ptr<syncer::SyncErrorFactory> sync_error_factory) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!sync_processor_.get());
   DCHECK(sync_processor.get());
   DCHECK(sync_error_factory.get());
@@ -205,7 +204,7 @@ AutofillProfileSyncableService::MergeDataAndStartSyncing(
 }
 
 void AutofillProfileSyncableService::StopSyncing(syncer::ModelType type) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_EQ(type, syncer::AUTOFILL_PROFILE);
 
   sync_processor_.reset();
@@ -216,7 +215,7 @@ void AutofillProfileSyncableService::StopSyncing(syncer::ModelType type) {
 
 syncer::SyncDataList AutofillProfileSyncableService::GetAllSyncData(
     syncer::ModelType type) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(sync_processor_.get());
   DCHECK_EQ(type, syncer::AUTOFILL_PROFILE);
 
@@ -227,9 +226,9 @@ syncer::SyncDataList AutofillProfileSyncableService::GetAllSyncData(
 }
 
 syncer::SyncError AutofillProfileSyncableService::ProcessSyncChanges(
-    const tracked_objects::Location& from_here,
+    const base::Location& from_here,
     const syncer::SyncChangeList& change_list) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!sync_processor_.get()) {
     syncer::SyncError error(FROM_HERE,
                             syncer::SyncError::DATATYPE_ERROR,
@@ -295,7 +294,7 @@ bool AutofillProfileSyncableService::LoadAutofillData(
 
 bool AutofillProfileSyncableService::SaveChangesToWebData(
     const DataBundle& bundle) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   AutofillTable* autofill_table = GetAutofillTable();
 
@@ -407,6 +406,14 @@ bool AutofillProfileSyncableService::OverwriteProfileWithServerData(
     diff = true;
   }
 
+  // Update the validity state bitfield.
+  if (specifics.has_validity_state_bitfield() &&
+      specifics.validity_state_bitfield() !=
+          profile->GetValidityBitfieldValue()) {
+    profile->SetValidityFromBitfieldValue(specifics.validity_state_bitfield());
+    diff = true;
+  }
+
   if (static_cast<size_t>(specifics.use_count()) != profile->use_count()) {
     profile->set_use_count(specifics.use_count());
     diff = true;
@@ -471,6 +478,7 @@ void AutofillProfileSyncableService::WriteAutofillProfile(
       LimitData(
           UTF16ToUTF8(profile.GetRawInfo(ADDRESS_HOME_DEPENDENT_LOCALITY))));
   specifics->set_address_home_language_code(LimitData(profile.language_code()));
+  specifics->set_validity_state_bitfield(profile.GetValidityBitfieldValue());
 
   // TODO(estade): this should be set_email_address.
   specifics->add_email_address(
@@ -519,7 +527,7 @@ AutofillProfileSyncableService::CreateOrUpdateProfile(
 
   // New profile synced.
   std::unique_ptr<AutofillProfile> new_profile =
-      base::MakeUnique<AutofillProfile>(autofill_specifics.guid(),
+      std::make_unique<AutofillProfile>(autofill_specifics.guid(),
                                         autofill_specifics.origin());
   AutofillProfile* new_profile_ptr = new_profile.get();
   OverwriteProfileWithServerData(autofill_specifics, new_profile_ptr);
@@ -548,8 +556,9 @@ AutofillProfileSyncableService::CreateOrUpdateProfile(
                << ". Profile to be deleted " << local_profile->guid();
       profile_map->erase(it);
       break;
-    } else if (!local_profile->IsVerified() && !new_profile->IsVerified() &&
-               comparator.AreMergeable(*local_profile, *new_profile)) {
+    }
+    if (!local_profile->IsVerified() && !new_profile->IsVerified() &&
+        comparator.AreMergeable(*local_profile, *new_profile)) {
       // Add it to candidates for merge - if there is no profile with this guid
       // we will merge them.
       bundle->candidates_to_merge.insert(
@@ -588,7 +597,7 @@ void AutofillProfileSyncableService::ActOnChange(
       DCHECK(profiles_map_.find(change.data_model()->guid()) ==
              profiles_map_.end());
       profiles_.push_back(
-          base::MakeUnique<AutofillProfile>(*(change.data_model())));
+          std::make_unique<AutofillProfile>(*(change.data_model())));
       profiles_map_[change.data_model()->guid()] = profiles_.back().get();
       break;
     case AutofillProfileChange::UPDATE: {

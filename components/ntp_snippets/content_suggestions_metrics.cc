@@ -19,12 +19,16 @@ namespace metrics {
 
 namespace {
 
-const int kMaxSuggestionsPerCategory = 10;
+// Keep in sync with MAX_SUGGESTIONS_PER_SECTION in NewTabPageUma.java.
+const int kMaxSuggestionsPerCategory = 20;
+
 const int kMaxSuggestionsTotal = 50;
 const int kMaxCategories = 10;
 
-const char kHistogramCountOnNtpOpened[] =
-    "NewTabPage.ContentSuggestions.CountOnNtpOpened";
+const char kHistogramCountOnNtpOpenedIfVisible[] =
+    "NewTabPage.ContentSuggestions.CountOnNtpOpenedIfVisible";
+const char kHistogramSectionCountOnNtpOpened[] =
+    "NewTabPage.ContentSuggestions.SectionCountOnNtpOpened";
 const char kHistogramShown[] = "NewTabPage.ContentSuggestions.Shown";
 const char kHistogramShownAge[] = "NewTabPage.ContentSuggestions.ShownAge";
 const char kHistogramShownScore[] =
@@ -61,6 +65,14 @@ const char kHistogramCategoryDismissed[] =
 const char kHistogramTimeSinceSuggestionFetched[] =
     "NewTabPage.ContentSuggestions.TimeSinceSuggestionFetched";
 
+// Histograms related to prefetching.
+const char kHistogramPrefetchedArticleOpenedWhenOffline[] =
+    "NewTabPage.ContentSuggestions.Opened.Articles.Prefetched.Offline";
+// NewTabPage.ContentSuggestions.CountOnNtpOpenedIfVisible.Articles.\
+// Prefetched.Offline2 and
+// NewTabPage.ContentSuggestions.Shown.Articles.Prefetched.Offline2 are recorded
+// in Java to avoid race condition.
+
 const char kPerCategoryHistogramFormat[] = "%s.%s";
 
 // This mostly corresponds to the KnownCategories enum, but it is contiguous
@@ -76,6 +88,7 @@ enum HistogramCategories {
   FOREIGN_TABS,
   ARTICLES,
   READING_LIST,
+  CONTEXTUAL,
   // Insert new values here!
   COUNT
 };
@@ -105,6 +118,8 @@ HistogramCategories GetHistogramCategory(Category category) {
       return HistogramCategories::ARTICLES;
     case KnownCategories::READING_LIST:
       return HistogramCategories::READING_LIST;
+    case KnownCategories::CONTEXTUAL:
+      return HistogramCategories::CONTEXTUAL;
     case KnownCategories::LOCAL_CATEGORIES_COUNT:
     case KnownCategories::REMOTE_CATEGORIES_OFFSET:
       NOTREACHED();
@@ -135,6 +150,8 @@ std::string GetCategorySuffix(Category category) {
       return "Experimental";
     case HistogramCategories::READING_LIST:
       return "ReadingList";
+    case HistogramCategories::CONTEXTUAL:
+      return "Contextual";
     case HistogramCategories::COUNT:
       NOTREACHED();
       break;
@@ -211,16 +228,26 @@ void RecordContentSuggestionsUsage() {
 
 }  // namespace
 
-void OnPageShown(
-    const std::vector<std::pair<Category, int>>& suggestions_per_category) {
+void OnPageShown(const std::vector<Category>& categories,
+                 const std::vector<int>& suggestions_per_category,
+                 const std::vector<bool>& is_category_visible) {
+  DCHECK_EQ(categories.size(), suggestions_per_category.size());
+  DCHECK_EQ(categories.size(), is_category_visible.size());
   int suggestions_total = 0;
-  for (const std::pair<Category, int>& item : suggestions_per_category) {
-    LogCategoryHistogramPosition(kHistogramCountOnNtpOpened, item.first,
-                                 item.second, kMaxSuggestionsPerCategory);
-    suggestions_total += item.second;
+  int visible_categories_count = 0;
+  for (size_t i = 0; i < categories.size(); ++i) {
+    if (is_category_visible[i]) {
+      LogCategoryHistogramPosition(kHistogramCountOnNtpOpenedIfVisible,
+                                   categories[i], suggestions_per_category[i],
+                                   kMaxSuggestionsPerCategory);
+      suggestions_total += suggestions_per_category[i];
+      ++visible_categories_count;
+    }
   }
-  UMA_HISTOGRAM_EXACT_LINEAR(kHistogramCountOnNtpOpened, suggestions_total,
-                             kMaxSuggestionsTotal);
+  UMA_HISTOGRAM_EXACT_LINEAR(kHistogramCountOnNtpOpenedIfVisible,
+                             suggestions_total, kMaxSuggestionsTotal);
+  UMA_HISTOGRAM_EXACT_LINEAR(kHistogramSectionCountOnNtpOpened,
+                             visible_categories_count, kMaxCategories);
 }
 
 void OnSuggestionShown(int global_position,
@@ -247,7 +274,7 @@ void OnSuggestionShown(int global_position,
         /*bucket_count=*/100);
   }
 
-  // TODO(markusheintz): Discuss whether the code below should be move into a
+  // TODO(markusheintz): Discuss whether the code below should be moved into a
   // separate method called OnSuggestionsListShown.
   // When the first of the articles suggestions is shown, then we count this as
   // a single usage of content suggestions.
@@ -263,7 +290,9 @@ void OnSuggestionOpened(int global_position,
                         int position_in_category,
                         base::Time publish_date,
                         float score,
-                        WindowOpenDisposition disposition) {
+                        WindowOpenDisposition disposition,
+                        bool is_prefetched,
+                        bool is_offline) {
   UMA_HISTOGRAM_EXACT_LINEAR(kHistogramOpenedCategoryIndex, category_index,
                              kMaxCategories);
   LogCategoryHistogramPosition(kHistogramOpenedCategoryIndex, category,
@@ -291,7 +320,14 @@ void OnSuggestionOpened(int global_position,
 
   if (category.IsKnownCategory(KnownCategories::ARTICLES)) {
     RecordContentSuggestionsUsage();
+    if (is_offline && is_prefetched) {
+      UMA_HISTOGRAM_EXACT_LINEAR(kHistogramPrefetchedArticleOpenedWhenOffline,
+                                 position_in_category,
+                                 kMaxSuggestionsPerCategory);
+    }
   }
+
+  base::RecordAction(base::UserMetricsAction("Suggestions.Content.Opened"));
 }
 
 void OnSuggestionMenuOpened(int global_position,
@@ -364,6 +400,18 @@ void OnCategoryDismissed(Category category) {
 void RecordRemoteSuggestionsProviderState(bool enabled) {
   UMA_HISTOGRAM_BOOLEAN(
       "NewTabPage.ContentSuggestions.Preferences.RemoteSuggestions", enabled);
+}
+
+void RecordContentSuggestionDismissed() {
+  base::RecordAction(base::UserMetricsAction("Suggestions.Content.Dismissed"));
+}
+
+void RecordCategoryDismissed() {
+  base::RecordAction(base::UserMetricsAction("Suggestions.Category.Dismissed"));
+}
+
+void RecordFetchAction() {
+  base::RecordAction(base::UserMetricsAction("Suggestions.Category.Fetch"));
 }
 
 }  // namespace metrics

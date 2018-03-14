@@ -26,11 +26,11 @@
 #ifndef CachingWordShaper_h
 #define CachingWordShaper_h
 
+#include "base/memory/scoped_refptr.h"
 #include "platform/fonts/shaping/ShapeResultBuffer.h"
 #include "platform/geometry/FloatRect.h"
 #include "platform/text/TextRun.h"
 #include "platform/wtf/Allocator.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/Vector.h"
 
 namespace blink {
@@ -39,7 +39,6 @@ struct CharacterRange;
 class Font;
 class ShapeCache;
 class SimpleFontData;
-class ShapeResultBloberizer;
 struct GlyphData;
 
 class PLATFORM_EXPORT CachingWordShaper final {
@@ -57,10 +56,7 @@ class PLATFORM_EXPORT CachingWordShaper final {
                         float target_x,
                         bool include_partial_glyphs);
 
-  float FillGlyphs(const TextRunPaintInfo&, ShapeResultBloberizer&);
-  void FillTextEmphasisGlyphs(const TextRunPaintInfo&,
-                              const GlyphData& emphasis_data,
-                              ShapeResultBloberizer&);
+  void FillResultBuffer(const TextRunPaintInfo&, ShapeResultBuffer*);
   CharacterRange GetCharacterRange(const TextRun&, unsigned from, unsigned to);
   Vector<CharacterRange> IndividualCharacterRanges(const TextRun&);
 

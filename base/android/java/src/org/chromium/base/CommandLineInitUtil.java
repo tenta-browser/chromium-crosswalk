@@ -9,15 +9,12 @@ import android.content.Context;
 import android.os.Build;
 import android.provider.Settings;
 
-import org.chromium.base.annotations.SuppressFBWarnings;
-
 import java.io.File;
 
 /**
  * Provides implementation of command line initialization for Android.
  */
 public final class CommandLineInitUtil {
-
     private static final String TAG = "CommandLineInitUtil";
 
     /**
@@ -47,14 +44,16 @@ public final class CommandLineInitUtil {
      *                 be used.
      * @param fileName The name of the command line file to pull arguments from.
      */
-    @SuppressFBWarnings("DMI_HARDCODED_ABSOLUTE_FILENAME")
     public static void initCommandLine(Context context, String fileName) {
         if (!CommandLine.isInitialized()) {
             File commandLineFile = getAlternativeCommandLinePath(context, fileName);
             if (commandLineFile != null) {
-                Log.i(TAG, "Using alternative command line file in " + commandLineFile.getPath());
+                Log.i(TAG,
+                        "Initializing command line from alternative file "
+                                + commandLineFile.getPath());
             } else {
                 commandLineFile = new File(COMMAND_LINE_FILE_PATH, fileName);
+                Log.d(TAG, "Initializing command line from " + commandLineFile.getPath());
             }
             CommandLine.initFromFile(commandLineFile.getPath());
         }
@@ -65,7 +64,6 @@ public final class CommandLineInitUtil {
      * - The current build is "eng" or "userdebug", OR
      * - adb is enabled and this is the debug app.
      */
-    @SuppressFBWarnings("DMI_HARDCODED_ABSOLUTE_FILENAME")
     private static File getAlternativeCommandLinePath(Context context, String fileName) {
         File alternativeCommandLineFile =
                 new File(COMMAND_LINE_FILE_PATH_DEBUG_APP, fileName);
@@ -75,8 +73,9 @@ public final class CommandLineInitUtil {
                 return alternativeCommandLineFile;
             }
 
-            String debugApp = Build.VERSION.SDK_INT < 17
-                    ? getDebugAppPreJBMR1(context) : getDebugAppJBMR1(context);
+            String debugApp = Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1
+                    ? getDebugAppPreJBMR1(context)
+                    : getDebugAppJBMR1(context);
 
             if (debugApp != null
                     && debugApp.equals(context.getApplicationContext().getPackageName())) {

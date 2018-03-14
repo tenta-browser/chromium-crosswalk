@@ -14,10 +14,11 @@
 #include "base/sequenced_task_runner_helpers.h"
 #include "base/single_thread_task_runner.h"
 #include "content/common/content_export.h"
-#include "content/common/url_loader_factory.mojom.h"
 #include "content/public/browser/browser_associated_interface.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "content/public/common/resource_type.h"
+#include "content/public/common/url_loader_factory.mojom.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace storage {
 class FileSystemContext;
@@ -70,21 +71,32 @@ class CONTENT_EXPORT ResourceMessageFilter
 
   base::WeakPtr<ResourceMessageFilter> GetWeakPtr();
 
-  void CreateLoaderAndStart(mojom::URLLoaderAssociatedRequest request,
+  void CreateLoaderAndStart(mojom::URLLoaderRequest request,
                             int32_t routing_id,
                             int32_t request_id,
+                            uint32_t options,
                             const ResourceRequest& url_request,
-                            mojom::URLLoaderClientPtr client) override;
-  void SyncLoad(int32_t routing_id,
-                int32_t request_id,
-                const ResourceRequest& request,
-                const SyncLoadCallback& callback) override;
+                            mojom::URLLoaderClientPtr client,
+                            const net::MutableNetworkTrafficAnnotationTag&
+                                traffic_annotation) override;
+  void Clone(mojom::URLLoaderFactoryRequest request) override;
+
   int child_id() const;
 
   ResourceRequesterInfo* requester_info_for_test() {
     return requester_info_.get();
   }
   void InitializeForTest();
+
+  // Overrides the network URLLoaderFactory for subsequent requests. Passing a
+  // null pointer will restore the default behavior.
+  // When the testing pointer's CreateLoaderAndStart() is being called,
+  // |GetCurrentForTesting()| will return the filter that's calling the testing
+  // pointer. Also, the testing pointer won't be used for nested
+  // CreateLoaderAndStart's. Must be called on the IO thread.
+  static void SetNetworkFactoryForTesting(
+      mojom::URLLoaderFactory* test_factory);
+  static ResourceMessageFilter* GetCurrentForTesting();
 
  protected:
   // Protected destructor so that we can be overriden in tests.
@@ -98,6 +110,11 @@ class CONTENT_EXPORT ResourceMessageFilter
 
   bool is_channel_closed_;
   scoped_refptr<ResourceRequesterInfo> requester_info_;
+
+  // An additional set of non-associated bindings (beyond those held by the
+  // BrowserAssociatedInterface parent class) of pipes to this object's
+  // URLLoaderFactory interface.
+  mojo::BindingSet<mojom::URLLoaderFactory> bindings_;
 
   // Task runner for the IO thead.
   scoped_refptr<base::SingleThreadTaskRunner> io_thread_task_runner_;

@@ -32,7 +32,7 @@
 #include "core/css/parser/CSSParserToken.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "platform/Decimal.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/wtf/text/StringBuffer.h"
 #include "platform/wtf/text/StringBuilder.h"
 
@@ -61,7 +61,7 @@ static inline bool FeatureWithValidIdent(const String& media_feature,
   if (media_feature == scanMediaFeature)
     return ident == CSSValueInterlace || ident == CSSValueProgressive;
 
-  if (RuntimeEnabledFeatures::mediaQueryShapeEnabled()) {
+  if (RuntimeEnabledFeatures::MediaQueryShapeEnabled()) {
     if (media_feature == shapeMediaFeature)
       return ident == CSSValueRect || ident == CSSValueRound;
   }
@@ -225,7 +225,7 @@ MediaQueryExp MediaQueryExp::Create(
 
   MediaQueryExpValue exp_value;
   String lower_media_feature =
-      AttemptStaticStringCreation(media_feature.DeprecatedLower());
+      AttemptStaticStringCreation(media_feature.LowerASCII());
 
   // Create value for media query expression that must have 1 or more values.
   if (token_list.size() == 0 && FeatureWithoutValue(lower_media_feature)) {
@@ -284,8 +284,8 @@ MediaQueryExp MediaQueryExp::Create(
         denominator.GetNumericValueType() != kIntegerValueType)
       return Invalid();
 
-    exp_value.numerator = (unsigned)numerator.NumericValue();
-    exp_value.denominator = (unsigned)denominator.NumericValue();
+    exp_value.numerator = clampTo<unsigned>(numerator.NumericValue());
+    exp_value.denominator = clampTo<unsigned>(denominator.NumericValue());
     exp_value.is_ratio = true;
   } else {
     return Invalid();
@@ -294,7 +294,7 @@ MediaQueryExp MediaQueryExp::Create(
   return MediaQueryExp(lower_media_feature, exp_value);
 }
 
-MediaQueryExp::~MediaQueryExp() {}
+MediaQueryExp::~MediaQueryExp() = default;
 
 bool MediaQueryExp::operator==(const MediaQueryExp& other) const {
   return (other.media_feature_ == media_feature_) &&
@@ -306,7 +306,7 @@ bool MediaQueryExp::operator==(const MediaQueryExp& other) const {
 String MediaQueryExp::Serialize() const {
   StringBuilder result;
   result.Append('(');
-  result.Append(media_feature_.DeprecatedLower());
+  result.Append(media_feature_.LowerASCII());
   if (exp_value_.IsValid()) {
     result.Append(": ");
     result.Append(exp_value_.CssText());

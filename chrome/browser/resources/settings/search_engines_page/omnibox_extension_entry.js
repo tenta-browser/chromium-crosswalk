@@ -14,6 +14,8 @@ Polymer({
     engine: Object,
   },
 
+  behaviors: [FocusRowBehavior],
+
   /** @private {?settings.ExtensionControlBrowserProxy} */
   browserProxy_: null,
 
@@ -51,8 +53,7 @@ Polymer({
 
   /** @private */
   onDotsTap_: function() {
-    /** @type {!CrActionMenuElement} */ (
-        this.$$('dialog[is=cr-action-menu]')).showAt(
-            assert(this.$$('paper-icon-button')));
+    /** @type {!CrActionMenuElement} */ (this.$$('dialog[is=cr-action-menu]'))
+        .showAt(assert(this.$$('button[is="paper-icon-button-light"]')));
   },
 });

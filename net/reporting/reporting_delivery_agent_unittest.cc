@@ -7,10 +7,10 @@
 #include <vector>
 
 #include "base/json/json_reader.h"
-#include "base/memory/ptr_util.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/values_test_util.h"
 #include "base/time/time.h"
+#include "base/timer/mock_timer.h"
 #include "base/values.h"
 #include "net/base/backoff_entry.h"
 #include "net/reporting/reporting_cache.h"
@@ -42,13 +42,8 @@ class ReportingDeliveryAgentTest : public ReportingTestBase {
     return tick_clock()->NowTicks() + base::TimeDelta::FromDays(1);
   }
 
-  const std::vector<std::unique_ptr<TestReportingUploader::PendingUpload>>&
-  pending_uploads() {
-    return uploader()->pending_uploads();
-  }
-
   const GURL kUrl_ = GURL("https://origin/path");
-  const url::Origin kOrigin_ = url::Origin(GURL("https://origin/"));
+  const url::Origin kOrigin_ = url::Origin::Create(GURL("https://origin/"));
   const GURL kEndpoint_ = GURL("https://endpoint/");
   const std::string kGroup_ = "group";
   const std::string kType_ = "type";
@@ -67,7 +62,8 @@ TEST_F(ReportingDeliveryAgentTest, SuccessfulUpload) {
 
   tick_clock()->Advance(base::TimeDelta::FromMilliseconds(kAgeMillis));
 
-  delivery_agent()->SendReports();
+  EXPECT_TRUE(delivery_timer()->IsRunning());
+  delivery_timer()->Fire();
 
   ASSERT_EQ(1u, pending_uploads().size());
   EXPECT_EQ(kEndpoint_, pending_uploads()[0]->url());
@@ -101,10 +97,11 @@ TEST_F(ReportingDeliveryAgentTest, FailedUpload) {
   cache()->SetClient(kOrigin_, kEndpoint_, ReportingClient::Subdomains::EXCLUDE,
                      kGroup_, tomorrow());
   cache()->AddReport(kUrl_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
 
-  delivery_agent()->SendReports();
+  EXPECT_TRUE(delivery_timer()->IsRunning());
+  delivery_timer()->Fire();
 
   ASSERT_EQ(1u, pending_uploads().size());
   pending_uploads()[0]->Complete(ReportingUploader::Outcome::FAILURE);
@@ -118,12 +115,14 @@ TEST_F(ReportingDeliveryAgentTest, FailedUpload) {
   // Since endpoint is now failing, an upload won't be started despite a pending
   // report.
   ASSERT_TRUE(pending_uploads().empty());
-  delivery_agent()->SendReports();
+  EXPECT_TRUE(delivery_timer()->IsRunning());
+  delivery_timer()->Fire();
   EXPECT_TRUE(pending_uploads().empty());
 }
 
 TEST_F(ReportingDeliveryAgentTest, RemoveEndpointUpload) {
-  static const url::Origin kDifferentOrigin(GURL("https://origin2/"));
+  static const url::Origin kDifferentOrigin =
+      url::Origin::Create(GURL("https://origin2/"));
 
   cache()->SetClient(kOrigin_, kEndpoint_, ReportingClient::Subdomains::EXCLUDE,
                      kGroup_, tomorrow());
@@ -133,10 +132,11 @@ TEST_F(ReportingDeliveryAgentTest, RemoveEndpointUpload) {
   ASSERT_TRUE(FindClientInCache(cache(), kDifferentOrigin, kEndpoint_));
 
   cache()->AddReport(kUrl_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
 
-  delivery_agent()->SendReports();
+  EXPECT_TRUE(delivery_timer()->IsRunning());
+  delivery_timer()->Fire();
 
   ASSERT_EQ(1u, pending_uploads().size());
   pending_uploads()[0]->Complete(ReportingUploader::Outcome::REMOVE_ENDPOINT);
@@ -153,7 +153,8 @@ TEST_F(ReportingDeliveryAgentTest, RemoveEndpointUpload) {
 
   // Since endpoint is now failing, an upload won't be started despite a pending
   // report.
-  delivery_agent()->SendReports();
+  EXPECT_TRUE(delivery_timer()->IsRunning());
+  delivery_timer()->Fire();
   EXPECT_TRUE(pending_uploads().empty());
 }
 
@@ -161,10 +162,11 @@ TEST_F(ReportingDeliveryAgentTest, ConcurrentRemove) {
   cache()->SetClient(kOrigin_, kEndpoint_, ReportingClient::Subdomains::EXCLUDE,
                      kGroup_, tomorrow());
   cache()->AddReport(kUrl_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
 
-  delivery_agent()->SendReports();
+  EXPECT_TRUE(delivery_timer()->IsRunning());
+  delivery_timer()->Fire();
   ASSERT_EQ(1u, pending_uploads().size());
 
   // Remove the report while the upload is running.
@@ -176,7 +178,7 @@ TEST_F(ReportingDeliveryAgentTest, ConcurrentRemove) {
   EXPECT_FALSE(cache()->IsReportDoomedForTesting(report));
 
   // Report should appear removed, even though the cache has doomed it.
-  cache()->RemoveReports(reports);
+  cache()->RemoveReports(reports, ReportingReport::Outcome::UNKNOWN);
   cache()->GetReports(&reports);
   EXPECT_TRUE(reports.empty());
   EXPECT_TRUE(cache()->IsReportDoomedForTesting(report));
@@ -195,7 +197,8 @@ TEST_F(ReportingDeliveryAgentTest, ConcurrentRemove) {
 TEST_F(ReportingDeliveryAgentTest,
        BatchReportsFromDifferentOriginsToSameEndpoint) {
   static const GURL kDifferentUrl("https://origin2/path");
-  static const url::Origin kDifferentOrigin(kDifferentUrl);
+  static const url::Origin kDifferentOrigin =
+      url::Origin::Create(kDifferentUrl);
 
   cache()->SetClient(kOrigin_, kEndpoint_, ReportingClient::Subdomains::EXCLUDE,
                      kGroup_, tomorrow());
@@ -203,13 +206,14 @@ TEST_F(ReportingDeliveryAgentTest,
                      ReportingClient::Subdomains::EXCLUDE, kGroup_, tomorrow());
 
   cache()->AddReport(kUrl_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
   cache()->AddReport(kDifferentUrl, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
 
-  delivery_agent()->SendReports();
+  EXPECT_TRUE(delivery_timer()->IsRunning());
+  delivery_timer()->Fire();
   ASSERT_EQ(1u, pending_uploads().size());
 
   pending_uploads()[0]->Complete(ReportingUploader::Outcome::SUCCESS);
@@ -221,7 +225,8 @@ TEST_F(ReportingDeliveryAgentTest,
 // pending.
 TEST_F(ReportingDeliveryAgentTest, SerializeUploadsToEndpoint) {
   static const GURL kDifferentUrl("https://origin2/path");
-  static const url::Origin kDifferentOrigin(kDifferentUrl);
+  static const url::Origin kDifferentOrigin =
+      url::Origin::Create(kDifferentUrl);
 
   cache()->SetClient(kOrigin_, kEndpoint_, ReportingClient::Subdomains::EXCLUDE,
                      kGroup_, tomorrow());
@@ -229,23 +234,26 @@ TEST_F(ReportingDeliveryAgentTest, SerializeUploadsToEndpoint) {
                      ReportingClient::Subdomains::EXCLUDE, kGroup_, tomorrow());
 
   cache()->AddReport(kUrl_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
 
-  delivery_agent()->SendReports();
+  EXPECT_TRUE(delivery_timer()->IsRunning());
+  delivery_timer()->Fire();
   EXPECT_EQ(1u, pending_uploads().size());
 
   cache()->AddReport(kDifferentUrl, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
 
-  delivery_agent()->SendReports();
+  EXPECT_TRUE(delivery_timer()->IsRunning());
+  delivery_timer()->Fire();
   ASSERT_EQ(1u, pending_uploads().size());
 
   pending_uploads()[0]->Complete(ReportingUploader::Outcome::SUCCESS);
   EXPECT_EQ(0u, pending_uploads().size());
 
-  delivery_agent()->SendReports();
+  EXPECT_TRUE(delivery_timer()->IsRunning());
+  delivery_timer()->Fire();
   ASSERT_EQ(1u, pending_uploads().size());
 
   pending_uploads()[0]->Complete(ReportingUploader::Outcome::SUCCESS);
@@ -264,23 +272,26 @@ TEST_F(ReportingDeliveryAgentTest, SerializeUploadsToGroup) {
                      ReportingClient::Subdomains::EXCLUDE, kGroup_, tomorrow());
 
   cache()->AddReport(kUrl_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
 
-  delivery_agent()->SendReports();
+  EXPECT_TRUE(delivery_timer()->IsRunning());
+  delivery_timer()->Fire();
   EXPECT_EQ(1u, pending_uploads().size());
 
   cache()->AddReport(kUrl_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
 
-  delivery_agent()->SendReports();
+  EXPECT_TRUE(delivery_timer()->IsRunning());
+  delivery_timer()->Fire();
   ASSERT_EQ(1u, pending_uploads().size());
 
   pending_uploads()[0]->Complete(ReportingUploader::Outcome::SUCCESS);
   EXPECT_EQ(0u, pending_uploads().size());
 
-  delivery_agent()->SendReports();
+  EXPECT_TRUE(delivery_timer()->IsRunning());
+  delivery_timer()->Fire();
   ASSERT_EQ(1u, pending_uploads().size());
 
   pending_uploads()[0]->Complete(ReportingUploader::Outcome::SUCCESS);
@@ -300,13 +311,14 @@ TEST_F(ReportingDeliveryAgentTest, ParallelizeUploadsAcrossGroups) {
                      tomorrow());
 
   cache()->AddReport(kUrl_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
   cache()->AddReport(kUrl_, kDifferentGroup, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
 
-  delivery_agent()->SendReports();
+  EXPECT_TRUE(delivery_timer()->IsRunning());
+  delivery_timer()->Fire();
   ASSERT_EQ(2u, pending_uploads().size());
 
   pending_uploads()[1]->Complete(ReportingUploader::Outcome::SUCCESS);

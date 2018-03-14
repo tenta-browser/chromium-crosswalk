@@ -2,19 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "content/browser/child_process_launcher_helper_android.h"
-
 #include <memory>
 
 #include "base/android/apk_assets.h"
-#include "base/android/context_utils.h"
 #include "base/android/jni_array.h"
 #include "base/i18n/icu_util.h"
 #include "base/logging.h"
 #include "base/metrics/field_trial.h"
+#include "content/browser/child_process_launcher.h"
 #include "content/browser/child_process_launcher_helper.h"
 #include "content/browser/child_process_launcher_helper_posix.h"
-#include "content/browser/file_descriptor_info_impl.h"
+#include "content/browser/posix_file_descriptor_info_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
@@ -34,6 +32,7 @@ namespace {
 
 // Stops a child process based on the handle returned from StartChildProcess.
 void StopChildProcess(base::ProcessHandle handle) {
+  DCHECK_CURRENTLY_ON(BrowserThread::PROCESS_LAUNCHER);
   JNIEnv* env = AttachCurrentThread();
   DCHECK(env);
   Java_ChildProcessLauncherHelper_stop(env, static_cast<jint>(handle));
@@ -63,7 +62,7 @@ ChildProcessLauncherHelper::PrepareMojoPipeHandlesOnClientThread() {
   return mojo::edk::ScopedPlatformHandle();
 }
 
-std::unique_ptr<FileDescriptorInfo>
+std::unique_ptr<PosixFileDescriptorInfo>
 ChildProcessLauncherHelper::GetFilesToMap() {
   DCHECK_CURRENTLY_ON(BrowserThread::PROCESS_LAUNCHER);
 
@@ -71,7 +70,7 @@ ChildProcessLauncherHelper::GetFilesToMap() {
   // running in single process mode.
   CHECK(!command_line()->HasSwitch(switches::kSingleProcess));
 
-  std::unique_ptr<FileDescriptorInfo> files_to_register =
+  std::unique_ptr<PosixFileDescriptorInfo> files_to_register =
       CreateDefaultPosixFilesToMap(child_process_id(), mojo_client_handle(),
                                    true /* include_service_required_files */,
                                    GetProcessType(), command_line());
@@ -85,15 +84,16 @@ ChildProcessLauncherHelper::GetFilesToMap() {
   return files_to_register;
 }
 
-void ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
-    const FileDescriptorInfo& files_to_register,
+bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
+    const PosixFileDescriptorInfo& files_to_register,
     base::LaunchOptions* options) {
+  return true;
 }
 
 ChildProcessLauncherHelper::Process
 ChildProcessLauncherHelper::LaunchProcessOnLauncherThread(
     const base::LaunchOptions& options,
-    std::unique_ptr<FileDescriptorInfo> files_to_register,
+    std::unique_ptr<PosixFileDescriptorInfo> files_to_register,
     bool* is_synchronous_launch,
     int* launch_result) {
   *is_synchronous_launch = false;
@@ -131,11 +131,14 @@ ChildProcessLauncherHelper::LaunchProcessOnLauncherThread(
   }
 
   constexpr int param_key = 0;  // TODO(boliu): Use this.
-  java_peer_.Reset(Java_ChildProcessLauncherHelper_create(
-      env, reinterpret_cast<intptr_t>(this),
-      base::android::GetApplicationContext(), param_key, j_argv,
-      child_process_id(), j_file_infos));
+  java_peer_.Reset(Java_ChildProcessLauncherHelper_createAndStart(
+      env, reinterpret_cast<intptr_t>(this), param_key, j_argv, j_file_infos));
   AddRef();  // Balanced by OnChildProcessStarted.
+  BrowserThread::PostTask(
+      client_thread_id_, FROM_HERE,
+      base::Bind(
+          &ChildProcessLauncherHelper::set_java_peer_available_on_client_thread,
+          this));
 
   return Process();
 }
@@ -149,7 +152,8 @@ base::TerminationStatus ChildProcessLauncherHelper::GetTerminationStatus(
     const ChildProcessLauncherHelper::Process& process,
     bool known_dead,
     int* exit_code) {
-  if (Java_ChildProcessLauncherHelper_isOomProtected(AttachCurrentThread(),
+  if (java_peer_avaiable_on_client_thread_ &&
+      Java_ChildProcessLauncherHelper_isOomProtected(AttachCurrentThread(),
                                                      java_peer_)) {
     return base::TERMINATION_STATUS_OOM_PROTECTED;
   }
@@ -159,7 +163,8 @@ base::TerminationStatus ChildProcessLauncherHelper::GetTerminationStatus(
 // static
 bool ChildProcessLauncherHelper::TerminateProcess(
     const base::Process& process, int exit_code, bool wait) {
-  StopChildProcess(process.Handle());
+  BrowserThread::PostTask(BrowserThread::PROCESS_LAUNCHER, FROM_HERE,
+                          base::Bind(&StopChildProcess, process.Handle()));
   return true;
 }
 
@@ -172,13 +177,14 @@ void ChildProcessLauncherHelper::ForceNormalProcessTerminationSync(
   StopChildProcess(process.process.Handle());
 }
 
-void ChildProcessLauncherHelper::SetProcessBackgroundedOnLauncherThread(
+void ChildProcessLauncherHelper::SetProcessPriorityOnLauncherThread(
     base::Process process,
-    bool background) {
+    const ChildProcessLauncherPriority& priority) {
   JNIEnv* env = AttachCurrentThread();
   DCHECK(env);
-  return Java_ChildProcessLauncherHelper_setInForeground(
-      env, java_peer_, process.Handle(), !background);
+  return Java_ChildProcessLauncherHelper_setPriority(
+      env, java_peer_, process.Handle(), !priority.background,
+      priority.boost_for_pending_views, static_cast<jint>(priority.importance));
 }
 
 // static
@@ -199,14 +205,14 @@ base::File OpenFileToShare(const base::FilePath& path,
   return base::File(base::android::OpenApkAsset(path.value(), region));
 }
 
-// Called from ChildProcessLauncher.java when the ChildProcess was
-// started.
+// Called from ChildProcessLauncher.java when the ChildProcess was started.
 // |handle| is the processID of the child process as originated in Java, 0 if
 // the ChildProcess could not be created.
 void ChildProcessLauncherHelper::OnChildProcessStarted(
     JNIEnv*,
     const base::android::JavaParamRef<jobject>& obj,
     jint handle) {
+  DCHECK_CURRENTLY_ON(BrowserThread::PROCESS_LAUNCHER);
   scoped_refptr<ChildProcessLauncherHelper> ref(this);
   Release();  // Balances with LaunchProcessOnLauncherThread.
 
@@ -214,28 +220,9 @@ void ChildProcessLauncherHelper::OnChildProcessStarted(
                           ? LAUNCH_RESULT_FAILURE
                           : LAUNCH_RESULT_SUCCESS;
 
-  // TODO(jcivelli): Remove this by defining better what happens on what thread
-  // in the corresponding Java code.
   ChildProcessLauncherHelper::Process process;
   process.process = base::Process(handle);
-  if (BrowserThread::CurrentlyOn(BrowserThread::PROCESS_LAUNCHER)) {
-    PostLaunchOnLauncherThread(std::move(process), launch_result,
-                               false);  // post_launch_on_client_thread_called
-    return;
-  }
-
-  bool on_client_thread = BrowserThread::CurrentlyOn(
-      static_cast<BrowserThread::ID>(client_thread_id()));
-  BrowserThread::PostTask(
-      BrowserThread::PROCESS_LAUNCHER, FROM_HERE,
-      base::Bind(&ChildProcessLauncherHelper::PostLaunchOnLauncherThread, this,
-                 base::Passed(std::move(process)), launch_result,
-                 on_client_thread));
-  if (on_client_thread) {
-    ChildProcessLauncherHelper::Process process;
-    process.process = base::Process(handle);
-    PostLaunchOnClientThread(std::move(process), launch_result);
-  }
+  PostLaunchOnLauncherThread(std::move(process), launch_result);
 }
 
 // static
@@ -246,9 +233,5 @@ size_t ChildProcessLauncherHelper::GetNumberOfRendererSlots() {
 }
 
 }  // namespace internal
-
-bool RegisterChildProcessLauncher(JNIEnv* env) {
-  return internal::RegisterNativesImpl(env);
-}
 
 }  // namespace content

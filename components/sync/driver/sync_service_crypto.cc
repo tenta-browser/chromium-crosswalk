@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -277,11 +276,6 @@ void SyncServiceCrypto::OnPassphraseAccepted() {
   // Clear our cache of the cryptographer's pending keys.
   cached_pending_keys_.clear_blob();
 
-  // If the pending keys were resolved via keystore, it's possible we never
-  // consumed our cached passphrase. Clear it now.
-  if (!cached_passphrase_.empty())
-    cached_passphrase_.clear();
-
   // Reset passphrase_required_reason_ since we know we no longer require the
   // passphrase.
   passphrase_required_reason_ = REASON_PASSPHRASE_NOT_REQUIRED;
@@ -301,7 +295,7 @@ void SyncServiceCrypto::OnBootstrapTokenUpdated(
     const std::string& bootstrap_token,
     BootstrapTokenType type) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  CHECK(sync_prefs_);
+  DCHECK(sync_prefs_);
   if (type == PASSPHRASE_BOOTSTRAP_TOKEN) {
     sync_prefs_->SetEncryptionBootstrapToken(bootstrap_token);
   } else {
@@ -371,7 +365,7 @@ void SyncServiceCrypto::BeginConfigureCatchUpBeforeClear() {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(data_type_manager_);
   DCHECK(!saved_nigori_state_);
-  saved_nigori_state_ = base::MakeUnique<SyncEncryptionHandler::NigoriState>();
+  saved_nigori_state_ = std::make_unique<SyncEncryptionHandler::NigoriState>();
   sync_prefs_->GetNigoriSpecificsForPassphraseTransition(
       &saved_nigori_state_->nigori_specifics);
   const ModelTypeSet types = data_type_manager_->GetActiveDataTypes();
@@ -381,7 +375,7 @@ void SyncServiceCrypto::BeginConfigureCatchUpBeforeClear() {
 std::unique_ptr<SyncEncryptionHandler::Observer>
 SyncServiceCrypto::GetEncryptionObserverProxy() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  return base::MakeUnique<SyncEncryptionObserverProxy>(
+  return std::make_unique<SyncEncryptionObserverProxy>(
       weak_factory_.GetWeakPtr(), base::ThreadTaskRunnerHandle::Get());
 }
 
@@ -389,34 +383,6 @@ std::unique_ptr<SyncEncryptionHandler::NigoriState>
 SyncServiceCrypto::TakeSavedNigoriState() {
   DCHECK(thread_checker_.CalledOnValidThread());
   return std::move(saved_nigori_state_);
-}
-
-void SyncServiceCrypto::ConsumeCachedPassphraseIfPossible() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-
-  // If no cached passphrase, or sync engine hasn't started up yet, just exit.
-  // If the engine isn't running yet, OnEngineInitialized() will call this
-  // method again after the engine starts up.
-  if (cached_passphrase_.empty() || !engine_)
-    return;
-
-  // Engine is up and running, so we can consume the cached passphrase.
-  std::string passphrase = cached_passphrase_;
-  cached_passphrase_.clear();
-
-  // If we need a passphrase to decrypt data, try the cached passphrase.
-  if (passphrase_required_reason() == REASON_DECRYPTION) {
-    if (SetDecryptionPassphrase(passphrase)) {
-      DVLOG(1) << "Cached passphrase successfully decrypted pending keys";
-      return;
-    }
-  }
-
-  // If we get here, we don't have pending keys (or at least, the passphrase
-  // doesn't decrypt them) - just try to re-encrypt using the encryption
-  // passphrase.
-  if (!IsUsingSecondaryPassphrase())
-    SetEncryptionPassphrase(passphrase, false);
 }
 
 bool SyncServiceCrypto::CheckPassphraseAgainstCachedPendingKeys(

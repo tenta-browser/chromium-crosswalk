@@ -103,8 +103,10 @@ class TouchSelectionControllerTest : public testing::Test,
   }
 
   std::unique_ptr<TouchHandleDrawable> CreateDrawable() override {
-    return base::MakeUnique<MockTouchHandleDrawable>(&dragging_enabled_);
+    return std::make_unique<MockTouchHandleDrawable>(&dragging_enabled_);
   }
+
+  void DidScroll() override {}
 
   void EnableLongPressDragSelection() {
     TouchSelectionController::Config config = DefaultConfig();
@@ -156,6 +158,8 @@ class TouchSelectionControllerTest : public testing::Test,
   void OnDoubleTapEvent() {
     controller().HandleTapEvent(kIgnoredPoint, 2);
   }
+
+  void OnTripleTapEvent() { controller().HandleTapEvent(kIgnoredPoint, 3); }
 
   void Animate() {
     base::TimeTicks now = base::TimeTicks::Now();
@@ -528,6 +532,33 @@ TEST_F(TouchSelectionControllerTest, SelectionAllowedByDoubleTapOnEditable) {
               ElementsAre(INSERTION_HANDLE_CLEARED, SELECTION_HANDLES_SHOWN));
 }
 
+TEST_F(TouchSelectionControllerTest,
+       SelectionAllowedByTripleTapOnEditableArabicVowel) {
+  gfx::RectF start_rect(5, 5, 0, 10);
+  gfx::RectF end_rect(5, 5, 0, 10);
+  bool visible = true;
+
+  // If the user triple tap selects text in an editable region, the first tap
+  // will register insertion.
+  OnTapEvent();
+  ChangeInsertion(start_rect, visible);
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(INSERTION_HANDLE_SHOWN));
+
+  // The second tap will also not select since the charcter (Arabic/Urdu vowel)
+  // has zero width, the second tap will maintain insertion.
+  OnDoubleTapEvent();
+  ChangeInsertion(start_rect, visible);
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre());
+
+  // The third tap selects everything in the editable text box. Since the only
+  // text in the editable box is a zero length character the selection has the
+  // same start and end rect.
+  OnTripleTapEvent();
+  ChangeSelection(start_rect, visible, end_rect, visible);
+  EXPECT_THAT(GetAndResetEvents(),
+              ElementsAre(INSERTION_HANDLE_CLEARED, SELECTION_HANDLES_SHOWN));
+}
+
 TEST_F(TouchSelectionControllerTest, SelectionAllowsEmptyUpdateAfterLongPress) {
   gfx::RectF start_rect(5, 5, 0, 10);
   gfx::RectF end_rect(50, 5, 0, 10);
@@ -876,15 +907,20 @@ TEST_F(TouchSelectionControllerTest, TemporarilyHidden) {
   EXPECT_FALSE(test_controller.GetStartVisible());
   EXPECT_FALSE(test_controller.GetEndVisible());
 
+  EXPECT_EQ(0.f, test_controller.GetStartAlpha());
+  EXPECT_EQ(0.f, test_controller.GetEndAlpha());
+
   visible = false;
   ChangeInsertion(insertion_rect, visible);
   EXPECT_FALSE(GetAndResetNeedsAnimate());
   EXPECT_FALSE(test_controller.GetStartVisible());
+  EXPECT_EQ(0.f, test_controller.GetStartAlpha());
 
   visible = true;
   ChangeInsertion(insertion_rect, visible);
   EXPECT_FALSE(GetAndResetNeedsAnimate());
   EXPECT_FALSE(test_controller.GetStartVisible());
+  EXPECT_EQ(0.f, test_controller.GetStartAlpha());
 
   controller().SetTemporarilyHidden(false);
   EXPECT_TRUE(GetAndResetNeedsAnimate());
@@ -935,6 +971,8 @@ TEST_F(TouchSelectionControllerTest, LongPressDrag) {
   // drag gesture are pending.
   EXPECT_FALSE(test_controller.GetStartVisible());
   EXPECT_FALSE(test_controller.GetEndVisible());
+  EXPECT_EQ(0.f, test_controller.GetStartAlpha());
+  EXPECT_EQ(0.f, test_controller.GetEndAlpha());
 
   // The selection coordinates should reflect the drag movement.
   gfx::PointF fixed_offset = start_rect.CenterPoint();
@@ -970,6 +1008,8 @@ TEST_F(TouchSelectionControllerTest, LongPressDrag) {
   // The handles should still be hidden.
   EXPECT_FALSE(test_controller.GetStartVisible());
   EXPECT_FALSE(test_controller.GetEndVisible());
+  EXPECT_EQ(0.f, test_controller.GetStartAlpha());
+  EXPECT_EQ(0.f, test_controller.GetEndAlpha());
 
   // Releasing the touch sequence should end the drag and show the handles.
   EXPECT_FALSE(controller().WillHandleTouchEvent(event.ReleasePoint()));
@@ -1002,6 +1042,9 @@ TEST_F(TouchSelectionControllerTest, LongPressNoDrag) {
   EXPECT_FALSE(test_controller.GetStartVisible());
   EXPECT_FALSE(test_controller.GetEndVisible());
 
+  EXPECT_EQ(0.f, test_controller.GetStartAlpha());
+  EXPECT_EQ(0.f, test_controller.GetEndAlpha());
+
   // If no drag movement occurs, the handles should reappear after the touch
   // is released.
   EXPECT_FALSE(controller().WillHandleTouchEvent(event.ReleasePoint()));
@@ -1031,6 +1074,9 @@ TEST_F(TouchSelectionControllerTest, NoLongPressDragIfDisabled) {
   EXPECT_TRUE(test_controller.GetStartVisible());
   EXPECT_TRUE(test_controller.GetEndVisible());
 
+  EXPECT_EQ(1.f, test_controller.GetStartAlpha());
+  EXPECT_EQ(1.f, test_controller.GetEndAlpha());
+
   // Subsequent motion of the same touch sequence after longpress shouldn't
   // trigger drag selection.
   EXPECT_FALSE(controller().WillHandleTouchEvent(event.MovePoint(0, 0, 0)));
@@ -1045,6 +1091,9 @@ TEST_F(TouchSelectionControllerTest, NoLongPressDragIfDisabled) {
   EXPECT_THAT(GetAndResetEvents(), IsEmpty());
   EXPECT_TRUE(test_controller.GetStartVisible());
   EXPECT_TRUE(test_controller.GetEndVisible());
+
+  EXPECT_EQ(1.f, test_controller.GetStartAlpha());
+  EXPECT_EQ(1.f, test_controller.GetEndAlpha());
 }
 
 TEST_F(TouchSelectionControllerTest, RectBetweenBounds) {

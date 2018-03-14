@@ -10,17 +10,20 @@
 #include <set>
 #include <string>
 
-#include "ash/public/interfaces/touch_view.mojom.h"
+#include "ash/wallpaper/wallpaper_controller_observer.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observer.h"
+#include "chrome/browser/chromeos/lock_screen_apps/state_observer.h"
 #include "chrome/browser/chromeos/login/screens/error_screen.h"
 #include "chrome/browser/chromeos/login/signin_specifics.h"
 #include "chrome/browser/chromeos/login/ui/login_display.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
+#include "chrome/browser/ui/ash/tablet_mode_client_observer.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_webui_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/network_state_informer.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
@@ -31,7 +34,6 @@
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_ui.h"
-#include "mojo/public/cpp/bindings/binding.h"
 #include "net/base/net_errors.h"
 #include "ui/base/ime/chromeos/ime_keyboard.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
@@ -39,9 +41,19 @@
 
 class AccountId;
 
+namespace ash {
+namespace mojom {
+enum class TrayActionState;
+}
+}
+
 namespace base {
 class DictionaryValue;
 class ListValue;
+}
+
+namespace lock_screen_apps {
+class StateController;
 }
 
 namespace chromeos {
@@ -97,8 +109,9 @@ class LoginDisplayWebUIHandler {
                                         const std::string& password) = 0;
   virtual void ShowWhitelistCheckFailedError() = 0;
   virtual void ShowUnrecoverableCrypthomeErrorDialog() = 0;
-  virtual void LoadUsers(const base::ListValue& users_list,
-                         bool show_guest) = 0;
+  virtual void LoadUsers(const user_manager::UserList& users,
+                         const base::ListValue& users_list) = 0;
+
  protected:
   virtual ~LoginDisplayWebUIHandler() {}
 };
@@ -224,8 +237,10 @@ class SigninScreenHandler
       public NetworkStateInformer::NetworkStateInformerObserver,
       public PowerManagerClient::Observer,
       public input_method::ImeKeyboard::Observer,
-      public ash::mojom::TouchViewObserver,
-      public OobeUI::Observer {
+      public TabletModeClientObserver,
+      public lock_screen_apps::StateObserver,
+      public OobeUI::Observer,
+      public ash::WallpaperControllerObserver {
  public:
   SigninScreenHandler(
       const scoped_refptr<NetworkStateInformer>& network_state_informer,
@@ -259,17 +274,25 @@ class SigninScreenHandler
   // Required Local State preferences.
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
-  // OobeUI::Observer implemetation.
+  // OobeUI::Observer implementation:
   void OnCurrentScreenChanged(OobeScreen current_screen,
                               OobeScreen new_screen) override;
+  void OnScreenInitialized(OobeScreen screen) override{};
+
+  // ash::WallpaperControllerObserver implementation:
+  void OnWallpaperDataChanged() override;
+  void OnWallpaperColorsChanged() override;
+  void OnWallpaperBlurChanged() override;
 
   void SetFocusPODCallbackForTesting(base::Closure callback);
 
   // To avoid spurious error messages on flaky networks, the offline message is
   // only shown if the network is offline for a threshold number of seconds.
-  // This method reduces the threshold to zero, allowing the offline message to
-  // show instantaneously in tests.
-  void ZeroOfflineTimeoutForTesting();
+  // This method provides an ability to reduce the threshold to zero, allowing
+  // the offline message to show instantaneously in tests. The threshold can
+  // also be set to a high value to disable the offline message on slow
+  // configurations like MSAN, where it otherwise triggers on every run.
+  void SetOfflineTimeoutForTesting(base::TimeDelta offline_timeout);
 
   // Gets the keyboard remapped pref value for |pref_name| key. Returns true if
   // successful, otherwise returns false.
@@ -300,6 +323,10 @@ class SigninScreenHandler
                           NetworkError::ErrorReason reason);
   void ReloadGaia(bool force_reload);
 
+  // Updates the color of the scrollable container on account picker screen,
+  // based on wallpaper color extraction results.
+  void UpdateAccountPickerColors();
+
   // BaseScreenHandler implementation:
   void DeclareLocalizedValues(
       ::login::LocalizedValuesBuilder* builder) override;
@@ -329,7 +356,8 @@ class SigninScreenHandler
                                 const std::string& password) override;
   void ShowWhitelistCheckFailedError() override;
   void ShowUnrecoverableCrypthomeErrorDialog() override;
-  void LoadUsers(const base::ListValue& users_list, bool show_guest) override;
+  void LoadUsers(const user_manager::UserList& users,
+                 const base::ListValue& users_list) override;
 
   // content::NotificationObserver implementation:
   void Observe(int type,
@@ -339,8 +367,11 @@ class SigninScreenHandler
   // PowerManagerClient::Observer implementation:
   void SuspendDone(const base::TimeDelta& sleep_duration) override;
 
-  // ash::mojom::TouchView:
-  void OnTouchViewToggled(bool enabled) override;
+  // TabletModeClientObserver:
+  void OnTabletModeToggled(bool enabled) override;
+
+  // lock_screen_apps::StateObserver:
+  void OnLockScreenNoteStateChanged(ash::mojom::TrayActionState state) override;
 
   void UpdateAddButtonStatus();
 
@@ -362,7 +393,6 @@ class SigninScreenHandler
                                  const std::string& input_method);
   void HandleOfflineLogin(const base::ListValue* args);
   void HandleShutdownSystem();
-  void HandleLoadWallpaper(const AccountId& account_id);
   void HandleRebootSystem();
   void HandleRemoveUser(const AccountId& account_id);
   void HandleShowAddUser(const base::ListValue* args);
@@ -375,7 +405,7 @@ class SigninScreenHandler
   void HandleAccountPickerReady();
   void HandleWallpaperReady();
   void HandleSignOutUser();
-  void HandleOpenProxySettings();
+  void HandleOpenInternetDetailDialog();
   void HandleLoginVisible(const std::string& source);
   void HandleCancelPasswordChangedFlow(const AccountId& account_id);
   void HandleCancelUserAdding();
@@ -386,7 +416,7 @@ class SigninScreenHandler
   void HandleLoginScreenUpdate();
   void HandleShowLoadingTimeoutError();
   void HandleShowSupervisedUserCreationScreen();
-  void HandleFocusPod(const AccountId& account_id);
+  void HandleFocusPod(const AccountId& account_id, bool load_wallpaper);
   void HandleNoPodFocused();
   void HandleHardlockPod(const std::string& user_id);
   void HandleLaunchKioskApp(const AccountId& app_account_id,
@@ -394,11 +424,14 @@ class SigninScreenHandler
   void HandleLaunchArcKioskApp(const AccountId& app_account_id);
   void HandleGetPublicSessionKeyboardLayouts(const AccountId& account_id,
                                              const std::string& locale);
-  void HandleGetTouchViewState();
+  void HandleGetTabletModeState();
   void HandleLogRemoveUserWarningShown();
   void HandleFirstIncorrectPasswordAttempt(const AccountId& account_id);
   void HandleMaxIncorrectPasswordAttempts(const AccountId& account_id);
   void HandleSendFeedbackAndResyncUserData();
+  void HandleRequestNewNoteAction(const std::string& request_type);
+  void HandleNewNoteLaunchAnimationDone();
+  void HandleCloseLockScreenApp();
 
   // Sends the list of |keyboard_layouts| available for the |locale| that is
   // currently selected for the public session identified by |user_id|.
@@ -439,6 +472,7 @@ class SigninScreenHandler
 
   // input_method::ImeKeyboard::Observer implementation:
   void OnCapsLockChanged(bool enabled) override;
+  void OnLayoutChanging(const std::string& layout_name) override {}
 
   // Callback invoked after the feedback is finished.
   void OnFeedbackFinished();
@@ -446,8 +480,9 @@ class SigninScreenHandler
   // Called when the cros property controlling allowed input methods changes.
   void OnAllowedInputMethodsChanged();
 
-  // Update the keyboard settings for |account_id|.
-  void SetKeyboardSettings(const AccountId& account_id);
+  // After proxy auth information has been supplied, this function re-enables
+  // responding to network state notifications.
+  void ReenableNetworkStateUpdatesAfterProxyAuth();
 
   // Current UI state of the signin screen.
   UIState ui_state_ = UI_STATE_UNKNOWN;
@@ -488,10 +523,10 @@ class SigninScreenHandler
   std::unique_ptr<CrosSettings::ObserverSubscription>
       allowed_input_methods_subscription_;
 
-  // Whether there is an auth UI pending. This flag is set on receiving
-  // NOTIFICATION_AUTH_NEEDED and reset on either NOTIFICATION_AUTH_SUPPLIED or
-  // NOTIFICATION_AUTH_CANCELLED.
-  bool has_pending_auth_ui_ = false;
+  // Whether we're currently ignoring network state updates because a proxy auth
+  // UI pending (or we're waiting for a grace period after the proxy auth UI is
+  // finished for the network to switch into the ONLINE state).
+  bool network_state_ignored_until_proxy_auth_ = false;
 
   // Used for pending GAIA reloads.
   NetworkError::ErrorReason gaia_reload_reason_ =
@@ -513,10 +548,6 @@ class SigninScreenHandler
   // TODO(antrim@): remove this dependency.
   GaiaScreenHandler* gaia_screen_handler_ = nullptr;
 
-  mojo::Binding<ash::mojom::TouchViewObserver> touch_view_binding_;
-  ash::mojom::TouchViewManagerPtr touch_view_manager_ptr_;
-  bool touch_view_enabled_ = false;
-
   // Input Method Engine state used at signin screen.
   scoped_refptr<input_method::InputMethodManager::State> ime_state_;
 
@@ -526,13 +557,18 @@ class SigninScreenHandler
   // True if SigninScreenHandler has already been added to OobeUI observers.
   bool oobe_ui_observer_added_ = false;
 
-  bool zero_offline_timeout_for_test_ = false;
+  bool is_offline_timeout_for_test_set_ = false;
+  base::TimeDelta offline_timeout_for_test_;
 
   std::unique_ptr<ErrorScreensHistogramHelper> histogram_helper_;
 
   std::unique_ptr<LoginFeedback> login_feedback_;
 
   std::unique_ptr<AccountId> focused_pod_account_id_;
+
+  ScopedObserver<lock_screen_apps::StateController,
+                 lock_screen_apps::StateObserver>
+      lock_screen_apps_observer_;
 
   base::WeakPtrFactory<SigninScreenHandler> weak_factory_;
 

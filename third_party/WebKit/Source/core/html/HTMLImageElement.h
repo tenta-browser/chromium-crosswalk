@@ -26,12 +26,12 @@
 
 #include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "core/CoreExport.h"
-#include "core/html/FormAssociated.h"
 #include "core/html/HTMLElement.h"
 #include "core/html/HTMLImageLoader.h"
-#include "core/html/canvas/CanvasImageElementSource.h"
-#include "core/imagebitmap/ImageBitmapSource.h"
+#include "core/html/canvas/ImageElementBase.h"
+#include "core/html/forms/FormAssociated.h"
 #include "platform/graphics/GraphicsTypes.h"
+#include "platform/heap/HeapAllocator.h"
 #include "platform/loader/fetch/FetchParameters.h"
 #include "platform/loader/fetch/ResourceResponse.h"
 
@@ -40,12 +40,10 @@ namespace blink {
 class HTMLFormElement;
 class ImageCandidate;
 class ShadowRoot;
-class ImageBitmapOptions;
 
 class CORE_EXPORT HTMLImageElement final
     : public HTMLElement,
-      public CanvasImageElementSource,
-      public ImageBitmapSource,
+      public ImageElementBase,
       public ActiveScriptWrappable<HTMLImageElement>,
       public FormAssociated {
   DEFINE_WRAPPERTYPEINFO();
@@ -63,7 +61,7 @@ class CORE_EXPORT HTMLImageElement final
                                                   unsigned height);
 
   ~HTMLImageElement() override;
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   unsigned width();
   unsigned height();
@@ -81,13 +79,13 @@ class CORE_EXPORT HTMLImageElement final
   String AltText() const final;
 
   ImageResourceContent* CachedImage() const {
-    return GetImageLoader().GetImage();
+    return GetImageLoader().GetContent();
   }
   ImageResource* CachedImageResourceForImageDocument() const {
     return GetImageLoader().ImageResourceForImageDocument();
   }
-  void SetImageResource(ImageResourceContent* i) {
-    GetImageLoader().SetImage(i);
+  void SetImageForTest(ImageResourceContent* content) {
+    GetImageLoader().SetImageForTest(content);
   }
 
   void SetLoadingImageDocument() { GetImageLoader().SetLoadingImageDocument(); }
@@ -101,6 +99,8 @@ class CORE_EXPORT HTMLImageElement final
 
   int x() const;
   int y() const;
+
+  ScriptPromise decode(ScriptState*, ExceptionState&);
 
   bool complete() const;
 
@@ -133,14 +133,6 @@ class CORE_EXPORT HTMLImageElement final
 
   void ForceReload() const;
 
-  // ImageBitmapSource implementation
-  IntSize BitmapSourceSize() const override;
-  ScriptPromise CreateImageBitmap(ScriptState*,
-                                  EventTarget&,
-                                  Optional<IntRect> crop_rect,
-                                  const ImageBitmapOptions&,
-                                  ExceptionState&) override;
-
   FormAssociated* ToFormAssociatedOrNull() override { return this; };
   void AssociateWith(HTMLFormElement*) override;
 
@@ -166,19 +158,20 @@ class CORE_EXPORT HTMLImageElement final
   void DidMoveToNewDocument(Document& old_document) override;
 
   void DidAddUserAgentShadowRoot(ShadowRoot&) override;
-  PassRefPtr<ComputedStyle> CustomStyleForLayoutObject() override;
+  scoped_refptr<ComputedStyle> CustomStyleForLayoutObject() override;
 
  private:
   bool AreAuthorShadowsAllowed() const override { return false; }
 
   void ParseAttribute(const AttributeModificationParams&) override;
   bool IsPresentationAttribute(const QualifiedName&) const override;
-  void CollectStyleForPresentationAttribute(const QualifiedName&,
-                                            const AtomicString&,
-                                            MutableStylePropertySet*) override;
+  void CollectStyleForPresentationAttribute(
+      const QualifiedName&,
+      const AtomicString&,
+      MutableCSSPropertyValueSet*) override;
   void SetLayoutDisposition(LayoutDisposition, bool force_reattach = false);
 
-  void AttachLayoutTree(const AttachContext& = AttachContext()) override;
+  void AttachLayoutTree(AttachContext&) override;
   LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
 
   bool CanStartSelection() const override { return false; }
@@ -191,14 +184,16 @@ class CORE_EXPORT HTMLImageElement final
 
   InsertionNotificationRequest InsertedInto(ContainerNode*) override;
   void RemovedFrom(ContainerNode*) override;
-  bool ShouldRegisterAsNamedItem() const override { return true; }
-  bool ShouldRegisterAsExtraNamedItem() const override { return true; }
+  NamedItemType GetNamedItemType() const override {
+    return NamedItemType::kNameOrIdWithName;
+  }
   bool IsInteractiveContent() const override;
   Image* ImageContents() override;
 
   void ResetFormOwner();
   ImageCandidate FindBestFitImageFromPictureParent();
   void SetBestFitURLAndDPRFromImageCandidate(const ImageCandidate&);
+  LayoutSize DensityCorrectedIntrinsicDimensions() const;
   HTMLImageLoader& GetImageLoader() const override { return *image_loader_; }
   void NotifyViewportChanged();
   void CreateMediaQueryListIfDoesNotExist();

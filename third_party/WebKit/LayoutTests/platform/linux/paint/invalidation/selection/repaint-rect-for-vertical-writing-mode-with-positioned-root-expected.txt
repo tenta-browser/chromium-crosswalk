@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutText #text",
@@ -15,14 +15,6 @@
     }
   ],
   "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (positioned) DIV id='test'",
-      "reason": "selection"
-    },
-    {
-      "object": "LayoutBlockFlow DIV",
-      "reason": "selection"
-    },
     {
       "object": "LayoutText #text",
       "reason": "selection"

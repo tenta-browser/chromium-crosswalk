@@ -41,7 +41,6 @@ class ImeWarningBubbleView : public views::BubbleDialogDelegateView,
   // views::DialogDelegate:
   bool Accept() override;
   bool Cancel() override;
-  bool ShouldDefaultButtonBeBlue() const override;
 
   // ToolbarActionsBarObserver:
   void OnToolbarActionsBarAnimationEnded() override;
@@ -75,10 +74,10 @@ class ImeWarningBubbleView : public views::BubbleDialogDelegateView,
   // Saves the Browser instance of the browser view, which will be used in
   // OnBrowserRemoved(), as browser_view_->browser() may be null when
   // OnBrowserRemoved() is called.
-  Browser* browser_;
+  Browser* const browser_;
 
-  // True if bubble anchors to the browser action of the extension.
-  bool anchor_to_browser_action_;
+  // True if bubble anchors to the action of the extension.
+  bool anchor_to_action_;
 
   // The check box on the bubble view.
   views::Checkbox* never_show_checkbox_;

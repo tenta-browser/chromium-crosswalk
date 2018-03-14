@@ -9,7 +9,9 @@
 #include "base/macros.h"
 #include "base/path_service.h"
 #include "base/test/launcher/unit_test_launcher.h"
+#include "base/test/test_discardable_memory_allocator.h"
 #include "base/test/test_suite.h"
+#include "mojo/edk/embedder/embedder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/env.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -31,6 +33,9 @@ class WMTestSuite : public base::TestSuite {
     ui::ResourceBundle::InitSharedInstanceWithPakPath(ui_test_pak_path);
 
     env_ = aura::Env::CreateInstance();
+
+    base::DiscardableMemoryAllocator::SetInstance(
+        &discardable_memory_allocator_);
   }
 
   void Shutdown() override {
@@ -41,11 +46,14 @@ class WMTestSuite : public base::TestSuite {
 
  private:
   std::unique_ptr<aura::Env> env_;
+  base::TestDiscardableMemoryAllocator discardable_memory_allocator_;
   DISALLOW_COPY_AND_ASSIGN(WMTestSuite);
 };
 
 int main(int argc, char** argv) {
   WMTestSuite test_suite(argc, argv);
+
+  mojo::edk::Init();
 
   return base::LaunchUnitTests(
       argc, argv, base::Bind(&WMTestSuite::Run, base::Unretained(&test_suite)));

@@ -4,11 +4,10 @@
 
 #include "ash/shelf/shelf_application_menu_model.h"
 
+#include <memory>
 #include <utility>
 
-#include "ash/test/test_shelf_item_delegate.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -31,7 +30,7 @@ class ShelfApplicationMenuModelTestAPI {
   // Creates a test api to access the internals of the |menu|.
   explicit ShelfApplicationMenuModelTestAPI(ShelfApplicationMenuModel* menu)
       : menu_(menu) {}
-  ~ShelfApplicationMenuModelTestAPI() {}
+  ~ShelfApplicationMenuModelTestAPI() = default;
 
   // Give public access to this metrics recording functions.
   void RecordMenuItemSelectedMetrics(int command_id,
@@ -124,9 +123,8 @@ TEST(ShelfApplicationMenuModelTest, VerifyHistogramOnExecute) {
 
   std::vector<mojom::MenuItemPtr> items;
   items.push_back(ash::mojom::MenuItem::New());
-  test::TestShelfItemDelegate test_delegate(nullptr);
   base::string16 title = base::ASCIIToUTF16("title");
-  ShelfApplicationMenuModel menu(title, std::move(items), &test_delegate);
+  ShelfApplicationMenuModel menu(title, std::move(items), nullptr);
   menu.ExecuteCommand(0, 0);
 
   histogram_tester.ExpectTotalCount(kNumItemsEnabledHistogramName, 1);

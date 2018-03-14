@@ -71,6 +71,25 @@ const char kLastActiveUser[] = "LastActiveUser";
 // one regular user logging out and a different regular user logging in.
 const int kLogoutToLoginDelayMaxSec = 1800;
 
+// This reads integer vaule from kUserType Local State preference and
+// interpretes it as UserType. It is used in initial users load.
+UserType GetStoredUserType(const base::DictionaryValue* prefs_user_types,
+                           const AccountId& account_id) {
+  const base::Value* stored_user_type = prefs_user_types->FindKey(
+      account_id.HasAccountIdKey() ? account_id.GetAccountIdKey()
+                                   : account_id.GetUserEmail());
+  if (!stored_user_type || !stored_user_type->is_int())
+    return USER_TYPE_REGULAR;
+
+  int int_user_type = stored_user_type->GetInt();
+  if (int_user_type < 0 || int_user_type >= NUM_USER_TYPES ||
+      int_user_type == 2) {
+    LOG(ERROR) << "Bad user type " << int_user_type;
+    return USER_TYPE_REGULAR;
+  }
+  return static_cast<UserType>(int_user_type);
+}
+
 }  // namespace
 
 // static
@@ -105,7 +124,7 @@ UserManagerBase::~UserManagerBase() {
 }
 
 void UserManagerBase::Shutdown() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
 }
 
 const UserList& UserManagerBase::GetUsers() const {
@@ -127,8 +146,9 @@ const AccountId& UserManagerBase::GetOwnerAccountId() const {
 
 void UserManagerBase::UserLoggedIn(const AccountId& account_id,
                                    const std::string& username_hash,
-                                   bool browser_restart) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+                                   bool browser_restart,
+                                   bool is_child) {
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
 
   if (!last_session_active_account_id_initialized_) {
     last_session_active_account_id_ =
@@ -137,6 +157,9 @@ void UserManagerBase::UserLoggedIn(const AccountId& account_id,
   }
 
   User* user = FindUserInListAndModify(account_id);
+
+  const UserType user_type =
+      CalculateUserType(account_id, user, browser_restart, is_child);
   if (active_user_ && user) {
     user->set_is_logged_in(true);
     user->set_username_hash(username_hash);
@@ -150,30 +173,47 @@ void UserManagerBase::UserLoggedIn(const AccountId& account_id,
     return;
   }
 
-  if (IsGuestAccountId(account_id)) {
-    GuestUserLoggedIn();
-  } else if (IsDemoApp(account_id)) {
+  if (IsDemoApp(account_id)) {
     DemoAccountLoggedIn();
   } else {
-    EnsureUsersLoaded();
+    switch (user_type) {
+      case USER_TYPE_REGULAR:  // fallthrough
+      case USER_TYPE_ACTIVE_DIRECTORY:
+        if (account_id != GetOwnerAccountId() && !user &&
+            (AreEphemeralUsersEnabled() || browser_restart)) {
+          RegularUserLoggedInAsEphemeral(account_id, user_type);
+        } else {
+          RegularUserLoggedIn(account_id, user_type);
+        }
+        break;
 
-    if (user && user->GetType() == USER_TYPE_PUBLIC_ACCOUNT) {
-      PublicAccountUserLoggedIn(user);
-    } else if (user && user->GetType() == USER_TYPE_KIOSK_APP) {
-      KioskAppLoggedIn(user);
-    } else if (user && user->GetType() == USER_TYPE_ARC_KIOSK_APP) {
-      ArcKioskAppLoggedIn(user);
-    } else if ((user && user->GetType() == USER_TYPE_SUPERVISED) ||
-               (!user && IsSupervisedAccountId(account_id))) {
-      SupervisedUserLoggedIn(account_id);
-    } else if (browser_restart &&
-               IsDeviceLocalAccountMarkedForRemoval(account_id)) {
-      PublicAccountUserLoggedIn(User::CreatePublicAccountUser(account_id));
-    } else if (account_id != GetOwnerAccountId() && !user &&
-               (AreEphemeralUsersEnabled() || browser_restart)) {
-      RegularUserLoggedInAsEphemeral(account_id);
-    } else {
-      RegularUserLoggedIn(account_id);
+      case USER_TYPE_GUEST:
+        GuestUserLoggedIn();
+        break;
+
+      case USER_TYPE_PUBLIC_ACCOUNT:
+        PublicAccountUserLoggedIn(
+            user ? user : User::CreatePublicAccountUser(account_id));
+        break;
+
+      case USER_TYPE_SUPERVISED:
+        SupervisedUserLoggedIn(account_id);
+        break;
+
+      case USER_TYPE_KIOSK_APP:
+        KioskAppLoggedIn(user);
+        break;
+
+      case USER_TYPE_CHILD:
+        RegularUserLoggedIn(account_id, USER_TYPE_CHILD);
+        break;
+
+      case USER_TYPE_ARC_KIOSK_APP:
+        ArcKioskAppLoggedIn(user);
+        break;
+
+      default:
+        NOTREACHED() << "Unhandled usert type " << user_type;
     }
   }
 
@@ -259,14 +299,14 @@ void UserManagerBase::SwitchToLastActiveUser() {
 }
 
 void UserManagerBase::OnSessionStarted() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
 
   CallUpdateLoginState();
   GetLocalState()->CommitPendingWrite();
 }
 
 void UserManagerBase::OnProfileInitialized(User* user) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
 
   // Mark the user as having an initialized session and persist this in
   // the known_user DB.
@@ -277,7 +317,7 @@ void UserManagerBase::OnProfileInitialized(User* user) {
 
 void UserManagerBase::RemoveUser(const AccountId& account_id,
                                  RemoveUserDelegate* delegate) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
 
   if (!CanUserBeRemoved(FindUser(account_id)))
     return;
@@ -294,23 +334,22 @@ void UserManagerBase::RemoveNonOwnerUserInternal(const AccountId& account_id,
                                                  RemoveUserDelegate* delegate) {
   if (delegate)
     delegate->OnBeforeUserRemoved(account_id);
-  RemoveUserFromList(account_id);
   AsyncRemoveCryptohome(account_id);
+  RemoveUserFromList(account_id);
 
   if (delegate)
     delegate->OnUserRemoved(account_id);
 }
 
 void UserManagerBase::RemoveUserFromList(const AccountId& account_id) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   RemoveNonCryptohomeData(account_id);
   if (user_loading_stage_ == STAGE_LOADED) {
     DeleteUser(RemoveRegularOrSupervisedUserFromList(account_id));
   } else if (user_loading_stage_ == STAGE_LOADING) {
-    DCHECK(IsSupervisedAccountId(account_id) ||
-           HasPendingBootstrap(account_id));
-    // Special case, removing partially-constructed supervised user or
-    // boostrapping user during user list loading.
+    DCHECK(IsSupervisedAccountId(account_id));
+    // Special case, removing partially-constructed supervised user during user
+    // list loading.
     ListPrefUpdate users_update(GetLocalState(), kRegularUsers);
     users_update->Remove(base::Value(account_id.GetUserEmail()), nullptr);
     OnUserRemoved(account_id);
@@ -318,6 +357,8 @@ void UserManagerBase::RemoveUserFromList(const AccountId& account_id) {
     NOTREACHED() << "Users are not loaded yet.";
     return;
   }
+
+  known_user::RemovePrefs(account_id);
 
   // Make sure that new data is persisted to Local State.
   GetLocalState()->CommitPendingWrite();
@@ -328,38 +369,38 @@ bool UserManagerBase::IsKnownUser(const AccountId& account_id) const {
 }
 
 const User* UserManagerBase::FindUser(const AccountId& account_id) const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   if (active_user_ && active_user_->GetAccountId() == account_id)
     return active_user_;
   return FindUserInList(account_id);
 }
 
 User* UserManagerBase::FindUserAndModify(const AccountId& account_id) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   if (active_user_ && active_user_->GetAccountId() == account_id)
     return active_user_;
   return FindUserInListAndModify(account_id);
 }
 
 const User* UserManagerBase::GetActiveUser() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return active_user_;
 }
 
 User* UserManagerBase::GetActiveUser() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return active_user_;
 }
 
 const User* UserManagerBase::GetPrimaryUser() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return primary_user_;
 }
 
 void UserManagerBase::SaveUserOAuthStatus(
     const AccountId& account_id,
     User::OAuthTokenStatus oauth_token_status) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
 
   DVLOG(1) << "Saving user OAuth token status in Local State";
   User* user = FindUserAndModify(account_id);
@@ -374,16 +415,20 @@ void UserManagerBase::SaveUserOAuthStatus(
   {
     DictionaryPrefUpdate oauth_status_update(GetLocalState(),
                                              kUserOAuthTokenStatus);
-    oauth_status_update->SetWithoutPathExpansion(
+    oauth_status_update->SetKey(
         account_id.GetUserEmail(),
-        new base::Value(static_cast<int>(oauth_token_status)));
+        base::Value(static_cast<int>(oauth_token_status)));
   }
   GetLocalState()->CommitPendingWrite();
 }
 
 void UserManagerBase::SaveForceOnlineSignin(const AccountId& account_id,
                                             bool force_online_signin) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
+
+  User* const user = FindUserAndModify(account_id);
+  if (user)
+    user->set_force_online_signin(force_online_signin);
 
   // Do not update local state if data stored or cached outside the user's
   // cryptohome is to be treated as ephemeral.
@@ -393,15 +438,15 @@ void UserManagerBase::SaveForceOnlineSignin(const AccountId& account_id,
   {
     DictionaryPrefUpdate force_online_update(GetLocalState(),
                                              kUserForceOnlineSignin);
-    force_online_update->SetBooleanWithoutPathExpansion(
-        account_id.GetUserEmail(), force_online_signin);
+    force_online_update->SetKey(account_id.GetUserEmail(),
+                                base::Value(force_online_signin));
   }
   GetLocalState()->CommitPendingWrite();
 }
 
 void UserManagerBase::SaveUserDisplayName(const AccountId& account_id,
                                           const base::string16& display_name) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
 
   if (User* user = FindUserAndModify(account_id)) {
     user->set_display_name(display_name);
@@ -411,8 +456,8 @@ void UserManagerBase::SaveUserDisplayName(const AccountId& account_id,
     if (!IsUserNonCryptohomeDataEphemeral(account_id)) {
       DictionaryPrefUpdate display_name_update(GetLocalState(),
                                                kUserDisplayName);
-      display_name_update->SetWithoutPathExpansion(
-          account_id.GetUserEmail(), new base::Value(display_name));
+      display_name_update->SetKey(account_id.GetUserEmail(),
+                                  base::Value(display_name));
     }
   }
 }
@@ -425,7 +470,7 @@ base::string16 UserManagerBase::GetUserDisplayName(
 
 void UserManagerBase::SaveUserDisplayEmail(const AccountId& account_id,
                                            const std::string& display_email) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
 
   User* user = FindUserAndModify(account_id);
   if (!user) {
@@ -441,8 +486,8 @@ void UserManagerBase::SaveUserDisplayEmail(const AccountId& account_id,
     return;
 
   DictionaryPrefUpdate display_email_update(GetLocalState(), kUserDisplayEmail);
-  display_email_update->SetWithoutPathExpansion(account_id.GetUserEmail(),
-                                                new base::Value(display_email));
+  display_email_update->SetKey(account_id.GetUserEmail(),
+                               base::Value(display_email));
 }
 
 std::string UserManagerBase::GetUserDisplayEmail(
@@ -451,31 +496,25 @@ std::string UserManagerBase::GetUserDisplayEmail(
   return user ? user->display_email() : account_id.GetUserEmail();
 }
 
-void UserManagerBase::SaveUserType(const AccountId& account_id,
-                                   const UserType& user_type) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+void UserManagerBase::SaveUserType(const User* user) {
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
 
-  User* user = FindUserAndModify(account_id);
-  if (!user) {
-    LOG(ERROR) << "User not found: " << account_id.GetUserEmail();
-    return;  // Ignore if there is no such user.
-  }
-
+  CHECK(user);
   // Do not update local state if data stored or cached outside the user's
   // cryptohome is to be treated as ephemeral.
-  if (IsUserNonCryptohomeDataEphemeral(account_id))
+  if (IsUserNonCryptohomeDataEphemeral(user->GetAccountId()))
     return;
 
   DictionaryPrefUpdate user_type_update(GetLocalState(), kUserType);
-  user_type_update->SetWithoutPathExpansion(
-      account_id.GetUserEmail(), new base::Value(static_cast<int>(user_type)));
+  user_type_update->SetKey(user->GetAccountId().GetAccountIdKey(),
+                           base::Value(static_cast<int>(user->GetType())));
   GetLocalState()->CommitPendingWrite();
 }
 
 void UserManagerBase::UpdateUserAccountData(
     const AccountId& account_id,
     const UserAccountData& account_data) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
 
   SaveUserDisplayName(account_id, account_data.display_name());
 
@@ -484,8 +523,8 @@ void UserManagerBase::UpdateUserAccountData(
     user->set_given_name(given_name);
     if (!IsUserNonCryptohomeDataEphemeral(account_id)) {
       DictionaryPrefUpdate given_name_update(GetLocalState(), kUserGivenName);
-      given_name_update->SetWithoutPathExpansion(account_id.GetUserEmail(),
-                                                 new base::Value(given_name));
+      given_name_update->SetKey(account_id.GetUserEmail(),
+                                base::Value(given_name));
     }
   }
 
@@ -518,76 +557,76 @@ void UserManagerBase::ParseUserList(const base::ListValue& users_list,
 }
 
 bool UserManagerBase::IsCurrentUserOwner() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return !owner_account_id_.empty() && active_user_ &&
          active_user_->GetAccountId() == owner_account_id_;
 }
 
 bool UserManagerBase::IsCurrentUserNew() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return is_current_user_new_;
 }
 
 bool UserManagerBase::IsCurrentUserNonCryptohomeDataEphemeral() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return IsUserLoggedIn() &&
          IsUserNonCryptohomeDataEphemeral(GetActiveUser()->GetAccountId());
 }
 
 bool UserManagerBase::IsCurrentUserCryptohomeDataEphemeral() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return IsUserLoggedIn() &&
          IsUserCryptohomeDataEphemeral(GetActiveUser()->GetAccountId());
 }
 
 bool UserManagerBase::CanCurrentUserLock() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return IsUserLoggedIn() && active_user_->can_lock();
 }
 
 bool UserManagerBase::IsUserLoggedIn() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return active_user_;
 }
 
 bool UserManagerBase::IsLoggedInAsUserWithGaiaAccount() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return IsUserLoggedIn() && active_user_->HasGaiaAccount();
 }
 
 bool UserManagerBase::IsLoggedInAsChildUser() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return IsUserLoggedIn() && active_user_->GetType() == USER_TYPE_CHILD;
 }
 
 bool UserManagerBase::IsLoggedInAsPublicAccount() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return IsUserLoggedIn() &&
          active_user_->GetType() == USER_TYPE_PUBLIC_ACCOUNT;
 }
 
 bool UserManagerBase::IsLoggedInAsGuest() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return IsUserLoggedIn() && active_user_->GetType() == USER_TYPE_GUEST;
 }
 
 bool UserManagerBase::IsLoggedInAsSupervisedUser() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return IsUserLoggedIn() && active_user_->GetType() == USER_TYPE_SUPERVISED;
 }
 
 bool UserManagerBase::IsLoggedInAsKioskApp() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return IsUserLoggedIn() && active_user_->GetType() == USER_TYPE_KIOSK_APP;
 }
 
 bool UserManagerBase::IsLoggedInAsArcKioskApp() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return IsUserLoggedIn() && active_user_->GetType() == USER_TYPE_ARC_KIOSK_APP;
 }
 
 bool UserManagerBase::IsLoggedInAsStub() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   return IsUserLoggedIn() && IsStubAccountId(active_user_->GetAccountId());
 }
 
@@ -649,41 +688,41 @@ bool UserManagerBase::IsUserCryptohomeDataEphemeral(
 }
 
 void UserManagerBase::AddObserver(UserManager::Observer* obs) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   observer_list_.AddObserver(obs);
 }
 
 void UserManagerBase::RemoveObserver(UserManager::Observer* obs) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   observer_list_.RemoveObserver(obs);
 }
 
 void UserManagerBase::AddSessionStateObserver(
     UserManager::UserSessionStateObserver* obs) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   session_state_observer_list_.AddObserver(obs);
 }
 
 void UserManagerBase::RemoveSessionStateObserver(
     UserManager::UserSessionStateObserver* obs) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   session_state_observer_list_.RemoveObserver(obs);
 }
 
 void UserManagerBase::NotifyLocalStateChanged() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   for (auto& observer : observer_list_)
     observer.LocalStateChanged(this);
 }
 
 void UserManagerBase::NotifyUserImageChanged(const User& user) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   for (auto& observer : observer_list_)
     observer.OnUserImageChanged(user);
 }
 
 void UserManagerBase::NotifyUserProfileImageUpdateFailed(const User& user) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   for (auto& observer : observer_list_)
     observer.OnUserProfileImageUpdateFailed(user);
 }
@@ -691,9 +730,15 @@ void UserManagerBase::NotifyUserProfileImageUpdateFailed(const User& user) {
 void UserManagerBase::NotifyUserProfileImageUpdated(
     const User& user,
     const gfx::ImageSkia& profile_image) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   for (auto& observer : observer_list_)
     observer.OnUserProfileImageUpdated(user, profile_image);
+}
+
+void UserManagerBase::NotifyUsersSignInConstraintsChanged() {
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
+  for (auto& observer : observer_list_)
+    observer.OnUsersSignInConstraintsChanged();
 }
 
 bool UserManagerBase::CanUserBeRemoved(const User* user) const {
@@ -735,10 +780,6 @@ void UserManagerBase::SetIsCurrentUserNew(bool is_new) {
   is_current_user_new_ = is_new;
 }
 
-bool UserManagerBase::HasPendingBootstrap(const AccountId& account_id) const {
-  return false;
-}
-
 void UserManagerBase::SetOwnerId(const AccountId& owner_account_id) {
   owner_account_id_ = owner_account_id;
   CallUpdateLoginState();
@@ -753,7 +794,7 @@ void UserManagerBase::SetPendingUserSwitchId(const AccountId& account_id) {
 }
 
 void UserManagerBase::EnsureUsersLoaded() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   if (!GetLocalState())
     return;
 
@@ -791,15 +832,9 @@ void UserManagerBase::EnsureUsersLoaded() {
     if (IsSupervisedAccountId(*it)) {
       user = User::CreateSupervisedUser(*it);
     } else {
-      user = User::CreateRegularUser(*it);
-      int user_type;
-      if (prefs_user_types->GetIntegerWithoutPathExpansion(it->GetUserEmail(),
-                                                           &user_type) &&
-          user_type == USER_TYPE_CHILD) {
-        ChangeUserChildStatus(user, true /* is child */);
-      }
+      user = User::CreateRegularUser(*it,
+                                     GetStoredUserType(prefs_user_types, *it));
     }
-    const AccountId account_id = user->GetAccountId();
     user->set_oauth_token_status(LoadUserOAuthStatus(*it));
     user->set_force_online_signin(LoadForceOnlineSignin(*it));
     user->set_profile_ever_initialized(
@@ -864,7 +899,7 @@ User* UserManagerBase::FindUserInListAndModify(const AccountId& account_id) {
 }
 
 void UserManagerBase::GuestUserLoggedIn() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   active_user_ = User::CreateGuestUser(GetGuestAccountId());
 }
 
@@ -876,19 +911,24 @@ void UserManagerBase::AddUserRecord(User* user) {
   users_.insert(users_.begin(), user);
 }
 
-void UserManagerBase::RegularUserLoggedIn(const AccountId& account_id) {
+void UserManagerBase::RegularUserLoggedIn(const AccountId& account_id,
+                                          const UserType user_type) {
   // Remove the user from the user list.
   active_user_ = RemoveRegularOrSupervisedUserFromList(account_id);
 
   // If the user was not found on the user list, create a new user.
   SetIsCurrentUserNew(!active_user_);
   if (IsCurrentUserNew()) {
-    active_user_ = User::CreateRegularUser(account_id);
+    active_user_ = User::CreateRegularUser(account_id, user_type);
+    SaveUserType(active_user_);
+
     active_user_->set_oauth_token_status(LoadUserOAuthStatus(account_id));
     SaveUserDisplayName(active_user_->GetAccountId(),
                         base::UTF8ToUTF16(active_user_->GetAccountName(true)));
     known_user::SetProfileEverInitialized(
         active_user_->GetAccountId(), active_user_->profile_ever_initialized());
+  } else {
+    SaveUserType(active_user_);
   }
 
   AddUserRecord(active_user_);
@@ -898,15 +938,16 @@ void UserManagerBase::RegularUserLoggedIn(const AccountId& account_id) {
 }
 
 void UserManagerBase::RegularUserLoggedInAsEphemeral(
-    const AccountId& account_id) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+    const AccountId& account_id,
+    const UserType user_type) {
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   SetIsCurrentUserNew(true);
   is_current_user_ephemeral_regular_user_ = true;
-  active_user_ = User::CreateRegularUser(account_id);
+  active_user_ = User::CreateRegularUser(account_id, user_type);
 }
 
 void UserManagerBase::NotifyOnLogin() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
 
   NotifyActiveUserHashChanged(active_user_->username_hash());
   NotifyActiveUserChanged(active_user_);
@@ -915,7 +956,7 @@ void UserManagerBase::NotifyOnLogin() {
 
 User::OAuthTokenStatus UserManagerBase::LoadUserOAuthStatus(
     const AccountId& account_id) const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
 
   const base::DictionaryValue* prefs_oauth_status =
       GetLocalState()->GetDictionary(kUserOAuthTokenStatus);
@@ -933,7 +974,7 @@ User::OAuthTokenStatus UserManagerBase::LoadUserOAuthStatus(
 }
 
 bool UserManagerBase::LoadForceOnlineSignin(const AccountId& account_id) const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
 
   const base::DictionaryValue* prefs_force_online =
       GetLocalState()->GetDictionary(kUserForceOnlineSignin);
@@ -998,34 +1039,34 @@ User* UserManagerBase::RemoveRegularOrSupervisedUserFromList(
 }
 
 void UserManagerBase::NotifyActiveUserChanged(const User* active_user) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   for (auto& observer : session_state_observer_list_)
     observer.ActiveUserChanged(active_user);
 }
 
 void UserManagerBase::NotifyUserAddedToSession(const User* added_user,
                                                bool user_switch_pending) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   for (auto& observer : session_state_observer_list_)
     observer.UserAddedToSession(added_user);
 }
 
 void UserManagerBase::NotifyActiveUserHashChanged(const std::string& hash) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->RunsTasksInCurrentSequence());
   for (auto& observer : session_state_observer_list_)
     observer.ActiveUserHashChanged(hash);
 }
 
-void UserManagerBase::ChangeUserChildStatus(User* user, bool is_child) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
-  if (user->IsSupervised() == is_child)
-    return;
-  user->SetIsChild(is_child);
-  SaveUserType(user->GetAccountId(), is_child
-                                         ? user_manager::USER_TYPE_CHILD
-                                         : user_manager::USER_TYPE_REGULAR);
-  for (auto& observer : session_state_observer_list_)
-    observer.UserChangedChildStatus(user);
+void UserManagerBase::ResetProfileEverInitialized(const AccountId& account_id) {
+  User* user = FindUserAndModify(account_id);
+  if (!user) {
+    LOG(ERROR) << "User not found: " << account_id.GetUserEmail();
+    return;  // Ignore if there is no such user.
+  }
+
+  user->set_profile_ever_initialized(false);
+  known_user::SetProfileEverInitialized(user->GetAccountId(), false);
+  GetLocalState()->CommitPendingWrite();
 }
 
 void UserManagerBase::Initialize() {

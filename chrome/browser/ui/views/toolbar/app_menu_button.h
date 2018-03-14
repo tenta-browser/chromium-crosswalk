@@ -9,7 +9,11 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/scoped_observer.h"
+#include "base/timer/timer.h"
+#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "chrome/browser/ui/toolbar/app_menu_icon_controller.h"
+#include "ui/views/controls/animated_icon_view.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/button/menu_button_listener.h"
 #include "ui/views/view.h"
@@ -24,7 +28,10 @@ class MenuListener;
 
 class ToolbarView;
 
-class AppMenuButton : public views::MenuButton {
+// The app menu button lives in the top right of the main browser window. It
+// shows three dots and animates to a hamburger-ish icon when there's a need to
+// alert the user. Clicking displays the app menu.
+class AppMenuButton : public views::MenuButton, public TabStripModelObserver {
  public:
   explicit AppMenuButton(ToolbarView* toolbar_view);
   ~AppMenuButton() override;
@@ -32,6 +39,8 @@ class AppMenuButton : public views::MenuButton {
   void SetSeverity(AppMenuIconController::IconType type,
                    AppMenuIconController::Severity severity,
                    bool animate);
+
+  AppMenuIconController::Severity severity() { return severity_; }
 
   // Shows the app menu. |for_drop| indicates whether the menu is opened for a
   // drag-and-drop operation.
@@ -41,6 +50,10 @@ class AppMenuButton : public views::MenuButton {
   void CloseMenu();
 
   AppMenu* app_menu_for_testing() { return menu_.get(); }
+
+  // Sets the background to a prominent color if |is_prominent| is true. This is
+  // used for an experimental UI for In-Product Help.
+  void SetIsProminent(bool is_prominent);
 
   // Whether the app/hotdogs menu is currently showing.
   bool IsMenuShowing() const;
@@ -52,10 +65,19 @@ class AppMenuButton : public views::MenuButton {
   void RemoveMenuListener(views::MenuListener* listener);
 
   // views::MenuButton:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
+  void Layout() override;
+  void OnThemeChanged() override;
+
+  // TabStripObserver:
+  void TabInsertedAt(TabStripModel* tab_strip_model,
+                     content::WebContents* contents,
+                     int index,
+                     bool foreground) override;
 
   // Updates the presentation according to |severity_| and the theme provider.
-  void UpdateIcon();
+  // If |should_animate| is true, the icon should animate.
+  void UpdateIcon(bool should_animate);
 
   // Sets |margin_trailing_| when the browser is maximized and updates layout
   // to make the focus rectangle centered.
@@ -66,6 +88,12 @@ class AppMenuButton : public views::MenuButton {
   static bool g_open_app_immediately_for_testing;
 
  private:
+  // Animates the icon if possible. The icon will not animate if the severity
+  // level is none, |animation_| is nullptr or |should_use_new_icon_| is false.
+  // If |should_delay_animation_| and |with_delay| is true, then delay the
+  // animation.
+  void AnimateIconIfPossible(bool with_delay);
+
   // views::MenuButton:
   const char* GetClassName() const override;
   std::unique_ptr<views::LabelButtonBorder> CreateDefaultBorder()
@@ -81,8 +109,9 @@ class AppMenuButton : public views::MenuButton {
   void OnDragExited() override;
   int OnPerformDrop(const ui::DropTargetEvent& event) override;
 
-  AppMenuIconController::Severity severity_;
-  AppMenuIconController::IconType type_;
+  AppMenuIconController::Severity severity_ =
+      AppMenuIconController::Severity::NONE;
+  AppMenuIconController::IconType type_ = AppMenuIconController::IconType::NONE;
 
   // Our owning toolbar view.
   ToolbarView* toolbar_view_;
@@ -96,12 +125,27 @@ class AppMenuButton : public views::MenuButton {
   std::unique_ptr<AppMenuModel> menu_model_;
   std::unique_ptr<AppMenu> menu_;
 
+  // The view that depicts and animates the icon. TODO(estade): rename to
+  // |animated_icon_| when |should_use_new_icon_| defaults to true and is
+  // removed.
+  views::AnimatedIconView* new_icon_ = nullptr;
+
+  // Used to delay the animation. Not used if |should_delay_animation_| is
+  // false.
+  base::Timer animation_delay_timer_;
+
+  // True if the app menu should use the new animated icon.
+  bool should_use_new_icon_ = false;
+
+  // True if the kAnimatedAppMenuIcon feature's "HasDelay" param is true.
+  bool should_delay_animation_ = false;
+
   // Any trailing margin to be applied. Used when the browser is in
   // a maximized state to extend to the full window width.
-  int margin_trailing_;
+  int margin_trailing_ = 0;
 
   // Used to spawn weak pointers for delayed tasks to open the overflow menu.
-  base::WeakPtrFactory<AppMenuButton> weak_factory_;
+  base::WeakPtrFactory<AppMenuButton> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AppMenuButton);
 };

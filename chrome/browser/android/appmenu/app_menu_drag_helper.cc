@@ -3,19 +3,15 @@
 // found in the LICENSE file.
 
 #include "base/metrics/histogram_macros.h"
-#include "chrome/browser/android/appmenu/app_menu_drag_helper.h"
 #include "jni/AppMenuDragHelper_jni.h"
 
 using base::android::JavaParamRef;
 
-bool RegisterAppMenuDragHelper(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
 // static
-void RecordAppMenuTouchDuration(JNIEnv* env,
-                                const JavaParamRef<jclass>& jcaller,
-                                jlong time_ms) {
+void JNI_AppMenuDragHelper_RecordAppMenuTouchDuration(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& jcaller,
+    jlong time_ms) {
   UMA_HISTOGRAM_TIMES("WrenchMenu.TouchDuration",
                       base::TimeDelta::FromMilliseconds(time_ms));
 }

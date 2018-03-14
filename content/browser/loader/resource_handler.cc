@@ -4,6 +4,8 @@
 
 #include "content/browser/loader/resource_handler.h"
 
+#include "base/command_line.h"
+#include "base/strings/string_number_conversions.h"
 #include "content/browser/loader/resource_request_info_impl.h"
 
 namespace content {
@@ -16,7 +18,9 @@ void ResourceHandler::SetDelegate(Delegate* delegate) {
   delegate_ = delegate;
 }
 
-ResourceHandler::~ResourceHandler() {}
+ResourceHandler::~ResourceHandler() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+}
 
 ResourceHandler::ResourceHandler(net::URLRequest* request)
     : request_(request) {}
@@ -40,16 +44,19 @@ void ResourceHandler::Cancel() {
   ReleaseController()->Cancel();
 }
 
-void ResourceHandler::CancelAndIgnore() {
-  ReleaseController()->CancelAndIgnore();
-}
-
 void ResourceHandler::CancelWithError(int error_code) {
   ReleaseController()->CancelWithError(error_code);
 }
 
 void ResourceHandler::OutOfBandCancel(int error_code, bool tell_renderer) {
   delegate_->OutOfBandCancel(error_code, tell_renderer);
+}
+
+void ResourceHandler::GetNumericArg(const std::string& name, int* result) {
+  const std::string& value =
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(name);
+  if (!value.empty())
+    base::StringToInt(value, result);
 }
 
 ResourceRequestInfoImpl* ResourceHandler::GetRequestInfo() const {

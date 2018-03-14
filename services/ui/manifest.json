@@ -1,5 +1,6 @@
 {
   "name": "ui",
+  "sandbox_type": "none",
   "display_name": "UI Service",
   "interface_provider_specs": {
     "service_manager:connector": {
@@ -13,15 +14,23 @@
           "ui::mojom::Clipboard",
           "ui::mojom::DisplayManager",
           "ui::mojom::Gpu",
-          "ui::mojom::IMEServer",
+          "ui::mojom::IMEDriver",
           "ui::mojom::InputDeviceServer",
           "ui::mojom::WindowTreeFactory"
         ],
+        "arc_manager" : [
+          "ui::mojom::Arc"
+        ],
+        "video_detector": [
+          "ui::mojom::VideoDetector"
+        ],
         // Interfaces provided by mus-gpu for mus-ws.
         "ozone": [
-          "ui::ozone::mojom::DeviceCursor"
+          "ui::ozone::mojom::DeviceCursor",
+          "ui::ozone::mojom::DrmDevice"
         ],
         "test": [
+          "ui::mojom::RemoteEventDispatcher",
           "ui::mojom::WindowServerTest"
         ],
         "discardable_memory": [
@@ -33,14 +42,17 @@
         "display_output_protection": [
           "display::mojom::OutputProtection"
         ],
-        "display_test": [
-          "display::mojom::TestDisplayController"
+        "display_dev": [
+          "display::mojom::DevDisplayController"
         ],
         "gpu_client": [
           "ui::mojom::Gpu"
         ],
         "ime_registrar": [
           "ui::mojom::IMERegistrar"
+        ],
+        "input_device_controller": [
+          "ui::mojom::InputDeviceController"
         ],
         "user_access_manager": [
           "ui::mojom::UserAccessManager"
@@ -53,8 +65,11 @@
           "ui::mojom::Clipboard",
           "ui::mojom::DisplayManager",
           "ui::mojom::Gpu",
-          "ui::mojom::IMEServer",
+          "ui::mojom::IMEDriver",
+          "ui::mojom::InputDeviceController",
           "ui::mojom::InputDeviceServer",
+          "ui::mojom::RemoteEventDispatcher",
+          "ui::mojom::TouchDeviceServer",
           "ui::mojom::UserActivityMonitor",
           "ui::mojom::WindowManagerWindowTreeFactory"
         ],
@@ -64,9 +79,10 @@
       },
       "requires": {
         "*": [ "app" ],
-        "catalog": [ "app" ],
+        "catalog": [ "directory" ],
         "service_manager": [ "service_manager:all_users" ],
-        "ui": [ "ozone" ]
+        "ui": [ "ozone" ],
+        "viz": [ "viz_host" ]
       }
     }
   }

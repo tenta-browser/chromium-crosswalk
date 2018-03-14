@@ -4,10 +4,13 @@
 
 #include "chrome/browser/ui/views/autofill/autofill_popup_view_views.h"
 
+#include "base/feature_list.h"
 #include "base/optional.h"
 #include "chrome/browser/ui/autofill/autofill_popup_controller.h"
 #include "chrome/browser/ui/autofill/autofill_popup_layout_model.h"
+#include "chrome/browser/ui/views/autofill/autofill_popup_view_native_views.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/autofill/core/browser/autofill_experiments.h"
 #include "components/autofill/core/browser/popup_item_ids.h"
 #include "components/autofill/core/browser/suggestion.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -150,9 +153,9 @@ void AutofillPopupViewViews::DrawAutofillEntry(gfx::Canvas* canvas,
       GetNativeTheme()->GetSystemColor(
           controller_->GetBackgroundColorIDForRow(index)));
 
-  const bool is_http_warning =
-      (controller_->GetSuggestionAt(index).frontend_id ==
-       POPUP_ITEM_ID_HTTP_NOT_SECURE_WARNING_MESSAGE);
+  const int frontend_id = controller_->GetSuggestionAt(index).frontend_id;
+  const bool icon_in_front_of_text =
+      (frontend_id == POPUP_ITEM_ID_HTTP_NOT_SECURE_WARNING_MESSAGE);
   const bool is_rtl = controller_->IsRTL();
   const int text_align =
       is_rtl ? gfx::Canvas::TEXT_ALIGN_RIGHT : gfx::Canvas::TEXT_ALIGN_LEFT;
@@ -160,7 +163,7 @@ void AutofillPopupViewViews::DrawAutofillEntry(gfx::Canvas* canvas,
   value_rect.Inset(AutofillPopupLayoutModel::kEndPadding, 0);
 
   // If the icon is on the right of the rect, no matter in RTL or LTR mode.
-  bool icon_on_the_right = is_http_warning == is_rtl;
+  bool icon_on_the_right = icon_in_front_of_text == is_rtl;
   int x_align_left = icon_on_the_right ? value_rect.right() : value_rect.x();
 
   // Draw the Autofill icon, if one exists
@@ -176,12 +179,12 @@ void AutofillPopupViewViews::DrawAutofillEntry(gfx::Canvas* canvas,
     canvas->DrawImageInt(image, icon_x_align_left, icon_y);
 
     // An icon was drawn; adjust the |x_align_left| value for the next element.
-    if (is_http_warning) {
+    if (icon_in_front_of_text) {
       x_align_left =
           icon_x_align_left +
-          (is_rtl ? -AutofillPopupLayoutModel::kHttpWarningIconPadding
+          (is_rtl ? -AutofillPopupLayoutModel::kPaddingAfterLeadingIcon
                   : image.width() +
-                        AutofillPopupLayoutModel::kHttpWarningIconPadding);
+                        AutofillPopupLayoutModel::kPaddingAfterLeadingIcon);
     } else {
       x_align_left =
           icon_x_align_left +
@@ -196,7 +199,7 @@ void AutofillPopupViewViews::DrawAutofillEntry(gfx::Canvas* canvas,
       controller_->layout_model().GetValueFontListForRow(index));
   int value_x_align_left = x_align_left;
 
-  if (is_http_warning) {
+  if (icon_in_front_of_text) {
     value_x_align_left += is_rtl ? -value_width : 0;
   } else {
     value_x_align_left =
@@ -219,7 +222,7 @@ void AutofillPopupViewViews::DrawAutofillEntry(gfx::Canvas* canvas,
         controller_->layout_model().GetLabelFontListForRow(index));
     int label_x_align_left = x_align_left;
 
-    if (is_http_warning) {
+    if (icon_in_front_of_text) {
       label_x_align_left =
           is_rtl ? value_rect.x() : value_rect.right() - label_width;
     } else {
@@ -263,6 +266,9 @@ AutofillPopupView* AutofillPopupView::Create(
   // fully set it up.
   if (!observing_widget)
     return NULL;
+
+  if (base::FeatureList::IsEnabled(autofill::kAutofillExpandedPopupViews))
+    return new AutofillPopupViewNativeViews(controller, observing_widget);
 
   return new AutofillPopupViewViews(controller, observing_widget);
 }

@@ -29,7 +29,7 @@
  */
 
 /** @typedef {string} */
-Protocol.Error;
+Protocol.Error = Symbol('Protocol.Error');
 
 /**
  * @unrestricted
@@ -225,6 +225,7 @@ Protocol.TargetBase = class {
     this._dispatchers = {};
     this._callbacks = {};
     this._initialize(Protocol.inspectorBackend._agentPrototypes, Protocol.inspectorBackend._dispatcherPrototypes);
+    this._domainToLogger = new Map();
     if (!Protocol.InspectorBackend.deprecatedRunAfterPendingDispatches) {
       Protocol.InspectorBackend.deprecatedRunAfterPendingDispatches =
           this._deprecatedRunAfterPendingDispatches.bind(this);
@@ -288,7 +289,7 @@ Protocol.TargetBase = class {
     var message = JSON.stringify(messageObject);
 
     if (Protocol.InspectorBackend.Options.dumpInspectorProtocolMessages)
-      this._dumpProtocolMessage('frontend: ' + message);
+      this._dumpProtocolMessage('frontend: ' + message, '[FE] ' + domain);
 
     this._connection.sendMessage(message);
     ++this._pendingResponsesCount;
@@ -327,8 +328,10 @@ Protocol.TargetBase = class {
    * @param {!Object|string} message
    */
   _onMessage(message) {
-    if (Protocol.InspectorBackend.Options.dumpInspectorProtocolMessages)
-      this._dumpProtocolMessage('backend: ' + ((typeof message === 'string') ? message : JSON.stringify(message)));
+    if (Protocol.InspectorBackend.Options.dumpInspectorProtocolMessages) {
+      this._dumpProtocolMessage(
+          'backend: ' + ((typeof message === 'string') ? message : JSON.stringify(message)), 'Backend');
+    }
 
     var messageObject = /** @type {!Object} */ ((typeof message === 'string') ? JSON.parse(message) : message);
 
@@ -341,14 +344,14 @@ Protocol.TargetBase = class {
 
       var timingLabel = 'time-stats: ' + callback.methodName;
       if (Protocol.InspectorBackend.Options.dumpInspectorTimeStats)
-        console.time(timingLabel);
+        Protocol.InspectorBackend._timeLogger.time(timingLabel);
 
       this._agent(callback.domain).dispatchResponse(messageObject, callback.methodName, callback);
       --this._pendingResponsesCount;
       delete this._callbacks[messageObject.id];
 
       if (Protocol.InspectorBackend.Options.dumpInspectorTimeStats)
-        console.timeEnd(timingLabel);
+        Protocol.InspectorBackend._timeLogger.timeEnd(timingLabel);
 
       if (this._scripts && !this._pendingResponsesCount)
         this._deprecatedRunAfterPendingDispatches();
@@ -362,8 +365,7 @@ Protocol.TargetBase = class {
       var domainName = method[0];
       if (!(domainName in this._dispatchers)) {
         Protocol.InspectorBackend.reportProtocolError(
-            'Protocol Error: the message ' + messageObject.method + ' is for non-existing domain \'' + domainName +
-                '\'',
+            `Protocol Error: the message ${messageObject.method} is for non-existing domain '${domainName}'`,
             messageObject);
         return;
       }
@@ -413,9 +415,13 @@ Protocol.TargetBase = class {
 
   /**
    * @param {string} message
+   * @param {string} context
    */
-  _dumpProtocolMessage(message) {
-    console.log(message);  // eslint-disable-line no-console
+  _dumpProtocolMessage(message, context) {
+    if (!this._domainToLogger.get(context))
+      this._domainToLogger.set(context, console.context ? console.context(context) : console);
+    var logger = this._domainToLogger.get(context);
+    logger.log(message);
   }
 
   /**
@@ -513,12 +519,12 @@ Protocol.InspectorBackend._AgentPrototype = class {
     this[methodName] = sendMessagePromise;
 
     /**
-     * @param {...*} vararg
+     * @param {!Object} request
+     * @return {!Promise}
      * @this {Protocol.InspectorBackend._AgentPrototype}
      */
-    function invoke(vararg) {
-      var params = [domainAndMethod].concat(Array.prototype.slice.call(arguments));
-      Protocol.InspectorBackend._AgentPrototype.prototype._invoke.apply(this, params);
+    function invoke(request) {
+      return this._invoke(domainAndMethod, request);
     }
 
     this['invoke_' + methodName] = invoke;
@@ -532,23 +538,22 @@ Protocol.InspectorBackend._AgentPrototype = class {
    * @param {string} method
    * @param {!Array.<!Object>} signature
    * @param {!Array.<*>} args
-   * @param {boolean} allowExtraUndefinedArg
    * @param {function(string)} errorCallback
    * @return {?Object}
    */
-  _prepareParameters(method, signature, args, allowExtraUndefinedArg, errorCallback) {
+  _prepareParameters(method, signature, args, errorCallback) {
     var params = {};
     var hasParams = false;
-    for (var i = 0; i < signature.length; ++i) {
-      var param = signature[i];
+
+    for (var param of signature) {
       var paramName = param['name'];
       var typeName = param['type'];
       var optionalFlag = param['optional'];
 
       if (!args.length && !optionalFlag) {
         errorCallback(
-            'Protocol Error: Invalid number of arguments for method \'' + method +
-            '\' call. It must have the following arguments \'' + JSON.stringify(signature) + '\'.');
+            `Protocol Error: Invalid number of arguments for method '${method}' call. ` +
+            `It must have the following arguments ${JSON.stringify(signature)}'.`);
         return null;
       }
 
@@ -558,8 +563,8 @@ Protocol.InspectorBackend._AgentPrototype = class {
 
       if (typeof value !== typeName) {
         errorCallback(
-            'Protocol Error: Invalid type of argument \'' + paramName + '\' for method \'' + method +
-            '\' call. It must be \'' + typeName + '\' but it is \'' + typeof value + '\'.');
+            `Protocol Error: Invalid type of argument '${paramName}' for method '${method}' call. ` +
+            `It must be '${typeName}' but it is '${typeof value}'.`);
         return null;
       }
 
@@ -567,15 +572,8 @@ Protocol.InspectorBackend._AgentPrototype = class {
       hasParams = true;
     }
 
-    if (args.length === 1 && (!allowExtraUndefinedArg || (typeof args[0] !== 'undefined'))) {
-      errorCallback(
-          'Protocol Error: Optional callback argument for method \'' + method +
-          '\' call must be a function but its type is \'' + typeof args[0] + '\'.');
-      return null;
-    }
-
-    if (args.length > 1) {
-      errorCallback('Protocol Error: Extra ' + args.length + ' arguments in a call to method \'' + method + '\'.');
+    if (args.length) {
+      errorCallback(`Protocol Error: Extra ${args.length} arguments in a call to method '${method}'.`);
       return null;
     }
 
@@ -584,9 +582,9 @@ Protocol.InspectorBackend._AgentPrototype = class {
 
   /**
    * @param {string} method
-   * @param {!Array.<!Object>} signature
-   * @param {!Array.<*>} args
-   * @return {!Promise.<*>}
+   * @param {!Array<!Object>} signature
+   * @param {!Array<*>} args
+   * @return {!Promise<?>}
    */
   _sendMessageToBackendPromise(method, signature, args) {
     var errorMessage;
@@ -597,49 +595,43 @@ Protocol.InspectorBackend._AgentPrototype = class {
       console.error(message);
       errorMessage = message;
     }
-    var userCallback = (args.length && typeof args.peekLast() === 'function') ? args.pop() : null;
-    var params = this._prepareParameters(method, signature, args, !userCallback, onError);
-    var responseArguments;
-    if (errorMessage) {
-      responseArguments = [errorMessage];
-      return Promise.resolve().then(runUserCallback);
-    }
-    return new Promise(promiseAction.bind(this)).then(runUserCallback);
+    var params = this._prepareParameters(method, signature, args, onError);
+    if (errorMessage)
+      return Promise.resolve(null);
 
-    /**
-     * @param {function()} resolve
-     * @param {function(!Error)} reject
-     * @this {Protocol.InspectorBackend._AgentPrototype}
-     */
-    function promiseAction(resolve, reject) {
-      /**
-       * @param {...*} vararg
-       */
-      function callback(vararg) {
-        responseArguments = arguments;
-        resolve();
-      }
-      this._target._wrapCallbackAndSendMessageObject(this._domain, method, params, callback);
-    }
-
-    function runUserCallback() {
-      return userCallback ? userCallback.apply(null, responseArguments) : undefined;
-    }
+    return new Promise(resolve => {
+      this._target._wrapCallbackAndSendMessageObject(this._domain, method, params, (error, result) => {
+        if (error) {
+          resolve(null);
+          return;
+        }
+        var args = this._replyArgs[method];
+        resolve(result && args.length ? result[args[0]] : undefined);
+      });
+    });
   }
 
   /**
    * @param {string} method
-   * @param {?Object} args
-   * @param {?function(*)} callback
+   * @param {?Object} request
+   * @return {!Promise<!Object>}
    */
-  _invoke(method, args, callback) {
-    this._target._wrapCallbackAndSendMessageObject(this._domain, method, args, callback);
+  _invoke(method, request) {
+    return new Promise(fulfill => {
+      this._target._wrapCallbackAndSendMessageObject(this._domain, method, request, (error, result) => {
+        if (!result)
+          result = {};
+        if (error)
+          result[Protocol.Error] = error.message;
+        fulfill(result);
+      });
+    });
   }
 
   /**
    * @param {!Object} messageObject
    * @param {string} methodName
-   * @param {function(*)|function(?Protocol.Error, ?Object)} callback
+   * @param {function(?Protocol.Error, ?Object)} callback
    */
   dispatchResponse(messageObject, methodName, callback) {
     if (messageObject.error && messageObject.error.code !== Protocol.InspectorBackend._ConnectionClosedErrorCode &&
@@ -648,20 +640,7 @@ Protocol.InspectorBackend._AgentPrototype = class {
       var id = Protocol.InspectorBackend.Options.dumpInspectorProtocolMessages ? ' with id = ' + messageObject.id : '';
       console.error('Request ' + methodName + id + ' failed. ' + JSON.stringify(messageObject.error));
     }
-
-    var argumentsArray = [];
-    argumentsArray[0] = messageObject.error ? messageObject.error.message : null;
-
-    if (this._hasErrorData[methodName])
-      argumentsArray[1] = messageObject.error ? messageObject.error.data : null;
-
-    if (messageObject.result) {
-      var paramNames = this._replyArgs[methodName] || [];
-      for (var i = 0; i < paramNames.length; ++i)
-        argumentsArray.push(messageObject.result[paramNames[i]]);
-    }
-
-    callback.apply(null, argumentsArray);
+    callback(messageObject.error, messageObject.result);
   }
 };
 
@@ -702,8 +681,7 @@ Protocol.InspectorBackend._DispatcherPrototype = class {
 
     if (!this._eventArgs[messageObject.method]) {
       Protocol.InspectorBackend.reportProtocolError(
-          'Protocol Error: Attempted to dispatch an unspecified method \'' + messageObject.method + '\'',
-          messageObject);
+          `Protocol Error: Attempted to dispatch an unspecified method '${messageObject.method}'`, messageObject);
       return;
     }
 
@@ -716,7 +694,7 @@ Protocol.InspectorBackend._DispatcherPrototype = class {
 
     var timingLabel = 'time-stats: ' + messageObject.method;
     if (Protocol.InspectorBackend.Options.dumpInspectorTimeStats)
-      console.time(timingLabel);
+      Protocol.InspectorBackend._timeLogger.time(timingLabel);
 
     for (var index = 0; index < this._dispatchers.length; ++index) {
       var dispatcher = this._dispatchers[index];
@@ -725,7 +703,7 @@ Protocol.InspectorBackend._DispatcherPrototype = class {
     }
 
     if (Protocol.InspectorBackend.Options.dumpInspectorTimeStats)
-      console.timeEnd(timingLabel);
+      Protocol.InspectorBackend._timeLogger.timeEnd(timingLabel);
   }
 };
 
@@ -734,3 +712,5 @@ Protocol.InspectorBackend.Options = {
   dumpInspectorProtocolMessages: false,
   suppressRequestErrors: false
 };
+
+Protocol.InspectorBackend._timeLogger = console.context ? console.context('Protocol timing') : console;

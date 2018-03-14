@@ -9,6 +9,8 @@
 Polymer({
   is: 'oobe-welcome-md',
 
+  behaviors: [I18nBehavior],
+
   properties: {
     /**
      * Currently selected system language (display name).
@@ -32,7 +34,7 @@ Polymer({
      */
     languages: {
       type: Array,
-      observer: "onLanguagesChanged_",
+      observer: 'onLanguagesChanged_',
     },
 
     /**
@@ -41,7 +43,7 @@ Polymer({
      */
     keyboards: {
       type: Array,
-      observer: "onKeyboardsChanged_",
+      observer: 'onKeyboardsChanged_',
     },
 
     /**
@@ -89,15 +91,19 @@ Polymer({
     /**
      * Controls displaying of "Enable debugging features" link.
      */
-     debuggingLinkVisible: Boolean,
+    debuggingLinkVisible: Boolean,
   },
 
   /**
    * GUID of the user-selected network. It is remembered after user taps on
    * network entry. After we receive event "connected" on this network,
    * OOBE will proceed.
+   * @private {string}
    */
   networkLastSelectedGuid_: '',
+
+  /** @private {string} GUID of the default network. */
+  defaultNetworkGuid_: '',
 
   /** @override */
   ready: function() {
@@ -111,26 +117,31 @@ Polymer({
     CrOncStrings = {
       OncTypeCellular: loadTimeData.getString('OncTypeCellular'),
       OncTypeEthernet: loadTimeData.getString('OncTypeEthernet'),
+      OncTypeTether: loadTimeData.getString('OncTypeTether'),
       OncTypeVPN: loadTimeData.getString('OncTypeVPN'),
       OncTypeWiFi: loadTimeData.getString('OncTypeWiFi'),
       OncTypeWiMAX: loadTimeData.getString('OncTypeWiMAX'),
-      networkDisabled: loadTimeData.getString('networkDisabled'),
       networkListItemConnected:
           loadTimeData.getString('networkListItemConnected'),
       networkListItemConnecting:
           loadTimeData.getString('networkListItemConnecting'),
       networkListItemConnectingTo:
           loadTimeData.getString('networkListItemConnectingTo'),
+      networkListItemInitializing:
+          loadTimeData.getString('networkListItemInitializing'),
       networkListItemNotConnected:
           loadTimeData.getString('networkListItemNotConnected'),
+      networkListItemNoNetwork:
+          loadTimeData.getString('networkListItemNoNetwork'),
       vpnNameTemplate: loadTimeData.getString('vpnNameTemplate'),
 
       // Additional strings for custom items.
-      addMobileNetworkMenuName:
-          loadTimeData.getString('addMobileNetworkMenuName'),
       addWiFiNetworkMenuName: loadTimeData.getString('addWiFiNetworkMenuName'),
       proxySettingsMenuName: loadTimeData.getString('proxySettingsMenuName'),
     };
+
+    this.$.welcomeScreen.i18nUpdateLocale();
+    this.i18nUpdateLocale();
   },
 
   /**
@@ -140,7 +151,7 @@ Polymer({
   hideAllScreens_: function() {
     this.$.welcomeScreen.hidden = true;
 
-    var screens = Polymer.dom(this.root).querySelectorAll('oobe-dialog')
+    var screens = Polymer.dom(this.root).querySelectorAll('oobe-dialog');
     for (var i = 0; i < screens.length; ++i) {
       screens[i].hidden = true;
     }
@@ -165,7 +176,7 @@ Polymer({
    * @private
    */
   getActiveScreen_: function() {
-    var screens = Polymer.dom(this.root).querySelectorAll('oobe-dialog')
+    var screens = Polymer.dom(this.root).querySelectorAll('oobe-dialog');
     for (var i = 0; i < screens.length; ++i) {
       if (!screens[i].hidden)
         return screens[i];
@@ -197,34 +208,34 @@ Polymer({
   },
 
   /**
-   * Returns custom items for network selector.
+   * Returns custom items for network selector. Shows 'Proxy settings' only
+   * when connected to a network.
    * @private
    */
-  getNetworkCustomItems_: function() {
+  getNetworkCustomItems_: function(isConnected_) {
     var self = this;
-    return [
-      {
+    var items = [];
+    if (isConnected_) {
+      items.push({
         customItemName: 'proxySettingsMenuName',
         polymerIcon: 'oobe-welcome-20:add-proxy',
         customData: {
-          onTap: function() { self.OpenProxySettingsDialog_(); },
+          onTap: function() {
+            self.OpenInternetDetailDialog_();
+          },
+        },
+      });
+    }
+    items.push({
+      customItemName: 'addWiFiNetworkMenuName',
+      polymerIcon: 'oobe-welcome-20:add-wifi',
+      customData: {
+        onTap: function() {
+          self.OpenAddWiFiNetworkDialog_();
         },
       },
-      {
-        customItemName: 'addWiFiNetworkMenuName',
-        polymerIcon: 'oobe-welcome-20:add-wifi',
-        customData: {
-          onTap: function() { self.OpenAddWiFiNetworkDialog_(); },
-        },
-      },
-      {
-        customItemName: 'addMobileNetworkMenuName',
-        polymerIcon: 'oobe-welcome-20:add-cellular',
-        customData: {
-          onTap: function() { self.OpenAddWiFiNetworkDialog_(); },
-        },
-      },
-    ];
+    });
+    return items;
   },
 
   /**
@@ -242,6 +253,15 @@ Polymer({
    */
   onWelcomeNextButtonClicked_: function() {
     this.showScreen_('networkSelectionScreen');
+  },
+
+  /**
+   * Handle "launch-advanced-options" button for "Welcome" screen.
+   *
+   * @private
+   */
+  onWelcomeLaunchAdvancedOptions_: function() {
+    this.showScreen_('oobeAdvancedOptionsScreen');
   },
 
   /**
@@ -272,30 +292,21 @@ Polymer({
   },
 
   /**
-   * Handle Networwork Setup screen "Proxy settings" button.
+   * Handle Network Setup screen "Proxy settings" button.
    *
    * @private
    */
-  OpenProxySettingsDialog_: function(item) {
-    chrome.send('launchProxySettingsDialog');
+  OpenInternetDetailDialog_: function(item) {
+    chrome.send('launchInternetDetailDialog');
   },
 
   /**
-   * Handle Networwork Setup screen "Add WiFi network" button.
+   * Handle Network Setup screen "Add WiFi network" button.
    *
    * @private
    */
   OpenAddWiFiNetworkDialog_: function(item) {
     chrome.send('launchAddWiFiNetworkDialog');
-  },
-
-  /**
-   * Handle Networwork Setup screen "Add cellular network" button.
-   *
-   * @private
-   */
-  OpenAddMobileNetworkDialog_: function(item) {
-    chrome.send('launchAddMobileNetworkDialog');
   },
 
   /**
@@ -315,6 +326,7 @@ Polymer({
    */
   onDefaultNetworkChanged_: function(event) {
     var state = event.detail;
+    this.defaultNetworkGuid_ = (state ? state.GUID : '');
     this.isConnected_ =
         !!state && state.ConnectionState == CrOnc.ConnectionState.CONNECTED;
     if (!state || state.GUID != this.networkLastSelectedGuid_)
@@ -334,21 +346,34 @@ Polymer({
    */
   onNetworkListNetworkItemSelected_: function(event) {
     var state = event.detail;
-    // If user has not previously made a selection and selected network
-    // is already connected, just continue to the next screen.
+    assert(state);
+    // If the user has not previously made a selection and the default network
+    // is selected and connected, continue to the next screen.
     if (this.networkLastSelectedGuid_ == '' &&
+        state.GUID == this.defaultNetworkGuid_ &&
         state.ConnectionState == CrOnc.ConnectionState.CONNECTED) {
       this.onSelectedNetworkConnected_();
+      return;
     }
 
     // If user has previously selected another network, there
     // is pending connection attempt. So even if new selection is currently
     // connected, it may get disconnected at any time.
     // So just send one more connection request to cancel current attempts.
-    this.networkLastSelectedGuid_ = state.GUID;
+    this.networkLastSelectedGuid_ = (state ? state.GUID : '');
+
+    if (!state)
+      return;
 
     var self = this;
     var networkStateCopy = Object.assign({}, state);
+
+    // TODO(stevenjb): Do this when state.Connectable == false once network
+    // configuration is integrated into the Settings UI / details dialog.
+    if (state.Type == chrome.networkingPrivate.NetworkType.CELLULAR) {
+      chrome.send('showNetworkDetails', [state.GUID]);
+      return;
+    }
 
     chrome.networkingPrivate.startConnect(state.GUID, function() {
       var lastError = chrome.runtime.lastError;
@@ -489,5 +514,43 @@ Polymer({
       return;
 
     this.screen.onTimezoneSelected_(item.value);
+  },
+
+  /** ******************** AdvancedOptions section ******************* */
+
+  /**
+   * Handle "OK" button for "AdvancedOptions Selection" screen.
+   *
+   * @private
+   */
+  closeAdvancedOptionsSection_: function() {
+    this.showScreen_('welcomeScreen');
+  },
+
+  /**
+   * Handle click on "Enable remote enrollment" option.
+   *
+   * @private
+   */
+  onEEBootstrappingClicked_: function() {
+    cr.ui.Oobe.handleAccelerator(ACCELERATOR_BOOTSTRAPPING_SLAVE);
+  },
+
+  /**
+   * Handle click on "Set up as CFM device" option.
+   *
+   * @private
+   */
+  onCFMBootstrappingClicked_: function() {
+    cr.ui.Oobe.handleAccelerator(ACCELERATOR_DEVICE_REQUISITION_REMORA);
+  },
+
+  /**
+   * Handle click on "Device requisition" option.
+   *
+   * @private
+   */
+  onDeviceRequisitionClicked_: function() {
+    cr.ui.Oobe.handleAccelerator(ACCELERATOR_DEVICE_REQUISITION);
   },
 });

@@ -18,6 +18,10 @@
 class Profile;
 class SigninManager;
 
+extern const char kForceSigninVerificationMetricsName[];
+extern const char kForceSigninVerificationSuccessTimeMetricsName[];
+extern const char kForceSigninVerificationFailureTimeMetricsName[];
+
 // ForceSigninVerifier will verify profile's auth token when profile is loaded
 // into memory by the first time via gaia server. It will retry on any transient
 // error.
@@ -28,14 +32,14 @@ class ForceSigninVerifier
   explicit ForceSigninVerifier(Profile* profile);
   ~ForceSigninVerifier() override;
 
-  // OAuth2TokenService::Consumer implementation
+  // override OAuth2TokenService::Consumer
   void OnGetTokenSuccess(const OAuth2TokenService::Request* request,
                          const std::string& access_token,
                          const base::Time& expiration_time) override;
   void OnGetTokenFailure(const OAuth2TokenService::Request* request,
                          const GoogleServiceAuthError& error) override;
 
-  // net::NetworkChangeNotifier::NetworkChangeObserver
+  // override net::NetworkChangeNotifier::NetworkChangeObserver
   void OnNetworkChanged(
       net::NetworkChangeNotifier::ConnectionType type) override;
 
@@ -56,9 +60,7 @@ class ForceSigninVerifier
 
   virtual bool ShouldSendRequest();
 
-  // Show the warning dialog before signing out user and closing assoicated
-  // browser window.
-  virtual void ShowDialog();
+  virtual void CloseAllBrowserWindows();
 
   OAuth2TokenService::Request* GetRequestForTesting();
   net::BackoffEntry* GetBackoffEntryForTesting();
@@ -72,11 +74,10 @@ class ForceSigninVerifier
   bool has_token_verified_;
   net::BackoffEntry backoff_entry_;
   base::OneShotTimer backoff_request_timer_;
+  base::TimeTicks creation_time_;
 
   OAuth2TokenService* oauth2_token_service_;
   SigninManager* signin_manager_;
-
-  base::Time token_request_time_;
 
   DISALLOW_COPY_AND_ASSIGN(ForceSigninVerifier);
 };

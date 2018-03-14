@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <vector>
 
 #include "base/i18n/break_iterator.h"
@@ -18,7 +19,6 @@
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/history/core/browser/history_database.h"
 #include "components/history/core/browser/history_service.h"
-#include "components/metrics/proto/omnibox_input_type.pb.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
 #include "components/omnibox/browser/autocomplete_provider_client.h"
 #include "components/omnibox/browser/autocomplete_result.h"
@@ -31,6 +31,7 @@
 #include "components/url_formatter/url_formatter.h"
 #include "net/base/escape.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "third_party/metrics_proto/omnibox_input_type.pb.h"
 #include "url/third_party/mozilla/url_parse.h"
 #include "url/url_util.h"
 
@@ -73,6 +74,26 @@ void HistoryQuickProvider::DoAutocomplete() {
   if (matches.empty())
     return;
 
+  // Loop over every result and add it to matches_.  In the process,
+  // guarantee that scores are decreasing.  |max_match_score| keeps
+  // track of the highest score we can assign to any later results we
+  // see.
+  int max_match_score = FindMaxMatchScore(matches);
+  for (ScoredHistoryMatches::const_iterator match_iter = matches.begin();
+       match_iter != matches.end(); ++match_iter) {
+    const ScoredHistoryMatch& history_match(*match_iter);
+    // Set max_match_score to the score we'll assign this result.
+    max_match_score = std::min(max_match_score, history_match.raw_score);
+    matches_.push_back(QuickMatchToACMatch(history_match, max_match_score));
+    // Mark this max_match_score as being used.
+    max_match_score--;
+  }
+  if (base::FeatureList::IsEnabled(omnibox::kOmniboxTabSwitchSuggestions))
+    ConvertOpenTabMatches();
+}
+
+int HistoryQuickProvider::FindMaxMatchScore(
+    const ScoredHistoryMatches& matches) {
   // Figure out if HistoryURL provider has a URL-what-you-typed match
   // that ought to go first and what its score will be.
   bool will_have_url_what_you_typed_match_first = false;
@@ -125,20 +146,21 @@ void HistoryQuickProvider::DoAutocomplete() {
         // the URL-what-you-typed match are on the same host (i.e., aren't
         // from a longer internet hostname for which the omnibox input is
         // a prefix).
-        if (url_db->GetRowForURL(
-            autocomplete_input_.canonicalized_url(), NULL) != 0) {
+        if (url_db->GetRowForURL(autocomplete_input_.canonicalized_url(),
+                                 nullptr) != 0) {
           // We visited this URL before.
           will_have_url_what_you_typed_match_first = true;
           // HistoryURLProvider gives visited what-you-typed URLs a high score.
           url_what_you_typed_match_score =
               HistoryURLProvider::kScoreForBestInlineableResult;
-        } else if (url_db->IsTypedHost(host) &&
-             (!autocomplete_input_.parts().path.is_nonempty() ||
-              ((autocomplete_input_.parts().path.len == 1) &&
-               (autocomplete_input_.text()[
-                   autocomplete_input_.parts().path.begin] == '/'))) &&
-             !autocomplete_input_.parts().query.is_nonempty() &&
-             !autocomplete_input_.parts().ref.is_nonempty()) {
+        } else if (url_db->IsTypedHost(host, /*scheme=*/nullptr) &&
+                   (!autocomplete_input_.parts().path.is_nonempty() ||
+                    ((autocomplete_input_.parts().path.len == 1) &&
+                     (autocomplete_input_
+                          .text()[autocomplete_input_.parts().path.begin] ==
+                      '/'))) &&
+                   !autocomplete_input_.parts().query.is_nonempty() &&
+                   !autocomplete_input_.parts().ref.is_nonempty()) {
           // Not visited, but we've seen the host before.
           will_have_url_what_you_typed_match_first = true;
           if (net::registry_controlled_domains::HostHasRegistryControlledDomain(
@@ -158,30 +180,17 @@ void HistoryQuickProvider::DoAutocomplete() {
       }
     }
   }
-
-  // Loop over every result and add it to matches_.  In the process,
-  // guarantee that scores are decreasing.  |max_match_score| keeps
-  // track of the highest score we can assign to any later results we
-  // see.  Also, reduce |max_match_score| if we think there will be
-  // a URL-what-you-typed match.  (We want URL-what-you-typed matches for
-  // visited URLs to beat out any longer URLs, no matter how frequently
-  // they're visited.)  The strength of this reduction depends on the
-  // likely score for the URL-what-you-typed result.
-
+  // Return a |max_match_score| that is the raw score for the first match, but
+  // reduce it if we think there will be a URL-what-you-typed match.  (We want
+  // URL-what-you-typed matches for visited URLs to beat out any longer URLs, no
+  // matter how frequently they're visited.)  The strength of this reduction
+  // depends on the likely score for the URL-what-you-typed result.
   int max_match_score = matches.begin()->raw_score;
   if (will_have_url_what_you_typed_match_first) {
     max_match_score = std::min(max_match_score,
         url_what_you_typed_match_score - 1);
   }
-  for (ScoredHistoryMatches::const_iterator match_iter = matches.begin();
-       match_iter != matches.end(); ++match_iter) {
-    const ScoredHistoryMatch& history_match(*match_iter);
-    // Set max_match_score to the score we'll assign this result.
-    max_match_score = std::min(max_match_score, history_match.raw_score);
-    matches_.push_back(QuickMatchToACMatch(history_match, max_match_score));
-    // Mark this max_match_score as being used.
-    max_match_score--;
-  }
+  return max_match_score;
 }
 
 AutocompleteMatch HistoryQuickProvider::QuickMatchToACMatch(
@@ -196,42 +205,29 @@ AutocompleteMatch HistoryQuickProvider::QuickMatchToACMatch(
   match.typed_count = info.typed_count();
   match.destination_url = info.url();
   DCHECK(match.destination_url.is_valid());
+
+  // The inline_autocomplete_offset should be adjusted based on the formatting
+  // applied to |fill_into_edit|.
   size_t inline_autocomplete_offset = URLPrefix::GetInlineAutocompleteOffset(
       autocomplete_input_.text(), FixupUserInput(autocomplete_input_).second,
       false, base::UTF8ToUTF16(info.url().spec()));
-
-  // Format the URL autocomplete presentation.
-  const url_formatter::FormatUrlTypes format_types =
-      url_formatter::kFormatUrlOmitAll &
-      ~(!history_match.match_in_scheme ? 0 : url_formatter::kFormatUrlOmitHTTP);
-  base::OffsetAdjuster::Adjustments adjustments;
-  match.contents = url_formatter::FormatUrlWithAdjustments(
-      info.url(), format_types, net::UnescapeRule::SPACES, nullptr,
-      nullptr, &adjustments);
+  auto fill_into_edit_format_types = url_formatter::kFormatUrlOmitDefaults;
+  if (history_match.match_in_scheme)
+    fill_into_edit_format_types &= ~url_formatter::kFormatUrlOmitHTTP;
   match.fill_into_edit =
       AutocompleteInput::FormattedStringWithEquivalentMeaning(
-          info.url(), match.contents, client()->GetSchemeClassifier());
-  std::vector<size_t> offsets =
-      OffsetsFromTermMatches(history_match.url_matches);
-  // In addition to knowing how |offsets| is transformed, we need to know how
-  // |inline_autocomplete_offset| is transformed.  We add it to the end of
-  // |offsets|, compute how everything is transformed, then remove it from the
-  // end.
-  offsets.push_back(inline_autocomplete_offset);
-  base::OffsetAdjuster::AdjustOffsets(adjustments, &offsets);
-  inline_autocomplete_offset = offsets.back();
-  offsets.pop_back();
-  TermMatches new_matches =
-      ReplaceOffsetsInTermMatches(history_match.url_matches, offsets);
-  match.contents_class =
-      SpansFromTermMatch(new_matches, match.contents.length(), true);
+          info.url(),
+          url_formatter::FormatUrl(info.url(), fill_into_edit_format_types,
+                                   net::UnescapeRule::SPACES, nullptr, nullptr,
+                                   &inline_autocomplete_offset),
+          client()->GetSchemeClassifier());
 
   // Set |inline_autocompletion| and |allowed_to_be_default_match| if possible.
   if (inline_autocomplete_offset != base::string16::npos) {
     // |inline_autocomplete_offset| may be beyond the end of the
     // |match.fill_into_edit| if the user has typed an URL with a scheme and the
     // last character typed is a slash.  That slash is removed by the
-    // FormatURLWithAdjustments call above.
+    // FormatUrlWithOffsets call above.
     if (inline_autocomplete_offset < match.fill_into_edit.length()) {
       match.inline_autocompletion =
           match.fill_into_edit.substr(inline_autocomplete_offset);
@@ -241,6 +237,22 @@ AutocompleteMatch HistoryQuickProvider::QuickMatchToACMatch(
   }
   match.EnsureUWYTIsAllowedToBeDefault(autocomplete_input_,
                                        client()->GetTemplateURLService());
+
+  // The term match offsets should be adjusted based on the formatting
+  // applied to the suggestion contents displayed in the dropdown.
+  std::vector<size_t> offsets =
+      OffsetsFromTermMatches(history_match.url_matches);
+  match.contents = url_formatter::FormatUrlWithOffsets(
+      info.url(),
+      AutocompleteMatch::GetFormatTypes(history_match.match_in_scheme,
+                                        history_match.match_in_subdomain,
+                                        history_match.match_after_host),
+      net::UnescapeRule::SPACES, nullptr, nullptr, &offsets);
+
+  TermMatches new_matches =
+      ReplaceOffsetsInTermMatches(history_match.url_matches, offsets);
+  match.contents_class =
+      SpansFromTermMatch(new_matches, match.contents.length(), true);
 
   // Format the description autocomplete presentation.
   match.description = info.title();

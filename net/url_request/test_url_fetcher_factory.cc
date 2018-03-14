@@ -21,6 +21,7 @@
 #include "net/base/net_errors.h"
 #include "net/base/upload_data_stream.h"
 #include "net/http/http_response_headers.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_fetcher_impl.h"
 #include "net/url_request/url_fetcher_response_writer.h"
@@ -35,6 +36,7 @@ ScopedURLFetcherFactory::ScopedURLFetcherFactory(
 }
 
 ScopedURLFetcherFactory::~ScopedURLFetcherFactory() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(URLFetcherImpl::factory());
   URLFetcherImpl::set_factory(NULL);
 }
@@ -210,6 +212,10 @@ HostPortPair TestURLFetcher::GetSocketAddress() const {
   return HostPortPair();
 }
 
+const ProxyServer& TestURLFetcher::ProxyServerUsed() const {
+  return fake_proxy_server_;
+}
+
 bool TestURLFetcher::WasFetchedViaProxy() const {
   return fake_was_fetched_via_proxy_;
 }
@@ -234,7 +240,7 @@ void TestURLFetcher::Start() {
   // If the response should go into a file, write it out now.
   if (fake_status_.is_success() && fake_response_code_ == net::HTTP_OK &&
       write_response_file_ && !fake_response_file_path_.empty()) {
-    base::ThreadRestrictions::ScopedAllowIO allow_io;
+    base::ScopedAllowBlockingForTesting allow_blocking;
     size_t written_bytes =
         base::WriteFile(fake_response_file_path_, fake_response_string_.c_str(),
                         fake_response_string_.size());
@@ -326,13 +332,14 @@ TestURLFetcherFactory::TestURLFetcherFactory()
       remove_fetcher_on_delete_(false) {
 }
 
-TestURLFetcherFactory::~TestURLFetcherFactory() {}
+TestURLFetcherFactory::~TestURLFetcherFactory() = default;
 
 std::unique_ptr<URLFetcher> TestURLFetcherFactory::CreateURLFetcher(
     int id,
     const GURL& url,
     URLFetcher::RequestType request_type,
-    URLFetcherDelegate* d) {
+    URLFetcherDelegate* d,
+    NetworkTrafficAnnotationTag traffic_annotation) {
   TestURLFetcher* fetcher = new TestURLFetcher(id, url, d);
   if (remove_fetcher_on_delete_)
     fetcher->set_owner(this);
@@ -385,7 +392,7 @@ FakeURLFetcher::FakeURLFetcher(const GURL& url,
   response_bytes_ = response_data.size();
 }
 
-FakeURLFetcher::~FakeURLFetcher() {}
+FakeURLFetcher::~FakeURLFetcher() = default;
 
 void FakeURLFetcher::Start() {
   TestURLFetcher::Start();
@@ -435,13 +442,14 @@ FakeURLFetcherFactory::DefaultFakeURLFetcherCreator(
       new FakeURLFetcher(url, delegate, response_data, response_code, status));
 }
 
-FakeURLFetcherFactory::~FakeURLFetcherFactory() {}
+FakeURLFetcherFactory::~FakeURLFetcherFactory() = default;
 
 std::unique_ptr<URLFetcher> FakeURLFetcherFactory::CreateURLFetcher(
     int id,
     const GURL& url,
     URLFetcher::RequestType request_type,
-    URLFetcherDelegate* d) {
+    URLFetcherDelegate* d,
+    NetworkTrafficAnnotationTag traffic_annotation) {
   FakeResponseMap::const_iterator it = fake_responses_.find(url);
   if (it == fake_responses_.end()) {
     if (default_factory_ == NULL) {
@@ -449,7 +457,8 @@ std::unique_ptr<URLFetcher> FakeURLFetcherFactory::CreateURLFetcher(
       DLOG(ERROR) << "No baked response for URL: " << url.spec();
       return NULL;
     } else {
-      return default_factory_->CreateURLFetcher(id, url, request_type, d);
+      return default_factory_->CreateURLFetcher(id, url, request_type, d,
+                                                traffic_annotation);
     }
   }
 
@@ -476,16 +485,18 @@ void FakeURLFetcherFactory::ClearFakeResponses() {
   fake_responses_.clear();
 }
 
-URLFetcherImplFactory::URLFetcherImplFactory() {}
+URLFetcherImplFactory::URLFetcherImplFactory() = default;
 
-URLFetcherImplFactory::~URLFetcherImplFactory() {}
+URLFetcherImplFactory::~URLFetcherImplFactory() = default;
 
 std::unique_ptr<URLFetcher> URLFetcherImplFactory::CreateURLFetcher(
     int id,
     const GURL& url,
     URLFetcher::RequestType request_type,
-    URLFetcherDelegate* d) {
-  return std::unique_ptr<URLFetcher>(new URLFetcherImpl(url, request_type, d));
+    URLFetcherDelegate* d,
+    NetworkTrafficAnnotationTag traffic_annotation) {
+  return std::unique_ptr<URLFetcher>(
+      new URLFetcherImpl(url, request_type, d, traffic_annotation));
 }
 
 }  // namespace net

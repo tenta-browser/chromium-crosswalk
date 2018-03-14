@@ -36,12 +36,9 @@
 #include "bindings/core/v8/ScriptSourceCode.h"
 #include "bindings/core/v8/ScriptValue.h"
 #include "bindings/core/v8/SourceLocation.h"
-#include "bindings/core/v8/V8DOMWrapper.h"
 #include "bindings/core/v8/V8ErrorHandler.h"
 #include "bindings/core/v8/V8Initializer.h"
-#include "bindings/core/v8/V8ObjectConstructor.h"
 #include "bindings/core/v8/V8ScriptRunner.h"
-#include "bindings/core/v8/WrapperTypeInfo.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/events/ErrorEvent.h"
 #include "core/inspector/InspectorTraceEvents.h"
@@ -49,6 +46,10 @@
 #include "core/workers/WorkerGlobalScope.h"
 #include "core/workers/WorkerOrWorkletGlobalScope.h"
 #include "core/workers/WorkerThread.h"
+#include "platform/bindings/OriginTrialFeatures.h"
+#include "platform/bindings/V8DOMWrapper.h"
+#include "platform/bindings/V8ObjectConstructor.h"
+#include "platform/bindings/WrapperTypeInfo.h"
 #include "platform/heap/ThreadState.h"
 #include "public/platform/Platform.h"
 #include "v8/include/v8.h"
@@ -102,19 +103,19 @@ WorkerOrWorkletScriptController::WorkerOrWorkletScriptController(
       isolate_(isolate),
       execution_forbidden_(false),
       rejected_promises_(RejectedPromises::Create()),
-      execution_state_(0) {
-  ASSERT(isolate);
+      execution_state_(nullptr) {
+  DCHECK(isolate);
   world_ =
       DOMWrapperWorld::Create(isolate, DOMWrapperWorld::WorldType::kWorker);
 }
 
 WorkerOrWorkletScriptController::~WorkerOrWorkletScriptController() {
-  ASSERT(!rejected_promises_);
+  DCHECK(!rejected_promises_);
 }
 
 void WorkerOrWorkletScriptController::Dispose() {
   rejected_promises_->Dispose();
-  rejected_promises_.Release();
+  rejected_promises_ = nullptr;
 
   world_->Dispose();
 
@@ -127,7 +128,7 @@ void WorkerOrWorkletScriptController::DisposeContextIfNeeded() {
 
   if (global_scope_->IsWorkerGlobalScope() ||
       global_scope_->IsThreadedWorkletGlobalScope()) {
-    ScriptState::Scope scope(script_state_.Get());
+    ScriptState::Scope scope(script_state_.get());
     WorkerThreadDebugger* debugger = WorkerThreadDebugger::From(isolate_);
     debugger->ContextWillBeDestroyed(global_scope_->GetThread(),
                                      script_state_->GetContext());
@@ -135,7 +136,8 @@ void WorkerOrWorkletScriptController::DisposeContextIfNeeded() {
   script_state_->DisposePerContextData();
 }
 
-bool WorkerOrWorkletScriptController::InitializeContextIfNeeded() {
+bool WorkerOrWorkletScriptController::InitializeContextIfNeeded(
+    const String& human_readable_name) {
   v8::HandleScope handle_scope(isolate_);
 
   if (IsContextInitialized())
@@ -143,7 +145,7 @@ bool WorkerOrWorkletScriptController::InitializeContextIfNeeded() {
 
   // Create a new v8::Context with the worker/worklet as the global object
   // (aka the inner global).
-  ScriptWrappable* script_wrappable = global_scope_->GetScriptWrappable();
+  auto* script_wrappable = static_cast<ScriptWrappable*>(global_scope_);
   const WrapperTypeInfo* wrapper_type_info =
       script_wrappable->GetWrapperTypeInfo();
   v8::Local<v8::FunctionTemplate> global_interface_template =
@@ -165,7 +167,7 @@ bool WorkerOrWorkletScriptController::InitializeContextIfNeeded() {
         extension_names.push_back(extension->name());
     }
     v8::ExtensionConfiguration extension_configuration(extension_names.size(),
-                                                       extension_names.Data());
+                                                       extension_names.data());
 
     V8PerIsolateData::UseCounterDisabledScope use_counter_disabled(
         V8PerIsolateData::From(isolate_));
@@ -177,7 +179,7 @@ bool WorkerOrWorkletScriptController::InitializeContextIfNeeded() {
 
   script_state_ = ScriptState::Create(context, world_);
 
-  ScriptState::Scope scope(script_state_.Get());
+  ScriptState::Scope scope(script_state_.get());
 
   // Associate the global proxy object, the global object and the worker
   // instance (C++ object) as follows.
@@ -229,22 +231,16 @@ bool WorkerOrWorkletScriptController::InitializeContextIfNeeded() {
     debugger->ContextCreated(global_scope_->GetThread(), context);
   }
 
-  return true;
-}
+  // Set the human readable name for the world if the call passes an actual
+  // |human_readable name|.
+  if (!human_readable_name.IsEmpty()) {
+    world_->SetNonMainWorldHumanReadableName(world_->GetWorldId(),
+                                             human_readable_name);
+  }
 
-ScriptValue WorkerOrWorkletScriptController::Evaluate(
-    const String& script,
-    const String& file_name,
-    const TextPosition& script_start_position,
-    CachedMetadataHandler* cache_handler,
-    V8CacheOptions v8_cache_options) {
-  TRACE_EVENT1("devtools.timeline", "EvaluateScript", "data",
-               InspectorEvaluateScriptEvent::Data(nullptr, file_name,
-                                                  script_start_position));
-  if (!InitializeContextIfNeeded())
-    return ScriptValue();
-
-  ScriptState::Scope scope(script_state_.Get());
+  wrapper_type_info->InstallConditionalFeatures(
+      context, *world_, global_object, v8::Local<v8::Object>(),
+      v8::Local<v8::Function>(), global_interface_template);
 
   if (!disable_eval_pending_.IsEmpty()) {
     script_state_->GetContext()->AllowCodeGenerationFromStrings(false);
@@ -253,14 +249,37 @@ ScriptValue WorkerOrWorkletScriptController::Evaluate(
     disable_eval_pending_ = String();
   }
 
+  return true;
+}
+
+ScriptValue WorkerOrWorkletScriptController::Evaluate(
+    const String& script,
+    const String& file_name,
+    const TextPosition& script_start_position,
+    ScriptSourceLocationType source_location_type,
+    CachedMetadataHandler* cache_handler,
+    V8CacheOptions v8_cache_options) {
+  TRACE_EVENT1("devtools.timeline", "EvaluateScript", "data",
+               InspectorEvaluateScriptEvent::Data(nullptr, file_name,
+                                                  script_start_position));
+  if (!InitializeContextIfNeeded(String()))
+    return ScriptValue();
+
+  ScriptState::Scope scope(script_state_.get());
+
   v8::TryCatch block(isolate_);
 
   v8::Local<v8::Script> compiled_script;
   v8::MaybeLocal<v8::Value> maybe_result;
-  if (V8Call(V8ScriptRunner::CompileScript(
-                 script, file_name, String(), script_start_position, isolate_,
-                 cache_handler, kSharableCrossOrigin, v8_cache_options),
-             compiled_script, block))
+  // Use default ReferrerScriptInfo here, as
+  // - A work{er,let} script doesn't have a nonce, and
+  // - a work{er,let} script is always "not parser inserted".
+  ReferrerScriptInfo referrer_info;
+  if (V8ScriptRunner::CompileScript(
+          script_state_.get(), script, file_name, String(),
+          script_start_position, source_location_type, cache_handler,
+          kSharableCrossOrigin, v8_cache_options, referrer_info)
+          .ToLocal(&compiled_script))
     maybe_result = V8ScriptRunner::RunCompiledScript(isolate_, compiled_script,
                                                      global_scope_);
 
@@ -274,9 +293,9 @@ ScriptValue WorkerOrWorkletScriptController::Evaluate(
     execution_state_->had_exception = true;
     execution_state_->error_message = ToCoreString(message->Get());
     execution_state_->location_ = SourceLocation::FromMessage(
-        isolate_, message, ExecutionContext::From(script_state_.Get()));
+        isolate_, message, ExecutionContext::From(script_state_.get()));
     execution_state_->exception =
-        ScriptValue(script_state_.Get(), block.Exception());
+        ScriptValue(script_state_.get(), block.Exception());
     block.Reset();
   } else {
     execution_state_->had_exception = false;
@@ -286,7 +305,7 @@ ScriptValue WorkerOrWorkletScriptController::Evaluate(
   if (!maybe_result.ToLocal(&result) || result->IsUndefined())
     return ScriptValue();
 
-  return ScriptValue(script_state_.Get(), result);
+  return ScriptValue(script_state_.get(), result);
 }
 
 bool WorkerOrWorkletScriptController::Evaluate(
@@ -299,9 +318,12 @@ bool WorkerOrWorkletScriptController::Evaluate(
 
   ExecutionState state(this);
   Evaluate(source_code.Source(), source_code.Url().GetString(),
-           source_code.StartPosition(), cache_handler, v8_cache_options);
+           source_code.StartPosition(), source_code.SourceLocationType(),
+           cache_handler, v8_cache_options);
   if (IsExecutionForbidden())
     return false;
+
+  ScriptState::Scope scope(script_state_.get());
   if (state.had_exception) {
     if (error_event) {
       if (state.error_event_from_imported_script_) {
@@ -311,14 +333,14 @@ bool WorkerOrWorkletScriptController::Evaluate(
       }
       if (global_scope_->ShouldSanitizeScriptError(state.location_->Url(),
                                                    kNotSharableCrossOrigin)) {
-        *error_event = ErrorEvent::CreateSanitizedError(world_.Get());
+        *error_event = ErrorEvent::CreateSanitizedError(world_.get());
       } else {
         *error_event =
             ErrorEvent::Create(state.error_message, state.location_->Clone(),
-                               state.exception, world_.Get());
+                               state.exception, world_.get());
       }
       V8ErrorHandler::StoreExceptionOnErrorEventWrapper(
-          script_state_.Get(), *error_event, state.exception.V8Value(),
+          script_state_.get(), *error_event, state.exception.V8Value(),
           script_state_->GetContext()->Global());
     } else {
       DCHECK(!global_scope_->ShouldSanitizeScriptError(
@@ -329,7 +351,7 @@ bool WorkerOrWorkletScriptController::Evaluate(
       } else {
         event =
             ErrorEvent::Create(state.error_message, state.location_->Clone(),
-                               state.exception, world_.Get());
+                               state.exception, world_.get());
       }
       global_scope_->DispatchErrorEvent(event, kNotSharableCrossOrigin);
     }
@@ -338,13 +360,21 @@ bool WorkerOrWorkletScriptController::Evaluate(
   return true;
 }
 
+ScriptValue WorkerOrWorkletScriptController::EvaluateAndReturnValueForTest(
+    const ScriptSourceCode& source_code) {
+  ExecutionState state(this);
+  return Evaluate(source_code.Source(), source_code.Url().GetString(),
+                  source_code.StartPosition(), source_code.SourceLocationType(),
+                  nullptr, kV8CacheOptionsDefault);
+}
+
 void WorkerOrWorkletScriptController::ForbidExecution() {
-  ASSERT(global_scope_->IsContextThread());
+  DCHECK(global_scope_->IsContextThread());
   execution_forbidden_ = true;
 }
 
 bool WorkerOrWorkletScriptController::IsExecutionForbidden() const {
-  ASSERT(global_scope_->IsContextThread());
+  DCHECK(global_scope_->IsContextThread());
   return execution_forbidden_;
 }
 
@@ -362,7 +392,7 @@ void WorkerOrWorkletScriptController::RethrowExceptionFromImportedScript(
       V8ThrowException::CreateError(isolate_, error_message));
 }
 
-DEFINE_TRACE(WorkerOrWorkletScriptController) {
+void WorkerOrWorkletScriptController::Trace(blink::Visitor* visitor) {
   visitor->Trace(global_scope_);
 }
 

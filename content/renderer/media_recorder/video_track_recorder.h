@@ -27,13 +27,18 @@ class PaintCanvas;
 }  // namespace cc
 
 namespace media {
-class SkCanvasVideoRenderer;
+class PaintCanvasVideoRenderer;
 class VideoFrame;
 }  // namespace media
 
 namespace video_track_recorder {
+#if defined(OS_ANDROID)
+const int kVEAEncoderMinResolutionWidth = 176;
+const int kVEAEncoderMinResolutionHeight = 144;
+#else
 const int kVEAEncoderMinResolutionWidth = 640;
 const int kVEAEncoderMinResolutionHeight = 480;
+#endif
 }  // namespace video_track_recorder
 
 namespace content {
@@ -44,8 +49,7 @@ namespace content {
 // MediaStreamVideo* classes that are constructed/configured on Main Render
 // thread but that pass frames on Render IO thread. It has an internal Encoder
 // with its own threading subtleties, see the implementation file.
-class CONTENT_EXPORT VideoTrackRecorder
-    : NON_EXPORTED_BASE(public MediaStreamVideoSink) {
+class CONTENT_EXPORT VideoTrackRecorder : public MediaStreamVideoSink {
  public:
   // Do not change the order of codecs; add new ones right before LAST.
   enum class CodecId {
@@ -111,11 +115,16 @@ class CONTENT_EXPORT VideoTrackRecorder
 
    protected:
     friend class base::RefCountedThreadSafe<Encoder>;
+    friend class VideoTrackRecorderTest;
+
     virtual ~Encoder();
 
     virtual void EncodeOnEncodingTaskRunner(
         scoped_refptr<media::VideoFrame> frame,
         base::TimeTicks capture_timestamp) = 0;
+
+    // Called when the frame reference is released after encode.
+    void FrameReleased(const scoped_refptr<media::VideoFrame>& frame);
 
     // Used to shutdown properly on the same thread we were created.
     const scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
@@ -139,9 +148,12 @@ class CONTENT_EXPORT VideoTrackRecorder
     // Target bitrate for video encoding. If 0, a standard bitrate is used.
     const int32_t bits_per_second_;
 
+    // Number of frames that we keep the reference alive for encode.
+    uint32_t num_frames_in_encode_;
+
     // Used to retrieve incoming opaque VideoFrames (i.e. VideoFrames backed by
     // textures). Created on-demand on |main_task_runner_|.
-    std::unique_ptr<media::SkCanvasVideoRenderer> video_renderer_;
+    std::unique_ptr<media::PaintCanvasVideoRenderer> video_renderer_;
     SkBitmap bitmap_;
     std::unique_ptr<cc::PaintCanvas> canvas_;
 
@@ -149,6 +161,9 @@ class CONTENT_EXPORT VideoTrackRecorder
   };
 
   static CodecId GetPreferredCodecId();
+  static bool CanUseAcceleratedEncoder(CodecId codec,
+                                       size_t width,
+                                       size_t height);
 
   VideoTrackRecorder(CodecId codec,
                      const blink::WebMediaStreamTrack& track,

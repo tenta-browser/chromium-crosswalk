@@ -13,10 +13,12 @@
 #include "base/metrics/sparse_histogram.h"
 #include "base/metrics/user_metrics.h"
 #include "build/build_config.h"
+#include "build/buildflag.h"
 #include "components/metrics/metrics_pref_names.h"
-#include "components/metrics/proto/system_profile.pb.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
+#include "extensions/features/features.h"
+#include "third_party/metrics_proto/system_profile.pb.h"
 
 #if defined(OS_WIN)
 #include <windows.h>  // Needed for STATUS_* codes
@@ -53,7 +55,7 @@ int MapCrashExitCodeForHistogram(int exit_code) {
   return std::abs(exit_code);
 }
 
-void RecordChildKills(int histogram_type) {
+void RecordChildKills(RendererType histogram_type) {
   UMA_HISTOGRAM_ENUMERATION("BrowserRenderProcessHost.ChildKills",
                             histogram_type, RENDERER_TYPE_COUNT);
 }
@@ -164,14 +166,16 @@ void StabilityMetricsHelper::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterInt64Pref(prefs::kUninstallMetricsPageLoadCount, 0);
 }
 
+void StabilityMetricsHelper::IncreaseRendererCrashCount() {
+  IncrementPrefValue(prefs::kStabilityRendererCrashCount);
+}
+
 void StabilityMetricsHelper::BrowserChildProcessCrashed() {
   IncrementPrefValue(prefs::kStabilityChildProcessCrashCount);
 }
 
 void StabilityMetricsHelper::LogLoadStarted() {
   base::RecordAction(base::UserMetricsAction("PageLoad"));
-  // TODO(asvitkine): Check if this is used for anything and if not, remove.
-  LOCAL_HISTOGRAM_BOOLEAN("Chrome.UmaPageloadCounter", true);
   IncrementPrefValue(prefs::kStabilityPageLoadCount);
   IncrementLongPrefsValue(prefs::kUninstallMetricsPageLoadCount);
   // We need to save the prefs, as page load count is a critical stat, and it
@@ -181,7 +185,7 @@ void StabilityMetricsHelper::LogLoadStarted() {
 void StabilityMetricsHelper::LogRendererCrash(bool was_extension_process,
                                               base::TerminationStatus status,
                                               int exit_code) {
-  int histogram_type =
+  RendererType histogram_type =
       was_extension_process ? RENDERER_TYPE_EXTENSION : RENDERER_TYPE_RENDERER;
 
   switch (status) {
@@ -191,6 +195,9 @@ void StabilityMetricsHelper::LogRendererCrash(bool was_extension_process,
     case base::TERMINATION_STATUS_ABNORMAL_TERMINATION:
     case base::TERMINATION_STATUS_OOM:
       if (was_extension_process) {
+#if !BUILDFLAG(ENABLE_EXTENSIONS)
+        NOTREACHED();
+#endif
         IncrementPrefValue(prefs::kStabilityExtensionRendererCrashCount);
 
         UMA_HISTOGRAM_SPARSE_SLOWLY("CrashExitCodes.Extension",

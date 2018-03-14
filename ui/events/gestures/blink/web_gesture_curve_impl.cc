@@ -14,9 +14,11 @@
 #include "build/build_config.h"
 #include "third_party/WebKit/public/platform/WebFloatSize.h"
 #include "third_party/WebKit/public/platform/WebGestureCurveTarget.h"
+#include "ui/events/gestures/fixed_velocity_curve.h"
 #include "ui/events/gestures/fling_curve.h"
 #include "ui/gfx/geometry/safe_integer_conversions.h"
 #include "ui/gfx/geometry/vector2d.h"
+#include "ui/gfx/geometry/vector2d_f.h"
 
 #if defined(OS_ANDROID)
 #include "ui/events/android/scroller.h"
@@ -28,10 +30,15 @@ namespace ui {
 namespace {
 
 std::unique_ptr<GestureCurve> CreateDefaultPlatformCurve(
+    blink::WebGestureDevice device_source,
     const gfx::Vector2dF& initial_velocity) {
-  DCHECK(!initial_velocity.IsZero());
+  if (device_source == blink::kWebGestureDeviceSyntheticAutoscroll) {
+    return std::make_unique<FixedVelocityCurve>(initial_velocity,
+                                                base::TimeTicks());
+  }
+
 #if defined(OS_ANDROID)
-  auto scroller = base::MakeUnique<Scroller>(Scroller::Config());
+  auto scroller = std::make_unique<Scroller>(Scroller::Config());
   scroller->Fling(0,
                   0,
                   initial_velocity.x(),
@@ -43,7 +50,7 @@ std::unique_ptr<GestureCurve> CreateDefaultPlatformCurve(
                   base::TimeTicks());
   return std::move(scroller);
 #else
-  return base::MakeUnique<FlingCurve>(initial_velocity, base::TimeTicks());
+  return std::make_unique<FlingCurve>(initial_velocity, base::TimeTicks());
 #endif
 }
 
@@ -52,12 +59,13 @@ std::unique_ptr<GestureCurve> CreateDefaultPlatformCurve(
 // static
 std::unique_ptr<WebGestureCurve>
 WebGestureCurveImpl::CreateFromDefaultPlatformCurve(
+    blink::WebGestureDevice device_source,
     const gfx::Vector2dF& initial_velocity,
     const gfx::Vector2dF& initial_offset,
     bool on_main_thread) {
   return std::unique_ptr<WebGestureCurve>(new WebGestureCurveImpl(
-      CreateDefaultPlatformCurve(initial_velocity), initial_offset,
-      on_main_thread ? ThreadType::MAIN : ThreadType::IMPL));
+      CreateDefaultPlatformCurve(device_source, initial_velocity),
+      initial_offset, on_main_thread ? ThreadType::MAIN : ThreadType::IMPL));
 }
 
 // static
@@ -74,37 +82,11 @@ WebGestureCurveImpl::WebGestureCurveImpl(std::unique_ptr<GestureCurve> curve,
                                          ThreadType animating_thread_type)
     : curve_(std::move(curve)),
       last_offset_(initial_offset),
-      animating_thread_type_(animating_thread_type),
       ticks_since_first_animate_(0),
       first_animate_time_(0),
       last_animate_time_(0) {}
 
-WebGestureCurveImpl::~WebGestureCurveImpl() {
-  if (ticks_since_first_animate_ <= 1)
-    return;
-
-  if (last_animate_time_ <= first_animate_time_)
-    return;
-
-  switch (animating_thread_type_) {
-    case ThreadType::MAIN:
-      UMA_HISTOGRAM_CUSTOM_COUNTS(
-          "Event.Frequency.Renderer.FlingAnimate",
-          gfx::ToRoundedInt(ticks_since_first_animate_ /
-                            (last_animate_time_ - first_animate_time_)),
-          1, 240, 120);
-      break;
-    case ThreadType::IMPL:
-      UMA_HISTOGRAM_CUSTOM_COUNTS(
-          "Event.Frequency.RendererImpl.FlingAnimate",
-          gfx::ToRoundedInt(ticks_since_first_animate_ /
-                            (last_animate_time_ - first_animate_time_)),
-          1, 240, 120);
-      break;
-    case ThreadType::TEST:
-      break;
-  }
-}
+WebGestureCurveImpl::~WebGestureCurveImpl() {}
 
 bool WebGestureCurveImpl::Apply(double time,
                                 blink::WebGestureCurveTarget* target) {

@@ -26,13 +26,6 @@ MediaRouterAndroidBridge::MediaRouterAndroidBridge(MediaRouterAndroid* router)
 
 MediaRouterAndroidBridge::~MediaRouterAndroidBridge() = default;
 
-// static
-bool MediaRouterAndroidBridge::Register(JNIEnv* env) {
-  bool ret = RegisterNativesImpl(env);
-  DCHECK(g_ChromeMediaRouter_clazz);
-  return ret;
-}
-
 void MediaRouterAndroidBridge::CreateRoute(const MediaSource::Id& source_id,
                                            const MediaSink::Id& sink_id,
                                            const std::string& presentation_id,
@@ -47,8 +40,6 @@ void MediaRouterAndroidBridge::CreateRoute(const MediaSource::Id& source_id,
       base::android::ConvertUTF8ToJavaString(env, sink_id);
   ScopedJavaLocalRef<jstring> jpresentation_id =
       base::android::ConvertUTF8ToJavaString(env, presentation_id);
-  // TODO(crbug.com/685358): Unique origins should not be considered
-  // same-origin.
   ScopedJavaLocalRef<jstring> jorigin =
       base::android::ConvertUTF8ToJavaString(env, origin.GetURL().spec());
 
@@ -133,7 +124,7 @@ void MediaRouterAndroidBridge::OnSinksReceived(
         env, java_media_router_, jsource_urn, i);
     sinks_converted.push_back(MediaSink(
         ConvertJavaStringToUTF8(env, jsink_urn.obj()),
-        ConvertJavaStringToUTF8(env, jsink_name.obj()), MediaSink::GENERIC));
+        ConvertJavaStringToUTF8(env, jsink_name.obj()), SinkIconType::GENERIC));
   }
   native_media_router_->OnSinksReceived(
       ConvertJavaStringToUTF8(env, jsource_urn), sinks_converted);

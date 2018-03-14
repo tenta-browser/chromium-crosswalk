@@ -31,14 +31,14 @@
 #include "bindings/core/v8/V8Document.h"
 
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/ScriptController.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8EventTarget.h"
 #include "bindings/core/v8/V8HTMLAllCollection.h"
 #include "bindings/core/v8/V8HTMLCollection.h"
 #include "bindings/core/v8/V8Node.h"
 #include "bindings/core/v8/V8Window.h"
-#include "core/HTMLNames.h"
 #include "core/dom/Document.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
@@ -47,60 +47,11 @@
 #include "core/html/HTMLCollection.h"
 #include "core/html/HTMLIFrameElement.h"
 #include "platform/wtf/PtrUtil.h"
-#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/StdLibExtras.h"
 
 namespace blink {
 
 // HTMLDocument ----------------------------------------------------------------
-
-void V8Document::openMethodCustom(
-    const v8::FunctionCallbackInfo<v8::Value>& info) {
-  Document* document = V8Document::toImpl(info.Holder());
-
-  if (info.Length() > 2) {
-    LocalFrame* frame = document->GetFrame();
-    if (!frame)
-      return;
-    // Fetch the global object for the frame.
-    v8::Local<v8::Context> context =
-        ToV8Context(frame, DOMWrapperWorld::Current(info.GetIsolate()));
-    // Bail out if we cannot get the context.
-    if (context.IsEmpty())
-      return;
-    v8::Local<v8::Object> global = context->Global();
-    // Get the open property of the global object.
-    v8::Local<v8::Value> function =
-        global->Get(V8AtomicString(info.GetIsolate(), "open"));
-    // Failed; return without throwing (new) exception.
-    if (function.IsEmpty())
-      return;
-    // If the open property is not a function throw a type error.
-    if (!function->IsFunction()) {
-      V8ThrowException::ThrowTypeError(info.GetIsolate(),
-                                       "open is not a function");
-      return;
-    }
-    // Wrap up the arguments and call the function.
-    std::unique_ptr<v8::Local<v8::Value>[]> params =
-        WrapArrayUnique(new v8::Local<v8::Value>[info.Length()]);
-    for (int i = 0; i < info.Length(); i++)
-      params[i] = info[i];
-
-    V8SetReturnValue(
-        info, V8ScriptRunner::CallFunction(
-                  v8::Local<v8::Function>::Cast(function), frame->GetDocument(),
-                  global, info.Length(), params.get(), info.GetIsolate()));
-    return;
-  }
-
-  ExceptionState exception_state(
-      info.GetIsolate(), ExceptionState::kExecutionContext, "Document", "open");
-  document->open(EnteredDOMWindow(info.GetIsolate())->document(),
-                 exception_state);
-
-  V8SetReturnValue(info, info.Holder());
-}
 
 void V8Document::createTouchMethodPrologueCustom(
     const v8::FunctionCallbackInfo<v8::Value>& info,
@@ -108,19 +59,19 @@ void V8Document::createTouchMethodPrologueCustom(
   v8::Local<v8::Value> v8_window = info[0];
   if (IsUndefinedOrNull(v8_window)) {
     UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                      UseCounter::kDocumentCreateTouchWindowNull);
+                      WebFeature::kDocumentCreateTouchWindowNull);
   } else if (!ToDOMWindow(info.GetIsolate(), v8_window)) {
     UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                      UseCounter::kDocumentCreateTouchWindowWrongType);
+                      WebFeature::kDocumentCreateTouchWindowWrongType);
   }
 
   v8::Local<v8::Value> v8_target = info[1];
   if (IsUndefinedOrNull(v8_target)) {
     UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                      UseCounter::kDocumentCreateTouchTargetNull);
+                      WebFeature::kDocumentCreateTouchTargetNull);
   } else if (!V8EventTarget::hasInstance(v8_target, info.GetIsolate())) {
     UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                      UseCounter::kDocumentCreateTouchTargetWrongType);
+                      WebFeature::kDocumentCreateTouchTargetWrongType);
   }
 }
 

@@ -13,6 +13,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
@@ -51,10 +52,8 @@ const char WebRtcTestBase::kVideoCallConstraints1080p[] =
 const char WebRtcTestBase::kAudioOnlyCallConstraints[] = "{audio: true}";
 const char WebRtcTestBase::kVideoOnlyCallConstraints[] = "{video: true}";
 const char WebRtcTestBase::kOkGotStream[] = "ok-got-stream";
-const char WebRtcTestBase::kFailedWithPermissionDeniedError[] =
-    "failed-with-error-PermissionDeniedError";
-const char WebRtcTestBase::kFailedWithPermissionDismissedError[] =
-    "failed-with-error-PermissionDismissedError";
+const char WebRtcTestBase::kFailedWithNotAllowedError[] =
+    "failed-with-error-NotAllowedError";
 const char WebRtcTestBase::kAudioVideoCallConstraints360p[] =
    "{audio: true, video: {mandatory: {minWidth: 640, maxWidth: 640, "
    " minHeight: 360, maxHeight: 360}}}";
@@ -64,6 +63,7 @@ const char WebRtcTestBase::kAudioVideoCallConstraints720p[] =
 const char WebRtcTestBase::kUseDefaultCertKeygen[] = "null";
 const char WebRtcTestBase::kUseDefaultAudioCodec[] = "";
 const char WebRtcTestBase::kUseDefaultVideoCodec[] = "";
+const char WebRtcTestBase::kUndefined[] = "undefined";
 
 namespace {
 
@@ -131,7 +131,7 @@ std::vector<std::string> JsonArrayToVectorOfStrings(
     const std::string& json_array) {
   std::unique_ptr<base::Value> value = base::JSONReader::Read(json_array);
   EXPECT_TRUE(value);
-  EXPECT_TRUE(value->IsType(base::Value::Type::LIST));
+  EXPECT_TRUE(value->is_list());
   std::unique_ptr<base::ListValue> list =
       base::ListValue::From(std::move(value));
   std::vector<std::string> vector;
@@ -139,7 +139,7 @@ std::vector<std::string> JsonArrayToVectorOfStrings(
   for (size_t i = 0; i < list->GetSize(); ++i) {
     base::Value* item;
     EXPECT_TRUE(list->Get(i, &item));
-    EXPECT_TRUE(item->IsType(base::Value::Type::STRING));
+    EXPECT_TRUE(item->is_string());
     std::string item_str;
     EXPECT_TRUE(item->GetAsString(&item_str));
     vector.push_back(std::move(item_str));
@@ -148,6 +148,13 @@ std::vector<std::string> JsonArrayToVectorOfStrings(
 }
 
 }  // namespace
+
+WebRtcTestBase::TrackEvent::TrackEvent(const std::string& track_id)
+    : track_id(track_id) {}
+
+WebRtcTestBase::TrackEvent::TrackEvent(const TrackEvent&) = default;
+
+WebRtcTestBase::TrackEvent::~TrackEvent() = default;
 
 WebRtcTestBase::WebRtcTestBase(): detect_errors_in_javascript_(false) {
   // The handler gets set for each test method, but that's fine since this
@@ -214,7 +221,7 @@ void WebRtcTestBase::GetUserMediaWithSpecificConstraintsAndDeny(
   EXPECT_TRUE(permissionRequestObserver.request_shown());
   EXPECT_TRUE(content::ExecuteScriptAndExtractString(
       tab_contents->GetMainFrame(), "obtainGetUserMediaResult();", &result));
-  EXPECT_EQ(kFailedWithPermissionDeniedError, result);
+  EXPECT_EQ(kFailedWithNotAllowedError, result);
 }
 
 void WebRtcTestBase::GetUserMediaAndDismiss(
@@ -228,7 +235,7 @@ void WebRtcTestBase::GetUserMediaAndDismiss(
   // A dismiss should be treated like a deny.
   EXPECT_TRUE(content::ExecuteScriptAndExtractString(
       tab_contents->GetMainFrame(), "obtainGetUserMediaResult();", &result));
-  EXPECT_EQ(kFailedWithPermissionDismissedError, result);
+  EXPECT_EQ(kFailedWithNotAllowedError, result);
 }
 
 void WebRtcTestBase::GetUserMediaAndExpectAutoAcceptWithoutPrompt(
@@ -270,7 +277,7 @@ void WebRtcTestBase::GetUserMediaAndExpectAutoDenyWithoutPrompt(
   EXPECT_FALSE(permissionRequestObserver.request_shown());
   EXPECT_TRUE(content::ExecuteScriptAndExtractString(
       tab_contents->GetMainFrame(), "obtainGetUserMediaResult();", &result));
-  EXPECT_EQ(kFailedWithPermissionDeniedError, result);
+  EXPECT_EQ(kFailedWithNotAllowedError, result);
 }
 
 void WebRtcTestBase::GetUserMedia(content::WebContents* tab_contents,
@@ -427,6 +434,14 @@ void WebRtcTestBase::NegotiateCall(content::WebContents* from_tab,
   GatherAndSendIceCandidates(from_tab, to_tab);
 }
 
+void WebRtcTestBase::VerifyLocalDescriptionContainsCertificate(
+    content::WebContents* tab,
+    const std::string& certificate) const {
+  std::string javascript = base::StringPrintf(
+      "verifyLocalDescriptionContainsCertificate(%s)", certificate.c_str());
+  EXPECT_EQ("ok-verified", ExecuteJavascript(javascript, tab));
+}
+
 void WebRtcTestBase::HangUp(content::WebContents* from_tab) const {
   EXPECT_EQ("ok-call-hung-up", ExecuteJavascript("hangUp()", from_tab));
 }
@@ -461,9 +476,9 @@ std::string WebRtcTestBase::GetStreamSize(
   return result.substr(3);
 }
 
-bool WebRtcTestBase::OnWin8() const {
+bool WebRtcTestBase::OnWin8OrHigher() const {
 #if defined(OS_WIN)
-  return base::win::GetVersion() > base::win::VERSION_WIN7;
+  return base::win::GetVersion() >= base::win::VERSION_WIN8;
 #else
   return false;
 #endif
@@ -549,11 +564,13 @@ void WebRtcTestBase::SetDefaultAudioCodec(
       "setDefaultAudioCodec('" + audio_codec + "')", tab));
 }
 
-void WebRtcTestBase::SetDefaultVideoCodec(
-    content::WebContents* tab,
-    const std::string& video_codec) const {
-  EXPECT_EQ("ok", ExecuteJavascript(
-      "setDefaultVideoCodec('" + video_codec + "')", tab));
+void WebRtcTestBase::SetDefaultVideoCodec(content::WebContents* tab,
+                                          const std::string& video_codec,
+                                          bool prefer_hw_codec) const {
+  EXPECT_EQ("ok",
+            ExecuteJavascript("setDefaultVideoCodec('" + video_codec + "'," +
+                                  (prefer_hw_codec ? "true" : "false") + ")",
+                              tab));
 }
 
 void WebRtcTestBase::EnableOpusDtx(content::WebContents* tab) const {
@@ -565,7 +582,17 @@ void WebRtcTestBase::CreateAndAddStreams(content::WebContents* tab,
   EXPECT_EQ(
       "ok-streams-created-and-added",
       ExecuteJavascript(
-          "createAndAddStreams(" + base::SizeTToString(count) + ")", tab));
+          "createAndAddStreams(" + base::NumberToString(count) + ")", tab));
+}
+
+void WebRtcTestBase::VerifyRtpSenders(
+    content::WebContents* tab,
+    base::Optional<size_t> expected_num_tracks) const {
+  std::string javascript =
+      expected_num_tracks ? "verifyRtpSenders(" +
+                                base::NumberToString(*expected_num_tracks) + ")"
+                          : "verifyRtpSenders()";
+  EXPECT_EQ("ok-senders-verified", ExecuteJavascript(javascript, tab));
 }
 
 void WebRtcTestBase::VerifyRtpReceivers(
@@ -573,7 +600,124 @@ void WebRtcTestBase::VerifyRtpReceivers(
     base::Optional<size_t> expected_num_tracks) const {
   std::string javascript =
       expected_num_tracks ? "verifyRtpReceivers(" +
-                                base::SizeTToString(*expected_num_tracks) + ")"
+                                base::NumberToString(*expected_num_tracks) + ")"
                           : "verifyRtpReceivers()";
   EXPECT_EQ("ok-receivers-verified", ExecuteJavascript(javascript, tab));
+}
+
+std::vector<std::string> WebRtcTestBase::CreateAndAddAudioAndVideoTrack(
+    content::WebContents* tab,
+    StreamArgumentType stream_argument_type) const {
+  const char* string_argument_type_str = nullptr;
+  switch (stream_argument_type) {
+    case StreamArgumentType::NO_STREAM:
+      string_argument_type_str = "'no-stream'";
+      break;
+    case StreamArgumentType::SHARED_STREAM:
+      string_argument_type_str = "'shared-stream'";
+      break;
+    case StreamArgumentType::INDIVIDUAL_STREAMS:
+      string_argument_type_str = "'individual-streams'";
+      break;
+  }
+  std::string result =
+      ExecuteJavascript(base::StringPrintf("createAndAddAudioAndVideoTrack(%s)",
+                                           string_argument_type_str),
+                        tab);
+  EXPECT_TRUE(base::StartsWith(result, "ok-", base::CompareCase::SENSITIVE));
+  std::vector<std::string> ids = base::SplitString(
+      result.substr(3), " ", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
+  EXPECT_EQ(4u, ids.size());
+  return ids;
+}
+
+void WebRtcTestBase::RemoveTrack(content::WebContents* tab,
+                                 const std::string& track_id) const {
+  EXPECT_EQ(
+      "ok-sender-removed",
+      ExecuteJavascript(
+          base::StringPrintf("removeTrack('%s')", track_id.c_str()), tab));
+}
+
+bool WebRtcTestBase::HasLocalStreamWithTrack(
+    content::WebContents* tab,
+    const std::string& stream_id,
+    const std::string& track_id) const {
+  return HasStreamWithTrack(tab, "hasLocalStreamWithTrack", stream_id,
+                            track_id);
+}
+
+bool WebRtcTestBase::HasRemoteStreamWithTrack(
+    content::WebContents* tab,
+    const std::string& stream_id,
+    const std::string& track_id) const {
+  return HasStreamWithTrack(tab, "hasRemoteStreamWithTrack", stream_id,
+                            track_id);
+}
+
+bool WebRtcTestBase::HasStreamWithTrack(content::WebContents* tab,
+                                        const char* function_name,
+                                        std::string stream_id,
+                                        std::string track_id) const {
+  if (stream_id != kUndefined)
+    stream_id = "'" + stream_id + "'";
+  std::string javascript = base::StringPrintf(
+      "%s(%s, '%s')", function_name, stream_id.c_str(), track_id.c_str());
+  std::string result = ExecuteJavascript(javascript, tab);
+  EXPECT_TRUE(result == "ok-stream-with-track-found" ||
+              result == "ok-stream-with-track-not-found");
+  return result == "ok-stream-with-track-found";
+}
+
+bool WebRtcTestBase::HasSenderWithTrack(content::WebContents* tab,
+                                        std::string track_id) const {
+  std::string javascript =
+      base::StringPrintf("hasSenderWithTrack('%s')", track_id.c_str());
+  std::string result = ExecuteJavascript(javascript, tab);
+  EXPECT_TRUE(result == "ok-sender-with-track-found" ||
+              result == "ok-sender-with-track-not-found");
+  return result == "ok-sender-with-track-found";
+}
+
+bool WebRtcTestBase::HasReceiverWithTrack(content::WebContents* tab,
+                                          std::string track_id) const {
+  std::string javascript =
+      base::StringPrintf("hasReceiverWithTrack('%s')", track_id.c_str());
+  std::string result = ExecuteJavascript(javascript, tab);
+  EXPECT_TRUE(result == "ok-receiver-with-track-found" ||
+              result == "ok-receiver-with-track-not-found");
+  return result == "ok-receiver-with-track-found";
+}
+
+size_t WebRtcTestBase::GetNegotiationNeededCount(
+    content::WebContents* tab) const {
+  std::string result = ExecuteJavascript("getNegotiationNeededCount()", tab);
+  EXPECT_TRUE(base::StartsWith(result, "ok-negotiation-count-is-",
+                               base::CompareCase::SENSITIVE));
+  size_t count = 0;
+  EXPECT_TRUE(base::StringToSizeT(result.substr(24), &count));
+  return count;
+}
+
+std::vector<WebRtcTestBase::TrackEvent> WebRtcTestBase::GetTrackEvents(
+    content::WebContents* tab) const {
+  std::string result = ExecuteJavascript("getTrackEvents()", tab);
+  EXPECT_TRUE(base::StartsWith(result, "ok-", base::CompareCase::SENSITIVE));
+  std::vector<std::string> tokens = base::SplitString(
+      result.substr(3), " ", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
+  std::vector<TrackEvent> events;
+  for (size_t i = 0; i < tokens.size(); ++i) {
+    if (tokens[i] == "RTCTrackEvent") {
+      DCHECK_LT(i + 1, tokens.size());
+      events.push_back(TrackEvent(tokens[++i]));
+    } else {
+      DCHECK(!events.empty());
+      events[events.size() - 1].stream_ids.push_back(tokens[i]);
+    }
+  }
+  return events;
+}
+
+void WebRtcTestBase::CollectGarbage(content::WebContents* tab) const {
+  EXPECT_EQ("ok-gc", ExecuteJavascript("collectGarbage()", tab));
 }

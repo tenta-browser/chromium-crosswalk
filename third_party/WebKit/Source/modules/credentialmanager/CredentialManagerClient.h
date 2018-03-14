@@ -5,10 +5,14 @@
 #ifndef CredentialManagerClient_h
 #define CredentialManagerClient_h
 
+#include <memory>
 #include "core/page/Page.h"
 #include "modules/ModulesExport.h"
+#include "modules/credentialmanager/MakePublicKeyCredentialOptions.h"
+#include "modules/credentialmanager/WebAuthenticationClient.h"
 #include "platform/Supplementable.h"
 #include "public/platform/WebCredentialManagerClient.h"
+#include "public/platform/WebCredentialMediationRequirement.h"
 #include "public/platform/WebVector.h"
 
 namespace blink {
@@ -29,7 +33,7 @@ class MODULES_EXPORT CredentialManagerClient final
  public:
   explicit CredentialManagerClient(WebCredentialManagerClient*);
   virtual ~CredentialManagerClient();
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   static const char* SupplementName();
   static CredentialManagerClient* From(Page*);
@@ -43,15 +47,21 @@ class MODULES_EXPORT CredentialManagerClient final
   virtual void DispatchStore(
       const WebCredential&,
       WebCredentialManagerClient::NotificationCallbacks*);
-  virtual void DispatchRequireUserMediation(
+  virtual void DispatchPreventSilentAccess(
       WebCredentialManagerClient::NotificationCallbacks*);
-  virtual void DispatchGet(bool zero_click_only,
+  virtual void DispatchGet(WebCredentialMediationRequirement,
                            bool include_passwords,
                            const WebVector<WebURL>& federations,
                            WebCredentialManagerClient::RequestCallbacks*);
+  virtual void DispatchMakeCredential(
+      LocalFrame&,
+      const MakePublicKeyCredentialOptions&,
+      std::unique_ptr<WebAuthenticationClient::PublicKeyCallbacks>);
 
  private:
   WebCredentialManagerClient* client_;
+  // TODO(crbug.com/740081): Merge authentication_client_ into this class.
+  Member<WebAuthenticationClient> authentication_client_;
 };
 
 MODULES_EXPORT void ProvideCredentialManagerClientTo(Page&,

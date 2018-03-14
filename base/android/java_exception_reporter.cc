@@ -27,10 +27,11 @@ void InitJavaExceptionReporterForChildProcess() {
   Java_JavaExceptionReporter_installHandler(env, crash_after_report);
 }
 
-void ReportJavaException(JNIEnv* env,
-                         const JavaParamRef<jclass>& jcaller,
-                         jboolean crash_after_report,
-                         const JavaParamRef<jthrowable>& e) {
+void JNI_JavaExceptionReporter_ReportJavaException(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& jcaller,
+    jboolean crash_after_report,
+    const JavaParamRef<jthrowable>& e) {
   std::string exception_info = base::android::GetJavaExceptionInfo(env, e);
   // Set the exception_string in BuildInfo so that breakpad can read it.
   base::android::BuildInfo::GetInstance()->SetJavaExceptionInfo(exception_info);
@@ -42,17 +43,14 @@ void ReportJavaException(JNIEnv* env,
   base::android::BuildInfo::GetInstance()->ClearJavaExceptionInfo();
 }
 
-void ReportJavaStackTrace(JNIEnv* env,
-                          const JavaParamRef<jclass>& jcaller,
-                          const JavaParamRef<jstring>& stackTrace) {
+void JNI_JavaExceptionReporter_ReportJavaStackTrace(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& jcaller,
+    const JavaParamRef<jstring>& stackTrace) {
   base::android::BuildInfo::GetInstance()->SetJavaExceptionInfo(
       ConvertJavaStringToUTF8(stackTrace));
   base::debug::DumpWithoutCrashing();
   base::android::BuildInfo::GetInstance()->ClearJavaExceptionInfo();
-}
-
-bool RegisterJavaExceptionReporterJni(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace android

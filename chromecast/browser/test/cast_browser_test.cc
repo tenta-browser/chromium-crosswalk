@@ -13,6 +13,7 @@
 #include "chromecast/browser/cast_browser_context.h"
 #include "chromecast/browser/cast_browser_process.h"
 #include "chromecast/browser/cast_content_window.h"
+#include "chromecast/browser/cast_web_contents_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
@@ -33,35 +34,29 @@ void CastBrowserTest::SetUp() {
   BrowserTestBase::SetUp();
 }
 
-void CastBrowserTest::TearDownOnMainThread() {
-  cast_web_view_.reset();
-
-  BrowserTestBase::TearDownOnMainThread();
-}
-
 void CastBrowserTest::SetUpCommandLine(base::CommandLine* command_line) {
-  BrowserTestBase::SetUpCommandLine(command_line);
-
   command_line->AppendSwitch(switches::kNoWifi);
   command_line->AppendSwitchASCII(switches::kTestType, "browser");
 }
 
-void CastBrowserTest::RunTestOnMainThreadLoop() {
+void CastBrowserTest::PreRunTestOnMainThread() {
   // Pump startup related events.
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   base::RunLoop().RunUntilIdle();
 
   metrics::CastMetricsHelper::GetInstance()->SetDummySessionIdForTesting();
+  web_contents_manager_ = base::MakeUnique<CastWebContentsManager>(
+      CastBrowserProcess::GetInstance()->browser_context());
+}
 
-  SetUpOnMainThread();
-  RunTestOnMainThread();
-  TearDownOnMainThread();
+void CastBrowserTest::PostRunTestOnMainThread() {
+  cast_web_view_.reset();
 }
 
 content::WebContents* CastBrowserTest::NavigateToURL(const GURL& url) {
-  cast_web_view_ = base::WrapUnique(new CastWebView(
-      this, CastBrowserProcess::GetInstance()->browser_context(), nullptr,
-      false /*transparent*/));
+  cast_web_view_ = web_contents_manager_->CreateWebView(
+      this, nullptr /*site_instance*/, false /*transparent*/,
+      false /*allow_media_access*/, false /*is_headless*/);
 
   content::WebContents* web_contents = cast_web_view_->web_contents();
   content::WaitForLoadStop(web_contents);

@@ -110,7 +110,7 @@ and [http://es6-features.org/](http://es6-features.org/)
 
 The following features are allowed in Chromium development.
 
-## `=>` (Arrow Functions)
+## => (Arrow Functions)
 
 Arrow functions provide a concise syntax to create a function, and fix a number
 of difficulties with `this` (e.g. eliminating the need to write `const self =
@@ -150,7 +150,7 @@ iOS.  There's a presubmit that should warn you about this.
 
 ---
 
-## `Promise`
+## Promise
 
 The Promise object is used for asynchronous computations. A Promise represents a
 value which may be available now, or in the future, or never.
@@ -183,17 +183,105 @@ this document.
 
 ---
 
-# Banned Features
+## Classes
 
-The following features are banned for Chromium development.
+OOP-style and boilerplate-free class syntax, including inheritance, `super()`,
+static members, and getters and setters.
 
-# Features To Be Discussed
+**Usage Example:**
 
-The following features are currently disallowed. See the top of this page on
-how to propose moving a feature from this list into the allowed or banned
-sections.
+```js
+class Shape {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+}
+// Note: let Shape = class {...}; is also valid.
 
-## `let` (Block-Scoped Variables)
+class Rectangle extends Shape {
+  constructor(x, y, width, height) {
+    super(id, x, y);
+    this.width  = width;
+    this.height = height;
+  }
+
+  static goldenRectangle() {
+    var PHI = (1 + Math.sqrt(5)) / 2;
+    return new Rectangle(0, 0, PHI, 1);
+  }
+}
+```
+
+**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-class-definitions)
+
+**Discussion Notes / Link to Thread:**
+https://groups.google.com/a/chromium.org/d/msg/chromium-dev/S1h-0m2ohOw/jyaiMGDlCwAJ
+
+**Note**: Not fully supported in iOS9.  Don't use it in code that runs on Chrome
+for iOS, unless you can verify it works. TODO: Remove this note once support for
+iOS9 is dropped.
+
+---
+
+## Map
+
+A simple key/value map in which any value (both objects and primitive values)
+may be used as either a key or a value.
+
+**Usage Example:**
+
+```js
+var map = new Map();
+map.size === 0;  // true
+map.get('foo');  // undefined
+
+var key = 54;
+map.set(key, 123);
+map.size === 1;  // true
+map.has(key);  // true
+map.get(key);  // 123
+
+map.delete(key);
+map.has(key);  // false
+map.size === 0;  // true
+```
+
+**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-map-objects)
+[link](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map)
+
+**Discussion Notes:** Feature already extensively used prior to creation of
+this document.
+
+---
+
+## Set
+
+An object that lets you store unique values of any type, whether primitive
+values or object references.
+
+**Usage Example:**
+
+```js
+var set = new Set();
+
+set.add(123);
+set.size();  // 1
+set.has(123);  // true
+
+set.add(123);
+set.size();  // 1
+```
+
+**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-set-objects)
+[link](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Set)
+
+**Discussion Notes:** Feature already extensively used prior to creation of
+this document.
+
+---
+
+## let (Block-Scoped Variables)
 
 `let` declares a variable within the scope of a block.  This differs from `var`,
 which uses function level scope.
@@ -232,11 +320,15 @@ function f() {
 
 **Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-let-and-const-declarations)
 
-**Discussion Notes / Link to Thread:**
+**Discussion Notes / Link to Thread:** [link](https://groups.google.com/a/chromium.org/d/msg/chromium-dev/MJhTok8Usr8/XCrkisaBBQAJ)
+
+**Note**: `let` is [not fully supported](https://caniuse.com/#feat=let) in iOS9.
+Don't use it in code that runs on Chrome for iOS, until support for iOS9 is
+dropped.
 
 ---
 
-## `const` (Block-Scoped Constants)
+## const (Block-Scoped Constants)
 
 Constants (also known as "immutable variables") are variables which cannot be
 re-assigned new content. Note that if the value is an object, the object itself
@@ -260,45 +352,142 @@ frobber.isFrobbing = false;  // Works.
 
 **See also:** [Object.freeze()](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/freeze)
 
-**Discussion Notes / Link to Thread:**
+**Discussion Notes / Link to Thread:** [link](https://groups.google.com/a/chromium.org/d/msg/chromium-dev/MJhTok8Usr8/XCrkisaBBQAJ)
+
+**Note**: `const` [not fully supported](https://caniuse.com/#feat=let) in iOS9.
+Don't use it in code that runs on Chrome for iOS, until support for iOS9 is
+dropped.
 
 ---
 
-## Classes
-
-OOP-style and boilerplate-free class syntax, including inheritance, `super()`,
-static members, and getters and setters.
+## Array Static & Prototype Methods
 
 **Usage Example:**
 
 ```js
-class Shape {
-  constructor(x, y) {
-    this.x = x;
-    this.y = y;
-  }
-}
-// Note: let Shape = class {...}; is also valid.
+// Static methods
+let a1 = Array.from(document.querySelectorAll('div'));
+let a2 = Array.of(7);
 
-class Rectangle extends Shape {
-  constructor(x, y, width, height) {
-    super(id, x, y);
-    this.width  = width;
-    this.height = height;
-  }
+// Prototype methods
+['a', 'b', 'c', 'd'].copyWithin(2, 0);  // Returns ['a', 'b', 'a', 'b']
+[2, 4, 6, 8].find(i => i == 6);  // Returns 6
+[2, 4, 6, 8].findIndex(i => i == 6); // Returns 2
+[2, 4, 6, 8].fill(1);  // Returns [1, 1, 1, 1]
 
-  static goldenRectangle() {
-		var PHI = (1 + Math.sqrt(5)) / 2;
-    return new Rectangle(0, 0, PHI, 1);
-  }
+[2, 4, 6, 8].keys();  // Returns an Array iterator
+[2, 4, 6, 8].entries();  // Returns an Array iterator
+```
+
+**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-properties-of-the-array-constructor)
+
+**Discussion Notes / Link to Thread:** [link](https://groups.google.com/a/chromium.org/d/msg/chromium-dev/d_2zUYQZJTg/-_PSji_OAQAJ)
+
+**Note**: `Array.prototype.values` is [not implemented in Chrome](https://kangax.github.io/compat-table/es6/#test-Array.prototype_methods) and should not be used. If the code in question is Closure compiled, a compile-time error will be thrown.
+
+---
+
+## Number Properties
+
+**Usage Example:**
+
+```js
+// Number.isFinite
+// Number.isInteger
+// Number.isSafeInteger
+// Number.isNaN
+// Number.EPSILON
+// Number.MIN_SAFE_INTEGER
+// Number.MAX_SAFE_INTEGER
+```
+
+**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-isfinite-number)
+
+**Discussion Notes / Link to Thread:** [link](https://groups.google.com/a/chromium.org/d/msg/chromium-dev/d_2zUYQZJTg/-_PSji_OAQAJ)
+
+---
+
+## Object Static Methods
+
+**Usage Example:**
+
+```js
+// Object.assign
+var o = Object.assign({a:true}, {b:true}, {c:true});  // {a: true, b: true, c: true}
+'a' in o && 'b' in o && 'c' in o;  // true
+
+// Object.setPrototypeOf
+Object.setPrototypeOf({}, Array.prototype) instanceof Array;  // true
+
+// Object.is
+Object.is(null, null)  // true
+Object.is(NaN, NaN)  // true
+Object.is(-0, +0)  // false, btw: -0 === +0 is true
+
+```
+
+**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-properties-of-the-object-constructor)
+
+**Discussion Notes / Link to Thread:** [link](https://groups.google.com/a/chromium.org/d/msg/chromium-dev/d_2zUYQZJTg/-_PSji_OAQAJ)
+
+---
+
+## for...of Loops
+
+Convenient operator to iterate over all values in an iterable collection. This
+differs from `for ...in`, which iterates over all enumerable properties of an
+object.
+
+**Usage Example:**
+
+```js
+// Given an iterable collection of Fibonacci numbers...
+for (let n of fibonacci) {
+  console.log(n);  // 1, 1, 2, 3, ...
 }
 ```
 
-**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-class-definitions)
+**Documentation:** [link1](http://www.ecma-international.org/ecma-262/6.0/#sec-for-in-and-for-of-statements)
+[link2](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/for...of)
+
+**Discussion Notes / Link to Thread:** [link](https://groups.google.com/a/chromium.org/d/msg/chromium-dev/d_2zUYQZJTg/-_PSji_OAQAJ)
+
+---
+
+## Template Literals
+
+Expression interpolation for Strings, with the ability to access raw template
+pieces.
+
+**Usage Example:**
+
+```js
+// Simple example
+let greeting = 'hello';
+let myName = {first: 'Foo', last: 'Bar'};
+let from = 1900;
+let to = 2000;
+
+var message = `${greeting}, I am ${myName.first}${myName.last},
+and I am ${to - from} years old`;
+// message == 'hello,\nI am FooBar,\nand I am 100 years old'
+```
+
+**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-template-literals)
 
 **Discussion Notes / Link to Thread:**
 
 ---
+
+# Banned Features
+
+The following features are banned for Chromium development.
+
+# Features To Be Discussed
+
+The following features are currently disallowed. See the top of this page on
+how to propose moving a feature from this list into the allowed or banned
+sections.
 
 ## Block Scope Functions
 
@@ -435,28 +624,6 @@ console.log(clearSky.clouds());  // 0
 
 **Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-object-initialiser)
 [link](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Object_initializer)
-
-**Discussion Notes / Link to Thread:**
-
----
-
-## Template Literals
-
-Expression interpolation for Strings, with the ability to access raw template
-pieces.
-
-**Usage Example:**
-
-```js
-// Simple example
-var greeting = 'hello';
-var myName = {first: 'Foo', last: 'Bar'};
-var message = `${greeting},
-my name is ${myName.first + myName.last}`;
-// message == 'hello,\nmy name is FooBar'
-```
-
-**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-template-literals)
 
 **Discussion Notes / Link to Thread:**
 
@@ -614,53 +781,6 @@ Object.getOwnPropertySymbols(obj);  // [foo, bar]
 
 ---
 
-## `for ...of` Loops
-
-Convenient operator to iterate over all values in an iterable collection. This
-differs from `for ...in`, which iterates over all iterable properties.
-
-**Usage Example:**
-
-```js
-// Given an iterable collection fibonacci numbers...
-for (var n of fibonacci) {
-  console.log(n);  // 1, 1, 2, 3, ...
-}
-```
-
-**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-for-in-and-for-of-statements)
-[link](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/for...of)
-
-**Discussion Notes / Link to Thread:**
-
----
-
-## Object Static Methods
-
-**Usage Example:**
-
-```js
-// Object.assign
-var o = Object.assign({a:true}, {b:true}, {c:true});  // {a: true, b: true, c: true}
-'a' in o && 'b' in o && 'c' in o;  // true
-
-// Object.setPrototypeOf
-Object.setPrototypeOf({}, Array.prototype) instanceof Array;  // true
-
-// Object.is
-Object.is(null, null)  // true
-Object.is(NaN, NaN)  // true
-Object.is(-0, +0)  // false, btw: -0 === +0 is true
-
-// Object.getOwnPropertySymbols
-```
-
-**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-properties-of-the-object-constructor)
-
-**Discussion Notes / Link to Thread:**
-
----
-
 ## String Static & Prototype methods
 
 **Usage Example:**
@@ -678,49 +798,6 @@ Object.is(-0, +0)  // false, btw: -0 === +0 is true
 ```
 
 **Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-properties-of-the-string-constructor)
-
-**Discussion Notes / Link to Thread:**
-
----
-
-## Array Static & Prototype Methods
-
-**Usage Example:**
-
-```js
-// Array.from
-// Array.of
-
-// Array.prototype.copyWithin
-// Array.prototype.find
-// Array.prototype.findIndex
-// Array.prototype.fill
-// Array.prototype.keys
-// Array.prototype.values
-// Array.prototype.entries
-```
-
-**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-properties-of-the-array-constructor)
-
-**Discussion Notes / Link to Thread:**
-
----
-
-## Number Properties
-
-**Usage Example:**
-
-```js
-// Number.isFinite
-// Number.isInteger
-// Number.isSafeInteger
-// Number.isNaN
-// Number.EPSILON
-// Number.MIN_SAFE_INTEGER
-// Number.MAX_SAFE_INTEGER
-```
-
-**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-isfinite-number)
 
 **Discussion Notes / Link to Thread:**
 
@@ -776,62 +853,7 @@ for (let i of range(0, 10, 2)) {
 
 ---
 
-## `Map`
-
-A simple key/value map in which any value (both objects and primitive values)
-may be used as either a key or a value.
-
-**Usage Example:**
-
-```js
-var map = new Map();
-map.size === 0;  // true
-map.get('foo');  // undefined
-
-var key = {};
-map.set(key, 123);
-map.size === 1;  // true
-map.has(key);  // true
-map.get(key);  // 123
-
-map.delete(key);
-map.has(key);  // false
-map.size === 0;  // true
-```
-
-**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-map-objects)
-[link](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map)
-
-**Discussion Notes / Link to Thread:**
-
----
-
-## `Set`
-
-An object that lets you store unique values of any type, whether primitive
-values or object references.
-
-**Usage Example:**
-
-```js
-var set = new Set();
-
-set.add(123);
-set.size();  // 1
-set.has(123);  // true
-
-set.add(123);
-set.size();  // 1
-```
-
-**Documentation:** [link](http://www.ecma-international.org/ecma-262/6.0/#sec-set-objects)
-[link](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Set)
-
-**Discussion Notes / Link to Thread:**
-
----
-
-## `WeakMap`
+## WeakMap
 
 WeakMap does not prevent garbage collection if nothing else refers to an object
 within the collection.
@@ -853,7 +875,7 @@ weakmap.has(key) && weakmap.get(key) === 123;  // true
 
 ---
 
-## `WeakSet`
+## WeakSet
 
 WeakSet does not prevent garbage collection if nothing else refers to an object
 within the collection.
@@ -895,7 +917,7 @@ new UInt8ClampedArray();
 
 ---
 
-## `Proxy`
+## Proxy
 
 Hooking into runtime-level object meta-operations.
 
@@ -927,7 +949,7 @@ keyTracker.key2;  // '2 keys created!'
 
 ---
 
-## `Reflection`
+## Reflection
 
 Make calls corresponding to the object meta-operations.
 

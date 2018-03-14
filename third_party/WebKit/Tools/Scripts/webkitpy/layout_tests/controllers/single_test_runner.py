@@ -27,6 +27,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
+import hashlib
 import logging
 import re
 
@@ -56,8 +57,6 @@ def run_single_test(
 
 
 class SingleTestRunner(object):
-    (ALONGSIDE_TEST, PLATFORM_DIR, VERSION_DIR, UPDATE) = ('alongside', 'platform', 'version', 'update')
-
     def __init__(self, port, options, results_directory, worker_name,
                  primary_driver, secondary_driver, test_input, stop_when_done):
         self._port = port
@@ -72,7 +71,6 @@ class SingleTestRunner(object):
         self._should_run_pixel_test = test_input.should_run_pixel_test
         self._should_run_pixel_test_first = test_input.should_run_pixel_test_first
         self._reference_files = test_input.reference_files
-        self._should_add_missing_baselines = test_input.should_add_missing_baselines
         self._stop_when_done = stop_when_done
 
         # If this is a virtual test that uses the default flags instead of the
@@ -104,13 +102,13 @@ class SingleTestRunner(object):
                             self._port.expected_audio(self._test_name))
 
     def _should_fetch_expected_checksum(self):
-        return self._should_run_pixel_test and not (self._options.new_baseline or self._options.reset_results)
+        return self._should_run_pixel_test and not self._options.reset_results
 
     def _driver_input(self):
         # The image hash is used to avoid doing an image dump if the
         # checksums match, so it should be set to a blank value if we
         # are generating a new baseline.  (Otherwise, an image from a
-        # previous run will be copied into the baseline."""
+        # previous run will be copied into the baseline.)
         image_hash = None
         if self._should_fetch_expected_checksum():
             image_hash = self._port.expected_checksum(self._test_name)
@@ -132,7 +130,7 @@ class SingleTestRunner(object):
     def run(self):
         if self._options.enable_sanitizer:
             return self._run_sanitized_test()
-        if self._options.reset_results:
+        if self._options.reset_results or self._options.copy_baselines:
             if self._reference_files:
                 expected_txt_filename = self._port.expected_filename(self._test_name, '.txt')
                 if not self._filesystem.exists(expected_txt_filename):
@@ -155,7 +153,7 @@ class SingleTestRunner(object):
         expected_driver_output = self._expected_driver_output()
         failures = self._handle_error(driver_output)
         test_result = TestResult(self._test_name, failures, driver_output.test_time, driver_output.has_stderr(),
-                                 pid=driver_output.pid)
+                                 pid=driver_output.pid, crash_site=driver_output.crash_site)
         test_result_writer.write_test_result(self._filesystem, self._port, self._results_directory,
                                              self._test_name, driver_output, expected_driver_output, test_result.failures)
         return test_result
@@ -165,74 +163,76 @@ class SingleTestRunner(object):
         expected_driver_output = self._expected_driver_output()
 
         test_result = self._compare_output(expected_driver_output, driver_output)
-        if self._should_add_missing_baselines:
-            self._add_missing_baselines(test_result, driver_output)
         test_result_writer.write_test_result(self._filesystem, self._port, self._results_directory,
                                              self._test_name, driver_output, expected_driver_output, test_result.failures)
         return test_result
 
     def _run_rebaseline(self):
         driver_output = self._driver.run_test(self._driver_input(), self._stop_when_done)
-        failures = self._handle_error(driver_output)
+        if self._options.reset_results:
+            expected_driver_output = None
+            failures = self._handle_error(driver_output)
+        else:
+            expected_driver_output = self._expected_driver_output()
+            failures = self._compare_output(expected_driver_output, driver_output).failures
         test_result_writer.write_test_result(self._filesystem, self._port, self._results_directory,
-                                             self._test_name, driver_output, None, failures)
+                                             self._test_name, driver_output, expected_driver_output, failures)
         # FIXME: It the test crashed or timed out, it might be better to avoid
         # to write new baselines.
-        self._overwrite_baselines(driver_output)
+        self._update_or_add_new_baselines(driver_output)
         return TestResult(self._test_name, failures, driver_output.test_time, driver_output.has_stderr(),
-                          pid=driver_output.pid)
+                          pid=driver_output.pid, crash_site=driver_output.crash_site)
 
     _render_tree_dump_pattern = re.compile(r"^layer at \(\d+,\d+\) size \d+x\d+\n")
 
-    def _add_missing_baselines(self, test_result, driver_output):
-        missingImage = test_result.has_failure_matching_types(
-            test_failures.FailureMissingImage, test_failures.FailureMissingImageHash)
-        if test_result.has_failure_matching_types(test_failures.FailureMissingResult):
-            self._save_baseline_data(driver_output.text, '.txt', self._location_for_new_baseline(driver_output.text, '.txt'))
-        if test_result.has_failure_matching_types(test_failures.FailureMissingAudio):
-            self._save_baseline_data(driver_output.audio, '.wav', self._location_for_new_baseline(driver_output.audio, '.wav'))
-        if missingImage:
-            self._save_baseline_data(driver_output.image, '.png', self._location_for_new_baseline(driver_output.image, '.png'))
-
-    def _location_for_new_baseline(self, data, extension):
-        if self._options.add_platform_exceptions:
-            return self.VERSION_DIR
-        if extension == '.png':
-            return self.PLATFORM_DIR
-        if extension == '.wav':
-            return self.ALONGSIDE_TEST
-        if extension == '.txt' and self._render_tree_dump_pattern.match(data):
-            return self.PLATFORM_DIR
-        return self.ALONGSIDE_TEST
-
-    def _overwrite_baselines(self, driver_output):
-        location = self.VERSION_DIR if self._options.add_platform_exceptions else self.UPDATE
-        self._save_baseline_data(driver_output.text, '.txt', location)
-        self._save_baseline_data(driver_output.audio, '.wav', location)
+    def _update_or_add_new_baselines(self, driver_output):
+        self._save_baseline_data(driver_output.text, '.txt')
+        self._save_baseline_data(driver_output.audio, '.wav')
         if self._should_run_pixel_test:
-            self._save_baseline_data(driver_output.image, '.png', location)
+            self._save_baseline_data(driver_output.image, '.png')
 
-    def _save_baseline_data(self, data, extension, location):
+    def _save_baseline_data(self, data, extension):
         if data is None:
             return
         port = self._port
         fs = self._filesystem
-        if location == self.ALONGSIDE_TEST:
-            output_dir = fs.dirname(port.abspath_for_test(self._test_name))
-        elif location == self.VERSION_DIR:
+
+        flag_specific_dir = port.baseline_flag_specific_dir()
+        if flag_specific_dir:
+            output_dir = fs.join(flag_specific_dir, fs.dirname(self._test_name))
+        elif self._options.copy_baselines:
             output_dir = fs.join(port.baseline_version_dir(), fs.dirname(self._test_name))
-        elif location == self.PLATFORM_DIR:
-            output_dir = fs.join(port.baseline_platform_dir(), fs.dirname(self._test_name))
-        elif location == self.UPDATE:
-            output_dir = fs.dirname(port.expected_filename(self._test_name, extension))
         else:
-            raise AssertionError('unrecognized baseline location: %s' % location)
+            output_dir = fs.dirname(port.expected_filename(self._test_name, extension, fallback_base_for_virtual=False))
 
         fs.maybe_make_directory(output_dir)
         output_basename = fs.basename(fs.splitext(self._test_name)[0] + '-expected' + extension)
         output_path = fs.join(output_dir, output_basename)
-        _log.info('Writing new expected result "%s"', port.relative_test_filename(output_path))
-        port.update_baseline(output_path, data)
+
+        # Remove |output_path| if it exists and is not the generic expectation to
+        # avoid extra baseline if the new baseline is the same as the fallback baseline.
+        generic_dir = fs.join(port.layout_tests_dir(),
+                              fs.dirname(port.lookup_virtual_test_base(self._test_name) or self._test_name))
+        if output_dir != generic_dir and fs.exists(output_path):
+            _log.info('Removing the current baseline "%s"', port.relative_test_filename(output_path))
+            fs.remove(output_path)
+
+        current_expected_path = port.expected_filename(self._test_name, extension)
+        if fs.exists(current_expected_path) and fs.sha1(current_expected_path) == hashlib.sha1(data).hexdigest():
+            if self._options.reset_results:
+                _log.info('Not writing new expected result "%s" because it is the same as the current expected result',
+                          port.relative_test_filename(output_path))
+            else:
+                _log.info('Not copying baseline to "%s" because the actual result is the same as the current expected result',
+                          port.relative_test_filename(output_path))
+            return
+
+        if self._options.reset_results:
+            _log.info('Writing new expected result "%s"', port.relative_test_filename(output_path))
+            port.update_baseline(output_path, data)
+        else:
+            _log.info('Copying baseline to "%s"', port.relative_test_filename(output_path))
+            fs.copyfile(current_expected_path, output_path)
 
     def _handle_error(self, driver_output, reference_filename=None):
         """Returns test failures if some unusual errors happen in driver's run.
@@ -279,7 +279,7 @@ class SingleTestRunner(object):
             # Don't continue any more if we already have a crash.
             # In case of timeouts, we continue since we still want to see the text and image output.
             return TestResult(self._test_name, failures, driver_output.test_time, driver_output.has_stderr(),
-                              pid=driver_output.pid)
+                              pid=driver_output.pid, crash_site=driver_output.crash_site)
 
         is_testharness_test, testharness_failures = self._compare_testharness_test(driver_output, expected_driver_output)
         if is_testharness_test:
@@ -326,17 +326,61 @@ class SingleTestRunner(object):
         return True, []
 
     def _is_render_tree(self, text):
-        return text and 'layer at (0,0) size 800x600' in text
+        return text and 'layer at (0,0) size' in text
+
+    def _is_layer_tree(self, text):
+        return text and '{\n  "layers": [' in text
 
     def _compare_text(self, expected_text, actual_text):
-        failures = []
-        if (expected_text and actual_text and
-                # Assuming expected_text is already normalized.
-                self._port.do_text_results_differ(expected_text, self._get_normalized_output_text(actual_text))):
-            failures.append(test_failures.FailureTextMismatch())
-        elif actual_text and not expected_text:
-            failures.append(test_failures.FailureMissingResult())
-        return failures
+        if not actual_text:
+            return []
+        if not expected_text:
+            return [test_failures.FailureMissingResult()]
+
+        normalized_actual_text = self._get_normalized_output_text(actual_text)
+        # Assuming expected_text is already normalized.
+        if not self._port.do_text_results_differ(expected_text, normalized_actual_text):
+            return []
+
+        # Determine the text mismatch type
+
+        def remove_chars(text, chars):
+            for char in chars:
+                text = text.replace(char, '')
+            return text
+
+        def is_ng_name_mismatch(expected, actual):
+            if 'LayoutNGBlockFlow' not in actual:
+                return False
+            if not self._is_render_tree(actual) and not self._is_layer_tree(actual):
+                return False
+            processed = actual.replace('LayoutNGBlockFlow', 'LayoutBlockFlow').replace('LayoutNGListItem', 'LayoutListItem')
+            return not self._port.do_text_results_differ(expected, processed)
+
+        # LayoutNG name mismatch
+        if is_ng_name_mismatch(expected_text, normalized_actual_text):
+            return [test_failures.FailureLayoutNGNameMismatch()]
+
+        # General text mismatch
+        if self._port.do_text_results_differ(
+                remove_chars(expected_text, ' \t\n'),
+                remove_chars(normalized_actual_text, ' \t\n')):
+            return [test_failures.FailureTextMismatch()]
+
+        # Space-only mismatch
+        if not self._port.do_text_results_differ(
+                remove_chars(expected_text, ' \t'),
+                remove_chars(normalized_actual_text, ' \t')):
+            return [test_failures.FailureSpacesAndTabsTextMismatch()]
+
+        # Newline-only mismatch
+        if not self._port.do_text_results_differ(
+                remove_chars(expected_text, '\n'),
+                remove_chars(normalized_actual_text, '\n')):
+            return [test_failures.FailureLineBreaksTextMismatch()]
+
+        # Spaces and newlines
+        return [test_failures.FailureSpaceTabLineBreakTextMismatch()]
 
     def _compare_audio(self, expected_audio, actual_audio):
         failures = []
@@ -443,7 +487,7 @@ class SingleTestRunner(object):
         # and only really handle the first of the references in the result.
         reftest_type = list(set([reference_file[0] for reference_file in self._reference_files]))
         return TestResult(self._test_name, test_result.failures, total_test_time,
-                          test_result.has_stderr, reftest_type=reftest_type, pid=test_result.pid,
+                          test_result.has_stderr, reftest_type=reftest_type, pid=test_result.pid, crash_site=test_result.crash_site,
                           references=reference_test_names, has_repaint_overlay=test_result.has_repaint_overlay)
 
     # The returned TestResult always has 0 test_run_time. _run_reftest() calculates total_run_time from test outputs.
@@ -453,10 +497,11 @@ class SingleTestRunner(object):
         failures.extend(self._handle_error(actual_driver_output))
         if failures:
             # Don't continue any more if we already have crash or timeout.
-            return TestResult(self._test_name, failures, 0, has_stderr)
+            return TestResult(self._test_name, failures, 0, has_stderr, crash_site=actual_driver_output.crash_site)
         failures.extend(self._handle_error(reference_driver_output, reference_filename=reference_filename))
         if failures:
-            return TestResult(self._test_name, failures, 0, has_stderr, pid=actual_driver_output.pid)
+            return TestResult(self._test_name, failures, 0, has_stderr, pid=actual_driver_output.pid,
+                              crash_site=reference_driver_output.crash_site)
 
         if not actual_driver_output.image_hash:
             failures.append(test_failures.FailureReftestNoImageGenerated(reference_filename))

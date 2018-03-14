@@ -9,21 +9,25 @@
 
 #include "base/macros.h"
 #include "cc/raster/raster_buffer_provider.h"
-#include "cc/resources/resource_provider.h"
+#include "cc/resources/layer_tree_resource_provider.h"
 #include "gpu/command_buffer/common/sync_token.h"
 
-namespace cc {
+namespace viz {
 class ContextProvider;
+}
+
+namespace cc {
 
 class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
  public:
-  GpuRasterBufferProvider(ContextProvider* compositor_context_provider,
-                          ContextProvider* worker_context_provider,
-                          ResourceProvider* resource_provider,
+  GpuRasterBufferProvider(viz::ContextProvider* compositor_context_provider,
+                          viz::ContextProvider* worker_context_provider,
+                          LayerTreeResourceProvider* resource_provider,
                           bool use_distance_field_text,
                           int gpu_rasterization_msaa_sample_count,
-                          ResourceFormat preferred_tile_format,
-                          bool async_worker_context_enabled);
+                          viz::ResourceFormat preferred_tile_format,
+                          bool async_worker_context_enabled,
+                          bool enable_oop_rasterization);
   ~GpuRasterBufferProvider() override;
 
   // Overridden from RasterBufferProvider:
@@ -31,12 +35,12 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
       const Resource* resource,
       uint64_t resource_content_id,
       uint64_t previous_content_id) override;
-  void ReleaseBufferForRaster(std::unique_ptr<RasterBuffer> buffer) override;
   void OrderingBarrier() override;
-  ResourceFormat GetResourceFormat(bool must_support_alpha) const override;
+  void Flush() override;
+  viz::ResourceFormat GetResourceFormat(bool must_support_alpha) const override;
   bool IsResourceSwizzleRequired(bool must_support_alpha) const override;
   bool CanPartialRasterIntoProvidedResource() const override;
-  bool IsResourceReadyToDraw(ResourceId id) const override;
+  bool IsResourceReadyToDraw(viz::ResourceId id) const override;
   uint64_t SetReadyToDrawCallback(
       const ResourceProvider::ResourceIdArray& resource_ids,
       const base::Closure& callback,
@@ -58,9 +62,8 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
   class RasterBufferImpl : public RasterBuffer {
    public:
     RasterBufferImpl(GpuRasterBufferProvider* client,
-                     ResourceProvider* resource_provider,
-                     ResourceId resource_id,
-                     bool async_worker_context_enabled,
+                     LayerTreeResourceProvider* resource_provider,
+                     viz::ResourceId resource_id,
                      bool resource_has_previous_content);
     ~RasterBufferImpl() override;
 
@@ -87,13 +90,14 @@ class CC_EXPORT GpuRasterBufferProvider : public RasterBufferProvider {
     DISALLOW_COPY_AND_ASSIGN(RasterBufferImpl);
   };
 
-  ContextProvider* const compositor_context_provider_;
-  ContextProvider* const worker_context_provider_;
-  ResourceProvider* const resource_provider_;
+  viz::ContextProvider* const compositor_context_provider_;
+  viz::ContextProvider* const worker_context_provider_;
+  LayerTreeResourceProvider* const resource_provider_;
   const bool use_distance_field_text_;
   const int msaa_sample_count_;
-  const ResourceFormat preferred_tile_format_;
+  const viz::ResourceFormat preferred_tile_format_;
   const bool async_worker_context_enabled_;
+  const bool enable_oop_rasterization_;
 
   std::set<RasterBufferImpl*> pending_raster_buffers_;
 

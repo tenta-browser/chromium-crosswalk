@@ -23,7 +23,6 @@
 #include "chrome/browser/ui/user_manager.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
-#include "components/signin/core/common/profile_management_switches.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
@@ -66,12 +65,8 @@ class UserManagerModalHost : public web_modal::WebContentsModalDialogHost {
       : host_view_(host_view) {}
 
   gfx::Size GetMaximumDialogSize() override {
-    return switches::UsePasswordSeparatedSigninFlow()
-               ? gfx::Size(UserManagerProfileDialog::kDialogWidth,
-                           UserManagerProfileDialog::kDialogHeight)
-               : gfx::Size(
-                     UserManagerProfileDialog::kPasswordCombinedDialogWidth,
-                     UserManagerProfileDialog::kPasswordCombinedDialogHeight);
+    return gfx::Size(UserManagerProfileDialog::kDialogWidth,
+                     UserManagerProfileDialog::kDialogHeight);
   }
 
   ~UserManagerModalHost() override {}
@@ -418,7 +413,6 @@ class UserManagerProfileDialogDelegate
 // static
 void UserManager::Show(
     const base::FilePath& profile_path_to_focus,
-    profiles::UserManagerTutorialMode tutorial_mode,
     profiles::UserManagerAction user_manager_action) {
   DCHECK(profile_path_to_focus != ProfileManager::GetGuestProfilePath());
 
@@ -442,7 +436,6 @@ void UserManager::Show(
   // from the guest profile.
   profiles::CreateSystemProfileForUserManager(
       profile_path_to_focus,
-      tutorial_mode,
       user_manager_action,
       base::Bind(&UserManagerMac::OnSystemProfileCreated, base::Time::Now()));
 }
@@ -495,7 +488,7 @@ void UserManagerProfileDialog::ShowReauthDialog(
   // This method should only be called if the user manager is already showing.
   if (!UserManager::IsShowing())
     return;
-  GURL url = signin::GetReauthURLWithEmail(
+  GURL url = signin::GetReauthURLWithEmailForDialog(
       signin_metrics::AccessPoint::ACCESS_POINT_USER_MANAGER, reason, email);
   instance_->ShowDialog(browser_context, email, url);
 }
@@ -503,13 +496,16 @@ void UserManagerProfileDialog::ShowReauthDialog(
 // static
 void UserManagerProfileDialog::ShowSigninDialog(
     content::BrowserContext* browser_context,
-    const base::FilePath& profile_path) {
+    const base::FilePath& profile_path,
+    signin_metrics::Reason reason) {
   if (!UserManager::IsShowing())
     return;
+  DCHECK(reason ==
+             signin_metrics::Reason::REASON_FORCED_SIGNIN_PRIMARY_ACCOUNT ||
+         reason == signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT);
   instance_->SetSigninProfilePath(profile_path);
-  GURL url = signin::GetPromoURL(
-      signin_metrics::AccessPoint::ACCESS_POINT_USER_MANAGER,
-      signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT, true, true);
+  GURL url = signin::GetPromoURLForDialog(
+      signin_metrics::AccessPoint::ACCESS_POINT_USER_MANAGER, reason, true);
   instance_->ShowDialog(browser_context, std::string(), url);
 }
 

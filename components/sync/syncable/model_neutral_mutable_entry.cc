@@ -5,6 +5,7 @@
 #include "components/sync/syncable/model_neutral_mutable_entry.h"
 
 #include <memory>
+#include <utility>
 
 #include "components/sync/base/hash_util.h"
 #include "components/sync/base/unique_position.h"
@@ -37,12 +38,12 @@ ModelNeutralMutableEntry::ModelNeutralMutableEntry(BaseWriteTransaction* trans,
   kernel->put(IS_DEL, true);
   // We match the database defaults here
   kernel->put(BASE_VERSION, CHANGES_VERSION);
-  if (!trans->directory()->InsertEntry(trans, kernel.get())) {
+  kernel_ = kernel.get();
+  if (!trans->directory()->InsertEntry(trans, std::move(kernel))) {
+    kernel_ = nullptr;
     return;  // Failed inserting.
   }
-  trans->TrackChangesTo(kernel.get());
-
-  kernel_ = kernel.release();
+  trans->TrackChangesTo(kernel_);
 }
 
 ModelNeutralMutableEntry::ModelNeutralMutableEntry(BaseWriteTransaction* trans,
@@ -74,14 +75,13 @@ ModelNeutralMutableEntry::ModelNeutralMutableEntry(BaseWriteTransaction* trans,
   kernel->put(IS_DIR, true);
 
   kernel->mark_dirty(&trans->directory()->kernel()->dirty_metahandles);
+  kernel_ = kernel.get();
 
-  if (!trans->directory()->InsertEntry(trans, kernel.get())) {
+  if (!trans->directory()->InsertEntry(trans, std::move(kernel))) {
+    kernel_ = nullptr;
     return;  // Failed inserting.
   }
-
-  trans->TrackChangesTo(kernel.get());
-
-  kernel_ = kernel.release();
+  trans->TrackChangesTo(kernel_);
 }
 
 ModelNeutralMutableEntry::ModelNeutralMutableEntry(BaseWriteTransaction* trans,
@@ -176,7 +176,7 @@ bool ModelNeutralMutableEntry::PutIsUnsynced(bool value) {
       }
     } else {
       if (!SyncAssert(1U == index->erase(kernel_->ref(META_HANDLE)), FROM_HERE,
-                      "Entry Not succesfully erased",
+                      "Entry Not successfully erased",
                       base_write_transaction())) {
         return false;
       }
@@ -208,7 +208,7 @@ bool ModelNeutralMutableEntry::PutIsUnappliedUpdate(bool value) {
       }
     } else {
       if (!SyncAssert(1U == index->erase(kernel_->ref(META_HANDLE)), FROM_HERE,
-                      "Entry Not succesfully erased",
+                      "Entry Not successfully erased",
                       base_write_transaction())) {
         return false;
       }
@@ -339,7 +339,11 @@ void ModelNeutralMutableEntry::PutUniqueBookmarkTag(const std::string& tag) {
 void ModelNeutralMutableEntry::PutServerSpecifics(
     const sync_pb::EntitySpecifics& value) {
   DCHECK(kernel_);
+
+  // Purposefully crash if we have client only data, as this could result in
+  // sending password in plain text.
   CHECK(!value.password().has_client_only_encrypted_data());
+
   // TODO(ncarter): This is unfortunately heavyweight.  Can we do
   // better?
   const std::string& serialized_value = value.SerializeAsString();
@@ -379,7 +383,11 @@ void ModelNeutralMutableEntry::PutServerSpecifics(
 void ModelNeutralMutableEntry::PutBaseServerSpecifics(
     const sync_pb::EntitySpecifics& value) {
   DCHECK(kernel_);
+
+  // Purposefully crash if we have client only data, as this could result in
+  // sending password in plain text.
   CHECK(!value.password().has_client_only_encrypted_data());
+
   // TODO(ncarter): This is unfortunately heavyweight.  Can we do
   // better?
   const std::string& serialized_value = value.SerializeAsString();

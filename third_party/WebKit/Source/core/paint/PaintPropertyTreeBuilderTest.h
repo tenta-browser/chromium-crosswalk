@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "core/layout/LayoutTestHelper.h"
+#ifndef PaintPropertyTreeBuilderTest_h
+#define PaintPropertyTreeBuilderTest_h
+
+#include "core/paint/PaintControllerPaintTest.h"
 #include "platform/testing/RuntimeEnabledFeaturesTestHelpers.h"
 #include "platform/testing/UnitTestHelpers.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -15,26 +18,21 @@ class ScrollPaintPropertyNode;
 class LayoutPoint;
 
 typedef bool TestParamRootLayerScrolling;
-class PaintPropertyTreeBuilderTest
-    : public ::testing::WithParamInterface<TestParamRootLayerScrolling>,
-      private ScopedSlimmingPaintV2ForTest,
-      private ScopedRootLayerScrollingForTest,
-      public RenderingTest {
+class PaintPropertyTreeBuilderTest : public PaintControllerPaintTest {
  public:
   PaintPropertyTreeBuilderTest()
-      : ScopedSlimmingPaintV2ForTest(true),
-        ScopedRootLayerScrollingForTest(GetParam()),
-        RenderingTest(SingleChildLocalFrameClient::Create()) {}
+      : PaintControllerPaintTest(SingleChildLocalFrameClient::Create()) {}
 
  protected:
   void LoadTestData(const char* file_name);
 
   // The following helpers return paint property nodes associated with the main
-  // FrameView, accounting for differences from the RootLayerScrolls setting.
+  // LocalFrameView, accounting for differences from the RootLayerScrolls
+  // setting.
   const TransformPaintPropertyNode* FramePreTranslation();
   const TransformPaintPropertyNode* FrameScrollTranslation();
   const ClipPaintPropertyNode* FrameContentClip();
-  const ScrollPaintPropertyNode* FrameScroll(FrameView* = nullptr);
+  const ScrollPaintPropertyNode* FrameScroll(LocalFrameView* = nullptr);
 
   // Return the local border box's paint offset. For more details, see
   // ObjectPaintProperties::localBorderBoxProperties().
@@ -44,7 +42,8 @@ class PaintPropertyTreeBuilderTest
 
  private:
   void SetUp() override;
-  void TearDown() override;
 };
 
 }  // namespace blink
+
+#endif  // PaintPropertyTreeBuilderTest_h

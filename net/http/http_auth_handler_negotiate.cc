@@ -49,8 +49,7 @@ HttpAuthHandlerNegotiate::Factory::Factory()
       is_unsupported_(false) {
 }
 
-HttpAuthHandlerNegotiate::Factory::~Factory() {
-}
+HttpAuthHandlerNegotiate::Factory::~Factory() = default;
 
 void HttpAuthHandlerNegotiate::Factory::set_host_resolver(
     HostResolver* resolver) {
@@ -92,7 +91,12 @@ int HttpAuthHandlerNegotiate::Factory::CreateAuthHandler(
   std::unique_ptr<HttpAuthHandler> tmp_handler(
       new HttpAuthHandlerNegotiate(http_auth_preferences(), resolver_));
 #elif defined(OS_POSIX)
-  if (is_unsupported_)
+  bool allow_gssapi_library_load = true;
+#if defined(OS_CHROMEOS)
+  allow_gssapi_library_load = http_auth_preferences() &&
+                              http_auth_preferences()->AllowGssapiLibraryLoad();
+#endif
+  if (is_unsupported_ || !allow_gssapi_library_load)
     return ERR_UNSUPPORTED_AUTH_SCHEME;
   if (!auth_library_->Init()) {
     is_unsupported_ = true;
@@ -134,8 +138,7 @@ HttpAuthHandlerNegotiate::HttpAuthHandlerNegotiate(
       http_auth_preferences_(prefs) {
 }
 
-HttpAuthHandlerNegotiate::~HttpAuthHandlerNegotiate() {
-}
+HttpAuthHandlerNegotiate::~HttpAuthHandlerNegotiate() = default;
 
 std::string HttpAuthHandlerNegotiate::CreateSPN(const AddressList& address_list,
                                                 const GURL& origin) {

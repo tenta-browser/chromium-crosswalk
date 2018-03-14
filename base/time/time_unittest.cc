@@ -17,6 +17,10 @@
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+#if defined(OS_IOS)
+#include "base/ios/ios_util.h"
+#endif
+
 namespace base {
 
 namespace {
@@ -111,10 +115,66 @@ class TimeTest : public testing::Test {
   Time comparison_time_pdt_;
 };
 
-// Test conversions to/from time_t and exploding/unexploding.
+// Test conversion to/from time_t.
 TEST_F(TimeTest, TimeT) {
+  EXPECT_EQ(10, Time().FromTimeT(10).ToTimeT());
+  EXPECT_EQ(10.0, Time().FromTimeT(10).ToDoubleT());
+
+  // Conversions of 0 should stay 0.
+  EXPECT_EQ(0, Time().ToTimeT());
+  EXPECT_EQ(0, Time::FromTimeT(0).ToInternalValue());
+}
+
+// Test conversions to/from time_t and exploding/unexploding (utc time).
+TEST_F(TimeTest, UTCTimeT) {
   // C library time and exploded time.
-  time_t now_t_1 = time(NULL);
+  time_t now_t_1 = time(nullptr);
+  struct tm tms;
+#if defined(OS_WIN)
+  gmtime_s(&tms, &now_t_1);
+#elif defined(OS_POSIX)
+  gmtime_r(&now_t_1, &tms);
+#endif
+
+  // Convert to ours.
+  Time our_time_1 = Time::FromTimeT(now_t_1);
+  Time::Exploded exploded;
+  our_time_1.UTCExplode(&exploded);
+
+  // This will test both our exploding and our time_t -> Time conversion.
+  EXPECT_EQ(tms.tm_year + 1900, exploded.year);
+  EXPECT_EQ(tms.tm_mon + 1, exploded.month);
+  EXPECT_EQ(tms.tm_mday, exploded.day_of_month);
+  EXPECT_EQ(tms.tm_hour, exploded.hour);
+  EXPECT_EQ(tms.tm_min, exploded.minute);
+  EXPECT_EQ(tms.tm_sec, exploded.second);
+
+  // Convert exploded back to the time struct.
+  Time our_time_2;
+  EXPECT_TRUE(Time::FromUTCExploded(exploded, &our_time_2));
+  EXPECT_TRUE(our_time_1 == our_time_2);
+
+  time_t now_t_2 = our_time_2.ToTimeT();
+  EXPECT_EQ(now_t_1, now_t_2);
+}
+
+// Test conversions to/from time_t and exploding/unexploding (local time).
+TEST_F(TimeTest, LocalTimeT) {
+#if defined(OS_IOS) && TARGET_OS_SIMULATOR
+  // The function CFTimeZoneCopySystem() fails to determine the system timezone
+  // when running iOS 11.0 simulator on an host running High Sierra and return
+  // the "GMT" timezone. This causes Time::LocalExplode and localtime_r values
+  // to differ by the local timezone offset. Disable the test if simulating
+  // iOS 10.0 as it is not possible to check the version of the host mac.
+  // TODO(crbug.com/782033): remove this once support for iOS pre-11.0 is
+  // dropped or when the bug in CFTimeZoneCopySystem() is fixed.
+  if (ios::IsRunningOnIOS10OrLater() && !ios::IsRunningOnIOS11OrLater()) {
+    return;
+  }
+#endif
+
+  // C library time and exploded time.
+  time_t now_t_1 = time(nullptr);
   struct tm tms;
 #if defined(OS_WIN)
   localtime_s(&tms, &now_t_1);
@@ -142,13 +202,6 @@ TEST_F(TimeTest, TimeT) {
 
   time_t now_t_2 = our_time_2.ToTimeT();
   EXPECT_EQ(now_t_1, now_t_2);
-
-  EXPECT_EQ(10, Time().FromTimeT(10).ToTimeT());
-  EXPECT_EQ(10.0, Time().FromTimeT(10).ToDoubleT());
-
-  // Conversions of 0 should stay 0.
-  EXPECT_EQ(0, Time().ToTimeT());
-  EXPECT_EQ(0, Time::FromTimeT(0).ToInternalValue());
 }
 
 // Test conversions to/from javascript time.
@@ -631,6 +684,48 @@ TEST_F(TimeTest, FromLocalExplodedCrashOnAndroid) {
 }
 #endif  // OS_ANDROID
 
+TEST_F(TimeTest, FromExploded_MinMax) {
+  Time::Exploded exploded = {0};
+  exploded.month = 1;
+  exploded.day_of_month = 1;
+
+  Time parsed_time;
+
+  if (Time::kExplodedMinYear != std::numeric_limits<int>::min()) {
+    exploded.year = Time::kExplodedMinYear;
+    EXPECT_TRUE(Time::FromUTCExploded(exploded, &parsed_time));
+#if !defined(OS_WIN)
+    // On Windows, January 1, 1601 00:00:00 is actually the null time.
+    EXPECT_FALSE(parsed_time.is_null());
+#endif
+
+#if !defined(OS_ANDROID) && !defined(OS_MACOSX)
+    // The dates earlier than |kExplodedMinYear| that don't work are OS version
+    // dependent on Android and Mac (for example, macOS 10.13 seems to support
+    // dates before 1902).
+    exploded.year--;
+    EXPECT_FALSE(Time::FromUTCExploded(exploded, &parsed_time));
+    EXPECT_TRUE(parsed_time.is_null());
+#endif
+  }
+
+  if (Time::kExplodedMaxYear != std::numeric_limits<int>::max()) {
+    exploded.year = Time::kExplodedMaxYear;
+    exploded.month = 12;
+    exploded.day_of_month = 31;
+    exploded.hour = 23;
+    exploded.minute = 59;
+    exploded.second = 59;
+    exploded.millisecond = 999;
+    EXPECT_TRUE(Time::FromUTCExploded(exploded, &parsed_time));
+    EXPECT_FALSE(parsed_time.is_null());
+
+    exploded.year++;
+    EXPECT_FALSE(Time::FromUTCExploded(exploded, &parsed_time));
+    EXPECT_TRUE(parsed_time.is_null());
+  }
+}
+
 TEST(TimeTicks, Deltas) {
   for (int index = 0; index < 50; index++) {
     TimeTicks ticks_start = TimeTicks::Now();
@@ -902,7 +997,7 @@ TEST(TimeDelta, Max) {
 }
 
 bool IsMin(TimeDelta delta) {
-  return (-delta).is_max();
+  return delta.is_min();
 }
 
 TEST(TimeDelta, MaxConversions) {
@@ -928,6 +1023,7 @@ TEST(TimeDelta, MaxConversions) {
   EXPECT_TRUE(t.is_max());
 
   int64_t max_int = std::numeric_limits<int64_t>::max();
+  int64_t min_int = std::numeric_limits<int64_t>::min();
 
   t = TimeDelta::FromSeconds(max_int / Time::kMicrosecondsPerSecond + 1);
   EXPECT_TRUE(t.is_max());
@@ -938,22 +1034,23 @@ TEST(TimeDelta, MaxConversions) {
   t = TimeDelta::FromMicroseconds(max_int);
   EXPECT_TRUE(t.is_max());
 
-  t = TimeDelta::FromSeconds(-max_int / Time::kMicrosecondsPerSecond - 1);
+  t = TimeDelta::FromSeconds(min_int / Time::kMicrosecondsPerSecond - 1);
   EXPECT_TRUE(IsMin(t));
 
-  t = TimeDelta::FromMilliseconds(-max_int / Time::kMillisecondsPerSecond - 1);
+  t = TimeDelta::FromMilliseconds(min_int / Time::kMillisecondsPerSecond - 1);
   EXPECT_TRUE(IsMin(t));
 
-  t = TimeDelta::FromMicroseconds(-max_int);
+  t = TimeDelta::FromMicroseconds(min_int);
   EXPECT_TRUE(IsMin(t));
 
-  t = -TimeDelta::FromMicroseconds(std::numeric_limits<int64_t>::min());
-  EXPECT_FALSE(IsMin(t));
+  t = TimeDelta::FromMicroseconds(std::numeric_limits<int64_t>::min());
+  EXPECT_TRUE(IsMin(t));
 
   t = TimeDelta::FromSecondsD(std::numeric_limits<double>::infinity());
   EXPECT_TRUE(t.is_max());
 
   double max_d = max_int;
+  double min_d = min_int;
 
   t = TimeDelta::FromSecondsD(max_d / Time::kMicrosecondsPerSecond + 1);
   EXPECT_TRUE(t.is_max());
@@ -964,10 +1061,10 @@ TEST(TimeDelta, MaxConversions) {
   t = TimeDelta::FromMillisecondsD(max_d / Time::kMillisecondsPerSecond * 2);
   EXPECT_TRUE(t.is_max());
 
-  t = TimeDelta::FromSecondsD(-max_d / Time::kMicrosecondsPerSecond - 1);
+  t = TimeDelta::FromSecondsD(min_d / Time::kMicrosecondsPerSecond - 1);
   EXPECT_TRUE(IsMin(t));
 
-  t = TimeDelta::FromMillisecondsD(-max_d / Time::kMillisecondsPerSecond * 2);
+  t = TimeDelta::FromMillisecondsD(min_d / Time::kMillisecondsPerSecond * 2);
   EXPECT_TRUE(IsMin(t));
 }
 
@@ -1046,7 +1143,8 @@ TEST(TimeDelta, NumericOperators) {
 TEST(TimeDelta, Overflows) {
   // Some sanity checks.
   EXPECT_TRUE(TimeDelta::Max().is_max());
-  EXPECT_TRUE(IsMin(-TimeDelta::Max()));
+  EXPECT_LT(-TimeDelta::Max(), TimeDelta());
+  EXPECT_GT(-TimeDelta::Max(), TimeDelta::Min());
   EXPECT_GT(TimeDelta(), -TimeDelta::Max());
 
   TimeDelta large_delta = TimeDelta::Max() - TimeDelta::FromMilliseconds(1);

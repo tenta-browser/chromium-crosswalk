@@ -52,11 +52,11 @@ class Nullable {
   }
 
   const T& Get() const {
-    ASSERT(!is_null_);
+    DCHECK(!is_null_);
     return value_;
   }
   T& Get() {
-    ASSERT(!is_null_);
+    DCHECK(!is_null_);
     return value_;
   }
   bool IsNull() const { return is_null_; }
@@ -68,7 +68,9 @@ class Nullable {
            (!is_null_ && !other.is_null_ && value_ == other.value_);
   }
 
-  DEFINE_INLINE_TRACE() { TraceIfNeeded<T>::Trace(visitor, value_); }
+  void Trace(blink::Visitor* visitor) {
+    TraceIfNeeded<T>::Trace(visitor, value_);
+  }
 
  private:
   T value_;

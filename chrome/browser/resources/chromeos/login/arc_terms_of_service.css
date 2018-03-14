@@ -32,6 +32,12 @@ p {
   display: none;
 }
 
+.arc-tos-loading #arc-tos-accept-button-md,
+.arc-tos-loading #arc-tos-skip-button-md,
+.arc-tos-loading #arc-tos-retry-button-md {
+  pointer-events: none;
+}
+
 .arc-tos-loading p,
 .error p {
   color: rgba(0, 0, 0, 0.87);
@@ -60,8 +66,7 @@ p {
 }
 
 #arc-tos-skip-button-md {
-  --oobe-text-button-border-color: rgba(0, 0, 0, 0.1);
-   color: rgba(0, 0, 0, 0.54);
+  color: rgba(0, 0, 0, 0.54);
 }
 
 #arc-tos-view-md {
@@ -69,6 +74,7 @@ p {
   height: 10px;
   margin: auto;
   padding: 0;
+  width: 638px;
 }
 
 #arc-tos-view-container-md {
@@ -86,5 +92,5 @@ p {
 
 #arc-tos-accept-button-md,
 #arc-tos-retry-button-md {
-  -webkit-padding-end: 12px;
+  -webkit-padding-end: 18px;
 }

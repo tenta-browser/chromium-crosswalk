@@ -27,6 +27,7 @@ class SupervisedUserNavigationThrottle : public content::NavigationThrottle {
   // content::NavigationThrottle implementation:
   ThrottleCheckResult WillStartRequest() override;
   ThrottleCheckResult WillRedirectRequest() override;
+  const char* GetNameForLogging() override;
 
  private:
   SupervisedUserNavigationThrottle(
@@ -50,10 +51,6 @@ class SupervisedUserNavigationThrottle : public content::NavigationThrottle {
                    bool uncertain);
 
   void OnInterstitialResult(bool continue_request);
-
-  void Resume();
-
-  void Cancel();
 
   const SupervisedUserURLFilter* url_filter_;
   bool deferred_;

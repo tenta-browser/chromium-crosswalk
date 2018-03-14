@@ -11,30 +11,118 @@
 #include "base/bind_helpers.h"
 #include "base/i18n/time_formatting.h"
 #include "base/json/json_writer.h"
+#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/values.h"
 #include "chrome/browser/certificate_viewer.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/certificate_dialogs.h"
 #include "chrome/browser/ui/webui/certificate_viewer_ui.h"
 #include "chrome/browser/ui/webui/constrained_web_dialog_ui.h"
-#include "chrome/common/net/x509_certificate_model.h"
+#include "chrome/common/net/x509_certificate_model_nss.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
+#include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/web_contents.h"
+#include "net/cert/x509_util_nss.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/geometry/size.h"
 
 using content::WebContents;
 using content::WebUIMessageHandler;
 
+namespace {
+
+// Helper class for building a Value representation of a certificate. The class
+// gathers data for a single node of the representation tree and builds a
+// DictionaryValue out of that.
+class CertNodeBuilder {
+ public:
+  // Starts the node with "label" set to |label|.
+  explicit CertNodeBuilder(base::StringPiece label);
+
+  // Convenience version: Converts |label_id| to the corresponding resource
+  // string, then delegates to the other constructor.
+  explicit CertNodeBuilder(int label_id);
+
+  // Builder methods all return |*this| so that they can be chained in single
+  // expressions.
+
+  // Sets the "payload.val" field. Call this at most once.
+  CertNodeBuilder& Payload(base::StringPiece payload);
+
+  // Adds |child| in the list keyed "children". Can be called multiple times.
+  CertNodeBuilder& Child(std::unique_ptr<base::DictionaryValue> child);
+
+  // Similar to Child, but if the argument is null, then this does not add
+  // anything.
+  CertNodeBuilder& ChildIfNotNull(std::unique_ptr<base::DictionaryValue> child);
+
+  // Creates a DictionaryValue representation of the collected information. Only
+  // call this once.
+  std::unique_ptr<base::DictionaryValue> Build();
+
+ private:
+  base::DictionaryValue node_;
+  base::ListValue children_;
+  // |built_| is false until Build() is called. Once it is |true|, |node_| and
+  // |children_| are no longer valid for use.
+  bool built_ = false;
+
+  DISALLOW_COPY_AND_ASSIGN(CertNodeBuilder);
+};
+
+CertNodeBuilder::CertNodeBuilder(base::StringPiece label) {
+  node_.SetString("label", label);
+}
+
+CertNodeBuilder::CertNodeBuilder(int label_id)
+    : CertNodeBuilder(l10n_util::GetStringUTF8(label_id)) {}
+
+CertNodeBuilder& CertNodeBuilder::Payload(base::StringPiece payload) {
+  DCHECK(!node_.HasKey("payload.val"));
+  node_.SetString("payload.val", payload);
+  return *this;
+}
+
+CertNodeBuilder& CertNodeBuilder::Child(
+    std::unique_ptr<base::DictionaryValue> child) {
+  children_.Append(std::move(child));
+  return *this;
+}
+
+CertNodeBuilder& CertNodeBuilder::ChildIfNotNull(
+    std::unique_ptr<base::DictionaryValue> child) {
+  if (child)
+    return Child(std::move(child));
+  return *this;
+}
+
+std::unique_ptr<base::DictionaryValue> CertNodeBuilder::Build() {
+  DCHECK(!built_);
+  if (!children_.empty()) {
+    node_.SetKey("children", std::move(children_));
+  }
+  built_ = true;
+  return base::MakeUnique<base::DictionaryValue>(std::move(node_));
+}
+
+}  // namespace
+
 // Shows a certificate using the WebUI certificate viewer.
 void ShowCertificateViewer(WebContents* web_contents,
                            gfx::NativeWindow parent,
                            net::X509Certificate* cert) {
-  CertificateViewerDialog* dialog = new CertificateViewerDialog(cert);
+  net::ScopedCERTCertificateList nss_certs =
+      net::x509_util::CreateCERTCertificateListFromX509Certificate(cert);
+  if (nss_certs.empty())
+    return;
+  CertificateViewerDialog* dialog =
+      new CertificateViewerDialog(std::move(nss_certs));
   dialog->Show(web_contents, parent);
 }
 
@@ -42,13 +130,13 @@ void ShowCertificateViewer(WebContents* web_contents,
 // CertificateViewerDialog
 
 CertificateViewerModalDialog::CertificateViewerModalDialog(
-    net::X509Certificate* cert)
-    : cert_(cert), webui_(NULL), window_(NULL) {
+    net::ScopedCERTCertificateList certs)
+    : nss_certs_(std::move(certs)), webui_(NULL), window_(NULL) {
   // Construct the dialog title from the certificate.
   title_ = l10n_util::GetStringFUTF16(
       IDS_CERT_INFO_DIALOG_TITLE,
       base::UTF8ToUTF16(
-          x509_certificate_model::GetTitle(cert_->os_cert_handle())));
+          x509_certificate_model::GetTitle(nss_certs_.front().get())));
 }
 
 CertificateViewerModalDialog::~CertificateViewerModalDialog() {
@@ -86,7 +174,8 @@ GURL CertificateViewerModalDialog::GetDialogContentURL() const {
 void CertificateViewerModalDialog::GetWebUIMessageHandlers(
     std::vector<WebUIMessageHandler*>* handlers) const {
   handlers->push_back(new CertificateViewerDialogHandler(
-      const_cast<CertificateViewerModalDialog*>(this), cert_.get()));
+      const_cast<CertificateViewerModalDialog*>(this),
+      net::x509_util::DupCERTCertificateList(nss_certs_)));
 }
 
 void CertificateViewerModalDialog::GetDialogSize(gfx::Size* size) const {
@@ -101,14 +190,7 @@ std::string CertificateViewerModalDialog::GetDialogArgs() const {
   // Certificate information. The keys in this dictionary's general key
   // correspond to the IDs in the Html page.
   base::DictionaryValue cert_info;
-  net::X509Certificate::OSCertHandle cert_hnd = cert_->os_cert_handle();
-
-  // Get the certificate chain.
-  net::X509Certificate::OSCertHandles cert_chain;
-  cert_chain.push_back(cert_->os_cert_handle());
-  const net::X509Certificate::OSCertHandles& certs =
-      cert_->GetIntermediateCertificates();
-  cert_chain.insert(cert_chain.end(), certs.begin(), certs.end());
+  CERTCertificate* cert_hnd = nss_certs_.front().get();
 
   // Certificate usage.
   std::vector<std::string> usages;
@@ -126,10 +208,11 @@ std::string CertificateViewerModalDialog::GetDialogArgs() const {
   // Standard certificate details.
   const std::string alternative_text =
       l10n_util::GetStringUTF8(IDS_CERT_INFO_FIELD_NOT_PRESENT);
-  cert_info.SetString("general.title", l10n_util::GetStringFUTF8(
-      IDS_CERT_INFO_DIALOG_TITLE,
-      base::UTF8ToUTF16(x509_certificate_model::GetTitle(
-          cert_chain.front()))));
+  cert_info.SetString(
+      "general.title",
+      l10n_util::GetStringFUTF8(
+          IDS_CERT_INFO_DIALOG_TITLE,
+          base::UTF8ToUTF16(x509_certificate_model::GetTitle(cert_hnd))));
 
   // Issued to information.
   cert_info.SetString("general.issued-cn",
@@ -169,25 +252,26 @@ std::string CertificateViewerModalDialog::GetDialogArgs() const {
       x509_certificate_model::HashCertSHA1(cert_hnd));
 
   // Certificate hierarchy is constructed from bottom up.
-  base::ListValue* children = NULL;
+  std::unique_ptr<base::ListValue> children;
   int index = 0;
-  for (net::X509Certificate::OSCertHandles::const_iterator i =
-      cert_chain.begin(); i != cert_chain.end(); ++i, ++index) {
+  for (net::ScopedCERTCertificateList::const_iterator i = nss_certs_.begin();
+       i != nss_certs_.end(); ++i, ++index) {
     std::unique_ptr<base::DictionaryValue> cert_node(
         new base::DictionaryValue());
     base::ListValue cert_details;
-    cert_node->SetString("label", x509_certificate_model::GetTitle(*i).c_str());
+    cert_node->SetString("label",
+                         x509_certificate_model::GetTitle(i->get()).c_str());
     cert_node->SetDouble("payload.index", index);
     // Add the child from the previous iteration.
     if (children)
-      cert_node->Set("children", children);
+      cert_node->Set("children", std::move(children));
 
     // Add this node to the children list for the next iteration.
-    children = new base::ListValue();
+    children = base::MakeUnique<base::ListValue>();
     children->Append(std::move(cert_node));
   }
   // Set the last node as the top of the certificate hierarchy.
-  cert_info.Set("hierarchy", children);
+  cert_info.Set("hierarchy", std::move(children));
 
   base::JSONWriter::Write(cert_info, &data);
 
@@ -216,10 +300,9 @@ bool CertificateViewerModalDialog::ShouldShowDialogTitle() const {
 ////////////////////////////////////////////////////////////////////////////////
 // CertificateViewerDialog
 
-CertificateViewerDialog::CertificateViewerDialog(net::X509Certificate* cert)
-    : CertificateViewerModalDialog(cert),
-      dialog_(NULL) {
-}
+CertificateViewerDialog::CertificateViewerDialog(
+    net::ScopedCERTCertificateList certs)
+    : CertificateViewerModalDialog(std::move(certs)), dialog_(NULL) {}
 
 CertificateViewerDialog::~CertificateViewerDialog() {
 }
@@ -230,6 +313,13 @@ void CertificateViewerDialog::Show(WebContents* web_contents,
   // on the title for Aura ConstrainedWebDialogUI.
   dialog_ = ShowConstrainedWebDialog(web_contents->GetBrowserContext(), this,
                                      web_contents);
+
+  // Clear the zoom level for the dialog so that it is not affected by the page
+  // zoom setting.
+  content::WebContents* dialog_web_contents = dialog_->GetWebContents();
+  const GURL dialog_url = GetDialogContentURL();
+  content::HostZoomMap::Get(dialog_web_contents->GetSiteInstance())
+      ->SetZoomLevelForHostAndScheme(dialog_url.scheme(), dialog_url.host(), 0);
 }
 
 gfx::NativeWindow CertificateViewerDialog::GetNativeWebContentsModalDialog() {
@@ -249,13 +339,8 @@ ui::ModalType CertificateViewerDialog::GetDialogModalType() const {
 
 CertificateViewerDialogHandler::CertificateViewerDialogHandler(
     CertificateViewerModalDialog* dialog,
-    net::X509Certificate* cert)
-    : cert_(cert), dialog_(dialog) {
-  cert_chain_.push_back(cert_->os_cert_handle());
-  const net::X509Certificate::OSCertHandles& certs =
-      cert_->GetIntermediateCertificates();
-  cert_chain_.insert(cert_chain_.end(), certs.begin(), certs.end());
-}
+    net::ScopedCERTCertificateList cert_chain)
+    : dialog_(dialog), cert_chain_(std::move(cert_chain)) {}
 
 CertificateViewerDialogHandler::~CertificateViewerDialogHandler() {
 }
@@ -289,183 +374,117 @@ void CertificateViewerDialogHandler::RequestCertificateFields(
   if (cert_index < 0)
     return;
 
-  net::X509Certificate::OSCertHandle cert = cert_chain_[cert_index];
+  CERTCertificate* cert = cert_chain_[cert_index].get();
 
-  // Main certificate fields.
-  auto cert_fields = base::MakeUnique<base::ListValue>();
-  auto node_details = base::MakeUnique<base::DictionaryValue>();
-  node_details->SetString("label",
-      l10n_util::GetStringUTF8(IDS_CERT_DETAILS_VERSION));
+  CertNodeBuilder version_node(IDS_CERT_DETAILS_VERSION);
   std::string version = x509_certificate_model::GetVersion(cert);
   if (!version.empty()) {
-    node_details->SetString("payload.val",
-        l10n_util::GetStringFUTF8(IDS_CERT_DETAILS_VERSION_FORMAT,
-                                  base::UTF8ToUTF16(version)));
+    version_node.Payload(l10n_util::GetStringFUTF8(
+        IDS_CERT_DETAILS_VERSION_FORMAT, base::UTF8ToUTF16(version)));
   }
-  cert_fields->Append(std::move(node_details));
 
-  node_details = base::MakeUnique<base::DictionaryValue>();
-  node_details->SetString("label",
-      l10n_util::GetStringUTF8(IDS_CERT_DETAILS_SERIAL_NUMBER));
-  node_details->SetString("payload.val",
-      x509_certificate_model::GetSerialNumberHexified(cert,
-          l10n_util::GetStringUTF8(IDS_CERT_INFO_FIELD_NOT_PRESENT)));
-  cert_fields->Append(std::move(node_details));
-
-  node_details = base::MakeUnique<base::DictionaryValue>();
-  node_details->SetString("label",
-      l10n_util::GetStringUTF8(IDS_CERT_DETAILS_CERTIFICATE_SIG_ALG));
-  node_details->SetString("payload.val",
-      x509_certificate_model::ProcessSecAlgorithmSignature(cert));
-  cert_fields->Append(std::move(node_details));
-
-  node_details = base::MakeUnique<base::DictionaryValue>();
-  node_details->SetString("label",
-      l10n_util::GetStringUTF8(IDS_CERT_DETAILS_ISSUER));
-  node_details->SetString("payload.val",
-      x509_certificate_model::GetIssuerName(cert));
-  cert_fields->Append(std::move(node_details));
-
-  // Validity period.
-  auto cert_sub_fields = base::MakeUnique<base::ListValue>();
-
-  auto sub_node_details = base::MakeUnique<base::DictionaryValue>();
-  sub_node_details->SetString(
-      "label", l10n_util::GetStringUTF8(IDS_CERT_DETAILS_NOT_BEFORE));
-
-  auto alt_node_details = base::MakeUnique<base::DictionaryValue>();
-  alt_node_details->SetString("label",
-      l10n_util::GetStringUTF8(IDS_CERT_DETAILS_NOT_AFTER));
-
+  CertNodeBuilder issued_node_builder(IDS_CERT_DETAILS_NOT_BEFORE);
+  CertNodeBuilder expires_node_builder(IDS_CERT_DETAILS_NOT_AFTER);
   base::Time issued, expires;
   if (x509_certificate_model::GetTimes(cert, &issued, &expires)) {
-    sub_node_details->SetString(
-        "payload.val",
-        base::UTF16ToUTF8(
-            base::TimeFormatShortDateAndTimeWithTimeZone(issued)));
-    alt_node_details->SetString(
-        "payload.val",
-        base::UTF16ToUTF8(
-            base::TimeFormatShortDateAndTimeWithTimeZone(expires)));
+    issued_node_builder.Payload(base::UTF16ToUTF8(
+        base::TimeFormatShortDateAndTimeWithTimeZone(issued)));
+    expires_node_builder.Payload(base::UTF16ToUTF8(
+        base::TimeFormatShortDateAndTimeWithTimeZone(expires)));
   }
-  cert_sub_fields->Append(std::move(sub_node_details));
-  cert_sub_fields->Append(std::move(alt_node_details));
 
-  node_details = base::MakeUnique<base::DictionaryValue>();
-  node_details->SetString("label",
-                          l10n_util::GetStringUTF8(IDS_CERT_DETAILS_VALIDITY));
-  node_details->Set("children", std::move(cert_sub_fields));
-  cert_fields->Append(std::move(node_details));
-
-  node_details = base::MakeUnique<base::DictionaryValue>();
-  node_details->SetString("label",
-      l10n_util::GetStringUTF8(IDS_CERT_DETAILS_SUBJECT));
-  node_details->SetString("payload.val",
-      x509_certificate_model::GetSubjectName(cert));
-  cert_fields->Append(std::move(node_details));
-
-  // Subject key information.
-  cert_sub_fields = base::MakeUnique<base::ListValue>();
-
-  sub_node_details = base::MakeUnique<base::DictionaryValue>();
-  sub_node_details->SetString(
-      "label", l10n_util::GetStringUTF8(IDS_CERT_DETAILS_SUBJECT_KEY_ALG));
-  sub_node_details->SetString(
-      "payload.val",
-      x509_certificate_model::ProcessSecAlgorithmSubjectPublicKey(cert));
-  cert_sub_fields->Append(std::move(sub_node_details));
-
-  sub_node_details = base::MakeUnique<base::DictionaryValue>();
-  sub_node_details->SetString(
-      "label", l10n_util::GetStringUTF8(IDS_CERT_DETAILS_SUBJECT_KEY));
-  sub_node_details->SetString(
-      "payload.val", x509_certificate_model::ProcessSubjectPublicKeyInfo(cert));
-  cert_sub_fields->Append(std::move(sub_node_details));
-
-  node_details = base::MakeUnique<base::DictionaryValue>();
-  node_details->SetString(
-      "label", l10n_util::GetStringUTF8(IDS_CERT_DETAILS_SUBJECT_KEY_INFO));
-  node_details->Set("children", std::move(cert_sub_fields));
-  cert_fields->Append(std::move(node_details));
-
-  // Extensions.
   x509_certificate_model::Extensions extensions;
   x509_certificate_model::GetExtensions(
       l10n_util::GetStringUTF8(IDS_CERT_EXTENSION_CRITICAL),
       l10n_util::GetStringUTF8(IDS_CERT_EXTENSION_NON_CRITICAL),
       cert, &extensions);
 
+  std::unique_ptr<base::DictionaryValue> details_extensions;
   if (!extensions.empty()) {
-    cert_sub_fields = base::MakeUnique<base::ListValue>();
-
-    for (x509_certificate_model::Extensions::const_iterator i =
-         extensions.begin(); i != extensions.end(); ++i) {
-      sub_node_details = base::MakeUnique<base::DictionaryValue>();
-      sub_node_details->SetString("label", i->name);
-      sub_node_details->SetString("payload.val", i->value);
-      cert_sub_fields->Append(std::move(sub_node_details));
+    CertNodeBuilder details_extensions_builder(IDS_CERT_DETAILS_EXTENSIONS);
+    for (const x509_certificate_model::Extension& extension : extensions) {
+      details_extensions_builder.Child(
+          CertNodeBuilder(extension.name).Payload(extension.value).Build());
     }
-
-    node_details = base::MakeUnique<base::DictionaryValue>();
-    node_details->SetString(
-        "label", l10n_util::GetStringUTF8(IDS_CERT_DETAILS_EXTENSIONS));
-    node_details->Set("children", std::move(cert_sub_fields));
-    cert_fields->Append(std::move(node_details));
+    details_extensions = details_extensions_builder.Build();
   }
 
-  // Details certificate information.
-  node_details = base::MakeUnique<base::DictionaryValue>();
-  node_details->SetString("label",
-      l10n_util::GetStringUTF8(IDS_CERT_DETAILS_CERTIFICATE_SIG_ALG));
-  node_details->SetString("payload.val",
-      x509_certificate_model::ProcessSecAlgorithmSignatureWrap(cert));
-  cert_fields->Append(std::move(node_details));
-
-  node_details = base::MakeUnique<base::DictionaryValue>();
-  node_details->SetString("label",
-      l10n_util::GetStringUTF8(IDS_CERT_DETAILS_CERTIFICATE_SIG_VALUE));
-  node_details->SetString("payload.val",
-      x509_certificate_model::ProcessRawBitsSignatureWrap(cert));
-  cert_fields->Append(std::move(node_details));
-
-  // Fingerprint information.
-  cert_sub_fields = base::MakeUnique<base::ListValue>();
-
-  sub_node_details = base::MakeUnique<base::DictionaryValue>();
-  sub_node_details->SetString(
-      "label",
-      l10n_util::GetStringUTF8(IDS_CERT_INFO_SHA256_FINGERPRINT_LABEL));
-  sub_node_details->SetString("payload.val",
-                              x509_certificate_model::HashCertSHA256(cert));
-  cert_sub_fields->Append(std::move(sub_node_details));
-
-  sub_node_details = base::MakeUnique<base::DictionaryValue>();
-  sub_node_details->SetString(
-      "label", l10n_util::GetStringUTF8(IDS_CERT_INFO_SHA1_FINGERPRINT_LABEL));
-  sub_node_details->SetString("payload.val",
-                              x509_certificate_model::HashCertSHA1(cert));
-  cert_sub_fields->Append(std::move(sub_node_details));
-
-  node_details = base::MakeUnique<base::DictionaryValue>();
-  node_details->SetString(
-      "label", l10n_util::GetStringUTF8(IDS_CERT_INFO_FINGERPRINTS_GROUP));
-  node_details->Set("children", std::move(cert_sub_fields));
-  cert_fields->Append(std::move(node_details));
-
-  // Certificate information.
-  node_details = base::MakeUnique<base::DictionaryValue>();
-  node_details->SetString(
-      "label", l10n_util::GetStringUTF8(IDS_CERT_DETAILS_CERTIFICATE));
-  node_details->Set("children", std::move(cert_fields));
-  cert_fields = base::MakeUnique<base::ListValue>();
-  cert_fields->Append(std::move(node_details));
-
-  // Top level information.
   base::ListValue root_list;
-  node_details = base::MakeUnique<base::DictionaryValue>();
-  node_details->SetString("label", x509_certificate_model::GetTitle(cert));
-  node_details->Set("children", std::move(cert_fields));
-  root_list.Append(std::move(node_details));
+  root_list.Append(
+      CertNodeBuilder(x509_certificate_model::GetTitle(cert))
+          .Child(
+              CertNodeBuilder(
+                  l10n_util::GetStringUTF8(IDS_CERT_DETAILS_CERTIFICATE))
+                  // Main certificate fields.
+                  .Child(version_node.Build())
+                  .Child(
+                      CertNodeBuilder(IDS_CERT_DETAILS_SERIAL_NUMBER)
+                          .Payload(
+                              x509_certificate_model::GetSerialNumberHexified(
+                                  cert, l10n_util::GetStringUTF8(
+                                            IDS_CERT_INFO_FIELD_NOT_PRESENT)))
+                          .Build())
+                  .Child(CertNodeBuilder(IDS_CERT_DETAILS_CERTIFICATE_SIG_ALG)
+                             .Payload(x509_certificate_model::
+                                          ProcessSecAlgorithmSignature(cert))
+                             .Build())
+                  .Child(
+                      CertNodeBuilder(IDS_CERT_DETAILS_ISSUER)
+                          .Payload(x509_certificate_model::GetIssuerName(cert))
+                          .Build())
+                  // Validity period.
+                  .Child(CertNodeBuilder(IDS_CERT_DETAILS_VALIDITY)
+                             .Child(issued_node_builder.Build())
+                             .Child(expires_node_builder.Build())
+                             .Build())
+                  .Child(
+                      CertNodeBuilder(IDS_CERT_DETAILS_SUBJECT)
+                          .Payload(x509_certificate_model::GetSubjectName(cert))
+                          .Build())
+                  // Subject key information.
+                  .Child(
+                      CertNodeBuilder(IDS_CERT_DETAILS_SUBJECT_KEY_INFO)
+                          .Child(
+                              CertNodeBuilder(IDS_CERT_DETAILS_SUBJECT_KEY_ALG)
+                                  .Payload(
+                                      x509_certificate_model::
+                                          ProcessSecAlgorithmSubjectPublicKey(
+                                              cert))
+                                  .Build())
+                          .Child(CertNodeBuilder(IDS_CERT_DETAILS_SUBJECT_KEY)
+                                     .Payload(
+                                         x509_certificate_model::
+                                             ProcessSubjectPublicKeyInfo(cert))
+                                     .Build())
+                          .Build())
+                  // Extensions.
+                  .ChildIfNotNull(std::move(details_extensions))
+                  .Child(
+                      CertNodeBuilder(IDS_CERT_DETAILS_CERTIFICATE_SIG_ALG)
+                          .Payload(x509_certificate_model::
+                                       ProcessSecAlgorithmSignatureWrap(cert))
+                          .Build())
+                  .Child(CertNodeBuilder(IDS_CERT_DETAILS_CERTIFICATE_SIG_VALUE)
+                             .Payload(x509_certificate_model::
+                                          ProcessRawBitsSignatureWrap(cert))
+                             .Build())
+                  .Child(
+                      CertNodeBuilder(IDS_CERT_INFO_FINGERPRINTS_GROUP)
+                          .Child(CertNodeBuilder(
+                                     IDS_CERT_INFO_SHA256_FINGERPRINT_LABEL)
+                                     .Payload(
+                                         x509_certificate_model::HashCertSHA256(
+                                             cert))
+                                     .Build())
+                          .Child(
+                              CertNodeBuilder(
+                                  IDS_CERT_INFO_SHA1_FINGERPRINT_LABEL)
+                                  .Payload(x509_certificate_model::HashCertSHA1(
+                                      cert))
+                                  .Build())
+                          .Build())
+                  .Build())
+          .Build());
 
   // Send certificate information to javascript.
   web_ui()->CallJavascriptFunctionUnsafe("cert_viewer.getCertificateFields",

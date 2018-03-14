@@ -6,21 +6,21 @@
 #define COMPONENTS_PAYMENTS_CONTENT_PAYMENT_RESPONSE_HELPER_H_
 
 #include "base/macros.h"
-#include "components/payments/content/payment_request.mojom.h"
+#include "base/memory/weak_ptr.h"
+#include "components/autofill/core/browser/address_normalizer.h"
+#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/payments/core/payment_instrument.h"
-
-namespace autofill {
-class AutofillProfile;
-}  // namespace autofill
+#include "third_party/WebKit/public/platform/modules/payments/payment_request.mojom.h"
 
 namespace payments {
 
+class PaymentRequestDelegate;
 class PaymentRequestSpec;
 
-// TODO(sebsg): Asynchronously normalize the billing and shipping addresses
-// before adding them to the PaymentResponse.
 // A helper class to facilitate the creation of the PaymentResponse.
-class PaymentResponseHelper : public PaymentInstrument::Delegate {
+class PaymentResponseHelper
+    : public PaymentInstrument::Delegate,
+      public base::SupportsWeakPtr<PaymentResponseHelper> {
  public:
   class Delegate {
    public:
@@ -34,6 +34,7 @@ class PaymentResponseHelper : public PaymentInstrument::Delegate {
   PaymentResponseHelper(const std::string& app_locale,
                         PaymentRequestSpec* spec,
                         PaymentInstrument* selected_instrument,
+                        PaymentRequestDelegate* payment_request_delegate,
                         autofill::AutofillProfile* selected_shipping_profile,
                         autofill::AutofillProfile* selected_contact_profile,
                         Delegate* delegate);
@@ -42,7 +43,7 @@ class PaymentResponseHelper : public PaymentInstrument::Delegate {
   // Returns a new mojo PaymentAddress based on the specified
   // |profile| and |app_locale|.
   static mojom::PaymentAddressPtr GetMojomPaymentAddressFromAutofillProfile(
-      const autofill::AutofillProfile* const profile,
+      const autofill::AutofillProfile& profile,
       const std::string& app_locale);
 
   // PaymentInstrument::Delegate
@@ -52,16 +53,35 @@ class PaymentResponseHelper : public PaymentInstrument::Delegate {
   void OnInstrumentDetailsError() override {}
 
  private:
+  // Generates the Payment Response and sends it to the delegate.
+  void GeneratePaymentResponse();
+
+  // To be used as AddressNormalizer::NormalizationCallback.
+  void OnAddressNormalized(bool success,
+                           const autofill::AutofillProfile& normalized_profile);
+
   const std::string& app_locale_;
+  bool is_waiting_for_shipping_address_normalization_;
+  bool is_waiting_for_instrument_details_;
 
   // Not owned, cannot be null.
   PaymentRequestSpec* spec_;
   Delegate* delegate_;
   PaymentInstrument* selected_instrument_;
+  PaymentRequestDelegate* payment_request_delegate_;
 
   // Not owned, can be null (dependent on the spec).
-  autofill::AutofillProfile* selected_shipping_profile_;
   autofill::AutofillProfile* selected_contact_profile_;
+
+  // A normalized copy of the shipping address, which will be included in the
+  // PaymentResponse.
+  autofill::AutofillProfile shipping_address_;
+
+  // Instrument Details.
+  std::string method_name_;
+  std::string stringified_details_;
+
+  base::WeakPtrFactory<PaymentResponseHelper> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(PaymentResponseHelper);
 };

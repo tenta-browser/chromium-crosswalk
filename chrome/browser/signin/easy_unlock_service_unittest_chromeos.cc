@@ -12,12 +12,13 @@
 #include <utility>
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/login/users/mock_user_manager.h"
-#include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/signin/easy_unlock_app_manager.h"
+#include "chrome/browser/signin/easy_unlock_notification_controller.h"
 #include "chrome/browser/signin/easy_unlock_service_factory.h"
 #include "chrome/browser/signin/easy_unlock_service_regular.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
@@ -25,9 +26,11 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/fake_power_manager_client.h"
+#include "chromeos/dbus/power_manager/suspend.pb.h"
 #include "components/signin/core/account_id/account_id.h"
 #include "components/signin/core/browser/signin_manager_base.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
+#include "components/user_manager/scoped_user_manager.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/test/mock_bluetooth_adapter.h"
@@ -49,6 +52,22 @@ const char kTestUserPrimary[] = "primary_user@nowhere.com";
 const char kPrimaryGaiaId[] = "1111111111";
 const char kTestUserSecondary[] = "secondary_user@nowhere.com";
 const char kSecondaryGaiaId[] = "2222222222";
+
+class MockEasyUnlockNotificationController
+    : public EasyUnlockNotificationController {
+ public:
+  MockEasyUnlockNotificationController() {}
+  ~MockEasyUnlockNotificationController() override {}
+
+  // EasyUnlockNotificationController:
+  MOCK_METHOD0(ShowChromebookAddedNotification, void());
+  MOCK_METHOD0(ShowPairingChangeNotification, void());
+  MOCK_METHOD1(ShowPairingChangeAppliedNotification, void(const std::string&));
+  MOCK_METHOD0(ShowPromotionNotification, void());
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(MockEasyUnlockNotificationController);
+};
 
 // App manager to be used in EasyUnlockService tests.
 // This effectivelly abstracts the extension system from the tests.
@@ -190,7 +209,9 @@ std::unique_ptr<KeyedService> CreateEasyUnlockServiceForTest(
     return nullptr;
 
   std::unique_ptr<EasyUnlockServiceRegular> service(
-      new EasyUnlockServiceRegular(Profile::FromBrowserContext(context)));
+      new EasyUnlockServiceRegular(
+          Profile::FromBrowserContext(context),
+          base::MakeUnique<MockEasyUnlockNotificationController>()));
   service->Initialize(std::move(app_manager));
   return std::move(service);
 }
@@ -199,7 +220,7 @@ class EasyUnlockServiceTest : public testing::Test {
  public:
   EasyUnlockServiceTest()
       : mock_user_manager_(new testing::NiceMock<chromeos::MockUserManager>()),
-        scoped_user_manager_(mock_user_manager_),
+        scoped_user_manager_(base::WrapUnique(mock_user_manager_)),
         is_bluetooth_adapter_present_(true) {}
 
   ~EasyUnlockServiceTest() override {}
@@ -306,7 +327,7 @@ class EasyUnlockServiceTest : public testing::Test {
   chromeos::MockUserManager* mock_user_manager_;
 
  private:
-  chromeos::ScopedUserManagerEnabler scoped_user_manager_;
+  user_manager::ScopedUserManager scoped_user_manager_;
 
   FakePowerManagerClient* power_manager_client_;
 
@@ -341,7 +362,8 @@ TEST_F(EasyUnlockServiceTest, DisabledOnSuspend) {
   EXPECT_TRUE(
       EasyUnlockAppInState(profile_.get(), TestAppManager::STATE_LOADED));
 
-  power_manager_client()->SendSuspendImminent();
+  power_manager_client()->SendSuspendImminent(
+      power_manager::SuspendImminent_Reason_OTHER);
   EXPECT_TRUE(
       EasyUnlockAppInState(profile_.get(), TestAppManager::STATE_DISABLED));
 

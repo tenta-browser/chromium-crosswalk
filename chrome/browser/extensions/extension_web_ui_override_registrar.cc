@@ -41,7 +41,7 @@ void ExtensionWebUIOverrideRegistrar::OnExtensionLoaded(
 void ExtensionWebUIOverrideRegistrar::OnExtensionUnloaded(
     content::BrowserContext* browser_context,
     const Extension* extension,
-    UnloadedExtensionInfo::Reason reason) {
+    UnloadedExtensionReason reason) {
   ExtensionWebUI::DeactivateChromeURLOverrides(
       Profile::FromBrowserContext(browser_context),
       URLOverrides::GetChromeURLOverrides(extension));
@@ -63,13 +63,13 @@ void ExtensionWebUIOverrideRegistrar::OnExtensionSystemReady(
 }
 
 static base::LazyInstance<BrowserContextKeyedAPIFactory<
-    ExtensionWebUIOverrideRegistrar>>::DestructorAtExit g_factory =
-    LAZY_INSTANCE_INITIALIZER;
+    ExtensionWebUIOverrideRegistrar>>::DestructorAtExit
+    g_extension_web_ui_override_registrar_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
 BrowserContextKeyedAPIFactory<ExtensionWebUIOverrideRegistrar>*
 ExtensionWebUIOverrideRegistrar::GetFactoryInstance() {
-  return g_factory.Pointer();
+  return g_extension_web_ui_override_registrar_factory.Pointer();
 }
 
 }  // namespace extensions

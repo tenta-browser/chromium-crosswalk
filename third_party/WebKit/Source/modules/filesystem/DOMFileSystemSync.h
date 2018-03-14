@@ -31,7 +31,6 @@
 #ifndef DOMFileSystemSync_h
 #define DOMFileSystemSync_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/filesystem/DOMFileSystemBase.h"
 #include "platform/heap/Handle.h"
 
@@ -43,8 +42,7 @@ class FileEntrySync;
 class FileWriterSync;
 class ExceptionState;
 
-class DOMFileSystemSync final : public DOMFileSystemBase,
-                                public ScriptWrappable {
+class DOMFileSystemSync final : public DOMFileSystemBase {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -66,7 +64,7 @@ class DOMFileSystemSync final : public DOMFileSystemBase,
   File* CreateFile(const FileEntrySync*, ExceptionState&);
   FileWriterSync* CreateWriter(const FileEntrySync*, ExceptionState&);
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   DOMFileSystemSync(ExecutionContext*,

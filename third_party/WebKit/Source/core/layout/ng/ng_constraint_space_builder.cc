@@ -4,34 +4,21 @@
 
 #include "core/layout/ng/ng_constraint_space_builder.h"
 
-#include "core/layout/ng/ng_length_utils.h"
+#include "core/layout/ng/ng_exclusion_space.h"
 
 namespace blink {
 
 NGConstraintSpaceBuilder::NGConstraintSpaceBuilder(
-    const NGConstraintSpace* parent_space)
-    : available_size_(parent_space->AvailableSize()),
-      percentage_resolution_size_(parent_space->PercentageResolutionSize()),
-      initial_containing_block_size_(
-          parent_space->InitialContainingBlockSize()),
-      fragmentainer_space_available_(NGSizeIndefinite),
-      parent_writing_mode_(parent_space->WritingMode()),
-      is_fixed_size_inline_(false),
-      is_fixed_size_block_(false),
-      is_shrink_to_fit_(false),
-      is_inline_direction_triggers_scrollbar_(false),
-      is_block_direction_triggers_scrollbar_(false),
-      fragmentation_type_(parent_space->BlockFragmentationType()),
-      is_new_fc_(parent_space->IsNewFormattingContext()),
-      is_anonymous_(false),
-      text_direction_(static_cast<unsigned>(parent_space->Direction())),
-      bfc_offset_(parent_space->bfc_offset_),
-      exclusions_(parent_space->Exclusions()) {}
+    const NGConstraintSpace& parent_space)
+    : NGConstraintSpaceBuilder(parent_space.GetWritingMode(),
+                               parent_space.InitialContainingBlockSize()) {}
 
-NGConstraintSpaceBuilder::NGConstraintSpaceBuilder(NGWritingMode writing_mode)
-    : initial_containing_block_size_{NGSizeIndefinite, NGSizeIndefinite},
-      fragmentainer_space_available_(NGSizeIndefinite),
-      parent_writing_mode_(writing_mode),
+NGConstraintSpaceBuilder::NGConstraintSpaceBuilder(WritingMode writing_mode,
+                                                   NGPhysicalSize icb_size)
+    : initial_containing_block_size_(icb_size),
+      fragmentainer_block_size_(NGSizeIndefinite),
+      fragmentainer_space_at_bfc_start_(NGSizeIndefinite),
+      parent_writing_mode_(static_cast<unsigned>(writing_mode)),
       is_fixed_size_inline_(false),
       is_fixed_size_block_(false),
       is_shrink_to_fit_(false),
@@ -40,8 +27,9 @@ NGConstraintSpaceBuilder::NGConstraintSpaceBuilder(NGWritingMode writing_mode)
       fragmentation_type_(kFragmentNone),
       is_new_fc_(false),
       is_anonymous_(false),
+      use_first_line_sytle_(false),
       text_direction_(static_cast<unsigned>(TextDirection::kLtr)),
-      exclusions_(new NGExclusions()) {}
+      exclusion_space_(nullptr) {}
 
 NGConstraintSpaceBuilder& NGConstraintSpaceBuilder::SetAvailableSize(
     NGLogicalSize available_size) {
@@ -52,12 +40,6 @@ NGConstraintSpaceBuilder& NGConstraintSpaceBuilder::SetAvailableSize(
 NGConstraintSpaceBuilder& NGConstraintSpaceBuilder::SetPercentageResolutionSize(
     NGLogicalSize percentage_resolution_size) {
   percentage_resolution_size_ = percentage_resolution_size;
-  return *this;
-}
-
-NGConstraintSpaceBuilder&
-NGConstraintSpaceBuilder::SetInitialContainingBlockSize(NGPhysicalSize size) {
-  initial_containing_block_size_ = size;
   return *this;
 }
 
@@ -74,14 +56,26 @@ NGConstraintSpaceBuilder& NGConstraintSpaceBuilder::SetMarginStrut(
 }
 
 NGConstraintSpaceBuilder& NGConstraintSpaceBuilder::SetBfcOffset(
-    const NGLogicalOffset& offset) {
-  bfc_offset_ = offset;
+    const NGBfcOffset& bfc_offset) {
+  bfc_offset_ = bfc_offset;
+  return *this;
+}
+
+NGConstraintSpaceBuilder& NGConstraintSpaceBuilder::SetFloatsBfcOffset(
+    const WTF::Optional<NGBfcOffset>& floats_bfc_offset) {
+  floats_bfc_offset_ = floats_bfc_offset;
   return *this;
 }
 
 NGConstraintSpaceBuilder& NGConstraintSpaceBuilder::SetClearanceOffset(
     const WTF::Optional<LayoutUnit>& clearance_offset) {
   clearance_offset_ = clearance_offset;
+  return *this;
+}
+
+NGConstraintSpaceBuilder& NGConstraintSpaceBuilder::SetExclusionSpace(
+    const NGExclusionSpace& exclusion_space) {
+  exclusion_space_ = &exclusion_space;
   return *this;
 }
 
@@ -137,26 +131,57 @@ NGConstraintSpaceBuilder& NGConstraintSpaceBuilder::SetIsAnonymous(
   return *this;
 }
 
-RefPtr<NGConstraintSpace> NGConstraintSpaceBuilder::ToConstraintSpace(
-    NGWritingMode out_writing_mode) {
+NGConstraintSpaceBuilder& NGConstraintSpaceBuilder::SetUseFirstLineStyle(
+    bool use_first_line_sytle) {
+  use_first_line_sytle_ = use_first_line_sytle;
+  return *this;
+}
+
+NGConstraintSpaceBuilder& NGConstraintSpaceBuilder::SetUnpositionedFloats(
+    Vector<scoped_refptr<NGUnpositionedFloat>>& unpositioned_floats) {
+  unpositioned_floats_ = unpositioned_floats;
+  return *this;
+}
+
+void NGConstraintSpaceBuilder::AddBaselineRequests(
+    const Vector<NGBaselineRequest>& requests) {
+  DCHECK(baseline_requests_.IsEmpty());
+  baseline_requests_.AppendVector(requests);
+}
+
+NGConstraintSpaceBuilder& NGConstraintSpaceBuilder::AddBaselineRequest(
+    const NGBaselineRequest& request) {
+  for (const auto& existing : baseline_requests_) {
+    if (existing == request)
+      return *this;
+  }
+  baseline_requests_.push_back(request);
+  return *this;
+}
+
+scoped_refptr<NGConstraintSpace> NGConstraintSpaceBuilder::ToConstraintSpace(
+    WritingMode out_writing_mode) {
   // Whether the child and the containing block are parallel to each other.
   // Example: vertical-rl and vertical-lr
   bool is_in_parallel_flow = IsParallelWritingMode(
-      static_cast<NGWritingMode>(parent_writing_mode_), out_writing_mode);
+      static_cast<WritingMode>(parent_writing_mode_), out_writing_mode);
 
   NGLogicalSize available_size = available_size_;
   NGLogicalSize percentage_resolution_size = percentage_resolution_size_;
+  Optional<NGLogicalSize> parent_percentage_resolution_size =
+      parent_percentage_resolution_size_;
   if (!is_in_parallel_flow) {
-    std::swap(available_size.inline_size, available_size.block_size);
-    std::swap(percentage_resolution_size.inline_size,
-              percentage_resolution_size.block_size);
+    available_size.Flip();
+    percentage_resolution_size.Flip();
+    if (parent_percentage_resolution_size.has_value())
+      parent_percentage_resolution_size->Flip();
   }
 
   // If inline size is indefinite, use size of initial containing block.
   // https://www.w3.org/TR/css-writing-modes-3/#orthogonal-auto
   if (available_size.inline_size == NGSizeIndefinite) {
     DCHECK(!is_in_parallel_flow);
-    if (out_writing_mode == kHorizontalTopBottom) {
+    if (out_writing_mode == WritingMode::kHorizontalTb) {
       available_size.inline_size = initial_containing_block_size_.width;
     } else {
       available_size.inline_size = initial_containing_block_size_.height;
@@ -164,7 +189,7 @@ RefPtr<NGConstraintSpace> NGConstraintSpaceBuilder::ToConstraintSpace(
   }
   if (percentage_resolution_size.inline_size == NGSizeIndefinite) {
     DCHECK(!is_in_parallel_flow);
-    if (out_writing_mode == kHorizontalTopBottom) {
+    if (out_writing_mode == WritingMode::kHorizontalTb) {
       percentage_resolution_size.inline_size =
           initial_containing_block_size_.width;
     } else {
@@ -172,36 +197,61 @@ RefPtr<NGConstraintSpace> NGConstraintSpaceBuilder::ToConstraintSpace(
           initial_containing_block_size_.height;
     }
   }
+  // parent_percentage_resolution_size is so rarely used that compute indefinite
+  // fallback in NGConstraintSpace when it is used.
+  Optional<LayoutUnit> parent_percentage_resolution_inline_size =
+      parent_percentage_resolution_size.has_value()
+          ? parent_percentage_resolution_size->inline_size
+          : Optional<LayoutUnit>();
+
+  DEFINE_STATIC_LOCAL(NGExclusionSpace, empty_exclusion_space, ());
 
   // Reset things that do not pass the Formatting Context boundary.
-  std::shared_ptr<NGExclusions> exclusions(
-      is_new_fc_ ? std::make_shared<NGExclusions>() : exclusions_);
-  NGLogicalOffset bfc_offset = is_new_fc_ ? NGLogicalOffset() : bfc_offset_;
+  if (is_new_fc_)
+    DCHECK(unpositioned_floats_.IsEmpty());
+
+  const NGExclusionSpace& exclusion_space = (is_new_fc_ || !exclusion_space_)
+                                                ? empty_exclusion_space
+                                                : *exclusion_space_;
+  NGBfcOffset bfc_offset = is_new_fc_ ? NGBfcOffset() : bfc_offset_;
   NGMarginStrut margin_strut = is_new_fc_ ? NGMarginStrut() : margin_strut_;
   WTF::Optional<LayoutUnit> clearance_offset =
-      is_new_fc_ ? WTF::kNullopt : clearance_offset_;
+      is_new_fc_ ? WTF::nullopt : clearance_offset_;
+  WTF::Optional<NGBfcOffset> floats_bfc_offset =
+      is_new_fc_ ? WTF::nullopt : floats_bfc_offset_;
+
+  if (floats_bfc_offset) {
+    floats_bfc_offset = NGBfcOffset(
+        {bfc_offset.line_offset, floats_bfc_offset.value().block_offset});
+  }
 
   if (is_in_parallel_flow) {
-    return AdoptRef(new NGConstraintSpace(
-        static_cast<NGWritingMode>(out_writing_mode),
+    return base::AdoptRef(new NGConstraintSpace(
+        static_cast<WritingMode>(out_writing_mode), false,
         static_cast<TextDirection>(text_direction_), available_size,
-        percentage_resolution_size, initial_containing_block_size_,
-        fragmentainer_space_available_, is_fixed_size_inline_,
+        percentage_resolution_size, parent_percentage_resolution_inline_size,
+        initial_containing_block_size_, fragmentainer_block_size_,
+        fragmentainer_space_at_bfc_start_, is_fixed_size_inline_,
         is_fixed_size_block_, is_shrink_to_fit_,
         is_inline_direction_triggers_scrollbar_,
         is_block_direction_triggers_scrollbar_,
         static_cast<NGFragmentationType>(fragmentation_type_), is_new_fc_,
-        is_anonymous_, margin_strut, bfc_offset, exclusions, clearance_offset));
+        is_anonymous_, use_first_line_sytle_, margin_strut, bfc_offset,
+        floats_bfc_offset, exclusion_space, unpositioned_floats_,
+        clearance_offset, baseline_requests_));
   }
-  return AdoptRef(new NGConstraintSpace(
-      out_writing_mode, static_cast<TextDirection>(text_direction_),
+  return base::AdoptRef(new NGConstraintSpace(
+      out_writing_mode, true, static_cast<TextDirection>(text_direction_),
       available_size, percentage_resolution_size,
-      initial_containing_block_size_, fragmentainer_space_available_,
+      parent_percentage_resolution_inline_size, initial_containing_block_size_,
+      fragmentainer_block_size_, fragmentainer_space_at_bfc_start_,
       is_fixed_size_block_, is_fixed_size_inline_, is_shrink_to_fit_,
       is_block_direction_triggers_scrollbar_,
       is_inline_direction_triggers_scrollbar_,
       static_cast<NGFragmentationType>(fragmentation_type_), is_new_fc_,
-      is_anonymous_, margin_strut, bfc_offset, exclusions, clearance_offset));
+      is_anonymous_, use_first_line_sytle_, margin_strut, bfc_offset,
+      floats_bfc_offset, exclusion_space, unpositioned_floats_,
+      clearance_offset, baseline_requests_));
 }
 
 }  // namespace blink

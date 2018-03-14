@@ -14,6 +14,7 @@
 namespace blink {
 
 class ClipRect;
+class DisplayItemClient;
 class PaintLayer;
 class GraphicsContext;
 class LayoutPoint;
@@ -54,9 +55,9 @@ class CORE_EXPORT PaintLayerPainter {
                               const GlobalPaintFlags);
 
  private:
-  enum ClipState { kHasNotClipped, kHasClipped };
+  friend class PaintLayerPainterTest;
 
-  inline bool IsFixedPositionObjectInPagedMedia();
+  enum ClipState { kHasNotClipped, kHasClipped };
 
   // "For paged media, boxes with fixed positions are repeated on every page."
   // https://www.w3.org/TR/2011/REC-CSS2-20110607/visuren.html#fixed-positioning
@@ -101,13 +102,11 @@ class CORE_EXPORT PaintLayerPainter {
   void PaintBackgroundForFragments(
       const PaintLayerFragments&,
       GraphicsContext&,
-      const LayoutRect& transparency_paint_dirty_rect,
       const PaintLayerPaintingInfo&,
       PaintLayerFlags);
   void PaintForegroundForFragments(
       const PaintLayerFragments&,
       GraphicsContext&,
-      const LayoutRect& transparency_paint_dirty_rect,
       const PaintLayerPaintingInfo&,
       bool selection_only,
       PaintLayerFlags);
@@ -134,32 +133,21 @@ class CORE_EXPORT PaintLayerPainter {
                                           const PaintLayerPaintingInfo&,
                                           PaintLayerFlags);
 
-  void FillMaskingFragment(GraphicsContext&, const ClipRect&);
+  void FillMaskingFragment(GraphicsContext&,
+                           const ClipRect&,
+                           const DisplayItemClient&);
 
   static bool NeedsToClip(const PaintLayerPaintingInfo& local_painting_info,
-                          const ClipRect&);
-
-  // Returns whether this layer should be painted during sofware painting (i.e.,
-  // not via calls from CompositedLayerMapping to draw into composited layers).
-  bool ShouldPaintLayerInSoftwareMode(const GlobalPaintFlags,
-                                      PaintLayerFlags paint_flags);
+                          const ClipRect&,
+                          const PaintLayerFlags&);
 
   // Returns true if the painted output of this PaintLayer and its children is
   // invisible and therefore can't impact painted output.
   bool PaintedOutputInvisible(const PaintLayerPaintingInfo&);
 
-  PaintLayer& paint_layer_;
+  void AdjustForPaintOffsetTranslation(PaintLayerPaintingInfo&);
 
-  FRIEND_TEST_ALL_PREFIXES(PaintLayerPainterTest, DontPaintWithTinyOpacity);
-  FRIEND_TEST_ALL_PREFIXES(PaintLayerPainterTest,
-                           DontPaintWithTinyOpacityAndBackdropFilter);
-  FRIEND_TEST_ALL_PREFIXES(PaintLayerPainterTest,
-                           DoPaintWithCompositedTinyOpacity);
-  FRIEND_TEST_ALL_PREFIXES(PaintLayerPainterTest, DoPaintWithNonTinyOpacity);
-  FRIEND_TEST_ALL_PREFIXES(PaintLayerPainterTest,
-                           DoPaintWithEffectAnimationZeroOpacity);
-  FRIEND_TEST_ALL_PREFIXES(PaintLayerPainterTest,
-                           DoNotPaintWithTransformAnimationZeroOpacity);
+  PaintLayer& paint_layer_;
 };
 
 }  // namespace blink

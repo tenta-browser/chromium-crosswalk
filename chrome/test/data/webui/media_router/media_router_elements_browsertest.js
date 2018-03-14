@@ -30,9 +30,7 @@ MediaRouterElementsBrowserTest.prototype = {
   /** @override */
   accessibilityIssuesAreErrors: true,
 
-  commandLineSwitches: [{
-    switchName: 'media-router', switchValue: '1'
-  }],
+  commandLineSwitches: [{switchName: 'media-router', switchValue: '1'}],
 
   // List tests for individual elements. The media-router-container tests are
   // split between several files and use common functionality from
@@ -48,12 +46,72 @@ MediaRouterElementsBrowserTest.prototype = {
     'media_router_container_test_base.js',
     'media_router_header_tests.js',
     'media_router_search_highlighter_tests.js',
+    'route_controls_tests.js',
     'route_details_tests.js',
   ]),
+
+  /**
+   * Mocks the browser API methods to make them fire events instead.
+   */
+  installMockBrowserApi: function() {
+    cr.define('media_router.browserApi', function() {
+      'use strict';
+
+      function pauseCurrentMedia() {
+        document.dispatchEvent(new Event('mock-pause-current-media'));
+      }
+
+      function playCurrentMedia() {
+        document.dispatchEvent(new Event('mock-play-current-media'));
+      }
+
+      function seekCurrentMedia(time) {
+        var event =
+            new CustomEvent('mock-seek-current-media', {detail: {time: time}})
+        document.dispatchEvent(event);
+      }
+
+      function setCurrentMediaMute(mute) {
+        var event = new CustomEvent(
+            'mock-set-current-media-mute', {detail: {mute: mute}});
+        document.dispatchEvent(event);
+      }
+
+      function setCurrentMediaVolume(volume) {
+        var event = new CustomEvent(
+            'mock-set-current-media-volume', {detail: {volume: volume}});
+        document.dispatchEvent(event);
+      }
+
+      function setHangoutsLocalPresent(localPresent) {
+        const event = new CustomEvent(
+            'mock-set-hangouts-local-present',
+            {detail: {localPresent: localPresent}});
+        document.dispatchEvent(event);
+      }
+
+      function setMediaRemotingEnabled(enabled) {
+        const event = new CustomEvent(
+            'mock-set-media-remoting-enabled', {detail: {enabled: enabled}});
+        document.dispatchEvent(event);
+      }
+
+      return {
+        pauseCurrentMedia: pauseCurrentMedia,
+        playCurrentMedia: playCurrentMedia,
+        seekCurrentMedia: seekCurrentMedia,
+        setCurrentMediaMute: setCurrentMediaMute,
+        setCurrentMediaVolume: setCurrentMediaVolume,
+        setHangoutsLocalPresent: setHangoutsLocalPresent,
+        setMediaRemotingEnabled: setMediaRemotingEnabled
+      };
+    });
+  },
 
   /** @override */
   setUp: function() {
     PolymerTest.prototype.setUp.call(this);
+    this.installMockBrowserApi();
 
     // Enable when failure is resolved.
     // AX_ARIA_02: http://crbug.com/591547
@@ -102,9 +160,16 @@ TEST_F('MediaRouterElementsBrowserTest',
 });
 
 TEST_F('MediaRouterElementsBrowserTest',
-    'MediaRouterContainerSearch',
+    'MediaRouterContainerSearchPart1',
     function() {
-  media_router_container_search.registerTests();
+  media_router_container_search.registerTestsPart1();
+  mocha.run();
+});
+
+TEST_F('MediaRouterElementsBrowserTest',
+    'MediaRouterContainerSearchPart2',
+    function() {
+  media_router_container_search.registerTestsPart2();
   mocha.run();
 });
 
@@ -116,9 +181,16 @@ TEST_F('MediaRouterElementsBrowserTest',
 });
 
 TEST_F('MediaRouterElementsBrowserTest',
-    'DISABLED_MediaRouterContainerFilter',
+    'MediaRouterContainerFilterPart1',
     function() {
-  media_router_container_filter.registerTests();
+  media_router_container_filter.registerTestsPart1();
+  mocha.run();
+});
+
+TEST_F('MediaRouterElementsBrowserTest',
+    'MediaRouterContainerFilterPart2',
+    function() {
+  media_router_container_filter.registerTestsPart2();
   mocha.run();
 });
 
@@ -133,6 +205,12 @@ TEST_F('MediaRouterElementsBrowserTest',
   media_router_search_highlighter.registerTests();
   mocha.run();
 });
+
+TEST_F(
+    'MediaRouterElementsBrowserTest', 'MediaRouterRouteControls', function() {
+      route_controls.registerTests();
+      mocha.run();
+    });
 
 TEST_F('MediaRouterElementsBrowserTest', 'MediaRouterRouteDetails', function() {
   route_details.registerTests();

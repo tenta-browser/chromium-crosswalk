@@ -5,14 +5,14 @@
 #ifndef CHROME_BROWSER_UI_SAD_TAB_H_
 #define CHROME_BROWSER_UI_SAD_TAB_H_
 
+#include <vector>
+
 #include "base/process/kill.h"
 #include "chrome/browser/ui/sad_tab_types.h"
 
 namespace content {
 class WebContents;
 }
-
-namespace chrome {
 
 // Cross-platform interface to show the Sad tab UI.
 class SadTab {
@@ -38,6 +38,10 @@ class SadTab {
   int GetButtonTitle();
   int GetHelpLinkTitle();
 
+  // Returns the resource string IDs for bullet points or empty vector if no
+  // bullet points should be displayed.
+  std::vector<int> GetSubMessages();
+
   // Returns the target of the "Learn more" link. Use it for the context menu
   // and to show the URL on hover, but call PerformAction() for regular clicks.
   const char* GetHelpLinkURL();
@@ -57,7 +61,5 @@ class SadTab {
 
   DISALLOW_COPY_AND_ASSIGN(SadTab);
 };
-
-}  // namespace chrome
 
 #endif  // CHROME_BROWSER_UI_SAD_TAB_H_

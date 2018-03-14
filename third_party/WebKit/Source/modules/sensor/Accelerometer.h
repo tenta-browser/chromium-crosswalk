@@ -9,7 +9,7 @@
 
 namespace blink {
 
-class Accelerometer final : public Sensor {
+class Accelerometer : public Sensor {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -22,10 +22,13 @@ class Accelerometer final : public Sensor {
   double y(bool& is_null) const;
   double z(bool& is_null) const;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
- private:
-  Accelerometer(ExecutionContext*, const SensorOptions&, ExceptionState&);
+ protected:
+  Accelerometer(ExecutionContext*,
+                const SensorOptions&,
+                ExceptionState&,
+                device::mojom::blink::SensorType);
 };
 
 }  // namespace blink

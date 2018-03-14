@@ -12,6 +12,7 @@
 #include "base/json/json_writer.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -121,7 +122,8 @@ class ExtensionInfoGeneratorUnitTest : public ExtensionServiceTestBase {
 
   const scoped_refptr<const Extension> CreateExtension(
       const std::string& name,
-      std::unique_ptr<base::ListValue> permissions) {
+      std::unique_ptr<base::ListValue> permissions,
+      Manifest::Location location) {
     const std::string kId = crx_file::id_util::GenerateId(name);
     scoped_refptr<const Extension> extension =
         ExtensionBuilder()
@@ -132,7 +134,7 @@ class ExtensionInfoGeneratorUnitTest : public ExtensionServiceTestBase {
                              .Set("version", "1.0.0")
                              .Set("permissions", std::move(permissions))
                              .Build())
-            .SetLocation(Manifest::INTERNAL)
+            .SetLocation(location)
             .SetID(kId)
             .Build();
 
@@ -210,7 +212,6 @@ class ExtensionInfoGeneratorUnitTest : public ExtensionServiceTestBase {
 // Test some of the basic fields.
 TEST_F(ExtensionInfoGeneratorUnitTest, BasicInfoTest) {
   // Enable error console for testing.
-  ResetThreadBundle(content::TestBrowserThreadBundle::DEFAULT);
   FeatureSwitch::ScopedOverride error_console_override(
       FeatureSwitch::error_console(), true);
   profile()->GetPrefs()->SetBoolean(prefs::kExtensionsUIDeveloperMode, true);
@@ -224,8 +225,14 @@ TEST_F(ExtensionInfoGeneratorUnitTest, BasicInfoTest) {
           .Set("version", kVersion)
           .Set("manifest_version", 2)
           .Set("description", "an extension")
-          .Set("permissions",
-               ListBuilder().Append("file://*/*").Append("tabs").Build())
+          .Set("permissions", ListBuilder()
+                                  .Append("file://*/*")
+                                  .Append("tabs")
+                                  .Append("*://*.google.com/*")
+                                  .Append("*://*.example.com/*")
+                                  .Append("*://*.foo.bar/*")
+                                  .Append("*://*.chromium.org/*")
+                                  .Build())
           .Build();
   std::unique_ptr<base::DictionaryValue> manifest_copy(manifest->DeepCopy());
   scoped_refptr<const Extension> extension =
@@ -276,7 +283,15 @@ TEST_F(ExtensionInfoGeneratorUnitTest, BasicInfoTest) {
   ASSERT_EQ(messages.size(), info->permissions.size());
   size_t i = 0;
   for (const PermissionMessage& message : messages) {
-    EXPECT_EQ(message.message(), base::UTF8ToUTF16(info->permissions[i]));
+    const api::developer_private::Permission& info_permission =
+        info->permissions[i];
+    EXPECT_EQ(message.message(), base::UTF8ToUTF16(info_permission.message));
+    const std::vector<base::string16>& submessages = message.submessages();
+    ASSERT_EQ(submessages.size(), info_permission.submessages.size());
+    for (size_t j = 0; j < submessages.size(); ++j) {
+      EXPECT_EQ(submessages[j],
+                base::UTF8ToUTF16(info_permission.submessages[j]));
+    }
     ++i;
   }
   ASSERT_EQ(2u, info->runtime_errors.size());
@@ -384,9 +399,10 @@ TEST_F(ExtensionInfoGeneratorUnitTest, ExtensionInfoRunOnAllUrls) {
                                         true));
   // Two extensions - one with all urls, one without.
   scoped_refptr<const Extension> all_urls_extension = CreateExtension(
-      "all_urls", ListBuilder().Append(kAllHostsPermission).Build());
+      "all_urls", ListBuilder().Append(kAllHostsPermission).Build(),
+      Manifest::INTERNAL);
   scoped_refptr<const Extension> no_urls_extension =
-      CreateExtension("no urls", ListBuilder().Build());
+      CreateExtension("no urls", ListBuilder().Build(), Manifest::INTERNAL);
 
   std::unique_ptr<developer::ExtensionInfo> info =
       GenerateExtensionInfo(all_urls_extension->id());
@@ -432,7 +448,8 @@ TEST_F(ExtensionInfoGeneratorUnitTest, ExtensionInfoRunOnAllUrls) {
 
   // Load another extension with all urls (so permissions get re-init'd).
   all_urls_extension = CreateExtension(
-      "all_urls_II", ListBuilder().Append(kAllHostsPermission).Build());
+      "all_urls_II", ListBuilder().Append(kAllHostsPermission).Build(),
+      Manifest::INTERNAL);
 
   // Even though the extension has all_urls permission, the checkbox shouldn't
   // show up without the switch.
@@ -441,12 +458,30 @@ TEST_F(ExtensionInfoGeneratorUnitTest, ExtensionInfoRunOnAllUrls) {
   EXPECT_TRUE(info->run_on_all_urls.is_active);
 }
 
+// Test that file:// access checkbox does not show up when the user can't
+// modify an extension's settings. https://crbug.com/173640.
+TEST_F(ExtensionInfoGeneratorUnitTest, ExtensionInfoLockedAllUrls) {
+  // Force installed extensions aren't user modifyable.
+  scoped_refptr<const Extension> locked_extension =
+      CreateExtension("locked", ListBuilder().Append("file://*/*").Build(),
+                      Manifest::EXTERNAL_POLICY_DOWNLOAD);
+
+  std::unique_ptr<developer::ExtensionInfo> info =
+      GenerateExtensionInfo(locked_extension->id());
+
+  // Extension wants file:// access but the checkbox will not appear
+  // in chrome://extensions.
+  EXPECT_TRUE(locked_extension->wants_file_access());
+  EXPECT_FALSE(info->file_access.is_enabled);
+  EXPECT_FALSE(info->file_access.is_active);
+}
+
 // Tests that blacklisted extensions are returned by the ExtensionInfoGenerator.
 TEST_F(ExtensionInfoGeneratorUnitTest, Blacklisted) {
-  const scoped_refptr<const Extension> extension1 =
-      CreateExtension("test1", base::WrapUnique(new base::ListValue()));
-  const scoped_refptr<const Extension> extension2 =
-      CreateExtension("test2", base::WrapUnique(new base::ListValue()));
+  const scoped_refptr<const Extension> extension1 = CreateExtension(
+      "test1", base::WrapUnique(new base::ListValue()), Manifest::INTERNAL);
+  const scoped_refptr<const Extension> extension2 = CreateExtension(
+      "test2", base::WrapUnique(new base::ListValue()), Manifest::INTERNAL);
 
   std::string id1 = extension1->id();
   std::string id2 = extension2->id();

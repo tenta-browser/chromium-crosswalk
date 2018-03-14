@@ -20,6 +20,8 @@ suite('Internet', function() {
       internetAddConnectionNotAllowed: 'internetAddConnectionNotAllowed',
       internetAddThirdPartyVPN: 'internetAddThirdPartyVPN',
       internetAddVPN: 'internetAddVPN',
+      internetAddArcVPN: 'internetAddArcVPN',
+      internetAddArcVPNProvider: 'internetAddArcVPNProvider',
       internetAddWiFi: 'internetAddWiFi',
       internetDetailPageTitle: 'internetDetailPageTitle',
       internetKnownNetworksPageTitle: 'internetKnownNetworksPageTitle',
@@ -28,22 +30,39 @@ suite('Internet', function() {
     CrOncStrings = {
       OncTypeCellular: 'OncTypeCellular',
       OncTypeEthernet: 'OncTypeEthernet',
+      OncTypeTether: 'OncTypeTether',
       OncTypeVPN: 'OncTypeVPN',
       OncTypeWiFi: 'OncTypeWiFi',
       OncTypeWiMAX: 'OncTypeWiMAX',
-      networkDisabled: 'networkDisabled',
       networkListItemConnected: 'networkListItemConnected',
       networkListItemConnecting: 'networkListItemConnecting',
       networkListItemConnectingTo: 'networkListItemConnectingTo',
       networkListItemNotConnected: 'networkListItemNotConnected',
+      networkListItemNoNetwork: 'networkListItemNoNetwork',
       vpnNameTemplate: 'vpnNameTemplate',
     };
 
-    api_ = new settings.FakeNetworkingPrivate();
+    api_ = new chrome.FakeNetworkingPrivate();
 
     // Disable animations so sub-pages open within one event loop.
     testing.Test.disableAnimationsAndTransitions();
   });
+
+  function flushAsync() {
+    Polymer.dom.flush();
+    return new Promise(resolve => {
+      internetPage.async(resolve);
+    });
+  }
+
+  function setNetworksForTest(networks) {
+    api_.resetForTest();
+    api_.addNetworksForTest(networks);
+  }
+
+  function setArcVpnProvidersForTest(arcVpnProviders) {
+    cr.webUIListenerCallback('sendArcVpnProviders',arcVpnProviders);
+  }
 
   setup(function() {
     PolymerTest.clearBody();
@@ -54,11 +73,19 @@ suite('Internet', function() {
     document.body.appendChild(internetPage);
     networkSummary_ = internetPage.$$('network-summary');
     assertTrue(!!networkSummary_);
-    Polymer.dom.flush();
+    return flushAsync().then(() => {
+      return Promise.all([
+        api_.whenCalled('getNetworks'),
+        api_.whenCalled('getDeviceStates'),
+      ]);
+    });
   });
 
   teardown(function() {
     internetPage.remove();
+    delete internetPage;
+    // Navigating to the details page changes the Route state.
+    settings.resetRouteForTesting();
   });
 
   suite('MainPage', function() {
@@ -74,7 +101,7 @@ suite('Internet', function() {
     });
 
     test('WiFi', function() {
-      api_.addNetworksForTest([
+      setNetworksForTest([
         {GUID: 'wifi1_guid', Name: 'wifi1', Type: 'WiFi'},
         {GUID: 'wifi12_guid', Name: 'wifi2', Type: 'WiFi'},
       ]);
@@ -97,7 +124,7 @@ suite('Internet', function() {
       assertEquals('Disabled', api_.getDeviceStateForTest('WiFi').State);
       var toggle = wifi.$$('#deviceEnabledButton');
       assertTrue(!!toggle);
-      assertTrue(toggle.enabled);
+      assertFalse(toggle.disabled);
       assertFalse(toggle.checked);
 
       // Tap the enable toggle button and ensure the state becomes enabled.
@@ -110,7 +137,7 @@ suite('Internet', function() {
 
   suite('SubPage', function() {
     test('WiFi', function() {
-      api_.addNetworksForTest([
+      setNetworksForTest([
         {GUID: 'wifi1_guid', Name: 'wifi1', Type: 'WiFi'},
         {GUID: 'wifi12_guid', Name: 'wifi2', Type: 'WiFi'},
       ]);
@@ -119,17 +146,99 @@ suite('Internet', function() {
       var wifi = networkSummary_.$$('#WiFi');
       assertTrue(!!wifi);
       MockInteractions.tap(wifi.$$('button.subpage-arrow'));
-      Polymer.dom.flush();
-      var subpage = internetPage.$$('settings-internet-subpage');
-      assertTrue(!!subpage);
-      assertEquals(2, subpage.networkStateList_.length);
-      var networkList = subpage.$$('#networkList');
-      assertTrue(!!networkList);
-      assertEquals(2, networkList.networks.length);
+      return flushAsync().then(() => {
+        var subpage = internetPage.$$('settings-internet-subpage');
+        assertTrue(!!subpage);
+        assertEquals(2, subpage.networkStateList_.length);
+        var toggle = wifi.$$('#deviceEnabledButton');
+        assertTrue(!!toggle);
+        assertFalse(toggle.disabled);
+        var networkList = subpage.$$('#networkList');
+        assertTrue(!!networkList);
+        assertEquals(2, networkList.networks.length);
+      });
+    });
+
+    test('Cellular', function() {
+      setNetworksForTest([
+        {GUID: 'cellular1_guid', Name: 'cellular1', Type: 'Cellular'},
+      ]);
+      api_.enableNetworkType('Cellular');
+      return flushAsync().then(() => {
+        return Promise.all([
+          api_.whenCalled('getNetworks'),
+          api_.whenCalled('getDeviceStates'),
+        ]);
+      }).then(() => {
+        var mobile = networkSummary_.$$('#Cellular');
+        assertTrue(!!mobile);
+        MockInteractions.tap(mobile.$$('button.subpage-arrow'));
+        return Promise.all([
+          api_.whenCalled('getManagedProperties'),
+        ]);
+      }).then(() => {
+        var detailPage = internetPage.$$('settings-internet-detail-page');
+        assertTrue(!!detailPage);
+      });
+    });
+
+    test('Tether', function() {
+      setNetworksForTest([
+        {GUID: 'tether1_guid', Name: 'tether1', Type: 'Tether'},
+        {GUID: 'tether2_guid', Name: 'tether2', Type: 'Tether'},
+      ]);
+      api_.enableNetworkType('Tether');
+      return flushAsync().then(() => {
+        var mobile = networkSummary_.$$('#Tether');
+        assertTrue(!!mobile);
+        MockInteractions.tap(mobile.$$('button.subpage-arrow'));
+        Polymer.dom.flush();
+        var subpage = internetPage.$$('settings-internet-subpage');
+        assertTrue(!!subpage);
+        assertEquals(2, subpage.networkStateList_.length);
+        var toggle = mobile.$$('#deviceEnabledButton');
+        assertTrue(!!toggle);
+        assertFalse(toggle.disabled);
+        var networkList = subpage.$$('#networkList');
+        assertTrue(!!networkList);
+        assertEquals(2, networkList.networks.length);
+        var tetherToggle = mobile.$$('#tetherEnabledButton');
+        // No separate tether toggle when Celular is not available; the
+        // primary toggle enables or disables Tether in that case.
+        assertFalse(!!tetherToggle);
+      });
+    });
+
+    test('Tether plus Cellular', function() {
+      setNetworksForTest([
+        {GUID: 'cellular1_guid', Name: 'cellular1', Type: 'Cellular'},
+        {GUID: 'tether1_guid', Name: 'tether1', Type: 'Tether'},
+        {GUID: 'tether2_guid', Name: 'tether2', Type: 'Tether'},
+      ]);
+      api_.enableNetworkType('Cellular');
+      api_.enableNetworkType('Tether');
+      return flushAsync().then(() => {
+        var mobile = networkSummary_.$$('#Cellular');
+        assertTrue(!!mobile);
+        MockInteractions.tap(mobile.$$('button.subpage-arrow'));
+        Polymer.dom.flush();
+        var subpage = internetPage.$$('settings-internet-subpage');
+        assertTrue(!!subpage);
+        assertEquals(3, subpage.networkStateList_.length);
+        var toggle = mobile.$$('#deviceEnabledButton');
+        assertTrue(!!toggle);
+        assertFalse(toggle.disabled);
+        var networkList = subpage.$$('#networkList');
+        assertTrue(!!networkList);
+        assertEquals(3, networkList.networks.length);
+        var tetherToggle = subpage.$$('#tetherEnabledButton');
+        assertTrue(!!tetherToggle);
+        assertFalse(tetherToggle.disabled);
+      });
     });
 
     test('VPN', function() {
-      api_.addNetworksForTest([
+      setNetworksForTest([
         {GUID: 'vpn1_guid', Name: 'vpn1', Type: 'VPN'},
         {GUID: 'vpn2_guid', Name: 'vpn1', Type: 'VPN'},
         {
@@ -161,19 +270,50 @@ suite('Internet', function() {
         },
       ]);
       api_.onNetworkListChanged.callListeners();
-      Polymer.dom.flush();
-      var vpn = networkSummary_.$$('#VPN');
-      assertTrue(!!vpn);
-      MockInteractions.tap(vpn.$$('button.subpage-arrow'));
-      Polymer.dom.flush();
-      var subpage = internetPage.$$('settings-internet-subpage');
-      assertTrue(!!subpage);
-      assertEquals(2, subpage.networkStateList_.length);
-      var networkList = subpage.$$('#networkList');
-      assertTrue(!!networkList);
-      assertEquals(2, networkList.networks.length);
-      // TODO(stevenjb): Implement fake management API and test third
-      // party provider sections.
+      return flushAsync().then(() => {
+        var vpn = networkSummary_.$$('#VPN');
+        assertTrue(!!vpn);
+        MockInteractions.tap(vpn.$$('button.subpage-arrow'));
+        Polymer.dom.flush();
+        var subpage = internetPage.$$('settings-internet-subpage');
+        assertTrue(!!subpage);
+        assertEquals(2, subpage.networkStateList_.length);
+        var networkList = subpage.$$('#networkList');
+        assertTrue(!!networkList);
+        assertEquals(2, networkList.networks.length);
+        // TODO(stevenjb): Implement fake management API and test third
+        // party provider sections.
+      });
+    });
+
+    test('ArcVPNProvider', function() {
+      setArcVpnProvidersForTest([
+        {
+          Packagename: 'vpn.app.pacakge1',
+          ProviderName: 'MyArcVPN1',
+          AppID: 'arcid1',
+          LastLaunchTime: 0
+        },
+        {
+          Packagename: 'vpn.app.pacakge2',
+          ProviderName: 'MyArcVPN2',
+          AppID: 'arcid2',
+          LastLaunchTime: 1
+        }]);
+      return flushAsync().then(() => {
+        var expandAddConnections = internetPage.$$('#expandAddConnections');
+        assertTrue(!!expandAddConnections);
+        assertTrue(!expandAddConnections.expanded);
+        internetPage.addConnectionExpanded_ = true;
+        Polymer.dom.flush();
+        var addArcVpn = internetPage.$$('#addArcVpn');
+        assertTrue(!!addArcVpn);
+        MockInteractions.tap(addArcVpn);
+        Polymer.dom.flush();
+        var subpage = internetPage.$$('settings-internet-subpage');
+        assertTrue(!!subpage);
+        assertEquals(2, subpage.arcVpnProviders.length);
+      });
     });
   });
 });

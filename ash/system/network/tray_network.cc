@@ -4,17 +4,16 @@
 
 #include "ash/system/network/tray_network.h"
 
-#include "ash/shelf/wm_shelf_util.h"
+#include "ash/metrics/user_metrics_recorder.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/network/network_icon.h"
 #include "ash/system/network/network_icon_animation.h"
 #include "ash/system/network/network_icon_animation_observer.h"
-#include "ash/system/network/network_state_list_detailed_view.h"
+#include "ash/system/network/network_list.h"
 #include "ash/system/network/tray_network_state_observer.h"
+#include "ash/system/system_notifier.h"
 #include "ash/system/tray/system_tray.h"
-#include "ash/system/tray/system_tray_delegate.h"
 #include "ash/system/tray/system_tray_notifier.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_item_more.h"
@@ -29,26 +28,45 @@
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/image/image_skia_operations.h"
+#include "ui/message_center/message_center.h"
+#include "ui/message_center/notification.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/link.h"
 #include "ui/views/controls/link_listener.h"
-#include "ui/views/layout/box_layout.h"
 #include "ui/views/widget/widget.h"
 
 using chromeos::NetworkHandler;
 using chromeos::NetworkState;
 using chromeos::NetworkStateHandler;
 using chromeos::NetworkTypePattern;
+using message_center::Notification;
 
 namespace ash {
 namespace tray {
 
 namespace {
 
+constexpr char kWifiToggleNotificationId[] = "wifi-toggle";
+
 // Returns the connected, non-virtual (aka VPN), network.
 const NetworkState* GetConnectedNetwork() {
   NetworkStateHandler* handler = NetworkHandler::Get()->network_state_handler();
   return handler->ConnectedNetworkByType(NetworkTypePattern::NonVirtual());
+}
+
+std::unique_ptr<Notification> CreateNotification(bool wifi_enabled) {
+  const int string_id = wifi_enabled
+                            ? IDS_ASH_STATUS_TRAY_NETWORK_WIFI_ENABLED
+                            : IDS_ASH_STATUS_TRAY_NETWORK_WIFI_DISABLED;
+  std::unique_ptr<Notification> notification(new Notification(
+      message_center::NOTIFICATION_TYPE_SIMPLE, kWifiToggleNotificationId,
+      base::string16(), l10n_util::GetStringUTF16(string_id),
+      gfx::Image(network_icon::GetImageForWiFiEnabledState(wifi_enabled)),
+      base::string16() /* display_source */, GURL(),
+      message_center::NotifierId(message_center::NotifierId::SYSTEM_COMPONENT,
+                                 system_notifier::kNotifierWifiToggle),
+      message_center::RichNotificationData(), nullptr));
+  return notification;
 }
 
 }  // namespace
@@ -60,6 +78,7 @@ class NetworkTrayView : public TrayItemView,
       : TrayItemView(network_tray) {
     CreateImageView();
     UpdateNetworkStateHandlerIcon();
+    UpdateConnectionStatus(GetConnectedNetwork(), true /* notify_a11y */);
   }
 
   ~NetworkTrayView() override {
@@ -80,14 +99,6 @@ class NetworkTrayView : public TrayItemView,
       network_icon::NetworkIconAnimation::GetInstance()->AddObserver(this);
     else
       network_icon::NetworkIconAnimation::GetInstance()->RemoveObserver(this);
-    // Update accessibility.
-    const NetworkState* connected_network = GetConnectedNetwork();
-    if (connected_network) {
-      UpdateConnectionStatus(base::UTF8ToUTF16(connected_network->name()),
-                             true);
-    } else {
-      UpdateConnectionStatus(base::string16(), false);
-    }
   }
 
   // views::View:
@@ -97,24 +108,60 @@ class NetworkTrayView : public TrayItemView,
   }
 
   // network_icon::AnimationObserver:
-  void NetworkIconChanged() override { UpdateNetworkStateHandlerIcon(); }
+  void NetworkIconChanged() override {
+    UpdateNetworkStateHandlerIcon();
+    UpdateConnectionStatus(GetConnectedNetwork(), false /* notify_a11y */);
+  }
 
- private:
   // Updates connection status and notifies accessibility event when necessary.
-  void UpdateConnectionStatus(const base::string16& network_name,
-                              bool connected) {
+  void UpdateConnectionStatus(const NetworkState* connected_network,
+                              bool notify_a11y) {
+    using SignalStrength = network_icon::SignalStrength;
+
     base::string16 new_connection_status_string;
-    if (connected) {
+    if (connected_network) {
       new_connection_status_string = l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_NETWORK_CONNECTED, network_name);
+          IDS_ASH_STATUS_TRAY_NETWORK_CONNECTED,
+          base::UTF8ToUTF16(connected_network->name()));
+
+      // Retrieve the string describing the signal strength, if it is applicable
+      // to |connected_network|.
+      base::string16 signal_strength_string;
+      switch (network_icon::GetSignalStrengthForNetwork(connected_network)) {
+        case SignalStrength::NOT_WIRELESS:
+          break;
+        case SignalStrength::WEAK:
+          signal_strength_string = l10n_util::GetStringUTF16(
+              IDS_ASH_STATUS_TRAY_NETWORK_SIGNAL_WEAK);
+          break;
+        case SignalStrength::MEDIUM:
+          signal_strength_string = l10n_util::GetStringUTF16(
+              IDS_ASH_STATUS_TRAY_NETWORK_SIGNAL_MEDIUM);
+          break;
+        case SignalStrength::STRONG:
+          signal_strength_string = l10n_util::GetStringUTF16(
+              IDS_ASH_STATUS_TRAY_NETWORK_SIGNAL_STRONG);
+          break;
+        default:
+          NOTREACHED();
+          break;
+      }
+
+      if (!signal_strength_string.empty()) {
+        new_connection_status_string = l10n_util::GetStringFUTF16(
+            IDS_ASH_STATUS_TRAY_NETWORK_CONNECTED_ACCESSIBLE,
+            base::UTF8ToUTF16(connected_network->name()),
+            signal_strength_string);
+      }
     }
     if (new_connection_status_string != connection_status_string_) {
       connection_status_string_ = new_connection_status_string;
-      if (!connection_status_string_.empty())
+      if (notify_a11y && !connection_status_string_.empty())
         NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, true);
     }
   }
 
+ private:
   void UpdateIcon(bool tray_icon_visible, const gfx::ImageSkia& image) {
     image_view()->SetImage(image);
     SetVisible(tray_icon_visible);
@@ -184,64 +231,13 @@ class NetworkDefaultView : public TrayItemMore,
   DISALLOW_COPY_AND_ASSIGN(NetworkDefaultView);
 };
 
-class NetworkWifiDetailedView : public NetworkDetailedView {
- public:
-  explicit NetworkWifiDetailedView(SystemTrayItem* owner)
-      : NetworkDetailedView(owner) {}
-
-  ~NetworkWifiDetailedView() override {}
-
-  // NetworkDetailedView:
-  void Init() override {
-    constexpr int kVerticalPadding = 10;
-    auto* box_layout = new views::BoxLayout(
-        views::BoxLayout::kHorizontal, kTrayPopupPaddingHorizontal,
-        kVerticalPadding, kTrayPopupPaddingBetweenItems);
-    SetLayoutManager(box_layout);
-
-    image_view_ = new views::ImageView;
-    AddChildView(image_view_);
-
-    label_view_ = new views::Label();
-    label_view_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    AddChildView(label_view_);
-    box_layout->SetFlexForView(label_view_, 1);
-
-    Update();
-  }
-
-  NetworkDetailedView::DetailedViewType GetViewType() const override {
-    return NetworkDetailedView::WIFI_VIEW;
-  }
-
-  void Update() override {
-    const bool wifi_enabled =
-        NetworkHandler::Get()->network_state_handler()->IsTechnologyEnabled(
-            NetworkTypePattern::WiFi());
-    image_view_->SetImage(
-        network_icon::GetImageForWiFiEnabledState(wifi_enabled));
-
-    const int string_id = wifi_enabled
-                              ? IDS_ASH_STATUS_TRAY_NETWORK_WIFI_ENABLED
-                              : IDS_ASH_STATUS_TRAY_NETWORK_WIFI_DISABLED;
-    label_view_->SetText(l10n_util::GetStringUTF16(string_id));
-  }
-
- private:
-  views::ImageView* image_view_ = nullptr;
-  views::Label* label_view_ = nullptr;
-
-  DISALLOW_COPY_AND_ASSIGN(NetworkWifiDetailedView);
-};
-
 }  // namespace tray
 
 TrayNetwork::TrayNetwork(SystemTray* system_tray)
     : SystemTrayItem(system_tray, UMA_NETWORK),
-      tray_(NULL),
-      default_(NULL),
-      detailed_(NULL),
-      request_wifi_view_(false) {
+      tray_(nullptr),
+      default_(nullptr),
+      detailed_(nullptr) {
   network_state_observer_.reset(new TrayNetworkStateObserver(this));
   SystemTrayNotifier* notifier = Shell::Get()->system_tray_notifier();
   notifier->AddNetworkObserver(this);
@@ -255,74 +251,72 @@ TrayNetwork::~TrayNetwork() {
 }
 
 views::View* TrayNetwork::CreateTrayView(LoginStatus status) {
-  CHECK(tray_ == NULL);
+  CHECK(tray_ == nullptr);
   if (!chromeos::NetworkHandler::IsInitialized())
-    return NULL;
+    return nullptr;
   tray_ = new tray::NetworkTrayView(this);
   return tray_;
 }
 
 views::View* TrayNetwork::CreateDefaultView(LoginStatus status) {
-  CHECK(default_ == NULL);
+  CHECK(default_ == nullptr);
   if (!chromeos::NetworkHandler::IsInitialized())
-    return NULL;
-  CHECK(tray_ != NULL);
+    return nullptr;
+  CHECK(tray_ != nullptr);
   default_ = new tray::NetworkDefaultView(this);
   default_->SetEnabled(status != LoginStatus::LOCKED);
   return default_;
 }
 
 views::View* TrayNetwork::CreateDetailedView(LoginStatus status) {
-  CHECK(detailed_ == NULL);
-  ShellPort::Get()->RecordUserMetricsAction(
+  CHECK(detailed_ == nullptr);
+  Shell::Get()->metrics()->RecordUserMetricsAction(
       UMA_STATUS_AREA_DETAILED_NETWORK_VIEW);
   if (!chromeos::NetworkHandler::IsInitialized())
-    return NULL;
-  if (request_wifi_view_) {
-    detailed_ = new tray::NetworkWifiDetailedView(this);
-    request_wifi_view_ = false;
-  } else {
-    detailed_ = new tray::NetworkStateListDetailedView(
-        this, tray::NetworkStateListDetailedView::LIST_TYPE_NETWORK, status);
-  }
+    return nullptr;
+  detailed_ = new tray::NetworkListView(this, status);
   detailed_->Init();
   return detailed_;
 }
 
-void TrayNetwork::DestroyTrayView() {
-  tray_ = NULL;
+void TrayNetwork::OnTrayViewDestroyed() {
+  tray_ = nullptr;
 }
 
-void TrayNetwork::DestroyDefaultView() {
-  default_ = NULL;
+void TrayNetwork::OnDefaultViewDestroyed() {
+  default_ = nullptr;
 }
 
-void TrayNetwork::DestroyDetailedView() {
-  detailed_ = NULL;
+void TrayNetwork::OnDetailedViewDestroyed() {
+  detailed_ = nullptr;
 }
 
 void TrayNetwork::RequestToggleWifi() {
   // This will always be triggered by a user action (e.g. keyboard shortcut)
-  if (!detailed_ ||
-      detailed_->GetViewType() == tray::NetworkDetailedView::WIFI_VIEW) {
-    request_wifi_view_ = true;
-    ShowDetailedView(kTrayPopupAutoCloseDelayForTextInSeconds, false);
-  }
   NetworkStateHandler* handler = NetworkHandler::Get()->network_state_handler();
   bool enabled = handler->IsTechnologyEnabled(NetworkTypePattern::WiFi());
-  ShellPort::Get()->RecordUserMetricsAction(
+  Shell::Get()->metrics()->RecordUserMetricsAction(
       enabled ? UMA_STATUS_AREA_DISABLE_WIFI : UMA_STATUS_AREA_ENABLE_WIFI);
   handler->SetTechnologyEnabled(NetworkTypePattern::WiFi(), !enabled,
                                 chromeos::network_handler::ErrorCallback());
+  message_center::MessageCenter* message_center =
+      message_center::MessageCenter::Get();
+  if (message_center->FindVisibleNotificationById(
+          tray::kWifiToggleNotificationId)) {
+    message_center->RemoveNotification(tray::kWifiToggleNotificationId, false);
+  }
+  message_center->AddNotification(tray::CreateNotification(!enabled));
 }
 
 void TrayNetwork::OnCaptivePortalDetected(const std::string& /* guid */) {
-  NetworkStateChanged();
+  NetworkStateChanged(true /* notify_a11y */);
 }
 
-void TrayNetwork::NetworkStateChanged() {
-  if (tray_)
+void TrayNetwork::NetworkStateChanged(bool notify_a11y) {
+  if (tray_) {
     tray_->UpdateNetworkStateHandlerIcon();
+    tray_->UpdateConnectionStatus(tray::GetConnectedNetwork(), notify_a11y);
+  }
   if (default_)
     default_->Update();
   if (detailed_)

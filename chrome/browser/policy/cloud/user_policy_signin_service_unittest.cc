@@ -96,8 +96,7 @@ UserCloudPolicyManager* BuildCloudPolicyManager(
   return new UserCloudPolicyManager(
       std::unique_ptr<UserCloudPolicyStore>(store), base::FilePath(),
       std::unique_ptr<CloudExternalDataManager>(),
-      base::ThreadTaskRunnerHandle::Get(), base::ThreadTaskRunnerHandle::Get(),
-      base::ThreadTaskRunnerHandle::Get());
+      base::ThreadTaskRunnerHandle::Get(), base::ThreadTaskRunnerHandle::Get());
 }
 
 class UserPolicySigninServiceTest : public testing::Test {
@@ -120,21 +119,19 @@ class UserPolicySigninServiceTest : public testing::Test {
     // Policy client registration on Android depends on Token Service having
     // a valid login token, while on other platforms, the login refresh token
     // is specified directly.
+    UserPolicySigninServiceBase::PolicyRegistrationCallback callback =
+        base::Bind(&UserPolicySigninServiceTest::OnRegisterCompleted,
+                   base::Unretained(this));
 #if defined(OS_ANDROID)
     GetTokenService()->UpdateCredentials(
         AccountTrackerService::PickAccountIdForAccount(
             profile_.get()->GetPrefs(), kTestGaiaId, kTestUser),
         "oauth2_login_refresh_token");
-#endif
-    service->RegisterForPolicy(
-        kTestUser,
-#if defined(OS_ANDROID)
-        kTestGaiaId,
+    service->RegisterForPolicyWithAccountId(kTestUser, kTestGaiaId, callback);
 #else
-        "mock_oauth_token",
+    service->RegisterForPolicyWithLoginToken(kTestUser, "mock_oauth_token",
+                                             callback);
 #endif
-        base::Bind(&UserPolicySigninServiceTest::OnRegisterCompleted,
-                   base::Unretained(this)));
     ASSERT_TRUE(IsRequestActive());
   }
 
@@ -143,7 +140,7 @@ class UserPolicySigninServiceTest : public testing::Test {
         &device_management_service_);
 
     local_state_.reset(new TestingPrefServiceSimple);
-    chrome::RegisterLocalState(local_state_->registry());
+    RegisterLocalState(local_state_->registry());
     system_request_context_getter_ = new net::TestURLRequestContextGetter(
         base::ThreadTaskRunnerHandle::Get());
     TestingBrowserProcess::GetGlobal()->SetSystemRequestContext(
@@ -157,7 +154,7 @@ class UserPolicySigninServiceTest : public testing::Test {
     // up a UserCloudPolicyManager with a MockUserCloudPolicyStore.
     std::unique_ptr<sync_preferences::TestingPrefServiceSyncable> prefs(
         new sync_preferences::TestingPrefServiceSyncable());
-    chrome::RegisterUserProfilePrefs(prefs->registry());
+    RegisterUserProfilePrefs(prefs->registry());
 
     // UserCloudPolicyManagerFactory isn't a real
     // BrowserContextKeyedServiceFactory (it derives from
@@ -402,9 +399,39 @@ TEST_F(UserPolicySigninServiceTest, InitWhileSignedOut) {
   ASSERT_FALSE(manager_->core()->service());
 }
 
-  // TODO(joaodasilva): these tests rely on issuing the OAuth2 login refresh
-  // token after signin. Revisit this after figuring how to handle that on
-  // Android.
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
+TEST_F(UserPolicySigninServiceTest, InitRefreshTokenAvailableBeforeSignin) {
+  // Make sure user is not signed in.
+  ASSERT_FALSE(
+      SigninManagerFactory::GetForProfile(profile_.get())->IsAuthenticated());
+
+  // No oauth access token yet, so client registration should be deferred.
+  ASSERT_FALSE(IsRequestActive());
+
+  // Make oauth token available.
+  std::string account_id = AccountTrackerService::PickAccountIdForAccount(
+      profile_.get()->GetPrefs(), kTestGaiaId, kTestUser);
+  GetTokenService()->UpdateCredentials(account_id, "oauth_login_refresh_token");
+
+  // Not ssigned in yet, so client registration should be deferred.
+  ASSERT_FALSE(IsRequestActive());
+
+  // Sign in to Chrome.
+  signin_manager_->SignIn(kTestGaiaId, kTestUser, "");
+
+  // Complete initialization of the store.
+  mock_store_->NotifyStoreLoaded();
+
+  // Client registration should be in progress since we now have an oauth token
+  // for the authenticated account id.
+  EXPECT_EQ(mock_store_->signin_username(), kTestUser);
+  ASSERT_TRUE(IsRequestActive());
+}
+#endif  // !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
+
+// TODO(joaodasilva): these tests rely on issuing the OAuth2 login refresh
+// token after signin. Revisit this after figuring how to handle that on
+// Android.
 #if !defined(OS_ANDROID)
 
 TEST_F(UserPolicySigninServiceSignedInTest, InitWhileSignedIn) {

@@ -6,8 +6,12 @@
 
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/browser/ui/views/payments/contact_info_editor_view_controller.h"
 #include "chrome/browser/ui/views/payments/credit_card_editor_view_controller.h"
 #include "chrome/browser/ui/views/payments/cvc_unmask_view_controller.h"
 #include "chrome/browser/ui/views/payments/error_message_view_controller.h"
@@ -24,6 +28,8 @@
 #include "components/payments/content/payment_request.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/web_contents.h"
+#include "content/public/common/content_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/label.h"
@@ -63,8 +69,8 @@ PaymentRequestDialogView::PaymentRequestDialogView(
     PaymentRequestDialogView::ObserverForTest* observer)
     : request_(request), observer_for_testing_(observer), being_closed_(false) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  if (observer_for_testing_)
-    request->spec()->add_observer_for_testing(this);
+
+  request->spec()->AddObserver(this);
   SetLayoutManager(new views::FillLayout());
 
   view_stack_ = base::MakeUnique<ViewStack>();
@@ -72,14 +78,30 @@ PaymentRequestDialogView::PaymentRequestDialogView(
   AddChildView(view_stack_.get());
 
   SetupSpinnerOverlay();
+  // Show spinner when getting all payment instruments. The spinner will be
+  // hidden in OnGetAllPaymentInstrumentsFinished.
+  if (!request->state()->is_get_all_instruments_finished()) {
+    request->state()->AddObserver(this);
+    ShowProcessingSpinner();
+  }
 
   ShowInitialPaymentSheet();
+
+  chrome::RecordDialogCreation(chrome::DialogIdentifier::PAYMENT_REQUEST);
 }
 
 PaymentRequestDialogView::~PaymentRequestDialogView() {}
 
+void PaymentRequestDialogView::RequestFocus() {
+  view_stack_->RequestFocus();
+}
+
 ui::ModalType PaymentRequestDialogView::GetModalType() const {
   return ui::MODAL_TYPE_CHILD;
+}
+
+views::View* PaymentRequestDialogView::GetInitiallyFocusedView() {
+  return view_stack_.get();
 }
 
 bool PaymentRequestDialogView::Cancel() {
@@ -131,14 +153,37 @@ void PaymentRequestDialogView::ShowErrorMessage() {
                             request_->spec(), request_->state(), this),
                         &controller_map_),
                     /* animate = */ false);
+  HideProcessingSpinner();
+
   if (observer_for_testing_)
     observer_for_testing_->OnErrorMessageShown();
 }
 
+void PaymentRequestDialogView::OnStartUpdating(
+    PaymentRequestSpec::UpdateReason reason) {
+  ShowProcessingSpinner();
+}
+
 void PaymentRequestDialogView::OnSpecUpdated() {
-  // Since this is called in tests only, |observer_for_testing_| is defined.
-  DCHECK(observer_for_testing_);
-  observer_for_testing_->OnSpecDoneUpdating();
+  if (request_->spec()->current_update_reason() !=
+      PaymentRequestSpec::UpdateReason::NONE) {
+    HideProcessingSpinner();
+  }
+
+  if (observer_for_testing_)
+    observer_for_testing_->OnSpecDoneUpdating();
+}
+
+void PaymentRequestDialogView::OnGetAllPaymentInstrumentsFinished() {
+  HideProcessingSpinner();
+  if (observer_for_testing_) {
+    // The OnGetAllPaymentInstrumentsFinished() method is called if the payment
+    // instruments were retrieved asynchronously. This method hides the
+    // "Processing" spinner, so the UI is now ready for interaction. Any test
+    // that opens UI can now interact with it. The OnDialogOpened() call
+    // notifies the tests of this event.
+    observer_for_testing_->OnDialogOpened();
+  }
 }
 
 void PaymentRequestDialogView::Pay() {
@@ -150,6 +195,16 @@ void PaymentRequestDialogView::GoBack() {
 
   if (observer_for_testing_)
     observer_for_testing_->OnBackNavigation();
+}
+
+void PaymentRequestDialogView::GoBackToPaymentSheet() {
+  // This assumes that the Payment Sheet is the first view in the stack. Thus if
+  // there is only one view, we are already showing the payment sheet.
+  if (view_stack_->size() > 1)
+    view_stack_->PopMany(view_stack_->size() - 1);
+
+  if (observer_for_testing_)
+    observer_for_testing_->OnBackToPaymentSheetNavigation();
 }
 
 void PaymentRequestDialogView::ShowContactProfileSheet() {
@@ -220,14 +275,17 @@ void PaymentRequestDialogView::ShowCvcUnmaskPrompt(
 }
 
 void PaymentRequestDialogView::ShowCreditCardEditor(
+    BackNavigationType back_navigation_type,
+    int next_ui_tag,
     base::OnceClosure on_edited,
     base::OnceCallback<void(const autofill::CreditCard&)> on_added,
     autofill::CreditCard* credit_card) {
   view_stack_->Push(
       CreateViewAndInstallController(
           base::MakeUnique<CreditCardEditorViewController>(
-              request_->spec(), request_->state(), this, std::move(on_edited),
-              std::move(on_added), credit_card),
+              request_->spec(), request_->state(), this, back_navigation_type,
+              next_ui_tag, std::move(on_edited), std::move(on_added),
+              credit_card),
           &controller_map_),
       /* animate = */ true);
   if (observer_for_testing_)
@@ -235,14 +293,35 @@ void PaymentRequestDialogView::ShowCreditCardEditor(
 }
 
 void PaymentRequestDialogView::ShowShippingAddressEditor(
+    BackNavigationType back_navigation_type,
+    base::OnceClosure on_edited,
+    base::OnceCallback<void(const autofill::AutofillProfile&)> on_added,
     autofill::AutofillProfile* profile) {
-  view_stack_->Push(CreateViewAndInstallController(
-                        base::MakeUnique<ShippingAddressEditorViewController>(
-                            request_->spec(), request_->state(), this, profile),
-                        &controller_map_),
-                    /* animate = */ true);
+  view_stack_->Push(
+      CreateViewAndInstallController(
+          base::MakeUnique<ShippingAddressEditorViewController>(
+              request_->spec(), request_->state(), this, back_navigation_type,
+              std::move(on_edited), std::move(on_added), profile),
+          &controller_map_),
+      /* animate = */ true);
   if (observer_for_testing_)
     observer_for_testing_->OnShippingAddressEditorOpened();
+}
+
+void PaymentRequestDialogView::ShowContactInfoEditor(
+    BackNavigationType back_navigation_type,
+    base::OnceClosure on_edited,
+    base::OnceCallback<void(const autofill::AutofillProfile&)> on_added,
+    autofill::AutofillProfile* profile) {
+  view_stack_->Push(
+      CreateViewAndInstallController(
+          base::MakeUnique<ContactInfoEditorViewController>(
+              request_->spec(), request_->state(), this, back_navigation_type,
+              std::move(on_edited), std::move(on_added), profile),
+          &controller_map_),
+      /* animate = */ true);
+  if (observer_for_testing_)
+    observer_for_testing_->OnContactInfoEditorOpened();
 }
 
 void PaymentRequestDialogView::EditorViewUpdated() {
@@ -255,14 +334,31 @@ void PaymentRequestDialogView::ShowProcessingSpinner() {
   throbber_overlay_.SetVisible(true);
 }
 
+void PaymentRequestDialogView::HideProcessingSpinner() {
+  throbber_.Stop();
+  throbber_overlay_.SetVisible(false);
+}
+
+Profile* PaymentRequestDialogView::GetProfile() {
+  return Profile::FromBrowserContext(
+      request_->web_contents()->GetBrowserContext());
+}
+
 void PaymentRequestDialogView::ShowInitialPaymentSheet() {
   view_stack_->Push(CreateViewAndInstallController(
                         base::MakeUnique<PaymentSheetViewController>(
                             request_->spec(), request_->state(), this),
                         &controller_map_),
                     /* animate = */ false);
-  if (observer_for_testing_)
+  if (observer_for_testing_ &&
+      request_->state()->is_get_all_instruments_finished()) {
+    // The is_get_all_instruments_finished() method returns true if all payment
+    // instruments were retrieved synchronously. There's no "Processing" spinner
+    // to hide, so the UI is ready instantly. Any test that opens UI can now
+    // interact with it. The OnDialogOpened() call notifies the tests of this
+    // event.
     observer_for_testing_->OnDialogOpened();
+  }
 }
 
 void PaymentRequestDialogView::SetupSpinnerOverlay() {
@@ -273,11 +369,10 @@ void PaymentRequestDialogView::SetupSpinnerOverlay() {
   throbber_overlay_.SetVisible(false);
   // The throbber overlay has to have a solid white background to hide whatever
   // would be under it.
-  throbber_overlay_.set_background(
-      views::Background::CreateSolidBackground(SK_ColorWHITE));
+  throbber_overlay_.SetBackground(views::CreateSolidBackground(SK_ColorWHITE));
 
-  std::unique_ptr<views::GridLayout> layout =
-      base::MakeUnique<views::GridLayout>(&throbber_overlay_);
+  views::GridLayout* layout =
+      views::GridLayout::CreateAndInstall(&throbber_overlay_);
   views::ColumnSet* throbber_columns = layout->AddColumnSet(0);
   throbber_columns->AddPaddingColumn(0.5, 0);
   throbber_columns->AddColumn(views::GridLayout::Alignment::CENTER,
@@ -299,12 +394,11 @@ void PaymentRequestDialogView::SetupSpinnerOverlay() {
   layout->AddView(new views::Label(
       l10n_util::GetStringUTF16(IDS_PAYMENTS_PROCESSING_MESSAGE)));
 
-  throbber_overlay_.SetLayoutManager(layout.release());
   AddChildView(&throbber_overlay_);
 }
 
-gfx::Size PaymentRequestDialogView::GetPreferredSize() const {
-  return gfx::Size(kDialogWidth, kDialogHeight);
+gfx::Size PaymentRequestDialogView::CalculatePreferredSize() const {
+  return gfx::Size(GetActualDialogWidth(), kDialogHeight);
 }
 
 void PaymentRequestDialogView::ViewHierarchyChanged(

@@ -41,6 +41,7 @@ blink::WebMediaPlayer::NetworkState PipelineErrorToNetworkState(
     case DEMUXER_ERROR_COULD_NOT_OPEN:
     case DEMUXER_ERROR_COULD_NOT_PARSE:
     case DEMUXER_ERROR_NO_SUPPORTED_STREAMS:
+    case DEMUXER_ERROR_DETECTED_HLS:
     case DECODER_ERROR_NOT_SUPPORTED:
       return blink::WebMediaPlayer::kNetworkStateFormatError;
 
@@ -110,7 +111,7 @@ std::string LoadTypeToString(blink::WebMediaPlayer::LoadType load_type) {
 void ReportMetrics(blink::WebMediaPlayer::LoadType load_type,
                    const GURL& url,
                    const blink::WebSecurityOrigin& security_origin,
-                   scoped_refptr<MediaLog> media_log) {
+                   MediaLog* media_log) {
   DCHECK(media_log);
 
   // Report URL scheme, such as http, https, file, blob etc.
@@ -137,7 +138,7 @@ void ReportMetrics(blink::WebMediaPlayer::LoadType load_type,
 
 void ReportPipelineError(blink::WebMediaPlayer::LoadType load_type,
                          PipelineStatus error,
-                         scoped_refptr<MediaLog> media_log) {
+                         MediaLog* media_log) {
   DCHECK_NE(PIPELINE_OK, error);
 
   // Report the origin from where the media player is created.
@@ -199,7 +200,7 @@ class SetSinkIdCallback {
       : web_callback_(web_callback) {}
   SetSinkIdCallback(const SetSinkIdCallback& other)
       : web_callback_(std::move(other.web_callback_)) {}
-  ~SetSinkIdCallback() {}
+  ~SetSinkIdCallback() = default;
   friend void RunSetSinkIdCallback(const SetSinkIdCallback& callback,
                                    OutputDeviceStatus result);
 

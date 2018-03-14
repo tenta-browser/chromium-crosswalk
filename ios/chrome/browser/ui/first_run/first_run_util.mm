@@ -8,6 +8,7 @@
 #include "base/callback.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/time/time.h"
 #include "components/signin/core/browser/signin_manager.h"
@@ -20,7 +21,7 @@
 #include "ios/chrome/browser/tabs/tab.h"
 #include "ios/chrome/browser/ui/first_run/first_run_histograms.h"
 #import "ios/chrome/browser/ui/settings/settings_utils.h"
-#import "ios/chrome/browser/ui/sync/sync_util.h"
+#import "ios/chrome/browser/ui/settings/sync_utils/sync_util.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #include "ios/web/public/web_thread.h"
 #import "ui/gfx/ios/NSString+CrStringDrawing.h"
@@ -120,8 +121,6 @@ void RecordFirstRunMetricsInternal(ios::ChromeBrowserState* browserState,
 
 }  // namespace
 
-namespace ios_internal {
-
 BOOL FixOrphanWord(UILabel* label) {
   // Calculate the height of the label's text.
   NSString* text = label.text;
@@ -151,17 +150,17 @@ void WriteFirstRunSentinelAndRecordMetrics(
     BOOL sign_in_attempted,
     BOOL has_sso_account) {
   // Call CreateSentinel() and pass the result into RecordFirstRunMetrics().
-  base::Callback<bool(void)> task = base::Bind(&CreateSentinel);
-  base::Callback<void(bool)> reply =
-      base::Bind(&RecordFirstRunMetricsInternal, browserState,
-                 sign_in_attempted, has_sso_account);
-  base::PostTaskAndReplyWithResult(web::WebThread::GetBlockingPool(), FROM_HERE,
-                                   task, reply);
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      base::BindOnce(&CreateSentinel),
+      base::BindOnce(&RecordFirstRunMetricsInternal, browserState,
+                     sign_in_attempted, has_sso_account));
 }
 
 void FinishFirstRun(ios::ChromeBrowserState* browserState,
                     Tab* tab,
-                    FirstRunConfiguration* config) {
+                    FirstRunConfiguration* config,
+                    id<SyncPresenter> presenter) {
   [[NSNotificationCenter defaultCenter]
       postNotificationName:kChromeFirstRunUIWillFinishNotification
                     object:nil];
@@ -169,7 +168,7 @@ void FinishFirstRun(ios::ChromeBrowserState* browserState,
                                         config.hasSSOAccount);
 
   // Display the sync errors infobar.
-  ios_internal::sync::displaySyncErrors(browserState, tab);
+  DisplaySyncErrors(browserState, tab, presenter);
 }
 
 void RecordProductTourTimingMetrics(NSString* timer_name,
@@ -188,5 +187,3 @@ void FirstRunDismissed() {
       postNotificationName:kChromeFirstRunUIDidFinishNotification
                     object:nil];
 }
-
-}  // namespace ios_internal

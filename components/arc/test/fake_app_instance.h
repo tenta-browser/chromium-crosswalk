@@ -79,39 +79,52 @@ class FakeAppInstance : public mojom::AppInstance {
   ~FakeAppInstance() override;
 
   // mojom::AppInstance overrides:
-  void Init(mojom::AppHostPtr host_ptr) override {}
+  void InitDeprecated(mojom::AppHostPtr host_ptr) override;
+  void Init(mojom::AppHostPtr host_ptr, InitCallback callback) override;
   void RefreshAppList() override;
+  void LaunchAppDeprecated(const std::string& package_name,
+                           const std::string& activity,
+                           const base::Optional<gfx::Rect>& dimension) override;
   void LaunchApp(const std::string& package_name,
                  const std::string& activity,
-                 const base::Optional<gfx::Rect>& dimension) override;
+                 int64_t display_id) override;
   void RequestAppIcon(const std::string& package_name,
                       const std::string& activity,
                       mojom::ScaleFactor scale_factor) override;
-  void LaunchIntent(
+  void LaunchIntentDeprecated(
       const std::string& intent_uri,
       const base::Optional<gfx::Rect>& dimension_on_screen) override;
+  void LaunchIntent(const std::string& intent_uri, int64_t display_id) override;
   void RequestIcon(const std::string& icon_resource_id,
                    mojom::ScaleFactor scale_factor,
-                   const RequestIconCallback& callback) override;
+                   RequestIconCallback callback) override;
   void RemoveCachedIcon(const std::string& icon_resource_id) override;
-  void CanHandleResolution(
+  void CanHandleResolutionDeprecated(
       const std::string& package_name,
       const std::string& activity,
       const gfx::Rect& dimension,
-      const CanHandleResolutionCallback& callback) override;
+      CanHandleResolutionDeprecatedCallback callback) override;
   void UninstallPackage(const std::string& package_name) override;
-  void GetTaskInfo(int32_t task_id,
-                   const GetTaskInfoCallback& callback) override;
+  void GetTaskInfo(int32_t task_id, GetTaskInfoCallback callback) override;
   void SetTaskActive(int32_t task_id) override;
   void CloseTask(int32_t task_id) override;
   void ShowPackageInfoDeprecated(const std::string& package_name,
                                  const gfx::Rect& dimension_on_screen) override;
+  void ShowPackageInfoOnPageDeprecated(
+      const std::string& package_name,
+      mojom::ShowPackageInfoPage page,
+      const gfx::Rect& dimension_on_screen) override;
   void ShowPackageInfoOnPage(const std::string& package_name,
                              mojom::ShowPackageInfoPage page,
-                             const gfx::Rect& dimension_on_screen) override;
+                             int64_t display_id) override;
   void SetNotificationsEnabled(const std::string& package_name,
                                bool enabled) override;
   void InstallPackage(mojom::ArcPackageInfoPtr arcPackageInfo) override;
+  void GetRecentAndSuggestedAppsFromPlayStore(
+      const std::string& query,
+      int32_t max_results,
+      GetRecentAndSuggestedAppsFromPlayStoreCallback callback) override;
+  void StartPaiFlow() override;
 
   // Methods to reply messages.
   void SendRefreshAppList(const std::vector<mojom::AppInfo>& apps);
@@ -121,6 +134,9 @@ class FakeAppInstance : public mojom::AppInstance {
   void SendTaskCreated(int32_t taskId,
                        const mojom::AppInfo& app,
                        const std::string& intent);
+  void SendTaskDescription(int32_t taskId,
+                           const std::string& label,
+                           const std::string& icon_png_data_as_string);
   void SendTaskDestroyed(int32_t taskId);
   bool GenerateAndSendIcon(const mojom::AppInfo& app,
                            mojom::ScaleFactor scale_factor,
@@ -137,6 +153,7 @@ class FakeAppInstance : public mojom::AppInstance {
   void SendRefreshPackageList(
       const std::vector<mojom::ArcPackageInfo>& packages);
   void SendPackageAdded(const mojom::ArcPackageInfo& package);
+  void SendPackageModified(const mojom::ArcPackageInfo& package);
   void SendPackageUninstalled(const std::string& pacakge_name);
 
   void SendInstallationStarted(const std::string& package_name);
@@ -144,6 +161,8 @@ class FakeAppInstance : public mojom::AppInstance {
                                 bool success);
 
   int refresh_app_list_count() const { return refresh_app_list_count_; }
+
+  int start_pai_request_count() const { return start_pai_request_count_; }
 
   const std::vector<std::unique_ptr<Request>>& launch_requests() const {
     return launch_requests_;
@@ -168,6 +187,8 @@ class FakeAppInstance : public mojom::AppInstance {
   mojom::AppHost* app_host_;
   // Number of RefreshAppList calls.
   int refresh_app_list_count_ = 0;
+  // Number of requests to start PAI flows.
+  int start_pai_request_count_ = 0;
   // Keeps information about launch requests.
   std::vector<std::unique_ptr<Request>> launch_requests_;
   // Keeps information about launch intents.

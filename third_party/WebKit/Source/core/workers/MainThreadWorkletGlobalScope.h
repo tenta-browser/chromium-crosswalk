@@ -9,44 +9,38 @@
 #include "core/dom/ContextLifecycleObserver.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/workers/WorkletGlobalScope.h"
-#include "core/workers/WorkletGlobalScopeProxy.h"
 
 namespace blink {
 
 class ConsoleMessage;
 class LocalFrame;
-class ScriptSourceCode;
+class WorkerReportingProxy;
 
-class CORE_EXPORT MainThreadWorkletGlobalScope : public WorkletGlobalScope,
-                                                 public WorkletGlobalScopeProxy,
-                                                 public ContextClient {
+class CORE_EXPORT MainThreadWorkletGlobalScope
+    : public WorkletGlobalScope,
+      public ContextClient {
   USING_GARBAGE_COLLECTED_MIXIN(MainThreadWorkletGlobalScope);
 
  public:
   MainThreadWorkletGlobalScope(LocalFrame*,
-                               const KURL&,
-                               const String& user_agent,
-                               PassRefPtr<SecurityOrigin>,
-                               v8::Isolate*);
+                               std::unique_ptr<GlobalScopeCreationParams>,
+                               v8::Isolate*,
+                               WorkerReportingProxy&);
   ~MainThreadWorkletGlobalScope() override;
   bool IsMainThreadWorkletGlobalScope() const final { return true; }
 
   // WorkerOrWorkletGlobalScope
-  void CountFeature(UseCounter::Feature) final;
-  void CountDeprecation(UseCounter::Feature) final;
   WorkerThread* GetThread() const final;
+  scoped_refptr<WebTaskRunner> GetTaskRunner(TaskType) override;
 
-  // WorkletGlobalScopeProxy
-  void EvaluateScript(const ScriptSourceCode&) final;
-  void TerminateWorkletGlobalScope() final;
+  void Terminate();
 
+  // ExecutionContext
   void AddConsoleMessage(ConsoleMessage*) final;
   void ExceptionThrown(ErrorEvent*) final;
+  CoreProbeSink* GetProbeSink() final;
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
-    WorkletGlobalScope::Trace(visitor);
-    ContextClient::Trace(visitor);
-  }
+  void Trace(blink::Visitor*) override;
 };
 
 DEFINE_TYPE_CASTS(MainThreadWorkletGlobalScope,

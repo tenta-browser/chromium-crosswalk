@@ -10,12 +10,10 @@
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
 
+class GURL;
+
 namespace base {
 class RefCountedMemory;
-}
-
-namespace net {
-class URLRequest;
 }
 
 namespace web {
@@ -79,18 +77,15 @@ class URLDataSourceIOS {
   // happening, return false. It is OK to return false as needed.
   virtual bool ShouldDenyXFrameOptions() const;
 
+  // Whether |path| is gzipped (and should be transmitted gzipped).
+  virtual bool IsGzipped(const std::string& path) const;
+
   // By default, only chrome: requests are allowed.  Override in specific WebUI
   // data sources to enable for additional schemes or to implement fancier
   // access control.  Typically used in concert with
   // WebClient::GetAdditionalWebUISchemes() to permit additional WebUI scheme
   // support for an embedder.
-  virtual bool ShouldServiceRequest(const net::URLRequest* request) const;
-
-  // Called to inform the source that StartDataRequest() will be called soon.
-  // Gives the source an opportunity to rewrite |path| to incorporate extra
-  // information from the URLRequest prior to serving.
-  virtual void WillServiceRequest(const net::URLRequest* request,
-                                  std::string* path) const {}
+  virtual bool ShouldServiceRequest(const GURL& url) const;
 };
 
 }  // namespace web

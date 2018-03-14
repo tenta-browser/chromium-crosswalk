@@ -19,7 +19,6 @@
 #include "chrome/browser/themes/theme_properties.h"
 #include "components/url_formatter/elide_url.h"
 #include "components/url_formatter/url_formatter.h"
-#include "services/service_manager/runner/common/client_util.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/pathops/SkPathOps.h"
 #include "ui/base/theme_provider.h"
@@ -40,48 +39,50 @@
 #include "ui/views/widget/widget.h"
 #include "url/gurl.h"
 
-#if defined(USE_ASH)
-#include "ash/wm/window_state.h"  // nogncheck
-#include "ash/wm/window_state_aura.h"  // nogncheck
-#endif
-
-#if defined(USE_AURA)
-#include "services/ui/public/cpp/property_type_converters.h"  // nogncheck
+#if defined(OS_CHROMEOS)
+#include "ash/shell.h"                                           // mash-ok
+#include "ash/wm/window_state.h"                                 // mash-ok
+#include "services/ui/public/cpp/property_type_converters.h"     // nogncheck
 #include "services/ui/public/interfaces/window_manager.mojom.h"  // nogncheck
 #endif
 
+namespace {
+
 // The alpha and color of the bubble's shadow.
-static const SkColor kShadowColor = SkColorSetARGB(30, 0, 0, 0);
+const SkColor kShadowColor = SkColorSetARGB(30, 0, 0, 0);
 
 // The roundedness of the edges of our bubble.
-static const int kBubbleCornerRadius = 4;
+const int kBubbleCornerRadius = 4;
 
 // How close the mouse can get to the infobubble before it starts sliding
 // off-screen.
-static const int kMousePadding = 20;
+const int kMousePadding = 20;
 
 // The horizontal offset of the text within the status bubble, not including the
 // outer shadow ring.
-static const int kTextPositionX = 3;
+const int kTextPositionX = 3;
 
 // The minimum horizontal space between the (right) end of the text and the edge
 // of the status bubble, not including the outer shadow ring.
-static const int kTextHorizPadding = 1;
+const int kTextHorizPadding = 1;
 
 // Delays before we start hiding or showing the bubble after we receive a
 // show or hide request.
-static const int kShowDelay = 80;
-static const int kHideDelay = 250;
+const int kShowDelay = 80;
+const int kHideDelay = 250;
 
 // How long each fade should last for.
-static const int kShowFadeDurationMS = 120;
-static const int kHideFadeDurationMS = 200;
-static const int kFramerate = 25;
+constexpr auto kShowFadeDuration = base::TimeDelta::FromMilliseconds(120);
+constexpr auto kHideFadeDuration = base::TimeDelta::FromMilliseconds(200);
+const int kFramerate = 25;
 
 // How long each expansion step should take.
-static const int kMinExpansionStepDurationMS = 20;
-static const int kMaxExpansionStepDurationMS = 150;
+constexpr auto kMinExpansionStepDuration =
+    base::TimeDelta::FromMilliseconds(20);
+constexpr auto kMaxExpansionStepDuration =
+    base::TimeDelta::FromMilliseconds(150);
 
+}  // namespace
 
 // StatusBubbleViews::StatusViewAnimation --------------------------------------
 class StatusBubbleViews::StatusViewAnimation : public gfx::LinearAnimation,
@@ -180,7 +181,7 @@ class StatusBubbleViews::StatusView : public views::View {
   void RestartTimer(base::TimeDelta delay);
 
   // Manage the fades and starting and stopping the animations correctly.
-  void StartFade(float start, float end, int duration);
+  void StartFade(float start, float end, base::TimeDelta duration);
   void StartHiding();
   void StartShowing();
 
@@ -266,18 +267,19 @@ void StatusBubbleViews::StatusView::StartTimer(base::TimeDelta time) {
     timer_factory_.InvalidateWeakPtrs();
 
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&StatusBubbleViews::StatusView::OnTimer,
-                            timer_factory_.GetWeakPtr()),
+      FROM_HERE,
+      base::BindOnce(&StatusBubbleViews::StatusView::OnTimer,
+                     timer_factory_.GetWeakPtr()),
       time);
 }
 
 void StatusBubbleViews::StatusView::OnTimer() {
   if (state_ == BUBBLE_HIDING_TIMER) {
     state_ = BUBBLE_HIDING_FADE;
-    StartFade(1.0f, 0.0f, kHideFadeDurationMS);
+    StartFade(1.0f, 0.0f, kHideFadeDuration);
   } else if (state_ == BUBBLE_SHOWING_TIMER) {
     state_ = BUBBLE_SHOWING_FADE;
-    StartFade(0.0f, 1.0f, kShowFadeDurationMS);
+    StartFade(0.0f, 1.0f, kShowFadeDuration);
   }
 }
 
@@ -301,7 +303,7 @@ void StatusBubbleViews::StatusView::ResetTimer() {
 
 void StatusBubbleViews::StatusView::StartFade(float start,
                                               float end,
-                                              int duration) {
+                                              base::TimeDelta duration) {
   animation_.reset(new StatusViewAnimation(this, start, end));
 
   // This will also reset the currently-occurring animation.
@@ -323,8 +325,7 @@ void StatusBubbleViews::StatusView::StartHiding() {
     float current_opacity = animation_->GetCurrentOpacity();
 
     // Start a fade in the opposite direction.
-    StartFade(current_opacity, 0.0f,
-              static_cast<int>(kHideFadeDurationMS * current_opacity));
+    StartFade(current_opacity, 0.0f, kHideFadeDuration * current_opacity);
   }
 }
 
@@ -344,8 +345,7 @@ void StatusBubbleViews::StatusView::StartShowing() {
     float current_opacity = animation_->GetCurrentOpacity();
 
     // Start a fade in the opposite direction.
-    StartFade(current_opacity, 1.0f,
-              static_cast<int>(kShowFadeDurationMS * current_opacity));
+    StartFade(current_opacity, 1.0f, kShowFadeDuration * current_opacity);
   } else if (state_ == BUBBLE_SHOWING_TIMER) {
     // We hadn't yet begun showing anything when we received a new request
     // for something to show, so we start from scratch.
@@ -484,7 +484,7 @@ void StatusBubbleViews::StatusView::OnPaint(gfx::Canvas* canvas) {
                       popup_size_.height());
   text_rect.Inset(kShadowThickness, kShadowThickness);
   // Make sure the text is aligned to the right on RTL UIs.
-  text_rect.set_x(GetMirroredXForRect(text_rect));
+  text_rect = GetMirroredRect(text_rect);
 
   // Text color is the foreground tab text color at 60% alpha.
   SkColor blended_text_color = color_utils::AlphaBlend(
@@ -588,10 +588,10 @@ void StatusBubbleViews::StatusViewExpander::StartExpansion(
   expanded_text_ = expanded_text;
   expansion_start_ = expansion_start;
   expansion_end_ = expansion_end;
-  int min_duration = std::max(kMinExpansionStepDurationMS,
-      static_cast<int>(kMaxExpansionStepDurationMS *
-          (expansion_end - expansion_start) / 100.0));
-  SetDuration(std::min(kMaxExpansionStepDurationMS, min_duration));
+  base::TimeDelta min_duration = std::max(
+      kMinExpansionStepDuration,
+      kMaxExpansionStepDuration * (expansion_end - expansion_start) / 100.0);
+  SetDuration(std::min(kMaxExpansionStepDuration, min_duration));
   Start();
 }
 
@@ -654,7 +654,7 @@ void StatusBubbleViews::Init() {
     params.parent = frame->GetNativeView();
     params.context = frame->GetNativeWindow();
     params.name = "StatusBubble";
-#if defined(USE_AURA)
+#if defined(OS_CHROMEOS)
     params.mus_properties
         [ui::mojom::WindowManager::kWindowIgnoredByShelf_InitProperty] =
         mojo::ConvertTo<std::vector<uint8_t>>(true);
@@ -665,7 +665,8 @@ void StatusBubbleViews::Init() {
     popup_->SetOpacity(0.f);
     popup_->SetContentsView(view_);
 #if defined(OS_CHROMEOS)
-    if (!service_manager::ServiceManagerIsRemote()) {
+    // Mash is handled via mus_properties.
+    if (ash::Shell::HasInstance()) {
       ash::wm::GetWindowState(popup_->GetNativeWindow())
           ->set_ignored_by_shelf(true);
     }
@@ -678,7 +679,7 @@ void StatusBubbleViews::Reposition() {
   // Overlap the client edge that's shown in restored mode, or when there is no
   // client edge this makes the bubble snug with the corner of the window.
   int overlap = kShadowThickness;
-  int height = GetPreferredSize().height();
+  int height = GetPreferredHeight();
   int base_view_height = base_view()->bounds().height();
   gfx::Point origin(-overlap, base_view_height - height + overlap);
   SetBounds(origin.x(), origin.y(), base_view()->bounds().width() / 3, height);
@@ -698,8 +699,8 @@ void StatusBubbleViews::RepositionPopup() {
   }
 }
 
-gfx::Size StatusBubbleViews::GetPreferredSize() {
-  return gfx::Size(0, gfx::FontList().GetHeight() + kTotalVerticalPadding);
+int StatusBubbleViews::GetPreferredHeight() {
+  return gfx::FontList().GetHeight() + kTotalVerticalPadding;
 }
 
 void StatusBubbleViews::SetBounds(int x, int y, int w, int h) {
@@ -778,8 +779,9 @@ void StatusBubbleViews::SetURL(const GURL& url) {
     } else if (url_formatter::FormatUrl(url).length() >
                url_text_.length()) {
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::Bind(&StatusBubbleViews::ExpandBubble,
-                                expand_timer_factory_.GetWeakPtr()),
+          FROM_HERE,
+          base::BindOnce(&StatusBubbleViews::ExpandBubble,
+                         expand_timer_factory_.GetWeakPtr()),
           base::TimeDelta::FromMilliseconds(kExpandHoverDelayMS));
     }
   }
@@ -792,8 +794,13 @@ void StatusBubbleViews::Hide() {
     view_->Hide();
 }
 
-void StatusBubbleViews::MouseMoved(const gfx::Point& location,
-                                   bool left_content) {
+void StatusBubbleViews::MouseMoved(bool left_content) {
+  MouseMovedAt(display::Screen::GetScreen()->GetCursorScreenPoint(),
+               left_content);
+}
+
+void StatusBubbleViews::MouseMovedAt(const gfx::Point& location,
+                                     bool left_content) {
   contains_mouse_ = !left_content;
   if (left_content) {
     RepositionPopup();

@@ -30,7 +30,7 @@
 #include "core/inspector/InspectorBaseAgent.h"
 #include "core/inspector/protocol/ApplicationCache.h"
 #include "core/loader/appcache/ApplicationCacheHost.h"
-#include "wtf/Noncopyable.h"
+#include "platform/wtf/Noncopyable.h"
 
 namespace blink {
 
@@ -47,7 +47,7 @@ class CORE_EXPORT InspectorApplicationCacheAgent final
     return new InspectorApplicationCacheAgent(inspected_frames);
   }
   ~InspectorApplicationCacheAgent() override {}
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
   // InspectorBaseAgent
   void Restore() override;

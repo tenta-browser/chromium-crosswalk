@@ -16,34 +16,30 @@ namespace blink {
 
 namespace {
 
-class TestPrerendererClient : public GarbageCollected<TestPrerendererClient>,
-                              public PrerendererClient {
-  USING_GARBAGE_COLLECTED_MIXIN(TestPrerendererClient);
-
+class TestPrerendererClient : public PrerendererClient {
  public:
   TestPrerendererClient(Page& page, bool is_prefetch_only)
-      : PrerendererClient(page), is_prefetch_only_(is_prefetch_only) {}
+      : PrerendererClient(page, nullptr), is_prefetch_only_(is_prefetch_only) {}
 
  private:
-  void WillAddPrerender(Prerender*) override{};
+  void WillAddPrerender(Prerender*) override {}
   bool IsPrefetchOnly() override { return is_prefetch_only_; }
 
   bool is_prefetch_only_;
 };
 
-class HTMLDocumentParserTest : public testing::Test {
+class HTMLDocumentParserTest : public ::testing::Test {
  protected:
   HTMLDocumentParserTest() : dummy_page_holder_(DummyPageHolder::Create()) {
     dummy_page_holder_->GetDocument().SetURL(
-        KURL(KURL(), "https://example.test"));
+        KURL(NullURL(), "https://example.test"));
   }
 
   HTMLDocumentParser* CreateParser(HTMLDocument& document) {
     HTMLDocumentParser* parser =
         HTMLDocumentParser::Create(document, kForceSynchronousParsing);
-    TextResourceDecoderBuilder decoder_builder("text/html", g_null_atom);
     std::unique_ptr<TextResourceDecoder> decoder(
-        decoder_builder.BuildFor(&document));
+        BuildTextResourceDecoderFor(&document, "text/html", g_null_atom));
     parser->SetDecoder(std::move(decoder));
     return parser;
   }

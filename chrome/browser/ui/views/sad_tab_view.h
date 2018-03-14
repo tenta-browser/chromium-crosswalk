@@ -29,12 +29,12 @@ class LabelButton;
 //  "sad tab" in the browser window when a renderer is destroyed unnaturally.
 //
 ///////////////////////////////////////////////////////////////////////////////
-class SadTabView : public chrome::SadTab,
+class SadTabView : public SadTab,
                    public views::View,
                    public views::LinkListener,
                    public views::ButtonListener {
  public:
-  SadTabView(content::WebContents* web_contents, chrome::SadTabKind kind);
+  SadTabView(content::WebContents* web_contents, SadTabKind kind);
   ~SadTabView() override;
 
   // Overridden from views::View:
@@ -51,15 +51,14 @@ class SadTabView : public chrome::SadTab,
   void OnPaint(gfx::Canvas* canvas) override;
 
  private:
-
-  views::Label* CreateLabel(const base::string16& text);
-  views::Link* CreateLink(const base::string16& text, const SkColor& color);
-
   bool painted_ = false;
   views::Label* message_;
+  std::vector<views::Label*> bullet_labels_;
   views::Link* help_link_;
   views::LabelButton* action_button_;
   views::Label* title_;
+
+  DISALLOW_COPY_AND_ASSIGN(SadTabView);
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_SAD_TAB_VIEW_H__

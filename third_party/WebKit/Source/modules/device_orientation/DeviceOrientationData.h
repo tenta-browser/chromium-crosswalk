@@ -27,6 +27,7 @@
 #define DeviceOrientationData_h
 
 #include "bindings/core/v8/Nullable.h"
+#include "modules/ModulesExport.h"
 #include "platform/heap/Handle.h"
 
 namespace device {
@@ -37,7 +38,7 @@ namespace blink {
 
 class DeviceOrientationEventInit;
 
-class DeviceOrientationData final
+class MODULES_EXPORT DeviceOrientationData final
     : public GarbageCollected<DeviceOrientationData> {
  public:
   static DeviceOrientationData* Create();
@@ -47,7 +48,7 @@ class DeviceOrientationData final
                                        bool absolute);
   static DeviceOrientationData* Create(const DeviceOrientationEventInit&);
   static DeviceOrientationData* Create(const device::OrientationData&);
-  DEFINE_INLINE_TRACE() {}
+  void Trace(blink::Visitor* visitor) {}
 
   double Alpha() const;
   double Beta() const;

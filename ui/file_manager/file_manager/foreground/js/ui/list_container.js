@@ -105,6 +105,13 @@ function ListContainer(element, table, grid) {
    */
   this.textSearchState = new TextSearchState();
 
+  /**
+   * Whtehter to allow or cancel a context menu event.
+   * @type {boolean}
+   * @private
+   */
+  this.allowContextMenuByTouch_ = false;
+
   // Overriding the default role 'list' to 'listbox' for better accessibility
   // on ChromeOS.
   this.table.list.setAttribute('role', 'listbox');
@@ -114,6 +121,14 @@ function ListContainer(element, table, grid) {
   this.element.addEventListener('keydown', this.onKeyDown_.bind(this));
   this.element.addEventListener('keypress', this.onKeyPress_.bind(this));
   this.element.addEventListener('mousemove', this.onMouseMove_.bind(this));
+  this.element.addEventListener(
+      'contextmenu', this.onContextMenu_.bind(this), /* useCapture */ true);
+
+  util.isTouchModeEnabled().then(function(enabled) {
+    if (!enabled)
+      return;
+    this.disableContextMenuByLongTap_();
+  }.bind(this));
 }
 
 /**
@@ -133,21 +148,6 @@ ListContainer.ListType = {
   DETAIL: 'detail',
   THUMBNAIL: 'thumb'
 };
-
-/**
- * Metadata property names used by FileTable and FileGrid.
- * These metadata is expected to be cached.
- * @const {!Array<string>}
- */
-ListContainer.METADATA_PREFETCH_PROPERTY_NAMES = [
-  'availableOffline',
-  'contentMimeType',
-  'customIconUrl',
-  'hosted',
-  'modificationTime',
-  'shared',
-  'size',
-];
 
 ListContainer.prototype = /** @struct */ {
   /**
@@ -246,6 +246,34 @@ ListContainer.prototype.setCurrentListType = function(listType) {
 };
 
 /**
+ * Disables context menu by long-tap but not two-finger tap.
+ * @private
+ */
+ListContainer.prototype.disableContextMenuByLongTap_ = function() {
+  this.element.addEventListener('touchstart', function(e) {
+    if (e.touches.length > 1) {
+      this.allowContextMenuByTouch_ = true;
+    }
+  }.bind(this));
+  this.element.addEventListener('touchend', function(e) {
+    if (e.touches.length == 0) {
+      // contextmenu event will be sent right after touchend.
+      setTimeout(function() {
+        this.allowContextMenuByTouch_ = false;
+      }.bind(this));
+    }
+  }.bind(this));
+  this.element.addEventListener('contextmenu', function(e) {
+    // Block context menu triggered by touch event unless it is right after
+    // multi-touch.
+    if (!this.allowContextMenuByTouch_ && e.sourceCapabilities &&
+        e.sourceCapabilities.firesTouchEvents) {
+      e.stopPropagation();
+    }
+  }.bind(this), true);
+};
+
+/**
  * Clears hover highlighting in the list container until next mouse move.
  */
 ListContainer.prototype.clearHover = function() {
@@ -278,6 +306,18 @@ ListContainer.prototype.focus = function() {
     default:
       assertNotReached();
       break;
+  }
+};
+
+/**
+ * Contextmenu event handler to prevent change of focus on long-tapping the
+ * header of the file list.
+ * @private
+ */
+ListContainer.prototype.onContextMenu_ = function(e) {
+  if (!this.allowContextMenuByTouch_ && e.sourceCapabilities &&
+      e.sourceCapabilities.firesTouchEvents) {
+    this.focus();
   }
 };
 

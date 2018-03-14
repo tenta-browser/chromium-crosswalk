@@ -42,7 +42,7 @@ class WebContentsImpl;
 class WebDragDestDelegate;
 
 class CONTENT_EXPORT WebContentsViewAura
-    : NON_EXPORTED_BASE(public WebContentsView),
+    : public WebContentsView,
       public RenderViewHostDelegateView,
       public OverscrollControllerDelegate,
       public aura::WindowDelegate,
@@ -88,8 +88,6 @@ class CONTENT_EXPORT WebContentsViewAura
   // animates in, or the content window animates out).
   void CompleteOverscrollNavigation(OverscrollMode mode);
 
-  void OverscrollUpdateForWebContentsDelegate(float delta_y);
-
   ui::TouchSelectionController* GetSelectionController() const;
   TouchSelectionControllerClientAura* GetSelectionControllerClient() const;
 
@@ -100,6 +98,9 @@ class CONTENT_EXPORT WebContentsViewAura
   // over. This enforces that same-page, cross-site drags are not allowed. See
   // crbug.com/666858.
   bool IsValidDragTarget(RenderWidgetHostImpl* target_rwh) const;
+
+  // Called from CreateView() to create |window_|.
+  void CreateAuraWindow(aura::Window* context);
 
   // Overridden from WebContentsView:
   gfx::NativeView GetNativeView() const override;
@@ -112,6 +113,7 @@ class CONTENT_EXPORT WebContentsViewAura
   void SetInitialFocus() override;
   void StoreFocus() override;
   void RestoreFocus() override;
+  void FocusThroughTabTraversal(bool reverse) override;
   DropData* GetDropData() const override;
   gfx::Rect GetViewBounds() const override;
   void CreateView(const gfx::Size& initial_size,
@@ -136,7 +138,8 @@ class CONTENT_EXPORT WebContentsViewAura
                      const DragEventSourceInfo& event_info,
                      RenderWidgetHostImpl* source_rwh) override;
   void UpdateDragCursor(blink::WebDragOperation operation) override;
-  void GotFocus() override;
+  void GotFocus(RenderWidgetHostImpl* render_widget_host) override;
+  void LostFocus(RenderWidgetHostImpl* render_widget_host) override;
   void TakeFocus(bool reverse) override;
 #if BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
   void ShowPopupMenu(RenderFrameHost* render_frame_host,
@@ -152,12 +155,13 @@ class CONTENT_EXPORT WebContentsViewAura
 #endif
 
   // Overridden from OverscrollControllerDelegate:
-  gfx::Rect GetVisibleBounds() const override;
+  gfx::Size GetDisplaySize() const override;
   bool OnOverscrollUpdate(float delta_x, float delta_y) override;
   void OnOverscrollComplete(OverscrollMode overscroll_mode) override;
   void OnOverscrollModeChange(OverscrollMode old_mode,
                               OverscrollMode new_mode,
                               OverscrollSource source) override;
+  base::Optional<float> GetMaxOverscrollDelta() const override;
 
   // Overridden from aura::WindowDelegate:
   gfx::Size GetMinimumSize() const override;
@@ -172,7 +176,8 @@ class CONTENT_EXPORT WebContentsViewAura
   bool CanFocus() override;
   void OnCaptureLost() override;
   void OnPaint(const ui::PaintContext& context) override;
-  void OnDeviceScaleFactorChanged(float device_scale_factor) override;
+  void OnDeviceScaleFactorChanged(float old_device_scale_factor,
+                                  float new_device_scale_factor) override;
   void OnWindowDestroying(aura::Window* window) override;
   void OnWindowDestroyed(aura::Window* window) override;
   void OnWindowTargetVisibilityChanged(bool visible) override;
@@ -194,6 +199,11 @@ class CONTENT_EXPORT WebContentsViewAura
 
   FRIEND_TEST_ALL_PREFIXES(WebContentsViewAuraTest, EnableDisableOverscroll);
 
+  const bool is_mus_browser_plugin_guest_;
+
+  bool enable_surface_synchronization_ = false;
+
+  // NOTE: this is null when running in mus and |is_mus_browser_plugin_guest_|.
   std::unique_ptr<aura::Window> window_;
 
   std::unique_ptr<WindowObserver> window_observer_;

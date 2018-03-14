@@ -82,8 +82,8 @@ bool WebCryptoResult::Cancelled() const {
 }
 
 WebCryptoResult::WebCryptoResult(CryptoResult* impl,
-                                 PassRefPtr<CryptoResultCancel> cancel)
-    : impl_(impl), cancel_(cancel) {
+                                 scoped_refptr<CryptoResultCancel> cancel)
+    : impl_(impl), cancel_(std::move(cancel)) {
   DCHECK(impl_.Get());
   DCHECK(cancel_.Get());
 }

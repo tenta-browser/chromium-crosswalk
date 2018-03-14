@@ -16,10 +16,10 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/path_service.h"
+#include "base/sequenced_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_info.h"
 #include "base/task_scheduler/post_task.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/version.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/app_mode/app_session.h"
@@ -51,7 +51,6 @@
 #include "components/signin/core/account_id/account_id.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user_manager.h"
-#include "content/public/browser/browser_thread.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/manifest_handlers/kiosk_mode_info.h"
 #include "third_party/cros_system_api/switches/chrome_switches.h"
@@ -79,7 +78,7 @@ void ScheduleDelayedCryptohomeRemoval(const cryptohome::Identification& id,
   // We are using cryptohome::Identification here because it cannot change
   // before actual removal will take place. (Possible cryptohome migration
   // happens only on session start, but deletion should happen before it.)
-  dict_update->SetStringWithoutPathExpansion(id.id(), app_id);
+  dict_update->SetKey(id.id(), base::Value(app_id));
   local_state->CommitPendingWrite();
 }
 
@@ -135,10 +134,9 @@ void CheckOwnerFilePresence(bool *present) {
 }
 
 scoped_refptr<base::SequencedTaskRunner> GetBackgroundTaskRunner() {
-  base::SequencedWorkerPool* pool = content::BrowserThread::GetBlockingPool();
-  CHECK(pool);
-  return pool->GetSequencedTaskRunnerWithShutdownBehavior(
-      pool->GetSequenceToken(), base::SequencedWorkerPool::SKIP_ON_SHUTDOWN);
+  return base::CreateSequencedTaskRunnerWithTraits(
+      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
 }
 
 base::Version GetPlatformVersion() {
@@ -419,12 +417,11 @@ void KioskAppManager::OnReadImmutableAttributes(
       } else if (!ownership_established_) {
         bool* owner_present = new bool(false);
         base::PostTaskWithTraitsAndReply(
-            FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                           base::TaskPriority::BACKGROUND),
-            base::Bind(&CheckOwnerFilePresence, owner_present),
-            base::Bind(&KioskAppManager::OnOwnerFileChecked,
-                       base::Unretained(this), callback,
-                       base::Owned(owner_present)));
+            FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+            base::BindOnce(&CheckOwnerFilePresence, owner_present),
+            base::BindOnce(&KioskAppManager::OnOwnerFileChecked,
+                           base::Unretained(this), callback,
+                           base::Owned(owner_present)));
         return;
       }
       break;
@@ -652,9 +649,9 @@ void KioskAppManager::InstallSecondaryApps(
   for (const std::string& id : ids) {
     std::unique_ptr<base::DictionaryValue> extension_entry(
         new base::DictionaryValue);
-    extension_entry->SetStringWithoutPathExpansion(
+    extension_entry->SetKey(
         extensions::ExternalProviderImpl::kExternalUpdateUrl,
-        extension_urls::GetWebstoreUpdateUrl().spec());
+        base::Value(extension_urls::GetWebstoreUpdateUrl().spec()));
     extension_entry->SetBoolean(
         extensions::ExternalProviderImpl::kIsFromWebstore, true);
     prefs->Set(id, std::move(extension_entry));
@@ -852,7 +849,7 @@ void KioskAppManager::ClearRemovedApps(
       if (it.second->account_id() == active_account_id) {
         VLOG(1) << "Currently running kiosk app removed from policy, exiting";
         cryptohomes_barrier_closure = BarrierClosure(
-            old_apps.size(), base::Bind(&chrome::AttemptUserExit));
+            old_apps.size(), base::BindOnce(&chrome::AttemptUserExit));
         break;
       }
     }

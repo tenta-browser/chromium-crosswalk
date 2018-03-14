@@ -12,7 +12,8 @@
 #include "components/keyed_service/core/service_access_type.h"
 
 namespace base {
-template <typename T> struct DefaultSingletonTraits;
+template <typename T>
+struct DefaultSingletonTraits;
 }
 
 class KeywordWebDataService;
@@ -23,6 +24,10 @@ class WebDataServiceWrapper;
 #if defined(OS_WIN)
 class PasswordWebDataService;
 #endif
+
+namespace payments {
+class PaymentManifestWebDataService;
+}
 
 namespace autofill {
 class AutofillWebDataService;
@@ -60,6 +65,10 @@ class WebDataServiceFactory : public BrowserContextKeyedServiceFactory {
       Profile* profile,
       ServiceAccessType access_type);
 #endif
+
+  static scoped_refptr<payments::PaymentManifestWebDataService>
+  GetPaymentManifestWebDataForProfile(Profile* profile,
+                                      ServiceAccessType access_type);
 
   static WebDataServiceFactory* GetInstance();
 

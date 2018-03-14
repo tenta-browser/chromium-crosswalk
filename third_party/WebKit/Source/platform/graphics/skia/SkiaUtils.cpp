@@ -30,6 +30,7 @@
 
 #include "platform/graphics/skia/SkiaUtils.h"
 
+#include "build/build_config.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/paint/PaintFlags.h"
 #include "third_party/skia/include/effects/SkCornerPathEffect.h"
@@ -37,8 +38,8 @@
 namespace blink {
 
 static const struct CompositOpToXfermodeMode {
-  CompositeOperator m_composit_op;
-  SkBlendMode xfermode_mode_;
+  CompositeOperator composit_op;
+  SkBlendMode xfermode_mode;
 } kGMapCompositOpsToXfermodeModes[] = {
     {kCompositeClear, SkBlendMode::kClear},
     {kCompositeCopy, SkBlendMode::kSrc},
@@ -76,8 +77,8 @@ static const SkBlendMode kGMapBlendOpsToXfermodeModes[] = {
 
 SkBlendMode WebCoreCompositeToSkiaComposite(CompositeOperator op,
                                             WebBlendMode blend_mode) {
-  DCHECK(op == kCompositeSourceOver || blend_mode == kWebBlendModeNormal);
-  if (blend_mode != kWebBlendModeNormal) {
+  DCHECK(op == kCompositeSourceOver || blend_mode == WebBlendMode::kNormal);
+  if (blend_mode != WebBlendMode::kNormal) {
     if (static_cast<uint8_t>(blend_mode) >=
         SK_ARRAY_COUNT(kGMapBlendOpsToXfermodeModes)) {
       SkDEBUGF(
@@ -98,8 +99,8 @@ SkBlendMode WebCoreCompositeToSkiaComposite(CompositeOperator op,
          op));
     return SkBlendMode::kSrcOver;
   }
-  SkASSERT(table[static_cast<uint8_t>(op)].m_composit_op == op);
-  return table[static_cast<uint8_t>(op)].xfermode_mode_;
+  SkASSERT(table[static_cast<uint8_t>(op)].composit_op == op);
+  return table[static_cast<uint8_t>(op)].xfermode_mode;
 }
 
 CompositeOperator CompositeOperatorFromSkia(SkBlendMode xfer_mode) {
@@ -137,41 +138,41 @@ CompositeOperator CompositeOperatorFromSkia(SkBlendMode xfer_mode) {
 WebBlendMode BlendModeFromSkia(SkBlendMode xfer_mode) {
   switch (xfer_mode) {
     case SkBlendMode::kSrcOver:
-      return kWebBlendModeNormal;
+      return WebBlendMode::kNormal;
     case SkBlendMode::kMultiply:
-      return kWebBlendModeMultiply;
+      return WebBlendMode::kMultiply;
     case SkBlendMode::kScreen:
-      return kWebBlendModeScreen;
+      return WebBlendMode::kScreen;
     case SkBlendMode::kOverlay:
-      return kWebBlendModeOverlay;
+      return WebBlendMode::kOverlay;
     case SkBlendMode::kDarken:
-      return kWebBlendModeDarken;
+      return WebBlendMode::kDarken;
     case SkBlendMode::kLighten:
-      return kWebBlendModeLighten;
+      return WebBlendMode::kLighten;
     case SkBlendMode::kColorDodge:
-      return kWebBlendModeColorDodge;
+      return WebBlendMode::kColorDodge;
     case SkBlendMode::kColorBurn:
-      return kWebBlendModeColorBurn;
+      return WebBlendMode::kColorBurn;
     case SkBlendMode::kHardLight:
-      return kWebBlendModeHardLight;
+      return WebBlendMode::kHardLight;
     case SkBlendMode::kSoftLight:
-      return kWebBlendModeSoftLight;
+      return WebBlendMode::kSoftLight;
     case SkBlendMode::kDifference:
-      return kWebBlendModeDifference;
+      return WebBlendMode::kDifference;
     case SkBlendMode::kExclusion:
-      return kWebBlendModeExclusion;
+      return WebBlendMode::kExclusion;
     case SkBlendMode::kHue:
-      return kWebBlendModeHue;
+      return WebBlendMode::kHue;
     case SkBlendMode::kSaturation:
-      return kWebBlendModeSaturation;
+      return WebBlendMode::kSaturation;
     case SkBlendMode::kColor:
-      return kWebBlendModeColor;
+      return WebBlendMode::kColor;
     case SkBlendMode::kLuminosity:
-      return kWebBlendModeLuminosity;
+      return WebBlendMode::kLuminosity;
     default:
       break;
   }
-  return kWebBlendModeNormal;
+  return WebBlendMode::kNormal;
 }
 
 SkMatrix AffineTransformToSkMatrix(const AffineTransform& source) {
@@ -195,12 +196,6 @@ SkMatrix AffineTransformToSkMatrix(const AffineTransform& source) {
 
 bool NearlyIntegral(float value) {
   return fabs(value - floorf(value)) < std::numeric_limits<float>::epsilon();
-}
-
-InterpolationQuality LimitInterpolationQuality(
-    const GraphicsContext& context,
-    InterpolationQuality resampling) {
-  return std::min(resampling, context.ImageInterpolationQuality());
 }
 
 InterpolationQuality ComputeInterpolationQuality(float src_width,
@@ -284,8 +279,8 @@ InterpolationQuality ComputeInterpolationQuality(float src_width,
   if (!is_data_complete)
     return kInterpolationLow;
 
-  // Everything else gets resampled at high quality.
-  return kInterpolationHigh;
+  // Everything else gets resampled at default quality.
+  return kInterpolationDefault;
 }
 
 int ClampedAlphaForBlending(float alpha) {
@@ -347,7 +342,7 @@ void DrawPlatformFocusRing(const PrimitiveType& primitive,
   flags.setColor(color);
   flags.setStrokeWidth(width);
 
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
   flags.setAlpha(64);
   const float corner_radius = (width - 1) * 0.5f;
 #else
@@ -356,7 +351,7 @@ void DrawPlatformFocusRing(const PrimitiveType& primitive,
 
   DrawFocusRingPrimitive(primitive, canvas, flags, corner_radius);
 
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
   // Inner part
   flags.setAlpha(128);
   flags.setStrokeWidth(flags.getStrokeWidth() * 0.5f);

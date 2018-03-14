@@ -7,23 +7,24 @@
 #include <cmath>
 #include <cstdlib>
 
-#include "ash/ash_switches.h"
+#include "ash/public/cpp/ash_switches.h"
 #include "ash/public/cpp/config.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
 #include "ash/session/session_controller.h"
+#include "ash/session/test_session_controller_client.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/test_session_controller_client.h"
-#include "ash/test/test_wallpaper_delegate.h"
+#include "ash/wallpaper/test_wallpaper_delegate.h"
+#include "ash/wallpaper/wallpaper_controller_observer.h"
 #include "ash/wallpaper/wallpaper_view.h"
 #include "ash/wallpaper/wallpaper_widget_controller.h"
-#include "ash/wm_window.h"
 #include "base/command_line.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task_scheduler/task_scheduler.h"
+#include "mojo/public/cpp/bindings/associated_binding.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/aura/window.h"
@@ -77,7 +78,7 @@ void RunAnimationForWidget(views::Widget* widget) {
 class TaskObserver : public base::MessageLoop::TaskObserver {
  public:
   TaskObserver() : processed_(false) {}
-  ~TaskObserver() override {}
+  ~TaskObserver() override = default;
 
   // MessageLoop::TaskObserver overrides.
   void WillProcessTask(const base::PendingTask& pending_task) override {}
@@ -93,12 +94,14 @@ class TaskObserver : public base::MessageLoop::TaskObserver {
   DISALLOW_COPY_AND_ASSIGN(TaskObserver);
 };
 
-void RunAllBlockingPoolTasksUntilIdle(base::SequencedWorkerPool* pool) {
+// See content::RunAllTasksUntilIdle().
+void RunAllTasksUntilIdle() {
   while (true) {
-    pool->FlushForTesting();
-
     TaskObserver task_observer;
     base::MessageLoop::current()->AddTaskObserver(&task_observer);
+    // May spin message loop.
+    base::TaskScheduler::GetInstance()->FlushForTesting();
+
     base::RunLoop().RunUntilIdle();
     base::MessageLoop::current()->RemoveTaskObserver(&task_observer);
 
@@ -107,16 +110,56 @@ void RunAllBlockingPoolTasksUntilIdle(base::SequencedWorkerPool* pool) {
   }
 }
 
+// A test implementation of the WallpaperObserver mojo interface.
+class TestWallpaperObserver : public mojom::WallpaperObserver {
+ public:
+  TestWallpaperObserver() = default;
+  ~TestWallpaperObserver() override = default;
+
+  // mojom::WallpaperObserver:
+  void OnWallpaperColorsChanged(
+      const std::vector<SkColor>& prominent_colors) override {
+    ++wallpaper_colors_changed_count_;
+    if (run_loop_)
+      run_loop_->Quit();
+  }
+
+  int wallpaper_colors_changed_count() const {
+    return wallpaper_colors_changed_count_;
+  }
+
+  void set_run_loop(base::RunLoop* loop) { run_loop_ = loop; }
+
+ private:
+  base::RunLoop* run_loop_ = nullptr;
+  int wallpaper_colors_changed_count_ = 0;
+
+  DISALLOW_COPY_AND_ASSIGN(TestWallpaperObserver);
+};
+
+class TestWallpaperControllerObserver : public WallpaperControllerObserver {
+ public:
+  TestWallpaperControllerObserver() = default;
+
+  void OnWallpaperDataChanged() override {}
+
+  void OnWallpaperBlurChanged() override { ++wallpaper_blur_changed_count_; }
+
+  void Reset() { wallpaper_blur_changed_count_ = 0; }
+
+  int wallpaper_blur_changed_count_ = 0;
+};
+
 }  // namespace
 
-class WallpaperControllerTest : public test::AshTestBase {
+class WallpaperControllerTest : public AshTestBase {
  public:
   WallpaperControllerTest()
       : controller_(nullptr), wallpaper_delegate_(nullptr) {}
-  ~WallpaperControllerTest() override {}
+  ~WallpaperControllerTest() override = default;
 
   void SetUp() override {
-    test::AshTestBase::SetUp();
+    AshTestBase::SetUp();
     // Ash shell initialization creates wallpaper. Reset it so we can manually
     // control wallpaper creation and animation in our tests.
     RootWindowController* root_window_controller =
@@ -124,8 +167,8 @@ class WallpaperControllerTest : public test::AshTestBase {
     root_window_controller->SetWallpaperWidgetController(nullptr);
     root_window_controller->SetAnimatingWallpaperWidgetController(nullptr);
     controller_ = Shell::Get()->wallpaper_controller();
-    wallpaper_delegate_ = static_cast<test::TestWallpaperDelegate*>(
-        Shell::Get()->wallpaper_delegate());
+    wallpaper_delegate_ =
+        static_cast<TestWallpaperDelegate*>(Shell::Get()->wallpaper_delegate());
     controller_->set_wallpaper_reload_delay_for_test(0);
   }
 
@@ -197,8 +240,8 @@ class WallpaperControllerTest : public test::AshTestBase {
   // Convenience function to ensure ShouldCalculateColors() returns true.
   void EnableShelfColoring() {
     const gfx::ImageSkia kImage = CreateImage(10, 10, kCustomWallpaperColor);
-    controller_->SetWallpaperImage(kImage, WALLPAPER_LAYOUT_STRETCH);
-    AddCommandLineSwitch(switches::kAshShelfColorEnabled);
+    controller_->SetWallpaperImage(
+        kImage, CreateWallpaperInfo(WALLPAPER_LAYOUT_STRETCH));
     SetSessionState(SessionState::ACTIVE);
 
     EXPECT_TRUE(ShouldCalculateColors());
@@ -209,10 +252,12 @@ class WallpaperControllerTest : public test::AshTestBase {
     GetSessionControllerClient()->SetSessionState(session_state);
   }
 
-  // Convenience function to modify the kAshShelfColor command line value.
-  void AddCommandLineSwitch(const std::string& value_string) {
-    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kAshShelfColor, value_string);
+  // Helper function to create a |WallpaperInfo| struct with dummy values
+  // given the desired layout.
+  wallpaper::WallpaperInfo CreateWallpaperInfo(
+      wallpaper::WallpaperLayout layout) {
+    return wallpaper::WallpaperInfo("", layout, wallpaper::DEFAULT,
+                                    base::Time::Now().LocalMidnight());
   }
 
   // Wrapper for private ShouldCalculateColors()
@@ -220,7 +265,7 @@ class WallpaperControllerTest : public test::AshTestBase {
 
   WallpaperController* controller_;  // Not owned.
 
-  test::TestWallpaperDelegate* wallpaper_delegate_;
+  TestWallpaperDelegate* wallpaper_delegate_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(WallpaperControllerTest);
@@ -381,9 +426,10 @@ TEST_F(WallpaperControllerTest, ResizeCustomWallpaper) {
 
   // Set the image as custom wallpaper, wait for the resize to finish, and check
   // that the resized image is the expected size.
-  controller_->SetWallpaperImage(image, WALLPAPER_LAYOUT_STRETCH);
+  controller_->SetWallpaperImage(image,
+                                 CreateWallpaperInfo(WALLPAPER_LAYOUT_STRETCH));
   EXPECT_TRUE(image.BackedBySameObjectAs(controller_->GetWallpaper()));
-  RunAllBlockingPoolTasksUntilIdle(Shell::Get()->blocking_pool().get());
+  RunAllTasksUntilIdle();
   gfx::ImageSkia resized_image = controller_->GetWallpaper();
   EXPECT_FALSE(image.BackedBySameObjectAs(resized_image));
   EXPECT_EQ(gfx::Size(320, 200).ToString(), resized_image.size().ToString());
@@ -391,8 +437,9 @@ TEST_F(WallpaperControllerTest, ResizeCustomWallpaper) {
   // Load the original wallpaper again and check that we're still using the
   // previously-resized image instead of doing another resize
   // (http://crbug.com/321402).
-  controller_->SetWallpaperImage(image, WALLPAPER_LAYOUT_STRETCH);
-  RunAllBlockingPoolTasksUntilIdle(Shell::Get()->blocking_pool().get());
+  controller_->SetWallpaperImage(image,
+                                 CreateWallpaperInfo(WALLPAPER_LAYOUT_STRETCH));
+  RunAllTasksUntilIdle();
   EXPECT_TRUE(resized_image.BackedBySameObjectAs(controller_->GetWallpaper()));
 }
 
@@ -451,14 +498,16 @@ TEST_F(WallpaperControllerTest, DontScaleWallpaperWithCenterLayout) {
   UpdateDisplay("1200x600*2");
   {
     SCOPED_TRACE(base::StringPrintf("1200x600*2 high resolution"));
-    controller_->SetWallpaperImage(image_high_res, WALLPAPER_LAYOUT_CENTER);
+    controller_->SetWallpaperImage(
+        image_high_res, CreateWallpaperInfo(WALLPAPER_LAYOUT_CENTER));
     WallpaperFitToNativeResolution(
         wallpaper_view(), high_dsf, high_resolution.width(),
         high_resolution.height(), kCustomWallpaperColor);
   }
   {
     SCOPED_TRACE(base::StringPrintf("1200x600*2 low resolution"));
-    controller_->SetWallpaperImage(image_low_res, WALLPAPER_LAYOUT_CENTER);
+    controller_->SetWallpaperImage(
+        image_low_res, CreateWallpaperInfo(WALLPAPER_LAYOUT_CENTER));
     WallpaperFitToNativeResolution(
         wallpaper_view(), high_dsf, low_resolution.width(),
         low_resolution.height(), kCustomWallpaperColor);
@@ -467,14 +516,16 @@ TEST_F(WallpaperControllerTest, DontScaleWallpaperWithCenterLayout) {
   UpdateDisplay("1200x600");
   {
     SCOPED_TRACE(base::StringPrintf("1200x600 high resolution"));
-    controller_->SetWallpaperImage(image_high_res, WALLPAPER_LAYOUT_CENTER);
+    controller_->SetWallpaperImage(
+        image_high_res, CreateWallpaperInfo(WALLPAPER_LAYOUT_CENTER));
     WallpaperFitToNativeResolution(
         wallpaper_view(), low_dsf, high_resolution.width(),
         high_resolution.height(), kCustomWallpaperColor);
   }
   {
     SCOPED_TRACE(base::StringPrintf("1200x600 low resolution"));
-    controller_->SetWallpaperImage(image_low_res, WALLPAPER_LAYOUT_CENTER);
+    controller_->SetWallpaperImage(
+        image_low_res, CreateWallpaperInfo(WALLPAPER_LAYOUT_CENTER));
     WallpaperFitToNativeResolution(
         wallpaper_view(), low_dsf, low_resolution.width(),
         low_resolution.height(), kCustomWallpaperColor);
@@ -483,14 +534,16 @@ TEST_F(WallpaperControllerTest, DontScaleWallpaperWithCenterLayout) {
   UpdateDisplay("1200x600/u@1.5");  // 1.5 ui scale
   {
     SCOPED_TRACE(base::StringPrintf("1200x600/u@1.5 high resolution"));
-    controller_->SetWallpaperImage(image_high_res, WALLPAPER_LAYOUT_CENTER);
+    controller_->SetWallpaperImage(
+        image_high_res, CreateWallpaperInfo(WALLPAPER_LAYOUT_CENTER));
     WallpaperFitToNativeResolution(
         wallpaper_view(), low_dsf, high_resolution.width(),
         high_resolution.height(), kCustomWallpaperColor);
   }
   {
     SCOPED_TRACE(base::StringPrintf("1200x600/u@1.5 low resolution"));
-    controller_->SetWallpaperImage(image_low_res, WALLPAPER_LAYOUT_CENTER);
+    controller_->SetWallpaperImage(
+        image_low_res, CreateWallpaperInfo(WALLPAPER_LAYOUT_CENTER));
     WallpaperFitToNativeResolution(
         wallpaper_view(), low_dsf, low_resolution.width(),
         low_resolution.height(), kCustomWallpaperColor);
@@ -528,6 +581,136 @@ TEST_F(WallpaperControllerTest, ShouldCalculateColorsBasedOnSessionState) {
 
   SetSessionState(SessionState::LOGIN_SECONDARY);
   EXPECT_FALSE(ShouldCalculateColors());
+}
+
+TEST_F(WallpaperControllerTest, MojoWallpaperObserverTest) {
+  TestWallpaperObserver observer;
+  mojom::WallpaperObserverAssociatedPtr observer_ptr;
+  mojo::AssociatedBinding<mojom::WallpaperObserver> binding(
+      &observer, mojo::MakeRequestAssociatedWithDedicatedPipe(&observer_ptr));
+  controller_->AddObserver(observer_ptr.PassInterface());
+  controller_->FlushForTesting();
+
+  // Adding an observer fires OnWallpaperColorsChanged() immediately.
+  EXPECT_EQ(1, observer.wallpaper_colors_changed_count());
+
+  // Enable shelf coloring will set a customized wallpaper image and change
+  // session state to ACTIVE, which will trigger wallpaper colors calculation.
+  base::RunLoop run_loop;
+  observer.set_run_loop(&run_loop);
+  EnableShelfColoring();
+  // Color calculation may be asynchronous.
+  run_loop.Run();
+  // Mojo methods are called after color calculation finishes.
+  controller_->FlushForTesting();
+  EXPECT_EQ(2, observer.wallpaper_colors_changed_count());
+}
+
+TEST_F(WallpaperControllerTest, WallpaperBlur) {
+  ASSERT_TRUE(controller_->IsBlurEnabled());
+  ASSERT_FALSE(controller_->IsWallpaperBlurred());
+
+  TestWallpaperControllerObserver observer;
+  controller_->AddObserver(&observer);
+
+  SetSessionState(SessionState::ACTIVE);
+  EXPECT_FALSE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(0, observer.wallpaper_blur_changed_count_);
+
+  SetSessionState(SessionState::LOCKED);
+  EXPECT_TRUE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(1, observer.wallpaper_blur_changed_count_);
+
+  SetSessionState(SessionState::LOGGED_IN_NOT_ACTIVE);
+  EXPECT_FALSE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(2, observer.wallpaper_blur_changed_count_);
+
+  SetSessionState(SessionState::LOGIN_SECONDARY);
+  EXPECT_TRUE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(3, observer.wallpaper_blur_changed_count_);
+
+  // Blur state does not change below.
+  observer.Reset();
+  SetSessionState(SessionState::LOGIN_PRIMARY);
+  EXPECT_TRUE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(0, observer.wallpaper_blur_changed_count_);
+
+  SetSessionState(SessionState::OOBE);
+  EXPECT_TRUE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(0, observer.wallpaper_blur_changed_count_);
+
+  SetSessionState(SessionState::UNKNOWN);
+  EXPECT_TRUE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(0, observer.wallpaper_blur_changed_count_);
+
+  controller_->RemoveObserver(&observer);
+}
+
+TEST_F(WallpaperControllerTest, WallpaperBlurDisabledByPolicy) {
+  // Simulate DEVICE policy wallpaper.
+  const wallpaper::WallpaperInfo info("", WALLPAPER_LAYOUT_CENTER,
+                                      wallpaper::DEVICE, base::Time::Now());
+  const gfx::ImageSkia image = CreateImage(10, 10, kWallpaperColor);
+  controller_->SetWallpaperImage(image, info);
+  ASSERT_FALSE(controller_->IsBlurEnabled());
+  ASSERT_FALSE(controller_->IsWallpaperBlurred());
+
+  TestWallpaperControllerObserver observer;
+  controller_->AddObserver(&observer);
+
+  SetSessionState(SessionState::ACTIVE);
+  EXPECT_FALSE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(0, observer.wallpaper_blur_changed_count_);
+
+  SetSessionState(SessionState::LOCKED);
+  EXPECT_FALSE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(0, observer.wallpaper_blur_changed_count_);
+
+  SetSessionState(SessionState::LOGGED_IN_NOT_ACTIVE);
+  EXPECT_FALSE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(0, observer.wallpaper_blur_changed_count_);
+
+  SetSessionState(SessionState::LOGIN_SECONDARY);
+  EXPECT_FALSE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(0, observer.wallpaper_blur_changed_count_);
+
+  SetSessionState(SessionState::LOGIN_PRIMARY);
+  EXPECT_FALSE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(0, observer.wallpaper_blur_changed_count_);
+
+  SetSessionState(SessionState::OOBE);
+  EXPECT_FALSE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(0, observer.wallpaper_blur_changed_count_);
+
+  SetSessionState(SessionState::UNKNOWN);
+  EXPECT_FALSE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(0, observer.wallpaper_blur_changed_count_);
+
+  controller_->RemoveObserver(&observer);
+}
+
+TEST_F(WallpaperControllerTest, WallpaperBlurDuringLockScreenTransition) {
+  ASSERT_TRUE(controller_->IsBlurEnabled());
+  ASSERT_FALSE(controller_->IsWallpaperBlurred());
+
+  TestWallpaperControllerObserver observer;
+  controller_->AddObserver(&observer);
+
+  // Simulate lock and unlock sequence.
+  controller_->PrepareWallpaperForLockScreenChange(true);
+  EXPECT_TRUE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(1, observer.wallpaper_blur_changed_count_);
+
+  SetSessionState(SessionState::LOCKED);
+  EXPECT_TRUE(controller_->IsWallpaperBlurred());
+
+  // Change of state to ACTIVE trigers post lock animation and
+  // PrepareWallpaperForLockScreenChange(false)
+  SetSessionState(SessionState::ACTIVE);
+  EXPECT_FALSE(controller_->IsWallpaperBlurred());
+  EXPECT_EQ(2, observer.wallpaper_blur_changed_count_);
+
+  controller_->RemoveObserver(&observer);
 }
 
 }  // namespace ash

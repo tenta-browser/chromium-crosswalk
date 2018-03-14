@@ -31,12 +31,12 @@
 #include "public/platform/WebURLResponse.h"
 
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "platform/loader/fetch/ResourceLoadTiming.h"
 #include "platform/loader/fetch/ResourceResponse.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/PtrUtil.h"
-#include "platform/wtf/RefPtr.h"
 #include "public/platform/WebHTTPHeaderVisitor.h"
 #include "public/platform/WebHTTPLoadInfo.h"
 #include "public/platform/WebString.h"
@@ -47,19 +47,19 @@ namespace blink {
 
 namespace {
 
-class ExtraDataContainer : public ResourceResponse::ExtraData {
+class URLResponseExtraDataContainer : public ResourceResponse::ExtraData {
  public:
-  static PassRefPtr<ExtraDataContainer> Create(
+  static scoped_refptr<URLResponseExtraDataContainer> Create(
       WebURLResponse::ExtraData* extra_data) {
-    return AdoptRef(new ExtraDataContainer(extra_data));
+    return base::AdoptRef(new URLResponseExtraDataContainer(extra_data));
   }
 
-  ~ExtraDataContainer() override {}
+  ~URLResponseExtraDataContainer() override {}
 
   WebURLResponse::ExtraData* GetExtraData() const { return extra_data_.get(); }
 
  private:
-  explicit ExtraDataContainer(WebURLResponse::ExtraData* extra_data)
+  explicit URLResponseExtraDataContainer(WebURLResponse::ExtraData* extra_data)
       : extra_data_(WTF::WrapUnique(extra_data)) {}
 
   std::unique_ptr<WebURLResponse::ExtraData> extra_data_;
@@ -125,8 +125,8 @@ void WebURLResponse::SetConnectionReused(bool connection_reused) {
 }
 
 void WebURLResponse::SetLoadTiming(const WebURLLoadTiming& timing) {
-  RefPtr<ResourceLoadTiming> load_timing =
-      PassRefPtr<ResourceLoadTiming>(timing);
+  scoped_refptr<ResourceLoadTiming> load_timing =
+      scoped_refptr<ResourceLoadTiming>(timing);
   resource_response_->SetResourceLoadTiming(std::move(load_timing));
 }
 
@@ -134,8 +134,8 @@ void WebURLResponse::SetHTTPLoadInfo(const WebHTTPLoadInfo& value) {
   resource_response_->SetResourceLoadInfo(value);
 }
 
-void WebURLResponse::SetResponseTime(long long response_time) {
-  resource_response_->SetResponseTime(static_cast<int64_t>(response_time));
+void WebURLResponse::SetResponseTime(base::Time response_time) {
+  resource_response_->SetResponseTime(response_time);
 }
 
 WebString WebURLResponse::MimeType() const {
@@ -232,6 +232,14 @@ void WebURLResponse::SetHasMajorCertificateErrors(bool value) {
   resource_response_->SetHasMajorCertificateErrors(value);
 }
 
+void WebURLResponse::SetIsLegacySymantecCert(bool value) {
+  resource_response_->SetIsLegacySymantecCert(value);
+}
+
+void WebURLResponse::SetCertValidityStart(base::Time expiration) {
+  resource_response_->SetCertValidityStart(expiration);
+}
+
 void WebURLResponse::SetSecurityStyle(WebSecurityStyle security_style) {
   resource_response_->SetSecurityStyle(
       static_cast<ResourceResponse::SecurityStyle>(security_style));
@@ -282,17 +290,13 @@ void WebURLResponse::SetWasFetchedViaServiceWorker(bool value) {
   resource_response_->SetWasFetchedViaServiceWorker(value);
 }
 
-void WebURLResponse::SetWasFetchedViaForeignFetch(bool value) {
-  resource_response_->SetWasFetchedViaForeignFetch(value);
-}
-
 void WebURLResponse::SetWasFallbackRequiredByServiceWorker(bool value) {
   resource_response_->SetWasFallbackRequiredByServiceWorker(value);
 }
 
-void WebURLResponse::SetServiceWorkerResponseType(
-    WebServiceWorkerResponseType value) {
-  resource_response_->SetServiceWorkerResponseType(value);
+void WebURLResponse::SetResponseTypeViaServiceWorker(
+    network::mojom::FetchResponseType value) {
+  resource_response_->SetResponseTypeViaServiceWorker(value);
 }
 
 void WebURLResponse::SetURLListViaServiceWorker(
@@ -315,6 +319,10 @@ void WebURLResponse::SetMultipartBoundary(const char* bytes, size_t size) {
 void WebURLResponse::SetCacheStorageCacheName(
     const WebString& cache_storage_cache_name) {
   resource_response_->SetCacheStorageCacheName(cache_storage_cache_name);
+}
+
+WebVector<WebString> WebURLResponse::CorsExposedHeaderNames() const {
+  return resource_response_->CorsExposedHeaderNames();
 }
 
 void WebURLResponse::SetCorsExposedHeaderNames(
@@ -356,28 +364,42 @@ void WebURLResponse::SetEncodedDataLength(long long length) {
   resource_response_->SetEncodedDataLength(length);
 }
 
-void WebURLResponse::AddToEncodedBodyLength(long long length) {
-  resource_response_->AddToEncodedBodyLength(length);
-}
-
-void WebURLResponse::AddToDecodedBodyLength(long long bytes) {
-  resource_response_->AddToDecodedBodyLength(bytes);
-}
-
 WebURLResponse::ExtraData* WebURLResponse::GetExtraData() const {
-  RefPtr<ResourceResponse::ExtraData> data = resource_response_->GetExtraData();
+  scoped_refptr<ResourceResponse::ExtraData> data =
+      resource_response_->GetExtraData();
   if (!data)
-    return 0;
-  return static_cast<ExtraDataContainer*>(data.Get())->GetExtraData();
+    return nullptr;
+  return static_cast<URLResponseExtraDataContainer*>(data.get())
+      ->GetExtraData();
 }
 
 void WebURLResponse::SetExtraData(WebURLResponse::ExtraData* extra_data) {
-  if (extra_data != GetExtraData())
-    resource_response_->SetExtraData(ExtraDataContainer::Create(extra_data));
+  if (extra_data != GetExtraData()) {
+    resource_response_->SetExtraData(
+        URLResponseExtraDataContainer::Create(extra_data));
+  }
 }
 
 void WebURLResponse::AppendRedirectResponse(const WebURLResponse& response) {
   resource_response_->AppendRedirectResponse(response.ToResourceResponse());
+}
+
+WebString WebURLResponse::AlpnNegotiatedProtocol() const {
+  return resource_response_->AlpnNegotiatedProtocol();
+}
+
+void WebURLResponse::SetAlpnNegotiatedProtocol(
+    const WebString& alpn_negotiated_protocol) {
+  resource_response_->SetAlpnNegotiatedProtocol(alpn_negotiated_protocol);
+}
+
+net::HttpResponseInfo::ConnectionInfo WebURLResponse::ConnectionInfo() const {
+  return resource_response_->ConnectionInfo();
+}
+
+void WebURLResponse::SetConnectionInfo(
+    net::HttpResponseInfo::ConnectionInfo connection_info) {
+  resource_response_->SetConnectionInfo(connection_info);
 }
 
 WebURLResponse::WebURLResponse(ResourceResponse& r) : resource_response_(&r) {}

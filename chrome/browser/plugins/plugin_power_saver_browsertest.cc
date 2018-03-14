@@ -7,22 +7,26 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/message_loop/message_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
-#include "base/test/scoped_feature_list.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
-#include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/policy/core/browser/browser_policy_connector.h"
+#include "components/policy/core/common/mock_configuration_policy_provider.h"
+#include "components/policy/policy_constants.h"
 #include "components/zoom/zoom_controller.h"
 #include "content/public/browser/readback_types.h"
 #include "content/public/browser/render_frame_host.h"
@@ -44,6 +48,9 @@
 #include "ui/display/screen.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/geometry/point.h"
+
+using testing::_;
+using testing::Return;
 
 namespace {
 
@@ -184,7 +191,6 @@ bool SnapshotMatches(const base::FilePath& reference, const SkBitmap& bitmap) {
     return false;
 
   int32_t* ref_pixels = reinterpret_cast<int32_t*>(decoded.data());
-  SkAutoLockPixels lock_image(bitmap);
   int32_t* pixels = static_cast<int32_t*>(bitmap.getPixels());
 
   bool success = true;
@@ -222,6 +228,7 @@ void CompareSnapshotToReference(const base::FilePath& reference,
                                 const base::Closure& done_cb,
                                 const SkBitmap& bitmap,
                                 content::ReadbackResponse response) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   DCHECK(snapshot_matches);
   ASSERT_EQ(content::READBACK_SUCCESS, response);
 
@@ -258,13 +265,19 @@ class PluginPowerSaverBrowserTest : public InProcessBrowserTest {
   }
 
   void SetUpOnMainThread() override {
-    InProcessBrowserTest::SetUpOnMainThread();
-
     embedded_test_server()->ServeFilesFromDirectory(
         ui_test_utils::GetTestFilePath(
             base::FilePath(FILE_PATH_LITERAL("plugin_power_saver")),
             base::FilePath()));
     ASSERT_TRUE(embedded_test_server()->Start());
+
+    // Plugin throttling only operates once Flash is ALLOW-ed on a site.
+    GURL server_root = embedded_test_server()->GetURL("/");
+    HostContentSettingsMap* content_settings_map =
+        HostContentSettingsMapFactory::GetForProfile(browser()->profile());
+    content_settings_map->SetContentSettingDefaultScope(
+        server_root, server_root, CONTENT_SETTINGS_TYPE_PLUGINS, std::string(),
+        CONTENT_SETTING_ALLOW);
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -280,8 +293,9 @@ class PluginPowerSaverBrowserTest : public InProcessBrowserTest {
   }
 
   void SetUpInProcessBrowserTestFixture() override {
-    // Disable HTML5 By Default feature to test Plugin Power Saver specifically.
-    feature_list.InitAndDisableFeature(features::kPreferHtmlOverPlugins);
+    EXPECT_CALL(provider_, IsInitializationComplete(_))
+        .WillRepeatedly(Return(true));
+    policy::BrowserPolicyConnector::SetPolicyProviderForTesting(&provider_);
   }
 
  protected:
@@ -399,8 +413,8 @@ class PluginPowerSaverBrowserTest : public InProcessBrowserTest {
 #endif
   }
 
- private:
-  base::test::ScopedFeatureList feature_list;
+ protected:
+  policy::MockConfigurationPolicyProvider provider_;
 };
 
 IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, EssentialPlugins) {
@@ -431,23 +445,6 @@ IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, MAYBE_SmallCrossOrigin) {
 
   SimulateClickAndAwaitMarkedEssential("plugin", gfx::Point(50, 50));
   SimulateClickAndAwaitMarkedEssential("plugin_poster", gfx::Point(50, 150));
-}
-
-IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, ContentSettings) {
-  HostContentSettingsMap* content_settings_map =
-      HostContentSettingsMapFactory::GetForProfile(browser()->profile());
-
-  // Throttle on DETECT.
-  content_settings_map->SetDefaultContentSetting(
-      CONTENT_SETTINGS_TYPE_PLUGINS, CONTENT_SETTING_DETECT_IMPORTANT_CONTENT);
-  LoadPeripheralPlugin();
-  VerifyPluginIsThrottled(GetActiveWebContents(), "plugin");
-
-  // Don't throttle on ALLOW.
-  content_settings_map->SetDefaultContentSetting(CONTENT_SETTINGS_TYPE_PLUGINS,
-                                                 CONTENT_SETTING_ALLOW);
-  LoadPeripheralPlugin();
-  VerifyPluginMarkedEssential(GetActiveWebContents(), "plugin");
 }
 
 IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, SmallerThanPlayIcon) {
@@ -566,14 +563,10 @@ IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, ZoomIndependent) {
 IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, BlockTinyPlugins) {
   LoadHTML("/block_tiny_plugins.html");
 
-  VerifyPluginMarkedEssential(GetActiveWebContents(), "tiny_same_origin");
+  VerifyPluginIsPlaceholderOnly("tiny_same_origin");
   VerifyPluginIsPlaceholderOnly("tiny_cross_origin_1");
   VerifyPluginIsPlaceholderOnly("tiny_cross_origin_2");
   VerifyPluginIsPlaceholderOnly("completely_obscured");
-
-  TabSpecificContentSettings* tab_specific_content_settings =
-      TabSpecificContentSettings::FromWebContents(GetActiveWebContents());
-  EXPECT_FALSE(tab_specific_content_settings->blocked_plugin_names().empty());
 }
 
 IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, BackgroundTabTinyPlugins) {
@@ -602,54 +595,23 @@ IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, ExpandingTinyPlugins) {
   VerifyPluginMarkedEssential(GetActiveWebContents(), "expand_to_essential");
 }
 
-// Separate test case with FilterSameOriginTinyPlugins feature flag on.
-class PluginPowerSaverFilterSameOriginTinyPluginsBrowserTest
-    : public PluginPowerSaverBrowserTest {
- public:
-  void SetUpInProcessBrowserTestFixture() override {
-    // Although this is redundant with the Field Trial testing configuration,
-    // the official builders don't read that.
-    feature_list.InitWithFeatures({features::kFilterSameOriginTinyPlugin},
-                                  {features::kPreferHtmlOverPlugins});
-  }
+IN_PROC_BROWSER_TEST_F(PluginPowerSaverBrowserTest, RunAllFlashInAllowMode) {
+  LoadHTML("/run_all_flash.html");
+  VerifyPluginIsThrottled(GetActiveWebContents(), "small");
+  VerifyPluginIsThrottled(GetActiveWebContents(), "cross_origin");
 
- private:
-  base::test::ScopedFeatureList feature_list;
-};
+  policy::PolicyMap policy;
+  policy.Set(policy::key::kRunAllFlashInAllowMode,
+             policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+             policy::POLICY_SOURCE_CLOUD, base::MakeUnique<base::Value>(true),
+             nullptr);
+  provider_.UpdateChromePolicy(policy);
+  content::RunAllPendingInMessageLoop();
 
-// Flaky on every platform. crbug.com/680544, crbug.com/682039
-IN_PROC_BROWSER_TEST_F(PluginPowerSaverFilterSameOriginTinyPluginsBrowserTest,
-                       DISABLED_BlockSameOriginTinyPlugin) {
-  LoadHTML("/same_origin_tiny_plugin.html");
+  ASSERT_TRUE(browser()->profile()->GetPrefs()->GetBoolean(
+      prefs::kRunAllFlashInAllowMode));
 
-  VerifyPluginIsPlaceholderOnly("tiny_same_origin");
-
-  TabSpecificContentSettings* tab_specific_content_settings =
-      TabSpecificContentSettings::FromWebContents(GetActiveWebContents());
-  EXPECT_FALSE(tab_specific_content_settings->blocked_plugin_names().empty());
-}
-
-// Separate test case with HTML By Default feature flag on.
-class PluginPowerSaverPreferHtmlBrowserTest
-    : public PluginPowerSaverBrowserTest {
- public:
-  void SetUpInProcessBrowserTestFixture() override {
-    // Although this is redundant with the Field Trial testing configuration,
-    // the official builders don't read that.
-    feature_list.InitAndEnableFeature(features::kPreferHtmlOverPlugins);
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list;
-};
-
-IN_PROC_BROWSER_TEST_F(PluginPowerSaverPreferHtmlBrowserTest,
-                       ThrottlePluginsOnAllowContentSetting) {
-  HostContentSettingsMap* content_settings_map =
-      HostContentSettingsMapFactory::GetForProfile(browser()->profile());
-
-  content_settings_map->SetDefaultContentSetting(CONTENT_SETTINGS_TYPE_PLUGINS,
-                                                 CONTENT_SETTING_ALLOW);
-  LoadPeripheralPlugin();
-  VerifyPluginIsThrottled(GetActiveWebContents(), "plugin");
+  LoadHTML("/run_all_flash.html");
+  VerifyPluginMarkedEssential(GetActiveWebContents(), "small");
+  VerifyPluginMarkedEssential(GetActiveWebContents(), "cross_origin");
 }

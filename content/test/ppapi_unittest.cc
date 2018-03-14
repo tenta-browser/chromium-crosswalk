@@ -6,7 +6,6 @@
 
 #include <stdint.h>
 
-#include "base/message_loop/message_loop.h"
 #include "content/renderer/pepper/gfx_conversion.h"
 #include "content/renderer/pepper/host_globals.h"
 #include "content/renderer/pepper/pepper_plugin_instance_impl.h"
@@ -22,7 +21,7 @@ namespace content {
 
 namespace {
 
-PpapiUnittest* current_unittest = NULL;
+PpapiUnittest* current_unittest = nullptr;
 
 const void* MockGetInterface(const char* interface_name) {
   return current_unittest->GetMockInterface(interface_name);
@@ -74,12 +73,10 @@ PpapiUnittest::PpapiUnittest() {
 
 PpapiUnittest::~PpapiUnittest() {
   DCHECK(current_unittest == this);
-  current_unittest = NULL;
+  current_unittest = nullptr;
 }
 
 void PpapiUnittest::SetUp() {
-  message_loop_.reset(new base::MessageLoop());
-
   // Initialize the mock module.
   ppapi::PpapiPermissions perms;
   module_ = new PluginModule("Mock plugin", "1.0", base::FilePath(),
@@ -95,27 +92,27 @@ void PpapiUnittest::SetUp() {
   CHECK(module_->renderer_ppapi_host());
 
   // Initialize the mock instance.
-  instance_ = PepperPluginInstanceImpl::Create(NULL, module(), NULL, GURL());
+  instance_ =
+      PepperPluginInstanceImpl::Create(nullptr, module(), nullptr, GURL());
 }
 
 void PpapiUnittest::TearDown() {
-  instance_ = NULL;
-  module_ = NULL;
-  message_loop_.reset();
+  instance_ = nullptr;
+  module_ = nullptr;
   PluginModule::ResetHostGlobalsForTest();
 }
 
 const void* PpapiUnittest::GetMockInterface(const char* interface_name) const {
   if (strcmp(interface_name, PPP_INSTANCE_INTERFACE_1_0) == 0)
     return &mock_instance_interface;
-  return NULL;
+  return nullptr;
 }
 
 void PpapiUnittest::ShutdownModule() {
   DCHECK(instance_->HasOneRef());
-  instance_ = NULL;
+  instance_ = nullptr;
   DCHECK(module_->HasOneRef());
-  module_ = NULL;
+  module_ = nullptr;
 }
 
 void PpapiUnittest::SetViewSize(int width, int height) const {

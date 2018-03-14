@@ -35,9 +35,12 @@ class CORE_EXPORT CSPDirectiveList
                                   const UChar* begin,
                                   const UChar* end,
                                   ContentSecurityPolicyHeaderType,
-                                  ContentSecurityPolicyHeaderSource);
+                                  ContentSecurityPolicyHeaderSource,
+                                  bool should_parse_wasm_eval = false);
 
-  void Parse(const UChar* begin, const UChar* end);
+  void Parse(const UChar* begin,
+             const UChar* end,
+             bool should_parse_wasm_eval = false);
 
   const String& Header() const { return header_; }
   ContentSecurityPolicyHeaderType HeaderType() const { return header_type_; }
@@ -69,8 +72,12 @@ class CORE_EXPORT CSPDirectiveList
                         const String& style_content) const;
   bool AllowEval(ScriptState*,
                  SecurityViolationReportingPolicy,
-                 ContentSecurityPolicy::ExceptionStatus =
-                     ContentSecurityPolicy::kWillNotThrowException) const;
+                 ContentSecurityPolicy::ExceptionStatus,
+                 const String& script_content) const;
+  bool AllowWasmEval(ScriptState*,
+                     SecurityViolationReportingPolicy,
+                     ContentSecurityPolicy::ExceptionStatus,
+                     const String& script_content) const;
   bool AllowPluginType(const String& type,
                        const String& type_attribute,
                        const KURL&,
@@ -151,6 +158,7 @@ class CORE_EXPORT CSPDirectiveList
     return header_type_ == kContentSecurityPolicyHeaderTypeReport;
   }
   const Vector<String>& ReportEndpoints() const { return report_endpoints_; }
+  bool UseReportingApi() const { return use_reporting_api_; }
   uint8_t RequireSRIForTokens() const { return require_sri_for_; }
   bool IsFrameAncestorsEnforced() const {
     return frame_ancestors_.Get() && !IsReportOnly();
@@ -175,11 +183,12 @@ class CORE_EXPORT CSPDirectiveList
   // * child-src
   // * frame-src
   // * form-action
+  // * upgrade-insecure-requests
   // The exported directives only contains sources that affect navigation. For
   // instance it doesn't contains 'unsafe-inline' or 'unsafe-eval'
   WebContentSecurityPolicy ExposeForNavigationalChecks() const;
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(CSPDirectiveListTest, IsMatchingNoncePresent);
@@ -198,6 +207,8 @@ class CORE_EXPORT CSPDirectiveList
                       String& value);
   void ParseRequireSRIFor(const String& name, const String& value);
   void ParseReportURI(const String& name, const String& value);
+  void ParseReportTo(const String& name, const String& value);
+  void ParseAndAppendReportEndpoints(const String& value);
   void ParsePluginTypes(const String& name, const String& value);
   void AddDirective(const String& name, const String& value);
   void ApplySandboxPolicy(const String& name, const String& sandbox_policy);
@@ -205,11 +216,13 @@ class CORE_EXPORT CSPDirectiveList
                                          const String& value);
   void EnableInsecureRequestsUpgrade(const String& name, const String& value);
   void TreatAsPublicAddress(const String& name, const String& value);
+  void RequireTrustedTypes(const String& name, const String& value);
 
   template <class CSPDirectiveType>
   void SetCSPDirective(const String& name,
                        const String& value,
-                       Member<CSPDirectiveType>&);
+                       Member<CSPDirectiveType>&,
+                       bool should_parse_wasm_eval = false);
 
   SourceListDirective* OperativeDirective(SourceListDirective*) const;
   SourceListDirective* OperativeDirective(SourceListDirective*,
@@ -232,15 +245,16 @@ class CORE_EXPORT CSPDirectiveList
                                    const WTF::OrdinalNumber& context_line,
                                    Element*,
                                    const String& source) const;
-  void ReportViolationWithState(
-      const String& directive_text,
-      const ContentSecurityPolicy::DirectiveType&,
-      const String& message,
-      const KURL& blocked_url,
-      ScriptState*,
-      const ContentSecurityPolicy::ExceptionStatus) const;
+  void ReportEvalViolation(const String& directive_text,
+                           const ContentSecurityPolicy::DirectiveType&,
+                           const String& message,
+                           const KURL& blocked_url,
+                           ScriptState*,
+                           const ContentSecurityPolicy::ExceptionStatus,
+                           const String& content) const;
 
   bool CheckEval(SourceListDirective*) const;
+  bool CheckWasmEval(SourceListDirective*) const;
   bool CheckDynamic(SourceListDirective*) const;
   bool IsMatchingNoncePresent(SourceListDirective*, const String&) const;
   bool AreAllMatchingHashesPresent(SourceListDirective*,
@@ -260,12 +274,16 @@ class CORE_EXPORT CSPDirectiveList
     eval_disabled_error_message_ = error_message;
   }
 
-  bool CheckEvalAndReportViolation(
-      SourceListDirective*,
-      const String& console_message,
-      ScriptState*,
-      ContentSecurityPolicy::ExceptionStatus =
-          ContentSecurityPolicy::kWillNotThrowException) const;
+  bool CheckEvalAndReportViolation(SourceListDirective*,
+                                   const String& console_message,
+                                   ScriptState*,
+                                   ContentSecurityPolicy::ExceptionStatus,
+                                   const String& script_content) const;
+  bool CheckWasmEvalAndReportViolation(SourceListDirective*,
+                                       const String& console_message,
+                                       ScriptState*,
+                                       ContentSecurityPolicy::ExceptionStatus,
+                                       const String& script_content) const;
   bool CheckInlineAndReportViolation(SourceListDirective*,
                                      const String& console_message,
                                      Element*,
@@ -317,6 +335,7 @@ class CORE_EXPORT CSPDirectiveList
 
   bool upgrade_insecure_requests_;
   bool treat_as_public_address_;
+  bool require_safe_types_;
 
   Member<MediaListDirective> plugin_types_;
   Member<SourceListDirective> base_uri_;
@@ -338,6 +357,7 @@ class CORE_EXPORT CSPDirectiveList
   uint8_t require_sri_for_;
 
   Vector<String> report_endpoints_;
+  bool use_reporting_api_;
 
   String eval_disabled_error_message_;
 };

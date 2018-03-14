@@ -14,20 +14,32 @@ import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
+import android.net.TrafficStats;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
+import android.os.ParcelFileDescriptor;
 import android.security.KeyChain;
 import android.security.NetworkSecurityPolicy;
 import android.telephony.TelephonyManager;
 import android.util.Log;
 
+import org.chromium.base.ContextUtils;
+import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.CalledByNativeUnchecked;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
+import java.net.Socket;
+import java.net.SocketAddress;
 import java.net.SocketException;
+import java.net.SocketImpl;
 import java.net.URLConnection;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
@@ -44,7 +56,6 @@ class AndroidNetworkLibrary {
 
     /**
      * Stores the key pair through the CertInstaller activity.
-     * @param context current application context.
      * @param publicKey The public key bytes as DER-encoded SubjectPublicKeyInfo (X.509)
      * @param privateKey The private key as DER-encoded PrivateKeyInfo (PKCS#8).
      * @return: true on success, false on failure.
@@ -54,7 +65,7 @@ class AndroidNetworkLibrary {
      * by the CertInstaller UI itself.
      */
     @CalledByNative
-    public static boolean storeKeyPair(Context context, byte[] publicKey, byte[] privateKey) {
+    public static boolean storeKeyPair(byte[] publicKey, byte[] privateKey) {
         // TODO(digit): Use KeyChain official extra values to pass the public and private
         // keys when they're available. The "KEY" and "PKEY" hard-coded constants were taken
         // from the platform sources, since there are no official KeyChain.EXTRA_XXX definitions
@@ -64,7 +75,7 @@ class AndroidNetworkLibrary {
             intent.putExtra("PKEY", privateKey);
             intent.putExtra("KEY", publicKey);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            context.startActivity(intent);
+            ContextUtils.getApplicationContext().startActivity(intent);
             return true;
         } catch (ActivityNotFoundException e) {
             Log.w(TAG, "could not store key pair: " + e);
@@ -156,9 +167,10 @@ class AndroidNetworkLibrary {
      * Returns the ISO country code equivalent of the current MCC.
      */
     @CalledByNative
-    private static String getNetworkCountryIso(Context context) {
+    private static String getNetworkCountryIso() {
         TelephonyManager telephonyManager =
-                (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+                (TelephonyManager) ContextUtils.getApplicationContext().getSystemService(
+                        Context.TELEPHONY_SERVICE);
         if (telephonyManager == null) return "";
         return telephonyManager.getNetworkCountryIso();
     }
@@ -168,9 +180,10 @@ class AndroidNetworkLibrary {
      * the numeric name of the current registered operator.
      */
     @CalledByNative
-    private static String getNetworkOperator(Context context) {
+    private static String getNetworkOperator() {
         TelephonyManager telephonyManager =
-                (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+                (TelephonyManager) ContextUtils.getApplicationContext().getSystemService(
+                        Context.TELEPHONY_SERVICE);
         if (telephonyManager == null) return "";
         return telephonyManager.getNetworkOperator();
     }
@@ -180,9 +193,10 @@ class AndroidNetworkLibrary {
      * the numeric name of the current SIM operator.
      */
     @CalledByNative
-    private static String getSimOperator(Context context) {
+    private static String getSimOperator() {
         TelephonyManager telephonyManager =
-                (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+                (TelephonyManager) ContextUtils.getApplicationContext().getSystemService(
+                        Context.TELEPHONY_SERVICE);
         if (telephonyManager == null) return "";
         return telephonyManager.getSimOperator();
     }
@@ -192,9 +206,10 @@ class AndroidNetworkLibrary {
      * suggests that use of data may incur extra costs.
      */
     @CalledByNative
-    private static boolean getIsRoaming(Context context) {
+    private static boolean getIsRoaming() {
         ConnectivityManager connectivityManager =
-                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+                (ConnectivityManager) ContextUtils.getApplicationContext().getSystemService(
+                        Context.CONNECTIVITY_SERVICE);
         NetworkInfo networkInfo = connectivityManager.getActiveNetworkInfo();
         if (networkInfo == null) return false; // No active network.
         return networkInfo.isRoaming();
@@ -209,12 +224,13 @@ class AndroidNetworkLibrary {
      */
     @TargetApi(Build.VERSION_CODES.M)
     @CalledByNative
-    private static boolean getIsCaptivePortal(Context context) {
+    private static boolean getIsCaptivePortal() {
         // NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL is only available on Marshmallow and
         // later versions.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false;
         ConnectivityManager connectivityManager =
-                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+                (ConnectivityManager) ContextUtils.getApplicationContext().getSystemService(
+                        Context.CONNECTIVITY_SERVICE);
         if (connectivityManager == null) return false;
 
         Network network = connectivityManager.getActiveNetwork();
@@ -230,11 +246,8 @@ class AndroidNetworkLibrary {
      * returns empty string.
      */
     @CalledByNative
-    public static String getWifiSSID(Context context) {
-        if (context == null) {
-            return "";
-        }
-        final Intent intent = context.registerReceiver(
+    public static String getWifiSSID() {
+        final Intent intent = ContextUtils.getApplicationContext().registerReceiver(
                 null, new IntentFilter(WifiManager.NETWORK_STATE_CHANGED_ACTION));
         if (intent != null) {
             final WifiInfo wifiInfo = intent.getParcelableExtra(WifiManager.EXTRA_WIFI_INFO);
@@ -248,28 +261,56 @@ class AndroidNetworkLibrary {
         return "";
     }
 
+    public static class NetworkSecurityPolicyProxy {
+        private static NetworkSecurityPolicyProxy sInstance = new NetworkSecurityPolicyProxy();
+
+        public static NetworkSecurityPolicyProxy getInstance() {
+            return sInstance;
+        }
+
+        @VisibleForTesting
+        public static void setInstanceForTesting(
+                NetworkSecurityPolicyProxy networkSecurityPolicyProxy) {
+            sInstance = networkSecurityPolicyProxy;
+        }
+
+        @TargetApi(Build.VERSION_CODES.N)
+        public boolean isCleartextTrafficPermitted(String host) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+                // No per-host configuration before N.
+                return isCleartextTrafficPermitted();
+            }
+            return NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(host);
+        }
+
+        @TargetApi(Build.VERSION_CODES.M)
+        public boolean isCleartextTrafficPermitted() {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                // Always true before M.
+                return true;
+            }
+            return NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted();
+        }
+    }
+
     /**
-     * Returns true if cleartext traffic to |host| is allowed by the current app. Always true on L
-     * and older.
+     * Returns true if cleartext traffic to |host| is allowed by the current app.
      */
-    @TargetApi(Build.VERSION_CODES.N)
     @CalledByNative
     private static boolean isCleartextPermitted(String host) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            NetworkSecurityPolicy policy = NetworkSecurityPolicy.getInstance();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                return policy.isCleartextTrafficPermitted(host);
-            }
-            return policy.isCleartextTrafficPermitted();
+        try {
+            return NetworkSecurityPolicyProxy.getInstance().isCleartextTrafficPermitted(host);
+        } catch (IllegalArgumentException e) {
+            return NetworkSecurityPolicyProxy.getInstance().isCleartextTrafficPermitted();
         }
-        return true;
     }
 
     @TargetApi(Build.VERSION_CODES.M)
     @CalledByNative
-    private static byte[][] getDnsServers(Context context) {
+    private static byte[][] getDnsServers() {
         ConnectivityManager connectivityManager =
-                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+                (ConnectivityManager) ContextUtils.getApplicationContext().getSystemService(
+                        Context.CONNECTIVITY_SERVICE);
         if (connectivityManager == null) {
             return new byte[0][0];
         }
@@ -287,5 +328,139 @@ class AndroidNetworkLibrary {
             dnsServers[i] = dnsServersList.get(i).getAddress();
         }
         return dnsServers;
+    }
+
+    /** Socket that exists only to provide a file descriptor when queried. */
+    private static class SocketFd extends Socket {
+        /** SocketImpl that exists only to provide a file descriptor when queried. */
+        private static class SocketImplFd extends SocketImpl {
+            private final ParcelFileDescriptor mPfd;
+
+            /**
+             * Create a {@link SocketImpl} that sets {@code fd} as the underlying file descriptor.
+             * Does not take ownership of {@code fd}, i.e. {@link #close()} is a no-op.
+             */
+            SocketImplFd(int fd) {
+                mPfd = ParcelFileDescriptor.adoptFd(fd);
+                this.fd = mPfd.getFileDescriptor();
+            }
+
+            protected void accept(SocketImpl s) {
+                throw new RuntimeException("accept not implemented");
+            }
+            protected int available() {
+                throw new RuntimeException("accept not implemented");
+            }
+            protected void bind(InetAddress host, int port) {
+                throw new RuntimeException("accept not implemented");
+            }
+            protected void close() {
+                // Detach from |fd| to avoid leak detection false positives without closing |fd|.
+                mPfd.detachFd();
+            }
+            protected void connect(InetAddress address, int port) {
+                throw new RuntimeException("connect not implemented");
+            }
+            protected void connect(SocketAddress address, int timeout) {
+                throw new RuntimeException("connect not implemented");
+            }
+            protected void connect(String host, int port) {
+                throw new RuntimeException("connect not implemented");
+            }
+            protected void create(boolean stream) {
+                throw new RuntimeException("create not implemented");
+            }
+            protected InputStream getInputStream() {
+                throw new RuntimeException("getInputStream not implemented");
+            }
+            protected OutputStream getOutputStream() {
+                throw new RuntimeException("getOutputStream not implemented");
+            }
+            protected void listen(int backlog) {
+                throw new RuntimeException("listen not implemented");
+            }
+            protected void sendUrgentData(int data) {
+                throw new RuntimeException("sendUrgentData not implemented");
+            }
+            public Object getOption(int optID) {
+                throw new RuntimeException("getOption not implemented");
+            }
+            public void setOption(int optID, Object value) {
+                throw new RuntimeException("setOption not implemented");
+            }
+        }
+
+        /**
+         * Creates a {@link Socket} that sets {@code fd} as the underlying file descriptor.
+         * Does not take ownership of {@code fd}, i.e. {@link #close()} is a no-op.
+         */
+        SocketFd(int fd) throws IOException {
+            super(new SocketImplFd(fd));
+        }
+    }
+
+    /**
+     * Class to wrap TrafficStats.setThreadStatsUid(int uid) and TrafficStats.clearThreadStatsUid()
+     * which are hidden and so must be accessed via reflection.
+     */
+    private static class ThreadStatsUid {
+        // Reference to TrafficStats.setThreadStatsUid(int uid).
+        private static final Method sSetThreadStatsUid;
+        // Reference to TrafficStats.clearThreadStatsUid().
+        private static final Method sClearThreadStatsUid;
+
+        // Get reference to TrafficStats.setThreadStatsUid(int uid) and
+        // TrafficStats.clearThreadStatsUid() via reflection.
+        static {
+            try {
+                sSetThreadStatsUid =
+                        TrafficStats.class.getMethod("setThreadStatsUid", Integer.TYPE);
+                sClearThreadStatsUid = TrafficStats.class.getMethod("clearThreadStatsUid");
+            } catch (NoSuchMethodException | SecurityException e) {
+                throw new RuntimeException("Unable to get TrafficStats methods", e);
+            }
+        }
+
+        /** Calls TrafficStats.setThreadStatsUid(uid) */
+        public static void set(int uid) throws IllegalAccessException, InvocationTargetException {
+            sSetThreadStatsUid.invoke(null, uid); // Pass null for "this" as it's a static method.
+        }
+
+        /** Calls TrafficStats.clearThreadStatsUid() */
+        public static void clear() throws IllegalAccessException, InvocationTargetException {
+            sClearThreadStatsUid.invoke(null); // Pass null for "this" as it's a static method.
+        }
+    }
+
+    /**
+     * Tag socket referenced by {@code fd} with {@code tag} for UID {@code uid}.
+     *
+     * Assumes thread UID tag isn't set upon entry, and ensures thread UID tag isn't set upon exit.
+     * Unfortunately there is no TrafficStatis.getThreadStatsUid().
+     */
+    @CalledByNative
+    private static void tagSocket(int fd, int uid, int tag)
+            throws IOException, IllegalAccessException, InvocationTargetException {
+        // Set thread tags.
+        int oldTag = TrafficStats.getThreadStatsTag();
+        if (tag != oldTag) {
+            TrafficStats.setThreadStatsTag(tag);
+        }
+        if (uid != TrafficStatsUid.UNSET) {
+            ThreadStatsUid.set(uid);
+        }
+
+        // Apply thread tags to socket.
+        SocketFd s = new SocketFd(fd);
+        TrafficStats.tagSocket(s);
+        s.close(); // No-op, just to avoid leak detection false positives.
+
+        // Restore prior thread tags.
+        if (tag != oldTag) {
+            TrafficStats.setThreadStatsTag(oldTag);
+        }
+        if (uid != TrafficStatsUid.UNSET) {
+            ThreadStatsUid.clear();
+        }
     }
 }

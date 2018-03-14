@@ -49,10 +49,8 @@ class LoadablePluginPlaceholder : public PluginPlaceholderBase {
 
  protected:
   LoadablePluginPlaceholder(content::RenderFrame* render_frame,
-                            blink::WebLocalFrame* frame,
                             const blink::WebPluginParams& params,
                             const std::string& html_data);
-
   ~LoadablePluginPlaceholder() override;
 
   void MarkPluginEssential(
@@ -91,6 +89,7 @@ class LoadablePluginPlaceholder : public PluginPlaceholderBase {
   v8::Local<v8::Object> GetV8ScriptableObject(
       v8::Isolate* isolate) const override;
   void OnUnobscuredRectUpdate(const gfx::Rect& unobscured_rect) override;
+  bool IsErrorPlaceholder() override;
 
   // RenderFrameObserver methods:
   void WasShown() override;
@@ -102,8 +101,10 @@ class LoadablePluginPlaceholder : public PluginPlaceholderBase {
   // Plugin creation is embedder-specific.
   virtual blink::WebPlugin* CreatePlugin() = 0;
 
-  // Embedder-specific behavior.
-  virtual void OnBlockedTinyContent() = 0;
+  // Embedder-specific behavior. This will only be called once per placeholder.
+  virtual void OnBlockedContent(
+      content::RenderFrame::PeripheralContentStatus status,
+      bool is_same_origin) = 0;
 
   content::WebPluginInfo plugin_info_;
 

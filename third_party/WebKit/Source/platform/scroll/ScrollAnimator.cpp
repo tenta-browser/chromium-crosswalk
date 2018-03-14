@@ -31,15 +31,15 @@
 #include "platform/scroll/ScrollAnimator.h"
 
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "cc/animation/scroll_offset_animation_curve.h"
 #include "platform/animation/CompositorAnimation.h"
 #include "platform/graphics/GraphicsLayer.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 #include "platform/scroll/MainThreadScrollingReason.h"
 #include "platform/scroll/ScrollableArea.h"
-#include "platform/wtf/CurrentTime.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/PtrUtil.h"
+#include "platform/wtf/Time.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebCompositorSupport.h"
 
@@ -147,7 +147,7 @@ bool ScrollAnimator::WillAnimateToOffset(const ScrollOffset& target_offset) {
 
   if (run_state_ == RunState::kWaitingToCancelOnCompositor ||
       run_state_ == RunState::kWaitingToCancelOnCompositorButNewScroll) {
-    ASSERT(animation_curve_);
+    DCHECK(animation_curve_);
     target_offset_ = target_offset;
     if (RegisterAndScheduleAnimation())
       run_state_ = RunState::kWaitingToCancelOnCompositorButNewScroll;
@@ -159,7 +159,7 @@ bool ScrollAnimator::WillAnimateToOffset(const ScrollOffset& target_offset) {
       return true;
 
     target_offset_ = target_offset;
-    ASSERT(run_state_ == RunState::kRunningOnMainThread ||
+    DCHECK(run_state_ == RunState::kRunningOnMainThread ||
            run_state_ == RunState::kRunningOnCompositor ||
            run_state_ == RunState::kRunningOnCompositorButNeedsUpdate ||
            run_state_ == RunState::kRunningOnCompositorButNeedsTakeover);
@@ -340,7 +340,7 @@ void ScrollAnimator::UpdateCompositorAnimations() {
   }
 
   if (run_state_ == RunState::kWaitingToSendToCompositor) {
-    if (!compositor_animation_attached_to_element_id_)
+    if (!element_id_)
       ReattachCompositorPlayerIfNeeded(
           GetScrollableArea()->GetCompositorAnimationTimeline());
 
@@ -409,7 +409,7 @@ void ScrollAnimator::NotifyAnimationTakeover(
                             scroll_offset_animation_curve->target_value().y());
   if (WillAnimateToOffset(target_value)) {
     animation_curve_ = CompositorScrollOffsetAnimationCurve::Create(
-        std::move(scroll_offset_animation_curve));
+        scroll_offset_animation_curve);
     start_time_ = animation_start_time;
   }
 }
@@ -442,7 +442,7 @@ bool ScrollAnimator::RegisterAndScheduleAnimation() {
   return true;
 }
 
-DEFINE_TRACE(ScrollAnimator) {
+void ScrollAnimator::Trace(blink::Visitor* visitor) {
   ScrollAnimatorBase::Trace(visitor);
 }
 

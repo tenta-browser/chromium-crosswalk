@@ -6,17 +6,18 @@
 <!--
 
 Accessibility Object Model
-Explainer: https://github.com/WICG/aom/blob/master/explainer.md
+Explainer: https://github.com/WICG/aom/blob/gh-pages/explainer.md
 Spec: https://wicg.github.io/aom/spec/
 
 -->
 
 <script>
-if (window.internals)
-    internals.runtimeFlags.accessibilityObjectModelEnabled = true;
+test(function(t) {
+    assert_true(internals.runtimeFlags.accessibilityObjectModelEnabled);
+}, "Make sure that Accessibility Object Model is enabled");
 </script>
 
-<div role="combobox" id="autocomplete"></div>
+<input role="combobox" id="autocomplete">
 
 <script>
 test(function(t) {
@@ -34,19 +35,17 @@ test(function(t) {
 test(function(t) {
     var node = document.getElementById("checked");
     var axNode = accessibilityController.accessibleElementById("checked");
-    assert_equals(axNode.isChecked, false);
+    assert_equals(axNode.checked, "false");
     node.accessibleNode.checked = "true";
-    assert_equals(axNode.isChecked, true);
+    assert_equals(axNode.checked, "true");
     node.accessibleNode.checked = "mixed";
-    assert_equals(axNode.isChecked, false);
-    assert_equals(axNode.isButtonStateMixed, true);
+    assert_equals(axNode.checked, "mixed");
 
     // It also works to set it to just true or false (no quotes).
     node.accessibleNode.checked = true;
-    assert_equals(axNode.isChecked, true);
+    assert_equals(axNode.checked, "true");
     node.accessibleNode.checked = false;
-    assert_equals(axNode.isChecked, false);
-
+    assert_equals(axNode.checked, "false");
 }, "AccessibleNode.checked");
 </script>
 
@@ -60,6 +59,20 @@ test(function(t) {
     node.accessibleNode.current = "page";
     assert_equals(axNode.current, "page");
 }, "AccessibleNode.current");
+</script>
+
+<div role="textbox" id="hasPopUp"></div>
+
+<script>
+test(function(t) {
+    var node = document.getElementById("hasPopUp");
+    var axNode = accessibilityController.accessibleElementById("hasPopUp");
+    assert_equals(axNode.hasPopup, false);
+    node.accessibleNode.hasPopUp = true;
+    assert_equals(axNode.hasPopup, true);
+    // TODO(dmazzoni): Test support for ARIA 1.1 values like "dialog", "tree", etc.
+    // when those are mapped through to platform APIs.
+}, "AccessibleNode.hasPopUp");
 </script>
 
 <div role="textbox" id="invalid"></div>
@@ -155,8 +168,10 @@ test(function(t) {
     var axNode = accessibilityController.accessibleElementById("role");
     assert_equals(axNode.role, "AXRole: AXButton");
     node.accessibleNode.role = "combobox";
-    assert_equals(axNode.role, "AXRole: AXComboBox");
+    axNode = accessibilityController.accessibleElementById("role");
+    assert_equals(axNode.role, "AXRole: AXComboBoxGrouping");
     node.accessibleNode.role = "banana button";
+    axNode = accessibilityController.accessibleElementById("role");
     assert_equals(axNode.role, "AXRole: AXButton");
 }, "AccessibleNode.role");
 </script>

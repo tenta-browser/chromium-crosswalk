@@ -10,10 +10,10 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "base/callback.h"
-#include "base/containers/hash_tables.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
@@ -28,8 +28,6 @@
 namespace data_usage {
 struct DataUse;
 }
-
-namespace chrome {
 
 namespace android {
 
@@ -171,8 +169,9 @@ class ExternalDataUseReporter {
     size_t operator()(const DataUseReportKey& k) const;
   };
 
-  typedef base::hash_map<DataUseReportKey, DataUseReport, DataUseReportKeyHash>
-      DataUseReports;
+  typedef std::
+      unordered_map<DataUseReportKey, DataUseReport, DataUseReportKeyHash>
+          DataUseReports;
 
   // Maximum size of the data use report buffer. Once this limit is reached, new
   // reports will be ignored.
@@ -252,7 +251,5 @@ class ExternalDataUseReporter {
 };
 
 }  // namespace android
-
-}  // namespace chrome
 
 #endif  // CHROME_BROWSER_ANDROID_DATA_USAGE_EXTERNAL_DATA_USE_REPORTER_H_

@@ -4,6 +4,7 @@
 
 #include "core/dom/StaticRange.h"
 
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/V8BindingForTesting.h"
 #include "core/dom/Element.h"
@@ -16,13 +17,12 @@
 #include "core/html/HTMLHtmlElement.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Compiler.h"
-#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/text/AtomicString.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
 
-class StaticRangeTest : public testing::Test {
+class StaticRangeTest : public ::testing::Test {
  protected:
   void SetUp() override;
 
@@ -33,7 +33,7 @@ class StaticRangeTest : public testing::Test {
 };
 
 void StaticRangeTest::SetUp() {
-  document_ = HTMLDocument::Create();
+  document_ = HTMLDocument::CreateForTest();
   HTMLHtmlElement* html = HTMLHtmlElement::Create(*document_);
   html->AppendChild(HTMLBodyElement::Create(*document_));
   document_->AppendChild(html);
@@ -45,8 +45,8 @@ HTMLDocument& StaticRangeTest::GetDocument() const {
 
 TEST_F(StaticRangeTest, SplitTextNodeRangeWithinText) {
   V8TestingScope scope;
-  GetDocument().body()->setInnerHTML("1234");
-  Text* old_text = ToText(GetDocument().body()->FirstChild());
+  GetDocument().body()->SetInnerHTMLFromString("1234");
+  Text* old_text = ToText(GetDocument().body()->firstChild());
 
   StaticRange* static_range04 =
       StaticRange::Create(GetDocument(), old_text, 0u, old_text, 4u);
@@ -116,16 +116,16 @@ TEST_F(StaticRangeTest, SplitTextNodeRangeWithinText) {
 
 TEST_F(StaticRangeTest, SplitTextNodeRangeOutsideText) {
   V8TestingScope scope;
-  GetDocument().body()->setInnerHTML(
+  GetDocument().body()->SetInnerHTMLFromString(
       "<span id=\"outer\">0<span id=\"inner-left\">1</span>SPLITME<span "
       "id=\"inner-right\">2</span>3</span>");
 
   Element* outer =
-      GetDocument().GetElementById(AtomicString::FromUTF8("outer"));
+      GetDocument().getElementById(AtomicString::FromUTF8("outer"));
   Element* inner_left =
-      GetDocument().GetElementById(AtomicString::FromUTF8("inner-left"));
+      GetDocument().getElementById(AtomicString::FromUTF8("inner-left"));
   Element* inner_right =
-      GetDocument().GetElementById(AtomicString::FromUTF8("inner-right"));
+      GetDocument().getElementById(AtomicString::FromUTF8("inner-right"));
   Text* old_text = ToText(outer->childNodes()->item(2));
 
   StaticRange* static_range_outer_outside =
@@ -231,8 +231,8 @@ TEST_F(StaticRangeTest, SplitTextNodeRangeOutsideText) {
 
 TEST_F(StaticRangeTest, InvalidToRange) {
   V8TestingScope scope;
-  GetDocument().body()->setInnerHTML("1234");
-  Text* old_text = ToText(GetDocument().body()->FirstChild());
+  GetDocument().body()->SetInnerHTMLFromString("1234");
+  Text* old_text = ToText(GetDocument().body()->firstChild());
 
   StaticRange* static_range04 =
       StaticRange::Create(GetDocument(), old_text, 0u, old_text, 4u);

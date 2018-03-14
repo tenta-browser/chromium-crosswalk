@@ -24,19 +24,19 @@
 #ifndef DataTransfer_h
 #define DataTransfer_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include <memory>
 #include "core/CoreExport.h"
+#include "core/clipboard/DataObject.h"
 #include "core/clipboard/DataTransferAccessPolicy.h"
 #include "core/loader/resource/ImageResourceContent.h"
 #include "core/page/DragActions.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/geometry/IntPoint.h"
 #include "platform/heap/Handle.h"
-#include "wtf/Forward.h"
-#include <memory>
+#include "platform/wtf/Forward.h"
 
 namespace blink {
 
-class DataObject;
 class DataTransferItemList;
 class DragImage;
 class Element;
@@ -44,15 +44,17 @@ class FileList;
 class FrameSelection;
 class LocalFrame;
 class Node;
+class PaintRecordBuilder;
+class PropertyTreeState;
 
 // Used for drag and drop and copy/paste.
 // Drag and Drop:
 // http://www.whatwg.org/specs/web-apps/current-work/multipage/dnd.html
 // Clipboard API (copy/paste):
 // http://dev.w3.org/2006/webapi/clipops/clipops.html
-class CORE_EXPORT DataTransfer final
-    : public GarbageCollectedFinalized<DataTransfer>,
-      public ScriptWrappable {
+class CORE_EXPORT DataTransfer final : public ScriptWrappable,
+                                       public DataObject::Observer {
+  USING_GARBAGE_COLLECTED_MIXIN(DataTransfer);
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -87,8 +89,10 @@ class CORE_EXPORT DataTransfer final
   String getData(const String& type) const;
   void setData(const String& type, const String& data);
 
-  // extensions beyond IE's API
-  Vector<String> types() const;
+  // Used by the bindings code to determine whether to call types() again.
+  bool hasDataStoreItemListChanged() const;
+
+  Vector<String> types();
   FileList* files() const;
 
   IntPoint DragLocation() const { return drag_loc_; }
@@ -128,7 +132,28 @@ class CORE_EXPORT DataTransfer final
 
   DataObject* GetDataObject() const;
 
-  DECLARE_TRACE();
+  // Clip to the visible area of the visual viewport.
+  static FloatRect ClipByVisualViewport(const FloatRect& rect_in_document,
+                                        const LocalFrame&);
+
+  // Returns the size with device scale factor and page scale factor applied.
+  static FloatSize DeviceSpaceSize(const FloatSize& css_size,
+                                   const LocalFrame&);
+
+  // |css_size| is the size of the image in CSS pixels.
+  // |paint_offset| is the offset from the origin of the dragged
+  // object of the PaintRecordBuilder.
+  static std::unique_ptr<DragImage> CreateDragImageForFrame(
+      const LocalFrame&,
+      float,
+      RespectImageOrientationEnum,
+      const FloatSize& css_size,
+      const FloatPoint& paint_offset,
+      PaintRecordBuilder&,
+      const PropertyTreeState&);
+  static std::unique_ptr<DragImage> NodeImage(const LocalFrame&, Node&);
+
+  void Trace(blink::Visitor*);
 
  private:
   DataTransfer(DataTransferType, DataTransferAccessPolicy, DataObject*);
@@ -138,6 +163,9 @@ class CORE_EXPORT DataTransfer final
   bool HasFileOfType(const String&) const;
   bool HasStringOfType(const String&) const;
 
+  // DataObject::Observer override.
+  void OnItemListChanged() override;
+
   // Instead of using this member directly, prefer to use the can*() methods
   // above.
   DataTransferAccessPolicy policy_;
@@ -145,6 +173,8 @@ class CORE_EXPORT DataTransfer final
   String effect_allowed_;
   DataTransferType transfer_type_;
   Member<DataObject> data_object_;
+
+  bool data_store_item_list_changed_;
 
   IntPoint drag_loc_;
   Member<ImageResourceContent> drag_image_;

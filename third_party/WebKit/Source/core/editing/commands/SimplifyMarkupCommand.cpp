@@ -77,8 +77,8 @@ void SimplifyMarkupCommand::DoApply(EditingState* editing_state) {
               ->AlwaysCreateLineBoxes())
         continue;
 
-      if (current_node->FirstChild() != current_node->LastChild()) {
-        top_node_with_starting_style = 0;
+      if (current_node->firstChild() != current_node->lastChild()) {
+        top_node_with_starting_style = nullptr;
         break;
       }
 
@@ -124,8 +124,8 @@ int SimplifyMarkupCommand::PruneSubsequentAncestorsToRemove(
     if (nodes_to_remove[past_last_node_to_remove - 1]->parentNode() !=
         nodes_to_remove[past_last_node_to_remove])
       break;
-    DCHECK_EQ(nodes_to_remove[past_last_node_to_remove]->FirstChild(),
-              nodes_to_remove[past_last_node_to_remove]->LastChild());
+    DCHECK_EQ(nodes_to_remove[past_last_node_to_remove]->firstChild(),
+              nodes_to_remove[past_last_node_to_remove]->lastChild());
   }
 
   ContainerNode* highest_ancestor_to_remove =
@@ -154,7 +154,7 @@ int SimplifyMarkupCommand::PruneSubsequentAncestorsToRemove(
   return past_last_node_to_remove - start_node_index - 1;
 }
 
-DEFINE_TRACE(SimplifyMarkupCommand) {
+void SimplifyMarkupCommand::Trace(blink::Visitor* visitor) {
   visitor->Trace(first_node_);
   visitor->Trace(node_after_last_);
   CompositeEditCommand::Trace(visitor);

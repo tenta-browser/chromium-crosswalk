@@ -51,11 +51,8 @@ class CloudPolicyRefreshSchedulerTest : public testing::Test {
     base::Time now = base::Time::NowFromSystemTime();
     base::TimeDelta initial_age =
         base::TimeDelta::FromMinutes(kInitialCacheAgeMinutes);
-    store_.policy_->set_timestamp(
-        ((now - initial_age) - base::Time::UnixEpoch()).InMilliseconds());
-    last_update_ =
-        base::Time::UnixEpoch() +
-        base::TimeDelta::FromMilliseconds(store_.policy_->timestamp());
+    store_.policy_->set_timestamp((now - initial_age).ToJavaTime());
+    last_update_ = base::Time::FromJavaTime(store_.policy_->timestamp());
     last_update_ticks_ = base::TimeTicks::Now() +
                          (last_update_ - base::Time::NowFromSystemTime());
   }
@@ -71,6 +68,16 @@ class CloudPolicyRefreshSchedulerTest : public testing::Test {
   void NotifyIPAddressChanged() {
     net::NetworkChangeNotifier::NotifyObserversOfIPAddressChangeForTests();
     base::RunLoop().RunUntilIdle();
+  }
+
+  void EmulateSleepThroughLastRefreshTime(
+      CloudPolicyRefreshScheduler* const scheduler) {
+    // Simulate a sleep of the device by decreasing the wall clock based refresh
+    // timestamp, so that the next refresh time point, calculated from it, turns
+    // out to be earlier than the next refresh time point, calculated from the
+    // ticks count clock.
+    scheduler->set_last_refresh_for_testing(base::Time::NowFromSystemTime() -
+                                            base::TimeDelta::FromDays(1));
   }
 
   base::TimeDelta GetLastDelay() const {
@@ -365,6 +372,37 @@ TEST_F(CloudPolicyRefreshSchedulerTest, InvalidationsDisconnected) {
   // default polling rate.
   scheduler->SetInvalidationServiceAvailability(false);
   CheckTiming(kPolicyRefreshRate);
+}
+
+TEST_F(CloudPolicyRefreshSchedulerTest, OnIPAddressChangedUnregistered) {
+  client_.SetDMToken(std::string());
+  std::unique_ptr<CloudPolicyRefreshScheduler> scheduler(
+      CreateRefreshScheduler());
+
+  client_.NotifyClientError();
+  EXPECT_FALSE(task_runner_->HasPendingTask());
+
+  EmulateSleepThroughLastRefreshTime(scheduler.get());
+  scheduler->OnIPAddressChanged();
+  EXPECT_FALSE(task_runner_->HasPendingTask());
+}
+// TODO(igorcov): Before sleep in normal flow there's a task pending. When the
+// device wakes up, OnIPAddressChanged is called which should cancel the
+// pending task and queue a new task to run earlier. It is desirable to
+// simulate that flow here.
+TEST_F(CloudPolicyRefreshSchedulerTest, OnIPAddressChangedAfterSleep) {
+  std::unique_ptr<CloudPolicyRefreshScheduler> scheduler(
+      CreateRefreshScheduler());
+
+  client_.SetPolicy(dm_protocol::kChromeUserPolicyType, std::string(),
+                    em::PolicyFetchResponse());
+  task_runner_->RunPendingTasks();
+  EXPECT_FALSE(task_runner_->HasPendingTask());
+
+  EmulateSleepThroughLastRefreshTime(scheduler.get());
+  scheduler->OnIPAddressChanged();
+  EXPECT_TRUE(task_runner_->HasPendingTask());
+  task_runner_->ClearPendingTasks();
 }
 
 class CloudPolicyRefreshSchedulerSteadyStateTest

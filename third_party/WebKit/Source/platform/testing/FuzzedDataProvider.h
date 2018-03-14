@@ -30,12 +30,21 @@ class FuzzedDataProvider {
   // Returns a bool, or false when no data remains.
   bool ConsumeBool();
 
+  // Returns a number in the range [min, max] by consuming bytes from the input
+  // data. The value might not be uniformly distributed in the given range. If
+  // there's no input data left, always returns |min|. |min| must be less than
+  // or equal to |max|.
+  int ConsumeInt32InRange(int min, int max);
+
   // Returns a value from |array|, consuming as many bytes as needed to do so.
   // |array| must be a fixed-size array.
   template <typename Type, size_t size>
   Type PickValueInArray(Type (&array)[size]) {
     return array[provider_.ConsumeUint32InRange(0, size - 1)];
   }
+
+  // Reports the remaining bytes available for fuzzed input.
+  size_t RemainingBytes() { return provider_.remaining_bytes(); }
 
  private:
   base::FuzzedDataProvider provider_;

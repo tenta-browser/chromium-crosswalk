@@ -16,11 +16,14 @@ import org.junit.Assert;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.content.browser.ContentView;
 import org.chromium.content.browser.ContentViewCore;
+import org.chromium.content.browser.ContentViewCoreImpl;
+import org.chromium.content.browser.RenderCoordinates;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.NavigationController;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_shell.Shell;
+import org.chromium.content_shell.ShellViewAndroidDelegate.OnCursorUpdateHelper;
 import org.chromium.content_shell_apk.ContentShellTestCommon.TestCommonCallback;
 
 import java.lang.annotation.ElementType;
@@ -70,16 +73,23 @@ public class ContentShellActivityTestRule extends ActivityTestRule<ContentShellA
      * The url is synchronously loaded.
      * @param url Test url to load.
      */
-    public void launchContentShellWithUrlSync(String url) {
+    public ContentShellActivity launchContentShellWithUrlSync(String url) {
         Assert.assertFalse(mLaunchActivity);
-        mDelegate.launchContentShellWithUrlSync(url);
+        return mDelegate.launchContentShellWithUrlSync(url);
+    }
+
+    /**
+     * Returns the OnCursorUpdateHelper.
+     */
+    public OnCursorUpdateHelper getOnCursorUpdateHelper() throws ExecutionException {
+        return mDelegate.getOnCursorUpdateHelper();
     }
 
     /**
      * Returns the current ContentViewCore or null if there is no ContentView.
      */
-    public ContentViewCore getContentViewCore() {
-        return mDelegate.getContentViewCore();
+    public ContentViewCoreImpl getContentViewCore() {
+        return (ContentViewCoreImpl) mDelegate.getContentViewCore();
     }
 
     /**
@@ -87,6 +97,13 @@ public class ContentShellActivityTestRule extends ActivityTestRule<ContentShellA
      */
     public WebContents getWebContents() {
         return mDelegate.getWebContents();
+    }
+
+    /**
+     * Returns the RenderCoordinates of the WebContents.
+     */
+    public RenderCoordinates getRenderCoordinates() {
+        return mDelegate.getRenderCoordinates();
     }
 
     /**

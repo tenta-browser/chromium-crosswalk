@@ -31,27 +31,26 @@
 #ifndef WebSecurityOrigin_h
 #define WebSecurityOrigin_h
 
-#include "public/platform/WebCommon.h"
-#include "public/platform/WebString.h"
+#include "third_party/WebKit/public/platform/WebCommon.h"
+#include "third_party/WebKit/public/platform/WebPrivatePtr.h"
+#include "third_party/WebKit/public/platform/WebString.h"
+#include "url/origin.h"
 
 #if INSIDE_BLINK
-#include "wtf/PassRefPtr.h"
-#else
-#include "url/origin.h"
+#include "base/memory/scoped_refptr.h"
 #endif
 
 namespace blink {
 
 class SecurityOrigin;
-class WebSecurityOriginPrivate;
 class WebURL;
 
 class WebSecurityOrigin {
  public:
   ~WebSecurityOrigin() { Reset(); }
 
-  WebSecurityOrigin() : private_(0) {}
-  WebSecurityOrigin(const WebSecurityOrigin& s) : private_(0) { Assign(s); }
+  WebSecurityOrigin() {}
+  WebSecurityOrigin(const WebSecurityOrigin& s) { Assign(s); }
   WebSecurityOrigin& operator=(const WebSecurityOrigin& s) {
     Assign(s);
     return *this;
@@ -65,13 +64,13 @@ class WebSecurityOrigin {
   BLINK_PLATFORM_EXPORT void Reset();
   BLINK_PLATFORM_EXPORT void Assign(const WebSecurityOrigin&);
 
-  bool IsNull() const { return !private_; }
+  bool IsNull() const { return private_.IsNull(); }
 
   BLINK_PLATFORM_EXPORT WebString Protocol() const;
   BLINK_PLATFORM_EXPORT WebString Host() const;
   BLINK_PLATFORM_EXPORT unsigned short Port() const;
 
-  // |port()| will return 0 if the port is the default for an origin. This
+  // |Port()| will return 0 if the port is the default for an origin. This
   // method instead returns the effective port, even if it is the default port
   // (e.g. "http" => 80).
   BLINK_PLATFORM_EXPORT unsigned short EffectivePort() const;
@@ -107,39 +106,18 @@ class WebSecurityOrigin {
   // passwords stored in password manager.
   BLINK_PLATFORM_EXPORT bool CanAccessPasswordManager() const;
 
-  // Allows this WebSecurityOrigin access to local resources.
-  BLINK_PLATFORM_EXPORT void GrantLoadLocalResources() const;
-
 #if INSIDE_BLINK
-  BLINK_PLATFORM_EXPORT WebSecurityOrigin(WTF::PassRefPtr<SecurityOrigin>);
+  BLINK_PLATFORM_EXPORT WebSecurityOrigin(scoped_refptr<SecurityOrigin>);
   BLINK_PLATFORM_EXPORT WebSecurityOrigin& operator=(
-      WTF::PassRefPtr<SecurityOrigin>);
-  BLINK_PLATFORM_EXPORT operator WTF::PassRefPtr<SecurityOrigin>() const;
+      scoped_refptr<SecurityOrigin>);
+  BLINK_PLATFORM_EXPORT operator scoped_refptr<SecurityOrigin>() const;
   BLINK_PLATFORM_EXPORT SecurityOrigin* Get() const;
-#else
+#endif
   // TODO(mkwst): A number of properties don't survive a round-trip
   // ('document.domain', for instance).  We'll need to fix that for OOPI-enabled
   // embedders, https://crbug.com/490074.
-  operator url::Origin() const {
-    return IsUnique() ? url::Origin()
-                      : url::Origin::CreateFromNormalizedTupleWithSuborigin(
-                            Protocol().Ascii(), Host().Ascii(), EffectivePort(),
-                            Suborigin().Ascii());
-  }
-
-  WebSecurityOrigin(const url::Origin& origin) : private_(0) {
-    if (origin.unique()) {
-      Assign(WebSecurityOrigin::CreateUnique());
-      return;
-    }
-
-    // TODO(mkwst): This might open up issues by double-canonicalizing the host.
-    Assign(WebSecurityOrigin::CreateFromTupleWithSuborigin(
-        WebString::FromUTF8(origin.scheme()),
-        WebString::FromUTF8(origin.host()), origin.port(),
-        WebString::FromUTF8(origin.suborigin())));
-  }
-#endif
+  BLINK_PLATFORM_EXPORT WebSecurityOrigin(const url::Origin&);
+  BLINK_PLATFORM_EXPORT operator url::Origin() const;
 
  private:
   // Present only to facilitate conversion from 'url::Origin'; this constructor
@@ -150,8 +128,7 @@ class WebSecurityOrigin {
       int port,
       const WebString& suborigin);
 
-  void Assign(WebSecurityOriginPrivate*);
-  WebSecurityOriginPrivate* private_;
+  WebPrivatePtr<SecurityOrigin> private_;
 };
 
 }  // namespace blink

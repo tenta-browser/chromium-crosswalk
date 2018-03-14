@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -22,7 +23,6 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "content/common/media/media_stream_messages.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
@@ -33,10 +33,10 @@
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/renderer/media/gpu/rtc_video_decoder_factory.h"
 #include "content/renderer/media/gpu/rtc_video_encoder_factory.h"
-#include "content/renderer/media/media_stream.h"
 #include "content/renderer/media/media_stream_video_source.h"
 #include "content/renderer/media/media_stream_video_track.h"
 #include "content/renderer/media/rtc_peer_connection_handler.h"
+#include "content/renderer/media/webrtc/audio_codec_factory.h"
 #include "content/renderer/media/webrtc/stun_field_trial.h"
 #include "content/renderer/media/webrtc/webrtc_video_capturer_adapter.h"
 #include "content/renderer/media/webrtc_audio_device_impl.h"
@@ -54,19 +54,22 @@
 #include "jingle/glue/thread_wrapper.h"
 #include "media/base/media_permission.h"
 #include "media/filters/ffmpeg_glue.h"
-#include "media/renderers/gpu_video_accelerator_factories.h"
+#include "media/video/gpu_video_accelerator_factories.h"
 #include "third_party/WebKit/public/platform/WebMediaConstraints.h"
 #include "third_party/WebKit/public/platform/WebMediaStream.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/webrtc/api/audio_codecs/builtin_audio_decoder_factory.h"
+#include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/webrtc/api/mediaconstraintsinterface.h"
+#include "third_party/webrtc/api/video_codecs/video_decoder_factory.h"
+#include "third_party/webrtc/api/video_codecs/video_encoder_factory.h"
 #include "third_party/webrtc/api/videosourceproxy.h"
-#include "third_party/webrtc/base/ssladapter.h"
+#include "third_party/webrtc/media/engine/convert_legacy_video_factory.h"
 #include "third_party/webrtc/modules/video_coding/codecs/h264/include/h264.h"
+#include "third_party/webrtc/rtc_base/refcountedobject.h"
+#include "third_party/webrtc/rtc_base/ssladapter.h"
 
 #if defined(OS_ANDROID)
 #include "media/base/android/media_codec_util.h"
@@ -103,21 +106,22 @@ bool IsValidPortRange(uint16_t min_port, uint16_t max_port) {
 
 PeerConnectionDependencyFactory::PeerConnectionDependencyFactory(
     P2PSocketDispatcher* p2p_socket_dispatcher)
-    : network_manager_(NULL),
+    : network_manager_(nullptr),
       p2p_socket_dispatcher_(p2p_socket_dispatcher),
-      signaling_thread_(NULL),
-      worker_thread_(NULL),
+      signaling_thread_(nullptr),
+      worker_thread_(nullptr),
       chrome_signaling_thread_("Chrome_libJingle_Signaling"),
       chrome_worker_thread_("Chrome_libJingle_WorkerThread") {
   TryScheduleStunProbeTrial();
 }
 
 PeerConnectionDependencyFactory::~PeerConnectionDependencyFactory() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DVLOG(1) << "~PeerConnectionDependencyFactory()";
   DCHECK(!pc_factory_);
 }
 
-blink::WebRTCPeerConnectionHandler*
+std::unique_ptr<blink::WebRTCPeerConnectionHandler>
 PeerConnectionDependencyFactory::CreateRTCPeerConnectionHandler(
     blink::WebRTCPeerConnectionHandlerClient* client) {
   // Save histogram data so we can see how much PeerConnetion is used.
@@ -125,7 +129,7 @@ PeerConnectionDependencyFactory::CreateRTCPeerConnectionHandler(
   // webKitRTCPeerConnection.
   UpdateWebRTCMethodCount(WEBKIT_RTC_PEER_CONNECTION);
 
-  return new RTCPeerConnectionHandler(client, this);
+  return std::make_unique<RTCPeerConnectionHandler>(client, this);
 }
 
 const scoped_refptr<webrtc::PeerConnectionFactoryInterface>&
@@ -180,17 +184,18 @@ void PeerConnectionDependencyFactory::CreatePeerConnectionFactory() {
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   chrome_worker_thread_.task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(&PeerConnectionDependencyFactory::InitializeWorkerThread,
-                 base::Unretained(this), &worker_thread_, &start_worker_event));
+      base::BindOnce(&PeerConnectionDependencyFactory::InitializeWorkerThread,
+                     base::Unretained(this), &worker_thread_,
+                     &start_worker_event));
 
   base::WaitableEvent create_network_manager_event(
       base::WaitableEvent::ResetPolicy::MANUAL,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   chrome_worker_thread_.task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(&PeerConnectionDependencyFactory::
-                     CreateIpcNetworkManagerOnWorkerThread,
-                 base::Unretained(this), &create_network_manager_event));
+      base::BindOnce(&PeerConnectionDependencyFactory::
+                         CreateIpcNetworkManagerOnWorkerThread,
+                     base::Unretained(this), &create_network_manager_event));
 
   start_worker_event.Wait();
   create_network_manager_event.Wait();
@@ -209,10 +214,11 @@ void PeerConnectionDependencyFactory::CreatePeerConnectionFactory() {
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   chrome_signaling_thread_.task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(&PeerConnectionDependencyFactory::InitializeSignalingThread,
-                 base::Unretained(this),
-                 RenderThreadImpl::current()->GetGpuFactories(),
-                 &start_signaling_event));
+      base::BindOnce(
+          &PeerConnectionDependencyFactory::InitializeSignalingThread,
+          base::Unretained(this),
+          RenderThreadImpl::current()->GetGpuFactories(),
+          &start_signaling_event));
 
   start_signaling_event.Wait();
   CHECK(signaling_thread_);
@@ -250,11 +256,17 @@ void PeerConnectionDependencyFactory::InitializeSignalingThread(
     encoder_factory.reset();
 #endif
 
+  // TODO(magjed): Update RTCVideoEncoderFactory/RTCVideoDecoderFactory to new
+  // interface and let Chromium be responsible in what order video codecs are
+  // listed, instead of using
+  // cricket::ConvertVideoEncoderFactory/cricket::ConvertVideoDecoderFactory.
   pc_factory_ = webrtc::CreatePeerConnectionFactory(
-      worker_thread_, signaling_thread_, audio_device_.get(),
-      webrtc::CreateBuiltinAudioEncoderFactory(),
-      webrtc::CreateBuiltinAudioDecoderFactory(), encoder_factory.release(),
-      decoder_factory.release());
+      worker_thread_ /* network thread */, worker_thread_, signaling_thread_,
+      audio_device_.get(), CreateWebrtcAudioEncoderFactory(),
+      CreateWebrtcAudioDecoderFactory(),
+      cricket::ConvertVideoEncoderFactory(std::move(encoder_factory)),
+      cricket::ConvertVideoDecoderFactory(std::move(decoder_factory)),
+      nullptr /* audio_mixer */, nullptr /* audio_processing */);
   CHECK(pc_factory_.get());
 
   webrtc::PeerConnectionFactoryInterface::Options factory_options;
@@ -263,26 +275,28 @@ void PeerConnectionDependencyFactory::InitializeSignalingThread(
       cmd_line->HasSwitch(switches::kDisableWebRtcEncryption);
   factory_options.crypto_options.enable_gcm_crypto_suites =
       cmd_line->HasSwitch(switches::kEnableWebRtcSrtpAesGcm);
+  factory_options.crypto_options.enable_encrypted_rtp_header_extensions =
+      cmd_line->HasSwitch(switches::kEnableWebRtcSrtpEncryptedHeaders);
   pc_factory_->SetOptions(factory_options);
 
   event->Signal();
 }
 
 bool PeerConnectionDependencyFactory::PeerConnectionFactoryCreated() {
-  return pc_factory_.get() != NULL;
+  return pc_factory_.get() != nullptr;
 }
 
 scoped_refptr<webrtc::PeerConnectionInterface>
 PeerConnectionDependencyFactory::CreatePeerConnection(
     const webrtc::PeerConnectionInterface::RTCConfiguration& config,
-    blink::WebFrame* web_frame,
+    blink::WebLocalFrame* web_frame,
     webrtc::PeerConnectionObserver* observer) {
   CHECK(web_frame);
   CHECK(observer);
   if (!GetPcFactory().get())
-    return NULL;
+    return nullptr;
 
-  // Copy the flag from Preference associated with this WebFrame.
+  // Copy the flag from Preference associated with this WebLocalFrame.
   P2PPortAllocator::Config port_config;
   uint16_t min_port = 0;
   uint16_t max_port = 0;
@@ -442,7 +456,7 @@ PeerConnectionDependencyFactory::CreateIceCandidate(
 
 WebRtcAudioDeviceImpl*
 PeerConnectionDependencyFactory::GetWebRtcAudioDevice() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   EnsureWebRtcAudioDeviceImpl();
   return audio_device_.get();
 }
@@ -467,8 +481,9 @@ void PeerConnectionDependencyFactory::TryScheduleStunProbeTrial() {
   if (!p2p_socket_dispatcher_->connected()) {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&PeerConnectionDependencyFactory::TryScheduleStunProbeTrial,
-                   base::Unretained(this)),
+        base::BindOnce(
+            &PeerConnectionDependencyFactory::TryScheduleStunProbeTrial,
+            base::Unretained(this)),
         base::TimeDelta::FromSeconds(1));
     return;
   }
@@ -484,7 +499,7 @@ void PeerConnectionDependencyFactory::TryScheduleStunProbeTrial() {
 
   chrome_worker_thread_.task_runner()->PostDelayedTask(
       FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &PeerConnectionDependencyFactory::StartStunProbeTrialOnWorkerThread,
           base::Unretained(this), params),
       base::TimeDelta::FromMilliseconds(kExperimentStartDelayMs));
@@ -508,20 +523,21 @@ void PeerConnectionDependencyFactory::CreateIpcNetworkManagerOnWorkerThread(
 void PeerConnectionDependencyFactory::DeleteIpcNetworkManager() {
   DCHECK(chrome_worker_thread_.task_runner()->BelongsToCurrentThread());
   delete network_manager_;
-  network_manager_ = NULL;
+  network_manager_ = nullptr;
 }
 
 void PeerConnectionDependencyFactory::CleanupPeerConnectionFactory() {
   DVLOG(1) << "PeerConnectionDependencyFactory::CleanupPeerConnectionFactory()";
-  pc_factory_ = NULL;
+  pc_factory_ = nullptr;
   if (network_manager_) {
     // The network manager needs to free its resources on the thread they were
     // created, which is the worked thread.
     if (chrome_worker_thread_.IsRunning()) {
       chrome_worker_thread_.task_runner()->PostTask(
           FROM_HERE,
-          base::Bind(&PeerConnectionDependencyFactory::DeleteIpcNetworkManager,
-                     base::Unretained(this)));
+          base::BindOnce(
+              &PeerConnectionDependencyFactory::DeleteIpcNetworkManager,
+              base::Unretained(this)));
       // Stopping the thread will wait until all tasks have been
       // processed before returning. We wait for the above task to finish before
       // letting the the function continue to avoid any potential race issues.
@@ -533,31 +549,31 @@ void PeerConnectionDependencyFactory::CleanupPeerConnectionFactory() {
 }
 
 void PeerConnectionDependencyFactory::EnsureInitialized() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   GetPcFactory();
 }
 
 scoped_refptr<base::SingleThreadTaskRunner>
 PeerConnectionDependencyFactory::GetWebRtcWorkerThread() const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return chrome_worker_thread_.IsRunning() ? chrome_worker_thread_.task_runner()
                                            : nullptr;
 }
 
 scoped_refptr<base::SingleThreadTaskRunner>
 PeerConnectionDependencyFactory::GetWebRtcSignalingThread() const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return chrome_signaling_thread_.IsRunning()
              ? chrome_signaling_thread_.task_runner()
              : nullptr;
 }
 
 void PeerConnectionDependencyFactory::EnsureWebRtcAudioDeviceImpl() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (audio_device_.get())
     return;
 
-  audio_device_ = new WebRtcAudioDeviceImpl();
+  audio_device_ = new rtc::RefCountedObject<WebRtcAudioDeviceImpl>();
 }
 
 }  // namespace content

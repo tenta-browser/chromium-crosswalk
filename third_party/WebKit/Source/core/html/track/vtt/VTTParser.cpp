@@ -36,8 +36,10 @@
 #include "core/html/track/vtt/VTTElement.h"
 #include "core/html/track/vtt/VTTRegion.h"
 #include "core/html/track/vtt/VTTScanner.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "platform/loader/fetch/TextResourceDecoderOptions.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/text/SegmentedString.h"
+#include "platform/wtf/DateMath.h"
 #include "platform/wtf/text/CharacterNames.h"
 #include "platform/wtf/text/WTFString.h"
 
@@ -82,14 +84,16 @@ bool VTTParser::ParseFloatPercentageValuePair(VTTScanner& value_scanner,
 VTTParser::VTTParser(VTTParserClient* client, Document& document)
     : document_(&document),
       state_(kInitial),
-      decoder_(TextResourceDecoder::Create("text/plain", UTF8Encoding())),
+      decoder_(TextResourceDecoder::Create(TextResourceDecoderOptions(
+          TextResourceDecoderOptions::kPlainTextContent,
+          UTF8Encoding()))),
       current_start_time_(0),
       current_end_time_(0),
       client_(client) {}
 
 void VTTParser::GetNewCues(HeapVector<Member<TextTrackCue>>& output_cues) {
   DCHECK(output_cues.IsEmpty());
-  output_cues.Swap(cue_list_);
+  output_cues.swap(cue_list_);
 }
 
 void VTTParser::ParseBytes(const char* data, size_t length) {
@@ -104,7 +108,7 @@ void VTTParser::Flush() {
   line_reader_.SetEndOfStream();
   Parse();
   FlushPendingCue();
-  region_map_.Clear();
+  region_map_.clear();
 }
 
 void VTTParser::Parse() {
@@ -213,13 +217,13 @@ void VTTParser::CollectMetadataHeader(const String& line) {
   // WebVTT header parsing (WebVTT parser algorithm step 12)
 
   // The only currently supported header is the "Region" header.
-  if (!RuntimeEnabledFeatures::webVTTRegionsEnabled())
+  if (!RuntimeEnabledFeatures::WebVTTRegionsEnabled())
     return;
 
   // Step 12.4 If line contains the character ":" (A U+003A COLON), then set
   // metadata's name to the substring of line before the first ":" character and
   // metadata's value to the substring after this character.
-  size_t colon_position = line.Find(':');
+  size_t colon_position = line.find(':');
   if (colon_position == kNotFound)
     return;
 
@@ -347,7 +351,7 @@ DocumentFragment* VTTTreeBuilder::BuildFromString(const String& cue_text) {
   current_node_ = fragment;
 
   VTTTokenizer tokenizer(cue_text);
-  language_stack_.Clear();
+  language_stack_.clear();
 
   while (tokenizer.NextToken(token_))
     ConstructTreeFromToken(GetDocument());
@@ -389,14 +393,26 @@ void VTTParser::CreateNewRegion(const String& header_value) {
   VTTRegion* region = VTTRegion::Create();
   region->SetRegionSettings(header_value);
 
-  if (region->Id().IsEmpty())
+  if (region->id().IsEmpty())
     return;
-  region_map_.Set(region->Id(), region);
+  region_map_.Set(region->id(), region);
 }
 
 bool VTTParser::CollectTimeStamp(const String& line, double& time_stamp) {
   VTTScanner input(line);
   return CollectTimeStamp(input, time_stamp);
+}
+
+static String SerializeTimeStamp(double time_stamp) {
+  uint64_t value = clampTo<uint64_t>(time_stamp * 1000);
+  unsigned milliseconds = value % 1000;
+  value /= 1000;
+  unsigned seconds = value % 60;
+  value /= 60;
+  unsigned minutes = value % 60;
+  unsigned hours = value / 60;
+  return String::Format("%02u:%02u:%02u.%03u", hours, minutes, seconds,
+                        milliseconds);
 }
 
 bool VTTParser::CollectTimeStamp(VTTScanner& input, double& time_stamp) {
@@ -439,11 +455,9 @@ bool VTTParser::CollectTimeStamp(VTTScanner& input, double& time_stamp) {
     return false;
 
   // Steps 18 - 19 - Calculate result.
-  const double kSecondsPerHour = 3600;
-  const double kSecondsPerMinute = 60;
-  const double kSecondsPerMillisecond = 0.001;
-  time_stamp = (value1 * kSecondsPerHour) + (value2 * kSecondsPerMinute) +
-               value3 + (value4 * kSecondsPerMillisecond);
+  time_stamp = (value1 * kMinutesPerHour * kSecondsPerMinute) +
+               (value2 * kSecondsPerMinute) + value3 +
+               (value4 * (1 / kMsPerSecond));
   return true;
 }
 
@@ -547,11 +561,11 @@ void VTTTreeBuilder::ConstructTreeFromToken(Document& document) {
       break;
     }
     case VTTTokenTypes::kTimestampTag: {
-      String characters_string = token_.Characters();
       double parsed_time_stamp;
-      if (VTTParser::CollectTimeStamp(characters_string, parsed_time_stamp))
+      if (VTTParser::CollectTimeStamp(token_.Characters(), parsed_time_stamp)) {
         current_node_->ParserAppendChild(ProcessingInstruction::Create(
-            document, "timestamp", characters_string));
+            document, "timestamp", SerializeTimeStamp(parsed_time_stamp)));
+      }
       break;
     }
     default:
@@ -559,7 +573,7 @@ void VTTTreeBuilder::ConstructTreeFromToken(Document& document) {
   }
 }
 
-DEFINE_TRACE(VTTParser) {
+void VTTParser::Trace(blink::Visitor* visitor) {
   visitor->Trace(document_);
   visitor->Trace(client_);
   visitor->Trace(cue_list_);

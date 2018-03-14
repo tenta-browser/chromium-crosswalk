@@ -14,15 +14,17 @@ import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 
+import org.chromium.base.SysUtils;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchFieldTrial;
 import org.chromium.chrome.browser.help.HelpAndFeedback;
 import org.chromium.chrome.browser.physicalweb.PhysicalWeb;
-import org.chromium.chrome.browser.precache.PrecacheLauncher;
 import org.chromium.chrome.browser.preferences.ChromeBaseCheckBoxPreference;
 import org.chromium.chrome.browser.preferences.ManagedPreferenceDelegate;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
+import org.chromium.chrome.browser.preferences.PreferenceUtils;
 import org.chromium.chrome.browser.profiles.Profile;
 
 /**
@@ -51,7 +53,7 @@ public class PrivacyPreferences extends PreferenceFragment
         super.onCreate(savedInstanceState);
         PrivacyPreferencesManager privacyPrefManager = PrivacyPreferencesManager.getInstance();
         privacyPrefManager.migrateNetworkPredictionPreferences();
-        addPreferencesFromResource(R.xml.privacy_preferences);
+        PreferenceUtils.addPreferencesFromResource(this, R.xml.privacy_preferences);
         getActivity().setTitle(R.string.prefs_privacy);
         setHasOptionsMenu(true);
         PrefServiceBridge prefServiceBridge = PrefServiceBridge.getInstance();
@@ -104,13 +106,8 @@ public class PrivacyPreferences extends PreferenceFragment
         safeBrowsingPref.setOnPreferenceChangeListener(this);
         safeBrowsingPref.setManagedPreferenceDelegate(mManagedPreferenceDelegate);
 
-        if (!PhysicalWeb.featureIsEnabled()) {
+        if (!PhysicalWeb.featureIsEnabled() || SysUtils.isLowEndDevice()) {
             preferenceScreen.removePreference(findPreference(PREF_PHYSICAL_WEB));
-        }
-
-        if (ClearBrowsingDataTabsFragment.isFeatureEnabled()) {
-            findPreference(PREF_CLEAR_BROWSING_DATA)
-                    .setFragment(ClearBrowsingDataTabsFragment.class.getName());
         }
 
         updateSummaries();
@@ -129,12 +126,17 @@ public class PrivacyPreferences extends PreferenceFragment
                     (boolean) newValue);
         } else if (PREF_NETWORK_PREDICTIONS.equals(key)) {
             PrefServiceBridge.getInstance().setNetworkPredictionEnabled((boolean) newValue);
-            PrecacheLauncher.updatePrecachingEnabled(getActivity());
+            recordNetworkPredictionEnablingUMA((boolean) newValue);
         } else if (PREF_NAVIGATION_ERROR.equals(key)) {
             PrefServiceBridge.getInstance().setResolveNavigationErrorEnabled((boolean) newValue);
         }
 
         return true;
+    }
+
+    private void recordNetworkPredictionEnablingUMA(boolean enabled) {
+        // Report user turning on and off NetworkPrediction.
+        RecordHistogram.recordBooleanHistogram("PrefService.NetworkPredictionEnabled", enabled);
     }
 
     @Override

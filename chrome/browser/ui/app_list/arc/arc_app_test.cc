@@ -13,7 +13,6 @@
 #include "chrome/browser/chromeos/arc/arc_session_manager.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
-#include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
@@ -25,6 +24,7 @@
 #include "components/arc/arc_util.h"
 #include "components/arc/test/fake_app_instance.h"
 #include "components/arc/test/fake_arc_session.h"
+#include "components/user_manager/scoped_user_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -45,8 +45,8 @@ std::string ArcAppTest::GetAppId(const arc::mojom::ShortcutInfo& shortcut) {
 }
 
 ArcAppTest::ArcAppTest() {
-  user_manager_enabler_.reset(new chromeos::ScopedUserManagerEnabler(
-      new chromeos::FakeChromeUserManager()));
+  user_manager_enabler_ = std::make_unique<user_manager::ScopedUserManager>(
+      std::make_unique<chromeos::FakeChromeUserManager>());
   CreateFakeAppsAndPackages();
 }
 
@@ -67,6 +67,9 @@ void ArcAppTest::SetUp(Profile* profile) {
       base::CommandLine::ForCurrentProcess());
   DCHECK(!profile_);
   profile_ = profile;
+
+  arc::ResetArcAllowedCheckForTesting(profile_);
+
   const user_manager::User* user = CreateUserAndLogin();
 
   // If for any reason the garbage collector kicks in while we are waiting for
@@ -82,7 +85,7 @@ void ArcAppTest::SetUp(Profile* profile) {
     ArcAppListPrefsFactory::GetInstance()->RecreateServiceInstanceForTesting(
         profile_);
   }
-  arc_service_manager_ = base::MakeUnique<arc::ArcServiceManager>(nullptr);
+  arc_service_manager_ = base::MakeUnique<arc::ArcServiceManager>();
   arc_session_manager_ = base::MakeUnique<arc::ArcSessionManager>(
       base::MakeUnique<arc::ArcSessionRunner>(
           base::Bind(arc::FakeArcSession::Create)));
@@ -90,6 +93,7 @@ void ArcAppTest::SetUp(Profile* profile) {
   arc::ArcSessionManager::DisableUIForTesting();
   arc::ArcAuthNotification::DisableForTesting();
   arc_session_manager_->SetProfile(profile_);
+  arc_session_manager_->Initialize();
   arc_play_store_enabled_preference_handler_ =
       base::MakeUnique<arc::ArcPlayStoreEnabledPreferenceHandler>(
           profile_, arc_session_manager_.get());
@@ -101,13 +105,10 @@ void ArcAppTest::SetUp(Profile* profile) {
     WaitForDefaultApps();
 
   // Check initial conditions.
-  if (arc::ShouldArcAlwaysStart()) {
-    // When ARC first starts, it runs in opt-out mode of Play Store.
-    EXPECT_TRUE(arc_session_manager_->IsSessionRunning());
-  } else {
+  if (!arc::ShouldArcAlwaysStart())
     arc::SetArcPlayStoreEnabledForProfile(profile_, true);
-    EXPECT_FALSE(arc_session_manager_->IsSessionRunning());
-  }
+  if (!arc::IsArcPlayStoreEnabledPreferenceManagedForProfile(profile_))
+    EXPECT_TRUE(arc_session_manager_->enable_requested());
 
   app_instance_.reset(new arc::FakeAppInstance(arc_app_list_pref_));
   arc_service_manager_->arc_bridge_service()->app()->SetInstance(
@@ -188,7 +189,7 @@ void ArcAppTest::TearDown() {
   arc_service_manager_.reset();
   if (dbus_thread_manager_initialized_) {
     // DBusThreadManager may be initialized from other testing utility,
-    // such as ash::test::AshTestHelper::SetUp(), so Shutdown() only when
+    // such as ash::AshTestHelper::SetUp(), so Shutdown() only when
     // it is initialized in ArcAppTest::SetUp().
     chromeos::DBusThreadManager::Shutdown();
     dbus_thread_manager_initialized_ = false;

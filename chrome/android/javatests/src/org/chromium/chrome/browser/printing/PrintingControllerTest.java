@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.printing;
 
+import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.os.Build;
 import android.os.CancellationSignal;
@@ -13,29 +14,39 @@ import android.print.PrintAttributes;
 import android.print.PrintDocumentAdapter;
 import android.print.PrintDocumentInfo;
 import android.support.test.filters.LargeTest;
+import android.support.test.filters.MediumTest;
+
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
-import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.TestFileUtil;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.test.ChromeActivityTestCaseBase;
-import org.chromium.chrome.test.util.browser.TabTitleObserver;
-import org.chromium.content.common.ContentSwitches;
+import org.chromium.chrome.browser.tabmodel.TabModelUtils;
+import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.printing.PrintDocumentAdapterWrapper;
+import org.chromium.printing.PrintDocumentAdapterWrapper.LayoutResultCallbackWrapper;
+import org.chromium.printing.PrintDocumentAdapterWrapper.WriteResultCallbackWrapper;
 import org.chromium.printing.PrintManagerDelegate;
 import org.chromium.printing.PrintingControllerImpl;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.IOException;
-import java.util.concurrent.Callable;
-import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Tests Android printing.
@@ -43,8 +54,16 @@ import java.util.concurrent.TimeUnit;
  * TODO(cimamoglu): Add a test with multiple, stacked onLayout/onWrite calls.
  * TODO(cimamoglu): Add a test which emulates Chromium failing to generate a PDF.
  */
+@RunWith(ChromeJUnit4ClassRunner.class)
 @RetryOnFailure
-public class PrintingControllerTest extends ChromeActivityTestCaseBase<ChromeActivity> {
+@SuppressLint("NewApi")
+@MinAndroidSdkLevel(Build.VERSION_CODES.KITKAT)
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
+        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+public class PrintingControllerTest {
+    @Rule
+    public final ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
+            new ChromeActivityTestRule<>(ChromeActivity.class);
 
     private static final String TEMP_FILE_NAME = "temp_print";
     private static final String TEMP_FILE_EXTENSION = ".pdf";
@@ -54,17 +73,12 @@ public class PrintingControllerTest extends ChromeActivityTestCaseBase<ChromeAct
     private static final String PDF_PREAMBLE = "%PDF-1";
     private static final long TEST_TIMEOUT = 20000L;
 
-    public PrintingControllerTest() {
-        super(ChromeActivity.class);
-    }
-
-    @Override
-    public void startMainActivity() throws InterruptedException {
+    @Before
+    public void setUp() throws InterruptedException {
         // Do nothing.
     }
 
-    private static class LayoutResultCallbackWrapperMock implements
-            PrintDocumentAdapterWrapper.LayoutResultCallbackWrapper {
+    private static class LayoutResultCallbackWrapperMock implements LayoutResultCallbackWrapper {
         @Override
         public void onLayoutFinished(PrintDocumentInfo info, boolean changed) {}
 
@@ -75,8 +89,7 @@ public class PrintingControllerTest extends ChromeActivityTestCaseBase<ChromeAct
         public void onLayoutCancelled() {}
     }
 
-    private static class WriteResultCallbackWrapperMock implements
-            PrintDocumentAdapterWrapper.WriteResultCallbackWrapper {
+    private static class WriteResultCallbackWrapperMock implements WriteResultCallbackWrapper {
         @Override
         public void onWriteFinished(PageRange[] pages) {}
 
@@ -87,19 +100,26 @@ public class PrintingControllerTest extends ChromeActivityTestCaseBase<ChromeAct
         public void onWriteCancelled() {}
     }
 
+    private static class WaitForOnWriteHelper extends CallbackHelper {
+        public void waitForCallback(String msg) throws InterruptedException, TimeoutException {
+            waitForCallback(msg, 0, 1, TEST_TIMEOUT, TimeUnit.MILLISECONDS);
+        }
+    }
+
     /**
      * Test a basic printing flow by emulating the corresponding system calls to the printing
      * controller: onStart, onLayout, onWrite, onFinish.  Each one is called once, and in this
      * order, in the UI thread.
      */
+    @Test
     @TargetApi(Build.VERSION_CODES.KITKAT)
     @LargeTest
     @Feature({"Printing"})
     public void testNormalPrintingFlow() throws Throwable {
         if (!ApiCompatibilityUtils.isPrintingSupported()) return;
 
-        startMainActivityWithURL(URL);
-        final Tab currentTab = getActivity().getActivityTab();
+        mActivityTestRule.startMainActivityWithURL(URL);
+        final Tab currentTab = mActivityTestRule.getActivity().getActivityTab();
 
         final PrintingControllerImpl printingController = createControllerOnUiThread();
 
@@ -108,198 +128,194 @@ public class PrintingControllerTest extends ChromeActivityTestCaseBase<ChromeAct
         callStartOnUiThread(printingController);
 
         // Create a temporary file to save the PDF.
-        final File cacheDir = getInstrumentation().getTargetContext().getCacheDir();
-        final File tempFile = File.createTempFile(TEMP_FILE_NAME, TEMP_FILE_EXTENSION, cacheDir);
-        final ParcelFileDescriptor fileDescriptor = ParcelFileDescriptor.open(tempFile,
-                (ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_READ_WRITE));
-
-        PrintAttributes attributes = new PrintAttributes.Builder()
-                .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
-                .setResolution(new PrintAttributes.Resolution("foo", "bar", 300, 300))
-                .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
-                .build();
+        final File tempFile = File.createTempFile(TEMP_FILE_NAME, TEMP_FILE_EXTENSION);
+        final ParcelFileDescriptor fileDescriptor =
+                ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_WRITE);
 
         // Use this to wait for PDF generation to complete, as it will happen asynchronously.
-        final FutureTask<Boolean> result = new FutureTask<Boolean>(new Callable<Boolean>() {
-            @Override
-            public Boolean call() {
-                return true;
-            }
-        });
+        final WaitForOnWriteHelper onWriteFinishedCompleted = new WaitForOnWriteHelper();
 
-        callLayoutOnUiThread(printingController, null, attributes,
+        final WriteResultCallbackWrapper writeResultCallback =
+                new WriteResultCallbackWrapperMock() {
+                    @Override
+                    public void onWriteFinished(PageRange[] pages) {
+                        onWriteFinishedCompleted.notifyCalled();
+                    }
+                };
+
+        final LayoutResultCallbackWrapper layoutResultCallback =
                 new LayoutResultCallbackWrapperMock() {
-                    // Called on UI thread
+                    // Called on UI thread.
                     @Override
                     public void onLayoutFinished(PrintDocumentInfo info, boolean changed) {
-                        callWriteOnUiThread(printingController, fileDescriptor, result);
+                        printingController.onWrite(new PageRange[] {PageRange.ALL_PAGES},
+                                fileDescriptor, new CancellationSignal(), writeResultCallback);
                     }
-                });
+                };
+
+        callLayoutOnUiThread(
+                printingController, null, createDummyPrintAttributes(), layoutResultCallback);
 
         FileInputStream in = null;
         try {
-            // This blocks until the PDF is generated.
-            result.get(TEST_TIMEOUT, TimeUnit.MILLISECONDS);
-            assertTrue(tempFile.length() > 0);
+            onWriteFinishedCompleted.waitForCallback("onWriteFinished callback never completed.");
+            Assert.assertTrue(tempFile.length() > 0);
             in = new FileInputStream(tempFile);
             byte[] b = new byte[PDF_PREAMBLE.length()];
             in.read(b);
             String preamble = new String(b);
-            assertEquals(PDF_PREAMBLE, preamble);
+            Assert.assertEquals(PDF_PREAMBLE, preamble);
         } finally {
-            callFinishOnUiThread(printingController);
             if (in != null) in.close();
+            callFinishOnUiThread(printingController);
             // Close the descriptor, if not closed already.
             fileDescriptor.close();
             TestFileUtil.deleteFile(tempFile.getAbsolutePath());
         }
-
     }
 
     /**
      * Test for http://crbug.com/528909
-     *
-     * @SmallTest
-     * @Feature({"Printing"})
+     * Simulating while a printing job is triggered and about to call Android framework to show UI,
+     * the corresponding tab is closed, this behaviour is mostly from JavaScript code. Make sure we
+     * don't crash and won't call into framework.
      */
-    @CommandLineFlags.Add(ContentSwitches.DISABLE_POPUP_BLOCKING)
-    @DisabledTest(message = "crbug.com/532652")
-    public void testPrintClosedWindow() throws Throwable {
+    @Test
+    @TargetApi(Build.VERSION_CODES.KITKAT)
+    @MediumTest
+    @Feature({"Printing"})
+    public void testPrintCloseWindowBeforeStart() throws Throwable {
         if (!ApiCompatibilityUtils.isPrintingSupported()) return;
 
-        String html = "<html><head><title>printwindowclose</title></head><body><script>"
-                + "function printClosedWindow() {"
-                + "  w = window.open(); w.close();"
-                + "  setTimeout(()=>{w.print(); document.title='completed'}, 0);"
-                + "}</script></body></html>";
+        mActivityTestRule.startMainActivityWithURL(URL);
+        final Tab currentTab = mActivityTestRule.getActivity().getActivityTab();
+        final PrintingControllerImpl printingController = createControllerOnUiThread();
+        final PrintManagerDelegate mockPrintManagerDelegate =
+                mockPrintManagerDelegate(() -> Assert.fail("Shouldn't start a printing job."));
 
-        startMainActivityWithURL("data:text/html;charset=utf-8," + html);
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            printingController.setPendingPrint(
+                    new TabPrinter(currentTab), mockPrintManagerDelegate, -1, -1);
+            TabModelUtils.closeCurrentTab(mActivityTestRule.getActivity().getCurrentTabModel());
+            Assert.assertFalse("currentTab should be closed already.", currentTab.isInitialized());
+            printingController.startPendingPrint(null);
+        });
+    }
 
-        Tab mTab = getActivity().getActivityTab();
-        assertEquals("title does not match initial title", "printwindowclose", mTab.getTitle());
+    /**
+     * Test for http://crbug.com/528909
+     * Simulating while a printing job is triggered and printing UI is showing, the corresponding
+     * tab is closed, this behaviour is mostly from JavaScript code. Make sure we don't crash and
+     * let framework notify user that we can't perform printing job.
+     */
+    @Test
+    @TargetApi(Build.VERSION_CODES.KITKAT)
+    @LargeTest
+    @Feature({"Printing"})
+    public void testPrintCloseWindowBeforeOnWrite() throws Throwable {
+        if (!ApiCompatibilityUtils.isPrintingSupported()) return;
 
-        TabTitleObserver mOnTitleUpdatedHelper = new TabTitleObserver(mTab, "completed");
-        runJavaScriptCodeInCurrentTab("printClosedWindow();");
-        mOnTitleUpdatedHelper.waitForTitleUpdate(5);
-        assertEquals("JS did not finish running", "completed", mTab.getTitle());
+        mActivityTestRule.startMainActivityWithURL(URL);
+        final Tab currentTab = mActivityTestRule.getActivity().getActivityTab();
+        final PrintingControllerImpl printingController = createControllerOnUiThread();
+
+        startControllerOnUiThread(printingController, currentTab);
+        callStartOnUiThread(printingController);
+
+        final WaitForOnWriteHelper onWriteFinishedCompleted = new WaitForOnWriteHelper();
+        final LayoutResultCallbackWrapper layoutResultCallback =
+                new LayoutResultCallbackWrapperMock() {
+                    @Override
+                    public void onLayoutFinished(PrintDocumentInfo info, boolean changed) {
+                        onWriteFinishedCompleted.notifyCalled();
+                    }
+                };
+        callLayoutOnUiThread(
+                printingController, null, createDummyPrintAttributes(), layoutResultCallback);
+
+        onWriteFinishedCompleted.waitForCallback("onWriteFinished callback never completed.");
+
+        final WaitForOnWriteHelper onWriteFailedCompleted = new WaitForOnWriteHelper();
+        // Create a temporary file to save the PDF.
+        final File tempFile = File.createTempFile(TEMP_FILE_NAME, TEMP_FILE_EXTENSION);
+        final ParcelFileDescriptor fileDescriptor =
+                ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_WRITE);
+        try {
+            ThreadUtils.runOnUiThreadBlocking(() -> {
+                // Close tab.
+                TabModelUtils.closeCurrentTab(mActivityTestRule.getActivity().getCurrentTabModel());
+                Assert.assertFalse(
+                        "currentTab should be closed already.", currentTab.isInitialized());
+
+                final WriteResultCallbackWrapper writeResultCallback =
+                        new WriteResultCallbackWrapperMock() {
+                            @Override
+                            public void onWriteFailed(CharSequence error) {
+                                onWriteFailedCompleted.notifyCalled();
+                            }
+                        };
+                // Call onWrite.
+                printingController.onWrite(new PageRange[] {PageRange.ALL_PAGES}, fileDescriptor,
+                        new CancellationSignal(), writeResultCallback);
+            });
+
+            onWriteFailedCompleted.waitForCallback("onWriteFailed callback never completed.");
+        } finally {
+            // Proper cleanup.
+            callFinishOnUiThread(printingController);
+            // Close the descriptor, if not closed already.
+            fileDescriptor.close();
+            TestFileUtil.deleteFile(tempFile.getAbsolutePath());
+        }
     }
 
     private PrintingControllerImpl createControllerOnUiThread() {
-        try {
-            final FutureTask<PrintingControllerImpl> task =
-                    new FutureTask<PrintingControllerImpl>(new Callable<PrintingControllerImpl>() {
-                        @Override
-                        public PrintingControllerImpl call() throws Exception {
-                            return (PrintingControllerImpl) PrintingControllerImpl.create(
-                                    new PrintDocumentAdapterWrapper(),
-                                    PRINT_JOB_NAME);
-                        }
-                    });
-
-            runTestOnUiThread(task);
-            PrintingControllerImpl result = task.get(TEST_TIMEOUT, TimeUnit.MILLISECONDS);
-            return result;
-        } catch (Throwable e) {
-            fail("Error on creating PrintingControllerImpl on the UI thread: " + e);
-        }
-        return null;
-    }
-
-    private void startControllerOnUiThread(final PrintingControllerImpl controller,
-            final Tab tab) {
-        try {
-            final PrintManagerDelegate mockPrintManagerDelegate = new PrintManagerDelegate() {
-                @Override
-                public void print(String printJobName, PrintDocumentAdapter documentAdapter,
-                        PrintAttributes attributes) {
-                    // Do nothing, as we will emulate the framework call sequence within the test.
-                }
-            };
-
-            runTestOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    controller.startPrint(new TabPrinter(tab), mockPrintManagerDelegate);
-                }
-            });
-        } catch (Throwable e) {
-            fail("Error on calling startPrint of PrintingControllerImpl " + e);
-        }
-    }
-
-    private void callStartOnUiThread(final PrintingControllerImpl controller) {
-        try {
-            runTestOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    controller.onStart();
-                }
-            });
-        } catch (Throwable e) {
-            fail("Error on calling onStart of PrintingControllerImpl " + e);
-        }
-    }
-
-    private void callLayoutOnUiThread(
-            final PrintingControllerImpl controller,
-            final PrintAttributes oldAttributes,
-            final PrintAttributes newAttributes,
-            final PrintDocumentAdapterWrapper.LayoutResultCallbackWrapper layoutResultCallback) {
-        try {
-            runTestOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    controller.onLayout(
-                            oldAttributes,
-                            newAttributes,
-                            new CancellationSignal(),
-                            layoutResultCallback,
-                            null);
-                }
-            });
-        } catch (Throwable e) {
-            fail("Error on calling onLayout of PrintingControllerImpl " + e);
-        }
+        return ThreadUtils.runOnUiThreadBlockingNoException(() -> {
+            return (PrintingControllerImpl) PrintingControllerImpl.create(
+                    new PrintDocumentAdapterWrapper(), PRINT_JOB_NAME);
+        });
     }
 
     @TargetApi(Build.VERSION_CODES.KITKAT)
-    private void callWriteOnUiThread(
-            final PrintingControllerImpl controller,
-            final ParcelFileDescriptor descriptor,
-            final FutureTask<Boolean> result) {
-        try {
-            controller.onWrite(
-                    new PageRange[] {PageRange.ALL_PAGES},
-                    descriptor,
-                    new CancellationSignal(),
-                    new WriteResultCallbackWrapperMock() {
-                        @Override
-                        public void onWriteFinished(PageRange[] pages) {
-                            try {
-                                descriptor.close();
-                                // Result is ready, signal to continue.
-                                result.run();
-                            } catch (IOException ex) {
-                                fail("Failed file operation: " + ex.toString());
-                            }
-                        }
-                    }
-            );
-        } catch (Throwable e) {
-            fail("Error on calling onWriteInternal of PrintingControllerImpl " + e);
-        }
+    private PrintAttributes createDummyPrintAttributes() {
+        return new PrintAttributes.Builder()
+                .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                .setResolution(new PrintAttributes.Resolution("foo", "bar", 300, 300))
+                .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
+                .build();
+    }
+
+    private PrintManagerDelegate mockPrintManagerDelegate(final Runnable r) {
+        return new PrintManagerDelegate() {
+            @Override
+            public void print(String printJobName, PrintDocumentAdapter documentAdapter,
+                    PrintAttributes attributes) {
+                if (r != null) r.run();
+            }
+        };
+    }
+
+    private void startControllerOnUiThread(final PrintingControllerImpl controller, final Tab tab) {
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            controller.startPrint(new TabPrinter(tab),
+                    /* non-op PrintManagerDelegate */ mockPrintManagerDelegate(null));
+        });
+    }
+
+    private void callStartOnUiThread(final PrintingControllerImpl controller) {
+        ThreadUtils.runOnUiThreadBlocking(() -> controller.onStart());
+    }
+
+    private void callLayoutOnUiThread(final PrintingControllerImpl controller,
+            final PrintAttributes oldAttributes, final PrintAttributes newAttributes,
+            final LayoutResultCallbackWrapper layoutResultCallback) {
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            controller.onLayout(oldAttributes, newAttributes, new CancellationSignal(),
+                    layoutResultCallback, null);
+        });
     }
 
     private void callFinishOnUiThread(final PrintingControllerImpl controller) {
-        try {
-            runTestOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    controller.onFinish();
-                }
-            });
-        } catch (Throwable e) {
-            fail("Error on calling onFinish of PrintingControllerImpl " + e);
-        }
+        ThreadUtils.runOnUiThreadBlocking(() -> controller.onFinish());
     }
 }

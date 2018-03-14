@@ -31,20 +31,19 @@
 #ifndef LinkResource_h
 #define LinkResource_h
 
+#include "base/macros.h"
 #include "core/CoreExport.h"
 #include "platform/heap/Handle.h"
-#include "platform/loader/fetch/FetchParameters.h"
-#include "platform/weborigin/KURL.h"
-#include "platform/wtf/text/WTFString.h"
+#include "platform/wtf/text/TextEncoding.h"
 
 namespace blink {
 
+class Document;
 class HTMLLinkElement;
 class LocalFrame;
 
 class CORE_EXPORT LinkResource
     : public GarbageCollectedFinalized<LinkResource> {
-  WTF_MAKE_NONCOPYABLE(LinkResource);
 
  public:
   enum LinkResourceType { kStyle, kImport, kManifest, kOther };
@@ -61,27 +60,18 @@ class CORE_EXPORT LinkResource
   virtual void OwnerInserted() {}
   virtual bool HasLoaded() const = 0;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  protected:
+  void Load();
+
+  Document& GetDocument();
+  const Document& GetDocument() const;
+  WTF::TextEncoding GetCharset() const;
+
   Member<HTMLLinkElement> owner_;
-};
 
-class LinkRequestBuilder {
-  STACK_ALLOCATED();
-
- public:
-  explicit LinkRequestBuilder(HTMLLinkElement* owner);
-
-  bool IsValid() const { return !url_.IsEmpty() && url_.IsValid(); }
-  const KURL& Url() const { return url_; }
-  const AtomicString& Charset() const { return charset_; }
-  FetchParameters Build(bool low_priority) const;
-
- private:
-  Member<HTMLLinkElement> owner_;
-  KURL url_;
-  AtomicString charset_;
+  DISALLOW_COPY_AND_ASSIGN(LinkResource);
 };
 
 }  // namespace blink

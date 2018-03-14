@@ -11,17 +11,18 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "services/catalog/public/interfaces/catalog.mojom.h"
 #include "services/catalog/public/interfaces/constants.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
 #include "services/service_manager/public/cpp/service_context.h"
 #include "ui/base/models/table_model.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/resources/grit/ui_resources.h"
 #include "ui/views/background.h"
+#include "ui/views/border.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/table/table_view.h"
 #include "ui/views/controls/table/table_view_observer.h"
@@ -48,12 +49,11 @@ class CatalogViewerContents : public views::WidgetDelegateView,
         table_view_parent_(nullptr),
         observer_(nullptr),
         capability_(new views::Textfield) {
-    const int kPadding = 5;
-    set_background(views::Background::CreateStandardPanelBackground());
+    constexpr int kPadding = 5;
+    SetBorder(views::CreateEmptyBorder(gfx::Insets(kPadding)));
+    SetBackground(views::CreateStandardPanelBackground());
 
-    views::GridLayout* layout = new views::GridLayout(this);
-    layout->SetInsets(kPadding, kPadding, kPadding, kPadding);
-    SetLayoutManager(layout);
+    views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
 
     views::ColumnSet* columns = layout->AddColumnSet(0);
     columns->AddColumn(views::GridLayout::FILL, views::GridLayout::FILL, 0,
@@ -102,7 +102,7 @@ class CatalogViewerContents : public views::WidgetDelegateView,
   gfx::ImageSkia GetWindowAppIcon() override {
     // TODO(jamescook): Create a new .pak file for this app and make a custom
     // icon, perhaps one that looks like the Chrome OS task viewer icon.
-    ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+    ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
     return *rb.GetImageSkiaNamed(IDR_NOTIFICATION_SETTINGS);
   }
 
@@ -111,16 +111,16 @@ class CatalogViewerContents : public views::WidgetDelegateView,
     return static_cast<int>(entries_.size());
   }
   base::string16 GetText(int row, int column_id) override {
-    switch(column_id) {
-    case 0:
-      DCHECK(row < static_cast<int>(entries_.size()));
-      return base::UTF8ToUTF16(entries_[row].name);
-    case 1:
-      DCHECK(row < static_cast<int>(entries_.size()));
-      return base::UTF8ToUTF16(entries_[row].url);
-    default:
-      NOTREACHED();
-      break;
+    switch (column_id) {
+      case 0:
+        DCHECK(row < static_cast<int>(entries_.size()));
+        return base::UTF8ToUTF16(entries_[row].name);
+      case 1:
+        DCHECK(row < static_cast<int>(entries_.size()));
+        return base::UTF8ToUTF16(entries_[row].url);
+      default:
+        NOTREACHED();
+        break;
     }
     return base::string16();
   }
@@ -207,32 +207,32 @@ class CatalogViewerContents : public views::WidgetDelegateView,
 }  // namespace
 
 CatalogViewer::CatalogViewer() {
-  registry_.AddInterface<mojom::Launchable>(this);
+  registry_.AddInterface<mojom::Launchable>(
+      base::Bind(&CatalogViewer::Create, base::Unretained(this)));
 }
-CatalogViewer::~CatalogViewer() {}
+CatalogViewer::~CatalogViewer() = default;
 
 void CatalogViewer::RemoveWindow(views::Widget* window) {
   auto it = std::find(windows_.begin(), windows_.end(), window);
   DCHECK(it != windows_.end());
   windows_.erase(it);
   if (windows_.empty())
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 void CatalogViewer::OnStart() {
-  tracing_.Initialize(context()->connector(), context()->identity().name());
-
-  aura_init_ = base::MakeUnique<views::AuraInit>(
+  aura_init_ = views::AuraInit::Create(
       context()->connector(), context()->identity(), "views_mus_resources.pak",
       std::string(), nullptr, views::AuraInit::Mode::AURA_MUS);
+  if (!aura_init_)
+    context()->QuitNow();
 }
 
 void CatalogViewer::OnBindInterface(
-    const service_manager::ServiceInfo& source_info,
+    const service_manager::BindSourceInfo& source_info,
     const std::string& interface_name,
     mojo::ScopedMessagePipeHandle interface_pipe) {
-  registry_.BindInterface(source_info.identity, interface_name,
-                          std::move(interface_pipe));
+  registry_.BindInterface(interface_name, std::move(interface_pipe));
 }
 
 void CatalogViewer::Launch(uint32_t what, mojom::LaunchMode how) {
@@ -252,8 +252,7 @@ void CatalogViewer::Launch(uint32_t what, mojom::LaunchMode how) {
   windows_.push_back(window);
 }
 
-void CatalogViewer::Create(const service_manager::Identity& remote_identity,
-                           mojom::LaunchableRequest request) {
+void CatalogViewer::Create(mojom::LaunchableRequest request) {
   bindings_.AddBinding(this, std::move(request));
 }
 

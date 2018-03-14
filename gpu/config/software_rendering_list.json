@@ -1,6 +1,5 @@
 {
   "name": "software rendering list",
-  "version": "13.8",
   "entries": [
     {
       "id": 1,
@@ -129,6 +128,9 @@
         {
           "vendor_id": "0x1414",
           "device_id": ["0x02c1"]
+        },
+        {
+          "driver_vendor": "swiftshader"
         }
       ],
       "features": [
@@ -441,29 +443,6 @@
       ]
     },
     {
-      "comment": [
-        "Panel fitting is only used with OS_CHROMEOS. To avoid displaying an ",
-        "error in chrome:gpu on every other platform, this blacklist entry ",
-        "needs to only match on chromeos. The drawback is that panel_fitting ",
-        "will not appear to be blacklisted if accidentally queried on ",
-        "non-chromeos."
-      ],
-      "id": 57,
-      "description": "Chrome OS panel fitting is only supported for Intel IVB and SNB Graphics Controllers",
-      "os": {
-        "type": "chromeos"
-      },
-      "exceptions": [
-        {
-          "vendor_id": "0x8086",
-          "device_id": ["0x0106", "0x0116", "0x0166"]
-        }
-      ],
-      "features": [
-        "panel_fitting"
-      ]
-    },
-    {
       "id": 59,
       "description": "NVidia driver 8.15.11.8593 is crashy on Windows",
       "cr_bugs": [155749],
@@ -496,8 +475,8 @@
     },
     {
       "id": 68,
-      "description": "VMware Fusion 4 has corrupt rendering with Win Vista+",
-      "cr_bugs": [169470],
+      "description": "VMware has corrupt rendering on Windows",
+      "cr_bugs": [169470, 754435],
       "os": {
         "type": "win",
         "version": {
@@ -506,10 +485,6 @@
         }
       },
       "vendor_id": "0x15ad",
-      "driver_version": {
-        "op": "<=",
-        "value": "7.14.1.1134"
-      },
       "features": [
         "all"
       ]
@@ -642,17 +617,6 @@
       },
       "features": [
         "all"
-      ]
-    },
-    {
-      "id": 82,
-      "description": "MediaCodec is still too buggy to use for encoding (b/11536167)",
-      "cr_bugs": [615108],
-      "os": {
-        "type": "android"
-      },
-      "features": [
-        "accelerated_video_encode"
       ]
     },
     {
@@ -893,11 +857,15 @@
     {
       "id": 104,
       "description": "GPU raster broken on PowerVR Rogue",
-      "cr_bugs": [436331, 483574],
+      "cr_bugs": [436331, 483574, 684586],
       "os": {
         "type": "android"
       },
       "gl_renderer": "PowerVR Rogue.*",
+      "driver_version": {
+        "op": "<",
+        "value": "1.8"
+      },
       "features": [
         "accelerated_2d_canvas",
         "gpu_rasterization"
@@ -1018,7 +986,7 @@
     {
       "id": 112,
       "description": "Intel HD 3000 driver crashes frequently on Mac",
-      "cr_bugs": [592130],
+      "cr_bugs": [592130, 661596],
       "os": {
         "type": "macosx"
       },
@@ -1257,7 +1225,7 @@
         "value": "4.1"
       },
       "features": [
-        "webgl2"
+        "accelerated_webgl2"
       ]
     },
     {
@@ -1309,18 +1277,6 @@
       ]
     },
     {
-      "id": 132,
-      "description": "Mali accelerated 2d canvas is slow on Linux",
-      "cr_bugs": [691601],
-      "os": {
-        "type": "linux"
-      },
-      "gl_renderer": "Mali-4.*",
-      "features": [
-        "accelerated_2d_canvas"
-      ]
-    },
-    {
       "id": 133,
       "description": "MediaCodec on VideoCore IV HW crashes on JB",
       "cr_bugs": [654905],
@@ -1354,6 +1310,9 @@
         },
         {
           "gl_renderer": ".*Gallium.*llvmpipe.*"
+        },
+        {
+          "gl_renderer": "Mesa OffScreen"
         }
       ],
       "features": [
@@ -1406,16 +1365,6 @@
       ]
     },
     {
-      "id": 138,
-      "description": "Accelerated video encode is unavailable on Linux",
-      "os": {
-        "type": "linux"
-      },
-      "features": [
-        "accelerated_video_encode"
-      ]
-    },
-    {
       "id": 139,
       "description": "GPU Rasterization is disabled on pre-GCN AMD cards",
       "cr_bugs": [643850],
@@ -1439,31 +1388,161 @@
       "cr_bugs": [449116, 698197],
       "gl_renderer": "Adreno \\(TM\\) 3.*",
       "features": [
-        "webgl2"
+        "accelerated_webgl2"
+      ]
+    },
+    {
+      "id": 141,
+      "description": "Disable use of D3D11/WebGL2 on Windows Vista and lower",
+      "os": {
+        "type": "win",
+        "version": {
+          "op": "<=",
+          "value": "6.0"
+        }
+      },
+      "features": [
+        "accelerated_webgl2"
+      ]
+    },
+    {
+      "id": 142,
+      "description": "Disable D3D11/WebGL2 on older nVidia drivers",
+      "cr_bugs": [349929],
+      "os": {
+        "type": "win"
+      },
+      "vendor_id": "0x10de",
+      "driver_version": {
+        "op": "<=",
+        "value": "8.17.12.6973"
+      },
+      "features": [
+        "accelerated_webgl2"
+      ]
+    },
+    {
+      "id": 143,
+      "description": "Disable use of D3D11/WebGL2 on Matrox video cards",
+      "cr_bugs": [395861],
+      "os": {
+        "type": "win"
+      },
+      "vendor_id": "0x102b",
+      "features": [
+        "accelerated_webgl2"
+      ]
+    },
+    {
+      "id": 144,
+      "description": "Disable use of D3D11/WebGL2 on older AMD drivers",
+      "cr_bugs": [402134],
+      "os": {
+        "type": "win"
+      },
+      "vendor_id": "0x1002",
+      "driver_date": {
+        "op": "<",
+        "value": "2011.1"
+      },
+      "features": [
+        "accelerated_webgl2"
+      ]
+    },
+    {
+      "id": 145,
+      "description": "Old Intel drivers cannot reliably support D3D11/WebGL2",
+      "cr_bugs": [363721],
+      "os": {
+        "type": "win"
+      },
+      "vendor_id": "0x8086",
+      "driver_version": {
+        "op": "<",
+        "value": "8.16"
+      },
+      "features": [
+        "accelerated_webgl2"
+      ]
+    },
+    {
+      "id": 146,
+      "description": "Disable D3D11/WebGL2 on AMD switchable graphics",
+      "cr_bugs": [451420, 755722],
+      "os": {
+        "type": "win"
+      },
+      "driver_date": {
+        "op": "<",
+        "value": "2016.6"
+      },
+      "multi_gpu_style": "amd_switchable",
+      "features": [
+        "accelerated_webgl2"
       ]
     },
     {
       "id": 147,
-      "description": "Explicit multisample resolve is broken on Adreno 4xx on Android 7.0",
-      "comment": "Corresponds to GPU driver bug #174",
-      "cr_bugs": [696126],
+      "description": "GPU raster broken on Mali-T760 on KitKat",
+      "cr_bugs": [737048],
       "os": {
         "type": "android",
         "version": {
-          "op": "between",
-          "value": "7.0.0",
-          "value2": "7.0.99",
-          "comment": "Only initial version of N."
+          "op": "<=",
+          "value": "4.4.4"
+        }
+      },
+      "gl_renderer": "Mali-T760.*",
+      "features": [
+        "accelerated_2d_canvas",
+        "gpu_rasterization"
+      ]
+    },
+    {
+      "id": 148,
+      "description": "VideoCore V has corrupt rendering with GPU Rasterization",
+      "cr_bugs": [710273],
+      "os": {
+        "type": "android"
+      },
+      "gl_renderer": ".*VideoCore V.*",
+      "features": [
+        "gpu_rasterization"
+      ]
+    },
+    {
+      "id": 149,
+      "description": "Adreno 420 support for EXT_multisampled_render_to_texture is buggy on Android < 5.1",
+      "comment": "Corresponds to GPU driver bug #116",
+      "cr_bugs": [490379, 767913],
+      "os": {
+        "type": "android",
+        "version": {
+          "op": "<",
+          "value": "5.1"
         }
       },
       "gl_renderer": "Adreno \\(TM\\) 4.*",
       "features": [
-        "webgl2"
+        "accelerated_webgl2"
+      ]
+    },
+    {
+      "id": 150,
+      "description": "Macs with NVidia GPUs experience rendering issues on High Sierra",
+      "cr_bugs": [773705],
+      "os": {
+        "type": "macosx",
+        "version": {
+          "op": ">=",
+          "value": "10.13"
+        }
+      },
+      "vendor_id": "0x10de",
+      "multi_gpu_category": "any",
+      "features": [
+        "gpu_rasterization"
       ]
     }
-  ],
-  "comment": [
-    "Please update the version number on top whenever you change this file",
-    "Please run gpu/config/process_json.py whenever you change this file"
   ]
 }

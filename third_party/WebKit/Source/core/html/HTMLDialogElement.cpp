@@ -28,12 +28,13 @@
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/dom/AXObjectCache.h"
 #include "core/dom/ExceptionCode.h"
-#include "core/dom/shadow/FlatTreeTraversal.h"
-#include "core/events/Event.h"
-#include "core/frame/FrameView.h"
+#include "core/dom/FlatTreeTraversal.h"
+#include "core/dom/events/Event.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/UseCounter.h"
-#include "core/html/HTMLFormControlElement.h"
-#include "core/style/ComputedStyle.h"
+#include "core/fullscreen/Fullscreen.h"
+#include "core/html/HTMLFrameOwnerElement.h"
+#include "core/html/forms/HTMLFormControlElement.h"
 
 namespace blink {
 
@@ -47,9 +48,9 @@ static void SetFocusForDialog(HTMLDialogElement* dialog) {
 
   // TODO(kochi): How to find focusable element inside Shadow DOM is not
   // currently specified.  This may change at any time.
-  // See crbug/383230 and https://github.com/whatwg/html/issue/2393 .
+  // See crbug/383230 and https://github.com/whatwg/html/issues/2393 .
   for (Node* node = FlatTreeTraversal::FirstChild(*dialog); node; node = next) {
-    next = isHTMLDialogElement(*node)
+    next = IsHTMLDialogElement(*node)
                ? FlatTreeTraversal::NextSkippingChildren(*node, dialog)
                : FlatTreeTraversal::Next(*node, dialog);
 
@@ -81,13 +82,18 @@ static void SetFocusForDialog(HTMLDialogElement* dialog) {
 }
 
 static void InertSubtreesChanged(Document& document) {
+  if (document.GetFrame()) {
+    // SetIsInert recurses through subframes to propagate the inert bit as
+    // needed.
+    document.GetFrame()->SetIsInert(document.LocalOwner() &&
+                                    document.LocalOwner()->IsInert());
+  }
+
   // When a modal dialog opens or closes, nodes all over the accessibility
   // tree can change inertness which means they must be added or removed from
   // the tree. The most foolproof way is to clear the entire tree and rebuild
   // it, though a more clever way is probably possible.
   document.ClearAXObjectCache();
-  if (AXObjectCache* cache = document.AxObjectCache())
-    cache->ChildrenChanged(&document);
 }
 
 inline HTMLDialogElement::HTMLDialogElement(Document& document)
@@ -95,24 +101,14 @@ inline HTMLDialogElement::HTMLDialogElement(Document& document)
       centering_mode_(kNotCentered),
       centered_position_(0),
       return_value_("") {
-  UseCounter::Count(document, UseCounter::kDialogElement);
+  UseCounter::Count(document, WebFeature::kDialogElement);
 }
 
 DEFINE_NODE_FACTORY(HTMLDialogElement)
 
-void HTMLDialogElement::close(const String& return_value,
-                              ExceptionState& exception_state) {
-  if (!FastHasAttribute(openAttr)) {
-    exception_state.ThrowDOMException(kInvalidStateError,
-                                      "The element does not have an 'open' "
-                                      "attribute, and therefore cannot be "
-                                      "closed.");
-    return;
-  }
-  CloseDialog(return_value);
-}
+void HTMLDialogElement::close(const String& return_value) {
+  // https://html.spec.whatwg.org/#close-the-dialog
 
-void HTMLDialogElement::CloseDialog(const String& return_value) {
   if (!FastHasAttribute(openAttr))
     return;
   SetBooleanAttribute(openAttr, false);
@@ -167,6 +163,12 @@ void HTMLDialogElement::showModal(ExceptionState& exception_state) {
     return;
   }
 
+  // See comment in |Fullscreen::RequestFullscreen|.
+  if (Fullscreen::IsInFullscreenElementStack(*this)) {
+    UseCounter::Count(GetDocument(),
+                      WebFeature::kShowModalForElementInFullscreenStack);
+  }
+
   GetDocument().AddToTopLayer(this);
   SetBooleanAttribute(openAttr, true);
 
@@ -182,7 +184,7 @@ void HTMLDialogElement::showModal(ExceptionState& exception_state) {
 void HTMLDialogElement::RemovedFrom(ContainerNode* insertion_point) {
   HTMLElement::RemovedFrom(insertion_point);
   SetNotCentered();
-  // FIXME: We should call inertSubtreesChanged() here.
+  InertSubtreesChanged(GetDocument());
 }
 
 void HTMLDialogElement::SetCentered(LayoutUnit centered_position) {
@@ -208,7 +210,7 @@ bool HTMLDialogElement::IsPresentationAttribute(
 
 void HTMLDialogElement::DefaultEventHandler(Event* event) {
   if (event->type() == EventTypeNames::cancel) {
-    CloseDialog();
+    close();
     event->SetDefaultHandled();
     return;
   }

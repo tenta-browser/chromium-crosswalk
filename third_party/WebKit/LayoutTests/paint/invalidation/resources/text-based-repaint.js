@@ -7,10 +7,8 @@ window.outputRepaintRects = true;
 if (window.testRunner)
     testRunner.waitUntilDone();
 
-if (window.internals) {
-    internals.settings.setUseDefaultImageInterpolationQuality(true);
+if (window.internals)
     internals.runtimeFlags.paintUnderInvalidationCheckingEnabled = true;
-}
 
 // Add string names of objects that should be invalidated here. If you use this feature,
 // you must also include testharness.js.
@@ -63,11 +61,13 @@ function checkObjectPaintInvalidations(layersWithInvalidationsText)
     }
 
     window.expectedObjectInvalidations.forEach(function(objectName) {
-        assert_true(objectNameSet.has(objectName), "Expected object to be invalidated, but it was not: '" + objectName + "'");
+        assert_true(objectNameSet.has(objectName),
+                    "Expected object to be invalidated, but it was not: '" + objectName + "'\n" + layersWithInvalidationsText);
     });
 
     window.expectedObjectNonInvalidations.forEach(function(objectName) {
-        assert_false(objectNameSet.has(objectName), "Expected object to *not* be invalidated, but it was: '" + objectName + "'");
+        assert_false(objectNameSet.has(objectName),
+                     "Expected object to *not* be invalidated, but it was: '" + objectName + "'\n" + layersWithInvalidationsText);
     });
 }
 

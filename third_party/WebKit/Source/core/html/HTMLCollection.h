@@ -65,10 +65,8 @@ class HTMLCollectionIterator {
 };
 
 // blink::HTMLCollection implements HTMLCollection IDL interface.
-class CORE_EXPORT HTMLCollection
-    : public GarbageCollectedFinalized<HTMLCollection>,
-      public ScriptWrappable,
-      public LiveNodeListBase {
+class CORE_EXPORT HTMLCollection : public ScriptWrappable,
+                                   public LiveNodeListBase {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(HTMLCollection);
 
@@ -80,7 +78,7 @@ class CORE_EXPORT HTMLCollection
 
   static HTMLCollection* Create(ContainerNode& base, CollectionType);
   virtual ~HTMLCollection();
-  void InvalidateCache(Document* old_document = 0) const override;
+  void InvalidateCache(Document* old_document = nullptr) const override;
   void InvalidateCacheForAttribute(const QualifiedName*) const;
 
   // DOM API
@@ -113,7 +111,7 @@ class CORE_EXPORT HTMLCollection
   Iterator begin() const { return Iterator(this); }
   Iterator end() const { return Iterator::CreateEnd(this); }
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  protected:
   HTMLCollection(ContainerNode& base, CollectionType, ItemAfterOverrideType);
@@ -124,14 +122,14 @@ class CORE_EXPORT HTMLCollection
 
     const HeapVector<Member<Element>>* GetElementsById(
         const AtomicString& id) const {
-      auto it = id_cache_.Find(id.Impl());
+      auto it = id_cache_.find(id.Impl());
       if (it == id_cache_.end())
         return nullptr;
       return &it->value;
     }
     const HeapVector<Member<Element>>* GetElementsByName(
         const AtomicString& name) const {
-      auto it = name_cache_.Find(name.Impl());
+      auto it = name_cache_.find(name.Impl());
       if (it == name_cache_.end())
         return nullptr;
       return &it->value;
@@ -143,7 +141,7 @@ class CORE_EXPORT HTMLCollection
       AddElementToMap(name_cache_, name, element);
     }
 
-    DEFINE_INLINE_TRACE() {
+    void Trace(blink::Visitor* visitor) {
       visitor->Trace(id_cache_);
       visitor->Trace(name_cache_);
     }
@@ -180,7 +178,7 @@ class CORE_EXPORT HTMLCollection
     // Do not repeat registration for the same invalidation type.
     if (InvalidationType() != kInvalidateOnIdNameAttrChange)
       GetDocument().RegisterNodeListWithIdNameCache(this);
-    named_item_cache_ = std::move(cache);
+    named_item_cache_ = cache;
   }
 
   NamedItemCache& GetNamedItemCache() const {
@@ -189,7 +187,7 @@ class CORE_EXPORT HTMLCollection
   }
 
  private:
-  void InvalidateIdNameCacheMaps(Document* old_document = 0) const {
+  void InvalidateIdNameCacheMaps(Document* old_document = nullptr) const {
     if (!HasValidIdNameCache())
       return;
 

@@ -6,10 +6,16 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/string_util.h"
 #include "base/task_runner_util.h"
 #include "base/values.h"
 #include "content/public/browser/browser_thread.h"
@@ -35,38 +41,78 @@ namespace extensions {
 
 namespace {
 
-const char kDeclarativeEventPrefix[] = "declarative";
+constexpr char kDeclarativeEventPrefix[] = "declarative";
+constexpr char kDeclarativeContentEventPrefix[] = "declarativeContent.";
+constexpr char kDeclarativeWebRequestEventPrefix[] = "declarativeWebRequest.";
+constexpr char kDeclarativeWebRequestWebViewEventPrefix[] =
+    "webViewInternal.declarativeWebRequest.";
 
-void ConvertBinaryDictionaryValuesToBase64(base::DictionaryValue* dict);
+// The type of Declarative API. To collect more granular metrics, a distinction
+// is made when the declarative web request API is used from a webview.
+enum class DeclarativeAPIType {
+  kContent,
+  kWebRequest,
+  kWebRequestWebview,
+  kUnknown,
+};
+
+// Describes the possible types of declarative API function calls.
+// These values are recorded as UMA. New enum values can be added, but existing
+// enum values must never be renumbered or deleted and reused.
+enum DeclarativeAPIFunctionType {
+  kDeclarativeContentAddRules = 0,
+  kDeclarativeContentRemoveRules = 1,
+  kDeclarativeContentGetRules = 2,
+  kDeclarativeWebRequestAddRules = 3,
+  kDeclarativeWebRequestRemoveRules = 4,
+  kDeclarativeWebRequestGetRules = 5,
+  kDeclarativeWebRequestWebviewAddRules = 6,
+  kDeclarativeWebRequestWebviewRemoveRules = 7,
+  kDeclarativeWebRequestWebviewGetRules = 8,
+  kDeclarativeApiFunctionCallTypeMax,
+};
+
+DeclarativeAPIType GetDeclarativeAPIType(const std::string& event_name) {
+  if (base::StartsWith(event_name, kDeclarativeContentEventPrefix,
+                       base::CompareCase::SENSITIVE))
+    return DeclarativeAPIType::kContent;
+  if (base::StartsWith(event_name, kDeclarativeWebRequestEventPrefix,
+                       base::CompareCase::SENSITIVE))
+    return DeclarativeAPIType::kWebRequest;
+  if (base::StartsWith(event_name, kDeclarativeWebRequestWebViewEventPrefix,
+                       base::CompareCase::SENSITIVE))
+    return DeclarativeAPIType::kWebRequestWebview;
+  return DeclarativeAPIType::kUnknown;
+}
+
+void RecordUMAHelper(DeclarativeAPIFunctionType type) {
+  DCHECK_LT(type, kDeclarativeApiFunctionCallTypeMax);
+  UMA_HISTOGRAM_ENUMERATION("Extensions.DeclarativeAPIFunctionCalls", type,
+                            kDeclarativeApiFunctionCallTypeMax);
+}
+
+void ConvertBinaryDictionaryValuesToBase64(base::Value* dict);
 
 // Encodes |binary| as base64 and returns a new StringValue populated with the
 // encoded string.
-std::unique_ptr<base::Value> ConvertBinaryToBase64(base::Value* binary) {
-  std::string binary_data = std::string(binary->GetBuffer(), binary->GetSize());
+base::Value ConvertBinaryToBase64(const base::Value& binary) {
+  std::string binary_data(binary.GetBlob().data(), binary.GetBlob().size());
   std::string data64;
   base::Base64Encode(binary_data, &data64);
-  return std::unique_ptr<base::Value>(new base::Value(data64));
+  return base::Value(std::move(data64));
 }
 
 // Parses through |args| replacing any BinaryValues with base64 encoded
 // StringValues. Recurses over any nested ListValues, and calls
 // ConvertBinaryDictionaryValuesToBase64 for any nested DictionaryValues.
-void ConvertBinaryListElementsToBase64(base::ListValue* args) {
-  size_t index = 0;
-  for (base::ListValue::iterator iter = args->begin(); iter != args->end();
-       ++iter, ++index) {
-    if (iter->IsType(base::Value::Type::BINARY)) {
-      base::Value* binary = NULL;
-      if (args->GetBinary(index, &binary))
-        args->Set(index, ConvertBinaryToBase64(binary).release());
-    } else if (iter->IsType(base::Value::Type::LIST)) {
-      base::ListValue* list;
-      iter->GetAsList(&list);
-      ConvertBinaryListElementsToBase64(list);
-    } else if (iter->IsType(base::Value::Type::DICTIONARY)) {
-      base::DictionaryValue* dict;
-      iter->GetAsDictionary(&dict);
-      ConvertBinaryDictionaryValuesToBase64(dict);
+void ConvertBinaryListElementsToBase64(base::Value* args) {
+  for (auto& value : args->GetList()) {
+    if (value.is_blob()) {
+      value = ConvertBinaryToBase64(value);
+    } else if (value.is_list()) {
+      ConvertBinaryListElementsToBase64(&value);
+    } else if (value.is_dict()) {
+      ConvertBinaryDictionaryValuesToBase64(&value);
     }
   }
 }
@@ -74,31 +120,22 @@ void ConvertBinaryListElementsToBase64(base::ListValue* args) {
 // Parses through |dict| replacing any BinaryValues with base64 encoded
 // StringValues. Recurses over any nested DictionaryValues, and calls
 // ConvertBinaryListElementsToBase64 for any nested ListValues.
-void ConvertBinaryDictionaryValuesToBase64(base::DictionaryValue* dict) {
-  for (base::DictionaryValue::Iterator iter(*dict); !iter.IsAtEnd();
-       iter.Advance()) {
-    if (iter.value().IsType(base::Value::Type::BINARY)) {
-      base::Value* binary = NULL;
-      if (dict->GetBinary(iter.key(), &binary))
-        dict->Set(iter.key(), ConvertBinaryToBase64(binary).release());
-    } else if (iter.value().IsType(base::Value::Type::LIST)) {
-      const base::ListValue* list;
-      iter.value().GetAsList(&list);
-      ConvertBinaryListElementsToBase64(const_cast<base::ListValue*>(list));
-    } else if (iter.value().IsType(base::Value::Type::DICTIONARY)) {
-      const base::DictionaryValue* dict;
-      iter.value().GetAsDictionary(&dict);
-      ConvertBinaryDictionaryValuesToBase64(
-          const_cast<base::DictionaryValue*>(dict));
+void ConvertBinaryDictionaryValuesToBase64(base::Value* dict) {
+  for (auto it : dict->DictItems()) {
+    auto& value = it.second;
+    if (value.is_blob()) {
+      value = ConvertBinaryToBase64(value);
+    } else if (value.is_list()) {
+      ConvertBinaryListElementsToBase64(&value);
+    } else if (value.is_dict()) {
+      ConvertBinaryDictionaryValuesToBase64(&value);
     }
   }
 }
 
 }  // namespace
 
-RulesFunction::RulesFunction()
-    : rules_registry_(NULL) {
-}
+RulesFunction::RulesFunction() {}
 
 RulesFunction::~RulesFunction() {}
 
@@ -110,10 +147,10 @@ bool RulesFunction::HasPermission() {
 
   // <webview> embedders use the declarativeWebRequest API via
   // <webview>.onRequest.
-  if (web_view_instance_id != 0 &&
-      extension_->permissions_data()->HasAPIPermission(
-          extensions::APIPermission::kWebView))
+  if (web_view_instance_id && extension_->permissions_data()->HasAPIPermission(
+                                  APIPermission::kWebView)) {
     return true;
+  }
   return ExtensionFunction::HasPermission();
 }
 
@@ -124,6 +161,8 @@ bool RulesFunction::RunAsync() {
   int web_view_instance_id = 0;
   EXTENSION_FUNCTION_VALIDATE(args_->GetInteger(1, &web_view_instance_id));
   int embedder_process_id = render_frame_host()->GetProcess()->GetID();
+
+  RecordUMA(event_name);
 
   bool from_web_view = web_view_instance_id != 0;
   // If we are not operating on a particular <webview>, then the key is 0.
@@ -189,6 +228,26 @@ bool EventsEventAddRulesFunction::RunAsyncOnCorrectThread() {
   return error_.empty();
 }
 
+void EventsEventAddRulesFunction::RecordUMA(
+    const std::string& event_name) const {
+  DeclarativeAPIFunctionType type = kDeclarativeApiFunctionCallTypeMax;
+  switch (GetDeclarativeAPIType(event_name)) {
+    case DeclarativeAPIType::kContent:
+      type = kDeclarativeContentAddRules;
+      break;
+    case DeclarativeAPIType::kWebRequest:
+      type = kDeclarativeWebRequestAddRules;
+      break;
+    case DeclarativeAPIType::kWebRequestWebview:
+      type = kDeclarativeWebRequestWebviewAddRules;
+      break;
+    case DeclarativeAPIType::kUnknown:
+      NOTREACHED();
+      return;
+  }
+  RecordUMAHelper(type);
+}
+
 bool EventsEventRemoveRulesFunction::RunAsyncOnCorrectThread() {
   std::unique_ptr<RemoveRules::Params> params(
       RemoveRules::Params::Create(*args_));
@@ -202,6 +261,26 @@ bool EventsEventRemoveRulesFunction::RunAsyncOnCorrectThread() {
   }
 
   return error_.empty();
+}
+
+void EventsEventRemoveRulesFunction::RecordUMA(
+    const std::string& event_name) const {
+  DeclarativeAPIFunctionType type = kDeclarativeApiFunctionCallTypeMax;
+  switch (GetDeclarativeAPIType(event_name)) {
+    case DeclarativeAPIType::kContent:
+      type = kDeclarativeContentRemoveRules;
+      break;
+    case DeclarativeAPIType::kWebRequest:
+      type = kDeclarativeWebRequestRemoveRules;
+      break;
+    case DeclarativeAPIType::kWebRequestWebview:
+      type = kDeclarativeWebRequestWebviewRemoveRules;
+      break;
+    case DeclarativeAPIType::kUnknown:
+      NOTREACHED();
+      return;
+  }
+  RecordUMAHelper(type);
 }
 
 bool EventsEventGetRulesFunction::RunAsyncOnCorrectThread() {
@@ -222,6 +301,26 @@ bool EventsEventGetRulesFunction::RunAsyncOnCorrectThread() {
   SetResult(std::move(rules_value));
 
   return true;
+}
+
+void EventsEventGetRulesFunction::RecordUMA(
+    const std::string& event_name) const {
+  DeclarativeAPIFunctionType type = kDeclarativeApiFunctionCallTypeMax;
+  switch (GetDeclarativeAPIType(event_name)) {
+    case DeclarativeAPIType::kContent:
+      type = kDeclarativeContentGetRules;
+      break;
+    case DeclarativeAPIType::kWebRequest:
+      type = kDeclarativeWebRequestGetRules;
+      break;
+    case DeclarativeAPIType::kWebRequestWebview:
+      type = kDeclarativeWebRequestWebviewGetRules;
+      break;
+    case DeclarativeAPIType::kUnknown:
+      NOTREACHED();
+      return;
+  }
+  RecordUMAHelper(type);
 }
 
 }  // namespace extensions

@@ -22,8 +22,10 @@
 #ifndef TextBreakIterator_h
 #define TextBreakIterator_h
 
+#include "base/macros.h"
 #include "platform/PlatformExport.h"
 #include "platform/wtf/text/AtomicString.h"
+#include "platform/wtf/text/CharacterNames.h"
 #include "platform/wtf/text/Unicode.h"
 
 #include <unicode/brkiter.h>
@@ -62,35 +64,77 @@ PLATFORM_EXPORT void ReleaseLineBreakIterator(TextBreakIterator*);
 PLATFORM_EXPORT TextBreakIterator* SentenceBreakIterator(const UChar*,
                                                          int length);
 
+// Before calling this, check if the iterator is not at the end. Otherwise,
+// it may not work as expected.
+// See https://ssl.icu-project.org/trac/ticket/13447 .
 PLATFORM_EXPORT bool IsWordTextBreak(TextBreakIterator*);
 
 const int kTextBreakDone = -1;
 
 enum class LineBreakType {
   kNormal,
-  kBreakAll,  // word-break:break-all allows breaks between letters/numbers
-  kKeepAll,   // word-break:keep-all doesn't allow breaks between all kind of
-              // letters/numbers except some south east asians'.
+
+  // word-break:break-all allows breaks between letters/numbers, but prohibits
+  // break before/after certain punctuation.
+  kBreakAll,
+
+  // Allows breaks at every grapheme cluster boundary.
+  // Terminal style line breaks described in UAX#14: Examples of Customization
+  // http://unicode.org/reports/tr14/#Examples
+  // CSS is discussing to add this feature crbug.com/720205
+  // Used internally for word-break:break-word.
+  kBreakCharacter,
+
+  // word-break:keep-all doesn't allow breaks between all kind of
+  // letters/numbers except some south east asians'.
+  kKeepAll,
 };
+
+// Determines break opportunities around collapsible space characters (space,
+// newline, and tabulation characters.)
+enum class BreakSpaceType {
+  // Break before collapsible space characters.
+  // This is a specialized optimization for CSS, where leading/trailing spaces
+  // in each line are removed, and thus breaking before spaces can save
+  // computing hanging spaces.
+  kBefore,
+
+  // Break before space characters, but after newline and tabulation characters.
+  // This is for CSS line breaking as in |kBefore|, but when whitespace
+  // collapsing is already applied to the target string.
+  kBeforeSpace,
+
+  // Break after collapsible space characters.
+  // When 'white-space:pre-wrap', or when in editing, leaging/trailing spaces
+  // need to be preserved, and that the |kBefore| optimization cannot work.
+  // This mode is compatible with UAX#14/ICU. http://unicode.org/reports/tr14/
+  kAfter,
+};
+
+PLATFORM_EXPORT std::ostream& operator<<(std::ostream&, LineBreakType);
+PLATFORM_EXPORT std::ostream& operator<<(std::ostream&, BreakSpaceType);
 
 class PLATFORM_EXPORT LazyLineBreakIterator final {
   STACK_ALLOCATED();
 
  public:
   LazyLineBreakIterator()
-      : iterator_(0),
-        cached_prior_context_(0),
-        cached_prior_context_length_(0) {
+      : iterator_(nullptr),
+        cached_prior_context_(nullptr),
+        cached_prior_context_length_(0),
+        break_type_(LineBreakType::kNormal) {
     ResetPriorContext();
   }
 
   LazyLineBreakIterator(String string,
-                        const AtomicString& locale = AtomicString())
+                        const AtomicString& locale = AtomicString(),
+                        LineBreakType break_type = LineBreakType::kNormal)
       : string_(string),
         locale_(locale),
-        iterator_(0),
-        cached_prior_context_(0),
-        cached_prior_context_length_(0) {
+        iterator_(nullptr),
+        cached_prior_context_(nullptr),
+        cached_prior_context_length_(0),
+        break_type_(break_type) {
     ResetPriorContext();
   }
 
@@ -99,7 +143,7 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
       ReleaseLineBreakIterator(iterator_);
   }
 
-  String GetString() const { return string_; }
+  const String& GetString() const { return string_; }
 
   UChar LastCharacter() const {
     static_assert(WTF_ARRAY_LENGTH(prior_context_) == 2,
@@ -150,12 +194,12 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
   // is (or has been) initialized to use the previously stored string as the
   // primary breaking context and using previously stored prior context if
   // non-empty.
-  TextBreakIterator* Get(unsigned prior_context_length) {
+  TextBreakIterator* Get(unsigned prior_context_length) const {
     DCHECK(prior_context_length <= kPriorContextCapacity);
     const UChar* prior_context =
         prior_context_length
             ? &prior_context_[kPriorContextCapacity - prior_context_length]
-            : 0;
+            : nullptr;
     if (!iterator_) {
       if (string_.Is8Bit())
         iterator_ = AcquireLineBreakIterator(
@@ -169,55 +213,88 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
       cached_prior_context_length_ = prior_context_length;
     } else if (prior_context != cached_prior_context_ ||
                prior_context_length != cached_prior_context_length_) {
-      this->ResetStringAndReleaseIterator(string_, locale_);
-      return this->Get(prior_context_length);
+      ReleaseIterator();
+      return Get(prior_context_length);
     }
     return iterator_;
   }
 
   void ResetStringAndReleaseIterator(String string,
                                      const AtomicString& locale) {
-    if (iterator_)
-      ReleaseLineBreakIterator(iterator_);
-
     string_ = string;
     locale_ = locale;
-    iterator_ = 0;
-    cached_prior_context_ = 0;
-    cached_prior_context_length_ = 0;
+
+    ReleaseIterator();
   }
 
-  inline bool IsBreakable(
-      int pos,
-      int& next_breakable,
-      LineBreakType line_break_type = LineBreakType::kNormal) {
+  void SetLocale(const AtomicString& locale) {
+    if (locale == locale_)
+      return;
+    locale_ = locale;
+    ReleaseIterator();
+  }
+
+  LineBreakType BreakType() const { return break_type_; }
+  void SetBreakType(LineBreakType break_type) { break_type_ = break_type; }
+  BreakSpaceType BreakSpace() const { return break_space_; }
+  void SetBreakSpace(BreakSpaceType break_space) { break_space_ = break_space; }
+
+  inline bool IsBreakable(int pos,
+                          int& next_breakable,
+                          LineBreakType line_break_type) const {
     if (pos > next_breakable) {
-      switch (line_break_type) {
-        case LineBreakType::kBreakAll:
-          next_breakable = NextBreakablePositionBreakAll(pos);
-          break;
-        case LineBreakType::kKeepAll:
-          next_breakable = NextBreakablePositionKeepAll(pos);
-          break;
-        default:
-          next_breakable = NextBreakablePositionIgnoringNBSP(pos);
-      }
+      next_breakable = NextBreakablePosition(pos, line_break_type);
     }
     return pos == next_breakable;
   }
 
+  inline bool IsBreakable(int pos, int& next_breakable) const {
+    return IsBreakable(pos, next_breakable, break_type_);
+  }
+
+  inline bool IsBreakable(int pos) const {
+    int next_breakable = -1;
+    return IsBreakable(pos, next_breakable, break_type_);
+  }
+
+  // Returns the break opportunity at or after |offset|.
+  unsigned NextBreakOpportunity(unsigned offset) const;
+
+  // Returns the break opportunity at or before |offset|.
+  unsigned PreviousBreakOpportunity(unsigned offset, unsigned min = 0) const;
+
+  static bool IsBreakableSpace(UChar ch) {
+    return ch == kSpaceCharacter || ch == kTabulationCharacter ||
+           ch == kNewlineCharacter;
+  }
+
  private:
-  int NextBreakablePositionIgnoringNBSP(int pos);
-  int NextBreakablePositionBreakAll(int pos);
-  int NextBreakablePositionKeepAll(int pos);
+  void ReleaseIterator() const {
+    if (iterator_)
+      ReleaseLineBreakIterator(iterator_);
+    iterator_ = nullptr;
+    cached_prior_context_ = nullptr;
+    cached_prior_context_length_ = 0;
+  }
+
+  template <typename CharacterType, LineBreakType, BreakSpaceType>
+  int NextBreakablePosition(int pos, const CharacterType* str) const;
+  template <typename CharacterType, LineBreakType>
+  int NextBreakablePosition(int pos, const CharacterType* str) const;
+  template <LineBreakType>
+  int NextBreakablePosition(int pos) const;
+  int NextBreakablePositionBreakCharacter(int pos) const;
+  int NextBreakablePosition(int pos, LineBreakType) const;
 
   static const unsigned kPriorContextCapacity = 2;
   String string_;
   AtomicString locale_;
-  TextBreakIterator* iterator_;
+  mutable TextBreakIterator* iterator_;
   UChar prior_context_[kPriorContextCapacity];
-  const UChar* cached_prior_context_;
-  unsigned cached_prior_context_length_;
+  mutable const UChar* cached_prior_context_;
+  mutable unsigned cached_prior_context_length_;
+  LineBreakType break_type_;
+  BreakSpaceType break_space_ = BreakSpaceType::kBefore;
 };
 
 // Iterates over "extended grapheme clusters", as defined in UAX #29.
@@ -227,7 +304,6 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
 
 class PLATFORM_EXPORT NonSharedCharacterBreakIterator final {
   STACK_ALLOCATED();
-  WTF_MAKE_NONCOPYABLE(NonSharedCharacterBreakIterator);
 
  public:
   explicit NonSharedCharacterBreakIterator(const String&);
@@ -273,6 +349,8 @@ class PLATFORM_EXPORT NonSharedCharacterBreakIterator final {
 
   // For 16 bit strings, we use a TextBreakIterator.
   TextBreakIterator* iterator_;
+
+  DISALLOW_COPY_AND_ASSIGN(NonSharedCharacterBreakIterator);
 };
 
 // Counts the number of grapheme clusters. A surrogate pair or a sequence

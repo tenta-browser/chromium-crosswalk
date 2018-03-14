@@ -8,10 +8,9 @@
 #include <stdint.h>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/test/scoped_task_scheduler.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
@@ -20,6 +19,7 @@
 #include "content/common/text_input_client_messages.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_browser_context.h"
+#include "content/test/mock_widget_impl.h"
 #include "ipc/ipc_test_sink.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
@@ -35,6 +35,9 @@ class MockRenderWidgetHostDelegate : public RenderWidgetHostDelegate {
   ~MockRenderWidgetHostDelegate() override {}
 
  private:
+  void ExecuteEditCommand(
+      const std::string& command,
+      const base::Optional<base::string16>& value) override {}
   void Cut() override {}
   void Copy() override {}
   void Paste() override {}
@@ -47,15 +50,21 @@ class MockRenderWidgetHostDelegate : public RenderWidgetHostDelegate {
 class TextInputClientMacTest : public testing::Test {
  public:
   TextInputClientMacTest()
-      : task_scheduler_(&message_loop_),
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI),
         browser_context_(),
         process_factory_(),
         delegate_(),
         thread_("TextInputClientMacTestThread") {
     RenderProcessHost* rph =
-        process_factory_.CreateRenderProcessHost(&browser_context_, nullptr);
+        process_factory_.CreateRenderProcessHost(&browser_context_);
     int32_t routing_id = rph->GetNextRoutingID();
-    widget_.reset(new RenderWidgetHostImpl(&delegate_, rph, routing_id, false));
+    mojom::WidgetPtr widget;
+    mock_widget_impl_ =
+        std::make_unique<MockWidgetImpl>(mojo::MakeRequest(&widget));
+
+    widget_.reset(new RenderWidgetHostImpl(&delegate_, rph, routing_id,
+                                           std::move(widget), false));
   }
 
   void TearDown() override {
@@ -74,12 +83,11 @@ class TextInputClientMacTest : public testing::Test {
 
   // Helper method to post a task on the testing thread's MessageLoop after
   // a short delay.
-  void PostTask(const tracked_objects::Location& from_here,
-                const base::Closure& task) {
+  void PostTask(const base::Location& from_here, const base::Closure& task) {
     PostTask(from_here, task, base::TimeDelta::FromMilliseconds(kTaskDelayMs));
   }
 
-  void PostTask(const tracked_objects::Location& from_here,
+  void PostTask(const base::Location& from_here,
                 const base::Closure& task,
                 const base::TimeDelta delay) {
     thread_.task_runner()->PostDelayedTask(from_here, task, delay);
@@ -94,10 +102,8 @@ class TextInputClientMacTest : public testing::Test {
  private:
   friend class ScopedTestingThread;
 
-  base::MessageLoopForUI message_loop_;
-
   // TaskScheduler is used by RenderWidgetHostImpl constructor.
-  base::test::ScopedTaskScheduler task_scheduler_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
   TestBrowserContext browser_context_;
 
@@ -105,6 +111,7 @@ class TextInputClientMacTest : public testing::Test {
   MockRenderProcessHostFactory process_factory_;
   MockRenderWidgetHostDelegate delegate_;
   std::unique_ptr<RenderWidgetHostImpl> widget_;
+  std::unique_ptr<MockWidgetImpl> mock_widget_impl_;
 
   base::Thread thread_;
 };

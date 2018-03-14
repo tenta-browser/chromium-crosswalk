@@ -4,12 +4,14 @@
 
 #include "components/arc/ime/arc_ime_bridge_impl.h"
 
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/arc/arc_bridge_service.h"
+#include "components/arc/arc_service_manager.h"
 #include "ui/base/ime/composition_text.h"
 #include "ui/base/ime/text_input_type.h"
 #include "ui/gfx/geometry/rect.h"
@@ -57,14 +59,14 @@ ui::TextInputType ConvertTextInputType(mojom::TextInputType ipc_type) {
 std::vector<mojom::CompositionSegmentPtr> ConvertSegments(
     const ui::CompositionText& composition) {
   std::vector<mojom::CompositionSegmentPtr> segments;
-  for (const ui::CompositionUnderline& underline : composition.underlines) {
+  for (const ui::ImeTextSpan& ime_text_span : composition.ime_text_spans) {
     mojom::CompositionSegmentPtr segment = mojom::CompositionSegment::New();
-    segment->start_offset = underline.start_offset;
-    segment->end_offset = underline.end_offset;
+    segment->start_offset = ime_text_span.start_offset;
+    segment->end_offset = ime_text_span.end_offset;
     segment->emphasized =
-        (underline.thick ||
-         (composition.selection.start() == underline.start_offset &&
-          composition.selection.end() == underline.end_offset));
+        (ime_text_span.thick ||
+         (composition.selection.start() == ime_text_span.start_offset &&
+          composition.selection.end() == ime_text_span.end_offset));
     segments.push_back(std::move(segment));
   }
   return segments;
@@ -74,18 +76,12 @@ std::vector<mojom::CompositionSegmentPtr> ConvertSegments(
 
 ArcImeBridgeImpl::ArcImeBridgeImpl(Delegate* delegate,
                                    ArcBridgeService* bridge_service)
-    : binding_(this), delegate_(delegate), bridge_service_(bridge_service) {
-  bridge_service_->ime()->AddObserver(this);
+    : delegate_(delegate), bridge_service_(bridge_service) {
+  bridge_service_->ime()->SetHost(this);
 }
 
 ArcImeBridgeImpl::~ArcImeBridgeImpl() {
-  bridge_service_->ime()->RemoveObserver(this);
-}
-
-void ArcImeBridgeImpl::OnInstanceReady() {
-  auto* instance = ARC_GET_INSTANCE_FOR_METHOD(bridge_service_->ime(), Init);
-  DCHECK(instance);
-  instance->Init(binding_.CreateInterfacePtrAndBind());
+  bridge_service_->ime()->SetHost(nullptr);
 }
 
 void ArcImeBridgeImpl::SendSetCompositionText(
@@ -141,10 +137,8 @@ void ArcImeBridgeImpl::OnTextInputTypeChanged(mojom::TextInputType type) {
   delegate_->OnTextInputTypeChanged(ConvertTextInputType(type));
 }
 
-void ArcImeBridgeImpl::OnCursorRectChanged(mojom::CursorRectPtr rect) {
-  delegate_->OnCursorRectChanged(gfx::Rect(rect->left, rect->top,
-                                           rect->right - rect->left,
-                                           rect->bottom - rect->top));
+void ArcImeBridgeImpl::OnCursorRectChanged(const gfx::Rect& rect) {
+  delegate_->OnCursorRectChanged(rect);
 }
 
 void ArcImeBridgeImpl::OnCancelComposition() {
@@ -153,6 +147,15 @@ void ArcImeBridgeImpl::OnCancelComposition() {
 
 void ArcImeBridgeImpl::ShowImeIfNeeded() {
   delegate_->ShowImeIfNeeded();
+}
+
+void ArcImeBridgeImpl::OnCursorRectChangedWithSurroundingText(
+    const gfx::Rect& rect,
+    const gfx::Range& text_range,
+    const std::string& text_in_range,
+    const gfx::Range& selection_range) {
+  delegate_->OnCursorRectChangedWithSurroundingText(
+      rect, text_range, base::UTF8ToUTF16(text_in_range), selection_range);
 }
 
 }  // namespace arc

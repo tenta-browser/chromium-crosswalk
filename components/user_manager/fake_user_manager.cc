@@ -18,13 +18,13 @@ namespace {
 
 class FakeTaskRunner : public base::TaskRunner {
  public:
-  bool PostDelayedTask(const tracked_objects::Location& from_here,
+  bool PostDelayedTask(const base::Location& from_here,
                        base::OnceClosure task,
                        base::TimeDelta delay) override {
     std::move(task).Run();
     return true;
   }
-  bool RunsTasksOnCurrentThread() const override { return true; }
+  bool RunsTasksInCurrentSequence() const override { return true; }
 
  protected:
   ~FakeTaskRunner() override {}
@@ -48,7 +48,8 @@ const user_manager::User* FakeUserManager::AddUser(
 const user_manager::User* FakeUserManager::AddUserWithAffiliation(
     const AccountId& account_id,
     bool is_affiliated) {
-  user_manager::User* user = user_manager::User::CreateRegularUser(account_id);
+  user_manager::User* user = user_manager::User::CreateRegularUser(
+      account_id, user_manager::USER_TYPE_REGULAR);
   user->SetAffiliation(is_affiliated);
   users_.push_back(user);
   return user;
@@ -88,25 +89,27 @@ user_manager::UserList FakeUserManager::GetUsersAllowedForMultiProfile() const {
   return result;
 }
 
-const user_manager::UserList& FakeUserManager::GetLoggedInUsers() const {
-  return logged_in_users_;
-}
-
 void FakeUserManager::UserLoggedIn(const AccountId& account_id,
                                    const std::string& username_hash,
-                                   bool browser_restart) {
+                                   bool browser_restart,
+                                   bool is_child) {
   for (user_manager::UserList::const_iterator it = users_.begin();
        it != users_.end(); ++it) {
     if ((*it)->username_hash() == username_hash) {
       (*it)->set_is_logged_in(true);
-      (*it)->set_profile_is_created();
+      (*it)->SetProfileIsCreated();
       logged_in_users_.push_back(*it);
 
       if (!primary_user_)
         primary_user_ = *it;
+      if (!active_user_)
+        active_user_ = *it;
       break;
     }
   }
+
+  if (!active_user_ && AreEphemeralUsersEnabled())
+    RegularUserLoggedInAsEphemeral(account_id, USER_TYPE_REGULAR);
 }
 
 user_manager::User* FakeUserManager::GetActiveUserInternal() const {
@@ -260,8 +263,24 @@ bool FakeUserManager::AreSupervisedUsersAllowed() const {
   return true;
 }
 
+bool FakeUserManager::IsGuestSessionAllowed() const {
+  return true;
+}
+
+bool FakeUserManager::IsGaiaUserAllowed(const user_manager::User& user) const {
+  return true;
+}
+
+bool FakeUserManager::IsUserAllowed(const user_manager::User& user) const {
+  return true;
+}
+
 bool FakeUserManager::AreEphemeralUsersEnabled() const {
-  return false;
+  return GetEphemeralUsersEnabled();
+}
+
+void FakeUserManager::SetEphemeralUsersEnabled(bool enabled) {
+  UserManagerBase::SetEphemeralUsersEnabled(enabled);
 }
 
 const std::string& FakeUserManager::GetApplicationLocale() const {
@@ -293,7 +312,7 @@ void FakeUserManager::UpdateLoginState(const user_manager::User* active_user,
 bool FakeUserManager::GetPlatformKnownUserId(const std::string& user_email,
                                              const std::string& gaia_id,
                                              AccountId* out_account_id) const {
-  if (user_email == kStubUser) {
+  if (user_email == kStubUserEmail) {
     *out_account_id = StubAccountId();
     return true;
   }

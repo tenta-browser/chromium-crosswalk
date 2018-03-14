@@ -12,7 +12,6 @@
 #include "net/base/network_change_notifier.h"
 #include "net/base/proxy_delegate.h"
 #include "net/proxy/proxy_retry_info.h"
-#include "net/proxy/proxy_server.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -26,7 +25,7 @@ class HttpResponseHeaders;
 class NetLog;
 class ProxyConfig;
 class ProxyInfo;
-class ProxyService;
+class ProxyServer;
 }
 
 namespace data_reduction_proxy {
@@ -57,7 +56,7 @@ class DataReductionProxyDelegate
   // net::ProxyDelegate implementation:
   void OnResolveProxy(const GURL& url,
                       const std::string& method,
-                      const net::ProxyService& proxy_service,
+                      const net::ProxyRetryInfoMap& proxy_retry_info,
                       net::ProxyInfo* result) override;
   void OnFallback(const net::ProxyServer& bad_proxy, int net_error) override;
   void OnBeforeTunnelRequest(const net::HostPortPair& proxy_server,
@@ -82,7 +81,6 @@ class DataReductionProxyDelegate
       net::ProxyServer* alternative_proxy_server) const override;
   void OnAlternativeProxyBroken(
       const net::ProxyServer& alternative_proxy_server) override;
-  net::ProxyServer GetDefaultAlternativeProxy() const override;
 
   // Protected so that it can be overridden during testing.
   // Returns true if |proxy_server| supports QUIC.
@@ -94,26 +92,13 @@ class DataReductionProxyDelegate
     QUIC_PROXY_STATUS_AVAILABLE,
     QUIC_PROXY_NOT_SUPPORTED,
     QUIC_PROXY_STATUS_MARKED_AS_BROKEN,
+    QUIC_PROXY_DISABLED_VIA_FIELD_TRIAL,
     QUIC_PROXY_STATUS_BOUNDARY
-  };
-
-  // Availability status of data reduction proxy that supports 0-RTT QUIC.
-  // Protected so that the enum values are accessible for testing.
-  enum DefaultAlternativeProxyStatus {
-    DEFAULT_ALTERNATIVE_PROXY_STATUS_AVAILABLE,
-    DEFAULT_ALTERNATIVE_PROXY_STATUS_BROKEN,
-    DEFAULT_ALTERNATIVE_PROXY_STATUS_UNAVAILABLE,
-    DEFAULT_ALTERNATIVE_PROXY_STATUS_BOUNDARY,
   };
 
  private:
   // Records the availability status of data reduction proxy.
   void RecordQuicProxyStatus(QuicProxyStatus status) const;
-
-  // Records the availability status of data reduction proxy that supports 0-RTT
-  // QUIC.
-  void RecordGetDefaultAlternativeProxy(
-      DefaultAlternativeProxyStatus status) const;
 
   // NetworkChangeNotifier::IPAddressObserver:
   void OnIPAddressChanged() override;

@@ -11,6 +11,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "extensions/common/api/declarative_net_request/constants.h"
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/socket_permission.h"
 #include "extensions/common/permissions/usb_device_permission.h"
@@ -31,7 +32,7 @@ std::vector<std::unique_ptr<APIPermissionInfo>>
 ExtensionsAPIPermissions::GetAllPermissions() const {
   // WARNING: If you are modifying a permission message in this list, be sure to
   // add the corresponding permission message rule to
-  // ChromePermissionMessageProvider::GetPermissionMessages as well.
+  // ChromePermissionMessageRule::GetAllRules as well.
   APIPermissionInfo::InitInfo permissions_to_register[] = {
       {APIPermission::kAlarms, "alarms"},
       {APIPermission::kAlphaEnabled, "app.window.alpha"},
@@ -57,17 +58,39 @@ ExtensionsAPIPermissions::GetAllPermissions() const {
        APIPermissionInfo::kFlagCannotBeOptional},
       {APIPermission::kExternallyConnectableAllUrls,
        "externally_connectable.all_urls"},
+      {APIPermission::kFeedbackPrivate, "feedbackPrivate",
+       APIPermissionInfo::kFlagCannotBeOptional},
       {APIPermission::kFullscreen, "app.window.fullscreen"},
+
+      // The permission string for "fileSystem" is only shown when
+      // "write" or "directory" is present. Read-only access is only
+      // granted after the user has been shown a file or directory
+      // chooser dialog and selected a file or directory. Selecting
+      // the file or directory is considered consent to read it.
+      {APIPermission::kFileSystem, "fileSystem"},
+      {APIPermission::kFileSystemDirectory, "fileSystem.directory"},
+      {APIPermission::kFileSystemRequestFileSystem,
+       "fileSystem.requestFileSystem"},
+      {APIPermission::kFileSystemRetainEntries, "fileSystem.retainEntries"},
+      {APIPermission::kFileSystemWrite, "fileSystem.write"},
+
       {APIPermission::kHid, "hid"},
       {APIPermission::kImeWindowEnabled, "app.window.ime"},
       {APIPermission::kOverrideEscFullscreen,
        "app.window.fullscreen.overrideEsc"},
       {APIPermission::kIdle, "idle"},
+      {APIPermission::kLockScreen, "lockScreen"},
+      {APIPermission::kLockWindowFullscreenPrivate,
+       "lockWindowFullscreenPrivate", APIPermissionInfo::kFlagCannotBeOptional},
+      {APIPermission::kMediaPerceptionPrivate, "mediaPerceptionPrivate"},
       {APIPermission::kMetricsPrivate, "metricsPrivate",
        APIPermissionInfo::kFlagCannotBeOptional},
+      {APIPermission::kNativeMessaging, "nativeMessaging"},
       {APIPermission::kNetworkingConfig, "networking.config"},
       {APIPermission::kNetworkingOnc, "networking.onc"},
       {APIPermission::kNetworkingPrivate, "networkingPrivate",
+       APIPermissionInfo::kFlagCannotBeOptional},
+      {APIPermission::kNewTabPageOverride, "newTabPageOverride",
        APIPermissionInfo::kFlagCannotBeOptional},
       {APIPermission::kPower, "power"},
       {APIPermission::kPrinterProvider, "printerProvider"},
@@ -100,6 +123,8 @@ ExtensionsAPIPermissions::GetAllPermissions() const {
            APIPermissionInfo::kFlagInternal},
       {APIPermission::kWebRequest, "webRequest"},
       {APIPermission::kWebRequestBlocking, "webRequestBlocking"},
+      {APIPermission::kDeclarativeNetRequest,
+       declarative_net_request::kAPIPermission},
       {APIPermission::kWebView, "webview",
        APIPermissionInfo::kFlagCannotBeOptional},
       {APIPermission::kWindowShape, "app.window.shape"},

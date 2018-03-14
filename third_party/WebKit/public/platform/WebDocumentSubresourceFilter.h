@@ -13,6 +13,14 @@ class WebURL;
 
 class WebDocumentSubresourceFilter {
  public:
+  // This builder class is created on the main thread and passed to a worker
+  // thread to create the subresource filter for the worker thread.
+  class Builder {
+   public:
+    virtual ~Builder() {}
+    virtual std::unique_ptr<WebDocumentSubresourceFilter> Build() = 0;
+  };
+
   enum LoadPolicy { kAllow, kDisallow, kWouldDisallow };
 
   virtual ~WebDocumentSubresourceFilter() {}
@@ -23,6 +31,10 @@ class WebDocumentSubresourceFilter {
   // Report that a resource loaded by the document (not a preload) was
   // disallowed.
   virtual void ReportDisallowedLoad() = 0;
+
+  // Returns true if disallowed resource loads should be logged to the devtools
+  // console.
+  virtual bool ShouldLogToConsole() = 0;
 };
 
 }  // namespace blink

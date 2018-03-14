@@ -31,8 +31,7 @@ const char kUserImageInfo[] = "user_image_info";
 const char kImageIndex[] = "image_index";
 
 bool IsIndexSupported(int index) {
-  return (index >= default_user_image::kFirstDefaultImageIndex &&
-          index < default_user_image::kDefaultImagesCount) ||
+  return default_user_image::IsValidIndex(index) ||
          (index == user_manager::User::USER_IMAGE_PROFILE);
 }
 
@@ -51,8 +50,8 @@ UserImageSyncObserver::UserImageSyncObserver(const user_manager::User* user)
   if (Profile* profile = ProfileHelper::Get()->GetProfileByUser(user)) {
     OnProfileGained(profile);
   } else {
-    notification_registrar_->Add(this,
-        chrome::NOTIFICATION_LOGIN_USER_PROFILE_PREPARED,
+    notification_registrar_->Add(
+        this, chrome::NOTIFICATION_LOGIN_USER_PROFILE_PREPARED,
         content::NotificationService::AllSources());
   }
 }
@@ -70,8 +69,7 @@ UserImageSyncObserver::~UserImageSyncObserver() {
 void UserImageSyncObserver::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry_) {
   registry_->RegisterDictionaryPref(
-      kUserImageInfo,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PRIORITY_PREF);
+      kUserImageInfo, user_prefs::PrefRegistrySyncable::SYNCABLE_PRIORITY_PREF);
 }
 
 void UserImageSyncObserver::AddObserver(Observer* observer) {
@@ -86,9 +84,9 @@ void UserImageSyncObserver::OnProfileGained(Profile* profile) {
   prefs_ = PrefServiceSyncableFromProfile(profile);
   pref_change_registrar_.reset(new PrefChangeRegistrar);
   pref_change_registrar_->Init(prefs_);
-  pref_change_registrar_->Add(kUserImageInfo,
-      base::Bind(&UserImageSyncObserver::OnPreferenceChanged,
-                 base::Unretained(this)));
+  pref_change_registrar_->Add(
+      kUserImageInfo, base::Bind(&UserImageSyncObserver::OnPreferenceChanged,
+                                 base::Unretained(this)));
   is_synced_ = prefs_->IsPrioritySyncing();
   if (!is_synced_) {
     prefs_->AddObserver(this);

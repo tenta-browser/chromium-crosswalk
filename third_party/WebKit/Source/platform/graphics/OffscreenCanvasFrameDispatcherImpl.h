@@ -6,44 +6,55 @@
 #define OffscreenCanvasFrameDispatcherImpl_h
 
 #include <memory>
-#include "cc/ipc/mojo_compositor_frame_sink.mojom-blink.h"
-#include "cc/output/begin_frame_args.h"
-#include "cc/resources/shared_bitmap.h"
-#include "cc/surfaces/local_surface_id_allocator.h"
-#include "cc/surfaces/surface_id.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
+#include "components/viz/common/surfaces/local_surface_id_allocator.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "platform/graphics/OffscreenCanvasFrameDispatcher.h"
-#include "platform/graphics/StaticBitmapImage.h"
+#include "platform/graphics/OffscreenCanvasResourceProvider.h"
 #include "platform/wtf/Compiler.h"
+#include "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom-blink.h"
 
 namespace blink {
 
-class PLATFORM_EXPORT OffscreenCanvasFrameDispatcherImpl final
+class PLATFORM_EXPORT OffscreenCanvasFrameDispatcherImpl
     : public OffscreenCanvasFrameDispatcher,
-      NON_EXPORTED_BASE(
-          public cc::mojom::blink::MojoCompositorFrameSinkClient) {
+      public viz::mojom::blink::CompositorFrameSinkClient {
  public:
+  enum {
+    kInvalidPlaceholderCanvasId = -1,
+  };
+
   OffscreenCanvasFrameDispatcherImpl(OffscreenCanvasFrameDispatcherClient*,
                                      uint32_t client_id,
                                      uint32_t sink_id,
-                                     int canvas_id,
+                                     int placeholder_canvas_id,
                                      int width,
                                      int height);
 
   // OffscreenCanvasFrameDispatcher implementation.
-  ~OffscreenCanvasFrameDispatcherImpl() final;
+  virtual ~OffscreenCanvasFrameDispatcherImpl();
   void SetNeedsBeginFrame(bool) final;
-  void DispatchFrame(RefPtr<StaticBitmapImage>,
+  void SetSuspendAnimation(bool) final;
+  bool NeedsBeginFrame() const final { return needs_begin_frame_; }
+  bool IsAnimationSuspended() const final { return suspend_animation_; }
+  void DispatchFrame(scoped_refptr<StaticBitmapImage>,
                      double commit_start_time,
-                     bool is_web_gl_software_rendering = false) final;
+                     const SkIRect& damage_rect) final;
   void ReclaimResource(unsigned resource_id) final;
   void Reshape(int width, int height) final;
 
-  // cc::mojom::blink::MojoCompositorFrameSinkClient implementation.
+  // viz::mojom::blink::CompositorFrameSinkClient implementation.
   void DidReceiveCompositorFrameAck(
-      const cc::ReturnedResourceArray& resources) final;
-  void OnBeginFrame(const cc::BeginFrameArgs&) final;
-  void ReclaimResources(const cc::ReturnedResourceArray& resources) final;
+      const WTF::Vector<viz::ReturnedResource>& resources) final;
+  void DidPresentCompositorFrame(uint32_t presentation_token,
+                                 ::mojo::common::mojom::blink::TimeTicksPtr,
+                                 WTF::TimeDelta refresh,
+                                 uint32_t flags) final;
+  void DidDiscardCompositorFrame(uint32_t presentation_token) final;
+  void OnBeginFrame(const viz::BeginFrameArgs&) final;
+  void OnBeginFramePausedChanged(bool paused) final{};
+  void ReclaimResources(
+      const WTF::Vector<viz::ReturnedResource>& resources) final;
 
   // This enum is used in histogram, so it should be append-only.
   enum OffscreenCanvasCommitType {
@@ -55,39 +66,44 @@ class PLATFORM_EXPORT OffscreenCanvasFrameDispatcherImpl final
   };
 
  private:
+  friend class OffscreenCanvasFrameDispatcherImplTest;
+
   // Surface-related
-  cc::LocalSurfaceIdAllocator local_surface_id_allocator_;
-  const cc::FrameSinkId frame_sink_id_;
-  cc::LocalSurfaceId current_local_surface_id_;
+  viz::LocalSurfaceIdAllocator local_surface_id_allocator_;
+  const viz::FrameSinkId frame_sink_id_;
+  viz::LocalSurfaceId current_local_surface_id_;
 
   int width_;
   int height_;
   bool change_size_for_next_commit_;
-  bool needs_begin_frame_;
-  bool compositor_has_pending_frame_ = false;
+  bool suspend_animation_ = false;
+  bool needs_begin_frame_ = false;
+  int pending_compositor_frames_ = 0;
 
-  unsigned next_resource_id_;
-  HashMap<unsigned, RefPtr<StaticBitmapImage>> cached_images_;
-  HashMap<unsigned, std::unique_ptr<cc::SharedBitmap>> shared_bitmaps_;
-  HashMap<unsigned, GLuint> cached_texture_ids_;
-  HashSet<unsigned> spare_resource_locks_;
+  void SetNeedsBeginFrameInternal();
+
+  std::unique_ptr<OffscreenCanvasResourceProvider>
+      offscreen_canvas_resource_provider_;
 
   bool VerifyImageSize(const IntSize);
-  void PostImageToPlaceholder(RefPtr<StaticBitmapImage>);
+  void PostImageToPlaceholderIfNotBlocked(scoped_refptr<StaticBitmapImage>,
+                                          unsigned resource_id);
+  // virtual for testing
+  virtual void PostImageToPlaceholder(scoped_refptr<StaticBitmapImage>,
+                                      unsigned resource_id);
 
-  cc::mojom::blink::MojoCompositorFrameSinkPtr sink_;
-  mojo::Binding<cc::mojom::blink::MojoCompositorFrameSinkClient> binding_;
+  viz::mojom::blink::CompositorFrameSinkPtr sink_;
+  mojo::Binding<viz::mojom::blink::CompositorFrameSinkClient> binding_;
 
   int placeholder_canvas_id_;
 
-  cc::BeginFrameAck current_begin_frame_ack_;
+  // The latest_unposted_resource_id_ always refers to the Id of the frame
+  // resource used by the latest_unposted_image_.
+  scoped_refptr<StaticBitmapImage> latest_unposted_image_;
+  unsigned latest_unposted_resource_id_;
+  unsigned num_unreclaimed_frames_posted_;
 
-  void SetTransferableResourceToSharedBitmap(cc::TransferableResource&,
-                                             RefPtr<StaticBitmapImage>);
-  void SetTransferableResourceToSharedGPUContext(cc::TransferableResource&,
-                                                 RefPtr<StaticBitmapImage>);
-  void SetTransferableResourceToStaticBitmapImage(cc::TransferableResource&,
-                                                  RefPtr<StaticBitmapImage>);
+  viz::BeginFrameAck current_begin_frame_ack_;
 };
 
 }  // namespace blink

@@ -8,18 +8,22 @@
 #include "base/callback_forward.h"
 #include "base/command_line.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "base/trace_event/memory_dump_request_args.h"
 #include "base/trace_event/trace_config_memory_test_util.h"
 #include "base/trace_event/trace_log.h"
+#include "build/build_config.h"
+#include "content/browser/tracing/tracing_controller_impl.h"
 #include "content/public/browser/tracing_controller.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
+#include "services/resource_coordinator/public/cpp/memory_instrumentation/memory_instrumentation.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 using base::trace_event::MemoryDumpArgs;
@@ -42,28 +46,21 @@ class MockDumpProvider : public base::trace_event::MemoryDumpProvider {
 
 class MemoryTracingTest : public ContentBrowserTest {
  public:
-  void DoRequestGlobalDump(
-      const MemoryDumpType& dump_type,
-      const MemoryDumpLevelOfDetail& level_of_detail,
-      const base::trace_event::GlobalMemoryDumpCallback& cb) {
-    MemoryDumpManager::GetInstance()->RequestGlobalDump(dump_type,
-                                                        level_of_detail, cb);
-  }
-
   // Used as callback argument for MemoryDumpManager::RequestGlobalDump():
   void OnGlobalMemoryDumpDone(
       scoped_refptr<base::SingleThreadTaskRunner> task_runner,
       base::Closure closure,
       uint32_t request_index,
-      uint64_t dump_guid,
-      bool success) {
+      bool success,
+      uint64_t dump_guid) {
     // Make sure we run the RunLoop closure on the same thread that originated
     // the run loop (which is the IN_PROC_BROWSER_TEST_F main thread).
-    if (!task_runner->RunsTasksOnCurrentThread()) {
+    if (!task_runner->RunsTasksInCurrentSequence()) {
       task_runner->PostTask(
-          FROM_HERE, base::Bind(&MemoryTracingTest::OnGlobalMemoryDumpDone,
-                                base::Unretained(this), task_runner, closure,
-                                request_index, dump_guid, success));
+          FROM_HERE,
+          base::BindOnce(&MemoryTracingTest::OnGlobalMemoryDumpDone,
+                         base::Unretained(this), task_runner, closure,
+                         request_index, success, dump_guid));
       return;
     }
     if (success)
@@ -79,15 +76,20 @@ class MemoryTracingTest : public ContentBrowserTest {
       const MemoryDumpLevelOfDetail& level_of_detail,
       const base::Closure& closure) {
     uint32_t request_index = next_request_index_++;
-    base::trace_event::GlobalMemoryDumpCallback callback = base::Bind(
+    auto callback = base::Bind(
         &MemoryTracingTest::OnGlobalMemoryDumpDone, base::Unretained(this),
         base::ThreadTaskRunnerHandle::Get(), closure, request_index);
     if (from_renderer_thread) {
       PostTaskToInProcessRendererAndWait(base::Bind(
-          &MemoryTracingTest::DoRequestGlobalDump, base::Unretained(this),
+          &memory_instrumentation::MemoryInstrumentation::
+              RequestGlobalDumpAndAppendToTrace,
+          base::Unretained(
+              memory_instrumentation::MemoryInstrumentation::GetInstance()),
           dump_type, level_of_detail, callback));
     } else {
-      DoRequestGlobalDump(dump_type, level_of_detail, callback);
+      memory_instrumentation::MemoryInstrumentation::GetInstance()
+          ->RequestGlobalDumpAndAppendToTrace(dump_type, level_of_detail,
+                                              callback);
     }
   }
 
@@ -130,9 +132,15 @@ class MemoryTracingTest : public ContentBrowserTest {
   }
 
   void DisableTracing() {
-    bool success = TracingController::GetInstance()->StopTracing(NULL);
+    base::RunLoop run_loop;
+    bool success = TracingController::GetInstance()->StopTracing(
+        TracingControllerImpl::CreateCallbackEndpoint(base::BindRepeating(
+            [](base::Closure quit_closure,
+               std::unique_ptr<const base::DictionaryValue> metadata,
+               base::RefCountedString* trace_str) { quit_closure.Run(); },
+            run_loop.QuitClosure())));
     EXPECT_TRUE(success);
-    base::RunLoop().RunUntilIdle();
+    run_loop.Run();
   }
 
   void RequestGlobalDumpAndWait(
@@ -153,7 +161,7 @@ class MemoryTracingTest : public ContentBrowserTest {
   }
 
   void Navigate(Shell* shell) {
-    NavigateToURL(shell, GetTestUrl("", "title.html"));
+    NavigateToURL(shell, GetTestUrl("", "title1.html"));
   }
 
   MOCK_METHOD2(OnMemoryDumpDone, void(uint32_t request_index, bool successful));
@@ -164,9 +172,9 @@ class MemoryTracingTest : public ContentBrowserTest {
   bool last_callback_success_;
 };
 
-// Ignore SingleProcessMemoryTracingTests for Google Chrome builds because
-// single-process is not supported on those builds.
-#if !defined(GOOGLE_CHROME_BUILD)
+// Run SingleProcessMemoryTracingTests only on Android, since these tests are
+// intended to give coverage to Android WebView.
+#if defined(OS_ANDROID)
 
 class SingleProcessMemoryTracingTest : public MemoryTracingTest {
  public:
@@ -193,10 +201,17 @@ IN_PROC_BROWSER_TEST_F(SingleProcessMemoryTracingTest,
   DisableTracing();
 }
 
+// https://crbug.com/788788
+#if defined(OS_ANDROID) && defined(ADDRESS_SANITIZER)
+#define MAYBE_RendererInitiatedSingleDump DISABLED_RendererInitiatedSingleDump
+#else
+#define MAYBE_RendererInitiatedSingleDump RendererInitiatedSingleDump
+#endif  // defined(OS_ANDROID) && defined(ADDRESS_SANITIZER)
+
 // Checks that a memory dump initiated from a renderer thread ends up in a
 // single dump even in single process mode.
 IN_PROC_BROWSER_TEST_F(SingleProcessMemoryTracingTest,
-                       RendererInitiatedSingleDump) {
+                       MAYBE_RendererInitiatedSingleDump) {
   Navigate(shell());
 
   EXPECT_CALL(*mock_dump_provider_, OnMemoryDump(_,_)).WillOnce(Return(true));
@@ -209,7 +224,14 @@ IN_PROC_BROWSER_TEST_F(SingleProcessMemoryTracingTest,
   DisableTracing();
 }
 
-IN_PROC_BROWSER_TEST_F(SingleProcessMemoryTracingTest, ManyInterleavedDumps) {
+// https://crbug.com/788788
+#if defined(OS_ANDROID) && defined(ADDRESS_SANITIZER)
+#define MAYBE_ManyInterleavedDumps DISABLED_ManyInterleavedDumps
+#else
+#define MAYBE_ManyInterleavedDumps ManyInterleavedDumps
+#endif  // defined(OS_ANDROID) && defined(ADDRESS_SANITIZER)
+IN_PROC_BROWSER_TEST_F(SingleProcessMemoryTracingTest,
+                       MAYBE_ManyInterleavedDumps) {
   Navigate(shell());
 
   EXPECT_CALL(*mock_dump_provider_, OnMemoryDump(_,_))
@@ -237,7 +259,8 @@ IN_PROC_BROWSER_TEST_F(SingleProcessMemoryTracingTest, ManyInterleavedDumps) {
 // dump requests are queued and carried out after it's finished. Also checks
 // that periodic dump requests fail in case there is already a request in the
 // queue with the same level of detail.
-IN_PROC_BROWSER_TEST_F(SingleProcessMemoryTracingTest, QueuedDumps) {
+// Flaky failures on all platforms. https://crbug.com/752613
+IN_PROC_BROWSER_TEST_F(SingleProcessMemoryTracingTest, DISABLED_QueuedDumps) {
   Navigate(shell());
 
   EnableMemoryTracing();
@@ -300,11 +323,10 @@ IN_PROC_BROWSER_TEST_F(SingleProcessMemoryTracingTest, QueuedDumps) {
   DisableTracing();
 }
 
-#endif  // !defined(GOOGLE_CHROME_BUILD)
+#endif  // defined(OS_ANDROID)
 
 // Non-deterministic races under TSan. crbug.com/529678
-// Flaky on Linux. crbug.com/709524
-#if defined(THREAD_SANITIZER) || defined(OS_LINUX)
+#if defined(THREAD_SANITIZER)
 #define MAYBE_BrowserInitiatedDump DISABLED_BrowserInitiatedDump
 #else
 #define MAYBE_BrowserInitiatedDump BrowserInitiatedDump
@@ -315,7 +337,14 @@ IN_PROC_BROWSER_TEST_F(MemoryTracingTest, MAYBE_BrowserInitiatedDump) {
   Navigate(shell());
 
   EXPECT_CALL(*mock_dump_provider_, OnMemoryDump(_,_)).WillOnce(Return(true));
+#if defined(OS_LINUX)
+  // TODO(ssid): Test for dump success once the on start tracing done callback
+  // is fixed to be called after enable tracing is acked by all processes,
+  // crbug.com/709524. The test still tests if dumping does not crash.
+  EXPECT_CALL(*this, OnMemoryDumpDone(_, _));
+#else
   EXPECT_CALL(*this, OnMemoryDumpDone(_, true /* success */));
+#endif
 
   EnableMemoryTracing();
   RequestGlobalDumpAndWait(false /* from_renderer_thread */,

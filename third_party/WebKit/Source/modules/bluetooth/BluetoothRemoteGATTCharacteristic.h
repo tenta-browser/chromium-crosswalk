@@ -5,13 +5,13 @@
 #ifndef BluetoothRemoteGATTCharacteristic_h
 #define BluetoothRemoteGATTCharacteristic_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/ContextLifecycleObserver.h"
-#include "core/dom/DOMArrayPiece.h"
-#include "core/dom/DOMDataView.h"
+#include "core/typed_arrays/DOMArrayPiece.h"
+#include "core/typed_arrays/DOMDataView.h"
 #include "modules/EventTargetModules.h"
 #include "modules/bluetooth/BluetoothRemoteGATTService.h"
 #include "mojo/public/cpp/bindings/associated_binding_set.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/modules/bluetooth/web_bluetooth.mojom-blink.h"
@@ -69,10 +69,10 @@ class BluetoothRemoteGATTCharacteristic final
 
   // EventTarget methods:
   const AtomicString& InterfaceName() const override;
-  ExecutionContext* GetExecutionContext() const;
+  ExecutionContext* GetExecutionContext() const override;
 
   // Interface required by garbage collection.
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
   // IDL exposed interface:
   BluetoothRemoteGATTService* service() { return service_; }

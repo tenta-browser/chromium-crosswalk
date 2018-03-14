@@ -22,7 +22,7 @@ CSSURIValue::CSSURIValue(const AtomicString& relative_url,
 CSSURIValue::CSSURIValue(const AtomicString& relative_url, const KURL& url)
     : CSSURIValue(relative_url, AtomicString(url.GetString())) {}
 
-CSSURIValue::~CSSURIValue() {}
+CSSURIValue::~CSSURIValue() = default;
 
 SVGElementProxy& CSSURIValue::EnsureElementProxy(
     const Document& document) const {
@@ -58,7 +58,7 @@ AtomicString CSSURIValue::FragmentIdentifier() const {
 }
 
 KURL CSSURIValue::AbsoluteUrl() const {
-  return KURL(kParsedURLString, absolute_url_);
+  return KURL(absolute_url_);
 }
 
 bool CSSURIValue::IsLocal(const Document& document) const {
@@ -70,11 +70,12 @@ bool CSSURIValue::Equals(const CSSURIValue& other) const {
   // If only one has the 'local url' flag set, the URLs can't match.
   if (is_local_ != other.is_local_)
     return false;
-  return (is_local_ && relative_url_ == other.relative_url_) ||
-         absolute_url_ == other.absolute_url_;
+  if (is_local_)
+    return relative_url_ == other.relative_url_;
+  return absolute_url_ == other.absolute_url_;
 }
 
-DEFINE_TRACE_AFTER_DISPATCH(CSSURIValue) {
+void CSSURIValue::TraceAfterDispatch(blink::Visitor* visitor) {
   visitor->Trace(proxy_);
   CSSValue::TraceAfterDispatch(visitor);
 }

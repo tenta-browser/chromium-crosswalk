@@ -31,8 +31,8 @@
 #ifndef VTTRegion_h
 #define VTTRegion_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "platform/Timer.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/geometry/FloatPoint.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
@@ -45,8 +45,7 @@ class HTMLDivElement;
 class VTTCueBox;
 class VTTScanner;
 
-class VTTRegion final : public GarbageCollectedFinalized<VTTRegion>,
-                        public ScriptWrappable {
+class VTTRegion final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -54,8 +53,8 @@ class VTTRegion final : public GarbageCollectedFinalized<VTTRegion>,
 
   virtual ~VTTRegion();
 
-  const String& Id() const { return id_; }
-  void SetId(const String&);
+  const String& id() const { return id_; }
+  void setId(const String&);
 
   double width() const { return width_; }
   void setWidth(double, ExceptionState&);
@@ -88,7 +87,7 @@ class VTTRegion final : public GarbageCollectedFinalized<VTTRegion>,
   void DisplayLastVTTCueBox();
   void WillRemoveVTTCueBox(VTTCueBox*);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   VTTRegion();

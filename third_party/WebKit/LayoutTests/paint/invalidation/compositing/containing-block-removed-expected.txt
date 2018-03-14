@@ -1,11 +1,10 @@
-CONSOLE MESSAGE: line 30: debug
 {
   "layers": [
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV class='fixed'",
@@ -19,7 +18,6 @@ CONSOLE MESSAGE: line 30: debug
       "position": [200, 100],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#0000FF",
       "paintInvalidations": [
         {

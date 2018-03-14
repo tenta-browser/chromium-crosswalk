@@ -8,6 +8,24 @@
  */
 
 /**
+ * @typedef {{
+ *   site: string,
+ *   id: string,
+ *   localData: string,
+ * }}
+ */
+var CookieDataSummaryItem;
+
+/**
+ * @typedef {{
+ *   id: string,
+ *   start: number,
+ *   count: number,
+ * }}
+ */
+var CookieRemovePacket;
+
+/**
  * TODO(dbeam): upstream to polymer externs?
  * @constructor
  * @extends {Event}
@@ -20,26 +38,82 @@ DomRepeatEvent.prototype.model;
 Polymer({
   is: 'site-data',
 
-  behaviors: [CookieTreeBehavior, I18nBehavior],
+  behaviors: [
+    I18nBehavior,
+    settings.GlobalScrollTargetBehavior,
+    WebUIListenerBehavior,
+  ],
 
   properties: {
     /**
      * The current filter applied to the cookie data list.
-     * @private
      */
-    filterString_: {
+    filter: {
+      observer: 'updateSiteList_',
+      notify: true,
       type: String,
-      value: '',
     },
-
-    /** @private */
-    confirmationDeleteMsg_: String,
 
     /** @type {!Map<string, string>} */
     focusConfig: {
       type: Object,
       observer: 'focusConfigChanged_',
     },
+
+    isLoading_: Boolean,
+
+    /** @type {!Array<!LocalDataItem>} */
+    sites: {
+      type: Array,
+      value: function() {
+        return [];
+      },
+    },
+
+    /**
+     * settings.GlobalScrollTargetBehavior
+     * @override
+     */
+    subpageRoute: {
+      type: Object,
+      value: settings.routes.SITE_SETTINGS_SITE_DATA,
+    },
+  },
+
+  /** @private {settings.LocalDataBrowserProxy} */
+  browserProxy_: null,
+
+  /** @override */
+  ready: function() {
+    this.browserProxy_ = settings.LocalDataBrowserProxyImpl.getInstance();
+    this.addWebUIListener(
+        'on-tree-item-removed', this.updateSiteList_.bind(this));
+  },
+
+  /**
+   * Reload cookies when the site data page is visited.
+   *
+   * settings.RouteObserverBehavior
+   * @param {!settings.Route} currentRoute
+   * @protected
+   */
+  currentRouteChanged: function(currentRoute) {
+    settings.GlobalScrollTargetBehaviorImpl.currentRouteChanged.call(
+        this, currentRoute);
+    if (currentRoute == settings.routes.SITE_SETTINGS_SITE_DATA) {
+      this.isLoading_ = true;
+      this.browserProxy_.reloadCookies().then(this.updateSiteList_.bind(this));
+    }
+  },
+
+  /**
+   * Returns the icon to use for a given site.
+   * @param {string} url The url of the site to fetch the icon for.
+   * @return {string} Value for background-image style.
+   * @private
+   */
+  favicon_: function(url) {
+    return cr.icon.getFavicon(url);
   },
 
   /**
@@ -55,49 +129,34 @@ Polymer({
     // Populate the |focusConfig| map of the parent <settings-animated-pages>
     // element, with additional entries that correspond to subpage trigger
     // elements residing in this element's Shadow DOM.
-    this.focusConfig.set(
-        settings.Route.SITE_SETTINGS_DATA_DETAILS.path,
-        '* /deep/ #filter /deep/ #searchInput');
-  },
-
-  /** @override */
-  ready: function() {
-    this.loadCookies();
+    if (settings.routes.SITE_SETTINGS_DATA_DETAILS) {
+      this.focusConfig.set(
+          settings.routes.SITE_SETTINGS_DATA_DETAILS.path,
+          '* /deep/ #filter /deep/ #searchInput');
+    }
   },
 
   /**
-   * A filter function for the list.
-   * @param {!CookieDataSummaryItem} item The item to possibly filter out.
-   * @return {boolean} Whether to show the item.
+   * Gather all the site data.
    * @private
    */
-  showItem_: function(item) {
-    if (this.filterString_.length == 0)
-      return true;
-    return item.site.indexOf(this.filterString_) > -1;
-  },
-
-  /** @private */
-  onSearchChanged_: function(e) {
-    this.filterString_ = e.detail;
-    this.$.list.render();
-  },
-
-  /**
-   * @return {boolean} Whether to show the multiple site remove button.
-   * @private
-   */
-  isRemoveButtonVisible_: function(sites, renderedItemCount) {
-    return renderedItemCount != 0;
+  updateSiteList_: function() {
+    this.isLoading_ = true;
+    this.browserProxy_.getDisplayList(this.filter).then((listInfo) => {
+      this.sites = listInfo.items;
+      this.isLoading_ = false;
+      this.fire('site-data-list-complete');
+    });
   },
 
   /**
    * Returns the string to use for the Remove label.
-   * @return {string} filterString The current filter string.
+   * @param {string} filter The current filter string.
+   * @return {string}
    * @private
    */
-  computeRemoveLabel_: function(filterString) {
-    if (filterString.length == 0)
+  computeRemoveLabel_: function(filter) {
+    if (filter.length == 0)
       return loadTimeData.getString('siteSettingsCookieRemoveAll');
     return loadTimeData.getString('siteSettingsCookieRemoveAllShown');
   },
@@ -109,7 +168,7 @@ Polymer({
 
   /** @private */
   onConfirmDeleteDialogClosed_: function() {
-    this.$.removeShowingSites.focus();
+    cr.ui.focusWithoutInk(assert(this.$.removeShowingSites));
   },
 
   /**
@@ -119,8 +178,6 @@ Polymer({
    */
   onRemoveShowingSitesTap_: function(e) {
     e.preventDefault();
-    this.confirmationDeleteMsg_ = loadTimeData.getString(
-        'siteSettingsCookieRemoveMultipleConfirmation');
     this.$.confirmDeleteDialog.showModal();
   },
 
@@ -130,17 +187,14 @@ Polymer({
    */
   onConfirmDelete_: function() {
     this.$.confirmDeleteDialog.close();
-
-    if (this.filterString_.length == 0) {
-      this.removeAllCookies();
+    if (this.filter.length == 0) {
+      this.browserProxy_.removeAll().then(() => {
+        this.sites = [];
+      });
     } else {
-      var items = this.$.list.items;
-      for (var i = 0; i < items.length; ++i) {
-        if (this.showItem_(items[i]))
-          this.browserProxy.removeCookie(items[i].id);
-      }
+      this.browserProxy_.removeShownItems();
       // We just deleted all items found by the filter, let's reset the filter.
-      /** @type {SettingsSubpageSearchElement} */(this.$.filter).setValue('');
+      this.fire('clear-subpage-search');
     }
   },
 
@@ -151,7 +205,7 @@ Polymer({
    */
   onRemoveSiteTap_: function(e) {
     e.stopPropagation();
-    this.browserProxy.removeCookie(e.model.item.id);
+    this.browserProxy_.removeItem(e.model.item.site);
   },
 
   /**
@@ -159,7 +213,8 @@ Polymer({
    * @private
    */
   onSiteTap_: function(event) {
-    settings.navigateTo(settings.Route.SITE_SETTINGS_DATA_DETAILS,
+    settings.navigateTo(
+        settings.routes.SITE_SETTINGS_DATA_DETAILS,
         new URLSearchParams('site=' + event.model.item.site));
   },
 });

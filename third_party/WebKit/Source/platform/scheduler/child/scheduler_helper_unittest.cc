@@ -7,22 +7,26 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/test/simple_test_tick_clock.h"
-#include "cc/test/ordered_simple_task_runner.h"
-#include "public/platform/scheduler/base/task_queue.h"
+#include "components/viz/test/ordered_simple_task_runner.h"
 #include "platform/scheduler/base/lazy_now.h"
+#include "platform/scheduler/base/task_queue.h"
 #include "platform/scheduler/base/test_time_source.h"
-#include "platform/scheduler/child/scheduler_tqm_delegate_for_test.h"
+#include "platform/scheduler/child/worker_scheduler_helper.h"
+#include "platform/scheduler/test/create_task_queue_manager_for_test.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using testing::_;
-using testing::AnyNumber;
-using testing::Invoke;
-using testing::Return;
+using ::testing::_;
+using ::testing::AnyNumber;
+using ::testing::Invoke;
+using ::testing::Return;
 
 namespace blink {
 namespace scheduler {
+namespace scheduler_helper_unittest {
 
 namespace {
 void AppendToVectorTestTask(std::vector<std::string>* vector,
@@ -45,20 +49,17 @@ void AppendToVectorReentrantTask(base::SingleThreadTaskRunner* task_runner,
 
 };  // namespace
 
-class SchedulerHelperTest : public testing::Test {
+class SchedulerHelperTest : public ::testing::Test {
  public:
   SchedulerHelperTest()
       : clock_(new base::SimpleTestTickClock()),
         mock_task_runner_(new cc::OrderedSimpleTaskRunner(clock_.get(), false)),
-        main_task_runner_(SchedulerTqmDelegateForTest::Create(
-            mock_task_runner_,
-            base::WrapUnique(new TestTimeSource(clock_.get())))),
-        scheduler_helper_(new SchedulerHelper(
-            main_task_runner_,
-            "test.scheduler",
-            TRACE_DISABLED_BY_DEFAULT("test.scheduler"),
-            TRACE_DISABLED_BY_DEFAULT("test.scheduler.dbg"))),
-        default_task_runner_(scheduler_helper_->DefaultTaskRunner()) {
+        scheduler_helper_(new WorkerSchedulerHelper(
+            CreateTaskQueueManagerWithUnownedClockForTest(nullptr,
+                                                          mock_task_runner_,
+                                                          clock_.get()),
+            nullptr)),
+        default_task_runner_(scheduler_helper_->DefaultWorkerTaskQueue()) {
     clock_->Advance(base::TimeDelta::FromMicroseconds(5000));
   }
 
@@ -87,8 +88,7 @@ class SchedulerHelperTest : public testing::Test {
   std::unique_ptr<base::SimpleTestTickClock> clock_;
   scoped_refptr<cc::OrderedSimpleTaskRunner> mock_task_runner_;
 
-  scoped_refptr<SchedulerTqmDelegateForTest> main_task_runner_;
-  std::unique_ptr<SchedulerHelper> scheduler_helper_;
+  std::unique_ptr<WorkerSchedulerHelper> scheduler_helper_;
   scoped_refptr<base::SingleThreadTaskRunner> default_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(SchedulerHelperTest);
@@ -107,8 +107,8 @@ TEST_F(SchedulerHelperTest, TestPostDefaultTask) {
 
   RunUntilIdle();
   EXPECT_THAT(run_order,
-              testing::ElementsAre(std::string("D1"), std::string("D2"),
-                                   std::string("D3"), std::string("D4")));
+              ::testing::ElementsAre(std::string("D1"), std::string("D2"),
+                                     std::string("D3"), std::string("D4")));
 }
 
 TEST_F(SchedulerHelperTest, TestRentrantTask) {
@@ -120,7 +120,7 @@ TEST_F(SchedulerHelperTest, TestRentrantTask) {
                             &count, 5));
   RunUntilIdle();
 
-  EXPECT_THAT(run_order, testing::ElementsAre(0, 1, 2, 3, 4));
+  EXPECT_THAT(run_order, ::testing::ElementsAre(0, 1, 2, 3, 4));
 }
 
 TEST_F(SchedulerHelperTest, IsShutdown) {
@@ -130,20 +130,13 @@ TEST_F(SchedulerHelperTest, IsShutdown) {
   EXPECT_TRUE(scheduler_helper_->IsShutdown());
 }
 
-TEST_F(SchedulerHelperTest, DefaultTaskRunnerRegistration) {
-  EXPECT_EQ(main_task_runner_->default_task_runner(),
-            scheduler_helper_->DefaultTaskRunner());
-  scheduler_helper_->Shutdown();
-  EXPECT_EQ(nullptr, main_task_runner_->default_task_runner());
-}
-
 TEST_F(SchedulerHelperTest, GetNumberOfPendingTasks) {
   std::vector<std::string> run_order;
-  scheduler_helper_->DefaultTaskRunner()->PostTask(
+  scheduler_helper_->DefaultWorkerTaskQueue()->PostTask(
       FROM_HERE, base::Bind(&AppendToVectorTestTask, &run_order, "D1"));
-  scheduler_helper_->DefaultTaskRunner()->PostTask(
+  scheduler_helper_->DefaultWorkerTaskQueue()->PostTask(
       FROM_HERE, base::Bind(&AppendToVectorTestTask, &run_order, "D2"));
-  scheduler_helper_->ControlTaskRunner()->PostTask(
+  scheduler_helper_->ControlWorkerTaskQueue()->PostTask(
       FROM_HERE, base::Bind(&AppendToVectorTestTask, &run_order, "C1"));
   EXPECT_EQ(3U, scheduler_helper_->GetNumberOfPendingTasks());
   RunUntilIdle();
@@ -164,20 +157,20 @@ TEST_F(SchedulerHelperTest, ObserversNotifiedFor_DefaultTaskRunner) {
   MockTaskObserver observer;
   scheduler_helper_->AddTaskObserver(&observer);
 
-  scheduler_helper_->DefaultTaskRunner()->PostTask(FROM_HERE,
-                                                   base::Bind(&NopTask));
+  scheduler_helper_->DefaultWorkerTaskQueue()->PostTask(FROM_HERE,
+                                                        base::Bind(&NopTask));
 
   EXPECT_CALL(observer, WillProcessTask(_)).Times(1);
   EXPECT_CALL(observer, DidProcessTask(_)).Times(1);
   RunUntilIdle();
 }
 
-TEST_F(SchedulerHelperTest, ObserversNotNotifiedFor_ControlTaskRunner) {
+TEST_F(SchedulerHelperTest, ObserversNotNotifiedFor_ControlTaskQueue) {
   MockTaskObserver observer;
   scheduler_helper_->AddTaskObserver(&observer);
 
-  scheduler_helper_->ControlTaskRunner()->PostTask(FROM_HERE,
-                                                   base::Bind(&NopTask));
+  scheduler_helper_->ControlWorkerTaskQueue()->PostTask(FROM_HERE,
+                                                        base::Bind(&NopTask));
 
   EXPECT_CALL(observer, WillProcessTask(_)).Times(0);
   EXPECT_CALL(observer, DidProcessTask(_)).Times(0);
@@ -188,34 +181,19 @@ namespace {
 
 class MockObserver : public SchedulerHelper::Observer {
  public:
-  MOCK_METHOD1(OnUnregisterTaskQueue,
-               void(const scoped_refptr<TaskQueue>& queue));
-  MOCK_METHOD2(OnTriedToExecuteBlockedTask,
-               void(const TaskQueue& queue, const base::PendingTask& task));
+  MOCK_METHOD0(OnTriedToExecuteBlockedTask, void());
+  MOCK_METHOD0(OnBeginNestedRunLoop, void());
+  MOCK_METHOD0(OnExitNestedRunLoop, void());
 };
 
 }  // namespace
-
-TEST_F(SchedulerHelperTest, OnUnregisterTaskQueue) {
-  MockObserver observer;
-  scheduler_helper_->SetObserver(&observer);
-
-  scoped_refptr<TaskQueue> task_queue = scheduler_helper_->NewTaskQueue(
-      TaskQueue::Spec(TaskQueue::QueueType::TEST));
-
-  EXPECT_CALL(observer, OnUnregisterTaskQueue(_)).Times(1);
-  task_queue->UnregisterTaskQueue();
-
-  scheduler_helper_->SetObserver(nullptr);
-}
 
 TEST_F(SchedulerHelperTest, OnTriedToExecuteBlockedTask) {
   MockObserver observer;
   scheduler_helper_->SetObserver(&observer);
 
   scoped_refptr<TaskQueue> task_queue = scheduler_helper_->NewTaskQueue(
-      TaskQueue::Spec(TaskQueue::QueueType::TEST)
-          .SetShouldReportWhenExecutionBlocked(true));
+      TaskQueue::Spec("test").SetShouldReportWhenExecutionBlocked(true));
   std::unique_ptr<TaskQueue::QueueEnabledVoter> voter =
       task_queue->CreateQueueEnabledVoter();
   voter->SetQueueEnabled(false);
@@ -226,11 +204,12 @@ TEST_F(SchedulerHelperTest, OnTriedToExecuteBlockedTask) {
   voter->SetQueueEnabled(true);
   voter->SetQueueEnabled(false);
 
-  EXPECT_CALL(observer, OnTriedToExecuteBlockedTask(_, _)).Times(1);
+  EXPECT_CALL(observer, OnTriedToExecuteBlockedTask()).Times(1);
   RunUntilIdle();
 
   scheduler_helper_->SetObserver(nullptr);
+  task_queue->ShutdownTaskQueue();
 }
-
+}  // namespace scheduler_helper_unittest
 }  // namespace scheduler
 }  // namespace blink

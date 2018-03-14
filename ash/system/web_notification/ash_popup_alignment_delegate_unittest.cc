@@ -4,6 +4,7 @@
 
 #include "ash/system/web_notification/ash_popup_alignment_delegate.h"
 
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -11,37 +12,35 @@
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
-#include "ash/shelf/wm_shelf.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/wm_window.h"
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/keyboard/keyboard_switches.h"
 #include "ui/keyboard/keyboard_util.h"
-#include "ui/message_center/message_center_style.h"
+#include "ui/message_center/public/cpp/message_center_constants.h"
 
 namespace ash {
 
-class AshPopupAlignmentDelegateTest : public test::AshTestBase {
+class AshPopupAlignmentDelegateTest : public AshTestBase {
  public:
-  AshPopupAlignmentDelegateTest() {}
-  ~AshPopupAlignmentDelegateTest() override {}
+  AshPopupAlignmentDelegateTest() = default;
+  ~AshPopupAlignmentDelegateTest() override = default;
 
   void SetUp() override {
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         keyboard::switches::kEnableVirtualKeyboard);
-    test::AshTestBase::SetUp();
+    AshTestBase::SetUp();
     SetAlignmentDelegate(
-        base::MakeUnique<AshPopupAlignmentDelegate>(GetPrimaryShelf()));
+        std::make_unique<AshPopupAlignmentDelegate>(GetPrimaryShelf()));
   }
 
   void TearDown() override {
     alignment_delegate_.reset();
-    test::AshTestBase::TearDown();
+    AshTestBase::TearDown();
   }
 
  protected:
@@ -145,7 +144,7 @@ TEST_F(AshPopupAlignmentDelegateTest, AutoHide) {
   // Create a window, otherwise autohide doesn't work.
   std::unique_ptr<views::Widget> widget = CreateTestWidget(
       nullptr, kShellWindowId_DefaultContainer, gfx::Rect(0, 0, 50, 50));
-  WmShelf* shelf = GetPrimaryShelf();
+  Shelf* shelf = GetPrimaryShelf();
   shelf->SetAutoHideBehavior(SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS);
   EXPECT_EQ(origin_x, alignment_delegate()->GetToastOriginX(toast_size));
   EXPECT_LT(baseline, alignment_delegate()->GetBaseLine());
@@ -200,19 +199,18 @@ TEST_F(AshPopupAlignmentDelegateTest, TrayHeight) {
   alignment_delegate()->SetTrayBubbleHeight(kTrayHeight);
 
   EXPECT_EQ(origin_x, alignment_delegate()->GetToastOriginX(toast_size));
-  EXPECT_EQ(baseline - kTrayHeight - message_center::kMarginBetweenItems,
+  EXPECT_EQ(baseline - kTrayHeight - message_center::kMarginBetweenPopups,
             alignment_delegate()->GetBaseLine());
 }
 
 TEST_F(AshPopupAlignmentDelegateTest, Extended) {
   UpdateDisplay("600x600,800x800");
   SetAlignmentDelegate(
-      base::MakeUnique<AshPopupAlignmentDelegate>(GetPrimaryShelf()));
+      std::make_unique<AshPopupAlignmentDelegate>(GetPrimaryShelf()));
 
   display::Display second_display = GetSecondaryDisplay();
-  WmShelf* second_shelf =
-      Shell::GetRootWindowControllerWithDisplayId(second_display.id())
-          ->GetShelf();
+  Shelf* second_shelf =
+      Shell::GetRootWindowControllerWithDisplayId(second_display.id())->shelf();
   AshPopupAlignmentDelegate for_2nd_display(second_shelf);
   UpdateWorkArea(&for_2nd_display, second_display);
   // Make sure that the toast position on the secondary display is
@@ -234,7 +232,7 @@ TEST_F(AshPopupAlignmentDelegateTest, Unified) {
 
   UpdateDisplay("600x600,800x800");
   SetAlignmentDelegate(
-      base::MakeUnique<AshPopupAlignmentDelegate>(GetPrimaryShelf()));
+      std::make_unique<AshPopupAlignmentDelegate>(GetPrimaryShelf()));
 
   EXPECT_GT(600,
             alignment_delegate()->GetToastOriginX(gfx::Rect(0, 0, 10, 10)));
@@ -249,7 +247,7 @@ TEST_F(AshPopupAlignmentDelegateTest, KeyboardShowing) {
   UpdateDisplay("600x600");
   int baseline = alignment_delegate()->GetBaseLine();
 
-  WmShelf* shelf = GetPrimaryShelf();
+  Shelf* shelf = GetPrimaryShelf();
   gfx::Rect keyboard_bounds(0, 300, 600, 300);
   shelf->SetVirtualKeyboardBoundsForTesting(keyboard_bounds);
   int keyboard_baseline = alignment_delegate()->GetBaseLine();

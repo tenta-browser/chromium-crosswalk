@@ -25,7 +25,6 @@
 
 #include "platform/wtf/text/TextPosition.h"
 
-#include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/StdLibExtras.h"
 #include <algorithm>
 #include <memory>
@@ -33,11 +32,12 @@
 namespace WTF {
 
 std::unique_ptr<Vector<unsigned>> GetLineEndings(const String& text) {
-  std::unique_ptr<Vector<unsigned>> result(WTF::MakeUnique<Vector<unsigned>>());
+  std::unique_ptr<Vector<unsigned>> result(
+      std::make_unique<Vector<unsigned>>());
 
   unsigned start = 0;
   while (start < text.length()) {
-    size_t line_end = text.Find('\n', start);
+    size_t line_end = text.find('\n', start);
     if (line_end == kNotFound)
       break;
 

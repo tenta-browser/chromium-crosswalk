@@ -9,7 +9,6 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
-#include "components/bookmarks/browser/bookmark_model.h"
 #include "components/favicon/core/favicon_driver_observer.h"
 #include "components/favicon/core/favicon_handler.h"
 #include "components/favicon/core/favicon_service.h"
@@ -26,15 +25,16 @@ const bool kEnableTouchIcon = false;
 #endif
 
 void RecordCandidateMetrics(const std::vector<FaviconURL>& candidates) {
+  const favicon_base::IconTypeSet touch_icon_types = {
+      favicon_base::IconType::kTouchIcon,
+      favicon_base::IconType::kTouchPrecomposedIcon};
   size_t with_defined_touch_icons = 0;
   size_t with_defined_sizes = 0;
   for (const auto& candidate : candidates) {
     if (!candidate.icon_sizes.empty()) {
       with_defined_sizes++;
     }
-    if (candidate.icon_type &
-        (favicon_base::IconType::TOUCH_ICON |
-         favicon_base::IconType::TOUCH_PRECOMPOSED_ICON)) {
+    if (touch_icon_types.count(candidate.icon_type) != 0) {
       with_defined_touch_icons++;
     }
   }
@@ -48,11 +48,8 @@ void RecordCandidateMetrics(const std::vector<FaviconURL>& candidates) {
 }  // namespace
 
 FaviconDriverImpl::FaviconDriverImpl(FaviconService* favicon_service,
-                                     history::HistoryService* history_service,
-                                     bookmarks::BookmarkModel* bookmark_model)
-    : favicon_service_(favicon_service),
-      history_service_(history_service),
-      bookmark_model_(bookmark_model) {
+                                     history::HistoryService* history_service)
+    : favicon_service_(favicon_service), history_service_(history_service) {
   if (!favicon_service_)
     return;
 
@@ -70,13 +67,10 @@ FaviconDriverImpl::FaviconDriverImpl(FaviconService* favicon_service,
 FaviconDriverImpl::~FaviconDriverImpl() {
 }
 
-void FaviconDriverImpl::FetchFavicon(const GURL& url) {
+void FaviconDriverImpl::FetchFavicon(const GURL& page_url,
+                                     bool is_same_document) {
   for (const std::unique_ptr<FaviconHandler>& handler : handlers_)
-    handler->FetchFavicon(url);
-}
-
-bool FaviconDriverImpl::IsBookmarked(const GURL& url) {
-  return bookmark_model_ && bookmark_model_->IsBookmarked(url);
+    handler->FetchFavicon(page_url, is_same_document);
 }
 
 bool FaviconDriverImpl::HasPendingTasksForTest() {
@@ -96,13 +90,22 @@ void FaviconDriverImpl::SetFaviconOutOfDateForPage(const GURL& url,
   }
 }
 
-void FaviconDriverImpl::OnUpdateFaviconURL(
+void FaviconDriverImpl::OnUpdateCandidates(
     const GURL& page_url,
-    const std::vector<FaviconURL>& candidates) {
-  DCHECK(!candidates.empty());
+    const std::vector<FaviconURL>& candidates,
+    const GURL& manifest_url) {
   RecordCandidateMetrics(candidates);
-  for (const std::unique_ptr<FaviconHandler>& handler : handlers_)
-    handler->OnUpdateFaviconURL(page_url, candidates);
+  for (const std::unique_ptr<FaviconHandler>& handler : handlers_) {
+    // We feed in the Web Manifest URL (if any) to the instance handling type
+    // kWebManifestIcon, because those compete which each other (i.e. manifest
+    // icons override inline touch icons).
+    handler->OnUpdateCandidates(
+        page_url, candidates,
+        (handler->icon_types().count(
+             favicon_base::IconType::kWebManifestIcon) != 0)
+            ? manifest_url
+            : GURL::EmptyGURL());
+  }
 }
 
 }  // namespace favicon

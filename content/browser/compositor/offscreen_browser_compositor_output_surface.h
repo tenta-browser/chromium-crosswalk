@@ -29,14 +29,14 @@ class OffscreenBrowserCompositorOutputSurface
   OffscreenBrowserCompositorOutputSurface(
       scoped_refptr<ui::ContextProviderCommandBuffer> context,
       const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
-      std::unique_ptr<display_compositor::CompositorOverlayCandidateValidator>
+      std::unique_ptr<viz::CompositorOverlayCandidateValidator>
           overlay_candidate_validator);
 
   ~OffscreenBrowserCompositorOutputSurface() override;
 
  private:
-  // cc::OutputSurface implementation.
-  void BindToClient(cc::OutputSurfaceClient* client) override;
+  // viz::OutputSurface implementation.
+  void BindToClient(viz::OutputSurfaceClient* client) override;
   void EnsureBackbuffer() override;
   void DiscardBackbuffer() override;
   void SetDrawRectangle(const gfx::Rect& draw_rectangle) override;
@@ -46,25 +46,28 @@ class OffscreenBrowserCompositorOutputSurface
                bool alpha,
                bool stencil) override;
   void BindFramebuffer() override;
-  void SwapBuffers(cc::OutputSurfaceFrame frame) override;
+  void SwapBuffers(viz::OutputSurfaceFrame frame) override;
   bool IsDisplayedAsOverlayPlane() const override;
   unsigned GetOverlayTextureId() const override;
+  gfx::BufferFormat GetOverlayBufferFormat() const override;
   bool SurfaceIsSuspendForRecycle() const override;
   uint32_t GetFramebufferCopyTextureFormat() override;
 
   // BrowserCompositorOutputSurface implementation.
   void OnReflectorChanged() override;
 #if defined(OS_MACOSX)
-  void SetSurfaceSuspendedForRecycle(bool suspended) override {};
+  void SetSurfaceSuspendedForRecycle(bool suspended) override {}
 #endif
 
-  void OnSwapBuffersComplete(const std::vector<ui::LatencyInfo>& latency_info);
+  void OnSwapBuffersComplete(const std::vector<ui::LatencyInfo>& latency_info,
+                             uint64_t swap_id);
 
-  cc::OutputSurfaceClient* client_ = nullptr;
+  viz::OutputSurfaceClient* client_ = nullptr;
   gfx::Size reshape_size_;
   uint32_t fbo_ = 0;
   bool reflector_changed_ = false;
   std::unique_ptr<ReflectorTexture> reflector_texture_;
+  uint64_t swap_id_ = 0;
   base::WeakPtrFactory<OffscreenBrowserCompositorOutputSurface>
       weak_ptr_factory_;
 

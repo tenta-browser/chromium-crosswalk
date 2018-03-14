@@ -19,9 +19,7 @@
 #include "pdf/pdfium/pdfium_api_string_buffer_adapter.h"
 #include "pdf/pdfium/pdfium_engine.h"
 #include "printing/units.h"
-
-// Used when doing hit detection.
-#define kTolerance 20.0
+#include "third_party/pdfium/public/fpdf_annot.h"
 
 using printing::ConvertUnitDouble;
 using printing::kPointsPerInch;
@@ -69,14 +67,20 @@ pp::FloatRect GetFloatCharRectInPixels(FPDF_PAGE page,
   return FloatPageRectToPixelRect(page, page_coords);
 }
 
-bool OverlapsOnYAxis(const pp::FloatRect &a, const pp::FloatRect& b) {
-  return !(a.IsEmpty() || b.IsEmpty() ||
-           a.bottom() < b.y() || b.bottom() < a.y());
+bool OverlapsOnYAxis(const pp::FloatRect& a, const pp::FloatRect& b) {
+  return !(a.IsEmpty() || b.IsEmpty() || a.bottom() < b.y() ||
+           b.bottom() < a.y());
 }
 
 }  // namespace
 
 namespace chrome_pdf {
+
+PDFiumPage::LinkTarget::LinkTarget() : page(-1) {}
+
+PDFiumPage::LinkTarget::LinkTarget(const LinkTarget& other) = default;
+
+PDFiumPage::LinkTarget::~LinkTarget() = default;
 
 PDFiumPage::PDFiumPage(PDFiumEngine* engine,
                        int i,
@@ -188,8 +192,8 @@ void PDFiumPage::GetTextRunInfo(int start_char_index,
     if (!base::IsUnicodeWhitespace(character)) {
       // TODO(dmazzoni): this assumes horizontal text.
       // https://crbug.com/580311
-      pp::FloatRect char_rect = GetFloatCharRectInPixels(
-          page, text_page, char_index);
+      pp::FloatRect char_rect =
+          GetFloatCharRectInPixels(page, text_page, char_index);
       if (!char_rect.IsEmpty() && !OverlapsOnYAxis(text_run_bounds, char_rect))
         break;
 
@@ -244,11 +248,13 @@ PDFiumPage::Area PDFiumPage::GetCharIndex(const pp::Point& point,
   pp::Point point2 = point - rect_.point();
   double new_x;
   double new_y;
-  FPDF_DeviceToPage(GetPage(), 0, 0, rect_.width(), rect_.height(),
-        rotation, point2.x(), point2.y(), &new_x, &new_y);
+  FPDF_DeviceToPage(GetPage(), 0, 0, rect_.width(), rect_.height(), rotation,
+                    point2.x(), point2.y(), &new_x, &new_y);
 
-  int rv = FPDFText_GetCharIndexAtPos(
-      GetTextPage(), new_x, new_y, kTolerance, kTolerance);
+  // hit detection tolerance, in points.
+  constexpr double kTolerance = 20.0;
+  int rv = FPDFText_GetCharIndexAtPos(GetTextPage(), new_x, new_y, kTolerance,
+                                      kTolerance);
   *char_index = rv;
 
   FPDF_LINK link = FPDFLink_GetLinkAtPoint(GetPage(), new_x, new_y);
@@ -264,32 +270,47 @@ PDFiumPage::Area PDFiumPage::GetCharIndex(const pp::Point& point,
     DCHECK_NE(control_z_order, link_z_order);
     if (control_z_order > link_z_order) {
       *form_type = control;
-      return PDFiumPage::NONSELECTABLE_AREA;
+      return FormTypeToArea(*form_type);
     }
 
     // We don't handle all possible link types of the PDF. For example,
     // launch actions, cross-document links, etc.
     // In that case, GetLinkTarget() will return NONSELECTABLE_AREA
     // and we should proceed with area detection.
-    PDFiumPage::Area area = GetLinkTarget(link, target);
-    if (area != PDFiumPage::NONSELECTABLE_AREA)
+    Area area = GetLinkTarget(link, target);
+    if (area != NONSELECTABLE_AREA)
       return area;
   } else if (link) {
     // We don't handle all possible link types of the PDF. For example,
     // launch actions, cross-document links, etc.
     // See identical block above.
-    PDFiumPage::Area area = GetLinkTarget(link, target);
-    if (area != PDFiumPage::NONSELECTABLE_AREA)
+    Area area = GetLinkTarget(link, target);
+    if (area != NONSELECTABLE_AREA)
       return area;
   } else if (control > FPDF_FORMFIELD_UNKNOWN) {
     *form_type = control;
-    return PDFiumPage::NONSELECTABLE_AREA;
+    return FormTypeToArea(*form_type);
   }
 
   if (rv < 0)
     return NONSELECTABLE_AREA;
 
   return GetLink(*char_index, target) != -1 ? WEBLINK_AREA : TEXT_AREA;
+}
+
+// static
+PDFiumPage::Area PDFiumPage::FormTypeToArea(int form_type) {
+  switch (form_type) {
+    case FPDF_FORMFIELD_COMBOBOX:
+    case FPDF_FORMFIELD_TEXTFIELD:
+#if defined(PDF_ENABLE_XFA)
+    // TODO(bug_353450): figure out selection and copying for XFA fields.
+    case FPDF_FORMFIELD_XFA:
+#endif
+      return FORM_TEXT_AREA;
+    default:
+      return NONSELECTABLE_AREA;
+  }
 }
 
 base::char16 PDFiumPage::GetCharAtIndex(int index) {
@@ -304,54 +325,89 @@ int PDFiumPage::GetCharCount() {
   return FPDFText_CountChars(GetTextPage());
 }
 
-PDFiumPage::Area PDFiumPage::GetLinkTarget(
-    FPDF_LINK link, PDFiumPage::LinkTarget* target) const {
+PDFiumPage::Area PDFiumPage::GetLinkTarget(FPDF_LINK link, LinkTarget* target) {
   FPDF_DEST dest = FPDFLink_GetDest(engine_->doc(), link);
   if (dest)
     return GetDestinationTarget(dest, target);
 
   FPDF_ACTION action = FPDFLink_GetAction(link);
-  if (action) {
-    switch (FPDFAction_GetType(action)) {
-      case PDFACTION_GOTO: {
-          FPDF_DEST dest = FPDFAction_GetDest(engine_->doc(), action);
-          if (dest)
-            return GetDestinationTarget(dest, target);
-          // TODO(gene): We don't fully support all types of the in-document
-          // links. Need to implement that. There is a bug to track that:
-          // http://code.google.com/p/chromium/issues/detail?id=55776
-        } break;
-      case PDFACTION_URI: {
-          if (target) {
-            size_t buffer_size =
-                FPDFAction_GetURIPath(engine_->doc(), action, nullptr, 0);
-            if (buffer_size > 0) {
-              PDFiumAPIStringBufferAdapter<std::string> api_string_adapter(
-                  &target->url, buffer_size, true);
-              void* data = api_string_adapter.GetData();
-              size_t bytes_written = FPDFAction_GetURIPath(
-                  engine_->doc(), action, data, buffer_size);
-              api_string_adapter.Close(bytes_written);
-            }
-          }
-          return WEBLINK_AREA;
-        } break;
-      // TODO(gene): We don't support PDFACTION_REMOTEGOTO and PDFACTION_LAUNCH
-      // at the moment.
-    }
-  }
+  if (!action)
+    return NONSELECTABLE_AREA;
 
-  return NONSELECTABLE_AREA;
+  switch (FPDFAction_GetType(action)) {
+    case PDFACTION_GOTO: {
+      FPDF_DEST dest = FPDFAction_GetDest(engine_->doc(), action);
+      if (dest)
+        return GetDestinationTarget(dest, target);
+      // TODO(crbug.com/55776): We don't fully support all types of the
+      // in-document links.
+      return NONSELECTABLE_AREA;
+    }
+    case PDFACTION_URI:
+      return GetURITarget(action, target);
+    // TODO(crbug.com/767191): Support PDFACTION_LAUNCH.
+    // TODO(crbug.com/142344): Support PDFACTION_REMOTEGOTO.
+    case PDFACTION_LAUNCH:
+    case PDFACTION_REMOTEGOTO:
+    default:
+      return NONSELECTABLE_AREA;
+  }
 }
 
-PDFiumPage::Area PDFiumPage::GetDestinationTarget(
-    FPDF_DEST destination, PDFiumPage::LinkTarget* target) const {
-  if (target)
-    target->page = FPDFDest_GetPageIndex(engine_->doc(), destination);
+PDFiumPage::Area PDFiumPage::GetDestinationTarget(FPDF_DEST destination,
+                                                  LinkTarget* target) {
+  if (!target)
+    return DOCLINK_AREA;
+
+  target->page = FPDFDest_GetPageIndex(engine_->doc(), destination);
+  GetPageYTarget(destination, target);
+
   return DOCLINK_AREA;
 }
 
-int PDFiumPage::GetLink(int char_index, PDFiumPage::LinkTarget* target) {
+void PDFiumPage::GetPageYTarget(FPDF_DEST destination, LinkTarget* target) {
+  if (!available_) {
+    target->y_in_pixels.reset();
+    return;
+  }
+
+  FPDF_BOOL has_x_coord;
+  FPDF_BOOL has_y_coord;
+  FPDF_BOOL has_zoom;
+  FS_FLOAT x;
+  FS_FLOAT y;
+  FS_FLOAT zoom;
+  FPDF_BOOL success = FPDFDest_GetLocationInPage(
+      destination, &has_x_coord, &has_y_coord, &has_zoom, &x, &y, &zoom);
+
+  if (!success || !has_x_coord || !has_y_coord) {
+    target->y_in_pixels.reset();
+    return;
+  }
+
+  pp::FloatRect page_rect(x, y, 0, 0);
+  pp::FloatRect pixel_rect(FloatPageRectToPixelRect(GetPage(), page_rect));
+  target->y_in_pixels = pixel_rect.y();
+}
+
+PDFiumPage::Area PDFiumPage::GetURITarget(FPDF_ACTION uri_action,
+                                          LinkTarget* target) const {
+  if (target) {
+    size_t buffer_size =
+        FPDFAction_GetURIPath(engine_->doc(), uri_action, nullptr, 0);
+    if (buffer_size > 0) {
+      PDFiumAPIStringBufferAdapter<std::string> api_string_adapter(
+          &target->url, buffer_size, true);
+      void* data = api_string_adapter.GetData();
+      size_t bytes_written =
+          FPDFAction_GetURIPath(engine_->doc(), uri_action, data, buffer_size);
+      api_string_adapter.Close(bytes_written);
+    }
+  }
+  return WEBLINK_AREA;
+}
+
+int PDFiumPage::GetLink(int char_index, LinkTarget* target) {
   if (!available_)
     return -1;
 
@@ -445,10 +501,16 @@ void PDFiumPage::CalculateLinks() {
 
     int rect_count = FPDFLink_CountRects(links, i);
     for (int j = 0; j < rect_count; ++j) {
-      double left, top, right, bottom;
+      double left;
+      double top;
+      double right;
+      double bottom;
       FPDFLink_GetRect(links, i, j, &left, &top, &right, &bottom);
-      link.rects.push_back(
-          PageToScreen(pp::Point(), 1.0, left, top, right, bottom, 0));
+      pp::Rect rect =
+          PageToScreen(pp::Point(), 1.0, left, top, right, bottom, 0);
+      if (rect.IsEmpty())
+        continue;
+      link.rects.push_back(rect);
     }
     links_.push_back(link);
   }
@@ -508,6 +570,27 @@ pp::Rect PDFiumPage::PageToScreen(const pp::Point& offset,
 
   return pp::Rect(new_left, new_top, new_size_x.ValueOrDie(),
                   new_size_y.ValueOrDie());
+}
+
+const PDFEngine::PageFeatures* PDFiumPage::GetPageFeatures() {
+  // If page_features_ is cached, return the cached features.
+  if (page_features_.IsInitialized())
+    return &page_features_;
+
+  FPDF_PAGE page = GetPage();
+  if (!page)
+    return nullptr;
+
+  // Initialize and cache page_features_.
+  page_features_.index = index_;
+  int annotation_count = FPDFPage_GetAnnotCount(page);
+  for (int i = 0; i < annotation_count; ++i) {
+    FPDF_ANNOTATION annotation = FPDFPage_GetAnnot(page, i);
+    FPDF_ANNOTATION_SUBTYPE subtype = FPDFAnnot_GetSubtype(annotation);
+    page_features_.annotation_types.insert(subtype);
+  }
+
+  return &page_features_;
 }
 
 PDFiumPage::ScopedLoadCounter::ScopedLoadCounter(PDFiumPage* page)

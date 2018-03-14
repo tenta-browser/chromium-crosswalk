@@ -6,6 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/test/test_timeouts.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "chrome/browser/media/webrtc/test_stats_dictionary.h"
 #include "chrome/browser/media/webrtc/webrtc_browsertest_base.h"
@@ -87,7 +88,8 @@ class WebRtcStatsPerfBrowserTest : public WebRtcTestBase {
   }
 
   void StartCall(const std::string& audio_codec,
-                 const std::string& video_codec) {
+                 const std::string& video_codec,
+                 bool prefer_hw_video_codec) {
     ASSERT_TRUE(test::HasReferenceFilesInCheckout());
     ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -102,8 +104,8 @@ class WebRtcStatsPerfBrowserTest : public WebRtcTestBase {
     SetupPeerconnectionWithLocalStream(right_tab_);
     SetDefaultAudioCodec(left_tab_, audio_codec);
     SetDefaultAudioCodec(right_tab_, audio_codec);
-    SetDefaultVideoCodec(left_tab_, video_codec);
-    SetDefaultVideoCodec(right_tab_, video_codec);
+    SetDefaultVideoCodec(left_tab_, video_codec, prefer_hw_video_codec);
+    SetDefaultVideoCodec(right_tab_, video_codec, prefer_hw_video_codec);
     CreateDataChannel(left_tab_, "data");
     CreateDataChannel(right_tab_, "data");
     NegotiateCall(left_tab_, right_tab_);
@@ -120,9 +122,23 @@ class WebRtcStatsPerfBrowserTest : public WebRtcTestBase {
       HangUp(right_tab_);
   }
 
-  void RunsAudioAndVideoCallCollectingMetrics(
-      const std::string& audio_codec, const std::string& video_codec) {
-    StartCall(audio_codec, video_codec);
+  void RunsAudioAndVideoCallCollectingMetricsWithAudioCodec(
+      const std::string& audio_codec) {
+    RunsAudioAndVideoCallCollectingMetrics(audio_codec, kUseDefaultVideoCodec,
+                                           false /* prefer_hw_video_codec */);
+  }
+
+  void RunsAudioAndVideoCallCollectingMetricsWithVideoCodec(
+      const std::string& video_codec,
+      bool prefer_hw_video_codec) {
+    RunsAudioAndVideoCallCollectingMetrics(kUseDefaultAudioCodec, video_codec,
+                                           prefer_hw_video_codec);
+  }
+
+  void RunsAudioAndVideoCallCollectingMetrics(const std::string& audio_codec,
+                                              const std::string& video_codec,
+                                              bool prefer_hw_video_codec) {
+    StartCall(audio_codec, video_codec, prefer_hw_video_codec);
 
     // Call for 60 seconds so that values may stabilize, bandwidth ramp up, etc.
     test::SleepInJavascript(left_tab_, 60000);
@@ -198,7 +214,8 @@ class WebRtcStatsPerfBrowserTest : public WebRtcTestBase {
       GetStatsVariation variation) {
     EXPECT_TRUE(base::TimeTicks::IsHighResolution());
 
-    StartCall(kUseDefaultAudioCodec, kUseDefaultVideoCodec);
+    StartCall(kUseDefaultAudioCodec, kUseDefaultVideoCodec,
+              false /* prefer_hw_video_codec */);
 
     double invocation_time = 0.0;
     switch (variation) {
@@ -232,43 +249,52 @@ class WebRtcStatsPerfBrowserTest : public WebRtcTestBase {
 IN_PROC_BROWSER_TEST_F(
     WebRtcStatsPerfBrowserTest,
     MANUAL_RunsAudioAndVideoCallCollectingMetrics_AudioCodec_opus) {
-  RunsAudioAndVideoCallCollectingMetrics("opus", kUseDefaultVideoCodec);
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  RunsAudioAndVideoCallCollectingMetricsWithAudioCodec("opus");
 }
 
 IN_PROC_BROWSER_TEST_F(
     WebRtcStatsPerfBrowserTest,
     MANUAL_RunsAudioAndVideoCallCollectingMetrics_AudioCodec_ISAC) {
-  RunsAudioAndVideoCallCollectingMetrics("ISAC", kUseDefaultVideoCodec);
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  RunsAudioAndVideoCallCollectingMetricsWithAudioCodec("ISAC");
 }
 
 IN_PROC_BROWSER_TEST_F(
     WebRtcStatsPerfBrowserTest,
     MANUAL_RunsAudioAndVideoCallCollectingMetrics_AudioCodec_G722) {
-  RunsAudioAndVideoCallCollectingMetrics("G722", kUseDefaultVideoCodec);
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  RunsAudioAndVideoCallCollectingMetricsWithAudioCodec("G722");
 }
 
 IN_PROC_BROWSER_TEST_F(
     WebRtcStatsPerfBrowserTest,
     MANUAL_RunsAudioAndVideoCallCollectingMetrics_AudioCodec_PCMU) {
-  RunsAudioAndVideoCallCollectingMetrics("PCMU", kUseDefaultVideoCodec);
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  RunsAudioAndVideoCallCollectingMetricsWithAudioCodec("PCMU");
 }
 
 IN_PROC_BROWSER_TEST_F(
     WebRtcStatsPerfBrowserTest,
     MANUAL_RunsAudioAndVideoCallCollectingMetrics_AudioCodec_PCMA) {
-  RunsAudioAndVideoCallCollectingMetrics("PCMA", kUseDefaultVideoCodec);
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  RunsAudioAndVideoCallCollectingMetricsWithAudioCodec("PCMA");
 }
 
 IN_PROC_BROWSER_TEST_F(
     WebRtcStatsPerfBrowserTest,
     MANUAL_RunsAudioAndVideoCallCollectingMetrics_VideoCodec_VP8) {
-  RunsAudioAndVideoCallCollectingMetrics(kUseDefaultAudioCodec, "VP8");
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  RunsAudioAndVideoCallCollectingMetricsWithVideoCodec(
+      "VP8", false /* prefer_hw_video_codec */);
 }
 
 IN_PROC_BROWSER_TEST_F(
     WebRtcStatsPerfBrowserTest,
     MANUAL_RunsAudioAndVideoCallCollectingMetrics_VideoCodec_VP9) {
-  RunsAudioAndVideoCallCollectingMetrics(kUseDefaultAudioCodec, "VP9");
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  RunsAudioAndVideoCallCollectingMetricsWithVideoCodec(
+      "VP9", false /* prefer_hw_video_codec */);
 }
 
 #if BUILDFLAG(RTC_USE_H264)
@@ -276,6 +302,7 @@ IN_PROC_BROWSER_TEST_F(
 IN_PROC_BROWSER_TEST_F(
     WebRtcStatsPerfBrowserTest,
     MANUAL_RunsAudioAndVideoCallCollectingMetrics_VideoCodec_H264) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   // Only run test if run-time feature corresponding to |rtc_use_h264| is on.
   if (!base::FeatureList::IsEnabled(content::kWebRtcH264WithOpenH264FFmpeg)) {
     LOG(WARNING) << "Run-time feature WebRTC-H264WithOpenH264FFmpeg disabled. "
@@ -284,7 +311,8 @@ IN_PROC_BROWSER_TEST_F(
         "\"OK\")";
     return;
   }
-  RunsAudioAndVideoCallCollectingMetrics(kUseDefaultAudioCodec, "H264");
+  RunsAudioAndVideoCallCollectingMetricsWithVideoCodec(
+      "H264", true /* prefer_hw_video_codec */);
 }
 
 #endif  // BUILDFLAG(RTC_USE_H264)
@@ -292,6 +320,7 @@ IN_PROC_BROWSER_TEST_F(
 IN_PROC_BROWSER_TEST_F(
     WebRtcStatsPerfBrowserTest,
     MANUAL_RunsAudioAndVideoCallMeasuringGetStatsPerformance_Promise) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   RunsAudioAndVideoCallMeasuringGetStatsPerformance(
       GetStatsVariation::PROMISE_BASED);
 }
@@ -299,6 +328,7 @@ IN_PROC_BROWSER_TEST_F(
 IN_PROC_BROWSER_TEST_F(
     WebRtcStatsPerfBrowserTest,
     MANUAL_RunsAudioAndVideoCallMeasuringGetStatsPerformance_Callback) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   RunsAudioAndVideoCallMeasuringGetStatsPerformance(
       GetStatsVariation::CALLBACK_BASED);
 }

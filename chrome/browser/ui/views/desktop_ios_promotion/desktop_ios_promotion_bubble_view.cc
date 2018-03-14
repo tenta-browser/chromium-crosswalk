@@ -6,7 +6,7 @@
 
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/desktop_ios_promotion/desktop_ios_promotion_controller.h"
+#include "chrome/browser/ui/desktop_ios_promotion/desktop_ios_promotion_bubble_controller.h"
 #include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/passwords/manage_passwords_bubble_view.h"
 #include "chrome/grit/generated_resources.h"
@@ -37,20 +37,19 @@ DesktopIOSPromotionBubbleView::DesktopIOSPromotionBubbleView(
     : promotion_text_label_(
           new views::Label(desktop_ios_promotion::GetPromoText(entry_point))),
       promotion_controller_(
-          base::MakeUnique<DesktopIOSPromotionController>(profile,
-                                                          this,
-                                                          entry_point)) {
-  views::GridLayout* layout = new views::GridLayout(this);
+          base::MakeUnique<DesktopIOSPromotionBubbleController>(profile,
+                                                                this,
+                                                                entry_point)) {
+  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
-  layout->SetInsets(
+  SetBorder(views::CreateEmptyBorder(
       0,
-      provider->GetDistanceMetric(DISTANCE_PANEL_CONTENT_MARGIN) +
+      provider->GetInsetsMetric(views::INSETS_DIALOG).left() +
           desktop_ios_promotion::GetPromoImage(
               GetNativeTheme()->GetSystemColor(
                   ui::NativeTheme::kColorId_TextfieldDefaultColor))
               .width(),
-      0, 0);
-  SetLayoutManager(layout);
+      0, 0));
   send_sms_button_ = views::MdTextButton::CreateSecondaryUiBlueButton(
       this, l10n_util::GetStringUTF16(IDS_DESKTOP_TO_IOS_PROMO_SEND_TO_PHONE));
   no_button_ = views::MdTextButton::CreateSecondaryUiButton(
@@ -74,8 +73,8 @@ DesktopIOSPromotionBubbleView::DesktopIOSPromotionBubbleView(
   promotion_text_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   layout->StartRow(0, kLabelColumnSet);
   layout->AddView(promotion_text_label_);
-  layout->AddPaddingRow(
-      0, provider->GetDistanceMetric(DISTANCE_UNRELATED_CONTROL_VERTICAL));
+  layout->AddPaddingRow(0, provider->GetDistanceMetric(
+                               views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
   layout->StartRow(0, kDoubleButtonColumnSet);
   layout->AddView(send_sms_button_);
   layout->AddView(no_button_);
@@ -96,19 +95,16 @@ void DesktopIOSPromotionBubbleView::ButtonPressed(views::Button* sender,
   GetWidget()->Close();
 }
 
-void DesktopIOSPromotionBubbleView::UpdateBubbleHeight() {
-  gfx::Rect old_bounds = GetWidget()->GetWindowBoundsInScreen();
-  old_bounds.set_height(
-      GetWidget()->GetRootView()->GetHeightForWidth(old_bounds.width()));
-  GetWidget()->SetBounds(old_bounds);
-}
-
 void DesktopIOSPromotionBubbleView::UpdateRecoveryPhoneLabel() {
   std::string number = promotion_controller_->GetUsersRecoveryPhoneNumber();
   if (!number.empty()) {
     promotion_text_label_->SetText(desktop_ios_promotion::GetPromoText(
         promotion_controller_->entry_point(), number));
     Layout();
-    UpdateBubbleHeight();
+    views::Widget* widget = GetWidget();
+    gfx::Rect old_bounds = widget->GetWindowBoundsInScreen();
+    old_bounds.set_height(
+        widget->GetRootView()->GetHeightForWidth(old_bounds.width()));
+    widget->SetBounds(old_bounds);
   }
 }

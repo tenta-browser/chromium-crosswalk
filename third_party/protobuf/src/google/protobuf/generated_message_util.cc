@@ -48,23 +48,23 @@ double NaN() {
   return std::numeric_limits<double>::quiet_NaN();
 }
 
-void DeleteEmptyString() {
-  delete cr_empty_string_;
-}
+ExplicitlyConstructed< ::std::string> fixed_address_empty_string;
+GOOGLE_PROTOBUF_DECLARE_ONCE(empty_string_once_init_);
+
+void DeleteEmptyString() { fixed_address_empty_string.Shutdown(); }
 
 void InitEmptyString() {
-  cr_empty_string_ = new string;
+  fixed_address_empty_string.DefaultConstruct();
   OnShutdown(&DeleteEmptyString);
 }
 
 const ::std::string& GetEmptyString() {
-  ::google::protobuf::GoogleOnceInit(&cr_empty_string_once_init_,
-                                     &InitEmptyString);
+  ::google::protobuf::GoogleOnceInit(&empty_string_once_init_, &InitEmptyString);
   return GetEmptyStringAlreadyInited();
 }
 
 
-int StringSpaceUsedExcludingSelf(const string& str) {
+size_t StringSpaceUsedExcludingSelfLong(const string& str) {
   const void* start = &str;
   const void* end = &str + 1;
   if (start <= str.data() && str.data() < end) {
@@ -76,6 +76,10 @@ int StringSpaceUsedExcludingSelf(const string& str) {
 }
 
 
+
+void InitProtobufDefaults() {
+  GetEmptyString();
+}
 
 }  // namespace internal
 }  // namespace protobuf

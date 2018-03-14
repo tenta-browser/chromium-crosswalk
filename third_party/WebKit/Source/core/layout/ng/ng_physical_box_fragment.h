@@ -6,54 +6,45 @@
 #define NGPhysicalBoxFragment_h
 
 #include "core/CoreExport.h"
-#include "core/layout/ng/geometry/ng_logical_offset.h"
-#include "core/layout/ng/geometry/ng_margin_strut.h"
-#include "core/layout/ng/ng_floating_object.h"
-#include "core/layout/ng/ng_physical_fragment.h"
-#include "platform/wtf/Optional.h"
+#include "core/layout/ng/inline/ng_baseline.h"
+#include "core/layout/ng/ng_physical_container_fragment.h"
 
 namespace blink {
 
-struct NGFloatingObject;
-
-class CORE_EXPORT NGPhysicalBoxFragment final : public NGPhysicalFragment {
+class CORE_EXPORT NGPhysicalBoxFragment final
+    : public NGPhysicalContainerFragment {
  public:
   // This modifies the passed-in children vector.
   NGPhysicalBoxFragment(LayoutObject* layout_object,
+                        const ComputedStyle& style,
                         NGPhysicalSize size,
-                        NGPhysicalSize overflow,
-                        Vector<RefPtr<NGPhysicalFragment>>& children,
-                        Vector<RefPtr<NGFloatingObject>>& positioned_floats,
-                        const WTF::Optional<NGLogicalOffset>& bfc_offset,
-                        const NGMarginStrut& end_margin_strut,
-                        RefPtr<NGBreakToken> break_token = nullptr);
+                        Vector<scoped_refptr<NGPhysicalFragment>>& children,
+                        const NGPhysicalOffsetRect& contents_visual_rect,
+                        Vector<NGBaseline>& baselines,
+                        NGBoxType box_type,
+                        unsigned,  // NGBorderEdges::Physical
+                        scoped_refptr<NGBreakToken> break_token = nullptr);
 
-  // Returns the total size, including the contents outside of the border-box.
-  NGPhysicalSize OverflowSize() const { return overflow_; }
+  const NGBaseline* Baseline(const NGBaselineRequest&) const;
 
-  const Vector<RefPtr<NGPhysicalFragment>>& Children() const {
-    return children_;
-  }
+  bool HasSelfPaintingLayer() const;
 
-  // List of positioned floats that need to be copied to the old layout tree.
-  // TODO(layout-ng): remove this once we change painting code to handle floats
-  // differently.
-  const Vector<RefPtr<NGFloatingObject>>& PositionedFloats() const {
-    return positioned_floats_;
-  }
+  // True if overflow != 'visible', except for certain boxes that do not allow
+  // overflow clip; i.e., AllowOverflowClip() returns false.
+  bool HasOverflowClip() const;
+  bool ShouldClipOverflow() const;
 
-  const WTF::Optional<NGLogicalOffset>& BfcOffset() const {
-    return bfc_offset_;
-  }
+  // Visual rect of this box in the local coordinate. Does not include children
+  // even if they overflow this box.
+  NGPhysicalOffsetRect SelfVisualRect() const;
 
-  const NGMarginStrut& EndMarginStrut() const { return end_margin_strut_; }
+  // VisualRect of itself including contents, in the local coordinate.
+  NGPhysicalOffsetRect VisualRectWithContents() const;
+
+  scoped_refptr<NGPhysicalFragment> CloneWithoutOffset() const;
 
  private:
-  NGPhysicalSize overflow_;
-  Vector<RefPtr<NGPhysicalFragment>> children_;
-  Vector<RefPtr<NGFloatingObject>> positioned_floats_;
-  const WTF::Optional<NGLogicalOffset> bfc_offset_;
-  const NGMarginStrut end_margin_strut_;
+  Vector<NGBaseline> baselines_;
 };
 
 DEFINE_TYPE_CASTS(NGPhysicalBoxFragment,

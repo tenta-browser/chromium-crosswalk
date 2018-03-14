@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/threading/thread.h"
 #include "net/base/address_tracker_linux.h"
 #include "net/dns/dns_config_service.h"
@@ -87,7 +88,7 @@ void NetworkChangeNotifierLinux::Thread::OnLinkChanged() {
     NetworkChangeNotifier::NotifyObserversOfConnectionTypeChange();
     last_type_ = GetCurrentConnectionType();
     double max_bandwidth_mbps =
-        NetworkChangeNotifier::GetMaxBandwidthForConnectionSubtype(
+        NetworkChangeNotifier::GetMaxBandwidthMbpsForConnectionSubtype(
             last_type_ == CONNECTION_NONE ? SUBTYPE_NONE : SUBTYPE_UNKNOWN);
     NetworkChangeNotifier::NotifyObserversOfMaxBandwidthChange(
         max_bandwidth_mbps, last_type_);

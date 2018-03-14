@@ -22,7 +22,7 @@ if [ ! -d "$OUTPUTDIR" ]; then
 fi
 
 # Download the source
-VERSION=2.26
+VERSION=2.28
 wget -c http://ftp.gnu.org/gnu/binutils/binutils-$VERSION.tar.bz2
 
 # Verify the signature
@@ -31,32 +31,13 @@ if ! gpg --verify binutils-$VERSION.tar.bz2.sig; then
   echo "GPG Signature failed to verify."
   echo ""
   echo "You may need to import the vendor GPG key with:"
-  echo "# gpg --keyserver pgp.mit.edu --recv-key 4AE55E93"
+  echo "# gpg --keyserver hkp://pgp.mit.edu:80 --recv-key 4AE55E93"
   exit 1
-fi
-
-if [ ! -d gperftools ]; then
-  git clone --branch gperftools-2.4 https://github.com/gperftools/gperftools
 fi
 
 # Extract the source
 rm -rf binutils-$VERSION
 tar jxf binutils-$VERSION.tar.bz2
-
-# Patch the source
-(
-  cd binutils-$VERSION
-  echo "long-plt.patch"
-  echo "=================================="
-  patch -p1 < ../long-plt.patch
-  echo "----------------------------------"
-  echo
-  echo "icf-rel.patch"
-  echo "=================================="
-  patch -p1 < ../icf-rel.patch
-  echo "----------------------------------"
-  echo
-)
 
 for ARCH in i386 amd64; do
   if [ ! -d precise-chroot-$ARCH ]; then
@@ -67,10 +48,9 @@ for ARCH in i386 amd64; do
     echo ""
     echo "Building chroot for $ARCH"
     echo "============================="
-    GPERFTOOLS_DEPS=autoconf,automake,libtool
     sudo debootstrap \
         --arch=$ARCH \
-        --include=build-essential,flex,bison,$GPERFTOOLS_DEPS \
+        --include=build-essential,flex,bison \
         precise precise-chroot-$ARCH
     echo "============================="
   fi
@@ -86,7 +66,6 @@ for ARCH in i386 amd64; do
   sudo mkdir -p "$BUILDDIR"
   sudo cp -a binutils-$VERSION "$BUILDDIR"
   sudo cp -a build-one.sh "$BUILDDIR"
-  sudo cp -a gperftools "$BUILDDIR"
 
   # Do the build
   PREFIX=
@@ -116,10 +95,6 @@ for ARCH in i386 amd64; do
 
   # Copy them out of the chroot
   cp -a "$BUILDDIR/output/$ARCHNAME" "$OUTPUTDIR"
-
-  # Copy plugin header out of the chroot
-  mkdir "$OUTPUTDIR/$ARCHNAME/include"
-  cp "$BUILDDIR/binutils-$VERSION/include/plugin-api.h" "$OUTPUTDIR/$ARCHNAME/include/"
 
   # Clean up chroot
   sudo rm -rf "$BUILDDIR"

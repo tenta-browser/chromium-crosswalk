@@ -19,14 +19,14 @@ class PLATFORM_EXPORT BeginTransformDisplayItem final
         transform_(transform) {}
 
   void Replay(GraphicsContext&) const override;
-  void AppendToWebDisplayItemList(const IntRect&,
+  void AppendToWebDisplayItemList(const LayoutSize&,
                                   WebDisplayItemList*) const override;
 
   const AffineTransform& Transform() const { return transform_; }
 
  private:
-#ifndef NDEBUG
-  void DumpPropertiesAsDebugString(WTF::StringBuilder&) const final;
+#if DCHECK_IS_ON()
+  void PropertiesAsJSON(JSONObject&) const final;
 #endif
   bool Equals(const DisplayItem& other) const final {
     return DisplayItem::Equals(other) &&
@@ -44,7 +44,7 @@ class PLATFORM_EXPORT EndTransformDisplayItem final
       : PairedEndDisplayItem(client, kEndTransform, sizeof(*this)) {}
 
   void Replay(GraphicsContext&) const override;
-  void AppendToWebDisplayItemList(const IntRect&,
+  void AppendToWebDisplayItemList(const LayoutSize&,
                                   WebDisplayItemList*) const override;
 
  private:

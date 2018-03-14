@@ -11,6 +11,7 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/memory/weak_ptr.h"
+#include "build/build_config.h"
 #include "headless/public/devtools/domains/page.h"
 #include "headless/public/devtools/domains/runtime.h"
 #include "headless/public/headless_browser.h"
@@ -18,6 +19,11 @@
 #include "headless/public/headless_devtools_target.h"
 #include "headless/public/headless_web_contents.h"
 #include "ui/gfx/geometry/size.h"
+
+#if defined(OS_WIN)
+#include "content/public/app/sandbox_helper_win.h"
+#include "sandbox/win/src/sandbox_types.h"
+#endif
 
 // This class contains the main application logic, i.e., waiting for a page to
 // load and printing its DOM. Note that browser initialization happens outside
@@ -91,21 +97,22 @@ void HeadlessExample::DevToolsTargetReady() {
 void HeadlessExample::OnLoadEventFired(
     const headless::page::LoadEventFiredParams& params) {
   // The page has now finished loading. Let's grab a snapshot of the DOM by
-  // evaluating the outerHTML property on the body element.
+  // evaluating the innerHTML property on the document element.
   devtools_client_->GetRuntime()->Evaluate(
-      "document.body.outerHTML",
+      "(document.doctype ? new "
+      "XMLSerializer().serializeToString(document.doctype) + '\\n' : '') + "
+      "document.documentElement.outerHTML",
       base::Bind(&HeadlessExample::OnDomFetched, weak_factory_.GetWeakPtr()));
 }
 
 void HeadlessExample::OnDomFetched(
     std::unique_ptr<headless::runtime::EvaluateResult> result) {
-  std::string dom;
   // Make sure the evaluation succeeded before reading the result.
   if (result->HasExceptionDetails()) {
-    LOG(ERROR) << "Failed to evaluate document.body.outerHTML: "
+    LOG(ERROR) << "Failed to serialize document: "
                << result->GetExceptionDetails()->GetText();
-  } else if (result->GetResult()->GetValue()->GetAsString(&dom)) {
-    printf("%s\n", dom.c_str());
+  } else {
+    printf("%s\n", result->GetResult()->GetValue()->GetString().c_str());
   }
 
   // Shut down the browser (see ~HeadlessExample).
@@ -158,15 +165,24 @@ void OnHeadlessBrowserStarted(headless::HeadlessBrowser* browser) {
 }
 
 int main(int argc, const char** argv) {
+#if !defined(OS_WIN)
   // This function must be the first thing we call to make sure child processes
   // such as the renderer are started properly. The headless library starts
   // child processes by forking and exec'ing the main application.
   headless::RunChildProcessIfNeeded(argc, argv);
+#endif
 
   // Create a headless browser instance. There can be one of these per process
   // and it can only be initialized once.
   headless::HeadlessBrowser::Options::Builder builder(argc, argv);
 
+#if defined(OS_WIN)
+  // In windows, you must initialize and set the sandbox, or pass it along
+  // if it has already been initialized.
+  sandbox::SandboxInterfaceInfo sandbox_info = {0};
+  content::InitializeSandboxInfo(&sandbox_info);
+  builder.SetSandboxInfo(&sandbox_info);
+#endif
   // Here you can customize browser options. As an example we set the window
   // size.
   builder.SetWindowSize(gfx::Size(800, 600));

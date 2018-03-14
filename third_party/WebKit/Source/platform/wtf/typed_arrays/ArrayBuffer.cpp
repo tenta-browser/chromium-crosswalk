@@ -25,14 +25,14 @@
 
 #include "platform/wtf/typed_arrays/ArrayBuffer.h"
 
-#include "platform/wtf/RefPtr.h"
+#include "base/memory/scoped_refptr.h"
 #include "platform/wtf/typed_arrays/ArrayBufferView.h"
 
 namespace WTF {
 
 bool ArrayBuffer::Transfer(ArrayBufferContents& result) {
   DCHECK(!IsShared());
-  RefPtr<ArrayBuffer> keep_alive(this);
+  scoped_refptr<ArrayBuffer> keep_alive(this);
 
   if (!contents_.Data()) {
     result.Neuter();
@@ -47,27 +47,31 @@ bool ArrayBuffer::Transfer(ArrayBufferContents& result) {
 
   if (all_views_are_neuterable) {
     contents_.Transfer(result);
+
+    while (first_view_) {
+      ArrayBufferView* current = first_view_;
+      RemoveView(current);
+      current->Neuter();
+    }
+
+    is_neutered_ = true;
   } else {
+    // TODO(https://crbug.com/763038): See original bug at
+    // https://crbug.com/254728. Copying the buffer instead of transferring is
+    // not spec compliant but was added for a WebAudio bug fix. The only time
+    // this branch is taken is when attempting to transfer an AudioBuffer's
+    // channel data ArrayBuffer.
     contents_.CopyTo(result);
     if (!result.Data())
       return false;
   }
-
-  while (first_view_) {
-    ArrayBufferView* current = first_view_;
-    RemoveView(current);
-    if (all_views_are_neuterable || current->IsNeuterable())
-      current->Neuter();
-  }
-
-  is_neutered_ = true;
 
   return true;
 }
 
 bool ArrayBuffer::ShareContentsWith(ArrayBufferContents& result) {
   DCHECK(IsShared());
-  RefPtr<ArrayBuffer> keep_alive(this);
+  scoped_refptr<ArrayBuffer> keep_alive(this);
 
   if (!contents_.DataShared()) {
     result.Neuter();
@@ -80,7 +84,7 @@ bool ArrayBuffer::ShareContentsWith(ArrayBufferContents& result) {
 
 void ArrayBuffer::AddView(ArrayBufferView* view) {
   view->buffer_ = this;
-  view->prev_view_ = 0;
+  view->prev_view_ = nullptr;
   view->next_view_ = first_view_;
   if (first_view_)
     first_view_->prev_view_ = view;
@@ -88,14 +92,14 @@ void ArrayBuffer::AddView(ArrayBufferView* view) {
 }
 
 void ArrayBuffer::RemoveView(ArrayBufferView* view) {
-  DCHECK_EQ(this, view->buffer_.Get());
+  DCHECK_EQ(this, view->buffer_.get());
   if (view->next_view_)
     view->next_view_->prev_view_ = view->prev_view_;
   if (view->prev_view_)
     view->prev_view_->next_view_ = view->next_view_;
   if (first_view_ == view)
     first_view_ = view->next_view_;
-  view->prev_view_ = view->next_view_ = 0;
+  view->prev_view_ = view->next_view_ = nullptr;
 }
 
 }  // namespace WTF

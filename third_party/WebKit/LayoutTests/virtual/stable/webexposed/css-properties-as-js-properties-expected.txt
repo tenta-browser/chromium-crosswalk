@@ -120,6 +120,7 @@ float
 floodColor
 floodOpacity
 font
+fontDisplay
 fontFamily
 fontFeatureSettings
 fontKerning
@@ -128,8 +129,10 @@ fontStretch
 fontStyle
 fontVariant
 fontVariantCaps
+fontVariantEastAsian
 fontVariantLigatures
 fontVariantNumeric
+fontVariationSettings
 fontWeight
 getPropertyPriority
 getPropertyValue
@@ -164,6 +167,7 @@ left
 length
 letterSpacing
 lightingColor
+lineBreak
 lineHeight
 listStyle
 listStyleImage
@@ -191,14 +195,12 @@ minInlineSize
 minWidth
 minZoom
 mixBlendMode
-motion
 objectFit
 objectPosition
 offset
 offsetDistance
 offsetPath
 offsetRotate
-offsetRotation
 opacity
 order
 orientation
@@ -213,6 +215,9 @@ overflowAnchor
 overflowWrap
 overflowX
 overflowY
+overscrollBehavior
+overscrollBehaviorX
+overscrollBehaviorY
 padding
 paddingBottom
 paddingLeft
@@ -238,6 +243,7 @@ resize
 right
 rx
 ry
+scrollBehavior
 setProperty
 shapeImageThreshold
 shapeMargin
@@ -265,7 +271,7 @@ textCombineUpright
 textDecoration
 textDecorationColor
 textDecorationLine
-textDecorationSkip
+textDecorationSkipInk
 textDecorationStyle
 textIndent
 textOrientation
@@ -278,6 +284,7 @@ textUnderlinePosition
 top
 touchAction
 transform
+transformBox
 transformOrigin
 transformStyle
 transition
@@ -294,8 +301,6 @@ verticalAlign
 visibility
 webkitAppRegion
 webkitAppearance
-webkitBackgroundClip
-webkitBackgroundOrigin
 webkitBorderAfter
 webkitBorderAfterColor
 webkitBorderAfterStyle

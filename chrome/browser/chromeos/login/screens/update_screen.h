@@ -54,10 +54,10 @@ class UpdateScreen : public BaseScreen,
   void SetIgnoreIdleStatus(bool ignore_idle_status);
 
   enum ExitReason {
-     REASON_UPDATE_CANCELED = 0,
-     REASON_UPDATE_INIT_FAILED,
-     REASON_UPDATE_NON_CRITICAL,
-     REASON_UPDATE_ENDED
+    REASON_UPDATE_CANCELED = 0,
+    REASON_UPDATE_INIT_FAILED,
+    REASON_UPDATE_NON_CRITICAL,
+    REASON_UPDATE_ENDED
   };
   // Reports update results to the BaseScreenDelegate.
   virtual void ExitUpdate(ExitReason reason);
@@ -79,6 +79,7 @@ class UpdateScreen : public BaseScreen,
   FRIEND_TEST_ALL_PREFIXES(UpdateScreenTest, TestBasic);
   FRIEND_TEST_ALL_PREFIXES(UpdateScreenTest, TestUpdateAvailable);
   FRIEND_TEST_ALL_PREFIXES(UpdateScreenTest, TestAPReselection);
+  friend class UpdateScreenUnitTest;
 
   enum class State {
     STATE_IDLE = 0,

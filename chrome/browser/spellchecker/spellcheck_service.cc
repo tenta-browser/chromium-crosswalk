@@ -7,6 +7,7 @@
 #include <set>
 
 #include "base/logging.h"
+#include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "base/supports_user_data.h"
 #include "base/synchronization/waitable_event.h"
@@ -20,9 +21,8 @@
 #include "components/spellcheck/browser/spellcheck_host_metrics.h"
 #include "components/spellcheck/browser/spellcheck_platform.h"
 #include "components/spellcheck/browser/spelling_service_client.h"
-#include "components/spellcheck/common/spellcheck_bdict_language.h"
+#include "components/spellcheck/common/spellcheck.mojom.h"
 #include "components/spellcheck/common/spellcheck_common.h"
-#include "components/spellcheck/common/spellcheck_messages.h"
 #include "components/spellcheck/spellcheck_build_features.h"
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/browser_context.h"
@@ -31,7 +31,7 @@
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/storage_partition.h"
-#include "ipc/ipc_platform_file.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 using content::BrowserThread;
 
@@ -167,34 +167,39 @@ void SpellcheckService::StartRecordingMetrics(bool spellcheck_enabled) {
   OnUseSpellingServiceChanged();
 }
 
-void SpellcheckService::InitForRenderer(content::RenderProcessHost* process) {
+void SpellcheckService::InitForRenderer(
+    const service_manager::Identity& renderer_identity) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  content::BrowserContext* context = process->GetBrowserContext();
+  content::BrowserContext* context =
+      content::BrowserContext::GetBrowserContextForServiceUserId(
+          renderer_identity.user_id());
   if (SpellcheckServiceFactory::GetForContext(context) != this)
     return;
 
-  PrefService* prefs = user_prefs::UserPrefs::Get(context);
-  std::vector<SpellCheckBDictLanguage> bdict_languages;
+  const PrefService* prefs = user_prefs::UserPrefs::Get(context);
+  std::vector<spellcheck::mojom::SpellCheckBDictLanguagePtr> dictionaries;
 
   for (const auto& hunspell_dictionary : hunspell_dictionaries_) {
-    bdict_languages.push_back(SpellCheckBDictLanguage());
-    bdict_languages.back().language = hunspell_dictionary->GetLanguage();
-    bdict_languages.back().file =
-        hunspell_dictionary->GetDictionaryFile().IsValid()
-            ? IPC::GetPlatformFileForTransit(
-                  hunspell_dictionary->GetDictionaryFile().GetPlatformFile(),
-                  false)
-            : IPC::InvalidPlatformFileForTransit();
+    dictionaries.push_back(spellcheck::mojom::SpellCheckBDictLanguage::New(
+        hunspell_dictionary->GetDictionaryFile().Duplicate(),
+        hunspell_dictionary->GetLanguage()));
   }
 
-  bool enabled =
-      prefs->GetBoolean(spellcheck::prefs::kEnableSpellcheck) &&
-      !bdict_languages.empty();
-  process->Send(new SpellCheckMsg_Init(
-      bdict_languages,
-      enabled ? custom_dictionary_->GetWords() : std::set<std::string>()));
-  process->Send(new SpellCheckMsg_EnableSpellCheck(enabled));
+  bool enable = prefs->GetBoolean(spellcheck::prefs::kEnableSpellcheck) &&
+                !dictionaries.empty();
+
+  std::vector<std::string> custom_words;
+  if (enable) {
+    custom_words.assign(custom_dictionary_->GetWords().begin(),
+                        custom_dictionary_->GetWords().end());
+  }
+
+  spellcheck::mojom::SpellCheckerPtr spellchecker;
+  content::BindInterface(
+      content::RenderProcessHost::FromRendererIdentity(renderer_identity),
+      &spellchecker);
+  spellchecker->Initialize(std::move(dictionaries), custom_words, enable);
 }
 
 SpellCheckHostMetrics* SpellcheckService::GetMetrics() const {
@@ -249,7 +254,9 @@ void SpellcheckService::Observe(int type,
                                 const content::NotificationSource& source,
                                 const content::NotificationDetails& details) {
   DCHECK_EQ(content::NOTIFICATION_RENDERER_PROCESS_CREATED, type);
-  InitForRenderer(content::Source<content::RenderProcessHost>(source).ptr());
+  InitForRenderer(content::Source<content::RenderProcessHost>(source)
+                      .ptr()
+                      ->GetChildIdentity());
 }
 
 void SpellcheckService::OnCustomDictionaryLoaded() {
@@ -257,13 +264,20 @@ void SpellcheckService::OnCustomDictionaryLoaded() {
 }
 
 void SpellcheckService::OnCustomDictionaryChanged(
-    const SpellcheckCustomDictionary::Change& dictionary_change) {
-  for (content::RenderProcessHost::iterator i(
-          content::RenderProcessHost::AllHostsIterator());
-       !i.IsAtEnd(); i.Advance()) {
-    i.GetCurrentValue()->Send(new SpellCheckMsg_CustomDictionaryChanged(
-        dictionary_change.to_add(),
-        dictionary_change.to_remove()));
+    const SpellcheckCustomDictionary::Change& change) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  auto process_hosts(content::RenderProcessHost::AllHostsIterator());
+
+  const std::vector<std::string> additions(change.to_add().begin(),
+                                           change.to_add().end());
+  const std::vector<std::string> deletions(change.to_remove().begin(),
+                                           change.to_remove().end());
+  while (!process_hosts.IsAtEnd()) {
+    spellcheck::mojom::SpellCheckerPtr spellchecker;
+    content::BindInterface(process_hosts.GetCurrentValue(), &spellchecker);
+    spellchecker->CustomDictionaryChanged(additions, deletions);
+    process_hosts.Advance();
   }
 }
 
@@ -304,7 +318,7 @@ void SpellcheckService::InitForAllRenderers() {
        !i.IsAtEnd(); i.Advance()) {
     content::RenderProcessHost* process = i.GetCurrentValue();
     if (process && process->GetHandle())
-      InitForRenderer(process);
+      InitForRenderer(process->GetChildIdentity());
   }
 }
 
@@ -341,8 +355,7 @@ void SpellcheckService::OnAcceptLanguagesChanged() {
   std::vector<std::string> filtered_dictionaries;
 
   for (const auto& dictionary : dictionaries) {
-    if (std::find(accept_languages.begin(), accept_languages.end(),
-                  dictionary) != accept_languages.end()) {
+    if (base::ContainsValue(accept_languages, dictionary)) {
       filtered_dictionaries.push_back(dictionary);
     }
   }

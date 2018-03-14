@@ -25,12 +25,13 @@
 #include "core/html/HTMLIFrameElement.h"
 
 #include "core/CSSPropertyNames.h"
-#include "core/HTMLNames.h"
 #include "core/frame/UseCounter.h"
+#include "core/frame/csp/ContentSecurityPolicy.h"
 #include "core/html/HTMLDocument.h"
+#include "core/html_names.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "core/layout/LayoutIFrame.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -38,28 +39,34 @@ using namespace HTMLNames;
 
 inline HTMLIFrameElement::HTMLIFrameElement(Document& document)
     : HTMLFrameElementBase(iframeTag, document),
-      did_load_non_empty_document_(false),
+      collapsed_by_client_(false),
       sandbox_(HTMLIFrameElementSandbox::Create(this)),
-      allow_(HTMLIFrameElementAllow::Create(this)),
       referrer_policy_(kReferrerPolicyDefault) {}
 
 DEFINE_NODE_FACTORY(HTMLIFrameElement)
 
-DEFINE_TRACE(HTMLIFrameElement) {
+void HTMLIFrameElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(sandbox_);
-  visitor->Trace(allow_);
   HTMLFrameElementBase::Trace(visitor);
   Supplementable<HTMLIFrameElement>::Trace(visitor);
 }
 
 HTMLIFrameElement::~HTMLIFrameElement() {}
 
-DOMTokenList* HTMLIFrameElement::sandbox() const {
-  return sandbox_.Get();
+void HTMLIFrameElement::SetCollapsed(bool collapse) {
+  if (collapsed_by_client_ == collapse)
+    return;
+
+  collapsed_by_client_ = collapse;
+
+  // This is always called in response to an IPC, so should not happen in the
+  // middle of a style recalc.
+  DCHECK(!GetDocument().InStyleRecalc());
+  LazyReattachIfAttached();
 }
 
-DOMTokenList* HTMLIFrameElement::allow() const {
-  return allow_.Get();
+DOMTokenList* HTMLIFrameElement::sandbox() const {
+  return sandbox_.Get();
 }
 
 bool HTMLIFrameElement::IsPresentationAttribute(
@@ -73,7 +80,7 @@ bool HTMLIFrameElement::IsPresentationAttribute(
 void HTMLIFrameElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,
     const AtomicString& value,
-    MutableStylePropertySet* style) {
+    MutableCSSPropertyValueSet* style) {
   if (name == widthAttr) {
     AddHTMLLengthToStyle(style, CSSPropertyWidth, value);
   } else if (name == heightAttr) {
@@ -103,23 +110,32 @@ void HTMLIFrameElement::ParseAttribute(
   if (name == nameAttr) {
     if (IsInDocumentTree() && GetDocument().IsHTMLDocument()) {
       HTMLDocument& document = ToHTMLDocument(this->GetDocument());
-      document.RemoveExtraNamedItem(name_);
-      document.AddExtraNamedItem(value);
+      document.RemoveNamedItem(name_);
+      document.AddNamedItem(value);
     }
     AtomicString old_name = name_;
     name_ = value;
     if (name_ != old_name)
       FrameOwnerPropertiesChanged();
   } else if (name == sandboxAttr) {
-    sandbox_->setValue(value);
-    UseCounter::Count(GetDocument(), UseCounter::kSandboxViaIFrame);
+    sandbox_->DidUpdateAttributeValue(params.old_value, value);
+    String invalid_tokens;
+    SetSandboxFlags(value.IsNull() ? kSandboxNone
+                                   : ParseSandboxPolicy(sandbox_->TokenSet(),
+                                                        invalid_tokens));
+    if (!invalid_tokens.IsNull()) {
+      GetDocument().AddConsoleMessage(ConsoleMessage::Create(
+          kOtherMessageSource, kErrorMessageLevel,
+          "Error while parsing the 'sandbox' attribute: " + invalid_tokens));
+    }
+    UseCounter::Count(GetDocument(), WebFeature::kSandboxViaIFrame);
   } else if (name == referrerpolicyAttr) {
     referrer_policy_ = kReferrerPolicyDefault;
     if (!value.IsNull()) {
       SecurityPolicy::ReferrerPolicyFromString(
           value, kSupportReferrerPolicyLegacyKeywords, &referrer_policy_);
       UseCounter::Count(GetDocument(),
-                        UseCounter::kHTMLIFrameElementReferrerPolicyAttribute);
+                        WebFeature::kHTMLIFrameElementReferrerPolicyAttribute);
     }
   } else if (name == allowfullscreenAttr) {
     bool old_allow_fullscreen = allow_fullscreen_;
@@ -130,33 +146,56 @@ void HTMLIFrameElement::ParseAttribute(
       if (allow_fullscreen_ && ContentFrame()) {
         UseCounter::Count(
             GetDocument(),
-            UseCounter::
+            WebFeature::
                 kHTMLIFrameElementAllowfullscreenAttributeSetAfterContentLoad);
       }
       FrameOwnerPropertiesChanged();
+      UpdateContainerPolicy();
     }
   } else if (name == allowpaymentrequestAttr) {
     bool old_allow_payment_request = allow_payment_request_;
     allow_payment_request_ = !value.IsNull();
-    if (allow_payment_request_ != old_allow_payment_request)
+    if (allow_payment_request_ != old_allow_payment_request) {
       FrameOwnerPropertiesChanged();
-  } else if (RuntimeEnabledFeatures::embedderCSPEnforcementEnabled() &&
+      UpdateContainerPolicy();
+    }
+  } else if (RuntimeEnabledFeatures::EmbedderCSPEnforcementEnabled() &&
              name == cspAttr) {
-    // TODO(amalika): add more robust validation of the value
-    if (!value.GetString().ContainsOnlyASCII()) {
+    if (!ContentSecurityPolicy::IsValidCSPAttr(value.GetString())) {
       csp_ = g_null_atom;
       GetDocument().AddConsoleMessage(ConsoleMessage::Create(
           kOtherMessageSource, kErrorMessageLevel,
-          "'csp' attribute contains non-ASCII characters: " + value));
+          "'csp' attribute is not a valid policy: " + value));
       return;
     }
-    AtomicString old_csp = csp_;
-    csp_ = value;
-    if (csp_ != old_csp)
+    if (csp_ != value) {
+      csp_ = value;
       FrameOwnerPropertiesChanged();
-  } else if (RuntimeEnabledFeatures::featurePolicyEnabled() &&
+    }
+  } else if (RuntimeEnabledFeatures::FeaturePolicyEnabled() &&
              name == allowAttr) {
-    allow_->setValue(value);
+    if (allow_ != value) {
+      allow_ = value;
+      Vector<String> messages;
+      bool old_syntax = false;
+      UpdateContainerPolicy(&messages, &old_syntax);
+      if (!messages.IsEmpty()) {
+        for (const String& message : messages) {
+          GetDocument().AddConsoleMessage(ConsoleMessage::Create(
+              kOtherMessageSource, kWarningMessageLevel, message));
+        }
+      }
+      if (!value.IsEmpty()) {
+        if (old_syntax) {
+          UseCounter::Count(
+              GetDocument(),
+              WebFeature::kFeaturePolicyAllowAttributeDeprecatedSyntax);
+        } else {
+          UseCounter::Count(GetDocument(),
+                            WebFeature::kFeaturePolicyAllowAttribute);
+        }
+      }
+    }
   } else {
     if (name == srcAttr)
       LogUpdateAttributeIfIsolatedWorldAndInDocument("iframe", params);
@@ -164,8 +203,64 @@ void HTMLIFrameElement::ParseAttribute(
   }
 }
 
+ParsedFeaturePolicy HTMLIFrameElement::ConstructContainerPolicy(
+    Vector<String>* messages,
+    bool* old_syntax) const {
+  scoped_refptr<SecurityOrigin> src_origin = GetOriginForFeaturePolicy();
+  scoped_refptr<SecurityOrigin> self_origin = GetDocument().GetSecurityOrigin();
+  ParsedFeaturePolicy container_policy = ParseFeaturePolicyAttribute(
+      allow_, self_origin, src_origin, messages, old_syntax);
+
+  // If allowfullscreen attribute is present and no fullscreen policy is set,
+  // enable the feature for all origins.
+  if (AllowFullscreen()) {
+    bool has_fullscreen_policy = false;
+    for (const auto& declaration : container_policy) {
+      if (declaration.feature == FeaturePolicyFeature::kFullscreen) {
+        has_fullscreen_policy = true;
+        if (messages) {
+          messages->push_back(
+              "allow attribute is overriding 'allowfullscreen'.");
+        }
+        break;
+      }
+    }
+    if (!has_fullscreen_policy) {
+      ParsedFeaturePolicyDeclaration whitelist;
+      whitelist.feature = FeaturePolicyFeature::kFullscreen;
+      whitelist.matches_all_origins = true;
+      container_policy.push_back(whitelist);
+    }
+  }
+  // If the allowpaymentrequest attribute is present and no 'payment' policy is
+  // set, enable the feature for all origins.
+  if (AllowPaymentRequest()) {
+    bool has_payment_policy = false;
+    for (const auto& declaration : container_policy) {
+      if (declaration.feature == FeaturePolicyFeature::kPayment) {
+        has_payment_policy = true;
+        if (messages) {
+          messages->push_back(
+              "allow attribute is overriding 'allowpaymentrequest'.");
+        }
+        break;
+      }
+    }
+    if (!has_payment_policy) {
+      ParsedFeaturePolicyDeclaration whitelist;
+      whitelist.feature = FeaturePolicyFeature::kPayment;
+      whitelist.matches_all_origins = true;
+      whitelist.origins = std::vector<url::Origin>(0UL);
+      container_policy.push_back(whitelist);
+    }
+  }
+
+  return container_policy;
+}
+
 bool HTMLIFrameElement::LayoutObjectIsNeeded(const ComputedStyle& style) {
-  return ContentFrame() && HTMLElement::LayoutObjectIsNeeded(style);
+  return ContentFrame() && !collapsed_by_client_ &&
+         HTMLElement::LayoutObjectIsNeeded(style);
 }
 
 LayoutObject* HTMLIFrameElement::CreateLayoutObject(const ComputedStyle&) {
@@ -177,7 +272,7 @@ Node::InsertionNotificationRequest HTMLIFrameElement::InsertedInto(
   InsertionNotificationRequest result =
       HTMLFrameElementBase::InsertedInto(insertion_point);
   if (insertion_point->IsInDocumentTree() && GetDocument().IsHTMLDocument())
-    ToHTMLDocument(GetDocument()).AddExtraNamedItem(name_);
+    ToHTMLDocument(GetDocument()).AddNamedItem(name_);
   LogAddElementIfIsolatedWorldAndInDocument("iframe", srcAttr);
   return result;
 }
@@ -185,35 +280,11 @@ Node::InsertionNotificationRequest HTMLIFrameElement::InsertedInto(
 void HTMLIFrameElement::RemovedFrom(ContainerNode* insertion_point) {
   HTMLFrameElementBase::RemovedFrom(insertion_point);
   if (insertion_point->IsInDocumentTree() && GetDocument().IsHTMLDocument())
-    ToHTMLDocument(GetDocument()).RemoveExtraNamedItem(name_);
+    ToHTMLDocument(GetDocument()).RemoveNamedItem(name_);
 }
 
 bool HTMLIFrameElement::IsInteractiveContent() const {
   return true;
-}
-
-void HTMLIFrameElement::SandboxValueWasSet() {
-  String invalid_tokens;
-  SetSandboxFlags(sandbox_->value().IsNull()
-                      ? kSandboxNone
-                      : ParseSandboxPolicy(sandbox_->Tokens(), invalid_tokens));
-  if (!invalid_tokens.IsNull())
-    GetDocument().AddConsoleMessage(ConsoleMessage::Create(
-        kOtherMessageSource, kErrorMessageLevel,
-        "Error while parsing the 'sandbox' attribute: " + invalid_tokens));
-  SetSynchronizedLazyAttribute(sandboxAttr, sandbox_->value());
-}
-
-void HTMLIFrameElement::AllowValueWasSet() {
-  String invalid_tokens;
-  allowed_features_ = allow_->ParseAllowedFeatureNames(invalid_tokens);
-  if (!invalid_tokens.IsNull()) {
-    GetDocument().AddConsoleMessage(ConsoleMessage::Create(
-        kOtherMessageSource, kErrorMessageLevel,
-        "Error while parsing the 'allow' attribute: " + invalid_tokens));
-  }
-  SetSynchronizedLazyAttribute(allowAttr, allow_->value());
-  FrameOwnerPropertiesChanged();
 }
 
 ReferrerPolicy HTMLIFrameElement::ReferrerPolicyAttribute() {

@@ -59,13 +59,16 @@ class TestDialog : public DialogDelegateView {
     return closeable_;
   }
 
-  gfx::Size GetPreferredSize() const override { return gfx::Size(200, 200); }
+  gfx::Size CalculatePreferredSize() const override {
+    return gfx::Size(200, 200);
+  }
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override {
     return should_handle_escape_;
   }
   base::string16 GetWindowTitle() const override { return title_; }
   View* GetInitiallyFocusedView() override { return input_; }
   bool ShouldUseCustomFrame() const override { return true; }
+  int GetDialogButtons() const override { return dialog_buttons_; }
 
   void CheckAndResetStates(bool canceled,
                            bool accepted,
@@ -90,6 +93,9 @@ class TestDialog : public DialogDelegateView {
   void set_should_handle_escape(bool should_handle_escape) {
     should_handle_escape_ = should_handle_escape;
   }
+  void set_dialog_buttons(int dialog_buttons) {
+    dialog_buttons_ = dialog_buttons;
+  }
 
   views::Textfield* input() { return input_; }
 
@@ -103,6 +109,7 @@ class TestDialog : public DialogDelegateView {
   base::string16 title_;
   bool show_close_button_ = true;
   bool should_handle_escape_ = false;
+  int dialog_buttons_ = ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL;
 
   DISALLOW_COPY_AND_ASSIGN(TestDialog);
 };
@@ -284,10 +291,33 @@ TEST_F(DialogTest, HitTest_WithTitle) {
   }
 }
 
+TEST_F(DialogTest, HitTest_CloseButton) {
+  const NonClientView* view = dialog()->GetWidget()->non_client_view();
+  dialog()->set_show_close_button(true);
+  BubbleFrameView* frame = static_cast<BubbleFrameView*>(view->frame_view());
+  frame->ResetWindowControls();
+
+  const gfx::Rect close_button_bounds =
+      frame->GetCloseButtonForTest()->bounds();
+  EXPECT_EQ(HTCLOSE,
+            frame->NonClientHitTest(gfx::Point(close_button_bounds.x() + 4,
+                                               close_button_bounds.y() + 4)));
+}
+
 TEST_F(DialogTest, BoundsAccommodateTitle) {
   TestDialog* dialog2(new TestDialog());
   dialog2->set_title(base::ASCIIToUTF16("Title"));
   DialogDelegate::CreateDialogWidget(dialog2, GetContext(), nullptr);
+
+  // Remove the close button so it doesn't influence the bounds if it's taller
+  // than the title.
+  dialog()->set_show_close_button(false);
+  dialog2->set_show_close_button(false);
+  dialog()->GetWidget()->non_client_view()->ResetWindowControls();
+  dialog2->GetWidget()->non_client_view()->ResetWindowControls();
+
+  EXPECT_FALSE(dialog()->ShouldShowWindowTitle());
+  EXPECT_TRUE(dialog2->ShouldShowWindowTitle());
 
   // Titled dialogs have taller initial frame bounds than untitled dialogs.
   View* frame1 = dialog()->GetWidget()->non_client_view()->frame_view();
@@ -297,11 +327,27 @@ TEST_F(DialogTest, BoundsAccommodateTitle) {
 
   // Giving the default test dialog a title will yield the same bounds.
   dialog()->set_title(base::ASCIIToUTF16("Title"));
+  EXPECT_TRUE(dialog()->ShouldShowWindowTitle());
+
   dialog()->GetWidget()->UpdateWindowTitle();
   EXPECT_EQ(frame1->GetPreferredSize().height(),
             frame2->GetPreferredSize().height());
 
   dialog2->TearDown();
+}
+
+TEST_F(DialogTest, ActualBoundsMatchPreferredBounds) {
+  dialog()->set_title(base::ASCIIToUTF16(
+      "La la la look at me I'm a really really long title that needs to be "
+      "really really long so that the title will multiline wrap."));
+  dialog()->GetWidget()->UpdateWindowTitle();
+
+  views::View* root_view = dialog()->GetWidget()->GetRootView();
+  gfx::Size preferred_size(root_view->GetPreferredSize());
+  EXPECT_FALSE(preferred_size.IsEmpty());
+  root_view->SizeToPreferredSize();
+  root_view->Layout();
+  EXPECT_EQ(preferred_size, root_view->size());
 }
 
 // Tests default focus is assigned correctly when showing a new dialog.
@@ -380,6 +426,13 @@ TEST_F(DialogTest, UnfocusableInitialFocus) {
   EXPECT_TRUE(textfield->HasFocus());
   EXPECT_EQ(textfield, dialog->GetFocusManager()->GetFocusedView());
   dialog_widget->CloseNow();
+}
+
+TEST_F(DialogTest, DontSnapWithoutButtons) {
+  TestDialog dialog;
+  EXPECT_TRUE(dialog.ShouldSnapFrameWidth());
+  dialog.set_dialog_buttons(ui::DIALOG_BUTTON_NONE);
+  EXPECT_FALSE(dialog.ShouldSnapFrameWidth());
 }
 
 }  // namespace views

@@ -28,7 +28,7 @@ std::string FormatLog(const char* fmt, va_list args) {
 }  // namespace
 
 EventReaderLibevdevCros::EventReaderLibevdevCros(
-    ScopedInputDevice fd,
+    base::ScopedFD fd,
     const base::FilePath& path,
     int id,
     const EventDeviceInfo& devinfo,
@@ -110,7 +110,7 @@ void EventReaderLibevdevCros::OnSynReport(void* data,
                                           EventStateRec* evstate,
                                           struct timeval* tv) {
   EventReaderLibevdevCros* reader = static_cast<EventReaderLibevdevCros*>(data);
-  if (!reader->enabled_)
+  if (!reader->IsEnabled())
     return;
 
   reader->delegate_->OnLibEvdevCrosEvent(&reader->evdev_, evstate, *tv);

@@ -28,13 +28,45 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "StorageQuotaClient.h"
+#include "modules/quota/StorageQuotaClient.h"
 
 #include "core/dom/Document.h"
+#include "core/dom/ExecutionContext.h"
+#include "core/frame/WebLocalFrameImpl.h"
 #include "core/page/Page.h"
 #include "core/workers/WorkerGlobalScope.h"
+#include "modules/quota/DeprecatedStorageQuotaCallbacksImpl.h"
+#include "modules/quota/StorageErrorCallback.h"
+#include "modules/quota/StorageQuotaCallback.h"
+#include "public/platform/TaskType.h"
+#include "public/platform/WebStorageQuotaType.h"
+#include "public/web/WebFrameClient.h"
 
 namespace blink {
+
+StorageQuotaClient::StorageQuotaClient() {}
+
+StorageQuotaClient::~StorageQuotaClient() {}
+
+void StorageQuotaClient::RequestQuota(ScriptState* script_state,
+                                      WebStorageQuotaType storage_type,
+                                      unsigned long long new_quota_in_bytes,
+                                      StorageQuotaCallback* success_callback,
+                                      StorageErrorCallback* error_callback) {
+  ExecutionContext* execution_context = ExecutionContext::From(script_state);
+  DCHECK(execution_context);
+  DCHECK(execution_context->IsDocument())
+      << "Quota requests are not supported in workers";
+
+  Document* document = ToDocument(execution_context);
+  WebLocalFrameImpl* web_frame =
+      WebLocalFrameImpl::FromFrame(document->GetFrame());
+  StorageQuotaCallbacks* callbacks =
+      DeprecatedStorageQuotaCallbacksImpl::Create(success_callback,
+                                                  error_callback);
+  web_frame->Client()->RequestStorageQuota(storage_type, new_quota_in_bytes,
+                                           callbacks);
+}
 
 const char* StorageQuotaClient::SupplementName() {
   return "StorageQuotaClient";
@@ -42,7 +74,7 @@ const char* StorageQuotaClient::SupplementName() {
 
 StorageQuotaClient* StorageQuotaClient::From(ExecutionContext* context) {
   if (!context->IsDocument())
-    return 0;
+    return nullptr;
   return static_cast<StorageQuotaClient*>(
       Supplement<Page>::From(ToDocument(context)->GetPage(), SupplementName()));
 }

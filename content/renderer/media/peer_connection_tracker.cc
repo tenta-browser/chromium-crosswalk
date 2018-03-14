@@ -8,11 +8,15 @@
 #include <stdint.h>
 
 #include <memory>
+#include <string>
 #include <utility>
+#include <vector>
 
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/values.h"
 #include "content/common/media/peer_connection_tracker_messages.h"
 #include "content/renderer/media/rtc_peer_connection_handler.h"
 #include "content/renderer/render_thread_impl.h"
@@ -25,7 +29,7 @@
 #include "third_party/WebKit/public/platform/WebRTCOfferOptions.h"
 #include "third_party/WebKit/public/platform/WebRTCPeerConnectionHandlerClient.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
+#include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebUserMediaRequest.h"
 
 using webrtc::MediaConstraintsInterface;
@@ -134,7 +138,7 @@ static const char* SerializeIceTransportType(
     break;
   default:
     NOTREACHED();
-  };
+  }
   return transport_type;
 }
 
@@ -153,7 +157,7 @@ static const char* SerializeBundlePolicy(
     break;
   default:
     NOTREACHED();
-  };
+  }
   return policy_str;
 }
 
@@ -169,7 +173,7 @@ static const char* SerializeRtcpMuxPolicy(
     break;
   default:
     NOTREACHED();
-  };
+  }
   return policy_str;
 }
 
@@ -177,30 +181,33 @@ static std::string SerializeConfiguration(
     const webrtc::PeerConnectionInterface::RTCConfiguration& config) {
   std::ostringstream oss;
   // TODO(hbos): Add serialization of certificate.
-  oss << "{ iceServers: " << SerializeServers(config.servers) << ", "
-      << "iceTransportPolicy: " << SerializeIceTransportType(config.type)
-      << ", "
-      << "bundlePolicy: " << SerializeBundlePolicy(config.bundle_policy) << ", "
-      << "rtcpMuxPolicy: " << SerializeRtcpMuxPolicy(config.rtcp_mux_policy)
-      << "iceCandidatePoolSize: " << config.ice_candidate_pool_size << " }";
+  oss << "{ iceServers: " << SerializeServers(config.servers)
+      << ", iceTransportPolicy: " << SerializeIceTransportType(config.type)
+      << ", bundlePolicy: " << SerializeBundlePolicy(config.bundle_policy)
+      << ", rtcpMuxPolicy: " << SerializeRtcpMuxPolicy(config.rtcp_mux_policy)
+      << ", iceCandidatePoolSize: " << config.ice_candidate_pool_size << " }";
   return oss.str();
 }
 
-#define GET_STRING_OF_STATE(state)                \
-  case WebRTCPeerConnectionHandlerClient::state:  \
-    result = #state;                              \
+#define GET_STRING_OF_STATE(state)                  \
+  case WebRTCPeerConnectionHandlerClient::k##state: \
+    result = #state;                                \
     break;
+
+// Note: All of these strings need to be kept in sync with
+// peer_connection_update_table.js, in order to be displayed as friendly
+// strings on chrome://webrtc-internals.
 
 static const char* GetSignalingStateString(
     WebRTCPeerConnectionHandlerClient::SignalingState state) {
   const char* result = "";
   switch (state) {
-    GET_STRING_OF_STATE(kSignalingStateStable)
-    GET_STRING_OF_STATE(kSignalingStateHaveLocalOffer)
-    GET_STRING_OF_STATE(kSignalingStateHaveRemoteOffer)
-    GET_STRING_OF_STATE(kSignalingStateHaveLocalPrAnswer)
-    GET_STRING_OF_STATE(kSignalingStateHaveRemotePrAnswer)
-    GET_STRING_OF_STATE(kSignalingStateClosed)
+    GET_STRING_OF_STATE(SignalingStateStable)
+    GET_STRING_OF_STATE(SignalingStateHaveLocalOffer)
+    GET_STRING_OF_STATE(SignalingStateHaveRemoteOffer)
+    GET_STRING_OF_STATE(SignalingStateHaveLocalPrAnswer)
+    GET_STRING_OF_STATE(SignalingStateHaveRemotePrAnswer)
+    GET_STRING_OF_STATE(SignalingStateClosed)
     default:
       NOTREACHED();
       break;
@@ -212,13 +219,13 @@ static const char* GetIceConnectionStateString(
     WebRTCPeerConnectionHandlerClient::ICEConnectionState state) {
   const char* result = "";
   switch (state) {
-    GET_STRING_OF_STATE(kICEConnectionStateStarting)
-    GET_STRING_OF_STATE(kICEConnectionStateChecking)
-    GET_STRING_OF_STATE(kICEConnectionStateConnected)
-    GET_STRING_OF_STATE(kICEConnectionStateCompleted)
-    GET_STRING_OF_STATE(kICEConnectionStateFailed)
-    GET_STRING_OF_STATE(kICEConnectionStateDisconnected)
-    GET_STRING_OF_STATE(kICEConnectionStateClosed)
+    GET_STRING_OF_STATE(ICEConnectionStateStarting)
+    GET_STRING_OF_STATE(ICEConnectionStateChecking)
+    GET_STRING_OF_STATE(ICEConnectionStateConnected)
+    GET_STRING_OF_STATE(ICEConnectionStateCompleted)
+    GET_STRING_OF_STATE(ICEConnectionStateFailed)
+    GET_STRING_OF_STATE(ICEConnectionStateDisconnected)
+    GET_STRING_OF_STATE(ICEConnectionStateClosed)
     default:
       NOTREACHED();
       break;
@@ -230,9 +237,9 @@ static const char* GetIceGatheringStateString(
     WebRTCPeerConnectionHandlerClient::ICEGatheringState state) {
   const char* result = "";
   switch (state) {
-    GET_STRING_OF_STATE(kICEGatheringStateNew)
-    GET_STRING_OF_STATE(kICEGatheringStateGathering)
-    GET_STRING_OF_STATE(kICEGatheringStateComplete)
+    GET_STRING_OF_STATE(ICEGatheringStateNew)
+    GET_STRING_OF_STATE(ICEGatheringStateGathering)
+    GET_STRING_OF_STATE(ICEGatheringStateComplete)
     default:
       NOTREACHED();
       break;
@@ -241,19 +248,15 @@ static const char* GetIceGatheringStateString(
 }
 
 // Builds a DictionaryValue from the StatsReport.
-// The caller takes the ownership of the returned value.
 // Note:
 // The format must be consistent with what webrtc_internals.js expects.
 // If you change it here, you must change webrtc_internals.js as well.
-static base::DictionaryValue* GetDictValueStats(const StatsReport& report) {
+static std::unique_ptr<base::DictionaryValue> GetDictValueStats(
+    const StatsReport& report) {
   if (report.values().empty())
-    return NULL;
+    return nullptr;
 
-  base::DictionaryValue* dict = new base::DictionaryValue();
-  dict->SetDouble("timestamp", report.timestamp());
-
-  base::ListValue* values = new base::ListValue();
-  dict->Set("values", values);
+  auto values = std::make_unique<base::ListValue>();
 
   for (const auto& v : report.values()) {
     const StatsReport::ValuePtr& value = v.second;
@@ -283,6 +286,10 @@ static base::DictionaryValue* GetDictValueStats(const StatsReport& report) {
     }
   }
 
+  auto dict = std::make_unique<base::DictionaryValue>();
+  dict->SetDouble("timestamp", report.timestamp());
+  dict->Set("values", std::move(values));
+
   return dict;
 }
 
@@ -290,17 +297,15 @@ static base::DictionaryValue* GetDictValueStats(const StatsReport& report) {
 // The caller takes the ownership of the returned value.
 static std::unique_ptr<base::DictionaryValue> GetDictValue(
     const StatsReport& report) {
-  std::unique_ptr<base::DictionaryValue> stats, result;
-
-  stats.reset(GetDictValueStats(report));
+  std::unique_ptr<base::DictionaryValue> stats = GetDictValueStats(report);
   if (!stats)
-    return NULL;
+    return nullptr;
 
-  result.reset(new base::DictionaryValue());
   // Note:
   // The format must be consistent with what webrtc_internals.js expects.
   // If you change it here, you must change webrtc_internals.js as well.
-  result->Set("stats", stats.release());
+  auto result = std::make_unique<base::DictionaryValue>();
+  result->Set("stats", std::move(stats));
   result->SetString("id", report.id()->ToString());
   result->SetString("type", report.TypeToString());
 
@@ -309,7 +314,7 @@ static std::unique_ptr<base::DictionaryValue> GetDictValue(
 
 class InternalStatsObserver : public webrtc::StatsObserver {
  public:
-  InternalStatsObserver(int lid)
+  explicit InternalStatsObserver(int lid)
       : lid_(lid), main_thread_(base::ThreadTaskRunnerHandle::Get()) {}
 
   void OnComplete(const StatsReports& reports) override {
@@ -322,9 +327,9 @@ class InternalStatsObserver : public webrtc::StatsObserver {
     }
 
     if (!list->empty()) {
-      main_thread_->PostTask(FROM_HERE,
-          base::Bind(&InternalStatsObserver::OnCompleteImpl,
-                     base::Passed(&list), lid_));
+      main_thread_->PostTask(
+          FROM_HERE, base::BindOnce(&InternalStatsObserver::OnCompleteImpl,
+                                    base::Passed(&list), lid_));
     }
   }
 
@@ -433,7 +438,7 @@ void PeerConnectionTracker::RegisterPeerConnection(
     RTCPeerConnectionHandler* pc_handler,
     const webrtc::PeerConnectionInterface::RTCConfiguration& config,
     const blink::WebMediaConstraints& constraints,
-    const blink::WebFrame* frame) {
+    const blink::WebLocalFrame* frame) {
   DCHECK(main_thread_.CalledOnValidThread());
   DCHECK_EQ(GetLocalIDForHandler(pc_handler), -1);
   DVLOG(1) << "PeerConnectionTracker::RegisterPeerConnection()";
@@ -545,18 +550,18 @@ void PeerConnectionTracker::TrackSetConfiguration(
 }
 
 void PeerConnectionTracker::TrackAddIceCandidate(
-      RTCPeerConnectionHandler* pc_handler,
-      const blink::WebRTCICECandidate& candidate,
-      Source source,
-      bool succeeded) {
+    RTCPeerConnectionHandler* pc_handler,
+    scoped_refptr<blink::WebRTCICECandidate> candidate,
+    Source source,
+    bool succeeded) {
   DCHECK(main_thread_.CalledOnValidThread());
   int id = GetLocalIDForHandler(pc_handler);
   if (id == -1)
     return;
   std::string value =
-      "sdpMid: " + candidate.SdpMid().Utf8() + ", " +
-      "sdpMLineIndex: " + base::UintToString(candidate.SdpMLineIndex()) + ", " +
-      "candidate: " + candidate.Candidate().Utf8();
+      "sdpMid: " + candidate->SdpMid().Utf8() + ", " +
+      "sdpMLineIndex: " + base::UintToString(candidate->SdpMLineIndex()) +
+      ", " + "candidate: " + candidate->Candidate().Utf8();
 
   // OnIceCandidate always succeeds as it's a callback from the browser.
   DCHECK(source != SOURCE_LOCAL || succeeded);
@@ -585,7 +590,7 @@ void PeerConnectionTracker::TrackAddStream(
 void PeerConnectionTracker::TrackRemoveStream(
     RTCPeerConnectionHandler* pc_handler,
     const blink::WebMediaStream& stream,
-    Source source){
+    Source source) {
   DCHECK(main_thread_.CalledOnValidThread());
   int id = GetLocalIDForHandler(pc_handler);
   if (id == -1)

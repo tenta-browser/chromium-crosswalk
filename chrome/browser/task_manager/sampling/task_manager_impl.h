@@ -15,6 +15,7 @@
 
 #include "base/lazy_instance.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "chrome/browser/task_manager/providers/task_provider.h"
@@ -22,18 +23,16 @@
 #include "chrome/browser/task_manager/sampling/task_group.h"
 #include "chrome/browser/task_manager/sampling/task_manager_io_thread_helper.h"
 #include "chrome/browser/task_manager/task_manager_interface.h"
-#include "content/public/browser/gpu_data_manager_observer.h"
 #include "gpu/ipc/common/memory_stats.h"
+#include "services/resource_coordinator/public/interfaces/memory_instrumentation/memory_instrumentation.mojom.h"
 
 namespace task_manager {
 
 class SharedSampler;
 
 // Defines a concrete implementation of the TaskManagerInterface.
-class TaskManagerImpl :
-    public TaskManagerInterface,
-    public TaskProviderObserver,
-    content::GpuDataManagerObserver {
+class TaskManagerImpl : public TaskManagerInterface,
+                        public TaskProviderObserver {
  public:
   ~TaskManagerImpl() override;
 
@@ -43,9 +42,10 @@ class TaskManagerImpl :
   void ActivateTask(TaskId task_id) override;
   bool IsTaskKillable(TaskId task_id) override;
   void KillTask(TaskId task_id) override;
-  double GetCpuUsage(TaskId task_id) const override;
+  double GetPlatformIndependentCPUUsage(TaskId task_id) const override;
   base::Time GetStartTime(TaskId task_id) const override;
   base::TimeDelta GetCpuTime(TaskId task_id) const override;
+  int64_t GetMemoryFootprintUsage(TaskId task_id) const override;
   int64_t GetPhysicalMemoryUsage(TaskId task_id) const override;
   int64_t GetPrivateMemoryUsage(TaskId task_id) const override;
   int64_t GetSharedMemoryUsage(TaskId task_id) const override;
@@ -54,6 +54,7 @@ class TaskManagerImpl :
                             bool* has_duplicates) const override;
   base::MemoryState GetMemoryState(TaskId task_id) const override;
   int GetIdleWakeupsPerSecond(TaskId task_id) const override;
+  int GetHardFaultsPerSecond(TaskId task_id) const override;
   int GetNaClDebugStubPort(TaskId task_id) const override;
   void GetGDIHandles(TaskId task_id,
                      int64_t* current,
@@ -76,7 +77,9 @@ class TaskManagerImpl :
                             base::TerminationStatus* out_status,
                             int* out_error_code) const override;
   int64_t GetNetworkUsage(TaskId task_id) const override;
+  int64_t GetCumulativeNetworkUsage(TaskId task_id) const override;
   int64_t GetProcessTotalNetworkUsage(TaskId task_id) const override;
+  int64_t GetCumulativeProcessTotalNetworkUsage(TaskId task_id) const override;
   int64_t GetSqliteMemoryUsed(TaskId task_id) const override;
   bool GetV8Memory(TaskId task_id,
                    int64_t* allocated,
@@ -96,33 +99,37 @@ class TaskManagerImpl :
   void TaskRemoved(Task* task) override;
   void TaskUnresponsive(Task* task) override;
 
-  // content::GpuDataManagerObserver:
-  void OnVideoMemoryUsageStatsUpdate(
-      const gpu::VideoMemoryUsageStats& gpu_memory_stats) override;
-
-  // The notification method on the UI thread when multiple bytes are read
-  // from URLRequests. This will be called by the |io_thread_helper_|
-  static void OnMultipleBytesReadUI(std::vector<BytesReadParam>* params);
+  // The notification method on the UI thread when multiple bytes are
+  // transferred from URLRequests. This will be called by the
+  // |io_thread_helper_|
+  static void OnMultipleBytesTransferredUI(BytesTransferredMap params);
 
  private:
   friend struct base::LazyInstanceTraitsBase<TaskManagerImpl>;
 
   TaskManagerImpl();
 
+  void OnVideoMemoryUsageStatsUpdate(
+      const gpu::VideoMemoryUsageStats& gpu_memory_stats);
+  void OnReceivedMemoryDump(
+      bool success,
+      memory_instrumentation::mojom::GlobalMemoryDumpPtr ptr);
+
   // task_manager::TaskManagerInterface:
   void Refresh() override;
   void StartUpdating() override;
   void StopUpdating() override;
 
-  // Lookup a task by its pid, child_id and possibly route_id.
-  Task* GetTaskByPidOrRoute(int pid, int child_id, int route_id) const;
+  // Lookup a task by child_id and possibly route_id.
+  Task* GetTaskByRoute(int child_id, int route_id) const;
 
   // Based on |param| the appropriate task will be updated by its network usage.
   // Returns true if it was able to match |param| to an existing task, returns
   // false otherwise, at which point the caller must explicitly match these
   // bytes to the browser process by calling this method again with
   // |param.origin_pid = 0| and |param.child_id = param.route_id = -1|.
-  bool UpdateTasksWithBytesRead(const BytesReadParam& param);
+  bool UpdateTasksWithBytesTransferred(const BytesTransferredKey& key,
+                                       const BytesTransferredParam& param);
 
   TaskGroup* GetTaskGroupByTaskId(TaskId task_id) const;
   Task* GetTaskByTaskId(TaskId task_id) const;
@@ -169,6 +176,11 @@ class TaskManagerImpl :
   // running.
   bool is_running_;
 
+  // This is set to true while waiting for a global memory dump from
+  // memory_instrumentation.
+  bool waiting_for_memory_dump_;
+
+  base::WeakPtrFactory<TaskManagerImpl> weak_ptr_factory_;
   DISALLOW_COPY_AND_ASSIGN(TaskManagerImpl);
 };
 

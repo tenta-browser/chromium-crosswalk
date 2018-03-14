@@ -33,6 +33,7 @@
 #include "jingle/notifier/base/notifier_options.h"
 #include "jingle/notifier/listener/push_client.h"
 #include "jingle/notifier/listener/push_client_observer.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "url/gurl.h"
 
 namespace cloud_print {
@@ -94,7 +95,7 @@ class CloudPrintProxyBackend::Core
 
   CloudPrintProxyFrontend* frontend() { return backend_->frontend_; }
 
-  bool PostFrontendTask(const tracked_objects::Location& from_here,
+  bool PostFrontendTask(const base::Location& from_here,
                         const base::Closure& task);
 
   bool CurrentlyOnFrontendThread() const;
@@ -227,9 +228,8 @@ void CloudPrintProxyBackend::UnregisterPrinters() {
                           core_));
 }
 
-bool CloudPrintProxyBackend::PostCoreTask(
-    const tracked_objects::Location& from_here,
-    const base::Closure& task) {
+bool CloudPrintProxyBackend::PostCoreTask(const base::Location& from_here,
+                                          const base::Closure& task) {
   return core_thread_.task_runner()->PostTask(from_here, task);
 }
 
@@ -249,7 +249,7 @@ CloudPrintProxyBackend::Core::Core(
 }
 
 bool CloudPrintProxyBackend::Core::PostFrontendTask(
-    const tracked_objects::Location& from_here,
+    const base::Location& from_here,
     const base::Closure& task) {
   return backend_->frontend_task_runner_->PostTask(from_here, task);
 }
@@ -263,13 +263,24 @@ bool CloudPrintProxyBackend::Core::CurrentlyOnCoreThread() const {
 }
 
 void CloudPrintProxyBackend::Core::CreateAuthAndConnector() {
+  net::PartialNetworkTrafficAnnotationTag partial_traffic_annotation =
+      net::DefinePartialNetworkTrafficAnnotation("cloud_print_backend",
+                                                 "cloud_print", R"(
+            semantics {
+              description:
+                "Creates and authenticates connection with Cloud Print."
+              trigger: "Cloud Print service intialization."
+              data: "OAuth2 token."
+            })");
   if (!auth_.get()) {
-    auth_ = new CloudPrintAuth(this, settings_.server_url(), oauth_client_info_,
-                               settings_.proxy_id());
+    auth_ =
+        new CloudPrintAuth(this, settings_.server_url(), oauth_client_info_,
+                           settings_.proxy_id(), partial_traffic_annotation);
   }
 
   if (!connector_.get()) {
-    connector_ = new CloudPrintConnector(this, settings_);
+    connector_ =
+        new CloudPrintConnector(this, settings_, partial_traffic_annotation);
   }
 }
 
@@ -442,7 +453,8 @@ void CloudPrintProxyBackend::Core::ScheduleJobPoll() {
     base::TimeDelta interval = base::TimeDelta::FromSeconds(
         base::RandInt(kMinJobPollIntervalSecs, kMaxJobPollIntervalSecs));
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, base::Bind(&CloudPrintProxyBackend::Core::PollForJobs, this),
+        FROM_HERE,
+        base::BindOnce(&CloudPrintProxyBackend::Core::PollForJobs, this),
         interval);
     job_poll_scheduled_ = true;
   }
@@ -461,7 +473,8 @@ void CloudPrintProxyBackend::Core::PingXmppServer() {
     // Check ping status when we close to the limit.
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&CloudPrintProxyBackend::Core::CheckXmppPingStatus, this),
+        base::BindOnce(&CloudPrintProxyBackend::Core::CheckXmppPingStatus,
+                       this),
         base::TimeDelta::FromSeconds(kXmppPingCheckIntervalSecs));
   }
 
@@ -479,7 +492,7 @@ void CloudPrintProxyBackend::Core::ScheduleXmppPing() {
                     settings_.xmpp_ping_timeout_sec() * 1.1));
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&CloudPrintProxyBackend::Core::PingXmppServer, this),
+        base::BindOnce(&CloudPrintProxyBackend::Core::PingXmppServer, this),
         interval);
     xmpp_ping_scheduled_ = true;
   }

@@ -26,10 +26,10 @@
 #include "modules/mediastream/MediaDevicesRequest.h"
 
 #include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/DOMException.h"
 #include "core/dom/Document.h"
 #include "modules/mediastream/UserMediaController.h"
+#include "platform/bindings/ScriptState.h"
 
 namespace blink {
 
@@ -52,7 +52,7 @@ Document* MediaDevicesRequest::OwnerDocument() {
     return ToDocument(context);
   }
 
-  return 0;
+  return nullptr;
 }
 
 ScriptPromise MediaDevicesRequest::Start() {
@@ -74,7 +74,7 @@ void MediaDevicesRequest::ContextDestroyed(ExecutionContext*) {
   resolver_.Clear();
 }
 
-DEFINE_TRACE(MediaDevicesRequest) {
+void MediaDevicesRequest::Trace(blink::Visitor* visitor) {
   visitor->Trace(controller_);
   visitor->Trace(resolver_);
   ContextLifecycleObserver::Trace(visitor);

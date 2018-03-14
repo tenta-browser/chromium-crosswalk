@@ -5,14 +5,16 @@
 #ifndef V8ScriptValueSerializer_h
 #define V8ScriptValueSerializer_h
 
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/SerializationTag.h"
-#include "bindings/core/v8/SerializedScriptValue.h"
+#include "bindings/core/v8/serialization/SerializationTag.h"
+#include "bindings/core/v8/serialization/SerializedColorParams.h"
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Noncopyable.h"
-#include "platform/wtf/RefPtr.h"
+#include "platform/wtf/Vector.h"
 #include "v8/include/v8.h"
 
 namespace blink {
@@ -28,22 +30,18 @@ class Transferables;
 //
 // A serializer cannot be used multiple times; it is expected that its serialize
 // method will be invoked exactly once.
-class GC_PLUGIN_IGNORE("https://crbug.com/644725")
-    CORE_EXPORT V8ScriptValueSerializer : public v8::ValueSerializer::Delegate {
+class CORE_EXPORT V8ScriptValueSerializer
+    : public v8::ValueSerializer::Delegate {
   STACK_ALLOCATED();
   WTF_MAKE_NONCOPYABLE(V8ScriptValueSerializer);
 
  public:
   using Options = SerializedScriptValue::SerializeOptions;
-  explicit V8ScriptValueSerializer(RefPtr<ScriptState>,
+  explicit V8ScriptValueSerializer(scoped_refptr<ScriptState>,
                                    const Options& = Options());
 
-  void SetInlineWasm(bool inline_wasm) { inline_wasm_ = inline_wasm; }
-
-  RefPtr<SerializedScriptValue> Serialize(v8::Local<v8::Value>,
-                                          ExceptionState&);
-
-  static const uint32_t kLatestVersion;
+  scoped_refptr<SerializedScriptValue> Serialize(v8::Local<v8::Value>,
+                                                 ExceptionState&);
 
  protected:
   // Returns true if the DOM object was successfully written.
@@ -62,6 +60,16 @@ class GC_PLUGIN_IGNORE("https://crbug.com/644725")
     serializer_.WriteRawBytes(data, size);
   }
   void WriteUTF8String(const String&);
+
+  template <typename E>
+  void WriteUint32Enum(E value) {
+    static_assert(
+        std::is_enum<E>::value &&
+            std::is_same<uint32_t,
+                         typename std::underlying_type<E>::type>::value,
+        "Only enums backed by uint32_t are accepted.");
+    WriteUint32(static_cast<uint32_t>(value));
+  }
 
  private:
   // Transfer is split into two phases: scanning the transferables so that we
@@ -91,18 +99,23 @@ class GC_PLUGIN_IGNORE("https://crbug.com/644725")
                                size_t* actual_size) override;
   void FreeBufferMemory(void* buffer) override;
 
-  RefPtr<ScriptState> script_state_;
-  RefPtr<SerializedScriptValue> serialized_script_value_;
+  scoped_refptr<ScriptState> script_state_;
+  scoped_refptr<SerializedScriptValue> serialized_script_value_;
   v8::ValueSerializer serializer_;
   const Transferables* transferables_ = nullptr;
   const ExceptionState* exception_state_ = nullptr;
   WebBlobInfoArray* blob_info_array_ = nullptr;
   ArrayBufferArray shared_array_buffers_;
-  bool inline_wasm_ = false;
+  Options::WasmSerializationPolicy wasm_policy_;
+  bool for_storage_ = false;
 #if DCHECK_IS_ON()
   bool serialize_invoked_ = false;
 #endif
 };
+
+// For code testing V8ScriptValueSerializer
+scoped_refptr<SerializedScriptValue> SerializedValue(
+    const Vector<uint8_t>& bytes);
 
 }  // namespace blink
 

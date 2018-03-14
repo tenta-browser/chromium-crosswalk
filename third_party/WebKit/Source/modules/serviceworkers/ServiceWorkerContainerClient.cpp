@@ -44,7 +44,7 @@ ServiceWorkerContainerClient* ServiceWorkerContainerClient::From(
     return client;
   }
   Document* document = ToDocument(context);
-  if (!document->GetFrame())
+  if (!document->GetFrame() || !document->GetFrame()->Client())
     return nullptr;
 
   ServiceWorkerContainerClient* client =
@@ -53,7 +53,7 @@ ServiceWorkerContainerClient* ServiceWorkerContainerClient::From(
   if (!client) {
     client = new ServiceWorkerContainerClient(
         *document,
-        document->GetFrame()->Loader().Client()->CreateServiceWorkerProvider());
+        document->GetFrame()->Client()->CreateServiceWorkerProvider());
     Supplement<Document>::ProvideTo(*document, SupplementName(), client);
   }
   return client;

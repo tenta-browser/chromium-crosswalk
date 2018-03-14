@@ -25,11 +25,11 @@
 #include "components/prefs/pref_service.h"
 #include "components/subresource_filter/core/browser/ruleset_service_delegate.h"
 #include "components/subresource_filter/core/browser/subresource_filter_constants.h"
-#include "components/subresource_filter/core/common/copying_file_stream.h"
 #include "components/subresource_filter/core/common/indexed_ruleset.h"
-#include "components/subresource_filter/core/common/proto/rules.pb.h"
 #include "components/subresource_filter/core/common/time_measurements.h"
-#include "components/subresource_filter/core/common/unindexed_ruleset.h"
+#include "components/url_pattern_index/copying_file_stream.h"
+#include "components/url_pattern_index/proto/rules.pb.h"
+#include "components/url_pattern_index/unindexed_ruleset.h"
 #include "third_party/protobuf/src/google/protobuf/io/zero_copy_stream_impl_lite.h"
 
 namespace subresource_filter {
@@ -73,7 +73,7 @@ void RecordIndexAndWriteRulesetResult(
 // ruleset, and it is expected that version updates will be frequent enough.
 class SentinelFile {
  public:
-  SentinelFile(base::FilePath& version_directory)
+  explicit SentinelFile(const base::FilePath& version_directory)
       : path_(IndexedRulesetLocator::GetSentinelFilePath(version_directory)) {}
 
   bool IsPresent() { return base::PathExists(path_); }
@@ -273,7 +273,7 @@ void RulesetService::IndexAndStoreAndPublishRulesetIfNeeded(
 IndexedRulesetVersion RulesetService::IndexAndWriteRuleset(
     const base::FilePath& indexed_ruleset_base_dir,
     const UnindexedRulesetInfo& unindexed_ruleset_info) {
-  base::ThreadRestrictions::AssertIOAllowed();
+  base::AssertBlockingAllowed();
 
   base::File unindexed_ruleset_file(
       unindexed_ruleset_info.ruleset_path,
@@ -351,15 +351,16 @@ bool RulesetService::IndexRuleset(base::File unindexed_ruleset_file,
   int64_t unindexed_ruleset_size = unindexed_ruleset_file.GetLength();
   if (unindexed_ruleset_size < 0)
     return false;
-  CopyingFileInputStream copying_stream(std::move(unindexed_ruleset_file));
+  url_pattern_index::CopyingFileInputStream copying_stream(
+      std::move(unindexed_ruleset_file));
   google::protobuf::io::CopyingInputStreamAdaptor zero_copy_stream_adaptor(
       &copying_stream, 4096 /* buffer_size */);
-  UnindexedRulesetReader reader(&zero_copy_stream_adaptor);
+  url_pattern_index::UnindexedRulesetReader reader(&zero_copy_stream_adaptor);
 
   size_t num_unsupported_rules = 0;
-  proto::FilteringRules ruleset_chunk;
+  url_pattern_index::proto::FilteringRules ruleset_chunk;
   while (reader.ReadNextChunk(&ruleset_chunk)) {
-    for (const proto::UrlRule& rule : ruleset_chunk.url_rules()) {
+    for (const auto& rule : ruleset_chunk.url_rules()) {
       if (!indexer->AddUrlRule(rule))
         ++num_unsupported_rules;
     }
@@ -410,13 +411,14 @@ RulesetService::IndexAndWriteRulesetResult RulesetService::WriteRuleset(
   // Due to the same-version check in IndexAndStoreAndPublishRulesetIfNeeded, we
   // would not normally find a pre-existing copy at this point unless the
   // previous write was interrupted.
-  if (!base::DeleteFile(indexed_ruleset_version_dir, true)) {
+  if (!base::DeleteFile(indexed_ruleset_version_dir, true))
     return IndexAndWriteRulesetResult::FAILED_DELETE_PREEXISTING;
-  }
 
+  base::FilePath scratch_dir_with_new_indexed_ruleset = scratch_dir.Take();
   base::File::Error error;
-  if (!(*g_replace_file_func)(scratch_dir.GetPath(),
+  if (!(*g_replace_file_func)(scratch_dir_with_new_indexed_ruleset,
                               indexed_ruleset_version_dir, &error)) {
+    base::DeleteFile(scratch_dir_with_new_indexed_ruleset, true);
     // While enumerators of base::File::Error all have negative values, the
     // histogram records the absolute values.
     UMA_HISTOGRAM_ENUMERATION("SubresourceFilter.WriteRuleset.ReplaceFileError",
@@ -424,7 +426,6 @@ RulesetService::IndexAndWriteRulesetResult RulesetService::WriteRuleset(
     return IndexAndWriteRulesetResult::FAILED_REPLACE_FILE;
   }
 
-  scratch_dir.Take();
   return IndexAndWriteRulesetResult::SUCCESS;
 }
 

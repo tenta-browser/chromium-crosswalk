@@ -5,9 +5,9 @@
 #include "platform/scheduler/base/work_queue.h"
 
 #include <stddef.h>
+#include <memory>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "platform/scheduler/base/real_time_domain.h"
 #include "platform/scheduler/base/task_queue_impl.h"
 #include "platform/scheduler/base/work_queue_sets.h"
@@ -20,16 +20,15 @@ namespace {
 void NopTask() {}
 }
 
-class WorkQueueTest : public testing::Test {
+class WorkQueueTest : public ::testing::Test {
  public:
   void SetUp() override {
-    time_domain_.reset(new RealTimeDomain("test"));
-    task_queue_ = make_scoped_refptr(new TaskQueueImpl(
-        nullptr, time_domain_.get(),
-        TaskQueue::Spec(TaskQueue::QueueType::TEST), "test", "test"));
+    time_domain_.reset(new RealTimeDomain());
+    task_queue_ = std::make_unique<TaskQueueImpl>(nullptr, time_domain_.get(),
+                                                  TaskQueue::Spec("test"));
 
     work_queue_.reset(new WorkQueue(task_queue_.get(), "test",
-                                    WorkQueue::QueueType::IMMEDIATE));
+                                    WorkQueue::QueueType::kImmediate));
     work_queue_sets_.reset(new WorkQueueSets(1, "test"));
     work_queue_sets_->AddQueue(work_queue_.get(), 0);
   }
@@ -38,14 +37,15 @@ class WorkQueueTest : public testing::Test {
 
  protected:
   TaskQueueImpl::Task FakeTaskWithEnqueueOrder(int enqueue_order) {
-    TaskQueueImpl::Task fake_task(FROM_HERE, base::Bind(&NopTask),
-                                  base::TimeTicks(), 0, true);
+    TaskQueueImpl::Task fake_task(
+        TaskQueue::PostedTask(base::Bind(&NopTask), FROM_HERE),
+        base::TimeTicks(), 0);
     fake_task.set_enqueue_order(enqueue_order);
     return fake_task;
   }
 
   std::unique_ptr<RealTimeDomain> time_domain_;
-  scoped_refptr<TaskQueueImpl> task_queue_;
+  std::unique_ptr<TaskQueueImpl> task_queue_;
   std::unique_ptr<WorkQueue> work_queue_;
   std::unique_ptr<WorkQueueSets> work_queue_sets_;
   std::unique_ptr<TaskQueueImpl::TaskDeque> incoming_queue_;

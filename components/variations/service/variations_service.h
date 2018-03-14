@@ -14,9 +14,10 @@
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/field_trial.h"
 #include "base/observer_list.h"
-#include "base/threading/thread_checker.h"
 #include "base/time/time.h"
+#include "components/variations/client_filterable_state.h"
 #include "components/variations/service/ui_string_overrider.h"
+#include "components/variations/service/variations_field_trial_creator.h"
 #include "components/variations/service/variations_service_client.h"
 #include "components/variations/variations_request_scheduler.h"
 #include "components/variations/variations_seed_simulator.h"
@@ -85,11 +86,6 @@ class VariationsService
   // Should be called before startup of the main message loop.
   void PerformPreMainMessageLoopStartup();
 
-  // Calls FetchVariationsSeed once and repeats this periodically. See
-  // implementation for details on the period. Must be called after
-  // |CreateTrialsFromSeed|.
-  void StartRepeatedVariationsSeedFetch();
-
   // Adds an observer to listen for detected experiment changes.
   void AddObserver(Observer* observer);
 
@@ -128,6 +124,10 @@ class VariationsService
   // reason.
   bool OverrideStoredPermanentCountry(const std::string& override_country);
 
+  // Returns what variations will consider to be the latest country. Returns
+  // empty if it is not available.
+  std::string GetLatestCountry() const;
+
   // Exposed for testing.
   static std::string GetDefaultVariationsServerURLForTesting();
 
@@ -147,10 +147,8 @@ class VariationsService
       const char* disable_network_switch,
       const UIStringOverrider& ui_string_overrider);
 
-  // Factory method for creating a VariationsService in a testing context.
-  static std::unique_ptr<VariationsService> CreateForTesting(
-      std::unique_ptr<VariationsServiceClient> client,
-      PrefService* local_state);
+  // Enables the VariationsService for testing, even in Chromium builds.
+  static void EnableForTesting();
 
   // Set the PrefService responsible for getting policy-related preferences,
   // such as the restrict parameter.
@@ -159,10 +157,17 @@ class VariationsService
     policy_pref_service_ = service;
   }
 
-  // Returns the invalid variations seed signature in base64 format, or an empty
-  // string if the signature was valid, missing, or if signature verification is
-  // disabled.
-  std::string GetInvalidVariationsSeedSignature() const;
+  // Exposed for testing.
+  void GetClientFilterableStateForVersionCalledForTesting();
+
+  // Wrapper around VariationsFieldTrialCreator::SetupFieldTrials().
+  bool SetupFieldTrials(const char* kEnableGpuBenchmarking,
+                        const char* kEnableFeatures,
+                        const char* kDisableFeatures,
+                        const std::set<std::string>& unforceable_field_trials,
+                        std::unique_ptr<base::FeatureList> feature_list,
+                        std::vector<std::string>* variation_ids,
+                        variations::PlatformFieldTrials* platform_field_trials);
 
  protected:
   // Starts the fetching process once, where |OnURLFetchComplete| is called with
@@ -209,6 +214,13 @@ class VariationsService
                            LoadPermanentConsistencyCountry);
   FRIEND_TEST_ALL_PREFIXES(VariationsServiceTest, CountryHeader);
   FRIEND_TEST_ALL_PREFIXES(VariationsServiceTest, GetVariationsServerURL);
+  FRIEND_TEST_ALL_PREFIXES(VariationsServiceTest, VariationsURLHasParams);
+  FRIEND_TEST_ALL_PREFIXES(VariationsServiceTest, RequestsInitiallyAllowed);
+  FRIEND_TEST_ALL_PREFIXES(VariationsServiceTest, RequestsInitiallyNotAllowed);
+  FRIEND_TEST_ALL_PREFIXES(VariationsServiceTest,
+                           SafeMode_SuccessfulFetchClearsFailureStreaks);
+  FRIEND_TEST_ALL_PREFIXES(VariationsServiceTest,
+                           SafeMode_NotModifiedFetchClearsFailureStreaks);
 
   // Set of different possible values to report for the
   // Variations.LoadPermanentConsistencyCountryResult histogram. This enum must
@@ -227,14 +239,10 @@ class VariationsService
     LOAD_COUNTRY_MAX,
   };
 
-  // Loads the seed from the variations store into |seed|. If successfull,
-  // |seed| will contain the loaded data and true is returned. Set as virtual
-  // so that it can be overridden by tests.
-  virtual bool LoadSeed(VariationsSeed* seed);
-
-  // Sets the stored permanent country pref for this client.
-  void StorePermanentCountry(const base::Version& version,
-                             const std::string& country);
+  // Calls FetchVariationsSeed once and repeats this periodically. See
+  // implementation for details on the period. Must be called after
+  // |CreateTrialsFromSeed|.
+  void StartRepeatedVariationsSeedFetch();
 
   // Checks if prerequisites for fetching the Variations seed are met, and if
   // so, performs the actual fetch using |DoActualFetch|.
@@ -256,8 +264,10 @@ class VariationsService
       std::unique_ptr<variations::VariationsSeed> seed,
       const base::Version& version);
 
-  // Record the time of the most recent successful fetch.
-  void RecordLastFetchTime();
+  // Records a successful fetch:
+  //   (1) Resets failure streaks for Safe Mode.
+  //   (2) Records the time of this fetch as the most recent successful fetch.
+  void RecordSuccessfulFetch();
 
   // Loads the country code to use for filtering permanent consistency studies,
   // updating the stored country code if the stored value was for a different
@@ -269,7 +279,6 @@ class VariationsService
       const std::string& latest_country);
 
   std::unique_ptr<VariationsServiceClient> client_;
-  UIStringOverrider ui_string_overrider_;
 
   // The pref service used to store persist the variations seed.
   PrefService* local_state_;
@@ -281,8 +290,6 @@ class VariationsService
   // Used to obtain policy-related preferences. Depending on the platform, will
   // either be Local State or Profile prefs.
   PrefService* policy_pref_service_;
-
-  VariationsSeedStore seed_store_;
 
   // Contains the scheduler instance that handles timing for requests to the
   // server. Initially NULL and instantiated when the initial fetch is
@@ -300,10 +307,6 @@ class VariationsService
 
   // The URL to use for querying the variations server.
   GURL variations_server_url_;
-
-  // Tracks whether |CreateTrialsFromSeed| has been called, to ensure that
-  // it gets called prior to |StartRepeatedVariationsSeedFetch|.
-  bool create_trials_from_seed_called_;
 
   // Tracks whether the initial request to the variations server had completed.
   bool initial_request_completed_;
@@ -328,7 +331,10 @@ class VariationsService
   // List of observers of the VariationsService.
   base::ObserverList<Observer> observer_list_;
 
-  base::ThreadChecker thread_checker_;
+  // Member responsible for creating trials from a variations seed.
+  VariationsFieldTrialCreator field_trial_creator_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   base::WeakPtrFactory<VariationsService> weak_ptr_factory_;
 

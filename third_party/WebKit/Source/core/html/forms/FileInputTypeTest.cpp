@@ -4,11 +4,11 @@
 
 #include "core/html/forms/FileInputType.h"
 
-#include "core/HTMLNames.h"
 #include "core/clipboard/DataObject.h"
 #include "core/dom/Document.h"
 #include "core/fileapi/FileList.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/html/forms/HTMLInputElement.h"
+#include "core/html_names.h"
 #include "core/page/DragData.h"
 #include "platform/wtf/DateMath.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -23,8 +23,7 @@ TEST(FileInputTypeTest, createFileList) {
       FileChooserFileInfo("/native/path/native-file", "display-name"));
 
   // Non-native file.
-  KURL url(ParsedURLStringTag(),
-           "filesystem:http://example.com/isolated/hash/non-native-file");
+  KURL url("filesystem:http://example.com/isolated/hash/non-native-file");
   FileMetadata metadata;
   metadata.length = 64;
   metadata.modification_time = 1.0 * kMsPerDay + 3;
@@ -46,7 +45,7 @@ TEST(FileInputTypeTest, createFileList) {
 }
 
 TEST(FileInputTypeTest, ignoreDroppedNonNativeFiles) {
-  Document* document = Document::Create();
+  Document* document = Document::CreateForTest();
   HTMLInputElement* input = HTMLInputElement::Create(*document, false);
   InputType* file_input = FileInputType::Create(*input);
 
@@ -66,8 +65,7 @@ TEST(FileInputTypeTest, ignoreDroppedNonNativeFiles) {
                                            kDragOperationCopy);
   FileMetadata metadata;
   metadata.length = 1234;
-  const KURL url(ParsedURLStringTag(),
-                 "filesystem:http://example.com/isolated/hash/non-native-file");
+  const KURL url("filesystem:http://example.com/isolated/hash/non-native-file");
   non_native_file_drag_data.PlatformData()->Add(
       File::CreateForFileSystemFile(url, metadata, File::kIsUserVisible));
   non_native_file_drag_data.PlatformData()->SetFilesystemId("fileSystemId");
@@ -79,7 +77,7 @@ TEST(FileInputTypeTest, ignoreDroppedNonNativeFiles) {
 }
 
 TEST(FileInputTypeTest, setFilesFromPaths) {
-  Document* document = Document::Create();
+  Document* document = Document::CreateForTest();
   HTMLInputElement* input = HTMLInputElement::Create(*document, false);
   InputType* file_input = FileInputType::Create(*input);
   Vector<String> paths;
@@ -90,7 +88,7 @@ TEST(FileInputTypeTest, setFilesFromPaths) {
   EXPECT_EQ(String("/native/path"), file_input->Files()->item(0)->GetPath());
 
   // Try to upload multiple files without multipleAttr
-  paths.Clear();
+  paths.clear();
   paths.push_back("/native/path1");
   paths.push_back("/native/path2");
   file_input->SetFilesFromPaths(paths);
@@ -99,7 +97,7 @@ TEST(FileInputTypeTest, setFilesFromPaths) {
 
   // Try to upload multiple files with multipleAttr
   input->SetBooleanAttribute(HTMLNames::multipleAttr, true);
-  paths.Clear();
+  paths.clear();
   paths.push_back("/native/real/path1");
   paths.push_back("/native/real/path2");
   file_input->SetFilesFromPaths(paths);

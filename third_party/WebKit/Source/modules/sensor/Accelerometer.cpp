@@ -11,7 +11,8 @@ namespace blink {
 Accelerometer* Accelerometer::Create(ExecutionContext* execution_context,
                                      const SensorOptions& options,
                                      ExceptionState& exception_state) {
-  return new Accelerometer(execution_context, options, exception_state);
+  return new Accelerometer(execution_context, options, exception_state,
+                           SensorType::ACCELEROMETER);
 }
 
 // static
@@ -22,25 +23,26 @@ Accelerometer* Accelerometer::Create(ExecutionContext* execution_context,
 
 Accelerometer::Accelerometer(ExecutionContext* execution_context,
                              const SensorOptions& options,
-                             ExceptionState& exception_state)
-    : Sensor(execution_context,
-             options,
-             exception_state,
-             SensorType::ACCELEROMETER) {}
+                             ExceptionState& exception_state,
+                             SensorType sensor_type)
+    : Sensor(execution_context, options, exception_state, sensor_type) {}
 
 double Accelerometer::x(bool& is_null) const {
-  return ReadingValue(0, is_null);
+  INIT_IS_NULL_AND_RETURN(is_null, 0.0);
+  return proxy()->reading().accel.x;
 }
 
 double Accelerometer::y(bool& is_null) const {
-  return ReadingValue(1, is_null);
+  INIT_IS_NULL_AND_RETURN(is_null, 0.0);
+  return proxy()->reading().accel.y;
 }
 
 double Accelerometer::z(bool& is_null) const {
-  return ReadingValue(2, is_null);
+  INIT_IS_NULL_AND_RETURN(is_null, 0.0);
+  return proxy()->reading().accel.z;
 }
 
-DEFINE_TRACE(Accelerometer) {
+void Accelerometer::Trace(blink::Visitor* visitor) {
   Sensor::Trace(visitor);
 }
 

@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/ui/android/infobars/simple_confirm_infobar_builder.h"
-
 #include <memory>
 
 #include "base/android/jni_android.h"
@@ -128,16 +126,17 @@ bool SimpleConfirmInfoBarDelegate::Cancel() {
 
 // Native JNI methods ---------------------------------------------------------
 
-void Create(JNIEnv* env,
-            const JavaParamRef<jclass>& j_caller,
-            const JavaParamRef<jobject>& j_tab,
-            jint j_identifier,
-            const JavaParamRef<jobject>& j_icon,
-            const JavaParamRef<jstring>& j_message,
-            const JavaParamRef<jstring>& j_primary,
-            const JavaParamRef<jstring>& j_secondary,
-            jboolean auto_expire,
-            const JavaParamRef<jobject>& j_listener) {
+void JNI_SimpleConfirmInfoBarBuilder_Create(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& j_caller,
+    const JavaParamRef<jobject>& j_tab,
+    jint j_identifier,
+    const JavaParamRef<jobject>& j_icon,
+    const JavaParamRef<jstring>& j_message,
+    const JavaParamRef<jstring>& j_primary,
+    const JavaParamRef<jstring>& j_secondary,
+    jboolean auto_expire,
+    const JavaParamRef<jobject>& j_listener) {
   infobars::InfoBarDelegate::InfoBarIdentifier infobar_identifier =
       static_cast<infobars::InfoBarDelegate::InfoBarIdentifier>(j_identifier);
 
@@ -163,8 +162,4 @@ void Create(JNIEnv* env,
       base::MakeUnique<SimpleConfirmInfoBarDelegate>(
           j_listener, infobar_identifier, icon_bitmap, message_str, primary_str,
           secondary_str, auto_expire)));
-}
-
-bool RegisterSimpleConfirmInfoBarBuilder(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }

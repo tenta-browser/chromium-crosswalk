@@ -8,9 +8,9 @@
 
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
 #include "components/bookmarks/test/test_bookmark_client.h"
@@ -25,7 +25,9 @@ namespace bookmarks {
 
 class BookmarkNodeDataTest : public testing::Test {
  public:
-  BookmarkNodeDataTest() {}
+  BookmarkNodeDataTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI) {}
 
   void SetUp() override {
     model_ = TestBookmarkClient::CreateModel();
@@ -53,7 +55,7 @@ class BookmarkNodeDataTest : public testing::Test {
  private:
   base::ScopedTempDir profile_dir_;
   std::unique_ptr<BookmarkModel> model_;
-  base::MessageLoopForUI loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkNodeDataTest);
 };
@@ -137,7 +139,7 @@ TEST_F(BookmarkNodeDataTest, URL) {
   base::ScopedTempDir other_profile_dir;
   EXPECT_TRUE(other_profile_dir.CreateUniqueTempDir());
   EXPECT_TRUE(read_data.GetFirstNode(model(), other_profile_dir.GetPath()) ==
-              NULL);
+              nullptr);
 
   // Writing should also put the URL and title on the clipboard.
   GURL read_url;
@@ -186,7 +188,7 @@ TEST_F(BookmarkNodeDataTest, Folder) {
   base::ScopedTempDir other_profile_dir;
   EXPECT_TRUE(other_profile_dir.CreateUniqueTempDir());
   EXPECT_TRUE(read_data.GetFirstNode(model(), other_profile_dir.GetPath()) ==
-              NULL);
+              nullptr);
 }
 
 // Tests reading/writing a folder with children.
@@ -273,7 +275,7 @@ TEST_F(BookmarkNodeDataTest, MultipleNodes) {
 
   // Asking for the first node should return NULL with more than one element
   // present.
-  EXPECT_TRUE(read_data.GetFirstNode(model(), GetProfilePath()) == NULL);
+  EXPECT_TRUE(read_data.GetFirstNode(model(), GetProfilePath()) == nullptr);
 }
 
 TEST_F(BookmarkNodeDataTest, WriteToClipboardURL) {

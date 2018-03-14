@@ -5,9 +5,13 @@
 #ifndef EXTENSIONS_BROWSER_GUEST_VIEW_MIME_HANDLER_VIEW_MIME_HANDLER_VIEW_GUEST_H_
 #define EXTENSIONS_BROWSER_GUEST_VIEW_MIME_HANDLER_VIEW_MIME_HANDLER_VIEW_GUEST_H_
 
+#include <memory>
+#include <string>
+
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/guest_view/browser/guest_view.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 
 namespace content {
 class WebContents;
@@ -48,6 +52,8 @@ class StreamContainer {
   const std::string extension_id_;
 
   base::WeakPtrFactory<StreamContainer> weak_factory_;
+
+  DISALLOW_COPY_AND_ASSIGN(StreamContainer);
 };
 
 class MimeHandlerViewGuest :
@@ -80,8 +86,8 @@ class MimeHandlerViewGuest :
                          const WebContentsCreatedCallback& callback) override;
   void DidAttachToEmbedder() override;
   void DidInitialize(const base::DictionaryValue& create_params) final;
-  bool ShouldHandleFindRequestsForEmbedder() const final;
   bool ZoomPropagatesFromEmbedderToGuest() const final;
+  bool ShouldDestroyOnDetach() const final;
 
   // WebContentsDelegate implementation.
   content::WebContents* OpenURLFromTab(
@@ -99,17 +105,19 @@ class MimeHandlerViewGuest :
 
   // content::WebContentsObserver implementation.
   void DocumentOnLoadCompletedInMainFrame() final;
-
-  std::string view_id() const { return view_id_; }
-  base::WeakPtr<StreamContainer> GetStream() const;
+  void OnInterfaceRequestFromFrame(
+      content::RenderFrameHost* render_frame_host,
+      const std::string& interface_name,
+      mojo::ScopedMessagePipeHandle* interface_pipe) final;
 
   std::unique_ptr<MimeHandlerViewGuestDelegate> delegate_;
   std::unique_ptr<StreamContainer> stream_;
-  std::string view_id_;
 
   int embedder_frame_process_id_;
   int embedder_frame_routing_id_;
   int embedder_widget_routing_id_;
+
+  service_manager::BinderRegistry registry_;
 
   DISALLOW_COPY_AND_ASSIGN(MimeHandlerViewGuest);
 };

@@ -13,6 +13,7 @@
 #include "ui/android/screen_android.h"
 #include "ui/android/window_android.h"
 #include "ui/display/display.h"
+#include "ui/gfx/icc_profile.h"
 
 namespace ui {
 
@@ -29,10 +30,6 @@ void SetScreenAndroid() {
 
   JNIEnv* env = AttachCurrentThread();
   Java_DisplayAndroidManager_onNativeSideCreated(env, (jlong)manager);
-}
-
-bool RegisterScreenAndroid(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 DisplayAndroidManager::DisplayAndroidManager() {}
@@ -78,26 +75,25 @@ void DisplayAndroidManager::UpdateDisplay(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& jobject,
     jint sdkDisplayId,
-    jint physicalWidth,
-    jint physicalHeight,
     jint width,
     jint height,
     jfloat dipScale,
     jint rotationDegrees,
     jint bitsPerPixel,
-    jint bitsPerComponent) {
-  gfx::Rect bounds_in_pixels = gfx::Rect(physicalWidth, physicalHeight);
-
-  // Physical width and height might be not supported.
-  if (bounds_in_pixels.IsEmpty())
-    bounds_in_pixels = gfx::Rect(width, height);
-
+    jint bitsPerComponent,
+    jboolean isWideColorGamut) {
+  gfx::Rect bounds_in_pixels = gfx::Rect(width, height);
   const gfx::Rect bounds_in_dip = gfx::Rect(
       gfx::ScaleToCeiledSize(bounds_in_pixels.size(), 1.0f / dipScale));
 
   display::Display display(sdkDisplayId, bounds_in_dip);
   if (!Display::HasForceDeviceScaleFactor())
     display.set_device_scale_factor(dipScale);
+  if (!Display::HasForceColorProfile()) {
+    // TODO(ccameron): Use CreateDisplayP3D65 if isWideColorGamut is true, once
+    // the feature is ready to use.
+    display.set_color_space(gfx::ColorSpace::CreateSRGB());
+  }
 
   display.set_size_in_pixels(bounds_in_pixels.size());
   display.SetRotationAsDegree(rotationDegrees);

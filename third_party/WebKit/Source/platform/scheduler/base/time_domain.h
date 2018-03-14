@@ -10,8 +10,6 @@
 #include "base/callback.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ref_counted.h"
-#include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "platform/scheduler/base/intrusive_heap.h"
 #include "platform/scheduler/base/lazy_now.h"
@@ -34,7 +32,7 @@ class TaskQueueManager;
 // Note the TimeDomain only knows about the first wake-up per queue, it's the
 // responsibility of TaskQueueImpl to keep the time domain up to date if this
 // changes.
-class BLINK_PLATFORM_EXPORT TimeDomain {
+class PLATFORM_EXPORT TimeDomain {
  public:
   TimeDomain();
   virtual ~TimeDomain();
@@ -69,7 +67,7 @@ class BLINK_PLATFORM_EXPORT TimeDomain {
 
   // If there is a scheduled delayed task, |out_task_queue| is set to the queue
   // the next task was posted to and it returns true.  Returns false otherwise.
-  bool NextScheduledTaskQueue(TaskQueue** out_task_queue) const;
+  bool NextScheduledTaskQueue(internal::TaskQueueImpl** out_task_queue) const;
 
   // Schedules a call to TaskQueueImpl::WakeUpForDelayedWork when this
   // TimeDomain reaches |delayed_run_time|.  This supersedes any previously
@@ -135,8 +133,8 @@ class BLINK_PLATFORM_EXPORT TimeDomain {
       DCHECK(queue->heap_handle().IsValid());
       queue->set_heap_handle(HeapHandle());
 
-      DCHECK_NE(queue->scheduled_time_domain_wake_up(), base::TimeTicks());
-      queue->set_scheduled_time_domain_wake_up(base::TimeTicks());
+      DCHECK(queue->scheduled_time_domain_wake_up());
+      queue->SetScheduledTimeDomainWakeUp(base::nullopt);
     }
   };
 

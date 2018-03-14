@@ -4,6 +4,8 @@
 
 #include "ui/gl/gl_angle_util_win.h"
 
+#include <objbase.h>
+
 #include "base/trace_event/trace_event.h"
 #include "third_party/angle/include/EGL/egl.h"
 #include "third_party/angle/include/EGL/eglext.h"
@@ -68,22 +70,22 @@ void* QueryDeviceObjectFromANGLE(int object_type) {
   return reinterpret_cast<void*>(device);
 }
 
-base::win::ScopedComPtr<ID3D11Device> QueryD3D11DeviceObjectFromANGLE() {
-  base::win::ScopedComPtr<ID3D11Device> d3d11_device;
+Microsoft::WRL::ComPtr<ID3D11Device> QueryD3D11DeviceObjectFromANGLE() {
+  Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device;
   d3d11_device = reinterpret_cast<ID3D11Device*>(
       QueryDeviceObjectFromANGLE(EGL_D3D11_DEVICE_ANGLE));
   return d3d11_device;
 }
 
-base::win::ScopedComPtr<IDirect3DDevice9> QueryD3D9DeviceObjectFromANGLE() {
-  base::win::ScopedComPtr<IDirect3DDevice9> d3d9_device;
+Microsoft::WRL::ComPtr<IDirect3DDevice9> QueryD3D9DeviceObjectFromANGLE() {
+  Microsoft::WRL::ComPtr<IDirect3DDevice9> d3d9_device;
   d3d9_device = reinterpret_cast<IDirect3DDevice9*>(
       QueryDeviceObjectFromANGLE(EGL_D3D9_DEVICE_ANGLE));
   return d3d9_device;
 }
 
-base::win::ScopedComPtr<IDCompositionDevice2> QueryDirectCompositionDevice(
-    base::win::ScopedComPtr<ID3D11Device> d3d11_device) {
+Microsoft::WRL::ComPtr<IDCompositionDevice2> QueryDirectCompositionDevice(
+    Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device) {
   // Each D3D11 device will have a DirectComposition device stored in its
   // private data under this GUID.
   // {CF81D85A-8D30-4769-8509-B9D73898D870}
@@ -93,13 +95,13 @@ base::win::ScopedComPtr<IDCompositionDevice2> QueryDirectCompositionDevice(
       0x4769,
       {0x85, 0x9, 0xb9, 0xd7, 0x38, 0x98, 0xd8, 0x70}};
 
-  base::win::ScopedComPtr<IDCompositionDevice2> dcomp_device;
+  Microsoft::WRL::ComPtr<IDCompositionDevice2> dcomp_device;
   if (!d3d11_device)
     return dcomp_device;
 
-  UINT data_size = sizeof(dcomp_device.get());
+  UINT data_size = sizeof(dcomp_device.Get());
   HRESULT hr = d3d11_device->GetPrivateData(kDirectCompositionGUID, &data_size,
-                                            dcomp_device.ReceiveVoid());
+                                            dcomp_device.GetAddressOf());
   if (SUCCEEDED(hr) && dcomp_device)
     return dcomp_device;
 
@@ -116,18 +118,18 @@ base::win::ScopedComPtr<IDCompositionDevice2> QueryDirectCompositionDevice(
   if (!create_device_function)
     return dcomp_device;
 
-  base::win::ScopedComPtr<IDXGIDevice> dxgi_device;
-  d3d11_device.QueryInterface(dxgi_device.Receive());
-  base::win::ScopedComPtr<IDCompositionDesktopDevice> desktop_device;
-  hr = create_device_function(dxgi_device.get(),
-                              IID_PPV_ARGS(desktop_device.Receive()));
+  Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device;
+  d3d11_device.CopyTo(dxgi_device.GetAddressOf());
+  Microsoft::WRL::ComPtr<IDCompositionDesktopDevice> desktop_device;
+  hr = create_device_function(dxgi_device.Get(),
+                              IID_PPV_ARGS(desktop_device.GetAddressOf()));
   if (FAILED(hr))
     return dcomp_device;
 
-  hr = desktop_device.QueryInterface(dcomp_device.Receive());
+  hr = desktop_device.CopyTo(dcomp_device.GetAddressOf());
   CHECK(SUCCEEDED(hr));
   d3d11_device->SetPrivateDataInterface(kDirectCompositionGUID,
-                                        dcomp_device.get());
+                                        dcomp_device.Get());
 
   return dcomp_device;
 }

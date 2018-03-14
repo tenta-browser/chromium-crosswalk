@@ -15,7 +15,7 @@
 #include "device/gamepad/gamepad_data_fetcher.h"
 #include "device/gamepad/gamepad_provider.h"
 #include "device/gamepad/gamepad_standard_mappings.h"
-#include "third_party/WebKit/public/platform/WebGamepads.h"
+#include "device/gamepad/public/cpp/gamepads.h"
 
 namespace device {
 
@@ -33,9 +33,6 @@ class GamepadPlatformDataFetcherAndroid : public GamepadDataFetcher {
   void PauseHint(bool paused) override;
 
   void GetGamepadData(bool devices_changed_hint) override;
-
-  // Registers the JNI methods for GamepadsReader.
-  static bool RegisterGamepadPlatformDataFetcherAndroid(JNIEnv* env);
 
  private:
   void OnAddedToProvider() override;

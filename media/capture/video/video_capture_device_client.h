@@ -13,7 +13,6 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/weak_ptr.h"
 #include "base/threading/thread_collision_warner.h"
 #include "media/capture/capture_export.h"
 #include "media/capture/video/video_capture_device.h"
@@ -37,8 +36,7 @@ using VideoCaptureJpegDecoderFactoryCB =
 // The owner is responsible for making sure that the instance outlives these
 // calls.
 class CAPTURE_EXPORT VideoCaptureDeviceClient
-    : public media::VideoCaptureDevice::Client,
-      public base::SupportsWeakPtr<VideoCaptureDeviceClient> {
+    : public media::VideoCaptureDevice::Client {
  public:
   VideoCaptureDeviceClient(
       std::unique_ptr<VideoFrameReceiver> receiver,
@@ -78,19 +76,13 @@ class CAPTURE_EXPORT VideoCaptureDeviceClient
                                    media::VideoPixelFormat format,
                                    media::VideoPixelStorage storage,
                                    int new_frame_feedback_id) override;
-  void OnError(const tracked_objects::Location& from_here,
+  void OnError(const base::Location& from_here,
                const std::string& reason) override;
   void OnLog(const std::string& message) override;
   void OnStarted() override;
   double GetBufferPoolUtilization() const override;
 
  private:
-  void InitializeI420PlanePointers(const gfx::Size& dimensions,
-                                   uint8_t* const data,
-                                   uint8_t** y_plane_data,
-                                   uint8_t** u_plane_data,
-                                   uint8_t** v_plane_data);
-
   // A branch of OnIncomingCapturedData for Y16 frame_format.pixel_format.
   void OnIncomingCapturedY16Data(const uint8_t* data,
                                  int length,

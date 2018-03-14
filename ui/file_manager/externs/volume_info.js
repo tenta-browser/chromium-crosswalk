@@ -7,7 +7,7 @@
  * flush storage", or "mounted zip archive" etc.
  * @interface
  */
-function VolumeInfo() {};
+function VolumeInfo() {}
 
 /** @type {VolumeManagerCommon.VolumeType} */
 VolumeInfo.prototype.volumeType;
@@ -23,6 +23,13 @@ VolumeInfo.prototype.fileSystem;
  * @type {DirectoryEntry}
  */
 VolumeInfo.prototype.displayRoot;
+
+/**
+ * The display root path of Team Drives directory. It is null before finishing
+ * to resolve the entry. Valid only for Drive volume.
+ * @type {DirectoryEntry}
+ */
+VolumeInfo.prototype.teamDriveDisplayRoot;
 
 /**
  * The volume's fake entries such as Recent, Offline, Shared with me, etc...
@@ -94,6 +101,9 @@ VolumeInfo.prototype.watchable;
 /**  @type {VolumeManagerCommon.Source} */
 VolumeInfo.prototype.source;
 
+/**  @type {VolumeManagerCommon.FileSystemType} */
+VolumeInfo.prototype.diskFileSystemType;
+
 /**
  * Starts resolving the display root and obtains it.  It may take long time for
  * Drive. Once resolved, it is cached.
@@ -101,7 +111,7 @@ VolumeInfo.prototype.source;
  * @param {function(!DirectoryEntry)=} opt_onSuccess Success callback with the
  *     display root directory as an argument.
  * @param {function(*)=} opt_onFailure Failure callback.
- * @return {!Promise.<!DirectoryEntry>}
+ * @return {!Promise<!DirectoryEntry>}
  */
 VolumeInfo.prototype.resolveDisplayRoot = function(
     opt_onSuccess, opt_onFailure) {};

@@ -20,6 +20,8 @@ scoped_refptr<ResourceResponse> ResourceResponse::DeepCopy() const {
   new_response->head.charset = head.charset;
   new_response->head.has_major_certificate_errors =
       head.has_major_certificate_errors;
+  new_response->head.is_legacy_symantec_cert = head.is_legacy_symantec_cert;
+  new_response->head.cert_validity_start = head.cert_validity_start;
   new_response->head.content_length = head.content_length;
   new_response->head.encoded_data_length = head.encoded_data_length;
   new_response->head.encoded_body_length = head.encoded_body_length;
@@ -39,8 +41,6 @@ scoped_refptr<ResourceResponse> ResourceResponse::DeepCopy() const {
   new_response->head.socket_address = head.socket_address;
   new_response->head.was_fetched_via_service_worker =
       head.was_fetched_via_service_worker;
-  new_response->head.was_fetched_via_foreign_fetch =
-      head.was_fetched_via_foreign_fetch;
   new_response->head.was_fallback_required_by_service_worker =
       head.was_fallback_required_by_service_worker;
   new_response->head.url_list_via_service_worker =
@@ -51,8 +51,14 @@ scoped_refptr<ResourceResponse> ResourceResponse::DeepCopy() const {
       head.service_worker_start_time;
   new_response->head.service_worker_ready_time =
       head.service_worker_ready_time;
+  new_response->head.is_in_cache_storage = head.is_in_cache_storage;
+  new_response->head.cache_storage_cache_name = head.cache_storage_cache_name;
   new_response->head.previews_state = head.previews_state;
   new_response->head.effective_connection_type = head.effective_connection_type;
+  new_response->head.certificate = head.certificate;
+  new_response->head.cert_status = head.cert_status;
+  new_response->head.ssl_connection_status = head.ssl_connection_status;
+  new_response->head.ssl_key_exchange_group = head.ssl_key_exchange_group;
   new_response->head.signed_certificate_timestamps =
       head.signed_certificate_timestamps;
   new_response->head.cors_exposed_header_names = head.cors_exposed_header_names;

@@ -4,7 +4,6 @@
 
 #include "core/paint/NinePieceImageGrid.h"
 
-#include "core/style/ComputedStyle.h"
 #include "core/style/NinePieceImage.h"
 #include "platform/LengthFunctions.h"
 #include "platform/geometry/FloatSize.h"
@@ -63,10 +62,8 @@ NinePieceImageGrid::NinePieceImageGrid(const NinePieceImage& nine_piece_image,
   // as its height, and Wside as the border image width offset for the side, let
   // f = min(Lwidth/(Wleft+Wright), Lheight/(Wtop+Wbottom)). If f < 1, then all
   // W are reduced by multiplying them by f.
-  int border_side_width =
-      std::max(1, SaturatedAddition(left_.width, right_.width));
-  int border_side_height =
-      std::max(1, SaturatedAddition(top_.width, bottom_.width));
+  int border_side_width = ClampAdd(left_.width, right_.width).Max(1);
+  int border_side_height = ClampAdd(top_.width, bottom_.width).Max(1);
   float border_side_scale_factor =
       std::min((float)border_image_area.Width() / border_side_width,
                (float)border_image_area.Height() / border_side_height);
@@ -147,7 +144,7 @@ void NinePieceImageGrid::SetDrawInfoCorner(NinePieceDrawInfo& draw_info,
                              right_.width, bottom_.width));
       break;
     default:
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
       break;
   }
 }
@@ -224,7 +221,7 @@ void NinePieceImageGrid::SetDrawInfoEdge(NinePieceDrawInfo& draw_info,
                         horizontal_tile_rule_);
       break;
     default:
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
       break;
   }
 }

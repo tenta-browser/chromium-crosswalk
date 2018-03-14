@@ -4,10 +4,15 @@
 
 #include "chrome/browser/page_load_metrics/observers/from_gws_page_load_metrics_observer.h"
 
+#include <vector>
+
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "chrome/browser/page_load_metrics/observers/page_load_metrics_observer_test_harness.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
+#include "chrome/browser/page_load_metrics/page_load_tracker.h"
+#include "chrome/common/page_load_metrics/test/page_load_metrics_test_util.h"
+#include "content/public/browser/web_contents.h"
 #include "third_party/WebKit/public/platform/WebMouseEvent.h"
 
 namespace {
@@ -25,15 +30,17 @@ class FromGWSPageLoadMetricsObserverTest
   }
 
   void SimulateTimingWithoutPaint() {
-    page_load_metrics::PageLoadTiming timing;
+    page_load_metrics::mojom::PageLoadTiming timing;
+    page_load_metrics::InitPageLoadTimingForTest(&timing);
     timing.navigation_start = base::Time::FromDoubleT(1);
     SimulateTimingUpdate(timing);
   }
 
   void SimulateTimingWithFirstPaint() {
-    page_load_metrics::PageLoadTiming timing;
+    page_load_metrics::mojom::PageLoadTiming timing;
+    page_load_metrics::InitPageLoadTimingForTest(&timing);
     timing.navigation_start = base::Time::FromDoubleT(1);
-    timing.first_paint = base::TimeDelta::FromMilliseconds(0);
+    timing.paint_timing->first_paint = base::TimeDelta::FromMilliseconds(0);
     PopulateRequiredTimingFields(&timing);
     SimulateTimingUpdate(timing);
   }
@@ -54,27 +61,31 @@ class FromGWSPageLoadMetricsLoggerTest : public testing::Test {};
 TEST_F(FromGWSPageLoadMetricsObserverTest, NoMetrics) {
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstTextPaint,
                                       0);
+  EXPECT_EQ(0ul, test_ukm_recorder().entries_count());
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest, NoPreviousCommittedUrl) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_text_paint = base::TimeDelta::FromMilliseconds(1);
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMilliseconds(1);
   PopulateRequiredTimingFields(&timing);
   NavigateAndCommit(GURL(kExampleUrl));
 
   SimulateTimingUpdate(timing);
 
   // Navigate again to force logging.
-  NavigateAndCommit(GURL("http://www.final.com"));
+  NavigateToUntrackedUrl();
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstTextPaint,
                                       0);
+  EXPECT_EQ(0ul, test_ukm_recorder().entries_count());
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest, NonSearchPreviousCommittedUrl) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_text_paint = base::TimeDelta::FromMilliseconds(1);
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMilliseconds(1);
   PopulateRequiredTimingFields(&timing);
   NavigateAndCommit(GURL("http://www.other.com"));
   NavigateAndCommit(GURL(kExampleUrl));
@@ -82,16 +93,18 @@ TEST_F(FromGWSPageLoadMetricsObserverTest, NonSearchPreviousCommittedUrl) {
   SimulateTimingUpdate(timing);
 
   // Navigate again to force logging.
-  NavigateAndCommit(GURL("http://www.final.com"));
+  NavigateToUntrackedUrl();
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstTextPaint,
                                       0);
+  EXPECT_EQ(0ul, test_ukm_recorder().entries_count());
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest,
        GoogleNonSearchPreviousCommittedUrl1) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_text_paint = base::TimeDelta::FromMilliseconds(1);
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMilliseconds(1);
   PopulateRequiredTimingFields(&timing);
   NavigateAndCommit(GURL("https://www.google.com/"));
   NavigateAndCommit(GURL(kExampleUrl));
@@ -99,16 +112,18 @@ TEST_F(FromGWSPageLoadMetricsObserverTest,
   SimulateTimingUpdate(timing);
 
   // Navigate again to force logging.
-  NavigateAndCommit(GURL("http://www.final.com"));
+  NavigateToUntrackedUrl();
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstTextPaint,
                                       0);
+  EXPECT_EQ(0ul, test_ukm_recorder().entries_count());
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest,
        GoogleNonSearchPreviousCommittedUrl2) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_text_paint = base::TimeDelta::FromMilliseconds(1);
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMilliseconds(1);
   PopulateRequiredTimingFields(&timing);
   // Navigation from /search, but missing a query string, so can't have been a
   // search results page.
@@ -118,23 +133,28 @@ TEST_F(FromGWSPageLoadMetricsObserverTest,
   SimulateTimingUpdate(timing);
 
   // Navigate again to force logging.
-  NavigateAndCommit(GURL("http://www.final.com"));
+  NavigateToUntrackedUrl();
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstTextPaint,
                                       0);
+  EXPECT_EQ(0ul, test_ukm_recorder().entries_count());
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest, SearchPreviousCommittedUrl1) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.parse_start = base::TimeDelta::FromMilliseconds(10);
-  timing.first_paint = base::TimeDelta::FromMilliseconds(20);
-  timing.first_contentful_paint = base::TimeDelta::FromMilliseconds(40);
-  timing.first_text_paint = base::TimeDelta::FromMilliseconds(80);
-  timing.first_image_paint = base::TimeDelta::FromMilliseconds(160);
-  timing.parse_stop = base::TimeDelta::FromMilliseconds(320);
-  timing.dom_content_loaded_event_start =
+  timing.parse_timing->parse_start = base::TimeDelta::FromMilliseconds(10);
+  timing.paint_timing->first_paint = base::TimeDelta::FromMilliseconds(20);
+  timing.paint_timing->first_contentful_paint =
+      base::TimeDelta::FromMilliseconds(40);
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMilliseconds(80);
+  timing.paint_timing->first_image_paint =
+      base::TimeDelta::FromMilliseconds(160);
+  timing.parse_timing->parse_stop = base::TimeDelta::FromMilliseconds(320);
+  timing.document_timing->dom_content_loaded_event_start =
       base::TimeDelta::FromMilliseconds(640);
-  timing.load_event_start = base::TimeDelta::FromMilliseconds(1280);
+  timing.document_timing->load_event_start =
+      base::TimeDelta::FromMilliseconds(1280);
   PopulateRequiredTimingFields(&timing);
   NavigateAndCommit(GURL("https://www.google.com/webhp?q=test"));
   NavigateAndCommit(GURL(kExampleUrl));
@@ -142,29 +162,30 @@ TEST_F(FromGWSPageLoadMetricsObserverTest, SearchPreviousCommittedUrl1) {
   SimulateTimingUpdate(timing);
 
   // Navigate again to force logging.
-  NavigateAndCommit(GURL("http://www.final.com"));
+  NavigateToUntrackedUrl();
 
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSParseStart, 1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSParseStart,
-      timing.parse_start.value().InMilliseconds(), 1);
+      timing.parse_timing->parse_start.value().InMilliseconds(), 1);
 
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstPaint, 1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSFirstPaint,
-      timing.first_paint.value().InMilliseconds(), 1);
+      timing.paint_timing->first_paint.value().InMilliseconds(), 1);
 
   histogram_tester().ExpectTotalCount(
       internal::kHistogramFromGWSFirstContentfulPaint, 1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSFirstContentfulPaint,
-      timing.first_contentful_paint.value().InMilliseconds(), 1);
+      timing.paint_timing->first_contentful_paint.value().InMilliseconds(), 1);
 
   histogram_tester().ExpectTotalCount(
       internal::kHistogramFromGWSParseStartToFirstContentfulPaint, 1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSParseStartToFirstContentfulPaint,
-      (timing.first_contentful_paint.value() - timing.parse_start.value())
+      (timing.paint_timing->first_contentful_paint.value() -
+       timing.parse_timing->parse_start.value())
           .InMilliseconds(),
       1);
 
@@ -172,37 +193,49 @@ TEST_F(FromGWSPageLoadMetricsObserverTest, SearchPreviousCommittedUrl1) {
                                       1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSFirstTextPaint,
-      timing.first_text_paint.value().InMilliseconds(), 1);
+      timing.paint_timing->first_text_paint.value().InMilliseconds(), 1);
 
   histogram_tester().ExpectTotalCount(
       internal::kHistogramFromGWSFirstImagePaint, 1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSFirstImagePaint,
-      timing.first_image_paint.value().InMilliseconds(), 1);
+      timing.paint_timing->first_image_paint.value().InMilliseconds(), 1);
 
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSParseDuration,
                                       1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSParseDuration,
-      (timing.parse_stop.value() - timing.parse_start.value()).InMilliseconds(),
+      (timing.parse_timing->parse_stop.value() -
+       timing.parse_timing->parse_start.value())
+          .InMilliseconds(),
       1);
 
   histogram_tester().ExpectTotalCount(
       internal::kHistogramFromGWSDomContentLoaded, 1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSDomContentLoaded,
-      timing.dom_content_loaded_event_start.value().InMilliseconds(), 1);
+      timing.document_timing->dom_content_loaded_event_start.value()
+          .InMilliseconds(),
+      1);
 
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSLoad, 1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSLoad,
-      timing.load_event_start.value().InMilliseconds(), 1);
+      timing.document_timing->load_event_start.value().InMilliseconds(), 1);
+
+  auto entries =
+      test_ukm_recorder().GetEntriesByName(internal::kUkmFromGoogleSearchName);
+  EXPECT_EQ(1u, entries.size());
+  for (const auto* const entry : entries) {
+    test_ukm_recorder().ExpectEntrySourceHasUrl(entry, GURL(kExampleUrl));
+  }
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest, SearchPreviousCommittedUrl2) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_text_paint = base::TimeDelta::FromMilliseconds(1);
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMilliseconds(1);
   PopulateRequiredTimingFields(&timing);
   NavigateAndCommit(GURL("https://www.google.com/#q=test"));
   NavigateAndCommit(GURL(kExampleUrl));
@@ -210,18 +243,26 @@ TEST_F(FromGWSPageLoadMetricsObserverTest, SearchPreviousCommittedUrl2) {
   SimulateTimingUpdate(timing);
 
   // Navigate again to force logging.
-  NavigateAndCommit(GURL("http://www.final.com"));
+  NavigateToUntrackedUrl();
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstTextPaint,
                                       1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSFirstTextPaint,
-      timing.first_text_paint.value().InMilliseconds(), 1);
+      timing.paint_timing->first_text_paint.value().InMilliseconds(), 1);
+
+  auto entries =
+      test_ukm_recorder().GetEntriesByName(internal::kUkmFromGoogleSearchName);
+  EXPECT_EQ(1u, entries.size());
+  for (const auto* const entry : entries) {
+    test_ukm_recorder().ExpectEntrySourceHasUrl(entry, GURL(kExampleUrl));
+  }
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest, SearchPreviousCommittedUrl3) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_text_paint = base::TimeDelta::FromMilliseconds(1);
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMilliseconds(1);
   PopulateRequiredTimingFields(&timing);
   NavigateAndCommit(GURL("https://www.google.com/webhp#q=test"));
   NavigateAndCommit(GURL(kExampleUrl));
@@ -229,18 +270,26 @@ TEST_F(FromGWSPageLoadMetricsObserverTest, SearchPreviousCommittedUrl3) {
   SimulateTimingUpdate(timing);
 
   // Navigate again to force logging.
-  NavigateAndCommit(GURL("http://www.final.com"));
+  NavigateToUntrackedUrl();
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstTextPaint,
                                       1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSFirstTextPaint,
-      timing.first_text_paint.value().InMilliseconds(), 1);
+      timing.paint_timing->first_text_paint.value().InMilliseconds(), 1);
+
+  auto entries =
+      test_ukm_recorder().GetEntriesByName(internal::kUkmFromGoogleSearchName);
+  EXPECT_EQ(1u, entries.size());
+  for (const auto* const entry : entries) {
+    test_ukm_recorder().ExpectEntrySourceHasUrl(entry, GURL(kExampleUrl));
+  }
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest, SearchPreviousCommittedUrl4) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_text_paint = base::TimeDelta::FromMilliseconds(1);
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMilliseconds(1);
   PopulateRequiredTimingFields(&timing);
   NavigateAndCommit(GURL("https://www.google.co.uk/search#q=test"));
   NavigateAndCommit(GURL(kExampleUrl));
@@ -248,21 +297,31 @@ TEST_F(FromGWSPageLoadMetricsObserverTest, SearchPreviousCommittedUrl4) {
   SimulateTimingUpdate(timing);
 
   // Navigate again to force logging.
-  NavigateAndCommit(GURL("http://www.final.com"));
+  NavigateToUntrackedUrl();
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstTextPaint,
                                       1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSFirstTextPaint,
-      timing.first_text_paint.value().InMilliseconds(), 1);
+      timing.paint_timing->first_text_paint.value().InMilliseconds(), 1);
+
+  auto entries =
+      test_ukm_recorder().GetEntriesByName(internal::kUkmFromGoogleSearchName);
+  EXPECT_EQ(1u, entries.size());
+  for (const auto* const entry : entries) {
+    test_ukm_recorder().ExpectEntrySourceHasUrl(entry, GURL(kExampleUrl));
+  }
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest, SearchToNonSearchToOtherPage) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_text_paint = base::TimeDelta::FromMilliseconds(1);
-  page_load_metrics::PageLoadTiming timing2;
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMilliseconds(1);
+  page_load_metrics::mojom::PageLoadTiming timing2;
+  page_load_metrics::InitPageLoadTimingForTest(&timing2);
   timing2.navigation_start = base::Time::FromDoubleT(2);
-  timing2.first_text_paint = base::TimeDelta::FromMilliseconds(100);
+  timing2.paint_timing->first_text_paint =
+      base::TimeDelta::FromMilliseconds(100);
   PopulateRequiredTimingFields(&timing);
   PopulateRequiredTimingFields(&timing2);
   NavigateAndCommit(GURL("https://www.google.co.uk/search#q=test"));
@@ -273,21 +332,31 @@ TEST_F(FromGWSPageLoadMetricsObserverTest, SearchToNonSearchToOtherPage) {
 
   // Navigate again to force logging. We expect to log timing for the page
   // navigated from search, but not for the page navigated from that page.
-  NavigateAndCommit(GURL("http://www.final.com"));
+  NavigateToUntrackedUrl();
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstTextPaint,
                                       1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSFirstTextPaint,
-      timing.first_text_paint.value().InMilliseconds(), 1);
+      timing.paint_timing->first_text_paint.value().InMilliseconds(), 1);
+
+  auto entries =
+      test_ukm_recorder().GetEntriesByName(internal::kUkmFromGoogleSearchName);
+  EXPECT_EQ(1u, entries.size());
+  for (const auto* const entry : entries) {
+    test_ukm_recorder().ExpectEntrySourceHasUrl(entry, GURL(kExampleUrl));
+  }
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest, SearchToNonSearchToSearch) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_text_paint = base::TimeDelta::FromMilliseconds(1);
-  page_load_metrics::PageLoadTiming timing2;
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMilliseconds(1);
+  page_load_metrics::mojom::PageLoadTiming timing2;
+  page_load_metrics::InitPageLoadTimingForTest(&timing2);
   timing2.navigation_start = base::Time::FromDoubleT(2);
-  timing2.first_text_paint = base::TimeDelta::FromMilliseconds(100);
+  timing2.paint_timing->first_text_paint =
+      base::TimeDelta::FromMilliseconds(100);
   PopulateRequiredTimingFields(&timing);
   PopulateRequiredTimingFields(&timing2);
   NavigateAndCommit(GURL("https://www.google.co.uk/search#q=test"));
@@ -298,25 +367,37 @@ TEST_F(FromGWSPageLoadMetricsObserverTest, SearchToNonSearchToSearch) {
 
   // Navigate again to force logging. We expect to log timing for the page
   // navigated from search, but not for the search page we navigated to.
-  NavigateAndCommit(GURL("http://www.final.com"));
+  NavigateToUntrackedUrl();
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstTextPaint,
                                       1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSFirstTextPaint,
-      timing.first_text_paint.value().InMilliseconds(), 1);
+      timing.paint_timing->first_text_paint.value().InMilliseconds(), 1);
+
+  auto entries =
+      test_ukm_recorder().GetEntriesByName(internal::kUkmFromGoogleSearchName);
+  EXPECT_EQ(1u, entries.size());
+  for (const auto* const entry : entries) {
+    test_ukm_recorder().ExpectEntrySourceHasUrl(entry, GURL(kExampleUrl));
+  }
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest,
        SearchToNonSearchToSearchToNonSearch) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_text_paint = base::TimeDelta::FromMilliseconds(1);
-  page_load_metrics::PageLoadTiming timing2;
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMilliseconds(1);
+  page_load_metrics::mojom::PageLoadTiming timing2;
+  page_load_metrics::InitPageLoadTimingForTest(&timing2);
   timing2.navigation_start = base::Time::FromDoubleT(2);
-  timing2.first_text_paint = base::TimeDelta::FromMilliseconds(100);
-  page_load_metrics::PageLoadTiming timing3;
+  timing2.paint_timing->first_text_paint =
+      base::TimeDelta::FromMilliseconds(100);
+  page_load_metrics::mojom::PageLoadTiming timing3;
+  page_load_metrics::InitPageLoadTimingForTest(&timing3);
   timing3.navigation_start = base::Time::FromDoubleT(3);
-  timing3.first_text_paint = base::TimeDelta::FromMilliseconds(1000);
+  timing3.paint_timing->first_text_paint =
+      base::TimeDelta::FromMilliseconds(1000);
   PopulateRequiredTimingFields(&timing);
   PopulateRequiredTimingFields(&timing2);
   PopulateRequiredTimingFields(&timing3);
@@ -330,28 +411,40 @@ TEST_F(FromGWSPageLoadMetricsObserverTest,
 
   // Navigate again to force logging. We expect to log timing for both pages
   // navigated from search, but not for the search pages we navigated to.
-  NavigateAndCommit(GURL("http://www.final.com"));
+  NavigateToUntrackedUrl();
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstTextPaint,
                                       2);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSFirstTextPaint,
-      timing.first_text_paint.value().InMilliseconds(), 1);
+      timing.paint_timing->first_text_paint.value().InMilliseconds(), 1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSFirstTextPaint,
-      timing3.first_text_paint.value().InMilliseconds(), 1);
+      timing3.paint_timing->first_text_paint.value().InMilliseconds(), 1);
+
+  auto entries =
+      test_ukm_recorder().GetEntriesByName(internal::kUkmFromGoogleSearchName);
+  EXPECT_EQ(2u, entries.size());
+  for (const auto* const entry : entries) {
+    test_ukm_recorder().ExpectEntrySourceHasUrl(entry, GURL(kExampleUrl));
+  }
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest,
        SearchToNonSearchToSearchToNonSearchBackgrounded) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_text_paint = base::TimeDelta::FromMilliseconds(1);
-  page_load_metrics::PageLoadTiming timing2;
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMilliseconds(1);
+  page_load_metrics::mojom::PageLoadTiming timing2;
+  page_load_metrics::InitPageLoadTimingForTest(&timing2);
   timing2.navigation_start = base::Time::FromDoubleT(2);
-  timing2.first_text_paint = base::TimeDelta::FromMilliseconds(100);
-  page_load_metrics::PageLoadTiming timing3;
+  timing2.paint_timing->first_text_paint =
+      base::TimeDelta::FromMilliseconds(100);
+  page_load_metrics::mojom::PageLoadTiming timing3;
+  page_load_metrics::InitPageLoadTimingForTest(&timing3);
   timing3.navigation_start = base::Time::FromDoubleT(3);
-  timing3.first_text_paint = base::TimeDelta::FromMilliseconds(1000);
+  timing3.paint_timing->first_text_paint =
+      base::TimeDelta::FromMilliseconds(1000);
   PopulateRequiredTimingFields(&timing);
   PopulateRequiredTimingFields(&timing2);
   PopulateRequiredTimingFields(&timing3);
@@ -366,19 +459,27 @@ TEST_F(FromGWSPageLoadMetricsObserverTest,
 
   // Navigate again to force logging. We expect to log timing for the first page
   // navigated from search, but not the second since it was backgrounded.
-  NavigateAndCommit(GURL("http://www.final.com"));
+  NavigateToUntrackedUrl();
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstTextPaint,
                                       1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSFirstTextPaint,
-      timing.first_text_paint.value().InMilliseconds(), 1);
+      timing.paint_timing->first_text_paint.value().InMilliseconds(), 1);
+
+  auto entries =
+      test_ukm_recorder().GetEntriesByName(internal::kUkmFromGoogleSearchName);
+  EXPECT_EQ(2u, entries.size());
+  for (const auto* const entry : entries) {
+    test_ukm_recorder().ExpectEntrySourceHasUrl(entry, GURL(kExampleUrl));
+  }
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest,
        SearchRedirectorPreviousCommittedUrl) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_text_paint = base::TimeDelta::FromMilliseconds(1);
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMilliseconds(1);
   PopulateRequiredTimingFields(&timing);
   NavigateAndCommit(GURL("https://www.google.com/search#q=test"));
   NavigateAndCommit(GURL("https://www.google.com/url?source=web"));
@@ -387,19 +488,27 @@ TEST_F(FromGWSPageLoadMetricsObserverTest,
   SimulateTimingUpdate(timing);
 
   // Navigate again to force logging.
-  NavigateAndCommit(GURL("http://www.final.com"));
+  NavigateToUntrackedUrl();
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstTextPaint,
                                       1);
   histogram_tester().ExpectBucketCount(
       internal::kHistogramFromGWSFirstTextPaint,
-      timing.first_text_paint.value().InMilliseconds(), 1);
+      timing.paint_timing->first_text_paint.value().InMilliseconds(), 1);
+
+  auto entries =
+      test_ukm_recorder().GetEntriesByName(internal::kUkmFromGoogleSearchName);
+  EXPECT_EQ(1u, entries.size());
+  for (const auto* const entry : entries) {
+    test_ukm_recorder().ExpectEntrySourceHasUrl(entry, GURL(kExampleUrl));
+  }
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest,
        NonSearchRedirectorPreviousCommittedUrl) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_text_paint = base::TimeDelta::FromMilliseconds(1);
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMilliseconds(1);
   PopulateRequiredTimingFields(&timing);
   NavigateAndCommit(GURL("https://www.google.com/webhp?q=test"));
   NavigateAndCommit(GURL("https://www.google.com/url?a=b&c=d"));
@@ -408,16 +517,19 @@ TEST_F(FromGWSPageLoadMetricsObserverTest,
   SimulateTimingUpdate(timing);
 
   // Navigate again to force logging.
-  NavigateAndCommit(GURL("http://www.final.com"));
+  NavigateToUntrackedUrl();
   histogram_tester().ExpectTotalCount(internal::kHistogramFromGWSFirstTextPaint,
                                       0);
+
+  EXPECT_EQ(0ul, test_ukm_recorder().entries_count());
 }
 
 TEST_F(FromGWSPageLoadMetricsObserverTest,
        SearchPreviousCommittedUrlBackgroundLater) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_text_paint = base::TimeDelta::FromMicroseconds(1);
+  timing.paint_timing->first_text_paint = base::TimeDelta::FromMicroseconds(1);
   PopulateRequiredTimingFields(&timing);
 
   NavigateAndCommit(GURL("https://www.google.com/search#q=test"));
@@ -432,12 +544,12 @@ TEST_F(FromGWSPageLoadMetricsObserverTest,
   // If the system clock is low resolution PageLoadTracker's background_time_
   // may be < timing.first_text_paint.
   if (page_load_metrics::WasStartedInForegroundOptionalEventInForeground(
-          timing.first_text_paint, info)) {
+          timing.paint_timing->first_text_paint, info)) {
     histogram_tester().ExpectTotalCount(
         internal::kHistogramFromGWSFirstTextPaint, 1);
     histogram_tester().ExpectBucketCount(
         internal::kHistogramFromGWSFirstTextPaint,
-        timing.first_text_paint.value().InMilliseconds(), 1);
+        timing.paint_timing->first_text_paint.value().InMilliseconds(), 1);
   } else {
     histogram_tester().ExpectTotalCount(
         internal::kHistogramFromGWSFirstTextPaint, 0);
@@ -598,9 +710,10 @@ TEST_F(FromGWSPageLoadMetricsObserverTest, NoAbortNewNavigationFromAboutURL) {
 
 TEST_F(FromGWSPageLoadMetricsObserverTest, NoAbortNewNavigationAfterPaint) {
   NavigateAndCommit(GURL(kGoogleSearchResultsUrl));
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_paint = base::TimeDelta::FromMicroseconds(1);
+  timing.paint_timing->first_paint = base::TimeDelta::FromMicroseconds(1);
   PopulateRequiredTimingFields(&timing);
   NavigateAndCommit(GURL("https://example.test"));
   SimulateTimingUpdate(timing);
@@ -692,160 +805,6 @@ TEST_F(FromGWSPageLoadMetricsObserverTest, ProvisionalIntent) {
   DeleteContents();
   histogram_tester().ExpectTotalCount(
       internal::kHistogramFromGWSAbortCloseBeforeCommit, 0);
-}
-
-TEST_F(FromGWSPageLoadMetricsLoggerTest, IsGoogleSearchHostname) {
-  struct {
-    bool expected_result;
-    const char* url;
-  } test_cases[] = {
-      {true, "www.google.com"},
-      {true, "www.google.co.uk"},
-      {true, "www.google.co.in"},
-      {false, "other.google.com"},
-      {false, "other.www.google.com"},
-      {false, "www.other.google.com"},
-      {false, "www.www.google.com"},
-      {false, "www.google.appspot.com"},
-      {false, "www.google.example.com"},
-      // Search results are not served from the bare google.com domain.
-      {false, "google.com"},
-  };
-  for (const auto& test : test_cases) {
-    EXPECT_EQ(test.expected_result,
-              FromGWSPageLoadMetricsLogger::IsGoogleSearchHostname(test.url))
-        << "for URL: " << test.url;
-  }
-}
-
-TEST_F(FromGWSPageLoadMetricsLoggerTest, IsGoogleSearchResultUrl) {
-  struct {
-    bool expected_result;
-    const char* url;
-  } test_cases[] = {
-      {true, "https://www.google.com/#q=test"},
-      {true, "https://www.google.com/search#q=test"},
-      {true, "https://www.google.com/search?q=test"},
-      {true, "https://www.google.com/webhp#q=test"},
-      {true, "https://www.google.com/webhp?q=test"},
-      {true, "https://www.google.com/webhp?a=b&q=test"},
-      {true, "https://www.google.com/webhp?a=b&q=test&c=d"},
-      {true, "https://www.google.com/webhp#a=b&q=test&c=d"},
-      {true, "https://www.google.com/webhp?#a=b&q=test&c=d"},
-      {false, "https://www.google.com/"},
-      {false, "https://www.google.com/about/"},
-      {false, "https://other.google.com/"},
-      {false, "https://other.google.com/webhp?q=test"},
-      {false, kExampleUrl},
-      {false, "https://www.example.com/webhp?q=test"},
-      {false, "https://google.com/#q=test"},
-  };
-  for (const auto& test : test_cases) {
-    EXPECT_EQ(
-        test.expected_result,
-        FromGWSPageLoadMetricsLogger::IsGoogleSearchResultUrl(GURL(test.url)))
-        << "for URL: " << test.url;
-  }
-}
-
-TEST_F(FromGWSPageLoadMetricsLoggerTest, IsGoogleSearchRedirectorUrl) {
-  struct {
-    bool expected_result;
-    const char* url;
-  } test_cases[] = {
-      {true, "https://www.google.com/url?source=web"},
-      {true, "https://www.google.com/url?source=web#foo"},
-      {true, "https://www.google.com/searchurl/r.html#foo"},
-      {true, "https://www.google.com/url?a=b&source=web&c=d"},
-      {false, "https://www.google.com/?"},
-      {false, "https://www.google.com/?url"},
-      {false, "https://www.example.com/url?source=web"},
-      {false, "https://google.com/url?"},
-      {false, "https://www.google.com/?source=web"},
-      {false, "https://www.google.com/source=web"},
-      {false, "https://www.example.com/url?source=web"},
-      {false, "https://www.google.com/url?"},
-      {false, "https://www.google.com/url?a=b"},
-  };
-  for (const auto& test : test_cases) {
-    EXPECT_EQ(test.expected_result,
-              FromGWSPageLoadMetricsLogger::IsGoogleSearchRedirectorUrl(
-                  GURL(test.url)))
-        << "for URL: " << test.url;
-  }
-}
-
-TEST_F(FromGWSPageLoadMetricsLoggerTest, QueryContainsComponent) {
-  struct {
-    bool expected_result;
-    const char* query;
-    const char* component;
-  } test_cases[] = {
-      {true, "a=b", "a=b"},
-      {true, "a=b&c=d", "a=b"},
-      {true, "a=b&c=d", "c=d"},
-      {true, "a=b&c=d&e=f", "c=d"},
-      {true, "za=b&a=b", "a=b"},
-      {true, "a=bz&a=b", "a=b"},
-      {true, "a=ba=b&a=b", "a=b"},
-      {true, "a=a=a&a=a", "a=a"},
-      {true, "source=web", "source=web"},
-      {true, "a=b&source=web", "source=web"},
-      {true, "a=b&source=web&c=d", "source=web"},
-      {false, "a=a=a", "a=a"},
-      {false, "", ""},
-      {false, "a=b", ""},
-      {false, "", "a=b"},
-      {false, "za=b", "a=b"},
-      {false, "za=bz", "a=b"},
-      {false, "a=bz", "a=b"},
-      {false, "za=b&c=d", "a=b"},
-      {false, "a=b&c=dz", "c=d"},
-      {false, "a=b&zc=d&e=f", "c=d"},
-      {false, "a=b&c=dz&e=f", "c=d"},
-      {false, "a=b&zc=dz&e=f", "c=d"},
-      {false, "a=b&foosource=web&c=d", "source=web"},
-      {false, "a=b&source=webbar&c=d", "source=web"},
-      {false, "a=b&foosource=webbar&c=d", "source=web"},
-  };
-  for (const auto& test : test_cases) {
-    EXPECT_EQ(test.expected_result,
-              FromGWSPageLoadMetricsLogger::QueryContainsComponent(
-                  test.query, test.component))
-        << "For query: " << test.query << " with component: " << test.component;
-  }
-}
-
-TEST_F(FromGWSPageLoadMetricsLoggerTest, QueryContainsComponentPrefix) {
-  struct {
-    bool expected_result;
-    const char* query;
-    const char* component;
-  } test_cases[] = {
-      {true, "a=b", "a="},
-      {true, "a=b&c=d", "a="},
-      {true, "a=b&c=d", "c="},
-      {true, "a=b&c=d&e=f", "c="},
-      {true, "za=b&a=b", "a="},
-      {true, "ba=a=b&a=b", "a="},
-      {true, "q=test", "q="},
-      {true, "a=b&q=test", "q="},
-      {true, "q=test&c=d", "q="},
-      {true, "a=b&q=test&c=d", "q="},
-      {false, "", ""},
-      {false, "za=b", "a="},
-      {false, "za=b&c=d", "a="},
-      {false, "a=b&zc=d", "c="},
-      {false, "a=b&zc=d&e=f", "c="},
-      {false, "a=b&zq=test&c=d", "q="},
-      {false, "ba=a=b", "a="},
-  };
-  for (const auto& test : test_cases) {
-    EXPECT_EQ(test.expected_result,
-              FromGWSPageLoadMetricsLogger::QueryContainsComponentPrefix(
-                  test.query, test.component))
-        << "For query: " << test.query << " with component: " << test.component;
-  }
 }
 
 TEST_F(FromGWSPageLoadMetricsLoggerTest, Basic) {

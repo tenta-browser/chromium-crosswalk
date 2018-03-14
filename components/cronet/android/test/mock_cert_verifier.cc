@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "mock_cert_verifier.h"
-
 #include <string>
 #include <vector>
 
@@ -53,7 +51,7 @@ static bool CalculatePublicKeySha256(const net::X509Certificate& cert,
 
 }  // namespace
 
-static jlong CreateMockCertVerifier(
+static jlong JNI_MockCertVerifier_CreateMockCertVerifier(
     JNIEnv* env,
     const JavaParamRef<jclass>& jcaller,
     const JavaParamRef<jobjectArray>& jcerts,
@@ -85,10 +83,6 @@ static jlong CreateMockCertVerifier(
   }
 
   return reinterpret_cast<jlong>(mock_cert_verifier);
-}
-
-bool RegisterMockCertVerifier(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace cronet

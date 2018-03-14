@@ -7,15 +7,15 @@ package org.chromium.chrome.browser.photo_picker;
 import android.support.annotation.IntDef;
 
 import org.chromium.base.ApiCompatibilityUtils;
-import org.chromium.base.annotations.SuppressFBWarnings;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.text.DateFormat;
+import java.util.Date;
 
 /**
  * A class to keep track of the meta data associated with a an image in the photo picker.
  */
-@SuppressFBWarnings("EQ_COMPARETO_USE_OBJECT_EQUALS")
 public class PickerBitmap implements Comparable<PickerBitmap> {
     // The possible types of tiles involved in the viewer.
     @IntDef({PICTURE, CAMERA, GALLERY})
@@ -53,6 +53,24 @@ public class PickerBitmap implements Comparable<PickerBitmap> {
      */
     public String getFilePath() {
         return mFilePath;
+    }
+
+    /**
+     * Accessor for the filename.
+     * @return The filename (without the extension and path).
+     */
+    public String getFilenameWithoutExtension() {
+        int index = mFilePath.lastIndexOf("/");
+        if (index == -1) return mFilePath;
+        return mFilePath.substring(index + 1, mFilePath.length());
+    }
+
+    /**
+     * Accessor for the last modified date.
+     * @return The last modified date in string format.
+     */
+    public String getLastModifiedString() {
+        return DateFormat.getDateTimeInstance().format(new Date(mLastModified));
     }
 
     /**

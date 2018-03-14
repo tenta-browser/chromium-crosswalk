@@ -47,16 +47,16 @@ class ImageDecoding(legacy_page_test.LegacyPageTest):
     config.enable_chrome_trace = True
     tab.browser.platform.tracing_controller.StartTracing(config)
 
-  def StopBrowserAfterPage(self, browser, page):
-    del page  # unused
-    return not browser.tabs[0].ExecuteJavaScript("""
-        window.chrome &&
-            chrome.gpuBenchmarking &&
-            chrome.gpuBenchmarking.clearImageCache;
-        """)
-
   def ValidateAndMeasurePage(self, page, tab, results):
     timeline_data = tab.browser.platform.tracing_controller.StopTracing()
+
+    # TODO(charliea): This is part of a three-sided Chromium/Telemetry patch
+    # where we're changing the return type of StopTracing from a TraceValue to a
+    # (TraceValue, nonfatal_exception_list) tuple. Once the tuple return value
+    # lands in Chromium, the non-tuple logic should be deleted.
+    if isinstance(timeline_data, tuple):
+      timeline_data = timeline_data[0]
+
     timeline_model = model.TimelineModel(timeline_data)
     self._power_metric.Stop(page, tab)
     self._power_metric.AddResults(tab, results)

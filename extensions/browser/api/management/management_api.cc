@@ -17,6 +17,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -33,7 +34,7 @@
 #include "extensions/browser/requirements_checker.h"
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/api/management.h"
-#include "extensions/common/constants.h"
+#include "extensions/common/disable_reason.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_icon_set.h"
@@ -142,6 +143,12 @@ management::ExtensionInfo CreateExtensionInfo(
     } else {
       info.disabled_reason = management::EXTENSION_DISABLED_REASON_UNKNOWN;
     }
+
+    info.may_enable = base::MakeUnique<bool>(
+        system->management_policy()->UserMayModifySettings(&extension,
+                                                           nullptr) &&
+        !system->management_policy()->MustRemainDisabled(&extension, nullptr,
+                                                         nullptr));
   }
 
   if (!ManifestURL::GetUpdateURL(&extension).is_empty()) {
@@ -445,9 +452,9 @@ ExtensionFunction::ResponseAction ManagementSetEnabledFunction::Run() {
       return RespondLater();
     }
     if (prefs->GetDisableReasons(extension_id_) &
-            Extension::DISABLE_UNSUPPORTED_REQUIREMENT) {
+        disable_reason::DISABLE_UNSUPPORTED_REQUIREMENT) {
       // Recheck the requirements.
-      requirements_checker_ = base::MakeUnique<RequirementsChecker>(extension);
+      requirements_checker_ = std::make_unique<RequirementsChecker>(extension);
       requirements_checker_->Start(
           base::Bind(&ManagementSetEnabledFunction::OnRequirementsChecked,
                      this));  // This bind creates a reference.
@@ -456,7 +463,7 @@ ExtensionFunction::ResponseAction ManagementSetEnabledFunction::Run() {
     delegate->EnableExtension(browser_context(), extension_id_);
   } else if (currently_enabled && !params->enabled) {
     delegate->DisableExtension(browser_context(), extension_id_,
-                               Extension::DISABLE_USER_ACTION);
+                               disable_reason::DISABLE_USER_ACTION);
   }
 
   return RespondNow(NoArguments());
@@ -468,7 +475,7 @@ void ManagementSetEnabledFunction::OnInstallPromptDone(bool did_accept) {
         ->Get(browser_context())
         ->GetDelegate()
         ->EnableExtension(browser_context(), extension_id_);
-    Respond(OneArgument(base::MakeUnique<base::Value>(true)));
+    Respond(OneArgument(std::make_unique<base::Value>(true)));
   } else {
     Respond(Error(keys::kUserDidNotReEnableError));
   }
@@ -477,7 +484,7 @@ void ManagementSetEnabledFunction::OnInstallPromptDone(bool did_accept) {
 }
 
 void ManagementSetEnabledFunction::OnRequirementsChecked(
-    PreloadCheck::Errors errors) {
+    const PreloadCheck::Errors& errors) {
   if (errors.empty()) {
     ManagementAPI::GetFactoryInstance()->Get(browser_context())->GetDelegate()->
         EnableExtension(browser_context(), extension_id_);
@@ -573,8 +580,7 @@ void ManagementUninstallFunctionBase::UninstallExtension() {
     base::string16 utf16_error;
     success = delegate->UninstallExtension(
         browser_context(), target_extension_id_,
-        extensions::UNINSTALL_REASON_MANAGEMENT_API,
-        base::Bind(&base::DoNothing), &utf16_error);
+        extensions::UNINSTALL_REASON_MANAGEMENT_API, &utf16_error);
     error = base::UTF16ToUTF8(utf16_error);
   } else {
     error = ErrorUtils::FormatErrorMessage(keys::kNoExtensionError,
@@ -706,8 +712,7 @@ ExtensionFunction::ResponseAction ManagementSetLaunchTypeFunction::Run() {
       GetAvailableLaunchTypes(*extension, delegate);
 
   management::LaunchType app_launch_type = params->launch_type;
-  if (std::find(available_launch_types.begin(), available_launch_types.end(),
-                app_launch_type) == available_launch_types.end()) {
+  if (!base::ContainsValue(available_launch_types, app_launch_type)) {
     return RespondNow(Error(keys::kLaunchTypeNotAvailableError));
   }
 
@@ -800,7 +805,7 @@ void ManagementEventRouter::OnExtensionLoaded(
 void ManagementEventRouter::OnExtensionUnloaded(
     content::BrowserContext* browser_context,
     const Extension* extension,
-    UnloadedExtensionInfo::Reason reason) {
+    UnloadedExtensionReason reason) {
   BroadcastEvent(extension, events::MANAGEMENT_ON_DISABLED,
                  management::OnDisabled::kEventName);
 }

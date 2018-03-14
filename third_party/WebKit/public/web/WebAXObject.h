@@ -31,11 +31,11 @@
 #ifndef WebAXObject_h
 #define WebAXObject_h
 
-#include "../platform/WebCommon.h"
-#include "../platform/WebPoint.h"
-#include "../platform/WebPrivatePtr.h"
-#include "../platform/WebSize.h"
-#include "../platform/WebVector.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebPoint.h"
+#include "public/platform/WebPrivatePtr.h"
+#include "public/platform/WebSize.h"
+#include "public/platform/WebVector.h"
 #include "WebAXEnums.h"
 #include <memory>
 
@@ -93,6 +93,11 @@ class WebAXObject {
     return *this;
   }
 
+  BLINK_EXPORT static WebAXObject FromWebNode(const WebNode&);
+  BLINK_EXPORT static WebAXObject FromWebDocument(const WebDocument&);
+  BLINK_EXPORT static WebAXObject FromWebDocumentByID(const WebDocument&, int);
+  BLINK_EXPORT static WebAXObject FromWebDocumentFocused(const WebDocument&);
+
   BLINK_EXPORT void Reset();
   BLINK_EXPORT void Assign(const WebAXObject&);
   BLINK_EXPORT bool Equals(const WebAXObject&) const;
@@ -126,13 +131,11 @@ class WebAXObject {
   BLINK_EXPORT void GetSparseAXAttributes(WebAXSparseAttributeClient&) const;
 
   BLINK_EXPORT bool IsAnchor() const;
-  BLINK_EXPORT bool IsAriaReadOnly() const;
-  BLINK_EXPORT bool IsButtonStateMixed() const;
-  BLINK_EXPORT bool IsChecked() const;
+  BLINK_EXPORT WebAXCheckedState CheckedState() const;
+  BLINK_EXPORT bool IsCheckable() const;
   BLINK_EXPORT bool IsClickable() const;
   BLINK_EXPORT bool IsCollapsed() const;
   BLINK_EXPORT bool IsControl() const;
-  BLINK_EXPORT bool IsEnabled() const;
   BLINK_EXPORT WebAXExpanded IsExpanded() const;
   BLINK_EXPORT bool IsFocused() const;
   BLINK_EXPORT bool IsHovered() const;
@@ -142,8 +145,6 @@ class WebAXObject {
   BLINK_EXPORT bool IsMultiSelectable() const;
   BLINK_EXPORT bool IsOffScreen() const;
   BLINK_EXPORT bool IsPasswordField() const;
-  BLINK_EXPORT bool IsPressed() const;
-  BLINK_EXPORT bool IsReadOnly() const;
   BLINK_EXPORT bool IsRequired() const;
   BLINK_EXPORT bool IsSelected() const;
   BLINK_EXPORT bool IsSelectedOptionActive() const;
@@ -152,6 +153,10 @@ class WebAXObject {
 
   BLINK_EXPORT WebString AccessKey() const;
   BLINK_EXPORT unsigned BackgroundColor() const;
+  BLINK_EXPORT bool CanPress() const;
+  BLINK_EXPORT bool CanSetValueAttribute() const;
+  BLINK_EXPORT bool CanSetFocusAttribute() const;
+  BLINK_EXPORT bool CanSetSelectedAttribute() const;
   BLINK_EXPORT unsigned GetColor() const;
   // Deprecated.
   BLINK_EXPORT void ColorValue(int& r, int& g, int& b) const;
@@ -160,6 +165,7 @@ class WebAXObject {
   BLINK_EXPORT WebString AriaAutoComplete() const;
   BLINK_EXPORT WebAXAriaCurrentState AriaCurrentState() const;
   BLINK_EXPORT bool AriaHasPopup() const;
+  BLINK_EXPORT bool IsEditableRoot() const;
   BLINK_EXPORT bool IsEditable() const;
   BLINK_EXPORT bool IsMultiline() const;
   BLINK_EXPORT bool IsRichlyEditable() const;
@@ -169,6 +175,7 @@ class WebAXObject {
   BLINK_EXPORT bool CanvasHasFallbackContent() const;
   // If this is an image, returns the image (scaled to maxSize) as a data url.
   BLINK_EXPORT WebString ImageDataUrl(const WebSize& max_size) const;
+  BLINK_EXPORT WebAXRestriction Restriction() const;
   BLINK_EXPORT WebAXInvalidState InvalidState() const;
   // Only used when invalidState() returns WebAXInvalidStateOther.
   BLINK_EXPORT WebString AriaInvalidValue() const;
@@ -215,10 +222,6 @@ class WebAXObject {
                               WebAXObject& focus_object,
                               int& focus_offset,
                               WebAXTextAffinity& focus_affinity) const;
-  BLINK_EXPORT void SetSelection(const WebAXObject& anchor_object,
-                                 int anchor_offset,
-                                 const WebAXObject& focus_object,
-                                 int focus_offset) const;
 
   // The following selection functions return text offsets calculated starting
   // the current object. They only report on a selection that is placed on
@@ -235,7 +238,6 @@ class WebAXObject {
   // Live regions.
   BLINK_EXPORT bool IsInLiveRegion() const;
   BLINK_EXPORT bool LiveRegionAtomic() const;
-  BLINK_EXPORT bool LiveRegionBusy() const;
   BLINK_EXPORT WebString LiveRegionRelevant() const;
   BLINK_EXPORT WebString LiveRegionStatus() const;
   BLINK_EXPORT WebAXObject LiveRegionRoot() const;
@@ -246,9 +248,10 @@ class WebAXObject {
 
   BLINK_EXPORT bool SupportsRangeValue() const;
   BLINK_EXPORT WebString ValueDescription() const;
-  BLINK_EXPORT float ValueForRange() const;
-  BLINK_EXPORT float MaxValueForRange() const;
-  BLINK_EXPORT float MinValueForRange() const;
+  BLINK_EXPORT bool ValueForRange(float* out_value) const;
+  BLINK_EXPORT bool MaxValueForRange(float* out_value) const;
+  BLINK_EXPORT bool MinValueForRange(float* out_value) const;
+  BLINK_EXPORT bool StepValueForRange(float* out_value) const;
 
   BLINK_EXPORT WebNode GetNode() const;
   BLINK_EXPORT WebDocument GetDocument() const;
@@ -260,24 +263,29 @@ class WebAXObject {
                             WebVector<int>& starts,
                             WebVector<int>& ends) const;
 
-  // Actions
-  BLINK_EXPORT WebAXSupportedAction Action() const;
-  BLINK_EXPORT bool CanDecrement() const;
-  BLINK_EXPORT bool CanIncrement() const;
-  BLINK_EXPORT bool CanPress() const;
-  BLINK_EXPORT bool CanSetFocusAttribute() const;
-  BLINK_EXPORT bool CanSetSelectedAttribute() const;
-  BLINK_EXPORT bool CanSetValueAttribute() const;
-  BLINK_EXPORT bool PerformDefaultAction() const;
-  BLINK_EXPORT bool Press() const;
-  BLINK_EXPORT bool Increment() const;
+  // Actions. Return true if handled.
+  BLINK_EXPORT WebAXDefaultActionVerb Action() const;
+  BLINK_EXPORT bool Click() const;
   BLINK_EXPORT bool Decrement() const;
-  BLINK_EXPORT void SetFocused(bool) const;
-  BLINK_EXPORT void SetSelectedTextRange(int selection_start,
-                                         int selection_end) const;
-  BLINK_EXPORT void SetSequentialFocusNavigationStartingPoint() const;
-  BLINK_EXPORT void SetValue(WebString) const;
-  BLINK_EXPORT void ShowContextMenu() const;
+  BLINK_EXPORT bool Increment() const;
+  BLINK_EXPORT bool Focus() const;
+  BLINK_EXPORT bool SetSelected(bool) const;
+  BLINK_EXPORT bool SetSelection(const WebAXObject& anchor_object,
+                                 int anchor_offset,
+                                 const WebAXObject& focus_object,
+                                 int focus_offset) const;
+  BLINK_EXPORT bool SetSequentialFocusNavigationStartingPoint() const;
+  BLINK_EXPORT bool SetValue(WebString) const;
+  BLINK_EXPORT bool ShowContextMenu() const;
+  // Make this object visible by scrolling as many nested scrollable views as
+  // needed.
+  BLINK_EXPORT bool ScrollToMakeVisible() const;
+  // Same, but if the whole object can't be made visible, try for this subrect,
+  // in local coordinates.
+  BLINK_EXPORT bool ScrollToMakeVisibleWithSubFocus(const WebRect&) const;
+  // Scroll this object to a given point in global coordinates of the top-level
+  // window.
+  BLINK_EXPORT bool ScrollToGlobalPoint(const WebPoint&) const;
 
   // For a table
   BLINK_EXPORT int AriaColumnCount() const;
@@ -338,22 +346,15 @@ class WebAXObject {
   // not null, walk up to its container and offset by the container's offset
   // from origin, the container's scroll position if any, and apply the
   // container's transform.  Do this until you reach the root of the tree.
+  // If the container clips its children, for example with overflow:hidden
+  // or similar, set |clips_children| to true.
   BLINK_EXPORT void GetRelativeBounds(WebAXObject& offset_container,
                                       WebFloatRect& bounds_in_container,
-                                      SkMatrix44& container_transform) const;
+                                      SkMatrix44& container_transform,
+                                      bool* clips_children = nullptr) const;
 
-  // Make this object visible by scrolling as many nested scrollable views as
-  // needed.
-  BLINK_EXPORT void ScrollToMakeVisible() const;
-  // Same, but if the whole object can't be made visible, try for this subrect,
-  // in local coordinates.
-  BLINK_EXPORT void ScrollToMakeVisibleWithSubFocus(const WebRect&) const;
-  // Scroll this object to a given point in global coordinates of the top-level
-  // window.
-  BLINK_EXPORT void ScrollToGlobalPoint(const WebPoint&) const;
-
-#if BLINK_IMPLEMENTATION
-  WebAXObject(AXObject*);
+#if INSIDE_BLINK
+  BLINK_EXPORT WebAXObject(AXObject*);
   WebAXObject& operator=(AXObject*);
   operator AXObject*() const;
 #endif

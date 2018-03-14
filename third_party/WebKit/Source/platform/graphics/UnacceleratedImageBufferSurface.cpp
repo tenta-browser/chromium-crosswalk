@@ -30,33 +30,31 @@
 
 #include "platform/graphics/UnacceleratedImageBufferSurface.h"
 
+#include "base/memory/scoped_refptr.h"
+#include "platform/graphics/StaticBitmapImage.h"
 #include "platform/graphics/skia/SkiaUtils.h"
-#include "platform/wtf/PassRefPtr.h"
+#include "platform/runtime_enabled_features.h"
 #include "third_party/skia/include/core/SkSurface.h"
 
 namespace blink {
 
 UnacceleratedImageBufferSurface::UnacceleratedImageBufferSurface(
     const IntSize& size,
-    OpacityMode opacity_mode,
     ImageInitializationMode initialization_mode,
-    sk_sp<SkColorSpace> color_space,
-    SkColorType color_type)
-    : ImageBufferSurface(size, opacity_mode, color_space, color_type) {
-  SkAlphaType alpha_type =
-      (kOpaque == opacity_mode) ? kOpaque_SkAlphaType : kPremul_SkAlphaType;
-  SkImageInfo info = SkImageInfo::Make(size.Width(), size.Height(), color_type,
-                                       alpha_type, color_space);
-  SkSurfaceProps disable_lcd_props(0, kUnknown_SkPixelGeometry);
-  surface_ = SkSurface::MakeRaster(
-      info, kOpaque == opacity_mode ? 0 : &disable_lcd_props);
-
+    const CanvasColorParams& color_params)
+    : ImageBufferSurface(size, color_params) {
+  SkImageInfo info = SkImageInfo::Make(
+      size.Width(), size.Height(), color_params.GetSkColorType(),
+      color_params.GetSkAlphaType(),
+      color_params.GetSkColorSpaceForSkSurfaces());
+  surface_ = SkSurface::MakeRaster(info, color_params.GetSkSurfaceProps());
   if (!surface_)
     return;
 
+  canvas_ = color_params.WrapCanvas(surface_->getCanvas());
+
   // Always save an initial frame, to support resetting the top level matrix
   // and clip.
-  canvas_ = WTF::WrapUnique(new SkiaPaintCanvas(surface_->getCanvas()));
   canvas_->save();
 
   if (initialization_mode == kInitializeImagePixels)
@@ -73,10 +71,18 @@ bool UnacceleratedImageBufferSurface::IsValid() const {
   return surface_;
 }
 
-sk_sp<SkImage> UnacceleratedImageBufferSurface::NewImageSnapshot(
-    AccelerationHint,
-    SnapshotReason) {
-  return surface_->makeImageSnapshot();
+bool UnacceleratedImageBufferSurface::WritePixels(const SkImageInfo& orig_info,
+                                                  const void* pixels,
+                                                  size_t row_bytes,
+                                                  int x,
+                                                  int y) {
+  return surface_->getCanvas()->writePixels(orig_info, pixels, row_bytes, x, y);
+}
+
+scoped_refptr<StaticBitmapImage>
+UnacceleratedImageBufferSurface::NewImageSnapshot(AccelerationHint,
+                                                  SnapshotReason) {
+  return StaticBitmapImage::Create(surface_->makeImageSnapshot());
 }
 
 }  // namespace blink

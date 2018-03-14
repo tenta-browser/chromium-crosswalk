@@ -4,12 +4,17 @@
 
 #include "components/update_client/test_configurator.h"
 
-#include "base/sequenced_task_runner.h"
-#include "base/single_thread_task_runner.h"
+#include <utility>
+
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/version.h"
+#include "components/patch_service/file_patcher_impl.h"
+#include "components/patch_service/patch_service.h"
+#include "components/patch_service/public/interfaces/file_patcher.mojom.h"
 #include "components/prefs/pref_service.h"
-#include "components/update_client/component_patcher_operation.h"
+#include "components/update_client/activity_data_service.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/service_manager/public/cpp/connector.h"
 #include "url/gurl.h"
 
 namespace update_client {
@@ -25,16 +30,16 @@ std::vector<GURL> MakeDefaultUrls() {
 
 }  // namespace
 
-TestConfigurator::TestConfigurator(
-    const scoped_refptr<base::SequencedTaskRunner>& worker_task_runner,
-    const scoped_refptr<base::SingleThreadTaskRunner>& network_task_runner)
-    : worker_task_runner_(worker_task_runner),
-      brand_("TEST"),
+TestConfigurator::TestConfigurator()
+    : brand_("TEST"),
       initial_time_(0),
       ondemand_time_(0),
       enabled_cup_signing_(false),
       enabled_component_updates_(true),
-      context_(new net::TestURLRequestContextGetter(network_task_runner)) {}
+      connector_factory_(std::make_unique<patch::PatchService>()),
+      connector_(connector_factory_.CreateConnector()),
+      context_(base::MakeRefCounted<net::TestURLRequestContextGetter>(
+          base::ThreadTaskRunnerHandle::Get())) {}
 
 TestConfigurator::~TestConfigurator() {
 }
@@ -106,9 +111,9 @@ net::URLRequestContextGetter* TestConfigurator::RequestContext() const {
   return context_.get();
 }
 
-scoped_refptr<OutOfProcessPatcher> TestConfigurator::CreateOutOfProcessPatcher()
-    const {
-  return NULL;
+std::unique_ptr<service_manager::Connector>
+TestConfigurator::CreateServiceManagerConnector() const {
+  return connector_->Clone();
 }
 
 bool TestConfigurator::EnabledDeltas() const {
@@ -161,18 +166,20 @@ void TestConfigurator::SetPingUrl(const GURL& url) {
   ping_url_ = url;
 }
 
-scoped_refptr<base::SequencedTaskRunner>
-TestConfigurator::GetSequencedTaskRunner() const {
-  DCHECK(worker_task_runner_.get());
-  return worker_task_runner_;
+PrefService* TestConfigurator::GetPrefService() const {
+  return nullptr;
 }
 
-PrefService* TestConfigurator::GetPrefService() const {
+ActivityDataService* TestConfigurator::GetActivityDataService() const {
   return nullptr;
 }
 
 bool TestConfigurator::IsPerUserInstall() const {
   return true;
+}
+
+std::vector<uint8_t> TestConfigurator::GetRunActionKeyHash() const {
+  return std::vector<uint8_t>(std::begin(gjpm_hash), std::end(gjpm_hash));
 }
 
 }  // namespace update_client

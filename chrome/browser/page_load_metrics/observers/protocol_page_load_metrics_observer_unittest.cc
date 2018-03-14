@@ -6,6 +6,8 @@
 
 #include "base/memory/ptr_util.h"
 #include "chrome/browser/page_load_metrics/observers/page_load_metrics_observer_test_harness.h"
+#include "chrome/browser/page_load_metrics/page_load_tracker.h"
+#include "chrome/common/page_load_metrics/test/page_load_metrics_test_util.h"
 
 class ProtocolPageLoadMetricsObserverTest
     : public page_load_metrics::PageLoadMetricsObserverTestHarness {
@@ -17,15 +19,20 @@ class ProtocolPageLoadMetricsObserverTest
     tracker->AddObserver(std::move(observer));
   }
 
-  void InitializeTestPageLoadTiming(page_load_metrics::PageLoadTiming* timing) {
+  void InitializeTestPageLoadTiming(
+      page_load_metrics::mojom::PageLoadTiming* timing) {
+    page_load_metrics::InitPageLoadTimingForTest(timing);
     timing->navigation_start = base::Time::FromDoubleT(1);
-    timing->parse_start = base::TimeDelta::FromMilliseconds(100);
-    timing->first_paint = base::TimeDelta::FromMilliseconds(200);
-    timing->first_contentful_paint = base::TimeDelta::FromMilliseconds(300);
-    timing->first_meaningful_paint = base::TimeDelta::FromMilliseconds(400);
-    timing->dom_content_loaded_event_start =
+    timing->parse_timing->parse_start = base::TimeDelta::FromMilliseconds(100);
+    timing->paint_timing->first_paint = base::TimeDelta::FromMilliseconds(200);
+    timing->paint_timing->first_contentful_paint =
+        base::TimeDelta::FromMilliseconds(300);
+    timing->paint_timing->first_meaningful_paint =
+        base::TimeDelta::FromMilliseconds(400);
+    timing->document_timing->dom_content_loaded_event_start =
         base::TimeDelta::FromMilliseconds(600);
-    timing->load_event_start = base::TimeDelta::FromMilliseconds(1000);
+    timing->document_timing->load_event_start =
+        base::TimeDelta::FromMilliseconds(1000);
     PopulateRequiredTimingFields(timing);
   }
 
@@ -37,7 +44,7 @@ class ProtocolPageLoadMetricsObserverTest
     // NavigationHandle.
     observer_->connection_info_ = connection_info;
 
-    page_load_metrics::PageLoadTiming timing;
+    page_load_metrics::mojom::PageLoadTiming timing;
     InitializeTestPageLoadTiming(&timing);
     SimulateTimingUpdate(timing);
 

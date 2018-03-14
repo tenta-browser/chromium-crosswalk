@@ -42,12 +42,6 @@ class MEDIA_EXPORT VideoFrameMetadata {
     // contexts.
     COPY_REQUIRED,
 
-    // Indicates that the frame is owned by the decoder and that destroying the
-    // decoder will make the frame unrenderable. TODO(sandersd): Remove once OSX
-    // and Windows hardware decoders support frames which outlive the decoder.
-    // http://crbug.com/595716 and http://crbug.com/602708.
-    DECODER_OWNS_FRAME,
-
     // Indicates if the current frame is the End of its current Stream. Use
     // Get/SetBoolean() for this Key.
     END_OF_STREAM,
@@ -119,6 +113,13 @@ class MEDIA_EXPORT VideoFrameMetadata {
     // Android only: if set, then this frame's resource would like to be
     // notified about its promotability to an overlay.
     WANTS_PROMOTION_HINT,
+
+    // Windows only: if set, then this frame must be displayed in an overlay
+    // rather than being composited into the framebuffer.
+    REQUIRE_OVERLAY,
+
+    // Whether this frame was decoded in a power efficient way.
+    POWER_EFFICIENT,
 
     NUM_KEYS
   };

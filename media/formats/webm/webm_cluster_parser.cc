@@ -10,10 +10,11 @@
 
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/numerics/checked_math.h"
 #include "base/sys_byteorder.h"
 #include "media/base/decrypt_config.h"
 #include "media/base/timestamp_constants.h"
-#include "media/filters/webvtt_util.h"
+#include "media/base/webvtt_util.h"
 #include "media/formats/webm/webm_constants.h"
 #include "media/formats/webm/webm_crypto_helpers.h"
 #include "media/formats/webm/webm_webvtt_parser.h"
@@ -45,7 +46,7 @@ WebMClusterParser::WebMClusterParser(
     const std::string& audio_encryption_key_id,
     const std::string& video_encryption_key_id,
     const AudioCodec audio_codec,
-    const scoped_refptr<MediaLog>& media_log)
+    MediaLog* media_log)
     : timecode_multiplier_(timecode_scale / 1000.0),
       ignored_tracks_(ignored_tracks),
       audio_encryption_key_id_(audio_encryption_key_id),
@@ -65,7 +66,7 @@ WebMClusterParser::WebMClusterParser(
   }
 }
 
-WebMClusterParser::~WebMClusterParser() {}
+WebMClusterParser::~WebMClusterParser() = default;
 
 void WebMClusterParser::Reset() {
   last_block_timecode_ = -1;
@@ -493,14 +494,26 @@ bool WebMClusterParser::OnBlock(bool is_simple_block,
 
   last_block_timecode_ = timecode;
 
-  base::TimeDelta timestamp = base::TimeDelta::FromMicroseconds(
-      (cluster_timecode_ + timecode) * timecode_multiplier_);
+  int64_t microseconds;
+
+  if (!base::CheckMul(base::CheckAdd(cluster_timecode_, timecode),
+                      timecode_multiplier_)
+           .AssignIfValid(&microseconds)) {
+    MEDIA_LOG(ERROR, media_log_) << "Invalid cluster timecode.";
+    return false;
+  }
+
+  base::TimeDelta timestamp = base::TimeDelta::FromMicroseconds(microseconds);
+
+  if (timestamp == kNoTimestamp || timestamp == kInfiniteDuration) {
+    MEDIA_LOG(ERROR, media_log_) << "Invalid block timestamp.";
+    return false;
+  }
 
   scoped_refptr<StreamParserBuffer> buffer;
   if (buffer_type != DemuxerStream::TEXT) {
-    // Every encrypted Block has a signal byte and IV prepended to it. Current
-    // encrypted WebM request for comments specification is here
-    // http://wiki.webmproject.org/encryption/webm-encryption-rfc
+    // Every encrypted Block has a signal byte and IV prepended to it.
+    // See: http://www.webmproject.org/docs/webm-encryption/
     std::unique_ptr<DecryptConfig> decrypt_config;
     int data_offset = 0;
     if (!encryption_key_id.empty() &&
@@ -509,6 +522,7 @@ bool WebMClusterParser::OnBlock(bool is_simple_block,
              reinterpret_cast<const uint8_t*>(encryption_key_id.data()),
              encryption_key_id.size(),
              &decrypt_config, &data_offset)) {
+      MEDIA_LOG(ERROR, media_log_) << "Failed to extract decrypt config.";
       return false;
     }
 
@@ -604,7 +618,7 @@ bool WebMClusterParser::OnBlock(bool is_simple_block,
 WebMClusterParser::Track::Track(int track_num,
                                 bool is_video,
                                 base::TimeDelta default_duration,
-                                const scoped_refptr<MediaLog>& media_log)
+                                MediaLog* media_log)
     : track_num_(track_num),
       is_video_(is_video),
       default_duration_(default_duration),
@@ -616,7 +630,7 @@ WebMClusterParser::Track::Track(int track_num,
 
 WebMClusterParser::Track::Track(const Track& other) = default;
 
-WebMClusterParser::Track::~Track() {}
+WebMClusterParser::Track::~Track() = default;
 
 DecodeTimestamp WebMClusterParser::Track::GetReadyUpperBound() {
   DCHECK(ready_buffers_.empty());

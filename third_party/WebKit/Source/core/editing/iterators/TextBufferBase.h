@@ -5,6 +5,7 @@
 #ifndef TextBufferBase_h
 #define TextBufferBase_h
 
+#include "base/macros.h"
 #include "core/CoreExport.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/WTFString.h"
@@ -13,13 +14,12 @@ namespace blink {
 
 class CORE_EXPORT TextBufferBase {
   STACK_ALLOCATED();
-  WTF_MAKE_NONCOPYABLE(TextBufferBase);
 
  public:
   void Clear() { size_ = 0; }
   size_t Size() const { return size_; }
   bool IsEmpty() const { return size_ == 0; }
-  size_t Capacity() const { return buffer_.Capacity(); }
+  size_t Capacity() const { return buffer_.capacity(); }
   const UChar& operator[](size_t index) const {
     DCHECK_LT(index, size_);
     return Data()[index];
@@ -56,6 +56,8 @@ class CORE_EXPORT TextBufferBase {
  private:
   size_t size_ = 0;
   Vector<UChar, 1024> buffer_;
+
+  DISALLOW_COPY_AND_ASSIGN(TextBufferBase);
 };
 
 }  // namespace blink

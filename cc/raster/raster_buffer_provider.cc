@@ -9,9 +9,10 @@
 #include "base/trace_event/trace_event.h"
 #include "cc/raster/raster_source.h"
 #include "cc/raster/texture_compressor.h"
-#include "cc/resources/platform_color.h"
-#include "cc/resources/resource_format_utils.h"
+#include "components/viz/common/resources/platform_color.h"
+#include "components/viz/common/resources/resource_format_utils.h"
 #include "third_party/skia/include/core/SkCanvas.h"
+#include "third_party/skia/include/core/SkMath.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "ui/gfx/geometry/axis_transform2d.h"
 
@@ -23,19 +24,20 @@ RasterBufferProvider::~RasterBufferProvider() {}
 
 namespace {
 
-bool IsSupportedPlaybackToMemoryFormat(ResourceFormat format) {
+bool IsSupportedPlaybackToMemoryFormat(viz::ResourceFormat format) {
   switch (format) {
-    case RGBA_4444:
-    case RGBA_8888:
-    case BGRA_8888:
-    case ETC1:
+    case viz::RGBA_4444:
+    case viz::RGBA_8888:
+    case viz::BGRA_8888:
+    case viz::ETC1:
       return true;
-    case ALPHA_8:
-    case LUMINANCE_8:
-    case RGB_565:
-    case RED_8:
-    case LUMINANCE_F16:
-    case RGBA_F16:
+    case viz::ALPHA_8:
+    case viz::LUMINANCE_8:
+    case viz::RGB_565:
+    case viz::RED_8:
+    case viz::LUMINANCE_F16:
+    case viz::RGBA_F16:
+    case viz::R16_EXT:
       return false;
   }
   NOTREACHED();
@@ -47,7 +49,7 @@ bool IsSupportedPlaybackToMemoryFormat(ResourceFormat format) {
 // static
 void RasterBufferProvider::PlaybackToMemory(
     void* memory,
-    ResourceFormat format,
+    viz::ResourceFormat format,
     const gfx::Size& size,
     size_t stride,
     const RasterSource* raster_source,
@@ -67,7 +69,7 @@ void RasterBufferProvider::PlaybackToMemory(
 
   // Use unknown pixel geometry to disable LCD text.
   SkSurfaceProps surface_props(0, kUnknown_SkPixelGeometry);
-  if (raster_source->CanUseLCDText()) {
+  if (playback_settings.use_lcd_text) {
     // LegacyFontHost will get LCD text and skia figures out what type to use.
     surface_props = SkSurfaceProps(SkSurfaceProps::kLegacyFontHost_InitType);
   }
@@ -77,18 +79,23 @@ void RasterBufferProvider::PlaybackToMemory(
   DCHECK_GT(stride, 0u);
 
   switch (format) {
-    case RGBA_8888:
-    case BGRA_8888:
-    case RGBA_F16: {
+    case viz::RGBA_8888:
+    case viz::BGRA_8888:
+    case viz::RGBA_F16: {
       sk_sp<SkSurface> surface =
           SkSurface::MakeRasterDirect(info, memory, stride, &surface_props);
+      // There are some rare crashes where this doesn't succeed and may be
+      // indicative of memory stomps elsewhere.  Instead of displaying
+      // invalid content, just crash the renderer and try again.
+      // See: http://crbug.com/721744.
+      CHECK(surface);
       raster_source->PlaybackToCanvas(surface->getCanvas(), target_color_space,
                                       canvas_bitmap_rect, canvas_playback_rect,
                                       transform, playback_settings);
       return;
     }
-    case RGBA_4444:
-    case ETC1: {
+    case viz::RGBA_4444:
+    case viz::ETC1: {
       sk_sp<SkSurface> surface = SkSurface::MakeRaster(info, &surface_props);
       // TODO(reveman): Improve partial raster support by reducing the size of
       // playback rect passed to PlaybackToCanvas. crbug.com/519070
@@ -96,7 +103,7 @@ void RasterBufferProvider::PlaybackToMemory(
                                       canvas_bitmap_rect, canvas_bitmap_rect,
                                       transform, playback_settings);
 
-      if (format == ETC1) {
+      if (format == viz::ETC1) {
         TRACE_EVENT0("cc",
                      "RasterBufferProvider::PlaybackToMemory::CompressETC1");
         DCHECK_EQ(size.width() % 4, 0);
@@ -119,11 +126,12 @@ void RasterBufferProvider::PlaybackToMemory(
       }
       return;
     }
-    case ALPHA_8:
-    case LUMINANCE_8:
-    case RGB_565:
-    case RED_8:
-    case LUMINANCE_F16:
+    case viz::ALPHA_8:
+    case viz::LUMINANCE_8:
+    case viz::RGB_565:
+    case viz::RED_8:
+    case viz::LUMINANCE_F16:
+    case viz::R16_EXT:
       NOTREACHED();
       return;
   }
@@ -132,21 +140,22 @@ void RasterBufferProvider::PlaybackToMemory(
 }
 
 bool RasterBufferProvider::ResourceFormatRequiresSwizzle(
-    ResourceFormat format) {
+    viz::ResourceFormat format) {
   switch (format) {
-    case RGBA_8888:
-    case BGRA_8888:
-      // Initialize resource using the preferred PlatformColor component
+    case viz::RGBA_8888:
+    case viz::BGRA_8888:
+      // Initialize resource using the preferred viz::PlatformColor component
       // order and swizzle in the shader instead of in software.
-      return !PlatformColor::SameComponentOrder(format);
-    case RGBA_4444:
-    case ETC1:
-    case ALPHA_8:
-    case LUMINANCE_8:
-    case RGB_565:
-    case RED_8:
-    case LUMINANCE_F16:
-    case RGBA_F16:
+      return !viz::PlatformColor::SameComponentOrder(format);
+    case viz::RGBA_4444:
+    case viz::ETC1:
+    case viz::ALPHA_8:
+    case viz::LUMINANCE_8:
+    case viz::RGB_565:
+    case viz::RED_8:
+    case viz::LUMINANCE_F16:
+    case viz::RGBA_F16:
+    case viz::R16_EXT:
       return false;
   }
   NOTREACHED();

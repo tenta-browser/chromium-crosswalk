@@ -10,7 +10,7 @@
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/common/sync_token.h"
 #include "media/base/video_frame.h"
-#include "media/renderers/gpu_video_accelerator_factories.h"
+#include "media/video/gpu_video_accelerator_factories.h"
 
 namespace media {
 
@@ -81,13 +81,13 @@ VideoOverlayFactory::VideoOverlayFactory(
     GpuVideoAcceleratorFactories* gpu_factories)
     : gpu_factories_(gpu_factories) {}
 
-VideoOverlayFactory::~VideoOverlayFactory() {}
+VideoOverlayFactory::~VideoOverlayFactory() = default;
 
 scoped_refptr<VideoFrame> VideoOverlayFactory::CreateFrame(
     const gfx::Size& size) {
   // Frame size empty => video has one dimension = 0.
-  // Dimension 0 case triggers a DCHECK later on in TextureMailbox if we push
-  // through the overlay path.
+  // Dimension 0 case triggers a DCHECK later on if we push through the overlay
+  // path.
   Texture* texture = size.IsEmpty() ? nullptr : GetTexture();
   if (!texture) {
     DVLOG(1) << "Create black frame " << size.width() << "x" << size.height();
@@ -107,9 +107,6 @@ scoped_refptr<VideoFrame> VideoOverlayFactory::CreateFrame(
       base::TimeDelta());  // timestamp
   CHECK(frame);
   frame->metadata()->SetBoolean(VideoFrameMetadata::ALLOW_OVERLAY, true);
-  // TODO(halliwell): this is to block idle suspend behaviour on Chromecast.
-  // Find a better way to do this.
-  frame->metadata()->SetBoolean(VideoFrameMetadata::DECODER_OWNS_FRAME, true);
   return frame;
 }
 

@@ -22,6 +22,7 @@
 #include "chrome/browser/safe_browsing/settings_reset_prompt/settings_reset_prompt_model.h"
 #include "chrome/browser/safe_browsing/settings_reset_prompt/settings_reset_prompt_test_utils.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -68,8 +69,6 @@ class MockSettingsResetPromptModel
       : SettingsResetPromptModel(
             profile,
             base::MakeUnique<NiceMock<MockSettingsResetPromptConfig>>(),
-            base::MakeUnique<ResettableSettingsSnapshot>(profile),
-            base::MakeUnique<BrandcodedDefaultSettings>(),
             base::MakeUnique<NiceMock<MockProfileResetter>>(profile)) {
     EXPECT_LE(params.startup_pages, arraysize(kStartupUrls));
 
@@ -91,7 +90,7 @@ class MockSettingsResetPromptModel
     }
 
     ON_CALL(*this, ShouldPromptForReset()).WillByDefault(Return(true));
-    ON_CALL(*this, PerformReset(_)).WillByDefault(Return());
+    ON_CALL(*this, MockPerformReset(_, _)).WillByDefault(Return());
     ON_CALL(*this, DialogShown()).WillByDefault(Return());
 
     ON_CALL(*this, homepage()).WillByDefault(Return(GURL(kHomepageUrl)));
@@ -122,7 +121,12 @@ class MockSettingsResetPromptModel
   }
   ~MockSettingsResetPromptModel() override {}
 
-  MOCK_METHOD1(PerformReset, void(const base::Closure&));
+  void PerformReset(std::unique_ptr<BrandcodedDefaultSettings> default_settings,
+                    const base::Closure& callback) override {
+    MockPerformReset(default_settings.get(), callback);
+  }
+  MOCK_METHOD2(MockPerformReset,
+               void(BrandcodedDefaultSettings*, const base::Closure&));
   MOCK_CONST_METHOD0(ShouldPromptForReset, bool());
   MOCK_METHOD0(DialogShown, void());
   MOCK_CONST_METHOD0(homepage, GURL());
@@ -146,64 +150,87 @@ class SettingsResetPromptDialogTest : public DialogBrowserTest {
  public:
   void ShowDialog(const std::string& name) override {
     const std::map<std::string, ModelParams> name_to_model_params = {
-        {"dse", {SettingType::DEFAULT_SEARCH_ENGINE, 0, 0}},
-        {"sp1", {SettingType::STARTUP_PAGE, 1, 0}},
-        {"sp2", {SettingType::STARTUP_PAGE, 2, 0}},
-        {"hp", {SettingType::HOMEPAGE, 0, 0}},
-        {"dse_ext1", {SettingType::DEFAULT_SEARCH_ENGINE, 0, 1}},
-        {"sp1_ext1", {SettingType::STARTUP_PAGE, 1, 1}},
-        {"sp2_ext1", {SettingType::STARTUP_PAGE, 2, 1}},
-        {"hp_ext1", {SettingType::HOMEPAGE, 0, 1}},
-        {"dse_ext2", {SettingType::DEFAULT_SEARCH_ENGINE, 0, 2}},
-        {"sp1_ext2", {SettingType::STARTUP_PAGE, 1, 2}},
-        {"sp2_ext2", {SettingType::STARTUP_PAGE, 2, 2}},
-        {"hp_ext2", {SettingType::HOMEPAGE, 0, 2}},
+        {"DefaultSearchEngineChanged",
+         {SettingType::DEFAULT_SEARCH_ENGINE, 0, 0}},
+        {"SingleStartupPageChanged", {SettingType::STARTUP_PAGE, 1, 0}},
+        {"MultipleStartupPagesChanged", {SettingType::STARTUP_PAGE, 2, 0}},
+        {"HomePageChanged", {SettingType::HOMEPAGE, 0, 0}},
+        {"DefaultSearchEngineChangedByExtension",
+         {SettingType::DEFAULT_SEARCH_ENGINE, 0, 1}},
+        {"SingleStartupPageChangedByExtension",
+         {SettingType::STARTUP_PAGE, 1, 1}},
+        {"MultipleStartupPagesChangedByExtension",
+         {SettingType::STARTUP_PAGE, 2, 1}},
+        {"HomePageChangedByExtension", {SettingType::HOMEPAGE, 0, 1}},
+        {"DefaultSearchEngineChangedByMultipleExtensions",
+         {SettingType::DEFAULT_SEARCH_ENGINE, 0, 2}},
+        {"SingleStartupPageChangedByMultipleExtensions",
+         {SettingType::STARTUP_PAGE, 1, 2}},
+        {"MultipleStartupPagesChangedByMultipleExtensions",
+         {SettingType::STARTUP_PAGE, 2, 2}},
+        {"HomePageChangedByMultipleExtensions", {SettingType::HOMEPAGE, 0, 2}},
     };
 
     ASSERT_NE(name_to_model_params.find(name), name_to_model_params.end());
     auto model = base::MakeUnique<NiceMock<MockSettingsResetPromptModel>>(
         browser()->profile(), name_to_model_params.find(name)->second);
 
-    safe_browsing::SettingsResetPromptController::ShowSettingsResetPrompt(
+    chrome::ShowSettingsResetPrompt(
         browser(),
-        new safe_browsing::SettingsResetPromptController(std::move(model)));
+        new safe_browsing::SettingsResetPromptController(
+            std::move(model), base::MakeUnique<BrandcodedDefaultSettings>()));
   }
 };
 
-IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest, InvokeDialog_dse) {
+IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest,
+                       InvokeDialog_DefaultSearchEngineChanged) {
   RunDialog();
 }
-IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest, InvokeDialog_sp1) {
+IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest,
+                       InvokeDialog_SingleStartupPageChanged) {
   RunDialog();
 }
-IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest, InvokeDialog_sp2) {
+IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest,
+                       InvokeDialog_MultipleStartupPagesChanged) {
   RunDialog();
 }
-IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest, InvokeDialog_hp) {
+IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest,
+                       InvokeDialog_HomePageChanged) {
   RunDialog();
 }
-IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest, InvokeDialog_dse_ext1) {
+IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest,
+                       InvokeDialog_DefaultSearchEngineChangedByExtension) {
   RunDialog();
 }
-IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest, InvokeDialog_sp1_ext1) {
+IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest,
+                       InvokeDialog_SingleStartupPageChangedByExtension) {
   RunDialog();
 }
-IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest, InvokeDialog_sp2_ext1) {
+IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest,
+                       InvokeDialog_MultipleStartupPagesChangedByExtension) {
   RunDialog();
 }
-IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest, InvokeDialog_hp_ext1) {
+IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest,
+                       InvokeDialog_HomePageChangedByExtension) {
   RunDialog();
 }
-IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest, InvokeDialog_dse_ext2) {
+IN_PROC_BROWSER_TEST_F(
+    SettingsResetPromptDialogTest,
+    InvokeDialog_DefaultSearchEngineChangedByMultipleExtensions) {
   RunDialog();
 }
-IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest, InvokeDialog_sp1_ext2) {
+IN_PROC_BROWSER_TEST_F(
+    SettingsResetPromptDialogTest,
+    InvokeDialog_SingleStartupPageChangedByMultipleExtensions) {
   RunDialog();
 }
-IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest, InvokeDialog_sp2_ext2) {
+IN_PROC_BROWSER_TEST_F(
+    SettingsResetPromptDialogTest,
+    InvokeDialog_MultipleStartupPagesChangedByMultipleExtensions) {
   RunDialog();
 }
-IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest, InvokeDialog_hp_ext2) {
+IN_PROC_BROWSER_TEST_F(SettingsResetPromptDialogTest,
+                       InvokeDialog_HomePageChangedByMultipleExtensions) {
   RunDialog();
 }
 

@@ -24,7 +24,7 @@ struct CurrencyCodeTestCase {
 };
 
 class PaymentsCurrencyValidatorTest
-    : public testing::TestWithParam<CurrencyCodeTestCase> {};
+    : public ::testing::TestWithParam<CurrencyCodeTestCase> {};
 
 const char* LongString2048() {
   static char long_string[2049];
@@ -59,7 +59,7 @@ TEST_P(PaymentsCurrencyValidatorTest, IsValidCurrencyCodeFormat) {
 INSTANTIATE_TEST_CASE_P(
     CurrencyCodes,
     PaymentsCurrencyValidatorTest,
-    testing::Values(
+    ::testing::Values(
         // The most common identifiers are three-letter alphabetic codes as
         // defined by [ISO4217] (for example, "USD" for US Dollars).
         // |system| is a URL that indicates the currency system that the
@@ -76,7 +76,7 @@ INSTANTIATE_TEST_CASE_P(
         CurrencyCodeTestCase("USDO", "http://www.example.com", true),
         CurrencyCodeTestCase("USDO", "urn:iso:std:iso:4217", false),
         CurrencyCodeTestCase("usd", "http://www.example.com", true),
-        CurrencyCodeTestCase("usd", "urn:iso:std:iso:4217", false),
+        CurrencyCodeTestCase("usd", "urn:iso:std:iso:4217", true),
         CurrencyCodeTestCase("ANYSTRING", "http://www.example.com", true),
         CurrencyCodeTestCase("ANYSTRING", "urn:iso:std:iso:4217", false),
         CurrencyCodeTestCase("", "http://www.example.com", true),
@@ -102,51 +102,55 @@ std::ostream& operator<<(std::ostream& out, const TestCase& test_case) {
   return out;
 }
 
-class PaymentsAmountValidatorTest : public testing::TestWithParam<TestCase> {};
+class PaymentsAmountValidatorTest : public ::testing::TestWithParam<TestCase> {
+};
 
 TEST_P(PaymentsAmountValidatorTest, IsValidAmountFormat) {
   String error_message;
-  EXPECT_EQ(GetParam().expected_valid, PaymentsValidators::IsValidAmountFormat(
-                                           GetParam().input, &error_message))
+  EXPECT_EQ(GetParam().expected_valid,
+            PaymentsValidators::IsValidAmountFormat(
+                GetParam().input, "test value", &error_message))
       << error_message;
   EXPECT_EQ(GetParam().expected_valid, error_message.IsEmpty())
       << error_message;
 
   EXPECT_EQ(GetParam().expected_valid,
-            PaymentsValidators::IsValidAmountFormat(GetParam().input, nullptr));
+            PaymentsValidators::IsValidAmountFormat(GetParam().input,
+                                                    "test value", nullptr));
 }
 
 INSTANTIATE_TEST_CASE_P(
     Amounts,
     PaymentsAmountValidatorTest,
-    testing::Values(TestCase("0", true),
-                    TestCase("-0", true),
-                    TestCase("1", true),
-                    TestCase("10", true),
-                    TestCase("-3", true),
-                    TestCase("10.99", true),
-                    TestCase("-3.00", true),
-                    TestCase("01234567890123456789.0123456789", true),
-                    TestCase("01234567890123456789012345678.9", true),
-                    TestCase("012345678901234567890123456789", true),
-                    TestCase("-01234567890123456789.0123456789", true),
-                    TestCase("-01234567890123456789012345678.9", true),
-                    TestCase("-012345678901234567890123456789", true),
-                    // Invalid amount formats
-                    TestCase("", false),
-                    TestCase("-", false),
-                    TestCase("notdigits", false),
-                    TestCase("ALSONOTDIGITS", false),
-                    TestCase("10.", false),
-                    TestCase(".99", false),
-                    TestCase("-10.", false),
-                    TestCase("-.99", false),
-                    TestCase("10-", false),
-                    TestCase("1-0", false),
-                    TestCase("1.0.0", false),
-                    TestCase("1/3", false)));
+    ::testing::Values(TestCase("0", true),
+                      TestCase("-0", true),
+                      TestCase("1", true),
+                      TestCase("10", true),
+                      TestCase("-3", true),
+                      TestCase("10.99", true),
+                      TestCase("-3.00", true),
+                      TestCase("01234567890123456789.0123456789", true),
+                      TestCase("01234567890123456789012345678.9", true),
+                      TestCase("012345678901234567890123456789", true),
+                      TestCase("-01234567890123456789.0123456789", true),
+                      TestCase("-01234567890123456789012345678.9", true),
+                      TestCase("-012345678901234567890123456789", true),
+                      // Invalid amount formats
+                      TestCase("", false),
+                      TestCase("-", false),
+                      TestCase("notdigits", false),
+                      TestCase("ALSONOTDIGITS", false),
+                      TestCase("10.", false),
+                      TestCase(".99", false),
+                      TestCase("-10.", false),
+                      TestCase("-.99", false),
+                      TestCase("10-", false),
+                      TestCase("1-0", false),
+                      TestCase("1.0.0", false),
+                      TestCase("1/3", false)));
 
-class PaymentsRegionValidatorTest : public testing::TestWithParam<TestCase> {};
+class PaymentsRegionValidatorTest : public ::testing::TestWithParam<TestCase> {
+};
 
 TEST_P(PaymentsRegionValidatorTest, IsValidCountryCodeFormat) {
   String error_message;
@@ -164,16 +168,16 @@ TEST_P(PaymentsRegionValidatorTest, IsValidCountryCodeFormat) {
 
 INSTANTIATE_TEST_CASE_P(CountryCodes,
                         PaymentsRegionValidatorTest,
-                        testing::Values(TestCase("US", true),
-                                        // Invalid country code formats
-                                        TestCase("U1", false),
-                                        TestCase("U", false),
-                                        TestCase("us", false),
-                                        TestCase("USA", false),
-                                        TestCase("", false)));
+                        ::testing::Values(TestCase("US", true),
+                                          // Invalid country code formats
+                                          TestCase("U1", false),
+                                          TestCase("U", false),
+                                          TestCase("us", false),
+                                          TestCase("USA", false),
+                                          TestCase("", false)));
 
-class PaymentsLanguageValidatorTest : public testing::TestWithParam<TestCase> {
-};
+class PaymentsLanguageValidatorTest
+    : public ::testing::TestWithParam<TestCase> {};
 
 TEST_P(PaymentsLanguageValidatorTest, IsValidLanguageCodeFormat) {
   String error_message;
@@ -191,17 +195,18 @@ TEST_P(PaymentsLanguageValidatorTest, IsValidLanguageCodeFormat) {
 
 INSTANTIATE_TEST_CASE_P(LanguageCodes,
                         PaymentsLanguageValidatorTest,
-                        testing::Values(TestCase("", true),
-                                        TestCase("en", true),
-                                        TestCase("eng", true),
-                                        // Invalid language code formats
-                                        TestCase("e1", false),
-                                        TestCase("en1", false),
-                                        TestCase("e", false),
-                                        TestCase("engl", false),
-                                        TestCase("EN", false)));
+                        ::testing::Values(TestCase("", true),
+                                          TestCase("en", true),
+                                          TestCase("eng", true),
+                                          // Invalid language code formats
+                                          TestCase("e1", false),
+                                          TestCase("en1", false),
+                                          TestCase("e", false),
+                                          TestCase("engl", false),
+                                          TestCase("EN", false)));
 
-class PaymentsScriptValidatorTest : public testing::TestWithParam<TestCase> {};
+class PaymentsScriptValidatorTest : public ::testing::TestWithParam<TestCase> {
+};
 
 TEST_P(PaymentsScriptValidatorTest, IsValidScriptCodeFormat) {
   String error_message;
@@ -219,15 +224,15 @@ TEST_P(PaymentsScriptValidatorTest, IsValidScriptCodeFormat) {
 
 INSTANTIATE_TEST_CASE_P(ScriptCodes,
                         PaymentsScriptValidatorTest,
-                        testing::Values(TestCase("", true),
-                                        TestCase("Latn", true),
-                                        // Invalid script code formats
-                                        TestCase("Lat1", false),
-                                        TestCase("1lat", false),
-                                        TestCase("Latin", false),
-                                        TestCase("Lat", false),
-                                        TestCase("latn", false),
-                                        TestCase("LATN", false)));
+                        ::testing::Values(TestCase("", true),
+                                          TestCase("Latn", true),
+                                          // Invalid script code formats
+                                          TestCase("Lat1", false),
+                                          TestCase("1lat", false),
+                                          TestCase("Latin", false),
+                                          TestCase("Lat", false),
+                                          TestCase("latn", false),
+                                          TestCase("LATN", false)));
 
 struct ShippingAddressTestCase {
   ShippingAddressTestCase(const char* country_code,
@@ -247,7 +252,7 @@ struct ShippingAddressTestCase {
 };
 
 class PaymentsShippingAddressValidatorTest
-    : public testing::TestWithParam<ShippingAddressTestCase> {};
+    : public ::testing::TestWithParam<ShippingAddressTestCase> {};
 
 TEST_P(PaymentsShippingAddressValidatorTest, IsValidShippingAddress) {
   payments::mojom::blink::PaymentAddressPtr address =
@@ -270,7 +275,7 @@ TEST_P(PaymentsShippingAddressValidatorTest, IsValidShippingAddress) {
 INSTANTIATE_TEST_CASE_P(
     ShippingAddresses,
     PaymentsShippingAddressValidatorTest,
-    testing::Values(
+    ::testing::Values(
         ShippingAddressTestCase("US", "en", "Latn", true),
         ShippingAddressTestCase("US", "en", "", true),
         ShippingAddressTestCase("US", "", "", true),

@@ -93,7 +93,7 @@ BluetoothDevice::ConnectionInfo::ConnectionInfo(
       transmit_power(transmit_power),
       max_transmit_power(max_transmit_power) {}
 
-BluetoothDevice::ConnectionInfo::~ConnectionInfo() {}
+BluetoothDevice::ConnectionInfo::~ConnectionInfo() = default;
 
 base::string16 BluetoothDevice::GetNameForDisplay() const {
   base::Optional<std::string> name = GetName();
@@ -467,7 +467,7 @@ BluetoothDevice::GetPrimaryServicesByUUID(const BluetoothUUID& service_uuid) {
 void BluetoothDevice::DidConnectGatt() {
   for (const auto& callback : create_gatt_connection_success_callbacks_) {
     callback.Run(
-        base::MakeUnique<BluetoothGattConnection>(adapter_, GetAddress()));
+        std::make_unique<BluetoothGattConnection>(adapter_, GetAddress()));
   }
   create_gatt_connection_success_callbacks_.clear();
   create_gatt_connection_error_callbacks_.clear();

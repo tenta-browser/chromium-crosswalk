@@ -4,42 +4,41 @@
 
 #include "core/xml/DocumentXSLT.h"
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8AbstractEventListener.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/dom/Node.h"
 #include "core/dom/ProcessingInstruction.h"
-#include "core/events/Event.h"
-#include "core/events/EventListener.h"
+#include "core/dom/events/Event.h"
+#include "core/dom/events/EventListener.h"
 #include "core/frame/UseCounter.h"
 #include "core/probe/CoreProbes.h"
 #include "core/xml/XSLStyleSheet.h"
 #include "core/xml/XSLTProcessor.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/ScriptState.h"
 
 namespace blink {
 
 class DOMContentLoadedListener final
-    : public V8AbstractEventListener,
+    : public EventListener,
       public ProcessingInstruction::DetachableEventListener {
   USING_GARBAGE_COLLECTED_MIXIN(DOMContentLoadedListener);
 
  public:
-  static DOMContentLoadedListener* Create(ScriptState* script_state,
-                                          ProcessingInstruction* pi) {
-    return new DOMContentLoadedListener(script_state, pi);
+  static DOMContentLoadedListener* Create(ProcessingInstruction* pi) {
+    return new DOMContentLoadedListener(pi);
   }
 
-  bool operator==(const EventListener&) const override { return true; }
+  bool operator==(const EventListener& rhs) const override {
+    return this == &rhs;
+  }
 
-  virtual void HandleEvent(ScriptState* script_state, Event* event) {
-    DCHECK(RuntimeEnabledFeatures::xsltEnabled());
+  void handleEvent(ExecutionContext* execution_context, Event* event) override {
+    DCHECK(RuntimeEnabledFeatures::XSLTEnabled());
     DCHECK_EQ(event->type(), "DOMContentLoaded");
-    ScriptState::Scope scope(script_state);
 
-    Document& document = *ToDocument(ExecutionContext::From(script_state));
+    Document& document = *ToDocument(execution_context);
     DCHECK(!document.Parsing());
 
     // Processing instruction (XML documents only).
@@ -59,25 +58,16 @@ class DOMContentLoadedListener final
 
   EventListener* ToEventListener() override { return this; }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  virtual void Trace(blink::Visitor* visitor) {
     visitor->Trace(processing_instruction_);
-    V8AbstractEventListener::Trace(visitor);
+    EventListener::Trace(visitor);
     ProcessingInstruction::DetachableEventListener::Trace(visitor);
   }
 
  private:
-  DOMContentLoadedListener(ScriptState* script_state, ProcessingInstruction* pi)
-      : V8AbstractEventListener(false,
-                                script_state->World(),
-                                script_state->GetIsolate()),
+  DOMContentLoadedListener(ProcessingInstruction* pi)
+      : EventListener(EventListener::kCPPEventListenerType),
         processing_instruction_(pi) {}
-
-  virtual v8::Local<v8::Value> CallListenerFunction(ScriptState*,
-                                                    v8::Local<v8::Value>,
-                                                    Event*) {
-    NOTREACHED();
-    return v8::Local<v8::Value>();
-  }
 
   // If this event listener is attached to a ProcessingInstruction, keep a
   // weak reference back to it. That ProcessingInstruction is responsible for
@@ -91,7 +81,7 @@ DocumentXSLT::DocumentXSLT(Document& document)
 void DocumentXSLT::ApplyXSLTransform(Document& document,
                                      ProcessingInstruction* pi) {
   DCHECK(!pi->IsLoading());
-  UseCounter::Count(document, UseCounter::kXSLProcessingInstruction);
+  UseCounter::Count(document, WebFeature::kXSLProcessingInstruction);
   XSLTProcessor* processor = XSLTProcessor::Create(document);
   processor->SetXSLStyleSheet(ToXSLStyleSheet(pi->sheet()));
   String result_mime_type;
@@ -113,7 +103,7 @@ void DocumentXSLT::ApplyXSLTransform(Document& document,
 }
 
 ProcessingInstruction* DocumentXSLT::FindXSLStyleSheet(Document& document) {
-  for (Node* node = document.FirstChild(); node; node = node->nextSibling()) {
+  for (Node* node = document.firstChild(); node; node = node->nextSibling()) {
     if (node->getNodeType() != Node::kProcessingInstructionNode)
       continue;
 
@@ -130,14 +120,10 @@ bool DocumentXSLT::ProcessingInstructionInsertedIntoDocument(
   if (!pi->IsXSL())
     return false;
 
-  if (!RuntimeEnabledFeatures::xsltEnabled() || !document.GetFrame())
+  if (!RuntimeEnabledFeatures::XSLTEnabled() || !document.GetFrame())
     return true;
 
-  ScriptState* script_state = ToScriptStateForMainWorld(document.GetFrame());
-  if (!script_state)
-    return false;
-  DOMContentLoadedListener* listener =
-      DOMContentLoadedListener::Create(script_state, pi);
+  DOMContentLoadedListener* listener = DOMContentLoadedListener::Create(pi);
   document.addEventListener(EventTypeNames::DOMContentLoaded, listener, false);
   DCHECK(!pi->EventListenerForXSLT());
   pi->SetEventListenerForXSLT(listener);
@@ -153,7 +139,7 @@ bool DocumentXSLT::ProcessingInstructionRemovedFromDocument(
   if (!pi->EventListenerForXSLT())
     return true;
 
-  DCHECK(RuntimeEnabledFeatures::xsltEnabled());
+  DCHECK(RuntimeEnabledFeatures::XSLTEnabled());
   document.removeEventListener(EventTypeNames::DOMContentLoaded,
                                pi->EventListenerForXSLT(), false);
   pi->ClearEventListenerForXSLT();
@@ -164,7 +150,7 @@ bool DocumentXSLT::SheetLoaded(Document& document, ProcessingInstruction* pi) {
   if (!pi->IsXSL())
     return false;
 
-  if (RuntimeEnabledFeatures::xsltEnabled() && !document.Parsing() &&
+  if (RuntimeEnabledFeatures::XSLTEnabled() && !document.Parsing() &&
       !pi->IsLoading() && !DocumentXSLT::HasTransformSourceDocument(document)) {
     if (FindXSLStyleSheet(document) == pi)
       ApplyXSLTransform(document, pi);
@@ -191,7 +177,7 @@ DocumentXSLT& DocumentXSLT::From(Document& document) {
   return *supplement;
 }
 
-DEFINE_TRACE(DocumentXSLT) {
+void DocumentXSLT::Trace(blink::Visitor* visitor) {
   visitor->Trace(transform_source_document_);
   Supplement<Document>::Trace(visitor);
 }

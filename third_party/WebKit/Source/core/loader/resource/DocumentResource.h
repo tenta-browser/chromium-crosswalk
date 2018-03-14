@@ -23,12 +23,12 @@
 #ifndef DocumentResource_h
 #define DocumentResource_h
 
-#include "core/html/parser/TextResourceDecoder.h"
+#include <memory>
 #include "core/loader/resource/TextResource.h"
 #include "platform/heap/Handle.h"
 #include "platform/loader/fetch/Resource.h"
 #include "platform/loader/fetch/ResourceClient.h"
-#include <memory>
+#include "platform/loader/fetch/TextResourceDecoderOptions.h"
 
 namespace blink {
 
@@ -42,24 +42,31 @@ class CORE_EXPORT DocumentResource final : public TextResource {
 
   static DocumentResource* FetchSVGDocument(FetchParameters&, ResourceFetcher*);
   ~DocumentResource() override;
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
   Document* GetDocument() const { return document_.Get(); }
 
-  void CheckNotify() override;
+  void NotifyFinished() override;
 
  private:
   class SVGDocumentResourceFactory : public ResourceFactory {
    public:
-    SVGDocumentResourceFactory() : ResourceFactory(Resource::kSVGDocument) {}
+    SVGDocumentResourceFactory()
+        : ResourceFactory(Resource::kSVGDocument,
+                          TextResourceDecoderOptions::kXMLContent) {}
 
-    Resource* Create(const ResourceRequest& request,
-                     const ResourceLoaderOptions& options,
-                     const String& charset) const override {
-      return new DocumentResource(request, Resource::kSVGDocument, options);
+    Resource* Create(
+        const ResourceRequest& request,
+        const ResourceLoaderOptions& options,
+        const TextResourceDecoderOptions& decoder_options) const override {
+      return new DocumentResource(request, Resource::kSVGDocument, options,
+                                  decoder_options);
     }
   };
-  DocumentResource(const ResourceRequest&, Type, const ResourceLoaderOptions&);
+  DocumentResource(const ResourceRequest&,
+                   Type,
+                   const ResourceLoaderOptions&,
+                   const TextResourceDecoderOptions&);
 
   bool MimeTypeAllowed() const;
   Document* CreateDocument(const KURL&);
@@ -72,17 +79,6 @@ DEFINE_TYPE_CASTS(DocumentResource,
                   resource,
                   resource->GetType() == Resource::kSVGDocument,
                   resource.GetType() == Resource::kSVGDocument);
-
-class CORE_EXPORT DocumentResourceClient : public ResourceClient {
- public:
-  ~DocumentResourceClient() override {}
-  static bool IsExpectedType(ResourceClient* client) {
-    return client->GetResourceClientType() == kDocumentType;
-  }
-  ResourceClientType GetResourceClientType() const final {
-    return kDocumentType;
-  }
-};
 
 }  // namespace blink
 

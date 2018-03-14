@@ -10,6 +10,7 @@
 
 #include <list>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -19,10 +20,10 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
 #include "base/observer_list_threadsafe.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "gpu/config/gpu_blacklist.h"
-#include "gpu/config/gpu_driver_bug_list.h"
 
 namespace base {
 class CommandLine;
@@ -44,13 +45,15 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   bool IsFeatureBlacklisted(int feature) const;
   bool IsFeatureEnabled(int feature) const;
   bool IsWebGLEnabled() const;
-  bool IsDriverBugWorkaroundActive(int feature) const;
+  bool IsWebGL2Enabled() const;
   gpu::GPUInfo GetGPUInfo() const;
   bool GpuAccessAllowed(std::string* reason) const;
   void RequestCompleteGpuInfoIfNeeded();
   bool IsEssentialGpuInfoAvailable() const;
   bool IsCompleteGpuInfoAvailable() const;
-  void RequestVideoMemoryUsageStatsUpdate() const;
+  void RequestVideoMemoryUsageStatsUpdate(
+      const base::Callback<void(const gpu::VideoMemoryUsageStats& stats)>&
+          callback) const;
   bool ShouldUseSwiftShader() const;
   void AddObserver(GpuDataManagerObserver* observer);
   void RemoveObserver(GpuDataManagerObserver* observer);
@@ -68,19 +71,15 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
 
   void UpdateGpuInfo(const gpu::GPUInfo& gpu_info);
   void UpdateGpuFeatureInfo(const gpu::GpuFeatureInfo& gpu_feature_info);
-
-  void UpdateVideoMemoryUsageStats(
-      const gpu::VideoMemoryUsageStats& video_memory_usage_stats);
+  gpu::GpuFeatureInfo GetGpuFeatureInfo() const;
 
   void AppendRendererCommandLine(base::CommandLine* command_line) const;
 
-  void AppendGpuCommandLine(base::CommandLine* command_line,
-                            gpu::GpuPreferences* gpu_preferences) const;
+  void AppendGpuCommandLine(base::CommandLine* command_line) const;
 
   void UpdateRendererWebPrefs(WebPreferences* prefs) const;
 
-  std::string GetBlacklistVersion() const;
-  std::string GetDriverBugListVersion() const;
+  void UpdateGpuPreferences(gpu::GpuPreferences* gpu_preferences) const;
 
   void GetBlacklistReasons(base::ListValue* reasons) const;
 
@@ -92,11 +91,10 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
 
   void ProcessCrashed(base::TerminationStatus exit_code);
 
-  base::ListValue* GetLogMessages() const;
+  std::unique_ptr<base::ListValue> GetLogMessages() const;
 
   void HandleGpuSwitch();
 
-  bool CanUseGpuBrowserCompositor() const;
   bool ShouldDisableAcceleratedVideoDecode(
       const base::CommandLine* command_line) const;
 
@@ -191,7 +189,6 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   explicit GpuDataManagerImplPrivate(GpuDataManagerImpl* owner);
 
   void InitializeImpl(const gpu::GpuControlListData& gpu_blacklist_data,
-                      const gpu::GpuControlListData& gpu_driver_bug_list_data,
                       const gpu::GPUInfo& gpu_info);
 
   void RunPostInitTasks();
@@ -203,10 +200,6 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   // This should only be called once at initialization time, when preliminary
   // gpu info is collected.
   void UpdatePreliminaryBlacklistedFeatures();
-
-  // Update the GPU switching status.
-  // This should only be called once at initialization time.
-  void UpdateGpuSwitchingManager(const gpu::GPUInfo& gpu_info);
 
   // Notify all observers whenever there is a GPU info update.
   void NotifyGpuInfoUpdate();
@@ -235,12 +228,9 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   // Eventually |blacklisted_features_| should be folded in to this.
   gpu::GpuFeatureInfo gpu_feature_info_;
 
-  std::set<int> gpu_driver_bugs_;
-
   gpu::GPUInfo gpu_info_;
 
   std::unique_ptr<gpu::GpuBlacklist> gpu_blacklist_;
-  std::unique_ptr<gpu::GpuDriverBugList> gpu_driver_bug_list_;
 
   const scoped_refptr<GpuDataManagerObserverList> observer_list_;
 
@@ -272,8 +262,6 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
 
   // True if --single-process or --in-process-gpu is passed in.
   bool in_process_gpu_;
-
-  std::string disabled_extensions_;
 
   // If one tries to call a member before initialization then it is defered
   // until Initialize() is completed.

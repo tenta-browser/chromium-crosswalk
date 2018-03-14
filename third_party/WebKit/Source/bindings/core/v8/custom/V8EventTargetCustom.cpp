@@ -41,20 +41,12 @@ void V8EventTarget::addEventListenerMethodPrologueCustom(
     EventTarget*) {
   if (info.Length() >= 3 && info[2]->IsObject()) {
     UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                      UseCounter::kAddEventListenerThirdArgumentIsObject);
+                      WebFeature::kAddEventListenerThirdArgumentIsObject);
   }
   if (info.Length() >= 4) {
     UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                      UseCounter::kAddEventListenerFourArguments);
+                      WebFeature::kAddEventListenerFourArguments);
   }
-}
-
-void V8EventTarget::addEventListenerMethodEpilogueCustom(
-    const v8::FunctionCallbackInfo<v8::Value>& info,
-    EventTarget* impl) {
-  if (info.Length() >= 2 && info[1]->IsObject() && !impl->ToNode())
-    AddHiddenValueToArray(info.GetIsolate(), info.Holder(), info[1],
-                          V8EventTarget::eventListenerCacheIndex);
 }
 
 void V8EventTarget::removeEventListenerMethodPrologueCustom(
@@ -62,20 +54,12 @@ void V8EventTarget::removeEventListenerMethodPrologueCustom(
     EventTarget*) {
   if (info.Length() >= 3 && info[2]->IsObject()) {
     UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                      UseCounter::kRemoveEventListenerThirdArgumentIsObject);
+                      WebFeature::kRemoveEventListenerThirdArgumentIsObject);
   }
   if (info.Length() >= 4) {
     UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                      UseCounter::kRemoveEventListenerFourArguments);
+                      WebFeature::kRemoveEventListenerFourArguments);
   }
-}
-
-void V8EventTarget::removeEventListenerMethodEpilogueCustom(
-    const v8::FunctionCallbackInfo<v8::Value>& info,
-    EventTarget* impl) {
-  if (info.Length() >= 2 && info[1]->IsObject() && !impl->ToNode())
-    RemoveHiddenValueFromArray(info.GetIsolate(), info.Holder(), info[1],
-                               V8EventTarget::eventListenerCacheIndex);
 }
 
 }  // namespace blink

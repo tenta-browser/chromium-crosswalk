@@ -18,13 +18,13 @@ class UrlTestImpl : public url::mojom::blink::UrlTest {
       : binding_(this, std::move(request)) {}
 
   // UrlTest:
-  void BounceUrl(const KURL& in, const BounceUrlCallback& callback) override {
-    callback.Run(in);
+  void BounceUrl(const KURL& in, BounceUrlCallback callback) override {
+    std::move(callback).Run(in);
   }
 
-  void BounceOrigin(const RefPtr<SecurityOrigin>& in,
-                    const BounceOriginCallback& callback) override {
-    callback.Run(in);
+  void BounceOrigin(const scoped_refptr<const SecurityOrigin>& in,
+                    BounceOriginCallback callback) override {
+    std::move(callback).Run(in);
   }
 
  private:
@@ -45,7 +45,7 @@ TEST(KURLSecurityOriginStructTraitsTest, Basic) {
   };
 
   for (const char* test_case : serialize_cases) {
-    KURL input(KURL(), test_case);
+    KURL input(NullURL(), test_case);
     KURL output;
     EXPECT_TRUE(proxy->BounceUrl(input, &output));
 
@@ -67,23 +67,33 @@ TEST(KURLSecurityOriginStructTraitsTest, Basic) {
   {
     const std::string url =
         std::string("http://example.org/").append(url::kMaxURLChars + 1, 'a');
-    KURL input(KURL(), url.c_str());
+    KURL input(NullURL(), url.c_str());
     KURL output;
     EXPECT_TRUE(proxy->BounceUrl(input, &output));
     EXPECT_TRUE(output.IsEmpty());
   }
 
   // Test basic Origin serialization.
-  RefPtr<SecurityOrigin> non_unique =
+  scoped_refptr<SecurityOrigin> non_unique =
       SecurityOrigin::Create("http", "www.google.com", 80);
-  RefPtr<SecurityOrigin> output;
+  scoped_refptr<const SecurityOrigin> output;
   EXPECT_TRUE(proxy->BounceOrigin(non_unique, &output));
-  EXPECT_TRUE(non_unique->IsSameSchemeHostPort(output.Get()));
-  EXPECT_FALSE(non_unique->IsUnique());
+  EXPECT_TRUE(non_unique->IsSameSchemeHostPortAndSuborigin(output.get()));
+  EXPECT_TRUE(non_unique->IsSameSchemeHostPort(output.get()));
+  EXPECT_FALSE(output->HasSuborigin());
+  EXPECT_FALSE(output->IsUnique());
 
-  RefPtr<SecurityOrigin> unique = SecurityOrigin::CreateUnique();
+  scoped_refptr<SecurityOrigin> unique = SecurityOrigin::CreateUnique();
   EXPECT_TRUE(proxy->BounceOrigin(unique, &output));
   EXPECT_TRUE(output->IsUnique());
+
+  scoped_refptr<SecurityOrigin> with_sub_origin =
+      SecurityOrigin::Create("http", "www.google.com", 80, "suborigin");
+  EXPECT_TRUE(proxy->BounceOrigin(with_sub_origin, &output));
+  EXPECT_TRUE(with_sub_origin->IsSameSchemeHostPortAndSuborigin(output.get()));
+  EXPECT_TRUE(with_sub_origin->IsSameSchemeHostPort(output.get()));
+  EXPECT_TRUE(output->HasSuborigin());
+  EXPECT_FALSE(output->IsUnique());
 }
 
 }  // namespace url

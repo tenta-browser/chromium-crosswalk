@@ -1,6 +1,6 @@
 # Checking out and building Chromium for Mac
 
-There are instructions for other platforms linked from the 
+There are instructions for other platforms linked from the
 [get the code](get_the_code.md) page.
 
 ## Instructions for Google Employees
@@ -12,16 +12,16 @@ Are you a Google employee? See
 
 ## System requirements
 
-*   A 64-bit Mac running 10.11+.
-*   [Xcode](https://developer.apple.com/xcode) 7.3+.
-*   The OS X 10.10 SDK. Run
+*   A 64-bit Mac running 10.12+.
+*   [Xcode](https://developer.apple.com/xcode) 8+
+*   The OS X 10.12 SDK. Run
 
-    ```shell  
+    ```shell
     $ ls `xcode-select -p`/Platforms/MacOSX.platform/Developer/SDKs
     ```
- 
+
     to check whether you have it.  Building with a newer SDK works too, but
-    the releases currently use the 10.10 SDK.
+    the releases currently use the 10.12 SDK.
 
 ## Install `depot_tools`
 
@@ -132,6 +132,17 @@ in your args.gn to disable debug symbols altogether.  This makes both full
 rebuilds and linking faster (at the cost of not getting symbolized backtraces
 in gdb).
 
+#### Jumbo/Unity builds
+
+Jumbo builds merge many translation units ("source files") and compile them
+together. Since a large portion of Chromium's code is in shared header files,
+this dramatically reduces the total amount of work needed. Check out the
+[Jumbo / Unity builds](jumbo.md) for more information.
+
+Enable jumbo builds by setting the GN arg `use_jumbo_build=true`.
+
+#### CCache
+
 You might also want to [install ccache](ccache_mac.md) to speed up the build.
 
 ## Build Chromium
@@ -152,7 +163,7 @@ out/Default chrome/test:unit_tests`).
 Once it is built, you can simply run the browser:
 
 ```shell
-$ out/Default/chrome
+$ out/Default/Chromium.app/Contents/MacOS/Chromium
 ```
 
 ## Running test targets
@@ -231,6 +242,8 @@ tree is open before checking out. This will increase your chances of success.
 
 ### Improving performance of `git status`
 
+#### Increase the vnode cache size
+
 `git status` is used frequently to determine the status of your checkout.  Due
 to the large number of files in Chromium's checkout, `git status` performance
 can be quite variable.  Increasing the system's vnode cache appears to help. By
@@ -257,8 +270,22 @@ $ echo kern.maxvnodes=$((512*1024)) | sudo tee -a /etc/sysctl.conf
 
 Or edit the file directly.
 
-If `git --version` reports 2.6 or higher, the following may also improve
-performance of `git status`:
+#### Configure git to use an untracked cache
+
+If `git --version` reports 2.8 or higher, try running
+
+```shell
+$ git update-index --test-untracked-cache
+```
+
+If the output ends with `OK`, then the following may also improve performance of
+`git status`:
+
+```shell
+$ git config core.untrackedCache true
+```
+
+If `git --version` reports 2.6 or higher, but below 2.8, you can instead run
 
 ```shell
 $ git update-index --untracked-cache

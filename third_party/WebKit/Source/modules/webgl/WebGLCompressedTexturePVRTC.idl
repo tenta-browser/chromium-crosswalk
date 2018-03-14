@@ -26,9 +26,8 @@
 // https://www.khronos.org/registry/webgl/extensions/WEBGL_compressed_texture_pvrtc/
 
 [
-    DependentLifetime,
     NoInterfaceObject,
-    DoNotCheckConstants,
+    DoNotCheckConstants
 ] interface WebGLCompressedTexturePVRTC {
     /* Compressed Texture Formats */
     const unsigned long COMPRESSED_RGB_PVRTC_4BPPV1_IMG  = 0x8C00;

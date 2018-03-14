@@ -18,7 +18,8 @@
 #include "base/process/process_info.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/task_scheduler/task_traits.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -35,9 +36,8 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
-#include "components/safe_browsing/csd.pb.h"
-#include "components/safe_browsing_db/database_manager.h"
-#include "components/safe_browsing_db/safe_browsing_prefs.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
+#include "components/safe_browsing/proto/csd.pb.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -45,11 +45,14 @@
 
 namespace safe_browsing {
 
-#if !defined(GOOGLE_CHROME_BUILD)
-// Chromium-only flag to disable incident uploads.
-extern const base::Feature kIncidentReportingDisableUpload{
-    "IncidentReportingDisableUpload", base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kIncidentReportingEnableUpload {
+  "IncidentReportingEnableUpload",
+#if defined(GOOGLE_CHROME_BUILD)
+      base::FEATURE_ENABLED_BY_DEFAULT
+#else
+      base::FEATURE_DISABLED_BY_DEFAULT
 #endif
+};
 
 namespace {
 
@@ -121,10 +124,17 @@ PersistentIncidentState ComputeIncidentState(const Incident& incident) {
 // Returns the shutdown behavior for the task runners of the incident reporting
 // service. Current metrics suggest that CONTINUE_ON_SHUTDOWN will reduce the
 // number of browser hangs on shutdown.
-base::SequencedWorkerPool::WorkerShutdown GetShutdownBehavior() {
+base::TaskShutdownBehavior GetShutdownBehavior() {
   return base::FeatureList::IsEnabled(features::kBrowserHangFixesExperiment)
-             ? base::SequencedWorkerPool::CONTINUE_ON_SHUTDOWN
-             : base::SequencedWorkerPool::SKIP_ON_SHUTDOWN;
+             ? base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN
+             : base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN;
+}
+
+// Returns a task runner for blocking tasks in the background.
+scoped_refptr<base::TaskRunner> GetBackgroundTaskRunner() {
+  return base::CreateTaskRunnerWithTraits({base::TaskPriority::BACKGROUND,
+                                           GetShutdownBehavior(),
+                                           base::MayBlock()});
 }
 
 }  // namespace
@@ -165,7 +175,7 @@ class IncidentReportingService::UploadContext {
   // The report being uploaded.
   std::unique_ptr<ClientIncidentReport> report;
 
-  // The uploader in use. This is NULL until the CSD killswitch is checked.
+  // The uploader in use.
   std::unique_ptr<IncidentReportUploader> uploader;
 
   // A mapping of profile contexts to the data to be persisted upon successful
@@ -229,8 +239,9 @@ void IncidentReportingService::Receiver::AddIncidentForProcess(
   } else {
     thread_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&IncidentReportingService::Receiver::AddIncidentOnMainThread,
-                   service_, nullptr, base::Passed(&incident)));
+        base::BindOnce(
+            &IncidentReportingService::Receiver::AddIncidentOnMainThread,
+            service_, nullptr, base::Passed(&incident)));
   }
 }
 
@@ -241,7 +252,7 @@ void IncidentReportingService::Receiver::ClearIncidentForProcess(
   } else {
     thread_runner_->PostTask(
         FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &IncidentReportingService::Receiver::ClearIncidentOnMainThread,
             service_, nullptr, base::Passed(&incident)));
   }
@@ -307,16 +318,11 @@ bool IncidentReportingService::IsEnabledForProfile(Profile* profile) {
 
 IncidentReportingService::IncidentReportingService(
     SafeBrowsingService* safe_browsing_service)
-    : database_manager_(safe_browsing_service
-                            ? safe_browsing_service->database_manager()
-                            : nullptr),
-      url_request_context_getter_(
+    : url_request_context_getter_(
           safe_browsing_service ? safe_browsing_service->url_request_context()
                                 : nullptr),
       collect_environment_data_fn_(&CollectEnvironmentData),
-      environment_collection_task_runner_(
-          content::BrowserThread::GetBlockingPool()
-              ->GetTaskRunnerWithShutdownBehavior(GetShutdownBehavior())),
+      environment_collection_task_runner_(GetBackgroundTaskRunner()),
       environment_collection_pending_(),
       collation_timeout_pending_(),
       collation_timer_(FROM_HERE,
@@ -325,9 +331,7 @@ IncidentReportingService::IncidentReportingService(
                        &IncidentReportingService::OnCollationTimeout),
       delayed_analysis_callbacks_(
           base::TimeDelta::FromMilliseconds(kDefaultCallbackIntervalMs),
-          content::BrowserThread::GetBlockingPool()
-              ->GetTaskRunnerWithShutdownBehavior(GetShutdownBehavior())),
-      download_metadata_manager_(content::BrowserThread::GetBlockingPool()),
+          GetBackgroundTaskRunner()),
       receiver_weak_ptr_factory_(this),
       weak_ptr_factory_(this) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -402,14 +406,9 @@ IncidentReportingService::IncidentReportingService(
     const scoped_refptr<net::URLRequestContextGetter>& request_context_getter,
     base::TimeDelta delayed_task_interval,
     const scoped_refptr<base::TaskRunner>& delayed_task_runner)
-    : database_manager_(safe_browsing_service
-                            ? safe_browsing_service->database_manager()
-                            : nullptr),
-      url_request_context_getter_(request_context_getter),
+    : url_request_context_getter_(request_context_getter),
       collect_environment_data_fn_(&CollectEnvironmentData),
-      environment_collection_task_runner_(
-          content::BrowserThread::GetBlockingPool()
-              ->GetTaskRunnerWithShutdownBehavior(GetShutdownBehavior())),
+      environment_collection_task_runner_(GetBackgroundTaskRunner()),
       environment_collection_pending_(),
       collation_timeout_pending_(),
       collation_timer_(FROM_HERE,
@@ -417,7 +416,6 @@ IncidentReportingService::IncidentReportingService(
                        this,
                        &IncidentReportingService::OnCollationTimeout),
       delayed_analysis_callbacks_(delayed_task_interval, delayed_task_runner),
-      download_metadata_manager_(content::BrowserThread::GetBlockingPool()),
       receiver_weak_ptr_factory_(this),
       weak_ptr_factory_(this) {
   notification_registrar_.Add(this,
@@ -436,9 +434,7 @@ void IncidentReportingService::SetCollectEnvironmentHook(
     environment_collection_task_runner_ = task_runner;
   } else {
     collect_environment_data_fn_ = &CollectEnvironmentData;
-    environment_collection_task_runner_ =
-        content::BrowserThread::GetBlockingPool()
-            ->GetTaskRunnerWithShutdownBehavior(GetShutdownBehavior());
+    environment_collection_task_runner_ = GetBackgroundTaskRunner();
   }
 }
 
@@ -691,10 +687,11 @@ void IncidentReportingService::BeginEnvironmentCollection() {
       new ClientIncidentReport_EnvironmentData();
   environment_collection_pending_ =
       environment_collection_task_runner_->PostTaskAndReply(
-          FROM_HERE, base::Bind(collect_environment_data_fn_, environment_data),
-          base::Bind(&IncidentReportingService::OnEnvironmentDataCollected,
-                     weak_ptr_factory_.GetWeakPtr(),
-                     base::Passed(base::WrapUnique(environment_data))));
+          FROM_HERE,
+          base::BindOnce(collect_environment_data_fn_, environment_data),
+          base::BindOnce(&IncidentReportingService::OnEnvironmentDataCollected,
+                         weak_ptr_factory_.GetWeakPtr(),
+                         base::Passed(base::WrapUnique(environment_data))));
 
   // Posting the task will fail if the runner has been shut down. This should
   // never happen since the blocking pool is shut down after this service.
@@ -939,24 +936,9 @@ void IncidentReportingService::ProcessIncidentsIfCollectionComplete() {
 
   std::unique_ptr<UploadContext> context(new UploadContext(std::move(report)));
   context->profiles_to_state.swap(profiles_to_state);
-  if (!database_manager_.get()) {
-    // No database manager during testing. Take ownership of the context and
-    // continue processing.
-    UploadContext* temp_context = context.get();
-    uploads_.push_back(std::move(context));
-    IncidentReportingService::OnKillSwitchResult(temp_context, false);
-  } else {
-    if (content::BrowserThread::PostTaskAndReplyWithResult(
-            content::BrowserThread::IO,
-            FROM_HERE,
-            base::Bind(&SafeBrowsingDatabaseManager::IsCsdWhitelistKillSwitchOn,
-                       database_manager_),
-            base::Bind(&IncidentReportingService::OnKillSwitchResult,
-                       weak_ptr_factory_.GetWeakPtr(),
-                       context.get()))) {
-      uploads_.push_back(std::move(context));
-    }  // else should not happen. Let the context be deleted automatically.
-  }
+  UploadContext* temp_context = context.get();
+  uploads_.push_back(std::move(context));
+  IncidentReportingService::UploadReportIfUploadingEnabled(temp_context);
 }
 
 void IncidentReportingService::CancelAllReportUploads() {
@@ -968,28 +950,24 @@ void IncidentReportingService::CancelAllReportUploads() {
   uploads_.clear();
 }
 
-void IncidentReportingService::OnKillSwitchResult(UploadContext* context,
-                                                  bool is_killswitch_on) {
-#if !defined(GOOGLE_CHROME_BUILD)
-  if (base::FeatureList::IsEnabled(kIncidentReportingDisableUpload)) {
-    is_killswitch_on = true;
-  }
-#endif
-
+void IncidentReportingService::UploadReportIfUploadingEnabled(
+    UploadContext* context) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  if (!is_killswitch_on) {
-    // Initiate the upload.
-    context->uploader = StartReportUpload(
-        base::Bind(&IncidentReportingService::OnReportUploadResult,
-                   weak_ptr_factory_.GetWeakPtr(), context),
-        url_request_context_getter_, *context->report);
-    if (!context->uploader) {
-      OnReportUploadResult(context,
-                           IncidentReportUploader::UPLOAD_INVALID_REQUEST,
-                           std::unique_ptr<ClientIncidentResponse>());
-    }
-  } else {
+
+  if (!base::FeatureList::IsEnabled(kIncidentReportingEnableUpload)) {
     OnReportUploadResult(context, IncidentReportUploader::UPLOAD_SUPPRESSED,
+                         std::unique_ptr<ClientIncidentResponse>());
+    return;
+  }
+
+  // Initiate the upload.
+  context->uploader = StartReportUpload(
+      base::Bind(&IncidentReportingService::OnReportUploadResult,
+                 weak_ptr_factory_.GetWeakPtr(), context),
+      url_request_context_getter_, *context->report);
+  if (!context->uploader) {
+    OnReportUploadResult(context,
+                         IncidentReportUploader::UPLOAD_INVALID_REQUEST,
                          std::unique_ptr<ClientIncidentResponse>());
   }
 }

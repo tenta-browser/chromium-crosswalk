@@ -11,6 +11,7 @@ module indexed_db.mojom;
 import "mojo/common/file_path.mojom";
 import "mojo/common/string16.mojom";
 import "mojo/common/time.mojom";
+import "third_party/WebKit/common/blob/blob.mojom";
 import "url/mojo/origin.mojom";
 
 enum CursorDirection {
@@ -90,6 +91,15 @@ enum TransactionMode {
   VersionChange,
 };
 
+enum Status {
+  OK,
+  NotFound,
+  Corruption,
+  NotSupported,
+  InvalidArgument,
+  IOError,
+};
+
 struct IndexMetadata {
   int64 id;
   mojo.common.mojom.String16 name;
@@ -127,6 +137,7 @@ struct FileInfo {
 };
 
 struct BlobInfo {
+  blink.mojom.Blob? blob;
   string uuid;
   mojo.common.mojom.String16 mime_type;
   int64 size;
@@ -330,4 +341,6 @@ interface Factory {
        mojo.common.mojom.String16 name, int64 version, int64 transaction_id);
   DeleteDatabase(associated Callbacks callbacks, url.mojom.Origin origin,
                  mojo.common.mojom.String16 name, bool force_close);
+  AbortTransactionsAndCompactDatabase(url.mojom.Origin origin) => (Status status);
+  AbortTransactionsForDatabase(url.mojom.Origin origin) => (Status status);
 };

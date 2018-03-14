@@ -27,8 +27,10 @@
 #include "bindings/core/v8/DictionaryHelperForBindings.h"
 #include "bindings/core/v8/ExceptionMessages.h"
 #include "bindings/core/v8/ExceptionState.h"
+#include "bindings/core/v8/IDLTypes.h"
+#include "bindings/core/v8/NativeValueTraitsImpl.h"
 #include "bindings/core/v8/V8ArrayBufferView.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8Element.h"
 #include "bindings/core/v8/V8MessagePort.h"
 #include "bindings/core/v8/V8TextTrack.h"
@@ -62,7 +64,7 @@ CORE_EXPORT bool DictionaryHelper::Get(const Dictionary& dictionary,
   if (!dictionary.Get(key, v8_value))
     return false;
 
-  return V8Call(v8_value->BooleanValue(dictionary.V8Context()), value);
+  return v8_value->BooleanValue(dictionary.V8Context()).To(&value);
 }
 
 template <>
@@ -73,30 +75,18 @@ CORE_EXPORT bool DictionaryHelper::Get(const Dictionary& dictionary,
   if (!dictionary.Get(key, v8_value))
     return false;
 
-  return V8Call(v8_value->Int32Value(dictionary.V8Context()), value);
+  return v8_value->Int32Value(dictionary.V8Context()).To(&value);
 }
 
 template <>
 CORE_EXPORT bool DictionaryHelper::Get(const Dictionary& dictionary,
                                        const StringView& key,
-                                       double& value,
-                                       bool& has_value) {
+                                       double& value) {
   v8::Local<v8::Value> v8_value;
-  if (!dictionary.Get(key, v8_value)) {
-    has_value = false;
+  if (!dictionary.Get(key, v8_value))
     return false;
-  }
 
-  has_value = true;
-  return V8Call(v8_value->NumberValue(dictionary.V8Context()), value);
-}
-
-template <>
-bool DictionaryHelper::Get(const Dictionary& dictionary,
-                           const StringView& key,
-                           double& value) {
-  bool unused;
-  return DictionaryHelper::Get(dictionary, key, value, unused);
+  return v8_value->NumberValue(dictionary.V8Context()).To(&value);
 }
 
 template <typename StringType>
@@ -169,7 +159,7 @@ bool DictionaryHelper::Get(const Dictionary& dictionary,
     return false;
 
   int64_t int64_value;
-  if (!V8Call(v8_value->IntegerValue(dictionary.V8Context()), int64_value))
+  if (!v8_value->IntegerValue(dictionary.V8Context()).To(&int64_value))
     return false;
   value = int64_value;
   return true;
@@ -184,7 +174,7 @@ bool DictionaryHelper::Get(const Dictionary& dictionary,
     return false;
 
   double double_value;
-  if (!V8Call(v8_value->NumberValue(dictionary.V8Context()), double_value))
+  if (!v8_value->NumberValue(dictionary.V8Context()).To(&double_value))
     return false;
   doubleToInteger(double_value, value);
   return true;
@@ -212,7 +202,7 @@ bool DictionaryHelper::Get(const Dictionary& dictionary,
   if (!dictionary.Get(key, v8_value))
     return false;
 
-  TrackBase* source = 0;
+  TrackBase* source = nullptr;
   if (v8_value->IsObject()) {
     v8::Local<v8::Object> wrapper = v8::Local<v8::Object>::Cast(v8_value);
 
@@ -221,7 +211,7 @@ bool DictionaryHelper::Get(const Dictionary& dictionary,
     v8::Local<v8::Object> track = V8TextTrack::findInstanceInPrototypeChain(
         wrapper, dictionary.GetIsolate());
     if (!track.IsEmpty())
-      source = V8TextTrack::toImpl(track);
+      source = V8TextTrack::ToImpl(track);
   }
   value = source;
   return true;
@@ -256,36 +246,6 @@ CORE_EXPORT bool DictionaryHelper::Get(const Dictionary& dictionary,
 template <>
 CORE_EXPORT bool DictionaryHelper::Get(const Dictionary& dictionary,
                                        const StringView& key,
-                                       Vector<Vector<String>>& value,
-                                       ExceptionState& exception_state) {
-  v8::Local<v8::Value> v8_value;
-  if (!dictionary.Get(key, v8_value))
-    return false;
-
-  if (!v8_value->IsArray())
-    return false;
-
-  v8::Local<v8::Array> v8_array = v8::Local<v8::Array>::Cast(v8_value);
-  for (size_t i = 0; i < v8_array->Length(); ++i) {
-    v8::Local<v8::Value> v8_indexed_value;
-    if (!v8_array
-             ->Get(dictionary.V8Context(),
-                   v8::Uint32::New(dictionary.GetIsolate(), i))
-             .ToLocal(&v8_indexed_value))
-      return false;
-    Vector<String> indexed_value = ToImplArray<Vector<String>>(
-        v8_indexed_value, i, dictionary.GetIsolate(), exception_state);
-    if (exception_state.HadException())
-      return false;
-    value.push_back(indexed_value);
-  }
-
-  return true;
-}
-
-template <>
-CORE_EXPORT bool DictionaryHelper::Get(const Dictionary& dictionary,
-                                       const StringView& key,
                                        ArrayValue& value) {
   v8::Local<v8::Value> v8_value;
   if (!dictionary.Get(key, v8_value))
@@ -294,8 +254,8 @@ CORE_EXPORT bool DictionaryHelper::Get(const Dictionary& dictionary,
   if (!v8_value->IsArray())
     return false;
 
-  ASSERT(dictionary.GetIsolate());
-  ASSERT(dictionary.GetIsolate() == v8::Isolate::GetCurrent());
+  DCHECK(dictionary.GetIsolate());
+  DCHECK_EQ(dictionary.GetIsolate(), v8::Isolate::GetCurrent());
   value =
       ArrayValue(v8::Local<v8::Array>::Cast(v8_value), dictionary.GetIsolate());
   return true;
@@ -309,7 +269,7 @@ CORE_EXPORT bool DictionaryHelper::Get(const Dictionary& dictionary,
   if (!dictionary.Get(key, v8_value))
     return false;
 
-  value = V8Uint8Array::toImplWithTypeCheck(dictionary.GetIsolate(), v8_value);
+  value = V8Uint8Array::ToImplWithTypeCheck(dictionary.GetIsolate(), v8_value);
   return true;
 }
 

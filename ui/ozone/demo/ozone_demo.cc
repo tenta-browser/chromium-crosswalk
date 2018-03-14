@@ -12,6 +12,9 @@
 #include "base/run_loop.h"
 #include "base/task_scheduler/task_scheduler.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/trace_event/trace_event.h"
+#include "components/tracing/common/trace_to_console.h"
+#include "components/tracing/common/tracing_switches.h"
 #include "ui/display/types/display_snapshot.h"
 #include "ui/display/types/native_display_delegate.h"
 #include "ui/display/types/native_display_observer.h"
@@ -77,7 +80,7 @@ class RendererFactory {
 
 class WindowManager : public display::NativeDisplayObserver {
  public:
-  WindowManager(const base::Closure& quit_closure);
+  explicit WindowManager(const base::Closure& quit_closure);
   ~WindowManager() override;
 
   void Quit();
@@ -123,6 +126,7 @@ class DemoWindow : public ui::PlatformWindowDelegate {
         weak_ptr_factory_(this) {
     platform_window_ =
         ui::OzonePlatform::GetInstance()->CreatePlatformWindow(this, bounds);
+    platform_window_->Show();
   }
   ~DemoWindow() override {}
 
@@ -199,10 +203,13 @@ RendererFactory::~RendererFactory() {
 }
 
 bool RendererFactory::Initialize() {
+  ui::OzonePlatform::InitParams params;
+  params.single_process = true;
+  ui::OzonePlatform::InitializeForGPU(params);
+
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if (!command_line->HasSwitch(kDisableGpu) && gl::init::InitializeGLOneOff() &&
-      gpu_helper_.Initialize(base::ThreadTaskRunnerHandle::Get(),
-                             base::ThreadTaskRunnerHandle::Get())) {
+      gpu_helper_.Initialize(base::ThreadTaskRunnerHandle::Get())) {
     type_ = GL;
   } else {
     type_ = SOFTWARE;
@@ -219,16 +226,15 @@ std::unique_ptr<ui::Renderer> RendererFactory::CreateRenderer(
       scoped_refptr<gl::GLSurface> surface = CreateGLSurface(widget);
       if (!surface)
         LOG(FATAL) << "Failed to create GL surface";
-      if (!surface->SupportsAsyncSwap())
-        LOG(FATAL) << "GL surface must support SwapBuffersAsync";
-      if (surface->IsSurfaceless())
-        return base::MakeUnique<ui::SurfacelessGlRenderer>(widget, surface,
+      if (surface->IsSurfaceless()) {
+        return std::make_unique<ui::SurfacelessGlRenderer>(widget, surface,
                                                            size);
-      else
-        return base::MakeUnique<ui::GlRenderer>(widget, surface, size);
+      } else {
+        return std::make_unique<ui::GlRenderer>(widget, surface, size);
+      }
     }
     case SOFTWARE:
-      return base::MakeUnique<ui::SoftwareRenderer>(widget, size);
+      return std::make_unique<ui::SoftwareRenderer>(widget, size);
   }
 
   return nullptr;
@@ -279,7 +285,6 @@ void WindowManager::OnConfigurationChanged() {
   }
 
   is_configuring_ = true;
-  delegate_->GrabServer();
   delegate_->GetDisplays(
       base::Bind(&WindowManager::OnDisplaysAquired, base::Unretained(this)));
 }
@@ -304,7 +309,6 @@ void WindowManager::OnDisplaysAquired(
                    gfx::Rect(origin, display->native_mode()->size())));
     origin.Offset(display->native_mode()->size().width(), 0);
   }
-  delegate_->UngrabServer();
   is_configuring_ = false;
 
   if (should_configure_) {
@@ -334,12 +338,23 @@ int main(int argc, char** argv) {
   logging::LoggingSettings settings;
   logging::InitLogging(settings);
 
+  // Initialize tracing.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kTraceToConsole)) {
+    base::trace_event::TraceConfig trace_config =
+        tracing::GetConfigForTraceToConsole();
+    base::trace_event::TraceLog::GetInstance()->SetEnabled(
+        trace_config, base::trace_event::TraceLog::RECORDING_MODE);
+  }
+
   // Build UI thread message loop. This is used by platform
   // implementations for event polling & running background tasks.
   base::MessageLoopForUI message_loop;
-  base::TaskScheduler::CreateAndSetSimpleTaskScheduler("OzoneDemo");
+  base::TaskScheduler::CreateAndStartWithDefaultParams("OzoneDemo");
 
-  ui::OzonePlatform::InitializeForUI();
+  ui::OzonePlatform::InitParams params;
+  params.single_process = true;
+  ui::OzonePlatform::InitializeForUI(params);
   ui::KeyboardLayoutEngineManager::GetKeyboardLayoutEngine()
       ->SetCurrentLayoutByName("us");
 

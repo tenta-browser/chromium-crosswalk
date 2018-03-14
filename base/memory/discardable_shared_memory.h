@@ -32,6 +32,11 @@
 
 namespace base {
 
+namespace trace_event {
+class MemoryAllocatorDump;
+class ProcessMemoryDump;
+}  // namespace trace_event
+
 // Platform abstraction for discardable shared memory.
 //
 // This class is not thread-safe. Clients are responsible for synchronizing
@@ -58,6 +63,7 @@ class BASE_EXPORT DiscardableSharedMemory {
   bool Map(size_t size);
 
   // Unmaps the discardable shared memory from the caller's address space.
+  // Unmapping won't unlock previously locked range.
   // Returns true if successful; returns false on error or if the memory is
   // not mapped.
   bool Unmap();
@@ -67,6 +73,13 @@ class BASE_EXPORT DiscardableSharedMemory {
 
   // Returns a shared memory handle for this DiscardableSharedMemory object.
   SharedMemoryHandle handle() const { return shared_memory_.handle(); }
+
+  // Returns an ID for the shared memory region. This is ID of the mapped region
+  // consistent across all processes and is valid as long as the region is not
+  // unmapped.
+  const UnguessableToken& mapped_id() const {
+    return shared_memory_.mapped_id();
+  }
 
   // Locks a range of memory so that it will not be purged by the system.
   // The range of memory must be unlocked. The result of trying to lock an
@@ -123,15 +136,15 @@ class BASE_EXPORT DiscardableSharedMemory {
   // It is safe to call Close repeatedly.
   void Close();
 
-  // Shares the discardable memory segment to another process. Attempts to
-  // create a platform-specific |new_handle| which can be used in a remote
-  // process to access the discardable memory segment. |new_handle| is an
-  // output parameter to receive the handle for use in the remote process.
-  // Returns true on success, false otherwise.
-  bool ShareToProcess(ProcessHandle process_handle,
-                      SharedMemoryHandle* new_handle) {
-    return shared_memory_.ShareToProcess(process_handle, new_handle);
-  }
+  // For tracing: Creates ownership edge to the underlying shared memory dump
+  // which is cross process in the given |pmd|. |local_segment_dump| is the dump
+  // associated with the local discardable shared memory segment and |is_owned|
+  // is true when the current process owns the segment and the effective memory
+  // is assigned to the current process.
+  void CreateSharedMemoryOwnershipEdge(
+      trace_event::MemoryAllocatorDump* local_segment_dump,
+      trace_event::ProcessMemoryDump* pmd,
+      bool is_owned) const;
 
  private:
   // Virtual for tests.

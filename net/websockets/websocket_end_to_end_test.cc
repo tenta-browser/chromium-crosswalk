@@ -23,12 +23,14 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_piece.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "net/base/auth.h"
 #include "net/base/proxy_delegate.h"
 #include "net/proxy/proxy_service.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
 #include "net/test/test_data_directory.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_test_util.h"
 #include "net/websockets/websocket_channel.h"
 #include "net/websockets/websocket_event_interface.h"
@@ -205,7 +207,7 @@ void ConnectTestingEventInterface::QuitNestedEventLoop() {
 // OnResolveProxy callback and records the information passed to it.
 class TestProxyDelegateWithProxyInfo : public ProxyDelegate {
  public:
-  TestProxyDelegateWithProxyInfo() {}
+  TestProxyDelegateWithProxyInfo() = default;
 
   struct ResolvedProxyInfo {
     GURL url;
@@ -219,7 +221,7 @@ class TestProxyDelegateWithProxyInfo : public ProxyDelegate {
  protected:
   void OnResolveProxy(const GURL& url,
                       const std::string& method,
-                      const ProxyService& proxy_service,
+                      const ProxyRetryInfoMap& proxy_retry_info,
                       ProxyInfo* result) override {
     resolved_proxy_info_.url = url;
     resolved_proxy_info_.proxy_info = *result;
@@ -244,9 +246,6 @@ class TestProxyDelegateWithProxyInfo : public ProxyDelegate {
       ProxyServer* alternative_proxy_server) const override {}
   void OnAlternativeProxyBroken(
       const ProxyServer& alternative_proxy_server) override {}
-  ProxyServer GetDefaultAlternativeProxy() const override {
-    return ProxyServer();
-  }
 
  private:
   ResolvedProxyInfo resolved_proxy_info_;
@@ -278,13 +277,13 @@ class WebSocketEndToEndTest : public ::testing::Test {
     if (!initialised_context_) {
       InitialiseContext();
     }
-    url::Origin origin(GURL("http://localhost"));
-    GURL first_party_for_cookies("http://localhost/");
+    url::Origin origin = url::Origin::Create(GURL("http://localhost"));
+    GURL site_for_cookies("http://localhost/");
     event_interface_ = new ConnectTestingEventInterface;
     channel_.reset(
         new WebSocketChannel(base::WrapUnique(event_interface_), &context_));
     channel_->SendAddChannelRequest(GURL(socket_url), sub_protocols_, origin,
-                                    first_party_for_cookies, "");
+                                    site_for_cookies, "");
     event_interface_->WaitForResponse();
     return !event_interface_->failed();
   }
@@ -297,19 +296,10 @@ class WebSocketEndToEndTest : public ::testing::Test {
   bool initialised_context_;
 };
 
-// None of these tests work on Android.
-// TODO(ricea): Make these tests work on Android. See crbug.com/441711.
-#if defined(OS_ANDROID)
-#define DISABLED_ON_ANDROID(test) DISABLED_##test
-#else
-#define DISABLED_ON_ANDROID(test) test
-#endif
-
 // Basic test of connectivity. If this test fails, nothing else can be expected
 // to work.
-TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(BasicSmokeTest)) {
+TEST_F(WebSocketEndToEndTest, BasicSmokeTest) {
   SpawnedTestServer ws_server(SpawnedTestServer::TYPE_WS,
-                              SpawnedTestServer::kLocalhost,
                               GetWebSocketTestDataDirectory());
   ASSERT_TRUE(ws_server.Start());
   EXPECT_TRUE(ConnectAndWait(ws_server.GetURL(kEchoServer)));
@@ -320,10 +310,8 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(BasicSmokeTest)) {
 // TODO(ricea): Enable this when the issue is fixed.
 TEST_F(WebSocketEndToEndTest, DISABLED_HttpsProxyUnauthedFails) {
   SpawnedTestServer proxy_server(SpawnedTestServer::TYPE_BASIC_AUTH_PROXY,
-                                 SpawnedTestServer::kLocalhost,
                                  base::FilePath());
   SpawnedTestServer ws_server(SpawnedTestServer::TYPE_WS,
-                              SpawnedTestServer::kLocalhost,
                               GetWebSocketTestDataDirectory());
   ASSERT_TRUE(proxy_server.StartInBackground());
   ASSERT_TRUE(ws_server.StartInBackground());
@@ -339,12 +327,21 @@ TEST_F(WebSocketEndToEndTest, DISABLED_HttpsProxyUnauthedFails) {
   EXPECT_EQ("Proxy authentication failed", event_interface_->failure_message());
 }
 
-TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HttpsWssProxyUnauthedFails)) {
+// These test are not compatible with RemoteTestServer because RemoteTestServer
+// doesn't support TYPE_BASIC_AUTH_PROXY.
+// TODO(ricea): Make these tests work. See crbug.com/441711.
+#if defined(OS_ANDROID) || defined(OS_FUCHSIA)
+#define MAYBE_HttpsWssProxyUnauthedFails DISABLED_HttpsWssProxyUnauthedFails
+#define MAYBE_HttpsProxyUsed DISABLED_HttpsProxyUsed
+#else
+#define MAYBE_HttpsWssProxyUnauthedFails HttpsWssProxyUnauthedFails
+#define MAYBE_HttpsProxyUsed HttpsProxyUsed
+#endif
+
+TEST_F(WebSocketEndToEndTest, MAYBE_HttpsWssProxyUnauthedFails) {
   SpawnedTestServer proxy_server(SpawnedTestServer::TYPE_BASIC_AUTH_PROXY,
-                                 SpawnedTestServer::kLocalhost,
                                  base::FilePath());
   SpawnedTestServer wss_server(SpawnedTestServer::TYPE_WSS,
-                               SpawnedTestServer::kLocalhost,
                                GetWebSocketTestDataDirectory());
   ASSERT_TRUE(proxy_server.StartInBackground());
   ASSERT_TRUE(wss_server.StartInBackground());
@@ -362,12 +359,10 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HttpsWssProxyUnauthedFails)) {
 
 // Regression test for crbug/426736 "WebSocket connections not using configured
 // system HTTPS Proxy".
-TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HttpsProxyUsed)) {
+TEST_F(WebSocketEndToEndTest, MAYBE_HttpsProxyUsed) {
   SpawnedTestServer proxy_server(SpawnedTestServer::TYPE_BASIC_AUTH_PROXY,
-                                 SpawnedTestServer::kLocalhost,
                                  base::FilePath());
   SpawnedTestServer ws_server(SpawnedTestServer::TYPE_WS,
-                              SpawnedTestServer::kLocalhost,
                               GetWebSocketTestDataDirectory());
   ASSERT_TRUE(proxy_server.StartInBackground());
   ASSERT_TRUE(ws_server.StartInBackground());
@@ -391,8 +386,8 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HttpsProxyUsed)) {
   delegate.set_credentials(
       AuthCredentials(base::ASCIIToUTF16("foo"), base::ASCIIToUTF16("bar")));
   {
-    std::unique_ptr<URLRequest> request(
-        context_.CreateRequest(http_page, DEFAULT_PRIORITY, &delegate));
+    std::unique_ptr<URLRequest> request(context_.CreateRequest(
+        http_page, DEFAULT_PRIORITY, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
     request->Start();
     // TestDelegate exits the message loop when the request completes by
     // default.
@@ -410,9 +405,8 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HttpsProxyUsed)) {
 
 // This is a regression test for crbug.com/408061 Crash in
 // net::WebSocketBasicHandshakeStream::Upgrade.
-TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(TruncatedResponse)) {
+TEST_F(WebSocketEndToEndTest, TruncatedResponse) {
   SpawnedTestServer ws_server(SpawnedTestServer::TYPE_WS,
-                              SpawnedTestServer::kLocalhost,
                               GetWebSocketTestDataDirectory());
   ASSERT_TRUE(ws_server.Start());
   InitialiseContext();
@@ -422,7 +416,7 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(TruncatedResponse)) {
 }
 
 // Regression test for crbug.com/455215 "HSTS not applied to WebSocket"
-TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HstsHttpsToWebSocket)) {
+TEST_F(WebSocketEndToEndTest, HstsHttpsToWebSocket) {
   EmbeddedTestServer https_server(net::EmbeddedTestServer::Type::TYPE_HTTPS);
   https_server.SetSSLConfig(
       net::EmbeddedTestServer::CERT_COMMON_NAME_IS_DOMAIN);
@@ -439,8 +433,8 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HstsHttpsToWebSocket)) {
   // Set HSTS via https:
   TestDelegate delegate;
   GURL https_page = https_server.GetURL("/hsts-headers.html");
-  std::unique_ptr<URLRequest> request(
-      context_.CreateRequest(https_page, DEFAULT_PRIORITY, &delegate));
+  std::unique_ptr<URLRequest> request(context_.CreateRequest(
+      https_page, DEFAULT_PRIORITY, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
   request->Start();
   // TestDelegate exits the message loop when the request completes.
   base::RunLoop().Run();
@@ -452,7 +446,7 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HstsHttpsToWebSocket)) {
   EXPECT_TRUE(ConnectAndWait(ws_url));
 }
 
-TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HstsWebSocketToHttps)) {
+TEST_F(WebSocketEndToEndTest, HstsWebSocketToHttps) {
   EmbeddedTestServer https_server(net::EmbeddedTestServer::Type::TYPE_HTTPS);
   https_server.SetSSLConfig(
       net::EmbeddedTestServer::CERT_COMMON_NAME_IS_DOMAIN);
@@ -473,8 +467,8 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HstsWebSocketToHttps)) {
   TestDelegate delegate;
   GURL http_page =
       ReplaceUrlScheme(https_server.GetURL("/simple.html"), "http");
-  std::unique_ptr<URLRequest> request(
-      context_.CreateRequest(http_page, DEFAULT_PRIORITY, &delegate));
+  std::unique_ptr<URLRequest> request(context_.CreateRequest(
+      http_page, DEFAULT_PRIORITY, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
   request->Start();
   // TestDelegate exits the message loop when the request completes.
   base::RunLoop().Run();
@@ -482,7 +476,7 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HstsWebSocketToHttps)) {
   EXPECT_TRUE(request->url().SchemeIs("https"));
 }
 
-TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HstsWebSocketToWebSocket)) {
+TEST_F(WebSocketEndToEndTest, HstsWebSocketToWebSocket) {
   SpawnedTestServer::SSLOptions ssl_options(
       SpawnedTestServer::SSLOptions::CERT_COMMON_NAME_IS_DOMAIN);
   SpawnedTestServer wss_server(SpawnedTestServer::TYPE_WSS, ssl_options,
@@ -500,9 +494,8 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HstsWebSocketToWebSocket)) {
 
 // Regression test for crbug.com/180504 "WebSocket handshake fails when HTTP
 // headers have trailing LWS".
-TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(TrailingWhitespace)) {
+TEST_F(WebSocketEndToEndTest, TrailingWhitespace) {
   SpawnedTestServer ws_server(SpawnedTestServer::TYPE_WS,
-                              SpawnedTestServer::kLocalhost,
                               GetWebSocketTestDataDirectory());
   ASSERT_TRUE(ws_server.Start());
 
@@ -517,9 +510,8 @@ TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(TrailingWhitespace)) {
 // TODO(ricea): HTTP continuation headers have been deprecated by RFC7230.  If
 // support for continuation headers is removed from Chrome, then this test will
 // break and should be removed.
-TEST_F(WebSocketEndToEndTest, DISABLED_ON_ANDROID(HeaderContinuations)) {
+TEST_F(WebSocketEndToEndTest, HeaderContinuations) {
   SpawnedTestServer ws_server(SpawnedTestServer::TYPE_WS,
-                              SpawnedTestServer::kLocalhost,
                               GetWebSocketTestDataDirectory());
   ASSERT_TRUE(ws_server.Start());
 

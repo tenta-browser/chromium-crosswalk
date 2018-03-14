@@ -66,9 +66,9 @@ Polymer({
       this.actionButtonText_ = loadTimeData.getString('add');
     }
 
-    this.addEventListener('cancel', function() {
+    this.addEventListener('cancel', () => {
       this.browserProxy_.searchEngineEditCancelled();
-    }.bind(this));
+    });
   },
 
   /** @override */
@@ -106,11 +106,12 @@ Polymer({
       return;
     }
 
-    this.browserProxy_.validateSearchEngineInput(
-        inputElement.id, inputElement.value).then(function(isValid) {
-      inputElement.invalid = !isValid;
-      this.updateActionButtonState_();
-    }.bind(this));
+    this.browserProxy_
+        .validateSearchEngineInput(inputElement.id, inputElement.value)
+        .then(isValid => {
+          inputElement.invalid = !isValid;
+          this.updateActionButtonState_();
+        });
   },
 
   /** @private */

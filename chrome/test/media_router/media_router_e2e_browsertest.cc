@@ -5,17 +5,18 @@
 #include "chrome/test/media_router/media_router_e2e_browsertest.h"
 
 #include <vector>
+
 #include "base/command_line.h"
 #include "base/stl_util.h"
 #include "chrome/browser/media/router/media_router.h"
 #include "chrome/browser/media/router/media_router_factory.h"
-#include "chrome/browser/media/router/media_source.h"
-#include "chrome/browser/media/router/media_source_helper.h"
-#include "chrome/browser/media/router/route_request_result.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/media_router/media_source.h"
+#include "chrome/common/media_router/media_source_helper.h"
+#include "chrome/common/media_router/route_request_result.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "media/base/test_data_util.h"
@@ -29,15 +30,12 @@
 //   --enable-pixel-output-in-tests --run-manual
 //   --gtest_filter=MediaRouterE2EBrowserTest.<test case name>
 //   --enable-logging=stderr
-//   --whitelisted-extension-id=enhhojjnijigcajfphajepfemndkmdlo
 //   --ui-test-action-timeout=200000
-//   --media-router=1
 
 namespace {
 // URL to launch Castv2Player_Staging app on Chromecast
 const char kCastAppPresentationUrl[] =
-    "https://google.com/cast#__castAppId__=BE6E4473/"
-    "__castClientId__=143692175507258981";
+    "cast:BE6E4473?clientId=143692175507258981";
 const char kVideo[] = "video";
 const char kBearVP9Video[] = "bear-vp9.webm";
 const char kPlayer[] = "player.html";
@@ -99,8 +97,8 @@ void MediaRouterE2EBrowserTest::CreateMediaRoute(
       base::Bind(&MediaRouterE2EBrowserTest::OnRouteResponseReceived,
                  base::Unretained(this)));
   media_router_->CreateRoute(source.id(), sink.id(), origin, web_contents,
-                             route_response_callbacks, base::TimeDelta(),
-                             is_incognito());
+                             std::move(route_response_callbacks),
+                             base::TimeDelta(), is_incognito());
 
   // Wait for the route request to be fulfilled (and route to be started).
   ASSERT_TRUE(ConditionalWait(
@@ -145,8 +143,8 @@ IN_PROC_BROWSER_TEST_F(MediaRouterE2EBrowserTest, MANUAL_TabMirroring) {
   int tab_id = SessionTabHelper::IdForTab(web_contents);
 
   // Wait for 30 seconds to make sure the route is stable.
-  CreateMediaRoute(MediaSourceForTab(tab_id), url::Origin(GURL(kOrigin)),
-                   web_contents);
+  CreateMediaRoute(MediaSourceForTab(tab_id),
+                   url::Origin::Create(GURL(kOrigin)), web_contents);
   Wait(base::TimeDelta::FromSeconds(30));
 
   // Wait for 10 seconds to make sure route has been stopped.
@@ -157,7 +155,7 @@ IN_PROC_BROWSER_TEST_F(MediaRouterE2EBrowserTest, MANUAL_TabMirroring) {
 IN_PROC_BROWSER_TEST_F(MediaRouterE2EBrowserTest, MANUAL_CastApp) {
   // Wait for 30 seconds to make sure the route is stable.
   CreateMediaRoute(MediaSourceForPresentationUrl(GURL(kCastAppPresentationUrl)),
-                   url::Origin(GURL(kOrigin)), nullptr);
+                   url::Origin::Create(GURL(kOrigin)), nullptr);
   Wait(base::TimeDelta::FromSeconds(30));
 
   // Wait for 10 seconds to make sure route has been stopped.

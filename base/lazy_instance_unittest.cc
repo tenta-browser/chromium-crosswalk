@@ -7,14 +7,14 @@
 #include "base/at_exit.h"
 #include "base/atomic_sequence_num.h"
 #include "base/lazy_instance.h"
-#include "base/memory/aligned_memory.h"
 #include "base/threading/simple_thread.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
-base::StaticAtomicSequenceNumber constructed_seq_;
-base::StaticAtomicSequenceNumber destructed_seq_;
+base::AtomicSequenceNumber constructed_seq_;
+base::AtomicSequenceNumber destructed_seq_;
 
 class ConstructAndDestructLogger {
  public:
@@ -108,7 +108,7 @@ namespace {
 // It accepts a bool* and sets the bool to true when the dtor runs.
 class DeleteLogger {
  public:
-  DeleteLogger() : deleted_(NULL) {}
+  DeleteLogger() : deleted_(nullptr) {}
   ~DeleteLogger() { *deleted_ = true; }
 
   void SetDeletedPtr(bool* deleted) {
@@ -150,12 +150,12 @@ namespace {
 template <size_t alignment>
 class AlignedData {
  public:
-  AlignedData() {}
-  ~AlignedData() {}
-  base::AlignedMemory<alignment, alignment> data_;
+  AlignedData() = default;
+  ~AlignedData() = default;
+  alignas(alignment) char data_[alignment];
 };
 
-}  // anonymous namespace
+}  // namespace
 
 #define EXPECT_ALIGNED(ptr, align) \
     EXPECT_EQ(0u, reinterpret_cast<uintptr_t>(ptr) & (align - 1))

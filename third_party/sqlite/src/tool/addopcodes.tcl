@@ -18,18 +18,11 @@ while {![eof $in]} {
 }
 close $in
 
-# The following are the extra token codes to be added.  SPACE and 
+# The following are the extra token codes to be added.  SPACE and
 # ILLEGAL *must* be the last two token codes and they must be in that order.
 #
 set extras {
-  TO_TEXT
-  TO_BLOB
-  TO_NUMERIC
-  TO_INT
-  TO_REAL
   ISNOT
-  END_OF_FILE
-  UNCLOSED_STRING
   FUNCTION
   COLUMN
   AGG_FUNCTION
@@ -39,8 +32,11 @@ set extras {
   REGISTER
   VECTOR
   SELECT_COLUMN
+  IF_NULL_ROW
   ASTERISK
   SPAN
+  END_OF_FILE
+  UNCLOSED_STRING
   SPACE
   ILLEGAL
 }

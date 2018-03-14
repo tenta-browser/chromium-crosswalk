@@ -26,12 +26,12 @@
 #ifndef PrintStream_h
 #define PrintStream_h
 
+#include <stdarg.h>
+#include "base/macros.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Compiler.h"
-#include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/StdLibExtras.h"
 #include "platform/wtf/WTFExport.h"
-#include <stdarg.h>
 
 namespace WTF {
 
@@ -40,7 +40,6 @@ class String;
 
 class WTF_EXPORT PrintStream {
   USING_FAST_MALLOC(PrintStream);
-  WTF_MAKE_NONCOPYABLE(PrintStream);
 
  public:
   PrintStream();
@@ -63,6 +62,8 @@ class WTF_EXPORT PrintStream {
     Print(value1);
     Print(values...);
   }
+
+  DISALLOW_COPY_AND_ASSIGN(PrintStream);
 };
 
 WTF_EXPORT void PrintInternal(PrintStream&, const char*);
@@ -92,43 +93,8 @@ void PrintInternal(PrintStream& out, const T& value) {
   value.Dump(out);
 }
 
-#define MAKE_PRINT_ADAPTOR(Name, Type, function)                 \
-  class Name final {                                             \
-    STACK_ALLOCATED();                                           \
-                                                                 \
-   public:                                                       \
-    Name(const Type& value) : value_(value) {}                   \
-    void Dump(PrintStream& out) const { function(out, value_); } \
-                                                                 \
-   private:                                                      \
-    Type value_;                                                 \
-  }
-
-#define MAKE_PRINT_METHOD_ADAPTOR(Name, Type, method)          \
-  class Name final {                                           \
-    STACK_ALLOCATED();                                         \
-                                                               \
-   public:                                                     \
-    Name(const Type& value) : m_value(value) {}                \
-    void dump(PrintStream& out) const { m_value.method(out); } \
-                                                               \
-   private:                                                    \
-    const Type& m_value;                                       \
-  }
-
-#define MAKE_PRINT_METHOD(Type, dumpMethod, method)                \
-  MAKE_PRINT_METHOD_ADAPTOR(DumperFor_##method, Type, dumpMethod); \
-  DumperFor_##method method() const { return DumperFor_##method(*this); }
-
-// Use an adaptor-based dumper for characters to avoid situations where
-// you've "compressed" an integer to a character and it ends up printing
-// as ASCII when you wanted it to print as a number.
-void DumpCharacter(PrintStream&, char);
-MAKE_PRINT_ADAPTOR(CharacterDump, char, DumpCharacter);
-
 }  // namespace WTF
 
-using WTF::CharacterDump;
 using WTF::PrintStream;
 
 #endif  // PrintStream_h

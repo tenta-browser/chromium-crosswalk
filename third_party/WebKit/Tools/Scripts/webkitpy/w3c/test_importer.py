@@ -8,403 +8,448 @@ If this script is given the argument --auto-update, it will also:
  1. Upload a CL.
  2. Trigger try jobs and wait for them to complete.
  3. Make any changes that are required for new failing tests.
- 4. Commit the CL.
-
-If this script is given the argument --auto-update, it will also attempt to
-upload a CL, trigger try jobs, and make any changes that are required for
-new failing tests before committing.
+ 4. Attempt to land the CL.
 """
 
 import argparse
+import datetime
+import json
 import logging
 
-from webkitpy.common.net.git_cl import GitCL
-from webkitpy.common.webkit_finder import WebKitFinder
 from webkitpy.common.net.buildbot import current_build_link
+from webkitpy.common.net.git_cl import GitCL
+from webkitpy.common.path_finder import PathFinder
+from webkitpy.common.system.log_utils import configure_logging
 from webkitpy.layout_tests.models.test_expectations import TestExpectations, TestExpectationParser
 from webkitpy.layout_tests.port.base import Port
-from webkitpy.w3c.common import WPT_REPO_URL, WPT_DEST_NAME, exportable_commits_since
+from webkitpy.w3c.chromium_exportable_commits import exportable_commits_over_last_n_commits
+from webkitpy.w3c.common import read_credentials, is_testharness_baseline, is_file_exportable
 from webkitpy.w3c.directory_owners_extractor import DirectoryOwnersExtractor
 from webkitpy.w3c.local_wpt import LocalWPT
 from webkitpy.w3c.test_copier import TestCopier
 from webkitpy.w3c.wpt_expectations_updater import WPTExpectationsUpdater
+from webkitpy.w3c.wpt_github import WPTGitHub
 from webkitpy.w3c.wpt_manifest import WPTManifest
 
 # Settings for how often to check try job results and how long to wait.
 POLL_DELAY_SECONDS = 2 * 60
-TIMEOUT_SECONDS = 180 * 60
+TIMEOUT_SECONDS = 210 * 60
+
+# Sheriff calendar URL, used for getting the ecosystem infra sheriff to TBR.
+ROTATIONS_URL = 'http://chromium-build.appspot.com/p/chromium/all_rotations.js'
 
 _log = logging.getLogger(__file__)
 
 
 class TestImporter(object):
 
-    def __init__(self, host):
+    def __init__(self, host, wpt_github=None):
         self.host = host
+        self.wpt_github = wpt_github
+
         self.executive = host.executive
         self.fs = host.filesystem
-        self.finder = WebKitFinder(self.fs)
-        self.verbose = False
+        self.finder = PathFinder(self.fs)
+        self.chromium_git = self.host.git(self.finder.chromium_base())
+        self.dest_path = self.finder.path_from_layout_tests('external', 'wpt')
+
+        # A common.net.git_cl.GitCL instance.
         self.git_cl = None
+        # Another Git instance with local WPT as CWD, which can only be
+        # instantiated after the working directory is created.
+        self.wpt_git = None
+        # The WPT revision we are importing.
+        self.wpt_revision = None
+        self.verbose = False
 
     def main(self, argv=None):
+        # TODO(robertma): Test this method! Split it to make it easier to test
+        # if necessary.
+
         options = self.parse_args(argv)
+
         self.verbose = options.verbose
         log_level = logging.DEBUG if self.verbose else logging.INFO
-        logging.basicConfig(level=log_level, format='%(message)s')
+        configure_logging(logging_level=log_level, include_time=True)
+        if options.verbose:
+            # Print out the full output when executive.run_command fails.
+            self.host.executive.error_output_limit = None
 
-        if not self.checkout_is_okay(options.allow_local_commits):
+        if not self.checkout_is_okay():
             return 1
 
+        credentials = read_credentials(self.host, options.credentials_json)
+        gh_user = credentials.get('GH_USER')
+        gh_token = credentials.get('GH_TOKEN')
+        self.wpt_github = self.wpt_github or WPTGitHub(self.host, gh_user, gh_token)
         self.git_cl = GitCL(self.host, auth_refresh_token_json=options.auth_refresh_token_json)
 
-        _log.debug('Noting the current Chromium commit.')
-        _, show_ref_output = self.run(['git', 'show-ref', 'HEAD'])
-        chromium_commit = show_ref_output.split()[0]
+        _log.debug('Noting the current Chromium revision.')
+        chromium_revision = self.chromium_git.latest_git_commit()
 
-        dest_dir_name = WPT_DEST_NAME
-        repo_url = WPT_REPO_URL
+        # Instantiate Git after local_wpt.fetch() to make sure the path exists.
+        local_wpt = LocalWPT(self.host, gh_token=gh_token)
+        local_wpt.fetch()
+        self.wpt_git = self.host.git(local_wpt.path)
 
-        # TODO(qyearsley): Simplify this to use LocalWPT.fetch when csswg-test
-        # is merged into web-platform-tests (crbug.com/706118).
-        temp_repo_path = self.path_from_webkit_base(dest_dir_name)
-        _log.info('Cloning repo: %s', repo_url)
-        _log.info('Local path: %s', temp_repo_path)
-        self.run(['git', 'clone', repo_url, temp_repo_path])
+        if options.revision is not None:
+            _log.info('Checking out %s', options.revision)
+            self.wpt_git.run(['checkout', options.revision])
 
-        if not options.ignore_exportable_commits:
-            commits = self.exportable_but_not_exported_commits(temp_repo_path)
-            if commits:
-                # If there are exportable commits, then there's no more work
-                # to do for now. This isn't really an error case; we expect
-                # to hit this case some of the time.
-                _log.info('There were exportable but not-yet-exported commits:')
-                for commit in commits:
-                    _log.info('  https://chromium.googlesource.com/chromium/src/+/%s', commit.sha)
-                _log.info('Aborting import to prevent clobbering these commits.')
-                self.clean_up_temp_repo(temp_repo_path)
-                return 0
+        _log.debug('Noting the revision we are importing.')
+        self.wpt_revision = self.wpt_git.latest_git_commit()
+        import_commit = 'wpt@%s' % self.wpt_revision
 
-        import_commit = self.update(dest_dir_name, temp_repo_path, options.revision)
+        _log.info('Importing %s to Chromium %s', import_commit, chromium_revision)
 
-        self.clean_up_temp_repo(temp_repo_path)
+        if options.ignore_exportable_commits:
+            commit_message = self._commit_message(chromium_revision, import_commit)
+        else:
+            commits = self.apply_exportable_commits_locally(local_wpt)
+            if commits is None:
+                _log.error('Could not apply some exportable commits cleanly.')
+                _log.error('Aborting import to prevent clobbering commits.')
+                return 1
+            commit_message = self._commit_message(
+                chromium_revision, import_commit, locally_applied_commits=commits)
 
-        self._copy_resources()
+        self._clear_out_dest_path()
 
-        has_changes = self._has_changes()
-        if not has_changes:
+        _log.info('Copying the tests from the temp repo to the destination.')
+        test_copier = TestCopier(self.host, local_wpt.path)
+        test_copier.do_import()
+
+        # TODO(robertma): Implement `add --all` in Git (it is different from `commit --all`).
+        self.chromium_git.run(['add', '--all', self.dest_path])
+
+        self._generate_manifest()
+
+        self._delete_orphaned_baselines()
+
+        # TODO(qyearsley): Consider running the imported tests with
+        # `run-webkit-tests --reset-results external/wpt` to get some baselines
+        # before the try jobs are started.
+
+        _log.info('Updating TestExpectations for any removed or renamed tests.')
+        self.update_all_test_expectations_files(self._list_deleted_tests(), self._list_renamed_tests())
+
+        if not self.chromium_git.has_working_directory_changes():
             _log.info('Done: no changes to import.')
             return 0
 
-        commit_message = self._commit_message(chromium_commit, import_commit)
-        self._commit_changes(commit_message)
-        _log.info('Done: changes imported and committed.')
+        if self._only_wpt_manifest_changed():
+            _log.info('Only WPT_BASE_MANIFEST.json was updated; skipping the import.')
+            return 0
 
-        if options.auto_update:
-            commit_successful = self.do_auto_update()
-            if not commit_successful:
-                return 1
+        self._commit_changes(commit_message)
+        _log.info('Changes imported and committed.')
+
+        if not options.auto_update:
+            return 0
+
+        self._upload_cl()
+        _log.info('Issue: %s', self.git_cl.run(['issue']).strip())
+
+        if not self.update_expectations_for_cl():
+            return 1
+
+        if not self.run_commit_queue_for_cl():
+            return 1
+
         return 0
+
+    def update_expectations_for_cl(self):
+        """Performs the expectation-updating part of an auto-import job.
+
+        This includes triggering try jobs and waiting; then, if applicable,
+        writing new baselines and TestExpectation lines, committing, and
+        uploading a new patchset.
+
+        This assumes that there is CL associated with the current branch.
+
+        Returns True if everything is OK to continue, or False on failure.
+        """
+        _log.info('Triggering try jobs for updating expectations.')
+        self.git_cl.trigger_try_jobs(self.blink_try_bots())
+        try_results = self.git_cl.wait_for_try_jobs(
+            poll_delay_seconds=POLL_DELAY_SECONDS,
+            timeout_seconds=TIMEOUT_SECONDS)
+
+        if not try_results:
+            _log.error('No initial try job results, aborting.')
+            self.git_cl.run(['set-close'])
+            return False
+
+        if try_results.status == 'closed':
+            _log.error('The CL was closed, aborting.')
+            return False
+
+        _log.info('All jobs finished.')
+        try_results = try_results.try_job_results
+
+        if try_results and self.git_cl.some_failed(try_results):
+            self.fetch_new_expectations_and_baselines()
+            if self.chromium_git.has_working_directory_changes():
+                self._generate_manifest()
+                message = 'Update test expectations and baselines.'
+                self._commit_changes(message)
+                self._upload_patchset(message)
+        return True
+
+    def run_commit_queue_for_cl(self):
+        """Triggers CQ and either commits or aborts; returns True on success."""
+        _log.info('Triggering CQ try jobs.')
+        self.git_cl.run(['try'])
+        try_results = self.git_cl.wait_for_try_jobs(
+            poll_delay_seconds=POLL_DELAY_SECONDS,
+            timeout_seconds=TIMEOUT_SECONDS)
+
+        if not try_results:
+            self.git_cl.run(['set-close'])
+            _log.error('Timed out waiting for CQ; aborting.')
+            return False
+
+        if try_results.status == 'closed':
+            _log.error('The CL was closed; aborting.')
+            return False
+
+        _log.info('All jobs finished.')
+        try_results = self.git_cl.filter_latest(try_results.try_job_results)
+
+        # We only want to check the status of CQ bots. The set of CQ bots is
+        # determined by //infra/config/cq.cfg, but since in import jobs we only
+        # trigger CQ bots and Blink try bots, we just ignore the
+        # Blink try bots to get the set of CQ try bots.
+        # Important: if any CQ bots are added to the builder list
+        # (self.host.builders), then this logic will need to be updated.
+        cq_try_results = {build: status for build, status in try_results.items()
+                          if build.builder_name not in self.blink_try_bots()}
+
+        if not cq_try_results:
+            _log.error('No CQ try results found in try results: %s.', try_results)
+            self.git_cl.run(['set-close'])
+            return False
+
+        if self.git_cl.all_success(cq_try_results):
+            _log.info('CQ appears to have passed; trying to commit.')
+            self.git_cl.run(['upload', '-f', '--send-mail'])  # Turn off WIP mode.
+            self.git_cl.run(['set-commit'])
+            self.git_cl.wait_for_closed_status()
+            _log.info('Update completed.')
+            return True
+
+        self.git_cl.run(['set-close'])
+        _log.error('CQ appears to have failed; aborting.')
+        return False
+
+    def blink_try_bots(self):
+        """Returns the collection of builders used for updating expectations."""
+        return self.host.builders.all_try_builder_names()
 
     def parse_args(self, argv):
         parser = argparse.ArgumentParser()
         parser.description = __doc__
-        parser.add_argument('-v', '--verbose', action='store_true',
-                            help='log what we are doing')
-        parser.add_argument('--allow-local-commits', action='store_true',
-                            help='allow script to run even if we have local commits')
-        parser.add_argument('-r', dest='revision', action='store',
-                            help='Target revision.')
-        parser.add_argument('--auto-update', action='store_true',
-                            help='uploads CL and initiates commit queue.')
-        parser.add_argument('--auth-refresh-token-json',
-                            help='authentication refresh token JSON file, '
-                                 'used for authentication for try jobs, '
-                                 'generally not necessary on developer machines')
-        parser.add_argument('--ignore-exportable-commits', action='store_true',
-                            help='Continue even if there are exportable commits that may be overwritten.')
-        # TODO(qyearsley): Change this back to parse_args once this script
-        # is no longer being called with the "wpt" argument. See crbug.com/706118.
-        args, _ = parser.parse_known_args(argv)
-        return args
+        parser.add_argument(
+            '-v', '--verbose', action='store_true',
+            help='log extra details that may be helpful when debugging')
+        parser.add_argument(
+            '--ignore-exportable-commits', action='store_true',
+            help='do not check for exportable commits that would be clobbered')
+        parser.add_argument('-r', '--revision', help='target wpt revision')
+        parser.add_argument(
+            '--auto-update', action='store_true',
+            help='upload a CL, update expectations, and trigger CQ')
+        parser.add_argument(
+            '--auth-refresh-token-json',
+            help='authentication refresh token JSON file used for try jobs, '
+                 'generally not necessary on developer machines')
+        parser.add_argument(
+            '--credentials-json',
+            help='A JSON file with GitHub credentials, '
+                 'generally not necessary on developer machines')
 
-    def checkout_is_okay(self, allow_local_commits):
-        git_diff_retcode, _ = self.run(['git', 'diff', '--quiet', 'HEAD'], exit_on_failure=False)
-        if git_diff_retcode:
+        return parser.parse_args(argv)
+
+    def checkout_is_okay(self):
+        if self.chromium_git.has_working_directory_changes():
             _log.warning('Checkout is dirty; aborting.')
             return False
-
-        local_commits = self.run(['git', 'log', '--oneline', 'origin/master..HEAD'])[1]
-        if local_commits and not allow_local_commits:
-            _log.warning('Checkout has local commits; aborting. Use --allow-local-commits to allow this.')
-            return False
-
-        if self.fs.exists(self.path_from_webkit_base(WPT_DEST_NAME)):
-            _log.warning('WebKit/%s exists; aborting.', WPT_DEST_NAME)
-            return False
-
+        # TODO(robertma): Add a method in Git to query a range of commits.
+        local_commits = self.chromium_git.run(['log', '--oneline', 'origin/master..HEAD'])
+        if local_commits:
+            _log.warning('Checkout has local commits before import.')
         return True
 
-    def exportable_but_not_exported_commits(self, wpt_path):
-        """Checks for commits that might be overwritten by importing.
+    def apply_exportable_commits_locally(self, local_wpt):
+        """Applies exportable Chromium changes to the local WPT repo.
+
+        The purpose of this is to avoid clobbering changes that were made in
+        Chromium but not yet merged upstream. By applying these changes to the
+        local copy of web-platform-tests before copying files over, we make
+        it so that the resulting change in Chromium doesn't undo the
+        previous Chromium change.
 
         Args:
-            wpt_path: The path to a local checkout of web-platform-tests.
+            A LocalWPT instance for our local copy of WPT.
 
         Returns:
-            A list of commits in the Chromium repo that are exportable
-            but not yet exported to the web-platform-tests repo.
+            A list of commits applied (could be empty), or None if any
+            of the patches could not be applied cleanly.
         """
-        local_wpt = LocalWPT(self.host, path=wpt_path)
-        assert self.host.filesystem.exists(wpt_path)
-        _, chromium_commit = local_wpt.most_recent_chromium_commit()
-        return exportable_commits_since(chromium_commit.sha, self.host, local_wpt)
+        commits = self.exportable_but_not_exported_commits(local_wpt)
+        for commit in commits:
+            _log.info('Applying exportable commit locally:')
+            _log.info(commit.url())
+            _log.info('Subject: %s', commit.subject().strip())
+            # TODO(qyearsley): We probably don't need to know about
+            # corresponding PRs at all anymore, although this information
+            # could still be useful for reference.
+            pull_request = self.wpt_github.pr_for_chromium_commit(commit)
+            if pull_request:
+                _log.info('PR: https://github.com/w3c/web-platform-tests/pull/%d', pull_request.number)
+            else:
+                _log.warning('No pull request found.')
+            error = local_wpt.apply_patch(commit.format_patch())
+            if error:
+                _log.error('Commit cannot be applied cleanly:')
+                _log.error(error)
+                return None
+            self.wpt_git.commit_locally_with_message('Applying patch %s' % commit.sha)
+        return commits
 
-    def clean_up_temp_repo(self, temp_repo_path):
-        _log.info('Deleting temp repo directory %s.', temp_repo_path)
-        self.rmtree(temp_repo_path)
+    def exportable_but_not_exported_commits(self, local_wpt):
+        """Returns a list of commits that would be clobbered by importer.
 
-    def _copy_resources(self):
-        """Copies resources from wpt to LayoutTests/resources.
-
-        We copy idlharness.js and testharness.js in wpt to LayoutTests/resources
-        in order to use them in non-imported tests.
-
-        If this method is changed, the lists of files expected to be identical
-        in LayoutTests/PRESUBMIT.py should also be changed.
+        The list contains all exportable but not exported commits, not filtered
+        by whether they can apply cleanly.
         """
-        resources_to_copy_from_wpt = [
-            ('idlharness.js', 'resources'),
-            ('testharness.js', 'resources'),
-        ]
-        for filename, wpt_subdir in resources_to_copy_from_wpt:
-            source = self.path_from_webkit_base('LayoutTests', 'external', WPT_DEST_NAME, wpt_subdir, filename)
-            destination = self.path_from_webkit_base('LayoutTests', 'resources', filename)
-            self.copyfile(source, destination)
-            self.run(['git', 'add', destination])
+        # The errors returned by exportable_commits_over_last_n_commits are
+        # irrelevant and ignored here, because it tests patches *individually*
+        # while the importer tries to reapply these patches *cumulatively*.
+        commits, _ = exportable_commits_over_last_n_commits(
+            self.host, local_wpt, self.wpt_github, require_clean=False, verify_merged_pr=True)
+        return commits
 
-    def _generate_manifest(self, dest_path):
+    def _generate_manifest(self):
         """Generates MANIFEST.json for imported tests.
-
-        Args:
-            dest_path: Path to the destination WPT directory.
 
         Runs the (newly-updated) manifest command if it's found, and then
         stages the generated MANIFEST.json in the git index, ready to commit.
         """
         _log.info('Generating MANIFEST.json')
-        WPTManifest.generate_manifest(self.host, dest_path)
-        manifest_path = self.fs.join(dest_path, 'MANIFEST.json')
+        WPTManifest.generate_manifest(self.host, self.dest_path)
+        manifest_path = self.fs.join(self.dest_path, 'MANIFEST.json')
         assert self.fs.exists(manifest_path)
         manifest_base_path = self.fs.normpath(
-            self.fs.join(dest_path, '..', 'WPT_BASE_MANIFEST.json'))
+            self.fs.join(self.dest_path, '..', 'WPT_BASE_MANIFEST.json'))
         self.copyfile(manifest_path, manifest_base_path)
-        self.run(['git', 'add', manifest_base_path])
+        self.chromium_git.add_list([manifest_base_path])
 
-    def update(self, dest_dir_name, temp_repo_path, revision):
-        """Updates an imported repository.
+    def _clear_out_dest_path(self):
+        """Removes all files that are synced with upstream from Chromium WPT.
 
-        Args:
-            dest_dir_name: The destination directory name.
-            temp_repo_path: Path to local checkout of W3C test repo.
-            revision: A W3C test repo commit hash, or None.
-
-        Returns:
-            A string for the commit description "<destination>@<commitish>".
+        Instead of relying on TestCopier to overwrite these files, cleaning up
+        first ensures if upstream deletes some files, we also delete them.
         """
-        if revision is not None:
-            _log.info('Checking out %s', revision)
-            self.run(['git', 'checkout', revision], cwd=temp_repo_path)
-
-        self.run(['git', 'submodule', 'update', '--init', '--recursive'], cwd=temp_repo_path)
-
-        _log.info('Noting the revision we are importing.')
-        _, show_ref_output = self.run(['git', 'show-ref', 'origin/master'], cwd=temp_repo_path)
-        master_commitish = show_ref_output.split()[0]
-
-        dest_path = self.path_from_webkit_base('LayoutTests', 'external', dest_dir_name)
-        self._clear_out_dest_path(dest_path)
-
-        _log.info('Importing the tests.')
-        test_copier = TestCopier(self.host, temp_repo_path)
-        test_copier.do_import()
-
-        self.run(['git', 'add', '--all', 'LayoutTests/external/%s' % dest_dir_name])
-
-        self._delete_orphaned_baselines(dest_path)
-
-        self._generate_manifest(dest_path)
-
-        _log.info('Updating TestExpectations for any removed or renamed tests.')
-        self.update_all_test_expectations_files(self._list_deleted_tests(), self._list_renamed_tests())
-
-        return '%s@%s' % (dest_dir_name, master_commitish)
-
-    def _clear_out_dest_path(self, dest_path):
-        _log.info('Cleaning out tests from %s.', dest_path)
+        _log.info('Cleaning out tests from %s.', self.dest_path)
         should_remove = lambda fs, dirname, basename: (
-            not self.is_baseline(basename) and
-            # See http://crbug.com/702283 for context.
-            basename != 'OWNERS')
-        files_to_delete = self.fs.files_under(dest_path, file_filter=should_remove)
+            is_file_exportable(fs.relpath(fs.join(dirname, basename), self.finder.chromium_base())))
+        files_to_delete = self.fs.files_under(self.dest_path, file_filter=should_remove)
         for subpath in files_to_delete:
-            self.remove('LayoutTests', 'external', subpath)
+            self.remove(self.finder.path_from_layout_tests('external', subpath))
 
     def _commit_changes(self, commit_message):
         _log.info('Committing changes.')
-        self.run(['git', 'commit', '--all', '-F', '-'], stdin=commit_message)
+        self.chromium_git.commit_locally_with_message(commit_message)
 
-    def _has_changes(self):
-        return_code, _ = self.run(['git', 'diff', '--quiet', 'HEAD'], exit_on_failure=False)
-        return return_code == 1
+    def _only_wpt_manifest_changed(self):
+        changed_files = self.chromium_git.changed_files()
+        wpt_base_manifest = self.fs.relpath(
+            self.fs.join(self.dest_path, '..', 'WPT_BASE_MANIFEST.json'),
+            self.finder.chromium_base())
+        return changed_files == [wpt_base_manifest]
 
-    def _commit_message(self, chromium_commit, import_commit):
-        return ('Import %s\n\n'
-                'Using wpt-import in Chromium %s.\n\n'
-                'NOEXPORT=true' %
-                (import_commit, chromium_commit))
+    def _commit_message(self, chromium_commit_sha, import_commit_sha,
+                        locally_applied_commits=None):
+        message = 'Import {}\n\nUsing wpt-import in Chromium {}.\n'.format(
+            import_commit_sha, chromium_commit_sha)
+        if locally_applied_commits:
+            message += 'With Chromium commits locally applied on WPT:\n'
+            message += '\n'.join(str(commit) for commit in locally_applied_commits)
+        message += '\nNo-Export: true'
+        return message
 
-    def _delete_orphaned_baselines(self, dest_path):
+    def _delete_orphaned_baselines(self):
         _log.info('Deleting any orphaned baselines.')
-        is_baseline_filter = lambda fs, dirname, basename: self.is_baseline(basename)
-        previous_baselines = self.fs.files_under(dest_path, file_filter=is_baseline_filter)
-        for sub_path in previous_baselines:
-            full_baseline_path = self.fs.join(dest_path, sub_path)
-            if not self._has_corresponding_test(full_baseline_path):
-                self.fs.remove(full_baseline_path)
 
-    def _has_corresponding_test(self, full_baseline_path):
-        base = full_baseline_path.replace('-expected.txt', '')
-        return any(self.fs.exists(base + ext) for ext in Port.supported_file_extensions)
+        is_baseline_filter = lambda fs, dirname, basename: is_testharness_baseline(basename)
 
-    @staticmethod
-    def is_baseline(basename):
-        # TODO(qyearsley): Find a better, centralized place for this.
-        # Also, the name for this method should be is_text_baseline.
-        return basename.endswith('-expected.txt')
+        baselines = self.fs.files_under(self.dest_path, file_filter=is_baseline_filter)
 
-    def run(self, cmd, exit_on_failure=True, cwd=None, stdin=''):
-        _log.debug('Running command: %s', ' '.join(cmd))
+        # TODO(qyearsley): Factor out the manifest path to a common location.
+        # TODO(qyearsley): Factor out the manifest reading from here and Port
+        # to WPTManifest.
+        manifest_path = self.finder.path_from_layout_tests('external', 'wpt', 'MANIFEST.json')
+        manifest = WPTManifest(self.fs.read_text_file(manifest_path))
+        wpt_urls = manifest.all_urls()
 
-        cwd = cwd or self.finder.webkit_base()
-        proc = self.executive.popen(cmd, stdout=self.executive.PIPE, stderr=self.executive.PIPE, stdin=self.executive.PIPE, cwd=cwd)
-        out, err = proc.communicate(stdin)
-        if proc.returncode or self.verbose:
-            _log.info('# ret> %d', proc.returncode)
-            if out:
-                for line in out.splitlines():
-                    _log.info('# out> %s', line)
-            if err:
-                for line in err.splitlines():
-                    _log.info('# err> %s', line)
-        if exit_on_failure and proc.returncode:
-            self.host.exit(proc.returncode)
-        return proc.returncode, out
+        # Currently baselines for tests with query strings are merged,
+        # so that the tests foo.html?r=1 and foo.html?r=2 both have the same
+        # baseline, foo-expected.txt.
+        # TODO(qyearsley): Remove this when this behavior is fixed.
+        wpt_urls = [url.split('?')[0] for url in wpt_urls]
 
-    def check_run(self, command):
-        return_code, out = self.run(command)
-        if return_code:
-            raise Exception('%s failed with exit code %d.' % ' '.join(command), return_code)
-        return out
+        wpt_dir = self.finder.path_from_layout_tests('external', 'wpt')
+        for full_path in baselines:
+            rel_path = self.fs.relpath(full_path, wpt_dir)
+            if not self._has_corresponding_test(rel_path, wpt_urls):
+                self.fs.remove(full_path)
+
+    def _has_corresponding_test(self, rel_path, wpt_urls):
+        # TODO(qyearsley): Ensure that this works with platform baselines and
+        # virtual baselines, and add unit tests.
+        base = '/' + rel_path.replace('-expected.txt', '')
+        return any((base + ext) in wpt_urls for ext in Port.supported_file_extensions)
 
     def copyfile(self, source, destination):
         _log.debug('cp %s %s', source, destination)
         self.fs.copyfile(source, destination)
 
-    def remove(self, *comps):
-        dest = self.path_from_webkit_base(*comps)
+    def remove(self, dest):
         _log.debug('rm %s', dest)
         self.fs.remove(dest)
 
-    def rmtree(self, *comps):
-        dest = self.path_from_webkit_base(*comps)
-        _log.debug('rm -fr %s', dest)
-        self.fs.rmtree(dest)
-
-    def path_from_webkit_base(self, *comps):
-        return self.finder.path_from_webkit_base(*comps)
-
-    def do_auto_update(self):
-        """Attempts to upload a CL, make any required adjustments, and commit.
-
-        This function assumes that the imported repo has already been updated,
-        and that change has been committed. There may be newly-failing tests,
-        so before being able to commit these new changes, we may need to update
-        TestExpectations or download new baselines.
-
-        Returns:
-            True if successfully committed, False otherwise.
-        """
-        self._upload_cl()
-        _log.info('Issue: %s', self.git_cl.run(['issue']).strip())
-
-        # First, try on Blink try bots in order to get any new baselines.
-        # TODO(qyearsley): Make this faster by triggering all try jobs in
-        # one invocation.
-        _log.info('Triggering try jobs.')
-        self.git_cl.trigger_try_jobs()
-        try_results = self.git_cl.wait_for_try_jobs(
-            poll_delay_seconds=POLL_DELAY_SECONDS, timeout_seconds=TIMEOUT_SECONDS)
-
-        if not try_results:
-            self.git_cl.run(['set-close'])
-            return False
-
-        if try_results and self.git_cl.has_failing_try_results(try_results):
-            self.fetch_new_expectations_and_baselines()
-            message = 'Update test expectations and baselines.'
-            self.check_run(['git', 'commit', '-a', '-m', message])
-            self._upload_patchset(message)
-
-        # Trigger CQ and wait for CQ try jobs to finish.
-        self.git_cl.run(['set-commit', '--gerrit'])
-        try_results = self.git_cl.wait_for_try_jobs(
-            poll_delay_seconds=POLL_DELAY_SECONDS, timeout_seconds=TIMEOUT_SECONDS)
-
-        if not try_results:
-            _log.error('No try job results.')
-            self.git_cl.run(['set-close'])
-            return False
-
-        # If the CQ passes, then the issue will be closed.
-        status = self.git_cl.run(['status' '--field', 'status']).strip()
-        _log.info('CL status: "%s"', status)
-        if status not in ('lgtm', 'closed'):
-            _log.error('CQ appears to have failed; aborting.')
-            self.git_cl.run(['set-close'])
-            return False
-
-        _log.info('Update completed.')
-        return True
+    def _upload_patchset(self, message):
+        self.git_cl.run(['upload', '-f', '-t', message, '--gerrit'])
 
     def _upload_cl(self):
         _log.info('Uploading change list.')
         directory_owners = self.get_directory_owners()
         description = self._cl_description(directory_owners)
+        sheriff_email = self.tbr_reviewer()
+
+        temp_file, temp_path = self.fs.open_text_tempfile()
+        temp_file.write(description)
+        temp_file.close()
+
         self.git_cl.run([
             'upload',
             '-f',
             '--gerrit',
-            '-m',
-            description,
-        ] + self._cc_part(directory_owners))
+            '--message-file', temp_path,
+            '--tbrs', sheriff_email,
+            # Note: we used to CC all the directory owners, but have stopped
+            # in search of a better notification mechanism. (crbug.com/765334)
+            '--cc', 'robertma@chromium.org',
+        ])
 
-    def _upload_patchset(self, message):
-        self.git_cl.run(['upload', '-f', '-t', message, '--gerrit'])
-
-    @staticmethod
-    def _cc_part(directory_owners):
-        cc_part = []
-        for owner_tuple in sorted(directory_owners):
-            cc_part.extend('--cc=' + owner for owner in owner_tuple)
-        return cc_part
+        self.fs.remove(temp_path)
 
     def get_directory_owners(self):
         """Returns a mapping of email addresses to owners of changed tests."""
         _log.info('Gathering directory owners emails to CC.')
-        changed_files = self.host.git().changed_files()
+        changed_files = self.chromium_git.changed_files()
         extractor = DirectoryOwnersExtractor(self.fs)
-        extractor.read_owner_map()
         return extractor.list_owners(changed_files)
 
     def _cl_description(self, directory_owners):
@@ -413,19 +458,27 @@ class TestImporter(object):
         Args:
             directory_owners: A dict of tuples of owner names to lists of directories.
         """
-        description = self.check_run(['git', 'log', '-1', '--format=%B'])
+        # TODO(robertma): Add a method in Git for getting the commit body.
+        description = self.chromium_git.run(['log', '-1', '--format=%B'])
         build_link = current_build_link(self.host)
         if build_link:
             description += 'Build: %s\n\n' % build_link
 
+        description += (
+            'Note to sheriffs: This CL imports external tests and adds\n'
+            'expectations for those tests; if this CL is large and causes\n'
+            'a few new failures, please fix the failures by adding new\n'
+            'lines to TestExpectations rather than reverting. See:\n'
+            'https://chromium.googlesource.com'
+            '/chromium/src/+/master/docs/testing/web_platform_tests.md\n\n')
+
         if directory_owners:
             description += self._format_directory_owners(directory_owners) + '\n\n'
-        description += 'TBR=qyearsley@chromium.org\n'
 
-        # Move any NOEXPORT tag to the end of the description.
-        description = description.replace('NOEXPORT=true', '')
+        # Move any No-Export tag to the end of the description.
+        description = description.replace('No-Export: true', '')
         description = description.replace('\n\n\n\n', '\n\n')
-        description += 'NOEXPORT=true'
+        description += 'No-Export: true'
         return description
 
     @staticmethod
@@ -436,14 +489,54 @@ class TestImporter(object):
             message_lines.extend('  ' + d for d in directories)
         return '\n'.join(message_lines)
 
+    def tbr_reviewer(self):
+        """Returns the user name or email address to use as the reviewer.
+
+        This tries to fetch the current ecosystem infra sheriff, but falls back
+        in case of error.
+
+        Either a user name (which is assumed to have a chromium.org email
+        address) or a full email address (for other cases) is returned.
+        """
+        username = ''
+        try:
+            username = self._fetch_ecosystem_infra_sheriff_username()
+        except (IOError, KeyError, ValueError) as error:
+            _log.error('Exception while fetching current sheriff: %s', error)
+        return username or 'qyearsley'  # Fallback in case of failure.
+
+    def _fetch_ecosystem_infra_sheriff_username(self):
+        content = self.host.web.get_binary(ROTATIONS_URL)
+        data = json.loads(content)
+        today = datetime.date.fromtimestamp(self.host.time()).isoformat()
+        index = data['rotations'].index('ecosystem_infra')
+        calendar = data['calendar']
+        for entry in calendar:
+            if entry['date'] == today:
+                if not entry['participants'][index]:
+                    return ''
+                return entry['participants'][index][0]
+        return ''
+
     def fetch_new_expectations_and_baselines(self):
-        """Adds new expectations and downloads baselines based on try job results, then commits and uploads the change."""
+        """Modifies expectation lines and baselines based on try job results.
+
+        Assuming that there are some try job results available, this
+        adds new expectation lines to TestExpectations and downloads new
+        baselines based on the try job results.
+
+        This is the same as invoking the `wpt-update-expectations` script.
+        """
         _log.info('Adding test expectations lines to LayoutTests/TestExpectations.')
         expectation_updater = WPTExpectationsUpdater(self.host)
         expectation_updater.run(args=[])
 
     def update_all_test_expectations_files(self, deleted_tests, renamed_tests):
-        """Updates all test expectations files for tests that have been deleted or renamed."""
+        """Updates all test expectations files for tests that have been deleted or renamed.
+
+        This is only for deleted or renamed tests in the initial import,
+        not for tests that have failures in try jobs.
+        """
         port = self.host.port_factory.get()
         for path, file_contents in port.all_expectations_dict().iteritems():
             parser = TestExpectationParser(port, all_tests=None, is_lint_mode=False)
@@ -451,9 +544,9 @@ class TestImporter(object):
             self._update_single_test_expectations_file(path, expectation_lines, deleted_tests, renamed_tests)
 
     def _update_single_test_expectations_file(self, path, expectation_lines, deleted_tests, renamed_tests):
-        """Updates single test expectations file."""
-        # FIXME: This won't work for removed or renamed directories with test expectations
-        # that are directories rather than individual tests.
+        """Updates a single test expectations file."""
+        # FIXME: This won't work for removed or renamed directories with test
+        # expectations that are directories rather than individual tests.
         new_lines = []
         changed_lines = []
         for expectation_line in expectation_lines:
@@ -472,23 +565,34 @@ class TestImporter(object):
         self.host.filesystem.write_text_file(path, new_file_contents)
 
     def _list_deleted_tests(self):
-        """Returns a list of layout tests that have been deleted."""
-        out = self.check_run(['git', 'diff', 'origin/master', '-M100%', '--diff-filter=D', '--name-only'])
+        """List of layout tests that have been deleted."""
+        # TODO(robertma): Improve Git.changed_files so that we can use it here.
+        out = self.chromium_git.run(['diff', 'origin/master', '-M100%', '--diff-filter=D', '--name-only'])
         deleted_tests = []
-        for line in out.splitlines():
-            test = self.finder.layout_test_name(line)
+        for path in out.splitlines():
+            test = self._relative_to_layout_test_dir(path)
             if test:
                 deleted_tests.append(test)
         return deleted_tests
 
     def _list_renamed_tests(self):
-        """Returns a dict mapping source to dest name for layout tests that have been renamed."""
-        out = self.check_run(['git', 'diff', 'origin/master', '-M100%', '--diff-filter=R', '--name-status'])
+        """Lists tests that have been renamed.
+
+        Returns a dict mapping source name to destination name.
+        """
+        out = self.chromium_git.run(['diff', 'origin/master', '-M100%', '--diff-filter=R', '--name-status'])
         renamed_tests = {}
         for line in out.splitlines():
             _, source_path, dest_path = line.split()
-            source_test = self.finder.layout_test_name(source_path)
-            dest_test = self.finder.layout_test_name(dest_path)
+            source_test = self._relative_to_layout_test_dir(source_path)
+            dest_test = self._relative_to_layout_test_dir(dest_path)
             if source_test and dest_test:
                 renamed_tests[source_test] = dest_test
         return renamed_tests
+
+    def _relative_to_layout_test_dir(self, path_relative_to_repo_root):
+        """Returns a path that's relative to the layout tests directory."""
+        abs_path = self.finder.path_from_chromium_base(path_relative_to_repo_root)
+        if not abs_path.startswith(self.finder.layout_tests_dir()):
+            return None
+        return self.fs.relpath(abs_path, self.finder.layout_tests_dir())

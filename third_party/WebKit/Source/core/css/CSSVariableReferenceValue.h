@@ -5,32 +5,43 @@
 #ifndef CSSVariableReferenceValue_h
 #define CSSVariableReferenceValue_h
 
+#include "base/memory/scoped_refptr.h"
 #include "core/css/CSSValue.h"
 #include "core/css/CSSVariableData.h"
-#include "platform/wtf/RefPtr.h"
+#include "core/css/parser/CSSParserContext.h"
 
 namespace blink {
 
 class CSSVariableReferenceValue : public CSSValue {
  public:
-  static CSSVariableReferenceValue* Create(PassRefPtr<CSSVariableData> data) {
-    return new CSSVariableReferenceValue(std::move(data));
+  static CSSVariableReferenceValue* Create(scoped_refptr<CSSVariableData> data,
+                                           const CSSParserContext& context) {
+    return new CSSVariableReferenceValue(std::move(data), context);
   }
 
-  CSSVariableData* VariableDataValue() const { return data_.Get(); }
+  CSSVariableData* VariableDataValue() const { return data_.get(); }
+  const CSSParserContext* ParserContext() const {
+    return parser_context_.Get();
+  }
 
   bool Equals(const CSSVariableReferenceValue& other) const {
     return data_ == other.data_;
   }
   String CustomCSSText() const;
 
-  DECLARE_TRACE_AFTER_DISPATCH();
+  void TraceAfterDispatch(blink::Visitor*);
 
  private:
-  CSSVariableReferenceValue(PassRefPtr<CSSVariableData> data)
-      : CSSValue(kVariableReferenceClass), data_(std::move(data)) {}
+  CSSVariableReferenceValue(scoped_refptr<CSSVariableData> data,
+                            const CSSParserContext& context)
+      : CSSValue(kVariableReferenceClass),
+        data_(std::move(data)),
+        parser_context_(context) {
+    DCHECK(parser_context_);
+  }
 
-  RefPtr<CSSVariableData> data_;
+  scoped_refptr<CSSVariableData> data_;
+  Member<const CSSParserContext> parser_context_;
 };
 
 DEFINE_CSS_VALUE_TYPE_CASTS(CSSVariableReferenceValue,

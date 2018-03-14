@@ -28,9 +28,10 @@ Polymer({
     devices: Array,
   },
 
+  /** @override */
   ready: function() {
-    this.addWebUIListener('updateDevicesMenu',
-        this.updateDevicesMenu_.bind(this));
+    this.addWebUIListener(
+        'updateDevicesMenu', this.updateDevicesMenu_.bind(this));
     this.browserProxy.getDefaultCaptureDevices(this.type);
   },
 
@@ -49,9 +50,9 @@ Polymer({
       this.devices = devices;
 
       // Wait for <select> to be populated.
-      this.async(function() {
+      this.async(() => {
         this.$.mediaPicker.value = defaultDevice;
-      }.bind(this));
+      });
     }
   },
 

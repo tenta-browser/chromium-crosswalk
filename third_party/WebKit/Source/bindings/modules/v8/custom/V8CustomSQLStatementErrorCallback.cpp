@@ -28,8 +28,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "bindings/core/v8/GeneratedCodeHelper.h"
 #include "bindings/core/v8/ScriptController.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/modules/v8/V8SQLError.h"
 #include "bindings/modules/v8/V8SQLStatementErrorCallback.h"
 #include "bindings/modules/v8/V8SQLTransaction.h"
@@ -40,21 +41,20 @@ namespace blink {
 
 bool V8SQLStatementErrorCallback::handleEvent(SQLTransaction* transaction,
                                               SQLError* error) {
-  v8::Isolate* isolate = m_scriptState->GetIsolate();
-  ExecutionContext* execution_context =
-      ExecutionContext::From(m_scriptState.Get());
-  if (!execution_context || execution_context->IsContextSuspended() ||
-      execution_context->IsContextDestroyed())
+  if (!IsCallbackFunctionRunnable(CallbackRelevantScriptState())) {
     return true;
-  if (!m_scriptState->ContextIsValid())
-    return true;
-  ScriptState::Scope scope(m_scriptState.Get());
+  }
 
+  v8::Isolate* isolate = GetIsolate();
+  ScriptState::Scope scope(CallbackRelevantScriptState());
+
+  v8::Local<v8::Object> argument_creation_context =
+      CallbackRelevantScriptState()->GetContext()->Global();
   v8::Local<v8::Value> transaction_handle =
-      ToV8(transaction, m_scriptState->GetContext()->Global(), isolate);
+      ToV8(transaction, argument_creation_context, isolate);
   v8::Local<v8::Value> error_handle =
-      ToV8(error, m_scriptState->GetContext()->Global(), isolate);
-  ASSERT(transaction_handle->IsObject());
+      ToV8(error, argument_creation_context, isolate);
+  DCHECK(transaction_handle->IsObject());
 
   v8::Local<v8::Value> argv[] = {transaction_handle, error_handle};
 
@@ -69,10 +69,10 @@ bool V8SQLStatementErrorCallback::handleEvent(SQLTransaction* transaction,
   // statement, if any, or onto the next overall step otherwise. Otherwise,
   // the error callback did not return false, or there was no error callback.
   // Jump to the last step in the overall steps.
-  if (!V8ScriptRunner::CallFunction(m_callback.NewLocal(isolate),
-                                    ExecutionContext::From(m_scriptState.Get()),
-                                    m_scriptState->GetContext()->Global(),
-                                    WTF_ARRAY_LENGTH(argv), argv, isolate)
+  if (!V8ScriptRunner::CallFunction(
+           CallbackObject().As<v8::Function>(),
+           ExecutionContext::From(CallbackRelevantScriptState()),
+           v8::Undefined(isolate), WTF_ARRAY_LENGTH(argv), argv, isolate)
            .ToLocal(&result))
     return true;
   bool value;

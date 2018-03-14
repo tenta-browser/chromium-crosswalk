@@ -14,6 +14,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -47,10 +48,6 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
-
-#if defined(OS_WIN)
-#include "base/win/windows_version.h"
-#endif
 
 using content::RenderViewHost;
 using content::WebContents;
@@ -92,10 +89,6 @@ class BrowserFocusTest : public InProcessBrowserTest {
 #if defined(OS_MACOSX)
     // TODO(msw): Mac requires ui::VKEY_BACKTAB for reverse cycling. Sigh...
     key = reverse ? ui::VKEY_BACKTAB : ui::VKEY_TAB;
-#elif defined(OS_WIN)
-    // This loop times out on Windows XP with no output. http://crbug.com/376635
-    if (base::win::GetVersion() < base::win::VERSION_VISTA)
-      return;
 #endif
 
     // Loop through the focus chain twice for good measure.
@@ -179,6 +172,7 @@ class BrowserFocusTest : public InProcessBrowserTest {
 class TestInterstitialPage : public content::InterstitialPageDelegate {
  public:
   explicit TestInterstitialPage(WebContents* tab) {
+    base::ScopedAllowBlockingForTesting allow_blocking;
     base::FilePath file_path;
     bool success = PathService::Get(chrome::DIR_TEST_DATA, &file_path);
     EXPECT_TRUE(success);
@@ -240,8 +234,7 @@ IN_PROC_BROWSER_TEST_F(BrowserFocusTest, MAYBE_ClickingMovesFocus) {
   ASSERT_TRUE(IsViewFocused(VIEW_ID_OMNIBOX));
 }
 
-// Flaky, http://crbug.com/69034.
-IN_PROC_BROWSER_TEST_F(BrowserFocusTest, DISABLED_BrowsersRememberFocus) {
+IN_PROC_BROWSER_TEST_F(BrowserFocusTest, BrowsersRememberFocus) {
   ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
   const GURL url = embedded_test_server()->GetURL(kSimplePage);
   ui_test_utils::NavigateToURL(browser(), url);
@@ -264,8 +257,7 @@ IN_PROC_BROWSER_TEST_F(BrowserFocusTest, DISABLED_BrowsersRememberFocus) {
 }
 
 // Tabs remember focus.
-// Disabled, http://crbug.com/62542.
-IN_PROC_BROWSER_TEST_F(BrowserFocusTest, DISABLED_TabsRememberFocus) {
+IN_PROC_BROWSER_TEST_F(BrowserFocusTest, TabsRememberFocus) {
   ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
   const GURL url = embedded_test_server()->GetURL(kSimplePage);
   ui_test_utils::NavigateToURL(browser(), url);
@@ -332,6 +324,7 @@ IN_PROC_BROWSER_TEST_F(BrowserFocusTest, DISABLED_TabsRememberFocus) {
 
 // Tabs remember focus with find-in-page box.
 IN_PROC_BROWSER_TEST_F(BrowserFocusTest, TabsRememberFocusFindInPage) {
+  ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
   const GURL url = embedded_test_server()->GetURL(kSimplePage);
   ui_test_utils::NavigateToURL(browser(), url);
 
@@ -367,8 +360,14 @@ IN_PROC_BROWSER_TEST_F(BrowserFocusTest, TabsRememberFocusFindInPage) {
 
 // Background window does not steal focus.
 // Flaky, http://crbug.com/62538.
+#if defined(OS_CHROMEOS)
+#define MAYBE_BackgroundBrowserDontStealFocus \
+  DISABLED_BackgroundBrowserDontStealFocus
+#else
+#define MAYBE_BackgroundBrowserDontStealFocus BackgroundBrowserDontStealFocus
+#endif
 IN_PROC_BROWSER_TEST_F(BrowserFocusTest,
-                       DISABLED_BackgroundBrowserDontStealFocus) {
+                       MAYBE_BackgroundBrowserDontStealFocus) {
   ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
 
   // Open a new browser window.
@@ -525,8 +524,7 @@ IN_PROC_BROWSER_TEST_F(BrowserFocusTest, MAYBE_FindFocusTest) {
 
 // Makes sure the focus is in the right location when opening the different
 // types of tabs.
-// Flaky, http://crbug.com/62539.
-IN_PROC_BROWSER_TEST_F(BrowserFocusTest, DISABLED_TabInitialFocus) {
+IN_PROC_BROWSER_TEST_F(BrowserFocusTest, TabInitialFocus) {
   ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
 
   // Open the history tab, focus should be on the tab contents.
@@ -600,7 +598,13 @@ IN_PROC_BROWSER_TEST_F(BrowserFocusTest, FocusOnReload) {
 }
 
 // Tests that focus goes where expected when using reload on a crashed tab.
-IN_PROC_BROWSER_TEST_F(BrowserFocusTest, DISABLED_FocusOnReloadCrashedTab) {
+#if (defined(OS_CHROMEOS) || defined(OS_LINUX)) && !defined(NDEBUG)
+// Hangy, http://crbug.com/50025.
+#define MAYBE_FocusOnReloadCrashedTab DISABLED_FocusOnReloadCrashedTab
+#else
+#define MAYBE_FocusOnReloadCrashedTab FocusOnReloadCrashedTab
+#endif
+IN_PROC_BROWSER_TEST_F(BrowserFocusTest, MAYBE_FocusOnReloadCrashedTab) {
   ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
 
   // Open a regular page, crash, reload.
@@ -669,8 +673,8 @@ IN_PROC_BROWSER_TEST_F(BrowserFocusTest, NavigateFromOmniboxIntoNewTab) {
   EXPECT_FALSE(IsViewFocused(VIEW_ID_OMNIBOX));
 }
 
-// Flaky on Windows and Mac (http://crbug.com/665296).
-#if defined(OS_WIN) || defined(OS_MACOSX)
+// Flaky on Mac (http://crbug.com/665296).
+#if defined(OS_MACOSX)
 #define MAYBE_FocusOnNavigate DISABLED_FocusOnNavigate
 #else
 #define MAYBE_FocusOnNavigate FocusOnNavigate

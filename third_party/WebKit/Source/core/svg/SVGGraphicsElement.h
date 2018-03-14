@@ -41,12 +41,8 @@ class CORE_EXPORT SVGGraphicsElement : public SVGElement, public SVGTests {
  public:
   ~SVGGraphicsElement() override;
 
-  enum StyleUpdateStrategy { kAllowStyleUpdate, kDisallowStyleUpdate };
-
-  AffineTransform GetCTM(StyleUpdateStrategy = kAllowStyleUpdate);
-  AffineTransform GetScreenCTM(StyleUpdateStrategy = kAllowStyleUpdate);
-  SVGMatrixTearOff* getCTMFromJavascript();
-  SVGMatrixTearOff* getScreenCTMFromJavascript();
+  SVGMatrixTearOff* getCTM();
+  SVGMatrixTearOff* getScreenCTM();
 
   SVGElement* nearestViewportElement() const;
   SVGElement* farthestViewportElement() const;
@@ -64,11 +60,11 @@ class CORE_EXPORT SVGGraphicsElement : public SVGElement, public SVGTests {
   SVGAnimatedTransformList* transform() { return transform_.Get(); }
   const SVGAnimatedTransformList* transform() const { return transform_.Get(); }
 
-  AffineTransform ComputeCTM(SVGElement::CTMScope mode,
-                             SVGGraphicsElement::StyleUpdateStrategy,
-                             const SVGGraphicsElement* ancestor = 0) const;
+  AffineTransform ComputeCTM(
+      CTMScope mode,
+      const SVGGraphicsElement* ancestor = nullptr) const;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  protected:
   SVGGraphicsElement(const QualifiedName&,
@@ -79,9 +75,10 @@ class CORE_EXPORT SVGGraphicsElement : public SVGElement, public SVGTests {
     return Element::SupportsFocus() || HasFocusEventListeners();
   }
 
-  void CollectStyleForPresentationAttribute(const QualifiedName&,
-                                            const AtomicString&,
-                                            MutableStylePropertySet*) override;
+  void CollectStyleForPresentationAttribute(
+      const QualifiedName&,
+      const AtomicString&,
+      MutableCSSPropertyValueSet*) override;
   void SvgAttributeChanged(const QualifiedName&) override;
 
   Member<SVGAnimatedTransformList> transform_;

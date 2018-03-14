@@ -10,10 +10,9 @@
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/win/windows_version.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/lifetime/keep_alive_types.h"
-#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/profile_resetter/triggered_profile_resetter.h"
 #include "chrome/browser/profile_resetter/triggered_profile_resetter_factory.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -21,6 +20,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/startup/startup_browser_creator_impl.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -29,6 +29,8 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/keep_alive_registry/keep_alive_types.h"
+#include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/prefs/pref_service.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -70,6 +72,11 @@ bool MockTriggeredProfileResetter::has_reset_trigger_ = false;
 std::unique_ptr<KeyedService> BuildMockTriggeredProfileResetter(
     content::BrowserContext* context) {
   return base::WrapUnique(new MockTriggeredProfileResetter);
+}
+
+GURL GetTriggeredResetSettingsURL() {
+  return GURL(
+      chrome::GetSettingsUrl(chrome::kTriggeredResetProfileSettingsSubPage));
 }
 
 }  // namespace
@@ -147,8 +154,7 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTriggeredResetTest,
   ASSERT_TRUE(new_browser);
 
   std::vector<GURL> expected_urls(urls);
-  expected_urls.insert(expected_urls.begin(),
-                       internals::GetTriggeredResetSettingsURL());
+  expected_urls.insert(expected_urls.begin(), GetTriggeredResetSettingsURL());
 
   TabStripModel* tab_strip = new_browser->tab_strip_model();
   ASSERT_EQ(static_cast<int>(expected_urls.size()), tab_strip->count());
@@ -236,8 +242,12 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTriggeredResetTest,
   ProfileManager* profile_manager = g_browser_process->profile_manager();
   base::FilePath path =
       profile_manager->user_data_dir().AppendASCII("test_profile");
-  Profile* other_profile =
-      Profile::CreateProfile(path, nullptr, Profile::CREATE_MODE_SYNCHRONOUS);
+  Profile* other_profile = nullptr;
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    other_profile =
+        Profile::CreateProfile(path, nullptr, Profile::CREATE_MODE_SYNCHRONOUS);
+  }
   profile_manager->RegisterTestingProfile(other_profile, true, false);
 
   // Use a couple same-site HTTP URLs.
@@ -268,6 +278,6 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTriggeredResetTest,
   // Check for the expected reset dialog in the second browser too.
   TabStripModel* other_tab_strip = other_profile_browser->tab_strip_model();
   ASSERT_LT(0, other_tab_strip->count());
-  EXPECT_EQ(internals::GetTriggeredResetSettingsURL(),
+  EXPECT_EQ(GetTriggeredResetSettingsURL(),
             other_tab_strip->GetActiveWebContents()->GetURL());
 }

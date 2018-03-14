@@ -5,9 +5,6 @@
 #include "chromeos/network/onc/onc_certificate_importer_impl.h"
 
 #include <cert.h>
-#include <certdb.h>
-#include <keyhi.h>
-#include <pk11pub.h>
 #include <string>
 
 #include "base/bind.h"
@@ -16,56 +13,23 @@
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
+#include "chromeos/network/certificate_helper.h"
 #include "chromeos/network/onc/onc_test_utils.h"
 #include "components/onc/onc_constants.h"
 #include "crypto/scoped_test_nss_db.h"
 #include "net/base/hash_value.h"
 #include "net/cert/cert_type.h"
 #include "net/cert/nss_cert_database_chromeos.h"
-#include "net/cert/x509_certificate.h"
+#include "net/cert/x509_util_nss.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
 namespace onc {
 
-namespace {
-
-#if defined(USE_NSS_CERTS)
-// In NSS 3.13, CERTDB_VALID_PEER was renamed CERTDB_TERMINAL_RECORD. So we use
-// the new name of the macro.
-#if !defined(CERTDB_TERMINAL_RECORD)
-#define CERTDB_TERMINAL_RECORD CERTDB_VALID_PEER
-#endif
-
-net::CertType GetCertType(net::X509Certificate::OSCertHandle cert) {
-  CERTCertTrust trust = {0};
-  CERT_GetCertTrust(cert, &trust);
-
-  unsigned all_flags = trust.sslFlags | trust.emailFlags |
-      trust.objectSigningFlags;
-
-  if (cert->nickname && (all_flags & CERTDB_USER))
-    return net::USER_CERT;
-  if ((all_flags & CERTDB_VALID_CA) || CERT_IsCACert(cert, NULL))
-    return net::CA_CERT;
-  // TODO(mattm): http://crbug.com/128633.
-  if (trust.sslFlags & CERTDB_TERMINAL_RECORD)
-    return net::SERVER_CERT;
-  return net::OTHER_CERT;
-}
-#else
-net::CertType GetCertType(net::X509Certificate::OSCertHandle cert) {
-  NOTIMPLEMENTED();
-  return net::OTHER_CERT;
-}
-#endif  // USE_NSS_CERTS
-
-}  // namespace
-
 class ONCCertificateImporterImplTest : public testing::Test {
  public:
-  ONCCertificateImporterImplTest() {}
-  ~ONCCertificateImporterImplTest() override {}
+  ONCCertificateImporterImplTest() = default;
+  ~ONCCertificateImporterImplTest() override = default;
 
   void SetUp() override {
     ASSERT_TRUE(public_nssdb_.is_open());
@@ -90,11 +54,12 @@ class ONCCertificateImporterImplTest : public testing::Test {
   }
 
  protected:
-  void OnImportCompleted(bool expected_success,
-                         bool success,
-                         const net::CertificateList& onc_trusted_certificates) {
+  void OnImportCompleted(
+      bool expected_success,
+      bool success,
+      net::ScopedCERTCertificateList onc_trusted_certificates) {
     EXPECT_EQ(expected_success, success);
-    web_trust_certificates_ = onc_trusted_certificates;
+    web_trust_certificates_ = std::move(onc_trusted_certificates);
   }
 
   void AddCertificatesFromFile(const std::string& filename,
@@ -134,12 +99,13 @@ class ONCCertificateImporterImplTest : public testing::Test {
 
     if (expected_type == net::SERVER_CERT || expected_type == net::CA_CERT) {
       ASSERT_EQ(1u, public_list_.size());
-      EXPECT_EQ(expected_type, GetCertType(public_list_[0]->os_cert_handle()));
+      EXPECT_EQ(expected_type, certificate::GetCertType(public_list_[0].get()));
       EXPECT_TRUE(private_list_.empty());
     } else {  // net::USER_CERT
       EXPECT_TRUE(public_list_.empty());
       ASSERT_EQ(1u, private_list_.size());
-      EXPECT_EQ(expected_type, GetCertType(private_list_[0]->os_cert_handle()));
+      EXPECT_EQ(expected_type,
+                certificate::GetCertType(private_list_[0].get()));
     }
 
     base::DictionaryValue* certificate = NULL;
@@ -157,45 +123,36 @@ class ONCCertificateImporterImplTest : public testing::Test {
   std::unique_ptr<net::NSSCertDatabaseChromeOS> test_nssdb_;
   std::unique_ptr<base::ListValue> onc_certificates_;
   // List of certs in the nssdb's public slot.
-  net::CertificateList public_list_;
+  net::ScopedCERTCertificateList public_list_;
   // List of certs in the nssdb's "private" slot.
-  net::CertificateList private_list_;
-  net::CertificateList web_trust_certificates_;
+  net::ScopedCERTCertificateList private_list_;
+  net::ScopedCERTCertificateList web_trust_certificates_;
 
  private:
-  net::CertificateList ListCertsInPublicSlot() {
+  net::ScopedCERTCertificateList ListCertsInPublicSlot() {
     return ListCertsInSlot(public_nssdb_.slot());
   }
 
-  net::CertificateList ListCertsInPrivateSlot() {
+  net::ScopedCERTCertificateList ListCertsInPrivateSlot() {
     return ListCertsInSlot(private_nssdb_.slot());
   }
 
-  net::CertificateList ListCertsInSlot(PK11SlotInfo* slot) {
-    net::CertificateList result;
+  net::ScopedCERTCertificateList ListCertsInSlot(PK11SlotInfo* slot) {
+    net::ScopedCERTCertificateList result;
     CERTCertList* cert_list = PK11_ListCertsInSlot(slot);
     for (CERTCertListNode* node = CERT_LIST_HEAD(cert_list);
          !CERT_LIST_END(node, cert_list);
          node = CERT_LIST_NEXT(node)) {
-      scoped_refptr<net::X509Certificate> cert =
-          net::X509Certificate::CreateFromHandle(
-              node->cert, net::X509Certificate::OSCertHandles());
-      if (!cert) {
-        ADD_FAILURE() << "X509Certificate::CreateFromHandle failed";
-        continue;
-      }
-      result.push_back(cert);
+      result.push_back(net::x509_util::DupCERTCertificate(node->cert));
     }
     CERT_DestroyCertList(cert_list);
 
     std::sort(result.begin(), result.end(),
-              [](const scoped_refptr<net::X509Certificate>& lhs,
-                 const scoped_refptr<net::X509Certificate>& rhs) {
+              [](const net::ScopedCERTCertificate& lhs,
+                 const net::ScopedCERTCertificate& rhs) {
                 return net::SHA256HashValueLessThan()(
-                    net::X509Certificate::CalculateFingerprint256(
-                        lhs->os_cert_handle()),
-                    net::X509Certificate::CalculateFingerprint256(
-                        rhs->os_cert_handle()));
+                    net::x509_util::CalculateFingerprint256(lhs.get()),
+                    net::x509_util::CalculateFingerprint256(rhs.get()));
               });
     return result;
   }
@@ -268,8 +225,8 @@ TEST_F(ONCCertificateImporterImplTest, AddServerCertificateWithWebTrust) {
   ASSERT_EQ(1u, web_trust_certificates_.size());
   ASSERT_EQ(1u, public_list_.size());
   EXPECT_TRUE(private_list_.empty());
-  EXPECT_TRUE(CERT_CompareCerts(public_list_[0]->os_cert_handle(),
-                                web_trust_certificates_[0]->os_cert_handle()));
+  EXPECT_TRUE(CERT_CompareCerts(public_list_[0].get(),
+                                web_trust_certificates_[0].get()));
 }
 
 TEST_F(ONCCertificateImporterImplTest, AddWebAuthorityCertificateWithWebTrust) {
@@ -286,8 +243,8 @@ TEST_F(ONCCertificateImporterImplTest, AddWebAuthorityCertificateWithWebTrust) {
   ASSERT_EQ(1u, web_trust_certificates_.size());
   ASSERT_EQ(1u, public_list_.size());
   EXPECT_TRUE(private_list_.empty());
-  EXPECT_TRUE(CERT_CompareCerts(public_list_[0]->os_cert_handle(),
-                                web_trust_certificates_[0]->os_cert_handle()));
+  EXPECT_TRUE(CERT_CompareCerts(public_list_[0].get(),
+                                web_trust_certificates_[0].get()));
 }
 
 TEST_F(ONCCertificateImporterImplTest, AddAuthorityCertificateWithoutWebTrust) {

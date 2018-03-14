@@ -12,6 +12,7 @@
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/KURLHash.h"
 #include "platform/wtf/HashMap.h"
+#include "platform/wtf/Optional.h"
 #include "platform/wtf/WeakPtr.h"
 #include "public/platform/WebURL.h"
 #include "public/platform/WebURLError.h"
@@ -36,7 +37,8 @@ class WebURLLoaderMockFactoryImpl : public WebURLLoaderMockFactory {
   ~WebURLLoaderMockFactoryImpl() override;
 
   // WebURLLoaderMockFactory:
-  WebURLLoader* CreateURLLoader(WebURLLoader* default_loader) override;
+  std::unique_ptr<WebURLLoader> CreateURLLoader(
+      std::unique_ptr<WebURLLoader> default_loader) override;
   void RegisterURL(const WebURL& url,
                    const WebURLResponse& response,
                    const WebString& file_path = WebString()) override;
@@ -44,6 +46,10 @@ class WebURLLoaderMockFactoryImpl : public WebURLLoaderMockFactory {
                         const WebURLResponse& response,
                         const WebURLError& error) override;
   void UnregisterURL(const WebURL& url) override;
+  void RegisterURLProtocol(const WebString& protocol,
+                           const WebURLResponse& response,
+                           const WebString& file_path) override;
+  void UnregisterURLProtocol(const WebString& protocol) override;
   void UnregisterAllURLsAndClearMemoryCache() override;
   void ServeAsynchronousRequests() override;
   void SetLoaderDelegate(WebURLLoaderTestDelegate* delegate) override {
@@ -56,7 +62,7 @@ class WebURLLoaderMockFactoryImpl : public WebURLLoaderMockFactory {
   // Called by the loader to load a resource.
   void LoadSynchronously(const WebURLRequest& request,
                          WebURLResponse* response,
-                         WebURLError* error,
+                         Optional<WebURLError>* error,
                          WebData* data,
                          int64_t* encoded_data_length);
   void LoadAsynchronouly(const WebURLRequest& request,
@@ -75,13 +81,20 @@ class WebURLLoaderMockFactoryImpl : public WebURLLoaderMockFactory {
 
   // Loads the specified request and populates the response, error and data
   // accordingly.
-  void LoadRequest(const WebURLRequest& request,
+  void LoadRequest(const WebURL& url,
                    WebURLResponse* response,
-                   WebURLError* error,
+                   Optional<WebURLError>* error,
                    WebData* data);
 
   // Checks if the loader is pending. Otherwise, it may have been deleted.
   bool IsPending(WeakPtr<WebURLLoaderMock> loader);
+
+  // Looks up an URL in the mock URL table.
+  //
+  // If the URL is found, returns true and sets |error| and |response_info|.
+  bool LookupURL(const WebURL& url,
+                 Optional<WebURLError>* error,
+                 ResponseInfo* response_info);
 
   // Reads |m_filePath| and puts its content in |data|.
   // Returns true if it successfully read the file.
@@ -93,12 +106,19 @@ class WebURLLoaderMockFactoryImpl : public WebURLLoaderMockFactory {
   using LoaderToRequestMap = HashMap<WebURLLoaderMock*, WebURLRequest>;
   LoaderToRequestMap pending_loaders_;
 
-  typedef HashMap<KURL, WebURLError> URLToErrorMap;
+  // All values must be valid, but we use Optional because HashMap requires
+  // "empty value".
+  typedef HashMap<KURL, Optional<WebURLError>> URLToErrorMap;
   URLToErrorMap url_to_error_info_;
 
   // Table of the registered URLs and the responses that they should receive.
   using URLToResponseMap = HashMap<KURL, ResponseInfo>;
   URLToResponseMap url_to_response_info_;
+
+  // Table of the registered URL protocols and the responses that they should
+  // receive.
+  using ProtocolToResponseMap = HashMap<String, ResponseInfo>;
+  ProtocolToResponseMap protocol_to_response_info_;
 
   TestingPlatformSupport* platform_;
 

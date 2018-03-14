@@ -8,7 +8,8 @@
 #include "services/ui/ws/platform_display_default.h"
 #include "services/ui/ws/platform_display_factory.h"
 #include "services/ui/ws/server_window.h"
-#include "ui/base/cursor/image_cursors.h"
+#include "services/ui/ws/threaded_image_cursors.h"
+#include "services/ui/ws/threaded_image_cursors_factory.h"
 
 namespace ui {
 namespace ws {
@@ -19,16 +20,17 @@ PlatformDisplayFactory* PlatformDisplay::factory_ = nullptr;
 // static
 std::unique_ptr<PlatformDisplay> PlatformDisplay::Create(
     ServerWindow* root,
-    const display::ViewportMetrics& metrics) {
+    const display::ViewportMetrics& metrics,
+    ThreadedImageCursorsFactory* threaded_image_cursors_factory) {
   if (factory_)
     return factory_->CreatePlatformDisplay(root, metrics);
 
 #if defined(OS_ANDROID)
-  return base::MakeUnique<PlatformDisplayDefault>(root, metrics,
+  return std::make_unique<PlatformDisplayDefault>(root, metrics,
                                                   nullptr /* image_cursors */);
 #else
-  return base::MakeUnique<PlatformDisplayDefault>(
-      root, metrics, base::MakeUnique<ImageCursors>());
+  return std::make_unique<PlatformDisplayDefault>(
+      root, metrics, threaded_image_cursors_factory->CreateCursors());
 #endif
 }
 

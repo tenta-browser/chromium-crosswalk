@@ -79,6 +79,16 @@ UI.TreeOutline = class extends Common.Object {
   }
 
   /**
+   * @return {?UI.TreeElement}
+   */
+  _lastDescendent() {
+    var last = this._rootElement.lastChild();
+    while (last.expanded && last.childCount())
+      last = last.lastChild();
+    return last;
+  }
+
+  /**
    * @param {!UI.TreeElement} child
    */
   appendChild(child) {
@@ -188,12 +198,10 @@ UI.TreeOutline = class extends Common.Object {
     var nextSelectedElement = this.selectedTreeElement.traversePreviousTreeElement(true);
     while (nextSelectedElement && !nextSelectedElement.selectable)
       nextSelectedElement = nextSelectedElement.traversePreviousTreeElement(!this.expandTreeElementsWhenArrowing);
-    if (nextSelectedElement) {
-      nextSelectedElement.reveal();
-      nextSelectedElement.select(false, true);
-      return true;
-    }
-    return false;
+    if (!nextSelectedElement)
+      return false;
+    nextSelectedElement.select(false, true);
+    return true;
   }
 
   /**
@@ -203,12 +211,36 @@ UI.TreeOutline = class extends Common.Object {
     var nextSelectedElement = this.selectedTreeElement.traverseNextTreeElement(true);
     while (nextSelectedElement && !nextSelectedElement.selectable)
       nextSelectedElement = nextSelectedElement.traverseNextTreeElement(!this.expandTreeElementsWhenArrowing);
-    if (nextSelectedElement) {
-      nextSelectedElement.reveal();
-      nextSelectedElement.select(false, true);
-      return true;
-    }
-    return false;
+    if (!nextSelectedElement)
+      return false;
+    nextSelectedElement.select(false, true);
+    return true;
+  }
+
+  /**
+   * @return {boolean}
+   */
+  _selectFirst() {
+    var first = this.firstChild();
+    while (first && !first.selectable)
+      first = first.traverseNextTreeElement(true);
+    if (!first)
+      return false;
+    first.select(false, true);
+    return true;
+  }
+
+  /**
+   * @return {boolean}
+   */
+  _selectLast() {
+    var last = this._lastDescendent();
+    while (last && !last.selectable)
+      last = last.traversePreviousTreeElement(true);
+    if (!last)
+      return false;
+    last.select(false, true);
+    return true;
   }
 
   /**
@@ -246,6 +278,10 @@ UI.TreeOutline = class extends Common.Object {
       handled = this.selectedTreeElement.onenter();
     } else if (event.keyCode === UI.KeyboardShortcut.Keys.Space.code) {
       handled = this.selectedTreeElement.onspace();
+    } else if (event.key === 'Home') {
+      handled = this._selectFirst();
+    } else if (event.key === 'End') {
+      handled = this._selectLast();
     }
 
     if (handled)
@@ -929,13 +965,10 @@ UI.TreeElement = class {
     while (nextSelectedElement && !nextSelectedElement.selectable)
       nextSelectedElement = nextSelectedElement.parent;
 
-    if (nextSelectedElement) {
-      nextSelectedElement.reveal();
-      nextSelectedElement.select(false, true);
-      return true;
-    }
-
-    return false;
+    if (!nextSelectedElement)
+      return false;
+    nextSelectedElement.select(false, true);
+    return true;
   }
 
   /**
@@ -958,13 +991,10 @@ UI.TreeElement = class {
     while (nextSelectedElement && !nextSelectedElement.selectable)
       nextSelectedElement = nextSelectedElement.nextSibling;
 
-    if (nextSelectedElement) {
-      nextSelectedElement.reveal();
-      nextSelectedElement.select(false, true);
-      return true;
-    }
-
-    return false;
+    if (!nextSelectedElement)
+      return false;
+    nextSelectedElement.select(false, true);
+    return true;
   }
 
   /**
@@ -1008,13 +1038,15 @@ UI.TreeElement = class {
   select(omitFocus, selectedByUser) {
     if (!this.treeOutline || !this.selectable || this.selected)
       return false;
-
-    if (this.treeOutline.selectedTreeElement)
-      this.treeOutline.selectedTreeElement.deselect();
+    // Wait to deselect this element so that focus only changes once
+    var lastSelected = this.treeOutline.selectedTreeElement;
     this.treeOutline.selectedTreeElement = null;
 
-    if (this.treeOutline._rootElement === this)
+    if (this.treeOutline._rootElement === this) {
+      if (lastSelected)
+        lastSelected.deselect();
       return false;
+    }
 
     this.selected = true;
 
@@ -1026,6 +1058,8 @@ UI.TreeElement = class {
 
     this._listItemNode.classList.add('selected');
     this.treeOutline.dispatchEventToListeners(UI.TreeOutline.Events.ElementSelected, this);
+    if (lastSelected)
+      lastSelected.deselect();
     return this.onselect(selectedByUser);
   }
 

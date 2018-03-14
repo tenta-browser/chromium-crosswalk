@@ -29,7 +29,7 @@ class TextInputClient;
 // A helper class providing functionalities shared among ui::InputMethod
 // implementations.
 class UI_BASE_IME_EXPORT InputMethodBase
-    : NON_EXPORTED_BASE(public InputMethod),
+    : public InputMethod,
       public base::SupportsWeakPtr<InputMethodBase>,
       public IMEInputContextHandlerInterface {
  public:
@@ -43,6 +43,7 @@ class UI_BASE_IME_EXPORT InputMethodBase
   void SetFocusedTextInputClient(TextInputClient* client) override;
   void DetachTextInputClient(TextInputClient* client) override;
   TextInputClient* GetTextInputClient() const override;
+  void SetOnScreenKeyboardBounds(const gfx::Rect& new_bounds) override;
 
   // If a derived class overrides this method, it should call parent's
   // implementation.
@@ -93,8 +94,13 @@ class UI_BASE_IME_EXPORT InputMethodBase
 
   // Convenience method to call delegate_->DispatchKeyEventPostIME().
   // Returns true if the event was processed
-  ui::EventDispatchDetails DispatchKeyEventPostIME(
-      ui::KeyEvent* event) const;
+  ui::EventDispatchDetails DispatchKeyEventPostIME(ui::KeyEvent* event) const
+      WARN_UNUSED_RESULT;
+
+  virtual ui::EventDispatchDetails DispatchKeyEventPostIME(
+      ui::KeyEvent* event,
+      std::unique_ptr<base::OnceCallback<void(bool)>> ack_callback) const
+      WARN_UNUSED_RESULT;
 
   // Convenience method to notify all observers of TextInputClient changes.
   void NotifyTextInputStateChanged(const TextInputClient* client);
@@ -106,23 +112,30 @@ class UI_BASE_IME_EXPORT InputMethodBase
   // Gets the bounds of the composition text or cursor in |client|.
   std::vector<gfx::Rect> GetCompositionBounds(const TextInputClient* client);
 
+  bool sending_key_event() const { return sending_key_event_; };
+  internal::InputMethodDelegate* delegate() const { return delegate_; };
+
+ private:
   // Indicates whether the IME extension is currently sending a fake key event.
   // This is used in SendKeyEvent.
   bool sending_key_event_;
 
- private:
+  internal::InputMethodDelegate* delegate_;
+
   // InputMethod:
   const std::vector<std::unique_ptr<ui::KeyEvent>>& GetKeyEventsForTesting()
       override;
 
   void SetFocusedTextInputClientInternal(TextInputClient* client);
 
-  internal::InputMethodDelegate* delegate_;
   TextInputClient* text_input_client_;
 
   base::ObserverList<InputMethodObserver> observer_list_;
 
   std::vector<std::unique_ptr<ui::KeyEvent>> key_events_for_testing_;
+
+  // Screen bounds of a on-screen keyboard.
+  gfx::Rect keyboard_bounds_;
 
   DISALLOW_COPY_AND_ASSIGN(InputMethodBase);
 };

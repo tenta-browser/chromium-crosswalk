@@ -15,7 +15,7 @@
 #include "remoting/signaling/iq_sender.h"
 #include "third_party/libjingle_xmpp/xmllite/xmlelement.h"
 #include "third_party/libjingle_xmpp/xmpp/constants.h"
-#include "third_party/webrtc/base/socketaddress.h"
+#include "third_party/webrtc/rtc_base/socketaddress.h"
 
 namespace remoting {
 namespace protocol {
@@ -28,7 +28,7 @@ static const int kJingleInfoUpdatePeriodSeconds = 3600;
 JingleInfoRequest::JingleInfoRequest(SignalStrategy* signal_strategy)
     : iq_sender_(signal_strategy) {}
 
-JingleInfoRequest::~JingleInfoRequest() {}
+JingleInfoRequest::~JingleInfoRequest() = default;
 
 void JingleInfoRequest::Send(const OnIceConfigCallback& callback) {
   on_ice_config_callback_ = callback;

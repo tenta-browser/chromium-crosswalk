@@ -56,7 +56,7 @@ MutationObserverInterestGroup::MutationObserverInterestGroup(
     MutationRecordDeliveryOptions old_value_flag)
     : old_value_flag_(old_value_flag) {
   DCHECK(!observers.IsEmpty());
-  observers_.Swap(observers);
+  observers_.swap(observers);
 }
 
 bool MutationObserverInterestGroup::IsOldValueRequested() {
@@ -87,7 +87,7 @@ void MutationObserverInterestGroup::EnqueueMutationRecord(
   }
 }
 
-DEFINE_TRACE(MutationObserverInterestGroup) {
+void MutationObserverInterestGroup::Trace(blink::Visitor* visitor) {
   visitor->Trace(observers_);
 }
 

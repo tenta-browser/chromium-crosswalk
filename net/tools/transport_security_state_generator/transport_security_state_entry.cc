@@ -8,9 +8,9 @@ namespace net {
 
 namespace transport_security_state {
 
-TransportSecurityStateEntry::TransportSecurityStateEntry() {}
-TransportSecurityStateEntry::~TransportSecurityStateEntry() {}
+TransportSecurityStateEntry::TransportSecurityStateEntry() = default;
+TransportSecurityStateEntry::~TransportSecurityStateEntry() = default;
 
 }  // namespace transport_security_state
 
-}  // namespace
+}  // namespace net

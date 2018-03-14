@@ -4,8 +4,10 @@
 
 #include "components/data_use_measurement/core/data_use_measurement.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
+#include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "components/data_use_measurement/core/data_use_ascriber.h"
@@ -47,9 +49,19 @@ void RecordUMAHistogramCount(const std::string& name, int64_t sample) {
 void IncreaseSparseHistogramByValue(const std::string& name,
                                     int64_t sample,
                                     int64_t value) {
+  // Convert raw value to KiB and probabilistically round up/down if the
+  // remainder is more than a random number [0, 1KiB). This gives a more
+  // accurate count when there are a large number of records. RandInt is
+  // "inclusive", hence the -1 for the max value.
+  int64_t value_kb = value >> 10;
+  if (value - (value_kb << 10) > base::RandInt(0, (1 << 10) - 1))
+    value_kb += 1;
+  if (value_kb == 0)
+    return;
+
   base::HistogramBase* histogram = base::SparseHistogram::FactoryGet(
-      name, base::HistogramBase::kUmaTargetedHistogramFlag);
-  histogram->AddCount(sample, value);
+      name + "KB", base::HistogramBase::kUmaTargetedHistogramFlag);
+  histogram->AddCount(sample, value_kb);
 }
 
 #if defined(OS_ANDROID)
@@ -100,6 +112,8 @@ DataUseMeasurement::DataUseMeasurement(
 {
   DCHECK(ascriber_);
   DCHECK(url_request_classifier_);
+  memset(user_traffic_content_type_bytes_, 0,
+         sizeof(user_traffic_content_type_bytes_));
 
 #if defined(OS_ANDROID)
   int64_t bytes = 0;
@@ -132,7 +146,8 @@ void DataUseMeasurement::OnBeforeURLRequest(net::URLRequest* request) {
     }
 
     data_use_user_data = new DataUseUserData(service_name, CurrentAppState());
-    request->SetUserData(DataUseUserData::kUserDataKey, data_use_user_data);
+    request->SetUserData(DataUseUserData::kUserDataKey,
+                         base::WrapUnique(data_use_user_data));
   } else {
     data_use_user_data->set_app_state(CurrentAppState());
   }
@@ -445,12 +460,17 @@ void DataUseMeasurement::RecordContentTypeHistogram(
   // Use the more primitive STATIC_HISTOGRAM_POINTER_BLOCK macro because the
   // simple UMA_HISTOGRAM_ENUMERATION macros don't expose 'AddCount'.
   if (is_user_traffic) {
-    STATIC_HISTOGRAM_POINTER_BLOCK(
-        "DataUse.ContentType.UserTraffic", AddCount(content_type, bytes),
-        base::LinearHistogram::FactoryGet(
-            "DataUse.ContentType.UserTraffic", 1, DataUseUserData::TYPE_MAX,
-            DataUseUserData::TYPE_MAX + 1,
-            base::HistogramBase::kUmaTargetedHistogramFlag));
+    bytes += user_traffic_content_type_bytes_[content_type];
+    if (bytes >= 1024) {
+      STATIC_HISTOGRAM_POINTER_BLOCK(
+          "DataUse.ContentType.UserTrafficKB",
+          AddCount(content_type, bytes / 1024),
+          base::LinearHistogram::FactoryGet(
+              "DataUse.ContentType.UserTrafficKB", 1, DataUseUserData::TYPE_MAX,
+              DataUseUserData::TYPE_MAX + 1,
+              base::HistogramBase::kUmaTargetedHistogramFlag));
+    }
+    user_traffic_content_type_bytes_[content_type] = bytes % 1024;
   } else {
     STATIC_HISTOGRAM_POINTER_BLOCK(
         "DataUse.ContentType.Services", AddCount(content_type, bytes),

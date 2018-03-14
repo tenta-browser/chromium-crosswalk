@@ -6,7 +6,10 @@
 
 #include <stddef.h>
 
+#include <utility>
+
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -91,31 +94,9 @@ void OnStringMethodWithErrorCallback(
 
 // Handles responses for methods without results.
 void OnVoidMethod(ShillClientHelper::RefHolder* ref_holder,
-                  const VoidDBusMethodCallback& callback,
+                  VoidDBusMethodCallback callback,
                   dbus::Response* response) {
-  if (!response) {
-    callback.Run(DBUS_METHOD_CALL_FAILURE);
-    return;
-  }
-  callback.Run(DBUS_METHOD_CALL_SUCCESS);
-}
-
-// Handles responses for methods with ObjectPath results.
-void OnObjectPathMethod(
-    ShillClientHelper::RefHolder* ref_holder,
-    const ObjectPathDBusMethodCallback& callback,
-    dbus::Response* response) {
-  if (!response) {
-    callback.Run(DBUS_METHOD_CALL_FAILURE, dbus::ObjectPath());
-    return;
-  }
-  dbus::MessageReader reader(response);
-  dbus::ObjectPath result;
-  if (!reader.PopObjectPath(&result)) {
-    callback.Run(DBUS_METHOD_CALL_FAILURE, dbus::ObjectPath());
-    return;
-  }
-  callback.Run(DBUS_METHOD_CALL_SUCCESS, result);
+  std::move(callback).Run(response != nullptr);
 }
 
 // Handles responses for methods with ObjectPath results and no status.
@@ -276,26 +257,14 @@ void ShillClientHelper::MonitorPropertyChangedInternal(
                                      weak_ptr_factory_.GetWeakPtr()));
 }
 
-void ShillClientHelper::CallVoidMethod(
-    dbus::MethodCall* method_call,
-    const VoidDBusMethodCallback& callback) {
+void ShillClientHelper::CallVoidMethod(dbus::MethodCall* method_call,
+                                       VoidDBusMethodCallback callback) {
   DCHECK(!callback.is_null());
   proxy_->CallMethod(
       method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-      base::Bind(&OnVoidMethod,
-                 base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
-                 callback));
-}
-
-void ShillClientHelper::CallObjectPathMethod(
-    dbus::MethodCall* method_call,
-    const ObjectPathDBusMethodCallback& callback) {
-  DCHECK(!callback.is_null());
-  proxy_->CallMethod(
-      method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-      base::Bind(&OnObjectPathMethod,
-                 base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
-                 callback));
+      base::BindOnce(&OnVoidMethod,
+                     base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
+                     std::move(callback)));
 }
 
 void ShillClientHelper::CallObjectPathMethodWithErrorCallback(
@@ -305,14 +274,11 @@ void ShillClientHelper::CallObjectPathMethodWithErrorCallback(
   DCHECK(!callback.is_null());
   DCHECK(!error_callback.is_null());
   proxy_->CallMethodWithErrorCallback(
-      method_call,
-      dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-      base::Bind(&OnObjectPathMethodWithoutStatus,
-                 base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
-                 callback,
-                 error_callback),
-      base::Bind(&OnError,
-                 error_callback));
+      method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+      base::BindOnce(&OnObjectPathMethodWithoutStatus,
+                     base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
+                     callback, error_callback),
+      base::BindOnce(&OnError, error_callback));
 }
 
 void ShillClientHelper::CallDictionaryValueMethod(
@@ -321,9 +287,9 @@ void ShillClientHelper::CallDictionaryValueMethod(
   DCHECK(!callback.is_null());
   proxy_->CallMethod(
       method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-      base::Bind(&OnDictionaryValueMethod,
-                 base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
-                 callback));
+      base::BindOnce(&OnDictionaryValueMethod,
+                     base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
+                     callback));
 }
 
 void ShillClientHelper::CallVoidMethodWithErrorCallback(
@@ -334,11 +300,10 @@ void ShillClientHelper::CallVoidMethodWithErrorCallback(
   DCHECK(!error_callback.is_null());
   proxy_->CallMethodWithErrorCallback(
       method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-      base::Bind(&OnVoidMethodWithErrorCallback,
-                 base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
-                 callback),
-      base::Bind(&OnError,
-                 error_callback));
+      base::BindOnce(&OnVoidMethodWithErrorCallback,
+                     base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
+                     callback),
+      base::BindOnce(&OnError, error_callback));
 }
 
 void ShillClientHelper::CallBooleanMethodWithErrorCallback(
@@ -349,12 +314,10 @@ void ShillClientHelper::CallBooleanMethodWithErrorCallback(
   DCHECK(!error_callback.is_null());
   proxy_->CallMethodWithErrorCallback(
       method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-      base::Bind(&OnBooleanMethodWithErrorCallback,
-                 base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
-                 callback,
-                 error_callback),
-      base::Bind(&OnError,
-                 error_callback));
+      base::BindOnce(&OnBooleanMethodWithErrorCallback,
+                     base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
+                     callback, error_callback),
+      base::BindOnce(&OnError, error_callback));
 }
 
 void ShillClientHelper::CallStringMethodWithErrorCallback(
@@ -365,12 +328,10 @@ void ShillClientHelper::CallStringMethodWithErrorCallback(
   DCHECK(!error_callback.is_null());
   proxy_->CallMethodWithErrorCallback(
       method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-      base::Bind(&OnStringMethodWithErrorCallback,
-                 base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
-                 callback,
-                 error_callback),
-      base::Bind(&OnError,
-                 error_callback));
+      base::BindOnce(&OnStringMethodWithErrorCallback,
+                     base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
+                     callback, error_callback),
+      base::BindOnce(&OnError, error_callback));
 }
 
 void ShillClientHelper::CallDictionaryValueMethodWithErrorCallback(
@@ -381,12 +342,10 @@ void ShillClientHelper::CallDictionaryValueMethodWithErrorCallback(
   DCHECK(!error_callback.is_null());
   proxy_->CallMethodWithErrorCallback(
       method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-      base::Bind(&OnDictionaryValueMethodWithErrorCallback,
-                 base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
-                 callback,
-                 error_callback),
-      base::Bind(&OnError,
-                 error_callback));
+      base::BindOnce(&OnDictionaryValueMethodWithErrorCallback,
+                     base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
+                     callback, error_callback),
+      base::BindOnce(&OnError, error_callback));
 }
 
 void ShillClientHelper::CallListValueMethodWithErrorCallback(
@@ -397,12 +356,10 @@ void ShillClientHelper::CallListValueMethodWithErrorCallback(
   DCHECK(!error_callback.is_null());
   proxy_->CallMethodWithErrorCallback(
       method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-      base::Bind(&OnListValueMethodWithErrorCallback,
-                 base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
-                 callback,
-                 error_callback),
-      base::Bind(&OnError,
-                 error_callback));
+      base::BindOnce(&OnListValueMethodWithErrorCallback,
+                     base::Owned(new RefHolder(weak_ptr_factory_.GetWeakPtr())),
+                     callback, error_callback),
+      base::BindOnce(&OnError, error_callback));
 }
 
 namespace {
@@ -441,7 +398,7 @@ void AppendValueDataAsVariantInternal(dbus::MessageWriter* writer,
                                       const base::Value& value,
                                       DictionaryType dictionary_type) {
   // Support basic types and string-to-string dictionary.
-  switch (value.GetType()) {
+  switch (value.type()) {
     case base::Value::Type::DICTIONARY: {
       const base::DictionaryValue* dictionary = NULL;
       value.GetAsDictionary(&dictionary);
@@ -482,7 +439,7 @@ void AppendValueDataAsVariantInternal(dbus::MessageWriter* writer,
       dbus::AppendBasicTypeValueDataAsVariant(writer, value);
       break;
     default:
-      NET_LOG(ERROR) << "Unexpected value type: " << value.GetType();
+      NET_LOG(ERROR) << "Unexpected value type: " << value.type();
   }
 }
 

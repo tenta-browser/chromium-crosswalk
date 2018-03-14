@@ -7,6 +7,9 @@
 
 #include <stddef.h>
 
+#include <string>
+#include <vector>
+
 #include "base/macros.h"
 #include "components/history/core/browser/keyword_id.h"
 #include "components/history/core/browser/url_row.h"
@@ -58,10 +61,6 @@ class URLDatabase {
   // Looks up a url given an id. Fills info with the data. Returns true on
   // success and false otherwise.
   bool GetURLRow(URLID url_id, URLRow* info);
-
-  // Looks up all urls that were typed in manually. Fills info with the data.
-  // Returns true on success and false otherwise.
-  bool GetAllTypedUrls(URLRows* urls);
 
   // Looks up the given URL and if it exists, fills the given pointers with the
   // associated info and returns the ID of that URL. If the info pointer is
@@ -150,9 +149,9 @@ class URLDatabase {
   bool InitURLEnumeratorForEverything(URLEnumerator* enumerator);
 
   // Initializes the given enumerator to enumerator all URLs in the database
-  // that are historically significant: ones having been visited within 3 days,
-  // having their URL manually typed more than once, or having been visited
-  // more than 3 times.
+  // that are historically significant: ones having their URL manually typed
+  // more than once, having been visited within 3 days, or having been visited
+  // more than 3 times in the order of the most significant ones first.
   bool InitURLEnumeratorForSignificant(URLEnumerator* enumerator);
 
   // Autocomplete --------------------------------------------------------------
@@ -168,8 +167,10 @@ class URLDatabase {
                              URLRows* results);
 
   // Returns true if the database holds some past typed navigation to a URL on
-  // the provided hostname.
-  bool IsTypedHost(const std::string& host);
+  // the provided hostname. If the return value is true and |scheme| is not
+  // nullptr, |scheme| holds the scheme of one of the corresponding entries in
+  // the database.
+  bool IsTypedHost(const std::string& host, std::string* scheme);
 
   // Tries to find the shortest URL beginning with |base| that strictly
   // prefixes |url|, and has minimum visit_ and typed_counts as specified.
@@ -286,9 +287,13 @@ class URLDatabase {
   // be used in between CreateTemporaryURLTable() and CommitTemporaryURLTable().
   URLID AddURLInternal(const URLRow& info, bool is_temporary);
 
+  // Return ture if the urls table's schema contains "AUTOINCREMENT".
+  // false if table do not contain AUTOINCREMENT, or the table is not created.
+  bool URLTableContainsAutoincrement();
+
   // Convenience to fill a URLRow. Must be in sync with the fields in
   // kHistoryURLRowFields.
-  static void FillURLRow(sql::Statement& s, URLRow* i);
+  static void FillURLRow(const sql::Statement& s, URLRow* i);
 
   // Returns the database for the functions in this interface. The decendent of
   // this class implements these functions to return its objects.
@@ -325,11 +330,11 @@ extern const int kLowQualityMatchAgeLimitInDays;
 // Returns the date threshold for considering an history item as significant.
 base::Time AutocompleteAgeThreshold();
 
-// Return true if |row| qualifies as an autocomplete candidate. If |time_cache|
+// Return true if |row| qualifies as an autocomplete candidate. If |threshold|
 // is_null() then this function determines a new time threshold each time it is
 // called. Since getting system time can be costly (such as for cases where
 // this function will be called in a loop over many history items), you can
-// provide a non-null |time_cache| by simply initializing |time_cache| with
+// provide a non-null |threshold| by simply initializing |threshold| with
 // AutocompleteAgeThreshold() (or any other desired time in the past).
 bool RowQualifiesAsSignificant(const URLRow& row, const base::Time& threshold);
 

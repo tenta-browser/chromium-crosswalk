@@ -21,6 +21,7 @@ import android.provider.Browser;
 import android.provider.Telephony;
 import android.support.v7.app.AlertDialog;
 import android.text.TextUtils;
+import android.view.WindowManager.BadTokenException;
 import android.webkit.MimeTypeMap;
 
 import org.chromium.base.ApplicationState;
@@ -30,10 +31,12 @@ import org.chromium.base.PathUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.blink_public.web.WebReferrerPolicy;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeTabbedActivity2;
 import org.chromium.chrome.browser.IntentHandler;
+import org.chromium.chrome.browser.LaunchIntentDispatcher;
 import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
 import org.chromium.chrome.browser.externalnav.ExternalNavigationHandler.OverrideUrlLoadingResult;
@@ -201,8 +204,10 @@ public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegat
         Context context = ContextUtils.getApplicationContext();
         try {
             // Early-out if the intent targets Chrome.
-            if (intent.getComponent() != null
-                    && context.getPackageName().equals(intent.getComponent().getPackageName())) {
+            if (context.getPackageName().equals(intent.getPackage())
+                    || (intent.getComponent() != null
+                               && context.getPackageName().equals(
+                                          intent.getComponent().getPackageName()))) {
                 return true;
             }
 
@@ -343,7 +348,6 @@ public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegat
         boolean activityWasLaunched;
         // Only touches disk on Kitkat. See http://crbug.com/617725 for more context.
         StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskWrites();
-        StrictMode.allowThreadDiskReads();
         try {
             forcePdfViewerAsIntentHandlerIfNeeded(intent);
             if (proxy) {
@@ -376,7 +380,19 @@ public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegat
     }
 
     @Override
-    public void startIncognitoIntent(final Intent intent, final String referrerUrl,
+    public boolean startIncognitoIntent(final Intent intent, final String referrerUrl,
+            final String fallbackUrl, final Tab tab, final boolean needsToCloseTab,
+            final boolean proxy) {
+        try {
+            startIncognitoIntentInternal(
+                    intent, referrerUrl, fallbackUrl, tab, needsToCloseTab, proxy);
+        } catch (BadTokenException e) {
+            return false;
+        }
+        return true;
+    }
+
+    private void startIncognitoIntentInternal(final Intent intent, final String referrerUrl,
             final String fallbackUrl, final Tab tab, final boolean needsToCloseTab,
             final boolean proxy) {
         Context context = tab.getWindowAndroid().getContext().get();
@@ -485,7 +501,8 @@ public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegat
 
         LoadUrlParams loadUrlParams = new LoadUrlParams(url, PageTransition.AUTO_TOPLEVEL);
         if (!TextUtils.isEmpty(referrerUrl)) {
-            Referrer referrer = new Referrer(referrerUrl, Referrer.REFERRER_POLICY_ALWAYS);
+            Referrer referrer =
+                    new Referrer(referrerUrl, WebReferrerPolicy.ALWAYS);
             loadUrlParams.setReferrer(referrer);
         }
         tab.loadUrl(loadUrlParams);
@@ -493,15 +510,24 @@ public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegat
 
     @Override
     public OverrideUrlLoadingResult clobberCurrentTab(
-            String url, String referrerUrl, Tab tab) {
+            String url, String referrerUrl, final Tab tab) {
         int transitionType = PageTransition.LINK;
-        LoadUrlParams loadUrlParams = new LoadUrlParams(url, transitionType);
+        final LoadUrlParams loadUrlParams = new LoadUrlParams(url, transitionType);
         if (!TextUtils.isEmpty(referrerUrl)) {
-            Referrer referrer = new Referrer(referrerUrl, Referrer.REFERRER_POLICY_ALWAYS);
+            Referrer referrer =
+                    new Referrer(referrerUrl, WebReferrerPolicy.ALWAYS);
             loadUrlParams.setReferrer(referrer);
         }
         if (tab != null) {
-            tab.loadUrl(loadUrlParams);
+            // Loading URL will start a new navigation which cancels the current one
+            // that this clobbering is being done for. It leads to UAF. To avoid that,
+            // we're loading URL asynchronously. See https://crbug.com/732260.
+            ThreadUtils.postOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    tab.loadUrl(loadUrlParams);
+                }
+            });
             return OverrideUrlLoadingResult.OVERRIDE_WITH_CLOBBERING_TAB;
         } else {
             assert false : "clobberCurrentTab was called with an empty tab.";
@@ -558,6 +584,8 @@ public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegat
 
     @Override
     public boolean isSerpReferrer(Tab tab) {
+        // TODO (thildebr): Investigate whether or not we can use getLastCommittedUrl() instead of
+        // the NavigationController.
         if (tab == null || tab.getWebContents() == null) return false;
 
         NavigationController nController = tab.getWebContents().getNavigationController();
@@ -585,16 +613,20 @@ public class ExternalNavigationDelegateImpl implements ExternalNavigationDelegat
             Intent resolvedIntent = new Intent(intent);
             resolvedIntent.setData(Uri.parse(url));
             return handler.handleIncomingIntent(getAvailableContext(), resolvedIntent,
-                    ChromeLauncherActivity.isCustomTabIntent(resolvedIntent), true);
+                    LaunchIntentDispatcher.isCustomTabIntent(resolvedIntent), true);
         } else if (!isIncomingRedirect) {
             // Check if the navigation is coming from SERP and skip instant app handling.
             if (isSerpReferrer(tab)) return false;
-            return handler.handleNavigation(
-                    getAvailableContext(), url,
-                    TextUtils.isEmpty(referrerUrl) ? null : Uri.parse(referrerUrl),
-                    tab.getWebContents());
+            return handler.handleNavigation(getAvailableContext(), url,
+                    TextUtils.isEmpty(referrerUrl) ? null : Uri.parse(referrerUrl), tab);
         }
         return false;
+    }
+
+    @Override
+    public String getPreviousUrl() {
+        if (mTab == null || mTab.getWebContents() == null) return null;
+        return mTab.getWebContents().getLastCommittedUrl();
     }
 
     /**

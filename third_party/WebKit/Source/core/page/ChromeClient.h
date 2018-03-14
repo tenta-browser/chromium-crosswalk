@@ -28,32 +28,34 @@
 #include "core/CoreExport.h"
 #include "core/dom/AXObjectCache.h"
 #include "core/dom/AnimationWorkletProxyClient.h"
+#include "core/dom/SandboxFlags.h"
+#include "core/html/forms/PopupMenu.h"
 #include "core/inspector/ConsoleTypes.h"
 #include "core/loader/FrameLoader.h"
 #include "core/loader/NavigationPolicy.h"
 #include "core/style/ComputedStyleConstants.h"
 #include "platform/Cursor.h"
-#include "platform/HostWindow.h"
-#include "platform/PopupMenu.h"
+#include "platform/PlatformChromeClient.h"
+#include "platform/WebFrameScheduler.h"
+#include "platform/graphics/TouchAction.h"
 #include "platform/heap/Handle.h"
 #include "platform/scroll/ScrollTypes.h"
+#include "platform/text/TextDirection.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/Optional.h"
-#include "platform/wtf/Vector.h"
 #include "public/platform/BlameContext.h"
 #include "public/platform/WebDragOperation.h"
 #include "public/platform/WebEventListenerProperties.h"
 #include "public/platform/WebFocusType.h"
+#include "public/platform/WebOverscrollBehavior.h"
 
 // To avoid conflicts with the CreateWindow macro from the Windows SDK...
 #undef CreateWindow
 
 namespace blink {
 
-class AXObject;
 class ColorChooser;
 class ColorChooserClient;
-class CompositorWorkerProxyClient;
 class CompositorAnimationTimeline;
 class DateTimeChooser;
 class DateTimeChooserClient;
@@ -71,22 +73,26 @@ class KeyboardEvent;
 class LocalFrame;
 class Node;
 class Page;
+class PagePopup;
+class PagePopupClient;
 class PopupOpeningObserver;
 class WebDragData;
-class WebFrameScheduler;
 class WebImage;
 class WebLayer;
 class WebLayerTreeView;
+class WebTappedInfo;
+class WebViewImpl;
 
 struct CompositedSelection;
 struct DateTimeChooserParameters;
 struct FrameLoadRequest;
 struct ViewportDescription;
+struct WebCursorInfo;
 struct WebPoint;
 struct WebScreenInfo;
-struct WindowFeatures;
+struct WebWindowFeatures;
 
-class CORE_EXPORT ChromeClient : public HostWindow {
+class CORE_EXPORT ChromeClient : public PlatformChromeClient {
  public:
   virtual void ChromeDestroyed() = 0;
 
@@ -124,11 +130,10 @@ class CORE_EXPORT ChromeClient : public HostWindow {
   // request could be fulfilled. The ChromeClient should not load the request.
   virtual Page* CreateWindow(LocalFrame*,
                              const FrameLoadRequest&,
-                             const WindowFeatures&,
-                             NavigationPolicy) = 0;
-  virtual void Show(NavigationPolicy = kNavigationPolicyIgnore) = 0;
-
-  void SetWindowFeatures(const WindowFeatures&);
+                             const WebWindowFeatures&,
+                             NavigationPolicy,
+                             SandboxFlags) = 0;
+  virtual void Show(NavigationPolicy) = 0;
 
   // All the parameters should be in viewport space. That is, if an event
   // scrolls by 10 px, but due to a 2X page scale we apply a 5px scroll to the
@@ -137,21 +142,8 @@ class CORE_EXPORT ChromeClient : public HostWindow {
   virtual void DidOverscroll(const FloatSize& overscroll_delta,
                              const FloatSize& accumulated_overscroll,
                              const FloatPoint& position_in_viewport,
-                             const FloatSize& velocity_in_viewport) = 0;
-
-  virtual void SetToolbarsVisible(bool) = 0;
-  virtual bool ToolbarsVisible() = 0;
-
-  virtual void SetStatusbarVisible(bool) = 0;
-  virtual bool StatusbarVisible() = 0;
-
-  virtual void SetScrollbarsVisible(bool) = 0;
-  virtual bool ScrollbarsVisible() = 0;
-
-  virtual void SetMenubarVisible(bool) = 0;
-  virtual bool MenubarVisible() = 0;
-
-  virtual void SetResizable(bool) = 0;
+                             const FloatSize& velocity_in_viewport,
+                             const WebOverscrollBehavior&) = 0;
 
   virtual bool ShouldReportDetailedMessageForSource(LocalFrame&,
                                                     const String& source) = 0;
@@ -176,24 +168,31 @@ class CORE_EXPORT ChromeClient : public HostWindow {
                             const String& message,
                             const String& default_value,
                             String& result);
-  virtual void SetStatusbarText(const String&) = 0;
   virtual bool TabsToLinks() = 0;
 
-  virtual void* WebView() const = 0;
+  virtual WebViewImpl* GetWebView() const = 0;
 
-  // Methods used by HostWindow.
+  // Methods used by PlatformChromeClient.
   virtual WebScreenInfo GetScreenInfo() const = 0;
   virtual void SetCursor(const Cursor&, LocalFrame* local_root) = 0;
-  // End methods used by HostWindow.
+  // End methods used by PlatformChromeClient.
+
+  virtual void SetCursorOverridden(bool) = 0;
+
+  virtual void AutoscrollStart(WebFloatPoint position, LocalFrame*) {}
+  virtual void AutoscrollFling(WebFloatSize velocity, LocalFrame*) {}
+  virtual void AutoscrollEnd(LocalFrame*) {}
 
   virtual Cursor LastSetCursorForTesting() const = 0;
   Node* LastSetTooltipNodeForTesting() const {
     return last_mouse_over_node_.Get();
   }
 
+  virtual void SetCursorForPlugin(const WebCursorInfo&, LocalFrame*) = 0;
+
   // Returns a custom visible content rect if a viewport override is active.
   virtual WTF::Optional<IntRect> VisibleContentRectForPainting() const {
-    return WTF::kNullopt;
+    return WTF::nullopt;
   }
 
   virtual void DispatchViewportPropertiesDidChange(
@@ -205,7 +204,8 @@ class CORE_EXPORT ChromeClient : public HostWindow {
     return scale;
   }
   virtual void MainFrameScrollOffsetChanged() const {}
-  virtual void LayoutUpdated(LocalFrame*) const {}
+  virtual void ResizeAfterLayout() const {}
+  virtual void LayoutUpdated() const {}
 
   void MouseDidMoveOverElement(LocalFrame&, const HitTestResult&);
   virtual void SetToolTip(LocalFrame&, const String&, TextDirection) = 0;
@@ -213,26 +213,24 @@ class CORE_EXPORT ChromeClient : public HostWindow {
 
   bool Print(LocalFrame*);
 
-  virtual void AnnotatedRegionsChanged() = 0;
-
   virtual ColorChooser* OpenColorChooser(LocalFrame*,
                                          ColorChooserClient*,
                                          const Color&) = 0;
 
   // This function is used for:
-  //  - Mandatory date/time choosers if !ENABLE(INPUT_MULTIPLE_FIELDS_UI)
+  //  - Mandatory date/time choosers if InputMultipleFieldsUI flag is not set
   //  - Date/time choosers for types for which
-  //    LayoutTheme::supportsCalendarPicker returns true, if
-  //    ENABLE(INPUT_MULTIPLE_FIELDS_UI)
+  //    LayoutTheme::SupportsCalendarPicker returns true, if
+  //    InputMultipleFieldsUI flag is set
   //  - <datalist> UI for date/time input types regardless of
-  //    ENABLE(INPUT_MULTIPLE_FIELDS_UI)
+  //    InputMultipleFieldsUI flag
   virtual DateTimeChooser* OpenDateTimeChooser(
       DateTimeChooserClient*,
       const DateTimeChooserParameters&) = 0;
 
   virtual void OpenTextDataListChooser(HTMLInputElement&) = 0;
 
-  virtual void OpenFileChooser(LocalFrame*, PassRefPtr<FileChooser>) = 0;
+  virtual void OpenFileChooser(LocalFrame*, scoped_refptr<FileChooser>) = 0;
 
   // Asychronous request to enumerate all files in a directory chosen by the
   // user.
@@ -256,7 +254,8 @@ class CORE_EXPORT ChromeClient : public HostWindow {
 
   virtual void EnterFullscreen(LocalFrame&) {}
   virtual void ExitFullscreen(LocalFrame&) {}
-  virtual void FullscreenElementChanged(Element*, Element*) {}
+  virtual void FullscreenElementChanged(Element* old_element,
+                                        Element* new_element) {}
 
   virtual void ClearCompositedSelection(LocalFrame*) {}
   virtual void UpdateCompositedSelection(LocalFrame*,
@@ -270,23 +269,30 @@ class CORE_EXPORT ChromeClient : public HostWindow {
       WebEventListenerClass) const = 0;
   virtual void UpdateEventRectsForSubframeIfNecessary(LocalFrame*) = 0;
   virtual void SetHasScrollEventHandlers(LocalFrame*, bool) = 0;
-
+  virtual void SetNeedsLowLatencyInput(LocalFrame*, bool) = 0;
+  virtual void RequestUnbufferedInputEvents(LocalFrame*) = 0;
   virtual void SetTouchAction(LocalFrame*, TouchAction) = 0;
 
   // Checks if there is an opened popup, called by LayoutMenuList::showPopup().
   virtual bool HasOpenedPopup() const = 0;
   virtual PopupMenu* OpenPopupMenu(LocalFrame&, HTMLSelectElement&) = 0;
+  virtual PagePopup* OpenPagePopup(PagePopupClient*) = 0;
+  virtual void ClosePagePopup(PagePopup*) = 0;
   virtual DOMWindow* PagePopupWindowForTesting() const = 0;
 
-  virtual void PostAccessibilityNotification(AXObject*,
-                                             AXObjectCache::AXNotification) {}
+  virtual void SetBrowserControlsState(float top_height,
+                                       float bottom_height,
+                                       bool shrinks_layout){};
+  virtual void SetBrowserControlsShownRatio(float){};
+
   virtual String AcceptLanguages() = 0;
 
   enum DialogType {
     kAlertDialog = 0,
     kConfirmDialog = 1,
     kPromptDialog = 2,
-    kHTMLDialog = 3
+    kHTMLDialog = 3,
+    kPrintDialog = 4
   };
   virtual bool ShouldOpenModalDialogDuringPageDismissal(
       LocalFrame&,
@@ -314,45 +320,39 @@ class CORE_EXPORT ChromeClient : public HostWindow {
   virtual void AjaxSucceeded(LocalFrame*) {}
 
   // Input method editor related functions.
-  virtual void ResetInputMethod() {}
-  virtual void DidUpdateTextOfFocusedElementByNonUserInput(LocalFrame&) {}
   virtual void ShowVirtualKeyboardOnElementFocus(LocalFrame&) {}
 
   virtual void RegisterViewportLayers() const {}
 
-  virtual void ShowUnhandledTapUIIfNeeded(IntPoint, Node*, bool) {}
+  virtual void ShowUnhandledTapUIIfNeeded(WebTappedInfo&) {}
 
   virtual void OnMouseDown(Node&) {}
 
   virtual void DidUpdateBrowserControls() const {}
 
+  virtual void SetOverscrollBehavior(const WebOverscrollBehavior&) {}
+
   virtual void RegisterPopupOpeningObserver(PopupOpeningObserver*) = 0;
   virtual void UnregisterPopupOpeningObserver(PopupOpeningObserver*) = 0;
-
-  virtual CompositorWorkerProxyClient* CreateCompositorWorkerProxyClient(
-      LocalFrame*) = 0;
-  virtual AnimationWorkletProxyClient* CreateAnimationWorkletProxyClient(
-      LocalFrame*) = 0;
+  virtual void NotifyPopupOpeningObservers() const = 0;
 
   virtual FloatSize ElasticOverscroll() const { return FloatSize(); }
 
-  // Called when observed XHR, fetch, and other fetch request with non-GET
-  // method is initiated from javascript. At this time, it is not guaranteed
-  // that this is comprehensive.
-  virtual void DidObserveNonGetFetchFromScript() const {}
-
   virtual std::unique_ptr<WebFrameScheduler> CreateFrameScheduler(
-      BlameContext*) = 0;
+      BlameContext*,
+      WebFrameScheduler::FrameType) = 0;
 
-  // Returns the time of the beginning of the last beginFrame, in seconds, if
-  // any, and 0.0 otherwise.
-  virtual double LastFrameTimeMonotonic() const { return 0.0; }
-
-  virtual void InstallSupplements(LocalFrame&) {}
+  virtual void InstallSupplements(LocalFrame&);
 
   virtual WebLayerTreeView* GetWebLayerTreeView(LocalFrame*) { return nullptr; }
 
-  DECLARE_TRACE();
+  virtual void RequestDecode(LocalFrame*,
+                             const PaintImage& image,
+                             WTF::Function<void(bool)> callback) {
+    std::move(callback).Run(false);
+  }
+
+  void Trace(blink::Visitor*);
 
  protected:
   ~ChromeClient() override {}
@@ -370,7 +370,7 @@ class CORE_EXPORT ChromeClient : public HostWindow {
   virtual void PrintDelegate(LocalFrame*) = 0;
 
  private:
-  bool CanOpenModalIfDuringPageDismissal(Frame* main_frame,
+  bool CanOpenModalIfDuringPageDismissal(Frame& main_frame,
                                          DialogType,
                                          const String& message);
   void SetToolTip(LocalFrame&, const HitTestResult&);

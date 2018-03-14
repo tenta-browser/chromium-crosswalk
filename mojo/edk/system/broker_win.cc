@@ -13,8 +13,8 @@
 #include "mojo/edk/embedder/named_platform_handle.h"
 #include "mojo/edk/embedder/named_platform_handle_utils.h"
 #include "mojo/edk/embedder/platform_handle.h"
-#include "mojo/edk/embedder/platform_handle_vector.h"
 #include "mojo/edk/embedder/platform_shared_buffer.h"
+#include "mojo/edk/embedder/scoped_platform_handle.h"
 #include "mojo/edk/system/broker.h"
 #include "mojo/edk/system/broker_messages.h"
 #include "mojo/edk/system/channel.h"
@@ -35,14 +35,12 @@ bool TakeHandlesFromBrokerMessage(Channel::Message* message,
     return false;
   }
 
-  ScopedPlatformHandleVectorPtr handles = message->TakeHandles();
-  DCHECK(handles);
-  DCHECK_EQ(handles->size(), num_handles);
+  std::vector<ScopedPlatformHandle> handles = message->TakeHandles();
+  DCHECK_EQ(handles.size(), num_handles);
   DCHECK(out_handles);
 
   for (size_t i = 0; i < num_handles; ++i)
-    out_handles[i] = ScopedPlatformHandle((*handles)[i]);
-  handles->clear();
+    out_handles[i] = std::move(handles[i]);
   return true;
 }
 
@@ -67,7 +65,6 @@ Channel::MessagePtr WaitForBrokerMessage(PlatformHandle platform_handle,
 
     base::debug::Alias(&buffer[0]);
     base::debug::Alias(&bytes_read);
-    base::debug::Alias(message.get());
     CHECK(false);
     return nullptr;
   }
@@ -79,7 +76,6 @@ Channel::MessagePtr WaitForBrokerMessage(PlatformHandle platform_handle,
 
     base::debug::Alias(&buffer[0]);
     base::debug::Alias(&bytes_read);
-    base::debug::Alias(message.get());
     CHECK(false);
     return nullptr;
   }
@@ -108,7 +104,7 @@ Broker::Broker(ScopedPlatformHandle handle) : sync_channel_(std::move(handle)) {
     const InitData* data = reinterpret_cast<const InitData*>(header + 1);
     CHECK_EQ(message->payload_size(),
              sizeof(BrokerMessageHeader) + sizeof(InitData) +
-             data->pipe_name_length * sizeof(base::char16));
+                 data->pipe_name_length * sizeof(base::char16));
     const base::char16* name_data =
         reinterpret_cast<const base::char16*>(data + 1);
     CHECK(data->pipe_name_length);
@@ -144,8 +140,13 @@ scoped_refptr<PlatformSharedBuffer> Broker::GetSharedBuffer(size_t num_bytes) {
       sync_channel_.get(), BrokerMessageType::BUFFER_RESPONSE);
   if (response &&
       TakeHandlesFromBrokerMessage(response.get(), 2, &handles[0])) {
+    BufferResponseData* data;
+    if (!GetBrokerMessageData(response.get(), &data))
+      return nullptr;
+    base::UnguessableToken guid =
+        base::UnguessableToken::Deserialize(data->guid_high, data->guid_low);
     return PlatformSharedBuffer::CreateFromPlatformHandlePair(
-        num_bytes, std::move(handles[0]), std::move(handles[1]));
+        num_bytes, guid, std::move(handles[0]), std::move(handles[1]));
   }
 
   return nullptr;

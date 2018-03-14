@@ -41,7 +41,7 @@ class FlexBoxIterator {
  public:
   FlexBoxIterator(LayoutDeprecatedFlexibleBox* parent)
       : box_(parent), largest_ordinal_(1) {
-    if (box_->Style()->BoxOrient() == HORIZONTAL &&
+    if (box_->Style()->BoxOrient() == EBoxOrient::kHorizontal &&
         !box_->Style()->IsLeftToRightDirection())
       forward_ = box_->Style()->BoxDirection() != EBoxDirection::kNormal;
     else
@@ -61,7 +61,8 @@ class FlexBoxIterator {
   }
 
   void Reset() {
-    current_child_ = 0;
+    current_child_ = nullptr;
+    natural_current_child_ = nullptr;
     ordinal_iteration_ = -1;
   }
 
@@ -107,6 +108,19 @@ class FlexBoxIterator {
     } while (!current_child_ ||
              (!current_child_->IsAnonymous() &&
               current_child_->Style()->BoxOrdinalGroup() != current_ordinal_));
+
+    // This peice of code just exists for detecting if this iterator actually
+    // does something other than returning the default order.
+    if (!natural_current_child_)
+      natural_current_child_ = box_->FirstChildBox();
+    else
+      natural_current_child_ = natural_current_child_->NextSiblingBox();
+
+    if (natural_current_child_ != current_child_) {
+      UseCounter::Count(box_->GetDocument(),
+                        WebFeature::kWebkitBoxNotDefaultOrder);
+    }
+
     return current_child_;
   }
 
@@ -119,6 +133,7 @@ class FlexBoxIterator {
 
   LayoutDeprecatedFlexibleBox* box_;
   LayoutBox* current_child_;
+  LayoutBox* natural_current_child_;
   bool forward_;
   unsigned current_ordinal_;
   unsigned largest_ordinal_;
@@ -269,14 +284,15 @@ LayoutDeprecatedFlexibleBox::LayoutDeprecatedFlexibleBox(Element& element)
   stretching_children_ = false;
   if (!IsAnonymous()) {
     const KURL& url = GetDocument().Url();
-    if (url.ProtocolIs("chrome"))
-      UseCounter::Count(GetDocument(), UseCounter::kDeprecatedFlexboxChrome);
-    else if (url.ProtocolIs("chrome-extension"))
+    if (url.ProtocolIs("chrome")) {
+      UseCounter::Count(GetDocument(), WebFeature::kDeprecatedFlexboxChrome);
+    } else if (url.ProtocolIs("chrome-extension")) {
       UseCounter::Count(GetDocument(),
-                        UseCounter::kDeprecatedFlexboxChromeExtension);
-    else
+                        WebFeature::kDeprecatedFlexboxChromeExtension);
+    } else {
       UseCounter::Count(GetDocument(),
-                        UseCounter::kDeprecatedFlexboxWebContent);
+                        WebFeature::kDeprecatedFlexboxWebContent);
+    }
   }
 }
 
@@ -363,6 +379,35 @@ void LayoutDeprecatedFlexibleBox::ComputeIntrinsicLogicalWidths(
 void LayoutDeprecatedFlexibleBox::UpdateBlockLayout(bool relayout_children) {
   DCHECK(NeedsLayout());
 
+  UseCounter::Count(GetDocument(), WebFeature::kWebkitBoxLayout);
+
+  if (Style()->BoxAlign() != ComputedStyleInitialValues::InitialBoxAlign())
+    UseCounter::Count(GetDocument(), WebFeature::kWebkitBoxAlignNotInitial);
+
+  if (Style()->BoxDirection() !=
+      ComputedStyleInitialValues::InitialBoxDirection())
+    UseCounter::Count(GetDocument(), WebFeature::kWebkitBoxDirectionNotInitial);
+
+  if (Style()->BoxLines() != ComputedStyleInitialValues::InitialBoxLines())
+    UseCounter::Count(GetDocument(), WebFeature::kWebkitBoxLinesNotInitial);
+
+  if (Style()->BoxPack() != ComputedStyleInitialValues::InitialBoxPack())
+    UseCounter::Count(GetDocument(), WebFeature::kWebkitBoxPackNotInitial);
+
+  if (!FirstChildBox()) {
+    UseCounter::Count(GetDocument(), WebFeature::kWebkitBoxNoChildren);
+  } else if (!FirstChildBox()->NextSiblingBox()) {
+    UseCounter::Count(GetDocument(), WebFeature::kWebkitBoxOneChild);
+
+    if (FirstChildBox()->IsLayoutBlockFlow() &&
+        ToLayoutBlockFlow(FirstChildBox())->ChildrenInline()) {
+      UseCounter::Count(GetDocument(),
+                        WebFeature::kWebkitBoxOneChildIsLayoutBlockFlowInline);
+    }
+  } else {
+    UseCounter::Count(GetDocument(), WebFeature::kWebkitBoxManyChildren);
+  }
+
   if (!relayout_children && SimplifiedLayout())
     return;
 
@@ -379,18 +424,21 @@ void LayoutDeprecatedFlexibleBox::UpdateBlockLayout(bool relayout_children) {
 
     if (previous_size != Size() ||
         (Parent()->IsDeprecatedFlexibleBox() &&
-         Parent()->Style()->BoxOrient() == HORIZONTAL &&
-         Parent()->Style()->BoxAlign() == BSTRETCH))
+         Parent()->Style()->BoxOrient() == EBoxOrient::kHorizontal &&
+         Parent()->Style()->BoxAlign() == EBoxAlignment::kStretch))
       relayout_children = true;
 
     SetHeight(LayoutUnit());
 
     stretching_children_ = false;
 
-    if (IsHorizontal())
+    if (IsHorizontal()) {
+      UseCounter::Count(GetDocument(), WebFeature::kWebkitBoxLayoutHorizontal);
       LayoutHorizontalBox(relayout_children);
-    else
+    } else {
+      UseCounter::Count(GetDocument(), WebFeature::kWebkitBoxLayoutVertical);
       LayoutVerticalBox(relayout_children);
+    }
 
     LayoutUnit old_client_after_edge = ClientLogicalBottom();
     UpdateLogicalHeight();
@@ -403,7 +451,6 @@ void LayoutDeprecatedFlexibleBox::UpdateBlockLayout(bool relayout_children) {
     ComputeOverflow(old_client_after_edge);
   }
 
-  UpdateLayerTransformAfterLayout();
   UpdateAfterLayout();
 
   ClearNeedsLayout();
@@ -411,11 +458,28 @@ void LayoutDeprecatedFlexibleBox::UpdateBlockLayout(bool relayout_children) {
 
 // The first walk over our kids is to find out if we have any flexible children.
 static void GatherFlexChildrenInfo(FlexBoxIterator& iterator,
+                                   Document& document,
                                    bool relayout_children,
                                    unsigned& highest_flex_group,
                                    unsigned& lowest_flex_group,
                                    bool& have_flex) {
   for (LayoutBox* child = iterator.First(); child; child = iterator.Next()) {
+    if (child->Style()->BoxFlex() !=
+        ComputedStyleInitialValues::InitialBoxFlex())
+      UseCounter::Count(document, WebFeature::kWebkitBoxChildFlexNotInitial);
+
+    if (child->Style()->BoxFlexGroup() !=
+        ComputedStyleInitialValues::InitialBoxFlexGroup()) {
+      UseCounter::Count(document,
+                        WebFeature::kWebkitBoxChildFlexGroupNotInitial);
+    }
+
+    if (child->Style()->BoxOrdinalGroup() !=
+        ComputedStyleInitialValues::InitialBoxOrdinalGroup()) {
+      UseCounter::Count(document,
+                        WebFeature::kWebkitBoxChildOrdinalGroupNotInitial);
+    }
+
     // Check to see if this child flexes.
     if (!ChildDoesNotAffectWidthOrFlexing(child) &&
         child->Style()->BoxFlex() > 0.0f) {
@@ -452,8 +516,8 @@ void LayoutDeprecatedFlexibleBox::LayoutHorizontalBox(bool relayout_children) {
   unsigned highest_flex_group = 0;
   unsigned lowest_flex_group = 0;
   bool have_flex = false, flexing_children = false;
-  GatherFlexChildrenInfo(iterator, relayout_children, highest_flex_group,
-                         lowest_flex_group, have_flex);
+  GatherFlexChildrenInfo(iterator, GetDocument(), relayout_children,
+                         highest_flex_group, lowest_flex_group, have_flex);
 
   PaintLayerScrollableArea::DelayScrollOffsetClampScope delay_clamp_scope;
 
@@ -493,7 +557,7 @@ void LayoutDeprecatedFlexibleBox::LayoutHorizontalBox(bool relayout_children) {
       child->LayoutIfNeeded();
 
       // Update our height and overflow height.
-      if (Style()->BoxAlign() == BBASELINE) {
+      if (Style()->BoxAlign() == EBoxAlignment::kBaseline) {
         LayoutUnit ascent(child->FirstLineBoxBaseline());
         if (ascent == -1)
           ascent = child->Size().Height() + child->MarginBottom();
@@ -535,7 +599,7 @@ void LayoutDeprecatedFlexibleBox::LayoutHorizontalBox(bool relayout_children) {
       height_specified = true;
 
     // Now that our height is actually known, we can place our boxes.
-    stretching_children_ = (Style()->BoxAlign() == BSTRETCH);
+    stretching_children_ = (Style()->BoxAlign() == EBoxAlignment::kStretch);
     for (LayoutBox* child = iterator.First(); child; child = iterator.Next()) {
       if (child->IsOutOfFlowPositioned()) {
         child->ContainingBlock()->InsertPositionedObject(child);
@@ -581,14 +645,14 @@ void LayoutDeprecatedFlexibleBox::LayoutHorizontalBox(bool relayout_children) {
       x_pos += child->MarginLeft();
       LayoutUnit child_y = y_pos;
       switch (Style()->BoxAlign()) {
-        case BCENTER:
+        case EBoxAlignment::kCenter:
           child_y += child->MarginTop() +
                      ((ContentHeight() -
                        (child->Size().Height() + child->MarginHeight())) /
                       2)
                          .ClampNegativeToZero();
           break;
-        case BBASELINE: {
+        case EBoxAlignment::kBaseline: {
           LayoutUnit ascent(child->FirstLineBoxBaseline());
           if (ascent == -1)
             ascent = child->Size().Height() + child->MarginBottom();
@@ -596,7 +660,7 @@ void LayoutDeprecatedFlexibleBox::LayoutHorizontalBox(bool relayout_children) {
           child_y += child->MarginTop() + (max_ascent - ascent);
           break;
         }
-        case BEND:
+        case EBoxAlignment::kEnd:
           child_y +=
               ContentHeight() - child->MarginBottom() - child->Size().Height();
           break;
@@ -724,12 +788,12 @@ void LayoutDeprecatedFlexibleBox::LayoutHorizontalBox(bool relayout_children) {
   } while (have_flex);
 
   if (remaining_space > 0 && ((Style()->IsLeftToRightDirection() &&
-                               Style()->BoxPack() != kBoxPackStart) ||
+                               Style()->BoxPack() != EBoxPack::kStart) ||
                               (!Style()->IsLeftToRightDirection() &&
-                               Style()->BoxPack() != kBoxPackEnd))) {
+                               Style()->BoxPack() != EBoxPack::kEnd))) {
     // Children must be repositioned.
     LayoutUnit offset;
-    if (Style()->BoxPack() == kBoxPackJustify) {
+    if (Style()->BoxPack() == EBoxPack::kJustify) {
       // Determine the total number of children.
       int total_children = 0;
       for (LayoutBox* child = iterator.First(); child;
@@ -763,7 +827,7 @@ void LayoutDeprecatedFlexibleBox::LayoutHorizontalBox(bool relayout_children) {
         }
       }
     } else {
-      if (Style()->BoxPack() == kBoxPackCenter)
+      if (Style()->BoxPack() == EBoxPack::kCenter)
         offset += remaining_space / 2;
       else  // END for LTR, START for RTL
         offset += remaining_space;
@@ -798,8 +862,8 @@ void LayoutDeprecatedFlexibleBox::LayoutVerticalBox(bool relayout_children) {
   unsigned highest_flex_group = 0;
   unsigned lowest_flex_group = 0;
   bool have_flex = false, flexing_children = false;
-  GatherFlexChildrenInfo(iterator, relayout_children, highest_flex_group,
-                         lowest_flex_group, have_flex);
+  GatherFlexChildrenInfo(iterator, GetDocument(), relayout_children,
+                         highest_flex_group, lowest_flex_group, have_flex);
 
   // We confine the line clamp ugliness to vertical flexible boxes (thus keeping
   // it out of
@@ -861,15 +925,16 @@ void LayoutDeprecatedFlexibleBox::LayoutVerticalBox(bool relayout_children) {
       // We can place the child now, using our value of box-align.
       LayoutUnit child_x = BorderLeft() + PaddingLeft();
       switch (Style()->BoxAlign()) {
-        case BCENTER:
-        case BBASELINE:  // Baseline just maps to center for vertical boxes
+        case EBoxAlignment::kCenter:
+        case EBoxAlignment::kBaseline:  // Baseline just maps to center for
+                                        // vertical boxes
           child_x += child->MarginLeft() +
                      ((ContentWidth() -
                        (child->Size().Width() + child->MarginWidth())) /
                       2)
                          .ClampNegativeToZero();
           break;
-        case BEND:
+        case EBoxAlignment::kEnd:
           if (!Style()->IsLeftToRightDirection()) {
             child_x += child->MarginLeft();
           } else {
@@ -1030,10 +1095,10 @@ void LayoutDeprecatedFlexibleBox::LayoutVerticalBox(bool relayout_children) {
     }
   } while (have_flex);
 
-  if (Style()->BoxPack() != kBoxPackStart && remaining_space > 0) {
+  if (Style()->BoxPack() != EBoxPack::kStart && remaining_space > 0) {
     // Children must be repositioned.
     LayoutUnit offset;
-    if (Style()->BoxPack() == kBoxPackJustify) {
+    if (Style()->BoxPack() == EBoxPack::kJustify) {
       // Determine the total number of children.
       int total_children = 0;
       for (LayoutBox* child = iterator.First(); child;
@@ -1067,7 +1132,7 @@ void LayoutDeprecatedFlexibleBox::LayoutVerticalBox(bool relayout_children) {
         }
       }
     } else {
-      if (Style()->BoxPack() == kBoxPackCenter)
+      if (Style()->BoxPack() == EBoxPack::kCenter)
         offset += remaining_space / 2;
       else  // END
         offset += remaining_space;
@@ -1089,7 +1154,28 @@ void LayoutDeprecatedFlexibleBox::LayoutVerticalBox(bool relayout_children) {
 
 void LayoutDeprecatedFlexibleBox::ApplyLineClamp(FlexBoxIterator& iterator,
                                                  bool relayout_children) {
-  UseCounter::Count(GetDocument(), UseCounter::kLineClamp);
+  UseCounter::Count(GetDocument(), WebFeature::kLineClamp);
+  UseCounter::Count(GetDocument(), WebFeature::kWebkitBoxLineClamp);
+
+  if (Style()->LineClamp().IsPercentage())
+    UseCounter::Count(GetDocument(), WebFeature::kWebkitBoxLineClampPercentage);
+
+  LayoutBox* child = FirstChildBox();
+  if (!child) {
+    UseCounter::Count(GetDocument(), WebFeature::kWebkitBoxLineClampNoChildren);
+  } else if (!child->NextSiblingBox()) {
+    UseCounter::Count(GetDocument(), WebFeature::kWebkitBoxLineClampOneChild);
+
+    if (child->IsLayoutBlockFlow() &&
+        ToLayoutBlockFlow(child)->ChildrenInline()) {
+      UseCounter::Count(
+          GetDocument(),
+          WebFeature::kWebkitBoxLineClampOneChildIsLayoutBlockFlowInline);
+    }
+  } else {
+    UseCounter::Count(GetDocument(),
+                      WebFeature::kWebkitBoxLineClampManyChildren);
+  }
 
   int max_line_count = 0;
   for (LayoutBox* child = iterator.First(); child; child = iterator.Next()) {
@@ -1189,14 +1275,19 @@ void LayoutDeprecatedFlexibleBox::ApplyLineClamp(FlexBoxIterator& iterator,
             LayoutUnit(total_width)))
       continue;
 
+    UseCounter::Count(GetDocument(),
+                      WebFeature::kWebkitBoxLineClampDoesSomething);
+
     // Let the truncation code kick in.
     // FIXME: the text alignment should be recomputed after the width changes
     // due to truncation.
     LayoutUnit block_left_edge = dest_block.LogicalLeftOffsetForLine(
         last_visible_line->Y(), kDoNotIndentText);
-    last_visible_line->PlaceEllipsis(
-        ellipsis_str, left_to_right, block_left_edge, block_right_edge,
-        LayoutUnit(total_width), LayoutUnit(), false);
+    InlineBox* box_truncation_starts_at = nullptr;
+    last_visible_line->PlaceEllipsis(ellipsis_str, left_to_right,
+                                     block_left_edge, block_right_edge,
+                                     LayoutUnit(total_width), LayoutUnit(),
+                                     &box_truncation_starts_at, ForceEllipsis);
     dest_block.SetHasMarkupTruncation(true);
   }
 }

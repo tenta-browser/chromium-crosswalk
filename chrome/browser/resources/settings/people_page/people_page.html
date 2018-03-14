@@ -1,12 +1,16 @@
+<link rel="import" href="chrome://resources/html/polymer.html">
+
 <link rel="import" href="chrome://resources/cr_elements/cr_dialog/cr_dialog.html">
 <link rel="import" href="chrome://resources/cr_elements/cr_expand_button/cr_expand_button.html">
 <link rel="import" href="chrome://resources/cr_elements/icons.html">
+<link rel="import" href="chrome://resources/html/assert.html">
+<link rel="import" href="chrome://resources/html/cr/ui/focus_without_ink.html">
 <link rel="import" href="chrome://resources/html/i18n_behavior.html">
 <link rel="import" href="chrome://resources/html/icon.html">
-<link rel="import" href="chrome://resources/html/polymer.html">
 <link rel="import" href="chrome://resources/html/util.html">
 <link rel="import" href="chrome://resources/html/web_ui_listener_behavior.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/iron-collapse/iron-collapse.html">
+<link rel="import" href="chrome://resources/polymer/v1_0/iron-flex-layout/iron-flex-layout-classes.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/neon-animation/neon-animatable.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-button/paper-button.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-checkbox/paper-checkbox.html">
@@ -22,6 +26,7 @@
 
 <if expr="chromeos">
 <link rel="import" href="change_picture.html">
+<link rel="import" href="chrome://resources/cr_elements/chromeos/cr_picture/cr_png_behavior.html">
 <link rel="import" href="fingerprint_list.html">
 <link rel="import" href="lock_screen.html">
 <link rel="import" href="lock_state_behavior.html">
@@ -34,7 +39,7 @@
 
 <dom-module id="settings-people-page">
   <template>
-    <style include="settings-shared">
+    <style include="settings-shared iron-flex">
       setting-box.middle {
         /* Per spec, middle text is indented 20px in this section. */
         -webkit-margin-start: 20px;
@@ -77,15 +82,21 @@
         width: 40px;
       }
 
-      #disconnectDialog .footer .settings-box {
+      #disconnectDialog [slot=footer] .settings-box {
         --settings-box-row-padding: 0;
       }
 
       .delete-profile-warning {
+        -webkit-padding-end: var(--cr-section-padding);
         /* In order to line up with the checkbox text. */
-        -webkit-padding-start: 36px;
+        -webkit-padding-start: var(--cr-section-indent-padding);
         padding-bottom: 10px;
         padding-top: 10px;
+      }
+
+      #wideFooter {
+        /* Override the cr-dialog footer padding. */
+        padding: 16px 0;
       }
     </style>
     <settings-animated-pages id="pages" section="people"
@@ -94,7 +105,7 @@
         <div id="picture-subpage-trigger" class="settings-box first two-line">
           <template is="dom-if" if="[[syncStatus]]">
             <div id="profile-icon" on-tap="onPictureTap_" actionable
-                style="background-image: [[getIconImageset_(profileIconUrl_)]]">
+                style="background-image: [[getIconImageSet_(profileIconUrl_)]]">
             </div>
 <if expr="not chromeos">
             <div class="middle two-line no-min-width"
@@ -123,34 +134,38 @@
             </div>
 <if expr="not chromeos">
             <template is="dom-if" if="[[showSignin_(syncStatus)]]">
-              <span class="secondary-action">
-                <paper-button class="primary-button" on-tap="onSigninTap_"
-                    disabled="[[syncStatus.setupInProgress]]">
-                  $i18n{syncSignin}
-                </paper-button>
-              </span>
+              <div class="separator"></div>
+              <paper-button class="primary-button" on-tap="onSigninTap_"
+                  disabled="[[syncStatus.setupInProgress]]">
+                $i18n{syncSignin}
+              </paper-button>
             </template>
             <template is="dom-if" if="[[syncStatus.signedIn]]">
-              <span class="secondary-action">
-                <paper-button id="disconnectButton" class="secondary-button"
-                    on-tap="onDisconnectTap_"
-                    disabled="[[syncStatus.setupInProgress]]">
-                  $i18n{syncDisconnect}
-                </paper-button>
-              </span>
+              <div class="separator"></div>
+              <paper-button id="disconnectButton" class="secondary-button"
+                  on-tap="onDisconnectTap_"
+                  disabled="[[syncStatus.setupInProgress]]">
+                $i18n{syncDisconnect}
+              </paper-button>
             </template>
 </if>
           </template>
         </div>
-        <div class="settings-box two-line"
-            hidden="[[!showSignin_(syncStatus)]]">
-          <div>
-            $i18n{syncOverview}
-            <a target="_blank" href="$i18n{syncLearnMoreUrl}">
-              $i18n{learnMore}
-            </a>
+
+        <template is="dom-if" if="[[!syncStatus.signedIn]]">
+          <div class="settings-box two-line"
+              hidden="[[!syncStatus.signinAllowed]]">
+            <div class="start">
+              $i18n{syncOverview}
+              <a target="_blank" href="$i18n{syncLearnMoreUrl}">
+                $i18n{learnMore}
+              </a>
+            </div>
           </div>
-        </div>
+          <div class="settings-box" hidden="[[syncStatus.signinAllowed]]">
+            $i18n{syncDisabledByAdministrator}
+          </div>
+        </template>
 
 <if expr="not chromeos">
         <template is="dom-if" if="[[syncStatus.domain]]">
@@ -188,8 +203,8 @@
         </template>
 
 <if expr="chromeos">
-        <div class="settings-box two-line" actionable
-             on-tap="onConfigureLockTap_">
+        <div id="lock-screen-subpage-trigger" class="settings-box two-line"
+            actionable on-tap="onConfigureLockTap_">
           <div class="start">
             $i18n{lockScreenTitle}
             <div class="secondary" id="lockScreenSecondary">
@@ -197,9 +212,9 @@
                                   prefs.settings.enable_screen_lock.value)]]
             </div>
           </div>
-          <button id="lockScreenSubpageTrigger" class="subpage-arrow"
+          <button class="subpage-arrow"
               is="paper-icon-button-light" aria-label="$i18n{lockScreenTitle}"
-              aria-describedby="lockScrenSecondary"></button>
+              aria-describedby="lockScreenSecondary"></button>
         </div>
 </if>
 
@@ -220,12 +235,14 @@
 </if>
 
         <template is="dom-if" if="[[profileManagesSupervisedUsers_]]">
-          <div id="manageSupervisedUsersContainer" class="settings-box"
-              on-tap="onManageSupervisedUsers_" actionable>
+          <a id="manageSupervisedUsersContainer"
+              class="settings-box inherit-color no-outline" tabindex="-1"
+              target="_blank" href="$i18n{supervisedUsersUrl}">
             <div class="start">$i18n{manageSupervisedUsers}</div>
             <button class="icon-external" is="paper-icon-button-light"
-                aria-label="$i18n{manageSupervisedUsers}"></button>
-          </div>
+                actionable aria-label="$i18n{manageSupervisedUsers}">
+            </button>
+          </a>
         </template>
       </neon-animatable>
       <template is="dom-if" route-path="/syncSetup"
@@ -238,8 +255,9 @@
         </settings-subpage>
       </template>
 <if expr="chromeos">
-      <template is="dom-if" route-path="/lockScreen" no-search>
-        <settings-subpage page-title="$i18n{lockScreenTitle}">
+      <template is="dom-if" route-path="/lockScreen">
+        <settings-subpage page-title="$i18n{lockScreenTitle}"
+            associated-control="[[$$('#lock-screen-subpage-trigger')]]">
           <settings-lock-screen
             prefs="{{prefs}}">
           </settings-lock-screen>
@@ -255,8 +273,12 @@
       <template is="dom-if" route-path="/accounts">
         <settings-subpage
             associated-control="[[$$('#manage-other-people-subpage-trigger')]]"
-            page-title="$i18n{usersPageTitle}">
-          <settings-users-page prefs="{{prefs}}"></settings-users-page>
+            page-title="$i18n{manageOtherPeople}">
+          <settings-users-page
+              prefs="{{prefs}}"
+              profile-manages-supervised-users=
+                  "[[profileManagesSupervisedUsers_]]">
+          </settings-users-page>
         </settings-subpage>
       </template>
       <template is="dom-if" route-path="/changePicture">
@@ -272,8 +294,8 @@
         <settings-subpage
             associated-control="[[$$('#picture-subpage-trigger')]]"
             page-title="$i18n{editPerson}">
-          <settings-manage-profile profile-icon-url="[[profileIconUrl_]]"
-              profile-name="[[profileName_]]" sync-status="[[syncStatus]]">
+          <settings-manage-profile profile-name="[[profileName_]]"
+              sync-status="[[syncStatus]]">
           </settings-manage-profile>
         </settings-subpage>
       </template>
@@ -284,13 +306,13 @@
       <dialog is="cr-dialog" id="disconnectDialog"
           ignore-popstate ignore-enter-key
           on-close="onDisconnectClosed_" close-text="$i18n{close}">
-        <div class="title">$i18n{syncDisconnectTitle}</div>
-        <div class="body">
+        <div slot="title">$i18n{syncDisconnectTitle}</div>
+        <div slot="body">
           <div inner-h-t-m-l="[[
               getDisconnectExplanationHtml_(syncStatus.domain)]]">
           </div>
         </div>
-        <div class="button-container">
+        <div slot="button-container">
           <paper-button on-tap="onDisconnectCancel_" class="cancel-button">
             $i18n{cancel}
           </paper-button>
@@ -306,7 +328,7 @@
         </div>
 <if expr="(not chromeos and is_posix) or is_win or is_macosx">
         <template is="dom-if" if="[[!syncStatus.domain]]">
-          <div class="footer border-top-divider">
+          <div id="wideFooter" slot="footer">
             <div class="settings-box first">
               <paper-checkbox id="deleteProfile" class="start"
                   checked="{{deleteProfile_}}">

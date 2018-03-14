@@ -45,7 +45,7 @@ var testing = {};
    * mimic the gtest's class names.
    * @constructor
    */
-  function Test() {};
+  function Test() {}
 
   /**
    * Make all transitions and animations take 0ms. NOTE: this will completely
@@ -53,16 +53,15 @@ var testing = {};
    * will break. animationend events should still work.
    */
   Test.disableAnimationsAndTransitions = function() {
-    var noAnimationStyle = document.createElement('style');
-    noAnimationStyle.id = 'no-animation';
-    noAnimationStyle.textContent =
-      '*, * /deep/ * {' +
-      '  -webkit-transition-duration: 0ms !important;' +
-      '  -webkit-transition-delay: 0ms !important;' +
-      '  animation-duration: 0ms !important;' +
-      '  animation-delay: 0ms !important;' +
-      '}';
-    document.querySelector('head').appendChild(noAnimationStyle);
+    let all = document.body.querySelectorAll('*, * /deep/ *');
+    const ZERO_MS_IMPORTANT = '0ms !important';
+    for (let i = 0, l = all.length; i < l; ++i) {
+      let style = all[i].style;
+      style.animationDelay = ZERO_MS_IMPORTANT;
+      style.animationDuration = ZERO_MS_IMPORTANT;
+      style.transitionDelay = ZERO_MS_IMPORTANT;
+      style.transitionDuration = ZERO_MS_IMPORTANT;
+    }
 
     var realElementAnimate = Element.prototype.animate;
     Element.prototype.animate = function(keyframes, opt_options) {
@@ -536,7 +535,7 @@ var testing = {};
      *     time.
      * @param {...*} var_args Arguments to pass when running the
      *     |currentTestCase|.
-     * @return {function(): void} A function thatwill run this TestCase when
+     * @return {function(): void} A function that will run this TestCase when
      *     called.
      */
     deferRunTest: function(whenTestDone) {
@@ -957,7 +956,7 @@ var testing = {};
    * Run an accessibility audit on the current page state.
    * @type {Function}
    * @param {Array} a11yResults
-   * @param {axs.AuditConfigutarion=} opt_config
+   * @param {axs.AuditConfiguration=} opt_config
    * @return {boolean} Whether there were any errors or warnings
    * @private
    */
@@ -1004,10 +1003,10 @@ var testing = {};
   }
 
   /**
-   * Creates a function based upon a function that thows an exception on
+   * Creates a function based upon a function that throws an exception on
    * failure. The new function stuffs any errors into the |errors| array for
    * checking by runTest. This allows tests to continue running other checks,
-   * while failing the overall test if any errors occurrred.
+   * while failing the overall test if any errors occurred.
    * @param {Function} assertFunc The function which may throw an Error.
    * @return {function(...*):bool} A function that applies its arguments to
    *     |assertFunc| and returns true if |assertFunc| passes.
@@ -1100,7 +1099,12 @@ var testing = {};
    */
   function createTestCase(testFixture, testName) {
     var fixtureConstructor = this[testFixture];
+    assertTrue(
+        !!fixtureConstructor,
+        `The testFixture \'${testFixture}\' was not found.`);
     var testBody = fixtureConstructor.testCaseBodies[testName];
+    assertTrue(
+        !!testBody, `Test \'${testName} was not found in \'${testFixture}\'.`);
     var fixture = new fixtureConstructor();
     fixture.name = testFixture;
     return new TestCase(testName, fixture, testBody);
@@ -1604,7 +1608,7 @@ var testing = {};
 
   /**
    * Mock4JS matcher object that matches the actual argument and the expected
-   * value iff their JSON represenations are same.
+   * value iff their JSON representations are same.
    * @param {Object} expectedValue
    * @constructor
    */
@@ -1614,7 +1618,7 @@ var testing = {};
 
   MatchJSON.prototype = {
     /**
-     * Checks that JSON represenation of the actual and expected arguments are
+     * Checks that JSON representation of the actual and expected arguments are
      * same.
      * @param {Object} actualArgument The argument to match.
      * @return {boolean} Result of the comparison.

@@ -10,15 +10,25 @@ namespace switches {
 // Disables the crash reporting.
 const char kDisableBreakpad[]               = "disable-breakpad";
 
+// Comma-separated list of feature names to disable. See also kEnableFeatures.
+const char kDisableFeatures[] = "disable-features";
+
 // Indicates that crash reporting should be enabled. On platforms where helper
 // processes cannot access to files needed to make this decision, this flag is
 // generated internally.
 const char kEnableCrashReporter[]           = "enable-crash-reporter";
 
+// Comma-separated list of feature names to enable. See also kDisableFeatures.
+const char kEnableFeatures[] = "enable-features";
+
 // Makes memory allocators keep track of their allocations and context, so a
 // detailed breakdown of memory usage can be presented in chrome://tracing when
 // the memory-infra category is enabled.
 const char kEnableHeapProfiling[]           = "enable-heap-profiling";
+
+// Report pseudo allocation traces. Pseudo traces are derived from currently
+// active trace events.
+const char kEnableHeapProfilingModePseudo[] = "";
 
 // Report native (walk the stack) allocation traces. By default pseudo stacks
 // derived from trace events are reported.
@@ -87,14 +97,6 @@ const char kTraceToFile[]                   = "trace-to-file";
 // go to a default file name.
 const char kTraceToFileName[]               = "trace-to-file-name";
 
-// Configure whether chrome://profiler will contain timing information. This
-// option is enabled by default. A value of "0" will disable profiler timing,
-// while all other values will enable it.
-const char kProfilerTiming[]                = "profiler-timing";
-// Value of the --profiler-timing flag that will disable timing information for
-// chrome://profiler.
-const char kProfilerTimingDisabledValue[]   = "0";
-
 // Specifies a location for profiling output. This will only work if chrome has
 // been built with the gyp variable profiling=1 or gn arg enable_profiling=true.
 //
@@ -115,6 +117,12 @@ const char kDisableUsbKeyboardDetect[]      = "disable-usb-keyboard-detect";
 // crash reporting is typically compiled but disabled.
 const char kEnableCrashReporterForTesting[] =
     "enable-crash-reporter-for-testing";
+#endif
+
+#if defined(OS_ANDROID)
+// Calls madvise(MADV_RANDOM) on executable code right after the library is
+// loaded, from all processes.
+const char kMadviseRandomExecutableCode[] = "madvise-random-executable-code";
 #endif
 
 }  // namespace switches

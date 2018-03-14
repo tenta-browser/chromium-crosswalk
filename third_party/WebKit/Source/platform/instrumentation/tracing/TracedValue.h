@@ -5,17 +5,16 @@
 #ifndef TracedValue_h
 #define TracedValue_h
 
+#include "base/macros.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "platform/PlatformExport.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
-// TracedValue copies all passed names and values and doesn't retain references.
+// Thin wrapper around base::trace_event::TracedValue.
 class PLATFORM_EXPORT TracedValue final
     : public base::trace_event::ConvertableToTraceFormat {
-  WTF_MAKE_NONCOPYABLE(TracedValue);
-
  public:
   ~TracedValue();
 
@@ -25,11 +24,18 @@ class PLATFORM_EXPORT TracedValue final
   void EndArray();
 
   void SetInteger(const char* name, int value);
-  void SetDouble(const char* name, double);
+  void SetDouble(const char* name, double value);
   void SetBoolean(const char* name, bool value);
   void SetString(const char* name, const String& value);
   void BeginArray(const char* name);
   void BeginDictionary(const char* name);
+
+  void SetIntegerWithCopiedName(const char* name, int value);
+  void SetDoubleWithCopiedName(const char* name, double value);
+  void SetBooleanWithCopiedName(const char* name, bool value);
+  void SetStringWithCopiedName(const char* name, const String& value);
+  void BeginArrayWithCopiedName(const char* name);
+  void BeginDictionaryWithCopiedName(const char* name);
 
   void PushInteger(int);
   void PushDouble(double);
@@ -50,6 +56,8 @@ class PLATFORM_EXPORT TracedValue final
       base::trace_event::TraceEventMemoryOverhead*) final;
 
   base::trace_event::TracedValue traced_value_;
+
+  DISALLOW_COPY_AND_ASSIGN(TracedValue);
 };
 
 }  // namespace blink

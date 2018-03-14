@@ -7,9 +7,9 @@
 #import <UIKit/UIKit.h>
 
 #include "base/logging.h"
-#include "base/mac/scoped_nsobject.h"
 #include "base/memory/ptr_util.h"
 #include "ios/public/provider/chrome/browser/distribution/test_app_distribution_provider.h"
+#include "ios/public/provider/chrome/browser/external_search/test_external_search_provider.h"
 #include "ios/public/provider/chrome/browser/images/test_branded_image_provider.h"
 #include "ios/public/provider/chrome/browser/omaha/test_omaha_service_provider.h"
 #include "ios/public/provider/chrome/browser/signin/fake_chrome_identity_service.h"
@@ -19,6 +19,10 @@
 #import "ios/public/provider/chrome/browser/user_feedback/test_user_feedback_provider.h"
 #import "ios/public/provider/chrome/browser/voice/test_voice_search_provider.h"
 #import "ios/public/provider/chrome/browser/voice/voice_search_language.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace ios {
 
@@ -31,7 +35,9 @@ TestChromeBrowserProvider::TestChromeBrowserProvider()
           base::MakeUnique<TestSigninResourcesProvider>()),
       voice_search_provider_(base::MakeUnique<TestVoiceSearchProvider>()),
       user_feedback_provider_(base::MakeUnique<TestUserFeedbackProvider>()),
-      spotlight_provider_(base::MakeUnique<TestSpotlightProvider>()) {}
+      spotlight_provider_(base::MakeUnique<TestSpotlightProvider>()),
+      external_search_provider_(
+          base::MakeUnique<TestExternalSearchProvider>()) {}
 
 TestChromeBrowserProvider::~TestChromeBrowserProvider() {}
 
@@ -87,14 +93,16 @@ SpotlightProvider* TestChromeBrowserProvider::GetSpotlightProvider() const {
   return spotlight_provider_.get();
 }
 
+ExternalSearchProvider* TestChromeBrowserProvider::GetExternalSearchProvider()
+    const {
+  return external_search_provider_.get();
+}
+
+void TestChromeBrowserProvider::CheckForFirstPartyApps() const {}
+
 BrandedImageProvider* TestChromeBrowserProvider::GetBrandedImageProvider()
     const {
   return branded_image_provider_.get();
-}
-
-id<NativeAppWhitelistManager>
-TestChromeBrowserProvider::GetNativeAppWhitelistManager() const {
-  return nil;
 }
 
 }  // namespace ios

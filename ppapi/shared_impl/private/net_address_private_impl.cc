@@ -24,23 +24,10 @@
 #include <ws2tcpip.h>
 #elif defined(OS_POSIX) && !defined(OS_NACL)
 #include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #endif
-
-#if defined(OS_MACOSX)
-// This is a bit evil, but it's standard operating procedure for |s6_addr|....
-#define s6_addr16 __u6_addr.__u6_addr16
-#endif
-
-#if defined(OS_WIN)
-// The type of |sockaddr::sa_family|.
-typedef ADDRESS_FAMILY sa_family_t;
-
-#define s6_addr16 u.Word
-#define ntohs(x) _byteswap_ushort(x)
-#define htons(x) _byteswap_ushort(x)
-#endif  // defined(OS_WIN)
 
 // The net address interface doesn't have a normal C -> C++ thunk since it
 // doesn't actually have any proxy wrapping or associated objects; it's just a
@@ -450,7 +437,7 @@ bool NetAddressPrivateImpl::SockaddrToNetAddress(
 
 // static
 bool NetAddressPrivateImpl::IPEndPointToNetAddress(
-    const std::vector<uint8_t>& address,
+    const net::IPAddressBytes& address,
     uint16_t port,
     PP_NetAddress_Private* addr) {
   if (!addr)
@@ -483,7 +470,7 @@ bool NetAddressPrivateImpl::IPEndPointToNetAddress(
 // static
 bool NetAddressPrivateImpl::NetAddressToIPEndPoint(
     const PP_NetAddress_Private& addr,
-    std::vector<uint8_t>* address,
+    net::IPAddressBytes* address,
     uint16_t* port) {
   if (!address || !port)
     return false;
@@ -494,8 +481,7 @@ bool NetAddressPrivateImpl::NetAddressToIPEndPoint(
 
   *port = net_addr->port;
   size_t address_size = GetAddressSize(net_addr);
-  address->assign(&net_addr->address[0], &net_addr->address[address_size]);
-
+  address->Assign(net_addr->address, address_size);
   return true;
 }
 #endif  // !defined(OS_NACL)

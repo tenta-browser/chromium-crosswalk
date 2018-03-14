@@ -4,7 +4,9 @@
 
 #include "chrome/browser/ui/webui/flags_ui.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -39,6 +41,7 @@
 
 #if defined(OS_CHROMEOS)
 #include "base/sys_info.h"
+#include "chrome/browser/chromeos/login/session/user_session_manager.h"
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos.h"
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos_factory.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
@@ -59,10 +62,9 @@ content::WebUIDataSource* CreateFlagsUIHTMLSource() {
   content::WebUIDataSource* source =
       content::WebUIDataSource::Create(chrome::kChromeUIFlagsHost);
 
-  source->AddLocalizedString(flags_ui::kFlagsLongTitle,
-                             IDS_FLAGS_UI_LONG_TITLE);
-  source->AddLocalizedString(flags_ui::kFlagsTableTitle,
-                             IDS_FLAGS_UI_TABLE_TITLE);
+  source->AddLocalizedString(flags_ui::kFlagsSearchPlaceholder,
+                             IDS_FLAGS_UI_SEARCH_PLACEHOLDER);
+  source->AddLocalizedString(flags_ui::kFlagsTitle, IDS_FLAGS_UI_TITLE);
   source->AddLocalizedString(flags_ui::kFlagsWarningHeader,
                              IDS_FLAGS_UI_WARNING_HEADER);
   source->AddLocalizedString(flags_ui::kFlagsBlurb, IDS_FLAGS_UI_WARNING_TEXT);
@@ -70,8 +72,10 @@ content::WebUIDataSource* CreateFlagsUIHTMLSource() {
                              IDS_FLAGS_UI_PROMOTE_BETA_CHANNEL);
   source->AddLocalizedString(flags_ui::kChannelPromoDev,
                              IDS_FLAGS_UI_PROMOTE_DEV_CHANNEL);
-  source->AddLocalizedString(flags_ui::kFlagsUnsupportedTableTitle,
-                             IDS_FLAGS_UI_UNSUPPORTED_TABLE_TITLE);
+  source->AddLocalizedString(flags_ui::kFlagsSupportedTitle,
+                             IDS_FLAGS_UI_SUPPORTED_TITLE);
+  source->AddLocalizedString(flags_ui::kFlagsUnsupportedTitle,
+                             IDS_FLAGS_UI_UNSUPPORTED_TITLE);
   source->AddLocalizedString(flags_ui::kFlagsNotSupported,
                              IDS_FLAGS_UI_NOT_AVAILABLE);
   source->AddLocalizedString(flags_ui::kFlagsRestartNotice,
@@ -80,8 +84,11 @@ content::WebUIDataSource* CreateFlagsUIHTMLSource() {
                              IDS_FLAGS_UI_RELAUNCH_BUTTON);
   source->AddLocalizedString(flags_ui::kResetAllButton,
                              IDS_FLAGS_UI_RESET_ALL_BUTTON);
+  source->AddLocalizedString(flags_ui::kFlagsNoMatches,
+                             IDS_FLAGS_UI_NO_MATCHES);
   source->AddLocalizedString(flags_ui::kDisable, IDS_FLAGS_UI_DISABLE);
   source->AddLocalizedString(flags_ui::kEnable, IDS_FLAGS_UI_ENABLE);
+  source->AddString(flags_ui::kVersion, version_info::GetVersionNumber());
 
 #if defined(OS_CHROMEOS)
   if (!user_manager::UserManager::Get()->IsCurrentUserOwner() &&
@@ -99,9 +106,9 @@ content::WebUIDataSource* CreateFlagsUIHTMLSource() {
   }
 #endif
 
-  source->SetJsonPath("strings.js");
   source->AddResourcePath(flags_ui::kFlagsJS, IDR_FLAGS_UI_FLAGS_JS);
   source->SetDefaultResource(IDR_FLAGS_UI_FLAGS_HTML);
+  source->UseGzip();
   return source;
 }
 
@@ -173,7 +180,7 @@ void FlagsDOMHandler::Init(flags_ui::FlagsStorage* flags_storage,
   access_ = access;
 
   if (experimental_features_requested_)
-    HandleRequestExperimentalFeatures(NULL);
+    HandleRequestExperimentalFeatures(nullptr);
 }
 
 void FlagsDOMHandler::HandleRequestExperimentalFeatures(
@@ -192,8 +199,8 @@ void FlagsDOMHandler::HandleRequestExperimentalFeatures(
                                      access_,
                                      supported_features.get(),
                                      unsupported_features.get());
-  results.Set(flags_ui::kSupportedFeatures, supported_features.release());
-  results.Set(flags_ui::kUnsupportedFeatures, unsupported_features.release());
+  results.Set(flags_ui::kSupportedFeatures, std::move(supported_features));
+  results.Set(flags_ui::kUnsupportedFeatures, std::move(unsupported_features));
   results.SetBoolean(flags_ui::kNeedsRestart,
                      about_flags::IsRestartNeededToCommitChanges());
   results.SetBoolean(flags_ui::kShowOwnerWarning,
@@ -239,6 +246,11 @@ void FlagsDOMHandler::HandleRestartBrowser(const base::ListValue* args) {
   about_flags::ConvertFlagsToSwitches(flags_storage_.get(),
                                       &user_flags,
                                       flags_ui::kAddSentinels);
+
+  // Apply additional switches from policy that should not be dropped when
+  // applying flags..
+  chromeos::UserSessionManager::MaybeAppendPolicySwitches(&user_flags);
+
   base::CommandLine::StringVector flags;
   // argv[0] is the program name |base::CommandLine::NO_PROGRAM|.
   flags.assign(user_flags.argv().begin() + 1, user_flags.argv().end());
@@ -338,6 +350,6 @@ FlagsUI::~FlagsUI() {
 // static
 base::RefCountedMemory* FlagsUI::GetFaviconResourceBytes(
       ui::ScaleFactor scale_factor) {
-  return ResourceBundle::GetSharedInstance().
-      LoadDataResourceBytesForScale(IDR_FLAGS_FAVICON, scale_factor);
+  return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
+      IDR_FLAGS_FAVICON, scale_factor);
 }

@@ -29,8 +29,8 @@
 #include "modules/crypto/Crypto.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/dom/DOMArrayBufferView.h"
 #include "core/dom/ExceptionCode.h"
+#include "core/typed_arrays/DOMArrayBufferView.h"
 #include "platform/wtf/CryptographicallyRandomNumber.h"
 
 namespace blink {
@@ -82,8 +82,9 @@ SubtleCrypto* Crypto::subtle() {
   return subtle_crypto_.Get();
 }
 
-DEFINE_TRACE(Crypto) {
+void Crypto::Trace(blink::Visitor* visitor) {
   visitor->Trace(subtle_crypto_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

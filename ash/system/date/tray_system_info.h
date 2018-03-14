@@ -40,9 +40,9 @@ class ASH_EXPORT TraySystemInfo : public SystemTrayItem, public ClockObserver {
   // SystemTrayItem:
   views::View* CreateTrayView(LoginStatus status) override;
   views::View* CreateDefaultView(LoginStatus status) override;
-  void DestroyTrayView() override;
-  void DestroyDefaultView() override;
-  void UpdateAfterShelfAlignmentChange(ShelfAlignment alignment) override;
+  void OnTrayViewDestroyed() override;
+  void OnDefaultViewDestroyed() override;
+  void UpdateAfterShelfAlignmentChange() override;
 
   // ClockObserver:
   void OnDateFormatChanged() override;

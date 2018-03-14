@@ -7,7 +7,7 @@
 
 #import <Foundation/Foundation.h>
 
-#import "ios/shared/chrome/browser/ui/tools_menu/tools_menu_configuration.h"
+#import "ios/chrome/browser/ui/tools_menu/tools_menu_configuration.h"
 
 // Total number of possible menu items.
 const int kToolsMenuNumberOfItems = 15;
@@ -18,6 +18,7 @@ struct MenuItemInfo {
   int title_id;
   NSString* accessibility_id;
   int command_id;
+  SEL selector;
   int toolbar_types;
   // |visibility| is applied if a menu item is included for a given
   // |toolbar_types|. A value of 0 means the menu item is always visible for

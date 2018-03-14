@@ -11,6 +11,7 @@
 
 #include "base/bits.h"
 #include "base/logging.h"
+#include "base/memory/shared_memory_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "gpu/command_buffer/client/cmd_buffer_helper.h"
 
@@ -36,6 +37,14 @@ TransferBuffer::~TransferBuffer() {
   Free();
 }
 
+base::SharedMemoryHandle TransferBuffer::shared_memory_handle() const {
+  if (!HaveBuffer())
+    return base::SharedMemoryHandle();
+  if (!buffer_->backing())
+    return base::SharedMemoryHandle();
+  return buffer_->backing()->shared_memory_handle();
+}
+
 bool TransferBuffer::Initialize(
     unsigned int default_buffer_size,
     unsigned int result_size,
@@ -56,7 +65,7 @@ bool TransferBuffer::Initialize(
 void TransferBuffer::Free() {
   if (HaveBuffer()) {
     TRACE_EVENT0("gpu", "TransferBuffer::Free");
-    helper_->Finish();
+    helper_->FlushLazy();
     helper_->command_buffer()->DestroyTransferBuffer(buffer_id_);
     buffer_id_ = -1;
     buffer_ = NULL;
@@ -96,6 +105,10 @@ unsigned int TransferBuffer::GetFreeSize() const {
   return HaveBuffer() ? ring_buffer_->GetTotalFreeSizeNoWaiting() : 0;
 }
 
+void TransferBuffer::ShrinkLastBlock(unsigned int new_size) {
+  ring_buffer_->ShrinkLastBlock(new_size);
+}
+
 void TransferBuffer::AllocateRingBuffer(unsigned int size) {
   for (;size >= min_buffer_size_; size /= 2) {
     int32_t id = -1;
@@ -104,12 +117,9 @@ void TransferBuffer::AllocateRingBuffer(unsigned int size) {
     if (id != -1) {
       DCHECK(buffer.get());
       buffer_ = buffer;
-      ring_buffer_.reset(new RingBuffer(
-          alignment_,
-          result_size_,
-          buffer_->size() - result_size_,
-          helper_,
-          static_cast<char*>(buffer_->memory()) + result_size_));
+      ring_buffer_ = std::make_unique<RingBuffer>(
+          alignment_, result_size_, buffer_->size() - result_size_, helper_,
+          static_cast<char*>(buffer_->memory()) + result_size_);
       buffer_id_ = id;
       result_buffer_ = buffer_->memory();
       result_shm_offset_ = 0;
@@ -219,6 +229,13 @@ void ScopedTransferBufferPtr::Reset(unsigned int new_size) {
   // We could add code skip the token for a zero size buffer but it doesn't seem
   // worth the complication.
   buffer_ = transfer_buffer_->AllocUpTo(new_size, &size_);
+}
+
+void ScopedTransferBufferPtr::Shrink(unsigned int new_size) {
+  if (!transfer_buffer_->HaveBuffer() || new_size >= size_)
+    return;
+  transfer_buffer_->ShrinkLastBlock(new_size);
+  size_ = new_size;
 }
 
 }  // namespace gpu

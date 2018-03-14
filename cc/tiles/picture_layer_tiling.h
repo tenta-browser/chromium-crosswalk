@@ -63,6 +63,9 @@ struct TileMapKey {
   bool operator==(const TileMapKey& other) const {
     return index_x == other.index_x && index_y == other.index_y;
   }
+  bool operator<(const TileMapKey& other) const {
+    return std::tie(index_x, index_y) < std::tie(other.index_x, other.index_y);
+  }
 
   int index_x;
   int index_y;
@@ -105,6 +108,10 @@ class CC_EXPORT PictureLayerTiling {
   bool IsTileRequiredForActivation(const Tile* tile) const;
   bool IsTileRequiredForDraw(const Tile* tile) const;
 
+  // Returns true if the tile should be processed for decoding images skipped
+  // during rasterization.
+  bool ShouldDecodeCheckeredImagesForTile(const Tile* tile) const;
+
   void set_resolution(TileResolution resolution) {
     resolution_ = resolution;
     may_contain_low_resolution_tiles_ |= resolution == LOW_RESOLUTION;
@@ -118,6 +125,9 @@ class CC_EXPORT PictureLayerTiling {
   }
   void set_can_require_tiles_for_activation(bool can_require_tiles) {
     can_require_tiles_for_activation_ = can_require_tiles;
+  }
+  bool can_require_tiles_for_activation() const {
+    return can_require_tiles_for_activation_;
   }
 
   const scoped_refptr<RasterSource>& raster_source() const {
@@ -230,6 +240,8 @@ class CC_EXPORT PictureLayerTiling {
     int j() const { return tile_j_; }
 
    private:
+    gfx::Rect ComputeGeometryRect() const;
+
     const PictureLayerTiling* tiling_ = nullptr;
     gfx::Size coverage_rect_max_bounds_;
     gfx::Rect coverage_rect_;

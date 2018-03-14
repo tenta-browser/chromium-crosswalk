@@ -33,7 +33,6 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image_skia_util_mac.h"
 #include "ui/gfx/paint_vector_icon.h"
-#include "ui/resources/grit/ui_resources.h"
 
 using content::NativeWebKeyboardEvent;
 
@@ -42,6 +41,7 @@ const float kFindBarCloseDuration = 0.15;
 const float kFindBarMoveDuration = 0.15;
 const float kRightEdgeOffset = 25;
 const int kMaxCharacters = 4000;
+const int kUndefinedResultCount = -1;
 
 @interface FindBarCocoaController (PrivateMethods) <NSAnimationDelegate>
 // Returns the appropriate frame for a hidden find bar.
@@ -76,6 +76,10 @@ const int kMaxCharacters = 4000;
 - (void)clearFindResultsForCurrentBrowser;
 
 - (BrowserWindowController*)browserWindowController;
+
+// Returns the number of matches from the last find results of the active
+// web contents. Returns kUndefinedResultCount if unable to determine the count.
+- (int)lastNumberOfMatchesForActiveWebContents;
 @end
 
 @implementation FindBarCocoaController
@@ -303,6 +307,8 @@ const int kMaxCharacters = 4000;
     // the list above.
     content::RenderViewHost* render_view_host =
         web_contents->GetRenderViewHost();
+
+    // TODO(tdresser): get the hardware timestamp from the NSEvent.
     render_view_host->GetWidget()->ForwardKeyboardEvent(
         NativeWebKeyboardEvent(event));
     return YES;
@@ -361,9 +367,9 @@ const int kMaxCharacters = 4000;
 
 - (void)setFocusAndSelection {
   [[findText_ window] makeFirstResponder:findText_];
+  BOOL buttonsEnabled = [self lastNumberOfMatchesForActiveWebContents] != 0 &&
+                        [[findText_ stringValue] length] > 0;
 
-  // Enable the buttons if the find text is non-empty.
-  BOOL buttonsEnabled = ([[findText_ stringValue] length] > 0) ? YES : NO;
   [previousButton_ setEnabled:buttonsEnabled];
   [nextButton_ setEnabled:buttonsEnabled];
 }
@@ -496,6 +502,10 @@ const int kMaxCharacters = 4000;
   // If the find bar is not visible, make it actually hidden, so it'll no longer
   // respond to key events.
   [[self view] setHidden:![self isFindBarVisible]];
+  // Notify the FindBarController that the visibility animation has completed in
+  // order to show or hide a decoration in the location bar.
+  if (findBarBridge_)
+    findBarBridge_->GetFindBarController()->FindBarVisibilityChanged();
 }
 
 - (gfx::Point)findBarWindowPosition {
@@ -667,4 +677,13 @@ const int kMaxCharacters = 4000;
       browserWindowControllerForWindow:browser_->window()->GetNativeWindow()];
 }
 
+- (int)lastNumberOfMatchesForActiveWebContents {
+  if (!browser_)
+    return kUndefinedResultCount;
+
+  content::WebContents* contents =
+      findBarBridge_->GetFindBarController()->web_contents();
+  FindTabHelper* findTabHelper = FindTabHelper::FromWebContents(contents);
+  return findTabHelper->find_result().number_of_matches();
+}
 @end

@@ -17,11 +17,13 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/result_codes.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_utils.h"
@@ -35,20 +37,38 @@
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/base_window.h"
 
-#if defined(USE_ASH)
-#include "extensions/browser/app_window/app_window_registry.h"
+#if defined(OS_CHROMEOS)
+#include "ash/public/cpp/window_properties.h"
+#include "ash/public/interfaces/window_pin_type.mojom.h"
+#include "chrome/app/chrome_command_ids.h"
+#include "chrome/browser/extensions/window_controller.h"
+#include "chrome/browser/extensions/window_controller_list.h"
+#include "chrome/browser/ui/browser_command_controller.h"
+#include "ui/aura/window.h"
 #endif
 
 using content::OpenURLParams;
 using content::Referrer;
 using content::WebContents;
 
+namespace aura {
+class Window;
+}
+
+class WindowOpenApiTest : public ExtensionApiTest {
+  void SetUpOnMainThread() override {
+    ExtensionApiTest::SetUpOnMainThread();
+    host_resolver()->AddRule("*", "127.0.0.1");
+  }
+};
+
 // The test uses the chrome.browserAction.openPopup API, which requires that the
 // window can automatically be activated.
 // See comments at BrowserActionInteractiveTest::ShouldRunPopupTest
 // Fails flakily on all platforms. https://crbug.com/477691
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, DISABLED_WindowOpen) {
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, DISABLED_WindowOpen) {
   extensions::ResultCatcher catcher;
   ASSERT_TRUE(LoadExtensionIncognito(test_data_dir_
       .AppendASCII("window_open").AppendASCII("spanning")));
@@ -93,8 +113,7 @@ bool WaitForTabsAndPopups(Browser* browser,
           (num_popups == num_popups_seen));
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, BrowserIsApp) {
-  host_resolver()->AddRule("a.com", "127.0.0.1");
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, BrowserIsApp) {
   ASSERT_TRUE(StartEmbeddedTestServer());
   ASSERT_TRUE(LoadExtension(
       test_data_dir_.AppendASCII("window_open").AppendASCII("browser_is_app")));
@@ -109,7 +128,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, BrowserIsApp) {
   }
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, WindowOpenPopupDefault) {
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, WindowOpenPopupDefault) {
   ASSERT_TRUE(StartEmbeddedTestServer());
   ASSERT_TRUE(LoadExtension(
       test_data_dir_.AppendASCII("window_open").AppendASCII("popup")));
@@ -119,7 +138,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, WindowOpenPopupDefault) {
   EXPECT_TRUE(WaitForTabsAndPopups(browser(), num_tabs, num_popups));
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, WindowOpenPopupIframe) {
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, WindowOpenPopupIframe) {
   base::FilePath test_data_dir;
   PathService::Get(chrome::DIR_TEST_DATA, &test_data_dir);
   embedded_test_server()->ServeFilesFromDirectory(test_data_dir);
@@ -132,7 +151,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, WindowOpenPopupIframe) {
   EXPECT_TRUE(WaitForTabsAndPopups(browser(), num_tabs, num_popups));
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, WindowOpenPopupLarge) {
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, WindowOpenPopupLarge) {
   ASSERT_TRUE(StartEmbeddedTestServer());
   ASSERT_TRUE(LoadExtension(
       test_data_dir_.AppendASCII("window_open").AppendASCII("popup_large")));
@@ -143,7 +162,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, WindowOpenPopupLarge) {
   EXPECT_TRUE(WaitForTabsAndPopups(browser(), num_tabs, num_popups));
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, WindowOpenPopupSmall) {
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, WindowOpenPopupSmall) {
   ASSERT_TRUE(StartEmbeddedTestServer());
   ASSERT_TRUE(LoadExtension(
       test_data_dir_.AppendASCII("window_open").AppendASCII("popup_small")));
@@ -161,8 +180,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, WindowOpenPopupSmall) {
 #else
 #define MAYBE_PopupBlockingExtension PopupBlockingExtension
 #endif
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, MAYBE_PopupBlockingExtension) {
-  host_resolver()->AddRule("*", "127.0.0.1");
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, MAYBE_PopupBlockingExtension) {
   ASSERT_TRUE(StartEmbeddedTestServer());
 
   ASSERT_TRUE(LoadExtension(
@@ -172,8 +190,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, MAYBE_PopupBlockingExtension) {
   EXPECT_TRUE(WaitForTabsAndPopups(browser(), 5, 3));
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, PopupBlockingHostedApp) {
-  host_resolver()->AddRule("*", "127.0.0.1");
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, PopupBlockingHostedApp) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   ASSERT_TRUE(LoadExtension(
@@ -206,11 +223,11 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, PopupBlockingHostedApp) {
   EXPECT_TRUE(WaitForTabsAndPopups(browser(), 3, 1));
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, WindowArgumentsOverflow) {
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, WindowArgumentsOverflow) {
   ASSERT_TRUE(RunExtensionTest("window_open/argument_overflow")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, DISABLED_WindowOpener) {
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, DISABLED_WindowOpener) {
   ASSERT_TRUE(RunExtensionTest("window_open/opener")) << message_;
 }
 
@@ -222,7 +239,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, DISABLED_WindowOpener) {
 #endif
 // Ensure that the width and height properties of a window opened with
 // chrome.windows.create match the creation parameters. See crbug.com/173831.
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, MAYBE_WindowOpenSized) {
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, MAYBE_WindowOpenSized) {
   ASSERT_TRUE(RunExtensionTest("window_open/window_size")) << message_;
   EXPECT_TRUE(WaitForTabsAndPopups(browser(), 0, 1));
 }
@@ -240,7 +257,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, WindowOpenExtension) {
   WebContents* newtab = NULL;
   ASSERT_NO_FATAL_FAILURE(
       OpenWindow(browser()->tab_strip_model()->GetActiveWebContents(),
-      start_url.Resolve("newtab.html"), true, &newtab));
+                 start_url.Resolve("newtab.html"), true, true, &newtab));
 
   bool result = false;
   ASSERT_TRUE(content::ExecuteScriptAndExtractBool(newtab, "testExtensionApi()",
@@ -251,19 +268,22 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, WindowOpenExtension) {
 // Tests that if an extension page calls window.open to an invalid extension
 // URL, the browser doesn't crash.
 IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, WindowOpenInvalidExtension) {
-  ASSERT_TRUE(LoadExtension(
-      test_data_dir_.AppendASCII("uitest").AppendASCII("window_open")));
+  const extensions::Extension* extension = LoadExtension(
+      test_data_dir_.AppendASCII("uitest").AppendASCII("window_open"));
+  ASSERT_TRUE(extension);
 
-  GURL start_url(std::string(extensions::kExtensionScheme) +
-                     url::kStandardSchemeSeparator +
-                     last_loaded_extension_id() + "/test.html");
+  GURL start_url = extension->GetResourceURL("/test.html");
   ui_test_utils::NavigateToURL(browser(), start_url);
-  ASSERT_NO_FATAL_FAILURE(
-      OpenWindow(browser()->tab_strip_model()->GetActiveWebContents(),
+  WebContents* newtab = nullptr;
+  bool new_page_in_same_process = true;
+  bool expect_success = false;
+  ASSERT_NO_FATAL_FAILURE(OpenWindow(
+      browser()->tab_strip_model()->GetActiveWebContents(),
       GURL("chrome-extension://thisissurelynotavalidextensionid/newtab.html"),
-      false, NULL));
+      new_page_in_same_process, expect_success, &newtab));
 
-  // If we got to this point, we didn't crash, so we're good.
+  // This is expected to redirect to about:blank.
+  EXPECT_EQ(GURL(url::kAboutBlankURL), newtab->GetLastCommittedURL());
 }
 
 // Tests that calling window.open from the newtab page to an extension URL
@@ -279,10 +299,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, WindowOpenNoPrivileges) {
   ASSERT_NO_FATAL_FAILURE(
       OpenWindow(browser()->tab_strip_model()->GetActiveWebContents(),
                  GURL(std::string(extensions::kExtensionScheme) +
-                     url::kStandardSchemeSeparator +
-                     last_loaded_extension_id() + "/newtab.html"),
-                 false,
-                 &newtab));
+                      url::kStandardSchemeSeparator +
+                      last_loaded_extension_id() + "/newtab.html"),
+                 false, true, &newtab));
 
   // Extension API should succeed.
   bool result = false;
@@ -365,3 +384,141 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest,
     EXPECT_EQ("HOWDIE!!!", result);
   }
 }
+
+#if defined(OS_CHROMEOS)
+
+namespace {
+
+aura::Window* GetCurrentWindow() {
+  extensions::WindowController* controller = nullptr;
+  for (auto* iter :
+       extensions::WindowControllerList::GetInstance()->windows()) {
+    if (iter->window()->IsActive()) {
+      controller = iter;
+      break;
+    }
+  }
+  EXPECT_TRUE(controller);
+  return controller->window()->GetNativeWindow();
+}
+
+ash::mojom::WindowPinType GetCurrentWindowPinType() {
+  ash::mojom::WindowPinType type =
+      GetCurrentWindow()->GetProperty(ash::kWindowPinTypeKey);
+  return type;
+}
+
+void SetCurrentWindowPinType(ash::mojom::WindowPinType type) {
+  GetCurrentWindow()->SetProperty(ash::kWindowPinTypeKey, type);
+}
+
+}  // namespace
+
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, OpenLockedFullscreenWindow) {
+  ASSERT_TRUE(RunExtensionTestWithArg("locked_fullscreen/with_permission",
+                                      "openLockedFullscreenWindow"))
+      << message_;
+
+  // Make sure the newly created window is "trusted pinned" (which means that
+  // it's in locked fullscreen mode).
+  EXPECT_EQ(ash::mojom::WindowPinType::TRUSTED_PINNED,
+            GetCurrentWindowPinType());
+}
+
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, UpdateWindowToLockedFullscreen) {
+  ASSERT_TRUE(RunExtensionTestWithArg("locked_fullscreen/with_permission",
+                                      "updateWindowToLockedFullscreen"))
+      << message_;
+
+  // Make sure the current window is put into the "trusted pinned" state.
+  EXPECT_EQ(ash::mojom::WindowPinType::TRUSTED_PINNED,
+            GetCurrentWindowPinType());
+}
+
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, RemoveLockedFullscreenFromWindow) {
+  // After locking the window, do a LockedFullscreenStateChanged so the
+  // command_controller state catches up as well.
+  SetCurrentWindowPinType(ash::mojom::WindowPinType::TRUSTED_PINNED);
+  browser()->command_controller()->LockedFullscreenStateChanged();
+
+  ASSERT_TRUE(RunExtensionTestWithArg("locked_fullscreen/with_permission",
+                                      "removeLockedFullscreenFromWindow"))
+      << message_;
+
+  // Make sure the current window is removed from locked-fullscreen state.
+  EXPECT_EQ(ash::mojom::WindowPinType::NONE, GetCurrentWindowPinType());
+}
+
+// Make sure that commands disabling code works in locked fullscreen mode.
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest, VerifyCommandsInLockedFullscreen) {
+  // IDC_EXIT is always enabled in regular mode so it's a perfect candidate for
+  // testing.
+  EXPECT_TRUE(browser()->command_controller()->IsCommandEnabled(IDC_EXIT));
+  ASSERT_TRUE(RunExtensionTestWithArg("locked_fullscreen/with_permission",
+                                      "updateWindowToLockedFullscreen"))
+      << message_;
+
+  // IDC_EXIT is not enabled in locked fullscreen.
+  EXPECT_FALSE(browser()->command_controller()->IsCommandEnabled(IDC_EXIT));
+
+  // Verify some whitelisted commands.
+  EXPECT_TRUE(browser()->command_controller()->IsCommandEnabled(IDC_COPY));
+  EXPECT_TRUE(browser()->command_controller()->IsCommandEnabled(IDC_FIND));
+  EXPECT_TRUE(browser()->command_controller()->IsCommandEnabled(IDC_ZOOM_PLUS));
+}
+
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest,
+                       OpenLockedFullscreenWindowWithoutPermission) {
+  ASSERT_TRUE(RunExtensionTestWithArg("locked_fullscreen/without_permission",
+                                      "openLockedFullscreenWindow"))
+      << message_;
+
+  // Make sure no new windows get created (so only the one created by default
+  // exists) since the call to chrome.windows.create fails on the javascript
+  // side.
+  EXPECT_EQ(1u,
+            extensions::WindowControllerList::GetInstance()->windows().size());
+}
+
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest,
+                       UpdateWindowToLockedFullscreenWithoutPermission) {
+  ASSERT_TRUE(RunExtensionTestWithArg("locked_fullscreen/without_permission",
+                                      "updateWindowToLockedFullscreen"))
+      << message_;
+
+  // chrome.windows.update call fails since this extension doesn't have the
+  // correct permission and hence the current window has NONE as WindowPinType.
+  EXPECT_EQ(ash::mojom::WindowPinType::NONE, GetCurrentWindowPinType());
+}
+
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest,
+                       RemoveLockedFullscreenFromWindowWithoutPermission) {
+  SetCurrentWindowPinType(ash::mojom::WindowPinType::TRUSTED_PINNED);
+  browser()->command_controller()->LockedFullscreenStateChanged();
+
+  ASSERT_TRUE(RunExtensionTestWithArg("locked_fullscreen/without_permission",
+                                      "removeLockedFullscreenFromWindow"))
+      << message_;
+
+  // The current window is still locked-fullscreen.
+  EXPECT_EQ(ash::mojom::WindowPinType::TRUSTED_PINNED,
+            GetCurrentWindowPinType());
+}
+#endif  // defined(OS_CHROMEOS)
+
+#if !defined(OS_CHROMEOS)
+// Loading an extension requiring the 'lockWindowFullscreenPrivate' permission
+// on non Chrome OS platforms should always fail since the API is available only
+// on Chrome OS.
+IN_PROC_BROWSER_TEST_F(WindowOpenApiTest,
+                       OpenLockedFullscreenWindowNonChromeOS) {
+  const extensions::Extension* extension = LoadExtensionWithFlags(
+      test_data_dir_.AppendASCII("locked_fullscreen/with_permission"),
+      ExtensionBrowserTest::kFlagIgnoreManifestWarnings);
+  ASSERT_TRUE(extension);
+  EXPECT_EQ(1u, extension->install_warnings().size());
+  EXPECT_EQ(std::string("'lockWindowFullscreenPrivate' "
+                        "is not allowed for specified platform."),
+            extension->install_warnings().front().message);
+}
+#endif

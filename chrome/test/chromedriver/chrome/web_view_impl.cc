@@ -70,24 +70,11 @@ const char* GetAsString(MouseEventType type) {
 const char* GetAsString(TouchEventType type) {
   switch (type) {
     case kTouchStart:
-      return "touchStart";
+      return "touchstart";
     case kTouchEnd:
-      return "touchEnd";
+      return "touchend";
     case kTouchMove:
-      return "touchMove";
-    default:
-      return "";
-  }
-}
-
-const char* GetPointStateString(TouchEventType type) {
-  switch (type) {
-    case kTouchStart:
-      return "touchPressed";
-    case kTouchEnd:
-      return "touchReleased";
-    case kTouchMove:
-      return "touchMoved";
+      return "touchmove";
     default:
       return "";
   }
@@ -136,10 +123,11 @@ WebViewImpl::WebViewImpl(const std::string& id,
       browser_info_(browser_info),
       dom_tracker_(new DomTracker(client.get())),
       frame_tracker_(new FrameTracker(client.get())),
-      dialog_manager_(new JavaScriptDialogManager(client.get())),
-      navigation_tracker_(PageLoadStrategy::Create(
-          page_load_strategy, client.get(),
-          browser_info, dialog_manager_.get())),
+      dialog_manager_(new JavaScriptDialogManager(client.get(), browser_info)),
+      navigation_tracker_(PageLoadStrategy::Create(page_load_strategy,
+                                                   client.get(),
+                                                   browser_info,
+                                                   dialog_manager_.get())),
       mobile_emulation_override_manager_(
           new MobileEmulationOverrideManager(client.get(), device_metrics)),
       geolocation_override_manager_(
@@ -197,6 +185,15 @@ Status WebViewImpl::Load(const std::string& url, const Timeout* timeout) {
     return Status(kUnknownError, "unsupported protocol");
   base::DictionaryValue params;
   params.SetString("url", url);
+  if (browser_info_->major_version >= 63 &&
+      navigation_tracker_->IsNonBlocking()) {
+    // With non-bloakcing navigation tracker, the previous navigation might
+    // still be in progress, and this can cause the new navigate command to be
+    // ignored on Chrome v63 and above. Stop previous navigation first.
+    client_->SendCommand("Page.stopLoading", base::DictionaryValue());
+    // Use SendCommandAndIgnoreResponse to ensure no blocking occurs.
+    return client_->SendCommandAndIgnoreResponse("Page.navigate", params);
+  }
   return client_->SendCommandWithTimeout("Page.navigate", params, timeout);
 }
 
@@ -204,6 +201,23 @@ Status WebViewImpl::Reload(const Timeout* timeout) {
   base::DictionaryValue params;
   params.SetBoolean("ignoreCache", false);
   return client_->SendCommandWithTimeout("Page.reload", params, timeout);
+}
+
+Status WebViewImpl::SendCommand(const std::string& cmd,
+                                const base::DictionaryValue& params) {
+  return client_->SendCommand(cmd, params);
+}
+
+Status WebViewImpl::SendCommandAndGetResult(
+        const std::string& cmd,
+        const base::DictionaryValue& params,
+        std::unique_ptr<base::Value>* value) {
+  std::unique_ptr<base::DictionaryValue> result;
+  Status status = client_->SendCommandAndGetResult(cmd, params, &result);
+  if (status.IsError())
+    return status;
+  *value = std::move(result);
+  return Status(kOk);
 }
 
 Status WebViewImpl::TraverseHistory(int delta, const Timeout* timeout) {
@@ -369,16 +383,12 @@ Status WebViewImpl::DispatchMouseEvents(const std::list<MouseEvent>& events,
 }
 
 Status WebViewImpl::DispatchTouchEvent(const TouchEvent& event) {
-  base::DictionaryValue params;
-  params.SetString("type", GetAsString(event.type));
-  std::unique_ptr<base::ListValue> point_list(new base::ListValue);
-  std::unique_ptr<base::DictionaryValue> point(new base::DictionaryValue);
-  point->SetString("state", GetPointStateString(event.type));
-  point->SetInteger("x", event.x);
-  point->SetInteger("y", event.y);
-  point_list->Set(0, point.release());
-  params.Set("touchPoints", point_list.release());
-  return client_->SendCommand("Input.dispatchTouchEvent", params);
+  base::ListValue args;
+  args.Append(base::MakeUnique<base::Value>(event.x));
+  args.Append(base::MakeUnique<base::Value>(event.y));
+  args.Append(base::MakeUnique<base::Value>(GetAsString(event.type)));
+  std::unique_ptr<base::Value> unused;
+  return CallFunction(std::string(), kDispatchTouchEventScript, args, &unused);
 }
 
 Status WebViewImpl::DispatchTouchEvents(const std::list<TouchEvent>& events) {
@@ -405,7 +415,6 @@ Status WebViewImpl::DispatchKeyEvents(const std::list<KeyEvent>& events) {
     }
     params.SetString("text", it->modified_text);
     params.SetString("unmodifiedText", it->unmodified_text);
-    params.SetInteger("nativeVirtualKeyCode", it->key_code);
     params.SetInteger("windowsVirtualKeyCode", it->key_code);
     ui::DomCode dom_code = ui::UsLayoutKeyboardCodeToDomCode(it->key_code);
     std::string code = ui::KeycodeConverter::DomCodeToCodeString(dom_code);
@@ -420,13 +429,27 @@ Status WebViewImpl::DispatchKeyEvents(const std::list<KeyEvent>& events) {
   return Status(kOk);
 }
 
-Status WebViewImpl::GetCookies(std::unique_ptr<base::ListValue>* cookies) {
+Status WebViewImpl::GetCookies(std::unique_ptr<base::ListValue>* cookies,
+                               const std::string& current_page_url) {
   base::DictionaryValue params;
   std::unique_ptr<base::DictionaryValue> result;
-  Status status = client_->SendCommandAndGetResult(
-      "Page.getCookies", params, &result);
-  if (status.IsError())
-    return status;
+
+  if (browser_info_->build_no >= 3029 &&
+      browser_info_->browser_name != "webview") {
+    base::ListValue url_list;
+    url_list.AppendString(current_page_url);
+    params.SetKey("urls", url_list.Clone());
+    Status status =
+        client_->SendCommandAndGetResult("Network.getCookies", params, &result);
+    if (status.IsError())
+      return status;
+  } else {
+    Status status =
+        client_->SendCommandAndGetResult("Page.getCookies", params, &result);
+    if (status.IsError())
+      return status;
+  }
+
   base::ListValue* cookies_tmp;
   if (!result->GetList("cookies", &cookies_tmp))
     return Status(kUnknownError, "DevTools didn't return cookies");
@@ -435,11 +458,51 @@ Status WebViewImpl::GetCookies(std::unique_ptr<base::ListValue>* cookies) {
 }
 
 Status WebViewImpl::DeleteCookie(const std::string& name,
-                                 const std::string& url) {
+                                 const std::string& url,
+                                 const std::string& domain,
+                                 const std::string& path) {
   base::DictionaryValue params;
-  params.SetString("cookieName", name);
   params.SetString("url", url);
-  return client_->SendCommand("Page.deleteCookie", params);
+  std::string command;
+  if (browser_info_->build_no >= 3189) {
+    params.SetString("name", name);
+    params.SetString("domain", domain);
+    params.SetString("path", path);
+    command = "Network.deleteCookies";
+  } else {
+    params.SetString("cookieName", name);
+    command = "Page.deleteCookie";
+  }
+
+  return client_->SendCommand(command, params);
+}
+
+Status WebViewImpl::AddCookie(const std::string& name,
+                              const std::string& url,
+                              const std::string& value,
+                              const std::string& domain,
+                              const std::string& path,
+                              bool secure,
+                              bool httpOnly,
+                              double expiry) {
+  base::DictionaryValue params;
+  params.SetString("name", name);
+  params.SetString("url", url);
+  params.SetString("value", value);
+  params.SetString("domain", domain);
+  params.SetString("path", path);
+  params.SetBoolean("secure", secure);
+  params.SetBoolean("httpOnly", httpOnly);
+  params.SetDouble("expirationDate", expiry);
+  params.SetDouble("expires", expiry);
+
+  std::unique_ptr<base::DictionaryValue> result;
+  Status status =
+      client_->SendCommandAndGetResult("Network.setCookie", params, &result);
+  bool success;
+  if (!result->GetBoolean("success", &success) || !success)
+    return Status(kUnableToSetCookie);
+  return Status(kOk);
 }
 
 Status WebViewImpl::WaitForPendingNavigations(const std::string& frame_id,
@@ -452,9 +515,13 @@ Status WebViewImpl::WaitForPendingNavigations(const std::string& frame_id,
   Status status = client_->HandleEventsUntil(not_pending_navigation, timeout);
   if (status.code() == kTimeout && stop_load_on_timeout) {
     VLOG(0) << "Timed out. Stopping navigation...";
-    std::unique_ptr<base::Value> unused_value;
     navigation_tracker_->set_timed_out(true);
-    EvaluateScript(std::string(), "window.stop();", &unused_value);
+    if (browser_info_->major_version >= 63) {
+      client_->SendCommand("Page.stopLoading", base::DictionaryValue());
+    } else {
+      std::unique_ptr<base::Value> unused_value;
+      EvaluateScript(std::string(), "window.stop();", &unused_value);
+    }
     // We don't consider |timeout| here to make sure the navigation actually
     // stops and we cleanup properly after a command that caused a navigation
     // that timed out.  Otherwise we might have to wait for that before
@@ -539,7 +606,7 @@ Status WebViewImpl::SetFileInputFiles(
     return Status(kUnknownError, "no node ID for file input");
   base::DictionaryValue params;
   params.SetInteger("nodeId", node_id);
-  params.Set("files", file_list.DeepCopy());
+  params.SetKey("files", file_list.Clone());
   return client_->SendCommand("DOM.setFileInputFiles", params);
 }
 

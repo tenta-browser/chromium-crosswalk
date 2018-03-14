@@ -7,38 +7,56 @@
 #include "ui/gfx/geometry/size.h"
 
 #define IPC_MESSAGE_IMPL
+#undef COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
 #include "components/printing/common/print_messages.h"
+#ifndef COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
+#error "Failed to include header components/printing/common/print_messages.h"
+#endif
 
 // Generate constructors.
 #include "ipc/struct_constructor_macros.h"
+#undef COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
 #include "components/printing/common/print_messages.h"
+#ifndef COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
+#error "Failed to include header components/printing/common/print_messages.h"
+#endif
 
 // Generate destructors.
 #include "ipc/struct_destructor_macros.h"
+#undef COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
 #include "components/printing/common/print_messages.h"
-
-// Generate param traits size methods.
-#include "ipc/param_traits_size_macros.h"
-namespace IPC {
-#include "components/printing/common/print_messages.h"
-}
+#ifndef COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
+#error "Failed to include header components/printing/common/print_messages.h"
+#endif
 
 // Generate param traits write methods.
 #include "ipc/param_traits_write_macros.h"
 namespace IPC {
+#undef COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
 #include "components/printing/common/print_messages.h"
+#ifndef COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
+#error "Failed to include header components/printing/common/print_messages.h"
+#endif
 }  // namespace IPC
 
 // Generate param traits read methods.
 #include "ipc/param_traits_read_macros.h"
 namespace IPC {
+#undef COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
 #include "components/printing/common/print_messages.h"
+#ifndef COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
+#error "Failed to include header components/printing/common/print_messages.h"
+#endif
 }  // namespace IPC
 
 // Generate param traits log methods.
 #include "ipc/param_traits_log_macros.h"
 namespace IPC {
+#undef COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
 #include "components/printing/common/print_messages.h"
+#ifndef COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
+#error "Failed to include header components/printing/common/print_messages.h"
+#endif
 }  // namespace IPC
 
 PrintMsg_Print_Params::PrintMsg_Print_Params()
@@ -61,7 +79,8 @@ PrintMsg_Print_Params::PrintMsg_Print_Params()
       display_header_footer(false),
       title(),
       url(),
-      should_print_backgrounds(false) {}
+      should_print_backgrounds(false),
+      printed_doc_type(printing::SkiaDocumentType::PDF) {}
 
 PrintMsg_Print_Params::PrintMsg_Print_Params(
     const PrintMsg_Print_Params& other) = default;
@@ -89,6 +108,7 @@ void PrintMsg_Print_Params::Reset() {
   title = base::string16();
   url = base::string16();
   should_print_backgrounds = false;
+  printed_doc_type = printing::SkiaDocumentType::PDF;
 }
 
 PrintMsg_PrintPages_Params::PrintMsg_PrintPages_Params()

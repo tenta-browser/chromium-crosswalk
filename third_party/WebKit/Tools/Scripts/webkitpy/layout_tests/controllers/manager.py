@@ -31,8 +31,8 @@
 
 This includes finding tests to run, reading the test expectations,
 starting the required helper servers, deciding the order and way to
-run the tests, retrying fails tests and collecting the test results,
-including crash logs, and mismatches with expectations.
+run the tests, retrying failed tests, and collecting the test results,
+including crash logs and mismatches with expectations.
 
 The Manager object has a constructor and one main method called run.
 """
@@ -45,7 +45,7 @@ import time
 
 from webkitpy.common import exit_codes
 from webkitpy.common.net.file_uploader import FileUploader
-from webkitpy.common.webkit_finder import WebKitFinder
+from webkitpy.common.path_finder import PathFinder
 from webkitpy.layout_tests.controllers.layout_test_finder import LayoutTestFinder
 from webkitpy.layout_tests.controllers.layout_test_runner import LayoutTestRunner
 from webkitpy.layout_tests.controllers.test_result_writer import TestResultWriter
@@ -65,44 +65,47 @@ TestExpectations = test_expectations.TestExpectations
 class Manager(object):
     """A class for managing running a series of layout tests."""
 
+    HTTP_SUBDIR = 'http'
+    INSPECTOR_SUBDIR = 'inspector'
+    PERF_SUBDIR = 'perf'
+    WEBSOCKET_SUBDIR = 'websocket'
+    ARCHIVED_RESULTS_LIMIT = 25
+
     def __init__(self, port, options, printer):
-        """Initialize test runner data structures.
+        """Initializes test runner data structures.
 
         Args:
-          port: An object implementing platform-specific functionality.
-          options: An options argument which contains command line options.
-          printer: A Printer object to record updates to.
+            port: An object implementing platform-specific functionality.
+            options: An options argument which contains command line options.
+            printer: A Printer object to record updates to.
         """
         self._port = port
         self._filesystem = port.host.filesystem
         self._options = options
         self._printer = printer
-        self._expectations = None
 
-        self.HTTP_SUBDIR = 'http' + port.TEST_PATH_SEPARATOR
-        self.INSPECTOR_SUBDIR = 'inspector' + port.TEST_PATH_SEPARATOR
-        self.PERF_SUBDIR = 'perf'
-        self.WEBSOCKET_SUBDIR = 'websocket' + port.TEST_PATH_SEPARATOR
-        self.LAYOUT_TESTS_DIRECTORY = 'LayoutTests'
-        self.ARCHIVED_RESULTS_LIMIT = 25
+        self._expectations = None
         self._http_server_started = False
         self._wptserve_started = False
         self._websockets_server_started = False
 
         self._results_directory = self._port.results_directory()
         self._finder = LayoutTestFinder(self._port, self._options)
-        self._webkit_finder = WebKitFinder(port.host.filesystem)
+        self._path_finder = PathFinder(port.host.filesystem)
         self._runner = LayoutTestRunner(self._options, self._port, self._printer, self._results_directory, self._test_is_slow)
 
     def run(self, args):
-        """Run the tests and return a RunDetails object with the results."""
+        """Runs the tests and return a RunDetails object with the results."""
         start_time = time.time()
-        self._printer.write_update("Collecting tests ...")
+        self._printer.write_update('Collecting tests ...')
         running_all_tests = False
 
-        self._printer.write_update('Generating MANIFEST.json for web-platform-tests ...')
-        WPTManifest.ensure_manifest(self._port.host)
+        if not args or any('external' in path for path in args):
+            self._printer.write_update('Generating MANIFEST.json for web-platform-tests ...')
+            WPTManifest.ensure_manifest(self._port.host)
+            self._printer.write_update('Completed generating manifest.')
 
+        self._printer.write_update('Collecting tests ...')
         try:
             paths, all_test_names, running_all_tests = self._collect_tests(args)
         except IOError:
@@ -119,12 +122,12 @@ class Manager(object):
 
         test_names, tests_in_other_chunks = self._finder.split_into_chunks(all_test_names)
 
-        self._printer.write_update("Parsing expectations ...")
+        self._printer.write_update('Parsing expectations ...')
         self._expectations = test_expectations.TestExpectations(self._port, test_names)
 
         tests_to_run, tests_to_skip = self._prepare_lists(paths, test_names)
 
-        self._expectations.remove_tests(tests_in_other_chunks)
+        self._expectations.remove_tests_from_expectations(tests_in_other_chunks)
 
         self._printer.print_found(
             len(all_test_names), len(test_names), len(tests_to_run),
@@ -145,58 +148,25 @@ class Manager(object):
         else:
             should_retry_failures = self._options.retry_failures
 
-        enabled_pixel_tests_in_retry = False
         try:
             self._start_servers(tests_to_run)
-
-            num_workers = self._port.num_workers(int(self._options.child_processes))
-
-            initial_results = self._run_tests(
-                tests_to_run, tests_to_skip, self._options.repeat_each, self._options.iterations,
-                num_workers)
-
-            # Don't retry failures when interrupted by user or failures limit exception.
-            should_retry_failures = should_retry_failures and not (
-                initial_results.interrupted or initial_results.keyboard_interrupted)
-
-            tests_to_retry = self._tests_to_retry(initial_results)
-            all_retry_results = []
-            if should_retry_failures and tests_to_retry:
-                enabled_pixel_tests_in_retry = self._force_pixel_tests_if_needed()
-
-                for retry_attempt in xrange(1, self._options.num_retries + 1):
-                    if not tests_to_retry:
-                        break
-
-                    _log.info('')
-                    _log.info('Retrying %s, attempt %d of %d...',
-                              grammar.pluralize('unexpected failure', len(tests_to_retry)),
-                              retry_attempt, self._options.num_retries)
-
-                    retry_results = self._run_tests(tests_to_retry,
-                                                    tests_to_skip=set(),
-                                                    repeat_each=1,
-                                                    iterations=1,
-                                                    num_workers=num_workers,
-                                                    retry_attempt=retry_attempt)
-                    all_retry_results.append(retry_results)
-
-                    tests_to_retry = self._tests_to_retry(retry_results)
-
-                if enabled_pixel_tests_in_retry:
-                    self._options.pixel_tests = False
+            if self._options.watch:
+                run_results = self._run_test_loop(tests_to_run, tests_to_skip)
+            else:
+                run_results = self._run_test_once(tests_to_run, tests_to_skip, should_retry_failures)
+            initial_results, all_retry_results, enabled_pixel_tests_in_retry = run_results
         finally:
             self._stop_servers()
             self._clean_up_run()
 
         # Some crash logs can take a long time to be written out so look
         # for new logs after the test run finishes.
-        self._printer.write_update("looking for new crash logs")
+        self._printer.write_update('Looking for new crash logs ...')
         self._look_for_new_crash_logs(initial_results, start_time)
         for retry_attempt_results in all_retry_results:
             self._look_for_new_crash_logs(retry_attempt_results, start_time)
 
-        _log.debug("summarizing results")
+        self._printer.write_update('Summarizing results ...')
         summarized_full_results = test_run_results.summarize_results(
             self._port, self._expectations, initial_results, all_retry_results,
             enabled_pixel_tests_in_retry)
@@ -215,21 +185,86 @@ class Manager(object):
 
             self._upload_json_files()
 
-            results_path = self._filesystem.join(self._results_directory, "results.html")
-            self._copy_results_html_file(results_path)
+            self._copy_results_html_file(self._results_directory, 'results.html')
+            self._copy_results_html_file(self._results_directory, 'legacy-results.html')
             if initial_results.keyboard_interrupted:
                 exit_code = exit_codes.INTERRUPTED_EXIT_STATUS
             else:
                 if initial_results.interrupted:
                     exit_code = exit_codes.EARLY_EXIT_STATUS
-                if self._options.show_results and (
-                        exit_code or (self._options.full_results_html and initial_results.total_failures)):
-                    self._port.show_results_html_file(results_path)
-                self._printer.print_results(time.time() - start_time, initial_results, summarized_failing_results)
+                if self._options.show_results and (exit_code or initial_results.total_failures):
+                    self._port.show_results_html_file(
+                        self._filesystem.join(self._results_directory, 'results.html'))
+                self._printer.print_results(time.time() - start_time, initial_results)
 
         return test_run_results.RunDetails(
             exit_code, summarized_full_results, summarized_failing_results,
             initial_results, all_retry_results, enabled_pixel_tests_in_retry)
+
+    def _run_test_loop(self, tests_to_run, tests_to_skip):
+        # Don't show results in a new browser window because we're already
+        # printing the link to diffs in the loop
+        self._options.show_results = False
+
+        while True:
+            initial_results, all_retry_results, enabled_pixel_tests_in_retry = self._run_test_once(
+                tests_to_run, tests_to_skip, should_retry_failures=False)
+            for name in initial_results.failures_by_name:
+                failure = initial_results.failures_by_name[name][0]
+                if isinstance(failure, test_failures.FailureTextMismatch):
+                    full_test_path = self._filesystem.join(self._results_directory, name)
+                    filename, _ = self._filesystem.splitext(full_test_path)
+                    pretty_diff_path = 'file://' + filename + '-pretty-diff.html'
+                    self._printer.writeln('Link to pretty diff:')
+                    self._printer.writeln(pretty_diff_path + '\n')
+            self._printer.writeln('Finished running tests')
+
+            user_input = self._port.host.user.prompt(
+                'Interactive watch mode: (q)uit (r)etry\n').lower()
+
+            if user_input == 'q' or user_input == 'quit':
+                return (initial_results, all_retry_results, enabled_pixel_tests_in_retry)
+
+    def _run_test_once(self, tests_to_run, tests_to_skip, should_retry_failures):
+        enabled_pixel_tests_in_retry = False
+
+        num_workers = self._port.num_workers(int(self._options.child_processes))
+
+        initial_results = self._run_tests(
+            tests_to_run, tests_to_skip, self._options.repeat_each, self._options.iterations,
+            num_workers)
+
+        # Don't retry failures when interrupted by user or failures limit exception.
+        should_retry_failures = should_retry_failures and not (
+            initial_results.interrupted or initial_results.keyboard_interrupted)
+
+        tests_to_retry = self._tests_to_retry(initial_results)
+        all_retry_results = []
+        if should_retry_failures and tests_to_retry:
+            enabled_pixel_tests_in_retry = self._force_pixel_tests_if_needed()
+
+            for retry_attempt in xrange(1, self._options.num_retries + 1):
+                if not tests_to_retry:
+                    break
+
+                _log.info('')
+                _log.info('Retrying %s, attempt %d of %d...',
+                          grammar.pluralize('unexpected failure', len(tests_to_retry)),
+                          retry_attempt, self._options.num_retries)
+
+                retry_results = self._run_tests(tests_to_retry,
+                                                tests_to_skip=set(),
+                                                repeat_each=1,
+                                                iterations=1,
+                                                num_workers=num_workers,
+                                                retry_attempt=retry_attempt)
+                all_retry_results.append(retry_results)
+
+                tests_to_retry = self._tests_to_retry(retry_results)
+
+            if enabled_pixel_tests_in_retry:
+                self._options.pixel_tests = False
+        return (initial_results, all_retry_results, enabled_pixel_tests_in_retry)
 
     def _collect_tests(self, args):
         return self._finder.find_tests(args, test_list=self._options.test_list,
@@ -237,19 +272,19 @@ class Manager(object):
 
     def _is_http_test(self, test):
         return (
-            test.startswith(self.HTTP_SUBDIR) or
+            test.startswith(self.HTTP_SUBDIR + self._port.TEST_PATH_SEPARATOR) or
             self._is_websocket_test(test) or
-            self._port.TEST_PATH_SEPARATOR + self.HTTP_SUBDIR in test
+            self._port.TEST_PATH_SEPARATOR + self.HTTP_SUBDIR + self._port.TEST_PATH_SEPARATOR in test
         )
 
     def _is_inspector_test(self, test):
-        return self.INSPECTOR_SUBDIR in test
+        return self.INSPECTOR_SUBDIR + self._port.TEST_PATH_SEPARATOR in test
 
     def _is_websocket_test(self, test):
         if self._port.should_use_wptserve(test):
             return False
 
-        return self.WEBSOCKET_SUBDIR in test
+        return self.WEBSOCKET_SUBDIR + self._port.TEST_PATH_SEPARATOR in test
 
     def _http_tests(self, test_names):
         return set(test for test in test_names if self._is_http_test(test))
@@ -266,12 +301,10 @@ class Manager(object):
     def _test_input_for_file(self, test_file):
         return TestInput(test_file,
                          self._options.slow_time_out_ms if self._test_is_slow(test_file) else self._options.time_out_ms,
-                         self._test_requires_lock(test_file),
-                         should_add_missing_baselines=(self._options.new_test_results and
-                                                       not self._test_is_expected_missing(test_file)))
+                         self._test_requires_lock(test_file))
 
     def _test_requires_lock(self, test_file):
-        """Return True if the test needs to be locked when running multiple
+        """Returns True if the test needs to be locked when running multiple
         instances of this test runner.
 
         Perf tests are locked because heavy load caused by running other
@@ -279,14 +312,10 @@ class Manager(object):
         """
         return self._is_http_test(test_file) or self._is_perf_test(test_file)
 
-    def _test_is_expected_missing(self, test_file):
-        expectations = self._expectations.model().get_expectations(test_file)
-        return (test_expectations.MISSING in expectations or
-                test_expectations.NEEDS_REBASELINE in expectations or
-                test_expectations.NEEDS_MANUAL_REBASELINE in expectations)
-
     def _test_is_slow(self, test_file):
-        return test_expectations.SLOW in self._expectations.model().get_expectations(test_file) or self._port.is_slow_wpt_test(test_file)
+        expectations = self._expectations.model().get_expectations(test_file)
+        return (test_expectations.SLOW in expectations or
+                self._port.is_slow_wpt_test(test_file))
 
     def _needs_servers(self, test_names):
         return any(self._test_requires_lock(test_name) for test_name in test_names)
@@ -295,48 +324,41 @@ class Manager(object):
         try:
             timestamp = time.strftime(
                 "%Y-%m-%d-%H-%M-%S", time.localtime(
-                    self._filesystem.mtime(self._filesystem.join(self._results_directory, "results.html"))))
+                    self._filesystem.mtime(self._filesystem.join(self._results_directory, 'results.html'))))
         except (IOError, OSError) as error:
             # It might be possible that results.html was not generated in previous run, because the test
             # run was interrupted even before testing started. In those cases, don't archive the folder.
             # Simply override the current folder contents with new results.
             import errno
             if error.errno in (errno.EEXIST, errno.ENOENT):
-                self._printer.write_update("No results.html file found in previous run, skipping it.")
+                self._printer.write_update('No results.html file found in previous run, skipping it.')
             return None
-        archived_name = ''.join((self._filesystem.basename(self._results_directory), "_", timestamp))
+        archived_name = ''.join((self._filesystem.basename(self._results_directory), '_', timestamp))
         archived_path = self._filesystem.join(self._filesystem.dirname(self._results_directory), archived_name)
         self._filesystem.move(self._results_directory, archived_path)
 
     def _delete_dirs(self, dir_list):
-        for dir in dir_list:
-            self._filesystem.rmtree(dir)
+        for dir_path in dir_list:
+            self._filesystem.rmtree(dir_path)
 
     def _limit_archived_results_count(self):
         results_directory_path = self._filesystem.dirname(self._results_directory)
         file_list = self._filesystem.listdir(results_directory_path)
         results_directories = []
-        for dir in file_list:
-            file_path = self._filesystem.join(results_directory_path, dir)
+        for name in file_list:
+            file_path = self._filesystem.join(results_directory_path, name)
             if self._filesystem.isdir(file_path) and self._results_directory in file_path:
                 results_directories.append(file_path)
-        results_directories.sort(key=lambda x: self._filesystem.mtime(x))
-        self._printer.write_update("Clobbering excess archived results in %s" % results_directory_path)
+        results_directories.sort(key=self._filesystem.mtime)
+        self._printer.write_update('Clobbering excess archived results in %s' % results_directory_path)
         self._delete_dirs(results_directories[:-self.ARCHIVED_RESULTS_LIMIT])
 
     def _set_up_run(self, test_names):
-        self._printer.write_update("Checking build ...")
+        self._printer.write_update('Checking build ...')
         if self._options.build:
             exit_code = self._port.check_build(self._needs_servers(test_names), self._printer)
             if exit_code:
-                _log.error("Build check failed")
-                return exit_code
-
-        # Check that the system dependencies (themes, fonts, ...) are correct.
-        if not self._options.nocheck_sys_deps:
-            self._printer.write_update("Checking system dependencies ...")
-            exit_code = self._port.check_sys_deps(self._needs_servers(test_names))
-            if exit_code:
+                _log.error('Build check failed')
                 return exit_code
 
         if self._options.clobber_old_results:
@@ -350,6 +372,14 @@ class Manager(object):
         self._port.host.filesystem.maybe_make_directory(self._results_directory)
 
         self._port.setup_test_run()
+
+        # Check that the system dependencies (themes, fonts, ...) are correct.
+        if not self._options.nocheck_sys_deps:
+            self._printer.write_update('Checking system dependencies ...')
+            exit_code = self._port.check_sys_deps(self._needs_servers(test_names))
+            if exit_code:
+                return exit_code
+
         return exit_codes.OK_EXIT_STATUS
 
     def _run_tests(self, tests_to_run, tests_to_skip, repeat_each, iterations,
@@ -395,11 +425,11 @@ class Manager(object):
             self._port.stop_websocket_server()
 
     def _clean_up_run(self):
-        _log.debug("Flushing stdout")
+        _log.debug('Flushing stdout')
         sys.stdout.flush()
-        _log.debug("Flushing stderr")
+        _log.debug('Flushing stderr')
         sys.stderr.flush()
-        _log.debug("Cleaning up port")
+        _log.debug('Cleaning up port')
         self._port.clean_up_test_run()
 
     def _force_pixel_tests_if_needed(self):
@@ -415,9 +445,9 @@ class Manager(object):
         under stress, do a second pass at the end of the test run.
 
         Args:
-          run_results: The results of the test run.
-          start_time: Time the tests started at. We're looking for crash
-              logs after that time.
+            run_results: The results of the test run.
+            start_time: Time the tests started at. We're looking for crash
+                logs after that time.
         """
         crashed_processes = []
         for test, result in run_results.unexpected_results_by_name.iteritems():
@@ -438,19 +468,20 @@ class Manager(object):
 
         crash_logs = self._port.look_for_new_crash_logs(crashed_processes, start_time)
         if crash_logs:
-            for test, crash_log in crash_logs.iteritems():
+            for test, (crash_log, crash_site) in crash_logs.iteritems():
                 writer = TestResultWriter(self._filesystem, self._port, self._port.results_directory(), test)
                 writer.write_crash_log(crash_log)
+                run_results.unexpected_results_by_name[test].crash_site = crash_site
 
     def _clobber_old_results(self):
         dir_above_results_path = self._filesystem.dirname(self._results_directory)
-        self._printer.write_update("Clobbering old results in %s" % dir_above_results_path)
+        self._printer.write_update('Clobbering old results in %s.' % dir_above_results_path)
         if not self._filesystem.exists(dir_above_results_path):
             return
         file_list = self._filesystem.listdir(dir_above_results_path)
         results_directories = []
-        for dir in file_list:
-            file_path = self._filesystem.join(dir_above_results_path, dir)
+        for name in file_list:
+            file_path = self._filesystem.join(dir_above_results_path, name)
             if self._filesystem.isdir(file_path) and self._results_directory in file_path:
                 results_directories.append(file_path)
         self._delete_dirs(results_directories)
@@ -470,7 +501,7 @@ class Manager(object):
 
         # FIXME: Upload stats.json to the server and delete times_ms.
         times_trie = json_results_generator.test_timings_trie(initial_results.results_by_name.values())
-        times_json_path = self._filesystem.join(self._results_directory, "times_ms.json")
+        times_json_path = self._filesystem.join(self._results_directory, 'times_ms.json')
         json_results_generator.write_json(self._filesystem, times_trie, times_json_path)
 
         # Save out the times data so we can use it for --fastest in the future.
@@ -480,16 +511,21 @@ class Manager(object):
             json_results_generator.write_json(self._filesystem, times_trie, bot_test_times_path)
 
         stats_trie = self._stats_trie(initial_results)
-        stats_path = self._filesystem.join(self._results_directory, "stats.json")
+        stats_path = self._filesystem.join(self._results_directory, 'stats.json')
         self._filesystem.write_text_file(stats_path, json.dumps(stats_trie))
 
-        full_results_path = self._filesystem.join(self._results_directory, "full_results.json")
+        full_results_path = self._filesystem.join(self._results_directory, 'full_results.json')
         json_results_generator.write_json(self._filesystem, summarized_full_results, full_results_path)
 
-        full_results_path = self._filesystem.join(self._results_directory, "failing_results.json")
+        full_results_jsonp_path = self._filesystem.join(self._results_directory, 'full_results_jsonp.js')
+        json_results_generator.write_json(self._filesystem,
+                                          summarized_full_results,
+                                          full_results_jsonp_path,
+                                          callback='ADD_FULL_RESULTS')
+        full_results_path = self._filesystem.join(self._results_directory, 'failing_results.json')
         # We write failing_results.json out as jsonp because we need to load it
         # from a file url for results.html and Chromium doesn't allow that.
-        json_results_generator.write_json(self._filesystem, summarized_failing_results, full_results_path, callback="ADD_RESULTS")
+        json_results_generator.write_json(self._filesystem, summarized_failing_results, full_results_path, callback='ADD_RESULTS')
 
         # Write out the JSON files suitable for other tools to process.
         # As the output can be quite large (as there are 60k+ tests) we also
@@ -501,25 +537,25 @@ class Manager(object):
         if self._options.json_test_results:
             json_results_generator.write_json(self._filesystem, summarized_full_results, self._options.json_test_results)
 
-        _log.debug("Finished writing JSON files.")
+        _log.debug('Finished writing JSON files.')
 
     def _upload_json_files(self):
         if not self._options.test_results_server:
             return
 
         if not self._options.master_name:
-            _log.error("--test-results-server was set, but --master-name was not.  Not uploading JSON files.")
+            _log.error('--test-results-server was set, but --master-name was not.  Not uploading JSON files.')
             return
 
-        _log.debug("Uploading JSON files for builder: %s", self._options.builder_name)
-        attrs = [("builder", self._options.builder_name),
-                 ("testtype", self._options.step_name),
-                 ("master", self._options.master_name)]
+        _log.debug('Uploading JSON files for builder: %s', self._options.builder_name)
+        attrs = [('builder', self._options.builder_name),
+                 ('testtype', self._options.step_name),
+                 ('master', self._options.master_name)]
 
-        files = [(file, self._filesystem.join(self._results_directory, file))
-                 for file in ["failing_results.json", "full_results.json", "times_ms.json"]]
+        files = [(name, self._filesystem.join(self._results_directory, name))
+                 for name in ['failing_results.json', 'full_results.json', 'times_ms.json']]
 
-        url = "https://%s/testfile/upload" % self._options.test_results_server
+        url = 'https://%s/testfile/upload' % self._options.test_results_server
         # Set uploading timeout in case appengine server is having problems.
         # 120 seconds are more than enough to upload test results.
         uploader = FileUploader(url, 120)
@@ -527,21 +563,24 @@ class Manager(object):
             response = uploader.upload_as_multipart_form_data(self._filesystem, files, attrs)
             if response:
                 if response.code == 200:
-                    _log.debug("JSON uploaded.")
+                    _log.debug('JSON uploaded.')
                 else:
-                    _log.debug("JSON upload failed, %d: '%s'", response.code, response.read())
+                    _log.debug('JSON upload failed, %d: "%s"', response.code, response.read())
             else:
-                _log.error("JSON upload failed; no response returned")
-        except Exception as err:
-            _log.error("Upload failed: %s", err)
+                _log.error('JSON upload failed; no response returned')
+        except IOError as err:
+            _log.error('Upload failed: %s', err)
 
-    def _copy_results_html_file(self, destination_path):
-        base_dir = self._port.path_from_webkit_base('LayoutTests', 'fast', 'harness')
-        results_file = self._filesystem.join(base_dir, 'results.html')
-        # Note that the results.html template file won't exist when we're using a MockFileSystem during unit tests,
-        # so make sure it exists before we try to copy it.
-        if self._filesystem.exists(results_file):
-            self._filesystem.copyfile(results_file, destination_path)
+    def _copy_results_html_file(self, destination_dir, filename):
+        """Copies a file from the template directory to the results directory."""
+        template_dir = self._path_finder.path_from_layout_tests('fast', 'harness')
+        source_path = self._filesystem.join(template_dir, filename)
+        destination_path = self._filesystem.join(destination_dir, filename)
+        # Note that the results.html template file won't exist when
+        # we're using a MockFileSystem during unit tests, so make sure
+        # it exists before we try to copy it.
+        if self._filesystem.exists(source_path):
+            self._filesystem.copyfile(source_path, destination_path)
 
     def _stats_trie(self, initial_results):
         def _worker_number(worker_name):

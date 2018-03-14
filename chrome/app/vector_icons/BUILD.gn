@@ -3,7 +3,7 @@
 # found in the LICENSE file.
 
 import("//build/util/branding.gni")
-import("//ui/vector_icons/vector_icons.gni")
+import("//components/vector_icons/vector_icons.gni")
 
 aggregate_vector_icons("chrome_vector_icons") {
   icon_directory = "."
@@ -13,10 +13,11 @@ aggregate_vector_icons("chrome_vector_icons") {
     "account_child.icon",
     "account_child_circle.icon",
     "account_circle.icon",
+    "add.icon",
     "apps.icon",
-    "autologin.icon",
     "blocked_badge.icon",
-    "bluetooth_connected.icon",
+    "browser_tools_animated.1x.icon",
+    "browser_tools_animated.icon",
     "browser_tools.1x.icon",
     "browser_tools.icon",
     "browser_tools_error.icon",
@@ -25,8 +26,10 @@ aggregate_vector_icons("chrome_vector_icons") {
     "caret_down.icon",
     "caret_up.1x.icon",
     "caret_up.icon",
+    "certificate.icon",
     "close_all.icon",
     "code.icon",
+    "content_paste.icon",
     "cookie.icon",
     "crashed_tab.icon",
     "credit_card.1x.icon",
@@ -38,37 +41,41 @@ aggregate_vector_icons("chrome_vector_icons") {
     "file_download_incognito.1x.icon",
     "file_download_incognito.icon",
     "file_download_shelf.icon",
-    "folder.1x.icon",
     "folder.icon",
     "folder_managed.1x.icon",
     "folder_managed.icon",
     "folder_supervised.1x.icon",
     "folder_supervised.icon",
     "globe.icon",
+    "google_g_logo.icon",
+    "horizontal_menu.1x.icon",
+    "horizontal_menu.icon",
     "image.icon",
     "incognito.1x.icon",
     "incognito.icon",
+    "key.icon",
     "laptop.icon",
-    "lock.icon",
     "mixed_content.icon",
     "my_location.icon",
     "navigate_home.1x.icon",
     "navigate_home.icon",
-    "navigate_reload.1x.icon",
-    "navigate_reload.icon",
     "navigate_stop.1x.icon",
     "navigate_stop.icon",
     "overflow_chevron.1x.icon",
     "overflow_chevron.icon",
     "paintbrush.icon",
     "photo_camera.icon",
+    "profile_switcher_outline.icon",
+    "remove.icon",
     "remove_box.icon",
     "sad_tab.icon",
+    "security.icon",
     "settings.icon",
     "smartphone.icon",
     "subresource_filter_active.icon",
     "supervisor_account.icon",
     "supervisor_account_circle.icon",
+    "sync_circle.icon",
     "sync_problem.icon",
     "tab.icon",
     "tab_audio.1x.icon",
@@ -86,6 +93,7 @@ aggregate_vector_icons("chrome_vector_icons") {
     "tab_usb_connected.icon",
     "tablet.icon",
     "translate.icon",
+    "trash_can.icon",
     "user_account_avatar.icon",
     "warning_badge.icon",
     "web.icon",
@@ -97,13 +105,43 @@ aggregate_vector_icons("chrome_vector_icons") {
   if (is_mac) {
     icons += [
       "default_favicon.icon",
-      "google_search_mac_touchbar.icon",
       "new_tab_mac_touchbar.icon",
     ]
   }
 
   if (is_win) {
-    icons += [ "open_in_phone.icon" ]
+    icons += [
+      "inactive_toast_arrow.icon",
+      "inactive_toast_close.icon",
+      "inactive_toast_logo.icon",
+      "open_in_phone.icon",
+    ]
+  }
+
+  if (is_chromeos) {
+    icons += [
+      "arc_migrate_encryption_notification.icon",
+      "notification_captive_portal.icon",
+      "notification_cellular_alert.1x.icon",
+      "notification_cellular_alert.icon",
+      "notification_download.icon",
+      "notification_end_of_support.icon",
+      "notification_google.icon",
+      "notification_image.icon",
+      "notification_installed.icon",
+      "notification_mobile_data.icon",
+      "notification_mobile_data_off.icon",
+      "notification_play_prism.icon",
+      "notification_printing.icon",
+      "notification_printing_done.icon",
+      "notification_printing_warning.icon",
+      "notification_storage_full.icon",
+      "notification_vpn.icon",
+      "notification_warning.icon",
+      "notification_wifi_off.icon",
+      "warning_badge_circle.1x.icon",
+      "warning_badge_circle.icon",
+    ]
   }
 
   if (is_chromeos) {
@@ -113,11 +151,11 @@ aggregate_vector_icons("chrome_vector_icons") {
 
 source_set("vector_icons") {
   sources = get_target_outputs(":chrome_vector_icons")
-  sources += [ "//ui/gfx/vector_icon_types.h" ]
 
   deps = [
     ":chrome_vector_icons",
     "//base",
     "//skia",
+    "//ui/gfx",
   ]
 }

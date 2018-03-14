@@ -20,6 +20,7 @@
 #include "chromeos/network/network_profile_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
+#include "chromeos/network/tether_constants.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace chromeos {
@@ -65,7 +66,6 @@ class NetworkConnectImpl : public NetworkConnect {
                                      bool shared) override;
   void CreateConfiguration(base::DictionaryValue* shill_properties,
                            bool shared) override;
-  void SetTetherDelegate(TetherDelegate* tether_delegate) override;
 
  private:
   void ActivateCellular(const std::string& network_id);
@@ -105,16 +105,15 @@ class NetworkConnectImpl : public NetworkConnect {
       std::unique_ptr<base::DictionaryValue> properties_to_set);
 
   Delegate* delegate_;
-  TetherDelegate* tether_delegate_;
   base::WeakPtrFactory<NetworkConnectImpl> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkConnectImpl);
 };
 
 NetworkConnectImpl::NetworkConnectImpl(Delegate* delegate)
-    : delegate_(delegate), tether_delegate_(nullptr), weak_factory_(this) {}
+    : delegate_(delegate), weak_factory_(this) {}
 
-NetworkConnectImpl::~NetworkConnectImpl() {}
+NetworkConnectImpl::~NetworkConnectImpl() = default;
 
 void NetworkConnectImpl::HandleUnconfiguredNetwork(
     const std::string& network_id) {
@@ -125,8 +124,12 @@ void NetworkConnectImpl::HandleUnconfiguredNetwork(
   }
 
   if (network->type() == shill::kTypeWifi) {
-    // Only show the config view for secure networks, otherwise do nothing.
-    if (network->security_class() != shill::kSecurityNone) {
+    // If the network does not require a password, do not show the dialog since
+    // there is nothing to configure. Likewise, if the network is the underlying
+    // Wi-Fi hotspot for a Tether network, do not show the dialog since the
+    // Tether component handles this case itself.
+    if (network->security_class() != shill::kSecurityNone &&
+        network->tether_guid().empty()) {
       delegate_->ShowNetworkConfigure(network_id);
     }
     return;
@@ -245,20 +248,10 @@ void NetworkConnectImpl::CallConnectToNetwork(const std::string& network_id,
     return;
   }
 
-  if (NetworkTypePattern::Tether().MatchesType(network->type())) {
-    if (tether_delegate_) {
-      tether_delegate_->ConnectToNetwork(network_id);
-    } else {
-      NET_LOG_ERROR(
-          "Connection to Tether requested but no TetherDelegate exists.",
-          network_id);
-    }
-    return;
-  }
-
   NetworkHandler::Get()->network_connection_handler()->ConnectToNetwork(
-      network->path(), base::Bind(&NetworkConnectImpl::OnConnectSucceeded,
-                                  weak_factory_.GetWeakPtr(), network_id),
+      network->path(),
+      base::Bind(&NetworkConnectImpl::OnConnectSucceeded,
+                 weak_factory_.GetWeakPtr(), network_id),
       base::Bind(&NetworkConnectImpl::OnConnectFailed,
                  weak_factory_.GetWeakPtr(), network_id),
       check_error_state);
@@ -306,8 +299,7 @@ void NetworkConnectImpl::CallCreateConfiguration(
         NetworkConnectionHandler::kErrorConfigureFailed, "");
     return;
   }
-  shill_properties->SetStringWithoutPathExpansion(shill::kProfileProperty,
-                                                  profile_path);
+  shill_properties->SetKey(shill::kProfileProperty, base::Value(profile_path));
   NetworkHandler::Get()
       ->network_configuration_handler()
       ->CreateShillConfiguration(
@@ -400,6 +392,10 @@ void NetworkConnectImpl::ConnectToNetworkId(const std::string& network_id) {
     } else if (network->RequiresActivation()) {
       ActivateCellular(network_id);
       return;
+    } else if (network->type() == kTypeTether &&
+               !network->tether_has_connected_to_host()) {
+      delegate_->ShowNetworkConfigure(network_id);
+      return;
     }
   }
   const bool check_error_state = true;
@@ -442,31 +438,28 @@ void NetworkConnectImpl::SetTechnologyEnabled(
                                   network_handler::ErrorCallback());
     return;
   }
-  // If we're dealing with a mobile network, then handle SIM lock here.
-  // SIM locking only applies to cellular, so the code below won't execute
-  // if |technology| has been explicitly set to WiMAX.
-  if (technology.MatchesPattern(NetworkTypePattern::Mobile())) {
+  // If we're dealing with a cellular network, then handle SIM lock here.
+  // SIM locking only applies to cellular.
+  if (technology.MatchesPattern(NetworkTypePattern::Cellular())) {
     const DeviceState* mobile = handler->GetDeviceStateByType(technology);
     if (!mobile) {
       NET_LOG_ERROR("SetTechnologyEnabled with no device", log_string);
       return;
     }
-    // The following only applies to cellular.
-    if (mobile->type() == shill::kTypeCellular) {
-      if (mobile->IsSimAbsent()) {
-        // If this is true, then we have a cellular device with no SIM
-        // inserted. TODO(armansito): Chrome should display a notification here,
-        // prompting the user to insert a SIM card and restart the device to
-        // enable cellular. See crbug.com/125171.
-        NET_LOG_USER("Cannot enable cellular device without SIM.", log_string);
-        return;
-      }
-      if (!mobile->sim_lock_type().empty()) {
-        // A SIM has been inserted, but it is locked. Let the user unlock it
-        // via the dialog.
-        delegate_->ShowMobileSimDialog();
-        return;
-      }
+    if (mobile->IsSimAbsent()) {
+      // If this is true, then we have a cellular device with no SIM
+      // inserted. TODO(armansito): Chrome should display a notification here,
+      // prompting the user to insert a SIM card and restart the device to
+      // enable cellular. See crbug.com/125171.
+      NET_LOG_USER("Cannot enable cellular device without SIM.", log_string);
+      return;
+    }
+    if (!mobile->IsSimLocked()) {
+      // A SIM has been inserted, but it is locked. Let the user unlock it
+      // via Settings or the details dialog.
+      const NetworkState* network = handler->FirstNetworkByType(technology);
+      delegate_->ShowNetworkSettings(network ? network->guid() : "");
+      return;
     }
   }
   handler->SetTechnologyEnabled(technology, true,
@@ -567,10 +560,6 @@ void NetworkConnectImpl::CreateConfiguration(base::DictionaryValue* properties,
   CallCreateConfiguration(properties, shared, false /* connect_on_configure */);
 }
 
-void NetworkConnectImpl::SetTetherDelegate(TetherDelegate* tether_delegate) {
-  tether_delegate_ = tether_delegate;
-}
-
 }  // namespace
 
 static NetworkConnect* g_network_connect = NULL;
@@ -594,8 +583,8 @@ NetworkConnect* NetworkConnect::Get() {
   return g_network_connect;
 }
 
-NetworkConnect::NetworkConnect() {}
+NetworkConnect::NetworkConnect() = default;
 
-NetworkConnect::~NetworkConnect() {}
+NetworkConnect::~NetworkConnect() = default;
 
 }  // namespace chromeos

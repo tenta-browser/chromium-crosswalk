@@ -27,16 +27,12 @@ class InfoBarManagerImpl : public infobars::InfoBarManager,
                            public web::WebStateObserver,
                            public web::WebStateUserData<InfoBarManagerImpl> {
  public:
-  // This function must only be called on infobars that are owned by an
-  // InfoBarManagerImpl instance (or not owned at all, in which case this
-  // returns null).
-  static web::WebState* WebStateFromInfoBar(infobars::InfoBar* infobar);
+  ~InfoBarManagerImpl() override;
 
  private:
   friend class web::WebStateUserData<InfoBarManagerImpl>;
 
   explicit InfoBarManagerImpl(web::WebState* web_state);
-  ~InfoBarManagerImpl() override;
 
   // InfoBarManager implementation.
   int GetActiveEntryID() override;
@@ -45,11 +41,16 @@ class InfoBarManagerImpl : public infobars::InfoBarManager,
 
   // web::WebStateObserver implementation.
   void NavigationItemCommitted(
+      web::WebState* web_state,
       const web::LoadCommittedDetails& load_details) override;
-  void WebStateDestroyed() override;
+  void WebStateDestroyed(web::WebState* web_state) override;
 
   // Opens a URL according to the specified |disposition|.
   void OpenURL(const GURL& url, WindowOpenDisposition disposition) override;
+
+  // The WebState this instance is observing. Will be null after
+  // WebStateDestroyed has been called.
+  web::WebState* web_state_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(InfoBarManagerImpl);
 };

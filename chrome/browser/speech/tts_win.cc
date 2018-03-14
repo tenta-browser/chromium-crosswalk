@@ -3,9 +3,11 @@
 // found in the LICENSE file.
 
 #include <math.h>
+#include <objbase.h>
 #include <sapi.h>
 #include <sphelper.h>
 #include <stdint.h>
+#include <wrl/client.h>
 
 #include "base/macros.h"
 #include "base/memory/singleton.h"
@@ -14,7 +16,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "base/win/scoped_co_mem.h"
-#include "base/win/scoped_comptr.h"
 #include "chrome/browser/speech/tts_controller.h"
 #include "chrome/browser/speech/tts_platform.h"
 
@@ -63,7 +64,7 @@ class TtsPlatformImplWin : public TtsPlatformImpl {
 
   void SetVoiceFromName(const std::string& name);
 
-  base::win::ScopedComPtr<ISpVoice> speech_synthesizer_;
+  Microsoft::WRL::ComPtr<ISpVoice> speech_synthesizer_;
 
   // These apply to the current utterance only.
   std::wstring utterance_;
@@ -93,7 +94,7 @@ bool TtsPlatformImplWin::Speak(
   std::wstring prefix;
   std::wstring suffix;
 
-  if (!speech_synthesizer_.get())
+  if (!speech_synthesizer_.Get())
     return false;
 
   SetVoiceFromName(voice.name);
@@ -138,7 +139,7 @@ bool TtsPlatformImplWin::Speak(
 }
 
 bool TtsPlatformImplWin::StopSpeaking() {
-  if (speech_synthesizer_.get()) {
+  if (speech_synthesizer_.Get()) {
     // Clear the stream number so that any further events relating to this
     // utterance are ignored.
     stream_number_ = 0;
@@ -156,7 +157,7 @@ bool TtsPlatformImplWin::StopSpeaking() {
 }
 
 void TtsPlatformImplWin::Pause() {
-  if (speech_synthesizer_.get() && utterance_id_ && !paused_) {
+  if (speech_synthesizer_.Get() && utterance_id_ && !paused_) {
     speech_synthesizer_->Pause();
     paused_ = true;
     TtsController::GetInstance()->OnTtsEvent(
@@ -165,7 +166,7 @@ void TtsPlatformImplWin::Pause() {
 }
 
 void TtsPlatformImplWin::Resume() {
-  if (speech_synthesizer_.get() && utterance_id_ && paused_) {
+  if (speech_synthesizer_.Get() && utterance_id_ && paused_) {
     speech_synthesizer_->Resume();
     paused_ = false;
     TtsController::GetInstance()->OnTtsEvent(
@@ -174,7 +175,7 @@ void TtsPlatformImplWin::Resume() {
 }
 
 bool TtsPlatformImplWin::IsSpeaking() {
-  if (speech_synthesizer_.get()) {
+  if (speech_synthesizer_.Get()) {
     SPVOICESTATUS status;
     HRESULT result = speech_synthesizer_->GetStatus(&status, NULL);
     if (result == S_OK) {
@@ -189,9 +190,10 @@ bool TtsPlatformImplWin::IsSpeaking() {
 
 void TtsPlatformImplWin::GetVoices(
     std::vector<VoiceData>* out_voices) {
-  base::win::ScopedComPtr<IEnumSpObjectTokens> voice_tokens;
+  Microsoft::WRL::ComPtr<IEnumSpObjectTokens> voice_tokens;
   unsigned long voice_count;
-  if (S_OK != SpEnumTokens(SPCAT_VOICES, NULL, NULL, voice_tokens.Receive()))
+  if (S_OK !=
+      SpEnumTokens(SPCAT_VOICES, NULL, NULL, voice_tokens.GetAddressOf()))
     return;
   if (S_OK != voice_tokens->GetCount(&voice_count))
     return;
@@ -199,17 +201,17 @@ void TtsPlatformImplWin::GetVoices(
   for (unsigned i = 0; i < voice_count; i++) {
     VoiceData voice;
 
-    base::win::ScopedComPtr<ISpObjectToken> voice_token;
-    if (S_OK != voice_tokens->Next(1, voice_token.Receive(), NULL))
+    Microsoft::WRL::ComPtr<ISpObjectToken> voice_token;
+    if (S_OK != voice_tokens->Next(1, voice_token.GetAddressOf(), NULL))
       return;
 
     base::win::ScopedCoMem<WCHAR> description;
-    if (S_OK != SpGetDescription(voice_token.get(), &description))
+    if (S_OK != SpGetDescription(voice_token.Get(), &description))
       continue;
     voice.name = base::WideToUTF8(description.get());
 
-    base::win::ScopedComPtr<ISpDataKey> attributes;
-    if (S_OK != voice_token->OpenKey(kAttributesKey, attributes.Receive()))
+    Microsoft::WRL::ComPtr<ISpDataKey> attributes;
+    if (S_OK != voice_token->OpenKey(kAttributesKey, attributes.GetAddressOf()))
       continue;
 
     base::win::ScopedCoMem<WCHAR> gender;
@@ -287,23 +289,24 @@ void TtsPlatformImplWin::SetVoiceFromName(const std::string& name) {
 
   last_voice_name_ = name;
 
-  base::win::ScopedComPtr<IEnumSpObjectTokens> voice_tokens;
+  Microsoft::WRL::ComPtr<IEnumSpObjectTokens> voice_tokens;
   unsigned long voice_count;
-  if (S_OK != SpEnumTokens(SPCAT_VOICES, NULL, NULL, voice_tokens.Receive()))
+  if (S_OK !=
+      SpEnumTokens(SPCAT_VOICES, NULL, NULL, voice_tokens.GetAddressOf()))
     return;
   if (S_OK != voice_tokens->GetCount(&voice_count))
     return;
 
   for (unsigned i = 0; i < voice_count; i++) {
-    base::win::ScopedComPtr<ISpObjectToken> voice_token;
-    if (S_OK != voice_tokens->Next(1, voice_token.Receive(), NULL))
+    Microsoft::WRL::ComPtr<ISpObjectToken> voice_token;
+    if (S_OK != voice_tokens->Next(1, voice_token.GetAddressOf(), NULL))
       return;
 
     base::win::ScopedCoMem<WCHAR> description;
-    if (S_OK != SpGetDescription(voice_token.get(), &description))
+    if (S_OK != SpGetDescription(voice_token.Get(), &description))
       continue;
     if (name == base::WideToUTF8(description.get())) {
-      speech_synthesizer_->SetVoice(voice_token.get());
+      speech_synthesizer_->SetVoice(voice_token.Get());
       break;
     }
   }
@@ -315,8 +318,9 @@ TtsPlatformImplWin::TtsPlatformImplWin()
     stream_number_(0),
     char_position_(0),
     paused_(false) {
-  speech_synthesizer_.CreateInstance(CLSID_SpVoice);
-  if (speech_synthesizer_.get()) {
+  ::CoCreateInstance(CLSID_SpVoice, nullptr, CLSCTX_ALL,
+                     IID_PPV_ARGS(&speech_synthesizer_));
+  if (speech_synthesizer_.Get()) {
     ULONGLONG event_mask =
         SPFEI(SPEI_START_INPUT_STREAM) |
         SPFEI(SPEI_TTS_BOOKMARK) |

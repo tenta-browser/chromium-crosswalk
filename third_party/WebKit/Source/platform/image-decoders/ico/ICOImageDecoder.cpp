@@ -82,22 +82,24 @@ bool ICOImageDecoder::SetSize(unsigned width, unsigned height) {
              : ((IntSize(width, height) == frame_size_) || SetFailed());
 }
 
-bool ICOImageDecoder::FrameIsCompleteAtIndex(size_t index) const {
+bool ICOImageDecoder::FrameIsReceivedAtIndex(size_t index) const {
   if (index >= dir_entries_.size())
     return false;
+
+  SECURITY_DCHECK(data_);
   const IconDirectoryEntry& dir_entry = dir_entries_[index];
   return (dir_entry.image_offset_ + dir_entry.byte_size_) <= data_->size();
 }
 
 bool ICOImageDecoder::SetFailed() {
-  bmp_readers_.Clear();
-  png_decoders_.Clear();
+  bmp_readers_.clear();
+  png_decoders_.clear();
   return ImageDecoder::SetFailed();
 }
 
 bool ICOImageDecoder::HotSpot(IntPoint& hot_spot) const {
   // When unspecified, the default frame is always frame 0. This is consistent
-  // with BitmapImage, where currentFrame() starts at 0 and only increases when
+  // with BitmapImage, where CurrentFrame() starts at 0 and only increases when
   // animation is requested.
   return HotSpotAtIndex(0, hot_spot);
 }
@@ -123,10 +125,10 @@ bool ICOImageDecoder::CompareEntries(const IconDirectoryEntry& a,
 size_t ICOImageDecoder::DecodeFrameCount() {
   DecodeSize();
 
-  // If decodeSize() fails, return the existing number of frames.  This way
+  // If DecodeSize() fails, return the existing number of frames.  This way
   // if we get halfway through the image before decoding fails, we won't
   // suddenly start reporting that the image has zero frames.
-  if (Failed())
+  if (Failed() || !data_)
     return frame_buffer_cache_.size();
 
   // If the file is incomplete, return the length of the sequence of completely
@@ -148,15 +150,15 @@ void ICOImageDecoder::SetDataForPNGDecoderAtIndex(size_t index) {
   if (!png_decoders_[index])
     return;
 
-  png_decoders_[index]->SetData(data_.Get(), IsAllDataReceived());
+  png_decoders_[index]->SetData(data_.get(), IsAllDataReceived());
 }
 
 void ICOImageDecoder::Decode(size_t index, bool only_size) {
-  if (Failed())
+  if (Failed() || !data_)
     return;
 
   // Defensively clear the FastSharedBufferReader's cache, as another caller
-  // may have called SharedBuffer::mergeSegmentsIntoBuffer().
+  // may have called SharedBuffer::MergeSegmentsIntoBuffer().
   fast_reader_.ClearCache();
 
   // If we couldn't decode the image but we've received all the data, decoding
@@ -197,10 +199,10 @@ bool ICOImageDecoder::DecodeAtIndex(size_t index) {
     if (!bmp_readers_[index]) {
       bmp_readers_[index] = WTF::WrapUnique(
           new BMPImageReader(this, dir_entry.image_offset_, 0, true));
-      bmp_readers_[index]->SetData(data_.Get());
+      bmp_readers_[index]->SetData(data_.get());
     }
     // Update the pointer to the buffer as it could change after
-    // m_frameBufferCache.resize().
+    // frame_buffer_cache_.resize().
     bmp_readers_[index]->SetBuffer(&frame_buffer_cache_[index]);
     frame_size_ = dir_entry.size_;
     bool result = bmp_readers_[index]->DecodeBMP(false);
@@ -223,7 +225,7 @@ bool ICOImageDecoder::DecodeAtIndex(size_t index) {
     if (png_decoder->Size() != dir_entry.size_)
       return SetFailed();
 
-    const auto* frame = png_decoder->FrameBufferAtIndex(0);
+    const auto* frame = png_decoder->DecodeFrameBufferAtIndex(0);
     if (frame)
       frame_buffer_cache_[index] = *frame;
   }
@@ -234,6 +236,7 @@ bool ICOImageDecoder::DecodeAtIndex(size_t index) {
 
 bool ICOImageDecoder::ProcessDirectory() {
   // Read directory.
+  SECURITY_DCHECK(data_);
   DCHECK(!decoded_offset_);
   if (data_->size() < kSizeOfDirectory)
     return false;
@@ -252,6 +255,7 @@ bool ICOImageDecoder::ProcessDirectory() {
 
 bool ICOImageDecoder::ProcessDirectoryEntries() {
   // Read directory entries.
+  SECURITY_DCHECK(data_);
   DCHECK_EQ(decoded_offset_, kSizeOfDirectory);
   if ((decoded_offset_ > data_->size()) ||
       ((data_->size() - decoded_offset_) <
@@ -259,13 +263,13 @@ bool ICOImageDecoder::ProcessDirectoryEntries() {
     return false;
 
   // Enlarge member vectors to hold all the entries.
-  dir_entries_.Resize(dir_entries_count_);
-  bmp_readers_.Resize(dir_entries_count_);
-  png_decoders_.Resize(dir_entries_count_);
+  dir_entries_.resize(dir_entries_count_);
+  bmp_readers_.resize(dir_entries_count_);
+  png_decoders_.resize(dir_entries_count_);
 
   for (IconDirectoryEntries::iterator i(dir_entries_.begin());
        i != dir_entries_.end(); ++i)
-    *i = ReadDirectoryEntry();  // Updates m_decodedOffset.
+    *i = ReadDirectoryEntry();  // Updates decoded_offset_.
 
   // Make sure the specified image offsets are past the end of the directory
   // entries.
@@ -281,13 +285,13 @@ bool ICOImageDecoder::ProcessDirectoryEntries() {
   // The image size is the size of the largest entry.
   const IconDirectoryEntry& dir_entry = dir_entries_.front();
   // Technically, this next call shouldn't be able to fail, since the width
-  // and height here are each <= 256, and |m_frameSize| is empty.
+  // and height here are each <= 256, and |frame_size_| is empty.
   return SetSize(dir_entry.size_.Width(), dir_entry.size_.Height());
 }
 
 ICOImageDecoder::IconDirectoryEntry ICOImageDecoder::ReadDirectoryEntry() {
   // Read icon data.
-  // The following calls to readUint8() return a uint8_t, which is appropriate
+  // The following calls to ReadUint8() return a uint8_t, which is appropriate
   // because that's the on-disk type of the width and height values.  Storing
   // them in ints (instead of matching uint8_ts) is so we can record dimensions
   // of size 256 (which is what a zero byte really means).
@@ -328,6 +332,7 @@ ICOImageDecoder::IconDirectoryEntry ICOImageDecoder::ReadDirectoryEntry() {
 ICOImageDecoder::ImageType ICOImageDecoder::ImageTypeAtIndex(size_t index) {
   // Check if this entry is a BMP or a PNG; we need 4 bytes to check the magic
   // number.
+  SECURITY_DCHECK(data_);
   SECURITY_DCHECK(index < dir_entries_.size());
   const uint32_t image_offset = dir_entries_[index].image_offset_;
   if ((image_offset > data_->size()) || ((data_->size() - image_offset) < 4))

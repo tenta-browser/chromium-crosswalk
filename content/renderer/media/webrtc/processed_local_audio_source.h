@@ -5,11 +5,12 @@
 #ifndef CONTENT_RENDERER_MEDIA_WEBRTC_PROCESSED_LOCAL_AUDIO_SOURCE_H_
 #define CONTENT_RENDERER_MEDIA_WEBRTC_PROCESSED_LOCAL_AUDIO_SOURCE_H_
 
+#include <string>
+
 #include "base/atomicops.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/lock.h"
-#include "content/common/media/media_stream_options.h"
 #include "content/renderer/media/media_stream_audio_level_calculator.h"
 #include "content/renderer/media/media_stream_audio_processor.h"
 #include "content/renderer/media/media_stream_audio_source.h"
@@ -30,17 +31,18 @@ class PeerConnectionDependencyFactory;
 // MediaStreamProcessor that modifies its audio. Modified audio is delivered to
 // one or more MediaStreamAudioTracks.
 class CONTENT_EXPORT ProcessedLocalAudioSource final
-    : NON_EXPORTED_BASE(public MediaStreamAudioSource),
-      NON_EXPORTED_BASE(public media::AudioCapturerSource::CaptureCallback) {
+    : public MediaStreamAudioSource,
+      public media::AudioCapturerSource::CaptureCallback {
  public:
   // |consumer_render_frame_id| references the RenderFrame that will consume the
   // audio data. Audio parameters and (optionally) a pre-existing audio session
   // ID are derived from |device_info|. |factory| must outlive this instance.
-  ProcessedLocalAudioSource(int consumer_render_frame_id,
-                            const StreamDeviceInfo& device_info,
-                            const blink::WebMediaConstraints& constraints,
-                            const ConstraintsCallback& started_callback,
-                            PeerConnectionDependencyFactory* factory);
+  ProcessedLocalAudioSource(
+      int consumer_render_frame_id,
+      const MediaStreamDevice& device,
+      const AudioProcessingProperties& audio_processing_properties,
+      const ConstraintsCallback& started_callback,
+      PeerConnectionDependencyFactory* factory);
 
   ~ProcessedLocalAudioSource() final;
 
@@ -55,10 +57,8 @@ class CONTENT_EXPORT ProcessedLocalAudioSource final
     allow_invalid_render_frame_id_for_testing_ = allowed;
   }
 
-  // Gets/Sets source constraints. Using this is optional, but must be done
-  // before the first call to ConnectToTrack().
-  const blink::WebMediaConstraints& source_constraints() const {
-    return constraints_;
+  const AudioProcessingProperties& audio_processing_properties() const {
+    return audio_processing_properties_;
   }
 
   // The following accessors are not valid until after the source is started
@@ -95,6 +95,7 @@ class CONTENT_EXPORT ProcessedLocalAudioSource final
                double volume,
                bool key_pressed) override;
   void OnCaptureError(const std::string& message) override;
+  void OnCaptureMuted(bool is_muted) override;
 
  private:
   // Helper function to get the source buffer size based on whether audio
@@ -111,8 +112,7 @@ class CONTENT_EXPORT ProcessedLocalAudioSource final
   // or data flow changes are being called on the main thread.
   base::ThreadChecker thread_checker_;
 
-  // Cached audio constraints for the capturer.
-  const blink::WebMediaConstraints constraints_;
+  AudioProcessingProperties audio_processing_properties_;
 
   // Callback that's called when the audio source has been initialized.
   ConstraintsCallback started_callback_;

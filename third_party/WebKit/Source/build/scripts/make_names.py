@@ -27,6 +27,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import os
 import sys
 
 import hasher
@@ -40,15 +41,15 @@ def _symbol(entry):
     # FIXME: Remove this special case for the ugly x-webkit-foo attributes.
     if entry['name'].startswith('-webkit-'):
         return entry['name'].replace('-', '_')[1:]
-    return name_utilities.cpp_name(entry).replace('-', '_')
+    return name_utilities.cpp_name(entry).replace('-', '_').replace(' ', '_')
 
 
 class MakeNamesWriter(json5_generator.Writer):
     default_parameters = {
-        'Conditional': None,  # FIXME: Add support for Conditional.
-        'ImplementedAs': None,
-        'RuntimeEnabled': None,  # What should we do for runtime-enabled features?
-        'Symbol': None,
+        'Conditional': {},  # FIXME: Add support for Conditional.
+        'ImplementedAs': {},
+        'RuntimeEnabled': {},  # What should we do for runtime-enabled features?
+        'Symbol': {},
     }
     default_metadata = {
         'export': '',
@@ -72,23 +73,25 @@ class MakeNamesWriter(json5_generator.Writer):
 
         assert namespace, 'A namespace is required.'
 
+        basename, _ = os.path.splitext(os.path.basename(json5_file_path[0]))
         self._outputs = {
-            (namespace + suffix + 'Names.h'): self.generate_header,
-            (namespace + suffix + 'Names.cpp'): self.generate_implementation,
+            (basename + '.h'): self.generate_header,
+            (basename + '.cc'): self.generate_implementation,
         }
         self._template_context = {
             'namespace': namespace,
             'suffix': suffix,
             'export': export,
             'entries': self.json5_file.name_dictionaries,
-            'in_files': self.json5_file.file_paths,
+            'input_files': self._input_files,
+            'this_include_header_name': basename + '.h',
         }
 
-    @template_expander.use_jinja("MakeNames.h.tmpl", filters=filters)
+    @template_expander.use_jinja("templates/MakeNames.h.tmpl", filters=filters)
     def generate_header(self):
         return self._template_context
 
-    @template_expander.use_jinja("MakeNames.cpp.tmpl", filters=filters)
+    @template_expander.use_jinja("templates/MakeNames.cpp.tmpl", filters=filters)
     def generate_implementation(self):
         return self._template_context
 

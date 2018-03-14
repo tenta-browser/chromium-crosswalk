@@ -12,6 +12,7 @@
 #include "cc/base/region.h"
 #include "cc/layers/content_layer_client.h"
 #include "cc/paint/display_item_list.h"
+#include "cc/paint/solid_color_analyzer.h"
 #include "cc/raster/raster_source.h"
 #include "skia/ext/analysis_canvas.h"
 
@@ -23,18 +24,22 @@ const bool kDefaultClearCanvasSetting = false;
 const bool kDefaultClearCanvasSetting = true;
 #endif
 
+// We don't perform per-layer solid color analysis when there are too many skia
+// operations.
+const int kMaxOpsToAnalyzeForLayer = 10;
+
 }  // namespace
 
 namespace cc {
 
 RecordingSource::RecordingSource()
     : slow_down_raster_scale_factor_for_debug_(0),
-      generate_discardable_images_metadata_(false),
       requires_clear_(false),
       is_solid_color_(false),
       clear_canvas_with_debug_color_(kDefaultClearCanvasSetting),
       solid_color_(SK_ColorTRANSPARENT),
-      background_color_(SK_ColorTRANSPARENT) {}
+      background_color_(SK_ColorTRANSPARENT),
+      recording_scale_factor_(1.f) {}
 
 RecordingSource::~RecordingSource() {}
 
@@ -56,8 +61,7 @@ void RecordingSource::FinishDisplayItemListUpdate() {
   TRACE_EVENT0("cc", "RecordingSource::FinishDisplayItemListUpdate");
   DetermineIfSolidColor();
   display_list_->EmitTraceSnapshot();
-  if (generate_discardable_images_metadata_)
-    display_list_->GenerateDiscardableImagesMetadata();
+  display_list_->GenerateDiscardableImagesMetadata();
 }
 
 void RecordingSource::SetNeedsDisplayRect(const gfx::Rect& layer_rect) {
@@ -97,7 +101,10 @@ bool RecordingSource::UpdateAndExpandInvalidation(
 
 void RecordingSource::UpdateDisplayItemList(
     const scoped_refptr<DisplayItemList>& display_list,
-    const size_t& painter_reported_memory_usage) {
+    const size_t& painter_reported_memory_usage,
+    float recording_scale_factor) {
+  recording_scale_factor_ = recording_scale_factor;
+
   display_list_ = display_list;
   painter_reported_memory_usage_ = painter_reported_memory_usage;
 
@@ -121,11 +128,6 @@ void RecordingSource::SetSlowdownRasterScaleFactor(int factor) {
   slow_down_raster_scale_factor_for_debug_ = factor;
 }
 
-void RecordingSource::SetGenerateDiscardableImagesMetadata(
-    bool generate_metadata) {
-  generate_discardable_images_metadata_ = generate_metadata;
-}
-
 void RecordingSource::SetBackgroundColor(SkColor background_color) {
   background_color_ = background_color;
 }
@@ -138,10 +140,8 @@ const DisplayItemList* RecordingSource::GetDisplayItemList() {
   return display_list_.get();
 }
 
-scoped_refptr<RasterSource> RecordingSource::CreateRasterSource(
-    bool can_use_lcd_text) const {
-  return scoped_refptr<RasterSource>(
-      RasterSource::CreateFromRecordingSource(this, can_use_lcd_text));
+scoped_refptr<RasterSource> RecordingSource::CreateRasterSource() const {
+  return scoped_refptr<RasterSource>(new RasterSource(this));
 }
 
 void RecordingSource::DetermineIfSolidColor() {
@@ -149,15 +149,14 @@ void RecordingSource::DetermineIfSolidColor() {
   is_solid_color_ = false;
   solid_color_ = SK_ColorTRANSPARENT;
 
-  if (!display_list_->ShouldBeAnalyzedForSolidColor())
+  if (display_list_->op_count() > kMaxOpsToAnalyzeForLayer)
     return;
 
   TRACE_EVENT1("cc", "RecordingSource::DetermineIfSolidColor", "opcount",
-               display_list_->ApproximateOpCount());
-  gfx::Size layer_size = GetSize();
-  skia::AnalysisCanvas canvas(layer_size.width(), layer_size.height());
-  display_list_->Raster(&canvas, nullptr, gfx::Rect(layer_size), 1.f);
-  is_solid_color_ = canvas.GetColorIfSolid(&solid_color_);
+               display_list_->op_count());
+  is_solid_color_ = display_list_->GetColorIfSolidInRect(
+      gfx::ScaleToRoundedRect(gfx::Rect(GetSize()), recording_scale_factor_),
+      &solid_color_, kMaxOpsToAnalyzeForLayer);
 }
 
 }  // namespace cc

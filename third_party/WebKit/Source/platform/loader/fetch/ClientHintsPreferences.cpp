@@ -4,48 +4,115 @@
 
 #include "platform/loader/fetch/ClientHintsPreferences.h"
 
-#include "platform/RuntimeEnabledFeatures.h"
+#include "base/macros.h"
+#include "platform/loader/fetch/ResourceResponse.h"
 #include "platform/network/HTTPParsers.h"
+#include "platform/network/http_names.h"
+#include "platform/runtime_enabled_features.h"
+#include "platform/weborigin/KURL.h"
+#include "third_party/WebKit/common/client_hints/client_hints.h"
 
 namespace blink {
 
-ClientHintsPreferences::ClientHintsPreferences()
-    : should_send_dpr_(false),
-      should_send_resource_width_(false),
-      should_send_viewport_width_(false) {}
+namespace {
+
+void ParseAcceptChHeader(const String& header_value,
+                         WebEnabledClientHints& enabled_hints) {
+  CommaDelimitedHeaderSet accept_client_hints_header;
+  ParseCommaDelimitedHeader(header_value, accept_client_hints_header);
+
+  for (size_t i = 0; i < static_cast<int>(mojom::WebClientHintsType::kLast) + 1;
+       ++i) {
+    enabled_hints.SetIsEnabled(
+        static_cast<mojom::WebClientHintsType>(i),
+        accept_client_hints_header.Contains(kClientHintsHeaderMapping[i]));
+  }
+
+  enabled_hints.SetIsEnabled(
+      mojom::WebClientHintsType::kDeviceMemory,
+      enabled_hints.IsEnabled(mojom::WebClientHintsType::kDeviceMemory) &&
+          RuntimeEnabledFeatures::DeviceMemoryHeaderEnabled());
+}
+
+}  // namespace
+
+ClientHintsPreferences::ClientHintsPreferences() {
+  DCHECK_EQ(static_cast<size_t>(mojom::WebClientHintsType::kLast) + 1,
+            kClientHintsHeaderMappingCount);
+}
 
 void ClientHintsPreferences::UpdateFrom(
     const ClientHintsPreferences& preferences) {
-  should_send_dpr_ = preferences.should_send_dpr_;
-  should_send_resource_width_ = preferences.should_send_resource_width_;
-  should_send_viewport_width_ = preferences.should_send_viewport_width_;
+  for (size_t i = 0; i < static_cast<int>(mojom::WebClientHintsType::kLast) + 1;
+       ++i) {
+    mojom::WebClientHintsType type = static_cast<mojom::WebClientHintsType>(i);
+    enabled_hints_.SetIsEnabled(type, preferences.ShouldSend(type));
+  }
 }
 
 void ClientHintsPreferences::UpdateFromAcceptClientHintsHeader(
     const String& header_value,
     Context* context) {
-  if (!RuntimeEnabledFeatures::clientHintsEnabled() || header_value.IsEmpty())
+  if (header_value.IsEmpty())
     return;
 
-  CommaDelimitedHeaderSet accept_client_hints_header;
-  ParseCommaDelimitedHeader(header_value, accept_client_hints_header);
-  if (accept_client_hints_header.Contains("dpr")) {
-    if (context)
-      context->CountClientHintsDPR();
-    should_send_dpr_ = true;
+  WebEnabledClientHints new_enabled_types;
+
+  ParseAcceptChHeader(header_value, new_enabled_types);
+
+  for (size_t i = 0; i < static_cast<int>(mojom::WebClientHintsType::kLast) + 1;
+       ++i) {
+    mojom::WebClientHintsType type = static_cast<mojom::WebClientHintsType>(i);
+    enabled_hints_.SetIsEnabled(type, enabled_hints_.IsEnabled(type) ||
+                                          new_enabled_types.IsEnabled(type));
   }
 
-  if (accept_client_hints_header.Contains("width")) {
-    if (context)
-      context->CountClientHintsResourceWidth();
-    should_send_resource_width_ = true;
+  if (context) {
+    for (size_t i = 0;
+         i < static_cast<int>(mojom::WebClientHintsType::kLast) + 1; ++i) {
+      mojom::WebClientHintsType type =
+          static_cast<mojom::WebClientHintsType>(i);
+      if (enabled_hints_.IsEnabled(type))
+        context->CountClientHints(type);
+    }
+  }
+}
+
+// static
+void ClientHintsPreferences::UpdatePersistentHintsFromHeaders(
+    const ResourceResponse& response,
+    Context* context,
+    WebEnabledClientHints& enabled_hints,
+    TimeDelta* persist_duration) {
+  *persist_duration = base::TimeDelta();
+
+  if (response.WasCached())
+    return;
+
+  String accept_ch_header_value =
+      response.HttpHeaderField(HTTPNames::Accept_CH);
+  String accept_ch_lifetime_header_value =
+      response.HttpHeaderField(HTTPNames::Accept_CH_Lifetime);
+
+  if (!RuntimeEnabledFeatures::ClientHintsPersistentEnabled() ||
+      accept_ch_header_value.IsEmpty() ||
+      accept_ch_lifetime_header_value.IsEmpty()) {
+    return;
   }
 
-  if (accept_client_hints_header.Contains("viewport-width")) {
-    if (context)
-      context->CountClientHintsViewportWidth();
-    should_send_viewport_width_ = true;
-  }
+  const KURL url = response.Url();
+
+  bool conversion_ok = false;
+  int64_t persist_duration_seconds =
+      accept_ch_lifetime_header_value.ToInt64Strict(&conversion_ok);
+  if (!conversion_ok || persist_duration_seconds <= 0)
+    return;
+
+  *persist_duration = TimeDelta::FromSeconds(persist_duration_seconds);
+  if (context)
+    context->CountPersistentClientHintHeaders();
+
+  ParseAcceptChHeader(accept_ch_header_value, enabled_hints);
 }
 
 }  // namespace blink

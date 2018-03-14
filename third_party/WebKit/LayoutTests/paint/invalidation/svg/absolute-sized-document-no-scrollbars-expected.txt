@@ -4,11 +4,26 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
+        {
+          "object": "LayoutView #document",
+          "rect": [0, 0, 800, 600],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutSVGRect rect",
+          "rect": [0, 0, 576, 432],
+          "reason": "style change"
+        },
         {
           "object": "LayoutSVGRoot svg",
           "rect": [0, 0, 576, 432],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutSVGRect rect",
+          "rect": [0, 0, 480, 360],
           "reason": "style change"
         }
       ]
@@ -16,15 +31,15 @@
   ],
   "objectPaintInvalidations": [
     {
+      "object": "LayoutView #document",
+      "reason": "style change"
+    },
+    {
       "object": "LayoutSVGRoot svg",
       "reason": "style change"
     },
     {
       "object": "LayoutSVGRect rect",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutSVGHiddenContainer defs",
       "reason": "style change"
     }
   ]

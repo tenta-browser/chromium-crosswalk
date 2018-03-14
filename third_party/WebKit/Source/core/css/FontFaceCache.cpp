@@ -26,15 +26,12 @@
 
 #include "core/css/FontFaceCache.h"
 
-#include "core/css/CSSFontSelector.h"
 #include "core/css/CSSSegmentedFontFace.h"
 #include "core/css/CSSValueList.h"
-#include "core/css/FontFace.h"
-#include "core/css/FontStyleMatcher.h"
-#include "core/css/StyleRule.h"
 #include "core/loader/resource/FontResource.h"
-#include "platform/FontFamilyNames.h"
+#include "platform/font_family_names.h"
 #include "platform/fonts/FontDescription.h"
+#include "platform/fonts/FontSelectionAlgorithm.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
 #include "platform/wtf/text/AtomicString.h"
 
@@ -44,41 +41,44 @@ static unsigned g_version = 0;
 
 FontFaceCache::FontFaceCache() : version_(0) {}
 
-void FontFaceCache::Add(CSSFontSelector* css_font_selector,
-                        const StyleRuleFontFace* font_face_rule,
+void FontFaceCache::Add(const StyleRuleFontFace* font_face_rule,
                         FontFace* font_face) {
   if (!style_rule_to_font_face_.insert(font_face_rule, font_face).is_new_entry)
     return;
-  AddFontFace(css_font_selector, font_face, true);
+  AddFontFace(font_face, true);
 }
 
-void FontFaceCache::AddFontFace(CSSFontSelector* css_font_selector,
-                                FontFace* font_face,
-                                bool css_connected) {
-  FamilyToTraitsMap::AddResult traits_result =
-      font_faces_.insert(font_face->family(), nullptr);
-  if (!traits_result.stored_value->value)
-    traits_result.stored_value->value = new TraitsMap;
+void FontFaceCache::AddFontFace(FontFace* font_face, bool css_connected) {
+  SegmentedFacesByFamily::AddResult capabilities_result =
+      segmented_faces_.insert(font_face->family(), nullptr);
 
-  TraitsMap::AddResult segmented_font_face_result =
-      traits_result.stored_value->value->insert(font_face->Traits().Bitfield(),
-                                                nullptr);
-  if (!segmented_font_face_result.stored_value->value)
+  if (capabilities_result.is_new_entry)
+    capabilities_result.stored_value->value = new CapabilitiesSet();
+
+  DCHECK(font_face->GetFontSelectionCapabilities().IsValid() &&
+         !font_face->GetFontSelectionCapabilities().IsHashTableDeletedValue());
+
+  CapabilitiesSet::AddResult segmented_font_face_result =
+      capabilities_result.stored_value->value->insert(
+          font_face->GetFontSelectionCapabilities(), nullptr);
+  if (segmented_font_face_result.is_new_entry) {
     segmented_font_face_result.stored_value->value =
-        CSSSegmentedFontFace::Create(css_font_selector, font_face->Traits());
+        CSSSegmentedFontFace::Create(font_face->GetFontSelectionCapabilities());
+  }
 
   segmented_font_face_result.stored_value->value->AddFontFace(font_face,
                                                               css_connected);
+
   if (css_connected)
     css_connected_font_faces_.insert(font_face);
 
-  fonts_.erase(font_face->family());
+  font_selection_query_cache_.erase(font_face->family());
   IncrementVersion();
 }
 
 void FontFaceCache::Remove(const StyleRuleFontFace* font_face_rule) {
   StyleRuleToFontFace::iterator it =
-      style_rule_to_font_face_.Find(font_face_rule);
+      style_rule_to_font_face_.find(font_face_rule);
   if (it != style_rule_to_font_face_.end()) {
     RemoveFontFace(it->value.Get(), true);
     style_rule_to_font_face_.erase(it);
@@ -86,25 +86,30 @@ void FontFaceCache::Remove(const StyleRuleFontFace* font_face_rule) {
 }
 
 void FontFaceCache::RemoveFontFace(FontFace* font_face, bool css_connected) {
-  FamilyToTraitsMap::iterator font_faces_iter =
-      font_faces_.Find(font_face->family());
-  if (font_faces_iter == font_faces_.end())
+  SegmentedFacesByFamily::iterator segmented_faces_iter =
+      segmented_faces_.find(font_face->family());
+  if (segmented_faces_iter == segmented_faces_.end())
     return;
-  TraitsMap* family_font_faces = font_faces_iter->value.Get();
 
-  TraitsMap::iterator family_font_faces_iter =
-      family_font_faces->Find(font_face->Traits().Bitfield());
-  if (family_font_faces_iter == family_font_faces->end())
+  CapabilitiesSet* family_segmented_faces = segmented_faces_iter->value.Get();
+
+  CapabilitiesSet::iterator family_segmented_faces_iter =
+      family_segmented_faces->find(font_face->GetFontSelectionCapabilities());
+  if (family_segmented_faces_iter == family_segmented_faces->end())
     return;
-  CSSSegmentedFontFace* segmented_font_face = family_font_faces_iter->value;
 
+  CSSSegmentedFontFace* segmented_font_face =
+      family_segmented_faces_iter->value;
   segmented_font_face->RemoveFontFace(font_face);
   if (segmented_font_face->IsEmpty()) {
-    family_font_faces->erase(family_font_faces_iter);
-    if (family_font_faces->IsEmpty())
-      font_faces_.erase(font_faces_iter);
+    family_segmented_faces->erase(family_segmented_faces_iter);
+    if (family_segmented_faces->IsEmpty()) {
+      segmented_faces_.erase(segmented_faces_iter);
+    }
   }
-  fonts_.erase(font_face->family());
+
+  font_selection_query_cache_.erase(font_face->family());
+
   if (css_connected)
     css_connected_font_faces_.erase(font_face);
 
@@ -114,17 +119,17 @@ void FontFaceCache::RemoveFontFace(FontFace* font_face, bool css_connected) {
 void FontFaceCache::ClearCSSConnected() {
   for (const auto& item : style_rule_to_font_face_)
     RemoveFontFace(item.value.Get(), true);
-  style_rule_to_font_face_.Clear();
+  style_rule_to_font_face_.clear();
 }
 
 void FontFaceCache::ClearAll() {
-  if (font_faces_.IsEmpty())
+  if (segmented_faces_.IsEmpty())
     return;
 
-  font_faces_.Clear();
-  fonts_.Clear();
-  style_rule_to_font_face_.Clear();
-  css_connected_font_faces_.Clear();
+  segmented_faces_.clear();
+  font_selection_query_cache_.clear();
+  style_rule_to_font_face_.clear();
+  css_connected_font_faces_.clear();
   IncrementVersion();
 }
 
@@ -135,33 +140,67 @@ void FontFaceCache::IncrementVersion() {
 CSSSegmentedFontFace* FontFaceCache::Get(
     const FontDescription& font_description,
     const AtomicString& family) {
-  TraitsMap* family_font_faces = font_faces_.at(family);
-  if (!family_font_faces || family_font_faces->IsEmpty())
+  SegmentedFacesByFamily::iterator segmented_faces_for_family =
+      segmented_faces_.find(family);
+  if (segmented_faces_for_family == segmented_faces_.end() ||
+      segmented_faces_for_family->value->IsEmpty())
     return nullptr;
 
-  FamilyToTraitsMap::AddResult traits_result = fonts_.insert(family, nullptr);
-  if (!traits_result.stored_value->value)
-    traits_result.stored_value->value = new TraitsMap;
+  auto family_faces = segmented_faces_for_family->value;
 
-  FontTraits traits = font_description.Traits();
-  TraitsMap::AddResult face_result =
-      traits_result.stored_value->value->insert(traits.Bitfield(), nullptr);
-  if (!face_result.stored_value->value) {
-    for (const auto& item : *family_font_faces) {
-      CSSSegmentedFontFace* candidate = item.value.Get();
-      FontStyleMatcher style_matcher(traits);
-      if (!face_result.stored_value->value ||
-          style_matcher.IsCandidateBetter(
-              candidate, face_result.stored_value->value.Get()))
-        face_result.stored_value->value = candidate;
+  // Either add or retrieve a cache entry in the selection query cache for the
+  // specified family.
+  FontSelectionQueryCache::AddResult cache_entry_for_family_add =
+      font_selection_query_cache_.insert(family,
+                                         new FontSelectionQueryResult());
+  auto cache_entry_for_family = cache_entry_for_family_add.stored_value->value;
+
+  const FontSelectionRequest& request =
+      font_description.GetFontSelectionRequest();
+
+  FontSelectionQueryResult::AddResult face_entry =
+      cache_entry_for_family->insert(request, nullptr);
+  if (!face_entry.is_new_entry)
+    return face_entry.stored_value->value;
+
+  // If we don't have a previously cached result for this request, we now need
+  // to iterate over all entries in the CapabilitiesSet for one family and
+  // extract the best CSSSegmentedFontFace from those.
+
+  // The FontSelectionAlgorithm needs to know the boundaries of stretch, style,
+  // range for all the available faces in order to calculate distances
+  // correctly.
+  FontSelectionCapabilities all_faces_boundaries;
+  for (const auto& item : *family_faces) {
+    all_faces_boundaries.Expand(item.value->GetFontSelectionCapabilities());
+  }
+
+  FontSelectionAlgorithm font_selection_algorithm(request,
+                                                  all_faces_boundaries);
+  for (const auto& item : *family_faces) {
+    const FontSelectionCapabilities& candidate_key = item.key;
+    CSSSegmentedFontFace* candidate_value = item.value;
+    if (!face_entry.stored_value->value ||
+        font_selection_algorithm.IsBetterMatchForRequest(
+            candidate_key,
+            face_entry.stored_value->value->GetFontSelectionCapabilities())) {
+      face_entry.stored_value->value = candidate_value;
     }
   }
-  return face_result.stored_value->value.Get();
+  return face_entry.stored_value->value;
 }
 
-DEFINE_TRACE(FontFaceCache) {
-  visitor->Trace(font_faces_);
-  visitor->Trace(fonts_);
+size_t FontFaceCache::GetNumSegmentedFacesForTesting() {
+  size_t count = 0;
+  for (auto& family_faces : segmented_faces_) {
+    count += family_faces.value->size();
+  }
+  return count;
+}
+
+void FontFaceCache::Trace(blink::Visitor* visitor) {
+  visitor->Trace(segmented_faces_);
+  visitor->Trace(font_selection_query_cache_);
   visitor->Trace(style_rule_to_font_face_);
   visitor->Trace(css_connected_font_faces_);
 }

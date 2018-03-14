@@ -4,13 +4,13 @@
 
 #include "modules/serviceworkers/NavigatorServiceWorker.h"
 
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Navigator.h"
 #include "modules/serviceworkers/ServiceWorkerContainer.h"
+#include "platform/bindings/ScriptState.h"
 
 namespace blink {
 
@@ -123,7 +123,7 @@ void NavigatorServiceWorker::ClearServiceWorker() {
   service_worker_ = nullptr;
 }
 
-DEFINE_TRACE(NavigatorServiceWorker) {
+void NavigatorServiceWorker::Trace(blink::Visitor* visitor) {
   visitor->Trace(service_worker_);
   Supplement<Navigator>::Trace(visitor);
 }

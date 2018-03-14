@@ -16,20 +16,20 @@
 #include <stdint.h>
 
 #include "base/macros.h"
-#include "base/strings/string_piece.h"
-#include "net/base/net_export.h"
 #include "net/http2/hpack/decoder/hpack_decoder_listener.h"
 #include "net/http2/hpack/decoder/hpack_decoder_string_buffer.h"
 #include "net/http2/hpack/decoder/hpack_decoder_tables.h"
 #include "net/http2/hpack/decoder/hpack_whole_entry_listener.h"
 #include "net/http2/hpack/http2_hpack_constants.h"
+#include "net/http2/platform/api/http2_export.h"
+#include "net/http2/platform/api/http2_string_piece.h"
 
 namespace net {
 namespace test {
 class HpackDecoderStatePeer;
 }  // namespace test
 
-class NET_EXPORT HpackDecoderState : public HpackWholeEntryListener {
+class HTTP2_EXPORT_PRIVATE HpackDecoderState : public HpackWholeEntryListener {
  public:
   explicit HpackDecoderState(HpackDecoderListener* listener);
   ~HpackDecoderState() override;
@@ -37,7 +37,6 @@ class NET_EXPORT HpackDecoderState : public HpackWholeEntryListener {
   // Set the listener to be notified when a whole entry has been decoded,
   // including resolving name or name and value references.
   // The listener may be changed at any time.
-  void set_listener(HpackDecoderListener* listener);
   HpackDecoderListener* listener() const { return listener_; }
 
   // Set listener to be notified of insertions into the HPACK dynamic table,
@@ -74,7 +73,7 @@ class NET_EXPORT HpackDecoderState : public HpackWholeEntryListener {
                              HpackDecoderStringBuffer* name_buffer,
                              HpackDecoderStringBuffer* value_buffer) override;
   void OnDynamicTableSizeUpdate(size_t size) override;
-  void OnHpackDecodeError(base::StringPiece error_message) override;
+  void OnHpackDecodeError(Http2StringPiece error_message) override;
 
   // OnHeaderBlockEnd notifies this object that an entire HPACK block has been
   // decoded, which might have extended into CONTINUATION blocks.
@@ -92,7 +91,7 @@ class NET_EXPORT HpackDecoderState : public HpackWholeEntryListener {
   friend class test::HpackDecoderStatePeer;
 
   // Reports an error to the listener IF this is the first error detected.
-  void ReportError(base::StringPiece error_message);
+  void ReportError(Http2StringPiece error_message);
 
   // The static and dynamic HPACK tables.
   HpackDecoderTables decoder_tables_;

@@ -33,9 +33,9 @@ class ScreenshotData : public base::RefCountedThreadSafe<ScreenshotData> {
 
   void EncodeScreenshot(const SkBitmap& bitmap, base::Closure callback) {
     base::PostTaskWithTraitsAndReply(
-        FROM_HERE, base::TaskTraits().WithShutdownBehavior(
-                       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN),
-        base::Bind(&ScreenshotData::EncodeOnWorker, this, bitmap), callback);
+        FROM_HERE, {base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+        base::BindOnce(&ScreenshotData::EncodeOnWorker, this, bitmap),
+        callback);
   }
 
   scoped_refptr<base::RefCountedBytes> data() const { return data_; }
@@ -183,7 +183,7 @@ bool NavigationEntryScreenshotManager::ClearScreenshot(
   if (!entry->screenshot().get())
     return false;
 
-  entry->SetScreenshotPNGData(NULL);
+  entry->SetScreenshotPNGData(nullptr);
   return true;
 }
 

@@ -10,6 +10,7 @@
 #include "base/optional.h"
 #include "content/renderer/media/media_stream_video_source.h"
 #include "content/renderer/media/mock_constraint_factory.h"
+#include "media/base/limits.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/WebMediaConstraints.h"
 
@@ -21,6 +22,7 @@ const char kDeviceID1[] = "fake_device_1";
 const char kDeviceID2[] = "fake_device_2";
 const char kDeviceID3[] = "fake_device_3";
 const char kDeviceID4[] = "fake_device_4";
+const char kDeviceID5[] = "fake_device_5";
 
 void CheckTrackAdapterSettingsEqualsResolution(
     const VideoCaptureSettings& settings) {
@@ -53,16 +55,25 @@ double AspectRatio(const media::VideoCaptureFormat& format) {
          static_cast<double>(format.frame_size.height());
 }
 
+VideoCaptureSettings SelectSettingsVideoDeviceCapture(
+    const VideoDeviceCaptureCapabilities& capabilities,
+    const blink::WebMediaConstraints& constraints) {
+  return SelectSettingsVideoDeviceCapture(
+      capabilities, constraints, MediaStreamVideoSource::kDefaultWidth,
+      MediaStreamVideoSource::kDefaultHeight,
+      MediaStreamVideoSource::kDefaultFrameRate);
+}
+
 }  // namespace
 
 class MediaStreamConstraintsUtilVideoDeviceTest : public testing::Test {
  public:
   void SetUp() override {
     // Default device. It is default because it is the first in the enumeration.
-    ::mojom::VideoInputDeviceCapabilitiesPtr device =
-        ::mojom::VideoInputDeviceCapabilities::New();
+    blink::mojom::VideoInputDeviceCapabilitiesPtr device =
+        blink::mojom::VideoInputDeviceCapabilities::New();
     device->device_id = kDeviceID1;
-    device->facing_mode = ::mojom::FacingMode::NONE;
+    device->facing_mode = blink::mojom::FacingMode::NONE;
     device->formats = {
         media::VideoCaptureFormat(gfx::Size(200, 200), 40.0f,
                                   media::PIXEL_FORMAT_I420),
@@ -75,9 +86,9 @@ class MediaStreamConstraintsUtilVideoDeviceTest : public testing::Test {
     capabilities_.device_capabilities.push_back(std::move(device));
 
     // A low-resolution device.
-    device = ::mojom::VideoInputDeviceCapabilities::New();
+    device = blink::mojom::VideoInputDeviceCapabilities::New();
     device->device_id = kDeviceID2;
-    device->facing_mode = ::mojom::FacingMode::ENVIRONMENT;
+    device->facing_mode = blink::mojom::FacingMode::ENVIRONMENT;
     device->formats = {
         media::VideoCaptureFormat(gfx::Size(40, 30), 20.0f,
                                   media::PIXEL_FORMAT_I420),
@@ -95,14 +106,21 @@ class MediaStreamConstraintsUtilVideoDeviceTest : public testing::Test {
     capabilities_.device_capabilities.push_back(std::move(device));
 
     // A high-resolution device.
-    device = ::mojom::VideoInputDeviceCapabilities::New();
+    device = blink::mojom::VideoInputDeviceCapabilities::New();
     device->device_id = kDeviceID3;
-    device->facing_mode = ::mojom::FacingMode::USER;
+    device->facing_mode = blink::mojom::FacingMode::USER;
     device->formats = {
         media::VideoCaptureFormat(gfx::Size(600, 400), 10.0f,
                                   media::PIXEL_FORMAT_I420),
         media::VideoCaptureFormat(gfx::Size(640, 480), 10.0f,
                                   media::PIXEL_FORMAT_I420),
+        // This format has default for all settings, except that the resolution
+        // is inverted.
+        media::VideoCaptureFormat(
+            gfx::Size(MediaStreamVideoSource::kDefaultHeight,
+                      MediaStreamVideoSource::kDefaultWidth),
+            MediaStreamVideoSource::kDefaultFrameRate,
+            media::PIXEL_FORMAT_I420),
         // This format has defaults for all settings
         media::VideoCaptureFormat(
             gfx::Size(MediaStreamVideoSource::kDefaultWidth,
@@ -119,11 +137,26 @@ class MediaStreamConstraintsUtilVideoDeviceTest : public testing::Test {
     capabilities_.device_capabilities.push_back(std::move(device));
 
     // A depth capture device.
-    device = ::mojom::VideoInputDeviceCapabilities::New();
+    device = blink::mojom::VideoInputDeviceCapabilities::New();
     device->device_id = kDeviceID4;
-    device->facing_mode = ::mojom::FacingMode::ENVIRONMENT;
+    device->facing_mode = blink::mojom::FacingMode::ENVIRONMENT;
     device->formats = {media::VideoCaptureFormat(gfx::Size(640, 480), 30.0f,
                                                  media::PIXEL_FORMAT_Y16)};
+    capabilities_.device_capabilities.push_back(std::move(device));
+
+    // A device that reports invalid frame rates. These devices exist and should
+    // be supported if no constraints are placed on the frame rate.
+    device = blink::mojom::VideoInputDeviceCapabilities::New();
+    device->device_id = kDeviceID5;
+    device->facing_mode = blink::mojom::FacingMode::NONE;
+    device->formats = {
+        media::VideoCaptureFormat(
+            gfx::Size(MediaStreamVideoSource::kDefaultWidth,
+                      MediaStreamVideoSource::kDefaultHeight),
+            0.0f, media::PIXEL_FORMAT_I420),
+        media::VideoCaptureFormat(gfx::Size(500, 500), 0.1f,
+                                  media::PIXEL_FORMAT_I420),
+    };
     capabilities_.device_capabilities.push_back(std::move(device));
 
     capabilities_.power_line_capabilities = {
@@ -140,10 +173,11 @@ class MediaStreamConstraintsUtilVideoDeviceTest : public testing::Test {
     default_device_ = capabilities_.device_capabilities[0].get();
     low_res_device_ = capabilities_.device_capabilities[1].get();
     high_res_device_ = capabilities_.device_capabilities[2].get();
+    invalid_frame_rate_device_ = capabilities_.device_capabilities[4].get();
     default_closest_format_ = &default_device_->formats[1];
     low_res_closest_format_ = &low_res_device_->formats[2];
-    high_res_closest_format_ = &high_res_device_->formats[2];
-    high_res_highest_format_ = &high_res_device_->formats[5];
+    high_res_closest_format_ = &high_res_device_->formats[3];
+    high_res_highest_format_ = &high_res_device_->formats[6];
   }
 
  protected:
@@ -154,9 +188,10 @@ class MediaStreamConstraintsUtilVideoDeviceTest : public testing::Test {
   }
 
   VideoDeviceCaptureCapabilities capabilities_;
-  const mojom::VideoInputDeviceCapabilities* default_device_;
-  const mojom::VideoInputDeviceCapabilities* low_res_device_;
-  const mojom::VideoInputDeviceCapabilities* high_res_device_;
+  const blink::mojom::VideoInputDeviceCapabilities* default_device_;
+  const blink::mojom::VideoInputDeviceCapabilities* low_res_device_;
+  const blink::mojom::VideoInputDeviceCapabilities* high_res_device_;
+  const blink::mojom::VideoInputDeviceCapabilities* invalid_frame_rate_device_;
   // Closest formats to the default settings.
   const media::VideoCaptureFormat* default_closest_format_;
   const media::VideoCaptureFormat* low_res_closest_format_;
@@ -307,6 +342,14 @@ TEST_F(MediaStreamConstraintsUtilVideoDeviceTest, OverconstrainedOnFrameRate) {
   EXPECT_FALSE(result.HasValue());
   EXPECT_EQ(constraint_factory_.basic().frame_rate.GetName(),
             result.failed_constraint_name());
+
+  // Maximum frame rate must be at least 1.0.
+  constraint_factory_.Reset();
+  constraint_factory_.basic().frame_rate.SetMax(0.99);
+  result = SelectSettings();
+  EXPECT_FALSE(result.HasValue());
+  EXPECT_EQ(constraint_factory_.basic().frame_rate.GetName(),
+            result.failed_constraint_name());
 }
 
 TEST_F(MediaStreamConstraintsUtilVideoDeviceTest,
@@ -339,10 +382,10 @@ TEST_F(MediaStreamConstraintsUtilVideoDeviceTest,
   // Manually adding device capabilities because VideoDeviceCaptureCapabilities
   // is move only.
   VideoDeviceCaptureCapabilities capabilities;
-  ::mojom::VideoInputDeviceCapabilitiesPtr device =
-      ::mojom::VideoInputDeviceCapabilities::New();
+  blink::mojom::VideoInputDeviceCapabilitiesPtr device =
+      blink::mojom::VideoInputDeviceCapabilities::New();
   device->device_id = kDeviceID1;
-  device->facing_mode = ::mojom::FacingMode::NONE;
+  device->facing_mode = blink::mojom::FacingMode::NONE;
   device->formats = {
       media::VideoCaptureFormat(gfx::Size(200, 200), 40.0f,
                                 media::PIXEL_FORMAT_I420),
@@ -402,7 +445,8 @@ TEST_F(MediaStreamConstraintsUtilVideoDeviceTest, MandatoryFacingMode) {
   // Only the low-res device supports environment facing mode. Should select
   // default settings for everything else.
   EXPECT_EQ(low_res_device_->device_id, result.device_id());
-  EXPECT_EQ(::mojom::FacingMode::ENVIRONMENT, low_res_device_->facing_mode);
+  EXPECT_EQ(blink::mojom::FacingMode::ENVIRONMENT,
+            low_res_device_->facing_mode);
   EXPECT_EQ(*low_res_closest_format_, result.Format());
   EXPECT_EQ(media::PowerLineFrequency::FREQUENCY_DEFAULT,
             result.PowerLineFrequency());
@@ -415,7 +459,7 @@ TEST_F(MediaStreamConstraintsUtilVideoDeviceTest, MandatoryFacingMode) {
   // Only the high-res device supports user facing mode. Should select default
   // settings for everything else.
   EXPECT_EQ(high_res_device_->device_id, result.device_id());
-  EXPECT_EQ(::mojom::FacingMode::USER, high_res_device_->facing_mode);
+  EXPECT_EQ(blink::mojom::FacingMode::USER, high_res_device_->facing_mode);
   EXPECT_EQ(*high_res_closest_format_, result.Format());
   EXPECT_EQ(media::PowerLineFrequency::FREQUENCY_DEFAULT,
             result.PowerLineFrequency());
@@ -900,12 +944,12 @@ TEST_F(MediaStreamConstraintsUtilVideoDeviceTest, IdealWidth) {
     constraint_factory_.basic().width.SetIdeal(kIdealWidth);
     auto result = SelectSettings();
     EXPECT_TRUE(result.HasValue());
-    // In this case, the default device is selected because it can satisfy the
-    // ideal at a lower cost than the other devices (500 vs 640).
+    // In this case, the high_res device is selected because it has a mode that
+    // can satisfy the ideal at a lower cost than other devices (480 vs 500).
     // Note that a native resolution of 320 is further from the ideal value of
-    // 321 than 500 cropped to 321.
-    EXPECT_EQ(default_device_->device_id, result.device_id());
-    EXPECT_EQ(*default_closest_format_, result.Format());
+    // 321 than 480 cropped to 321.
+    EXPECT_EQ(high_res_device_->device_id, result.device_id());
+    EXPECT_EQ(480, result.Width());
     // The track is cropped to kIdealWidth and keeps the source aspect ratio.
     EXPECT_EQ(std::round(kIdealWidth / AspectRatio(result.Format())),
               result.track_adapter_settings().max_height);
@@ -979,47 +1023,117 @@ TEST_F(MediaStreamConstraintsUtilVideoDeviceTest, MandatoryExactFrameRate) {
 }
 
 TEST_F(MediaStreamConstraintsUtilVideoDeviceTest, MandatoryMinFrameRate) {
-  constraint_factory_.Reset();
-  const double kFrameRate = MediaStreamVideoSource::kDefaultFrameRate;
-  constraint_factory_.basic().frame_rate.SetMin(kFrameRate);
-  auto result = SelectSettings();
-  EXPECT_TRUE(result.HasValue());
-  // All devices in |capabilities_| support the requested frame-rate range. The
-  // algorithm should prefer the default device.
-  EXPECT_EQ(default_device_->device_id, result.device_id());
-  // The format closest to the default satisfies the constraint.
-  EXPECT_EQ(*default_closest_format_, result.Format());
-  CheckTrackAdapterSettingsEqualsFormat(result);
+  // MinFrameRate equal to default frame rate.
+  {
+    constraint_factory_.Reset();
+    const double kMinFrameRate = MediaStreamVideoSource::kDefaultFrameRate;
+    constraint_factory_.basic().frame_rate.SetMin(kMinFrameRate);
+    auto result = SelectSettings();
+    EXPECT_TRUE(result.HasValue());
+    // All devices in |capabilities_| support the requested frame-rate range.
+    // The algorithm should prefer the default device.
+    EXPECT_EQ(default_device_->device_id, result.device_id());
+    // The format closest to the default satisfies the constraint.
+    EXPECT_EQ(*default_closest_format_, result.Format());
+    CheckTrackAdapterSettingsEqualsFormat(result);
+    EXPECT_TRUE(result.min_frame_rate().has_value());
+    EXPECT_EQ(result.min_frame_rate(), kMinFrameRate);
+    EXPECT_FALSE(result.max_frame_rate().has_value());
+  }
 
-  const double kLargeFrameRate = 50;
-  constraint_factory_.basic().frame_rate.SetMin(kLargeFrameRate);
-  result = SelectSettings();
-  EXPECT_TRUE(result.HasValue());
-  // Only the high-res device supports the requested frame-rate range.
-  // The least expensive configuration is 1280x720x60Hz.
-  EXPECT_EQ(high_res_device_->device_id, result.device_id());
-  EXPECT_LE(kLargeFrameRate, result.FrameRate());
-  EXPECT_EQ(1280, result.Width());
-  EXPECT_EQ(720, result.Height());
-  CheckTrackAdapterSettingsEqualsFormat(result);
+  // MinFrameRate greater than default frame rate.
+  {
+    const double kMinFrameRate = 50;
+    constraint_factory_.basic().frame_rate.SetMin(kMinFrameRate);
+    auto result = SelectSettings();
+    EXPECT_TRUE(result.HasValue());
+    // Only the high-res device supports the requested frame-rate range.
+    // The least expensive configuration is 1280x720x60Hz.
+    EXPECT_EQ(high_res_device_->device_id, result.device_id());
+    EXPECT_LE(kMinFrameRate, result.FrameRate());
+    EXPECT_EQ(1280, result.Width());
+    EXPECT_EQ(720, result.Height());
+    CheckTrackAdapterSettingsEqualsFormat(result);
+    EXPECT_TRUE(result.min_frame_rate().has_value());
+    EXPECT_EQ(result.min_frame_rate(), kMinFrameRate);
+    EXPECT_FALSE(result.max_frame_rate().has_value());
+  }
+
+  // MinFrameRate lower than the minimum allowed value.
+  {
+    const double kMinFrameRate = -0.01;
+    constraint_factory_.basic().frame_rate.SetMin(kMinFrameRate);
+    auto result = SelectSettings();
+    EXPECT_TRUE(result.HasValue());
+    // The minimum frame rate is ignored. Default settings should be used.
+    EXPECT_EQ(default_device_->device_id, result.device_id());
+    EXPECT_EQ(*default_closest_format_, result.Format());
+    EXPECT_FALSE(result.min_frame_rate().has_value());
+    EXPECT_FALSE(result.max_frame_rate().has_value());
+  }
+
+  // MinFrameRate equal to the minimum allowed value.
+  {
+    const double kMinFrameRate = 0.0;
+    constraint_factory_.basic().frame_rate.SetMin(kMinFrameRate);
+    auto result = SelectSettings();
+    EXPECT_TRUE(result.HasValue());
+    EXPECT_TRUE(result.min_frame_rate().has_value());
+    EXPECT_EQ(result.min_frame_rate(), kMinFrameRate);
+    EXPECT_FALSE(result.max_frame_rate().has_value());
+  }
 }
 
 TEST_F(MediaStreamConstraintsUtilVideoDeviceTest, MandatoryMaxFrameRate) {
-  constraint_factory_.Reset();
-  const double kLowFrameRate = 10;
-  constraint_factory_.basic().frame_rate.SetMax(kLowFrameRate);
-  auto result = SelectSettings();
-  EXPECT_TRUE(result.HasValue());
-  // All devices in |capabilities_| support the requested frame-rate range. The
-  // algorithm should prefer the settings that natively exceed the requested
-  // maximum by the lowest amount. In this case it is the high-res device with
-  // default resolution .
-  EXPECT_EQ(high_res_device_->device_id, result.device_id());
-  EXPECT_EQ(kLowFrameRate, result.FrameRate());
-  EXPECT_EQ(MediaStreamVideoSource::kDefaultHeight, result.Height());
-  EXPECT_EQ(MediaStreamVideoSource::kDefaultWidth, result.Width());
-  CheckTrackAdapterSettingsEqualsResolution(result);
-  CheckTrackAdapterSettingsEqualsFrameRate(result, kLowFrameRate);
+  // MaxFrameRate within valid range.
+  {
+    constraint_factory_.Reset();
+    const double kMaxFrameRate = 10;
+    constraint_factory_.basic().frame_rate.SetMax(kMaxFrameRate);
+    auto result = SelectSettings();
+    EXPECT_TRUE(result.HasValue());
+    // All devices in |capabilities_| support the requested frame-rate range.
+    // The algorithm should prefer the settings that natively exceed the
+    // requested maximum by the lowest amount. In this case it is the high-res
+    // device with default resolution .
+    EXPECT_EQ(high_res_device_->device_id, result.device_id());
+    EXPECT_EQ(kMaxFrameRate, result.FrameRate());
+    EXPECT_EQ(MediaStreamVideoSource::kDefaultHeight, result.Height());
+    EXPECT_EQ(MediaStreamVideoSource::kDefaultWidth, result.Width());
+    EXPECT_FALSE(result.min_frame_rate().has_value());
+    EXPECT_TRUE(result.max_frame_rate().has_value());
+    EXPECT_EQ(kMaxFrameRate, result.max_frame_rate());
+    CheckTrackAdapterSettingsEqualsResolution(result);
+    CheckTrackAdapterSettingsEqualsFrameRate(result, kMaxFrameRate);
+  }
+
+  // MaxFrameRate greater than the maximum allowed.
+  {
+    constraint_factory_.Reset();
+    const double kMaxFrameRate = media::limits::kMaxFramesPerSecond + 0.1;
+    constraint_factory_.basic().frame_rate.SetMax(kMaxFrameRate);
+    auto result = SelectSettings();
+    EXPECT_TRUE(result.HasValue());
+    // The maximum frame rate should be ignored. Default settings apply.
+    EXPECT_EQ(default_device_->device_id, result.device_id());
+    EXPECT_EQ(*default_closest_format_, result.Format());
+    EXPECT_FALSE(result.min_frame_rate().has_value());
+    EXPECT_FALSE(result.max_frame_rate().has_value());
+  }
+
+  // MaxFrameRate equal to the maximum and minimum allowed MaxFrameRate.
+  {
+    const double kMaxFrameRates[] = {1.0, media::limits::kMaxFramesPerSecond};
+    for (double max_frame_rate : kMaxFrameRates) {
+      constraint_factory_.Reset();
+      constraint_factory_.basic().frame_rate.SetMax(max_frame_rate);
+      auto result = SelectSettings();
+      EXPECT_TRUE(result.HasValue());
+      EXPECT_TRUE(result.max_frame_rate().has_value());
+      EXPECT_FALSE(result.min_frame_rate().has_value());
+      EXPECT_EQ(result.max_frame_rate(), max_frame_rate);
+    }
+  }
 }
 
 TEST_F(MediaStreamConstraintsUtilVideoDeviceTest, MandatoryFrameRateRange) {
@@ -2150,6 +2264,46 @@ TEST_F(MediaStreamConstraintsUtilVideoDeviceTest, NoDevicesWithConstraints) {
       capabilities, constraint_factory_.CreateWebMediaConstraints());
   EXPECT_FALSE(result.HasValue());
   EXPECT_TRUE(std::string(result.failed_constraint_name()).empty());
+}
+
+// This test verifies that having a device that reports a frame rate lower than
+// 1 fps works.
+TEST_F(MediaStreamConstraintsUtilVideoDeviceTest, InvalidFrameRateDevice) {
+  constraint_factory_.Reset();
+  constraint_factory_.basic().device_id.SetExact(
+      blink::WebString::FromASCII(invalid_frame_rate_device_->device_id));
+  auto result = SelectSettings();
+  EXPECT_TRUE(result.HasValue());
+  EXPECT_EQ(invalid_frame_rate_device_->device_id, result.device_id());
+  EXPECT_EQ(invalid_frame_rate_device_->formats[0].frame_rate,
+            result.FrameRate());
+  EXPECT_EQ(result.FrameRate(), 0.0);
+  EXPECT_FALSE(result.min_frame_rate().has_value());
+  EXPECT_FALSE(result.max_frame_rate().has_value());
+
+  // Select the second format with invalid frame rate.
+  constraint_factory_.basic().width.SetExact(500);
+  result = SelectSettings();
+  EXPECT_TRUE(result.HasValue());
+  EXPECT_EQ(invalid_frame_rate_device_->device_id, result.device_id());
+  EXPECT_EQ(invalid_frame_rate_device_->formats[1].frame_rate,
+            result.FrameRate());
+  EXPECT_LT(result.FrameRate(), 1.0);
+  EXPECT_FALSE(result.min_frame_rate().has_value());
+  EXPECT_FALSE(result.max_frame_rate().has_value());
+}
+
+// This test verifies that an inverted default resolution is not preferred over
+// the actual default resolution.
+TEST_F(MediaStreamConstraintsUtilVideoDeviceTest, InvertedDefaultResolution) {
+  constraint_factory_.Reset();
+  constraint_factory_.basic().device_id.SetExact(
+      blink::WebString::FromASCII(high_res_device_->device_id));
+  auto result = SelectSettings();
+  EXPECT_TRUE(result.HasValue());
+  EXPECT_EQ(high_res_device_->device_id, result.device_id());
+  EXPECT_EQ(result.Width(), MediaStreamVideoSource::kDefaultWidth);
+  EXPECT_EQ(result.Height(), MediaStreamVideoSource::kDefaultHeight);
 }
 
 }  // namespace content

@@ -7,11 +7,11 @@
 
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/ContextLifecycleObserver.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/frame/Navigator.h"
 #include "platform/Supplementable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/HashSet.h"
 #include "public/platform/modules/webshare/webshare.mojom-blink.h"
@@ -36,7 +36,7 @@ class NavigatorShare final : public GarbageCollectedFinalized<NavigatorShare>,
   ScriptPromise share(ScriptState*, const ShareData&);
   static ScriptPromise share(ScriptState*, Navigator&, const ShareData&);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   class ShareClientImpl;

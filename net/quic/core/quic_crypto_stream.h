@@ -18,7 +18,6 @@
 
 namespace net {
 
-class CryptoHandshakeMessage;
 class QuicSession;
 
 // Crypto handshake messages in QUIC take place over a reserved stream with the
@@ -31,9 +30,7 @@ class QuicSession;
 //
 // For more details:
 // https://docs.google.com/document/d/1g5nIXAIkN_Y-7XJW5K45IblHd_L2f5LTaDUDwvZ5L6g/edit?usp=sharing
-class QUIC_EXPORT_PRIVATE QuicCryptoStream
-    : public QuicStream,
-      public CryptoFramerVisitorInterface {
+class QUIC_EXPORT_PRIVATE QuicCryptoStream : public QuicStream {
  public:
   explicit QuicCryptoStream(QuicSession* session);
 
@@ -41,18 +38,11 @@ class QUIC_EXPORT_PRIVATE QuicCryptoStream
 
   // Returns the per-packet framing overhead associated with sending a
   // handshake message for |version|.
-  static QuicByteCount CryptoMessageFramingOverhead(QuicVersion version);
-
-  // CryptoFramerVisitorInterface implementation
-  void OnError(CryptoFramer* framer) override;
-  void OnHandshakeMessage(const CryptoHandshakeMessage& message) override;
+  static QuicByteCount CryptoMessageFramingOverhead(
+      QuicTransportVersion version);
 
   // QuicStream implementation
   void OnDataAvailable() override;
-
-  // Sends |message| to the peer.
-  // TODO(wtc): return a success/failure status.
-  void SendHandshakeMessage(const CryptoHandshakeMessage& message);
 
   // Performs key extraction to derive a new secret of |result_len| bytes
   // dependent on |label|, |context|, and the stream's negotiated subkey secret.
@@ -73,21 +63,23 @@ class QUIC_EXPORT_PRIVATE QuicCryptoStream
   // value.
   bool ExportTokenBindingKeyingMaterial(std::string* result) const;
 
-  bool encryption_established() const { return encryption_established_; }
-  bool handshake_confirmed() const { return handshake_confirmed_; }
+  // Writes |data| to the QuicStream.
+  virtual void WriteCryptoData(const QuicStringPiece& data);
 
-  const QuicCryptoNegotiatedParameters& crypto_negotiated_params() const;
+  // Returns true once an encrypter has been set for the connection.
+  virtual bool encryption_established() const = 0;
 
- protected:
-  bool encryption_established_;
-  bool handshake_confirmed_;
+  // Returns true once the crypto handshake has completed.
+  virtual bool handshake_confirmed() const = 0;
 
-  QuicReferenceCountedPointer<QuicCryptoNegotiatedParameters>
-      crypto_negotiated_params_;
+  // Returns the parameters negotiated in the crypto handshake.
+  virtual const QuicCryptoNegotiatedParameters& crypto_negotiated_params()
+      const = 0;
+
+  // Provides the message parser to use when data is received on this stream.
+  virtual CryptoMessageParser* crypto_message_parser() = 0;
 
  private:
-  CryptoFramer crypto_framer_;
-
   DISALLOW_COPY_AND_ASSIGN(QuicCryptoStream);
 };
 

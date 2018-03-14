@@ -14,14 +14,18 @@
 #include "ios/chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state_manager.h"
 #include "ios/chrome/browser/search_engines/template_url_service_factory.h"
+#import "ios/chrome/browser/sessions/session_ios.h"
 #import "ios/chrome/browser/sessions/session_service_ios.h"
 #import "ios/chrome/browser/sessions/session_window_ios.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/ui/browser_view_controller.h"
 #import "ios/chrome/browser/ui/browser_view_controller_dependency_factory.h"
-#import "ios/chrome/browser/ui/preload_controller.h"
 #import "ios/chrome/browser/web/chrome_web_client.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 // Subclass of PrerenderController so it isn't actually used. Using a mock for
 // this makes cleanup on shutdown simpler, by minimizing the number of profile
@@ -32,37 +36,6 @@
 namespace {
 static GURL emptyGurl_ = GURL("foo", 3, url::Parsed(), false);
 }
-
-@interface TestPreloadController : PreloadController
-- (Tab*)releasePrerenderContents;
-@end
-
-@implementation TestPreloadController
-
-- (Tab*)releasePrerenderContents {
-  return nil;
-}
-
-- (id<PreloadControllerDelegate>)delegate {
-  return nil;
-}
-
-- (GURL)prerenderedURL {
-  return emptyGurl_;
-}
-@end
-
-// Subclass the factory that creates the PreloadController for BVC to return
-// the TestPrerenderController.
-@interface TestBVCDependencyFactory : BrowserViewControllerDependencyFactory
-- (PreloadController*)newPreloadController;
-@end
-
-@implementation TestBVCDependencyFactory
-- (PreloadController*)newPreloadController {
-  return [[TestPreloadController alloc] init];
-}
-@end
 
 PerfTestWithBVC::PerfTestWithBVC(std::string testGroup)
     : PerfTest(testGroup),
@@ -118,28 +91,31 @@ void PerfTestWithBVC::SetUp() {
   // Use the session to create a window which will contain the tab models.
   NSString* state_path = base::SysUTF8ToNSString(
       chrome_browser_state_->GetStatePath().AsUTF8Unsafe());
-  SessionWindowIOS* session_window = [[SessionServiceIOS sharedService]
-      loadSessionWindowFromDirectory:state_path];
+  SessionIOS* session =
+      [[SessionServiceIOS sharedService] loadSessionFromDirectory:state_path];
+  DCHECK_EQ(session.sessionWindows.count, 1u);
 
   // Tab models. The off-the-record (OTR) tab model is required for the stack
   // view controller, which is created in OpenStackView().
   tab_model_.reset([[TabModel alloc]
-      initWithSessionWindow:session_window
+      initWithSessionWindow:session.sessionWindows[0]
              sessionService:[SessionServiceIOS sharedService]
                browserState:chrome_browser_state_.get()]);
   otr_tab_model_.reset([[TabModel alloc]
-      initWithSessionWindow:session_window
+      initWithSessionWindow:session.sessionWindows[0]
              sessionService:[SessionServiceIOS sharedService]
                browserState:chrome_browser_state_
                                 ->GetOffTheRecordChromeBrowserState()]);
 
   // Create the browser view controller with its testing factory.
-  bvc_factory_.reset([[TestBVCDependencyFactory alloc]
-      initWithBrowserState:chrome_browser_state_.get()]);
+  bvc_factory_.reset([[BrowserViewControllerDependencyFactory alloc]
+      initWithBrowserState:chrome_browser_state_.get()
+              webStateList:[tab_model_ webStateList]]);
   bvc_.reset([[BrowserViewController alloc]
-       initWithTabModel:tab_model_
-           browserState:chrome_browser_state_.get()
-      dependencyFactory:bvc_factory_]);
+                initWithTabModel:tab_model_
+                    browserState:chrome_browser_state_.get()
+               dependencyFactory:bvc_factory_
+      applicationCommandEndpoint:nil]);
   [bvc_ setActive:YES];
 
   // Create a real window to give to the browser view controller.
@@ -158,6 +134,7 @@ void PerfTestWithBVC::TearDown() {
   // and its associated data.
   window_.reset();
   [bvc_ browserStateDestroyed];
+  [bvc_ shutdown];
   bvc_.reset();
   bvc_factory_.reset();
   tab_model_.reset();

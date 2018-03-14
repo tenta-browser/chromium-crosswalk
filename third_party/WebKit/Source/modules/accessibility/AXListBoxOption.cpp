@@ -28,8 +28,9 @@
 
 #include "modules/accessibility/AXListBoxOption.h"
 
-#include "core/html/HTMLOptionElement.h"
-#include "core/html/HTMLSelectElement.h"
+#include "core/dom/AccessibleNode.h"
+#include "core/html/forms/HTMLOptionElement.h"
+#include "core/html/forms/HTMLSelectElement.h"
 #include "core/layout/LayoutObject.h"
 #include "modules/accessibility/AXObjectCacheImpl.h"
 
@@ -78,22 +79,9 @@ bool AXListBoxOption::IsParentPresentationalRole() const {
   return false;
 }
 
-bool AXListBoxOption::IsEnabled() const {
-  if (!GetNode())
-    return false;
-
-  if (EqualIgnoringASCIICase(GetAttribute(aria_disabledAttr), "true"))
-    return false;
-
-  if (ToElement(GetNode())->hasAttribute(disabledAttr))
-    return false;
-
-  return true;
-}
-
 bool AXListBoxOption::IsSelected() const {
-  return isHTMLOptionElement(GetNode()) &&
-         toHTMLOptionElement(GetNode())->Selected();
+  return IsHTMLOptionElement(GetNode()) &&
+         ToHTMLOptionElement(GetNode())->Selected();
 }
 
 bool AXListBoxOption::IsSelectedOptionActive() const {
@@ -113,20 +101,6 @@ bool AXListBoxOption::ComputeAccessibilityIsIgnored(
     return true;
 
   return false;
-}
-
-bool AXListBoxOption::CanSetSelectedAttribute() const {
-  if (!isHTMLOptionElement(GetNode()))
-    return false;
-
-  if (toHTMLOptionElement(GetNode())->IsDisabledFormControl())
-    return false;
-
-  HTMLSelectElement* select_element = ListBoxOptionParentNode();
-  if (select_element && select_element->IsDisabledFormControl())
-    return false;
-
-  return true;
 }
 
 String AXListBoxOption::TextAlternative(bool recursive,
@@ -151,7 +125,7 @@ String AXListBoxOption::TextAlternative(bool recursive,
     return text_alternative;
 
   name_from = kAXNameFromContents;
-  text_alternative = toHTMLOptionElement(GetNode())->DisplayLabel();
+  text_alternative = ToHTMLOptionElement(GetNode())->DisplayLabel();
   if (name_sources) {
     name_sources->push_back(NameSource(found_text_alternative));
     name_sources->back().type = name_from;
@@ -162,29 +136,30 @@ String AXListBoxOption::TextAlternative(bool recursive,
   return text_alternative;
 }
 
-void AXListBoxOption::SetSelected(bool selected) {
+bool AXListBoxOption::OnNativeSetSelectedAction(bool selected) {
   HTMLSelectElement* select_element = ListBoxOptionParentNode();
   if (!select_element)
-    return;
+    return false;
 
   if (!CanSetSelectedAttribute())
-    return;
+    return false;
 
   bool is_option_selected = IsSelected();
   if ((is_option_selected && selected) || (!is_option_selected && !selected))
-    return;
+    return false;
 
-  select_element->SelectOptionByAccessKey(toHTMLOptionElement(GetNode()));
+  select_element->SelectOptionByAccessKey(ToHTMLOptionElement(GetNode()));
+  return true;
 }
 
 HTMLSelectElement* AXListBoxOption::ListBoxOptionParentNode() const {
   if (!GetNode())
-    return 0;
+    return nullptr;
 
-  if (isHTMLOptionElement(GetNode()))
-    return toHTMLOptionElement(GetNode())->OwnerSelectElement();
+  if (auto* option = ToHTMLOptionElementOrNull(GetNode()))
+    return option->OwnerSelectElement();
 
-  return 0;
+  return nullptr;
 }
 
 }  // namespace blink

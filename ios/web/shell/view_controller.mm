@@ -59,6 +59,14 @@ using web::NavigationManager;
   return self;
 }
 
+- (void)dealloc {
+  if (_webState) {
+    _webState->RemoveObserver(_webStateObserver.get());
+    _webStateObserver.reset();
+    _webState.reset();
+  }
+}
+
 - (void)viewDidLoad {
   [super viewDidLoad];
 
@@ -84,26 +92,18 @@ using web::NavigationManager;
   [self.view addSubview:_containerView];
 
   // Set up the toolbar buttons.
-  UIButton* back = [UIButton buttonWithType:UIButtonTypeCustom];
-  [back setImage:[UIImage imageNamed:@"toolbar_back"]
-        forState:UIControlStateNormal];
-  [back setFrame:CGRectMake(0, 0, 44, 44)];
-  [back setImageEdgeInsets:UIEdgeInsetsMake(5, 5, 4, 4)];
-  [back setAutoresizingMask:UIViewAutoresizingFlexibleRightMargin];
-  [back addTarget:self
-                action:@selector(back)
-      forControlEvents:UIControlEventTouchUpInside];
+  UIBarButtonItem* back = [[UIBarButtonItem alloc]
+      initWithImage:[UIImage imageNamed:@"toolbar_back"]
+              style:UIBarButtonItemStylePlain
+             target:self
+             action:@selector(back)];
   [back setAccessibilityLabel:kWebShellBackButtonAccessibilityLabel];
 
-  UIButton* forward = [UIButton buttonWithType:UIButtonTypeCustom];
-  [forward setImage:[UIImage imageNamed:@"toolbar_forward"]
-           forState:UIControlStateNormal];
-  [forward setFrame:CGRectMake(44, 0, 44, 44)];
-  [forward setImageEdgeInsets:UIEdgeInsetsMake(5, 5, 4, 4)];
-  [forward setAutoresizingMask:UIViewAutoresizingFlexibleRightMargin];
-  [forward addTarget:self
-                action:@selector(forward)
-      forControlEvents:UIControlEventTouchUpInside];
+  UIBarButtonItem* forward = [[UIBarButtonItem alloc]
+      initWithImage:[UIImage imageNamed:@"toolbar_forward"]
+              style:UIBarButtonItemStylePlain
+             target:self
+             action:@selector(forward)];
   [forward setAccessibilityLabel:kWebShellForwardButtonAccessibilityLabel];
 
   base::scoped_nsobject<UITextField> field([[UITextField alloc]
@@ -120,17 +120,17 @@ using web::NavigationManager;
   [field setClearButtonMode:UITextFieldViewModeWhileEditing];
   self.field = field;
 
-  [_toolbarView addSubview:back];
-  [_toolbarView addSubview:forward];
-  [_toolbarView addSubview:field];
+  [_toolbarView setItems:@[
+    back, forward, [[UIBarButtonItem alloc] initWithCustomView:field]
+  ]];
 
   web::WebState::CreateParams webStateCreateParams(_browserState);
   _webState = web::WebState::Create(webStateCreateParams);
-  _webState->SetWebUsageEnabled(true);
 
-  _webStateObserver.reset(
-      new web::WebStateObserverBridge(_webState.get(), self));
-  _webStateDelegate.reset(new web::WebStateDelegateBridge(self));
+  _webStateObserver = std::make_unique<web::WebStateObserverBridge>(self);
+  _webState->AddObserver(_webStateObserver.get());
+
+  _webStateDelegate = std::make_unique<web::WebStateDelegateBridge>(self);
   _webState->SetDelegate(_webStateDelegate.get());
 
   UIView* view = _webState->GetView();
@@ -251,12 +251,13 @@ using web::NavigationManager;
 // -----------------------------------------------------------------------
 // WebStateObserver implementation.
 
-- (void)didStartProvisionalNavigationForURL:(const GURL&)URL {
+- (void)webState:(web::WebState*)webState
+    didStartNavigation:(web::NavigationContext*)navigation {
   [self updateToolbar];
 }
 
-- (void)didCommitNavigationWithDetails:
-    (const web::LoadCommittedDetails&)details {
+- (void)webState:(web::WebState*)webState
+    didCommitNavigationWithDetails:(const web::LoadCommittedDetails&)details {
   [self updateToolbar];
 }
 
@@ -268,11 +269,11 @@ using web::NavigationManager;
 // -----------------------------------------------------------------------
 // WebStateDelegate implementation.
 
-- (BOOL)webState:(web::WebState*)webState
+- (void)webState:(web::WebState*)webState
     handleContextMenu:(const web::ContextMenuParams&)params {
   GURL link = params.link_url;
   if (!link.is_valid()) {
-    return NO;
+    return;
   }
 
   UIAlertController* alert = [UIAlertController
@@ -300,8 +301,13 @@ using web::NavigationManager;
                                           handler:nil]];
 
   [self presentViewController:alert animated:YES completion:nil];
+}
 
-  return YES;
+- (void)webStateDestroyed:(web::WebState*)webState {
+  // The WebState is owned by the current instance, and the observer bridge
+  // is unregistered before the WebState is destroyed, so this event should
+  // never happen.
+  NOTREACHED();
 }
 
 @end

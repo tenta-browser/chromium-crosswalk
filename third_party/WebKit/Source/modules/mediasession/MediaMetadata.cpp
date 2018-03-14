@@ -5,13 +5,14 @@
 #include "modules/mediasession/MediaMetadata.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/ToV8ForCore.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/dom/TaskRunnerHelper.h"
 #include "modules/mediasession/MediaImage.h"
 #include "modules/mediasession/MediaMetadataInit.h"
 #include "modules/mediasession/MediaSession.h"
+#include "platform/bindings/ScriptState.h"
+#include "public/platform/TaskType.h"
 
 namespace blink {
 
@@ -25,10 +26,10 @@ MediaMetadata* MediaMetadata::Create(ScriptState* script_state,
 MediaMetadata::MediaMetadata(ScriptState* script_state,
                              const MediaMetadataInit& metadata,
                              ExceptionState& exception_state)
-    : notify_session_timer_(
-          TaskRunnerHelper::Get(TaskType::kMiscPlatformAPI, script_state),
-          this,
-          &MediaMetadata::NotifySessionTimerFired) {
+    : notify_session_timer_(ExecutionContext::From(script_state)
+                                ->GetTaskRunner(TaskType::kMiscPlatformAPI),
+                            this,
+                            &MediaMetadata::NotifySessionTimerFired) {
   title_ = metadata.title();
   artist_ = metadata.artist();
   album_ = metadata.album();
@@ -92,7 +93,7 @@ void MediaMetadata::SetSession(MediaSession* session) {
 void MediaMetadata::NotifySessionAsync() {
   if (!session_ || notify_session_timer_.IsActive())
     return;
-  notify_session_timer_.StartOneShot(0, BLINK_FROM_HERE);
+  notify_session_timer_.StartOneShot(TimeDelta(), BLINK_FROM_HERE);
 }
 
 void MediaMetadata::NotifySessionTimerFired(TimerBase*) {
@@ -117,12 +118,13 @@ void MediaMetadata::SetArtworkInternal(ScriptState* script_state,
   }
 
   DCHECK(!exception_state.HadException());
-  artwork_.Swap(processed_artwork);
+  artwork_.swap(processed_artwork);
 }
 
-DEFINE_TRACE(MediaMetadata) {
+void MediaMetadata::Trace(blink::Visitor* visitor) {
   visitor->Trace(artwork_);
   visitor->Trace(session_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

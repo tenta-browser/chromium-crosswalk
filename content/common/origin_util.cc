@@ -36,8 +36,7 @@ bool IsOriginSecure(const GURL& url) {
     return true;
   }
 
-  std::string hostname = url.HostNoBrackets();
-  if (net::IsLocalhost(hostname))
+  if (net::IsLocalhost(url.HostNoBracketsPiece()))
     return true;
 
   if (base::ContainsValue(url::GetSecureSchemes(), url.scheme()))
@@ -64,8 +63,7 @@ bool IsOriginWhiteListedTrustworthy(const url::Origin& origin) {
   if (IsOriginUnique(origin))
     return false;
 
-  return base::ContainsValue(GetSecureOrigins(),
-                             origin.GetURL().HostNoBrackets());
+  return base::ContainsValue(GetSecureOrigins(), origin.GetURL());
 }
 
 bool IsPotentiallyTrustworthyOrigin(const url::Origin& origin) {
@@ -79,7 +77,7 @@ bool IsPotentiallyTrustworthyOrigin(const url::Origin& origin) {
 
   if (base::ContainsValue(url::GetSecureSchemes(), origin.scheme()) ||
       base::ContainsValue(url::GetLocalSchemes(), origin.scheme()) ||
-      net::IsLocalhost(origin.GetURL().HostNoBrackets())) {
+      net::IsLocalhost(origin.GetURL().HostNoBracketsPiece())) {
     return true;
   }
 

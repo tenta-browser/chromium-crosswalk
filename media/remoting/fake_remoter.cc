@@ -9,10 +9,15 @@
 #include "base/callback.h"
 #include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "media/remoting/proto_utils.h"
+#include "build/buildflag.h"
+#include "media/media_features.h"
 #include "media/remoting/shared_session.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if BUILDFLAG(ENABLE_MEDIA_REMOTING_RPC)
+#include "media/remoting/proto_utils.h"  // nogncheck
+#endif
 
 namespace media {
 namespace remoting {
@@ -45,6 +50,7 @@ bool FakeRemotingDataStreamSender::ValidateFrameBuffer(size_t index,
     return false;
   }
 
+#if BUILDFLAG(ENABLE_MEDIA_REMOTING_RPC)
   const std::vector<uint8_t>& data = received_frame_list[index];
   scoped_refptr<DecoderBuffer> media_buffer =
       ByteArrayToDecoderBuffer(data.data(), data.size());
@@ -83,6 +89,9 @@ bool FakeRemotingDataStreamSender::ValidateFrameBuffer(size_t index,
     }
   }
   return return_value;
+#else
+  return true;
+#endif  // BUILDFLAG(ENABLE_MEDIA_REMOTING_RPC)
 }
 
 void FakeRemotingDataStreamSender::ConsumeDataChunk(
@@ -90,9 +99,8 @@ void FakeRemotingDataStreamSender::ConsumeDataChunk(
     uint32_t size,
     uint32_t total_payload_size) {
   next_frame_data_.resize(total_payload_size);
-  MojoResult result = mojo::ReadDataRaw(consumer_handle_.get(),
-                                        next_frame_data_.data() + offset, &size,
-                                        MOJO_READ_DATA_FLAG_ALL_OR_NONE);
+  MojoResult result = consumer_handle_->ReadData(
+      next_frame_data_.data() + offset, &size, MOJO_READ_DATA_FLAG_ALL_OR_NONE);
   CHECK(result == MOJO_RESULT_OK);
   ++consume_data_chunk_count_;
 }
@@ -112,7 +120,7 @@ FakeRemoter::FakeRemoter(mojom::RemotingSourcePtr source, bool start_will_fail)
       start_will_fail_(start_will_fail),
       weak_factory_(this) {}
 
-FakeRemoter::~FakeRemoter() {}
+FakeRemoter::~FakeRemoter() = default;
 
 void FakeRemoter::Start() {
   if (start_will_fail_) {
@@ -152,6 +160,11 @@ void FakeRemoter::Stop(mojom::RemotingStopReason reason) {
 
 void FakeRemoter::SendMessageToSink(const std::vector<uint8_t>& message) {}
 
+void FakeRemoter::EstimateTransmissionCapacity(
+    mojom::Remoter::EstimateTransmissionCapacityCallback callback) {
+  std::move(callback).Run(10000000 / 8.0);
+}
+
 void FakeRemoter::Started() {
   source_->OnStarted();
 }
@@ -167,7 +180,7 @@ void FakeRemoter::Stopped(mojom::RemotingStopReason reason) {
 FakeRemoterFactory::FakeRemoterFactory(bool start_will_fail)
     : start_will_fail_(start_will_fail) {}
 
-FakeRemoterFactory::~FakeRemoterFactory() {}
+FakeRemoterFactory::~FakeRemoterFactory() = default;
 
 void FakeRemoterFactory::Create(mojom::RemotingSourcePtr source,
                                 mojom::RemoterRequest request) {
@@ -180,7 +193,7 @@ void FakeRemoterFactory::Create(mojom::RemotingSourcePtr source,
 scoped_refptr<SharedSession> FakeRemoterFactory::CreateSharedSession(
     bool start_will_fail) {
   mojom::RemotingSourcePtr remoting_source;
-  mojom::RemotingSourceRequest remoting_source_request(&remoting_source);
+  auto remoting_source_request = mojo::MakeRequest(&remoting_source);
   mojom::RemoterPtr remoter;
   FakeRemoterFactory remoter_factory(start_will_fail);
   remoter_factory.Create(std::move(remoting_source),

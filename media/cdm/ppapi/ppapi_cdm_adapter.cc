@@ -28,6 +28,11 @@ const uint32_t kSizeKBMin = 1;
 const uint32_t kSizeKBMax = 512 * 1024;  // 512MB
 const uint32_t kSizeKBBuckets = 100;
 
+// Only support version 1 of Storage Id. However, the "latest" version can also
+// be requested.
+const uint32_t kRequestLatestStorageIdVersion = 0;
+const uint32_t kCurrentStorageIdVersion = 1;
+
 #if !defined(NDEBUG)
 #define DLOG_TO_CONSOLE(message) LogToConsole(message);
 #else
@@ -95,6 +100,32 @@ void ConfigureInputBuffer(const pp::Buffer_Dev& encrypted_buffer,
   input_buffer->timestamp = encrypted_block_info.tracking_info.timestamp;
 }
 
+cdm::HdcpVersion PpHdcpVersionToCdmHdcpVersion(PP_HdcpVersion hdcp_version) {
+  switch (hdcp_version) {
+    case PP_HDCPVERSION_NONE:
+      return cdm::kHdcpVersionNone;
+    case PP_HDCPVERSION_1_0:
+      return cdm::kHdcpVersion1_0;
+    case PP_HDCPVERSION_1_1:
+      return cdm::kHdcpVersion1_1;
+    case PP_HDCPVERSION_1_2:
+      return cdm::kHdcpVersion1_2;
+    case PP_HDCPVERSION_1_3:
+      return cdm::kHdcpVersion1_3;
+    case PP_HDCPVERSION_1_4:
+      return cdm::kHdcpVersion1_4;
+    case PP_HDCPVERSION_2_0:
+      return cdm::kHdcpVersion2_0;
+    case PP_HDCPVERSION_2_1:
+      return cdm::kHdcpVersion2_1;
+    case PP_HDCPVERSION_2_2:
+      return cdm::kHdcpVersion2_2;
+  }
+
+  PP_NOTREACHED();
+  return cdm::kHdcpVersion2_2;
+}
+
 PP_DecryptResult CdmStatusToPpDecryptResult(cdm::Status status) {
   switch (status) {
     case cdm::kSuccess:
@@ -107,11 +138,11 @@ PP_DecryptResult CdmStatusToPpDecryptResult(cdm::Status status) {
       return PP_DECRYPTRESULT_DECRYPT_ERROR;
     case cdm::kDecodeError:
       return PP_DECRYPTRESULT_DECODE_ERROR;
-    case cdm::kSessionError:
+    case cdm::kInitializationError:
     case cdm::kDeferredInitialization:
-      // kSessionError and kDeferredInitialization are only used by the
-      // Initialize* methods internally and never returned. Deliver*
-      // methods should never use these values.
+      // kInitializationError and kDeferredInitialization are only used by the
+      // Initialize* methods internally and never returned. Deliver* methods
+      // should never use these values.
       break;
   }
 
@@ -255,26 +286,44 @@ cdm::InitDataType PpInitDataTypeToCdmInitDataType(
   return cdm::kKeyIds;
 }
 
-PP_CdmExceptionCode CdmExceptionTypeToPpCdmExceptionType(cdm::Error error) {
-  switch (error) {
-    case cdm::kNotSupportedError:
+PP_CdmExceptionCode CdmExceptionTypeToPpCdmExceptionType(
+    cdm::Exception exception) {
+  switch (exception) {
+    case cdm::Exception::kExceptionNotSupportedError:
       return PP_CDMEXCEPTIONCODE_NOTSUPPORTEDERROR;
-    case cdm::kInvalidStateError:
+    case cdm::Exception::kExceptionInvalidStateError:
       return PP_CDMEXCEPTIONCODE_INVALIDSTATEERROR;
-    case cdm::kInvalidAccessError:
-      return PP_CDMEXCEPTIONCODE_INVALIDACCESSERROR;
-    case cdm::kQuotaExceededError:
+    case cdm::Exception::kExceptionTypeError:
+      return PP_CDMEXCEPTIONCODE_TYPEERROR;
+    case cdm::Exception::kExceptionQuotaExceededError:
       return PP_CDMEXCEPTIONCODE_QUOTAEXCEEDEDERROR;
-    case cdm::kUnknownError:
-      return PP_CDMEXCEPTIONCODE_UNKNOWNERROR;
-    case cdm::kClientError:
-      return PP_CDMEXCEPTIONCODE_CLIENTERROR;
-    case cdm::kOutputError:
-      return PP_CDMEXCEPTIONCODE_OUTPUTERROR;
   }
 
   PP_NOTREACHED();
-  return PP_CDMEXCEPTIONCODE_UNKNOWNERROR;
+  return PP_CDMEXCEPTIONCODE_INVALIDSTATEERROR;
+}
+
+cdm::Exception CdmErrorTypeToCdmExceptionType(cdm::Error error) {
+  switch (error) {
+    case cdm::kNotSupportedError:
+      return cdm::Exception::kExceptionNotSupportedError;
+    case cdm::kInvalidStateError:
+      return cdm::Exception::kExceptionInvalidStateError;
+    case cdm::kInvalidAccessError:
+      return cdm::Exception::kExceptionTypeError;
+    case cdm::kQuotaExceededError:
+      return cdm::Exception::kExceptionQuotaExceededError;
+
+    // TODO(jrummell): Remove these once CDM_8 is no longer supported.
+    // https://crbug.com/737296.
+    case cdm::kUnknownError:
+    case cdm::kClientError:
+    case cdm::kOutputError:
+      break;
+  }
+
+  PP_NOTREACHED();
+  return cdm::Exception::kExceptionInvalidStateError;
 }
 
 PP_CdmMessageType CdmMessageTypeToPpMessageType(cdm::MessageType message) {
@@ -340,7 +389,7 @@ PpapiCdmAdapter::PpapiCdmAdapter(PP_Instance instance, pp::Module* module)
   callback_factory_.Initialize(this);
 }
 
-PpapiCdmAdapter::~PpapiCdmAdapter() {}
+PpapiCdmAdapter::~PpapiCdmAdapter() = default;
 
 CdmWrapper* PpapiCdmAdapter::CreateCdmInstance(const std::string& key_system) {
   // The Pepper plugin will be staticly linked to the CDM, so pass the plugin's
@@ -380,7 +429,7 @@ void PpapiCdmAdapter::Initialize(uint32_t promise_id,
   PP_URLComponents_Dev url_components = {};
   const pp::URLUtil_Dev* url_util = pp::URLUtil_Dev::Get();
   if (!url_util) {
-    RejectPromise(promise_id, cdm::kUnknownError, 0,
+    RejectPromise(promise_id, cdm::Exception::kExceptionInvalidStateError, 0,
                   "Unable to determine origin.");
     return;
   }
@@ -401,7 +450,7 @@ void PpapiCdmAdapter::Initialize(uint32_t promise_id,
 
   cdm_ = make_linked_ptr(CreateCdmInstance(key_system));
   if (!cdm_) {
-    RejectPromise(promise_id, cdm::kInvalidAccessError, 0,
+    RejectPromise(promise_id, cdm::Exception::kExceptionInvalidStateError, 0,
                   "Unable to create CDM.");
     return;
   }
@@ -423,13 +472,22 @@ void PpapiCdmAdapter::SetServerCertificate(
   if (!server_certificate_ptr ||
       server_certificate_size < media::limits::kMinCertificateLength ||
       server_certificate_size > media::limits::kMaxCertificateLength) {
-    RejectPromise(promise_id, cdm::kInvalidAccessError, 0,
+    RejectPromise(promise_id, cdm::Exception::kExceptionTypeError, 0,
                   "Incorrect certificate.");
     return;
   }
 
   cdm_->SetServerCertificate(promise_id, server_certificate_ptr,
                              server_certificate_size);
+}
+
+void PpapiCdmAdapter::GetStatusForPolicy(uint32_t promise_id,
+                                         PP_HdcpVersion min_hdcp_version) {
+  if (!cdm_->GetStatusForPolicy(
+          promise_id, PpHdcpVersionToCdmHdcpVersion(min_hdcp_version))) {
+    RejectPromise(promise_id, cdm::Exception::kExceptionNotSupportedError, 0,
+                  "GetStatusForPolicy not supported.");
+  }
 }
 
 void PpapiCdmAdapter::CreateSessionAndGenerateRequest(
@@ -509,7 +567,7 @@ void PpapiCdmAdapter::InitializeAudioDecoder(
     pp::Buffer_Dev extra_data_buffer) {
   PP_DCHECK(!deferred_initialize_audio_decoder_);
   PP_DCHECK(deferred_audio_decoder_config_id_ == 0);
-  cdm::Status status = cdm::kSessionError;
+  cdm::Status status = cdm::kInitializationError;
   if (cdm_) {
     cdm::AudioDecoderConfig cdm_decoder_config;
     cdm_decoder_config.codec =
@@ -539,7 +597,7 @@ void PpapiCdmAdapter::InitializeVideoDecoder(
     pp::Buffer_Dev extra_data_buffer) {
   PP_DCHECK(!deferred_initialize_video_decoder_);
   PP_DCHECK(deferred_video_decoder_config_id_ == 0);
-  cdm::Status status = cdm::kSessionError;
+  cdm::Status status = cdm::kInitializationError;
   if (cdm_) {
     cdm::VideoDecoderConfig cdm_decoder_config;
     cdm_decoder_config.codec =
@@ -658,6 +716,13 @@ cdm::Time PpapiCdmAdapter::GetCurrentWallTime() {
   return pp::Module::Get()->core()->GetTime();
 }
 
+void PpapiCdmAdapter::OnResolveKeyStatusPromise(uint32_t promise_id,
+                                                cdm::KeyStatus key_status) {
+  PostOnMain(callback_factory_.NewCallback(
+      &PpapiCdmAdapter::SendPromiseResolvedWithKeyStatusInternal, promise_id,
+      key_status));
+}
+
 void PpapiCdmAdapter::OnResolveNewSessionPromise(uint32_t promise_id,
                                                  const char* session_id,
                                                  uint32_t session_id_size) {
@@ -672,30 +737,41 @@ void PpapiCdmAdapter::OnResolvePromise(uint32_t promise_id) {
 }
 
 void PpapiCdmAdapter::OnRejectPromise(uint32_t promise_id,
+                                      cdm::Exception exception,
+                                      uint32_t system_code,
+                                      const char* error_message,
+                                      uint32_t error_message_size) {
+  RejectPromise(promise_id, exception, system_code,
+                std::string(error_message, error_message_size));
+}
+
+void PpapiCdmAdapter::OnRejectPromise(uint32_t promise_id,
                                       cdm::Error error,
                                       uint32_t system_code,
                                       const char* error_message,
                                       uint32_t error_message_size) {
-  // UMA to investigate http://crbug.com/410630
-  // TODO(xhwang): Remove after bug is fixed.
-  if (system_code == 0x27) {
-    pp::UMAPrivate uma_interface(this);
-    uma_interface.HistogramCustomCounts("Media.EME.CdmFileIO.FileSizeKBOnError",
-                                        last_read_file_size_kb_, kSizeKBMin,
-                                        kSizeKBMax, kSizeKBBuckets);
-  }
-
-  RejectPromise(promise_id, error, system_code,
-                std::string(error_message, error_message_size));
+  OnRejectPromise(promise_id, CdmErrorTypeToCdmExceptionType(error),
+                  system_code, error_message, error_message_size);
 }
 
 void PpapiCdmAdapter::RejectPromise(uint32_t promise_id,
-                                    cdm::Error error,
+                                    cdm::Exception exception,
                                     uint32_t system_code,
                                     const std::string& error_message) {
   PostOnMain(callback_factory_.NewCallback(
       &PpapiCdmAdapter::SendPromiseRejectedInternal, promise_id,
-      SessionError(error, system_code, error_message)));
+      SessionError(exception, system_code, error_message)));
+}
+
+void PpapiCdmAdapter::OnSessionMessage(const char* session_id,
+                                       uint32_t session_id_size,
+                                       cdm::MessageType message_type,
+                                       const char* message,
+                                       uint32_t message_size) {
+  PostOnMain(callback_factory_.NewCallback(
+      &PpapiCdmAdapter::SendSessionMessageInternal,
+      SessionMessage(std::string(session_id, session_id_size), message_type,
+                     message, message_size)));
 }
 
 void PpapiCdmAdapter::OnSessionMessage(const char* session_id,
@@ -710,11 +786,8 @@ void PpapiCdmAdapter::OnSessionMessage(const char* session_id,
   // License requests should not specify |legacy_destination_url|.
   PP_DCHECK(legacy_destination_url_size == 0 ||
             message_type != cdm::MessageType::kLicenseRequest);
-
-  PostOnMain(callback_factory_.NewCallback(
-      &PpapiCdmAdapter::SendSessionMessageInternal,
-      SessionMessage(std::string(session_id, session_id_size), message_type,
-                     message, message_size)));
+  OnSessionMessage(session_id, session_id_size, message_type, message,
+                   message_size);
 }
 
 void PpapiCdmAdapter::OnSessionKeysChange(const char* session_id,
@@ -780,6 +853,15 @@ void PpapiCdmAdapter::SendPromiseResolvedInternal(int32_t result,
   pp::ContentDecryptor_Private::PromiseResolved(promise_id);
 }
 
+void PpapiCdmAdapter::SendPromiseResolvedWithKeyStatusInternal(
+    int32_t result,
+    uint32_t promise_id,
+    cdm::KeyStatus key_status) {
+  PP_DCHECK(result == PP_OK);
+  pp::ContentDecryptor_Private::PromiseResolvedWithKeyStatus(
+      promise_id, CdmKeyStatusToPpKeyStatus(key_status));
+}
+
 void PpapiCdmAdapter::SendPromiseResolvedWithSessionInternal(
     int32_t result,
     uint32_t promise_id,
@@ -794,7 +876,7 @@ void PpapiCdmAdapter::SendPromiseRejectedInternal(int32_t result,
                                                   const SessionError& error) {
   PP_DCHECK(result == PP_OK);
   pp::ContentDecryptor_Private::PromiseRejected(
-      promise_id, CdmExceptionTypeToPpCdmExceptionType(error.error),
+      promise_id, CdmExceptionTypeToPpCdmExceptionType(error.exception),
       error.system_code, error.error_description);
 }
 
@@ -1117,6 +1199,28 @@ void PpapiCdmAdapter::OnDeferredInitializationDone(cdm::StreamType stream_type,
   }
 }
 
+void PpapiCdmAdapter::RequestStorageId(uint32_t version) {
+  PP_DCHECK(version < 0x80000000);  // Reserved versions not allowed.
+
+  // If persistent storage is not allowed, no need to get the Storage ID.
+  // As well, only allow the request if the current version (or "latest")
+  // is requested.
+  if (allow_persistent_state_ && (version == kCurrentStorageIdVersion ||
+                                  version == kRequestLatestStorageIdVersion)) {
+    linked_ptr<pp::Var> response(new pp::Var());
+    int32_t result = platform_verification_.GetStorageId(
+        response.get(), callback_factory_.NewCallback(
+                            &PpapiCdmAdapter::RequestStorageIdDone, response));
+    if (result == PP_OK_COMPLETIONPENDING)
+      return;
+
+    // Fall through on error and provide an empty storage_id.
+    PP_DCHECK(result != PP_OK);
+  }
+
+  cdm_->OnStorageId(version, nullptr, 0);
+}
+
 // The CDM owns the returned object and must call FileIO::Close() to release it.
 cdm::FileIO* PpapiCdmAdapter::CreateFileIO(cdm::FileIOClient* client) {
   if (!allow_persistent_state_) {
@@ -1231,11 +1335,31 @@ void PpapiCdmAdapter::QueryOutputProtectionStatusDone(int32_t result) {
                                       output_protection_mask_);
 }
 
+void PpapiCdmAdapter::RequestStorageIdDone(
+    int32_t result,
+    const linked_ptr<pp::Var>& response) {
+  uint8_t* storage_id_ptr;
+  uint32_t storage_id_size;
+
+  if (result == PP_OK && response->is_array_buffer()) {
+    pp::VarArrayBuffer storage_id(*response);
+    storage_id_ptr = static_cast<uint8_t*>(storage_id.Map());
+    storage_id_size = storage_id.ByteLength();
+  } else {
+    CDM_DLOG() << __func__ << " failed, result = " << result;
+    storage_id_ptr = nullptr;
+    storage_id_size = 0;
+  }
+
+  // Pepper only supports a single version of Storage ID.
+  cdm_->OnStorageId(kCurrentStorageIdVersion, storage_id_ptr, storage_id_size);
+}
+
 PpapiCdmAdapter::SessionError::SessionError(
-    cdm::Error error,
+    cdm::Exception exception,
     uint32_t system_code,
     const std::string& error_description)
-    : error(error),
+    : exception(exception),
       system_code(system_code),
       error_description(error_description) {}
 
@@ -1252,7 +1376,7 @@ void* GetCdmHost(int host_interface_version, void* user_data) {
     return NULL;
 
   static_assert(
-      cdm::ContentDecryptionModule::Host::kVersion == cdm::Host_8::kVersion,
+      cdm::ContentDecryptionModule::Host::kVersion == cdm::Host_9::kVersion,
       "update the code below");
 
   // Ensure IsSupportedCdmHostVersion matches implementation of this function.
@@ -1262,10 +1386,11 @@ void* GetCdmHost(int host_interface_version, void* user_data) {
 
   PP_DCHECK(
       // Future version is not supported.
-      !IsSupportedCdmHostVersion(cdm::Host_8::kVersion + 1) &&
+      !IsSupportedCdmHostVersion(cdm::Host_9::kVersion + 1) &&
       // Current version is supported.
-      IsSupportedCdmHostVersion(cdm::Host_8::kVersion) &&
+      IsSupportedCdmHostVersion(cdm::Host_9::kVersion) &&
       // Include all previous supported versions (if any) here.
+      IsSupportedCdmHostVersion(cdm::Host_8::kVersion) &&
       // One older than the oldest supported version is not supported.
       !IsSupportedCdmHostVersion(cdm::Host_8::kVersion - 1));
   PP_DCHECK(IsSupportedCdmHostVersion(host_interface_version));
@@ -1275,6 +1400,8 @@ void* GetCdmHost(int host_interface_version, void* user_data) {
   switch (host_interface_version) {
     case cdm::Host_8::kVersion:
       return static_cast<cdm::Host_8*>(cdm_adapter);
+    case cdm::Host_9::kVersion:
+      return static_cast<cdm::Host_9*>(cdm_adapter);
     default:
       PP_NOTREACHED();
       return NULL;

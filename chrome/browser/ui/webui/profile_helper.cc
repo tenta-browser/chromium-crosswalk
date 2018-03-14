@@ -8,15 +8,16 @@
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/lifetime/keep_alive_types.h"
-#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/profiles/profiles_state.h"
+#include "chrome/browser/signin/signin_util.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/user_manager.h"
 #include "chrome/browser/ui/webui/signin/signin_utils.h"
+#include "components/keep_alive_registry/keep_alive_types.h"
+#include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "extensions/browser/app_window/app_window.h"
@@ -27,7 +28,7 @@ namespace {
 
 void ShowUserManager(const ProfileManager::CreateCallback& callback) {
   if (!UserManager::IsShowing()) {
-    UserManager::Show(base::FilePath(), profiles::USER_MANAGER_NO_TUTORIAL,
+    UserManager::Show(base::FilePath(),
                       profiles::USER_MANAGER_SELECT_PROFILE_NO_ACTION);
   }
 
@@ -43,13 +44,6 @@ std::string GetProfileUserName(Profile* profile) {
            .GetProfileAttributesWithPath(profile->GetPath(), &entry))
     return std::string();
   return base::UTF16ToUTF8(entry->GetUserName());
-}
-
-void ShowSigninDialog(base::FilePath signin_profile_path,
-                      Profile* system_profile,
-                      Profile::CreateStatus status) {
-  UserManagerProfileDialog::ShowSigninDialog(system_profile,
-                                             signin_profile_path);
 }
 
 void ShowReauthDialog(const std::string& user_name,
@@ -72,8 +66,10 @@ void DeleteProfileCallback(std::unique_ptr<ScopedKeepAlive> keep_alive,
 
 void OpenNewWindowForProfile(Profile* profile) {
   if (profiles::IsProfileLocked(profile->GetPath())) {
-    if (signin::IsForceSigninEnabled()) {
-      ShowUserManager(base::Bind(&ShowSigninDialog, profile->GetPath()));
+    if (signin_util::IsForceSigninEnabled()) {
+      // If force-sign-in policy is enabled, UserManager will be displayed
+      // without any sign-in dialog opened.
+      ShowUserManager(ProfileManager::CreateCallback());
     } else {
       ShowUserManager(
           base::Bind(&ShowReauthDialog, GetProfileUserName(profile)));

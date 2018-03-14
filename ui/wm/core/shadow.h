@@ -10,7 +10,11 @@
 #include "base/macros.h"
 #include "ui/compositor/layer_animation_observer.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/wm/wm_export.h"
+#include "ui/wm/core/wm_core_export.h"
+
+namespace gfx {
+struct ShadowDetails;
+}  // namespace gfx
 
 namespace ui {
 class Layer;
@@ -20,7 +24,7 @@ namespace wm {
 enum class ShadowElevation;
 
 // Simple class that draws a drop shadow around content at given bounds.
-class WM_EXPORT Shadow : public ui::ImplicitAnimationObserver {
+class WM_CORE_EXPORT Shadow : public ui::ImplicitAnimationObserver {
  public:
   Shadow();
   ~Shadow() override;
@@ -50,6 +54,8 @@ class WM_EXPORT Shadow : public ui::ImplicitAnimationObserver {
   // adjusting the shadow layer to frame |content_bounds|. 0 or greater.
   void SetRoundedCornerRadius(int rounded_corner_radius);
 
+  const gfx::ShadowDetails* details_for_testing() const { return details_; }
+
   // ui::ImplicitAnimationObserver overrides:
   void OnImplicitAnimationsCompleted() override;
 
@@ -67,12 +73,16 @@ class WM_EXPORT Shadow : public ui::ImplicitAnimationObserver {
   // isn't big enough to support it.
   ShadowElevation desired_elevation_;
 
-  // The elevation of the shadow image that's currently set on |shadow_layer_|.
-  int effective_elevation_ = 0;
-
   // Rounded corners are drawn on top of the window's content layer,
   // we need to exclude them from the occlusion area.
   int rounded_corner_radius_;
+
+  // The details of the shadow image that's currently set on |shadow_layer_|.
+  // This will be null until a positive elevation has been set. Once set, it
+  // will always point to a global ShadowDetails instance that is guaranteed
+  // to outlive the Shadow instance. See ui/gfx/shadow_util.h for how these
+  // ShadowDetails instances are created.
+  const gfx::ShadowDetails* details_ = nullptr;
 
   // The parent layer of the shadow layer. It serves as a container accessible
   // from the outside to control the visibility of the shadow.

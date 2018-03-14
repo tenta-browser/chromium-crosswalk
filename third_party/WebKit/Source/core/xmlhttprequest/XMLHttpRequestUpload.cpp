@@ -25,11 +25,11 @@
 
 #include "core/xmlhttprequest/XMLHttpRequestUpload.h"
 
-#include "core/EventTypeNames.h"
+#include "core/event_type_names.h"
 #include "core/events/ProgressEvent.h"
 #include "core/probe/CoreProbes.h"
-#include "wtf/Assertions.h"
-#include "wtf/text/AtomicString.h"
+#include "platform/wtf/Assertions.h"
+#include "platform/wtf/text/AtomicString.h"
 
 namespace blink {
 
@@ -84,7 +84,7 @@ void XMLHttpRequestUpload::HandleRequestError(const AtomicString& type) {
                           last_total_bytes_to_be_sent_);
 }
 
-DEFINE_TRACE(XMLHttpRequestUpload) {
+void XMLHttpRequestUpload::Trace(blink::Visitor* visitor) {
   visitor->Trace(xml_http_request_);
   XMLHttpRequestEventTarget::Trace(visitor);
 }

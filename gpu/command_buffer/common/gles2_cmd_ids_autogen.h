@@ -277,10 +277,10 @@
   OP(VertexAttribDivisorANGLE)                             /* 518 */ \
   OP(ProduceTextureCHROMIUMImmediate)                      /* 519 */ \
   OP(ProduceTextureDirectCHROMIUMImmediate)                /* 520 */ \
-  OP(ConsumeTextureCHROMIUMImmediate)                      /* 521 */ \
-  OP(CreateAndConsumeTextureINTERNALImmediate)             /* 522 */ \
-  OP(BindUniformLocationCHROMIUMBucket)                    /* 523 */ \
-  OP(BindTexImage2DCHROMIUM)                               /* 524 */ \
+  OP(CreateAndConsumeTextureINTERNALImmediate)             /* 521 */ \
+  OP(BindUniformLocationCHROMIUMBucket)                    /* 522 */ \
+  OP(BindTexImage2DCHROMIUM)                               /* 523 */ \
+  OP(BindTexImage2DWithInternalformatCHROMIUM)             /* 524 */ \
   OP(ReleaseTexImage2DCHROMIUM)                            /* 525 */ \
   OP(TraceBeginCHROMIUM)                                   /* 526 */ \
   OP(TraceEndCHROMIUM)                                     /* 527 */ \
@@ -333,7 +333,19 @@
   OP(OverlayPromotionHintCHROMIUM)                         /* 574 */ \
   OP(SwapBuffersWithBoundsCHROMIUMImmediate)               /* 575 */ \
   OP(SetDrawRectangleCHROMIUM)                             /* 576 */ \
-  OP(SetEnableDCLayersCHROMIUM)                            /* 577 */
+  OP(SetEnableDCLayersCHROMIUM)                            /* 577 */ \
+  OP(InitializeDiscardableTextureCHROMIUM)                 /* 578 */ \
+  OP(UnlockDiscardableTextureCHROMIUM)                     /* 579 */ \
+  OP(LockDiscardableTextureCHROMIUM)                       /* 580 */ \
+  OP(BeginRasterCHROMIUM)                                  /* 581 */ \
+  OP(RasterCHROMIUM)                                       /* 582 */ \
+  OP(EndRasterCHROMIUM)                                    /* 583 */ \
+  OP(CreateTransferCacheEntryCHROMIUM)                     /* 584 */ \
+  OP(DeleteTransferCacheEntryCHROMIUM)                     /* 585 */ \
+  OP(UnlockTransferCacheEntryCHROMIUM)                     /* 586 */ \
+  OP(TexStorage2DImageCHROMIUM)                            /* 587 */ \
+  OP(SetColorSpaceMetadataCHROMIUM)                        /* 588 */ \
+  OP(WindowRectanglesEXTImmediate)                         /* 589 */
 
 enum CommandId {
   kOneBeforeStartPoint =

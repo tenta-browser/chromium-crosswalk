@@ -10,8 +10,10 @@
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
+#include "core/frame/Deprecation.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameClient.h"
 #include "core/frame/Navigator.h"
 #include "core/frame/UseCounter.h"
 #include "modules/presentation/NavigatorPresentation.h"
@@ -19,13 +21,15 @@
 #include "modules/presentation/PresentationConnection.h"
 #include "modules/presentation/PresentationConnectionList.h"
 #include "public/platform/modules/presentation/WebPresentationClient.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 
 namespace blink {
 
 PresentationReceiver::PresentationReceiver(LocalFrame* frame,
                                            WebPresentationClient* client)
-    : ContextClient(frame) {
-  RecordOriginTypeAccess(frame->GetDocument());
+    : ContextLifecycleObserver(frame->GetDocument()),
+      receiver_binding_(this),
+      client_(client) {
   connection_list_ = new PresentationConnectionList(frame->GetDocument());
 
   if (client)
@@ -34,7 +38,7 @@ PresentationReceiver::PresentationReceiver(LocalFrame* frame,
 
 // static
 PresentationReceiver* PresentationReceiver::From(Document& document) {
-  if (!document.GetFrame() || !document.GetFrame()->DomWindow())
+  if (!document.IsInMainFrame() || !document.GetFrame()->DomWindow())
     return nullptr;
   Navigator& navigator = *document.GetFrame()->DomWindow()->navigator();
   Presentation* presentation = NavigatorPresentation::presentation(navigator);
@@ -45,10 +49,12 @@ PresentationReceiver* PresentationReceiver::From(Document& document) {
 }
 
 ScriptPromise PresentationReceiver::connectionList(ScriptState* script_state) {
-  if (!connection_list_property_)
-    connection_list_property_ =
-        new ConnectionListProperty(ExecutionContext::From(script_state), this,
-                                   ConnectionListProperty::kReady);
+  ExecutionContext* execution_context = ExecutionContext::From(script_state);
+  RecordOriginTypeAccess(*execution_context);
+  if (!connection_list_property_) {
+    connection_list_property_ = new ConnectionListProperty(
+        execution_context, this, ConnectionListProperty::kReady);
+  }
 
   if (!connection_list_->IsEmpty() && connection_list_property_->GetState() ==
                                           ScriptPromisePropertyBase::kPending)
@@ -57,15 +63,54 @@ ScriptPromise PresentationReceiver::connectionList(ScriptState* script_state) {
   return connection_list_property_->Promise(script_state->World());
 }
 
-WebPresentationConnection* PresentationReceiver::OnReceiverConnectionAvailable(
-    const WebPresentationInfo& presentation_info) {
-  // take() will call PresentationReceiver::registerConnection()
-  // and register the connection.
-  auto connection = PresentationConnection::Take(this, presentation_info);
+void PresentationReceiver::Init() {
+  DCHECK(!receiver_binding_.is_bound());
 
-  // receiver.connectionList property not accessed
+  mojom::blink::PresentationServicePtr presentation_service;
+  auto* interface_provider = GetFrame()->Client()->GetInterfaceProvider();
+  interface_provider->GetInterface(mojo::MakeRequest(&presentation_service));
+
+  mojom::blink::PresentationReceiverPtr receiver_ptr;
+  receiver_binding_.Bind(mojo::MakeRequest(&receiver_ptr));
+  presentation_service->SetReceiver(std::move(receiver_ptr));
+}
+
+void PresentationReceiver::OnReceiverTerminated() {
+  for (auto& connection : connection_list_->connections())
+    connection->OnReceiverTerminated();
+}
+
+void PresentationReceiver::Terminate() {
+  if (!GetFrame())
+    return;
+
+  auto* window = GetFrame()->DomWindow();
+  if (!window || window->closed())
+    return;
+
+  window->close(window);
+}
+
+void PresentationReceiver::RemoveConnection(
+    ReceiverPresentationConnection* connection) {
+  DCHECK(connection_list_);
+  connection_list_->RemoveConnection(connection);
+}
+
+void PresentationReceiver::OnReceiverConnectionAvailable(
+    mojom::blink::PresentationInfoPtr info,
+    mojom::blink::PresentationConnectionPtr controller_connection,
+    mojom::blink::PresentationConnectionRequest receiver_connection_request) {
+  // Take() will call PresentationReceiver::registerConnection()
+  // and register the connection.
+  auto* connection = ReceiverPresentationConnection::Take(
+      this, *info, std::move(controller_connection),
+      std::move(receiver_connection_request));
+
+  // Only notify receiver.connectionList property if it has been acccessed
+  // previously.
   if (!connection_list_property_)
-    return connection;
+    return;
 
   if (connection_list_property_->GetState() ==
       ScriptPromisePropertyBase::kPending) {
@@ -74,51 +119,39 @@ WebPresentationConnection* PresentationReceiver::OnReceiverConnectionAvailable(
              ScriptPromisePropertyBase::kResolved) {
     connection_list_->DispatchConnectionAvailableEvent(connection);
   }
-
-  return connection;
-}
-
-void PresentationReceiver::DidChangeConnectionState(
-    WebPresentationConnectionState state) {
-  // TODO(zhaobin): remove or modify DCHECK when receiver supports more
-  // connection state change.
-  DCHECK(state == WebPresentationConnectionState::kTerminated);
-
-  for (auto connection : connection_list_->connections())
-    connection->DidChangeState(state, false /* shouldDispatchEvent */);
-}
-
-void PresentationReceiver::TerminateConnection() {
-  if (!GetFrame())
-    return;
-
-  auto* window = GetFrame()->DomWindow();
-  if (!window || window->closed())
-    return;
-
-  window->close(GetFrame()->GetDocument());
 }
 
 void PresentationReceiver::RegisterConnection(
-    PresentationConnection* connection) {
+    ReceiverPresentationConnection* connection) {
   DCHECK(connection_list_);
   connection_list_->AddConnection(connection);
 }
 
-void PresentationReceiver::RecordOriginTypeAccess(Document* document) const {
-  DCHECK(document);
-  if (document->IsSecureContext()) {
-    UseCounter::Count(document, UseCounter::kPresentationReceiverSecureOrigin);
+// static
+void PresentationReceiver::RecordOriginTypeAccess(
+    ExecutionContext& execution_context) {
+  if (execution_context.IsSecureContext()) {
+    UseCounter::Count(&execution_context,
+                      WebFeature::kPresentationReceiverSecureOrigin);
   } else {
-    UseCounter::Count(document,
-                      UseCounter::kPresentationReceiverInsecureOrigin);
+    Deprecation::CountDeprecation(
+        &execution_context, WebFeature::kPresentationReceiverInsecureOrigin);
   }
 }
 
-DEFINE_TRACE(PresentationReceiver) {
+void PresentationReceiver::ContextDestroyed(ExecutionContext*) {
+  receiver_binding_.Close();
+  if (client_) {
+    client_->SetReceiver(nullptr);
+    client_ = nullptr;
+  }
+}
+
+void PresentationReceiver::Trace(blink::Visitor* visitor) {
   visitor->Trace(connection_list_);
   visitor->Trace(connection_list_property_);
-  ContextClient::Trace(visitor);
+  ScriptWrappable::Trace(visitor);
+  ContextLifecycleObserver::Trace(visitor);
 }
 
 }  // namespace blink

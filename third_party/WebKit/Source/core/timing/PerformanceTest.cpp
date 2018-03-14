@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "bindings/core/v8/ExceptionState.h"
 #include "core/timing/Performance.h"
 
 #include "core/frame/PerformanceMonitor.h"
@@ -9,21 +10,55 @@
 #include "core/loader/DocumentLoader.h"
 #include "core/testing/DummyPageHolder.h"
 #include "core/timing/DOMWindowPerformance.h"
+#include "platform/testing/HistogramTester.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
+
+static const int kTimeOrigin = 500;
+
+namespace {
+
+const char kStartMarkForMeasureHistogram[] =
+    "Performance.PerformanceMeasurePassedInParameter.StartMark";
+const char kEndMarkForMeasureHistogram[] =
+    "Performance.PerformanceMeasurePassedInParameter.EndMark";
+
+class FakeTimer {
+ public:
+  FakeTimer(double init_time) {
+    g_mock_time = init_time;
+    original_time_function_ =
+        WTF::SetTimeFunctionsForTesting(GetMockTimeInSeconds);
+  }
+
+  ~FakeTimer() { WTF::SetTimeFunctionsForTesting(original_time_function_); }
+
+  static double GetMockTimeInSeconds() { return g_mock_time; }
+
+  void AdvanceTimer(double duration) { g_mock_time += duration; }
+
+ private:
+  TimeFunction original_time_function_;
+  static double g_mock_time;
+};
+
+double FakeTimer::g_mock_time = 1000.;
+
+}  // namespace
 
 class PerformanceTest : public ::testing::Test {
  protected:
   void SetUp() override {
     page_holder_ = DummyPageHolder::Create(IntSize(800, 600));
-    page_holder_->GetDocument().SetURL(KURL(KURL(), "https://example.com"));
-    performance_ = Performance::Create(&page_holder_->GetFrame());
+    page_holder_->GetDocument().SetURL(KURL(NullURL(), "https://example.com"));
+    performance_ = Performance::Create(page_holder_->GetDocument().domWindow());
+    performance_->time_origin_ = kTimeOrigin;
 
     // Create another dummy page holder and pretend this is the iframe.
     another_page_holder_ = DummyPageHolder::Create(IntSize(400, 300));
     another_page_holder_->GetDocument().SetURL(
-        KURL(KURL(), "https://iframed.com/bar"));
+        KURL(NullURL(), "https://iframed.com/bar"));
   }
 
   bool ObservingLongTasks() {
@@ -45,7 +80,7 @@ class PerformanceTest : public ::testing::Test {
     auto* monitor = GetFrame()->GetPerformanceMonitor();
     monitor->WillExecuteScript(GetDocument());
     monitor->DidExecuteScript();
-    monitor->DidProcessTask(nullptr, 0, 1);
+    monitor->DidProcessTask(0, 1);
   }
 
   LocalFrame* GetFrame() const { return &page_holder_->GetFrame(); }
@@ -116,10 +151,10 @@ TEST_F(PerformanceTest, NavigateAway) {
   EXPECT_TRUE(ObservingLongTasks());
 
   // Simulate navigation commit.
-  DocumentInit init(KURL(), GetFrame());
+  DocumentInit init = DocumentInit::Create().WithFrame(GetFrame());
   GetDocument()->Shutdown();
   GetFrame()->SetDOMWindow(LocalDOMWindow::Create(*GetFrame()));
-  GetFrame()->DomWindow()->InstallNewDocument(AtomicString(), init);
+  GetFrame()->DomWindow()->InstallNewDocument(AtomicString(), init, false);
 
   // m_performance is still alive, and should not crash when notified.
   SimulateDidProcessLongTask();
@@ -150,7 +185,8 @@ TEST(PerformanceLifetimeTest, SurviveContextSwitch) {
   // Simulate changing the document while keeping the window.
   page_holder->GetDocument().Shutdown();
   page_holder->GetFrame().DomWindow()->InstallNewDocument(
-      AtomicString(), DocumentInit(KURL(), &page_holder->GetFrame()));
+      AtomicString(),
+      DocumentInit::Create().WithFrame(&page_holder->GetFrame()), false);
 
   EXPECT_EQ(perf, DOMWindowPerformance::performance(
                       *page_holder->GetFrame().DomWindow()));
@@ -159,4 +195,69 @@ TEST(PerformanceLifetimeTest, SurviveContextSwitch) {
   EXPECT_EQ(&page_holder->GetFrame(), timing->GetFrame());
   EXPECT_EQ(navigation_start, timing->navigationStart());
 }
+
+// Make sure the output entries with the same timestamps follow the insertion
+// order. (http://crbug.com/767560)
+TEST_F(PerformanceTest, EnsureEntryListOrder) {
+  FakeTimer timer(kTimeOrigin);
+
+  DummyExceptionStateForTesting exception_state;
+  timer.AdvanceTimer(2);
+  for (int i = 0; i < 8; i++) {
+    performance_->mark(String::Number(i), exception_state);
+  }
+  timer.AdvanceTimer(2);
+  for (int i = 8; i < 17; i++) {
+    performance_->mark(String::Number(i), exception_state);
+  }
+  PerformanceEntryVector entries = performance_->getEntries();
+  EXPECT_EQ(17U, entries.size());
+  for (int i = 0; i < 8; i++) {
+    EXPECT_EQ(String::Number(i), entries[i]->name());
+    EXPECT_NEAR(2000, entries[i]->startTime(), 0.005);
+  }
+  for (int i = 8; i < 17; i++) {
+    EXPECT_EQ(String::Number(i), entries[i]->name());
+    EXPECT_NEAR(4000, entries[i]->startTime(), 0.005);
+  }
 }
+
+TEST_F(PerformanceTest, ParameterHistogramForMeasure) {
+  HistogramTester histogram_tester;
+  DummyExceptionStateForTesting exception_state;
+
+  histogram_tester.ExpectTotalCount(kStartMarkForMeasureHistogram, 0);
+  histogram_tester.ExpectTotalCount(kEndMarkForMeasureHistogram, 0);
+
+  performance_->measure("testMark", "unloadEventStart", "unloadEventEnd",
+                        exception_state);
+
+  histogram_tester.ExpectBucketCount(
+      kStartMarkForMeasureHistogram,
+      static_cast<int>(PerformanceBase::kUnloadEventStart), 1);
+  histogram_tester.ExpectBucketCount(
+      kEndMarkForMeasureHistogram,
+      static_cast<int>(PerformanceBase::kUnloadEventEnd), 1);
+
+  performance_->measure("testMark", "domInteractive", "[object Object]",
+                        exception_state);
+
+  histogram_tester.ExpectBucketCount(
+      kStartMarkForMeasureHistogram,
+      static_cast<int>(PerformanceBase::kDomInteractive), 1);
+  histogram_tester.ExpectBucketCount(
+      kEndMarkForMeasureHistogram,
+      static_cast<int>(PerformanceBase::kObjectObject), 1);
+
+  performance_->measure("testMark", "[object Object]", "[object Object]",
+                        exception_state);
+
+  histogram_tester.ExpectBucketCount(
+      kStartMarkForMeasureHistogram,
+      static_cast<int>(PerformanceBase::kObjectObject), 1);
+  histogram_tester.ExpectBucketCount(
+      kEndMarkForMeasureHistogram,
+      static_cast<int>(PerformanceBase::kObjectObject), 2);
+}
+
+}  // namespace blink

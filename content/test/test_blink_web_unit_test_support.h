@@ -10,10 +10,11 @@
 #include "base/compiler_specific.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "cc/blink/web_compositor_support_impl.h"
 #include "content/child/blink_platform_impl.h"
-#include "content/child/webfileutilities_impl.h"
+#include "content/renderer/webfileutilities_impl.h"
 #include "content/test/mock_webblob_registry_impl.h"
 #include "content/test/mock_webclipboard_impl.h"
 #include "third_party/WebKit/public/platform/WebURLLoaderMockFactory.h"
@@ -41,7 +42,8 @@ class TestBlinkWebUnitTestSupport : public BlinkPlatformImpl {
   blink::WebFileUtilities* GetFileUtilities() override;
   blink::WebIDBFactory* IdbFactory() override;
 
-  blink::WebURLLoader* CreateURLLoader() override;
+  std::unique_ptr<blink::WebURLLoaderFactory> CreateDefaultURLLoaderFactory()
+      override;
   blink::WebString UserAgent() override;
   blink::WebString QueryLocalizedString(
       blink::WebLocalizedString::Name name) override;
@@ -55,7 +57,7 @@ class TestBlinkWebUnitTestSupport : public BlinkPlatformImpl {
 
   blink::WebCompositorSupport* CompositorSupport() override;
 
-  blink::WebGestureCurve* CreateFlingAnimationCurve(
+  std::unique_ptr<blink::WebGestureCurve> CreateFlingAnimationCurve(
       blink::WebGestureDevice device_source,
       const blink::WebFloatPoint& velocity,
       const blink::WebSize& cumulative_scroll) override;
@@ -64,14 +66,15 @@ class TestBlinkWebUnitTestSupport : public BlinkPlatformImpl {
 
   blink::WebThread* CurrentThread() override;
 
-  std::unique_ptr<cc::SharedBitmap> AllocateSharedBitmap(
+  std::unique_ptr<viz::SharedBitmap> AllocateSharedBitmap(
       const blink::WebSize& size) override;
 
   void GetPluginList(bool refresh,
                      const blink::WebSecurityOrigin& mainFrameOrigin,
                      blink::WebPluginListBuilder* builder) override;
 
-  blink::WebRTCCertificateGenerator* CreateRTCCertificateGenerator() override;
+  std::unique_ptr<blink::WebRTCCertificateGenerator>
+  CreateRTCCertificateGenerator() override;
 
  private:
   MockWebBlobRegistryImpl blob_registry_;
@@ -83,6 +86,8 @@ class TestBlinkWebUnitTestSupport : public BlinkPlatformImpl {
   std::unique_ptr<blink::scheduler::RendererScheduler> renderer_scheduler_;
   std::unique_ptr<blink::WebThread> web_thread_;
   std::unique_ptr<cc::TestSharedBitmapManager> shared_bitmap_manager_;
+
+  base::WeakPtrFactory<TestBlinkWebUnitTestSupport> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(TestBlinkWebUnitTestSupport);
 };

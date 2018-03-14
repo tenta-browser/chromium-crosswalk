@@ -13,6 +13,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/login/users/wallpaper/wallpaper_manager.h"
 #include "chromeos/chromeos_switches.h"
@@ -39,11 +40,9 @@ class TestWallpaperObserverPendingListEmpty
     wallpaper_manager_->RemoveObserver(this);
   }
 
-  void OnWallpaperAnimationFinished(const AccountId& account_id) override {}
-
   void OnPendingListEmptyForTesting() override {
     empty_ = true;
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   void WaitForPendingListEmpty() {
@@ -85,15 +84,8 @@ bool CreateJPEGImage(int width,
   bitmap.allocN32Pixels(width, height);
   bitmap.eraseColor(color);
 
-  const int kQuality = 80;
-  if (!gfx::JPEGCodec::Encode(
-          static_cast<const unsigned char*>(bitmap.getPixels()),
-          gfx::JPEGCodec::FORMAT_SkBitmap,
-          width,
-          height,
-          bitmap.rowBytes(),
-          kQuality,
-          output)) {
+  constexpr int kQuality = 80;
+  if (!gfx::JPEGCodec::Encode(bitmap, kQuality, output)) {
     LOG(ERROR) << "Unable to encode " << width << "x" << height << " bitmap";
     return false;
   }
@@ -111,6 +103,7 @@ bool WriteJPEGFile(const base::FilePath& path,
                    int width,
                    int height,
                    SkColor color) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   std::vector<unsigned char> output;
   if (!CreateJPEGImage(width, height, color, &output))
     return false;
@@ -137,10 +130,8 @@ bool ImageIsNearColor(gfx::ImageSkia image, SkColor expected_color) {
     return false;
   }
 
-  bitmap->lockPixels();
   gfx::Point center = gfx::Rect(image.size()).CenterPoint();
   SkColor image_color = bitmap->getColor(center.x(), center.y());
-  bitmap->unlockPixels();
 
   const int kDiff = 3;
   if (std::abs(static_cast<int>(SkColorGetA(image_color)) -
@@ -201,27 +192,19 @@ void CreateCmdlineWallpapers(const base::ScopedTempDir& dir,
                     chromeos::switches::kChildWallpaperLarge + "=" +
                     child_large_file.value());
 
-  ASSERT_TRUE(WriteJPEGFile(
-      small_file, kWallpaperSize, kWallpaperSize, kSmallDefaultWallpaperColor));
-  ASSERT_TRUE(WriteJPEGFile(
-      large_file, kWallpaperSize, kWallpaperSize, kLargeDefaultWallpaperColor));
+  ASSERT_TRUE(WriteJPEGFile(small_file, kWallpaperSize, kWallpaperSize,
+                            kSmallDefaultWallpaperColor));
+  ASSERT_TRUE(WriteJPEGFile(large_file, kWallpaperSize, kWallpaperSize,
+                            kLargeDefaultWallpaperColor));
 
-  ASSERT_TRUE(WriteJPEGFile(guest_small_file,
-                            kWallpaperSize,
-                            kWallpaperSize,
+  ASSERT_TRUE(WriteJPEGFile(guest_small_file, kWallpaperSize, kWallpaperSize,
                             kSmallGuestWallpaperColor));
-  ASSERT_TRUE(WriteJPEGFile(guest_large_file,
-                            kWallpaperSize,
-                            kWallpaperSize,
+  ASSERT_TRUE(WriteJPEGFile(guest_large_file, kWallpaperSize, kWallpaperSize,
                             kLargeGuestWallpaperColor));
 
-  ASSERT_TRUE(WriteJPEGFile(child_small_file,
-                            kWallpaperSize,
-                            kWallpaperSize,
+  ASSERT_TRUE(WriteJPEGFile(child_small_file, kWallpaperSize, kWallpaperSize,
                             kSmallChildWallpaperColor));
-  ASSERT_TRUE(WriteJPEGFile(child_large_file,
-                            kWallpaperSize,
-                            kWallpaperSize,
+  ASSERT_TRUE(WriteJPEGFile(child_large_file, kWallpaperSize, kWallpaperSize,
                             kLargeChildWallpaperColor));
 
   command_line->reset(new base::CommandLine(options));

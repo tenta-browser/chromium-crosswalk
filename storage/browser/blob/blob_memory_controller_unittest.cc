@@ -31,6 +31,7 @@ const std::string kBlobStorageDirectory = "blob_storage";
 const size_t kTestBlobStorageIPCThresholdBytes = 20;
 const size_t kTestBlobStorageMaxSharedMemoryBytes = 50;
 const size_t kTestBlobStorageMaxBlobMemorySize = 500;
+const float kTestMaxBlobInMemorySpaceUnderPressureRatio = 0.004f;
 const uint64_t kTestBlobStorageMaxDiskSpace = 1000;
 const uint64_t kTestBlobStorageMinFileSizeBytes = 10;
 const uint64_t kTestBlobStorageMaxFileSizeBytes = 100;
@@ -48,7 +49,7 @@ int64_t FakeDiskSpaceMethod(const base::FilePath& path) {
 
 class BlobMemoryControllerTest : public testing::Test {
  protected:
-  BlobMemoryControllerTest() {}
+  BlobMemoryControllerTest() = default;
 
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
@@ -77,8 +78,8 @@ class BlobMemoryControllerTest : public testing::Test {
       const BlobDataBuilder& builder) {
     std::vector<scoped_refptr<ShareableBlobDataItem>> result;
     for (size_t i = 0; i < builder.items_.size(); ++i) {
-      result.push_back(make_scoped_refptr(new ShareableBlobDataItem(
-          builder.items_[i], ShareableBlobDataItem::QUOTA_NEEDED)));
+      result.push_back(base::MakeRefCounted<ShareableBlobDataItem>(
+          builder.items_[i], ShareableBlobDataItem::QUOTA_NEEDED));
     }
     return result;
   }
@@ -88,6 +89,8 @@ class BlobMemoryControllerTest : public testing::Test {
     limits.max_ipc_memory_size = kTestBlobStorageIPCThresholdBytes;
     limits.max_shared_memory_size = kTestBlobStorageMaxSharedMemoryBytes;
     limits.max_blob_in_memory_space = kTestBlobStorageMaxBlobMemorySize;
+    limits.max_blob_in_memory_space_under_pressure_ratio =
+        kTestMaxBlobInMemorySpaceUnderPressureRatio;
     limits.desired_max_disk_space = kTestBlobStorageMaxDiskSpace;
     limits.effective_max_disk_space = kTestBlobStorageMaxDiskSpace;
     limits.min_page_file_size = kTestBlobStorageMinFileSizeBytes;
@@ -100,6 +103,8 @@ class BlobMemoryControllerTest : public testing::Test {
     limits.max_ipc_memory_size = kTestBlobStorageIPCThresholdBytes;
     limits.max_shared_memory_size = kTestBlobStorageMaxSharedMemoryBytes;
     limits.max_blob_in_memory_space = kTestBlobStorageMaxBlobMemorySize;
+    limits.max_blob_in_memory_space_under_pressure_ratio =
+        kTestMaxBlobInMemorySpaceUnderPressureRatio;
     limits.desired_max_disk_space = kTestSmallBlobStorageMaxDiskSpace;
     limits.effective_max_disk_space = kTestSmallBlobStorageMaxDiskSpace;
     limits.min_page_file_size = kTestBlobStorageMinFileSizeBytes;
@@ -1118,6 +1123,50 @@ TEST_F(BlobMemoryControllerTest, DiskSpaceUnknown) {
 
   // Check the effective limit is constrained.
   EXPECT_FALSE(controller.limits().IsDiskSpaceConstrained());
+}
+
+TEST_F(BlobMemoryControllerTest, OnMemoryPressure) {
+  BlobMemoryController controller(temp_dir_.GetPath(), file_runner_);
+  SetTestMemoryLimits(&controller);
+  AssertEnoughDiskSpace();
+
+  char kData[1];
+  kData[0] = 'e';
+
+  std::vector<scoped_refptr<ShareableBlobDataItem>> small_items;
+  size_t size_to_load = 2 * kTestBlobStorageMaxBlobMemorySize *
+                            kTestMaxBlobInMemorySpaceUnderPressureRatio +
+                        1;
+  for (size_t i = 0; i < size_to_load; i++) {
+    BlobDataBuilder builder("fake");
+    builder.AppendData(kData, 1);
+    std::vector<scoped_refptr<ShareableBlobDataItem>> items =
+        CreateSharedDataItems(builder);
+    base::WeakPtr<QuotaAllocationTask> memory_task =
+        controller.ReserveMemoryQuota(items, GetMemoryRequestCallback());
+    EXPECT_FALSE(memory_task);
+    items[0]->set_state(ItemState::POPULATED_WITH_QUOTA);
+    small_items.insert(small_items.end(), items.begin(), items.end());
+  }
+  controller.NotifyMemoryItemsUsed(small_items);
+  EXPECT_FALSE(file_runner_->HasPendingTask());
+  EXPECT_EQ(size_to_load, controller.memory_usage());
+
+  controller.OnMemoryPressure(
+      base::MemoryPressureListener::MemoryPressureLevel::
+          MEMORY_PRESSURE_LEVEL_CRITICAL);
+
+  EXPECT_TRUE(file_runner_->HasPendingTask());
+  RunFileThreadTasks();
+
+  base::RunLoop().RunUntilIdle();
+
+  // 2 page files of size |kTestBlobStorageMaxBlobMemorySize *
+  // kTestMaxBlobInMemorySpaceUnderPressureRatio| should be evicted with 1 byte
+  // left in-memory.
+  EXPECT_EQ(1u, controller.memory_usage());
+  EXPECT_EQ(size_to_load - 1, controller.disk_usage());
+  return;
 }
 
 }  // namespace storage

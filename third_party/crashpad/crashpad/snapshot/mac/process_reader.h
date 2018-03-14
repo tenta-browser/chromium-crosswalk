@@ -30,7 +30,6 @@
 #include "util/mach/task_memory.h"
 #include "util/misc/initialization_state_dcheck.h"
 #include "util/posix/process_info.h"
-#include "util/stdlib/pointer_container.h"
 
 namespace crashpad {
 
@@ -150,6 +149,21 @@ class ProcessReader {
   //!     corresponds to the dynamic loader, dyld.
   const std::vector<Module>& Modules();
 
+  //! \brief Determines the location of the `dyld_all_image_infos` structure in
+  //!     the process’ address space.
+  //!
+  //! This function is an internal implementation detail of Modules(), and
+  //! should not normally be used directly. It is exposed solely for use by test
+  //! code.
+  //!
+  //! \param[out] all_image_info_size The size of the `dyld_all_image_infos`
+  //!     structure. Optional, may be `nullptr` if not required.
+  //!
+  //! \return The address of the `dyld_all_image_infos` structure in the
+  //!     process’ address space, with \a all_image_info_size set appropriately.
+  //!     On failure, returns `0` with a message logged.
+  mach_vm_address_t DyldAllImageInfo(mach_vm_size_t* all_image_info_size);
+
  private:
   //! Performs lazy initialization of the \a threads_ vector on behalf of
   //! Threads().
@@ -217,7 +231,7 @@ class ProcessReader {
   ProcessInfo process_info_;
   std::vector<Thread> threads_;  // owns send rights
   std::vector<Module> modules_;
-  PointerVector<MachOImageReader> module_readers_;
+  std::vector<std::unique_ptr<MachOImageReader>> module_readers_;
   std::unique_ptr<TaskMemory> task_memory_;
   task_t task_;  // weak
   InitializationStateDcheck initialized_;

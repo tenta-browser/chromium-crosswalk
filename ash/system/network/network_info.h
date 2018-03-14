@@ -18,9 +18,8 @@ namespace ash {
 
 // Includes information necessary about a network for displaying the appropriate
 // UI to the user.
-// TODO(tdanderson): Remove the |highlight| member. See crbug.com/708190.
 struct NetworkInfo {
-  enum class Type { UNKNOWN, WIFI, TETHER, CELLULAR };
+  enum class Type { UNKNOWN, WIFI, MOBILE };
 
   NetworkInfo();
   NetworkInfo(const std::string& guid);
@@ -34,7 +33,6 @@ struct NetworkInfo {
   base::string16 tooltip;
   gfx::ImageSkia image;
   bool disable;
-  bool highlight;
   bool connected;
   bool connecting;
   Type type;

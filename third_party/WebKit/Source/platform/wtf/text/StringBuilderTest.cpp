@@ -53,7 +53,7 @@ void ExpectBuilderContent(const String& expected,
 void ExpectEmpty(const StringBuilder& builder) {
   EXPECT_EQ(0U, builder.length());
   EXPECT_TRUE(builder.IsEmpty());
-  EXPECT_EQ(0, builder.Characters8());
+  EXPECT_EQ(nullptr, builder.Characters8());
 }
 
 }  // namespace
@@ -162,7 +162,7 @@ TEST(StringBuilderTest, ToString) {
   // the StringBuilder.
   String string1 = builder.ToString();
   EXPECT_EQ(String("0123456789abcdefghijklmnopqrstuvwxyzABC"), string1);
-  string1.Append("DEF");
+  string1.append("DEF");
   EXPECT_EQ(String("0123456789abcdefghijklmnopqrstuvwxyzABC"),
             builder.ToString());
   EXPECT_EQ(String("0123456789abcdefghijklmnopqrstuvwxyzABCDEF"), string1);
@@ -210,11 +210,40 @@ TEST(StringBuilderTest, Resize) {
   ExpectEmpty(builder);
 }
 
+TEST(StringBuilderTest, Erase) {
+  StringBuilder builder;
+  builder.Append(String("01234"));
+  // Erase from String.
+  builder.erase(3);
+  ExpectBuilderContent("0124", builder);
+  // Erase from buffer.
+  builder.erase(1);
+  ExpectBuilderContent("024", builder);
+}
+
+TEST(StringBuilderTest, Erase16) {
+  StringBuilder builder;
+  builder.Append(String(u"\uFF10\uFF11\uFF12\uFF13\uFF14"));
+  // Erase from String.
+  builder.erase(3);
+  ExpectBuilderContent(u"\uFF10\uFF11\uFF12\uFF14", builder);
+  // Erase from buffer.
+  builder.erase(1);
+  ExpectBuilderContent(u"\uFF10\uFF12\uFF14", builder);
+}
+
+TEST(StringBuilderTest, EraseLast) {
+  StringBuilder builder;
+  builder.Append("01234");
+  builder.erase(4);
+  ExpectBuilderContent("0123", builder);
+}
+
 TEST(StringBuilderTest, Equal) {
   StringBuilder builder1;
   StringBuilder builder2;
   EXPECT_TRUE(builder1 == builder2);
-  EXPECT_TRUE(Equal(builder1, static_cast<LChar*>(0), 0));
+  EXPECT_TRUE(Equal(builder1, static_cast<LChar*>(nullptr), 0));
   EXPECT_TRUE(builder1 == String());
   EXPECT_TRUE(String() == builder1);
   EXPECT_TRUE(builder1 != String("abc"));

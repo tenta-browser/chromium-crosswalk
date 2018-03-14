@@ -20,7 +20,7 @@ ExtendableMessageEvent* ExtendableMessageEvent::Create(
 }
 
 ExtendableMessageEvent* ExtendableMessageEvent::Create(
-    PassRefPtr<SerializedScriptValue> data,
+    scoped_refptr<SerializedScriptValue> data,
     const String& origin,
     MessagePortArray* ports,
     WaitUntilObserver* observer) {
@@ -28,7 +28,7 @@ ExtendableMessageEvent* ExtendableMessageEvent::Create(
 }
 
 ExtendableMessageEvent* ExtendableMessageEvent::Create(
-    PassRefPtr<SerializedScriptValue> data,
+    scoped_refptr<SerializedScriptValue> data,
     const String& origin,
     MessagePortArray* ports,
     ServiceWorkerClient* source,
@@ -40,7 +40,7 @@ ExtendableMessageEvent* ExtendableMessageEvent::Create(
 }
 
 ExtendableMessageEvent* ExtendableMessageEvent::Create(
-    PassRefPtr<SerializedScriptValue> data,
+    scoped_refptr<SerializedScriptValue> data,
     const String& origin,
     MessagePortArray* ports,
     ServiceWorker* source,
@@ -51,33 +51,26 @@ ExtendableMessageEvent* ExtendableMessageEvent::Create(
   return event;
 }
 
-MessagePortArray ExtendableMessageEvent::ports(bool& is_null) const {
+MessagePortArray ExtendableMessageEvent::ports() const {
   // TODO(bashi): Currently we return a copied array because the binding
   // layer could modify the content of the array while executing JS callbacks.
   // Avoid copying once we can make sure that the binding layer won't
   // modify the content.
   if (ports_) {
-    is_null = false;
     return *ports_;
   }
-  is_null = true;
   return MessagePortArray();
-}
-
-MessagePortArray ExtendableMessageEvent::ports() const {
-  bool unused;
-  return ports(unused);
 }
 
 void ExtendableMessageEvent::source(
     ClientOrServiceWorkerOrMessagePort& result) const {
   if (source_as_client_)
-    result = ClientOrServiceWorkerOrMessagePort::fromClient(source_as_client_);
+    result = ClientOrServiceWorkerOrMessagePort::FromClient(source_as_client_);
   else if (source_as_service_worker_)
-    result = ClientOrServiceWorkerOrMessagePort::fromServiceWorker(
+    result = ClientOrServiceWorkerOrMessagePort::FromServiceWorker(
         source_as_service_worker_);
   else if (source_as_message_port_)
-    result = ClientOrServiceWorkerOrMessagePort::fromMessagePort(
+    result = ClientOrServiceWorkerOrMessagePort::FromMessagePort(
         source_as_message_port_);
   else
     result = ClientOrServiceWorkerOrMessagePort();
@@ -87,7 +80,7 @@ const AtomicString& ExtendableMessageEvent::InterfaceName() const {
   return EventNames::ExtendableMessageEvent;
 }
 
-DEFINE_TRACE(ExtendableMessageEvent) {
+void ExtendableMessageEvent::Trace(blink::Visitor* visitor) {
   visitor->Trace(source_as_client_);
   visitor->Trace(source_as_service_worker_);
   visitor->Trace(source_as_message_port_);
@@ -110,19 +103,19 @@ ExtendableMessageEvent::ExtendableMessageEvent(
   if (initializer.hasLastEventId())
     last_event_id_ = initializer.lastEventId();
   if (initializer.hasSource()) {
-    if (initializer.source().isClient())
-      source_as_client_ = initializer.source().getAsClient();
-    else if (initializer.source().isServiceWorker())
-      source_as_service_worker_ = initializer.source().getAsServiceWorker();
-    else if (initializer.source().isMessagePort())
-      source_as_message_port_ = initializer.source().getAsMessagePort();
+    if (initializer.source().IsClient())
+      source_as_client_ = initializer.source().GetAsClient();
+    else if (initializer.source().IsServiceWorker())
+      source_as_service_worker_ = initializer.source().GetAsServiceWorker();
+    else if (initializer.source().IsMessagePort())
+      source_as_message_port_ = initializer.source().GetAsMessagePort();
   }
   if (initializer.hasPorts())
     ports_ = new MessagePortArray(initializer.ports());
 }
 
 ExtendableMessageEvent::ExtendableMessageEvent(
-    PassRefPtr<SerializedScriptValue> data,
+    scoped_refptr<SerializedScriptValue> data,
     const String& origin,
     MessagePortArray* ports,
     WaitUntilObserver* observer)

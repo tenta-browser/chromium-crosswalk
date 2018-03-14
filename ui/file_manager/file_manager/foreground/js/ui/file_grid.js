@@ -87,10 +87,9 @@ FileGrid.decorate = function(
 
   self.itemConstructor = function(entry) {
     var item = self.ownerDocument.createElement('li');
-    FileGrid.Item.decorate(
-        item,
-        entry,
-        /** @type {FileGrid} */ (self));
+    item.__proto__ = FileGrid.Item.prototype;
+    item = /** @type {!FileGrid.Item} */ (item);
+    self.decorateThumbnail_(item, entry);
     return item;
   };
 
@@ -136,6 +135,25 @@ FileGrid.prototype.setListThumbnailLoader = function(listThumbnailLoader) {
     this.listThumbnailLoader_.setHighPriorityRange(
         this.beginIndex_, this.endIndex_);
   }
+};
+
+/**
+ * Returns the element containing the thumbnail of a certain list item as
+ * background image.
+ * @param {number} index The index of the item containing the desired thumbnail.
+ * @return {?Element} The element containing the thumbnail, or null, if an error
+ *     occurred.
+ */
+FileGrid.prototype.getThumbnail = function(index) {
+  var listItem = this.getListItemByIndex(index);
+  if (!listItem) {
+    return null;
+  }
+  var container = listItem.querySelector('.img-container');
+  if (!container) {
+    return null;
+  }
+  return container.querySelector('.thumbnail');
 };
 
 /**
@@ -789,18 +807,13 @@ Object.defineProperty(FileGrid.Item.prototype, 'label', {
 });
 
 /**
- * @param {Element} li List item element.
- * @param {!Entry} entry File entry.
- * @param {FileGrid} grid Owner.
+ * @override
  */
-FileGrid.Item.decorate = function(li, entry, grid) {
-  li.__proto__ = FileGrid.Item.prototype;
-  li = /** @type {!FileGrid.Item} */ (li);
-  grid.decorateThumbnail_(li, entry);
-
+FileGrid.Item.prototype.decorate = function() {
+  cr.ui.ListItem.prototype.decorate.apply(this);
   // Override the default role 'listitem' to 'option' to match the parent's
   // role (listbox).
-  li.setAttribute('role', 'option');
+  this.setAttribute('role', 'option');
 };
 
 /**
@@ -905,6 +918,21 @@ FileGrid.prototype.getHitElements = function(x, y, opt_width, opt_height) {
  */
 function FileGridSelectionController(selectionModel, grid) {
   cr.ui.GridSelectionController.call(this, selectionModel, grid);
+
+  /**
+   * Whether to allow touch-specific interaction.
+   * @private {boolean}
+   */
+  this.enableTouchMode_ = false;
+  util.isTouchModeEnabled().then(function(enabled) {
+    this.enableTouchMode_ = enabled;
+  }.bind(this));
+
+  /**
+   * @type {!FileTapHandler}
+   * @const
+   */
+  this.tapHandler_ = new FileTapHandler();
 }
 
 FileGridSelectionController.prototype = /** @struct */ {
@@ -914,6 +942,15 @@ FileGridSelectionController.prototype = /** @struct */ {
 /** @override */
 FileGridSelectionController.prototype.handlePointerDownUp = function(e, index) {
   filelist.handlePointerDownUp.call(this, e, index);
+};
+
+/** @override */
+FileGridSelectionController.prototype.handleTouchEvents = function(e, index) {
+  if (!this.enableTouchMode_)
+    return;
+  if (this.tapHandler_.handleTouchEvents(
+          e, index, filelist.handleTap.bind(this)))
+    filelist.focusParentList(e);
 };
 
 /** @override */

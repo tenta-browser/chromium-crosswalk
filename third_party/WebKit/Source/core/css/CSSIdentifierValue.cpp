@@ -12,21 +12,6 @@
 
 namespace blink {
 
-static const AtomicString& ValueName(CSSValueID value_id) {
-  DCHECK_GE(value_id, 0);
-  DCHECK_LT(value_id, numCSSValueKeywords);
-
-  if (value_id < 0)
-    return g_null_atom;
-
-  static AtomicString* keyword_strings =
-      new AtomicString[numCSSValueKeywords];  // Leaked intentionally.
-  AtomicString& keyword_string = keyword_strings[value_id];
-  if (keyword_string.IsNull())
-    keyword_string = getValueName(value_id);
-  return keyword_string;
-}
-
 CSSIdentifierValue* CSSIdentifierValue::Create(CSSValueID value_id) {
   CSSIdentifierValue* css_value = CssValuePool().IdentifierCacheValue(value_id);
   if (!css_value) {
@@ -37,7 +22,7 @@ CSSIdentifierValue* CSSIdentifierValue::Create(CSSValueID value_id) {
 }
 
 String CSSIdentifierValue::CustomCSSText() const {
-  return ValueName(value_id_);
+  return AtomicString(getValueName(value_id_));
 }
 
 CSSIdentifierValue::CSSIdentifierValue(CSSValueID value_id)
@@ -77,7 +62,7 @@ CSSIdentifierValue::CSSIdentifierValue(const Length& length)
   }
 }
 
-DEFINE_TRACE_AFTER_DISPATCH(CSSIdentifierValue) {
+void CSSIdentifierValue::TraceAfterDispatch(blink::Visitor* visitor) {
   CSSValue::TraceAfterDispatch(visitor);
 }
 

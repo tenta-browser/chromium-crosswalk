@@ -5,10 +5,10 @@
 #ifndef ShapeResultBuffer_h
 #define ShapeResultBuffer_h
 
+#include "base/memory/scoped_refptr.h"
 #include "platform/PlatformExport.h"
 #include "platform/fonts/shaping/ShapeResult.h"
 #include "platform/wtf/Allocator.h"
-#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/Vector.h"
 
 namespace blink {
@@ -18,7 +18,6 @@ class FontDescription;
 struct GlyphData;
 class ShapeResultBloberizer;
 class TextRun;
-struct TextRunPaintInfo;
 
 class PLATFORM_EXPORT ShapeResultBuffer {
   WTF_MAKE_NONCOPYABLE(ShapeResultBuffer);
@@ -27,17 +26,13 @@ class PLATFORM_EXPORT ShapeResultBuffer {
  public:
   ShapeResultBuffer() : has_vertical_offsets_(false) {}
 
-  void AppendResult(PassRefPtr<const ShapeResult> result) {
+  void AppendResult(scoped_refptr<const ShapeResult> result) {
     has_vertical_offsets_ |= result->HasVerticalOffsets();
-    results_.push_back(result);
+    results_.push_back(std::move(result));
   }
 
   bool HasVerticalOffsets() const { return has_vertical_offsets_; }
 
-  float FillGlyphs(const TextRunPaintInfo&, ShapeResultBloberizer&) const;
-  void FillTextEmphasisGlyphs(const TextRunPaintInfo&,
-                              const GlyphData& emphasis_data,
-                              ShapeResultBloberizer&) const;
   int OffsetForPosition(const TextRun&,
                         float target_x,
                         bool include_partial_glyphs) const;
@@ -48,7 +43,7 @@ class PLATFORM_EXPORT ShapeResultBuffer {
   Vector<CharacterRange> IndividualCharacterRanges(TextDirection,
                                                    float total_width) const;
 
-  static CharacterRange GetCharacterRange(RefPtr<const ShapeResult>,
+  static CharacterRange GetCharacterRange(scoped_refptr<const ShapeResult>,
                                           TextDirection,
                                           float total_width,
                                           unsigned from,
@@ -64,26 +59,13 @@ class PLATFORM_EXPORT ShapeResultBuffer {
   GlyphData EmphasisMarkGlyphData(const FontDescription&) const;
 
  private:
+  friend class ShapeResultBloberizer;
   static CharacterRange GetCharacterRangeInternal(
-      const Vector<RefPtr<const ShapeResult>, 64>&,
+      const Vector<scoped_refptr<const ShapeResult>, 64>&,
       TextDirection,
       float total_width,
       unsigned from,
       unsigned to);
-
-  float FillFastHorizontalGlyphs(const TextRun&, ShapeResultBloberizer&) const;
-
-  static float FillGlyphsForResult(ShapeResultBloberizer&,
-                                   const ShapeResult&,
-                                   const TextRunPaintInfo&,
-                                   float initial_advance,
-                                   unsigned run_offset);
-  static float FillTextEmphasisGlyphsForRun(ShapeResultBloberizer&,
-                                            const ShapeResult::RunInfo*,
-                                            const TextRunPaintInfo&,
-                                            const GlyphData&,
-                                            float initial_advance,
-                                            unsigned run_offset);
 
   static void AddRunInfoRanges(const ShapeResult::RunInfo&,
                                float offset,
@@ -91,7 +73,7 @@ class PLATFORM_EXPORT ShapeResultBuffer {
 
   // Empirically, cases where we get more than 50 ShapeResults are extremely
   // rare.
-  Vector<RefPtr<const ShapeResult>, 64> results_;
+  Vector<scoped_refptr<const ShapeResult>, 64> results_;
   bool has_vertical_offsets_;
 };
 

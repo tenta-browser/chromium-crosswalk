@@ -16,7 +16,7 @@ import org.chromium.chrome.browser.services.AndroidEduAndChildAccountHelper;
 import org.chromium.chrome.browser.signin.AccountManagementFragment;
 import org.chromium.chrome.browser.signin.SigninManager;
 import org.chromium.chrome.browser.util.FeatureUtilities;
-import org.chromium.components.signin.AccountManagerHelper;
+import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
 
 import javax.annotation.Nullable;
@@ -59,7 +59,7 @@ public final class ForcedSigninProcessor {
                 assert !(isAndroidEduDevice && hasChildAccount);
                 processForcedSignIn(appContext, onComplete);
             }
-        }.start(appContext);
+        }.start();
     }
 
     /**
@@ -75,7 +75,7 @@ public final class ForcedSigninProcessor {
             Log.d(TAG, "Sign in disallowed");
             return;
         }
-        AccountManagerHelper.get().getGoogleAccounts(new Callback<Account[]>() {
+        AccountManagerFacade.get().tryGetGoogleAccounts(new Callback<Account[]>() {
             @Override
             public void onResult(Account[] accounts) {
                 if (accounts.length != 1) {
@@ -86,8 +86,7 @@ public final class ForcedSigninProcessor {
                     @Override
                     public void onSignInComplete() {
                         // Since this is a forced signin, signout is not allowed.
-                        AccountManagementFragment.setSignOutAllowedPreferenceValue(
-                                appContext, false);
+                        AccountManagementFragment.setSignOutAllowedPreferenceValue(false);
                         if (onComplete != null) {
                             onComplete.run();
                         }
@@ -114,7 +113,7 @@ public final class ForcedSigninProcessor {
     public static void checkCanSignIn(final ChromeActivity activity) {
         final Context appContext = activity.getApplicationContext();
         if (SigninManager.get(appContext).isForceSigninEnabled()) {
-            ExternalAuthUtils.getInstance().canUseGooglePlayServices(appContext,
+            ExternalAuthUtils.getInstance().canUseGooglePlayServices(
                     new UserRecoverableErrorHandler.ModalDialog(activity, false));
         }
     }

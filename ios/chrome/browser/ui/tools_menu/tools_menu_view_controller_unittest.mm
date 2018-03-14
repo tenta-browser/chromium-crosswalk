@@ -5,19 +5,25 @@
 #import "ios/chrome/browser/ui/tools_menu/tools_menu_view_controller.h"
 
 #import "base/mac/scoped_nsobject.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
+#include "ios/chrome/browser/experimental_flags.h"
+#import "ios/chrome/browser/ui/tools_menu/public/tools_menu_constants.h"
+#import "ios/chrome/browser/ui/tools_menu/tools_menu_configuration.h"
 #import "ios/chrome/browser/ui/tools_menu/tools_menu_view_item.h"
-#import "ios/shared/chrome/browser/ui/tools_menu/tools_menu_configuration.h"
 #include "ios/web/public/user_agent.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 class ToolsMenuViewControllerTest : public PlatformTest {
  protected:
   void SetUp() override {
     PlatformTest::SetUp();
-    configuration_.reset(
-        [[ToolsMenuConfiguration alloc] initWithDisplayView:nil]);
+    configuration_.reset([[ToolsMenuConfiguration alloc]
+        initWithDisplayView:nil
+         baseViewController:nil]);
     controller_.reset([[ToolsMenuViewController alloc] init]);
   }
 
@@ -43,12 +49,12 @@ TEST_F(ToolsMenuViewControllerTest, TestUserAgentTypeNONE) {
   [controller_ initializeMenuWithConfiguration:configuration_.get()];
 
   ToolsMenuViewItem* desktop_item =
-      GetToolsMenuViewItemWithTag(IDC_REQUEST_DESKTOP_SITE);
+      GetToolsMenuViewItemWithTag(TOOLS_REQUEST_DESKTOP_SITE);
   ASSERT_TRUE(desktop_item);
   EXPECT_FALSE(desktop_item.active);
 
   ToolsMenuViewItem* mobile_item =
-      GetToolsMenuViewItemWithTag(IDC_REQUEST_MOBILE_SITE);
+      GetToolsMenuViewItemWithTag(TOOLS_REQUEST_MOBILE_SITE);
   EXPECT_FALSE(mobile_item);
 }
 
@@ -60,28 +66,30 @@ TEST_F(ToolsMenuViewControllerTest, TestUserAgentTypeMOBILE) {
   [controller_ initializeMenuWithConfiguration:configuration_.get()];
 
   ToolsMenuViewItem* desktop_item =
-      GetToolsMenuViewItemWithTag(IDC_REQUEST_DESKTOP_SITE);
+      GetToolsMenuViewItemWithTag(TOOLS_REQUEST_DESKTOP_SITE);
   ASSERT_TRUE(desktop_item);
   EXPECT_TRUE(desktop_item.active);
 
   ToolsMenuViewItem* mobile_item =
-      GetToolsMenuViewItemWithTag(IDC_REQUEST_MOBILE_SITE);
+      GetToolsMenuViewItemWithTag(TOOLS_REQUEST_MOBILE_SITE);
   EXPECT_FALSE(mobile_item);
 }
 
-// Tests that "Request Desktop Site" is visible and not enabled, and
-// "Request Mobile Site" is invisible when the current page is a web page and
-// uses DESKTOP user agent.
+// Tests that when the current page is a web page and uses DESKTOP user
+// agent, if request mobile site experiment is turned on, "Request Desktop Site"
+// is invisible, and "Request Mobile Site" is visible and enabled; otherwise,
+// "Request Desktop Site" is visible and not enabled, and "Request Mobile Site"
+// is invisible.
 TEST_F(ToolsMenuViewControllerTest, TestUserAgentTypeDESKTOP) {
   [configuration_ setUserAgentType:web::UserAgentType::DESKTOP];
   [controller_ initializeMenuWithConfiguration:configuration_.get()];
 
   ToolsMenuViewItem* desktop_item =
-      GetToolsMenuViewItemWithTag(IDC_REQUEST_DESKTOP_SITE);
-  ASSERT_TRUE(desktop_item);
-  EXPECT_FALSE(desktop_item.active);
-
+      GetToolsMenuViewItemWithTag(TOOLS_REQUEST_DESKTOP_SITE);
   ToolsMenuViewItem* mobile_item =
-      GetToolsMenuViewItemWithTag(IDC_REQUEST_MOBILE_SITE);
-  EXPECT_FALSE(mobile_item);
+      GetToolsMenuViewItemWithTag(TOOLS_REQUEST_MOBILE_SITE);
+
+  EXPECT_FALSE(desktop_item);
+  ASSERT_TRUE(mobile_item);
+  EXPECT_TRUE(mobile_item.active);
 }

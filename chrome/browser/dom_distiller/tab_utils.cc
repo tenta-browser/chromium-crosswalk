@@ -153,7 +153,7 @@ void DistillCurrentPageAndView(content::WebContents* old_web_contents) {
 
   // Copy all navigation state from the old WebContents to the new one.
   new_web_contents->GetController().CopyStateFrom(
-      old_web_contents->GetController());
+      old_web_contents->GetController(), /* needs_reload */ true);
 
   // StartNavigationToDistillerViewer must come before swapping the tab contents
   // to avoid triggering a reload of the page.  This reloadmakes it very
@@ -171,15 +171,21 @@ void DistillCurrentPageAndView(content::WebContents* old_web_contents) {
   MaybeStartDistillation(std::move(source_page_handle));
 }
 
-void DistillAndView(content::WebContents* source_web_contents,
-                    content::WebContents* destination_web_contents) {
+void DistillCurrentPage(content::WebContents* source_web_contents) {
   DCHECK(source_web_contents);
-  DCHECK(destination_web_contents);
 
   std::unique_ptr<SourcePageHandleWebContents> source_page_handle(
       new SourcePageHandleWebContents(source_web_contents, false));
 
   MaybeStartDistillation(std::move(source_page_handle));
+}
+
+void DistillAndView(content::WebContents* source_web_contents,
+                    content::WebContents* destination_web_contents) {
+  DCHECK(destination_web_contents);
+
+  DistillCurrentPage(source_web_contents);
+
   StartNavigationToDistillerViewer(destination_web_contents,
                                    source_web_contents->GetLastCommittedURL());
 }

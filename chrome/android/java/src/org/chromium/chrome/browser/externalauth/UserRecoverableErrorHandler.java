@@ -7,10 +7,12 @@ package org.chromium.chrome.browser.externalauth;
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
+import android.content.DialogInterface;
 
 import com.google.android.gms.common.GoogleApiAvailability;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.metrics.CachedMetrics.ActionEvent;
 import org.chromium.base.metrics.CachedMetrics.EnumeratedHistogramSample;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -51,6 +53,12 @@ public abstract class UserRecoverableErrorHandler {
     private static final EnumeratedHistogramSample sErrorHandlerActionHistogramSample =
             new EnumeratedHistogramSample(ERROR_HANDLER_ACTION_HISTOGRAM_NAME,
                     ERROR_HANDLER_ACTION_HISTOGRAM_BOUNDARY);
+
+    private static final ActionEvent sModalDialogShownActionEvent =
+            new ActionEvent("Signin_Android_GmsUserRecoverableDialogShown");
+
+    private static final ActionEvent sModalDialogAcceptedActionEvent =
+            new ActionEvent("Signin_Android_GmsUserRecoverableDialogAccepted");
 
     /**
      * Handles the specified error code from Google Play Services.
@@ -121,6 +129,35 @@ public abstract class UserRecoverableErrorHandler {
         private static final int NO_RESPONSE_REQUIRED = -1;
 
         /**
+         * This class receives cancel and dismiss events from error dialog and records UMA action
+         * when user accepts the option presented in the dialog (usually it means pressing "Update"
+         * button). It's not possible to use less obscure ways (like setOnClickListener) here,
+         * because the error dialog is created by Google Play Services.
+         */
+        private static class DialogUserActionRecorder
+                implements DialogInterface.OnCancelListener, DialogInterface.OnDismissListener {
+            private boolean mCancelled;
+
+            @Override
+            public void onCancel(DialogInterface dialogInterface) {
+                mCancelled = true;
+            }
+
+            @Override
+            public void onDismiss(DialogInterface dialogInterface) {
+                if (mCancelled) return;
+                // Dialog is being dismissed without being cancelled - user accepted dialog action.
+                sModalDialogAcceptedActionEvent.record();
+            }
+
+            public static void createAndAttachToDialog(Dialog dialog) {
+                DialogUserActionRecorder actionRecorder = new DialogUserActionRecorder();
+                dialog.setOnDismissListener(actionRecorder);
+                dialog.setOnCancelListener(actionRecorder);
+            }
+        }
+
+        /**
          * The activity from which to start the dialog and any subsequent
          * actions, and the activity which will receive the response from those
          * actions.
@@ -173,11 +210,14 @@ public abstract class UserRecoverableErrorHandler {
                 mDialog = GoogleApiAvailability.getInstance().getErrorDialog(
                         mActivity, errorCode, NO_RESPONSE_REQUIRED);
                 mErrorCode = errorCode;
+
+                DialogUserActionRecorder.createAndAttachToDialog(mDialog);
             }
             // This can happen if |errorCode| is ConnectionResult.SERVICE_INVALID.
-            if (mDialog != null) {
+            if (mDialog != null && !mDialog.isShowing()) {
                 mDialog.setCancelable(mCancelable);
                 mDialog.show();
+                sModalDialogShownActionEvent.record();
             }
             sErrorHandlerActionHistogramSample.record(ERROR_HANDLER_ACTION_MODAL_DIALOG);
         }
@@ -190,6 +230,13 @@ public abstract class UserRecoverableErrorHandler {
                 mDialog.cancel();
                 mDialog = null;
             }
+        }
+
+        /**
+         * Checks whether dialog is being shown.
+         */
+        public boolean isShowing() {
+            return mDialog != null && mDialog.isShowing();
         }
     }
 }

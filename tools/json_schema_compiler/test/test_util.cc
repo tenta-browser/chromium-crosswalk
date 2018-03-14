@@ -5,10 +5,10 @@
 #include "tools/json_schema_compiler/test/test_util.h"
 
 #include <string>
+#include <utility>
 
 #include "base/json/json_reader.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 
 namespace json_schema_compiler {
 namespace test_util {
@@ -23,46 +23,56 @@ std::unique_ptr<base::Value> ReadJson(const base::StringPiece& json) {
   return result;
 }
 
-std::unique_ptr<base::ListValue> List(base::Value* a) {
-  std::unique_ptr<base::ListValue> list(new base::ListValue());
-  list->Append(base::WrapUnique(a));
+std::unique_ptr<base::ListValue> List(std::unique_ptr<base::Value> a) {
+  auto list = std::make_unique<base::ListValue>();
+  list->Append(std::move(a));
   return list;
 }
-std::unique_ptr<base::ListValue> List(base::Value* a, base::Value* b) {
-  std::unique_ptr<base::ListValue> list = List(a);
-  list->Append(base::WrapUnique(b));
+std::unique_ptr<base::ListValue> List(std::unique_ptr<base::Value> a,
+                                      std::unique_ptr<base::Value> b) {
+  auto list = std::make_unique<base::ListValue>();
+  list->Append(std::move(a));
+  list->Append(std::move(b));
   return list;
 }
-std::unique_ptr<base::ListValue> List(base::Value* a,
-                                      base::Value* b,
-                                      base::Value* c) {
-  std::unique_ptr<base::ListValue> list = List(a, b);
-  list->Append(base::WrapUnique(c));
+std::unique_ptr<base::ListValue> List(std::unique_ptr<base::Value> a,
+                                      std::unique_ptr<base::Value> b,
+                                      std::unique_ptr<base::Value> c) {
+  auto list = std::make_unique<base::ListValue>();
+  list->Append(std::move(a));
+  list->Append(std::move(b));
+  list->Append(std::move(c));
   return list;
 }
 
-std::unique_ptr<base::DictionaryValue> Dictionary(const std::string& ak,
-                                                  base::Value* av) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetWithoutPathExpansion(ak, av);
+std::unique_ptr<base::DictionaryValue> Dictionary(
+    const std::string& ak,
+    std::unique_ptr<base::Value> av) {
+  auto dict = std::make_unique<base::DictionaryValue>();
+  dict->SetWithoutPathExpansion(ak, std::move(av));
   return dict;
 }
-std::unique_ptr<base::DictionaryValue> Dictionary(const std::string& ak,
-                                                  base::Value* av,
-                                                  const std::string& bk,
-                                                  base::Value* bv) {
-  std::unique_ptr<base::DictionaryValue> dict = Dictionary(ak, av);
-  dict->SetWithoutPathExpansion(bk, bv);
+std::unique_ptr<base::DictionaryValue> Dictionary(
+    const std::string& ak,
+    std::unique_ptr<base::Value> av,
+    const std::string& bk,
+    std::unique_ptr<base::Value> bv) {
+  auto dict = std::make_unique<base::DictionaryValue>();
+  dict->SetWithoutPathExpansion(ak, std::move(av));
+  dict->SetWithoutPathExpansion(bk, std::move(bv));
   return dict;
 }
-std::unique_ptr<base::DictionaryValue> Dictionary(const std::string& ak,
-                                                  base::Value* av,
-                                                  const std::string& bk,
-                                                  base::Value* bv,
-                                                  const std::string& ck,
-                                                  base::Value* cv) {
-  std::unique_ptr<base::DictionaryValue> dict = Dictionary(ak, av, bk, bv);
-  dict->SetWithoutPathExpansion(ck, cv);
+std::unique_ptr<base::DictionaryValue> Dictionary(
+    const std::string& ak,
+    std::unique_ptr<base::Value> av,
+    const std::string& bk,
+    std::unique_ptr<base::Value> bv,
+    const std::string& ck,
+    std::unique_ptr<base::Value> cv) {
+  auto dict = std::make_unique<base::DictionaryValue>();
+  dict->SetWithoutPathExpansion(ak, std::move(av));
+  dict->SetWithoutPathExpansion(bk, std::move(bv));
+  dict->SetWithoutPathExpansion(ck, std::move(cv));
   return dict;
 }
 

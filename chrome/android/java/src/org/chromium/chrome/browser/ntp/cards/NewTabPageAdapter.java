@@ -14,15 +14,25 @@ import org.chromium.base.Callback;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ntp.ContextMenuManager;
+import org.chromium.chrome.browser.ntp.LogoView;
 import org.chromium.chrome.browser.ntp.cards.NewTabPageViewHolder.PartialBindCallback;
+import org.chromium.chrome.browser.ntp.snippets.CategoryInt;
+import org.chromium.chrome.browser.ntp.snippets.CategoryStatus;
+import org.chromium.chrome.browser.ntp.snippets.KnownCategories;
 import org.chromium.chrome.browser.ntp.snippets.SectionHeaderViewHolder;
-import org.chromium.chrome.browser.ntp.snippets.SnippetArticle;
 import org.chromium.chrome.browser.ntp.snippets.SnippetArticleViewHolder;
+import org.chromium.chrome.browser.ntp.snippets.SnippetsBridge;
+import org.chromium.chrome.browser.ntp.snippets.SuggestionsSource;
 import org.chromium.chrome.browser.offlinepages.OfflinePageBridge;
+import org.chromium.chrome.browser.suggestions.DestructionObserver;
+import org.chromium.chrome.browser.suggestions.LogoItem;
+import org.chromium.chrome.browser.suggestions.SiteSection;
+import org.chromium.chrome.browser.suggestions.SuggestionsCarousel;
+import org.chromium.chrome.browser.suggestions.SuggestionsConfig;
 import org.chromium.chrome.browser.suggestions.SuggestionsRecyclerView;
 import org.chromium.chrome.browser.suggestions.SuggestionsUiDelegate;
-import org.chromium.chrome.browser.suggestions.TileGrid;
 import org.chromium.chrome.browser.suggestions.TileGroup;
+import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.widget.displaystyle.UiConfig;
 
 import java.util.List;
@@ -37,18 +47,19 @@ import java.util.Set;
 public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements NodeParent {
     private final SuggestionsUiDelegate mUiDelegate;
     private final ContextMenuManager mContextMenuManager;
+    private final OfflinePageBridge mOfflinePageBridge;
 
-    @Nullable
-    private final View mAboveTheFoldView;
+    private final @Nullable View mAboveTheFoldView;
+    private final @Nullable LogoView mLogoView;
     private final UiConfig mUiConfig;
     private SuggestionsRecyclerView mRecyclerView;
 
     private final InnerNode mRoot;
 
-    @Nullable
-    private final AboveTheFoldItem mAboveTheFold;
-    @Nullable
-    private final TileGrid mTileGrid;
+    private final @Nullable AboveTheFoldItem mAboveTheFold;
+    private final @Nullable LogoItem mLogo;
+    private final @Nullable SiteSection mSiteSection;
+    private final SuggestionsCarousel mSuggestionsCarousel;
     private final SectionList mSections;
     private final SignInPromo mSigninPromo;
     private final AllDismissedItem mAllDismissed;
@@ -61,25 +72,32 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements 
      * @param aboveTheFoldView the layout encapsulating all the above-the-fold elements
      *         (logo, search box, most visited tiles), or null if only suggestions should
      *         be displayed.
+     * @param logoView the view for the logo, which may be provided when {@code aboveTheFoldView} is
+     *         null. They are not expected to be both non-null as that would lead to showing the
+     *         logo twice.
      * @param uiConfig the NTP UI configuration, to be passed to created views.
      * @param offlinePageBridge used to determine if articles are available.
      * @param contextMenuManager used to build context menus.
-     * @param tileGroupDelegate if not null this is used to build a {@link TileGrid}.
+     * @param tileGroupDelegate if not null this is used to build a {@link SiteSection}.
+     * @param suggestionsCarousel if not null this is used to build a carousel showing contextual
+     *         suggestions.
      */
     public NewTabPageAdapter(SuggestionsUiDelegate uiDelegate, @Nullable View aboveTheFoldView,
-            UiConfig uiConfig, OfflinePageBridge offlinePageBridge,
-            ContextMenuManager contextMenuManager, @Nullable TileGroup.Delegate tileGroupDelegate) {
+            @Nullable LogoView logoView, UiConfig uiConfig, OfflinePageBridge offlinePageBridge,
+            ContextMenuManager contextMenuManager, @Nullable TileGroup.Delegate tileGroupDelegate,
+            @Nullable SuggestionsCarousel suggestionsCarousel) {
+        assert !(aboveTheFoldView != null && logoView != null);
+
         mUiDelegate = uiDelegate;
         mContextMenuManager = contextMenuManager;
 
         mAboveTheFoldView = aboveTheFoldView;
+        mLogoView = logoView;
         mUiConfig = uiConfig;
         mRoot = new InnerNode();
-
         mSections = new SectionList(mUiDelegate, offlinePageBridge);
         mSigninPromo = new SignInPromo(mUiDelegate);
         mAllDismissed = new AllDismissedItem();
-        mFooter = new Footer();
 
         if (mAboveTheFoldView == null) {
             mAboveTheFold = null;
@@ -87,14 +105,37 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements 
             mAboveTheFold = new AboveTheFoldItem();
             mRoot.addChild(mAboveTheFold);
         }
-        if (tileGroupDelegate == null) {
-            mTileGrid = null;
+
+        if (mLogoView == null) {
+            mLogo = null;
         } else {
-            mTileGrid = new TileGrid(
-                    uiDelegate, mContextMenuManager, tileGroupDelegate, offlinePageBridge);
-            mRoot.addChild(mTileGrid);
+            mLogo = new LogoItem();
+            mRoot.addChild(mLogo);
         }
-        mRoot.addChildren(mSections, mSigninPromo, mAllDismissed, mFooter);
+
+        mSuggestionsCarousel = suggestionsCarousel;
+        if (suggestionsCarousel != null) {
+            assert ChromeFeatureList.isEnabled(ChromeFeatureList.CONTEXTUAL_SUGGESTIONS_CAROUSEL);
+            mRoot.addChild(mSuggestionsCarousel);
+        }
+
+        if (tileGroupDelegate == null) {
+            mSiteSection = null;
+        } else {
+            mSiteSection = new SiteSection(uiDelegate, mContextMenuManager, tileGroupDelegate,
+                    offlinePageBridge, uiConfig);
+            mRoot.addChild(mSiteSection);
+        }
+
+        if (FeatureUtilities.isChromeHomeEnabled()) {
+            mRoot.addChildren(mSigninPromo, mAllDismissed, mSections);
+        } else {
+            mRoot.addChildren(mSections, mSigninPromo, mAllDismissed);
+        }
+
+        mFooter = new Footer();
+        mRoot.addChild(mFooter);
+
         if (mAboveTheFoldView == null
                 || ChromeFeatureList.isEnabled(ChromeFeatureList.NTP_CONDENSED_LAYOUT)) {
             mBottomSpacer = null;
@@ -102,6 +143,11 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements 
             mBottomSpacer = new SpacingItem();
             mRoot.addChild(mBottomSpacer);
         }
+
+        mOfflinePageBridge = offlinePageBridge;
+
+        RemoteSuggestionsStatusObserver suggestionsObserver = new RemoteSuggestionsStatusObserver();
+        mUiDelegate.addDestructionObserver(suggestionsObserver);
 
         updateAllDismissedVisibility();
         mRoot.setParent(this);
@@ -121,15 +167,19 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements 
             case ItemViewType.ABOVE_THE_FOLD:
                 return new NewTabPageViewHolder(mAboveTheFoldView);
 
-            case ItemViewType.TILE_GRID:
-                return new TileGrid.ViewHolder(mRecyclerView);
+            case ItemViewType.LOGO:
+                return new LogoItem.ViewHolder(mLogoView);
+
+            case ItemViewType.SITE_SECTION:
+                return SiteSection.createViewHolder(
+                        SiteSection.inflateSiteSection(parent), mUiConfig);
 
             case ItemViewType.HEADER:
                 return new SectionHeaderViewHolder(mRecyclerView, mUiConfig);
 
             case ItemViewType.SNIPPET:
-                return new SnippetArticleViewHolder(
-                        mRecyclerView, mContextMenuManager, mUiDelegate, mUiConfig);
+                return new SnippetArticleViewHolder(mRecyclerView, mContextMenuManager, mUiDelegate,
+                        mUiConfig, mOfflinePageBridge);
 
             case ItemViewType.SPACING:
                 return new NewTabPageViewHolder(SpacingItem.createView(parent));
@@ -145,13 +195,16 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements 
                         mRecyclerView, mContextMenuManager, mUiDelegate, mUiConfig);
 
             case ItemViewType.PROMO:
-                return new SignInPromo.ViewHolder(mRecyclerView, mContextMenuManager, mUiConfig);
+                return mSigninPromo.createViewHolder(mRecyclerView, mContextMenuManager, mUiConfig);
 
             case ItemViewType.FOOTER:
                 return new Footer.ViewHolder(mRecyclerView, mUiDelegate.getNavigationDelegate());
 
             case ItemViewType.ALL_DISMISSED:
                 return new AllDismissedItem.ViewHolder(mRecyclerView, mSections);
+
+            case ItemViewType.CAROUSEL:
+                return new SuggestionsCarousel.ViewHolder(mRecyclerView);
         }
 
         assert false : viewType;
@@ -166,7 +219,6 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements 
         }
 
         for (Object payload : payloads) {
-            assert payload instanceof PartialBindCallback;
             ((PartialBindCallback) payload).onResult(holder);
         }
     }
@@ -183,10 +235,15 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements 
 
     /** Resets suggestions, pulling the current state as known by the backend. */
     public void refreshSuggestions() {
-        // The NTP Tiles already update when changes occurs, they don't need to be explicitly reset,
-        // unlike the cards.
-        mSections.refreshSuggestions();
-        if (mTileGrid != null) mTileGrid.getTileGroup().onSwitchToForeground();
+        if (FeatureUtilities.isChromeHomeEnabled()) {
+            mSections.synchroniseWithSource();
+        } else {
+            mSections.refreshSuggestions();
+        }
+
+        if (mSiteSection != null) {
+            mSiteSection.getTileGroup().onSwitchToForeground(/* trackLoadTask = */ true);
+        }
     }
 
     public int getAboveTheFoldPosition() {
@@ -207,7 +264,9 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements 
     }
 
     int getLastContentItemPosition() {
-        return getChildPositionOffset(hasAllBeenDismissed() ? mAllDismissed : mFooter);
+        int bottomSpacerPosition = getChildPositionOffset(mBottomSpacer);
+        assert bottomSpacerPosition > 0;
+        return bottomSpacerPosition - 1;
     }
 
     int getBottomSpacerPosition() {
@@ -217,9 +276,27 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements 
     }
 
     private void updateAllDismissedVisibility() {
-        boolean showAllDismissed = hasAllBeenDismissed();
-        mAllDismissed.setVisible(showAllDismissed);
-        mFooter.setVisible(!showAllDismissed);
+        boolean areRemoteSuggestionsEnabled =
+                mUiDelegate.getSuggestionsSource().areRemoteSuggestionsEnabled();
+        boolean allDismissed = hasAllBeenDismissed() && !areArticlesLoading();
+
+        mAllDismissed.setVisible(areRemoteSuggestionsEnabled && allDismissed);
+        mFooter.setVisible(!SuggestionsConfig.scrollToLoad() && areRemoteSuggestionsEnabled
+                && !allDismissed);
+
+        if (mBottomSpacer != null) {
+            mBottomSpacer.setVisible(areRemoteSuggestionsEnabled || !allDismissed);
+        }
+    }
+
+    private boolean areArticlesLoading() {
+        for (int category : mUiDelegate.getSuggestionsSource().getCategories()) {
+            if (category != KnownCategories.ARTICLES) continue;
+
+            return mUiDelegate.getSuggestionsSource().getCategoryStatus(KnownCategories.ARTICLES)
+                    == CategoryStatus.AVAILABLE_LOADING;
+        }
+        return false;
     }
 
     @Override
@@ -234,6 +311,10 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements 
         assert child == mRoot;
         notifyItemRangeInserted(itemPosition, itemCount);
         if (mBottomSpacer != null) mBottomSpacer.refresh();
+        if (mRecyclerView != null && FeatureUtilities.isChromeHomeEnabled()
+                && mSections.hasRecentlyInsertedContent()) {
+            mRecyclerView.highlightContentLength();
+        }
 
         updateAllDismissedVisibility();
     }
@@ -251,14 +332,32 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements 
     public void onAttachedToRecyclerView(RecyclerView recyclerView) {
         super.onAttachedToRecyclerView(recyclerView);
 
+        if (mRecyclerView == recyclerView) return;
+
         // We are assuming for now that the adapter is used with a single RecyclerView.
         // Getting the reference as we are doing here is going to be broken if that changes.
         assert mRecyclerView == null;
 
-        // FindBugs chokes on the cast below when not checked, raising BC_UNCONFIRMED_CAST
-        assert recyclerView instanceof SuggestionsRecyclerView;
-
         mRecyclerView = (SuggestionsRecyclerView) recyclerView;
+
+        if (SuggestionsConfig.scrollToLoad()) {
+            mRecyclerView.setScrollToLoadListener(new ScrollToLoadListener(
+                    this, mRecyclerView.getLinearLayoutManager(), mSections));
+        }
+    }
+
+    @Override
+    public void onDetachedFromRecyclerView(RecyclerView recyclerView) {
+        super.onDetachedFromRecyclerView(recyclerView);
+
+        if (SuggestionsConfig.scrollToLoad()) mRecyclerView.clearScrollToLoadListener();
+
+        mRecyclerView = null;
+    }
+
+    @Override
+    public void onViewRecycled(NewTabPageViewHolder holder) {
+        holder.recycle();
     }
 
     /**
@@ -280,8 +379,31 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements 
         mRoot.dismissItem(position, itemRemovedCallback);
     }
 
+    /**
+     * Sets the visibility of the logo.
+     * @param visible Whether the logo should be visible.
+     */
+    public void setLogoVisibility(boolean visible) {
+        assert mLogo != null;
+        mLogo.setVisible(visible);
+    }
+
+    /**
+     * Drops all but the first {@code n} thumbnails on articles.
+     * @param n The number of article thumbnails to keep.
+     */
+    public void dropAllButFirstNArticleThumbnails(int n) {
+        mSections.dropAllButFirstNArticleThumbnails(n);
+    }
+
     private boolean hasAllBeenDismissed() {
-        return mSections.isEmpty() && !mSigninPromo.isVisible();
+        if (mSigninPromo.isVisible()) return false;
+
+        if (!FeatureUtilities.isChromeHomeEnabled()) return mSections.isEmpty();
+
+        // In Chrome Home we only consider articles.
+        SuggestionsSection suggestions = mSections.getSection(KnownCategories.ARTICLES);
+        return suggestions == null || !suggestions.hasCards();
     }
 
     private int getChildPositionOffset(TreeNode child) {
@@ -289,12 +411,7 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements 
     }
 
     @VisibleForTesting
-    SnippetArticle getSuggestionAt(int position) {
-        return mRoot.getSuggestionAt(position);
-    }
-
-    @VisibleForTesting
-    int getFirstPositionForType(@ItemViewType int viewType) {
+    public int getFirstPositionForType(@ItemViewType int viewType) {
         int count = getItemCount();
         for (int i = 0; i < count; i++) {
             if (getItemViewType(i) == viewType) return i;
@@ -306,7 +423,27 @@ public class NewTabPageAdapter extends Adapter<NewTabPageViewHolder> implements 
         return mSections;
     }
 
-    InnerNode getRootForTesting() {
+    public InnerNode getRootForTesting() {
         return mRoot;
+    }
+
+    private class RemoteSuggestionsStatusObserver
+            extends SuggestionsSource.EmptyObserver implements DestructionObserver {
+        public RemoteSuggestionsStatusObserver() {
+            mUiDelegate.getSuggestionsSource().addObserver(this);
+        }
+
+        @Override
+        public void onCategoryStatusChanged(
+                @CategoryInt int category, @CategoryStatus int newStatus) {
+            if (!SnippetsBridge.isCategoryRemote(category)) return;
+
+            updateAllDismissedVisibility();
+        }
+
+        @Override
+        public void onDestroy() {
+            mUiDelegate.getSuggestionsSource().removeObserver(this);
+        }
     }
 }

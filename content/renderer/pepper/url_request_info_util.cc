@@ -9,8 +9,8 @@
 
 #include "base/logging.h"
 #include "base/strings/string_util.h"
-#include "content/child/request_extra_data.h"
 #include "content/common/fileapi/file_system_messages.h"
+#include "content/renderer/loader/request_extra_data.h"
 #include "content/renderer/pepper/host_globals.h"
 #include "content/renderer/pepper/pepper_file_ref_renderer_host.h"
 #include "content/renderer/pepper/pepper_plugin_instance_impl.h"
@@ -30,7 +30,7 @@
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
+#include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "url/gurl.h"
 #include "url/url_util.h"
 
@@ -40,7 +40,7 @@ using ppapi::thunk::EnterResourceNoLock;
 using blink::WebData;
 using blink::WebHTTPBody;
 using blink::WebString;
-using blink::WebFrame;
+using blink::WebLocalFrame;
 using blink::WebURL;
 using blink::WebURLRequest;
 
@@ -146,7 +146,7 @@ std::string MakeXRequestedWithValue(const std::string& name,
 
 bool CreateWebURLRequest(PP_Instance instance,
                          URLRequestInfoData* data,
-                         WebFrame* frame,
+                         WebLocalFrame* frame,
                          WebURLRequest* dest) {
   // In the out-of-process case, we've received the URLRequestInfoData
   // from the untrusted plugin and done no validation on it. We need to be
@@ -154,38 +154,37 @@ bool CreateWebURLRequest(PP_Instance instance,
   if (!ValidateURLRequestData(*data))
     return false;
 
-   std::string name_version;
+  std::string name_version;
 
-   // Allow instance to be 0 or -1 for testing purposes.
-   if (instance && instance != -1) {
-     PepperPluginInstanceImpl* instance_impl =
-         HostGlobals::Get()->GetInstance(instance);
-     if (instance_impl) {
-       name_version = MakeXRequestedWithValue(
-           instance_impl->module()->name(),
-           instance_impl->module()->version());
-     }
-   } else {
-     name_version = "internal_testing_only";
-   }
+  // Allow instance to be 0 or -1 for testing purposes.
+  if (instance && instance != -1) {
+    PepperPluginInstanceImpl* instance_impl =
+        HostGlobals::Get()->GetInstance(instance);
+    if (instance_impl) {
+      name_version = MakeXRequestedWithValue(
+          instance_impl->module()->name(), instance_impl->module()->version());
+    }
+  } else {
+    name_version = "internal_testing_only";
+  }
 
-   dest->SetURL(
-       frame->GetDocument().CompleteURL(WebString::FromUTF8(data->url)));
-   dest->SetDownloadToFile(data->stream_to_file);
-   dest->SetReportUploadProgress(data->record_upload_progress);
+  dest->SetURL(
+      frame->GetDocument().CompleteURL(WebString::FromUTF8(data->url)));
+  dest->SetDownloadToFile(data->stream_to_file);
+  dest->SetReportUploadProgress(data->record_upload_progress);
 
-   if (!data->method.empty())
-     dest->SetHTTPMethod(WebString::FromUTF8(data->method));
+  if (!data->method.empty())
+    dest->SetHTTPMethod(WebString::FromUTF8(data->method));
 
-   dest->SetFirstPartyForCookies(frame->GetDocument().FirstPartyForCookies());
+  dest->SetSiteForCookies(frame->GetDocument().SiteForCookies());
 
-   const std::string& headers = data->headers;
-   if (!headers.empty()) {
-     net::HttpUtil::HeadersIterator it(headers.begin(), headers.end(), "\n\r");
-     while (it.GetNext()) {
-       dest->AddHTTPHeaderField(WebString::FromUTF8(it.name()),
-                                WebString::FromUTF8(it.values()));
-     }
+  const std::string& headers = data->headers;
+  if (!headers.empty()) {
+    net::HttpUtil::HeadersIterator it(headers.begin(), headers.end(), "\n\r");
+    while (it.GetNext()) {
+      dest->AddHTTPHeaderField(WebString::FromUTF8(it.name()),
+                               WebString::FromUTF8(it.values()));
+    }
   }
 
   // Append the upload data.
@@ -244,7 +243,7 @@ bool URLRequestRequiresUniversalAccess(const URLRequestInfoData& data) {
   return data.has_custom_referrer_url ||
          data.has_custom_content_transfer_encoding ||
          data.has_custom_user_agent ||
-         url::FindAndCompareScheme(data.url, url::kJavaScriptScheme, NULL);
+         url::FindAndCompareScheme(data.url, url::kJavaScriptScheme, nullptr);
 }
 
 }  // namespace content

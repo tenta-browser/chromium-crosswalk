@@ -5,16 +5,15 @@
 #ifndef TrackDefaultList_h
 #define TrackDefaultList_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/mediasource/TrackDefault.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
 class ExceptionState;
 
-class TrackDefaultList final : public GarbageCollected<TrackDefaultList>,
-                               public ScriptWrappable {
+class TrackDefaultList final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -27,7 +26,7 @@ class TrackDefaultList final : public GarbageCollected<TrackDefaultList>,
   unsigned length() const { return track_defaults_.size(); }
   TrackDefault* item(unsigned) const;
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   TrackDefaultList();

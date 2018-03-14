@@ -4,8 +4,7 @@
 
 // <include src="../../../../ui/webui/resources/js/cr/ui/focus_row.js">
 // <include src="../../../../ui/webui/resources/js/cr/ui/focus_grid.js">
-// <include src="../uber/uber_utils.js">
-// <include src="drag_and_drop_handler.js">
+// <include src="../md_extensions/drag_and_drop_handler.js">
 // <include src="extension_code.js">
 // <include src="extension_commands_overlay.js">
 // <include src="extension_error_overlay.js">
@@ -65,12 +64,8 @@ cr.define('extensions', function() {
      */
     initialize: function() {
       this.setLoading_(true);
-      uber.onContentFrameLoaded();
       cr.ui.FocusOutlineManager.forDocument(document);
       measureCheckboxStrings();
-
-      // Set the title.
-      uber.setTitle(loadTimeData.getString('extensionSettings'));
 
       var extensionList = new ExtensionList(this);
       extensionList.id = 'extension-settings-list';
@@ -113,7 +108,7 @@ cr.define('extensions', function() {
       var dragTarget = document.documentElement;
       /** @private {extensions.DragAndDropHandler} */
       this.dragWrapperHandler_ =
-          new extensions.DragAndDropHandler(true, dragTarget);
+          new extensions.DragAndDropHandler(true, false, dragTarget);
       dragTarget.addEventListener('extension-drag-started', function() {
         ExtensionSettings.showOverlay($('drop-target-overlay'));
       });
@@ -385,7 +380,7 @@ cr.define('extensions', function() {
           lastFocused.focus();
 
         $('overlay').removeEventListener('cancelOverlay', f);
-        uber.replaceState({}, '');
+        window.history.replaceState({}, '', '/');
       });
       node.classList.add('showing');
     }
@@ -409,9 +404,6 @@ cr.define('extensions', function() {
       assert(settings.dragWrapperHandler_).dragEnabled =
           !node || node == $('drop-target-overlay');
     }
-
-    uber.invokeMethodOnParent(node ? 'beginInterceptingEvents' :
-                                     'stopInterceptingEvents');
   };
 
   ExtensionSettings.focusOverlay = function() {
@@ -458,7 +450,7 @@ cr.define('extensions', function() {
         '  min-width: ' + pxWidth + 'px;' +
         '}';
     document.querySelector('head').appendChild(style);
-  };
+  }
 
   // Export
   return {

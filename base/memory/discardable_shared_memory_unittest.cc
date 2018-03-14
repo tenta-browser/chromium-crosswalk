@@ -2,10 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <fcntl.h>
 #include <stdint.h>
 
+#include "base/files/scoped_file.h"
 #include "base/memory/discardable_shared_memory.h"
+#include "base/memory/shared_memory_tracker.h"
 #include "base/process/process_metrics.h"
+#include "base/trace_event/memory_allocator_dump.h"
+#include "base/trace_event/process_memory_dump.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -13,7 +19,7 @@ namespace {
 
 class TestDiscardableSharedMemory : public DiscardableSharedMemory {
  public:
-  TestDiscardableSharedMemory() {}
+  TestDiscardableSharedMemory() = default;
 
   explicit TestDiscardableSharedMemory(SharedMemoryHandle handle)
       : DiscardableSharedMemory(handle) {}
@@ -44,10 +50,8 @@ TEST(DiscardableSharedMemoryTest, CreateFromHandle) {
   bool rv = memory1.CreateAndMap(kDataSize);
   ASSERT_TRUE(rv);
 
-  SharedMemoryHandle shared_handle;
-  ASSERT_TRUE(
-      memory1.ShareToProcess(GetCurrentProcessHandle(), &shared_handle));
-  ASSERT_TRUE(SharedMemory::IsHandleValid(shared_handle));
+  SharedMemoryHandle shared_handle = memory1.handle().Duplicate();
+  ASSERT_TRUE(shared_handle.IsValid());
 
   TestDiscardableSharedMemory memory2(shared_handle);
   rv = memory2.Map(kDataSize);
@@ -78,10 +82,8 @@ TEST(DiscardableSharedMemoryTest, LockAndUnlock) {
   EXPECT_EQ(DiscardableSharedMemory::SUCCESS, lock_rv);
   EXPECT_TRUE(memory1.IsMemoryLocked());
 
-  SharedMemoryHandle shared_handle;
-  ASSERT_TRUE(
-      memory1.ShareToProcess(GetCurrentProcessHandle(), &shared_handle));
-  ASSERT_TRUE(SharedMemory::IsHandleValid(shared_handle));
+  SharedMemoryHandle shared_handle = memory1.handle().Duplicate();
+  ASSERT_TRUE(shared_handle.IsValid());
 
   TestDiscardableSharedMemory memory2(shared_handle);
   rv = memory2.Map(kDataSize);
@@ -116,10 +118,8 @@ TEST(DiscardableSharedMemoryTest, Purge) {
   bool rv = memory1.CreateAndMap(kDataSize);
   ASSERT_TRUE(rv);
 
-  SharedMemoryHandle shared_handle;
-  ASSERT_TRUE(
-      memory1.ShareToProcess(GetCurrentProcessHandle(), &shared_handle));
-  ASSERT_TRUE(SharedMemory::IsHandleValid(shared_handle));
+  SharedMemoryHandle shared_handle = memory1.handle().Duplicate();
+  ASSERT_TRUE(shared_handle.IsValid());
 
   TestDiscardableSharedMemory memory2(shared_handle);
   rv = memory2.Map(kDataSize);
@@ -158,10 +158,8 @@ TEST(DiscardableSharedMemoryTest, LastUsed) {
   bool rv = memory1.CreateAndMap(kDataSize);
   ASSERT_TRUE(rv);
 
-  SharedMemoryHandle shared_handle;
-  ASSERT_TRUE(
-      memory1.ShareToProcess(GetCurrentProcessHandle(), &shared_handle));
-  ASSERT_TRUE(SharedMemory::IsHandleValid(shared_handle));
+  SharedMemoryHandle shared_handle = memory1.handle().Duplicate();
+  ASSERT_TRUE(shared_handle.IsValid());
 
   TestDiscardableSharedMemory memory2(shared_handle);
   rv = memory2.Map(kDataSize);
@@ -226,10 +224,8 @@ TEST(DiscardableSharedMemoryTest, LockShouldAlwaysFailAfterSuccessfulPurge) {
   bool rv = memory1.CreateAndMap(kDataSize);
   ASSERT_TRUE(rv);
 
-  SharedMemoryHandle shared_handle;
-  ASSERT_TRUE(
-      memory1.ShareToProcess(GetCurrentProcessHandle(), &shared_handle));
-  ASSERT_TRUE(SharedMemory::IsHandleValid(shared_handle));
+  SharedMemoryHandle shared_handle = memory1.handle().Duplicate();
+  ASSERT_TRUE(shared_handle.IsValid());
 
   TestDiscardableSharedMemory memory2(shared_handle);
   rv = memory2.Map(kDataSize);
@@ -246,6 +242,34 @@ TEST(DiscardableSharedMemoryTest, LockShouldAlwaysFailAfterSuccessfulPurge) {
   EXPECT_EQ(DiscardableSharedMemory::FAILED, lock_rv);
 }
 
+TEST(DiscardableSharedMemoryTest, LockShouldFailIfPlatformLockPagesFails) {
+  const uint32_t kDataSize = 1024;
+
+  DiscardableSharedMemory memory;
+  bool rv = memory.CreateAndMap(kDataSize);
+  ASSERT_TRUE(rv);
+
+  // Unlock() the first page of memory, so we can test Lock()ing it.
+  memory.Unlock(0, base::GetPageSize());
+#if defined(OS_ANDROID)
+  // To cause ashmem_pin_region() to fail, we arrange for it to be called with
+  // an invalid file-descriptor, which requires a valid-looking fd (i.e. we
+  // can't just Close() |memory|), but one on which the operation is invalid.
+  // We can overwrite the |memory| fd with a handle to a different file using
+  // dup2(), which has the nice properties that |memory| still has a valid fd
+  // that it can close, etc without errors, but on which ashmem_pin_region()
+  // will fail.
+  base::ScopedFD null(open("/dev/null", O_RDONLY));
+  ASSERT_EQ(memory.handle().GetHandle(),
+            dup2(null.get(), memory.handle().GetHandle()));
+
+  // Now re-Lock()ing the first page should fail.
+  DiscardableSharedMemory::LockResult lock_rv =
+      memory.Lock(0, base::GetPageSize());
+  EXPECT_EQ(DiscardableSharedMemory::FAILED, lock_rv);
+#endif  // defined(OS_ANDROID)
+}
+
 TEST(DiscardableSharedMemoryTest, LockAndUnlockRange) {
   const uint32_t kDataSize = 32;
 
@@ -255,10 +279,8 @@ TEST(DiscardableSharedMemoryTest, LockAndUnlockRange) {
   bool rv = memory1.CreateAndMap(data_size_in_bytes);
   ASSERT_TRUE(rv);
 
-  SharedMemoryHandle shared_handle;
-  ASSERT_TRUE(
-      memory1.ShareToProcess(GetCurrentProcessHandle(), &shared_handle));
-  ASSERT_TRUE(SharedMemory::IsHandleValid(shared_handle));
+  SharedMemoryHandle shared_handle = memory1.handle().Duplicate();
+  ASSERT_TRUE(shared_handle.IsValid());
 
   TestDiscardableSharedMemory memory2(shared_handle);
   rv = memory2.Map(data_size_in_bytes);
@@ -374,10 +396,8 @@ TEST(DiscardableSharedMemoryTest, ZeroFilledPagesAfterPurge) {
   bool rv = memory1.CreateAndMap(kDataSize);
   ASSERT_TRUE(rv);
 
-  SharedMemoryHandle shared_handle;
-  ASSERT_TRUE(
-      memory1.ShareToProcess(GetCurrentProcessHandle(), &shared_handle));
-  ASSERT_TRUE(SharedMemory::IsHandleValid(shared_handle));
+  SharedMemoryHandle shared_handle = memory1.handle().Duplicate();
+  ASSERT_TRUE(shared_handle.IsValid());
 
   TestDiscardableSharedMemory memory2(shared_handle);
   rv = memory2.Map(kDataSize);
@@ -403,6 +423,31 @@ TEST(DiscardableSharedMemoryTest, ZeroFilledPagesAfterPurge) {
   EXPECT_EQ(memcmp(memory2.memory(), expected_data, kDataSize), 0);
 }
 #endif
+
+TEST(DiscardableSharedMemoryTest, TracingOwnershipEdges) {
+  const uint32_t kDataSize = 1024;
+  TestDiscardableSharedMemory memory1;
+  bool rv = memory1.CreateAndMap(kDataSize);
+  ASSERT_TRUE(rv);
+
+  base::trace_event::MemoryDumpArgs args = {
+      base::trace_event::MemoryDumpLevelOfDetail::DETAILED};
+  trace_event::ProcessMemoryDump pmd(nullptr, args);
+  trace_event::MemoryAllocatorDump* client_dump =
+      pmd.CreateAllocatorDump("discardable_manager/map1");
+  const bool is_owned = false;
+  memory1.CreateSharedMemoryOwnershipEdge(client_dump, &pmd, is_owned);
+  const auto* shm_dump = pmd.GetAllocatorDump(
+      SharedMemoryTracker::GetDumpNameForTracing(memory1.mapped_id()));
+  EXPECT_TRUE(shm_dump);
+  EXPECT_EQ(shm_dump->GetSizeInternal(), client_dump->GetSizeInternal());
+  const auto edges = pmd.allocator_dumps_edges();
+  EXPECT_EQ(2u, edges.size());
+  EXPECT_NE(edges.end(), edges.find(shm_dump->guid()));
+  EXPECT_NE(edges.end(), edges.find(client_dump->guid()));
+  // TODO(ssid): test for weak global dump once the
+  // CreateWeakSharedMemoryOwnershipEdge() is fixed, crbug.com/661257.
+}
 
 }  // namespace
 }  // namespace base

@@ -7,7 +7,7 @@
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
 #include "core/dom/DOMException.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "modules/bluetooth/Bluetooth.h"
 #include "modules/bluetooth/BluetoothCharacteristicProperties.h"
@@ -94,7 +94,7 @@ void BluetoothRemoteGATTCharacteristic::ReadValueCallback(
   // If the device is disconnected, reject.
   if (!GetGatt()->RemoveFromActiveAlgorithms(resolver)) {
     resolver->Reject(
-        BluetoothError::CreateNotConnectedException(BluetoothOperation::GATT));
+        BluetoothError::CreateNotConnectedException(BluetoothOperation::kGATT));
     return;
   }
 
@@ -115,7 +115,7 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::readValue(
   if (!GetGatt()->connected()) {
     return ScriptPromise::RejectWithDOMException(
         script_state,
-        BluetoothError::CreateNotConnectedException(BluetoothOperation::GATT));
+        BluetoothError::CreateNotConnectedException(BluetoothOperation::kGATT));
   }
 
   if (!GetGatt()->device()->IsValidCharacteristic(
@@ -150,7 +150,7 @@ void BluetoothRemoteGATTCharacteristic::WriteValueCallback(
   // If the device is disconnected, reject.
   if (!GetGatt()->RemoveFromActiveAlgorithms(resolver)) {
     resolver->Reject(
-        BluetoothError::CreateNotConnectedException(BluetoothOperation::GATT));
+        BluetoothError::CreateNotConnectedException(BluetoothOperation::kGATT));
     return;
   }
 
@@ -168,7 +168,7 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::writeValue(
   if (!GetGatt()->connected()) {
     return ScriptPromise::RejectWithDOMException(
         script_state,
-        BluetoothError::CreateNotConnectedException(BluetoothOperation::GATT));
+        BluetoothError::CreateNotConnectedException(BluetoothOperation::kGATT));
   }
 
   if (!GetGatt()->device()->IsValidCharacteristic(
@@ -217,7 +217,7 @@ void BluetoothRemoteGATTCharacteristic::NotificationsCallback(
   // If the device is disconnected, reject.
   if (!GetGatt()->RemoveFromActiveAlgorithms(resolver)) {
     resolver->Reject(
-        BluetoothError::CreateNotConnectedException(BluetoothOperation::GATT));
+        BluetoothError::CreateNotConnectedException(BluetoothOperation::kGATT));
     return;
   }
 
@@ -233,7 +233,7 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::startNotifications(
   if (!GetGatt()->connected()) {
     return ScriptPromise::RejectWithDOMException(
         script_state,
-        BluetoothError::CreateNotConnectedException(BluetoothOperation::GATT));
+        BluetoothError::CreateNotConnectedException(BluetoothOperation::kGATT));
   }
 
   if (!GetGatt()->device()->IsValidCharacteristic(
@@ -266,7 +266,7 @@ ScriptPromise BluetoothRemoteGATTCharacteristic::stopNotifications(
   if (!GetGatt()->connected()) {
     return ScriptPromise::RejectWithDOMException(
         script_state,
-        BluetoothError::CreateNotConnectedException(BluetoothOperation::GATT));
+        BluetoothError::CreateNotConnectedException(BluetoothOperation::kGATT));
   }
 
   if (!GetGatt()->device()->IsValidCharacteristic(
@@ -418,7 +418,7 @@ BluetoothRemoteGATTCharacteristic::CreateInvalidCharacteristicError() {
           "after reconnecting.");
 }
 
-DEFINE_TRACE(BluetoothRemoteGATTCharacteristic) {
+void BluetoothRemoteGATTCharacteristic::Trace(blink::Visitor* visitor) {
   visitor->Trace(service_);
   visitor->Trace(properties_);
   visitor->Trace(value_);

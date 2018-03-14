@@ -9,10 +9,14 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "base/version.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
+#include "components/data_reduction_proxy/core/common/lofi_decider.h"
 #include "components/data_reduction_proxy/core/common/version.h"
 #include "net/base/net_errors.h"
 #include "net/base/url_util.h"
 #include "net/http/http_response_headers.h"
+#include "net/http/http_status_code.h"
+#include "net/http/http_util.h"
 #include "net/proxy/proxy_config.h"
 #include "net/proxy/proxy_info.h"
 #include "net/url_request/url_request.h"
@@ -55,6 +59,22 @@ int64_t ScaleByteCountByRatio(int64_t byte_count,
     return byte_count;
   }
   return static_cast<int64_t>(scaled_byte_count);
+}
+
+// Estimate the size of the original headers of |request|. If |used_drp| is
+// true, then it's assumed that the original request would have used HTTP/1.1,
+// otherwise it assumes that the original request would have used the same
+// protocol as |request| did. This is to account for stuff like HTTP/2 header
+// compression.
+int64_t EstimateOriginalHeaderBytes(const net::URLRequest& request,
+                                    bool used_drp) {
+  if (used_drp) {
+    // TODO(sclittle): Remove headers added by Data Reduction Proxy when
+    // computing original size. https://crbug.com/535701.
+    return request.response_headers()->raw_headers().size();
+  }
+  return std::max<int64_t>(0, request.GetTotalReceivedBytes() -
+                                  request.received_response_content_length());
 }
 
 }  // namespace
@@ -131,11 +151,6 @@ const char* GetStringForClient(Client client) {
   }
 }
 
-bool IsMethodIdempotent(const std::string& method) {
-  return method == "GET" || method == "OPTIONS" || method == "HEAD" ||
-         method == "PUT" || method == "DELETE" || method == "TRACE";
-}
-
 GURL AddApiKeyToUrl(const GURL& url) {
   GURL new_url = url;
 #if defined(USE_GOOGLE_API_KEYS)
@@ -151,7 +166,7 @@ bool EligibleForDataReductionProxy(const net::ProxyInfo& proxy_info,
                                    const GURL& url,
                                    const std::string& method) {
   return proxy_info.is_direct() && proxy_info.proxy_list().size() == 1 &&
-         !url.SchemeIsWSOrWSS() && IsMethodIdempotent(method);
+         !url.SchemeIsWSOrWSS() && net::HttpUtil::IsMethodIdempotent(method);
 }
 
 bool ApplyProxyConfigToProxyInfo(const net::ProxyConfig& proxy_config,
@@ -166,12 +181,40 @@ bool ApplyProxyConfigToProxyInfo(const net::ProxyConfig& proxy_config,
   return !data_reduction_proxy_info->proxy_server().is_direct();
 }
 
+int64_t CalculateOCLFromOFCL(const net::URLRequest& request) {
+  const net::HttpResponseHeaders* response_headers = request.response_headers();
+  if (!response_headers)
+    return request.received_response_content_length();
+
+  int64_t original_content_length = GetDataReductionProxyOFCL(response_headers);
+
+  if (response_headers->response_code() == net::HTTP_PARTIAL_CONTENT) {
+    int64_t first, last, range_content_length;
+    if (response_headers->GetContentRangeFor206(&first, &last,
+                                                &range_content_length) &&
+        range_content_length > 0 && original_content_length > 0) {
+      // For a range request, OFCL indicates the original content length of the
+      // entire resource. The received response content length should be scaled
+      // by the compression ratio given by OFCL / range_content_length.
+      original_content_length =
+          ScaleByteCountByRatio(request.received_response_content_length(),
+                                original_content_length, range_content_length);
+    }
+  }
+  if (original_content_length < 0) {
+    // Fallback to using XOCL if getting from OFCL header fails.
+    // TODO(rajendrant): Remove the usage of OFCL, after integration tests are
+    // changed.
+    original_content_length =
+        response_headers->GetInt64HeaderValue("x-original-content-length");
+  }
+  return original_content_length;
+}
+
 int64_t CalculateEffectiveOCL(const net::URLRequest& request) {
   if (request.was_cached() || !request.response_headers())
     return request.received_response_content_length();
-  int64_t original_content_length_from_header =
-      request.response_headers()->GetInt64HeaderValue(
-          "x-original-content-length");
+  int64_t original_content_length_from_header = CalculateOCLFromOFCL(request);
 
   if (original_content_length_from_header < 0)
     return request.received_response_content_length();
@@ -189,6 +232,47 @@ int64_t CalculateEffectiveOCL(const net::URLRequest& request) {
   return ScaleByteCountByRatio(request.received_response_content_length(),
                                original_content_length_from_header,
                                content_length_from_header);
+}
+
+int64_t EstimateOriginalReceivedBytes(const net::URLRequest& request,
+                                      bool used_drp,
+                                      const LoFiDecider* lofi_decider) {
+  if (request.was_cached() || !request.response_headers())
+    return request.GetTotalReceivedBytes();
+
+  if (lofi_decider) {
+    if (lofi_decider->IsClientLoFiAutoReloadRequest(request))
+      return 0;
+
+    int64_t first, last, length;
+    if (lofi_decider->IsClientLoFiImageRequest(request) &&
+        request.response_headers()->GetContentRangeFor206(&first, &last,
+                                                          &length) &&
+        length > request.received_response_content_length()) {
+      return EstimateOriginalHeaderBytes(request, used_drp) + length;
+    }
+  }
+
+  return used_drp ? EstimateOriginalHeaderBytes(request, used_drp) +
+                        util::CalculateEffectiveOCL(request)
+                  : request.GetTotalReceivedBytes();
+}
+
+ProxyScheme ConvertNetProxySchemeToProxyScheme(
+    net::ProxyServer::Scheme scheme) {
+  switch (scheme) {
+    case net::ProxyServer::SCHEME_HTTP:
+      return PROXY_SCHEME_HTTP;
+    case net::ProxyServer::SCHEME_HTTPS:
+      return PROXY_SCHEME_HTTPS;
+    case net::ProxyServer::SCHEME_QUIC:
+      return PROXY_SCHEME_QUIC;
+    case net::ProxyServer::SCHEME_DIRECT:
+      return PROXY_SCHEME_DIRECT;
+    default:
+      NOTREACHED() << scheme;
+      return PROXY_SCHEME_UNKNOWN;
+  }
 }
 
 }  // namespace util

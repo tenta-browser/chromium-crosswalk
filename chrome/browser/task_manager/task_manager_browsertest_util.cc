@@ -106,6 +106,12 @@ class ResourceChangeObserver {
     switch (column_specifier_) {
       case ColumnSpecifier::COLUMN_NONE:
         return "N/A";
+      case ColumnSpecifier::PROCESS_ID:
+        return "Process ID";
+      case ColumnSpecifier::MEMORY_FOOTPRINT:
+        return "Memory Footprint";
+      case ColumnSpecifier::PHYSICAL_MEMORY:
+        return "Physical Memory";
       case ColumnSpecifier::V8_MEMORY:
         return "V8 Memory";
       case ColumnSpecifier::V8_MEMORY_USED:
@@ -116,6 +122,10 @@ class ResourceChangeObserver {
         return "Idle wake ups";
       case ColumnSpecifier::MEMORY_STATE:
         return "Memory State";
+      case ColumnSpecifier::NETWORK_USE:
+        return "Network";
+      case ColumnSpecifier::TOTAL_NETWORK_USE:
+        return "Total Network";
     }
     return "N/A";
   }

@@ -9,6 +9,8 @@
 
 #include "ash/ash_export.h"
 #include "base/strings/string16.h"
+#include "ui/gfx/canvas.h"
+#include "ui/gfx/image/canvas_image_source.h"
 #include "ui/gfx/image/image_skia.h"
 
 namespace chromeos {
@@ -26,6 +28,49 @@ enum IconType {
   ICON_TYPE_MENU_LIST,     // dark icons without VPN badges; separate status
 };
 
+// 'NONE' will default to ARCS behavior where appropriate (e.g. no network or
+// if a new type gets added).
+enum ImageType { ARCS, BARS, NONE };
+
+// Strength of a wireless signal.
+enum class SignalStrength { WEAK, MEDIUM, STRONG, NOT_WIRELESS };
+
+// Depicts a given signal strength using arcs (e.g. for WiFi connections) or
+// bars (e.g. for cell connections).
+class SignalStrengthImageSource : public gfx::CanvasImageSource {
+ public:
+  ASH_EXPORT SignalStrengthImageSource(ImageType image_type,
+                                       SkColor color,
+                                       const gfx::Size& size,
+                                       int signal_strength);
+
+  // This version intuits color and size from icon_type.
+  ASH_EXPORT SignalStrengthImageSource(ImageType image_type,
+                                       IconType icon_type,
+                                       int signal_strength);
+
+  ~SignalStrengthImageSource() override;
+
+  void set_color(SkColor color);
+
+  // gfx::CanvasImageSource:
+  void Draw(gfx::Canvas* canvas) override;
+  bool HasRepresentationAtAllScales() const override;
+
+ private:
+  static gfx::Size GetSizeForIconType(IconType icon_type);
+  void DrawArcs(gfx::Canvas* canvas);
+  void DrawBars(gfx::Canvas* canvas);
+
+  ImageType image_type_;
+  SkColor color_;
+
+  // On a scale of 0 to kNumNetworkImages - 1, how connected we are.
+  int signal_strength_;
+
+  DISALLOW_COPY_AND_ASSIGN(SignalStrengthImageSource);
+};
+
 // Gets the image for provided |network|. |network| must not be NULL.
 // |icon_type| determines the color theme and whether or not to show the VPN
 // badge. This caches badged icons per network per |icon_type|.
@@ -35,13 +80,13 @@ ASH_EXPORT gfx::ImageSkia GetImageForNetwork(
 
 // Gets an image for a Wi-Fi network, either full strength or strike-through
 // based on |enabled|.
-// TODO(estade): Expose SignalStrengthImageSource and use that instead.
 ASH_EXPORT gfx::ImageSkia GetImageForWiFiEnabledState(
     bool enabled,
     IconType = ICON_TYPE_DEFAULT_VIEW);
 
 // Gets the disconnected image for a cell network.
-// TODO(estade): Expose SignalStrengthImageSource and use that instead.
+// TODO(estade): this is only used by the pre-MD OOBE, which should be removed:
+// crbug.com/728805.
 ASH_EXPORT gfx::ImageSkia GetImageForDisconnectedCellNetwork();
 
 // Gets the full strength image for a Wi-Fi network using |icon_color| for the
@@ -70,6 +115,12 @@ ASH_EXPORT void GetDefaultNetworkImageAndLabel(IconType icon_type,
 // from the global NetworkStateHandler instance and removes cached entries
 // that are no longer in the list.
 ASH_EXPORT void PurgeNetworkIconCache();
+
+// Called by ChromeVox to give a verbal indication of the network icon. Returns
+// the signal strength of |network|, if it is a network type with a signal
+// strength.
+ASH_EXPORT SignalStrength
+GetSignalStrengthForNetwork(const chromeos::NetworkState* network);
 
 }  // namespace network_icon
 }  // namespace ash

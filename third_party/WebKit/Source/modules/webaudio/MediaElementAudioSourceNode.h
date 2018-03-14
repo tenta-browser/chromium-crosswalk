@@ -27,10 +27,10 @@
 #define MediaElementAudioSourceNode_h
 
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "modules/webaudio/AudioNode.h"
 #include "platform/audio/AudioSourceProviderClient.h"
 #include "platform/audio/MultiChannelResampler.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/ThreadingPrimitives.h"
 
 namespace blink {
@@ -41,8 +41,9 @@ class MediaElementAudioSourceOptions;
 
 class MediaElementAudioSourceHandler final : public AudioHandler {
  public:
-  static PassRefPtr<MediaElementAudioSourceHandler> Create(AudioNode&,
-                                                           HTMLMediaElement&);
+  static scoped_refptr<MediaElementAudioSourceHandler> Create(
+      AudioNode&,
+      HTMLMediaElement&);
   ~MediaElementAudioSourceHandler() override;
 
   HTMLMediaElement* MediaElement() const;
@@ -50,6 +51,10 @@ class MediaElementAudioSourceHandler final : public AudioHandler {
   // AudioHandler
   void Dispose() override;
   void Process(size_t frames_to_process) override;
+
+  // AudioNode
+  double TailTime() const override { return 0; }
+  double LatencyTime() const override { return 0; }
 
   // Helpers for AudioSourceProviderClient implementation of
   // MediaElementAudioSourceNode.
@@ -102,6 +107,8 @@ class MediaElementAudioSourceHandler final : public AudioHandler {
   // The value of mediaElement()->currentSrc().string() in the ctor and
   // onCurrentSrcChanged().  Protected by |m_processLock|.
   String current_src_string_;
+
+  scoped_refptr<WebTaskRunner> task_runner_;
 };
 
 class MediaElementAudioSourceNode final : public AudioNode,
@@ -118,7 +125,7 @@ class MediaElementAudioSourceNode final : public AudioNode,
       const MediaElementAudioSourceOptions&,
       ExceptionState&);
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
   MediaElementAudioSourceHandler& GetMediaElementAudioSourceHandler() const;
 
   HTMLMediaElement* mediaElement() const;

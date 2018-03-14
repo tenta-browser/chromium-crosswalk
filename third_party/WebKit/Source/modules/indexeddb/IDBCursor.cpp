@@ -28,18 +28,18 @@
 #include <limits>
 #include <memory>
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8PrivateProperty.h"
 #include "bindings/modules/v8/ToV8ForModules.h"
 #include "bindings/modules/v8/V8BindingForModules.h"
 #include "bindings/modules/v8/V8IDBRequest.h"
 #include "core/dom/ExceptionCode.h"
-#include "modules/IndexedDBNames.h"
+#include "modules/indexed_db_names.h"
 #include "modules/indexeddb/IDBAny.h"
 #include "modules/indexeddb/IDBDatabase.h"
 #include "modules/indexeddb/IDBObjectStore.h"
 #include "modules/indexeddb/IDBTracing.h"
 #include "modules/indexeddb/IDBTransaction.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8PrivateProperty.h"
 #include "public/platform/modules/indexeddb/WebIDBDatabase.h"
 #include "public/platform/modules/indexeddb/WebIDBKeyRange.h"
 
@@ -76,12 +76,13 @@ IDBCursor::IDBCursor(std::unique_ptr<WebIDBCursor> backend,
 
 IDBCursor::~IDBCursor() {}
 
-DEFINE_TRACE(IDBCursor) {
+void IDBCursor::Trace(blink::Visitor* visitor) {
   visitor->Trace(request_);
   visitor->Trace(source_);
   visitor->Trace(transaction_);
   visitor->Trace(key_);
   visitor->Trace(primary_key_);
+  ScriptWrappable::Trace(visitor);
 }
 
 // Keep the request's wrapper alive as long as the cursor's wrapper is alive,
@@ -102,8 +103,7 @@ v8::Local<v8::Object> IDBCursor::AssociateWithWrapper(
 IDBRequest* IDBCursor::update(ScriptState* script_state,
                               const ScriptValue& value,
                               ExceptionState& exception_state) {
-  IDB_TRACE("IDBCursor::update");
-
+  IDB_TRACE("IDBCursor::updateRequestSetup");
   if (!transaction_->IsActive()) {
     exception_state.ThrowDOMException(kTransactionInactiveError,
                                       transaction_->InactiveErrorMessage());
@@ -138,7 +138,8 @@ IDBRequest* IDBCursor::update(ScriptState* script_state,
 }
 
 void IDBCursor::advance(unsigned count, ExceptionState& exception_state) {
-  IDB_TRACE("IDBCursor::advance");
+  IDB_TRACE("IDBCursor::advanceRequestSetup");
+  IDBRequest::AsyncTraceState metrics("IDBCursor::advance");
   if (!count) {
     exception_state.ThrowTypeError(
         "A count argument with value 0 (zero) was supplied, must be greater "
@@ -162,14 +163,16 @@ void IDBCursor::advance(unsigned count, ExceptionState& exception_state) {
   }
 
   request_->SetPendingCursor(this);
+  request_->AssignNewMetrics(std::move(metrics));
   got_value_ = false;
   backend_->Advance(count, request_->CreateWebCallbacks().release());
 }
 
-void IDBCursor::continueFunction(ScriptState* script_state,
-                                 const ScriptValue& key_value,
-                                 ExceptionState& exception_state) {
-  IDB_TRACE("IDBCursor::continue");
+void IDBCursor::Continue(ScriptState* script_state,
+                         const ScriptValue& key_value,
+                         ExceptionState& exception_state) {
+  IDB_TRACE("IDBCursor::continueRequestSetup");
+  IDBRequest::AsyncTraceState metrics("IDBCursor::continue");
 
   if (!transaction_->IsActive()) {
     exception_state.ThrowDOMException(kTransactionInactiveError,
@@ -198,14 +201,15 @@ void IDBCursor::continueFunction(ScriptState* script_state,
                                       IDBDatabase::kNotValidKeyErrorMessage);
     return;
   }
-  Continue(key, nullptr, exception_state);
+  Continue(key, nullptr, std::move(metrics), exception_state);
 }
 
 void IDBCursor::continuePrimaryKey(ScriptState* script_state,
                                    const ScriptValue& key_value,
                                    const ScriptValue& primary_key_value,
                                    ExceptionState& exception_state) {
-  IDB_TRACE("IDBCursor::continuePrimaryKey");
+  IDB_TRACE("IDBCursor::continuePrimaryKeyRequestSetup");
+  IDBRequest::AsyncTraceState metrics("IDBCursor::continuePrimaryKey");
 
   if (!transaction_->IsActive()) {
     exception_state.ThrowDOMException(kTransactionInactiveError,
@@ -258,11 +262,12 @@ void IDBCursor::continuePrimaryKey(ScriptState* script_state,
     return;
   }
 
-  Continue(key, primary_key, exception_state);
+  Continue(key, primary_key, std::move(metrics), exception_state);
 }
 
 void IDBCursor::Continue(IDBKey* key,
                          IDBKey* primary_key,
+                         IDBRequest::AsyncTraceState metrics,
                          ExceptionState& exception_state) {
   DCHECK(transaction_->IsActive());
   DCHECK(got_value_);
@@ -300,14 +305,16 @@ void IDBCursor::Continue(IDBKey* key,
   // means the callback will be on the original context openCursor was called
   // on. Is this right?
   request_->SetPendingCursor(this);
+  request_->AssignNewMetrics(std::move(metrics));
   got_value_ = false;
-  backend_->ContinueFunction(key, primary_key,
-                             request_->CreateWebCallbacks().release());
+  backend_->Continue(key, primary_key,
+                     request_->CreateWebCallbacks().release());
 }
 
-IDBRequest* IDBCursor::deleteFunction(ScriptState* script_state,
-                                      ExceptionState& exception_state) {
-  IDB_TRACE("IDBCursor::delete");
+IDBRequest* IDBCursor::Delete(ScriptState* script_state,
+                              ExceptionState& exception_state) {
+  IDB_TRACE("IDBCursor::deleteRequestSetup");
+  IDBRequest::AsyncTraceState metrics("IDBCursor::delete");
   if (!transaction_->IsActive()) {
     exception_state.ThrowDOMException(kTransactionInactiveError,
                                       transaction_->InactiveErrorMessage());
@@ -343,8 +350,9 @@ IDBRequest* IDBCursor::deleteFunction(ScriptState* script_state,
   IDBKeyRange* key_range = IDBKeyRange::only(primary_key_, exception_state);
   DCHECK(!exception_state.HadException());
 
-  IDBRequest* request = IDBRequest::Create(script_state, IDBAny::Create(this),
-                                           transaction_.Get());
+  IDBRequest* request =
+      IDBRequest::Create(script_state, IDBAny::Create(this), transaction_.Get(),
+                         std::move(metrics));
   transaction_->BackendDB()->DeleteRange(
       transaction_->Id(), EffectiveObjectStore()->Id(), key_range,
       request->CreateWebCallbacks().release());
@@ -357,7 +365,7 @@ void IDBCursor::PostSuccessHandlerCallback() {
 }
 
 void IDBCursor::Close() {
-  value_.Clear();
+  value_ = nullptr;
   request_.Clear();
   backend_.reset();
 }
@@ -381,12 +389,12 @@ ScriptValue IDBCursor::value(ScriptState* script_state) {
     value = IDBAny::CreateUndefined();
   } else if (object_store->autoIncrement() &&
              !object_store->IdbKeyPath().IsNull()) {
-    RefPtr<IDBValue> idb_value = IDBValue::Create(value_.Get(), primary_key_,
-                                                  object_store->IdbKeyPath());
+    scoped_refptr<IDBValue> idb_value = IDBValue::Create(
+        value_.get(), primary_key_, object_store->IdbKeyPath());
 #if DCHECK_IS_ON()
-    AssertPrimaryKeyValidOrInjectable(script_state, idb_value.Get());
+    AssertPrimaryKeyValidOrInjectable(script_state, idb_value.get());
 #endif  // DCHECK_IS_ON()
-    value = IDBAny::Create(idb_value.Release());
+    value = IDBAny::Create(std::move(idb_value));
   } else {
     value = IDBAny::Create(value_);
   }
@@ -402,7 +410,7 @@ ScriptValue IDBCursor::source(ScriptState* script_state) const {
 
 void IDBCursor::SetValueReady(IDBKey* key,
                               IDBKey* primary_key,
-                              PassRefPtr<IDBValue> value) {
+                              scoped_refptr<IDBValue> value) {
   key_ = key;
   key_dirty_ = true;
 

@@ -4,7 +4,11 @@
 
 #include "chrome/browser/ui/page_info/page_info_ui.h"
 
+#include <utility>
+
+#include "base/command_line.h"
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/permissions/permission_manager.h"
 #include "chrome/browser/permissions/permission_result.h"
@@ -12,9 +16,10 @@
 #include "chrome/browser/plugins/plugin_utils.h"
 #include "chrome/browser/plugins/plugins_field_trial.h"
 #include "chrome/common/chrome_features.h"
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
+#include "components/strings/grit/components_chromium_strings.h"
 #include "components/strings/grit/components_strings.h"
 #include "ppapi/features/features.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -22,9 +27,48 @@
 #include "ui/gfx/image/image.h"
 #include "url/gurl.h"
 
+#if defined(OS_ANDROID)
+#include "chrome/browser/android/android_theme_resources.h"
+#else
+#include "chrome/app/vector_icons/vector_icons.h"
+#include "ui/gfx/color_palette.h"
+#include "ui/gfx/paint_vector_icon.h"
+#endif
+
+#if defined(SAFE_BROWSING_DB_LOCAL)
+#include "components/safe_browsing/password_protection/password_protection_service.h"
+#endif
+
 namespace {
 
 const int kInvalidResourceID = -1;
+
+// The resource IDs for the strings that are displayed on the permissions
+// button if the permission setting is managed by policy.
+const int kPermissionButtonTextIDPolicyManaged[] = {
+    kInvalidResourceID,
+    IDS_PAGE_INFO_PERMISSION_ALLOWED_BY_POLICY,
+    IDS_PAGE_INFO_PERMISSION_BLOCKED_BY_POLICY,
+    IDS_PAGE_INFO_PERMISSION_ASK_BY_POLICY,
+    kInvalidResourceID,
+    kInvalidResourceID};
+static_assert(arraysize(kPermissionButtonTextIDPolicyManaged) ==
+                  CONTENT_SETTING_NUM_SETTINGS,
+              "kPermissionButtonTextIDPolicyManaged array size is incorrect");
+
+// The resource IDs for the strings that are displayed on the permissions
+// button if the permission setting is managed by an extension.
+const int kPermissionButtonTextIDExtensionManaged[] = {
+    kInvalidResourceID,
+    IDS_PAGE_INFO_PERMISSION_ALLOWED_BY_EXTENSION,
+    IDS_PAGE_INFO_PERMISSION_BLOCKED_BY_EXTENSION,
+    IDS_PAGE_INFO_PERMISSION_ASK_BY_EXTENSION,
+    kInvalidResourceID,
+    kInvalidResourceID};
+static_assert(arraysize(kPermissionButtonTextIDExtensionManaged) ==
+                  CONTENT_SETTING_NUM_SETTINGS,
+              "kPermissionButtonTextIDExtensionManaged array size is "
+              "incorrect");
 
 // The resource IDs for the strings that are displayed on the permissions
 // button if the permission setting is managed by the user.
@@ -90,19 +134,53 @@ const PermissionsUIInfo kPermissionsUIInfo[] = {
     // Autoplay is Android-only at the moment, and the Page Info popup on
     // Android ignores these block/allow icon pairs, so we can specify 0 there.
     {CONTENT_SETTINGS_TYPE_AUTOPLAY, IDS_PAGE_INFO_TYPE_AUTOPLAY, 0, 0},
-    {CONTENT_SETTINGS_TYPE_SUBRESOURCE_FILTER, IDS_SUBRESOURCE_FILTER_HEADER,
-     IDR_ALLOWED_SUBRESOURCE_FILTER, IDR_BLOCKED_SUBRESOURCE_FILTER},
+    {CONTENT_SETTINGS_TYPE_ADS, IDS_PAGE_INFO_TYPE_ADS, IDR_BLOCKED_ADS,
+     IDR_ALLOWED_ADS},
+    {CONTENT_SETTINGS_TYPE_SOUND, IDS_PAGE_INFO_TYPE_SOUND, IDR_BLOCKED_SOUND,
+     IDR_ALLOWED_SOUND},
+    {CONTENT_SETTINGS_TYPE_CLIPBOARD_READ, IDS_PAGE_INFO_TYPE_CLIPBOARD,
+     IDR_BLOCKED_CLIPBOARD, IDR_ALLOWED_CLIPBOARD},
 };
 
 std::unique_ptr<PageInfoUI::SecurityDescription> CreateSecurityDescription(
+    PageInfoUI::SecuritySummaryColor style,
     int summary_id,
     int details_id) {
   std::unique_ptr<PageInfoUI::SecurityDescription> security_description(
       new PageInfoUI::SecurityDescription());
+  security_description->summary_style = style;
   security_description->summary = l10n_util::GetStringUTF16(summary_id);
   security_description->details = l10n_util::GetStringUTF16(details_id);
   return security_description;
 }
+
+// Gets the actual setting for a ContentSettingType, taking into account what
+// the default setting value is and whether Html5ByDefault is enabled.
+ContentSetting GetEffectiveSetting(Profile* profile,
+                                   ContentSettingsType type,
+                                   ContentSetting setting,
+                                   ContentSetting default_setting) {
+  ContentSetting effective_setting = setting;
+  if (effective_setting == CONTENT_SETTING_DEFAULT)
+    effective_setting = default_setting;
+
+#if BUILDFLAG(ENABLE_PLUGINS)
+  HostContentSettingsMap* host_content_settings_map =
+      HostContentSettingsMapFactory::GetForProfile(profile);
+  effective_setting = PluginsFieldTrial::EffectiveContentSetting(
+      host_content_settings_map, type, effective_setting);
+
+  // Display the UI string for ASK instead of DETECT for HTML5 by Default.
+  // TODO(tommycli): Once HTML5 by Default is shipped and the feature flag
+  // is removed, just migrate the actual content setting to ASK.
+  if (PluginUtils::ShouldPreferHtmlOverPlugins(host_content_settings_map) &&
+      effective_setting == CONTENT_SETTING_DETECT_IMPORTANT_CONTENT) {
+    effective_setting = CONTENT_SETTING_ASK;
+  }
+#endif
+  return effective_setting;
+}
+
 }  // namespace
 
 PageInfoUI::CookieInfo::CookieInfo() : allowed(-1), blocked(-1) {}
@@ -124,7 +202,8 @@ PageInfoUI::ChosenObjectInfo::~ChosenObjectInfo() {}
 PageInfoUI::IdentityInfo::IdentityInfo()
     : identity_status(PageInfo::SITE_IDENTITY_STATUS_UNKNOWN),
       connection_status(PageInfo::SITE_CONNECTION_STATUS_UNKNOWN),
-      show_ssl_decision_revoke_button(false) {}
+      show_ssl_decision_revoke_button(false),
+      show_change_password_buttons(false) {}
 
 PageInfoUI::IdentityInfo::~IdentityInfo() {}
 
@@ -135,8 +214,15 @@ PageInfoUI::IdentityInfo::GetSecurityDescription() const {
 
   switch (identity_status) {
     case PageInfo::SITE_IDENTITY_STATUS_INTERNAL_PAGE:
-      // Internal pages have their own UI implementations which should never
-      // call this function.
+#if defined(OS_ANDROID)
+      // We provide identical summary and detail strings for Android, which
+      // deduplicates them in the UI code.
+      return CreateSecurityDescription(SecuritySummaryColor::GREEN,
+                                       IDS_PAGE_INFO_INTERNAL_PAGE,
+                                       IDS_PAGE_INFO_INTERNAL_PAGE);
+#endif
+      // Internal pages on desktop have their own UI implementations which
+      // should never call this function.
       NOTREACHED();
     case PageInfo::SITE_IDENTITY_STATUS_CERT:
     case PageInfo::SITE_IDENTITY_STATUS_EV_CERT:
@@ -144,33 +230,53 @@ PageInfoUI::IdentityInfo::GetSecurityDescription() const {
     case PageInfo::SITE_IDENTITY_STATUS_ADMIN_PROVIDED_CERT:
       switch (connection_status) {
         case PageInfo::SITE_CONNECTION_STATUS_INSECURE_ACTIVE_SUBRESOURCE:
-          return CreateSecurityDescription(IDS_PAGEINFO_NOT_SECURE_SUMMARY,
-                                           IDS_PAGEINFO_NOT_SECURE_DETAILS);
+          return CreateSecurityDescription(SecuritySummaryColor::RED,
+                                           IDS_PAGE_INFO_NOT_SECURE_SUMMARY,
+                                           IDS_PAGE_INFO_NOT_SECURE_DETAILS);
         case PageInfo::SITE_CONNECTION_STATUS_INSECURE_FORM_ACTION:
-          return CreateSecurityDescription(IDS_PAGEINFO_MIXED_CONTENT_SUMMARY,
-                                           IDS_PAGEINFO_NOT_SECURE_DETAILS);
+          return CreateSecurityDescription(SecuritySummaryColor::RED,
+                                           IDS_PAGE_INFO_MIXED_CONTENT_SUMMARY,
+                                           IDS_PAGE_INFO_NOT_SECURE_DETAILS);
         case PageInfo::SITE_CONNECTION_STATUS_INSECURE_PASSIVE_SUBRESOURCE:
-          return CreateSecurityDescription(IDS_PAGEINFO_MIXED_CONTENT_SUMMARY,
-                                           IDS_PAGEINFO_MIXED_CONTENT_DETAILS);
+          return CreateSecurityDescription(SecuritySummaryColor::RED,
+                                           IDS_PAGE_INFO_MIXED_CONTENT_SUMMARY,
+                                           IDS_PAGE_INFO_MIXED_CONTENT_DETAILS);
         default:
-          return CreateSecurityDescription(IDS_PAGEINFO_SECURE_SUMMARY,
-                                           IDS_PAGEINFO_SECURE_DETAILS);
+          return CreateSecurityDescription(SecuritySummaryColor::GREEN,
+                                           IDS_PAGE_INFO_SECURE_SUMMARY,
+                                           IDS_PAGE_INFO_SECURE_DETAILS);
       }
     case PageInfo::SITE_IDENTITY_STATUS_MALWARE:
-      return CreateSecurityDescription(IDS_PAGEINFO_MALWARE_SUMMARY,
-                                       IDS_PAGEINFO_MALWARE_DETAILS);
+      return CreateSecurityDescription(SecuritySummaryColor::RED,
+                                       IDS_PAGE_INFO_MALWARE_SUMMARY,
+                                       IDS_PAGE_INFO_MALWARE_DETAILS);
     case PageInfo::SITE_IDENTITY_STATUS_SOCIAL_ENGINEERING:
-      return CreateSecurityDescription(IDS_PAGEINFO_SOCIAL_ENGINEERING_SUMMARY,
-                                       IDS_PAGEINFO_SOCIAL_ENGINEERING_DETAILS);
+      return CreateSecurityDescription(
+          SecuritySummaryColor::RED, IDS_PAGE_INFO_SOCIAL_ENGINEERING_SUMMARY,
+          IDS_PAGE_INFO_SOCIAL_ENGINEERING_DETAILS);
     case PageInfo::SITE_IDENTITY_STATUS_UNWANTED_SOFTWARE:
-      return CreateSecurityDescription(IDS_PAGEINFO_UNWANTED_SOFTWARE_SUMMARY,
-                                       IDS_PAGEINFO_UNWANTED_SOFTWARE_DETAILS);
+      return CreateSecurityDescription(SecuritySummaryColor::RED,
+                                       IDS_PAGE_INFO_UNWANTED_SOFTWARE_SUMMARY,
+                                       IDS_PAGE_INFO_UNWANTED_SOFTWARE_DETAILS);
+    case PageInfo::SITE_IDENTITY_STATUS_PASSWORD_REUSE:
+#if defined(SAFE_BROWSING_DB_LOCAL)
+      return safe_browsing::PasswordProtectionService::ShouldShowSofterWarning()
+                 ? CreateSecurityDescription(
+                       SecuritySummaryColor::RED,
+                       IDS_PAGE_INFO_CHANGE_PASSWORD_SUMMARY_SOFTER,
+                       IDS_PAGE_INFO_CHANGE_PASSWORD_DETAILS)
+                 : CreateSecurityDescription(
+                       SecuritySummaryColor::RED,
+                       IDS_PAGE_INFO_CHANGE_PASSWORD_SUMMARY,
+                       IDS_PAGE_INFO_CHANGE_PASSWORD_DETAILS);
+#endif
     case PageInfo::SITE_IDENTITY_STATUS_DEPRECATED_SIGNATURE_ALGORITHM:
     case PageInfo::SITE_IDENTITY_STATUS_UNKNOWN:
     case PageInfo::SITE_IDENTITY_STATUS_NO_CERT:
     default:
-      return CreateSecurityDescription(IDS_PAGEINFO_NOT_SECURE_SUMMARY,
-                                       IDS_PAGEINFO_NOT_SECURE_DETAILS);
+      return CreateSecurityDescription(SecuritySummaryColor::RED,
+                                       IDS_PAGE_INFO_NOT_SECURE_SUMMARY,
+                                       IDS_PAGE_INFO_NOT_SECURE_DETAILS);
   }
 }
 
@@ -187,46 +293,14 @@ base::string16 PageInfoUI::PermissionTypeToUIString(ContentSettingsType type) {
 }
 
 // static
-base::string16 PageInfoUI::PermissionValueToUIString(ContentSetting value) {
-  switch (value) {
-    case CONTENT_SETTING_ALLOW:
-      return l10n_util::GetStringUTF16(IDS_PAGE_INFO_PERMISSION_ALLOW);
-    case CONTENT_SETTING_BLOCK:
-      return l10n_util::GetStringUTF16(IDS_PAGE_INFO_PERMISSION_BLOCK);
-    case CONTENT_SETTING_ASK:
-      return l10n_util::GetStringUTF16(IDS_PAGE_INFO_PERMISSION_ASK);
-    default:
-      NOTREACHED();
-      return base::string16();
-  }
-}
-
-// static
 base::string16 PageInfoUI::PermissionActionToUIString(
     Profile* profile,
     ContentSettingsType type,
     ContentSetting setting,
     ContentSetting default_setting,
     content_settings::SettingSource source) {
-  ContentSetting effective_setting = setting;
-  if (effective_setting == CONTENT_SETTING_DEFAULT)
-    effective_setting = default_setting;
-
-#if BUILDFLAG(ENABLE_PLUGINS)
-  HostContentSettingsMap* host_content_settings_map =
-      HostContentSettingsMapFactory::GetForProfile(profile);
-  effective_setting = PluginsFieldTrial::EffectiveContentSetting(
-      host_content_settings_map, type, effective_setting);
-
-  // Display the UI string for ASK instead of DETECT for HTML5 by Default.
-  // TODO(tommycli): Once HTML5 by Default is shipped and the feature flag
-  // is removed, just migrate the actual content setting to ASK.
-  if (PluginUtils::ShouldPreferHtmlOverPlugins(host_content_settings_map) &&
-      effective_setting == CONTENT_SETTING_DETECT_IMPORTANT_CONTENT) {
-    effective_setting = CONTENT_SETTING_ASK;
-  }
-#endif
-
+  ContentSetting effective_setting =
+      GetEffectiveSetting(profile, type, setting, default_setting);
   const int* button_text_ids = NULL;
   switch (source) {
     case content_settings::SETTING_SOURCE_USER:
@@ -245,6 +319,10 @@ base::string16 PageInfoUI::PermissionActionToUIString(
       NOTREACHED();
       return base::string16();
   }
+  // The subresource filter permission uses the user managed strings
+  // (i.e. Allow / Block).
+  if (type == CONTENT_SETTINGS_TYPE_ADS)
+    button_text_ids = kPermissionButtonTextIDUserManaged;
   int button_text_id = button_text_ids[effective_setting];
   DCHECK_NE(button_text_id, kInvalidResourceID);
   return l10n_util::GetStringUTF16(button_text_id);
@@ -259,7 +337,7 @@ int PageInfoUI::GetPermissionIconID(ContentSettingsType type,
       return use_blocked ? info.blocked_icon_id : info.allowed_icon_id;
   }
   NOTREACHED();
-  return IDR_INFO;
+  return 0;
 }
 
 // static
@@ -267,13 +345,15 @@ base::string16 PageInfoUI::PermissionDecisionReasonToUIString(
     Profile* profile,
     const PageInfoUI::PermissionInfo& permission,
     const GURL& url) {
+  ContentSetting effective_setting = GetEffectiveSetting(
+      profile, permission.type, permission.setting, permission.default_setting);
   int message_id = kInvalidResourceID;
   switch (permission.source) {
     case content_settings::SettingSource::SETTING_SOURCE_POLICY:
-      message_id = IDS_PAGE_INFO_PERMISSION_SET_BY_POLICY;
+      message_id = kPermissionButtonTextIDPolicyManaged[effective_setting];
       break;
     case content_settings::SettingSource::SETTING_SOURCE_EXTENSION:
-      message_id = IDS_PAGE_INFO_PERMISSION_SET_BY_EXTENSION;
+      message_id = kPermissionButtonTextIDExtensionManaged[effective_setting];
       break;
     default:
       break;
@@ -294,6 +374,9 @@ base::string16 PageInfoUI::PermissionDecisionReasonToUIString(
     }
   }
 
+  if (permission.type == CONTENT_SETTINGS_TYPE_ADS)
+    message_id = IDS_PAGE_INFO_PERMISSION_ADS_SUBTITLE;
+
   if (message_id == kInvalidResourceID)
     return base::string16();
   return l10n_util::GetStringUTF16(message_id);
@@ -309,7 +392,7 @@ const gfx::Image& PageInfoUI::GetPermissionIcon(const PermissionInfo& info) {
   ContentSetting setting = info.setting;
   if (setting == CONTENT_SETTING_DEFAULT)
     setting = info.default_setting;
-  ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   return rb.GetNativeImageNamed(GetPermissionIconID(info.type, setting));
 }
 
@@ -325,11 +408,12 @@ base::string16 PageInfoUI::ChosenObjectToUIString(
 const gfx::Image& PageInfoUI::GetChosenObjectIcon(
     const ChosenObjectInfo& object,
     bool deleted) {
-  ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   return rb.GetNativeImageNamed(deleted ? object.ui_info.blocked_icon_id
                                         : object.ui_info.allowed_icon_id);
 }
 
+#if defined(OS_ANDROID)
 // static
 int PageInfoUI::GetIdentityIconID(PageInfo::SiteIdentityStatus status) {
   int resource_id = IDR_PAGEINFO_INFO;
@@ -364,13 +448,6 @@ int PageInfoUI::GetIdentityIconID(PageInfo::SiteIdentityStatus status) {
 }
 
 // static
-const gfx::Image& PageInfoUI::GetIdentityIcon(
-    PageInfo::SiteIdentityStatus status) {
-  ResourceBundle& rb = ResourceBundle::GetSharedInstance();
-  return rb.GetNativeImageNamed(GetIdentityIconID(status));
-}
-
-// static
 int PageInfoUI::GetConnectionIconID(PageInfo::SiteConnectionStatus status) {
   int resource_id = IDR_PAGEINFO_INFO;
   switch (status) {
@@ -394,10 +471,23 @@ int PageInfoUI::GetConnectionIconID(PageInfo::SiteConnectionStatus status) {
   }
   return resource_id;
 }
+#else  // !defined(OS_ANDROID)
+// static
+const gfx::ImageSkia PageInfoUI::GetCertificateIcon() {
+  return gfx::CreateVectorIcon(kCertificateIcon, 16, gfx::kChromeIconGrey);
+}
 
 // static
-const gfx::Image& PageInfoUI::GetConnectionIcon(
-    PageInfo::SiteConnectionStatus status) {
-  ResourceBundle& rb = ResourceBundle::GetSharedInstance();
-  return rb.GetNativeImageNamed(GetConnectionIconID(status));
+const gfx::ImageSkia PageInfoUI::GetSiteSettingsIcon() {
+  return gfx::CreateVectorIcon(kSettingsIcon, 16, gfx::kChromeIconGrey);
+}
+#endif
+
+// static
+bool PageInfoUI::ContentSettingsTypeInPageInfo(ContentSettingsType type) {
+  for (const PermissionsUIInfo& info : kPermissionsUIInfo) {
+    if (info.type == type)
+      return true;
+  }
+  return false;
 }

@@ -5,51 +5,55 @@
 #ifndef ThreadedWorkletObjectProxy_h
 #define ThreadedWorkletObjectProxy_h
 
-#include "bindings/core/v8/SourceLocation.h"
 #include "core/CoreExport.h"
-#include "core/dom/MessagePort.h"
 #include "core/workers/ThreadedObjectProxyBase.h"
 #include "core/workers/WorkerReportingProxy.h"
+#include "platform/WebTaskRunner.h"
+#include "public/platform/WebURLRequest.h"
 
 namespace blink {
 
 class ThreadedWorkletMessagingProxy;
+class WorkletModuleResponsesMap;
+class WorkletPendingTasks;
 class WorkerThread;
 
 // A proxy to talk to the parent worker object. See class comments on
 // ThreadedObjectProxyBase.h for lifetime of this class etc.
+// TODO(nhiroki): Consider merging this class into ThreadedObjectProxyBase
+// after EvaluateScript() for classic script loading is removed in favor of
+// module script loading.
 class CORE_EXPORT ThreadedWorkletObjectProxy : public ThreadedObjectProxyBase {
   USING_FAST_MALLOC(ThreadedWorkletObjectProxy);
   WTF_MAKE_NONCOPYABLE(ThreadedWorkletObjectProxy);
 
  public:
   static std::unique_ptr<ThreadedWorkletObjectProxy> Create(
-      const WeakPtr<ThreadedWorkletMessagingProxy>&,
+      ThreadedWorkletMessagingProxy*,
       ParentFrameTaskRunners*);
   ~ThreadedWorkletObjectProxy() override;
 
-  void EvaluateScript(const String& source,
-                      const KURL& script_url,
-                      WorkerThread*);
-
-  // ThreadedObjectProxyBase overrides.
-  void ReportException(const String& error_message,
-                       std::unique_ptr<SourceLocation>,
-                       int exception_id) final {}
-  void DidEvaluateWorkerScript(bool success) final {}
-  void WillDestroyWorkerGlobalScope() final {}
+  void FetchAndInvokeScript(
+      const KURL& module_url_record,
+      WorkletModuleResponsesMap*,
+      network::mojom::FetchCredentialsMode,
+      scoped_refptr<WebTaskRunner> outside_settings_task_runner,
+      WorkletPendingTasks*,
+      WorkerThread*);
 
  protected:
-  ThreadedWorkletObjectProxy(const WeakPtr<ThreadedWorkletMessagingProxy>&,
+  ThreadedWorkletObjectProxy(ThreadedWorkletMessagingProxy*,
                              ParentFrameTaskRunners*);
 
-  WeakPtr<ThreadedMessagingProxyBase> MessagingProxyWeakPtr() final;
+  CrossThreadWeakPersistent<ThreadedMessagingProxyBase> MessagingProxyWeakPtr()
+      final;
 
  private:
   // No guarantees about the lifetimes of tasks posted by this proxy wrt the
   // ThreadedWorkletMessagingProxy so a weak pointer must be used when posting
   // the tasks.
-  WeakPtr<ThreadedWorkletMessagingProxy> messaging_proxy_weak_ptr_;
+  CrossThreadWeakPersistent<ThreadedWorkletMessagingProxy>
+      messaging_proxy_weak_ptr_;
 };
 
 }  // namespace blink

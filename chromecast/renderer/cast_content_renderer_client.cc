@@ -11,7 +11,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
 #include "chromecast/base/chromecast_switches.h"
-#include "chromecast/crash/cast_crash_keys.h"
 #include "chromecast/media/base/media_caps.h"
 #include "chromecast/media/base/media_codec_support.h"
 #include "chromecast/media/base/supported_codec_profile_levels_memo.h"
@@ -28,14 +27,20 @@
 #include "media/base/media.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "third_party/WebKit/public/platform/WebColor.h"
+#include "third_party/WebKit/public/platform/WebRuntimeFeatures.h"
 #include "third_party/WebKit/public/web/WebFrameWidget.h"
-#include "third_party/WebKit/public/web/WebRuntimeFeatures.h"
 #include "third_party/WebKit/public/web/WebSettings.h"
 #include "third_party/WebKit/public/web/WebView.h"
 
 #if defined(OS_ANDROID)
 #include "media/base/android/media_codec_util.h"
+#else
+#include "chromecast/renderer/memory_pressure_observer_impl.h"
 #endif  // OS_ANDROID
+
+#if !defined(OS_FUCHSIA)
+#include "chromecast/crash/cast_crash_keys.h"
+#endif  // !defined(OS_FUCHSIA)
 
 namespace chromecast {
 namespace shell {
@@ -68,8 +73,6 @@ CastContentRendererClient::~CastContentRendererClient() {
 }
 
 void CastContentRendererClient::RenderThreadStarted() {
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-
   // Register as observer for media capabilities
   content::RenderThread* thread = content::RenderThread::Get();
   media::mojom::MediaCapsPtr media_caps;
@@ -80,8 +83,23 @@ void CastContentRendererClient::RenderThreadStarted() {
       new media::MediaCapsObserverImpl(&proxy, supported_profiles_.get()));
   media_caps->AddObserver(std::move(proxy));
 
+#if !defined(OS_ANDROID)
+  // Register to observe memory pressure changes
+  mojom::MemoryPressureControllerPtr memory_pressure_controller;
+  thread->GetConnector()->BindInterface(content::mojom::kBrowserServiceName,
+                                        &memory_pressure_controller);
+  mojom::MemoryPressureObserverPtr memory_pressure_proxy;
+  memory_pressure_observer_.reset(
+      new MemoryPressureObserverImpl(&memory_pressure_proxy));
+  memory_pressure_controller->AddObserver(std::move(memory_pressure_proxy));
+#endif
+
   prescient_networking_dispatcher_.reset(
       new network_hints::PrescientNetworkingDispatcher());
+
+#if !defined(OS_FUCHSIA)
+  // TODO(crbug.com/753619): Enable crash reporting on Fuchsia.
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
 
   std::string last_launched_app =
       command_line->GetSwitchValueNative(switches::kLastLaunchedApp);
@@ -92,14 +110,15 @@ void CastContentRendererClient::RenderThreadStarted() {
       command_line->GetSwitchValueNative(switches::kPreviousApp);
   if (!previous_app.empty())
     base::debug::SetCrashKeyValue(crash_keys::kPreviousApp, previous_app);
+#endif  // !defined(OS_FUCHSIA)
 }
 
 void CastContentRendererClient::RenderViewCreated(
     content::RenderView* render_view) {
   blink::WebView* webview = render_view->GetWebView();
   if (webview) {
-    blink::WebFrameWidget* web_frame_widget = render_view->GetWebFrameWidget();
-    web_frame_widget->SetBaseBackgroundColor(kColorBlack);
+    if (auto* web_frame_widget = render_view->GetWebFrameWidget())
+      web_frame_widget->SetBaseBackgroundColor(kColorBlack);
 
     // Disable application cache as Chromecast doesn't support off-line
     // application running.
@@ -118,6 +137,15 @@ void CastContentRendererClient::AddSupportedKeySystems(
 bool CastContentRendererClient::IsSupportedAudioConfig(
     const ::media::AudioConfig& config) {
 #if defined(OS_ANDROID)
+  media::AudioCodec codec = media::ToCastAudioCodec(config.codec);
+
+  // No ATV device we know of has (E)AC3 decoder, so it relies on the audio sink
+  // device.
+  if (codec == media::kCodecEAC3)
+    return media::MediaCapabilities::HdmiSinkSupportsEAC3();
+  if (codec == media::kCodecAC3)
+    return media::MediaCapabilities::HdmiSinkSupportsAC3();
+
   // TODO(sanfin): Implement this for Android.
   return true;
 #else
@@ -157,6 +185,14 @@ bool CastContentRendererClient::IsSupportedVideoConfig(
 #endif
 }
 
+bool CastContentRendererClient::IsSupportedBitstreamAudioCodec(
+    ::media::AudioCodec codec) {
+  return (codec == ::media::kCodecAC3 &&
+          media::MediaCapabilities::HdmiSinkSupportsAC3()) ||
+         (codec == ::media::kCodecEAC3 &&
+          media::MediaCapabilities::HdmiSinkSupportsEAC3());
+}
+
 blink::WebPrescientNetworking*
 CastContentRendererClient::GetPrescientNetworking() {
   return prescient_networking_dispatcher_.get();
@@ -186,7 +222,7 @@ void CastContentRendererClient::RunWhenInForeground(
   new CastRenderFrameActionDeferrer(render_frame, closure);
 }
 
-bool CastContentRendererClient::AllowMediaSuspend() {
+bool CastContentRendererClient::AllowIdleMediaSuspend() {
   return false;
 }
 

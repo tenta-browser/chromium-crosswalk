@@ -10,8 +10,6 @@ namespace content {
 
 uint32_t AXStateFromBlink(const blink::WebAXObject& o) {
   uint32_t state = 0;
-  if (o.IsChecked())
-    state |= (1 << ui::AX_STATE_CHECKED);
 
   blink::WebAXExpanded expanded = o.IsExpanded();
   if (expanded) {
@@ -42,17 +40,8 @@ uint32_t AXStateFromBlink(const blink::WebAXObject& o) {
   if (o.IsMultiSelectable())
     state |= (1 << ui::AX_STATE_MULTISELECTABLE);
 
-  if (o.IsOffScreen())
-    state |= (1 << ui::AX_STATE_OFFSCREEN);
-
-  if (o.IsPressed())
-    state |= (1 << ui::AX_STATE_PRESSED);
-
   if (o.IsPasswordField())
     state |= (1 << ui::AX_STATE_PROTECTED);
-
-  if (o.IsReadOnly())
-    state |= (1 << ui::AX_STATE_READ_ONLY);
 
   if (o.IsRequired())
     state |= (1 << ui::AX_STATE_REQUIRED);
@@ -62,9 +51,6 @@ uint32_t AXStateFromBlink(const blink::WebAXObject& o) {
 
   if (o.IsEditable())
     state |= (1 << ui::AX_STATE_EDITABLE);
-
-  if (!o.IsEnabled())
-    state |= (1 << ui::AX_STATE_DISABLED);
 
   if (o.IsSelected())
     state |= (1 << ui::AX_STATE_SELECTED);
@@ -108,8 +94,6 @@ ui::AXRole AXRoleFromBlink(blink::WebAXRole role) {
       return ui::AX_ROLE_BANNER;
     case blink::kWebAXRoleBlockquote:
       return ui::AX_ROLE_BLOCKQUOTE;
-    case blink::kWebAXRoleBusyIndicator:
-      return ui::AX_ROLE_BUSY_INDICATOR;
     case blink::kWebAXRoleButton:
       return ui::AX_ROLE_BUTTON;
     case blink::kWebAXRoleCanvas:
@@ -126,8 +110,10 @@ ui::AXRole AXRoleFromBlink(blink::WebAXRole role) {
       return ui::AX_ROLE_COLUMN;
     case blink::kWebAXRoleColumnHeader:
       return ui::AX_ROLE_COLUMN_HEADER;
-    case blink::kWebAXRoleComboBox:
-      return ui::AX_ROLE_COMBO_BOX;
+    case blink::kWebAXRoleComboBoxGrouping:
+      return ui::AX_ROLE_COMBO_BOX_GROUPING;
+    case blink::kWebAXRoleComboBoxMenuButton:
+      return ui::AX_ROLE_COMBO_BOX_MENU_BUTTON;
     case blink::kWebAXRoleComplementary:
       return ui::AX_ROLE_COMPLEMENTARY;
     case blink::kWebAXRoleContentInfo:
@@ -152,8 +138,6 @@ ui::AXRole AXRoleFromBlink(blink::WebAXRole role) {
       return ui::AX_ROLE_DIRECTORY;
     case blink::kWebAXRoleDisclosureTriangle:
       return ui::AX_ROLE_DISCLOSURE_TRIANGLE;
-    case blink::kWebAXRoleDiv:
-      return ui::AX_ROLE_DIV;
     case blink::kWebAXRoleDocument:
       return ui::AX_ROLE_DOCUMENT;
     case blink::kWebAXRoleEmbeddedObject:
@@ -168,6 +152,8 @@ ui::AXRole AXRoleFromBlink(blink::WebAXRole role) {
       return ui::AX_ROLE_FOOTER;
     case blink::kWebAXRoleForm:
       return ui::AX_ROLE_FORM;
+    case blink::kWebAXRoleGenericContainer:
+      return ui::AX_ROLE_GENERIC_CONTAINER;
     case blink::kWebAXRoleGrid:
       return ui::AX_ROLE_GRID;
     case blink::kWebAXRoleGroup:
@@ -184,8 +170,6 @@ ui::AXRole AXRoleFromBlink(blink::WebAXRole role) {
       return ui::AX_ROLE_IMAGE;
     case blink::kWebAXRoleImageMap:
       return ui::AX_ROLE_IMAGE_MAP;
-    case blink::kWebAXRoleImageMapLink:
-      return ui::AX_ROLE_IMAGE_MAP_LINK;
     case blink::kWebAXRoleInlineTextBox:
       return ui::AX_ROLE_INLINE_TEXT_BOX;
     case blink::kWebAXRoleInputTime:
@@ -240,8 +224,6 @@ ui::AXRole AXRoleFromBlink(blink::WebAXRole role) {
       return ui::AX_ROLE_NONE;
     case blink::kWebAXRoleNote:
       return ui::AX_ROLE_NOTE;
-    case blink::kWebAXRoleOutline:
-      return ui::AX_ROLE_OUTLINE;
     case blink::kWebAXRoleParagraph:
       return ui::AX_ROLE_PARAGRAPH;
     case blink::kWebAXRolePopUpButton:
@@ -258,24 +240,16 @@ ui::AXRole AXRoleFromBlink(blink::WebAXRole role) {
       return ui::AX_ROLE_RADIO_GROUP;
     case blink::kWebAXRoleRegion:
       return ui::AX_ROLE_REGION;
-    case blink::kWebAXRoleRootWebArea:
-      return ui::AX_ROLE_ROOT_WEB_AREA;
     case blink::kWebAXRoleRow:
       return ui::AX_ROLE_ROW;
     case blink::kWebAXRoleRuby:
       return ui::AX_ROLE_RUBY;
     case blink::kWebAXRoleRowHeader:
       return ui::AX_ROLE_ROW_HEADER;
-    case blink::kWebAXRoleRuler:
-      return ui::AX_ROLE_RULER;
     case blink::kWebAXRoleSVGRoot:
       return ui::AX_ROLE_SVG_ROOT;
-    case blink::kWebAXRoleScrollArea:
-      return ui::AX_ROLE_SCROLL_AREA;
     case blink::kWebAXRoleScrollBar:
       return ui::AX_ROLE_SCROLL_BAR;
-    case blink::kWebAXRoleSeamlessWebArea:
-      return ui::AX_ROLE_SEAMLESS_WEB_AREA;
     case blink::kWebAXRoleSearch:
       return ui::AX_ROLE_SEARCH;
     case blink::kWebAXRoleSearchBox:
@@ -298,8 +272,6 @@ ui::AXRole AXRoleFromBlink(blink::WebAXRole role) {
       return ui::AX_ROLE_SWITCH;
     case blink::kWebAXRoleTab:
       return ui::AX_ROLE_TAB;
-    case blink::kWebAXRoleTabGroup:
-      return ui::AX_ROLE_TAB_GROUP;
     case blink::kWebAXRoleTabList:
       return ui::AX_ROLE_TAB_LIST;
     case blink::kWebAXRoleTabPanel:
@@ -312,6 +284,8 @@ ui::AXRole AXRoleFromBlink(blink::WebAXRole role) {
       return ui::AX_ROLE_TERM;
     case blink::kWebAXRoleTextField:
       return ui::AX_ROLE_TEXT_FIELD;
+    case blink::kWebAXRoleTextFieldWithComboBox:
+      return ui::AX_ROLE_TEXT_FIELD_WITH_COMBO_BOX;
     case blink::kWebAXRoleTime:
       return ui::AX_ROLE_TIME;
     case blink::kWebAXRoleTimer:
@@ -336,13 +310,7 @@ ui::AXRole AXRoleFromBlink(blink::WebAXRole role) {
       return ui::AX_ROLE_ROOT_WEB_AREA;
     case blink::kWebAXRoleLineBreak:
       return ui::AX_ROLE_LINE_BREAK;
-    case blink::kWebAXRoleWindow:
-      return ui::AX_ROLE_WINDOW;
     default:
-      // We can't add an assertion here, that prevents us
-      // from adding new role enums in Blink.
-      LOG(WARNING) << "Warning: Blink WebAXRole " << role
-                   << " not handled by Chromium yet.";
       return ui::AX_ROLE_UNKNOWN;
   }
 }
@@ -414,30 +382,32 @@ ui::AXEvent AXEventFromBlink(blink::WebAXEvent event) {
   }
 }
 
-ui::AXSupportedAction AXSupportedActionFromBlink(
-    blink::WebAXSupportedAction supported_action) {
-  switch (supported_action) {
-    case blink::WebAXSupportedAction::kNone:
-      return ui::AX_SUPPORTED_ACTION_NONE;
-    case blink::WebAXSupportedAction::kActivate:
-      return ui::AX_SUPPORTED_ACTION_ACTIVATE;
-    case blink::WebAXSupportedAction::kCheck:
-      return ui::AX_SUPPORTED_ACTION_CHECK;
-    case blink::WebAXSupportedAction::kClick:
-      return ui::AX_SUPPORTED_ACTION_CLICK;
-    case blink::WebAXSupportedAction::kJump:
-      return ui::AX_SUPPORTED_ACTION_JUMP;
-    case blink::WebAXSupportedAction::kOpen:
-      return ui::AX_SUPPORTED_ACTION_OPEN;
-    case blink::WebAXSupportedAction::kPress:
-      return ui::AX_SUPPORTED_ACTION_PRESS;
-    case blink::WebAXSupportedAction::kSelect:
-      return ui::AX_SUPPORTED_ACTION_SELECT;
-    case blink::WebAXSupportedAction::kUncheck:
-      return ui::AX_SUPPORTED_ACTION_UNCHECK;
+ui::AXDefaultActionVerb AXDefaultActionVerbFromBlink(
+    blink::WebAXDefaultActionVerb action_verb) {
+  switch (action_verb) {
+    case blink::WebAXDefaultActionVerb::kNone:
+      return ui::AX_DEFAULT_ACTION_VERB_NONE;
+    case blink::WebAXDefaultActionVerb::kActivate:
+      return ui::AX_DEFAULT_ACTION_VERB_ACTIVATE;
+    case blink::WebAXDefaultActionVerb::kCheck:
+      return ui::AX_DEFAULT_ACTION_VERB_CHECK;
+    case blink::WebAXDefaultActionVerb::kClick:
+      return ui::AX_DEFAULT_ACTION_VERB_CLICK;
+    case blink::WebAXDefaultActionVerb::kClickAncestor:
+      return ui::AX_DEFAULT_ACTION_VERB_CLICK_ANCESTOR;
+    case blink::WebAXDefaultActionVerb::kJump:
+      return ui::AX_DEFAULT_ACTION_VERB_JUMP;
+    case blink::WebAXDefaultActionVerb::kOpen:
+      return ui::AX_DEFAULT_ACTION_VERB_OPEN;
+    case blink::WebAXDefaultActionVerb::kPress:
+      return ui::AX_DEFAULT_ACTION_VERB_PRESS;
+    case blink::WebAXDefaultActionVerb::kSelect:
+      return ui::AX_DEFAULT_ACTION_VERB_SELECT;
+    case blink::WebAXDefaultActionVerb::kUncheck:
+      return ui::AX_DEFAULT_ACTION_VERB_UNCHECK;
   }
   NOTREACHED();
-  return ui::AX_SUPPORTED_ACTION_NONE;
+  return ui::AX_DEFAULT_ACTION_VERB_NONE;
 }
 
 ui::AXMarkerType AXMarkerTypeFromBlink(blink::WebAXMarkerType marker_type) {
@@ -448,6 +418,10 @@ ui::AXMarkerType AXMarkerTypeFromBlink(blink::WebAXMarkerType marker_type) {
       return ui::AX_MARKER_TYPE_GRAMMAR;
     case blink::kWebAXMarkerTypeTextMatch:
       return ui::AX_MARKER_TYPE_TEXT_MATCH;
+    case blink::kWebAXMarkerTypeActiveSuggestion:
+      return ui::AX_MARKER_TYPE_ACTIVE_SUGGESTION;
+    case blink::kWebAXMarkerTypeSuggestion:
+      return ui::AX_MARKER_TYPE_SUGGESTION;
   }
   NOTREACHED();
   return ui::AX_MARKER_TYPE_NONE;
@@ -527,6 +501,22 @@ ui::AXInvalidState AXInvalidStateFromBlink(
   return ui::AX_INVALID_STATE_NONE;
 }
 
+ui::AXCheckedState AXCheckedStateFromBlink(
+    blink::WebAXCheckedState checked_state) {
+  switch (checked_state) {
+    case blink::kWebAXCheckedUndefined:
+      return ui::AX_CHECKED_STATE_NONE;
+    case blink::kWebAXCheckedTrue:
+      return ui::AX_CHECKED_STATE_TRUE;
+    case blink::kWebAXCheckedMixed:
+      return ui::AX_CHECKED_STATE_MIXED;
+    case blink::kWebAXCheckedFalse:
+      return ui::AX_CHECKED_STATE_FALSE;
+  }
+  NOTREACHED();
+  return ui::AX_CHECKED_STATE_NONE;
+}
+
 ui::AXSortDirection AXSortDirectionFromBlink(
     blink::WebAXSortDirection sort_direction) {
   switch (sort_direction) {
@@ -551,6 +541,8 @@ ui::AXNameFrom AXNameFromFromBlink(blink::WebAXNameFrom name_from) {
       return ui::AX_NAME_FROM_UNINITIALIZED;
     case blink::kWebAXNameFromAttribute:
       return ui::AX_NAME_FROM_ATTRIBUTE;
+    case blink::kWebAXNameFromAttributeExplicitlyEmpty:
+      return ui::AX_NAME_FROM_ATTRIBUTE_EXPLICITLY_EMPTY;
     case blink::kWebAXNameFromCaption:
       return ui::AX_NAME_FROM_RELATED_ELEMENT;
     case blink::kWebAXNameFromContents:

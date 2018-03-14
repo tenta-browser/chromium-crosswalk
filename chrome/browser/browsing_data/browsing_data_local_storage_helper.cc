@@ -44,7 +44,7 @@ void GetUsageInfoCallback(
   }
 
   BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::Bind(callback, result));
+                          base::BindOnce(callback, result));
 }
 
 }  // namespace
@@ -91,7 +91,7 @@ void CannedBrowsingDataLocalStorageHelper::AddLocalStorage(
   if (!HasStorageScheme(origin_url))
     return;
   pending_local_storage_info_.insert(origin_url);
-  url::Origin origin(origin_url);
+  url::Origin origin = url::Origin::Create(origin_url);
   if (!origin.suborigin().empty()) {
     pending_origins_to_pending_suborigins_.insert(
         std::make_pair(origin.GetPhysicalOrigin().GetURL(), origin_url));
@@ -125,8 +125,8 @@ void CannedBrowsingDataLocalStorageHelper::StartFetching(
   for (const GURL& url : pending_local_storage_info_)
     result.push_back(LocalStorageInfo(url, 0, base::Time()));
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE, base::Bind(callback, result));
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::BindOnce(callback, result));
 }
 
 void CannedBrowsingDataLocalStorageHelper::DeleteOrigin(
@@ -149,7 +149,7 @@ void CannedBrowsingDataLocalStorageHelper::DeleteOrigin(
   // Similarly, if |origin_url| has a suborigin, the physical origin associated
   // with that suborigin must also be deleted. This is also taken care of on the
   // backend, so it's only necessary to clean up the pending storage.
-  url::Origin origin(origin_url);
+  url::Origin origin = url::Origin::Create(origin_url);
   if (!origin.suborigin().empty()) {
     GURL physical_origin(origin.GetPhysicalOrigin().GetURL());
     pending_local_storage_info_.erase(physical_origin);

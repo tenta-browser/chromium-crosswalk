@@ -5,16 +5,18 @@
 #ifndef CSSTransformValue_h
 #define CSSTransformValue_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "base/macros.h"
 #include "core/CoreExport.h"
 #include "core/css/cssom/CSSStyleValue.h"
 #include "core/css/cssom/CSSTransformComponent.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/HeapAllocator.h"
 
 namespace blink {
 
+class DOMMatrix;
+
 class CORE_EXPORT CSSTransformValue final : public CSSStyleValue {
-  WTF_MAKE_NONCOPYABLE(CSSTransformValue);
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -29,7 +31,9 @@ class CORE_EXPORT CSSTransformValue final : public CSSStyleValue {
 
   bool is2D() const;
 
-  const CSSValue* ToCSSValue() const override;
+  DOMMatrix* toMatrix(ExceptionState&) const;
+
+  const CSSValue* ToCSSValue(SecureContextMode) const override;
 
   StyleValueType GetType() const override { return kTransformType; }
 
@@ -39,18 +43,19 @@ class CORE_EXPORT CSSTransformValue final : public CSSStyleValue {
 
   size_t length() const { return transform_components_.size(); }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  virtual void Trace(blink::Visitor* visitor) {
     visitor->Trace(transform_components_);
     CSSStyleValue::Trace(visitor);
   }
 
  private:
-  CSSTransformValue() {}
+  CSSTransformValue() = default;
   CSSTransformValue(
       const HeapVector<Member<CSSTransformComponent>>& transform_components)
       : CSSStyleValue(), transform_components_(transform_components) {}
 
   HeapVector<Member<CSSTransformComponent>> transform_components_;
+  DISALLOW_COPY_AND_ASSIGN(CSSTransformValue);
 };
 
 }  // namespace blink

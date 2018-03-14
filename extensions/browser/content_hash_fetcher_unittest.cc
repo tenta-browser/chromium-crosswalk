@@ -14,6 +14,7 @@
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/version.h"
 #include "content/public/browser/browser_thread.h"
@@ -66,7 +67,7 @@ class ContentHashFetcherWaiter {
                 bool success,
                 bool force,
                 const std::set<base::FilePath>& mismatch_paths) {
-    result_ = base::MakeUnique<ContentHashFetcherResult>();
+    result_ = std::make_unique<ContentHashFetcherResult>();
     result_->extension_id = extension_id;
     result_->success = success;
     result_->force = force;
@@ -125,19 +126,16 @@ class MockDelegate : public ContentVerifierDelegate {
 
 class ContentHashFetcherTest : public ExtensionsTest {
  public:
-  ContentHashFetcherTest() {}
-  ~ContentHashFetcherTest() override {}
-
-  void SetUp() override {
-    ExtensionsTest::SetUp();
-    // We need a real IO thread to be able to intercept the network request
-    // for the missing verified_contents.json file.
-    browser_threads_.reset(new content::TestBrowserThreadBundle(
-        content::TestBrowserThreadBundle::REAL_IO_THREAD));
+  ContentHashFetcherTest()
+      // We need a real IO thread to be able to intercept the network request
+      // for the missing verified_contents.json file.
+      : ExtensionsTest(std::make_unique<content::TestBrowserThreadBundle>(
+            content::TestBrowserThreadBundle::REAL_IO_THREAD)) {
     request_context_ = new net::TestURLRequestContextGetter(
         content::BrowserThread::GetTaskRunnerForThread(
             content::BrowserThread::IO));
   }
+  ~ContentHashFetcherTest() override {}
 
   net::URLRequestContextGetter* request_context() {
     return request_context_.get();
@@ -171,30 +169,24 @@ class ContentHashFetcherTest : public ExtensionsTest {
   // of the file at |response_path|.
   void RegisterInterception(const GURL& url,
                             const base::FilePath& response_path) {
-    interceptor_ = base::MakeUnique<net::TestURLRequestInterceptor>(
+    interceptor_ = std::make_unique<net::TestURLRequestInterceptor>(
         url.scheme(), url.host(),
         content::BrowserThread::GetTaskRunnerForThread(
             content::BrowserThread::IO),
-        content::BrowserThread::GetBlockingPool());
+        base::CreateTaskRunnerWithTraits(
+            {base::MayBlock(), base::TaskPriority::BACKGROUND}));
     interceptor_->SetResponse(url, response_path);
   }
 
  protected:
-  std::unique_ptr<content::TestBrowserThreadBundle> browser_threads_;
   std::unique_ptr<net::TestURLRequestInterceptor> interceptor_;
   scoped_refptr<net::TestURLRequestContextGetter> request_context_;
   base::ScopedTempDir temp_dir_;
 };
 
-// Flaky on Linux and ChromeOS. https://crbug.com/702300
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
-#define MAYBE_MissingVerifiedContents DISABLED_MissingVerifiedContents
-#else
-#define MAYBE_MissingVerifiedContents MissingVerifiedContents
-#endif
 // This tests our ability to successfully fetch, parse, and validate a missing
 // verified_contents.json file for an extension.
-TEST_F(ContentHashFetcherTest, MAYBE_MissingVerifiedContents) {
+TEST_F(ContentHashFetcherTest, MissingVerifiedContents) {
   // We unzip the extension source to a temp directory to simulate it being
   // installed there, because the ContentHashFetcher will create the _metadata/
   // directory within the extension install dir and write the fetched
@@ -233,17 +225,9 @@ TEST_F(ContentHashFetcherTest, MAYBE_MissingVerifiedContents) {
       base::PathExists(file_util::GetVerifiedContentsPath(extension->path())));
 }
 
-// Flaky on Linux and ChromeOS. https://crbug.com/702300
-#if defined(OS_LINUX) || defined(OS_CHROMEOS)
-#define MAYBE_MissingVerifiedContentsAndCorrupt \
-  DISABLED_MissingVerifiedContentsAndCorrupt
-#else
-#define MAYBE_MissingVerifiedContentsAndCorrupt \
-  MissingVerifiedContentsAndCorrupt
-#endif
 // Similar to MissingVerifiedContents, but tests the case where the extension
 // actually has corruption.
-TEST_F(ContentHashFetcherTest, MAYBE_MissingVerifiedContentsAndCorrupt) {
+TEST_F(ContentHashFetcherTest, MissingVerifiedContentsAndCorrupt) {
   base::FilePath test_dir_base =
       GetTestPath(base::FilePath()).AppendASCII("missing_verified_contents");
   scoped_refptr<Extension> extension =

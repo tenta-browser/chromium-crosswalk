@@ -30,21 +30,14 @@
 #include <libxml/parserInternals.h>
 #include <libxslt/xslt.h>
 #include <memory>
-#include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptController.h"
-#include "bindings/core/v8/ScriptSourceCode.h"
-#include "core/HTMLNames.h"
-#include "core/XMLNSNames.h"
+#include "core/css/StyleEngine.h"
 #include "core/dom/CDATASection.h"
-#include "core/dom/ClassicScript.h"
 #include "core/dom/Comment.h"
 #include "core/dom/Document.h"
 #include "core/dom/DocumentFragment.h"
 #include "core/dom/DocumentParserTiming.h"
 #include "core/dom/DocumentType.h"
 #include "core/dom/ProcessingInstruction.h"
-#include "core/dom/ScriptLoader.h"
-#include "core/dom/StyleEngine.h"
 #include "core/dom/TransformSource.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/UseCounter.h"
@@ -52,6 +45,7 @@
 #include "core/html/HTMLTemplateElement.h"
 #include "core/html/parser/HTMLEntityParser.h"
 #include "core/html/parser/TextResourceDecoder.h"
+#include "core/html_names.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "core/loader/FrameLoader.h"
 #include "core/loader/ImageLoader.h"
@@ -61,15 +55,16 @@
 #include "core/xml/parser/SharedBufferReader.h"
 #include "core/xml/parser/XMLDocumentParserScope.h"
 #include "core/xml/parser/XMLParserInput.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "core/xmlns_names.h"
 #include "platform/SharedBuffer.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
-#include "platform/loader/fetch/FetchInitiatorTypeNames.h"
 #include "platform/loader/fetch/RawResource.h"
 #include "platform/loader/fetch/ResourceError.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
 #include "platform/loader/fetch/ResourceRequest.h"
 #include "platform/loader/fetch/ResourceResponse.h"
+#include "platform/loader/fetch/fetch_initiator_type_names.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "platform/wtf/AutoReset.h"
 #include "platform/wtf/PtrUtil.h"
@@ -315,12 +310,8 @@ void XMLDocumentParser::ClearCurrentNodeStack() {
   leaf_text_node_ = nullptr;
 
   if (current_node_stack_.size()) {  // Aborted parsing.
-    current_node_stack_.Clear();
+    current_node_stack_.clear();
   }
-}
-
-void XMLDocumentParser::insert(const SegmentedString&) {
-  NOTREACHED();
 }
 
 void XMLDocumentParser::Append(const String& input_source) {
@@ -366,8 +357,8 @@ bool XMLDocumentParser::UpdateLeafTextNode() {
     return true;
 
   leaf_text_node_->appendData(
-      ToString(buffered_text_.Data(), buffered_text_.size()));
-  buffered_text_.Clear();
+      ToString(buffered_text_.data(), buffered_text_.size()));
+  buffered_text_.clear();
   leaf_text_node_ = nullptr;
 
   // Mutation event handlers executed by appendData() might detach this parser.
@@ -375,11 +366,10 @@ bool XMLDocumentParser::UpdateLeafTextNode() {
 }
 
 void XMLDocumentParser::Detach() {
-  if (pending_script_) {
-    pending_script_->RemoveClient(this);
-    pending_script_ = nullptr;
-    parser_blocking_pending_script_load_start_time_ = 0.0;
-  }
+  if (script_runner_)
+    script_runner_->Detach();
+  script_runner_ = nullptr;
+
   ClearCurrentNodeStack();
   ScriptableDocumentParser::Detach();
 }
@@ -433,50 +423,8 @@ void XMLDocumentParser::InsertErrorMessageBlock() {
   xml_errors_.InsertErrorMessageBlock();
 }
 
-void XMLDocumentParser::NotifyFinished(Resource* unused_resource) {
-  DCHECK_EQ(unused_resource, pending_script_);
-
-  ScriptSourceCode source_code(pending_script_.Get());
-  bool error_occurred = pending_script_->ErrorOccurred();
-  bool was_canceled = pending_script_->WasCanceled();
-  double script_parser_blocking_time =
-      parser_blocking_pending_script_load_start_time_;
-  parser_blocking_pending_script_load_start_time_ = 0.0;
-
-  pending_script_->RemoveClient(this);
-  pending_script_ = nullptr;
-
-  Element* e = script_element_;
-  script_element_ = nullptr;
-
-  ScriptLoader* script_loader =
-      ScriptElementBase::FromElementIfPossible(e)->Loader();
-  DCHECK(script_loader);
-
-  if (error_occurred) {
-    script_loader->DispatchErrorEvent();
-  } else if (!was_canceled) {
-    if (script_parser_blocking_time > 0.0) {
-      DocumentParserTiming::From(*GetDocument())
-          .RecordParserBlockedOnScriptLoadDuration(
-              MonotonicallyIncreasingTime() - script_parser_blocking_time,
-              script_loader->WasCreatedDuringDocumentWrite());
-    }
-
-    if (!script_loader->ExecuteScript(ClassicScript::Create(source_code)))
-      script_loader->DispatchErrorEvent();
-    else
-      script_loader->DispatchLoadEvent();
-  }
-
-  script_element_ = nullptr;
-
-  if (!IsDetached() && !requesting_script_)
-    ResumeParsing();
-}
-
 bool XMLDocumentParser::IsWaitingForScripts() const {
-  return pending_script_;
+  return script_runner_ && script_runner_->HasParserBlockingScript();
 }
 
 void XMLDocumentParser::PauseParsing() {
@@ -567,7 +515,7 @@ static void ParseChunk(xmlParserCtxtPtr ctxt, const String& chunk) {
 }
 
 static void FinishParsing(xmlParserCtxtPtr ctxt) {
-  xmlParseChunk(ctxt, 0, 0, 1);
+  xmlParseChunk(ctxt, nullptr, 0, 1);
 }
 
 #define xmlParseChunk \
@@ -581,8 +529,8 @@ static bool IsLibxmlDefaultCatalogFile(const String& url_string) {
 
   // On Windows, libxml with catalogs enabled computes a URL relative
   // to where its DLL resides.
-  if (url_string.StartsWith("file:///", kTextCaseASCIIInsensitive) &&
-      url_string.EndsWith("/etc/catalog", kTextCaseASCIIInsensitive))
+  if (url_string.StartsWithIgnoringASCIICase("file:///") &&
+      url_string.EndsWithIgnoringASCIICase("/etc/catalog"))
     return true;
   return false;
 }
@@ -596,13 +544,11 @@ static bool ShouldAllowExternalLoad(const KURL& url) {
 
   // The most common DTD. There isn't much point in hammering www.w3c.org by
   // requesting this URL for every XHTML document.
-  if (url_string.StartsWith("http://www.w3.org/TR/xhtml",
-                            kTextCaseASCIIInsensitive))
+  if (url_string.StartsWithIgnoringASCIICase("http://www.w3.org/TR/xhtml"))
     return false;
 
   // Similarly, there isn't much point in requesting the SVG DTD.
-  if (url_string.StartsWith("http://www.w3.org/Graphics/SVG",
-                            kTextCaseASCIIInsensitive))
+  if (url_string.StartsWithIgnoringASCIICase("http://www.w3.org/Graphics/SVG"))
     return false;
 
   // The libxml doesn't give us a lot of context for deciding whether to allow
@@ -635,20 +581,21 @@ static void* OpenFunc(const char* uri) {
   DCHECK(XMLDocumentParserScope::current_document_);
   DCHECK_EQ(CurrentThread(), g_libxml_loader_thread);
 
-  KURL url(KURL(), uri);
+  KURL url(NullURL(), uri);
 
   if (!ShouldAllowExternalLoad(url))
     return &g_global_descriptor;
 
   KURL final_url;
-  RefPtr<const SharedBuffer> data;
+  scoped_refptr<const SharedBuffer> data;
 
   {
     Document* document = XMLDocumentParserScope::current_document_;
-    XMLDocumentParserScope scope(0);
+    XMLDocumentParserScope scope(nullptr);
     // FIXME: We should restore the original global error handler as well.
-    FetchParameters params(ResourceRequest(url), FetchInitiatorTypeNames::xml,
-                           ResourceFetcher::DefaultResourceOptions());
+    ResourceLoaderOptions options;
+    options.initiator_info.name = FetchInitiatorTypeNames::xml;
+    FetchParameters params(ResourceRequest(url), options);
     Resource* resource =
         RawResource::FetchSynchronously(params, document->Fetcher());
     if (resource && !resource->ErrorOccurred()) {
@@ -663,7 +610,7 @@ static void* OpenFunc(const char* uri) {
     return &g_global_descriptor;
 
   UseCounter::Count(XMLDocumentParserScope::current_document_,
-                    UseCounter::kXMLExternalResourceLoad);
+                    WebFeature::kXMLExternalResourceLoad);
 
   return new SharedBufferReader(data);
 }
@@ -706,19 +653,20 @@ static void InitializeLibXMLIfNecessary() {
   did_init = true;
 }
 
-PassRefPtr<XMLParserContext> XMLParserContext::CreateStringParser(
+scoped_refptr<XMLParserContext> XMLParserContext::CreateStringParser(
     xmlSAXHandlerPtr handlers,
     void* user_data) {
   InitializeLibXMLIfNecessary();
-  xmlParserCtxtPtr parser = xmlCreatePushParserCtxt(handlers, 0, 0, 0, 0);
+  xmlParserCtxtPtr parser =
+      xmlCreatePushParserCtxt(handlers, nullptr, nullptr, 0, nullptr);
   xmlCtxtUseOptions(parser, XML_PARSE_HUGE);
   parser->_private = user_data;
   parser->replaceEntities = true;
-  return AdoptRef(new XMLParserContext(parser));
+  return base::AdoptRef(new XMLParserContext(parser));
 }
 
 // Chunk should be encoded in UTF-8
-PassRefPtr<XMLParserContext> XMLParserContext::CreateMemoryParser(
+scoped_refptr<XMLParserContext> XMLParserContext::CreateMemoryParser(
     xmlSAXHandlerPtr handlers,
     void* user_data,
     const CString& chunk) {
@@ -726,7 +674,7 @@ PassRefPtr<XMLParserContext> XMLParserContext::CreateMemoryParser(
 
   // appendFragmentSource() checks that the length doesn't overflow an int.
   xmlParserCtxtPtr parser =
-      xmlCreateMemoryParserCtxt(chunk.Data(), chunk.length());
+      xmlCreateMemoryParserCtxt(chunk.data(), chunk.length());
 
   if (!parser)
     return nullptr;
@@ -750,7 +698,7 @@ PassRefPtr<XMLParserContext> XMLParserContext::CreateMemoryParser(
   parser->str_xml_ns = xmlDictLookup(parser->dict, XML_XML_NAMESPACE, 36);
   parser->_private = user_data;
 
-  return AdoptRef(new XMLParserContext(parser));
+  return base::AdoptRef(new XMLParserContext(parser));
 }
 
 // --------------------------------
@@ -759,9 +707,9 @@ bool XMLDocumentParser::SupportsXMLVersion(const String& version) {
   return version == "1.0";
 }
 
-XMLDocumentParser::XMLDocumentParser(Document& document, FrameView* frame_view)
+XMLDocumentParser::XMLDocumentParser(Document& document,
+                                     LocalFrameView* frame_view)
     : ScriptableDocumentParser(document),
-      has_view_(frame_view),
       context_(nullptr),
       current_node_(&document),
       is_currently_parsing8_bit_chunk_(false),
@@ -774,19 +722,20 @@ XMLDocumentParser::XMLDocumentParser(Document& document, FrameView* frame_view)
       requesting_script_(false),
       finish_called_(false),
       xml_errors_(&document),
+      script_runner_(frame_view ? XMLParserScriptRunner::Create(this)
+                                : nullptr),  // Don't execute scripts for
+                                             // documents without frames.
       script_start_position_(TextPosition::BelowRangePosition()),
-      parser_blocking_pending_script_load_start_time_(0.0),
       parsing_fragment_(false) {
   // This is XML being used as a document resource.
   if (frame_view && document.IsXMLDocument())
-    UseCounter::Count(document, UseCounter::kXMLDocument);
+    UseCounter::Count(document, WebFeature::kXMLDocument);
 }
 
 XMLDocumentParser::XMLDocumentParser(DocumentFragment* fragment,
                                      Element* parent_element,
                                      ParserContentPolicy parser_content_policy)
     : ScriptableDocumentParser(fragment->GetDocument(), parser_content_policy),
-      has_view_(false),
       context_(nullptr),
       current_node_(fragment),
       is_currently_parsing8_bit_chunk_(false),
@@ -799,24 +748,26 @@ XMLDocumentParser::XMLDocumentParser(DocumentFragment* fragment,
       requesting_script_(false),
       finish_called_(false),
       xml_errors_(&fragment->GetDocument()),
+      script_runner_(nullptr),  // Don't execute scripts for document fragments.
       script_start_position_(TextPosition::BelowRangePosition()),
       parsing_fragment_(true) {
-  // Add namespaces based on the parent node
+  // Step 2 of
+  // https://html.spec.whatwg.org/multipage/xhtml.html#xml-fragment-parsing-algorithm
+  // The following code collects prefix-namespace mapping in scope on
+  // |parent_element|.
   HeapVector<Member<Element>> elem_stack;
-  while (parent_element) {
+  for (; parent_element; parent_element = parent_element->parentElement())
     elem_stack.push_back(parent_element);
-
-    Element* grand_parent_element = parent_element->parentElement();
-    if (!grand_parent_element)
-      break;
-    parent_element = grand_parent_element;
-  }
 
   if (elem_stack.IsEmpty())
     return;
 
   for (; !elem_stack.IsEmpty(); elem_stack.pop_back()) {
     Element* element = elem_stack.back();
+    // According to https://dom.spec.whatwg.org/#locate-a-namespace, a namespace
+    // from the element name should have higher priority. So we check xmlns
+    // attributes first, then overwrite the map with the namespace of the
+    // element name.
     AttributeCollection attributes = element->Attributes();
     for (auto& attribute : attributes) {
       if (attribute.LocalName() == g_xmlns_atom)
@@ -824,12 +775,13 @@ XMLDocumentParser::XMLDocumentParser(DocumentFragment* fragment,
       else if (attribute.Prefix() == g_xmlns_atom)
         prefix_to_namespace_map_.Set(attribute.LocalName(), attribute.Value());
     }
+    if (element->namespaceURI().IsNull())
+      continue;
+    if (element->prefix().IsEmpty())
+      default_namespace_uri_ = element->namespaceURI();
+    else
+      prefix_to_namespace_map_.Set(element->prefix(), element->namespaceURI());
   }
-
-  // If the parent element is not in document tree, there may be no xmlns
-  // attribute; just default to the parent's namespace.
-  if (default_namespace_uri_.IsNull() && !parent_element->isConnected())
-    default_namespace_uri_ = parent_element->namespaceURI();
 }
 
 XMLParserContext::~XMLParserContext() {
@@ -839,18 +791,16 @@ XMLParserContext::~XMLParserContext() {
 }
 
 XMLDocumentParser::~XMLDocumentParser() {
-  DCHECK(!pending_script_);
 }
 
-DEFINE_TRACE(XMLDocumentParser) {
+void XMLDocumentParser::Trace(blink::Visitor* visitor) {
   visitor->Trace(current_node_);
   visitor->Trace(current_node_stack_);
   visitor->Trace(leaf_text_node_);
   visitor->Trace(xml_errors_);
-  visitor->Trace(pending_script_);
-  visitor->Trace(script_element_);
+  visitor->Trace(script_runner_);
   ScriptableDocumentParser::Trace(visitor);
-  ScriptResourceClient::Trace(visitor);
+  XMLParserScriptRunnerHost::Trace(visitor);
 }
 
 void XMLDocumentParser::DoWrite(const String& parse_string) {
@@ -860,7 +810,7 @@ void XMLDocumentParser::DoWrite(const String& parse_string) {
     InitializeParserContext();
 
   // Protect the libxml context from deletion during a callback
-  RefPtr<XMLParserContext> context = context_;
+  scoped_refptr<XMLParserContext> context = context_;
 
   // libXML throws an error if you try to switch the encoding for an empty
   // string.
@@ -947,7 +897,7 @@ static inline void HandleElementAttributes(
         attr_uri = ToAtomicString(attributes[i].uri);
       } else {
         const HashMap<AtomicString, AtomicString>::const_iterator it =
-            initial_prefix_to_namespace_map.Find(attr_prefix);
+            initial_prefix_to_namespace_map.find(attr_prefix);
         if (it != initial_prefix_to_namespace_map.end())
           attr_uri = it->value;
         else
@@ -1042,15 +992,15 @@ void XMLDocumentParser::StartElementNs(const AtomicString& local_name,
     return;
   }
 
-  if (isHTMLTemplateElement(*new_element))
-    PushCurrentNode(toHTMLTemplateElement(*new_element).content());
+  if (auto* template_element = ToHTMLTemplateElementOrNull(*new_element))
+    PushCurrentNode(template_element->content());
   else
     PushCurrentNode(new_element);
 
   // Note: |insertedByParser| will perform dispatching if this is an
   // HTMLHtmlElement.
-  if (isHTMLHtmlElement(*new_element) && is_first_element) {
-    toHTMLHtmlElement(*new_element).InsertedByParser();
+  if (IsHTMLHtmlElement(*new_element) && is_first_element) {
+    ToHTMLHtmlElement(*new_element).InsertedByParser();
   } else if (!parsing_fragment_ && is_first_element &&
              GetDocument()->GetFrame()) {
     GetDocument()->GetFrame()->Loader().DispatchDocumentElementAvailable();
@@ -1065,7 +1015,7 @@ void XMLDocumentParser::EndElementNs() {
 
   if (parser_paused_) {
     pending_callbacks_.push_back(
-        WTF::MakeUnique<PendingEndElementNSCallback>(script_start_position_));
+        std::make_unique<PendingEndElementNSCallback>(script_start_position_));
     return;
   }
 
@@ -1076,23 +1026,24 @@ void XMLDocumentParser::EndElementNs() {
   if (current_node_->IsElementNode())
     ToElement(n)->FinishParsingChildren();
 
-  ScriptElementBase* script_element_base =
-      n->IsElementNode()
-          ? ScriptElementBase::FromElementIfPossible(ToElement(n))
-          : nullptr;
-  if (!ScriptingContentIsAllowed(GetParserContentPolicy()) &&
-      script_element_base) {
-    PopCurrentNode();
-    n->remove(IGNORE_EXCEPTION_FOR_TESTING);
-    return;
-  }
-
-  if (!n->IsElementNode() || !has_view_) {
+  if (!n->IsElementNode()) {
     PopCurrentNode();
     return;
   }
 
   Element* element = ToElement(n);
+
+  if (element->IsScriptElement() &&
+      !ScriptingContentIsAllowed(GetParserContentPolicy())) {
+    PopCurrentNode();
+    n->remove(IGNORE_EXCEPTION_FOR_TESTING);
+    return;
+  }
+
+  if (!script_runner_) {
+    PopCurrentNode();
+    return;
+  }
 
   // The element's parent may have already been removed from document.
   // Parsing continues in this case, but scripts aren't executed.
@@ -1101,51 +1052,27 @@ void XMLDocumentParser::EndElementNs() {
     return;
   }
 
-  ScriptLoader* script_loader =
-      script_element_base ? script_element_base->Loader() : nullptr;
-  if (!script_loader) {
+  if (element->IsScriptElement()) {
+    requesting_script_ = true;
+    script_runner_->ProcessScriptElement(*GetDocument(), element,
+                                         script_start_position_);
+    requesting_script_ = false;
+  }
+
+  // A parser-blocking script might be set and synchronously executed in
+  // ProcessScriptElement() if the script was already ready, and in that case
+  // IsWaitingForScripts() is false here.
+  if (IsWaitingForScripts())
+    PauseParsing();
+
+  // JavaScript may have detached the parser
+  if (!IsDetached())
     PopCurrentNode();
-    return;
-  }
+}
 
-  // Don't load external scripts for standalone documents (for now).
-  DCHECK(!pending_script_);
-  requesting_script_ = true;
-
-  if (script_loader->PrepareScript(
-          script_start_position_,
-          ScriptLoader::kAllowLegacyTypeInTypeAttribute)) {
-    // FIXME: Script execution should be shared between
-    // the libxml2 and Qt XMLDocumentParser implementations.
-
-    if (script_loader->ReadyToBeParserExecuted()) {
-      if (!script_loader->ExecuteScript(ClassicScript::Create(ScriptSourceCode(
-              script_loader->ScriptContent(), GetDocument()->Url(),
-              script_start_position_)))) {
-        script_loader->DispatchErrorEvent();
-        return;
-      }
-    } else if (script_loader->WillBeParserExecuted()) {
-      pending_script_ = script_loader->GetResource();
-      DCHECK_EQ(parser_blocking_pending_script_load_start_time_, 0.0);
-      parser_blocking_pending_script_load_start_time_ =
-          MonotonicallyIncreasingTime();
-      script_element_ = element;
-      pending_script_->AddClient(this);
-      // m_pendingScript will be 0 if script was already loaded and
-      // addClient() executed it.
-      if (pending_script_)
-        PauseParsing();
-    } else {
-      script_element_ = nullptr;
-    }
-
-    // JavaScript may have detached the parser
-    if (IsDetached())
-      return;
-  }
-  requesting_script_ = false;
-  PopCurrentNode();
+void XMLDocumentParser::NotifyScriptExecuted() {
+  if (!IsDetached() && !requesting_script_)
+    ResumeParsing();
 }
 
 void XMLDocumentParser::SetScriptStartPosition(TextPosition text_position) {
@@ -1158,7 +1085,7 @@ void XMLDocumentParser::Characters(const xmlChar* chars, int length) {
 
   if (parser_paused_) {
     pending_callbacks_.push_back(
-        WTF::MakeUnique<PendingCharactersCallback>(chars, length));
+        std::make_unique<PendingCharactersCallback>(chars, length));
     return;
   }
 
@@ -1192,7 +1119,7 @@ void XMLDocumentParser::GetProcessingInstruction(const String& target,
 
   if (parser_paused_) {
     pending_callbacks_.push_back(
-        WTF::MakeUnique<PendingProcessingInstructionCallback>(target, data));
+        std::make_unique<PendingProcessingInstructionCallback>(target, data));
     return;
   }
 
@@ -1212,7 +1139,7 @@ void XMLDocumentParser::GetProcessingInstruction(const String& target,
   if (pi->IsCSS())
     saw_css_ = true;
 
-  if (!RuntimeEnabledFeatures::xsltEnabled())
+  if (!RuntimeEnabledFeatures::XSLTEnabled())
     return;
 
   saw_xsl_transform_ = !saw_first_element_ && pi->IsXSL();
@@ -1234,7 +1161,7 @@ void XMLDocumentParser::CdataBlock(const String& text) {
 
   if (parser_paused_) {
     pending_callbacks_.push_back(
-        WTF::MakeUnique<PendingCDATABlockCallback>(text));
+        std::make_unique<PendingCDATABlockCallback>(text));
     return;
   }
 
@@ -1250,7 +1177,8 @@ void XMLDocumentParser::Comment(const String& text) {
     return;
 
   if (parser_paused_) {
-    pending_callbacks_.push_back(WTF::MakeUnique<PendingCommentCallback>(text));
+    pending_callbacks_.push_back(
+        std::make_unique<PendingCommentCallback>(text));
     return;
   }
 
@@ -1405,9 +1333,9 @@ static size_t ConvertUTF16EntityToUTF8(const UChar* utf16_entity,
   if (conversion_result != WTF::Unicode::kConversionOK)
     return 0;
 
+  DCHECK_GT(target, original_target);
   // Even though we must pass the length, libxml expects the entity string to be
   // null terminated.
-  DCHECK_GT(target, original_target + 1);
   *target = '\0';
   return target - original_target;
 }
@@ -1417,7 +1345,7 @@ static xmlEntityPtr GetXHTMLEntity(const xmlChar* name) {
   size_t number_of_code_units = DecodeNamedEntityToUCharArray(
       reinterpret_cast<const char*>(name), utf16_decoded_entity);
   if (!number_of_code_units)
-    return 0;
+    return nullptr;
 
   DCHECK_LE(number_of_code_units, 4u);
   size_t entity_length_in_utf8 = ConvertUTF16EntityToUTF8(
@@ -1425,7 +1353,7 @@ static xmlEntityPtr GetXHTMLEntity(const xmlChar* name) {
       reinterpret_cast<char*>(g_shared_xhtml_entity_result),
       WTF_ARRAY_LENGTH(g_shared_xhtml_entity_result));
   if (!entity_length_in_utf8)
-    return 0;
+    return nullptr;
 
   xmlEntityPtr entity = SharedXHTMLEntity();
   entity->length = entity_length_in_utf8;
@@ -1534,7 +1462,7 @@ void XMLDocumentParser::InitializeParserContext(const CString& chunk) {
   if (parsing_fragment_) {
     context_ = XMLParserContext::CreateMemoryParser(&sax, this, chunk);
   } else {
-    DCHECK(!chunk.Data());
+    DCHECK(!chunk.data());
     context_ = XMLParserContext::CreateStringParser(&sax, this);
   }
 }
@@ -1561,7 +1489,7 @@ void XMLDocumentParser::DoEnd() {
     xmlDocPtr doc = XmlDocPtrForString(
         GetDocument(), original_source_for_transform_.ToString(),
         GetDocument()->Url().GetString());
-    GetDocument()->SetTransformSource(WTF::MakeUnique<TransformSource>(doc));
+    GetDocument()->SetTransformSource(std::make_unique<TransformSource>(doc));
     DocumentParser::StopParsing();
   }
 }
@@ -1570,13 +1498,13 @@ xmlDocPtr XmlDocPtrForString(Document* document,
                              const String& source,
                              const String& url) {
   if (source.IsEmpty())
-    return 0;
+    return nullptr;
   // Parse in a single chunk into an xmlDocPtr
   // FIXME: Hook up error handlers so that a failure to parse the main
   // document results in good error messages.
-  XMLDocumentParserScope scope(document, ErrorFunc, 0);
+  XMLDocumentParserScope scope(document, ErrorFunc, nullptr);
   XMLParserInput input(source);
-  return xmlReadMemory(input.Data(), input.size(), url.Latin1().Data(),
+  return xmlReadMemory(input.Data(), input.size(), url.Latin1().data(),
                        input.Encoding(), XSLT_PARSE_OPTIONS);
 }
 
@@ -1660,7 +1588,7 @@ bool XMLDocumentParser::AppendFragmentSource(const String& chunk) {
     // an error or a null byte. If we hit this DCHECK, we've found a test
     // case which demonstrates the need for this code.
     DCHECK(saw_error_ ||
-           (bytes_processed >= 0 && !chunk_as_utf8.Data()[bytes_processed]));
+           (bytes_processed >= 0 && !chunk_as_utf8.data()[bytes_processed]));
     return false;
   }
 
@@ -1716,7 +1644,7 @@ HashMap<String, String> ParseAttributes(const String& string, bool& attrs_ok) {
   memset(&sax, 0, sizeof(sax));
   sax.startElementNs = AttributesStartElementNsHandler;
   sax.initialized = XML_SAX2_MAGIC;
-  RefPtr<XMLParserContext> parser =
+  scoped_refptr<XMLParserContext> parser =
       XMLParserContext::CreateStringParser(&sax, &state);
   String parse_string = "<?xml version=\"1.0\"?><attrs " + string + " />";
   ParseChunk(parser->Context(), parse_string);

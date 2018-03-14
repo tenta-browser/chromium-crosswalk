@@ -4,12 +4,12 @@
 
 #include "ios/chrome/browser/ui/webui/sync_internals/sync_internals_message_handler.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/logging.h"
 #include "base/values.h"
 #include "components/browser_sync/profile_sync_service.h"
-#include "components/signin/core/browser/signin_manager.h"
 #include "components/sync/base/weak_handle.h"
 #include "components/sync/driver/about_sync_util.h"
 #include "components/sync/driver/sync_service.h"
@@ -19,7 +19,6 @@
 #include "components/sync/engine/events/protocol_event.h"
 #include "components/sync/js/js_event_details.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
-#include "ios/chrome/browser/signin/signin_manager_factory.h"
 #include "ios/chrome/browser/sync/ios_chrome_profile_sync_service_factory.h"
 #include "ios/chrome/common/channel_info.h"
 #include "ios/web/public/web_thread.h"
@@ -76,6 +75,11 @@ void SyncInternalsMessageHandler::RegisterMessages() {
       syncer::sync_ui_util::kGetAllNodes,
       base::Bind(&SyncInternalsMessageHandler::HandleGetAllNodes,
                  base::Unretained(this)));
+
+  web_ui()->RegisterMessageCallback(
+      syncer::sync_ui_util::kSetIncludeSpecifics,
+      base::Bind(&SyncInternalsMessageHandler::HandleSetIncludeSpecifics,
+                 base::Unretained(this)));
 }
 
 void SyncInternalsMessageHandler::HandleRegisterForEvents(
@@ -127,7 +131,7 @@ void SyncInternalsMessageHandler::HandleRequestListOfTypes(
        it.Inc()) {
     type_list->AppendString(ModelTypeToString(it.Get()));
   }
-  event_details.Set(syncer::sync_ui_util::kTypes, type_list.release());
+  event_details.Set(syncer::sync_ui_util::kTypes, std::move(type_list));
   web_ui()->CallJavascriptFunction(
       syncer::sync_ui_util::kDispatchEvent,
       base::Value(syncer::sync_ui_util::kOnReceivedListOfTypes), event_details);
@@ -148,6 +152,12 @@ void SyncInternalsMessageHandler::HandleGetAllNodes(
   }
 }
 
+void SyncInternalsMessageHandler::HandleSetIncludeSpecifics(
+    const base::ListValue* args) {
+  DCHECK_EQ(1U, args->GetSize());
+  include_specifics_ = args->GetList()[0].GetBool();
+}
+
 void SyncInternalsMessageHandler::OnReceivedAllNodes(
     int request_id,
     std::unique_ptr<base::ListValue> nodes) {
@@ -163,7 +173,7 @@ void SyncInternalsMessageHandler::OnStateChanged(syncer::SyncService* sync) {
 void SyncInternalsMessageHandler::OnProtocolEvent(
     const syncer::ProtocolEvent& event) {
   std::unique_ptr<base::DictionaryValue> value(
-      syncer::ProtocolEvent::ToValue(event));
+      syncer::ProtocolEvent::ToValue(event, include_specifics_));
   web_ui()->CallJavascriptFunction(
       syncer::sync_ui_util::kDispatchEvent,
       base::Value(syncer::sync_ui_util::kOnProtocolEvent), *value);
@@ -194,7 +204,7 @@ void SyncInternalsMessageHandler::EmitCounterUpdate(
   std::unique_ptr<base::DictionaryValue> details(new base::DictionaryValue());
   details->SetString(syncer::sync_ui_util::kModelType, ModelTypeToString(type));
   details->SetString(syncer::sync_ui_util::kCounterType, counter_type);
-  details->Set(syncer::sync_ui_util::kCounters, value.release());
+  details->Set(syncer::sync_ui_util::kCounters, std::move(value));
   web_ui()->CallJavascriptFunction(
       syncer::sync_ui_util::kDispatchEvent,
       base::Value(syncer::sync_ui_util::kOnCountersUpdated), *details);
@@ -209,14 +219,10 @@ void SyncInternalsMessageHandler::HandleJsEvent(const std::string& name,
 }
 
 void SyncInternalsMessageHandler::SendAboutInfo() {
-  ios::ChromeBrowserState* browser_state =
-      ios::ChromeBrowserState::FromWebUIIOS(web_ui());
-  SigninManager* signin_manager =
-      ios::SigninManagerFactory::GetForBrowserState(browser_state);
   syncer::SyncService* sync_service = GetSyncService();
   std::unique_ptr<base::DictionaryValue> value =
-      syncer::sync_ui_util::ConstructAboutInformation(
-          sync_service, signin_manager, GetChannel());
+      syncer::sync_ui_util::ConstructAboutInformation_DEPRECATED(sync_service,
+                                                                 GetChannel());
   web_ui()->CallJavascriptFunction(
       syncer::sync_ui_util::kDispatchEvent,
       base::Value(syncer::sync_ui_util::kOnAboutInfoUpdated), *value);

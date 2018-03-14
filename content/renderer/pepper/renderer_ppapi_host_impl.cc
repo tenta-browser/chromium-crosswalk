@@ -11,6 +11,7 @@
 #include "base/process/process_handle.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "content/public/common/origin_util.h"
 #include "content/renderer/pepper/fullscreen_container.h"
 #include "content/renderer/pepper/host_globals.h"
 #include "content/renderer/pepper/pepper_browser_connection.h"
@@ -58,7 +59,7 @@ RendererPpapiHostImpl::RendererPpapiHostImpl(
 RendererPpapiHostImpl::RendererPpapiHostImpl(
     PluginModule* module,
     const ppapi::PpapiPermissions& permissions)
-    : module_(module), dispatcher_(NULL), is_external_plugin_host_(false) {
+    : module_(module), dispatcher_(nullptr), is_external_plugin_host_(false) {
   // Hook the host up to the in-process router.
   in_process_router_.reset(new PepperInProcessRouter(this));
   ppapi_host_.reset(new ppapi::host::PpapiHost(
@@ -110,7 +111,7 @@ RendererPpapiHostImpl* RendererPpapiHostImpl::GetForPPInstance(
   PepperPluginInstanceImpl* instance =
       HostGlobals::Get()->GetInstance(pp_instance);
   if (!instance)
-    return NULL;
+    return nullptr;
 
   // All modules created by content will have their embedder state be the
   // host impl.
@@ -141,7 +142,7 @@ RenderFrame* RendererPpapiHostImpl::GetRenderFrameForInstance(
     PP_Instance instance) const {
   PepperPluginInstanceImpl* instance_object = GetAndValidateInstance(instance);
   if (!instance_object)
-    return NULL;
+    return nullptr;
 
   // Since we're the embedder, we can make assumptions about the helper on
   // the instance and get back to our RenderFrame.
@@ -152,7 +153,7 @@ RenderView* RendererPpapiHostImpl::GetRenderViewForInstance(
     PP_Instance instance) const {
   PepperPluginInstanceImpl* instance_object = GetAndValidateInstance(instance);
   if (!instance_object)
-    return NULL;
+    return nullptr;
 
   // Since we're the embedder, we can make assumptions about the helper on
   // the instance and get back to our RenderView.
@@ -172,14 +173,8 @@ blink::WebPluginContainer* RendererPpapiHostImpl::GetContainerForInstance(
     PP_Instance instance) const {
   PepperPluginInstanceImpl* instance_object = GetAndValidateInstance(instance);
   if (!instance_object)
-    return NULL;
+    return nullptr;
   return instance_object->container();
-}
-
-base::ProcessId RendererPpapiHostImpl::GetPluginPID() const {
-  if (dispatcher_)
-    return dispatcher_->peer_pid();
-  return base::kNullProcessId;
 }
 
 bool RendererPpapiHostImpl::HasUserGesture(PP_Instance instance) const {
@@ -264,7 +259,7 @@ void RendererPpapiHostImpl::CreateBrowserResourceHosts(
   if (!browser_connection) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(callback, std::vector<int>(nested_msgs.size(), 0)));
+        base::BindOnce(callback, std::vector<int>(nested_msgs.size(), 0)));
   } else {
     browser_connection->SendBrowserCreate(
         module_->GetPluginChildId(), instance, nested_msgs, callback);
@@ -278,14 +273,26 @@ GURL RendererPpapiHostImpl::GetDocumentURL(PP_Instance pp_instance) const {
   return instance->document_url();
 }
 
+bool RendererPpapiHostImpl::IsSecureContext(PP_Instance pp_instance) const {
+  PepperPluginInstanceImpl* instance = GetAndValidateInstance(pp_instance);
+  if (!instance)
+    return false;
+  return instance->GetContainer()->GetDocument().IsSecureContext() &&
+         content::IsOriginSecure(instance->GetPluginURL());
+}
+
+int RendererPpapiHostImpl::GetPluginChildId() const {
+  return module_->GetPluginChildId();
+}
+
 PepperPluginInstanceImpl* RendererPpapiHostImpl::GetAndValidateInstance(
     PP_Instance pp_instance) const {
   PepperPluginInstanceImpl* instance =
       HostGlobals::Get()->GetInstance(pp_instance);
   if (!instance)
-    return NULL;
+    return nullptr;
   if (!instance->IsValidInstanceOf(module_))
-    return NULL;
+    return nullptr;
   return instance;
 }
 

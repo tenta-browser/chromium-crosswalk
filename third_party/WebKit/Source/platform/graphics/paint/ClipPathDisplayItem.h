@@ -21,14 +21,12 @@ class PLATFORM_EXPORT BeginClipPathDisplayItem final
         clip_path_(clip_path.GetSkPath()) {}
 
   void Replay(GraphicsContext&) const override;
-  void AppendToWebDisplayItemList(const IntRect&,
+  void AppendToWebDisplayItemList(const LayoutSize&,
                                   WebDisplayItemList*) const override;
 
-  void AnalyzeForGpuRasterization(SkPictureGpuAnalyzer&) const override;
-
  private:
-#ifndef NDEBUG
-  void DumpPropertiesAsDebugString(WTF::StringBuilder&) const override;
+#if DCHECK_IS_ON()
+  void PropertiesAsJSON(JSONObject&) const override;
 #endif
   bool Equals(const DisplayItem& other) const final {
     return DisplayItem::Equals(other) &&
@@ -46,7 +44,7 @@ class PLATFORM_EXPORT EndClipPathDisplayItem final
       : PairedEndDisplayItem(client, kEndClipPath, sizeof(*this)) {}
 
   void Replay(GraphicsContext&) const override;
-  void AppendToWebDisplayItemList(const IntRect&,
+  void AppendToWebDisplayItemList(const LayoutSize&,
                                   WebDisplayItemList*) const override;
 
  private:

@@ -11,6 +11,7 @@
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/task_runner.h"
 
 #include "testing/gmock/include/gmock/gmock.h"
@@ -77,23 +78,22 @@ class StartupTaskRunnerTest : public testing::Test {
 
 class MockTaskRunner {
  public:
-  MOCK_METHOD2(PostDelayedTask,
-               bool(const tracked_objects::Location&, base::TimeDelta));
+  MOCK_METHOD2(PostDelayedTask, bool(const base::Location&, base::TimeDelta));
   MOCK_METHOD2(PostNonNestableDelayedTask,
-               bool(const tracked_objects::Location&, base::TimeDelta));
+               bool(const base::Location&, base::TimeDelta));
 };
 
 class TaskRunnerProxy : public base::SingleThreadTaskRunner {
  public:
   TaskRunnerProxy(MockTaskRunner* mock) : mock_(mock) {}
-  bool RunsTasksOnCurrentThread() const override { return true; }
-  bool PostDelayedTask(const tracked_objects::Location& location,
+  bool RunsTasksInCurrentSequence() const override { return true; }
+  bool PostDelayedTask(const base::Location& location,
                        base::OnceClosure closure,
                        base::TimeDelta delta) override {
     last_task_ = std::move(closure);
     return mock_->PostDelayedTask(location, delta);
   }
-  bool PostNonNestableDelayedTask(const tracked_objects::Location& location,
+  bool PostNonNestableDelayedTask(const base::Location& location,
                                   base::OnceClosure closure,
                                   base::TimeDelta delta) override {
     last_task_ = std::move(closure);

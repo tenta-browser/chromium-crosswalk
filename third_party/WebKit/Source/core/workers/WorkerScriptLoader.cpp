@@ -28,30 +28,29 @@
 #include "core/workers/WorkerScriptLoader.h"
 
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/html/parser/TextResourceDecoder.h"
 #include "core/inspector/ConsoleMessage.h"
+#include "core/loader/AllowedByNosniff.h"
 #include "core/loader/WorkerThreadableLoader.h"
 #include "core/loader/resource/ScriptResource.h"
 #include "core/origin_trials/OriginTrialContext.h"
 #include "core/workers/WorkerGlobalScope.h"
-#include "platform/HTTPNames.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
 #include "platform/loader/fetch/ResourceResponse.h"
+#include "platform/loader/fetch/TextResourceDecoderOptions.h"
 #include "platform/network/ContentSecurityPolicyResponseHeaders.h"
 #include "platform/network/NetworkUtils.h"
+#include "platform/network/http_names.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "platform/wtf/PtrUtil.h"
-#include "platform/wtf/RefPtr.h"
 #include "public/platform/WebAddressSpace.h"
-#include "public/platform/WebURLRequest.h"
 
 namespace blink {
 
 WorkerScriptLoader::WorkerScriptLoader()
-    : response_callback_(nullptr),
-      finished_callback_(nullptr),
-      request_context_(WebURLRequest::kRequestContextWorker),
-      response_address_space_(kWebAddressSpacePublic) {}
+    : response_address_space_(kWebAddressSpacePublic) {}
 
 WorkerScriptLoader::~WorkerScriptLoader() {
   // If |m_threadableLoader| is still working, we have to cancel it here.
@@ -65,22 +64,24 @@ WorkerScriptLoader::~WorkerScriptLoader() {
 void WorkerScriptLoader::LoadSynchronously(
     ExecutionContext& execution_context,
     const KURL& url,
-    CrossOriginRequestPolicy cross_origin_request_policy,
+    WebURLRequest::RequestContext request_context,
     WebAddressSpace creation_address_space) {
   url_ = url;
   execution_context_ = &execution_context;
 
-  ResourceRequest request(CreateResourceRequest(creation_address_space));
+  ResourceRequest request(url);
+  request.SetHTTPMethod(HTTPNames::GET);
+  request.SetExternalRequestStateFromRequestorAddressSpace(
+      creation_address_space);
+  request.SetRequestContext(request_context);
+
   SECURITY_DCHECK(execution_context.IsWorkerGlobalScope());
 
   ThreadableLoaderOptions options;
-  options.cross_origin_request_policy = cross_origin_request_policy;
-  // FIXME: Should we add EnforceScriptSrcDirective here?
-  options.content_security_policy_enforcement =
-      kDoNotEnforceContentSecurityPolicy;
 
   ResourceLoaderOptions resource_loader_options;
-  resource_loader_options.allow_credentials = kAllowStoredCredentials;
+  resource_loader_options.parser_disposition =
+      ParserDisposition::kNotParserInserted;
 
   WorkerThreadableLoader::LoadResourceSynchronously(
       ToWorkerGlobalScope(execution_context), request, *this, options,
@@ -90,28 +91,35 @@ void WorkerScriptLoader::LoadSynchronously(
 void WorkerScriptLoader::LoadAsynchronously(
     ExecutionContext& execution_context,
     const KURL& url,
-    CrossOriginRequestPolicy cross_origin_request_policy,
+    WebURLRequest::RequestContext request_context,
+    network::mojom::FetchRequestMode fetch_request_mode,
+    network::mojom::FetchCredentialsMode fetch_credentials_mode,
     WebAddressSpace creation_address_space,
-    std::unique_ptr<WTF::Closure> response_callback,
-    std::unique_ptr<WTF::Closure> finished_callback) {
+    WTF::Closure response_callback,
+    WTF::Closure finished_callback) {
   DCHECK(response_callback || finished_callback);
   response_callback_ = std::move(response_callback);
   finished_callback_ = std::move(finished_callback);
   url_ = url;
   execution_context_ = &execution_context;
 
-  ResourceRequest request(CreateResourceRequest(creation_address_space));
+  ResourceRequest request(url);
+  request.SetHTTPMethod(HTTPNames::GET);
+  request.SetExternalRequestStateFromRequestorAddressSpace(
+      creation_address_space);
+  request.SetRequestContext(request_context);
+  request.SetFetchRequestMode(fetch_request_mode);
+  request.SetFetchCredentialsMode(fetch_credentials_mode);
+
   ThreadableLoaderOptions options;
-  options.cross_origin_request_policy = cross_origin_request_policy;
 
   ResourceLoaderOptions resource_loader_options;
-  resource_loader_options.allow_credentials = kAllowStoredCredentials;
 
   // During create, callbacks may happen which could remove the last reference
   // to this object, while some of the callchain assumes that the client and
   // loader wouldn't be deleted within callbacks.
   // (E.g. see crbug.com/524694 for why we can't easily remove this protect)
-  RefPtr<WorkerScriptLoader> protect(this);
+  scoped_refptr<WorkerScriptLoader> protect(this);
   need_to_cancel_ = true;
   threadable_loader_ = ThreadableLoader::Create(
       execution_context, this, options, resource_loader_options);
@@ -125,16 +133,6 @@ const KURL& WorkerScriptLoader::ResponseURL() const {
   return response_url_;
 }
 
-ResourceRequest WorkerScriptLoader::CreateResourceRequest(
-    WebAddressSpace creation_address_space) {
-  ResourceRequest request(url_);
-  request.SetHTTPMethod(HTTPNames::GET);
-  request.SetRequestContext(request_context_);
-  request.SetExternalRequestStateFromRequestorAddressSpace(
-      creation_address_space);
-  return request;
-}
-
 void WorkerScriptLoader::DidReceiveResponse(
     unsigned long identifier,
     const ResourceResponse& response,
@@ -144,12 +142,7 @@ void WorkerScriptLoader::DidReceiveResponse(
     NotifyError();
     return;
   }
-  if (!ScriptResource::MimeTypeAllowedByNosniff(response)) {
-    execution_context_->AddConsoleMessage(ConsoleMessage::Create(
-        kSecurityMessageSource, kErrorMessageLevel,
-        "Refused to execute script from '" + url_.ElidedString() +
-            "' because its MIME type ('" + response.HttpContentType() +
-            "') is not executable, and strict MIME type checking is enabled."));
+  if (!AllowedByNosniff::MimeTypeAsScript(execution_context_, response)) {
     NotifyError();
     return;
   }
@@ -171,7 +164,7 @@ void WorkerScriptLoader::DidReceiveResponse(
   }
 
   if (response_callback_)
-    (*response_callback_)();
+    std::move(response_callback_).Run();
 }
 
 void WorkerScriptLoader::DidReceiveData(const char* data, unsigned len) {
@@ -179,11 +172,10 @@ void WorkerScriptLoader::DidReceiveData(const char* data, unsigned len) {
     return;
 
   if (!decoder_) {
-    if (!response_encoding_.IsEmpty())
-      decoder_ =
-          TextResourceDecoder::Create("text/javascript", response_encoding_);
-    else
-      decoder_ = TextResourceDecoder::Create("text/javascript", "UTF-8");
+    decoder_ = TextResourceDecoder::Create(TextResourceDecoderOptions(
+        TextResourceDecoderOptions::kPlainTextContent,
+        response_encoding_.IsEmpty() ? UTF8Encoding()
+                                     : WTF::TextEncoding(response_encoding_)));
   }
 
   if (!len)
@@ -193,8 +185,8 @@ void WorkerScriptLoader::DidReceiveData(const char* data, unsigned len) {
 }
 
 void WorkerScriptLoader::DidReceiveCachedMetadata(const char* data, int size) {
-  cached_metadata_ = WTF::MakeUnique<Vector<char>>(size);
-  memcpy(cached_metadata_->Data(), data, size);
+  cached_metadata_ = std::make_unique<Vector<char>>(size);
+  memcpy(cached_metadata_->data(), data, size);
 }
 
 void WorkerScriptLoader::DidFinishLoading(unsigned long identifier, double) {
@@ -243,8 +235,7 @@ void WorkerScriptLoader::NotifyFinished() {
   if (!finished_callback_)
     return;
 
-  std::unique_ptr<WTF::Closure> callback = std::move(finished_callback_);
-  (*callback)();
+  std::move(finished_callback_).Run();
 }
 
 void WorkerScriptLoader::ProcessContentSecurityPolicy(

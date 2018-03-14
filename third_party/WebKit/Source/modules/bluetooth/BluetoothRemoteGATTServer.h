@@ -5,11 +5,11 @@
 #ifndef BluetoothRemoteGATTServer_h
 #define BluetoothRemoteGATTServer_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/modules/v8/StringOrUnsignedLong.h"
+#include "bindings/modules/v8/string_or_unsigned_long.h"
 #include "core/dom/ContextLifecycleObserver.h"
 #include "modules/bluetooth/BluetoothDevice.h"
 #include "mojo/public/cpp/bindings/associated_binding_set.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Heap.h"
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/modules/bluetooth/web_bluetooth.mojom-blink.h"
@@ -24,8 +24,7 @@ class ScriptState;
 // BluetoothRemoteGATTServer provides a way to interact with a connected
 // bluetooth peripheral.
 class BluetoothRemoteGATTServer
-    : public GarbageCollectedFinalized<BluetoothRemoteGATTServer>,
-      public ScriptWrappable,
+    : public ScriptWrappable,
       public ContextLifecycleObserver,
       public mojom::blink::WebBluetoothServerClient {
   USING_PRE_FINALIZER(BluetoothRemoteGATTServer, Dispose);
@@ -57,7 +56,7 @@ class BluetoothRemoteGATTServer
   // and returns true, false otherwise.
   bool RemoveFromActiveAlgorithms(ScriptPromiseResolver*);
   // Removes all ScriptPromiseResolvers from the set of Active Algorithms.
-  void ClearActiveAlgorithms() { active_algorithms_.Clear(); }
+  void ClearActiveAlgorithms() { active_algorithms_.clear(); }
 
   // If gatt is connected then sets gatt.connected to false and disconnects.
   // This function only performs the necessary steps to ensure a device
@@ -76,7 +75,7 @@ class BluetoothRemoteGATTServer
   void Dispose();
 
   // Interface required by Garbage Collectoin:
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
   // IDL exposed interface:
   BluetoothDevice* device() { return device_; }

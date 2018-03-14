@@ -5,13 +5,14 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_STATUS_ICONS_STATUS_TRAY_STATE_CHANGER_WIN_H_
 #define CHROME_BROWSER_UI_VIEWS_STATUS_ICONS_STATUS_TRAY_STATE_CHANGER_WIN_H_
 
+#include <wrl/client.h>
+
 #include <memory>
 
 #include "base/macros.h"
 #include "base/strings/string16.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/threading/thread_checker.h"
 #include "base/win/iunknown_impl.h"
-#include "base/win/scoped_comptr.h"
 
 // The known values for NOTIFYITEM's dwPreference member.
 enum NOTIFYITEM_PREFERENCE {
@@ -53,8 +54,7 @@ class __declspec(uuid("D782CCBA-AFB0-43F1-94DB-FDA3779EACCB")) INotificationCB
 // overflow area to the taskbar, and refuses to do anything if the user has
 // explicitly marked an icon to be always hidden.
 class StatusTrayStateChangerWin : public INotificationCB,
-                                  public base::win::IUnknownImpl,
-                                  public base::NonThreadSafe {
+                                  public base::win::IUnknownImpl {
  public:
   StatusTrayStateChangerWin(UINT icon_id, HWND window);
 
@@ -109,7 +109,7 @@ class StatusTrayStateChangerWin : public INotificationCB,
 
   // Storing IUnknown since we will need to use different interfaces
   // for different versions of Windows.
-  base::win::ScopedComPtr<IUnknown> tray_notify_;
+  Microsoft::WRL::ComPtr<IUnknown> tray_notify_;
   InterfaceVersion interface_version_;
 
   // The ID assigned to the notification area icon that we want to manipulate.
@@ -128,6 +128,8 @@ class StatusTrayStateChangerWin : public INotificationCB,
   //   StatusTrayStateChangerWin->Notify(NOTIFYITEM);
   // so we can't just return the notifyitem we're looking for.
   std::unique_ptr<NOTIFYITEM> notify_item_;
+
+  THREAD_CHECKER(thread_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(StatusTrayStateChangerWin);
 };

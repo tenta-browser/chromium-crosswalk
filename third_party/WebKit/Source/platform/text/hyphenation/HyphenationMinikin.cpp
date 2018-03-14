@@ -141,26 +141,28 @@ static LocaleMap CreateLocaleFallbackMap() {
   return map;
 }
 
-PassRefPtr<Hyphenation> Hyphenation::PlatformGetHyphenation(
+scoped_refptr<Hyphenation> Hyphenation::PlatformGetHyphenation(
     const AtomicString& locale) {
-  RefPtr<HyphenationMinikin> hyphenation(AdoptRef(new HyphenationMinikin));
+  scoped_refptr<HyphenationMinikin> hyphenation(
+      base::AdoptRef(new HyphenationMinikin));
   if (hyphenation->OpenDictionary(locale.LowerASCII()))
-    return hyphenation.Release();
-  hyphenation.Clear();
+    return hyphenation;
+  hyphenation = nullptr;
 
   DEFINE_STATIC_LOCAL(LocaleMap, locale_fallback, (CreateLocaleFallbackMap()));
-  const auto& it = locale_fallback.Find(locale);
+  const auto& it = locale_fallback.find(locale);
   if (it != locale_fallback.end())
     return LayoutLocale::Get(it->value)->GetHyphenation();
 
   return nullptr;
 }
 
-PassRefPtr<HyphenationMinikin> HyphenationMinikin::FromFileForTesting(
+scoped_refptr<HyphenationMinikin> HyphenationMinikin::FromFileForTesting(
     base::File file) {
-  RefPtr<HyphenationMinikin> hyphenation(AdoptRef(new HyphenationMinikin));
+  scoped_refptr<HyphenationMinikin> hyphenation(
+      base::AdoptRef(new HyphenationMinikin));
   if (hyphenation->OpenDictionary(std::move(file)))
-    return hyphenation.Release();
+    return hyphenation;
   return nullptr;
 }
 

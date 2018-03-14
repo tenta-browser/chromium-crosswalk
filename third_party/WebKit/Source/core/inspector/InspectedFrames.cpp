@@ -9,7 +9,9 @@
 
 namespace blink {
 
-InspectedFrames::InspectedFrames(LocalFrame* root) : root_(root) {}
+InspectedFrames::InspectedFrames(LocalFrame* root,
+                                 const String& instrumentation_token)
+    : root_(root), instrumentation_token_(instrumentation_token) {}
 
 InspectedFrames::Iterator InspectedFrames::begin() {
   return Iterator(root_, root_);
@@ -20,7 +22,7 @@ InspectedFrames::Iterator InspectedFrames::end() {
 }
 
 bool InspectedFrames::Contains(LocalFrame* frame) const {
-  return frame->InstrumentingAgents() == root_->InstrumentingAgents();
+  return frame->GetProbeSink() == root_->GetProbeSink();
 }
 
 LocalFrame* InspectedFrames::FrameWithSecurityOrigin(
@@ -45,7 +47,7 @@ InspectedFrames::Iterator& InspectedFrames::Iterator::operator++() {
     if (!frame->IsLocalFrame())
       continue;
     LocalFrame* local = ToLocalFrame(frame);
-    if (local->InstrumentingAgents() == root_->InstrumentingAgents()) {
+    if (local->GetProbeSink() == root_->GetProbeSink()) {
       current_ = local;
       break;
     }
@@ -67,7 +69,7 @@ bool InspectedFrames::Iterator::operator!=(const Iterator& other) {
   return !(*this == other);
 }
 
-DEFINE_TRACE(InspectedFrames) {
+void InspectedFrames::Trace(blink::Visitor* visitor) {
   visitor->Trace(root_);
 }
 

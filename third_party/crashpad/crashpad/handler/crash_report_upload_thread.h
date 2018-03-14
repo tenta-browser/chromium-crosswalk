@@ -20,6 +20,8 @@
 
 #include "base/macros.h"
 #include "client/crash_report_database.h"
+#include "util/misc/uuid.h"
+#include "util/stdlib/thread_safe_vector.h"
 #include "util/thread/worker_thread.h"
 
 namespace crashpad {
@@ -32,24 +34,40 @@ namespace crashpad {
 //! report has been added to the database by calling ReportPending().
 //!
 //! Independently of being triggered by ReportPending(), objects of this class
-//! periodically examine the database for pending reports. This allows failed
-//! upload attempts for reports left in the pending state to be retried. It also
-//! catches reports that are added without a ReportPending() signal being
-//! caught. This may happen if crash reports are added to the database by other
-//! processes.
+//! can periodically examine the database for pending reports. This allows
+//! failed upload attempts for reports left in the pending state to be retried.
+//! It also catches reports that are added without a ReportPending() signal
+//! being caught. This may happen if crash reports are added to the database by
+//! other processes.
 class CrashReportUploadThread : public WorkerThread::Delegate {
  public:
+   //! \brief Options to be passed to the CrashReportUploadThread constructor.
+   struct Options {
+    //! Whether client identifying parameters like product name or version
+    //! should be added to the URL.
+    bool identify_client_via_url;
+
+    //! Whether uploads should be throttled to a (currently hardcoded) rate.
+    bool rate_limit;
+
+    //! Whether uploads should use `gzip` compression.
+    bool upload_gzip;
+
+    //! Whether to periodically check for new pending reports not already known
+    //! to exist. When `false`, only an initial upload attempt will be made for
+    //! reports known to exist by having been added by the ReportPending()
+    //! method. No scans for new pending reports will be conducted.
+    bool watch_pending_reports;
+  };
+
   //! \brief Constructs a new object.
   //!
   //! \param[in] database The database to upload crash reports from.
   //! \param[in] url The URL of the server to upload crash reports to.
-  //! \param[in] rate_limit Whether uploads should be throttled to a (currently
-  //!     hardcoded) rate.
-  //! \param[in] upload_gzip Whether uploads should use `gzip` compression.
+  //! \param[in] options Options for the report uploads.
   CrashReportUploadThread(CrashReportDatabase* database,
                           const std::string& url,
-                          bool rate_limit,
-                          bool upload_gzip);
+                          const Options& options);
   ~CrashReportUploadThread();
 
   //! \brief Starts a dedicated upload thread, which executes ThreadMain().
@@ -75,8 +93,11 @@ class CrashReportUploadThread : public WorkerThread::Delegate {
   //! \brief Informs the upload thread that a new pending report has been added
   //!     to the database.
   //!
+  //! \param[in] report_uuid The unique identifier of the newly added pending
+  //!     report.
+  //!
   //! This method may be called from any thread.
-  void ReportPending();
+  void ReportPending(const UUID& report_uuid);
 
  private:
   //! \brief The result code from UploadReport().
@@ -99,8 +120,13 @@ class CrashReportUploadThread : public WorkerThread::Delegate {
     kRetry,
   };
 
-  //! \brief Obtains all pending reports from the database, and calls
-  //!     ProcessPendingReport() to process each one.
+  //! \brief Calls ProcessPendingReport() on pending reports.
+  //!
+  //! Assuming Stop() has not been called, this will process reports that the
+  //! object has been made aware of in ReportPending(). Additionally, if the
+  //! object was constructed with \a watch_pending_reports, it will also scan
+  //! the crash report database for other pending reports, and process those as
+  //! well.
   void ProcessPendingReports();
 
   //! \brief Processes a single pending report from the database.
@@ -137,11 +163,11 @@ class CrashReportUploadThread : public WorkerThread::Delegate {
   //!     been called on any thread, as well as periodically on a timer.
   void DoWork(const WorkerThread* thread) override;
 
-  std::string url_;
+  const Options options_;
+  const std::string url_;
   WorkerThread thread_;
+  ThreadSafeVector<UUID> known_pending_report_uuids_;
   CrashReportDatabase* database_;  // weak
-  bool rate_limit_;
-  bool upload_gzip_;
 
   DISALLOW_COPY_AND_ASSIGN(CrashReportUploadThread);
 };

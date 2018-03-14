@@ -9,13 +9,15 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/time/time.h"
 #include "crypto/encryptor.h"
 #include "crypto/symmetric_key.h"
 #include "media/base/audio_decoder_config.h"
-#include "media/base/cdm_key_information.h"
 #include "media/base/cdm_promise.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/decrypt_config.h"
@@ -31,6 +33,43 @@
 
 namespace media {
 
+namespace {
+
+// Vastly simplified ACM random class, based on media/base/test_random.h.
+// base/rand_util.h doesn't work in the sandbox. This class generates
+// predictable sequences of pseudorandom numbers. These are only used for
+// persistent session IDs, so unpredictable sequences are not necessary.
+uint32_t Rand(uint32_t seed) {
+  static const uint64_t A = 16807;        // bits 14, 8, 7, 5, 2, 1, 0
+  static const uint64_t M = 2147483647L;  // 2^32-1
+  return static_cast<uint32_t>((seed * A) % M);
+}
+
+// Create a random session ID. Returned value is a printable string to make
+// logging the session ID easier.
+std::string GenerateSessionId() {
+  // Create a random value. There is a slight chance that the same ID is
+  // generated in different processes, but session IDs are only ever saved
+  // by External Clear Key, which is test only.
+  static uint32_t seed = 0;
+  if (!seed) {
+    // If this is the first call, use the current time as the starting value.
+    seed = static_cast<uint32_t>(base::Time::Now().ToInternalValue());
+  }
+  seed = Rand(seed);
+
+  // Include an incrementing value to ensure that the session ID is unique
+  // in this process.
+  static uint32_t next_session_id_suffix = 0;
+  next_session_id_suffix++;
+
+  return base::HexEncode(&seed, sizeof(seed)) +
+         base::HexEncode(&next_session_id_suffix,
+                         sizeof(next_session_id_suffix));
+}
+
+}  // namespace
+
 // Keeps track of the session IDs and DecryptionKeys. The keys are ordered by
 // insertion time (last insertion is first). It takes ownership of the
 // DecryptionKeys.
@@ -42,8 +81,8 @@ class AesDecryptor::SessionIdDecryptionKeyMap {
       std::list<std::pair<std::string, std::unique_ptr<DecryptionKey>>>;
 
  public:
-  SessionIdDecryptionKeyMap() {}
-  ~SessionIdDecryptionKeyMap() {}
+  SessionIdDecryptionKeyMap() = default;
+  ~SessionIdDecryptionKeyMap() = default;
 
   // Replaces value if |session_id| is already present, or adds it if not.
   // This |decryption_key| becomes the latest until another insertion or
@@ -111,8 +150,6 @@ void AesDecryptor::SessionIdDecryptionKeyMap::Erase(
   key_list_.erase(position);
 }
 
-uint32_t AesDecryptor::next_session_id_ = 1;
-
 enum ClearBytesBufferSel {
   kSrcContainsClearBytes,
   kDstContainsClearBytes
@@ -137,8 +174,9 @@ static void CopySubsamples(const std::vector<SubsampleEntry>& subsamples,
 
 // Decrypts |input| using |key|.  Returns a DecoderBuffer with the decrypted
 // data if decryption succeeded or NULL if decryption failed.
-static scoped_refptr<DecoderBuffer> DecryptData(const DecoderBuffer& input,
-                                                crypto::SymmetricKey* key) {
+static scoped_refptr<DecoderBuffer> DecryptData(
+    const DecoderBuffer& input,
+    const crypto::SymmetricKey* key) {
   CHECK(input.data_size());
   CHECK(input.decrypt_config());
   CHECK(key);
@@ -231,13 +269,15 @@ static scoped_refptr<DecoderBuffer> DecryptData(const DecoderBuffer& input,
   return output;
 }
 
-AesDecryptor::AesDecryptor(const GURL& /* security_origin */,
-                           const SessionMessageCB& session_message_cb,
-                           const SessionClosedCB& session_closed_cb,
-                           const SessionKeysChangeCB& session_keys_change_cb)
+AesDecryptor::AesDecryptor(
+    const SessionMessageCB& session_message_cb,
+    const SessionClosedCB& session_closed_cb,
+    const SessionKeysChangeCB& session_keys_change_cb,
+    const SessionExpirationUpdateCB& session_expiration_update_cb)
     : session_message_cb_(session_message_cb),
       session_closed_cb_(session_closed_cb),
-      session_keys_change_cb_(session_keys_change_cb) {
+      session_keys_change_cb_(session_keys_change_cb),
+      session_expiration_update_cb_(session_expiration_update_cb) {
   // AesDecryptor doesn't keep any persistent data, so no need to do anything
   // with |security_origin|.
   DCHECK(!session_message_cb_.is_null());
@@ -252,7 +292,7 @@ AesDecryptor::~AesDecryptor() {
 void AesDecryptor::SetServerCertificate(
     const std::vector<uint8_t>& certificate,
     std::unique_ptr<SimpleCdmPromise> promise) {
-  promise->reject(CdmPromise::NOT_SUPPORTED_ERROR, 0,
+  promise->reject(CdmPromise::Exception::NOT_SUPPORTED_ERROR, 0,
                   "SetServerCertificate() is not supported.");
 }
 
@@ -261,11 +301,9 @@ void AesDecryptor::CreateSessionAndGenerateRequest(
     EmeInitDataType init_data_type,
     const std::vector<uint8_t>& init_data,
     std::unique_ptr<NewSessionCdmPromise> promise) {
-  std::string session_id(base::UintToString(next_session_id_++));
-  open_sessions_.insert(session_id);
-
-  // For now, the AesDecryptor does not care about |session_type|.
-  // TODO(jrummell): Validate |session_type|.
+  std::string session_id = GenerateSessionId();
+  bool session_added = CreateSession(session_id, session_type);
+  DCHECK(session_added) << "Failed to add new session " << session_id;
 
   std::vector<uint8_t> message;
   std::vector<std::vector<uint8_t>> keys;
@@ -274,7 +312,8 @@ void AesDecryptor::CreateSessionAndGenerateRequest(
       // |init_data| is simply the key needed.
       if (init_data.size() < limits::kMinKeyIdLength ||
           init_data.size() > limits::kMaxKeyIdLength) {
-        promise->reject(CdmPromise::NOT_SUPPORTED_ERROR, 0, "Incorrect length");
+        promise->reject(CdmPromise::Exception::TYPE_ERROR, 0,
+                        "Incorrect length");
         return;
       }
       keys.push_back(init_data);
@@ -283,13 +322,13 @@ void AesDecryptor::CreateSessionAndGenerateRequest(
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
       // |init_data| is a set of 0 or more concatenated 'pssh' boxes.
       if (!GetKeyIdsForCommonSystemId(init_data, &keys)) {
-        promise->reject(CdmPromise::NOT_SUPPORTED_ERROR, 0,
+        promise->reject(CdmPromise::Exception::NOT_SUPPORTED_ERROR, 0,
                         "No supported PSSH box found.");
         return;
       }
       break;
 #else
-      promise->reject(CdmPromise::NOT_SUPPORTED_ERROR, 0,
+      promise->reject(CdmPromise::Exception::NOT_SUPPORTED_ERROR, 0,
                       "Initialization data type CENC is not supported.");
       return;
 #endif
@@ -298,14 +337,14 @@ void AesDecryptor::CreateSessionAndGenerateRequest(
       std::string error_message;
       if (!ExtractKeyIdsFromKeyIdsInitData(init_data_string, &keys,
                                            &error_message)) {
-        promise->reject(CdmPromise::NOT_SUPPORTED_ERROR, 0, error_message);
+        promise->reject(CdmPromise::Exception::TYPE_ERROR, 0, error_message);
         return;
       }
       break;
     }
     default:
       NOTREACHED();
-      promise->reject(CdmPromise::NOT_SUPPORTED_ERROR, 0,
+      promise->reject(CdmPromise::Exception::NOT_SUPPORTED_ERROR, 0,
                       "init_data_type not supported.");
       return;
   }
@@ -313,15 +352,17 @@ void AesDecryptor::CreateSessionAndGenerateRequest(
 
   promise->resolve(session_id);
 
-  session_message_cb_.Run(session_id, LICENSE_REQUEST, message);
+  session_message_cb_.Run(session_id, CdmMessageType::LICENSE_REQUEST, message);
 }
 
 void AesDecryptor::LoadSession(CdmSessionType session_type,
                                const std::string& session_id,
                                std::unique_ptr<NewSessionCdmPromise> promise) {
-  // TODO(xhwang): Change this to NOTREACHED() when blink checks for key systems
-  // that do not support loadSession. See http://crbug.com/342481
-  promise->reject(CdmPromise::NOT_SUPPORTED_ERROR, 0,
+  // LoadSession() is not supported directly, as there is no way to persist
+  // the session state. Should not be called as blink should not allow
+  // persistent sessions for ClearKey.
+  NOTREACHED();
+  promise->reject(CdmPromise::Exception::NOT_SUPPORTED_ERROR, 0,
                   "LoadSession() is not supported.");
 }
 
@@ -335,50 +376,76 @@ void AesDecryptor::UpdateSession(const std::string& session_id,
   // could get called on a closed session.
   // https://github.com/w3c/encrypted-media/issues/365
   if (open_sessions_.find(session_id) == open_sessions_.end()) {
-    promise->reject(CdmPromise::INVALID_ACCESS_ERROR, 0,
+    promise->reject(CdmPromise::Exception::INVALID_STATE_ERROR, 0,
                     "Session does not exist.");
     return;
   }
 
-  std::string key_string(response.begin(), response.end());
+  bool key_added = false;
+  CdmPromise::Exception exception;
+  std::string error_message;
+  if (!UpdateSessionWithJWK(session_id,
+                            std::string(response.begin(), response.end()),
+                            &key_added, &exception, &error_message)) {
+    promise->reject(exception, 0, error_message);
+    return;
+  }
+
+  FinishUpdate(session_id, key_added, std::move(promise));
+}
+
+bool AesDecryptor::UpdateSessionWithJWK(const std::string& session_id,
+                                        const std::string& json_web_key_set,
+                                        bool* key_added,
+                                        CdmPromise::Exception* exception,
+                                        std::string* error_message) {
+  auto open_session = open_sessions_.find(session_id);
+  DCHECK(open_session != open_sessions_.end());
+  CdmSessionType session_type = open_session->second;
 
   KeyIdAndKeyPairs keys;
-  CdmSessionType session_type = CdmSessionType::TEMPORARY_SESSION;
-  if (!ExtractKeysFromJWKSet(key_string, &keys, &session_type)) {
-    promise->reject(CdmPromise::INVALID_ACCESS_ERROR, 0,
-                    "Response is not a valid JSON Web Key Set.");
-    return;
+  if (!ExtractKeysFromJWKSet(json_web_key_set, &keys, &session_type)) {
+    *exception = CdmPromise::Exception::TYPE_ERROR;
+    error_message->assign("Invalid JSON Web Key Set.");
+    return false;
   }
 
   // Make sure that at least one key was extracted.
   if (keys.empty()) {
-    promise->reject(CdmPromise::INVALID_ACCESS_ERROR, 0,
-                    "Response does not contain any keys.");
-    return;
+    *exception = CdmPromise::Exception::TYPE_ERROR;
+    error_message->assign("JSON Web Key Set does not contain any keys.");
+    return false;
   }
 
-  bool key_added = false;
+  bool local_key_added = false;
   for (KeyIdAndKeyPairs::iterator it = keys.begin(); it != keys.end(); ++it) {
     if (it->second.length() !=
         static_cast<size_t>(DecryptConfig::kDecryptionKeySize)) {
       DVLOG(1) << "Invalid key length: " << it->second.length();
-      promise->reject(CdmPromise::INVALID_ACCESS_ERROR, 0,
-                      "Invalid key length.");
-      return;
+      *exception = CdmPromise::Exception::TYPE_ERROR;
+      error_message->assign("Invalid key length.");
+      return false;
     }
 
     // If this key_id doesn't currently exist in this session,
     // a new key is added.
     if (!HasKey(session_id, it->first))
-      key_added = true;
+      local_key_added = true;
 
     if (!AddDecryptionKey(session_id, it->first, it->second)) {
-      promise->reject(CdmPromise::INVALID_ACCESS_ERROR, 0,
-                      "Unable to add key.");
-      return;
+      *exception = CdmPromise::Exception::INVALID_STATE_ERROR;
+      error_message->assign("Unable to add key.");
+      return false;
     }
   }
 
+  *key_added = local_key_added;
+  return true;
+}
+
+void AesDecryptor::FinishUpdate(const std::string& session_id,
+                                bool key_added,
+                                std::unique_ptr<SimpleCdmPromise> promise) {
   {
     base::AutoLock auto_lock(new_key_cb_lock_);
 
@@ -391,19 +458,9 @@ void AesDecryptor::UpdateSession(const std::string& session_id,
 
   promise->resolve();
 
-  // Create the list of all available keys for this session.
-  CdmKeysInfo keys_info;
-  {
-    base::AutoLock auto_lock(key_map_lock_);
-    for (const auto& item : key_map_) {
-      if (item.second->Contains(session_id)) {
-        keys_info.push_back(
-            new CdmKeyInformation(item.first, CdmKeyInformation::USABLE, 0));
-      }
-    }
-  }
-
-  session_keys_change_cb_.Run(session_id, key_added, std::move(keys_info));
+  session_keys_change_cb_.Run(
+      session_id, key_added,
+      GenerateKeysInfoList(session_id, CdmKeyInformation::USABLE));
 }
 
 // Runs the parallel steps from https://w3c.github.io/encrypted-media/#close.
@@ -418,7 +475,7 @@ void AesDecryptor::CloseSession(const std::string& session_id,
   //
   // close() is called from a MediaKeySession object, so it is unlikely that
   // this method will be called with a previously unseen |session_id|.
-  std::set<std::string>::iterator it = open_sessions_.find(session_id);
+  auto it = open_sessions_.find(session_id);
   if (it == open_sessions_.end()) {
     promise->resolve();
     return;
@@ -437,11 +494,69 @@ void AesDecryptor::CloseSession(const std::string& session_id,
   promise->resolve();
 }
 
+// Runs the parallel steps from https://w3c.github.io/encrypted-media/#remove.
 void AesDecryptor::RemoveSession(const std::string& session_id,
                                  std::unique_ptr<SimpleCdmPromise> promise) {
-  NOTIMPLEMENTED() << "Need to address https://crbug.com/616166.";
-  promise->reject(CdmPromise::INVALID_ACCESS_ERROR, 0,
-                  "Session does not exist.");
+  auto it = open_sessions_.find(session_id);
+  if (it == open_sessions_.end()) {
+    // Session doesn't exist. Since this should only be called if the session
+    // existed at one time, this must mean the session has been closed.
+    promise->reject(CdmPromise::Exception::INVALID_STATE_ERROR, 0,
+                    "The session is already closed.");
+    return;
+  }
+
+  // Create the list of all existing keys for this session. They will be
+  // removed, so set the status to "released".
+  CdmKeysInfo keys_info =
+      GenerateKeysInfoList(session_id, CdmKeyInformation::RELEASED);
+
+  // 4.1. Let cdm be the CDM instance represented by session's cdm instance
+  //      value.
+  // 4.2 Let message be null.
+  // 4.3 Let message type be null.
+  // 4.4 Use the cdm to execute the following steps:
+  // 4.4.1.1 Destroy the license(s) and/or key(s) associated with the session.
+  DeleteKeysForSession(session_id);
+
+  // 4.4.1.2 Follow the steps for the value of this object's session type
+  //         from the following list:
+  //           "temporary"
+  //              Continue with the following steps.
+  //           "persistent-license"
+  //              Let message be a message containing or reflecting the record
+  //              of license destruction.
+  std::vector<uint8_t> message;
+  if (it->second != CdmSessionType::TEMPORARY_SESSION) {
+    // The license release message is specified in the spec:
+    // https://w3c.github.io/encrypted-media/#clear-key-release-format.
+    KeyIdList key_ids;
+    key_ids.reserve(keys_info.size());
+    for (const auto& key_info : keys_info)
+      key_ids.push_back(key_info->key_id);
+    CreateKeyIdsInitData(key_ids, &message);
+  }
+
+  // 4.5. Queue a task to run the following steps:
+  // 4.5.1 Run the Update Key Statuses algorithm on the session, providing
+  //       all key ID(s) in the session along with the "released"
+  //       MediaKeyStatus value for each.
+  session_keys_change_cb_.Run(session_id, false, std::move(keys_info));
+
+  // 4.5.2 Run the Update Expiration algorithm on the session, providing NaN.
+  session_expiration_update_cb_.Run(session_id, base::Time());
+
+  // 4.5.3 If any of the preceding steps failed, reject promise with a new
+  //       DOMException whose name is the appropriate error name.
+  // 4.5.4 Let message type be "license-release".
+  // 4.5.5 If message is not null, run the Queue a "message" Event algorithm
+  //       on the session, providing message type and message.
+  if (!message.empty())
+    session_message_cb_.Run(session_id, CdmMessageType::LICENSE_RELEASE,
+                            message);
+
+  // 4.5.6. Resolve promise.
+  promise->resolve();
 }
 
 CdmContext* AesDecryptor::GetCdmContext() {
@@ -542,6 +657,33 @@ void AesDecryptor::DeinitializeDecoder(StreamType stream_type) {
   // nothing to be done here.
 }
 
+bool AesDecryptor::CreateSession(const std::string& session_id,
+                                 CdmSessionType session_type) {
+  auto it = open_sessions_.find(session_id);
+  if (it != open_sessions_.end())
+    return false;
+
+  auto result = open_sessions_.emplace(session_id, session_type);
+  return result.second;
+}
+
+std::string AesDecryptor::GetSessionStateAsJWK(const std::string& session_id) {
+  // Create the list of all available keys for this session.
+  KeyIdAndKeyPairs keys;
+  {
+    base::AutoLock auto_lock(key_map_lock_);
+    for (const auto& item : key_map_) {
+      if (item.second->Contains(session_id)) {
+        std::string key_id = item.first;
+        // |key| is the value used to create the decryption key.
+        std::string key = item.second->LatestDecryptionKey()->secret();
+        keys.push_back(std::make_pair(key_id, key));
+      }
+    }
+  }
+  return GenerateJWKSet(keys, CdmSessionType::PERSISTENT_LICENSE_SESSION);
+}
+
 bool AesDecryptor::AddDecryptionKey(const std::string& session_id,
                                     const std::string& key_id,
                                     const std::string& key_string) {
@@ -608,11 +750,28 @@ void AesDecryptor::DeleteKeysForSession(const std::string& session_id) {
   }
 }
 
+CdmKeysInfo AesDecryptor::GenerateKeysInfoList(
+    const std::string& session_id,
+    CdmKeyInformation::KeyStatus status) {
+  // Create the list of all available keys for this session.
+  CdmKeysInfo keys_info;
+  {
+    base::AutoLock auto_lock(key_map_lock_);
+    for (const auto& item : key_map_) {
+      if (item.second->Contains(session_id)) {
+        keys_info.push_back(
+            base::MakeUnique<CdmKeyInformation>(item.first, status, 0));
+      }
+    }
+  }
+  return keys_info;
+}
+
 AesDecryptor::DecryptionKey::DecryptionKey(const std::string& secret)
     : secret_(secret) {
 }
 
-AesDecryptor::DecryptionKey::~DecryptionKey() {}
+AesDecryptor::DecryptionKey::~DecryptionKey() = default;
 
 bool AesDecryptor::DecryptionKey::Init() {
   CHECK(!secret_.empty());

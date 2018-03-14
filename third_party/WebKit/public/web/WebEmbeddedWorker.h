@@ -31,27 +31,33 @@
 #ifndef WebEmbeddedWorker_h
 #define WebEmbeddedWorker_h
 
+#include <memory>
+
+#include "mojo/public/cpp/system/message_pipe.h"
 #include "public/platform/WebCommon.h"
 
 namespace blink {
 
+class WebContentSettingsClient;
 class WebServiceWorkerContextClient;
+class WebServiceWorkerInstalledScriptsManager;
 class WebString;
-class WebWorkerContentSettingsClientProxy;
 struct WebConsoleMessage;
 struct WebEmbeddedWorkerStartData;
 
 // An interface to start and terminate an embedded worker.
 // All methods of this class must be called on the main thread.
-class WebEmbeddedWorker {
+class BLINK_EXPORT WebEmbeddedWorker {
  public:
   // Invoked on the main thread to instantiate a WebEmbeddedWorker.
-  // The given WebWorkerContextClient and WebWorkerContentSettingsClientProxy
-  // are going to be passed on to the worker thread and is held by a newly
-  // created WorkerGlobalScope.
-  BLINK_EXPORT static WebEmbeddedWorker* Create(
-      WebServiceWorkerContextClient*,
-      WebWorkerContentSettingsClientProxy*);
+  // The given WebWorkerContextClient and WebContentSettingsClient are going to
+  // be passed on to the worker thread and is held by a newly created
+  // WorkerGlobalScope.
+  static std::unique_ptr<WebEmbeddedWorker> Create(
+      std::unique_ptr<WebServiceWorkerContextClient>,
+      std::unique_ptr<WebServiceWorkerInstalledScriptsManager>,
+      mojo::ScopedMessagePipeHandle content_settings_handle,
+      mojo::ScopedMessagePipeHandle interface_provider);
 
   virtual ~WebEmbeddedWorker() {}
 
@@ -64,11 +70,10 @@ class WebEmbeddedWorker {
   virtual void ResumeAfterDownload() = 0;
 
   // Inspector related methods.
-  virtual void AttachDevTools(const WebString& host_id, int session_id) = 0;
-  virtual void ReattachDevTools(const WebString& host_id,
-                                int session_id,
+  virtual void AttachDevTools(int session_id) = 0;
+  virtual void ReattachDevTools(int session_id,
                                 const WebString& saved_state) = 0;
-  virtual void DetachDevTools() = 0;
+  virtual void DetachDevTools(int session_id) = 0;
   virtual void DispatchDevToolsMessage(int session_id,
                                        int call_id,
                                        const WebString& method,

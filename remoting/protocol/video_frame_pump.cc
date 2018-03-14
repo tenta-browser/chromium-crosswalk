@@ -30,15 +30,15 @@ namespace protocol {
 // must be smaller than the minimum RTO used in PseudoTCP, which is 250ms.
 static const int kKeepAlivePacketIntervalMs = 200;
 
-VideoFramePump::FrameTimestamps::FrameTimestamps() {}
-VideoFramePump::FrameTimestamps::~FrameTimestamps() {}
+VideoFramePump::FrameTimestamps::FrameTimestamps() = default;
+VideoFramePump::FrameTimestamps::~FrameTimestamps() = default;
 
 VideoFramePump::PacketWithTimestamps::PacketWithTimestamps(
     std::unique_ptr<VideoPacket> packet,
     std::unique_ptr<FrameTimestamps> timestamps)
     : packet(std::move(packet)), timestamps(std::move(timestamps)) {}
 
-VideoFramePump::PacketWithTimestamps::~PacketWithTimestamps() {}
+VideoFramePump::PacketWithTimestamps::~PacketWithTimestamps() = default;
 
 VideoFramePump::VideoFramePump(
     scoped_refptr<base::SingleThreadTaskRunner> encode_task_runner,
@@ -66,6 +66,7 @@ VideoFramePump::VideoFramePump(
 }
 
 VideoFramePump::~VideoFramePump() {
+  DCHECK(thread_checker_.CalledOnValidThread());
   encode_task_runner_->DeleteSoon(FROM_HERE, encoder_.release());
 }
 

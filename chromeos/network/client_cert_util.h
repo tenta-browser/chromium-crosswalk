@@ -11,20 +11,24 @@
 #include "base/memory/ref_counted.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/network/certificate_pattern.h"
+#include "components/onc/onc_constants.h"
 
 namespace base {
+class Value;
 class DictionaryValue;
 }
 
 namespace net {
 struct CertPrincipal;
 class X509Certificate;
-typedef std::vector<scoped_refptr<X509Certificate> > CertificateList;
+typedef std::vector<scoped_refptr<X509Certificate>> CertificateList;
 }
 
 namespace chromeos {
 
 namespace client_cert {
+
+CHROMEOS_EXPORT extern const char kDefaultTPMPin[];
 
 enum ConfigType {
   CONFIG_TYPE_NONE,
@@ -50,6 +54,9 @@ struct CHROMEOS_EXPORT ClientCertConfig {
 
   // The value of kIdentity, to enable substitutions.
   std::string policy_identity;
+
+  // source of this ClientCertConfig.
+  ::onc::ONCSource onc_source;
 };
 
 // Returns true only if any fields set in this pattern match exactly with
@@ -85,12 +92,12 @@ CHROMEOS_EXPORT void GetClientCertFromShillProperties(
 CHROMEOS_EXPORT void SetShillProperties(const ConfigType cert_config_type,
                                         const int tpm_slot,
                                         const std::string& pkcs11_id,
-                                        base::DictionaryValue* properties);
+                                        base::Value* properties);
 
 // Like SetShillProperties but instead sets the properties to empty strings.
 // This should be used to clear previously set client certificate properties.
 CHROMEOS_EXPORT void SetEmptyShillProperties(const ConfigType cert_config_type,
-                                             base::DictionaryValue* properties);
+                                             base::Value* properties);
 
 // Returns true if all required configuration properties are set and not empty.
 bool IsCertificateConfigured(const client_cert::ConfigType cert_config_type,
@@ -99,6 +106,7 @@ bool IsCertificateConfigured(const client_cert::ConfigType cert_config_type,
 // Determines the type of the CertificatePattern configuration, i.e. is it a
 // pattern within an EAP, IPsec or OpenVPN configuration.
 CHROMEOS_EXPORT void OncToClientCertConfig(
+    ::onc::ONCSource onc_source,
     const base::DictionaryValue& network_config,
     ClientCertConfig* cert_config);
 

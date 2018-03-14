@@ -5,17 +5,17 @@
 #ifndef ThreadDebugger_h
 #define ThreadDebugger_h
 
-#include <v8-inspector.h>
-#include <v8-profiler.h>
-#include <v8.h>
 #include <memory>
-#include "bindings/core/v8/V8PerIsolateData.h"
 #include "core/CoreExport.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "core/inspector/ConsoleTypes.h"
 #include "platform/Timer.h"
-#include "platform/UserGestureIndicator.h"
-#include "wtf/Forward.h"
-#include "wtf/Vector.h"
+#include "platform/bindings/V8PerIsolateData.h"
+#include "platform/wtf/Forward.h"
+#include "platform/wtf/Vector.h"
+#include "v8/include/v8-inspector.h"
+#include "v8/include/v8-profiler.h"
+#include "v8/include/v8.h"
 
 namespace blink {
 
@@ -51,6 +51,11 @@ class CORE_EXPORT ThreadDebugger : public v8_inspector::V8InspectorClient,
                            std::unique_ptr<SourceLocation>);
   void PromiseRejectionRevoked(v8::Local<v8::Context>,
                                unsigned promise_rejection_id);
+
+  v8_inspector::V8StackTraceId StoreCurrentStackTrace(
+      const String& description);
+  void ExternalAsyncTaskStarted(const v8_inspector::V8StackTraceId& parent);
+  void ExternalAsyncTaskFinished(const v8_inspector::V8StackTraceId& parent);
 
  protected:
   virtual int ContextGroupId(ExecutionContext*) = 0;
@@ -110,6 +115,12 @@ class CORE_EXPORT ThreadDebugger : public v8_inspector::V8InspectorClient,
   Vector<v8_inspector::V8InspectorClient::TimerCallback> timer_callbacks_;
   Vector<void*> timer_data_;
   std::unique_ptr<UserGestureIndicator> user_gesture_indicator_;
+};
+
+template <>
+struct CrossThreadCopier<v8_inspector::V8StackTraceId> {
+  typedef v8_inspector::V8StackTraceId Type;
+  static Type Copy(const Type& id) { return id; }
 };
 
 }  // namespace blink

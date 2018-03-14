@@ -27,7 +27,7 @@ class ComboboxTestApi;
 }
 
 class ComboboxListener;
-class CustomButton;
+class Button;
 class MenuRunner;
 class Painter;
 class PrefixSelector;
@@ -81,6 +81,9 @@ class VIEWS_EXPORT Combobox : public View,
 
   ui::ComboboxModel* model() const { return model_; }
 
+  // Set the tooltip text, and the accessible name if it is currently empty.
+  void SetTooltipText(const base::string16& tooltip_text);
+
   // Set the accessible name of the combobox.
   void SetAccessibleName(const base::string16& name);
 
@@ -91,7 +94,7 @@ class VIEWS_EXPORT Combobox : public View,
   bool invalid() const { return invalid_; }
 
   // Overridden from View:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   const char* GetClassName() const override;
   bool SkipDefaultKeyEventProcessing(const ui::KeyEvent& e) override;
   bool OnKeyPressed(const ui::KeyEvent& e) override;
@@ -100,8 +103,8 @@ class VIEWS_EXPORT Combobox : public View,
   void OnFocus() override;
   void OnBlur() override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  bool HandleAccessibleAction(const ui::AXActionData& action_data) override;
   void Layout() override;
-  void OnEnabledChanged() override;
   void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
 
   // Overridden from PrefixDelegate:
@@ -214,8 +217,8 @@ class VIEWS_EXPORT Combobox : public View,
   // STYLE_NOTIFY_ON_CLICK, a Combobox renders the button images according to
   // these button states.
   // The base View takes the ownerships of these as child views.
-  CustomButton* text_button_;
-  CustomButton* arrow_button_;
+  Button* text_button_;
+  Button* arrow_button_;
 
   // Set while the dropdown is showing. Ensures the menu is closed if |this| is
   // destroyed.

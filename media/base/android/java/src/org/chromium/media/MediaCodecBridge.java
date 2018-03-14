@@ -28,7 +28,7 @@ import java.nio.ByteBuffer;
  */
 @JNINamespace("media")
 class MediaCodecBridge {
-    private static final String TAG = "cr.MediaCodecBridge";
+    private static final String TAG = "cr_MediaCodecBridge";
 
     // After a flush(), dequeueOutputBuffer() can often produce empty presentation timestamps
     // for several frames. As a result, the player may find that the time does not increase
@@ -52,15 +52,15 @@ class MediaCodecBridge {
     private static final int BITRATE_ADJUSTMENT_FPS = 30;
     private static final int MAXIMUM_INITIAL_FPS = 30;
 
+    protected MediaCodec mMediaCodec;
+
     private ByteBuffer[] mInputBuffers;
     private ByteBuffer[] mOutputBuffers;
 
-    private MediaCodec mMediaCodec;
     private boolean mFlushed;
     private long mLastPresentationTimeUs;
     private String mMime;
     private boolean mAdaptivePlaybackSupported;
-
     private BitrateAdjustmentTypes mBitrateAdjustmentType = BitrateAdjustmentTypes.NO_ADJUSTMENT;
 
     @MainDex
@@ -181,8 +181,8 @@ class MediaCodecBridge {
         }
     }
 
-    private MediaCodecBridge(MediaCodec mediaCodec, String mime, boolean adaptivePlaybackSupported,
-            BitrateAdjustmentTypes bitrateAdjustmentType) {
+    protected MediaCodecBridge(MediaCodec mediaCodec, String mime,
+            boolean adaptivePlaybackSupported, BitrateAdjustmentTypes bitrateAdjustmentType) {
         assert mediaCodec != null;
         mMediaCodec = mediaCodec;
         mMime = mime;
@@ -194,21 +194,29 @@ class MediaCodecBridge {
 
     @CalledByNative
     private static MediaCodecBridge create(
-            String mime, boolean isSecure, int direction, boolean requireSoftwareCodec) {
+            String mime, int codecType, int direction, MediaCrypto mediaCrypto) {
         MediaCodecUtil.CodecCreationInfo info = new MediaCodecUtil.CodecCreationInfo();
         try {
             if (direction == MediaCodecDirection.ENCODER) {
+                Log.i(TAG, "creat MediaCodec encoder, mime %s", mime);
                 info = MediaCodecUtil.createEncoder(mime);
             } else {
-                // |isSecure| only applies to video decoders.
-                info = MediaCodecUtil.createDecoder(mime, isSecure, requireSoftwareCodec);
+                // |codecType| only applies to decoders not encoders.
+                info = MediaCodecUtil.createDecoder(mime, codecType, mediaCrypto);
             }
         } catch (Exception e) {
-            Log.e(TAG, "Failed to create MediaCodec: %s, isSecure: %s, direction: %d",
-                    mime, isSecure, direction, e);
+            Log.e(TAG, "Failed to create MediaCodec: %s, codecType: %d, direction: %d", mime,
+                    codecType, direction, e);
         }
 
         if (info.mediaCodec == null) return null;
+
+        // Create MediaCodecEncoder for H264 to meet WebRTC requirements to IDR/keyframes.
+        // See https://crbug.com/761336 for more details.
+        if (direction == MediaCodecDirection.ENCODER && mime.equals(MimeTypes.VIDEO_H264)) {
+            return new MediaCodecEncoder(info.mediaCodec, mime, info.supportsAdaptivePlayback,
+                    info.bitrateAdjustmentType);
+        }
 
         return new MediaCodecBridge(
                 info.mediaCodec, mime, info.supportsAdaptivePlayback, info.bitrateAdjustmentType);
@@ -278,7 +286,7 @@ class MediaCodecBridge {
         try {
             mFlushed = true;
             mMediaCodec.flush();
-        } catch (IllegalStateException e) {
+        } catch (Exception e) {
             Log.e(TAG, "Failed to flush MediaCodec", e);
             return MediaCodecStatus.ERROR;
         }
@@ -335,7 +343,7 @@ class MediaCodecBridge {
 
     /** Returns null if MediaCodec throws IllegalStateException. */
     @CalledByNative
-    private ByteBuffer getOutputBuffer(int index) {
+    protected ByteBuffer getOutputBuffer(int index) {
         if (Build.VERSION.SDK_INT > Build.VERSION_CODES.KITKAT) {
             try {
                 return mMediaCodec.getOutputBuffer(index);
@@ -420,7 +428,7 @@ class MediaCodecBridge {
                 return MediaCodecStatus.ERROR;
             }
             boolean usesCbcs = cipherMode == MediaCodec.CRYPTO_MODE_AES_CBC;
-            if (usesCbcs && !MediaCodecUtil.platformSupportsCbcsEncryption()) {
+            if (usesCbcs && !MediaCodecUtil.platformSupportsCbcsEncryption(Build.VERSION.SDK_INT)) {
                 Log.e(TAG, "Encryption scheme 'cbcs' not supported on this platform.");
                 return MediaCodecStatus.ERROR;
             }
@@ -445,6 +453,11 @@ class MediaCodecBridge {
             Log.e(TAG, "Failed to queue secure input buffer, CryptoException with error code "
                             + e.getErrorCode());
             return MediaCodecStatus.ERROR;
+        } catch (IllegalArgumentException e) {
+            // IllegalArgumentException can occur when release() is called on the MediaCrypto
+            // object, but the MediaCodecBridge is unaware of the change.
+            Log.e(TAG, "Failed to queue secure input buffer, IllegalArgumentException " + e);
+            return MediaCodecStatus.ERROR;
         } catch (IllegalStateException e) {
             Log.e(TAG, "Failed to queue secure input buffer, IllegalStateException " + e);
             return MediaCodecStatus.ERROR;
@@ -453,7 +466,7 @@ class MediaCodecBridge {
     }
 
     @CalledByNative
-    private void releaseOutputBuffer(int index, boolean render) {
+    protected void releaseOutputBuffer(int index, boolean render) {
         try {
             mMediaCodec.releaseOutputBuffer(index, render);
         } catch (IllegalStateException e) {
@@ -469,7 +482,7 @@ class MediaCodecBridge {
         int status = MediaCodecStatus.ERROR;
         int index = -1;
         try {
-            int indexOrStatus = mMediaCodec.dequeueOutputBuffer(info, timeoutUs);
+            int indexOrStatus = dequeueOutputBufferInternal(info, timeoutUs);
             if (info.presentationTimeUs < mLastPresentationTimeUs) {
                 // TODO(qinmin): return a special code through DequeueOutputResult
                 // to notify the native code the the frame has a wrong presentation
@@ -500,6 +513,10 @@ class MediaCodecBridge {
 
         return new DequeueOutputResult(
                 status, index, info.flags, info.offset, info.presentationTimeUs, info.size);
+    }
+
+    protected int dequeueOutputBufferInternal(MediaCodec.BufferInfo info, long timeoutUs) {
+        return mMediaCodec.dequeueOutputBuffer(info, timeoutUs);
     }
 
     @CalledByNative

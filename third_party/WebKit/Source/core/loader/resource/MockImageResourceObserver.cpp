@@ -32,19 +32,22 @@ void MockImageResourceObserver::RemoveAsObserver() {
 }
 
 void MockImageResourceObserver::ImageChanged(ImageResourceContent* image,
+                                             CanDeferInvalidation defer,
                                              const IntRect*) {
   image_changed_count_++;
   image_width_on_last_image_changed_ =
       content_->HasImage() ? content_->GetImage()->width() : 0;
+  defer_ = defer;
 }
 
 void MockImageResourceObserver::ImageNotifyFinished(
     ImageResourceContent* image) {
   ASSERT_EQ(0, image_notify_finished_count_);
+  DCHECK(image->IsLoaded());
   image_notify_finished_count_++;
   image_width_on_image_notify_finished_ =
       content_->HasImage() ? content_->GetImage()->width() : 0;
-  status_on_image_notify_finished_ = content_->GetStatus();
+  status_on_image_notify_finished_ = content_->GetContentStatus();
 }
 
 bool MockImageResourceObserver::ImageNotifyFinishedCalled() const {

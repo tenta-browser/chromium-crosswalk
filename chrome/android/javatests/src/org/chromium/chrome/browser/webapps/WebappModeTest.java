@@ -8,30 +8,39 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
+import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.MediumTest;
 import android.view.View;
 
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ContextUtils;
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
+import org.chromium.base.test.util.ScalableTimeout;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.blink_public.platform.WebDisplayMode;
 import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
+import org.chromium.chrome.browser.DeferredStartupHandler;
 import org.chromium.chrome.browser.ShortcutHelper;
 import org.chromium.chrome.browser.ShortcutSource;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabIdManager;
-import org.chromium.chrome.test.MultiActivityTestBase;
-import org.chromium.chrome.test.util.ActivityUtils;
+import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.MultiActivityTestRule;
 import org.chromium.chrome.test.util.ApplicationTestUtils;
-import org.chromium.chrome.test.util.browser.TabLoadObserver;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.JavaScriptUtils;
-import org.chromium.content.browser.test.util.TouchCommon;
 import org.chromium.content_public.common.ScreenOrientationValues;
 
 /**
@@ -43,8 +52,13 @@ import org.chromium.content_public.common.ScreenOrientationValues;
  * FLAG_ACTIVITY_NEW_DOCUMENT mechanism.  Moreover, we don't have access to the task list pre-L so
  * we have to assume that any non-running WebappActivities are not listed in Android's Overview.
  */
+@RunWith(ChromeJUnit4ClassRunner.class)
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @RetryOnFailure
-public class WebappModeTest extends MultiActivityTestBase {
+public class WebappModeTest {
+    @Rule
+    public MultiActivityTestRule mTestRule = new MultiActivityTestRule();
+
     private static final String WEBAPP_1_ID = "webapp_id_1";
     private static final String WEBAPP_1_URL = UrlUtils.encodeHtmlDataUri(
             "<html><head><title>Web app #1</title><meta name='viewport' "
@@ -64,19 +78,21 @@ public class WebappModeTest extends MultiActivityTestBase {
     private Intent createIntent(String id, String url, String title, String icon, boolean addMac) {
         Intent intent = new Intent();
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        intent.setPackage(getInstrumentation().getTargetContext().getPackageName());
+        intent.setPackage(InstrumentationRegistry.getTargetContext().getPackageName());
         intent.setAction(WebappLauncherActivity.ACTION_START_WEBAPP);
         if (addMac) {
             // Needed for security reasons.  If the MAC is excluded, the URL of the webapp is opened
             // in a browser window, instead.
-            String mac = ShortcutHelper.getEncodedMac(getInstrumentation().getTargetContext(), url);
+            String mac =
+                    ShortcutHelper.getEncodedMac(InstrumentationRegistry.getTargetContext(), url);
             intent.putExtra(ShortcutHelper.EXTRA_MAC, mac);
         }
 
         WebappInfo webappInfo = WebappInfo.create(id, url, null, new WebappInfo.Icon(icon), title,
-                null, WebDisplayMode.kStandalone, ScreenOrientationValues.PORTRAIT,
+                null, WebDisplayMode.STANDALONE, ScreenOrientationValues.PORTRAIT,
                 ShortcutSource.UNKNOWN, ShortcutHelper.MANIFEST_COLOR_INVALID_OR_MISSING,
-                ShortcutHelper.MANIFEST_COLOR_INVALID_OR_MISSING, false);
+                ShortcutHelper.MANIFEST_COLOR_INVALID_OR_MISSING, null, false /* isIconGenerated */,
+                false /* forceNavigation */);
         webappInfo.setWebappIntentExtras(intent);
 
         return intent;
@@ -86,14 +102,13 @@ public class WebappModeTest extends MultiActivityTestBase {
             boolean addMac) {
         Intent intent = createIntent(id, url, title, icon, addMac);
 
-        getInstrumentation().getTargetContext().startActivity(intent);
-        getInstrumentation().waitForIdleSync();
+        InstrumentationRegistry.getTargetContext().startActivity(intent);
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         ApplicationTestUtils.waitUntilChromeInForeground();
     }
 
-    @Override
+    @Before
     public void setUp() throws Exception {
-        super.setUp();
         WebappRegistry.refreshSharedPrefsForTesting();
 
         // Register the webapps so when the data storage is opened, the test doesn't crash. There is
@@ -120,6 +135,7 @@ public class WebappModeTest extends MultiActivityTestBase {
     /**
      * Tests that WebappActivities are started properly.
      */
+    @Test
     @MediumTest
     @Feature({"Webapps"})
     public void testWebappLaunches() {
@@ -158,6 +174,7 @@ public class WebappModeTest extends MultiActivityTestBase {
     /**
      * Tests that the WebappActivity gets the next available Tab ID instead of 0.
      */
+    @Test
     @MediumTest
     @Feature({"Webapps"})
     public void testWebappTabIdsProperlyAssigned() {
@@ -168,13 +185,15 @@ public class WebappModeTest extends MultiActivityTestBase {
 
         final WebappActivity webappActivity =
                 startWebappActivity(WEBAPP_1_ID, WEBAPP_1_URL, WEBAPP_1_TITLE, WEBAPP_ICON);
-        assertEquals("Wrong Tab ID was used", 11684, webappActivity.getActivityTab().getId());
+        Assert.assertEquals(
+                "Wrong Tab ID was used", 11684, webappActivity.getActivityTab().getId());
     }
 
     /**
      * Tests that a WebappActivity can be brought forward by firing an Intent with
      * TabOpenType.BRING_TAB_TO_FRONT.
      */
+    @Test
     @MediumTest
     @Feature({"Webapps"})
     public void testBringTabToFront() throws Exception {
@@ -184,9 +203,9 @@ public class WebappModeTest extends MultiActivityTestBase {
         final int webappTabId = firstActivity.getActivityTab().getId();
 
         // Return home.
-        final Context context = getInstrumentation().getTargetContext();
+        final Context context = InstrumentationRegistry.getTargetContext();
         ApplicationTestUtils.fireHomeScreenIntent(context);
-        getInstrumentation().waitForIdleSync();
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
         // Bring the WebappActivity back via an Intent.
         Intent intent = Tab.createBringTabToFrontIntent(webappTabId);
@@ -196,7 +215,7 @@ public class WebappModeTest extends MultiActivityTestBase {
         // When Chrome is back in the foreground, confirm that the correct Activity was restored.
         // Because of Android killing Activities willy-nilly, it may not be the same Activity, but
         // it should have the same Tab ID.
-        getInstrumentation().waitForIdleSync();
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         ApplicationTestUtils.waitUntilChromeInForeground();
         CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
@@ -213,9 +232,11 @@ public class WebappModeTest extends MultiActivityTestBase {
     /**
      * Ensure WebappActivities can't be launched without proper security checks.
      */
-    @MediumTest
-    @Feature({"Webapps"})
-    public void testWebappRequiresValidMac() {
+    @Test
+    //@MediumTest
+    //@Feature({"Webapps"})
+    @DisabledTest(message = "crbug.com/755114")
+    public void testWebappRequiresValidMac() throws Exception {
         // Try to start a WebappActivity.  Fail because the Intent is insecure.
         fireWebappIntent(WEBAPP_1_ID, WEBAPP_1_URL, WEBAPP_1_TITLE, WEBAPP_ICON, false);
         CriteriaHelper.pollUiThread(new Criteria() {
@@ -227,7 +248,7 @@ public class WebappModeTest extends MultiActivityTestBase {
         });
         ChromeActivity chromeActivity =
                 (ChromeActivity) ApplicationStatus.getLastTrackedFocusedActivity();
-        waitForFullLoad(chromeActivity, WEBAPP_1_TITLE);
+        mTestRule.waitForFullLoad(chromeActivity, WEBAPP_1_TITLE);
 
         // Firing a correct Intent should start a WebappActivity instance instead of the browser.
         fireWebappIntent(WEBAPP_2_ID, WEBAPP_2_URL, WEBAPP_2_TITLE, WEBAPP_ICON, true);
@@ -240,71 +261,59 @@ public class WebappModeTest extends MultiActivityTestBase {
     }
 
     /**
-     * Tests that WebappActivities handle window.open() properly in tabbed mode.
+     * Test that a WebappActivity uses WebappInfo set via WebappActivity#putWebappInfo() if
+     * available instead of constructing the WebappInfo from the launch intent.
      */
+    @Test
     @MediumTest
     @Feature({"Webapps"})
-    public void testWebappHandlesWindowOpenInTabbedMode() throws Exception {
-        triggerWindowOpenAndWaitForLoad(ChromeTabbedActivity.class, ONCLICK_LINK, true);
-    }
+    public void testWebappInfoReuse() throws Exception {
+        Intent intent = createIntent(
+                WebappActivityTestRule.WEBAPP_ID, WEBAPP_2_URL, WEBAPP_2_TITLE, WEBAPP_ICON, true);
+        Intent newIntent = createIntent(
+                WebappActivityTestRule.WEBAPP_ID, WEBAPP_1_URL, WEBAPP_1_TITLE, WEBAPP_ICON, true);
+        WebappInfo webappInfo = WebappInfo.create(intent);
+        WebappActivity.addWebappInfo(WebappActivityTestRule.WEBAPP_ID, webappInfo);
 
-    /**
-     * Tests that WebappActivities handle suppressed window.open() properly in tabbed mode.
-     */
-    @MediumTest
-    @Feature({"Webapps"})
-    public void testWebappHandlesSuppressedWindowOpenInTabbedMode() throws Exception {
-        triggerWindowOpenAndWaitForLoad(ChromeTabbedActivity.class, HREF_NO_REFERRER_LINK, false);
-    }
+        WebappActivityTestRule mActivityTestRule = new WebappActivityTestRule();
+        mActivityTestRule.startWebappActivity(newIntent);
 
-    private <T extends ChromeActivity> void triggerWindowOpenAndWaitForLoad(
-            Class<T> classToWaitFor, String linkHtml, boolean checkContents) throws Exception {
-        final WebappActivity firstActivity =
-                startWebappActivity(WEBAPP_1_ID, WEBAPP_1_URL, WEBAPP_1_TITLE, WEBAPP_ICON);
-        final int firstWebappId = firstActivity.getActivityTab().getId();
-
-        // Load up the test page.
-        new TabLoadObserver(firstActivity.getActivityTab()).fullyLoadUrl(linkHtml);
-
-        // Do a plain click to make the link open in the main browser via a window.open().
-        // If the window is opened successfully, javascript on the first page triggers and changes
-        // its URL as a signal for this test.
-        Runnable fgTrigger = new Runnable() {
-            @Override
-            public void run() {
-                ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-                    @Override
-                    public void run() {
-                        View view = firstActivity.findViewById(android.R.id.content).getRootView();
-                        TouchCommon.singleClickView(view);
-                    }
-                });
-            }
-        };
-        ChromeActivity secondActivity = ActivityUtils.waitForActivity(
-                getInstrumentation(), classToWaitFor, fgTrigger);
-        waitForFullLoad(secondActivity, "Page 4");
-        if (checkContents) {
-            assertEquals("New WebContents was not created",
-                    SUCCESS_URL, firstActivity.getActivityTab().getUrl());
-        }
-        assertNotSame("Wrong Activity in foreground",
-                firstActivity, ApplicationStatus.getLastTrackedFocusedActivity());
-
-        // Close the child window to kick the user back to the WebappActivity.
-        JavaScriptUtils.executeJavaScript(
-                secondActivity.getActivityTab().getWebContents(), "window.close()");
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
-                Activity lastActivity = ApplicationStatus.getLastTrackedFocusedActivity();
-                if (!isWebappActivityReady(lastActivity)) return false;
-
-                WebappActivity webappActivity = (WebappActivity) lastActivity;
-                return webappActivity.getActivityTab().getId() == firstWebappId;
+                return isWebappActivityReady(ApplicationStatus.getLastTrackedFocusedActivity());
             }
         });
-        ApplicationTestUtils.waitUntilChromeInForeground();
+
+        Activity lastActivity = ApplicationStatus.getLastTrackedFocusedActivity();
+        WebappActivity lastWebappActivity = (WebappActivity) lastActivity;
+
+        Assert.assertEquals(webappInfo, lastWebappActivity.getWebappInfo());
+        Assert.assertTrue(lastWebappActivity.getWebappInfo().uri().equals(Uri.parse(WEBAPP_2_URL)));
+    }
+
+    /** Test that on first launch {@link WebappDataStorage#hasBeenLaunched()} is set. */
+    // Flaky even with RetryOnFailure: http://crbug.com/749375
+    @DisabledTest
+    @Test
+    //    @MediumTest
+    //    @Feature({"Webapps"})
+    public void testSetsHasBeenLaunchedOnFirstLaunch() throws Exception {
+        WebappDataStorage storage = WebappRegistry.getInstance().getWebappDataStorage(WEBAPP_1_ID);
+        Assert.assertFalse(storage.hasBeenLaunched());
+
+        startWebappActivity(WEBAPP_1_ID, WEBAPP_1_URL, WEBAPP_1_TITLE, WEBAPP_ICON);
+
+        // Use a longer timeout because the DeferredStartupHandler is called after the page has
+        // finished loading.
+        CriteriaHelper.pollUiThread(new Criteria("Deferred startup never completed") {
+            @Override
+            public boolean isSatisfied() {
+                return DeferredStartupHandler.getInstance().isDeferredStartupCompleteForApp();
+            }
+        }, ScalableTimeout.scaleTimeout(5000), CriteriaHelper.DEFAULT_POLLING_INTERVAL);
+
+        Assert.assertTrue(storage.hasBeenLaunched());
     }
 
     /**

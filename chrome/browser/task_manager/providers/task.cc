@@ -12,6 +12,7 @@
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/task_manager/providers/task_provider_observer.h"
 #include "chrome/browser/task_manager/task_manager_observer.h"
 #include "content/public/common/result_codes.h"
 
@@ -22,6 +23,13 @@ namespace {
 // The last ID given to the previously created task.
 int64_t g_last_id = 0;
 
+base::ProcessId DetermineProcessId(base::ProcessHandle handle,
+                                   base::ProcessId process_id) {
+  if (process_id != base::kNullProcessId)
+    return process_id;
+  return base::GetProcId(handle);
+}
+
 }  // namespace
 
 Task::Task(const base::string16& title,
@@ -30,15 +38,17 @@ Task::Task(const base::string16& title,
            base::ProcessHandle handle,
            base::ProcessId process_id)
     : task_id_(g_last_id++),
-      network_usage_(-1),
-      current_byte_count_(-1),
+      last_refresh_cumulative_bytes_sent_(0),
+      last_refresh_cumulative_bytes_read_(0),
+      cumulative_bytes_sent_(0),
+      cumulative_bytes_read_(0),
+      network_sent_rate_(0),
+      network_read_rate_(0),
       title_(title),
       rappor_sample_name_(rappor_sample),
       icon_(icon ? *icon : gfx::ImageSkia()),
       process_handle_(handle),
-      process_id_(process_id != base::kNullProcessId
-                      ? process_id
-                      : base::GetProcId(handle)) {}
+      process_id_(DetermineProcessId(handle, process_id)) {}
 
 Task::~Task() {}
 
@@ -59,10 +69,17 @@ void Task::Activate() {
 }
 
 bool Task::IsKillable() {
+  // Protects from trying to kill a task that doesn't have an accurate process
+  // Id yet. This can result in calling "kill 0" which kills all processes in
+  // the process group.
+  if (process_id() == base::kNullProcessId)
+    return false;
   return true;
 }
 
 void Task::Kill() {
+  if (!IsKillable())
+    return;
   DCHECK_NE(process_id(), base::GetCurrentProcId());
   base::Process process = base::Process::Open(process_id());
   process.Terminate(content::RESULT_CODE_KILLED, false);
@@ -70,24 +87,50 @@ void Task::Kill() {
 
 void Task::Refresh(const base::TimeDelta& update_interval,
                    int64_t refresh_flags) {
-  if ((refresh_flags & REFRESH_TYPE_NETWORK_USAGE) == 0)
+  if ((refresh_flags & REFRESH_TYPE_NETWORK_USAGE) == 0 ||
+      update_interval == base::TimeDelta())
     return;
 
-  if (current_byte_count_ == -1)
+  int64_t current_cycle_read_byte_count =
+      cumulative_bytes_read_ - last_refresh_cumulative_bytes_read_;
+  network_read_rate_ =
+      (current_cycle_read_byte_count * base::TimeDelta::FromSeconds(1)) /
+      update_interval;
+
+  int64_t current_cycle_sent_byte_count =
+      cumulative_bytes_sent_ - last_refresh_cumulative_bytes_sent_;
+  network_sent_rate_ =
+      (current_cycle_sent_byte_count * base::TimeDelta::FromSeconds(1)) /
+      update_interval;
+
+  last_refresh_cumulative_bytes_read_ = cumulative_bytes_read_;
+  last_refresh_cumulative_bytes_sent_ = cumulative_bytes_sent_;
+}
+
+void Task::UpdateProcessInfo(base::ProcessHandle handle,
+                             base::ProcessId process_id,
+                             TaskProviderObserver* observer) {
+  process_id = DetermineProcessId(handle, process_id);
+
+  // Don't remove the task if there is no change to the process ID.
+  if (process_id == process_id_)
     return;
 
-  network_usage_ =
-      (current_byte_count_ * base::TimeDelta::FromSeconds(1)) / update_interval;
-
-  // Reset the current byte count for this task.
-  current_byte_count_ = 0;
+  // TaskManagerImpl and TaskGroup implementations assume that a process ID is
+  // consistent for the lifetime of a Task. So to change the process ID,
+  // temporarily unregister this Task.
+  observer->TaskRemoved(this);
+  process_handle_ = handle;
+  process_id_ = process_id;
+  observer->TaskAdded(this);
 }
 
 void Task::OnNetworkBytesRead(int64_t bytes_read) {
-  if (current_byte_count_ == -1)
-    current_byte_count_ = 0;
+  cumulative_bytes_read_ += bytes_read;
+}
 
-  current_byte_count_ += bytes_read;
+void Task::OnNetworkBytesSent(int64_t bytes_sent) {
+  cumulative_bytes_sent_ += bytes_sent;
 }
 
 void Task::GetTerminationStatus(base::TerminationStatus* out_status,
@@ -145,10 +188,6 @@ blink::WebCache::ResourceTypeStats Task::GetWebCacheStats() const {
 
 int Task::GetKeepaliveCount() const {
   return -1;
-}
-
-bool Task::ReportsNetworkUsage() const {
-  return network_usage_ != -1;
 }
 
 }  // namespace task_manager

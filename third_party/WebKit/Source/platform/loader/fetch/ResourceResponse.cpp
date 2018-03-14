@@ -26,11 +26,13 @@
 
 #include "platform/loader/fetch/ResourceResponse.h"
 
-#include "platform/HTTPNames.h"
 #include "platform/network/HTTPParsers.h"
-#include "platform/wtf/CurrentTime.h"
+#include "platform/network/http_names.h"
+#include "platform/wtf/Assertions.h"
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/StdLibExtras.h"
+#include "platform/wtf/Time.h"
+#include "public/platform/WebURLResponse.h"
 
 #include <memory>
 
@@ -75,32 +77,34 @@ ResourceResponse::SignedCertificateTimestamp::IsolatedCopy() const {
 
 ResourceResponse::ResourceResponse()
     : expected_content_length_(0),
-      http_status_code_(0),
-      was_cached_(false),
       connection_id_(0),
+      http_status_code_(0),
+      remote_port_(0),
+      was_cached_(false),
       connection_reused_(false),
       is_null_(true),
       have_parsed_age_header_(false),
       have_parsed_date_header_(false),
       have_parsed_expires_header_(false),
       have_parsed_last_modified_header_(false),
+      has_major_certificate_errors_(false),
+      is_legacy_symantec_cert_(false),
+      was_fetched_via_spdy_(false),
+      was_fetched_via_proxy_(false),
+      was_fetched_via_service_worker_(false),
+      was_fallback_required_by_service_worker_(false),
+      did_service_worker_navigation_preload_(false),
+      response_type_via_service_worker_(
+          network::mojom::FetchResponseType::kDefault),
+      http_version_(kHTTPVersionUnknown),
+      security_style_(kSecurityStyleUnknown),
       age_(0.0),
       date_(0.0),
       expires_(0.0),
       last_modified_(0.0),
-      has_major_certificate_errors_(false),
-      security_style_(kSecurityStyleUnknown),
-      http_version_(kHTTPVersionUnknown),
       app_cache_id_(0),
-      was_fetched_via_spdy_(false),
-      was_fetched_via_proxy_(false),
-      was_fetched_via_service_worker_(false),
-      was_fetched_via_foreign_fetch_(false),
-      was_fallback_required_by_service_worker_(false),
-      service_worker_response_type_(kWebServiceWorkerResponseTypeDefault),
-      did_service_worker_navigation_preload_(false),
-      response_time_(0),
-      remote_port_(0),
+      connection_info_(
+          net::HttpResponseInfo::ConnectionInfo::CONNECTION_INFO_UNKNOWN),
       encoded_data_length_(0),
       encoded_body_length_(0),
       decoded_body_length_(0) {}
@@ -113,32 +117,32 @@ ResourceResponse::ResourceResponse(const KURL& url,
       mime_type_(mime_type),
       expected_content_length_(expected_length),
       text_encoding_name_(text_encoding_name),
-      http_status_code_(0),
-      was_cached_(false),
       connection_id_(0),
+      http_status_code_(0),
+      remote_port_(0),
+      was_cached_(false),
       connection_reused_(false),
       is_null_(false),
       have_parsed_age_header_(false),
       have_parsed_date_header_(false),
       have_parsed_expires_header_(false),
       have_parsed_last_modified_header_(false),
+      has_major_certificate_errors_(false),
+      is_legacy_symantec_cert_(false),
+      was_fetched_via_spdy_(false),
+      was_fetched_via_proxy_(false),
+      was_fetched_via_service_worker_(false),
+      was_fallback_required_by_service_worker_(false),
+      did_service_worker_navigation_preload_(false),
+      response_type_via_service_worker_(
+          network::mojom::FetchResponseType::kDefault),
+      http_version_(kHTTPVersionUnknown),
+      security_style_(kSecurityStyleUnknown),
       age_(0.0),
       date_(0.0),
       expires_(0.0),
       last_modified_(0.0),
-      has_major_certificate_errors_(false),
-      security_style_(kSecurityStyleUnknown),
-      http_version_(kHTTPVersionUnknown),
       app_cache_id_(0),
-      was_fetched_via_spdy_(false),
-      was_fetched_via_proxy_(false),
-      was_fetched_via_service_worker_(false),
-      was_fetched_via_foreign_fetch_(false),
-      was_fallback_required_by_service_worker_(false),
-      service_worker_response_type_(kWebServiceWorkerResponseTypeDefault),
-      did_service_worker_navigation_preload_(false),
-      response_time_(0),
-      remote_port_(0),
       encoded_data_length_(0),
       encoded_body_length_(0),
       decoded_body_length_(0) {}
@@ -154,8 +158,20 @@ ResourceResponse::ResourceResponse(CrossThreadResourceResponseData* data)
   SetHTTPStatusText(AtomicString(data->http_status_text_));
 
   http_header_fields_.Adopt(std::move(data->http_headers_));
-  SetResourceLoadTiming(data->resource_load_timing_.Release());
+  SetResourceLoadTiming(std::move(data->resource_load_timing_));
+  remote_ip_address_ = AtomicString(data->remote_ip_address_);
+  remote_port_ = data->remote_port_;
   has_major_certificate_errors_ = data->has_major_certificate_errors_;
+  is_legacy_symantec_cert_ = data->is_legacy_symantec_cert_;
+  cert_validity_start_ = data->cert_validity_start_;
+  was_fetched_via_spdy_ = data->was_fetched_via_spdy_;
+  was_fetched_via_proxy_ = data->was_fetched_via_proxy_;
+  was_fetched_via_service_worker_ = data->was_fetched_via_service_worker_;
+  was_fallback_required_by_service_worker_ =
+      data->was_fallback_required_by_service_worker_;
+  did_service_worker_navigation_preload_ =
+      data->did_service_worker_navigation_preload_;
+  response_type_via_service_worker_ = data->response_type_via_service_worker_;
   security_style_ = data->security_style_;
   security_details_.protocol = data->security_details_.protocol;
   security_details_.cipher = data->security_details_.cipher;
@@ -175,20 +191,9 @@ ResourceResponse::ResourceResponse(CrossThreadResourceResponseData* data)
   app_cache_id_ = data->app_cache_id_;
   app_cache_manifest_url_ = data->app_cache_manifest_url_.Copy();
   multipart_boundary_ = data->multipart_boundary_;
-  was_fetched_via_spdy_ = data->was_fetched_via_spdy_;
-  was_fetched_via_proxy_ = data->was_fetched_via_proxy_;
-  was_fetched_via_service_worker_ = data->was_fetched_via_service_worker_;
-  was_fetched_via_foreign_fetch_ = data->was_fetched_via_foreign_fetch_;
-  was_fallback_required_by_service_worker_ =
-      data->was_fallback_required_by_service_worker_;
-  service_worker_response_type_ = data->service_worker_response_type_;
   url_list_via_service_worker_ = data->url_list_via_service_worker_;
   cache_storage_cache_name_ = data->cache_storage_cache_name_;
-  did_service_worker_navigation_preload_ =
-      data->did_service_worker_navigation_preload_;
   response_time_ = data->response_time_;
-  remote_ip_address_ = AtomicString(data->remote_ip_address_);
-  remote_port_ = data->remote_port_;
   encoded_data_length_ = data->encoded_data_length_;
   encoded_body_length_ = data->encoded_body_length_;
   decoded_body_length_ = data->decoded_body_length_;
@@ -216,7 +221,19 @@ std::unique_ptr<CrossThreadResourceResponseData> ResourceResponse::CopyData()
   data->http_headers_ = HttpHeaderFields().CopyData();
   if (resource_load_timing_)
     data->resource_load_timing_ = resource_load_timing_->DeepCopy();
+  data->remote_ip_address_ = remote_ip_address_.GetString().IsolatedCopy();
+  data->remote_port_ = remote_port_;
   data->has_major_certificate_errors_ = has_major_certificate_errors_;
+  data->is_legacy_symantec_cert_ = is_legacy_symantec_cert_;
+  data->cert_validity_start_ = cert_validity_start_;
+  data->was_fetched_via_spdy_ = was_fetched_via_spdy_;
+  data->was_fetched_via_proxy_ = was_fetched_via_proxy_;
+  data->was_fetched_via_service_worker_ = was_fetched_via_service_worker_;
+  data->was_fallback_required_by_service_worker_ =
+      was_fallback_required_by_service_worker_;
+  data->did_service_worker_navigation_preload_ =
+      did_service_worker_navigation_preload_;
+  data->response_type_via_service_worker_ = response_type_via_service_worker_;
   data->security_style_ = security_style_;
   data->security_details_.protocol = security_details_.protocol.IsolatedCopy();
   data->security_details_.cipher = security_details_.cipher.IsolatedCopy();
@@ -238,25 +255,14 @@ std::unique_ptr<CrossThreadResourceResponseData> ResourceResponse::CopyData()
   data->app_cache_id_ = app_cache_id_;
   data->app_cache_manifest_url_ = app_cache_manifest_url_.Copy();
   data->multipart_boundary_ = multipart_boundary_;
-  data->was_fetched_via_spdy_ = was_fetched_via_spdy_;
-  data->was_fetched_via_proxy_ = was_fetched_via_proxy_;
-  data->was_fetched_via_service_worker_ = was_fetched_via_service_worker_;
-  data->was_fetched_via_foreign_fetch_ = was_fetched_via_foreign_fetch_;
-  data->was_fallback_required_by_service_worker_ =
-      was_fallback_required_by_service_worker_;
-  data->service_worker_response_type_ = service_worker_response_type_;
-  data->url_list_via_service_worker_.Resize(
+  data->url_list_via_service_worker_.resize(
       url_list_via_service_worker_.size());
   std::transform(url_list_via_service_worker_.begin(),
                  url_list_via_service_worker_.end(),
                  data->url_list_via_service_worker_.begin(),
                  [](const KURL& url) { return url.Copy(); });
   data->cache_storage_cache_name_ = CacheStorageCacheName().IsolatedCopy();
-  data->did_service_worker_navigation_preload_ =
-      did_service_worker_navigation_preload_;
   data->response_time_ = response_time_;
-  data->remote_ip_address_ = remote_ip_address_.GetString().IsolatedCopy();
-  data->remote_port_ = remote_port_;
   data->encoded_data_length_ = encoded_data_length_;
   data->encoded_body_length_ = encoded_body_length_;
   data->decoded_body_length_ = decoded_body_length_;
@@ -513,7 +519,7 @@ double ResourceResponse::LastModified() const {
 bool ResourceResponse::IsAttachment() const {
   static const char kAttachmentString[] = "attachment";
   String value = http_header_fields_.Get(HTTPNames::Content_Disposition);
-  size_t loc = value.Find(';');
+  size_t loc = value.find(';');
   if (loc != kNotFound)
     value = value.Left(loc);
   value = value.StripWhiteSpace();
@@ -550,20 +556,20 @@ void ResourceResponse::SetConnectionID(unsigned connection_id) {
 }
 
 ResourceLoadTiming* ResourceResponse::GetResourceLoadTiming() const {
-  return resource_load_timing_.Get();
+  return resource_load_timing_.get();
 }
 
 void ResourceResponse::SetResourceLoadTiming(
-    PassRefPtr<ResourceLoadTiming> resource_load_timing) {
+    scoped_refptr<ResourceLoadTiming> resource_load_timing) {
   resource_load_timing_ = std::move(resource_load_timing);
 }
 
-PassRefPtr<ResourceLoadInfo> ResourceResponse::GetResourceLoadInfo() const {
-  return resource_load_info_.Get();
+scoped_refptr<ResourceLoadInfo> ResourceResponse::GetResourceLoadInfo() const {
+  return resource_load_info_.get();
 }
 
 void ResourceResponse::SetResourceLoadInfo(
-    PassRefPtr<ResourceLoadInfo> load_info) {
+    scoped_refptr<ResourceLoadInfo> load_info) {
   resource_load_info_ = std::move(load_info);
 }
 
@@ -573,23 +579,31 @@ KURL ResourceResponse::OriginalURLViaServiceWorker() const {
   return url_list_via_service_worker_.back();
 }
 
+AtomicString ResourceResponse::ConnectionInfoString() const {
+  std::string connection_info_string =
+      net::HttpResponseInfo::ConnectionInfoToString(connection_info_);
+  return AtomicString(
+      reinterpret_cast<const LChar*>(connection_info_string.data()),
+      connection_info_string.length());
+}
+
 void ResourceResponse::SetEncodedDataLength(long long value) {
   encoded_data_length_ = value;
 }
 
-void ResourceResponse::AddToEncodedBodyLength(long long value) {
-  encoded_body_length_ += value;
+void ResourceResponse::SetEncodedBodyLength(long long value) {
+  encoded_body_length_ = value;
 }
 
-void ResourceResponse::AddToDecodedBodyLength(long long value) {
-  decoded_body_length_ += value;
+void ResourceResponse::SetDecodedBodyLength(long long value) {
+  decoded_body_length_ = value;
 }
 
 void ResourceResponse::SetDownloadedFilePath(
     const String& downloaded_file_path) {
   downloaded_file_path_ = downloaded_file_path;
   if (downloaded_file_path_.IsEmpty()) {
-    downloaded_file_handle_.Clear();
+    downloaded_file_handle_ = nullptr;
     return;
   }
   // TODO(dmurph): Investigate whether we need the mimeType on this blob.
@@ -634,4 +648,14 @@ bool ResourceResponse::Compare(const ResourceResponse& a,
   return true;
 }
 
+STATIC_ASSERT_ENUM(WebURLResponse::kHTTPVersionUnknown,
+                   ResourceResponse::kHTTPVersionUnknown);
+STATIC_ASSERT_ENUM(WebURLResponse::kHTTPVersion_0_9,
+                   ResourceResponse::kHTTPVersion_0_9);
+STATIC_ASSERT_ENUM(WebURLResponse::kHTTPVersion_1_0,
+                   ResourceResponse::kHTTPVersion_1_0);
+STATIC_ASSERT_ENUM(WebURLResponse::kHTTPVersion_1_1,
+                   ResourceResponse::kHTTPVersion_1_1);
+STATIC_ASSERT_ENUM(WebURLResponse::kHTTPVersion_2_0,
+                   ResourceResponse::kHTTPVersion_2_0);
 }  // namespace blink

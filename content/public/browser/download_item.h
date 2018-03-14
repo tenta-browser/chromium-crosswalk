@@ -78,10 +78,17 @@ class CONTENT_EXPORT DownloadItem : public base::SupportsUserData {
 
   // How the final target path should be used.
   enum TargetDisposition {
-    TARGET_DISPOSITION_OVERWRITE, // Overwrite if the target already exists.
-    TARGET_DISPOSITION_PROMPT     // Prompt the user for the actual
-                                  // target. Implies
-                                  // TARGET_DISPOSITION_OVERWRITE.
+    TARGET_DISPOSITION_OVERWRITE,  // Overwrite if the target already exists.
+    TARGET_DISPOSITION_PROMPT      // Prompt the user for the actual
+                                   // target. Implies
+                                   // TARGET_DISPOSITION_OVERWRITE.
+  };
+
+  // How download item is created. Used for trace event.
+  enum DownloadType {
+    TYPE_ACTIVE_DOWNLOAD,
+    TYPE_HISTORY_IMPORT,
+    TYPE_SAVE_PAGE_AS
   };
 
   // Callback used with AcquireFileAndDeleteDownload().
@@ -103,7 +110,6 @@ class CONTENT_EXPORT DownloadItem : public base::SupportsUserData {
     // down.
     virtual void OnDownloadDestroyed(DownloadItem* download) {}
 
-   protected:
     virtual ~Observer() {}
   };
 
@@ -297,8 +303,8 @@ class CONTENT_EXPORT DownloadItem : public base::SupportsUserData {
   // DO NOT USE THIS METHOD to access the target path of the DownloadItem. Use
   // GetTargetFilePath() instead. While the download is in progress, the
   // intermediate file named by GetFullPath() may be renamed or disappear
-  // completely on the FILE thread. The path may also be reset to empty when the
-  // download is interrupted.
+  // completely on the download sequence. The path may also be reset to empty
+  // when the download is interrupted.
   virtual const base::FilePath& GetFullPath() const = 0;
 
   // Target path of an in-progress download. We may be downloading to a
@@ -415,7 +421,8 @@ class CONTENT_EXPORT DownloadItem : public base::SupportsUserData {
   virtual base::Time GetLastAccessTime() const = 0;
 
   // Returns whether the download item is transient. Transient items are cleaned
-  // up after completion and not shown in the UI.
+  // up after completion and not shown in the UI, and will not prompt to user
+  // for target file path determination.
   virtual bool IsTransient() const = 0;
 
   //    Misc State accessors ---------------------------------------------------
@@ -435,8 +442,13 @@ class CONTENT_EXPORT DownloadItem : public base::SupportsUserData {
 
   // Called if a check of the download contents was performed and the results of
   // the test are available. This should only be called after AllDataSaved() is
-  // true.
-  virtual void OnContentCheckCompleted(DownloadDangerType danger_type) = 0;
+  // true. If |reason| is not DOWNLOAD_INTERRUPT_REASON_NONE, then the download
+  // file should be blocked.
+  // TODO(crbug.com/733291): Move DownloadInterruptReason out of here and add a
+  // new  Interrupt method instead. Same for other methods supporting
+  // interruptions.
+  virtual void OnContentCheckCompleted(DownloadDangerType danger_type,
+                                       DownloadInterruptReason reason) = 0;
 
   // Mark the download to be auto-opened when completed.
   virtual void SetOpenWhenComplete(bool open) = 0;

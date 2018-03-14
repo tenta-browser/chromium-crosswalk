@@ -1,4 +1,4 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright (c) 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,9 +8,10 @@
 #include "net/quic/core/quic_crypto_client_stream.h"
 #include "net/quic/core/quic_crypto_server_stream.h"
 #include "net/quic/core/quic_crypto_stream.h"
+#include "net/quic/core/quic_error_codes.h"
 #include "net/quic/core/quic_session.h"
 #include "net/quic/platform/api/quic_export.h"
-#include "net/quic/platform/impl/quic_chromium_clock.h"
+#include "net/quic/quartc/quartc_clock_interface.h"
 #include "net/quic/quartc/quartc_session_interface.h"
 #include "net/quic/quartc/quartc_stream.h"
 
@@ -36,13 +37,16 @@ class QUIC_EXPORT_PRIVATE QuartcSession
                 const QuicConfig& config,
                 const std::string& unique_remote_server_id,
                 Perspective perspective,
-                QuicConnectionHelperInterface* helper);
+                QuicConnectionHelperInterface* helper,
+                QuicClock* clock);
   ~QuartcSession() override;
 
   // QuicSession overrides.
-  QuicCryptoStream* GetCryptoStream() override;
+  QuicCryptoStream* GetMutableCryptoStream() override;
 
-  QuartcStream* CreateOutgoingDynamicStream(SpdyPriority priority) override;
+  const QuicCryptoStream* GetCryptoStream() const override;
+
+  QuartcStream* CreateOutgoingDynamicStream() override;
 
   void OnCryptoHandshakeEvent(CryptoHandshakeEvent event) override;
 
@@ -63,8 +67,16 @@ class QUIC_EXPORT_PRIVATE QuartcSession
                             uint8_t* result,
                             size_t result_len) override;
 
+  void CloseConnection(const std::string& details) override;
+
   QuartcStreamInterface* CreateOutgoingStream(
       const OutgoingStreamParameters& param) override;
+
+  void CancelStream(QuicStreamId stream_id) override;
+
+  bool IsOpenStream(QuicStreamId stream_id) override;
+
+  QuartcSessionStats GetStats() override;
 
   void SetDelegate(QuartcSessionInterface::Delegate* session_delegate) override;
 
@@ -92,19 +104,25 @@ class QUIC_EXPORT_PRIVATE QuartcSession
   // QuicSession override.
   QuicStream* CreateIncomingDynamicStream(QuicStreamId id) override;
 
-  QuartcStream* CreateDataStream(QuicStreamId id, SpdyPriority priority);
+  std::unique_ptr<QuartcStream> CreateDataStream(QuicStreamId id,
+                                                 SpdyPriority priority);
+  // Activates a QuartcStream.  The session takes ownership of the stream, but
+  // returns an unowned pointer to the stream for convenience.
+  QuartcStream* ActivateDataStream(std::unique_ptr<QuartcStream> stream);
+
+  void ResetStream(QuicStreamId stream_id, QuicRstStreamErrorCode error);
 
  private:
   // For crypto handshake.
   std::unique_ptr<QuicCryptoStream> crypto_stream_;
-  // For recording packet receipt time
-  QuicChromiumClock clock_;
   const std::string unique_remote_server_id_;
   Perspective perspective_;
   // Take the ownership of the QuicConnection.
   std::unique_ptr<QuicConnection> connection_;
   // Not owned by QuartcSession. From the QuartcFactory.
   QuicConnectionHelperInterface* helper_;
+  // For recording packet receipt time
+  QuicClock* clock_;
   // Not owned by QuartcSession.
   QuartcSessionInterface::Delegate* session_delegate_ = nullptr;
   // Used by QUIC crypto server stream to track most recently compressed certs.

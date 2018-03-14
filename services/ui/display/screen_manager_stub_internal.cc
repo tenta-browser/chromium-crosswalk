@@ -12,6 +12,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "services/ui/display/viewport_metrics.h"
+#include "ui/display/screen_base.h"
 #include "ui/gfx/geometry/dip_util.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -42,11 +43,12 @@ Display DefaultDisplay() {
 
 // static
 std::unique_ptr<ScreenManager> ScreenManager::Create() {
-  return base::MakeUnique<ScreenManagerStubInternal>();
+  return std::make_unique<ScreenManagerStubInternal>();
 }
 
 ScreenManagerStubInternal::ScreenManagerStubInternal()
-    : weak_ptr_factory_(this) {}
+    : screen_(std::make_unique<display::ScreenBase>()),
+      weak_ptr_factory_(this) {}
 
 ScreenManagerStubInternal::~ScreenManagerStubInternal() {}
 
@@ -60,7 +62,8 @@ void ScreenManagerStubInternal::FixedSizeScreenConfiguration() {
 }
 
 void ScreenManagerStubInternal::AddInterfaces(
-    service_manager::BinderRegistry* registry) {}
+    service_manager::BinderRegistryWithArgs<
+        const service_manager::BindSourceInfo&>* registry) {}
 
 void ScreenManagerStubInternal::Init(ScreenManagerDelegate* delegate) {
   DCHECK(delegate);
@@ -78,6 +81,10 @@ void ScreenManagerStubInternal::RequestCloseDisplay(int64_t display_id) {
         FROM_HERE, base::Bind(&ScreenManagerDelegate::OnDisplayRemoved,
                               base::Unretained(delegate_), display_id));
   }
+}
+
+display::ScreenBase* ScreenManagerStubInternal::GetScreen() {
+  return screen_.get();
 }
 
 }  // namespace display

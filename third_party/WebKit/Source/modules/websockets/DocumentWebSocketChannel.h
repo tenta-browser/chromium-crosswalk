@@ -33,6 +33,8 @@
 
 #include <stdint.h>
 #include <memory>
+#include <utility>
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/SourceLocation.h"
 #include "core/fileapi/Blob.h"
 #include "core/fileapi/FileError.h"
@@ -45,46 +47,52 @@
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/wtf/Deque.h"
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/CString.h"
 #include "platform/wtf/text/WTFString.h"
+#include "public/platform/WebCallbacks.h"
+#include "public/platform/modules/websockets/websocket.mojom-blink.h"
 
 namespace blink {
 
 class ThreadableLoadingContext;
 class WebSocketHandshakeRequest;
+class WebSocketHandshakeThrottle;
 
 // This class is a WebSocketChannel subclass that works with a Document in a
 // DOMWindow (i.e. works in the main thread).
 class MODULES_EXPORT DocumentWebSocketChannel final
     : public WebSocketChannel,
-      public WebSocketHandleClient {
+      public WebSocketHandleClient,
+      public WebCallbacks<void, const WebString&> {
  public:
   // You can specify the source file and the line number information
   // explicitly by passing the last parameter.
   // In the usual case, they are set automatically and you don't have to
   // pass it.
-  // Specify handle explicitly only in tests.
   static DocumentWebSocketChannel* Create(
       Document* document,
       WebSocketChannelClient* client,
-      std::unique_ptr<SourceLocation> location,
-      WebSocketHandle* handle = 0) {
+      std::unique_ptr<SourceLocation> location) {
     DCHECK(document);
     return Create(ThreadableLoadingContext::Create(*document), client,
-                  std::move(location), handle);
+                  std::move(location));
   }
-  static DocumentWebSocketChannel* Create(
-      ThreadableLoadingContext* loading_context,
-      WebSocketChannelClient* client,
-      std::unique_ptr<SourceLocation> location,
-      WebSocketHandle* handle = 0) {
-    return new DocumentWebSocketChannel(loading_context, client,
-                                        std::move(location), handle);
-  }
+  static DocumentWebSocketChannel* Create(ThreadableLoadingContext*,
+                                          WebSocketChannelClient*,
+                                          std::unique_ptr<SourceLocation>);
+  static DocumentWebSocketChannel* CreateForTesting(
+      Document*,
+      WebSocketChannelClient*,
+      std::unique_ptr<SourceLocation>,
+      WebSocketHandle*,
+      std::unique_ptr<WebSocketHandshakeThrottle>);
+
   ~DocumentWebSocketChannel() override;
+
+  // Allows the caller to provide the Mojo pipe through which the socket is
+  // connected, overriding the interface provider of the Document.
+  bool Connect(const KURL&, const String& protocol, mojom::blink::WebSocketPtr);
 
   // WebSocketChannel functions.
   bool Connect(const KURL&, const String& protocol) override;
@@ -92,7 +100,7 @@ class MODULES_EXPORT DocumentWebSocketChannel final
   void Send(const DOMArrayBuffer&,
             unsigned byte_offset,
             unsigned byte_length) override;
-  void Send(PassRefPtr<BlobDataHandle>) override;
+  void Send(scoped_refptr<BlobDataHandle>) override;
   void SendTextAsCharVector(std::unique_ptr<Vector<char>> data) override;
   void SendBinaryAsCharVector(std::unique_ptr<Vector<char>> data) override;
   // Start closing handshake. Use the CloseEventCodeNotSpecified for the code
@@ -103,11 +111,12 @@ class MODULES_EXPORT DocumentWebSocketChannel final
             std::unique_ptr<SourceLocation>) override;
   void Disconnect() override;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   class BlobLoader;
   class Message;
+  struct ConnectInfo;
 
   enum MessageType {
     kMessageTypeText,
@@ -126,7 +135,9 @@ class MODULES_EXPORT DocumentWebSocketChannel final
   DocumentWebSocketChannel(ThreadableLoadingContext*,
                            WebSocketChannelClient*,
                            std::unique_ptr<SourceLocation>,
-                           WebSocketHandle*);
+                           std::unique_ptr<WebSocketHandle>,
+                           std::unique_ptr<WebSocketHandshakeThrottle>);
+
   void SendInternal(WebSocketHandle::MessageType,
                     const char* data,
                     size_t total_size,
@@ -150,8 +161,9 @@ class MODULES_EXPORT DocumentWebSocketChannel final
   void DidConnect(WebSocketHandle*,
                   const String& selected_protocol,
                   const String& extensions) override;
-  void DidStartOpeningHandshake(WebSocketHandle*,
-                                PassRefPtr<WebSocketHandshakeRequest>) override;
+  void DidStartOpeningHandshake(
+      WebSocketHandle*,
+      scoped_refptr<WebSocketHandshakeRequest>) override;
   void DidFinishOpeningHandshake(WebSocketHandle*,
                                  const WebSocketHandshakeResponse*) override;
   void DidFail(WebSocketHandle*, const String& message) override;
@@ -166,6 +178,11 @@ class MODULES_EXPORT DocumentWebSocketChannel final
                 const String& reason) override;
   void DidReceiveFlowControl(WebSocketHandle*, int64_t quota) override;
   void DidStartClosingHandshake(WebSocketHandle*) override;
+
+  // WebCallbacks<void, const WebString&> functions. These are called with the
+  // results of throttling.
+  void OnSuccess() override;
+  void OnError(const WebString& console_message) override;
 
   // Methods for BlobLoader.
   void DidFinishLoadingBlob(DOMArrayBuffer*);
@@ -197,7 +214,12 @@ class MODULES_EXPORT DocumentWebSocketChannel final
       connection_handle_for_scheduler_;
 
   std::unique_ptr<SourceLocation> location_at_construction_;
-  RefPtr<WebSocketHandshakeRequest> handshake_request_;
+  scoped_refptr<WebSocketHandshakeRequest> handshake_request_;
+  std::unique_ptr<WebSocketHandshakeThrottle> handshake_throttle_;
+  // This field is only initialised if the object is still waiting for a
+  // throttle response when DidConnect is called.
+  std::unique_ptr<ConnectInfo> connect_info_;
+  bool throttle_passed_;
 
   static const uint64_t kReceivedDataSizeForFlowControlHighWaterMark = 1 << 15;
 };

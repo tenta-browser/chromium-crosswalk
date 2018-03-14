@@ -61,8 +61,7 @@ void TextfieldExample::CreateExampleView(View* container) {
   name_->set_controller(this);
   password_->set_controller(this);
 
-  GridLayout* layout = new GridLayout(container);
-  container->SetLayoutManager(layout);
+  GridLayout* layout = GridLayout::CreateAndInstall(container);
 
   ColumnSet* column_set = layout->AddColumnSet(0);
   column_set->AddColumn(GridLayout::LEADING, GridLayout::FILL,
@@ -149,7 +148,6 @@ void TextfieldExample::ButtonPressed(Button* sender, const ui::Event& event) {
         const gfx::Range small_range(2 * fifth, 3 * fifth);
         name_->ApplyStyle(gfx::ITALIC, true, small_range);
         name_->ApplyStyle(gfx::UNDERLINE, false, small_range);
-        name_->ApplyStyle(gfx::DIAGONAL_STRIKE, true, small_range);
         name_->ApplyColor(SK_ColorRED, small_range);
       }
     }

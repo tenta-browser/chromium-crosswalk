@@ -28,7 +28,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 /**
- * @implements {SDK.DOMNodeHighlighter}
+ * @implements {SDK.OverlayModel.Highlighter}
  * @unrestricted
  */
 Screencast.ScreencastView = class extends UI.VBox {
@@ -39,6 +39,7 @@ Screencast.ScreencastView = class extends UI.VBox {
     super();
     this._screenCaptureModel = screenCaptureModel;
     this._domModel = screenCaptureModel.target().model(SDK.DOMModel);
+    this._overlayModel = screenCaptureModel.target().model(SDK.OverlayModel);
     this._resourceTreeModel = screenCaptureModel.target().model(SDK.ResourceTreeModel);
     this._networkManager = screenCaptureModel.target().model(SDK.NetworkManager);
     this._inputModel = screenCaptureModel.target().model(Screencast.InputModel);
@@ -129,9 +130,10 @@ Screencast.ScreencastView = class extends UI.VBox {
         'jpeg', 80, Math.floor(Math.min(maxImageDimension, dimensions.width)),
         Math.floor(Math.min(maxImageDimension, dimensions.height)), undefined, this._screencastFrame.bind(this),
         this._screencastVisibilityChanged.bind(this));
-    Emulation.MultitargetTouchModel.instance().setCustomTouchEnabled(true);
-    if (this._domModel)
-      this._domModel.setHighlighter(this);
+    for (var emulationModel of SDK.targetManager.models(SDK.EmulationModel))
+      emulationModel.overrideEmulateTouch(true);
+    if (this._overlayModel)
+      this._overlayModel.setHighlighter(this);
   }
 
   _stopCasting() {
@@ -139,9 +141,10 @@ Screencast.ScreencastView = class extends UI.VBox {
       return;
     this._isCasting = false;
     this._screenCaptureModel.stopScreencast();
-    Emulation.MultitargetTouchModel.instance().setCustomTouchEnabled(false);
-    if (this._domModel)
-      this._domModel.setHighlighter(null);
+    for (var emulationModel of SDK.targetManager.models(SDK.EmulationModel))
+      emulationModel.overrideEmulateTouch(false);
+    if (this._overlayModel)
+      this._overlayModel.setHighlighter(null);
   }
 
   /**
@@ -212,7 +215,7 @@ Screencast.ScreencastView = class extends UI.VBox {
   /**
    * @param {!Event} event
    */
-  _handleMouseEvent(event) {
+  async _handleMouseEvent(event) {
     if (this._isGlassPaneActive()) {
       event.consume();
       return;
@@ -231,24 +234,19 @@ Screencast.ScreencastView = class extends UI.VBox {
     }
 
     var position = this._convertIntoScreenSpace(event);
-    this._domModel.nodeForLocation(
+
+    var node = await this._domModel.nodeForLocation(
         Math.floor(position.x / this._pageScaleFactor + this._scrollOffsetX),
         Math.floor(position.y / this._pageScaleFactor + this._scrollOffsetY),
-        Common.moduleSetting('showUAShadowDOM').get(), callback.bind(this));
+        Common.moduleSetting('showUAShadowDOM').get());
 
-    /**
-     * @param {?SDK.DOMNode} node
-     * @this {Screencast.ScreencastView}
-     */
-    function callback(node) {
-      if (!node)
-        return;
-      if (event.type === 'mousemove') {
-        this.highlightDOMNode(node, this._inspectModeConfig);
-        this._domModel.nodeHighlightRequested(node.id);
-      } else if (event.type === 'click') {
-        Common.Revealer.reveal(node);
-      }
+    if (!node)
+      return;
+    if (event.type === 'mousemove') {
+      this.highlightDOMNode(node, this._inspectModeConfig);
+      this._domModel.overlayModel().nodeHighlightRequested(node.id);
+    } else if (event.type === 'click') {
+      Common.Revealer.reveal(node);
     }
   }
 
@@ -316,7 +314,7 @@ Screencast.ScreencastView = class extends UI.VBox {
   /**
    * @override
    * @param {?SDK.DOMNode} node
-   * @param {?Protocol.DOM.HighlightConfig} config
+   * @param {?Protocol.Overlay.HighlightConfig} config
    * @param {!Protocol.DOM.BackendNodeId=} backendNodeId
    * @param {!Protocol.Runtime.RemoteObjectId=} objectId
    */
@@ -333,13 +331,7 @@ Screencast.ScreencastView = class extends UI.VBox {
     }
 
     this._node = node;
-    node.boxModel(callback.bind(this));
-
-    /**
-     * @param {?Protocol.DOM.BoxModel} model
-     * @this {Screencast.ScreencastView}
-     */
-    function callback(model) {
+    node.boxModel().then(model => {
       if (!model || !this._pageScaleFactor) {
         this._repaint();
         return;
@@ -347,7 +339,7 @@ Screencast.ScreencastView = class extends UI.VBox {
       this._model = this._scaleModel(model);
       this._config = config;
       this._repaint();
-    }
+    });
   }
 
   /**
@@ -361,8 +353,8 @@ Screencast.ScreencastView = class extends UI.VBox {
      */
     function scaleQuad(quad) {
       for (var i = 0; i < quad.length; i += 2) {
-        quad[i] = quad[i] * this._screenZoom;
-        quad[i + 1] = (quad[i + 1] + this._screenOffsetTop) * this._screenZoom;
+        quad[i] = quad[i] * this._pageScaleFactor * this._screenZoom;
+        quad[i + 1] = (quad[i + 1] * this._pageScaleFactor + this._screenOffsetTop) * this._screenZoom;
       }
     }
 
@@ -569,14 +561,13 @@ Screencast.ScreencastView = class extends UI.VBox {
 
   /**
    * @override
-   * @param {!Protocol.DOM.InspectMode} mode
-   * @param {!Protocol.DOM.HighlightConfig} config
-   * @param {function(?Protocol.Error)=} callback
+   * @param {!Protocol.Overlay.InspectMode} mode
+   * @param {!Protocol.Overlay.HighlightConfig} config
+   * @return {!Promise}
    */
-  setInspectMode(mode, config, callback) {
-    this._inspectModeConfig = mode !== Protocol.DOM.InspectMode.None ? config : null;
-    if (callback)
-      callback(null);
+  setInspectMode(mode, config) {
+    this._inspectModeConfig = mode !== Protocol.Overlay.InspectMode.None ? config : null;
+    return Promise.resolve();
   }
 
   /**
@@ -612,7 +603,8 @@ Screencast.ScreencastView = class extends UI.VBox {
     this._navigationForward = this._navigationBar.createChild('button', 'forward');
     this._navigationForward.disabled = true;
     this._navigationReload = this._navigationBar.createChild('button', 'reload');
-    this._navigationUrl = this._navigationBar.createChild('input');
+    this._navigationUrl = UI.createInput();
+    this._navigationBar.appendChild(this._navigationUrl);
     this._navigationUrl.type = 'text';
     this._navigationProgressBar = new Screencast.ScreencastView.ProgressTracker(
         this._resourceTreeModel, this._networkManager, this._navigationBar.createChild('div', 'progress'));

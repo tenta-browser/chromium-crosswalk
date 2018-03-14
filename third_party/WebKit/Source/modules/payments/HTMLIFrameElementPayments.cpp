@@ -6,7 +6,7 @@
 
 #include "core/dom/QualifiedName.h"
 #include "core/html/HTMLIFrameElement.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -49,11 +49,11 @@ HTMLIFrameElementPayments& HTMLIFrameElementPayments::From(
 // static
 bool HTMLIFrameElementPayments::AllowPaymentRequest(
     HTMLIFrameElement& element) {
-  return RuntimeEnabledFeatures::paymentRequestEnabled() &&
+  return RuntimeEnabledFeatures::PaymentRequestEnabled() &&
          element.FastHasAttribute(HTMLNames::allowpaymentrequestAttr);
 }
 
-DEFINE_TRACE(HTMLIFrameElementPayments) {
+void HTMLIFrameElementPayments::Trace(blink::Visitor* visitor) {
   Supplement<HTMLIFrameElement>::Trace(visitor);
 }
 

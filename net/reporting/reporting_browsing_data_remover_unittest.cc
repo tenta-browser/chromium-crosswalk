@@ -4,10 +4,10 @@
 
 #include "net/reporting/reporting_browsing_data_remover.h"
 
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "net/reporting/reporting_cache.h"
 #include "net/reporting/reporting_client.h"
@@ -35,7 +35,7 @@ class ReportingBrowsingDataRemoverTest : public ReportingTestBase {
           base::Bind(&ReportingBrowsingDataRemoverTest::HostIs, host);
     }
 
-    ReportingBrowsingDataRemover::RemoveBrowsingData(context(), data_type_mask,
+    ReportingBrowsingDataRemover::RemoveBrowsingData(cache(), data_type_mask,
                                                      origin_filter);
   }
 
@@ -57,8 +57,8 @@ class ReportingBrowsingDataRemoverTest : public ReportingTestBase {
 
   const GURL kUrl1_ = GURL("https://origin1/path");
   const GURL kUrl2_ = GURL("https://origin2/path");
-  const url::Origin kOrigin1_ = url::Origin(kUrl1_);
-  const url::Origin kOrigin2_ = url::Origin(kUrl2_);
+  const url::Origin kOrigin1_ = url::Origin::Create(kUrl1_);
+  const url::Origin kOrigin2_ = url::Origin::Create(kUrl2_);
   const GURL kEndpoint_ = GURL("https://endpoint/");
   const std::string kGroup_ = "group";
   const std::string kType_ = "default";
@@ -66,10 +66,10 @@ class ReportingBrowsingDataRemoverTest : public ReportingTestBase {
 
 TEST_F(ReportingBrowsingDataRemoverTest, RemoveNothing) {
   cache()->AddReport(kUrl1_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
   cache()->AddReport(kUrl2_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
   cache()->SetClient(kOrigin1_, kEndpoint_,
                      ReportingClient::Subdomains::EXCLUDE, kGroup_,
@@ -86,10 +86,10 @@ TEST_F(ReportingBrowsingDataRemoverTest, RemoveNothing) {
 
 TEST_F(ReportingBrowsingDataRemoverTest, RemoveAllReports) {
   cache()->AddReport(kUrl1_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
   cache()->AddReport(kUrl2_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
   cache()->SetClient(kOrigin1_, kEndpoint_,
                      ReportingClient::Subdomains::EXCLUDE, kGroup_,
@@ -106,10 +106,10 @@ TEST_F(ReportingBrowsingDataRemoverTest, RemoveAllReports) {
 
 TEST_F(ReportingBrowsingDataRemoverTest, RemoveAllClients) {
   cache()->AddReport(kUrl1_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
   cache()->AddReport(kUrl2_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
   cache()->SetClient(kOrigin1_, kEndpoint_,
                      ReportingClient::Subdomains::EXCLUDE, kGroup_,
@@ -126,10 +126,10 @@ TEST_F(ReportingBrowsingDataRemoverTest, RemoveAllClients) {
 
 TEST_F(ReportingBrowsingDataRemoverTest, RemoveAllReportsAndClients) {
   cache()->AddReport(kUrl1_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
   cache()->AddReport(kUrl2_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
   cache()->SetClient(kOrigin1_, kEndpoint_,
                      ReportingClient::Subdomains::EXCLUDE, kGroup_,
@@ -146,10 +146,10 @@ TEST_F(ReportingBrowsingDataRemoverTest, RemoveAllReportsAndClients) {
 
 TEST_F(ReportingBrowsingDataRemoverTest, RemoveSomeReports) {
   cache()->AddReport(kUrl1_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
   cache()->AddReport(kUrl2_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
   cache()->SetClient(kOrigin1_, kEndpoint_,
                      ReportingClient::Subdomains::EXCLUDE, kGroup_,
@@ -170,10 +170,10 @@ TEST_F(ReportingBrowsingDataRemoverTest, RemoveSomeReports) {
 
 TEST_F(ReportingBrowsingDataRemoverTest, RemoveSomeClients) {
   cache()->AddReport(kUrl1_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
   cache()->AddReport(kUrl2_, kGroup_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(),
+                     std::make_unique<base::DictionaryValue>(),
                      tick_clock()->NowTicks(), 0);
   cache()->SetClient(kOrigin1_, kEndpoint_,
                      ReportingClient::Subdomains::EXCLUDE, kGroup_,

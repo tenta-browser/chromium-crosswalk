@@ -19,7 +19,7 @@
 // one parameter |Document|.
 //
 // |expectedText| is an HTML fragment indicating the expected result, where text
-// with spelling marker is surrounded by '_', and text with grammar marker is
+// with spelling marker is surrounded by '#', and text with grammar marker is
 // surrounded by '~'.
 //
 // |opt_args| is an optional object with the following optional fields:
@@ -176,16 +176,10 @@ class MarkerSerializer {
    * @param {!HTMLElement} element
    */
   handleInnerEditorOf(element) {
-    /** @type {!ShadowRoot} */
-    const shadowRoot = window.internals.shadowRoot(element);
-    assert_not_equals(
-        shadowRoot, undefined,
-        'Internal error: text form control element not having shadow tree as ' +
-        'internal implementation.');
     /** @type {!HTMLDivElement} */
-    const innerEditor = shadowRoot.getElementById('inner-editor');
+    const innerEditor = internals.innerEditorElement(element);
     assert_equals(innerEditor.tagName, 'DIV',
-                  'Internal error: DIV#inner-editor not found in shadow tree.');
+                  'Internal error: inner editor DIV not found.');
     innerEditor.childNodes.forEach(child => {
       assert_true(isCharacterData(child),
                   'Internal error: inner editor having child node that is ' +
@@ -359,13 +353,11 @@ function invokeSpellcheckTest(testObject, input, tester, expectedText) {
       });
     };
 
-    if (internals.idleTimeSpellCheckerState !== undefined) {
-      if (internals.idleTimeSpellCheckerState(sample.document) === 'HotModeRequested')
+    if (internals.idleTimeSpellCheckerState(sample.document) === 'HotModeRequested')
+      internals.runIdleTimeSpellChecker(sample.document);
+    if (testObject.properties[kNeedsFullCheck]) {
+      while (internals.idleTimeSpellCheckerState(sample.document) !== 'Inactive')
         internals.runIdleTimeSpellChecker(sample.document);
-      if (testObject.properties[kNeedsFullCheck]) {
-        while (internals.idleTimeSpellCheckerState(sample.document) !== 'Inactive')
-          internals.runIdleTimeSpellChecker(sample.document);
-      }
     }
 
     // For a test that does not create new spell check request, a synchronous

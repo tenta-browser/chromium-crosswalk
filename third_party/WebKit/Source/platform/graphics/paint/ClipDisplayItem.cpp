@@ -26,7 +26,7 @@ void ClipDisplayItem::Replay(GraphicsContext& context) const {
 }
 
 void ClipDisplayItem::AppendToWebDisplayItemList(
-    const IntRect& visual_rect,
+    const LayoutSize&,
     WebDisplayItemList* list) const {
   WebVector<SkRRect> web_rounded_rects(rounded_rect_clips_.size());
   for (size_t i = 0; i < rounded_rect_clips_.size(); ++i)
@@ -40,18 +40,15 @@ void EndClipDisplayItem::Replay(GraphicsContext& context) const {
 }
 
 void EndClipDisplayItem::AppendToWebDisplayItemList(
-    const IntRect& visual_rect,
+    const LayoutSize&,
     WebDisplayItemList* list) const {
   list->AppendEndClipItem();
 }
 
-#ifndef NDEBUG
-void ClipDisplayItem::DumpPropertiesAsDebugString(
-    WTF::StringBuilder& string_builder) const {
-  DisplayItem::DumpPropertiesAsDebugString(string_builder);
-  string_builder.Append(WTF::String::Format(
-      ", clipRect: [%d,%d,%d,%d]", clip_rect_.X(), clip_rect_.Y(),
-      clip_rect_.Width(), clip_rect_.Height()));
+#if DCHECK_IS_ON()
+void ClipDisplayItem::PropertiesAsJSON(JSONObject& json) const {
+  DisplayItem::PropertiesAsJSON(json);
+  json.SetString("clipRect", clip_rect_.ToString());
 }
 #endif
 

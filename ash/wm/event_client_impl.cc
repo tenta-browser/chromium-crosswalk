@@ -7,17 +7,21 @@
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/session/session_controller.h"
 #include "ash/shell.h"
+#include "ash/tray_action/tray_action.h"
 #include "ui/aura/window.h"
 #include "ui/keyboard/keyboard_util.h"
 
 namespace ash {
 
-EventClientImpl::EventClientImpl() {}
+EventClientImpl::EventClientImpl() = default;
 
-EventClientImpl::~EventClientImpl() {}
+EventClientImpl::~EventClientImpl() = default;
 
 bool EventClientImpl::CanProcessEventsWithinSubtree(
     const aura::Window* window) const {
+  if (skip_user_session_blocked_check_)
+    return true;
+
   // TODO(oshima): Migrate this logic to Shell::CanWindowReceieveEvents and
   // remove this.
   const aura::Window* root_window = window ? window->GetRootWindow() : NULL;

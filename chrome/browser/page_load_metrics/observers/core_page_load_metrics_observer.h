@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_PAGE_LOAD_METRICS_OBSERVERS_CORE_PAGE_LOAD_METRICS_OBSERVER_H_
 
 #include "chrome/browser/page_load_metrics/page_load_metrics_observer.h"
+#include "components/ukm/ukm_source.h"
 
 namespace internal {
 
@@ -20,6 +21,7 @@ extern const char kHistogramDomContentLoaded[];
 extern const char kHistogramLoad[];
 extern const char kHistogramFirstContentfulPaint[];
 extern const char kHistogramFirstMeaningfulPaint[];
+extern const char kHistogramTimeToInteractive[];
 extern const char kHistogramParseDuration[];
 extern const char kHistogramParseBlockedOnScriptLoad[];
 extern const char kHistogramParseBlockedOnScriptExecution[];
@@ -44,8 +46,11 @@ extern const char kHistogramFailedProvisionalLoad[];
 extern const char kHistogramPageTimingForegroundDuration[];
 extern const char kHistogramPageTimingForegroundDurationNoCommit[];
 
+extern const char kHistogramForegroundToFirstMeaningfulPaint[];
+
 extern const char kRapporMetricsNameCoarseTiming[];
 extern const char kHistogramFirstMeaningfulPaintStatus[];
+extern const char kHistogramTimeToInteractiveStatus[];
 
 extern const char kHistogramFirstNonScrollInputAfterFirstPaint[];
 extern const char kHistogramFirstScrollInputAfterFirstPaint[];
@@ -79,6 +84,38 @@ enum FirstMeaningfulPaintStatus {
   FIRST_MEANINGFUL_PAINT_LAST_ENTRY
 };
 
+enum TimeToInteractiveStatus {
+  // Time to Interactive recorded successfully.
+  TIME_TO_INTERACTIVE_RECORDED = 0,
+
+  // Reasons for not recording Time to Interactive:
+  // Main thread and network quiescence reached, but the user backgrounded the
+  // page at least once before reaching quiescence.
+  TIME_TO_INTERACTIVE_BACKGROUNDED = 1,
+
+  // Main thread and network quiescence reached, but there was a non-mouse-move
+  // user input that hit the renderer main thread between navigation start and
+  // the
+  // interactive time, so the detected interactive time is inaccurate. Note that
+  // Time to Interactive is not invalidated if the user input is after
+  // interactive time, but before quiescence windows are detected. User input
+  // invalidation has less priority than backgrounding - if there was an input
+  // event before reaching interactive, but the page was backgrounded before
+  // reaching interactive detection, the status is recorded as backgrounded
+  // instead of user-interaction-before-interactive.
+  TIME_TO_INTERACTIVE_USER_INTERACTION_BEFORE_INTERACTIVE = 2,
+
+  // User left page before main thread and network quiescence, but after First
+  // Meaningful Paint.
+  TIME_TO_INTERACTIVE_DID_NOT_REACH_QUIESCENCE = 3,
+
+  // User left page before First Meaningful Paint happened, but after First
+  // Paint.
+  TIME_TO_INTERACTIVE_DID_NOT_REACH_FIRST_MEANINGFUL_PAINT = 4,
+
+  TIME_TO_INTERACTIVE_LAST_ENTRY
+};
+
 }  // namespace internal
 
 // Observer responsible for recording 'core' page load metrics. Core metrics are
@@ -91,59 +128,66 @@ class CorePageLoadMetricsObserver
   ~CorePageLoadMetricsObserver() override;
 
   // page_load_metrics::PageLoadMetricsObserver:
-  ObservePolicy OnCommit(content::NavigationHandle* navigation_handle) override;
+  ObservePolicy OnRedirect(
+      content::NavigationHandle* navigation_handle) override;
+  ObservePolicy OnCommit(content::NavigationHandle* navigation_handle,
+                         ukm::SourceId source_id) override;
   void OnDomContentLoadedEventStart(
-      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
   void OnLoadEventStart(
-      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
   void OnFirstLayout(
-      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
-  void OnFirstPaint(
-      const page_load_metrics::PageLoadTiming& timing,
+  void OnFirstPaintInPage(
+      const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
-  void OnFirstTextPaint(
-      const page_load_metrics::PageLoadTiming& timing,
+  void OnFirstTextPaintInPage(
+      const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
-  void OnFirstImagePaint(
-      const page_load_metrics::PageLoadTiming& timing,
+  void OnFirstImagePaintInPage(
+      const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
-  void OnFirstContentfulPaint(
-      const page_load_metrics::PageLoadTiming& timing,
+  void OnFirstContentfulPaintInPage(
+      const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
-  void OnFirstMeaningfulPaint(
-      const page_load_metrics::PageLoadTiming& timing,
+  void OnFirstMeaningfulPaintInMainFrameDocument(
+      const page_load_metrics::mojom::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+  void OnPageInteractive(
+      const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
   void OnParseStart(
-      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
   void OnParseStop(
-      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
-  void OnComplete(const page_load_metrics::PageLoadTiming& timing,
+  void OnComplete(const page_load_metrics::mojom::PageLoadTiming& timing,
                   const page_load_metrics::PageLoadExtraInfo& info) override;
   void OnFailedProvisionalLoad(
       const page_load_metrics::FailedProvisionalLoadInfo& failed_load_info,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
   ObservePolicy FlushMetricsOnAppEnterBackground(
-      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& info) override;
   void OnUserInput(const blink::WebInputEvent& event) override;
-  void OnLoadedResource(
-      const page_load_metrics::ExtraRequestInfo& extra_request_info) override;
+  void OnLoadedResource(const page_load_metrics::ExtraRequestCompleteInfo&
+                            extra_request_complete_info) override;
 
  private:
-  void RecordTimingHistograms(const page_load_metrics::PageLoadTiming& timing,
-                              const page_load_metrics::PageLoadExtraInfo& info);
-  void RecordByteAndResourceHistograms(
-      const page_load_metrics::PageLoadTiming& timing,
+  void RecordTimingHistograms(
+      const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& info);
-  void RecordRappor(const page_load_metrics::PageLoadTiming& timing,
+  void RecordByteAndResourceHistograms(
+      const page_load_metrics::mojom::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& info);
+  void RecordRappor(const page_load_metrics::mojom::PageLoadTiming& timing,
                     const page_load_metrics::PageLoadExtraInfo& info);
   void RecordForegroundDurationHistograms(
-      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& info,
       base::TimeTicks app_background_time);
 
@@ -161,6 +205,9 @@ class CorePageLoadMetricsObserver
   int64_t cache_bytes_;
   int64_t network_bytes_;
 
+  // Size of the redirect chain, which excludes the first URL.
+  int redirect_chain_size_;
+
   // True if we've received a non-scroll input (touch tap or mouse up)
   // after first paint has happened.
   bool received_non_scroll_input_after_first_paint_ = false;
@@ -168,7 +215,6 @@ class CorePageLoadMetricsObserver
   // True if we've received a scroll input after first paint has happened.
   bool received_scroll_input_after_first_paint_ = false;
 
-  base::TimeTicks first_user_interaction_after_first_paint_;
   base::TimeTicks first_paint_;
 
   DISALLOW_COPY_AND_ASSIGN(CorePageLoadMetricsObserver);

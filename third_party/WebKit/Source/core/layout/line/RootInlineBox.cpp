@@ -19,8 +19,8 @@
 
 #include "core/layout/line/RootInlineBox.h"
 
+#include "core/css/StyleEngine.h"
 #include "core/dom/Document.h"
-#include "core/dom/StyleEngine.h"
 #include "core/editing/EditingUtilities.h"
 #include "core/layout/HitTestResult.h"
 #include "core/layout/VerticalPositionCache.h"
@@ -78,7 +78,7 @@ void RootInlineBox::ClearTruncation() {
   }
 }
 
-int RootInlineBox::BaselinePosition(FontBaseline baseline_type) const {
+LayoutUnit RootInlineBox::BaselinePosition(FontBaseline baseline_type) const {
   return BoxModelObject().BaselinePosition(
       baseline_type, IsFirstLineStyle(),
       IsHorizontal() ? kHorizontalLine : kVerticalLine,
@@ -114,11 +114,11 @@ LayoutUnit RootInlineBox::PlaceEllipsis(const AtomicString& ellipsis_str,
                                         LayoutUnit block_right_edge,
                                         LayoutUnit ellipsis_width,
                                         LayoutUnit logical_left_offset,
-                                        bool found_box) {
+                                        InlineBox** found_box,
+                                        ForceEllipsisOnLine force_ellipsis) {
   // Create an ellipsis box if we don't already have one. If we already have one
-  // we're just
-  // here to blank out (truncate) the text boxes.
-  if (!found_box) {
+  // we're just here to blank out (truncate) the text boxes.
+  if (!*found_box) {
     EllipsisBox* ellipsis_box = new EllipsisBox(
         GetLineLayoutItem(), ellipsis_str, this, ellipsis_width,
         LogicalHeight(), Location(), !PrevRootBox(), IsHorizontal());
@@ -131,8 +131,9 @@ LayoutUnit RootInlineBox::PlaceEllipsis(const AtomicString& ellipsis_str,
 
   // FIXME: Do we need an RTL version of this?
   LayoutUnit adjusted_logical_left = logical_left_offset + LogicalLeft();
-  if (ltr && (adjusted_logical_left + LogicalWidth() + ellipsis_width) <=
-                 block_right_edge) {
+  if (force_ellipsis == ForceEllipsis && ltr &&
+      (adjusted_logical_left + LogicalWidth() + ellipsis_width) <=
+          block_right_edge) {
     if (HasEllipsisBox())
       GetEllipsisBox()->SetLogicalLeft(LogicalLeft() + LogicalWidth());
     return LogicalWidth() + ellipsis_width;
@@ -155,7 +156,7 @@ LayoutUnit RootInlineBox::PlaceEllipsisBox(bool ltr,
                                            LayoutUnit block_right_edge,
                                            LayoutUnit ellipsis_width,
                                            LayoutUnit& truncated_width,
-                                           bool& found_box,
+                                           InlineBox** found_box,
                                            LayoutUnit logical_left_offset) {
   LayoutUnit result = InlineFlowBox::PlaceEllipsisBox(
       ltr, block_left_edge, block_right_edge, ellipsis_width, truncated_width,
@@ -212,22 +213,22 @@ void RootInlineBox::Move(const LayoutSize& delta) {
 
 void RootInlineBox::ChildRemoved(InlineBox* box) {
   if (box->GetLineLayoutItem() == line_break_obj_)
-    SetLineBreakInfo(0, 0, BidiStatus());
+    SetLineBreakInfo(nullptr, 0, BidiStatus());
 
   for (RootInlineBox* prev = PrevRootBox();
        prev && prev->LineBreakObj() == box->GetLineLayoutItem();
        prev = prev->PrevRootBox()) {
-    prev->SetLineBreakInfo(0, 0, BidiStatus());
+    prev->SetLineBreakInfo(nullptr, 0, BidiStatus());
     prev->MarkDirty();
   }
 }
 
 static inline void ApplyLineHeightStep(uint8_t line_height_step,
-                                       int& max_ascent,
-                                       int& max_descent) {
+                                       LayoutUnit& max_ascent,
+                                       LayoutUnit& max_descent) {
   // Round up to the multiple of units, by adding spaces to over/under equally.
   // https://drafts.csswg.org/css-rhythm/#line-height-step
-  int remainder = (max_ascent + max_descent) % line_height_step;
+  int remainder = (max_ascent + max_descent).ToInt() % line_height_step;
   if (!remainder)
     return;
   DCHECK_GT(remainder, 0);
@@ -246,8 +247,8 @@ LayoutUnit RootInlineBox::AlignBoxesInBlockDirection(
 
   LayoutUnit max_position_top;
   LayoutUnit max_position_bottom;
-  int max_ascent = 0;
-  int max_descent = 0;
+  LayoutUnit max_ascent;
+  LayoutUnit max_descent;
   bool set_max_ascent = false;
   bool set_max_descent = false;
 
@@ -343,21 +344,26 @@ LayoutUnit RootInlineBox::BeforeAnnotationsAdjustment() const {
 
 SelectionState RootInlineBox::GetSelectionState() const {
   // Walk over all of the selected boxes.
-  SelectionState state = SelectionNone;
+  SelectionState state = SelectionState::kNone;
   for (InlineBox* box = FirstLeafChild(); box; box = box->NextLeafChild()) {
     SelectionState box_state = box->GetSelectionState();
-    if ((box_state == SelectionStart && state == SelectionEnd) ||
-        (box_state == SelectionEnd && state == SelectionStart)) {
-      state = SelectionBoth;
-    } else if (state == SelectionNone ||
-               ((box_state == SelectionStart || box_state == SelectionEnd) &&
-                (state == SelectionNone || state == SelectionInside))) {
+    if ((box_state == SelectionState::kStart &&
+         state == SelectionState::kEnd) ||
+        (box_state == SelectionState::kEnd &&
+         state == SelectionState::kStart)) {
+      state = SelectionState::kStartAndEnd;
+    } else if (state == SelectionState::kNone ||
+               ((box_state == SelectionState::kStart ||
+                 box_state == SelectionState::kEnd) &&
+                (state == SelectionState::kNone ||
+                 state == SelectionState::kInside))) {
       state = box_state;
-    } else if (box_state == SelectionNone && state == SelectionStart) {
+    } else if (box_state == SelectionState::kNone &&
+               state == SelectionState::kStart) {
       // We are past the end of the selection.
-      state = SelectionBoth;
+      state = SelectionState::kStartAndEnd;
     }
-    if (state == SelectionBoth)
+    if (state == SelectionState::kStartAndEnd)
       break;
   }
 
@@ -366,7 +372,7 @@ SelectionState RootInlineBox::GetSelectionState() const {
 
 InlineBox* RootInlineBox::FirstSelectedBox() const {
   for (InlineBox* box = FirstLeafChild(); box; box = box->NextLeafChild()) {
-    if (box->GetSelectionState() != SelectionNone)
+    if (box->GetSelectionState() != SelectionState::kNone)
       return box;
   }
 
@@ -375,7 +381,7 @@ InlineBox* RootInlineBox::FirstSelectedBox() const {
 
 InlineBox* RootInlineBox::LastSelectedBox() const {
   for (InlineBox* box = LastLeafChild(); box; box = box->PrevLeafChild()) {
-    if (box->GetSelectionState() != SelectionNone)
+    if (box->GetSelectionState() != SelectionState::kNone)
       return box;
   }
 
@@ -561,10 +567,10 @@ LayoutRect RootInlineBox::PaddedLayoutOverflowRect(
   return line_layout_overflow;
 }
 
-static void SetAscentAndDescent(int& ascent,
-                                int& descent,
-                                int new_ascent,
-                                int new_descent,
+static void SetAscentAndDescent(LayoutUnit& ascent,
+                                LayoutUnit& descent,
+                                LayoutUnit new_ascent,
+                                LayoutUnit new_descent,
                                 bool& ascent_descent_set) {
   if (!ascent_descent_set) {
     ascent_descent_set = true;
@@ -579,15 +585,15 @@ static void SetAscentAndDescent(int& ascent,
 void RootInlineBox::AscentAndDescentForBox(
     InlineBox* box,
     GlyphOverflowAndFallbackFontsMap& text_box_data_map,
-    int& ascent,
-    int& descent,
+    LayoutUnit& ascent,
+    LayoutUnit& descent,
     bool& affects_ascent,
     bool& affects_descent) const {
   bool ascent_descent_set = false;
 
   if (box->GetLineLayoutItem().IsAtomicInlineLevel()) {
     ascent = box->BaselinePosition(BaselineType());
-    descent = RoundToInt(box->LineHeight() - ascent);
+    descent = box->LineHeight() - ascent;
 
     // Replaced elements always affect both the ascent and descent.
     affects_ascent = true;
@@ -598,8 +604,8 @@ void RootInlineBox::AscentAndDescentForBox(
   Vector<const SimpleFontData*>* used_fonts = nullptr;
   if (box->IsText()) {
     GlyphOverflowAndFallbackFontsMap::iterator it =
-        text_box_data_map.Find(ToInlineTextBox(box));
-    used_fonts = it == text_box_data_map.end() ? 0 : &it->value.first;
+        text_box_data_map.find(ToInlineTextBox(box));
+    used_fonts = it == text_box_data_map.end() ? nullptr : &it->value.first;
   }
 
   bool include_leading = IncludeLeadingForBox(box);
@@ -617,12 +623,12 @@ void RootInlineBox::AscentAndDescentForBox(
                               .PrimaryFont());
     for (size_t i = 0; i < used_fonts->size(); ++i) {
       const FontMetrics& font_metrics = used_fonts->at(i)->GetFontMetrics();
-      int used_font_ascent = font_metrics.Ascent(BaselineType());
-      int used_font_descent = font_metrics.Descent(BaselineType());
-      int half_leading =
-          (font_metrics.LineSpacing() - font_metrics.Height()) / 2;
-      int used_font_ascent_and_leading = used_font_ascent + half_leading;
-      int used_font_descent_and_leading =
+      LayoutUnit used_font_ascent(font_metrics.Ascent(BaselineType()));
+      LayoutUnit used_font_descent(font_metrics.Descent(BaselineType()));
+      LayoutUnit half_leading(
+          (font_metrics.LineSpacing() - font_metrics.Height()) / 2);
+      LayoutUnit used_font_ascent_and_leading = used_font_ascent + half_leading;
+      LayoutUnit used_font_descent_and_leading =
           font_metrics.LineSpacing() - used_font_ascent_and_leading;
       if (include_leading) {
         SetAscentAndDescent(ascent, descent, used_font_ascent_and_leading,
@@ -638,9 +644,8 @@ void RootInlineBox::AscentAndDescentForBox(
 
   // If leading is included for the box, then we compute that box.
   if (include_leading && !set_used_font_with_leading) {
-    int ascent_with_leading = box->BaselinePosition(BaselineType());
-    int descent_with_leading =
-        (box->LineHeight() - ascent_with_leading).ToInt();
+    LayoutUnit ascent_with_leading = box->BaselinePosition(BaselineType());
+    LayoutUnit descent_with_leading = box->LineHeight() - ascent_with_leading;
     SetAscentAndDescent(ascent, descent, ascent_with_leading,
                         descent_with_leading, ascent_descent_set);
 

@@ -23,7 +23,6 @@
 #include "net/disk_cache/simple/simple_index.h"
 #include "net/disk_cache/simple/simple_synchronous_entry.h"
 #include "net/disk_cache/simple/simple_util.h"
-#include "third_party/zlib/zlib.h"
 
 using base::File;
 
@@ -33,12 +32,16 @@ namespace {
 const int kEntryFilesHashLength = 16;
 const int kEntryFilesSuffixLength = 2;
 
-const uint64_t kMaxEntriesInIndex = 100000000;
+// Limit on how big a file we are willing to work with, to avoid crashes
+// when its corrupt.
+const int kMaxEntriesInIndex = 1000000;
+
+// Here 8 comes from the key size.
+const int64_t kMaxIndexFileSizeBytes =
+    kMaxEntriesInIndex * (8 + EntryMetadata::kOnDiskSizeBytes);
 
 uint32_t CalculatePickleCRC(const base::Pickle& pickle) {
-  return crc32(crc32(0, Z_NULL, 0),
-               reinterpret_cast<const Bytef*>(pickle.payload()),
-               pickle.payload_size());
+  return simple_util::Crc32(pickle.payload(), pickle.payload_size());
 }
 
 // Used in histograms. Please only add new values at the end.
@@ -153,14 +156,50 @@ void ProcessEntryFile(SimpleIndex::EntrySet* entries,
   SimpleIndex::EntrySet::iterator it = entries->find(hash_key);
   base::CheckedNumeric<uint32_t> total_entry_size = size;
 
+  // Sometimes we see entry sizes here which are nonsense. We can't use them
+  // as-is, as they simply won't fit the type. The options that come to mind
+  // are:
+  // 1) Ignore the file.
+  // 2) Make something up.
+  // 3) Delete the files for the hash.
+  // ("crash the browser" isn't considered a serious alternative).
+  //
+  // The problem with doing (1) is that we are recovering the index here, so if
+  // we don't include the info on the file here, we may completely lose track of
+  // the entry and never clean the file up.
+  //
+  // (2) is actually mostly fine: we may trigger eviction too soon or too late,
+  // but we can't really do better since we can't trust the size. If the entry
+  // is never opened, it will eventually get evicted. If it is opened, we will
+  // re-check the file size, and if it's nonsense delete it there, and if it's
+  // fine we will fix up the index via a UpdateDataFromEntryStat to have the
+  // correct size.
+  //
+  // (3) does the best thing except when the wrong size is some weird interim
+  // thing just on directory listing (in which case it may evict an entry
+  // prematurely). It's a little harder to think about since it involves
+  // mutating the disk while there are other mutations going on, however,
+  // while (2) is single-threaded.
+  //
+  // Hence this picks (2).
+
+  const int kPlaceHolderSizeWhenInvalid = 32768;
+  if (!total_entry_size.IsValid()) {
+    LOG(WARNING) << "Invalid file size while restoring index from disk: "
+                 << size << " on file:" << file_name;
+  }
+
   if (it == entries->end()) {
     SimpleIndex::InsertInEntrySet(
-        hash_key, EntryMetadata(last_used_time, total_entry_size.ValueOrDie()),
+        hash_key,
+        EntryMetadata(last_used_time, total_entry_size.ValueOrDefault(
+                                          kPlaceHolderSizeWhenInvalid)),
         entries);
   } else {
     // Summing up the total size of the entry through all the *_[0-1] files
     total_entry_size += it->second.GetEntrySize();
-    it->second.SetEntrySize(total_entry_size.ValueOrDie());
+    it->second.SetEntrySize(
+        total_entry_size.ValueOrDefault(kPlaceHolderSizeWhenInvalid));
   }
 }
 
@@ -171,8 +210,7 @@ SimpleIndexLoadResult::SimpleIndexLoadResult()
       index_write_reason(SimpleIndex::INDEX_WRITE_REASON_MAX),
       flush_required(false) {}
 
-SimpleIndexLoadResult::~SimpleIndexLoadResult() {
-}
+SimpleIndexLoadResult::~SimpleIndexLoadResult() = default;
 
 void SimpleIndexLoadResult::Reset() {
   did_load = false;
@@ -215,13 +253,11 @@ void SimpleIndexFile::IndexMetadata::Serialize(base::Pickle* pickle) const {
 }
 
 // static
-bool SimpleIndexFile::SerializeFinalData(base::Time cache_modified,
+void SimpleIndexFile::SerializeFinalData(base::Time cache_modified,
                                          base::Pickle* pickle) {
-  if (!pickle->WriteInt64(cache_modified.ToInternalValue()))
-    return false;
+  pickle->WriteInt64(cache_modified.ToInternalValue());
   SimpleIndexFile::PickleHeader* header_p = pickle->headerT<PickleHeader>();
   header_p->crc = CalculatePickleCRC(*pickle);
-  return true;
 }
 
 bool SimpleIndexFile::IndexMetadata::Deserialize(base::PickleIterator* it) {
@@ -274,9 +310,6 @@ void SimpleIndexFile::SyncWriteToDisk(net::CacheType cache_type,
   }
 
   // Atomically rename the temporary index file to become the real one.
-  // TODO(gavinp): DCHECK when not shutting down, since that is very strange.
-  // The rename failing during shutdown is legal because it's legal to begin
-  // erasing a cache as soon as the destructor has been called.
   if (!base::ReplaceFile(temp_index_filename, index_filename, NULL))
     return;
 
@@ -297,29 +330,29 @@ bool SimpleIndexFile::IndexMetadata::CheckIndexMetadata() {
     return false;
   }
 
-  static_assert(kSimpleVersion == 7, "index metadata reader out of date");
+  static_assert(kSimpleVersion == 8, "index metadata reader out of date");
   // No |reason_| is saved in the version 6 file format.
   if (version_ == 6)
     return reason_ == SimpleIndex::INDEX_WRITE_REASON_MAX;
-  return version_ == 7 && reason_ < SimpleIndex::INDEX_WRITE_REASON_MAX;
+  return (version_ == 7 || version_ == 8) &&
+         reason_ < SimpleIndex::INDEX_WRITE_REASON_MAX;
 }
 
 SimpleIndexFile::SimpleIndexFile(
-    const scoped_refptr<base::SingleThreadTaskRunner>& cache_thread,
+    const scoped_refptr<base::SequencedTaskRunner>& cache_runner,
     const scoped_refptr<base::TaskRunner>& worker_pool,
     net::CacheType cache_type,
     const base::FilePath& cache_directory)
-    : cache_thread_(cache_thread),
+    : cache_runner_(cache_runner),
       worker_pool_(worker_pool),
       cache_type_(cache_type),
       cache_directory_(cache_directory),
       index_file_(cache_directory_.AppendASCII(kIndexDirectory)
                       .AppendASCII(kIndexFileName)),
       temp_index_file_(cache_directory_.AppendASCII(kIndexDirectory)
-                           .AppendASCII(kTempIndexFileName)) {
-}
+                           .AppendASCII(kTempIndexFileName)) {}
 
-SimpleIndexFile::~SimpleIndexFile() {}
+SimpleIndexFile::~SimpleIndexFile() = default;
 
 void SimpleIndexFile::LoadIndexEntries(base::Time cache_last_modified,
                                        const base::Closure& callback,
@@ -345,9 +378,9 @@ void SimpleIndexFile::WriteToDisk(SimpleIndex::IndexWriteToDiskReason reason,
                  cache_type_, cache_directory_, index_file_, temp_index_file_,
                  base::Passed(&pickle), start, app_on_background);
   if (callback.is_null())
-    cache_thread_->PostTask(FROM_HERE, task);
+    cache_runner_->PostTask(FROM_HERE, task);
   else
-    cache_thread_->PostTaskAndReply(FROM_HERE, task, callback);
+    cache_runner_->PostTaskAndReply(FROM_HERE, task, callback);
 }
 
 // static
@@ -395,7 +428,7 @@ void SimpleIndexFile::SyncLoadIndexEntries(
   SyncRestoreFromDisk(cache_directory, index_file_path, out_result);
   SIMPLE_CACHE_UMA(MEDIUM_TIMES, "IndexRestoreTime", cache_type,
                    base::TimeTicks::Now() - start);
-  SIMPLE_CACHE_UMA(COUNTS, "IndexEntriesRestored", cache_type,
+  SIMPLE_CACHE_UMA(COUNTS_1M, "IndexEntriesRestored", cache_type,
                    out_result->entries.size());
   if (index_file_existed) {
     out_result->init_method = SimpleIndex::INITIALIZE_METHOD_RECOVERED;
@@ -414,7 +447,7 @@ void SimpleIndexFile::SyncLoadIndexEntries(
                                cache_type);
   } else {
     out_result->init_method = SimpleIndex::INITIALIZE_METHOD_NEWCACHE;
-    SIMPLE_CACHE_UMA(COUNTS,
+    SIMPLE_CACHE_UMA(COUNTS_1M,
                      "IndexCreatedEntryCount", cache_type,
                      out_result->entries.size());
   }
@@ -427,22 +460,32 @@ void SimpleIndexFile::SyncLoadFromDisk(const base::FilePath& index_filename,
                                        SimpleIndexLoadResult* out_result) {
   out_result->Reset();
 
-  File file(index_filename,
-            File::FLAG_OPEN | File::FLAG_READ | File::FLAG_SHARE_DELETE);
+  File file(index_filename, File::FLAG_OPEN | File::FLAG_READ |
+                                File::FLAG_SHARE_DELETE |
+                                File::FLAG_SEQUENTIAL_SCAN);
   if (!file.IsValid())
     return;
 
-  base::MemoryMappedFile index_file_map;
-  if (!index_file_map.Initialize(std::move(file))) {
+  // Sanity-check the length. We don't want to crash trying to read some corrupt
+  // 10GiB file or such.
+  int64_t file_length = file.GetLength();
+  if (file_length < 0 || file_length > kMaxIndexFileSizeBytes) {
     simple_util::SimpleCacheDeleteFile(index_filename);
     return;
   }
 
-  SimpleIndexFile::Deserialize(
-      reinterpret_cast<const char*>(index_file_map.data()),
-      index_file_map.length(),
-      out_last_cache_seen_by_index,
-      out_result);
+  // Make sure to preallocate in one chunk, so we don't induce fragmentation
+  // reallocating a growing buffer.
+  auto buffer = std::make_unique<char[]>(file_length);
+
+  int read = file.Read(0, buffer.get(), file_length);
+  if (read < file_length) {
+    simple_util::SimpleCacheDeleteFile(index_filename);
+    return;
+  }
+
+  SimpleIndexFile::Deserialize(buffer.get(), read, out_last_cache_seen_by_index,
+                               out_result);
 
   if (!out_result->did_load)
     simple_util::SimpleCacheDeleteFile(index_filename);
@@ -506,7 +549,8 @@ void SimpleIndexFile::Deserialize(const char* data, int data_len,
     uint64_t hash_key;
     EntryMetadata entry_metadata;
     if (!pickle_it.ReadUInt64(&hash_key) ||
-        !entry_metadata.Deserialize(&pickle_it)) {
+        !entry_metadata.Deserialize(
+            &pickle_it, index_metadata.has_entry_in_memory_data())) {
       LOG(WARNING) << "Invalid EntryMetadata in Simple Index file.";
       entries->clear();
       return;

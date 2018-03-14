@@ -4,10 +4,10 @@
 
 #include "modules/payments/PaymentAppServiceWorkerRegistration.h"
 
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/Document.h"
 #include "modules/payments/PaymentManager.h"
 #include "modules/serviceworkers/ServiceWorkerRegistration.h"
+#include "platform/bindings/ScriptState.h"
 
 namespace blink {
 
@@ -45,7 +45,7 @@ PaymentManager* PaymentAppServiceWorkerRegistration::paymentManager(
   return payment_manager_.Get();
 }
 
-DEFINE_TRACE(PaymentAppServiceWorkerRegistration) {
+void PaymentAppServiceWorkerRegistration::Trace(blink::Visitor* visitor) {
   visitor->Trace(registration_);
   visitor->Trace(payment_manager_);
   Supplement<ServiceWorkerRegistration>::Trace(visitor);

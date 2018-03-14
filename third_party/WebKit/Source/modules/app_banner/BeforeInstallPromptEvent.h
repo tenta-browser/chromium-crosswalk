@@ -5,14 +5,16 @@
 #ifndef BeforeInstallPromptEvent_h
 #define BeforeInstallPromptEvent_h
 
+#include <utility>
+#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseProperty.h"
+#include "core/dom/ContextLifecycleObserver.h"
 #include "core/frame/LocalFrame.h"
 #include "modules/EventModules.h"
 #include "modules/app_banner/AppBannerPromptResult.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "public/platform/modules/app_banner/app_banner.mojom-blink.h"
-#include <utility>
 
 namespace blink {
 
@@ -21,13 +23,17 @@ class BeforeInstallPromptEventInit;
 
 using UserChoiceProperty =
     ScriptPromiseProperty<Member<BeforeInstallPromptEvent>,
-                          Member<AppBannerPromptResult>,
+                          AppBannerPromptResult,
                           ToV8UndefinedGenerator>;
 
-class BeforeInstallPromptEvent final : public Event,
-                                       public mojom::blink::AppBannerEvent {
+class BeforeInstallPromptEvent final
+    : public Event,
+      public mojom::blink::AppBannerEvent,
+      public ActiveScriptWrappable<BeforeInstallPromptEvent>,
+      public ContextClient {
   DEFINE_WRAPPERTYPEINFO();
   USING_PRE_FINALIZER(BeforeInstallPromptEvent, Dispose);
+  USING_GARBAGE_COLLECTED_MIXIN(BeforeInstallPromptEvent);
 
  public:
   ~BeforeInstallPromptEvent() override;
@@ -43,9 +49,10 @@ class BeforeInstallPromptEvent final : public Event,
   }
 
   static BeforeInstallPromptEvent* Create(
+      ExecutionContext* execution_context,
       const AtomicString& name,
       const BeforeInstallPromptEventInit& init) {
-    return new BeforeInstallPromptEvent(name, init);
+    return new BeforeInstallPromptEvent(execution_context, name, init);
   }
 
   void Dispose();
@@ -57,7 +64,10 @@ class BeforeInstallPromptEvent final : public Event,
   const AtomicString& InterfaceName() const override;
   void preventDefault() override;
 
-  DECLARE_VIRTUAL_TRACE();
+  // ScriptWrappable
+  bool HasPendingActivity() const override;
+
+  void Trace(blink::Visitor*) override;
 
  private:
   BeforeInstallPromptEvent(const AtomicString& name,
@@ -65,7 +75,8 @@ class BeforeInstallPromptEvent final : public Event,
                            mojom::blink::AppBannerServicePtr,
                            mojom::blink::AppBannerEventRequest,
                            const Vector<String>& platforms);
-  BeforeInstallPromptEvent(const AtomicString& name,
+  BeforeInstallPromptEvent(ExecutionContext*,
+                           const AtomicString& name,
                            const BeforeInstallPromptEventInit&);
 
   // mojom::blink::AppBannerEvent methods:

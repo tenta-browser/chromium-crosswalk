@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/api/messaging/native_process_launcher.h"
 
+#include <inttypes.h>
 #include <utility>
 
 #include "base/bind.h"
@@ -108,10 +109,9 @@ void NativeProcessLauncherImpl::Core::Launch(
     const std::string& native_host_name,
     const LaunchedCallback& callback) {
   base::PostTaskWithTraits(FROM_HERE,
-                           base::TaskTraits().MayBlock().WithPriority(
-                               base::TaskPriority::USER_VISIBLE),
-                           base::Bind(&Core::DoLaunchOnThreadPool, this, origin,
-                                      native_host_name, callback));
+                           {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+                           base::BindOnce(&Core::DoLaunchOnThreadPool, this,
+                                          origin, native_host_name, callback));
 }
 
 void NativeProcessLauncherImpl::Core::DoLaunchOnThreadPool(
@@ -193,7 +193,7 @@ void NativeProcessLauncherImpl::Core::DoLaunchOnThreadPool(
   // way the host will be able to create properly focused UI windows.
 #if defined(OS_WIN)
   command_line.AppendArg(
-      base::StringPrintf("--parent-window=%d", window_handle_));
+      base::StringPrintf("--parent-window=%" PRIdPTR, window_handle_));
 #endif  // !defined(OS_WIN)
 
   base::Process process;
@@ -227,9 +227,9 @@ void NativeProcessLauncherImpl::Core::PostErrorResult(
     LaunchResult error) {
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&NativeProcessLauncherImpl::Core::CallCallbackOnIOThread, this,
-                 callback, error, Passed(base::Process()),
-                 Passed(base::File()), Passed(base::File())));
+      base::BindOnce(&NativeProcessLauncherImpl::Core::CallCallbackOnIOThread,
+                     this, callback, error, Passed(base::Process()),
+                     Passed(base::File()), Passed(base::File())));
 }
 
 void NativeProcessLauncherImpl::Core::PostResult(
@@ -239,9 +239,9 @@ void NativeProcessLauncherImpl::Core::PostResult(
     base::File write_file) {
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&NativeProcessLauncherImpl::Core::CallCallbackOnIOThread, this,
-                 callback, RESULT_SUCCESS, Passed(&process),
-                 Passed(&read_file), Passed(&write_file)));
+      base::BindOnce(&NativeProcessLauncherImpl::Core::CallCallbackOnIOThread,
+                     this, callback, RESULT_SUCCESS, Passed(&process),
+                     Passed(&read_file), Passed(&write_file)));
 }
 
 NativeProcessLauncherImpl::NativeProcessLauncherImpl(

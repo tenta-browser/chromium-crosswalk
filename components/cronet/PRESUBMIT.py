@@ -8,6 +8,8 @@ See http://dev.chromium.org/developers/how-tos/depottools/presubmit-scripts
 for more details about the presubmit API built into depot_tools.
 """
 
+import os
+
 def _PyLintChecks(input_api, output_api):
   pylint_checks = input_api.canned_checks.GetPylint(input_api, output_api,
           extra_paths_list=_GetPathsToPrepend(input_api), pylintrc='pylintrc')
@@ -23,6 +25,8 @@ def _GetPathsToPrepend(input_api):
     input_api.os_path.join(chromium_src_dir, 'tools', 'perf'),
     input_api.os_path.join(chromium_src_dir, 'build', 'android'),
     input_api.os_path.join(chromium_src_dir, 'build', 'android', 'gyp', 'util'),
+    input_api.os_path.join(chromium_src_dir,
+        'mojo', 'public', 'tools', 'bindings', 'pylib'),
     input_api.os_path.join(chromium_src_dir, 'net', 'tools', 'net_docs'),
     input_api.os_path.join(chromium_src_dir, 'tools'),
     input_api.os_path.join(chromium_src_dir, 'third_party'),
@@ -73,6 +77,26 @@ def _RunUnittests(input_api, output_api):
       input_api, output_api, '.', [ r'^.+_unittest\.py$'])
 
 
+def _ChangeAffectsCronetForAndroid(change):
+  """ Returns |true| if the change may affect Cronet for Android. """
+
+  for affected_file in change.AffectedFiles():
+    path = affected_file.LocalPath()
+    if not path.startswith(os.path.join('components', 'cronet', 'ios')):
+      return True
+  return False
+
+
+def _ChangeAffectsCronetForIos(change):
+  """ Returns |true| if the change may affect Cronet for iOS. """
+
+  for affected_file in change.AffectedFiles():
+    path = affected_file.LocalPath()
+    if not path.startswith(os.path.join('components', 'cronet', 'android')):
+      return True
+  return False
+
+
 def CheckChangeOnUpload(input_api, output_api):
   results = []
   results.extend(_PyLintChecks(input_api, output_api))
@@ -85,32 +109,18 @@ def CheckChangeOnCommit(input_api, output_api):
   return _RunUnittests(input_api, output_api)
 
 
-def _GetTryMasters(project, change):
-  return {
-    'master.tryserver.chromium.android': {
-      'android_cronet_tester': [],
-     },
-  }
-
-
-def GetPreferredTryMasters(project, change):
-  # TODO(nick, dcheng): Using the value of _GetTryMasters() instead of an empty
-  # value here would cause 'git cl try' to include the Cronet trybot,
-  # which would be nice. But it has the side effect of replacing, rather than
-  # augmenting, the default set of try servers. Re-enable this when we figure
-  # out a way to augment the default set.
-  return {}
-
-
 def PostUploadHook(cl, change, output_api):
   """git cl upload will call this hook after the issue is created/modified.
 
   This hook adds an extra try bot to the CL description in order to run Cronet
   tests in addition to CQ try bots.
   """
+
+  try_bots = []
+  if _ChangeAffectsCronetForAndroid(change):
+    try_bots.append('master.tryserver.chromium.android:android_cronet_tester')
+  if _ChangeAffectsCronetForIos(change):
+    try_bots.append('master.tryserver.chromium.mac:ios-simulator-cronet')
+
   return output_api.EnsureCQIncludeTrybotsAreAdded(
-    cl,
-    [
-      'master.tryserver.chromium.android:android_cronet_tester',
-    ],
-    'Automatically added Cronet trybot to run tests on CQ.')
+    cl, try_bots, 'Automatically added Cronet trybots to run tests on CQ.')

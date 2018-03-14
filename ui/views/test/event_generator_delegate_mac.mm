@@ -272,6 +272,9 @@ class EventGeneratorDelegateMac : public ui::EventTarget,
   ui::EventSink* GetEventSink() override { return this; }
 
   // Overridden from ui::EventProcessor:
+  ui::EventTarget* GetInitialEventTarget(ui::Event* event) override {
+    return nullptr;
+  }
   ui::EventTarget* GetRootForEvent(ui::Event* event) override { return this; }
   ui::EventTargeter* GetDefaultEventTargeter() override {
     return this->GetEventTargeter();
@@ -309,11 +312,12 @@ class EventGeneratorDelegateMac : public ui::EventTarget,
                             gfx::Point* point) const override {}
   void ConvertPointFromHost(const ui::EventTarget* hosted_target,
                             gfx::Point* point) const override {}
-  void DispatchKeyEventToIME(EventTarget* target,
-                             ui::KeyEvent* event) override {
+  ui::EventDispatchDetails DispatchKeyEventToIME(EventTarget* target,
+                                                 ui::KeyEvent* event) override {
     // InputMethodMac does not send native events nor do the necessary
     // translation. Key events must be handled natively by an NSResponder which
     // translates keyboard events into editing commands.
+    return ui::EventDispatchDetails();
   }
 
  private:

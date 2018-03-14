@@ -57,6 +57,10 @@ SupervisedUserGoogleAuthNavigationThrottle::WillRedirectRequest() {
   return WillStartOrRedirectRequest();
 }
 
+const char* SupervisedUserGoogleAuthNavigationThrottle::GetNameForLogging() {
+  return "SupervisedUserGoogleAuthNavigationThrottle";
+}
+
 content::NavigationThrottle::ThrottleCheckResult
 SupervisedUserGoogleAuthNavigationThrottle::WillStartOrRedirectRequest() {
   const GURL& url = navigation_handle()->GetURL();
@@ -67,10 +71,9 @@ SupervisedUserGoogleAuthNavigationThrottle::WillStartOrRedirectRequest() {
     return content::NavigationThrottle::PROCEED;
   }
 
-  content::NavigationThrottle::ThrottleCheckResult result =
-      ShouldProceed(child_account_service_->IsGoogleAuthenticated());
+  content::NavigationThrottle::ThrottleCheckResult result = ShouldProceed();
 
-  if (result == content::NavigationThrottle::DEFER) {
+  if (result.action() == content::NavigationThrottle::DEFER) {
     google_auth_state_subscription_ =
         child_account_service_->ObserveGoogleAuthState(
             base::Bind(&SupervisedUserGoogleAuthNavigationThrottle::
@@ -81,20 +84,18 @@ SupervisedUserGoogleAuthNavigationThrottle::WillStartOrRedirectRequest() {
   return result;
 }
 
-void SupervisedUserGoogleAuthNavigationThrottle::OnGoogleAuthStateChanged(
-    bool authenticated) {
-  content::NavigationThrottle::ThrottleCheckResult result =
-      ShouldProceed(authenticated);
+void SupervisedUserGoogleAuthNavigationThrottle::OnGoogleAuthStateChanged() {
+  content::NavigationThrottle::ThrottleCheckResult result = ShouldProceed();
 
-  switch (result) {
+  switch (result.action()) {
     case content::NavigationThrottle::PROCEED: {
       google_auth_state_subscription_.reset();
-      navigation_handle()->Resume();
+      Resume();
       break;
     }
     case content::NavigationThrottle::CANCEL:
     case content::NavigationThrottle::CANCEL_AND_IGNORE: {
-      navigation_handle()->CancelDeferredNavigation(result);
+      CancelDeferredNavigation(result);
       break;
     }
     case content::NavigationThrottle::DEFER: {
@@ -102,6 +103,7 @@ void SupervisedUserGoogleAuthNavigationThrottle::OnGoogleAuthStateChanged(
       break;
     }
     case content::NavigationThrottle::BLOCK_REQUEST:
+    case content::NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE:
     case content::NavigationThrottle::BLOCK_RESPONSE: {
       NOTREACHED();
     }
@@ -109,9 +111,13 @@ void SupervisedUserGoogleAuthNavigationThrottle::OnGoogleAuthStateChanged(
 }
 
 content::NavigationThrottle::ThrottleCheckResult
-SupervisedUserGoogleAuthNavigationThrottle::ShouldProceed(bool authenticated) {
-  if (authenticated)
+SupervisedUserGoogleAuthNavigationThrottle::ShouldProceed() {
+  ChildAccountService::AuthState authStatus =
+      child_account_service_->GetGoogleAuthState();
+  if (authStatus == ChildAccountService::AuthState::AUTHENTICATED)
     return content::NavigationThrottle::PROCEED;
+  if (authStatus == ChildAccountService::AuthState::PENDING)
+    return content::NavigationThrottle::DEFER;
 
 #if !defined(OS_ANDROID)
   // TODO(bauerb): Show a reauthentication dialog.
@@ -145,6 +151,5 @@ void SupervisedUserGoogleAuthNavigationThrottle::OnReauthenticationResult(
   }
 
   // Otherwise cancel immediately.
-  navigation_handle()->CancelDeferredNavigation(
-      content::NavigationThrottle::CANCEL_AND_IGNORE);
+  CancelDeferredNavigation(content::NavigationThrottle::CANCEL_AND_IGNORE);
 }

@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/supports_user_data.h"
@@ -14,18 +15,43 @@
 #include "ui/base/dragdrop/os_exchange_data_provider_factory.h"
 #include "ui/events/event_handler.h"
 #include "ui/events/event_target.h"
+#include "ui/events/system_input_injector.h"
 #include "ui/gfx/geometry/point.h"
+
+#if defined(USE_OZONE)
+#include "ui/ozone/public/client_native_pixmap_factory_ozone.h"
+#endif
+
+namespace base {
+class UnguessableToken;
+}
+
+#if defined(USE_OZONE)
+namespace gfx {
+class ClientNativePixmapFactory;
+}
+#endif
+
+namespace mojo {
+template <typename MojoInterface>
+class InterfacePtr;
+}
 
 namespace ui {
 class ContextFactory;
 class ContextFactoryPrivate;
 class PlatformEventSource;
+namespace mojom {
+class WindowTreeClient;
+}
 }
 namespace aura {
 namespace test {
 class EnvTestHelper;
+class EnvWindowTreeClientSetter;
 }
 
+class EnvInputStateController;
 class EnvObserver;
 class InputStateLookup;
 class MusMouseLocationUpdater;
@@ -37,6 +63,7 @@ class WindowTreeHost;
 // A singleton object that tracks general state within Aura.
 class AURA_EXPORT Env : public ui::EventTarget,
                         public ui::OSExchangeDataProviderFactory::Factory,
+                        public ui::SystemInputInjectorFactory,
                         public base::SupportsUserData {
  public:
   enum class Mode {
@@ -62,6 +89,10 @@ class AURA_EXPORT Env : public ui::EventTarget,
 
   void AddObserver(EnvObserver* observer);
   void RemoveObserver(EnvObserver* observer);
+
+  EnvInputStateController* env_controller() const {
+    return env_controller_.get();
+  }
 
   int mouse_button_flags() const { return mouse_button_flags_; }
   void set_mouse_button_flags(int mouse_button_flags) {
@@ -99,10 +130,19 @@ class AURA_EXPORT Env : public ui::EventTarget,
   void SetWindowTreeClient(WindowTreeClient* window_tree_client);
   bool HasWindowTreeClient() const { return window_tree_client_ != nullptr; }
 
+  // Schedules an embed of a client. See
+  // mojom::WindowTreeClient::ScheduleEmbed() for details.
+  void ScheduleEmbed(
+      mojo::InterfacePtr<ui::mojom::WindowTreeClient> client,
+      base::OnceCallback<void(const base::UnguessableToken&)> callback);
+
  private:
   friend class test::EnvTestHelper;
+  friend class test::EnvWindowTreeClientSetter;
+  friend class EventInjector;
   friend class MusMouseLocationUpdater;
   friend class Window;
+  friend class WindowTreeClient;  // For call to WindowTreeClientDestroyed().
   friend class WindowTreeHost;
 
   explicit Env(Mode mode);
@@ -114,6 +154,10 @@ class AURA_EXPORT Env : public ui::EventTarget,
   // changed via the EnvTestHelper.
   void EnableMusOSExchangeDataProvider();
 
+  // After calling this method, all SystemInputInjectors will go through mus
+  // instead of ozone.
+  void EnableMusOverrideInputInjector();
+
   // Called by the Window when it is initialized. Notifies observers.
   void NotifyWindowInitialized(Window* window);
 
@@ -122,6 +166,8 @@ class AURA_EXPORT Env : public ui::EventTarget,
 
   // Invoked by WindowTreeHost when it is activated. Notifies observers.
   void NotifyHostActivated(WindowTreeHost* host);
+
+  void WindowTreeClientDestroyed(WindowTreeClient* client);
 
   // Overridden from ui::EventTarget:
   bool CanAcceptEvent(const ui::Event& event) override;
@@ -132,16 +178,21 @@ class AURA_EXPORT Env : public ui::EventTarget,
   // Overridden from ui::OSExchangeDataProviderFactory::Factory:
   std::unique_ptr<ui::OSExchangeData::Provider> BuildProvider() override;
 
+  // Overridden from SystemInputInjectorFactory:
+  std::unique_ptr<ui::SystemInputInjector> CreateSystemInputInjector() override;
+
   // This is not const for tests, which may share Env across tests and so needs
   // to reset the value.
   Mode mode_;
 
   // Intentionally not exposed publicly. Someday we might want to support
-  // multiple WindowTreeClients. Use EnvTestHelper in tests.
+  // multiple WindowTreeClients. Use EnvTestHelper in tests. This is set to null
+  // during shutdown.
   WindowTreeClient* window_tree_client_ = nullptr;
 
   base::ObserverList<EnvObserver> observers_;
 
+  std::unique_ptr<EnvInputStateController> env_controller_;
   int mouse_button_flags_;
   // Location of last mouse event, in screen coordinates.
   mutable gfx::Point last_mouse_location_;
@@ -152,12 +203,24 @@ class AURA_EXPORT Env : public ui::EventTarget,
   bool always_use_last_mouse_location_ = false;
   // Whether we set ourselves as the OSExchangeDataProviderFactory.
   bool is_os_exchange_data_provider_factory_ = false;
+  // Whether we set ourselves as the SystemInputInjectorFactory.
+  bool is_override_input_injector_factory_ = false;
 
   std::unique_ptr<InputStateLookup> input_state_lookup_;
   std::unique_ptr<ui::PlatformEventSource> event_source_;
 
+#if defined(USE_OZONE)
+  // Factory for pixmaps that can use be transported from the client to the GPU
+  // process using a low-level ozone-provided platform specific mechanism.
+  std::unique_ptr<gfx::ClientNativePixmapFactory> native_pixmap_factory_;
+#endif
+
   ui::ContextFactory* context_factory_;
   ui::ContextFactoryPrivate* context_factory_private_;
+
+  // This is set to true when the WindowTreeClient is destroyed. It triggers
+  // creating a different WindowPort implementation.
+  bool in_mus_shutdown_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(Env);
 };

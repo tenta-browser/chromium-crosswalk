@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "third_party/skia/include/core/SkColor.h"
 
 class PrefService;
@@ -24,15 +25,35 @@ namespace autofill {
 
 struct Suggestion;
 
+extern const base::Feature kAutofillAlwaysFillAddresses;
+extern const base::Feature kAutofillCreateDataForTest;
 extern const base::Feature kAutofillCreditCardAssist;
 extern const base::Feature kAutofillScanCardholderName;
+extern const base::Feature kAutofillCreditCardAblationExperiment;
+extern const base::Feature kAutofillCreditCardBankNameDisplay;
 extern const base::Feature kAutofillCreditCardPopupLayout;
 extern const base::Feature kAutofillCreditCardLastUsedDateDisplay;
-extern const base::Feature kAutofillUkmLogging;
+extern const base::Feature kAutofillDeleteDisusedAddresses;
+extern const base::Feature kAutofillDeleteDisusedCreditCards;
+extern const base::Feature kAutofillExpandedPopupViews;
+extern const base::Feature kAutofillOfferLocalSaveIfServerCardManuallyEntered;
+extern const base::Feature kAutofillRationalizeFieldTypePredictions;
+extern const base::Feature kAutofillSendBillingCustomerNumber;
+extern const base::Feature kAutofillSuppressDisusedAddresses;
+extern const base::Feature kAutofillSuppressDisusedCreditCards;
+extern const base::Feature kAutofillToolkitViewsCreditCardDialogsMac;
+extern const base::Feature kAutofillUpstreamAllowAllEmailDomains;
 extern const base::Feature kAutofillUpstreamRequestCvcIfMissing;
+extern const base::Feature kAutofillUpstreamShowGoogleLogo;
+extern const base::Feature kAutofillUpstreamShowNewUi;
+extern const base::Feature kAutofillUpstreamUseAutofillProfileComparator;
 extern const char kCreditCardSigninPromoImpressionLimitParamKey[];
-extern const char kAutofillCreditCardPopupSettingsSuggestionValueKey[];
 extern const char kAutofillCreditCardLastUsedDateShowExpirationDateKey[];
+extern const char kAutofillUpstreamMaxMinutesSinceAutofillProfileUseKey[];
+
+#if defined(OS_MACOSX)
+extern const base::Feature kCreditCardAutofillTouchBar;
+#endif  // defined(OS_MACOSX)
 
 // Returns true if autofill should be enabled. See also
 // IsInAutofillSuggestionsDisabledExperiment below.
@@ -70,6 +91,9 @@ bool IsAutofillCreditCardLastUsedDateDisplayExperimentEnabled();
 // Returns whether Autofill credit card last used date shows expiration date.
 bool ShowExpirationDateInAutofillCreditCardLastUsedDate();
 
+// Returns whether Autofill credit card bank name display experiment is enabled.
+bool IsAutofillCreditCardBankNameDisplayExperimentEnabled();
+
 // Returns the background color for credit card autofill popup, or
 // |SK_ColorTRANSPARENT| if the new credit card autofill popup layout experiment
 // is not enabled.
@@ -102,12 +126,33 @@ void ModifyAutofillCreditCardSuggestion(struct Suggestion* suggestion);
 // layout.
 unsigned int GetPopupMargin();
 
-// Returns whether the feature to log UKMs is enabled.
-bool IsUkmLoggingEnabled();
+// Returns whether the experiment is enabled where if Chrome Autofill has a
+// server card synced down from Payments but the user manually enters its card
+// number into a checkout form anyway, the option to locally save the card is
+// offered.
+bool IsAutofillOfferLocalSaveIfServerCardManuallyEnteredExperimentEnabled();
+
+// Returns whether the experiment is enabled where Chrome reads billing customer
+// number from priority preference and sends it along with UploadCardRequest and
+// FullCardRequest.
+bool IsAutofillSendBillingCustomerNumberExperimentEnabled();
 
 // Returns whether the experiment is enabled where Chrome Upstream requests CVC
 // in the offer to save bubble if it was not detected during the checkout flow.
 bool IsAutofillUpstreamRequestCvcIfMissingExperimentEnabled();
+
+// Returns whether the experiment is enabled where Chrome Upstream displays a
+// Google Logo in the save card bubble/infobar.
+bool IsAutofillUpstreamShowGoogleLogoExperimentEnabled();
+
+// Returns whether the experiment is enabled where Chrome Upstream displays a
+// new save card bubble/infobar design.
+bool IsAutofillUpstreamShowNewUiExperimentEnabled();
+
+#if defined(OS_MACOSX)
+// Returns whether the Credit Card Autofill Touch Bar experiment is enabled.
+bool IsCreditCardAutofillTouchBarExperimentEnabled();
+#endif  // defined(OS_MACOSX)
 
 }  // namespace autofill
 

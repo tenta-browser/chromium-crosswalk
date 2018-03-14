@@ -15,6 +15,7 @@
 #include "build/build_config.h"
 #include "content/public/browser/browser_child_process_observer.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -26,8 +27,9 @@
 #endif
 
 namespace base {
-class Value;
 class CommandLine;
+class Value;
+struct Feature;
 }  // namespace base
 
 // A collection of functions designed for use with unit and browser tests.
@@ -56,12 +58,9 @@ void RunAllPendingInMessageLoop();
 // thread.
 void RunAllPendingInMessageLoop(BrowserThread::ID thread_id);
 
-// Runs until both the blocking pool and the current message loop are empty
-// (have no more scheduled tasks) and no tasks are running.
-//
-// TODO(fdoray): Rename to RunAllTaskSchedulerTasksUntilIdle() once the blocking
-// pool is fully deprecated. https://crbug.com/667892
-void RunAllBlockingPoolTasksUntilIdle();
+// Runs until the blocking pool, task scheduler, and the current message loop
+// are all empty (have no more scheduled tasks) and no tasks are running.
+void RunAllTasksUntilIdle();
 
 // Get task to quit the given RunLoop. It allows a few generations of pending
 // tasks to run as opposed to run_loop->QuitClosure().
@@ -87,10 +86,18 @@ void IsolateAllSitesForTesting(base::CommandLine* command_line);
 // Resets the internal secure schemes/origins whitelist.
 void ResetSchemesAndOriginsWhitelist();
 
-#if defined(OS_ANDROID)
-// Registers content/browser JNI bindings necessary for some types of tests.
-bool RegisterJniForTesting(JNIEnv* env);
-#endif
+// Appends command line switches to |command_line| to enable the |feature| and
+// to set field trial params associated with the feature as specified by
+// |param_name| and |param_value|.
+//
+// Note that a dummy trial and trial group will be registered behind the scenes.
+// See also variations::testing::VariationsParamsManager class.
+// This method is deprecated because we want to unify the FeatureList change to
+// ScopedFeatureList. See crbug.com/713390
+void DeprecatedEnableFeatureWithParam(const base::Feature& feature,
+                                      const std::string& param_name,
+                                      const std::string& param_value,
+                                      base::CommandLine* command_line);
 
 // Helper class to Run and Quit the message loop. Run and Quit can only happen
 // once per instance. Make a new instance for each use. Calling Quit after Run
@@ -309,6 +316,25 @@ class WebContentsDestroyedWatcher : public WebContentsObserver {
   base::RunLoop run_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(WebContentsDestroyedWatcher);
+};
+
+// A custom ContentBrowserClient that simulates GetEffectiveURL() translation
+// for a single URL.
+class EffectiveURLContentBrowserClient : public ContentBrowserClient {
+ public:
+  EffectiveURLContentBrowserClient(const GURL& url_to_modify,
+                                   const GURL& url_to_return)
+      : url_to_modify_(url_to_modify), url_to_return_(url_to_return) {}
+  ~EffectiveURLContentBrowserClient() override {}
+
+ private:
+  GURL GetEffectiveURL(BrowserContext* browser_context,
+                       const GURL& url) override;
+
+  GURL url_to_modify_;
+  GURL url_to_return_;
+
+  DISALLOW_COPY_AND_ASSIGN(EffectiveURLContentBrowserClient);
 };
 
 }  // namespace content

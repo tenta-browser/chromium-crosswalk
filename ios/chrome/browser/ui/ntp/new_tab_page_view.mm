@@ -5,37 +5,38 @@
 #import "ios/chrome/browser/ui/ntp/new_tab_page_view.h"
 
 #include "base/logging.h"
-#include "base/mac/objc_property_releaser.h"
+#import "ios/chrome/browser/ui/ntp/modal_ntp.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_bar.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_bar_item.h"
 #import "ios/chrome/browser/ui/rtl_geometry.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 
-@implementation NewTabPageView {
- @private
-  // The objects pointed to by |tabBar_| and |scrollView_| are owned as
-  // subviews already.
-  __unsafe_unretained NewTabPageBar* tabBar_;     // weak
-  __unsafe_unretained UIScrollView* scrollView_;  // weak
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
-  base::mac::ObjCPropertyReleaser propertyReleaser_NewTabPageView_;
-}
+@implementation NewTabPageView
 
 @synthesize scrollView = scrollView_;
 @synthesize tabBar = tabBar_;
+@synthesize safeAreaInsetForToolbar = _safeAreaInsetForToolbar;
 
 - (instancetype)initWithFrame:(CGRect)frame
                 andScrollView:(UIScrollView*)scrollView
                     andTabBar:(NewTabPageBar*)tabBar {
   self = [super initWithFrame:frame];
   if (self) {
-    propertyReleaser_NewTabPageView_.Init(self, [NewTabPageView class]);
     [self addSubview:scrollView];
     [self addSubview:tabBar];
     scrollView_ = scrollView;
     tabBar_ = tabBar;
   }
   return self;
+}
+
+- (void)safeAreaInsetsDidChange {
+  self.safeAreaInsetForToolbar = self.safeAreaInsets;
+  [super safeAreaInsetsDidChange];
 }
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -46,6 +47,13 @@
 - (instancetype)initWithCoder:(NSCoder*)aDecoder {
   NOTREACHED();
   return nil;
+}
+
+#pragma mark - Properties
+
+- (void)setSafeAreaInsetForToolbar:(UIEdgeInsets)safeAreaInsetForToolbar {
+  _safeAreaInsetForToolbar = safeAreaInsetForToolbar;
+  self.tabBar.safeAreaInsetFromNTPView = safeAreaInsetForToolbar;
 }
 
 - (void)setFrame:(CGRect)frame {
@@ -64,7 +72,7 @@
   [self updateScrollViewContentSize];
 
   // Set the frame of the laid out NTP panels on iPad.
-  if (IsIPadIdiom()) {
+  if (!PresentNTPPanelModally()) {
     NSUInteger index = 0;
     CGFloat selectedItemXOffset = 0;
     for (NewTabPageBarItem* item in self.tabBar.items) {
@@ -106,11 +114,12 @@
         CGRectGetMinX(self.bounds), CGRectGetMinY(self.bounds),
         CGRectGetWidth(self.bounds), CGRectGetMinY(self.tabBar.frame));
   }
+  [self updateScrollViewContentSize];
 
   // When using a new_tab_page_view in autolayout -setFrame is never called,
   // which means all the logic to keep the selected scroll index set is never
-  // called.  Rather than refactor away all of this to support ios/clean, just
-  // make sure -setFrame is called when loaded in autolayout.
+  // called.  Rather than refactor away all of this, just make sure -setFrame is
+  // called when loaded in autolayout.
   if (!self.translatesAutoresizingMaskIntoConstraints) {
     [self setFrame:self.frame];
   }
@@ -120,7 +129,7 @@
   CGSize contentSize = self.scrollView.bounds.size;
   // On iPhone, NTP doesn't scroll horizontally, as alternate panels are shown
   // modally. On iPad, panels are laid out side by side in the scroll view.
-  if (IsIPadIdiom()) {
+  if (!PresentNTPPanelModally()) {
     contentSize.width *= self.tabBar.items.count;
   }
   self.scrollView.contentSize = contentSize;

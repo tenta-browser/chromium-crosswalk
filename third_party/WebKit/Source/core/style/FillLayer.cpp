@@ -44,7 +44,7 @@ static_assert(sizeof(FillLayer) == sizeof(SameSizeAsFillLayer),
               "FillLayer should stay small");
 
 FillLayer::FillLayer(EFillLayerType type, bool use_initial_values)
-    : next_(0),
+    : next_(nullptr),
       image_(FillLayer::InitialFillImage(type)),
       x_position_(FillLayer::InitialFillXPosition(type)),
       y_position_(FillLayer::InitialFillYPosition(type)),
@@ -57,7 +57,7 @@ FillLayer::FillLayer(EFillLayerType type, bool use_initial_values)
       composite_(FillLayer::InitialFillComposite(type)),
       size_type_(use_initial_values ? FillLayer::InitialFillSizeType(type)
                                     : kSizeNone),
-      blend_mode_(FillLayer::InitialFillBlendMode(type)),
+      blend_mode_(static_cast<unsigned>(FillLayer::InitialFillBlendMode(type))),
       mask_source_type_(FillLayer::InitialFillMaskSourceType(type)),
       background_x_origin_(kLeftEdge),
       background_y_origin_(kTopEdge),
@@ -81,7 +81,7 @@ FillLayer::FillLayer(EFillLayerType type, bool use_initial_values)
       cached_properties_computed_(false) {}
 
 FillLayer::FillLayer(const FillLayer& o)
-    : next_(o.next_ ? new FillLayer(*o.next_) : 0),
+    : next_(o.next_ ? new FillLayer(*o.next_) : nullptr),
       image_(o.image_),
       x_position_(o.x_position_),
       y_position_(o.y_position_),
@@ -123,7 +123,7 @@ FillLayer::~FillLayer() {
 FillLayer& FillLayer::operator=(const FillLayer& o) {
   if (next_ != o.next_) {
     delete next_;
-    next_ = o.next_ ? new FillLayer(*o.next_) : 0;
+    next_ = o.next_ ? new FillLayer(*o.next_) : nullptr;
   }
 
   image_ = o.image_;
@@ -178,6 +178,12 @@ bool FillLayer::operator==(const FillLayer& o) const {
          mask_source_type_ == o.mask_source_type_ &&
          size_length_ == o.size_length_ && type_ == o.type_ &&
          ((next_ && o.next_) ? *next_ == *o.next_ : next_ == o.next_);
+}
+
+bool FillLayer::VisuallyEqual(const FillLayer& o) const {
+  if (!image_ && !o.image_ && clip_ == o.clip_)
+    return true;
+  return *this == o;
 }
 
 void FillLayer::FillUnsetProperties() {
@@ -318,7 +324,7 @@ void FillLayer::CullEmptyLayers() {
     next = p->next_;
     if (next && !next->IsImageSet()) {
       delete next;
-      p->next_ = 0;
+      p->next_ = nullptr;
       break;
     }
   }
@@ -369,14 +375,13 @@ bool FillLayer::ImagesAreLoaded() const {
   return true;
 }
 
-bool FillLayer::ImageIsOpaque(const LayoutObject& layout_object) const {
+bool FillLayer::ImageIsOpaque(const Document& document,
+                              const ComputedStyle& style) const {
   // Returns true if we have an image that will cover the content below it when
   // m_composite == CompositeSourceOver && m_blendMode == WebBlendModeNormal.
   // Otherwise false.
-  return image_->KnownToBeOpaque(layout_object) &&
-         !image_
-              ->ImageSize(layout_object, layout_object.Style()->EffectiveZoom(),
-                          LayoutSize())
+  return image_->KnownToBeOpaque(document, style) &&
+         !image_->ImageSize(document, style.EffectiveZoom(), LayoutSize())
               .IsEmpty();
 }
 
@@ -390,8 +395,8 @@ bool FillLayer::ImageTilesLayer() const {
          (repeat_y_ == kRepeatFill || repeat_y_ == kRoundFill);
 }
 
-bool FillLayer::ImageOccludesNextLayers(
-    const LayoutObject& layout_object) const {
+bool FillLayer::ImageOccludesNextLayers(const Document& document,
+                                        const ComputedStyle& style) const {
   // We can't cover without an image, regardless of other parameters
   if (!image_ || !image_->CanRender())
     return false;
@@ -401,8 +406,8 @@ bool FillLayer::ImageOccludesNextLayers(
     case kCompositeCopy:
       return ImageTilesLayer();
     case kCompositeSourceOver:
-      return (blend_mode_ == kWebBlendModeNormal) && ImageTilesLayer() &&
-             ImageIsOpaque(layout_object);
+      return (blend_mode_ == static_cast<unsigned>(WebBlendMode::kNormal)) &&
+             ImageTilesLayer() && ImageIsOpaque(document, style);
     default: {}
   }
 

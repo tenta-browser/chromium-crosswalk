@@ -2,11 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/external_protocol/external_protocol_handler.h"
 #include "chrome/browser/loader/chrome_resource_dispatcher_host_delegate.h"
@@ -17,11 +22,13 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/guest_view/browser/guest_view_manager_delegate.h"
 #include "components/guest_view/browser/test_guest_view_manager.h"
+#include "components/spellcheck/spellcheck_build_features.h"
 #include "content/public/browser/interstitial_page.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/browser_test_utils.h"
@@ -32,6 +39,17 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "ui/display/display_switches.h"
 #include "url/gurl.h"
+
+#if BUILDFLAG(ENABLE_SPELLCHECK)
+#include "components/spellcheck/common/spellcheck.mojom.h"
+#include "components/spellcheck/common/spellcheck_messages.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
+#if BUILDFLAG(HAS_SPELLCHECK_PANEL)
+#include "chrome/browser/spellchecker/test/spellcheck_content_browser_client.h"
+#include "components/spellcheck/common/spellcheck_panel.mojom.h"
+#endif  // BUILDFLAG(HAS_SPELLCHECK_PANEL)
+#endif
 
 class ChromeSitePerProcessTest : public InProcessBrowserTest {
  public:
@@ -247,7 +265,7 @@ IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessTest, PopupWindowFocus) {
 
   // Focus the popup via window.focus().
   content::DOMMessageQueue queue;
-  EXPECT_TRUE(ExecuteScript(web_contents, "focusPopup()"));
+  ExecuteScriptAsync(web_contents, "focusPopup()");
 
   // Wait for main page to lose focus and for popup to gain focus.  Each event
   // will send a message, and the two messages can arrive in any order.
@@ -508,3 +526,305 @@ IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessTest,
   EXPECT_TRUE(popup_handle_is_valid);
   ASSERT_EQ(2, browser()->tab_strip_model()->count());
 }
+
+IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessTest, PrintIgnoredInUnloadHandler) {
+  ui_test_utils::NavigateToURL(
+      browser(), GURL(embedded_test_server()->GetURL("a.com", "/title1.html")));
+
+  content::WebContents* active_web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  // Create 2 iframes and navigate them to b.com.
+  EXPECT_TRUE(ExecuteScript(active_web_contents,
+                            "var i = document.createElement('iframe'); i.id = "
+                            "'child-0'; document.body.appendChild(i);"));
+  EXPECT_TRUE(ExecuteScript(active_web_contents,
+                            "var i = document.createElement('iframe'); i.id = "
+                            "'child-1'; document.body.appendChild(i);"));
+  EXPECT_TRUE(NavigateIframeToURL(
+      active_web_contents, "child-0",
+      GURL(embedded_test_server()->GetURL("b.com", "/title1.html"))));
+  EXPECT_TRUE(NavigateIframeToURL(
+      active_web_contents, "child-1",
+      GURL(embedded_test_server()->GetURL("b.com", "/title1.html"))));
+
+  content::RenderFrameHost* child_0 =
+      ChildFrameAt(active_web_contents->GetMainFrame(), 0);
+  content::RenderFrameHost* child_1 =
+      ChildFrameAt(active_web_contents->GetMainFrame(), 1);
+
+  // Add an unload handler that calls print() to child-0 iframe.
+  EXPECT_TRUE(ExecuteScript(
+      child_0, "document.body.onunload = function() { print(); }"));
+
+  // Transfer child-0 to a new process hosting c.com.
+  EXPECT_TRUE(NavigateIframeToURL(
+      active_web_contents, "child-0",
+      GURL(embedded_test_server()->GetURL("c.com", "/title1.html"))));
+
+  // Check that b.com's process is still alive.
+  bool renderer_alive = false;
+  EXPECT_TRUE(ExecuteScriptAndExtractBool(
+      child_1, "window.domAutomationController.send(true);", &renderer_alive));
+  EXPECT_TRUE(renderer_alive);
+}
+
+// Ensure that when a window closes itself via window.close(), its process does
+// not get destroyed if there's a pending cross-process navigation in the same
+// process from another tab.  See https://crbug.com/799399.
+IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessTest,
+                       ClosePopupWithPendingNavigationInOpener) {
+  // Start on a.com and open a popup to b.com.
+  GURL opener_url(embedded_test_server()->GetURL("a.com", "/title1.html"));
+  ui_test_utils::NavigateToURL(browser(), opener_url);
+  content::WebContents* opener_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  GURL popup_url(embedded_test_server()->GetURL("b.com", "/title1.html"));
+  content::WindowedNotificationObserver popup_observer(
+      chrome::NOTIFICATION_TAB_ADDED,
+      content::NotificationService::AllSources());
+  EXPECT_TRUE(ExecuteScript(opener_contents,
+                            "window.open('" + popup_url.spec() + "');"));
+  popup_observer.Wait();
+  ASSERT_EQ(2, browser()->tab_strip_model()->count());
+  content::WebContents* popup_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_NE(opener_contents, popup_contents);
+  EXPECT_TRUE(content::WaitForLoadStop(popup_contents));
+
+  // From the popup, start a navigation in the opener to b.com, but don't
+  // commit.
+  GURL b_url(embedded_test_server()->GetURL("b.com", "/title2.html"));
+  content::TestNavigationManager manager(opener_contents, b_url);
+  EXPECT_TRUE(
+      ExecuteScript(popup_contents, "opener.location='" + b_url.spec() + "';"));
+
+  // Close the popup.  This should *not* kill the b.com process, as it still
+  // has a pending navigation in the opener window.
+  content::RenderProcessHost* b_com_rph =
+      popup_contents->GetMainFrame()->GetProcess();
+  content::WebContentsDestroyedWatcher destroyed_watcher(popup_contents);
+  EXPECT_TRUE(ExecuteScript(popup_contents, "window.close();"));
+  destroyed_watcher.Wait();
+  EXPECT_TRUE(b_com_rph->HasConnection());
+
+  // Resume the pending navigation in the original tab and ensure it finishes
+  // loading successfully.
+  manager.WaitForNavigationFinished();
+  EXPECT_EQ(b_url, opener_contents->GetMainFrame()->GetLastCommittedURL());
+}
+
+#if BUILDFLAG(ENABLE_SPELLCHECK)
+// Class to sniff incoming spellcheck IPC / Mojo SpellCheckHost messages.
+class TestSpellCheckMessageFilter : public content::BrowserMessageFilter,
+                                    spellcheck::mojom::SpellCheckHost {
+ public:
+  explicit TestSpellCheckMessageFilter(content::RenderProcessHost* process_host)
+      : content::BrowserMessageFilter(SpellCheckMsgStart),
+        process_host_(process_host),
+        text_received_(false),
+        message_loop_runner_(
+            base::MakeRefCounted<content::MessageLoopRunner>()),
+        binding_(this) {}
+
+  content::RenderProcessHost* process_host() const { return process_host_; }
+
+  const base::string16& text() const { return text_; }
+
+  void Wait() {
+    if (!text_received_)
+      message_loop_runner_->Run();
+  }
+
+  bool OnMessageReceived(const IPC::Message& message) override {
+#if BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+    IPC_BEGIN_MESSAGE_MAP(TestSpellCheckMessageFilter, message)
+      // TODO(crbug.com/714480): convert the RequestTextCheck IPC to mojo.
+      IPC_MESSAGE_HANDLER(SpellCheckHostMsg_RequestTextCheck, HandleMessage)
+    IPC_END_MESSAGE_MAP()
+#endif
+    return false;
+  }
+
+#if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+  void SpellCheckHostRequest(spellcheck::mojom::SpellCheckHostRequest request) {
+    EXPECT_FALSE(binding_.is_bound());
+    binding_.Bind(std::move(request));
+  }
+#endif
+
+ private:
+  ~TestSpellCheckMessageFilter() override {}
+
+#if BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+  void HandleMessage(int, int, const base::string16& text) {
+    content::BrowserThread::PostTask(
+        content::BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&TestSpellCheckMessageFilter::HandleMessageOnUIThread,
+                       this, text));
+  }
+#endif
+
+  void HandleMessageOnUIThread(const base::string16& text) {
+    if (!text_received_) {
+      text_received_ = true;
+      text_ = text;
+      message_loop_runner_->Quit();
+    } else {
+      NOTREACHED();
+    }
+  }
+
+  // spellcheck::mojom::SpellCheckHost:
+  void RequestDictionary() override {}
+
+  void NotifyChecked(const base::string16& word, bool misspelled) override {}
+
+  void CallSpellingService(const base::string16& text,
+                           CallSpellingServiceCallback callback) override {
+#if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+    DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+    std::move(callback).Run(true, std::vector<SpellCheckResult>());
+    binding_.Close();
+    HandleMessageOnUIThread(text);
+#endif
+  }
+
+  content::RenderProcessHost* process_host_;
+  bool text_received_;
+  base::string16 text_;
+  scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
+  mojo::Binding<spellcheck::mojom::SpellCheckHost> binding_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestSpellCheckMessageFilter);
+};
+
+class TestBrowserClientForSpellCheck : public ChromeContentBrowserClient {
+ public:
+  TestBrowserClientForSpellCheck() = default;
+
+  // ContentBrowserClient overrides.
+  void RenderProcessWillLaunch(
+      content::RenderProcessHost* process_host) override {
+    filters_.push_back(new TestSpellCheckMessageFilter(process_host));
+    process_host->AddFilter(filters_.back().get());
+    ChromeContentBrowserClient::RenderProcessWillLaunch(process_host);
+  }
+
+#if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+  void OverrideOnBindInterface(
+      const service_manager::BindSourceInfo& remote_info,
+      const std::string& name,
+      mojo::ScopedMessagePipeHandle* handle) override {
+    if (name != spellcheck::mojom::SpellCheckHost::Name_)
+      return;
+
+    spellcheck::mojom::SpellCheckHostRequest request(std::move(*handle));
+
+    // Override the default SpellCheckHost interface.
+    auto ui_task_runner = content::BrowserThread::GetTaskRunnerForThread(
+        content::BrowserThread::UI);
+    ui_task_runner->PostTask(
+        FROM_HERE,
+        base::Bind(&TestBrowserClientForSpellCheck::BindSpellCheckHostRequest,
+                   base::Unretained(this), base::Passed(&request),
+                   remote_info));
+  }
+
+#endif  // !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+
+  // Retrieves the registered filter for the given RenderProcessHost. It will
+  // return nullptr if the RenderProcessHost was initialized while a different
+  // instance of ContentBrowserClient was in action.
+  scoped_refptr<TestSpellCheckMessageFilter>
+  GetSpellCheckMessageFilterForProcess(
+      content::RenderProcessHost* process_host) const {
+    for (auto filter : filters_) {
+      if (filter->process_host() == process_host)
+        return filter;
+    }
+    return nullptr;
+  }
+
+ private:
+#if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+  void BindSpellCheckHostRequest(
+      spellcheck::mojom::SpellCheckHostRequest request,
+      const service_manager::BindSourceInfo& source_info) {
+    content::RenderProcessHost* host =
+        content::RenderProcessHost::FromRendererIdentity(source_info.identity);
+    scoped_refptr<TestSpellCheckMessageFilter> filter =
+        GetSpellCheckMessageFilterForProcess(host);
+    CHECK(filter);
+    filter->SpellCheckHostRequest(std::move(request));
+  }
+#endif
+
+  std::vector<scoped_refptr<TestSpellCheckMessageFilter>> filters_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestBrowserClientForSpellCheck);
+};
+
+// Tests that spelling in out-of-process subframes is checked.
+// See crbug.com/638361 for details.
+IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessTest, OOPIFSpellCheckTest) {
+  TestBrowserClientForSpellCheck browser_client;
+  content::ContentBrowserClient* old_browser_client =
+      content::SetBrowserClientForTesting(&browser_client);
+
+  GURL main_url(embedded_test_server()->GetURL(
+      "a.com", "/page_with_contenteditable_in_cross_site_subframe.html"));
+  ui_test_utils::NavigateToURL(browser(), main_url);
+
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  content::RenderFrameHost* cross_site_subframe =
+      ChildFrameAt(web_contents->GetMainFrame(), 0);
+
+  scoped_refptr<TestSpellCheckMessageFilter> filter =
+      browser_client.GetSpellCheckMessageFilterForProcess(
+          cross_site_subframe->GetProcess());
+  filter->Wait();
+
+  EXPECT_EQ(base::ASCIIToUTF16("zz."), filter->text());
+
+  content::SetBrowserClientForTesting(old_browser_client);
+}
+
+#if BUILDFLAG(HAS_SPELLCHECK_PANEL)
+
+// Tests that the OSX spell check panel can be opened from an out-of-process
+// subframe, crbug.com/712395
+IN_PROC_BROWSER_TEST_F(ChromeSitePerProcessTest, OOPIFSpellCheckPanelTest) {
+  spellcheck::SpellCheckContentBrowserClient browser_client;
+  content::ContentBrowserClient* old_browser_client =
+      content::SetBrowserClientForTesting(&browser_client);
+
+  GURL main_url(embedded_test_server()->GetURL(
+      "a.com", "/page_with_contenteditable_in_cross_site_subframe.html"));
+  ui_test_utils::NavigateToURL(browser(), main_url);
+
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  content::RenderFrameHost* cross_site_subframe =
+      ChildFrameAt(web_contents->GetMainFrame(), 0);
+
+  EXPECT_TRUE(cross_site_subframe->IsCrossProcessSubframe());
+
+  spellcheck::mojom::SpellCheckPanelPtr spell_check_panel_client;
+  cross_site_subframe->GetRemoteInterfaces()->GetInterface(
+      &spell_check_panel_client);
+  spell_check_panel_client->ToggleSpellPanel(false);
+  browser_client.RunUntilBind();
+
+  spellcheck::SpellCheckMockPanelHost* host =
+      browser_client.GetSpellCheckMockPanelHostForProcess(
+          cross_site_subframe->GetProcess());
+  EXPECT_TRUE(host->SpellingPanelVisible());
+
+  content::SetBrowserClientForTesting(old_browser_client);
+}
+#endif  // BUILDFLAG(HAS_SPELLCHECK_PANEL)
+
+#endif  // BUILDFLAG(ENABLE_SPELLCHECK)

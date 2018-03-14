@@ -16,9 +16,12 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
+#include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task_scheduler/task_scheduler.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/values.h"
 #include "base/version.h"
 #include "build/build_config.h"
@@ -47,6 +50,7 @@
 #include "extensions/common/value_builder.h"
 #include "net/base/net_errors.h"
 #include "net/dns/mock_host_resolver.h"
+#include "net/reporting/reporting_feature.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
@@ -145,8 +149,8 @@ void FlushTaskRunner(base::SequencedTaskRunner* runner) {
   base::WaitableEvent unblock(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                               base::WaitableEvent::InitialState::NOT_SIGNALED);
 
-  runner->PostTask(FROM_HERE,
-      base::Bind(&base::WaitableEvent::Signal, base::Unretained(&unblock)));
+  runner->PostTask(FROM_HERE, base::BindOnce(&base::WaitableEvent::Signal,
+                                             base::Unretained(&unblock)));
 
   unblock.Wait();
 }
@@ -157,8 +161,6 @@ void SpinThreads() {
   // Should not be necessary anymore once Profile deletion is fixed
   // (see crbug.com/88586).
   content::RunAllPendingInMessageLoop();
-  content::RunAllPendingInMessageLoop(content::BrowserThread::DB);
-  content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
 
   // This prevents HistoryBackend from accessing its databases after the
   // directory that contains them has been deleted.
@@ -233,13 +235,13 @@ class ProfileBrowserTest : public InProcessBrowserTest {
   void SetUpOnMainThread() override {
     content::BrowserThread::PostTask(
         content::BrowserThread::IO, FROM_HERE,
-        base::Bind(&chrome_browser_net::SetUrlRequestMocksEnabled, true));
+        base::BindOnce(&chrome_browser_net::SetUrlRequestMocksEnabled, true));
   }
 
   void TearDownOnMainThread() override {
     content::BrowserThread::PostTask(
         content::BrowserThread::IO, FROM_HERE,
-        base::Bind(&chrome_browser_net::SetUrlRequestMocksEnabled, false));
+        base::BindOnce(&chrome_browser_net::SetUrlRequestMocksEnabled, false));
   }
 
   std::unique_ptr<Profile> CreateProfile(const base::FilePath& path,
@@ -342,6 +344,7 @@ class ProfileBrowserTest : public InProcessBrowserTest {
 // Test OnProfileCreate is called with is_new_profile set to true when
 // creating a new profile synchronously.
 IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, CreateNewProfileSynchronous) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
 
@@ -367,6 +370,7 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, CreateNewProfileSynchronous) {
 // Test OnProfileCreate is called with is_new_profile set to false when
 // creating a profile synchronously with an existing prefs file.
 IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, CreateOldProfileSynchronous) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   CreatePrefsFileInDirectory(temp_dir.GetPath());
@@ -388,6 +392,7 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, CreateOldProfileSynchronous) {
 // creating a new profile asynchronously.
 IN_PROC_BROWSER_TEST_F(ProfileBrowserTest,
                        DISABLED_CreateNewProfileAsynchronous) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
 
@@ -422,6 +427,7 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest,
 // creating a profile asynchronously with an existing prefs file.
 IN_PROC_BROWSER_TEST_F(ProfileBrowserTest,
                        DISABLED_CreateOldProfileAsynchronous) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   CreatePrefsFileInDirectory(temp_dir.GetPath());
@@ -448,6 +454,7 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest,
 // Flaky: http://crbug.com/393177
 // Test that a README file is created for profiles that didn't have it.
 IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, DISABLED_ProfileReadmeCreated) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
 
@@ -475,6 +482,7 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, DISABLED_ProfileReadmeCreated) {
 
 // Test that repeated setting of exit type is handled correctly.
 IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, ExitType) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
 
@@ -543,22 +551,26 @@ void CompareURLRequestContexts(
       main_context_getter->GetURLRequestContext();
 
   // Check that the URLRequestContexts are different and that their
-  // ChannelIDServices and CookieStores are different.
+  // ChannelIDServices, CookieStores, and ReportingServices are different.
   EXPECT_NE(extension_context, main_context);
   EXPECT_NE(extension_context->channel_id_service(),
             main_context->channel_id_service());
   EXPECT_NE(extension_context->cookie_store(), main_context->cookie_store());
+  if (extension_context->reporting_service()) {
+    EXPECT_NE(extension_context->reporting_service(),
+              main_context->reporting_service());
+  }
 
   // Check that the ChannelIDService in the HttpNetworkSession is the same as
   // the one directly on the URLRequestContext.
   EXPECT_EQ(extension_context->http_transaction_factory()
                 ->GetSession()
-                ->params()
+                ->context()
                 .channel_id_service,
             extension_context->channel_id_service());
   EXPECT_EQ(main_context->http_transaction_factory()
                 ->GetSession()
-                ->params()
+                ->context()
                 .channel_id_service,
             main_context->channel_id_service());
 }
@@ -566,8 +578,12 @@ void CompareURLRequestContexts(
 }  // namespace
 
 IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, URLRequestContextIsolation) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kReporting);
 
   MockProfileDelegate delegate;
   EXPECT_CALL(delegate, OnProfileCreated(testing::NotNull(), true, true));
@@ -590,8 +606,9 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, URLRequestContextIsolation) {
     base::RunLoop run_loop;
     content::BrowserThread::PostTaskAndReply(
         content::BrowserThread::IO, FROM_HERE,
-        base::Bind(&CompareURLRequestContexts, extension_context_getter,
-                   main_context_getter),
+        base::BindOnce(&CompareURLRequestContexts,
+                       base::RetainedRef(extension_context_getter),
+                       base::RetainedRef(main_context_getter)),
         run_loop.QuitClosure());
     run_loop.Run();
   }
@@ -601,8 +618,12 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, URLRequestContextIsolation) {
 
 IN_PROC_BROWSER_TEST_F(ProfileBrowserTest,
                        OffTheRecordURLRequestContextIsolation) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kReporting);
 
   MockProfileDelegate delegate;
   EXPECT_CALL(delegate, OnProfileCreated(testing::NotNull(), true, true));
@@ -625,8 +646,9 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest,
     base::RunLoop run_loop;
     content::BrowserThread::PostTaskAndReply(
         content::BrowserThread::IO, FROM_HERE,
-        base::Bind(&CompareURLRequestContexts, extension_context_getter,
-                   main_context_getter),
+        base::BindOnce(&CompareURLRequestContexts,
+                       base::RetainedRef(extension_context_getter),
+                       base::RetainedRef(main_context_getter)),
         run_loop.QuitClosure());
     run_loop.Run();
   }
@@ -666,6 +688,7 @@ std::string GetExitTypePreferenceFromDisk(Profile* profile) {
 
 IN_PROC_BROWSER_TEST_F(ProfileBrowserTest,
                        WritesProfilesSynchronouslyOnEndSession) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
 
@@ -692,11 +715,6 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest,
     // Flush the profile data to disk for all loaded profiles.
     profile->SetExitType(Profile::EXIT_CRASHED);
     profile->GetPrefs()->CommitPendingWrite();
-    if (base::FeatureList::IsEnabled(features::kPrefService)) {
-      FlushTaskRunner(content::BrowserThread::GetTaskRunnerForThread(
-                          content::BrowserThread::IO)
-                          .get());
-    }
     FlushTaskRunner(profile->GetIOTaskRunner().get());
 
     // Make sure that the prefs file was written with the expected key/value.
@@ -747,12 +765,6 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest,
           browser()->profile())->GetMediaURLRequestContext());
 }
 
-IN_PROC_BROWSER_TEST_F(ProfileBrowserTest,
-                       URLFetcherUsingExtensionContextDuringShutdown) {
-  StartActiveFetcherDuringProfileShutdownTest(
-      browser()->profile()->GetRequestContextForExtensions());
-}
-
 // The following tests make sure that it's safe to destroy an incognito profile
 // while one of the its URLRequestContextGetters is in use by a URLFetcher.
 
@@ -764,19 +776,10 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest,
       incognito_browser, incognito_browser->profile()->GetRequestContext());
 }
 
-IN_PROC_BROWSER_TEST_F(ProfileBrowserTest,
-                       URLFetcherUsingExtensionContextDuringIncognitoTeardown) {
-  Browser* incognito_browser =
-      OpenURLOffTheRecord(browser()->profile(), GURL("about:blank"));
-
-  RunURLFetcherActiveDuringIncognitoTeardownTest(
-      incognito_browser,
-      incognito_browser->profile()->GetRequestContextForExtensions());
-}
-
 // Verifies the cache directory supports multiple profiles when it's overriden
 // by group policy or command line switches.
 IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, DiskCacheDirOverride) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   int size;
   const base::FilePath::StringPieceType profile_name =
       FILE_PATH_LITERAL("Profile 1");
@@ -787,22 +790,13 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, DiskCacheDirOverride) {
   ProfileImpl* profile_impl = static_cast<ProfileImpl*>(browser()->profile());
 
   {
-    profile_impl->GetPrefs()->SetFilePath(prefs::kDiskCacheDir,
-                                          base::FilePath());
-
-    base::FilePath cache_path = profile_path;
-    profile_impl->GetCacheParameters(false, &cache_path, &size);
-    EXPECT_EQ(profile_path, cache_path);
-  }
-
-  {
     base::ScopedTempDir temp_disk_cache_dir;
     ASSERT_TRUE(temp_disk_cache_dir.CreateUniqueTempDir());
     profile_impl->GetPrefs()->SetFilePath(prefs::kDiskCacheDir,
                                           temp_disk_cache_dir.GetPath());
 
     base::FilePath cache_path = profile_path;
-    profile_impl->GetCacheParameters(false, &cache_path, &size);
+    profile_impl->GetMediaCacheParameters(&cache_path, &size);
     EXPECT_EQ(temp_disk_cache_dir.GetPath().Append(profile_name), cache_path);
   }
 }
@@ -811,9 +805,9 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, DiskCacheDirOverride) {
 IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, SendHPKPReport) {
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &DisablePinningBypass,
-          make_scoped_refptr(browser()->profile()->GetRequestContext())));
+          base::WrapRefCounted(browser()->profile()->GetRequestContext())));
 
   base::RunLoop wait_for_report_loop;
   // Server that HPKP reports are sent to.
@@ -847,9 +841,9 @@ IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, SendHPKPReport) {
 IN_PROC_BROWSER_TEST_F(ProfileBrowserTest, SendHPKPReportServerHangs) {
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &DisablePinningBypass,
-          make_scoped_refptr(browser()->profile()->GetRequestContext())));
+          base::WrapRefCounted(browser()->profile()->GetRequestContext())));
 
   base::RunLoop wait_for_report_loop;
   // Server that HPKP reports are sent to.  Have to use a class member to make

@@ -20,6 +20,7 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.UrlConstants;
@@ -28,7 +29,6 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabRedirectHandler;
 import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.chrome.browser.util.UrlUtilities;
-import org.chromium.chrome.browser.webapps.ChromeWebApkHost;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.ui.base.PageTransition;
 
@@ -50,7 +50,6 @@ public class ExternalNavigationHandler {
 
     private static final String WTAI_URL_PREFIX = "wtai://wp/";
     private static final String WTAI_MC_URL_PREFIX = "wtai://wp/mc;";
-    private static final String SMS_SCHEME = "sms";
 
     private static final String PLAY_PACKAGE_PARAM = "id";
     private static final String PLAY_REFERRER_PARAM = "referrer";
@@ -184,7 +183,8 @@ public class ExternalNavigationHandler {
 
         // http://crbug.com/169549 : If you type in a URL that then redirects in server side to an
         // link that cannot be rendered by the browser, we want to show the intent picker.
-        boolean isTyped = pageTransitionCore == PageTransition.TYPED;
+        boolean isTyped = (pageTransitionCore == PageTransition.TYPED)
+                || ((params.getPageTransition() & PageTransition.FROM_ADDRESS_BAR) != 0);
         boolean typedRedirectToExternalProtocol = isTyped && params.isRedirect()
                 && isExternalProtocol;
 
@@ -300,6 +300,7 @@ public class ExternalNavigationHandler {
                     Uri.parse(WebView.SCHEME_TEL
                             + params.getUrl().substring(WTAI_MC_URL_PREFIX.length()))), false);
             if (DEBUG) Log.i(TAG, "OVERRIDE_WITH_EXTERNAL_INTENT wtai:// link handled");
+            RecordUserAction.record("Android.PhoneIntent");
             return OverrideUrlLoadingResult.OVERRIDE_WITH_EXTERNAL_INTENT;
         }
 
@@ -378,11 +379,14 @@ public class ExternalNavigationHandler {
             intent.removeExtra(EXTRA_BROWSER_FALLBACK_URL);
         }
 
-        if (intent.getPackage() == null) {
-            final Uri uri = intent.getData();
-            if (uri != null && SMS_SCHEME.equals(uri.getScheme())) {
-                intent.setPackage(getDefaultSmsPackageName(resolvingInfos));
-            }
+        final Uri uri = intent.getData();
+        if (intent.getPackage() == null && uri != null
+                && UrlConstants.SMS_SCHEME.equals(uri.getScheme())) {
+            intent.setPackage(getDefaultSmsPackageName(resolvingInfos));
+        } else if (uri != null && UrlConstants.TEL_SCHEME.equals(uri.getScheme())
+                || (Intent.ACTION_DIAL.equals(intent.getAction()))
+                || (Intent.ACTION_CALL.equals(intent.getAction()))) {
+            RecordUserAction.record("Android.PhoneIntent");
         }
 
         // Set the Browser application ID to us in case the user chooses Chrome
@@ -391,6 +395,8 @@ public class ExternalNavigationHandler {
         intent.putExtra(Browser.EXTRA_APPLICATION_ID, packageName);
         if (params.isOpenInNewTab()) intent.putExtra(Browser.EXTRA_CREATE_NEW_TAB, true);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        // Ensure intents re-target potential caller activity when we run in Herb/CCT mode.
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
         mDelegate.maybeSetWindowId(intent);
         mDelegate.maybeRecordAppHandlersInIntent(intent, resolvingInfos);
 
@@ -429,15 +435,19 @@ public class ExternalNavigationHandler {
                 return OverrideUrlLoadingResult.NO_OVERRIDE;
             }
 
-            if (params.getReferrerUrl() != null && (isLink || isFormSubmit)) {
+            String delegatePreviousUrl = mDelegate.getPreviousUrl();
+            String previousUriString =
+                    delegatePreviousUrl != null ? delegatePreviousUrl : params.getReferrerUrl();
+            if (previousUriString != null && (isLink || isFormSubmit)) {
                 // Current URL has at least one specialized handler available. For navigations
                 // within the same host, keep the navigation inside the browser unless the set of
                 // available apps to handle the new navigation is different. http://crbug.com/463138
                 URI currentUri;
                 URI previousUri;
+
                 try {
                     currentUri = new URI(params.getUrl());
-                    previousUri = new URI(params.getReferrerUrl());
+                    previousUri = new URI(previousUriString);
                 } catch (Exception e) {
                     currentUri = null;
                     previousUri = null;
@@ -447,15 +457,15 @@ public class ExternalNavigationHandler {
                         && TextUtils.equals(currentUri.getHost(), previousUri.getHost())) {
                     Intent previousIntent;
                     try {
-                        previousIntent = Intent.parseUri(
-                                params.getReferrerUrl(), Intent.URI_INTENT_SCHEME);
+                        previousIntent =
+                                Intent.parseUri(previousUriString, Intent.URI_INTENT_SCHEME);
                     } catch (Exception e) {
                         previousIntent = null;
                     }
 
                     if (previousIntent != null
                             && resolversSubsetOf(resolvingInfos,
-                                    mDelegate.queryIntentActivities(previousIntent))) {
+                                       mDelegate.queryIntentActivities(previousIntent))) {
                         if (DEBUG) Log.i(TAG, "NO_OVERRIDE: Same host, no new resolvers");
                         return OverrideUrlLoadingResult.NO_OVERRIDE;
                     }
@@ -483,10 +493,13 @@ public class ExternalNavigationHandler {
             if (params.isIncognito() && !mDelegate.willChromeHandleIntent(intent)) {
                 // This intent may leave Chrome.  Warn the user that incognito does not carry over
                 // to apps out side of Chrome.
-                mDelegate.startIncognitoIntent(intent, params.getReferrerUrl(),
-                        hasBrowserFallbackUrl ? browserFallbackUrl : null, params.getTab(),
-                        params.shouldCloseContentsOnOverrideUrlLoadingAndLaunchIntent(),
-                        shouldProxyForInstantApps);
+                if (!mDelegate.startIncognitoIntent(intent, params.getReferrerUrl(),
+                            hasBrowserFallbackUrl ? browserFallbackUrl : null, params.getTab(),
+                            params.shouldCloseContentsOnOverrideUrlLoadingAndLaunchIntent(),
+                            shouldProxyForInstantApps)) {
+                    if (DEBUG) Log.i(TAG, "NO_OVERRIDE: Failed to show incognito alert dialog.");
+                    return OverrideUrlLoadingResult.NO_OVERRIDE;
+                }
                 if (DEBUG) Log.i(TAG, "OVERRIDE_WITH_ASYNC_ACTION: Incognito navigation out");
                 return OverrideUrlLoadingResult.OVERRIDE_WITH_ASYNC_ACTION;
             }
@@ -511,27 +524,24 @@ public class ExternalNavigationHandler {
                 IntentWithGesturesHandler.getInstance().onNewIntentWithGesture(intent);
             }
 
-            if (ChromeWebApkHost.isEnabled()) {
-                // If the only specialized intent handler is a WebAPK, set the intent's package to
-                // launch the WebAPK without showing the intent picker.
-                String targetWebApkPackageName = mDelegate.findWebApkPackageName(resolvingInfos);
+            // If the only specialized intent handler is a WebAPK, set the intent's package to
+            // launch the WebAPK without showing the intent picker.
+            String targetWebApkPackageName = mDelegate.findWebApkPackageName(resolvingInfos);
 
-                // We can't rely on this falling through to startActivityIfNeeded and behaving
-                // correctly for WebAPKs. This is because the target of the intent is the WebApk's
-                // main activity but that's just a bouncer which will redirect to WebApkActivity in
-                // chrome. To avoid bouncing indefinitely, don't override the navigation if we are
-                // currently showing the WebApk |params.webApkPackageName()| that we will redirect
-                // to.
-                if (targetWebApkPackageName != null
-                        && targetWebApkPackageName.equals(params.webApkPackageName())) {
-                    if (DEBUG) Log.i(TAG, "NO_OVERRIDE: Navigation in WebApk");
-                    return OverrideUrlLoadingResult.NO_OVERRIDE;
-                }
+            // We can't rely on this falling through to startActivityIfNeeded and behaving
+            // correctly for WebAPKs. This is because the target of the intent is the WebApk's main
+            // activity but that's just a bouncer which will redirect to WebApkActivity in chrome.
+            // To avoid bouncing indefinitely, don't override the navigation if we are currently
+            // showing the WebApk |params.webApkPackageName()| that we will redirect to.
+            if (targetWebApkPackageName != null
+                    && targetWebApkPackageName.equals(params.nativeClientPackageName())) {
+                if (DEBUG) Log.i(TAG, "NO_OVERRIDE: Navigation in WebApk");
+                return OverrideUrlLoadingResult.NO_OVERRIDE;
+            }
 
-                if (targetWebApkPackageName != null
-                        && mDelegate.countSpecializedHandlers(resolvingInfos) == 1) {
-                    intent.setPackage(targetWebApkPackageName);
-                }
+            if (targetWebApkPackageName != null
+                    && mDelegate.countSpecializedHandlers(resolvingInfos) == 1) {
+                intent.setPackage(targetWebApkPackageName);
             }
 
             if (mDelegate.startActivityIfNeeded(intent, shouldProxyForInstantApps)) {
@@ -569,9 +579,13 @@ public class ExternalNavigationHandler {
                 intent.putExtra(Intent.EXTRA_REFERRER, Uri.parse(params.getReferrerUrl()));
             }
             if (params.isIncognito()) {
-                mDelegate.startIncognitoIntent(intent, params.getReferrerUrl(), null,
-                        params.getTab(),
-                        params.shouldCloseContentsOnOverrideUrlLoadingAndLaunchIntent(), false);
+                if (!mDelegate.startIncognitoIntent(intent, params.getReferrerUrl(), null,
+                            params.getTab(),
+                            params.shouldCloseContentsOnOverrideUrlLoadingAndLaunchIntent(),
+                            false)) {
+                    if (DEBUG) Log.i(TAG, "NO_OVERRIDE: Failed to show incognito alert dialog.");
+                    return OverrideUrlLoadingResult.NO_OVERRIDE;
+                }
                 if (DEBUG) Log.i(TAG, "OVERRIDE_WITH_ASYNC_ACTION: Incognito intent to Play Store");
                 return OverrideUrlLoadingResult.OVERRIDE_WITH_ASYNC_ACTION;
             } else {

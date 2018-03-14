@@ -50,9 +50,8 @@
  */
 
 #include "platform/wtf/WTFExport.h"
-#include "platform/wtf/build_config.h"
 
-#if USE(DYNAMIC_ANNOTATIONS)
+#if defined(WTF_USE_DYNAMIC_ANNOTATIONS)
 /* Tell data race detector that we're not interested in reports on the given
  * address range. */
 #define WTF_ANNOTATE_BENIGN_RACE_SIZED(address, size, description) \
@@ -68,11 +67,11 @@
  *
  * The most common case requiring annotations is atomic reference counting:
  * bool deref() {
- *     ANNOTATE_HAPPENS_BEFORE(&m_refCount);
- *     if (!atomicDecrement(&m_refCount)) {
- *         // m_refCount is now 0
- *         ANNOTATE_HAPPENS_AFTER(&m_refCount);
- *         // "return true; happens-after each atomicDecrement of m_refCount"
+ *     ANNOTATE_HAPPENS_BEFORE(&ref_count_);
+ *     if (!atomicDecrement(&ref_count_)) {
+ *         // ref_count_ is now 0
+ *         ANNOTATE_HAPPENS_AFTER(&ref_count_);
+ *         // "return true; happens-after each atomicDecrement of ref_count_"
  *         return true;
  *     }
  *     return false;
@@ -102,13 +101,13 @@ WTF_EXPORT void WTFAnnotateHappensAfter(const char* file,
 }  // extern "C"
 #endif
 
-#else  // USE(DYNAMIC_ANNOTATIONS)
+#else  // defined(WTF_USE_DYNAMIC_ANNOTATIONS)
 /* These macros are empty when dynamic annotations are not enabled so you can
  * use them without affecting the performance of release binaries. */
 #define WTF_ANNOTATE_BENIGN_RACE_SIZED(address, size, description)
 #define WTF_ANNOTATE_BENIGN_RACE(pointer, description)
 #define WTF_ANNOTATE_HAPPENS_BEFORE(address)
 #define WTF_ANNOTATE_HAPPENS_AFTER(address)
-#endif  // USE(DYNAMIC_ANNOTATIONS)
+#endif  // defined(WTF_USE_DYNAMIC_ANNOTATIONS)
 
 #endif  // WTF_DynamicAnnotations_h

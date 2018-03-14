@@ -5,8 +5,8 @@
 #ifndef Credential_h
 #define Credential_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/ModulesExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/credentialmanager/PlatformCredential.h"
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
@@ -15,8 +15,7 @@ namespace blink {
 
 class ExceptionState;
 
-class MODULES_EXPORT Credential : public GarbageCollectedFinalized<Credential>,
-                                  public ScriptWrappable {
+class MODULES_EXPORT Credential : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -24,11 +23,9 @@ class MODULES_EXPORT Credential : public GarbageCollectedFinalized<Credential>,
 
   // Credential.idl
   const String& id() const { return platform_credential_->Id(); }
-  const String& GetName() const { return platform_credential_->GetName(); }
-  const KURL& GetIconURL() const { return platform_credential_->GetIconURL(); }
   const String& type() const { return platform_credential_->GetType(); }
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   PlatformCredential* GetPlatformCredential() const {
     return platform_credential_;
@@ -36,7 +33,7 @@ class MODULES_EXPORT Credential : public GarbageCollectedFinalized<Credential>,
 
  protected:
   Credential(PlatformCredential*);
-  Credential(const String& id, const String& name, const KURL& icon);
+  Credential(const String& id);
 
   // Parses a string as a KURL. Throws an exception via |exceptionState| if an
   // invalid URL is produced.

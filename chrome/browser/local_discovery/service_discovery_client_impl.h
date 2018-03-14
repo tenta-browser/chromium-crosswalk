@@ -35,12 +35,12 @@ class ServiceDiscoveryClientImpl : public ServiceDiscoveryClient {
 
   std::unique_ptr<ServiceResolver> CreateServiceResolver(
       const std::string& service_name,
-      const ServiceResolver::ResolveCompleteCallback& callback) override;
+      ServiceResolver::ResolveCompleteCallback callback) override;
 
   std::unique_ptr<LocalDomainResolver> CreateLocalDomainResolver(
       const std::string& domain,
       net::AddressFamily address_family,
-      const LocalDomainResolver::IPAddressCallback& callback) override;
+      LocalDomainResolver::IPAddressCallback callback) override;
 
  private:
   net::MDnsClient* mdns_client_;
@@ -61,7 +61,7 @@ class ServiceWatcherImpl : public ServiceWatcher,
   // ServiceWatcher implementation:
   void Start() override;
 
-  void DiscoverNewServices(bool force_update) override;
+  void DiscoverNewServices() override;
 
   void SetActivelyRefreshServices(bool actively_refresh_services) override;
 
@@ -130,7 +130,6 @@ class ServiceWatcherImpl : public ServiceWatcher,
   void AddSRV(const std::string& service);
   bool CreateTransaction(bool active,
                          bool alert_existing_services,
-                         bool force_refresh,
                          std::unique_ptr<net::MDnsTransaction>* transaction);
 
   void DeferUpdate(ServiceWatcher::UpdateType update_type,
@@ -140,7 +139,7 @@ class ServiceWatcherImpl : public ServiceWatcher,
 
   void ScheduleQuery(int timeout_seconds);
 
-  void SendQuery(int next_timeout_seconds, bool force_update);
+  void SendQuery(int next_timeout_seconds);
 
   const std::string service_type_;
   ServiceListenersMap services_;
@@ -162,7 +161,7 @@ class ServiceResolverImpl
       public base::SupportsWeakPtr<ServiceResolverImpl> {
  public:
   ServiceResolverImpl(const std::string& service_name,
-                      const ServiceResolver::ResolveCompleteCallback& callback,
+                      ServiceResolver::ResolveCompleteCallback callback,
                       net::MDnsClient* mdns_client);
 
   ~ServiceResolverImpl() override;
@@ -228,7 +227,7 @@ class LocalDomainResolverImpl : public LocalDomainResolver {
  public:
   LocalDomainResolverImpl(const std::string& domain,
                           net::AddressFamily address_family,
-                          const IPAddressCallback& callback,
+                          IPAddressCallback callback,
                           net::MDnsClient* mdns_client);
   ~LocalDomainResolverImpl() override;
 

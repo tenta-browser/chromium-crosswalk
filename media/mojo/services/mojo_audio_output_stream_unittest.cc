@@ -11,7 +11,6 @@
 #include "base/run_loop.h"
 #include "base/sync_socket.h"
 #include "media/audio/audio_output_controller.h"
-#include "media/mojo/interfaces/audio_output_stream.mojom.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -37,7 +36,7 @@ using AudioOutputStreamPtr = mojo::InterfacePtr<AudioOutputStream>;
 
 class TestCancelableSyncSocket : public base::CancelableSyncSocket {
  public:
-  TestCancelableSyncSocket() {}
+  TestCancelableSyncSocket() = default;
 
   void ExpectOwnershipTransfer() { expect_ownership_transfer_ = true; }
 
@@ -55,13 +54,12 @@ class TestCancelableSyncSocket : public base::CancelableSyncSocket {
   DISALLOW_COPY_AND_ASSIGN(TestCancelableSyncSocket);
 };
 
-class MockDelegate : NON_EXPORTED_BASE(public AudioOutputDelegate) {
+class MockDelegate : public AudioOutputDelegate {
  public:
-  MockDelegate() {}
-  ~MockDelegate() {}
+  MockDelegate() = default;
+  ~MockDelegate() = default;
 
-  MOCK_CONST_METHOD0(GetController, scoped_refptr<AudioOutputController>());
-  MOCK_CONST_METHOD0(GetStreamId, int());
+  MOCK_METHOD0(GetStreamId, int());
   MOCK_METHOD0(OnPlayStream, void());
   MOCK_METHOD0(OnPauseStream, void());
   MOCK_METHOD1(OnSetVolume, void(double));
@@ -93,9 +91,9 @@ class MockDeleter {
   MOCK_METHOD0(Finished, void());
 };
 
-class MockClient {
+class MockClient : public mojom::AudioOutputStreamClient {
  public:
-  MockClient() {}
+  MockClient() = default;
 
   void Initialized(mojo::ScopedSharedBufferHandle shared_buffer,
                    mojo::ScopedHandle socket_handle) {
@@ -122,28 +120,42 @@ class MockClient {
 
   MOCK_METHOD0(GotNotification, void());
 
+  MOCK_METHOD0(OnError, void());
+
  private:
   std::unique_ptr<base::SharedMemory> buffer_;
   std::unique_ptr<base::CancelableSyncSocket> socket_;
 };
+
+std::unique_ptr<AudioOutputDelegate> CreateNoDelegate(
+    AudioOutputDelegate::EventHandler* event_handler) {
+  return nullptr;
+}
+
+void NotCalled(mojo::ScopedSharedBufferHandle shared_buffer,
+               mojo::ScopedHandle socket_handle) {
+  EXPECT_TRUE(false) << "The StreamCreated callback was called despite the "
+                        "test expecting it not to.";
+}
 
 }  // namespace
 
 class MojoAudioOutputStreamTest : public Test {
  public:
   MojoAudioOutputStreamTest()
-      : foreign_socket_(base::MakeUnique<TestCancelableSyncSocket>()) {}
+      : foreign_socket_(base::MakeUnique<TestCancelableSyncSocket>()),
+        client_binding_(&client_, mojo::MakeRequest(&client_ptr_)) {}
 
   AudioOutputStreamPtr CreateAudioOutput() {
     AudioOutputStreamPtr p;
     ExpectDelegateCreation();
     impl_ = base::MakeUnique<MojoAudioOutputStream>(
-        mojo::MakeRequest(&p),
+        mojo::MakeRequest(&p), std::move(client_ptr_),
         base::BindOnce(&MockDelegateFactory::CreateDelegate,
                        base::Unretained(&mock_delegate_factory_)),
-        base::Bind(&MockClient::Initialized, base::Unretained(&client_)),
+        base::BindOnce(&MockClient::Initialized, base::Unretained(&client_)),
         base::BindOnce(&MockDeleter::Finished, base::Unretained(&deleter_)));
-    EXPECT_NE(nullptr, p);
+    EXPECT_TRUE(p.is_bound());
     return p;
   }
 
@@ -167,9 +179,25 @@ class MojoAudioOutputStreamTest : public Test {
   AudioOutputDelegate::EventHandler* delegate_event_handler_ = nullptr;
   StrictMock<MockDelegateFactory> mock_delegate_factory_;
   StrictMock<MockDeleter> deleter_;
-  MockClient client_;
+  StrictMock<MockClient> client_;
+  media::mojom::AudioOutputStreamClientPtr client_ptr_;
+  mojo::Binding<media::mojom::AudioOutputStreamClient> client_binding_;
   std::unique_ptr<MojoAudioOutputStream> impl_;
 };
+
+TEST_F(MojoAudioOutputStreamTest, NoDelegate_SignalsError) {
+  bool deleter_called = false;
+  EXPECT_CALL(client_, OnError()).Times(1);
+  mojom::AudioOutputStreamPtr stream_ptr;
+  MojoAudioOutputStream stream(
+      mojo::MakeRequest(&stream_ptr), std::move(client_ptr_),
+      base::BindOnce(&CreateNoDelegate), base::BindOnce(&NotCalled),
+      base::BindOnce([](bool* p) { *p = true; }, &deleter_called));
+  EXPECT_FALSE(deleter_called)
+      << "Stream shouldn't call the deleter from its constructor.";
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(deleter_called);
+}
 
 TEST_F(MojoAudioOutputStreamTest, Play_Plays) {
   AudioOutputStreamPtr audio_output_ptr = CreateAudioOutput();
@@ -197,6 +225,7 @@ TEST_F(MojoAudioOutputStreamTest, SetVolume_SetsVolume) {
 
 TEST_F(MojoAudioOutputStreamTest, DestructWithCallPending_Safe) {
   AudioOutputStreamPtr audio_output_ptr = CreateAudioOutput();
+  EXPECT_CALL(client_, GotNotification());
   base::RunLoop().RunUntilIdle();
 
   ASSERT_NE(nullptr, delegate_event_handler_);
@@ -225,6 +254,7 @@ TEST_F(MojoAudioOutputStreamTest, Created_NotifiesClient) {
 TEST_F(MojoAudioOutputStreamTest, SetVolumeTooLarge_Error) {
   AudioOutputStreamPtr audio_output_ptr = CreateAudioOutput();
   EXPECT_CALL(deleter_, Finished());
+  EXPECT_CALL(client_, OnError()).Times(1);
 
   audio_output_ptr->SetVolume(15);
   base::RunLoop().RunUntilIdle();
@@ -234,6 +264,7 @@ TEST_F(MojoAudioOutputStreamTest, SetVolumeTooLarge_Error) {
 TEST_F(MojoAudioOutputStreamTest, SetVolumeNegative_Error) {
   AudioOutputStreamPtr audio_output_ptr = CreateAudioOutput();
   EXPECT_CALL(deleter_, Finished());
+  EXPECT_CALL(client_, OnError()).Times(1);
 
   audio_output_ptr->SetVolume(-0.5);
   base::RunLoop().RunUntilIdle();
@@ -243,6 +274,7 @@ TEST_F(MojoAudioOutputStreamTest, SetVolumeNegative_Error) {
 TEST_F(MojoAudioOutputStreamTest, DelegateErrorBeforeCreated_PropagatesError) {
   AudioOutputStreamPtr audio_output_ptr = CreateAudioOutput();
   EXPECT_CALL(deleter_, Finished());
+  EXPECT_CALL(client_, OnError()).Times(1);
 
   ASSERT_NE(nullptr, delegate_event_handler_);
   delegate_event_handler_->OnStreamError(kStreamId);
@@ -253,7 +285,9 @@ TEST_F(MojoAudioOutputStreamTest, DelegateErrorBeforeCreated_PropagatesError) {
 
 TEST_F(MojoAudioOutputStreamTest, DelegateErrorAfterCreated_PropagatesError) {
   AudioOutputStreamPtr audio_output_ptr = CreateAudioOutput();
+  EXPECT_CALL(client_, GotNotification());
   EXPECT_CALL(deleter_, Finished());
+  EXPECT_CALL(client_, OnError()).Times(1);
   base::RunLoop().RunUntilIdle();
 
   ASSERT_NE(nullptr, delegate_event_handler_);

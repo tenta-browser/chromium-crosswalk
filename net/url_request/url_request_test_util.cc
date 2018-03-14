@@ -9,7 +9,6 @@
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
@@ -79,15 +78,15 @@ void TestURLRequestContext::Init() {
     context_storage_.set_cert_verifier(CertVerifier::CreateDefault());
   if (!transport_security_state()) {
     context_storage_.set_transport_security_state(
-        base::MakeUnique<TransportSecurityState>());
+        std::make_unique<TransportSecurityState>());
   }
   if (!cert_transparency_verifier()) {
     context_storage_.set_cert_transparency_verifier(
-        base::MakeUnique<MultiLogCTVerifier>());
+        std::make_unique<MultiLogCTVerifier>());
   }
   if (!ct_policy_enforcer()) {
     context_storage_.set_ct_policy_enforcer(
-        base::WrapUnique(new CTPolicyEnforcer));
+        std::make_unique<CTPolicyEnforcer>());
   }
   if (!ssl_config_service())
     context_storage_.set_ssl_config_service(new SSLConfigServiceDefaults());
@@ -100,51 +99,53 @@ void TestURLRequestContext::Init() {
         std::unique_ptr<HttpServerProperties>(new HttpServerPropertiesImpl()));
   }
   // In-memory cookie store.
-  if (!cookie_store()) {
-    context_storage_.set_cookie_store(
-        base::MakeUnique<CookieMonster>(nullptr, nullptr));
-  }
+  if (!cookie_store())
+    context_storage_.set_cookie_store(std::make_unique<CookieMonster>(nullptr));
+
   // In-memory Channel ID service.  Must be created before the
   // HttpNetworkSession.
   if (!channel_id_service()) {
     context_storage_.set_channel_id_service(
-        base::MakeUnique<ChannelIDService>(new DefaultChannelIDStore(nullptr)));
+        std::make_unique<ChannelIDService>(new DefaultChannelIDStore(nullptr)));
   }
   if (http_transaction_factory()) {
     // Make sure we haven't been passed an object we're not going to use.
     EXPECT_FALSE(client_socket_factory_);
   } else {
-    HttpNetworkSession::Params params;
-
+    HttpNetworkSession::Params session_params;
     if (http_network_session_params_)
-      params = *http_network_session_params_;
-    params.client_socket_factory = client_socket_factory();
-    params.proxy_delegate = proxy_delegate();
-    params.host_resolver = host_resolver();
-    params.cert_verifier = cert_verifier();
-    params.cert_transparency_verifier = cert_transparency_verifier();
-    params.ct_policy_enforcer = ct_policy_enforcer();
-    params.transport_security_state = transport_security_state();
-    params.proxy_service = proxy_service();
-    params.ssl_config_service = ssl_config_service();
-    params.http_auth_handler_factory = http_auth_handler_factory();
-    params.http_server_properties = http_server_properties();
-    params.net_log = net_log();
-    params.channel_id_service = channel_id_service();
+      session_params = *http_network_session_params_;
+
+    HttpNetworkSession::Context session_context;
+    if (http_network_session_context_)
+      session_context = *http_network_session_context_;
+    session_context.client_socket_factory = client_socket_factory();
+    session_context.proxy_delegate = proxy_delegate();
+    session_context.host_resolver = host_resolver();
+    session_context.cert_verifier = cert_verifier();
+    session_context.cert_transparency_verifier = cert_transparency_verifier();
+    session_context.ct_policy_enforcer = ct_policy_enforcer();
+    session_context.transport_security_state = transport_security_state();
+    session_context.proxy_service = proxy_service();
+    session_context.ssl_config_service = ssl_config_service();
+    session_context.http_auth_handler_factory = http_auth_handler_factory();
+    session_context.http_server_properties = http_server_properties();
+    session_context.net_log = net_log();
+    session_context.channel_id_service = channel_id_service();
     context_storage_.set_http_network_session(
-        base::MakeUnique<HttpNetworkSession>(params));
-    context_storage_.set_http_transaction_factory(base::MakeUnique<HttpCache>(
+        std::make_unique<HttpNetworkSession>(session_params, session_context));
+    context_storage_.set_http_transaction_factory(std::make_unique<HttpCache>(
         context_storage_.http_network_session(),
-        HttpCache::DefaultBackend::InMemory(0), false));
+        HttpCache::DefaultBackend::InMemory(0), true /* is_main_cache */));
   }
   if (!http_user_agent_settings()) {
     context_storage_.set_http_user_agent_settings(
-        base::MakeUnique<StaticHttpUserAgentSettings>("en-us,fr",
+        std::make_unique<StaticHttpUserAgentSettings>("en-us,fr",
                                                       std::string()));
   }
   if (!job_factory()) {
     context_storage_.set_job_factory(
-        base::MakeUnique<URLRequestJobFactoryImpl>());
+        std::make_unique<URLRequestJobFactoryImpl>());
   }
 }
 
@@ -161,7 +162,7 @@ TestURLRequestContextGetter::TestURLRequestContextGetter(
   DCHECK(network_task_runner_.get());
 }
 
-TestURLRequestContextGetter::~TestURLRequestContextGetter() {}
+TestURLRequestContextGetter::~TestURLRequestContextGetter() = default;
 
 TestURLRequestContext* TestURLRequestContextGetter::GetURLRequestContext() {
   if (!context_.get())
@@ -196,7 +197,7 @@ TestDelegate::TestDelegate()
       request_status_(ERR_IO_PENDING),
       buf_(new IOBuffer(kBufferSize)) {}
 
-TestDelegate::~TestDelegate() {}
+TestDelegate::~TestDelegate() = default;
 
 void TestDelegate::ClearFullRequestHeaders() {
   full_request_headers_.Clear();
@@ -633,7 +634,7 @@ bool TestNetworkDelegate::OnCanGetCookies(const URLRequest& request,
 }
 
 bool TestNetworkDelegate::OnCanSetCookie(const URLRequest& request,
-                                         const std::string& cookie_line,
+                                         const net::CanonicalCookie& cookie,
                                          CookieOptions* options) {
   bool allow = true;
   if (cookie_options_bit_mask_ & NO_SET_COOKIE)
@@ -648,8 +649,10 @@ bool TestNetworkDelegate::OnCanSetCookie(const URLRequest& request,
   return allow;
 }
 
-bool TestNetworkDelegate::OnCanAccessFile(const URLRequest& request,
-                                          const base::FilePath& path) const {
+bool TestNetworkDelegate::OnCanAccessFile(
+    const URLRequest& request,
+    const base::FilePath& original_path,
+    const base::FilePath& absolute_path) const {
   return can_access_files_;
 }
 
@@ -664,9 +667,9 @@ bool TestNetworkDelegate::OnCancelURLRequestWithPolicyViolatingReferrerHeader(
   return cancel_request_with_policy_violating_referrer_;
 }
 
-TestJobInterceptor::TestJobInterceptor() {}
+TestJobInterceptor::TestJobInterceptor() = default;
 
-TestJobInterceptor::~TestJobInterceptor() {}
+TestJobInterceptor::~TestJobInterceptor() = default;
 
 URLRequestJob* TestJobInterceptor::MaybeCreateJob(
     URLRequest* request,

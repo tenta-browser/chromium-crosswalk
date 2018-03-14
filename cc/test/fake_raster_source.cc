@@ -9,6 +9,7 @@
 #include "base/synchronization/waitable_event.h"
 #include "cc/paint/paint_flags.h"
 #include "cc/test/fake_recording_source.h"
+#include "cc/test/skia_common.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -37,8 +38,22 @@ scoped_refptr<FakeRasterSource> FakeRasterSource::CreateFilled(
 
   recording_source->Rerecord();
 
-  return make_scoped_refptr(
-      new FakeRasterSource(recording_source.get(), false));
+  return base::WrapRefCounted(new FakeRasterSource(recording_source.get()));
+}
+
+scoped_refptr<FakeRasterSource> FakeRasterSource::CreateFilledWithImages(
+    const gfx::Size& size) {
+  auto recording_source =
+      FakeRecordingSource::CreateFilledRecordingSource(size);
+
+  for (int y = 0; y < size.height(); y += 100) {
+    for (int x = 0; x < size.width(); x += 100) {
+      recording_source->add_draw_image(
+          CreateDiscardablePaintImage(gfx::Size(100, 100)), gfx::Point(x, y));
+    }
+  }
+  recording_source->Rerecord();
+  return base::WrapRefCounted(new FakeRasterSource(recording_source.get()));
 }
 
 scoped_refptr<FakeRasterSource> FakeRasterSource::CreateFilledLCD(
@@ -58,7 +73,7 @@ scoped_refptr<FakeRasterSource> FakeRasterSource::CreateFilledLCD(
 
   recording_source->Rerecord();
 
-  return make_scoped_refptr(new FakeRasterSource(recording_source.get(), true));
+  return base::WrapRefCounted(new FakeRasterSource(recording_source.get()));
 }
 
 scoped_refptr<FakeRasterSource> FakeRasterSource::CreateFilledSolidColor(
@@ -71,7 +86,7 @@ scoped_refptr<FakeRasterSource> FakeRasterSource::CreateFilledSolidColor(
   recording_source->add_draw_rect_with_flags(gfx::Rect(size), red_flags);
   recording_source->Rerecord();
   auto raster_source =
-      make_scoped_refptr(new FakeRasterSource(recording_source.get(), false));
+      base::WrapRefCounted(new FakeRasterSource(recording_source.get()));
   if (!raster_source->IsSolidColor())
     ADD_FAILURE() << "Not solid color!";
   return raster_source;
@@ -98,43 +113,35 @@ scoped_refptr<FakeRasterSource> FakeRasterSource::CreatePartiallyFilled(
   recording_source->Rerecord();
   recording_source->SetRecordedViewport(recorded_viewport);
 
-  return make_scoped_refptr(
-      new FakeRasterSource(recording_source.get(), false));
+  return base::WrapRefCounted(new FakeRasterSource(recording_source.get()));
 }
 
 scoped_refptr<FakeRasterSource> FakeRasterSource::CreateEmpty(
     const gfx::Size& size) {
   auto recording_source =
       FakeRecordingSource::CreateFilledRecordingSource(size);
-  return make_scoped_refptr(
-      new FakeRasterSource(recording_source.get(), false));
+  return base::WrapRefCounted(new FakeRasterSource(recording_source.get()));
 }
 
 scoped_refptr<FakeRasterSource> FakeRasterSource::CreateFromRecordingSource(
-    const RecordingSource* recording_source,
-    bool can_use_lcd) {
-  return make_scoped_refptr(
-      new FakeRasterSource(recording_source, can_use_lcd));
+    const RecordingSource* recording_source) {
+  return base::WrapRefCounted(new FakeRasterSource(recording_source));
 }
 
 scoped_refptr<FakeRasterSource>
 FakeRasterSource::CreateFromRecordingSourceWithWaitable(
     const RecordingSource* recording_source,
-    bool can_use_lcd,
     base::WaitableEvent* playback_allowed_event) {
-  return make_scoped_refptr(new FakeRasterSource(recording_source, can_use_lcd,
-                                                 playback_allowed_event));
+  return base::WrapRefCounted(
+      new FakeRasterSource(recording_source, playback_allowed_event));
 }
 
-FakeRasterSource::FakeRasterSource(const RecordingSource* recording_source,
-                                   bool can_use_lcd)
-    : RasterSource(recording_source, can_use_lcd),
-      playback_allowed_event_(nullptr) {}
+FakeRasterSource::FakeRasterSource(const RecordingSource* recording_source)
+    : RasterSource(recording_source), playback_allowed_event_(nullptr) {}
 
 FakeRasterSource::FakeRasterSource(const RecordingSource* recording_source,
-                                   bool can_use_lcd,
                                    base::WaitableEvent* playback_allowed_event)
-    : RasterSource(recording_source, can_use_lcd),
+    : RasterSource(recording_source),
       playback_allowed_event_(playback_allowed_event) {}
 
 FakeRasterSource::~FakeRasterSource() {}

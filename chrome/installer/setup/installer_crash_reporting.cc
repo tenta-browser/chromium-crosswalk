@@ -22,7 +22,6 @@
 #include "chrome/installer/setup/installer_crash_reporter_client.h"
 #include "chrome/installer/setup/installer_state.h"
 #include "chrome/installer/util/google_update_settings.h"
-#include "components/crash/content/app/crash_keys_win.h"
 #include "components/crash/content/app/crashpad.h"
 #include "components/crash/core/common/crash_keys.h"
 
@@ -94,7 +93,7 @@ void ConfigureCrashReporting(const InstallerState& installer_state) {
   }
 
   crash_reporter::InitializeCrashpadWithEmbeddedHandler(true,
-                                                        "Chrome Installer");
+                                                        "Chrome Installer", "");
 
   // Set up the metrics client id (a la child_process_logging::Init()).
   std::unique_ptr<metrics::ClientInfo> client_info =

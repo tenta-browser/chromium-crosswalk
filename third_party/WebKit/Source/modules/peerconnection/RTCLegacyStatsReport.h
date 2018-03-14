@@ -25,7 +25,7 @@
 #ifndef RTCLegacyStatsReport_h
 #define RTCLegacyStatsReport_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/HashMap.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/StringHash.h"
@@ -33,9 +33,7 @@
 
 namespace blink {
 
-class RTCLegacyStatsReport final
-    : public GarbageCollectedFinalized<RTCLegacyStatsReport>,
-      public ScriptWrappable {
+class RTCLegacyStatsReport final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -50,8 +48,6 @@ class RTCLegacyStatsReport final
   Vector<String> names() const;
 
   void AddStatistic(const String& name, const String& value);
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   RTCLegacyStatsReport(const String& id, const String& type, double timestamp);

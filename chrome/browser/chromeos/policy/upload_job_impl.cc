@@ -378,8 +378,9 @@ void UploadJobImpl::HandleError(ErrorCode error_code) {
                                             access_token_);
       access_token_.clear();
       task_runner_->PostDelayedTask(
-          FROM_HERE, base::Bind(&UploadJobImpl::RequestAccessToken,
-                                weak_factory_.GetWeakPtr()),
+          FROM_HERE,
+          base::BindOnce(&UploadJobImpl::RequestAccessToken,
+                         weak_factory_.GetWeakPtr()),
           base::TimeDelta::FromMilliseconds(g_retry_delay_ms));
     } else {
       // Retry without a new token.
@@ -387,7 +388,8 @@ void UploadJobImpl::HandleError(ErrorCode error_code) {
       SYSLOG(WARNING) << "Retrying upload with the same token.";
       task_runner_->PostDelayedTask(
           FROM_HERE,
-          base::Bind(&UploadJobImpl::StartUpload, weak_factory_.GetWeakPtr()),
+          base::BindOnce(&UploadJobImpl::StartUpload,
+                         weak_factory_.GetWeakPtr()),
           base::TimeDelta::FromMilliseconds(g_retry_delay_ms));
     }
   }
@@ -409,8 +411,9 @@ void UploadJobImpl::OnURLFetchComplete(const net::URLFetcher* source) {
       access_token_.clear();
       post_data_.reset();
       state_ = SUCCESS;
-      UMA_HISTOGRAM_ENUMERATION(kUploadJobSuccessHistogram, retry_,
-                                UploadJobSuccess::REQUEST_MAX);
+      UMA_HISTOGRAM_EXACT_LINEAR(
+          kUploadJobSuccessHistogram, retry_,
+          static_cast<int>(UploadJobSuccess::REQUEST_MAX));
       delegate_->OnSuccess();
     } else if (response_code == net::HTTP_UNAUTHORIZED) {
       SYSLOG(ERROR) << "Unauthorized request.";

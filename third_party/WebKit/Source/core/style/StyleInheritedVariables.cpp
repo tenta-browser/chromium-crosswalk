@@ -22,7 +22,7 @@ bool StyleInheritedVariables::operator==(
     return false;
 
   for (const auto& iter : data_) {
-    RefPtr<CSSVariableData> other_data = other.data_.at(iter.key);
+    scoped_refptr<CSSVariableData> other_data = other.data_.at(iter.key);
     if (!DataEquivalent(iter.value, other_data))
       return false;
   }
@@ -43,12 +43,12 @@ StyleInheritedVariables::StyleInheritedVariables(
 
 CSSVariableData* StyleInheritedVariables::GetVariable(
     const AtomicString& name) const {
-  auto result = data_.Find(name);
+  auto result = data_.find(name);
   if (result == data_.end() && root_)
     return root_->GetVariable(name);
   if (result == data_.end())
     return nullptr;
-  return result->value.Get();
+  return result->value.get();
 }
 
 void StyleInheritedVariables::SetRegisteredVariable(
@@ -59,7 +59,7 @@ void StyleInheritedVariables::SetRegisteredVariable(
 
 const CSSValue* StyleInheritedVariables::RegisteredVariable(
     const AtomicString& name) const {
-  auto result = registered_data_.Find(name);
+  auto result = registered_data_.find(name);
   if (result != registered_data_.end())
     return result->value.Get();
   if (root_)
@@ -69,21 +69,22 @@ const CSSValue* StyleInheritedVariables::RegisteredVariable(
 
 void StyleInheritedVariables::RemoveVariable(const AtomicString& name) {
   data_.Set(name, nullptr);
-  auto iterator = registered_data_.Find(name);
+  auto iterator = registered_data_.find(name);
   if (iterator != registered_data_.end())
     iterator->value = nullptr;
 }
 
-std::unique_ptr<HashMap<AtomicString, RefPtr<CSSVariableData>>>
+std::unique_ptr<HashMap<AtomicString, scoped_refptr<CSSVariableData>>>
 StyleInheritedVariables::GetVariables() const {
-  std::unique_ptr<HashMap<AtomicString, RefPtr<CSSVariableData>>> result;
+  std::unique_ptr<HashMap<AtomicString, scoped_refptr<CSSVariableData>>> result;
   if (root_) {
-    result.reset(
-        new HashMap<AtomicString, RefPtr<CSSVariableData>>(root_->data_));
+    result.reset(new HashMap<AtomicString, scoped_refptr<CSSVariableData>>(
+        root_->data_));
     for (auto it = data_.begin(); it != data_.end(); ++it)
       result->Set(it->key, it->value);
   } else {
-    result.reset(new HashMap<AtomicString, RefPtr<CSSVariableData>>(data_));
+    result.reset(
+        new HashMap<AtomicString, scoped_refptr<CSSVariableData>>(data_));
   }
   return result;
 }

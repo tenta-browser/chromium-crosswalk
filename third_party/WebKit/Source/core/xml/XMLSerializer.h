@@ -21,23 +21,20 @@
 #ifndef XMLSerializer_h
 #define XMLSerializer_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
 class Node;
 
-class XMLSerializer final : public GarbageCollected<XMLSerializer>,
-                            public ScriptWrappable {
+class XMLSerializer final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   static XMLSerializer* Create() { return new XMLSerializer; }
 
   String serializeToString(Node*);
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   XMLSerializer() {}

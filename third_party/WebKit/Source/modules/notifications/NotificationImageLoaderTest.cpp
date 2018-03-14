@@ -8,15 +8,14 @@
 #include "core/testing/DummyPageHolder.h"
 #include "platform/loader/fetch/MemoryCache.h"
 #include "platform/testing/HistogramTester.h"
-#include "platform/testing/TestingPlatformSupport.h"
+#include "platform/testing/TestingPlatformSupportWithMockScheduler.h"
 #include "platform/testing/URLTestHelpers.h"
 #include "platform/testing/UnitTestHelpers.h"
+#include "platform/weborigin/KURL.h"
 #include "platform/wtf/Functional.h"
-#include "public/platform/Platform.h"
 #include "public/platform/WebURL.h"
 #include "public/platform/WebURLLoaderMockFactory.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/Source/platform/weborigin/KURL.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
 namespace blink {
@@ -24,9 +23,9 @@ namespace {
 
 enum class LoadState { kNotLoaded, kLoadFailed, kLoadSuccessful };
 
-constexpr char kBaseUrl[] = "http://test.com/";
-constexpr char kBaseDir[] = "notifications/";
-constexpr char kIcon500x500[] = "500x500.png";
+constexpr char kImageLoaderBaseUrl[] = "http://test.com/";
+constexpr char kImageLoaderBaseDir[] = "notifications/";
+constexpr char kImageLoaderIcon500x500[] = "500x500.png";
 
 // This mirrors the definition in NotificationImageLoader.cpp.
 constexpr unsigned long kImageFetchTimeoutInMs = 90000;
@@ -45,8 +44,7 @@ class NotificationImageLoaderTest : public ::testing::Test {
 
   ~NotificationImageLoaderTest() override {
     loader_->Stop();
-    Platform::Current()
-        ->GetURLLoaderMockFactory()
+    platform_->GetURLLoaderMockFactory()
         ->UnregisterAllURLsAndClearMemoryCache();
   }
 
@@ -54,7 +52,8 @@ class NotificationImageLoaderTest : public ::testing::Test {
   // directory.
   WebURL RegisterMockedURL(const String& file_name) {
     WebURL registered_url = URLTestHelpers::RegisterMockedURLLoadFromBase(
-        kBaseUrl, testing::WebTestDataPath(kBaseDir), file_name, "image/png");
+        kImageLoaderBaseUrl, testing::CoreTestDataPath(kImageLoaderBaseDir),
+        file_name, "image/png");
     return registered_url;
   }
 
@@ -78,6 +77,7 @@ class NotificationImageLoaderTest : public ::testing::Test {
 
  protected:
   HistogramTester histogram_tester_;
+  ScopedTestingPlatformSupport<TestingPlatformSupport> platform_;
 
  private:
   std::unique_ptr<DummyPageHolder> page_;
@@ -86,12 +86,12 @@ class NotificationImageLoaderTest : public ::testing::Test {
 };
 
 TEST_F(NotificationImageLoaderTest, SuccessTest) {
-  KURL url = RegisterMockedURL(kIcon500x500);
+  KURL url = RegisterMockedURL(kImageLoaderIcon500x500);
   LoadImage(url);
   histogram_tester_.ExpectTotalCount("Notifications.LoadFinishTime.Icon", 0);
   histogram_tester_.ExpectTotalCount("Notifications.LoadFileSize.Icon", 0);
   histogram_tester_.ExpectTotalCount("Notifications.LoadFailTime.Icon", 0);
-  Platform::Current()->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
+  platform_->GetURLLoaderMockFactory()->ServeAsynchronousRequests();
   EXPECT_EQ(LoadState::kLoadSuccessful, Loaded());
   histogram_tester_.ExpectTotalCount("Notifications.LoadFinishTime.Icon", 1);
   histogram_tester_.ExpectUniqueSample("Notifications.LoadFileSize.Icon", 7439,
@@ -105,7 +105,7 @@ TEST_F(NotificationImageLoaderTest, TimeoutTest) {
 
   // To test for a timeout, this needs to override the clock in the platform.
   // Just creating the mock platform will do everything to set it up.
-  KURL url = RegisterMockedURL(kIcon500x500);
+  KURL url = RegisterMockedURL(kImageLoaderIcon500x500);
   LoadImage(url);
 
   // Run the platform for kImageFetchTimeoutInMs-1 seconds. This should not

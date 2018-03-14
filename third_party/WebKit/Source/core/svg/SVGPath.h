@@ -43,7 +43,7 @@ class SVGPath final : public SVGPropertyBase {
   typedef void TearOffType;
 
   static SVGPath* Create() { return new SVGPath(); }
-  static SVGPath* Create(CSSPathValue* path_value) {
+  static SVGPath* Create(cssvalue::CSSPathValue* path_value) {
     return new SVGPath(path_value);
   }
 
@@ -53,7 +53,7 @@ class SVGPath final : public SVGPropertyBase {
     return path_value_->ByteStream();
   }
   StylePath* GetStylePath() const { return path_value_->GetStylePath(); }
-  CSSPathValue* PathValue() const { return path_value_.Get(); }
+  cssvalue::CSSPathValue* PathValue() const { return path_value_.Get(); }
 
   // SVGPropertyBase:
   SVGPath* Clone() const;
@@ -74,13 +74,13 @@ class SVGPath final : public SVGPropertyBase {
   static AnimatedPropertyType ClassType() { return kAnimatedPath; }
   AnimatedPropertyType GetType() const override { return ClassType(); }
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   SVGPath();
-  explicit SVGPath(CSSPathValue*);
+  explicit SVGPath(cssvalue::CSSPathValue*);
 
-  Member<CSSPathValue> path_value_;
+  Member<cssvalue::CSSPathValue> path_value_;
 };
 
 DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGPath);

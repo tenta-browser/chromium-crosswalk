@@ -77,11 +77,19 @@ void BookmarkContextMenuController::BuildMenu() {
     AddItem(IDC_BOOKMARK_BAR_OPEN_ALL_INCOGNITO,
             IDS_BOOKMARK_BAR_OPEN_INCOGNITO);
   } else {
-    AddItem(IDC_BOOKMARK_BAR_OPEN_ALL, IDS_BOOKMARK_BAR_OPEN_ALL);
+    int count = chrome::OpenCount(parent_window_, selection_);
+    AddItem(IDC_BOOKMARK_BAR_OPEN_ALL,
+            l10n_util::GetPluralStringFUTF16(IDS_BOOKMARK_BAR_OPEN_ALL_COUNT,
+                                             count));
     AddItem(IDC_BOOKMARK_BAR_OPEN_ALL_NEW_WINDOW,
-            IDS_BOOKMARK_BAR_OPEN_ALL_NEW_WINDOW);
+            l10n_util::GetPluralStringFUTF16(
+                IDS_BOOKMARK_BAR_OPEN_ALL_COUNT_NEW_WINDOW, count));
+
+    int incognito_count =
+        chrome::OpenCount(parent_window_, selection_, profile_);
     AddItem(IDC_BOOKMARK_BAR_OPEN_ALL_INCOGNITO,
-            IDS_BOOKMARK_BAR_OPEN_ALL_INCOGNITO);
+            l10n_util::GetPluralStringFUTF16(
+                IDS_BOOKMARK_BAR_OPEN_ALL_COUNT_INCOGNITO, incognito_count));
   }
 
   AddSeparator();
@@ -118,6 +126,10 @@ void BookmarkContextMenuController::BuildMenu() {
   AddCheckboxItem(IDC_BOOKMARK_BAR_SHOW_MANAGED_BOOKMARKS,
                   IDS_BOOKMARK_BAR_SHOW_MANAGED_BOOKMARKS_DEFAULT_NAME);
   AddCheckboxItem(IDC_BOOKMARK_BAR_ALWAYS_SHOW, IDS_SHOW_BOOKMARK_BAR);
+}
+
+void BookmarkContextMenuController::AddItem(int id, const base::string16 str) {
+  menu_model_->AddItem(id, str);
 }
 
 void BookmarkContextMenuController::AddItem(int id, int localization_id) {
@@ -261,7 +273,6 @@ void BookmarkContextMenuController::ExecuteCommand(int id, int event_flags) {
     }
 
     case IDC_BOOKMARK_MANAGER: {
-      base::RecordAction(UserMetricsAction("ShowBookmarkManager"));
       if (selection_.size() != 1)
         chrome::ShowBookmarkManager(browser_);
       else if (selection_[0]->is_folder())
@@ -391,7 +402,7 @@ bool BookmarkContextMenuController::IsCommandIdEnabled(int command_id) const {
     case IDC_BOOKMARK_BAR_NEW_FOLDER:
     case IDC_BOOKMARK_BAR_ADD_NEW_BOOKMARK:
       return can_edit && model_->client()->CanBeEditedByUser(parent_) &&
-             bookmarks::GetParentForNewNodes(parent_, selection_, NULL) != NULL;
+             bookmarks::GetParentForNewNodes(parent_, selection_, nullptr);
 
     case IDC_BOOKMARK_BAR_ALWAYS_SHOW:
       return !prefs->IsManagedPreference(bookmarks::prefs::kShowBookmarkBar);

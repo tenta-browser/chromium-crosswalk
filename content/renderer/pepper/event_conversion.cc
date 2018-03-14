@@ -19,9 +19,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "content/common/input/web_touch_event_traits.h"
+#include "device/gamepad/public/cpp/gamepads.h"
 #include "ppapi/c/pp_input_event.h"
 #include "ppapi/shared_impl/ppb_input_event_shared.h"
-#include "third_party/WebKit/public/platform/WebGamepads.h"
 #include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/WebKit/public/platform/WebKeyboardEvent.h"
 #include "third_party/WebKit/public/platform/WebMouseWheelEvent.h"
@@ -29,6 +29,7 @@
 #include "ui/events/keycodes/dom/keycode_converter.h"
 
 using ppapi::InputEventData;
+using ppapi::TouchPointWithTilt;
 using blink::WebInputEvent;
 using blink::WebKeyboardEvent;
 using blink::WebMouseEvent;
@@ -101,7 +102,10 @@ PP_InputEvent_Type ConvertEventTypes(const WebInputEvent& event) {
     case WebInputEvent::kMouseWheel:
       return PP_INPUTEVENT_TYPE_WHEEL;
     case WebInputEvent::kRawKeyDown:
-      return PP_INPUTEVENT_TYPE_RAWKEYDOWN;
+      // In the past blink has always returned kKeyDown passed into plugins
+      // although PPAPI had a RAWKEYDOWN definition. However implementations are
+      // broken now that blink passes kRawKeyDown so convert it to a keydown.
+      return PP_INPUTEVENT_TYPE_KEYDOWN;
     case WebInputEvent::kKeyDown:
       return PP_INPUTEVENT_TYPE_KEYDOWN;
     case WebInputEvent::kKeyUp:
@@ -244,7 +248,7 @@ enum IncludedTouchPointTypes {
 void SetPPTouchPoints(const WebTouchPoint* touches,
                       uint32_t touches_length,
                       IncludedTouchPointTypes included_types,
-                      std::vector<PP_TouchPoint>* result) {
+                      std::vector<TouchPointWithTilt>* result) {
   for (uint32_t i = 0; i < touches_length; i++) {
     const WebTouchPoint& touch_point = touches[i];
     if (included_types == ACTIVE &&
@@ -259,13 +263,17 @@ void SetPPTouchPoints(const WebTouchPoint* touches,
     }
     PP_TouchPoint pp_pt;
     pp_pt.id = touch_point.id;
-    pp_pt.position.x = touch_point.position.x;
-    pp_pt.position.y = touch_point.position.y;
+    pp_pt.position.x = touch_point.PositionInWidget().x;
+    pp_pt.position.y = touch_point.PositionInWidget().y;
     pp_pt.radius.x = touch_point.radius_x;
     pp_pt.radius.y = touch_point.radius_y;
     pp_pt.rotation_angle = touch_point.rotation_angle;
     pp_pt.pressure = touch_point.force;
-    result->push_back(pp_pt);
+    PP_FloatPoint pp_ft;
+    pp_ft.x = touch_point.tilt_x;
+    pp_ft.y = touch_point.tilt_y;
+    TouchPointWithTilt touch_with_tilt{pp_pt, pp_ft};
+    result->push_back(touch_with_tilt);
   }
 }
 
@@ -301,11 +309,9 @@ WebTouchPoint CreateWebTouchPoint(const PP_TouchPoint& pp_pt,
   WebTouchPoint pt;
   pt.pointer_type = blink::WebPointerProperties::PointerType::kTouch;
   pt.id = pp_pt.id;
-  pt.position.x = pp_pt.position.x;
-  pt.position.y = pp_pt.position.y;
+  pt.SetPositionInWidget(pp_pt.position.x, pp_pt.position.y);
   // TODO(crbug.com/93902): Add screen coordinate calculation.
-  pt.screen_position.x = 0;
-  pt.screen_position.y = 0;
+  pt.SetPositionInScreen(0, 0);
   pt.force = pp_pt.pressure;
   pt.radius_x = pp_pt.radius.x;
   pt.radius_y = pp_pt.radius.y;
@@ -326,10 +332,11 @@ bool HasTouchPointWithId(const WebTouchPoint* web_touches,
   return false;
 }
 
-void SetWebTouchPointsIfNotYetSet(const std::vector<PP_TouchPoint>& pp_touches,
-                                  WebTouchPoint::State state,
-                                  WebTouchPoint* web_touches,
-                                  uint32_t* web_touches_length) {
+void SetWebTouchPointsIfNotYetSet(
+    const std::vector<TouchPointWithTilt>& pp_touches,
+    WebTouchPoint::State state,
+    WebTouchPoint* web_touches,
+    uint32_t* web_touches_length) {
   const uint32_t initial_web_touches_length = *web_touches_length;
   const uint32_t touches_length =
       std::min(static_cast<uint32_t>(pp_touches.size()),
@@ -339,7 +346,7 @@ void SetWebTouchPointsIfNotYetSet(const std::vector<PP_TouchPoint>& pp_touches,
     if (touch_index >= static_cast<uint32_t>(WebTouchEvent::kTouchesLengthCap))
       return;
 
-    const PP_TouchPoint& pp_pt = pp_touches[i];
+    const PP_TouchPoint& pp_pt = pp_touches[i].touch;
     if (HasTouchPointWithId(web_touches, initial_web_touches_length, pp_pt.id))
       continue;
 
@@ -605,7 +612,7 @@ WebInputEvent* CreateWebInputEvent(const InputEventData& event) {
   std::unique_ptr<WebInputEvent> web_input_event;
   switch (event.event_type) {
     case PP_INPUTEVENT_TYPE_UNDEFINED:
-      return NULL;
+      return nullptr;
     case PP_INPUTEVENT_TYPE_MOUSEDOWN:
     case PP_INPUTEVENT_TYPE_MOUSEUP:
     case PP_INPUTEVENT_TYPE_MOUSEMOVE:

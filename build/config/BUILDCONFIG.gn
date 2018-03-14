@@ -135,8 +135,13 @@ declare_args() {
 
   # Set to true when compiling with the Clang compiler. Typically this is used
   # to configure warnings.
-  is_clang = current_os == "mac" || current_os == "ios" ||
-             current_os == "linux" || current_os == "chromeos"
+  is_clang =
+      current_os == "mac" || current_os == "ios" || current_os == "chromeos" ||
+      current_os == "fuchsia" || current_os == "android" ||
+      current_os == "win" ||
+      (current_os == "linux" && current_cpu != "s390x" &&
+       current_cpu != "s390" && current_cpu != "ppc64" &&
+       current_cpu != "ppc" && current_cpu != "mips" && current_cpu != "mips64")
 
   # Allows the path to a custom target toolchain to be injected as a single
   # argument, and set as the default toolchain.
@@ -161,7 +166,8 @@ declare_args() {
   #
   # For more information see
   # https://chromium.googlesource.com/chromium/src/+/master/docs/component_build.md
-  is_component_build = is_debug && current_os != "ios"
+  is_component_build =
+      is_debug && current_os != "ios" && current_os != "fuchsia"
 }
 
 assert(!(is_debug && is_official_build), "Can't do official debug builds")
@@ -203,10 +209,12 @@ if (host_toolchain == "") {
     # On Windows always use the target CPU for host builds. On the
     # configurations we support this will always work and it saves build steps.
     if (is_clang) {
-      host_toolchain = "//build/toolchain/win:clang_$target_cpu"
+      host_toolchain = "//build/toolchain/win:win_clang_$target_cpu"
     } else {
       host_toolchain = "//build/toolchain/win:$target_cpu"
     }
+  } else if (host_os == "aix") {
+    host_toolchain = "//build/toolchain/aix:$host_cpu"
   } else {
     assert(false, "Unsupported host_os: $host_os")
   }
@@ -217,11 +225,7 @@ _default_toolchain = ""
 if (target_os == "android") {
   assert(host_os == "linux" || host_os == "mac",
          "Android builds are only supported on Linux and Mac hosts.")
-  if (is_clang) {
-    _default_toolchain = "//build/toolchain/android:android_clang_$target_cpu"
-  } else {
-    _default_toolchain = "//build/toolchain/android:android_$target_cpu"
-  }
+  _default_toolchain = "//build/toolchain/android:android_clang_$target_cpu"
 } else if (target_os == "chromeos" || target_os == "linux") {
   # See comments in build/toolchain/cros/BUILD.gn about board compiles.
   if (is_clang) {
@@ -229,6 +233,8 @@ if (target_os == "android") {
   } else {
     _default_toolchain = "//build/toolchain/linux:$target_cpu"
   }
+} else if (target_os == "fuchsia") {
+  _default_toolchain = "//build/toolchain/fuchsia:$target_cpu"
 } else if (target_os == "ios") {
   _default_toolchain = "//build/toolchain/mac:ios_clang_$target_cpu"
 } else if (target_os == "mac") {
@@ -236,12 +242,16 @@ if (target_os == "android") {
   _default_toolchain = host_toolchain
 } else if (target_os == "win") {
   # On Windows we use the same toolchain for host and target by default.
-  assert(target_os == host_os, "Win cross-compiles only work on win hosts.")
+  # Beware, win cross builds mostly don't work yet, see docs/win_cross.md
+  # TODO(thakis): Allow on Mac as well soon.
+  assert(host_os != "mac", "https://crbug.com/774209")
   if (is_clang) {
-    _default_toolchain = "//build/toolchain/win:clang_$target_cpu"
+    _default_toolchain = "//build/toolchain/win:win_clang_$target_cpu"
   } else {
     _default_toolchain = "//build/toolchain/win:$target_cpu"
   }
+} else if (target_os == "aix") {
+  _default_toolchain = "//build/toolchain/aix:$target_cpu"
 } else if (target_os == "winrt_81" || target_os == "winrt_81_phone" ||
            target_os == "winrt_10") {
   _default_toolchain = "//build/toolchain/win:winrt_$target_cpu"
@@ -279,6 +289,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
     current_os == "winrt_81_phone" || current_os == "winrt_10") {
   is_android = false
   is_chromeos = false
+  is_fuchsia = false
   is_ios = false
   is_linux = false
   is_mac = false
@@ -288,6 +299,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
 } else if (current_os == "mac") {
   is_android = false
   is_chromeos = false
+  is_fuchsia = false
   is_ios = false
   is_linux = false
   is_mac = true
@@ -297,6 +309,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
 } else if (current_os == "android") {
   is_android = true
   is_chromeos = false
+  is_fuchsia = false
   is_ios = false
   is_linux = false
   is_mac = false
@@ -306,6 +319,7 @@ if (current_os == "win" || current_os == "winrt_81" ||
 } else if (current_os == "chromeos") {
   is_android = false
   is_chromeos = true
+  is_fuchsia = false
   is_ios = false
   is_linux = true
   is_mac = false
@@ -318,15 +332,27 @@ if (current_os == "win" || current_os == "winrt_81" ||
   # Posix variant.
   is_android = false
   is_chromeos = false
+  is_fuchsia = false
   is_ios = false
   is_linux = false
   is_mac = false
   is_nacl = true
   is_posix = true
   is_win = false
+} else if (current_os == "fuchsia") {
+  is_android = false
+  is_chromeos = false
+  is_fuchsia = true
+  is_ios = false
+  is_linux = false
+  is_mac = false
+  is_nacl = false
+  is_posix = true
+  is_win = false
 } else if (current_os == "ios") {
   is_android = false
   is_chromeos = false
+  is_fuchsia = false
   is_ios = true
   is_linux = false
   is_mac = false
@@ -336,8 +362,18 @@ if (current_os == "win" || current_os == "winrt_81" ||
 } else if (current_os == "linux") {
   is_android = false
   is_chromeos = false
+  is_fuchsia = false
   is_ios = false
   is_linux = true
+  is_mac = false
+  is_nacl = false
+  is_posix = true
+  is_win = false
+} else if (current_os == "aix") {
+  is_android = false
+  is_chromeos = false
+  is_ios = false
+  is_linux = false
   is_mac = false
   is_nacl = false
   is_posix = true
@@ -370,6 +406,7 @@ if (!is_posix) {
     "*\bposix/*",
   ]
 }
+
 if (!is_win) {
   sources_assignment_filter += [
     "*_win.cc",
@@ -465,13 +502,20 @@ set_sources_assignment_filter(sources_assignment_filter)
 # The values configured here will be automatically set on the scope of the
 # corresponding target. Target definitions can add or remove to the settings
 # here as needed.
+#
+# WHAT GOES HERE?
+#
+# Other than the main compiler and linker configs, the only reason for a config
+# to be in this list is if some targets need to explicitly override that config
+# by removing it. This is how targets opt-out of flags. If you don't have that
+# requirement and just need to add a config everywhere, reference it as a
+# sub-config of an existing one, most commonly the main "compiler" one.
 
 # Holds all configs used for running the compiler.
 default_compiler_configs = [
   "//build/config:feature_flags",
   "//build/config/compiler:afdo",
   "//build/config/compiler:compiler",
-  "//build/config/compiler:pthread",
   "//build/config/compiler:clang_stackrealign",
   "//build/config/compiler:compiler_arm_fpu",
   "//build/config/compiler:compiler_arm_thumb",
@@ -480,8 +524,10 @@ default_compiler_configs = [
   "//build/config/compiler:default_optimization",
   "//build/config/compiler:default_stack_frames",
   "//build/config/compiler:default_symbols",
+  "//build/config/compiler:no_exceptions",
   "//build/config/compiler:no_rtti",
   "//build/config/compiler:runtime_library",
+  "//build/config/coverage:default_coverage",
   "//build/config/sanitizers:default_sanitizer_flags",
 ]
 if (is_win) {
@@ -498,16 +544,22 @@ if (current_os == "winrt_81" || current_os == "winrt_81_phone" ||
     current_os == "winrt_10") {
   default_compiler_configs += [ "//build/config/win:target_winrt" ]
 }
+
 if (is_posix) {
-  default_compiler_configs += [
-    "//build/config/gcc:no_exceptions",
-    "//build/config/gcc:symbol_visibility_hidden",
-  ]
+  if (current_os != "aix") {
+    default_compiler_configs +=
+        [ "//build/config/gcc:symbol_visibility_hidden" ]
+  }
 }
 
 if (is_android) {
   default_compiler_configs +=
       [ "//build/config/android:default_cygprofile_instrumentation" ]
+}
+
+if (is_win) {
+  default_compiler_configs +=
+      [ "//build/config/win:default_cygprofile_instrumentation" ]
 }
 
 if (is_clang && !is_nacl) {
@@ -544,7 +596,7 @@ if (is_win) {
     # that shouldn't use the windows subsystem.
     "//build/config/win:console",
   ]
-} else if (is_mac || is_ios) {
+} else if (is_mac) {
   _linker_configs = [ "//build/config/mac:strip_all" ]
 } else {
   _linker_configs = []
@@ -643,7 +695,7 @@ template("component") {
     if (!defined(deps)) {
       deps = []
     }
-    deps += [ "//build/config/sanitizers:deps" ]
+    deps += [ "//build/config:exe_and_shlib_deps" ]
   }
 }
 

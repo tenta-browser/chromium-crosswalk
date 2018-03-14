@@ -25,25 +25,23 @@
 #ifndef NodeIterator_h
 #define NodeIterator_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/NodeFilter.h"
 #include "core/dom/NodeIteratorBase.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
 class ExceptionState;
 
-class NodeIterator final : public GarbageCollected<NodeIterator>,
-                           public ScriptWrappable,
-                           public NodeIteratorBase {
+class NodeIterator final : public ScriptWrappable, public NodeIteratorBase {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(NodeIterator);
 
  public:
   static NodeIterator* Create(Node* root_node,
                               unsigned what_to_show,
-                              NodeFilter* filter) {
+                              V8NodeFilterCondition* filter) {
     return new NodeIterator(root_node, what_to_show, filter);
   }
 
@@ -59,12 +57,12 @@ class NodeIterator final : public GarbageCollected<NodeIterator>,
   // This function is called before any node is removed from the document tree.
   void NodeWillBeRemoved(Node&);
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
 
  private:
-  NodeIterator(Node*, unsigned what_to_show, NodeFilter*);
+  NodeIterator(Node*, unsigned what_to_show, V8NodeFilterCondition*);
 
   class NodePointer {
     DISALLOW_NEW();
@@ -80,7 +78,7 @@ class NodeIterator final : public GarbageCollected<NodeIterator>,
     Member<Node> node;
     bool is_pointer_before_node;
 
-    DEFINE_INLINE_TRACE() { visitor->Trace(node); }
+    void Trace(blink::Visitor* visitor) { visitor->Trace(node); }
   };
 
   void UpdateForNodeRemoval(Node& node_to_be_removed, NodePointer&) const;

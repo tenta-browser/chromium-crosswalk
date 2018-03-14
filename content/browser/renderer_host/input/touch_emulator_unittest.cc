@@ -9,12 +9,13 @@
 #include <memory>
 #include <vector>
 
-#include "base/message_loop/message_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
 #include "content/browser/renderer_host/input/touch_emulator_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/WebKeyboardEvent.h"
 #include "third_party/WebKit/public/platform/WebMouseWheelEvent.h"
+#include "ui/base/ui_base_types.h"
 #include "ui/events/blink/web_input_event_traits.h"
 
 using blink::WebGestureEvent;
@@ -31,7 +32,9 @@ class TouchEmulatorTest : public testing::Test,
                           public TouchEmulatorClient {
  public:
   TouchEmulatorTest()
-      : shift_pressed_(false),
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI),
+        shift_pressed_(false),
         mouse_pressed_(false),
         ack_touches_synchronously_(true),
         last_mouse_x_(-1),
@@ -47,7 +50,8 @@ class TouchEmulatorTest : public testing::Test,
   void SetUp() override {
     emulator_.reset(new TouchEmulator(this, 1.0f));
     emulator_->SetDoubleTapSupportForPageEnabled(false);
-    emulator_->Enable(ui::GestureProviderConfigType::GENERIC_MOBILE);
+    emulator_->Enable(TouchEmulator::Mode::kEmulatingTouchFromMouse,
+                      ui::GestureProviderConfigType::GENERIC_MOBILE);
   }
 
   void TearDown() override {
@@ -63,8 +67,8 @@ class TouchEmulatorTest : public testing::Test,
   void ForwardEmulatedTouchEvent(const blink::WebTouchEvent& event) override {
     forwarded_events_.push_back(event.GetType());
     EXPECT_EQ(1U, event.touches_length);
-    EXPECT_EQ(last_mouse_x_, event.touches[0].position.x);
-    EXPECT_EQ(last_mouse_y_, event.touches[0].position.y);
+    EXPECT_EQ(last_mouse_x_, event.touches[0].PositionInWidget().x);
+    EXPECT_EQ(last_mouse_y_, event.touches[0].PositionInWidget().y);
     const int all_buttons =
         WebInputEvent::kLeftButtonDown | WebInputEvent::kMiddleButtonDown |
         WebInputEvent::kRightButtonDown | WebInputEvent::kBackButtonDown |
@@ -85,7 +89,8 @@ class TouchEmulatorTest : public testing::Test,
     cursor_ = cursor;
   }
 
-  void ShowContextMenuAtPoint(const gfx::Point& point) override {}
+  void ShowContextMenuAtPoint(const gfx::Point& point,
+                              const ui::MenuSourceType source_type) override {}
 
  protected:
   TouchEmulator* emulator() const {
@@ -199,10 +204,8 @@ class TouchEmulatorTest : public testing::Test,
     event.touches_length = 1;
     event.touches[0].id = 0;
     event.touches[0].state = state;
-    event.touches[0].position.x = x;
-    event.touches[0].position.y = y;
-    event.touches[0].screen_position.x = x;
-    event.touches[0].screen_position.y = y;
+    event.touches[0].SetPositionInWidget(x, y);
+    event.touches[0].SetPositionInScreen(x, y);
     return event;
   }
 
@@ -227,6 +230,16 @@ class TouchEmulatorTest : public testing::Test,
     return true;
   }
 
+  void InjectTouchEvent(WebInputEvent::Type type,
+                        WebTouchPoint::State state,
+                        int x,
+                        int y) {
+    last_mouse_x_ = x;
+    last_mouse_y_ = y;
+    WebTouchEvent event = MakeTouchEvent(type, state, x, y);
+    emulator()->InjectTouchEvent(event, base::OnceClosure());
+  }
+
   void AckOldestTouchEvent() {
     DCHECK(touch_events_to_ack_.size());
     WebTouchEvent event = touch_events_to_ack_[0];
@@ -245,6 +258,7 @@ class TouchEmulatorTest : public testing::Test,
   }
 
  private:
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<TouchEmulator> emulator_;
   std::vector<WebInputEvent::Type> forwarded_events_;
   double last_event_time_seconds_;
@@ -255,7 +269,6 @@ class TouchEmulatorTest : public testing::Test,
   int last_mouse_x_;
   int last_mouse_y_;
   std::vector<WebTouchEvent> touch_events_to_ack_;
-  base::MessageLoopForUI message_loop_;
   WebCursor cursor_;
 };
 
@@ -383,7 +396,8 @@ TEST_F(TouchEmulatorTest, DisableAndReenable) {
   MouseMove(300, 300);
   EXPECT_EQ("", ExpectedEvents());
 
-  emulator()->Enable(ui::GestureProviderConfigType::GENERIC_MOBILE);
+  emulator()->Enable(TouchEmulator::Mode::kEmulatingTouchFromMouse,
+                     ui::GestureProviderConfigType::GENERIC_MOBILE);
   MouseDown(300, 300);
   EXPECT_EQ("TouchStart GestureTapDown", ExpectedEvents());
   MouseDrag(300, 400);
@@ -415,7 +429,8 @@ TEST_F(TouchEmulatorTest, DisableAndReenableDifferentConfig) {
   MouseMove(300, 300);
   EXPECT_EQ("", ExpectedEvents());
 
-  emulator()->Enable(ui::GestureProviderConfigType::GENERIC_DESKTOP);
+  emulator()->Enable(TouchEmulator::Mode::kEmulatingTouchFromMouse,
+                     ui::GestureProviderConfigType::GENERIC_DESKTOP);
   MouseDown(300, 300);
   EXPECT_EQ("TouchStart GestureTapDown", ExpectedEvents());
   MouseDrag(300, 400);
@@ -475,7 +490,8 @@ TEST_F(TouchEmulatorTest, MouseWheel) {
   emulator()->Disable();
   EXPECT_EQ("TouchCancel GestureTapCancel", ExpectedEvents());
   EXPECT_TRUE(SendMouseWheelEvent());
-  emulator()->Enable(ui::GestureProviderConfigType::GENERIC_MOBILE);
+  emulator()->Enable(TouchEmulator::Mode::kEmulatingTouchFromMouse,
+                     ui::GestureProviderConfigType::GENERIC_MOBILE);
   EXPECT_TRUE(SendMouseWheelEvent());
 }
 
@@ -501,7 +517,8 @@ TEST_F(TouchEmulatorTest, MultipleTouchStreams) {
   EXPECT_EQ("", ExpectedEvents());
   // Re-enabling in the middle of a touch sequence should not affect this.
   emulator()->Disable();
-  emulator()->Enable(ui::GestureProviderConfigType::GENERIC_MOBILE);
+  emulator()->Enable(TouchEmulator::Mode::kEmulatingTouchFromMouse,
+                     ui::GestureProviderConfigType::GENERIC_MOBILE);
   MouseDrag(300, 300);
   EXPECT_EQ("", ExpectedEvents());
   MouseUp(300, 300);
@@ -516,7 +533,8 @@ TEST_F(TouchEmulatorTest, MultipleTouchStreams) {
   EXPECT_TRUE(TouchEnd(20, 20, false));
   EXPECT_TRUE(TouchStart(30, 30, false));
   AckOldestTouchEvent(); // TouchStart.
-  emulator()->Enable(ui::GestureProviderConfigType::GENERIC_MOBILE);
+  emulator()->Enable(TouchEmulator::Mode::kEmulatingTouchFromMouse,
+                     ui::GestureProviderConfigType::GENERIC_MOBILE);
   AckOldestTouchEvent(); // TouchMove.
   AckOldestTouchEvent(); // TouchEnd.
   MouseDown(300, 200);
@@ -583,15 +601,32 @@ TEST_F(TouchEmulatorTest, CursorScaleFactor) {
   EXPECT_EQ(1.0f, GetCursorScaleFactor());
   emulator()->SetDeviceScaleFactor(3.0f);
   EXPECT_EQ(1.0f, GetCursorScaleFactor());
-  emulator()->Enable(ui::GestureProviderConfigType::GENERIC_MOBILE);
+  emulator()->Enable(TouchEmulator::Mode::kEmulatingTouchFromMouse,
+                     ui::GestureProviderConfigType::GENERIC_MOBILE);
   EXPECT_EQ(2.0f, GetCursorScaleFactor());
   emulator()->SetDeviceScaleFactor(1.0f);
   EXPECT_EQ(1.0f, GetCursorScaleFactor());
 
   TouchEmulator another(this, 4.0f);
   EXPECT_EQ(1.0f, GetCursorScaleFactor());
-  another.Enable(ui::GestureProviderConfigType::GENERIC_MOBILE);
+  another.Enable(TouchEmulator::Mode::kEmulatingTouchFromMouse,
+                 ui::GestureProviderConfigType::GENERIC_MOBILE);
   EXPECT_EQ(2.0f, GetCursorScaleFactor());
+}
+
+TEST_F(TouchEmulatorTest, InjectingTouchEventsMode) {
+  emulator()->Enable(TouchEmulator::Mode::kInjectingTouchEvents,
+                     ui::GestureProviderConfigType::GENERIC_MOBILE);
+  InjectTouchEvent(WebInputEvent::kTouchStart, WebTouchPoint::kStatePressed,
+                   100, 200);
+  EXPECT_EQ("TouchStart GestureTapDown", ExpectedEvents());
+  InjectTouchEvent(WebInputEvent::kTouchMove, WebTouchPoint::kStateMoved, 200,
+                   200);
+  EXPECT_EQ("TouchMove GestureTapCancel GestureScrollBegin GestureScrollUpdate",
+            ExpectedEvents());
+  InjectTouchEvent(WebInputEvent::kTouchEnd, WebTouchPoint::kStateReleased, 200,
+                   200);
+  EXPECT_EQ("TouchEnd GestureScrollEnd", ExpectedEvents());
 }
 
 }  // namespace content

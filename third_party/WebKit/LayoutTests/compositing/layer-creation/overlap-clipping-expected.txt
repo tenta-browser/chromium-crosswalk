@@ -4,38 +4,58 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "Ancestor Clipping Layer",
       "position": [50, 50],
       "bounds": [100, 100],
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow DIV id='child'",
       "bounds": [500, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#008000"
+      "backgroundColor": "#008000",
+      "transform": 1
     },
     {
       "name": "Squashing Containment Layer",
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow DIV id='child'",
-      "position": [50, 200],
       "bounds": [500, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#008000"
+      "backgroundColor": "#008000",
+      "transform": 2
     },
     {
       "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV id='overlap')",
       "position": [450, 200],
-      "bounds": [100, 100],
-      "drawsContent": true
+      "bounds": [100, 100]
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [50, 50, 0, 1]
+      ],
+      "flattenInheritedTransform": false
+    },
+    {
+      "id": 2,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [50, 200, 0, 1]
+      ],
+      "flattenInheritedTransform": false
     }
   ]
 }

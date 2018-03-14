@@ -4,12 +4,9 @@
 
 package org.chromium.chrome.browser.ntp;
 
-import android.annotation.TargetApi;
-import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Point;
 import android.graphics.Rect;
-import android.os.Build;
 import android.support.v4.view.ViewCompat;
 import android.support.v7.widget.RecyclerView;
 import android.text.TextUtils;
@@ -17,7 +14,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 
 import org.chromium.base.ApiCompatibilityUtils;
-import org.chromium.base.CommandLine;
+import org.chromium.base.DiscardableReferencePool;
 import org.chromium.base.Log;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.VisibleForTesting;
@@ -25,8 +22,6 @@ import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
-import org.chromium.chrome.browser.ChromeFeatureList;
-import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.NativePage;
 import org.chromium.chrome.browser.NativePageHost;
 import org.chromium.chrome.browser.UrlConstants;
@@ -34,12 +29,14 @@ import org.chromium.chrome.browser.compositor.layouts.content.InvalidationAwareT
 import org.chromium.chrome.browser.download.DownloadManagerService;
 import org.chromium.chrome.browser.metrics.StartupMetrics;
 import org.chromium.chrome.browser.ntp.NewTabPageView.NewTabPageManager;
-import org.chromium.chrome.browser.ntp.snippets.SnippetsBridge;
 import org.chromium.chrome.browser.ntp.snippets.SuggestionsSource;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService.TemplateUrlServiceObserver;
-import org.chromium.chrome.browser.suggestions.SuggestionsMetricsReporter;
+import org.chromium.chrome.browser.snackbar.SnackbarManager;
+import org.chromium.chrome.browser.suggestions.SuggestionsDependencyFactory;
+import org.chromium.chrome.browser.suggestions.SuggestionsEventReporter;
+import org.chromium.chrome.browser.suggestions.SuggestionsMetrics;
 import org.chromium.chrome.browser.suggestions.SuggestionsNavigationDelegate;
 import org.chromium.chrome.browser.suggestions.SuggestionsNavigationDelegateImpl;
 import org.chromium.chrome.browser.suggestions.SuggestionsUiDelegateImpl;
@@ -50,17 +47,19 @@ import org.chromium.chrome.browser.sync.SyncSessionsMetrics;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
-import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
-import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.util.UrlUtilities;
+import org.chromium.chrome.browser.vr_shell.VrShellDelegate;
 import org.chromium.content_public.browser.NavigationController;
 import org.chromium.content_public.browser.NavigationEntry;
 import org.chromium.net.NetworkChangeNotifier;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.mojom.WindowOpenDisposition;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -73,10 +72,7 @@ public class NewTabPage
     // Key for the scroll position data that may be stored in a navigation entry.
     private static final String NAVIGATION_ENTRY_SCROLL_POSITION_KEY = "NewTabPageScrollPosition";
 
-    private static SuggestionsSource sSuggestionsSourceForTests;
-
     private final Tab mTab;
-    private final TabModelSelector mTabModelSelector;
 
     private final String mTitle;
     private final int mBackgroundColor;
@@ -87,8 +83,8 @@ public class NewTabPage
 
     private TabObserver mTabObserver;
     private boolean mSearchProviderHasLogo;
+
     private FakeboxDelegate mFakeboxDelegate;
-    private SnippetsBridge mSnippetsBridge;
 
     // The timestamp at which the constructor was called.
     private final long mConstructedTimeNs;
@@ -156,36 +152,42 @@ public class NewTabPage
      * @return Whether the passed in URL is used to render the NTP.
      */
     public static boolean isNTPUrl(String url) {
-        // Also handle the legacy chrome://newtab URL since that will redirect to
+        // Also handle the legacy chrome://newtab and about:newtab URLs since they will redirect to
         // chrome-native://newtab natively.
-        return url != null
-                && (url.startsWith(UrlConstants.NTP_URL) || url.startsWith("chrome://newtab"));
-    }
+        if (url == null) return false;
+        try {
+            // URL().getProtocol() throws MalformedURLException if the scheme is "invalid",
+            // including common ones like "about:", so it's not usable for isInternalScheme().
+            URI uri = new URI(url);
+            if (!UrlUtilities.isInternalScheme(uri)) return false;
 
-    private boolean isNtpOfflinePagesEnabled() {
-        return ChromeFeatureList.isEnabled(ChromeFeatureList.NTP_OFFLINE_PAGES_FEATURE_NAME);
-    }
-
-    @VisibleForTesting
-    public static void setSuggestionsSourceForTests(SuggestionsSource suggestionsSource) {
-        sSuggestionsSourceForTests = suggestionsSource;
+            String host = uri.getHost();
+            if (host == null) {
+                // "about:newtab" would lead to null host.
+                uri = new URI(uri.getScheme() + "://" + uri.getSchemeSpecificPart());
+                host = uri.getHost();
+            }
+            return UrlConstants.NTP_HOST.equals(host);
+        } catch (URISyntaxException e) {
+            return false;
+        }
     }
 
     private class NewTabPageManagerImpl
             extends SuggestionsUiDelegateImpl implements NewTabPageManager {
         public NewTabPageManagerImpl(SuggestionsSource suggestionsSource,
-                SuggestionsMetricsReporter metricsReporter,
+                SuggestionsEventReporter eventReporter,
                 SuggestionsNavigationDelegate navigationDelegate, Profile profile,
-                NativePageHost nativePageHost) {
-            super(suggestionsSource, metricsReporter, navigationDelegate, profile, nativePageHost);
+                NativePageHost nativePageHost, DiscardableReferencePool referencePool,
+                SnackbarManager snackbarManager) {
+            super(suggestionsSource, eventReporter, navigationDelegate, profile, nativePageHost,
+                    referencePool, snackbarManager);
         }
 
         @Override
         public boolean isLocationBarShownInNTP() {
             if (mIsDestroyed) return false;
-            Context context = mNewTabPageView.getContext();
-            return isInSingleUrlBarMode(context)
-                    && !mNewTabPageView.urlFocusAnimationsDisabled();
+            return isInSingleUrlBarMode() && !mNewTabPageView.urlFocusAnimationsDisabled();
         }
 
         @Override
@@ -193,37 +195,10 @@ public class NewTabPage
             return mFakeboxDelegate != null && mFakeboxDelegate.isVoiceSearchEnabled();
         }
 
-        @TargetApi(Build.VERSION_CODES.LOLLIPOP)
-        private boolean switchToExistingTab(String url) {
-            String matchPattern = CommandLine.getInstance().getSwitchValue(
-                    ChromeSwitches.NTP_SWITCH_TO_EXISTING_TAB);
-            boolean matchByHost;
-            if ("url".equals(matchPattern)) {
-                matchByHost = false;
-            } else if ("host".equals(matchPattern)) {
-                matchByHost = true;
-            } else {
-                return false;
-            }
-
-            TabModel tabModel = mTabModelSelector.getModel(false);
-            for (int i = tabModel.getCount() - 1; i >= 0; --i) {
-                if (matchURLs(tabModel.getTabAt(i).getUrl(), url, matchByHost)) {
-                    TabModelUtils.setIndex(tabModel, i);
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        private boolean matchURLs(String url1, String url2, boolean matchByHost) {
-            if (url1 == null || url2 == null) return false;
-            return matchByHost ? UrlUtilities.sameHost(url1, url2) : url1.equals(url2);
-        }
-
         @Override
         public void focusSearchBox(boolean beginVoiceSearch, String pastedText) {
             if (mIsDestroyed) return;
+            if (VrShellDelegate.isInVr()) return;
             if (mFakeboxDelegate != null) {
                 if (beginVoiceSearch) {
                     mFakeboxDelegate.startVoiceRecognition();
@@ -234,36 +209,15 @@ public class NewTabPage
         }
 
         @Override
-        public SuggestionsSource getSuggestionsSource() {
-            if (sSuggestionsSourceForTests != null) return sSuggestionsSourceForTests;
-            return mSnippetsBridge;
-        }
-
-        @Override
         public boolean isCurrentPage() {
             if (mIsDestroyed) return false;
             if (mFakeboxDelegate == null) return false;
             return mFakeboxDelegate.isCurrentPage(NewTabPage.this);
         }
-    }
-
-    /**
-     * Extends {@link TileGroupDelegateImpl} to add metrics logging that is specific to
-     * {@link NewTabPage}.
-     */
-    private class NewTabPageTileGroupDelegate extends TileGroupDelegateImpl {
-        private NewTabPageTileGroupDelegate(ChromeActivity activity, Profile profile,
-                TabModelSelector tabModelSelector,
-                SuggestionsNavigationDelegate navigationDelegate) {
-            super(activity, profile, tabModelSelector, navigationDelegate,
-                    activity.getSnackbarManager());
-        }
 
         @Override
-        public void onLoadingComplete(Tile[] items) {
+        public void onLoadingComplete() {
             if (mIsDestroyed) return;
-
-            super.onLoadingComplete(items);
 
             long loadTimeMs = (System.nanoTime() - mConstructedTimeNs) / 1000000;
             RecordHistogram.recordTimesHistogram(
@@ -274,16 +228,26 @@ public class NewTabPage
             // If not visible when loading completes, wait until onShown is received.
             if (!mTab.isHidden()) recordNTPShown();
 
-            if (isNtpOfflinePagesEnabled()) {
-                final int maxNumTiles = 12;
-                for (int i = 0; i < items.length; i++) {
-                    if (items[i].isOfflineAvailable()) {
-                        RecordHistogram.recordEnumeratedHistogram(
-                                "NewTabPage.TileOfflineAvailable", i, maxNumTiles);
-                    }
-                }
-            }
             SyncSessionsMetrics.recordYoungestForeignTabAgeOnNTP();
+        }
+    }
+
+    /**
+     * Extends {@link TileGroupDelegateImpl} to add metrics logging that is specific to
+     * {@link NewTabPage}.
+     */
+    private class NewTabPageTileGroupDelegate extends TileGroupDelegateImpl {
+        private NewTabPageTileGroupDelegate(ChromeActivity activity, Profile profile,
+                SuggestionsNavigationDelegate navigationDelegate) {
+            super(activity, profile, navigationDelegate, activity.getSnackbarManager());
+        }
+
+        @Override
+        public void onLoadingComplete(List<Tile> tiles) {
+            if (mIsDestroyed) return;
+
+            super.onLoadingComplete(tiles);
+            mNewTabPageView.onTilesLoaded();
         }
 
         @Override
@@ -311,18 +275,19 @@ public class NewTabPage
         TraceEvent.begin(TAG);
 
         mTab = nativePageHost.getActiveTab();
-        mTabModelSelector = tabModelSelector;
         Profile profile = mTab.getProfile();
 
-        mSnippetsBridge = new SnippetsBridge(profile);
+        SuggestionsDependencyFactory depsFactory = SuggestionsDependencyFactory.getInstance();
+        SuggestionsSource suggestionsSource = depsFactory.createSuggestionSource(profile);
+        SuggestionsEventReporter eventReporter = depsFactory.createEventReporter();
 
         SuggestionsNavigationDelegateImpl navigationDelegate =
                 new SuggestionsNavigationDelegateImpl(
                         activity, profile, nativePageHost, tabModelSelector);
-        mNewTabPageManager = new NewTabPageManagerImpl(
-                mSnippetsBridge, mSnippetsBridge, navigationDelegate, profile, nativePageHost);
-        mTileGroupDelegate = new NewTabPageTileGroupDelegate(
-                activity, profile, tabModelSelector, navigationDelegate);
+        mNewTabPageManager = new NewTabPageManagerImpl(suggestionsSource, eventReporter,
+                navigationDelegate, profile, nativePageHost, activity.getReferencePool(),
+                activity.getSnackbarManager());
+        mTileGroupDelegate = new NewTabPageTileGroupDelegate(activity, profile, navigationDelegate);
 
         mTitle = activity.getResources().getString(R.string.button_new_tab);
         mBackgroundColor = ApiCompatibilityUtils.getColor(activity.getResources(), R.color.ntp_bg);
@@ -336,12 +301,12 @@ public class NewTabPage
                 // Showing the NTP is only meaningful when the page has been loaded already.
                 if (mIsLoaded) recordNTPShown();
 
-                mNewTabPageView.getTileGroup().onSwitchToForeground();
+                mNewTabPageView.getTileGroup().onSwitchToForeground(/* trackLoadTask = */ false);
             }
 
             @Override
             public void onHidden(Tab tab) {
-                if (mIsLoaded) recordNTPInteractionTime();
+                if (mIsLoaded) recordNTPHidden();
             }
 
             @Override
@@ -373,14 +338,14 @@ public class NewTabPage
         LayoutInflater inflater = LayoutInflater.from(activity);
         mNewTabPageView = (NewTabPageView) inflater.inflate(R.layout.new_tab_page_view, null);
         mNewTabPageView.initialize(mNewTabPageManager, mTab, mTileGroupDelegate,
-                mSearchProviderHasLogo, getScrollPositionFromNavigationEntry());
+                mSearchProviderHasLogo,
+                TemplateUrlService.getInstance().isDefaultSearchEngineGoogle(),
+                getScrollPositionFromNavigationEntry());
 
-        if (mSnippetsBridge != null) {
-            mSnippetsBridge.onNtpInitialized();
-        }
+        eventReporter.onSurfaceOpened();
 
         DownloadManagerService.getDownloadManagerService().checkForExternallyRemovedDownloads(
-                /*isOffRecord=*/false);
+                /*isOffTheRecord=*/false);
 
         RecordHistogram.recordBooleanHistogram(
                 "NewTabPage.MobileIsUserOnline", NetworkChangeNotifier.isOnline());
@@ -402,20 +367,21 @@ public class NewTabPage
         mNewTabPageView.setUrlFocusAnimationsDisabled(disable);
     }
 
-    private boolean isInSingleUrlBarMode(Context context) {
-        if (DeviceFormFactor.isTablet(context)) return false;
+    private boolean isInSingleUrlBarMode() {
+        if (DeviceFormFactor.isTablet()) return false;
         if (FeatureUtilities.isChromeHomeEnabled()) return false;
         return mSearchProviderHasLogo;
     }
 
     private void updateSearchProviderHasLogo() {
-        mSearchProviderHasLogo = TemplateUrlService.getInstance().isDefaultSearchEngineGoogle();
+        mSearchProviderHasLogo = TemplateUrlService.getInstance().doesDefaultSearchEngineHaveLogo();
     }
 
     private void onSearchEngineUpdated() {
-        // TODO(newt): update this if other search providers provide logos.
         updateSearchProviderHasLogo();
-        mNewTabPageView.setSearchProviderHasLogo(mSearchProviderHasLogo);
+        mNewTabPageView.setSearchProviderInfo(mSearchProviderHasLogo,
+                TemplateUrlService.getInstance().isDefaultSearchEngineGoogle());
+        mNewTabPageView.loadSearchProviderLogo();
     }
 
     /**
@@ -496,11 +462,14 @@ public class NewTabPage
     private void recordNTPShown() {
         mLastShownTimeNs = System.nanoTime();
         RecordUserAction.record("MobileNTPShown");
+        SuggestionsMetrics.recordSurfaceVisible();
     }
 
-    private void recordNTPInteractionTime() {
+    /** Records UMA for the NTP being hidden and the time spent on it. */
+    private void recordNTPHidden() {
         RecordHistogram.recordMediumTimesHistogram(
                 "NewTabPage.TimeSpent", System.nanoTime() - mLastShownTimeNs, TimeUnit.NANOSECONDS);
+        SuggestionsMetrics.recordSurfaceHidden();
     }
 
     /**
@@ -548,12 +517,8 @@ public class NewTabPage
         assert !mIsDestroyed;
         assert !ViewCompat
                 .isAttachedToWindow(getView()) : "Destroy called before removed from window";
-        if (mIsLoaded && !mTab.isHidden()) recordNTPInteractionTime();
+        if (mIsLoaded && !mTab.isHidden()) recordNTPHidden();
 
-        if (mSnippetsBridge != null) {
-            mSnippetsBridge.onDestroy();
-            mSnippetsBridge = null;
-        }
         mNewTabPageManager.onDestroy();
         mTileGroupDelegate.destroy();
         TemplateUrlService.getInstance().removeObserver(this);
@@ -611,5 +576,10 @@ public class NewTabPage
     @Override
     public void captureThumbnail(Canvas canvas) {
         mNewTabPageView.captureThumbnail(canvas);
+    }
+
+    @VisibleForTesting
+    public NewTabPageManager getManagerForTesting() {
+        return mNewTabPageManager;
     }
 }

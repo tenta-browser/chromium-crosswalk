@@ -4,8 +4,10 @@
 
 #include "extensions/common/common_manifest_handlers.h"
 
+#include "components/nacl/common/features.h"
 #include "extensions/common/api/bluetooth/bluetooth_manifest_handler.h"
 #include "extensions/common/api/declarative/declarative_manifest_handler.h"
+#include "extensions/common/api/declarative_net_request/dnr_manifest_handler.h"
 #include "extensions/common/api/printer_provider/usb_printer_manifest_handler.h"
 #include "extensions/common/api/sockets/sockets_manifest_handler.h"
 #include "extensions/common/manifest_handler.h"
@@ -46,6 +48,7 @@ void RegisterCommonManifestHandlers() {
   (new ContentCapabilitiesHandler)->Register();
   (new CSPHandler(false))->Register();
   (new CSPHandler(true))->Register();
+  (new declarative_net_request::DNRManifestHandler)->Register();
   (new DeclarativeManifestHandler)->Register();
   (new DefaultLocaleHandler)->Register();
   (new ExternallyConnectableHandler)->Register();
@@ -55,7 +58,7 @@ void RegisterCommonManifestHandlers() {
   (new KioskModeHandler)->Register();
   (new LauncherPageHandler)->Register();
   (new MimeTypesHandlerParser)->Register();
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   (new NaClModulesHandler)->Register();
 #endif
   (new OAuth2ManifestHandler)->Register();

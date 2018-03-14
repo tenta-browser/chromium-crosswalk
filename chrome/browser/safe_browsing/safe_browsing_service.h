@@ -20,9 +20,9 @@
 #include "base/observer_list.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "chrome/browser/safe_browsing/services_delegate.h"
-#include "components/safe_browsing_db/safe_browsing_prefs.h"
-#include "components/safe_browsing_db/util.h"
-#include "components/safe_browsing_db/v4_feature_list.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
+#include "components/safe_browsing/db/util.h"
+#include "components/safe_browsing/db/v4_feature_list.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -54,7 +54,6 @@ namespace safe_browsing {
 class ClientSideDetectionService;
 class DownloadProtectionService;
 class PasswordProtectionService;
-class ChromePasswordProtectionService;
 struct ResourceRequestInfo;
 struct SafeBrowsingProtocolConfig;
 class SafeBrowsingDatabaseManager;
@@ -65,6 +64,7 @@ class SafeBrowsingProtocolManagerDelegate;
 class SafeBrowsingServiceFactory;
 class SafeBrowsingUIManager;
 class SafeBrowsingURLRequestContextGetter;
+class TriggerManager;
 struct V4ProtocolConfig;
 
 // Construction needs to happen on the main thread.
@@ -164,6 +164,8 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   const scoped_refptr<SafeBrowsingDatabaseManager>& v4_local_database_manager()
       const;
 
+  TriggerManager* trigger_manager() const;
+
   // Gets PasswordProtectionService by profile.
   PasswordProtectionService* GetPasswordProtectionService(
       Profile* profile) const;
@@ -230,8 +232,11 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   friend struct content::BrowserThread::DeleteOnThread<
       content::BrowserThread::UI>;
   friend class base::DeleteHelper<SafeBrowsingService>;
+  friend class SafeBrowsingBlockingPageTest;
+  friend class SafeBrowsingBlockingQuietPageTest;
   friend class SafeBrowsingServerTest;
   friend class SafeBrowsingServiceTest;
+  friend class SafeBrowsingUIManagerTest;
   friend class SafeBrowsingURLRequestContextGetter;
   friend class TestSafeBrowsingService;
   friend class TestSafeBrowsingServiceFactory;
@@ -277,9 +282,7 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   // Process the observed resource requests on the UI thread.
   void ProcessResourceRequest(const ResourceRequestInfo& request);
 
-  void CreatePasswordProtectionService(Profile* profile);
-
-  void RemovePasswordProtectionService(Profile* profile);
+  void CreateTriggerManager();
 
   // The factory used to instantiate a SafeBrowsingService object.
   // Useful for tests, so they can provide their own implementation of
@@ -350,11 +353,7 @@ class SafeBrowsingService : public base::RefCountedThreadSafe<
   scoped_refptr<SafeBrowsingNavigationObserverManager>
       navigation_observer_manager_;
 
-  // Tracks existing Profiles, and their corresponding
-  // ChromePasswordProtectionService instances.
-  // Accessed on UI thread.
-  std::map<Profile*, std::unique_ptr<ChromePasswordProtectionService>>
-      password_protection_service_map_;
+  std::unique_ptr<TriggerManager> trigger_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(SafeBrowsingService);
 };

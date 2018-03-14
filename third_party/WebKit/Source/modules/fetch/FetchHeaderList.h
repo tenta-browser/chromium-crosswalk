@@ -5,22 +5,25 @@
 #ifndef FetchHeaderList_h
 #define FetchHeaderList_h
 
-#include <memory>
+#include <map>
 #include <utility>
 #include "modules/ModulesExport.h"
 #include "platform/heap/Handle.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
-class Header;
-
 // http://fetch.spec.whatwg.org/#terminology-headers
 class MODULES_EXPORT FetchHeaderList final
     : public GarbageCollectedFinalized<FetchHeaderList> {
  public:
+  struct ByteCaseInsensitiveCompare {
+    bool operator()(const String& lhs, const String& rhs) const {
+      return CodePointCompareLessThan(lhs.LowerASCII(), rhs.LowerASCII());
+    }
+  };
+
   typedef std::pair<String, String> Header;
   static FetchHeaderList* Create();
   FetchHeaderList* Clone() const;
@@ -38,22 +41,35 @@ class MODULES_EXPORT FetchHeaderList final
   bool Has(const String&) const;
   void ClearList();
 
-  bool ContainsNonSimpleHeader() const;
-  void SortAndCombine();
+  bool ContainsNonCORSSafelistedHeader() const;
+  Vector<Header> SortAndCombine() const;
 
-  const Vector<std::unique_ptr<Header>>& List() const { return header_list_; }
-  const Header& Entry(size_t index) const {
-    return *(header_list_[index].get());
+  const std::multimap<String, String, ByteCaseInsensitiveCompare>& List()
+      const {
+    return header_list_;
   }
 
   static bool IsValidHeaderName(const String&);
   static bool IsValidHeaderValue(const String&);
 
-  DEFINE_INLINE_TRACE() {}
+  void Trace(blink::Visitor* visitor) {}
 
  private:
   FetchHeaderList();
-  Vector<std::unique_ptr<Header>> header_list_;
+
+  // While using STL data structures in Blink is not very common or
+  // encouraged, we do need a multimap here. The closest WTF structure
+  // comparable to what we need would be a
+  //   HashMap<String, Vector<String>>
+  // but it is not a "flat" data structure like std::multimap is. The
+  // size() of the HashMap is the number of distinct header names, not
+  // the total number of headers and values on the list.
+  // This would cause FetchHeaderList::size() to have to manually
+  // iterate through all keys and vectors in the HashMap. Similarly,
+  // list() would require callers to manually iterate through the
+  // HashMap's keys and value vector, and so would
+  // ContainsNonCORSSafelistedHeader().
+  std::multimap<String, String, ByteCaseInsensitiveCompare> header_list_;
 };
 
 }  // namespace blink

@@ -28,25 +28,26 @@
 #ifndef Settings_h
 #define Settings_h
 
+#include <memory>
 #include "bindings/core/v8/V8CacheOptions.h"
-#include "bindings/core/v8/V8CacheStrategiesForCacheStorage.h"
 #include "core/CoreExport.h"
-#include "core/SettingsMacros.h"
+#include "core/dom/events/AddEventListenerOptionsDefaults.h"
 #include "core/editing/EditingBehaviorTypes.h"
 #include "core/editing/SelectionStrategy.h"
-#include "core/events/AddEventListenerOptionsDefaults.h"
 #include "core/frame/SettingsDelegate.h"
+#include "core/html/media/AutoplayPolicy.h"
 #include "core/html/track/TextTrackKindUserPreference.h"
 #include "core/loader/FrameLoaderTypes.h"
+#include "core/settings_macros.h"
 #include "platform/Timer.h"
 #include "platform/fonts/GenericFontFamilySettings.h"
 #include "platform/geometry/IntSize.h"
+#include "platform/graphics/HighContrastSettings.h"
 #include "platform/graphics/ImageAnimationPolicy.h"
 #include "platform/weborigin/KURL.h"
 #include "public/platform/PointerProperties.h"
 #include "public/platform/WebDisplayMode.h"
 #include "public/platform/WebViewportStyle.h"
-#include <memory>
 
 namespace blink {
 

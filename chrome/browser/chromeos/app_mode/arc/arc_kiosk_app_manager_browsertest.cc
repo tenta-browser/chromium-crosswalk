@@ -82,13 +82,10 @@ class ArcKioskAppManagerTest : public InProcessBrowserTest {
   ~ArcKioskAppManagerTest() override {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    InProcessBrowserTest::SetUpCommandLine(command_line);
     arc::SetArcAvailableCommandLineForTesting(command_line);
   }
 
   void SetUpOnMainThread() override {
-    InProcessBrowserTest::SetUpOnMainThread();
-
     settings_helper_.ReplaceProvider(kAccountsPrefDeviceLocalAccounts);
     owner_settings_service_ =
         settings_helper_.CreateOwnerSettingsService(browser()->profile());
@@ -101,22 +98,19 @@ class ArcKioskAppManagerTest : public InProcessBrowserTest {
     base::ListValue device_local_accounts;
     for (const policy::ArcKioskAppBasicInfo& app : apps) {
       std::unique_ptr<base::DictionaryValue> entry(new base::DictionaryValue);
-      entry->SetStringWithoutPathExpansion(
-          kAccountsPrefDeviceLocalAccountsKeyId,
-          GenerateAccountId(app.package_name()));
-      entry->SetIntegerWithoutPathExpansion(
+      entry->SetKey(kAccountsPrefDeviceLocalAccountsKeyId,
+                    base::Value(GenerateAccountId(app.package_name())));
+      entry->SetKey(
           kAccountsPrefDeviceLocalAccountsKeyType,
-          policy::DeviceLocalAccount::TYPE_ARC_KIOSK_APP);
-      entry->SetStringWithoutPathExpansion(
-          kAccountsPrefDeviceLocalAccountsKeyArcKioskPackage,
-          app.package_name());
-      entry->SetStringWithoutPathExpansion(
-          kAccountsPrefDeviceLocalAccountsKeyArcKioskClass, app.class_name());
-      entry->SetStringWithoutPathExpansion(
-          kAccountsPrefDeviceLocalAccountsKeyArcKioskAction, app.action());
-      entry->SetStringWithoutPathExpansion(
-          kAccountsPrefDeviceLocalAccountsKeyArcKioskDisplayName,
-          app.display_name());
+          base::Value(policy::DeviceLocalAccount::TYPE_ARC_KIOSK_APP));
+      entry->SetKey(kAccountsPrefDeviceLocalAccountsKeyArcKioskPackage,
+                    base::Value(app.package_name()));
+      entry->SetKey(kAccountsPrefDeviceLocalAccountsKeyArcKioskClass,
+                    base::Value(app.class_name()));
+      entry->SetKey(kAccountsPrefDeviceLocalAccountsKeyArcKioskAction,
+                    base::Value(app.action()));
+      entry->SetKey(kAccountsPrefDeviceLocalAccountsKeyArcKioskDisplayName,
+                    base::Value(app.display_name()));
       device_local_accounts.Append(std::move(entry));
     }
     owner_settings_service_->Set(kAccountsPrefDeviceLocalAccounts,
@@ -161,8 +155,8 @@ IN_PROC_BROWSER_TEST_F(ArcKioskAppManagerTest, Basic) {
     ArcKioskAppManager::Apps apps;
     manager()->GetAllApps(&apps);
     ASSERT_EQ(2u, apps.size());
-    ASSERT_EQ(app1.package_name(), apps[0]->app_id());
-    ASSERT_EQ(app2.package_name(), apps[1]->app_id());
+    ASSERT_EQ(app1.package_name(), apps[0]->package_name());
+    ASSERT_EQ(app2.package_name(), apps[1]->package_name());
     ASSERT_EQ(app1.package_name(), apps[0]->name());
     ASSERT_EQ(app2.display_name(), apps[1]->name());
     EXPECT_FALSE(manager()->GetAutoLaunchAccountId().is_valid());
@@ -183,8 +177,8 @@ IN_PROC_BROWSER_TEST_F(ArcKioskAppManagerTest, Basic) {
     ArcKioskAppManager::Apps apps;
     manager()->GetAllApps(&apps);
     ASSERT_EQ(2u, apps.size());
-    ASSERT_EQ(app1.package_name(), apps[0]->app_id());
-    ASSERT_EQ(app2.package_name(), apps[1]->app_id());
+    ASSERT_EQ(app1.package_name(), apps[0]->package_name());
+    ASSERT_EQ(app2.package_name(), apps[1]->package_name());
     ASSERT_EQ(app1.package_name(), apps[0]->name());
     ASSERT_EQ(app2.display_name(), apps[1]->name());
     EXPECT_TRUE(manager()->GetAutoLaunchAccountId().is_valid());
@@ -206,8 +200,8 @@ IN_PROC_BROWSER_TEST_F(ArcKioskAppManagerTest, Basic) {
     ArcKioskAppManager::Apps apps;
     manager()->GetAllApps(&apps);
     ASSERT_EQ(2u, apps.size());
-    ASSERT_EQ(app1.package_name(), apps[0]->app_id());
-    ASSERT_EQ(app3.package_name(), apps[1]->app_id());
+    ASSERT_EQ(app1.package_name(), apps[0]->package_name());
+    ASSERT_EQ(app3.package_name(), apps[1]->package_name());
     ASSERT_EQ(app1.package_name(), apps[0]->name());
     ASSERT_EQ(app3.package_name(), apps[1]->name());
     // Auto launch app must be reset.

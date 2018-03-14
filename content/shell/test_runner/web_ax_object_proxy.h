@@ -17,7 +17,7 @@
 #include "v8/include/v8.h"
 
 namespace blink {
-class WebFrame;
+class WebLocalFrame;
 }
 
 namespace test_runner {
@@ -44,7 +44,7 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   virtual bool IsRoot() const;
   bool IsEqualToObject(const blink::WebAXObject& object);
 
-  void NotificationReceived(blink::WebFrame* frame,
+  void NotificationReceived(blink::WebLocalFrame* frame,
                             const std::string& notification_name);
   void Reset();
 
@@ -70,6 +70,7 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   int IntValue();
   int MinValue();
   int MaxValue();
+  int StepValue();
   std::string ValueDescription();
   int ChildrenCount();
 
@@ -92,8 +93,10 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   int SelectionStartLineNumber();
   int SelectionEndLineNumber();
 
-  bool IsEnabled();
+  bool IsAtomic();
+  bool IsBusy();
   bool IsRequired();
+  bool IsEditableRoot();
   bool IsEditable();
   bool IsRichlyEditable();
   bool IsFocused();
@@ -101,16 +104,18 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   bool IsModal();
   bool IsSelected();
   bool IsSelectable();
+  bool IsMultiLine();
   bool IsMultiSelectable();
   bool IsSelectedOptionActive();
   bool IsExpanded();
-  bool IsChecked();
+  std::string Checked();
   bool IsVisible();
   bool IsOffScreen();
   bool IsCollapsed();
   bool HasPopup();
   bool IsValid();
   bool IsReadOnly();
+  std::string Restriction();
   unsigned int BackgroundColor();
   unsigned int Color();
   // For input elements of type color.
@@ -126,6 +131,7 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   std::string Relevant();
   std::string RoleDescription();
   std::string Sort();
+  int HierarchicalLevel();
   int PosInSet();
   int SetSize();
   int ClickPointX();
@@ -135,14 +141,16 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   int32_t ColumnCount();
   int32_t ColumnHeadersCount();
   bool IsClickable();
-  bool IsButtonStateMixed();
   float BoundsX();
   float BoundsY();
   float BoundsWidth();
   float BoundsHeight();
 
   // Bound methods.
+  v8::Local<v8::Object> AriaActiveDescendantElement();
   v8::Local<v8::Object> AriaControlsElementAtIndex(unsigned index);
+  v8::Local<v8::Object> AriaDetailsElement();
+  v8::Local<v8::Object> AriaErrorMessageElement();
   v8::Local<v8::Object> AriaFlowToElementAtIndex(unsigned index);
   v8::Local<v8::Object> AriaOwnsElementAtIndex(unsigned index);
   std::string AllAttributes();
@@ -158,7 +166,7 @@ class WebAXObjectProxy : public gin::Wrappable<WebAXObjectProxy> {
   std::string ColumnIndexRange();
   v8::Local<v8::Object> CellForColumnAndRow(int column, int row);
   void SetSelectedTextRange(int selection_start, int length);
-  void SetSelection(v8::Local<v8::Value> anchor_object,
+  bool SetSelection(v8::Local<v8::Value> anchor_object,
                     int anchor_offset,
                     v8::Local<v8::Value> focus_object,
                     int focus_offset);

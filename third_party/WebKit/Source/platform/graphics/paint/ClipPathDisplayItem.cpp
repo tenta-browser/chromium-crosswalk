@@ -18,16 +18,9 @@ void BeginClipPathDisplayItem::Replay(GraphicsContext& context) const {
 }
 
 void BeginClipPathDisplayItem::AppendToWebDisplayItemList(
-    const IntRect& visual_rect,
+    const LayoutSize&,
     WebDisplayItemList* list) const {
   list->AppendClipPathItem(clip_path_, true);
-}
-
-void BeginClipPathDisplayItem::AnalyzeForGpuRasterization(
-    SkPictureGpuAnalyzer& analyzer) const {
-  // Temporarily disabled (pref regressions due to GPU veto stickiness:
-  // http://crbug.com/603969).
-  // analyzer.analyzeClipPath(m_clipPath, SkRegion::kIntersect_Op, true);
 }
 
 void EndClipPathDisplayItem::Replay(GraphicsContext& context) const {
@@ -35,20 +28,20 @@ void EndClipPathDisplayItem::Replay(GraphicsContext& context) const {
 }
 
 void EndClipPathDisplayItem::AppendToWebDisplayItemList(
-    const IntRect& visual_rect,
+    const LayoutSize&,
     WebDisplayItemList* list) const {
   list->AppendEndClipPathItem();
 }
 
-#ifndef NDEBUG
-void BeginClipPathDisplayItem::DumpPropertiesAsDebugString(
-    WTF::StringBuilder& string_builder) const {
-  DisplayItem::DumpPropertiesAsDebugString(string_builder);
-  string_builder.Append(WTF::String::Format(
-      ", pathVerbs: %d, pathPoints: %d, windRule: \"%s\"",
-      clip_path_.countVerbs(), clip_path_.countPoints(),
-      clip_path_.getFillType() == SkPath::kWinding_FillType ? "nonzero"
-                                                            : "evenodd"));
+#if DCHECK_IS_ON()
+void BeginClipPathDisplayItem::PropertiesAsJSON(JSONObject& json) const {
+  DisplayItem::PropertiesAsJSON(json);
+  json.SetInteger("pathVerbs", clip_path_.countVerbs());
+  json.SetInteger("pathPoints", clip_path_.countPoints());
+  json.SetString("windRule",
+                 clip_path_.getFillType() == SkPath::kWinding_FillType
+                     ? "nonzero"
+                     : "evenodd");
 }
 
 #endif

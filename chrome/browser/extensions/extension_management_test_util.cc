@@ -63,7 +63,7 @@ void ExtensionManagementPrefUpdaterBase::
     ClearInstallationModesForIndividualExtensions() {
   for (base::DictionaryValue::Iterator it(*pref_); !it.IsAtEnd();
        it.Advance()) {
-    DCHECK(it.value().IsType(base::Value::Type::DICTIONARY));
+    DCHECK(it.value().is_dict());
     if (it.key() != schema::kWildcard) {
       DCHECK(crx_file::id_util::IdIsValid(it.key()));
       pref_->Remove(make_path(it.key(), schema::kInstallationMode), nullptr);
@@ -159,6 +159,16 @@ void ExtensionManagementPrefUpdaterBase::RemoveBlockedPermission(
   DCHECK(prefix == schema::kWildcard || crx_file::id_util::IdIsValid(prefix));
   RemoveStringFromList(make_path(prefix, schema::kBlockedPermissions),
                        permission);
+}
+
+// Helper function for 'blocked_install_message' manipulation -----------------
+
+void ExtensionManagementPrefUpdaterBase::SetBlockedInstallMessage(
+    const ExtensionId& id,
+    const std::string& blocked_install_message) {
+  DCHECK(id == schema::kWildcard || crx_file::id_util::IdIsValid(id));
+  pref_->SetString(make_path(id, schema::kBlockedInstallMessage),
+                   blocked_install_message);
 }
 
 // Helper functions for 'runtime_blocked_hosts' manipulation ------------------

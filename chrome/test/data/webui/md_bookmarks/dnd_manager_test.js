@@ -5,10 +5,9 @@
 suite('drag and drop', function() {
   var app;
   var list;
-  var sidebar;
+  var rootFolderNode;
   var store;
   var dndManager;
-  var draggedIds;
 
   var DRAG_STYLE = {
     NONE: 0,
@@ -18,16 +17,7 @@ suite('drag and drop', function() {
   };
 
   function getFolderNode(id) {
-    var nodes = [sidebar];
-    var node;
-    while (nodes.length) {
-      node = nodes.pop();
-      if (node.itemId == id)
-        return node;
-
-      node.root.querySelectorAll('bookmarks-folder-node')
-          .forEach((x) => {nodes.unshift(x)});
-    }
+    return findFolderNode(rootFolderNode, id);
   }
 
   function getListItem(id) {
@@ -74,54 +64,69 @@ suite('drag and drop', function() {
     };
   }
 
+  function startInternalDrag(dragElement) {
+    MockInteractions.down(dragElement);
+    move(dragElement, MockInteractions.topLeftOfNode(dragElement));
+  }
+
+  function move(target, dest) {
+    MockInteractions.move(
+        target, {x: 0, y: 0}, dest || MockInteractions.middleOfNode(target),
+        -1);
+  }
+
+  function getDragIds() {
+    return dndManager.dragInfo_.dragData.elements.map((x) => x.id);
+  }
+
   setup(function() {
+    var nodes = testTree(
+        createFolder(
+            '1',
+            [
+              createFolder(
+                  '11',
+                  [
+                    createFolder(
+                        '111',
+                        [
+                          createItem('1111'),
+                        ]),
+                    createFolder('112', []),
+                  ]),
+              createItem('12'),
+              createItem('13'),
+              createFolder('14', []),
+              createFolder('15', []),
+            ]),
+        createFolder('2', []));
     store = new bookmarks.TestStore({
-      nodes: testTree(
-          createFolder(
-              '1',
-              [
-                createFolder(
-                    '11',
-                    [
-                      createFolder(
-                          '111',
-                          [
-                            createItem('1111'),
-                          ]),
-                      createFolder('112', []),
-                    ]),
-                createItem('12'),
-                createItem('13'),
-                createFolder('14', []),
-                createFolder('15', []),
-              ]),
-          createFolder('2', [])),
+      nodes: nodes,
+      folderOpenState: getAllFoldersOpenState(nodes),
       selectedFolder: '1',
     });
-    bookmarks.Store.instance_ = store;
+    store.replaceSingleton();
 
-    chrome.bookmarkManagerPrivate.startDrag = function(nodes, isTouch) {
-      draggedIds = nodes;
-    };
+    chrome.bookmarks.move = function(id, details) {};
 
     app = document.createElement('bookmarks-app');
     replaceBody(app);
     list = app.$$('bookmarks-list');
-    sidebar = app.$$('bookmarks-sidebar');
+    rootFolderNode = app.$$('bookmarks-folder-node');
     dndManager = app.dndManager_;
-    dndManager.dropIndicator_.disableTimeoutForTesting();
+    dndManager.setTimerProxyForTesting(new bookmarks.TestTimerProxy());
     Polymer.dom.flush();
   });
 
   test('dragInfo isDraggingFolderToDescendant', function() {
     var dragInfo = new bookmarks.DragInfo();
     var nodes = store.data.nodes;
-    dragInfo.handleChromeDragEnter(createDragData(['11']));
+    dragInfo.setNativeDragData(createDragData(['11']));
     assertTrue(dragInfo.isDraggingFolderToDescendant('111', nodes));
     assertFalse(dragInfo.isDraggingFolderToDescendant('1', nodes));
     assertFalse(dragInfo.isDraggingFolderToDescendant('2', nodes));
 
-    dragInfo.handleChromeDragEnter(createDragData(['1']));
+    dragInfo.setNativeDragData(createDragData(['1']));
     assertTrue(dragInfo.isDraggingFolderToDescendant('14', nodes));
     assertTrue(dragInfo.isDraggingFolderToDescendant('111', nodes));
     assertFalse(dragInfo.isDraggingFolderToDescendant('2', nodes));
@@ -131,24 +136,23 @@ suite('drag and drop', function() {
     var dragElement = getListItem('13');
     var dragTarget = getListItem('12');
 
-    dispatchDragEvent('dragstart', dragElement);
-    assertDeepEquals(['13'], draggedIds);
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(draggedIds));
+    startInternalDrag(dragElement);
+
+    assertDeepEquals(['13'], getDragIds());
 
     // Bookmark items cannot be dragged onto other items.
-    dispatchDragEvent(
-        'dragover', dragTarget, MockInteractions.topLeftOfNode(dragTarget));
+    move(dragTarget, MockInteractions.topLeftOfNode(dragTarget));
     assertEquals(
         DropPosition.ABOVE,
         dndManager.calculateValidDropPositions_(dragTarget));
     assertDragStyle(dragTarget, DRAG_STYLE.ABOVE);
 
-    dispatchDragEvent('dragleave', dragTarget);
+    move(document.body);
     assertDragStyle(dragTarget, DRAG_STYLE.NONE);
 
     // Bookmark items can be dragged onto folders.
     dragTarget = getListItem('11');
-    dispatchDragEvent('dragover', dragTarget);
+    move(dragTarget);
     assertEquals(
         DropPosition.ON | DropPosition.ABOVE | DropPosition.BELOW,
         dndManager.calculateValidDropPositions_(dragTarget));
@@ -158,8 +162,7 @@ suite('drag and drop', function() {
     assertEquals(
         DropPosition.NONE,
         dndManager.calculateValidDropPositions_(dragElement));
-    dispatchDragEvent('dragleave', dragTarget);
-    dispatchDragEvent('dragover', dragElement);
+    move(dragElement);
 
     assertDragStyle(dragTarget, DRAG_STYLE.NONE);
     assertDragStyle(dragElement, DRAG_STYLE.NONE);
@@ -168,34 +171,32 @@ suite('drag and drop', function() {
   test('reorder folder nodes', function() {
     var dragElement = getFolderNode('112');
     var dragTarget = getFolderNode('111');
-    dispatchDragEvent('dragstart', dragElement);
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(draggedIds));
+
+    startInternalDrag(dragElement);
 
     assertEquals(
         DropPosition.ON | DropPosition.ABOVE,
         dndManager.calculateValidDropPositions_(dragTarget));
 
-    dispatchDragEvent(
-        'dragover', dragTarget, MockInteractions.topLeftOfNode(dragTarget));
+    move(dragTarget, MockInteractions.topLeftOfNode(dragTarget));
     assertDragStyle(dragTarget, DRAG_STYLE.ABOVE);
   });
 
   test('drag an item into a sidebar folder', function() {
     var dragElement = getListItem('13');
     var dragTarget = getFolderNode('2');
-    dispatchDragEvent('dragstart', dragElement);
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(draggedIds));
+    startInternalDrag(dragElement);
 
     // Items can only be dragged onto sidebar folders, not above or below.
     assertEquals(
         DropPosition.ON, dndManager.calculateValidDropPositions_(dragTarget));
 
-    dispatchDragEvent('dragover', dragTarget);
+    move(dragTarget);
     assertDragStyle(dragTarget, DRAG_STYLE.ON);
 
     // Items cannot be dragged onto their parent folders.
     dragTarget = getFolderNode('1');
-    dispatchDragEvent('dragover', dragTarget);
+    move(dragTarget);
     assertDragStyle(dragTarget, DRAG_STYLE.NONE);
   });
 
@@ -204,13 +205,11 @@ suite('drag and drop', function() {
     var dragTarget = getFolderNode('112');
 
     // Folders cannot be dragged into their descendants.
-    dispatchDragEvent('dragstart', dragElement);
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(draggedIds));
+    startInternalDrag(dragElement);
     assertEquals(
-        DropPosition.NONE,
-        dndManager.calculateValidDropPositions_(dragTarget));
+        DropPosition.NONE, dndManager.calculateValidDropPositions_(dragTarget));
 
-    dispatchDragEvent('dragover', dragTarget);
+    move(dragTarget);
 
     assertDragStyle(dragTarget, DRAG_STYLE.NONE);
   });
@@ -218,25 +217,25 @@ suite('drag and drop', function() {
   test('drag item into sidebar folder with descendants', function() {
     var dragElement = getFolderNode('15');
     var dragTarget = getFolderNode('11');
-    dispatchDragEvent('dragstart', dragElement);
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(draggedIds));
+
+    startInternalDrag(dragElement);
 
     // Drags below an open folder are not allowed.
     assertEquals(
         DropPosition.ON | DropPosition.ABOVE,
         dndManager.calculateValidDropPositions_(dragTarget));
 
-    dispatchDragEvent('dragover', dragTarget);
+    move(dragTarget);
 
     assertDragStyle(dragTarget, DRAG_STYLE.ON);
 
-    dispatchDragEvent('dragend', dragElement);
+    MockInteractions.up(dragElement);
     assertDragStyle(dragTarget, DRAG_STYLE.NONE);
 
-    store.data.closedFolders.add('11');
+    store.data.folderOpenState.set('11', false);
+    store.notifyObservers();
 
-    dispatchDragEvent('dragstart', dragElement);
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(draggedIds));
+    startInternalDrag(dragElement);
 
     // Drags below a closed folder are allowed.
     assertEquals(
@@ -247,9 +246,9 @@ suite('drag and drop', function() {
   test('drag multiple list items', function() {
     // Dragging multiple items.
     store.data.selection.items = new Set(['13', '15']);
-    dispatchDragEvent('dragstart', getListItem('13'));
-    assertDeepEquals(['13', '15'], draggedIds);
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(draggedIds));
+    var dragElement = getListItem('13');
+    startInternalDrag(dragElement);
+    assertDeepEquals(['13', '15'], getDragIds());
 
     // The dragged items should not be allowed to be dragged around any selected
     // item.
@@ -262,18 +261,22 @@ suite('drag and drop', function() {
     assertEquals(
         DropPosition.NONE,
         dndManager.calculateValidDropPositions_(getListItem('15')));
+    MockInteractions.up(dragElement);
 
     // Dragging an unselected item should only drag the unselected item.
-    dispatchDragEvent('dragstart', getListItem('14'));
-    assertDeepEquals(['14'], draggedIds);
+    dragElement = getListItem('14');
+    startInternalDrag(dragElement);
+    assertDeepEquals(['14'], getDragIds());
+    MockInteractions.up(dragElement);
 
     // Dragging a folder node should only drag the node.
-    dispatchDragEvent('dragstart', getListItem('11'));
-    assertDeepEquals(['11'], draggedIds);
+    dragElement = getListItem('11');
+    startInternalDrag(dragElement);
+    assertDeepEquals(['11'], getDragIds());
   });
 
   test('bookmarks from different profiles', function() {
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(['11'], false));
+    dndManager.handleChromeDragEnter_(createDragData(['11'], false));
 
     // All positions should be allowed even with the same bookmark id if the
     // drag element is from a different profile.
@@ -293,18 +296,16 @@ suite('drag and drop', function() {
     var dragTarget = getListItem('13');
 
     // Drag a folder onto the list.
-    dispatchDragEvent('dragstart', dragElement);
-    assertDeepEquals(['112'], draggedIds);
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(draggedIds));
+    startInternalDrag(dragElement);
+    assertDeepEquals(['112'], getDragIds());
 
-    dispatchDragEvent(
-        'dragover', dragTarget, MockInteractions.topLeftOfNode(dragTarget));
+    move(dragTarget, MockInteractions.topLeftOfNode(dragTarget));
     assertDragStyle(dragTarget, DRAG_STYLE.ABOVE);
 
-    dispatchDragEvent('dragend', dragTarget);
+    MockInteractions.up(dragTarget);
 
     // Folders should not be able to dragged onto themselves in the list.
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(['11']));
+    dndManager.handleChromeDragEnter_(createDragData(['11']));
     assertEquals(
         DropPosition.NONE,
         dndManager.calculateValidDropPositions_(getListItem('11')));
@@ -315,7 +316,7 @@ suite('drag and drop', function() {
     store.notifyObservers();
     Polymer.dom.flush();
 
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(['11']));
+    dndManager.handleChromeDragEnter_(createDragData(['11']));
     assertEquals(
         DropPosition.NONE,
         dndManager.calculateValidDropPositions_(getListItem('1111')));
@@ -329,7 +330,7 @@ suite('drag and drop', function() {
 
     // Search results should not be able to be dragged onto, but can be dragged
     // from.
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(['2']));
+    dndManager.handleChromeDragEnter_(createDragData(['2']));
     assertEquals(
         DropPosition.NONE,
         dndManager.calculateValidDropPositions_(getListItem('13')));
@@ -354,7 +355,6 @@ suite('drag and drop', function() {
               {element: element, position: position}));
     }
 
-
     // Drops onto the list.
     assertDropInfo('1', 0, getListItem('11'), DropPosition.ABOVE);
     assertDropInfo('1', 2, getListItem('12'), DropPosition.BELOW);
@@ -366,7 +366,12 @@ suite('drag and drop', function() {
     assertDropInfo('111', -1, getFolderNode('111'), DropPosition.ON);
   });
 
-  test('simple drag and drop end to end', function() {
+  test('simple native drop end to end', function() {
+    var draggedIds;
+    chrome.bookmarkManagerPrivate.startDrag = function(nodes, isTouch) {
+      draggedIds = nodes;
+    };
+
     var dropParentId;
     var dropIndex;
     chrome.bookmarkManagerPrivate.drop = function(parentId, index) {
@@ -377,9 +382,13 @@ suite('drag and drop', function() {
     var dragElement = getListItem('13');
     var dragTarget = getListItem('12');
 
+    startInternalDrag(dragElement);
+    assertDeepEquals(['13'], getDragIds());
+
     dispatchDragEvent('dragstart', dragElement);
+    assertEquals(null, dndManager.internalDragElement_);
     assertDeepEquals(['13'], draggedIds);
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(draggedIds));
+    dndManager.handleChromeDragEnter_(createDragData(draggedIds));
 
     dispatchDragEvent(
         'dragover', dragTarget, MockInteractions.topLeftOfNode(dragTarget));
@@ -393,60 +402,91 @@ suite('drag and drop', function() {
     assertDragStyle(dragTarget, DRAG_STYLE.NONE);
   });
 
+
+  test('simple internal drop end to end', function() {
+    var moveId;
+    var moveParentId;
+    var moveIndex;
+    chrome.bookmarks.move = function(id, details) {
+      moveId = id;
+      moveParentId = details.parentId;
+      moveIndex = details.index;
+    };
+
+    var dragElement = getListItem('13');
+    var dragTarget = getListItem('12');
+
+    startInternalDrag(dragElement);
+    assertDeepEquals(['13'], getDragIds());
+
+    move(dragTarget, MockInteractions.topLeftOfNode(dragTarget));
+    assertDragStyle(dragTarget, DRAG_STYLE.ABOVE);
+
+    MockInteractions.up(dragTarget);
+    assertEquals('13', moveId);
+    assertEquals('1', moveParentId);
+    assertEquals(1, moveIndex);
+
+    assertDragStyle(dragTarget, DRAG_STYLE.NONE);
+  });
+
   test('auto expander', function() {
+    var timerProxy = new bookmarks.TestTimerProxy();
+    timerProxy.immediatelyResolveTimeouts = false;
+
     var autoExpander = dndManager.autoExpander_;
-    store.data.closedFolders = new Set(['11']);
+    autoExpander.debouncer_.timerProxy_ = timerProxy;
+
+    store.data.folderOpenState.set('11', false);
     store.notifyObservers();
     Polymer.dom.flush();
 
     var dragElement = getFolderNode('14');
     var dragTarget = getFolderNode('15');
-    autoExpander.testTimestamp_ = 500;
 
-    dispatchDragEvent('dragstart', dragElement);
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(draggedIds));
+    startInternalDrag(dragElement);
 
     // Dragging onto folders without children doesn't update the auto expander.
-    dispatchDragEvent('dragover', dragTarget);
+    move(dragTarget);
     assertEquals(null, autoExpander.lastElement_);
 
     // Dragging onto open folders doesn't update the auto expander.
     dragTarget = getFolderNode('1');
-    dispatchDragEvent('dragover', dragTarget);
+    move(dragTarget);
     assertEquals(null, autoExpander.lastElement_);
 
     // Dragging onto a closed folder with children updates the auto expander.
     dragTarget = getFolderNode('11');
-    dispatchDragEvent('dragover', dragTarget);
-    assertEquals(500, autoExpander.lastTimestamp_);
+    move(dragTarget);
     assertEquals(dragTarget, autoExpander.lastElement_);
 
     // Dragging onto another item resets the auto expander.
-    autoExpander.testTimestamp_ = 700;
     dragTarget = getFolderNode('1');
-    dispatchDragEvent('dragover', dragTarget);
+    move(dragTarget);
     assertEquals(null, autoExpander.lastElement_);
 
     // Dragging onto the list resets the auto expander.
     dragTarget = getFolderNode('11');
-    dispatchDragEvent('dragover', dragTarget);
-    assertEquals(700, autoExpander.lastTimestamp_);
+    move(dragTarget);
     assertEquals(dragTarget, autoExpander.lastElement_);
 
     dragTarget = list;
-    dispatchDragEvent('dragover', dragTarget);
+    move(dragTarget);
     assertEquals(null, autoExpander.lastElement_);
 
-    // Auto expands after expand delay.
+    // Moving the mouse resets the delay.
     dragTarget = getFolderNode('11');
-    dispatchDragEvent('dragover', dragTarget);
-    assertEquals(700, autoExpander.lastTimestamp_);
+    move(dragTarget);
+    assertEquals(dragTarget, autoExpander.lastElement_);
+    var oldTimer = autoExpander.debouncer_.timer_;
 
-    autoExpander.testTimestamp_ += autoExpander.EXPAND_FOLDER_DELAY;
-    dispatchDragEvent('dragover', dragTarget);
+    move(dragTarget);
+    assertNotEquals(oldTimer, autoExpander.debouncer_.timer_);
+
+    // Auto expands after expand delay.
+    timerProxy.runTimeoutFn(autoExpander.debouncer_.timer_);
     assertDeepEquals(
         bookmarks.actions.changeFolderOpen('11', true), store.lastAction);
-    assertEquals(0, autoExpander.lastTimestamp_);
     assertEquals(null, autoExpander.lastElement_);
   });
 
@@ -458,26 +498,108 @@ suite('drag and drop', function() {
     var dragTarget = list;
 
     // Dragging onto an empty list.
-    dispatchDragEvent('dragstart', dragElement);
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(draggedIds));
+    startInternalDrag(dragElement);
 
-    dispatchDragEvent('dragover', dragTarget);
+    move(dragTarget);
     assertEquals(
         DropPosition.ON, dndManager.calculateValidDropPositions_(dragTarget));
     assertDragStyle(dragTarget, DRAG_STYLE.ON);
 
-    dispatchDragEvent('dragend', dragTarget);
+    MockInteractions.up(dragTarget);
 
     // Dragging onto a non-empty list.
     store.data.selectedFolder = '11';
     store.notifyObservers();
 
-    dispatchDragEvent('dragstart', dragElement);
-    dndManager.dragInfo_.handleChromeDragEnter(createDragData(draggedIds));
+    startInternalDrag(dragElement);
 
-    dispatchDragEvent('dragover', dragTarget);
+    move(dragTarget);
     assertEquals(
         DropPosition.NONE, dndManager.calculateValidDropPositions_(dragTarget));
     assertDragStyle(dragTarget, DRAG_STYLE.NONE);
+  });
+
+  test('drag item selects/deselects items', function() {
+    store.setReducersEnabled(true);
+
+    store.data.selection.items = new Set(['13', '15']);
+    store.notifyObservers();
+
+    // Dragging an item not in the selection selects the dragged item and
+    // deselects the previous selection.
+    var dragElement = getListItem('14');
+    startInternalDrag(dragElement);
+    assertDeepEquals(['14'], normalizeIterable(store.data.selection.items));
+    MockInteractions.up(dragElement);
+
+    // Dragging a folder node deselects any selected items in the bookmark list.
+    dragElement = getFolderNode('15');
+    startInternalDrag(dragElement);
+    assertDeepEquals([], normalizeIterable(store.data.selection.items));
+    MockInteractions.up(dragElement);
+  });
+
+  test('cannot drag items when editing is disabled', function() {
+    store.data.prefs.canEdit = false;
+    store.notifyObservers();
+
+    var dragElement = getFolderNode('11');
+    startInternalDrag(dragElement);
+    assertFalse(dndManager.dragInfo_.isDragValid());
+  });
+
+  test('cannot start dragging unmodifiable items', function() {
+    store.data.nodes['2'].unmodifiable = 'managed';
+    store.notifyObservers();
+
+    var dragElement = getFolderNode('1');
+    startInternalDrag(dragElement);
+    assertFalse(dndManager.dragInfo_.isDragValid());
+
+    dragElement = getFolderNode('2');
+    startInternalDrag(dragElement);
+    assertFalse(dndManager.dragInfo_.isDragValid());
+  });
+
+  test('cannot drag onto folders with unmodifiable children', function() {
+    store.data.nodes['2'].unmodifiable = 'managed';
+    store.notifyObservers();
+
+    var dragElement = getListItem('12');
+    startInternalDrag(dragElement);
+
+    // Can't drag onto the unmodifiable node.
+    var dragTarget = getFolderNode('2');
+    move(dragTarget);
+    assertEquals(
+        DropPosition.NONE, dndManager.calculateValidDropPositions_(dragTarget));
+  });
+
+  test('ensure drag and drop chip shows', function() {
+    var dragElement = getListItem('13');
+    var dragTarget = getFolderNode('2');
+
+    startInternalDrag(dragElement);
+
+    move(dragTarget, {x: 50, y: 80});
+    assertTrue(!!dndManager.chip_);
+    var dndChip = dndManager.dndChip;
+    assertEquals('50px', dndChip.style.getPropertyValue('--mouse-x'));
+    assertEquals('80px', dndChip.style.getPropertyValue('--mouse-y'));
+    assertTrue(dndChip.showing_);
+
+    MockInteractions.up(dragElement);
+    assertFalse(dndChip.showing_);
+  });
+
+  test('drag starts after minimal move distance', function() {
+    var dragElement = getListItem('13');
+
+    MockInteractions.down(dragElement);
+    move(dragElement);
+    assertFalse(dndManager.dragInfo_.isDragValid());
+
+    move(dragElement, MockInteractions.topLeftOfNode(dragElement));
+    assertTrue(dndManager.dragInfo_.isDragValid());
   });
 });

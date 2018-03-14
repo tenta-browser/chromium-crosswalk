@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/browser_commands.h"
 
+#include <vector>
+
 #include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
@@ -13,20 +15,17 @@
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
-#include "chrome/browser/browsing_data/browsing_data_remover.h"
-#include "chrome/browser/browsing_data/browsing_data_remover_factory.h"
 #include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/dom_distiller/tab_utils.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/media/router/media_router_dialog_controller.h"  // nogncheck
 #include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_service_factory.h"
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
-#include "chrome/browser/ssl/security_state_tab_helper.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/accelerator_utils.h"
 #include "chrome/browser/ui/autofill/save_card_bubble_controller_impl.h"
@@ -35,7 +34,6 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_dialogs.h"
-#include "chrome/browser/ui/browser_instant_controller.h"
 #include "chrome/browser/ui/browser_live_tab_context.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -54,6 +52,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/translate/translate_bubble_view_state_transition.h"
 #include "chrome/browser/upgrade_detector.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/content_restriction.h"
 #include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
@@ -61,9 +60,9 @@
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/favicon/content/content_favicon_driver.h"
+#include "components/feature_engagement/features.h"
 #include "components/google/core/browser/google_util.h"
 #include "components/prefs/pref_service.h"
-#include "components/security_state/core/security_state.h"
 #include "components/sessions/core/live_tab_context.h"
 #include "components/sessions/core/tab_restore_service.h"
 #include "components/signin/core/browser/signin_header_helper.h"
@@ -72,10 +71,10 @@
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/zoom/page_zoom.h"
 #include "components/zoom/zoom_controller.h"
+#include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -89,7 +88,10 @@
 #include "net/base/escape.h"
 #include "printing/features/features.h"
 #include "rlz/features/features.h"
+#include "ui/base/clipboard/clipboard_types.h"
+#include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/events/keycodes/keyboard_codes.h"
+#include "url/gurl.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/api/commands/command_service.h"
@@ -116,8 +118,9 @@
 #include "components/rlz/rlz_tracker.h"  // nogncheck
 #endif
 
-#if defined(ENABLE_MEDIA_ROUTER)
-#include "chrome/browser/media/router/media_router_dialog_controller.h"  // nogncheck
+#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
+#include "chrome/browser/feature_engagement/incognito_window/incognito_window_tracker.h"
+#include "chrome/browser/feature_engagement/incognito_window/incognito_window_tracker_factory.h"
 #endif
 
 namespace {
@@ -303,44 +306,38 @@ bool PrintPreviewShowing(const Browser* browser) {
 }  // namespace
 
 bool IsCommandEnabled(Browser* browser, int command) {
-  return browser->command_controller()->command_updater()->IsCommandEnabled(
-      command);
+  return browser->command_controller()->IsCommandEnabled(command);
 }
 
 bool SupportsCommand(Browser* browser, int command) {
-  return browser->command_controller()->command_updater()->SupportsCommand(
-      command);
+  return browser->command_controller()->SupportsCommand(command);
 }
 
 bool ExecuteCommand(Browser* browser, int command) {
-  return browser->command_controller()->command_updater()->ExecuteCommand(
-      command);
+  return browser->command_controller()->ExecuteCommand(command);
 }
 
 bool ExecuteCommandWithDisposition(Browser* browser,
                                    int command,
                                    WindowOpenDisposition disposition) {
-  return browser->command_controller()->command_updater()->
-      ExecuteCommandWithDisposition(command, disposition);
+  return browser->command_controller()->ExecuteCommandWithDisposition(
+      command, disposition);
 }
 
 void UpdateCommandEnabled(Browser* browser, int command, bool enabled) {
-  browser->command_controller()->command_updater()->UpdateCommandEnabled(
-      command, enabled);
+  browser->command_controller()->UpdateCommandEnabled(command, enabled);
 }
 
 void AddCommandObserver(Browser* browser,
                         int command,
                         CommandObserver* observer) {
-  browser->command_controller()->command_updater()->AddCommandObserver(
-      command, observer);
+  browser->command_controller()->AddCommandObserver(command, observer);
 }
 
 void RemoveCommandObserver(Browser* browser,
                            int command,
                            CommandObserver* observer) {
-  browser->command_controller()->command_updater()->RemoveCommandObserver(
-      command, observer);
+  browser->command_controller()->RemoveCommandObserver(command, observer);
 }
 
 int GetContentRestrictions(const Browser* browser) {
@@ -527,26 +524,8 @@ void OpenCurrentURL(Browser* browser) {
 
   GURL url(location_bar->GetDestinationURL());
 
-  ui::PageTransition page_transition = location_bar->GetPageTransition();
-  WindowOpenDisposition open_disposition =
-      location_bar->GetWindowOpenDisposition();
-  // A PAGE_TRANSITION_TYPED means the user has typed a URL. We do not want to
-  // open URLs with instant_controller since in some cases it disregards it
-  // and performs a search instead. For example, when using CTRL-Enter, the
-  // location_bar is aware of the URL but instant is not.
-  // Instant should also not handle PAGE_TRANSITION_RELOAD because its knowledge
-  // of the omnibox text may be stale if the user focuses in the omnibox and
-  // presses enter without typing anything.
-  if (!ui::PageTransitionCoreTypeIs(page_transition,
-                                    ui::PAGE_TRANSITION_TYPED) &&
-      !ui::PageTransitionCoreTypeIs(page_transition,
-                                    ui::PAGE_TRANSITION_RELOAD) &&
-      browser->instant_controller()) {
-    browser->instant_controller()->OpenInstant(open_disposition, url);
-  }
-
-  NavigateParams params(browser, url, page_transition);
-  params.disposition = open_disposition;
+  NavigateParams params(browser, url, location_bar->GetPageTransition());
+  params.disposition = location_bar->GetWindowOpenDisposition();
   // Use ADD_INHERIT_OPENER so that all pages opened by the omnibox at least
   // inherit the opener. In some cases the tabstrip will determine the group
   // should be inherited, in which case the group is inherited instead of the
@@ -578,6 +557,11 @@ void NewWindow(Browser* browser) {
 }
 
 void NewIncognitoWindow(Browser* browser) {
+#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
+  feature_engagement::IncognitoWindowTrackerFactory::GetInstance()
+      ->GetForProfile(browser->profile())
+      ->OnIncognitoWindowOpened();
+#endif
   NewEmptyWindow(browser->profile()->GetOffTheRecordProfile());
 }
 
@@ -744,6 +728,21 @@ bool CanDuplicateTabAt(const Browser* browser, int index) {
          contents->GetController().GetLastCommittedEntry();
 }
 
+void PinTab(Browser* browser) {
+  browser->tab_strip_model()->ExecuteContextMenuCommand(
+      browser->tab_strip_model()->active_index(),
+      TabStripModel::ContextMenuCommand::CommandTogglePinned);
+}
+
+void MuteSite(Browser* browser) {
+  TabStripModel::ContextMenuCommand command_id =
+      base::FeatureList::IsEnabled(features::kSoundContentSetting)
+          ? TabStripModel::ContextMenuCommand::CommandToggleSiteMuted
+          : TabStripModel::ContextMenuCommand::CommandToggleTabAudioMuted;
+  browser->tab_strip_model()->ExecuteContextMenuCommand(
+      browser->tab_strip_model()->active_index(), command_id);
+}
+
 void ConvertPopupToTabbedBrowser(Browser* browser) {
   base::RecordAction(UserMetricsAction("ShowAsTab"));
   TabStripModel* tab_strip = browser->tab_strip_model();
@@ -777,7 +776,8 @@ void BookmarkCurrentPageIgnoringExtensionOverrides(Browser* browser) {
       web_contents->GetBrowserContext()->IsOffTheRecord()) {
     // If we're incognito the favicon may not have been saved. Save it now
     // so that bookmarks have an icon for the page.
-    favicon::ContentFaviconDriver::FromWebContents(web_contents)->SaveFavicon();
+    favicon::ContentFaviconDriver::FromWebContents(web_contents)
+        ->SaveFaviconEvenIfInIncognito();
   }
   bool was_bookmarked_by_user = bookmarks::IsBookmarkedByUser(model, url);
   bookmarks::AddIfNotBookmarked(model, url, title);
@@ -856,6 +856,8 @@ void Translate(Browser* browser) {
   if (chrome_translate_client) {
     if (chrome_translate_client->GetLanguageState().translation_pending())
       step = translate::TRANSLATE_STEP_TRANSLATING;
+    else if (chrome_translate_client->GetLanguageState().translation_error())
+      step = translate::TRANSLATE_STEP_TRANSLATE_ERROR;
     else if (chrome_translate_client->GetLanguageState().IsPageTranslated())
       step = translate::TRANSLATE_STEP_AFTER_TRANSLATE;
   }
@@ -895,23 +897,6 @@ bool CanSavePage(const Browser* browser) {
 
 void ShowFindBar(Browser* browser) {
   browser->GetFindBarController()->Show();
-}
-
-bool ShowPageInfo(Browser* browser, content::WebContents* web_contents) {
-  content::NavigationEntry* entry =
-      web_contents->GetController().GetVisibleEntry();
-  if (!entry)
-    return false;
-
-  SecurityStateTabHelper* helper =
-      SecurityStateTabHelper::FromWebContents(web_contents);
-  security_state::SecurityInfo security_info;
-  helper->GetSecurityInfo(&security_info);
-
-  browser->window()->ShowPageInfo(
-      Profile::FromBrowserContext(web_contents->GetBrowserContext()),
-      web_contents, entry->GetVirtualURL(), security_info);
-  return true;
 }
 
 void Print(Browser* browser) {
@@ -963,7 +948,6 @@ bool CanRouteMedia(Browser* browser) {
 }
 
 void RouteMedia(Browser* browser) {
-#if defined(ENABLE_MEDIA_ROUTER)
   DCHECK(CanRouteMedia(browser));
 
   media_router::MediaRouterDialogController* dialog_controller =
@@ -973,7 +957,6 @@ void RouteMedia(Browser* browser) {
     return;
 
   dialog_controller->ShowMediaRouterDialog();
-#endif  // defined(ENABLE_MEDIA_ROUTER)
 }
 
 void EmailPageLocation(Browser* browser) {
@@ -1108,9 +1091,11 @@ void OpenTaskManager(Browser* browser) {
 #endif
 }
 
-void OpenFeedbackDialog(Browser* browser) {
+void OpenFeedbackDialog(Browser* browser, FeedbackSource source) {
   base::RecordAction(UserMetricsAction("Feedback"));
-  chrome::ShowFeedbackPage(browser, std::string(), std::string());
+  chrome::ShowFeedbackPage(
+      browser, source, std::string() /* description_template */,
+      std::string() /* category_tag */, std::string() /* extra_diagnostics */);
 }
 
 void ToggleBookmarkBar(Browser* browser) {
@@ -1131,15 +1116,9 @@ void ShowAvatarMenu(Browser* browser) {
 
 void OpenUpdateChromeDialog(Browser* browser) {
   if (UpgradeDetector::GetInstance()->is_outdated_install()) {
-    content::NotificationService::current()->Notify(
-        chrome::NOTIFICATION_OUTDATED_INSTALL,
-        content::NotificationService::AllSources(),
-        content::NotificationService::NoDetails());
+    UpgradeDetector::GetInstance()->NotifyOutdatedInstall();
   } else if (UpgradeDetector::GetInstance()->is_outdated_install_no_au()) {
-    content::NotificationService::current()->Notify(
-        chrome::NOTIFICATION_OUTDATED_INSTALL_NO_AU,
-        content::NotificationService::AllSources(),
-        content::NotificationService::NoDetails());
+    UpgradeDetector::GetInstance()->NotifyOutdatedInstallNoAutoUpdate();
   } else {
     base::RecordAction(UserMetricsAction("UpdateChrome"));
     browser->window()->ShowUpdateChromeDialog();
@@ -1193,11 +1172,11 @@ void ToggleFullscreenMode(Browser* browser) {
 }
 
 void ClearCache(Browser* browser) {
-  BrowsingDataRemover* remover =
-      BrowsingDataRemoverFactory::GetForBrowserContext(browser->profile());
+  content::BrowsingDataRemover* remover =
+      content::BrowserContext::GetBrowsingDataRemover(browser->profile());
   remover->Remove(base::Time(), base::Time::Max(),
-                  BrowsingDataRemover::DATA_TYPE_CACHE,
-                  BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB);
+                  content::BrowsingDataRemover::DATA_TYPE_CACHE,
+                  content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB);
   // BrowsingDataRemover takes care of deleting itself when done.
 }
 
@@ -1207,86 +1186,30 @@ bool IsDebuggerAttachedToCurrentTab(Browser* browser) {
       content::DevToolsAgentHost::IsDebuggerAttached(contents) : false;
 }
 
-void ViewSource(Browser* browser, WebContents* contents) {
-  DCHECK(contents);
-
-  // Use the last committed entry, since the pending entry hasn't loaded yet and
-  // won't be copied into the cloned tab.
-  NavigationEntry* entry = contents->GetController().GetLastCommittedEntry();
-  if (!entry)
-    return;
-
-  ViewSource(browser, contents, entry->GetURL(), entry->GetPageState());
+void CopyURL(Browser* browser) {
+  ui::ScopedClipboardWriter scw(ui::CLIPBOARD_TYPE_COPY_PASTE);
+  scw.WriteText(base::UTF8ToUTF16(browser->tab_strip_model()
+                                      ->GetActiveWebContents()
+                                      ->GetVisibleURL()
+                                      .spec()));
 }
 
-void ViewSource(Browser* browser,
-                WebContents* contents,
-                const GURL& url,
-                const content::PageState& page_state) {
-  base::RecordAction(UserMetricsAction("ViewSource"));
-  DCHECK(contents);
+void OpenInChrome(Browser* browser) {
+  // Find a non-incognito browser.
+  Browser* target_browser =
+      chrome::FindTabbedBrowser(browser->profile(), false);
 
-  WebContents* view_source_contents = contents->Clone();
-  DCHECK(view_source_contents->GetController().CanPruneAllButLastCommitted());
-  view_source_contents->GetController().PruneAllButLastCommitted();
-  NavigationEntry* last_committed_entry =
-      view_source_contents->GetController().GetLastCommittedEntry();
-  if (!last_committed_entry)
-    return;
-
-  GURL view_source_url =
-      GURL(content::kViewSourceScheme + std::string(":") + url.spec());
-  last_committed_entry->SetVirtualURL(view_source_url);
-  last_committed_entry->SetURL(url);
-
-  // Do not restore scroller position.
-  last_committed_entry->SetPageState(page_state.RemoveScrollOffset());
-
-  // Do not restore title, derive it from the url.
-  view_source_contents->UpdateTitleForEntry(last_committed_entry,
-                                            base::string16());
-
-  // Now show view-source entry.
-  if (browser->CanSupportWindowFeature(Browser::FEATURE_TABSTRIP)) {
-    // If this is a tabbed browser, just create a duplicate tab inside the same
-    // window next to the tab being duplicated.
-    int index = browser->tab_strip_model()->GetIndexOfWebContents(contents);
-    int add_types = TabStripModel::ADD_ACTIVE |
-        TabStripModel::ADD_INHERIT_GROUP;
-    browser->tab_strip_model()->InsertWebContentsAt(
-        index + 1,
-        view_source_contents,
-        add_types);
-  } else {
-    Browser* b = new Browser(
-        Browser::CreateParams(Browser::TYPE_TABBED, browser->profile(), true));
-
-    // Preserve the size of the original window. The new window has already
-    // been given an offset by the OS, so we shouldn't copy the old bounds.
-    BrowserWindow* new_window = b->window();
-    new_window->SetBounds(gfx::Rect(new_window->GetRestoredBounds().origin(),
-                          browser->window()->GetRestoredBounds().size()));
-
-    // We need to show the browser now. Otherwise ContainerWin assumes the
-    // WebContents is invisible and won't size it.
-    b->window()->Show();
-
-    // The page transition below is only for the purpose of inserting the tab.
-    b->tab_strip_model()->AddWebContents(view_source_contents, -1,
-                                         ui::PAGE_TRANSITION_LINK,
-                                         TabStripModel::ADD_ACTIVE);
+  if (!target_browser) {
+    target_browser =
+        new Browser(Browser::CreateParams(browser->profile(), true));
   }
 
-  SessionService* session_service =
-      SessionServiceFactory::GetForProfileIfExisting(browser->profile());
-  if (session_service)
-    session_service->TabRestored(view_source_contents, false);
+  TabStripModel* source_tabstrip = browser->tab_strip_model();
+  target_browser->tab_strip_model()->AppendWebContents(
+      source_tabstrip->DetachWebContentsAt(source_tabstrip->active_index()),
+      true);
+  target_browser->window()->Show();
 }
-
-void ViewSelectedSource(Browser* browser) {
-  ViewSource(browser, browser->tab_strip_model()->GetActiveWebContents());
-}
-
 bool CanViewSource(const Browser* browser) {
   return !browser->is_devtools() &&
       browser->tab_strip_model()->GetActiveWebContents()->GetController().
@@ -1307,5 +1230,18 @@ bool CanCreateBookmarkApp(const Browser* browser) {
       ->CanCreateBookmarkApp();
 }
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+
+#if defined(OS_CHROMEOS)
+void QueryAndDisplayArcApps(
+    const Browser* browser,
+    const std::vector<arc::ArcNavigationThrottle::AppInfo>& app_info,
+    IntentPickerResponse callback) {
+  browser->window()->ShowIntentPickerBubble(app_info, callback);
+}
+
+void SetIntentPickerViewVisibility(Browser* browser, bool visible) {
+  browser->window()->SetIntentPickerViewVisibility(visible);
+}
+#endif  // defined(OS_CHROMEOS)
 
 }  // namespace chrome

@@ -9,15 +9,22 @@
 
 #include "base/macros.h"
 #include "build/build_config.h"
-#include "cc/surfaces/surface_manager.h"
+#include "components/viz/host/host_frame_sink_manager.h"
+#include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
+#include "components/viz/service/surfaces/surface_manager.h"
 #include "content/browser/compositor/image_transport_factory.h"
+#include "ui/compositor/test/in_process_context_factory.h"
 
-namespace cc {
-class ContextProvider;
+namespace gl {
+class DisableNullDrawGLBindings;
 }
 
 namespace ui {
 class InProcessContextFactory;
+}
+
+namespace viz {
+class ContextProvider;
 }
 
 namespace content {
@@ -29,22 +36,23 @@ class NoTransportImageTransportFactory : public ImageTransportFactory {
   ~NoTransportImageTransportFactory() override;
 
   // ImageTransportFactory implementation.
+  bool IsGpuCompositingDisabled() override;
   ui::ContextFactory* GetContextFactory() override;
   ui::ContextFactoryPrivate* GetContextFactoryPrivate() override;
-  display_compositor::GLHelper* GetGLHelper() override;
-  FrameSinkManagerHost* GetFrameSinkManagerHost() override;
-  void SetGpuChannelEstablishFactory(
-      gpu::GpuChannelEstablishFactory* factory) override;
+  viz::GLHelper* GetGLHelper() override;
 #if defined(OS_MACOSX)
   void SetCompositorSuspendedForRecycle(ui::Compositor* compositor,
                                         bool suspended) override {}
 #endif
 
  private:
-  std::unique_ptr<cc::SurfaceManager> surface_manager_;
-  std::unique_ptr<ui::InProcessContextFactory> context_factory_;
-  scoped_refptr<cc::ContextProvider> context_provider_;
-  std::unique_ptr<display_compositor::GLHelper> gl_helper_;
+  // The FrameSinkManagerImpl implementation lives in-process here for tests.
+  viz::FrameSinkManagerImpl frame_sink_manager_;
+  viz::HostFrameSinkManager host_frame_sink_manager_;
+  ui::InProcessContextFactory context_factory_;
+  scoped_refptr<viz::ContextProvider> context_provider_;
+  std::unique_ptr<viz::GLHelper> gl_helper_;
+  std::unique_ptr<gl::DisableNullDrawGLBindings> disable_null_draw_;
 
   DISALLOW_COPY_AND_ASSIGN(NoTransportImageTransportFactory);
 };

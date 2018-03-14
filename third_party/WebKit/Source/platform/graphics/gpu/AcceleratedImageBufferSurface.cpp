@@ -30,10 +30,12 @@
 
 #include "platform/graphics/gpu/AcceleratedImageBufferSurface.h"
 
+#include "base/memory/scoped_refptr.h"
+#include "platform/graphics/AcceleratedStaticBitmapImage.h"
 #include "platform/graphics/gpu/SharedGpuContext.h"
 #include "platform/graphics/skia/SkiaUtils.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/wtf/PtrUtil.h"
-#include "platform/wtf/RefPtr.h"
 #include "skia/ext/texture_handle.h"
 #include "third_party/skia/include/gpu/GrContext.h"
 
@@ -41,28 +43,27 @@ namespace blink {
 
 AcceleratedImageBufferSurface::AcceleratedImageBufferSurface(
     const IntSize& size,
-    OpacityMode opacity_mode,
-    sk_sp<SkColorSpace> color_space,
-    SkColorType color_type)
-    : ImageBufferSurface(size, opacity_mode, color_space, color_type) {
-  if (!SharedGpuContext::IsValid())
+    const CanvasColorParams& color_params)
+    : ImageBufferSurface(size, color_params) {
+  context_provider_wrapper_ = SharedGpuContext::ContextProviderWrapper();
+  if (!context_provider_wrapper_)
     return;
-  GrContext* gr_context = SharedGpuContext::Gr();
-  context_id_ = SharedGpuContext::ContextId();
+  GrContext* gr_context =
+      context_provider_wrapper_->ContextProvider()->GetGrContext();
+
   CHECK(gr_context);
 
-  SkAlphaType alpha_type =
-      (kOpaque == opacity_mode) ? kOpaque_SkAlphaType : kPremul_SkAlphaType;
-  SkImageInfo info = SkImageInfo::Make(size.Width(), size.Height(), color_type,
-                                       alpha_type, color_space);
-  SkSurfaceProps disable_lcd_props(0, kUnknown_SkPixelGeometry);
-  surface_ = SkSurface::MakeRenderTarget(
-      gr_context, SkBudgeted::kYes, info, 0 /* sampleCount */,
-      kOpaque == opacity_mode ? nullptr : &disable_lcd_props);
+  SkImageInfo info = SkImageInfo::Make(
+      size.Width(), size.Height(), color_params.GetSkColorType(),
+      color_params.GetSkAlphaType(),
+      color_params.GetSkColorSpaceForSkSurfaces());
+  surface_ = SkSurface::MakeRenderTarget(gr_context, SkBudgeted::kYes, info,
+                                         0 /* sampleCount */,
+                                         color_params.GetSkSurfaceProps());
   if (!surface_)
     return;
 
-  canvas_ = WTF::WrapUnique(new SkiaPaintCanvas(surface_->getCanvas()));
+  canvas_ = color_params.WrapCanvas(surface_->getCanvas());
   Clear();
 
   // Always save an initial frame, to support resetting the top level matrix
@@ -71,13 +72,25 @@ AcceleratedImageBufferSurface::AcceleratedImageBufferSurface(
 }
 
 bool AcceleratedImageBufferSurface::IsValid() const {
-  return surface_ && SharedGpuContext::IsValid() &&
-         context_id_ == SharedGpuContext::ContextId();
+  // Note: SharedGpuContext::ContextProviderWrapper() is called in order to
+  // actively detect not-yet-handled context losses.
+  return surface_ && context_provider_wrapper_;
 }
 
-sk_sp<SkImage> AcceleratedImageBufferSurface::NewImageSnapshot(AccelerationHint,
-                                                               SnapshotReason) {
-  return surface_->makeImageSnapshot();
+scoped_refptr<StaticBitmapImage>
+AcceleratedImageBufferSurface::NewImageSnapshot(AccelerationHint,
+                                                SnapshotReason) {
+  if (!IsValid())
+    return nullptr;
+  // Must make a copy of the WeakPtr because CreateFromSkImage only takes
+  // r-value references.
+  WeakPtr<WebGraphicsContext3DProviderWrapper> context_provider_wrapper =
+      context_provider_wrapper_;
+  scoped_refptr<AcceleratedStaticBitmapImage> image =
+      AcceleratedStaticBitmapImage::CreateFromSkImage(
+          surface_->makeImageSnapshot(), std::move(context_provider_wrapper));
+  image->RetainOriginalSkImageForCopyOnWrite();
+  return image;
 }
 
 GLuint AcceleratedImageBufferSurface::GetBackingTextureHandleForOverwrite() {
@@ -87,6 +100,14 @@ GLuint AcceleratedImageBufferSurface::GetBackingTextureHandleForOverwrite() {
              surface_->getTextureHandle(
                  SkSurface::kDiscardWrite_TextureHandleAccess))
       ->fID;
+}
+
+bool AcceleratedImageBufferSurface::WritePixels(const SkImageInfo& orig_info,
+                                                const void* pixels,
+                                                size_t row_bytes,
+                                                int x,
+                                                int y) {
+  return surface_->getCanvas()->writePixels(orig_info, pixels, row_bytes, x, y);
 }
 
 }  // namespace blink

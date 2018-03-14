@@ -9,6 +9,8 @@
 #include <string>
 
 #include "base/callback_forward.h"
+#include "base/values.h"
+#include "chrome/test/chromedriver/session.h"
 
 namespace base {
 class DictionaryValue;
@@ -194,6 +196,18 @@ Status ExecuteTouchPinch(Session* session,
                          std::unique_ptr<base::Value>* value,
                          Timeout* timeout);
 
+Status ExecuteSendCommand(Session* session,
+                          WebView* web_view,
+                          const base::DictionaryValue& params,
+                          std::unique_ptr<base::Value>* value,
+                          Timeout* timeout);
+
+Status ExecuteSendCommandAndGetResult(Session* session,
+                                      WebView* web_view,
+                                      const base::DictionaryValue& params,
+                                      std::unique_ptr<base::Value>* value,
+                                      Timeout* timeout);
+
 Status ExecuteGetActiveElement(Session* session,
                                WebView* web_view,
                                const base::DictionaryValue& params,
@@ -275,6 +289,13 @@ Status ExecuteGetCookies(Session* session,
                          std::unique_ptr<base::Value>* value,
                          Timeout* timeout);
 
+// Retrieve a single cookie with the requested name.
+Status ExecuteGetNamedCookie(Session* session,
+                             WebView* web_view,
+                             const base::DictionaryValue& params,
+                             std::unique_ptr<base::Value>* value,
+                             Timeout* timeout);
+
 // Set a cookie. If the cookie path is not specified, it should be set to "/".
 // If the domain is omitted, it should default to the current page's domain.
 Status ExecuteAddCookie(Session* session,
@@ -321,4 +342,13 @@ Status ExecuteTakeHeapSnapshot(Session* session,
                                std::unique_ptr<base::Value>* value,
                                Timeout* timeout);
 
+Status ExecutePerformActions(Session* session,
+                             WebView* web_view,
+                             const base::DictionaryValue& params,
+                             std::unique_ptr<base::Value>* value,
+                             Timeout* timeout);
+
+Status ProcessInputActionSequence(Session* session,
+                                  const base::DictionaryValue* action_sequence,
+                                  std::unique_ptr<base::ListValue>* result);
 #endif  // CHROME_TEST_CHROMEDRIVER_WINDOW_COMMANDS_H_

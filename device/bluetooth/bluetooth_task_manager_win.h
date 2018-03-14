@@ -24,7 +24,6 @@
 namespace base {
 
 class SequencedTaskRunner;
-class SequencedWorkerPool;
 
 }  // namespace base
 
@@ -121,7 +120,6 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothTaskManagerWin
   void Initialize();
   void InitializeWithBluetoothTaskRunner(
       scoped_refptr<base::SequencedTaskRunner> bluetooth_task_runner);
-  void Shutdown();
 
   void PostSetPoweredBluetoothTask(
       bool powered,
@@ -283,6 +281,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothTaskManagerWin
 
   // Search for device paths of the GATT services in |*service_record_states|
   // from |device_address|.
+  // Return true if we were able to match all services with a service device
+  // path.
   bool SearchForGattServiceDevicePaths(
       const std::string device_address,
       std::vector<std::unique_ptr<ServiceRecordState>>* service_record_states);
@@ -316,7 +316,6 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothTaskManagerWin
   // UI task runner reference.
   scoped_refptr<base::SequencedTaskRunner> ui_task_runner_;
 
-  scoped_refptr<base::SequencedWorkerPool> worker_pool_;
   scoped_refptr<base::SequencedTaskRunner> bluetooth_task_runner_;
 
   // List of observers interested in event notifications.

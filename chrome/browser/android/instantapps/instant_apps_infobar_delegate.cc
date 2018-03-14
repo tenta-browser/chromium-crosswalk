@@ -12,23 +12,34 @@
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/ui/android/infobars/instant_apps_infobar.h"
 #include "components/infobars/core/infobar_delegate.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/InstantAppsInfoBarDelegate_jni.h"
 
 InstantAppsInfoBarDelegate::~InstantAppsInfoBarDelegate() {}
 
 // static
-void InstantAppsInfoBarDelegate::Create(InfoBarService* infobar_service,
+void InstantAppsInfoBarDelegate::Create(content::WebContents* web_contents,
                                         const jobject jdata,
-                                        const std::string& url) {
+                                        const std::string& url,
+                                        bool instant_app_is_default) {
+  InfoBarService* infobar_service =
+      InfoBarService::FromWebContents(web_contents);
   infobar_service->AddInfoBar(base::MakeUnique<InstantAppsInfoBar>(
       std::unique_ptr<InstantAppsInfoBarDelegate>(
-          new InstantAppsInfoBarDelegate(jdata, url))));
+          new InstantAppsInfoBarDelegate(web_contents, jdata, url,
+                                         instant_app_is_default))));
 }
 
-InstantAppsInfoBarDelegate::InstantAppsInfoBarDelegate(const jobject jdata,
-                                                       const std::string& url)
-    : url_(url) {
+InstantAppsInfoBarDelegate::InstantAppsInfoBarDelegate(
+    content::WebContents* web_contents,
+    const jobject jdata,
+    const std::string& url,
+    bool instant_app_is_default)
+    : content::WebContentsObserver(web_contents),
+      url_(url),
+      has_navigated_away_from_launch_url_(false),
+      instant_app_is_default_(instant_app_is_default) {
   JNIEnv* env = base::android::AttachCurrentThread();
   java_delegate_.Reset(Java_InstantAppsInfoBarDelegate_create(env));
   data_.Reset(env, jdata);
@@ -46,11 +57,14 @@ base::string16 InstantAppsInfoBarDelegate::GetMessageText() const {
 
 bool InstantAppsInfoBarDelegate::Accept() {
   JNIEnv* env = base::android::AttachCurrentThread();
-  base::RecordAction(base::UserMetricsAction(
-      "Android.InstantApps.BannerOpen"));
-  Java_InstantAppsInfoBarDelegate_openInstantApp(env,
-                                                 java_delegate_.obj(),
-                                                 data_.obj());
+  if (instant_app_is_default_) {
+    base::RecordAction(
+        base::UserMetricsAction("Android.InstantApps.BannerOpenAppIsDefault"));
+  } else {
+    base::RecordAction(
+        base::UserMetricsAction("Android.InstantApps.BannerOpen"));
+  }
+  Java_InstantAppsInfoBarDelegate_openInstantApp(env, java_delegate_, data_);
   return true;
 }
 
@@ -64,26 +78,55 @@ void InstantAppsInfoBarDelegate::InfoBarDismissed() {
   content::WebContents* web_contents =
       InfoBarService::WebContentsFromInfoBar(infobar());
   InstantAppsSettings::RecordInfoBarDismissEvent(web_contents, url_);
-  base::RecordAction(base::UserMetricsAction(
-      "Android.InstantApps.BannerDismissed"));
+  if (instant_app_is_default_) {
+    base::RecordAction(base::UserMetricsAction(
+        "Android.InstantApps.BannerDismissedAppIsDefault"));
+  } else {
+    base::RecordAction(
+        base::UserMetricsAction("Android.InstantApps.BannerDismissed"));
+  }
 }
 
-void Launch(JNIEnv* env,
-            const base::android::JavaParamRef<jclass>& clazz,
-            const base::android::JavaParamRef<jobject>& jweb_contents,
-            const base::android::JavaParamRef<jobject>& jdata,
-            const base::android::JavaParamRef<jstring>& jurl) {
+void InstantAppsInfoBarDelegate::DidStartNavigation(
+    content::NavigationHandle* navigation_handle) {
+  if (!GURL(url_).EqualsIgnoringRef(
+          navigation_handle->GetWebContents()->GetURL())) {
+    has_navigated_away_from_launch_url_ = true;
+  }
+}
+
+void InstantAppsInfoBarDelegate::DidFinishNavigation(
+    content::NavigationHandle* navigation_handle) {
+  if (navigation_handle->IsErrorPage()) {
+    infobar()->RemoveSelf();
+  }
+}
+
+bool InstantAppsInfoBarDelegate::ShouldExpire(
+    const NavigationDetails& details) const {
+  return has_navigated_away_from_launch_url_ &&
+         ConfirmInfoBarDelegate::ShouldExpire(details);
+}
+
+void JNI_InstantAppsInfoBarDelegate_Launch(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jclass>& clazz,
+    const base::android::JavaParamRef<jobject>& jweb_contents,
+    const base::android::JavaParamRef<jobject>& jdata,
+    const base::android::JavaParamRef<jstring>& jurl,
+    const jboolean instant_app_is_default) {
   auto* web_contents = content::WebContents::FromJavaWebContents(jweb_contents);
   std::string url(base::android::ConvertJavaStringToUTF8(env, jurl));
-  InstantAppsInfoBarDelegate::Create(
-      InfoBarService::FromWebContents(web_contents),
-      jdata,
-      url);
-  InstantAppsSettings::RecordInfoBarShowEvent(web_contents, url);
-  base::RecordAction(base::UserMetricsAction(
-      "Android.InstantApps.BannerShown"));
-}
 
-bool RegisterInstantAppsInfoBarDelegate(JNIEnv* env) {
-  return RegisterNativesImpl(env);
+  InstantAppsInfoBarDelegate::Create(web_contents, jdata, url,
+                                     instant_app_is_default);
+  InstantAppsSettings::RecordInfoBarShowEvent(web_contents, url);
+
+  if (instant_app_is_default) {
+    base::RecordAction(
+        base::UserMetricsAction("Android.InstantApps.BannerShownAppIsDefault"));
+  } else {
+    base::RecordAction(
+        base::UserMetricsAction("Android.InstantApps.BannerShown"));
+  }
 }

@@ -26,9 +26,8 @@
 // https://www.khronos.org/registry/webgl/extensions/WEBGL_compressed_texture_s3tc/
 
 [
-    DependentLifetime,
     NoInterfaceObject,
-    DoNotCheckConstants,
+    DoNotCheckConstants
 ] interface WebGLCompressedTextureS3TC {
     /* Compressed Texture Formats */
     const unsigned long COMPRESSED_RGB_S3TC_DXT1_EXT        = 0x83F0;

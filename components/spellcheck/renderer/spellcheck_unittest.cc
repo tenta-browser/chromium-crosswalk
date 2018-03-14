@@ -54,13 +54,11 @@ class SpellCheckTest : public testing::Test {
   }
 
   void ReinitializeSpellCheck(const std::string& language) {
-    spell_check_.reset(new SpellCheck());
+    spell_check_.reset(new SpellCheck(nullptr));
     InitializeSpellCheck(language);
   }
 
-  void UninitializeSpellCheck() {
-    spell_check_.reset(new SpellCheck());
-  }
+  void UninitializeSpellCheck() { spell_check_.reset(new SpellCheck(nullptr)); }
 
   bool InitializeIfNeeded() {
     return spell_check()->InitializeIfNeeded();
@@ -75,9 +73,10 @@ class SpellCheckTest : public testing::Test {
 #if defined(OS_MACOSX)
     // TODO(groby): Forcing spellcheck to use hunspell, even on OSX.
     // Instead, tests should exercise individual spelling engines.
-    spell_check_->languages_.push_back(base::MakeUnique<SpellcheckLanguage>());
+    spell_check_->languages_.push_back(
+        base::MakeUnique<SpellcheckLanguage>(nullptr));
     spell_check_->languages_.front()->platform_spelling_engine_.reset(
-        new HunspellEngine);
+        new HunspellEngine(nullptr));
     spell_check_->languages_.front()->Init(std::move(file), language);
 #else
     spell_check_->AddSpellcheckLanguage(std::move(file), language);
@@ -402,18 +401,15 @@ TEST_F(SpellCheckTest, SpellCheckStrings_EN_US) {
 
   for (size_t i = 0; i < arraysize(kTestCases); ++i) {
     size_t input_length = 0;
-    if (kTestCases[i].input != NULL) {
+    if (kTestCases[i].input != nullptr) {
       input_length = wcslen(kTestCases[i].input);
     }
     int misspelling_start;
     int misspelling_length;
     bool result = spell_check()->SpellCheckWord(
-        base::WideToUTF16(kTestCases[i].input).c_str(),
-        kNoOffset,
-        static_cast<int>(input_length),
-        kNoTag,
-        &misspelling_start,
-        &misspelling_length, NULL);
+        base::WideToUTF16(kTestCases[i].input).c_str(), kNoOffset,
+        static_cast<int>(input_length), kNoTag, &misspelling_start,
+        &misspelling_length, nullptr);
 
     EXPECT_EQ(kTestCases[i].expected_result, result);
     EXPECT_EQ(kTestCases[i].misspelling_start, misspelling_start);
@@ -455,7 +451,7 @@ TEST_F(SpellCheckTest, SpellCheckSuggestions_EN_US) {
   for (size_t i = 0; i < arraysize(kTestCases); ++i) {
     std::vector<base::string16> suggestions;
     size_t input_length = 0;
-    if (kTestCases[i].input != NULL) {
+    if (kTestCases[i].input != nullptr) {
       input_length = wcslen(kTestCases[i].input);
     }
     int misspelling_start;
@@ -841,18 +837,15 @@ TEST_F(SpellCheckTest, SpellCheckText) {
   for (size_t i = 0; i < arraysize(kTestCases); ++i) {
     ReinitializeSpellCheck(kTestCases[i].language);
     size_t input_length = 0;
-    if (kTestCases[i].input != NULL)
+    if (kTestCases[i].input != nullptr)
       input_length = wcslen(kTestCases[i].input);
 
     int misspelling_start = 0;
     int misspelling_length = 0;
     bool result = spell_check()->SpellCheckWord(
-        base::WideToUTF16(kTestCases[i].input).c_str(),
-        kNoOffset,
-        static_cast<int>(input_length),
-        kNoTag,
-        &misspelling_start,
-        &misspelling_length, NULL);
+        base::WideToUTF16(kTestCases[i].input).c_str(), kNoOffset,
+        static_cast<int>(input_length), kNoTag, &misspelling_start,
+        &misspelling_length, nullptr);
 
     EXPECT_TRUE(result)
         << "\""
@@ -907,13 +900,9 @@ TEST_F(SpellCheckTest, MisspelledWords) {
     int word_length = static_cast<int>(word.length());
     int misspelling_start = 0;
     int misspelling_length = 0;
-    bool result = spell_check()->SpellCheckWord(word.c_str(),
-                                                kNoOffset,
-                                                word_length,
-                                                kNoTag,
-                                                &misspelling_start,
-                                                &misspelling_length,
-                                                NULL);
+    bool result = spell_check()->SpellCheckWord(
+        word.c_str(), kNoOffset, word_length, kNoTag, &misspelling_start,
+        &misspelling_length, nullptr);
     EXPECT_FALSE(result);
     EXPECT_EQ(0, misspelling_start);
     EXPECT_EQ(word_length, misspelling_length);
@@ -1201,9 +1190,10 @@ TEST_F(SpellCheckTest, CreateTextCheckingResultsKeepsTypographicalApostrophe) {
       SpellCheckResult::SPELLING, 6, 6,
       base::WideToUTF16(L"haven" TYPOGRAPHICAL_APOSTROPHE L"t")));
   spellcheck_results.push_back(SpellCheckResult(
-        SpellCheckResult::SPELLING, 13, 10, base::WideToUTF16(
-            L"in" TYPOGRAPHICAL_APOSTROPHE L"n" TYPOGRAPHICAL_APOSTROPHE L"out"
-            TYPOGRAPHICAL_APOSTROPHE L"s")));
+      SpellCheckResult::SPELLING, 13, 10,
+      base::WideToUTF16(
+          L"in" TYPOGRAPHICAL_APOSTROPHE L"n" TYPOGRAPHICAL_APOSTROPHE L"ou"
+          L"t" TYPOGRAPHICAL_APOSTROPHE L"s")));
 
   // Replacements that differ only by apostrophe type should be ignored.
   spellcheck_results.push_back(
@@ -1213,26 +1203,71 @@ TEST_F(SpellCheckTest, CreateTextCheckingResultsKeepsTypographicalApostrophe) {
       SpellCheckResult(SpellCheckResult::SPELLING, 29, 4,
                        base::WideToUTF16(L"I" TYPOGRAPHICAL_APOSTROPHE L"ve")));
 
+  // If we have no suggested replacements, we should keep this misspelling.
+  spellcheck_results.push_back(SpellCheckResult(
+      SpellCheckResult::SPELLING, 0, 5, std::vector<base::string16>()));
+
+  // If we have multiple replacements that all differ only by apostrophe type,
+  // we should ignore this misspelling.
+  spellcheck_results.push_back(SpellCheckResult(
+      SpellCheckResult::SPELLING, 0, 11,
+      std::vector<base::string16>(
+          {base::UTF8ToUTF16("Ik've havn'"),
+           base::WideToUTF16(L"Ik" TYPOGRAPHICAL_APOSTROPHE
+                             "ve havn" TYPOGRAPHICAL_APOSTROPHE)})));
+
+  // If we have multiple replacements where some only differ by apostrophe type
+  // and some don't, we should keep this misspelling, but remove the
+  // replacements that only differ by apostrophe type.
+  spellcheck_results.push_back(SpellCheckResult(
+      SpellCheckResult::SPELLING, 0, 5,
+      std::vector<base::string16>(
+          {base::UTF8ToUTF16("I've"), base::UTF8ToUTF16("Ive"),
+           base::WideToUTF16(L"Ik" TYPOGRAPHICAL_APOSTROPHE "ve")})));
+
+  // Similar to the previous case except with the apostrophe changing from
+  // typographical to straight instead of the other direction
+  spellcheck_results.push_back(SpellCheckResult(
+      SpellCheckResult::SPELLING, 6, 6,
+      std::vector<base::string16>({base::UTF8ToUTF16("havn't"),
+                                   base::UTF8ToUTF16("havnt"),
+                                   base::UTF8ToUTF16("haven't")})));
+
+  // If we have multiple replacements, none of which differ only by apostrophe
+  // type, we should keep this misspelling.
+  spellcheck_results.push_back(SpellCheckResult(
+      SpellCheckResult::SPELLING, 6, 6,
+      std::vector<base::string16>(
+          {base::UTF8ToUTF16("have"), base::UTF8ToUTF16("haven't")})));
+
   blink::WebVector<blink::WebTextCheckingResult> textcheck_results;
   spell_check()->CreateTextCheckingResults(SpellCheck::USE_NATIVE_CHECKER, 0,
                                            text, spellcheck_results,
                                            &textcheck_results);
 
-  static const wchar_t* kExpectedReplacements[] = {
-      L"I've",
-      L"haven" TYPOGRAPHICAL_APOSTROPHE L"t",
-      L"in'n" TYPOGRAPHICAL_APOSTROPHE L"out's",
-      L"I've",
-      L"haven" TYPOGRAPHICAL_APOSTROPHE L"t",
-      L"in'n" TYPOGRAPHICAL_APOSTROPHE L"out" TYPOGRAPHICAL_APOSTROPHE L"s",
+  static std::vector<std::vector<const wchar_t*>> kExpectedReplacements = {
+      {L"I've"},
+      {L"haven" TYPOGRAPHICAL_APOSTROPHE L"t"},
+      {L"in'n" TYPOGRAPHICAL_APOSTROPHE L"out's"},
+      {L"I've"},
+      {L"haven" TYPOGRAPHICAL_APOSTROPHE L"t"},
+      {L"in'n" TYPOGRAPHICAL_APOSTROPHE L"out" TYPOGRAPHICAL_APOSTROPHE L"s"},
+      std::vector<const wchar_t*>(),
+      {L"I've", L"Ive"},
+      {L"havnt", L"haven" TYPOGRAPHICAL_APOSTROPHE "t"},
+      {L"have", L"haven" TYPOGRAPHICAL_APOSTROPHE "t"},
   };
 
-  ASSERT_EQ(arraysize(kExpectedReplacements), textcheck_results.size());
-  for (size_t i = 0; i < arraysize(kExpectedReplacements); ++i) {
-    EXPECT_EQ(base::WideToUTF16(kExpectedReplacements[i]),
-              textcheck_results[i].replacement.Utf16())
-        << "i=" << i << "\nactual: \""
-        << textcheck_results[i].replacement.Utf16() << "\"";
+  ASSERT_EQ(kExpectedReplacements.size(), textcheck_results.size());
+  for (size_t i = 0; i < kExpectedReplacements.size(); ++i) {
+    EXPECT_EQ(kExpectedReplacements[i].size(),
+              textcheck_results[i].replacements.size());
+    for (size_t j = 0; j < kExpectedReplacements[i].size(); ++j) {
+      EXPECT_EQ(base::WideToUTF16(kExpectedReplacements[i][j]),
+                textcheck_results[i].replacements[j].Utf16())
+          << "i=" << i << "\nj=" << j << "\nactual: \""
+          << textcheck_results[i].replacements[j].Utf16() << "\"";
+    }
   }
 }
 
@@ -1270,18 +1305,15 @@ TEST_F(SpellCheckTest, EnglishWords) {
     ReinitializeSpellCheck(kLocales[j]);
     for (size_t i = 0; i < arraysize(kTestCases); ++i) {
       size_t input_length = 0;
-      if (kTestCases[i].input != NULL)
+      if (kTestCases[i].input != nullptr)
         input_length = strlen(kTestCases[i].input);
 
       int misspelling_start = 0;
       int misspelling_length = 0;
       bool result = spell_check()->SpellCheckWord(
-          base::ASCIIToUTF16(kTestCases[i].input).c_str(),
-          kNoOffset,
-          static_cast<int>(input_length),
-          kNoTag,
-          &misspelling_start,
-          &misspelling_length, NULL);
+          base::ASCIIToUTF16(kTestCases[i].input).c_str(), kNoOffset,
+          static_cast<int>(input_length), kNoTag, &misspelling_start,
+          &misspelling_length, nullptr);
 
       EXPECT_EQ(kTestCases[i].should_pass, result) << kTestCases[i].input <<
           " in " << kLocales[j];
@@ -1316,7 +1348,7 @@ TEST_F(SpellCheckTest, NoSuggest) {
   for (size_t i = 0; i < test_cases_size; ++i) {
     ReinitializeSpellCheck(kTestCases[i].locale);
     size_t suggestion_length = 0;
-    if (kTestCases[i].suggestion != NULL)
+    if (kTestCases[i].suggestion != nullptr)
       suggestion_length = strlen(kTestCases[i].suggestion);
 
     // First check that the NOSUGGEST flag didn't mark this word as not being in
@@ -1324,12 +1356,9 @@ TEST_F(SpellCheckTest, NoSuggest) {
     int misspelling_start = 0;
     int misspelling_length = 0;
     bool result = spell_check()->SpellCheckWord(
-        base::ASCIIToUTF16(kTestCases[i].suggestion).c_str(),
-        kNoOffset,
-        static_cast<int>(suggestion_length),
-        kNoTag,
-        &misspelling_start,
-        &misspelling_length, NULL);
+        base::ASCIIToUTF16(kTestCases[i].suggestion).c_str(), kNoOffset,
+        static_cast<int>(suggestion_length), kNoTag, &misspelling_start,
+        &misspelling_length, nullptr);
 
     EXPECT_EQ(kTestCases[i].should_pass, result) << kTestCases[i].suggestion <<
         " in " << kTestCases[i].locale;

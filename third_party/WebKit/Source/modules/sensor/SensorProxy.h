@@ -6,26 +6,28 @@
 #define SensorProxy_h
 
 #include "core/dom/ExceptionCode.h"
+#include "core/page/FocusChangedObserver.h"
 #include "core/page/PageVisibilityObserver.h"
-#include "device/generic_sensor/public/cpp/sensor_reading.h"
-#include "device/generic_sensor/public/interfaces/sensor.mojom-blink.h"
-#include "device/generic_sensor/public/interfaces/sensor_provider.mojom-blink.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "platform/Supplementable.h"
+#include "platform/Timer.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Vector.h"
+#include "services/device/public/cpp/generic_sensor/sensor_reading.h"
+#include "services/device/public/cpp/generic_sensor/sensor_reading_shared_buffer_reader.h"
+#include "services/device/public/interfaces/sensor.mojom-blink.h"
+#include "services/device/public/interfaces/sensor_provider.mojom-blink.h"
 
 namespace blink {
 
 class SensorProviderProxy;
-class SensorReading;
-class SensorReadingUpdater;
 
 // This class wraps 'Sensor' mojo interface and used by multiple
 // JS sensor instances of the same type (within a single frame).
 class SensorProxy final : public GarbageCollectedFinalized<SensorProxy>,
                           public device::mojom::blink::SensorClient,
-                          public PageVisibilityObserver {
+                          public PageVisibilityObserver,
+                          public FocusChangedObserver {
   USING_GARBAGE_COLLECTED_MIXIN(SensorProxy);
   USING_PRE_FINALIZER(SensorProxy, Dispose);
   WTF_MAKE_NONCOPYABLE(SensorProxy);
@@ -36,20 +38,9 @@ class SensorProxy final : public GarbageCollectedFinalized<SensorProxy>,
     // Has valid 'Sensor' binding, {add, remove}Configuration()
     // methods can be called.
     virtual void OnSensorInitialized() {}
-    // Platfrom sensor reading has changed.
+    // Observer should update its cached reading and send 'onchange'
+    // event if needed.
     virtual void OnSensorReadingChanged() {}
-    // Observer should send 'onchange' event if needed.
-    // The 'notifySensorChanged' calls are in sync with rAF.
-    // Currently, we decide whether to send 'onchange' event based on the
-    // time elapsed from the previous notification.
-    // TODO: Reconsider this after https://github.com/w3c/sensors/issues/152
-    // is resolved.
-    // |timestamp| Reference timestamp in seconds of the moment when
-    // sensor reading was updated from the buffer.
-    // Note: |timestamp| values are only used to calculate elapsed time
-    // between shared buffer readings. These values *do not* correspond
-    // to sensor reading timestamps which are obtained on platform side.
-    virtual void NotifySensorChanged(double timestamp) {}
     // An error has occurred.
     virtual void OnSensorError(ExceptionCode,
                                const String& sanitized_message,
@@ -68,23 +59,18 @@ class SensorProxy final : public GarbageCollectedFinalized<SensorProxy>,
   bool IsInitializing() const { return state_ == kInitializing; }
   bool IsInitialized() const { return state_ == kInitialized; }
 
-  // Is watching new reading data (initialized, not suspended and has
-  // configurations added).
-  bool IsActive() const;
-
   void AddConfiguration(device::mojom::blink::SensorConfigurationPtr,
-                        std::unique_ptr<Function<void(bool)>>);
+                        Function<void(bool)>);
 
   void RemoveConfiguration(device::mojom::blink::SensorConfigurationPtr);
 
   void Suspend();
   void Resume();
 
-  device::mojom::blink::SensorType GetType() const { return type_; }
-  device::mojom::blink::ReportingMode GetReportingMode() const { return mode_; }
+  device::mojom::blink::SensorType type() const { return type_; }
 
   // Note: the returned value is reset after updateSensorReading() call.
-  const device::SensorReading& Reading() const { return reading_; }
+  const device::SensorReading& reading() const { return reading_; }
 
   const device::mojom::blink::SensorConfiguration* DefaultConfig() const;
 
@@ -92,17 +78,10 @@ class SensorProxy final : public GarbageCollectedFinalized<SensorProxy>,
     return frequency_limits_;
   }
 
-  Document* GetDocument() const;
-  const WTF::Vector<double>& FrequenciesUsed() const {
-    return frequencies_used_;
-  }
-
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   friend class SensorProviderProxy;
-  friend class SensorReadingUpdaterContinuous;
-  friend class SensorReadingUpdaterOnChange;
   SensorProxy(device::mojom::blink::SensorType, SensorProviderProxy*, Page*);
 
   // Updates sensor reading from shared buffer.
@@ -116,20 +95,31 @@ class SensorProxy final : public GarbageCollectedFinalized<SensorProxy>,
   // PageVisibilityObserver overrides.
   void PageVisibilityChanged() override;
 
+  // FocusChangedObserver overrides.
+  void FocusedFrameChanged() override;
+
   // Generic handler for a fatal error.
   void HandleSensorError();
 
   // mojo call callbacks.
   void OnSensorCreated(device::mojom::blink::SensorInitParamsPtr,
                        device::mojom::blink::SensorClientRequest);
-  void OnAddConfigurationCompleted(
-      double frequency,
-      std::unique_ptr<Function<void(bool)>> callback,
-      bool result);
-  void OnRemoveConfigurationCompleted(double frequency, bool result);
 
-  bool TryReadFromBuffer(device::SensorReading& result);
-  void OnAnimationFrame(double timestamp);
+  void OnPollingTimer(TimerBase*);
+
+  // Returns 'true' if readings should be propagated to Observers
+  // (i.e. proxy is initialized, not suspended and has active configurations);
+  // returns 'false' otherwise.
+  bool ShouldProcessReadings() const;
+
+  // Starts or stops polling timer.
+  void UpdatePollingStatus();
+
+  // Suspends or resumes the wrapped sensor.
+  void UpdateSuspendedStatus();
+
+  void RemoveActiveFrequency(double frequency);
+  void AddActiveFrequency(double frequency);
 
   device::mojom::blink::SensorType type_;
   device::mojom::blink::ReportingMode mode_;
@@ -145,13 +135,14 @@ class SensorProxy final : public GarbageCollectedFinalized<SensorProxy>,
   State state_;
   mojo::ScopedSharedBufferHandle shared_buffer_handle_;
   mojo::ScopedSharedBufferMapping shared_buffer_;
+  std::unique_ptr<device::SensorReadingSharedBufferReader>
+      shared_buffer_reader_;
   bool suspended_;
   device::SensorReading reading_;
   std::pair<double, double> frequency_limits_;
 
-  Member<SensorReadingUpdater> reading_updater_;
-  WTF::Vector<double> frequencies_used_;
-  double last_raf_timestamp_;
+  WTF::Vector<double> active_frequencies_;
+  TaskRunnerTimer<SensorProxy> polling_timer_;
 
   using ReadingBuffer = device::SensorReadingSharedBuffer;
   static_assert(

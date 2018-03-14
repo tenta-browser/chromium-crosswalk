@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_refresh_keys_operation.h"
 #include "base/bind.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_create_keys_operation.h"
-#include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_refresh_keys_operation.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_remove_keys_operation.h"
 
 namespace chromeos {
@@ -18,15 +18,14 @@ EasyUnlockRefreshKeysOperation::EasyUnlockRefreshKeysOperation(
       tpm_public_key_(tpm_public_key),
       devices_(devices),
       callback_(callback),
-      weak_ptr_factory_(this) {
-}
+      weak_ptr_factory_(this) {}
 
-EasyUnlockRefreshKeysOperation::~EasyUnlockRefreshKeysOperation() {
-}
+EasyUnlockRefreshKeysOperation::~EasyUnlockRefreshKeysOperation() {}
 
 void EasyUnlockRefreshKeysOperation::Start() {
   if (devices_.empty()) {
-    OnKeysCreated(true);
+    // Delete all keys from cryptohome so they can not be exploited.
+    RemoveKeysStartingFromIndex(0);
     return;
   }
 
@@ -50,8 +49,14 @@ void EasyUnlockRefreshKeysOperation::OnKeysCreated(bool success) {
   if (create_keys_operation_)
     user_context_ = create_keys_operation_->user_context();
 
+  // Remove all keys that weren't overwritten by the create operation.
+  RemoveKeysStartingFromIndex(devices_.size());
+}
+
+void EasyUnlockRefreshKeysOperation::RemoveKeysStartingFromIndex(
+    size_t key_index) {
   remove_keys_operation_.reset(new EasyUnlockRemoveKeysOperation(
-      user_context_, devices_.size(),
+      user_context_, key_index,
       base::Bind(&EasyUnlockRefreshKeysOperation::OnKeysRemoved,
                  weak_ptr_factory_.GetWeakPtr())));
   remove_keys_operation_->Start();

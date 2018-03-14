@@ -31,18 +31,18 @@
 #ifndef V8AbstractEventListener_h
 #define V8AbstractEventListener_h
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/core/v8/TraceWrapperV8Reference.h"
 #include "core/CoreExport.h"
-#include "core/events/EventListener.h"
+#include "core/dom/events/EventListener.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/bindings/TraceWrapperV8Reference.h"
 #include "platform/heap/SelfKeepAlive.h"
 #include "v8/include/v8.h"
 
 namespace blink {
 
 class Event;
-class WorkerGlobalScope;
+class WorkerOrWorkletGlobalScope;
 
 // There are two kinds of event listeners: HTML or non-HMTL. onload,
 // onfocus, etc (attributes) are always HTML event handler type; Event
@@ -52,15 +52,14 @@ class WorkerGlobalScope;
 // Why does this matter?
 // WebKit does not allow duplicated HTML event handlers of the same type,
 // but ALLOWs duplicated non-HTML event handlers.
-class CORE_EXPORT V8AbstractEventListener : public EventListener,
-                                            public TraceWrapperBase {
+class CORE_EXPORT V8AbstractEventListener : public EventListener {
  public:
   ~V8AbstractEventListener() override;
 
   static const V8AbstractEventListener* Cast(const EventListener* listener) {
     return listener->GetType() == kJSEventListenerType
                ? static_cast<const V8AbstractEventListener*>(listener)
-               : 0;
+               : nullptr;
   }
 
   static V8AbstractEventListener* Cast(EventListener* listener) {
@@ -112,8 +111,8 @@ class CORE_EXPORT V8AbstractEventListener : public EventListener,
   v8::Isolate* GetIsolate() const { return isolate_; }
   DOMWrapperWorld& World() const { return *world_; }
 
-  DECLARE_VIRTUAL_TRACE();
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+  virtual void Trace(blink::Visitor*);
+  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
 
  protected:
   V8AbstractEventListener(bool is_attribute, DOMWrapperWorld&, v8::Isolate*);
@@ -146,11 +145,11 @@ class CORE_EXPORT V8AbstractEventListener : public EventListener,
   // true if the listener is created through a DOM attribute.
   bool is_attribute_;
 
-  RefPtr<DOMWrapperWorld> world_;
+  scoped_refptr<DOMWrapperWorld> world_;
   v8::Isolate* isolate_;
 
-  // nullptr unless this listener belongs to a worker.
-  Member<WorkerGlobalScope> worker_global_scope_;
+  // nullptr unless this listener belongs to a worker or worklet.
+  Member<WorkerOrWorkletGlobalScope> worker_or_worklet_global_scope_;
 
   SelfKeepAlive<V8AbstractEventListener> keep_alive_;
 };

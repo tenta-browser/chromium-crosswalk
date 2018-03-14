@@ -11,7 +11,6 @@
 #include "core/loader/resource/ImageResourceObserver.h"
 #include "core/svg/graphics/SVGImage.h"
 #include "platform/Histogram.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/SharedBuffer.h"
 #include "platform/geometry/IntSize.h"
 #include "platform/graphics/BitmapImage.h"
@@ -31,7 +30,9 @@ class NullImageResourceInfo final
  public:
   NullImageResourceInfo() {}
 
-  DEFINE_INLINE_VIRTUAL_TRACE() { ImageResourceInfo::Trace(visitor); }
+  void Trace(blink::Visitor* visitor) override {
+    ImageResourceInfo::Trace(visitor);
+  }
 
  private:
   const KURL& Url() const override { return url_; }
@@ -39,7 +40,6 @@ class NullImageResourceInfo final
   bool HasDevicePixelRatioHeaderValue() const override { return false; }
   float DevicePixelRatioHeaderValue() const override { return 1.0; }
   const ResourceResponse& GetResponse() const override { return response_; }
-  ResourceStatus GetStatus() const override { return ResourceStatus::kCached; }
   bool ShouldShowPlaceholder() const override { return false; }
   bool IsCacheValidator() const override { return false; }
   bool SchedulingReloadOrShouldReloadBrokenPlaceholder() const override {
@@ -51,7 +51,9 @@ class NullImageResourceInfo final
     return true;
   }
   bool HasCacheControlNoStoreHeader() const override { return false; }
-  const ResourceError& GetResourceError() const override { return error_; }
+  Optional<ResourceError> GetResourceError() const override {
+    return WTF::nullopt;
+  }
 
   void SetDecodedSize(size_t) override {}
   void WillAddClientOrObserver() override {}
@@ -63,16 +65,23 @@ class NullImageResourceInfo final
 
   const KURL url_;
   const ResourceResponse response_;
-  const ResourceError error_;
 };
 
 }  // namespace
 
-ImageResourceContent::ImageResourceContent(PassRefPtr<blink::Image> image)
-    : image_(std::move(image)), is_refetchable_data_from_disk_cache_(true) {
+ImageResourceContent::ImageResourceContent(scoped_refptr<blink::Image> image)
+    : is_refetchable_data_from_disk_cache_(true), image_(std::move(image)) {
   DEFINE_STATIC_LOCAL(NullImageResourceInfo, null_info,
                       (new NullImageResourceInfo()));
   info_ = &null_info;
+}
+
+ImageResourceContent* ImageResourceContent::CreateLoaded(
+    scoped_refptr<blink::Image> image) {
+  DCHECK(image);
+  ImageResourceContent* content = new ImageResourceContent(std::move(image));
+  content->content_status_ = ResourceStatus::kCached;
+  return content;
 }
 
 ImageResourceContent* ImageResourceContent::Fetch(FetchParameters& params,
@@ -89,7 +98,7 @@ void ImageResourceContent::SetImageResourceInfo(ImageResourceInfo* info) {
   info_ = info;
 }
 
-DEFINE_TRACE(ImageResourceContent) {
+void ImageResourceContent::Trace(blink::Visitor* visitor) {
   visitor->Trace(info_);
   ImageObserver::Trace(visitor);
 }
@@ -120,7 +129,7 @@ void ImageResourceContent::AddObserver(ImageResourceObserver* observer) {
     return;
 
   if (image_ && !image_->IsNull()) {
-    observer->ImageChanged(this);
+    observer->ImageChanged(this, CanDeferInvalidation::kNo);
   }
 
   if (IsLoaded() && observers_.Contains(observer) &&
@@ -179,7 +188,7 @@ void ImageResourceContent::DoResetAnimation() {
     image_->ResetAnimation();
 }
 
-PassRefPtr<const SharedBuffer> ImageResourceContent::ResourceBuffer() const {
+scoped_refptr<const SharedBuffer> ImageResourceContent::ResourceBuffer() const {
   if (image_)
     return image_->Data();
   return nullptr;
@@ -194,82 +203,26 @@ bool ImageResourceContent::ShouldUpdateImageImmediately() const {
          (image_ && image_->MaybeAnimated());
 }
 
-std::pair<blink::Image*, float> ImageResourceContent::BrokenImage(
-    float device_scale_factor) {
-  if (device_scale_factor >= 2) {
-    DEFINE_STATIC_REF(blink::Image, broken_image_hi_res,
-                      (blink::Image::LoadPlatformResource("missingImage@2x")));
-    return std::make_pair(broken_image_hi_res, 2);
-  }
-
-  DEFINE_STATIC_REF(blink::Image, broken_image_lo_res,
-                    (blink::Image::LoadPlatformResource("missingImage")));
-  return std::make_pair(broken_image_lo_res, 1);
-}
-
 blink::Image* ImageResourceContent::GetImage() {
-  if (ErrorOccurred()) {
-    // Returning the 1x broken image is non-ideal, but we cannot reliably access
-    // the appropriate deviceScaleFactor from here. It is critical that callers
-    // use ImageResourceContent::brokenImage() when they need the real,
-    // deviceScaleFactor-appropriate broken image icon.
-    return BrokenImage(1).first;
-  }
+  if (!image_ || ErrorOccurred())
+    return Image::NullImage();
 
-  if (image_)
-    return image_.Get();
-
-  return blink::Image::NullImage();
+  return image_.get();
 }
 
-bool ImageResourceContent::UsesImageContainerSize() const {
-  if (image_)
-    return image_->UsesContainerSize();
-
-  return false;
-}
-
-bool ImageResourceContent::ImageHasRelativeSize() const {
-  if (image_)
-    return image_->HasRelativeSize();
-
-  return false;
-}
-
-LayoutSize ImageResourceContent::ImageSize(
-    RespectImageOrientationEnum should_respect_image_orientation,
-    float multiplier,
-    SizeType size_type) {
+IntSize ImageResourceContent::IntrinsicSize(
+    RespectImageOrientationEnum should_respect_image_orientation) {
   if (!image_)
-    return LayoutSize();
-
-  LayoutSize size;
-
-  if (image_->IsBitmapImage() &&
-      should_respect_image_orientation == kRespectImageOrientation) {
-    size = LayoutSize(ToBitmapImage(image_.Get())->SizeRespectingOrientation());
-  } else {
-    size = LayoutSize(image_->Size());
-  }
-
-  if (size_type == kIntrinsicCorrectedToDPR &&
-      HasDevicePixelRatioHeaderValue() && DevicePixelRatioHeaderValue() > 0)
-    multiplier = 1 / DevicePixelRatioHeaderValue();
-
-  if (multiplier == 1 || image_->HasRelativeSize())
-    return size;
-
-  // Don't let images that have a width/height >= 1 shrink below 1 when zoomed.
-  LayoutSize minimum_size(
-      size.Width() > LayoutUnit() ? LayoutUnit(1) : LayoutUnit(),
-      LayoutUnit(size.Height() > LayoutUnit() ? LayoutUnit(1) : LayoutUnit()));
-  size.Scale(multiplier);
-  size.ClampToMinimumSize(minimum_size);
-  return size;
+    return IntSize();
+  if (should_respect_image_orientation == kRespectImageOrientation &&
+      image_->IsBitmapImage())
+    return ToBitmapImage(image_.get())->SizeRespectingOrientation();
+  return image_->Size();
 }
 
 void ImageResourceContent::NotifyObservers(
     NotifyFinishOption notifying_finish_option,
+    CanDeferInvalidation defer,
     const IntRect* change_rect) {
   {
     Vector<ImageResourceObserver*> finished_observers_as_vector;
@@ -281,7 +234,7 @@ void ImageResourceContent::NotifyObservers(
 
     for (auto* observer : finished_observers_as_vector) {
       if (finished_observers_.Contains(observer))
-        observer->ImageChanged(this, change_rect);
+        observer->ImageChanged(this, defer, change_rect);
     }
   }
   {
@@ -294,7 +247,7 @@ void ImageResourceContent::NotifyObservers(
 
     for (auto* observer : observers_as_vector) {
       if (observers_.Contains(observer)) {
-        observer->ImageChanged(this, change_rect);
+        observer->ImageChanged(this, defer, change_rect);
         if (notifying_finish_option == kShouldNotifyFinish &&
             observers_.Contains(observer) &&
             !info_->SchedulingReloadOrShouldReloadBrokenPlaceholder()) {
@@ -306,10 +259,10 @@ void ImageResourceContent::NotifyObservers(
   }
 }
 
-PassRefPtr<Image> ImageResourceContent::CreateImage() {
+scoped_refptr<Image> ImageResourceContent::CreateImage(bool is_multipart) {
   if (info_->GetResponse().MimeType() == "image/svg+xml")
-    return SVGImage::Create(this);
-  return BitmapImage::Create(this);
+    return SVGImage::Create(this, is_multipart);
+  return BitmapImage::Create(this, is_multipart);
 }
 
 void ImageResourceContent::ClearImage() {
@@ -321,20 +274,105 @@ void ImageResourceContent::ClearImage() {
   // If our Image has an observer, it's always us so we need to clear the back
   // pointer before dropping our reference.
   image_->ClearImageObserver();
-  image_.Clear();
+  image_ = nullptr;
   size_available_ = Image::kSizeUnavailable;
 }
 
+// |new_status| is the status of corresponding ImageResource.
+void ImageResourceContent::UpdateToLoadedContentStatus(
+    ResourceStatus new_status) {
+  // When |ShouldNotifyFinish|, we set content_status_
+  // to a loaded ResourceStatus.
+
+  // Checks |new_status| (i.e. Resource's current status).
+  switch (new_status) {
+    case ResourceStatus::kCached:
+    case ResourceStatus::kPending:
+      // In case of successful load, Resource's status can be
+      // kCached (e.g. for second part of multipart image) or
+      // still Pending (e.g. for a non-multipart image).
+      // Therefore we use kCached as the new state here.
+      new_status = ResourceStatus::kCached;
+      break;
+
+    case ResourceStatus::kLoadError:
+    case ResourceStatus::kDecodeError:
+      // In case of error, Resource's status is set to an error status
+      // before UpdateImage() and thus we use the error status as-is.
+      break;
+
+    case ResourceStatus::kNotStarted:
+      CHECK(false);
+      break;
+  }
+
+  // Checks ImageResourceContent's previous status.
+  switch (GetContentStatus()) {
+    case ResourceStatus::kPending:
+      // A non-multipart image or the first part of a multipart image.
+      break;
+
+    case ResourceStatus::kCached:
+    case ResourceStatus::kLoadError:
+    case ResourceStatus::kDecodeError:
+      // Second (or later) part of a multipart image.
+      // TODO(hiroshige): Assert that this is actually a multipart image.
+      break;
+
+    case ResourceStatus::kNotStarted:
+      // Should have updated to kPending via NotifyStartLoad().
+      CHECK(false);
+      break;
+  }
+
+  // Updates the status.
+  content_status_ = new_status;
+}
+
+void ImageResourceContent::NotifyStartLoad() {
+  // Checks ImageResourceContent's previous status.
+  switch (GetContentStatus()) {
+    case ResourceStatus::kPending:
+      CHECK(false);
+      break;
+
+    case ResourceStatus::kNotStarted:
+      // Normal load start.
+      break;
+
+    case ResourceStatus::kCached:
+    case ResourceStatus::kLoadError:
+    case ResourceStatus::kDecodeError:
+      // Load start due to revalidation/reload.
+      break;
+  }
+
+  content_status_ = ResourceStatus::kPending;
+}
+
+void ImageResourceContent::AsyncLoadCompleted(const blink::Image* image) {
+  if (image_ != image)
+    return;
+  CHECK_EQ(size_available_, Image::kSizeAvailableAndLoadingAsynchronously);
+  size_available_ = Image::kSizeAvailable;
+  UpdateToLoadedContentStatus(ResourceStatus::kCached);
+  NotifyObservers(kShouldNotifyFinish, CanDeferInvalidation::kNo);
+}
+
 ImageResourceContent::UpdateImageResult ImageResourceContent::UpdateImage(
-    PassRefPtr<SharedBuffer> data,
+    scoped_refptr<SharedBuffer> data,
+    ResourceStatus status,
     UpdateImageOption update_image_option,
-    bool all_data_received) {
+    bool all_data_received,
+    bool is_multipart) {
   TRACE_EVENT0("blink", "ImageResourceContent::updateImage");
 
 #if DCHECK_IS_ON()
   DCHECK(!is_update_image_being_called_);
   AutoReset<bool> scope(&is_update_image_being_called_, true);
 #endif
+
+  CHECK_NE(GetContentStatus(), ResourceStatus::kNotStarted);
 
   // Clears the existing image, if instructed by |updateImageOption|.
   switch (update_image_option) {
@@ -359,9 +397,12 @@ ImageResourceContent::UpdateImageResult ImageResourceContent::UpdateImage(
       // or specific image frames).
       if (data) {
         if (!image_)
-          image_ = CreateImage();
+          image_ = CreateImage(is_multipart);
         DCHECK(image_);
         size_available_ = image_->SetData(std::move(data), all_data_received);
+        DCHECK(all_data_received ||
+               size_available_ !=
+                   Image::kSizeAvailableAndLoadingAsynchronously);
       }
 
       // Go ahead and tell our observers to try to draw if we have either
@@ -378,17 +419,40 @@ ImageResourceContent::UpdateImageResult ImageResourceContent::UpdateImage(
         }
       }
 
-      if (!image_ || image_->IsNull()) {
+      // As per spec, zero intrinsic size SVG is a valid image so do not
+      // consider such an image as DecodeError.
+      // https://www.w3.org/TR/SVG/struct.html#SVGElementWidthAttribute
+      if (!image_ ||
+          (image_->IsNull() && (!image_->IsSVGImage() ||
+                                size_available_ == Image::kSizeUnavailable))) {
         ClearImage();
         return UpdateImageResult::kShouldDecodeError;
       }
       break;
   }
 
+  DCHECK(all_data_received ||
+         size_available_ != Image::kSizeAvailableAndLoadingAsynchronously);
+
   // Notifies the observers.
   // It would be nice to only redraw the decoded band of the image, but with the
   // current design (decoding delayed until painting) that seems hard.
-  NotifyObservers(all_data_received ? kShouldNotifyFinish : kDoNotNotifyFinish);
+  //
+  // In the case of kSizeAvailableAndLoadingAsynchronously, we are waiting for
+  // SVG image completion, and thus we notify observers of kDoNotNotifyFinish
+  // here, and will notify observers of finish later in AsyncLoadCompleted().
+  //
+  // Don't allow defering of invalidation if it resulted from a data update.
+  // This is necessary to ensure that all PaintImages in a recording committed
+  // to the compositor have the same data.
+  if (all_data_received &&
+      size_available_ != Image::kSizeAvailableAndLoadingAsynchronously) {
+    UpdateToLoadedContentStatus(status);
+    NotifyObservers(kShouldNotifyFinish, CanDeferInvalidation::kNo);
+  } else {
+    NotifyObservers(kDoNotNotifyFinish, CanDeferInvalidation::kNo);
+  }
+
   return UpdateImageResult::kNoDecodeError;
 }
 
@@ -422,7 +486,7 @@ bool ImageResourceContent::ShouldPauseAnimation(const blink::Image* image) {
 void ImageResourceContent::AnimationAdvanced(const blink::Image* image) {
   if (!image || image != image_)
     return;
-  NotifyObservers(kDoNotNotifyFinish);
+  NotifyObservers(kDoNotNotifyFinish, CanDeferInvalidation::kYes);
 }
 
 void ImageResourceContent::UpdateImageAnimationPolicy() {
@@ -443,17 +507,14 @@ void ImageResourceContent::UpdateImageAnimationPolicy() {
     }
   }
 
-  if (image_->AnimationPolicy() != new_policy) {
-    image_->ResetAnimation();
-    image_->SetAnimationPolicy(new_policy);
-  }
+  image_->SetAnimationPolicy(new_policy);
 }
 
 void ImageResourceContent::ChangedInRect(const blink::Image* image,
                                          const IntRect& rect) {
   if (!image || image != image_)
     return;
-  NotifyObservers(kDoNotNotifyFinish, &rect);
+  NotifyObservers(kDoNotNotifyFinish, CanDeferInvalidation::kYes, &rect);
 }
 
 bool ImageResourceContent::IsAccessAllowed(SecurityOrigin* security_origin) {
@@ -470,29 +531,29 @@ void ImageResourceContent::EmulateLoadStartedForInspector(
   info_->EmulateLoadStartedForInspector(fetcher, url, initiator_name);
 }
 
-// TODO(hiroshige): Consider removing the following methods, or stoping
-// redirecting to ImageResource.
 bool ImageResourceContent::IsLoaded() const {
-  return GetStatus() > ResourceStatus::kPending;
+  return GetContentStatus() > ResourceStatus::kPending;
 }
 
 bool ImageResourceContent::IsLoading() const {
-  return GetStatus() == ResourceStatus::kPending;
+  return GetContentStatus() == ResourceStatus::kPending;
 }
 
 bool ImageResourceContent::ErrorOccurred() const {
-  return GetStatus() == ResourceStatus::kLoadError ||
-         GetStatus() == ResourceStatus::kDecodeError;
+  return GetContentStatus() == ResourceStatus::kLoadError ||
+         GetContentStatus() == ResourceStatus::kDecodeError;
 }
 
 bool ImageResourceContent::LoadFailedOrCanceled() const {
-  return GetStatus() == ResourceStatus::kLoadError;
+  return GetContentStatus() == ResourceStatus::kLoadError;
 }
 
-ResourceStatus ImageResourceContent::GetStatus() const {
-  return info_->GetStatus();
+ResourceStatus ImageResourceContent::GetContentStatus() const {
+  return content_status_;
 }
 
+// TODO(hiroshige): Consider removing the following methods, or stoping
+// redirecting to ImageResource.
 const KURL& ImageResourceContent::Url() const {
   return info_->Url();
 }
@@ -513,8 +574,12 @@ const ResourceResponse& ImageResourceContent::GetResponse() const {
   return info_->GetResponse();
 }
 
-const ResourceError& ImageResourceContent::GetResourceError() const {
+Optional<ResourceError> ImageResourceContent::GetResourceError() const {
   return info_->GetResourceError();
+}
+
+bool ImageResourceContent::IsCacheValidator() const {
+  return info_->IsCacheValidator();
 }
 
 }  // namespace blink

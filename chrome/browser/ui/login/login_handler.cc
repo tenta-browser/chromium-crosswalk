@@ -13,12 +13,12 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/prerender/prerender_contents.h"
 #include "chrome/browser/tab_contents/tab_util.h"
 #include "chrome/browser/ui/login/login_interstitial_delegate.h"
-#include "chrome/grit/generated_resources.h"
 #include "components/password_manager/core/browser/browser_save_password_progress_logger.h"
 #include "components/password_manager/core/browser/log_manager.h"
 #include "components/password_manager/core/browser/password_manager.h"
@@ -51,7 +51,7 @@
 #endif
 
 #if !defined(OS_ANDROID)
-#include "chrome/browser/ui/blocked_content/app_modal_dialog_helper.h"
+#include "chrome/browser/ui/blocked_content/popunder_preventer.h"
 #endif
 
 using autofill::PasswordForm;
@@ -121,9 +121,8 @@ LoginHandler::LoginHandler(net::AuthChallengeInfo* auth_info,
   DCHECK(info);
   web_contents_getter_ = info->GetWebContentsGetterForRequest();
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::Bind(&LoginHandler::AddObservers, this));
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::BindOnce(&LoginHandler::AddObservers, this));
 }
 
 void LoginHandler::OnRequestCancelled() {
@@ -211,10 +210,10 @@ void LoginHandler::SetAuth(const base::string16& username,
 
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&LoginHandler::CloseContentsDeferred, this));
+      base::BindOnce(&LoginHandler::CloseContentsDeferred, this));
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&LoginHandler::SetAuthDeferred, this, username, password));
+      base::BindOnce(&LoginHandler::SetAuthDeferred, this, username, password));
 }
 
 void LoginHandler::CancelAuth() {
@@ -312,15 +311,14 @@ void LoginHandler::ReleaseSoon() {
   if (!TestAndSetAuthHandled()) {
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&LoginHandler::CancelAuthDeferred, this));
+        base::BindOnce(&LoginHandler::CancelAuthDeferred, this));
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(&LoginHandler::NotifyAuthCancelled, this, false));
+        base::BindOnce(&LoginHandler::NotifyAuthCancelled, this, false));
   }
 
-  BrowserThread::PostTask(
-    BrowserThread::UI, FROM_HERE,
-    base::Bind(&LoginHandler::RemoveObservers, this));
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::BindOnce(&LoginHandler::RemoveObservers, this));
 
   // Delete this object once all InvokeLaters have been called.
   BrowserThread::ReleaseSoon(BrowserThread::IO, FROM_HERE, this);
@@ -340,7 +338,7 @@ void LoginHandler::AddObservers() {
 #if !defined(OS_ANDROID)
   WebContents* requesting_contents = GetWebContentsForLogin();
   if (requesting_contents)
-    dialog_helper_.reset(new AppModalDialogHelper(requesting_contents));
+    popunder_preventer_.reset(new PopunderPreventer(requesting_contents));
 #endif
 }
 
@@ -420,15 +418,16 @@ void LoginHandler::DoCancelAuth(bool dismiss_navigation) {
     NotifyAuthCancelled(dismiss_navigation);
   } else {
     BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                            base::Bind(&LoginHandler::NotifyAuthCancelled, this,
-                                       dismiss_navigation));
+                            base::BindOnce(&LoginHandler::NotifyAuthCancelled,
+                                           this, dismiss_navigation));
   }
 
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&LoginHandler::CloseContentsDeferred, this));
-  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                          base::Bind(&LoginHandler::CancelAuthDeferred, this));
+      base::BindOnce(&LoginHandler::CloseContentsDeferred, this));
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&LoginHandler::CancelAuthDeferred, this));
 }
 
 // Calls CancelAuth from the IO loop.
@@ -450,7 +449,7 @@ void LoginHandler::CloseContentsDeferred() {
   if (interstitial_delegate_)
     interstitial_delegate_->Proceed();
 #if !defined(OS_ANDROID)
-  dialog_helper_.reset();
+  popunder_preventer_.reset();
 #endif
 }
 
@@ -489,8 +488,8 @@ PasswordForm LoginHandler::MakeInputForPasswordManager(
     dialog_form.scheme = PasswordForm::SCHEME_OTHER;
   }
   dialog_form.origin = auth_info.challenger.GetURL();
-  DCHECK(auth_info.is_proxy ||
-         auth_info.challenger.IsSameOriginWith(url::Origin(request_url)));
+  DCHECK(auth_info.is_proxy || auth_info.challenger.IsSameOriginWith(
+                                   url::Origin::Create(request_url)));
   dialog_form.signon_realm = GetSignonRealm(dialog_form.origin, auth_info);
   return dialog_form;
 }
@@ -509,17 +508,20 @@ void LoginHandler::GetDialogStrings(const GURL& request_url,
             auth_info.challenger, url_formatter::SchemeDisplay::SHOW));
     authority_url = auth_info.challenger.GetURL();
   } else {
-    *authority = l10n_util::GetStringFUTF16(
-        IDS_LOGIN_DIALOG_AUTHORITY,
-        url_formatter::FormatUrlForSecurityDisplay(request_url));
+    *authority = url_formatter::FormatUrlForSecurityDisplay(request_url);
+#if defined(OS_ANDROID)
+    // Android concatenates with a space rather than displaying on two separate
+    // lines, so it needs some surrounding text.
+    *authority =
+        l10n_util::GetStringFUTF16(IDS_LOGIN_DIALOG_AUTHORITY, *authority);
+#endif
     authority_url = request_url;
   }
 
   if (!content::IsOriginSecure(authority_url)) {
     // TODO(asanka): The string should be different for proxies and servers.
     // http://crbug.com/620756
-    *explanation =
-        l10n_util::GetStringUTF16(IDS_PAGE_INFO_NON_SECURE_TRANSPORT);
+    *explanation = l10n_util::GetStringUTF16(IDS_LOGIN_DIALOG_NOT_PRIVATE);
   } else {
     explanation->clear();
   }
@@ -664,8 +666,8 @@ LoginHandler* CreateLoginPrompt(net::AuthChallengeInfo* auth_info,
   LoginHandler* handler = LoginHandler::Create(auth_info, request);
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&LoginHandler::LoginDialogCallback, request->url(),
-                 base::RetainedRef(auth_info), base::RetainedRef(handler),
-                 is_main_frame));
+      base::BindOnce(&LoginHandler::LoginDialogCallback, request->url(),
+                     base::RetainedRef(auth_info), base::RetainedRef(handler),
+                     is_main_frame));
   return handler;
 }

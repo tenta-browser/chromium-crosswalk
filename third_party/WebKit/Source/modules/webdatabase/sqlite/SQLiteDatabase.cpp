@@ -44,14 +44,17 @@ const int kSQLResultConstraint = SQLITE_CONSTRAINT;
 static const char kNotOpenErrorMessage[] = "database is not open";
 
 SQLiteDatabase::SQLiteDatabase()
-    : db_(0),
+    : db_(nullptr),
       page_size_(-1),
       transaction_in_progress_(false),
+#if DCHECK_IS_ON()
       sharable_(false),
+#endif
       opening_thread_(0),
       open_error_(SQLITE_ERROR),
       open_error_message_(),
-      last_changes_count_(0) {}
+      last_changes_count_(0) {
+}
 
 SQLiteDatabase::~SQLiteDatabase() {
   Close();
@@ -65,9 +68,9 @@ bool SQLiteDatabase::Open(const String& filename) {
     open_error_message_ =
         db_ ? sqlite3_errmsg(db_) : "sqlite_open returned null";
     DLOG(ERROR) << "SQLite database failed to load from " << filename
-                << "\nCause - " << open_error_message_.Data();
+                << "\nCause - " << open_error_message_.data();
     sqlite3_close(db_);
-    db_ = 0;
+    db_ = nullptr;
     return false;
   }
 
@@ -75,9 +78,9 @@ bool SQLiteDatabase::Open(const String& filename) {
   if (open_error_ != SQLITE_OK) {
     open_error_message_ = sqlite3_errmsg(db_);
     DLOG(ERROR) << "SQLite database error when enabling extended errors - "
-                << open_error_message_.Data();
+                << open_error_message_.data();
     sqlite3_close(db_);
-    db_ = 0;
+    db_ = nullptr;
     return false;
   }
 
@@ -101,11 +104,11 @@ void SQLiteDatabase::Close() {
   if (db_) {
     // FIXME: This is being called on the main thread during JS GC.
     // <rdar://problem/5739818>
-    // ASSERT(currentThread() == m_openingThread);
+    // DCHECK_EQ(currentThread(), m_openingThread);
     sqlite3* db = db_;
     {
       MutexLocker locker(database_closing_mutex_);
-      db_ = 0;
+      db_ = nullptr;
     }
     sqlite3_close(db);
   }
@@ -251,7 +254,7 @@ const char* SQLiteDatabase::LastErrorMsg() {
   if (db_)
     return sqlite3_errmsg(db_);
   return open_error_message_.IsNull() ? kNotOpenErrorMessage
-                                      : open_error_message_.Data();
+                                      : open_error_message_.data();
 }
 
 int SQLiteDatabase::AuthorizerFunction(void* user_data,
@@ -352,7 +355,7 @@ void SQLiteDatabase::EnableAuthorizer(bool enable) {
     sqlite3_set_authorizer(db_, SQLiteDatabase::AuthorizerFunction,
                            authorizer_.Get());
   else
-    sqlite3_set_authorizer(db_, NULL, 0);
+    sqlite3_set_authorizer(db_, nullptr, nullptr);
 }
 
 bool SQLiteDatabase::IsAutoCommitOn() const {

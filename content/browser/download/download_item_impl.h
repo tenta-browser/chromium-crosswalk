@@ -9,6 +9,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "base/callback_forward.h"
 #include "base/files/file_path.h"
@@ -17,12 +18,10 @@
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "content/browser/download/download_destination_observer.h"
-#include "content/browser/download/download_net_log_parameters.h"
 #include "content/browser/download/download_request_handle.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/download_interrupt_reasons.h"
 #include "content/public/browser/download_item.h"
-#include "net/log/net_log_with_source.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -35,12 +34,111 @@ class CONTENT_EXPORT DownloadItemImpl
     : public DownloadItem,
       public DownloadDestinationObserver {
  public:
-  enum ResumeMode {
-    RESUME_MODE_INVALID = 0,
-    RESUME_MODE_IMMEDIATE_CONTINUE,
-    RESUME_MODE_IMMEDIATE_RESTART,
-    RESUME_MODE_USER_CONTINUE,
-    RESUME_MODE_USER_RESTART
+  // Information about the initial request that triggers the download. Most of
+  // the fields are immutable after the DownloadItem is successfully created.
+  // However, it is possible that the url chain is changed when resuming an
+  // interrupted download. In that case, the download will restart from the
+  // beginning.
+  struct CONTENT_EXPORT RequestInfo {
+    RequestInfo(const std::vector<GURL>& url_chain,
+                const GURL& referrer_url,
+                const GURL& site_url,
+                const GURL& tab_url,
+                const GURL& tab_referrer_url,
+                const std::string& suggested_filename,
+                const base::FilePath& forced_file_path,
+                ui::PageTransition transition_type,
+                bool has_user_gesture,
+                const std::string& remote_address,
+                base::Time start_time);
+    RequestInfo();
+    explicit RequestInfo(const RequestInfo& other);
+    explicit RequestInfo(const GURL& url);
+    ~RequestInfo();
+
+    // The chain of redirects that leading up to and including the final URL.
+    std::vector<GURL> url_chain;
+
+    // The URL of the page that initiated the download.
+    GURL referrer_url;
+
+    // Site URL for the site instance that initiated this download.
+    GURL site_url;
+
+    // The URL of the tab that initiated the download.
+    GURL tab_url;
+
+    // The URL of the referrer of the tab that initiated the download.
+    GURL tab_referrer_url;
+
+    // Filename suggestion from DownloadSaveInfo. It could, among others, be the
+    // suggested filename in 'download' attribute of an anchor. Details:
+    // http://www.whatwg.org/specs/web-apps/current-work/#downloading-hyperlinks
+    std::string suggested_filename;
+
+    // If non-empty, contains an externally supplied path that should be used as
+    // the target path.
+    base::FilePath forced_file_path;
+
+    // Page transition that triggerred the download.
+    ui::PageTransition transition_type = ui::PAGE_TRANSITION_LINK;
+
+    // Whether the download was triggered with a user gesture.
+    bool has_user_gesture = false;
+
+    // The remote IP address where the download was fetched from.
+    std::string remote_address;
+
+    // Time the download was started.
+    base::Time start_time;
+  };
+
+  // Information about the current state of the download destination.
+  struct CONTENT_EXPORT DestinationInfo {
+    DestinationInfo(const base::FilePath& target_path,
+                    const base::FilePath& current_path,
+                    int64_t received_bytes,
+                    bool all_data_saved,
+                    const std::string& hash,
+                    base::Time end_time);
+    DestinationInfo();
+    explicit DestinationInfo(TargetDisposition target_disposition);
+    explicit DestinationInfo(const DestinationInfo& other);
+    ~DestinationInfo();
+
+    // Whether the target should be overwritten, uniquified or prompted for.
+    TargetDisposition target_disposition = TARGET_DISPOSITION_OVERWRITE;
+
+    // Target path of an in-progress download. We may be downloading to a
+    // temporary or intermediate file (specified by |current_path|).  Once the
+    // download completes, we will rename the file to |target_path|.
+    base::FilePath target_path;
+
+    // Full path to the downloaded or downloading file. This is the path to the
+    // physical file, if one exists. The final target path is specified by
+    // |target_path|. |current_path| can be empty if the in-progress path
+    // hasn't been determined.
+    base::FilePath current_path;
+
+    // Current received bytes.
+    int64_t received_bytes = 0;
+
+    // True if we've saved all the data for the download. If true, then the file
+    // at |current_path| contains |received_bytes|, which constitute the
+    // entirety of what we expect to save there. A digest of its contents can be
+    // found at |hash|.
+    bool all_data_saved = false;
+
+    // SHA256 hash of the possibly partial content. The hash is updated each
+    // time the download is interrupted, and when the all the data has been
+    // transferred. |hash| contains the raw binary hash and is not hex encoded.
+    //
+    // While the download is in progress, and while resuming, |hash| will be
+    // empty.
+    std::string hash;
+
+    // Time last update was written to target file.
+    base::Time end_time;
   };
 
   // The maximum number of attempts we will make to resume automatically.
@@ -78,15 +176,13 @@ class CONTENT_EXPORT DownloadItemImpl
       bool opened,
       base::Time last_access_time,
       bool transient,
-      const std::vector<DownloadItem::ReceivedSlice>& received_slices,
-      const net::NetLogWithSource& net_log);
+      const std::vector<DownloadItem::ReceivedSlice>& received_slices);
 
   // Constructing for a regular download.
   // |net_log| is constructed externally for our use.
   DownloadItemImpl(DownloadItemImplDelegate* delegate,
                    uint32_t id,
-                   const DownloadCreateInfo& info,
-                   const net::NetLogWithSource& net_log);
+                   const DownloadCreateInfo& info);
 
   // Constructing for the "Save Page As..." feature:
   // |net_log| is constructed externally for our use.
@@ -96,8 +192,7 @@ class CONTENT_EXPORT DownloadItemImpl
       const base::FilePath& path,
       const GURL& url,
       const std::string& mime_type,
-      std::unique_ptr<DownloadRequestHandleInterface> request_handle,
-      const net::NetLogWithSource& net_log);
+      std::unique_ptr<DownloadRequestHandleInterface> request_handle);
 
   ~DownloadItemImpl() override;
 
@@ -171,7 +266,8 @@ class CONTENT_EXPORT DownloadItemImpl
   bool IsTransient() const override;
   BrowserContext* GetBrowserContext() const override;
   WebContents* GetWebContents() const override;
-  void OnContentCheckCompleted(DownloadDangerType danger_type) override;
+  void OnContentCheckCompleted(DownloadDangerType danger_type,
+                               DownloadInterruptReason reason) override;
   void SetOpenWhenComplete(bool open) override;
   void SetOpened(bool opened) override;
   void SetLastAccessTime(base::Time last_access_time) override;
@@ -180,11 +276,6 @@ class CONTENT_EXPORT DownloadItemImpl
 
   // All remaining public interfaces virtual to allow for DownloadItemImpl
   // mocks.
-
-  // Determines the resume mode for an interrupted download. Requires
-  // last_reason_ to be set, but doesn't require the download to be in
-  // INTERRUPTED state.
-  virtual ResumeMode GetResumeMode() const;
 
   // State transition operations on regular downloads --------------------------
 
@@ -204,18 +295,12 @@ class CONTENT_EXPORT DownloadItemImpl
   // TODO(rdsmith): Unwind DownloadManagerImpl and DownloadItemImpl,
   // removing these from the public interface.
 
-  // Notify observers that this item is being removed by the user.
-  virtual void NotifyRemoved();
-
   virtual void OnDownloadedFileRemoved();
 
   // Provide a weak pointer reference to a DownloadDestinationObserver
   // for use by download destinations.
   virtual base::WeakPtr<DownloadDestinationObserver>
       DestinationObserverAsWeakPtr();
-
-  // Get the download's NetLogWithSource.
-  virtual const net::NetLogWithSource& GetNetLogWithSource() const;
 
   // DownloadItemImpl routines only needed by SavePackage ----------------------
 
@@ -404,12 +489,8 @@ class CONTENT_EXPORT DownloadItemImpl
 
   // Construction common to all constructors. |active| should be true for new
   // downloads and false for downloads from the history.
-  // |download_type| indicates to the net log system what kind of download
-  // this is.
-  void Init(bool active, DownloadType download_type);
-
-  // Start a series of events that result in the file being downloaded.
-  void StartDownload();
+  // |download_type| indicates to the trace event what kind of download this is.
+  void Init(bool active, DownloadItem::DownloadType download_type);
 
   // Callback from file thread when we initialize the DownloadFile.
   void OnDownloadFileInitialized(DownloadInterruptReason result);
@@ -507,8 +588,21 @@ class CONTENT_EXPORT DownloadItemImpl
   virtual void UpdateValidatorsOnResumption(
       const DownloadCreateInfo& new_create_info);
 
-  // Cancel a particular request that starts from |offset|.
-  void CancelRequestWithOffset(int64_t offset);
+  // Notify observers that this item is being removed by the user.
+  void NotifyRemoved();
+
+  enum ResumeMode {
+    RESUME_MODE_INVALID = 0,
+    RESUME_MODE_IMMEDIATE_CONTINUE,
+    RESUME_MODE_IMMEDIATE_RESTART,
+    RESUME_MODE_USER_CONTINUE,
+    RESUME_MODE_USER_RESTART
+  };
+
+  // Determines the resume mode for an interrupted download. Requires
+  // last_reason_ to be set, but doesn't require the download to be in
+  // INTERRUPTED state.
+  ResumeMode GetResumeMode() const;
 
   static DownloadState InternalToExternalState(
       DownloadInternalState internal_state);
@@ -523,55 +617,21 @@ class CONTENT_EXPORT DownloadItemImpl
   static bool IsValidStateTransition(DownloadInternalState from,
                                      DownloadInternalState to);
 
-  // Will be false for save package downloads retrieved from the history.
-  // TODO(rdsmith): Replace with a generalized enum for "download source".
-  const bool is_save_package_download_ = false;
+  RequestInfo request_info_;
 
+  // GUID to identify the download, generated by |base::GenerateGUID| in
+  // download item, or provided by |DownloadUrlParameters|.
+  // The format should follow UUID version 4 in RFC 4122.
+  // The string representation is case sensitive. Legacy download GUID hex
+  // digits may be upper case ASCII characters, and new GUID will be in lower
+  // case.
   std::string guid_;
 
   uint32_t download_id_ = kInvalidId;
 
   // Display name for the download. If this is empty, then the display name is
-  // considered to be |target_path_.BaseName()|.
+  // considered to be |GetTargetFilePath().BaseName()|.
   base::FilePath display_name_;
-
-  // Target path of an in-progress download. We may be downloading to a
-  // temporary or intermediate file (specified by |current_path_|.  Once the
-  // download completes, we will rename the file to |target_path_|.
-  base::FilePath target_path_;
-
-  // Whether the target should be overwritten, uniquified or prompted for.
-  TargetDisposition target_disposition_ = TARGET_DISPOSITION_OVERWRITE;
-
-  // The chain of redirects that leading up to and including the final URL.
-  std::vector<GURL> url_chain_;
-
-  // The URL of the page that initiated the download.
-  GURL referrer_url_;
-
-  // Site URL for the site instance that initiated this download.
-  GURL site_url_;
-
-  // The URL of the tab that initiated the download.
-  GURL tab_url_;
-
-  // The URL of the referrer of the tab that initiated the download.
-  GURL tab_referrer_url_;
-
-  // Filename suggestion from DownloadSaveInfo. It could, among others, be the
-  // suggested filename in 'download' attribute of an anchor. Details:
-  // http://www.whatwg.org/specs/web-apps/current-work/#downloading-hyperlinks
-  std::string suggested_filename_;
-
-  // If non-empty, contains an externally supplied path that should be used as
-  // the target path.
-  base::FilePath forced_file_path_;
-
-  // Page transition that triggerred the download.
-  ui::PageTransition transition_type_ = ui::PAGE_TRANSITION_LINK;
-
-  // Whether the download was triggered with a user gesture.
-  bool has_user_gesture_ = false;
 
   // Information from the response.
 
@@ -590,10 +650,6 @@ class CONTENT_EXPORT DownloadItemImpl
   // which may look at the file extension and first few bytes of the file.
   std::string original_mime_type_;
 
-  // The remote IP address where the download was fetched from.  Copied from
-  // DownloadCreateInfo::remote_address.
-  std::string remote_address_;
-
   // Total bytes expected.
   int64_t total_bytes_ = 0;
 
@@ -611,12 +667,6 @@ class CONTENT_EXPORT DownloadItemImpl
 
   // The views of this item in the download shelf and download contents.
   base::ObserverList<Observer> observers_;
-
-  // Time the download was started.
-  base::Time start_time_;
-
-  // Time the download completed.
-  base::Time end_time_;
 
   // Our delegate.
   DownloadItemImplDelegate* delegate_ = nullptr;
@@ -659,40 +709,20 @@ class CONTENT_EXPORT DownloadItemImpl
   // The following fields describe the current state of the download file.
 
   // DownloadFile associated with this download.  Note that this
-  // pointer may only be used or destroyed on the FILE thread.
+  // pointer may only be used or destroyed on the download sequence.
   // This pointer will be non-null only while the DownloadItem is in
   // the IN_PROGRESS state.
   std::unique_ptr<DownloadFile> download_file_;
 
-  // Full path to the downloaded or downloading file. This is the path to the
-  // physical file, if one exists. The final target path is specified by
-  // |target_path_|. |current_path_| can be empty if the in-progress path hasn't
-  // been determined.
-  base::FilePath current_path_;
-
-  // Current received bytes.
-  int64_t received_bytes_ = 0;
+  // Information about |download_file_|.
+  DestinationInfo destination_info_;
 
   // Current speed. Calculated by the DownloadFile.
   int64_t bytes_per_sec_ = 0;
 
-  // True if we've saved all the data for the download. If true, then the file
-  // at |current_path_| contains |received_bytes_|, which constitute the
-  // entirety of what we expect to save there. A digest of its contents can be
-  // found at |hash_|.
-  bool all_data_saved_ = false;
-
   // The number of times this download has been resumed automatically. Will be
   // reset to 0 if a resumption is performed in response to a Resume() call.
   int auto_resume_count_ = 0;
-
-  // SHA256 hash of the possibly partial content. The hash is updated each time
-  // the download is interrupted, and when the all the data has been
-  // transferred. |hash_| contains the raw binary hash and is not hex encoded.
-  //
-  // While the download is in progress, and while resuming, |hash_| will be
-  // empty.
-  std::string hash_;
 
   // In the event of an interruption, the DownloadDestinationObserver interface
   // exposes the partial hash state. This state can be held by the download item
@@ -708,10 +738,18 @@ class CONTENT_EXPORT DownloadItemImpl
   // The data slices that have been received so far.
   std::vector<DownloadItem::ReceivedSlice> received_slices_;
 
-  // Net log to use for this download.
-  const net::NetLogWithSource net_log_;
-
   std::unique_ptr<DownloadJob> job_;
+
+  // Value of |received_bytes_| at the time the download was interrupted with
+  // CONTENT_LENGTH_MISMATCH.
+  int64_t received_bytes_at_length_mismatch_ = -1;
+
+  // Check whether the download item is updating its observers.
+  bool is_updating_observers_;
+
+  // Whether the download should fetch the response body for non successful HTTP
+  // response.
+  bool fetch_error_body_ = false;
 
   base::WeakPtrFactory<DownloadItemImpl> weak_ptr_factory_;
 

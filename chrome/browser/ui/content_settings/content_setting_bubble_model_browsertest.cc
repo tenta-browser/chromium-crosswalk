@@ -18,6 +18,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/network_session_configurator/common/network_switches.h"
 #include "components/rappor/test_rappor_service.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/test_navigation_observer.h"
@@ -25,6 +26,7 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/events/event_constants.h"
 
 const base::FilePath::CharType kDocRoot[] =
     FILE_PATH_LITERAL("chrome/test/data");
@@ -82,6 +84,14 @@ class ContentSettingsMixedScriptIgnoreCertErrorsTest
   void SetUpCommandLine(base::CommandLine* command_line) override {
     command_line->AppendSwitch(switches::kIgnoreCertificateErrors);
   }
+
+  void SetUpOnMainThread() override {
+    ContentSettingBubbleModelMixedScriptTest::SetUpOnMainThread();
+    // Rappor treats local hostnames a little bit special (e.g. records
+    // "127.0.0.1" as "localhost"), so use a non-local hostname for
+    // convenience.
+    host_resolver()->AddRule("*", "127.0.0.1");
+  }
 };
 
 // Tests that a MIXEDSCRIPT type ContentSettingBubbleModel records UMA
@@ -95,10 +105,6 @@ IN_PROC_BROWSER_TEST_F(ContentSettingsMixedScriptIgnoreCertErrorsTest,
                        MainFrameMetrics) {
   GURL url(https_server_->GetURL("/content_setting_bubble/mixed_script.html"));
 
-  // Rappor treats local hostnames a little bit special (e.g. records
-  // "127.0.0.1" as "localhost"), so use a non-local hostname for
-  // convenience.
-  host_resolver()->AddRule("*", "127.0.0.1");
   GURL::Replacements replace_host;
   replace_host.SetHostStr("example.test");
   url = url.ReplaceComponents(replace_host);
@@ -182,9 +188,9 @@ class ContentSettingBubbleModelMediaStreamTest : public InProcessBrowserTest {
             browser()->content_setting_bubble_model_delegate(), original_tab,
             browser()->profile()));
 
-    // Click the management link, which opens in a new tab or window.
-    // Wait until it loads.
-    bubble->OnManageLinkClicked();
+    // Click the manage button, which opens in a new tab or window. Wait until
+    // it loads.
+    bubble->OnManageButtonClicked();
     ASSERT_NE(GetActiveTab(), original_tab);
     content::TestNavigationObserver observer(GetActiveTab());
     observer.Wait();
@@ -198,14 +204,14 @@ class ContentSettingBubbleModelMediaStreamTest : public InProcessBrowserTest {
   }
 };
 
-// Tests that clicking on the management link in the media bubble opens
-// the correct section of the settings UI.
-// This test sometimes leaks memory, detected by linux_chromium_asan_rel_ng. See
-// http://crbug/668693 for more info.
+// Tests that clicking on the manage button in the media bubble opens the
+// correct section of the settings UI. This test sometimes leaks memory,
+// detected by linux_chromium_asan_rel_ng. See http://crbug/668693 for more
+// info.
 IN_PROC_BROWSER_TEST_F(ContentSettingBubbleModelMediaStreamTest,
                        DISABLED_ManageLink) {
-  // For each of the three options, we click the management link and check if
-  // the active tab loads the correct internal url.
+  // For each of the three options, we click the manage button and check if the
+  // active tab loads the correct internal url.
 
   // The microphone bubble links to microphone exceptions.
   ManageMediaStreamSettings(TabSpecificContentSettings::MICROPHONE_ACCESSED);
@@ -218,10 +224,6 @@ IN_PROC_BROWSER_TEST_F(ContentSettingBubbleModelMediaStreamTest,
                             TabSpecificContentSettings::CAMERA_ACCESSED);
   EXPECT_EQ(GURL("chrome://settings/content#media-stream-mic"),
             GetActiveTab()->GetLastCommittedURL());
-
-  // In ChromeOS, we do not sanitize chrome://settings-frame to
-  // chrome://settings for same-document navigations. See crbug.com/416157. For
-  // this reason, order the tests so no same-document navigation occurs.
 
   // The camera bubble links to camera exceptions.
   ManageMediaStreamSettings(TabSpecificContentSettings::CAMERA_ACCESSED);
@@ -264,12 +266,12 @@ IN_PROC_BROWSER_TEST_F(ContentSettingBubbleModelPopupTest,
         "ContentSettings.Popups",
         content_settings::POPUPS_ACTION_DISPLAYED_BUBBLE, 1);
 
-  model->OnListItemClicked(0);
+  model->OnListItemClicked(0, ui::EF_LEFT_MOUSE_BUTTON);
   histograms.ExpectBucketCount(
         "ContentSettings.Popups",
         content_settings::POPUPS_ACTION_CLICKED_LIST_ITEM_CLICKED, 1);
 
-  model->OnManageLinkClicked();
+  model->OnManageButtonClicked();
   histograms.ExpectBucketCount(
         "ContentSettings.Popups",
         content_settings::POPUPS_ACTION_CLICKED_MANAGE_POPUPS_BLOCKING, 1);

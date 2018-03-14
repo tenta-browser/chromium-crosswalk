@@ -8,6 +8,7 @@
 #include "core/animation/LengthInterpolationFunctions.h"
 #include "core/css/CSSIdentifierValue.h"
 #include "core/css/resolver/StyleResolverState.h"
+#include "core/style/ComputedStyle.h"
 #include "platform/LengthFunctions.h"
 #include "platform/fonts/FontDescription.h"
 #include "platform/wtf/PtrUtil.h"
@@ -16,7 +17,7 @@ namespace blink {
 
 namespace {
 
-class IsMonospaceChecker : public InterpolationType::ConversionChecker {
+class IsMonospaceChecker : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<IsMonospaceChecker> Create(bool is_monospace) {
     return WTF::WrapUnique(new IsMonospaceChecker(is_monospace));
@@ -25,16 +26,16 @@ class IsMonospaceChecker : public InterpolationType::ConversionChecker {
  private:
   IsMonospaceChecker(bool is_monospace) : is_monospace_(is_monospace) {}
 
-  bool IsValid(const InterpolationEnvironment& environment,
+  bool IsValid(const StyleResolverState& state,
                const InterpolationValue&) const final {
-    return is_monospace_ ==
-           environment.GetState().Style()->GetFontDescription().IsMonospace();
+    return is_monospace_ == state.Style()->GetFontDescription().IsMonospace();
   }
 
   const bool is_monospace_;
 };
 
-class InheritedFontSizeChecker : public InterpolationType::ConversionChecker {
+class InheritedFontSizeChecker
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<InheritedFontSizeChecker> Create(
       const FontDescription::Size& inherited_font_size) {
@@ -45,10 +46,10 @@ class InheritedFontSizeChecker : public InterpolationType::ConversionChecker {
   InheritedFontSizeChecker(const FontDescription::Size& inherited_font_size)
       : inherited_font_size_(inherited_font_size.value) {}
 
-  bool IsValid(const InterpolationEnvironment& environment,
+  bool IsValid(const StyleResolverState& state,
                const InterpolationValue&) const final {
     return inherited_font_size_ ==
-           environment.GetState().ParentFontDescription().GetSize().value;
+           state.ParentFontDescription().GetSize().value;
   }
 
   const float inherited_font_size_;
@@ -63,11 +64,11 @@ InterpolationValue MaybeConvertKeyword(
     CSSValueID value_id,
     const StyleResolverState& state,
     InterpolationType::ConversionCheckers& conversion_checkers) {
-  if (FontSize::IsValidValueID(value_id)) {
+  if (FontSizeFunctions::IsValidValueID(value_id)) {
     bool is_monospace = state.Style()->GetFontDescription().IsMonospace();
     conversion_checkers.push_back(IsMonospaceChecker::Create(is_monospace));
     return ConvertFontSize(state.GetFontBuilder().FontSizeForKeyword(
-        FontSize::KeywordSize(value_id), is_monospace));
+        FontSizeFunctions::KeywordSize(value_id), is_monospace));
   }
 
   if (value_id != CSSValueSmaller && value_id != CSSValueLarger)
@@ -96,7 +97,7 @@ InterpolationValue CSSFontSizeInterpolationType::MaybeConvertNeutral(
 InterpolationValue CSSFontSizeInterpolationType::MaybeConvertInitial(
     const StyleResolverState& state,
     ConversionCheckers& conversion_checkers) const {
-  return MaybeConvertKeyword(FontSize::InitialValueID(), state,
+  return MaybeConvertKeyword(FontSizeFunctions::InitialValueID(), state,
                              conversion_checkers);
 }
 

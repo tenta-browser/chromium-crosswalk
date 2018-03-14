@@ -4,113 +4,68 @@
 
 #include "chrome/browser/signin/signin_error_notifier_ash.h"
 
-#include "ash/system/system_notifier.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/chromeos/login/user_flow.h"
+#include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
-#include "chrome/browser/notifications/notification.h"
-#include "chrome/browser/notifications/notification_delegate.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_pages.h"
-#include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
-#include "chrome/browser/ui/webui/signin/login_ui_service.h"
-#include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/signin/core/account_id/account_id.h"
+#include "components/user_manager/user_manager.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/message_center/notification.h"
 #include "ui/message_center/notification_delegate.h"
-
-#if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/login/user_flow.h"
-#include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
-#include "components/user_manager/user_manager.h"
-#endif
+#include "ui/message_center/public/cpp/message_center_constants.h"
+#include "ui/message_center/public/cpp/message_center_switches.h"
 
 namespace {
 
 const char kProfileSigninNotificationId[] = "chrome://settings/signin/";
 
 // A notification delegate for the sign-out button.
-class SigninNotificationDelegate : public NotificationDelegate {
+// TODO(estade): should this use a generic notification delegate?
+class SigninNotificationDelegate : public message_center::NotificationDelegate {
  public:
-  SigninNotificationDelegate(const std::string& id,
-                             Profile* profile);
+  SigninNotificationDelegate();
 
   // NotificationDelegate:
   void Click() override;
   void ButtonClick(int button_index) override;
-  std::string id() const override;
 
  protected:
   ~SigninNotificationDelegate() override;
 
  private:
-  void FixSignIn();
-
   // Unique id of the notification.
   const std::string id_;
-
-#if !defined(OS_CHROMEOS)
-  Profile* profile_;
-#endif
 
   DISALLOW_COPY_AND_ASSIGN(SigninNotificationDelegate);
 };
 
-SigninNotificationDelegate::SigninNotificationDelegate(const std::string& id,
-                                                       Profile* profile)
-#if defined(OS_CHROMEOS)
-    : id_(id) {
-#else
-    : id_(id), profile_(profile) {
-#endif
-}
-
-SigninNotificationDelegate::~SigninNotificationDelegate() {
-}
+SigninNotificationDelegate::SigninNotificationDelegate() = default;
+SigninNotificationDelegate::~SigninNotificationDelegate() = default;
 
 void SigninNotificationDelegate::Click() {
-  FixSignIn();
+  chrome::AttemptUserExit();
 }
 
 void SigninNotificationDelegate::ButtonClick(int button_index) {
-  FixSignIn();
-}
-
-std::string SigninNotificationDelegate::id() const {
-  return id_;
-}
-
-void SigninNotificationDelegate::FixSignIn() {
-#if defined(OS_CHROMEOS)
   chrome::AttemptUserExit();
-#else
-  LoginUIService* login_ui = LoginUIServiceFactory::GetForProfile(profile_);
-  if (login_ui->current_login_ui()) {
-    login_ui->current_login_ui()->FocusUI();
-    return;
-  }
-
-  // Find a browser instance or create one.
-  chrome::ScopedTabbedBrowserDisplayer browser_displayer(profile_);
-
-  // Navigate to the sync setup subpage, which will launch a login page.
-  chrome::ShowSettingsSubPage(browser_displayer.browser(),
-                              chrome::kSyncSetupSubPage);
-#endif
 }
 
 }  // namespace
@@ -151,7 +106,6 @@ void SigninErrorNotifier::OnErrorChanged() {
     return;
   }
 
-#if defined(OS_CHROMEOS)
   if (user_manager::UserManager::IsInitialized()) {
     chromeos::UserFlow* user_flow =
         chromeos::ChromeUserManager::Get()->GetCurrentUserFlow();
@@ -162,16 +116,12 @@ void SigninErrorNotifier::OnErrorChanged() {
     if (!user_flow->ShouldLaunchBrowser())
       return;
   }
-#endif
 
   // Add an accept button to sign the user out.
   message_center::RichNotificationData data;
   data.buttons.push_back(message_center::ButtonInfo(
       l10n_util::GetStringUTF16(IDS_SYNC_RELOGIN_LINK_LABEL)));
 
-  // Set the delegate for the notification's sign-out button.
-  SigninNotificationDelegate* delegate =
-      new SigninNotificationDelegate(notification_id_, profile_);
 
   message_center::NotifierId notifier_id(
       message_center::NotifierId::SYSTEM_COMPONENT,
@@ -181,22 +131,29 @@ void SigninErrorNotifier::OnErrorChanged() {
   notifier_id.profile_id =
       multi_user_util::GetAccountIdFromProfile(profile_).GetUserEmail();
 
-  Notification notification(
-      message_center::NOTIFICATION_TYPE_SIMPLE,
+  message_center::Notification notification(
+      message_center::NOTIFICATION_TYPE_SIMPLE, notification_id_,
       l10n_util::GetStringUTF16(IDS_SIGNIN_ERROR_BUBBLE_VIEW_TITLE),
-      GetMessageBody(), ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-                            IDR_NOTIFICATION_ALERT),
-      notifier_id,
-      base::string16(),  // display_source
-      GURL(notification_id_), notification_id_, data, delegate);
+      GetMessageBody(),
+      message_center::IsNewStyleNotificationEnabled()
+          ? gfx::Image()
+          : ui::ResourceBundle::GetSharedInstance().GetImageNamed(
+                IDR_NOTIFICATION_ALERT),
+      l10n_util::GetStringUTF16(IDS_SIGNIN_ERROR_DISPLAY_SOURCE),
+      GURL(notification_id_), notifier_id, data,
+      new SigninNotificationDelegate());
+  if (message_center::IsNewStyleNotificationEnabled()) {
+    notification.set_accent_color(
+        message_center::kSystemNotificationColorWarning);
+    notification.set_small_image(gfx::Image(gfx::CreateVectorIcon(
+        kNotificationWarningIcon, message_center::kSmallImageSizeMD,
+        message_center::kSystemNotificationColorWarning)));
+    notification.set_vector_small_image(kNotificationWarningIcon);
+  }
   notification.SetSystemPriority();
 
   // Update or add the notification.
-  if (notification_ui_manager->FindById(
-          notification_id_, NotificationUIManager::GetProfileID(profile_)))
-    notification_ui_manager->Update(notification, profile_);
-  else
-    notification_ui_manager->Add(notification, profile_);
+  notification_ui_manager->Add(notification, profile_);
 }
 
 base::string16 SigninErrorNotifier::GetMessageBody() const {

@@ -4,6 +4,7 @@
 
 #include "net/proxy/proxy_config.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/logging.h"
@@ -261,7 +262,7 @@ std::unique_ptr<base::DictionaryValue> ProxyConfig::ToValue() const {
       if (proxy_rules_.reverse_bypass)
         dict->SetBoolean("reverse_bypass", true);
 
-      base::ListValue* list = new base::ListValue();
+      auto list = std::make_unique<base::ListValue>();
 
       for (ProxyBypassRules::RuleList::const_iterator it =
               bypass.rules().begin();
@@ -269,7 +270,7 @@ std::unique_ptr<base::DictionaryValue> ProxyConfig::ToValue() const {
         list->AppendString((*it)->ToString());
       }
 
-      dict->Set("bypass_list", list);
+      dict->Set("bypass_list", std::move(list));
     }
   }
 

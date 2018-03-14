@@ -28,6 +28,10 @@
 #include <sys/syscall.h>
 #endif
 
+#if defined(OS_FUCHSIA)
+#include <zircon/process.h>
+#endif
+
 namespace base {
 
 void InitThreading();
@@ -38,7 +42,7 @@ namespace {
 
 struct ThreadParams {
   ThreadParams()
-      : delegate(NULL), joinable(false), priority(ThreadPriority::NORMAL) {}
+      : delegate(nullptr), joinable(false), priority(ThreadPriority::NORMAL) {}
 
   PlatformThread::Delegate* delegate;
   bool joinable;
@@ -75,7 +79,7 @@ void* ThreadFunc(void* params) {
       PlatformThread::CurrentId());
 
   base::TerminateOnThread();
-  return NULL;
+  return nullptr;
 }
 
 bool CreateThread(size_t stack_size,
@@ -137,6 +141,8 @@ PlatformThreadId PlatformThread::CurrentId() {
   return syscall(__NR_gettid);
 #elif defined(OS_ANDROID)
   return gettid();
+#elif defined(OS_FUCHSIA)
+  return zx_thread_self();
 #elif defined(OS_SOLARIS) || defined(OS_QNX)
   return pthread_self();
 #elif defined(OS_NACL) && defined(__GLIBC__)
@@ -144,7 +150,9 @@ PlatformThreadId PlatformThread::CurrentId() {
 #elif defined(OS_NACL) && !defined(__GLIBC__)
   // Pointers are 32-bits in NaCl.
   return reinterpret_cast<int32_t>(pthread_self());
-#elif defined(OS_POSIX)
+#elif defined(OS_POSIX) && defined(OS_AIX)
+  return pthread_self();
+#elif defined(OS_POSIX) && !defined(OS_AIX)
   return reinterpret_cast<int64_t>(pthread_self());
 #endif
 }
@@ -217,8 +225,8 @@ void PlatformThread::Join(PlatformThreadHandle thread_handle) {
   // Joining another thread may block the current thread for a long time, since
   // the thread referred to by |thread_handle| may still be running long-lived /
   // blocking tasks.
-  base::ThreadRestrictions::AssertIOAllowed();
-  CHECK_EQ(0, pthread_join(thread_handle.platform_handle(), NULL));
+  AssertBlockingAllowed();
+  CHECK_EQ(0, pthread_join(thread_handle.platform_handle(), nullptr));
 }
 
 // static

@@ -7,13 +7,13 @@
 #include <map>
 #include <set>
 
+#include "base/lazy_instance.h"
 #include "base/macros.h"
 #include "components/guest_view/common/guest_view_constants.h"
 #include "components/guest_view/common/guest_view_messages.h"
-#include "content/public/child/v8_value_converter.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
-#include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_constants.h"
+#include "content/public/renderer/v8_value_converter.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/guest_view/extensions_guest_view_messages.h"
 #include "gin/arguments.h"
@@ -22,6 +22,7 @@
 #include "gin/interceptor.h"
 #include "gin/object_template_builder.h"
 #include "gin/wrappable.h"
+#include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/web/WebAssociatedURLLoader.h"
 #include "third_party/WebKit/public/web/WebAssociatedURLLoaderOptions.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
@@ -147,16 +148,15 @@ void MimeHandlerViewContainer::OnReady() {
   if (!render_frame() || !is_embedded_)
     return;
 
-  blink::WebFrame* frame = render_frame()->GetWebFrame();
+  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
+
   blink::WebAssociatedURLLoaderOptions options;
-  // The embedded plugin is allowed to be cross-origin and we should always
-  // send credentials/cookies with the request.
-  options.cross_origin_request_policy =
-      blink::WebAssociatedURLLoaderOptions::kCrossOriginRequestPolicyAllow;
-  options.allow_credentials = true;
   DCHECK(!loader_);
   loader_.reset(frame->CreateAssociatedURLLoader(options));
 
+  // The embedded plugin is allowed to be cross-origin and we should always
+  // send credentials/cookies with the request. So, use the default mode
+  // "no-cors" and credentials mode "include".
   blink::WebURLRequest request(original_url_);
   request.SetRequestContext(blink::WebURLRequest::kRequestContextObject);
   loader_->LoadAsynchronously(request, this);
@@ -178,7 +178,7 @@ bool MimeHandlerViewContainer::OnMessage(const IPC::Message& message) {
 
 void MimeHandlerViewContainer::PluginDidFinishLoading() {
   DCHECK(!is_embedded_);
-  CreateMimeHandlerViewGuest();
+  CreateMimeHandlerViewGuestIfNecessary();
 }
 
 void MimeHandlerViewContainer::OnRenderFrameDestroyed() {
@@ -193,6 +193,15 @@ void MimeHandlerViewContainer::PluginDidReceiveData(const char* data,
 
 void MimeHandlerViewContainer::DidResizeElement(const gfx::Size& new_size) {
   element_size_ = new_size;
+
+  CreateMimeHandlerViewGuestIfNecessary();
+
+  // Don't try to resize a guest that hasn't been created yet. It is enough to
+  // initialise |element_size_| here and then we'll send that to the browser
+  // during guest creation.
+  if (!guest_created_)
+    return;
+
   render_frame()->Send(new ExtensionsGuestViewHostMsg_ResizeGuest(
       render_frame()->GetRoutingID(), element_instance_id(), new_size));
 }
@@ -214,7 +223,7 @@ void MimeHandlerViewContainer::DidReceiveData(const char* data,
 
 void MimeHandlerViewContainer::DidFinishLoading(double /* unused */) {
   DCHECK(is_embedded_);
-  CreateMimeHandlerViewGuest();
+  CreateMimeHandlerViewGuestIfNecessary();
 }
 
 void MimeHandlerViewContainer::PostMessage(v8::Isolate* isolate,
@@ -236,14 +245,7 @@ void MimeHandlerViewContainer::PostMessage(v8::Isolate* isolate,
   v8::Context::Scope context_scope(
       render_frame()->GetWebFrame()->MainWorldScriptContext());
 
-  // TODO(lazyboy,nasko): The WebLocalFrame branch is not used when running
-  // on top of out-of-process iframes. Remove it once the code is converted.
-  v8::Local<v8::Object> guest_proxy_window;
-  if (guest_proxy_frame->IsWebLocalFrame()) {
-    guest_proxy_window = guest_proxy_frame->MainWorldScriptContext()->Global();
-  } else {
-    guest_proxy_window = guest_proxy_frame->ToWebRemoteFrame()->GlobalProxy();
-  }
+  v8::Local<v8::Object> guest_proxy_window = guest_proxy_frame->GlobalProxy();
   gin::Dictionary window_object(isolate, guest_proxy_window);
   v8::Local<v8::Function> post_message;
   if (!window_object.Get(std::string(kPostMessageName), &post_message))
@@ -261,17 +263,15 @@ void MimeHandlerViewContainer::PostMessage(v8::Isolate* isolate,
 
 void MimeHandlerViewContainer::PostMessageFromValue(
     const base::Value& message) {
-  blink::WebFrame* frame = render_frame()->GetWebFrame();
+  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   if (!frame)
     return;
 
   v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::HandleScope handle_scope(isolate);
   v8::Context::Scope context_scope(frame->MainWorldScriptContext());
-  std::unique_ptr<content::V8ValueConverter> converter(
-      content::V8ValueConverter::create());
-  PostMessage(isolate,
-              converter->ToV8Value(&message, frame->MainWorldScriptContext()));
+  PostMessage(isolate, content::V8ValueConverter::Create()->ToV8Value(
+                           &message, frame->MainWorldScriptContext()));
 }
 
 void MimeHandlerViewContainer::OnCreateMimeHandlerViewGuestACK(
@@ -302,7 +302,7 @@ void MimeHandlerViewContainer::OnMimeHandlerViewGuestOnLoadCompleted(
     return;
 
   // Now that the guest has loaded, flush any unsent messages.
-  blink::WebFrame* frame = render_frame()->GetWebFrame();
+  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   if (!frame)
     return;
 
@@ -315,7 +315,10 @@ void MimeHandlerViewContainer::OnMimeHandlerViewGuestOnLoadCompleted(
   pending_messages_.clear();
 }
 
-void MimeHandlerViewContainer::CreateMimeHandlerViewGuest() {
+void MimeHandlerViewContainer::CreateMimeHandlerViewGuestIfNecessary() {
+  if (guest_created_ || !element_size_.has_value() || view_id_.empty())
+    return;
+
   // The loader has completed loading |view_id_| so we can dispose it.
   if (loader_) {
     DCHECK(is_embedded_);
@@ -330,7 +333,9 @@ void MimeHandlerViewContainer::CreateMimeHandlerViewGuest() {
   render_frame()->Send(
       new ExtensionsGuestViewHostMsg_CreateMimeHandlerViewGuest(
           render_frame()->GetRoutingID(), view_id_, element_instance_id(),
-          element_size_));
+          *element_size_));
+
+  guest_created_ = true;
 }
 
 }  // namespace extensions

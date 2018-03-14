@@ -17,8 +17,8 @@
 #include "extensions/browser/pref_names.h"
 #include "extensions/common/extension.h"
 
-#if defined(USE_ASH)
-#include "ash/shell.h"  // nogncheck
+#if defined(OS_CHROMEOS)
+#include "ash/shell.h"
 #endif
 
 namespace extensions {
@@ -35,7 +35,7 @@ namespace launch_util {
 // static
 void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterIntegerPref(pref_names::kBookmarkAppCreationLaunchType,
-                                LAUNCH_TYPE_REGULAR);
+                                LAUNCH_TYPE_WINDOW);
 }
 
 }  // namespace launch_util
@@ -116,7 +116,7 @@ LaunchContainer GetLaunchContainer(const ExtensionPrefs* prefs,
       // If the pref is set to launch a window (or no pref is set, and
       // window opening is the default), make the container a window.
       result = LAUNCH_CONTAINER_WINDOW;
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
     } else if (prefs_launch_type == LAUNCH_TYPE_FULLSCREEN) {
       // LAUNCH_TYPE_FULLSCREEN launches in a maximized app window in ash.
       // For desktop chrome AURA on all platforms we should open the

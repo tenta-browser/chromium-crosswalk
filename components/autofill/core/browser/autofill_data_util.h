@@ -5,11 +5,15 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_DATA_UTIL_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_DATA_UTIL_H_
 
+#include <string>
+
 #include "base/strings/string16.h"
-#include "base/strings/string_piece.h"
-#include "components/autofill/core/browser/autofill_profile.h"
+#include "base/strings/string_piece_forward.h"
 
 namespace autofill {
+
+class AutofillProfile;
+
 namespace data_util {
 
 struct NameParts {
@@ -18,12 +22,14 @@ struct NameParts {
   base::string16 family;
 };
 
-// Used to map Chrome card types to Payment Request API basic card payment spec
-// types and icons. https://w3c.github.io/webpayments-methods-card/#method-id
+// Used to map Chrome card issuer networks to Payment Request API basic card
+// payment spec issuer networks and icons.
+// https://w3c.github.io/webpayments-methods-card/#method-id
 struct PaymentRequestData {
-  const char* card_type;
-  const char* basic_card_payment_type;
+  const char* issuer_network;
+  const char* basic_card_issuer_network;
   const int icon_resource_id;
+  const int a11y_label_resource_id;
 };
 
 // Returns true if |name| looks like a CJK name (or some kind of mish-mash of
@@ -48,13 +54,25 @@ bool ProfileMatchesFullName(base::StringPiece16 full_name,
                             const autofill::AutofillProfile& profile);
 
 // Returns the Payment Request API basic card payment spec data for the provided
-// autofill credit card |type|.  Will set the type and the icon to "generic" for
-// any unrecognized type.
-const PaymentRequestData& GetPaymentRequestData(const std::string& type);
+// autofill credit card |network|.  Will set the network and the icon to
+// "generic" for any unrecognized type.
+const PaymentRequestData& GetPaymentRequestData(
+    const std::string& issuer_network);
 
-// Returns the autofill credit card type string for the provided Payment Request
-// API basic card payment spec |type|.
-const char* GetCardTypeForBasicCardPaymentType(const std::string& type);
+// Returns the autofill credit card issuer network string for the provided
+// Payment Request API basic card payment spec |basic_card_card_issuer_network|.
+const char* GetIssuerNetworkForBasicCardIssuerNetwork(
+    const std::string& basic_card_issuer_network);
+
+// Returns whether the specified |country_code| is a valid country code.
+bool IsValidCountryCode(const std::string& country_code);
+bool IsValidCountryCode(const base::string16& country_code);
+
+// Returns a country code to be used when validating this profile. If the
+// profile has a valid country code set, it is returned. If not, a country code
+// associated with |app_locale| is used as a fallback.
+std::string GetCountryCodeWithFallback(const autofill::AutofillProfile& profile,
+                                       const std::string& app_locale);
 
 }  // namespace data_util
 }  // namespace autofill

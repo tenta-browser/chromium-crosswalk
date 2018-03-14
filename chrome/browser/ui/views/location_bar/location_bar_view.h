@@ -18,9 +18,9 @@
 #include "chrome/browser/ui/views/dropdown_bar_host.h"
 #include "chrome/browser/ui/views/dropdown_bar_host_delegate.h"
 #include "chrome/browser/ui/views/extensions/extension_popup.h"
+#include "chrome/browser/ui/views/location_bar/content_setting_image_view.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_view_views.h"
 #include "components/prefs/pref_member.h"
-#include "components/search_engines/template_url_service_observer.h"
 #include "components/security_state/core/security_state.h"
 #include "components/zoom/zoom_event_manager_observer.h"
 #include "ui/gfx/animation/animation_delegate.h"
@@ -32,15 +32,15 @@
 
 class CommandUpdater;
 class ContentSettingBubbleModelDelegate;
-class ContentSettingImageView;
+class FindBarIcon;
 class GURL;
+class IntentPickerView;
 class KeywordHintView;
 class LocationIconView;
 class ManagePasswordsIconViews;
 class Profile;
 class SelectedKeywordView;
 class StarView;
-class TemplateURLService;
 class TranslateIconView;
 class ZoomView;
 
@@ -49,6 +49,7 @@ class SaveCardIconView;
 }
 
 namespace views {
+class ImageButton;
 class Label;
 }
 
@@ -67,9 +68,9 @@ class LocationBarView : public LocationBar,
                         public gfx::AnimationDelegate,
                         public ChromeOmniboxEditController,
                         public DropdownBarHostDelegate,
-                        public TemplateURLServiceObserver,
                         public zoom::ZoomEventManagerObserver,
-                        public views::ButtonListener {
+                        public views::ButtonListener,
+                        public ContentSettingImageView::Delegate {
  public:
   class Delegate {
    public:
@@ -82,9 +83,6 @@ class LocationBarView : public LocationBar,
     // Returns ContentSettingBubbleModelDelegate.
     virtual ContentSettingBubbleModelDelegate*
         GetContentSettingBubbleModelDelegate() = 0;
-
-    // Shows permissions and settings for the given web contents.
-    virtual void ShowPageInfo(content::WebContents* web_contents) = 0;
 
    protected:
     virtual ~Delegate() {}
@@ -105,9 +103,6 @@ class LocationBarView : public LocationBar,
   // its click target, for all all sides of the icon. The total edge length of
   // each icon view should be kIconWidth + 2 * kIconInteriorPadding.
   static constexpr int kIconInteriorPadding = 4;
-
-  // The additional vertical padding of a bubble.
-  static constexpr int kBubbleVerticalPadding = 3;
 
   // The location bar view's class name.
   static const char kViewClassName[];
@@ -157,6 +152,11 @@ class LocationBarView : public LocationBar,
   // Toggles the star on or off.
   void SetStarToggled(bool on);
 
+#if defined(OS_CHROMEOS)
+  // The intent picker, should not always be visible.
+  IntentPickerView* intent_picker_view() { return intent_picker_view_; }
+#endif  // defined(OS_CHROMEOS)
+
   // The star. It may not be visible.
   StarView* star_view() { return star_view_; }
 
@@ -187,6 +187,10 @@ class LocationBarView : public LocationBar,
   virtual void SelectAll();
 
   LocationIconView* location_icon_view() { return location_icon_view_; }
+
+  SelectedKeywordView* selected_keyword_view() {
+    return selected_keyword_view_;
+  }
 
   // Where InfoBar arrows should point. The point will be returned in the
   // coordinates of the LocationBarView.
@@ -225,7 +229,7 @@ class LocationBarView : public LocationBar,
   // views::View:
   bool HasFocus() const override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
 
@@ -234,12 +238,19 @@ class LocationBarView : public LocationBar,
   ToolbarModel* GetToolbarModel() override;
   content::WebContents* GetWebContents() override;
 
+  // ContentSettingImageView::Delegate:
+  content::WebContents* GetContentSettingWebContents() override;
+  ContentSettingBubbleModelDelegate* GetContentSettingBubbleModelDelegate()
+      override;
+
   // ZoomEventManagerObserver:
   // Updates the view for the zoom icon when default zoom levels change.
   void OnDefaultZoomLevelChanged() override;
 
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
+
+  static bool IsVirtualKeyboardVisible();
 
  private:
   using ContentSettingViews = std::vector<ContentSettingImageView*>;
@@ -253,7 +264,6 @@ class LocationBarView : public LocationBar,
 
   // Returns the thickness of any visible edge, in pixels.
   int GetHorizontalEdgeThickness() const;
-  int GetVerticalEdgeThickness() const;
 
   // Returns the total amount of space reserved above or below the content,
   // which is the vertical edge thickness plus the padding next to it.
@@ -274,14 +284,17 @@ class LocationBarView : public LocationBar,
   // Updates |save_credit_card_icon_view_|. Returns true if visibility changed.
   bool RefreshSaveCreditCardIconView();
 
+  // Updates |find_bar_icon_|. Returns true if visibility changed.
+  bool RefreshFindBarIcon();
+
   // Updates the Translate icon based on the current tab's Translate status.
   void RefreshTranslateIcon();
 
   // Updates |manage_passwords_icon_view_|. Returns true if visibility changed.
   bool RefreshManagePasswordsIconView();
 
-  // Helper to show the first run info bubble.
-  void ShowFirstRunBubbleInternal();
+  // Updates the color of the icon for the "clear all" button.
+  void RefreshClearAllButtonIcon();
 
   // Returns text to be placed in the location icon view.
   // - For secure/insecure pages, returns text describing the URL's security
@@ -300,18 +313,7 @@ class LocationBarView : public LocationBar,
   // Returns true if the location icon text should be animated.
   bool ShouldAnimateLocationIconTextVisibilityChange() const;
 
-  // Used to "reverse" the URL showing/hiding animations, since we use separate
-  // animations whose curves are not true inverses of each other.  Based on the
-  // current position of the omnibox, calculates what value the desired
-  // animation (|hide_url_animation_| if |hide| is true, |show_url_animation_|
-  // if it's false) should be set to in order to produce the same omnibox
-  // position.  This way we can stop the old animation, set the new animation to
-  // this value, and start it running, and the text will appear to reverse
-  // directions from its current location.
-  double GetValueForAnimation(bool hide) const;
-
   // LocationBar:
-  void ShowFirstRunBubble() override;
   GURL GetDestinationURL() const override;
   WindowOpenDisposition GetWindowOpenDisposition() const override;
   ui::PageTransition GetPageTransition() const override;
@@ -320,7 +322,9 @@ class LocationBarView : public LocationBar,
   void UpdateContentSettingsIcons() override;
   void UpdateManagePasswordsIconAndBubble() override;
   void UpdateSaveCreditCardIcon() override;
+  void UpdateFindBarIconVisibility() override;
   void UpdateBookmarkStarVisibility() override;
+  void UpdateZoomViewVisibility() override;
   void UpdateLocationBarVisibility(bool visible, bool animation) override;
   void SaveStateToContents(content::WebContents* contents) override;
   const OmniboxView* GetOmniboxView() const override;
@@ -357,28 +361,25 @@ class LocationBarView : public LocationBar,
   // DropdownBarHostDelegate:
   void SetFocusAndSelection(bool select_all) override;
 
-  // TemplateURLServiceObserver:
-  void OnTemplateURLServiceChanged() override;
-
   // The Browser this LocationBarView is in.  Note that at least
   // chromeos::SimpleWebViewDialog uses a LocationBarView outside any browser
   // window, so this may be NULL.
-  Browser* browser_;
+  Browser* const browser_;
 
-  OmniboxViewViews* omnibox_view_;
+  OmniboxViewViews* omnibox_view_ = nullptr;
 
   // Our delegate.
   Delegate* delegate_;
 
   // An icon to the left of the edit field: the HTTPS lock, blank page icon,
   // search icon, EV HTTPS bubble, etc.
-  LocationIconView* location_icon_view_;
+  LocationIconView* location_icon_view_ = nullptr;
 
   // A view to show inline autocompletion when an IME is active.  In this case,
   // we shouldn't change the text or selection inside the OmniboxView itself,
   // since this will conflict with the IME's control over the text.  So instead
   // we show any autocompletion in a separate field after the OmniboxView.
-  views::Label* ime_inline_autocomplete_view_;
+  views::Label* ime_inline_autocomplete_view_ = nullptr;
 
   // The following views are used to provide hints and remind the user as to
   // what is going in the edit. They are all added a children of the
@@ -387,31 +388,43 @@ class LocationBarView : public LocationBar,
   // These autocollapse when the edit needs the room.
 
   // Shown if the user has selected a keyword.
-  SelectedKeywordView* selected_keyword_view_;
+  SelectedKeywordView* selected_keyword_view_ = nullptr;
 
   // Shown if the selected url has a corresponding keyword.
-  KeywordHintView* keyword_hint_view_;
+  KeywordHintView* keyword_hint_view_ = nullptr;
 
   // The content setting views.
   ContentSettingViews content_setting_views_;
 
   // The zoom icon.
-  ZoomView* zoom_view_;
+  ZoomView* zoom_view_ = nullptr;
 
   // The manage passwords icon.
-  ManagePasswordsIconViews* manage_passwords_icon_view_;
+  ManagePasswordsIconViews* manage_passwords_icon_view_ = nullptr;
 
   // The save credit card icon.
-  autofill::SaveCardIconView* save_credit_card_icon_view_;
+  autofill::SaveCardIconView* save_credit_card_icon_view_ = nullptr;
 
   // The icon for Translate.
-  TranslateIconView* translate_icon_view_;
+  TranslateIconView* translate_icon_view_ = nullptr;
 
-  // The star.
-  StarView* star_view_;
+#if defined(OS_CHROMEOS)
+  // The intent picker for accessing ARC's apps.
+  IntentPickerView* intent_picker_view_ = nullptr;
+#endif  // defined(OS_CHROMEOS)
+
+  // The icon displayed when the find bar is visible.
+  FindBarIcon* find_bar_icon_ = nullptr;
+
+  // The star for bookmarking.
+  StarView* star_view_ = nullptr;
+
+  // An [x] that appears in touch mode (when the OSK is visible) and allows the
+  // user to clear all text.
+  views::ImageButton* clear_all_button_ = nullptr;
 
   // Animation to control showing / hiding the location bar.
-  gfx::SlideAnimation size_animation_;
+  gfx::SlideAnimation size_animation_{this};
 
   // Whether we're in popup mode. This value also controls whether the location
   // bar is read-only.
@@ -419,11 +432,7 @@ class LocationBarView : public LocationBar,
 
   // True if we should show a focus rect while the location entry field is
   // focused. Used when the toolbar is in full keyboard accessibility mode.
-  bool show_focus_rect_;
-
-  // This is in case we're destroyed before the model loads. We need to make
-  // Add/RemoveObserver calls.
-  TemplateURLService* template_url_service_;
+  bool show_focus_rect_ = false;
 
   // Tracks this preference to determine whether bookmark editing is allowed.
   BooleanPrefMember edit_bookmarks_enabled_;

@@ -3,12 +3,13 @@
 // found in the LICENSE file.
 
 #include <oleacc.h>
+#include <wrl/client.h>
 
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/win/scoped_bstr.h"
 #include "base/win/scoped_com_initializer.h"
-#include "base/win/scoped_comptr.h"
 #include "base/win/scoped_variant.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/ui/browser.h"
@@ -70,7 +71,7 @@ class WinAccessibilityEventMonitor {
     LONG child_id;
   };
 
-  std::deque<EventInfo> event_queue_;
+  base::circular_deque<EventInfo> event_queue_;
   scoped_refptr<content::MessageLoopRunner> loop_runner_;
   HWINEVENTHOOK win_event_hook_handle_;
   static WinAccessibilityEventMonitor* instance_;
@@ -118,11 +119,11 @@ void WinAccessibilityEventMonitor::WaitForNextEvent(
   *out_event = event_info.event;
   *out_hwnd = event_info.hwnd;
 
-  base::win::ScopedComPtr<IAccessible> acc_obj;
+  Microsoft::WRL::ComPtr<IAccessible> acc_obj;
   base::win::ScopedVariant child_variant;
   CHECK(S_OK == AccessibleObjectFromEvent(
-      event_info.hwnd, event_info.obj_id, event_info.child_id,
-      acc_obj.Receive(), child_variant.Receive()));
+                    event_info.hwnd, event_info.obj_id, event_info.child_id,
+                    acc_obj.GetAddressOf(), child_variant.Receive()));
 
   base::win::ScopedVariant role_variant;
   if (S_OK == acc_obj->get_accRole(child_variant, role_variant.Receive()))
@@ -182,6 +183,10 @@ class NavigationAccessibilityTest : public InProcessBrowserTest {
   NavigationAccessibilityTest() {}
   ~NavigationAccessibilityTest() override {}
 
+  void SetUpOnMainThread() override {
+    host_resolver()->AddRule("*", "127.0.0.1");
+  }
+
   void SendKeyPress(ui::KeyboardCode key) {
     gfx::NativeWindow native_window = browser()->window()->GetNativeWindow();
     ASSERT_NO_FATAL_FAILURE(
@@ -209,7 +214,6 @@ IN_PROC_BROWSER_TEST_F(NavigationAccessibilityTest,
 
   chrome::ExecuteCommand(browser(), IDC_FOCUS_LOCATION);
 
-  host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL main_url(embedded_test_server()->GetURL("/english_page.html"));
 

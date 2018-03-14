@@ -44,10 +44,10 @@ StreamParserTestBase::StreamParserTestBase(
       base::Bind(&StreamParserTestBase::OnKeyNeeded, base::Unretained(this)),
       base::Bind(&StreamParserTestBase::OnNewSegment, base::Unretained(this)),
       base::Bind(&StreamParserTestBase::OnEndOfSegment, base::Unretained(this)),
-      new MediaLog());
+      &media_log_);
 }
 
-StreamParserTestBase::~StreamParserTestBase() {}
+StreamParserTestBase::~StreamParserTestBase() = default;
 
 std::string StreamParserTestBase::ParseFile(const std::string& filename,
                                             int append_bytes) {

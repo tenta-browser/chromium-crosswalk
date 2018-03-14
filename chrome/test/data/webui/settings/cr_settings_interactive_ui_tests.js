@@ -53,7 +53,7 @@ CrSettingsFocusRowBehavior.prototype = {
   __proto__: CrSettingsInteractiveUITest.prototype,
 
   /** @override */
-  browsePreload: 'chrome://md-settings/focus_row_behavior.html',
+  browsePreload: 'chrome://settings/focus_row_behavior.html',
 
   /** @override */
   extraLibraries: CrSettingsInteractiveUITest.prototype.extraLibraries.concat([
@@ -62,6 +62,30 @@ CrSettingsFocusRowBehavior.prototype = {
 };
 
 TEST_F('CrSettingsFocusRowBehavior', 'FocusTest', function() {
+  mocha.run();
+});
+
+
+/**
+ * Test fixture for Sync Page.
+ * @constructor
+ * @extends {CrSettingsInteractiveUITest}
+ */
+function CrSettingsSyncPageTest() {}
+
+CrSettingsSyncPageTest.prototype = {
+  __proto__: CrSettingsInteractiveUITest.prototype,
+
+  /** @override */
+  browsePreload: 'chrome://settings/people_page/sync_page.html',
+
+  /** @override */
+  extraLibraries: CrSettingsInteractiveUITest.prototype.extraLibraries.concat([
+    'people_page_sync_page_interactive_test.js',
+  ]),
+};
+
+TEST_F('CrSettingsSyncPageTest', 'All', function() {
   mocha.run();
 });
 
@@ -76,8 +100,7 @@ CrSettingsAnimatedPagesTest.prototype = {
   __proto__: CrSettingsInteractiveUITest.prototype,
 
   /** @override */
-  browsePreload:
-      'chrome://md-settings/settings_page/settings_animated_pages.html',
+  browsePreload: 'chrome://settings/settings_page/settings_animated_pages.html',
 
   extraLibraries: CrSettingsInteractiveUITest.prototype.extraLibraries.concat([
     'settings_animated_pages_test.js',
@@ -85,5 +108,5 @@ CrSettingsAnimatedPagesTest.prototype = {
 };
 
 TEST_F('CrSettingsAnimatedPagesTest', 'All', function() {
-  mocha.run()
+  mocha.run();
 });

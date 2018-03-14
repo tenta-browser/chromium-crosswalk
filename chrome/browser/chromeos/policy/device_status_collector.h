@@ -7,7 +7,6 @@
 
 #include <stdint.h>
 
-#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -15,6 +14,7 @@
 #include "base/callback_forward.h"
 #include "base/callback_list.h"
 #include "base/compiler_specific.h"
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -24,6 +24,7 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
+#include "chromeos/dbus/cryptohome_client.h"
 #include "chromeos/system/version_loader.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "components/prefs/pref_member.h"
@@ -107,7 +108,7 @@ class DeviceStatusCollector {
 
   // Called after the status information has successfully been submitted to
   // the server.
-  void OnSubmittedSuccessfully();
+  virtual void OnSubmittedSuccessfully();
 
   static void RegisterPrefs(PrefRegistrySimple* registry);
   static void RegisterProfilePrefs(PrefRegistrySimple* registry);
@@ -174,6 +175,8 @@ class DeviceStatusCollector {
   // Callbacks from chromeos::VersionLoader.
   void OnOSVersion(const std::string& version);
   void OnOSFirmware(const std::string& version);
+  void OnTpmVersion(
+      const chromeos::CryptohomeClient::TpmVersionInfo& tpm_version_info);
 
   void GetDeviceStatus(scoped_refptr<GetStatusState> state);
   void GetSessionStatus(scoped_refptr<GetStatusState> state);
@@ -232,6 +235,7 @@ class DeviceStatusCollector {
 
   std::string os_version_;
   std::string firmware_version_;
+  chromeos::CryptohomeClient::TpmVersionInfo tpm_version_info_;
 
   struct ResourceUsage {
     // Sample of percentage-of-CPU-used.
@@ -244,7 +248,7 @@ class DeviceStatusCollector {
 
   // Samples of resource usage (contains multiple samples taken
   // periodically every kHardwareStatusSampleIntervalSeconds).
-  std::deque<ResourceUsage> resource_usage_;
+  base::circular_deque<ResourceUsage> resource_usage_;
 
   // Callback invoked to fetch information about the mounted disk volumes.
   VolumeInfoFetcher volume_info_fetcher_;

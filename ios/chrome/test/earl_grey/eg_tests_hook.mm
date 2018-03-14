@@ -4,7 +4,15 @@
 
 #include "ios/chrome/app/tests_hook.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace tests_hook {
+
+bool DisableContentSuggestions() {
+  return true;
+}
 
 bool DisableContextualSearch() {
   return true;

@@ -6,6 +6,9 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <utility>
+
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
@@ -18,7 +21,7 @@ namespace syncer {
 JsMutationEventObserver::JsMutationEventObserver() : weak_ptr_factory_(this) {}
 
 JsMutationEventObserver::~JsMutationEventObserver() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
 
 base::WeakPtr<JsMutationEventObserver> JsMutationEventObserver::AsWeakPtr() {
@@ -53,20 +56,20 @@ void JsMutationEventObserver::OnChangesApplied(
   details.SetString("modelType", ModelTypeToString(model_type));
   details.SetString("writeTransactionId",
                     base::Int64ToString(write_transaction_id));
-  base::Value* changes_value = nullptr;
+  std::unique_ptr<base::Value> changes_value;
   const size_t changes_size = changes.Get().size();
   if (changes_size <= kChangeLimit) {
-    base::ListValue* changes_list = new base::ListValue();
+    auto changes_list = std::make_unique<base::ListValue>();
     for (ChangeRecordList::const_iterator it = changes.Get().begin();
          it != changes.Get().end(); ++it) {
       changes_list->Append(it->ToValue());
     }
-    changes_value = changes_list;
+    changes_value = std::move(changes_list);
   } else {
-    changes_value =
-        new base::Value(base::SizeTToString(changes_size) + " changes");
+    changes_value = std::make_unique<base::Value>(
+        base::NumberToString(changes_size) + " changes");
   }
-  details.Set("changes", changes_value);
+  details.Set("changes", std::move(changes_value));
   HandleJsEvent(FROM_HERE, "onChangesApplied", JsEventDetails(&details));
 }
 
@@ -82,7 +85,7 @@ void JsMutationEventObserver::OnChangesComplete(ModelType model_type) {
 void JsMutationEventObserver::OnTransactionWrite(
     const syncable::ImmutableWriteTransactionInfo& write_transaction_info,
     ModelTypeSet models_with_changes) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!event_handler_.IsInitialized()) {
     return;
   }
@@ -93,10 +96,9 @@ void JsMutationEventObserver::OnTransactionWrite(
   HandleJsEvent(FROM_HERE, "onTransactionWrite", JsEventDetails(&details));
 }
 
-void JsMutationEventObserver::HandleJsEvent(
-    const tracked_objects::Location& from_here,
-    const std::string& name,
-    const JsEventDetails& details) {
+void JsMutationEventObserver::HandleJsEvent(const base::Location& from_here,
+                                            const std::string& name,
+                                            const JsEventDetails& details) {
   if (!event_handler_.IsInitialized()) {
     NOTREACHED();
     return;

@@ -7,6 +7,8 @@
 #include <algorithm>
 
 #include "net/quic/platform/api/quic_bug_tracker.h"
+#include "net/quic/platform/api/quic_flag_utils.h"
+#include "net/quic/platform/api/quic_flags.h"
 
 namespace net {
 BandwidthSampler::BandwidthSampler()
@@ -51,35 +53,44 @@ void BandwidthSampler::OnPacketSent(
     last_acked_packet_sent_time_ = sent_time;
   }
 
-  DCHECK(connection_state_map_.find(packet_number) ==
-         connection_state_map_.end());
-  connection_state_map_.emplace(
-      packet_number, ConnectionStateOnSentPacket(sent_time, bytes, *this));
+  if (!connection_state_map_.IsEmpty() &&
+      packet_number >
+          connection_state_map_.last_packet() + kMaxTrackedPackets) {
+    QUIC_BUG << "BandwidthSampler in-flight packet map has exceeded maximum "
+                "number "
+                "of tracked packets.";
+  }
 
-  QUIC_BUG_IF(connection_state_map_.size() > kMaxTrackedPackets)
-      << "BandwidthSampler in-flight packet map has exceeded maximum number "
-         "of tracked packets.";
+  bool success =
+      connection_state_map_.Emplace(packet_number, sent_time, bytes, *this);
+  QUIC_BUG_IF(!success) << "BandwidthSampler failed to insert the packet "
+                           "into the map, most likely because it's already "
+                           "in it.";
 }
 
 BandwidthSample BandwidthSampler::OnPacketAcknowledged(
     QuicTime ack_time,
     QuicPacketNumber packet_number) {
-  auto it = connection_state_map_.find(packet_number);
-  if (it == connection_state_map_.end()) {
-    // TODO(vasilvv): currently, this can happen because the congestion
-    // controller can be created while some of the handshake packets are still
-    // in flight.  Once the sampler is fully integrated with unacked packet map,
-    // this should be a QUIC_BUG equivalent.
+  ConnectionStateOnSentPacket* sent_packet_pointer =
+      connection_state_map_.GetEntry(packet_number);
+  if (sent_packet_pointer == nullptr) {
+    // See the TODO below.
     return BandwidthSample();
   }
-  const ConnectionStateOnSentPacket sent_packet = it->second;
+  BandwidthSample sample =
+      OnPacketAcknowledgedInner(ack_time, packet_number, *sent_packet_pointer);
+  connection_state_map_.Remove(packet_number);
+  return sample;
+}
 
+BandwidthSample BandwidthSampler::OnPacketAcknowledgedInner(
+    QuicTime ack_time,
+    QuicPacketNumber packet_number,
+    const ConnectionStateOnSentPacket& sent_packet) {
   total_bytes_acked_ += sent_packet.size;
   total_bytes_sent_at_last_acked_packet_ = sent_packet.total_bytes_sent;
   last_acked_packet_sent_time_ = sent_packet.sent_time;
   last_acked_packet_ack_time_ = ack_time;
-
-  connection_state_map_.erase(it);
 
   // Exit app-limited phase once a packet that was sent while the connection is
   // not app-limited is acknowledged.
@@ -130,14 +141,10 @@ BandwidthSample BandwidthSampler::OnPacketAcknowledged(
 }
 
 void BandwidthSampler::OnPacketLost(QuicPacketNumber packet_number) {
-  auto it = connection_state_map_.find(packet_number);
-  if (it == connection_state_map_.end()) {
-    // TODO(vasilvv): see the comment for the same case in
-    // BandwidthSampler::OnPacketAcknowledged.
-    return;
-  }
-
-  connection_state_map_.erase(it);
+  // TODO(vasilvv): see the comment for the case of missing packets in
+  // BandwidthSampler::OnPacketAcknowledged on why this does not raise a
+  // QUIC_BUG when removal fails.
+  connection_state_map_.Remove(packet_number);
 }
 
 void BandwidthSampler::OnAppLimited() {
@@ -146,10 +153,22 @@ void BandwidthSampler::OnAppLimited() {
 }
 
 void BandwidthSampler::RemoveObsoletePackets(QuicPacketNumber least_unacked) {
-  while (!connection_state_map_.empty() &&
-         connection_state_map_.begin()->first < least_unacked) {
-    connection_state_map_.pop_front();
+  while (!connection_state_map_.IsEmpty() &&
+         connection_state_map_.first_packet() < least_unacked) {
+    connection_state_map_.Remove(connection_state_map_.first_packet());
   }
+}
+
+QuicByteCount BandwidthSampler::total_bytes_acked() const {
+  return total_bytes_acked_;
+}
+
+bool BandwidthSampler::is_app_limited() const {
+  return is_app_limited_;
+}
+
+QuicPacketNumber BandwidthSampler::end_of_app_limited_phase() const {
+  return end_of_app_limited_phase_;
 }
 
 }  // namespace net

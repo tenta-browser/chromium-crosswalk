@@ -33,30 +33,21 @@ Help.showReleaseNoteIfNeeded = function() {
  * @param {number} latestVersion
  */
 Help._showReleaseNoteIfNeeded = function(lastSeenVersion, latestVersion) {
+  if (!lastSeenVersion) {
+    Help.releaseNoteVersionSetting().set(latestVersion);
+    return;
+  }
   if (lastSeenVersion >= latestVersion)
     return;
   Help.releaseNoteVersionSetting().set(latestVersion);
-  UI.viewManager.showView(Help._releaseNoteViewId, true);
-};
-
-/**
- * @return {number}
- */
-Help.browserVersion = function() {
-  if (!Help._browserVersion) {
-    var chromeRegex = new RegExp('(?:^|\\W)Chrome/(\\d+)');
-    var chromeMatch = navigator.userAgent.match(chromeRegex);
-    /** @type {number} */
-    Help._browserVersion = Number(chromeMatch[1]);
-  }
-  return Help._browserVersion;
+  UI.viewManager.showView(Help.releaseNoteViewId, true);
 };
 
 /**
  * @const
  * @type {string}
  */
-Help._releaseNoteViewId = 'release-note';
+Help.releaseNoteViewId = 'release-note';
 
 /** @typedef {!{title: string, subtitle: string, link: string}} */
 Help.ReleaseNoteHighlight;

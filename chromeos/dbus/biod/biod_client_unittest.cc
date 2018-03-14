@@ -5,10 +5,15 @@
 #include "chromeos/dbus/biod/biod_client.h"
 
 #include <map>
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
+#include "chromeos/dbus/biod/messages.pb.h"
 #include "chromeos/dbus/biod/test_utils.h"
 #include "dbus/mock_bus.h"
 #include "dbus/mock_object_proxy.h"
@@ -48,24 +53,25 @@ MATCHER_P(HasMember, name, "") {
 // bare pointer rather than an std::unique_ptr.
 void RunResponseCallback(dbus::ObjectProxy::ResponseCallback callback,
                          std::unique_ptr<dbus::Response> response) {
-  callback.Run(response.get());
+  std::move(callback).Run(response.get());
 }
 
 }  // namespace
 
 class BiodClientTest : public testing::Test {
  public:
-  BiodClientTest() {}
-  ~BiodClientTest() override {}
+  BiodClientTest() = default;
+  ~BiodClientTest() override = default;
 
   void SetUp() override {
     dbus::Bus::Options options;
     options.bus_type = dbus::Bus::SYSTEM;
     bus_ = new dbus::MockBus(options);
 
-    proxy_ =
-        new dbus::MockObjectProxy(bus_.get(), biod::kBiodServiceName,
-                                  dbus::ObjectPath(biod::kBiodServicePath));
+    dbus::ObjectPath fpc_bio_path = dbus::ObjectPath(base::StringPrintf(
+        "%s/%s", biod::kBiodServicePath, biod::kFpcBiometricsManagerName));
+    proxy_ = new dbus::MockObjectProxy(bus_.get(), biod::kBiodServiceName,
+                                       fpc_bio_path);
 
     // |client_|'s Init() method should request a proxy for communicating with
     // biometrics api.
@@ -73,7 +79,7 @@ class BiodClientTest : public testing::Test {
         .WillRepeatedly(Return(proxy_.get()));
 
     // Save |client_|'s signal callback.
-    EXPECT_CALL(*proxy_.get(), ConnectToSignal(kInterface, _, _, _))
+    EXPECT_CALL(*proxy_.get(), DoConnectToSignal(kInterface, _, _, _))
         .WillRepeatedly(Invoke(this, &BiodClientTest::ConnectToSignal));
 
     client_.reset(BiodClient::Create(REAL_DBUS_CLIENT_IMPLEMENTATION));
@@ -83,6 +89,10 @@ class BiodClientTest : public testing::Test {
     base::RunLoop().RunUntilIdle();
   }
 
+  void GetBiometricType(uint32_t type) {
+    biometric_type_ = static_cast<biod::BiometricType>(type);
+  }
+
  protected:
   // Add an expectation for method with |method_name| to be called. When the
   // method is called the response should match |response|.
@@ -90,7 +100,7 @@ class BiodClientTest : public testing::Test {
                             std::unique_ptr<dbus::Response> response) {
     ASSERT_FALSE(pending_method_calls_.count(method_name));
     pending_method_calls_[method_name] = std::move(response);
-    EXPECT_CALL(*proxy_.get(), CallMethod(HasMember(method_name), _, _))
+    EXPECT_CALL(*proxy_.get(), DoCallMethod(HasMember(method_name), _, _))
         .WillOnce(Invoke(this, &BiodClientTest::OnCallMethod));
   }
 
@@ -106,12 +116,16 @@ class BiodClientTest : public testing::Test {
 
   // Passes a enroll scan done signal to |client_|.
   void EmitEnrollScanDoneSignal(biod::ScanResult scan_result,
-                                bool enroll_session_complete) {
+                                bool enroll_session_complete,
+                                int percent_complete) {
     dbus::Signal signal(kInterface,
                         biod::kBiometricsManagerEnrollScanDoneSignal);
     dbus::MessageWriter writer(&signal);
-    writer.AppendUint32(static_cast<uint32_t>(scan_result));
-    writer.AppendBool(enroll_session_complete);
+    biod::EnrollScanDone protobuf;
+    protobuf.set_scan_result(scan_result);
+    protobuf.set_done(enroll_session_complete);
+    protobuf.set_percent_complete(percent_complete);
+    writer.AppendProtoAsArrayOfBytes(protobuf);
     EmitSignal(&signal);
   }
 
@@ -128,7 +142,7 @@ class BiodClientTest : public testing::Test {
       dbus::MessageWriter entry_writer(nullptr);
       array_writer.OpenDictEntry(&entry_writer);
       entry_writer.AppendString(match.first);
-      entry_writer.AppendArrayOfStrings(match.second);
+      entry_writer.AppendArrayOfObjectPaths(match.second);
       array_writer.CloseContainer(&entry_writer);
     }
     writer.CloseContainer(&array_writer);
@@ -156,32 +170,35 @@ class BiodClientTest : public testing::Test {
   // |client_|.
   std::map<std::string, dbus::ObjectProxy::SignalCallback> signal_callbacks_;
 
+  biod::BiometricType biometric_type_;
+
  private:
   // Handles calls to |proxy_|'s ConnectToSignal() method.
   void ConnectToSignal(
       const std::string& interface_name,
       const std::string& signal_name,
       dbus::ObjectProxy::SignalCallback signal_callback,
-      dbus::ObjectProxy::OnConnectedCallback on_connected_callback) {
+      dbus::ObjectProxy::OnConnectedCallback* on_connected_callback) {
     EXPECT_EQ(interface_name, kInterface);
     signal_callbacks_[signal_name] = signal_callback;
     message_loop_.task_runner()->PostTask(
-        FROM_HERE, base::Bind(on_connected_callback, interface_name,
-                              signal_name, true /* success */));
+        FROM_HERE,
+        base::BindOnce(std::move(*on_connected_callback), interface_name,
+                       signal_name, true /* success */));
   }
 
   // Handles calls to |proxy_|'s CallMethod().
   void OnCallMethod(dbus::MethodCall* method_call,
                     int timeout_ms,
-                    const dbus::ObjectProxy::ResponseCallback& callback) {
+                    dbus::ObjectProxy::ResponseCallback* callback) {
     auto it = pending_method_calls_.find(method_call->GetMember());
     ASSERT_TRUE(it != pending_method_calls_.end());
     auto pending_response = std::move(it->second);
     pending_method_calls_.erase(it);
 
     message_loop_.task_runner()->PostTask(
-        FROM_HERE, base::Bind(&RunResponseCallback, callback,
-                              base::Passed(&pending_response)));
+        FROM_HERE, base::BindOnce(&RunResponseCallback, std::move(*callback),
+                                  base::Passed(&pending_response)));
   }
 
   DISALLOW_COPY_AND_ASSIGN(BiodClientTest);
@@ -193,26 +210,11 @@ TEST_F(BiodClientTest, TestStartEnrollSession) {
   const dbus::ObjectPath kFakeObjectPath(std::string("/fake/object/path"));
   const dbus::ObjectPath kFakeObjectPath2(std::string("/fake/object/path2"));
 
-  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
-  dbus::MessageWriter writer(response.get());
-  writer.AppendObjectPath(kFakeObjectPath);
-
-  // Create a fake response with a fake object path. The start enroll
-  // call should return this object path.
-  AddMethodExpectation(biod::kBiometricsManagerStartEnrollSessionMethod,
-                       std::move(response));
-  dbus::ObjectPath returned_path(kInvalidTestPath);
-  client_->StartEnrollSession(
-      kFakeId, kFakeLabel,
-      base::Bind(&test_utils::CopyObjectPath, &returned_path));
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(kFakeObjectPath, returned_path);
-
   // Verify that by sending a empty reponse or a improperly formatted one, the
   // response is an empty object path.
   AddMethodExpectation(biod::kBiometricsManagerStartEnrollSessionMethod,
                        nullptr);
-  returned_path = dbus::ObjectPath(kInvalidTestPath);
+  dbus::ObjectPath returned_path(kInvalidTestPath);
   client_->StartEnrollSession(
       kFakeId, kFakeLabel,
       base::Bind(&test_utils::CopyObjectPath, &returned_path));
@@ -230,6 +232,21 @@ TEST_F(BiodClientTest, TestStartEnrollSession) {
       base::Bind(&test_utils::CopyObjectPath, &returned_path));
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(dbus::ObjectPath(), returned_path);
+
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  dbus::MessageWriter writer(response.get());
+  writer.AppendObjectPath(kFakeObjectPath);
+
+  // Create a fake response with a fake object path. The start enroll
+  // call should return this object path.
+  AddMethodExpectation(biod::kBiometricsManagerStartEnrollSessionMethod,
+                       std::move(response));
+  returned_path = dbus::ObjectPath(kInvalidTestPath);
+  client_->StartEnrollSession(
+      kFakeId, kFakeLabel,
+      base::Bind(&test_utils::CopyObjectPath, &returned_path));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(kFakeObjectPath, returned_path);
 }
 
 TEST_F(BiodClientTest, TestGetRecordsForUser) {
@@ -274,43 +291,29 @@ TEST_F(BiodClientTest, TestDestroyAllRecords) {
   // Create an empty response to simulate success.
   AddMethodExpectation(biod::kBiometricsManagerDestroyAllRecordsMethod,
                        std::move(response));
-  DBusMethodCallStatus returned_status = static_cast<DBusMethodCallStatus>(-1);
+  bool result = false;
   client_->DestroyAllRecords(
-      base::Bind(&test_utils::CopyDBusMethodCallStatus, &returned_status));
+      base::BindOnce(&test_utils::CopyDBusMethodCallResult, &result));
   base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(DBUS_METHOD_CALL_SUCCESS, returned_status);
+  EXPECT_TRUE(result);
 
   // Return a null response to simulate failure.
   AddMethodExpectation(biod::kBiometricsManagerDestroyAllRecordsMethod,
                        nullptr);
-  returned_status = static_cast<DBusMethodCallStatus>(-1);
+  result = false;
   client_->DestroyAllRecords(
-      base::Bind(&test_utils::CopyDBusMethodCallStatus, &returned_status));
+      base::BindOnce(&test_utils::CopyDBusMethodCallResult, &result));
   base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(DBUS_METHOD_CALL_FAILURE, returned_status);
+  EXPECT_FALSE(result);
 }
 
 TEST_F(BiodClientTest, TestStartAuthentication) {
   const dbus::ObjectPath kFakeObjectPath(std::string("/fake/object/path"));
 
-  // Create a fake response with a fake object path. The start authentication
-  // call should return this object path.
-  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
-  dbus::MessageWriter writer(response.get());
-  writer.AppendObjectPath(kFakeObjectPath);
-
-  AddMethodExpectation(biod::kBiometricsManagerStartAuthSessionMethod,
-                       std::move(response));
-  dbus::ObjectPath returned_path(kInvalidTestPath);
-  client_->StartAuthSession(
-      base::Bind(&test_utils::CopyObjectPath, &returned_path));
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(kFakeObjectPath, returned_path);
-
   // Verify that by sending a empty reponse or a improperly formatted one, the
   // response is an empty object path.
   AddMethodExpectation(biod::kBiometricsManagerStartAuthSessionMethod, nullptr);
-  returned_path = dbus::ObjectPath(kInvalidTestPath);
+  dbus::ObjectPath returned_path(kInvalidTestPath);
   client_->StartAuthSession(
       base::Bind(&test_utils::CopyObjectPath, &returned_path));
   base::RunLoop().RunUntilIdle();
@@ -326,6 +329,20 @@ TEST_F(BiodClientTest, TestStartAuthentication) {
       base::Bind(&test_utils::CopyObjectPath, &returned_path));
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(dbus::ObjectPath(), returned_path);
+
+  // Create a fake response with a fake object path. The start authentication
+  // call should return this object path.
+  std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
+  dbus::MessageWriter writer(response.get());
+  writer.AppendObjectPath(kFakeObjectPath);
+
+  AddMethodExpectation(biod::kBiometricsManagerStartAuthSessionMethod,
+                       std::move(response));
+  returned_path = dbus::ObjectPath(kInvalidTestPath);
+  client_->StartAuthSession(
+      base::Bind(&test_utils::CopyObjectPath, &returned_path));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(kFakeObjectPath, returned_path);
 }
 
 TEST_F(BiodClientTest, TestRequestBiometricType) {
@@ -338,22 +355,21 @@ TEST_F(BiodClientTest, TestRequestBiometricType) {
 
   // Create a fake response with biometric type. The get label call should
   // return this exact biometric type.
-  biod::BiometricType returned_biometric_type = biod::BIOMETRIC_TYPE_MAX;
+  biometric_type_ = biod::BIOMETRIC_TYPE_MAX;
   AddMethodExpectation(dbus::kDBusPropertiesGet, std::move(response));
   client_->RequestType(
-      base::Bind(&test_utils::CopyBiometricType, &returned_biometric_type));
+      base::Bind(&BiodClientTest::GetBiometricType, base::Unretained(this)));
   base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(kFakeBiometricType, returned_biometric_type);
+  EXPECT_EQ(kFakeBiometricType, biometric_type_);
 
   // Verify that by sending a null reponse, the result is an unknown biometric
   // type.
-  returned_biometric_type = biod::BIOMETRIC_TYPE_MAX;
+  biometric_type_ = biod::BIOMETRIC_TYPE_MAX;
   AddMethodExpectation(dbus::kDBusPropertiesGet, nullptr);
   client_->RequestType(
-      base::Bind(&test_utils::CopyBiometricType, &returned_biometric_type));
+      base::Bind(&BiodClientTest::GetBiometricType, base::Unretained(this)));
   base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(biod::BiometricType::BIOMETRIC_TYPE_UNKNOWN,
-            returned_biometric_type);
+  EXPECT_EQ(biod::BiometricType::BIOMETRIC_TYPE_UNKNOWN, biometric_type_);
 }
 
 TEST_F(BiodClientTest, TestRequestRecordLabel) {
@@ -362,7 +378,7 @@ TEST_F(BiodClientTest, TestRequestRecordLabel) {
 
   std::unique_ptr<dbus::Response> response(dbus::Response::CreateEmpty());
   dbus::MessageWriter writer(response.get());
-  writer.AppendString(kFakeLabel);
+  writer.AppendVariantOfString(kFakeLabel);
 
   // Create a fake response with string. The get label call should return this
   // exact string.
@@ -391,12 +407,14 @@ TEST_F(BiodClientTest, TestNotifyObservers) {
 
   const biod::ScanResult scan_signal = biod::ScanResult::SCAN_RESULT_SUCCESS;
   const bool enroll_session_complete = false;
+  const int percent_complete = 0;
   const AuthScanMatches test_attempt;
   EXPECT_EQ(0, observer.NumEnrollScansReceived());
   EXPECT_EQ(0, observer.NumAuthScansReceived());
   EXPECT_EQ(0, observer.num_failures_received());
 
-  EmitEnrollScanDoneSignal(scan_signal, enroll_session_complete);
+  EmitEnrollScanDoneSignal(scan_signal, enroll_session_complete,
+                           percent_complete);
   EXPECT_EQ(1, observer.NumEnrollScansReceived());
 
   EmitAuthScanDoneSignal(scan_signal, test_attempt);
@@ -407,7 +425,8 @@ TEST_F(BiodClientTest, TestNotifyObservers) {
 
   client_->RemoveObserver(&observer);
 
-  EmitEnrollScanDoneSignal(scan_signal, enroll_session_complete);
+  EmitEnrollScanDoneSignal(scan_signal, enroll_session_complete,
+                           percent_complete);
   EmitAuthScanDoneSignal(scan_signal, test_attempt);
   EXPECT_EQ(1, observer.NumEnrollScansReceived());
   EXPECT_EQ(1, observer.NumAuthScansReceived());

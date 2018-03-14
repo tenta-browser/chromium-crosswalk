@@ -4,26 +4,19 @@
 
 #include "ui/views/widget/desktop_aura/x11_desktop_handler.h"
 
-#include <X11/Xatom.h>
-#include <X11/Xlib.h>
-
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/x/x11_menu_list.h"
-#include "ui/base/x/x11_util.h"
 #include "ui/base/x/x11_window_event_manager.h"
 #include "ui/events/platform/platform_event_source.h"
+#include "ui/gfx/x/x11.h"
+#include "ui/gfx/x/x11_atom_cache.h"
 #include "ui/gfx/x/x11_error_tracker.h"
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host_x11.h"
 
 namespace {
-
-const char* const kAtomsToCache[] = {
-  "_NET_CURRENT_DESKTOP",
-  nullptr
-};
 
 // Our global instance. Deleted when our Env() is deleted.
 views::X11DesktopHandler* g_handler = NULL;
@@ -47,8 +40,7 @@ X11DesktopHandler* X11DesktopHandler::get_dont_create() {
 
 X11DesktopHandler::X11DesktopHandler()
     : xdisplay_(gfx::GetXDisplay()),
-      x_root_window_(DefaultRootWindow(xdisplay_)),
-      atom_cache_(xdisplay_, kAtomsToCache) {
+      x_root_window_(DefaultRootWindow(xdisplay_)) {
   if (ui::PlatformEventSource::GetInstance())
     ui::PlatformEventSource::GetInstance()->AddPlatformEventDispatcher(this);
   aura::Env::GetInstance()->AddObserver(this);
@@ -96,8 +88,7 @@ bool X11DesktopHandler::CanDispatchEvent(const ui::PlatformEvent& event) {
 uint32_t X11DesktopHandler::DispatchEvent(const ui::PlatformEvent& event) {
   switch (event->type) {
     case PropertyNotify: {
-      if (event->xproperty.atom ==
-          atom_cache_.GetAtom("_NET_CURRENT_DESKTOP")) {
+      if (event->xproperty.atom == gfx::GetAtom("_NET_CURRENT_DESKTOP")) {
         if (UpdateWorkspace()) {
           for (views::X11DesktopHandlerObserver& observer : observers_)
             observer.OnWorkspaceChanged(workspace_);

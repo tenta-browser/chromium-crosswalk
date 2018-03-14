@@ -13,9 +13,8 @@
 
 namespace device {
 
-class DEVICE_GAMEPAD_EXPORT GamepadMonitor
-    : public GamepadConsumer,
-      NON_EXPORTED_BASE(public mojom::GamepadMonitor) {
+class DEVICE_GAMEPAD_EXPORT GamepadMonitor : public GamepadConsumer,
+                                             public mojom::GamepadMonitor {
  public:
   GamepadMonitor();
   ~GamepadMonitor() override;
@@ -23,15 +22,12 @@ class DEVICE_GAMEPAD_EXPORT GamepadMonitor
   static void Create(mojom::GamepadMonitorRequest request);
 
   // GamepadConsumer implementation.
-  void OnGamepadConnected(unsigned index,
-                          const blink::WebGamepad& gamepad) override;
-  void OnGamepadDisconnected(unsigned index,
-                             const blink::WebGamepad& gamepad) override;
+  void OnGamepadConnected(unsigned index, const Gamepad& gamepad) override;
+  void OnGamepadDisconnected(unsigned index, const Gamepad& gamepad) override;
 
   // mojom::GamepadMonitor implementation.
-  void GamepadStartPolling(
-      const GamepadStartPollingCallback& callback) override;
-  void GamepadStopPolling(const GamepadStopPollingCallback& callback) override;
+  void GamepadStartPolling(GamepadStartPollingCallback callback) override;
+  void GamepadStopPolling(GamepadStopPollingCallback callback) override;
   void SetObserver(mojom::GamepadObserverPtr gamepad_observer) override;
 
  private:

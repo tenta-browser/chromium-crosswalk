@@ -392,6 +392,10 @@ const std::string& Extension::id() const {
   return manifest_->extension_id();
 }
 
+const HashedExtensionId& Extension::hashed_id() const {
+  return manifest_->hashed_id();
+}
+
 const std::string Extension::VersionString() const {
   return version()->GetString();
 }
@@ -455,7 +459,7 @@ bool Extension::InitExtensionID(extensions::Manifest* manifest,
                                 int creation_flags,
                                 base::string16* error) {
   if (!explicit_id.empty()) {
-    manifest->set_extension_id(explicit_id);
+    manifest->SetExtensionId(explicit_id);
     return true;
   }
 
@@ -468,7 +472,7 @@ bool Extension::InitExtensionID(extensions::Manifest* manifest,
       return false;
     }
     std::string extension_id = crx_file::id_util::GenerateId(public_key_bytes);
-    manifest->set_extension_id(extension_id);
+    manifest->SetExtensionId(extension_id);
     return true;
   }
 
@@ -484,7 +488,7 @@ bool Extension::InitExtensionID(extensions::Manifest* manifest,
       NOTREACHED() << "Could not create ID from path.";
       return false;
     }
-    manifest->set_extension_id(extension_id);
+    manifest->SetExtensionId(extension_id);
     return true;
   }
 }
@@ -633,7 +637,7 @@ bool Extension::LoadExtent(const char* key,
     std::string pattern_string;
     if (!pattern_list->GetString(i, &pattern_string)) {
       *error = ErrorUtils::FormatErrorMessageUTF16(
-          value_error, base::SizeTToString(i), errors::kExpectString);
+          value_error, base::NumberToString(i), errors::kExpectString);
       return false;
     }
 
@@ -646,7 +650,7 @@ bool Extension::LoadExtent(const char* key,
 
     if (parse_result != URLPattern::PARSE_SUCCESS) {
       *error = ErrorUtils::FormatErrorMessageUTF16(
-          value_error, base::SizeTToString(i),
+          value_error, base::NumberToString(i),
           URLPattern::GetParseResultString(parse_result));
       return false;
     }
@@ -654,7 +658,7 @@ bool Extension::LoadExtent(const char* key,
     // Do not allow authors to claim "<all_urls>".
     if (pattern.match_all_urls()) {
       *error = ErrorUtils::FormatErrorMessageUTF16(
-          value_error, base::SizeTToString(i),
+          value_error, base::NumberToString(i),
           errors::kCannotClaimAllURLsInExtent);
       return false;
     }
@@ -662,7 +666,7 @@ bool Extension::LoadExtent(const char* key,
     // Do not allow authors to claim "*" for host.
     if (pattern.host().empty()) {
       *error = ErrorUtils::FormatErrorMessageUTF16(
-          value_error, base::SizeTToString(i),
+          value_error, base::NumberToString(i),
           errors::kCannotClaimAllHostsInExtent);
       return false;
     }
@@ -671,7 +675,7 @@ bool Extension::LoadExtent(const char* key,
     // imply one at the end.
     if (pattern.path().find('*') != std::string::npos) {
       *error = ErrorUtils::FormatErrorMessageUTF16(
-          value_error, base::SizeTToString(i), errors::kNoWildCardsInPaths);
+          value_error, base::NumberToString(i), errors::kNoWildCardsInPaths);
       return false;
     }
     pattern.SetPath(pattern.path() + '*');
@@ -757,22 +761,6 @@ ExtensionInfo::ExtensionInfo(const base::DictionaryValue* manifest,
 }
 
 ExtensionInfo::~ExtensionInfo() {}
-
-InstalledExtensionInfo::InstalledExtensionInfo(
-    const Extension* extension,
-    bool is_update,
-    bool from_ephemeral,
-    const std::string& old_name)
-    : extension(extension),
-      is_update(is_update),
-      from_ephemeral(from_ephemeral),
-      old_name(old_name) {}
-
-UnloadedExtensionInfo::UnloadedExtensionInfo(
-    const Extension* extension,
-    UnloadedExtensionInfo::Reason reason)
-    : reason(reason),
-      extension(extension) {}
 
 UpdatedExtensionPermissionsInfo::UpdatedExtensionPermissionsInfo(
     const Extension* extension,

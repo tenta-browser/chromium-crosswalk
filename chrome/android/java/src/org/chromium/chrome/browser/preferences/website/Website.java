@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.preferences.website;
 
+import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.chrome.browser.ContentSettingsType;
 import org.chromium.chrome.browser.util.MathUtils;
 
 import java.io.Serializable;
@@ -26,6 +28,7 @@ public class Website implements Serializable {
     private final WebsiteAddress mOrigin;
     private final WebsiteAddress mEmbedder;
 
+    private ContentSettingException mAdsException;
     private ContentSettingException mAutoplayExceptionInfo;
     private ContentSettingException mBackgroundSyncExceptionInfo;
     private CameraInfo mCameraInfo;
@@ -37,8 +40,8 @@ public class Website implements Serializable {
     private MidiInfo mMidiInfo;
     private NotificationInfo mNotificationInfo;
     private ContentSettingException mPopupException;
-    private ContentSettingException mSubresourceFilterException;
     private ProtectedMediaIdentifierInfo mProtectedMediaIdentifierInfo;
+    private ContentSettingException mSoundException;
     private final List<StorageInfo> mStorageInfo = new ArrayList<StorageInfo>();
     private int mStorageInfoCallbacksLeft;
     private final List<UsbInfo> mUsbInfo = new ArrayList<UsbInfo>();
@@ -86,6 +89,45 @@ public class Website implements Serializable {
     }
 
     /**
+     * Sets the Ads exception info for this Website.
+     */
+    public void setAdsException(ContentSettingException exception) {
+        mAdsException = exception;
+    }
+
+    /**
+     * Returns the Ads exception info for this Website.
+     */
+    public ContentSettingException getAdsException() {
+        return mAdsException;
+    }
+
+    /**
+     * Returns what permission governs the Ads setting.
+     */
+    public ContentSetting getAdsPermission() {
+        if (mAdsException != null) {
+            return mAdsException.getContentSetting();
+        }
+        return null;
+    }
+
+    /**
+     * Sets the Ads permission.
+     */
+    public void setAdsPermission(ContentSetting value) {
+        // It is possible to set the permission without having an existing exception, because we can
+        // show the BLOCK state even when this permission is set to the default. In that case, just
+        // set an exception now to BLOCK to enable changing the permission.
+        if (mAdsException == null) {
+            setAdsException(
+                    new ContentSettingException(ContentSettingsType.CONTENT_SETTINGS_TYPE_ADS,
+                            getAddress().getOrigin(), ContentSetting.BLOCK, ""));
+        }
+        mAdsException.setContentSetting(value);
+    }
+
+    /**
      * Returns what permission governs Autoplay access.
      */
     public ContentSetting getAutoplayPermission() {
@@ -102,10 +144,24 @@ public class Website implements Serializable {
     }
 
     /**
+     * Returns the Autoplay exception info for this Website.
+     */
+    public ContentSettingException getAutoplayException() {
+        return mAutoplayExceptionInfo;
+    }
+
+    /**
      * Sets the Autoplay exception info for this Website.
      */
     public void setAutoplayException(ContentSettingException exception) {
         mAutoplayExceptionInfo = exception;
+    }
+
+    /**
+     * Returns the background sync exception info for this Website.
+     */
+    public ContentSettingException getBackgroundSyncException() {
+        return mBackgroundSyncExceptionInfo;
     }
 
     /**
@@ -241,6 +297,49 @@ public class Website implements Serializable {
     }
 
     /**
+     * Returns the JavaScript exception info for this Website.
+     */
+    public ContentSettingException getJavaScriptException() {
+        return mJavaScriptException;
+    }
+
+    /**
+     * Returns what permission governs Sound access.
+     */
+    public ContentSetting getSoundPermission() {
+        return mSoundException != null ? mSoundException.getContentSetting() : null;
+    }
+
+    /**
+     * Configure Sound permission access setting for this site.
+     */
+    public void setSoundPermission(ContentSetting value) {
+        if (mSoundException == null) {
+            return;
+        }
+        mSoundException.setContentSetting(value);
+        if (value == ContentSetting.BLOCK) {
+            RecordUserAction.record("SoundContentSetting.MuteBy.SiteSettings");
+        } else {
+            RecordUserAction.record("SoundContentSetting.UnmuteBy.SiteSettings");
+        }
+    }
+
+    /**
+     * Sets the Sound exception info for this Website.
+     */
+    public void setSoundException(ContentSettingException exception) {
+        mSoundException = exception;
+    }
+
+    /**
+     * Returns the Sound exception info for this Website.
+     */
+    public ContentSettingException getSoundException() {
+        return mSoundException;
+    }
+
+    /**
      * Sets microphone capture info class.
      */
     public void setMicrophoneInfo(MicrophoneInfo info) {
@@ -344,39 +443,6 @@ public class Website implements Serializable {
     public void setPopupPermission(ContentSetting value) {
         if (mPopupException != null) {
             mPopupException.setContentSetting(value);
-        }
-    }
-
-    /**
-     * Sets the Subresource Filter exception info for this Website.
-     */
-    public void setSubresourceFilterException(ContentSettingException exception) {
-        mSubresourceFilterException = exception;
-    }
-
-    /**
-     * Returns the Subresource Filter exception info for this Website.
-     */
-    public ContentSettingException getSubresourceFilterException() {
-        return mSubresourceFilterException;
-    }
-
-    /**
-     * Returns what permission governs the Subresource Filter.
-     */
-    public ContentSetting getSubresourceFilterPermission() {
-        if (mSubresourceFilterException != null) {
-            return mSubresourceFilterException.getContentSetting();
-        }
-        return null;
-    }
-
-    /**
-     * Sets the Subresource Filter permission.
-     */
-    public void setSubresourceFilterPermission(ContentSetting value) {
-        if (mSubresourceFilterException != null) {
-            mSubresourceFilterException.setContentSetting(value);
         }
     }
 

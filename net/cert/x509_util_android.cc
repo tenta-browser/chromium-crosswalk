@@ -2,10 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "net/cert/x509_util_android.h"
-
 #include "base/android/build_info.h"
-#include "base/android/context_utils.h"
 #include "base/metrics/histogram_macros.h"
 #include "jni/X509Util_jni.h"
 #include "net/cert/cert_database.h"
@@ -14,13 +11,15 @@ using base::android::JavaParamRef;
 
 namespace net {
 
-void NotifyKeyChainChanged(JNIEnv* env, const JavaParamRef<jclass>& clazz) {
+void JNI_X509Util_NotifyKeyChainChanged(JNIEnv* env,
+                                        const JavaParamRef<jclass>& clazz) {
   CertDatabase::GetInstance()->OnAndroidKeyChainChanged();
 }
 
-void RecordCertVerifyCapabilitiesHistogram(JNIEnv* env,
-                                           const JavaParamRef<jclass>& clazz,
-                                           jboolean found_system_trust_roots) {
+void JNI_X509Util_RecordCertVerifyCapabilitiesHistogram(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    jboolean found_system_trust_roots) {
   // Only record the histogram for 4.2 and up. Before 4.2, the platform doesn't
   // return the certificate chain anyway.
   if (base::android::BuildInfo::GetInstance()->sdk_int() >= 17) {
@@ -29,8 +28,4 @@ void RecordCertVerifyCapabilitiesHistogram(JNIEnv* env,
   }
 }
 
-bool RegisterX509Util(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
-}  // net namespace
+}  // namespace net

@@ -38,7 +38,6 @@
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
 #include "core/frame/UseCounter.h"
-#include "core/loader/FrameLoader.h"
 #include "core/probe/CoreProbes.h"
 #include "core/workers/SharedWorkerRepositoryClient.h"
 #include "platform/weborigin/KURL.h"
@@ -56,15 +55,13 @@ SharedWorker* SharedWorker::Create(ExecutionContext* context,
   DCHECK(IsMainThread());
   SECURITY_DCHECK(context->IsDocument());
 
-  UseCounter::Count(context, UseCounter::kSharedWorkerStart);
+  UseCounter::Count(context, WebFeature::kSharedWorkerStart);
 
   SharedWorker* worker = new SharedWorker(context);
 
   MessageChannel* channel = MessageChannel::Create(context);
   worker->port_ = channel->port1();
-  std::unique_ptr<WebMessagePortChannel> remote_port =
-      channel->port2()->Disentangle();
-  DCHECK(remote_port);
+  MessagePortChannel remote_port = channel->port2()->Disentangle();
 
   // We don't currently support nested workers, so workers can only be created
   // from documents.
@@ -76,20 +73,14 @@ SharedWorker* SharedWorker::Create(ExecutionContext* context,
     return nullptr;
   }
 
-  KURL script_url = worker->ResolveURL(
-      url, exception_state, WebURLRequest::kRequestContextSharedWorker);
+  KURL script_url = ResolveURL(context, url, exception_state,
+                               WebURLRequest::kRequestContextSharedWorker);
   if (script_url.IsEmpty())
     return nullptr;
 
-  if (document->GetFrame()
-          ->Loader()
-          .Client()
-          ->GetSharedWorkerRepositoryClient()) {
-    document->GetFrame()
-        ->Loader()
-        .Client()
-        ->GetSharedWorkerRepositoryClient()
-        ->Connect(worker, std::move(remote_port), script_url, name);
+  if (document->GetFrame()->Client()->GetSharedWorkerRepositoryClient()) {
+    document->GetFrame()->Client()->GetSharedWorkerRepositoryClient()->Connect(
+        worker, std::move(remote_port), script_url, name);
   }
 
   return worker;
@@ -105,7 +96,7 @@ bool SharedWorker::HasPendingActivity() const {
   return is_being_connected_;
 }
 
-DEFINE_TRACE(SharedWorker) {
+void SharedWorker::Trace(blink::Visitor* visitor) {
   visitor->Trace(port_);
   AbstractWorker::Trace(visitor);
   Supplementable<SharedWorker>::Trace(visitor);

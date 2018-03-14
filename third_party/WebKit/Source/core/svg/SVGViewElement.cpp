@@ -20,19 +20,19 @@
 
 #include "core/svg/SVGViewElement.h"
 
-#include "core/SVGNames.h"
 #include "core/frame/UseCounter.h"
+#include "core/svg_names.h"
 
 namespace blink {
 
 inline SVGViewElement::SVGViewElement(Document& document)
     : SVGElement(SVGNames::viewTag, document), SVGFitToViewBox(this) {
-  UseCounter::Count(document, UseCounter::kSVGViewElement);
+  UseCounter::Count(document, WebFeature::kSVGViewElement);
 }
 
 DEFINE_NODE_FACTORY(SVGViewElement)
 
-DEFINE_TRACE(SVGViewElement) {
+void SVGViewElement::Trace(blink::Visitor* visitor) {
   SVGElement::Trace(visitor);
   SVGFitToViewBox::Trace(visitor);
 }

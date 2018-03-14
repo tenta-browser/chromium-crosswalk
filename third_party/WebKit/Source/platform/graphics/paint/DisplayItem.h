@@ -8,21 +8,21 @@
 #include "platform/PlatformExport.h"
 #include "platform/graphics/ContiguousContainer.h"
 #include "platform/graphics/paint/DisplayItemClient.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/Noncopyable.h"
 
-#ifndef NDEBUG
-#include "platform/wtf/text/StringBuilder.h"
+#if DCHECK_IS_ON()
+#include "platform/json/JSONValues.h"
 #include "platform/wtf/text/WTFString.h"
 #endif
-
-class SkPictureGpuAnalyzer;
 
 namespace blink {
 
 class GraphicsContext;
-class IntRect;
+class LayoutSize;
+enum class PaintPhase;
 class WebDisplayItemList;
 
 class PLATFORM_EXPORT DisplayItem {
@@ -89,6 +89,7 @@ class PLATFORM_EXPORT DisplayItem {
     kPrintedContentPDFURLRect,
     kResizer,
     kSVGClip,
+    kSVGClipBoundsHack,
     kSVGFilter,
     kSVGMask,
     kScrollbarBackButtonEnd,
@@ -104,15 +105,7 @@ class PLATFORM_EXPORT DisplayItem {
     kScrollbarTrackBackground,
     kScrollbarCompositedScrollbar,
     kSelectionTint,
-    // Table collapsed borders can be painted together (e.g., left & top) but
-    // there are at most 4 phases of collapsed border painting for a single
-    // cell. To disambiguate these phases of collapsed border painting, a mask
-    // is used. TableCollapsedBorderBase can be larger than
-    // TableCollapsedBorderUnalignedBase to ensure the base lower bits are 0's.
-    kTableCollapsedBorderUnalignedBase,
-    kTableCollapsedBorderBase =
-        (((kTableCollapsedBorderUnalignedBase - 1) >> 4) + 1) << 4,
-    kTableCollapsedBorderLast = kTableCollapsedBorderBase + 0x0f,
+    kTableCollapsedBorders,
     kVideoBitmap,
     kWebPlugin,
     kWebFont,
@@ -182,33 +175,19 @@ class PLATFORM_EXPORT DisplayItem {
     kEndTransform,
     kBeginClipPath,
     kEndClipPath,
+    kScrollHitTest,
     kUninitializedType,
     kTypeLast = kUninitializedType
   };
 
-  static_assert(kTableCollapsedBorderBase >= kTableCollapsedBorderUnalignedBase,
-                "TableCollapsedBorder types overlap with other types");
-  static_assert((kTableCollapsedBorderBase & 0xf) == 0,
-                "The lowest 4 bits of TableCollapsedBorderBase should be zero");
-  // Bits or'ed onto TableCollapsedBorderBase to generate a real table collapsed
-  // border type.
-  enum TableCollapsedBorderSides {
-    kTableCollapsedBorderTop = 1 << 0,
-    kTableCollapsedBorderRight = 1 << 1,
-    kTableCollapsedBorderBottom = 1 << 2,
-    kTableCollapsedBorderLeft = 1 << 3,
-  };
-
   DisplayItem(const DisplayItemClient& client, Type type, size_t derived_size)
       : client_(&client),
+        visual_rect_(client.VisualRect()),
+        outset_for_raster_effects_(client.VisualRectOutsetForRasterEffects()),
         type_(type),
         derived_size_(derived_size),
-        skipped_cache_(false)
-#ifndef NDEBUG
-        ,
-        client_debug_string_(client.DebugName())
-#endif
-  {
+        skipped_cache_(false),
+        is_tombstone_(false) {
     // derivedSize must fit in m_derivedSize.
     // If it doesn't, enlarge m_derivedSize and fix this assert.
     SECURITY_DCHECK(derived_size < (1 << 8));
@@ -227,7 +206,7 @@ class PLATFORM_EXPORT DisplayItem {
     const Type type;
   };
 
-  Id GetId() const { return Id(*client_, type_); }
+  Id GetId() const { return Id(*client_, GetType()); }
 
   virtual void Replay(GraphicsContext&) const {}
 
@@ -235,7 +214,22 @@ class PLATFORM_EXPORT DisplayItem {
     DCHECK(client_);
     return *client_;
   }
-  Type GetType() const { return type_; }
+
+  // This equals to Client().VisualRect() as long as the client is alive and is
+  // not invalidated. Otherwise it saves the previous visual rect of the client.
+  // See DisplayItemClient::VisualRect() about its coordinate space.
+  const LayoutRect& VisualRect() const { return visual_rect_; }
+  LayoutUnit OutsetForRasterEffects() const {
+    return outset_for_raster_effects_;
+  }
+
+  // Visual rect can change without needing invalidation of the client, e.g.
+  // when ancestor clip changes. This is called from PaintController::
+  // UseCachedDrawingIfPossible() to update the visual rect of a cached display
+  // item.
+  void UpdateVisualRect() { visual_rect_ = client_->VisualRect(); }
+
+  Type GetType() const { return static_cast<Type>(type_); }
 
   // Size of this object in memory, used to move it with memcpy.
   // This is not sizeof(*this), because it needs to account for the size of
@@ -248,9 +242,11 @@ class PLATFORM_EXPORT DisplayItem {
   void SetSkippedCache() { skipped_cache_ = true; }
   bool SkippedCache() const { return skipped_cache_; }
 
-  // TODO(wkorman): Only DrawingDisplayItem needs the visual rect argument.
-  // Consider refactoring class hierarchy to make this more explicit.
-  virtual void AppendToWebDisplayItemList(const IntRect&,
+  // Appends this display item to the WebDisplayItemList, if applicable.
+  // |visual_rect_offset| is the offset between the space of the GraphicsLayer
+  // which owns the display item and the coordinate space of VisualRect().
+  // TODO(wangxianzhu): Remove the parameter for slimming paint v2.
+  virtual void AppendToWebDisplayItemList(const LayoutSize& visual_rect_offset,
                                           WebDisplayItemList*) const {}
 
 // See comments of enum Type for usage of the following macros.
@@ -282,14 +278,15 @@ class PLATFORM_EXPORT DisplayItem {
   DEFINE_CATEGORY_METHODS(End##Category)                   \
   DEFINE_CONVERSION_METHODS(Category, category, End##Category, end##Category)
 
-#define DEFINE_PAINT_PHASE_CONVERSION_METHOD(Category)                   \
-  static Type PaintPhaseTo##Category##Type(int paintPhase) {             \
-    static_assert(                                                       \
-        k##Category##PaintPhaseLast - k##Category##PaintPhaseFirst ==    \
-            k##PaintPhaseMax,                                            \
-        "Invalid paint-phase-based category " #Category                  \
-        ". See comments of DisplayItem::Type");                          \
-    return static_cast<Type>(paintPhase + k##Category##PaintPhaseFirst); \
+#define DEFINE_PAINT_PHASE_CONVERSION_METHOD(Category)                \
+  static Type PaintPhaseTo##Category##Type(PaintPhase paint_phase) {  \
+    static_assert(                                                    \
+        k##Category##PaintPhaseLast - k##Category##PaintPhaseFirst == \
+            kPaintPhaseMax,                                           \
+        "Invalid paint-phase-based category " #Category               \
+        ". See comments of DisplayItem::Type");                       \
+    return static_cast<Type>(static_cast<int>(paint_phase) +          \
+                             k##Category##PaintPhaseFirst);           \
   }
 
   DEFINE_CATEGORY_METHODS(Drawing)
@@ -310,8 +307,14 @@ class PLATFORM_EXPORT DisplayItem {
 
   DEFINE_PAIRED_CATEGORY_METHODS(Transform3D, transform3D)
 
+  static bool IsScrollHitTestType(Type type) { return type == kScrollHitTest; }
+  bool IsScrollHitTest() const { return IsScrollHitTestType(GetType()); }
+
+  // TODO(pdr): Should this return true for IsScrollHitTestType too?
   static bool IsCacheableType(Type type) { return IsDrawingType(type); }
-  bool IsCacheable() const { return !SkippedCache() && IsCacheableType(type_); }
+  bool IsCacheable() const {
+    return !SkippedCache() && IsCacheableType(GetType());
+  }
 
   virtual bool IsBegin() const { return false; }
   virtual bool IsEnd() const { return false; }
@@ -323,53 +326,49 @@ class PLATFORM_EXPORT DisplayItem {
 #endif
 
   virtual bool Equals(const DisplayItem& other) const {
+    // Failure of this DCHECK would cause bad casts in subclasses.
+    SECURITY_CHECK(!is_tombstone_);
     return client_ == other.client_ && type_ == other.type_ &&
            derived_size_ == other.derived_size_ &&
            skipped_cache_ == other.skipped_cache_;
   }
 
-  // True if the client is non-null. Because m_client is const, this should
-  // never be false except when we explicitly create a tombstone/"dead display
-  // item" as part of moving an item from one list to another (see:
-  // DisplayItemList::appendByMoving).
-  bool HasValidClient() const { return client_; }
+  // True if this DisplayItem is the tombstone/"dead display item" as part of
+  // moving an item from one list to another. See the default constructor of
+  // DisplayItem.
+  bool IsTombstone() const { return is_tombstone_; }
 
   virtual bool DrawsContent() const { return false; }
 
-  // Override to implement specific analysis strategies.
-  virtual void AnalyzeForGpuRasterization(SkPictureGpuAnalyzer&) const {}
-
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
   static WTF::String TypeAsDebugString(DisplayItem::Type);
-  const WTF::String ClientDebugString() const { return client_debug_string_; }
-  void SetClientDebugString(const WTF::String& s) { client_debug_string_ = s; }
   WTF::String AsDebugString() const;
-  virtual void DumpPropertiesAsDebugString(WTF::StringBuilder&) const;
+  virtual void PropertiesAsJSON(JSONObject&) const;
 #endif
 
  private:
-  // The default DisplayItem constructor is only used by
-  // ContiguousContainer::appendByMoving where an invalid DisplaItem is
-  // constructed at the source location.
   template <typename T, unsigned alignment>
   friend class ContiguousContainer;
+  friend class DisplayItemList;
 
-  DisplayItem()
-      : client_(nullptr),
-        type_(kUninitializedType),
-        derived_size_(sizeof(*this)),
-        skipped_cache_(false) {}
+  // The default DisplayItem constructor is only used by ContiguousContainer::
+  // AppendByMoving() where a tombstone DisplayItem is constructed at the source
+  // location. Only set is_tombstone_ to true, leaving other fields as-is so
+  // that we can get their original values for debugging. |visual_rect_| and
+  // |outset_for_raster_effects_| are special, see DisplayItemList::
+  // AppendByMoving().
+  DisplayItem() : is_tombstone_(true) {}
 
   const DisplayItemClient* client_;
+  LayoutRect visual_rect_;
+  LayoutUnit outset_for_raster_effects_;
+
   static_assert(kTypeLast < (1 << 16),
                 "DisplayItem::Type should fit in 16 bits");
-  const Type type_ : 16;
-  const unsigned derived_size_ : 8;  // size of the actual derived class
+  unsigned type_ : 16;
+  unsigned derived_size_ : 8;  // size of the actual derived class
   unsigned skipped_cache_ : 1;
-
-#ifndef NDEBUG
-  WTF::String client_debug_string_;
-#endif
+  unsigned is_tombstone_ : 1;
 };
 
 inline bool operator==(const DisplayItem::Id& a, const DisplayItem::Id& b) {
@@ -385,7 +384,9 @@ class PLATFORM_EXPORT PairedBeginDisplayItem : public DisplayItem {
   PairedBeginDisplayItem(const DisplayItemClient& client,
                          Type type,
                          size_t derived_size)
-      : DisplayItem(client, type, derived_size) {}
+      : DisplayItem(client, type, derived_size) {
+    DCHECK(!RuntimeEnabledFeatures::SlimmingPaintV175Enabled());
+  }
 
  private:
   bool IsBegin() const final { return true; }
@@ -396,7 +397,9 @@ class PLATFORM_EXPORT PairedEndDisplayItem : public DisplayItem {
   PairedEndDisplayItem(const DisplayItemClient& client,
                        Type type,
                        size_t derived_size)
-      : DisplayItem(client, type, derived_size) {}
+      : DisplayItem(client, type, derived_size) {
+    DCHECK(!RuntimeEnabledFeatures::SlimmingPaintV175Enabled());
+  }
 
 #if DCHECK_IS_ON()
   bool IsEndAndPairedWith(DisplayItem::Type other_type) const override = 0;

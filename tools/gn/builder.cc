@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <utility>
 
+#include "tools/gn/action_values.h"
 #include "tools/gn/config.h"
 #include "tools/gn/deps_iterator.h"
 #include "tools/gn/err.h"
@@ -56,8 +57,7 @@ bool RecursiveFindCycle(const BuilderRecord* search_in,
 Builder::Builder(Loader* loader) : loader_(loader) {
 }
 
-Builder::~Builder() {
-}
+Builder::~Builder() = default;
 
 void Builder::ItemDefined(std::unique_ptr<Item> item) {
   ScopedTrace trace(TraceItem::TRACE_DEFINE_TARGET, item->label());
@@ -227,6 +227,7 @@ bool Builder::TargetDefined(BuilderRecord* record, Err* err) {
       !AddDeps(record, target->configs().vector(), err) ||
       !AddDeps(record, target->all_dependent_configs(), err) ||
       !AddDeps(record, target->public_configs(), err) ||
+      !AddActionValuesDep(record, target->action_values(), err) ||
       !AddToolchainDep(record, target, err))
     return false;
 
@@ -389,6 +390,22 @@ bool Builder::AddDeps(BuilderRecord* record,
   return true;
 }
 
+bool Builder::AddActionValuesDep(BuilderRecord* record,
+                                 const ActionValues& action_values,
+                                 Err* err) {
+  if (action_values.pool().label.is_null())
+    return true;
+
+  BuilderRecord* pool_record = GetOrCreateRecordOfType(
+      action_values.pool().label, action_values.pool().origin,
+      BuilderRecord::ITEM_POOL, err);
+  if (!pool_record)
+    return false;
+  record->AddDep(pool_record);
+
+  return true;
+}
+
 bool Builder::AddToolchainDep(BuilderRecord* record,
                               const Target* target,
                               Err* err) {
@@ -439,6 +456,7 @@ bool Builder::ResolveItem(BuilderRecord* record, Err* err) {
         !ResolveConfigs(&target->configs(), err) ||
         !ResolveConfigs(&target->all_dependent_configs(), err) ||
         !ResolveConfigs(&target->public_configs(), err) ||
+        !ResolveActionValues(&target->action_values(), err) ||
         !ResolveToolchain(target, err))
       return false;
   } else if (record->type() == BuilderRecord::ITEM_CONFIG) {
@@ -515,6 +533,20 @@ bool Builder::ResolveToolchain(Target* target, Err* err) {
 
   if (!target->SetToolchain(record->item()->AsToolchain(), err))
     return false;
+
+  return true;
+}
+
+bool Builder::ResolveActionValues(ActionValues* action_values, Err* err) {
+  if (action_values->pool().label.is_null())
+    return true;
+
+  BuilderRecord* record = GetResolvedRecordOfType(
+      action_values->pool().label, action_values->pool().origin,
+      BuilderRecord::ITEM_POOL, err);
+  if (!record)
+    return false;
+  action_values->set_pool(LabelPtrPair<Pool>(record->item()->AsPool()));
 
   return true;
 }

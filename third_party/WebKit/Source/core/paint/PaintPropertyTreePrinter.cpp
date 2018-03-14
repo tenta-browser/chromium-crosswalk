@@ -4,9 +4,9 @@
 
 #include "core/paint/PaintPropertyTreePrinter.h"
 
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
-#include "core/layout/LayoutPart.h"
+#include "core/frame/LocalFrameView.h"
+#include "core/layout/LayoutEmbeddedContent.h"
 #include "core/layout/LayoutView.h"
 #include "core/paint/ObjectPaintProperties.h"
 #include "platform/graphics/paint/PropertyTreeState.h"
@@ -25,8 +25,7 @@ class PropertyTreePrinterTraits;
 template <typename PropertyTreeNode>
 class PropertyTreePrinter {
  public:
-  String TreeAsString(const FrameView& frame_view) {
-    DCHECK(RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled());
+  String TreeAsString(const LocalFrameView& frame_view) {
     CollectPropertyNodes(frame_view);
 
     const PropertyTreeNode* root_node = LookupRootNode();
@@ -54,14 +53,20 @@ class PropertyTreePrinter {
     return string_builder.ToString();
   }
 
-  void AddPropertyNode(const PropertyTreeNode* node, String debug_info) {
+  void AddPropertyNode(const PropertyTreeNode* node, const String& debug_info) {
     node_to_debug_string_.Set(node, debug_info);
+  }
+
+  void AddPropertyNode(const PropertyTreeNode* node,
+                       const String& name,
+                       const LayoutObject& object) {
+    node_to_debug_string_.Set(node, name + " (" + object.DebugName() + ")");
   }
 
  private:
   using Traits = PropertyTreePrinterTraits<PropertyTreeNode>;
 
-  void CollectPropertyNodes(const FrameView& frame_view) {
+  void CollectPropertyNodes(const LocalFrameView& frame_view) {
     Traits::AddFrameViewProperties(frame_view, *this);
     if (LayoutView* layout_view = frame_view.GetLayoutView())
       CollectPropertyNodes(*layout_view);
@@ -69,16 +74,18 @@ class PropertyTreePrinter {
          child = child->Tree().NextSibling()) {
       if (!child->IsLocalFrame())
         continue;
-      if (FrameView* child_view = ToLocalFrame(child)->View())
+      if (LocalFrameView* child_view = ToLocalFrame(child)->View())
         CollectPropertyNodes(*child_view);
     }
   }
 
   void CollectPropertyNodes(const LayoutObject& object) {
-    if (const ObjectPaintProperties* paint_properties =
-            object.PaintProperties())
-      Traits::AddObjectPaintProperties(object, *paint_properties, *this);
-    for (LayoutObject* child = object.SlowFirstChild(); child;
+    for (const auto* fragment = &object.FirstFragment(); fragment;
+         fragment = fragment->NextFragment()) {
+      if (const auto* properties = fragment->PaintProperties())
+        Traits::AddObjectPaintProperties(object, *properties, *this);
+    }
+    for (const auto* child = object.SlowFirstChild(); child;
          child = child->NextSibling())
       CollectPropertyNodes(*child);
   }
@@ -120,7 +127,7 @@ template <>
 class PropertyTreePrinterTraits<TransformPaintPropertyNode> {
  public:
   static void AddFrameViewProperties(
-      const FrameView& frame_view,
+      const LocalFrameView& frame_view,
       PropertyTreePrinter<TransformPaintPropertyNode>& printer) {
     if (const TransformPaintPropertyNode* pre_translation =
             frame_view.PreTranslation())
@@ -133,35 +140,18 @@ class PropertyTreePrinterTraits<TransformPaintPropertyNode> {
 
   static void AddObjectPaintProperties(
       const LayoutObject& object,
-      const ObjectPaintProperties& paint_properties,
+      const ObjectPaintProperties& properties,
       PropertyTreePrinter<TransformPaintPropertyNode>& printer) {
-    if (const TransformPaintPropertyNode* paint_offset_translation =
-            paint_properties.PaintOffsetTranslation())
-      printer.AddPropertyNode(
-          paint_offset_translation,
-          "PaintOffsetTranslation (" + object.DebugName() + ")");
-    if (const TransformPaintPropertyNode* transform =
-            paint_properties.Transform())
-      printer.AddPropertyNode(transform,
-                              "Transform (" + object.DebugName() + ")");
-    if (const TransformPaintPropertyNode* perspective =
-            paint_properties.Perspective())
-      printer.AddPropertyNode(perspective,
-                              "Perspective (" + object.DebugName() + ")");
-    if (const TransformPaintPropertyNode* svg_local_to_border_box_transform =
-            paint_properties.SvgLocalToBorderBoxTransform())
-      printer.AddPropertyNode(
-          svg_local_to_border_box_transform,
-          "SvgLocalToBorderBoxTransform (" + object.DebugName() + ")");
-    if (const TransformPaintPropertyNode* scroll_translation =
-            paint_properties.ScrollTranslation())
-      printer.AddPropertyNode(scroll_translation,
-                              "ScrollTranslation (" + object.DebugName() + ")");
-    if (const TransformPaintPropertyNode* scrollbar_paint_offset =
-            paint_properties.ScrollbarPaintOffset())
-      printer.AddPropertyNode(
-          scrollbar_paint_offset,
-          "ScrollbarPaintOffset (" + object.DebugName() + ")");
+    if (const auto* t = properties.PaintOffsetTranslation())
+      printer.AddPropertyNode(t, "PaintOffsetTranslation", object);
+    if (const auto* t = properties.Transform())
+      printer.AddPropertyNode(t, "Transform", object);
+    if (const auto* t = properties.Perspective())
+      printer.AddPropertyNode(t, "Perspective", object);
+    if (const auto* t = properties.SvgLocalToBorderBoxTransform())
+      printer.AddPropertyNode(t, "SvgLocalToBorderBoxTransform", object);
+    if (const auto* t = properties.ScrollTranslation())
+      printer.AddPropertyNode(t, "ScrollTranslation", object);
   }
 };
 
@@ -169,7 +159,7 @@ template <>
 class PropertyTreePrinterTraits<ClipPaintPropertyNode> {
  public:
   static void AddFrameViewProperties(
-      const FrameView& frame_view,
+      const LocalFrameView& frame_view,
       PropertyTreePrinter<ClipPaintPropertyNode>& printer) {
     if (const ClipPaintPropertyNode* content_clip = frame_view.ContentClip())
       printer.AddPropertyNode(content_clip, "ContentClip (FrameView)");
@@ -177,24 +167,20 @@ class PropertyTreePrinterTraits<ClipPaintPropertyNode> {
 
   static void AddObjectPaintProperties(
       const LayoutObject& object,
-      const ObjectPaintProperties& paint_properties,
+      const ObjectPaintProperties& properties,
       PropertyTreePrinter<ClipPaintPropertyNode>& printer) {
-    if (const ClipPaintPropertyNode* css_clip = paint_properties.CssClip())
-      printer.AddPropertyNode(css_clip, "CssClip (" + object.DebugName() + ")");
-    if (const ClipPaintPropertyNode* css_clip_fixed_position =
-            paint_properties.CssClipFixedPosition())
-      printer.AddPropertyNode(
-          css_clip_fixed_position,
-          "CssClipFixedPosition (" + object.DebugName() + ")");
-    if (const ClipPaintPropertyNode* inner_border_radius_clip =
-            paint_properties.InnerBorderRadiusClip())
-      printer.AddPropertyNode(
-          inner_border_radius_clip,
-          "InnerBorderRadiusClip (" + object.DebugName() + ")");
-    if (const ClipPaintPropertyNode* overflow_clip =
-            paint_properties.OverflowClip())
-      printer.AddPropertyNode(overflow_clip,
-                              "OverflowClip (" + object.DebugName() + ")");
+    if (const auto* c = properties.FragmentClip())
+      printer.AddPropertyNode(c, "FragmentClip", object);
+    if (const auto* c = properties.MaskClip())
+      printer.AddPropertyNode(c, "MaskClip", object);
+    if (const auto* c = properties.CssClip())
+      printer.AddPropertyNode(c, "CssClip", object);
+    if (const auto* c = properties.CssClipFixedPosition())
+      printer.AddPropertyNode(c, "CssClipFixedPosition", object);
+    if (const auto* c = properties.InnerBorderRadiusClip())
+      printer.AddPropertyNode(c, "InnerBorderRadiusClip", object);
+    if (const auto* c = properties.OverflowClip())
+      printer.AddPropertyNode(c, "OverflowClip", object);
   }
 };
 
@@ -202,15 +188,19 @@ template <>
 class PropertyTreePrinterTraits<EffectPaintPropertyNode> {
  public:
   static void AddFrameViewProperties(
-      const FrameView& frame_view,
+      const LocalFrameView& frame_view,
       PropertyTreePrinter<EffectPaintPropertyNode>& printer) {}
 
   static void AddObjectPaintProperties(
       const LayoutObject& object,
-      const ObjectPaintProperties& paint_properties,
+      const ObjectPaintProperties& properties,
       PropertyTreePrinter<EffectPaintPropertyNode>& printer) {
-    if (const EffectPaintPropertyNode* effect = paint_properties.Effect())
-      printer.AddPropertyNode(effect, "Effect (" + object.DebugName() + ")");
+    if (const auto* e = properties.Effect())
+      printer.AddPropertyNode(e, "Effect", object);
+    if (const auto* e = properties.Filter())
+      printer.AddPropertyNode(e, "Filter", object);
+    if (const auto* e = properties.Mask())
+      printer.AddPropertyNode(e, "Mask", object);
   }
 };
 
@@ -218,22 +208,18 @@ template <>
 class PropertyTreePrinterTraits<ScrollPaintPropertyNode> {
  public:
   static void AddFrameViewProperties(
-      const FrameView& frame_view,
+      const LocalFrameView& frame_view,
       PropertyTreePrinter<ScrollPaintPropertyNode>& printer) {
-    if (const auto* scroll_translation = frame_view.ScrollTranslation()) {
-      const auto* scroll_node = scroll_translation->ScrollNode();
-      printer.AddPropertyNode(scroll_node, "Scroll (FrameView)");
-    }
+    if (const auto* s = frame_view.ScrollNode())
+      printer.AddPropertyNode(s, "Scroll (FrameView)");
   }
 
   static void AddObjectPaintProperties(
       const LayoutObject& object,
-      const ObjectPaintProperties& paint_properties,
+      const ObjectPaintProperties& properties,
       PropertyTreePrinter<ScrollPaintPropertyNode>& printer) {
-    if (const auto* scroll_translation = paint_properties.ScrollTranslation()) {
-      printer.AddPropertyNode(scroll_translation->ScrollNode(),
-                              "Scroll (" + object.DebugName() + ")");
-    }
+    if (const auto* s = properties.Scroll())
+      printer.AddPropertyNode(s, "Scroll", object);
   }
 };
 
@@ -241,7 +227,7 @@ class PaintPropertyTreeGraphBuilder {
  public:
   PaintPropertyTreeGraphBuilder() {}
 
-  void GenerateTreeGraph(const FrameView& frame_view,
+  void GenerateTreeGraph(const LocalFrameView& frame_view,
                          StringBuilder& string_builder) {
     layout_.str("");
     properties_.str("");
@@ -386,7 +372,8 @@ class PaintPropertyTreeGraphBuilder {
   }
 
   void WriteObjectPaintPropertyNodes(const LayoutObject& object) {
-    const ObjectPaintProperties* properties = object.PaintProperties();
+    const ObjectPaintProperties* properties =
+        object.FirstFragment().PaintProperties();
     if (!properties)
       return;
     const TransformPaintPropertyNode* paint_offset =
@@ -408,11 +395,6 @@ class PaintPropertyTreeGraphBuilder {
         properties->ScrollTranslation();
     if (scroll_translation)
       WritePaintPropertyNode(*scroll_translation, &object, "scrollTranslation");
-    const TransformPaintPropertyNode* scrollbar_paint_offset =
-        properties->ScrollbarPaintOffset();
-    if (scrollbar_paint_offset)
-      WritePaintPropertyNode(*scrollbar_paint_offset, &object,
-                             "scrollbarPaintOffset");
     const EffectPaintPropertyNode* effect = properties->Effect();
     if (effect)
       WritePaintPropertyNode(*effect, &object, "effect");
@@ -448,7 +430,7 @@ class PaintPropertyTreeGraphBuilder {
     return node;
   }
 
-  void WriteFrameViewPaintPropertyNodes(const FrameView& frame_view) {
+  void WriteFrameViewPaintPropertyNodes(const LocalFrameView& frame_view) {
     if (const auto* contents_state =
             frame_view.TotalPropertyTreeStateForContents()) {
       if (const auto* root = GetRoot(contents_state->Transform()))
@@ -482,9 +464,9 @@ class PaintPropertyTreeGraphBuilder {
        << object.GetName();
     Node* node = object.GetNode();
     if (node) {
-      os << "\\n" << GetTagName(node).Utf8().Data();
+      os << "\\n" << GetTagName(node).Utf8().data();
       if (node->IsElementNode() && ToElement(node)->HasID())
-        os << "\\nid=" << ToElement(node)->GetIdAttribute().Utf8().Data();
+        os << "\\nid=" << ToElement(node)->GetIdAttribute().Utf8().data();
     }
     os << "\"];" << std::endl;
     const void* parent = object.IsLayoutView()
@@ -495,14 +477,16 @@ class PaintPropertyTreeGraphBuilder {
     for (const LayoutObject* child = object.SlowFirstChild(); child;
          child = child->NextSibling())
       WriteLayoutObjectNode(*child);
-    if (object.IsLayoutPart()) {
-      FrameView* frame_view = ToLayoutPart(object).ChildFrameView();
+    if (object.IsLayoutEmbeddedContent()) {
+      LocalFrameView* frame_view =
+          ToLayoutEmbeddedContent(object).ChildFrameView();
       if (frame_view)
         WriteFrameViewNode(*frame_view, &object);
     }
   }
 
-  void WriteFrameViewNode(const FrameView& frame_view, const void* parent) {
+  void WriteFrameViewNode(const LocalFrameView& frame_view,
+                          const void* parent) {
     std::ostream& os = layout_;
     os << "n" << &frame_view << " [color=" << layout_node_color_
        << ", fontcolor=" << layout_node_color_ << ", shape=doublecircle"
@@ -535,51 +519,54 @@ const char* PaintPropertyTreeGraphBuilder::effect_node_color_ = "black";
 }  // namespace {
 }  // namespace blink
 
-CORE_EXPORT void showAllPropertyTrees(const blink::FrameView& rootFrame) {
+CORE_EXPORT void showAllPropertyTrees(const blink::LocalFrameView& rootFrame) {
   showTransformPropertyTree(rootFrame);
   showClipPropertyTree(rootFrame);
   showEffectPropertyTree(rootFrame);
   showScrollPropertyTree(rootFrame);
 }
 
-void showTransformPropertyTree(const blink::FrameView& rootFrame) {
-  fprintf(stderr, "%s\n",
-          transformPropertyTreeAsString(rootFrame).Utf8().Data());
+void showTransformPropertyTree(const blink::LocalFrameView& rootFrame) {
+  LOG(ERROR) << "Transform tree:\n"
+             << transformPropertyTreeAsString(rootFrame).Utf8().data();
 }
 
-void showClipPropertyTree(const blink::FrameView& rootFrame) {
-  fprintf(stderr, "%s\n", clipPropertyTreeAsString(rootFrame).Utf8().Data());
+void showClipPropertyTree(const blink::LocalFrameView& rootFrame) {
+  LOG(ERROR) << "Clip tree:\n"
+             << clipPropertyTreeAsString(rootFrame).Utf8().data();
 }
 
-void showEffectPropertyTree(const blink::FrameView& rootFrame) {
-  fprintf(stderr, "%s\n", effectPropertyTreeAsString(rootFrame).Utf8().Data());
+void showEffectPropertyTree(const blink::LocalFrameView& rootFrame) {
+  LOG(ERROR) << "Effect tree:\n"
+             << effectPropertyTreeAsString(rootFrame).Utf8().data();
 }
 
-void showScrollPropertyTree(const blink::FrameView& rootFrame) {
-  fprintf(stderr, "%s\n", scrollPropertyTreeAsString(rootFrame).Utf8().Data());
+void showScrollPropertyTree(const blink::LocalFrameView& rootFrame) {
+  LOG(ERROR) << "Scroll tree:\n"
+             << scrollPropertyTreeAsString(rootFrame).Utf8().data();
 }
 
-String transformPropertyTreeAsString(const blink::FrameView& rootFrame) {
+String transformPropertyTreeAsString(const blink::LocalFrameView& rootFrame) {
   return blink::PropertyTreePrinter<blink::TransformPaintPropertyNode>()
       .TreeAsString(rootFrame);
 }
 
-String clipPropertyTreeAsString(const blink::FrameView& rootFrame) {
+String clipPropertyTreeAsString(const blink::LocalFrameView& rootFrame) {
   return blink::PropertyTreePrinter<blink::ClipPaintPropertyNode>()
       .TreeAsString(rootFrame);
 }
 
-String effectPropertyTreeAsString(const blink::FrameView& rootFrame) {
+String effectPropertyTreeAsString(const blink::LocalFrameView& rootFrame) {
   return blink::PropertyTreePrinter<blink::EffectPaintPropertyNode>()
       .TreeAsString(rootFrame);
 }
 
-String scrollPropertyTreeAsString(const blink::FrameView& rootFrame) {
+String scrollPropertyTreeAsString(const blink::LocalFrameView& rootFrame) {
   return blink::PropertyTreePrinter<blink::ScrollPaintPropertyNode>()
       .TreeAsString(rootFrame);
 }
 
-String paintPropertyTreeGraph(const blink::FrameView& frameView) {
+String paintPropertyTreeGraph(const blink::LocalFrameView& frameView) {
   blink::PaintPropertyTreeGraphBuilder builder;
   StringBuilder stringBuilder;
   builder.GenerateTreeGraph(frameView, stringBuilder);

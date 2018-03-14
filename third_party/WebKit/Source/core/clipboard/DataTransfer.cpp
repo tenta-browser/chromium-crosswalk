@@ -25,28 +25,134 @@
 
 #include "core/clipboard/DataTransfer.h"
 
-#include "core/HTMLNames.h"
+#include <memory>
+
+#include "build/build_config.h"
 #include "core/clipboard/DataObject.h"
 #include "core/clipboard/DataTransferItem.h"
 #include "core/clipboard/DataTransferItemList.h"
 #include "core/editing/EphemeralRange.h"
 #include "core/editing/FrameSelection.h"
+#include "core/editing/VisibleSelection.h"
 #include "core/editing/serializers/Serialization.h"
 #include "core/fileapi/FileList.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/VisualViewport.h"
 #include "core/html/HTMLImageElement.h"
-#include "core/html/TextControlElement.h"
+#include "core/html/forms/TextControlElement.h"
 #include "core/layout/LayoutImage.h"
 #include "core/layout/LayoutObject.h"
 #include "core/loader/resource/ImageResourceContent.h"
+#include "core/page/ChromeClient.h"
+#include "core/page/Page.h"
+#include "core/paint/PaintInfo.h"
+#include "core/paint/PaintLayer.h"
+#include "core/paint/PaintLayerPainter.h"
 #include "platform/DragImage.h"
 #include "platform/clipboard/ClipboardMimeTypes.h"
 #include "platform/clipboard/ClipboardUtilities.h"
+#include "platform/graphics/StaticBitmapImage.h"
+#include "platform/graphics/paint/PaintRecordBuilder.h"
 #include "platform/network/mime/MIMETypeRegistry.h"
-#include <memory>
+#include "public/platform/WebScreenInfo.h"
+#include "third_party/skia/include/core/SkSurface.h"
 
 namespace blink {
 
+namespace {
+
+class DraggedNodeImageBuilder {
+  STACK_ALLOCATED();
+
+ public:
+  DraggedNodeImageBuilder(const LocalFrame& local_frame, Node& node)
+      : local_frame_(&local_frame),
+        node_(&node)
+#if DCHECK_IS_ON()
+        ,
+        dom_tree_version_(node.GetDocument().DomTreeVersion())
+#endif
+  {
+    for (Node& descendant : NodeTraversal::InclusiveDescendantsOf(*node_))
+      descendant.SetDragged(true);
+  }
+
+  ~DraggedNodeImageBuilder() {
+#if DCHECK_IS_ON()
+    DCHECK_EQ(dom_tree_version_, node_->GetDocument().DomTreeVersion());
+#endif
+    for (Node& descendant : NodeTraversal::InclusiveDescendantsOf(*node_))
+      descendant.SetDragged(false);
+  }
+
+  std::unique_ptr<DragImage> CreateImage() {
+#if DCHECK_IS_ON()
+    DCHECK_EQ(dom_tree_version_, node_->GetDocument().DomTreeVersion());
+#endif
+    // Construct layout object for |m_node| with pseudo class "-webkit-drag"
+    local_frame_->View()->UpdateAllLifecyclePhasesExceptPaint();
+    LayoutObject* const dragged_layout_object = node_->GetLayoutObject();
+    if (!dragged_layout_object)
+      return nullptr;
+    // Paint starting at the nearest stacking context, clipped to the object
+    // itself. This will also paint the contents behind the object if the
+    // object contains transparency and there are other elements in the same
+    // stacking context which stacked below.
+    PaintLayer* layer = dragged_layout_object->EnclosingLayer();
+    if (!layer->StackingNode()->IsStackingContext())
+      layer = layer->StackingNode()->AncestorStackingContextNode()->Layer();
+    IntRect absolute_bounding_box =
+        dragged_layout_object->AbsoluteBoundingBoxRectIncludingDescendants();
+    // TODO(chrishtr): consider using the root frame's visible rect instead
+    // of the local frame, to avoid over-clipping.
+    FloatRect visible_rect =
+        layer->GetLayoutObject().GetFrameView()->VisibleContentRect();
+    // If the absolute bounding box is large enough to be possibly a memory
+    // or IPC payload issue, clip it to the visible content rect.
+    if (absolute_bounding_box.Size().Area() > visible_rect.Size().Area()) {
+      absolute_bounding_box.Intersect(IntRect(visible_rect));
+    }
+
+    FloatRect bounding_box =
+        layer->GetLayoutObject()
+            .AbsoluteToLocalQuad(FloatQuad(absolute_bounding_box),
+                                 kUseTransforms)
+            .BoundingBox();
+    PaintLayerPaintingInfo painting_info(layer, LayoutRect(bounding_box),
+                                         kGlobalPaintFlattenCompositingLayers,
+                                         LayoutSize());
+    PaintLayerFlags flags = kPaintLayerHaveTransparency |
+                            kPaintLayerAppliedTransform |
+                            kPaintLayerUncachedClipRects;
+    PaintRecordBuilder builder;
+
+    dragged_layout_object->GetDocument().Lifecycle().AdvanceTo(
+        DocumentLifecycle::kInPaint);
+    PaintLayerPainter(*layer).Paint(builder.Context(), painting_info, flags);
+    dragged_layout_object->GetDocument().Lifecycle().AdvanceTo(
+        DocumentLifecycle::kPaintClean);
+
+    PropertyTreeState border_box_properties = PropertyTreeState::Root();
+    if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
+      border_box_properties =
+          *layer->GetLayoutObject().FirstFragment().LocalBorderBoxProperties();
+    }
+    FloatPoint paint_offset = dragged_layout_object->LocalToAncestorPoint(
+        FloatPoint(), &layer->GetLayoutObject(), kUseTransforms);
+    return DataTransfer::CreateDragImageForFrame(
+        *local_frame_, 1.0f,
+        LayoutObject::ShouldRespectImageOrientation(dragged_layout_object),
+        bounding_box.Size(), paint_offset, builder, border_box_properties);
+  }
+
+ private:
+  const Member<const LocalFrame> local_frame_;
+  const Member<Node> node_;
+#if DCHECK_IS_ON()
+  const uint64_t dom_tree_version_;
+#endif
+};
+}  // namespace
 static DragOperation ConvertEffectAllowedToDragOperation(const String& op) {
   // Values specified in
   // http://www.whatwg.org/specs/web-apps/current-work/multipage/dnd.html#dom-datatransfer-effectallowed
@@ -97,7 +203,8 @@ static String ConvertDragOperationToEffectAllowed(DragOperation op) {
 // We provide the IE clipboard types (URL and Text), and the clipboard types
 // specified in the WHATWG Web Applications 1.0 draft see
 // http://www.whatwg.org/specs/web-apps/current-work/ Section 6.3.5.3
-static String NormalizeType(const String& type, bool* convert_to_url = 0) {
+static String NormalizeType(const String& type,
+                            bool* convert_to_url = nullptr) {
   String clean_type = type.StripWhiteSpace().DeprecatedLower();
   if (clean_type == kMimeTypeText ||
       clean_type.StartsWith(kMimeTypeTextPlainEtc))
@@ -192,12 +299,19 @@ void DataTransfer::setData(const String& type, const String& data) {
   data_object_->SetData(NormalizeType(type), data);
 }
 
-// extensions beyond IE's API
-Vector<String> DataTransfer::types() const {
-  Vector<String> types;
-  if (!CanReadTypes())
-    return types;
+bool DataTransfer::hasDataStoreItemListChanged() const {
+  return data_store_item_list_changed_ || !CanReadTypes();
+}
 
+void DataTransfer::OnItemListChanged() {
+  data_store_item_list_changed_ = true;
+}
+
+Vector<String> DataTransfer::types() {
+  if (!CanReadTypes())
+    return Vector<String>();
+
+  data_store_item_list_changed_ = false;
   return data_object_->Types();
 }
 
@@ -218,14 +332,14 @@ FileList* DataTransfer::files() const {
 }
 
 void DataTransfer::setDragImage(Element* image, int x, int y) {
-  ASSERT(image);
+  DCHECK(image);
 
   if (!IsForDragAndDrop())
     return;
 
   IntPoint location(x, y);
-  if (isHTMLImageElement(*image) && !image->isConnected())
-    SetDragImageResource(toHTMLImageElement(*image).CachedImage(), location);
+  if (IsHTMLImageElement(*image) && !image->isConnected())
+    SetDragImageResource(ToHTMLImageElement(*image).CachedImage(), location);
   else
     SetDragImageElement(image, location);
 }
@@ -241,11 +355,81 @@ void DataTransfer::ClearDragImage() {
 
 void DataTransfer::SetDragImageResource(ImageResourceContent* img,
                                         const IntPoint& loc) {
-  setDragImage(img, 0, loc);
+  setDragImage(img, nullptr, loc);
 }
 
 void DataTransfer::SetDragImageElement(Node* node, const IntPoint& loc) {
-  setDragImage(0, node, loc);
+  setDragImage(nullptr, node, loc);
+}
+
+FloatRect DataTransfer::ClipByVisualViewport(const FloatRect& rect_in_document,
+                                             const LocalFrame& frame) {
+  IntRect viewport_in_root_frame =
+      IntRect(frame.GetPage()->GetVisualViewport().VisibleRect());
+  FloatRect viewport_in_document =
+      frame.View()->RootFrameToDocument(viewport_in_root_frame);
+  return Intersection(viewport_in_document, rect_in_document);
+}
+
+// static
+// Converts from size in CSS space to device space based on the given frame.
+FloatSize DataTransfer::DeviceSpaceSize(const FloatSize& css_size,
+                                        const LocalFrame& frame) {
+  float device_scale_factor = frame.GetPage()->DeviceScaleFactorDeprecated();
+  float page_scale_factor = frame.GetPage()->GetVisualViewport().Scale();
+  FloatSize device_size(css_size);
+  device_size.Scale(device_scale_factor * page_scale_factor);
+  return device_size;
+}
+
+// static
+// Returns a DragImage whose bitmap contains |contents|, positioned and scaled
+// in device space.
+std::unique_ptr<DragImage> DataTransfer::CreateDragImageForFrame(
+    const LocalFrame& frame,
+    float opacity,
+    RespectImageOrientationEnum image_orientation,
+    const FloatSize& css_size,
+    const FloatPoint& paint_offset,
+    PaintRecordBuilder& builder,
+    const PropertyTreeState& property_tree_state) {
+  float device_scale_factor = frame.GetPage()->DeviceScaleFactorDeprecated();
+  float page_scale_factor = frame.GetPage()->GetVisualViewport().Scale();
+
+  FloatSize device_size = DeviceSpaceSize(css_size, frame);
+  AffineTransform transform;
+  FloatSize paint_offset_size =
+      DeviceSpaceSize(FloatSize(paint_offset.X(), paint_offset.Y()), frame);
+  transform.Translate(-paint_offset_size.Width(), -paint_offset_size.Height());
+  transform.Scale(device_scale_factor * page_scale_factor);
+
+  // Rasterize upfront, since DragImage::create() is going to do it anyway
+  // (SkImage::asLegacyBitmap).
+  SkSurfaceProps surface_props(0, kUnknown_SkPixelGeometry);
+  sk_sp<SkSurface> surface = SkSurface::MakeRasterN32Premul(
+      device_size.Width(), device_size.Height(), &surface_props);
+  if (!surface)
+    return nullptr;
+
+  SkiaPaintCanvas skia_paint_canvas(surface->getCanvas());
+  skia_paint_canvas.concat(AffineTransformToSkMatrix(transform));
+  builder.EndRecording(skia_paint_canvas, property_tree_state);
+
+  scoped_refptr<Image> image =
+      StaticBitmapImage::Create(surface->makeImageSnapshot());
+  float screen_device_scale_factor =
+      frame.GetPage()->GetChromeClient().GetScreenInfo().device_scale_factor;
+
+  return DragImage::Create(image.get(), image_orientation,
+                           screen_device_scale_factor, kInterpolationDefault,
+                           opacity);
+}
+
+// static
+std::unique_ptr<DragImage> DataTransfer::NodeImage(const LocalFrame& frame,
+                                                   Node& node) {
+  DraggedNodeImageBuilder image_node(frame, node);
+  return image_node.CreateImage();
 }
 
 std::unique_ptr<DragImage> DataTransfer::CreateDragImage(
@@ -254,7 +438,7 @@ std::unique_ptr<DragImage> DataTransfer::CreateDragImage(
   if (drag_image_element_) {
     loc = drag_loc_;
 
-    return frame->NodeImage(*drag_image_element_);
+    return NodeImage(*frame, *drag_image_element_);
   }
   if (drag_image_) {
     loc = drag_loc_;
@@ -265,16 +449,16 @@ std::unique_ptr<DragImage> DataTransfer::CreateDragImage(
 
 static ImageResourceContent* GetImageResourceContent(Element* element) {
   // Attempt to pull ImageResourceContent from element
-  ASSERT(element);
+  DCHECK(element);
   LayoutObject* layout_object = element->GetLayoutObject();
   if (!layout_object || !layout_object->IsImage())
-    return 0;
+    return nullptr;
 
   LayoutImage* image = ToLayoutImage(layout_object);
   if (image->CachedImage() && !image->CachedImage()->ErrorOccurred())
     return image->CachedImage();
 
-  return 0;
+  return nullptr;
 }
 
 static void WriteImageToDataObject(DataObject* data_object,
@@ -285,12 +469,13 @@ static void WriteImageToDataObject(DataObject* data_object,
   if (!cached_image || !cached_image->GetImage() || !cached_image->IsLoaded())
     return;
 
-  RefPtr<SharedBuffer> image_buffer = cached_image->GetImage()->Data();
+  Image* image = cached_image->GetImage();
+  scoped_refptr<SharedBuffer> image_buffer = image->Data();
   if (!image_buffer || !image_buffer->size())
     return;
 
   data_object->AddSharedBuffer(
-      image_buffer, image_url, cached_image->GetImage()->FilenameExtension(),
+      image_buffer, image_url, image->FilenameExtension(),
       cached_image->GetResponse().HttpHeaderFields().Get(
           HTTPNames::Content_Disposition));
 }
@@ -316,7 +501,7 @@ void DataTransfer::DeclareAndWriteDragImage(Element* element,
 void DataTransfer::WriteURL(Node* node, const KURL& url, const String& title) {
   if (!data_object_)
     return;
-  ASSERT(!url.IsEmpty());
+  DCHECK(!url.IsEmpty());
 
   data_object_->SetURLAndTitle(url, title);
 
@@ -339,7 +524,7 @@ void DataTransfer::WriteSelection(const FrameSelection& selection) {
   }
 
   String str = selection.SelectedTextForClipboard();
-#if OS(WIN)
+#if defined(OS_WIN)
   ReplaceNewlinesWithWindowsStyleNewlines(str);
 #endif
   ReplaceNBSPWithSpace(str);
@@ -348,7 +533,7 @@ void DataTransfer::WriteSelection(const FrameSelection& selection) {
 
 void DataTransfer::SetAccessPolicy(DataTransferAccessPolicy policy) {
   // once you go numb, can never go back
-  ASSERT(policy_ != kDataTransferNumb || policy == kDataTransferNumb);
+  DCHECK(policy_ != kDataTransferNumb || policy == kDataTransferNumb);
   policy_ = policy;
 }
 
@@ -373,13 +558,13 @@ bool DataTransfer::CanSetDragImage() const {
 
 DragOperation DataTransfer::SourceOperation() const {
   DragOperation op = ConvertEffectAllowedToDragOperation(effect_allowed_);
-  ASSERT(op != kDragOperationPrivate);
+  DCHECK_NE(op, kDragOperationPrivate);
   return op;
 }
 
 DragOperation DataTransfer::DestinationOperation() const {
   DragOperation op = ConvertEffectAllowedToDragOperation(drop_effect_);
-  ASSERT(op == kDragOperationCopy || op == kDragOperationNone ||
+  DCHECK(op == kDragOperationCopy || op == kDragOperationNone ||
          op == kDragOperationLink ||
          op == (DragOperation)(kDragOperationGeneric | kDragOperationMove) ||
          op == kDragOperationEvery);
@@ -429,7 +614,10 @@ DataTransfer::DataTransfer(DataTransferType type,
       drop_effect_("uninitialized"),
       effect_allowed_("uninitialized"),
       transfer_type_(type),
-      data_object_(data_object) {}
+      data_object_(data_object),
+      data_store_item_list_changed_(true) {
+  data_object_->AddObserver(this);
+}
 
 void DataTransfer::setDragImage(ImageResourceContent* image,
                                 Node* node,
@@ -461,7 +649,7 @@ bool DataTransfer::HasStringOfType(const String& type) const {
   if (!CanReadTypes())
     return false;
 
-  return types().Contains(type);
+  return data_object_->Types().Contains(type);
 }
 
 DragOperation ConvertDropZoneOperationToDragOperation(
@@ -488,10 +676,11 @@ String ConvertDragOperationToDropZoneOperation(DragOperation operation) {
   }
 }
 
-DEFINE_TRACE(DataTransfer) {
+void DataTransfer::Trace(blink::Visitor* visitor) {
   visitor->Trace(data_object_);
   visitor->Trace(drag_image_);
   visitor->Trace(drag_image_element_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

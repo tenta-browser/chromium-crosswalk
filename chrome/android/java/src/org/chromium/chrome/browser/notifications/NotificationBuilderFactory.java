@@ -7,9 +7,10 @@ package org.chromium.chrome.browser.notifications;
 import android.annotation.SuppressLint;
 import android.app.NotificationManager;
 import android.content.Context;
+import android.os.Build;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
+import org.chromium.chrome.browser.notifications.channels.ChannelsInitializer;
 
 /**
  * Factory which supplies the appropriate type of notification builder based on Android version.
@@ -31,9 +32,9 @@ public class NotificationBuilderFactory {
      *                  {@link ChannelsInitializer#ensureInitialized(String)}.
      */
     public static ChromeNotificationBuilder createChromeNotificationBuilder(
-            boolean preferCompat, @ChannelDefinitions.ChannelId String channelId) {
+            boolean preferCompat, String channelId) {
         Context context = ContextUtils.getApplicationContext();
-        if (BuildInfo.isAtLeastO()) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             return createNotificationBuilderForO(channelId, context);
         }
         return preferCompat ? new NotificationCompatBuilder(context)
@@ -42,10 +43,10 @@ public class NotificationBuilderFactory {
 
     @SuppressLint("NewApi") // for Context.getSystemService(Class)
     private static ChromeNotificationBuilder createNotificationBuilderForO(
-            @ChannelDefinitions.ChannelId String channelId, Context context) {
+            String channelId, Context context) {
         return new NotificationBuilderForO(context, channelId,
                 new ChannelsInitializer(new NotificationManagerProxyImpl(context.getSystemService(
                                                 NotificationManager.class)),
-                        new ChannelDefinitions()));
+                        context.getResources()));
     }
 }

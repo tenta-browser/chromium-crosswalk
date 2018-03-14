@@ -62,7 +62,8 @@ void LoadCallback(const base::FilePath& path,
     // all bookmarks if some titles have invalid utf.
     JSONFileValueDeserializer deserializer(
         path, base::JSON_REPLACE_INVALID_CHARACTERS);
-    std::unique_ptr<base::Value> root = deserializer.Deserialize(NULL, NULL);
+    std::unique_ptr<base::Value> root =
+        deserializer.Deserialize(nullptr, nullptr);
 
     if (root.get()) {
       // Building the index can take a while, so we do it on the background
@@ -153,10 +154,10 @@ BookmarkStorage::BookmarkStorage(
     : model_(model),
       writer_(profile_path.Append(kBookmarksFileName),
               sequenced_task_runner,
-              base::TimeDelta::FromMilliseconds(kSaveDelayMS)),
+              base::TimeDelta::FromMilliseconds(kSaveDelayMS),
+              "BookmarkStorage"),
       sequenced_task_runner_(sequenced_task_runner),
-      weak_factory_(this) {
-}
+      weak_factory_(this) {}
 
 BookmarkStorage::~BookmarkStorage() {
   if (writer_.HasPendingWrite())
@@ -201,7 +202,7 @@ void BookmarkStorage::BookmarkModelDeleted() {
   // the model is gone.
   if (writer_.HasPendingWrite())
     SaveNow();
-  model_ = NULL;
+  model_ = nullptr;
 }
 
 bool BookmarkStorage::SerializeData(std::string* output) {

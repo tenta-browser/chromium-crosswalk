@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_OMNIBOX_BROWSER_SEARCH_SUGGESTION_PARSER_H_
 #define COMPONENTS_OMNIBOX_BROWSER_SEARCH_SUGGESTION_PARSER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -172,7 +173,7 @@ class SearchSuggestionParser {
     base::string16 suggestion_;
 
     // The contents to be displayed as prefix of match contents.
-    // Used for postfix suggestions to display a leading ellipsis (or some
+    // Used for tail suggestions to display a leading ellipsis (or some
     // equivalent character) to indicate omitted text.
     // Only used to pass this information to about:omnibox's "Additional Info".
     base::string16 match_contents_prefix_;

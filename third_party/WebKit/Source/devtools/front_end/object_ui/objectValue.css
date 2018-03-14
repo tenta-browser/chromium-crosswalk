@@ -19,13 +19,13 @@
     display: flex !important;
 }
 
-.object-value-node:hover {
+.value.object-value-node:hover {
     background-color: rgba(56, 121, 217, 0.1);
 }
 
 .object-value-function-prefix,
 .object-value-boolean {
-    color: rgb(170, 13, 145);
+    color: rgb(13, 34, 170);
 }
 
 .object-value-function {
@@ -35,21 +35,6 @@
 .object-value-function.linkified:hover {
     background-color: rgba(0, 0, 0, 0.1);
     cursor: pointer;
-}
-
-.object-value-object,
-.object-value-promise,
-.object-value-map,
-.object-value-set,
-.object-value-iterator,
-.object-value-generator,
-.object-value-node,
-.object-value-typedarray,
-.object-value-array {
-    position: relative;
-    vertical-align: baseline;
-    color: inherit;
-    display: inline-block;
 }
 
 .object-value-number {
@@ -69,7 +54,10 @@
 }
 
 .object-value-node {
-    color: rgb(136, 18, 128);
+    position: relative;
+    vertical-align: baseline;
+    color: rgb(48, 57, 66);
+    display: inline-block;
 }
 
 .object-value-null,
@@ -101,4 +89,17 @@
 
 .object-properties-section .object-description {
     color: gray;
+}
+
+.object-properties-preview {
+    white-space: nowrap;
+}
+
+.name {
+    color: rgb(136, 19, 145);
+    flex-shrink: 0;
+}
+
+.object-properties-preview .name {
+    color: #565656;
 }

@@ -36,15 +36,16 @@ class SaveCardBubbleViews : public SaveCardBubbleView,
  public:
   // Bubble will be anchored to |anchor_view|.
   SaveCardBubbleViews(views::View* anchor_view,
+                      const gfx::Point& anchor_point,
                       content::WebContents* web_contents,
                       SaveCardBubbleController* controller);
 
   void Show(DisplayReason reason);
 
-  // SaveCardBubbleView
+  // SaveCardBubbleView:
   void Hide() override;
 
-  // views::BubbleDialogDelegateView
+  // views::BubbleDialogDelegateView:
   views::View* CreateExtraView() override;
   views::View* CreateFootnoteView() override;
   bool Accept() override;
@@ -53,41 +54,61 @@ class SaveCardBubbleViews : public SaveCardBubbleView,
   int GetDialogButtons() const override;
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   bool IsDialogButtonEnabled(ui::DialogButton button) const override;
-  bool ShouldDefaultButtonBeBlue() const override;
 
-  // views::View
-  gfx::Size GetPreferredSize() const override;
+  // views::View:
+  gfx::Size CalculatePreferredSize() const override;
 
-  // views::WidgetDelegate
+  // views::WidgetDelegate:
+  bool ShouldShowCloseButton() const override;
   base::string16 GetWindowTitle() const override;
+  gfx::ImageSkia GetWindowIcon() override;
+  bool ShouldShowWindowIcon() const override;
   void WindowClosing() override;
 
-  // views::LinkListener
+  // views::LinkListener:
   void LinkClicked(views::Link* source, int event_flags) override;
 
-  // views::StyledLabelListener
+  // views::StyledLabelListener:
   void StyledLabelLinkClicked(views::StyledLabel* label,
                               const gfx::Range& range,
                               int event_flags) override;
 
-  // views::TextfieldController
+  // views::TextfieldController:
   void ContentsChanged(views::Textfield* sender,
                        const base::string16& new_contents) override;
 
  private:
+  // The current step of the save card flow.  Accounts for:
+  //  1) Local save vs. Upload save
+  //  2) Upload save can have all information or be missing CVC
+  enum CurrentFlowStep {
+    UNKNOWN_STEP,
+    LOCAL_SAVE_ONLY_STEP,
+    UPLOAD_SAVE_ONLY_STEP,
+    UPLOAD_SAVE_CVC_FIX_FLOW_STEP_1_OFFER_UPLOAD,
+    UPLOAD_SAVE_CVC_FIX_FLOW_STEP_2_REQUEST_CVC,
+  };
+
   ~SaveCardBubbleViews() override;
 
+  CurrentFlowStep GetCurrentFlowStep() const;
+  // Create the dialog's content view containing everything except for the
+  // footnote.
   std::unique_ptr<views::View> CreateMainContentView();
+  // Create the dialog's content view asking for the user's CVC.
   std::unique_ptr<views::View> CreateRequestCvcView();
 
-  // views::BubbleDialogDelegateView
+  // views::BubbleDialogDelegateView:
   void Init() override;
 
   SaveCardBubbleController* controller_;  // Weak reference.
 
-  views::Textfield* cvc_textfield_;
+  bool initial_step_ = true;
+  views::View* footnote_view_ = nullptr;
+  views::Textfield* cvc_textfield_ = nullptr;
+  views::Link* learn_more_link_ = nullptr;
 
-  views::Link* learn_more_link_;
+  std::unique_ptr<WebContentMouseHandler> mouse_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(SaveCardBubbleViews);
 };

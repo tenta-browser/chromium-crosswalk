@@ -31,12 +31,6 @@ void AppCacheDispatcherHost::OnChannelConnected(int32_t peer_pid) {
 
   backend_impl_.Initialize(appcache_service_.get(), &frontend_proxy_,
                            process_id_);
-  get_status_callback_ = base::Bind(&AppCacheDispatcherHost::GetStatusCallback,
-                                    weak_factory_.GetWeakPtr());
-  start_update_callback_ = base::Bind(
-      &AppCacheDispatcherHost::StartUpdateCallback, weak_factory_.GetWeakPtr());
-  swap_cache_callback_ = base::Bind(&AppCacheDispatcherHost::SwapCacheCallback,
-                                    weak_factory_.GetWeakPtr());
 }
 
 bool AppCacheDispatcherHost::OnMessageReceived(const IPC::Message& message) {
@@ -47,8 +41,6 @@ bool AppCacheDispatcherHost::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(AppCacheHostMsg_SetSpawningHostId, OnSetSpawningHostId)
     IPC_MESSAGE_HANDLER(AppCacheHostMsg_GetResourceList, OnGetResourceList)
     IPC_MESSAGE_HANDLER(AppCacheHostMsg_SelectCache, OnSelectCache)
-    IPC_MESSAGE_HANDLER(AppCacheHostMsg_SelectCacheForWorker,
-                        OnSelectCacheForWorker)
     IPC_MESSAGE_HANDLER(AppCacheHostMsg_SelectCacheForSharedWorker,
                         OnSelectCacheForSharedWorker)
     IPC_MESSAGE_HANDLER(AppCacheHostMsg_MarkAsForeignEntry,
@@ -116,19 +108,6 @@ void AppCacheDispatcherHost::OnSelectCache(
   }
 }
 
-void AppCacheDispatcherHost::OnSelectCacheForWorker(
-    int host_id, int parent_process_id, int parent_host_id) {
-  if (appcache_service_.get()) {
-    if (!backend_impl_.SelectCacheForWorker(host_id, parent_process_id,
-                                            parent_host_id)) {
-      bad_message::ReceivedBadMessage(
-          this, bad_message::ACDH_SELECT_CACHE_FOR_WORKER);
-    }
-  } else {
-    frontend_proxy_.OnCacheSelected(host_id, AppCacheInfo());
-  }
-}
-
 void AppCacheDispatcherHost::OnSelectCacheForSharedWorker(int host_id,
                                                           int64_t appcache_id) {
   if (appcache_service_.get()) {
@@ -169,14 +148,17 @@ void AppCacheDispatcherHost::OnGetStatus(int host_id, IPC::Message* reply_msg) {
 
   pending_reply_msg_.reset(reply_msg);
   if (appcache_service_.get()) {
-    if (!backend_impl_.GetStatusWithCallback(host_id, get_status_callback_,
-                                             reply_msg)) {
+    if (!backend_impl_.GetStatusWithCallback(
+            host_id,
+            base::BindOnce(&AppCacheDispatcherHost::GetStatusCallback,
+                           weak_factory_.GetWeakPtr()),
+            reply_msg)) {
       bad_message::ReceivedBadMessage(this, bad_message::ACDH_GET_STATUS);
     }
     return;
   }
 
-  GetStatusCallback(APPCACHE_STATUS_UNCACHED, reply_msg);
+  GetStatusCallback(AppCacheStatus::APPCACHE_STATUS_UNCACHED, reply_msg);
 }
 
 void AppCacheDispatcherHost::OnStartUpdate(int host_id,
@@ -190,8 +172,11 @@ void AppCacheDispatcherHost::OnStartUpdate(int host_id,
 
   pending_reply_msg_.reset(reply_msg);
   if (appcache_service_.get()) {
-    if (!backend_impl_.StartUpdateWithCallback(host_id, start_update_callback_,
-                                               reply_msg)) {
+    if (!backend_impl_.StartUpdateWithCallback(
+            host_id,
+            base::BindOnce(&AppCacheDispatcherHost::StartUpdateCallback,
+                           weak_factory_.GetWeakPtr()),
+            reply_msg)) {
       bad_message::ReceivedBadMessage(this, bad_message::ACDH_START_UPDATE);
     }
     return;
@@ -210,8 +195,11 @@ void AppCacheDispatcherHost::OnSwapCache(int host_id, IPC::Message* reply_msg) {
 
   pending_reply_msg_.reset(reply_msg);
   if (appcache_service_.get()) {
-    if (!backend_impl_.SwapCacheWithCallback(host_id, swap_cache_callback_,
-                                             reply_msg)) {
+    if (!backend_impl_.SwapCacheWithCallback(
+            host_id,
+            base::BindOnce(&AppCacheDispatcherHost::SwapCacheCallback,
+                           weak_factory_.GetWeakPtr()),
+            reply_msg)) {
       bad_message::ReceivedBadMessage(this, bad_message::ACDH_SWAP_CACHE);
     }
     return;

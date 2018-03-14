@@ -22,7 +22,6 @@ TEST_F('NetInternalsTest', 'netInternalsTourTabs', function() {
   // Expected visibility state of each tab.
   var tabVisibilityState = {
     capture: true,
-    export: true,
     import: true,
     proxy: true,
     events: true,
@@ -32,7 +31,6 @@ TEST_F('NetInternalsTest', 'netInternalsTourTabs', function() {
     http2: true,
     quic: true,
     'alt-svc': true,
-    sdch: true,
     httpCache: true,
     modules: true,
     hsts: true,

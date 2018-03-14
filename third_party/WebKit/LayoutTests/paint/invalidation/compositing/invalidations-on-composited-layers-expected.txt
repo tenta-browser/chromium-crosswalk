@@ -4,14 +4,12 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow DIV id='parent'",
-      "position": [8, 8],
       "bounds": [400, 400],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#008000",
       "paintInvalidations": [
         {
@@ -19,14 +17,13 @@
           "rect": [0, 0, 400, 400],
           "reason": "style change"
         }
-      ]
+      ],
+      "transform": 1
     },
     {
       "name": "LayoutBlockFlow (relative positioned) DIV id='child'",
-      "position": [50, 50],
       "bounds": [75, 75],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#0000FF",
       "paintInvalidations": [
         {
@@ -34,6 +31,28 @@
           "rect": [0, 0, 75, 75],
           "reason": "style change"
         }
+      ],
+      "transform": 2
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [8, 8, 0, 1]
+      ]
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [50, 50, 0, 1]
       ]
     }
   ],

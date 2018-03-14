@@ -8,7 +8,6 @@
 #include "components/update_client/update_client.h"
 #include "extensions/browser/extension_api_frame_id_map.h"
 #include "extensions/browser/extension_error.h"
-#include "extensions/browser/updater/update_client_config.h"
 
 namespace extensions {
 
@@ -51,6 +50,12 @@ ExtensionNavigationUIData*
 ExtensionsBrowserClient::GetExtensionNavigationUIData(
     net::URLRequest* request) {
   return nullptr;
+}
+
+bool ExtensionsBrowserClient::IsExtensionEnabled(
+    const std::string& extension_id,
+    content::BrowserContext* context) const {
+  return false;
 }
 
 ExtensionsBrowserClient* ExtensionsBrowserClient::Get() {

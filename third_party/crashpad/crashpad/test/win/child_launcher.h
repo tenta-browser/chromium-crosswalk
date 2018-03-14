@@ -19,6 +19,7 @@
 
 #include <string>
 
+#include "base/files/file_path.h"
 #include "util/win/scoped_handle.h"
 
 namespace crashpad {
@@ -32,13 +33,16 @@ class ChildLauncher {
  public:
   //! \brief Creates the object. \a executable will be escaped and prepended to
   //!     \a command_line to build the command line of the child.
-  ChildLauncher(const std::wstring& executable,
+  ChildLauncher(const base::FilePath& executable,
                 const std::wstring& command_line);
 
   ~ChildLauncher();
 
   //! \brief Starts the child process, after which the handle functions below
   //!     will be valid.
+  //!
+  //! Errors are signaled via gtest assertions. This method may be invoked via
+  //! `ASSERT_NO_FATAL_FAILURE()` to assert that it succeeds.
   void Start();
 
   //! \brief Waits for the child process to exit.
@@ -59,7 +63,7 @@ class ChildLauncher {
   HANDLE stdin_write_handle() const { return stdin_write_handle_.get(); }
 
  private:
-  std::wstring executable_;
+  base::FilePath executable_;
   std::wstring command_line_;
   ScopedKernelHANDLE process_handle_;
   ScopedKernelHANDLE main_thread_handle_;

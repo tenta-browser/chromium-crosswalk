@@ -12,6 +12,7 @@
 #include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/card_unmask_delegate.h"
 #include "components/autofill/core/browser/credit_card.h"
+#include "components/prefs/pref_service.h"
 #include "google_apis/gaia/oauth2_token_service.h"
 #include "net/url_request/url_fetcher_delegate.h"
 
@@ -28,16 +29,16 @@ namespace payments {
 
 class PaymentsRequest;
 
-class PaymentsClientDelegate {
+class PaymentsClientUnmaskDelegate {
  public:
-  // The identity provider used to get OAuth2 tokens.
-  virtual IdentityProvider* GetIdentityProvider() = 0;
-
   // Returns the real PAN retrieved from Payments. |real_pan| will be empty
   // on failure.
   virtual void OnDidGetRealPan(AutofillClient::PaymentsRpcResult result,
                                const std::string& real_pan) = 0;
+};
 
+class PaymentsClientSaveDelegate {
+ public:
   // Returns the legal message retrieved from Payments. On failure or not
   // meeting Payments's conditions for upload, |legal_message| will contain
   // nullptr.
@@ -47,7 +48,10 @@ class PaymentsClientDelegate {
       std::unique_ptr<base::DictionaryValue> legal_message) = 0;
 
   // Returns the result of an upload request.
-  virtual void OnDidUploadCard(AutofillClient::PaymentsRpcResult result) = 0;
+  // If |result| == |AutofillClient::SUCCESS|, |server_id| may, optionally,
+  // contain the opaque identifier for the card on the server.
+  virtual void OnDidUploadCard(AutofillClient::PaymentsRpcResult result,
+                               const std::string& server_id) = 0;
 };
 
 // PaymentsClient issues Payments RPCs and manages responses and failure
@@ -68,8 +72,10 @@ class PaymentsClient : public net::URLFetcherDelegate,
   // request.
   struct UnmaskRequestDetails {
     UnmaskRequestDetails();
+    UnmaskRequestDetails(const UnmaskRequestDetails& other);
     ~UnmaskRequestDetails();
 
+    int64_t billing_customer_number = 0;
     CreditCard card;
     std::string risk_data;
     CardUnmaskDelegate::UnmaskResponse user_response;
@@ -82,19 +88,25 @@ class PaymentsClient : public net::URLFetcherDelegate,
     UploadRequestDetails(const UploadRequestDetails& other);
     ~UploadRequestDetails();
 
+    int64_t billing_customer_number = 0;
     CreditCard card;
     base::string16 cvc;
     std::vector<AutofillProfile> profiles;
     base::string16 context_token;
     std::string risk_data;
     std::string app_locale;
+    std::vector<const char*> active_experiments;
   };
 
   // |context_getter| is reference counted so it has no lifetime or ownership
-  // requirements. |delegate| must outlive |this|. |source_url| is the url
-  // of the merchant page.
+  // requirements. |pref_service| is used to get the registered preference
+  // value, |identity_provider|, |unmask_delegate| and |save_delegate| must all
+  // outlive |this|. Either delegate might be nullptr.
   PaymentsClient(net::URLRequestContextGetter* context_getter,
-                 PaymentsClientDelegate* delegate);
+                 PrefService* pref_service,
+                 IdentityProvider* identity_provider,
+                 PaymentsClientUnmaskDelegate* unmask_delegate,
+                 PaymentsClientSaveDelegate* save_delegate);
 
   ~PaymentsClient() override;
 
@@ -105,6 +117,13 @@ class PaymentsClient : public net::URLFetcherDelegate,
   // accepted an upload prompt.
   void Prepare();
 
+  // Sets up the |save_delegate_|. Necessary because CreditCardSaveManager
+  // requires PaymentsClient during initialization, so PaymentsClient can't
+  // start with save_delegate_ initialized.
+  void SetSaveDelegate(PaymentsClientSaveDelegate* save_delegate);
+
+  PrefService* GetPrefService() const;
+
   // The user has attempted to unmask a card with the given cvc.
   void UnmaskCard(const UnmaskRequestDetails& request_details);
 
@@ -112,9 +131,12 @@ class PaymentsClient : public net::URLFetcherDelegate,
   // The service uses |addresses| (from which names and phone numbers are
   // removed) and |app_locale| to determine which legal message to display. If
   // the conditions are met, the legal message will be returned via
-  // OnDidGetUploadDetails.
-  virtual void GetUploadDetails(const std::vector<AutofillProfile>& addresses,
-                                const std::string& app_locale);
+  // OnDidGetUploadDetails. |active_experiments| is used by payments server to
+  // track requests that were triggered by enabled features.
+  virtual void GetUploadDetails(
+      const std::vector<AutofillProfile>& addresses,
+      const std::vector<const char*>& active_experiments,
+      const std::string& app_locale);
 
   // The user has indicated that they would like to upload a card with the given
   // cvc. This request will fail server-side if a successful call to
@@ -153,9 +175,15 @@ class PaymentsClient : public net::URLFetcherDelegate,
   // The context for the request.
   scoped_refptr<net::URLRequestContextGetter> context_getter_;
 
-  // Observer class that has its various On* methods called based on the results
-  // of a Payments request.
-  PaymentsClientDelegate* const delegate_;  // must outlive |this|.
+  // The pref service for this client.
+  PrefService* const pref_service_;
+
+  IdentityProvider* const identity_provider_;
+
+  // Delegates for the results of the various requests to Payments. Both must
+  // outlive |this|.
+  PaymentsClientUnmaskDelegate* const unmask_delegate_;
+  PaymentsClientSaveDelegate* save_delegate_;
 
   // The current request.
   std::unique_ptr<PaymentsRequest> request_;

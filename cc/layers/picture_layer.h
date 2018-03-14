@@ -28,7 +28,10 @@ class CC_EXPORT PictureLayer : public Layer {
     return picture_layer_inputs_.nearest_neighbor;
   }
 
-  void SetAllowTransformedRasterization(bool allowed);
+  void SetTransformedRasterizationAllowed(bool allowed);
+  bool transformed_rasterization_allowed() const {
+    return picture_layer_inputs_.transformed_rasterization_allowed;
+  }
 
   // Layer interface.
   std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
@@ -39,7 +42,8 @@ class CC_EXPORT PictureLayer : public Layer {
   void SetLayerMaskType(LayerMaskType mask_type) override;
   sk_sp<SkPicture> GetPicture() const override;
 
-  bool IsSuitableForGpuRasterization() const override;
+  bool HasSlowPaths() const override;
+  bool HasNonAAPaint() const override;
 
   void RunMicroBenchmark(MicroBenchmark* benchmark) override;
 
@@ -51,6 +55,8 @@ class CC_EXPORT PictureLayer : public Layer {
 
   const DisplayItemList* GetDisplayItemList();
 
+  LayerMaskType mask_type() { return mask_type_; }
+
  protected:
   // Encapsulates all data, callbacks or interfaces received from the embedder.
   struct PictureLayerInputs {
@@ -59,7 +65,7 @@ class CC_EXPORT PictureLayer : public Layer {
 
     ContentLayerClient* client = nullptr;
     bool nearest_neighbor = false;
-    bool allow_transformed_rasterization = false;
+    bool transformed_rasterization_allowed = false;
     gfx::Rect recorded_viewport;
     scoped_refptr<DisplayItemList> display_list;
     size_t painter_reported_memory_usage = 0;
@@ -72,8 +78,6 @@ class CC_EXPORT PictureLayer : public Layer {
   ~PictureLayer() override;
 
   bool HasDrawableContent() const override;
-
-  LayerMaskType mask_type() { return mask_type_; }
 
   PictureLayerInputs picture_layer_inputs_;
 

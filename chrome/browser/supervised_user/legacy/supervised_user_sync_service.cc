@@ -170,10 +170,8 @@ bool SupervisedUserSyncService::GetAvatarIndex(const std::string& avatar_str,
   const int kChromeOSDummyAvatarIndex = -111;
 
 #if defined(OS_CHROMEOS)
-  return (
-      *avatar_index == kChromeOSDummyAvatarIndex ||
-      (*avatar_index >= chromeos::default_user_image::kFirstDefaultImageIndex &&
-       *avatar_index < chromeos::default_user_image::kDefaultImagesCount));
+  return *avatar_index == kChromeOSDummyAvatarIndex ||
+         chromeos::default_user_image::IsInCurrentImageSet(*avatar_index);
 #else
   // Check if the Chrome avatar index is set to a dummy value. Some early
   // supervised user profiles on ChromeOS stored a dummy avatar index as a
@@ -209,17 +207,17 @@ void SupervisedUserSyncService::RemoveObserver(
   observers_.RemoveObserver(observer);
 }
 
-std::unique_ptr<base::DictionaryValue>
-SupervisedUserSyncService::CreateDictionary(const std::string& name,
-                                            const std::string& master_key,
-                                            const std::string& signature_key,
-                                            const std::string& encryption_key,
-                                            int avatar_index) {
-  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
-  result->SetString(kName, name);
-  result->SetString(kMasterKey, master_key);
-  result->SetString(kPasswordSignatureKey, signature_key);
-  result->SetString(kPasswordEncryptionKey, encryption_key);
+base::Value SupervisedUserSyncService::CreateDictionary(
+    const std::string& name,
+    const std::string& master_key,
+    const std::string& signature_key,
+    const std::string& encryption_key,
+    int avatar_index) {
+  base::Value result(base::Value::Type::DICTIONARY);
+  result.SetKey(kName, base::Value(name));
+  result.SetKey(kMasterKey, base::Value(master_key));
+  result.SetKey(kPasswordSignatureKey, base::Value(signature_key));
+  result.SetKey(kPasswordEncryptionKey, base::Value(encryption_key));
   // TODO(akuegel): Get rid of the avatar stuff here when Chrome OS switches
   // to the avatar index that is stored as a shared setting.
   std::string chrome_avatar;
@@ -229,8 +227,8 @@ SupervisedUserSyncService::CreateDictionary(const std::string& name,
 #else
   chrome_avatar = BuildAvatarString(avatar_index);
 #endif
-  result->SetString(kChromeAvatar, chrome_avatar);
-  result->SetString(kChromeOsAvatar, chromeos_avatar);
+  result.SetKey(kChromeAvatar, base::Value(std::move(chrome_avatar)));
+  result.SetKey(kChromeOsAvatar, base::Value(std::move(chromeos_avatar)));
   return result;
 }
 
@@ -276,12 +274,11 @@ void SupervisedUserSyncService::UpdateSupervisedUserImpl(
     bool add_user) {
   DictionaryPrefUpdate update(prefs_, prefs::kSupervisedUsers);
   base::DictionaryValue* dict = update.Get();
-  std::unique_ptr<base::DictionaryValue> value = CreateDictionary(
-      name, master_key, signature_key, encryption_key, avatar_index);
-
   DCHECK_EQ(add_user, !dict->HasKey(id));
-  base::DictionaryValue* entry = value.get();
-  dict->SetWithoutPathExpansion(id, value.release());
+
+  base::Value* entry =
+      dict->SetKey(id, CreateDictionary(name, master_key, signature_key,
+                                        encryption_key, avatar_index));
 
   if (!sync_processor_)
     return;
@@ -488,7 +485,7 @@ SyncDataList SupervisedUserSyncService::GetAllSyncData(
 }
 
 SyncError SupervisedUserSyncService::ProcessSyncChanges(
-    const tracked_objects::Location& from_here,
+    const base::Location& from_here,
     const SyncChangeList& change_list) {
   SyncError error;
   DictionaryPrefUpdate update(prefs_, prefs::kSupervisedUsers);

@@ -36,10 +36,16 @@ public interface VrDaydreamApi {
     Intent createVrIntent(final ComponentName componentName);
 
     /**
-     * Launch the given Intent in VR mode.
+     * Launch the given PendingIntent in VR mode.
      * @return false if unable to acquire DaydreamApi instance.
      */
     boolean launchInVr(final PendingIntent pendingIntent);
+
+    /**
+     * Launch the given Intent in VR mode.
+     * @return false if unable to acquire DaydreamApi instance.
+     */
+    boolean launchInVr(final Intent intent);
 
     /**
      * @param requestCode The requestCode used by startActivityForResult.
@@ -56,5 +62,11 @@ public interface VrDaydreamApi {
     /**
      * Launch the stereoscopic, 3D VR launcher homescreen.
      */
-    void launchVrHomescreen();
+    boolean launchVrHomescreen();
+
+    /**
+     * @return Whether this device boots directly into VR mode. May be used to detect standalone VR
+     * devices.
+     */
+    boolean bootsToVr();
 }

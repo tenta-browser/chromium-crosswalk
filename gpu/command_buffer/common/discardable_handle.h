@@ -6,6 +6,7 @@
 #define GPU_COMMAND_BUFFER_COMMON_DISCARDABLE_HANDLE_H_
 
 #include "base/memory/ref_counted.h"
+#include "gpu/command_buffer/common/id_type.h"
 #include "gpu/gpu_export.h"
 
 namespace gpu {
@@ -36,9 +37,13 @@ class GPU_EXPORT DiscardableHandleBase {
   int32_t shm_id() const { return shm_id_; }
   uint32_t byte_offset() const { return byte_offset_; }
 
+  // Ensures this is a valid allocation for use with a DiscardableHandleBase.
+  static bool ValidateParameters(const Buffer* buffer, uint32_t byte_offset);
+
   // Test only functions.
-  bool IsLockedForTesting();
-  bool IsDeletedForTesting();
+  bool IsLockedForTesting() const;
+  bool IsDeletedForTesting() const;
+  scoped_refptr<Buffer> BufferForTesting() const;
 
  protected:
   DiscardableHandleBase(scoped_refptr<Buffer> buffer,
@@ -62,6 +67,11 @@ class GPU_EXPORT DiscardableHandleBase {
 // handle (via the constructor), and can Lock an existing handle.
 class GPU_EXPORT ClientDiscardableHandle : public DiscardableHandleBase {
  public:
+  using Id = IdType<ClientDiscardableHandle,
+                    uint64_t,
+                    std::numeric_limits<uint64_t>::max()>;
+
+  ClientDiscardableHandle();  // Constructs an invalid handle.
   ClientDiscardableHandle(scoped_refptr<Buffer> buffer,
                           uint32_t byte_offset,
                           int32_t shm_id);
@@ -77,6 +87,12 @@ class GPU_EXPORT ClientDiscardableHandle : public DiscardableHandleBase {
   // Returns true if the handle has been deleted on service side and can be
   // re-used on the client.
   bool CanBeReUsed() const;
+
+  // Gets an Id which uniquely identifies this ClientDiscardableHandle within
+  // the ClientDiscardableManager which created it.
+  Id GetId() const;
+
+  bool IsValid() const { return !GetId().is_null(); }
 };
 
 // ServiceDiscardableHandle can wrap an existing handle (via the constructor),
@@ -98,6 +114,11 @@ class GPU_EXPORT ServiceDiscardableHandle : public DiscardableHandleBase {
   // Tries to delete the handle. Returns true if successfully deleted. Returns
   // false if the handle is locked client-side and cannot be deleted.
   bool Delete();
+
+  // Deletes the handle, regardless of the handle's state. This should be
+  // called in response to glDeleteTextures, which may be called while the
+  // handle is in the locked or unlocked state.
+  void ForceDelete();
 };
 
 }  // namespace gpu

@@ -5,13 +5,15 @@
 #include "ash/display/cursor_window_controller.h"
 
 #include "ash/ash_constants.h"
-#include "ash/ash_switches.h"
 #include "ash/display/mirror_window_controller.h"
 #include "ash/display/window_tree_host_manager.h"
+#include "ash/public/cpp/ash_pref_names.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
+#include "ash/session/session_controller.h"
 #include "ash/shell.h"
-#include "base/command_line.h"
+#include "components/prefs/pref_service.h"
+#include "services/ui/public/interfaces/window_tree_constants.mojom.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/aura/window_event_dispatcher.h"
@@ -38,8 +40,8 @@ const int kMaxLargeCursorSize = 64;
 
 class CursorWindowDelegate : public aura::WindowDelegate {
  public:
-  CursorWindowDelegate() {}
-  ~CursorWindowDelegate() override {}
+  CursorWindowDelegate() = default;
+  ~CursorWindowDelegate() override = default;
 
   // aura::WindowDelegate overrides:
   gfx::Size GetMinimumSize() const override { return size_; }
@@ -64,7 +66,8 @@ class CursorWindowDelegate : public aura::WindowDelegate {
     ui::PaintRecorder recorder(context, size_);
     recorder.canvas()->DrawImageInt(cursor_image_, 0, 0);
   }
-  void OnDeviceScaleFactorChanged(float device_scale_factor) override {}
+  void OnDeviceScaleFactorChanged(float old_device_scale_factor,
+                                  float new_device_scale_factor) override {}
   void OnWindowDestroying(aura::Window* window) override {}
   void OnWindowDestroyed(aura::Window* window) override {}
   void OnWindowTargetVisibilityChanged(bool visible) override {}
@@ -88,17 +91,7 @@ class CursorWindowDelegate : public aura::WindowDelegate {
 };
 
 CursorWindowController::CursorWindowController()
-    : is_cursor_compositing_enabled_(false),
-      container_(NULL),
-      cursor_type_(ui::kCursorNone),
-      visible_(true),
-      cursor_set_(ui::CURSOR_SET_NORMAL),
-      large_cursor_size_in_dip_(ash::kDefaultLargeCursorSize),
-      delegate_(new CursorWindowDelegate()) {
-  enable_adjustable_large_cursor_ =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          ash::switches::kAshAdjustableLargeCursor);
-}
+    : delegate_(new CursorWindowDelegate()) {}
 
 CursorWindowController::~CursorWindowController() {
   SetContainer(NULL);
@@ -116,8 +109,24 @@ void CursorWindowController::SetLargeCursorSizeInDip(
 
   large_cursor_size_in_dip_ = large_cursor_size_in_dip;
 
-  if (enable_adjustable_large_cursor_ && display_.is_valid())
+  if (display_.is_valid())
     UpdateCursorImage();
+}
+
+bool CursorWindowController::ShouldEnableCursorCompositing() {
+  PrefService* prefs =
+      Shell::Get()->session_controller()->GetActivePrefService();
+  if (!prefs) {
+    // The active pref service can be null early in startup.
+    return false;
+  }
+  display::DisplayManager* display_manager = Shell::Get()->display_manager();
+  return prefs->GetBoolean(prefs::kAccessibilityLargeCursorEnabled) ||
+         prefs->GetBoolean(prefs::kAccessibilityHighContrastEnabled) ||
+         prefs->GetBoolean(prefs::kAccessibilityScreenMagnifierEnabled) ||
+         prefs->GetBoolean(prefs::kNightLightEnabled) ||
+         (display_manager->is_multi_mirroring_enabled() &&
+          display_manager->IsInSoftwareMirrorMode());
 }
 
 void CursorWindowController::SetCursorCompositingEnabled(bool enabled) {
@@ -138,13 +147,16 @@ void CursorWindowController::UpdateContainer() {
     if (display.is_valid())
       SetDisplay(display);
   } else {
-    aura::Window* mirror_window = Shell::Get()
-                                      ->window_tree_host_manager()
-                                      ->mirror_window_controller()
-                                      ->GetWindow();
-    if (mirror_window)
-      display_ = display::Screen::GetScreen()->GetPrimaryDisplay();
-    SetContainer(mirror_window);
+    aura::Window::Windows mirror_windows = Shell::Get()
+                                               ->window_tree_host_manager()
+                                               ->mirror_window_controller()
+                                               ->GetAllRootWindows();
+    if (mirror_windows.empty()) {
+      SetContainer(nullptr);
+      return;
+    }
+    display_ = display::Screen::GetScreen()->GetPrimaryDisplay();
+    SetContainer(mirror_windows[0]);
   }
   // Updates the hot point based on the current display.
   UpdateCursorImage();
@@ -154,21 +166,19 @@ void CursorWindowController::SetDisplay(const display::Display& display) {
   if (!is_cursor_compositing_enabled_)
     return;
 
-  // TODO(oshima): Do not updatethe composition cursor when crossing
+  // TODO(oshima): Do not update the composition cursor when crossing
   // display in unified desktop mode for now. crbug.com/517222.
   if (Shell::Get()->display_manager()->IsInUnifiedMode() &&
-      display.id() != display::DisplayManager::kUnifiedDisplayId) {
+      display.id() != display::kUnifiedDisplayId) {
     return;
   }
 
   display_ = display;
-  aura::Window* root_window =
-      Shell::Get()->window_tree_host_manager()->GetRootWindowForDisplayId(
-          display.id());
+  aura::Window* root_window = Shell::GetRootWindowForDisplayId(display.id());
   if (!root_window)
     return;
 
-  SetContainer(GetRootWindowController(root_window)
+  SetContainer(RootWindowController::ForWindow(root_window)
                    ->GetContainer(kShellWindowId_MouseCursorContainer));
   SetBoundsInScreen(display.bounds());
   // Updates the hot point based on the current display.
@@ -198,8 +208,8 @@ void CursorWindowController::SetCursor(gfx::NativeCursor cursor) {
   UpdateCursorVisibility();
 }
 
-void CursorWindowController::SetCursorSet(ui::CursorSetType cursor_set) {
-  cursor_set_ = cursor_set;
+void CursorWindowController::SetCursorSize(ui::CursorSize cursor_size) {
+  cursor_size_ = cursor_size;
   UpdateCursorImage();
 }
 
@@ -222,7 +232,8 @@ void CursorWindowController::SetContainer(aura::Window* container) {
   cursor_window_.reset(new aura::Window(delegate_.get()));
   cursor_window_->SetTransparent(true);
   cursor_window_->Init(ui::LAYER_TEXTURED);
-  cursor_window_->set_ignore_events(true);
+  cursor_window_->SetEventTargetingPolicy(
+      ui::mojom::EventTargetingPolicy::NONE);
   cursor_window_->set_owned_by_parent(false);
   // Call UpdateCursorImage() to figure out |cursor_window_|'s desired size.
   UpdateCursorImage();
@@ -254,12 +265,12 @@ void CursorWindowController::UpdateCursorImage() {
   }
   int resource_id;
   // TODO(hshi): support custom cursor set.
-  if (!ui::GetCursorDataFor(cursor_set_, cursor_type_, cursor_scale,
+  if (!ui::GetCursorDataFor(cursor_size_, cursor_type_, cursor_scale,
                             &resource_id, &hot_point_)) {
     return;
   }
   const gfx::ImageSkia* image =
-      ResourceBundle::GetSharedInstance().GetImageSkiaNamed(resource_id);
+      ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(resource_id);
   if (!is_cursor_compositing_enabled_) {
     gfx::ImageSkia rotated = *image;
     switch (display_.rotation()) {
@@ -296,8 +307,7 @@ void CursorWindowController::UpdateCursorImage() {
     // large cursor. We don't need to care about the case where cursor
     // compositing is disabled as we always use cursor compositing if
     // accessibility large cursor is enabled.
-    if (enable_adjustable_large_cursor_ &&
-        cursor_set_ == ui::CursorSetType::CURSOR_SET_LARGE &&
+    if (cursor_size_ == ui::CursorSize::kLarge &&
         large_cursor_size_in_dip_ != image->size().width()) {
       float rescale = static_cast<float>(large_cursor_size_in_dip_) /
                       static_cast<float>(image->size().width());
@@ -326,7 +336,7 @@ void CursorWindowController::UpdateCursorImage() {
 void CursorWindowController::UpdateCursorVisibility() {
   if (!cursor_window_)
     return;
-  bool visible = (visible_ && cursor_type_ != ui::kCursorNone);
+  bool visible = (visible_ && cursor_type_ != ui::CursorType::kNone);
   if (visible)
     cursor_window_->Show();
   else

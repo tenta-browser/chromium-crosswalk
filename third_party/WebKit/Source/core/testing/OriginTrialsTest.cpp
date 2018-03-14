@@ -2,23 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "OriginTrialsTest.h"
+#include "core/testing/OriginTrialsTest.h"
 
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/origin_trials/OriginTrials.h"
+#include "core/origin_trials/origin_trials.h"
 
 namespace blink {
-
-bool OriginTrialsTest::normalAttribute() {
-  return true;
-}
-
-// static
-bool OriginTrialsTest::staticAttribute() {
-  return true;
-}
 
 bool OriginTrialsTest::throwingAttribute(ScriptState* script_state,
                                          ExceptionState& exception_state) {
@@ -32,11 +23,5 @@ bool OriginTrialsTest::throwingAttribute(ScriptState* script_state,
   }
   return unconditionalAttribute();
 }
-
-bool OriginTrialsTest::unconditionalAttribute() {
-  return true;
-}
-
-DEFINE_TRACE(OriginTrialsTest) {}
 
 }  // namespace blink

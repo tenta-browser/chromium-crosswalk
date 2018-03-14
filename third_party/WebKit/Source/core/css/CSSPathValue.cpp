@@ -10,7 +10,9 @@
 
 namespace blink {
 
-CSSPathValue* CSSPathValue::Create(PassRefPtr<StylePath> style_path) {
+namespace cssvalue {
+
+CSSPathValue* CSSPathValue::Create(scoped_refptr<StylePath> style_path) {
   return new CSSPathValue(std::move(style_path));
 }
 
@@ -19,7 +21,7 @@ CSSPathValue* CSSPathValue::Create(
   return CSSPathValue::Create(StylePath::Create(std::move(path_byte_stream)));
 }
 
-CSSPathValue::CSSPathValue(PassRefPtr<StylePath> style_path)
+CSSPathValue::CSSPathValue(scoped_refptr<StylePath> style_path)
     : CSSValue(kPathClass), style_path_(std::move(style_path)) {
   DCHECK(style_path_);
 }
@@ -50,8 +52,9 @@ bool CSSPathValue::Equals(const CSSPathValue& other) const {
   return ByteStream() == other.ByteStream();
 }
 
-DEFINE_TRACE_AFTER_DISPATCH(CSSPathValue) {
+void CSSPathValue::TraceAfterDispatch(blink::Visitor* visitor) {
   CSSValue::TraceAfterDispatch(visitor);
 }
 
+}  // namespace cssvalue
 }  // namespace blink

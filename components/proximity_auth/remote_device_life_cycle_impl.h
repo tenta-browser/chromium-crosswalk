@@ -12,7 +12,6 @@
 #include "base/observer_list.h"
 #include "base/timer/timer.h"
 #include "components/cryptauth/authenticator.h"
-#include "components/cryptauth/bluetooth_throttler.h"
 #include "components/cryptauth/connection.h"
 #include "components/cryptauth/connection_finder.h"
 #include "components/cryptauth/remote_device.h"
@@ -41,6 +40,7 @@ class RemoteDeviceLifeCycleImpl : public RemoteDeviceLifeCycle,
   // RemoteDeviceLifeCycle:
   void Start() override;
   cryptauth::RemoteDevice GetRemoteDevice() const override;
+  cryptauth::Connection* GetConnection() const override;
   RemoteDeviceLifeCycle::State GetState() const override;
   Messenger* GetMessenger() override;
   void AddObserver(Observer* observer) override;
@@ -87,8 +87,9 @@ class RemoteDeviceLifeCycleImpl : public RemoteDeviceLifeCycle,
   // The current state in the life cycle.
   RemoteDeviceLifeCycle::State state_;
 
-  // Observers added to the life cycle. Configured as NOTIFY_EXISTING_ONLY.
-  base::ObserverList<Observer> observers_;
+  // Observers added to the life cycle.
+  base::ObserverList<Observer> observers_{
+      base::ObserverListPolicy::EXISTING_ONLY};
 
   // The connection that is established by |connection_finder_|.
   std::unique_ptr<cryptauth::Connection> connection_;
@@ -108,10 +109,6 @@ class RemoteDeviceLifeCycleImpl : public RemoteDeviceLifeCycle,
   // Used in the FINDING_CONNECTION state to establish a connection to the
   // remote device.
   std::unique_ptr<cryptauth::ConnectionFinder> connection_finder_;
-
-  // Rate limits Bluetooth connections to the same device. Used to in the
-  // created cryptauth::ConnectionFinder.
-  cryptauth::BluetoothThrottler* bluetooth_throttler_;
 
   // After authentication fails, this timer waits for a period of time before
   // retrying the connection.

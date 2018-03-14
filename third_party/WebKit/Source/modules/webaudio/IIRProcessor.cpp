@@ -22,8 +22,8 @@ IIRProcessor::IIRProcessor(float sample_rate,
 
   feedforward_.Allocate(feedforward_length);
   feedback_.Allocate(feedback_length);
-  feedforward_.CopyToRange(feedforward_coef.Data(), 0, feedforward_length);
-  feedback_.CopyToRange(feedback_coef.Data(), 0, feedback_length);
+  feedforward_.CopyToRange(feedforward_coef.data(), 0, feedforward_length);
+  feedback_.CopyToRange(feedback_coef.data(), 0, feedback_length);
 
   // Need to scale the feedback and feedforward coefficients appropriately.
   // (It's up to the caller to ensure feedbackCoef[0] is not 0.)
@@ -51,7 +51,7 @@ IIRProcessor::IIRProcessor(float sample_rate,
     feedback_[0] = 1;
   }
 
-  response_kernel_ = WTF::MakeUnique<IIRDSPKernel>(this);
+  response_kernel_ = std::make_unique<IIRDSPKernel>(this);
 }
 
 IIRProcessor::~IIRProcessor() {
@@ -60,7 +60,7 @@ IIRProcessor::~IIRProcessor() {
 }
 
 std::unique_ptr<AudioDSPKernel> IIRProcessor::CreateKernel() {
-  return WTF::MakeUnique<IIRDSPKernel>(this);
+  return std::make_unique<IIRDSPKernel>(this);
 }
 
 void IIRProcessor::Process(const AudioBus* source,

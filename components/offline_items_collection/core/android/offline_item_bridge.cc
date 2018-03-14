@@ -22,7 +22,8 @@ namespace {
 // - If |jlist| is specified (an ArrayList<OfflineItem>), the item is added to
 //   that list.  |jlist| can also be null, in which case the item isn't added to
 //   anything.
-ScopedJavaLocalRef<jobject> createOfflineItemAndMaybeAddToList(
+ScopedJavaLocalRef<jobject>
+JNI_OfflineItemBridge_createOfflineItemAndMaybeAddToList(
     JNIEnv* env,
     ScopedJavaLocalRef<jobject> jlist,
     const OfflineItem& item) {
@@ -31,13 +32,16 @@ ScopedJavaLocalRef<jobject> createOfflineItemAndMaybeAddToList(
       ConvertUTF8ToJavaString(env, item.id.id),
       ConvertUTF8ToJavaString(env, item.title),
       ConvertUTF8ToJavaString(env, item.description),
-      static_cast<jint>(item.filter), item.is_transient, item.total_size_bytes,
-      item.externally_removed, item.creation_time.ToJavaTime(),
-      item.last_accessed_time.ToJavaTime(), item.is_openable,
+      static_cast<jint>(item.filter), item.is_transient, item.is_suggested,
+      item.total_size_bytes, item.externally_removed,
+      item.creation_time.ToJavaTime(), item.last_accessed_time.ToJavaTime(),
+      item.is_openable, ConvertUTF8ToJavaString(env, item.file_path.value()),
+      ConvertUTF8ToJavaString(env, item.mime_type),
       ConvertUTF8ToJavaString(env, item.page_url.spec()),
       ConvertUTF8ToJavaString(env, item.original_url.spec()),
       item.is_off_the_record, static_cast<jint>(item.state), item.is_resumable,
-      item.allow_metered, item.received_bytes, item.percent_completed,
+      item.allow_metered, item.received_bytes, item.progress.value,
+      item.progress.max.value_or(-1), static_cast<jint>(item.progress.unit),
       item.time_remaining_ms);
 }
 
@@ -47,7 +51,8 @@ ScopedJavaLocalRef<jobject> createOfflineItemAndMaybeAddToList(
 ScopedJavaLocalRef<jobject> OfflineItemBridge::CreateOfflineItem(
     JNIEnv* env,
     const OfflineItem* const item) {
-  return item ? createOfflineItemAndMaybeAddToList(env, nullptr, *item)
+  return item ? JNI_OfflineItemBridge_createOfflineItemAndMaybeAddToList(
+                    env, nullptr, *item)
               : nullptr;
 }
 
@@ -59,7 +64,7 @@ ScopedJavaLocalRef<jobject> OfflineItemBridge::CreateOfflineItemList(
       Java_OfflineItemBridge_createArrayList(env);
 
   for (const auto& item : items)
-    createOfflineItemAndMaybeAddToList(env, jlist, item);
+    JNI_OfflineItemBridge_createOfflineItemAndMaybeAddToList(env, jlist, item);
 
   return jlist;
 }

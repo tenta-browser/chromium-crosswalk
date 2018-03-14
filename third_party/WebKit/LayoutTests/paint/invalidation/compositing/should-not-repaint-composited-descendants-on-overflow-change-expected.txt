@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow DIV id='overflow2'",
@@ -22,7 +22,6 @@
       "name": "LayoutBlockFlow DIV class='composited-child'",
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backfaceVisibility": "hidden",
       "backgroundColor": "#008000"
     },
@@ -30,13 +29,13 @@
       "name": "Ancestor Clipping Layer",
       "position": [0, 200],
       "bounds": [200, 200],
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow DIV class='composited-child'",
+      "position": [0, 200],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backfaceVisibility": "hidden",
       "backgroundColor": "#008000"
     },
@@ -45,7 +44,6 @@
       "position": [150, 150],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backfaceVisibility": "hidden",
       "backgroundColor": "#008000"
     },
@@ -53,14 +51,13 @@
       "name": "Ancestor Clipping Layer",
       "position": [0, 200],
       "bounds": [200, 200],
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (relative positioned) DIV class='composited-child overflow-child'",
-      "position": [150, 150],
+      "position": [150, 350],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backfaceVisibility": "hidden",
       "backgroundColor": "#008000"
     }

@@ -25,7 +25,7 @@
 
 #include "modules/encryptedmedia/MediaEncryptedEvent.h"
 
-#include "core/dom/DOMArrayBuffer.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
 
 namespace blink {
 
@@ -42,7 +42,7 @@ const AtomicString& MediaEncryptedEvent::InterfaceName() const {
   return EventNames::MediaEncryptedEvent;
 }
 
-DEFINE_TRACE(MediaEncryptedEvent) {
+void MediaEncryptedEvent::Trace(blink::Visitor* visitor) {
   visitor->Trace(init_data_);
   Event::Trace(visitor);
 }

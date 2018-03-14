@@ -9,7 +9,12 @@
 #include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
+#include "testing/platform_test.h"
 #include "url/gurl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace web {
 namespace {
@@ -19,7 +24,7 @@ struct TestEntry {
   std::string expectedUrl;
 };
 
-class HistoryStateUtilTest : public ::testing::Test {
+class HistoryStateUtilTest : public PlatformTest {
  protected:
   static const struct TestEntry tests_[];
 };

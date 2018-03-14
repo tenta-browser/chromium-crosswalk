@@ -6,15 +6,17 @@
 
 #include "net/quic/core/crypto/quic_random.h"
 #include "net/quic/core/quic_utils.h"
+#include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_socket_address.h"
+#include "net/quic/platform/api/quic_test.h"
+#include "net/quic/platform/api/quic_test_loopback.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/mock_quic_dispatcher.h"
 #include "net/tools/quic/quic_epoll_alarm_factory.h"
 #include "net/tools/quic/quic_epoll_connection_helper.h"
 #include "net/tools/quic/quic_simple_crypto_server_stream_helper.h"
 #include "net/tools/quic/test_tools/quic_server_peer.h"
-#include "testing/gtest/include/gtest/gtest.h"
 
 using ::testing::_;
 
@@ -40,7 +42,7 @@ class MockQuicSimpleDispatcher : public QuicSimpleDispatcher {
                              std::move(session_helper),
                              std::move(alarm_factory),
                              response_cache) {}
-  ~MockQuicSimpleDispatcher() override {}
+  ~MockQuicSimpleDispatcher() override = default;
 
   MOCK_METHOD0(OnCanWrite, void());
   MOCK_CONST_METHOD0(HasPendingWrites, bool());
@@ -54,7 +56,7 @@ class TestQuicServer : public QuicServer {
       : QuicServer(crypto_test_utils::ProofSourceForTesting(),
                    &response_cache_) {}
 
-  ~TestQuicServer() override {}
+  ~TestQuicServer() override = default;
 
   MockQuicSimpleDispatcher* mock_dispatcher() { return mock_dispatcher_; }
 
@@ -73,11 +75,11 @@ class TestQuicServer : public QuicServer {
     return mock_dispatcher_;
   }
 
-  MockQuicSimpleDispatcher* mock_dispatcher_;
+  MockQuicSimpleDispatcher* mock_dispatcher_ = nullptr;
   QuicHttpResponseCache response_cache_;
 };
 
-class QuicServerEpollInTest : public ::testing::Test {
+class QuicServerEpollInTest : public QuicTest {
  public:
   QuicServerEpollInTest()
       : port_(net::test::kTestPort),
@@ -94,7 +96,6 @@ class QuicServerEpollInTest : public ::testing::Test {
   }
 
  protected:
-  QuicFlagSaver saver_;
   int port_;
   QuicSocketAddress server_address_;
   TestQuicServer server_;
@@ -104,7 +105,6 @@ class QuicServerEpollInTest : public ::testing::Test {
 // event should try to create connections for them. And set epoll mask with
 // EPOLLIN if there are still CHLOs remaining at the end of epoll event.
 TEST_F(QuicServerEpollInTest, ProcessBufferedCHLOsOnEpollin) {
-  FLAGS_quic_reloadable_flag_quic_limit_num_new_sessions_per_epoll_loop = true;
   // Given an EPOLLIN event, try to create session for buffered CHLOs. In first
   // event, dispatcher can't create session for all of CHLOs. So listener should
   // register another EPOLLIN event by itself. Even without new packet arrival,
@@ -124,7 +124,9 @@ TEST_F(QuicServerEpollInTest, ProcessBufferedCHLOsOnEpollin) {
           DoAll(testing::Assign(&more_chlos, false), testing::Return(false)));
 
   // Send a packet to trigger epoll event.
-  int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
+  int fd = socket(
+      AddressFamilyUnderTest() == IpAddressFamily::IP_V4 ? AF_INET : AF_INET6,
+      SOCK_DGRAM | SOCK_NONBLOCK, IPPROTO_UDP);
   ASSERT_LT(0, fd);
 
   char buf[1024];
@@ -141,13 +143,13 @@ TEST_F(QuicServerEpollInTest, ProcessBufferedCHLOsOnEpollin) {
   }
 }
 
-class QuicServerDispatchPacketTest : public ::testing::Test {
+class QuicServerDispatchPacketTest : public QuicTest {
  public:
   QuicServerDispatchPacketTest()
       : crypto_config_("blah",
                        QuicRandom::GetInstance(),
                        crypto_test_utils::ProofSourceForTesting()),
-        version_manager_(AllSupportedVersions()),
+        version_manager_(AllSupportedTransportVersions()),
         dispatcher_(
             config_,
             &crypto_config_,

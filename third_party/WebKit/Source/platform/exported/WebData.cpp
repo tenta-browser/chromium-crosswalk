@@ -52,21 +52,24 @@ size_t WebData::size() const {
   return private_->size();
 }
 
-const char* WebData::Data() const {
-  if (private_.IsNull())
-    return 0;
-  return private_->Data();
+size_t WebData::GetSomeData(const char*& data, size_t position) const {
+  return private_.IsNull() ? 0 : private_->GetSomeData(data, position);
 }
 
-WebData::WebData(PassRefPtr<SharedBuffer> buffer) : private_(buffer) {}
+WebData::WebData(scoped_refptr<SharedBuffer> buffer)
+    : private_(std::move(buffer)) {}
 
-WebData& WebData::operator=(PassRefPtr<SharedBuffer> buffer) {
-  private_ = buffer;
+WebData& WebData::operator=(scoped_refptr<SharedBuffer> buffer) {
+  private_ = std::move(buffer);
   return *this;
 }
 
-WebData::operator PassRefPtr<SharedBuffer>() const {
-  return PassRefPtr<SharedBuffer>(private_.Get());
+WebData::operator scoped_refptr<SharedBuffer>() const {
+  return scoped_refptr<SharedBuffer>(private_.Get());
+}
+
+WebData::operator const SharedBuffer&() const {
+  return *private_;
 }
 
 }  // namespace blink

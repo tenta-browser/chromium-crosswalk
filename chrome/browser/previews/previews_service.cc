@@ -8,24 +8,41 @@
 #include "base/files/file_path.h"
 #include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task_scheduler/post_task.h"
 #include "chrome/common/chrome_constants.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
+#include "components/optimization_guide/optimization_guide_service.h"
+#include "components/previews/content/previews_io_data.h"
+#include "components/previews/content/previews_optimization_guide.h"
+#include "components/previews/content/previews_ui_service.h"
 #include "components/previews/core/previews_experiments.h"
-#include "components/previews/core/previews_io_data.h"
+#include "components/previews/core/previews_logger.h"
 #include "components/previews/core/previews_opt_out_store.h"
 #include "components/previews/core/previews_opt_out_store_sql.h"
-#include "components/previews/core/previews_ui_service.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace {
 
 // Returns true if previews can be shown for |type|.
 bool IsPreviewsTypeEnabled(previews::PreviewsType type) {
+  bool server_previews_enabled = base::FeatureList::IsEnabled(
+      data_reduction_proxy::features::kDataReductionProxyDecidesTransform);
   switch (type) {
     case previews::PreviewsType::OFFLINE:
       return previews::params::IsOfflinePreviewsEnabled();
-    case previews::PreviewsType::CLIENT_LOFI:
-      return previews::params::IsClientLoFiEnabled();
+    case previews::PreviewsType::LOFI:
+      return server_previews_enabled ||
+             previews::params::IsClientLoFiEnabled() ||
+             data_reduction_proxy::params::IsLoFiOnViaFlags();
+    case previews::PreviewsType::LITE_PAGE:
+      return server_previews_enabled ||
+             (data_reduction_proxy::params::IsLoFiOnViaFlags() &&
+              data_reduction_proxy::params::AreLitePagesEnabledViaFlags());
+    case previews::PreviewsType::AMP_REDIRECTION:
+      return previews::params::IsAMPRedirectionPreviewEnabled();
+    case previews::PreviewsType::NOSCRIPT:
+      return previews::params::IsNoScriptPreviewsEnabled();
     case previews::PreviewsType::NONE:
     case previews::PreviewsType::LAST:
       break;
@@ -40,8 +57,14 @@ int GetPreviewsTypeVersion(previews::PreviewsType type) {
   switch (type) {
     case previews::PreviewsType::OFFLINE:
       return previews::params::OfflinePreviewsVersion();
-    case previews::PreviewsType::CLIENT_LOFI:
+    case previews::PreviewsType::LOFI:
       return previews::params::ClientLoFiVersion();
+    case previews::PreviewsType::LITE_PAGE:
+      return data_reduction_proxy::params::LitePageVersion();
+    case previews::PreviewsType::AMP_REDIRECTION:
+      return previews::params::AMPRedirectionPreviewsVersion();
+    case previews::PreviewsType::NOSCRIPT:
+      return previews::params::NoScriptPreviewsVersion();
     case previews::PreviewsType::NONE:
     case previews::PreviewsType::LAST:
       break;
@@ -77,15 +100,15 @@ PreviewsService::~PreviewsService() {
 
 void PreviewsService::Initialize(
     previews::PreviewsIOData* previews_io_data,
+    optimization_guide::OptimizationGuideService* optimization_guide_service,
     const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
     const base::FilePath& profile_path) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  base::SequencedWorkerPool* blocking_pool =
-      content::BrowserThread::GetBlockingPool();
   // Get the background thread to run SQLite on.
   scoped_refptr<base::SequencedTaskRunner> background_task_runner =
-      blocking_pool->GetSequencedTaskRunner(blocking_pool->GetSequenceToken());
+      base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::BACKGROUND});
 
   previews_ui_service_ = base::MakeUnique<previews::PreviewsUIService>(
       previews_io_data, io_task_runner,
@@ -93,5 +116,10 @@ void PreviewsService::Initialize(
           io_task_runner, background_task_runner,
           profile_path.Append(chrome::kPreviewsOptOutDBFilename),
           GetEnabledPreviews()),
-      base::Bind(&IsPreviewsTypeEnabled));
+      optimization_guide_service
+          ? base::MakeUnique<previews::PreviewsOptimizationGuide>(
+                optimization_guide_service, io_task_runner)
+          : nullptr,
+      base::Bind(&IsPreviewsTypeEnabled),
+      base::MakeUnique<previews::PreviewsLogger>());
 }

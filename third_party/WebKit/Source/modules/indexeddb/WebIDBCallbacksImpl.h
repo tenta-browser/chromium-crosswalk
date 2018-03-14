@@ -30,8 +30,9 @@
 #define WebIDBCallbacksImpl_h
 
 #include <memory>
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/RefPtr.h"
+
+#include "platform/heap/Persistent.h"
+#include "platform/wtf/Allocator.h"
 #include "public/platform/modules/indexeddb/WebIDBCallbacks.h"
 
 namespace blink {

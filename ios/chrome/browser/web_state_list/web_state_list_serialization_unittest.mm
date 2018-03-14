@@ -106,17 +106,19 @@ TEST_F(WebStateListSerializationTest, SerializationEmpty) {
 
 TEST_F(WebStateListSerializationTest, SerializationRoundTrip) {
   WebStateList original_web_state_list(web_state_list_delegate());
-  original_web_state_list.InsertWebState(0, SerializableTestWebState::Create());
-  original_web_state_list.InsertWebState(1, SerializableTestWebState::Create());
-  original_web_state_list.InsertWebState(2, SerializableTestWebState::Create());
-  original_web_state_list.InsertWebState(3, SerializableTestWebState::Create());
-  original_web_state_list.SetOpenerOfWebStateAt(
-      1, WebStateOpener(original_web_state_list.GetWebStateAt(0), 3));
-  original_web_state_list.SetOpenerOfWebStateAt(
-      2, WebStateOpener(original_web_state_list.GetWebStateAt(0), 2));
-  original_web_state_list.SetOpenerOfWebStateAt(
-      3, WebStateOpener(original_web_state_list.GetWebStateAt(1), 1));
-  original_web_state_list.ActivateWebStateAt(1);
+  original_web_state_list.InsertWebState(0, SerializableTestWebState::Create(),
+                                         WebStateList::INSERT_FORCE_INDEX,
+                                         WebStateOpener());
+  original_web_state_list.InsertWebState(
+      1, SerializableTestWebState::Create(),
+      WebStateList::INSERT_FORCE_INDEX | WebStateList::INSERT_ACTIVATE,
+      WebStateOpener(original_web_state_list.GetWebStateAt(0), 3));
+  original_web_state_list.InsertWebState(
+      2, SerializableTestWebState::Create(), WebStateList::INSERT_FORCE_INDEX,
+      WebStateOpener(original_web_state_list.GetWebStateAt(0), 2));
+  original_web_state_list.InsertWebState(
+      3, SerializableTestWebState::Create(), WebStateList::INSERT_FORCE_INDEX,
+      WebStateOpener(original_web_state_list.GetWebStateAt(1), 1));
 
   SessionWindowIOS* session_window =
       SerializeWebStateList(&original_web_state_list);
@@ -126,11 +128,13 @@ TEST_F(WebStateListSerializationTest, SerializationRoundTrip) {
 
   // Create a deserialized WebStateList and verify its contents.
   WebStateList restored_web_state_list(web_state_list_delegate());
-  restored_web_state_list.InsertWebState(0, SerializableTestWebState::Create());
+  restored_web_state_list.InsertWebState(0, SerializableTestWebState::Create(),
+                                         WebStateList::INSERT_FORCE_INDEX,
+                                         WebStateOpener());
   ASSERT_EQ(1, restored_web_state_list.count());
 
   DeserializeWebStateList(
-      &restored_web_state_list, session_window, false,
+      &restored_web_state_list, session_window,
       base::BindRepeating(&SerializableTestWebState::CreateWithSessionStorage));
 
   EXPECT_EQ(5, restored_web_state_list.count());
@@ -138,33 +142,7 @@ TEST_F(WebStateListSerializationTest, SerializationRoundTrip) {
   ExpectRelationshipIdenticalFrom(1, &original_web_state_list,
                                   &restored_web_state_list);
 
-  // Create a deserialized WebStateList with web usage enabled and verify its
-  // contents.
-  WebStateList restored_web_state_list_web_usage_enabled(
-      web_state_list_delegate());
-  std::unique_ptr<web::WebState> webUsageEnabledWebState =
-      SerializableTestWebState::Create();
-  webUsageEnabledWebState->SetWebUsageEnabled(true);
-  restored_web_state_list_web_usage_enabled.InsertWebState(
-      0, std::move(webUsageEnabledWebState));
-  ASSERT_EQ(1, restored_web_state_list_web_usage_enabled.count());
-
-  DeserializeWebStateList(
-      &restored_web_state_list_web_usage_enabled, session_window, true,
-      base::BindRepeating(&SerializableTestWebState::CreateWithSessionStorage));
-
-  EXPECT_EQ(5, restored_web_state_list_web_usage_enabled.count());
-  EXPECT_EQ(2, restored_web_state_list_web_usage_enabled.active_index());
-  ExpectRelationshipIdenticalFrom(1, &original_web_state_list,
-                                  &restored_web_state_list_web_usage_enabled);
-
-  // Verify that the WebUsageEnabled bit is set appropriately for the restored
-  // WebStateLists.
-  ASSERT_EQ(restored_web_state_list_web_usage_enabled.count(),
-            restored_web_state_list.count());
-  for (int i = 0; i < restored_web_state_list.count(); ++i) {
-    EXPECT_TRUE(restored_web_state_list_web_usage_enabled.GetWebStateAt(i)
-                    ->IsWebUsageEnabled());
-    EXPECT_FALSE(restored_web_state_list.GetWebStateAt(i)->IsWebUsageEnabled());
-  }
+  // Verify that the WebUsageEnabled bit is left to default value.
+  for (int i = 0; i < restored_web_state_list.count(); ++i)
+    EXPECT_TRUE(restored_web_state_list.GetWebStateAt(i)->IsWebUsageEnabled());
 }

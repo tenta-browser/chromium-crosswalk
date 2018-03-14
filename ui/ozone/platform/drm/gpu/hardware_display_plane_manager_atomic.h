@@ -20,6 +20,10 @@ class HardwareDisplayPlaneManagerAtomic : public HardwareDisplayPlaneManager {
   // HardwareDisplayPlaneManager:
   bool Commit(HardwareDisplayPlaneList* plane_list,
               bool test_only) override;
+  bool DisableOverlayPlanes(HardwareDisplayPlaneList* plane_list) override;
+
+  bool ValidatePrimarySize(const OverlayPlane& primary,
+                           const drmModeModeInfo& mode) override;
 
  private:
   bool SetPlaneData(HardwareDisplayPlaneList* plane_list,

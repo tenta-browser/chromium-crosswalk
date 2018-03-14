@@ -36,10 +36,11 @@
 #include "core/dom/DOMNodeIds.h"
 #include "core/dom/Element.h"
 #include "core/dom/Node.h"
-#include "core/events/Event.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/Event.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/inspector/InspectorDOMAgent.h"
+#include "core/inspector/ResolveNode.h"
 #include "core/inspector/V8InspectorString.h"
 #include "core/probe/CoreProbes.h"
 
@@ -99,7 +100,7 @@ static void CollectEventListeners(v8::Isolate* isolate,
     if (!listeners)
       continue;
     for (size_t k = 0; k < listeners->size(); ++k) {
-      EventListener* event_listener = listeners->at(k).Listener();
+      EventListener* event_listener = listeners->at(k).Callback();
       if (event_listener->GetType() != EventListener::kJSEventListenerType)
         continue;
       V8AbstractEventListener* v8_listener =
@@ -120,7 +121,7 @@ static void CollectEventListeners(v8::Isolate* isolate,
       int backend_node_id = 0;
       if (target_node) {
         backend_node_id = DOMNodeIds::IdForNode(target_node);
-        target_wrapper = InspectorDOMAgent::NodeV8Value(
+        target_wrapper = NodeV8Value(
             report_for_all_contexts ? context : isolate->GetCurrentContext(),
             target_node);
       }
@@ -158,14 +159,13 @@ void InspectorDOMDebuggerAgent::EventListenersInfoForTarget(
     bool pierce,
     V8EventListenerInfoList* event_information) {
   // Special-case nodes, respect depth and pierce parameters in case of nodes.
-  Node* node = V8Node::toImplWithTypeCheck(isolate, value);
+  Node* node = V8Node::ToImplWithTypeCheck(isolate, value);
   if (node) {
     if (depth < 0)
       depth = INT_MAX;
     HeapVector<Member<Node>> nodes;
-    InspectorDOMAgent::CollectNodes(node, depth, pierce,
-                                    WTF::Bind(&FilterNodesWithListeners).get(),
-                                    &nodes);
+    InspectorDOMAgent::CollectNodes(
+        node, depth, pierce, WTF::Bind(&FilterNodesWithListeners), &nodes);
     for (Node* n : nodes) {
       // We are only interested in listeners from the current context.
       CollectEventListeners(isolate, n, v8::Local<v8::Value>(), n, pierce,
@@ -174,7 +174,7 @@ void InspectorDOMDebuggerAgent::EventListenersInfoForTarget(
     return;
   }
 
-  EventTarget* target = V8EventTarget::toImplWithTypeCheck(isolate, value);
+  EventTarget* target = V8EventTarget::ToImplWithTypeCheck(isolate, value);
   // We need to handle LocalDOMWindow specially, because LocalDOMWindow wrapper
   // exists on prototype chain.
   if (!target)
@@ -193,7 +193,7 @@ InspectorDOMDebuggerAgent::InspectorDOMDebuggerAgent(
 
 InspectorDOMDebuggerAgent::~InspectorDOMDebuggerAgent() {}
 
-DEFINE_TRACE(InspectorDOMDebuggerAgent) {
+void InspectorDOMDebuggerAgent::Trace(blink::Visitor* visitor) {
   visitor->Trace(dom_agent_);
   visitor->Trace(dom_breakpoints_);
   InspectorBaseAgent::Trace(visitor);
@@ -201,7 +201,7 @@ DEFINE_TRACE(InspectorDOMDebuggerAgent) {
 
 Response InspectorDOMDebuggerAgent::disable() {
   SetEnabled(false);
-  dom_breakpoints_.Clear();
+  dom_breakpoints_.clear();
   state_->remove(DOMDebuggerAgentState::kEventListenerBreakpoints);
   state_->remove(DOMDebuggerAgentState::kXhrBreakpoints);
   state_->remove(DOMDebuggerAgentState::kPauseOnAllXHRs);
@@ -556,7 +556,7 @@ void InspectorDOMDebuggerAgent::BreakProgramOnDOMEvent(Node* target,
     // Find breakpoint owner node.
     if (!insertion)
       breakpoint_owner = InspectorDOMAgent::InnerParentNode(target);
-    ASSERT(breakpoint_owner);
+    DCHECK(breakpoint_owner);
     while (!(dom_breakpoints_.at(breakpoint_owner) & (1 << breakpoint_type))) {
       Node* parent_node = InspectorDOMAgent::InnerParentNode(breakpoint_owner);
       if (!parent_node)
@@ -569,7 +569,7 @@ void InspectorDOMDebuggerAgent::BreakProgramOnDOMEvent(Node* target,
   }
 
   int breakpoint_owner_node_id = dom_agent_->BoundNodeId(breakpoint_owner);
-  ASSERT(breakpoint_owner_node_id);
+  DCHECK(breakpoint_owner_node_id);
   description->setInteger("nodeId", breakpoint_owner_node_id);
   description->setString("type", DomTypeName(breakpoint_type));
   String json = description->serialize();
@@ -656,7 +656,7 @@ InspectorDOMDebuggerAgent::PreparePauseOnNativeEventData(
 
 void InspectorDOMDebuggerAgent::DidFireWebGLError(const String& error_name) {
   std::unique_ptr<protocol::DictionaryValue> event_data =
-      PreparePauseOnNativeEventData(kWebglErrorFiredEventName, 0);
+      PreparePauseOnNativeEventData(kWebglErrorFiredEventName, nullptr);
   if (!event_data)
     return;
   if (!error_name.IsEmpty())
@@ -666,7 +666,8 @@ void InspectorDOMDebuggerAgent::DidFireWebGLError(const String& error_name) {
 
 void InspectorDOMDebuggerAgent::DidFireWebGLWarning() {
   PauseOnNativeEventIfNeeded(
-      PreparePauseOnNativeEventData(kWebglWarningFiredEventName, 0), false);
+      PreparePauseOnNativeEventData(kWebglWarningFiredEventName, nullptr),
+      false);
 }
 
 void InspectorDOMDebuggerAgent::DidFireWebGLErrorOrWarning(
@@ -684,7 +685,7 @@ void InspectorDOMDebuggerAgent::CancelNativeBreakpoint() {
 void InspectorDOMDebuggerAgent::ScriptExecutionBlockedByCSP(
     const String& directive_text) {
   std::unique_ptr<protocol::DictionaryValue> event_data =
-      PreparePauseOnNativeEventData(kScriptBlockedByCSPEventName, 0);
+      PreparePauseOnNativeEventData(kScriptBlockedByCSPEventName, nullptr);
   if (!event_data)
     return;
   event_data->setString("directiveText", directive_text);
@@ -769,7 +770,8 @@ void InspectorDOMDebuggerAgent::WillSendXMLHttpOrFetchNetworkRequest(
 
 void InspectorDOMDebuggerAgent::DidCreateCanvasContext() {
   PauseOnNativeEventIfNeeded(
-      PreparePauseOnNativeEventData(kCanvasContextCreatedEventName, 0), true);
+      PreparePauseOnNativeEventData(kCanvasContextCreatedEventName, nullptr),
+      true);
 }
 
 void InspectorDOMDebuggerAgent::DidAddBreakpoint() {
@@ -801,7 +803,7 @@ void InspectorDOMDebuggerAgent::SetEnabled(bool enabled) {
 }
 
 void InspectorDOMDebuggerAgent::DidCommitLoadForLocalFrame(LocalFrame*) {
-  dom_breakpoints_.Clear();
+  dom_breakpoints_.clear();
 }
 
 }  // namespace blink

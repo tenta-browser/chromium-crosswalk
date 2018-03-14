@@ -45,11 +45,14 @@ CommandHandler.onCommand = function(command) {
       chrome.automation.getDesktop(function(d) {
         // First, try speaking the on-screen time.
         var allTime = d.findAll({role: RoleType.TIME});
-        allTime.filter(function(t) { return t.root.role == RoleType.DESKTOP; });
+        allTime.filter(function(t) {
+          return t.root.role == RoleType.DESKTOP;
+        });
 
         var timeString = '';
         allTime.forEach(function(t) {
-          if (t.name) timeString = t.name;
+          if (t.name)
+            timeString = t.name;
         });
         if (timeString) {
           cvox.ChromeVox.tts.speak(timeString, cvox.QueueMode.FLUSH);
@@ -199,19 +202,12 @@ CommandHandler.onCommand = function(command) {
           localStorage[brailleTableType]);
       new Output().format(output).go();
       return false;
-    case 'toggleChromeVoxVersion':
-      if (!ChromeVoxState.instance.toggleNext())
-        return false;
-      if (ChromeVoxState.instance.currentRange) {
-        ChromeVoxState.instance.navigateToRange(
-            ChromeVoxState.instance.currentRange);
-      }
-      break;
     case 'help':
       (new PanelCommand(PanelCommandType.TUTORIAL)).send();
       return false;
     case 'showNextUpdatePage':
       (new PanelCommand(PanelCommandType.UPDATE_NOTES)).send();
+      localStorage['notifications_update_notification_shown'] = true;
       return false;
     case 'darkenScreen':
       chrome.accessibilityPrivate.darkenScreen(true);
@@ -225,6 +221,14 @@ CommandHandler.onCommand = function(command) {
       var state = cvox.ChromeVox.tts.toggleSpeechOnOrOff();
       new Output().format(state ? '@speech_on' : '@speech_off').go();
       return false;
+    case 'enableChromeVoxArcSupportForCurrentApp':
+      chrome.accessibilityPrivate.setNativeChromeVoxArcSupportForCurrentApp(
+          true);
+      break;
+    case 'disableChromeVoxArcSupportForCurrentApp':
+      chrome.accessibilityPrivate.setNativeChromeVoxArcSupportForCurrentApp(
+          false);
+      break;
     default:
       break;
   }
@@ -252,17 +256,19 @@ CommandHandler.onCommand = function(command) {
       current = current.move(cursors.Unit.CHARACTER, Dir.FORWARD);
       break;
     case 'previousCharacter':
+      dir = Dir.BACKWARD;
       didNavigate = true;
       speechProps['phoneticCharacters'] = true;
-      current = current.move(cursors.Unit.CHARACTER, Dir.BACKWARD);
+      current = current.move(cursors.Unit.CHARACTER, dir);
       break;
     case 'nextWord':
       didNavigate = true;
       current = current.move(cursors.Unit.WORD, Dir.FORWARD);
       break;
     case 'previousWord':
+      dir = Dir.BACKWARD;
       didNavigate = true;
-      current = current.move(cursors.Unit.WORD, Dir.BACKWARD);
+      current = current.move(cursors.Unit.WORD, dir);
       break;
     case 'forward':
     case 'nextLine':
@@ -271,8 +277,9 @@ CommandHandler.onCommand = function(command) {
       break;
     case 'backward':
     case 'previousLine':
+      dir = Dir.BACKWARD;
       didNavigate = true;
-      current = current.move(cursors.Unit.LINE, Dir.BACKWARD);
+      current = current.move(cursors.Unit.LINE, dir);
       break;
     case 'nextButton':
       dir = Dir.FORWARD;
@@ -285,7 +292,6 @@ CommandHandler.onCommand = function(command) {
       predErrorMsg = 'no_previous_button';
       break;
     case 'nextCheckbox':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.checkBox;
       predErrorMsg = 'no_next_checkbox';
       break;
@@ -295,7 +301,6 @@ CommandHandler.onCommand = function(command) {
       predErrorMsg = 'no_previous_checkbox';
       break;
     case 'nextComboBox':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.comboBox;
       predErrorMsg = 'no_next_combo_box';
       break;
@@ -305,7 +310,6 @@ CommandHandler.onCommand = function(command) {
       predErrorMsg = 'no_previous_combo_box';
       break;
     case 'nextEditText':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.editText;
       predErrorMsg = 'no_next_edit_text';
       break;
@@ -315,7 +319,6 @@ CommandHandler.onCommand = function(command) {
       predErrorMsg = 'no_previous_edit_text';
       break;
     case 'nextFormField':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.formField;
       predErrorMsg = 'no_next_form_field';
       break;
@@ -330,42 +333,34 @@ CommandHandler.onCommand = function(command) {
       predErrorMsg = 'no_previous_graphic';
       break;
     case 'nextGraphic':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.image;
       predErrorMsg = 'no_next_graphic';
       break;
     case 'nextHeading':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.heading;
       predErrorMsg = 'no_next_heading';
       break;
     case 'nextHeading1':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.makeHeadingPredicate(1);
       predErrorMsg = 'no_next_heading_1';
       break;
     case 'nextHeading2':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.makeHeadingPredicate(2);
       predErrorMsg = 'no_next_heading_2';
       break;
     case 'nextHeading3':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.makeHeadingPredicate(3);
       predErrorMsg = 'no_next_heading_3';
       break;
     case 'nextHeading4':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.makeHeadingPredicate(4);
       predErrorMsg = 'no_next_heading_4';
       break;
     case 'nextHeading5':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.makeHeadingPredicate(5);
       predErrorMsg = 'no_next_heading_5';
       break;
     case 'nextHeading6':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.makeHeadingPredicate(6);
       predErrorMsg = 'no_next_heading_6';
       break;
@@ -405,7 +400,6 @@ CommandHandler.onCommand = function(command) {
       predErrorMsg = 'no_previous_heading_6';
       break;
     case 'nextLink':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.link;
       predErrorMsg = 'no_next_link';
       break;
@@ -415,7 +409,6 @@ CommandHandler.onCommand = function(command) {
       predErrorMsg = 'no_previous_link';
       break;
     case 'nextTable':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.table;
       predErrorMsg = 'no_next_table';
       break;
@@ -425,7 +418,6 @@ CommandHandler.onCommand = function(command) {
       predErrorMsg = 'no_previous_table';
       break;
     case 'nextVisitedLink':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.visitedLink;
       predErrorMsg = 'no_next_visited_link';
       break;
@@ -435,7 +427,6 @@ CommandHandler.onCommand = function(command) {
       predErrorMsg = 'no_previous_visited_link';
       break;
     case 'nextLandmark':
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.landmark;
       predErrorMsg = 'no_next_landmark';
       break;
@@ -451,8 +442,9 @@ CommandHandler.onCommand = function(command) {
       break;
     case 'left':
     case 'previousObject':
+      dir = Dir.BACKWARD;
       didNavigate = true;
-      current = current.move(cursors.Unit.NODE, Dir.BACKWARD);
+      current = current.move(cursors.Unit.NODE, dir);
       break;
     case 'previousGroup':
       skipSync = true;
@@ -461,18 +453,17 @@ CommandHandler.onCommand = function(command) {
       break;
     case 'nextGroup':
       skipSync = true;
-      dir = Dir.FORWARD;
       pred = AutomationPredicate.group;
       break;
     case 'jumpToTop':
       var node = AutomationUtil.findNodePost(
-          current.start.node.root, Dir.FORWARD, AutomationPredicate.leaf);
-    if (node)
-      current = cursors.Range.fromNode(node);
+          current.start.node.root, Dir.FORWARD, AutomationPredicate.object);
+      if (node)
+        current = cursors.Range.fromNode(node);
       break;
     case 'jumpToBottom':
-      var node = AutomationUtil.findNodePost(
-          current.start.node.root, Dir.BACKWARD, AutomationPredicate.leaf);
+      var node = AutomationUtil.findLastNode(
+          current.start.node.root, AutomationPredicate.object);
       if (node)
         current = cursors.Range.fromNode(node);
       break;
@@ -480,13 +471,17 @@ CommandHandler.onCommand = function(command) {
       if (ChromeVoxState.instance.currentRange) {
         var actionNode = ChromeVoxState.instance.currentRange.start.node;
         while (actionNode.role == RoleType.INLINE_TEXT_BOX ||
-            actionNode.role == RoleType.STATIC_TEXT)
+               actionNode.role == RoleType.STATIC_TEXT)
           actionNode = actionNode.parent;
         if (actionNode.inPageLinkTarget) {
           ChromeVoxState.instance.navigateToRange(
               cursors.Range.fromNode(actionNode.inPageLinkTarget));
         } else {
-          actionNode.doDefault();
+          // Scan for a clickable, which overrides the |actionNode|.
+          var clickable = actionNode;
+          while (clickable && !clickable.clickable)
+            clickable = clickable.parent;
+          clickable ? clickable.doDefault() : actionNode.doDefault();
         }
       }
       // Skip all other processing; if focus changes, we should get an event
@@ -500,32 +495,31 @@ CommandHandler.onCommand = function(command) {
           return;
 
         var prevRange = ChromeVoxState.instance.currentRange_;
-        var newRange =
-            ChromeVoxState.instance.currentRange_.move(
-                cursors.Unit.NODE, Dir.FORWARD);
+        var newRange = ChromeVoxState.instance.currentRange_.move(
+            cursors.Unit.NODE, Dir.FORWARD);
 
         // Stop if we've wrapped back to the document.
         var maybeDoc = newRange.start.node;
-        if (maybeDoc.role == RoleType.ROOT_WEB_AREA &&
-            maybeDoc.parent.root.role == RoleType.DESKTOP) {
+        if (AutomationPredicate.root(maybeDoc)) {
           ChromeVoxState.isReadingContinuously = false;
           return;
         }
 
         ChromeVoxState.instance.setCurrentRange(newRange);
+        newRange.select();
 
         new Output()
-            .withRichSpeechAndBraille(ChromeVoxState.instance.currentRange_,
-                                      prevRange,
-                                      Output.EventType.NAVIGATE)
+            .withRichSpeechAndBraille(
+                ChromeVoxState.instance.currentRange_, prevRange,
+                Output.EventType.NAVIGATE)
             .onSpeechEnd(continueReading)
             .go();
       }.bind(this);
-
+      var startNode = ChromeVoxState.instance.currentRange.start.node;
+      var collapsedRange = cursors.Range.fromNode(startNode);
       new Output()
-          .withRichSpeechAndBraille(ChromeVoxState.instance.currentRange_,
-                                    null,
-                                    Output.EventType.NAVIGATE)
+          .withRichSpeechAndBraille(
+              collapsedRange, collapsedRange, Output.EventType.NAVIGATE)
           .onSpeechEnd(continueReading)
           .go();
 
@@ -563,17 +557,18 @@ CommandHandler.onCommand = function(command) {
     case 'readCurrentTitle':
       var target = ChromeVoxState.instance.currentRange_.start.node;
       var output = new Output();
+      target = AutomationUtil.getTopLevelRoot(target) || target.parent;
 
-      if (target.root.role == RoleType.ROOT_WEB_AREA) {
-        // Web.
-        target = target.root;
+      // Search for a container (e.g. rootWebArea, window) with a title-like
+      // string.
+      while (target && !target.name && !target.docUrl)
+        target = target.parent;
+
+      if (!target)
+        output.format('@no_title');
+      else
         output.withString(target.name || target.docUrl);
-      } else {
-        // Views.
-        while (target.role != RoleType.WINDOW) target = target.parent;
-        if (target)
-          output.withString(target.name || '');
-      }
+
       output.go();
       return false;
     case 'readCurrentURL':
@@ -639,7 +634,6 @@ CommandHandler.onCommand = function(command) {
       rootPred = AutomationPredicate.row;
       break;
     case 'nextRow':
-      dir = Dir.FORWARD;
       var tableOpts = {row: true, dir: dir};
       pred = AutomationPredicate.makeTableCellPredicate(
           current.start.node, tableOpts);
@@ -647,7 +641,6 @@ CommandHandler.onCommand = function(command) {
       rootPred = AutomationPredicate.table;
       break;
     case 'nextCol':
-      dir = Dir.FORWARD;
       var tableOpts = {col: true, dir: dir};
       pred = AutomationPredicate.makeTableCellPredicate(
           current.start.node, tableOpts);
@@ -661,14 +654,13 @@ CommandHandler.onCommand = function(command) {
         node = node.parent;
       if (!node)
         break;
-      var end = AutomationUtil.findNodePost(node,
-          command == 'goToRowLastCell' ? Dir.BACKWARD : Dir.FORWARD,
+      var end = AutomationUtil.findNodePost(
+          node, command == 'goToRowLastCell' ? Dir.BACKWARD : Dir.FORWARD,
           AutomationPredicate.leaf);
       if (end)
         current = cursors.Range.fromNode(end);
       break;
     case 'goToColFirstCell':
-      dir = Dir.FORWARD;
       var node = current.start.node;
       while (node && node.role != RoleType.TABLE)
         node = node.parent;
@@ -704,8 +696,8 @@ CommandHandler.onCommand = function(command) {
         node = node.parent;
       if (!node)
         break;
-      var end = AutomationUtil.findNodePost(node,
-          command == 'goToLastCell' ? Dir.BACKWARD : Dir.FORWARD,
+      var end = AutomationUtil.findNodePost(
+          node, command == 'goToLastCell' ? Dir.BACKWARD : Dir.FORWARD,
           AutomationPredicate.leaf);
       if (end)
         current = cursors.Range.fromNode(end);
@@ -723,7 +715,8 @@ CommandHandler.onCommand = function(command) {
     var bound = current.getBound(dir).node;
     if (bound) {
       var node = AutomationUtil.findNextNode(
-          bound, dir, pred, {skipInitialAncestry: true});
+          bound, dir, pred,
+          {skipInitialAncestry: true, root: AutomationPredicate.editableRoot});
 
       if (node && !skipSync) {
         node = AutomationUtil.findNodePre(
@@ -735,29 +728,94 @@ CommandHandler.onCommand = function(command) {
         current = cursors.Range.fromNode(node);
       } else {
         cvox.ChromeVox.earcons.playEarcon(cvox.Earcon.WRAP);
-        var root = AutomationUtil.getTopLevelRoot(bound) || bound.root;
+        var root = bound;
+        while (root && !AutomationPredicate.editableRoot(root))
+          root = root.parent;
+
+        if (!root)
+          root = bound.root;
+
         if (dir == Dir.FORWARD) {
           bound = root;
         } else {
           bound = AutomationUtil.findNodePost(
-              root, dir, AutomationPredicate.leaf) || bound;
+                      root, dir, AutomationPredicate.leaf) ||
+              bound;
         }
-        node = AutomationUtil.findNextNode(
-            bound, dir, pred, {skipInitialAncestry: true});
+        node = AutomationUtil.findNextNode(bound, dir, pred, {
+          skipInitialAncestry: true,
+          root: AutomationPredicate.editableRoot
+        });
 
-      if (node && !skipSync) {
-        node = AutomationUtil.findNodePre(
-            node, Dir.FORWARD, AutomationPredicate.object) || node;
-      }
+        if (node && !skipSync) {
+          node = AutomationUtil.findNodePre(
+                     node, Dir.FORWARD, AutomationPredicate.object) ||
+              node;
+        }
 
-      if (node) {
-        current = cursors.Range.fromNode(node);
-      } else if (predErrorMsg) {
+        if (node) {
+          current = cursors.Range.fromNode(node);
+        } else if (predErrorMsg) {
           cvox.ChromeVox.tts.speak(
               Msgs.getMsg(predErrorMsg), cvox.QueueMode.FLUSH);
-        return false;
+          return false;
         }
       }
+    }
+  }
+
+  if (current && current.start && current.start.node &&
+      ChromeVoxState.instance.currentRange.start.node) {
+    var exited = AutomationUtil.getUniqueAncestors(
+        current.start.node, ChromeVoxState.instance.currentRange.start.node);
+    var scrollable = null;
+    for (var i = 0; i < exited.length; i++) {
+      if (exited[i].scrollable) {
+        scrollable = exited[i];
+        break;
+      }
+    }
+
+    // TODO(dtseng): handle more precise positioning after scroll e.g. list with
+    // 10 items shoing 1-7, scroll forward, should position at item 8.
+    if (scrollable) {
+      var callback = function(result) {
+        if (result) {
+          var innerCallback = function(currentNode, evt) {
+            scrollable.removeEventListener(
+                EventType.SCROLL_POSITION_CHANGED, innerCallback);
+
+            if (pred || (currentNode && currentNode.root)) {
+              // Jump or if there is a valid current range, then move from it
+              // since we have refreshed node data.
+              CommandHandler.onCommand(command);
+              return;
+            }
+
+            // Otherwise, sync to the directed deepest child.
+            var sync = scrollable;
+            if (dir == Dir.FORWARD) {
+              while (sync.firstChild)
+                sync = sync.firstChild;
+            } else {
+              while (sync.lastChild)
+                sync = sync.lastChild;
+            }
+            ChromeVoxState.instance.navigateToRange(
+                cursors.Range.fromNode(sync), false, speechProps);
+          }.bind(this, current.start.node);
+          scrollable.addEventListener(
+              EventType.SCROLL_POSITION_CHANGED, innerCallback, true);
+        } else {
+          ChromeVoxState.instance.navigateToRange(current, false, speechProps);
+        }
+      };
+
+      if (dir == Dir.FORWARD)
+        scrollable.scrollForward(callback);
+      else
+        scrollable.scrollBackward(callback);
+      return false;
     }
   }
 
@@ -792,12 +850,12 @@ CommandHandler.onModeChanged = function(newMode, oldMode) {
  *     step size, otherwise decreases.
  * @private
  */
-CommandHandler.increaseOrDecreaseSpeechProperty_ =
-    function(propertyName, increase) {
+CommandHandler.increaseOrDecreaseSpeechProperty_ = function(
+    propertyName, increase) {
   cvox.ChromeVox.tts.increaseOrDecreaseProperty(propertyName, increase);
   var announcement;
-  var valueAsPercent = Math.round(
-      cvox.ChromeVox.tts.propertyToPercentage(propertyName) * 100);
+  var valueAsPercent =
+      Math.round(cvox.ChromeVox.tts.propertyToPercentage(propertyName) * 100);
   switch (propertyName) {
     case cvox.AbstractTts.RATE:
       announcement = Msgs.getMsg('announce_rate', [valueAsPercent]);
@@ -833,11 +891,11 @@ CommandHandler.onImageFrameUpdated_ = function(event) {
     return;
 
   if (!AutomationUtil.isDescendantOf(
-      ChromeVoxState.instance.currentRange.start.node,
-      CommandHandler.imageNode_)) {
+          ChromeVoxState.instance.currentRange.start.node,
+          CommandHandler.imageNode_)) {
     CommandHandler.imageNode_.removeEventListener(
-        EventType.IMAGE_FRAME_UPDATED,
-        CommandHandler.onImageFrameUpdated_, false);
+        EventType.IMAGE_FRAME_UPDATED, CommandHandler.onImageFrameUpdated_,
+        false);
     CommandHandler.imageNode_ = null;
     return;
   }
@@ -857,20 +915,19 @@ CommandHandler.onImageFrameUpdated_ = function(event) {
 CommandHandler.viewGraphicAsBraille_ = function(current) {
   if (CommandHandler.imageNode_) {
     CommandHandler.imageNode_.removeEventListener(
-        EventType.IMAGE_FRAME_UPDATED,
-        CommandHandler.onImageFrameUpdated_, false);
+        EventType.IMAGE_FRAME_UPDATED, CommandHandler.onImageFrameUpdated_,
+        false);
     CommandHandler.imageNode_ = null;
   }
 
   // Find the first node within the current range that supports image data.
   var imageNode = AutomationUtil.findNodePost(
-      current.start.node, Dir.FORWARD,
-      AutomationPredicate.supportsImageData);
+      current.start.node, Dir.FORWARD, AutomationPredicate.supportsImageData);
   if (!imageNode)
     return;
 
-  imageNode.addEventListener(EventType.IMAGE_FRAME_UPDATED,
-                             this.onImageFrameUpdated_, false);
+  imageNode.addEventListener(
+      EventType.IMAGE_FRAME_UPDATED, this.onImageFrameUpdated_, false);
   CommandHandler.imageNode_ = imageNode;
   if (imageNode.imageDataUrl) {
     var event = new CustomAutomationEvent(
@@ -887,30 +944,30 @@ CommandHandler.viewGraphicAsBraille_ = function(current) {
  */
 CommandHandler.init_ = function() {
   var firstRunId = 'jdgcneonijmofocbhmijhacgchbihela';
-  chrome.runtime.onMessageExternal.addListener(
-      function(request, sender, sendResponse) {
-        if (sender.id != firstRunId)
-          return;
+  chrome.runtime.onMessageExternal.addListener(function(
+      request, sender, sendResponse) {
+    if (sender.id != firstRunId)
+      return;
 
-        if (request.openTutorial) {
-          var launchTutorial = function(desktop, evt) {
-            desktop.removeEventListener(
-                chrome.automation.EventType.FOCUS, launchTutorial, true);
-            CommandHandler.onCommand('help');
-          };
+    if (request.openTutorial) {
+      var launchTutorial = function(desktop, evt) {
+        desktop.removeEventListener(
+            chrome.automation.EventType.FOCUS, launchTutorial, true);
+        CommandHandler.onCommand('help');
+      };
 
-          // Since we get this command early on ChromeVox launch, the first run
-          // UI is not yet shown. Monitor for when first run gets focused, and
-          // show our tutorial.
-          chrome.automation.getDesktop(function(desktop) {
-            launchTutorial = launchTutorial.bind(this, desktop);
-            desktop.addEventListener(
-                chrome.automation.EventType.FOCUS, launchTutorial, true);
-          });
-        }
+      // Since we get this command early on ChromeVox launch, the first run
+      // UI is not yet shown. Monitor for when first run gets focused, and
+      // show our tutorial.
+      chrome.automation.getDesktop(function(desktop) {
+        launchTutorial = launchTutorial.bind(this, desktop);
+        desktop.addEventListener(
+            chrome.automation.EventType.FOCUS, launchTutorial, true);
       });
+    }
+  });
 };
 
 CommandHandler.init_();
 
-}); //  goog.scope
+});  //  goog.scope

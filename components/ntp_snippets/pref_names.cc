@@ -11,19 +11,29 @@ const char kEnableSnippets[] = "ntp_snippets.enable";
 
 const char kRemoteSuggestionCategories[] = "ntp_snippets.remote_categories";
 
-const char kSnippetLastFetchAttempt[] = "ntp_snippets.last_fetch_attempt";
+const char kSnippetLastFetchAttemptTime[] = "ntp_snippets.last_fetch_attempt";
 
-const char kSnippetSoftFetchingIntervalWifi[] =
-    "ntp_snippets.soft_fetching_interval_wifi";
+const char kSnippetLastSuccessfulFetchTime[] =
+    "ntp_snippets.last_successful_fetch_time";
 
-const char kSnippetSoftFetchingIntervalFallback[] =
-    "ntp_snippets.soft_fetching_interval_fallback";
-
+// For backwards compatibility, we do not rename the "fetching_" prefs (should
+// be "persistent_fetching_").
 const char kSnippetPersistentFetchingIntervalWifi[] =
     "ntp_snippets.fetching_interval_wifi";
-
 const char kSnippetPersistentFetchingIntervalFallback[] =
     "ntp_snippets.fetching_interval_fallback";
+
+const char kSnippetStartupFetchingIntervalWifi[] =
+    "ntp_snippets.startup_fetching_interval_wifi";
+const char kSnippetStartupFetchingIntervalFallback[] =
+    "ntp_snippets.startup_fetching_interval_fallback";
+
+// For backwards compatibility, we do not rename the "soft_fetching_" prefs
+// (should be "shown_fetching_").
+const char kSnippetShownFetchingIntervalWifi[] =
+    "ntp_snippets.soft_fetching_interval_wifi";
+const char kSnippetShownFetchingIntervalFallback[] =
+    "ntp_snippets.soft_fetching_interval_fallback";
 
 const char kSnippetFetcherRequestCount[] =
     "ntp.request_throttler.suggestion_fetcher.count";
@@ -73,6 +83,21 @@ const char kClickBasedCategoryRankerOrderWithClicks[] =
     "ntp_suggestions.click_based_category_ranker.category_order_with_clicks";
 const char kClickBasedCategoryRankerLastDecayTime[] =
     "ntp_suggestions.click_based_category_ranker.last_decay_time";
+
+const char kBreakingNewsSubscriptionDataToken[] =
+    "ntp_suggestions.breaking_news_subscription_data.token";
+
+const char kBreakingNewsSubscriptionDataIsAuthenticated[] =
+    "ntp_suggestions.breaking_news_subscription_data.is_authenticated";
+
+const char kBreakingNewsGCMSubscriptionTokenCache[] =
+    "ntp_suggestions.breaking_news_gcm_subscription_token_cache";
+
+const char kBreakingNewsGCMLastTokenValidationTime[] =
+    "ntp_suggestions.breaking_news_gcm_last_token_validation_time";
+
+const char kBreakingNewsGCMLastForcedSubscriptionTime[] =
+    "ntp_suggestions.breaking_news_gcm_last_forced_subscription_time";
 
 }  // namespace prefs
 }  // namespace ntp_snippets

@@ -5,14 +5,12 @@
 // Custom bindings for the automation API.
 var AutomationNode = require('automationNode').AutomationNode;
 var AutomationRootNode = require('automationNode').AutomationRootNode;
-var automation = require('binding').Binding.create('automation');
+var automation = apiBridge || require('binding').Binding.create('automation');
 var automationInternal =
-    require('binding').Binding.create('automationInternal').generate();
-var eventBindings = require('event_bindings');
-var Event = eventBindings.Event;
+    getInternalApi ?
+        getInternalApi('automationInternal') :
+        require('binding').Binding.create('automationInternal').generate();
 var exceptionHandler = require('uncaught_exception_handler');
-var forEach = require('utils').forEach;
-var lastError = require('lastError');
 var logging = requireNative('logging');
 var nativeAutomationInternal = requireNative('automationInternal');
 var GetRoutingID = nativeAutomationInternal.GetRoutingID;
@@ -25,6 +23,12 @@ var AddTreeChangeObserver = nativeAutomationInternal.AddTreeChangeObserver;
 var RemoveTreeChangeObserver =
     nativeAutomationInternal.RemoveTreeChangeObserver;
 var GetFocusNative = nativeAutomationInternal.GetFocus;
+
+var jsLastError = bindingUtil ? undefined : require('lastError');
+function hasLastError() {
+  return bindingUtil ?
+      bindingUtil.hasLastError() : jsLastError.hasError(chrome);
+}
 
 /**
  * A namespace to export utility functions to other files in automation.
@@ -117,7 +121,7 @@ automation.registerCustomHook(function(bindingsAPI) {
     var params = { routingID: routingID, tabID: tabID };
     automationInternal.enableTab(params,
         function onEnable(id) {
-          if (lastError.hasError(chrome)) {
+          if (hasLastError()) {
             callback();
             return;
           }
@@ -140,7 +144,7 @@ automation.registerCustomHook(function(bindingsAPI) {
       // TODO(dtseng): Disable desktop tree once desktop object goes out of
       // scope.
       automationInternal.enableDesktop(routingID, function() {
-        if (lastError.hasError(chrome)) {
+        if (hasLastError()) {
           AutomationRootNode.destroy(DESKTOP_TREE_ID);
           callback();
           return;
@@ -281,11 +285,7 @@ automationInternal.onNodesRemoved.addListener(function(treeID, nodeIDs) {
 automationInternal.onAccessibilityEvent.addListener(function(eventParams) {
   var id = eventParams.treeID;
   var targetTree = AutomationRootNode.getOrCreate(id);
-
-  var isFocusEvent = false;
-  if (eventParams.eventType == 'focus') {
-    isFocusEvent = true;
-  } else if (eventParams.eventType == 'blur') {
+  if (eventParams.eventType == 'blur') {
     // Work around an issue where Chrome sends us 'blur' events on the
     // root node when nothing has focus, we need to treat those as focus
     // events but otherwise not handle blur events specially.
@@ -296,27 +296,31 @@ automationInternal.onAccessibilityEvent.addListener(function(eventParams) {
       eventParams.eventType == 'mediaStoppedPlaying') {
     // These events are global to the tree.
     eventParams.targetID = privates(targetTree).impl.id;
-  }
-
-  // When we get a focus event, ignore the actual event target, and instead
-  // check what node has focus globally. If that represents a focus change,
-  // fire a focus event on the correct target.
-  if (isFocusEvent) {
+  } else {
     var previousFocusedNode = automationUtil.focusedNode;
     automationUtil.updateFocusedNode();
-    if (automationUtil.focusedNode &&
-        automationUtil.focusedNode == previousFocusedNode) {
-      return;
-    }
 
-    if (automationUtil.focusedNode) {
-      targetTree = automationUtil.focusedNode.root;
-      eventParams.treeID = privates(targetTree).impl.treeID;
-      eventParams.targetID = privates(automationUtil.focusedNode).impl.id;
+    // Fire focus events if necessary.
+    if (automationUtil.focusedNode &&
+        automationUtil.focusedNode != previousFocusedNode) {
+      var eventParamsCopy = {};
+      for (var key in eventParams)
+        eventParamsCopy[key] = eventParams[key];
+      eventParamsCopy['eventType'] = 'focus';
+      eventParamsCopy['treeID'] =
+          privates(automationUtil.focusedNode.root).impl.treeID;
+      eventParamsCopy['targetID'] =
+          privates(automationUtil.focusedNode).impl.id;
+      privates(automationUtil.focusedNode.root)
+          .impl.onAccessibilityEvent(eventParamsCopy);
     }
   }
 
-  if (!privates(targetTree).impl.onAccessibilityEvent(eventParams))
+  // Note that focus type events have already been handled above if there was a
+  // focused node. All other events, even non-focus events that triggered a
+  // focus dispatch, still need to have their original event fired.
+  if ((!automationUtil.focusedNode || eventParams.eventType != 'focus') &&
+      !privates(targetTree).impl.onAccessibilityEvent(eventParams))
     return;
 
   // If we're not waiting on a callback to getTree(), we can early out here.
@@ -360,5 +364,14 @@ automationInternal.onAccessibilityTreeSerializationError.addListener(
   automationInternal.enableFrame(id);
 });
 
-var binding = automation.generate();
-exports.$set('binding', binding);
+automationInternal.onActionResult.addListener(
+    function(treeID, requestID, result) {
+  var targetTree = AutomationRootNode.get(treeID);
+  if (!targetTree)
+    return;
+
+  privates(targetTree).impl.onActionResult(requestID, result);
+    });
+
+if (!apiBridge)
+  exports.$set('binding', automation.generate());

@@ -8,9 +8,8 @@ blink_modules_sources("app_banner") {
   sources = [
     "AppBannerController.cpp",
     "AppBannerController.h",
-    "AppBannerPromptResult.cpp",
-    "AppBannerPromptResult.h",
     "BeforeInstallPromptEvent.cpp",
     "BeforeInstallPromptEvent.h",
+    "DOMWindowInstallation.h",
   ]
 }

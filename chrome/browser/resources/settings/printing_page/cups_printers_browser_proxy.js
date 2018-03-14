@@ -4,21 +4,25 @@
 
 /**
  * @fileoverview A helper object used from the "CUPS printing" section to
- * interact with the browser.
+ * interact with the browser. Used only on Chrome OS.
  */
 
 /**
  * @typedef {{
+ *   ppdManufacturer: string,
+ *   ppdModel: string,
  *   printerAddress: string,
+ *   printerAutoconf: boolean,
  *   printerDescription: string,
  *   printerId: string,
  *   printerManufacturer: string,
  *   printerModel: string,
+ *   printerMakeAndModel: string,
  *   printerName: string,
  *   printerPPDPath: string,
  *   printerProtocol: string,
  *   printerQueue: string,
- *   printerStatus: string
+ *   printerStatus: string,
  * }}
  */
 var CupsPrinterInfo;
@@ -46,108 +50,186 @@ var ManufacturersInfo;
  */
 var ModelsInfo;
 
+/**
+ * @typedef {{
+ *   manufacturer: string,
+ *   model: string,
+ *   makeAndModel: string,
+ *   autoconf: boolean
+ * }}
+ */
+var PrinterMakeModel;
+
+/**
+ * @typedef {{
+ *   ppdManufacturer: string,
+ *   ppdModel: string
+ * }}
+ */
+var PrinterPpdMakeModel;
+
+/**
+ *  @enum {number}
+ *  These values must be kept in sync with the PrinterSetupResult enum in
+ *  chrome/browser/chromeos/printing/printer_configurer.h.
+ */
+var PrinterSetupResult = {
+  FATAL_ERROR: 0,
+  SUCCESS: 1,
+  PRINTER_UNREACHABLE: 2,
+  DBUS_ERROR: 3,
+  PPD_TOO_LARGE: 10,
+  INVALID_PPD: 11,
+  PPD_NOT_FOUND: 12,
+  PPD_UNRETRIEVABLE: 13,
+};
+
+/**
+ * @typedef {{
+ *   message: string
+ * }}
+ */
+var QueryFailure;
+
 cr.define('settings', function() {
   /** @interface */
-  function CupsPrintersBrowserProxy() {}
-
-  CupsPrintersBrowserProxy.prototype = {
-
+  class CupsPrintersBrowserProxy {
     /**
      * @return {!Promise<!CupsPrintersList>}
      */
-    getCupsPrintersList: function() {},
+    getCupsPrintersList() {}
 
     /**
      * @param {string} printerId
      * @param {string} printerName
      */
-    updateCupsPrinter: function(printerId, printerName) {},
+    updateCupsPrinter(printerId, printerName) {}
 
     /**
      * @param {string} printerId
      * @param {string} printerName
      */
-    removeCupsPrinter: function(printerId, printerName) {},
+    removeCupsPrinter(printerId, printerName) {}
 
     /**
      * @return {!Promise<string>} The full path of the printer PPD file.
      */
-    getCupsPrinterPPDPath: function() {},
+    getCupsPrinterPPDPath() {}
 
     /**
      * @param {!CupsPrinterInfo} newPrinter
      */
-    addCupsPrinter: function(newPrinter) {},
+    addCupsPrinter(newPrinter) {}
 
-    startDiscoveringPrinters: function() {},
-
-    stopDiscoveringPrinters: function() {},
+    startDiscoveringPrinters() {}
+    stopDiscoveringPrinters() {}
 
     /**
      * @return {!Promise<!ManufacturersInfo>}
      */
-    getCupsPrinterManufacturersList: function() {},
+    getCupsPrinterManufacturersList() {}
 
     /**
      * @param {string} manufacturer
      * @return {!Promise<!ModelsInfo>}
      */
-    getCupsPrinterModelsList: function(manufacturer) {},
-  };
+    getCupsPrinterModelsList(manufacturer) {}
+
+    /**
+     * @param {!CupsPrinterInfo} newPrinter
+     * @return {!Promise<!PrinterMakeModel>}
+     */
+    getPrinterInfo(newPrinter) {}
+
+    /**
+     * @param {string} printerId
+     * @return {!Promise<!PrinterPpdMakeModel>}
+     */
+    getPrinterPpdManufacturerAndModel(printerId) {}
+
+    /**
+     * @param{string} printerId
+     */
+    addDiscoveredPrinter(printerId) {}
+
+    /**
+     * Report to the handler that setup was cancelled.
+     * @param {!CupsPrinterInfo} newPrinter
+     */
+    cancelPrinterSetUp(newPrinter) {}
+  }
 
   /**
-   * @constructor
    * @implements {settings.CupsPrintersBrowserProxy}
    */
-  function CupsPrintersBrowserProxyImpl() {}
-  cr.addSingletonGetter(CupsPrintersBrowserProxyImpl);
-
-  CupsPrintersBrowserProxyImpl.prototype = {
+  class CupsPrintersBrowserProxyImpl {
     /** @override */
-    getCupsPrintersList: function() {
+    getCupsPrintersList() {
       return cr.sendWithPromise('getCupsPrintersList');
-    },
+    }
 
     /** @override */
-    updateCupsPrinter: function(printerId, printerName) {
+    updateCupsPrinter(printerId, printerName) {
       chrome.send('updateCupsPrinter', [printerId, printerName]);
-    },
+    }
 
     /** @override */
-    removeCupsPrinter: function(printerId, printerName) {
+    removeCupsPrinter(printerId, printerName) {
       chrome.send('removeCupsPrinter', [printerId, printerName]);
-    },
+    }
 
     /** @override */
-    addCupsPrinter: function(newPrinter) {
+    addCupsPrinter(newPrinter) {
       chrome.send('addCupsPrinter', [newPrinter]);
-    },
+    }
 
     /** @override */
-    getCupsPrinterPPDPath: function() {
+    getCupsPrinterPPDPath() {
       return cr.sendWithPromise('selectPPDFile');
-    },
+    }
 
     /** @override */
-    startDiscoveringPrinters: function() {
+    startDiscoveringPrinters() {
       chrome.send('startDiscoveringPrinters');
-    },
+    }
 
     /** @override */
-    stopDiscoveringPrinters: function() {
+    stopDiscoveringPrinters() {
       chrome.send('stopDiscoveringPrinters');
-    },
+    }
 
     /** @override */
-    getCupsPrinterManufacturersList: function() {
+    getCupsPrinterManufacturersList() {
       return cr.sendWithPromise('getCupsPrinterManufacturersList');
-    },
+    }
 
     /** @override */
-    getCupsPrinterModelsList: function(manufacturer) {
+    getCupsPrinterModelsList(manufacturer) {
       return cr.sendWithPromise('getCupsPrinterModelsList', manufacturer);
-    },
-  };
+    }
+
+    /** @override */
+    getPrinterInfo(newPrinter) {
+      return cr.sendWithPromise('getPrinterInfo', newPrinter);
+    }
+
+    /** @override */
+    getPrinterPpdManufacturerAndModel(printerId) {
+      return cr.sendWithPromise('getPrinterPpdManufacturerAndModel', printerId);
+    }
+
+    /** @override */
+    addDiscoveredPrinter(printerId) {
+      chrome.send('addDiscoveredPrinter', [printerId]);
+    }
+
+    /** @override */
+    cancelPrinterSetUp(newPrinter) {
+      chrome.send('cancelPrinterSetUp', [newPrinter]);
+    }
+  }
+
+  cr.addSingletonGetter(CupsPrintersBrowserProxyImpl);
 
   return {
     CupsPrintersBrowserProxy: CupsPrintersBrowserProxy,

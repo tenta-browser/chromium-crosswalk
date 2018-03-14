@@ -11,22 +11,19 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/content_settings/host_content_settings_map_factory.h"
-#import "ios/chrome/browser/ui/settings/settings_collection_view_controller.h"
-#include "ios/chrome/browser/ui/tools_menu/tools_menu_constants.h"
-#import "ios/chrome/browser/ui/tools_menu/tools_popup_controller.h"
+#include "ios/chrome/browser/ui/tools_menu/public/tools_menu_constants.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #include "ios/chrome/test/app/navigation_test_util.h"
 #include "ios/chrome/test/app/web_view_interaction_test_util.h"
 #include "ios/chrome/test/earl_grey/accessibility_util.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
-#import "ios/chrome/test/earl_grey/chrome_assertions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
-#import "ios/web/public/test/http_server.h"
-#include "ios/web/public/test/http_server_util.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#include "ios/web/public/test/http_server/http_server_util.h"
 #import "ios/web/public/test/web_view_interaction_test_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "url/gurl.h"
@@ -35,7 +32,9 @@
 #error "This file requires ARC support."
 #endif
 
+using chrome_test_util::ContentSettingsButton;
 using chrome_test_util::NavigationBarDoneButton;
+using chrome_test_util::SettingsMenuBackButton;
 
 namespace {
 
@@ -53,54 +52,9 @@ NSString* kBlockPopupsResponseTemplate =
 NSString* kOpenPopupScript = @"document.getElementById('open-window').click()";
 const std::string kOpenedWindowResponse = "Opened window";
 
-// Opens the block popups settings page.  Must be called from the NTP.
-void OpenBlockPopupsSettings() {
-  const CGFloat scroll_displacement = 50.0;
-  id<GREYMatcher> tools_menu_table_view_matcher =
-      grey_accessibilityID(kToolsMenuTableViewId);
-  id<GREYMatcher> settings_button_matcher =
-      grey_accessibilityID(kToolsMenuSettingsId);
-  id<GREYMatcher> content_settings_button_matcher =
-      chrome_test_util::ButtonWithAccessibilityLabelId(
-          IDS_IOS_CONTENT_SETTINGS_TITLE);
-  id<GREYMatcher> settings_collection_view_matcher =
-      grey_accessibilityID(kSettingsCollectionViewId);
-  id<GREYMatcher> block_popups_button_matcher =
-      chrome_test_util::ButtonWithAccessibilityLabelId(IDS_IOS_BLOCK_POPUPS);
-
-  [ChromeEarlGreyUI openToolsMenu];
-  [[[EarlGrey selectElementWithMatcher:settings_button_matcher]
-         usingSearchAction:grey_scrollInDirection(kGREYDirectionDown,
-                                                  scroll_displacement)
-      onElementWithMatcher:tools_menu_table_view_matcher]
-      performAction:grey_tap()];
-
-  [[[EarlGrey selectElementWithMatcher:content_settings_button_matcher]
-         usingSearchAction:grey_scrollInDirection(kGREYDirectionDown,
-                                                  scroll_displacement)
-      onElementWithMatcher:settings_collection_view_matcher]
-      performAction:grey_tap()];
-
-  [[EarlGrey selectElementWithMatcher:block_popups_button_matcher]
-      performAction:grey_tap()];
-}
-
-// Exits out of settings.  Must be called from the block popups settings page.
-void CloseSettings() {
-  [[EarlGrey
-      selectElementWithMatcher:grey_allOf(
-                                   grey_accessibilityID(@"ic_arrow_back"),
-                                   grey_accessibilityTrait(
-                                       UIAccessibilityTraitButton),
-                                   nil)] performAction:grey_tap()];
-  [[EarlGrey
-      selectElementWithMatcher:grey_allOf(
-                                   grey_accessibilityID(@"ic_arrow_back"),
-                                   grey_accessibilityTrait(
-                                       UIAccessibilityTraitButton),
-                                   nil)] performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
-      performAction:grey_tap()];
+// Returns matcher for the block popups settings menu button.
+id<GREYMatcher> BlockPopupsSettingsButton() {
+  return chrome_test_util::ButtonWithAccessibilityLabelId(IDS_IOS_BLOCK_POPUPS);
 }
 
 // ScopedBlockPopupsPref modifies the block popups preference and resets the
@@ -182,13 +136,23 @@ class ScopedBlockPopupsException {
 // Opens the block popups settings page and verifies that accessibility is set
 // up properly.
 - (void)testAccessibilityOfBlockPopupSettings {
-  OpenBlockPopupsSettings();
+  [ChromeEarlGreyUI openSettingsMenu];
+  [ChromeEarlGreyUI tapSettingsMenuButton:ContentSettingsButton()];
+  [[EarlGrey selectElementWithMatcher:BlockPopupsSettingsButton()]
+      performAction:grey_tap()];
   [[EarlGrey
       selectElementWithMatcher:grey_accessibilityID(
                                    @"block_popups_settings_view_controller")]
       assertWithMatcher:grey_notNil()];
   chrome_test_util::VerifyAccessibilityForCurrentScreen();
-  CloseSettings();
+
+  // Close the settings menu.
+  [[EarlGrey selectElementWithMatcher:SettingsMenuBackButton()]
+      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:SettingsMenuBackButton()]
+      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+      performAction:grey_tap()];
 }
 
 // Tests that popups are opened in new tabs when the preference is set to ALLOW.
@@ -205,13 +169,13 @@ class ScopedBlockPopupsException {
 
   ScopedBlockPopupsPref prefSetter(CONTENT_SETTING_ALLOW);
   [ChromeEarlGrey loadURL:blockPopupsURL];
-  chrome_test_util::AssertMainTabCount(1U);
+  [ChromeEarlGrey waitForMainTabCount:1];
 
   // Request popup and make sure the popup opened in a new tab.
-  __unsafe_unretained NSError* error = nil;
+  NSError* error = nil;
   chrome_test_util::ExecuteJavaScript(kOpenPopupScript, &error);
   GREYAssert(!error, @"Error during script execution: %@", error);
-  chrome_test_util::AssertMainTabCount(2U);
+  [ChromeEarlGrey waitForMainTabCount:2];
 
   // No infobar should be displayed.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::
@@ -235,12 +199,12 @@ class ScopedBlockPopupsException {
 
   ScopedBlockPopupsPref prefSetter(CONTENT_SETTING_BLOCK);
   [ChromeEarlGrey loadURL:blockPopupsURL];
-  chrome_test_util::AssertMainTabCount(1U);
+  [ChromeEarlGrey waitForMainTabCount:1];
 
   // Request popup, then make sure it was blocked and an infobar was displayed.
   // The window.open() call is run via async JS, so the infobar may not open
   // immediately.
-  __unsafe_unretained NSError* error = nil;
+  NSError* error = nil;
   chrome_test_util::ExecuteJavaScript(kOpenPopupScript, &error);
   GREYAssert(!error, @"Error during script execution: %@", error);
 
@@ -256,7 +220,7 @@ class ScopedBlockPopupsException {
                                     error:&error];
                     return error == nil;
                   }] waitWithTimeout:4.0];
-  chrome_test_util::AssertMainTabCount(1U);
+  [ChromeEarlGrey waitForMainTabCount:1];
 }
 
 // Tests that the "exceptions" section on the settings page is hidden and
@@ -266,7 +230,10 @@ class ScopedBlockPopupsException {
   ScopedBlockPopupsPref prefSetter(CONTENT_SETTING_BLOCK);
   ScopedBlockPopupsException exceptionSetter(allowedPattern);
 
-  OpenBlockPopupsSettings();
+  [ChromeEarlGreyUI openSettingsMenu];
+  [ChromeEarlGreyUI tapSettingsMenuButton:ContentSettingsButton()];
+  [[EarlGrey selectElementWithMatcher:BlockPopupsSettingsButton()]
+      performAction:grey_tap()];
 
   // Make sure that the "example.com" exception is listed.
   [[EarlGrey selectElementWithMatcher:grey_text(base::SysUTF8ToNSString(
@@ -303,7 +270,13 @@ class ScopedBlockPopupsException {
                                    IDS_IOS_NAVIGATION_BAR_EDIT_BUTTON))]
       assertWithMatcher:grey_sufficientlyVisible()];
 
-  CloseSettings();
+  // Close the settings menu.
+  [[EarlGrey selectElementWithMatcher:SettingsMenuBackButton()]
+      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:SettingsMenuBackButton()]
+      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
+      performAction:grey_tap()];
 }
 
 @end

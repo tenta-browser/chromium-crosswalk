@@ -60,6 +60,7 @@ def main(args):
                            "the action's first output.")
   parser.add_argument('--test-runner-path',
                       help='Path to test_runner.py (optional).')
+
   # We need to intercept any test runner path arguments and make all
   # of the paths relative to the output script directory.
   group = parser.add_argument_group('Test runner path arguments.')
@@ -69,15 +70,19 @@ def main(args):
   group.add_argument('--additional-apk-incremental', action='append',
                      dest='additional_apks_incremental', default=[])
   group.add_argument('--apk-under-test')
-  group.add_argument('--apk-under-test-incremental-install-script')
+  group.add_argument('--apk-under-test-incremental-install-json')
   group.add_argument('--executable-dist-dir')
   group.add_argument('--isolate-file-path')
   group.add_argument('--output-directory')
   group.add_argument('--runtime-deps-path')
   group.add_argument('--test-apk')
   group.add_argument('--test-jar')
-  group.add_argument('--test-apk-incremental-install-script')
+  group.add_argument('--test-apk-incremental-install-json')
   group.add_argument('--coverage-dir')
+  group.add_argument('--android-manifest-path')
+  group.add_argument('--resource-zips')
+  group.add_argument('--robolectric-runtime-deps-dir')
+  group.add_argument('--non-native-packed-relocations')
   args, test_runner_args = parser.parse_known_args(
       build_utils.ExpandFileArgs(args))
 
@@ -90,6 +95,8 @@ def main(args):
   test_runner_path = RelativizePathToScript(test_runner_path)
 
   test_runner_path_args = []
+  if 'True' == args.non_native_packed_relocations:
+    test_runner_args.append('--non-native-packed-relocations')
   if args.additional_apk_list:
     args.additional_apks.extend(
         build_utils.ParseGnList(args.additional_apk_list))
@@ -105,11 +112,11 @@ def main(args):
   if args.apk_under_test:
     test_runner_path_args.append(
         ('--apk-under-test', RelativizePathToScript(args.apk_under_test)))
-  if args.apk_under_test_incremental_install_script:
+  if args.apk_under_test_incremental_install_json:
     test_runner_path_args.append(
-        ('--apk-under-test-incremental-install-script',
+        ('--apk-under-test-incremental-install-json',
          RelativizePathToScript(
-             args.apk_under_test_incremental_install_script)))
+             args.apk_under_test_incremental_install_json)))
   if args.executable_dist_dir:
     test_runner_path_args.append(
         ('--executable-dist-dir',
@@ -129,13 +136,25 @@ def main(args):
   if args.test_jar:
     test_runner_path_args.append(
         ('--test-jar', RelativizePathToScript(args.test_jar)))
-  if args.test_apk_incremental_install_script:
+  if args.test_apk_incremental_install_json:
     test_runner_path_args.append(
-        ('--test-apk-incremental-install-script',
-         RelativizePathToScript(args.test_apk_incremental_install_script)))
+        ('--test-apk-incremental-install-json',
+         RelativizePathToScript(args.test_apk_incremental_install_json)))
   if args.coverage_dir:
     test_runner_path_args.append(
         ('--coverage-dir', RelativizePathToScript(args.coverage_dir)))
+  if args.android_manifest_path:
+    test_runner_path_args.append(
+        ('--android-manifest-path',
+         RelativizePathToScript(args.android_manifest_path)))
+  if args.resource_zips:
+    test_runner_path_args.extend(
+        ('--resource-zip', RelativizePathToScript(r))
+        for r in build_utils.ParseGnList(args.resource_zips))
+  if args.robolectric_runtime_deps_dir:
+    test_runner_path_args.append(
+        ('--robolectric-runtime-deps-dir',
+         RelativizePathToScript(args.robolectric_runtime_deps_dir)))
 
   with open(args.script_output_path, 'w') as script:
     script.write(SCRIPT_TEMPLATE.format(

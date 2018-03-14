@@ -20,7 +20,7 @@
 #include "extensions/browser/event_listener_map.h"
 #include "extensions/browser/extensions_test.h"
 #include "extensions/common/extension_builder.h"
-#include "extensions/common/test_util.h"
+#include "extensions/common/extension_messages.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using base::DictionaryValue;
@@ -37,7 +37,7 @@ class MockEventRouterObserver : public EventRouter::Observer {
   MockEventRouterObserver()
       : listener_added_count_(0),
         listener_removed_count_(0) {}
-  virtual ~MockEventRouterObserver() {}
+  ~MockEventRouterObserver() override {}
 
   int listener_added_count() const { return listener_added_count_; }
   int listener_removed_count() const { return listener_removed_count_; }
@@ -68,29 +68,27 @@ class MockEventRouterObserver : public EventRouter::Observer {
   DISALLOW_COPY_AND_ASSIGN(MockEventRouterObserver);
 };
 
-typedef base::Callback<std::unique_ptr<EventListener>(
-    const std::string&,           // event_name
-    content::RenderProcessHost*,  // process
-    base::DictionaryValue*        // filter (takes ownership)
-    )>
-    EventListenerConstructor;
+using EventListenerConstructor = base::Callback<std::unique_ptr<EventListener>(
+    const std::string& /* event_name */,
+    content::RenderProcessHost* /* process */,
+    std::unique_ptr<base::DictionaryValue> /* filter */)>;
 
 std::unique_ptr<EventListener> CreateEventListenerForExtension(
     const std::string& extension_id,
     const std::string& event_name,
     content::RenderProcessHost* process,
-    base::DictionaryValue* filter) {
+    std::unique_ptr<base::DictionaryValue> filter) {
   return EventListener::ForExtension(event_name, extension_id, process,
-                                     base::WrapUnique(filter));
+                                     std::move(filter));
 }
 
 std::unique_ptr<EventListener> CreateEventListenerForURL(
     const GURL& listener_url,
     const std::string& event_name,
     content::RenderProcessHost* process,
-    base::DictionaryValue* filter) {
+    std::unique_ptr<base::DictionaryValue> filter) {
   return EventListener::ForURL(event_name, listener_url, process,
-                               base::WrapUnique(filter));
+                               std::move(filter));
 }
 
 // Creates an extension.  If |component| is true, it is created as a component
@@ -99,7 +97,7 @@ std::unique_ptr<EventListener> CreateEventListenerForURL(
 scoped_refptr<Extension> CreateExtension(bool component, bool persistent) {
   ExtensionBuilder builder;
   std::unique_ptr<base::DictionaryValue> manifest =
-      base::MakeUnique<base::DictionaryValue>();
+      std::make_unique<base::DictionaryValue>();
   manifest->SetString("name", "foo");
   manifest->SetString("version", "1.0.0");
   manifest->SetInteger("manifest_version", 2);
@@ -114,14 +112,14 @@ scoped_refptr<Extension> CreateExtension(bool component, bool persistent) {
 
 std::unique_ptr<DictionaryValue> CreateHostSuffixFilter(
     const std::string& suffix) {
-  std::unique_ptr<DictionaryValue> filter(new DictionaryValue());
-  std::unique_ptr<ListValue> filter_list(new ListValue());
-  std::unique_ptr<DictionaryValue> filter_dict(new DictionaryValue());
+  auto filter_dict = std::make_unique<DictionaryValue>();
+  filter_dict->Set("hostSuffix", std::make_unique<Value>(suffix));
 
-  filter_dict->Set("hostSuffix", base::MakeUnique<Value>(suffix));
+  auto filter_list = std::make_unique<ListValue>();
   filter_list->Append(std::move(filter_dict));
-  filter->Set("url", std::move(filter_list));
 
+  auto filter = std::make_unique<DictionaryValue>();
+  filter->Set("url", std::move(filter_list));
   return filter;
 }
 
@@ -129,7 +127,8 @@ std::unique_ptr<DictionaryValue> CreateHostSuffixFilter(
 
 class EventRouterTest : public ExtensionsTest {
  public:
-  EventRouterTest() {}
+  EventRouterTest()
+      : ExtensionsTest(std::make_unique<content::TestBrowserThreadBundle>()) {}
 
  protected:
   // Tests adding and removing observers from EventRouter.
@@ -176,7 +175,6 @@ class EventRouterTest : public ExtensionsTest {
   }
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
   base::HistogramTester histogram_tester_;
 
   DISALLOW_COPY_AND_ASSIGN(EventRouterTest);
@@ -188,9 +186,9 @@ class EventRouterFilterTest : public ExtensionsTest {
 
   void SetUp() override {
     ExtensionsTest::SetUp();
-    render_process_host_.reset(
-        new content::MockRenderProcessHost(browser_context()));
-    ASSERT_TRUE(EventRouter::Get(browser_context()));  // constructs EventRouter
+    render_process_host_ =
+        std::make_unique<content::MockRenderProcessHost>(browser_context());
+    ASSERT_TRUE(event_router());  // constructs EventRouter
   }
 
   void TearDown() override {
@@ -205,7 +203,8 @@ class EventRouterFilterTest : public ExtensionsTest {
   EventRouter* event_router() { return EventRouter::Get(browser_context()); }
 
   const DictionaryValue* GetFilteredEvents(const std::string& extension_id) {
-    return event_router()->GetFilteredEvents(extension_id);
+    return event_router()->GetFilteredEvents(
+        extension_id, EventRouter::RegisteredEventType::kLazy);
   }
 
   bool ContainsFilter(const std::string& extension_id,
@@ -259,9 +258,9 @@ TEST_F(EventRouterTest, GetBaseEventName) {
 // Tests adding and removing observers from EventRouter.
 void EventRouterTest::RunEventRouterObserverTest(
     const EventListenerConstructor& constructor) {
-  EventRouter router(NULL, NULL);
-  std::unique_ptr<EventListener> listener =
-      constructor.Run("event_name", NULL, new base::DictionaryValue());
+  EventRouter router(nullptr, nullptr);
+  std::unique_ptr<EventListener> listener = constructor.Run(
+      "event_name", nullptr, std::make_unique<base::DictionaryValue>());
 
   // Add/remove works without any observers.
   router.OnListenerAdded(listener.get());
@@ -296,8 +295,8 @@ void EventRouterTest::RunEventRouterObserverTest(
   // Adding a listener with a sub-event notifies the main observer with
   // proper details.
   matching_observer.Reset();
-  std::unique_ptr<EventListener> sub_event_listener =
-      constructor.Run("event_name/1", NULL, new base::DictionaryValue());
+  std::unique_ptr<EventListener> sub_event_listener = constructor.Run(
+      "event_name/1", nullptr, std::make_unique<base::DictionaryValue>());
   router.OnListenerAdded(sub_event_listener.get());
   EXPECT_EQ(1, matching_observer.listener_added_count());
   EXPECT_EQ(0, matching_observer.listener_removed_count());
@@ -322,8 +321,8 @@ TEST_F(EventRouterTest, EventRouterObserverForURLs) {
 }
 
 TEST_F(EventRouterTest, TestReportEvent) {
-  EventRouter router(browser_context(), NULL);
-  scoped_refptr<Extension> normal = test_util::CreateEmptyExtension("id1");
+  EventRouter router(browser_context(), nullptr);
+  scoped_refptr<Extension> normal = ExtensionBuilder("Test").Build();
   router.ReportEvent(events::HistogramValue::FOR_TEST, normal.get(),
                      false /** did_enqueue */);
   ExpectHistogramCounts(1 /** Dispatch */, 0 /** DispatchToComponent */,
@@ -372,9 +371,9 @@ TEST_F(EventRouterFilterTest, Basic) {
   for (size_t i = 0; i < arraysize(kHostSuffixes); ++i) {
     std::unique_ptr<base::DictionaryValue> filter =
         CreateHostSuffixFilter(kHostSuffixes[i]);
-    EventRouter::Get(browser_context())
-        ->AddFilteredEventListener(kEventName, render_process_host(),
-                                   kExtensionId, *filter, true);
+    event_router()->AddFilteredEventListener(kEventName, render_process_host(),
+                                             kExtensionId, base::nullopt,
+                                             *filter, true);
     filters.push_back(std::move(filter));
   }
 
@@ -396,21 +395,24 @@ TEST_F(EventRouterFilterTest, Basic) {
 
   // Remove the second filter.
   event_router()->RemoveFilteredEventListener(kEventName, render_process_host(),
-                                              kExtensionId, *filters[1], true);
+                                              kExtensionId, base::nullopt,
+                                              *filters[1], true);
   ASSERT_TRUE(ContainsFilter(kExtensionId, kEventName, *filters[0]));
   ASSERT_FALSE(ContainsFilter(kExtensionId, kEventName, *filters[1]));
   ASSERT_TRUE(ContainsFilter(kExtensionId, kEventName, *filters[2]));
 
   // Remove the first filter.
   event_router()->RemoveFilteredEventListener(kEventName, render_process_host(),
-                                              kExtensionId, *filters[0], true);
+                                              kExtensionId, base::nullopt,
+                                              *filters[0], true);
   ASSERT_FALSE(ContainsFilter(kExtensionId, kEventName, *filters[0]));
   ASSERT_FALSE(ContainsFilter(kExtensionId, kEventName, *filters[1]));
   ASSERT_TRUE(ContainsFilter(kExtensionId, kEventName, *filters[2]));
 
   // Remove the third filter.
   event_router()->RemoveFilteredEventListener(kEventName, render_process_host(),
-                                              kExtensionId, *filters[2], true);
+                                              kExtensionId, base::nullopt,
+                                              *filters[2], true);
   ASSERT_FALSE(ContainsFilter(kExtensionId, kEventName, *filters[0]));
   ASSERT_FALSE(ContainsFilter(kExtensionId, kEventName, *filters[1]));
   ASSERT_FALSE(ContainsFilter(kExtensionId, kEventName, *filters[2]));

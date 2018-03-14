@@ -45,6 +45,7 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
 
   static GURL SanitizeFrontendURL(const GURL& url);
   static bool IsValidFrontendURL(const GURL& url);
+  static bool IsValidRemoteFrontendURL(const GURL& url);
 
   class Delegate {
    public:
@@ -57,6 +58,7 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
     virtual void SetIsDocked(bool is_docked) = 0;
     virtual void OpenInNewTab(const std::string& url) = 0;
     virtual void SetWhitelistedShortcuts(const std::string& message) = 0;
+    virtual void SetEyeDropperActive(bool active) = 0;
     virtual void OpenNodeFrontend() = 0;
 
     virtual void InspectedContentsClosing() = 0;
@@ -64,6 +66,7 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
     virtual void ReadyForTest() = 0;
     virtual InfoBarService* GetInfoBarService() = 0;
     virtual void RenderProcessGone(bool crashed) = 0;
+    virtual void ShowCertificateViewer(const std::string& cert_chain) = 0;
   };
 
   explicit DevToolsUIBindings(content::WebContents* web_contents);
@@ -90,8 +93,7 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
   // content::DevToolsAgentHostClient implementation.
   void DispatchProtocolMessage(content::DevToolsAgentHost* agent_host,
                                const std::string& message) override;
-  void AgentHostClosed(content::DevToolsAgentHost* agent_host,
-                       bool replaced_with_another_client) override;
+  void AgentHostClosed(content::DevToolsAgentHost* agent_host) override;
 
   // DevToolsEmbedderMessageDispatcher::Delegate implementation.
   void ActivateWindow() override;
@@ -112,7 +114,7 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
   void AppendToFile(const std::string& url,
                     const std::string& content) override;
   void RequestFileSystems() override;
-  void AddFileSystem(const std::string& file_system_path) override;
+  void AddFileSystem(const std::string& type) override;
   void RemoveFileSystem(const std::string& file_system_path) override;
   void UpgradeDraggedFileSystemPermissions(
       const std::string& file_system_url) override;
@@ -123,6 +125,7 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
                     const std::string& file_system_path,
                     const std::string& query) override;
   void SetWhitelistedShortcuts(const std::string& message) override;
+  void SetEyeDropperActive(bool active) override;
   void ShowCertificateViewer(const std::string& cert_chain) override;
   void ZoomIn() override;
   void ZoomOut() override;
@@ -130,7 +133,9 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
   void SetDevicesDiscoveryConfig(
       bool discover_usb_devices,
       bool port_forwarding_enabled,
-      const std::string& port_forwarding_config) override;
+      const std::string& port_forwarding_config,
+      bool network_discovery_enabled,
+      const std::string& network_discovery_config) override;
   void SetDevicesUpdatesEnabled(bool enabled) override;
   void PerformActionOnRemotePage(const std::string& page_id,
                                  const std::string& action) override;
@@ -152,6 +157,8 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
   void ClearPreferences() override;
   void Reattach(const DispatchCallback& callback) override;
   void ReadyForTest() override;
+  void RegisterExtensionsAPI(const std::string& origin,
+                             const std::string& script) override;
 
   // net::URLFetcherDelegate overrides.
   void OnURLFetchComplete(const net::URLFetcher* source) override;
@@ -160,6 +167,7 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
 
   void SendMessageAck(int request_id,
                       const base::Value* arg1);
+  void InnerAttach();
 
   // DevToolsAndroidBridge::DeviceCountListener override:
   void DeviceCountChanged(int count) override;
@@ -168,6 +176,7 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
   virtual void DevicesUpdated(const std::string& source,
                               const base::ListValue& targets);
 
+  void ReadyToCommitNavigation(content::NavigationHandle* navigation_handle);
   void DocumentAvailableInMainFrame();
   void DocumentOnLoadCompletedInMainFrame();
   void DidNavigateMainFrame();
@@ -181,14 +190,15 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
 
   // DevToolsFileHelper::Delegate overrides.
   void FileSystemAdded(
-      const DevToolsFileHelper::FileSystem& file_system) override;
+      const std::string& error,
+      const DevToolsFileHelper::FileSystem* file_system) override;
   void FileSystemRemoved(const std::string& file_system_path) override;
   void FilePathsChanged(const std::vector<std::string>& changed_paths,
                         const std::vector<std::string>& added_paths,
                         const std::vector<std::string>& removed_paths) override;
 
   // DevToolsFileHelper callbacks.
-  void FileSavedAs(const std::string& url);
+  void FileSavedAs(const std::string& url, const std::string& file_system_path);
   void CanceledFileSaveAs(const std::string& url);
   void AppendedTo(const std::string& url);
   void IndexingTotalWorkCalculated(int request_id,
@@ -204,7 +214,6 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
   typedef base::Callback<void(bool)> InfoBarCallback;
   void ShowDevToolsConfirmInfoBar(const base::string16& message,
                                   const InfoBarCallback& callback);
-  void UpdateFrontendHost(content::NavigationHandle* navigation_handle);
 
   // Extensions support.
   void AddDevToolsExtensionsToClient();
@@ -237,6 +246,8 @@ class DevToolsUIBindings : public DevToolsEmbedderMessageDispatcher::Delegate,
   GURL url_;
   using PendingRequestsMap = std::map<const net::URLFetcher*, DispatchCallback>;
   PendingRequestsMap pending_requests_;
+  using ExtensionsAPIs = std::map<std::string, std::string>;
+  ExtensionsAPIs extensions_api_;
   base::WeakPtrFactory<DevToolsUIBindings> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DevToolsUIBindings);

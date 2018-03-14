@@ -1,10 +1,8 @@
 include_rules = [
   # Allow inclusion of specific components that we depend on.
   # See comment in content/DEPS for which components are allowed.
-  "+components/mime_util",
-  "+components/scheduler/child",
-  "+components/scheduler/common",
   "+components/tracing",
+  "+components/variations/child_process_field_trial_syncer.h",
   "+components/webcrypto",
 
   "+content/app/strings/grit",  # For generated headers
@@ -14,7 +12,7 @@ include_rules = [
   "+services/device/public/interfaces",
   "+services/resource_coordinator",
   "+services/service_manager",
-  "+services/service_manager",
+  "+third_party/WebKit/common",
   "+v8/include/v8.h"
 ]
 

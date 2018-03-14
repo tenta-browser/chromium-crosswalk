@@ -6,7 +6,6 @@
 
 #include "base/location.h"
 #include "base/logging.h"
-#include "components/sync/syncable/directory.h"
 #include "components/sync/syncable/entry.h"
 #include "components/sync/syncable/mutable_entry.h"
 #include "components/sync/syncable/syncable_id.h"
@@ -16,7 +15,8 @@ namespace syncer {
 namespace syncable {
 
 // Returns the number of unsynced entries.
-int GetUnsyncedEntries(BaseTransaction* trans, std::vector<int64_t>* handles) {
+int GetUnsyncedEntries(BaseTransaction* trans,
+                       Directory::Metahandles* handles) {
   trans->directory()->GetUnsyncedMetaHandles(trans, handles);
   DVLOG_IF(1, !handles->empty()) << "Have " << handles->size()
                                  << " unsynced items.";
@@ -49,7 +49,7 @@ void ChangeEntryIDAndUpdateChildren(BaseWriteTransaction* trans,
   Id old_id = entry->GetId();
   if (!entry->PutId(new_id)) {
     Entry old_entry(trans, GET_BY_ID, new_id);
-    CHECK(old_entry.good());
+    DCHECK(old_entry.good());
     LOG(FATAL) << "Attempt to change ID to " << new_id
                << " conflicts with existing entry.\n\n"
                << *entry << "\n\n"
@@ -62,7 +62,7 @@ void ChangeEntryIDAndUpdateChildren(BaseWriteTransaction* trans,
     Directory::Metahandles::iterator i = children.begin();
     while (i != children.end()) {
       ModelNeutralMutableEntry child_entry(trans, GET_BY_HANDLE, *i++);
-      CHECK(child_entry.good());
+      DCHECK(child_entry.good());
       // Change the parent ID of the entry unless it was unset (implicit)
       if (!child_entry.GetParentId().IsNull()) {
         // Use the unchecked setter here to avoid touching the child's
@@ -80,7 +80,7 @@ void ChangeEntryIDAndUpdateChildren(BaseWriteTransaction* trans,
 // 1. Sets unrecoverable error on transaction.
 // 2. Returns false.
 bool SyncAssert(bool condition,
-                const tracked_objects::Location& location,
+                const base::Location& location,
                 const char* msg,
                 BaseTransaction* trans) {
   if (!condition) {

@@ -14,9 +14,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
-#include "content/public/child/v8_value_converter.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
+#include "content/public/renderer/v8_value_converter.h"
 #include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/WebKit/public/web/WebDOMMessageEvent.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
@@ -43,7 +43,7 @@ void LoadablePluginPlaceholder::BlockForPowerSaverPoster() {
 
   DCHECK(render_frame());
   render_frame()->RegisterPeripheralPlugin(
-      url::Origin(GURL(GetPluginParams().url)),
+      url::Origin::Create(GURL(GetPluginParams().url)),
       base::Bind(&LoadablePluginPlaceholder::MarkPluginEssential,
                  weak_factory_.GetWeakPtr(),
                  PluginInstanceThrottler::UNTHROTTLE_METHOD_BY_WHITELIST));
@@ -59,10 +59,9 @@ void LoadablePluginPlaceholder::SetPremadePlugin(
 
 LoadablePluginPlaceholder::LoadablePluginPlaceholder(
     RenderFrame* render_frame,
-    blink::WebLocalFrame* frame,
     const blink::WebPluginParams& params,
     const std::string& html_data)
-    : PluginPlaceholderBase(render_frame, frame, params, html_data),
+    : PluginPlaceholderBase(render_frame, params, html_data),
       heuristic_run_before_(false),
       is_blocked_for_tinyness_(false),
       is_blocked_for_background_tab_(false),
@@ -146,7 +145,7 @@ void LoadablePluginPlaceholder::UpdateMessage() {
     return;
   std::string script =
       "window.setMessage(" + base::GetQuotedJSONString(message_) + ")";
-  plugin()->web_view()->MainFrame()->ExecuteScript(
+  plugin()->main_frame()->ExecuteScript(
       blink::WebScriptSource(blink::WebString::FromUTF8(script)));
 }
 
@@ -179,6 +178,10 @@ v8::Local<v8::Object> LoadablePluginPlaceholder::GetV8ScriptableObject(
   return v8::Local<v8::Object>();
 }
 
+bool LoadablePluginPlaceholder::IsErrorPlaceholder() {
+  return !allow_loading_;
+}
+
 void LoadablePluginPlaceholder::OnUnobscuredRectUpdate(
     const gfx::Rect& unobscured_rect) {
   DCHECK(content::RenderThread::Get());
@@ -203,20 +206,17 @@ void LoadablePluginPlaceholder::OnUnobscuredRectUpdate(
   int y = roundf(unobscured_rect_.y() / zoom_factor);
 
   // On a size update check if we now qualify as a essential plugin.
-  url::Origin content_origin = url::Origin(GetPluginParams().url);
+  url::Origin main_frame_origin =
+      render_frame()->GetWebFrame()->Top()->GetSecurityOrigin();
+  url::Origin content_origin = url::Origin::Create(GetPluginParams().url);
   RenderFrame::PeripheralContentStatus status =
       render_frame()->GetPeripheralContentStatus(
-          render_frame()->GetWebFrame()->Top()->GetSecurityOrigin(),
-          content_origin, gfx::Size(width, height),
+          main_frame_origin, content_origin, gfx::Size(width, height),
           heuristic_run_before_ ? RenderFrame::DONT_RECORD_DECISION
                                 : RenderFrame::RECORD_DECISION);
 
-  bool plugin_is_tiny_and_blocked =
-      is_blocked_for_tinyness_ && status == RenderFrame::CONTENT_STATUS_TINY;
-
   // Early exit for plugins that we've discovered to be essential.
-  if (!plugin_is_tiny_and_blocked &&
-      status != RenderFrame::CONTENT_STATUS_PERIPHERAL &&
+  if (status != RenderFrame::CONTENT_STATUS_PERIPHERAL &&
       status != RenderFrame::CONTENT_STATUS_TINY) {
     MarkPluginEssential(
         heuristic_run_before_
@@ -230,16 +230,16 @@ void LoadablePluginPlaceholder::OnUnobscuredRectUpdate(
 
     return;
   }
-  heuristic_run_before_ = true;
 
-  if (is_blocked_for_tinyness_) {
-    if (plugin_is_tiny_and_blocked) {
-      OnBlockedTinyContent();
-    } else {
-      is_blocked_for_tinyness_ = false;
-      if (!LoadingBlocked()) {
-        LoadPlugin();
-      }
+  if (!heuristic_run_before_) {
+    OnBlockedContent(status,
+                     main_frame_origin.IsSameOriginWith(content_origin));
+  }
+
+  if (is_blocked_for_tinyness_ && status != RenderFrame::CONTENT_STATUS_TINY) {
+    is_blocked_for_tinyness_ = false;
+    if (!LoadingBlocked()) {
+      LoadPlugin();
     }
   }
 
@@ -249,9 +249,11 @@ void LoadablePluginPlaceholder::OnUnobscuredRectUpdate(
     std::string script = base::StringPrintf(
         "window.resizePoster('%dpx', '%dpx', '%dpx', '%dpx')", x, y, width,
         height);
-    plugin()->web_view()->MainFrame()->ExecuteScript(
+    plugin()->main_frame()->ExecuteScript(
         blink::WebScriptSource(blink::WebString::FromUTF8(script)));
   }
+
+  heuristic_run_before_ = true;
 }
 
 void LoadablePluginPlaceholder::WasShown() {
@@ -340,13 +342,11 @@ void LoadablePluginPlaceholder::DidFinishIconRepositionForTestingCallback() {
   blink::WebElement element = plugin()->Container()->GetElement();
   element.SetAttribute("placeholderReady", "true");
 
-  std::unique_ptr<content::V8ValueConverter> converter(
-      content::V8ValueConverter::create());
   base::Value value("placeholderReady");
   blink::WebSerializedScriptValue message_data =
       blink::WebSerializedScriptValue::Serialize(
           blink::MainThreadIsolate(),
-          converter->ToV8Value(
+          content::V8ValueConverter::Create()->ToV8Value(
               &value,
               element.GetDocument().GetFrame()->MainWorldScriptContext()));
   blink::WebDOMMessageEvent msg_event(message_data);

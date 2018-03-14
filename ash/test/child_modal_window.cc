@@ -4,7 +4,8 @@
 
 #include "ash/test/child_modal_window.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/strings/utf_string_conversions.h"
 #include "ui/aura/window.h"
 #include "ui/gfx/canvas.h"
@@ -63,7 +64,7 @@ class ChildModalWindow : public views::WidgetDelegateView {
  private:
   // Overridden from View:
   void OnPaint(gfx::Canvas* canvas) override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
 
   // Overridden from WidgetDelegate:
   base::string16 GetWindowTitle() const override;
@@ -80,13 +81,13 @@ ChildModalWindow::ChildModalWindow() {
                        kChildTextfieldWidth, kChildTextfieldHeight);
 }
 
-ChildModalWindow::~ChildModalWindow() {}
+ChildModalWindow::~ChildModalWindow() = default;
 
 void ChildModalWindow::OnPaint(gfx::Canvas* canvas) {
   canvas->FillRect(GetLocalBounds(), kChildColor);
 }
 
-gfx::Size ChildModalWindow::GetPreferredSize() const {
+gfx::Size ChildModalWindow::CalculatePreferredSize() const {
   return gfx::Size(kChildWindowWidth, kChildWindowHeight);
 }
 
@@ -103,7 +104,7 @@ ui::ModalType ChildModalWindow::GetModalType() const {
 }
 
 ChildModalParent::ChildModalParent(aura::Window* context)
-    : widget_(base::MakeUnique<Widget>()),
+    : widget_(std::make_unique<Widget>()),
       button_(new views::LabelButton(
           this,
           base::ASCIIToUTF16("Show/Hide Child Modal Window"))),
@@ -114,15 +115,15 @@ ChildModalParent::ChildModalParent(aura::Window* context)
   params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.context = context;
   widget_->Init(params);
-  widget_->GetRootView()->set_background(
-      views::Background::CreateSolidBackground(kModalParentColor));
+  widget_->GetRootView()->SetBackground(
+      views::CreateSolidBackground(kModalParentColor));
   widget_->GetNativeView()->SetName("ModalParent");
   AddChildView(button_);
   AddChildView(textfield_);
   AddChildView(host_);
 }
 
-ChildModalParent::~ChildModalParent() {}
+ChildModalParent::~ChildModalParent() = default;
 
 void ChildModalParent::ShowChild() {
   if (!child_)

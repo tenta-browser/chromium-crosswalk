@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/containers/flat_map.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/json/json_file_value_serializer.h"
@@ -22,6 +23,8 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/sys_info.h"
 #include "base/task_runner.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/task_scheduler/task_traits.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -57,7 +60,8 @@ const char kMachineHardwareInfoDelim[] = " \n";
 
 // File to get ECHO coupon info from, and key/value delimiters of
 // the file.
-const char kEchoCouponFile[] = "/var/cache/echo/vpd_echo.txt";
+const char kEchoCouponFile[] =
+    "/mnt/stateful_partition/unencrypted/cache/vpd/echo/vpd_echo.txt";
 const char kEchoCouponEq[] = "=";
 const char kEchoCouponDelim[] = "\n";
 
@@ -80,24 +84,26 @@ const char kKeyboardsPath[] = "keyboards";
 const char kLocalesPath[] = "locales";
 const char kTimeZonesPath[] = "time_zones";
 
-// These are the machine serial number keys that we check in order until we
-// find a non-empty serial number. The VPD spec says the serial number should be
-// in the "serial_number" key for v2+ VPDs. However, legacy devices used a
-// different key to report their serial number, which we fall back to if
-// "serial_number" is not present.
+// These are the machine serial number keys that we check in order until we find
+// a non-empty serial number.
 //
-// Product_S/N is still special-cased due to inconsistencies with serial
-// numbers on Lumpy devices: On these devices, serial_number is identical to
-// Product_S/N with an appended checksum. Unfortunately, the sticker on the
-// packaging doesn't include that checksum either (the sticker on the device
-// does though!). The former sticker is the source of the serial number used by
-// device management service, so we prefer Product_S/N over serial number to
-// match the server.
+// On older Samsung devices the VPD contains two serial numbers: "Product_S/N"
+// and "serial_number" which are based on the same value except that the latter
+// has a letter appended that serves as a check digit. Unfortunately, the
+// sticker on the device packaging didn't include that check digit (the sticker
+// on the device did though!). The former sticker was the source of the serial
+// number used by device management service, so we preferred "Product_S/N" over
+// "serial_number" to match the server. As an unintended consequence, older
+// Samsung devices display and report a serial number that doesn't match the
+// sticker on the device (the check digit is missing).
+//
+// "Product_S/N" is known to be used on celes, lumpy, pi, pit, snow, winky and
+// some kevin devices and thus needs to be supported until AUE of these
+// devices. It's known *not* to be present on caroline.
+// TODO(tnagel): Remove "Product_S/N" after all devices that have it are AUE.
 const char* const kMachineInfoSerialNumberKeys[] = {
-    "Product_S/N",     // Lumpy/Alex devices
+    "Product_S/N",     // Samsung legacy
     kSerialNumberKey,  // VPD v2+ devices
-    "Product_SN",      // Mario
-    "sn",              // old ZGB devices (more recent ones use serial_number)
 };
 
 // Gets ListValue from given |dictionary| by given |key| and (unless |result| is
@@ -178,14 +184,11 @@ const char kFirmwareTypeValueNonchrome[] = "nonchrome";
 const char kFirmwareTypeValueNormal[] = "normal";
 const char kHardwareClassKey[] = "hardware_class";
 const char kIsVmKey[] = "is_vm";
-const char kIsVmValueTrue[] = "1";
 const char kIsVmValueFalse[] = "0";
+const char kIsVmValueTrue[] = "1";
 const char kOffersCouponCodeKey[] = "ubind_attribute";
 const char kOffersGroupCodeKey[] = "gbind_attribute";
 const char kRlzBrandCodeKey[] = "rlz_brand_code";
-const char kWriteProtectSwitchBootKey[] = "wpsw_boot";
-const char kWriteProtectSwitchBootValueOff[] = "0";
-const char kWriteProtectSwitchBootValueOn[] = "1";
 const char kRegionKey[] = "region";
 const char kSerialNumberKey[] = "serial_number";
 const char kInitialLocaleKey[] = "initial_locale";
@@ -206,9 +209,7 @@ bool HasOemPrefix(const std::string& name) {
 class StatisticsProviderImpl : public StatisticsProvider {
  public:
   // StatisticsProvider implementation:
-  void StartLoadingMachineStatistics(
-      const scoped_refptr<base::TaskRunner>& file_task_runner,
-      bool load_oem_manifest) override;
+  void StartLoadingMachineStatistics(bool load_oem_manifest) override;
   bool GetMachineStatistic(const std::string& name,
                            std::string* result) override;
   bool GetMachineFlag(const std::string& name, bool* result) override;
@@ -262,7 +263,7 @@ class StatisticsProviderImpl : public StatisticsProvider {
   bool oem_manifest_loaded_;
   std::string region_;
   std::unique_ptr<base::Value> regional_data_;
-  base::hash_map<std::string, RegionDataExtractor> regional_data_extractors_;
+  base::flat_map<std::string, RegionDataExtractor> regional_data_extractors_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(StatisticsProviderImpl);
@@ -421,11 +422,9 @@ StatisticsProviderImpl::StatisticsProviderImpl()
       &GetInitialTimezoneFromRegionalData;
 }
 
-StatisticsProviderImpl::~StatisticsProviderImpl() {
-}
+StatisticsProviderImpl::~StatisticsProviderImpl() = default;
 
 void StatisticsProviderImpl::StartLoadingMachineStatistics(
-    const scoped_refptr<base::TaskRunner>& file_task_runner,
     bool load_oem_manifest) {
   CHECK(!load_statistics_started_);
   load_statistics_started_ = true;
@@ -433,11 +432,12 @@ void StatisticsProviderImpl::StartLoadingMachineStatistics(
   VLOG(1) << "Started loading statistics. Load OEM Manifest: "
           << load_oem_manifest;
 
-  file_task_runner->PostTask(
+  base::PostTaskWithTraits(
       FROM_HERE,
-      base::Bind(&StatisticsProviderImpl::LoadMachineStatistics,
-                 base::Unretained(this),
-                 load_oem_manifest));
+      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+      base::BindOnce(&StatisticsProviderImpl::LoadMachineStatistics,
+                     base::Unretained(this), load_oem_manifest));
 }
 
 void StatisticsProviderImpl::LoadMachineStatistics(bool load_oem_manifest) {

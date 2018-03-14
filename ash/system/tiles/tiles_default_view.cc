@@ -5,16 +5,19 @@
 #include "ash/system/tiles/tiles_default_view.h"
 
 #include "ash/metrics/user_metrics_action.h"
+#include "ash/metrics/user_metrics_recorder.h"
+#include "ash/public/cpp/ash_switches.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/session/session_controller.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
 #include "ash/shutdown_controller.h"
+#include "ash/shutdown_reason.h"
 #include "ash/strings/grit/ash_strings.h"
+#include "ash/system/night_light/night_light_controller.h"
+#include "ash/system/night_light/night_light_toggle_button.h"
 #include "ash/system/tray/system_menu_button.h"
 #include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/system_tray_controller.h"
-#include "ash/system/tray/system_tray_delegate.h"
 #include "ash/system/tray/system_tray_item.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_popup_utils.h"
@@ -24,9 +27,11 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/views/border.h"
-#include "ui/views/controls/button/custom_button.h"
+#include "ui/views/controls/button/button.h"
 #include "ui/views/controls/separator.h"
 #include "ui/views/layout/box_layout.h"
+
+namespace ash {
 
 namespace {
 
@@ -36,21 +41,21 @@ const char kHebrewLocale[] = "he";
 
 }  // namespace
 
-namespace ash {
-
-TilesDefaultView::TilesDefaultView(SystemTrayItem* owner, LoginStatus login)
+TilesDefaultView::TilesDefaultView(SystemTrayItem* owner)
     : owner_(owner),
-      login_(login),
       settings_button_(nullptr),
       help_button_(nullptr),
+      night_light_button_(nullptr),
       lock_button_(nullptr),
-      power_button_(nullptr) {}
+      power_button_(nullptr) {
+  DCHECK(owner_);
+}
 
-TilesDefaultView::~TilesDefaultView() {}
+TilesDefaultView::~TilesDefaultView() = default;
 
 void TilesDefaultView::Init() {
   views::BoxLayout* box_layout =
-      new views::BoxLayout(views::BoxLayout::kHorizontal, 4, 0, 0);
+      new views::BoxLayout(views::BoxLayout::kHorizontal, gfx::Insets(0, 4));
   box_layout->set_main_axis_alignment(
       views::BoxLayout::MAIN_AXIS_ALIGNMENT_START);
   box_layout->set_cross_axis_alignment(
@@ -60,14 +65,12 @@ void TilesDefaultView::Init() {
   // Show the buttons in this row as disabled if the user is at the login
   // screen, lock screen, or in a secondary account flow. The exception is
   // |power_button_| which is always shown as enabled.
-  const bool disable_buttons = !TrayPopupUtils::CanOpenWebUISettings(login_);
+  const bool can_show_web_ui = TrayPopupUtils::CanOpenWebUISettings();
 
   settings_button_ = new SystemMenuButton(
       this, TrayPopupInkDropStyle::HOST_CENTERED, kSystemMenuSettingsIcon,
       IDS_ASH_STATUS_TRAY_SETTINGS);
-  if (disable_buttons ||
-      !Shell::Get()->system_tray_delegate()->ShouldShowSettings())
-    settings_button_->SetEnabled(false);
+  settings_button_->SetEnabled(can_show_web_ui);
   AddChildView(settings_button_);
   AddChildView(TrayPopupUtils::CreateVerticalSeparator());
 
@@ -81,16 +84,22 @@ void TilesDefaultView::Init() {
     // flipping must be disabled. (crbug.com/475237)
     help_button_->EnableCanvasFlippingForRTLUI(false);
   }
-  if (disable_buttons)
-    help_button_->SetEnabled(false);
+  help_button_->SetEnabled(can_show_web_ui);
   AddChildView(help_button_);
   AddChildView(TrayPopupUtils::CreateVerticalSeparator());
+
+  if (switches::IsNightLightEnabled()) {
+    night_light_button_ = new NightLightToggleButton(this);
+    night_light_button_->SetEnabled(can_show_web_ui);
+    AddChildView(night_light_button_);
+    AddChildView(TrayPopupUtils::CreateVerticalSeparator());
+  }
 
   lock_button_ =
       new SystemMenuButton(this, TrayPopupInkDropStyle::HOST_CENTERED,
                            kSystemMenuLockIcon, IDS_ASH_STATUS_TRAY_LOCK);
-  if (disable_buttons || !Shell::Get()->session_controller()->CanLockScreen())
-    lock_button_->SetEnabled(false);
+  lock_button_->SetEnabled(can_show_web_ui &&
+                           Shell::Get()->session_controller()->CanLockScreen());
 
   AddChildView(lock_button_);
   AddChildView(TrayPopupUtils::CreateVerticalSeparator());
@@ -110,30 +119,31 @@ void TilesDefaultView::ButtonPressed(views::Button* sender,
                                      const ui::Event& event) {
   DCHECK(sender);
   if (sender == settings_button_) {
-    ShellPort::Get()->RecordUserMetricsAction(UMA_TRAY_SETTINGS);
+    Shell::Get()->metrics()->RecordUserMetricsAction(UMA_TRAY_SETTINGS);
     Shell::Get()->system_tray_controller()->ShowSettings();
   } else if (sender == help_button_) {
-    ShellPort::Get()->RecordUserMetricsAction(UMA_TRAY_HELP);
+    Shell::Get()->metrics()->RecordUserMetricsAction(UMA_TRAY_HELP);
     Shell::Get()->system_tray_controller()->ShowHelp();
+  } else if (switches::IsNightLightEnabled() && sender == night_light_button_) {
+    Shell::Get()->metrics()->RecordUserMetricsAction(UMA_TRAY_NIGHT_LIGHT);
+    night_light_button_->Toggle();
   } else if (sender == lock_button_) {
-    ShellPort::Get()->RecordUserMetricsAction(UMA_TRAY_LOCK_SCREEN);
+    Shell::Get()->metrics()->RecordUserMetricsAction(UMA_TRAY_LOCK_SCREEN);
     chromeos::DBusThreadManager::Get()
         ->GetSessionManagerClient()
         ->RequestLockScreen();
   } else if (sender == power_button_) {
-    ShellPort::Get()->RecordUserMetricsAction(UMA_TRAY_SHUT_DOWN);
-    Shell::Get()->lock_state_controller()->RequestShutdown();
+    Shell::Get()->metrics()->RecordUserMetricsAction(UMA_TRAY_SHUT_DOWN);
+    Shell::Get()->lock_state_controller()->RequestShutdown(
+        ShutdownReason::TRAY_SHUT_DOWN_BUTTON);
   }
-
-  owner_->system_tray()->CloseSystemBubble();
 }
 
 views::View* TilesDefaultView::GetHelpButtonView() const {
   return help_button_;
 }
 
-const views::CustomButton* TilesDefaultView::GetShutdownButtonViewForTest()
-    const {
+const views::Button* TilesDefaultView::GetShutdownButtonViewForTest() const {
   return power_button_;
 }
 

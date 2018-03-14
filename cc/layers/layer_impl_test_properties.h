@@ -9,17 +9,21 @@
 #include <vector>
 
 #include "base/memory/ptr_util.h"
-#include "cc/base/filter_operations.h"
+#include "cc/input/overscroll_behavior.h"
 #include "cc/layers/layer_collections.h"
 #include "cc/layers/layer_position_constraint.h"
 #include "cc/layers/layer_sticky_position_constraint.h"
+#include "cc/paint/filter_operations.h"
 #include "third_party/skia/include/core/SkBlendMode.h"
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/transform.h"
 
+namespace viz {
+class CopyOutputRequest;
+}
+
 namespace cc {
 
-class CopyOutputRequest;
 class LayerImpl;
 
 struct CC_EXPORT LayerImplTestProperties {
@@ -32,11 +36,14 @@ struct CC_EXPORT LayerImplTestProperties {
 
   LayerImpl* owning_layer;
   bool double_sided;
+  bool trilinear_filtering;
+  bool cache_render_surface;
   bool force_render_surface;
   bool is_container_for_fixed_position_layers;
   bool should_flatten_transform;
   bool hide_layer_and_subtree;
   bool opacity_can_animate;
+  bool subtree_has_copy_request;
   int sorting_context_id;
   float opacity;
   FilterOperations filters;
@@ -48,13 +55,15 @@ struct CC_EXPORT LayerImplTestProperties {
   gfx::Point3F transform_origin;
   gfx::Transform transform;
   LayerImpl* scroll_parent;
-  std::unique_ptr<std::set<LayerImpl*>> scroll_children;
   LayerImpl* clip_parent;
   std::unique_ptr<std::set<LayerImpl*>> clip_children;
-  std::vector<std::unique_ptr<CopyOutputRequest>> copy_requests;
+  std::vector<std::unique_ptr<viz::CopyOutputRequest>> copy_requests;
   LayerImplList children;
   LayerImpl* mask_layer;
   LayerImpl* parent;
+  bool user_scrollable_horizontal = true;
+  bool user_scrollable_vertical = true;
+  OverscrollBehavior overscroll_behavior;
 };
 
 }  // namespace cc

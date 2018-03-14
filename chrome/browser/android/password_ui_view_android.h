@@ -7,6 +7,8 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "base/android/jni_weak_ref.h"
@@ -28,11 +30,8 @@ class PasswordUIViewAndroid : public PasswordUIView {
 
   // PasswordUIView implementation.
   Profile* GetProfile() override;
-  void ShowPassword(
-      size_t index,
-      const std::string& origin_url,
-      const std::string& username,
-      const base::string16& password_value) override;
+  void ShowPassword(size_t index,
+                    const base::string16& password_value) override;
   void SetPasswordList(
       const std::vector<std::unique_ptr<autofill::PasswordForm>>& password_list)
       override;
@@ -61,9 +60,6 @@ class PasswordUIViewAndroid : public PasswordUIView {
       int index);
   // Destroy the native implementation.
   void Destroy(JNIEnv*, const base::android::JavaParamRef<jobject>&);
-
-  // JNI registration
-  static bool RegisterPasswordUIViewAndroid(JNIEnv* env);
 
  private:
   PasswordManagerPresenter password_manager_presenter_;

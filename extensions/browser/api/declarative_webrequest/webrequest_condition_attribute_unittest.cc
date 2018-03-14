@@ -19,11 +19,14 @@
 #include "content/public/common/previews_state.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_condition.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_constants.h"
+#include "extensions/browser/api/extensions_api_client.h"
 #include "net/base/request_priority.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/gurl.h"
 
 using base::DictionaryValue;
 using base::ListValue;
@@ -102,7 +105,8 @@ TEST(WebRequestConditionAttributeTest, ResourceType) {
 
   net::TestURLRequestContext context;
   std::unique_ptr<net::URLRequest> url_request_ok(context.CreateRequest(
-      GURL("http://www.example.com"), net::DEFAULT_PRIORITY, NULL));
+      GURL("http://www.example.com"), net::DEFAULT_PRIORITY, nullptr,
+      TRAFFIC_ANNOTATION_FOR_TESTS));
   content::ResourceRequestInfo::AllocateForTesting(
       url_request_ok.get(), content::RESOURCE_TYPE_SUB_FRAME,
       NULL,   // context
@@ -110,15 +114,16 @@ TEST(WebRequestConditionAttributeTest, ResourceType) {
       -1,     // render_view_id
       -1,     // render_frame_id
       false,  // is_main_frame
-      false,  // parent_is_main_frame
       true,   // allow_download
       false,  // is_async
-      content::PREVIEWS_OFF);
+      content::PREVIEWS_OFF,
+      nullptr);  // navigation_ui_data
   EXPECT_TRUE(attribute->IsFulfilled(
       WebRequestData(url_request_ok.get(), ON_BEFORE_REQUEST)));
 
   std::unique_ptr<net::URLRequest> url_request_fail(context.CreateRequest(
-      GURL("http://www.example.com"), net::DEFAULT_PRIORITY, NULL));
+      GURL("http://www.example.com"), net::DEFAULT_PRIORITY, nullptr,
+      TRAFFIC_ANNOTATION_FOR_TESTS));
   content::ResourceRequestInfo::AllocateForTesting(
       url_request_fail.get(), content::RESOURCE_TYPE_MAIN_FRAME,
       NULL,   // context
@@ -126,10 +131,10 @@ TEST(WebRequestConditionAttributeTest, ResourceType) {
       -1,     // render_view_id
       -1,     // render_frame_id
       true,   // is_main_frame
-      false,  // parent_is_main_frame
       true,   // allow_download
       false,  // is_async
-      content::PREVIEWS_OFF);
+      content::PREVIEWS_OFF,
+      nullptr);  // navigation_ui_data
   EXPECT_FALSE(attribute->IsFulfilled(WebRequestData(url_request_fail.get(),
                                                      ON_BEFORE_REQUEST)));
 }
@@ -149,7 +154,8 @@ TEST(WebRequestConditionAttributeTest, ContentType) {
   net::TestURLRequestContext context;
   net::TestDelegate delegate;
   std::unique_ptr<net::URLRequest> url_request(context.CreateRequest(
-      test_server.GetURL("/headers.html"), net::DEFAULT_PRIORITY, &delegate));
+      test_server.GetURL("/headers.html"), net::DEFAULT_PRIORITY, &delegate,
+      TRAFFIC_ANNOTATION_FOR_TESTS));
   url_request->Start();
   base::RunLoop().Run();
 
@@ -232,26 +238,26 @@ TEST(WebRequestConditionAttributeTest, ThirdParty) {
   const GURL url_b("http://b.com");
   net::TestURLRequestContext context;
   net::TestDelegate delegate;
-  std::unique_ptr<net::URLRequest> url_request(
-      context.CreateRequest(url_a, net::DEFAULT_PRIORITY, &delegate));
+  std::unique_ptr<net::URLRequest> url_request(context.CreateRequest(
+      url_a, net::DEFAULT_PRIORITY, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
 
   for (unsigned int i = 1; i <= kLastActiveStage; i <<= 1) {
     if (!(kActiveStages & i))
       continue;
     const RequestStage stage = static_cast<RequestStage>(i);
-    url_request->set_first_party_for_cookies(url_empty);
+    url_request->set_site_for_cookies(url_empty);
     EXPECT_FALSE(third_party_attribute->IsFulfilled(
         WebRequestData(url_request.get(), stage)));
     EXPECT_TRUE(first_party_attribute->IsFulfilled(
         WebRequestData(url_request.get(), stage)));
 
-    url_request->set_first_party_for_cookies(url_b);
+    url_request->set_site_for_cookies(url_b);
     EXPECT_TRUE(third_party_attribute->IsFulfilled(
         WebRequestData(url_request.get(), stage)));
     EXPECT_FALSE(first_party_attribute->IsFulfilled(
         WebRequestData(url_request.get(), stage)));
 
-    url_request->set_first_party_for_cookies(url_a);
+    url_request->set_site_for_cookies(url_a);
     EXPECT_FALSE(third_party_attribute->IsFulfilled(
         WebRequestData(url_request.get(), stage)));
     EXPECT_TRUE(first_party_attribute->IsFulfilled(
@@ -324,7 +330,8 @@ TEST(WebRequestConditionAttributeTest, Stages) {
   net::TestURLRequestContext context;
   net::TestDelegate delegate;
   std::unique_ptr<net::URLRequest> url_request(
-      context.CreateRequest(url_empty, net::DEFAULT_PRIORITY, &delegate));
+      context.CreateRequest(url_empty, net::DEFAULT_PRIORITY, &delegate,
+                            TRAFFIC_ANNOTATION_FOR_TESTS));
 
   for (size_t i = 0; i < arraysize(active_stages); ++i) {
     EXPECT_FALSE(empty_attribute->IsFulfilled(
@@ -380,22 +387,21 @@ std::unique_ptr<base::DictionaryValue> GetDictionaryFromArray(
     if (dictionary->HasKey(*name)) {
       base::Value* entry = NULL;
       std::unique_ptr<base::Value> entry_owned;
-      base::ListValue* list = NULL;
       if (!dictionary->GetWithoutPathExpansion(*name, &entry))
         return std::unique_ptr<base::DictionaryValue>();
-      switch (entry->GetType()) {
-        case base::Value::Type::STRING:
+      switch (entry->type()) {
+        case base::Value::Type::STRING: {
           // Replace the present string with a list.
-          list = new base::ListValue;
+          auto list = std::make_unique<base::ListValue>();
           // Ignoring return value, we already verified the entry is there.
           dictionary->RemoveWithoutPathExpansion(*name, &entry_owned);
           list->Append(std::move(entry_owned));
           list->AppendString(*value);
-          dictionary->SetWithoutPathExpansion(*name, base::WrapUnique(list));
+          dictionary->SetWithoutPathExpansion(*name, std::move(list));
           break;
+        }
         case base::Value::Type::LIST:  // Just append to the list.
-          CHECK(entry->GetAsList(&list));
-          list->AppendString(*value);
+          entry->GetList().emplace_back(*value);
           break;
         default:
           NOTREACHED();  // We never put other Values here.
@@ -449,9 +455,9 @@ TEST(WebRequestConditionAttributeTest, RequestHeaders) {
 
   net::TestURLRequestContext context;
   net::TestDelegate delegate;
-  std::unique_ptr<net::URLRequest> url_request(
-      context.CreateRequest(GURL("http://example.com"),  // Dummy URL.
-                            net::DEFAULT_PRIORITY, &delegate));
+  std::unique_ptr<net::URLRequest> url_request(context.CreateRequest(
+      GURL("http://example.com"),  // Dummy URL.
+      net::DEFAULT_PRIORITY, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
   url_request->SetExtraRequestHeaderByName(
       "Custom-header", "custom/value", true /* overwrite */);
   url_request->Start();
@@ -527,6 +533,7 @@ TEST(WebRequestConditionAttributeTest, RequestHeaders) {
 // 2. Performing logical disjunction (||) between multiple specifications.
 // 3. Negating the match in case of 'doesNotContainHeaders'.
 TEST(WebRequestConditionAttributeTest, ResponseHeaders) {
+  ExtensionsAPIClient api_client;
   // Necessary for TestURLRequest.
   base::MessageLoopForIO message_loop;
 
@@ -538,7 +545,8 @@ TEST(WebRequestConditionAttributeTest, ResponseHeaders) {
   net::TestURLRequestContext context;
   net::TestDelegate delegate;
   std::unique_ptr<net::URLRequest> url_request(context.CreateRequest(
-      test_server.GetURL("/headers.html"), net::DEFAULT_PRIORITY, &delegate));
+      test_server.GetURL("/headers.html"), net::DEFAULT_PRIORITY, &delegate,
+      TRAFFIC_ANNOTATION_FOR_TESTS));
   url_request->Start();
   base::RunLoop().Run();
 
@@ -716,6 +724,71 @@ TEST(WebRequestConditionAttributeTest, ResponseHeaders) {
   MatchAndCheck(tests, keys::kExcludeResponseHeadersKey, stage,
                 url_request.get(), &result);
   EXPECT_FALSE(result);
+}
+
+TEST(WebRequestConditionAttributeTest, HideResponseHeaders) {
+  // Necessary for TestURLRequest.
+  base::MessageLoopForIO message_loop;
+
+  net::EmbeddedTestServer test_server;
+  test_server.ServeFilesFromDirectory(TestDataPath(
+      "chrome/test/data/extensions/api_test/webrequest/declarative"));
+  ASSERT_TRUE(test_server.Start());
+
+  net::TestURLRequestContext context;
+  net::TestDelegate delegate;
+  GURL url = test_server.GetURL("/headers.html");
+  std::unique_ptr<net::URLRequest> url_request(context.CreateRequest(
+      url, net::DEFAULT_PRIORITY, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
+  url_request->Start();
+  base::RunLoop().Run();
+
+  // In all the test below we assume that the server includes the headers
+  // Custom-Header: custom/value
+  // Custom-Header-B: valueA
+  // Custom-Header-B: valueB
+  // Custom-Header-C: valueC, valueD
+  // Custom-Header-D:
+
+  std::vector<std::vector<const std::string*>> tests;
+  bool result;
+  const RequestStage stage = ON_HEADERS_RECEIVED;
+  const std::string kCondition[] = {keys::kValueEqualsKey, "custom/value"};
+  const size_t kConditionSizes[] = {arraysize(kCondition)};
+  GetArrayAsVector(kCondition, kConditionSizes, 1u, &tests);
+
+  {
+    // Default client does not hide the response header.
+    ExtensionsAPIClient api_client;
+    MatchAndCheck(tests, keys::kResponseHeadersKey, stage, url_request.get(),
+                  &result);
+    EXPECT_TRUE(result);
+  }
+
+  {
+    // Custom client hides the response header.
+    class TestExtensionsAPIClient : public ExtensionsAPIClient {
+     public:
+      TestExtensionsAPIClient(const GURL& url) : url_(url) {}
+
+     private:
+      bool ShouldHideResponseHeader(
+          const GURL& url,
+          const std::string& header_name) const override {
+        // Check that the client is called with the right URL.
+        EXPECT_EQ(url_, url);
+        // Hide the header.
+        return header_name == "Custom-Header";
+      }
+
+      GURL url_;
+    };
+
+    TestExtensionsAPIClient api_client(url);
+    MatchAndCheck(tests, keys::kResponseHeadersKey, stage, url_request.get(),
+                  &result);
+    EXPECT_FALSE(result);
+  }
 }
 
 }  // namespace

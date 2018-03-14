@@ -14,9 +14,10 @@
 #include "base/callback.h"
 #include "base/optional.h"
 #include "content/public/common/web_preferences.h"
+#include "headless/lib/browser/headless_network_conditions.h"
 #include "headless/public/headless_export.h"
 #include "headless/public/headless_web_contents.h"
-#include "net/base/host_port_pair.h"
+#include "net/proxy/proxy_service.h"
 #include "net/url_request/url_request_job_factory.h"
 
 namespace base {
@@ -40,6 +41,7 @@ using ProtocolHandlerMap = std::unordered_map<
 // When browser context is deleted, all associated web contents are closed.
 class HEADLESS_EXPORT HeadlessBrowserContext {
  public:
+  class Observer;
   class Builder;
 
   virtual ~HeadlessBrowserContext() {}
@@ -65,6 +67,11 @@ class HEADLESS_EXPORT HeadlessBrowserContext {
   // GUID for this browser context.
   virtual const std::string& Id() const = 0;
 
+  virtual void AddObserver(Observer* observer) = 0;
+  virtual void RemoveObserver(Observer* observer) = 0;
+
+  virtual HeadlessNetworkConditions GetNetworkConditions() = 0;
+
   // TODO(skyostil): Allow saving and restoring contexts (crbug.com/617931).
 
  protected:
@@ -72,6 +79,25 @@ class HEADLESS_EXPORT HeadlessBrowserContext {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(HeadlessBrowserContext);
+};
+
+class HEADLESS_EXPORT HeadlessBrowserContext::Observer {
+ public:
+  // This will be delivered on the UI thread.
+  virtual void OnChildContentsCreated(HeadlessWebContents* parent,
+                                      HeadlessWebContents* child) {}
+
+  // Indicates that a network request failed or was canceled. This will be
+  // delivered on the IO thread.
+  virtual void UrlRequestFailed(net::URLRequest* request,
+                                int net_error,
+                                bool canceled_by_devtools) {}
+
+  // Indicates the HeadlessBrowserContext is about to be deleted.
+  virtual void OnHeadlessBrowserContextDestruct() {}
+
+ protected:
+  virtual ~Observer() {}
 };
 
 class HEADLESS_EXPORT HeadlessBrowserContext::Builder {
@@ -82,15 +108,6 @@ class HEADLESS_EXPORT HeadlessBrowserContext::Builder {
   // Set custom network protocol handlers. These can be used to override URL
   // fetching for different network schemes.
   Builder& SetProtocolHandlers(ProtocolHandlerMap protocol_handlers);
-
-  // DEPRECATED. Specify JS mojo module bindings to be installed, one per mojom
-  // file. Note a single mojom file could potentially define many interfaces.
-  // |mojom_name| the name including path of the .mojom file.
-  // |js_bindings| compiletime generated javascript bindings. Typically loaded
-  // from gen/path/name.mojom.js.
-  // TODO(alexclarke): Remove this.
-  Builder& AddJsMojoBindings(const std::string& mojom_name,
-                             const std::string& js_bindings);
 
   Builder& AddTabSocketMojoBindings();
 
@@ -111,12 +128,14 @@ class HEADLESS_EXPORT HeadlessBrowserContext::Builder {
   // settings. See HeadlessBrowser::Options for their meaning.
   Builder& SetProductNameAndVersion(
       const std::string& product_name_and_version);
+  Builder& SetAcceptLanguage(const std::string& accept_language);
   Builder& SetUserAgent(const std::string& user_agent);
-  Builder& SetProxyServer(const net::HostPortPair& proxy_server);
+  Builder& SetProxyConfig(std::unique_ptr<net::ProxyConfig> proxy_config);
   Builder& SetHostResolverRules(const std::string& host_resolver_rules);
   Builder& SetWindowSize(const gfx::Size& window_size);
   Builder& SetUserDataDir(const base::FilePath& user_data_dir);
   Builder& SetIncognitoMode(bool incognito_mode);
+  Builder& SetAllowCookies(bool incognito_mode);
   Builder& SetOverrideWebPreferencesCallback(
       base::Callback<void(WebPreferences*)> callback);
 

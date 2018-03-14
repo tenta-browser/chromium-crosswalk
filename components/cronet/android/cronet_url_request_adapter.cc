@@ -47,19 +47,15 @@ std::string GetProxy(const net::HttpResponseInfo& info) {
 
 }  // namespace
 
-// Explicitly register static JNI functions.
-bool CronetUrlRequestAdapterRegisterJni(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
-static jlong CreateRequestAdapter(JNIEnv* env,
-                                  const JavaParamRef<jobject>& jurl_request,
-                                  jlong jurl_request_context_adapter,
-                                  const JavaParamRef<jstring>& jurl_string,
-                                  jint jpriority,
-                                  jboolean jdisable_cache,
-                                  jboolean jdisable_connection_migration,
-                                  jboolean jenable_metrics) {
+static jlong JNI_CronetUrlRequest_CreateRequestAdapter(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& jurl_request,
+    jlong jurl_request_context_adapter,
+    const JavaParamRef<jstring>& jurl_string,
+    jint jpriority,
+    jboolean jdisable_cache,
+    jboolean jdisable_connection_migration,
+    jboolean jenable_metrics) {
   CronetURLRequestContextAdapter* context_adapter =
       reinterpret_cast<CronetURLRequestContextAdapter*>(
           jurl_request_context_adapter);
@@ -91,8 +87,9 @@ CronetURLRequestAdapter::CronetURLRequestAdapter(
       initial_url_(url),
       initial_priority_(priority),
       initial_method_("GET"),
-      load_flags_(context->default_load_flags()),
-      enable_metrics_(jenable_metrics == JNI_TRUE) {
+      load_flags_(net::LOAD_NORMAL),
+      enable_metrics_(jenable_metrics == JNI_TRUE),
+      metrics_reported_(false) {
   DCHECK(!context_->IsOnNetworkThread());
   owner_.Reset(env, jurl_request);
   if (jdisable_cache == JNI_TRUE)
@@ -215,17 +212,15 @@ void CronetURLRequestAdapter::OnReceivedRedirect(
   DCHECK(context_->IsOnNetworkThread());
   JNIEnv* env = base::android::AttachCurrentThread();
   cronet::Java_CronetUrlRequest_onRedirectReceived(
-      env, owner_.obj(),
-      ConvertUTF8ToJavaString(env, redirect_info.new_url.spec()).obj(),
+      env, owner_, ConvertUTF8ToJavaString(env, redirect_info.new_url.spec()),
       redirect_info.status_code,
-      ConvertUTF8ToJavaString(env, request->response_headers()->GetStatusText())
-          .obj(),
-      GetResponseHeaders(env).obj(),
-      request->response_info().was_cached ? JNI_TRUE : JNI_FALSE,
       ConvertUTF8ToJavaString(env,
-                              request->response_info().alpn_negotiated_protocol)
-          .obj(),
-      ConvertUTF8ToJavaString(env, GetProxy(request->response_info())).obj(),
+                              request->response_headers()->GetStatusText()),
+      GetResponseHeaders(env),
+      request->response_info().was_cached ? JNI_TRUE : JNI_FALSE,
+      ConvertUTF8ToJavaString(
+          env, request->response_info().alpn_negotiated_protocol),
+      ConvertUTF8ToJavaString(env, GetProxy(request->response_info())),
       request->GetTotalReceivedBytes());
   *defer_redirect = true;
 }
@@ -245,12 +240,7 @@ void CronetURLRequestAdapter::OnSSLCertificateError(
   DCHECK(context_->IsOnNetworkThread());
   request->Cancel();
   int net_error = net::MapCertStatusToNetError(ssl_info.cert_status);
-  JNIEnv* env = base::android::AttachCurrentThread();
-  cronet::Java_CronetUrlRequest_onError(
-      env, owner_.obj(), NetErrorToUrlRequestError(net_error), net_error,
-      net::QUIC_NO_ERROR,
-      ConvertUTF8ToJavaString(env, net::ErrorToString(net_error)).obj(),
-      request->GetTotalReceivedBytes());
+  ReportError(request, net_error);
 }
 
 void CronetURLRequestAdapter::OnResponseStarted(net::URLRequest* request,
@@ -264,15 +254,14 @@ void CronetURLRequestAdapter::OnResponseStarted(net::URLRequest* request,
   }
   JNIEnv* env = base::android::AttachCurrentThread();
   cronet::Java_CronetUrlRequest_onResponseStarted(
-      env, owner_.obj(), request->GetResponseCode(),
-      ConvertUTF8ToJavaString(env, request->response_headers()->GetStatusText())
-          .obj(),
-      GetResponseHeaders(env).obj(),
-      request->response_info().was_cached ? JNI_TRUE : JNI_FALSE,
+      env, owner_, request->GetResponseCode(),
       ConvertUTF8ToJavaString(env,
-                              request->response_info().alpn_negotiated_protocol)
-          .obj(),
-      ConvertUTF8ToJavaString(env, GetProxy(request->response_info())).obj());
+                              request->response_headers()->GetStatusText()),
+      GetResponseHeaders(env),
+      request->response_info().was_cached ? JNI_TRUE : JNI_FALSE,
+      ConvertUTF8ToJavaString(
+          env, request->response_info().alpn_negotiated_protocol),
+      ConvertUTF8ToJavaString(env, GetProxy(request->response_info())));
 }
 
 void CronetURLRequestAdapter::OnReadCompleted(net::URLRequest* request,
@@ -286,12 +275,13 @@ void CronetURLRequestAdapter::OnReadCompleted(net::URLRequest* request,
 
   if (bytes_read == 0) {
     JNIEnv* env = base::android::AttachCurrentThread();
+    MaybeReportMetrics(env);
     cronet::Java_CronetUrlRequest_onSucceeded(
-        env, owner_.obj(), url_request_->GetTotalReceivedBytes());
+        env, owner_, url_request_->GetTotalReceivedBytes());
   } else {
     JNIEnv* env = base::android::AttachCurrentThread();
     cronet::Java_CronetUrlRequest_onReadCompleted(
-        env, owner_.obj(), read_buffer_->byte_buffer(), bytes_read,
+        env, owner_, read_buffer_->byte_buffer(), bytes_read,
         read_buffer_->initial_position(), read_buffer_->initial_limit(),
         request->GetTotalReceivedBytes());
     // Free the read buffer. This lets the Java ByteBuffer be freed, if the
@@ -307,7 +297,7 @@ void CronetURLRequestAdapter::StartOnNetworkThread() {
           << " priority: " << RequestPriorityToString(initial_priority_);
   url_request_ = context_->GetURLRequestContext()->CreateRequest(
       initial_url_, net::DEFAULT_PRIORITY, this);
-  url_request_->SetLoadFlags(load_flags_);
+  url_request_->SetLoadFlags(load_flags_ | context_->default_load_flags());
   url_request_->set_method(initial_method_);
   url_request_->SetExtraRequestHeaders(initial_request_headers_);
   url_request_->SetPriority(initial_priority_);
@@ -328,8 +318,8 @@ void CronetURLRequestAdapter::GetStatusOnNetworkThread(
   // See crbug.com/606872.
   if (url_request_)
     status = url_request_->GetLoadState().state;
-  cronet::Java_CronetUrlRequest_onStatus(env, owner_.obj(),
-                                         status_listener_ref.obj(), status);
+  cronet::Java_CronetUrlRequest_onStatus(env, owner_, status_listener_ref,
+                                         status);
 }
 
 base::android::ScopedJavaLocalRef<jobjectArray>
@@ -376,10 +366,10 @@ void CronetURLRequestAdapter::ReadDataOnNetworkThread(
 void CronetURLRequestAdapter::DestroyOnNetworkThread(bool send_on_canceled) {
   DCHECK(context_->IsOnNetworkThread());
   JNIEnv* env = base::android::AttachCurrentThread();
-  if (send_on_canceled) {
-    cronet::Java_CronetUrlRequest_onCanceled(env, owner_.obj());
-  }
   MaybeReportMetrics(env);
+  if (send_on_canceled)
+    cronet::Java_CronetUrlRequest_onCanceled(env, owner_);
+  cronet::Java_CronetUrlRequest_onNativeAdapterDestroyed(env, owner_);
   delete this;
 }
 
@@ -395,26 +385,27 @@ void CronetURLRequestAdapter::ReportError(net::URLRequest* request,
           << " on chromium request: " << initial_url_.possibly_invalid_spec();
   JNIEnv* env = base::android::AttachCurrentThread();
   cronet::Java_CronetUrlRequest_onError(
-      env, owner_.obj(), NetErrorToUrlRequestError(net_error), net_error,
+      env, owner_, NetErrorToUrlRequestError(net_error), net_error,
       net_error_details.quic_connection_error,
-      ConvertUTF8ToJavaString(env, net::ErrorToString(net_error)).obj(),
+      ConvertUTF8ToJavaString(env, net::ErrorToString(net_error)),
       request->GetTotalReceivedBytes());
 }
 
-void CronetURLRequestAdapter::MaybeReportMetrics(JNIEnv* env) const {
+void CronetURLRequestAdapter::MaybeReportMetrics(JNIEnv* env) {
   // If there was an exception while starting the CronetUrlRequest, there won't
   // be a native URLRequest. In this case, the caller gets the exception
   // immediately, and the onFailed callback isn't called, so don't report
   // metrics either.
-  if (!enable_metrics_ || !url_request_) {
+  if (!enable_metrics_ || metrics_reported_ || !url_request_) {
     return;
   }
+  metrics_reported_ = true;
   net::LoadTimingInfo metrics;
   url_request_->GetLoadTimingInfo(&metrics);
   base::Time start_time = metrics.request_start_time;
   base::TimeTicks start_ticks = metrics.request_start;
   Java_CronetUrlRequest_onMetricsCollected(
-      env, owner_.obj(),
+      env, owner_,
       metrics_util::ConvertTime(start_ticks, start_ticks, start_time),
       metrics_util::ConvertTime(metrics.connect_timing.dns_start, start_ticks,
                                 start_time),

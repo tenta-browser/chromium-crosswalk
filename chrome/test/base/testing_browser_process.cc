@@ -12,20 +12,22 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_impl.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
-#include "chrome/browser/memory/tab_manager.h"
 #include "chrome/browser/notifications/notification_platform_bridge.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/printing/print_job_manager.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/resource_coordinator/tab_manager.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/features.h"
 #include "chrome/test/base/testing_browser_process_platform_part.h"
 #include "components/network_time/network_time_tracker.h"
+#include "components/optimization_guide/optimization_guide_service.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/prefs/pref_service.h"
 #include "components/subresource_filter/content/browser/content_ruleset_service.h"
 #include "content/public/browser/notification_service.h"
+#include "content/public/common/network_connection_tracker.h"
 #include "extensions/features/features.h"
 #include "media/media_features.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -49,6 +51,29 @@
 #include "chrome/browser/printing/background_printing_manager.h"
 #include "chrome/browser/printing/print_preview_dialog_controller.h"
 #endif
+
+#if !defined(OS_ANDROID)
+#include "components/keep_alive_registry/keep_alive_registry.h"
+#endif
+
+namespace {
+
+class MockNetworkConnectionTracker : public content::NetworkConnectionTracker {
+ public:
+  MockNetworkConnectionTracker() : content::NetworkConnectionTracker() {}
+  ~MockNetworkConnectionTracker() override {}
+
+  bool GetConnectionType(network::mojom::ConnectionType* type,
+                         ConnectionTypeCallback callback) override {
+    *type = network::mojom::ConnectionType::CONNECTION_UNKNOWN;
+    return true;
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(MockNetworkConnectionTracker);
+};
+
+}  // namespace
 
 // static
 TestingBrowserProcess* TestingBrowserProcess::GetGlobal() {
@@ -77,13 +102,16 @@ TestingBrowserProcess::TestingBrowserProcess()
       io_thread_(nullptr),
       system_request_context_(nullptr),
       rappor_service_(nullptr),
-      ukm_service_(nullptr),
       platform_part_(new TestingBrowserProcessPlatformPart()) {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   extensions_browser_client_.reset(
       new extensions::ChromeExtensionsBrowserClient);
   extensions::AppWindowClient::Set(ChromeAppWindowClient::GetInstance());
   extensions::ExtensionsBrowserClient::Set(extensions_browser_client_.get());
+#endif
+
+#if !defined(OS_ANDROID)
+  KeepAliveRegistry::GetInstance()->SetIsShuttingDown(false);
 #endif
 }
 
@@ -92,6 +120,7 @@ TestingBrowserProcess::~TestingBrowserProcess() {
   ShutdownBrowserPolicyConnector();
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   extensions::ExtensionsBrowserClient::Set(nullptr);
+  extensions::AppWindowClient::Set(nullptr);
 #endif
 
   // Destructors for some objects owned by TestingBrowserProcess will use
@@ -100,6 +129,13 @@ TestingBrowserProcess::~TestingBrowserProcess() {
 }
 
 void TestingBrowserProcess::ResourceDispatcherHostCreated() {
+}
+
+void TestingBrowserProcess::FlushLocalStateAndReply(base::OnceClosure reply) {
+  // This could be implemented the same way as in BrowserProcessImpl but it's
+  // not currently expected to be used by TestingBrowserProcess users so we
+  // don't bother.
+  CHECK(false);
 }
 
 void TestingBrowserProcess::EndSession() {
@@ -118,12 +154,22 @@ rappor::RapporServiceImpl* TestingBrowserProcess::rappor_service() {
   return rappor_service_;
 }
 
-ukm::UkmService* TestingBrowserProcess::ukm_service() {
-  return ukm_service_;
-}
-
 IOThread* TestingBrowserProcess::io_thread() {
   return io_thread_;
+}
+
+SystemNetworkContextManager*
+TestingBrowserProcess::system_network_context_manager() {
+  return nullptr;
+}
+
+content::NetworkConnectionTracker*
+TestingBrowserProcess::network_connection_tracker() {
+  if (!network_connection_tracker_) {
+    network_connection_tracker_ =
+        std::make_unique<MockNetworkConnectionTracker>();
+  }
+  return network_connection_tracker_.get();
 }
 
 WatchDogThread* TestingBrowserProcess::watchdog_thread() {
@@ -225,6 +271,11 @@ TestingBrowserProcess::safe_browsing_detection_service() {
 subresource_filter::ContentRulesetService*
 TestingBrowserProcess::subresource_filter_ruleset_service() {
   return subresource_filter_ruleset_service_.get();
+}
+
+optimization_guide::OptimizationGuideService*
+TestingBrowserProcess::optimization_guide_service() {
+  return optimization_guide_service_.get();
 }
 
 net::URLRequestContextGetter* TestingBrowserProcess::system_request_context() {
@@ -340,15 +391,6 @@ TestingBrowserProcess::component_updater() {
   return nullptr;
 }
 
-CRLSetFetcher* TestingBrowserProcess::crl_set_fetcher() {
-  return nullptr;
-}
-
-component_updater::PnaclComponentInstaller*
-TestingBrowserProcess::pnacl_component_installer() {
-  return nullptr;
-}
-
 component_updater::SupervisedUserWhitelistInstaller*
 TestingBrowserProcess::supervised_user_whitelist_installer() {
   return nullptr;
@@ -363,10 +405,6 @@ MediaFileSystemRegistry* TestingBrowserProcess::media_file_system_registry() {
     media_file_system_registry_.reset(new MediaFileSystemRegistry());
   return media_file_system_registry_.get();
 #endif
-}
-
-bool TestingBrowserProcess::created_local_state() const {
-  return (local_state_ != nullptr);
 }
 
 #if BUILDFLAG(ENABLE_WEBRTC)
@@ -391,10 +429,10 @@ gcm::GCMDriver* TestingBrowserProcess::gcm_driver() {
   return nullptr;
 }
 
-memory::TabManager* TestingBrowserProcess::GetTabManager() {
+resource_coordinator::TabManager* TestingBrowserProcess::GetTabManager() {
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
   if (!tab_manager_.get())
-    tab_manager_.reset(new memory::TabManager());
+    tab_manager_.reset(new resource_coordinator::TabManager());
   return tab_manager_.get();
 #else
   return nullptr;
@@ -411,9 +449,19 @@ TestingBrowserProcess::GetPhysicalWebDataSource() {
   return nullptr;
 }
 
+prefs::InProcessPrefServiceFactory*
+TestingBrowserProcess::pref_service_factory() const {
+  return nullptr;
+}
+
 void TestingBrowserProcess::SetSystemRequestContext(
     net::URLRequestContextGetter* context_getter) {
   system_request_context_ = context_getter;
+}
+
+void TestingBrowserProcess::SetNetworkConnectionTracker(
+    std::unique_ptr<content::NetworkConnectionTracker> tracker) {
+  network_connection_tracker_ = std::move(tracker);
 }
 
 void TestingBrowserProcess::SetNotificationUIManager(
@@ -466,13 +514,15 @@ void TestingBrowserProcess::SetRulesetService(
   subresource_filter_ruleset_service_.swap(content_ruleset_service);
 }
 
+void TestingBrowserProcess::SetOptimizationGuideService(
+    std::unique_ptr<optimization_guide::OptimizationGuideService>
+        optimization_guide_service) {
+  optimization_guide_service_.swap(optimization_guide_service);
+}
+
 void TestingBrowserProcess::SetRapporServiceImpl(
     rappor::RapporServiceImpl* rappor_service) {
   rappor_service_ = rappor_service;
-}
-
-void TestingBrowserProcess::SetUkmService(ukm::UkmService* ukm_service) {
-  ukm_service_ = ukm_service;
 }
 
 void TestingBrowserProcess::SetShuttingDown(bool is_shutting_down) {

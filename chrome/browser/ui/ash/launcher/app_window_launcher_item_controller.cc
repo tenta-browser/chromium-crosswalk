@@ -5,19 +5,22 @@
 #include "chrome/browser/ui/ash/launcher/app_window_launcher_item_controller.h"
 
 #include <algorithm>
+#include <utility>
 
-#include "ash/wm/window_util.h"
+#include "ash/public/cpp/shelf_types.h"
 #include "base/memory/ptr_util.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
+#include "chrome/browser/ui/ash/launcher/launcher_context_menu.h"
 #include "chrome/browser/ui/ash/launcher/launcher_controller_helper.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
 #include "ui/base/base_window.h"
 #include "ui/wm/core/window_animations.h"
+#include "ui/wm/core/window_util.h"
 
 AppWindowLauncherItemController::AppWindowLauncherItemController(
-    const ash::AppLaunchId& app_launch_id)
-    : ash::ShelfItemDelegate(app_launch_id), observed_windows_(this) {}
+    const ash::ShelfID& shelf_id)
+    : ash::ShelfItemDelegate(shelf_id), observed_windows_(this) {}
 
 AppWindowLauncherItemController::~AppWindowLauncherItemController() {}
 
@@ -26,6 +29,7 @@ void AppWindowLauncherItemController::AddWindow(ui::BaseWindow* app_window) {
   aura::Window* window = app_window->GetNativeWindow();
   if (window)
     observed_windows_.Add(window);
+  UpdateShelfItemIcon();
 }
 
 AppWindowLauncherItemController::WindowList::iterator
@@ -48,8 +52,8 @@ void AppWindowLauncherItemController::RemoveWindow(ui::BaseWindow* app_window) {
     NOTREACHED();
     return;
   }
-  OnWindowRemoved(app_window);
   windows_.erase(iter);
+  UpdateShelfItemIcon();
 }
 
 ui::BaseWindow* AppWindowLauncherItemController::GetAppWindow(
@@ -64,6 +68,7 @@ void AppWindowLauncherItemController::SetActiveWindow(aura::Window* window) {
   ui::BaseWindow* app_window = GetAppWindow(window);
   if (app_window)
     last_active_window_ = app_window;
+  UpdateShelfItemIcon();
 }
 
 AppWindowLauncherItemController*
@@ -75,9 +80,9 @@ void AppWindowLauncherItemController::ItemSelected(
     std::unique_ptr<ui::Event> event,
     int64_t display_id,
     ash::ShelfLaunchSource source,
-    const ItemSelectedCallback& callback) {
+    ItemSelectedCallback callback) {
   if (windows_.empty()) {
-    callback.Run(ash::SHELF_ACTION_NONE, base::nullopt);
+    std::move(callback).Run(ash::SHELF_ACTION_NONE, base::nullopt);
     return;
   }
 
@@ -93,13 +98,15 @@ void AppWindowLauncherItemController::ItemSelected(
     action = ShowAndActivateOrMinimize(window_to_show);
   }
 
-  callback.Run(action, GetAppMenuItems(event ? event->flags() : ui::EF_NONE));
+  std::move(callback).Run(
+      action, GetAppMenuItems(event ? event->flags() : ui::EF_NONE));
 }
 
-void AppWindowLauncherItemController::ExecuteCommand(uint32_t command_id,
-                                                     int32_t event_flags) {
-  // This delegate does not support showing an application menu.
-  NOTIMPLEMENTED();
+std::unique_ptr<ui::MenuModel> AppWindowLauncherItemController::GetContextMenu(
+    int64_t display_id) {
+  ChromeLauncherController* controller = ChromeLauncherController::instance();
+  const ash::ShelfItem* item = controller->GetItem(shelf_id());
+  return LauncherContextMenu::Create(controller, item, display_id);
 }
 
 void AppWindowLauncherItemController::Close() {
@@ -117,20 +124,30 @@ void AppWindowLauncherItemController::ActivateIndexedApp(size_t index) {
   ShowAndActivateOrMinimize(*it);
 }
 
+ui::BaseWindow* AppWindowLauncherItemController::GetLastActiveWindow() {
+  if (last_active_window_)
+    return last_active_window_;
+  if (windows_.empty())
+    return nullptr;
+  return windows_.front();
+}
+
 void AppWindowLauncherItemController::OnWindowPropertyChanged(
     aura::Window* window,
     const void* key,
     intptr_t old) {
   if (key == aura::client::kDrawAttentionKey) {
     ash::ShelfItemStatus status;
-    if (ash::wm::IsActiveWindow(window)) {
-      status = ash::STATUS_ACTIVE;
-    } else if (window->GetProperty(aura::client::kDrawAttentionKey)) {
+    // Active windows don't draw attention because the user is looking at them.
+    if (window->GetProperty(aura::client::kDrawAttentionKey) &&
+        !wm::IsActiveWindow(window)) {
       status = ash::STATUS_ATTENTION;
     } else {
       status = ash::STATUS_RUNNING;
     }
     ChromeLauncherController::instance()->SetItemStatus(shelf_id(), status);
+  } else if (key == aura::client::kAppIconKey) {
+    UpdateShelfItemIcon();
   }
 }
 
@@ -161,4 +178,26 @@ AppWindowLauncherItemController::ActivateOrAdvanceToNextAppWindow(
     return ShowAndActivateOrMinimize(window_to_show);
   }
   return ash::SHELF_ACTION_NONE;
+}
+
+void AppWindowLauncherItemController::UpdateShelfItemIcon() {
+  // Set the shelf item icon from the kAppIconKey property of the current
+  // (or most recently) active window. If there is no valid icon, ask
+  // ChromeLauncherController to update the icon.
+  const gfx::ImageSkia* app_icon = nullptr;
+  ui::BaseWindow* last_active_window = GetLastActiveWindow();
+  if (last_active_window && last_active_window->GetNativeWindow()) {
+    app_icon = last_active_window->GetNativeWindow()->GetProperty(
+        aura::client::kAppIconKey);
+  }
+  // TODO(khmel): Remove using image_set_by_controller
+  if (app_icon && !app_icon->isNull()) {
+    set_image_set_by_controller(true);
+    ChromeLauncherController::instance()->SetLauncherItemImage(shelf_id(),
+                                                               *app_icon);
+  } else if (image_set_by_controller()) {
+    set_image_set_by_controller(false);
+    ChromeLauncherController::instance()->UpdateLauncherItemImage(
+        shelf_id().app_id);
+  }
 }

@@ -26,8 +26,8 @@
 #ifndef AnalyserNode_h
 #define AnalyserNode_h
 
-#include "core/dom/DOMTypedArray.h"
-#include "core/dom/NotShared.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
+#include "core/typed_arrays/DOMTypedArray.h"
 #include "modules/webaudio/AudioBasicInspectorNode.h"
 #include "modules/webaudio/RealtimeAnalyser.h"
 
@@ -39,7 +39,7 @@ class ExceptionState;
 
 class AnalyserHandler final : public AudioBasicInspectorHandler {
  public:
-  static PassRefPtr<AnalyserHandler> Create(AudioNode&, float sample_rate);
+  static scoped_refptr<AnalyserHandler> Create(AudioNode&, float sample_rate);
   ~AnalyserHandler() override;
 
   // AudioHandler

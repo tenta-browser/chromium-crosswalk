@@ -34,16 +34,15 @@ class VideoRendererSink;
 
 // A mojom::Renderer implementation that use a media::Renderer to render
 // media streams.
-class MEDIA_MOJO_EXPORT MojoRendererService
-    : NON_EXPORTED_BASE(public mojom::Renderer),
-      public RendererClient {
+class MEDIA_MOJO_EXPORT MojoRendererService : public mojom::Renderer,
+                                              public RendererClient {
  public:
   using InitiateSurfaceRequestCB = base::Callback<base::UnguessableToken()>;
 
   // Helper function to bind MojoRendererService with a StrongBinding,
   // which is safely accessible via the returned StrongBindingPtr.
   static mojo::StrongBindingPtr<mojom::Renderer> Create(
-      base::WeakPtr<MojoCdmServiceContext> mojo_cdm_service_context,
+      MojoCdmServiceContext* mojo_cdm_service_context,
       scoped_refptr<AudioRendererSink> audio_sink,
       std::unique_ptr<VideoRendererSink> video_sink,
       std::unique_ptr<media::Renderer> renderer,
@@ -52,28 +51,28 @@ class MEDIA_MOJO_EXPORT MojoRendererService
 
   // |mojo_cdm_service_context| can be used to find the CDM to support
   // encrypted media. If null, encrypted media is not supported.
-  MojoRendererService(
-      base::WeakPtr<MojoCdmServiceContext> mojo_cdm_service_context,
-      scoped_refptr<AudioRendererSink> audio_sink,
-      std::unique_ptr<VideoRendererSink> video_sink,
-      std::unique_ptr<media::Renderer> renderer,
-      InitiateSurfaceRequestCB initiate_surface_request_cb);
+  MojoRendererService(MojoCdmServiceContext* mojo_cdm_service_context,
+                      scoped_refptr<AudioRendererSink> audio_sink,
+                      std::unique_ptr<VideoRendererSink> video_sink,
+                      std::unique_ptr<media::Renderer> renderer,
+                      InitiateSurfaceRequestCB initiate_surface_request_cb);
 
   ~MojoRendererService() final;
 
   // mojom::Renderer implementation.
-  void Initialize(mojom::RendererClientAssociatedPtrInfo client,
-                  base::Optional<std::vector<mojom::DemuxerStreamPtr>> streams,
-                  const base::Optional<GURL>& media_url,
-                  const base::Optional<GURL>& first_party_for_cookies,
-                  const InitializeCallback& callback) final;
-  void Flush(const FlushCallback& callback) final;
+  void Initialize(
+      mojom::RendererClientAssociatedPtrInfo client,
+      base::Optional<std::vector<mojom::DemuxerStreamPtrInfo>> streams,
+      const base::Optional<GURL>& media_url,
+      const base::Optional<GURL>& site_for_cookies,
+      InitializeCallback callback) final;
+  void Flush(FlushCallback callback) final;
   void StartPlayingFrom(base::TimeDelta time_delta) final;
   void SetPlaybackRate(double playback_rate) final;
   void SetVolume(float volume) final;
-  void SetCdm(int32_t cdm_id, const SetCdmCallback& callback) final;
+  void SetCdm(int32_t cdm_id, SetCdmCallback callback) final;
   void InitiateScopedSurfaceRequest(
-      const InitiateScopedSurfaceRequestCallback& callback) final;
+      InitiateScopedSurfaceRequestCallback callback) final;
 
   void set_bad_message_cb(base::Closure bad_message_cb) {
     bad_message_cb_ = bad_message_cb;
@@ -94,16 +93,18 @@ class MEDIA_MOJO_EXPORT MojoRendererService
   void OnStatisticsUpdate(const PipelineStatistics& stats) final;
   void OnBufferingStateChange(BufferingState state) final;
   void OnWaitingForDecryptionKey() final;
+  void OnAudioConfigChange(const AudioDecoderConfig& config) final;
+  void OnVideoConfigChange(const VideoDecoderConfig& config) final;
   void OnVideoNaturalSizeChange(const gfx::Size& size) final;
   void OnVideoOpacityChange(bool opaque) final;
   void OnDurationChange(base::TimeDelta duration) final;
 
   // Called when the MediaResourceShim is ready to go (has a config,
   // pipe handle, etc) and can be handed off to a renderer for use.
-  void OnStreamReady(const base::Callback<void(bool)>& callback);
+  void OnStreamReady(base::OnceCallback<void(bool)> callback);
 
   // Called when |audio_renderer_| initialization has completed.
-  void OnRendererInitializeDone(const base::Callback<void(bool)>& callback,
+  void OnRendererInitializeDone(base::OnceCallback<void(bool)> callback,
                                 PipelineStatus status);
 
   // Periodically polls the media time from the renderer and notifies the client
@@ -115,14 +116,14 @@ class MEDIA_MOJO_EXPORT MojoRendererService
   void SchedulePeriodicMediaTimeUpdates();
 
   // Callback executed once Flush() completes.
-  void OnFlushCompleted(const FlushCallback& callback);
+  void OnFlushCompleted(FlushCallback callback);
 
   // Callback executed once SetCdm() completes.
   void OnCdmAttached(scoped_refptr<ContentDecryptionModule> cdm,
-                     const base::Callback<void(bool)>& callback,
+                     base::OnceCallback<void(bool)> callback,
                      bool success);
 
-  base::WeakPtr<MojoCdmServiceContext> mojo_cdm_service_context_;
+  MojoCdmServiceContext* const mojo_cdm_service_context_ = nullptr;
 
   State state_;
   double playback_rate_;

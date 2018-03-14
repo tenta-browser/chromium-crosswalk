@@ -5,92 +5,11 @@
 // Namespace
 var importer = importer || {};
 
-/**
- * A persistent data store for Cloud Import history information.
- *
- * @interface
- */
-importer.ImportHistory = function() {};
-
-/**
- * @return {!Promise<!importer.ImportHistory>} Resolves when history
- *     has been fully loaded.
- */
-importer.ImportHistory.prototype.whenReady;
-
-/**
- * @param {!FileEntry} entry
- * @param {!importer.Destination} destination
- * @return {!Promise<boolean>} Resolves with true if the FileEntry
- *     was previously copied to the device.
- */
-importer.ImportHistory.prototype.wasCopied;
-
-/**
- * @param {!FileEntry} entry
- * @param {!importer.Destination} destination
- * @return {!Promise<boolean>} Resolves with true if the FileEntry
- *     was previously imported to the specified destination.
- */
-importer.ImportHistory.prototype.wasImported;
-
-/**
- * @param {!FileEntry} entry
- * @param {!importer.Destination} destination
- * @param {string} destinationUrl
- */
-importer.ImportHistory.prototype.markCopied;
-
-/**
- * List urls of all files that are marked as copied, but not marked as synced.
- * @param {!importer.Destination} destination
- * @return {!Promise<!Array<string>>}
- */
-importer.ImportHistory.prototype.listUnimportedUrls;
-
-/**
- * @param {!FileEntry} entry
- * @param {!importer.Destination} destination
- * @return {!Promise<?>} Resolves when the operation is completed.
- */
-importer.ImportHistory.prototype.markImported;
-
-/**
- * @param {string} destinationUrl
- * @return {!Promise<?>} Resolves when the operation is completed.
- */
-importer.ImportHistory.prototype.markImportedByUrl;
-
-/**
- * Adds an observer, which will be notified when cloud import history changes.
- *
- * @param {!importer.ImportHistory.Observer} observer
- */
-importer.ImportHistory.prototype.addObserver;
-
-/**
- * Remove a previously registered observer.
- *
- * @param {!importer.ImportHistory.Observer} observer
- */
-importer.ImportHistory.prototype.removeObserver;
-
 /** @enum {string} */
-importer.ImportHistory.State = {
+importer.ImportHistoryState = {
   'COPIED': 'copied',
   'IMPORTED': 'imported'
 };
-
-/**
- * @typedef {{
- *   state: !importer.ImportHistory.State,
- *   entry: !FileEntry
- * }}
- */
-importer.ImportHistory.ChangedEvent;
-
-/** @typedef {function(!importer.ImportHistory.ChangedEvent)} */
-importer.ImportHistory.Observer;
 
 /**
  * An dummy {@code ImportHistory} implementation. This class can conveniently
@@ -223,7 +142,7 @@ importer.PersistentImportHistory = function(hashGenerator, storage) {
   /** @private {!Array<!importer.ImportHistory.Observer>} */
   this.observers_ = [];
 
-  /** @private {Promise.<!importer.PersistentImportHistory>} */
+  /** @private {Promise<!importer.PersistentImportHistory>} */
   this.whenReady_ = this.load_();
 };
 
@@ -238,13 +157,13 @@ importer.PersistentImportHistory = function(hashGenerator, storage) {
 importer.PersistentImportHistory.prototype.load_ = function() {
   return this.storage_.readAll(this.updateInMemoryRecord_.bind(this))
       .then(
-          /**
+          (/**
            * @return {!importer.PersistentImportHistory}
            * @this {importer.PersistentImportHistory}
            */
           function() {
             return this;
-          }.bind(this))
+          }).bind(this))
       .catch(importer.getLogger().catcher('import-history-load'));
 };
 
@@ -353,7 +272,7 @@ importer.PersistentImportHistory.prototype.wasCopied =
   return this.whenReady_
       .then(this.createKey_.bind(this, entry))
       .then(
-          /**
+          (/**
            * @param {string} key
            * @return {boolean}
            * @this {importer.PersistentImportHistory}
@@ -361,7 +280,7 @@ importer.PersistentImportHistory.prototype.wasCopied =
           function(key) {
             return key in this.copiedEntries_ &&
                 destination in this.copiedEntries_[key];
-          }.bind(this))
+          }).bind(this))
       .catch(importer.getLogger().catcher('import-history-was-imported'));
 };
 
@@ -371,24 +290,23 @@ importer.PersistentImportHistory.prototype.wasImported =
   return this.whenReady_
       .then(this.createKey_.bind(this, entry))
       .then(
-          /**
+          (/**
            * @param {string} key
            * @return {boolean}
            * @this {importer.PersistentImportHistory}
            */
           function(key) {
             return this.getDestinations_(key).indexOf(destination) >= 0;
-          }.bind(this))
+          }).bind(this))
       .catch(importer.getLogger().catcher('import-history-was-imported'));
 };
 
 /** @override */
-importer.PersistentImportHistory.prototype.markCopied =
-    function(entry, destination, destinationUrl) {
-  return this.whenReady_
-      .then(this.createKey_.bind(this, entry))
+importer.PersistentImportHistory.prototype.markCopied = function(
+    entry, destination, destinationUrl) {
+  return this.whenReady_.then(this.createKey_.bind(this, entry))
       .then(
-          /**
+          (/**
            * @param {string} key
            * @return {!Promise<?>}
            * @this {importer.ImportHistory}
@@ -400,12 +318,9 @@ importer.PersistentImportHistory.prototype.markCopied =
                 destination,
                 importer.deflateAppUrl(entry.toURL()),
                 importer.deflateAppUrl(destinationUrl)]);
-          }.bind(this))
+          }).bind(this))
       .then(this.notifyObservers_.bind(
-          this,
-          importer.ImportHistory.State.COPIED,
-          entry,
-          destination,
+          this, importer.ImportHistoryState.COPIED, entry, destination,
           destinationUrl))
       .catch(importer.getLogger().catcher('import-history-mark-copied'));
 };
@@ -435,12 +350,11 @@ importer.PersistentImportHistory.prototype.listUnimportedUrls =
 };
 
 /** @override */
-importer.PersistentImportHistory.prototype.markImported =
-    function(entry, destination) {
-  return this.whenReady_
-      .then(this.createKey_.bind(this, entry))
+importer.PersistentImportHistory.prototype.markImported = function(
+    entry, destination) {
+  return this.whenReady_.then(this.createKey_.bind(this, entry))
       .then(
-          /**
+          (/**
            * @param {string} key
            * @return {!Promise<?>}
            * @this {importer.ImportHistory}
@@ -450,12 +364,9 @@ importer.PersistentImportHistory.prototype.markImported =
                 importer.RecordType_.IMPORT,
                 key,
                 destination]);
-          }.bind(this))
+          }).bind(this))
       .then(this.notifyObservers_.bind(
-          this,
-          importer.ImportHistory.State.IMPORTED,
-          entry,
-          destination))
+          this, importer.ImportHistoryState.IMPORTED, entry, destination))
       .catch(importer.getLogger().catcher('import-history-mark-imported'));
 };
 
@@ -477,7 +388,7 @@ importer.PersistentImportHistory.prototype.markImportedByUrl =
           key,
           destination])
             .then(
-                /** @this {importer.PersistentImportHistory} */
+                (/** @this {importer.PersistentImportHistory} */
                 function() {
                   var sourceUrl = importer.inflateAppUrl(
                       copyData[destination].sourceUrl);
@@ -485,18 +396,17 @@ importer.PersistentImportHistory.prototype.markImportedByUrl =
                   // This will allow observers to update the UI if the
                   // source entry is in view.
                   util.urlToEntry(sourceUrl).then(
-                      /**
+                      (/**
                        * @param {Entry} entry
                        * @this {importer.PersistentImportHistory}
                        */
                       function(entry) {
                         if (entry.isFile) {
                           this.notifyObservers_(
-                                importer.ImportHistory.State.IMPORTED,
-                                /** @type {!FileEntry} */ (entry),
-                                destination);
+                              importer.ImportHistoryState.IMPORTED,
+                              /** @type {!FileEntry} */ (entry), destination);
                         }
-                      }.bind(this),
+                      }).bind(this),
                       function() {
                         console.log(
                             'Unable to find original entry for: ' + sourceUrl);
@@ -504,7 +414,7 @@ importer.PersistentImportHistory.prototype.markImportedByUrl =
                       })
                       .catch(importer.getLogger().catcher(
                           'notify-listeners-on-import'));
-                }.bind(this))
+                }).bind(this))
             .catch(importer.getLogger().catcher('mark-imported-by-url'));
       }
     }
@@ -532,7 +442,7 @@ importer.PersistentImportHistory.prototype.removeObserver =
 };
 
 /**
- * @param {!importer.ImportHistory.State} state
+ * @param {!importer.ImportHistoryState} state
  * @param {!FileEntry} entry
  * @param {!importer.Destination} destination
  * @param {string=} opt_destinationUrl
@@ -541,7 +451,7 @@ importer.PersistentImportHistory.prototype.removeObserver =
 importer.PersistentImportHistory.prototype.notifyObservers_ =
     function(state, entry, destination, opt_destinationUrl) {
   this.observers_.forEach(
-      /**
+      (/**
        * @param {!importer.ImportHistory.Observer} observer
        * @this {importer.PersistentImportHistory}
        */
@@ -552,7 +462,7 @@ importer.PersistentImportHistory.prototype.notifyObservers_ =
           destination: destination,
           destinationUrl: opt_destinationUrl
         });
-      }.bind(this));
+      }).bind(this));
 };
 
 /**
@@ -575,34 +485,6 @@ importer.PersistentImportHistory.prototype.storeRecord_ = function(record) {
 importer.PersistentImportHistory.prototype.getDestinations_ = function(key) {
   return key in this.importedEntries_ ? this.importedEntries_[key] : [];
 };
-
-/**
- * Provider of lazy loaded importer.ImportHistory. This is the main
- * access point for a fully prepared {@code importer.ImportHistory} object.
- *
- * @interface
- */
-importer.HistoryLoader = function() {};
-
-/**
- * Instantiates an {@code importer.ImportHistory} object and manages any
- * necessary ongoing maintenance of the object with respect to
- * its external dependencies.
- *
- * @see importer.SynchronizedHistoryLoader for an example.
- *
- * @return {!Promise<!importer.ImportHistory>} Resolves when history instance
- *     is ready.
- */
-importer.HistoryLoader.prototype.getHistory;
-
-/**
- * Adds a listener to be notified when history is fully loaded for the first
- * time. If history is already loaded...will be called immediately.
- *
- * @param {function(!importer.ImportHistory)} listener
- */
-importer.HistoryLoader.prototype.addHistoryLoadedListener;
 
 /**
  * Class responsible for lazy loading of {@code importer.ImportHistory},
@@ -642,9 +524,8 @@ importer.SynchronizedHistoryLoader.prototype.getHistory = function() {
     this.needsInitialization_ = false;
     this.getHistoryFiles_()
         .then(
-            /**
+            (/**
              * @param {!Array<!FileEntry>} fileEntries
-             * @return {!Promise<!importer.ImportHistory>}
              * @this {importer.SynchronizedHistoryLoader}
              */
             function(fileEntries) {
@@ -656,11 +537,11 @@ importer.SynchronizedHistoryLoader.prototype.getHistory = function() {
                   storage);
               new importer.DriveSyncWatcher(history);
               history.whenReady().then(
-                  /** @this {importer.SynchronizedHistoryLoader} */
+                  (/** @this {importer.SynchronizedHistoryLoader} */
                   function() {
                     this.historyResolver_.resolve(history);
-                  }.bind(this));
-            }.bind(this))
+                  }).bind(this));
+            }).bind(this))
         .catch(importer.getLogger().catcher('history-load-chain'));
   }
 
@@ -731,13 +612,13 @@ importer.FileBasedRecordStorage = function(fileEntries, tracker) {
 importer.FileBasedRecordStorage.prototype.write = function(record) {
   return this.latestOperation_ = this.latestOperation_
       .then(
-          /**
+          (/**
            * @param {?} ignore
            * @this {importer.FileBasedRecordStorage}
            */
           function(ignore) {
             return this.outputFile_.createWriter();
-          }.bind(this))
+          }).bind(this))
       .then(this.writeRecord_.bind(this, record))
       .catch(importer.getLogger().catcher('file-record-store-write'));
 };
@@ -757,7 +638,7 @@ importer.FileBasedRecordStorage.prototype.writeRecord_ =
       {type: 'text/plain; charset=UTF-8'});
 
   return new Promise(
-      /**
+      (/**
        * @param {function()} resolve
        * @param {function()} reject
        * @this {importer.FileBasedRecordStorage}
@@ -768,7 +649,7 @@ importer.FileBasedRecordStorage.prototype.writeRecord_ =
 
         writer.seek(writer.length);
         writer.write(blob);
-      }.bind(this));
+      }).bind(this));
 };
 
 /** @override */
@@ -779,7 +660,7 @@ importer.FileBasedRecordStorage.prototype.readAll = function(recordCallback) {
 
   return this.latestOperation_ = this.latestOperation_
       .then(
-          /**
+          (/**
            * @param {?} ignored
            * @this {importer.FileBasedRecordStorage}
            */
@@ -793,27 +674,27 @@ importer.FileBasedRecordStorage.prototype.readAll = function(recordCallback) {
                   return entry.file();
                 });
             return Promise.all(filePromises);
-          }.bind(this))
+          }).bind(this))
       .then(
-          /**
-           * @return {!Array<!File>}
+          (/**
+           * @return {!Promise<!Array<string>>}
            * @this {importer.FileBasedRecordStorage}
            */
           function(files) {
             var contentPromises = files.map(
                 this.readFileAsText_.bind(this));
             return Promise.all(contentPromises);
-          }.bind(this),
-          /**
+          }).bind(this),
+          (/**
            * @return {string}
            * @this {importer.FileBasedRecordStorage}
            */
           function() {
             console.error('Unable to read from one of history files.');
             return '';
-          }.bind(this))
+          }).bind(this))
       .then(
-          /**
+          (/**
            * @param {!Array<string>} fileContents
            * @this {importer.FileBasedRecordStorage}
            */
@@ -821,9 +702,9 @@ importer.FileBasedRecordStorage.prototype.readAll = function(recordCallback) {
             var parsePromises = fileContents.map(
                 this.parse_.bind(this));
             return Promise.all(parsePromises);
-          }.bind(this))
+          }).bind(this))
       .then(
-          /** @param {!Array<!Array<*>>} parsedContents */
+          (/** @param {!Array<!Array<*>>} parsedContents */
           function(parsedContents) {
             parsedContents.forEach(
                 /** @param {!Array<!Array<*>>} recordSet */
@@ -840,7 +721,7 @@ importer.FileBasedRecordStorage.prototype.readAll = function(recordCallback) {
                     .dimension(fileCount === 1
                         ? metrics.Dimensions.MACHINE_USE_SINGLE
                         : metrics.Dimensions.MACHINE_USE_MULTIPLE));
-          }.bind(this))
+          }).bind(this))
       .catch(importer.getLogger().catcher('file-record-store-read-all'));
 };
 
@@ -853,11 +734,6 @@ importer.FileBasedRecordStorage.prototype.readAll = function(recordCallback) {
  */
 importer.FileBasedRecordStorage.prototype.readFileAsText_ = function(file) {
   return new Promise(
-      /**
-       * @param {function()} resolve
-       * @param {function()} reject
-       * @this {importer.FileBasedRecordStorage}
-       */
       function(resolve, reject) {
         var reader = new FileReader();
 
@@ -978,9 +854,8 @@ importer.DriveSyncWatcher.prototype.onFileTransfersUpdated_ =
  * @param {!importer.ImportHistory.ChangedEvent} event
  * @private
  */
-importer.DriveSyncWatcher.prototype.onHistoryChanged_ =
-    function(event) {
-  if (event.state === importer.ImportHistory.State.COPIED) {
+importer.DriveSyncWatcher.prototype.onHistoryChanged_ = function(event) {
+  if (event.state === importer.ImportHistoryState.COPIED) {
     // Check sync status incase the file synced *before* it was able
     // to mark be marked as copied.
     this.checkSyncStatus_(
@@ -1006,7 +881,7 @@ importer.DriveSyncWatcher.prototype.checkSyncStatus_ =
 
   this.getSyncStatus_(url)
       .then(
-          /**
+          (/**
            * @param {boolean} synced True if file is synced
            * @this {importer.DriveSyncWatcher}
            */
@@ -1018,7 +893,7 @@ importer.DriveSyncWatcher.prototype.checkSyncStatus_ =
                 this.history_.markImportedByUrl(url);
               }
             }
-          }.bind(this))
+          }).bind(this))
       .catch(
           importer.getLogger().catcher(
               'drive-sync-watcher-check-sync-status'));
@@ -1037,15 +912,16 @@ importer.DriveSyncWatcher.prototype.getSyncStatus_ = function(url) {
           if (results.entries.length !== 1)
             return Promise.reject();
           return new Promise(
-              /** @this {importer.DriveSyncWatcher} */
+              (/** @this {importer.DriveSyncWatcher} */
               function(resolve, reject) {
                 // TODO(smckay): User Metadata Cache...once it is available
                 // in the background.
                 chrome.fileManagerPrivate.getEntryProperties(
                     [results.entries[0]],
                     ['dirty'],
-                    /**
-                     * @param {!Array<Object>} propertiesList
+                    (/**
+                     * @param {!Array<!EntryProperties>|undefined}
+                     *     propertiesList
                      * @this {importer.DriveSyncWatcher}
                      */
                     function(propertiesList) {
@@ -1058,8 +934,8 @@ importer.DriveSyncWatcher.prototype.getSyncStatus_ = function(url) {
                         var data = propertiesList[0];
                         resolve(!data['dirty']);
                       }
-                    }.bind(this));
-              }.bind(this));
+                    }).bind(this));
+              }).bind(this));
         })
     .catch(importer.getLogger().catcher('drive-sync-watcher-get-sync-status'));
 };
@@ -1099,7 +975,7 @@ importer.RuntimeHistoryLoader.prototype.getHistory = function() {
     this.needsInitialization_ = false;
     importer.importEnabled()
         .then(
-            /**
+            (/**
              * @param {boolean} enabled
              * @return {!importer.HistoryLoader}
              * @this {importer.RuntimeHistoryLoader}
@@ -1108,12 +984,8 @@ importer.RuntimeHistoryLoader.prototype.getHistory = function() {
               return enabled ?
                   this.createRealHistoryLoader_() :
                   new importer.DummyImportHistory(false);
-            }.bind(this))
+            }).bind(this))
         .then(
-            /**
-             * @param {!importer.HistoryLoader} loader
-             * @this {importer.RuntimeHistoryLoader}
-             */
             function(loader) {
               return this.historyResolver_.resolve(loader.getHistory());
             }.bind(this))
@@ -1129,4 +1001,32 @@ importer.RuntimeHistoryLoader.prototype.getHistory = function() {
 importer.RuntimeHistoryLoader.prototype.addHistoryLoadedListener =
     function(listener) {
   this.historyResolver_.promise.then(listener);
+};
+
+/**
+ * @param {!FileEntry} fileEntry
+ * @return {!Promise<string>} Resolves with a "hashcode" consisting of
+ *     just the last modified time and the file size.
+ */
+importer.createMetadataHashcode = function(fileEntry) {
+  return new Promise(
+             function(resolve, reject) {
+               metadataProxy.getEntryMetadata(fileEntry).then(
+                   (/**
+                    * @param {!Object} metadata
+                    * @this {importer.PersistentImportHistory}
+                    */
+                   function(metadata) {
+                     if (!('modificationTime' in metadata)) {
+                       reject('File entry missing "modificationTime" field.');
+                     } else if (!('size' in metadata)) {
+                       reject('File entry missing "size" field.');
+                     } else {
+                       var secondsSinceEpoch = importer.toSecondsFromEpoch(
+                           metadata.modificationTime);
+                       resolve(secondsSinceEpoch + '_' + metadata.size);
+                     }
+                   }).bind(this));
+             }.bind(this))
+      .catch(importer.getLogger().catcher('importer-common-create-hashcode'));
 };

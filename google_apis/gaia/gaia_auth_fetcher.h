@@ -13,6 +13,7 @@
 #include "base/macros.h"
 #include "google_apis/gaia/gaia_auth_consumer.h"
 #include "google_apis/gaia/google_service_auth_error.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "url/gurl.h"
 
@@ -51,15 +52,6 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
                   net::URLRequestContextGetter* getter);
   ~GaiaAuthFetcher() override;
 
-  // Start a request to obtain service token for the the account identified by
-  // |sid| and |lsid| and the |service|.
-  //
-  // Either OnIssueAuthTokenSuccess or OnIssueAuthTokenFailure will be
-  // called on the consumer on the original thread.
-  void StartIssueAuthToken(const std::string& sid,
-                           const std::string& lsid,
-                           const char* const service);
-
   // Start a request to obtain |service| token for the the account identified by
   // |uber_token|.
   //
@@ -89,7 +81,8 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
   //
   // Either OnClientOAuthSuccess or OnClientOAuthFailure will be
   // called on the consumer on the original thread.
-  void StartCookieForOAuthLoginTokenExchange(const std::string& session_index);
+  void DeprecatedStartCookieForOAuthLoginTokenExchange(
+      const std::string& session_index);
 
   // Start a request to exchange the cookies of a signed-in user session
   // for an OAuthLogin-scoped oauth2 token. In the case of a session with
@@ -100,7 +93,7 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
   //
   // Either OnClientOAuthSuccess or OnClientOAuthFailure will be
   // called on the consumer on the original thread.
-  void StartCookieForOAuthLoginTokenExchangeWithDeviceId(
+  void DeprecatedStartCookieForOAuthLoginTokenExchangeWithDeviceId(
       const std::string& session_index,
       const std::string& device_id);
 
@@ -116,7 +109,7 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
   //
   // Either OnClientOAuthCode or ClientOAuthSuccess or OnClientOAuthFailure
   // will be called on the consumer on the original thread.
-  void StartCookieForOAuthLoginTokenExchange(
+  void DeprecatedStartCookieForOAuthLoginTokenExchange(
       bool fetch_token_from_auth_code,
       const std::string& session_index,
       const std::string& client_id,
@@ -168,10 +161,13 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
   // Start a request to exchange an OAuthLogin-scoped oauth2 access token for an
   // uber-auth token.  The returned token can be used with the method
   // StartMergeSession().
+  // If |is_bound_to_channel_id| is true, then the generated UberToken will
+  // be bound to the channel ID of the network context of |getter_|.
   //
   // Either OnUberAuthTokenSuccess or OnUberAuthTokenFailure will be
   // called on the consumer on the original thread.
-  void StartTokenFetchForUberAuthExchange(const std::string& access_token);
+  void StartTokenFetchForUberAuthExchange(const std::string& access_token,
+                                          bool is_bound_to_channel_id);
 
   // Start a request to exchange an OAuthLogin-scoped oauth2 access token for a
   // ClientLogin-style service tokens.  The response to this request is the
@@ -194,18 +190,6 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
   // Returns token/URL pairs to check, and the resulting status can be given to
   // /MergeSession requests.
   void StartGetCheckConnectionInfo();
-
-  // Starts listing any sessions that exist for the IDP. If all requested scopes
-  // have been approved by the session user, then a login hint is included in
-  // the response.
-  void StartListIDPSessions(const std::string& scopes,
-                            const std::string& domain);
-
-  // Generates an access token for the session, specifying the scopes and
-  // |login_hint|.
-  void StartGetTokenResponse(const std::string& scopes,
-                             const std::string& domain,
-                             const std::string& login_hint);
 
   // Implementation of net::URLFetcherDelegate
   void OnURLFetchComplete(const net::URLFetcher* source) override;
@@ -233,10 +217,12 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
   //
   // HasPendingFetch() should return false before calling this method, and will
   // return true afterwards.
-  virtual void CreateAndStartGaiaFetcher(const std::string& body,
-                                         const std::string& headers,
-                                         const GURL& gaia_gurl,
-                                         int load_flags);
+  virtual void CreateAndStartGaiaFetcher(
+      const std::string& body,
+      const std::string& headers,
+      const GURL& gaia_gurl,
+      int load_flags,
+      const net::NetworkTrafficAnnotationTag& traffic_annotation);
 
   // Dispatch the results of a request.
   void DispatchFetchedRequest(const GURL& url,
@@ -246,9 +232,6 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
                               int response_code);
 
   void SetPendingFetch(bool pending_fetch);
-
-  // Set the headers to use during the Logout call.
-  void SetLogoutHeaders(const std::string& headers);
 
  private:
   // The format of the POST body for IssueAuthToken.
@@ -351,14 +334,6 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
                                        const net::URLRequestStatus& status,
                                        int response_code);
 
-  void OnListIdpSessionsFetched(const std::string& data,
-                                const net::URLRequestStatus& status,
-                                int response_code);
-
-  void OnGetTokenResponseFetched(const std::string& data,
-                                 const net::URLRequestStatus& status,
-                                 int response_code);
-
   // Tokenize the results of a ClientLogin fetch.
   static void ParseClientLoginResponse(const std::string& data,
                                        std::string* sid,
@@ -378,9 +353,6 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
 
   static bool ParseClientLoginToOAuth2Cookie(const std::string& cookie,
                                              std::string* auth_code);
-
-  static bool ParseListIdpSessionsResponse(const std::string& data,
-                                           std::string* login_hint);
 
   // Is this a special case Gaia error for TwoFactor auth?
   static bool IsSecondFactorSuccess(const std::string& alleged_error);
@@ -415,13 +387,6 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
   static std::string MakeOAuthLoginBody(const std::string& service,
                                         const std::string& source);
 
-  static std::string MakeListIDPSessionsBody(const std::string& scopes,
-                                             const std::string& domain);
-
-  static std::string MakeGetTokenResponseBody(const std::string& scopes,
-                                              const std::string& domain,
-                                              const std::string& login_hint);
-
   // From a URLFetcher result, generate an appropriate error.
   // From the API documentation, both IssueAuthToken and ClientLogin have
   // the same error returns.
@@ -443,18 +408,15 @@ class GaiaAuthFetcher : public net::URLFetcherDelegate {
   const GURL list_accounts_gurl_;
   const GURL logout_gurl_;
   const GURL get_check_connection_info_url_;
-  const GURL oauth2_iframe_url_;
 
   // While a fetch is going on:
   std::unique_ptr<net::URLFetcher> fetcher_;
-  GURL client_login_to_oauth2_gurl_;
+  GURL deprecated_client_login_to_oauth2_gurl_;
   std::string request_body_;
-  std::string requested_service_;
+
+  std::string requested_service_; // Currently tracked for IssueAuthToken only.
   bool fetch_pending_ = false;
   bool fetch_token_from_auth_code_ = false;
-
-  // Headers used during the Logout call.
-  std::string logout_headers_;
 
   friend class GaiaAuthFetcherTest;
   FRIEND_TEST_ALL_PREFIXES(GaiaAuthFetcherTest, CaptchaParse);

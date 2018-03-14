@@ -9,16 +9,19 @@
 #include <string>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/macros.h"
+#include "base/task_scheduler/post_task.h"
 #include "components/cdm/common/cdm_messages_android.h"
+#include "content/public/browser/android/android_overlay_provider.h"
 #include "ipc/ipc_message_macros.h"
 #include "media/base/android/media_codec_util.h"
 #include "media/base/android/media_drm_bridge.h"
 #include "media/base/audio_codecs.h"
+#include "media/base/media_switches.h"
 #include "media/base/video_codecs.h"
 #include "media/media_features.h"
 
-using content::BrowserThread;
 using media::MediaDrmBridge;
 using media::SupportedCodecs;
 
@@ -41,27 +44,35 @@ const CodecInfo<media::VideoCodec> kVideoCodecsToQuery[] = {
 #if BUILDFLAG(ENABLE_HEVC_DEMUXING)
     {media::EME_CODEC_MP4_HEVC, media::kCodecHEVC, "video/mp4"},
 #endif
+#if BUILDFLAG(ENABLE_DOLBY_VISION_DEMUXING)
+    {media::EME_CODEC_MP4_DV_AVC, media::kCodecDolbyVision, "video/mp4"},
+#if BUILDFLAG(ENABLE_HEVC_DEMUXING)
+    {media::EME_CODEC_MP4_DV_HEVC, media::kCodecDolbyVision, "video/mp4"},
+#endif
+#endif
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 };
 
 const CodecInfo<media::AudioCodec> kAudioCodecsToQuery[] = {
+    // FLAC is not supported. See https://crbug.com/747050 for details.
+    // Vorbis is not supported. See http://crbug.com/710924 for details.
     {media::EME_CODEC_WEBM_OPUS, media::kCodecOpus, "video/webm"},
-    {media::EME_CODEC_WEBM_VORBIS, media::kCodecVorbis, "video/webm"},
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
     {media::EME_CODEC_MP4_AAC, media::kCodecAAC, "video/mp4"},
+#if BUILDFLAG(ENABLE_AC3_EAC3_AUDIO_DEMUXING)
+    {media::EME_CODEC_MP4_AC3, media::kCodecAC3, "video/mp4"},
+    {media::EME_CODEC_MP4_EAC3, media::kCodecEAC3, "video/mp4"},
+#endif
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 };
 
 static SupportedCodecs GetSupportedCodecs(
     const SupportedKeySystemRequest& request,
-    bool video_must_be_compositable) {
+    bool is_secure) {
   const std::string& key_system = request.key_system;
   SupportedCodecs supported_codecs = media::EME_CODEC_NONE;
 
   for (const auto& info : kVideoCodecsToQuery) {
-    // TODO(qinmin): Remove the composition logic when secure contents can be
-    // composited.
-    bool is_secure = !video_must_be_compositable;
     if ((request.codecs & info.eme_codec) &&
         MediaDrmBridge::IsKeySystemSupportedWithType(
             key_system, info.container_mime_type) &&
@@ -82,8 +93,14 @@ static SupportedCodecs GetSupportedCodecs(
   return supported_codecs;
 }
 
-CdmMessageFilterAndroid::CdmMessageFilterAndroid()
-    : BrowserMessageFilter(EncryptedMediaMsgStart) {}
+CdmMessageFilterAndroid::CdmMessageFilterAndroid(
+    bool can_persist_data,
+    bool force_to_support_secure_codecs)
+    : BrowserMessageFilter(EncryptedMediaMsgStart),
+      task_runner_(base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::BACKGROUND})),
+      can_persist_data_(can_persist_data),
+      force_to_support_secure_codecs_(force_to_support_secure_codecs) {}
 
 CdmMessageFilterAndroid::~CdmMessageFilterAndroid() {}
 
@@ -99,11 +116,13 @@ bool CdmMessageFilterAndroid::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
-void CdmMessageFilterAndroid::OverrideThreadForMessage(
-    const IPC::Message& message, BrowserThread::ID* thread) {
+base::TaskRunner* CdmMessageFilterAndroid::OverrideTaskRunnerForMessage(
+    const IPC::Message& message) {
   // Move the IPC handling to FILE thread as it is not very cheap.
   if (message.type() == ChromeViewHostMsg_QueryKeySystemSupport::ID)
-    *thread = BrowserThread::FILE;
+    return task_runner_.get();
+
+  return nullptr;
 }
 
 void CdmMessageFilterAndroid::OnQueryKeySystemSupport(
@@ -122,11 +141,28 @@ void CdmMessageFilterAndroid::OnQueryKeySystemSupport(
   if (!MediaDrmBridge::IsKeySystemSupported(request.key_system))
     return;
 
+  // When using MediaDrm, we assume it'll always try to persist some data. If
+  // |can_persist_data_| is false and MediaDrm were to persist data on the
+  // Android system, we are somewhat violating the incognito assumption.
+  // This cannot be used detect incognito mode easily because the result is the
+  // same when |can_persist_data_| is false, and when user blocks the "protected
+  // media identifier" permission prompt.
+  if (!can_persist_data_)
+    return;
+
   DCHECK(request.codecs & media::EME_CODEC_ALL) << "unrecognized codec";
   response->key_system = request.key_system;
-  // TODO(qinmin): check composition is supported or not.
-  response->compositing_codecs = GetSupportedCodecs(request, true);
-  response->non_compositing_codecs = GetSupportedCodecs(request, false);
+  response->non_secure_codecs = GetSupportedCodecs(request, false);
+
+  bool are_overlay_supported =
+      content::AndroidOverlayProvider::GetInstance()->AreOverlaysSupported();
+  bool use_android_overlay =
+      base::FeatureList::IsEnabled(media::kUseAndroidOverlay);
+  if (force_to_support_secure_codecs_ ||
+      (are_overlay_supported && use_android_overlay)) {
+    DVLOG(1) << "Rendering the output of secure codecs is supported!";
+    response->secure_codecs = GetSupportedCodecs(request, true);
+  }
 
   response->is_persistent_license_supported =
       MediaDrmBridge::IsPersistentLicenseTypeSupported(request.key_system);

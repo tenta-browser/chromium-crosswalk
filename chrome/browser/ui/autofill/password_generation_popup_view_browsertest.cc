@@ -28,10 +28,10 @@ class TestPasswordGenerationPopupController :
             gfx::RectF(0, 0, 10, 10),
             PasswordForm(),
             10,
-            nullptr /* PasswordManager*/,
             password_manager::ContentPasswordManagerDriverFactory::
                 FromWebContents(web_contents)
-                    ->GetDriverForFrame(web_contents->GetMainFrame()),
+                    ->GetDriverForFrame(web_contents->GetMainFrame())
+                    ->AsWeakPtr(),
             nullptr /* PasswordGenerationPopupObserver*/,
             web_contents,
             native_view) {}
@@ -89,5 +89,14 @@ IN_PROC_BROWSER_TEST_F(PasswordGenerationPopupViewTest,
   controller_->Show(true /* display password */);
 }
 #endif
+
+// Verify that destroying web contents with visible popup does not crash.
+IN_PROC_BROWSER_TEST_F(PasswordGenerationPopupViewTest,
+                       CloseWebContentsWithVisiblePopup) {
+  controller_ = new autofill::TestPasswordGenerationPopupController(
+      GetWebContents(), GetNativeView());
+  controller_->Show(false);
+  GetWebContents()->Close();
+}
 
 }  // namespace autofill

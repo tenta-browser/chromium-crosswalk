@@ -22,9 +22,10 @@
 
 #include "core/layout/LayoutTextControl.h"
 
-#include "core/dom/StyleChangeReason.h"
-#include "core/html/TextControlElement.h"
+#include "core/css/StyleChangeReason.h"
+#include "core/html/forms/TextControlElement.h"
 #include "core/layout/HitTestResult.h"
+#include "core/page/Page.h"
 #include "platform/scroll/ScrollbarTheme.h"
 
 namespace blink {
@@ -67,8 +68,9 @@ void LayoutTextControl::StyleDidChange(StyleDifference diff,
 
 static inline void UpdateUserModifyProperty(TextControlElement& node,
                                             ComputedStyle& style) {
-  style.SetUserModify(node.IsDisabledOrReadOnly() ? READ_ONLY
-                                                  : READ_WRITE_PLAINTEXT_ONLY);
+  style.SetUserModify(node.IsDisabledOrReadOnly()
+                          ? EUserModify::kReadOnly
+                          : EUserModify::kReadWritePlaintextOnly);
 }
 
 void LayoutTextControl::AdjustInnerEditorStyle(
@@ -78,6 +80,7 @@ void LayoutTextControl::AdjustInnerEditorStyle(
   // element.
   text_block_style.SetDirection(Style()->Direction());
   text_block_style.SetUnicodeBidi(Style()->GetUnicodeBidi());
+  text_block_style.SetUserSelect(EUserSelect::kText);
 
   UpdateUserModifyProperty(*GetTextControlElement(), text_block_style);
 }
@@ -109,7 +112,7 @@ void LayoutTextControl::UpdateFromElement() {
 int LayoutTextControl::ScrollbarThickness() const {
   // FIXME: We should get the size of the scrollbar from the LayoutTheme
   // instead.
-  return ScrollbarTheme::GetTheme().ScrollbarThickness();
+  return GetDocument().GetPage()->GetScrollbarTheme().ScrollbarThickness();
 }
 
 void LayoutTextControl::ComputeLogicalHeight(
@@ -131,7 +134,7 @@ void LayoutTextControl::ComputeLogicalHeight(
     if (Style()->OverflowInlineDirection() == EOverflow::kScroll ||
         (Style()->OverflowInlineDirection() == EOverflow::kAuto &&
          inner_editor->GetLayoutObject()->Style()->OverflowWrap() ==
-             kNormalOverflowWrap))
+             EOverflowWrap::kNormal))
       logical_height += ScrollbarThickness();
 
     // FIXME: The logical height of the inner text box should have been added
@@ -341,8 +344,8 @@ LayoutObject* LayoutTextControl::LayoutSpecialExcludedChild(
   return placeholder_layout_object;
 }
 
-int LayoutTextControl::FirstLineBoxBaseline() const {
-  int result = LayoutBlock::FirstLineBoxBaseline();
+LayoutUnit LayoutTextControl::FirstLineBoxBaseline() const {
+  LayoutUnit result = LayoutBlock::FirstLineBoxBaseline();
   if (result != -1)
     return result;
 
@@ -350,7 +353,7 @@ int LayoutTextControl::FirstLineBoxBaseline() const {
   // compute the baseline because lineboxes do not exist.
   Element* inner_editor = InnerEditorElement();
   if (!inner_editor || !inner_editor->GetLayoutObject())
-    return -1;
+    return LayoutUnit(-1);
 
   LayoutBlock* inner_editor_layout_object =
       ToLayoutBlock(inner_editor->GetLayoutObject());
@@ -358,7 +361,7 @@ int LayoutTextControl::FirstLineBoxBaseline() const {
       inner_editor_layout_object->Style(true)->GetFont().PrimaryFont();
   DCHECK(font_data);
   if (!font_data)
-    return -1;
+    return LayoutUnit(-1);
 
   LayoutUnit baseline(font_data->GetFontMetrics().Ascent(kAlphabeticBaseline));
   for (LayoutObject* box = inner_editor_layout_object; box && box != this;
@@ -366,7 +369,7 @@ int LayoutTextControl::FirstLineBoxBaseline() const {
     if (box->IsBox())
       baseline += ToLayoutBox(box)->LogicalTop();
   }
-  return baseline.ToInt();
+  return baseline;
 }
 
 }  // namespace blink

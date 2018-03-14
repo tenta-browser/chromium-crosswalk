@@ -4,11 +4,12 @@
 
 #include "bindings/core/v8/WindowProxyManager.h"
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/V8PerIsolateData.h"
 
 namespace blink {
 
-DEFINE_TRACE(WindowProxyManager) {
+void WindowProxyManager::Trace(blink::Visitor* visitor) {
   visitor->Trace(frame_);
   visitor->Trace(window_proxy_);
   visitor->Trace(isolated_worlds_);
@@ -24,6 +25,12 @@ void WindowProxyManager::ClearForNavigation() {
   window_proxy_->ClearForNavigation();
   for (auto& entry : isolated_worlds_)
     entry.value->ClearForNavigation();
+}
+
+void WindowProxyManager::ClearForSwap() {
+  window_proxy_->ClearForSwap();
+  for (auto& entry : isolated_worlds_)
+    entry.value->ClearForSwap();
 }
 
 void WindowProxyManager::ReleaseGlobalProxies(
@@ -47,10 +54,15 @@ void WindowProxyManager::SetGlobalProxies(
 }
 
 WindowProxyManager::WindowProxyManager(Frame& frame, FrameType frame_type)
-    : isolate_(v8::Isolate::GetCurrent()),
+    : isolate_(V8PerIsolateData::MainThreadIsolate()),
       frame_(&frame),
       frame_type_(frame_type),
-      window_proxy_(CreateWindowProxy(DOMWrapperWorld::MainWorld())) {}
+      window_proxy_(CreateWindowProxy(DOMWrapperWorld::MainWorld())) {
+  // All WindowProxyManagers must be created in the main thread.
+  // Note that |isolate_| is initialized with
+  // V8PerIsolateData::MainThreadIsolate().
+  CHECK(IsMainThread());
+}
 
 WindowProxy* WindowProxyManager::CreateWindowProxy(DOMWrapperWorld& world) {
   switch (frame_type_) {
@@ -76,7 +88,7 @@ WindowProxy* WindowProxyManager::WindowProxyMaybeUninitialized(
   if (world.IsMainWorld()) {
     window_proxy = window_proxy_.Get();
   } else {
-    IsolatedWorldMap::iterator iter = isolated_worlds_.Find(world.GetWorldId());
+    IsolatedWorldMap::iterator iter = isolated_worlds_.find(world.GetWorldId());
     if (iter != isolated_worlds_.end()) {
       window_proxy = iter->value.Get();
     } else {

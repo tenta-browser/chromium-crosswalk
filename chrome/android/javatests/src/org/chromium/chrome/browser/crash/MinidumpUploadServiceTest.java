@@ -4,8 +4,6 @@
 
 package org.chromium.chrome.browser.crash;
 
-import static android.support.test.InstrumentationRegistry.getInstrumentation;
-
 import static org.chromium.chrome.browser.crash.MinidumpUploadService.BROWSER;
 import static org.chromium.chrome.browser.crash.MinidumpUploadService.GPU;
 import static org.chromium.chrome.browser.crash.MinidumpUploadService.OTHER;
@@ -14,20 +12,28 @@ import static org.chromium.chrome.browser.crash.MinidumpUploadService.RENDERER;
 import android.annotation.TargetApi;
 import android.app.job.JobInfo;
 import android.app.job.JobScheduler;
+import android.app.job.JobWorkItem;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.SmallTest;
 
+import org.junit.Assert;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
 import org.chromium.base.ContextUtils;
-import org.chromium.base.annotations.SuppressFBWarnings;
+import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.AdvancedMockContext;
 import org.chromium.base.test.util.Feature;
 import org.chromium.components.background_task_scheduler.TaskIds;
-import org.chromium.components.minidump_uploader.CrashTestCase;
+import org.chromium.components.minidump_uploader.CrashTestRule;
+import org.chromium.components.minidump_uploader.CrashTestRule.MockCrashReportingPermissionManager;
 import org.chromium.components.minidump_uploader.MinidumpUploadCallable;
 import org.chromium.components.minidump_uploader.util.CrashReportingPermissionManager;
 import org.chromium.content.browser.test.util.Criteria;
@@ -42,7 +48,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Testcase for {@link MinidumpUploadService}.
  */
-public class MinidumpUploadServiceTest extends CrashTestCase {
+@RunWith(BaseJUnit4ClassRunner.class)
+public class MinidumpUploadServiceTest {
+    @Rule
+    public CrashTestRule mTestRule = new CrashTestRule();
+
     private static final int CHECK_INTERVAL_MS = 250;
     private static final int MAX_TIMEOUT_MS = 20000;
     private static final String BOUNDARY = "TESTBOUNDARY";
@@ -61,6 +71,7 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
 
         private static class NetworkChangingPermissionManager
                 extends MockCrashReportingPermissionManager {
+            @Override
             public boolean isNetworkAvailableForCrashUploads() {
                 return mIsNetworkAvailable;
             }
@@ -70,6 +81,7 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
             }
         }
 
+        @Override
         CrashReportingPermissionManager getCrashReportingPermissionManager() {
             return mPermissionManager;
         }
@@ -79,6 +91,7 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         }
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testTryUploadAllCrashDumps() throws IOException {
@@ -88,22 +101,30 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         // Setup prerequisites.
         final AtomicInteger numServiceStarts = new AtomicInteger(0);
         final File[] minidumpFiles = {
-                new File(mCrashDir, "chromium_renderer-111.dmp1"),
-                new File(mCrashDir, "chromium_renderer-222.dmp2"),
-                new File(mCrashDir, "chromium_renderer-333.dmp3"),
+                new File(mTestRule.getCrashDir(), "chromium_renderer-111.dmp1.try0"),
+                new File(mTestRule.getCrashDir(), "chromium_renderer-222.dmp2.try1"),
+                new File(mTestRule.getCrashDir(), "chromium_renderer-333.dmp3.try2"),
+        };
+        final File[] invalidMinidumpFiles = {
+                // The ".try" suffix is required.
+                new File(mTestRule.getCrashDir(), "chromium_renderer-111.dmp4"),
+                // The minidump should not have exceeded the maximum number of tries.
+                new File(mTestRule.getCrashDir(), "chromium_renderer-222.dmp5.try3"),
         };
         MinidumpPreparationContext context = new MinidumpPreparationContext(
-                getInstrumentation().getTargetContext().getApplicationContext()) {
+                InstrumentationRegistry.getInstrumentation()
+                        .getTargetContext()
+                        .getApplicationContext()) {
             @Override
             public ComponentName startService(Intent intentToCheck) {
                 String filePath =
                         intentToCheck.getStringExtra(MinidumpUploadService.FILE_TO_UPLOAD_KEY);
                 // Assuming numServicesStart value corresponds to minidumpFiles index.
-                assertEquals("Action should be correct", MinidumpUploadService.ACTION_UPLOAD,
+                Assert.assertEquals("Action should be correct", MinidumpUploadService.ACTION_UPLOAD,
                         intentToCheck.getAction());
-                assertTrue("Should not call service more than number of files",
+                Assert.assertTrue("Should not call service more than number of files",
                         numServiceStarts.incrementAndGet() <= minidumpFiles.length);
-                assertEquals("Minidump path should be the absolute path",
+                Assert.assertEquals("Minidump path should be the absolute path",
                         minidumpFiles[numServiceStarts.intValue() - 1].getAbsolutePath(), filePath);
                 return new ComponentName(getPackageName(), MinidumpUploadService.class.getName());
             }
@@ -111,7 +132,10 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         };
         MinidumpUploadService service = new TestMinidumpUploadService(context);
         for (File minidumpFile : minidumpFiles) {
-            setUpMinidumpFile(minidumpFile, BOUNDARY);
+            CrashTestRule.setUpMinidumpFile(minidumpFile, BOUNDARY);
+        }
+        for (File minidumpFile : invalidMinidumpFiles) {
+            CrashTestRule.setUpMinidumpFile(minidumpFile, BOUNDARY);
         }
 
         // Run test.
@@ -121,22 +145,25 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
 
         // Verify.
         for (File minidumpFile : minidumpFiles) {
-            assertTrue("Minidump file should exist: " + minidumpFile, minidumpFile.isFile());
+            Assert.assertTrue("Minidump file should exist: " + minidumpFile, minidumpFile.isFile());
         }
-        assertEquals("Should have called startService() same number of times as there are files",
+        Assert.assertEquals(
+                "Should have called startService() same number of times as there are files",
                 minidumpFiles.length, numServiceStarts.intValue());
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testUploadCrash() throws IOException, InterruptedException {
         List<CountedMinidumpUploadCallable> callables =
                 new ArrayList<CountedMinidumpUploadCallable>();
         callables.add(new CountedMinidumpUploadCallable(
-                "chromium_renderer-111.dmp1", MinidumpUploadCallable.UPLOAD_SUCCESS, false));
+                "chromium_renderer-111.dmp1.try0", MinidumpUploadCallable.UPLOAD_SUCCESS, false));
         runUploadCrashTest(callables);
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testUploadCrashWithThreeFails() throws IOException, InterruptedException {
@@ -144,36 +171,36 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         final List<CountedMinidumpUploadCallable> callables =
                 new ArrayList<CountedMinidumpUploadCallable>();
         for (int i = 0; i < MinidumpUploadService.MAX_TRIES_ALLOWED; i++) {
-            callables.add(new CountedMinidumpUploadCallable(
-                    "chromium_renderer-111.dmp1" + (i > 0 ? ".try" + i : ""),
+            callables.add(new CountedMinidumpUploadCallable("chromium_renderer-111.dmp1.try" + i,
                     MinidumpUploadCallable.UPLOAD_FAILURE, true));
         }
         runUploadCrashTest(callables);
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testUploadCrashWithOneFailWithNetwork() throws IOException, InterruptedException {
         List<CountedMinidumpUploadCallable> callables =
                 new ArrayList<CountedMinidumpUploadCallable>();
         callables.add(new CountedMinidumpUploadCallable(
-                "chromium_renderer-111.dmp1", MinidumpUploadCallable.UPLOAD_FAILURE, true));
+                "chromium_renderer-111.dmp1.try0", MinidumpUploadCallable.UPLOAD_FAILURE, true));
         callables.add(new CountedMinidumpUploadCallable(
                 "chromium_renderer-111.dmp1.try1", MinidumpUploadCallable.UPLOAD_SUCCESS, true));
         runUploadCrashTest(callables);
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testUploadCrashWithOneFailNoNetwork() throws IOException, InterruptedException {
         List<CountedMinidumpUploadCallable> callables =
                 new ArrayList<CountedMinidumpUploadCallable>();
         callables.add(new CountedMinidumpUploadCallable(
-                "chromium_renderer-111.dmp1", MinidumpUploadCallable.UPLOAD_FAILURE, false));
+                "chromium_renderer-111.dmp1.try0", MinidumpUploadCallable.UPLOAD_FAILURE, false));
         runUploadCrashTest(callables);
     }
 
-    @SuppressFBWarnings("RV_RETURN_VALUE_IGNORED_BAD_PRACTICE")
     private void runUploadCrashTest(final List<CountedMinidumpUploadCallable> callables)
             throws IOException, InterruptedException {
         // The JobScheduler API is used on Android M+.
@@ -190,7 +217,7 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
             @Override
             MinidumpUploadCallable createMinidumpUploadCallable(File minidumpFile, File logfile) {
                 if (mIndex >= callables.size()) {
-                    fail("Should not create callable number " + mIndex);
+                    Assert.fail("Should not create callable number " + mIndex);
                 }
                 CountedMinidumpUploadCallable callable = callables.get(mIndex++);
                 if (callable.mTriggerNetworkChange) {
@@ -202,18 +229,18 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
             @Override
             protected void onHandleIntent(Intent intent) {
                 try {
-                    runTestOnUiThread(new Runnable() {
+                    InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
                         @Override
                         public void run() {
                             // Set up basically a fake.
                             if (!NetworkChangeNotifier.isInitialized()) {
-                                NetworkChangeNotifier.init(getApplicationContext());
+                                NetworkChangeNotifier.init();
                             }
                         }
                     });
                 } catch (Throwable t) {
                     t.printStackTrace();
-                    fail("Failed to set up NetworkChangeNotifier");
+                    Assert.fail("Failed to set up NetworkChangeNotifier");
                 }
 
                 super.onHandleIntent(intent);
@@ -221,7 +248,7 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
                 if (mTriggerNetworkChange) {
                     mTriggerNetworkChange = false;
                     try {
-                        runTestOnUiThread(new Runnable() {
+                        InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
                             @Override
                             public void run() {
                                 NetworkChangeNotifier.setAutoDetectConnectivityState(false);
@@ -235,7 +262,7 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
                         });
                     } catch (Throwable t) {
                         t.printStackTrace();
-                        fail("Failed to trigger NetworkChangeNotifier");
+                        Assert.fail("Failed to trigger NetworkChangeNotifier");
                     }
                 }
             }
@@ -244,7 +271,10 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         // calls on a handler thread. We pass in the MinidumpUploadService as an argument so we
         // can call it directly without going through the Android framework.
         final MinidumpPreparationContext context = new MinidumpPreparationContext(
-                getInstrumentation().getTargetContext().getApplicationContext(), service) {
+                InstrumentationRegistry.getInstrumentation()
+                        .getTargetContext()
+                        .getApplicationContext(),
+                service) {
             Handler mHandler;
             {
                 HandlerThread handlerThread =
@@ -255,7 +285,8 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
 
             @Override
             public ComponentName startService(final Intent intentToCheck) {
-                assertTrue(MinidumpUploadService.ACTION_UPLOAD.equals(intentToCheck.getAction()));
+                Assert.assertTrue(
+                        MinidumpUploadService.ACTION_UPLOAD.equals(intentToCheck.getAction()));
                 // Post to the handler thread to run the retry intent.
                 mHandler.post(new Runnable() {
                     @Override
@@ -271,9 +302,9 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         // dependent on the service, we do this after context creation.
         service.attachBaseContextLate(context);
         // Create the file used for uploading.
-        File minidumpFile = new File(mCrashDir, "chromium_renderer-111.dmp1");
+        File minidumpFile = new File(mTestRule.getCrashDir(), "chromium_renderer-111.dmp1.try0");
         minidumpFile.createNewFile();
-        setUpMinidumpFile(minidumpFile, BOUNDARY);
+        CrashTestRule.setUpMinidumpFile(minidumpFile, BOUNDARY);
 
         // Run test.
         service.onCreate();
@@ -296,6 +327,7 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
                 MAX_TIMEOUT_MS, CHECK_INTERVAL_MS);
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testHandleForceUploadCrash_MinidumpFileExists_SansJobScheduler()
@@ -304,20 +336,22 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) return;
 
         // Set up prerequisites.
-        File minidumpFile =
-                new File(mCrashDir, "chromium-renderer-minidump-f297dbcba7a2d0bb.dmp0.try3");
-        final File expectedRenamedMinidumpFile =
-                new File(mCrashDir, "chromium-renderer-minidump-f297dbcba7a2d0bb.forced0.try0");
-        setUpMinidumpFile(minidumpFile, BOUNDARY);
+        File minidumpFile = new File(
+                mTestRule.getCrashDir(), "chromium-renderer-minidump-f297dbcba7a2d0bb.dmp0.try3");
+        final File expectedRenamedMinidumpFile = new File(mTestRule.getCrashDir(),
+                "chromium-renderer-minidump-f297dbcba7a2d0bb.forced0.try0");
+        CrashTestRule.setUpMinidumpFile(minidumpFile, BOUNDARY);
         final String startServiceFlag = "startServiceFlag";
         MinidumpPreparationContext context = new MinidumpPreparationContext(
-                getInstrumentation().getTargetContext().getApplicationContext()) {
+                InstrumentationRegistry.getInstrumentation()
+                        .getTargetContext()
+                        .getApplicationContext()) {
             @Override
             public ComponentName startService(Intent intentToCheck) {
-                assertEquals(MinidumpUploadService.ACTION_UPLOAD, intentToCheck.getAction());
+                Assert.assertEquals(MinidumpUploadService.ACTION_UPLOAD, intentToCheck.getAction());
                 String filePath =
                         intentToCheck.getStringExtra(MinidumpUploadService.FILE_TO_UPLOAD_KEY);
-                assertEquals("Minidump path should be for a fresh upload",
+                Assert.assertEquals("Minidump path should be for a fresh upload",
                         expectedRenamedMinidumpFile.getAbsolutePath(), filePath);
                 setFlag(startServiceFlag);
                 return new ComponentName(getPackageName(), MinidumpUploadService.class.getName());
@@ -329,9 +363,11 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         MinidumpUploadService.tryUploadCrashDumpWithLocalId("f297dbcba7a2d0bb");
 
         // Verify.
-        assertTrue("Should have called startService(...)", context.isFlagSet(startServiceFlag));
+        Assert.assertTrue(
+                "Should have called startService(...)", context.isFlagSet(startServiceFlag));
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testHandleForceUploadCrash_MinidumpFileExists_WithJobScheduler()
@@ -340,25 +376,29 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
 
         // Set up prerequisites.
-        setUpMinidumpFile(
-                new File(mCrashDir, "chromium-renderer-minidump-f297dbcba7a2d0bb.dmp0.try3"),
+        CrashTestRule.setUpMinidumpFile(
+                new File(mTestRule.getCrashDir(),
+                        "chromium-renderer-minidump-f297dbcba7a2d0bb.dmp0.try3"),
                 BOUNDARY);
-        AdvancedMockContext context = new MinidumpPreparationContext(
-                getInstrumentation().getTargetContext().getApplicationContext());
+        AdvancedMockContext context =
+                new MinidumpPreparationContext(InstrumentationRegistry.getInstrumentation()
+                                                       .getTargetContext()
+                                                       .getApplicationContext());
 
         // Run test.
         ContextUtils.initApplicationContextForTests(context);
         MinidumpUploadService.tryUploadCrashDumpWithLocalId("f297dbcba7a2d0bb");
 
         // Verify.
-        final File expectedRenamedMinidumpFile =
-                new File(mCrashDir, "chromium-renderer-minidump-f297dbcba7a2d0bb.forced0.try0");
-        assertTrue("Should have renamed the minidump file for forced upload",
+        final File expectedRenamedMinidumpFile = new File(mTestRule.getCrashDir(),
+                "chromium-renderer-minidump-f297dbcba7a2d0bb.forced0.try0");
+        Assert.assertTrue("Should have renamed the minidump file for forced upload",
                 expectedRenamedMinidumpFile.exists());
-        assertTrue("Should have tried to schedule an upload job",
+        Assert.assertTrue("Should have tried to schedule an upload job",
                 context.isFlagSet(TestJobScheduler.SCHEDULE_JOB_FLAG));
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testHandleForceUploadCrash_SkippedMinidumpFileExists_SansJobScheduler()
@@ -367,20 +407,22 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) return;
 
         // Set up prerequisites.
-        File minidumpFile =
-                new File(mCrashDir, "chromium-renderer-minidump-f297dbcba7a2d0bb.skipped0.try0");
-        final File expectedRenamedMinidumpFile =
-                new File(mCrashDir, "chromium-renderer-minidump-f297dbcba7a2d0bb.forced0.try0");
-        setUpMinidumpFile(minidumpFile, BOUNDARY);
+        File minidumpFile = new File(mTestRule.getCrashDir(),
+                "chromium-renderer-minidump-f297dbcba7a2d0bb.skipped0.try0");
+        final File expectedRenamedMinidumpFile = new File(mTestRule.getCrashDir(),
+                "chromium-renderer-minidump-f297dbcba7a2d0bb.forced0.try0");
+        CrashTestRule.setUpMinidumpFile(minidumpFile, BOUNDARY);
         final String startServiceFlag = "startServiceFlag";
         MinidumpPreparationContext context = new MinidumpPreparationContext(
-                getInstrumentation().getTargetContext().getApplicationContext()) {
+                InstrumentationRegistry.getInstrumentation()
+                        .getTargetContext()
+                        .getApplicationContext()) {
             @Override
             public ComponentName startService(Intent intentToCheck) {
-                assertEquals(MinidumpUploadService.ACTION_UPLOAD, intentToCheck.getAction());
+                Assert.assertEquals(MinidumpUploadService.ACTION_UPLOAD, intentToCheck.getAction());
                 String filePath =
                         intentToCheck.getStringExtra(MinidumpUploadService.FILE_TO_UPLOAD_KEY);
-                assertEquals("Minidump path should be for a fresh upload",
+                Assert.assertEquals("Minidump path should be for a fresh upload",
                         expectedRenamedMinidumpFile.getAbsolutePath(), filePath);
                 setFlag(startServiceFlag);
                 return new ComponentName(getPackageName(), MinidumpUploadService.class.getName());
@@ -392,9 +434,11 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         MinidumpUploadService.tryUploadCrashDumpWithLocalId("f297dbcba7a2d0bb");
 
         // Verify.
-        assertTrue("Should have called startService(...)", context.isFlagSet(startServiceFlag));
+        Assert.assertTrue(
+                "Should have called startService(...)", context.isFlagSet(startServiceFlag));
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testHandleForceUploadCrash_SkippedMinidumpFileExists_WithJobScheduler()
@@ -403,25 +447,29 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
 
         // Set up prerequisites.
-        setUpMinidumpFile(
-                new File(mCrashDir, "chromium-renderer-minidump-f297dbcba7a2d0bb.skipped0.try3"),
+        CrashTestRule.setUpMinidumpFile(
+                new File(mTestRule.getCrashDir(),
+                        "chromium-renderer-minidump-f297dbcba7a2d0bb.skipped0.try3"),
                 BOUNDARY);
-        AdvancedMockContext context = new MinidumpPreparationContext(
-                getInstrumentation().getTargetContext().getApplicationContext());
+        AdvancedMockContext context =
+                new MinidumpPreparationContext(InstrumentationRegistry.getInstrumentation()
+                                                       .getTargetContext()
+                                                       .getApplicationContext());
 
         // Run test.
         ContextUtils.initApplicationContextForTests(context);
         MinidumpUploadService.tryUploadCrashDumpWithLocalId("f297dbcba7a2d0bb");
 
         // Verify.
-        final File expectedRenamedMinidumpFile =
-                new File(mCrashDir, "chromium-renderer-minidump-f297dbcba7a2d0bb.forced0.try0");
-        assertTrue("Should have renamed the minidump file for forced upload",
+        final File expectedRenamedMinidumpFile = new File(mTestRule.getCrashDir(),
+                "chromium-renderer-minidump-f297dbcba7a2d0bb.forced0.try0");
+        Assert.assertTrue("Should have renamed the minidump file for forced upload",
                 expectedRenamedMinidumpFile.exists());
-        assertTrue("Should have tried to schedule an upload job",
+        Assert.assertTrue("Should have tried to schedule an upload job",
                 context.isFlagSet(TestJobScheduler.SCHEDULE_JOB_FLAG));
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testHandleForceUploadCrash_FileDoesntExist_SansJobScheduler() {
@@ -431,7 +479,9 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         // Set up prerequisites.
         final String startServiceFlag = "startServiceFlag";
         MinidumpPreparationContext context = new MinidumpPreparationContext(
-                getInstrumentation().getTargetContext().getApplicationContext()) {
+                InstrumentationRegistry.getInstrumentation()
+                        .getTargetContext()
+                        .getApplicationContext()) {
             @Override
             public ComponentName startService(Intent unused) {
                 setFlag(startServiceFlag);
@@ -443,10 +493,11 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         MinidumpUploadService.tryUploadCrashDumpWithLocalId("f297dbcba7a2d0bb");
 
         // Verify.
-        assertFalse(
+        Assert.assertFalse(
                 "Should not have called startService(...)", context.isFlagSet(startServiceFlag));
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testHandleForceUploadCrash_FileDoesntExist_WithJobScheduler() throws IOException {
@@ -454,17 +505,20 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
 
         // Set up prerequisites.
-        AdvancedMockContext context = new MinidumpPreparationContext(
-                getInstrumentation().getTargetContext().getApplicationContext());
+        AdvancedMockContext context =
+                new MinidumpPreparationContext(InstrumentationRegistry.getInstrumentation()
+                                                       .getTargetContext()
+                                                       .getApplicationContext());
 
         // Run test.
         MinidumpUploadService.tryUploadCrashDumpWithLocalId("f297dbcba7a2d0bb");
 
         // Verify.
-        assertFalse("Should not have tried to schedule an upload job",
+        Assert.assertFalse("Should not have tried to schedule an upload job",
                 context.isFlagSet(TestJobScheduler.SCHEDULE_JOB_FLAG));
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testHandleForceUploadCrash_FileAlreadyUploaded_SansJobScheduler()
@@ -473,12 +527,15 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) return;
 
         // Set up prerequisites.
-        setUpMinidumpFile(
-                new File(mCrashDir, "chromium-renderer-minidump-f297dbcba7a2d0bb.up0.try0"),
+        CrashTestRule.setUpMinidumpFile(
+                new File(mTestRule.getCrashDir(),
+                        "chromium-renderer-minidump-f297dbcba7a2d0bb.up0.try0"),
                 BOUNDARY);
         final String startServiceFlag = "startServiceFlag";
         MinidumpPreparationContext context = new MinidumpPreparationContext(
-                getInstrumentation().getTargetContext().getApplicationContext()) {
+                InstrumentationRegistry.getInstrumentation()
+                        .getTargetContext()
+                        .getApplicationContext()) {
             @Override
             public ComponentName startService(Intent unused) {
                 setFlag(startServiceFlag);
@@ -490,10 +547,11 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         MinidumpUploadService.tryUploadCrashDumpWithLocalId("f297dbcba7a2d0bb");
 
         // Verify.
-        assertFalse(
+        Assert.assertFalse(
                 "Should not have called startService(...)", context.isFlagSet(startServiceFlag));
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testHandleForceUploadCrash_FileAlreadyUploaded_WithJobScheduler()
@@ -502,50 +560,65 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
 
         // Set up prerequisites.
-        setUpMinidumpFile(
-                new File(mCrashDir, "chromium-renderer-minidump-f297dbcba7a2d0bb.up0.try0"),
+        CrashTestRule.setUpMinidumpFile(
+                new File(mTestRule.getCrashDir(),
+                        "chromium-renderer-minidump-f297dbcba7a2d0bb.up0.try0"),
                 BOUNDARY);
-        AdvancedMockContext context = new MinidumpPreparationContext(
-                getInstrumentation().getTargetContext().getApplicationContext());
+        AdvancedMockContext context =
+                new MinidumpPreparationContext(InstrumentationRegistry.getInstrumentation()
+                                                       .getTargetContext()
+                                                       .getApplicationContext());
 
         // Run test.
         MinidumpUploadService.tryUploadCrashDumpWithLocalId("f297dbcba7a2d0bb");
 
         // Verify.
-        assertFalse("Should not have tried to schedule an upload job",
+        Assert.assertFalse("Should not have tried to schedule an upload job",
                 context.isFlagSet(TestJobScheduler.SCHEDULE_JOB_FLAG));
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testGetCrashType1() throws IOException {
-        final File minidumpFile = new File(mCrashDir, "chromium_renderer-123.dmp");
-        setUpMinidumpFile(minidumpFile, BOUNDARY, "browser");
-        assertEquals(BROWSER, MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
+        final File minidumpFile =
+                new File(mTestRule.getCrashDir(), "chromium_renderer-123.dmp.try0");
+        CrashTestRule.setUpMinidumpFile(minidumpFile, BOUNDARY, "browser");
+        Assert.assertEquals(
+                BROWSER, MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testGetCrashType2() throws IOException {
-        final File minidumpFile = new File(mCrashDir, "chromium_renderer-123.dmp");
-        setUpMinidumpFile(minidumpFile, BOUNDARY, "renderer");
-        assertEquals(RENDERER, MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
+        final File minidumpFile =
+                new File(mTestRule.getCrashDir(), "chromium_renderer-123.dmp.try0");
+        CrashTestRule.setUpMinidumpFile(minidumpFile, BOUNDARY, "renderer");
+        Assert.assertEquals(
+                RENDERER, MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testGetCrashType3() throws IOException {
-        final File minidumpFile = new File(mCrashDir, "chromium_renderer-123.dmp");
-        setUpMinidumpFile(minidumpFile, BOUNDARY, "gpu-process");
-        assertEquals(GPU, MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
+        final File minidumpFile =
+                new File(mTestRule.getCrashDir(), "chromium_renderer-123.dmp.try0");
+        CrashTestRule.setUpMinidumpFile(minidumpFile, BOUNDARY, "gpu-process");
+        Assert.assertEquals(
+                GPU, MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
     }
 
+    @Test
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testGetCrashType4() throws IOException {
-        final File minidumpFile = new File(mCrashDir, "chromium_renderer-123.dmp");
-        setUpMinidumpFile(minidumpFile, BOUNDARY, "weird test type");
-        assertEquals(OTHER, MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
+        final File minidumpFile =
+                new File(mTestRule.getCrashDir(), "chromium_renderer-123.dmp.try0");
+        CrashTestRule.setUpMinidumpFile(minidumpFile, BOUNDARY, "weird test type");
+        Assert.assertEquals(
+                OTHER, MinidumpUploadService.getCrashType(minidumpFile.getAbsolutePath()));
     }
 
     private class MinidumpPreparationContext extends AdvancedMockContext {
@@ -594,6 +667,11 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         public void cancelAll() {}
 
         @Override
+        public int enqueue(JobInfo job, JobWorkItem work) {
+            return 0;
+        }
+
+        @Override
         public List<JobInfo> getAllPendingJobs() {
             return null;
         }
@@ -606,8 +684,8 @@ public class MinidumpUploadServiceTest extends CrashTestCase {
         @Override
         public int schedule(JobInfo job) {
             mContext.setFlag(SCHEDULE_JOB_FLAG);
-            assertEquals(TaskIds.CHROME_MINIDUMP_UPLOADING_JOB_ID, job.getId());
-            assertEquals(ChromeMinidumpUploadJobService.class.getName(),
+            Assert.assertEquals(TaskIds.CHROME_MINIDUMP_UPLOADING_JOB_ID, job.getId());
+            Assert.assertEquals(ChromeMinidumpUploadJobService.class.getName(),
                     job.getService().getClassName());
             return JobScheduler.RESULT_SUCCESS;
         }

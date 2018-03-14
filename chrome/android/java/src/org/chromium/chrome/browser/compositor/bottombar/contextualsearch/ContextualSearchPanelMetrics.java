@@ -6,14 +6,12 @@ package org.chromium.chrome.browser.compositor.bottombar.contextualsearch;
 
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel.PanelState;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel.StateChangeReason;
-import org.chromium.chrome.browser.contextualsearch.ContextualSearchBlacklist.BlacklistReason;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchHeuristics;
+import org.chromium.chrome.browser.contextualsearch.ContextualSearchIPH;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchRankerLogger;
-import org.chromium.chrome.browser.contextualsearch.ContextualSearchRankerLoggerImpl;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchUma;
 import org.chromium.chrome.browser.contextualsearch.QuickActionCategory;
-
-import java.util.Locale;
+import org.chromium.chrome.browser.profiles.Profile;
 
 /**
  * This class is responsible for all the logging related to Contextual Search.
@@ -21,11 +19,7 @@ import java.util.Locale;
 public class ContextualSearchPanelMetrics {
     private static final int MILLISECONDS_TO_NANOSECONDS = 1000000;
 
-    // The Ranker logger to use to write Tap Suppression Ranker logs to UMA.
-    private final ContextualSearchRankerLogger mTapSuppressionRankerLogger;
-
     // Flags for logging.
-    private BlacklistReason mBlacklistReason;
     private boolean mDidSearchInvolvePromo;
     private boolean mWasSearchContentViewSeen;
     private boolean mIsPromoActive;
@@ -37,14 +31,10 @@ public class ContextualSearchPanelMetrics {
     private boolean mIsSerpNavigation;
     private boolean mWasActivatedByTap;
     private boolean mWasPanelOpenedBeyondPeek;
-    private boolean mWasSelectionPartOfUrl;
     private boolean mWasContextualCardsDataShown;
     private boolean mWasQuickActionShown;
     private int mQuickActionCategory;
     private boolean mWasQuickActionClicked;
-    private boolean mWasSelectionAllCaps;
-    private boolean mDidSelectionStartWithCapital;
-    private char mSelectionFirstChar;
     private int mSelectionLength;
     // Whether any Tap suppression heuristic was satisfied when the panel was shown.
     private boolean mWasAnyHeuristicSatisfiedOnPanelShow;
@@ -60,27 +50,24 @@ public class ContextualSearchPanelMetrics {
     // Time when the panel was opened beyond peeked. Reset when the panel is closed.
     // Used to log how long the panel was open.
     private long mPanelOpenedBeyondPeekTimeNs;
+    // Duration that the panel was opened beyond peeked. Reset when the panel is closed.
+    // Used to log how long the panel was open.
+    private long mPanelOpenedBeyondPeekDurationMs;
     // The current set of heuristics that should be logged with results seen when the panel closes.
     private ContextualSearchHeuristics mResultsSeenExperiments;
     // The current set of heuristics to be logged through ranker with results seen when the panel
     // closes.
-    private ContextualSearchHeuristics mRankerLogExperiments;
-
-    /**
-     * Constructs an object to track metrics for the Contextual Search Overlay Panel.
-     */
-    ContextualSearchPanelMetrics() {
-        mTapSuppressionRankerLogger = new ContextualSearchRankerLoggerImpl();
-    }
+    private ContextualSearchRankerLogger mRankerLogger;
 
     /**
      * Log information when the panel's state has changed.
      * @param fromState The state the panel is transitioning from.
      * @param toState The state that the panel is transitioning to.
      * @param reason The reason for the state change.
+     * @param profile The current {@link Profile}.
      */
-    public void onPanelStateChanged(PanelState fromState, PanelState toState,
-            StateChangeReason reason) {
+    public void onPanelStateChanged(
+            PanelState fromState, PanelState toState, StateChangeReason reason, Profile profile) {
         // Note: the logging within this function includes the promo, unless specifically
         // excluded.
         boolean isStartingSearch = isStartingNewContextualSearch(toState, reason);
@@ -103,16 +90,25 @@ public class ContextualSearchPanelMetrics {
                     (System.nanoTime() - mPanelTriggerTimeFromTapNs) / MILLISECONDS_TO_NANOSECONDS;
             ContextualSearchUma.logDurationBetweenTriggerAndScroll(
                     durationMs, mWasSearchContentViewSeen);
-            mTapSuppressionRankerLogger.log(
-                    ContextualSearchRankerLogger.Feature.DURATION_BEFORE_SCROLL_MS, durationMs);
+        }
+
+        if (isExitingPanelOpenedBeyondPeeked) {
+            assert mPanelOpenedBeyondPeekTimeNs != 0;
+            mPanelOpenedBeyondPeekDurationMs = (System.nanoTime() - mPanelOpenedBeyondPeekTimeNs)
+                    / MILLISECONDS_TO_NANOSECONDS;
+            ContextualSearchUma.logPanelOpenDuration(mPanelOpenedBeyondPeekDurationMs);
+            mPanelOpenedBeyondPeekTimeNs = 0;
+            mWasPanelOpenedBeyondPeek = false;
         }
 
         if (isEndingSearch) {
-            long durationMs = (System.nanoTime() - mFirstPeekTimeNs) / MILLISECONDS_TO_NANOSECONDS;
-            ContextualSearchUma.logPanelViewDurationAction(durationMs);
+            long panelViewDurationMs =
+                    (System.nanoTime() - mFirstPeekTimeNs) / MILLISECONDS_TO_NANOSECONDS;
+            ContextualSearchUma.logPanelViewDurationAction(panelViewDurationMs);
             if (!mDidSearchInvolvePromo) {
                 // Measure duration only when the promo is not involved.
-                ContextualSearchUma.logDuration(mWasSearchContentViewSeen, isChained, durationMs);
+                ContextualSearchUma.logDuration(
+                        mWasSearchContentViewSeen, isChained, panelViewDurationMs);
             }
             if (mIsPromoActive) {
                 // The user is exiting still in the promo, without choosing an option.
@@ -121,70 +117,68 @@ public class ContextualSearchPanelMetrics {
                 ContextualSearchUma.logResultsSeen(mWasSearchContentViewSeen, mWasActivatedByTap);
             }
 
-            if (mWasSelectionPartOfUrl) {
-                ContextualSearchUma.logResultsSeenSelectionIsUrl(mWasSearchContentViewSeen,
-                        mWasActivatedByTap);
-            }
-
             if (mWasContextualCardsDataShown) {
                 ContextualSearchUma.logContextualCardsResultsSeen(mWasSearchContentViewSeen);
+            }
+            if (mRankerLogger != null) {
+                mRankerLogger.logOutcome(
+                        ContextualSearchRankerLogger.Feature.OUTCOME_WAS_CARDS_DATA_SHOWN,
+                        mWasContextualCardsDataShown);
             }
             if (mWasQuickActionShown) {
                 ContextualSearchUma.logQuickActionResultsSeen(mWasSearchContentViewSeen,
                         mQuickActionCategory);
                 ContextualSearchUma.logQuickActionClicked(mWasQuickActionClicked,
                         mQuickActionCategory);
-                mTapSuppressionRankerLogger.log(
-                        ContextualSearchRankerLogger.Feature.OUTCOME_WAS_QUICK_ACTION_CLICKED,
-                        mWasQuickActionClicked);
+                if (mRankerLogger != null) {
+                    mRankerLogger.logOutcome(
+                            ContextualSearchRankerLogger.Feature.OUTCOME_WAS_QUICK_ACTION_CLICKED,
+                            mWasQuickActionClicked);
+                }
             }
-
-            if (mWasSelectionAllCaps && mWasActivatedByTap) {
-                ContextualSearchUma.logAllCapsResultsSeen(mWasSearchContentViewSeen);
-            } else if (mDidSelectionStartWithCapital && mWasActivatedByTap) {
-                ContextualSearchUma.logStartedWithCapitalResultsSeen(mWasSearchContentViewSeen);
-            }
-
-            ContextualSearchUma.logBlacklistSeen(mBlacklistReason, mWasSearchContentViewSeen);
 
             if (mResultsSeenExperiments != null) {
                 mResultsSeenExperiments.logResultsSeen(
                         mWasSearchContentViewSeen, mWasActivatedByTap);
+                mResultsSeenExperiments.logPanelViewedDurations(
+                        panelViewDurationMs, mPanelOpenedBeyondPeekDurationMs);
+                if (mRankerLogger != null) {
+                    mResultsSeenExperiments.logRankerTapSuppressionOutcome(mRankerLogger);
+                }
                 mResultsSeenExperiments = null;
             }
+            mPanelOpenedBeyondPeekDurationMs = 0;
 
             if (mWasActivatedByTap) {
-                boolean wasAnySuppressionHeuristicSatisfied =
-                        mWasAnyHeuristicSatisfiedOnPanelShow || mWasSelectionPartOfUrl;
+                boolean wasAnySuppressionHeuristicSatisfied = mWasAnyHeuristicSatisfiedOnPanelShow;
                 ContextualSearchUma.logAnyTapSuppressionHeuristicSatisfied(
                         mWasSearchContentViewSeen, wasAnySuppressionHeuristicSatisfied);
-                // Log all the experiments to the Ranker logger.
-                if (mRankerLogExperiments != null) {
-                    writeSelectionFeaturesToRanker();
-                    mTapSuppressionRankerLogger.logOutcome(mWasSearchContentViewSeen);
-                    mRankerLogExperiments.logRankerTapSuppression(mTapSuppressionRankerLogger);
-                    mTapSuppressionRankerLogger.writeLogAndReset();
-                    mRankerLogExperiments = null;
+                // Update The Ranker logger.
+                if (mRankerLogger != null) {
+                    // Tell Ranker about the primary outcome.
+                    mRankerLogger.logOutcome(
+                            ContextualSearchRankerLogger.Feature.OUTCOME_WAS_PANEL_OPENED,
+                            mWasSearchContentViewSeen);
+                    ContextualSearchUma.logRankerInference(mWasSearchContentViewSeen,
+                            mRankerLogger.getPredictionForTapSuppression());
                 }
-
                 ContextualSearchUma.logSelectionLengthResultsSeen(
                         mWasSearchContentViewSeen, mSelectionLength);
             }
-        }
 
-        if (isExitingPanelOpenedBeyondPeeked) {
-            assert mPanelOpenedBeyondPeekTimeNs != 0;
-            long durationPanelOpen = (System.nanoTime() - mPanelOpenedBeyondPeekTimeNs)
-                    / MILLISECONDS_TO_NANOSECONDS;
-            ContextualSearchUma.logPanelOpenDuration(durationPanelOpen);
-            mPanelOpenedBeyondPeekTimeNs = 0;
-            mWasPanelOpenedBeyondPeek = false;
+            // Reset writing to Ranker so whatever interactions occurred are recorded as a
+            // complete record.
+            if (mRankerLogger != null) mRankerLogger.writeLogAndReset();
+            mRankerLogger = null;
+
+            // Notifications to Feature Engagement.
+            ContextualSearchIPH.doSearchFinishedNotifications(profile, mWasSearchContentViewSeen,
+                    mWasActivatedByTap, mWasContextualCardsDataShown);
         }
 
         if (isStartingSearch) {
             mFirstPeekTimeNs = System.nanoTime();
             mWasActivatedByTap = reason == StateChangeReason.TEXT_SELECT_TAP;
-            mBlacklistReason = BlacklistReason.NONE;
             if (mWasActivatedByTap && mResultsSeenExperiments != null) {
                 mWasAnyHeuristicSatisfiedOnPanelShow =
                         mResultsSeenExperiments.isAnyConditionSatisfiedForAggregrateLogging();
@@ -242,24 +236,13 @@ public class ContextualSearchPanelMetrics {
             mHasExitedExpanded = false;
             mHasExitedMaximized = false;
             mIsSerpNavigation = false;
-            mWasSelectionPartOfUrl = false;
             mWasContextualCardsDataShown = false;
             mWasQuickActionShown = false;
             mQuickActionCategory = QuickActionCategory.NONE;
             mWasQuickActionClicked = false;
-            mWasSelectionAllCaps = false;
-            mDidSelectionStartWithCapital = false;
             mWasAnyHeuristicSatisfiedOnPanelShow = false;
             mPanelTriggerTimeFromTapNs = 0;
         }
-    }
-
-    /**
-     * Sets the reason why the current selection was blacklisted.
-     * @param reason The given reason.
-     */
-    public void setBlacklistReason(BlacklistReason reason) {
-        mBlacklistReason = reason;
     }
 
     /**
@@ -276,6 +259,7 @@ public class ContextualSearchPanelMetrics {
         mWasSearchContentViewSeen = true;
         mWasPanelOpenedBeyondPeek = true;
         mPanelOpenedBeyondPeekTimeNs = System.nanoTime();
+        mPanelOpenedBeyondPeekDurationMs = 0;
     }
 
     /**
@@ -283,13 +267,6 @@ public class ContextualSearchPanelMetrics {
      */
     public void setIsPromoActive(boolean shown) {
         mIsPromoActive = shown;
-    }
-
-    /**
-     * @param wasPartOfUrl Whether the selected text was part of a URL.
-     */
-    public void setWasSelectionPartOfUrl(boolean wasPartOfUrl) {
-        mWasSelectionPartOfUrl = wasPartOfUrl;
     }
 
     /**
@@ -328,27 +305,6 @@ public class ContextualSearchPanelMetrics {
      */
     public void onSelectionEstablished(String selection) {
         mSelectionLength = selection.length();
-        // In some locales, there is no concept of an upper or lower case letter. Account for this
-        // by checking that the selected text is not equivalent to selection#toLowerCase().
-        mWasSelectionAllCaps = selection.equals(selection.toUpperCase(Locale.getDefault()))
-                && !selection.equals(selection.toLowerCase(Locale.getDefault()));
-        mSelectionFirstChar = selection.charAt(0);
-        String firstChar = String.valueOf(mSelectionFirstChar);
-        mDidSelectionStartWithCapital = firstChar.equals(
-                firstChar.toUpperCase(Locale.getDefault()))
-                && !firstChar.equals(firstChar.toLowerCase(Locale.getDefault()));
-    }
-
-    /**
-     * Writes the set of selection features that we've collected for Ranker to its log.
-     */
-    private void writeSelectionFeaturesToRanker() {
-        mTapSuppressionRankerLogger.log(
-                ContextualSearchRankerLogger.Feature.SELECTION_LENGTH, mSelectionLength);
-        mTapSuppressionRankerLogger.log(
-                ContextualSearchRankerLogger.Feature.SELECTION_FIRST_CHAR, mSelectionFirstChar);
-        mTapSuppressionRankerLogger.log(
-                ContextualSearchRankerLogger.Feature.SELECTION_WAS_ALL_CAPS, mWasSelectionAllCaps);
     }
 
     /**
@@ -386,12 +342,12 @@ public class ContextualSearchPanelMetrics {
     }
 
     /**
-     * Sets the experiments to log through Ranker with results seen.
-     * @param rankerLogExperiments The experiments to log through ranker when the panel results
-     *        are known.
+     * Sets up logging through Ranker for outcomes.
+     * @param rankerLogger The {@link ContextualSearchRankerLogger} currently being used to measure
+     *                     or suppress the UI by Ranker.
      */
-    public void setRankerLogExperiments(ContextualSearchHeuristics rankerLogExperiments) {
-        mRankerLogExperiments = rankerLogExperiments;
+    public void setRankerLogger(ContextualSearchRankerLogger rankerLogger) {
+        mRankerLogger = rankerLogger;
     }
 
     /**

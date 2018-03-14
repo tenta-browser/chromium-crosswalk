@@ -18,9 +18,9 @@
 #include "chrome/browser/metrics/perf/windowed_incognito_observer.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/login/login_state.h"
-#include "components/metrics/proto/sampled_profile.pb.h"
 #include "components/variations/variations_associated_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/metrics_proto/sampled_profile.pb.h"
 #include "third_party/protobuf/src/google/protobuf/io/coded_stream.h"
 #include "third_party/protobuf/src/google/protobuf/io/zero_copy_stream_impl_lite.h"
 #include "third_party/protobuf/src/google/protobuf/wire_format_lite_inl.h"
@@ -35,6 +35,8 @@ const char kPerfRecordCallgraphCmd[] =
   "perf record -a -e cycles -g -c 4000037";
 const char kPerfRecordLBRCmd[] =
   "perf record -a -e r20c4 -b -c 200011";
+const char kPerfRecordCacheMissesCmd[] =
+    "perf record -a -e cache-misses -c 10007";
 const char kPerfStatMemoryBandwidthCmd[] =
   "perf stat -a -e cycles -e instructions "
   "-e uncore_imc/data_reads/ -e uncore_imc/data_writes/ "
@@ -89,17 +91,17 @@ PerfStatProto GetExamplePerfStatProto() {
   PerfStatProto_PerfStatLine* line1 = proto.add_line();
   line1->set_time_ms(1000);
   line1->set_count(2000);
-  line1->set_event("cycles");
+  line1->set_event_name("cycles");
 
   PerfStatProto_PerfStatLine* line2 = proto.add_line();
   line2->set_time_ms(2000);
   line2->set_count(5678);
-  line2->set_event("instructions");
+  line2->set_event_name("instructions");
 
   PerfStatProto_PerfStatLine* line3 = proto.add_line();
   line3->set_time_ms(3000);
   line3->set_count(9999);
-  line3->set_event("branches");
+  line3->set_event_name("branches");
 
   return proto;
 }
@@ -582,6 +584,12 @@ TEST_F(PerfProviderTest, DefaultCommandsBasedOnUarch_IvyBridge) {
         return cmd.value == kPerfRecordLBRCmd;
       });
   EXPECT_NE(cmds.end(), found);
+  found = std::find_if(
+      cmds.begin(), cmds.end(),
+      [](const RandomSelector::WeightAndValue& cmd) -> bool {
+        return cmd.value == kPerfRecordCacheMissesCmd;
+      });
+  EXPECT_NE(cmds.end(), found);
 }
 
 TEST_F(PerfProviderTest, DefaultCommandsBasedOnUarch_SandyBridge) {
@@ -608,6 +616,12 @@ TEST_F(PerfProviderTest, DefaultCommandsBasedOnUarch_SandyBridge) {
         return cmd.value == kPerfRecordLBRCmd;
       });
   EXPECT_NE(cmds.end(), found);
+  found = std::find_if(
+      cmds.begin(), cmds.end(),
+      [](const RandomSelector::WeightAndValue& cmd) -> bool {
+        return cmd.value == kPerfRecordCacheMissesCmd;
+      });
+  EXPECT_NE(cmds.end(), found);
 }
 
 TEST_F(PerfProviderTest, DefaultCommandsBasedOnArch_Arm) {
@@ -622,10 +636,16 @@ TEST_F(PerfProviderTest, DefaultCommandsBasedOnArch_Arm) {
   ASSERT_GE(cmds.size(), 2UL);
   EXPECT_EQ(cmds[0].value, kPerfRecordCyclesCmd);
   EXPECT_EQ(cmds[1].value, kPerfRecordCallgraphCmd);
-  const auto found = std::find_if(
+  auto found = std::find_if(
       cmds.begin(), cmds.end(),
       [](const RandomSelector::WeightAndValue& cmd) -> bool {
         return cmd.value == kPerfRecordLBRCmd;
+      });
+  EXPECT_EQ(cmds.end(), found) << "ARM does not support this command";
+  found = std::find_if(
+      cmds.begin(), cmds.end(),
+      [](const RandomSelector::WeightAndValue& cmd) -> bool {
+        return cmd.value == kPerfRecordCacheMissesCmd;
       });
   EXPECT_EQ(cmds.end(), found) << "ARM does not support this command";
 }
@@ -652,6 +672,12 @@ TEST_F(PerfProviderTest, DefaultCommandsBasedOnArch_x86_32) {
       cmds.begin(), cmds.end(),
       [](const RandomSelector::WeightAndValue& cmd) -> bool {
         return cmd.value == kPerfRecordLBRCmd;
+      });
+  EXPECT_EQ(cmds.end(), found) << "x86_32 does not support this command";
+  found = std::find_if(
+      cmds.begin(), cmds.end(),
+      [](const RandomSelector::WeightAndValue& cmd) -> bool {
+        return cmd.value == kPerfRecordCacheMissesCmd;
       });
   EXPECT_EQ(cmds.end(), found) << "x86_32 does not support this command";
 }

@@ -14,20 +14,23 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/observer_list_threadsafe.h"
-#include "base/single_thread_task_runner.h"
+#include "base/sequenced_task_runner.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/keyed_service/core/refcounted_keyed_service.h"
+#include "components/password_manager/core/browser/password_reuse_defines.h"
 #include "components/password_manager/core/browser/password_store_change.h"
 #include "components/password_manager/core/browser/password_store_sync.h"
 #include "components/sync/model/syncable_service.h"
 
 // TODO(crbug.com/706392): Fix password reuse detection for Android.
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
+#include "components/password_manager/core/browser/hash_password_manager.h"
 #include "components/password_manager/core/browser/password_reuse_detector.h"
 #include "components/password_manager/core/browser/password_reuse_detector_consumer.h"
 #endif
 
-class PasswordStoreProxyMac;
+class PrefService;
 
 namespace autofill {
 struct PasswordForm;
@@ -41,6 +44,7 @@ namespace password_manager {
 
 class AffiliatedMatchHelper;
 class PasswordStoreConsumer;
+class PasswordStoreSigninNotifier;
 class PasswordSyncableService;
 struct InteractionsStats;
 
@@ -48,12 +52,12 @@ struct InteractionsStats;
 // The login request/manipulation API is not threadsafe and must be used
 // from the UI thread.
 // Implementations, however, should carry out most tasks asynchronously on a
-// background thread: the base class provides functionality to facilitate this.
-// I/O heavy initialization should also be performed asynchronously in this
-// manner. If this deferred initialization fails, all subsequent method calls
-// should fail without side effects, return no data, and send no notifications.
-// PasswordStoreSync is a hidden base class because only PasswordSyncableService
-// needs to access these methods.
+// background sequence: the base class provides functionality to facilitate
+// this. I/O heavy initialization should also be performed asynchronously in
+// this manner. If this deferred initialization fails, all subsequent method
+// calls should fail without side effects, return no data, and send no
+// notifications. PasswordStoreSync is a hidden base class because only
+// PasswordSyncableService needs to access these methods.
 class PasswordStore : protected PasswordStoreSync,
                       public RefcountedKeyedService {
  public:
@@ -88,11 +92,12 @@ class PasswordStore : protected PasswordStoreSync,
     GURL origin;
   };
 
-  PasswordStore(scoped_refptr<base::SingleThreadTaskRunner> main_thread_runner,
-                scoped_refptr<base::SingleThreadTaskRunner> db_thread_runner);
+  PasswordStore();
 
-  // Reimplement this to add custom initialization. Always call this too.
-  virtual bool Init(const syncer::SyncableService::StartSyncFlare& flare);
+  // Reimplement this to add custom initialization. Always call this too on the
+  // UI thread.
+  virtual bool Init(const syncer::SyncableService::StartSyncFlare& flare,
+                    PrefService* prefs);
 
   // RefcountedKeyedService:
   void ShutdownOnUIThread() override;
@@ -133,7 +138,7 @@ class PasswordStore : protected PasswordStoreSync,
   // Remove all logins whose origins match the given filter and that were
   // created
   // in the given date range. |completion| will be posted to the
-  // |main_thread_runner_| after deletions have been completed and notification
+  // |main_task_runner_| after deletions have been completed and notification
   // have been sent out.
   void RemoveLoginsByURLAndTime(
       const base::Callback<bool(const GURL&)>& url_filter,
@@ -142,8 +147,8 @@ class PasswordStore : protected PasswordStoreSync,
       const base::Closure& completion);
 
   // Removes all logins created in the given date range. If |completion| is not
-  // null, it will be posted to the |main_thread_runner_| after deletions have
-  // be completed and notification have been sent out.
+  // null, it will be posted to the |main_task_runner_| after deletions have
+  // been completed and notification have been sent out.
   void RemoveLoginsCreatedBetween(base::Time delete_begin,
                                   base::Time delete_end,
                                   const base::Closure& completion);
@@ -155,7 +160,7 @@ class PasswordStore : protected PasswordStoreSync,
   // Removes all the stats created in the given date range.
   // If |origin_filter| is not null, only statistics for matching origins are
   // removed. If |completion| is not null, it will be posted to the
-  // |main_thread_runner_| after deletions have been completed.
+  // |main_task_runner_| after deletions have been completed.
   // Should be called on the UI thread.
   void RemoveStatisticsByOriginAndTime(
       const base::Callback<bool(const GURL&)>& origin_filter,
@@ -164,30 +169,41 @@ class PasswordStore : protected PasswordStoreSync,
       const base::Closure& completion);
 
   // Sets the 'skip_zero_click' flag for all logins in the database that match
-  // |origin_filter| to 'true'. |completion| will be posted to
-  // the |main_thread_runner_| after these modifications are completed
-  // and notifications are sent out.
+  // |origin_filter| to 'true'. |completion| will be posted to the
+  // |main_task_runner_| after these modifications are completed and
+  // notifications are sent out.
   void DisableAutoSignInForOrigins(
       const base::Callback<bool(const GURL&)>& origin_filter,
       const base::Closure& completion);
-
-  // Removes cached affiliation data that is no longer needed; provided that
-  // affiliation-based matching is enabled.
-  void TrimAffiliationCache();
 
   // Searches for a matching PasswordForm, and notifies |consumer| on
   // completion. The request will be cancelled if the consumer is destroyed.
   virtual void GetLogins(const FormDigest& form,
                          PasswordStoreConsumer* consumer);
 
+  // Returns all stored credentials with SCHEME_HTTP that have a realm whose
+  // organization-identifying name -- that is, the first domain name label below
+  // the effective TLD -- matches that of |signon_realm|. Notifies |consumer| on
+  // completion. The request will be cancelled if the consumer is destroyed.
+  //
+  // WARNING: This is *NOT* PSL (Public Suffix List) matching. The logins
+  // returned by this method are not safe to be filled into the observed form.
+  //
+  // For example, the organization-identifying name of "https://foo.example.org"
+  // is `example`, and logins will be returned for "http://bar.example.co.uk",
+  // but not for "http://notexample.com" or "https://example.foo.com".
+  virtual void GetLoginsForSameOrganizationName(
+      const std::string& signon_realm,
+      PasswordStoreConsumer* consumer);
+
   // Gets the complete list of PasswordForms that are not blacklist entries--and
   // are thus auto-fillable. |consumer| will be notified on completion.
   // The request will be cancelled if the consumer is destroyed.
   virtual void GetAutofillableLogins(PasswordStoreConsumer* consumer);
 
-  // Same as above, but also fills in |affiliated_web_realm| for Android
-  // credentials.
-  virtual void GetAutofillableLoginsWithAffiliatedRealms(
+  // Same as above, but also fills in affiliation and branding information for
+  // Android credentials.
+  virtual void GetAutofillableLoginsWithAffiliationAndBrandingInformation(
       PasswordStoreConsumer* consumer);
 
   // Gets the complete list of PasswordForms that are blacklist entries,
@@ -195,9 +211,9 @@ class PasswordStore : protected PasswordStoreSync,
   // consumer is destroyed.
   virtual void GetBlacklistLogins(PasswordStoreConsumer* consumer);
 
-  // Same as above, but also fills in |affiliated_web_realm| for Android
-  // credentials.
-  virtual void GetBlacklistLoginsWithAffiliatedRealms(
+  // Same as above, but also fills in affiliation and branding information for
+  // Android credentials.
+  virtual void GetBlacklistLoginsWithAffiliationAndBrandingInformation(
       PasswordStoreConsumer* consumer);
 
   // Reports usage metrics for the database. |sync_username| and
@@ -236,11 +252,23 @@ class PasswordStore : protected PasswordStoreSync,
   // Checks that some suffix of |input| equals to a password saved on another
   // registry controlled domain than |domain|.
   // If such suffix is found, |consumer|->OnReuseFound() is called on the same
-  // thread on which this method is called.
+  // sequence on which this method is called.
   // |consumer| must not be null.
   virtual void CheckReuse(const base::string16& input,
                           const std::string& domain,
                           PasswordReuseDetectorConsumer* consumer);
+
+#if !defined(OS_CHROMEOS)
+  // Saves a hash of |password| for password reuse checking.
+  virtual void SaveSyncPasswordHash(const base::string16& password);
+
+  // Clears the saved sync password hash.
+  virtual void ClearSyncPasswordHash();
+
+  // Shouldn't be called more than once, |notifier| must be not nullptr.
+  void SetPasswordStoreSigninNotifier(
+      std::unique_ptr<PasswordStoreSigninNotifier> notifier);
+#endif
 #endif
 
  protected:
@@ -272,7 +300,7 @@ class PasswordStore : protected PasswordStoreSync,
     // See GetLogins(). Logins older than this will be removed from the reply.
     base::Time ignore_logins_cutoff_;
 
-    scoped_refptr<base::SingleThreadTaskRunner> origin_task_runner_;
+    scoped_refptr<base::SequencedTaskRunner> origin_task_runner_;
     base::WeakPtr<PasswordStoreConsumer> consumer_weak_;
 
     DISALLOW_COPY_AND_ASSIGN(GetLoginsRequest);
@@ -281,7 +309,7 @@ class PasswordStore : protected PasswordStoreSync,
 // TODO(crbug.com/706392): Fix password reuse detection for Android.
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
   // Represents a single CheckReuse() request. Implements functionality to
-  // listen to reuse events and propagate them to |consumer| on the thread on
+  // listen to reuse events and propagate them to |consumer| on the sequence on
   // which CheckReuseRequest is created.
   class CheckReuseRequest : public PasswordReuseDetectorConsumer {
    public:
@@ -290,13 +318,13 @@ class PasswordStore : protected PasswordStoreSync,
     ~CheckReuseRequest() override;
 
     // PasswordReuseDetectorConsumer
-    void OnReuseFound(const base::string16& password,
-                      const std::string& saved_domain,
-                      int saved_passwords,
-                      int number_matches) override;
+    void OnReuseFound(size_t password_length,
+                      bool matches_sync_password,
+                      const std::vector<std::string>& matches_domains,
+                      int saved_passwords) override;
 
    private:
-    const scoped_refptr<base::SingleThreadTaskRunner> origin_task_runner_;
+    const scoped_refptr<base::SequencedTaskRunner> origin_task_runner_;
     const base::WeakPtr<PasswordReuseDetectorConsumer> consumer_weak_;
 
     DISALLOW_COPY_AND_ASSIGN(CheckReuseRequest);
@@ -305,12 +333,16 @@ class PasswordStore : protected PasswordStoreSync,
 
   ~PasswordStore() override;
 
-  // Get the TaskRunner to use for PasswordStore background tasks.
-  // By default, a SingleThreadTaskRunner on the DB thread is used, but
-  // subclasses can override.
-  virtual scoped_refptr<base::SingleThreadTaskRunner> GetBackgroundTaskRunner();
+  // Create a TaskRunner to be saved in |background_task_runner_|.
+  virtual scoped_refptr<base::SequencedTaskRunner> CreateBackgroundTaskRunner()
+      const;
 
-  // Methods below will be run in PasswordStore's own thread.
+  // Creates PasswordSyncableService and PasswordReuseDetector instances on the
+  // background sequence. Subclasses can add more logic.
+  virtual void InitOnBackgroundSequence(
+      const syncer::SyncableService::StartSyncFlare& flare);
+
+  // Methods below will be run in PasswordStore's own sequence.
   // Synchronous implementation that reports usage metrics.
   virtual void ReportMetricsImpl(const std::string& sync_username,
                                  bool custom_passphrase_sync_enabled) = 0;
@@ -369,6 +401,11 @@ class PasswordStore : protected PasswordStoreSync,
   virtual std::vector<std::unique_ptr<autofill::PasswordForm>>
   FillMatchingLogins(const FormDigest& form) = 0;
 
+  // Finds and returns all organization-name-matching logins, or returns an
+  // empty list on error.
+  virtual std::vector<std::unique_ptr<autofill::PasswordForm>>
+  FillLoginsForSameOrganizationName(const std::string& signon_realm) = 0;
+
   // Synchronous implementation for manipulating with statistics.
   virtual void AddSiteStatsImpl(const InteractionsStats& stats) = 0;
   virtual void RemoveSiteStatsImpl(const GURL& origin_domain) = 0;
@@ -402,32 +439,37 @@ class PasswordStore : protected PasswordStoreSync,
   void CheckReuseImpl(std::unique_ptr<CheckReuseRequest> request,
                       const base::string16& input,
                       const std::string& domain);
+
+  // Synchronous implementation of SaveSyncPasswordHash().
+  void SaveSyncPasswordHashImpl(
+      base::Optional<SyncPasswordData> sync_password_data);
+
+  // Synchronous implementation of ClearSyncPasswordHash().
+  void ClearSyncPasswordHashImpl();
 #endif
 
-  // TaskRunner for tasks that run on the main thread (usually the UI thread).
-  scoped_refptr<base::SingleThreadTaskRunner> main_thread_runner_;
+  scoped_refptr<base::SequencedTaskRunner> main_task_runner() const {
+    return main_task_runner_;
+  }
 
-  // TaskRunner for the DB thread. By default, this is the task runner used for
-  // background tasks -- see |GetBackgroundTaskRunner|.
-  scoped_refptr<base::SingleThreadTaskRunner> db_thread_runner_;
+  scoped_refptr<base::SequencedTaskRunner> background_task_runner() const {
+    return background_task_runner_;
+  }
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(PasswordStoreTest, GetLoginImpl);
   FRIEND_TEST_ALL_PREFIXES(PasswordStoreTest,
                            UpdatePasswordsStoredForAffiliatedWebsites);
-  // TODO(vasilii): remove this together with PasswordStoreProxyMac.
-  friend class ::PasswordStoreProxyMac;
 
-  // Schedule the given |func| to be run in the PasswordStore's own thread with
-  // responses delivered to |consumer| on the current thread.
+  // Schedule the given |func| to be run in the PasswordStore's own sequence
+  // with responses delivered to |consumer| on the current sequence.
   void Schedule(void (PasswordStore::*func)(std::unique_ptr<GetLoginsRequest>),
                 PasswordStoreConsumer* consumer);
 
-  // Wrapper method called on the destination thread (DB for non-mac) that
-  // invokes |task| and then calls back into the source thread to notify
-  // observers that the password store may have been modified via
-  // NotifyLoginsChanged(). Note that there is no guarantee that the called
-  // method will actually modify the password store data.
+  // Wrapper method called on the destination sequence that invokes |task| and
+  // then calls back into the source sequence to notify observers that the
+  // password store may have been modified via NotifyLoginsChanged(). Note that
+  // there is no guarantee that the called method will actually modify the
+  // password store data.
   void WrapModificationTask(ModificationTask task);
 
   // Temporary specializations of WrapModificationTask for a better stack trace.
@@ -456,20 +498,26 @@ class PasswordStore : protected PasswordStoreSync,
       const base::Callback<bool(const GURL&)>& origin_filter,
       const base::Closure& completion);
 
+  // Finds all logins organization-name-matching |signon_realm| and notifies the
+  // consumer.
+  void GetLoginsForSameOrganizationNameImpl(
+      const std::string& signon_realm,
+      std::unique_ptr<GetLoginsRequest> request);
+
   // Finds all non-blacklist PasswordForms, and notifies the consumer.
   void GetAutofillableLoginsImpl(std::unique_ptr<GetLoginsRequest> request);
 
-  // Same as above, but also fills in |affiliated_web_realm| for Android
-  // credentials.
-  void GetAutofillableLoginsWithAffiliatedRealmsImpl(
+  // Same as above, but also fills in affiliation and branding information for
+  // Android credentials.
+  void GetAutofillableLoginsWithAffiliationAndBrandingInformationImpl(
       std::unique_ptr<GetLoginsRequest> request);
 
   // Finds all blacklist PasswordForms, and notifies the consumer.
   void GetBlacklistLoginsImpl(std::unique_ptr<GetLoginsRequest> request);
 
-  // Same as above, but also fills in |affiliated_web_realm| for Android
-  // credentials.
-  void GetBlacklistLoginsWithAffiliatedRealmsImpl(
+  // Same as above, but also fills in affiliation and branding information for
+  // Android credentials.
+  void GetBlacklistLoginsWithAffiliationAndBrandingInformationImpl(
       std::unique_ptr<GetLoginsRequest> request);
 
   // Notifies |request| about the stats for all sites.
@@ -478,12 +526,6 @@ class PasswordStore : protected PasswordStoreSync,
   // Notifies |request| about the stats for |origin_domain|.
   void NotifySiteStats(const GURL& origin_domain,
                        std::unique_ptr<GetLoginsRequest> request);
-
-  // Notifies |request| about the autofillable logins with affiliated web
-  // realms for Android credentials.
-  void NotifyLoginsWithAffiliatedRealms(
-      std::unique_ptr<GetLoginsRequest> request,
-      std::vector<std::unique_ptr<autofill::PasswordForm>> obtained_forms);
 
   // Extended version of GetLoginsImpl that also returns credentials stored for
   // the specified affiliated Android applications. That is, it finds all
@@ -497,13 +539,14 @@ class PasswordStore : protected PasswordStoreSync,
       std::unique_ptr<GetLoginsRequest> request,
       const std::vector<std::string>& additional_android_realms);
 
-  // Retrieves and fills in |affiliated_web_realm| values for Android
-  // credentials in |forms|. Called on the main thread.
-  void InjectAffiliatedWebRealms(
+  // Retrieves and fills in affiliation and branding information for Android
+  // credentials in |forms|. Called on the main sequence.
+  void InjectAffiliationAndBrandingInformation(
       std::vector<std::unique_ptr<autofill::PasswordForm>> forms,
       std::unique_ptr<GetLoginsRequest> request);
 
-  // Schedules GetLoginsWithAffiliationsImpl() to be run on the DB thread.
+  // Schedules GetLoginsWithAffiliationsImpl() to be run on the background
+  // sequence.
   void ScheduleGetLoginsWithAffiliations(
       const FormDigest& form,
       std::unique_ptr<GetLoginsRequest> request,
@@ -512,42 +555,45 @@ class PasswordStore : protected PasswordStoreSync,
   // Retrieves the currently stored form, if any, with the same primary key as
   // |form|, that is, with the same signon_realm, origin, username_element,
   // username_value and password_element attributes. To be called on the
-  // background thread.
+  // background sequence.
   std::unique_ptr<autofill::PasswordForm> GetLoginImpl(
       const autofill::PasswordForm& primary_key);
 
   // Called when a password is added or updated for an Android application, and
   // triggers finding web sites affiliated with the Android application and
   // propagating the new password to credentials for those web sites, if any.
-  // Called on the main thread.
+  // Called on the main sequence.
   void FindAndUpdateAffiliatedWebLogins(
       const autofill::PasswordForm& added_or_updated_android_form);
 
-  // Posts FindAndUpdateAffiliatedWebLogins() to the main thread. Should be
-  // called from the background thread.
+  // Posts FindAndUpdateAffiliatedWebLogins() to the main sequence. Should be
+  // called from the background sequence.
   void ScheduleFindAndUpdateAffiliatedWebLogins(
       const autofill::PasswordForm& added_or_updated_android_form);
 
   // Called when a password is added or updated for an Android application, and
   // propagates these changes to credentials stored for |affiliated_web_realms|
-  // under the same username, if there are any. Called on the background thread.
+  // under the same username, if there are any. Called on the background
+  // sequence.
   void UpdateAffiliatedWebLoginsImpl(
       const autofill::PasswordForm& updated_android_form,
       const std::vector<std::string>& affiliated_web_realms);
 
-  // Schedules UpdateAffiliatedWebLoginsImpl() to run on the background thread.
-  // Should be called from the main thread.
+  // Schedules UpdateAffiliatedWebLoginsImpl() to run on the background
+  // sequence. Should be called from the main sequence.
   void ScheduleUpdateAffiliatedWebLoginsImpl(
       const autofill::PasswordForm& updated_android_form,
       const std::vector<std::string>& affiliated_web_realms);
 
-  // Creates PasswordSyncableService and PasswordReuseDetector instances on the
-  // background thread.
-  void InitOnBackgroundThread(
-      const syncer::SyncableService::StartSyncFlare& flare);
+  // Deletes object that should be destroyed on the background sequence.
+  // WARNING: this method can be skipped on shutdown.
+  void DestroyOnBackgroundSequence();
 
-  // Deletes objest that should be destroyed on the background thread.
-  void DestroyOnBackgroundThread();
+  // TaskRunner for tasks that run on the main sequence (usually the UI thread).
+  scoped_refptr<base::SequencedTaskRunner> main_task_runner_;
+
+  // TaskRunner for all the background operations.
+  scoped_refptr<base::SequencedTaskRunner> background_task_runner_;
 
   // The observers.
   scoped_refptr<base::ObserverListThreadSafe<Observer>> observers_;
@@ -556,8 +602,16 @@ class PasswordStore : protected PasswordStoreSync,
   std::unique_ptr<AffiliatedMatchHelper> affiliated_match_helper_;
 // TODO(crbug.com/706392): Fix password reuse detection for Android.
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
-  std::unique_ptr<PasswordReuseDetector> reuse_detector_;
+  // PasswordReuseDetector can be only destroyed on the background sequence. It
+  // can't be owned by PasswordStore because PasswordStore can be destroyed on
+  // the UI thread and DestroyOnBackgroundThread isn't guaranteed to be called.
+  PasswordReuseDetector* reuse_detector_ = nullptr;
 #endif
+#if defined(SYNC_PASSWORD_REUSE_DETECTION_ENABLED)
+  std::unique_ptr<PasswordStoreSigninNotifier> notifier_;
+  HashPasswordManager hash_password_manager_;
+#endif
+
   bool is_propagating_password_changes_to_web_credentials_enabled_;
 
   bool shutdown_called_;

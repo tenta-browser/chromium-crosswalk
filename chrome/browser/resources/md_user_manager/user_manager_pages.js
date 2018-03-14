@@ -14,24 +14,16 @@ Polymer({
      * ID of the currently selected page.
      * @private {string}
      */
-    selectedPage_: {
-      type: String,
-      value: 'user-pods-page'
-    },
+    selectedPage_: {type: String, value: 'user-pods-page'},
 
     /**
      * Data passed to the currently selected page.
      * @private {?Object}
      */
-    pageData_: {
-      type: Object,
-      value: null
-    }
+    pageData_: {type: Object, value: null}
   },
 
-  listeners: {
-    'change-page': 'onChangePage_'
-  },
+  listeners: {'change-page': 'onChangePage_'},
 
   /**
    * Handler for the change-page event.
@@ -51,6 +43,20 @@ Polymer({
   setSelectedPage: function(pageId, opt_pageData) {
     this.pageData_ = opt_pageData || null;
     this.selectedPage_ = pageId;
+  },
+
+  /**
+   * This is to prevent events from propagating to the document element, which
+   * erroneously triggers user-pod selections.
+   *
+   * TODO(scottchen): re-examine if its necessary for user_pod_row.js to bind
+   * listeners on the entire document element.
+   *
+   * @param {!Event} e
+   * @private
+   */
+  stopPropagation_: function(e) {
+    e.stopPropagation();
   },
 
   /**

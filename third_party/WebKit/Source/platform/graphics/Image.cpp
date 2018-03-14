@@ -26,8 +26,9 @@
 
 #include "platform/graphics/Image.h"
 
+#include "build/build_config.h"
+#include "platform/Histogram.h"
 #include "platform/Length.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/SharedBuffer.h"
 #include "platform/geometry/FloatPoint.h"
 #include "platform/geometry/FloatRect.h"
@@ -35,12 +36,16 @@
 #include "platform/graphics/BitmapImage.h"
 #include "platform/graphics/DeferredImageDecoder.h"
 #include "platform/graphics/GraphicsContext.h"
+#include "platform/graphics/ScopedInterpolationQuality.h"
+#include "platform/graphics/paint/PaintImage.h"
 #include "platform/graphics/paint/PaintRecorder.h"
 #include "platform/graphics/paint/PaintShader.h"
 #include "platform/instrumentation/PlatformInstrumentation.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 #include "platform/network/mime/MIMETypeRegistry.h"
+#include "platform/wtf/CheckedNumeric.h"
 #include "platform/wtf/StdLibExtras.h"
+#include "platform/wtf/text/WTFString.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebData.h"
 #include "third_party/skia/include/core/SkImage.h"
@@ -49,9 +54,34 @@
 #include <tuple>
 
 namespace blink {
+namespace {
 
-Image::Image(ImageObserver* observer)
-    : image_observer_(observer), image_observer_disabled_(false) {}
+bool HasCheckerableDimensions(const IntSize& size) {
+  CheckedNumeric<size_t> checked_size = 4u;
+  checked_size *= size.Width();
+  checked_size *= size.Height();
+
+// The constants used here should remain consistent with the values used for
+// LayerTreeSettings in render_widget_compositor.cc.
+#if defined(OS_ANDROID)
+  static const size_t kMinImageSizeCheckered = 512 * 1024;
+#else
+  static const size_t kMinImageSizeCheckered = 1 * 1024 * 1024;
+#endif
+
+  return checked_size.ValueOrDefault(std::numeric_limits<size_t>::max()) >=
+         kMinImageSizeCheckered;
+}
+
+}  // namespace
+
+Image::Image(ImageObserver* observer, bool is_multipart)
+    : image_observer_disabled_(false),
+      image_observer_(observer),
+      stable_image_id_(PaintImage::GetNextId()),
+      is_multipart_(is_multipart),
+      high_contrast_classification_(
+          HighContrastClassification::kNotClassified) {}
 
 Image::~Image() {}
 
@@ -61,24 +91,24 @@ Image* Image::NullImage() {
   return null_image;
 }
 
-PassRefPtr<Image> Image::LoadPlatformResource(const char* name) {
-  const WebData& resource = Platform::Current()->LoadResource(name);
+scoped_refptr<Image> Image::LoadPlatformResource(const char* name) {
+  const WebData& resource = Platform::Current()->GetDataResource(name);
   if (resource.IsEmpty())
     return Image::NullImage();
 
-  RefPtr<Image> image = BitmapImage::Create();
+  scoped_refptr<Image> image = BitmapImage::Create();
   image->SetData(resource, true);
-  return image.Release();
+  return image;
 }
 
 bool Image::SupportsType(const String& type) {
   return MIMETypeRegistry::IsSupportedImageResourceMIMEType(type);
 }
 
-Image::SizeAvailability Image::SetData(PassRefPtr<SharedBuffer> data,
+Image::SizeAvailability Image::SetData(scoped_refptr<SharedBuffer> data,
                                        bool all_data_received) {
   encoded_image_data_ = std::move(data);
-  if (!encoded_image_data_.Get())
+  if (!encoded_image_data_.get())
     return kSizeAvailable;
 
   int length = encoded_image_data_->size();
@@ -86,6 +116,10 @@ Image::SizeAvailability Image::SetData(PassRefPtr<SharedBuffer> data,
     return kSizeAvailable;
 
   return DataChanged(all_data_received);
+}
+
+String Image::FilenameExtension() const {
+  return String();
 }
 
 void Image::DrawTiledBackground(GraphicsContext& ctxt,
@@ -112,7 +146,7 @@ void Image::DrawTiledBackground(GraphicsContext& ctxt,
   if (one_tile_rect.Contains(dest_rect)) {
     const FloatRect visible_src_rect =
         ComputeSubsetForTile(one_tile_rect, dest_rect, intrinsic_tile_size);
-    ctxt.DrawImage(this, dest_rect, &visible_src_rect, op,
+    ctxt.DrawImage(this, kSyncDecode, dest_rect, &visible_src_rect, op,
                    kDoNotRespectImageOrientation);
     return;
   }
@@ -209,11 +243,10 @@ void Image::DrawTiledBorder(GraphicsContext& ctxt,
 
   // TODO(cavalcantii): see crbug.com/662507.
   if ((h_rule == kRoundTile) || (v_rule == kRoundTile)) {
-    InterpolationQuality previous_interpolation_quality =
-        ctxt.ImageInterpolationQuality();
-    ctxt.SetImageInterpolationQuality(kInterpolationLow);
-    DrawPattern(ctxt, src_rect, tile_scale_factor, pattern_phase, op, dst_rect);
-    ctxt.SetImageInterpolationQuality(previous_interpolation_quality);
+    ScopedInterpolationQuality interpolation_quality_scope(ctxt,
+                                                           kInterpolationLow);
+    DrawPattern(ctxt, src_rect, tile_scale_factor, pattern_phase, op, dst_rect,
+                FloatSize());
   } else {
     DrawPattern(ctxt, src_rect, tile_scale_factor, pattern_phase, op, dst_rect,
                 spacing);
@@ -224,26 +257,27 @@ void Image::DrawTiledBorder(GraphicsContext& ctxt,
 
 namespace {
 
-sk_sp<PaintShader> CreatePatternShader(sk_sp<const SkImage> image,
+sk_sp<PaintShader> CreatePatternShader(const PaintImage& image,
                                        const SkMatrix& shader_matrix,
                                        const PaintFlags& paint,
                                        const FloatSize& spacing,
                                        SkShader::TileMode tmx,
                                        SkShader::TileMode tmy) {
-  if (spacing.IsZero())
-    return MakePaintShaderImage(image, tmx, tmy, &shader_matrix);
+  if (spacing.IsZero()) {
+    return PaintShader::MakeImage(image, tmx, tmy, &shader_matrix);
+  }
 
   // Arbitrary tiling is currently only supported for SkPictureShader, so we use
   // that instead of a plain bitmap shader to implement spacing.
-  const SkRect tile_rect = SkRect::MakeWH(image->width() + spacing.Width(),
-                                          image->height() + spacing.Height());
+  const SkRect tile_rect = SkRect::MakeWH(image.width() + spacing.Width(),
+                                          image.height() + spacing.Height());
 
   PaintRecorder recorder;
   PaintCanvas* canvas = recorder.beginRecording(tile_rect);
   canvas->drawImage(image, 0, 0, &paint);
 
-  return MakePaintShaderRecord(recorder.finishRecordingAsPicture(), tmx, tmy,
-                               &shader_matrix, nullptr);
+  return PaintShader::MakePaintRecord(recorder.finishRecordingAsPicture(),
+                                      tile_rect, tmx, tmy, &shader_matrix);
 }
 
 SkShader::TileMode ComputeTileMode(float left,
@@ -266,13 +300,13 @@ void Image::DrawPattern(GraphicsContext& context,
                         const FloatSize& repeat_spacing) {
   TRACE_EVENT0("skia", "Image::drawPattern");
 
-  sk_sp<SkImage> image = ImageForCurrentFrame();
+  PaintImage image = PaintImageForCurrentFrame();
   if (!image)
     return;
 
   FloatRect norm_src_rect = float_src_rect;
 
-  norm_src_rect.Intersect(FloatRect(0, 0, image->width(), image->height()));
+  norm_src_rect.Intersect(FloatRect(0, 0, image.width(), image.height()));
   if (dest_rect.IsEmpty() || norm_src_rect.IsEmpty())
     return;  // nothing to draw
 
@@ -291,15 +325,17 @@ void Image::DrawPattern(GraphicsContext& context,
   local_matrix.preScale(scale.Width(), scale.Height());
 
   // Fetch this now as subsetting may swap the image.
-  auto image_id = image->uniqueID();
+  auto image_id = image.GetSkImage()->uniqueID();
 
-  image = image->makeSubset(EnclosingIntRect(norm_src_rect));
+  image = PaintImageBuilder::WithCopy(std::move(image))
+              .make_subset(EnclosingIntRect(norm_src_rect))
+              .TakePaintImage();
   if (!image)
     return;
 
   const FloatSize tile_size(
-      image->width() * scale.Width() + repeat_spacing.Width(),
-      image->height() * scale.Height() + repeat_spacing.Height());
+      image.width() * scale.Width() + repeat_spacing.Width(),
+      image.height() * scale.Height() + repeat_spacing.Height());
   const auto tmx = ComputeTileMode(dest_rect.X(), dest_rect.MaxX(), adjusted_x,
                                    adjusted_x + tile_size.Width());
   const auto tmy = ComputeTileMode(dest_rect.Y(), dest_rect.MaxY(), adjusted_y,
@@ -312,14 +348,14 @@ void Image::DrawPattern(GraphicsContext& context,
       context.ComputeFilterQuality(this, dest_rect, norm_src_rect));
   flags.setAntiAlias(context.ShouldAntialias());
   flags.setShader(
-      CreatePatternShader(std::move(image), local_matrix, flags,
+      CreatePatternShader(image, local_matrix, flags,
                           FloatSize(repeat_spacing.Width() / scale.Width(),
                                     repeat_spacing.Height() / scale.Height()),
                           tmx, tmy));
   // If the shader could not be instantiated (e.g. non-invertible matrix),
   // draw transparent.
   // Note: we can't simply bail, because of arbitrary blend mode.
-  if (!flags.getShader())
+  if (!flags.HasShader())
     flags.setColor(SK_ColorTRANSPARENT);
 
   context.DrawRect(dest_rect, flags);
@@ -328,22 +364,32 @@ void Image::DrawPattern(GraphicsContext& context,
     PlatformInstrumentation::DidDrawLazyPixelRef(image_id);
 }
 
-PassRefPtr<Image> Image::ImageForDefaultFrame() {
-  RefPtr<Image> image(this);
+scoped_refptr<Image> Image::ImageForDefaultFrame() {
+  scoped_refptr<Image> image(this);
 
-  return image.Release();
+  return image;
+}
+
+PaintImageBuilder Image::CreatePaintImageBuilder() {
+  auto animation_type = MaybeAnimated() ? PaintImage::AnimationType::ANIMATED
+                                        : PaintImage::AnimationType::STATIC;
+  return PaintImageBuilder::WithDefault()
+      .set_id(stable_image_id_)
+      .set_animation_type(animation_type)
+      .set_is_multipart(is_multipart_);
 }
 
 bool Image::ApplyShader(PaintFlags& flags, const SkMatrix& local_matrix) {
   // Default shader impl: attempt to build a shader based on the current frame
   // SkImage.
-  sk_sp<SkImage> image = ImageForCurrentFrame();
+  PaintImage image = PaintImageForCurrentFrame();
   if (!image)
     return false;
 
-  flags.setShader(image->makeShader(SkShader::kRepeat_TileMode,
-                                    SkShader::kRepeat_TileMode, &local_matrix));
-  if (!flags.getShader())
+  flags.setShader(PaintShader::MakeImage(image, SkShader::kRepeat_TileMode,
+                                         SkShader::kRepeat_TileMode,
+                                         &local_matrix));
+  if (!flags.HasShader())
     return false;
 
   // Animation is normally refreshed in draw() impls, which we don't call when
@@ -384,6 +430,38 @@ FloatRect Image::ComputeSubsetForTile(const FloatRect& tile,
   subset.SetHeight(dest.Height() / scale.Height());
 
   return subset;
+}
+
+// static
+void Image::RecordCheckerableImageUMA(Image& image, ImageType type) {
+  // This enum is used in UMA counting so should be treated as append only.
+  // Please keep it in sync with CheckerableImageType in enums.xml.
+  enum class CheckerableImageType {
+    kCheckerableImg = 0,
+    kCheckerableSvg = 1,
+    kCheckerableCss = 2,
+    kNotCheckerable = 3,
+    kCount = 4
+  };
+
+  CheckerableImageType checkerable_type = CheckerableImageType::kNotCheckerable;
+  if (image.IsSizeAvailable() && !image.MaybeAnimated() &&
+      HasCheckerableDimensions(image.Size())) {
+    switch (type) {
+      case ImageType::kImg:
+        checkerable_type = CheckerableImageType::kCheckerableImg;
+        break;
+      case ImageType::kSvg:
+        checkerable_type = CheckerableImageType::kCheckerableSvg;
+        break;
+      case ImageType::kCss:
+        checkerable_type = CheckerableImageType::kCheckerableCss;
+        break;
+    }
+  }
+
+  UMA_HISTOGRAM_ENUMERATION("Blink.CheckerableImageCount", checkerable_type,
+                            CheckerableImageType::kCount);
 }
 
 }  // namespace blink

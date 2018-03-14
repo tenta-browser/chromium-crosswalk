@@ -32,6 +32,7 @@ class DrmDeviceManager;
 class DrmOverlayValidator;
 class HardwareDisplayController;
 struct OverlayCheck_Params;
+struct OverlayCheckReturn_Params;
 class ScanoutBufferGenerator;
 class ScreenManager;
 
@@ -84,9 +85,9 @@ class DrmWindow {
   // Move the HW cursor to the specified location.
   void MoveCursor(const gfx::Point& location);
 
-  void SchedulePageFlip(const std::vector<OverlayPlane>& planes,
-                        const SwapCompletionCallback& callback);
-  std::vector<OverlayCheck_Params> TestPageFlip(
+  bool SchedulePageFlip(const std::vector<OverlayPlane>& planes,
+                        SwapCompletionOnceCallback callback);
+  std::vector<OverlayCheckReturn_Params> TestPageFlip(
       const std::vector<OverlayCheck_Params>& overlay_params);
 
   // Returns the last buffer associated with this window.

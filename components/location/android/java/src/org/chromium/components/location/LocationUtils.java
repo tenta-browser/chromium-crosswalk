@@ -18,7 +18,6 @@ import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.ui.base.WindowAndroid;
 
 /**
@@ -37,7 +36,6 @@ public class LocationUtils {
     /**
      * Returns the singleton instance of LocationSettings, creating it if needed.
      */
-    @SuppressFBWarnings("LI_LAZY_INIT_STATIC")
     public static LocationUtils getInstance() {
         ThreadUtils.assertOnUiThread();
         if (sInstance == null) {
@@ -103,10 +101,13 @@ public class LocationUtils {
      *
      * <p>The callback is guaranteed to be called unless the user never replies to the prompt
      * dialog, which in practice happens very infrequently since the dialog is modal.
+     *
+     * TODO(crbug/730711): Add back @LocationSettingsDialogOutcome to the callback when type
+     *     annotations are allowed in Java 8.
      */
     public void promptToEnableSystemLocationSetting(
             @LocationSettingsDialogContext int promptContext, WindowAndroid window,
-            @LocationSettingsDialogOutcome Callback<Integer> callback) {
+            Callback<Integer> callback) {
         callback.onResult(LocationSettingsDialogOutcome.NO_PROMPT);
     }
 

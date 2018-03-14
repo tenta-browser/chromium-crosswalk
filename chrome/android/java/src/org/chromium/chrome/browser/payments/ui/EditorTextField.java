@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.payments.ui;
 
 import android.content.Context;
+import android.support.v7.content.res.AppCompatResources;
 import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
@@ -24,7 +25,6 @@ import android.widget.TextView.OnEditorActionListener;
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.payments.ui.PaymentRequestUI.PaymentRequestObserverForTest;
 import org.chromium.chrome.browser.widget.CompatibilityTextInputLayout;
 import org.chromium.chrome.browser.widget.TintedDrawable;
 
@@ -42,11 +42,12 @@ public class EditorTextField extends FrameLayout implements EditorFieldView, Vie
     private ImageView mValueIcon;
     private int mValueIconId;
     private boolean mHasFocusedAtLeastOnce;
-    @Nullable private PaymentRequestObserverForTest mObserverForTest;
+    @Nullable
+    private EditorObserverForTest mObserverForTest;
 
     public EditorTextField(Context context, final EditorFieldModel fieldModel,
             OnEditorActionListener actionListener, @Nullable InputFilter filter,
-            @Nullable TextWatcher formatter, @Nullable PaymentRequestObserverForTest observer) {
+            @Nullable TextWatcher formatter, @Nullable EditorObserverForTest observer) {
         super(context);
         assert fieldModel.getInputTypeHint() != EditorFieldModel.INPUT_TYPE_HINT_DROPDOWN;
         mEditorFieldModel = fieldModel;
@@ -58,7 +59,7 @@ public class EditorTextField extends FrameLayout implements EditorFieldView, Vie
 
         // Build up the label.  Required fields are indicated by appending a '*'.
         CharSequence label = fieldModel.getLabel();
-        if (fieldModel.isRequired()) label = label + EditorView.REQUIRED_FIELD_INDICATOR;
+        if (fieldModel.isRequired()) label = label + EditorDialog.REQUIRED_FIELD_INDICATOR;
         mInputLayout.setHint(label);
 
         mInput = (AutoCompleteTextView) mInputLayout.findViewById(R.id.text_view);
@@ -91,7 +92,6 @@ public class EditorTextField extends FrameLayout implements EditorFieldView, Vie
 
         if (fieldModel.getValueIconGenerator() != null) {
             mValueIcon = (ImageView) mIconsLayer.findViewById(R.id.value_icon);
-            mValueIcon.setBackgroundResource(R.drawable.payments_ui_logo_bg);
             mValueIcon.setVisibility(VISIBLE);
         }
 
@@ -116,7 +116,7 @@ public class EditorTextField extends FrameLayout implements EditorFieldView, Vie
                 updateDisplayedError(false);
                 updateFieldValueIcon(false);
                 if (mObserverForTest != null) {
-                    mObserverForTest.onPaymentRequestEditorTextUpdate();
+                    mObserverForTest.onEditorTextUpdate();
                 }
                 if (!mEditorFieldModel.isLengthMaximum()) return;
                 updateDisplayedError(true);
@@ -270,7 +270,7 @@ public class EditorTextField extends FrameLayout implements EditorFieldView, Vie
         if (mValueIconId == 0) {
             mValueIcon.setVisibility(GONE);
         } else {
-            mValueIcon.setImageResource(mValueIconId);
+            mValueIcon.setImageDrawable(AppCompatResources.getDrawable(getContext(), mValueIconId));
             mValueIcon.setVisibility(VISIBLE);
         }
     }

@@ -22,6 +22,10 @@ extern const int kBubblePaddingHorizontalSide;
 extern const int kBubblePaddingVerticalBottom;
 extern const int kBubblePaddingVerticalSide;
 
+// The size delta between the default font and the font size found in tray
+// items like labels and buttons.
+extern const int kTrayTextFontSizeIncrease;
+
 extern const int kTrayBubbleAnchorTopInsetBottomAnchor;
 
 extern const int kTrayImageItemHorizontalPaddingVerticalAlignment;
@@ -29,7 +33,7 @@ extern const int kTrayImageItemHorizontalPaddingVerticalAlignment;
 ASH_EXPORT extern const int kTrayItemSize;
 
 // Extra padding used beside a single icon in the tray area of the shelf.
-extern const int kTrayImageItemPadding;
+constexpr int kTrayImageItemPadding = 3;
 
 extern const int kTrayLabelItemHorizontalPaddingBottomAlignment;
 extern const int kTrayLabelItemVerticalPaddingVerticalAlignment;
@@ -37,17 +41,22 @@ extern const int kTrayLabelItemVerticalPaddingVerticalAlignment;
 extern const int kTrayMenuBottomRowPadding;
 extern const int kTrayMenuBottomRowPaddingBetweenItems;
 
-// The minimum width of the tray menu.
-extern const int kTrayMenuMinimumWidth;
+// The width of the tray menu.
+extern const int kTrayMenuWidth;
 
 extern const int kTrayPopupAutoCloseDelayInSeconds;
 extern const int kTrayPopupAutoCloseDelayForTextInSeconds;
 extern const int kTrayPopupPaddingHorizontal;
 extern const int kTrayPopupPaddingBetweenItems;
 extern const int kTrayPopupButtonEndMargin;
+
 // The padding used on the left and right of labels. This applies to all labels
 // in the system menu.
 extern const int kTrayPopupLabelHorizontalPadding;
+
+// The horizontal padding used to properly lay out a slider in a TriView
+// container with a FillLayout (such as a volume notification bubble).
+extern const int kTrayPopupSliderHorizontalPadding;
 
 // The minimum/default height of the rows in the system tray menu.
 extern const int kTrayPopupItemMinHeight;
@@ -66,15 +75,12 @@ ASH_EXPORT extern const int kTrayDetailedViewTransitionDelayMs;
 // item. This applies to all labels in the system menu.
 extern const int kTrayPopupLabelRightPadding;
 
-extern const int kTrayPopupDetailsIconWidth;
-extern const int kTrayPopupDetailsLabelExtraLeftMargin;
 extern const SkColor kTrayPopupHoverBackgroundColor;
 extern const int kTrayRoundedBorderRadius;
 
 // The width of ToggleButton views including any border padding.
 extern const int kTrayToggleButtonWidth;
 
-extern const SkColor kBackgroundColor;
 extern const SkColor kPublicAccountUserCardTextColor;
 extern const SkColor kPublicAccountUserCardNameColor;
 
@@ -82,6 +88,8 @@ extern const SkColor kHeaderBackgroundColor;
 
 extern const SkColor kHeaderTextColorNormal;
 extern const SkColor kHeaderTextColorHover;
+
+extern const SkColor kMobileNotConnectedXIconColor;
 
 extern const int kTrayPopupMinWidth;
 extern const int kTrayPopupMaxWidth;
@@ -105,7 +113,7 @@ extern const SkColor kTrayIconColor;
 
 // The total visual padding at the start and end of the icon/label section
 // of the tray.
-extern const int kTrayEdgePadding;
+constexpr int kTrayEdgePadding = 6;
 
 // The size and foreground color of the icons appearing in the material design
 // system menu.
@@ -140,11 +148,6 @@ extern const int kTrayPopupInkDropCornerRadius;
 
 // The height of the system info row.
 extern const int kTrayPopupSystemInfoRowHeight;
-
-namespace test {
-const int kSettingsTrayItemViewId = 10000;
-const int kAccessibilityTrayItemViewId = 10001;
-}  // namespace test
 
 }  // namespace ash
 

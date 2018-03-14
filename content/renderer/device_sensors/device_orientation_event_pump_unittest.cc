@@ -9,6 +9,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -62,7 +63,7 @@ class DeviceOrientationEventPumpForTesting : public DeviceOrientationEventPump {
   void FireEvent() override {
     DeviceOrientationEventPump::FireEvent();
     Stop();
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
  private:
@@ -182,8 +183,9 @@ TEST_F(DeviceOrientationEventPumpTest, UpdateRespectsOrientationThreshold) {
   orientation_pump()->Start(listener());
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&DeviceOrientationEventPumpForTesting::FireEvent,
-                            base::Unretained(orientation_pump())));
+      FROM_HERE,
+      base::BindOnce(&DeviceOrientationEventPumpForTesting::FireEvent,
+                     base::Unretained(orientation_pump())));
   base::RunLoop().Run();
 
   EXPECT_FALSE(listener()->did_change_device_orientation());
@@ -203,8 +205,9 @@ TEST_F(DeviceOrientationEventPumpTest, UpdateRespectsOrientationThreshold) {
   orientation_pump()->Start(listener());
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&DeviceOrientationEventPumpForTesting::FireEvent,
-                            base::Unretained(orientation_pump())));
+      FROM_HERE,
+      base::BindOnce(&DeviceOrientationEventPumpForTesting::FireEvent,
+                     base::Unretained(orientation_pump())));
   base::RunLoop().Run();
 
   EXPECT_TRUE(listener()->did_change_device_orientation());

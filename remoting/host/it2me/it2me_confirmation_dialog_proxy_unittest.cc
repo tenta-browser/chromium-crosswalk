@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
@@ -131,7 +132,7 @@ It2MeConfirmationDialogProxyTest::It2MeConfirmationDialogProxyTest()
                                                        std::move(dialog)));
 }
 
-It2MeConfirmationDialogProxyTest::~It2MeConfirmationDialogProxyTest() {}
+It2MeConfirmationDialogProxyTest::~It2MeConfirmationDialogProxyTest() = default;
 
 TEST_F(It2MeConfirmationDialogProxyTest, Show) {
   ResultCallbackTarget callback_target(main_task_runner());

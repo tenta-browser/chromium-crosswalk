@@ -51,7 +51,7 @@ class CrashReportDatabaseTest : public testing::Test {
     CrashReportDatabase::NewReport* new_report = nullptr;
     ASSERT_EQ(db_->PrepareNewCrashReport(&new_report),
               CrashReportDatabase::kNoError);
-    const char kTest[] = "test";
+    static constexpr char kTest[] = "test";
     ASSERT_TRUE(LoggingWriteFile(new_report->handle, kTest, sizeof(kTest)));
 
     UUID uuid;
@@ -476,6 +476,22 @@ TEST_F(CrashReportDatabaseTest, DuelingUploads) {
 
   EXPECT_EQ(db()->RecordUploadAttempt(upload_report, true, std::string()),
             CrashReportDatabase::kNoError);
+}
+
+TEST_F(CrashReportDatabaseTest, UploadAlreadyUploaded) {
+  CrashReportDatabase::Report report;
+  CreateCrashReport(&report);
+
+  const CrashReportDatabase::Report* upload_report;
+  EXPECT_EQ(db()->GetReportForUploading(report.uuid, &upload_report),
+            CrashReportDatabase::kNoError);
+  EXPECT_EQ(db()->RecordUploadAttempt(upload_report, true, std::string()),
+            CrashReportDatabase::kNoError);
+
+  const CrashReportDatabase::Report* upload_report_2 = nullptr;
+  EXPECT_EQ(db()->GetReportForUploading(report.uuid, &upload_report_2),
+            CrashReportDatabase::kReportNotFound);
+  EXPECT_FALSE(upload_report_2);
 }
 
 TEST_F(CrashReportDatabaseTest, MoveDatabase) {

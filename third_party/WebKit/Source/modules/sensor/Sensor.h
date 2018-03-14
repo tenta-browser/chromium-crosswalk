@@ -6,15 +6,16 @@
 #define Sensor_h
 
 #include "bindings/core/v8/ActiveScriptWrappable.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/ContextLifecycleObserver.h"
 #include "core/dom/DOMHighResTimeStamp.h"
 #include "core/dom/DOMTimeStamp.h"
-#include "core/dom/SuspendableObject.h"
+#include "core/dom/PausableObject.h"
 #include "core/frame/PlatformEventController.h"
 #include "modules/EventTargetModules.h"
 #include "modules/sensor/SensorOptions.h"
 #include "modules/sensor/SensorProxy.h"
+#include "platform/WebTaskRunner.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -22,7 +23,6 @@ namespace blink {
 class DOMException;
 class ExceptionState;
 class ExecutionContext;
-class SensorReading;
 
 class Sensor : public EventTargetWithInlineData,
                public ActiveScriptWrappable<Sensor>,
@@ -49,16 +49,17 @@ class Sensor : public EventTargetWithInlineData,
 
   // Getters
   bool activated() const;
+  bool hasReading() const;
   DOMHighResTimeStamp timestamp(ScriptState*, bool& is_null) const;
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(error);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(change);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(reading);
   DEFINE_ATTRIBUTE_EVENT_LISTENER(activate);
 
   // ActiveScriptWrappable overrides.
   bool HasPendingActivity() const override;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  protected:
   Sensor(ExecutionContext*,
@@ -74,10 +75,16 @@ class Sensor : public EventTargetWithInlineData,
   // parameters if needed.
   virtual SensorConfigurationPtr CreateSensorConfig();
 
-  double ReadingValue(int index, bool& is_null) const;
-  double ReadingValueUnchecked(int index) const;
-  bool CanReturnReadings() const;
   bool IsActivated() const { return state_ == SensorState::kActivated; }
+  bool IsIdleOrErrored() const;
+  const SensorProxy* proxy() const { return sensor_proxy_; }
+
+  // SensorProxy::Observer overrides.
+  void OnSensorInitialized() override;
+  void OnSensorReadingChanged() override;
+  void OnSensorError(ExceptionCode,
+                     const String& sanitized_message,
+                     const String& unsanitized_message) override;
 
  private:
   void InitSensorProxyIfNeeded();
@@ -85,26 +92,19 @@ class Sensor : public EventTargetWithInlineData,
   // ContextLifecycleObserver overrides.
   void ContextDestroyed(ExecutionContext*) override;
 
-  // SensorProxy::Observer overrides.
-  void OnSensorInitialized() override;
-  void NotifySensorChanged(double timestamp) override;
-  void OnSensorError(ExceptionCode,
-                     const String& sanitized_message,
-                     const String& unsanitized_message) override;
+  void OnAddConfigurationRequestCompleted(bool);
 
-  void OnStartRequestCompleted(bool);
-  void OnStopRequestCompleted(bool);
+  void Activate();
+  void Deactivate();
 
-  void StartListening();
-  void StopListening();
+  void RequestAddConfiguration();
 
-  void UpdateState(SensorState new_state);
-  void ReportError(ExceptionCode = kUnknownError,
+  void HandleError(ExceptionCode = kUnknownError,
                    const String& sanitized_message = String(),
                    const String& unsanitized_message = String());
 
-  void NotifySensorReadingChanged();
-  void NotifyOnActivate();
+  void NotifyReading();
+  void NotifyActivated();
   void NotifyError(DOMException* error);
 
  private:
@@ -112,11 +112,20 @@ class Sensor : public EventTargetWithInlineData,
   device::mojom::blink::SensorType type_;
   SensorState state_;
   Member<SensorProxy> sensor_proxy_;
-  device::SensorReading stored_data_;
+  double last_reported_timestamp_;
   SensorConfigurationPtr configuration_;
-  double last_update_timestamp_;
+  TaskHandle pending_reading_notification_;
+  TaskHandle pending_activated_notification_;
+  TaskHandle pending_error_notification_;
 };
 
 }  // namespace blink
+
+// To be used in getters in concrete sensors
+// bindings code.
+#define INIT_IS_NULL_AND_RETURN(is_null, x) \
+  is_null = !hasReading();                  \
+  if (is_null)                              \
+  return (x)
 
 #endif  // Sensor_h

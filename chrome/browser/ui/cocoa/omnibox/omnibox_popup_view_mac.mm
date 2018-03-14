@@ -6,6 +6,7 @@
 
 #include <cmath>
 
+#include "base/feature_list.h"
 #include "base/mac/mac_util.h"
 #import "base/mac/sdk_forward_declarations.h"
 #include "base/stl_util.h"
@@ -15,10 +16,10 @@
 #import "chrome/browser/ui/cocoa/omnibox/omnibox_popup_cell.h"
 #import "chrome/browser/ui/cocoa/omnibox/omnibox_popup_separator_view.h"
 #include "chrome/browser/ui/cocoa/omnibox/omnibox_view_mac.h"
-#include "chrome/grit/theme_resources.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
+#include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/omnibox_popup_model.h"
 #include "components/toolbar/vector_icons.h"
 #include "skia/ext/skia_utils_mac.h"
@@ -86,6 +87,7 @@ bool OmniboxPopupViewMac::IsOpen() const {
 
 void OmniboxPopupViewMac::UpdatePopupAppearance() {
   DCHECK([NSThread isMainThread]);
+  model_->autocomplete_controller()->InlineTailPrefixes();
   const AutocompleteResult& result = GetResult();
   const size_t rows = result.size();
   if (rows == 0) {
@@ -128,6 +130,11 @@ void OmniboxPopupViewMac::UpdatePopupAppearance() {
   // animation.
   DCHECK_EQ([matrix_ intercellSpacing].height, 0.0);
   PositionPopup(NSHeight([matrix_ frame]));
+}
+
+void OmniboxPopupViewMac::OnMatchIconUpdated(size_t match_index) {
+  [matrix_ setMatchIcon:ImageForMatch(GetResult().match_at(match_index))
+                 forRow:match_index];
 }
 
 gfx::Rect OmniboxPopupViewMac::GetTargetBounds() {
@@ -174,6 +181,10 @@ void OmniboxPopupViewMac::CreatePopupIfNeeded() {
                                         defer:NO]);
     [popup_ setBackgroundColor:[NSColor clearColor]];
     [popup_ setOpaque:NO];
+    bool narrow_popup =
+        base::FeatureList::IsEnabled(omnibox::kUIExperimentNarrowDropdown);
+    if (narrow_popup)
+      [popup_ setHasShadow:YES];
 
     // Use a flipped view to pin the matrix top the top left. This is needed
     // for animated resize.
@@ -195,14 +206,16 @@ void OmniboxPopupViewMac::CreatePopupIfNeeded() {
                                                   forDarkTheme:is_dark_theme]);
     [background_view_ addSubview:matrix_];
 
-    top_separator_view_.reset(
-        [[OmniboxPopupTopSeparatorView alloc] initWithFrame:NSZeroRect]);
-    [contentView addSubview:top_separator_view_];
+    if (!narrow_popup) {
+      top_separator_view_.reset(
+          [[OmniboxPopupTopSeparatorView alloc] initWithFrame:NSZeroRect]);
+      [contentView addSubview:top_separator_view_];
 
-    bottom_separator_view_.reset([[OmniboxPopupBottomSeparatorView alloc]
-        initWithFrame:NSZeroRect
-         forDarkTheme:is_dark_theme]);
-    [contentView addSubview:bottom_separator_view_];
+      bottom_separator_view_.reset([[OmniboxPopupBottomSeparatorView alloc]
+          initWithFrame:NSZeroRect
+           forDarkTheme:is_dark_theme]);
+      [contentView addSubview:bottom_separator_view_];
+    }
 
     // TODO(dtseng): Ignore until we provide NSAccessibility support.
     [popup_ accessibilitySetOverrideValue:NSAccessibilityUnknownRole
@@ -217,11 +230,27 @@ void OmniboxPopupViewMac::PositionPopup(const CGFloat matrixHeight) {
 
   // Calculate the popup's position on the screen.
   NSRect popup_frame = anchor_rect_base;
+
+  bool match_omnibox_width =
+      base::FeatureList::IsEnabled(omnibox::kUIExperimentNarrowDropdown);
+
+  CGFloat table_width = match_omnibox_width
+                            ? NSWidth([field_ bounds])
+                            : NSWidth([[[field_ window] contentView] bounds]);
+  DCHECK_GT(table_width, 0.0);
+
+  NSPoint field_origin_base =
+      [field_ convertPoint:[field_ bounds].origin toView:nil];
+
   // Size to fit the matrix and shift down by the size.
   popup_frame.size.height = matrixHeight + PopupPaddingVertical() * 2.0;
   popup_frame.size.height += [OmniboxPopupTopSeparatorView preferredHeight];
   popup_frame.size.height += [OmniboxPopupBottomSeparatorView preferredHeight];
+  popup_frame.origin.x = match_omnibox_width ? field_origin_base.x : 0;
   popup_frame.origin.y -= NSHeight(popup_frame);
+
+  if (match_omnibox_width)
+    popup_frame.size.width = table_width;
 
   // Shift to screen coordinates.
   if ([controller window]) {
@@ -252,18 +281,11 @@ void OmniboxPopupViewMac::PositionPopup(const CGFloat matrixHeight) {
   background_rect.origin.y = NSMaxY(top_separator_frame);
   [background_view_ setFrame:background_rect];
 
-  // In Material Design, the table is the width of the window. In non-MD,
-  // calculate the width of the table based on backing out the popup's border
-  // from the width of the field.
-  CGFloat table_width = NSWidth([[[field_ window] contentView] bounds]);
-  DCHECK_GT(table_width, 0.0);
-
   // Matrix.
-  NSPoint field_origin_base =
-      [field_ convertPoint:[field_ bounds].origin toView:nil];
   NSRect matrix_frame = NSZeroRect;
   matrix_frame.origin.x = 0;
-  [matrix_ setContentLeftPadding:field_origin_base.x];
+  [matrix_ setContentLeftPadding:match_omnibox_width ? 0 : field_origin_base.x];
+  [matrix_ setContentMaxWidth:NSWidth([field_ bounds])];
   matrix_frame.origin.y = PopupPaddingVertical();
   matrix_frame.size.width = table_width;
   matrix_frame.size.height = matrixHeight;
@@ -325,20 +347,10 @@ void OmniboxPopupViewMac::PositionPopup(const CGFloat matrixHeight) {
 
 NSImage* OmniboxPopupViewMac::ImageForMatch(
     const AutocompleteMatch& match) const {
-  gfx::Image image = model_->GetIconIfExtensionMatch(match);
-  if (!image.IsEmpty())
-    return image.AsNSImage();
-
   bool is_dark_mode = [matrix_ hasDarkTheme];
-  const SkColor icon_color =
+  const SkColor vector_icon_color =
       is_dark_mode ? SkColorSetA(SK_ColorWHITE, 0xCC) : gfx::kChromeIconGrey;
-  const gfx::VectorIcon& vector_icon =
-      model_->IsStarredMatch(match)
-          ? toolbar::kStarIcon
-          : AutocompleteMatch::TypeToVectorIcon(match.type);
-  const int kIconSize = 16;
-  return NSImageFromImageSkia(
-      gfx::CreateVectorIcon(vector_icon, kIconSize, icon_color));
+  return model_->GetMatchIcon(match, vector_icon_color).ToNSImage();
 }
 
 void OmniboxPopupViewMac::OpenURLForRow(size_t row,

@@ -27,7 +27,7 @@
 #define CSSSegmentedFontFace_h
 
 #include "platform/fonts/FontCacheKey.h"
-#include "platform/fonts/FontTraits.h"
+#include "platform/fonts/FontSelectionTypes.h"
 #include "platform/fonts/SegmentedFontData.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
@@ -38,7 +38,6 @@
 
 namespace blink {
 
-class CSSFontSelector;
 class FontData;
 class FontDescription;
 class FontFace;
@@ -47,14 +46,15 @@ class SegmentedFontData;
 class CSSSegmentedFontFace final
     : public GarbageCollectedFinalized<CSSSegmentedFontFace> {
  public:
-  static CSSSegmentedFontFace* Create(CSSFontSelector* selector,
-                                      FontTraits traits) {
-    return new CSSSegmentedFontFace(selector, traits);
+  static CSSSegmentedFontFace* Create(
+      FontSelectionCapabilities font_selection_capabilities) {
+    return new CSSSegmentedFontFace(font_selection_capabilities);
   }
   ~CSSSegmentedFontFace();
 
-  CSSFontSelector* FontSelector() const { return font_selector_; }
-  FontTraits Traits() const { return traits_; }
+  FontSelectionCapabilities GetFontSelectionCapabilities() const {
+    return font_selection_capabilities_;
+  }
 
   // Called when status of a FontFace has changed (e.g. loaded or timed out)
   // so cached FontData must be discarded.
@@ -64,7 +64,7 @@ class CSSSegmentedFontFace final
   void RemoveFontFace(FontFace*);
   bool IsEmpty() const { return font_faces_.IsEmpty(); }
 
-  PassRefPtr<FontData> GetFontData(const FontDescription&);
+  scoped_refptr<FontData> GetFontData(const FontDescription&);
 
   bool CheckFont(const String&) const;
   void Match(const String&, HeapVector<Member<FontFace>>&) const;
@@ -74,20 +74,19 @@ class CSSSegmentedFontFace final
     return approximate_character_count_;
   }
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
-  CSSSegmentedFontFace(CSSFontSelector*, FontTraits);
+  CSSSegmentedFontFace(FontSelectionCapabilities);
 
   void PruneTable();
   bool IsValid() const;
 
   using FontFaceList = HeapListHashSet<Member<FontFace>>;
 
-  Member<CSSFontSelector> font_selector_;
-  FontTraits traits_;
+  FontSelectionCapabilities font_selection_capabilities_;
   HashMap<FontCacheKey,
-          RefPtr<SegmentedFontData>,
+          scoped_refptr<SegmentedFontData>,
           FontCacheKeyHash,
           FontCacheKeyTraits>
       font_data_table_;

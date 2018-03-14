@@ -102,9 +102,6 @@ class ExtensionServiceTestBase : public testing::Test {
   // Initializes an ExtensionService without extensions enabled.
   void InitializeExtensionServiceWithExtensionsDisabled();
 
-  // Resets the browser thread bundle to one with |options|.
-  void ResetThreadBundle(int options);
-
   // Helpers to check the existence and values of extension prefs.
   size_t GetPrefKeyCount();
   void ValidatePrefKeyCount(size_t count);
@@ -125,6 +122,7 @@ class ExtensionServiceTestBase : public testing::Test {
 
   content::BrowserContext* browser_context();
   Profile* profile();
+  TestingProfile* testing_profile() { return profile_.get(); }
   sync_preferences::TestingPrefServiceSyncable* testing_pref_service();
   ExtensionService* service() { return service_; }
   ExtensionRegistry* registry() { return registry_; }
@@ -143,10 +141,12 @@ class ExtensionServiceTestBase : public testing::Test {
   // after thread_bundle_ in the destruction order.
   base::ShadowingAtExitManager at_exit_manager_;
 
+  // The MessageLoop is used by RenderViewHostTestEnabler, so this must be
+  // created before it.
+  content::TestBrowserThreadBundle thread_bundle_;
+
   // Enable creation of WebContents without initializing a renderer.
   content::RenderViewHostTestEnabler rvh_test_enabler_;
-
-  std::unique_ptr<content::TestBrowserThreadBundle> thread_bundle_;
 
  protected:
   // It's unfortunate that these are exposed to subclasses (rather than used
@@ -163,9 +163,6 @@ class ExtensionServiceTestBase : public testing::Test {
 
  private:
   void CreateExtensionService(const ExtensionServiceInitParams& params);
-
-  // Whether or not the thread bundle was reset in the test.
-  bool did_reset_thread_bundle_;
 
   // The directory into which extensions are installed.
   base::FilePath extensions_install_dir_;

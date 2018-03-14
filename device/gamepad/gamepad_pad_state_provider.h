@@ -12,7 +12,7 @@
 
 #include "device/gamepad/gamepad_export.h"
 #include "device/gamepad/gamepad_standard_mappings.h"
-#include "third_party/WebKit/public/platform/WebGamepad.h"
+#include "device/gamepad/public/cpp/gamepad.h"
 
 namespace device {
 
@@ -22,10 +22,12 @@ enum GamepadSource {
   GAMEPAD_SOURCE_NONE = 0,
   GAMEPAD_SOURCE_ANDROID,
   GAMEPAD_SOURCE_GVR,
+  GAMEPAD_SOURCE_CARDBOARD,
   GAMEPAD_SOURCE_LINUX_UDEV,
   GAMEPAD_SOURCE_MAC_GC,
   GAMEPAD_SOURCE_MAC_HID,
   GAMEPAD_SOURCE_MAC_XBOX,
+  GAMEPAD_SOURCE_OPENVR,
   GAMEPAD_SOURCE_TEST,
   GAMEPAD_SOURCE_WIN_XINPUT,
   GAMEPAD_SOURCE_WIN_RAW,
@@ -47,7 +49,7 @@ struct PadState {
   GamepadActiveState active_state;
 
   // Gamepad data, unmapped.
-  blink::WebGamepad data;
+  Gamepad data;
 
   // Functions to map from device data to standard layout, if available. May
   // be null if no mapping is available or needed.
@@ -59,13 +61,13 @@ struct PadState {
   // corresponding bit will be set to 1.
 
   // If we ever increase the max axis count this will need to be updated.
-  static_assert(blink::WebGamepad::kAxesLengthCap <=
+  static_assert(Gamepad::kAxesLengthCap <=
                     std::numeric_limits<uint32_t>::digits,
                 "axis_mask is not large enough");
   uint32_t axis_mask;
 
   // If we ever increase the max button count this will need to be updated.
-  static_assert(blink::WebGamepad::kButtonsLengthCap <=
+  static_assert(Gamepad::kButtonsLengthCap <=
                     std::numeric_limits<uint32_t>::digits,
                 "button_mask is not large enough");
   uint32_t button_mask;
@@ -81,13 +83,18 @@ class DEVICE_GAMEPAD_EXPORT GamepadPadStateProvider {
   // If no slots are available will return NULL.
   PadState* GetPadState(GamepadSource source, int source_id);
 
+  // Gets a PadState object for a connected gamepad by specifying its index in
+  // the pad_states_ array. Returns NULL if there is no connected gamepad at
+  // that index.
+  PadState* GetConnectedPadState(int pad_index);
+
  protected:
   void ClearPadState(PadState& state);
 
   void InitializeDataFetcher(GamepadDataFetcher* fetcher);
 
   void MapAndSanitizeGamepadData(PadState* pad_state,
-                                 blink::WebGamepad* pad,
+                                 Gamepad* pad,
                                  bool sanitize);
 
   // Tracks the state of each gamepad slot.

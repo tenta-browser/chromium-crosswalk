@@ -14,13 +14,19 @@ import android.support.v4.text.TextUtilsCompat;
 import android.support.v4.view.ViewCompat;
 import android.support.v4.view.ViewPager;
 import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.browsing_data.ClearBrowsingDataTab;
+import org.chromium.chrome.browser.help.HelpAndFeedback;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.preferences.Preferences;
+import org.chromium.chrome.browser.profiles.Profile;
 
 import java.util.Locale;
 
@@ -30,21 +36,11 @@ import java.util.Locale;
 public class ClearBrowsingDataTabsFragment extends Fragment {
     public static final int CBD_TAB_COUNT = 2;
 
-    public ClearBrowsingDataTabsFragment() {
-        // TODO(dullweber): Remove this migration after after three milestones (probably M61)
-        PrefServiceBridge.getInstance().migrateBrowsingDataPreferences();
-    }
-
-    /**
-     * @return Returns whether the CBD dialog with tabs is enabled.
-     */
-    public static boolean isFeatureEnabled() {
-        return ChromeFeatureList.isEnabled(ChromeFeatureList.TABS_IN_CBD);
-    }
-
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setHasOptionsMenu(true);
+        RecordUserAction.record("ClearBrowsingData_DialogCreated");
     }
 
     /*
@@ -76,13 +72,13 @@ public class ClearBrowsingDataTabsFragment extends Fragment {
         // Give the TabLayout the ViewPager.
         TabLayout tabLayout = (TabLayout) view.findViewById(R.id.clear_browsing_data_tabs);
         tabLayout.setupWithViewPager(viewPager);
-        tabLayout.addOnTabSelectedListener(new TabSelectListener());
         int tabIndex = adjustIndexForDirectionality(
                 PrefServiceBridge.getInstance().getLastSelectedClearBrowsingDataTab());
         TabLayout.Tab tab = tabLayout.getTabAt(tabIndex);
         if (tab != null) {
             tab.select();
         }
+        tabLayout.addOnTabSelectedListener(new TabSelectListener());
 
         // Remove elevation to avoid shadow between title and tabs.
         Preferences activity = (Preferences) getActivity();
@@ -136,6 +132,11 @@ public class ClearBrowsingDataTabsFragment extends Fragment {
         public void onTabSelected(TabLayout.Tab tab) {
             int tabIndex = adjustIndexForDirectionality(tab.getPosition());
             PrefServiceBridge.getInstance().setLastSelectedClearBrowsingDataTab(tabIndex);
+            if (tabIndex == ClearBrowsingDataTab.BASIC) {
+                RecordUserAction.record("ClearBrowsingData_SwitchTo_BasicTab");
+            } else {
+                RecordUserAction.record("ClearBrowsingData_SwitchTo_AdvancedTab");
+            }
         }
 
         @Override
@@ -143,5 +144,25 @@ public class ClearBrowsingDataTabsFragment extends Fragment {
 
         @Override
         public void onTabReselected(TabLayout.Tab tab) {}
+    }
+
+    @Override
+    public void onCreateOptionsMenu(Menu menu, MenuInflater inflater) {
+        menu.clear();
+        MenuItem help =
+                menu.add(Menu.NONE, R.id.menu_id_targeted_help, Menu.NONE, R.string.menu_help);
+        help.setIcon(R.drawable.ic_help_and_feedback);
+        help.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == R.id.menu_id_targeted_help) {
+            HelpAndFeedback.getInstance(getActivity())
+                    .show(getActivity(), getString(R.string.help_context_clear_browsing_data),
+                            Profile.getLastUsedProfile(), null);
+            return true;
+        }
+        return false;
     }
 }

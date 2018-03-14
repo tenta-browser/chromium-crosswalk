@@ -8,7 +8,6 @@
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/buffer_manager.h"
-#include "gpu/command_buffer/service/cmd_buffer_engine.h"
 #include "gpu/command_buffer/service/context_group.h"
 #include "gpu/command_buffer/service/framebuffer_manager.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
@@ -105,6 +104,25 @@ class GLES3DecoderRGBBackbufferTest : public GLES2DecoderRGBBackbufferTest {
 class GLES3DecoderManualInitTest : public GLES2DecoderManualInitTest {
  public:
   GLES3DecoderManualInitTest() { shader_language_version_ = 300; }
+};
+
+class GLES2DecoderPassthroughTest : public GLES2DecoderPassthroughTestBase {
+ public:
+  GLES2DecoderPassthroughTest()
+      : GLES2DecoderPassthroughTestBase(CONTEXT_TYPE_OPENGLES2) {}
+};
+
+class GLES2WebGLDecoderPassthroughTest
+    : public GLES2DecoderPassthroughTestBase {
+ public:
+  GLES2WebGLDecoderPassthroughTest()
+      : GLES2DecoderPassthroughTestBase(CONTEXT_TYPE_WEBGL1) {}
+};
+
+class GLES3DecoderPassthroughTest : public GLES2DecoderPassthroughTestBase {
+ public:
+  GLES3DecoderPassthroughTest()
+      : GLES2DecoderPassthroughTestBase(CONTEXT_TYPE_OPENGLES3) {}
 };
 
 }  // namespace gles2

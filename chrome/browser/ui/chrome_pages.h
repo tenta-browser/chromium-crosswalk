@@ -34,6 +34,24 @@ enum HelpSource {
   HELP_SOURCE_WEBUI,
 };
 
+// Sources of feedback requests.
+//
+// WARNING: The below enum MUST never be renamed, modified or reordered, as
+// they're written to logs. You can only insert a new element immediately
+// before the last.
+enum FeedbackSource {
+  kFeedbackSourceArcApp = 0,
+  kFeedbackSourceAsh,
+  kFeedbackSourceBrowserCommand,
+  kFeedbackSourceMdSettingsAboutPage,
+  kFeedbackSourceOldSettingsAboutPage,
+  kFeedbackSourceProfileErrorDialog,
+  kFeedbackSourceSadTabPage,
+  kFeedbackSourceSupervisedUserInterstitial,
+
+  // Must be last.
+  kFeedbackSourceCount,
+};
 
 void ShowBookmarkManager(Browser* browser);
 void ShowBookmarkManagerForNode(Browser* browser, int64_t node_id);
@@ -46,19 +64,19 @@ void ShowConflicts(Browser* browser);
 // ShowFeedbackPage() uses |browser| to determine the URL of the current tab.
 // |browser| should be NULL if there are no currently open browser windows.
 void ShowFeedbackPage(Browser* browser,
+                      FeedbackSource source,
                       const std::string& description_template,
-                      const std::string& category_tag);
+                      const std::string& category_tag,
+                      const std::string& extra_diagnostics);
 
 void ShowHelp(Browser* browser, HelpSource source);
 void ShowHelpForProfile(Profile* profile, HelpSource source);
+void ShowBetaForum(Browser* browser);
 void ShowPolicy(Browser* browser);
 void ShowSlow(Browser* browser);
 
 // Constructs a settings GURL for the specified |sub_page|.
 GURL GetSettingsUrl(const std::string& sub_page);
-
-// Returns true if |url| is the URL for the settings subpage |sub_page|.
-bool IsSettingsSubPage(const GURL& url, const std::string& sub_page);
 
 // Returns true if |browser| is a trusted popup window containing a page with
 // matching |scheme| (or any trusted popup if |scheme| is empty).
@@ -73,9 +91,11 @@ void ShowSettingsSubPageForProfile(Profile* profile,
                                    const std::string& sub_page);
 void ShowContentSettingsExceptions(Browser* browser,
                                    ContentSettingsType content_settings_type);
-void ShowContentSettingsExceptionsInWindow(
+void ShowContentSettingsExceptionsForProfile(
     Profile* profile,
     ContentSettingsType content_settings_type);
+void ShowSiteSettings(Browser* browser, const GURL& url);
+
 void ShowContentSettings(Browser* browser,
                          ContentSettingsType content_settings_type);
 void ShowSettingsSubPageInTabbedBrowser(Browser* browser,

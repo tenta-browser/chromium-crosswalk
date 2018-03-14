@@ -9,6 +9,7 @@
 #include "net/base/network_interfaces.h"
 #include "net/dns/dns_protocol.h"
 #include "net/dns/mdns_client_impl.h"
+#include "net/log/net_log.h"
 #include "net/log/net_log_source.h"
 
 namespace net {
@@ -29,7 +30,7 @@ IPEndPoint GetMDnsIPEndPoint(const char* address) {
 int Bind(const IPEndPoint& multicast_addr,
          uint32_t interface_index,
          DatagramServerSocket* socket) {
-  IPAddress address_any(std::vector<uint8_t>(multicast_addr.address().size()));
+  IPAddress address_any(IPAddress::AllZeros(multicast_addr.address().size()));
   IPEndPoint bind_endpoint(address_any, multicast_addr.port());
 
   socket->AllowAddressReuse();
@@ -87,9 +88,10 @@ InterfaceIndexFamilyList GetMDnsInterfacesToBind() {
 
 std::unique_ptr<DatagramServerSocket> CreateAndBindMDnsSocket(
     AddressFamily address_family,
-    uint32_t interface_index) {
+    uint32_t interface_index,
+    NetLog* net_log) {
   std::unique_ptr<DatagramServerSocket> socket(
-      new UDPServerSocket(NULL, NetLogSource()));
+      new UDPServerSocket(net_log, NetLogSource()));
 
   IPEndPoint multicast_addr = GetMDnsIPEndPoint(address_family);
   int rv = Bind(multicast_addr, interface_index, socket.get());

@@ -15,8 +15,13 @@ class CORE_EXPORT PointerEvent final : public MouseEvent {
 
  public:
   static PointerEvent* Create(const AtomicString& type,
+                              const PointerEventInit& initializer,
+                              TimeTicks platform_time_stamp) {
+    return new PointerEvent(type, initializer, platform_time_stamp);
+  }
+  static PointerEvent* Create(const AtomicString& type,
                               const PointerEventInit& initializer) {
-    return new PointerEvent(type, initializer);
+    return PointerEvent::Create(type, initializer, TimeTicks::Now());
   }
 
   int pointerId() const { return pointer_id_; }
@@ -34,14 +39,27 @@ class CORE_EXPORT PointerEvent final : public MouseEvent {
   bool IsMouseEvent() const override;
   bool IsPointerEvent() const override;
 
-  EventDispatchMediator* CreateMediator() override;
+  // TODO(eirage): Remove these override of coordinates getters when
+  // fractional mouseevent flag is removed.
+  double screenX() const override;
+  double screenY() const override;
+  double clientX() const override;
+  double clientY() const override;
+  double pageX() const override;
+  double pageY() const override;
 
-  HeapVector<Member<PointerEvent>> getCoalescedEvents() const;
+  void ReceivedTarget() override;
 
-  DECLARE_VIRTUAL_TRACE();
+  HeapVector<Member<PointerEvent>> getCoalescedEvents();
+
+  DispatchEventResult DispatchEvent(EventDispatcher&) override;
+
+  virtual void Trace(blink::Visitor*);
 
  private:
-  PointerEvent(const AtomicString&, const PointerEventInit&);
+  PointerEvent(const AtomicString&,
+               const PointerEventInit&,
+               TimeTicks platform_time_stamp);
 
   int pointer_id_;
   double width_;
@@ -54,17 +72,9 @@ class CORE_EXPORT PointerEvent final : public MouseEvent {
   String pointer_type_;
   bool is_primary_;
 
+  bool coalesced_events_targets_dirty_;
+
   HeapVector<Member<PointerEvent>> coalesced_events_;
-};
-
-class PointerEventDispatchMediator final : public EventDispatchMediator {
- public:
-  static PointerEventDispatchMediator* Create(PointerEvent*);
-
- private:
-  explicit PointerEventDispatchMediator(PointerEvent*);
-  PointerEvent& Event() const;
-  DispatchEventResult DispatchEvent(EventDispatcher&) const override;
 };
 
 DEFINE_EVENT_TYPE_CASTS(PointerEvent);

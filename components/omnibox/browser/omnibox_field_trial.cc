@@ -4,7 +4,9 @@
 
 #include "components/omnibox/browser/omnibox_field_trial.h"
 
+#include <algorithm>
 #include <cmath>
+#include <functional>
 #include <string>
 
 #include "base/command_line.h"
@@ -14,43 +16,58 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/sys_info.h"
 #include "base/time/time.h"
-#include "build/build_config.h"
-#include "components/metrics/proto/omnibox_event.pb.h"
 #include "components/omnibox/browser/omnibox_switches.h"
 #include "components/omnibox/browser/url_index_private_data.h"
+#include "components/prefs/pref_service.h"
 #include "components/search/search.h"
 #include "components/variations/active_field_trials.h"
 #include "components/variations/metrics_util.h"
 #include "components/variations/variations_associated_data.h"
+#include "third_party/metrics_proto/omnibox_event.pb.h"
+
+#if defined(OS_ANDROID)
+#include "components/omnibox/browser/omnibox_pref_names.h"
+#include "components/pref_registry/pref_registry_syncable.h"
+#endif
 
 using metrics::OmniboxEventProto;
 
 namespace omnibox {
-
-// Feature used to enable the new set of answers in suggest types (currency,
-// dictionary, sports, translation, when is). Note that the state of this
-// Feature is not consulted anywhere in the code. It is only used to force a
-// Finch experiment arm which sends an experiment ID to GWS which triggers
-// serving the new types.
-const base::Feature kNewOmniboxAnswerTypes{"NewOmniboxAnswerTypes",
-                                           base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Feature used to enable the transmission of entity suggestions from GWS
 // to this client.
 const base::Feature kOmniboxEntitySuggestions{
     "OmniboxEntitySuggestions", base::FEATURE_DISABLED_BY_DEFAULT};
 
+// Feature used to force on the experiment of transmission of tail suggestions
+// from GWS to this client, currently testing for desktop.
+const base::Feature kOmniboxTailSuggestions{
+    "OmniboxTailSuggestions", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Feature used to enable the identification of open tabs given URLs in
+// suggestions, and converting those suggestions to ones that allow switching to
+// the tab if found.  Currently only on the desktop.
+const base::Feature kOmniboxTabSwitchSuggestions{
+    "OmniboxTabSwitchSuggestions", base::FEATURE_DISABLED_BY_DEFAULT};
+
 // Feature used to enable clipboard provider, which provides the user with
 // suggestions of the URL in the user's clipboard (if any) upon omnibox focus.
 const base::Feature kEnableClipboardProvider {
   "OmniboxEnableClipboardProvider",
-#if defined(OS_IOS)
+#if defined(OS_IOS) || defined(OS_ANDROID)
       base::FEATURE_ENABLED_BY_DEFAULT
 #else
       base::FEATURE_DISABLED_BY_DEFAULT
 #endif
 };
+
+// Feature to enable personalized omnibox suggestions on focus when Android's
+// Chrome Home feature is enabled.
+const base::Feature kAndroidChromeHomePersonalizedSuggestions{
+    "ChromeHomePersonalizedOmniboxSuggestions",
+    base::FEATURE_DISABLED_BY_DEFAULT};
 
 // Feature to enable the search provider to send a request to the suggest
 // server on focus.  This allows the suggest server to warm up, by, for
@@ -58,14 +75,20 @@ const base::Feature kEnableClipboardProvider {
 // in memory allows the suggest server to respond more quickly with
 // personalized suggestions as the user types.
 const base::Feature kSearchProviderWarmUpOnFocus{
-    "OmniboxWarmUpSearchProviderOnFocus", base::FEATURE_DISABLED_BY_DEFAULT};
+  "OmniboxWarmUpSearchProviderOnFocus",
+#if defined(OS_IOS)
+      base::FEATURE_DISABLED_BY_DEFAULT
+#else
+      base::FEATURE_ENABLED_BY_DEFAULT
+#endif
+};
 
 // Feature used to enable the transmission of HTTPS URLs as part of the
 // context to the suggest server (assuming SearchProvider is permitted to
 // transmit URLs for context in the first place).
 const base::Feature kSearchProviderContextAllowHttpsUrls{
     "OmniboixSearchProviderContextAllowHttpsUrls",
-    base::FEATURE_DISABLED_BY_DEFAULT};
+    base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Feature used for the Zero Suggest Redirect to Chrome Field Trial.
 const base::Feature kZeroSuggestRedirectToChrome{
@@ -75,6 +98,76 @@ const base::Feature kZeroSuggestRedirectToChrome{
 // suggestions.
 const base::Feature kZeroSuggestSwapTitleAndUrl{
     "ZeroSuggestSwapTitleAndUrl", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Feature used to display the title of the current URL match.
+const base::Feature kDisplayTitleForCurrentUrl{
+    "OmniboxDisplayTitleForCurrentUrl", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Feature used for the max autocomplete matches UI experiment.
+const base::Feature kUIExperimentMaxAutocompleteMatches{
+    "OmniboxUIExperimentMaxAutocompleteMatches",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Feature used for eliding the suggestion URL after the host as a UI
+// experiment.
+const base::Feature kUIExperimentElideSuggestionUrlAfterHost{
+    "OmniboxUIExperimentElideSuggestionUrlAfterHost",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Feature used for hiding the suggestion URL scheme as a UI experiment.
+const base::Feature kUIExperimentHideSuggestionUrlScheme{
+    "OmniboxUIExperimentHideSuggestionUrlScheme",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Feature used for hiding the suggestion URL subdomain as a UI experiment.
+// This only hides some trivially informative subdomains such as "www" or "m".
+const base::Feature kUIExperimentHideSuggestionUrlTrivialSubdomains{
+    "OmniboxUIExperimentHideSuggestionUrlTrivialSubdomains",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Feature used for the omnibox narrow suggestions dropdown UI experiment.
+const base::Feature kUIExperimentNarrowDropdown{
+    "OmniboxUIExperimentNarrowDropdown", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Feature used for showing the URL suggestion favicons as a UI experiment.
+const base::Feature kUIExperimentShowSuggestionFavicons{
+    "OmniboxUIExperimentShowSuggestionFavicons",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Feature used to always swap the title and URL.
+const base::Feature kUIExperimentSwapTitleAndUrl{
+    "OmniboxUIExperimentSwapTitleAndUrl", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Feature used for the vertical margin UI experiment.
+const base::Feature kUIExperimentVerticalLayout{
+    "OmniboxUIExperimentVerticalLayout", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Feature used for the vertical margin UI experiment.
+const base::Feature kUIExperimentVerticalMargin{
+    "OmniboxUIExperimentVerticalMargin", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Feature used to enable speculatively starting a service worker associated
+// with the destination of the default match when the user's input looks like a
+// query.
+const base::Feature kSpeculativeServiceWorkerStartOnQueryInput{
+  "OmniboxSpeculativeServiceWorkerStartOnQueryInput",
+#if defined(OS_ANDROID)
+      base::FEATURE_ENABLED_BY_DEFAULT
+#else
+      base::FEATURE_DISABLED_BY_DEFAULT
+#endif
+};
+
+// Feature used to allow breaking words at underscores in building
+// URLIndexPrivateData.
+const base::Feature kBreakWordsAtUnderscores{"OmniboxBreakWordsAtUnderscores",
+                                             base::FEATURE_DISABLED_BY_DEFAULT};
+
+#if defined(OS_IOS)
+// Feature used to enable ZeroSuggestProvider on iOS.
+const base::Feature kZeroSuggestProviderIOS{"ZeroSuggestProviderIOS",
+                                            base::FEATURE_DISABLED_BY_DEFAULT};
+#endif
 
 }  // namespace omnibox
 
@@ -166,6 +259,15 @@ double HUPScoringParams::ScoreBuckets::HalfLifeTimeDecay(
   return pow(2.0, -half_life_intervals);
 }
 
+#if defined(OS_ANDROID)
+// static
+void OmniboxFieldTrial::RegisterProfilePrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  registry->RegisterBooleanPref(omnibox::kZeroSuggestChromeHomePersonalized,
+                                false);
+}
+#endif
+
 int OmniboxFieldTrial::GetDisabledProviderTypes() {
   const std::string& types_string = variations::GetVariationParamValue(
       kBundledExperimentFieldTrialName,
@@ -195,28 +297,15 @@ base::TimeDelta OmniboxFieldTrial::StopTimerFieldTrialDuration() {
   return base::TimeDelta::FromMilliseconds(1500);
 }
 
-bool OmniboxFieldTrial::InZeroSuggestFieldTrial() {
-  if (variations::GetVariationParamValue(
-          kBundledExperimentFieldTrialName, kZeroSuggestRule) == "true")
-    return true;
-  if (variations::GetVariationParamValue(
-          kBundledExperimentFieldTrialName, kZeroSuggestRule) == "false")
-    return false;
-#if defined(OS_IOS)
-  return false;
-#else
-  return true;
-#endif
-}
-
-bool OmniboxFieldTrial::InZeroSuggestMostVisitedFieldTrial() {
-  return InZeroSuggestMostVisitedWithoutSerpFieldTrial() ||
+bool OmniboxFieldTrial::InZeroSuggestMostVisitedFieldTrial(PrefService* prefs) {
+  return InZeroSuggestMostVisitedWithoutSerpFieldTrial(prefs) ||
       variations::GetVariationParamValue(
       kBundledExperimentFieldTrialName,
       kZeroSuggestVariantRule) == "MostVisited";
 }
 
-bool OmniboxFieldTrial::InZeroSuggestMostVisitedWithoutSerpFieldTrial() {
+bool OmniboxFieldTrial::InZeroSuggestMostVisitedWithoutSerpFieldTrial(
+    PrefService* prefs) {
   std::string variant(variations::GetVariationParamValue(
       kBundledExperimentFieldTrialName,
       kZeroSuggestVariantRule));
@@ -224,28 +313,48 @@ bool OmniboxFieldTrial::InZeroSuggestMostVisitedWithoutSerpFieldTrial() {
     return true;
 #if defined(OS_ANDROID)
   // Android defaults to MostVisitedWithoutSERP
+  if (variant.empty() && !InChromeHomePersonalizedZeroSuggest(prefs))
+    return true;
+
+  return false;
+#elif defined(OS_IOS)
+  // iOS defaults to MostVisitedWithoutSERP
   return variant.empty();
 #else
   return false;
 #endif
 }
 
-bool OmniboxFieldTrial::InZeroSuggestAfterTypingFieldTrial() {
-  if (variations::GetVariationParamValue(
-      kBundledExperimentFieldTrialName,
-      kSuggestVariantRule) == "AfterTyping")
+// static
+bool OmniboxFieldTrial::InZeroSuggestPersonalizedFieldTrial(
+    PrefService* prefs) {
+  std::string variant(variations::GetVariationParamValue(
+      kBundledExperimentFieldTrialName, kZeroSuggestVariantRule));
+  if (variant == "Personalized")
     return true;
-#if defined(OS_IOS) || defined(OS_ANDROID)
+#if defined(OS_ANDROID)
+  if (variant.empty() && InChromeHomePersonalizedZeroSuggest(prefs))
+    return true;
+
   return false;
 #else
-  return true;
+  return false;
 #endif
 }
 
-bool OmniboxFieldTrial::InZeroSuggestPersonalizedFieldTrial() {
-  return variations::GetVariationParamValue(
-      kBundledExperimentFieldTrialName,
-      kZeroSuggestVariantRule) == "Personalized";
+// static
+int OmniboxFieldTrial::GetZeroSuggestRedirectToChromeExperimentId() {
+  return base::GetFieldTrialParamByFeatureAsInt(
+      omnibox::kZeroSuggestRedirectToChrome,
+      kZeroSuggestRedirectToChromeExperimentIdParam,
+      /*default_value=*/-1);
+}
+
+// static
+std::string OmniboxFieldTrial::GetZeroSuggestRedirectToChromeServerAddress() {
+  return base::GetFieldTrialParamValueByFeature(
+      omnibox::kZeroSuggestRedirectToChrome,
+      kZeroSuggestRedirectToChromeServerAddressParam);
 }
 
 bool OmniboxFieldTrial::ShortcutsScoringMaxRelevance(
@@ -351,19 +460,10 @@ void OmniboxFieldTrial::GetDefaultHUPScoringParams(
 
 void OmniboxFieldTrial::GetExperimentalHUPScoringParams(
     HUPScoringParams* scoring_params) {
-  scoring_params->experimental_scoring_enabled = false;
-
   VariationParams params;
   if (!variations::GetVariationParams(kBundledExperimentFieldTrialName,
                                       &params))
     return;
-
-  VariationParams::const_iterator it = params.find(kHUPNewScoringEnabledParam);
-  if (it != params.end()) {
-    int enabled = 0;
-    if (base::StringToInt(it->second, &enabled))
-      scoring_params->experimental_scoring_enabled = (enabled != 0);
-  }
 
   InitializeScoreBuckets(params, kHUPNewScoringTypedCountRelevanceCapParam,
       kHUPNewScoringTypedCountHalfLifeTimeParam,
@@ -439,20 +539,34 @@ float OmniboxFieldTrial::HQPExperimentalTopicalityThreshold() {
   double topicality_threshold;
   if (topicality_threshold_str.empty() ||
       !base::StringToDouble(topicality_threshold_str, &topicality_threshold))
-    return 0.8f;
+    return 0.5f;
 
   return static_cast<float>(topicality_threshold);
 }
 
-bool OmniboxFieldTrial::HQPFixFewVisitsBug() {
-  return variations::GetVariationParamValue(
-      kBundledExperimentFieldTrialName,
-      kHQPFixFewVisitsBugRule) == "true";
-}
+int OmniboxFieldTrial::MaxNumHQPUrlsIndexedAtStartup() {
+  const char* param = kMaxNumHQPUrlsIndexedAtStartupOnNonLowEndDevicesParam;
+  const bool is_low_end_device = base::SysInfo::IsLowEndDevice();
+  if (is_low_end_device)
+    param = kMaxNumHQPUrlsIndexedAtStartupOnLowEndDevicesParam;
+  std::string param_value(variations::GetVariationParamValue(
+      kBundledExperimentFieldTrialName, param));
+  int num_urls;
+  if (base::StringToInt(param_value, &num_urls))
+    return num_urls;
 
-bool OmniboxFieldTrial::HQPFreqencyUsesSum() {
-  return variations::GetVariationParamValue(kBundledExperimentFieldTrialName,
-                                            kHQPFreqencyUsesSumRule) == "true";
+#if defined(OS_ANDROID)
+  // Limits on Android are chosen based on experiment results. See
+  // crbug.com/715852#c18.
+  constexpr int kMaxNumHQPUrlsIndexedAtStartupOnLowEndDevices = 100;
+  constexpr int kMaxNumHQPUrlsIndexedAtStartupOnNonLowEndDevices = 1000;
+  if (is_low_end_device)
+    return kMaxNumHQPUrlsIndexedAtStartupOnLowEndDevices;
+  return kMaxNumHQPUrlsIndexedAtStartupOnNonLowEndDevices;
+#else
+  // Default value is set to -1 for unlimited number of urls.
+  return -1;
+#endif  // defined(OS_ANDROID)
 }
 
 size_t OmniboxFieldTrial::HQPMaxVisitsToScore() {
@@ -476,7 +590,7 @@ float OmniboxFieldTrial::HQPTypedValue() {
   std::string typed_value_str = variations::GetVariationParamValue(
       kBundledExperimentFieldTrialName, kHQPTypedValueRule);
   if (typed_value_str.empty())
-    return 20;
+    return 1.5;
   // This is a best-effort conversion; we trust the hand-crafted parameters
   // downloaded from the server to be perfect.  There's no need for handle
   // errors smartly.
@@ -488,8 +602,11 @@ float OmniboxFieldTrial::HQPTypedValue() {
 OmniboxFieldTrial::NumMatchesScores OmniboxFieldTrial::HQPNumMatchesScores() {
   std::string str = variations::GetVariationParamValue(
       kBundledExperimentFieldTrialName, kHQPNumMatchesScoresRule);
-  // The parameter is a comma-separated list of (number, value) pairs, e.g.
-  // "1:3,2:2.5,3:2,4:1.5".
+  static constexpr char kDefaultNumMatchesScores[] = "1:3,2:2.5,3:2,4:1.5";
+  if (str.empty())
+    str = kDefaultNumMatchesScores;
+  // The parameter is a comma-separated list of (number, value) pairs such as
+  // listed above.
   // This is a best-effort conversion; we trust the hand-crafted parameters
   // downloaded from the server to be perfect.  There's no need to handle
   // errors smartly.
@@ -563,14 +680,20 @@ int OmniboxFieldTrial::KeywordScoreForSufficientlyCompleteMatch() {
 OmniboxFieldTrial::EmphasizeTitlesCondition
 OmniboxFieldTrial::GetEmphasizeTitlesConditionForInput(
     const AutocompleteInput& input) {
-  // First, check if we should emphasize titles for zero suggest suggestions.
-  if (input.from_omnibox_focus() &&
-      base::FeatureList::IsEnabled(omnibox::kZeroSuggestSwapTitleAndUrl)) {
+  // Check the feature that always swaps title and URL (assuming the title is
+  // non-empty).
+  if (base::FeatureList::IsEnabled(omnibox::kUIExperimentSwapTitleAndUrl))
     return EMPHASIZE_WHEN_NONEMPTY;
-  }
-  // Look up the parameter named kEmphasizeTitlesRule + ":" + input.type(),
+
+  // Check the feature that swaps the title and URL only for zero suggest
+  // suggestions.
+  if (input.from_omnibox_focus() &&
+      base::FeatureList::IsEnabled(omnibox::kZeroSuggestSwapTitleAndUrl))
+    return EMPHASIZE_WHEN_NONEMPTY;
+
+  // Look up the parameter named kEmphasizeTitlesRule + "_" + input.type(),
   // find its value, and return that value as an enum.  If the parameter
-  // isn't redefined, fall back to the generic rule kEmphasizeTitlesRule + ":*"
+  // isn't redefined, fall back to the generic rule kEmphasizeTitlesRule + "_*"
   std::string value_str(variations::GetVariationParamValue(
       kBundledExperimentFieldTrialName,
       std::string(kEmphasizeTitlesRule) + "_" +
@@ -631,25 +754,6 @@ int OmniboxFieldTrial::GetPhysicalWebAfterTypingBaseRelevance() {
   return 700;
 }
 
-// static
-bool OmniboxFieldTrial::InZeroSuggestRedirectToChromeFieldTrial() {
-  return base::FeatureList::IsEnabled(omnibox::kZeroSuggestRedirectToChrome);
-}
-
-// static
-std::string OmniboxFieldTrial::ZeroSuggestRedirectToChromeServerAddress() {
-  return base::GetFieldTrialParamValueByFeature(
-      omnibox::kZeroSuggestRedirectToChrome,
-      kZeroSuggestRedirectToChromeServerAddressParam);
-}
-
-// static
-std::string OmniboxFieldTrial::ZeroSuggestRedirectToChromeAdditionalFields() {
-  return base::GetFieldTrialParamValueByFeature(
-      omnibox::kZeroSuggestRedirectToChrome,
-      kZeroSuggestRedirectToChromeAdditionalFieldsParam);
-}
-
 const char OmniboxFieldTrial::kBundledExperimentFieldTrialName[] =
     "OmniboxBundledExperimentV1";
 const char OmniboxFieldTrial::kDisableProvidersRule[] = "DisableProviders";
@@ -663,9 +767,7 @@ const char OmniboxFieldTrial::kHQPTypedValueRule[] = "HQPTypedValue";
 const char OmniboxFieldTrial::kHQPAllowMatchInTLDRule[] = "HQPAllowMatchInTLD";
 const char OmniboxFieldTrial::kHQPAllowMatchInSchemeRule[] =
     "HQPAllowMatchInScheme";
-const char OmniboxFieldTrial::kZeroSuggestRule[] = "ZeroSuggest";
 const char OmniboxFieldTrial::kZeroSuggestVariantRule[] = "ZeroSuggestVariant";
-const char OmniboxFieldTrial::kSuggestVariantRule[] = "SuggestVariant";
 const char OmniboxFieldTrial::kDisableResultsCachingRule[] =
     "DisableResultsCaching";
 const char
@@ -673,8 +775,6 @@ OmniboxFieldTrial::kMeasureSuggestPollingDelayFromLastKeystrokeRule[] =
     "MeasureSuggestPollingDelayFromLastKeystroke";
 const char OmniboxFieldTrial::kSuggestPollingDelayMsRule[] =
     "SuggestPollingDelayMs";
-const char OmniboxFieldTrial::kHQPFixFewVisitsBugRule[] = "HQPFixFewVisitsBug";
-const char OmniboxFieldTrial::kHQPFreqencyUsesSumRule[] = "HQPFreqencyUsesSum";
 const char OmniboxFieldTrial::kHQPMaxVisitsToScoreRule[] =
     "HQPMaxVisitsToScoreRule";
 const char OmniboxFieldTrial::kHQPNumMatchesScoresRule[] =
@@ -696,8 +796,6 @@ const char OmniboxFieldTrial::kPhysicalWebZeroSuggestRule[] =
 const char OmniboxFieldTrial::kPhysicalWebAfterTypingRule[] =
     "PhysicalWebAfterTyping";
 
-const char OmniboxFieldTrial::kHUPNewScoringEnabledParam[] =
-    "HUPExperimentalScoringEnabled";
 const char OmniboxFieldTrial::kHUPNewScoringTypedCountRelevanceCapParam[] =
     "TypedCountRelevanceCap";
 const char OmniboxFieldTrial::kHUPNewScoringTypedCountHalfLifeTimeParam[] =
@@ -721,16 +819,26 @@ const char
     OmniboxFieldTrial::kHQPExperimentalScoringTopicalityThresholdParam[] =
       "HQPExperimentalScoringTopicalityThreshold";
 
+const char
+    OmniboxFieldTrial::kMaxNumHQPUrlsIndexedAtStartupOnLowEndDevicesParam[] =
+        "MaxNumHQPUrlsIndexedAtStartupOnLowEndDevices";
+const char
+    OmniboxFieldTrial::kMaxNumHQPUrlsIndexedAtStartupOnNonLowEndDevicesParam[] =
+        "MaxNumHQPUrlsIndexedAtStartupOnNonLowEndDevices";
+
 const char OmniboxFieldTrial::kPhysicalWebZeroSuggestBaseRelevanceParam[] =
     "PhysicalWebZeroSuggestBaseRelevance";
 const char OmniboxFieldTrial::kPhysicalWebAfterTypingBaseRelevanceParam[] =
     "PhysicalWebAfterTypingBaseRelevanceParam";
 
+const char OmniboxFieldTrial::kUIMaxAutocompleteMatchesParam[] =
+    "UIMaxAutocompleteMatches";
+const char OmniboxFieldTrial::kUIVerticalMarginParam[] = "UIVerticalMargin";
+
+const char OmniboxFieldTrial::kZeroSuggestRedirectToChromeExperimentIdParam[] =
+    "ZeroSuggestRedirectToChromeExperimentID";
 const char OmniboxFieldTrial::kZeroSuggestRedirectToChromeServerAddressParam[] =
     "ZeroSuggestRedirectToChromeServerAddress";
-const char
-    OmniboxFieldTrial::kZeroSuggestRedirectToChromeAdditionalFieldsParam[] =
-        "ZeroSuggestRedirectToChromeAdditionalFields";
 
 // static
 int OmniboxFieldTrial::kDefaultMinimumTimeBetweenSuggestQueriesMs = 100;
@@ -797,3 +905,17 @@ std::string OmniboxFieldTrial::GetValueForRuleInContext(
   it = params.find(rule + ":*:*");
   return (it != params.end()) ? it->second : std::string();
 }
+
+#if defined(OS_ANDROID)
+// static
+bool OmniboxFieldTrial::InChromeHomePersonalizedZeroSuggest(
+    PrefService* prefs) {
+  // Android's Java code sets a preference controlling whether personalized
+  // suggestions are enabled based on whether Chrome Home is enabled and
+  // whether the |kAndroidChromeHomePersonalizedSuggestions| feature is
+  // enabled.
+  return prefs->GetBoolean(omnibox::kZeroSuggestChromeHomePersonalized) &&
+         base::FeatureList::IsEnabled(
+             omnibox::kAndroidChromeHomePersonalizedSuggestions);
+}
+#endif

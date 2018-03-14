@@ -5,11 +5,11 @@
 #include "core/css/MediaQueryEvaluator.h"
 
 #include <memory>
-#include "core/MediaTypeNames.h"
 #include "core/css/MediaList.h"
 #include "core/css/MediaValuesCached.h"
 #include "core/css/MediaValuesInitialViewport.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
+#include "core/media_type_names.h"
 #include "core/testing/DummyPageHolder.h"
 #include "platform/wtf/text/StringBuilder.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -19,9 +19,9 @@ namespace blink {
 typedef struct {
   const char* input;
   const bool output;
-} TestCase;
+} MediaQueryEvaluatorTestCase;
 
-TestCase g_screen_test_cases[] = {
+MediaQueryEvaluatorTestCase g_screen_test_cases[] = {
     {"", 1},
     {" ", 1},
     {"screen", 1},
@@ -66,10 +66,18 @@ TestCase g_screen_test_cases[] = {
     {"(display-mode: @junk browser)", 0},
     {"(shape: rect)", 1},
     {"(shape: round)", 0},
-    {0, 0}  // Do not remove the terminator line.
+    {"(max-device-aspect-ratio: 4294967295/1)", 1},
+    {"(min-device-aspect-ratio: 1/4294967296)", 1},
+    {nullptr, 0}  // Do not remove the terminator line.
 };
 
-TestCase g_viewport_test_cases[] = {
+MediaQueryEvaluatorTestCase g_monochrome_test_cases[] = {
+    {"(color)", 0},
+    {"(monochrome)", 1},
+    {nullptr, 0}  // Do not remove the terminator line.
+};
+
+MediaQueryEvaluatorTestCase g_viewport_test_cases[] = {
     {"all and (min-width: 500px)", 1},
     {"(min-width: 500px)", 1},
     {"(min-width: 501px)", 0},
@@ -91,10 +99,12 @@ TestCase g_viewport_test_cases[] = {
     {"(width)", 1},
     {"(width: whatisthis)", 0},
     {"screen and (min-width: 400px) and (max-width: 700px)", 1},
-    {0, 0}  // Do not remove the terminator line.
+    {"(max-aspect-ratio: 4294967296/1)", 1},
+    {"(min-aspect-ratio: 1/4294967295)", 1},
+    {nullptr, 0}  // Do not remove the terminator line.
 };
 
-TestCase g_float_viewport_test_cases[] = {
+MediaQueryEvaluatorTestCase g_float_viewport_test_cases[] = {
     {"all and (min-width: 600.5px)", 1},
     {"(min-width: 600px)", 1},
     {"(min-width: 600.5px)", 1},
@@ -115,10 +125,10 @@ TestCase g_float_viewport_test_cases[] = {
     {"(height: 700.126px)", 0},
     {"(height: 700.124px)", 0},
     {"(height: 701px)", 0},
-    {0, 0}  // Do not remove the terminator line.
+    {nullptr, 0}  // Do not remove the terminator line.
 };
 
-TestCase g_float_non_friendly_viewport_test_cases[] = {
+MediaQueryEvaluatorTestCase g_float_non_friendly_viewport_test_cases[] = {
     {"(min-width: 821px)", 1},
     {"(max-width: 821px)", 1},
     {"(width: 821px)", 1},
@@ -127,22 +137,23 @@ TestCase g_float_non_friendly_viewport_test_cases[] = {
     {"(height: 821px)", 1},
     {"(width: 100vw)", 1},
     {"(height: 100vh)", 1},
-    {0, 0}  // Do not remove the terminator line.
+    {nullptr, 0}  // Do not remove the terminator line.
 };
 
-TestCase g_print_test_cases[] = {
+MediaQueryEvaluatorTestCase g_print_test_cases[] = {
     {"print and (min-resolution: 1dppx)", 1},
     {"print and (min-resolution: 118dpcm)", 1},
     {"print and (min-resolution: 119dpcm)", 0},
-    {0, 0}  // Do not remove the terminator line.
+    {nullptr, 0}  // Do not remove the terminator line.
 };
 
-void TestMQEvaluator(TestCase* test_cases,
+void TestMQEvaluator(MediaQueryEvaluatorTestCase* test_cases,
                      const MediaQueryEvaluator& media_query_evaluator) {
-  RefPtr<MediaQuerySet> query_set = nullptr;
+  scoped_refptr<MediaQuerySet> query_set = nullptr;
   for (unsigned i = 0; test_cases[i].input; ++i) {
     query_set = MediaQuerySet::Create(test_cases[i].input);
-    EXPECT_EQ(test_cases[i].output, media_query_evaluator.Eval(*query_set));
+    EXPECT_EQ(test_cases[i].output, media_query_evaluator.Eval(*query_set))
+        << "Query: " << test_cases[i].input;
   }
 }
 
@@ -163,16 +174,34 @@ TEST(MediaQueryEvaluatorTest, Cached) {
   data.strict_mode = true;
   data.display_mode = kWebDisplayModeBrowser;
   data.display_shape = kDisplayShapeRect;
-  MediaValues* media_values = MediaValuesCached::Create(data);
 
-  MediaQueryEvaluator media_query_evaluator(*media_values);
-  TestMQEvaluator(g_screen_test_cases, media_query_evaluator);
-  TestMQEvaluator(g_viewport_test_cases, media_query_evaluator);
+  // Default values.
+  {
+    MediaValues* media_values = MediaValuesCached::Create(data);
+    MediaQueryEvaluator media_query_evaluator(*media_values);
+    TestMQEvaluator(g_screen_test_cases, media_query_evaluator);
+    TestMQEvaluator(g_viewport_test_cases, media_query_evaluator);
+  }
 
-  data.media_type = MediaTypeNames::print;
-  media_values = MediaValuesCached::Create(data);
-  MediaQueryEvaluator print_media_query_evaluator(*media_values);
-  TestMQEvaluator(g_print_test_cases, print_media_query_evaluator);
+  // Print values.
+  {
+    data.media_type = MediaTypeNames::print;
+    MediaValues* media_values = MediaValuesCached::Create(data);
+    MediaQueryEvaluator media_query_evaluator(*media_values);
+    TestMQEvaluator(g_print_test_cases, media_query_evaluator);
+    data.media_type = MediaTypeNames::screen;
+  }
+
+  // Monochrome values.
+  {
+    data.color_bits_per_component = 0;
+    data.monochrome_bits_per_component = 8;
+    MediaValues* media_values = MediaValuesCached::Create(data);
+    MediaQueryEvaluator media_query_evaluator(*media_values);
+    TestMQEvaluator(g_monochrome_test_cases, media_query_evaluator);
+    data.color_bits_per_component = 24;
+    data.monochrome_bits_per_component = 0;
+  }
 }
 
 TEST(MediaQueryEvaluatorTest, Dynamic) {
@@ -193,7 +222,7 @@ TEST(MediaQueryEvaluatorTest, DynamicNoView) {
   page_holder.reset();
   ASSERT_EQ(nullptr, frame->View());
   MediaQueryEvaluator media_query_evaluator(frame);
-  RefPtr<MediaQuerySet> query_set = MediaQuerySet::Create("foobar");
+  scoped_refptr<MediaQuerySet> query_set = MediaQuerySet::Create("foobar");
   EXPECT_FALSE(media_query_evaluator.Eval(*query_set));
 }
 

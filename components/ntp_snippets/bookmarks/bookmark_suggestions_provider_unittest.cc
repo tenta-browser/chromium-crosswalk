@@ -12,13 +12,13 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_node.h"
 #include "components/bookmarks/test/test_bookmark_client.h"
 #include "components/ntp_snippets/bookmarks/bookmark_last_visit_utils.h"
 #include "components/ntp_snippets/category.h"
 #include "components/ntp_snippets/mock_content_suggestions_provider_observer.h"
-#include "components/prefs/testing_pref_service.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -53,23 +53,22 @@ class BookmarkSuggestionsProviderTest : public ::testing::Test {
                     _, Category::FromKnownCategory(KnownCategories::BOOKMARKS),
                     CategoryStatus::AVAILABLE))
         .RetiresOnSaturation();
-    BookmarkSuggestionsProvider::RegisterProfilePrefs(test_prefs_.registry());
-    provider_ = base::MakeUnique<BookmarkSuggestionsProvider>(
-        &observer_, model_.get(), &test_prefs_);
+    provider_ =
+        base::MakeUnique<BookmarkSuggestionsProvider>(&observer_, model_.get());
+    scoped_task_environment_.RunUntilIdle();
   }
 
  protected:
   std::unique_ptr<bookmarks::BookmarkModel> model_;
   StrictMock<MockContentSuggestionsProviderObserver> observer_;
-  TestingPrefServiceSimple test_prefs_;
   std::unique_ptr<BookmarkSuggestionsProvider> provider_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 TEST_F(BookmarkSuggestionsProviderTest, ShouldProvideBookmarkSuggestions) {
   GURL url("http://my-new-bookmarked.url");
-  // Note, this update to the model does not trigger OnNewSuggestions() on the
+  // This update to the model does not trigger OnNewSuggestions() on the
   // observer as the provider realizes no new nodes were added.
-  // don't have new data.
   model_->AddURL(model_->bookmark_bar_node(), 0,
                  base::ASCIIToUTF16("cool page's title"), url);
 
@@ -82,6 +81,30 @@ TEST_F(BookmarkSuggestionsProviderTest, ShouldProvideBookmarkSuggestions) {
           UnorderedElementsAre(Property(&ContentSuggestion::url, GURL(url)))));
   UpdateBookmarkOnURLVisitedInMainFrame(model_.get(), url,
                                         /*is_mobile_platform=*/true);
+  scoped_task_environment_.RunUntilIdle();
+}
+
+TEST_F(BookmarkSuggestionsProviderTest,
+       ShouldProvideBookmarkSuggestionsOnlyOnceForDuplicates) {
+  GURL url("http://my-new-bookmarked.url");
+  // This update to the model does not trigger OnNewSuggestions() on the
+  // observer as the provider realizes no new nodes were added.
+  model_->AddURL(model_->bookmark_bar_node(), 0,
+                 base::ASCIIToUTF16("first cool page title"), url);
+  model_->AddURL(model_->bookmark_bar_node(), 1,
+                 base::ASCIIToUTF16("second cool page title"), url);
+
+  // Once we provided the last-visited meta information, _only one_ update with
+  // the suggestion containing the bookmark should follow.
+  EXPECT_CALL(
+      observer_,
+      OnNewSuggestions(
+          _, Category::FromKnownCategory(KnownCategories::BOOKMARKS),
+          UnorderedElementsAre(Property(&ContentSuggestion::url, GURL(url)))))
+      .Times(1);
+  UpdateBookmarkOnURLVisitedInMainFrame(model_.get(), url,
+                                        /*is_mobile_platform=*/true);
+  scoped_task_environment_.RunUntilIdle();
 }
 
 TEST_F(BookmarkSuggestionsProviderTest,
@@ -100,6 +123,7 @@ TEST_F(BookmarkSuggestionsProviderTest,
                  base::ASCIIToUTF16("cool page's title"), active_bookmark);
   UpdateBookmarkOnURLVisitedInMainFrame(model_.get(), active_bookmark,
                                         /*is_mobile_platform=*/true);
+  scoped_task_environment_.RunUntilIdle();
 
   // Add the other bookmark -- this will trigger another notification. Then
   // marks it was dismissed.
@@ -116,6 +140,8 @@ TEST_F(BookmarkSuggestionsProviderTest,
       dismissed_bookmark);
   UpdateBookmarkOnURLVisitedInMainFrame(model_.get(), dismissed_bookmark,
                                         /*is_mobile_platform=*/true);
+  scoped_task_environment_.RunUntilIdle();
+
   // According to the ContentSugestionsProvider contract, solely dismissing an
   // item should not result in another OnNewSuggestions() call.
   static_cast<ContentSuggestionsProvider*>(provider_.get())
@@ -132,6 +158,7 @@ TEST_F(BookmarkSuggestionsProviderTest,
   static_cast<ContentSuggestionsProvider*>(provider_.get())
       ->ClearHistory(base::Time(), base::Time::Max(),
                      base::Bind([](const GURL& url) { return true; }));
+  scoped_task_environment_.RunUntilIdle();
 
   // Verify the dismissed marker is gone.
   EXPECT_THAT(IsDismissedFromNTPForBookmark(*dismissed_node), Eq(false));

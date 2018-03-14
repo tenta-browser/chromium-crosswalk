@@ -33,38 +33,33 @@ public class StubbedHistoryProvider implements HistoryProvider {
     }
 
     @Override
-    public void queryHistory(String query, long endQueryTime) {
-        // endQueryTime should be 0 if the query is changing.
-        if (!TextUtils.equals(query, mLastQuery)) assert endQueryTime == 0;
+    public void queryHistory(String query) {
+        mLastQueryEndPosition = 0;
+        mLastQuery = query;
+        queryHistoryContinuation();
+    }
 
-        if (endQueryTime == 0) {
-            mLastQueryEndPosition = 0;
-        } else {
-            // If endQueryTime is not 0, more items are being paged in and endQueryTime should
-            // equal the timestamp of the last HistoryItem returned in the previous query.
-            assert endQueryTime == mItems.get(mLastQueryEndPosition - 1).getTimestamp();
-        }
-
+    @Override
+    public void queryHistoryContinuation() {
         // Simulate basic paging to facilitate testing loading more items.
         // TODO(twellington): support loading more items while searching.
         int queryStartPosition = mLastQueryEndPosition;
         int queryStartPositionPlusFive = mLastQueryEndPosition + 5;
-        boolean hasMoreItems = queryStartPositionPlusFive < mItems.size()
-                && TextUtils.isEmpty(query);
+        boolean hasMoreItems =
+                queryStartPositionPlusFive < mItems.size() && TextUtils.isEmpty(mLastQuery);
         int queryEndPosition = hasMoreItems ? queryStartPositionPlusFive : mItems.size();
 
         mLastQueryEndPosition = queryEndPosition;
-        mLastQuery = query;
 
         List<HistoryItem> items = new ArrayList<>();
-        if (TextUtils.isEmpty(query)) {
+        if (TextUtils.isEmpty(mLastQuery)) {
             items = mItems.subList(queryStartPosition, queryEndPosition);
         } else {
             // Simulate basic search.
-            query = query.toLowerCase(Locale.getDefault());
+            mLastQuery = mLastQuery.toLowerCase(Locale.getDefault());
             for (HistoryItem item : mItems) {
-                if (item.getUrl().toLowerCase(Locale.getDefault()).contains(query)
-                        || item.getTitle().toLowerCase(Locale.getDefault()).contains(query)) {
+                if (item.getUrl().toLowerCase(Locale.getDefault()).contains(mLastQuery)
+                        || item.getTitle().toLowerCase(Locale.getDefault()).contains(mLastQuery)) {
                     items.add(item);
                 }
             }
@@ -99,22 +94,26 @@ public class StubbedHistoryProvider implements HistoryProvider {
         mItems.remove(item);
     }
 
-    public static HistoryItem createHistoryItem(int which, long[] timestamps) {
+    public static HistoryItem createHistoryItem(int which, long timestamp) {
+        long[] nativeTimestamps = {timestamp * 1000};
         if (which == 0) {
-            return new HistoryItem("http://google.com/", "www.google.com", "Google", timestamps,
-                    false);
+            return new HistoryItem("http://google.com/", "www.google.com", "Google", timestamp,
+                    nativeTimestamps, false);
         } else if (which == 1) {
-            return new HistoryItem("http://foo.com/", "www.foo.com", "Foo", timestamps, false);
+            return new HistoryItem(
+                    "http://foo.com/", "www.foo.com", "Foo", timestamp, nativeTimestamps, false);
         } else if (which == 2) {
-            return new HistoryItem("http://bar.com/", "www.bar.com", "Bar", timestamps, false);
+            return new HistoryItem(
+                    "http://bar.com/", "www.bar.com", "Bar", timestamp, nativeTimestamps, false);
         } else if (which == 3) {
-            return new HistoryItem("http://news.com/", "www.news.com", "News", timestamps, false);
+            return new HistoryItem(
+                    "http://news.com/", "www.news.com", "News", timestamp, nativeTimestamps, false);
         } else if (which == 4) {
-            return new HistoryItem("http://eng.com/", "www.eng.com", "Engineering", timestamps,
-                    false);
+            return new HistoryItem("http://eng.com/", "www.eng.com", "Engineering", timestamp,
+                    nativeTimestamps, false);
         } else if (which == 5) {
             return new HistoryItem("http://blocked.com/", "www.blocked.com", "Cannot Visit",
-                    timestamps, true);
+                    timestamp, nativeTimestamps, true);
         } else {
             return null;
         }

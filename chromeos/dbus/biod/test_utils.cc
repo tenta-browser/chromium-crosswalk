@@ -28,21 +28,14 @@ void CopyString(std::string* dest_str, const std::string& src_str) {
   *dest_str = src_str;
 }
 
-void CopyDBusMethodCallStatus(DBusMethodCallStatus* dest_status,
-                              DBusMethodCallStatus src_status) {
-  CHECK(dest_status);
-  *dest_status = src_status;
+void CopyDBusMethodCallResult(bool* dest_result, bool src_result) {
+  CHECK(dest_result);
+  *dest_result = src_result;
 }
 
-void CopyBiometricType(biod::BiometricType* dest_type,
-                       biod::BiometricType src_type) {
-  CHECK(dest_type);
-  *dest_type = src_type;
-}
+TestBiodObserver::TestBiodObserver() = default;
 
-TestBiodObserver::TestBiodObserver() {}
-
-TestBiodObserver::~TestBiodObserver() {}
+TestBiodObserver::~TestBiodObserver() = default;
 
 int TestBiodObserver::NumEnrollScansReceived() const {
   return num_complete_enroll_scans_received_ +
@@ -64,7 +57,8 @@ void TestBiodObserver::ResetAllCounts() {
 void TestBiodObserver::BiodServiceRestarted() {}
 
 void TestBiodObserver::BiodEnrollScanDoneReceived(biod::ScanResult scan_result,
-                                                  bool is_complete) {
+                                                  bool is_complete,
+                                                  int percent_complete) {
   is_complete ? num_complete_enroll_scans_received_++
               : num_incomplete_enroll_scans_received_++;
 }
@@ -81,5 +75,5 @@ void TestBiodObserver::BiodSessionFailedReceived() {
   num_failures_received_++;
 }
 
-}  // namepsace test_utils
+}  // namespace test_utils
 }  // namespace chromeos

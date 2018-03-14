@@ -8,27 +8,14 @@ Make sure you have followed
 [android build instructions](android_build_instructions.md) already.
 
 ```shell
-build/android/gradle/generate_gradle.py
+build/android/gradle/generate_gradle.py --output-directory out/Debug [--canary]  # Use --canary for Android Studio 3.1 canary
 ```
 
 This creates a project at `out/Debug/gradle`. To create elsewhere:
 
 ```shell
-build/android/gradle/generate_gradle.py --output-directory out/My-Out-Dir --project-dir my-project
+build/android/gradle/generate_gradle.py --output-directory out/Debug --project-dir my-project
 ```
-
-By default, only common targets are generated. To customize the list of targets
-to generate projects for:
-
-```shell
-build/android/gradle/generate_gradle.py --target //chrome/android:chrome_public_apk --target //android_webview/test:android_webview_apk
-```
-
-For those upgrading from Android Studio 2.2 to 2.3:
-
-* Regenerate with `generate_gradle.py`.
-* Clean up in `//third_party/android_tools` with `git clean -ffd`.
-* Restart Android Studio with File -&gt; "Invalidate Caches / Restart".
 
 For first-time Android Studio users:
 
@@ -42,6 +29,14 @@ To import the project:
 * Use "Import Project", and select the directory containing the generated
   project, by default `out/Debug/gradle`.
 
+If you're asked to use Studio's Android SDK:
+
+* No. (Always use project's own SDK)
+
+If you're asked to use Studio's Gradle wrapper:
+
+* Yes.
+
 You need to re-run `generate_gradle.py` whenever `BUILD.gn` files change.
 
 * After regenerating, Android Studio should prompt you to "Sync". If it
@@ -50,24 +45,33 @@ You need to re-run `generate_gradle.py` whenever `BUILD.gn` files change.
     * Help -&gt; Find Action -&gt; "Sync Project with Gradle Files"
     * After `gn clean` you may need to restart Android Studio.
 
-## How it Works
+## How It Works
 
-Android Studio integration works by generating `build.gradle` files based on GN
-targets. Each `android_apk` and `android_library` target produces a separate
-Gradle sub-project.
+By default, only a single module is generated. If more than one apk target is
+specified, then an `_all` module is generated. Otherwise a single apk module is
+generated. Since instrumentation tests are combined with their `apk_under_test`
+target, they count as one module together.
 
-### Excluded files and .srcjars
+To see more detailed structure of gn targets, the `--split-projects` flag can
+be used. This will generate one module for every gn target in the dependency
+graph.
 
-Gradle supports source directories but not source files. However, some
-directories in Chromium are split amonst multiple GN targets. To accommodate
-this, the script detects such targets and creates exclude patterns to exclude
-files not in the current target. You still see them when editing, but they are
-excluded in gradle tasks.
-***
+### Excluded Files
+
+Gradle supports source directories but not source files. However, files in
+Chromium are used amongst multiple targets. To accommodate this, the script
+detects such targets and creates exclude patterns to exclude files not in the
+current target. The editor does not respect these exclude patterns, so a `_all`
+pseudo module is added which includes directories from all targets. This allows
+imports and refactorings to be searched across all targets.
+
+### Extracting .srcjars
 
 Most generated .java files in GN are stored as `.srcjars`. Android Studio does
-not have support for them, and so the generator script builds and extracts them
-all to `extracted-srcjars/` subdirectories for each target that contains them.
+not support them, and so the generator script builds and extracts them all to
+`extracted-srcjars/` subdirectories for each target that contains them. This is
+the reason that the `_all` pseudo module may contain multiple copies of
+generated files.
 
 *** note
 ** TLDR:** Always re-generate project files when `.srcjars` change (this
@@ -76,15 +80,19 @@ includes `R.java`).
 
 ## Android Studio Tips
 
+* Using the Java debugger is documented at [android_debugging_instructions.md#android-studio](android_debugging_instructions.md#android-studio).
 * Configuration instructions can be found
   [here](http://tools.android.com/tech-docs/configuration). One suggestions:
     * Launch it with more RAM:
       `STUDIO_VM_OPTIONS=-Xmx2048m /opt/android-studio-stable/bin/studio-launcher.sh`
 * If you ever need to reset it: `rm -r ~/.AndroidStudio*/`
-* Import Android style settings:
+* Import Chromium-specific style and inspections settings:
     * Help -&gt; Find Action -&gt; "Code Style" (settings) -&gt; Java -&gt;
-      Manage -&gt; Import
-        * Select `tools/android/android_studio/ChromiumStyle.xml`
+      Scheme -&gt; Import Scheme
+        * Select `tools/android/android_studio/ChromiumStyle.xml` -&gt; OK
+    * Help -&gt; Find Action -&gt; "Inspections" (settings) -&gt;
+      Profile -&gt; Import profile
+        * Select `tools/android/android_studio/ChromiumInspections.xml` -&gt; OK
 * Turn on automatic import:
     * Help -&gt; Find Action -&gt; "Auto Import"
         * Tick all the boxes under "Java" and change the dropdown to "All".
@@ -92,6 +100,13 @@ includes `R.java`).
     * Help -&gt; Find Action -&gt; "Show quick documentation on mouse move"
 * Turn on line numbers:
     * Help -&gt; Find Action -&gt; "Show line numbers"
+* Format changed files (Useful for changes made by running code inspection):
+    * Set up version control
+        * File -&gt; Settings -&gt; Version Control
+        * Add src directories
+    * Commit changes and reformat
+        * Help -&gt; Find Action -&gt; "Commit Changes"
+        * Check "Reformat code" & "Optimize imports" and commit
 
 ### Useful Shortcuts
 
@@ -123,23 +138,23 @@ resources, native libraries, etc.
     * Add the line `org.gradle.daemon=true` to `~/.gradle/gradle.properties`,
       creating it if necessary.
 
-## Status (as of April 4th, 2017)
+## Status (as of Nov 1, 2017)
 
 ### What works
 
-* Tested with Android Studio v2.3.
-* Java editing and gradle compile works.
+* Android Studio v3.0 and v3.1 canary with `--canary` flag.
+* Java editing and gradle compile (mostly).
 * Instrumentation tests included as androidTest.
 * Symlinks to existing .so files in jniLibs (doesn't generate them).
-* Editing resource xml files.
+* Editing resource xml files
+* Layout editor (somewhat :P).
 * Java debugging (see
 [here](/docs/android_debugging_instructions.md#Android-Studio)).
+* Import resolution and refactoring across all modules.
+* Correct lint and AndroidManifest when only one target is specified.
 
 ### What doesn't work (yet) ([crbug](https://bugs.chromium.org/p/chromium/issues/detail?id=620034))
 
-* Proper file resolution and imports for overlapping modules.
-* Make gradle aware of assets.
-* Layout editor.
-* Add a mode in which gradle is responsible for generating `R.java`.
-* Add support for native code editing.
-* Make the "Make Project" button work correctly.
+* Gradle being aware of assets.
+* Native code editing.
+* Having the "Make Project" button work correctly.

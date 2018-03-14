@@ -8,7 +8,6 @@
 #include "base/run_loop.h"
 #include "content/public/common/presentation_connection_message.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "content/renderer/presentation/presentation_connection_proxy.h"
 #include "content/renderer/presentation/presentation_dispatcher.h"
 #include "content/renderer/presentation/test_presentation_connection.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -35,11 +34,11 @@ using blink::WebVector;
 using blink::mojom::PresentationConnection;
 using blink::mojom::PresentationService;
 using blink::mojom::PresentationServiceClientPtr;
+using blink::mojom::ScreenAvailability;
 
 // TODO(crbug.com/576808): Add test cases for the following:
 // - State changes
 // - Messages received
-// - Discarding queued messages when the frame navigates
 // - Screen availability not supported
 // - Default presentation starting
 
@@ -52,7 +51,7 @@ class MockPresentationAvailabilityObserver
       : urls_(urls) {}
   ~MockPresentationAvailabilityObserver() override {}
 
-  MOCK_METHOD1(AvailabilityChanged, void(bool is_available));
+  MOCK_METHOD1(AvailabilityChanged, void(ScreenAvailability availability));
   const WebVector<WebURL>& Urls() const override { return urls_; }
 
  private:
@@ -62,18 +61,33 @@ class MockPresentationAvailabilityObserver
 class MockPresentationService : public PresentationService {
  public:
   void SetClient(PresentationServiceClientPtr client) override {}
+  void SetReceiver(blink::mojom::PresentationReceiverPtr receiver) override {}
   MOCK_METHOD1(SetDefaultPresentationUrls,
                void(const std::vector<GURL>& presentation_urls));
   MOCK_METHOD1(ListenForScreenAvailability, void(const GURL& availability_url));
   MOCK_METHOD1(StopListeningForScreenAvailability,
                void(const GURL& availability_url));
-  MOCK_METHOD2(StartPresentation,
+
+  // TODO(crbug.com/729950): Use MOCK_METHOD directly once GMock gets the
+  // move-only type support.
+  void StartPresentation(const std::vector<GURL>& presentation_urls,
+                         StartPresentationCallback callback) {
+    StartPresentationInternal(presentation_urls, callback);
+  }
+  MOCK_METHOD2(StartPresentationInternal,
                void(const std::vector<GURL>& presentation_urls,
-                    const StartPresentationCallback& callback));
-  MOCK_METHOD3(ReconnectPresentation,
+                    StartPresentationCallback& callback));
+
+  void ReconnectPresentation(const std::vector<GURL>& presentation_urls,
+                             const std::string& presentation_id,
+                             ReconnectPresentationCallback callback) {
+    ReconnectPresentationInternal(presentation_urls, presentation_id, callback);
+  }
+  MOCK_METHOD3(ReconnectPresentationInternal,
                void(const std::vector<GURL>& presentation_urls,
-                    const base::Optional<std::string>& presentation_id,
-                    const ReconnectPresentationCallback& callback));
+                    const std::string& presentation_id,
+                    ReconnectPresentationCallback& callback));
+
   void SetPresentationConnection(
       const PresentationInfo& presentation_info,
       blink::mojom::PresentationConnectionPtr controller_conn_ptr,
@@ -84,44 +98,19 @@ class MockPresentationService : public PresentationService {
   MOCK_METHOD2(SetPresentationConnection,
                void(const PresentationInfo& presentation_info,
                     PresentationConnection* connection));
+
   MOCK_METHOD2(CloseConnection,
                void(const GURL& presentation_url,
                     const std::string& presentation_id));
   MOCK_METHOD2(Terminate,
                void(const GURL& presentation_url,
                     const std::string& presentation_id));
-  MOCK_METHOD1(ListenForConnectionMessages,
-               void(const PresentationInfo& presentation_info));
-};
-
-class TestPresentationConnectionProxy : public PresentationConnectionProxy {
- public:
-  TestPresentationConnectionProxy(blink::WebPresentationConnection* connection)
-      : PresentationConnectionProxy(connection) {}
-
-  // PresentationConnectionMessage is move-only.
-  void SendConnectionMessage(PresentationConnectionMessage message,
-                             const OnMessageCallback& cb) const {
-    SendConnectionMessageInternal(message, cb);
-  }
-  MOCK_CONST_METHOD2(SendConnectionMessageInternal,
-                     void(const PresentationConnectionMessage&,
-                          const OnMessageCallback&));
-  MOCK_CONST_METHOD0(Close, void());
 };
 
 class TestPresentationReceiver : public blink::WebPresentationReceiver {
  public:
-  blink::WebPresentationConnection* OnReceiverConnectionAvailable(
-      const blink::WebPresentationInfo&) override {
-    return &connection_;
-  }
-
-  MOCK_METHOD1(DidChangeConnectionState,
-               void(blink::WebPresentationConnectionState));
-  MOCK_METHOD0(TerminateConnection, void());
-
-  TestPresentationConnection connection_;
+  MOCK_METHOD0(InitIfNeeded, void());
+  MOCK_METHOD0(OnReceiverTerminated, void());
 };
 
 class MockPresentationAvailabilityCallbacks
@@ -196,7 +185,7 @@ class TestPresentationDispatcher : public PresentationDispatcher {
  private:
   void ConnectToPresentationServiceIfNeeded() override {
     if (!mock_binding_) {
-      mock_binding_ = base::MakeUnique<mojo::Binding<PresentationService>>(
+      mock_binding_ = std::make_unique<mojo::Binding<PresentationService>>(
           mock_presentation_service_,
           mojo::MakeRequest(&presentation_service_));
     }
@@ -208,10 +197,6 @@ class TestPresentationDispatcher : public PresentationDispatcher {
 
 class PresentationDispatcherTest : public ::testing::Test {
  public:
-  using OnMessageCallback = PresentationConnectionProxy::OnMessageCallback;
-
-  enum class URLState { Available, Unavailable, Unsupported, Unknown };
-
   PresentationDispatcherTest()
       : gurl1_(GURL("https://www.example.com/1.html")),
         gurl2_(GURL("https://www.example.com/2.html")),
@@ -243,18 +228,25 @@ class PresentationDispatcherTest : public ::testing::Test {
     return static_cast<uint8_t*>(array_buffer_.Data());
   }
 
-  void ChangeURLState(const GURL& url, URLState state) {
+  void ChangeURLState(const GURL& url, ScreenAvailability state) {
     switch (state) {
-      case URLState::Available:
-        dispatcher_.OnScreenAvailabilityUpdated(url, true);
+      case ScreenAvailability::AVAILABLE:
+        dispatcher_.OnScreenAvailabilityUpdated(url,
+                                                ScreenAvailability::AVAILABLE);
         break;
-      case URLState::Unavailable:
-        dispatcher_.OnScreenAvailabilityUpdated(url, false);
+      case ScreenAvailability::SOURCE_NOT_SUPPORTED:
+        dispatcher_.OnScreenAvailabilityUpdated(
+            url, ScreenAvailability::SOURCE_NOT_SUPPORTED);
         break;
-      case URLState::Unsupported:
-        dispatcher_.OnScreenAvailabilityNotSupported(url);
+      case ScreenAvailability::UNAVAILABLE:
+        dispatcher_.OnScreenAvailabilityUpdated(
+            url, ScreenAvailability::UNAVAILABLE);
         break;
-      case URLState::Unknown:
+      case ScreenAvailability::DISABLED:
+        dispatcher_.OnScreenAvailabilityUpdated(url,
+                                                ScreenAvailability::DISABLED);
+        break;
+      case ScreenAvailability::UNKNOWN:
         break;
     }
   }
@@ -264,7 +256,7 @@ class PresentationDispatcherTest : public ::testing::Test {
   // |mock_callback|.
   void TestGetAvailability(
       const std::vector<GURL>& urls,
-      const std::vector<URLState>& states,
+      const std::vector<ScreenAvailability>& states,
       MockPresentationAvailabilityCallbacks* mock_callback) {
     DCHECK_EQ(urls.size(), states.size());
 
@@ -314,46 +306,43 @@ class PresentationDispatcherTest : public ::testing::Test {
 
 TEST_F(PresentationDispatcherTest, TestStartPresentation) {
   TestPresentationConnection connection;
-  EXPECT_FALSE(connection.proxy());
   {
     base::RunLoop run_loop;
-    EXPECT_CALL(presentation_service_, ListenForConnectionMessages(_));
-    EXPECT_CALL(presentation_service_, SetPresentationConnection(_, _));
-    EXPECT_CALL(presentation_service_, StartPresentation(gurls_, _))
-        .WillOnce(
-            Invoke([this](const std::vector<GURL>& presentation_urls,
-                          const PresentationService::StartPresentationCallback&
-                              callback) {
+    EXPECT_CALL(presentation_service_, StartPresentationInternal(gurls_, _))
+        .WillOnce(Invoke(
+            [this](const std::vector<GURL>& presentation_urls,
+                   PresentationService::StartPresentationCallback& callback) {
               PresentationInfo presentation_info(gurl1_,
                                                  presentation_id_.Utf8());
-              callback.Run(presentation_info, base::nullopt);
+              std::move(callback).Run(presentation_info, base::nullopt);
             }));
 
+    EXPECT_CALL(connection, Init()).Times(1);
     dispatcher_.StartPresentation(
-        urls_, base::MakeUnique<TestWebPresentationConnectionCallback>(
+        urls_, std::make_unique<TestWebPresentationConnectionCallback>(
                    url1_, presentation_id_, &connection));
     run_loop.RunUntilIdle();
   }
-  EXPECT_TRUE(connection.proxy());
 }
 
 TEST_F(PresentationDispatcherTest, TestStartPresentationError) {
   WebString error_message = WebString::FromUTF8("Test error message");
   base::RunLoop run_loop;
 
-  EXPECT_CALL(presentation_service_, StartPresentation(gurls_, _))
-      .WillOnce(Invoke(
-          [&error_message](
-              const std::vector<GURL>& presentation_urls,
-              const PresentationService::StartPresentationCallback& callback) {
-            callback.Run(base::nullopt,
-                         PresentationError(
-                             content::PRESENTATION_ERROR_NO_AVAILABLE_SCREENS,
-                             error_message.Utf8()));
+  EXPECT_CALL(presentation_service_, StartPresentationInternal(gurls_, _))
+      .WillOnce(
+          Invoke([&error_message](
+                     const std::vector<GURL>& presentation_urls,
+                     PresentationService::StartPresentationCallback& callback) {
+            std::move(callback).Run(
+                base::nullopt,
+                PresentationError(
+                    content::PRESENTATION_ERROR_NO_AVAILABLE_SCREENS,
+                    error_message.Utf8()));
           }));
   dispatcher_.StartPresentation(
       urls_,
-      base::MakeUnique<TestWebPresentationConnectionErrorCallback>(
+      std::make_unique<TestWebPresentationConnectionErrorCallback>(
           WebPresentationError::kErrorTypeNoAvailableScreens, error_message));
   run_loop.RunUntilIdle();
 }
@@ -362,165 +351,80 @@ TEST_F(PresentationDispatcherTest, TestReconnectPresentationError) {
   WebString error_message = WebString::FromUTF8("Test error message");
   base::RunLoop run_loop;
 
-  EXPECT_CALL(presentation_service_, ReconnectPresentation(gurls_, _, _))
-      .WillOnce(
-          Invoke([this, &error_message](
-                     const std::vector<GURL>& presentation_urls,
-                     const base::Optional<std::string>& presentation_id,
-                     const PresentationService::ReconnectPresentationCallback&
-                         callback) {
+  EXPECT_CALL(presentation_service_,
+              ReconnectPresentationInternal(gurls_, _, _))
+      .WillOnce(Invoke(
+          [this, &error_message](
+              const std::vector<GURL>& presentation_urls,
+              const base::Optional<std::string>& presentation_id,
+              PresentationService::ReconnectPresentationCallback& callback) {
             EXPECT_TRUE(presentation_id.has_value());
             EXPECT_EQ(presentation_id_.Utf8(), presentation_id.value());
-            callback.Run(base::nullopt,
-                         PresentationError(
-                             content::PRESENTATION_ERROR_NO_AVAILABLE_SCREENS,
-                             error_message.Utf8()));
+            std::move(callback).Run(
+                base::nullopt,
+                PresentationError(
+                    content::PRESENTATION_ERROR_NO_AVAILABLE_SCREENS,
+                    error_message.Utf8()));
           }));
   dispatcher_.ReconnectPresentation(
       urls_, presentation_id_,
-      base::MakeUnique<TestWebPresentationConnectionErrorCallback>(
+      std::make_unique<TestWebPresentationConnectionErrorCallback>(
           WebPresentationError::kErrorTypeNoAvailableScreens, error_message));
   run_loop.RunUntilIdle();
 }
 
 TEST_F(PresentationDispatcherTest, TestReconnectPresentation) {
   TestPresentationConnection connection;
-  EXPECT_FALSE(connection.proxy());
   {
     base::RunLoop run_loop;
-    EXPECT_CALL(presentation_service_, ListenForConnectionMessages(_));
-    EXPECT_CALL(presentation_service_, SetPresentationConnection(_, _));
-    EXPECT_CALL(presentation_service_, ReconnectPresentation(gurls_, _, _))
+    EXPECT_CALL(presentation_service_,
+                ReconnectPresentationInternal(gurls_, _, _))
         .WillOnce(Invoke(
-            [this](const std::vector<GURL>& presentation_urls,
-                   const base::Optional<std::string>& presentation_id,
-                   const PresentationService::ReconnectPresentationCallback&
-                       callback) {
+            [this](
+                const std::vector<GURL>& presentation_urls,
+                const base::Optional<std::string>& presentation_id,
+                PresentationService::ReconnectPresentationCallback& callback) {
               EXPECT_TRUE(presentation_id.has_value());
               EXPECT_EQ(presentation_id_.Utf8(), presentation_id.value());
-              callback.Run(PresentationInfo(gurl1_, presentation_id_.Utf8()),
-                           base::nullopt);
+              std::move(callback).Run(
+                  PresentationInfo(gurl1_, presentation_id_.Utf8()),
+                  base::nullopt);
             }));
 
+    EXPECT_CALL(connection, Init()).Times(1);
     dispatcher_.ReconnectPresentation(
         urls_, presentation_id_,
-        base::MakeUnique<TestWebPresentationConnectionCallback>(
+        std::make_unique<TestWebPresentationConnectionCallback>(
             url1_, presentation_id_, &connection));
     run_loop.RunUntilIdle();
   }
-  EXPECT_TRUE(connection.proxy());
 }
 
-TEST_F(PresentationDispatcherTest, TestSendString) {
-  WebString message = WebString::FromUTF8("test message");
+TEST_F(PresentationDispatcherTest, TestReconnectPresentationNoConnection) {
   TestPresentationConnection connection;
-  TestPresentationConnectionProxy connection_proxy(&connection);
+  {
+    base::RunLoop run_loop;
+    EXPECT_CALL(presentation_service_,
+                ReconnectPresentationInternal(gurls_, _, _))
+        .WillOnce(Invoke(
+            [this](
+                const std::vector<GURL>& presentation_urls,
+                const base::Optional<std::string>& presentation_id,
+                PresentationService::ReconnectPresentationCallback& callback) {
+              EXPECT_TRUE(presentation_id.has_value());
+              EXPECT_EQ(presentation_id_.Utf8(), presentation_id.value());
+              std::move(callback).Run(
+                  PresentationInfo(gurl1_, presentation_id_.Utf8()),
+                  base::nullopt);
+            }));
 
-  PresentationConnectionMessage expected_message(message.Utf8());
-
-  base::RunLoop run_loop;
-  EXPECT_CALL(connection_proxy, SendConnectionMessageInternal(_, _))
-      .WillOnce(Invoke([&expected_message](
-                           const PresentationConnectionMessage& message_request,
-                           const OnMessageCallback& callback) {
-        EXPECT_EQ(message_request, expected_message);
-        callback.Run(true);
-      }));
-
-  dispatcher_.SendString(url1_, presentation_id_, message, &connection_proxy);
-  run_loop.RunUntilIdle();
-}
-
-TEST_F(PresentationDispatcherTest, TestSendArrayBuffer) {
-  std::vector<uint8_t> data(array_buffer_data(),
-                            array_buffer_data() + array_buffer_.ByteLength());
-  TestPresentationConnection connection;
-  TestPresentationConnectionProxy connection_proxy(&connection);
-  PresentationConnectionMessage expected_message(data);
-
-  base::RunLoop run_loop;
-  EXPECT_CALL(connection_proxy, SendConnectionMessageInternal(_, _))
-      .WillOnce(Invoke([&expected_message](
-                           const PresentationConnectionMessage& message_request,
-                           const OnMessageCallback& callback) {
-        EXPECT_EQ(message_request, expected_message);
-        callback.Run(true);
-      }));
-  dispatcher_.SendArrayBuffer(url1_, presentation_id_, array_buffer_data(),
-                              array_buffer_.ByteLength(), &connection_proxy);
-  run_loop.RunUntilIdle();
-}
-
-TEST_F(PresentationDispatcherTest, TestSendBlobData) {
-  std::vector<uint8_t> data(array_buffer_data(),
-                            array_buffer_data() + array_buffer_.ByteLength());
-  TestPresentationConnection connection;
-  TestPresentationConnectionProxy connection_proxy(&connection);
-  PresentationConnectionMessage expected_message(data);
-
-  base::RunLoop run_loop;
-  EXPECT_CALL(connection_proxy, SendConnectionMessageInternal(_, _))
-      .WillOnce(Invoke([&expected_message](
-                           const PresentationConnectionMessage& message_request,
-                           const OnMessageCallback& callback) {
-        EXPECT_EQ(message_request, expected_message);
-        callback.Run(true);
-      }));
-  dispatcher_.SendBlobData(url1_, presentation_id_, array_buffer_data(),
-                           array_buffer_.ByteLength(), &connection_proxy);
-  run_loop.RunUntilIdle();
-}
-
-TEST_F(PresentationDispatcherTest, TestOnReceiverConnectionAvailable) {
-  PresentationInfo presentation_info(gurl1_, presentation_id_.Utf8());
-
-  blink::mojom::PresentationConnectionPtr controller_connection_ptr;
-  TestPresentationConnection controller_connection;
-  TestPresentationConnectionProxy controller_connection_proxy(
-      &controller_connection);
-  mojo::Binding<blink::mojom::PresentationConnection> binding(
-      &controller_connection_proxy,
-      mojo::MakeRequest(&controller_connection_ptr));
-
-  blink::mojom::PresentationConnectionPtr receiver_connection_ptr;
-
-  TestPresentationReceiver receiver;
-  dispatcher_.SetReceiver(&receiver);
-
-  base::RunLoop run_loop;
-  EXPECT_CALL(
-      controller_connection,
-      DidChangeState(blink::WebPresentationConnectionState::kConnected));
-  EXPECT_CALL(
-      receiver.connection_,
-      DidChangeState(blink::WebPresentationConnectionState::kConnected));
-
-  dispatcher_.OnReceiverConnectionAvailable(
-      std::move(presentation_info), std::move(controller_connection_ptr),
-      mojo::MakeRequest(&receiver_connection_ptr));
-
-  EXPECT_TRUE(receiver_connection_ptr);
-  EXPECT_TRUE(receiver.connection_.proxy());
-  run_loop.RunUntilIdle();
-}
-
-TEST_F(PresentationDispatcherTest, TestCloseConnection) {
-  base::RunLoop run_loop;
-  TestPresentationConnection connection;
-  TestPresentationConnectionProxy test_proxy(&connection);
-  EXPECT_CALL(test_proxy, Close());
-  EXPECT_CALL(presentation_service_,
-              CloseConnection(gurl1_, presentation_id_.Utf8()));
-  dispatcher_.CloseConnection(url1_, presentation_id_, &test_proxy);
-  run_loop.RunUntilIdle();
-}
-
-TEST_F(PresentationDispatcherTest, TestTerminatePresentation) {
-  base::RunLoop run_loop;
-  EXPECT_CALL(presentation_service_,
-              Terminate(gurl1_, presentation_id_.Utf8()));
-  dispatcher_.TerminatePresentation(url1_, presentation_id_);
-  run_loop.RunUntilIdle();
+    EXPECT_CALL(connection, Init()).Times(0);
+    dispatcher_.ReconnectPresentation(
+        urls_, presentation_id_,
+        std::make_unique<TestWebPresentationConnectionCallback>(
+            url1_, presentation_id_, nullptr));
+    run_loop.RunUntilIdle();
+  }
 }
 
 TEST_F(PresentationDispatcherTest, TestListenForScreenAvailability) {
@@ -532,8 +436,8 @@ TEST_F(PresentationDispatcherTest, TestListenForScreenAvailability) {
   }
 
   dispatcher_.GetAvailability(
-      urls_, base::MakeUnique<WebPresentationAvailabilityCallbacks>());
-  dispatcher_.OnScreenAvailabilityUpdated(url1_, true);
+      urls_, std::make_unique<WebPresentationAvailabilityCallbacks>());
+  dispatcher_.OnScreenAvailabilityUpdated(url1_, ScreenAvailability::AVAILABLE);
   run_loop1.RunUntilIdle();
 
   base::RunLoop run_loop2;
@@ -544,10 +448,15 @@ TEST_F(PresentationDispatcherTest, TestListenForScreenAvailability) {
   run_loop2.RunUntilIdle();
 
   base::RunLoop run_loop3;
-  EXPECT_CALL(observer_, AvailabilityChanged(false));
-  dispatcher_.OnScreenAvailabilityUpdated(url1_, false);
-  EXPECT_CALL(observer_, AvailabilityChanged(true));
-  dispatcher_.OnScreenAvailabilityUpdated(url1_, true);
+  EXPECT_CALL(observer_, AvailabilityChanged(ScreenAvailability::UNAVAILABLE));
+  dispatcher_.OnScreenAvailabilityUpdated(url1_,
+                                          ScreenAvailability::UNAVAILABLE);
+  EXPECT_CALL(observer_,
+              AvailabilityChanged(ScreenAvailability::SOURCE_NOT_SUPPORTED));
+  dispatcher_.OnScreenAvailabilityUpdated(
+      url1_, ScreenAvailability::SOURCE_NOT_SUPPORTED);
+  EXPECT_CALL(observer_, AvailabilityChanged(ScreenAvailability::AVAILABLE));
+  dispatcher_.OnScreenAvailabilityUpdated(url1_, ScreenAvailability::AVAILABLE);
   for (const auto& gurl : gurls_) {
     EXPECT_CALL(presentation_service_,
                 StopListeningForScreenAvailability(gurl));
@@ -557,8 +466,10 @@ TEST_F(PresentationDispatcherTest, TestListenForScreenAvailability) {
 
   // After stopListening(), |observer_| should no longer be notified.
   base::RunLoop run_loop4;
-  EXPECT_CALL(observer_, AvailabilityChanged(false)).Times(0);
-  dispatcher_.OnScreenAvailabilityUpdated(url1_, false);
+  EXPECT_CALL(observer_, AvailabilityChanged(ScreenAvailability::UNAVAILABLE))
+      .Times(0);
+  dispatcher_.OnScreenAvailabilityUpdated(url1_,
+                                          ScreenAvailability::UNAVAILABLE);
   run_loop4.RunUntilIdle();
 }
 
@@ -586,21 +497,30 @@ TEST_F(PresentationDispatcherTest, GetAvailabilityOneUrlBecomesAvailable) {
   auto* mock_callback = new MockPresentationAvailabilityCallbacks();
   EXPECT_CALL(*mock_callback, OnSuccess(true));
 
-  TestGetAvailability({url1_}, {URLState::Available}, mock_callback);
+  TestGetAvailability({url1_}, {ScreenAvailability::AVAILABLE}, mock_callback);
+}
+
+TEST_F(PresentationDispatcherTest, GetAvailabilityOneUrlBecomesNotCompatible) {
+  auto* mock_callback = new MockPresentationAvailabilityCallbacks();
+  EXPECT_CALL(*mock_callback, OnSuccess(false));
+
+  TestGetAvailability({url1_}, {ScreenAvailability::SOURCE_NOT_SUPPORTED},
+                      mock_callback);
 }
 
 TEST_F(PresentationDispatcherTest, GetAvailabilityOneUrlBecomesUnavailable) {
   auto* mock_callback = new MockPresentationAvailabilityCallbacks();
   EXPECT_CALL(*mock_callback, OnSuccess(false));
 
-  TestGetAvailability({url1_}, {URLState::Unavailable}, mock_callback);
+  TestGetAvailability({url1_}, {ScreenAvailability::UNAVAILABLE},
+                      mock_callback);
 }
 
-TEST_F(PresentationDispatcherTest, GetAvailabilityOneUrlBecomesNotSupported) {
+TEST_F(PresentationDispatcherTest, GetAvailabilityOneUrlBecomesUnsupported) {
   auto* mock_callback = new MockPresentationAvailabilityCallbacks();
   EXPECT_CALL(*mock_callback, OnError(_));
 
-  TestGetAvailability({url1_}, {URLState::Unsupported}, mock_callback);
+  TestGetAvailability({url1_}, {ScreenAvailability::DISABLED}, mock_callback);
 }
 
 TEST_F(PresentationDispatcherTest,
@@ -608,9 +528,10 @@ TEST_F(PresentationDispatcherTest,
   auto* mock_callback = new MockPresentationAvailabilityCallbacks();
   EXPECT_CALL(*mock_callback, OnSuccess(true)).Times(1);
 
-  TestGetAvailability({url1_, url2_},
-                      {URLState::Available, URLState::Available},
-                      mock_callback);
+  TestGetAvailability(
+      {url1_, url2_},
+      {ScreenAvailability::AVAILABLE, ScreenAvailability::AVAILABLE},
+      mock_callback);
 }
 
 TEST_F(PresentationDispatcherTest,
@@ -618,8 +539,20 @@ TEST_F(PresentationDispatcherTest,
   auto* mock_callback = new MockPresentationAvailabilityCallbacks();
   EXPECT_CALL(*mock_callback, OnSuccess(false)).Times(1);
 
+  TestGetAvailability(
+      {url1_, url2_},
+      {ScreenAvailability::UNAVAILABLE, ScreenAvailability::UNAVAILABLE},
+      mock_callback);
+}
+
+TEST_F(PresentationDispatcherTest,
+       GetAvailabilityMultipleUrlsAllBecomesNotCompatible) {
+  auto* mock_callback = new MockPresentationAvailabilityCallbacks();
+  EXPECT_CALL(*mock_callback, OnSuccess(false)).Times(1);
+
   TestGetAvailability({url1_, url2_},
-                      {URLState::Unavailable, URLState::Unavailable},
+                      {ScreenAvailability::SOURCE_NOT_SUPPORTED,
+                       ScreenAvailability::SOURCE_NOT_SUPPORTED},
                       mock_callback);
 }
 
@@ -628,9 +561,10 @@ TEST_F(PresentationDispatcherTest,
   auto* mock_callback = new MockPresentationAvailabilityCallbacks();
   EXPECT_CALL(*mock_callback, OnError(_)).Times(1);
 
-  TestGetAvailability({url1_, url2_},
-                      {URLState::Unsupported, URLState::Unsupported},
-                      mock_callback);
+  TestGetAvailability(
+      {url1_, url2_},
+      {ScreenAvailability::DISABLED, ScreenAvailability::DISABLED},
+      mock_callback);
 }
 
 TEST_F(PresentationDispatcherTest,
@@ -639,8 +573,9 @@ TEST_F(PresentationDispatcherTest,
   auto* mock_callback_1 = new MockPresentationAvailabilityCallbacks();
   EXPECT_CALL(*mock_callback_1, OnSuccess(false)).Times(1);
 
-  std::vector<URLState> state_seq = {URLState::Unavailable, URLState::Available,
-                                     URLState::Unavailable};
+  std::vector<ScreenAvailability> state_seq = {ScreenAvailability::UNAVAILABLE,
+                                               ScreenAvailability::AVAILABLE,
+                                               ScreenAvailability::UNAVAILABLE};
   TestGetAvailability({url1_, url2_, url3_}, state_seq, mock_callback_1);
 
   // Second getAvailability() call.
@@ -667,7 +602,7 @@ TEST_F(PresentationDispatcherTest, StartListeningListenToEachURLOnce) {
   for (auto* mock_observer : mock_observers_) {
     client()->GetAvailability(
         mock_observer->Urls(),
-        base::MakeUnique<WebPresentationAvailabilityCallbacks>());
+        std::make_unique<WebPresentationAvailabilityCallbacks>());
     client()->StartListening(mock_observer);
   }
   run_loop.RunUntilIdle();
@@ -681,22 +616,25 @@ TEST_F(PresentationDispatcherTest, StopListeningListenToEachURLOnce) {
         .Times(1);
   }
 
-  EXPECT_CALL(mock_observer1_, AvailabilityChanged(false));
-  EXPECT_CALL(mock_observer2_, AvailabilityChanged(false));
-  EXPECT_CALL(mock_observer3_, AvailabilityChanged(false));
+  EXPECT_CALL(mock_observer1_,
+              AvailabilityChanged(ScreenAvailability::UNAVAILABLE));
+  EXPECT_CALL(mock_observer2_,
+              AvailabilityChanged(ScreenAvailability::UNAVAILABLE));
+  EXPECT_CALL(mock_observer3_,
+              AvailabilityChanged(ScreenAvailability::UNAVAILABLE));
 
   // Set up |availability_set_| and |listening_status_|
   base::RunLoop run_loop;
   for (auto* mock_observer : mock_observers_) {
     client()->GetAvailability(
         mock_observer->Urls(),
-        base::MakeUnique<WebPresentationAvailabilityCallbacks>());
+        std::make_unique<WebPresentationAvailabilityCallbacks>());
 
     client()->StartListening(mock_observer);
   }
 
   // Clean up callbacks.
-  ChangeURLState(gurl2_, URLState::Unavailable);
+  ChangeURLState(gurl2_, ScreenAvailability::UNAVAILABLE);
 
   for (auto* mock_observer : mock_observers_)
     client()->StopListening(mock_observer);
@@ -722,18 +660,21 @@ TEST_F(PresentationDispatcherTest,
   for (auto* mock_observer : mock_observers_) {
     client()->GetAvailability(
         mock_observer->Urls(),
-        base::MakeUnique<WebPresentationAvailabilityCallbacks>());
+        std::make_unique<WebPresentationAvailabilityCallbacks>());
   }
 
   for (auto* mock_observer : mock_observers_)
     client()->StartListening(mock_observer);
 
-  EXPECT_CALL(mock_observer1_, AvailabilityChanged(false));
-  EXPECT_CALL(mock_observer2_, AvailabilityChanged(false));
-  EXPECT_CALL(mock_observer3_, AvailabilityChanged(false));
+  EXPECT_CALL(mock_observer1_,
+              AvailabilityChanged(ScreenAvailability::UNAVAILABLE));
+  EXPECT_CALL(mock_observer2_,
+              AvailabilityChanged(ScreenAvailability::UNAVAILABLE));
+  EXPECT_CALL(mock_observer3_,
+              AvailabilityChanged(ScreenAvailability::UNAVAILABLE));
 
   // Clean up callbacks.
-  ChangeURLState(gurl2_, URLState::Unavailable);
+  ChangeURLState(gurl2_, ScreenAvailability::UNAVAILABLE);
   client()->StopListening(&mock_observer1_);
   run_loop.RunUntilIdle();
 }
@@ -744,24 +685,33 @@ TEST_F(PresentationDispatcherTest,
     EXPECT_CALL(presentation_service_, ListenForScreenAvailability(gurl))
         .Times(1);
   }
-  EXPECT_CALL(mock_observer1_, AvailabilityChanged(true));
+  EXPECT_CALL(mock_observer1_,
+              AvailabilityChanged(ScreenAvailability::AVAILABLE));
 
   base::RunLoop run_loop;
   for (auto* mock_observer : mock_observers_) {
     client()->GetAvailability(
         mock_observer->Urls(),
-        base::MakeUnique<WebPresentationAvailabilityCallbacks>());
+        std::make_unique<WebPresentationAvailabilityCallbacks>());
     client()->StartListening(mock_observer);
   }
 
-  ChangeURLState(gurl1_, URLState::Available);
+  ChangeURLState(gurl1_, ScreenAvailability::AVAILABLE);
   run_loop.RunUntilIdle();
 
-  EXPECT_CALL(mock_observer1_, AvailabilityChanged(false));
+  EXPECT_CALL(mock_observer1_,
+              AvailabilityChanged(ScreenAvailability::UNAVAILABLE));
 
   base::RunLoop run_loop_2;
-  ChangeURLState(gurl1_, URLState::Unavailable);
+  ChangeURLState(gurl1_, ScreenAvailability::UNAVAILABLE);
   run_loop_2.RunUntilIdle();
+
+  EXPECT_CALL(mock_observer1_,
+              AvailabilityChanged(ScreenAvailability::SOURCE_NOT_SUPPORTED));
+
+  base::RunLoop run_loop_3;
+  ChangeURLState(gurl1_, ScreenAvailability::SOURCE_NOT_SUPPORTED);
+  run_loop_3.RunUntilIdle();
 }
 
 TEST_F(PresentationDispatcherTest,
@@ -770,26 +720,39 @@ TEST_F(PresentationDispatcherTest,
     EXPECT_CALL(presentation_service_, ListenForScreenAvailability(gurl))
         .Times(1);
   }
-  for (auto* mock_observer : mock_observers_)
-    EXPECT_CALL(*mock_observer, AvailabilityChanged(true));
+  for (auto* mock_observer : mock_observers_) {
+    EXPECT_CALL(*mock_observer,
+                AvailabilityChanged(ScreenAvailability::AVAILABLE));
+  }
 
   base::RunLoop run_loop;
   for (auto* mock_observer : mock_observers_) {
     client()->GetAvailability(
         mock_observer->Urls(),
-        base::MakeUnique<WebPresentationAvailabilityCallbacks>());
+        std::make_unique<WebPresentationAvailabilityCallbacks>());
     client()->StartListening(mock_observer);
   }
 
-  ChangeURLState(gurl2_, URLState::Available);
+  ChangeURLState(gurl2_, ScreenAvailability::AVAILABLE);
   run_loop.RunUntilIdle();
 
-  for (auto* mock_observer : mock_observers_)
-    EXPECT_CALL(*mock_observer, AvailabilityChanged(false));
+  for (auto* mock_observer : mock_observers_) {
+    EXPECT_CALL(*mock_observer,
+                AvailabilityChanged(ScreenAvailability::UNAVAILABLE));
+  }
 
   base::RunLoop run_loop_2;
-  ChangeURLState(gurl2_, URLState::Unavailable);
+  ChangeURLState(gurl2_, ScreenAvailability::UNAVAILABLE);
   run_loop_2.RunUntilIdle();
+
+  for (auto* mock_observer : mock_observers_) {
+    EXPECT_CALL(*mock_observer,
+                AvailabilityChanged(ScreenAvailability::SOURCE_NOT_SUPPORTED));
+  }
+
+  base::RunLoop run_loop_3;
+  ChangeURLState(gurl2_, ScreenAvailability::SOURCE_NOT_SUPPORTED);
+  run_loop_3.RunUntilIdle();
 }
 
 }  // namespace content

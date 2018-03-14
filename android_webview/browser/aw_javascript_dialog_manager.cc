@@ -4,7 +4,9 @@
 
 #include "android_webview/browser/aw_javascript_dialog_manager.h"
 
-#include "android_webview/browser/aw_contents_client_bridge_base.h"
+#include <utility>
+
+#include "android_webview/browser/aw_contents_client_bridge.h"
 #include "content/public/browser/javascript_dialog_manager.h"
 #include "content/public/browser/web_contents.h"
 
@@ -20,32 +22,32 @@ void AwJavaScriptDialogManager::RunJavaScriptDialog(
     content::JavaScriptDialogType dialog_type,
     const base::string16& message_text,
     const base::string16& default_prompt_text,
-    const DialogClosedCallback& callback,
+    DialogClosedCallback callback,
     bool* did_suppress_message) {
-  AwContentsClientBridgeBase* bridge =
-      AwContentsClientBridgeBase::FromWebContents(web_contents);
+  AwContentsClientBridge* bridge =
+      AwContentsClientBridge::FromWebContents(web_contents);
   if (!bridge) {
-    callback.Run(false, base::string16());
+    std::move(callback).Run(false, base::string16());
     return;
   }
 
   bridge->RunJavaScriptDialog(dialog_type, origin_url, message_text,
-                              default_prompt_text, callback);
+                              default_prompt_text, std::move(callback));
 }
 
 void AwJavaScriptDialogManager::RunBeforeUnloadDialog(
     content::WebContents* web_contents,
+    content::RenderFrameHost* render_frame_host,
     bool is_reload,
-    const DialogClosedCallback& callback) {
-  AwContentsClientBridgeBase* bridge =
-      AwContentsClientBridgeBase::FromWebContents(web_contents);
+    DialogClosedCallback callback) {
+  AwContentsClientBridge* bridge =
+      AwContentsClientBridge::FromWebContents(web_contents);
   if (!bridge) {
-    callback.Run(false, base::string16());
+    std::move(callback).Run(false, base::string16());
     return;
   }
 
-  bridge->RunBeforeUnloadDialog(web_contents->GetURL(),
-                                callback);
+  bridge->RunBeforeUnloadDialog(web_contents->GetURL(), std::move(callback));
 }
 
 void AwJavaScriptDialogManager::CancelDialogs(

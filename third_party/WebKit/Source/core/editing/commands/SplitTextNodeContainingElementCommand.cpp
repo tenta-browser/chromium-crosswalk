@@ -55,7 +55,7 @@ void SplitTextNodeContainingElementCommand::DoApply(EditingState*) {
   LayoutObject* parent_layout_object = parent->GetLayoutObject();
   if (!parent_layout_object || !parent_layout_object->IsInline()) {
     WrapContentsInDummySpan(parent);
-    Node* first_child = parent->FirstChild();
+    Node* first_child = parent->firstChild();
     if (!first_child || !first_child->IsElementNode())
       return;
     parent = ToElement(first_child);
@@ -64,7 +64,7 @@ void SplitTextNodeContainingElementCommand::DoApply(EditingState*) {
   SplitElement(parent, text_.Get());
 }
 
-DEFINE_TRACE(SplitTextNodeContainingElementCommand) {
+void SplitTextNodeContainingElementCommand::Trace(blink::Visitor* visitor) {
   visitor->Trace(text_);
   CompositeEditCommand::Trace(visitor);
 }

@@ -17,9 +17,22 @@
 
 #include_next <elf.h>
 
+#if !defined(ELF32_ST_VISIBILITY)
+#define ELF32_ST_VISIBILITY(other) ((other) & 0x3)
+#endif
+
+#if !defined(ELF64_ST_VISIBILITY)
+#define ELF64_ST_VISIBILITY(other) ELF32_ST_VISIBILITY(other)
+#endif
+
 // Android 5.0.0 (API 21) NDK
-#if !defined(NT_PRSTATUS)
-#define NT_PRSTATUS 1
+
+#if !defined(STT_COMMON)
+#define STT_COMMON 5
+#endif
+
+#if !defined(STT_TLS)
+#define STT_TLS 6
 #endif
 
 #endif  // CRASHPAD_COMPAT_ANDROID_ELF_H_

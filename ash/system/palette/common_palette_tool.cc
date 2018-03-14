@@ -4,7 +4,6 @@
 
 #include "ash/system/palette/common_palette_tool.h"
 
-#include "ash/resources/grit/ash_resources.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shelf/shelf_constants.h"
 #include "ash/system/palette/palette_ids.h"
@@ -19,7 +18,6 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/paint_vector_icon.h"
-#include "ui/views/border.h"
 #include "ui/views/controls/label.h"
 
 namespace ash {
@@ -34,6 +32,10 @@ void AddHistogramTimes(PaletteToolId id, base::TimeDelta duration) {
     UMA_HISTOGRAM_CUSTOM_TIMES("Ash.Shelf.Palette.InMagnifyMode", duration,
                                base::TimeDelta::FromMilliseconds(100),
                                base::TimeDelta::FromHours(1), 50);
+  } else if (id == PaletteToolId::METALAYER) {
+    UMA_HISTOGRAM_CUSTOM_TIMES("Ash.Shelf.Palette.InAssistantMode", duration,
+                               base::TimeDelta::FromMilliseconds(100),
+                               base::TimeDelta::FromHours(1), 50);
   }
 }
 
@@ -42,7 +44,7 @@ void AddHistogramTimes(PaletteToolId id, base::TimeDelta duration) {
 CommonPaletteTool::CommonPaletteTool(Delegate* delegate)
     : PaletteTool(delegate) {}
 
-CommonPaletteTool::~CommonPaletteTool() {}
+CommonPaletteTool::~CommonPaletteTool() = default;
 
 void CommonPaletteTool::OnViewDestroyed() {
   highlight_view_ = nullptr;
@@ -51,43 +53,31 @@ void CommonPaletteTool::OnViewDestroyed() {
 void CommonPaletteTool::OnEnable() {
   PaletteTool::OnEnable();
   start_time_ = base::TimeTicks::Now();
-
-  if (highlight_view_)
-    TrayPopupUtils::UpdateCheckMarkVisibility(highlight_view_, true);
 }
 
 void CommonPaletteTool::OnDisable() {
   PaletteTool::OnDisable();
   AddHistogramTimes(GetToolId(), base::TimeTicks::Now() - start_time_);
-
-  if (highlight_view_)
-    TrayPopupUtils::UpdateCheckMarkVisibility(highlight_view_, false);
 }
 
 void CommonPaletteTool::OnViewClicked(views::View* sender) {
+  // The tool should always be disabled when we click it because the bubble
+  // which houses this view is automatically closed when the tool is first
+  // enabled. Then, to open the bubble again we have to click on the palette
+  // tray twice, and the first click will disable any active tools.
+  DCHECK(!enabled());
+
   delegate()->RecordPaletteOptionsUsage(
-      PaletteToolIdToPaletteTrayOptions(GetToolId()));
-  if (enabled()) {
-    delegate()->DisableTool(GetToolId());
-    delegate()->RecordPaletteModeCancellation(
-        PaletteToolIdToPaletteModeCancelType(GetToolId(),
-                                             false /*is_switched*/));
-  } else {
-    delegate()->EnableTool(GetToolId());
-  }
+      PaletteToolIdToPaletteTrayOptions(GetToolId()),
+      PaletteInvocationMethod::MENU);
+  delegate()->EnableTool(GetToolId());
 }
 
 views::View* CommonPaletteTool::CreateDefaultView(const base::string16& name) {
   gfx::ImageSkia icon =
       CreateVectorIcon(GetPaletteIcon(), kMenuIconSize, gfx::kChromeIconGrey);
-
   highlight_view_ = new HoverHighlightView(this);
-  highlight_view_->SetBorder(views::CreateEmptyBorder(0, 0, 0, 0));
   highlight_view_->AddIconAndLabel(icon, name);
-  highlight_view_->set_custom_height(kMenuButtonSize);
-
-  TrayPopupUtils::InitializeAsCheckableRow(highlight_view_, enabled());
-
   return highlight_view_;
 }
 

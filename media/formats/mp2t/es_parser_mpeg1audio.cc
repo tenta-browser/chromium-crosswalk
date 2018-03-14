@@ -39,11 +39,10 @@ struct EsParserMpeg1Audio::Mpeg1AudioFrame {
 EsParserMpeg1Audio::EsParserMpeg1Audio(
     const NewAudioConfigCB& new_audio_config_cb,
     const EmitBufferCB& emit_buffer_cb,
-    const scoped_refptr<MediaLog>& media_log)
+    MediaLog* media_log)
     : media_log_(media_log),
       new_audio_config_cb_(new_audio_config_cb),
-      emit_buffer_cb_(emit_buffer_cb) {
-}
+      emit_buffer_cb_(emit_buffer_cb) {}
 
 EsParserMpeg1Audio::~EsParserMpeg1Audio() {
 }
@@ -171,6 +170,12 @@ bool EsParserMpeg1Audio::UpdateAudioConfiguration(
   AudioDecoderConfig audio_decoder_config(
       kCodecMP3, kSampleFormatS16, header.channel_layout, header.sample_rate,
       EmptyExtraData(), Unencrypted());
+
+  if (!audio_decoder_config.IsValidConfig()) {
+    DVLOG(1) << "Invalid config: "
+             << audio_decoder_config.AsHumanReadableString();
+    return false;
+  }
 
   if (!audio_decoder_config.Matches(last_audio_decoder_config_)) {
     DVLOG(1) << "Sampling frequency: " << header.sample_rate;

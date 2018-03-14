@@ -9,9 +9,11 @@
 #import "chrome/browser/ui/cocoa/browser_window_layout.h"
 #import "chrome/browser/ui/cocoa/fast_resize_view.h"
 #import "chrome/browser/ui/cocoa/framed_browser_window.h"
+#import "chrome/browser/ui/cocoa/tabbed_browser_window.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_strip_background_view.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_strip_view.h"
 #import "chrome/browser/ui/cocoa/themed_window.h"
+#include "chrome/browser/ui/window_sizer/window_sizer.h"
 #import "ui/base/cocoa/focus_tracker.h"
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/theme_provider.h"
@@ -20,9 +22,7 @@
 - (void)setUseOverlay:(BOOL)useOverlay;
 
 // The tab strip background view should always be inserted as the back-most
-// subview of the root view. It cannot be a subview of the contentView, as that
-// would cause it to become layer backed, which would cause it to draw on top
-// of non-layer backed content like the window controls.
+// subview of the contentView.
 - (void)insertTabStripBackgroundViewIntoWindow:(NSWindow*)window
                                       titleBar:(BOOL)hasTitleBar;
 
@@ -87,13 +87,13 @@
 
 - (id)initTabWindowControllerWithTabStrip:(BOOL)hasTabStrip
                                  titleBar:(BOOL)hasTitleBar {
-  const CGFloat kDefaultWidth = 750;
+  const CGFloat kDefaultWidth = WindowSizer::kWindowMaxDefaultWidth;
   const CGFloat kDefaultHeight = 600;
 
   NSRect contentRect = NSMakeRect(60, 229, kDefaultWidth, kDefaultHeight);
   base::scoped_nsobject<FramedBrowserWindow> window(
-      [[FramedBrowserWindow alloc] initWithContentRect:contentRect
-                                           hasTabStrip:hasTabStrip]);
+      [(hasTabStrip ? [TabbedBrowserWindow alloc] : [FramedBrowserWindow alloc])
+          initWithContentRect:contentRect]);
   [window setReleasedWhenClosed:YES];
   [window setAutorecalculatesKeyViewLoop:YES];
 
@@ -134,24 +134,21 @@
     if (hasTabStrip)
       [windowView addSubview:tabStripView_];
 
-    if (chrome::ShouldUseFullSizeContentView()) {
-      // |windowWillEnterFullScreen:| and |windowWillExitFullScreen:| are
-      // already called because self is a delegate for the window. However this
-      // class is designed for subclassing and can not implement
-      // NSWindowDelegate methods (because subclasses can do so as well and they
-      // should be able to). TODO(crbug.com/654656): Move |visualEffectView_| to
-      // subclass.
-      [[NSNotificationCenter defaultCenter]
-          addObserver:self
-             selector:@selector(windowWillEnterFullScreenNotification:)
-                 name:NSWindowWillEnterFullScreenNotification
-               object:window];
-      [[NSNotificationCenter defaultCenter]
-          addObserver:self
-             selector:@selector(windowWillExitFullScreenNotification:)
-                 name:NSWindowWillExitFullScreenNotification
-               object:window];
-    }
+    // |windowWillEnterFullScreen:| and |windowWillExitFullScreen:| are already
+    // called because self is a delegate for the window. However this class is
+    // designed for subclassing and can not implement NSWindowDelegate methods
+    // (because subclasses can do so as well and they should be able to).
+    // TODO(crbug.com/654656): Move |visualEffectView_| to subclass.
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+           selector:@selector(windowWillEnterFullScreenNotification:)
+               name:NSWindowWillEnterFullScreenNotification
+             object:window];
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+           selector:@selector(windowWillExitFullScreenNotification:)
+               name:NSWindowWillExitFullScreenNotification
+             object:window];
   }
   return self;
 }
@@ -159,6 +156,10 @@
 - (void)dealloc {
   [[NSNotificationCenter defaultCenter] removeObserver:self];
   [super dealloc];
+}
+
+- (NSVisualEffectView*)visualEffectView {
+  return visualEffectView_;
 }
 
 - (NSView*)tabStripBackgroundView {
@@ -238,17 +239,12 @@
     DCHECK(originalContentView_);
 
     // Return the original window's tab strip view and content view to their
-    // places. The TabStripView always needs to be in front of the window's
-    // content view and therefore it should always be added after the content
-    // view is set. It needs to be positioned below the avatar button to ensure
-    // that its overlay will not overlap it.
-    [[window contentView] addSubview:originalContentView_
-                          positioned:NSWindowBelow
-                          relativeTo:nil];
+    // places. The TabStripView should be in front of the content view, and the
+    // avatar button, if present, should be in front of the TabStripView.
+    [[window contentView] addSubview:originalContentView_];
     originalContentView_.frame = [[window contentView] bounds];
-    [[window contentView] addSubview:[self tabStripView]
-                          positioned:NSWindowBelow
-                          relativeTo:[self avatarView]];
+    [[window contentView] addSubview:[self tabStripView]];
+    [[window contentView] addSubview:[self avatarView]];
     [[self tabStripView] setInATabDraggingOverlayWindow:NO];
     [[window contentView] updateTrackingAreas];
 
@@ -418,58 +414,58 @@
 - (void)insertTabStripBackgroundViewIntoWindow:(NSWindow*)window
                                       titleBar:(BOOL)hasTitleBar {
   DCHECK(tabStripBackgroundView_);
-  NSView* rootView = [[window contentView] superview];
 
   // In Material Design on 10.10 and higher, the top portion of the window is
   // blurred using an NSVisualEffectView.
-  Class nsVisualEffectViewClass = NSClassFromString(@"NSVisualEffectView");
-  if (!nsVisualEffectViewClass) {
-    DCHECK(!chrome::ShouldUseFullSizeContentView());
-    [rootView addSubview:tabStripBackgroundView_
-              positioned:NSWindowBelow
-              relativeTo:nil];
-    return;
-  }
+  if (@available(macOS 10.10, *)) {
+    [window setTitlebarAppearsTransparent:YES];
 
-  [window setTitlebarAppearsTransparent:YES];
+    // If the window has a normal titlebar, then do not add NSVisualEffectView.
+    if (hasTitleBar)
+      return;
 
-  // If the window has a normal titlebar, then do not add NSVisualEffectView.
-  if (hasTitleBar)
-    return;
+    // NSVisualEffectView provides hints about text anti-aliasing that are wrong
+    // when anything is drawn over it (like a tint or theme image). Wrapping it
+    // stops it from being used for hints. See https://crbug.com/593835.
+    NSView* visualEffectWrapperView = [[[NSView alloc]
+        initWithFrame:[tabStripBackgroundView_ frame]] autorelease];
 
-  visualEffectView_.reset(
-      [[nsVisualEffectViewClass alloc]
-          initWithFrame:[tabStripBackgroundView_ frame]]);
-  DCHECK(visualEffectView_);
+    visualEffectView_.reset([[NSVisualEffectView alloc]
+        initWithFrame:visualEffectWrapperView.bounds]);
+    DCHECK(visualEffectView_);
 
-  [visualEffectView_ setAutoresizingMask:
-      [tabStripBackgroundView_ autoresizingMask]];
-  [tabStripBackgroundView_
-      setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+    [visualEffectWrapperView
+        setAutoresizingMask:[tabStripBackgroundView_ autoresizingMask]];
+    [visualEffectView_
+        setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+    [tabStripBackgroundView_
+        setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
 
-  // Set to a default appearance and material. If this is an Incognito window
-  // the material and vibrancy should be dark but this method gets called at
-  // the start of -[BrowserWindowController initWithBrowser:takeOwnership:],
-  // before the |browser_| ivar has been set. Without a browser object we
-  // can't check the window's theme. The final setup happens in
-  // -[TabStripView setController:], at which point we have access to the theme.
-  [visualEffectView_ setAppearance:
-      [NSAppearance appearanceNamed:NSAppearanceNameVibrantLight]];
-  [visualEffectView_ setMaterial:NSVisualEffectMaterialLight];
-  [visualEffectView_ setBlendingMode:NSVisualEffectBlendingModeBehindWindow];
-  [visualEffectView_ setState:NSVisualEffectStateFollowsWindowActiveState];
+    // Set to a default appearance and material. If this is an Incognito window
+    // the material and vibrancy should be dark but this method gets called at
+    // the start of -[BrowserWindowController initWithBrowser:takeOwnership:],
+    // before the |browser_| ivar has been set. Without a browser object we
+    // can't check the window's theme. The final setup happens in
+    // -[TabStripView setController:], at which point we have access to the
+    // theme.
+    [visualEffectView_
+        setAppearance:[NSAppearance
+                          appearanceNamed:NSAppearanceNameVibrantLight]];
+    [visualEffectView_ setMaterial:NSVisualEffectMaterialLight];
+    [visualEffectView_ setBlendingMode:NSVisualEffectBlendingModeBehindWindow];
+    [visualEffectView_ setState:NSVisualEffectStateFollowsWindowActiveState];
 
-  if (chrome::ShouldUseFullSizeContentView()) {
-    [[window contentView] addSubview:visualEffectView_];
+    [visualEffectWrapperView addSubview:visualEffectView_];
+
+    [[window contentView] addSubview:visualEffectWrapperView];
+
+    // Make the |tabStripBackgroundView_| a child of the NSVisualEffectView.
+    [tabStripBackgroundView_ setFrame:[visualEffectView_ bounds]];
+    [visualEffectView_ addSubview:tabStripBackgroundView_];
   } else {
-    [rootView addSubview:visualEffectView_
-              positioned:NSWindowBelow
-              relativeTo:nil];
+    DCHECK(!chrome::ShouldUseFullSizeContentView());
+    [[window contentView] addSubview:tabStripBackgroundView_];
   }
-
-  // Make the |tabStripBackgroundView_| a child of the NSVisualEffectView.
-  [tabStripBackgroundView_ setFrame:[visualEffectView_ bounds]];
-  [visualEffectView_ addSubview:tabStripBackgroundView_];
 }
 
 // Called when the size of the window content area has changed. Override to
@@ -479,11 +475,13 @@
 }
 
 - (void)windowWillEnterFullScreenNotification:(NSNotification*)notification {
-  [[visualEffectView_ animator] setAlphaValue:0.0];
+  [(visualEffectView_ ? visualEffectView_.get()
+                      : tabStripBackgroundView_.get()) setHidden:YES];
 }
 
 - (void)windowWillExitFullScreenNotification:(NSNotification*)notification {
-  [[visualEffectView_ animator] setAlphaValue:1.0];
+  [(visualEffectView_ ? visualEffectView_.get()
+                      : tabStripBackgroundView_.get()) setHidden:NO];
 }
 
 @end

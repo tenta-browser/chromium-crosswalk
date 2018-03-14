@@ -57,17 +57,15 @@ const uint64_t kTestBlobStorageMaxFileSizeBytes = 100;
 // scope the disk cache and entries.
 class EmptyDataHandle : public storage::BlobDataBuilder::DataHandle {
  private:
-  ~EmptyDataHandle() override {}
+  ~EmptyDataHandle() override = default;
 };
 
 std::unique_ptr<disk_cache::Backend> CreateInMemoryDiskCache() {
   std::unique_ptr<disk_cache::Backend> cache;
   net::TestCompletionCallback callback;
-  int rv = disk_cache::CreateCacheBackend(net::MEMORY_CACHE,
-                                          net::CACHE_BACKEND_DEFAULT,
-                                          base::FilePath(), 0,
-                                          false, nullptr, nullptr, &cache,
-                                          callback.callback());
+  int rv = disk_cache::CreateCacheBackend(
+      net::MEMORY_CACHE, net::CACHE_BACKEND_DEFAULT, base::FilePath(), 0, false,
+      nullptr, &cache, callback.callback());
   EXPECT_EQ(net::OK, callback.GetResult(rv));
 
   return cache;
@@ -114,8 +112,8 @@ void IncrementNumber(size_t* number, BlobStatus status) {
 
 class BlobStorageContextTest : public testing::Test {
  protected:
-  BlobStorageContextTest() {}
-  ~BlobStorageContextTest() override {}
+  BlobStorageContextTest() = default;
+  ~BlobStorageContextTest() override = default;
 
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
@@ -469,7 +467,8 @@ TEST_F(BlobStorageContextTest, AddFinishedBlob_LargeOffset) {
   const std::string kId2("id2");
 
   BlobDataBuilder builder1(kId1);
-  builder1.AppendFileSystemFile(GURL(), 0, kLargeSize, base::Time::Now());
+  builder1.AppendFileSystemFile(GURL(), 0, kLargeSize, base::Time::Now(),
+                                nullptr);
 
   BlobDataBuilder builder2(kId2);
   builder2.AppendBlob(kId1, kLargeSize - kBlobLength, kBlobLength);
@@ -756,7 +755,7 @@ size_t AppendDataInBuilder(BlobDataBuilder* builder,
   }
   if (index % 5 != 0) {
     builder->AppendFile(
-        base::FilePath::FromUTF8Unsafe(base::SizeTToString(index)), 0ul, 20ul,
+        base::FilePath::FromUTF8Unsafe(base::NumberToString(index)), 0ul, 20ul,
         base::Time::Max());
     size += 20u;
   }
@@ -786,7 +785,7 @@ void PopulateDataInBuilder(BlobDataBuilder* builder,
     scoped_refptr<ShareableFileReference> file_ref =
         ShareableFileReference::GetOrCreate(
             base::FilePath::FromUTF8Unsafe(
-                base::SizeTToString(index + kTotalRawBlobs)),
+                base::NumberToString(index + kTotalRawBlobs)),
             ShareableFileReference::DONT_DELETE_ON_FINAL_RELEASE, file_runner);
     builder->PopulateFutureFile(0, file_ref, base::Time::Max());
   }
@@ -810,7 +809,7 @@ TEST_F(BlobStorageContextTest, BuildBlobCombinations) {
   std::vector<std::unique_ptr<BlobDataBuilder>> builders;
   std::vector<size_t> sizes;
   for (size_t i = 0; i < kTotalRawBlobs; i++) {
-    builders.emplace_back(new BlobDataBuilder(base::SizeTToString(i)));
+    builders.emplace_back(new BlobDataBuilder(base::NumberToString(i)));
     auto& builder = *builders.back();
     size_t size = AppendDataInBuilder(&builder, i, entry.get());
     EXPECT_NE(0u, size);
@@ -819,11 +818,11 @@ TEST_F(BlobStorageContextTest, BuildBlobCombinations) {
 
   for (size_t i = 0; i < kTotalSlicedBlobs; i++) {
     builders.emplace_back(
-        new BlobDataBuilder(base::SizeTToString(i + kTotalRawBlobs)));
+        new BlobDataBuilder(base::NumberToString(i + kTotalRawBlobs)));
     size_t source_size = sizes[i];
     size_t offset = source_size == 1 ? 0 : i % (source_size - 1);
     size_t size = (i % (source_size - offset)) + 1;
-    builders.back()->AppendBlob(base::SizeTToString(i), offset, size);
+    builders.back()->AppendBlob(base::NumberToString(i), offset, size);
   }
 
   size_t total_finished_blobs = 0;
@@ -859,7 +858,7 @@ TEST_F(BlobStorageContextTest, BuildBlobCombinations) {
       if (DoesBuilderHaveFutureData(i) && !populated[i] &&
           statuses[i] == BlobStatus::PENDING_TRANSPORT) {
         PopulateDataInBuilder(builder, i, file_runner_.get());
-        context_->NotifyTransportComplete(base::SizeTToString(i));
+        context_->NotifyTransportComplete(base::NumberToString(i));
         populated[i] = true;
       }
     }
@@ -889,6 +888,24 @@ TEST_F(BlobStorageContextTest, BuildBlobCombinations) {
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(0lu, context_->memory_controller().memory_usage());
   EXPECT_EQ(0lu, context_->memory_controller().disk_usage());
+}
+
+TEST_F(BlobStorageContextTest, NegativeSlice) {
+  const std::string kId1("id1");
+  const std::string kId2("id2");
+
+  std::unique_ptr<BlobDataHandle> handle = SetupBasicBlob(kId1);
+
+  EXPECT_EQ(1lu, context_->memory_controller().memory_usage());
+
+  BlobDataBuilder builder(kId2);
+  builder.AppendBlob(kId1, static_cast<uint64_t>(-10), 11);
+  std::unique_ptr<BlobDataHandle> handle2 = context_->BuildBlob(
+      builder, BlobStorageContext::TransportAllowedCallback());
+
+  EXPECT_TRUE(handle2->IsBroken());
+  EXPECT_EQ(BlobStatus::ERR_INVALID_CONSTRUCTION_ARGUMENTS,
+            handle2->GetBlobStatus());
 }
 
 // TODO(michaeln): tests for the deprecated url stuff

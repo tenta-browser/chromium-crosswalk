@@ -6,11 +6,11 @@
 
 #import <WebKit/WebKit.h>
 
+#include "base/ios/ios_util.h"
 #include "base/json/string_escape.h"
 #include "base/logging.h"
 #import "base/mac/foundation_util.h"
 #include "base/mac/scoped_block.h"
-#import "base/mac/scoped_nsobject.h"
 #include "base/strings/sys_string_conversions.h"
 #include "ios/chrome/browser/signin/gaia_auth_fetcher_ios_private.h"
 #include "ios/web/public/browser_state.h"
@@ -20,6 +20,10 @@
 #include "net/base/net_errors.h"
 #include "net/http/http_request_headers.h"
 #include "net/url_request/url_request_status.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -60,7 +64,7 @@ NSString* const kPostRequestTemplate =
      "}"
      "</script></html>";
 
-// JavaScript template to read the reponse to a GET or POST request. There is
+// JavaScript template to read the response to a GET or POST request. There is
 // two different cases:
 // * GET request, which was made by simply loading a request to the correct
 //   URL. The response is the inner text (to avoid formatting in case of JSON
@@ -81,8 +85,8 @@ NSString* const kReadResponseTemplate =
 NSURLRequest* GetRequest(const std::string& body,
                          const std::string& headers,
                          const GURL& url) {
-  base::scoped_nsobject<NSMutableURLRequest> request(
-      [[NSMutableURLRequest alloc] initWithURL:net::NSURLWithGURL(url)]);
+  NSMutableURLRequest* request =
+      [[NSMutableURLRequest alloc] initWithURL:net::NSURLWithGURL(url)];
   net::HttpRequestHeaders request_headers;
   request_headers.AddHeadersFromString(headers);
   for (net::HttpRequestHeaders::Iterator it(request_headers); it.GetNext();) {
@@ -98,7 +102,7 @@ NSURLRequest* GetRequest(const std::string& body,
     [request setValue:@"application/x-www-form-urlencoded"
         forHTTPHeaderField:@"Content-Type"];
   }
-  return request.autorelease();
+  return request;
 }
 
 // Escapes and quotes |value| and converts the result to an NSString.
@@ -111,10 +115,13 @@ NSString* EscapeAndQuoteToNSString(const std::string& value) {
 // This is needed because WKWebView ignores the HTTPBody in a POST request.
 // See
 // https://bugs.webkit.org/show_bug.cgi?id=145410
+// TODO(crbug.com/740987): Remove this function workaround once iOS 10 is
+// dropped.
 void DoPostRequest(WKWebView* web_view,
                    const std::string& body,
                    const std::string& headers,
                    const GURL& url) {
+  DCHECK(!base::ios::IsRunningOnIOS11OrLater());
   NSMutableString* header_data = [NSMutableString string];
   net::HttpRequestHeaders request_headers;
   request_headers.AddHeadersFromString(headers);
@@ -209,12 +216,11 @@ GaiaAuthFetcherIOSBridge::GaiaAuthFetcherIOSBridge(
     GaiaAuthFetcherIOS* fetcher,
     web::BrowserState* browser_state)
     : browser_state_(browser_state), fetcher_(fetcher), request_() {
-  web::BrowserState::GetActiveStateManager(browser_state_)->AddObserver(this);
+  ActiveStateManager::FromBrowserState(browser_state_)->AddObserver(this);
 }
 
 GaiaAuthFetcherIOSBridge::~GaiaAuthFetcherIOSBridge() {
-  web::BrowserState::GetActiveStateManager(browser_state_)
-      ->RemoveObserver(this);
+  ActiveStateManager::FromBrowserState(browser_state_)->RemoveObserver(this);
   ResetWKWebView();
 }
 
@@ -259,12 +265,12 @@ void GaiaAuthFetcherIOSBridge::URLFetchFailure(bool is_cancelled) {
 void GaiaAuthFetcherIOSBridge::FetchPendingRequest() {
   if (!request_.pending)
     return;
-  if (!request_.body.empty()) {
+  if (!request_.body.empty() && !base::ios::IsRunningOnIOS11OrLater()) {
     DoPostRequest(GetWKWebView(), request_.body, request_.headers,
                   request_.url);
   } else {
-  [GetWKWebView()
-      loadRequest:GetRequest(request_.body, request_.headers, request_.url)];
+    [GetWKWebView()
+        loadRequest:GetRequest(request_.body, request_.headers, request_.url)];
   }
 }
 
@@ -275,13 +281,13 @@ GURL GaiaAuthFetcherIOSBridge::FinishPendingRequest() {
 }
 
 WKWebView* GaiaAuthFetcherIOSBridge::GetWKWebView() {
-  if (!web::BrowserState::GetActiveStateManager(browser_state_)->IsActive()) {
+  if (!ActiveStateManager::FromBrowserState(browser_state_)->IsActive()) {
     // |browser_state_| is not active, WKWebView linked to this browser state
     // should not exist or be created.
     return nil;
   }
   if (!web_view_) {
-    web_view_.reset([BuildWKWebView() retain]);
+    web_view_.reset(BuildWKWebView());
     navigation_delegate_.reset(
         [[GaiaAuthFetcherNavigationDelegate alloc] initWithBridge:this]);
     [web_view_ setNavigationDelegate:navigation_delegate_];
@@ -319,27 +325,24 @@ GaiaAuthFetcherIOS::GaiaAuthFetcherIOS(GaiaAuthConsumer* consumer,
                                        web::BrowserState* browser_state)
     : GaiaAuthFetcher(consumer, source, getter),
       bridge_(new GaiaAuthFetcherIOSBridge(this, browser_state)),
-      browser_state_(browser_state) {
-  // Account Consistency needs to be disabled for the Logout call. There is a
-  // race with the cookie clearing request (handled by
-  // AccountConsistencyService), so we invalidate the cookie for the call.
-  SetLogoutHeaders("Cookie: CHROME_CONNECTED=EXPIRED;");
-}
+      browser_state_(browser_state) {}
 
 GaiaAuthFetcherIOS::~GaiaAuthFetcherIOS() {
 }
 
-void GaiaAuthFetcherIOS::CreateAndStartGaiaFetcher(const std::string& body,
-                                                   const std::string& headers,
-                                                   const GURL& gaia_gurl,
-                                                   int load_flags) {
+void GaiaAuthFetcherIOS::CreateAndStartGaiaFetcher(
+    const std::string& body,
+    const std::string& headers,
+    const GURL& gaia_gurl,
+    int load_flags,
+    const net::NetworkTrafficAnnotationTag& traffic_annotation) {
   DCHECK(!HasPendingFetch()) << "Tried to fetch two things at once!";
 
   bool cookies_required = !(load_flags & (net::LOAD_DO_NOT_SEND_COOKIES |
                                           net::LOAD_DO_NOT_SAVE_COOKIES));
   if (!ShouldUseGaiaAuthFetcherIOS() || !cookies_required) {
     GaiaAuthFetcher::CreateAndStartGaiaFetcher(body, headers, gaia_gurl,
-                                               load_flags);
+                                               load_flags, traffic_annotation);
     return;
   }
 

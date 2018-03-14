@@ -7,11 +7,8 @@
 #include <unordered_set>
 
 #import "base/mac/foundation_util.h"
-#include "base/mac/scoped_nsobject.h"
 #include "base/memory/ptr_util.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_clock.h"
 #include "components/favicon/core/large_icon_service.h"
 #include "components/favicon/core/test/mock_favicon_service.h"
@@ -23,6 +20,7 @@
 #include "ios/chrome/browser/favicon/ios_chrome_large_icon_service_factory.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
 #import "ios/chrome/browser/ui/reading_list/reading_list_collection_view_item.h"
+#import "ios/chrome/browser/ui/reading_list/reading_list_mediator.h"
 #include "ios/web/public/test/test_web_thread_bundle.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -30,28 +28,30 @@
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/gtest_support.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 using favicon::PostReply;
 using testing::_;
 
 #pragma mark - ReadingListCollectionViewControllerTest
 
-class ReadingListCollectionViewControllerTest : public testing::Test {
+class ReadingListCollectionViewControllerTest : public PlatformTest {
  public:
   ReadingListCollectionViewControllerTest() {}
   ~ReadingListCollectionViewControllerTest() override {}
 
   testing::StrictMock<favicon::MockFaviconService> mock_favicon_service_;
   std::unique_ptr<ReadingListModelImpl> reading_list_model_;
+  ReadingListMediator* mediator_;
   std::unique_ptr<favicon::LargeIconService> large_icon_service_;
 
-  base::scoped_nsobject<ReadingListCollectionViewController>
-      reading_list_view_controller_;
+  ReadingListCollectionViewController* reading_list_view_controller_;
   id mock_delegate_;
 
-  // TODO(crbug.com/625617) When offline url can be opened, use a mock for the
-  // readinglistdownloadservice.
   void SetUp() override {
-    testing::Test::SetUp();
+    PlatformTest::SetUp();
 
     EXPECT_CALL(mock_favicon_service_,
                 GetLargestRawFaviconForPageURL(_, _, _, _, _))
@@ -60,14 +60,13 @@ class ReadingListCollectionViewControllerTest : public testing::Test {
     reading_list_model_.reset(new ReadingListModelImpl(
         nullptr, nullptr, base::MakeUnique<base::DefaultClock>()));
     large_icon_service_.reset(new favicon::LargeIconService(
-        &mock_favicon_service_, base::ThreadTaskRunnerHandle::Get(),
-        /*image_fetcher=*/nullptr));
-    reading_list_view_controller_.reset(
-        [[ReadingListCollectionViewController alloc]
-                         initWithModel:reading_list_model_.get()
-                      largeIconService:large_icon_service_.get()
-            readingListDownloadService:nil
-                               toolbar:nil]);
+        &mock_favicon_service_, /*image_fetcher=*/nullptr));
+    mediator_ =
+        [[ReadingListMediator alloc] initWithModel:reading_list_model_.get()
+                                  largeIconService:large_icon_service_.get()];
+    reading_list_view_controller_ = [[ReadingListCollectionViewController alloc]
+        initWithDataSource:mediator_
+                   toolbar:nil];
 
     mock_delegate_ = [OCMockObject
         niceMockForProtocol:@protocol(
@@ -95,14 +94,12 @@ TEST_F(ReadingListCollectionViewControllerTest, DisplaysItems) {
   [reading_list_view_controller_ view];
 
   // There are two sections: Read and Unread.
-  DCHECK(
-      [reading_list_view_controller_.get().collectionView numberOfSections] ==
-      2);
+  DCHECK([reading_list_view_controller_.collectionView numberOfSections] == 2);
   // There are two unread articles.
-  DCHECK([reading_list_view_controller_.get().collectionView
+  DCHECK([reading_list_view_controller_.collectionView
              numberOfItemsInSection:0] == 2);
   // There is one read article.
-  DCHECK([reading_list_view_controller_.get().collectionView
+  DCHECK([reading_list_view_controller_.collectionView
              numberOfItemsInSection:1] == 1);
 }
 
@@ -112,13 +109,17 @@ TEST_F(ReadingListCollectionViewControllerTest, GetsDismissed) {
   [reading_list_view_controller_ view];
 
   [[mock_delegate_ expect]
-      dismissReadingListCollectionViewController:reading_list_view_controller_
-                                                     .get()];
+      dismissReadingListCollectionViewController:reading_list_view_controller_];
 
   // Simulate tap on "Done" button.
   UIBarButtonItem* done =
-      reading_list_view_controller_.get().navigationItem.rightBarButtonItem;
+      reading_list_view_controller_.navigationItem.rightBarButtonItem;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+  // Since @selector stored in done.action is a method returning void, there is
+  // no potential for memory leak. It is OK to ignore this warning here.
   [done.target performSelector:done.action];
+#pragma clang diagnostic pop
 
   EXPECT_OCMOCK_VERIFY(mock_delegate_);
 }
@@ -141,13 +142,12 @@ TEST_F(ReadingListCollectionViewControllerTest, OpensItems) {
               itemAtIndexPath:indexPath]);
 
   [[mock_delegate_ expect]
-      readingListCollectionViewController:reading_list_view_controller_.get()
+      readingListCollectionViewController:reading_list_view_controller_
                                  openItem:readingListItem];
 
   // Simulate touch on second cell.
   [reading_list_view_controller_
-                collectionView:reading_list_view_controller_.get()
-                                   .collectionView
+                collectionView:reading_list_view_controller_.collectionView
       didSelectItemAtIndexPath:indexPath];
 
   EXPECT_OCMOCK_VERIFY(mock_delegate_);
@@ -164,7 +164,7 @@ TEST_F(ReadingListCollectionViewControllerTest,
                                 reading_list::ADDED_VIA_CURRENT_APP);
   // Load view.
   [reading_list_view_controller_ view];
-  DCHECK([reading_list_view_controller_.get().collectionView
+  DCHECK([reading_list_view_controller_.collectionView
              numberOfItemsInSection:0] == 1);
   NSIndexPath* indexPath = [NSIndexPath indexPathForItem:0 inSection:0];
   ReadingListCollectionViewItem* readingListItem =
@@ -197,7 +197,7 @@ TEST_F(ReadingListCollectionViewControllerTest,
                                              size, base::Time::FromTimeT(100));
   // Load view.
   [reading_list_view_controller_ view];
-  DCHECK([reading_list_view_controller_.get().collectionView
+  DCHECK([reading_list_view_controller_.collectionView
              numberOfItemsInSection:0] == 1);
   NSIndexPath* indexPath = [NSIndexPath indexPathForItem:0 inSection:0];
   ReadingListCollectionViewItem* readingListItem =

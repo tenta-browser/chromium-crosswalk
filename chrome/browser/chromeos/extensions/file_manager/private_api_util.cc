@@ -212,13 +212,17 @@ void VolumeToVolumeMetadata(
   volume_metadata->configurable = volume.configurable();
   volume_metadata->watchable = volume.watchable();
 
+  // TODO(baileyberro): Refactor extension_id into provider_id here.
   if (volume.type() == VOLUME_TYPE_PROVIDED) {
-    volume_metadata->extension_id.reset(new std::string(volume.extension_id()));
+    volume_metadata->extension_id.reset(
+        new std::string(volume.provider_id().GetIdUnsafe()));
     volume_metadata->file_system_id.reset(
         new std::string(volume.file_system_id()));
   }
 
   volume_metadata->volume_label.reset(new std::string(volume.volume_label()));
+  volume_metadata->disk_file_system_type.reset(
+      new std::string(volume.file_system_type()));
 
   switch (volume.type()) {
     case VOLUME_TYPE_GOOGLE_DRIVE:
@@ -357,8 +361,8 @@ void GetSelectedFileInfo(content::RenderFrameHost* render_frame_host,
   }
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&GetSelectedFileInfoInternal, profile, base::Passed(&params)));
+      FROM_HERE, base::BindOnce(&GetSelectedFileInfoInternal, profile,
+                                base::Passed(&params)));
 }
 
 void SetupProfileFileAccessPermissions(int render_view_process_id,

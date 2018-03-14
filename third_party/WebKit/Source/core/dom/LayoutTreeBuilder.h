@@ -28,17 +28,31 @@
 #ifndef LayoutTreeBuilder_h
 #define LayoutTreeBuilder_h
 
+#include "base/memory/scoped_refptr.h"
 #include "core/dom/Document.h"
 #include "core/dom/LayoutTreeBuilderTraversal.h"
 #include "core/dom/Node.h"
 #include "core/dom/Text.h"
 #include "core/layout/LayoutObject.h"
-#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
 class ComputedStyle;
 
+// The LayoutTreeBuilder class uses the DOM tree and CSS style rules as input to
+// form a LayoutObject Tree which is then used for layout computations in a
+// later stage.
+
+// To construct the LayoutObject tree, the LayoutTreeBuilder does the following:
+// 1. Starting at the root of the DOM tree, traverse each visible node.
+//    Visibility is determined by
+//    LayoutTreeBuilderFor{Element,Text}::ShouldCreateLayoutObject() functions.
+// 2. For each visible node, ensure that the style has been resolved (either by
+//    getting the ComputedStyle passed on to the LayoutTreeBuilder or by forcing
+//    style resolution). This is done in LayoutTreeBuilderForElement::Style().
+// 3. Emit visible LayoutObjects with content and their computed styles.
+//    This is dealt with by the
+//    LayoutTreeBuilderFor{Element,Text}::CreateLayoutObject() functions.
 template <typename NodeType>
 class LayoutTreeBuilder {
   STACK_ALLOCATED();
@@ -59,7 +73,7 @@ class LayoutTreeBuilder {
     // node.
     if (layout_object_parent_->GetNode() &&
         layout_object_parent_->GetNode()->NeedsAttach())
-      return 0;
+      return nullptr;
 
     return LayoutTreeBuilderTraversal::NextSiblingLayoutObject(*node_);
   }
@@ -77,7 +91,7 @@ class LayoutTreeBuilderForElement : public LayoutTreeBuilder<Element> {
       CreateLayoutObject();
   }
 
-  ComputedStyle* ResolvedStyle() const { return style_.Get(); }
+  ComputedStyle* ResolvedStyle() const { return style_.get(); }
 
  private:
   LayoutObject* ParentLayoutObject() const;
@@ -86,7 +100,7 @@ class LayoutTreeBuilderForElement : public LayoutTreeBuilder<Element> {
   ComputedStyle& Style() const;
   void CreateLayoutObject();
 
-  mutable RefPtr<ComputedStyle> style_;
+  mutable scoped_refptr<ComputedStyle> style_;
 };
 
 class LayoutTreeBuilderForText : public LayoutTreeBuilder<Text> {
@@ -96,7 +110,7 @@ class LayoutTreeBuilderForText : public LayoutTreeBuilder<Text> {
                            ComputedStyle* style_from_parent)
       : LayoutTreeBuilder(text, layout_parent), style_(style_from_parent) {}
 
-  RefPtr<ComputedStyle> style_;
+  scoped_refptr<ComputedStyle> style_;
   void CreateLayoutObject();
 };
 

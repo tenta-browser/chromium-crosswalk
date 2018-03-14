@@ -18,6 +18,8 @@ const char* MemoryDumpTypeToString(const MemoryDumpType& dump_type) {
       return "explicitly_triggered";
     case MemoryDumpType::PEAK_MEMORY_USAGE:
       return "peak_memory_usage";
+    case MemoryDumpType::SUMMARY_ONLY:
+      return "summary_only";
   }
   NOTREACHED();
   return "unknown";
@@ -30,6 +32,8 @@ MemoryDumpType StringToMemoryDumpType(const std::string& str) {
     return MemoryDumpType::EXPLICITLY_TRIGGERED;
   if (str == "peak_memory_usage")
     return MemoryDumpType::PEAK_MEMORY_USAGE;
+  if (str == "summary_only")
+    return MemoryDumpType::SUMMARY_ONLY;
   NOTREACHED();
   return MemoryDumpType::LAST;
 }
@@ -41,6 +45,8 @@ const char* MemoryDumpLevelOfDetailToString(
       return "background";
     case MemoryDumpLevelOfDetail::LIGHT:
       return "light";
+    case MemoryDumpLevelOfDetail::VM_REGIONS_ONLY_FOR_HEAP_PROFILER:
+      return "vm_regions_only";
     case MemoryDumpLevelOfDetail::DETAILED:
       return "detailed";
   }
@@ -54,18 +60,13 @@ MemoryDumpLevelOfDetail StringToMemoryDumpLevelOfDetail(
     return MemoryDumpLevelOfDetail::BACKGROUND;
   if (str == "light")
     return MemoryDumpLevelOfDetail::LIGHT;
+  if (str == "vm_regions_only")
+    return MemoryDumpLevelOfDetail::VM_REGIONS_ONLY_FOR_HEAP_PROFILER;
   if (str == "detailed")
     return MemoryDumpLevelOfDetail::DETAILED;
   NOTREACHED();
   return MemoryDumpLevelOfDetail::LAST;
 }
-
-MemoryDumpCallbackResult::MemoryDumpCallbackResult() {}
-
-MemoryDumpCallbackResult::MemoryDumpCallbackResult(
-    const MemoryDumpCallbackResult&) = default;
-
-MemoryDumpCallbackResult::~MemoryDumpCallbackResult() {}
 
 }  // namespace trace_event
 }  // namespace base

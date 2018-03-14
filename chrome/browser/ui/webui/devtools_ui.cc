@@ -15,8 +15,6 @@
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/devtools_frontend_host.h"
-#include "content/public/browser/site_instance.h"
-#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
@@ -27,7 +25,6 @@
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "storage/browser/fileapi/file_system_context.h"
 #include "third_party/WebKit/public/public_features.h"
 
 using content::BrowserThread;
@@ -74,6 +71,8 @@ std::string GetMimeTypeForPath(const std::string& path) {
 // requests. Three types of requests could be handled based on the URL path:
 // 1. /bundled/: bundled DevTools frontend is served.
 // 2. /remote/: remote DevTools frontend is served from App Engine.
+// 3. /custom/: custom DevTools frontend is served from the server as specified
+//    by the --custom-devtools-frontend flag.
 class DevToolsDataSource : public content::URLDataSource,
                            public net::URLFetcherDelegate {
  public:
@@ -104,8 +103,7 @@ class DevToolsDataSource : public content::URLDataSource,
                                const GotDataCallback& callback);
 
   // Serves remote DevTools frontend from hard-coded App Engine domain.
-  void StartRemoteDataRequest(const std::string& path,
-                              const GotDataCallback& callback);
+  void StartRemoteDataRequest(const GURL& url, const GotDataCallback& callback);
 
   // Serves remote DevTools frontend from any endpoint, passed through
   // command-line flag.
@@ -153,13 +151,29 @@ void DevToolsDataSource::StartDataRequest(
     return;
   }
 
+  // Serve empty page.
+  std::string empty_path_prefix(chrome::kChromeUIDevToolsBlankPath);
+  if (base::StartsWith(path, empty_path_prefix,
+                       base::CompareCase::INSENSITIVE_ASCII)) {
+    callback.Run(new base::RefCountedStaticMemory());
+    return;
+  }
+
   // Serve request from remote location.
   std::string remote_path_prefix(chrome::kChromeUIDevToolsRemotePath);
   remote_path_prefix += "/";
   if (base::StartsWith(path, remote_path_prefix,
                        base::CompareCase::INSENSITIVE_ASCII)) {
-    StartRemoteDataRequest(path.substr(remote_path_prefix.length()),
-                           callback);
+    GURL url(kRemoteFrontendBase + path.substr(remote_path_prefix.length()));
+
+    CHECK_EQ(url.host(), kRemoteFrontendDomain);
+    if (url.is_valid() && DevToolsUIBindings::IsValidRemoteFrontendURL(url)) {
+      StartRemoteDataRequest(url, callback);
+    } else {
+      DLOG(ERROR) << "Refusing to load invalid remote front-end URL";
+      callback.Run(new base::RefCountedStaticMemory(kHttpNotFound,
+                                                    strlen(kHttpNotFound)));
+    }
     return;
   }
 
@@ -180,6 +194,7 @@ void DevToolsDataSource::StartDataRequest(
                        base::CompareCase::INSENSITIVE_ASCII)) {
     GURL url = GURL(custom_frontend_url +
                     path.substr(custom_path_prefix.length()));
+    DCHECK(url.is_valid());
     StartCustomDataRequest(url, callback);
     return;
   }
@@ -220,15 +235,9 @@ void DevToolsDataSource::StartBundledDataRequest(
 }
 
 void DevToolsDataSource::StartRemoteDataRequest(
-    const std::string& path,
+    const GURL& url,
     const content::URLDataSource::GotDataCallback& callback) {
-  GURL url = GURL(kRemoteFrontendBase + path);
-  CHECK_EQ(url.host(), kRemoteFrontendDomain);
-  if (!url.is_valid()) {
-    callback.Run(
-        new base::RefCountedStaticMemory(kHttpNotFound, strlen(kHttpNotFound)));
-    return;
-  }
+  CHECK(url.is_valid());
   net::NetworkTrafficAnnotationTag traffic_annotation =
       net::DefineNetworkTrafficAnnotation("devtools_hard_coded_data_source", R"(
         semantics {
@@ -242,13 +251,13 @@ void DevToolsDataSource::StartRemoteDataRequest(
           destination: GOOGLE_OWNED_SERVICE
         }
         policy {
-          cookies_allowed: true
+          cookies_allowed: YES
           cookies_store: "user"
           setting: "This feature cannot be disabled by settings."
           chrome_policy {
             DeveloperToolsDisabled {
               policy_options {mode: MANDATORY}
-              DeveloperToolsDisabled: True
+              DeveloperToolsDisabled: true
             }
           }
         })");
@@ -286,13 +295,13 @@ void DevToolsDataSource::StartCustomDataRequest(
           destination: WEBSITE
         }
         policy {
-          cookies_allowed: true
+          cookies_allowed: YES
           cookies_store: "user"
           setting: "This feature cannot be disabled by settings."
           chrome_policy {
             DeveloperToolsDisabled {
               policy_options {mode: MANDATORY}
-              DeveloperToolsDisabled: True
+              DeveloperToolsDisabled: true
             }
           }
         })");
@@ -344,6 +353,27 @@ GURL DevToolsUI::GetRemoteBaseURL() {
       content::GetWebKitRevision().c_str()));
 }
 
+// static
+bool DevToolsUI::IsFrontendResourceURL(const GURL& url) {
+  if (url.host_piece() == kRemoteFrontendDomain)
+    return true;
+
+  const base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
+  if (cmd_line->HasSwitch(switches::kCustomDevtoolsFrontend)) {
+    GURL custom_frontend_url =
+        GURL(cmd_line->GetSwitchValueASCII(switches::kCustomDevtoolsFrontend));
+    if (custom_frontend_url.is_valid() &&
+        custom_frontend_url.scheme_piece() == url.scheme_piece() &&
+        custom_frontend_url.host_piece() == url.host_piece() &&
+        custom_frontend_url.EffectiveIntPort() == url.EffectiveIntPort() &&
+        base::StartsWith(url.path_piece(), custom_frontend_url.path_piece(),
+                         base::CompareCase::SENSITIVE)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 DevToolsUI::DevToolsUI(content::WebUI* web_ui)
     : WebUIController(web_ui), bindings_(web_ui->GetWebContents()) {
   web_ui->SetBindings(0);
@@ -351,13 +381,6 @@ DevToolsUI::DevToolsUI(content::WebUI* web_ui)
   content::URLDataSource::Add(
       profile,
       new DevToolsDataSource(profile->GetRequestContext()));
-
-  if (!profile->IsOffTheRecord())
-    return;
-  GURL url = web_ui->GetWebContents()->GetVisibleURL();
-  GURL site = content::SiteInstance::GetSiteForURL(profile, url);
-  content::BrowserContext::GetStoragePartitionForSite(profile, site)->
-      GetFileSystemContext()->EnableTemporaryFileSystemInIncognito();
 }
 
 DevToolsUI::~DevToolsUI() {

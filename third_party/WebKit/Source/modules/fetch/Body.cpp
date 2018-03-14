@@ -5,18 +5,20 @@
 #include "modules/fetch/Body.h"
 
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/V8ArrayBuffer.h"
-#include "bindings/core/v8/V8ThrowException.h"
-#include "core/dom/DOMArrayBuffer.h"
-#include "core/dom/DOMTypedArray.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/fileapi/Blob.h"
+#include "core/html/forms/FormData.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
+#include "core/typed_arrays/DOMTypedArray.h"
+#include "core/url/URLSearchParams.h"
 #include "modules/fetch/BodyStreamBuffer.h"
 #include "modules/fetch/FetchDataLoader.h"
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/RefPtr.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8ThrowException.h"
+#include "platform/network/ParsedContentType.h"
 #include "public/platform/WebDataConsumerHandle.h"
 
 namespace blink {
@@ -38,7 +40,7 @@ class BodyConsumerBase : public GarbageCollectedFinalized<BodyConsumerBase>,
         Resolver()->GetScriptState()->GetIsolate(), "Failed to fetch"));
   }
 
-  DEFINE_INLINE_TRACE() {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(resolver_);
     FetchDataLoader::Client::Trace(visitor);
   }
@@ -55,7 +57,7 @@ class BodyBlobConsumer final : public BodyConsumerBase {
       : BodyConsumerBase(resolver) {}
 
   void DidFetchDataLoadedBlobHandle(
-      PassRefPtr<BlobDataHandle> blob_data_handle) override {
+      scoped_refptr<BlobDataHandle> blob_data_handle) override {
     Resolver()->Resolve(Blob::Create(std::move(blob_data_handle)));
   }
 };
@@ -69,6 +71,25 @@ class BodyArrayBufferConsumer final : public BodyConsumerBase {
 
   void DidFetchDataLoadedArrayBuffer(DOMArrayBuffer* array_buffer) override {
     Resolver()->Resolve(array_buffer);
+  }
+};
+
+class BodyFormDataConsumer final : public BodyConsumerBase {
+  WTF_MAKE_NONCOPYABLE(BodyFormDataConsumer);
+
+ public:
+  explicit BodyFormDataConsumer(ScriptPromiseResolver* resolver)
+      : BodyConsumerBase(resolver) {}
+
+  void DidFetchDataLoadedFormData(FormData* formData) override {
+    Resolver()->Resolve(formData);
+  }
+
+  void DidFetchDataLoadedString(const String& string) override {
+    FormData* formData = FormData::Create();
+    for (const auto& pair : URLSearchParams::Create(string)->Params())
+      formData->append(pair.first, pair.second);
+    DidFetchDataLoadedFormData(formData);
   }
 };
 
@@ -100,7 +121,7 @@ class BodyJsonConsumer final : public BodyConsumerBase {
     v8::Local<v8::String> input_string = V8String(isolate, string);
     v8::TryCatch trycatch(isolate);
     v8::Local<v8::Value> parsed;
-    if (V8Call(v8::JSON::Parse(isolate, input_string), parsed, trycatch))
+    if (v8::JSON::Parse(isolate, input_string).ToLocal(&parsed))
       Resolver()->Resolve(parsed);
     else
       Resolver()->Reject(trycatch.Exception());
@@ -158,6 +179,49 @@ ScriptPromise Body::blob(ScriptState* script_state) {
   return promise;
 }
 
+ScriptPromise Body::formData(ScriptState* script_state) {
+  ScriptPromise promise = RejectInvalidConsumption(script_state);
+  if (!promise.IsEmpty())
+    return promise;
+
+  // See above comment.
+  if (!ExecutionContext::From(script_state))
+    return ScriptPromise();
+
+  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  const ParsedContentType parsedTypeWithParameters(ContentType());
+  const String parsedType = parsedTypeWithParameters.MimeType().LowerASCII();
+  promise = resolver->Promise();
+  if (parsedType == "multipart/form-data") {
+    const String boundary =
+        parsedTypeWithParameters.ParameterValueForName("boundary");
+    if (BodyBuffer() && !boundary.IsEmpty()) {
+      BodyBuffer()->StartLoading(
+          FetchDataLoader::CreateLoaderAsFormData(boundary),
+          new BodyFormDataConsumer(resolver));
+      return promise;
+    }
+  } else if (parsedType == "application/x-www-form-urlencoded") {
+    if (BodyBuffer()) {
+      BodyBuffer()->StartLoading(FetchDataLoader::CreateLoaderAsString(),
+                                 new BodyFormDataConsumer(resolver));
+    } else {
+      resolver->Resolve(FormData::Create());
+    }
+    return promise;
+  } else {
+    if (BodyBuffer()) {
+      BodyBuffer()->StartLoading(FetchDataLoader::CreateLoaderAsFailure(),
+                                 new BodyFormDataConsumer(resolver));
+      return promise;
+    }
+  }
+
+  resolver->Reject(V8ThrowException::CreateTypeError(script_state->GetIsolate(),
+                                                     "Invalid MIME type"));
+  return promise;
+}
+
 ScriptPromise Body::json(ScriptState* script_state) {
   ScriptPromise promise = RejectInvalidConsumption(script_state);
   if (!promise.IsEmpty())
@@ -203,7 +267,7 @@ ScriptValue Body::body(ScriptState* script_state) {
   if (!BodyBuffer())
     return ScriptValue::CreateNull(script_state);
   ScriptValue stream = BodyBuffer()->Stream();
-  ASSERT(stream.GetScriptState() == script_state);
+  DCHECK_EQ(stream.GetScriptState(), script_state);
   return stream;
 }
 
@@ -226,10 +290,14 @@ bool Body::HasPendingActivity() const {
 Body::Body(ExecutionContext* context) : ContextClient(context) {}
 
 ScriptPromise Body::RejectInvalidConsumption(ScriptState* script_state) {
-  if (IsBodyLocked() || bodyUsed())
+  const bool used = bodyUsed();
+  if (IsBodyLocked() || used) {
     return ScriptPromise::Reject(
-        script_state, V8ThrowException::CreateTypeError(
-                          script_state->GetIsolate(), "Already read"));
+        script_state,
+        V8ThrowException::CreateTypeError(
+            script_state->GetIsolate(),
+            used ? "body stream already read" : "body stream is locked"));
+  }
   return ScriptPromise();
 }
 

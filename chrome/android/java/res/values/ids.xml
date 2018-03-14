@@ -17,10 +17,12 @@
     <item name="tabswitcher_multiple_drawable" type="id"/>
     <item name="tabswitcher_single_drawable" type="id"/>
     <item name="custom_tab_bottom_bar_wrapper" type="id"/>
+    <item name="default_search_engine_dialog_options" type="id"/>
 
     <!-- InfoBar constants -->
     <item type="id" name="button_primary" />
     <item type="id" name="button_secondary" />
+    <item type="id" name="infobar_icon" />
     <item type="id" name="infobar_close_button" />
     <item type="id" name="infobar_extra_check" />
     <item type="id" name="infobar_message" />
@@ -81,6 +83,7 @@
     <item type="id" name="contextmenu_copy_link_address" />
     <item type="id" name="contextmenu_copy_link_text" />
     <item type="id" name="contextmenu_save_link_as" />
+    <item type="id" name="contextmenu_share_link" />
 
     <!--Image Group -->
     <item type="id" name="contextmenu_load_original_image" />
@@ -100,10 +103,29 @@
     <item type="id" name="contextmenu_save_video" />
 
     <!-- Menu item IDs for FullscreenActivities -->
-    <item type="id" name="menu_id_open_in_chrome" />
+    <item type="id" name="contextmenu_open_in_chrome" />
 
     <!-- App menu item custom tags -->
     <item type="id" name="menu_item_enter_anim_id" />
     <item type="id" name="menu_item_original_background" />
     <item type="id" name="menu_item_background_drawable_position" />
+
+    <!-- Menu item IDs for Browser Action menu -->
+    <item type="id" name="browser_actions_open_in_background" />
+    <item type="id" name="browser_actions_open_in_incognito_tab" />
+    <item type="id" name="browser_actions_save_link_as" />
+    <item type="id" name="browser_actions_copy_address" />
+    <item type="id" name="browser_actions_share" />
+    <item type="id" name="browser_actions_custom_item_one" />
+    <item type="id" name="browser_actions_custom_item_two" />
+    <item type="id" name="browser_actions_custom_item_three" />
+    <item type="id" name="browser_actions_custom_item_four" />
+    <item type="id" name="browser_actions_custom_item_five" />
+
+    <!-- VR constants -->
+    <item type="id" name="vr_overlay_view" />
+
+    <!-- Tags -->
+    <item type="id" name="highlight_state" />
+
 </resources>

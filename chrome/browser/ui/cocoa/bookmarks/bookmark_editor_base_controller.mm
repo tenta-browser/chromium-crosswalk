@@ -2,14 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <stack>
-
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_editor_base_controller.h"
 
 #include "base/auto_reset.h"
+#include "base/containers/stack.h"
 #include "base/logging.h"
+#include "base/mac/availability.h"
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
+#include "base/mac/mac_util.h"
+#import "base/mac/sdk_forward_declarations.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/managed_bookmark_service_factory.h"
@@ -19,18 +21,33 @@
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_editor_controller.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_name_folder_controller.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_tree_browser_cell.h"
+#include "chrome/browser/ui/cocoa/browser_dialogs_views_mac.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/managed/managed_bookmark_service.h"
 #include "components/strings/grit/components_strings.h"
+#include "ui/base/cocoa/touch_bar_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
-#include "ui/base/material_design/material_design_controller.h"
+#include "ui/strings/grit/ui_strings.h"
 
 using bookmarks::BookmarkExpandedStateTracker;
 using bookmarks::BookmarkModel;
 using bookmarks::BookmarkNode;
+
+namespace {
+
+// Touch bar identifier.
+NSString* const kBookmarkEditDialogTouchBarId = @"bookmark-edit-dialog";
+
+// Touch bar item identifiers.
+NSString* const kNewFolderTouchBarId = @"NEW-FOLDER";
+NSString* const kCancelTouchBarId = @"CANCEL";
+NSString* const kSaveTouchBarId = @"SAVE";
+
+}  // end namespace
 
 @interface BookmarkEditorBaseController ()
 
@@ -76,7 +93,7 @@ void BookmarkEditor::Show(gfx::NativeWindow parent_window,
                           Profile* profile,
                           const EditDetails& details,
                           Configuration configuration) {
-  if (ui::MaterialDesignController::IsSecondaryUiMaterial()) {
+  if (chrome::ShowAllDialogsWithViewsToolkit()) {
     chrome::ShowBookmarkEditorViews(parent_window, profile, details,
                                     configuration);
     return;
@@ -342,6 +359,53 @@ NSString* const kOkEnabledName = @"okEnabled";
   [self autorelease];
 }
 
+- (NSTouchBar*)makeTouchBar {
+  if (!base::FeatureList::IsEnabled(features::kDialogTouchBar))
+    return nil;
+
+  base::scoped_nsobject<NSTouchBar> touchBar([[ui::NSTouchBar() alloc] init]);
+  [touchBar setCustomizationIdentifier:ui::GetTouchBarId(
+                                           kBookmarkEditDialogTouchBarId)];
+  [touchBar setDelegate:self];
+
+  NSArray* dialogItems = @[
+    ui::GetTouchBarItemId(kBookmarkEditDialogTouchBarId, kNewFolderTouchBarId),
+    ui::GetTouchBarItemId(kBookmarkEditDialogTouchBarId, kCancelTouchBarId),
+    ui::GetTouchBarItemId(kBookmarkEditDialogTouchBarId, kSaveTouchBarId)
+  ];
+
+  [touchBar setDefaultItemIdentifiers:dialogItems];
+  [touchBar setCustomizationAllowedItemIdentifiers:dialogItems];
+  return touchBar.autorelease();
+}
+
+- (NSTouchBarItem*)touchBar:(NSTouchBar*)touchBar
+      makeItemForIdentifier:(NSTouchBarItemIdentifier)identifier
+    API_AVAILABLE(macos(10.12.2)) {
+  NSButton* button = nil;
+  if ([identifier hasSuffix:kNewFolderTouchBarId]) {
+    button =
+        [NSButton buttonWithTitle:l10n_util::GetNSString(
+                                      IDS_BOOKMARK_EDITOR_NEW_FOLDER_BUTTON)
+                           target:self
+                           action:@selector(newFolder:)];
+  } else if ([identifier hasSuffix:kCancelTouchBarId]) {
+    button = [NSButton buttonWithTitle:l10n_util::GetNSString(IDS_APP_CANCEL)
+                                target:self
+                                action:@selector(cancel:)];
+  } else if ([identifier hasSuffix:kSaveTouchBarId]) {
+    button = ui::GetBlueTouchBarButton(l10n_util::GetNSString(IDS_SAVE), self,
+                                       @selector(ok:));
+  } else {
+    return nil;
+  }
+
+  base::scoped_nsobject<NSCustomTouchBarItem> item(
+      [[ui::NSCustomTouchBarItem() alloc] initWithIdentifier:identifier]);
+  [item setView:button];
+  return item.autorelease();
+}
+
 #pragma mark Folder Tree Management
 
 - (BookmarkModel*)bookmarkModel {
@@ -483,7 +547,7 @@ NSString* const kOkEnabledName = @"okEnabled";
   // Back up the parent chain for desiredNode, building up a stack
   // of ancestor nodes.  Then crawl down the folderTreeArray looking
   // for each ancestor in order while building up the selectionPath.
-  std::stack<const BookmarkNode*> nodeStack;
+  base::stack<const BookmarkNode*> nodeStack;
   BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile_);
   const BookmarkNode* rootNode = model->root_node();
   const BookmarkNode* node = desiredNode;

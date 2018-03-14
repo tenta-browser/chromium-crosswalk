@@ -5,16 +5,16 @@
 #ifndef PlatformPasswordCredential_h
 #define PlatformPasswordCredential_h
 
+#include "base/macros.h"
 #include "platform/credentialmanager/PlatformCredential.h"
 #include "platform/heap/Handle.h"
+#include "platform/weborigin/KURL.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
 class PLATFORM_EXPORT PlatformPasswordCredential final
     : public PlatformCredential {
-  WTF_MAKE_NONCOPYABLE(PlatformPasswordCredential);
-
  public:
   static PlatformPasswordCredential* Create(const String& id,
                                             const String& password,
@@ -25,14 +25,19 @@ class PLATFORM_EXPORT PlatformPasswordCredential final
   const String& Password() const { return password_; }
 
   bool IsPassword() override { return true; }
+  const String& Name() const { return name_; }
+  const KURL& IconURL() const { return icon_url_; }
 
  private:
   PlatformPasswordCredential(const String& id,
                              const String& password,
                              const String& name,
                              const KURL& icon_url);
-
+  String name_;
+  KURL icon_url_;
   String password_;
+
+  DISALLOW_COPY_AND_ASSIGN(PlatformPasswordCredential);
 };
 
 }  // namespace blink

@@ -10,14 +10,18 @@
 #import "ios/web/navigation/navigation_item_impl.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/navigation_manager.h"
-#import "ios/web/public/test/http_server.h"
-#include "ios/web/public/test/http_server_util.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#include "ios/web/public/test/http_server/http_server_util.h"
 #import "ios/web/public/test/web_view_interaction_test_util.h"
 #import "ios/web/public/web_state/web_state.h"
 #import "ios/web/test/web_int_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
 #include "url/url_canon.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 using base::ASCIIToUTF16;
 
@@ -308,7 +312,13 @@ TEST_F(HistoryStateOperationsTest, StateReplacement) {
 
 // Tests that the state object is reset to the correct value after reloading a
 // page whose state has been replaced.
-TEST_F(HistoryStateOperationsTest, StateReplacementReload) {
+#if TARGET_IPHONE_SIMULATOR
+#define MAYBE_StateReplacementReload StateReplacementReload
+#else
+#define MAYBE_StateReplacementReload DISABLED_StateReplacementReload
+#endif
+// TODO(crbug.com/720381): Enable this test on device.
+TEST_F(HistoryStateOperationsTest, MAYBE_StateReplacementReload) {
   // Set up the state parameters and tap the replace state button.
   std::string new_state("STATE OBJECT");
   std::string empty_title;
@@ -433,4 +443,19 @@ TEST_F(HistoryStateOperationsTest, ReplaceStateNoHashChangeEvent) {
   // Verify that the hashchange event was not fired.
   EXPECT_FALSE(static_cast<web::NavigationItemImpl*>(GetLastCommittedItem())
                    ->IsCreatedFromHashChange());
+}
+
+// Regression test for crbug.com/788464.
+TEST_F(HistoryStateOperationsTest, ReplaceStateThenReload) {
+  GURL url = web::test::HttpServer::MakeUrl(
+      "http://ios/testing/data/http_server_files/"
+      "onload_replacestate_reload.html");
+  LoadUrl(url);
+  GURL new_url = web::test::HttpServer::MakeUrl(
+      "http://ios/testing/data/http_server_files/pony.html");
+  BOOL completed =
+      testing::WaitUntilConditionOrTimeout(kWaitForStateUpdateTimeout, ^{
+        return GetLastCommittedItem()->GetURL() == new_url;
+      });
+  EXPECT_TRUE(completed);
 }

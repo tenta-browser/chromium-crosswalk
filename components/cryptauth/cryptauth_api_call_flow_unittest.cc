@@ -30,7 +30,10 @@ class CryptAuthApiCallFlowTest
  protected:
   CryptAuthApiCallFlowTest()
       : url_request_context_getter_(new net::TestURLRequestContextGetter(
-            new base::TestSimpleTaskRunner())) {}
+            new base::TestSimpleTaskRunner())) {
+    flow_.SetPartialNetworkTrafficAnnotation(
+        PARTIAL_TRAFFIC_ANNOTATION_FOR_TESTS);
+  }
 
   void SetUp() override {
     // The TestURLFetcherFactory will override the global URLFetcherFactory for
@@ -82,7 +85,7 @@ class CryptAuthApiCallFlowTest
                               const std::string& response_string) {
     ASSERT_TRUE(url_fetcher_);
     net::TestURLFetcher* url_fetcher = url_fetcher_;
-    url_fetcher_ = NULL;
+    url_fetcher_ = nullptr;
     url_fetcher->set_status(net::URLRequestStatus::FromError(error));
     if (error == net::OK) {
       url_fetcher->set_response_code(response_code);

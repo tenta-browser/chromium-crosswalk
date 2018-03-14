@@ -15,12 +15,13 @@
 #include "core/loader/resource/CSSStyleSheetResource.h"
 #include "core/loader/resource/StyleSheetResourceClient.h"
 #include "core/page/Page.h"
-#include "platform/loader/fetch/FetchInitiatorTypeNames.h"
 #include "platform/loader/fetch/RawResource.h"
 #include "platform/loader/fetch/Resource.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
-#include "public/platform/WebCachePolicy.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
+#include "platform/loader/fetch/fetch_initiator_type_names.h"
 #include "public/platform/WebURLRequest.h"
+#include "public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
 
 namespace blink {
 
@@ -42,7 +43,7 @@ class InspectorResourceContentLoader::ResourceClient final
       resource->AddClient(static_cast<StyleSheetResourceClient*>(this));
   }
 
-  DEFINE_INLINE_TRACE() {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(loader_);
     StyleSheetResourceClient::Trace(visitor);
     RawResourceClient::Trace(visitor);
@@ -54,7 +55,7 @@ class InspectorResourceContentLoader::ResourceClient final
   void SetCSSStyleSheet(const String&,
                         const KURL&,
                         ReferrerPolicy,
-                        const String&,
+                        const WTF::TextEncoding&,
                         const CSSStyleSheetResource*) override;
   void NotifyFinished(Resource*) override;
   String DebugName() const override {
@@ -80,7 +81,7 @@ void InspectorResourceContentLoader::ResourceClient::SetCSSStyleSheet(
     const String&,
     const KURL& url,
     ReferrerPolicy,
-    const String&,
+    const WTF::TextEncoding&,
     const CSSStyleSheetResource* resource) {
   ResourceFinished(const_cast<CSSStyleSheetResource*>(resource));
 }
@@ -102,7 +103,8 @@ InspectorResourceContentLoader::InspectorResourceContentLoader(
 void InspectorResourceContentLoader::Start() {
   started_ = true;
   HeapVector<Member<Document>> documents;
-  InspectedFrames* inspected_frames = InspectedFrames::Create(inspected_frame_);
+  InspectedFrames* inspected_frames =
+      new InspectedFrames(inspected_frame_, String());
   for (LocalFrame* frame : *inspected_frames) {
     documents.push_back(frame->GetDocument());
     documents.AppendVector(InspectorPageAgent::ImportsForFrame(frame));
@@ -114,18 +116,19 @@ void InspectorResourceContentLoader::Start() {
     HistoryItem* item =
         document->Loader() ? document->Loader()->GetHistoryItem() : nullptr;
     if (item) {
-      resource_request = item->GenerateResourceRequest(
-          WebCachePolicy::kReturnCacheDataDontLoad);
+      resource_request =
+          item->GenerateResourceRequest(mojom::FetchCacheMode::kOnlyIfCached);
     } else {
-      resource_request = document->Url();
-      resource_request.SetCachePolicy(WebCachePolicy::kReturnCacheDataDontLoad);
+      resource_request = ResourceRequest(document->Url());
+      resource_request.SetCacheMode(mojom::FetchCacheMode::kOnlyIfCached);
     }
     resource_request.SetRequestContext(WebURLRequest::kRequestContextInternal);
 
     if (!resource_request.Url().GetString().IsEmpty()) {
       urls_to_fetch.insert(resource_request.Url().GetString());
-      FetchParameters params(resource_request,
-                             FetchInitiatorTypeNames::internal);
+      ResourceLoaderOptions options;
+      options.initiator_info.name = FetchInitiatorTypeNames::internal;
+      FetchParameters params(resource_request, options);
       Resource* resource = RawResource::Fetch(params, document->Fetcher());
       if (resource) {
         // Prevent garbage collection by holding a reference to this resource.
@@ -148,8 +151,9 @@ void InspectorResourceContentLoader::Start() {
       ResourceRequest resource_request(url);
       resource_request.SetRequestContext(
           WebURLRequest::kRequestContextInternal);
-      FetchParameters params(resource_request,
-                             FetchInitiatorTypeNames::internal);
+      ResourceLoaderOptions options;
+      options.initiator_info.name = FetchInitiatorTypeNames::internal;
+      FetchParameters params(resource_request, options);
       Resource* resource =
           CSSStyleSheetResource::Fetch(params, document->Fetcher());
       if (!resource)
@@ -172,7 +176,7 @@ int InspectorResourceContentLoader::CreateClientId() {
 
 void InspectorResourceContentLoader::EnsureResourcesContentLoaded(
     int client_id,
-    std::unique_ptr<WTF::Closure> callback) {
+    WTF::Closure callback) {
   if (!started_)
     Start();
   callbacks_.insert(client_id, Callbacks())
@@ -185,10 +189,10 @@ void InspectorResourceContentLoader::Cancel(int client_id) {
 }
 
 InspectorResourceContentLoader::~InspectorResourceContentLoader() {
-  ASSERT(resources_.IsEmpty());
+  DCHECK(resources_.IsEmpty());
 }
 
-DEFINE_TRACE(InspectorResourceContentLoader) {
+void InspectorResourceContentLoader::Trace(blink::Visitor* visitor) {
   visitor->Trace(inspected_frame_);
   visitor->Trace(pending_resource_clients_);
   visitor->Trace(resources_);
@@ -200,16 +204,24 @@ void InspectorResourceContentLoader::DidCommitLoadForLocalFrame(
     Stop();
 }
 
+Resource* InspectorResourceContentLoader::ResourceForURL(const KURL& url) {
+  for (const auto& resource : resources_) {
+    if (resource->Url() == url)
+      return resource;
+  }
+  return nullptr;
+}
+
 void InspectorResourceContentLoader::Dispose() {
   Stop();
 }
 
 void InspectorResourceContentLoader::Stop() {
   HeapHashSet<Member<ResourceClient>> pending_resource_clients;
-  pending_resource_clients_.Swap(pending_resource_clients);
+  pending_resource_clients_.swap(pending_resource_clients);
   for (const auto& client : pending_resource_clients)
     client->loader_ = nullptr;
-  resources_.Clear();
+  resources_.clear();
   // Make sure all callbacks are called to prevent infinite waiting time.
   CheckDone();
   all_requests_started_ = false;
@@ -224,10 +236,10 @@ void InspectorResourceContentLoader::CheckDone() {
   if (!HasFinished())
     return;
   HashMap<int, Callbacks> callbacks;
-  callbacks.Swap(callbacks_);
-  for (const auto& key_value : callbacks) {
-    for (const auto& callback : key_value.value)
-      (*callback)();
+  callbacks.swap(callbacks_);
+  for (auto& key_value : callbacks) {
+    for (auto& callback : key_value.value)
+      std::move(callback).Run();
   }
 }
 

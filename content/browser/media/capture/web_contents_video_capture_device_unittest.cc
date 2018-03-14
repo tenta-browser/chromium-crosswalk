@@ -13,6 +13,7 @@
 #include "base/debug/debugger.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/test_timeouts.h"
 #include "base/time/time.h"
@@ -21,6 +22,7 @@
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_factory.h"
+#include "content/browser/renderer_host/render_widget_host_factory.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_frame_subscriber.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -31,6 +33,7 @@
 #include "content/public/test/test_utils.h"
 #include "content/test/test_render_frame_host_factory.h"
 #include "content/test/test_render_view_host.h"
+#include "content/test/test_render_widget_host_factory.h"
 #include "content/test/test_web_contents.h"
 #include "media/base/video_frame.h"
 #include "media/base/video_util.h"
@@ -142,7 +145,7 @@ class CaptureTestView : public TestRenderWidgetHostView {
     media::FillYUV(target.get(), SkColorGetR(yuv_color_),
                    SkColorGetG(yuv_color_), SkColorGetB(yuv_color_));
     BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                            base::Bind(callback, gfx::Rect(), true));
+                            base::BindOnce(callback, gfx::Rect(), true));
   }
 
   void BeginFrameSubscription(
@@ -186,7 +189,7 @@ class CaptureTestRenderViewHost : public TestRenderViewHost {
                             int32_t main_frame_routing_id,
                             bool swapped_out)
       : TestRenderViewHost(instance,
-                           base::MakeUnique<RenderWidgetHostImpl>(
+                           TestRenderWidgetHost::Create(
                                widget_delegate,
                                instance->GetProcess(),
                                routing_id,
@@ -238,7 +241,7 @@ class StubClient : public media::VideoCaptureDevice::Client {
       : report_callback_(report_callback),
         error_callback_(error_callback) {
     buffer_pool_ = new media::VideoCaptureBufferPoolImpl(
-        base::MakeUnique<media::VideoCaptureBufferTrackerFactoryImpl>(), 2);
+        std::make_unique<media::VideoCaptureBufferTrackerFactoryImpl>(), 2);
   }
   ~StubClient() override {}
 
@@ -300,7 +303,7 @@ class StubClient : public media::VideoCaptureDevice::Client {
         VideoFrame::WrapExternalSharedMemory(
             media::PIXEL_FORMAT_I420, format.frame_size, visible_rect,
             format.frame_size, buffer_access->data(),
-            buffer_access->mapped_size(), base::SharedMemory::NULLHandle(), 0u,
+            buffer_access->mapped_size(), base::SharedMemoryHandle(), 0u,
             base::TimeDelta());
     const gfx::Point center = visible_rect.CenterPoint();
     const int center_offset_y =
@@ -329,7 +332,7 @@ class StubClient : public media::VideoCaptureDevice::Client {
         buffer_pool_, buffer_id, frame_feedback_id);
   }
 
-  void OnError(const tracked_objects::Location& from_here,
+  void OnError(const base::Location& from_here,
                const std::string& reason) override {
     error_callback_.Run();
   }
@@ -370,7 +373,7 @@ class StubClientObserver {
         wait_color_yuv_ == color) {
       last_frame_color_yuv_ = color;
       last_frame_size_ = size;
-      base::MessageLoop::current()->QuitWhenIdle();
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
     }
   }
 
@@ -412,19 +415,17 @@ class StubClientObserver {
 
   void OnError() {
     error_encountered_ = true;
-    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, base::Bind(
-        &StubClientObserver::QuitIfConditionsMet,
-        base::Unretained(this),
-        kNothingYet,
-        gfx::Size()));
+    BrowserThread::PostTask(
+        BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&StubClientObserver::QuitIfConditionsMet,
+                       base::Unretained(this), kNothingYet, gfx::Size()));
   }
 
   void DidDeliverFrame(SkColor color, const gfx::Size& size) {
-    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, base::Bind(
-        &StubClientObserver::QuitIfConditionsMet,
-        base::Unretained(this),
-        color,
-        size));
+    BrowserThread::PostTask(
+        BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&StubClientObserver::QuitIfConditionsMet,
+                       base::Unretained(this), color, size));
   }
 
  private:
@@ -469,17 +470,21 @@ class WebContentsVideoCaptureDeviceTest : public testing::Test {
     // CopyFromSurfaceToVideoFrame functionality into TestRenderWidgetHostView
     // itself.
 
-    render_process_host_factory_.reset(new MockRenderProcessHostFactory());
+    render_process_host_factory_ =
+        std::make_unique<MockRenderProcessHostFactory>();
     // Create our (self-registering) RVH factory, so that when we create a
     // WebContents, it in turn creates CaptureTestRenderViewHosts.
-    render_view_host_factory_.reset(new CaptureTestRenderViewHostFactory());
-    render_frame_host_factory_.reset(new TestRenderFrameHostFactory());
+    render_view_host_factory_ =
+        std::make_unique<CaptureTestRenderViewHostFactory>();
+    render_frame_host_factory_ = std::make_unique<TestRenderFrameHostFactory>();
+    render_widget_host_factory_ =
+        std::make_unique<TestRenderWidgetHostFactory>();
 
     browser_context_.reset(new TestBrowserContext());
 
     scoped_refptr<SiteInstance> site_instance =
         SiteInstance::Create(browser_context_.get());
-    SiteInstanceImpl::set_render_process_host_factory(
+    RenderProcessHostImpl::set_render_process_host_factory(
         render_process_host_factory_.get());
     web_contents_.reset(
         TestWebContents::Create(browser_context_.get(), site_instance.get()));
@@ -507,7 +512,7 @@ class WebContentsVideoCaptureDeviceTest : public testing::Test {
 
     base::RunLoop().RunUntilIdle();
 
-    SiteInstanceImpl::set_render_process_host_factory(NULL);
+    RenderProcessHostImpl::set_render_process_host_factory(nullptr);
     render_frame_host_factory_.reset();
     render_view_host_factory_.reset();
     render_process_host_factory_.reset();
@@ -551,8 +556,8 @@ class WebContentsVideoCaptureDeviceTest : public testing::Test {
     // Schedule the update to occur when the test runs the event loop (and not
     // before expectations have been set).
     BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                            base::Bind(&CaptureTestView::SimulateUpdate,
-                                       base::Unretained(test_view())));
+                            base::BindOnce(&CaptureTestView::SimulateUpdate,
+                                           base::Unretained(test_view())));
   }
 
   void SimulateSourceSizeChange(const gfx::Size& size) {
@@ -606,8 +611,8 @@ class WebContentsVideoCaptureDeviceTest : public testing::Test {
 
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(&media::VideoCaptureDevice::RequestRefreshFrame,
-                   base::Unretained(device_.get())));
+        base::BindOnce(&media::VideoCaptureDevice::RequestRefreshFrame,
+                       base::Unretained(device_.get())));
   }
 
   void DestroyVideoCaptureDevice() { device_.reset(); }
@@ -631,6 +636,9 @@ class WebContentsVideoCaptureDeviceTest : public testing::Test {
 
   // Self-registering RenderFrameHostFactory.
   std::unique_ptr<TestRenderFrameHostFactory> render_frame_host_factory_;
+
+  // Self-registering RenderWidgetHostFactory.
+  std::unique_ptr<TestRenderWidgetHostFactory> render_widget_host_factory_;
 
   // A mocked-out browser and tab.
   std::unique_ptr<TestBrowserContext> browser_context_;
@@ -677,8 +685,8 @@ TEST_F(WebContentsVideoCaptureDeviceTest,
   // consumer.
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&WebContentsVideoCaptureDeviceTest::ResetWebContents,
-                 base::Unretained(this)));
+      base::BindOnce(&WebContentsVideoCaptureDeviceTest::ResetWebContents,
+                     base::Unretained(this)));
   ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForError());
   device()->StopAndDeAllocate();
 }

@@ -14,6 +14,7 @@
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
 #include "components/search_engines/template_url.h"
+#include "ui/app_list/app_list_features.h"
 
 namespace app_list {
 namespace test {
@@ -94,8 +95,8 @@ TEST_F(OmniboxResultTest, Basic) {
       kFullQuery, kRelevance, kExampleUrl, kFullQuery, kExampleDescription,
       AutocompleteMatchType::HISTORY_URL, kExampleKeyword, false);
 
-  EXPECT_EQ(base::ASCIIToUTF16(kFullQuery), result->title());
-  EXPECT_EQ(base::ASCIIToUTF16(kExampleDescription), result->details());
+  EXPECT_EQ(base::ASCIIToUTF16(kExampleDescription), result->title());
+  EXPECT_EQ(base::ASCIIToUTF16(kFullQuery), result->details());
   EXPECT_EQ(kAppListRelevance, result->relevance());
   EXPECT_FALSE(result->voice_result());
 

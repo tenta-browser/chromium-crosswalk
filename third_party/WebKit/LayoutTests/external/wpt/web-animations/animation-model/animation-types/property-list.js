@@ -1,6 +1,6 @@
 'use strict';
 
-var gCSSProperties = {
+const gCSSProperties = {
   'align-content': {
     // https://drafts.csswg.org/css-align/#propdef-align-content
     types: [
@@ -146,7 +146,7 @@ var gCSSProperties = {
     // https://drafts.csswg.org/css-backgrounds-3/#border-bottom-width
     types: [ 'length' ],
     setup: t => {
-      var element = createElement(t);
+      const element = createElement(t);
       element.style.borderBottomStyle = 'solid';
       return element;
     }
@@ -190,7 +190,7 @@ var gCSSProperties = {
   'border-image-outset': {
     // https://drafts.csswg.org/css-backgrounds-3/#border-image-outset
     types: [
-      { type: 'discrete', options: [ [ '1 1 1 1', '5 5 5 5' ] ] }
+      { type: 'discrete', options: [ [ '1 2 3 4', '5 6 7 8' ] ] }
     ]
   },
   'border-image-repeat': {
@@ -202,7 +202,7 @@ var gCSSProperties = {
   'border-image-slice': {
     // https://drafts.csswg.org/css-backgrounds-3/#border-image-slice
     types: [
-      { type: 'discrete', options: [ [ '1 1 1 1', '5 5 5 5' ] ] }
+      { type: 'discrete', options: [ [ '1 2 3 4', '5 6 7 8' ] ] }
     ]
   },
   'border-image-source': {
@@ -216,7 +216,7 @@ var gCSSProperties = {
   'border-image-width': {
     // https://drafts.csswg.org/css-backgrounds-3/#border-image-width
     types: [
-      { type: 'discrete', options: [ [ '1 1 1 1', '5 5 5 5' ] ] }
+      { type: 'discrete', options: [ [ '1 2 3 4', '5 6 7 8' ] ] }
     ]
   },
   'border-left-color': {
@@ -233,7 +233,7 @@ var gCSSProperties = {
     // https://drafts.csswg.org/css-backgrounds-3/#border-left-width
     types: [ 'length' ],
     setup: t => {
-      var element = createElement(t);
+      const element = createElement(t);
       element.style.borderLeftStyle = 'solid';
       return element;
     }
@@ -252,15 +252,14 @@ var gCSSProperties = {
     // https://drafts.csswg.org/css-backgrounds-3/#border-right-width
     types: [ 'length' ],
     setup: t => {
-      var element = createElement(t);
+      const element = createElement(t);
       element.style.borderRightStyle = 'solid';
       return element;
     }
   },
   'border-spacing': {
     // https://drafts.csswg.org/css-tables/#propdef-border-spacing
-    types: [
-    ]
+    types: [ 'lengthPair' ]
   },
   'border-top-color': {
     // https://drafts.csswg.org/css-backgrounds-3/#border-top-color
@@ -286,7 +285,7 @@ var gCSSProperties = {
     // https://drafts.csswg.org/css-backgrounds-3/#border-top-width
     types: [ 'length' ],
     setup: t => {
-      var element = createElement(t);
+      const element = createElement(t);
       element.style.borderTopStyle = 'solid';
       return element;
     }
@@ -318,6 +317,10 @@ var gCSSProperties = {
       { type: 'discrete', options: [ [ 'top', 'bottom' ] ] }
     ]
   },
+  'caret-color': {
+    // https://drafts.csswg.org/css-ui/#propdef-caret-color
+    types: [ 'color' ]
+  },
   'clear': {
     // https://drafts.csswg.org/css-page-floats/#propdef-clear
     types: [
@@ -327,6 +330,11 @@ var gCSSProperties = {
   'clip': {
     // https://drafts.fxtf.org/css-masking-1/#propdef-clip
     types: [
+      'rect',
+      { type: 'discrete', options: [ [ 'rect(10px, 10px, 10px, 10px)',
+                                       'auto' ],
+                                     [ 'rect(10px, 10px, 10px, 10px)',
+                                       'rect(10px, 10px, 10px, auto)'] ] }
     ]
   },
   'clip-path': {
@@ -364,12 +372,15 @@ var gCSSProperties = {
   },
   'column-count': {
     // https://drafts.csswg.org/css-multicol/#propdef-column-count
-    types: [
+    types: [ 'positiveInteger',
+            { type: 'discrete', options: [ [ 'auto', '10' ] ] }
     ]
   },
   'column-gap': {
     // https://drafts.csswg.org/css-multicol/#propdef-column-gap
-    types: [ 'length' ]
+    types: [ 'length',
+            {  type: 'discrete', options: [ [ 'normal', '200px' ] ] }
+    ]
   },
   'column-rule-color': {
     // https://drafts.csswg.org/css-multicol/#propdef-column-rule-color
@@ -391,7 +402,7 @@ var gCSSProperties = {
     // https://drafts.csswg.org/css-multicol/#propdef-column-rule-width
     types: [ 'length' ],
     setup: t => {
-      var element = createElement(t);
+      const element = createElement(t);
       element.style.columnRuleStyle = 'solid';
       return element;
     }
@@ -460,8 +471,7 @@ var gCSSProperties = {
   },
   'fill-opacity': {
     // https://svgwg.org/svg2-draft/painting.html#FillOpacityProperty
-    types: [
-    ]
+    types: [ 'opacity' ]
   },
   'fill-rule': {
     // https://svgwg.org/svg2-draft/painting.html#FillRuleProperty
@@ -506,8 +516,7 @@ var gCSSProperties = {
   },
   'flood-opacity': {
     // https://drafts.fxtf.org/filters/#propdef-flood-opacity
-    types: [
-    ]
+    types: [ 'opacity' ]
   },
   'font-size': {
     // https://drafts.csswg.org/css-fonts-3/#propdef-font-size
@@ -521,8 +530,7 @@ var gCSSProperties = {
   },
   'font-stretch': {
     // https://drafts.csswg.org/css-fonts-3/#propdef-font-stretch
-    types: [
-    ]
+    types: [ 'fontStretch' ]
   },
   'font-style': {
     // https://drafts.csswg.org/css-fonts/#propdef-font-style
@@ -608,6 +616,16 @@ var gCSSProperties = {
     // https://drafts.csswg.org/css-fonts-3/#propdef-font-variant-position
     types: [
       { type: 'discrete', options: [ [ 'sub', 'super' ] ] }
+    ]
+  },
+  'font-variation-settings': {
+    // https://drafts.csswg.org/css-fonts-4/#descdef-font-face-font-variation-settings
+    types: [
+      'fontVariationSettings',
+      { type: 'discrete',
+        options: [ ['"wght" 1.1, "wdth" 1', '"wdth" 5'],
+                   ['"wdth" 5', 'normal']
+                 ] },
     ]
   },
   'font-weight': {
@@ -1026,7 +1044,7 @@ var gCSSProperties = {
     // https://drafts.csswg.org/css-ui-3/#propdef-outline-width
     types: [ 'length' ],
     setup: t => {
-      var element = createElement(t);
+      const element = createElement(t);
       element.style.outlineStyle = 'solid';
       return element;
     }
@@ -1130,8 +1148,7 @@ var gCSSProperties = {
   },
   'perspective-origin': {
     // https://drafts.csswg.org/css-transforms-1/#propdef-perspective-origin
-    types: [
-    ]
+    types: [ 'position' ]
   },
   'pointer-events': {
     // https://svgwg.org/svg2-draft/interact.html#PointerEventsProperty
@@ -1215,8 +1232,7 @@ var gCSSProperties = {
   },
   'stop-opacity': {
     // https://svgwg.org/svg2-draft/pservers.html#StopOpacityProperty
-    types: [
-    ]
+    types: [ 'opacity' ]
   },
   'stroke': {
     // https://svgwg.org/svg2-draft/painting.html#StrokeProperty
@@ -1226,6 +1242,8 @@ var gCSSProperties = {
   'stroke-dasharray': {
     // https://svgwg.org/svg2-draft/painting.html#StrokeDasharrayProperty
     types: [
+      'dasharray',
+      { type: 'discrete', options: [ [ 'none', '10, 20' ] ] }
     ]
   },
   'stroke-dashoffset': {
@@ -1250,13 +1268,11 @@ var gCSSProperties = {
   },
   'stroke-miterlimit': {
     // https://svgwg.org/svg2-draft/painting.html#StrokeMiterlimitProperty
-    types: [
-    ]
+    types: [ 'positiveNumber' ]
   },
   'stroke-opacity': {
     // https://svgwg.org/svg2-draft/painting.html#StrokeOpacityProperty
-    types: [
-    ]
+    types: [ 'opacity' ]
   },
   'stroke-width': {
     // https://svgwg.org/svg2-draft/painting.html#StrokeWidthProperty
@@ -1352,7 +1368,7 @@ var gCSSProperties = {
     // https://drafts.csswg.org/css-text-decor-3/#propdef-text-shadow
     types: [ 'textShadowList' ],
     setup: t => {
-      var element = createElement(t);
+      const element = createElement(t);
       element.style.color = 'green';
       return element;
     }
@@ -1435,8 +1451,7 @@ var gCSSProperties = {
   },
   'word-spacing': {
     // https://drafts.csswg.org/css-text-3/#propdef-word-spacing
-    types: [
-    ]
+    types: [ 'lengthPercentageOrCalc' ]
   },
   'will-change': {
     // http://dev.w3.org/csswg/css-will-change/#propdef-will-change
@@ -1458,29 +1473,56 @@ var gCSSProperties = {
 };
 
 function testAnimationSamples(animation, idlName, testSamples) {
-  var type = animation.effect.target.type;
-  var target = type
-               ? animation.effect.target.parentElement
-               : animation.effect.target;
-  testSamples.forEach(function(testSample) {
+  const type = animation.effect.target.type;
+  const target = animation.effect.target.constructor.name === 'CSSPseudoElement'
+                 ? animation.effect.target.parentElement
+                 : animation.effect.target;
+  for (const testSample of testSamples) {
     animation.currentTime = testSample.time;
     assert_equals(getComputedStyle(target, type)[idlName],
                   testSample.expected,
-                  'The value should be ' + testSample.expected +
-                  ' at ' + testSample.time + 'ms');
-  });
+                  `The value should be ${testSample.expected}` +
+                  ` at ${testSample.time}ms`);
+  }
+}
+
+function toOrderedArray(string) {
+  return string.split(/\s*,\s/).sort();
+}
+
+// This test is for some list-based CSS properties such as font-variant-settings
+// don't specify an order for serializing computed values.
+// This test is for such the property.
+function testAnimationSamplesWithAnyOrder(animation, idlName, testSamples) {
+  const type = animation.effect.target.type;
+  const target = animation.effect.target.constructor.name === 'CSSPseudoElement'
+                 ? animation.effect.target.parentElement
+                 : animation.effect.target;
+  for (const testSample of testSamples) {
+    animation.currentTime = testSample.time;
+
+    // Convert to array and sort the expected and actual value lists first
+    // before comparing them.
+    const computedValues =
+      toOrderedArray(getComputedStyle(target, type)[idlName]);
+    const expectedValues = toOrderedArray(testSample.expected);
+
+    assert_array_equals(computedValues, expectedValues,
+                        `The computed values should be ${expectedValues}` +
+                        ` at ${testSample.time}ms`);
+  }
 }
 
 function testAnimationSampleMatrices(animation, idlName, testSamples) {
-  var target = animation.effect.target;
-  testSamples.forEach(function(testSample) {
+  const target = animation.effect.target;
+  for (const testSample of testSamples) {
     animation.currentTime = testSample.time;
-    var actual = getComputedStyle(target)[idlName];
-    var expected = createMatrixFromArray(testSample.expected);
+    const actual = getComputedStyle(target)[idlName];
+    const expected = createMatrixFromArray(testSample.expected);
     assert_matrix_equals(actual, expected,
-                         'The value should be ' + expected +
-                         ' at ' + testSample.time + 'ms but got ' + actual);
-  });
+                         `The value should be ${expected} at`
+                         + ` ${testSample.time}ms but got ${actual}`);
+  }
 }
 
 function createTestElement(t, setup) {
@@ -1488,7 +1530,7 @@ function createTestElement(t, setup) {
 }
 
 function isSupported(property) {
-  var testKeyframe = new TestKeyframe(propertyToIDL(property));
+  const testKeyframe = new TestKeyframe(propertyToIDL(property));
   try {
     // Since TestKeyframe returns 'undefined' for |property|,
     // the KeyframeEffect constructor will throw
@@ -1499,7 +1541,7 @@ function isSupported(property) {
 }
 
 function TestKeyframe(testProp) {
-  var _propAccessCount = 0;
+  let _propAccessCount = 0;
 
   Object.defineProperty(this, testProp, {
     get: function() { _propAccessCount++; },
@@ -1520,4 +1562,13 @@ function propertyToIDL(property) {
                           function (str) {
                             return str.substr(1).toUpperCase(); });
 }
+function calcFromPercentage(idlName, percentageValue) {
+  const examElem = document.createElement('div');
+  document.body.appendChild(examElem);
+  examElem.style[idlName] = percentageValue;
 
+  const calcValue = getComputedStyle(examElem)[idlName];
+  document.body.removeChild(examElem);
+
+  return calcValue;
+}

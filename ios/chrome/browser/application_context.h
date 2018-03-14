@@ -50,7 +50,7 @@ class RapporServiceImpl;
 }
 
 namespace ukm {
-class UkmService;
+class UkmRecorder;
 }
 
 namespace variations {
@@ -58,7 +58,6 @@ class VariationsService;
 }
 
 class ApplicationContext;
-class CRLSetFetcher;
 class IOSChromeIOThread;
 class PrefService;
 
@@ -103,8 +102,8 @@ class ApplicationContext {
   // Gets the MetricsService used by this application.
   virtual metrics::MetricsService* GetMetricsService() = 0;
 
-  // Gets the UkmService used by this application.
-  virtual ukm::UkmService* GetUkmService() = 0;
+  // Gets the UkmRecorder used by this application.
+  virtual ukm::UkmRecorder* GetUkmRecorder() = 0;
 
   // Gets the VariationsService used by this application.
   virtual variations::VariationsService* GetVariationsService() = 0;
@@ -127,9 +126,6 @@ class ApplicationContext {
   // Gets the ComponentUpdateService.
   virtual component_updater::ComponentUpdateService*
   GetComponentUpdateService() = 0;
-
-  // Gets the CRLSetFetcher.
-  virtual CRLSetFetcher* GetCRLSetFetcher() = 0;
 
   // Gets the PhysicalWebDataSource.
   virtual physical_web::PhysicalWebDataSource* GetPhysicalWebDataSource() = 0;

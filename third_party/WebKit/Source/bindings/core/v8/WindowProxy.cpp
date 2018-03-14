@@ -32,11 +32,12 @@
 
 #include <utility>
 
-#include "bindings/core/v8/V8Binding.h"
-#include "bindings/core/v8/V8DOMWrapper.h"
+#include "base/debug/alias.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8GCForContextDispose.h"
 #include "core/frame/DOMWindow.h"
 #include "core/frame/Frame.h"
+#include "platform/bindings/V8DOMWrapper.h"
 #include "platform/wtf/Assertions.h"
 #include "v8/include/v8.h"
 
@@ -48,13 +49,13 @@ WindowProxy::~WindowProxy() {
   DCHECK(lifecycle_ != Lifecycle::kContextIsInitialized);
 }
 
-DEFINE_TRACE(WindowProxy) {
+void WindowProxy::Trace(blink::Visitor* visitor) {
   visitor->Trace(frame_);
 }
 
 WindowProxy::WindowProxy(v8::Isolate* isolate,
                          Frame& frame,
-                         RefPtr<DOMWrapperWorld> world)
+                         scoped_refptr<DOMWrapperWorld> world)
     : isolate_(isolate),
       frame_(frame),
 
@@ -62,11 +63,15 @@ WindowProxy::WindowProxy(v8::Isolate* isolate,
       lifecycle_(Lifecycle::kContextIsUninitialized) {}
 
 void WindowProxy::ClearForClose() {
-  DisposeContext(Lifecycle::kFrameIsDetached);
+  DisposeContext(Lifecycle::kFrameIsDetached, kFrameWillNotBeReused);
 }
 
 void WindowProxy::ClearForNavigation() {
-  DisposeContext(Lifecycle::kGlobalObjectIsDetached);
+  DisposeContext(Lifecycle::kGlobalObjectIsDetached, kFrameWillBeReused);
+}
+
+void WindowProxy::ClearForSwap() {
+  DisposeContext(Lifecycle::kGlobalObjectIsDetached, kFrameWillNotBeReused);
 }
 
 v8::Local<v8::Object> WindowProxy::GlobalProxyIfNotDetached() {
@@ -95,6 +100,8 @@ v8::Local<v8::Object> WindowProxy::ReleaseGlobalProxy() {
 void WindowProxy::SetGlobalProxy(v8::Local<v8::Object> global_proxy) {
   DCHECK_EQ(lifecycle_, Lifecycle::kContextIsUninitialized);
 
+  base::debug::StackTrace initialization_stack = initialization_stack_;
+  base::debug::Alias(&initialization_stack);
   CHECK(global_proxy_.IsEmpty());
   global_proxy_.Set(isolate_, global_proxy);
 
@@ -146,6 +153,7 @@ void WindowProxy::InitializeIfNeeded() {
   if (lifecycle_ == Lifecycle::kContextIsUninitialized ||
       lifecycle_ == Lifecycle::kGlobalObjectIsDetached) {
     Initialize();
+    initialization_stack_ = base::debug::StackTrace();
   }
 }
 
@@ -155,7 +163,7 @@ v8::Local<v8::Object> WindowProxy::AssociateWithWrapper(
     v8::Local<v8::Object> wrapper) {
   if (world_->DomDataStore().Set(isolate_, window, wrapper_type_info,
                                  wrapper)) {
-    wrapper_type_info->WrapperCreated();
+    WrapperTypeInfo::WrapperCreated();
     V8DOMWrapper::SetNativeInfo(isolate_, wrapper, wrapper_type_info, window);
     DCHECK(V8DOMWrapper::HasInternalFieldsSet(wrapper));
   }

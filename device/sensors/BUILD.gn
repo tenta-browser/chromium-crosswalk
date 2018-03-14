@@ -10,10 +10,6 @@ if (is_android) {
 
 component("sensors") {
   sources = [
-    "ambient_light_mac.cc",
-    "ambient_light_mac.h",
-    "android/device_sensor_jni_registrar.cc",
-    "android/device_sensor_jni_registrar.h",
     "data_fetcher_shared_memory.h",
     "data_fetcher_shared_memory_android.cc",
     "data_fetcher_shared_memory_base.cc",
@@ -40,6 +36,7 @@ component("sensors") {
     "//base",
     "//device/sensors/public/cpp:full",
     "//mojo/public/cpp/bindings",
+    "//ui/gfx/geometry:geometry",
   ]
 
   public_deps = [
@@ -72,6 +69,10 @@ component("sensors") {
       "//ui/gfx",
     ]
   }
+  if (is_fuchsia) {
+    sources += [ "data_fetcher_shared_memory_fuchsia.cc" ]
+    sources -= [ "data_fetcher_shared_memory_default.cc" ]
+  }
 }
 
 if (is_android) {
@@ -97,7 +98,9 @@ if (is_android) {
     java_files = [ "android/javatests/src/org/chromium/device/sensors/DeviceSensorsTest.java" ]
     deps = [
       ":java",
+      "//base:base_java_test_support",
       "//third_party/android_support_test_runner:runner_java",
+      "//third_party/junit",
     ]
   }
 

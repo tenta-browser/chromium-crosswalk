@@ -42,45 +42,13 @@ class CORE_EXPORT AnimatableValue : public RefCounted<AnimatableValue> {
  public:
   virtual ~AnimatableValue() {}
 
-  static PassRefPtr<AnimatableValue> Interpolate(const AnimatableValue*,
-                                                 const AnimatableValue*,
-                                                 double fraction);
-  static bool UsesDefaultInterpolation(const AnimatableValue* from,
-                                       const AnimatableValue* to) {
-    return !from->IsSameType(to) || from->UsesDefaultInterpolationWith(to);
-  }
-
-  bool Equals(const AnimatableValue* value) const {
-    return IsSameType(value) && EqualTo(value);
-  }
-  bool Equals(const AnimatableValue& value) const { return Equals(&value); }
-
-  bool IsClipPathOperation() const {
-    return GetType() == kTypeClipPathOperation;
-  }
-  bool IsColor() const { return GetType() == kTypeColor; }
+  static scoped_refptr<AnimatableValue> Interpolate(const AnimatableValue*,
+                                                    const AnimatableValue*,
+                                                    double fraction);
   bool IsDouble() const { return GetType() == kTypeDouble; }
-  bool IsDoubleAndBool() const { return GetType() == kTypeDoubleAndBool; }
   bool IsFilterOperations() const { return GetType() == kTypeFilterOperations; }
-  bool IsImage() const { return GetType() == kTypeImage; }
-  bool IsLength() const { return GetType() == kTypeLength; }
-  bool IsLengthBox() const { return GetType() == kTypeLengthBox; }
-  bool IsLengthBoxAndBool() const { return GetType() == kTypeLengthBoxAndBool; }
-  bool IsLengthPoint() const { return GetType() == kTypeLengthPoint; }
-  bool IsLengthPoint3D() const { return GetType() == kTypeLengthPoint3D; }
-  bool IsLengthSize() const { return GetType() == kTypeLengthSize; }
-  bool IsPath() const { return GetType() == kTypePath; }
-  bool IsRepeatable() const { return GetType() == kTypeRepeatable; }
-  bool IsSVGLength() const { return GetType() == kTypeSVGLength; }
-  bool IsSVGPaint() const { return GetType() == kTypeSVGPaint; }
-  bool IsShadow() const { return GetType() == kTypeShadow; }
-  bool IsShapeValue() const { return GetType() == kTypeShapeValue; }
-  bool IsStrokeDasharrayList() const {
-    return GetType() == kTypeStrokeDasharrayList;
-  }
   bool IsTransform() const { return GetType() == kTypeTransform; }
   bool IsUnknown() const { return GetType() == kTypeUnknown; }
-  bool IsVisibility() const { return GetType() == kTypeVisibility; }
 
   bool IsSameType(const AnimatableValue* value) const {
     DCHECK(value);
@@ -89,41 +57,18 @@ class CORE_EXPORT AnimatableValue : public RefCounted<AnimatableValue> {
 
  protected:
   enum AnimatableType {
-    kTypeClipPathOperation,
-    kTypeColor,
     kTypeDouble,
-    kTypeDoubleAndBool,
     kTypeFilterOperations,
-    kTypeImage,
-    kTypeLength,
-    kTypeLengthBox,
-    kTypeLengthBoxAndBool,
-    kTypeLengthPoint,
-    kTypeLengthPoint3D,
-    kTypeLengthSize,
-    kTypePath,
-    kTypeRepeatable,
-    kTypeSVGLength,
-    kTypeSVGPaint,
-    kTypeShadow,
-    kTypeShapeValue,
-    kTypeStrokeDasharrayList,
     kTypeTransform,
     kTypeUnknown,
-    kTypeVisibility,
   };
 
-  virtual bool UsesDefaultInterpolationWith(
-      const AnimatableValue* value) const {
-    NOTREACHED();
-    return false;
-  }
-  virtual PassRefPtr<AnimatableValue> InterpolateTo(const AnimatableValue*,
-                                                    double fraction) const {
+  virtual scoped_refptr<AnimatableValue> InterpolateTo(const AnimatableValue*,
+                                                       double fraction) const {
     NOTREACHED();
     return nullptr;
   }
-  static PassRefPtr<AnimatableValue> DefaultInterpolateTo(
+  static scoped_refptr<AnimatableValue> DefaultInterpolateTo(
       const AnimatableValue* left,
       const AnimatableValue* right,
       double fraction) {
@@ -131,15 +76,12 @@ class CORE_EXPORT AnimatableValue : public RefCounted<AnimatableValue> {
   }
 
   template <class T>
-  static PassRefPtr<T> TakeConstRef(const T* value) {
-    return PassRefPtr<T>(const_cast<T*>(value));
+  static scoped_refptr<T> TakeConstRef(const T* value) {
+    return scoped_refptr<T>(const_cast<T*>(value));
   }
 
  private:
   virtual AnimatableType GetType() const = 0;
-  // Implementations can assume that the object being compared has the same type
-  // as the object this is called on
-  virtual bool EqualTo(const AnimatableValue*) const = 0;
 
   template <class Keyframe>
   friend class KeyframeEffectModel;

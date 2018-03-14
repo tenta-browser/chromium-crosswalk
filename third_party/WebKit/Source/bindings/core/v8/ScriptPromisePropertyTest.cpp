@@ -6,21 +6,20 @@
 
 #include <memory>
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/ScriptFunction.h"
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8BindingForTesting.h"
 #include "bindings/core/v8/V8GCController.h"
 #include "core/dom/Document.h"
 #include "core/testing/DummyPageHolder.h"
 #include "core/testing/GCObservation.h"
 #include "core/testing/GarbageCollectedScriptWrappable.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/heap/Handle.h"
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/RefPtr.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "v8/include/v8.h"
 
@@ -89,7 +88,7 @@ class GarbageCollectedHolder : public GarbageCollectedScriptWrappable {
     return this;
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  virtual void Trace(blink::Visitor* visitor) {
     GarbageCollectedScriptWrappable::Trace(visitor);
     visitor->Trace(property_);
   }
@@ -116,7 +115,7 @@ class ScriptPromisePropertyTestBase {
     return ToScriptStateForMainWorld(GetDocument().GetFrame());
   }
   DOMWrapperWorld& MainWorld() { return MainScriptState()->World(); }
-  ScriptState* OtherScriptState() { return other_script_state_.Get(); }
+  ScriptState* OtherScriptState() { return other_script_state_.get(); }
   DOMWrapperWorld& OtherWorld() { return other_script_state_->World(); }
   ScriptState* CurrentScriptState() {
     return ScriptState::Current(GetIsolate());
@@ -156,7 +155,7 @@ class ScriptPromisePropertyTestBase {
 
  private:
   std::unique_ptr<DummyPageHolder> page_;
-  RefPtr<ScriptState> other_script_state_;
+  scoped_refptr<ScriptState> other_script_state_;
 };
 
 // This is the main test class.
@@ -218,7 +217,7 @@ class ScriptPromisePropertyNonScriptWrappableResolutionTargetTest
     if (expected != actual) {
       ADD_FAILURE_AT(file, line)
           << "toV8 returns an incorrect value.\n  Actual: "
-          << actual.Utf8().Data() << "\nExpected: " << expected;
+          << actual.Utf8().data() << "\nExpected: " << expected;
       return;
     }
   }

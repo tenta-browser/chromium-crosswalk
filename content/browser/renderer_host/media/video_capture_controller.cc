@@ -16,7 +16,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "build/build_config.h"
-#include "components/display_compositor/gl_helper.h"
+#include "components/viz/common/gl_helper.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/browser/renderer_host/media/video_capture_manager.h"
 #include "content/common/video_capture.mojom.h"
@@ -167,13 +167,15 @@ VideoCaptureController::VideoCaptureController(
     const std::string& device_id,
     MediaStreamType stream_type,
     const media::VideoCaptureParams& params,
-    std::unique_ptr<BuildableVideoCaptureDevice> buildable_device)
+    std::unique_ptr<VideoCaptureDeviceLauncher> device_launcher,
+    base::RepeatingCallback<void(const std::string&)> emit_log_message_cb)
     : serial_id_(g_device_start_id++),
       device_id_(device_id),
       stream_type_(stream_type),
       parameters_(params),
-      buildable_device_(std::move(buildable_device)),
-      consumer_feedback_observer_(nullptr),
+      device_launcher_(std::move(device_launcher)),
+      emit_log_message_cb_(std::move(emit_log_message_cb)),
+      device_launch_observer_(nullptr),
       state_(VIDEO_CAPTURE_STATE_STARTING),
       has_received_frames_(false),
       weak_ptr_factory_(this) {
@@ -187,25 +189,18 @@ VideoCaptureController::GetWeakPtrForIOThread() {
   return weak_ptr_factory_.GetWeakPtr();
 }
 
-void VideoCaptureController::SetConsumerFeedbackObserver(
-    std::unique_ptr<media::VideoFrameConsumerFeedbackObserver>
-        consumer_feedback_observer) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  consumer_feedback_observer_ = std::move(consumer_feedback_observer);
-  // Update existing BufferContext entries.
-  for (auto& entry : buffer_contexts_)
-    entry.set_consumer_feedback_observer(consumer_feedback_observer_.get());
-}
-
 void VideoCaptureController::AddClient(
     VideoCaptureControllerID id,
     VideoCaptureControllerEventHandler* event_handler,
     media::VideoCaptureSessionId session_id,
     const media::VideoCaptureParams& params) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  DVLOG(1) << "VideoCaptureController::AddClient() -- id=" << id
-           << ", session_id=" << session_id << ", params.requested_format="
-           << media::VideoCaptureFormat::ToString(params.requested_format);
+  std::ostringstream string_stream;
+  string_stream << "VideoCaptureController::AddClient(): id = " << id
+                << ", session_id = " << session_id
+                << ", params.requested_format = "
+                << media::VideoCaptureFormat::ToString(params.requested_format);
+  EmitLogMessage(string_stream.str(), 1);
 
   // Check that requested VideoCaptureParams are valid and supported.  If not,
   // report an error immediately and punt.
@@ -240,7 +235,7 @@ void VideoCaptureController::AddClient(
     event_handler->OnStarted(id);
 
   std::unique_ptr<ControllerClient> client =
-      base::MakeUnique<ControllerClient>(id, event_handler, session_id, params);
+      std::make_unique<ControllerClient>(id, event_handler, session_id, params);
   // If we already have gotten frame_info from the device, repeat it to the new
   // client.
   if (state_ != VIDEO_CAPTURE_STATE_ERROR) {
@@ -252,7 +247,9 @@ int VideoCaptureController::RemoveClient(
     VideoCaptureControllerID id,
     VideoCaptureControllerEventHandler* event_handler) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  DVLOG(1) << "VideoCaptureController::RemoveClient, id " << id;
+  std::ostringstream string_stream;
+  string_stream << "VideoCaptureController::RemoveClient: id = " << id;
+  EmitLogMessage(string_stream.str(), 1);
 
   ControllerClient* client = FindClient(id, event_handler, controller_clients_);
   if (!client)
@@ -278,7 +275,7 @@ void VideoCaptureController::PauseClient(
     VideoCaptureControllerID id,
     VideoCaptureControllerEventHandler* event_handler) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  DVLOG(1) << "VideoCaptureController::PauseClient, id " << id;
+  DVLOG(1) << "VideoCaptureController::PauseClient: id = " << id;
 
   ControllerClient* client = FindClient(id, event_handler, controller_clients_);
   if (!client)
@@ -293,7 +290,7 @@ bool VideoCaptureController::ResumeClient(
     VideoCaptureControllerID id,
     VideoCaptureControllerEventHandler* event_handler) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  DVLOG(1) << "VideoCaptureController::ResumeClient, id " << id;
+  DVLOG(1) << "VideoCaptureController::ResumeClient: id = " << id;
 
   ControllerClient* client = FindClient(id, event_handler, controller_clients_);
   if (!client)
@@ -333,7 +330,10 @@ bool VideoCaptureController::HasPausedClient() const {
 
 void VideoCaptureController::StopSession(int session_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  DVLOG(1) << "VideoCaptureController::StopSession, id " << session_id;
+  std::ostringstream string_stream;
+  string_stream << "VideoCaptureController::StopSession: session_id = "
+                << session_id;
+  EmitLogMessage(string_stream.str(), 1);
 
   ControllerClient* client = FindClient(session_id, controller_clients_);
 
@@ -385,8 +385,8 @@ void VideoCaptureController::OnNewBufferHandle(
   DCHECK(FindUnretiredBufferContextFromBufferId(buffer_id) ==
          buffer_contexts_.end());
   buffer_contexts_.emplace_back(
-      next_buffer_context_id_++, buffer_id, consumer_feedback_observer_.get(),
-      handle_provider->GetHandleForInterProcessTransit());
+      next_buffer_context_id_++, buffer_id, launched_device_.get(),
+      handle_provider->GetHandleForInterProcessTransit(true /* read only */));
 }
 
 void VideoCaptureController::OnFrameReadyInBuffer(
@@ -457,6 +457,9 @@ void VideoCaptureController::OnFrameReadyInBuffer(
       }
     }
     UMA_HISTOGRAM_COUNTS("Media.VideoCapture.FrameRate", frame_rate);
+    UMA_HISTOGRAM_TIMES("Media.VideoCapture.DelayUntilFirstFrame",
+                        base::TimeTicks::Now() - time_of_start_request_);
+    OnLog("First frame received at VideoCaptureController");
     has_received_frames_ = true;
   }
 }
@@ -484,7 +487,7 @@ void VideoCaptureController::OnError() {
 
 void VideoCaptureController::OnLog(const std::string& message) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  MediaStreamManager::SendMessageToNativeLog("Video capture: " + message);
+  EmitLogMessage(message, 3);
 }
 
 void VideoCaptureController::OnStarted() {
@@ -494,58 +497,130 @@ void VideoCaptureController::OnStarted() {
 }
 
 void VideoCaptureController::OnStartedUsingGpuDecode() {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  OnLog("StartedUsingGpuDecode");
   PerformForClientsWithOpenSession(base::Bind(&CallOnStartedUsingGpuDecode));
+}
+
+void VideoCaptureController::OnDeviceLaunched(
+    std::unique_ptr<LaunchedVideoCaptureDevice> device) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  launched_device_ = std::move(device);
+  for (auto& entry : buffer_contexts_)
+    entry.set_consumer_feedback_observer(launched_device_.get());
+  if (device_launch_observer_) {
+    device_launch_observer_->OnDeviceLaunched(this);
+  }
+}
+
+void VideoCaptureController::OnDeviceLaunchFailed() {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  if (device_launch_observer_) {
+    device_launch_observer_->OnDeviceLaunchFailed(this);
+    device_launch_observer_ = nullptr;
+  }
+}
+
+void VideoCaptureController::OnDeviceLaunchAborted() {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  if (device_launch_observer_) {
+    device_launch_observer_->OnDeviceLaunchAborted();
+    device_launch_observer_ = nullptr;
+  }
+}
+
+void VideoCaptureController::OnDeviceConnectionLost() {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  if (device_launch_observer_) {
+    device_launch_observer_->OnDeviceConnectionLost(this);
+    device_launch_observer_ = nullptr;
+  }
 }
 
 void VideoCaptureController::CreateAndStartDeviceAsync(
     const media::VideoCaptureParams& params,
-    BuildableVideoCaptureDevice::Callbacks* callbacks,
+    VideoCaptureDeviceLaunchObserver* observer,
     base::OnceClosure done_cb) {
-  buildable_device_->CreateAndStartDeviceAsync(this, params, callbacks,
-                                               std::move(done_cb));
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  std::ostringstream string_stream;
+  string_stream
+      << "VideoCaptureController::CreateAndStartDeviceAsync: serial_id = "
+      << serial_id() << ", device_id = " << device_id();
+  EmitLogMessage(string_stream.str(), 1);
+  time_of_start_request_ = base::TimeTicks::Now();
+  device_launch_observer_ = observer;
+  device_launcher_->LaunchDeviceAsync(
+      device_id_, stream_type_, params, GetWeakPtrForIOThread(),
+      base::BindOnce(&VideoCaptureController::OnDeviceConnectionLost,
+                     GetWeakPtrForIOThread()),
+      this, std::move(done_cb));
 }
 
 void VideoCaptureController::ReleaseDeviceAsync(base::OnceClosure done_cb) {
-  buildable_device_->ReleaseDeviceAsync(this, std::move(done_cb));
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  std::ostringstream string_stream;
+  string_stream << "VideoCaptureController::ReleaseDeviceAsync: serial_id = "
+                << serial_id() << ", device_id = " << device_id();
+  EmitLogMessage(string_stream.str(), 1);
+  if (!launched_device_) {
+    device_launcher_->AbortLaunch();
+    return;
+  }
+  launched_device_.reset();
 }
 
 bool VideoCaptureController::IsDeviceAlive() const {
-  return buildable_device_->IsDeviceAlive();
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  return launched_device_ != nullptr;
 }
 
-void VideoCaptureController::GetPhotoCapabilities(
-    media::VideoCaptureDevice::GetPhotoCapabilitiesCallback callback) const {
-  buildable_device_->GetPhotoCapabilities(std::move(callback));
+void VideoCaptureController::GetPhotoState(
+    media::VideoCaptureDevice::GetPhotoStateCallback callback) const {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK(launched_device_);
+  launched_device_->GetPhotoState(std::move(callback));
 }
 
 void VideoCaptureController::SetPhotoOptions(
     media::mojom::PhotoSettingsPtr settings,
     media::VideoCaptureDevice::SetPhotoOptionsCallback callback) {
-  buildable_device_->SetPhotoOptions(std::move(settings), std::move(callback));
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK(launched_device_);
+  launched_device_->SetPhotoOptions(std::move(settings), std::move(callback));
 }
 
 void VideoCaptureController::TakePhoto(
     media::VideoCaptureDevice::TakePhotoCallback callback) {
-  buildable_device_->TakePhoto(std::move(callback));
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK(launched_device_);
+  launched_device_->TakePhoto(std::move(callback));
 }
 
 void VideoCaptureController::MaybeSuspend() {
-  buildable_device_->MaybeSuspendDevice();
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK(launched_device_);
+  launched_device_->MaybeSuspendDevice();
 }
 
 void VideoCaptureController::Resume() {
-  buildable_device_->ResumeDevice();
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK(launched_device_);
+  launched_device_->ResumeDevice();
 }
 
 void VideoCaptureController::RequestRefreshFrame() {
-  buildable_device_->RequestRefreshFrame();
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK(launched_device_);
+  launched_device_->RequestRefreshFrame();
 }
 
 void VideoCaptureController::SetDesktopCaptureWindowIdAsync(
     gfx::NativeViewId window_id,
     base::OnceClosure done_cb) {
-  buildable_device_->SetDesktopCaptureWindowIdAsync(window_id,
-                                                    std::move(done_cb));
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK(launched_device_);
+  launched_device_->SetDesktopCaptureWindowIdAsync(window_id,
+                                                   std::move(done_cb));
 }
 
 VideoCaptureController::ControllerClient* VideoCaptureController::FindClient(
@@ -628,6 +703,12 @@ void VideoCaptureController::PerformForClientsWithOpenSession(
       continue;
     action.Run(client->event_handler, client->controller_id);
   }
+}
+
+void VideoCaptureController::EmitLogMessage(const std::string& message,
+                                            int verbose_log_level) {
+  DVLOG(verbose_log_level) << message;
+  emit_log_message_cb_.Run(message);
 }
 
 }  // namespace content

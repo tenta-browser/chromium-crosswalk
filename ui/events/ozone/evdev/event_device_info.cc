@@ -251,6 +251,11 @@ void EventDeviceInfo::SetDeviceType(InputDeviceType type) {
   device_type_ = type;
 }
 
+void EventDeviceInfo::SetId(uint16_t vendor_id, uint16_t product_id) {
+  vendor_id_ = vendor_id;
+  product_id_ = product_id;
+}
+
 bool EventDeviceInfo::HasEventType(unsigned int type) const {
   if (type > EV_MAX)
     return false;
@@ -360,12 +365,12 @@ bool EventDeviceInfo::HasDirect() const {
     return has_direct;
 
   switch (ProbeLegacyAbsoluteDevice()) {
-    case LegacyAbsoluteDeviceType::LADT_TOUCHSCREEN:
+    case LegacyAbsoluteDeviceType::TOUCHSCREEN:
       return true;
 
-    case LegacyAbsoluteDeviceType::LADT_TABLET:
-    case LegacyAbsoluteDeviceType::LADT_TOUCHPAD:
-    case LegacyAbsoluteDeviceType::LADT_NONE:
+    case LegacyAbsoluteDeviceType::TABLET:
+    case LegacyAbsoluteDeviceType::TOUCHPAD:
+    case LegacyAbsoluteDeviceType::NONE:
       return false;
   }
 
@@ -380,12 +385,12 @@ bool EventDeviceInfo::HasPointer() const {
     return has_pointer;
 
   switch (ProbeLegacyAbsoluteDevice()) {
-    case LegacyAbsoluteDeviceType::LADT_TOUCHPAD:
-    case LegacyAbsoluteDeviceType::LADT_TABLET:
+    case LegacyAbsoluteDeviceType::TOUCHPAD:
+    case LegacyAbsoluteDeviceType::TABLET:
       return true;
 
-    case LegacyAbsoluteDeviceType::LADT_TOUCHSCREEN:
-    case LegacyAbsoluteDeviceType::LADT_NONE:
+    case LegacyAbsoluteDeviceType::TOUCHSCREEN:
+    case LegacyAbsoluteDeviceType::NONE:
       return false;
   }
 
@@ -427,29 +432,46 @@ bool EventDeviceInfo::HasTouchscreen() const {
   return HasAbsXY() && HasDirect();
 }
 
+bool EventDeviceInfo::HasGamepad() const {
+  if (!HasEventType(EV_KEY))
+    return false;
+
+  // If the device has gamepad button, and it's not keyboard or tablet, it will
+  // be considered to be a gamepad. Note: this WILL have false positives and
+  // false negatives. A concrete solution will use ID_INPUT_JOYSTICK with some
+  // patch removing false positives.
+  bool support_gamepad_btn = false;
+  for (int key = BTN_JOYSTICK; key <= BTN_THUMBR; ++key) {
+    if (HasKeyEvent(key))
+      support_gamepad_btn = true;
+  }
+
+  return support_gamepad_btn && !HasTablet() && !HasKeyboard();
+}
+
 EventDeviceInfo::LegacyAbsoluteDeviceType
 EventDeviceInfo::ProbeLegacyAbsoluteDevice() const {
   if (!HasAbsXY())
-    return LegacyAbsoluteDeviceType::LADT_NONE;
+    return LegacyAbsoluteDeviceType::NONE;
 
   // Treat internal stylus devices as touchscreens.
   if (device_type_ == INPUT_DEVICE_INTERNAL && HasStylus())
-    return LegacyAbsoluteDeviceType::LADT_TOUCHSCREEN;
+    return LegacyAbsoluteDeviceType::TOUCHSCREEN;
 
   if (HasStylus())
-    return LegacyAbsoluteDeviceType::LADT_TABLET;
+    return LegacyAbsoluteDeviceType::TABLET;
 
   if (HasKeyEvent(BTN_TOOL_FINGER) && HasKeyEvent(BTN_TOUCH))
-    return LegacyAbsoluteDeviceType::LADT_TOUCHPAD;
+    return LegacyAbsoluteDeviceType::TOUCHPAD;
 
   if (HasKeyEvent(BTN_TOUCH))
-    return LegacyAbsoluteDeviceType::LADT_TOUCHSCREEN;
+    return LegacyAbsoluteDeviceType::TOUCHSCREEN;
 
   // ABS_Z mitigation for extra device on some Elo devices.
   if (HasKeyEvent(BTN_LEFT) && !HasAbsEvent(ABS_Z))
-    return LegacyAbsoluteDeviceType::LADT_TOUCHSCREEN;
+    return LegacyAbsoluteDeviceType::TOUCHSCREEN;
 
-  return LegacyAbsoluteDeviceType::LADT_NONE;
+  return LegacyAbsoluteDeviceType::NONE;
 }
 
 }  // namespace ui

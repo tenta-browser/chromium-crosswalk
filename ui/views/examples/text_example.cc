@@ -50,6 +50,17 @@ const char* kTextExamples[] = { "Short", "Long", "Ampersands", "RTL Hebrew", };
 const char* kElideBehaviors[] = { "Elide", "No Elide", "Fade", };
 const char* kPrefixOptions[] = { "Default", "Show", "Hide", };
 const char* kHorizontalAligments[] = { "Default", "Left", "Center", "Right", };
+constexpr const char* kWeightLabels[] = {
+    "Thin",     "Extra Light", "Light",      "Normal", "Medium",
+    "Semibold", "Bold",        "Extra Bold", "Black",
+};
+constexpr gfx::Font::Weight kFontWeights[]{
+    gfx::Font::Weight::THIN,   gfx::Font::Weight::EXTRA_LIGHT,
+    gfx::Font::Weight::LIGHT,  gfx::Font::Weight::NORMAL,
+    gfx::Font::Weight::MEDIUM, gfx::Font::Weight::SEMIBOLD,
+    gfx::Font::Weight::BOLD,   gfx::Font::Weight::EXTRA_BOLD,
+    gfx::Font::Weight::BLACK,
+};
 
 // Toggles bit |flag| on |flags| based on state of |checkbox|.
 void SetFlagFromCheckbox(Checkbox* checkbox, int* flags, int flag) {
@@ -87,16 +98,23 @@ class TextExample::TextExampleView : public View {
   void set_elide(gfx::ElideBehavior elide) { elide_ = elide; }
 
   int GetStyle() const { return font_list_.GetFontStyle(); }
-  void SetStyle(int style) { font_list_ = font_list_.DeriveWithStyle(style); }
+  void SetStyle(int style) {
+    base_font_ = base_font_.DeriveWithStyle(style);
+    font_list_ = font_list_.DeriveWithStyle(style);
+  }
 
   gfx::Font::Weight GetWeight() const { return font_list_.GetFontWeight(); }
   void SetWeight(gfx::Font::Weight weight) {
-    font_list_ = font_list_.DeriveWithWeight(weight);
+    font_list_ = base_font_.DeriveWithWeight(weight);
   }
 
  private:
   // The font used for drawing the text.
   gfx::FontList font_list_;
+
+  // The font without any bold attributes. Mac font APIs struggle to derive UI
+  // fonts from a base font that isn't NORMAL or BOLD.
+  gfx::FontList base_font_;
 
   // The text to draw.
   base::string16 text_;
@@ -126,12 +144,12 @@ Checkbox* TextExample::AddCheckbox(GridLayout* layout, const char* name) {
 
 Combobox* TextExample::AddCombobox(GridLayout* layout,
                                    const char* name,
-                                   const char** strings,
+                                   const char* const* strings,
                                    int count) {
   layout->StartRow(0, 0);
   layout->AddView(new Label(base::ASCIIToUTF16(name)));
   example_combobox_model_.push_back(
-      base::MakeUnique<ExampleComboboxModel>(strings, count));
+      std::make_unique<ExampleComboboxModel>(strings, count));
   Combobox* combobox = new Combobox(example_combobox_model_.back().get());
   combobox->SetSelectedIndex(0);
   combobox->set_listener(this);
@@ -142,8 +160,7 @@ Combobox* TextExample::AddCombobox(GridLayout* layout,
 void TextExample::CreateExampleView(View* container) {
   text_view_ = new TextExampleView;
   text_view_->SetBorder(CreateSolidBorder(1, SK_ColorGRAY));
-  GridLayout* layout = new GridLayout(container);
-  container->SetLayoutManager(layout);
+  GridLayout* layout = GridLayout::CreateAndInstall(container);
   layout->AddPaddingRow(0, 8);
 
   ColumnSet* column_set = layout->AddColumnSet(0);
@@ -163,11 +180,13 @@ void TextExample::CreateExampleView(View* container) {
                            arraysize(kPrefixOptions));
   text_cb_ = AddCombobox(layout, "Example Text", kTextExamples,
                          arraysize(kTextExamples));
+  weight_cb_ = AddCombobox(layout, "Font Weight", kWeightLabels,
+                           arraysize(kWeightLabels));
+  weight_cb_->SelectValue(base::ASCIIToUTF16("Normal"));
 
   layout->StartRow(0, 0);
   multiline_checkbox_ = AddCheckbox(layout, "Multiline");
   break_checkbox_ = AddCheckbox(layout, "Character Break");
-  bold_checkbox_ = AddCheckbox(layout, "Bold");
   italic_checkbox_ = AddCheckbox(layout, "Italic");
   underline_checkbox_ = AddCheckbox(layout, "Underline");
 
@@ -191,8 +210,6 @@ void TextExample::ButtonPressed(Button* button, const ui::Event& event) {
   SetFlagFromCheckbox(underline_checkbox_, &style, gfx::Font::UNDERLINE);
   text_view_->set_flags(flags);
   text_view_->SetStyle(style);
-  text_view_->SetWeight(bold_checkbox_->checked() ? gfx::Font::Weight::BOLD
-                                                  : gfx::Font::Weight::NORMAL);
   text_view_->SchedulePaint();
 }
 
@@ -254,6 +271,8 @@ void TextExample::OnPerformAction(Combobox* combobox) {
         flags |= gfx::Canvas::HIDE_PREFIX;
         break;
     }
+  } else if (combobox == weight_cb_) {
+    text_view_->SetWeight(kFontWeights[combobox->selected_index()]);
   }
   text_view_->set_flags(flags);
   text_view_->SchedulePaint();

@@ -8,7 +8,7 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "cc/surfaces/surface_manager.h"
+#include "components/viz/host/host_frame_sink_manager.h"
 #include "content/browser/compositor/image_transport_factory.h"
 #include "content/browser/compositor/surface_utils.h"
 #include "content/browser/dom_storage/dom_storage_context_wrapper.h"
@@ -30,7 +30,12 @@
 #include "media/base/video_frame.h"
 #include "ui/aura/env.h"
 #include "ui/compositor/compositor.h"
+#include "ui/compositor/layer_type.h"
 #include "ui/gfx/geometry/rect.h"
+
+#if defined(USE_AURA)
+#include "ui/aura/test/test_window_delegate.h"
+#endif
 
 namespace content {
 
@@ -41,6 +46,7 @@ void InitNavigateParams(FrameHostMsg_DidCommitProvisionalLoad_Params* params,
                         ui::PageTransition transition) {
   params->nav_entry_id = nav_entry_id;
   params->url = url;
+  params->origin = url::Origin::Create(url);
   params->referrer = Referrer();
   params->transition = transition;
   params->redirects = std::vector<GURL>();
@@ -62,23 +68,33 @@ TestRenderWidgetHostView::TestRenderWidgetHostView(RenderWidgetHost* rwh)
       background_color_(SK_ColorWHITE) {
 #if defined(OS_ANDROID)
   frame_sink_id_ = AllocateFrameSinkId();
-  GetSurfaceManager()->RegisterFrameSinkId(frame_sink_id_);
+  GetHostFrameSinkManager()->RegisterFrameSinkId(frame_sink_id_, this);
 #else
   // Not all tests initialize or need an image transport factory.
   if (ImageTransportFactory::GetInstance()) {
     frame_sink_id_ = AllocateFrameSinkId();
-    GetSurfaceManager()->RegisterFrameSinkId(frame_sink_id_);
+    GetHostFrameSinkManager()->RegisterFrameSinkId(frame_sink_id_, this);
+#if DCHECK_IS_ON()
+    GetHostFrameSinkManager()->SetFrameSinkDebugLabel(
+        frame_sink_id_, "TestRenderWidgetHostView");
+#endif
   }
 #endif
 
   rwh_->SetView(this);
+
+#if defined(USE_AURA)
+  window_.reset(new aura::Window(
+      aura::test::TestWindowDelegate::CreateSelfDestroyingDelegate()));
+  window_->set_owned_by_parent(false);
+  window_->Init(ui::LayerType::LAYER_NOT_DRAWN);
+#endif
 }
 
 TestRenderWidgetHostView::~TestRenderWidgetHostView() {
-  cc::SurfaceManager* manager = GetSurfaceManager();
-  if (manager) {
+  viz::HostFrameSinkManager* manager = GetHostFrameSinkManager();
+  if (manager)
     manager->InvalidateFrameSinkId(frame_sink_id_);
-  }
 }
 
 RenderWidgetHost* TestRenderWidgetHostView::GetRenderWidgetHost() const {
@@ -90,7 +106,11 @@ gfx::Vector2dF TestRenderWidgetHostView::GetLastScrollOffset() const {
 }
 
 gfx::NativeView TestRenderWidgetHostView::GetNativeView() const {
+#if defined(USE_AURA)
+  return window_.get();
+#else
   return nullptr;
+#endif
 }
 
 gfx::NativeViewAccessible TestRenderWidgetHostView::GetNativeViewAccessible() {
@@ -181,14 +201,18 @@ gfx::Rect TestRenderWidgetHostView::GetBoundsInRootWindow() {
 }
 
 void TestRenderWidgetHostView::DidCreateNewRendererCompositorFrameSink(
-    cc::mojom::MojoCompositorFrameSinkClient* renderer_compositor_frame_sink) {
+    viz::mojom::CompositorFrameSinkClient* renderer_compositor_frame_sink) {
   did_change_compositor_frame_sink_ = true;
 }
 
 void TestRenderWidgetHostView::SubmitCompositorFrame(
-    const cc::LocalSurfaceId& local_surface_id,
-    cc::CompositorFrame frame) {
+    const viz::LocalSurfaceId& local_surface_id,
+    viz::CompositorFrame frame,
+    viz::mojom::HitTestRegionListPtr hit_test_region_list) {
   did_swap_compositor_frame_ = true;
+  uint32_t frame_token = frame.metadata.frame_token;
+  if (frame_token)
+    OnFrameTokenChanged(frame_token);
 }
 
 bool TestRenderWidgetHostView::LockMouse() {
@@ -198,8 +222,18 @@ bool TestRenderWidgetHostView::LockMouse() {
 void TestRenderWidgetHostView::UnlockMouse() {
 }
 
-cc::FrameSinkId TestRenderWidgetHostView::GetFrameSinkId() {
+viz::FrameSinkId TestRenderWidgetHostView::GetFrameSinkId() {
   return frame_sink_id_;
+}
+
+void TestRenderWidgetHostView::OnFirstSurfaceActivation(
+    const viz::SurfaceInfo& surface_info) {
+  // TODO(fsamuel): Once surface synchronization is turned on, the fallback
+  // surface should be set here.
+}
+
+void TestRenderWidgetHostView::OnFrameTokenChanged(uint32_t frame_token) {
+  OnFrameTokenChangedForView(frame_token);
 }
 
 TestRenderViewHost::TestRenderViewHost(
@@ -236,21 +270,29 @@ bool TestRenderViewHost::CreateTestRenderView(
   FrameReplicationState replicated_state;
   replicated_state.name = base::UTF16ToUTF8(frame_name);
   return CreateRenderView(opener_frame_route_id, proxy_route_id,
-                          replicated_state, window_was_created_with_opener);
+                          base::UnguessableToken::Create(), replicated_state,
+                          window_was_created_with_opener);
 }
 
 bool TestRenderViewHost::CreateRenderView(
     int opener_frame_route_id,
     int proxy_route_id,
+    const base::UnguessableToken& devtools_frame_token,
     const FrameReplicationState& replicated_frame_state,
     bool window_was_created_with_opener) {
   DCHECK(!IsRenderViewLive());
   GetWidget()->set_renderer_initialized(true);
   DCHECK(IsRenderViewLive());
   opener_frame_route_id_ = opener_frame_route_id;
-  RenderFrameHost* main_frame = GetMainFrame();
-  if (main_frame)
-    static_cast<RenderFrameHostImpl*>(main_frame)->SetRenderFrameCreated(true);
+  RenderFrameHostImpl* main_frame =
+      static_cast<RenderFrameHostImpl*>(GetMainFrame());
+  if (main_frame && is_active()) {
+    service_manager::mojom::InterfaceProviderPtr
+        stub_interface_provider_request;
+    main_frame->BindInterfaceProviderRequest(
+        mojo::MakeRequest(&stub_interface_provider_request));
+    main_frame->SetRenderFrameCreated(true);
+  }
 
   return true;
 }

@@ -32,6 +32,7 @@
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "content/public/browser/plugin_service.h"
+#include "content/public/common/webplugininfo.h"
 #include "extensions/browser/extension_prefs_scope.h"
 #include "extensions/common/error_utils.h"
 
@@ -204,6 +205,9 @@ ContentSettingsContentSettingSetFunction::Run() {
   ContentSetting setting;
   EXTENSION_FUNCTION_VALIDATE(
       content_settings::ContentSettingFromString(setting_str, &setting));
+  // The content settings extensions API does not support setting any content
+  // settings to |CONTENT_SETTING_DEFAULT|.
+  EXTENSION_FUNCTION_VALIDATE(CONTENT_SETTING_DEFAULT != setting);
   EXTENSION_FUNCTION_VALIDATE(
       content_settings::ContentSettingsRegistry::GetInstance()
           ->Get(content_type)
@@ -216,8 +220,9 @@ ContentSettingsContentSettingSetFunction::Run() {
   // [ask, block] for the default setting.
   if (primary_pattern == ContentSettingsPattern::Wildcard() &&
       secondary_pattern == ContentSettingsPattern::Wildcard() &&
-      !HostContentSettingsMap::IsDefaultSettingAllowedForType(setting,
-                                                              content_type)) {
+      !content_settings::ContentSettingsRegistry::GetInstance()
+           ->Get(content_type)
+           ->IsDefaultSettingValid(setting)) {
     static const char kUnsupportedDefaultSettingError[] =
         "'%s' is not supported as the default setting of %s.";
 
@@ -279,10 +284,10 @@ bool ContentSettingsContentSettingGetResourceIdentifiersFunction::RunAsync() {
     return true;
   }
 
-  PluginService::GetInstance()->GetPlugins(
-      base::Bind(&ContentSettingsContentSettingGetResourceIdentifiersFunction::
-                 OnGotPlugins,
-                 this));
+  PluginService::GetInstance()->GetPlugins(base::BindOnce(
+      &ContentSettingsContentSettingGetResourceIdentifiersFunction::
+          OnGotPlugins,
+      this));
   return true;
 }
 
@@ -307,11 +312,11 @@ void ContentSettingsContentSettingGetResourceIdentifiersFunction::OnGotPlugins(
   }
   SetResult(std::move(list));
   BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE, base::Bind(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(
           &ContentSettingsContentSettingGetResourceIdentifiersFunction::
-          SendResponse,
-          this,
-          true));
+              SendResponse,
+          this, true));
 }
 
 }  // namespace extensions

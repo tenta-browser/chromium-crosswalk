@@ -43,10 +43,18 @@ class ExclusiveAccessBubbleViewsContext {
   virtual gfx::Rect GetClientAreaBoundsInScreen() const = 0;
 
   // Returns true if immersive mode is enabled.
-  virtual bool IsImmersiveModeEnabled() = 0;
+  virtual bool IsImmersiveModeEnabled() const = 0;
 
   // Returns the bounds of the top level View in screen coordinate system.
   virtual gfx::Rect GetTopContainerBoundsInScreen() = 0;
+
+  // Destroy any exclusive access bubble. This allows the bubble to ask its
+  // owner to clean up when the bubble observes its native widget being
+  // destroyed before the owner requested it.
+  virtual void DestroyAnyExclusiveAccessBubble() = 0;
+
+  // Returns true if mouse position can trigger showing the bubble.
+  virtual bool CanTriggerOnMouse() const = 0;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_EXCLUSIVE_ACCESS_BUBBLE_VIEWS_CONTEXT_H_

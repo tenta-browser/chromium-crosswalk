@@ -11,11 +11,8 @@
 #include "printing/printing_context.h"
 
 namespace base {
-class SequencedTaskRunner;
-}
-
-namespace tracked_objects {
 class Location;
+class SequencedTaskRunner;
 }
 
 namespace printing {
@@ -26,6 +23,7 @@ class PrintSettings;
 class PrintJobWorkerOwner
     : public base::RefCountedThreadSafe<PrintJobWorkerOwner> {
  public:
+  // Can only be called in single-threaded context.
   PrintJobWorkerOwner();
 
   // Finishes the initialization began by PrintJobWorker::GetSettings().
@@ -44,14 +42,12 @@ class PrintJobWorkerOwner
   // Cookie uniquely identifying the PrintedDocument and/or loaded settings.
   virtual int cookie() const = 0;
 
-  // Returns true if the current thread is a thread on which a task
-  // may be run, and false if no task will be run on the current
-  // thread.
-  bool RunsTasksOnCurrentThread() const;
+  // Returns true if tasks posted to this TaskRunner are sequenced
+  // with this call.
+  bool RunsTasksInCurrentSequence() const;
 
   // Posts the given task to be run.
-  bool PostTask(const tracked_objects::Location& from_here,
-                const base::Closure& task);
+  bool PostTask(const base::Location& from_here, const base::Closure& task);
 
  protected:
   friend class base::RefCountedThreadSafe<PrintJobWorkerOwner>;

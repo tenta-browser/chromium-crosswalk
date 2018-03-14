@@ -36,7 +36,6 @@ class GlobalErrorBubbleView : public views::BubbleDialogDelegateView,
   void Init() override;
   bool ShouldShowCloseButton() const override;
   void UpdateButton(views::LabelButton* button, ui::DialogButton type) override;
-  bool ShouldDefaultButtonBeBlue() const override;
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   int GetDialogButtons() const override;
   bool Cancel() override;
@@ -47,7 +46,7 @@ class GlobalErrorBubbleView : public views::BubbleDialogDelegateView,
   void CloseBubbleView() override;
 
  private:
-  Browser* browser_;
+  Browser* const browser_;
   base::WeakPtr<GlobalErrorWithStandardBubble> error_;
 
   std::unique_ptr<ElevationIconSetter> elevation_icon_setter_;

@@ -30,8 +30,8 @@
 
 #include "bindings/core/v8/V8ErrorEvent.h"
 
-#include "bindings/core/v8/V8Binding.h"
-#include "bindings/core/v8/V8PrivateProperty.h"
+#include "bindings/core/v8/V8BindingForCore.h"
+#include "platform/bindings/V8PrivateProperty.h"
 
 namespace blink {
 
@@ -47,7 +47,7 @@ void V8ErrorEvent::errorAttributeGetterCustom(
     return;
   }
 
-  ErrorEvent* event = V8ErrorEvent::toImpl(info.Holder());
+  ErrorEvent* event = V8ErrorEvent::ToImpl(info.Holder());
   ScriptState* script_state = ScriptState::From(isolate->GetCurrentContext());
   ScriptValue error = event->error(script_state);
   v8::Local<v8::Value> error_value =

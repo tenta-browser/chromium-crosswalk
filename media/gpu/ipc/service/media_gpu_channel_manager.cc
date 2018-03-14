@@ -21,14 +21,14 @@ MediaGpuChannelManager::MediaGpuChannelManager(
     gpu::GpuChannelManager* channel_manager)
     : channel_manager_(channel_manager) {}
 
-MediaGpuChannelManager::~MediaGpuChannelManager() {}
+MediaGpuChannelManager::~MediaGpuChannelManager() = default;
 
 void MediaGpuChannelManager::AddChannel(int32_t client_id) {
   gpu::GpuChannel* gpu_channel = channel_manager_->LookupChannel(client_id);
   DCHECK(gpu_channel);
   base::UnguessableToken channel_token = base::UnguessableToken::Create();
   std::unique_ptr<MediaGpuChannel> media_gpu_channel(
-      new MediaGpuChannel(gpu_channel, channel_token));
+      new MediaGpuChannel(gpu_channel, channel_token, overlay_factory_cb_));
   gpu_channel->SetUnhandledMessageListener(media_gpu_channel.get());
   media_gpu_channels_[client_id] = std::move(media_gpu_channel);
   channel_to_token_[client_id] = channel_token;
@@ -56,6 +56,15 @@ gpu::GpuChannel* MediaGpuChannelManager::LookupChannel(
   if (it == token_to_channel_.end())
     return nullptr;
   return channel_manager_->LookupChannel(it->second);
+}
+
+void MediaGpuChannelManager::SetOverlayFactory(
+    AndroidOverlayMojoFactoryCB overlay_factory_cb) {
+  overlay_factory_cb_ = std::move(overlay_factory_cb);
+}
+
+AndroidOverlayMojoFactoryCB MediaGpuChannelManager::GetOverlayFactory() {
+  return overlay_factory_cb_;
 }
 
 }  // namespace media

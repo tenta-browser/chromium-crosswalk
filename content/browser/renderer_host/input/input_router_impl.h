@@ -1,4 +1,4 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,57 +10,58 @@
 #include <memory>
 #include <queue>
 
+#include "base/containers/flat_map.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/time/time.h"
+#include "cc/input/touch_action.h"
 #include "content/browser/renderer_host/input/gesture_event_queue.h"
 #include "content/browser/renderer_host/input/input_router.h"
+#include "content/browser/renderer_host/input/input_router_client.h"
 #include "content/browser/renderer_host/input/mouse_wheel_event_queue.h"
 #include "content/browser/renderer_host/input/touch_action_filter.h"
 #include "content/browser/renderer_host/input/touch_event_queue.h"
 #include "content/browser/renderer_host/input/touchpad_tap_suppression_controller.h"
-#include "content/common/input/input_event_dispatch_type.h"
 #include "content/common/input/input_event_stream_validator.h"
+#include "content/common/input/input_handler.mojom.h"
+#include "content/common/widget.mojom.h"
 #include "content/public/browser/native_web_keyboard_event.h"
-
-namespace IPC {
-class Sender;
-}
+#include "content/public/common/input_event_ack_source.h"
+#include "mojo/public/cpp/bindings/binding.h"
 
 namespace ui {
 class LatencyInfo;
 struct DidOverscrollParams;
-}
+}  // namespace ui
 
 namespace content {
 
-class InputAckHandler;
-class InputRouterClient;
-struct InputEventAck;
+class InputDispositionHandler;
+
+class CONTENT_EXPORT InputRouterImplClient : public InputRouterClient {
+ public:
+  virtual mojom::WidgetInputHandler* GetWidgetInputHandler() = 0;
+  virtual void OnImeCancelComposition() = 0;
+  virtual void OnImeCompositionRangeChanged(
+      const gfx::Range& range,
+      const std::vector<gfx::Rect>& bounds) = 0;
+};
 
 // A default implementation for browser input event routing.
 class CONTENT_EXPORT InputRouterImpl
-    : public NON_EXPORTED_BASE(InputRouter),
-      public NON_EXPORTED_BASE(GestureEventQueueClient),
-      public NON_EXPORTED_BASE(MouseWheelEventQueueClient),
-      public NON_EXPORTED_BASE(TouchEventQueueClient),
-      public NON_EXPORTED_BASE(TouchpadTapSuppressionControllerClient) {
+    : public InputRouter,
+      public GestureEventQueueClient,
+      public MouseWheelEventQueueClient,
+      public TouchEventQueueClient,
+      public TouchpadTapSuppressionControllerClient,
+      public mojom::WidgetInputHandlerHost {
  public:
-  struct CONTENT_EXPORT Config {
-    Config();
-    GestureEventQueue::Config gesture_config;
-    TouchEventQueue::Config touch_config;
-  };
-
-  InputRouterImpl(IPC::Sender* sender,
-                  InputRouterClient* client,
-                  InputAckHandler* ack_handler,
-                  int routing_id,
+  InputRouterImpl(InputRouterImplClient* client,
+                  InputDispositionHandler* disposition_handler,
                   const Config& config);
   ~InputRouterImpl() override;
 
   // InputRouter
-  bool SendInput(std::unique_ptr<IPC::Message> message) override;
   void SendMouseEvent(const MouseEventWithLatencyInfo& mouse_event) override;
   void SendWheelEvent(
       const MouseWheelEventWithLatencyInfo& wheel_event) override;
@@ -69,23 +70,32 @@ class CONTENT_EXPORT InputRouterImpl
   void SendGestureEvent(
       const GestureEventWithLatencyInfo& gesture_event) override;
   void SendTouchEvent(const TouchEventWithLatencyInfo& touch_event) override;
-  const NativeWebKeyboardEvent* GetLastKeyboardEvent() const override;
   void NotifySiteIsMobileOptimized(bool is_mobile_optimized) override;
-  void RequestNotificationWhenFlushed() override;
   bool HasPendingEvents() const override;
   void SetDeviceScaleFactor(float device_scale_factor) override;
+  void SetFrameTreeNodeId(int frame_tree_node_id) override;
+  void SetForceEnableZoom(bool enabled) override;
+  cc::TouchAction AllowedTouchAction() override;
+  void BindHost(mojom::WidgetInputHandlerHostRequest request,
+                bool frame_handler) override;
+
+  // InputHandlerHost impl
+  void CancelTouchTimeout() override;
+  void SetWhiteListedTouchAction(cc::TouchAction touch_action,
+                                 uint32_t unique_touch_event_id,
+                                 InputEventAckState state) override;
+  void DidOverscroll(const ui::DidOverscrollParams& params) override;
+  void DidStopFlinging() override;
+  void ImeCancelComposition() override;
+  void ImeCompositionRangeChanged(
+      const gfx::Range& range,
+      const std::vector<gfx::Rect>& bounds) override;
 
   // IPC::Listener
   bool OnMessageReceived(const IPC::Message& message) override;
 
-  void SetFrameTreeNodeId(int frameTreeNodeId) override;
-
  private:
   friend class InputRouterImplTest;
-  FRIEND_TEST_ALL_PREFIXES(SitePerProcessBrowserTest,
-                           SubframeTouchEventRouting);
-  FRIEND_TEST_ALL_PREFIXES(SitePerProcessBrowserTest,
-                           MainframeTouchEventRouting);
 
   // Keeps track of last position of touch points and sets MovementXY for them.
   void SetMovementXYForTouchPoints(blink::WebTouchEvent* event);
@@ -98,100 +108,71 @@ class CONTENT_EXPORT InputRouterImpl
   void SendTouchEventImmediately(
       const TouchEventWithLatencyInfo& touch_event) override;
   void OnTouchEventAck(const TouchEventWithLatencyInfo& event,
+                       InputEventAckSource ack_source,
                        InputEventAckState ack_result) override;
-  void OnFilteringTouchEvent(
-      const blink::WebTouchEvent& touch_event) override;
+  void OnFilteringTouchEvent(const blink::WebTouchEvent& touch_event) override;
 
   // GestureEventFilterClient
   void SendGestureEventImmediately(
       const GestureEventWithLatencyInfo& gesture_event) override;
   void OnGestureEventAck(const GestureEventWithLatencyInfo& event,
+                         InputEventAckSource ack_source,
                          InputEventAckState ack_result) override;
 
   // MouseWheelEventQueueClient
   void SendMouseWheelEventImmediately(
       const MouseWheelEventWithLatencyInfo& touch_event) override;
   void OnMouseWheelEventAck(const MouseWheelEventWithLatencyInfo& event,
+                            InputEventAckSource ack_source,
                             InputEventAckState ack_result) override;
   void ForwardGestureEventWithLatencyInfo(
       const blink::WebGestureEvent& gesture_event,
       const ui::LatencyInfo& latency_info) override;
 
-  bool SendMoveCaret(std::unique_ptr<IPC::Message> message);
-  bool SendSelectMessage(std::unique_ptr<IPC::Message> message);
-  bool Send(IPC::Message* message);
+  void FilterAndSendWebInputEvent(
+      const blink::WebInputEvent& input_event,
+      const ui::LatencyInfo& latency_info,
+      mojom::WidgetInputHandler::DispatchEventCallback callback);
 
-  // Filters and forwards |input_event| to the appropriate handler.
-  void FilterAndSendWebInputEvent(const blink::WebInputEvent& input_event,
-                                  const ui::LatencyInfo& latency_info);
-
-  // Utility routine for filtering and forwarding |input_event| to the
-  // appropriate handler. |input_event| will be offered to the overscroll
-  // controller, client and renderer, in that order.
-  void OfferToHandlers(const blink::WebInputEvent& input_event,
-                       const ui::LatencyInfo& latency_info);
-
-  // Returns true if |input_event| was consumed by the client.
-  bool OfferToClient(const blink::WebInputEvent& input_event,
-                     const ui::LatencyInfo& latency_info);
-
-  // Returns true if |input_event| was successfully sent to the renderer
-  // as an async IPC Message.
-  bool OfferToRenderer(const blink::WebInputEvent& input_event,
-                       const ui::LatencyInfo& latency_info,
-                       InputEventDispatchType dispatch_type);
+  void KeyboardEventHandled(
+      const NativeWebKeyboardEventWithLatencyInfo& event,
+      InputEventAckSource source,
+      const ui::LatencyInfo& latency,
+      InputEventAckState state,
+      const base::Optional<ui::DidOverscrollParams>& overscroll,
+      const base::Optional<cc::TouchAction>& touch_action);
+  void MouseEventHandled(
+      const MouseEventWithLatencyInfo& event,
+      InputEventAckSource source,
+      const ui::LatencyInfo& latency,
+      InputEventAckState state,
+      const base::Optional<ui::DidOverscrollParams>& overscroll,
+      const base::Optional<cc::TouchAction>& touch_action);
+  void TouchEventHandled(
+      const TouchEventWithLatencyInfo& touch_event,
+      InputEventAckSource source,
+      const ui::LatencyInfo& latency,
+      InputEventAckState state,
+      const base::Optional<ui::DidOverscrollParams>& overscroll,
+      const base::Optional<cc::TouchAction>& touch_action);
+  void GestureEventHandled(
+      const GestureEventWithLatencyInfo& gesture_event,
+      InputEventAckSource source,
+      const ui::LatencyInfo& latency,
+      InputEventAckState state,
+      const base::Optional<ui::DidOverscrollParams>& overscroll,
+      const base::Optional<cc::TouchAction>& touch_action);
+  void MouseWheelEventHandled(
+      const MouseWheelEventWithLatencyInfo& event,
+      InputEventAckSource source,
+      const ui::LatencyInfo& latency,
+      InputEventAckState state,
+      const base::Optional<ui::DidOverscrollParams>& overscroll,
+      const base::Optional<cc::TouchAction>& touch_action);
 
   // IPC message handlers
-  void OnInputEventAck(const InputEventAck& ack);
-  void OnDidOverscroll(const ui::DidOverscrollParams& params);
-  void OnMsgMoveCaretAck();
-  void OnSelectMessageAck();
   void OnHasTouchEventHandlers(bool has_handlers);
-  void OnSetTouchAction(TouchAction touch_action);
-  void OnDidStopFlinging();
-
-  // Indicates the source of an ack provided to |ProcessInputEventAck()|.
-  // The source is tracked by |current_ack_source_|, which aids in ack routing.
-  enum AckSource {
-    RENDERER,
-    CLIENT,
-    IGNORING_DISPOSITION,
-    ACK_SOURCE_NONE
-  };
-  // Note: This function may result in |this| being deleted, and as such
-  // should be the last method called in any internal chain of event handling.
-  void ProcessInputEventAck(blink::WebInputEvent::Type event_type,
-                            InputEventAckState ack_result,
-                            const ui::LatencyInfo& latency_info,
-                            uint32_t unique_touch_event_id,
-                            AckSource ack_source);
-
-  // Dispatches the ack'ed event to |ack_handler_|.
-  void ProcessKeyboardAck(blink::WebInputEvent::Type type,
-                          InputEventAckState ack_result,
-                          const ui::LatencyInfo& latency);
-
-  // Forwards a valid |next_mouse_move_| if |type| is MouseMove.
-  void ProcessMouseAck(blink::WebInputEvent::Type type,
-                       InputEventAckState ack_result,
-                       const ui::LatencyInfo& latency);
-
-  // Dispatches the ack'ed event to |ack_handler_|, forwarding queued events
-  // from |coalesced_mouse_wheel_events_|.
-  void ProcessWheelAck(InputEventAckState ack_result,
-                       const ui::LatencyInfo& latency);
-
-  // Forwards the event ack to |gesture_event_queue|, potentially triggering
-  // dispatch of queued gesture events.
-  void ProcessGestureAck(blink::WebInputEvent::Type type,
-                         InputEventAckState ack_result,
-                         const ui::LatencyInfo& latency);
-
-  // Forwards the event ack to |touch_event_queue_|, potentially triggering
-  // dispatch of queued touch events, or the creation of gesture events.
-  void ProcessTouchAck(InputEventAckState ack_result,
-                       const ui::LatencyInfo& latency,
-                       uint32_t unique_touch_event_id);
+  void OnSetTouchAction(cc::TouchAction touch_action);
 
   // Called when a touch timeout-affecting bit has changed, in turn toggling the
   // touch ack timeout feature of the |touch_event_queue_| as appropriate. Input
@@ -200,50 +181,9 @@ class CONTENT_EXPORT InputRouterImpl
   // non-zero touch timeout configuration.
   void UpdateTouchAckTimeoutEnabled();
 
-  // If a flush has been requested, signals a completed flush to the client if
-  // all events have been dispatched (i.e., |HasPendingEvents()| is false).
-  void SignalFlushedIfNecessary();
-
-  int routing_id() const { return routing_id_; }
-
-  IPC::Sender* sender_;
-  InputRouterClient* client_;
-  InputAckHandler* ack_handler_;
-  int routing_id_;
+  InputRouterImplClient* client_;
+  InputDispositionHandler* disposition_handler_;
   int frame_tree_node_id_;
-
-  // (Similar to |mouse_move_pending_|.) True while waiting for SelectRange_ACK
-  // or MoveRangeSelectionExtent_ACK.
-  bool select_message_pending_;
-
-  // Queue of pending select messages to send after receiving the next select
-  // message ack.
-  std::deque<std::unique_ptr<IPC::Message>> pending_select_messages_;
-
-  // True while waiting for MoveCaret_ACK.
-  bool move_caret_pending_;
-
-  // The next MoveCaret to send, if any.
-  std::unique_ptr<IPC::Message> next_move_caret_;
-
-  // A queue of the mouse move events sent to the renderer. Similar
-  // to |key_queue_|.
-  typedef std::deque<MouseEventWithLatencyInfo> MouseMoveQueue;
-  MouseMoveQueue mouse_move_queue_;
-
-  // A queue of keyboard events. We can't trust data from the renderer so we
-  // stuff key events into a queue and pop them out on ACK, feeding our copy
-  // back to whatever unhandled handler instead of the returned version.
-  typedef std::deque<NativeWebKeyboardEventWithLatencyInfo> KeyQueue;
-  KeyQueue key_queue_;
-
-  // The source of the ack within the scope of |ProcessInputEventAck()|.
-  // Defaults to ACK_SOURCE_NONE.
-  AckSource current_ack_source_;
-
-  // Whether a call to |Flush()| has yet been accompanied by a |DidFlush()| call
-  // to the client_ after all events have been dispatched/acked.
-  bool flush_requested_;
 
   // Whether there are any active flings in the renderer. As the fling
   // end notification is asynchronous, we use a count rather than a boolean
@@ -254,6 +194,7 @@ class CONTENT_EXPORT InputRouterImpl
   // gesture scroll yet.
   bool touch_scroll_started_sent_;
 
+  bool wheel_scroll_latching_enabled_;
   MouseWheelEventQueue wheel_event_queue_;
   std::unique_ptr<TouchEventQueue> touch_event_queue_;
   GestureEventQueue gesture_event_queue_;
@@ -262,10 +203,20 @@ class CONTENT_EXPORT InputRouterImpl
   InputEventStreamValidator output_stream_validator_;
 
   float device_scale_factor_;
-  bool raf_aligned_touch_enabled_;
 
   // Last touch position relative to screen. Used to compute movementX/Y.
-  std::map<int, gfx::Point> global_touch_position_;
+  base::flat_map<int, gfx::Point> global_touch_position_;
+
+  // The host binding associated with the widget input handler from
+  // the widget.
+  mojo::Binding<mojom::WidgetInputHandlerHost> host_binding_;
+
+  // The host binding associated with the widget input handler from
+  // the frame.
+  mojo::Binding<mojom::WidgetInputHandlerHost> frame_host_binding_;
+
+  base::WeakPtr<InputRouterImpl> weak_this_;
+  base::WeakPtrFactory<InputRouterImpl> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(InputRouterImpl);
 };

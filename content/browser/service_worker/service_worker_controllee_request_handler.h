@@ -13,12 +13,15 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "content/browser/service_worker/service_worker_request_handler.h"
+#include "content/browser/service_worker/service_worker_url_job_wrapper.h"
+#include "content/browser/service_worker/service_worker_url_loader_job.h"
 #include "content/browser/service_worker/service_worker_url_request_job.h"
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/public/common/request_context_frame_type.h"
 #include "content/public/common/request_context_type.h"
 #include "content/public/common/resource_type.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerResponseType.h"
+#include "content/public/common/service_worker_modes.h"
+#include "services/network/public/interfaces/fetch_api.mojom.h"
 #include "url/gurl.h"
 
 namespace net {
@@ -28,34 +31,52 @@ class URLRequest;
 
 namespace content {
 
-class ResourceRequestBodyImpl;
+class ResourceRequestBody;
 class ServiceWorkerRegistration;
 class ServiceWorkerVersion;
 
 // A request handler derivative used to handle requests from
 // controlled documents.
+// Note that in IsServicificationEnabled cases this is used only for
+// main resource fetch during navigation.
 class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
     : public ServiceWorkerRequestHandler,
-      public ServiceWorkerURLRequestJob::Delegate {
+      public ServiceWorkerURLJobWrapper::Delegate {
  public:
   ServiceWorkerControlleeRequestHandler(
       base::WeakPtr<ServiceWorkerContextCore> context,
       base::WeakPtr<ServiceWorkerProviderHost> provider_host,
       base::WeakPtr<storage::BlobStorageContext> blob_storage_context,
-      FetchRequestMode request_mode,
-      FetchCredentialsMode credentials_mode,
+      network::mojom::FetchRequestMode request_mode,
+      network::mojom::FetchCredentialsMode credentials_mode,
       FetchRedirectMode redirect_mode,
+      const std::string& integrity,
+      bool keepalive,
       ResourceType resource_type,
       RequestContextType request_context_type,
       RequestContextFrameType frame_type,
-      scoped_refptr<ResourceRequestBodyImpl> body);
+      scoped_refptr<ResourceRequestBody> body);
   ~ServiceWorkerControlleeRequestHandler() override;
 
   // Called via custom URLRequestJobFactory.
+  // Returning a nullptr indicates that the request is not handled by
+  // this handler.
+  // This could get called multiple times during the lifetime.
   net::URLRequestJob* MaybeCreateJob(
       net::URLRequest* request,
       net::NetworkDelegate* network_delegate,
       ResourceContext* resource_context) override;
+
+  // S13nServiceWorker:
+  // MaybeCreateLoader replaces MaybeCreateJob() when S13nServiceWorker is
+  // enabled.
+  // This could get called multiple times during the lifetime in redirect
+  // cases. (In fallback-to-network cases we basically forward the request
+  // to the request to the next request handler)
+  // URLLoaderRequestHandler overrides:
+  void MaybeCreateLoader(const ResourceRequest& request,
+                         ResourceContext* resource_context,
+                         LoaderCallback callback) override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerControlleeRequestHandlerTest,
@@ -63,7 +84,7 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
   typedef ServiceWorkerControlleeRequestHandler self;
 
   // For main resource case.
-  void PrepareForMainResource(const net::URLRequest* request);
+  void PrepareForMainResource(const GURL& url, const GURL& site_for_cookies);
   void DidLookupRegistrationForMainResource(
       ServiceWorkerStatusCode status,
       scoped_refptr<ServiceWorkerRegistration> registration);
@@ -83,7 +104,7 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
   // For sub resource case.
   void PrepareForSubResource();
 
-  // ServiceWorkerURLRequestJob::Delegate implementation:
+  // ServiceWorkerURLJobWrapper::Delegate implementation:
 
   // Called just before the request is restarted. Makes sure the next request
   // goes over the network.
@@ -99,15 +120,19 @@ class CONTENT_EXPORT ServiceWorkerControlleeRequestHandler
   // that job, except for timing information.
   void ClearJob();
 
+  bool JobWasCanceled() const;
+
   const bool is_main_resource_load_;
   const bool is_main_frame_load_;
-  base::WeakPtr<ServiceWorkerURLRequestJob> job_;
-  FetchRequestMode request_mode_;
-  FetchCredentialsMode credentials_mode_;
+  std::unique_ptr<ServiceWorkerURLJobWrapper> url_job_;
+  network::mojom::FetchRequestMode request_mode_;
+  network::mojom::FetchCredentialsMode credentials_mode_;
   FetchRedirectMode redirect_mode_;
+  std::string integrity_;
+  const bool keepalive_;
   RequestContextType request_context_type_;
   RequestContextFrameType frame_type_;
-  scoped_refptr<ResourceRequestBodyImpl> body_;
+  scoped_refptr<ResourceRequestBody> body_;
   ResourceContext* resource_context_;
   GURL stripped_url_;
   bool force_update_started_;

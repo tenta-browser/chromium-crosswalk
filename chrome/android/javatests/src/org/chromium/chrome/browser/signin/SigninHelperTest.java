@@ -8,6 +8,7 @@ import android.accounts.Account;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.SmallTest;
 
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -18,30 +19,33 @@ import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.browser.signin.MockChangeEventChecker;
-import org.chromium.components.signin.AccountManagerHelper;
+import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.components.signin.test.util.AccountHolder;
-import org.chromium.components.signin.test.util.MockAccountManager;
+import org.chromium.components.signin.test.util.FakeAccountManagerDelegate;
 
 /**
  * Instrumentation tests for {@link SigninHelper}.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 public class SigninHelperTest {
-    private MockAccountManager mAccountManager;
+    private FakeAccountManagerDelegate mAccountManager;
     private AdvancedMockContext mContext;
     private MockChangeEventChecker mEventChecker;
 
     @Before
     public void setUp() {
-        mContext = new AdvancedMockContext(
-                InstrumentationRegistry.getInstrumentation().getTargetContext());
+        mContext = new AdvancedMockContext(InstrumentationRegistry.getTargetContext());
         mEventChecker = new MockChangeEventChecker();
 
-        // Mock out the account manager on the device.
-        mAccountManager = new MockAccountManager(
-                mContext, InstrumentationRegistry.getInstrumentation().getContext());
-        AccountManagerHelper.overrideAccountManagerHelperForTests(mContext, mAccountManager);
+        mAccountManager = new FakeAccountManagerDelegate(
+                FakeAccountManagerDelegate.DISABLE_PROFILE_DATA_SOURCE);
+        AccountManagerFacade.overrideAccountManagerFacadeForTests(mAccountManager);
+    }
+
+    @After
+    public void tearDown() {
+        AccountManagerFacade.resetAccountManagerFacadeForTests();
     }
 
     @Test
@@ -142,9 +146,9 @@ public class SigninHelperTest {
         mEventChecker.insertRenameEvent("B", "C");
         mEventChecker.insertRenameEvent("C", "D");
         mEventChecker.insertRenameEvent("D", "A"); // Looped.
-        Account account = AccountManagerHelper.createAccountFromName("D");
+        Account account = AccountManagerFacade.createAccountFromName("D");
         AccountHolder accountHolder = AccountHolder.builder(account).build();
-        mAccountManager.addAccountHolderExplicitly(accountHolder);
+        mAccountManager.addAccountHolderBlocking(accountHolder);
         SigninHelper.updateAccountRenameData(mContext, mEventChecker);
         Assert.assertEquals("D", getNewSignedInAccountName());
     }

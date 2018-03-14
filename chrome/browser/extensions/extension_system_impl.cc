@@ -60,7 +60,7 @@
 #include "extensions/common/constants.h"
 #include "extensions/common/features/feature_channel.h"
 #include "extensions/common/manifest_url_handlers.h"
-#include "ui/message_center/notifier_settings.h"
+#include "ui/message_center/notifier_id.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/app_mode/app_mode_utils.h"
@@ -71,7 +71,6 @@
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/login/login_state.h"
-#include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #endif
 
@@ -208,8 +207,10 @@ void ExtensionSystemImpl::Shared::Init(bool extensions_enabled) {
   bool autoupdate_enabled = !profile_->IsGuestSession() &&
                             !profile_->IsSystemProfile();
 #if defined(OS_CHROMEOS)
-  if (!extensions_enabled)
+  if (!extensions_enabled ||
+      chromeos::ProfileHelper::IsLockScreenAppProfile(profile_)) {
     autoupdate_enabled = false;
+  }
 #endif  // defined(OS_CHROMEOS)
   extension_service_.reset(new ExtensionService(
       profile_, base::CommandLine::ForCurrentProcess(),
@@ -232,7 +233,10 @@ void ExtensionSystemImpl::Shared::Init(bool extensions_enabled) {
     if (mode >= ContentVerifierDelegate::BOOTSTRAP)
       content_verifier_->Start();
     info_map()->SetContentVerifier(content_verifier_.get());
-
+#if defined(OS_CHROMEOS)
+    if (chromeos::ProfileHelper::IsLockScreenAppProfile(profile_))
+      info_map()->SetIsLockScreenContext(true);
+#endif
     management_policy_.reset(new ManagementPolicy);
     RegisterManagementPolicyProviders();
   }
@@ -244,9 +248,12 @@ void ExtensionSystemImpl::Shared::Init(bool extensions_enabled) {
   bool skip_session_extensions = false;
 #if defined(OS_CHROMEOS)
   // Skip loading session extensions if we are not in a user session or if the
-  // profile is the sign-in profile, which doesn't correspond to a user session.
-  skip_session_extensions = !chromeos::LoginState::Get()->IsUserLoggedIn() ||
-                            chromeos::ProfileHelper::IsSigninProfile(profile_);
+  // profile is the sign-in or lock screen app profile, which don't correspond
+  // to a user session.
+  skip_session_extensions =
+      !chromeos::LoginState::Get()->IsUserLoggedIn() ||
+      chromeos::ProfileHelper::IsSigninProfile(profile_) ||
+      chromeos::ProfileHelper::IsLockScreenAppProfile(profile_);
   if (chrome::IsRunningInForcedAppMode()) {
     extension_service_->component_loader()->
         AddDefaultComponentExtensionsForKioskMode(skip_session_extensions);
@@ -453,19 +460,18 @@ void ExtensionSystemImpl::RegisterExtensionWithRequestContexts(
 
   BrowserThread::PostTaskAndReply(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&InfoMap::AddExtension, info_map(),
-                 base::RetainedRef(extension), install_time, incognito_enabled,
-                 notifications_disabled),
+      base::BindOnce(&InfoMap::AddExtension, info_map(),
+                     base::RetainedRef(extension), install_time,
+                     incognito_enabled, notifications_disabled),
       callback);
 }
 
 void ExtensionSystemImpl::UnregisterExtensionWithRequestContexts(
     const std::string& extension_id,
-    const UnloadedExtensionInfo::Reason reason) {
-  BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&InfoMap::RemoveExtension, info_map(), extension_id, reason));
+    const UnloadedExtensionReason reason) {
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::BindOnce(&InfoMap::RemoveExtension, info_map(),
+                                         extension_id, reason));
 }
 
 }  // namespace extensions

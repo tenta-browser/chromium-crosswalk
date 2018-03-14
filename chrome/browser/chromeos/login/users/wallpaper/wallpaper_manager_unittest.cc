@@ -14,9 +14,9 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
-#include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
 #include "chrome/browser/prefs/browser_prefs.h"
@@ -26,6 +26,7 @@
 #include "chromeos/settings/cros_settings_provider.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/user_manager/scoped_user_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/image/image.h"
 
@@ -33,11 +34,11 @@ using namespace ash;
 
 namespace chromeos {
 
-class WallpaperManagerCacheTest : public test::AshTestBase {
+class WallpaperManagerCacheTest : public AshTestBase {
  public:
   WallpaperManagerCacheTest()
       : fake_user_manager_(new FakeChromeUserManager()),
-        scoped_user_manager_(fake_user_manager_) {}
+        scoped_user_manager_(base::WrapUnique(fake_user_manager_)) {}
 
  protected:
   ~WallpaperManagerCacheTest() override {}
@@ -45,13 +46,13 @@ class WallpaperManagerCacheTest : public test::AshTestBase {
   FakeChromeUserManager* fake_user_manager() { return fake_user_manager_; }
 
   void SetUp() override {
-    test::AshTestBase::SetUp();
+    AshTestBase::SetUp();
     WallpaperManager::Initialize();
   }
 
   void TearDown() override {
     WallpaperManager::Shutdown();
-    test::AshTestBase::TearDown();
+    AshTestBase::TearDown();
   }
 
   // Creates a test image of size 1x1.
@@ -64,7 +65,7 @@ class WallpaperManagerCacheTest : public test::AshTestBase {
 
  private:
   FakeChromeUserManager* fake_user_manager_;
-  ScopedUserManagerEnabler scoped_user_manager_;
+  user_manager::ScopedUserManager scoped_user_manager_;
 };
 
 TEST_F(WallpaperManagerCacheTest, VerifyWallpaperCache) {

@@ -40,13 +40,13 @@ class AXProgressIndicator final : public AXLayoutObject {
 
   bool IsProgressIndicator() const override { return true; }
 
-  float ValueForRange() const override;
-  float MaxValueForRange() const override;
-  float MinValueForRange() const override;
+  bool ValueForRange(float* out_value) const override;
+  bool MaxValueForRange(float* out_value) const override;
+  bool MinValueForRange(float* out_value) const override;
 
   AXProgressIndicator(LayoutProgress*, AXObjectCacheImpl&);
 
-  HTMLProgressElement* GetElement() const;
+  HTMLProgressElement* GetProgressElement() const;
   bool ComputeAccessibilityIsIgnored(IgnoredReasons* = nullptr) const override;
 };
 

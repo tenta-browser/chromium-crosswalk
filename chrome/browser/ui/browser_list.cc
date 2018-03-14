@@ -13,6 +13,7 @@
 #include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/lifetime/termination_notification.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -83,6 +84,7 @@ void BrowserList::RemoveBrowser(Browser* browser) {
   // Remove |browser| from the appropriate list instance.
   BrowserList* browser_list = GetInstance();
   RemoveBrowserFrom(browser, &browser_list->last_active_browsers_);
+  browser_list->currently_closing_browsers_.erase(browser);
 
   content::NotificationService::current()->Notify(
       chrome::NOTIFICATION_BROWSER_CLOSED,
@@ -106,7 +108,7 @@ void BrowserList::RemoveBrowser(Browser* browser) {
     // to call ProfileManager::ShutdownSessionServices() as part of the
     // shutdown, because Browser::WindowClosing() already makes sure that the
     // SessionService is created and notified.
-    chrome::NotifyAppTerminating();
+    browser_shutdown::NotifyAppTerminating();
     chrome::OnAppExiting();
   }
 }
@@ -164,7 +166,8 @@ void BrowserList::TryToCloseBrowserList(const BrowserVector& browsers_to_close,
     }
   }
 
-  on_close_success.Run(profile_path);
+  if (on_close_success)
+    on_close_success.Run(profile_path);
 
   for (Browser* b : browsers_to_close) {
     // BeforeUnload handlers may close browser windows, so we need to explicitly
@@ -196,7 +199,8 @@ void BrowserList::PostTryToCloseBrowserWindow(
          it != browsers_to_close.end(); ++it) {
       (*it)->ResetTryToCloseWindow();
     }
-    on_close_aborted.Run(profile_path);
+    if (on_close_aborted)
+      on_close_aborted.Run(profile_path);
   }
 }
 
@@ -246,6 +250,14 @@ void BrowserList::SetLastActive(Browser* browser) {
 void BrowserList::NotifyBrowserNoLongerActive(Browser* browser) {
   for (chrome::BrowserListObserver& observer : observers_.Get())
     observer.OnBrowserNoLongerActive(browser);
+}
+
+// static
+void BrowserList::NotifyBrowserCloseStarted(Browser* browser) {
+  GetInstance()->currently_closing_browsers_.insert(browser);
+
+  for (chrome::BrowserListObserver& observer : observers_.Get())
+    observer.OnBrowserClosing(browser);
 }
 
 // static

@@ -22,6 +22,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_html_writer.h"
@@ -215,8 +216,7 @@ bool BookmarksFunction::CanBeModified(const BookmarkNode* node) {
     return false;
   }
   ManagedBookmarkService* managed = GetManagedBookmarkService();
-  if (::bookmarks::IsDescendantOf(node, managed->managed_node()) ||
-      ::bookmarks::IsDescendantOf(node, managed->supervised_node())) {
+  if (::bookmarks::IsDescendantOf(node, managed->managed_node())) {
     error_ = keys::kModifyManagedError;
     return false;
   }
@@ -403,14 +403,13 @@ void BookmarksAPI::Shutdown() {
   EventRouter::Get(browser_context_)->UnregisterObserver(this);
 }
 
-static base::LazyInstance<
-    BrowserContextKeyedAPIFactory<BookmarksAPI>>::DestructorAtExit g_factory =
-    LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<BrowserContextKeyedAPIFactory<BookmarksAPI>>::
+    DestructorAtExit g_bookmarks_api_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
 BrowserContextKeyedAPIFactory<BookmarksAPI>*
 BookmarksAPI::GetFactoryInstance() {
-  return g_factory.Pointer();
+  return g_bookmarks_api_factory.Pointer();
 }
 
 void BookmarksAPI::OnListenerAdded(const EventListenerInfo& details) {
@@ -557,21 +556,6 @@ bool BookmarksSearchFunction::RunOnReady() {
   return true;
 }
 
-// static
-bool BookmarksRemoveFunction::ExtractIds(const base::ListValue* args,
-                                         std::list<int64_t>* ids,
-                                         bool* invalid_id) {
-  std::string id_string;
-  if (!args->GetString(0, &id_string))
-    return false;
-  int64_t id;
-  if (base::StringToInt64(id_string, &id))
-    ids->push_back(id);
-  else
-    *invalid_id = true;
-  return true;
-}
-
 bool BookmarksRemoveFunction::RunOnReady() {
   if (!EditBookmarksEnabled())
     return false;
@@ -615,14 +599,6 @@ bool BookmarksCreateFunction::RunOnReady() {
   results_ = bookmarks::Create::Results::Create(ret);
 
   return true;
-}
-
-// static
-bool BookmarksMoveFunction::ExtractIds(const base::ListValue* args,
-                                       std::list<int64_t>* ids,
-                                       bool* invalid_id) {
-  // For now, Move accepts ID parameters in the same way as an Update.
-  return BookmarksUpdateFunction::ExtractIds(args, ids, invalid_id);
 }
 
 bool BookmarksMoveFunction::RunOnReady() {
@@ -676,14 +652,6 @@ bool BookmarksMoveFunction::RunOnReady() {
   results_ = bookmarks::Move::Results::Create(tree_node);
 
   return true;
-}
-
-// static
-bool BookmarksUpdateFunction::ExtractIds(const base::ListValue* args,
-                                         std::list<int64_t>* ids,
-                                         bool* invalid_id) {
-  // For now, Update accepts ID parameters in the same way as an Remove.
-  return BookmarksRemoveFunction::ExtractIds(args, ids, invalid_id);
 }
 
 bool BookmarksUpdateFunction::RunOnReady() {
@@ -742,34 +710,13 @@ BookmarksIOFunction::~BookmarksIOFunction() {
     select_file_dialog_->ListenerDestroyed();
 }
 
-void BookmarksIOFunction::SelectFile(ui::SelectFileDialog::Type type) {
-  // GetDefaultFilepathForBookmarkExport() might have to touch the filesystem
-  // (stat or access, for example), so this requires a thread with IO allowed.
-  if (!BrowserThread::CurrentlyOn(BrowserThread::FILE)) {
-    BrowserThread::PostTask(BrowserThread::FILE, FROM_HERE,
-        base::Bind(&BookmarksIOFunction::SelectFile, this, type));
-    return;
-  }
-
-  // Pre-populating the filename field in case this is a SELECT_SAVEAS_FILE
-  // dialog. If not, there is no filename field in the dialog box.
-  base::FilePath default_path;
-  if (type == ui::SelectFileDialog::SELECT_SAVEAS_FILE)
-    default_path = GetDefaultFilepathForBookmarkExport();
-  else
-    DCHECK(type == ui::SelectFileDialog::SELECT_OPEN_FILE);
-
-  // After getting the |default_path|, ask the UI to display the file dialog.
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-      base::Bind(&BookmarksIOFunction::ShowSelectFileDialog, this,
-                 type, default_path));
-}
-
 void BookmarksIOFunction::ShowSelectFileDialog(
     ui::SelectFileDialog::Type type,
     const base::FilePath& default_path) {
   if (!dispatcher())
     return;  // Extension was unloaded.
+
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   // Balanced in one of the three callbacks of SelectFileDialog:
   // either FileSelectionCanceled, MultiFilesSelected, or FileSelected
@@ -778,7 +725,7 @@ void BookmarksIOFunction::ShowSelectFileDialog(
   WebContents* web_contents = GetAssociatedWebContents();
 
   select_file_dialog_ = ui::SelectFileDialog::Create(
-      this, new ChromeSelectFilePolicy(web_contents));
+      this, std::make_unique<ChromeSelectFilePolicy>(web_contents));
   ui::SelectFileDialog::FileTypeInfo file_type_info;
   file_type_info.extensions.resize(1);
   file_type_info.extensions[0].push_back(FILE_PATH_LITERAL("html"));
@@ -811,7 +758,8 @@ void BookmarksIOFunction::MultiFilesSelected(
 bool BookmarksImportFunction::RunOnReady() {
   if (!EditBookmarksEnabled())
     return false;
-  SelectFile(ui::SelectFileDialog::SELECT_OPEN_FILE);
+  ShowSelectFileDialog(ui::SelectFileDialog::SELECT_OPEN_FILE,
+                       base::FilePath());
   return true;
 }
 
@@ -834,7 +782,17 @@ void BookmarksImportFunction::FileSelected(const base::FilePath& path,
 }
 
 bool BookmarksExportFunction::RunOnReady() {
-  SelectFile(ui::SelectFileDialog::SELECT_SAVEAS_FILE);
+  // "bookmarks.export" is exposed to a small number of extensions. These
+  // extensions use user gesture for export, so use USER_VISIBLE priority.
+  // GetDefaultFilepathForBookmarkExport() might have to touch filesystem
+  // (stat or access, for example), so this requires IO.
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+      base::BindOnce(&GetDefaultFilepathForBookmarkExport),
+      base::BindOnce(&BookmarksIOFunction::ShowSelectFileDialog, this,
+                     ui::SelectFileDialog::SELECT_SAVEAS_FILE));
   return true;
 }
 

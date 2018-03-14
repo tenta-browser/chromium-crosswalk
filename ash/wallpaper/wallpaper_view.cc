@@ -4,6 +4,7 @@
 
 #include "ash/wallpaper/wallpaper_view.h"
 
+#include "ash/login/ui/login_constants.h"
 #include "ash/root_window_controller.h"
 #include "ash/session/session_controller.h"
 #include "ash/shell.h"
@@ -12,15 +13,19 @@
 #include "ash/wallpaper/wallpaper_delegate.h"
 #include "ash/wallpaper/wallpaper_widget_controller.h"
 #include "ash/wm/overview/window_selector_controller.h"
-#include "ash/wm_window.h"
+#include "ui/aura/window.h"
 #include "ui/display/display.h"
+#include "ui/display/manager/display_manager.h"
 #include "ui/display/manager/managed_display_info.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/color_analysis.h"
+#include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/safe_integer_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/transform.h"
 #include "ui/views/widget/widget.h"
+#include "ui/wm/core/window_animations.h"
 
 namespace ash {
 namespace {
@@ -39,16 +44,16 @@ class LayerControlView : public views::View {
 
   // Overrides views::View.
   void Layout() override {
-    WmWindow* window = WmWindow::Get(GetWidget()->GetNativeWindow());
+    aura::Window* window = GetWidget()->GetNativeWindow();
     // Keep |this| at the bottom since there may be other windows on top of the
     // wallpaper view such as an overview mode shield.
-    window->GetParent()->StackChildAtBottom(window);
-    display::Display display = window->GetDisplayNearestWindow();
+    window->parent()->StackChildAtBottom(window);
+    display::Display display =
+        display::Screen::GetScreen()->GetDisplayNearestWindow(window);
 
-    // TODO(mash): Mash returns a fake ManagedDisplayInfo. crbug.com/622480
     float ui_scale = 1.f;
     display::ManagedDisplayInfo info =
-        ShellPort::Get()->GetDisplayInfo(display.id());
+        Shell::Get()->display_manager()->GetDisplayInfo(display.id());
     if (info.id() == display.id())
       ui_scale = info.GetEffectiveUIScale();
 
@@ -69,6 +74,22 @@ class LayerControlView : public views::View {
   DISALLOW_COPY_AND_ASSIGN(LayerControlView);
 };
 
+// Returns the color used to dim the wallpaper.
+SkColor GetWallpaperDarkenColor() {
+  SkColor darken_color =
+      Shell::Get()->wallpaper_controller()->GetProminentColor(
+          color_utils::ColorProfile(color_utils::LumaRange::DARK,
+                                    color_utils::SaturationRange::MUTED));
+  if (darken_color == WallpaperController::kInvalidColor)
+    darken_color = login_constants::kDefaultBaseColor;
+
+  darken_color = color_utils::GetResultingPaintColor(
+      SkColorSetA(login_constants::kDefaultBaseColor,
+                  login_constants::kTranslucentColorDarkenAlpha),
+      SkColorSetA(darken_color, 0xFF));
+  return SkColorSetA(darken_color, login_constants::kTranslucentAlpha);
+}
+
 }  // namespace
 
 // This event handler receives events in the pre-target phase and takes care of
@@ -77,8 +98,8 @@ class LayerControlView : public views::View {
 //   - Disabling overview mode on mouse release.
 class PreEventDispatchHandler : public ui::EventHandler {
  public:
-  PreEventDispatchHandler() {}
-  ~PreEventDispatchHandler() override {}
+  PreEventDispatchHandler() = default;
+  ~PreEventDispatchHandler() override = default;
 
  private:
   // ui::EventHandler:
@@ -137,6 +158,12 @@ void WallpaperView::OnPaint(gfx::Canvas* canvas) {
   if (wallpaper.isNull())
     return;
 
+  cc::PaintFlags flags;
+  if (controller->ShouldApplyDimming()) {
+    flags.setColorFilter(SkColorFilter::MakeModeFilter(
+        GetWallpaperDarkenColor(), SkBlendMode::kDarken));
+  }
+
   if (layout == wallpaper::WALLPAPER_LAYOUT_CENTER_CROPPED) {
     // The dimension with the smallest ratio must be cropped, the other one
     // is preserved. Both are set in gfx::Size cropped_size.
@@ -162,13 +189,14 @@ void WallpaperView::OnPaint(gfx::Canvas* canvas) {
     canvas->DrawImageInt(
         wallpaper, wallpaper_cropped_rect.x(), wallpaper_cropped_rect.y(),
         wallpaper_cropped_rect.width(), wallpaper_cropped_rect.height(), 0, 0,
-        width(), height(), true);
+        width(), height(), true, flags);
   } else if (layout == wallpaper::WALLPAPER_LAYOUT_TILE) {
-    canvas->TileImageInt(wallpaper, 0, 0, width(), height());
+    canvas->TileImageInt(wallpaper, 0, 0, 0, 0, width(), height(), 1.0f,
+                         &flags);
   } else if (layout == wallpaper::WALLPAPER_LAYOUT_STRETCH) {
     // This is generally not recommended as it may show artifacts.
     canvas->DrawImageInt(wallpaper, 0, 0, wallpaper.width(), wallpaper.height(),
-                         0, 0, width(), height(), true);
+                         0, 0, width(), height(), true, flags);
   } else {
     float image_scale = canvas->image_scale();
     gfx::Rect wallpaper_rect(0, 0, wallpaper.width() / image_scale,
@@ -177,7 +205,8 @@ void WallpaperView::OnPaint(gfx::Canvas* canvas) {
     canvas->DrawImageInt(wallpaper, 0, 0, wallpaper.width(), wallpaper.height(),
                          (width() - wallpaper_rect.width()) / 2,
                          (height() - wallpaper_rect.height()) / 2,
-                         wallpaper_rect.width(), wallpaper_rect.height(), true);
+                         wallpaper_rect.width(), wallpaper_rect.height(), true,
+                         flags);
   }
 }
 
@@ -191,7 +220,7 @@ void WallpaperView::ShowContextMenuForView(views::View* source,
   ShellPort::Get()->ShowContextMenu(point, source_type);
 }
 
-views::Widget* CreateWallpaper(WmWindow* root_window, int container_id) {
+views::Widget* CreateWallpaper(aura::Window* root_window, int container_id) {
   WallpaperController* controller = Shell::Get()->wallpaper_controller();
   WallpaperDelegate* wallpaper_delegate = Shell::Get()->wallpaper_delegate();
 
@@ -201,17 +230,12 @@ views::Widget* CreateWallpaper(WmWindow* root_window, int container_id) {
   params.name = "WallpaperView";
   if (controller->GetWallpaper().isNull())
     params.opacity = views::Widget::InitParams::TRANSLUCENT_WINDOW;
-  root_window->GetRootWindowController()->ConfigureWidgetInitParamsForContainer(
-      wallpaper_widget, container_id, &params);
+  params.parent = root_window->GetChildById(container_id);
   wallpaper_widget->Init(params);
   wallpaper_widget->SetContentsView(new LayerControlView(new WallpaperView()));
   int animation_type = wallpaper_delegate->GetAnimationType();
-  WmWindow* wallpaper_window =
-      WmWindow::Get(wallpaper_widget->GetNativeWindow());
-  wallpaper_window->SetVisibilityAnimationType(animation_type);
-
-  RootWindowController* root_window_controller =
-      root_window->GetRootWindowController();
+  aura::Window* wallpaper_window = wallpaper_widget->GetNativeWindow();
+  ::wm::SetWindowVisibilityAnimationType(wallpaper_window, animation_type);
 
   // Enable wallpaper transition for the following cases:
   // 1. Initial(OOBE) wallpaper animation.
@@ -219,21 +243,26 @@ views::Widget* CreateWallpaper(WmWindow* root_window, int container_id) {
   // 3. From an empty background, chrome transit to a logged in user session.
   // 4. From an empty background, guest user logged in.
   if (wallpaper_delegate->ShouldShowInitialAnimation() ||
-      root_window_controller->animating_wallpaper_widget_controller() ||
+      RootWindowController::ForWindow(root_window)
+          ->animating_wallpaper_widget_controller() ||
       Shell::Get()->session_controller()->NumberOfLoggedInUsers()) {
-    wallpaper_window->SetVisibilityAnimationTransition(::wm::ANIMATE_SHOW);
+    ::wm::SetWindowVisibilityAnimationTransition(wallpaper_window,
+                                                 ::wm::ANIMATE_SHOW);
     int duration_override = wallpaper_delegate->GetAnimationDurationOverride();
     if (duration_override) {
-      wallpaper_window->SetVisibilityAnimationDuration(
+      ::wm::SetWindowVisibilityAnimationDuration(
+          wallpaper_window,
           base::TimeDelta::FromMilliseconds(duration_override));
     }
   } else {
     // Disable animation if transition to login screen from an empty background.
-    wallpaper_window->SetVisibilityAnimationTransition(::wm::ANIMATE_NONE);
+    ::wm::SetWindowVisibilityAnimationTransition(wallpaper_window,
+                                                 ::wm::ANIMATE_NONE);
   }
 
-  WmWindow* container = root_window->GetChildByShellWindowId(container_id);
-  wallpaper_widget->SetBounds(container->GetBounds());
+  aura::Window* container = root_window->GetChildById(container_id);
+  wallpaper_widget->SetBounds(container->bounds());
+
   return wallpaper_widget;
 }
 

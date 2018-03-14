@@ -546,17 +546,14 @@ NSMenuItem* PasteAndGoMenuItemForObserver(
     return;
   }
 
-  // If the escape key was pressed and no revert happened and we're in
-  // fullscreen mode, give focus to the web contents, which may dismiss the
-  // overlay.
+  // If the escape key was pressed and no revert happened, give focus to the web
+  // contents. In fullscreen, this will dismiss the overlay.
   if (cmd == @selector(cancelOperation:)) {
     BrowserWindowController* windowController =
         [BrowserWindowController browserWindowControllerForView:self];
-    if ([windowController isInAnyFullscreenMode]) {
-      [windowController focusTabContents];
-      textChangedByKeyEvents_ = NO;
-      return;
-    }
+    [windowController focusTabContents];
+    textChangedByKeyEvents_ = NO;
+    return;
   }
 
   [super doCommandBySelector:cmd];
@@ -596,20 +593,6 @@ NSMenuItem* PasteAndGoMenuItemForObserver(
     return;
 
   [[FindPasteboard sharedInstance] setFindText:[selection string]];
-}
-
-- (BOOL)isOpaque {
-  // Even if you call -setDrawsBackground:NO, the background still gets drawn
-  // when editing. This is a problem because the left edge of the background
-  // overlaps the security decoration's hover rect. Return that the textview
-  // is transparent, and follow up below by disabling any background drawing.
-  // This will cause background drawing to fall through to the cell. See
-  // https://crbug.com/669870 .
-  return NO;
-}
-
-- (void)drawViewBackgroundInRect:(NSRect)aRect {
-  // See the comment in -isOpaque.
 }
 
 - (void)drawRect:(NSRect)rect {

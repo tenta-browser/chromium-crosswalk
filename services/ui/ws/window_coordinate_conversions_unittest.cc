@@ -1,62 +1,59 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "services/ui/ws/window_coordinate_conversions.h"
 
 #include "services/ui/ws/server_window.h"
-#include "services/ui/ws/server_window_delegate.h"
 #include "services/ui/ws/test_server_window_delegate.h"
+#include "services/ui/ws/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/gfx/geometry/point_f.h"
-#include "ui/gfx/geometry/rect.h"
 
 namespace ui {
-
 namespace ws {
 
-using WindowCoordinateConversionsTest = testing::Test;
+class WindowCoordinateConversions : public testing::Test {
+ public:
+  WindowCoordinateConversions() {}
+  ~WindowCoordinateConversions() override {}
 
-TEST_F(WindowCoordinateConversionsTest, ConvertRectBetweenWindows) {
-  TestServerWindowDelegate d1, d2, d3;
-  ServerWindow v1(&d1, WindowId()), v2(&d2, WindowId()), v3(&d3, WindowId());
-  v1.SetBounds(gfx::Rect(1, 2, 100, 100));
-  v2.SetBounds(gfx::Rect(3, 4, 100, 100));
-  v3.SetBounds(gfx::Rect(5, 6, 100, 100));
-  v1.Add(&v2);
-  v2.Add(&v3);
-
-  EXPECT_EQ(gfx::Rect(2, 1, 8, 9),
-            ConvertRectBetweenWindows(&v1, &v3, gfx::Rect(10, 11, 8, 9)));
-
-  EXPECT_EQ(gfx::Rect(18, 21, 8, 9),
-            ConvertRectBetweenWindows(&v3, &v1, gfx::Rect(10, 11, 8, 9)));
-}
-
-TEST_F(WindowCoordinateConversionsTest, ConvertPointFBetweenWindows) {
-  TestServerWindowDelegate d1, d2, d3;
-  ServerWindow v1(&d1, WindowId()), v2(&d2, WindowId()), v3(&d3, WindowId());
-  v1.SetBounds(gfx::Rect(1, 2, 100, 100));
-  v2.SetBounds(gfx::Rect(3, 4, 100, 100));
-  v3.SetBounds(gfx::Rect(5, 6, 100, 100));
-  v1.Add(&v2);
-  v2.Add(&v3);
-
-  {
-    const gfx::PointF result(
-        ConvertPointFBetweenWindows(&v1, &v3, gfx::PointF(10.5f, 11.9f)));
-    EXPECT_FLOAT_EQ(2.5f, result.x());
-    EXPECT_FLOAT_EQ(1.9f, result.y());
+  VizHostProxy* viz_host_proxy() {
+    return ws_test_helper_.window_server()->GetVizHostProxy();
   }
 
-  {
-    const gfx::PointF result(
-        ConvertPointFBetweenWindows(&v3, &v1, gfx::PointF(10.2f, 11.4f)));
-    EXPECT_FLOAT_EQ(18.2f, result.x());
-    EXPECT_FLOAT_EQ(21.4f, result.y());
-  }
+ private:
+  test::WindowServerTestHelper ws_test_helper_;
+
+  DISALLOW_COPY_AND_ASSIGN(WindowCoordinateConversions);
+};
+
+TEST_F(WindowCoordinateConversions, Transform) {
+  TestServerWindowDelegate window_delegate(viz_host_proxy());
+  ServerWindow root(&window_delegate, WindowId(1, 2));
+  root.set_event_targeting_policy(
+      mojom::EventTargetingPolicy::DESCENDANTS_ONLY);
+  root.SetVisible(true);
+  root.SetBounds(gfx::Rect(0, 0, 100, 100), base::nullopt);
+  ServerWindow child(&window_delegate, WindowId(1, 3));
+  root.Add(&child);
+  child.SetVisible(true);
+  child.SetBounds(gfx::Rect(0, 0, 20, 20), base::nullopt);
+  // Make the root |child|, and set a transform on |child|, which mirrors
+  // how WindowManagerState and EventDispatcher work together.
+  window_delegate.set_root_window(&child);
+  gfx::Transform transform;
+  transform.Scale(SkIntToMScalar(2), SkIntToMScalar(2));
+  child.SetTransform(transform);
+
+  ServerWindow child_child(&window_delegate, WindowId(1, 4));
+  child.Add(&child_child);
+  child_child.SetVisible(true);
+  child_child.SetBounds(gfx::Rect(4, 6, 12, 24), base::nullopt);
+
+  const gfx::Point converted_point = ConvertPointFromRootForEventDispatch(
+      &child, &child_child, gfx::Point(14, 20));
+  EXPECT_EQ(gfx::Point(3, 4), converted_point);
 }
 
 }  // namespace ws
-
 }  // namespace ui

@@ -26,23 +26,18 @@
 # (INCLUDING NEGLIGENCE OR/ OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from __future__ import print_function
 import collections
 import json
 import logging
 import optparse
 import re
-import sys
-import traceback
 
-from webkitpy.common.memoized import memoized
 from webkitpy.common.net.buildbot import Build
-from webkitpy.common.system.executive import ScriptError
+from webkitpy.layout_tests.models.test_expectations import BASELINE_SUFFIX_LIST
+from webkitpy.layout_tests.models.test_expectations import TestExpectations
 from webkitpy.layout_tests.models.testharness_results import is_all_pass_testharness_result
-from webkitpy.layout_tests.models.test_expectations import TestExpectations, BASELINE_SUFFIX_LIST, SKIP
 from webkitpy.layout_tests.port import factory
 from webkitpy.tool.commands.command import Command
-
 
 _log = logging.getLogger(__name__)
 
@@ -82,10 +77,7 @@ class AbstractRebaseliningCommand(Command):
         self.expectation_line_changes = ChangeSet()
         self._tool = None
 
-    def _print_expectation_line_changes(self):
-        print(json.dumps(self.expectation_line_changes.to_dict()))
-
-    def _baseline_directory(self, builder_name):
+    def baseline_directory(self, builder_name):
         port = self._tool.port_factory.get_from_builder_name(builder_name)
         return port.baseline_version_dir()
 
@@ -176,7 +168,15 @@ class TestBaselineSet(object):
                 '>')
 
     def test_prefixes(self):
+        """Returns a sorted list of test prefixes."""
         return sorted(self._test_prefix_map)
+
+    def all_tests(self):
+        """Returns a sorted list of all tests without duplicates."""
+        tests = set()
+        for test_prefix in self._test_prefix_map:
+            tests.update(self._port.tests([test_prefix]))
+        return sorted(tests)
 
     def build_port_pairs(self, test_prefix):
         # Return a copy in case the caller modifies the returned list.
@@ -199,187 +199,6 @@ class TestBaselineSet(object):
         return self._builder_names
 
 
-class CopyExistingBaselinesInternal(AbstractRebaseliningCommand):
-    name = 'copy-existing-baselines-internal'
-    help_text = ('Copy existing baselines down one level in the baseline order to ensure '
-                 "new baselines don't break existing passing platforms.")
-
-    def __init__(self):
-        super(CopyExistingBaselinesInternal, self).__init__(options=[
-            self.test_option,
-            self.suffixes_option,
-            self.port_name_option,
-            self.results_directory_option,
-        ])
-
-    @memoized
-    def _immediate_predecessors_in_fallback(self, path_to_rebaseline):
-        """Returns the predecessor directories in the baseline fall-back graph.
-
-        The platform-specific fall-back baseline directories form a tree, where
-        when we search for baselines we normally fall back to parents nodes in
-        the tree. The "immediate predecessors" are the children nodes of the
-        given node.
-
-        For example, if the baseline fall-back graph includes:
-            "mac10.9" -> "mac10.10/"
-            "mac10.10/" -> "mac/"
-            "retina/" -> "mac/"
-        Then, the "immediate predecessors" are:
-            "mac/": ["mac10.10/", "retina/"]
-            "mac10.10/": ["mac10.9/"]
-            "mac10.9/", "retina/": []
-
-        Args:
-            path_to_rebaseline: The absolute path to a baseline directory.
-
-        Returns:
-            A list of directory names (not full paths) of directories that are
-            "immediate predecessors" of the given baseline path.
-        """
-        port_names = self._tool.port_factory.all_port_names()
-        immediate_predecessors = []
-        for port_name in port_names:
-            port = self._tool.port_factory.get(port_name)
-            baseline_search_path = port.baseline_search_path()
-            try:
-                index = baseline_search_path.index(path_to_rebaseline)
-                if index:
-                    immediate_predecessors.append(self._tool.filesystem.basename(baseline_search_path[index - 1]))
-            except ValueError:
-                # baseline_search_path.index() throws a ValueError if the item isn't in the list.
-                pass
-        return immediate_predecessors
-
-    def _port_for_primary_baseline(self, baseline):
-        """Returns a Port object for the given baseline directory base name."""
-        for port in [self._tool.port_factory.get(port_name) for port_name in self._tool.port_factory.all_port_names()]:
-            if self._tool.filesystem.basename(port.baseline_version_dir()) == baseline:
-                return port
-        raise Exception('Failed to find port for primary baseline %s.' % baseline)
-
-    def _copy_existing_baseline(self, port_name, test_name, suffix):
-        """Copies the baseline for the given builder to all "predecessor" directories."""
-        baseline_directory = self._tool.port_factory.get(port_name).baseline_version_dir()
-        ports = [self._port_for_primary_baseline(baseline)
-                 for baseline in self._immediate_predecessors_in_fallback(baseline_directory)]
-
-        old_baselines = []
-        new_baselines = []
-
-        # Need to gather all the baseline paths before modifying the filesystem since
-        # the modifications can affect the results of port.expected_filename.
-        for port in ports:
-            old_baseline = port.expected_filename(test_name, '.' + suffix)
-            if not self._tool.filesystem.exists(old_baseline):
-                _log.debug('No existing baseline for %s.', test_name)
-                continue
-
-            new_baseline = self._tool.filesystem.join(
-                port.baseline_version_dir(),
-                self._file_name_for_expected_result(test_name, suffix))
-            if self._tool.filesystem.exists(new_baseline):
-                _log.debug('Existing baseline at %s, not copying over it.', new_baseline)
-                continue
-
-            generic_expectations = TestExpectations(port, tests=[test_name], include_overrides=False)
-            full_expectations = TestExpectations(port, tests=[test_name], include_overrides=True)
-            # TODO(qyearsley): Change Port.skips_test so that this can be simplified.
-            if SKIP in full_expectations.get_expectations(test_name):
-                _log.debug('%s is skipped (perhaps temporarily) on %s.', test_name, port.name())
-                continue
-            if port.skips_test(test_name, generic_expectations, full_expectations):
-                _log.debug('%s is skipped on %s.', test_name, port.name())
-                continue
-
-            old_baselines.append(old_baseline)
-            new_baselines.append(new_baseline)
-
-        for i in range(len(old_baselines)):
-            old_baseline = old_baselines[i]
-            new_baseline = new_baselines[i]
-
-            _log.debug('Copying baseline from %s to %s.', old_baseline, new_baseline)
-            self._tool.filesystem.maybe_make_directory(self._tool.filesystem.dirname(new_baseline))
-            self._tool.filesystem.copyfile(old_baseline, new_baseline)
-
-    def execute(self, options, args, tool):
-        self._tool = tool
-        port_name = options.port_name
-        for suffix in options.suffixes.split(','):
-            self._copy_existing_baseline(port_name, options.test, suffix)
-
-
-class RebaselineTest(AbstractRebaseliningCommand):
-    name = 'rebaseline-test-internal'
-    help_text = 'Rebaseline a single test from a buildbot. Only intended for use by other webkit-patch commands.'
-
-    def __init__(self):
-        super(RebaselineTest, self).__init__(options=[
-            self.test_option,
-            self.suffixes_option,
-            self.port_name_option,
-            self.builder_option,
-            self.build_number_option,
-            self.results_directory_option,
-        ])
-
-    def _save_baseline(self, data, target_baseline):
-        if not data:
-            _log.debug('No baseline data to save.')
-            return
-
-        filesystem = self._tool.filesystem
-        filesystem.maybe_make_directory(filesystem.dirname(target_baseline))
-        filesystem.write_binary_file(target_baseline, data)
-
-    def _rebaseline_test(self, port_name, test_name, suffix, results_url):
-        """Downloads a baseline file and saves it to the filesystem.
-
-        Args:
-            port_name: The port that the baseline is for. This determines
-                the directory that the baseline is saved to.
-            test_name: The name of the test being rebaselined.
-            suffix: The baseline file extension (e.g. png); together with the
-                test name and results_url this determines what file to download.
-            results_url: Base URL to download the actual result from.
-        """
-        baseline_directory = self._tool.port_factory.get(port_name).baseline_version_dir()
-
-        source_baseline = '%s/%s' % (results_url, self._file_name_for_actual_result(test_name, suffix))
-        target_baseline = self._tool.filesystem.join(baseline_directory, self._file_name_for_expected_result(test_name, suffix))
-
-        _log.debug('Retrieving source %s for target %s.', source_baseline, target_baseline)
-        self._save_baseline(self._tool.web.get_binary(source_baseline, return_none_on_404=True),
-                            target_baseline)
-
-    def _rebaseline_test_and_update_expectations(self, options):
-        self._baseline_suffix_list = options.suffixes.split(',')
-
-        port_name = options.port_name or self._tool.builders.port_name_for_builder_name(options.builder)
-        port = self._tool.port_factory.get(port_name)
-
-        if port.reference_files(options.test):
-            if 'png' in self._baseline_suffix_list:
-                _log.warning('Cannot rebaseline image result for reftest: %s', options.test)
-                return
-            assert self._baseline_suffix_list == ['txt']
-
-        if options.results_directory:
-            results_url = 'file://' + options.results_directory
-        else:
-            results_url = self._tool.buildbot.results_url(options.builder, build_number=options.build_number)
-
-        for suffix in self._baseline_suffix_list:
-            self._rebaseline_test(port_name, options.test, suffix, results_url)
-        self.expectation_line_changes.remove_line(test=options.test, port_name=port_name)
-
-    def execute(self, options, args, tool):
-        self._tool = tool
-        self._rebaseline_test_and_update_expectations(options)
-        self._print_expectation_line_changes()
-
-
 class AbstractParallelRebaselineCommand(AbstractRebaseliningCommand):
     """Base class for rebaseline commands that do some tasks in parallel."""
     # Not overriding execute() - pylint: disable=abstract-method
@@ -398,18 +217,6 @@ class AbstractParallelRebaselineCommand(AbstractRebaseliningCommand):
             if port.test_configuration().build_type == 'release':
                 release_builders.append(builder_name)
         return release_builders
-
-    def _run_webkit_patch(self, args, verbose):
-        try:
-            verbose_args = ['--verbose'] if verbose else []
-            stderr = self._tool.executive.run_command(
-                [self._tool.path()] + verbose_args + args,
-                cwd=self._tool.git().checkout_root,
-                return_stderr=True)
-            for line in stderr.splitlines():
-                _log.warning(line)
-        except ScriptError:
-            traceback.print_exc(file=sys.stderr)
 
     def _builders_to_fetch_from(self, builders_to_check):
         """Returns the subset of builders that will cover all of the baseline
@@ -533,22 +340,17 @@ class AbstractParallelRebaselineCommand(AbstractRebaseliningCommand):
         return optimize_commands
 
     def _update_expectations_files(self, lines_to_remove):
-        # FIXME: This routine is way too expensive. We're creating O(n ports) TestExpectations objects.
-        # This is slow and uses a lot of memory.
         tests = lines_to_remove.keys()
         to_remove = []
 
-        # This is so we remove lines for builders that skip this test, e.g. Android skips most
-        # tests and we don't want to leave stray [ Android ] lines in TestExpectations..
-        # This is only necessary for "webkit-patch rebaseline" and for rebaselining expected
-        # failures from garden-o-matic. rebaseline-expectations and auto-rebaseline will always
-        # pass the exact set of ports to rebaseline.
+        # This is so we remove lines for builders that skip this test.
+        # For example, Android skips most tests and we don't want to leave
+        # stray [ Android ] lines in TestExpectations.
+        # This is only necessary for "webkit-patch rebaseline".
         for port_name in self._tool.port_factory.all_port_names():
             port = self._tool.port_factory.get(port_name)
-            generic_expectations = TestExpectations(port, tests=tests, include_overrides=False)
-            full_expectations = TestExpectations(port, tests=tests, include_overrides=True)
             for test in tests:
-                if port.skips_test(test, generic_expectations, full_expectations):
+                if port.skips_test(test):
                     for test_configuration in port.all_test_configurations():
                         if test_configuration.version == port.test_configuration().version:
                             to_remove.append((test, test_configuration))
@@ -611,9 +413,6 @@ class AbstractParallelRebaselineCommand(AbstractRebaseliningCommand):
             self._update_expectations_files(lines_to_remove)
 
         if options.optimize:
-            # TODO(wkorman): Consider changing temporary branch to base off of HEAD rather than
-            # origin/master to ensure we run baseline optimization processes with the same code as
-            # auto-rebaseline itself.
             self._run_in_parallel(self._optimize_baselines(test_baseline_set, options.verbose))
 
         self._remove_all_pass_testharness_baselines(test_baseline_set)
@@ -627,14 +426,17 @@ class AbstractParallelRebaselineCommand(AbstractRebaseliningCommand):
         return sorted(self._tool.git().absolute_path(path) for path in unstaged_changes if re.match(baseline_re, path))
 
     def _remove_all_pass_testharness_baselines(self, test_baseline_set):
-        """Removes all of the all-PASS baselines for the given builders and tests.
+        """Removes all of the generic all-PASS baselines for the given tests.
 
-        In general, for testharness.js tests, the absence of a baseline
-        indicates that the test is expected to pass. When rebaselining,
-        new all-PASS baselines may be downloaded, but they should not be kept.
+        For testharness.js tests, the absence of a baseline indicates that the
+        test is expected to pass. When rebaselining, new all-PASS baselines may
+        be downloaded to platform directories. After optimization, some of them
+        may be pushed to the root layout test directory and become generic
+        baselines, which can be safely removed. Non-generic all-PASS baselines
+        need to be preserved; otherwise the fallback may be wrong.
         """
         filesystem = self._tool.filesystem
-        baseline_paths = self._possible_baseline_paths(test_baseline_set)
+        baseline_paths = self._generic_baseline_paths(test_baseline_set)
         for path in baseline_paths:
             if not (filesystem.exists(path) and filesystem.splitext(path)[1] == '.txt'):
                 continue
@@ -643,23 +445,19 @@ class AbstractParallelRebaselineCommand(AbstractRebaseliningCommand):
                 _log.info('Removing all-PASS testharness baseline: %s', path)
                 filesystem.remove(path)
 
-    def _possible_baseline_paths(self, test_baseline_set):
-        """Returns file paths for all baselines for the given tests and builders.
+    def _generic_baseline_paths(self, test_baseline_set):
+        """Returns absolute paths for generic baselines for the given tests.
 
-        Args:
-            test_baseline_set: A TestBaselineSet instance.
-
-        Returns:
-            A list of absolute paths where baselines could possibly exist.
+        Even when a test does not have a generic baseline, the path where it
+        would be is still included in the return value.
         """
         filesystem = self._tool.filesystem
-        baseline_paths = set()
-        for test, build, _ in test_baseline_set:
+        baseline_paths = []
+        for test in test_baseline_set.all_tests():
             filenames = [self._file_name_for_expected_result(test, suffix) for suffix in BASELINE_SUFFIX_LIST]
-            port_baseline_dir = self._baseline_directory(build.builder_name)
-            baseline_paths.update({filesystem.join(port_baseline_dir, filename) for filename in filenames})
-            baseline_paths.update({filesystem.join(self._layout_tests_dir(), filename) for filename in filenames})
-        return sorted(baseline_paths)
+            baseline_paths += [filesystem.join(self._layout_tests_dir(), filename) for filename in filenames]
+        baseline_paths.sort()
+        return baseline_paths
 
     def _layout_tests_dir(self):
         return self._tool.port_factory.get().layout_tests_dir()

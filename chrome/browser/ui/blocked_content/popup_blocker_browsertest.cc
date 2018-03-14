@@ -10,7 +10,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_feature_list.h"
+#include "base/test/histogram_tester.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
@@ -51,6 +51,7 @@
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
@@ -117,8 +118,6 @@ class PopupBlockerBrowserTest : public InProcessBrowserTest {
   ~PopupBlockerBrowserTest() override {}
 
   void SetUpOnMainThread() override {
-    InProcessBrowserTest::SetUpOnMainThread();
-
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(embedded_test_server()->Start());
   }
@@ -135,7 +134,9 @@ class PopupBlockerBrowserTest : public InProcessBrowserTest {
 
   enum WhatToExpect {
     ExpectPopup,
-    ExpectTab
+    ExpectForegroundTab,
+    ExpectBackgroundTab,
+    ExpectNewWindow
   };
 
   enum ShouldCheckTitle {
@@ -169,15 +170,24 @@ class PopupBlockerBrowserTest : public InProcessBrowserTest {
   // then opens the blocked popup. Once the popup stopped loading, verifies
   // that the title of the page is "PASS" if |check_title| is set.
   //
-  // If |what_to_expect| is ExpectPopup, the popup is expected to open a new
-  // window, or a background tab if it is false.
+  // If |disposition| is CURRENT_TAB, the blocked content will be opened as
+  // it was specified by renderer. In this case possible WhatToExpect is
+  // ExpectPopup or ExpectForegroundTab.
+  //
+  // But if |disposition| is something else but CURRENT_TAB, blocked contents
+  // will be opened in that alternative disposition. This is for allowing users
+  // to use keyboard modifiers in ContentSettingBubble. Therefore possible
+  // WhatToExpect is ExpectForegroundTab, ExpectBackgroundTab, or
+  // ExpectNewWindow.
   //
   // Returns the WebContents of the launched popup.
-  WebContents* RunCheckTest(Browser* browser,
-                            const std::string& test_name,
-                            WhatToExpect what_to_expect,
-                            ShouldCheckTitle check_title,
-                            const base::string16& expected_title) {
+  WebContents* RunCheckTest(
+      Browser* browser,
+      const std::string& test_name,
+      WindowOpenDisposition disposition,
+      WhatToExpect what_to_expect,
+      ShouldCheckTitle check_title,
+      const base::string16& expected_title = base::ASCIIToUTF16("PASS")) {
     GURL url(embedded_test_server()->GetURL(test_name));
 
     CountRenderViewHosts counter;
@@ -213,18 +223,21 @@ class PopupBlockerBrowserTest : public InProcessBrowserTest {
     std::map<int32_t, GURL> blocked_requests =
         popup_blocker_helper->GetBlockedPopupRequests();
     std::map<int32_t, GURL>::const_iterator iter = blocked_requests.begin();
-    popup_blocker_helper->ShowBlockedPopup(iter->first);
+    popup_blocker_helper->ShowBlockedPopup(iter->first, disposition);
 
     observer.Wait();
     Browser* new_browser;
-    if (what_to_expect == ExpectPopup) {
+    if (what_to_expect == ExpectPopup || what_to_expect == ExpectNewWindow) {
       new_browser = browser_observer.WaitForSingleNewBrowser();
       web_contents = new_browser->tab_strip_model()->GetActiveWebContents();
+      if (what_to_expect == ExpectNewWindow)
+        EXPECT_TRUE(new_browser->is_type_tabbed());
     } else {
       new_browser = browser;
       EXPECT_EQ(2, browser->tab_strip_model()->count());
-      // Check that we always create foreground tabs.
-      EXPECT_EQ(1, browser->tab_strip_model()->active_index());
+      int expected_active_tab = (what_to_expect == ExpectForegroundTab) ? 1 : 0;
+      EXPECT_EQ(expected_active_tab,
+                browser->tab_strip_model()->active_index());
       web_contents = browser->tab_strip_model()->GetWebContentsAt(1);
     }
 
@@ -237,14 +250,6 @@ class PopupBlockerBrowserTest : public InProcessBrowserTest {
     return web_contents;
   }
 
-  WebContents* RunCheckTest(Browser* browser,
-                            const std::string& test_name,
-                            WhatToExpect what_to_expect,
-                            ShouldCheckTitle check_title) {
-    return RunCheckTest(browser, test_name, what_to_expect, check_title,
-                        base::ASCIIToUTF16("PASS"));
-  }
-
  private:
   DISALLOW_COPY_AND_ASSIGN(PopupBlockerBrowserTest);
 };
@@ -254,7 +259,8 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest,
   RunCheckTest(
       browser(),
       "/popup_blocker/popup-blocked-to-post-blank.html",
-      ExpectTab,
+      WindowOpenDisposition::CURRENT_TAB,
+      ExpectForegroundTab,
       DontCheckTitle);
 }
 
@@ -271,7 +277,8 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest,
   RunCheckTest(
       CreateIncognitoBrowser(),
       "/popup_blocker/popup-blocked-to-post-blank.html",
-      ExpectTab,
+      WindowOpenDisposition::CURRENT_TAB,
+      ExpectForegroundTab,
       DontCheckTitle);
 }
 
@@ -280,7 +287,8 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest,
   RunCheckTest(
       browser(),
       "/popup_blocker/popup-fake-click-on-anchor.html",
-      ExpectTab,
+      WindowOpenDisposition::CURRENT_TAB,
+      ExpectForegroundTab,
       DontCheckTitle);
 }
 
@@ -289,8 +297,95 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest,
   RunCheckTest(
       browser(),
       "/popup_blocker/popup-fake-click-on-anchor2.html",
-      ExpectTab,
+      WindowOpenDisposition::CURRENT_TAB,
+      ExpectForegroundTab,
       DontCheckTitle);
+}
+
+IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, PopupPositionMetrics) {
+  const GURL url(
+      embedded_test_server()->GetURL("/popup_blocker/popup-many.html"));
+  ui_test_utils::NavigateToURL(browser(), url);
+  EXPECT_EQ(2, GetBlockedContentsCount());
+
+  // Open two more popups.
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  EXPECT_TRUE(content::ExecuteScriptWithoutUserGesture(web_contents, "test()"));
+  EXPECT_EQ(4, GetBlockedContentsCount());
+
+  auto* popup_blocker = PopupBlockerTabHelper::FromWebContents(web_contents);
+  std::vector<int32_t> ids;
+  for (const auto& it : popup_blocker->GetBlockedPopupRequests())
+    ids.push_back(it.first);
+  ASSERT_EQ(4u, ids.size());
+
+  WindowOpenDisposition disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
+
+  base::HistogramTester tester;
+  const char kClickThroughPosition[] =
+      "ContentSettings.Popups.ClickThroughPosition";
+
+  popup_blocker->ShowBlockedPopup(ids[1], disposition);
+  tester.ExpectBucketCount(
+      kClickThroughPosition,
+      static_cast<int>(PopupBlockerTabHelper::PopupPosition::kMiddlePopup), 1);
+
+  popup_blocker->ShowBlockedPopup(ids[0], disposition);
+  tester.ExpectBucketCount(
+      kClickThroughPosition,
+      static_cast<int>(PopupBlockerTabHelper::PopupPosition::kFirstPopup), 1);
+
+  popup_blocker->ShowBlockedPopup(ids[3], disposition);
+  tester.ExpectBucketCount(
+      kClickThroughPosition,
+      static_cast<int>(PopupBlockerTabHelper::PopupPosition::kLastPopup), 1);
+
+  popup_blocker->ShowBlockedPopup(ids[2], disposition);
+  tester.ExpectBucketCount(
+      kClickThroughPosition,
+      static_cast<int>(PopupBlockerTabHelper::PopupPosition::kOnlyPopup), 1);
+
+  tester.ExpectTotalCount(kClickThroughPosition, 4);
+}
+
+IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, PopupMetrics) {
+  const char kPopupActions[] = "ContentSettings.Popups.BlockerActions";
+  base::HistogramTester tester;
+
+  const GURL url(
+      embedded_test_server()->GetURL("/popup_blocker/popup-many.html"));
+  ui_test_utils::NavigateToURL(browser(), url);
+  EXPECT_EQ(2, GetBlockedContentsCount());
+
+  tester.ExpectBucketCount(
+      kPopupActions,
+      static_cast<int>(PopupBlockerTabHelper::Action::kInitiated), 2);
+  tester.ExpectBucketCount(
+      kPopupActions, static_cast<int>(PopupBlockerTabHelper::Action::kBlocked),
+      2);
+
+  // Click through one of them.
+  auto* popup_blocker = PopupBlockerTabHelper::FromWebContents(
+      browser()->tab_strip_model()->GetActiveWebContents());
+  popup_blocker->ShowBlockedPopup(
+      popup_blocker->GetBlockedPopupRequests().begin()->first,
+      WindowOpenDisposition::NEW_BACKGROUND_TAB);
+
+  tester.ExpectBucketCount(
+      kPopupActions,
+      static_cast<int>(PopupBlockerTabHelper::Action::kClickedThrough), 1);
+
+  // Whitelist the site and navigate again.
+  HostContentSettingsMapFactory::GetForProfile(browser()->profile())
+      ->SetContentSettingDefaultScope(url, GURL(), CONTENT_SETTINGS_TYPE_POPUPS,
+                                      std::string(), CONTENT_SETTING_ALLOW);
+  ui_test_utils::NavigateToURL(browser(), url);
+  tester.ExpectBucketCount(
+      kPopupActions,
+      static_cast<int>(PopupBlockerTabHelper::Action::kInitiated), 4);
+  // 4 initiated popups, 2 blocked, and 1 clicked through.
+  tester.ExpectTotalCount(kPopupActions, 4 + 2 + 1);
 }
 
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, MultiplePopups) {
@@ -308,7 +403,7 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest,
       ->SetContentSettingDefaultScope(url, GURL(), CONTENT_SETTINGS_TYPE_POPUPS,
                                       std::string(), CONTENT_SETTING_ALLOW);
 
-  NavigateAndCheckPopupShown(url, ExpectTab);
+  NavigateAndCheckPopupShown(url, ExpectForegroundTab);
 }
 
 // Verify that content settings are applied based on the top-level frame URL.
@@ -321,7 +416,7 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest,
 
   // Popup from the iframe should be allowed since the top-level URL is
   // whitelisted.
-  NavigateAndCheckPopupShown(url, ExpectTab);
+  NavigateAndCheckPopupShown(url, ExpectForegroundTab);
 
   // Whitelist iframe URL instead.
   GURL::Replacements replace_host;
@@ -360,7 +455,7 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest,
       switches::kDisablePopupBlocking);
   GURL url(embedded_test_server()->GetURL(
       "/popup_blocker/popup-blocked-to-post-blank.html"));
-  NavigateAndCheckPopupShown(url, ExpectTab);
+  NavigateAndCheckPopupShown(url, ExpectForegroundTab);
 
   // Make sure the navigation in the new tab actually finished.
   WebContents* web_contents = browser()->tab_strip_model()->GetWebContentsAt(1);
@@ -404,6 +499,7 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, MAYBE_WindowFeatures) {
   WebContents* popup =
       RunCheckTest(browser(),
                    "/popup_blocker/popup-window-open.html",
+                   WindowOpenDisposition::CURRENT_TAB,
                    ExpectPopup,
                    DontCheckTitle);
 
@@ -416,20 +512,23 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, MAYBE_WindowFeatures) {
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, CorrectReferrer) {
   RunCheckTest(browser(),
                "/popup_blocker/popup-referrer.html",
-               ExpectTab,
+               WindowOpenDisposition::CURRENT_TAB,
+               ExpectForegroundTab,
                CheckTitle);
 }
 
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, CorrectFrameName) {
   RunCheckTest(browser(),
                "/popup_blocker/popup-framename.html",
-               ExpectTab,
+               WindowOpenDisposition::CURRENT_TAB,
+               ExpectForegroundTab,
                CheckTitle);
 }
 
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, WindowFeaturesBarProps) {
   RunCheckTest(browser(),
                "/popup_blocker/popup-windowfeatures.html",
+               WindowOpenDisposition::CURRENT_TAB,
                ExpectPopup,
                CheckTitle);
 }
@@ -437,14 +536,16 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, WindowFeaturesBarProps) {
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, SessionStorage) {
   RunCheckTest(browser(),
                "/popup_blocker/popup-sessionstorage.html",
-               ExpectTab,
+               WindowOpenDisposition::CURRENT_TAB,
+               ExpectForegroundTab,
                CheckTitle);
 }
 
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, Opener) {
   RunCheckTest(browser(),
                "/popup_blocker/popup-opener.html",
-               ExpectTab,
+               WindowOpenDisposition::CURRENT_TAB,
+               ExpectForegroundTab,
                CheckTitle);
 }
 
@@ -455,7 +556,8 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, ClosableAfterNavigation) {
   WebContents* popup =
       RunCheckTest(browser(),
                    "/popup_blocker/popup-opener.html",
-                   ExpectTab,
+                   WindowOpenDisposition::CURRENT_TAB,
+                   ExpectForegroundTab,
                    CheckTitle);
 
   // Navigate it elsewhere.
@@ -474,20 +576,23 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, ClosableAfterNavigation) {
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, OpenerSuppressed) {
   RunCheckTest(browser(),
                "/popup_blocker/popup-openersuppressed.html",
-               ExpectTab,
+               WindowOpenDisposition::CURRENT_TAB,
+               ExpectForegroundTab,
                CheckTitle);
 }
 
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, ShiftClick) {
   RunCheckTest(browser(), "/popup_blocker/popup-fake-click-on-anchor3.html",
-               ExpectPopup, CheckTitle, base::ASCIIToUTF16("Popup Success!"));
+               WindowOpenDisposition::CURRENT_TAB, ExpectPopup, CheckTitle,
+               base::ASCIIToUTF16("Popup Success!"));
 }
 
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, WebUI) {
   WebContents* popup =
       RunCheckTest(browser(),
                    "/popup_blocker/popup-webui.html",
-                   ExpectTab,
+                   WindowOpenDisposition::CURRENT_TAB,
+                   ExpectForegroundTab,
                    DontCheckTitle);
 
   // Check that the new popup displays about:blank.
@@ -504,6 +609,9 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, DenialOfService) {
 
 // Verify that an onunload popup does not show up for about:blank.
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, Regress427477) {
+  // Flaky in this case: crbug.com/780371
+  if (!content::IsBrowserSideNavigationEnabled())
+    return;
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUINewTabURL));
   ui_test_utils::NavigateToURL(browser(), GURL(url::kAboutBlankURL));
 
@@ -523,7 +631,7 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, Regress427477) {
   ASSERT_EQ(0, GetBlockedContentsCount());
 }
 
-// Verify that app modal prompts can't be used to create pop unders.
+// Verify that JavaScript dialogs can't be used to create pop unders.
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, ModalPopUnder) {
   WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
   GURL url(
@@ -543,20 +651,21 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, ModalPopUnder) {
   // https://crbug.com/687732 for details.
   ui_test_utils::BrowserActivationWaiter alert_waiter(browser());
 #endif
-  tab->GetMainFrame()->ExecuteJavaScriptForTests(base::UTF8ToUTF16("alert()"));
-  app_modal::AppModalDialog* dialog = ui_test_utils::WaitForAppModalDialog();
+  JavaScriptDialogTabHelper* js_helper =
+      JavaScriptDialogTabHelper::FromWebContents(tab);
+  base::RunLoop dialog_wait;
+  js_helper->SetDialogShownCallbackForTesting(dialog_wait.QuitClosure());
+  tab->GetMainFrame()->ExecuteJavaScriptForTests(
+      base::UTF8ToUTF16("confirm()"));
+  dialog_wait.Run();
 #if !defined(OS_MACOSX)
   if (chrome::FindLastActive() != browser())
     alert_waiter.WaitForActivation();
 #endif
 
   // Verify that after the dialog is closed, the popup is in front again.
-  ASSERT_TRUE(dialog->IsJavaScriptModalDialog());
-  app_modal::JavaScriptAppModalDialog* js_dialog =
-      static_cast<app_modal::JavaScriptAppModalDialog*>(dialog);
-
   ui_test_utils::BrowserActivationWaiter waiter(popup_browser);
-  js_dialog->native_dialog()->AcceptAppModalDialog();
+  js_helper->HandleJavaScriptDialog(tab, true, nullptr);
   waiter.WaitForActivation();
   ASSERT_EQ(popup_browser, chrome::FindLastActive());
 }
@@ -587,20 +696,21 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, ModalPopUnderWindowOpener) {
   // https://crbug.com/687732 for details.
   ui_test_utils::BrowserActivationWaiter alert_waiter(browser());
 #endif
-  tab->GetMainFrame()->ExecuteJavaScriptForTests(base::UTF8ToUTF16("alert()"));
-  app_modal::AppModalDialog* dialog = ui_test_utils::WaitForAppModalDialog();
+  JavaScriptDialogTabHelper* js_helper =
+      JavaScriptDialogTabHelper::FromWebContents(tab);
+  base::RunLoop dialog_wait;
+  js_helper->SetDialogShownCallbackForTesting(dialog_wait.QuitClosure());
+  tab->GetMainFrame()->ExecuteJavaScriptForTests(
+      base::UTF8ToUTF16("confirm()"));
+  dialog_wait.Run();
 #if !defined(OS_MACOSX)
   if (chrome::FindLastActive() != browser())
     alert_waiter.WaitForActivation();
 #endif
 
   // Verify that after the dialog is closed, the popup is in front again.
-  ASSERT_TRUE(dialog->IsJavaScriptModalDialog());
-  app_modal::JavaScriptAppModalDialog* js_dialog =
-      static_cast<app_modal::JavaScriptAppModalDialog*>(dialog);
-
   ui_test_utils::BrowserActivationWaiter waiter(popup_browser);
-  js_dialog->native_dialog()->AcceptAppModalDialog();
+  js_helper->HandleJavaScriptDialog(tab, true, nullptr);
   waiter.WaitForActivation();
   ASSERT_EQ(popup_browser, chrome::FindLastActive());
 }
@@ -625,20 +735,21 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, ModalPopUnderSubframe) {
   // https://crbug.com/687732 for details.
   ui_test_utils::BrowserActivationWaiter alert_waiter(browser());
 #endif
-  tab->GetMainFrame()->ExecuteJavaScriptForTests(base::UTF8ToUTF16("alert()"));
-  app_modal::AppModalDialog* dialog = ui_test_utils::WaitForAppModalDialog();
+  JavaScriptDialogTabHelper* js_helper =
+      JavaScriptDialogTabHelper::FromWebContents(tab);
+  base::RunLoop dialog_wait;
+  js_helper->SetDialogShownCallbackForTesting(dialog_wait.QuitClosure());
+  tab->GetMainFrame()->ExecuteJavaScriptForTests(
+      base::UTF8ToUTF16("confirm()"));
+  dialog_wait.Run();
 #if !defined(OS_MACOSX)
   if (chrome::FindLastActive() != browser())
     alert_waiter.WaitForActivation();
 #endif
 
   // Verify that after the dialog is closed, the popup is in front again.
-  ASSERT_TRUE(dialog->IsJavaScriptModalDialog());
-  app_modal::JavaScriptAppModalDialog* js_dialog =
-      static_cast<app_modal::JavaScriptAppModalDialog*>(dialog);
-
   ui_test_utils::BrowserActivationWaiter waiter(popup_browser);
-  js_dialog->native_dialog()->AcceptAppModalDialog();
+  js_helper->HandleJavaScriptDialog(tab, true, nullptr);
   waiter.WaitForActivation();
   ASSERT_EQ(popup_browser, chrome::FindLastActive());
 }
@@ -663,69 +774,13 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, ModalPopUnderNoOpener) {
   // https://crbug.com/687732 for details.
   ui_test_utils::BrowserActivationWaiter alert_waiter(browser());
 #endif
-  tab->GetMainFrame()->ExecuteJavaScriptForTests(base::UTF8ToUTF16("alert()"));
-  app_modal::AppModalDialog* dialog = ui_test_utils::WaitForAppModalDialog();
-#if !defined(OS_MACOSX)
-  if (chrome::FindLastActive() != browser())
-    alert_waiter.WaitForActivation();
-#endif
-
-  // Verify that after the dialog is closed, the popup is in front again.
-  ASSERT_TRUE(dialog->IsJavaScriptModalDialog());
-  app_modal::JavaScriptAppModalDialog* js_dialog =
-      static_cast<app_modal::JavaScriptAppModalDialog*>(dialog);
-
-  ui_test_utils::BrowserActivationWaiter waiter(popup_browser);
-  js_dialog->native_dialog()->AcceptAppModalDialog();
-  waiter.WaitForActivation();
-  ASSERT_EQ(popup_browser, chrome::FindLastActive());
-}
-
-// Verify that app modal prompts can't be used to create pop unders, while the
-// new auto-dismissing JavaScript dialogs are enabled.
-IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest,
-                       ModalPopUnderAutoDismissingDialogs) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(features::kAutoDismissingDialogs);
-
-  // One tab to test in.
-  TabStripModel* tab_strip = browser()->tab_strip_model();
-  WebContents* tab = tab_strip->GetActiveWebContents();
-  EXPECT_EQ(1, tab_strip->count());
-
-  // One blank tab for later.
-  ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL(url::kAboutBlankURL),
-      WindowOpenDisposition::NEW_BACKGROUND_TAB,
-      ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
-  EXPECT_EQ(2, tab_strip->count());
-  ASSERT_EQ(0, tab_strip->GetIndexOfWebContents(tab));
-
-  // Show a popup.
   JavaScriptDialogTabHelper* js_helper =
       JavaScriptDialogTabHelper::FromWebContents(tab);
-  GURL url(
-      embedded_test_server()->GetURL("/popup_blocker/popup-window-open.html"));
-  HostContentSettingsMapFactory::GetForProfile(browser()->profile())
-      ->SetContentSettingDefaultScope(url, GURL(), CONTENT_SETTINGS_TYPE_POPUPS,
-                                      std::string(), CONTENT_SETTING_ALLOW);
-
-  NavigateAndCheckPopupShown(url, ExpectPopup);
-
-  Browser* popup_browser = chrome::FindLastActive();
-  ASSERT_NE(popup_browser, browser());
-
-  // Showing an alert will raise the tab over the popup.
-#if !defined(OS_MACOSX)
-  // Mac doesn't activate the browser during modal dialogs, see
-  // https://crbug.com/687732 for details.
-  ui_test_utils::BrowserActivationWaiter alert_waiter(browser());
-#endif
-  scoped_refptr<content::MessageLoopRunner> runner =
-      new content::MessageLoopRunner;
-  js_helper->SetDialogShownCallbackForTesting(runner->QuitClosure());
-  tab->GetMainFrame()->ExecuteJavaScriptForTests(base::UTF8ToUTF16("alert()"));
-  runner->Run();
+  base::RunLoop dialog_wait;
+  js_helper->SetDialogShownCallbackForTesting(dialog_wait.QuitClosure());
+  tab->GetMainFrame()->ExecuteJavaScriptForTests(
+      base::UTF8ToUTF16("confirm()"));
+  dialog_wait.Run();
 #if !defined(OS_MACOSX)
   if (chrome::FindLastActive() != browser())
     alert_waiter.WaitForActivation();
@@ -733,7 +788,7 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest,
 
   // Verify that after the dialog is closed, the popup is in front again.
   ui_test_utils::BrowserActivationWaiter waiter(popup_browser);
-  tab_strip->ActivateTabAt(1, true);
+  js_helper->HandleJavaScriptDialog(tab, true, nullptr);
   waiter.WaitForActivation();
   ASSERT_EQ(popup_browser, chrome::FindLastActive());
 }
@@ -766,65 +821,66 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest,
   tab->GetMainFrame()->ExecuteJavaScriptForTests(
       base::UTF8ToUTF16("var o = document.createElement('object'); o.data = "
                         "'/alert_dialog.pdf'; document.body.appendChild(o);"));
-  app_modal::AppModalDialog* dialog = ui_test_utils::WaitForAppModalDialog();
+  app_modal::JavaScriptAppModalDialog* dialog =
+      ui_test_utils::WaitForAppModalDialog();
 #if !defined(OS_MACOSX)
   if (chrome::FindLastActive() != browser())
     alert_waiter.WaitForActivation();
 #endif
 
   // Verify that after the dialog was closed, the popup is in front again.
-  ASSERT_TRUE(dialog->IsJavaScriptModalDialog());
-  app_modal::JavaScriptAppModalDialog* js_dialog =
-      static_cast<app_modal::JavaScriptAppModalDialog*>(dialog);
-
   ui_test_utils::BrowserActivationWaiter waiter(popup_browser);
-  js_dialog->native_dialog()->AcceptAppModalDialog();
+  dialog->native_dialog()->AcceptAppModalDialog();
   waiter.WaitForActivation();
   ASSERT_EQ(popup_browser, chrome::FindLastActive());
 }
 
-IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, ModalPopUnderViaHTTPAuth) {
-  WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
-  GURL url(
-      embedded_test_server()->GetURL("/popup_blocker/popup-window-open.html"));
+// Verify that if a new tab opens a popup via window.open of its spawning tab,
+// that can't be used to bypass the popunder blocker.
+IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, ModalPopUnderSpawnerOpen) {
+  GURL url(embedded_test_server()->GetURL(
+      "/popup_blocker/popup-window-spawner-open.html"));
   HostContentSettingsMapFactory::GetForProfile(browser()->profile())
       ->SetContentSettingDefaultScope(url, GURL(), CONTENT_SETTINGS_TYPE_POPUPS,
                                       std::string(), CONTENT_SETTING_ALLOW);
 
-  NavigateAndCheckPopupShown(url, ExpectPopup);
+  // Navigate and wait for a new browser window; that will be the popup.
+  ui_test_utils::BrowserAddedObserver observer;
+  ui_test_utils::NavigateToURL(browser(), url);
+  observer.WaitForSingleNewBrowser();
+
+  ASSERT_EQ(2u, chrome::GetBrowserCount(browser()->profile()));
+  ASSERT_EQ(2, browser()->tab_strip_model()->count());
+  ASSERT_EQ(1, browser()->tab_strip_model()->active_index());
+  WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
 
   Browser* popup_browser = chrome::FindLastActive();
   ASSERT_NE(popup_browser, browser());
+  ASSERT_TRUE(popup_browser->is_type_popup());
 
-  // Showing an http auth dialog will raise the tab over the popup.
-  LoginPromptBrowserTestObserver observer;
-  content::NavigationController* controller = &tab->GetController();
-  observer.Register(content::Source<content::NavigationController>(controller));
-  {
+// Showing an alert will raise the tab over the popup.
 #if !defined(OS_MACOSX)
-    // Mac doesn't activate the browser during modal dialogs, see
-    // https://crbug.com/687732 for details.
-    ui_test_utils::BrowserActivationWaiter raised_waiter(browser());
+  // Mac doesn't activate the browser during modal dialogs, see
+  // https://crbug.com/687732 for details.
+  ui_test_utils::BrowserActivationWaiter alert_waiter(browser());
 #endif
-    WindowedAuthNeededObserver auth_needed_observer(controller);
-    tab->GetMainFrame()->ExecuteJavaScriptForTests(
-        base::UTF8ToUTF16("var f = document.createElement('iframe'); f.src = "
-                          "'/auth-basic'; document.body.appendChild(f);"));
-    auth_needed_observer.Wait();
-    ASSERT_FALSE(observer.handlers().empty());
+  JavaScriptDialogTabHelper* js_helper =
+      JavaScriptDialogTabHelper::FromWebContents(tab);
+  base::RunLoop dialog_wait;
+  js_helper->SetDialogShownCallbackForTesting(dialog_wait.QuitClosure());
+  tab->GetMainFrame()->ExecuteJavaScriptForTests(
+      base::UTF8ToUTF16("confirm()"));
+  dialog_wait.Run();
 #if !defined(OS_MACOSX)
-    if (chrome::FindLastActive() != browser())
-      raised_waiter.WaitForActivation();
+  if (chrome::FindLastActive() != browser())
+    alert_waiter.WaitForActivation();
 #endif
-  }
 
-  {
-    ui_test_utils::BrowserActivationWaiter waiter(popup_browser);
-    LoginHandler* handler = *observer.handlers().begin();
-    handler->CancelAuth();
-    waiter.WaitForActivation();
-    ASSERT_EQ(popup_browser, chrome::FindLastActive());
-  }
+  // Verify that after the dialog is closed, the popup is in front again.
+  ui_test_utils::BrowserActivationWaiter waiter(popup_browser);
+  js_helper->HandleJavaScriptDialog(tab, true, nullptr);
+  waiter.WaitForActivation();
+  ASSERT_EQ(popup_browser, chrome::FindLastActive());
 }
 
 // Tests that Ctrl+Enter/Cmd+Enter keys on a link open the backgournd tab.
@@ -881,6 +937,33 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, TapGestureWithCtrlKey) {
   ASSERT_EQ(2, browser()->tab_strip_model()->count());
   // Check that we create the background tab.
   ASSERT_EQ(0, browser()->tab_strip_model()->active_index());
+}
+
+// Test that popup blocker can show blocked contents in new foreground tab.
+IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, OpenInNewForegroundTab) {
+  RunCheckTest(browser(),
+               "/popup_blocker/popup-window-open.html",
+               WindowOpenDisposition::NEW_FOREGROUND_TAB,
+               ExpectForegroundTab,
+               DontCheckTitle);
+}
+
+// Test that popup blocker can show blocked contents in new background tab.
+IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, OpenInNewBackgroundTab) {
+  RunCheckTest(browser(),
+               "/popup_blocker/popup-window-open.html",
+               WindowOpenDisposition::NEW_BACKGROUND_TAB,
+               ExpectBackgroundTab,
+               DontCheckTitle);
+}
+
+// Test that popup blocker can show blocked contents in new window.
+IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, OpenInNewWindow) {
+  RunCheckTest(browser(),
+               "/popup_blocker/popup-window-open.html",
+               WindowOpenDisposition::NEW_WINDOW,
+               ExpectNewWindow,
+               DontCheckTitle);
 }
 
 }  // namespace

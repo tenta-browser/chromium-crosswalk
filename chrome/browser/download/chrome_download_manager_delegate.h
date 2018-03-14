@@ -12,14 +12,16 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/containers/hash_tables.h"
+#include "base/containers/flat_map.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/sequenced_task_runner.h"
 #include "chrome/browser/download/download_path_reservation_tracker.h"
 #include "chrome/browser/download/download_target_determiner_delegate.h"
 #include "chrome/browser/download/download_target_info.h"
-#include "chrome/browser/safe_browsing/download_protection_service.h"
+#include "chrome/browser/safe_browsing/download_protection/download_protection_service.h"
+#include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
 #include "content/public/browser/download_danger_type.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager_delegate.h"
@@ -80,13 +82,22 @@ class ChromeDownloadManagerDelegate
       const base::FilePath::StringType& default_extension,
       bool can_save_as_complete,
       const content::SavePackagePathPickedCallback& callback) override;
+  download::InProgressCache* GetInProgressCache() override;
   void SanitizeSavePackageResourceName(base::FilePath* filename) override;
   void OpenDownload(content::DownloadItem* download) override;
+  bool IsMostRecentDownloadItemAtFilePath(
+      content::DownloadItem* download) override;
   void ShowDownloadInShell(content::DownloadItem* download) override;
   void CheckForFileExistence(
       content::DownloadItem* download,
-      const content::CheckForFileExistenceCallback& callback) override;
+      content::CheckForFileExistenceCallback callback) override;
   std::string ApplicationClientIdForFileScanning() const override;
+  void CheckDownloadAllowed(
+      const content::ResourceRequestInfo::WebContentsGetter&
+          web_contents_getter,
+      const GURL& url,
+      const std::string& request_method,
+      content::CheckDownloadAllowedCallback check_download_allowed_cb) override;
 
   // Opens a download using the platform handler. DownloadItem::OpenDownload,
   // which ends up being handled by OpenDownload(), will open a download in the
@@ -139,9 +150,8 @@ class ChromeDownloadManagerDelegate
                const content::NotificationDetails& details) override;
 
   // Callback function after the DownloadProtectionService completes.
-  void CheckClientDownloadDone(
-      uint32_t download_id,
-      safe_browsing::DownloadProtectionService::DownloadCheckResult result);
+  void CheckClientDownloadDone(uint32_t download_id,
+                               safe_browsing::DownloadCheckResult result);
 
   // Internal gateways for ShouldCompleteDownload().
   bool IsDownloadReadyForCompletion(
@@ -151,8 +161,11 @@ class ChromeDownloadManagerDelegate
       uint32_t download_id,
       const base::Closure& user_complete_callback);
 
+  // Sets the next download id based on download database records, and runs all
+  // cached id callbacks.
   void SetNextId(uint32_t id);
 
+  // Runs the |callback| with next id. Results in the download being started.
   void ReturnNextId(const content::DownloadIdCallback& callback);
 
   void OnDownloadTargetDetermined(
@@ -163,15 +176,42 @@ class ChromeDownloadManagerDelegate
   // Returns true if |path| should open in the browser.
   bool IsOpenInBrowserPreferreredForFile(const base::FilePath& path);
 
+  // Return true if the downloaded file should be blocked based on the current
+  // download restriction pref and |danger_type|.
+  bool ShouldBlockFile(content::DownloadDangerType danger_type) const;
+
+  void MaybeSendDangerousDownloadOpenedReport(content::DownloadItem* download,
+                                              bool show_download_in_folder);
+
+  void OnCheckDownloadAllowedComplete(
+      content::CheckDownloadAllowedCallback check_download_allowed_cb,
+      bool storage_permission_granted,
+      bool allow);
+
   Profile* profile_;
+
+  std::unique_ptr<download::InProgressCache> download_metadata_cache_;
+
+  // Incremented by one for each download, the first available download id is
+  // assigned from history database or 1 when history database fails to
+  // intialize.
   uint32_t next_download_id_;
+
+  // The |GetNextId| callbacks that may be cached before loading the download
+  // database.
   IdCallbackVector id_callbacks_;
   std::unique_ptr<DownloadPrefs> download_prefs_;
 
+  // SequencedTaskRunner to check for file existence and read/write metadata
+  // cache. A sequence is used so that a large download history doesn't cause a
+  // large number of concurrent disk operations.
+  const scoped_refptr<base::SequencedTaskRunner> disk_access_task_runner_;
+
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   // Maps from pending extension installations to DownloadItem IDs.
-  typedef base::hash_map<extensions::CrxInstaller*,
-      content::DownloadOpenDelayedCallback> CrxInstallerMap;
+  typedef base::flat_map<extensions::CrxInstaller*,
+                         content::DownloadOpenDelayedCallback>
+      CrxInstallerMap;
   CrxInstallerMap crx_installers_;
 #endif
 

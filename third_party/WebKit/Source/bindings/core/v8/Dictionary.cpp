@@ -80,10 +80,10 @@ DictionaryIterator Dictionary::GetIterator(
       !iterator_getter->IsFunction())
     return nullptr;
   v8::Local<v8::Value> iterator;
-  if (!V8Call(V8ScriptRunner::CallFunction(
-                  v8::Local<v8::Function>::Cast(iterator_getter),
-                  execution_context, dictionary_object_, 0, nullptr, isolate_),
-              iterator))
+  if (!V8ScriptRunner::CallFunction(
+           v8::Local<v8::Function>::Cast(iterator_getter), execution_context,
+           dictionary_object_, 0, nullptr, isolate_)
+           .ToLocal(&iterator))
     return nullptr;
   if (!iterator->IsObject())
     return nullptr;
@@ -96,8 +96,8 @@ bool Dictionary::Get(const StringView& key, Dictionary& value) const {
     return false;
 
   if (v8_value->IsObject()) {
-    ASSERT(isolate_);
-    ASSERT(isolate_ == v8::Isolate::GetCurrent());
+    DCHECK(isolate_);
+    DCHECK_EQ(isolate_, v8::Isolate::GetCurrent());
     // TODO(bashi,yukishiino): Should rethrow the exception.
     // http://crbug.com/666661
     DummyExceptionStateForTesting exception_state;
@@ -120,6 +120,32 @@ bool Dictionary::GetInternal(const v8::Local<v8::Value>& key,
   // http://crbug.com/666661
   v8::TryCatch try_catch(GetIsolate());
   return dictionary_object_->Get(V8Context(), key).ToLocal(&result);
+}
+
+bool Dictionary::GetInternal(const v8::Local<v8::Value>& key,
+                             v8::Local<v8::Value>& result,
+                             ExceptionState& exception_state) const {
+  if (dictionary_object_.IsEmpty())
+    return false;
+
+  v8::TryCatch try_catch(GetIsolate());
+  bool has_key = false;
+  if (!dictionary_object_->Has(V8Context(), key).To(&has_key)) {
+    DCHECK(try_catch.HasCaught());
+    exception_state.RethrowV8Exception(try_catch.Exception());
+    return false;
+  }
+  DCHECK(!try_catch.HasCaught());
+  if (!has_key)
+    return false;
+
+  if (!dictionary_object_->Get(V8Context(), key).ToLocal(&result)) {
+    DCHECK(try_catch.HasCaught());
+    exception_state.RethrowV8Exception(try_catch.Exception());
+    return false;
+  }
+  DCHECK(!try_catch.HasCaught());
+  return true;
 }
 
 WARN_UNUSED_RESULT static v8::MaybeLocal<v8::String> GetStringValueInArray(

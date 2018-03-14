@@ -8,7 +8,7 @@ cr.define('print_preview', function() {
   /**
    * Creates a ColorSettings object. This object encapsulates all settings and
    * logic related to color selection (color/bw).
-   * @param {!print_preview.ticket_item.Color} colorTicketItem Used for writing
+   * @param {!print_preview.ticket_items.Color} colorTicketItem Used for writing
    *     and reading color value.
    * @constructor
    * @extends {print_preview.SettingsSection}
@@ -22,7 +22,7 @@ cr.define('print_preview', function() {
      * @private
      */
     this.colorTicketItem_ = colorTicketItem;
-  };
+  }
 
   ColorSettings.prototype = {
     __proto__: print_preview.SettingsSection.prototype,
@@ -45,8 +45,7 @@ cr.define('print_preview', function() {
     /** @override */
     enterDocument: function() {
       print_preview.SettingsSection.prototype.enterDocument.call(this);
-      this.tracker.add(
-          this.select_, 'change', this.onSelectChange_.bind(this));
+      this.tracker.add(this.select_, 'change', this.onSelectChange_.bind(this));
       this.tracker.add(
           this.colorTicketItem_,
           print_preview.ticket_items.TicketItem.EventType.CHANGE,
@@ -59,17 +58,18 @@ cr.define('print_preview', function() {
      * @private
      */
     onSelectChange_: function() {
-      var select = this.select_;
-      var isColor = select.options[select.selectedIndex].value == 'color';
+      const select = this.select_;
+      const isColor = select.options[select.selectedIndex].value == 'color';
       this.colorTicketItem_.updateValue(isColor);
     },
 
     /**
-     * @return {HTMLSelectElement} Select element containing the color options.
+     * @return {!HTMLSelectElement} Select element containing the color options.
      * @private
      */
     get select_() {
-      return this.getChildElement('.color-settings-select');
+      return /** @type {!HTMLSelectElement} */ (
+          this.getChildElement('.color-settings-select'));
     },
 
     /**
@@ -78,9 +78,9 @@ cr.define('print_preview', function() {
      */
     updateState_: function() {
       if (this.isAvailable()) {
-        var select = this.select_;
-        var valueToSelect = this.colorTicketItem_.getValue() ? 'color' : 'bw';
-        for (var i = 0; i < select.options.length; i++) {
+        const select = this.select_;
+        const valueToSelect = this.colorTicketItem_.getValue() ? 'color' : 'bw';
+        for (let i = 0; i < select.options.length; i++) {
           if (select.options[i].value == valueToSelect) {
             select.selectedIndex = i;
             break;
@@ -92,7 +92,5 @@ cr.define('print_preview', function() {
   };
 
   // Export
-  return {
-    ColorSettings: ColorSettings
-  };
+  return {ColorSettings: ColorSettings};
 });

@@ -34,6 +34,8 @@ struct StructTraits<ui::mojom::InputDeviceDataView, ui::InputDevice> {
     return device.name;
   }
 
+  static bool enabled(const ui::InputDevice& device) { return device.enabled; }
+
   static std::string sys_path(const ui::InputDevice& device) {
     return device.sys_path.AsUTF8Unsafe();
   }
@@ -69,6 +71,10 @@ struct StructTraits<ui::mojom::TouchscreenDeviceDataView,
 
   static int32_t touch_points(const ui::TouchscreenDevice& device) {
     return device.touch_points;
+  }
+
+  static bool has_stylus(const ui::TouchscreenDevice& device) {
+    return device.has_stylus;
   }
 
   static bool Read(ui::mojom::TouchscreenDeviceDataView data,

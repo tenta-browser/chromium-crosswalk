@@ -8,7 +8,6 @@
 #include <iostream>
 #include <memory>
 
-#include "base/android/context_utils.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/command_line.h"
@@ -60,7 +59,7 @@ void CreateAndConnectSocket(
       << "Failed to convert " << endpoint.ToString() << " to sockaddr.";
 
   std::unique_ptr<net::SocketPosix> socket(
-      base::MakeUnique<net::SocketPosix>());
+      std::make_unique<net::SocketPosix>());
 
   int result = socket->Open(AF_INET);
   LOG_IF(FATAL, net::OK != result) << "Failed to open socket for "

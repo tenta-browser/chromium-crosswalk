@@ -48,8 +48,8 @@ class TracedValue : public base::trace_event::ConvertableToTraceFormat {
 
 }  // namespace
 
-TraceNetLogObserver::TraceNetLogObserver() : net_log_to_watch_(NULL) {
-}
+TraceNetLogObserver::TraceNetLogObserver()
+    : net_log_to_watch_(nullptr), weak_factory_(this) {}
 
 TraceNetLogObserver::~TraceNetLogObserver() {
   DCHECK(!net_log_to_watch_);
@@ -94,19 +94,21 @@ void TraceNetLogObserver::WatchForTraceStart(NetLog* netlog) {
   // startup tracing.
   if (base::trace_event::TraceLog::GetInstance()->IsEnabled())
     OnTraceLogEnabled();
-  base::trace_event::TraceLog::GetInstance()->AddEnabledStateObserver(this);
+  base::trace_event::TraceLog::GetInstance()->AddAsyncEnabledStateObserver(
+      weak_factory_.GetWeakPtr());
 }
 
 void TraceNetLogObserver::StopWatchForTraceStart() {
   // Should only stop if is currently watching.
   DCHECK(net_log_to_watch_);
-  base::trace_event::TraceLog::GetInstance()->RemoveEnabledStateObserver(this);
-  // net_log() != nullptr iff NetLog::DeprecatedAddObserver() has been called.
+  base::trace_event::TraceLog::GetInstance()->RemoveAsyncEnabledStateObserver(
+      this);
+  // net_log() != nullptr iff NetLog::AddObserver() has been called.
   // This implies that if the netlog category wasn't enabled, then
-  // NetLog::DeprecatedRemoveObserver() will not get called, and there won't be
-  // a crash in NetLog::DeprecatedRemoveObserver().
+  // NetLog::RemoveObserver() will not get called, and there won't be
+  // a crash in NetLog::RemoveObserver().
   if (net_log())
-    net_log()->DeprecatedRemoveObserver(this);
+    net_log()->RemoveObserver(this);
   net_log_to_watch_ = nullptr;
 }
 
@@ -116,12 +118,12 @@ void TraceNetLogObserver::OnTraceLogEnabled() {
   if (!enabled)
     return;
 
-  net_log_to_watch_->DeprecatedAddObserver(this, NetLogCaptureMode::Default());
+  net_log_to_watch_->AddObserver(this, NetLogCaptureMode::Default());
 }
 
 void TraceNetLogObserver::OnTraceLogDisabled() {
   if (net_log())
-    net_log()->DeprecatedRemoveObserver(this);
+    net_log()->RemoveObserver(this);
 }
 
 }  // namespace net

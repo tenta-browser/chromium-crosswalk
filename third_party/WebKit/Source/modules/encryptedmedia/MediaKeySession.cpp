@@ -27,18 +27,14 @@
 
 #include <cmath>
 #include <limits>
-#include "bindings/core/v8/DOMWrapperWorld.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8ThrowException.h"
-#include "core/dom/DOMArrayBuffer.h"
 #include "core/dom/DOMException.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/dom/TaskRunnerHelper.h"
-#include "core/events/Event.h"
-#include "core/events/GenericEventQueue.h"
+#include "core/dom/events/Event.h"
+#include "core/dom/events/MediaElementEventQueue.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
 #include "modules/encryptedmedia/ContentDecryptionModuleResultPromise.h"
 #include "modules/encryptedmedia/EncryptedMediaUtils.h"
 #include "modules/encryptedmedia/MediaKeyMessageEvent.h"
@@ -46,9 +42,13 @@
 #include "platform/ContentDecryptionModuleResult.h"
 #include "platform/InstanceCounters.h"
 #include "platform/Timer.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8ThrowException.h"
 #include "platform/network/mime/ContentType.h"
 #include "platform/wtf/ASCIICType.h"
 #include "platform/wtf/PtrUtil.h"
+#include "public/platform/TaskType.h"
 #include "public/platform/WebContentDecryptionModule.h"
 #include "public/platform/WebContentDecryptionModuleException.h"
 #include "public/platform/WebContentDecryptionModuleSession.h"
@@ -103,29 +103,6 @@ static bool IsPersistentSessionType(WebEncryptedMediaSessionType session_type) {
   return false;
 }
 
-static String ConvertKeyStatusToString(
-    const WebEncryptedMediaKeyInformation::KeyStatus status) {
-  switch (status) {
-    case WebEncryptedMediaKeyInformation::KeyStatus::kUsable:
-      return "usable";
-    case WebEncryptedMediaKeyInformation::KeyStatus::kExpired:
-      return "expired";
-    case WebEncryptedMediaKeyInformation::KeyStatus::kReleased:
-      return "released";
-    case WebEncryptedMediaKeyInformation::KeyStatus::kOutputRestricted:
-      return "output-restricted";
-    case WebEncryptedMediaKeyInformation::KeyStatus::kOutputDownscaled:
-      return "output-downscaled";
-    case WebEncryptedMediaKeyInformation::KeyStatus::kStatusPending:
-      return "status-pending";
-    case WebEncryptedMediaKeyInformation::KeyStatus::kInternalError:
-      return "internal-error";
-  }
-
-  NOTREACHED();
-  return "internal-error";
-}
-
 static ScriptPromise CreateRejectedPromiseNotCallable(
     ScriptState* script_state) {
   return ScriptPromise::RejectWithDOMException(
@@ -149,7 +126,7 @@ static ScriptPromise CreateRejectedPromiseAlreadyInitialized(
 }
 
 // A class holding a pending action.
-class MediaKeySession::PendingAction
+class MediaKeySession::PendingAction final
     : public GarbageCollectedFinalized<MediaKeySession::PendingAction> {
  public:
   enum Type { kGenerateRequest, kLoad, kUpdate, kClose, kRemove };
@@ -220,7 +197,7 @@ class MediaKeySession::PendingAction
 
   ~PendingAction() {}
 
-  DEFINE_INLINE_TRACE() {
+  void Trace(blink::Visitor* visitor) {
     visitor->Trace(result_);
     visitor->Trace(data_);
   }
@@ -271,7 +248,7 @@ class NewSessionResultPromise : public ContentDecryptionModuleResultPromise {
     Resolve();
   }
 
-  DEFINE_INLINE_TRACE() {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(session_);
     ContentDecryptionModuleResultPromise::Trace(visitor);
   }
@@ -317,7 +294,7 @@ class LoadSessionResultPromise : public ContentDecryptionModuleResultPromise {
     NOTREACHED();
   }
 
-  DEFINE_INLINE_TRACE() {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(session_);
     ContentDecryptionModuleResultPromise::Trace(visitor);
   }
@@ -345,7 +322,7 @@ class SimpleResultPromise : public ContentDecryptionModuleResultPromise {
     Resolve();
   }
 
-  DEFINE_INLINE_TRACE() {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(session_);
     ContentDecryptionModuleResultPromise::Trace(visitor);
   }
@@ -367,7 +344,9 @@ MediaKeySession::MediaKeySession(ScriptState* script_state,
                                  MediaKeys* media_keys,
                                  WebEncryptedMediaSessionType session_type)
     : ContextLifecycleObserver(ExecutionContext::From(script_state)),
-      async_event_queue_(GenericEventQueue::Create(this)),
+      async_event_queue_(
+          MediaElementEventQueue::Create(this,
+                                         ExecutionContext::From(script_state))),
       media_keys_(media_keys),
       session_type_(session_type),
       expiration_(std::numeric_limits<double>::quiet_NaN()),
@@ -378,10 +357,10 @@ MediaKeySession::MediaKeySession(ScriptState* script_state,
       closed_promise_(new ClosedPromise(ExecutionContext::From(script_state),
                                         this,
                                         ClosedPromise::kClosed)),
-      action_timer_(
-          TaskRunnerHelper::Get(TaskType::kMiscPlatformAPI, script_state),
-          this,
-          &MediaKeySession::ActionTimerFired) {
+      action_timer_(ExecutionContext::From(script_state)
+                        ->GetTaskRunner(TaskType::kMiscPlatformAPI),
+                    this,
+                    &MediaKeySession::ActionTimerFired) {
   DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __func__ << "(" << this << ")";
   InstanceCounters::IncrementCounter(InstanceCounters::kMediaKeySessionCounter);
 
@@ -389,7 +368,7 @@ MediaKeySession::MediaKeySession(ScriptState* script_state,
   // initializeNewSession() is called in response to the user calling
   // generateRequest().
   WebContentDecryptionModule* cdm = media_keys->ContentDecryptionModule();
-  session_ = WTF::WrapUnique(cdm->CreateSession());
+  session_ = cdm->CreateSession();
   session_->SetClientInterface(this);
 
   // From https://w3c.github.io/encrypted-media/#createSession:
@@ -522,7 +501,7 @@ ScriptPromise MediaKeySession::generateRequest(
   pending_actions_.push_back(PendingAction::CreatePendingGenerateRequest(
       result, init_data_type, init_data_buffer));
   DCHECK(!action_timer_.IsActive());
-  action_timer_.StartOneShot(0, BLINK_FROM_HERE);
+  action_timer_.StartOneShot(TimeDelta(), BLINK_FROM_HERE);
 
   // 11. Return promise.
   return promise;
@@ -617,7 +596,7 @@ ScriptPromise MediaKeySession::load(ScriptState* script_state,
   pending_actions_.push_back(
       PendingAction::CreatePendingLoadRequest(result, session_id));
   DCHECK(!action_timer_.IsActive());
-  action_timer_.StartOneShot(0, BLINK_FROM_HERE);
+  action_timer_.StartOneShot(TimeDelta(), BLINK_FROM_HERE);
 
   // 9. Return promise.
   return promise;
@@ -736,7 +715,7 @@ ScriptPromise MediaKeySession::update(ScriptState* script_state,
   pending_actions_.push_back(
       PendingAction::CreatePendingUpdate(result, response_copy));
   if (!action_timer_.IsActive())
-    action_timer_.StartOneShot(0, BLINK_FROM_HERE);
+    action_timer_.StartOneShot(TimeDelta(), BLINK_FROM_HERE);
 
   // 7. Return promise.
   return promise;
@@ -780,7 +759,7 @@ ScriptPromise MediaKeySession::close(ScriptState* script_state) {
   // 5. Run the following steps in parallel (done in closeTask()).
   pending_actions_.push_back(PendingAction::CreatePendingClose(result));
   if (!action_timer_.IsActive())
-    action_timer_.StartOneShot(0, BLINK_FROM_HERE);
+    action_timer_.StartOneShot(TimeDelta(), BLINK_FROM_HERE);
 
   // 6. Return promise.
   return promise;
@@ -813,37 +792,27 @@ ScriptPromise MediaKeySession::remove(ScriptState* script_state) {
   if (!is_callable_)
     return CreateRejectedPromiseNotCallable(script_state);
 
-  // 3. If the result of running the "Is persistent session type?" algorithm
-  //    on this object's session type is false, return a promise rejected
-  //    with a newly created TypeError.
-  if (!IsPersistentSessionType(session_type_)) {
-    return ScriptPromise::Reject(
-        script_state,
-        V8ThrowException::CreateTypeError(
-            script_state->GetIsolate(), "The session type is not persistent."));
-  }
-
-  // 4. Let promise be a new promise.
+  // 3. Let promise be a new promise.
   SimpleResultPromise* result = new SimpleResultPromise(script_state, this);
   ScriptPromise promise = result->Promise();
 
-  // 5. Run the following steps asynchronously (done in removeTask()).
+  // 4. Run the following steps asynchronously (done in removeTask()).
   pending_actions_.push_back(PendingAction::CreatePendingRemove(result));
   if (!action_timer_.IsActive())
-    action_timer_.StartOneShot(0, BLINK_FROM_HERE);
+    action_timer_.StartOneShot(TimeDelta(), BLINK_FROM_HERE);
 
-  // 6. Return promise.
+  // 5. Return promise.
   return promise;
 }
 
 void MediaKeySession::RemoveTask(ContentDecryptionModuleResult* result) {
-  // NOTE: Continue step 5 of MediaKeySession::remove().
+  // NOTE: Continue step 4 of MediaKeySession::remove().
   DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL) << __func__ << "(" << this << ")";
 
-  // remove() in Chromium will execute steps 5.1 through 5.3.
+  // remove() in Chromium will execute steps 4.1 through 4.5.
   session_->Remove(result->Result());
 
-  // Last step (5.3.6 Resolve promise) will be done when |result| is resolved.
+  // Last step (4.5.6 Resolve promise) will be done when |result| is resolved.
 }
 
 void MediaKeySession::ActionTimerFired(TimerBase*) {
@@ -921,7 +890,7 @@ void MediaKeySession::Message(MessageType message_type,
   MediaKeyMessageEvent* event =
       MediaKeyMessageEvent::Create(EventTypeNames::message, init);
   event->SetTarget(this);
-  async_event_queue_->EnqueueEvent(event);
+  async_event_queue_->EnqueueEvent(BLINK_FROM_HERE, event);
 }
 
 void MediaKeySession::Close() {
@@ -998,15 +967,15 @@ void MediaKeySession::KeysStatusesChange(
     const auto& key = keys[i];
     // 4.2.2 Insert an entry for pair's key ID into statuses with the
     //       value of pair's MediaKeyStatus value.
-    key_statuses_map_->AddEntry(key.Id(),
-                                ConvertKeyStatusToString(key.Status()));
+    key_statuses_map_->AddEntry(
+        key.Id(), EncryptedMediaUtils::ConvertKeyStatusToString(key.Status()));
   }
 
   // 5. Queue a task to fire a simple event named keystatuseschange
   //    at the session.
   Event* event = Event::Create(EventTypeNames::keystatuseschange);
   event->SetTarget(this);
-  async_event_queue_->EnqueueEvent(event);
+  async_event_queue_->EnqueueEvent(BLINK_FROM_HERE, event);
 
   // 6. Queue a task to run the attempt to resume playback if necessary
   //    algorithm on each of the media element(s) whose mediaKeys attribute
@@ -1029,11 +998,11 @@ bool MediaKeySession::HasPendingActivity() const {
   // and we're not closed.
   DVLOG(MEDIA_KEY_SESSION_LOG_LEVEL)
       << __func__ << "(" << this << ")"
-      << (!pending_actions_.IsEmpty() ? " !m_pendingActions.isEmpty()" : "")
+      << (!pending_actions_.IsEmpty() ? " !pending_actions_.IsEmpty()" : "")
       << (async_event_queue_->HasPendingEvents()
-              ? " m_asyncEventQueue->hasPendingEvents()"
+              ? " async_event_queue_->HasPendingEvents()"
               : "")
-      << ((media_keys_ && !is_closed_) ? " m_mediaKeys && !m_isClosed" : "");
+      << ((media_keys_ && !is_closed_) ? " media_keys_ && !is_closed_" : "");
 
   return !pending_actions_.IsEmpty() ||
          async_event_queue_->HasPendingEvents() || (media_keys_ && !is_closed_);
@@ -1044,11 +1013,11 @@ void MediaKeySession::ContextDestroyed(ExecutionContext*) {
   session_.reset();
   is_closed_ = true;
   action_timer_.Stop();
-  pending_actions_.Clear();
+  pending_actions_.clear();
   async_event_queue_->Close();
 }
 
-DEFINE_TRACE(MediaKeySession) {
+void MediaKeySession::Trace(blink::Visitor* visitor) {
   visitor->Trace(async_event_queue_);
   visitor->Trace(pending_actions_);
   visitor->Trace(media_keys_);

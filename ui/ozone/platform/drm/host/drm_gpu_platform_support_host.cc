@@ -9,6 +9,7 @@
 #include "base/trace_event/trace_event.h"
 #include "ui/ozone/common/gpu/ozone_gpu_message_params.h"
 #include "ui/ozone/common/gpu/ozone_gpu_messages.h"
+#include "ui/ozone/platform/drm/common/drm_util.h"
 #include "ui/ozone/platform/drm/host/drm_cursor.h"
 #include "ui/ozone/platform/drm/host/drm_display_host_manager.h"
 #include "ui/ozone/platform/drm/host/drm_overlay_candidates_host.h"
@@ -33,7 +34,7 @@ class CursorIPC : public DrmCursorProxy {
                  const gfx::Point& point,
                  int frame_delay_ms) override;
   void Move(gfx::AcceleratedWidget window, const gfx::Point& point) override;
-  void InitializeOnEvdev() override;
+  void InitializeOnEvdevIfNecessary() override;
 
  private:
   bool IsConnected();
@@ -66,7 +67,7 @@ void CursorIPC::Move(gfx::AcceleratedWidget window, const gfx::Point& point) {
   Send(new OzoneGpuMsg_CursorMove(window, point));
 }
 
-void CursorIPC::InitializeOnEvdev() {}
+void CursorIPC::InitializeOnEvdevIfNecessary() {}
 
 void CursorIPC::Send(IPC::Message* message) {
   if (IsConnected() &&
@@ -82,7 +83,7 @@ void CursorIPC::Send(IPC::Message* message) {
 }  // namespace
 
 DrmGpuPlatformSupportHost::DrmGpuPlatformSupportHost(DrmCursor* cursor)
-    : cursor_(cursor) {}
+    : cursor_(cursor), weak_ptr_factory_(this) {}
 
 DrmGpuPlatformSupportHost::~DrmGpuPlatformSupportHost() {}
 
@@ -105,31 +106,23 @@ bool DrmGpuPlatformSupportHost::IsConnected() {
 
 void DrmGpuPlatformSupportHost::OnGpuProcessLaunched(
     int host_id,
+    scoped_refptr<base::SingleThreadTaskRunner> ui_runner,
     scoped_refptr<base::SingleThreadTaskRunner> send_runner,
     const base::Callback<void(IPC::Message*)>& send_callback) {
+  DCHECK(!ui_runner->BelongsToCurrentThread());
+  ui_runner_ = std::move(ui_runner);
   TRACE_EVENT1("drm", "DrmGpuPlatformSupportHost::OnGpuProcessLaunched",
                "host_id", host_id);
   host_id_ = host_id;
-  send_runner_ = send_runner;
+  send_runner_ = std::move(send_runner);
   send_callback_ = send_callback;
 
   for (GpuThreadObserver& observer : gpu_thread_observers_)
     observer.OnGpuProcessLaunched();
-}
 
-void DrmGpuPlatformSupportHost::OnChannelEstablished() {
-  TRACE_EVENT0("drm", "DrmGpuPlatformSupportHost::OnChannelEstablished");
-  channel_established_ = true;
-
-  for (GpuThreadObserver& observer : gpu_thread_observers_)
-    observer.OnGpuThreadReady();
-
-  // The cursor is special since it will process input events on the IO thread
-  // and can by-pass the UI thread. This means that we need to special case it
-  // and notify it after all other observers/handlers are notified such that the
-  // (windowing) state on the GPU can be initialized before the cursor is
-  // allowed to IPC messages (which are targeted to a specific window).
-  cursor_->SetDrmCursorProxy(new CursorIPC(send_runner_, send_callback_));
+  ui_runner_->PostTask(
+      FROM_HERE, base::Bind(&DrmGpuPlatformSupportHost::OnChannelEstablished,
+                            weak_ptr_factory_.GetWeakPtr()));
 }
 
 void DrmGpuPlatformSupportHost::OnChannelDestroyed(int host_id) {
@@ -174,6 +167,22 @@ void DrmGpuPlatformSupportHost::RegisterHandlerForDrmDisplayHostManager(
 
 void DrmGpuPlatformSupportHost::UnRegisterHandlerForDrmDisplayHostManager() {
   display_manager_ = nullptr;
+}
+
+void DrmGpuPlatformSupportHost::OnChannelEstablished() {
+  TRACE_EVENT0("drm", "DrmGpuPlatformSupportHost::OnChannelEstablished");
+  channel_established_ = true;
+
+  for (GpuThreadObserver& observer : gpu_thread_observers_)
+    observer.OnGpuThreadReady();
+
+  // The cursor is special since it will process input events on the IO thread
+  // and can by-pass the UI thread. This means that we need to special case it
+  // and notify it after all other observers/handlers are notified such that the
+  // (windowing) state on the GPU can be initialized before the cursor is
+  // allowed to IPC messages (which are targeted to a specific window).
+  cursor_->SetDrmCursorProxy(
+      std::make_unique<CursorIPC>(send_runner_, send_callback_));
 }
 
 bool DrmGpuPlatformSupportHost::OnMessageReceivedForDrmDisplayHostManager(
@@ -236,10 +245,10 @@ bool DrmGpuPlatformSupportHost::GpuRelinquishDisplayControl() {
   return Send(new OzoneGpuMsg_RelinquishDisplayControl());
 }
 
-bool DrmGpuPlatformSupportHost::GpuAddGraphicsDevice(
-    const base::FilePath& path,
-    const base::FileDescriptor& fd) {
-  IPC::Message* message = new OzoneGpuMsg_AddGraphicsDevice(path, fd);
+bool DrmGpuPlatformSupportHost::GpuAddGraphicsDevice(const base::FilePath& path,
+                                                     base::ScopedFD fd) {
+  IPC::Message* message = new OzoneGpuMsg_AddGraphicsDevice(
+      path, base::FileDescriptor(std::move(fd)));
 
   // This function may be called from two places:
   // - DrmDisplayHostManager::OnGpuProcessLaunched() invoked synchronously
@@ -285,14 +294,18 @@ bool DrmGpuPlatformSupportHost::OnMessageReceivedForDrmOverlayManager(
 
 void DrmGpuPlatformSupportHost::OnOverlayResult(
     gfx::AcceleratedWidget widget,
-    const std::vector<OverlayCheck_Params>& params) {
-  overlay_manager_->GpuSentOverlayResult(widget, params);
+    const std::vector<OverlayCheck_Params>& params,
+    const std::vector<OverlayCheckReturn_Params>& param_returns) {
+  auto candidates = CreateOverlaySurfaceCandidateListFrom(params);
+  auto returns = CreateOverlayStatusListFrom(param_returns);
+  overlay_manager_->GpuSentOverlayResult(widget, candidates, returns);
 }
 
 bool DrmGpuPlatformSupportHost::GpuCheckOverlayCapabilities(
     gfx::AcceleratedWidget widget,
-    const std::vector<OverlayCheck_Params>& new_params) {
-  return Send(new OzoneGpuMsg_CheckOverlayCapabilities(widget, new_params));
+    const OverlaySurfaceCandidateList& candidates) {
+  auto params = CreateParamsFromOverlaySurfaceCandidate(candidates);
+  return Send(new OzoneGpuMsg_CheckOverlayCapabilities(widget, params));
 }
 
 // DrmDisplayHost

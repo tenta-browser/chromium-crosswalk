@@ -6,16 +6,18 @@ package org.chromium.chrome.browser.contextmenu;
 
 import android.app.Activity;
 import android.graphics.drawable.Drawable;
+import android.os.StrictMode;
 import android.util.Pair;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.ImageView;
+import android.widget.Space;
 import android.widget.TextView;
 
+import org.chromium.base.Callback;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.share.ShareHelper;
 
 import java.util.List;
 
@@ -26,18 +28,19 @@ import java.util.List;
 class TabularContextMenuListAdapter extends BaseAdapter {
     private final List<ContextMenuItem> mMenuItems;
     private final Activity mActivity;
-    private final Runnable mOnShareItemClicked;
+    private final Callback<Boolean> mOnDirectShare;
 
     /**
      * Adapter for the tabular context menu UI
      * @param menuItems The list of items to display in the view.
      * @param activity Used to inflate the layout.
+     * @param onDirectShare Callback to handle direct share.
      */
     TabularContextMenuListAdapter(
-            List<ContextMenuItem> menuItems, Activity activity, Runnable onShareItemClicked) {
+            List<ContextMenuItem> menuItems, Activity activity, Callback<Boolean> onDirectShare) {
         mMenuItems = menuItems;
         mActivity = activity;
-        mOnShareItemClicked = onShareItemClicked;
+        mOnDirectShare = onDirectShare;
     }
 
     @Override
@@ -52,12 +55,12 @@ class TabularContextMenuListAdapter extends BaseAdapter {
 
     @Override
     public long getItemId(int position) {
-        return mMenuItems.get(position).menuId;
+        return mMenuItems.get(position).getMenuId();
     }
 
     @Override
     public View getView(int position, View convertView, ViewGroup parent) {
-        ContextMenuItem menuItem = mMenuItems.get(position);
+        final ContextMenuItem menuItem = mMenuItems.get(position);
         ViewHolderItem viewHolder;
 
         if (convertView == null) {
@@ -66,37 +69,53 @@ class TabularContextMenuListAdapter extends BaseAdapter {
 
             viewHolder = new ViewHolderItem();
             viewHolder.mIcon = (ImageView) convertView.findViewById(R.id.context_menu_icon);
-            viewHolder.mText = (TextView) convertView.findViewById(R.id.context_text);
+            viewHolder.mText = (TextView) convertView.findViewById(R.id.context_menu_text);
+            if (viewHolder.mText == null) {
+                throw new IllegalStateException("Context text not found in new view inflation");
+            }
             viewHolder.mShareIcon =
                     (ImageView) convertView.findViewById(R.id.context_menu_share_icon);
+            viewHolder.mRightPadding =
+                    (Space) convertView.findViewById(R.id.context_menu_right_padding);
 
             convertView.setTag(viewHolder);
         } else {
             viewHolder = (ViewHolderItem) convertView.getTag();
+            if (viewHolder.mText == null) {
+                throw new IllegalStateException("Context text not found in view resuse");
+            }
         }
 
-        viewHolder.mText.setText(menuItem.getString(mActivity));
-        Drawable icon = menuItem.getDrawableAndDescription(mActivity);
+        viewHolder.mText.setText(menuItem.getTitle(mActivity));
+        Drawable icon = menuItem.getDrawable(mActivity);
         viewHolder.mIcon.setImageDrawable(icon);
         viewHolder.mIcon.setVisibility(icon != null ? View.VISIBLE : View.INVISIBLE);
 
-        if (menuItem == ContextMenuItem.SHARE_IMAGE) {
-            final Pair<Drawable, CharSequence> shareInfo =
-                    ShareHelper.getShareableIconAndName(mActivity);
-            if (shareInfo.first != null) {
-                viewHolder.mShareIcon.setImageDrawable(shareInfo.first);
-                viewHolder.mShareIcon.setVisibility(View.VISIBLE);
-                viewHolder.mShareIcon.setContentDescription(mActivity.getString(
-                        R.string.accessibility_menu_share_via, shareInfo.second));
-                viewHolder.mShareIcon.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View view) {
-                        mOnShareItemClicked.run();
-                    }
-                });
+        if (menuItem instanceof ShareContextMenuItem) {
+            StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
+            try {
+                final Pair<Drawable, CharSequence> shareInfo =
+                        ((ShareContextMenuItem) menuItem).getShareInfo();
+                if (shareInfo.first != null) {
+                    viewHolder.mShareIcon.setImageDrawable(shareInfo.first);
+                    viewHolder.mShareIcon.setVisibility(View.VISIBLE);
+                    viewHolder.mShareIcon.setContentDescription(mActivity.getString(
+                            R.string.accessibility_menu_share_via, shareInfo.second));
+                    viewHolder.mShareIcon.setOnClickListener(new View.OnClickListener() {
+                        @Override
+                        public void onClick(View view) {
+                            mOnDirectShare.onResult(
+                                    ((ShareContextMenuItem) menuItem).isShareLink());
+                        }
+                    });
+                    viewHolder.mRightPadding.setVisibility(View.GONE);
+                }
+            } finally {
+                StrictMode.setThreadPolicy(oldPolicy);
             }
         } else {
             viewHolder.mShareIcon.setVisibility(View.GONE);
+            viewHolder.mRightPadding.setVisibility(View.VISIBLE);
         }
 
         return convertView;
@@ -106,5 +125,6 @@ class TabularContextMenuListAdapter extends BaseAdapter {
         ImageView mIcon;
         TextView mText;
         ImageView mShareIcon;
+        Space mRightPadding;
     }
 }

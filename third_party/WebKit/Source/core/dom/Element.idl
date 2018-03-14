@@ -38,12 +38,13 @@ interface Element : Node {
 
     // Pointer Events
     // https://w3c.github.io/pointerevents/#extensions-to-the-element-interface
-    [RuntimeEnabled=PointerEvent, RaisesException] void setPointerCapture (long pointerId);
-    [RuntimeEnabled=PointerEvent, RaisesException] void releasePointerCapture (long pointerId);
-    [RuntimeEnabled=PointerEvent] boolean hasPointerCapture (long pointerId);
+    [RaisesException] void setPointerCapture (long pointerId);
+    [RaisesException] void releasePointerCapture (long pointerId);
+    boolean hasPointerCapture (long pointerId);
 
     boolean hasAttributes();
     [SameObject, PerWorldBindings, ImplementedAs=attributesForBindings] readonly attribute NamedNodeMap attributes;
+    sequence<DOMString> getAttributeNames();
     DOMString? getAttribute(DOMString name);
     DOMString? getAttributeNS(DOMString? namespaceURI, DOMString localName);
     [RaisesException, CEReactions, CustomElementCallbacks] void setAttribute(DOMString name, DOMString value);
@@ -64,7 +65,7 @@ interface Element : Node {
     [RaisesException, ImplementedAs=matches, MeasureAs=ElementPrefixedMatchesSelector] boolean webkitMatchesSelector(DOMString selectors); // historical alias of .matches
 
     [RaisesException, CallWith=ScriptState, MeasureAs=ElementAttachShadow] ShadowRoot attachShadow(ShadowRootInit shadowRootInitDict);
-    [PerWorldBindings, ImplementedAs=openShadowRoot] readonly attribute ShadowRoot? shadowRoot;
+    [PerWorldBindings, ImplementedAs=OpenShadowRoot] readonly attribute ShadowRoot? shadowRoot;
 
     HTMLCollection getElementsByTagName(DOMString localName);
     HTMLCollection getElementsByTagNameNS(DOMString? namespaceURI, DOMString localName);
@@ -79,22 +80,24 @@ interface Element : Node {
 
     // DOM Parsing and Serialization
     // https://w3c.github.io/DOM-Parsing/#extensions-to-the-element-interface
-    [TreatNullAs=NullString, CEReactions, CustomElementCallbacks, RaisesException=Setter] attribute DOMString innerHTML;
-    [TreatNullAs=NullString, CEReactions, CustomElementCallbacks, RaisesException=Setter] attribute DOMString outerHTML;
-    [CEReactions, CustomElementCallbacks, RaisesException] void insertAdjacentHTML(DOMString position, DOMString text);
+    //
+    // TODO(mkwst): Write a spec for the `TrustedHTML` variants.
+    [CEReactions, CustomElementCallbacks, Custom=Setter, RuntimeCallStatsCounter=ElementInnerHTML] attribute HTMLString innerHTML;
+    [CEReactions, CustomElementCallbacks, Custom=Setter] attribute HTMLString outerHTML;
+    [CEReactions, CustomElementCallbacks, RaisesException] void insertAdjacentHTML(DOMString position, HTMLString text);
 
     // Pointer Lock
     // https://w3c.github.io/pointerlock/#extensions-to-the-element-interface
     [MeasureAs=ElementRequestPointerLock] void requestPointerLock();
 
     // CSSOM View Module
-    // https://dev.w3.org/csswg/cssom-view/#extension-to-the-element-interface
-    // FIXME: getClientRect() and getBoundingClientRect() should
-    // return DOMRectList and DOMRect respectively.
-    ClientRectList getClientRects();
-    ClientRect getBoundingClientRect();
-    // FIXME: scrollIntoView() should have a ScrollIntoViewOptions dictionary argument.
-    void scrollIntoView(optional boolean alignWithTop);
+    // https://drafts.csswg.org/cssom-view/#extension-to-the-element-interface
+    [Measure] DOMRectList getClientRects();
+    [Measure, RuntimeCallStatsCounter=ElementGetBoundingClientRect] DOMRect getBoundingClientRect();
+
+    // TODO(sunyunjia): Add default value for scrollIntoView() once
+    // crbug.com/734599 is fixed.
+    void scrollIntoView(optional (ScrollIntoViewOptions or boolean) arg);
     [RuntimeEnabled=CSSOMSmoothScroll, ImplementedAs=scrollTo] void scroll(optional ScrollToOptions options);
     [RuntimeEnabled=CSSOMSmoothScroll, ImplementedAs=scrollTo] void scroll(unrestricted double x, unrestricted double y);
     [RuntimeEnabled=CSSOMSmoothScroll] void scrollTo(optional ScrollToOptions options);
@@ -116,12 +119,12 @@ interface Element : Node {
 
     // Typed OM
     // https://drafts.css-houdini.org/css-typed-om/#inline-stylepropertymap-objects
-    [RuntimeEnabled=CSSTypedOM] readonly attribute StylePropertyMap styleMap;
+    [RuntimeEnabled=CSSTypedOM, SameObject] readonly attribute StylePropertyMap attributeStyleMap;
 
     // Non-standard API
     [MeasureAs=ElementScrollIntoViewIfNeeded] void scrollIntoViewIfNeeded(optional boolean centerIfNeeded);
-    [RaisesException, CallWith=ScriptState, MeasureAs=ElementCreateShadowRoot] ShadowRoot createShadowRoot();
-    NodeList getDestinationInsertionPoints();
+    [RuntimeEnabled=ShadowDOMV0, RaisesException, CallWith=ScriptState, MeasureAs=ElementCreateShadowRoot] ShadowRoot createShadowRoot();
+    [RuntimeEnabled=ShadowDOMV0] NodeList getDestinationInsertionPoints();
 
     // Experimental accessibility API
     [RuntimeEnabled=ComputedAccessibilityInfo] readonly attribute DOMString? computedRole;
@@ -139,7 +142,6 @@ interface Element : Node {
     attribute EventHandler onpaste;
     attribute EventHandler onsearch;
     attribute EventHandler onselectstart;
-    attribute EventHandler onwheel;
 };
 
 Element implements ParentNode;

@@ -12,7 +12,6 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "content/shell/test_runner/layout_and_paint_async_then.h"
 #include "content/shell/test_runner/layout_dump.h"
@@ -20,7 +19,6 @@
 #include "content/shell/test_runner/mock_credential_manager_client.h"
 #include "content/shell/test_runner/mock_screen_orientation_client.h"
 #include "content/shell/test_runner/mock_web_speech_recognizer.h"
-#include "content/shell/test_runner/mock_web_user_media_client.h"
 #include "content/shell/test_runner/pixel_dump.h"
 #include "content/shell/test_runner/spell_check_client.h"
 #include "content/shell/test_runner/test_common.h"
@@ -36,6 +34,7 @@
 #include "gin/handle.h"
 #include "gin/object_template_builder.h"
 #include "gin/wrappable.h"
+#include "third_party/WebKit/common/page/page_visibility_state.mojom.h"
 #include "third_party/WebKit/public/platform/WebCanvas.h"
 #include "third_party/WebKit/public/platform/WebData.h"
 #include "third_party/WebKit/public/platform/WebPasswordCredential.h"
@@ -44,7 +43,6 @@
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerRegistration.h"
 #include "third_party/WebKit/public/web/WebArrayBuffer.h"
 #include "third_party/WebKit/public/web/WebArrayBufferConverter.h"
-#include "third_party/WebKit/public/web/WebDataSource.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebFindOptions.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
@@ -52,7 +50,6 @@
 #include "third_party/WebKit/public/web/WebInputElement.h"
 #include "third_party/WebKit/public/web/WebKit.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPageImportanceSignals.h"
 #include "third_party/WebKit/public/web/WebScriptSource.h"
 #include "third_party/WebKit/public/web/WebSecurityPolicy.h"
 #include "third_party/WebKit/public/web/WebSerializedScriptValue.h"
@@ -102,9 +99,10 @@ void TestRunnerForSpecificView::Reset() {
     web_view()->SetSelectionColors(0xff1e90ff, 0xff000000, 0xffc8c8c8,
                                    0xff323232);
 #endif
-    web_view()->SetVisibilityState(kWebPageVisibilityStateVisible, true);
+    web_view()->SetVisibilityState(blink::mojom::PageVisibilityState::kVisible,
+                                   true);
     if (web_view()->MainFrame()->IsWebLocalFrame()) {
-      web_view()->MainFrame()->EnableViewSourceMode(false);
+      web_view()->MainFrame()->ToWebLocalFrame()->EnableViewSourceMode(false);
       web_view()->SetTextZoomFactor(1);
       web_view()->SetZoomLevel(0);
     }
@@ -185,7 +183,7 @@ void TestRunnerForSpecificView::InvokeV8CallbackWithArgs(
   v8::Isolate* isolate = blink::MainThreadIsolate();
   v8::HandleScope handle_scope(isolate);
 
-  WebFrame* frame = web_view()->MainFrame();
+  blink::WebLocalFrame* frame = GetLocalMainFrame();
   v8::Local<v8::Context> context = frame->MainWorldScriptContext();
   if (context.IsEmpty())
     return;
@@ -233,13 +231,17 @@ void TestRunnerForSpecificView::CapturePixelsAsyncThen(
   v8::UniquePersistent<v8::Function> persistent_callback(
       blink::MainThreadIsolate(), callback);
 
+  CHECK(web_view()->MainFrame()->IsWebLocalFrame())
+      << "Layout tests harness doesn't currently support running "
+      << "testRuner.capturePixelsAsyncThen from an OOPIF";
+
   web_view_test_proxy_base_->test_interfaces()
       ->GetTestRunner()
       ->DumpPixelsAsync(
-          web_view(),
-          base::Bind(&TestRunnerForSpecificView::CapturePixelsCallback,
-                     weak_factory_.GetWeakPtr(),
-                     base::Passed(std::move(persistent_callback))));
+          web_view()->MainFrame()->ToWebLocalFrame(),
+          base::BindOnce(&TestRunnerForSpecificView::CapturePixelsCallback,
+                         weak_factory_.GetWeakPtr(),
+                         base::Passed(std::move(persistent_callback))));
 }
 
 void TestRunnerForSpecificView::CapturePixelsCallback(
@@ -249,13 +251,12 @@ void TestRunnerForSpecificView::CapturePixelsCallback(
   v8::HandleScope handle_scope(isolate);
 
   v8::Local<v8::Context> context =
-      web_view()->MainFrame()->MainWorldScriptContext();
+      GetLocalMainFrame()->MainWorldScriptContext();
   if (context.IsEmpty())
     return;
 
   v8::Context::Scope context_scope(context);
   v8::Local<v8::Value> argv[3];
-  SkAutoLockPixels snapshot_lock(snapshot);
 
   // Size can be 0 for cases where copyImageAt was called on position
   // that doesn't have an image.
@@ -270,8 +271,8 @@ void TestRunnerForSpecificView::CapturePixelsCallback(
   const SkImageInfo bufferInfo =
       snapshot.info().makeColorType(kRGBA_8888_SkColorType);
   const size_t bufferRowBytes = bufferInfo.minRowBytes();
-  blink::WebArrayBuffer buffer =
-      blink::WebArrayBuffer::Create(bufferInfo.getSafeSize(bufferRowBytes), 1);
+  blink::WebArrayBuffer buffer = blink::WebArrayBuffer::Create(
+      bufferInfo.computeByteSize(bufferRowBytes), 1);
   if (!snapshot.readPixels(bufferInfo, buffer.Data(), bufferRowBytes, 0, 0)) {
     // We only expect readPixels to fail for null bitmaps.
     DCHECK(snapshot.isNull());
@@ -290,20 +291,32 @@ void TestRunnerForSpecificView::CopyImageAtAndCapturePixelsAsyncThen(
   v8::UniquePersistent<v8::Function> persistent_callback(
       blink::MainThreadIsolate(), callback);
 
+  // TODO(lukasza): Support image capture in OOPIFs for
+  // https://crbug.com/477150.
+  CHECK(web_view()->MainFrame()->IsWebLocalFrame())
+      << "Layout tests harness doesn't support calling "
+      << "testRunner.copyImageAtAndCapturePixelsAsyncThen from an OOPIF.";
+
   CopyImageAtAndCapturePixels(
-      web_view(), x, y,
-      base::Bind(&TestRunnerForSpecificView::CapturePixelsCallback,
-                 weak_factory_.GetWeakPtr(),
-                 base::Passed(std::move(persistent_callback))));
+      web_view()->MainFrame()->ToWebLocalFrame(), x, y,
+      base::BindOnce(&TestRunnerForSpecificView::CapturePixelsCallback,
+                     weak_factory_.GetWeakPtr(),
+                     base::Passed(std::move(persistent_callback))));
 }
 
 void TestRunnerForSpecificView::GetManifestThen(
     v8::Local<v8::Function> callback) {
+  if (!web_view()->MainFrame()->IsWebLocalFrame()) {
+    CHECK(false) << "This function cannot be called if the main frame is not a "
+                    "local frame.";
+  }
+
   v8::UniquePersistent<v8::Function> persistent_callback(
       blink::MainThreadIsolate(), callback);
 
   delegate()->FetchManifest(
-      web_view(), web_view()->MainFrame()->GetDocument().ManifestURL(),
+      web_view(),
+      web_view()->MainFrame()->ToWebLocalFrame()->GetDocument().ManifestURL(),
       base::Bind(&TestRunnerForSpecificView::GetManifestCallback,
                  weak_factory_.GetWeakPtr(),
                  base::Passed(std::move(persistent_callback))));
@@ -332,7 +345,7 @@ void TestRunnerForSpecificView::GetBluetoothManualChooserEventsCallback(
   v8::Isolate* isolate = blink::MainThreadIsolate();
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::Context> context =
-      web_view()->MainFrame()->MainWorldScriptContext();
+      GetLocalMainFrame()->MainWorldScriptContext();
   if (context.IsEmpty())
     return;
   v8::Context::Scope context_scope(context);
@@ -386,7 +399,7 @@ void TestRunnerForSpecificView::EnableUseZoomForDSF(
 void TestRunnerForSpecificView::SetColorProfile(
     const std::string& name,
     v8::Local<v8::Function> callback) {
-  delegate()->SetDeviceColorProfile(name);
+  delegate()->SetDeviceColorSpace(name);
   PostV8Callback(callback);
 }
 
@@ -409,7 +422,7 @@ void TestRunnerForSpecificView::DispatchBeforeInstallPromptCallback(
   v8::HandleScope handle_scope(isolate);
 
   v8::Local<v8::Context> context =
-      web_view()->MainFrame()->MainWorldScriptContext();
+      GetLocalMainFrame()->MainWorldScriptContext();
   if (context.IsEmpty())
     return;
 
@@ -468,11 +481,14 @@ void TestRunnerForSpecificView::ForceRedSelectionColors() {
 void TestRunnerForSpecificView::SetPageVisibility(
     const std::string& new_visibility) {
   if (new_visibility == "visible")
-    web_view()->SetVisibilityState(kWebPageVisibilityStateVisible, false);
+    web_view()->SetVisibilityState(blink::mojom::PageVisibilityState::kVisible,
+                                   false);
   else if (new_visibility == "hidden")
-    web_view()->SetVisibilityState(kWebPageVisibilityStateHidden, false);
+    web_view()->SetVisibilityState(blink::mojom::PageVisibilityState::kHidden,
+                                   false);
   else if (new_visibility == "prerender")
-    web_view()->SetVisibilityState(kWebPageVisibilityStatePrerender, false);
+    web_view()->SetVisibilityState(
+        blink::mojom::PageVisibilityState::kPrerender, false);
 }
 
 void TestRunnerForSpecificView::SetTextDirection(
@@ -488,23 +504,7 @@ void TestRunnerForSpecificView::SetTextDirection(
   else
     return;
 
-  web_view()->SetTextDirection(direction);
-}
-
-void TestRunnerForSpecificView::DumpPageImportanceSignals() {
-  blink::WebPageImportanceSignals* signals =
-      web_view()->PageImportanceSignals();
-  if (!signals)
-    return;
-
-  std::string message = base::StringPrintf(
-      "WebPageImportanceSignals:\n"
-      "  hadFormInteraction: %s\n"
-      "  issuedNonGetFetchFromScript: %s\n",
-      signals->HadFormInteraction() ? "true" : "false",
-      signals->IssuedNonGetFetchFromScript() ? "true" : "false");
-  if (delegate())
-    delegate()->PrintMessage(message);
+  web_view()->FocusedFrame()->SetTextDirection(direction);
 }
 
 void TestRunnerForSpecificView::AddWebPageOverlay() {
@@ -573,13 +573,7 @@ void TestRunnerForSpecificView::DidLosePointerLockInternal() {
 }
 
 bool TestRunnerForSpecificView::CallShouldCloseOnWebView() {
-  if (!web_view()->MainFrame()->ToWebLocalFrame()) {
-    CHECK(false) << "This function cannot be called if the main frame is not a "
-                    "local frame.";
-  }
-
-  return web_view()->MainFrame()->ToWebLocalFrame()->DispatchBeforeUnloadEvent(
-      false);
+  return GetLocalMainFrame()->DispatchBeforeUnloadEvent(false);
 }
 
 void TestRunnerForSpecificView::SetDomainRelaxationForbiddenForURLScheme(
@@ -663,27 +657,36 @@ bool TestRunnerForSpecificView::FindString(
       wrap_around = true;
   }
 
-  WebLocalFrame* frame = web_view()->MainFrame()->ToWebLocalFrame();
+  WebLocalFrame* frame = GetLocalMainFrame();
   const bool find_result = frame->Find(0, WebString::FromUTF8(search_text),
-                                       find_options, wrap_around, 0);
+                                       find_options, wrap_around, nullptr);
   frame->StopFinding(WebLocalFrame::kStopFindActionKeepSelection);
   return find_result;
 }
 
 std::string TestRunnerForSpecificView::SelectionAsMarkup() {
-  if (!web_view()->MainFrame()->ToWebLocalFrame()) {
-    CHECK(false) << "This function cannot be called if the main frame is not a "
-                    "local frame.";
-  }
-  return web_view()->MainFrame()->ToWebLocalFrame()->SelectionAsMarkup().Utf8();
+  return GetLocalMainFrame()->SelectionAsMarkup().Utf8();
 }
 
 void TestRunnerForSpecificView::SetViewSourceForFrame(const std::string& name,
                                                       bool enabled) {
   WebFrame* target_frame =
-      web_view()->FindFrameByName(WebString::FromUTF8(name));
-  if (target_frame)
-    target_frame->EnableViewSourceMode(enabled);
+      GetLocalMainFrame()->FindFrameByName(WebString::FromUTF8(name));
+  if (target_frame) {
+    CHECK(target_frame->IsWebLocalFrame())
+        << "This function requires that the target frame is a local frame.";
+    target_frame->ToWebLocalFrame()->EnableViewSourceMode(enabled);
+  }
+}
+
+blink::WebLocalFrame* TestRunnerForSpecificView::GetLocalMainFrame() {
+  if (!web_view()->MainFrame()->IsWebLocalFrame()) {
+    // Hitting the check below uncovers a new scenario that requires OOPIF
+    // support in the layout tests harness.
+    CHECK(false) << "This function cannot be called if the main frame is not a "
+                    "local frame.";
+  }
+  return web_view()->MainFrame()->ToWebLocalFrame();
 }
 
 blink::WebView* TestRunnerForSpecificView::web_view() {

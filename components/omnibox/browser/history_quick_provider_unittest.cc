@@ -15,9 +15,9 @@
 
 #include "base/format_macros.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
 #include "components/bookmarks/test/test_bookmark_client.h"
@@ -97,12 +97,12 @@ class GetURLTask : public history::HistoryDBTask {
 
   bool RunOnDBThread(history::HistoryBackend* backend,
                      history::HistoryDatabase* db) override {
-    *result_storage_ = backend->GetURL(url_, NULL);
+    *result_storage_ = backend->GetURL(url_, nullptr);
     return true;
   }
 
   void DoneRunOnMainThread() override {
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
  private:
@@ -186,7 +186,7 @@ class HistoryQuickProviderTest : public testing::Test {
   HistoryQuickProvider& provider() { return *provider_; }
 
  private:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<FakeAutocompleteProviderClient> client_;
 
   ACMatches ac_matches_;  // The resulting matches after running RunTest.
@@ -197,7 +197,7 @@ class HistoryQuickProviderTest : public testing::Test {
 };
 
 void HistoryQuickProviderTest::SetUp() {
-  client_.reset(new FakeAutocompleteProviderClient());
+  client_ = std::make_unique<FakeAutocompleteProviderClient>();
   ASSERT_TRUE(client_->GetHistoryService());
   ASSERT_NO_FATAL_FAILURE(FillData());
 
@@ -218,14 +218,8 @@ void HistoryQuickProviderTest::SetUp() {
 
 void HistoryQuickProviderTest::TearDown() {
   provider_ = nullptr;
-  // The InMemoryURLIndex must be explicitly shut down or it will DCHECK() in
-  // its destructor.
-  client_->GetInMemoryURLIndex()->Shutdown();
-  client_->set_in_memory_url_index(nullptr);
-  // History index rebuild task is created from main thread during SetUp,
-  // performed on DB thread and must be deleted on main thread.
-  // Run main loop to process delete task, to prevent leaks.
-  base::RunLoop().RunUntilIdle();
+  client_.reset();
+  scoped_task_environment_.RunUntilIdle();
 }
 
 std::vector<HistoryQuickProviderTest::TestURLInfo>
@@ -331,10 +325,10 @@ void HistoryQuickProviderTest::RunTestWithCursor(
     base::string16 expected_autocompletion) {
   SCOPED_TRACE(text);  // Minimal hint to query being run.
   base::RunLoop().RunUntilIdle();
-  AutocompleteInput input(text, cursor_position, std::string(), GURL(),
-                          metrics::OmniboxEventProto::INVALID_SPEC,
-                          prevent_inline_autocomplete, false, true, true, false,
+  AutocompleteInput input(text, cursor_position,
+                          metrics::OmniboxEventProto::OTHER,
                           TestSchemeClassifier());
+  input.set_prevent_inline_autocomplete(prevent_inline_autocomplete);
   provider_->Start(input, false);
   EXPECT_TRUE(provider_->done());
 
@@ -745,10 +739,10 @@ TEST_F(HistoryQuickProviderTest, PreventInlineAutocomplete) {
 }
 
 TEST_F(HistoryQuickProviderTest, DoesNotProvideMatchesOnFocus) {
-  AutocompleteInput input(ASCIIToUTF16("popularsite"), base::string16::npos,
-                          std::string(), GURL(),
-                          metrics::OmniboxEventProto::INVALID_SPEC, false,
-                          false, true, true, true, TestSchemeClassifier());
+  AutocompleteInput input(ASCIIToUTF16("popularsite"),
+                          metrics::OmniboxEventProto::OTHER,
+                          TestSchemeClassifier());
+  input.set_from_omnibox_focus(true);
   provider().Start(input, false);
   EXPECT_TRUE(provider().matches().empty());
 }
@@ -788,7 +782,7 @@ HQPOrderingTest::GetTestData() {
       {"http://store.steampowered.com/", "", 6, 6, 1},
       {"http://techmeme.com/", "techmeme", 111, 110, 4},
       {"http://www.teamliquid.net/tlpd", "team liquid progaming database", 15,
-       15, 2},
+       15, 4},
       {"http://store.steampowered.com/", "the steam summer camp sale", 6, 6, 1},
       {"http://www.teamliquid.net/tlpd/korean/players",
        "tlpd - bw korean - player index", 25, 7, 219},
@@ -823,7 +817,7 @@ TEST_F(HQPOrderingTest, TEAMatch) {
   std::vector<std::string> expected_urls;
   expected_urls.push_back("http://www.teamliquid.net/");
   expected_urls.push_back("http://www.teamliquid.net/tlpd");
-  expected_urls.push_back("http://www.teamliquid.net/tlpd/korean/players");
+  expected_urls.push_back("http://teamliquid.net/");
   RunTest(ASCIIToUTF16("tea"), false, expected_urls, true,
           ASCIIToUTF16("www.teamliquid.net"),
                  ASCIIToUTF16("mliquid.net"));

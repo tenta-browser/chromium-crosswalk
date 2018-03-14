@@ -5,8 +5,8 @@
 #ifndef PushManager_h
 #define PushManager_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/ModulesExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -17,8 +17,7 @@ class ScriptPromise;
 class ScriptState;
 class ServiceWorkerRegistration;
 
-class MODULES_EXPORT PushManager final : public GarbageCollected<PushManager>,
-                                         public ScriptWrappable {
+class MODULES_EXPORT PushManager final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -26,6 +25,10 @@ class MODULES_EXPORT PushManager final : public GarbageCollected<PushManager>,
     return new PushManager(registration);
   }
 
+  // Web-exposed property:
+  static Vector<String> supportedContentEncodings();
+
+  // Web-exposed methods:
   ScriptPromise subscribe(ScriptState*,
                           const PushSubscriptionOptionsInit&,
                           ExceptionState&);
@@ -34,7 +37,7 @@ class MODULES_EXPORT PushManager final : public GarbageCollected<PushManager>,
                                 const PushSubscriptionOptionsInit&,
                                 ExceptionState&);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   explicit PushManager(ServiceWorkerRegistration*);

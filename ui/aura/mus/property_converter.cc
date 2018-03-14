@@ -22,8 +22,8 @@ std::unique_ptr<std::vector<uint8_t>> GetArray(Window* window,
                                                const WindowProperty<T>* key) {
   const T value = window->GetProperty(key);
   if (!value)
-    return base::MakeUnique<std::vector<uint8_t>>();
-  return base::MakeUnique<std::vector<uint8_t>>(
+    return std::make_unique<std::vector<uint8_t>>();
+  return std::make_unique<std::vector<uint8_t>>(
       mojo::ConvertTo<std::vector<uint8_t>>(*value));
 }
 
@@ -66,31 +66,36 @@ PropertyConverter::CreateAcceptAnyValueCallback() {
 
 PropertyConverter::PropertyConverter() {
   // Add known aura properties with associated mus properties.
-  RegisterProperty(client::kAlwaysOnTopKey,
-                   ui::mojom::WindowManager::kAlwaysOnTop_Property,
-                   CreateAcceptAnyValueCallback());
-  RegisterProperty(client::kAppIconKey,
-                   ui::mojom::WindowManager::kAppIcon_Property);
-  RegisterProperty(client::kAppIdKey,
-                   ui::mojom::WindowManager::kAppID_Property);
-  RegisterProperty(client::kImmersiveFullscreenKey,
-                   ui::mojom::WindowManager::kImmersiveFullscreen_Property,
-                   CreateAcceptAnyValueCallback());
-  RegisterProperty(client::kNameKey, ui::mojom::WindowManager::kName_Property);
-  RegisterProperty(client::kPreferredSize,
-                   ui::mojom::WindowManager::kPreferredSize_Property);
-  RegisterProperty(client::kResizeBehaviorKey,
-                   ui::mojom::WindowManager::kResizeBehavior_Property,
-                   base::Bind(&ValidateResizeBehaviour));
-  RegisterProperty(client::kRestoreBoundsKey,
-                   ui::mojom::WindowManager::kRestoreBounds_Property);
-  RegisterProperty(client::kShowStateKey,
-                   ui::mojom::WindowManager::kShowState_Property,
-                   base::Bind(&ValidateShowState));
-  RegisterProperty(client::kWindowIconKey,
-                   ui::mojom::WindowManager::kWindowIcon_Property);
-  RegisterProperty(client::kTitleKey,
-                   ui::mojom::WindowManager::kWindowTitle_Property);
+  RegisterImageSkiaProperty(client::kAppIconKey,
+                            ui::mojom::WindowManager::kAppIcon_Property);
+  RegisterImageSkiaProperty(client::kWindowIconKey,
+                            ui::mojom::WindowManager::kWindowIcon_Property);
+  RegisterPrimitiveProperty(client::kAlwaysOnTopKey,
+                            ui::mojom::WindowManager::kAlwaysOnTop_Property,
+                            CreateAcceptAnyValueCallback());
+  RegisterPrimitiveProperty(client::kDrawAttentionKey,
+                            ui::mojom::WindowManager::kDrawAttention_Property,
+                            CreateAcceptAnyValueCallback());
+  RegisterPrimitiveProperty(
+      client::kImmersiveFullscreenKey,
+      ui::mojom::WindowManager::kImmersiveFullscreen_Property,
+      CreateAcceptAnyValueCallback());
+  RegisterPrimitiveProperty(client::kResizeBehaviorKey,
+                            ui::mojom::WindowManager::kResizeBehavior_Property,
+                            base::Bind(&ValidateResizeBehaviour));
+  RegisterPrimitiveProperty(client::kShowStateKey,
+                            ui::mojom::WindowManager::kShowState_Property,
+                            base::Bind(&ValidateShowState));
+  RegisterRectProperty(client::kRestoreBoundsKey,
+                       ui::mojom::WindowManager::kRestoreBounds_Property);
+  RegisterSizeProperty(client::kPreferredSize,
+                       ui::mojom::WindowManager::kPreferredSize_Property);
+  RegisterSizeProperty(client::kMinimumSize,
+                       ui::mojom::WindowManager::kMinimumSize_Property);
+  RegisterStringProperty(client::kNameKey,
+                         ui::mojom::WindowManager::kName_Property);
+  RegisterString16Property(client::kTitleKey,
+                           ui::mojom::WindowManager::kWindowTitle_Property);
 }
 
 PropertyConverter::~PropertyConverter() {}
@@ -115,10 +120,10 @@ bool PropertyConverter::ConvertPropertyForTransport(
     if (value) {
       // TODO(crbug.com/667566): Support additional scales or gfx::Image[Skia].
       SkBitmap bitmap = value->GetRepresentation(1.f).sk_bitmap();
-      *transport_value = base::MakeUnique<std::vector<uint8_t>>(
+      *transport_value = std::make_unique<std::vector<uint8_t>>(
           mojo::ConvertTo<std::vector<uint8_t>>(bitmap));
     } else {
-      *transport_value = base::MakeUnique<std::vector<uint8_t>>();
+      *transport_value = std::make_unique<std::vector<uint8_t>>();
     }
     return true;
   }
@@ -152,7 +157,7 @@ bool PropertyConverter::ConvertPropertyForTransport(
   PrimitiveType default_value = primitive_properties_[key].default_value;
   // TODO(msw): Using the int64_t accessor is wasteful for smaller types.
   const PrimitiveType value = window->GetPropertyInternal(key, default_value);
-  *transport_value = base::MakeUnique<std::vector<uint8_t>>(
+  *transport_value = std::make_unique<std::vector<uint8_t>>(
       mojo::ConvertTo<std::vector<uint8_t>>(value));
   return true;
 }
@@ -290,35 +295,35 @@ bool PropertyConverter::GetPropertyValueFromTransportValue(
   return false;
 }
 
-void PropertyConverter::RegisterProperty(
+void PropertyConverter::RegisterImageSkiaProperty(
     const WindowProperty<gfx::ImageSkia*>* property,
     const char* transport_name) {
   image_properties_[property] = transport_name;
   transport_names_.insert(transport_name);
 }
 
-void PropertyConverter::RegisterProperty(
+void PropertyConverter::RegisterRectProperty(
     const WindowProperty<gfx::Rect*>* property,
     const char* transport_name) {
   rect_properties_[property] = transport_name;
   transport_names_.insert(transport_name);
 }
 
-void PropertyConverter::RegisterProperty(
+void PropertyConverter::RegisterSizeProperty(
     const WindowProperty<gfx::Size*>* property,
     const char* transport_name) {
   size_properties_[property] = transport_name;
   transport_names_.insert(transport_name);
 }
 
-void PropertyConverter::RegisterProperty(
+void PropertyConverter::RegisterStringProperty(
     const WindowProperty<std::string*>* property,
     const char* transport_name) {
   string_properties_[property] = transport_name;
   transport_names_.insert(transport_name);
 }
 
-void PropertyConverter::RegisterProperty(
+void PropertyConverter::RegisterString16Property(
     const WindowProperty<base::string16*>* property,
     const char* transport_name) {
   string16_properties_[property] = transport_name;

@@ -17,6 +17,9 @@ namespace media {
 // - not too small to avoid breaking most reads into multiple read operations.
 const int kReadSize = 8 * 1024;
 
+// Maximum length of a file name.
+const size_t kFileNameMaxLength = 256;
+
 // Call func_call and check the result. If the result is not
 // PP_OK_COMPLETIONPENDING, print out logs, call OnError() and return.
 #define CHECK_PP_OK_COMPLETIONPENDING(func_call, error_type)            \
@@ -45,6 +48,31 @@ static bool IsMainThread() {
 // current thread is the main thread.
 static void PostOnMain(pp::CompletionCallback cb) {
   pp::Module::Get()->core()->CallOnMainThread(0, cb, PP_OK);
+}
+
+// As this is part of pepper, don't use base::string_utils.
+static bool IsLetter(char c) {
+  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+static bool IsDigit(char c) {
+  return c >= '0' && c <= '9';
+}
+
+// File names must only contain letters (A-Za-z), digits(0-9), or "._-",
+// and not start with "_". It must contain at least 1 character, and not
+// more then |kFileNameMaxLength| characters.
+static bool IsValidFileName(const std::string& name) {
+  if (name.empty() || name.length() > kFileNameMaxLength || name[0] == '_')
+    return false;
+
+  for (auto ch : name) {
+    if (!IsLetter(ch) && !IsDigit(ch) && ch != '.' && ch != '_' && ch != '-') {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 CdmFileIOImpl::FileLockMap* CdmFileIOImpl::file_lock_map_ = NULL;
@@ -82,7 +110,7 @@ CdmFileIOImpl::~CdmFileIOImpl() {
 // Note: This only stores file name and opens the file system. The real file
 // open is deferred to when Read() or Write() is called.
 void CdmFileIOImpl::Open(const char* file_name, uint32_t file_name_size) {
-  CDM_DLOG() << __func__;
+  CDM_DLOG() << __func__ << " " << std::string(file_name, file_name_size);
   PP_DCHECK(IsMainThread());
 
   if (state_ != STATE_UNOPENED) {
@@ -91,13 +119,8 @@ void CdmFileIOImpl::Open(const char* file_name, uint32_t file_name_size) {
     return;
   }
 
-  // File name should not (1) be empty, (2) start with '_', or (3) contain any
-  // path separators.
   std::string file_name_str(file_name, file_name_size);
-  if (file_name_str.empty() ||
-      file_name_str[0] == '_' ||
-      file_name_str.find('/') != std::string::npos ||
-      file_name_str.find('\\') != std::string::npos) {
+  if (!IsValidFileName(file_name_str)) {
     CDM_DLOG() << "Invalid file name.";
     state_ = STATE_ERROR;
     OnError(OPEN_ERROR);
@@ -149,7 +172,7 @@ void CdmFileIOImpl::Read() {
 // Write() -> OpenTempFileForWrite() -> WriteTempFile() -> RenameTempFile().
 // The file name of the temporary file is /_<requested_file_name>.
 void CdmFileIOImpl::Write(const uint8_t* data, uint32_t data_size) {
-  CDM_DLOG() << __func__;
+  CDM_DLOG() << __func__ << ": size = " << data_size;
   PP_DCHECK(IsMainThread());
 
   if (state_ == STATE_READING || state_ == STATE_WRITING) {
@@ -288,7 +311,7 @@ void CdmFileIOImpl::OpenFileForRead() {
 }
 
 void CdmFileIOImpl::OnFileOpenedForRead(int32_t result) {
-  CDM_DLOG() << __func__ << ": " << result;
+  CDM_DLOG() << __func__ << ": result = " << result;
   PP_DCHECK(IsMainThread());
   PP_DCHECK(state_ == STATE_READING);
 
@@ -328,7 +351,7 @@ void CdmFileIOImpl::ReadFile() {
 }
 
 void CdmFileIOImpl::OnFileRead(int32_t bytes_read) {
-  CDM_DLOG() << __func__ << ": " << bytes_read;
+  CDM_DLOG() << __func__ << ": bytes_read = " << bytes_read;
   PP_DCHECK(IsMainThread());
   PP_DCHECK(state_ == STATE_READING);
 
@@ -404,7 +427,7 @@ void CdmFileIOImpl::OpenTempFileForWrite() {
 }
 
 void CdmFileIOImpl::OnTempFileOpenedForWrite(int32_t result) {
-  CDM_DLOG() << __func__ << ": " << result;
+  CDM_DLOG() << __func__ << ": result = " << result;
   PP_DCHECK(IsMainThread());
   PP_DCHECK(state_ == STATE_WRITING);
 
@@ -447,7 +470,7 @@ void CdmFileIOImpl::WriteTempFile() {
 }
 
 void CdmFileIOImpl::OnTempFileWritten(int32_t bytes_written) {
-  CDM_DLOG() << __func__ << ": " << bytes_written;
+  CDM_DLOG() << __func__ << ": bytes_written = " << bytes_written;
   PP_DCHECK(IsMainThread());
   PP_DCHECK(state_ == STATE_WRITING);
 
@@ -481,7 +504,7 @@ void CdmFileIOImpl::RenameTempFile() {
 }
 
 void CdmFileIOImpl::OnTempFileRenamed(int32_t result) {
-  CDM_DLOG() << __func__ << ": " << result;
+  CDM_DLOG() << __func__ << ": result = " << result;
   PP_DCHECK(IsMainThread());
   PP_DCHECK(state_ == STATE_WRITING);
 

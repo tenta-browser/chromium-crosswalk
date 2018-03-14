@@ -12,8 +12,8 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/profiler/scoped_tracker.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/sequenced_task_runner.h"
+#include "base/task_scheduler/post_task.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/cookie_store_factory.h"
 #include "net/cookies/canonical_cookie.h"
@@ -46,7 +46,8 @@ QuotaPolicyCookieStore::~QuotaPolicyCookieStore() {
     }
     const GURL url(net::cookie_util::CookieOriginToURL(cookie.first.first,
                                                        cookie.first.second));
-    if (!url.is_valid() || !special_storage_policy_->IsStorageSessionOnly(url))
+    if (!url.is_valid() ||
+        !special_storage_policy_->IsStorageSessionOnlyOrBlocked(url))
       continue;
 
     session_only_cookies.push_back(cookie.first);
@@ -92,8 +93,13 @@ void QuotaPolicyCookieStore::SetForceKeepSessionState() {
   special_storage_policy_ = nullptr;
 }
 
-void QuotaPolicyCookieStore::Flush(const base::Closure& callback) {
-  persistent_store_->Flush(callback);
+void QuotaPolicyCookieStore::SetBeforeFlushCallback(
+    base::RepeatingClosure callback) {
+  persistent_store_->SetBeforeFlushCallback(std::move(callback));
+}
+
+void QuotaPolicyCookieStore::Flush(base::OnceClosure callback) {
+  persistent_store_->Flush(std::move(callback));
 }
 
 void QuotaPolicyCookieStore::OnLoad(
@@ -109,21 +115,21 @@ void QuotaPolicyCookieStore::OnLoad(
 }
 
 CookieStoreConfig::CookieStoreConfig()
-  : session_cookie_mode(EPHEMERAL_SESSION_COOKIES),
-    crypto_delegate(nullptr) {
+    : session_cookie_mode(EPHEMERAL_SESSION_COOKIES),
+      crypto_delegate(nullptr),
+      channel_id_service(nullptr) {
   // Default to an in-memory cookie store.
 }
 
 CookieStoreConfig::CookieStoreConfig(
     const base::FilePath& path,
     SessionCookieMode session_cookie_mode,
-    storage::SpecialStoragePolicy* storage_policy,
-    net::CookieMonsterDelegate* cookie_delegate)
+    storage::SpecialStoragePolicy* storage_policy)
     : path(path),
       session_cookie_mode(session_cookie_mode),
       storage_policy(storage_policy),
-      cookie_delegate(cookie_delegate),
-      crypto_delegate(nullptr) {
+      crypto_delegate(nullptr),
+      channel_id_service(nullptr) {
   CHECK(!path.empty() || session_cookie_mode == EPHEMERAL_SESSION_COOKIES);
 }
 
@@ -132,16 +138,11 @@ CookieStoreConfig::~CookieStoreConfig() {
 
 std::unique_ptr<net::CookieStore> CreateCookieStore(
     const CookieStoreConfig& config) {
-  // TODO(bcwhite): Remove ScopedTracker below once crbug.com/483686 is fixed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION("483686 content::CreateCookieStore"));
-
   std::unique_ptr<net::CookieMonster> cookie_monster;
 
   if (config.path.empty()) {
     // Empty path means in-memory store.
-    cookie_monster.reset(
-        new net::CookieMonster(nullptr, config.cookie_delegate.get()));
+    cookie_monster.reset(new net::CookieMonster(nullptr));
   } else {
     scoped_refptr<base::SequencedTaskRunner> client_task_runner =
         config.client_task_runner;
@@ -154,9 +155,9 @@ std::unique_ptr<net::CookieStore> CreateCookieStore(
     }
 
     if (!background_task_runner.get()) {
-      background_task_runner =
-          BrowserThread::GetBlockingPool()->GetSequencedTaskRunner(
-              base::SequencedWorkerPool::GetSequenceToken());
+      background_task_runner = base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+           base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
     }
 
     scoped_refptr<net::SQLitePersistentCookieStore> sqlite_store(
@@ -173,8 +174,8 @@ std::unique_ptr<net::CookieStore> CreateCookieStore(
             sqlite_store.get(),
             config.storage_policy.get());
 
-    cookie_monster.reset(
-        new net::CookieMonster(persistent_store, config.cookie_delegate.get()));
+    cookie_monster.reset(new net::CookieMonster(persistent_store,
+                                                config.channel_id_service));
     if ((config.session_cookie_mode ==
          CookieStoreConfig::PERSISTANT_SESSION_COOKIES) ||
         (config.session_cookie_mode ==

@@ -10,14 +10,12 @@
 <translation id="1188858454923323853">допълнение</translation>
 <translation id="1206619573307042055">marquee</translation>
 <translation id="1206693055195146388">плъзгач</translation>
-<translation id="1235745349614807883">Изчистване на скорошните търсения</translation>
 <translation id="1281252709823657822">диалогов прозорец</translation>
 <translation id="1342835525016946179">статия</translation>
 <translation id="1359897965706325498">банер</translation>
 <translation id="1589122976691792535">регион</translation>
 <translation id="1591562245178063882">Този месец</translation>
 <translation id="1637811476055996098">Избор на файлове</translation>
-<translation id="167575180612809735">индикатор за заетост</translation>
 <translation id="1729654308190250600">Моля, въведете имейл адрес.</translation>
 <translation id="1758486001363313524">Други...</translation>
 <translation id="1806710327868736751">диалогов прозорец със сигнал</translation>
@@ -25,7 +23,6 @@
 <translation id="1822429046913737220">AM/PM</translation>
 <translation id="1832974991323546415">възпроизвеждане на отдалечено устройство</translation>
 <translation id="1854180393107901205">Спиране на предаването</translation>
-<translation id="1880518467580572141">структура</translation>
 <translation id="1921819250265091946">дд</translation>
 <translation id="1930711995431081526">състояние</translation>
 <translation id="1938124657309484470">Стойността трябва да е <ph name="MAXIMUM_DATE_OR_TIME" /> или по-рано.</translation>
@@ -39,7 +36,6 @@
 <translation id="248395913932153421">Ден</translation>
 <translation id="2507943997699731163">Моля, попълнете това поле.</translation>
 <translation id="2508569020611168319">списък с раздели</translation>
-<translation id="2548326553472216322">Няма скорошни търсения</translation>
 <translation id="2561842179657104141">показване на още контроли за мултимедия</translation>
 <translation id="2572483411312390101">пускане</translation>
 <translation id="2613802280814924224">Моля, въведете валидна стойност. Най-близката такава е <ph name="VALID_VALUE" />.</translation>
@@ -51,7 +47,6 @@
 <translation id="2759744352195237655">бутон с изскачащ прозорец</translation>
 <translation id="2761667185364618470">Моля, поставете отметка в това квадратче, ако искате да продължите.</translation>
 <translation id="2896972712917208084">група бутони за избор</translation>
-<translation id="2901282870647571346">текущо състояние на филма</translation>
 <translation id="2908441821576996758">Моля, въведете списък с имейл адреси, разделени със запетаи.</translation>
 <translation id="2940813599313844715">обект</translation>
 <translation id="2942448076852699108">откроено съдържание</translation>
@@ -95,12 +90,10 @@
 <translation id="4992066212339426712">Включване на звука</translation>
 <translation id="49969490063480558">Моля, въведете текст след „<ph name="ATSIGN" />“. „<ph name="INVALIDADDRESS" />“ е непълно.</translation>
 <translation id="5034860022980953847">индикатор за напредък</translation>
-<translation id="5048533449481078685">списъчен показалец</translation>
 <translation id="5117590920725113268">Показване на следващия месец</translation>
 <translation id="512758898067543763">заглавка на ред</translation>
 <translation id="5164977714490026579">Стойността трябва да е по-голяма или равна на <ph name="MINIMUM" />.</translation>
 <translation id="5307600278924710095">Моля, въведете текст преди „<ph name="ATSIGN" />“. „<ph name="INVALIDADDRESS" />“ е непълно.</translation>
-<translation id="5317780077021120954">Запазване</translation>
 <translation id="5406322316791861025">фигура</translation>
 <translation id="5453733299334684579">елемент от дърво</translation>
 <translation id="5466621249238537318">Моля, изберете един или повече файлове.</translation>
@@ -113,9 +106,9 @@
 <translation id="5643186887447432888">бутон</translation>
 <translation id="5677946354068040947">още опции</translation>
 <translation id="57838592816432529">Заглушаване</translation>
-<translation id="5843503607508392247">Други...</translation>
 <translation id="5860033963881614850">Изключено</translation>
 <translation id="588258955323874662">Цял екран</translation>
+<translation id="5888666972993069672">В момента се предава към „<ph name="DEVICE_FRIENDLY_NAME" />“</translation>
 <translation id="5939518447894949180">Нулиране</translation>
 <translation id="5966707198760109579">Седмица</translation>
 <translation id="5987525920412732405">брояч</translation>
@@ -123,19 +116,16 @@
 <translation id="6023896073578205740">списъчно поле</translation>
 <translation id="6101327004457443354">пускане на аудиозаписа</translation>
 <translation id="6164829606128959761">индикатор</translation>
-<translation id="6270583010843788609">миниизображение за времевата контрола за филма</translation>
-<translation id="6359256949422175976">миниизображение за времевия плъзгач за филма</translation>
 <translation id="6398862346408813489">Показване на панела за избиране на месец</translation>
 <translation id="6404546809543547843">времеви плъзгач за аудиозаписа</translation>
 <translation id="648732519525291180">инструмент за избор на час</translation>
+<translation id="6550675742724504774">Опции</translation>
 <translation id="658823671542763450">вход за цял екран</translation>
 <translation id="663493177488814956">емисия</translation>
 <translation id="6637586476836377253">регистрационен файл</translation>
 <translation id="6643016212128521049">Изчистване</translation>
-<translation id="6663448176199120256">Скорошни търсения</translation>
 <translation id="668171684555832681">Друг...</translation>
 <translation id="6692633176391053278">stepper</translation>
-<translation id="6739588121953935928">линия</translation>
 <translation id="6755330956360078551">подсказка</translation>
 <translation id="6790428901817661496">Пускане</translation>
 <translation id="6820355525329141109">Приставката не можа да се зареди.</translation>
@@ -145,7 +135,6 @@
 <translation id="6934078000481955284">блоков цитат</translation>
 <translation id="6941933287844615239">изтегляне на мултимедията</translation>
 <translation id="6989848892321993519">Моля, удължете този текст до поне <ph name="MIN_CHARACTERS" /> знака (понастоящем използвате 1 знак).</translation>
-<translation id="7057186640035488495">време от филма</translation>
 <translation id="709897737746224366">Моля, спазвайте изисквания формат.</translation>
 <translation id="7223624360433298498">изминало време</translation>
 <translation id="7263440858009898357">Моля, изберете елемент в списъка.</translation>
@@ -166,10 +155,8 @@
 <translation id="8053789581856978548">текстово поле за търсене</translation>
 <translation id="8115662671911883373">започване на показването на надписите</translation>
 <translation id="8117451130807776954">Тази седмица</translation>
-<translation id="8141602879876242471">В този индекс може да се търси. Въведете ключови думи за търсене:</translation>
 <translation id="819205353528511139">пускане на филма в режим на цял екран</translation>
 <translation id="8199524924445686405">гггг</translation>
-<translation id="8244226242650769279">карта с изображения</translation>
 <translation id="8284326494547611709">Надписи</translation>
 <translation id="835897206747267392">Невалидна стойност.</translation>
 <translation id="8433900881053900389">лента с инструменти</translation>

@@ -6,15 +6,14 @@
 
 #include <memory>
 #include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/DOMException.h"
-#include "core/dom/Document.h"
 #include "modules/encryptedmedia/ContentDecryptionModuleResultPromise.h"
 #include "modules/encryptedmedia/EncryptedMediaUtils.h"
 #include "modules/encryptedmedia/MediaKeySession.h"
 #include "modules/encryptedmedia/MediaKeys.h"
 #include "modules/encryptedmedia/MediaKeysController.h"
 #include "platform/Timer.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/wtf/PtrUtil.h"
 #include "public/platform/WebContentDecryptionModule.h"
 #include "public/platform/WebEncryptedMediaTypes.h"
@@ -169,7 +168,5 @@ ScriptPromise MediaKeySystemAccess::createMediaKeys(ScriptState* script_state) {
   // 3. Return promise.
   return promise;
 }
-
-DEFINE_TRACE(MediaKeySystemAccess) {}
 
 }  // namespace blink

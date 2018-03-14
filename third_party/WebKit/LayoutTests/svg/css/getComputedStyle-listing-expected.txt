@@ -5,8 +5,6 @@ On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE
 
 -webkit-app-region: no-drag
 -webkit-appearance: none
--webkit-background-clip: border-box
--webkit-background-origin: padding-box
 -webkit-border-horizontal-spacing: 0px
 -webkit-border-image: none
 -webkit-border-vertical-spacing: 0px
@@ -48,7 +46,7 @@ On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE
 -webkit-text-combine: none
 -webkit-text-decorations-in-effect: none
 -webkit-text-emphasis-color: rgb(0, 0, 0)
--webkit-text-emphasis-position: over
+-webkit-text-emphasis-position: over right
 -webkit-text-emphasis-style: none
 -webkit-text-fill-color: rgb(0, 0, 0)
 -webkit-text-orientation: vertical-right
@@ -60,7 +58,7 @@ On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE
 -webkit-writing-mode: horizontal-tb
 align-content: normal
 align-items: normal
-align-self: normal
+align-self: auto
 alignment-baseline: auto
 animation-delay: 0s
 animation-direction: normal
@@ -155,13 +153,14 @@ flood-opacity: 1
 font-kerning: auto
 font-size: 16px
 font-size-adjust: none
-font-stretch: normal
+font-stretch: 100%
 font-style: normal
 font-variant: normal
 font-variant-caps: normal
+font-variant-east-asian: normal
 font-variant-ligatures: normal
 font-variant-numeric: normal
-font-weight: normal
+font-weight: 400
 grid-auto-columns: auto
 grid-auto-flow: row
 grid-auto-rows: auto
@@ -174,17 +173,18 @@ grid-row-start: auto
 grid-template-areas: none
 grid-template-columns: none
 grid-template-rows: none
-height: auto
+height: 100px
 hyphens: manual
 image-orientation: 0deg
 image-rendering: auto
 isolation: auto
 justify-content: normal
 justify-items: normal
-justify-self: normal
+justify-self: auto
 left: auto
 letter-spacing: normal
 lighting-color: rgb(255, 255, 255)
+line-break: auto
 line-height: normal
 line-height-step: 0px
 list-style-image: none
@@ -212,7 +212,6 @@ offset-distance: 0px
 offset-path: none
 offset-position: auto
 offset-rotate: auto 0deg
-offset-rotation: auto 0deg
 opacity: 1
 order: 0
 orphans: 2
@@ -242,11 +241,6 @@ rx: auto
 ry: auto
 scale: none
 scroll-behavior: auto
-scroll-snap-coordinate: none
-scroll-snap-destination: 0px 0px
-scroll-snap-points-x: none
-scroll-snap-points-y: none
-scroll-snap-type: none
 shape-image-threshold: 0
 shape-margin: 0px
 shape-outside: none
@@ -270,7 +264,7 @@ text-anchor: start
 text-decoration: none solid rgb(0, 0, 0)
 text-decoration-color: rgb(0, 0, 0)
 text-decoration-line: none
-text-decoration-skip: objects
+text-decoration-skip-ink: auto
 text-decoration-style: solid
 text-indent: 0px
 text-justify: auto
@@ -291,13 +285,13 @@ transition-property: all
 transition-timing-function: ease
 translate: none
 unicode-bidi: normal
-user-select: text
+user-select: auto
 vector-effect: none
 vertical-align: baseline
 visibility: visible
 white-space: normal
 widows: 2
-width: auto
+width: 100px
 will-change: auto
 word-break: normal
 word-spacing: 0px

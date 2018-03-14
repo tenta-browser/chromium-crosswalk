@@ -11,10 +11,11 @@
 namespace blink {
 
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+  static BlinkFuzzerTestSupport test_support = BlinkFuzzerTestSupport();
   FuzzedDataProvider fuzzed_data(data, size);
   TextResourceDecoderForFuzzing decoder(fuzzed_data);
   CString bytes = fuzzed_data.ConsumeRemainingBytes();
-  decoder.Decode(bytes.Data(), bytes.length());
+  decoder.Decode(bytes.data(), bytes.length());
   decoder.Flush();
   return 0;
 }
@@ -23,9 +24,4 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   return blink::LLVMFuzzerTestOneInput(data, size);
-}
-
-extern "C" int LLVMFuzzerInitialize(int* argc, char*** argv) {
-  blink::InitializeBlinkFuzzTest(argc, argv);
-  return 0;
 }

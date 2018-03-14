@@ -21,9 +21,7 @@
 
 namespace chromeos {
 
-AuthPrewarmer::AuthPrewarmer()
-    : doing_prewarm_(false) {
-}
+AuthPrewarmer::AuthPrewarmer() : doing_prewarm_(false) {}
 
 AuthPrewarmer::~AuthPrewarmer() {
   if (registrar_.IsRegistered(
@@ -53,8 +51,8 @@ void AuthPrewarmer::PrewarmAuthentication(
   }
   if (!IsNetworkConnected()) {
     // DefaultNetworkChanged will get called when a network becomes connected.
-    NetworkHandler::Get()->network_state_handler()
-        ->AddObserver(this, FROM_HERE);
+    NetworkHandler::Get()->network_state_handler()->AddObserver(this,
+                                                                FROM_HERE);
   }
   if (!GetRequestContext()) {
     registrar_.Add(
@@ -68,8 +66,8 @@ void AuthPrewarmer::DefaultNetworkChanged(const NetworkState* network) {
   if (!network)
     return;  // Still no default (connected) network.
 
-  NetworkHandler::Get()->network_state_handler()
-      ->RemoveObserver(this, FROM_HERE);
+  NetworkHandler::Get()->network_state_handler()->RemoveObserver(this,
+                                                                 FROM_HERE);
   if (GetRequestContext())
     DoPrewarm();
 }
@@ -91,10 +89,10 @@ void AuthPrewarmer::DoPrewarm() {
   const GURL& url = GaiaUrls::GetInstance()->service_login_url();
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&content::PreconnectUrl,
-                 ProfileHelper::GetSigninProfile()->GetResourceContext(), url,
-                 url, kConnectionsNeeded, true,
-                 net::HttpRequestInfo::EARLY_LOAD_MOTIVATED));
+      base::BindOnce(&content::PreconnectUrl,
+                     base::RetainedRef(GetRequestContext()), url, url,
+                     kConnectionsNeeded, true,
+                     net::HttpRequestInfo::EARLY_LOAD_MOTIVATED));
   if (!completion_callback_.is_null()) {
     content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
                                      completion_callback_);

@@ -26,12 +26,11 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from webkitpy.common.config.builders import BUILDERS
 from webkitpy.common.checkout.git_mock import MockGit
 from webkitpy.common.net.buildbot_mock import MockBuildBot
 from webkitpy.common.net.web_mock import MockWeb
+from webkitpy.common.path_finder import PathFinder
 from webkitpy.common.system.system_host_mock import MockSystemHost
-from webkitpy.common.webkit_finder import WebKitFinder
 
 # New-style ports need to move down into webkitpy.common.
 from webkitpy.layout_tests.builder_list import BuilderList
@@ -65,22 +64,44 @@ class MockHost(MockSystemHost):
         # on the list of known ports should override this with a MockPortFactory.
         self.port_factory = PortFactory(self)
 
-        self.builders = BuilderList(BUILDERS)
+        self.builders = BuilderList({
+            'Fake Test Win10': {
+                'port_name': 'win-win10',
+                'specifiers': ['Win10', 'Release']
+            },
+            'Fake Test Linux': {
+                'port_name': 'linux-trusty',
+                'specifiers': ['Trusty', 'Release']
+            },
+            'Fake Test Linux (dbg)': {
+                'port_name': 'linux-trusty',
+                'specifiers': ['Trusty', 'Debug']
+            },
+            'Fake Test Mac10.12': {
+                'port_name': 'mac-mac10.12',
+                'specifiers': ['Mac10.12', 'Release']
+            },
+            'Fake Test Linux Try Bot': {
+                'port_name': 'linux-trusty',
+                'specifiers': ['Trusty', 'Release'],
+                'is_try_builder': True,
+            },
+        })
 
     def git(self, path=None):
         if path:
-            return MockGit(cwd=path, filesystem=self.filesystem, executive=self.executive)
+            return MockGit(cwd=path, filesystem=self.filesystem, executive=self.executive, platform=self.platform)
         if not self._git:
-            self._git = MockGit(filesystem=self.filesystem, executive=self.executive)
+            self._git = MockGit(filesystem=self.filesystem, executive=self.executive, platform=self.platform)
         # Various pieces of code (wrongly) call filesystem.chdir(checkout_root).
         # Making the checkout_root exist in the mock filesystem makes that chdir not raise.
         self.filesystem.maybe_make_directory(self._git.checkout_root)
         return self._git
 
     def _add_base_manifest_to_mock_filesystem(self, filesystem):
-        webkit_finder = WebKitFinder(filesystem)
+        path_finder = PathFinder(filesystem)
 
-        external_dir = webkit_finder.path_from_webkit_base('LayoutTests', 'external')
+        external_dir = path_finder.path_from_layout_tests('external')
         filesystem.maybe_make_directory(filesystem.join(external_dir, 'wpt'))
 
         manifest_base_path = filesystem.join(external_dir, 'WPT_BASE_MANIFEST.json')

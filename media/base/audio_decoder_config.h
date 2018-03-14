@@ -59,14 +59,17 @@ class MEDIA_EXPORT AudioDecoderConfig {
   // Note: The contents of |extra_data_| are compared not the raw pointers.
   bool Matches(const AudioDecoderConfig& config) const;
 
-  // Returns a human-readable string describing |*this|.  For debugging & test
-  // output only.
+  // Returns a human-readable string describing |*this|.
   std::string AsHumanReadableString() const;
+
+  // Sets the number of channels if |channel_layout_| is CHANNEL_LAYOUT_DISCRETE
+  void SetChannelsForDiscrete(int channels);
 
   AudioCodec codec() const { return codec_; }
   int bits_per_channel() const { return bytes_per_channel_ * 8; }
   int bytes_per_channel() const { return bytes_per_channel_; }
   ChannelLayout channel_layout() const { return channel_layout_; }
+  int channels() const { return channels_; }
   int samples_per_second() const { return samples_per_second_; }
   SampleFormat sample_format() const { return sample_format_; }
   int bytes_per_frame() const { return bytes_per_frame_; }
@@ -88,16 +91,23 @@ class MEDIA_EXPORT AudioDecoderConfig {
   }
 
   // Sets the config to be encrypted or not encrypted manually. This can be
-  // useful for decryptors that decrypts an encrypted stream to a clear stream,
-  // or for decoder selectors that wants to select decrypting decoders instead
-  // of clear decoders.
+  // useful for decryptors that decrypts an encrypted stream to a clear stream.
   void SetIsEncrypted(bool is_encrypted);
+
+  bool should_discard_decoder_delay() const {
+    return should_discard_decoder_delay_;
+  }
+
+  void disable_discard_decoder_delay() {
+    should_discard_decoder_delay_ = false;
+  }
 
  private:
   AudioCodec codec_;
   SampleFormat sample_format_;
   int bytes_per_channel_;
   ChannelLayout channel_layout_;
+  int channels_;
   int samples_per_second_;
   int bytes_per_frame_;
   std::vector<uint8_t> extra_data_;
@@ -111,6 +121,10 @@ class MEDIA_EXPORT AudioDecoderConfig {
   // returning decoded data.  This value can include both decoder delay as well
   // as padding added during encoding.
   int codec_delay_;
+
+  // Indicates if a decoder should implicitly discard decoder delay without it
+  // being explicitly marked in discard padding.
+  bool should_discard_decoder_delay_;
 
   // Not using DISALLOW_COPY_AND_ASSIGN here intentionally to allow the compiler
   // generated copy constructor and assignment operator. Since the extra data is

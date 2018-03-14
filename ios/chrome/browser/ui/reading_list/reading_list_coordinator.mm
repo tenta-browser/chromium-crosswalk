@@ -4,18 +4,25 @@
 
 #import "ios/chrome/browser/ui/reading_list/reading_list_coordinator.h"
 
+#import "base/mac/foundation_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "components/feature_engagement/public/event_constants.h"
+#include "components/feature_engagement/public/tracker.h"
 #include "components/reading_list/core/reading_list_model.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
+#include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/favicon/ios_chrome_large_icon_service_factory.h"
+#include "ios/chrome/browser/feature_engagement/tracker_factory.h"
+#import "ios/chrome/browser/metrics/new_tab_page_uma.h"
 #include "ios/chrome/browser/reading_list/offline_url_utils.h"
 #include "ios/chrome/browser/reading_list/reading_list_download_service.h"
 #include "ios/chrome/browser/reading_list/reading_list_download_service_factory.h"
 #include "ios/chrome/browser/reading_list/reading_list_model_factory.h"
 #import "ios/chrome/browser/ui/alert_coordinator/action_sheet_coordinator.h"
 #import "ios/chrome/browser/ui/reading_list/reading_list_collection_view_item.h"
+#import "ios/chrome/browser/ui/reading_list/reading_list_mediator.h"
 #import "ios/chrome/browser/ui/reading_list/reading_list_toolbar.h"
 #import "ios/chrome/browser/ui/reading_list/reading_list_view_controller.h"
 #import "ios/chrome/browser/ui/url_loader.h"
@@ -65,6 +72,7 @@ enum UMAContextMenuAction {
 @synthesize containerViewController = _containerViewController;
 @synthesize URLLoader = _URLLoader;
 @synthesize browserState = _browserState;
+@synthesize mediator = _mediator;
 
 - (instancetype)initWithBaseViewController:(UIViewController*)viewController
                               browserState:
@@ -87,17 +95,16 @@ enum UMAContextMenuAction {
             self.browserState);
     favicon::LargeIconService* largeIconService =
         IOSChromeLargeIconServiceFactory::GetForBrowserState(self.browserState);
-    ReadingListDownloadService* readingListDownloadService =
-        ReadingListDownloadServiceFactory::GetInstance()->GetForBrowserState(
-            self.browserState);
 
+    self.mediator =
+        [[ReadingListMediator alloc] initWithModel:model
+                                  largeIconService:largeIconService];
     ReadingListToolbar* toolbar = [[ReadingListToolbar alloc] init];
     ReadingListCollectionViewController* collectionViewController =
         [[ReadingListCollectionViewController alloc]
-                         initWithModel:model
-                      largeIconService:largeIconService
-            readingListDownloadService:readingListDownloadService
-                               toolbar:toolbar];
+            initWithDataSource:self.mediator
+
+                       toolbar:toolbar];
     collectionViewController.delegate = self;
 
     self.containerViewController = [[ReadingListViewController alloc]
@@ -109,6 +116,11 @@ enum UMAContextMenuAction {
   [self.baseViewController presentViewController:self.containerViewController
                                         animated:YES
                                       completion:nil];
+
+  // Send the "Viewed Reading List" event to the feature_engagement::Tracker
+  // when the user opens their reading list.
+  feature_engagement::TrackerFactory::GetForBrowserState(self.browserState)
+      ->NotifyEvent(feature_engagement::events::kViewedReadingList);
 }
 
 - (void)stop {
@@ -130,16 +142,16 @@ enum UMAContextMenuAction {
 - (void)readingListCollectionViewController:
             (ReadingListCollectionViewController*)
                 readingListCollectionViewController
-                  displayContextMenuForItem:
-                      (ReadingListCollectionViewItem*)readingListItem
+                  displayContextMenuForItem:(CollectionViewItem*)item
                                     atPoint:(CGPoint)menuLocation {
   if (!self.containerViewController) {
     return;
   }
 
-  const ReadingListEntry* entry =
-      readingListCollectionViewController.readingListModel->GetEntryByURL(
-          readingListItem.url);
+  ReadingListCollectionViewItem* readingListItem =
+      base::mac::ObjCCastStrict<ReadingListCollectionViewItem>(item);
+
+  const ReadingListEntry* entry = [self.mediator entryFromItem:item];
 
   if (!entry) {
     [readingListCollectionViewController reloadData];
@@ -229,11 +241,8 @@ enum UMAContextMenuAction {
 - (void)
 readingListCollectionViewController:
     (ReadingListCollectionViewController*)readingListCollectionViewController
-                           openItem:
-                               (ReadingListCollectionViewItem*)readingListItem {
-  const ReadingListEntry* entry =
-      readingListCollectionViewController.readingListModel->GetEntryByURL(
-          readingListItem.url);
+                           openItem:(CollectionViewItem*)readingListItem {
+  const ReadingListEntry* entry = [self.mediator entryFromItem:readingListItem];
 
   if (!entry) {
     [readingListCollectionViewController reloadData];
@@ -244,14 +253,59 @@ readingListCollectionViewController:
 
   [readingListCollectionViewController willBeDismissed];
 
+  // Use a referrer with a specific URL to signal that this entry should not be
+  // taken into account for the Most Visited tiles.
+  const web::Referrer referrer(GURL(kReadingListReferrerURL),
+                               web::ReferrerPolicyDefault);
+
   [self.URLLoader loadURL:entry->URL()
-                 referrer:web::Referrer()
+                 referrer:referrer
                transition:ui::PAGE_TRANSITION_AUTO_BOOKMARK
         rendererInitiated:NO];
+  new_tab_page_uma::RecordAction(
+      self.browserState, new_tab_page_uma::ACTION_OPENED_READING_LIST_ENTRY);
 
   [self stop];
 }
 
+- (void)readingListCollectionViewController:
+            (ReadingListCollectionViewController*)
+                readingListCollectionViewController
+                           openItemInNewTab:(CollectionViewItem*)item
+                                  incognito:(BOOL)incognito {
+  ReadingListCollectionViewItem* readingListItem =
+      base::mac::ObjCCastStrict<ReadingListCollectionViewItem>(item);
+  [self readingListCollectionViewController:readingListCollectionViewController
+                          openNewTabWithURL:readingListItem.url
+                                  incognito:incognito];
+}
+
+- (void)readingListCollectionViewController:
+            (ReadingListCollectionViewController*)
+                readingListCollectionViewController
+                    openItemOfflineInNewTab:(CollectionViewItem*)item {
+  const ReadingListEntry* entry = [self.mediator entryFromItem:item];
+
+  if (!entry) {
+    return;
+  }
+
+  if (entry->DistilledState() == ReadingListEntry::PROCESSED) {
+    const GURL entryURL = entry->URL();
+    GURL offlineURL = reading_list::OfflineURLForPath(
+        entry->DistilledPath(), entryURL, entry->DistilledURL());
+
+    [self
+        readingListCollectionViewController:readingListCollectionViewController
+                             openOfflineURL:offlineURL
+                      correspondingEntryURL:entryURL];
+  }
+}
+
+#pragma mark - Private
+
+// Opens the offline url |offlineURL| of the entry saved in the reading list
+// model with the |entryURL| url.
 - (void)readingListCollectionViewController:
             (ReadingListCollectionViewController*)
                 readingListCollectionViewController
@@ -263,10 +317,10 @@ readingListCollectionViewController:
 
   UMA_HISTOGRAM_BOOLEAN("ReadingList.OfflineVersionDisplayed", true);
   const GURL updateURL = entryURL;
-  readingListCollectionViewController.readingListModel->SetReadStatus(updateURL,
-                                                                      true);
+  [self.mediator markEntryRead:updateURL];
 }
 
+// Opens |URL| in a new tab |incognito| or not.
 - (void)readingListCollectionViewController:
             (ReadingListCollectionViewController*)
                 readingListCollectionViewController

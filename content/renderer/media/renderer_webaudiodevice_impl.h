@@ -15,7 +15,6 @@
 #include "media/base/audio_renderer_sink.h"
 #include "third_party/WebKit/public/platform/WebAudioDevice.h"
 #include "third_party/WebKit/public/platform/WebAudioLatencyHint.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
 #include "url/origin.h"
 
 namespace base {
@@ -28,12 +27,12 @@ class SilentSinkSuspender;
 
 namespace content {
 class CONTENT_EXPORT RendererWebAudioDeviceImpl
-    : NON_EXPORTED_BASE(public blink::WebAudioDevice),
-      NON_EXPORTED_BASE(public media::AudioRendererSink::RenderCallback) {
+    : public blink::WebAudioDevice,
+      public media::AudioRendererSink::RenderCallback {
  public:
   ~RendererWebAudioDeviceImpl() override;
 
-  static RendererWebAudioDeviceImpl* Create(
+  static std::unique_ptr<RendererWebAudioDeviceImpl> Create(
       media::ChannelLayout layout,
       int channels,
       const blink::WebAudioLatencyHint& latency_hint,

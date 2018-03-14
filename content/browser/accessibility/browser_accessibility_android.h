@@ -11,11 +11,15 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
 #include "content/browser/accessibility/browser_accessibility.h"
+#include "ui/accessibility/platform/ax_platform_node.h"
 
 namespace content {
 
 class CONTENT_EXPORT BrowserAccessibilityAndroid : public BrowserAccessibility {
  public:
+  static BrowserAccessibilityAndroid* GetFromUniqueId(int32_t unique_id);
+  int32_t unique_id() const { return unique_id_; }
+
   // Overrides from BrowserAccessibility.
   void OnDataChanged() override;
   bool IsNative() const override;
@@ -60,13 +64,20 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid : public BrowserAccessibility {
   // if more than one is interesting, returns nullptr.
   const BrowserAccessibilityAndroid* GetSoleInterestingNodeFromSubtree() const;
 
+  // Returns true if the given subtree has inline text box data, or if there
+  // aren't any to load.
+  bool AreInlineTextBoxesLoaded() const;
+
   bool CanOpenPopup() const;
 
-  bool HasFocusableChild() const;
+  bool HasFocusableNonOptionChild() const;
   bool HasNonEmptyValue() const;
 
   const char* GetClassName() const;
   base::string16 GetText() const override;
+  base::string16 GetHint() const;
+
+  std::string GetRoleString() const;
 
   base::string16 GetRoleDescription() const;
 
@@ -137,12 +148,12 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid : public BrowserAccessibility {
   friend class BrowserAccessibility;
 
   BrowserAccessibilityAndroid();
+  ~BrowserAccessibilityAndroid() override;
 
   bool HasOnlyTextChildren() const;
   bool HasOnlyTextAndImageChildren() const;
   bool IsIframe() const;
-
-  void NotifyLiveRegionUpdate(base::string16& aria_live);
+  bool ShouldExposeValueAsName() const;
 
   int CountChildrenWithRole(ui::AXRole role) const;
 
@@ -154,9 +165,9 @@ class CONTENT_EXPORT BrowserAccessibilityAndroid : public BrowserAccessibility {
                                  const base::string16 b);
 
   base::string16 cached_text_;
-  bool first_time_;
   base::string16 old_value_;
   base::string16 new_value_;
+  int32_t unique_id_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserAccessibilityAndroid);
 };

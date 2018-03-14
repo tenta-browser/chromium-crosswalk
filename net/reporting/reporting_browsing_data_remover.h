@@ -12,7 +12,7 @@
 
 namespace net {
 
-class ReportingContext;
+class ReportingCache;
 
 // Clears browsing data (reports and clients) from the Reporting system.
 class NET_EXPORT ReportingBrowsingDataRemover {
@@ -22,8 +22,16 @@ class NET_EXPORT ReportingBrowsingDataRemover {
     DATA_TYPE_CLIENTS = 0x2,
   };
 
+  // Removes browsing data from the Reporting system. |data_type_mask| specifies
+  // which types of data to remove: reports queued by browser features and/or
+  // clients (endpoints configured by origins). |origin_filter|, if not null,
+  // specifies which origins' data to remove.
+  //
+  // Note: Currently this does not clear the endpoint backoff data in
+  // ReportingEndpointManager because that's not persisted to disk. If it's ever
+  // persisted, it will need to be cleared as well.
   static void RemoveBrowsingData(
-      ReportingContext* context,
+      ReportingCache* cache,
       int data_type_mask,
       base::Callback<bool(const GURL&)> origin_filter);
 

@@ -24,6 +24,8 @@ import org.chromium.ui.UiUtils;
 import java.util.ArrayList;
 import java.util.List;
 
+import javax.annotation.Nullable;
+
 /**
  * Helper class for creating a dropdown view with a label.
  */
@@ -33,6 +35,8 @@ class EditorDropdownField implements EditorFieldView {
     private final TextView mLabel;
     private final Spinner mDropdown;
     private int mSelectedIndex;
+    @Nullable
+    private EditorObserverForTest mObserverForTest;
 
     /**
      * Builds a dropdown view.
@@ -44,17 +48,18 @@ class EditorDropdownField implements EditorFieldView {
      *                        processed.
      */
     public EditorDropdownField(Context context, ViewGroup root, final EditorFieldModel fieldModel,
-            final Runnable changedCallback) {
+            final Runnable changedCallback, @Nullable EditorObserverForTest observer) {
         assert fieldModel.getInputTypeHint() == EditorFieldModel.INPUT_TYPE_HINT_DROPDOWN;
         mFieldModel = fieldModel;
+        mObserverForTest = observer;
 
         mLayout = LayoutInflater.from(context).inflate(
                 R.layout.payment_request_editor_dropdown, root, false);
 
         mLabel = (TextView) mLayout.findViewById(R.id.spinner_label);
         mLabel.setText(mFieldModel.isRequired()
-                ? mFieldModel.getLabel() + EditorView.REQUIRED_FIELD_INDICATOR
-                : mFieldModel.getLabel());
+                        ? mFieldModel.getLabel() + EditorDialog.REQUIRED_FIELD_INDICATOR
+                        : mFieldModel.getLabel());
 
         final List<DropdownKeyValue> dropdownKeyValues = mFieldModel.getDropdownKeyValues();
         mSelectedIndex = getDropdownIndex(dropdownKeyValues, mFieldModel.getValue());
@@ -62,8 +67,8 @@ class EditorDropdownField implements EditorFieldView {
         final List<CharSequence> dropdownValues = getDropdownValues(dropdownKeyValues);
         ArrayAdapter<CharSequence> adapter;
         if (mFieldModel.getHint() != null) {
-            // Use the BillingAddressAdapter and pass it a hint to be displayed as default.
-            adapter = new BillingAddressAdapter<CharSequence>(context,
+            // Use the AddressDropDownAdapter and pass it a hint to be displayed as default.
+            adapter = new AddressDropDownAdapter<CharSequence>(context,
                     R.layout.multiline_spinner_item, R.id.spinner_item, dropdownValues,
                     mFieldModel.getHint().toString());
             // Wrap the TextView in the dropdown popup around with a FrameLayout to display the text
@@ -76,7 +81,9 @@ class EditorDropdownField implements EditorFieldView {
             // If no value is selected, select the hint entry which is the last item in the adapter.
             // Using getCount will not result in an out of bounds index because the hint value is
             // ommited in the count.
-            if (mFieldModel.getValue() == null) mSelectedIndex = adapter.getCount();
+            if (mFieldModel.getValue() == null || mFieldModel.getValue().length() == 0) {
+                mSelectedIndex = adapter.getCount();
+            }
         } else {
             adapter = new DropdownFieldAdapter<CharSequence>(
                     context, R.layout.multiline_spinner_item, dropdownValues);
@@ -97,6 +104,9 @@ class EditorDropdownField implements EditorFieldView {
                             mFieldModel.getDropdownKeyValues().get(position).getKey(),
                             changedCallback);
                 }
+                if (mObserverForTest != null) {
+                    mObserverForTest.onEditorTextUpdate();
+                }
             }
 
             @Override
@@ -108,12 +118,6 @@ class EditorDropdownField implements EditorFieldView {
             @Override
             public boolean onTouch(View v, MotionEvent event) {
                 if (event.getAction() == MotionEvent.ACTION_DOWN) requestFocusAndHideKeyboard();
-
-                // If the dropdown supports an hint and the hint is selected, select the first
-                // element instead.
-                if (mDropdown.getSelectedItemPosition() == count) {
-                    mDropdown.setSelection(0);
-                }
 
                 return false;
             }

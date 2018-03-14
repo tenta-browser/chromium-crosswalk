@@ -11,17 +11,16 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/chromeos/options/passphrase_textfield.h"
+#include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/events/event.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/layout/grid_layout.h"
-#include "ui/views/layout/layout_constants.h"
 #include "ui/views/widget/widget.h"
-#include "ui/views/window/dialog_client_view.h"
 
 namespace chromeos {
 
@@ -38,6 +37,7 @@ RequestPinView::RequestPinView(const std::string& extension_name,
   const bool accept_input = (attempts_left != 0);
   SetDialogParameters(code_type, RequestPinErrorType::NONE, attempts_left,
                       accept_input);
+  chrome::RecordDialogCreation(chrome::DialogIdentifier::REQUEST_PIN);
 }
 
 // When the parent window is closed while the dialog is active, this object is
@@ -53,7 +53,7 @@ RequestPinView::~RequestPinView() {
 
 void RequestPinView::ContentsChanged(views::Textfield* sender,
                                      const base::string16& new_contents) {
-  GetDialogClientView()->UpdateDialogButtons();
+  DialogModelChanged();
 }
 
 bool RequestPinView::Cancel() {
@@ -79,7 +79,7 @@ bool RequestPinView::Accept() {
   // close the dialog.
   SetAcceptInput(false);
   base::ResetAndReturn(&callback_).Run(textfield_->text());
-  GetDialogClientView()->UpdateDialogButtons();
+  DialogModelChanged();
   delegate_->OnPinDialogInput();
 
   return false;
@@ -161,7 +161,10 @@ void RequestPinView::UpdateHeaderText() {
 }
 
 void RequestPinView::Init() {
-  views::GridLayout* layout = views::GridLayout::CreatePanel(this);
+  set_margins(ChromeLayoutProvider::Get()->GetDialogInsetsForContentType(
+      views::TEXT, views::TEXT));
+
+  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
 
   int column_view_set_id = 0;
   views::ColumnSet* column_set = layout->AddColumnSet(column_view_set_id);
@@ -177,7 +180,10 @@ void RequestPinView::Init() {
   header_label_->SetEnabled(true);
   layout->AddView(header_label_);
 
-  layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
+  const int related_vertical_spacing =
+      ChromeLayoutProvider::Get()->GetDistanceMetric(
+          views::DISTANCE_RELATED_CONTROL_VERTICAL);
+  layout->AddPaddingRow(0, related_vertical_spacing);
 
   column_view_set_id++;
   column_set = layout->AddColumnSet(column_view_set_id);
@@ -191,7 +197,7 @@ void RequestPinView::Init() {
   textfield_->SetEnabled(true);
   layout->AddView(textfield_);
 
-  layout->AddPaddingRow(0, views::kRelatedControlVerticalSpacing);
+  layout->AddPaddingRow(0, related_vertical_spacing);
 
   column_view_set_id++;
   column_set = layout->AddColumnSet(column_view_set_id);

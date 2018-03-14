@@ -13,6 +13,7 @@
 #include "cc/base/lap_timer.h"
 #include "cc/layers/layer_impl.h"
 #include "cc/layers/picture_layer_impl.h"
+#include "cc/raster/playback_image_provider.h"
 #include "cc/raster/raster_buffer_provider.h"
 #include "cc/trees/layer_tree_host_common.h"
 #include "cc/trees/layer_tree_host_impl.h"
@@ -27,6 +28,7 @@ namespace {
 const int kDefaultRasterizeRepeatCount = 100;
 
 void RunBenchmark(RasterSource* raster_source,
+                  ImageDecodeCache* image_decode_cache,
                   const gfx::Rect& content_rect,
                   float contents_scale,
                   size_t repeat_count,
@@ -45,18 +47,33 @@ void RunBenchmark(RasterSource* raster_source,
                    base::TimeDelta::FromMilliseconds(kTimeLimitMillis),
                    kTimeCheckInterval);
     SkColor color = SK_ColorTRANSPARENT;
-    *is_solid_color = raster_source->PerformSolidColorAnalysis(
-        content_rect, contents_scale, &color);
+    gfx::Rect layer_rect =
+        gfx::ScaleToEnclosingRect(content_rect, 1.f / contents_scale);
+    *is_solid_color =
+        raster_source->PerformSolidColorAnalysis(layer_rect, &color);
 
     do {
       SkBitmap bitmap;
       bitmap.allocPixels(SkImageInfo::MakeN32Premul(content_rect.width(),
                                                     content_rect.height()));
       SkCanvas canvas(bitmap);
+
+      // Pass an empty settings to make sure that the decode cache is used to
+      // replace all images.
+      base::Optional<PlaybackImageProvider::Settings> image_settings;
+      image_settings.emplace();
+      image_settings->images_to_skip = {};
+      image_settings->at_raster_images = {};
+      image_settings->image_to_current_frame_index = {};
+
+      PlaybackImageProvider image_provider(
+          image_decode_cache, gfx::ColorSpace(), std::move(image_settings));
+      RasterSource::PlaybackSettings settings;
+      settings.image_provider = &image_provider;
+
       raster_source->PlaybackToCanvas(
           &canvas, gfx::ColorSpace(), content_rect, content_rect,
-          gfx::AxisTransform2d(contents_scale, gfx::Vector2dF()),
-          RasterSource::PlaybackSettings());
+          gfx::AxisTransform2d(contents_scale, gfx::Vector2dF()), settings);
 
       timer.NextLap();
     } while (!timer.HasTimeLimitExpired());
@@ -193,8 +210,9 @@ void RasterizeAndRecordBenchmarkImpl::RunOnLayer(PictureLayerImpl* layer) {
 
     base::TimeDelta min_time;
     bool is_solid_color = false;
-    RunBenchmark(raster_source, content_rect, contents_scale,
-                 rasterize_repeat_count_, &min_time, &is_solid_color);
+    RunBenchmark(raster_source, layer->layer_tree_impl()->image_decode_cache(),
+                 content_rect, contents_scale, rasterize_repeat_count_,
+                 &min_time, &is_solid_color);
 
     int tile_size = content_rect.width() * content_rect.height();
     if (layer->contents_opaque())

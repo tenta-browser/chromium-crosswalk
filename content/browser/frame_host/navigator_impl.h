@@ -23,7 +23,7 @@ namespace content {
 
 class NavigationControllerImpl;
 class NavigatorDelegate;
-class ResourceRequestBodyImpl;
+class ResourceRequestBody;
 struct LoadCommittedDetails;
 
 // This class is an implementation of Navigator, responsible for managing
@@ -52,8 +52,7 @@ class CONTENT_EXPORT NavigatorImpl : public Navigator {
   void DidFailLoadWithError(RenderFrameHostImpl* render_frame_host,
                             const GURL& url,
                             int error_code,
-                            const base::string16& error_description,
-                            bool was_ignored_by_handler) override;
+                            const base::string16& error_description) override;
   void DidNavigate(
       RenderFrameHostImpl* render_frame_host,
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
@@ -64,15 +63,17 @@ class CONTENT_EXPORT NavigatorImpl : public Navigator {
                               bool is_same_document_history_load) override;
   bool NavigateNewChildFrame(RenderFrameHostImpl* render_frame_host,
                              const GURL& default_url) override;
-  void RequestOpenURL(RenderFrameHostImpl* render_frame_host,
-                      const GURL& url,
-                      bool uses_post,
-                      const scoped_refptr<ResourceRequestBodyImpl>& body,
-                      const std::string& extra_headers,
-                      const Referrer& referrer,
-                      WindowOpenDisposition disposition,
-                      bool should_replace_current_entry,
-                      bool user_gesture) override;
+  void RequestOpenURL(
+      RenderFrameHostImpl* render_frame_host,
+      const GURL& url,
+      bool uses_post,
+      const scoped_refptr<ResourceRequestBody>& body,
+      const std::string& extra_headers,
+      const Referrer& referrer,
+      WindowOpenDisposition disposition,
+      bool should_replace_current_entry,
+      bool user_gesture,
+      blink::WebTriggeringEventInfo triggering_event_info) override;
   void RequestTransferURL(RenderFrameHostImpl* render_frame_host,
                           const GURL& url,
                           SiteInstance* source_site_instance,
@@ -82,9 +83,11 @@ class CONTENT_EXPORT NavigatorImpl : public Navigator {
                           const GlobalRequestID& transferred_global_request_id,
                           bool should_replace_current_entry,
                           const std::string& method,
-                          scoped_refptr<ResourceRequestBodyImpl> post_body,
+                          scoped_refptr<ResourceRequestBody> post_body,
                           const std::string& extra_headers) override;
-  void OnBeforeUnloadACK(FrameTreeNode* frame_tree_node, bool proceed) override;
+  void OnBeforeUnloadACK(FrameTreeNode* frame_tree_node,
+                         bool proceed,
+                         const base::TimeTicks& proceed_time) override;
   void OnBeginNavigation(FrameTreeNode* frame_tree_node,
                          const CommonNavigationParams& common_params,
                          const BeginNavigationParams& begin_params) override;
@@ -96,7 +99,7 @@ class CONTENT_EXPORT NavigatorImpl : public Navigator {
       const base::TimeTicks& renderer_before_unload_end_time) override;
   void CancelNavigation(FrameTreeNode* frame_tree_node,
                         bool inform_renderer) override;
-  void DiscardPendingEntryIfNeeded(NavigationHandleImpl* handle) override;
+  void DiscardPendingEntryIfNeeded(int expected_pending_entry_id) override;
 
  private:
   // Holds data used to track browser side navigation metrics.
@@ -115,9 +118,7 @@ class CONTENT_EXPORT NavigatorImpl : public Navigator {
                        bool is_same_document_history_load,
                        bool is_history_navigation_in_new_child,
                        bool is_pending_entry,
-                       const scoped_refptr<ResourceRequestBodyImpl>& post_body);
-
-  bool ShouldAssignSiteForURL(const GURL& url);
+                       const scoped_refptr<ResourceRequestBody>& post_body);
 
   // PlzNavigate: if needed, sends a BeforeUnload IPC to the renderer to ask it
   // to execute the beforeUnload event. Otherwise, the navigation request will
@@ -131,6 +132,7 @@ class CONTENT_EXPORT NavigatorImpl : public Navigator {
                          PreviewsState previews_state,
                          bool is_same_document_history_load,
                          bool is_history_navigation_in_new_child,
+                         const scoped_refptr<ResourceRequestBody>& post_body,
                          base::TimeTicks navigation_start);
 
   void RecordNavigationMetrics(

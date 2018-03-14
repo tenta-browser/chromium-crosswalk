@@ -31,15 +31,16 @@
 #ifndef SVGAnimatedLength_h
 #define SVGAnimatedLength_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGLengthTearOff.h"
 #include "core/svg/properties/SVGAnimatedProperty.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
-class SVGAnimatedLength : public SVGAnimatedProperty<SVGLength>,
-                          public ScriptWrappable {
+class SVGAnimatedLength : public ScriptWrappable,
+                          public SVGAnimatedProperty<SVGLength> {
   DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(SVGAnimatedLength);
 
  public:
   static SVGAnimatedLength* Create(
@@ -58,7 +59,8 @@ class SVGAnimatedLength : public SVGAnimatedProperty<SVGLength>,
     return &CurrentValue()->AsCSSPrimitiveValue();
   }
 
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+  void Trace(blink::Visitor*) override;
+  void TraceWrappers(const ScriptWrappableVisitor*) const override;
 
  protected:
   SVGAnimatedLength(SVGElement* context_element,

@@ -10,47 +10,104 @@
 #include "ash/shell.h"
 #include "ash/system/toast/toast_manager.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/singleton.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/arc/arc_bridge_service.h"
-#include "ui/arc/notification/arc_custom_notification_item.h"
-#include "ui/arc/notification/arc_notification_item.h"
+#include "components/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "ui/arc/notification/arc_notification_delegate.h"
+#include "ui/arc/notification/arc_notification_item_impl.h"
+#include "ui/arc/notification/arc_notification_view.h"
+#include "ui/message_center/views/message_view_factory.h"
 
 namespace arc {
+namespace {
 
-ArcNotificationManager::ArcNotificationManager(ArcBridgeService* bridge_service,
-                                               const AccountId& main_profile_id)
+std::unique_ptr<message_center::MessageView> CreateCustomMessageView(
+    message_center::MessageViewDelegate* controller,
+    const message_center::Notification& notification) {
+  DCHECK_EQ(notification.notifier_id().type,
+            message_center::NotifierId::ARC_APPLICATION);
+  auto* arc_delegate =
+      static_cast<ArcNotificationDelegate*>(notification.delegate());
+  return arc_delegate->CreateCustomMessageView(controller, notification);
+}
+
+// Singleton factory for ArcNotificationManager.
+class ArcNotificationManagerFactory
+    : public internal::ArcBrowserContextKeyedServiceFactoryBase<
+          ArcNotificationManager,
+          ArcNotificationManagerFactory> {
+ public:
+  // Factory name used by ArcBrowserContextKeyedServiceFactoryBase.
+  static constexpr const char* kName = "ArcNotificationManagerFactory";
+
+  static ArcNotificationManagerFactory* GetInstance() {
+    return base::Singleton<ArcNotificationManagerFactory>::get();
+  }
+
+ private:
+  friend base::DefaultSingletonTraits<ArcNotificationManagerFactory>;
+  ArcNotificationManagerFactory() = default;
+  ~ArcNotificationManagerFactory() override = default;
+};
+
+}  // namespace
+
+// static
+ArcNotificationManager* ArcNotificationManager::GetForBrowserContext(
+    content::BrowserContext* context) {
+  return ArcNotificationManagerFactory::GetForBrowserContext(context);
+}
+
+// static
+std::unique_ptr<ArcNotificationManager>
+ArcNotificationManager::CreateForTesting(
+    ArcBridgeService* bridge_service,
+    const AccountId& main_profile_id,
+    message_center::MessageCenter* message_center) {
+  // MakeUnique cannot be used because the used ctor is private.
+  return base::WrapUnique(new ArcNotificationManager(
+      bridge_service, main_profile_id, message_center));
+}
+
+// static
+void ArcNotificationManager::SetCustomNotificationViewFactory() {
+  message_center::MessageViewFactory::SetCustomNotificationViewFactory(
+      base::Bind(&CreateCustomMessageView));
+}
+
+ArcNotificationManager::ArcNotificationManager(content::BrowserContext* context,
+                                               ArcBridgeService* bridge_service)
     : ArcNotificationManager(bridge_service,
-                             main_profile_id,
+                             ArcServiceManager::Get()->account_id(),
                              message_center::MessageCenter::Get()) {}
 
 ArcNotificationManager::ArcNotificationManager(
     ArcBridgeService* bridge_service,
     const AccountId& main_profile_id,
     message_center::MessageCenter* message_center)
-    : ArcService(bridge_service),
+    : arc_bridge_service_(bridge_service),
       main_profile_id_(main_profile_id),
-      message_center_(message_center),
-      binding_(this) {
-  arc_bridge_service()->notifications()->AddObserver(this);
+      message_center_(message_center) {
+  arc_bridge_service_->notifications()->SetHost(this);
+  arc_bridge_service_->notifications()->AddObserver(this);
+  if (!message_center::MessageViewFactory::HasCustomNotificationViewFactory())
+    SetCustomNotificationViewFactory();
 }
 
 ArcNotificationManager::~ArcNotificationManager() {
-  arc_bridge_service()->notifications()->RemoveObserver(this);
+  arc_bridge_service_->notifications()->RemoveObserver(this);
+  arc_bridge_service_->notifications()->SetHost(nullptr);
 }
 
-void ArcNotificationManager::OnInstanceReady() {
+void ArcNotificationManager::OnConnectionReady() {
   DCHECK(!ready_);
-
-  auto* notifications_instance =
-      ARC_GET_INSTANCE_FOR_METHOD(arc_bridge_service()->notifications(), Init);
-  DCHECK(notifications_instance);
-
-  notifications_instance->Init(binding_.CreateInterfacePtrAndBind());
+  // TODO(hidehiko): Replace this by ConnectionHolder::IsConnected().
   ready_ = true;
 }
 
-void ArcNotificationManager::OnInstanceClosed() {
+void ArcNotificationManager::OnConnectionClosed() {
   DCHECK(ready_);
   while (!items_.empty()) {
     auto it = items_.begin();
@@ -66,23 +123,26 @@ void ArcNotificationManager::OnNotificationPosted(
   const std::string& key = data->key;
   auto it = items_.find(key);
   if (it == items_.end()) {
-    // Old client with version < 5 would have use_custom_notification default,
-    // which is false.
-    const bool use_custom_notification = data->use_custom_notification;
     // Show a notification on the primary logged-in user's desktop.
     // TODO(yoshiki): Reconsider when ARC supports multi-user.
-    ArcNotificationItem* item =
-        use_custom_notification
-            ? new ArcCustomNotificationItem(this, message_center_, key,
-                                            main_profile_id_)
-            : new ArcNotificationItem(this, message_center_, key,
-                                      main_profile_id_);
+    auto item = std::make_unique<ArcNotificationItemImpl>(
+        this, message_center_, key, main_profile_id_);
     // TODO(yoshiki): Use emplacement for performance when it's available.
-    auto result = items_.insert(std::make_pair(key, base::WrapUnique(item)));
+    auto result = items_.insert(std::make_pair(key, std::move(item)));
     DCHECK(result.second);
     it = result.first;
   }
-  it->second->UpdateWithArcNotificationData(std::move(data));
+  it->second->OnUpdatedFromAndroid(std::move(data));
+}
+
+void ArcNotificationManager::OnNotificationUpdated(
+    mojom::ArcNotificationDataPtr data) {
+  const std::string& key = data->key;
+  auto it = items_.find(key);
+  if (it == items_.end())
+    return;
+
+  it->second->OnUpdatedFromAndroid(std::move(data));
 }
 
 void ArcNotificationManager::OnNotificationRemoved(const std::string& key) {
@@ -113,7 +173,7 @@ void ArcNotificationManager::SendNotificationRemovedFromChrome(
   items_.erase(it);
 
   auto* notifications_instance = ARC_GET_INSTANCE_FOR_METHOD(
-      arc_bridge_service()->notifications(), SendNotificationEventToAndroid);
+      arc_bridge_service_->notifications(), SendNotificationEventToAndroid);
 
   // On shutdown, the ARC channel may quit earlier than notifications.
   if (!notifications_instance) {
@@ -135,7 +195,7 @@ void ArcNotificationManager::SendNotificationClickedOnChrome(
   }
 
   auto* notifications_instance = ARC_GET_INSTANCE_FOR_METHOD(
-      arc_bridge_service()->notifications(), SendNotificationEventToAndroid);
+      arc_bridge_service_->notifications(), SendNotificationEventToAndroid);
 
   // On shutdown, the ARC channel may quit earlier than notifications.
   if (!notifications_instance) {
@@ -158,7 +218,7 @@ void ArcNotificationManager::SendNotificationButtonClickedOnChrome(
   }
 
   auto* notifications_instance = ARC_GET_INSTANCE_FOR_METHOD(
-      arc_bridge_service()->notifications(), SendNotificationEventToAndroid);
+      arc_bridge_service_->notifications(), SendNotificationEventToAndroid);
 
   // On shutdown, the ARC channel may quit earlier than notifications.
   if (!notifications_instance) {
@@ -201,7 +261,7 @@ void ArcNotificationManager::CreateNotificationWindow(const std::string& key) {
   }
 
   auto* notifications_instance = ARC_GET_INSTANCE_FOR_METHOD(
-      arc_bridge_service()->notifications(), CreateNotificationWindow);
+      arc_bridge_service_->notifications(), CreateNotificationWindow);
   if (!notifications_instance)
     return;
 
@@ -216,7 +276,7 @@ void ArcNotificationManager::CloseNotificationWindow(const std::string& key) {
   }
 
   auto* notifications_instance = ARC_GET_INSTANCE_FOR_METHOD(
-      arc_bridge_service()->notifications(), CloseNotificationWindow);
+      arc_bridge_service_->notifications(), CloseNotificationWindow);
   if (!notifications_instance)
     return;
 
@@ -231,7 +291,7 @@ void ArcNotificationManager::OpenNotificationSettings(const std::string& key) {
   }
 
   auto* notifications_instance = ARC_GET_INSTANCE_FOR_METHOD(
-      arc_bridge_service()->notifications(), OpenNotificationSettings);
+      arc_bridge_service_->notifications(), OpenNotificationSettings);
 
   // On shutdown, the ARC channel may quit earlier than notifications.
   if (!notifications_instance)
@@ -242,7 +302,7 @@ void ArcNotificationManager::OpenNotificationSettings(const std::string& key) {
 
 bool ArcNotificationManager::IsOpeningSettingsSupported() const {
   const auto* notifications_instance = ARC_GET_INSTANCE_FOR_METHOD(
-      arc_bridge_service()->notifications(), OpenNotificationSettings);
+      arc_bridge_service_->notifications(), OpenNotificationSettings);
   return notifications_instance != nullptr;
 }
 
@@ -255,7 +315,7 @@ void ArcNotificationManager::SendNotificationToggleExpansionOnChrome(
   }
 
   auto* notifications_instance = ARC_GET_INSTANCE_FOR_METHOD(
-      arc_bridge_service()->notifications(), SendNotificationEventToAndroid);
+      arc_bridge_service_->notifications(), SendNotificationEventToAndroid);
 
   // On shutdown, the ARC channel may quit earlier than notifications.
   if (!notifications_instance) {

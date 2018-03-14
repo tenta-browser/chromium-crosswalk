@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "public/platform/WebScheduler.h"
+#include "platform/scheduler/child/web_scheduler.h"
 
 #include "platform/WebFrameScheduler.h"
 #include "platform/wtf/Assertions.h"
+#include "platform/wtf/Noncopyable.h"
 #include "public/platform/WebTraceLocation.h"
 
 namespace blink {
@@ -17,28 +18,29 @@ class IdleTaskRunner : public WebThread::IdleTask {
   WTF_MAKE_NONCOPYABLE(IdleTaskRunner);
 
  public:
-  explicit IdleTaskRunner(std::unique_ptr<WebScheduler::IdleTask> task)
+  explicit IdleTaskRunner(WebScheduler::IdleTask task)
       : task_(std::move(task)) {}
 
   ~IdleTaskRunner() override {}
 
   // WebThread::IdleTask implementation.
-  void Run(double deadline_seconds) override { (*task_)(deadline_seconds); }
+  void Run(double deadline_seconds) override {
+    std::move(task_).Run(deadline_seconds);
+  }
 
  private:
-  std::unique_ptr<WebScheduler::IdleTask> task_;
+  WebScheduler::IdleTask task_;
 };
 
 }  // namespace
 
 void WebScheduler::PostIdleTask(const WebTraceLocation& location,
-                                std::unique_ptr<IdleTask> idle_task) {
+                                IdleTask idle_task) {
   PostIdleTask(location, new IdleTaskRunner(std::move(idle_task)));
 }
 
-void WebScheduler::PostNonNestableIdleTask(
-    const WebTraceLocation& location,
-    std::unique_ptr<IdleTask> idle_task) {
+void WebScheduler::PostNonNestableIdleTask(const WebTraceLocation& location,
+                                           IdleTask idle_task) {
   PostNonNestableIdleTask(location, new IdleTaskRunner(std::move(idle_task)));
 }
 

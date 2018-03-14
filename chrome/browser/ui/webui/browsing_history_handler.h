@@ -8,25 +8,20 @@
 #include <stdint.h>
 
 #include <memory>
-#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "base/callback.h"
 #include "base/macros.h"
-#include "base/strings/string16.h"
 #include "base/time/clock.h"
 #include "base/values.h"
-#include "chrome/browser/history/browsing_history_service_handler.h"
+#include "chrome/browser/history/profile_based_browsing_history_driver.h"
 #include "content/public/browser/web_ui_message_handler.h"
 
-namespace history {
-struct QueryOptions;
-}  // namespace history
-
 // The handler for Javascript messages related to the "history" view.
-class BrowsingHistoryHandler :
-    public content::WebUIMessageHandler,
-    public BrowsingHistoryServiceHandler {
+class BrowsingHistoryHandler : public content::WebUIMessageHandler,
+                               public ProfileBasedBrowsingHistoryDriver {
  public:
   BrowsingHistoryHandler();
   ~BrowsingHistoryHandler() override;
@@ -37,6 +32,9 @@ class BrowsingHistoryHandler :
   // Handler for the "queryHistory" message.
   void HandleQueryHistory(const base::ListValue* args);
 
+  // Handler for the "queryHistoryContinuation" message.
+  void HandleQueryHistoryContinuation(const base::ListValue* args);
+
   // Handler for the "removeVisits" message.
   void HandleRemoveVisits(const base::ListValue* args);
 
@@ -46,15 +44,20 @@ class BrowsingHistoryHandler :
   // Handler for "removeBookmark" message.
   void HandleRemoveBookmark(const base::ListValue* args);
 
-  // BrowsingHistoryServiceHandler implementation.
+  // BrowsingHistoryDriver implementation.
   void OnQueryComplete(
-      std::vector<BrowsingHistoryService::HistoryEntry>* results,
-      BrowsingHistoryService::QueryResultsInfo* query_results_info) override;
+      const std::vector<history::BrowsingHistoryService::HistoryEntry>& results,
+      const history::BrowsingHistoryService::QueryResultsInfo&
+          query_results_info,
+      base::OnceClosure continuation_closure) override;
   void OnRemoveVisitsComplete() override;
   void OnRemoveVisitsFailed() override;
   void HistoryDeleted() override;
   void HasOtherFormsOfBrowsingHistory(
       bool has_other_forms, bool has_synced_results) override;
+
+  // ProfileBasedBrowsingHistoryDriver implementation.
+  Profile* GetProfile() override;
 
   // For tests.
   void set_clock(std::unique_ptr<base::Clock> clock) {
@@ -64,33 +67,14 @@ class BrowsingHistoryHandler :
  private:
   FRIEND_TEST_ALL_PREFIXES(BrowsingHistoryHandlerTest,
                            ObservingWebHistoryDeletions);
-  FRIEND_TEST_ALL_PREFIXES(BrowsingHistoryHandlerTest, SetQueryTimeInWeeks);
-  FRIEND_TEST_ALL_PREFIXES(BrowsingHistoryHandlerTest, SetQueryTimeInMonths);
   FRIEND_TEST_ALL_PREFIXES(BrowsingHistoryHandlerTest, MdTruncatesTitles);
-
-  // The range for which to return results:
-  // - ALLTIME: allows access to all the results in a paginated way.
-  // - WEEK: the last 7 days.
-  // - MONTH: the last calendar month.
-  enum Range {
-    ALL_TIME = 0,
-    WEEK = 1,
-    MONTH = 2
-  };
-
-  bool ExtractIntegerValueAtIndex(
-      const base::ListValue* value, int index, int* out_int);
-
-  // Sets the query options for a week-wide query, |offset| weeks ago.
-  void SetQueryTimeInWeeks(int offset, history::QueryOptions* options);
-
-  // Sets the query options for a monthly query, |offset| months ago.
-  void SetQueryTimeInMonths(int offset, history::QueryOptions* options);
 
   // The clock used to vend times.
   std::unique_ptr<base::Clock> clock_;
 
-  std::unique_ptr<BrowsingHistoryService> browsing_history_service_;
+  std::unique_ptr<history::BrowsingHistoryService> browsing_history_service_;
+
+  base::OnceClosure query_history_continuation_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowsingHistoryHandler);
 };

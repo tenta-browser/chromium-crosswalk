@@ -6,8 +6,6 @@ static_library("browser") {
   sources = [
     "password_data_type_controller.cc",
     "password_data_type_controller.h",
-    "password_manager_setting_migrator_service.cc",
-    "password_manager_setting_migrator_service.h",
     "password_model_worker.cc",
     "password_model_worker.h",
     "password_sync_util.cc",
@@ -35,7 +33,6 @@ static_library("browser") {
 source_set("unit_tests") {
   testonly = true
   sources = [
-    "password_manager_setting_migrator_service_unittest.cc",
     "password_sync_util_unittest.cc",
     "sync_credentials_filter_unittest.cc",
     "sync_username_test_base.cc",
@@ -49,8 +46,8 @@ source_set("unit_tests") {
     "//components/password_manager/core/browser:test_support",
     "//components/password_manager/core/common",
     "//components/prefs",
+    "//components/signin/core/browser",
     "//components/signin/core/browser:test_support",
-    "//components/signin/core/common",
     "//components/sync:test_support_driver",
     "//components/sync:test_support_model",
     "//components/sync_preferences",

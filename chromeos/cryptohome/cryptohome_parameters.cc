@@ -30,7 +30,7 @@ const std::string GetCryptohomeId(const AccountId& account_id) {
 
 }  //  anonymous namespace
 
-Identification::Identification() {}
+Identification::Identification() = default;
 
 Identification::Identification(const AccountId& account_id)
     : id_(GetCryptohomeId(account_id)) {}
@@ -115,8 +115,7 @@ KeyDefinition::AuthorizationData::AuthorizationData(
 KeyDefinition::AuthorizationData::AuthorizationData(
     const AuthorizationData& other) = default;
 
-KeyDefinition::AuthorizationData::~AuthorizationData() {
-}
+KeyDefinition::AuthorizationData::~AuthorizationData() = default;
 
 bool KeyDefinition::AuthorizationData::operator==(
     const AuthorizationData& other) const {
@@ -129,8 +128,7 @@ bool KeyDefinition::AuthorizationData::operator==(
   return true;
 }
 
-KeyDefinition::ProviderData::ProviderData() {
-}
+KeyDefinition::ProviderData::ProviderData() = default;
 
 KeyDefinition::ProviderData::ProviderData(const std::string& name)
     : name(name) {
@@ -160,8 +158,7 @@ void KeyDefinition::ProviderData::operator=(const ProviderData& other) {
   bytes.reset(other.bytes ? new std::string(*other.bytes) : NULL);
 }
 
-KeyDefinition::ProviderData::~ProviderData() {
-}
+KeyDefinition::ProviderData::~ProviderData() = default;
 
 bool KeyDefinition::ProviderData::operator==(const ProviderData& other) const {
   const bool has_number = number != nullptr;
@@ -192,8 +189,7 @@ KeyDefinition::KeyDefinition(const std::string& secret,
 
 KeyDefinition::KeyDefinition(const KeyDefinition& other) = default;
 
-KeyDefinition::~KeyDefinition() {
-}
+KeyDefinition::~KeyDefinition() = default;
 
 bool KeyDefinition::operator==(const KeyDefinition& other) const {
   if (type != other.type ||
@@ -230,18 +226,6 @@ bool Authorization::operator==(const Authorization& other) const {
   return key == other.key && label == other.label;
 }
 
-MountParameters::MountParameters(bool ephemeral) : ephemeral(ephemeral) {
-}
-
-MountParameters::MountParameters(const MountParameters& other) = default;
-
-bool MountParameters::operator==(const MountParameters& other) const {
-  return ephemeral == other.ephemeral && create_keys == other.create_keys;
-}
-
-MountParameters::~MountParameters() {
-}
-
 bool GetGaiaIdMigrationStatus(const AccountId& account_id) {
   return user_manager::known_user::GetGaiaIdMigrationStatus(account_id,
                                                             kCryptohome);
@@ -253,12 +237,3 @@ void SetGaiaIdMigrationStatusDone(const AccountId& account_id) {
 }
 
 }  // namespace cryptohome
-
-namespace BASE_HASH_NAMESPACE {
-
-std::size_t hash<cryptohome::Identification>::operator()(
-    const cryptohome::Identification& cryptohome_id) const {
-  return hash<std::string>()(cryptohome_id.id());
-}
-
-}  // namespace BASE_HASH_NAMESPACE

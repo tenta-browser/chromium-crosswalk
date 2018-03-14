@@ -66,20 +66,20 @@ class UtilityProcessMojoClient {
 
   // Starts the utility process and connects to the remote Mojo service.
   void Start() {
-    DCHECK(thread_checker_.CalledOnValidThread());
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     DCHECK(error_callback_);
     DCHECK(!start_called_);
 
     start_called_ = true;
 
-    mojo::InterfaceRequest<MojoInterface> request(&service_);
+    auto request = MakeRequest(&service_);
     service_.set_connection_error_handler(error_callback_);
     helper_->Start(MojoInterface::Name_, request.PassMessagePipe());
   }
 
   // Returns the Mojo service used to make calls to the utility process.
   MojoInterface* service() WARN_UNUSED_RESULT {
-    DCHECK(thread_checker_.CalledOnValidThread());
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     DCHECK(start_called_);
 
     return service_.get();
@@ -106,8 +106,8 @@ class UtilityProcessMojoClient {
                mojo::ScopedMessagePipeHandle interface_pipe) {
       BrowserThread::PostTask(
           BrowserThread::IO, FROM_HERE,
-          base::Bind(&Helper::StartOnIOThread, base::Unretained(this),
-                     mojo_interface_name, base::Passed(&interface_pipe)));
+          base::BindOnce(&Helper::StartOnIOThread, base::Unretained(this),
+                         mojo_interface_name, base::Passed(&interface_pipe)));
     }
 
     void set_exposed_directory(const base::FilePath& directory) {
@@ -136,11 +136,12 @@ class UtilityProcessMojoClient {
         utility_host_->SetExposedDir(exposed_directory_);
 
       if (disable_sandbox_)
-        utility_host_->DisableSandbox();
+        utility_host_->SetSandboxType(service_manager::SANDBOX_TYPE_NO_SANDBOX);
 #if defined(OS_WIN)
       if (run_elevated_) {
         DCHECK(disable_sandbox_);
-        utility_host_->ElevatePrivileges();
+        utility_host_->SetSandboxType(
+            service_manager::SANDBOX_TYPE_NO_SANDBOX_AND_ELEVATED_PRIVILEGES);
       }
 #endif  // defined(OS_WIN)
 
@@ -174,7 +175,7 @@ class UtilityProcessMojoClient {
   bool start_called_ = false;
 
   // Checks that this class is always accessed from the same thread.
-  base::ThreadChecker thread_checker_;
+  SEQUENCE_CHECKER(sequence_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(UtilityProcessMojoClient);
 };

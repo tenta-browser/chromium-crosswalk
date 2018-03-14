@@ -14,11 +14,13 @@
  * @param {!Array<?string>} mimeTypes
  * @param {!Array<!Object>} tasks
  * @param {Object} defaultTask
+ * @param {!TaskHistory} taskHistory
  * @constructor
  * @struct
  */
-function FileTasks(volumeManager, metadataModel, directoryModel, ui, entries,
-    mimeTypes, tasks, defaultTask) {
+function FileTasks(
+    volumeManager, metadataModel, directoryModel, ui, entries, mimeTypes, tasks,
+    defaultTask, taskHistory) {
   /**
    * @private {!VolumeManagerWrapper}
    * @const
@@ -66,6 +68,21 @@ function FileTasks(volumeManager, metadataModel, directoryModel, ui, entries,
    * @const
    */
   this.defaultTask_ = defaultTask;
+
+  /**
+   * @private {!TaskHistory}
+   * @const
+   */
+  this.taskHistory_ = taskHistory;
+}
+
+FileTasks.prototype = {
+  /**
+   * @return {!Array<!Entry>}
+   */
+  get entries() {
+    return this.entries_;
+  }
 };
 
 /**
@@ -83,6 +100,22 @@ FileTasks.VIDEO_PLAYER_ID = 'jcgeabjmjgoblfofpppfkcoakmfobdko';
 FileTasks.ZIP_UNPACKER_TASK_ID = 'oedeeodfidgoollimchfdnbmhcpnklnd|app|zip';
 
 /**
+ * The task id of unzip action of Zip Archiver app.
+ * @const
+ * @type {string}
+ */
+FileTasks.ZIP_ARCHIVER_UNZIP_TASK_ID =
+    'dmboannefpncccogfdikhmhpmdnddgoe|app|open';
+
+/**
+ * The task id of zip action of Zip Archiver app.
+ * @const
+ * @type {string}
+ */
+FileTasks.ZIP_ARCHIVER_ZIP_TASK_ID =
+    'dmboannefpncccogfdikhmhpmdnddgoe|app|pack';
+
+/**
  * Available tasks in task menu button.
  * @enum {string}
  */
@@ -91,6 +124,23 @@ FileTasks.TaskMenuButtonItemType = {
   RunTask: 'RunTask',
   ChangeDefaultTask: 'ChangeDefaultTask'
 };
+
+/**
+ * Dialog types to show a task picker.
+ * @enum {string}
+ */
+FileTasks.TaskPickerType = {
+  ChangeDefault: 'ChangeDefault',
+  OpenWith: 'OpenWith',
+  MoreActions: 'MoreActions'
+};
+
+/**
+ * A promise to obtain '{enable,disable}-zip-archiver-unpacker' switch.
+ * @type {Promise<boolean>}
+ * @private
+ */
+FileTasks.zipArchiverUnpackerEnabledPromise_ = null;
 
 /**
  * Creates an instance of FileTasks for the specified list of entries with mime
@@ -102,10 +152,12 @@ FileTasks.TaskMenuButtonItemType = {
  * @param {!FileManagerUI} ui
  * @param {!Array<!Entry>} entries
  * @param {!Array<?string>} mimeTypes
+ * @param {!TaskHistory} taskHistory
  * @return {!Promise<!FileTasks>}
  */
-FileTasks.create = function(volumeManager, metadataModel, directoryModel, ui,
-    entries, mimeTypes) {
+FileTasks.create = function(
+    volumeManager, metadataModel, directoryModel, ui, entries, mimeTypes,
+    taskHistory) {
   var tasksPromise = new Promise(function(fulfill) {
     if (entries.length === 0) {
       fulfill([]);
@@ -118,27 +170,76 @@ FileTasks.create = function(volumeManager, metadataModel, directoryModel, ui,
         Promise.reject();
         return;
       }
-      fulfill(FileTasks.annotateTasks_(assert(taskItems), entries));
+
+      // Filters out Pack with Zip Archiver task because it will be accessible
+      // via 'Zip selection' context menu button
+      taskItems = taskItems.filter(function(item) {
+        return item.taskId !== FileTasks.ZIP_ARCHIVER_ZIP_TASK_ID;
+      });
+
+      // Filters out Unpack with Zip Archiver task if switch is not enabled.
+      // TODO(klemenko): Remove this when http://crbug/359837 is finished.
+      if (!FileTasks.zipArchiverUnpackerEnabledPromise_) {
+        FileTasks.zipArchiverUnpackerEnabledPromise_ =
+            new Promise(function(resolve, reject) {
+              // Disabled by default.
+              chrome.commandLinePrivate.hasSwitch(
+                  'enable-zip-archiver-unpacker', function(enabled) {
+                    resolve(enabled);
+                  });
+            });
+      }
+
+      FileTasks.zipArchiverUnpackerEnabledPromise_.then(function(
+          zipArchiverUnpackerEnabled) {
+        if (zipArchiverUnpackerEnabled) {
+          taskItems = taskItems.filter(function(item) {
+            return item.taskId !== FileTasks.ZIP_UNPACKER_TASK_ID;
+          });
+        } else {
+          taskItems = taskItems.filter(function(item) {
+            return item.taskId !== FileTasks.ZIP_ARCHIVER_UNZIP_TASK_ID;
+          });
+        }
+
+        fulfill(FileTasks.annotateTasks_(assert(taskItems), entries));
+      });
     });
   });
 
   var defaultTaskPromise = tasksPromise.then(function(tasks) {
-    return FileTasks.getDefaultTask(tasks);
+    return FileTasks.getDefaultTask(tasks, taskHistory);
   });
 
-  return Promise.all([tasksPromise, defaultTaskPromise]).then(
-      function(args) {
-        return new FileTasks(volumeManager, metadataModel, directoryModel, ui,
-            entries, mimeTypes, args[0], args[1]);
-      });
+  return Promise.all([tasksPromise, defaultTaskPromise]).then(function(args) {
+    return new FileTasks(
+        volumeManager, metadataModel, directoryModel, ui, entries, mimeTypes,
+        args[0], args[1], taskHistory);
+  });
 };
 
 /**
  * Obtains the task items.
- * @return {Array<!Object>}
+ * @return {!Array<!Object>}
  */
 FileTasks.prototype.getTaskItems = function() {
   return this.tasks_;
+};
+
+/**
+ * Obtain tasks which are categorized as OPEN tasks.
+ * @return {!Array<!Object>}
+ */
+FileTasks.prototype.getOpenTaskItems = function() {
+  return this.tasks_.filter(FileTasks.isOpenTask);
+};
+
+/**
+ * Obtain tasks which are not categorized as OPEN tasks.
+ * @return {!Array<!Object>}
+ */
+FileTasks.prototype.getNonOpenTaskItems = function() {
+  return this.tasks_.filter(task => !FileTasks.isOpenTask(task));
 };
 
 /**
@@ -231,6 +332,20 @@ FileTasks.recordViewingFileTypeUMA_ = function(entries) {
 };
 
 /**
+ * Records trial of opening file grouped by root types.
+ *
+ * @param {?VolumeManagerCommon.RootType} rootType The type of the root where
+ *     entries are being opened.
+ * @private
+ */
+FileTasks.recordViewingRootTypeUMA_ = function(rootType) {
+  if (rootType !== null) {
+    metrics.recordEnum(
+        'ViewingRootType', rootType, VolumeManagerCommon.RootTypesForUMA);
+  }
+};
+
+/**
  * Returns true if the taskId is for an internal task.
  *
  * @param {string} taskId Task identifier.
@@ -245,6 +360,19 @@ FileTasks.isInternalTask_ = function(taskId) {
   return (appId === chrome.runtime.id &&
           taskType === 'file' &&
           actionId === 'mount-archive');
+};
+
+/**
+ * Returns true if the given task is categorized as an OPEN task.
+ *
+ * @param {!Object} task
+ * @return {boolean} True if the given task is an OPEN task.
+ */
+FileTasks.isOpenTask = function(task) {
+  // We consider following types of tasks as OPEN tasks.
+  // - Files app's internal tasks
+  // - file_handler tasks with OPEN_WITH verb
+  return !task.verb || task.verb == chrome.fileManagerPrivate.Verb.OPEN_WITH;
 };
 
 /**
@@ -316,24 +444,32 @@ FileTasks.annotateTasks_ = function(tasks, entries) {
 
     // Add verb to title.
     if (task.verb) {
-      var verb_button_label = 'OPEN_WITH_VERB_BUTTON_LABEL';  // Default.
+      var verbButtonLabel = '';
       switch (task.verb) {
         case chrome.fileManagerPrivate.Verb.ADD_TO:
-          verb_button_label = 'ADD_TO_VERB_BUTTON_LABEL';
+          verbButtonLabel = 'ADD_TO_VERB_BUTTON_LABEL';
           break;
         case chrome.fileManagerPrivate.Verb.PACK_WITH:
-          verb_button_label = 'PACK_WITH_VERB_BUTTON_LABEL';
+          verbButtonLabel = 'PACK_WITH_VERB_BUTTON_LABEL';
           break;
         case chrome.fileManagerPrivate.Verb.SHARE_WITH:
-          verb_button_label = 'SHARE_WITH_VERB_BUTTON_LABEL';
+          // Even when the task has SHARE_WITH verb, we don't prefix the title
+          // with "Share with" when the task is from SEND/SEND_MULTIPLE intent
+          // handlers from Android apps, since the title can already have an
+          // appropriate verb.
+          if (!(taskParts[1] == 'arc' &&
+                (taskParts[2] == 'send' || taskParts[2] == 'send_multiple'))) {
+            verbButtonLabel = 'SHARE_WITH_VERB_BUTTON_LABEL';
+          }
           break;
         case chrome.fileManagerPrivate.Verb.OPEN_WITH:
-          // Nothing to do as same as initialization button label.
+          verbButtonLabel = 'OPEN_WITH_VERB_BUTTON_LABEL';
           break;
         default:
           console.error('Invalid task verb: ' + task.verb + '.');
       }
-      task.title = loadTimeData.getStringF(verb_button_label, task.title);
+      if (verbButtonLabel)
+        task.title = loadTimeData.getStringF(verbButtonLabel, task.title);
     }
 
     result.push(task);
@@ -351,6 +487,8 @@ FileTasks.annotateTasks_ = function(tasks, entries) {
  */
 FileTasks.prototype.executeDefault = function(opt_callback) {
   FileTasks.recordViewingFileTypeUMA_(this.entries_);
+  FileTasks.recordViewingRootTypeUMA_(
+      this.directoryModel_.getCurrentRootType());
   this.executeDefaultInternal_(opt_callback);
 };
 
@@ -367,6 +505,20 @@ FileTasks.prototype.executeDefaultInternal_ = function(opt_callback) {
   if (this.defaultTask_ !== null) {
     this.executeInternal_(this.defaultTask_.taskId);
     callback(true, this.entries_);
+    return;
+  }
+
+  var nonGenericTasks = this.tasks_.filter(t => !t.isGenericFileHandler);
+  // If there is only one task that is not a generic file handler, it should be
+  // executed as a default task. If there are multiple tasks that are not
+  // generic file handlers, and none of them are considered as default, we show
+  // a task picker to ask the user to choose one.
+  if (nonGenericTasks.length >= 2) {
+    this.showTaskPicker(
+        this.ui_.defaultTaskPicker, str('OPEN_WITH_BUTTON_LABEL'),
+        '', function(task) {
+          this.execute(task.taskId);
+        }.bind(this), FileTasks.TaskPickerType.OpenWith);
     return;
   }
 
@@ -415,8 +567,11 @@ FileTasks.prototype.executeDefaultInternal_ = function(opt_callback) {
 
     this.openSuggestAppsDialog(
         function() {
-          FileTasks.create(this.volumeManager_, this.metadataModel_,
-              this.directoryModel_, this.ui_, this.entries_, this.mimeTypes_)
+          FileTasks
+              .create(
+                  this.volumeManager_, this.metadataModel_,
+                  this.directoryModel_, this.ui_, this.entries_,
+                  this.mimeTypes_, this.taskHistory_)
               .then(
                   function(tasks) {
                     tasks.executeDefault();
@@ -468,6 +623,8 @@ FileTasks.prototype.executeDefaultInternal_ = function(opt_callback) {
  */
 FileTasks.prototype.execute = function(taskId) {
   FileTasks.recordViewingFileTypeUMA_(this.entries_);
+  FileTasks.recordViewingRootTypeUMA_(
+      this.directoryModel_.getCurrentRootType());
   this.executeInternal_(taskId);
 };
 
@@ -479,6 +636,7 @@ FileTasks.prototype.execute = function(taskId) {
  */
 FileTasks.prototype.executeInternal_ = function(taskId) {
   this.checkAvailability_(function() {
+    this.taskHistory_.recordTaskExecuted(taskId);
     if (FileTasks.isInternalTask_(taskId)) {
       this.executeInternalTask_(taskId);
     } else {
@@ -626,17 +784,21 @@ FileTasks.prototype.mountArchivesInternal_ = function() {
             tracker.stop();
             return;
           }
-          volumeInfo.resolveDisplayRoot(function(displayRoot) {
-            if (tracker.hasChanged) {
-              tracker.stop();
-              return;
-            }
-            this.directoryModel_.changeDirectoryEntry(displayRoot);
-          }, function() {
-            console.warn('Failed to resolve the display root after mounting.');
-            tracker.stop();
-          });
-        }, function(url, error) {
+          volumeInfo.resolveDisplayRoot(
+              function(displayRoot) {
+                if (tracker.hasChanged) {
+                  tracker.stop();
+                  return;
+                }
+                this.directoryModel_.changeDirectoryEntry(displayRoot);
+              }.bind(this),
+              function() {
+                console.warn(
+                    'Failed to resolve the display root after mounting.');
+                tracker.stop();
+              });
+        }.bind(this),
+        function(url, error) {
           tracker.stop();
           var path = util.extractFilePath(url);
           var namePos = path.lastIndexOf('/');
@@ -649,25 +811,43 @@ FileTasks.prototype.mountArchivesInternal_ = function() {
 };
 
 /**
- * Displays the list of tasks in a task picker combobutton.
+ * Displays the list of tasks in a open task picker combobutton and a share
+ * options menu.
  *
- * @param {cr.ui.ComboButton} combobutton The task picker element.
+ * @param {!cr.ui.ComboButton} openCombobutton The open task picker combobutton.
+ * @param {!cr.ui.MenuButton} shareMenuButton The menu button for share options.
  * @public
  */
-FileTasks.prototype.display = function(combobutton) {
-  // If there does not exist available task, hide combobutton.
-  if (this.tasks_.length === 0) {
-    combobutton.hidden = true;
-    return;
+FileTasks.prototype.display = function(openCombobutton, shareMenuButton) {
+  var openTasks = [];
+  var otherTasks = [];
+  for (var i = 0; i < this.tasks_.length; i++) {
+    var task = this.tasks_[i];
+    if (FileTasks.isOpenTask(task))
+      openTasks.push(task);
+    else
+      otherTasks.push(task);
   }
+  this.updateOpenComboButton_(openCombobutton, openTasks);
+  this.updateShareMenuButton_(shareMenuButton, otherTasks);
+};
+
+/**
+ * Setup a task picker combobutton based on the given tasks.
+ * @param {!cr.ui.ComboButton} combobutton
+ * @param {!Array<!Object>} tasks
+ */
+FileTasks.prototype.updateOpenComboButton_ = function(combobutton, tasks) {
+  combobutton.hidden = tasks.length == 0;
+  if (tasks.length == 0)
+    return;
 
   combobutton.clear();
-  combobutton.hidden = false;
 
   // If there exist defaultTask show it on the combobutton.
   if (this.defaultTask_) {
-    combobutton.defaultItem = this.createCombobuttonItem_(this.defaultTask_,
-        str('TASK_OPEN'));
+    combobutton.defaultItem =
+        this.createCombobuttonItem_(this.defaultTask_, str('TASK_OPEN'));
   } else {
     combobutton.defaultItem = {
       type: FileTasks.TaskMenuButtonItemType.ShowMenu,
@@ -678,7 +858,7 @@ FileTasks.prototype.display = function(combobutton) {
   // If there exist 2 or more available tasks, show them in context menu
   // (including defaultTask). If only one generic task is available, we
   // also show it in the context menu.
-  var items = this.createItems_();
+  var items = this.createItems_(tasks);
   if (items.length > 1 || (items.length === 1 && this.defaultTask_ === null)) {
     for (var j = 0; j < items.length; j++) {
       combobutton.addDropDownItem(items[j]);
@@ -698,18 +878,60 @@ FileTasks.prototype.display = function(combobutton) {
 };
 
 /**
+ * Setup a menu button for sharing options based on the given tasks.
+ * @param {!cr.ui.MenuButton} shareMenuButton
+ * @param {!Array<!Object>} tasks
+ */
+FileTasks.prototype.updateShareMenuButton_ = function(shareMenuButton, tasks) {
+  var driveShareCommand =
+      shareMenuButton.menu.querySelector('cr-menu-item[command="#share"]');
+  var driveShareCommandSeparator =
+      shareMenuButton.menu.querySelector('#drive-share-separator');
+
+  shareMenuButton.hidden = driveShareCommand.disabled && tasks.length == 0;
+
+  // Show the separator if Drive share command is enabled and there is at least
+  // one other share actions.
+  driveShareCommandSeparator.hidden =
+      driveShareCommand.disabled || tasks.length == 0;
+
+  // Clear menu items except for drive share menu and a separator for it.
+  // As querySelectorAll() returns live NodeList, we need to copy elements to
+  // Array object to modify DOM in the for loop.
+  var itemsToRemove = [].slice.call(shareMenuButton.menu.querySelectorAll(
+      'cr-menu-item:not([command="#share"])'));
+  for (var i = 0; i < itemsToRemove.length; i++) {
+    var item = itemsToRemove[i];
+    item.parentNode.removeChild(item);
+  }
+
+  // Add menu items for the new tasks.
+  var items = this.createItems_(tasks);
+  for (var i = 0; i < items.length; i++) {
+    var menuitem = shareMenuButton.menu.addMenuItem(items[i]);
+    cr.ui.decorate(menuitem, cr.ui.FilesMenuItem);
+    menuitem.data = items[i];
+    if (items[i].iconType) {
+      menuitem.style.backgroundImage = '';
+      menuitem.setAttribute('file-type-icon', items[i].iconType);
+    }
+  }
+};
+
+/**
  * Creates sorted array of available task descriptions such as title and icon.
  *
+ * @param {!Array<!Object>} tasks Tasks to create items.
  * @return {!Array<!Object>} Created array can be used to feed combobox, menus
  *     and so on.
  * @private
  */
-FileTasks.prototype.createItems_ = function() {
+FileTasks.prototype.createItems_ = function(tasks) {
   var items = [];
 
   // Create items.
-  for (var index = 0; index < this.tasks_.length; index++) {
-    var task = this.tasks_[index];
+  for (var index = 0; index < tasks.length; index++) {
+    var task = tasks[index];
     if (task === this.defaultTask_) {
       var title = task.title + ' ' +
                   loadTimeData.getString('DEFAULT_TASK_LABEL');
@@ -719,22 +941,22 @@ FileTasks.prototype.createItems_ = function() {
     }
   }
 
-  // Sort items (Sort order: isDefault, isGenericFileHandler, label).
+  // Sort items (Sort order: isDefault, lastExecutedTime, label).
   items.sort(function(a, b) {
     // Sort by isDefaultTask.
     var isDefault = (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0);
     if (isDefault !== 0)
       return isDefault;
 
-    // Sort by isGenericFileHandler.
-    var isGenericFileHandler =
-        (a.isGenericFileHandler ? 1 : 0) - (b.isGenericFileHandler ? 1 : 0);
-    if (isGenericFileHandler !== 0)
-      return isGenericFileHandler;
+    // Sort by last-executed time.
+    var aTime = this.taskHistory_.getLastExecutedTime(a.task.taskId);
+    var bTime = this.taskHistory_.getLastExecutedTime(b.task.taskId);
+    if (aTime != bTime)
+      return bTime - aTime;
 
     // Sort by label.
     return a.label.localeCompare(b.label);
-  });
+  }.bind(this));
 
   return items;
 };
@@ -772,16 +994,16 @@ FileTasks.prototype.createCombobuttonItem_ = function(task, opt_title,
  * @param {string} title Title to use.
  * @param {string} message Message to use.
  * @param {function(Object)} onSuccess Callback to pass selected task.
- * @param {boolean=} opt_hideGenericFileHandler Whether to hide generic file
- *     handler or not.
+ * @param {FileTasks.TaskPickerType} pickerType Task picker type.
  */
-FileTasks.prototype.showTaskPicker = function(taskDialog, title, message,
-                                              onSuccess,
-                                              opt_hideGenericFileHandler) {
-  var items = !opt_hideGenericFileHandler ? this.createItems_() :
-      this.createItems_().filter(function(item) {
-        return !item.isGenericFileHandler;
-      });
+FileTasks.prototype.showTaskPicker = function(
+    taskDialog, title, message, onSuccess, pickerType) {
+  var tasks = pickerType == FileTasks.TaskPickerType.MoreActions ?
+      this.getNonOpenTaskItems() :
+      this.getOpenTaskItems();
+  var items = this.createItems_(tasks);
+  if (pickerType == FileTasks.TaskPickerType.ChangeDefault)
+    items = items.filter(item => !item.isGenericFileHandler);
 
   var defaultIdx = 0;
   for (var j = 0; j < items.length; j++) {
@@ -800,28 +1022,29 @@ FileTasks.prototype.showTaskPicker = function(taskDialog, title, message,
 
 /**
  * Gets the default task from tasks. In case there is no such task (i.e. all
- * tasks are generic file handlers), then return opt_taskToUseIfNoDefault or
- * null.
+ * tasks are generic file handlers), then return null.
  *
  * @param {!Array<!Object>} tasks The list of tasks from where to choose the
  *     default task.
- * @param {!Object=} opt_taskToUseIfNoDefault The task to return in case there
- *     is no default task available in tasks.
- * @return {Object} opt_taskToUseIfNoDefault or null in case
- *     opt_taskToUseIfNoDefault is undefined.
+ * @param {!TaskHistory} taskHistory
+ * @return {Object} the default task, or null if no default task found.
  */
-FileTasks.getDefaultTask = function(tasks, opt_taskToUseIfNoDefault) {
+FileTasks.getDefaultTask = function(tasks, taskHistory) {
+  // 1. Default app set for MIME or file extension by user, or built-in app.
   for (var i = 0; i < tasks.length; i++) {
     if (tasks[i].isDefault) {
       return tasks[i];
     }
   }
-  // If we haven't picked a default task yet, then just pick the first one
-  // which is not generic file handler.
-  for (var i = 0; i < tasks.length; i++) {
-    if (!tasks[i].isGenericFileHandler) {
-      return tasks[i];
-    }
+  var nonGenericTasks = tasks.filter(t => !t.isGenericFileHandler);
+  // 2. Most recently executed non-generic task.
+  var latest = nonGenericTasks[0];
+  if (latest && taskHistory.getLastExecutedTime(latest.taskId)) {
+    return latest;
   }
-  return opt_taskToUseIfNoDefault || null;
+  // 3. Sole non-generic handler.
+  if (nonGenericTasks.length == 1) {
+    return nonGenericTasks[0];
+  }
+  return null;
 };

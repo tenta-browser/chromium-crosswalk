@@ -26,17 +26,17 @@ FileSystem::FileSystem(const base::FilePath& base_user_dir,
 FileSystem::~FileSystem() {}
 
 void FileSystem::GetDirectory(filesystem::mojom::DirectoryRequest request,
-                              const GetDirectoryCallback& callback) {
+                              GetDirectoryCallback callback) {
   mojo::MakeStrongBinding(
-      base::MakeUnique<filesystem::DirectoryImpl>(
+      std::make_unique<filesystem::DirectoryImpl>(
           path_, scoped_refptr<filesystem::SharedTempDir>(), lock_table_),
       std::move(request));
-  callback.Run();
+  std::move(callback).Run();
 }
 
 void FileSystem::GetSubDirectory(const std::string& sub_directory_path,
                                  filesystem::mojom::DirectoryRequest request,
-                                 const GetSubDirectoryCallback& callback) {
+                                 GetSubDirectoryCallback callback) {
   // Ensure that we've made |subdirectory| recursively under our user dir.
   base::FilePath subdir = path_.Append(
 #if defined(OS_WIN)
@@ -46,15 +46,15 @@ void FileSystem::GetSubDirectory(const std::string& sub_directory_path,
 #endif
   base::File::Error error;
   if (!base::CreateDirectoryAndGetError(subdir, &error)) {
-    callback.Run(static_cast<filesystem::mojom::FileError>(error));
+    std::move(callback).Run(static_cast<filesystem::mojom::FileError>(error));
     return;
   }
 
   mojo::MakeStrongBinding(
-      base::MakeUnique<filesystem::DirectoryImpl>(
+      std::make_unique<filesystem::DirectoryImpl>(
           subdir, scoped_refptr<filesystem::SharedTempDir>(), lock_table_),
       std::move(request));
-  callback.Run(filesystem::mojom::FileError::OK);
+  std::move(callback).Run(filesystem::mojom::FileError::OK);
 }
 
 }  // namespace file

@@ -31,9 +31,8 @@
 #ifndef WebImageDecoder_h
 #define WebImageDecoder_h
 
-#include "../platform/WebCommon.h"
-#include "../platform/WebImage.h"
-#include "../platform/WebNonCopyable.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebImage.h"
 
 namespace blink {
 
@@ -41,13 +40,15 @@ class ImageDecoder;
 class WebData;
 typedef ImageDecoder WebImageDecoderPrivate;
 
-class WebImageDecoder : public WebNonCopyable {
+class WebImageDecoder {
  public:
   enum Type { kTypeBMP, kTypeICO };
 
   ~WebImageDecoder() { Reset(); }
 
   explicit WebImageDecoder(Type type) { Init(type); }
+  WebImageDecoder(const WebImageDecoder&) = delete;
+  WebImageDecoder& operator=(const WebImageDecoder&) = delete;
 
   // Sets data contents for underlying decoder. All the API methods
   // require that setData() is called prior to their use.

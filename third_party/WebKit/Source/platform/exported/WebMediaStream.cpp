@@ -38,21 +38,6 @@
 
 namespace blink {
 
-namespace {
-
-class ExtraDataContainer : public MediaStreamDescriptor::ExtraData {
- public:
-  ExtraDataContainer(std::unique_ptr<WebMediaStream::ExtraData> extra_data)
-      : extra_data_(std::move(extra_data)) {}
-
-  WebMediaStream::ExtraData* GetExtraData() { return extra_data_.get(); }
-
- private:
-  std::unique_ptr<WebMediaStream::ExtraData> extra_data_;
-};
-
-}  // namespace
-
 WebMediaStream::WebMediaStream(MediaStreamDescriptor* media_stream_descriptor)
     : private_(media_stream_descriptor) {}
 
@@ -64,16 +49,8 @@ WebString WebMediaStream::Id() const {
   return private_->Id();
 }
 
-WebMediaStream::ExtraData* WebMediaStream::GetExtraData() const {
-  MediaStreamDescriptor::ExtraData* data = private_->GetExtraData();
-  if (!data)
-    return 0;
-  return static_cast<ExtraDataContainer*>(data)->GetExtraData();
-}
-
-void WebMediaStream::SetExtraData(ExtraData* extra_data) {
-  private_->SetExtraData(
-      WTF::WrapUnique(new ExtraDataContainer(WTF::WrapUnique(extra_data))));
+int WebMediaStream::UniqueId() const {
+  return private_->UniqueId();
 }
 
 void WebMediaStream::AudioTracks(
@@ -128,6 +105,16 @@ void WebMediaStream::AddTrack(const WebMediaStreamTrack& track) {
 void WebMediaStream::RemoveTrack(const WebMediaStreamTrack& track) {
   DCHECK(!IsNull());
   private_->RemoveRemoteTrack(track);
+}
+
+void WebMediaStream::AddObserver(WebMediaStreamObserver* observer) {
+  DCHECK(!IsNull());
+  private_->AddObserver(observer);
+}
+
+void WebMediaStream::RemoveObserver(WebMediaStreamObserver* observer) {
+  DCHECK(!IsNull());
+  private_->RemoveObserver(observer);
 }
 
 WebMediaStream& WebMediaStream::operator=(

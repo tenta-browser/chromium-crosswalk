@@ -25,19 +25,22 @@
 
 #include "core/loader/ProgressTracker.h"
 
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/loader/DocumentLoader.h"
 #include "core/loader/FrameLoader.h"
+#include "core/paint/PaintTiming.h"
 #include "core/probe/CoreProbes.h"
 #include "platform/loader/fetch/Resource.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
 #include "platform/loader/fetch/ResourceResponse.h"
-#include "platform/wtf/CurrentTime.h"
+#include "platform/wtf/Assertions.h"
 #include "platform/wtf/PtrUtil.h"
+#include "platform/wtf/Time.h"
 #include "platform/wtf/text/CString.h"
+#include "public/web/WebSettings.h"
 
 namespace blink {
 
@@ -71,11 +74,12 @@ ProgressTracker::ProgressTracker(LocalFrame* frame)
       last_notified_progress_value_(0),
       last_notified_progress_time_(0),
       finished_parsing_(false),
+      did_first_contentful_paint_(false),
       progress_value_(0) {}
 
 ProgressTracker::~ProgressTracker() {}
 
-DEFINE_TRACE(ProgressTracker) {
+void ProgressTracker::Trace(blink::Visitor* visitor) {
   visitor->Trace(frame_);
 }
 
@@ -90,11 +94,12 @@ double ProgressTracker::EstimatedProgress() const {
 }
 
 void ProgressTracker::Reset() {
-  progress_items_.Clear();
+  progress_items_.clear();
   progress_value_ = 0;
   last_notified_progress_value_ = 0;
   last_notified_progress_time_ = 0;
   finished_parsing_ = false;
+  did_first_contentful_paint_ = false;
 }
 
 LocalFrameClient* ProgressTracker::GetLocalFrameClient() const {
@@ -125,6 +130,11 @@ void ProgressTracker::FinishedParsing() {
   MaybeSendProgress();
 }
 
+void ProgressTracker::DidFirstContentfulPaint() {
+  did_first_contentful_paint_ = true;
+  MaybeSendProgress();
+}
+
 void ProgressTracker::SendFinalProgress() {
   if (progress_value_ == 1)
     return;
@@ -142,9 +152,9 @@ void ProgressTracker::WillStartLoading(unsigned long identifier,
   // finishes.
   if (frame_->GetSettings()->GetProgressBarCompletion() !=
           ProgressBarCompletion::kLoadEvent &&
-      (finished_parsing_ || priority < kResourceLoadPriorityHigh))
+      (HaveParsedAndPainted() || priority < ResourceLoadPriority::kHigh))
     return;
-  progress_items_.Set(identifier, WTF::MakeUnique<ProgressItem>(
+  progress_items_.Set(identifier, std::make_unique<ProgressItem>(
                                       kProgressItemDefaultEstimatedLength));
 }
 
@@ -172,13 +182,19 @@ void ProgressTracker::IncrementProgress(unsigned long identifier, int length) {
   MaybeSendProgress();
 }
 
+bool ProgressTracker::HaveParsedAndPainted() {
+  return finished_parsing_ && did_first_contentful_paint_;
+}
+
 void ProgressTracker::MaybeSendProgress() {
   if (!frame_->IsLoading())
     return;
 
   progress_value_ = kInitialProgressValue + 0.1;  // +0.1 for committing
   if (finished_parsing_)
-    progress_value_ += 0.2;
+    progress_value_ += 0.1;
+  if (did_first_contentful_paint_)
+    progress_value_ += 0.1;
 
   long long bytes_received = 0;
   long long estimated_bytes_for_pending_requests = 0;
@@ -190,7 +206,7 @@ void ProgressTracker::MaybeSendProgress() {
   DCHECK_GE(estimated_bytes_for_pending_requests, 0);
   DCHECK_GE(estimated_bytes_for_pending_requests, bytes_received);
 
-  if (finished_parsing_) {
+  if (HaveParsedAndPainted()) {
     if (frame_->GetSettings()->GetProgressBarCompletion() ==
         ProgressBarCompletion::kDOMContentLoaded) {
       SendFinalProgress();
@@ -239,5 +255,15 @@ void ProgressTracker::CompleteProgress(unsigned long identifier) {
   item->estimated_length = item->bytes_received;
   MaybeSendProgress();
 }
+
+STATIC_ASSERT_ENUM(WebSettings::ProgressBarCompletion::kLoadEvent,
+                   ProgressBarCompletion::kLoadEvent);
+STATIC_ASSERT_ENUM(WebSettings::ProgressBarCompletion::kResourcesBeforeDCL,
+                   ProgressBarCompletion::kResourcesBeforeDCL);
+STATIC_ASSERT_ENUM(WebSettings::ProgressBarCompletion::kDOMContentLoaded,
+                   ProgressBarCompletion::kDOMContentLoaded);
+STATIC_ASSERT_ENUM(
+    WebSettings::ProgressBarCompletion::kResourcesBeforeDCLAndSameOriginIFrames,
+    ProgressBarCompletion::kResourcesBeforeDCLAndSameOriginIFrames);
 
 }  // namespace blink

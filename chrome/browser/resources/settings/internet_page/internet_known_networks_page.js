@@ -15,7 +15,7 @@ Polymer({
   properties: {
     /**
      * The type of networks to list.
-     * @type {chrome.networkingPrivate.NetworkType}
+     * @type {CrOnc.Type}
      */
     networkType: {
       type: String,
@@ -44,42 +44,23 @@ Polymer({
 
     /** @private */
     showRemovePreferred_: Boolean,
+
+    /**
+     * We always show 'Forget' since we do not know whether or not to enable
+     * it until we fetch the managed properties, and we do not want an empty
+     * menu.
+     * @private
+     */
+    enableForget_: Boolean,
   },
+
+  listeners: {'network-list-changed': 'refreshNetworks_'},
 
   /** @private {string} */
   selectedGuid_: '',
 
-  /**
-   * Listener function for chrome.networkingPrivate.onNetworksChanged event.
-   * @type {function(!Array<string>)}
-   * @private
-   */
-  networksChangedListener_: function() {},
-
-  /** @override */
-  attached: function() {
-    this.networksChangedListener_ = this.onNetworksChangedEvent_.bind(this);
-    this.networkingPrivate.onNetworksChanged.addListener(
-        this.networksChangedListener_);
-  },
-
-  /** @override */
-  detached: function() {
-    this.networkingPrivate.onNetworksChanged.removeListener(
-        this.networksChangedListener_);
-  },
-
   /** @private */
   networkTypeChanged_: function() {
-    this.refreshNetworks_();
-  },
-
-  /**
-   * networkingPrivate.onNetworksChanged event callback.
-   * @param {!Array<string>} networkIds The list of changed network GUIDs.
-   * @private
-   */
-  onNetworksChangedEvent_: function(networkIds) {
     this.refreshNetworks_();
   },
 
@@ -96,9 +77,9 @@ Polymer({
       visible: false,
       configured: true
     };
-    this.networkingPrivate.getNetworks(filter, function(states) {
+    this.networkingPrivate.getNetworks(filter, states => {
       this.networkStateList_ = states;
-    }.bind(this));
+    });
   },
 
   /**
@@ -125,9 +106,8 @@ Polymer({
    * @private
    */
   havePreferred_: function() {
-    return this.networkStateList_.find(function(state) {
-      return this.networkIsPreferred_(state);
-    }.bind(this)) !== undefined;
+    return this.networkStateList_.find(
+               state => this.networkIsPreferred_(state)) !== undefined;
   },
 
   /**
@@ -135,9 +115,8 @@ Polymer({
    * @private
    */
   haveNotPreferred_: function() {
-    return this.networkStateList_.find(function(state) {
-      return this.networkIsNotPreferred_(state);
-    }.bind(this)) !== undefined;
+    return this.networkStateList_.find(
+               state => this.networkIsNotPreferred_(state)) !== undefined;
   },
 
   /**
@@ -153,7 +132,12 @@ Polymer({
     // properties for the network. The delay is not noticeable (~5ms) and is
     // preferable to initiating a query for every known network at load time.
     this.networkingPrivate.getManagedProperties(
-        this.selectedGuid_, function(properties) {
+        this.selectedGuid_, properties => {
+          if (chrome.runtime.lastError || !properties) {
+            console.error(
+                'Unexpected error: ' + chrome.runtime.lastError.message);
+            return;
+          }
           var preferred = button.hasAttribute('preferred');
           if (this.isNetworkPolicyEnforced(properties.Priority)) {
             this.showAddPreferred_ = false;
@@ -162,8 +146,9 @@ Polymer({
             this.showAddPreferred_ = !preferred;
             this.showRemovePreferred_ = preferred;
           }
+          this.enableForget_ = !this.isPolicySource(properties.Source);
           /** @type {!CrActionMenuElement} */ (this.$.dotsMenu).showAt(button);
-        }.bind(this));
+        });
     event.stopPropagation();
   },
 
@@ -188,7 +173,7 @@ Polymer({
   /**
    * Fires a 'show-details' event with an item containing a |networkStateList_|
    * entry in the event model.
-   * @param {Event} event
+   * @param {!Event} event
    * @private
    */
   fireShowDetails_: function(event) {

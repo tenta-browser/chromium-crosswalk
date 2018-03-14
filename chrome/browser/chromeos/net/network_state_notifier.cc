@@ -11,6 +11,7 @@
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/chromeos/net/shill_error.h"
 #include "chrome/browser/ui/ash/system_tray_client.h"
 #include "chrome/grit/generated_resources.h"
@@ -25,6 +26,7 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/notification.h"
+#include "ui/message_center/public/cpp/message_center_switches.h"
 
 namespace chromeos {
 
@@ -58,12 +60,22 @@ base::string16 GetConnectErrorString(const std::string& error_name) {
   return base::string16();
 }
 
+// TODO(tetsui): Remove with IsNewStyleNotificationEnabled switch.
 int GetErrorNotificationIconId(const std::string& network_type) {
   if (network_type == shill::kTypeVPN)
     return IDR_AURA_UBER_TRAY_NETWORK_VPN;
   if (network_type == shill::kTypeCellular)
     return IDR_AURA_UBER_TRAY_NETWORK_FAILED_CELLULAR;
   return IDR_AURA_UBER_TRAY_NETWORK_FAILED;
+}
+
+const gfx::VectorIcon& GetErrorNotificationVectorIcon(
+    const std::string& network_type) {
+  if (network_type == shill::kTypeVPN)
+    return kNotificationVpnIcon;
+  if (network_type == shill::kTypeCellular)
+    return kNotificationMobileDataOffIcon;
+  return kNotificationWifiOffIcon;
 }
 
 void ShowErrorNotification(const std::string& service_path,
@@ -74,13 +86,59 @@ void ShowErrorNotification(const std::string& service_path,
                            const base::Closure& callback) {
   NET_LOG(ERROR) << "ShowErrorNotification: " << service_path << ": "
                  << base::UTF16ToUTF8(title);
-  const gfx::Image& icon =
-      ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-          GetErrorNotificationIconId(network_type));
+  std::unique_ptr<message_center::Notification> notification;
+  if (message_center::IsNewStyleNotificationEnabled()) {
+    notification = message_center::Notification::CreateSystemNotification(
+        message_center::NOTIFICATION_TYPE_SIMPLE, notification_id, title,
+        message, gfx::Image(), base::string16() /* display_source */, GURL(),
+        message_center::NotifierId(message_center::NotifierId::SYSTEM_COMPONENT,
+                                   ash::system_notifier::kNotifierNetworkError),
+        message_center::RichNotificationData(),
+        new message_center::HandleNotificationClickedDelegate(callback),
+        GetErrorNotificationVectorIcon(network_type),
+        message_center::SystemNotificationWarningLevel::CRITICAL_WARNING);
+  } else {
+    const gfx::Image& icon =
+        ui::ResourceBundle::GetSharedInstance().GetImageNamed(
+            GetErrorNotificationIconId(network_type));
+    notification = message_center::Notification::CreateSystemNotification(
+        notification_id, title, message, icon,
+        ash::system_notifier::kNotifierNetworkError, callback);
+  }
   message_center::MessageCenter::Get()->AddNotification(
-      message_center::Notification::CreateSystemNotification(
-          notification_id, title, message, icon,
-          ash::system_notifier::kNotifierNetworkError, callback));
+      std::move(notification));
+}
+
+bool ShouldConnectFailedNotificationBeShown(const std::string& error_name,
+                                            const NetworkState* network_state) {
+  // Only show a notification for certain errors. Other failures are expected
+  // to be handled by the UI that initiated the connect request.
+  // Note: kErrorConnectFailed may also cause the configure dialog to be
+  // displayed, but we rely on the notification system to show additional
+  // details if available.
+  if (error_name != NetworkConnectionHandler::kErrorConnectFailed &&
+      error_name != NetworkConnectionHandler::kErrorNotFound &&
+      error_name != NetworkConnectionHandler::kErrorConfigureFailed &&
+      error_name != NetworkConnectionHandler::kErrorCertLoadTimeout) {
+    return false;
+  }
+
+  // When a connection to a Tether network fails, the Tether component shows its
+  // own error notification. If this is the case, there is no need to show an
+  // additional notification for the failure to connect to the underlying Wi-Fi
+  // network.
+  if (network_state && !network_state->tether_guid().empty())
+    return false;
+
+  // Otherwise, the connection failed notification should be shown.
+  return true;
+}
+
+const NetworkState* GetNetworkStateForGuid(const std::string& guid) {
+  return guid.empty() ? nullptr
+                      : NetworkHandler::Get()
+                            ->network_state_handler()
+                            ->GetNetworkStateFromGuid(guid);
 }
 
 }  // namespace
@@ -127,18 +185,11 @@ void NetworkStateNotifier::ConnectSucceeded(const std::string& service_path) {
 
 void NetworkStateNotifier::ConnectFailed(const std::string& service_path,
                                          const std::string& error_name) {
-  // Only show a notification for certain errors. Other failures are expected
-  // to be handled by the UI that initiated the connect request.
-  // Note: kErrorConnectFailed may also cause the configure dialog to be
-  // displayed, but we rely on the notification system to show additional
-  // details if available.
-  if (error_name != NetworkConnectionHandler::kErrorConnectFailed &&
-      error_name != NetworkConnectionHandler::kErrorNotFound &&
-      error_name != NetworkConnectionHandler::kErrorConfigureFailed &&
-      error_name != NetworkConnectionHandler::kErrorCertLoadTimeout) {
-    return;
-  }
-  ShowNetworkConnectError(error_name, service_path);
+  const NetworkState* network =
+      NetworkHandler::Get()->network_state_handler()->GetNetworkState(
+          service_path);
+  if (ShouldConnectFailedNotificationBeShown(error_name, network))
+    ShowNetworkConnectErrorForGuid(error_name, network ? network->guid() : "");
 }
 
 void NetworkStateNotifier::DisconnectRequested(
@@ -188,7 +239,9 @@ bool NetworkStateNotifier::UpdateDefaultNetwork(const NetworkState* network) {
 void NetworkStateNotifier::UpdateVpnConnectionState(const NetworkState* vpn) {
   if (vpn->path() == connected_vpn_) {
     if (!vpn->IsConnectedState() && !vpn->IsConnectingState()) {
-      ShowVpnDisconnectedNotification(vpn);
+      if (vpn->vpn_provider_type() != shill::kProviderArcVpn) {
+        ShowVpnDisconnectedNotification(vpn);
+      }
       connected_vpn_.clear();
     }
   } else if (vpn->IsConnectedState()) {
@@ -262,31 +315,30 @@ void NetworkStateNotifier::UpdateCellularActivating(
                      weak_ptr_factory_.GetWeakPtr(), cellular->guid())));
 }
 
-void NetworkStateNotifier::ShowNetworkConnectError(
+void NetworkStateNotifier::ShowNetworkConnectErrorForGuid(
     const std::string& error_name,
-    const std::string& service_path) {
-  if (service_path.empty()) {
+    const std::string& guid) {
+  const NetworkState* network = GetNetworkStateForGuid(guid);
+  if (!network) {
     base::DictionaryValue shill_properties;
-    ShowConnectErrorNotification(error_name, service_path, shill_properties);
+    ShowConnectErrorNotification(error_name, "", shill_properties);
     return;
   }
   // Get the up-to-date properties for the network and display the error.
   NetworkHandler::Get()->network_configuration_handler()->GetShillProperties(
-      service_path,
+      network->path(),
       base::Bind(&NetworkStateNotifier::ConnectErrorPropertiesSucceeded,
                  weak_ptr_factory_.GetWeakPtr(), error_name),
       base::Bind(&NetworkStateNotifier::ConnectErrorPropertiesFailed,
-                 weak_ptr_factory_.GetWeakPtr(), error_name, service_path));
+                 weak_ptr_factory_.GetWeakPtr(), error_name, network->path()));
 }
 
-void NetworkStateNotifier::ShowMobileActivationError(
-    const std::string& service_path) {
-  const NetworkState* cellular =
-      NetworkHandler::Get()->network_state_handler()->GetNetworkState(
-          service_path);
+void NetworkStateNotifier::ShowMobileActivationErrorForGuid(
+    const std::string& guid) {
+  const NetworkState* cellular = GetNetworkStateForGuid(guid);
   if (!cellular || cellular->type() != shill::kTypeCellular) {
     NET_LOG(ERROR) << "ShowMobileActivationError without Cellular network: "
-                   << service_path;
+                   << guid;
     return;
   }
   message_center::MessageCenter::Get()->AddNotification(

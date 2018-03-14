@@ -9,13 +9,13 @@
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/numerics/safe_conversions.h"
@@ -26,16 +26,18 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/autofill/core/common/password_form.h"
-#include "components/password_manager/core/browser/affiliation_utils.h"
+#include "components/password_manager/core/browser/android_affiliation/affiliation_utils.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/browser/password_manager_util.h"
+#include "components/password_manager/core/browser/psl_matching_helper.h"
 #include "components/password_manager/core/browser/sql_table_builder.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "sql/connection.h"
 #include "sql/statement.h"
 #include "sql/transaction.h"
+#include "third_party/re2/src/re2/re2.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
 
@@ -359,6 +361,7 @@ void InitializeBuilder(SQLTableBuilder* builder) {
   builder->AddColumn("date_created", "INTEGER NOT NULL");
   builder->AddColumn("blacklisted_by_user", "INTEGER NOT NULL");
   builder->AddColumn("scheme", "INTEGER NOT NULL");
+  builder->AddIndex("logins_signon", {"signon_realm"});
   builder->SealVersion();
   unsigned version = builder->SealVersion();
   DCHECK_EQ(1u, version);
@@ -519,8 +522,7 @@ std::string GeneratePlaceholders(size_t count) {
 }  // namespace
 
 LoginDatabase::LoginDatabase(const base::FilePath& db_path)
-    : db_path_(db_path), clear_password_values_(false) {
-}
+    : db_path_(db_path) {}
 
 LoginDatabase::~LoginDatabase() {
 }
@@ -566,7 +568,7 @@ bool LoginDatabase::Init() {
     return false;
   }
 
-  SQLTableBuilder builder;
+  SQLTableBuilder builder("logins");
   InitializeBuilder(&builder);
   InitializeStatementStrings(builder);
 
@@ -812,9 +814,8 @@ PasswordStoreChangeList LoginDatabase::AddLogin(const PasswordForm& form) {
   if (!DoesMatchConstraints(form))
     return list;
   std::string encrypted_password;
-  if (EncryptedString(
-          clear_password_values_ ? base::string16() : form.password_value,
-          &encrypted_password) != ENCRYPTION_RESULT_SUCCESS)
+  if (EncryptedString(form.password_value, &encrypted_password) !=
+      ENCRYPTION_RESULT_SUCCESS)
     return list;
 
   DCHECK(!add_statement_.empty());
@@ -842,9 +843,8 @@ PasswordStoreChangeList LoginDatabase::AddLogin(const PasswordForm& form) {
 
 PasswordStoreChangeList LoginDatabase::UpdateLogin(const PasswordForm& form) {
   std::string encrypted_password;
-  if (EncryptedString(
-          clear_password_values_ ? base::string16() : form.password_value,
-          &encrypted_password) != ENCRYPTION_RESULT_SUCCESS)
+  if (EncryptedString(form.password_value, &encrypted_password) !=
+      ENCRYPTION_RESULT_SUCCESS)
     return PasswordStoreChangeList();
 
 #if defined(OS_IOS)
@@ -1039,7 +1039,7 @@ LoginDatabase::EncryptionResult LoginDatabase::InitPasswordFormFromStatement(
   form->display_name = s.ColumnString16(COLUMN_DISPLAY_NAME);
   form->icon_url = GURL(s.ColumnString(COLUMN_ICON_URL));
   form->federation_origin =
-      url::Origin(GURL(s.ColumnString(COLUMN_FEDERATION_URL)));
+      url::Origin::Create(GURL(s.ColumnString(COLUMN_FEDERATION_URL)));
   form->skip_zero_click = (s.ColumnInt(COLUMN_SKIP_ZERO_CLICK) > 0);
   int generation_upload_status_int =
       s.ColumnInt(COLUMN_GENERATION_UPLOAD_STATUS);
@@ -1131,6 +1131,48 @@ bool LoginDatabase::GetLogins(
     return true;
   forms->clear();
   return false;
+}
+
+bool LoginDatabase::GetLoginsForSameOrganizationName(
+    const std::string& signon_realm,
+    std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) const {
+  DCHECK(forms);
+  forms->clear();
+
+  GURL signon_realm_as_url(signon_realm);
+  if (!signon_realm_as_url.SchemeIsHTTPOrHTTPS())
+    return true;
+
+  std::string organization_name =
+      GetOrganizationIdentifyingName(signon_realm_as_url);
+  if (organization_name.empty())
+    return true;
+
+  // SQLite does not provide a function to escape special characters, but
+  // seemingly uses POSIX Extended Regular Expressions (ERE), and so does RE2.
+  // In the worst case the bogus results will be filtered out below.
+  static constexpr char kRESchemeAndSubdomains[] = "^https?://([\\w+%-]+\\.)*";
+  static constexpr char kREDotAndEffectiveTLD[] = "(\\.[\\w+%-]+)+/$";
+  const std::string signon_realms_with_same_organization_name_regexp =
+      kRESchemeAndSubdomains + RE2::QuoteMeta(organization_name) +
+      kREDotAndEffectiveTLD;
+  sql::Statement s(db_.GetCachedStatement(
+      SQL_FROM_HERE, get_same_organization_name_logins_statement_.c_str()));
+  s.BindString(0, signon_realms_with_same_organization_name_regexp);
+
+  bool success = StatementToForms(&s, nullptr, forms);
+
+  using PasswordFormPtr = std::unique_ptr<autofill::PasswordForm>;
+  base::EraseIf(*forms, [&organization_name](const PasswordFormPtr& form) {
+    GURL candidate_signon_realm_as_url(form->signon_realm);
+    DCHECK_EQ(form->scheme, PasswordForm::SCHEME_HTML);
+    DCHECK(candidate_signon_realm_as_url.SchemeIsHTTPOrHTTPS());
+    std::string candidate_form_organization_name =
+        GetOrganizationIdentifyingName(candidate_signon_realm_as_url);
+    return candidate_form_organization_name != organization_name;
+  });
+
+  return success;
 }
 
 bool LoginDatabase::GetLoginsCreatedBetween(
@@ -1226,7 +1268,7 @@ bool LoginDatabase::StatementToForms(
 
   forms->clear();
   while (statement->Step()) {
-    auto new_form = base::MakeUnique<PasswordForm>();
+    auto new_form = std::make_unique<PasswordForm>();
     EncryptionResult result =
         InitPasswordFormFromStatement(new_form.get(), *statement);
     if (result == ENCRYPTION_RESULT_SERVICE_FAILURE)
@@ -1315,6 +1357,11 @@ void LoginDatabase::InitializeStatementStrings(const SQLTableBuilder& builder) {
   DCHECK(get_statement_psl_federated_.empty());
   get_statement_psl_federated_ =
       get_statement_ + psl_statement + psl_federated_statement;
+  DCHECK(get_same_organization_name_logins_statement_.empty());
+  get_same_organization_name_logins_statement_ =
+      "SELECT " + all_column_names +
+      " FROM LOGINS"
+      " WHERE scheme == 0 AND signon_realm REGEXP ?";
   DCHECK(created_statement_.empty());
   created_statement_ =
       "SELECT " + all_column_names +

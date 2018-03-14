@@ -5,13 +5,13 @@
 #include <stdint.h>
 #include <cstdio>
 #include <cstdlib>
-#include <deque>
 #include <string>
 #include <utility>
 
 #include "base/at_exit.h"
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/containers/circular_deque.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -59,9 +59,9 @@ class ByteCounter {
  private:
   uint64_t bytes_;
   uint64_t packets_;
-  std::deque<uint64_t> byte_data_;
-  std::deque<uint64_t> packet_data_;
-  std::deque<base::TimeTicks> time_data_;
+  base::circular_deque<uint64_t> byte_data_;
+  base::circular_deque<uint64_t> packet_data_;
+  base::circular_deque<base::TimeTicks> time_data_;
 };
 
 namespace {
@@ -143,7 +143,8 @@ int main(int argc, char** argv) {
             "Usage: udp_proxy <localport> <remotehost> <remoteport> <type>\n"
             "or:\n"
             "       udp_proxy <localport> <type>\n"
-            "Where type is one of: perfect, wifi, bad, evil, poisson-wifi\n");
+            "Where type is one of:\n"
+            "    perfect, wifi, slow, bad, evil, poisson-wifi\n");
     exit(1);
   }
 
@@ -179,6 +180,9 @@ int main(int argc, char** argv) {
   } else if (network_type == "wifi") {
     in_pipe = media::cast::test::WifiNetwork();
     out_pipe = media::cast::test::WifiNetwork();
+  } else if (network_type == "slow") {
+    in_pipe = media::cast::test::SlowNetwork();
+    out_pipe = media::cast::test::SlowNetwork();
   } else if (network_type == "bad") {
     in_pipe = media::cast::test::BadNetwork();
     out_pipe = media::cast::test::BadNetwork();

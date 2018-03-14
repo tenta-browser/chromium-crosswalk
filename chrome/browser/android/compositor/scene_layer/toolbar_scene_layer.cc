@@ -9,16 +9,16 @@
 #include "cc/layers/solid_color_layer.h"
 #include "chrome/browser/android/compositor/layer/toolbar_layer.h"
 #include "content/public/browser/android/compositor.h"
-#include "content/public/browser/android/content_view_core.h"
 #include "jni/ToolbarSceneLayer_jni.h"
 #include "ui/android/resources/resource_manager_impl.h"
 #include "ui/gfx/android/java_bitmap.h"
 
 using base::android::JavaParamRef;
+using base::android::JavaRef;
 
 namespace android {
 
-ToolbarSceneLayer::ToolbarSceneLayer(JNIEnv* env, jobject jobj)
+ToolbarSceneLayer::ToolbarSceneLayer(JNIEnv* env, const JavaRef<jobject>& jobj)
     : SceneLayer(env, jobj),
       should_show_background_(false),
       background_color_(SK_ColorWHITE),
@@ -114,15 +114,12 @@ bool ToolbarSceneLayer::ShouldShowBackground() {
   return should_show_background_;
 }
 
-static jlong Init(JNIEnv* env, const JavaParamRef<jobject>& jobj) {
+static jlong JNI_ToolbarSceneLayer_Init(JNIEnv* env,
+                                        const JavaParamRef<jobject>& jobj) {
   // This will automatically bind to the Java object and pass ownership there.
   ToolbarSceneLayer* toolbar_scene_layer =
       new ToolbarSceneLayer(env, jobj);
   return reinterpret_cast<intptr_t>(toolbar_scene_layer);
-}
-
-bool RegisterToolbarSceneLayer(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace android

@@ -8,20 +8,22 @@
 #include <string.h>
 
 #include <memory>
-#include <stack>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/containers/stack.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/message_loop/message_loop.h"
 #include "base/pickle.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/appcache/appcache_response.h"
@@ -30,6 +32,7 @@
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_response_headers.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_error_job.h"
@@ -228,13 +231,15 @@ class AppCacheURLRequestJobTest : public testing::Test {
   }
 
   static void SetUpTestCase() {
+    scoped_task_environment_.reset(new base::test::ScopedTaskEnvironment());
     io_thread_.reset(new base::Thread("AppCacheURLRequestJobTest Thread"));
     base::Thread::Options options(base::MessageLoop::TYPE_IO, 0);
     io_thread_->StartWithOptions(options);
   }
 
   static void TearDownTestCase() {
-    io_thread_.reset(NULL);
+    io_thread_.reset();
+    scoped_task_environment_.reset();
   }
 
   AppCacheURLRequestJobTest() {}
@@ -245,8 +250,9 @@ class AppCacheURLRequestJobTest : public testing::Test {
         base::WaitableEvent::ResetPolicy::AUTOMATIC,
         base::WaitableEvent::InitialState::NOT_SIGNALED));
     io_thread_->task_runner()->PostTask(
-        FROM_HERE, base::Bind(&AppCacheURLRequestJobTest::MethodWrapper<Method>,
-                              base::Unretained(this), method));
+        FROM_HERE,
+        base::BindOnce(&AppCacheURLRequestJobTest::MethodWrapper<Method>,
+                       base::Unretained(this), method));
     test_finished_event_->Wait();
   }
 
@@ -278,11 +284,11 @@ class AppCacheURLRequestJobTest : public testing::Test {
       task_stack_.pop();
 
     reader_.reset();
-    read_buffer_ = NULL;
-    read_info_buffer_ = NULL;
+    read_buffer_ = nullptr;
+    read_info_buffer_ = nullptr;
     writer_.reset();
-    write_buffer_ = NULL;
-    write_info_buffer_ = NULL;
+    write_buffer_ = nullptr;
+    write_info_buffer_ = nullptr;
     storage_delegate_.reset();
     service_.reset();
 
@@ -297,8 +303,9 @@ class AppCacheURLRequestJobTest : public testing::Test {
     // based objects get deleted.
     DCHECK(io_thread_->task_runner()->BelongsToCurrentThread());
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&AppCacheURLRequestJobTest::TestFinishedUnwound,
-                              base::Unretained(this)));
+        FROM_HERE,
+        base::BindOnce(&AppCacheURLRequestJobTest::TestFinishedUnwound,
+                       base::Unretained(this)));
   }
 
   void TestFinishedUnwound() {
@@ -306,12 +313,13 @@ class AppCacheURLRequestJobTest : public testing::Test {
     test_finished_event_->Signal();
   }
 
-  void PushNextTask(const base::Closure& task) {
-    task_stack_.push(std::pair<base::Closure, bool>(task, false));
+  void PushNextTask(base::OnceClosure task) {
+    task_stack_.push(
+        std::pair<base::OnceClosure, bool>(std::move(task), false));
   }
 
-  void PushNextTaskAsImmediate(const base::Closure& task) {
-    task_stack_.push(std::pair<base::Closure, bool>(task, true));
+  void PushNextTaskAsImmediate(base::OnceClosure task) {
+    task_stack_.push(std::pair<base::OnceClosure, bool>(std::move(task), true));
   }
 
   void ScheduleNextTask() {
@@ -320,13 +328,13 @@ class AppCacheURLRequestJobTest : public testing::Test {
       TestFinished();
       return;
     }
-    base::Closure task =task_stack_.top().first;
+    base::OnceClosure task = std::move(task_stack_.top().first);
     bool immediate = task_stack_.top().second;
     task_stack_.pop();
     if (immediate)
-      task.Run();
+      std::move(task).Run();
     else
-      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, task);
+      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, std::move(task));
   }
 
   // Wrappers to call AppCacheResponseReader/Writer Read and Write methods
@@ -342,8 +350,8 @@ class AppCacheURLRequestJobTest : public testing::Test {
                      IOBuffer* body, int body_len) {
     DCHECK(body);
     scoped_refptr<IOBuffer> body_ref(body);
-    PushNextTask(base::Bind(&AppCacheURLRequestJobTest::WriteResponseBody,
-                            base::Unretained(this), body_ref, body_len));
+    PushNextTask(base::BindOnce(&AppCacheURLRequestJobTest::WriteResponseBody,
+                                base::Unretained(this), body_ref, body_len));
     WriteResponseHead(head);
   }
 
@@ -459,18 +467,19 @@ class AppCacheURLRequestJobTest : public testing::Test {
   void Basic() {
     AppCacheStorage* storage = service_->storage();
     request_ = empty_context_->CreateRequest(GURL("http://blah/"),
-                                             net::DEFAULT_PRIORITY, nullptr);
+                                             net::DEFAULT_PRIORITY, nullptr,
+                                             TRAFFIC_ANNOTATION_FOR_TESTS);
 
     // Create an instance and see that it looks as expected.
 
     std::unique_ptr<AppCacheURLRequestJob> job(
         new AppCacheURLRequestJob(request_.get(), nullptr, storage, nullptr,
-                                  false, base::Bind(&ExpectNotRestarted)));
-    EXPECT_TRUE(job->is_waiting());
-    EXPECT_FALSE(job->is_delivering_appcache_response());
-    EXPECT_FALSE(job->is_delivering_network_response());
-    EXPECT_FALSE(job->is_delivering_error_response());
-    EXPECT_FALSE(job->has_been_started());
+                                  false, base::BindOnce(&ExpectNotRestarted)));
+    EXPECT_TRUE(job->IsWaiting());
+    EXPECT_FALSE(job->IsDeliveringAppCacheResponse());
+    EXPECT_FALSE(job->IsDeliveringNetworkResponse());
+    EXPECT_FALSE(job->IsDeliveringErrorResponse());
+    EXPECT_FALSE(job->IsStarted());
     EXPECT_FALSE(job->has_been_killed());
     EXPECT_EQ(GURL(), job->manifest_url());
     EXPECT_EQ(kAppCacheNoCacheId, job->cache_id());
@@ -483,35 +492,36 @@ class AppCacheURLRequestJobTest : public testing::Test {
   void DeliveryOrders() {
     AppCacheStorage* storage = service_->storage();
     std::unique_ptr<net::URLRequest> request(empty_context_->CreateRequest(
-        GURL("http://blah/"), net::DEFAULT_PRIORITY, nullptr));
+        GURL("http://blah/"), net::DEFAULT_PRIORITY, nullptr,
+        TRAFFIC_ANNOTATION_FOR_TESTS));
 
     // Create an instance, give it a delivery order and see that
     // it looks as expected.
 
     std::unique_ptr<AppCacheURLRequestJob> job(
         new AppCacheURLRequestJob(request.get(), nullptr, storage, nullptr,
-                                  false, base::Bind(&ExpectNotRestarted)));
+                                  false, base::BindOnce(&ExpectNotRestarted)));
     job->DeliverErrorResponse();
-    EXPECT_TRUE(job->is_delivering_error_response());
-    EXPECT_FALSE(job->has_been_started());
+    EXPECT_TRUE(job->IsDeliveringErrorResponse());
+    EXPECT_FALSE(job->IsStarted());
 
     job.reset(new AppCacheURLRequestJob(request.get(), nullptr, storage,
                                         nullptr, false,
-                                        base::Bind(&ExpectNotRestarted)));
+                                        base::BindOnce(&ExpectNotRestarted)));
     job->DeliverNetworkResponse();
-    EXPECT_TRUE(job->is_delivering_network_response());
-    EXPECT_FALSE(job->has_been_started());
+    EXPECT_TRUE(job->IsDeliveringNetworkResponse());
+    EXPECT_FALSE(job->IsStarted());
 
     job.reset(new AppCacheURLRequestJob(request.get(), nullptr, storage,
                                         nullptr, false,
-                                        base::Bind(&ExpectNotRestarted)));
+                                        base::BindOnce(&ExpectNotRestarted)));
     const GURL kManifestUrl("http://blah/");
     const int64_t kCacheId(1);
     const AppCacheEntry kEntry(AppCacheEntry::EXPLICIT, 1);
     job->DeliverAppCachedResponse(kManifestUrl, kCacheId, kEntry, false);
-    EXPECT_FALSE(job->is_waiting());
-    EXPECT_TRUE(job->is_delivering_appcache_response());
-    EXPECT_FALSE(job->has_been_started());
+    EXPECT_FALSE(job->IsWaiting());
+    EXPECT_TRUE(job->IsDeliveringAppCacheResponse());
+    EXPECT_FALSE(job->IsStarted());
     EXPECT_EQ(kManifestUrl, job->manifest_url());
     EXPECT_EQ(kCacheId, job->cache_id());
     EXPECT_EQ(kEntry.types(), job->entry().types());
@@ -525,22 +535,22 @@ class AppCacheURLRequestJobTest : public testing::Test {
   void DeliverNetworkResponse() {
     // This test has async steps.
     PushNextTask(
-        base::Bind(&AppCacheURLRequestJobTest::VerifyDeliverNetworkResponse,
-                   base::Unretained(this)));
+        base::BindOnce(&AppCacheURLRequestJobTest::VerifyDeliverNetworkResponse,
+                       base::Unretained(this)));
 
     AppCacheStorage* storage = service_->storage();
-    request_ = empty_context_->CreateRequest(GURL("http://blah/"),
-                                             net::DEFAULT_PRIORITY,
-                                             url_request_delegate_.get());
+    request_ = empty_context_->CreateRequest(
+        GURL("http://blah/"), net::DEFAULT_PRIORITY,
+        url_request_delegate_.get(), TRAFFIC_ANNOTATION_FOR_TESTS);
 
     // Set up to create an AppCacheURLRequestJob with orders to deliver
     // a network response.
     std::unique_ptr<AppCacheURLRequestJob> mock_job(new AppCacheURLRequestJob(
         request_.get(), nullptr, storage, nullptr, false,
-        base::Bind(&SetIfCalled, &restart_callback_invoked_)));
+        base::BindOnce(&SetIfCalled, &restart_callback_invoked_)));
     mock_job->DeliverNetworkResponse();
-    EXPECT_TRUE(mock_job->is_delivering_network_response());
-    EXPECT_FALSE(mock_job->has_been_started());
+    EXPECT_TRUE(mock_job->IsDeliveringNetworkResponse());
+    EXPECT_FALSE(mock_job->IsStarted());
     job_factory_->SetJob(std::move(mock_job));
 
     // Start the request.
@@ -563,22 +573,22 @@ class AppCacheURLRequestJobTest : public testing::Test {
   void DeliverErrorResponse() {
     // This test has async steps.
     PushNextTask(
-        base::Bind(&AppCacheURLRequestJobTest::VerifyDeliverErrorResponse,
-                   base::Unretained(this)));
+        base::BindOnce(&AppCacheURLRequestJobTest::VerifyDeliverErrorResponse,
+                       base::Unretained(this)));
 
     AppCacheStorage* storage = service_->storage();
-    request_ = empty_context_->CreateRequest(GURL("http://blah/"),
-                                             net::DEFAULT_PRIORITY,
-                                             url_request_delegate_.get());
+    request_ = empty_context_->CreateRequest(
+        GURL("http://blah/"), net::DEFAULT_PRIORITY,
+        url_request_delegate_.get(), TRAFFIC_ANNOTATION_FOR_TESTS);
 
     // Setup to create an AppCacheURLRequestJob with orders to deliver
     // a network response.
     std::unique_ptr<AppCacheURLRequestJob> mock_job(
         new AppCacheURLRequestJob(request_.get(), nullptr, storage, nullptr,
-                                  false, base::Bind(&ExpectNotRestarted)));
+                                  false, base::BindOnce(&ExpectNotRestarted)));
     mock_job->DeliverErrorResponse();
-    EXPECT_TRUE(mock_job->is_delivering_error_response());
-    EXPECT_FALSE(mock_job->has_been_started());
+    EXPECT_TRUE(mock_job->IsDeliveringErrorResponse());
+    EXPECT_FALSE(mock_job->IsStarted());
     job_factory_->SetJob(std::move(mock_job));
 
     // Start the request.
@@ -604,12 +614,12 @@ class AppCacheURLRequestJobTest : public testing::Test {
     // 2. Use net::URLRequest to retrieve it.
     // 3. Verify we received what we expected to receive.
 
-    PushNextTask(base::Bind(
+    PushNextTask(base::BindOnce(
         &AppCacheURLRequestJobTest::VerifyDeliverSmallAppCachedResponse,
         base::Unretained(this)));
     PushNextTask(
-        base::Bind(&AppCacheURLRequestJobTest::RequestAppCachedResource,
-                   base::Unretained(this), false));
+        base::BindOnce(&AppCacheURLRequestJobTest::RequestAppCachedResource,
+                       base::Unretained(this), false));
 
     writer_.reset(service_->storage()->CreateResponseWriter(GURL()));
     written_response_id_ = writer_->response_id();
@@ -619,38 +629,38 @@ class AppCacheURLRequestJobTest : public testing::Test {
 
   void RequestAppCachedResource(bool start_after_delivery_orders) {
     AppCacheStorage* storage = service_->storage();
-    request_ = empty_context_->CreateRequest(GURL("http://blah/"),
-                                             net::DEFAULT_PRIORITY,
-                                             url_request_delegate_.get());
+    request_ = empty_context_->CreateRequest(
+        GURL("http://blah/"), net::DEFAULT_PRIORITY,
+        url_request_delegate_.get(), TRAFFIC_ANNOTATION_FOR_TESTS);
 
     // Setup to create an AppCacheURLRequestJob with orders to deliver
     // a network response.
     std::unique_ptr<AppCacheURLRequestJob> job(
-        new AppCacheURLRequestJob(request_.get(), NULL, storage, NULL, false,
-                                  base::Bind(&ExpectNotRestarted)));
+        new AppCacheURLRequestJob(request_.get(), nullptr, storage, nullptr,
+                                  false, base::BindOnce(&ExpectNotRestarted)));
 
     if (start_after_delivery_orders) {
       job->DeliverAppCachedResponse(
           GURL(), 111,
           AppCacheEntry(AppCacheEntry::EXPLICIT, written_response_id_), false);
-      EXPECT_TRUE(job->is_delivering_appcache_response());
+      EXPECT_TRUE(job->IsDeliveringAppCacheResponse());
     }
 
     // Start the request.
-    EXPECT_FALSE(job->has_been_started());
-    base::WeakPtr<AppCacheURLRequestJob> weak_job = job->GetWeakPtr();
+    EXPECT_FALSE(job->IsStarted());
+    base::WeakPtr<AppCacheJob> weak_job = job->GetWeakPtr();
     job_factory_->SetJob(std::move(job));
     request_->Start();
     EXPECT_FALSE(job_factory_->has_job());
     ASSERT_TRUE(weak_job);
-    EXPECT_TRUE(weak_job->has_been_started());
+    EXPECT_TRUE(weak_job->IsStarted());
 
     if (!start_after_delivery_orders) {
       weak_job->DeliverAppCachedResponse(
           GURL(), 111,
           AppCacheEntry(AppCacheEntry::EXPLICIT, written_response_id_), false);
       ASSERT_TRUE(weak_job);
-      EXPECT_TRUE(weak_job->is_delivering_appcache_response());
+      EXPECT_TRUE(weak_job->IsDeliveringAppCacheResponse());
     }
 
     // Completion is async.
@@ -677,12 +687,12 @@ class AppCacheURLRequestJobTest : public testing::Test {
     // 2. Use net::URLRequest to retrieve it.
     // 3. Verify we received what we expected to receive.
 
-    PushNextTask(base::Bind(
-       &AppCacheURLRequestJobTest::VerifyDeliverLargeAppCachedResponse,
-       base::Unretained(this)));
-    PushNextTask(base::Bind(
-       &AppCacheURLRequestJobTest::RequestAppCachedResource,
-       base::Unretained(this), true));
+    PushNextTask(base::BindOnce(
+        &AppCacheURLRequestJobTest::VerifyDeliverLargeAppCachedResponse,
+        base::Unretained(this)));
+    PushNextTask(
+        base::BindOnce(&AppCacheURLRequestJobTest::RequestAppCachedResource,
+                       base::Unretained(this), true));
 
     writer_.reset(service_->storage()->CreateResponseWriter(GURL()));
     written_response_id_ = writer_->response_id();
@@ -722,11 +732,11 @@ class AppCacheURLRequestJobTest : public testing::Test {
     // 1. Write a small response to response storage.
     // 2. Use net::URLRequest to retrieve it a subset using a range request
     // 3. Verify we received what we expected to receive.
-    PushNextTask(base::Bind(
-       &AppCacheURLRequestJobTest::VerifyDeliverPartialResponse,
-       base::Unretained(this)));
-    PushNextTask(base::Bind(
-       &AppCacheURLRequestJobTest::MakeRangeRequest, base::Unretained(this)));
+    PushNextTask(
+        base::BindOnce(&AppCacheURLRequestJobTest::VerifyDeliverPartialResponse,
+                       base::Unretained(this)));
+    PushNextTask(base::BindOnce(&AppCacheURLRequestJobTest::MakeRangeRequest,
+                                base::Unretained(this)));
     writer_.reset(service_->storage()->CreateResponseWriter(GURL()));
     written_response_id_ = writer_->response_id();
     WriteBasicResponse();
@@ -735,9 +745,9 @@ class AppCacheURLRequestJobTest : public testing::Test {
 
   void MakeRangeRequest() {
     AppCacheStorage* storage = service_->storage();
-    request_ = empty_context_->CreateRequest(GURL("http://blah/"),
-                                             net::DEFAULT_PRIORITY,
-                                             url_request_delegate_.get());
+    request_ = empty_context_->CreateRequest(
+        GURL("http://blah/"), net::DEFAULT_PRIORITY,
+        url_request_delegate_.get(), TRAFFIC_ANNOTATION_FOR_TESTS);
 
     // Request a range, the 3 middle chars out of 'Hello'
     net::HttpRequestHeaders extra_headers;
@@ -746,15 +756,15 @@ class AppCacheURLRequestJobTest : public testing::Test {
 
     // Create job with orders to deliver an appcached entry.
     std::unique_ptr<AppCacheURLRequestJob> job(
-        new AppCacheURLRequestJob(request_.get(), NULL, storage, NULL, false,
-                                  base::Bind(&ExpectNotRestarted)));
+        new AppCacheURLRequestJob(request_.get(), nullptr, storage, nullptr,
+                                  false, base::BindOnce(&ExpectNotRestarted)));
     job->DeliverAppCachedResponse(
         GURL(), 111,
         AppCacheEntry(AppCacheEntry::EXPLICIT, written_response_id_), false);
-    EXPECT_TRUE(job->is_delivering_appcache_response());
+    EXPECT_TRUE(job->IsDeliveringAppCacheResponse());
 
     // Start the request.
-    EXPECT_FALSE(job->has_been_started());
+    EXPECT_FALSE(job->IsStarted());
     job_factory_->SetJob(std::move(job));
     request_->Start();
     EXPECT_FALSE(job_factory_->has_job());
@@ -788,11 +798,11 @@ class AppCacheURLRequestJobTest : public testing::Test {
     // 2. Use net::URLRequest to retrieve it.
     // 3. Cancel the request after data starts coming in.
 
-    PushNextTask(base::Bind(
-       &AppCacheURLRequestJobTest::VerifyCancel, base::Unretained(this)));
-    PushNextTask(base::Bind(
-       &AppCacheURLRequestJobTest::RequestAppCachedResource,
-       base::Unretained(this), true));
+    PushNextTask(base::BindOnce(&AppCacheURLRequestJobTest::VerifyCancel,
+                                base::Unretained(this)));
+    PushNextTask(
+        base::BindOnce(&AppCacheURLRequestJobTest::RequestAppCachedResource,
+                       base::Unretained(this), true));
 
     writer_.reset(service_->storage()->CreateResponseWriter(GURL()));
     written_response_id_ = writer_->response_id();
@@ -816,11 +826,11 @@ class AppCacheURLRequestJobTest : public testing::Test {
     // 2. Use net::URLRequest to retrieve it.
     // 3. Cancel the request after data starts coming in.
 
-    PushNextTask(base::Bind(
-       &AppCacheURLRequestJobTest::VerifyCancel, base::Unretained(this)));
-    PushNextTask(base::Bind(
-       &AppCacheURLRequestJobTest::RequestAppCachedResource,
-       base::Unretained(this), true));
+    PushNextTask(base::BindOnce(&AppCacheURLRequestJobTest::VerifyCancel,
+                                base::Unretained(this)));
+    PushNextTask(
+        base::BindOnce(&AppCacheURLRequestJobTest::RequestAppCachedResource,
+                       base::Unretained(this), true));
 
     writer_.reset(service_->storage()->CreateResponseWriter(GURL()));
     written_response_id_ = writer_->response_id();
@@ -837,7 +847,7 @@ class AppCacheURLRequestJobTest : public testing::Test {
   std::unique_ptr<base::WaitableEvent> test_finished_event_;
   std::unique_ptr<MockStorageDelegate> storage_delegate_;
   std::unique_ptr<MockAppCacheService> service_;
-  std::stack<std::pair<base::Closure, bool> > task_stack_;
+  base::stack<std::pair<base::OnceClosure, bool>> task_stack_;
 
   std::unique_ptr<AppCacheResponseReader> reader_;
   scoped_refptr<HttpResponseInfoIOBuffer> read_info_buffer_;
@@ -860,10 +870,14 @@ class AppCacheURLRequestJobTest : public testing::Test {
   std::unique_ptr<MockURLRequestDelegate> url_request_delegate_;
 
   static std::unique_ptr<base::Thread> io_thread_;
+  static std::unique_ptr<base::test::ScopedTaskEnvironment>
+      scoped_task_environment_;
 };
 
 // static
 std::unique_ptr<base::Thread> AppCacheURLRequestJobTest::io_thread_;
+std::unique_ptr<base::test::ScopedTaskEnvironment>
+    AppCacheURLRequestJobTest::scoped_task_environment_;
 
 TEST_F(AppCacheURLRequestJobTest, Basic) {
   RunTestOnIOThread(&AppCacheURLRequestJobTest::Basic);

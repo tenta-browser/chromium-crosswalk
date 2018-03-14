@@ -19,8 +19,19 @@ static_library("renderer") {
     "//content/public/renderer",
     "//services/service_manager/public/cpp",
     "//third_party/WebKit/public:blink",
-    "//third_party/cld",
     "//url",
     "//v8",
+  ]
+}
+
+source_set("unit_tests") {
+  testonly = true
+  sources = [
+    "translate_helper_unittest.cc",
+  ]
+  deps = [
+    ":renderer",
+    "//base",
+    "//testing/gtest",
   ]
 }

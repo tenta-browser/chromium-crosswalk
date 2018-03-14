@@ -32,14 +32,13 @@
 #define WorkerThreadableLoader_h
 
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "core/loader/ThreadableLoader.h"
 #include "core/loader/ThreadableLoaderClient.h"
 #include "core/workers/WorkerThread.h"
 #include "core/workers/WorkerThreadLifecycleObserver.h"
 #include "platform/WaitableEvent.h"
 #include "platform/heap/Handle.h"
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/Threading.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/WTFString.h"
@@ -52,7 +51,7 @@ class ResourceError;
 class ResourceRequest;
 class ResourceResponse;
 class WorkerGlobalScope;
-class WorkerLoaderProxy;
+class WorkerThreadLifecycleContext;
 struct CrossThreadResourceRequestData;
 struct CrossThreadResourceTimingInfoData;
 
@@ -104,8 +103,9 @@ class WorkerThreadableLoader final : public ThreadableLoader {
   void Start(const ResourceRequest&) override;
   void OverrideTimeout(unsigned long timeout) override;
   void Cancel() override;
+  void Detach() override;
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   enum BlockingBehavior { kLoadSynchronously, kLoadAsynchronously };
@@ -114,14 +114,12 @@ class WorkerThreadableLoader final : public ThreadableLoader {
   class TaskForwarder : public GarbageCollectedFinalized<TaskForwarder> {
    public:
     virtual ~TaskForwarder() {}
-    virtual void ForwardTask(const WebTraceLocation&,
-                             std::unique_ptr<CrossThreadClosure>) = 0;
-    virtual void ForwardTaskWithDoneSignal(
-        const WebTraceLocation&,
-        std::unique_ptr<CrossThreadClosure>) = 0;
+    virtual void ForwardTask(const WebTraceLocation&, CrossThreadClosure) = 0;
+    virtual void ForwardTaskWithDoneSignal(const WebTraceLocation&,
+                                           CrossThreadClosure) = 0;
     virtual void Abort() = 0;
 
-    DEFINE_INLINE_VIRTUAL_TRACE() {}
+    virtual void Trace(blink::Visitor* visitor) {}
   };
   class AsyncTaskForwarder;
   struct TaskWithLocation;
@@ -141,12 +139,13 @@ class WorkerThreadableLoader final : public ThreadableLoader {
 
    public:
     static void CreateAndStart(WorkerThreadableLoader*,
-                               RefPtr<WorkerLoaderProxy>,
+                               ThreadableLoadingContext*,
+                               scoped_refptr<WebTaskRunner>,
                                WorkerThreadLifecycleContext*,
                                std::unique_ptr<CrossThreadResourceRequestData>,
                                const ThreadableLoaderOptions&,
                                const ResourceLoaderOptions&,
-                               PassRefPtr<WaitableEventWithTasks>);
+                               scoped_refptr<WaitableEventWithTasks>);
     ~MainThreadLoaderHolder() override;
 
     void OverrideTimeout(unsigned long timeout_millisecond);
@@ -164,13 +163,12 @@ class WorkerThreadableLoader final : public ThreadableLoader {
     void DidFinishLoading(unsigned long identifier,
                           double finish_time) override;
     void DidFail(const ResourceError&) override;
-    void DidFailAccessControlCheck(const ResourceError&) override;
     void DidFailRedirectCheck() override;
     void DidReceiveResourceTiming(const ResourceTimingInfo&) override;
 
     void ContextDestroyed(WorkerThreadLifecycleContext*) override;
 
-    DECLARE_TRACE();
+    void Trace(blink::Visitor*) override;
 
    private:
     MainThreadLoaderHolder(TaskForwarder*, WorkerThreadLifecycleContext*);
@@ -203,14 +201,13 @@ class WorkerThreadableLoader final : public ThreadableLoader {
   void DidReceiveCachedMetadata(std::unique_ptr<Vector<char>> data);
   void DidFinishLoading(unsigned long identifier, double finish_time);
   void DidFail(const ResourceError&);
-  void DidFailAccessControlCheck(const ResourceError&);
   void DidFailRedirectCheck();
   void DidDownloadData(int data_length);
   void DidReceiveResourceTiming(
       std::unique_ptr<CrossThreadResourceTimingInfoData>);
 
   Member<WorkerGlobalScope> worker_global_scope_;
-  RefPtr<WorkerLoaderProxy> worker_loader_proxy_;
+  CrossThreadPersistent<ParentFrameTaskRunners> parent_frame_task_runners_;
   ThreadableLoaderClient* client_;
 
   ThreadableLoaderOptions threadable_loader_options_;

@@ -13,7 +13,7 @@ namespace media {
 
 static void WarnOnNonMonotonicTimestamps(base::TimeDelta last_timestamp,
                                          base::TimeDelta current_timestamp) {
-  if (last_timestamp == kNoTimestamp || last_timestamp < current_timestamp)
+  if (last_timestamp == kNoTimestamp || last_timestamp <= current_timestamp)
     return;
 
   const base::TimeDelta diff = current_timestamp - last_timestamp;
@@ -35,8 +35,7 @@ AudioDiscardHelper::AudioDiscardHelper(int sample_rate,
   DCHECK_GT(sample_rate_, 0);
 }
 
-AudioDiscardHelper::~AudioDiscardHelper() {
-}
+AudioDiscardHelper::~AudioDiscardHelper() = default;
 
 size_t AudioDiscardHelper::TimeDeltaToFrames(base::TimeDelta duration) const {
   DCHECK(duration >= base::TimeDelta());
@@ -194,7 +193,10 @@ bool AudioDiscardHelper::ProcessBuffers(
     if (decoder_delay_) {
       // Delayed end discard only works if the decoder delay is less than a
       // single buffer.
-      DCHECK_LT(decoder_delay_, original_frame_count);
+      if (decoder_delay_ >= original_frame_count) {
+        DLOG(ERROR) << "Encountered invalid discard padding value.";
+        return false;
+      }
 
       // If the discard is >= the decoder delay, trim everything we can off the
       // end of this buffer and the rest from the start of the next.

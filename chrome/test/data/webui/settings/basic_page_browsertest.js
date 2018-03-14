@@ -17,20 +17,12 @@ SettingsBasicPageBrowserTest.prototype = {
 
   /** @override */
   extraLibraries: SettingsPageBrowserTest.prototype.extraLibraries.concat([
-    'test_browser_proxy.js',
+    '../test_browser_proxy.js',
   ]),
 };
 
-// Times out on debug builders and may time out on memory bots because
-// the Settings page can take several seconds to load in a Release build
-// and several times that in a Debug build. See https://crbug.com/558434.
-GEN('#if defined(MEMORY_SANITIZER) || !defined(NDEBUG)');
-GEN('#define MAYBE_Load DISABLED_Load');
-GEN('#else');
-GEN('#define MAYBE_Load Load');
-GEN('#endif');
-
-TEST_F('SettingsBasicPageBrowserTest', 'MAYBE_Load', function() {
+// http://crbug/738146
+TEST_F('SettingsBasicPageBrowserTest', 'DISABLED_Load', function() {
   // Assign |self| to |this| instead of binding since 'this' in suite()
   // and test() will be a Mocha 'Suite' or 'Test' instance.
   var self = this;
@@ -39,22 +31,19 @@ TEST_F('SettingsBasicPageBrowserTest', 'MAYBE_Load', function() {
    * This fake SearchManager just hides and re-displays the sections on search.
    *
    * @implements {SearchManager}
-   * @extends {settings.TestBrowserProxy}
    */
-  var TestSearchManager = function() {
-    settings.TestBrowserProxy.call(this, [
-      'search',
-    ]);
+  class TestSearchManager extends TestBrowserProxy {
+    constructor() {
+      super([
+        'search',
+      ]);
 
-    /** @private {?settings.SearchRequest} */
-    this.searchRequest_ = null;
-  }
-
-  TestSearchManager.prototype = {
-    __proto__: settings.TestBrowserProxy.prototype,
+      /** @private {?settings.SearchRequest} */
+      this.searchRequest_ = null;
+    }
 
     /** @override */
-    search: function(text, page) {
+    search(text, page) {
       if (this.searchRequest_ == null || !this.searchRequest_.isSame(text)) {
         this.searchRequest_ = new settings.SearchRequest(
             text, document.createElement('div'));
@@ -76,8 +65,8 @@ TEST_F('SettingsBasicPageBrowserTest', 'MAYBE_Load', function() {
         }.bind(this), 0);
       }
       return this.searchRequest_.resolver.promise;
-    },
-  };
+    }
+  }
 
   // Register mocha tests.
   suite('SettingsPage', function() {
@@ -104,7 +93,7 @@ TEST_F('SettingsBasicPageBrowserTest', 'MAYBE_Load', function() {
     test('scroll to section', function() {
       var page = self.basicPage;
       // Setting the page and section will cause a scrollToSection_.
-      settings.navigateTo(settings.Route.ON_STARTUP);
+      settings.navigateTo(settings.routes.ON_STARTUP);
 
       return new Promise(function(resolve, reject) {
         // This test checks for a regression that occurred with scrollToSection_
@@ -142,14 +131,15 @@ TEST_F('SettingsBasicPageBrowserTest', 'MAYBE_Load', function() {
       var searchManager = new TestSearchManager();
       settings.setSearchManagerForTesting(searchManager);
 
-      settings.navigateTo(settings.Route.BASIC,
-                          new URLSearchParams(`search=foobar`),
-                          /* removeSearch */ false);
+      settings.navigateTo(
+          settings.routes.BASIC, new URLSearchParams(`search=foobar`),
+          /* removeSearch */ false);
       return searchManager.whenCalled('search').then(function() {
         return new Promise(function(resolve) {
-          settings.navigateTo(settings.Route.ON_STARTUP,
-                              /* dynamicParams */ null,
-                              /* removeSearch */ true);
+          settings.navigateTo(
+              settings.routes.ON_STARTUP,
+              /* dynamicParams */ null,
+              /* removeSearch */ true);
 
           assertTrue(!!page);
 
@@ -169,10 +159,10 @@ TEST_F('SettingsBasicPageBrowserTest', 'MAYBE_Load', function() {
       // Set the viewport small to force the scrollbar to appear on ABOUT.
       Polymer.dom().querySelector('settings-ui').style.height = '200px';
 
-      settings.navigateTo(settings.Route.ON_STARTUP);
+      settings.navigateTo(settings.routes.ON_STARTUP);
       assertNotEquals(0, page.scroller.scrollTop);
 
-      settings.navigateTo(settings.Route.ABOUT);
+      settings.navigateTo(settings.routes.ABOUT);
       assertEquals(0, page.scroller.scrollTop);
     });
   });

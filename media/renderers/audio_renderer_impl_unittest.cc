@@ -6,11 +6,14 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/format_macros.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
@@ -18,6 +21,7 @@
 #include "media/base/audio_buffer_converter.h"
 #include "media/base/fake_audio_renderer_sink.h"
 #include "media/base/gmock_callback_support.h"
+#include "media/base/media_client.h"
 #include "media/base/media_util.h"
 #include "media/base/mock_filters.h"
 #include "media/base/test_helpers.h"
@@ -44,6 +48,26 @@ struct OutputFrames {
   int value;
 };
 
+class MockMediaClient : public MediaClient {
+ public:
+  MockMediaClient() = default;
+  ~MockMediaClient() override = default;
+
+  void AddSupportedKeySystems(
+      std::vector<std::unique_ptr<KeySystemProperties>>* key_systems) override {
+  }
+  bool IsKeySystemsUpdateNeeded() override { return false; }
+  bool IsSupportedAudioConfig(const AudioConfig& config) override {
+    return true;
+  }
+  bool IsSupportedVideoConfig(const VideoConfig& config) override {
+    return true;
+  }
+  bool IsSupportedBitstreamAudioCodec(AudioCodec codec) override {
+    return true;
+  }
+};
+
 }  // namespace
 
 // Constants to specify the type of audio data used.
@@ -66,8 +90,8 @@ ACTION_P(EnterPendingDecoderInitStateAction, test) {
 
 class AudioRendererImplTest : public ::testing::Test, public RendererClient {
  public:
-  ScopedVector<AudioDecoder> CreateAudioDecoderForTest() {
-    MockAudioDecoder* decoder = new MockAudioDecoder();
+  std::vector<std::unique_ptr<AudioDecoder>> CreateAudioDecoderForTest() {
+    auto decoder = base::MakeUnique<MockAudioDecoder>();
     if (!enter_pending_decoder_init_) {
       EXPECT_CALL(*decoder, Initialize(_, _, _, _))
           .WillOnce(DoAll(SaveArg<3>(&output_cb_),
@@ -80,8 +104,8 @@ class AudioRendererImplTest : public ::testing::Test, public RendererClient {
         .WillRepeatedly(Invoke(this, &AudioRendererImplTest::DecodeDecoder));
     EXPECT_CALL(*decoder, Reset(_))
         .WillRepeatedly(Invoke(this, &AudioRendererImplTest::ResetDecoder));
-    ScopedVector<AudioDecoder> decoders;
-    decoders.push_back(decoder);
+    std::vector<std::unique_ptr<AudioDecoder>> decoders;
+    decoders.push_back(std::move(decoder));
     return decoders;
   }
 
@@ -114,7 +138,7 @@ class AudioRendererImplTest : public ::testing::Test, public RendererClient {
         message_loop_.task_runner(), sink_.get(),
         base::Bind(&AudioRendererImplTest::CreateAudioDecoderForTest,
                    base::Unretained(this)),
-        new MediaLog()));
+        &media_log_));
     renderer_->tick_clock_.reset(tick_clock_);
     tick_clock_->Advance(base::TimeDelta::FromSeconds(1));
   }
@@ -141,7 +165,7 @@ class AudioRendererImplTest : public ::testing::Test, public RendererClient {
         message_loop_.task_runner(), sink_.get(),
         base::Bind(&AudioRendererImplTest::CreateAudioDecoderForTest,
                    base::Unretained(this)),
-        new MediaLog()));
+        &media_log_));
     testing::Mock::VerifyAndClearExpectations(&demuxer_stream_);
     ConfigureDemuxerStream(false);
   }
@@ -155,7 +179,7 @@ class AudioRendererImplTest : public ::testing::Test, public RendererClient {
         message_loop_.task_runner(), sink_.get(),
         base::Bind(&AudioRendererImplTest::CreateAudioDecoderForTest,
                    base::Unretained(this)),
-        new MediaLog()));
+        &media_log_));
     testing::Mock::VerifyAndClearExpectations(&demuxer_stream_);
     ConfigureDemuxerStream(true);
   }
@@ -171,6 +195,8 @@ class AudioRendererImplTest : public ::testing::Test, public RendererClient {
   }
   MOCK_METHOD1(OnBufferingStateChange, void(BufferingState));
   MOCK_METHOD0(OnWaitingForDecryptionKey, void(void));
+  MOCK_METHOD1(OnAudioConfigChange, void(const AudioDecoderConfig&));
+  MOCK_METHOD1(OnVideoConfigChange, void(const VideoDecoderConfig&));
   MOCK_METHOD1(OnVideoNaturalSizeChange, void(const gfx::Size&));
   MOCK_METHOD1(OnVideoOpacityChange, void(bool));
   MOCK_METHOD1(OnDurationChange, void(base::TimeDelta));
@@ -180,6 +206,7 @@ class AudioRendererImplTest : public ::testing::Test, public RendererClient {
     EXPECT_CALL(*this, OnWaitingForDecryptionKey()).Times(0);
     EXPECT_CALL(*this, OnVideoNaturalSizeChange(_)).Times(0);
     EXPECT_CALL(*this, OnVideoOpacityChange(_)).Times(0);
+    EXPECT_CALL(*this, OnVideoConfigChange(_)).Times(0);
     renderer_->Initialize(demuxer_stream, nullptr, this, pipeline_status_cb);
   }
 
@@ -187,6 +214,28 @@ class AudioRendererImplTest : public ::testing::Test, public RendererClient {
     InitializeWithStatus(PIPELINE_OK);
 
     next_timestamp_.reset(new AudioTimestampHelper(kInputSamplesPerSecond));
+  }
+
+  void InitializeBitstreamFormat() {
+    SetMediaClient(&media_client_);
+
+    hardware_params_.Reset(AudioParameters::AUDIO_BITSTREAM_EAC3,
+                           kChannelLayout, kOutputSamplesPerSecond, 1024, 512);
+    sink_ = new FakeAudioRendererSink(hardware_params_);
+    AudioDecoderConfig audio_config(kCodecAC3, kSampleFormatEac3,
+                                    kChannelLayout, kInputSamplesPerSecond,
+                                    EmptyExtraData(), Unencrypted());
+    demuxer_stream_.set_audio_decoder_config(audio_config);
+
+    ConfigureDemuxerStream(true);
+
+    renderer_.reset(new AudioRendererImpl(
+        message_loop_.task_runner(), sink_.get(),
+        base::Bind(&AudioRendererImplTest::CreateAudioDecoderForTest,
+                   base::Unretained(this)),
+        &media_log_));
+
+    Initialize();
   }
 
   void InitializeWithStatus(PipelineStatus expected) {
@@ -288,15 +337,17 @@ class AudioRendererImplTest : public ::testing::Test, public RendererClient {
     CHECK_GT(frames.value, 0);
     CHECK(!decode_cb_.is_null());
 
-    scoped_refptr<AudioBuffer> buffer =
-        MakeAudioBuffer<float>(kSampleFormat,
-                               kChannelLayout,
-                               kChannelCount,
-                               kInputSamplesPerSecond,
-                               1.0f,
-                               0.0f,
-                               frames.value,
-                               next_timestamp_->GetTimestamp());
+    scoped_refptr<AudioBuffer> buffer;
+    if (hardware_params_.IsBitstreamFormat()) {
+      buffer = MakeBitstreamAudioBuffer(kSampleFormatEac3, kChannelLayout,
+                                        kChannelCount, kInputSamplesPerSecond,
+                                        1, 0, frames.value, frames.value / 2,
+                                        next_timestamp_->GetTimestamp());
+    } else {
+      buffer = MakeAudioBuffer<float>(
+          kSampleFormat, kChannelLayout, kChannelCount, kInputSamplesPerSecond,
+          1.0f, 0.0f, frames.value, next_timestamp_->GetTimestamp());
+    }
     next_timestamp_->AddFrames(frames.value);
 
     DeliverBuffer(DecodeStatus::OK, buffer);
@@ -350,6 +401,23 @@ class AudioRendererImplTest : public ::testing::Test, public RendererClient {
     return ConsumeBufferedData(requested_frames, base::TimeDelta());
   }
 
+  bool ConsumeBitstreamBufferedData(OutputFrames requested_frames,
+                                    base::TimeDelta delay = base::TimeDelta()) {
+    std::unique_ptr<AudioBus> bus =
+        AudioBus::Create(kChannels, requested_frames.value);
+    int total_frames_read = 0;
+    while (total_frames_read != requested_frames.value) {
+      int frames_read = 0;
+      EXPECT_TRUE(sink_->Render(bus.get(), delay, &frames_read));
+
+      if (frames_read <= 0)
+        break;
+      total_frames_read += frames_read;
+    }
+
+    return total_frames_read == requested_frames.value;
+  }
+
   base::TimeTicks ConvertMediaTime(base::TimeDelta timestamp,
                                    bool* is_time_moving) {
     std::vector<base::TimeTicks> wall_clock_times;
@@ -382,8 +450,8 @@ class AudioRendererImplTest : public ::testing::Test, public RendererClient {
     return OutputFrames(buffer_capacity().value - frames_buffered().value);
   }
 
-  void force_config_change() {
-    renderer_->OnConfigChange();
+  void force_config_change(const AudioDecoderConfig& config) {
+    renderer_->OnConfigChange(config);
   }
 
   InputFrames converter_input_frames_left() const {
@@ -448,12 +516,14 @@ class AudioRendererImplTest : public ::testing::Test, public RendererClient {
   // Fixture members.
   AudioParameters hardware_params_;
   base::MessageLoop message_loop_;
+  MediaLog media_log_;
   std::unique_ptr<AudioRendererImpl> renderer_;
   scoped_refptr<FakeAudioRendererSink> sink_;
   base::SimpleTestTickClock* tick_clock_;
   PipelineStatistics last_statistics_;
 
   MockDemuxerStream demuxer_stream_;
+  MockMediaClient media_client_;
 
   // Used for satisfying reads.
   AudioDecoder::OutputCB output_cb_;
@@ -508,6 +578,35 @@ TEST_F(AudioRendererImplTest, ReinitializeForDifferentStream) {
   WaitableMessageLoopEvent event;
   InitializeRenderer(&new_stream, event.GetPipelineStatusCB());
   event.RunAndWaitForStatus(PIPELINE_OK);
+}
+
+TEST_F(AudioRendererImplTest, SignalConfigChange) {
+  // Initialize and start playback.
+  Initialize();
+  Preroll();
+  StartTicking();
+  EXPECT_TRUE(ConsumeBufferedData(OutputFrames(256)));
+  WaitForPendingRead();
+
+  // Force config change to simulate detected change from decoder stream. Expect
+  // that RendererClient to be signaled with the new config.
+  const AudioDecoderConfig kValidAudioConfig(
+      kCodecVorbis, kSampleFormatPlanarF32, CHANNEL_LAYOUT_STEREO, 44100,
+      EmptyExtraData(), Unencrypted());
+  EXPECT_TRUE(kValidAudioConfig.IsValidConfig());
+  EXPECT_CALL(*this, OnAudioConfigChange(DecoderConfigEq(kValidAudioConfig)));
+  force_config_change(kValidAudioConfig);
+
+  // Verify rendering can continue after config change.
+  EXPECT_TRUE(ConsumeBufferedData(OutputFrames(256)));
+  WaitForPendingRead();
+
+  // Force a config change with an invalid dummy config. This is occasionally
+  // done to reset internal state and should not bubble to the RendererClient.
+  EXPECT_CALL(*this, OnAudioConfigChange(_)).Times(0);
+  const AudioDecoderConfig kInvalidConfig;
+  EXPECT_FALSE(kInvalidConfig.IsValidConfig());
+  force_config_change(kInvalidConfig);
 }
 
 TEST_F(AudioRendererImplTest, Preroll) {
@@ -672,6 +771,29 @@ TEST_F(AudioRendererImplTest, ChannelMask) {
   EXPECT_FALSE(mask.empty());
   ASSERT_EQ(mask.size(), static_cast<size_t>(hw_params.channels()));
   for (int ch = 0; ch < hw_params.channels(); ++ch)
+    ASSERT_TRUE(mask[ch]);
+}
+
+// Verify that the proper channel mask is configured when downmixing is applied
+// to the input with discrete layout. The default hardware layout is stereo.
+TEST_F(AudioRendererImplTest, ChannelMask_DownmixDiscreteLayout) {
+  int audio_channels = 9;
+
+  AudioDecoderConfig audio_config(
+      kCodecOpus, kSampleFormat, CHANNEL_LAYOUT_DISCRETE,
+      kInputSamplesPerSecond, EmptyExtraData(), Unencrypted());
+  audio_config.SetChannelsForDiscrete(audio_channels);
+  demuxer_stream_.set_audio_decoder_config(audio_config);
+  ConfigureDemuxerStream(true);
+
+  // Fake an attached webaudio client.
+  sink_->SetIsOptimizedForHardwareParameters(false);
+
+  Initialize();
+  std::vector<bool> mask = channel_mask();
+  EXPECT_FALSE(mask.empty());
+  ASSERT_EQ(mask.size(), static_cast<size_t>(audio_channels));
+  for (int ch = 0; ch < audio_channels; ++ch)
     ASSERT_TRUE(mask[ch]);
 }
 
@@ -1094,6 +1216,40 @@ TEST_F(AudioRendererImplTest, TimeSourceBehavior) {
       current_time + timestamp_helper.GetFrameDuration(frames_to_consume.value),
       CurrentMediaWallClockTime(&is_time_moving));
   EXPECT_TRUE(is_time_moving);
+}
+
+TEST_F(AudioRendererImplTest, BitstreamEndOfStream) {
+  InitializeBitstreamFormat();
+  Preroll();
+  StartTicking();
+
+  // Drain internal buffer, we should have a pending read.
+  EXPECT_TRUE(ConsumeBitstreamBufferedData(frames_buffered()));
+  WaitForPendingRead();
+
+  // Forcefully trigger underflow.
+  EXPECT_FALSE(ConsumeBitstreamBufferedData(OutputFrames(1)));
+  EXPECT_CALL(*this, OnBufferingStateChange(BUFFERING_HAVE_NOTHING));
+
+  // Fulfill the read with an end-of-stream buffer. Doing so should change our
+  // buffering state so playback resumes.
+  EXPECT_CALL(*this, OnBufferingStateChange(BUFFERING_HAVE_ENOUGH));
+  DeliverEndOfStream();
+
+  // Consume all remaining data. We shouldn't have signal ended yet.
+  if (frames_buffered().value != 0)
+    EXPECT_TRUE(ConsumeBitstreamBufferedData(frames_buffered()));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(ended());
+
+  // Ended should trigger on next render call.
+  EXPECT_FALSE(ConsumeBitstreamBufferedData(OutputFrames(1)));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(ended());
+
+  // Clear the use of |media_client_|, which was set in
+  // InitializeBitstreamFormat().
+  SetMediaClient(nullptr);
 }
 
 }  // namespace media

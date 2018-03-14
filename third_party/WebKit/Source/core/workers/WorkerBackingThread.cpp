@@ -5,32 +5,44 @@
 #include "core/workers/WorkerBackingThread.h"
 
 #include <memory>
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
+#include "bindings/core/v8/V8ContextSnapshot.h"
 #include "bindings/core/v8/V8GCController.h"
 #include "bindings/core/v8/V8IdleTaskRunner.h"
 #include "bindings/core/v8/V8Initializer.h"
-#include "bindings/core/v8/V8PerIsolateData.h"
 #include "core/inspector/WorkerThreadDebugger.h"
+#include "core/workers/WorkerBackingThreadStartupData.h"
 #include "platform/CrossThreadFunctional.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/WebThreadSupportingGC.h"
+#include "platform/bindings/V8PerIsolateData.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/wtf/PtrUtil.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebTraceLocation.h"
+#include "public/web/WebKit.h"
 
 namespace blink {
 
-#define DEFINE_STATIC_LOCAL_WITH_LOCK(type, name, arguments) \
-  ASSERT(IsolatesMutex().Locked());                          \
-  static type& name = *new type arguments
+// Wrapper functions defined in WebKit.h
+void MemoryPressureNotificationToWorkerThreadIsolates(
+    v8::MemoryPressureLevel level) {
+  WorkerBackingThread::MemoryPressureNotificationToWorkerThreadIsolates(level);
+}
+
+void SetRAILModeOnWorkerThreadIsolates(v8::RAILMode rail_mode) {
+  WorkerBackingThread::SetRAILModeOnWorkerThreadIsolates(rail_mode);
+}
 
 static Mutex& IsolatesMutex() {
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(Mutex, mutex, new Mutex);
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(Mutex, mutex, ());
   return mutex;
 }
 
 static HashSet<v8::Isolate*>& Isolates() {
-  DEFINE_STATIC_LOCAL_WITH_LOCK(HashSet<v8::Isolate*>, isolates, ());
+#if DCHECK_IS_ON()
+  DCHECK(IsolatesMutex().Locked());
+#endif
+  static HashSet<v8::Isolate*>& isolates = *new HashSet<v8::Isolate*>();
   return isolates;
 }
 
@@ -58,11 +70,15 @@ WorkerBackingThread::WorkerBackingThread(WebThread* thread,
 
 WorkerBackingThread::~WorkerBackingThread() {}
 
-void WorkerBackingThread::Initialize() {
+void WorkerBackingThread::InitializeOnBackingThread(
+    const WorkerBackingThreadStartupData& startup_data) {
+  DCHECK(backing_thread_->IsCurrentThread());
+  backing_thread_->InitializeOnThread();
+
   DCHECK(!isolate_);
-  backing_thread_->Initialize();
   isolate_ = V8PerIsolateData::Initialize(
-      backing_thread_->PlatformThread().GetWebTaskRunner());
+      backing_thread_->PlatformThread().GetWebTaskRunner(),
+      V8PerIsolateData::V8ContextSnapshotMode::kDontUseSnapshot);
   AddWorkerIsolate(isolate_);
   V8Initializer::InitializeWorker(isolate_);
 
@@ -70,7 +86,7 @@ void WorkerBackingThread::Initialize() {
       isolate_, V8GCController::TraceDOMWrappers,
       ScriptWrappableVisitor::InvalidateDeadObjectsInMarkingDeque,
       ScriptWrappableVisitor::PerformCleanup);
-  if (RuntimeEnabledFeatures::v8IdleTasksEnabled())
+  if (RuntimeEnabledFeatures::V8IdleTasksEnabled())
     V8PerIsolateData::EnableIdleTasks(
         isolate_, WTF::WrapUnique(new V8IdleTaskRunner(
                       BackingThread().PlatformThread().Scheduler())));
@@ -78,10 +94,22 @@ void WorkerBackingThread::Initialize() {
     Platform::Current()->DidStartWorkerThread();
 
   V8PerIsolateData::From(isolate_)->SetThreadDebugger(
-      WTF::MakeUnique<WorkerThreadDebugger>(isolate_));
+      std::make_unique<WorkerThreadDebugger>(isolate_));
+
+  // Optimize for memory usage instead of latency for the worker isolate.
+  isolate_->IsolateInBackgroundNotification();
+
+  if (startup_data.heap_limit_mode ==
+      WorkerBackingThreadStartupData::HeapLimitMode::kIncreasedForDebugging) {
+    isolate_->IncreaseHeapLimitForDebugging();
+  }
+  isolate_->SetAllowAtomicsWait(
+      startup_data.atomics_wait_mode ==
+      WorkerBackingThreadStartupData::AtomicsWaitMode::kAllow);
 }
 
-void WorkerBackingThread::Shutdown() {
+void WorkerBackingThread::ShutdownOnBackingThread() {
+  DCHECK(backing_thread_->IsCurrentThread());
   if (is_owning_thread_)
     Platform::Current()->WillStopWorkerThread();
 
@@ -91,7 +119,7 @@ void WorkerBackingThread::Shutdown() {
     // This statement runs only in tests.
     V8GCController::CollectAllGarbageForTesting(isolate_);
   }
-  backing_thread_->Shutdown();
+  backing_thread_->ShutdownOnThread();
 
   RemoveWorkerIsolate(isolate_);
   V8PerIsolateData::Destroy(isolate_);

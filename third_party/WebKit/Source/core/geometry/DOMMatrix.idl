@@ -2,15 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// https://dev.w3.org/fxtf/geometry/#DOMMatrix
+// https://drafts.fxtf.org/geometry/#DOMMatrix
 
 [
-    Constructor,
-    Constructor(DOMString transformList),
-    Constructor(sequence<unrestricted double> numberSequence),
+    Constructor(optional (DOMString or sequence<unrestricted double>) init),
     RaisesException=Constructor,
+    ConstructorCallWith=ExecutionContext,
     Exposed=(Window,Worker),
-    RuntimeEnabled=GeometryInterfaces,
+    RuntimeEnabled=GeometryInterfaces
 ] interface DOMMatrix : DOMMatrixReadOnly {
     [RaisesException, NewObject] static DOMMatrix fromMatrix(optional DOMMatrixInit other);
     [RaisesException, NewObject] static DOMMatrix fromFloat32Array(Float32Array array32);
@@ -70,5 +69,5 @@
     DOMMatrix skewYSelf(optional unrestricted double sy = 0);
     DOMMatrix invertSelf();
 
-    [RaisesException] DOMMatrix setMatrixValue(DOMString transformList);
+    [Exposed=Window, RaisesException, CallWith=ExecutionContext] DOMMatrix setMatrixValue(DOMString transformList);
 };

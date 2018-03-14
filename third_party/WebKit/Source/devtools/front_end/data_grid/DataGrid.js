@@ -125,6 +125,30 @@ DataGrid.DataGrid = class extends Common.Object {
   }
 
   /**
+   * @param {!Element} element
+   * @param {string} newText
+   * @param {boolean} longText
+   */
+  static setElementText(element, newText, longText) {
+    if (longText && newText.length > 1000) {
+      element.textContent = newText.trimEnd(1000);
+      element.title = newText;
+      element[DataGrid.DataGrid._longTextSymbol] = newText;
+    } else {
+      element.textContent = newText;
+      element.title = '';
+      element[DataGrid.DataGrid._longTextSymbol] = undefined;
+    }
+  }
+
+  /**
+   * @param {boolean} isStriped
+   */
+  setStriped(isStriped) {
+    this.element.classList.toggle('striped-data-grid', isStriped);
+  }
+
+  /**
    * @return {!Element}
    */
   headerTableBody() {
@@ -344,6 +368,8 @@ DataGrid.DataGrid = class extends Common.Object {
     }
 
     this._editing = true;
+    if (element[DataGrid.DataGrid._longTextSymbol])
+      element.textContent = element[DataGrid.DataGrid._longTextSymbol];
     UI.InplaceEditor.startEditing(element, this._startEditingConfig(element));
 
     element.getComponentSelection().selectAllChildren(element);
@@ -361,8 +387,7 @@ DataGrid.DataGrid = class extends Common.Object {
    * @return {!UI.InplaceEditor.Config}
    */
   _startEditingConfig(element) {
-    return new UI.InplaceEditor.Config(
-        this._editingCommitted.bind(this), this._editingCancelled.bind(this), element.textContent);
+    return new UI.InplaceEditor.Config(this._editingCommitted.bind(this), this._editingCancelled.bind(this));
   }
 
   /**
@@ -429,6 +454,9 @@ DataGrid.DataGrid = class extends Common.Object {
         return;
       }
     }
+
+    // Show trimmed text after editing.
+    DataGrid.DataGrid.setElementText(element, newText, !!column.longText);
 
     if (textBeforeEditing === newText) {
       this._editingCancelled(element);
@@ -999,22 +1027,22 @@ DataGrid.DataGrid = class extends Common.Object {
 
     var gridNode = this.dataGridNodeFromNode(target);
     if (this._refreshCallback && (!gridNode || gridNode !== this.creationNode))
-      contextMenu.appendItem(Common.UIString('Refresh'), this._refreshCallback.bind(this));
+      contextMenu.defaultSection().appendItem(Common.UIString('Refresh'), this._refreshCallback.bind(this));
 
     if (gridNode && gridNode.selectable && !gridNode.isEventWithinDisclosureTriangle(event)) {
       if (this._editCallback) {
         if (gridNode === this.creationNode) {
-          contextMenu.appendItem(Common.UIString.capitalize('Add ^new'), this._startEditing.bind(this, target));
+          contextMenu.defaultSection().appendItem(Common.UIString('Add new'), this._startEditing.bind(this, target));
         } else {
           var columnId = this.columnIdFromNode(target);
           if (columnId && this._columns[columnId].editable) {
-            contextMenu.appendItem(
+            contextMenu.defaultSection().appendItem(
                 Common.UIString('Edit "%s"', this._columns[columnId].title), this._startEditing.bind(this, target));
           }
         }
       }
       if (this._deleteCallback && gridNode !== this.creationNode)
-        contextMenu.appendItem(Common.UIString.capitalize('Delete'), this._deleteCallback.bind(this, gridNode));
+        contextMenu.defaultSection().appendItem(Common.UIString('Delete'), this._deleteCallback.bind(this, gridNode));
       if (this._rowContextMenuCallback)
         this._rowContextMenuCallback(contextMenu, gridNode);
     }
@@ -1209,6 +1237,7 @@ DataGrid.DataGrid.Align = {
 DataGrid.DataGrid._preferredWidthSymbol = Symbol('preferredWidth');
 DataGrid.DataGrid._columnIdSymbol = Symbol('columnId');
 DataGrid.DataGrid._sortIconSymbol = Symbol('sortIcon');
+DataGrid.DataGrid._longTextSymbol = Symbol('longText');
 
 DataGrid.DataGrid.ColumnResizePadding = 24;
 DataGrid.DataGrid.CenterResizerOverBorderAdjustment = 3;
@@ -1291,7 +1320,7 @@ DataGrid.DataGridNode = class extends Common.Object {
    * @return {!Element}
    */
   createElement() {
-    this._element = createElement('tr');
+    this._element = createElementWithClass('tr', 'data-grid-data-grid-node');
     this._element._dataGridNode = this;
 
     if (this._hasChildren)
@@ -1367,7 +1396,7 @@ DataGrid.DataGridNode = class extends Common.Object {
       currentAncestor = currentAncestor.parent;
     }
 
-    this._revealed = true;
+    this.revealed = true;
     return true;
   }
 
@@ -1574,13 +1603,10 @@ DataGrid.DataGridNode = class extends Common.Object {
     var cell = this.createTD(columnId);
 
     var data = this.data[columnId];
-    if (data instanceof Node) {
+    if (data instanceof Node)
       cell.appendChild(data);
-    } else if (data !== null) {
-      cell.textContent = data;
-      if (this.dataGrid._columns[columnId].longText)
-        cell.title = data;
-    }
+    else if (data !== null)
+      DataGrid.DataGrid.setElementText(cell, /** @type {string} */ (data), !!this.dataGrid._columns[columnId].longText);
 
     return cell;
   }
@@ -1952,11 +1978,6 @@ DataGrid.DataGridNode = class extends Common.Object {
 
     for (var i = 0; i < this.children.length; ++i)
       this.children[i]._detach();
-
-    this.wasDetached();
-  }
-
-  wasDetached() {
   }
 
   savePosition() {

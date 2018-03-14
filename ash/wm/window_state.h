@@ -8,16 +8,13 @@
 #include <memory>
 
 #include "ash/ash_export.h"
+#include "ash/public/interfaces/window_state_type.mojom.h"
 #include "ash/wm/drag_details.h"
-#include "ash/wm/wm_types.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
+#include "ui/aura/window_observer.h"
 #include "ui/base/ui_base_types.h"
-
-namespace aura {
-class Window;
-}
 
 namespace gfx {
 class Rect;
@@ -25,17 +22,27 @@ class Rect;
 
 namespace ash {
 class LockWindowState;
-class MaximizeModeWindowState;
-class WmWindow;
+class TabletModeWindowState;
 
 namespace mojom {
 enum class WindowPinType;
 }
 
 namespace wm {
+class WindowState;
 class WindowStateDelegate;
 class WindowStateObserver;
 class WMEvent;
+class ClientControlledState;
+
+// Returns the WindowState for the active window, null if there is no active
+// window.
+ASH_EXPORT WindowState* GetActiveWindowState();
+
+// Returns the WindowState for |window|. Creates WindowState if it doesn't
+// exist. The returned value is owned by |window| (you should not delete it).
+ASH_EXPORT WindowState* GetWindowState(aura::Window* window);
+ASH_EXPORT const WindowState* GetWindowState(const aura::Window* window);
 
 // WindowState manages and defines ash specific window state and
 // behavior. Ash specific per-window state (such as ones that controls
@@ -48,7 +55,7 @@ class WMEvent;
 // Prefer using this class instead of passing aura::Window* around in
 // ash code as this is often what you need to interact with, and
 // accessing the window using |window()| is cheap.
-class ASH_EXPORT WindowState {
+class ASH_EXPORT WindowState : public aura::WindowObserver {
  public:
   // A subclass of State class represents one of the window's states
   // that corresponds to WindowStateType in Ash environment, e.g.
@@ -62,7 +69,7 @@ class ASH_EXPORT WindowState {
     // Update WindowState based on |event|.
     virtual void OnWMEvent(WindowState* window_state, const WMEvent* event) = 0;
 
-    virtual WindowStateType GetType() const = 0;
+    virtual mojom::WindowStateType GetType() const = 0;
 
     // Gets called when the state object became active and the managed window
     // needs to be adjusted to the State's requirement.
@@ -82,10 +89,10 @@ class ASH_EXPORT WindowState {
   };
 
   // Call GetWindowState() to instantiate this class.
-  virtual ~WindowState();
+  ~WindowState() override;
 
-  WmWindow* window() { return window_; }
-  const WmWindow* window() const { return window_; }
+  aura::Window* window() { return window_; }
+  const aura::Window* window() const { return window_; }
 
   bool HasDelegate() const;
   void SetDelegate(std::unique_ptr<WindowStateDelegate> delegate);
@@ -93,7 +100,7 @@ class ASH_EXPORT WindowState {
   // Returns the window's current ash state type.
   // Refer to WindowStateType definition in wm_types.h as for why Ash
   // has its own state type.
-  WindowStateType GetStateType() const;
+  mojom::WindowStateType GetStateType() const;
 
   // Predicates to check window state.
   bool IsMinimized() const;
@@ -103,12 +110,12 @@ class ASH_EXPORT WindowState {
   bool IsPinned() const;
   bool IsTrustedPinned() const;
 
-  // True if the window's state type is WINDOW_STATE_TYPE_MAXIMIZED,
-  // WINDOW_STATE_TYPE_FULLSCREEN or WINDOW_STATE_TYPE_PINNED.
+  // True if the window's state type is WindowStateType::MAXIMIZED,
+  // WindowStateType::FULLSCREEN or WindowStateType::PINNED.
   bool IsMaximizedOrFullscreenOrPinned() const;
 
-  // True if the window's state type is WINDOW_STATE_TYPE_NORMAL or
-  // WINDOW_STATE_TYPE_DEFAULT.
+  // True if the window's state type is WindowStateType::NORMAL or
+  // WindowStateType::DEFAULT.
   bool IsNormalStateType() const;
 
   bool IsNormalOrSnapped() const;
@@ -144,7 +151,7 @@ class ASH_EXPORT WindowState {
 
   // Caches, then disables always on top state and then stacks |window_| below
   // |window_on_top| if a |window_| is currently in always on top state.
-  void DisableAlwaysOnTop(WmWindow* window_on_top);
+  void DisableAlwaysOnTop(aura::Window* window_on_top);
 
   // Restores always on top state that a window might have cached.
   void RestoreAlwaysOnTop();
@@ -197,13 +204,8 @@ class ASH_EXPORT WindowState {
 
   // Gets/sets whether the shelf should be hidden when this window is
   // fullscreen.
-  bool hide_shelf_when_fullscreen() const {
-    return hide_shelf_when_fullscreen_;
-  }
-
-  void set_hide_shelf_when_fullscreen(bool value) {
-    hide_shelf_when_fullscreen_ = value;
-  }
+  bool GetHideShelfWhenFullscreen() const;
+  void SetHideShelfWhenFullscreen(bool value);
 
   // Gets/sets whether the shelf should be autohidden when this window is
   // fullscreen or active.
@@ -220,7 +222,7 @@ class ASH_EXPORT WindowState {
   // If the minimum visibility is true, ash will try to keep a
   // minimum amount of the window is always visible on the work area
   // when shown.
-  // TODO(oshima): Consolidate this and window_position_managed
+  // TODO(oshima): Consolidate this and GetWindowPositionManaged
   // into single parameter to control the window placement.
   bool minimum_visibility() const { return minimum_visibility_; }
   void set_minimum_visibility(bool minimum_visibility) {
@@ -250,10 +252,8 @@ class ASH_EXPORT WindowState {
 
   // Whether or not the window's position can be managed by the
   // auto management logic.
-  bool window_position_managed() const { return window_position_managed_; }
-  void set_window_position_managed(bool window_position_managed) {
-    window_position_managed_ = window_position_managed;
-  }
+  bool GetWindowPositionManaged() const;
+  void SetWindowPositionManaged(bool managed);
 
   // Whether or not the window's position or size was changed by a user.
   bool bounds_changed_by_user() const { return bounds_changed_by_user_; }
@@ -269,19 +269,15 @@ class ASH_EXPORT WindowState {
   // True if the window should be offered a chance to consume special system
   // keys such as brightness, volume, etc. that are usually handled by the
   // shell.
-  bool can_consume_system_keys() const { return can_consume_system_keys_; }
-  void set_can_consume_system_keys(bool can_consume_system_keys) {
-    can_consume_system_keys_ = can_consume_system_keys;
-  }
+  bool CanConsumeSystemKeys() const;
+  void SetCanConsumeSystemKeys(bool can_consume_system_keys);
 
   // True if the window is in "immersive full screen mode" which is slightly
   // different from the normal fullscreen mode by allowing the user to reveal
   // the top portion of the window through a touch / mouse gesture. It might
   // also allow the shelf to be shown in some situations.
-  bool in_immersive_fullscreen() const { return in_immersive_fullscreen_; }
-  void set_in_immersive_fullscreen(bool enable) {
-    in_immersive_fullscreen_ = enable;
-  }
+  bool IsInImmersiveFullscreen() const;
+  void SetInImmersiveFullscreen(bool enabled);
 
   // True if the window should not adjust the window's bounds when
   // virtual keyboard bounds changes.
@@ -304,7 +300,7 @@ class ASH_EXPORT WindowState {
   // active. This should be done before a resizer gets created.
   void CreateDragDetails(const gfx::Point& point_in_parent,
                          int window_component,
-                         aura::client::WindowMoveSource source);
+                         ::wm::WindowMoveSource source);
 
   // Deletes and clears a pointer to DragDetails. This should be done when the
   // resizer gets destroyed.
@@ -317,22 +313,24 @@ class ASH_EXPORT WindowState {
   const DragDetails* drag_details() const { return drag_details_.get(); }
   DragDetails* drag_details() { return drag_details_.get(); }
 
-  // Called from the associated WmWindow once the show state changes.
-  void OnWindowShowStateChanged();
-
-  // Called from the associated WmWindow once the window pin type changes.
-  void OnWindowPinTypeChanged();
-
- protected:
-  explicit WindowState(WmWindow* window);
+  class TestApi {
+   public:
+    static State* GetStateImpl(WindowState* window_state) {
+      return window_state->current_state_.get();
+    }
+  };
 
  private:
   friend class DefaultState;
+  friend class ash::wm::ClientControlledState;
   friend class ash::LockWindowState;
-  friend class ash::MaximizeModeWindowState;
+  friend class ash::TabletModeWindowState;
+  friend WindowState* GetWindowState(aura::Window*);
   FRIEND_TEST_ALL_PREFIXES(WindowAnimationsTest, CrossFadeToBounds);
   FRIEND_TEST_ALL_PREFIXES(WindowAnimationsTest,
                            CrossFadeToBoundsFromTransform);
+
+  explicit WindowState(aura::Window* window);
 
   WindowStateDelegate* delegate() { return delegate_.get(); }
 
@@ -357,8 +355,8 @@ class ASH_EXPORT WindowState {
   // Note that this does not update the window bounds.
   void UpdateWindowPropertiesFromStateType();
 
-  void NotifyPreStateTypeChange(WindowStateType old_window_state_type);
-  void NotifyPostStateTypeChange(WindowStateType old_window_state_type);
+  void NotifyPreStateTypeChange(mojom::WindowStateType old_window_state_type);
+  void NotifyPostStateTypeChange(mojom::WindowStateType old_window_state_type);
 
   // Sets |bounds| as is and ensure the layer is aligned with pixel boundary.
   void SetBoundsDirect(const gfx::Rect& bounds);
@@ -375,18 +373,21 @@ class ASH_EXPORT WindowState {
   // a cross fade animation.
   void SetBoundsDirectCrossFade(const gfx::Rect& bounds);
 
+  // aura::WindowObserver:
+  void OnWindowPropertyChanged(aura::Window* window,
+                               const void* key,
+                               intptr_t old) override;
+
   // The owner of this window settings.
-  WmWindow* window_;
+  aura::Window* window_;
   std::unique_ptr<WindowStateDelegate> delegate_;
 
-  bool window_position_managed_;
   bool bounds_changed_by_user_;
   bool ignored_by_shelf_;
   bool can_consume_system_keys_;
   std::unique_ptr<DragDetails> drag_details_;
 
   bool unminimize_to_restore_bounds_;
-  bool in_immersive_fullscreen_;
   bool ignore_keyboard_bounds_change_ = false;
   bool hide_shelf_when_fullscreen_;
   bool autohide_shelf_when_maximized_or_fullscreen_;

@@ -11,11 +11,24 @@ ObjectUI.RemoteObjectPreviewFormatter = class {
    * @return {number}
    */
   static _objectPropertyComparator(a, b) {
-    if (a.type !== 'function' && b.type === 'function')
-      return -1;
-    if (a.type === 'function' && b.type !== 'function')
-      return 1;
-    return 0;
+    return sortValue(a) - sortValue(b);
+
+    /**
+     * @param {!Protocol.Runtime.PropertyPreview} property
+     * @return {number}
+     */
+    function sortValue(property) {
+      var internalName = ObjectUI.RemoteObjectPreviewFormatter._internalName;
+      if (property.name === internalName.PromiseStatus)
+        return 1;
+      else if (property.name === internalName.PromiseValue)
+        return 2;
+      else if (property.name === internalName.GeneratorStatus || internalName.PrimitiveValue)
+        return 3;
+      else if (property.type !== 'function')
+        return 4;
+      return 5;
+    }
   }
 
   /**
@@ -26,7 +39,9 @@ ObjectUI.RemoteObjectPreviewFormatter = class {
   appendObjectPreview(parentElement, preview, isEntry) {
     const previewExperimentEnabled = Runtime.experiments.isEnabled('objectPreviews');
     var description = preview.description;
-    if (preview.type !== 'object' || preview.subtype === 'null' || (previewExperimentEnabled && isEntry)) {
+    var subTypesWithoutValuePreview = new Set(['null', 'regexp', 'error', 'internal#entry']);
+    if (preview.type !== 'object' || subTypesWithoutValuePreview.has(preview.subtype) ||
+        (previewExperimentEnabled && isEntry)) {
       parentElement.appendChild(this.renderPropertyPreview(preview.type, preview.subtype, description));
       return;
     }
@@ -36,26 +51,29 @@ ObjectUI.RemoteObjectPreviewFormatter = class {
       if (isArrayOrTypedArray) {
         var arrayLength = SDK.RemoteObject.arrayLength(preview);
         var arrayLengthText = arrayLength > 1 ? ('(' + arrayLength + ')') : '';
-        var arrayName = preview.subtype === 'typedarray' ? SDK.RemoteObject.arrayNameFromDescription(description) : '';
-        text = arrayName + arrayLengthText;
+        var arrayName = SDK.RemoteObject.arrayNameFromDescription(description);
+        text = arrayName === 'Array' ? arrayLengthText : (arrayName + arrayLengthText);
       } else {
         var hideDescription = previewExperimentEnabled && description === 'Object';
         text = hideDescription ? '' : description;
       }
       if (text.length > 0)
-        parentElement.createChild('span', 'object-description').textContent = text + ' ';
+        parentElement.createChild('span', 'object-description').textContent = text + '\u00a0';
     }
 
-    parentElement.createTextChild(isArrayOrTypedArray ? '[' : '{');
+    var propertiesElement = parentElement.createChild('span', 'object-properties-preview source-code');
+    propertiesElement.createTextChild(isArrayOrTypedArray ? '[' : '{');
     if (preview.entries)
-      this._appendEntriesPreview(parentElement, preview);
+      this._appendEntriesPreview(propertiesElement, preview);
     else if (isArrayOrTypedArray)
-      this._appendArrayPropertiesPreview(parentElement, preview);
+      this._appendArrayPropertiesPreview(propertiesElement, preview);
     else
-      this._appendObjectPropertiesPreview(parentElement, preview);
-    if (preview.overflow)
-      parentElement.createChild('span').textContent = '\u2026';
-    parentElement.createTextChild(isArrayOrTypedArray ? ']' : '}');
+      this._appendObjectPropertiesPreview(propertiesElement, preview);
+    if (preview.overflow) {
+      var ellipsisText = propertiesElement.textContent.length > 1 ? ',\u00a0\u2026' : '\u2026';
+      propertiesElement.createChild('span').textContent = ellipsisText;
+    }
+    propertiesElement.createTextChild(isArrayOrTypedArray ? ']' : '}');
   }
 
   /**
@@ -74,6 +92,7 @@ ObjectUI.RemoteObjectPreviewFormatter = class {
    * @param {!Protocol.Runtime.ObjectPreview} preview
    */
   _appendObjectPropertiesPreview(parentElement, preview) {
+    var internalName = ObjectUI.RemoteObjectPreviewFormatter._internalName;
     var properties = preview.properties.filter(p => p.type !== 'accessor')
                          .stableSort(ObjectUI.RemoteObjectPreviewFormatter._objectPropertyComparator);
     for (var i = 0; i < properties.length; ++i) {
@@ -81,9 +100,27 @@ ObjectUI.RemoteObjectPreviewFormatter = class {
         parentElement.createTextChild(', ');
 
       var property = properties[i];
-      parentElement.appendChild(this._renderDisplayName(property.name));
-      parentElement.createTextChild(': ');
-      parentElement.appendChild(this._renderPropertyPreviewOrAccessor([property]));
+      var name = property.name;
+      // Internal properties are given special formatting, e.g. Promises `<rejected>: 123`.
+      if (preview.subtype === 'promise' && name === internalName.PromiseStatus) {
+        parentElement.appendChild(this._renderDisplayName('<' + property.value + '>'));
+        var nextProperty = i + 1 < properties.length ? properties[i + 1] : null;
+        if (nextProperty && nextProperty.name === internalName.PromiseValue) {
+          if (property.value !== 'pending') {
+            parentElement.createTextChild(': ');
+            parentElement.appendChild(this._renderPropertyPreviewOrAccessor([nextProperty]));
+          }
+          i++;
+        }
+      } else if (preview.subtype === 'generator' && name === internalName.GeneratorStatus) {
+        parentElement.appendChild(this._renderDisplayName('<' + property.value + '>'));
+      } else if (name === internalName.PrimitiveValue) {
+        parentElement.appendChild(this._renderPropertyPreviewOrAccessor([property]));
+      } else {
+        parentElement.appendChild(this._renderDisplayName(name));
+        parentElement.createTextChild(': ');
+        parentElement.appendChild(this._renderPropertyPreviewOrAccessor([property]));
+      }
     }
   }
 
@@ -162,7 +199,8 @@ ObjectUI.RemoteObjectPreviewFormatter = class {
      */
     function appendUndefined(index) {
       var span = parentElement.createChild('span', 'object-value-undefined');
-      span.textContent = Common.UIString('undefined × %d', index - lastNonEmptyArrayIndex - 1);
+      var count = index - lastNonEmptyArrayIndex - 1;
+      span.textContent = count !== 1 ? Common.UIString('empty × %d', count) : Common.UIString('empty');
       elementsAdded = true;
     }
   }
@@ -222,7 +260,7 @@ ObjectUI.RemoteObjectPreviewFormatter = class {
     }
 
     if (type === 'function') {
-      span.textContent = 'function';
+      span.textContent = '\u0192';
       return span;
     }
 
@@ -237,7 +275,10 @@ ObjectUI.RemoteObjectPreviewFormatter = class {
     }
 
     if (type === 'object' && !subtype) {
-      span.textContent = this._abbreviateFullQualifiedClassName(description);
+      var preview = this._abbreviateFullQualifiedClassName(description);
+      if (preview === 'Object')
+        preview = '{\u2026}';
+      span.textContent = preview;
       span.title = description;
       return span;
     }
@@ -245,4 +286,12 @@ ObjectUI.RemoteObjectPreviewFormatter = class {
     span.textContent = description;
     return span;
   }
+};
+
+/** @enum {string} */
+ObjectUI.RemoteObjectPreviewFormatter._internalName = {
+  GeneratorStatus: '[[GeneratorStatus]]',
+  PrimitiveValue: '[[PrimitiveValue]]',
+  PromiseStatus: '[[PromiseStatus]]',
+  PromiseValue: '[[PromiseValue]]'
 };

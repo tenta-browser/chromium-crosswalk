@@ -29,17 +29,16 @@
 
 #include "core/inspector/DevToolsHost.h"
 
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8ScriptRunner.h"
 #include "core/clipboard/Pasteboard.h"
-#include "core/dom/DocumentUserGestureToken.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/events/Event.h"
-#include "core/events/EventTarget.h"
-#include "core/frame/FrameView.h"
+#include "core/dom/UserGestureIndicator.h"
+#include "core/dom/events/Event.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/parser/TextResourceDecoder.h"
 #include "core/inspector/InspectorFrontendClient.h"
 #include "core/layout/LayoutTheme.h"
@@ -49,10 +48,10 @@
 #include "core/page/Page.h"
 #include "platform/ContextMenu.h"
 #include "platform/ContextMenuItem.h"
-#include "platform/HostWindow.h"
-#include "platform/ScriptForbiddenScope.h"
+#include "platform/PlatformChromeClient.h"
 #include "platform/SharedBuffer.h"
-#include "platform/UserGestureIndicator.h"
+#include "platform/bindings/ScriptForbiddenScope.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/loader/fetch/ResourceError.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
 #include "platform/loader/fetch/ResourceRequest.h"
@@ -69,10 +68,10 @@ class FrontendMenuProvider final : public ContextMenuProvider {
 
   ~FrontendMenuProvider() override {
     // Verify that this menu provider has been detached.
-    ASSERT(!devtools_host_);
+    DCHECK(!devtools_host_);
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(devtools_host_);
     ContextMenuProvider::Trace(visitor);
   }
@@ -85,7 +84,7 @@ class FrontendMenuProvider final : public ContextMenuProvider {
       devtools_host_->ClearMenuProvider();
       devtools_host_ = nullptr;
     }
-    items_.Clear();
+    items_.clear();
   }
 
   void PopulateContextMenu(ContextMenu* menu) override {
@@ -117,12 +116,13 @@ DevToolsHost::DevToolsHost(InspectorFrontendClient* client,
       menu_provider_(nullptr) {}
 
 DevToolsHost::~DevToolsHost() {
-  ASSERT(!client_);
+  DCHECK(!client_);
 }
 
-DEFINE_TRACE(DevToolsHost) {
+void DevToolsHost::Trace(blink::Visitor* visitor) {
   visitor->Trace(frontend_frame_);
   visitor->Trace(menu_provider_);
+  ScriptWrappable::Trace(visitor);
 }
 
 void DevToolsHost::EvaluateScript(const String& expression) {
@@ -134,18 +134,19 @@ void DevToolsHost::EvaluateScript(const String& expression) {
   if (!script_state)
     return;
   ScriptState::Scope scope(script_state);
-  UserGestureIndicator gesture_indicator(
-      DocumentUserGestureToken::Create(frontend_frame_->GetDocument()));
+  std::unique_ptr<UserGestureIndicator> gesture_indicator =
+      Frame::NotifyUserActivation(frontend_frame_);
   v8::MicrotasksScope microtasks(script_state->GetIsolate(),
                                  v8::MicrotasksScope::kRunMicrotasks);
   v8::Local<v8::String> source =
-      V8AtomicString(script_state->GetIsolate(), expression.Utf8().Data());
-  V8ScriptRunner::CompileAndRunInternalScript(
-      source, script_state->GetIsolate(), String(), TextPosition());
+      V8AtomicString(script_state->GetIsolate(), expression.Utf8().data());
+  V8ScriptRunner::CompileAndRunInternalScript(script_state, source,
+                                              script_state->GetIsolate(),
+                                              String(), TextPosition());
 }
 
 void DevToolsHost::DisconnectClient() {
-  client_ = 0;
+  client_ = nullptr;
   if (menu_provider_) {
     menu_provider_->Disconnect();
     menu_provider_ = nullptr;
@@ -159,15 +160,10 @@ float DevToolsHost::zoomFactor() {
   float zoom_factor = frontend_frame_->PageZoomFactor();
   // Cancel the device scale factor applied to the zoom factor in
   // use-zoom-for-dsf mode.
-  const HostWindow* host_window = frontend_frame_->View()->GetHostWindow();
-  float window_to_viewport_ratio = host_window->WindowToViewportScalar(1.0f);
+  const PlatformChromeClient* client =
+      frontend_frame_->View()->GetChromeClient();
+  float window_to_viewport_ratio = client->WindowToViewportScalar(1.0f);
   return zoom_factor / window_to_viewport_ratio;
-}
-
-void DevToolsHost::setInjectedScriptForOrigin(const String& origin,
-                                              const String& script) {
-  if (client_)
-    client_->SetInjectedScriptForOrigin(origin, script);
 }
 
 void DevToolsHost::copyText(const String& text) {
@@ -208,7 +204,7 @@ void DevToolsHost::ShowContextMenu(LocalFrame* target_frame,
                                    float x,
                                    float y,
                                    const Vector<ContextMenuItem>& items) {
-  ASSERT(frontend_frame_);
+  DCHECK(frontend_frame_);
   FrontendMenuProvider* menu_provider =
       FrontendMenuProvider::Create(this, items);
   menu_provider_ = menu_provider;

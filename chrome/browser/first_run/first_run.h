@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "base/time/time.h"
 #include "build/build_config.h"
 
 class GURL;
@@ -82,7 +83,6 @@ struct MasterPrefs {
   std::vector<GURL> bookmarks;
   std::string import_bookmarks_path;
   std::string compressed_variations_seed;
-  std::string variations_seed;
   std::string variations_seed_signature;
   std::string suppress_default_browser_prompt_for_version;
 };
@@ -114,6 +114,10 @@ bool IsMetricsReportingOptIn();
 // the process singleton has been grabbed by the current process
 // (http://crbug.com/264694).
 void CreateSentinelIfNeeded();
+
+// Returns the first run sentinel creation time. This only requires I/O
+// permission on the sequence it is first called on.
+base::Time GetFirstRunSentinelCreationTime();
 
 // Sets the kShowFirstRunBubbleOption local state pref so that the browser
 // shows the bubble once the main message loop gets going (or refrains from

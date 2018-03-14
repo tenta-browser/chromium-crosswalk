@@ -9,92 +9,22 @@
 #include "core/frame/LocalFrame.h"
 #include "core/frame/UseCounter.h"
 #include "core/inspector/ConsoleMessage.h"
+#include "core/loader/AllowedByNosniff.h"
 #include "platform/loader/fetch/AccessControlStatus.h"
 #include "platform/network/mime/MIMETypeRegistry.h"
 
 namespace blink {
 
-namespace {
-
-void LogScriptMIMEType(LocalFrame* frame,
-                       ScriptResource* resource,
-                       const String& mime_type,
-                       const SecurityOrigin* security_origin) {
-  if (MIMETypeRegistry::IsSupportedJavaScriptMIMEType(mime_type))
-    return;
-  bool is_text = mime_type.StartsWith("text/", kTextCaseASCIIInsensitive);
-  if (is_text && MIMETypeRegistry::IsLegacySupportedJavaScriptLanguage(
-                     mime_type.Substring(5)))
-    return;
-  bool is_same_origin = security_origin->CanRequest(resource->Url());
-  bool is_application =
-      !is_text &&
-      mime_type.StartsWith("application/", kTextCaseASCIIInsensitive);
-
-  UseCounter::Feature feature =
-      is_same_origin
-          ? (is_text ? UseCounter::kSameOriginTextScript
-                     : is_application ? UseCounter::kSameOriginApplicationScript
-                                      : UseCounter::kSameOriginOtherScript)
-          : (is_text
-                 ? UseCounter::kCrossOriginTextScript
-                 : is_application ? UseCounter::kCrossOriginApplicationScript
-                                  : UseCounter::kCrossOriginOtherScript);
-
-  UseCounter::Count(frame, feature);
-}
-
-}  // namespace
-
-DEFINE_TRACE(ClassicScript) {
+void ClassicScript::Trace(blink::Visitor* visitor) {
   Script::Trace(visitor);
   visitor->Trace(script_source_code_);
-}
-
-bool ClassicScript::IsEmpty() const {
-  return GetScriptSourceCode().IsEmpty();
 }
 
 bool ClassicScript::CheckMIMETypeBeforeRunScript(
     Document* context_document,
     const SecurityOrigin* security_origin) const {
-  ScriptResource* resource = GetScriptSourceCode().GetResource();
-  CHECK(resource);
-
-  if (!ScriptResource::MimeTypeAllowedByNosniff(resource->GetResponse())) {
-    context_document->AddConsoleMessage(ConsoleMessage::Create(
-        kSecurityMessageSource, kErrorMessageLevel,
-        "Refused to execute script from '" + resource->Url().ElidedString() +
-            "' because its MIME type ('" + resource->HttpContentType() +
-            "') is not executable, and "
-            "strict MIME type checking is "
-            "enabled."));
-    return false;
-  }
-
-  String mime_type = resource->HttpContentType();
-  LocalFrame* frame = context_document->GetFrame();
-  if (mime_type.StartsWith("image/") || mime_type == "text/csv" ||
-      mime_type.StartsWith("audio/") || mime_type.StartsWith("video/")) {
-    context_document->AddConsoleMessage(ConsoleMessage::Create(
-        kSecurityMessageSource, kErrorMessageLevel,
-        "Refused to execute script from '" + resource->Url().ElidedString() +
-            "' because its MIME type ('" + mime_type +
-            "') is not executable."));
-    if (mime_type.StartsWith("image/"))
-      UseCounter::Count(frame, UseCounter::kBlockedSniffingImageToScript);
-    else if (mime_type.StartsWith("audio/"))
-      UseCounter::Count(frame, UseCounter::kBlockedSniffingAudioToScript);
-    else if (mime_type.StartsWith("video/"))
-      UseCounter::Count(frame, UseCounter::kBlockedSniffingVideoToScript);
-    else if (mime_type == "text/csv")
-      UseCounter::Count(frame, UseCounter::kBlockedSniffingCSVToScript);
-    return false;
-  }
-
-  LogScriptMIMEType(frame, resource, mime_type, security_origin);
-
-  return true;
+  return AllowedByNosniff::MimeTypeAsScript(
+      context_document, GetScriptSourceCode().GetResource()->GetResponse());
 }
 
 void ClassicScript::RunScript(LocalFrame* frame,
@@ -107,12 +37,11 @@ void ClassicScript::RunScript(LocalFrame* frame,
   } else {
     CHECK(GetScriptSourceCode().GetResource());
     access_control_status =
-        GetScriptSourceCode().GetResource()->CalculateAccessControlStatus(
-            security_origin);
+        GetScriptSourceCode().GetResource()->CalculateAccessControlStatus();
   }
 
-  frame->GetScriptController().ExecuteScriptInMainWorld(GetScriptSourceCode(),
-                                                        access_control_status);
+  frame->GetScriptController().ExecuteScriptInMainWorld(
+      GetScriptSourceCode(), FetchOptions(), access_control_status);
 }
 
 }  // namespace blink

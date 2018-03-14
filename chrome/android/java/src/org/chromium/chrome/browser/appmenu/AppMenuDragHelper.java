@@ -14,7 +14,6 @@ import android.view.View;
 import android.view.ViewConfiguration;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
-import android.widget.ListPopupWindow;
 import android.widget.ListView;
 
 import org.chromium.base.metrics.RecordUserAction;
@@ -69,25 +68,21 @@ class AppMenuDragHelper {
         // If user is dragging and the popup ListView is too big to display at once,
         // mDragScrolling animator scrolls mPopup.getListView() automatically depending on
         // the user's touch position.
-        mDragScrolling.setTimeListener(new TimeAnimator.TimeListener() {
-            @Override
-            public void onTimeUpdate(TimeAnimator animation, long totalTime, long deltaTime) {
-                ListPopupWindow popup = mAppMenu.getPopup();
-                if (popup == null || popup.getListView() == null) return;
+        mDragScrolling.setTimeListener((animation, totalTime, deltaTime) -> {
+            if (mAppMenu.getListView() == null) return;
 
-                // We keep both mDragScrollOffset and mDragScrollOffsetRounded because
-                // the actual scrolling is by the rounded value but at the same time we also
-                // want to keep the precise scroll value in float.
-                mDragScrollOffset += (deltaTime * 0.001f) * mDragScrollingVelocity;
-                int diff = Math.round(mDragScrollOffset - mDragScrollOffsetRounded);
-                mDragScrollOffsetRounded += diff;
-                popup.getListView().smoothScrollBy(diff, 0);
+            // We keep both mDragScrollOffset and mDragScrollOffsetRounded because
+            // the actual scrolling is by the rounded value but at the same time we also
+            // want to keep the precise scroll value in float.
+            mDragScrollOffset += (deltaTime * 0.001f) * mDragScrollingVelocity;
+            int diff = Math.round(mDragScrollOffset - mDragScrollOffsetRounded);
+            mDragScrollOffsetRounded += diff;
+            mAppMenu.getListView().smoothScrollBy(diff, 0);
 
-                // Force touch move event to highlight items correctly for the scrolled position.
-                if (!Float.isNaN(mLastTouchX) && !Float.isNaN(mLastTouchY)) {
-                    menuItemAction(Math.round(mLastTouchX), Math.round(mLastTouchY),
-                            ITEM_ACTION_HIGHLIGHT);
-                }
+            // Force touch move event to highlight items correctly for the scrolled position.
+            if (!Float.isNaN(mLastTouchX) && !Float.isNaN(mLastTouchY)) {
+                menuItemAction(Math.round(mLastTouchX), Math.round(mLastTouchY),
+                        ITEM_ACTION_HIGHLIGHT);
             }
         });
 
@@ -153,7 +148,7 @@ class AppMenuDragHelper {
         final int roundedRawY = Math.round(rawY);
         final int eventActionMasked = event.getActionMasked();
         final long timeSinceDown = event.getEventTime() - event.getDownTime();
-        final ListView listView = mAppMenu.getPopup().getListView();
+        final ListView listView = mAppMenu.getListView();
 
         mLastTouchX = rawX;
         mLastTouchY = rawY;
@@ -234,7 +229,7 @@ class AppMenuDragHelper {
      * @return true whether or not a menu item is performed (executed).
      */
     private boolean menuItemAction(int screenX, int screenY, int action) {
-        ListView listView = mAppMenu.getPopup().getListView();
+        ListView listView = mAppMenu.getListView();
 
         // Starting M, we have a popup menu animation that slides down. If we process dragging
         // events while it's sliding, it will touch many views that are passing by user's finger,

@@ -7,11 +7,11 @@
 
 #include <memory>
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/cachestorage/Cache.h"
 #include "modules/cachestorage/CacheQueryOptions.h"
 #include "modules/fetch/GlobalFetch.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/HashMap.h"
 #include "platform/wtf/Noncopyable.h"
@@ -22,29 +22,26 @@ namespace blink {
 class Cache;
 class WebServiceWorkerCacheStorage;
 
-class CacheStorage final : public GarbageCollectedFinalized<CacheStorage>,
-                           public ScriptWrappable {
+class CacheStorage final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
   WTF_MAKE_NONCOPYABLE(CacheStorage);
 
  public:
   static CacheStorage* Create(GlobalFetch::ScopedFetcher*,
-                              WebServiceWorkerCacheStorage*);
+                              std::unique_ptr<WebServiceWorkerCacheStorage>);
   ~CacheStorage();
   void Dispose();
 
   ScriptPromise open(ScriptState*, const String& cache_name, ExceptionState&);
   ScriptPromise has(ScriptState*, const String& cache_name, ExceptionState&);
-  ScriptPromise deleteFunction(ScriptState*,
-                               const String& cache_name,
-                               ExceptionState&);
+  ScriptPromise Delete(ScriptState*, const String& cache_name, ExceptionState&);
   ScriptPromise keys(ScriptState*, ExceptionState&);
   ScriptPromise match(ScriptState*,
                       const RequestInfo&,
                       const CacheQueryOptions&,
                       ExceptionState&);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   class Callbacks;

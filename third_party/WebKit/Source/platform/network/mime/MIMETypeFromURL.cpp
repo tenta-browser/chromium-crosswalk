@@ -34,9 +34,9 @@ namespace blink {
 
 String MimeTypeFromDataURL(const String& url) {
   DCHECK(ProtocolIs(url, "data"));
-  size_t index = url.Find(';');
+  size_t index = url.find(';');
   if (index == kNotFound)
-    index = url.Find(',');
+    index = url.find(',');
   if (index != kNotFound) {
     if (index > 5)
       return url.Substring(5, index - 5).DeprecatedLower();
@@ -44,15 +44,6 @@ String MimeTypeFromDataURL(const String& url) {
     return "text/plain";
   }
   return "";
-}
-
-String MimeTypeFromURL(const KURL& url) {
-  String decoded_path = DecodeURLEscapeSequences(url.GetPath());
-  String extension = decoded_path.Substring(decoded_path.ReverseFind('.') + 1);
-
-  // We don't use MIMETypeRegistry::getMIMETypeForPath() because it returns
-  // "application/octet-stream" upon failure
-  return MIMETypeRegistry::GetMIMETypeForExtension(extension);
 }
 
 }  // namespace blink

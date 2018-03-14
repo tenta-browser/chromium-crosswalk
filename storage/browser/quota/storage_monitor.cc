@@ -22,9 +22,9 @@ StorageObserverList::ObserverState::ObserverState()
     : requires_update(false) {
 }
 
-StorageObserverList::StorageObserverList() {}
+StorageObserverList::StorageObserverList() = default;
 
-StorageObserverList::~StorageObserverList() {}
+StorageObserverList::~StorageObserverList() = default;
 
 void StorageObserverList::AddObserver(
     StorageObserver* observer, const StorageObserver::MonitorParams& params) {
@@ -141,7 +141,7 @@ HostStorageObservers::HostStorageObservers(QuotaManager* quota_manager)
       weak_factory_(this) {
 }
 
-HostStorageObservers::~HostStorageObservers() {}
+HostStorageObservers::~HostStorageObservers() = default;
 
 void HostStorageObservers::AddObserver(
     StorageObserver* observer,
@@ -246,8 +246,7 @@ StorageTypeObservers::StorageTypeObservers(QuotaManager* quota_manager)
     : quota_manager_(quota_manager) {
 }
 
-StorageTypeObservers::~StorageTypeObservers() {
-}
+StorageTypeObservers::~StorageTypeObservers() = default;
 
 void StorageTypeObservers::AddObserver(
     StorageObserver* observer, const StorageObserver::MonitorParams& params) {
@@ -277,18 +276,6 @@ void StorageTypeObservers::RemoveObserver(StorageObserver* observer) {
   }
 }
 
-void StorageTypeObservers::RemoveObserverForFilter(
-    StorageObserver* observer, const StorageObserver::Filter& filter) {
-  std::string host = net::GetHostOrSpecFromURL(filter.origin);
-  auto it = host_observers_map_.find(host);
-  if (it == host_observers_map_.end())
-    return;
-
-  it->second->RemoveObserver(observer);
-  if (!it->second->ContainsObservers())
-    host_observers_map_.erase(it);
-}
-
 const HostStorageObservers* StorageTypeObservers::GetHostObservers(
     const std::string& host) const {
   auto it = host_observers_map_.find(host);
@@ -316,8 +303,7 @@ StorageMonitor::StorageMonitor(QuotaManager* quota_manager)
     : quota_manager_(quota_manager) {
 }
 
-StorageMonitor::~StorageMonitor() {
-}
+StorageMonitor::~StorageMonitor() = default;
 
 void StorageMonitor::AddObserver(
     StorageObserver* observer, const StorageObserver::MonitorParams& params) {
@@ -344,15 +330,6 @@ void StorageMonitor::RemoveObserver(StorageObserver* observer) {
        it != storage_type_observers_map_.end(); ++it) {
     it->second->RemoveObserver(observer);
   }
-}
-
-void StorageMonitor::RemoveObserverForFilter(
-    StorageObserver* observer, const StorageObserver::Filter& filter) {
-  auto it = storage_type_observers_map_.find(filter.storage_type);
-  if (it == storage_type_observers_map_.end())
-    return;
-
-  it->second->RemoveObserverForFilter(observer, filter);
 }
 
 const StorageTypeObservers* StorageMonitor::GetStorageTypeObservers(

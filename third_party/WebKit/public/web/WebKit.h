@@ -36,13 +36,15 @@
 
 namespace blink {
 
+class InterfaceRegistry;
+
 // Initialize the entire Blink (wtf, platform, core, modules and web).
 // If you just need wtf and platform, use Platform::initialize instead.
 //
 // Must be called on the thread that will be the main thread before
 // using any other public APIs. The provided Platform; must be
 // non-null and must remain valid until the current thread calls shutdown.
-BLINK_EXPORT void Initialize(Platform*);
+BLINK_EXPORT void Initialize(Platform*, InterfaceRegistry*);
 
 // Get the V8 Isolate for the main thread.
 // initialize must have been called first.
@@ -60,8 +62,9 @@ BLINK_EXPORT void SetMockThemeEnabledForTest(bool);
 BLINK_EXPORT void SetFontAntialiasingEnabledForTest(bool);
 BLINK_EXPORT bool FontAntialiasingEnabledForTest();
 
-// Purge the plugin list cache. If |reloadPages| is true, any pages
-// containing plugins will be reloaded after refreshing the plugin list.
+// Purge the plugin list cache. This can cause a web-visible and out-of-spec
+// change to |navigator.plugins| if the plugin list has changed (see
+// https://crbug.com/735854). |reloadPages| is unsupported and must be false.
 BLINK_EXPORT void ResetPluginCache(bool reload_pages = false);
 
 // The embedder should call this periodically in an attempt to balance overall
@@ -74,6 +77,9 @@ BLINK_EXPORT void MemoryPressureNotificationToWorkerThreadIsolates(
 
 // Set the RAIL performance mode on all worker thread isolates.
 BLINK_EXPORT void SetRAILModeOnWorkerThreadIsolates(v8::RAILMode);
+
+// Logs Runtime Call Stats table for Blink.
+BLINK_EXPORT void LogRuntimeCallStats();
 
 }  // namespace blink
 

@@ -10,10 +10,13 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
 #include "content/public/browser/resource_throttle.h"
@@ -22,6 +25,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/navigation_handle_observer.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_content_browser_client.h"
@@ -58,7 +62,7 @@ class TrackingResourceDispatcherHostDelegate
     ASSERT_FALSE(throttle_created_);
     // If this is a request for the tracked URL, add a throttle to track it.
     if (request->url() == tracked_url_)
-      throttles->push_back(base::MakeUnique<TrackingThrottle>(request, this));
+      throttles->push_back(std::make_unique<TrackingThrottle>(request, this));
   }
 
   // Starts tracking a URL.  The request for previously tracked URL, if any,
@@ -75,7 +79,7 @@ class TrackingResourceDispatcherHostDelegate
 
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &TrackingResourceDispatcherHostDelegate::SetTrackedURLOnIOThread,
             base::Unretained(this), tracked_url, run_loop_->QuitClosure()));
   }
@@ -183,8 +187,9 @@ class CrossSiteTransferTest
   void SetUpOnMainThread() override {
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&CrossSiteTransferTest::InjectResourceDispatcherHostDelegate,
-                   base::Unretained(this)));
+        base::BindOnce(
+            &CrossSiteTransferTest::InjectResourceDispatcherHostDelegate,
+            base::Unretained(this)));
     host_resolver()->AddRule("*", "127.0.0.1");
     content::SetupCrossSiteRedirector(embedded_test_server());
     ASSERT_TRUE(embedded_test_server()->Start());
@@ -193,7 +198,7 @@ class CrossSiteTransferTest
   void TearDownOnMainThread() override {
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &CrossSiteTransferTest::RestoreResourceDisptcherHostDelegate,
             base::Unretained(this)));
   }
@@ -428,6 +433,7 @@ IN_PROC_BROWSER_TEST_P(CrossSiteTransferTest, NoLeakOnCrossSiteCancel) {
   // request for url2.
   tracking_delegate().SetTrackedURL(url2);
 
+  NavigationHandleObserver handle_observer(shell()->web_contents(), url2);
   // Don't wait for the navigation to complete, since that never happens in
   // this case.
   NavigateToURLContentInitiated(shell(), url2, false, false);
@@ -440,6 +446,7 @@ IN_PROC_BROWSER_TEST_P(CrossSiteTransferTest, NoLeakOnCrossSiteCancel) {
   // Make sure the request for url2 did not complete.
   EXPECT_FALSE(tracking_delegate().WaitForTrackedURLAndGetCompleted());
 
+  EXPECT_EQ(net::ERR_ABORTED, handle_observer.net_error_code());
   shell()->web_contents()->SetDelegate(old_delegate);
 }
 
@@ -475,7 +482,8 @@ IN_PROC_BROWSER_TEST_P(CrossSiteTransferTest, PostWithFileData) {
   EXPECT_TRUE(delegate->file_chosen());
 
   // Remember the old process id for a sanity check below.
-  int old_process_id = shell()->web_contents()->GetRenderProcessHost()->GetID();
+  int old_process_id =
+      shell()->web_contents()->GetMainFrame()->GetProcess()->GetID();
 
   // Submit the form.
   TestNavigationObserver form_post_observer(shell()->web_contents(), 1);
@@ -488,7 +496,8 @@ IN_PROC_BROWSER_TEST_P(CrossSiteTransferTest, PostWithFileData) {
             shell()->web_contents()->GetLastCommittedURL());
 
   // Verify that the test really verifies access of a *new* renderer process.
-  int new_process_id = shell()->web_contents()->GetRenderProcessHost()->GetID();
+  int new_process_id =
+      shell()->web_contents()->GetMainFrame()->GetProcess()->GetID();
   ASSERT_NE(new_process_id, old_process_id);
 
   // MAIN VERIFICATION: Check if the new renderer process is able to read the
@@ -509,6 +518,97 @@ IN_PROC_BROWSER_TEST_P(CrossSiteTransferTest, PostWithFileData) {
               ::testing::HasSubstr(file_path.BaseName().AsUTF8Unsafe()));
   EXPECT_THAT(actual_page_body,
               ::testing::HasSubstr("form-data; name=\"file\""));
+}
+
+// Test that verifies that if navigation originator doesn't have access to a
+// file, then no access is granted after a cross-process transfer of POST data.
+// This is a regression test for https://crbug.com/726067.
+//
+// This test is somewhat similar to
+// http/tests/navigation/form-targets-cross-site-frame-post.html layout test
+// except that it 1) tests with files, 2) simulates a malicious scenario and 3)
+// verifies file access (all of these 3 things are not possible with layout
+// tests).
+//
+// This test is very similar to CrossSiteTransferTest.PostWithFileData above,
+// except that it simulates a malicious form / POST originator.
+IN_PROC_BROWSER_TEST_P(CrossSiteTransferTest, MaliciousPostWithFileData) {
+  // The initial test window is a named form target.
+  GURL initial_target_url(
+      embedded_test_server()->GetURL("initial-target.com", "/title1.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), initial_target_url));
+  WebContents* target_contents = shell()->web_contents();
+  EXPECT_TRUE(ExecuteScript(target_contents, "window.name = 'form-target';"));
+
+  // Create a new window containing a form targeting |target_contents|.
+  GURL form_url(embedded_test_server()->GetURL(
+      "main.com", "/form_that_posts_cross_site.html"));
+  Shell* other_window = OpenPopup(target_contents, form_url, "form-window");
+  WebContents* form_contents = other_window->web_contents();
+  EXPECT_TRUE(ExecuteScript(
+      form_contents,
+      "document.getElementById('file-form').target = 'form-target';"));
+
+  // Verify the current locations and process placement of |target_contents|
+  // and |form_contents|.
+  EXPECT_EQ(initial_target_url, target_contents->GetLastCommittedURL());
+  EXPECT_EQ(form_url, form_contents->GetLastCommittedURL());
+  EXPECT_NE(target_contents->GetMainFrame()->GetProcess()->GetID(),
+            form_contents->GetMainFrame()->GetProcess()->GetID());
+
+  // Prepare a file to upload.
+  base::ThreadRestrictions::ScopedAllowIO allow_io_for_temp_dir;
+  base::ScopedTempDir temp_dir;
+  base::FilePath file_path;
+  std::string file_content("test-file-content");
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir.GetPath(), &file_path));
+  ASSERT_LT(
+      0, base::WriteFile(file_path, file_content.data(), file_content.size()));
+
+  // Fill out the form to refer to the test file.
+  std::unique_ptr<FileChooserDelegate> delegate(
+      new FileChooserDelegate(file_path));
+  form_contents->Focus();
+  form_contents->SetDelegate(delegate.get());
+  EXPECT_TRUE(
+      ExecuteScript(form_contents, "document.getElementById('file').click();"));
+  EXPECT_TRUE(delegate->file_chosen());
+  ChildProcessSecurityPolicyImpl* security_policy =
+      ChildProcessSecurityPolicyImpl::GetInstance();
+  EXPECT_TRUE(security_policy->CanReadFile(
+      form_contents->GetMainFrame()->GetProcess()->GetID(), file_path));
+
+  // Simulate a malicious situation, where the renderer doesn't really have
+  // access to the file.
+  security_policy->RevokeAllPermissionsForFile(
+      form_contents->GetMainFrame()->GetProcess()->GetID(), file_path);
+  EXPECT_FALSE(security_policy->CanReadFile(
+      form_contents->GetMainFrame()->GetProcess()->GetID(), file_path));
+  EXPECT_FALSE(security_policy->CanReadFile(
+      target_contents->GetMainFrame()->GetProcess()->GetID(), file_path));
+
+  // Submit the form and wait until the malicious renderer gets killed.
+  RenderProcessHostWatcher process_exit_observer(
+      form_contents->GetMainFrame()->GetProcess(),
+      RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
+  EXPECT_TRUE(ExecuteScript(
+      form_contents,
+      "setTimeout(\n"
+      "  function() { document.getElementById('file-form').submit(); },\n"
+      "  0);"));
+  process_exit_observer.Wait();
+  EXPECT_FALSE(process_exit_observer.did_exit_normally());
+
+  // The target frame should still be at the original location - the malicious
+  // navigation should have been stopped.
+  EXPECT_EQ(initial_target_url, target_contents->GetLastCommittedURL());
+
+  // Both processes still shouldn't have access.
+  EXPECT_FALSE(security_policy->CanReadFile(
+      form_contents->GetMainFrame()->GetProcess()->GetID(), file_path));
+  EXPECT_FALSE(security_policy->CanReadFile(
+      target_contents->GetMainFrame()->GetProcess()->GetID(), file_path));
 }
 
 INSTANTIATE_TEST_CASE_P(CrossSiteTransferTest,

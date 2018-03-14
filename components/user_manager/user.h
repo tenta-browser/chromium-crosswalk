@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "base/callback_forward.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
@@ -28,6 +29,10 @@ class SupervisedUserManagerImpl;
 class UserAddingScreenTest;
 class UserImageManagerImpl;
 class UserSessionManager;
+}
+
+namespace policy {
+class ProfilePolicyConnectorTest;
 }
 
 namespace user_manager {
@@ -66,24 +71,6 @@ class USER_MANAGER_EXPORT User : public UserInfo {
     USER_IMAGE_EXTERNAL = -1,
   } UserImageType;
 
-  // This enum is used to define the buckets for an enumerated UMA histogram.
-  // Hence,
-  //   (a) existing enumerated constants should never be deleted or reordered,
-  //   (b) new constants should only be appended at the end of the enumeration.
-  enum WallpaperType {
-    DAILY = 0,         // Surprise wallpaper. Changes once a day if enabled.
-    CUSTOMIZED = 1,    // Selected by user.
-    DEFAULT = 2,       // Default.
-    /* UNKNOWN = 3 */  // Removed.
-    ONLINE = 4,        // WallpaperInfo.location denotes an URL.
-    POLICY = 5,        // Controlled by policy, can't be changed by the user.
-    THIRDPARTY = 6,    // Current wallpaper is set by a third party app.
-    DEVICE = 7,        // Current wallpaper is the device policy controlled
-                       // wallpaper. It shows on the login screen if the device
-                       // is an enterprise managed device.
-    WALLPAPER_TYPE_COUNT = 8
-  };
-
   // Returns true if user type has gaia account.
   static bool TypeHasGaiaAccount(UserType user_type);
 
@@ -99,9 +86,6 @@ class USER_MANAGER_EXPORT User : public UserInfo {
 
   // Returns the user type.
   virtual UserType GetType() const = 0;
-
-  // Allows managing child status of the user. Used for RegularUser.
-  virtual void SetIsChild(bool is_child);
 
   // Returns true if user has gaia account. True for users of types
   // USER_TYPE_REGULAR and USER_TYPE_CHILD.
@@ -190,6 +174,12 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   // True if the user Profile is created.
   bool is_profile_created() const { return profile_is_created_; }
 
+  static User* CreatePublicAccountUserForTesting(const AccountId& account_id) {
+    return CreatePublicAccountUser(account_id);
+  }
+
+  void AddProfileCreatedObserver(base::OnceClosure on_profile_created);
+
  protected:
   friend class UserManagerBase;
   friend class chromeos::ChromeUserManagerImpl;
@@ -202,11 +192,13 @@ class USER_MANAGER_EXPORT User : public UserInfo {
   friend class chromeos::FakeChromeUserManager;
   friend class chromeos::MockUserManager;
   friend class chromeos::UserAddingScreenTest;
+  friend class policy::ProfilePolicyConnectorTest;
   FRIEND_TEST_ALL_PREFIXES(UserTest, DeviceLocalAccountAffiliation);
   FRIEND_TEST_ALL_PREFIXES(UserTest, UserSessionInitialized);
 
   // Do not allow anyone else to create new User instances.
-  static User* CreateRegularUser(const AccountId& account_id);
+  static User* CreateRegularUser(const AccountId& account_id,
+                                 const UserType user_type);
   static User* CreateGuestUser(const AccountId& guest_account_id);
   static User* CreateKioskAppUser(const AccountId& kiosk_app_account_id);
   static User* CreateArcKioskAppUser(const AccountId& arc_kiosk_account_id);
@@ -267,7 +259,7 @@ class USER_MANAGER_EXPORT User : public UserInfo {
 
   void set_is_active(bool is_active) { is_active_ = is_active; }
 
-  void set_profile_is_created() { profile_is_created_ = true; }
+  void SetProfileIsCreated();
 
   // True if user has google account (not a guest or managed user).
   bool has_gaia_account() const;
@@ -319,6 +311,8 @@ class USER_MANAGER_EXPORT User : public UserInfo {
 
   // True if the user is affiliated to the device.
   bool is_affiliated_ = false;
+
+  std::vector<base::OnceClosure> on_profile_created_observers_;
 
   DISALLOW_COPY_AND_ASSIGN(User);
 };

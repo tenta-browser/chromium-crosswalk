@@ -5,13 +5,10 @@
 #ifndef PasswordCredential_h
 #define PasswordCredential_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/core/v8/SerializedScriptValue.h"
-#include "bindings/modules/v8/FormDataOrURLSearchParams.h"
 #include "modules/ModulesExport.h"
-#include "modules/credentialmanager/SiteBoundCredential.h"
+#include "modules/credentialmanager/Credential.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "platform/network/EncodedFormData.h"
 #include "platform/weborigin/KURL.h"
 
 namespace blink {
@@ -20,9 +17,7 @@ class HTMLFormElement;
 class PasswordCredentialData;
 class WebPasswordCredential;
 
-using CredentialPostBodyType = FormDataOrURLSearchParams;
-
-class MODULES_EXPORT PasswordCredential final : public SiteBoundCredential {
+class MODULES_EXPORT PasswordCredential final : public Credential {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -32,23 +27,9 @@ class MODULES_EXPORT PasswordCredential final : public SiteBoundCredential {
   static PasswordCredential* Create(WebPasswordCredential*);
 
   // PasswordCredential.idl
-  void setIdName(const String& name) { id_name_ = name; }
-  const String& idName() const { return id_name_; }
-
-  void setPasswordName(const String& name) { password_name_ = name; }
-  const String& passwordName() const { return password_name_; }
-
-  void setAdditionalData(const CredentialPostBodyType& data) {
-    additional_data_ = data;
-  }
-  void additionalData(CredentialPostBodyType& out) const {
-    out = additional_data_;
-  }
-
-  // Internal methods
-  PassRefPtr<EncodedFormData> EncodeFormData(String& content_type) const;
-  const String& Password() const;
-  DECLARE_VIRTUAL_TRACE();
+  const String& password() const;
+  const String& name() const;
+  const KURL& iconURL() const;
 
  private:
   PasswordCredential(WebPasswordCredential*);
@@ -56,10 +37,6 @@ class MODULES_EXPORT PasswordCredential final : public SiteBoundCredential {
                      const String& password,
                      const String& name,
                      const KURL& icon);
-
-  String id_name_;
-  String password_name_;
-  CredentialPostBodyType additional_data_;
 };
 
 }  // namespace blink

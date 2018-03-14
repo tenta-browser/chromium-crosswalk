@@ -101,18 +101,23 @@ _REVISION_NEGATIVE_FILTER['HEAD'] = [
     'BasicMouseInterfaceTest.testDraggingElementWithMouseMovesItToAnotherList',
     # https://bugs.chromium.org/p/chromedriver/issues/detail?id=1674
     'WindowSwitchingTest.testShouldBeAbleToIterateOverAllOpenWindows',
+    # https://bugs.chromium.org/p/chromedriver/issues/detail?id=1138
+    'AlertsTest.testSettingTheValueOfAnAlertThrows',
+    # https://bugs.chromium.org/p/chromedriver/issues/detail?id=1910
+    'AlertsTest.testPromptShouldUseDefaultValueIfNoKeysSent',
+    'UnexpectedAlertBehaviorTest.canAcceptUnhandledAlert',
+    'UnexpectedAlertBehaviorTest.canSpecifyUnhandledAlertBehaviourUsingCapabilities',
+    # https://bugs.chromium.org/p/chromium/issues/detail?id=764519
+    'FrameSwitchingTest.testShouldBeAbleToClickInAFrameThatRewritesTopWindowLocation',
+    # https://bugs.chromium.org/p/chromedriver/issues/detail?id=2025
+    'PageLoadingTest.testShouldBeAbleToGetAFragmentOnTheCurrentPage',
 ]
-_REVISION_NEGATIVE_FILTER['58'] = (
+
+_REVISION_NEGATIVE_FILTER['63'] = (
     _REVISION_NEGATIVE_FILTER['HEAD'] + [
-        # https://bugs.chromium.org/p/chromedriver/issues/detail?id=1674
-        'WindowSwitchingTest.testShouldBeAbleToIterateOverAllOpenWindows',
-    ]
-)
-_REVISION_NEGATIVE_FILTER['57'] = (
-    _REVISION_NEGATIVE_FILTER['HEAD'] + [
-        # https://bugs.chromium.org/p/chromedriver/issues/detail?id=1625
-        'TakesScreenshotTest.*',
-        'WindowTest.*',
+        # https://bugs.chromium.org/p/chromedriver/issues/detail?id=2025
+        'MiscTest.testStimulatesStrangeOnloadInteractionInFirefox',
+	'PageLoadingTest.testShouldNotHangIfDocumentOpenCallIsNeverFollowedByDocumentCloseCall',
     ]
 )
 
@@ -146,6 +151,10 @@ _OS_NEGATIVE_FILTER['mac'] = [
     'TakesScreenshotTest.testShouldCaptureScreenshotAtFramePage',
     # Flaky: https://bugs.chromium.org/p/chromedriver/issues/detail?id=1149
     'ChromeDriverTests.testShouldAllowTheUserToSwitchToAnIFrameAndRemainFocusedOnIt',
+    # https://bugs.chromium.org/p/chromedriver/issues/detail?id=1857
+    'TakesScreenshotTest.testShouldCaptureScreenshot',
+    'TakesScreenshotTest.testShouldCaptureScreenshotAtFramePageAfterSwitching',
+    'TakesScreenshotTest.testShouldCaptureScreenshotAtIFramePageAfterSwitching',
 ]
 
 _SPECIFIC_OS_REVISION_NEGATIVE_FILTER = {}
@@ -225,11 +234,39 @@ _OS_NEGATIVE_FILTER['android:chrome'] = [
 
     # https://bugs.chromium.org/p/chromedriver/issues/detail?id=1478
     'WindowSwitchingTest.*',
+
+    # https://bugs.chromium.org/p/chromedriver/issues/detail?id=1878
+    'CombinedInputActionsTest.testSelectingMultipleItems',
+    'CombinedInputActionsTest.testHoldingDownShiftKeyWhileClicking',
+    'BasicMouseInterfaceTest.testDoubleClick',
+    'BasicMouseInterfaceTest.testContextClick',
+    'CorrectEventFiringTest.testShouldFireMouseUpEventWhenClicking',
+
+    # https://bugs.chromium.org/p/chromedriver/issues/detail?id=1960
+    'CorrectEventFiringTest.testShouldNotThrowIfEventHandlerThrows',
+    'CorrectEventFiringTest.testShouldFireMouseOverEventWhenClicking',
+    'CorrectEventFiringTest.testShouldFireTwoClickEventsWhenClickingOnALabel',
+    'CorrectEventFiringTest.testShouldIssueClickEvents',
+    'CorrectEventFiringTest.testShouldFireMouseMoveEventWhenClicking',
+    'CombinedInputActionsTest.testChordControlCutAndPaste',
+    'BasicKeyboardInterfaceTest.testSendingKeysWithShiftPressed',
+    'BasicKeyboardInterfaceTest.testBasicKeyboardInputOnActiveElement',
+    'BasicKeyboardInterfaceTest.testSendingKeyUp',
+    'BasicKeyboardInterfaceTest.testSendingKeyDownOnly',
+    'BasicMouseInterfaceTest.testMoveAndClick',
+    'BasicMouseInterfaceTest.testShouldClickElementInIFrame',
+    'CombinedInputActionsTest.testCanClickOnLinks',
 ]
 _OS_NEGATIVE_FILTER['android:chrome_stable'] = (
     _OS_NEGATIVE_FILTER['android:chrome'] + [
          # https://bugs.chromium.org/p/chromedriver/issues/detail?id=998
         'ImplicitWaitTest.testShouldImplicitlyWaitForASingleElement',
+         # https://bugs.chromium.org/p/chromedriver/issues/detail?id=1960
+        'CorrectEventFiringTest.testShouldFireMouseDownEventWhenClicking',
+        # https://bugs.chromium.org/p/chromedriver/issues/detail?id=2076
+        'CorrectEventFiringTest.testShouldReportTheXAndYCoordinatesWhenClicking',
+        # https://bugs.chromium.org/p/chromedriver/issues/detail?id=2077
+        'CorrectEventFiringTest.testShouldEmitClickEventWhenClickingOnATextInputElement',
     ]
 )
 

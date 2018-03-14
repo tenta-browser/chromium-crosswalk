@@ -8,75 +8,105 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/memory/singleton.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/session_manager_client.h"
 #include "components/arc/arc_bridge_service.h"
-
-namespace {
-
-const int kRequestProcessListPeriodInMinutes = 5;
-const char kArcProcessNamePrefix[] = "org.chromium.arc.";
-const char kGmsProcessNamePrefix[] = "com.google.android.gms";
-const char kBootProgressEnableScreen[] = "boot_progress_enable_screen";
-
-}  // namespace
+#include "components/arc/arc_browser_context_keyed_service_factory_base.h"
 
 namespace arc {
 
-ArcMetricsService::ArcMetricsService(ArcBridgeService* bridge_service)
-    : ArcService(bridge_service),
-      binding_(this),
+namespace {
+
+constexpr base::TimeDelta kUmaMinTime = base::TimeDelta::FromMilliseconds(1);
+constexpr base::TimeDelta kUmaMaxTime = base::TimeDelta::FromSeconds(60);
+constexpr int kUmaNumBuckets = 50;
+
+constexpr base::TimeDelta kRequestProcessListPeriod =
+    base::TimeDelta::FromMinutes(5);
+constexpr char kArcProcessNamePrefix[] = "org.chromium.arc.";
+constexpr char kGmsProcessNamePrefix[] = "com.google.android.gms";
+constexpr char kBootProgressEnableScreen[] = "boot_progress_enable_screen";
+
+std::string BootTypeToString(mojom::BootType boot_type) {
+  switch (boot_type) {
+    case mojom::BootType::UNKNOWN:
+      break;
+    case mojom::BootType::FIRST_BOOT:
+      return ".FirstBoot";
+    case mojom::BootType::FIRST_BOOT_AFTER_UPDATE:
+      return ".FirstBootAfterUpdate";
+    case mojom::BootType::REGULAR_BOOT:
+      return ".RegularBoot";
+  }
+  NOTREACHED();
+  return "";
+}
+
+// Singleton factory for ArcMetricsService.
+class ArcMetricsServiceFactory
+    : public internal::ArcBrowserContextKeyedServiceFactoryBase<
+          ArcMetricsService,
+          ArcMetricsServiceFactory> {
+ public:
+  // Factory name used by ArcBrowserContextKeyedServiceFactoryBase.
+  static constexpr const char* kName = "ArcMetricsServiceFactory";
+
+  static ArcMetricsServiceFactory* GetInstance() {
+    return base::Singleton<ArcMetricsServiceFactory>::get();
+  }
+
+ private:
+  friend base::DefaultSingletonTraits<ArcMetricsServiceFactory>;
+  ArcMetricsServiceFactory() = default;
+  ~ArcMetricsServiceFactory() override = default;
+};
+
+}  // namespace
+
+// static
+BrowserContextKeyedServiceFactory* ArcMetricsService::GetFactory() {
+  return ArcMetricsServiceFactory::GetInstance();
+}
+
+// static
+ArcMetricsService* ArcMetricsService::GetForBrowserContext(
+    content::BrowserContext* context) {
+  return ArcMetricsServiceFactory::GetForBrowserContext(context);
+}
+
+ArcMetricsService::ArcMetricsService(content::BrowserContext* context,
+                                     ArcBridgeService* bridge_service)
+    : arc_bridge_service_(bridge_service),
       process_observer_(this),
       weak_ptr_factory_(this) {
-  arc_bridge_service()->metrics()->AddObserver(this);
-  arc_bridge_service()->process()->AddObserver(&process_observer_);
+  arc_bridge_service_->metrics()->SetHost(this);
+  arc_bridge_service_->process()->AddObserver(&process_observer_);
 }
 
 ArcMetricsService::~ArcMetricsService() {
-  DCHECK(CalledOnValidThread());
-  arc_bridge_service()->process()->RemoveObserver(&process_observer_);
-  arc_bridge_service()->metrics()->RemoveObserver(this);
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  arc_bridge_service_->process()->RemoveObserver(&process_observer_);
+  arc_bridge_service_->metrics()->SetHost(nullptr);
 }
 
-bool ArcMetricsService::CalledOnValidThread() {
-  // Make sure access to the Chrome clipboard is happening in the UI thread.
-  return thread_checker_.CalledOnValidThread();
-}
-
-void ArcMetricsService::OnInstanceReady() {
-  VLOG(2) << "Start metrics service.";
-  // Retrieve ARC start time from session manager.
-  chromeos::SessionManagerClient* session_manager_client =
-      chromeos::DBusThreadManager::Get()->GetSessionManagerClient();
-  session_manager_client->GetArcStartTime(
-      base::Bind(&ArcMetricsService::OnArcStartTimeRetrieved,
-                 weak_ptr_factory_.GetWeakPtr()));
-}
-
-void ArcMetricsService::OnInstanceClosed() {
-  VLOG(2) << "Close metrics service.";
-  DCHECK(CalledOnValidThread());
-  if (binding_.is_bound())
-    binding_.Unbind();
-}
-
-void ArcMetricsService::OnProcessInstanceReady() {
+void ArcMetricsService::OnProcessConnectionReady() {
   VLOG(2) << "Start updating process list.";
-  timer_.Start(FROM_HERE,
-               base::TimeDelta::FromMinutes(kRequestProcessListPeriodInMinutes),
-               this, &ArcMetricsService::RequestProcessList);
+  timer_.Start(FROM_HERE, kRequestProcessListPeriod, this,
+               &ArcMetricsService::RequestProcessList);
 }
 
-void ArcMetricsService::OnProcessInstanceClosed() {
+void ArcMetricsService::OnProcessConnectionClosed() {
   VLOG(2) << "Stop updating process list.";
   timer_.Stop();
 }
 
 void ArcMetricsService::RequestProcessList() {
   mojom::ProcessInstance* process_instance = ARC_GET_INSTANCE_FOR_METHOD(
-      arc_bridge_service()->process(), RequestProcessList);
+      arc_bridge_service_->process(), RequestProcessList);
   if (!process_instance)
     return;
   VLOG(2) << "RequestProcessList";
@@ -111,52 +141,51 @@ void ArcMetricsService::ParseProcessList(
 }
 
 void ArcMetricsService::OnArcStartTimeRetrieved(
-    bool success,
-    base::TimeTicks arc_start_time) {
-  DCHECK(CalledOnValidThread());
-  if (!success) {
+    std::vector<mojom::BootProgressEventPtr> events,
+    mojom::BootType boot_type,
+    base::Optional<base::TimeTicks> arc_start_time) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  if (!arc_start_time.has_value()) {
     LOG(ERROR) << "Failed to retrieve ARC start timeticks.";
     return;
   }
-  auto* instance =
-      ARC_GET_INSTANCE_FOR_METHOD(arc_bridge_service()->metrics(), Init);
-  if (!instance)
-    return;
+  VLOG(2) << "ARC start @" << arc_start_time.value();
 
-  // The binding of host interface is deferred until the ARC start time is
-  // retrieved here because it prevents race condition of the ARC start
-  // time availability in ReportBootProgress().
-  if (!binding_.is_bound()) {
-    mojom::MetricsHostPtr host_ptr;
-    binding_.Bind(mojo::MakeRequest(&host_ptr));
-    instance->Init(std::move(host_ptr));
-  }
-  arc_start_time_ = arc_start_time;
-  VLOG(2) << "ARC start @" << arc_start_time_;
-}
-
-void ArcMetricsService::ReportBootProgress(
-    std::vector<mojom::BootProgressEventPtr> events) {
-  DCHECK(CalledOnValidThread());
-  int64_t arc_start_time_in_ms =
-      (arc_start_time_ - base::TimeTicks()).InMilliseconds();
+  DCHECK_NE(mojom::BootType::UNKNOWN, boot_type);
+  const std::string suffix = BootTypeToString(boot_type);
   for (const auto& event : events) {
     VLOG(2) << "Report boot progress event:" << event->event << "@"
             << event->uptimeMillis;
-    std::string title = "Arc." + event->event;
-    base::TimeDelta elapsed_time = base::TimeDelta::FromMilliseconds(
-        event->uptimeMillis - arc_start_time_in_ms);
-    // Note: This leaks memory, which is expected behavior.
-    base::HistogramBase* histogram = base::Histogram::FactoryTimeGet(
-        title, base::TimeDelta::FromMilliseconds(1),
-        base::TimeDelta::FromSeconds(30), 50,
-        base::HistogramBase::kUmaTargetedHistogramFlag);
-    histogram->AddTime(elapsed_time);
-    if (event->event.compare(kBootProgressEnableScreen) == 0)
-      UMA_HISTOGRAM_CUSTOM_TIMES("Arc.AndroidBootTime", elapsed_time,
-                                 base::TimeDelta::FromMilliseconds(1),
-                                 base::TimeDelta::FromSeconds(30), 50);
+    const std::string name = "Arc." + event->event + suffix;
+    const base::TimeTicks uptime =
+        base::TimeDelta::FromMilliseconds(event->uptimeMillis) +
+        base::TimeTicks();
+    const base::TimeDelta elapsed_time = uptime - arc_start_time.value();
+    base::UmaHistogramCustomTimes(name, elapsed_time, kUmaMinTime, kUmaMaxTime,
+                                  kUmaNumBuckets);
+    if (event->event.compare(kBootProgressEnableScreen) == 0) {
+      base::UmaHistogramCustomTimes("Arc.AndroidBootTime" + suffix,
+                                    elapsed_time, kUmaMinTime, kUmaMaxTime,
+                                    kUmaNumBuckets);
+    }
   }
+}
+
+void ArcMetricsService::ReportBootProgress(
+    std::vector<mojom::BootProgressEventPtr> events,
+    mojom::BootType boot_type) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  if (boot_type == mojom::BootType::UNKNOWN) {
+    LOG(WARNING) << "boot_type is unknown. Skip recording UMA.";
+    return;
+  }
+
+  // Retrieve ARC start time from session manager.
+  chromeos::SessionManagerClient* session_manager_client =
+      chromeos::DBusThreadManager::Get()->GetSessionManagerClient();
+  session_manager_client->GetArcStartTime(base::BindOnce(
+      &ArcMetricsService::OnArcStartTimeRetrieved,
+      weak_ptr_factory_.GetWeakPtr(), std::move(events), boot_type));
 }
 
 ArcMetricsService::ProcessObserver::ProcessObserver(
@@ -165,12 +194,12 @@ ArcMetricsService::ProcessObserver::ProcessObserver(
 
 ArcMetricsService::ProcessObserver::~ProcessObserver() = default;
 
-void ArcMetricsService::ProcessObserver::OnInstanceReady() {
-  arc_metrics_service_->OnProcessInstanceReady();
+void ArcMetricsService::ProcessObserver::OnConnectionReady() {
+  arc_metrics_service_->OnProcessConnectionReady();
 }
 
-void ArcMetricsService::ProcessObserver::OnInstanceClosed() {
-  arc_metrics_service_->OnProcessInstanceClosed();
+void ArcMetricsService::ProcessObserver::OnConnectionClosed() {
+  arc_metrics_service_->OnProcessConnectionClosed();
 }
 
 }  // namespace arc

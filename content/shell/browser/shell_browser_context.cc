@@ -15,6 +15,7 @@
 #include "base/threading/thread.h"
 #include "build/build_config.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/network_session_configurator/common/network_switches.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_switches.h"
@@ -34,8 +35,7 @@
 namespace content {
 
 ShellBrowserContext::ShellResourceContext::ShellResourceContext()
-    : getter_(NULL) {
-}
+    : getter_(nullptr) {}
 
 ShellBrowserContext::ShellResourceContext::~ShellResourceContext() {
 }
@@ -58,7 +58,7 @@ ShellBrowserContext::ShellBrowserContext(bool off_the_record,
       ignore_certificate_errors_(false),
       off_the_record_(off_the_record),
       net_log_(net_log),
-      guest_manager_(NULL) {
+      guest_manager_(nullptr) {
   InitWhileIOAllowed();
   BrowserContextDependencyManager::GetInstance()->
       CreateBrowserContextServices(this);
@@ -76,6 +76,12 @@ ShellBrowserContext::~ShellBrowserContext() {
       BrowserThread::IO, FROM_HERE, resource_context_.release());
   }
   ShutdownStoragePartitions();
+  if (url_request_getter_) {
+    BrowserThread::PostTask(
+        BrowserThread::IO, FROM_HERE,
+        base::BindOnce(&ShellURLRequestContextGetter::NotifyContextShuttingDown,
+                       url_request_getter_));
+  }
 }
 
 void ShellBrowserContext::InitWhileIOAllowed() {
@@ -123,10 +129,12 @@ void ShellBrowserContext::InitWhileIOAllowed() {
   BrowserContext::Initialize(this, path_);
 }
 
+#if !defined(OS_ANDROID)
 std::unique_ptr<ZoomLevelDelegate> ShellBrowserContext::CreateZoomLevelDelegate(
     const base::FilePath&) {
   return std::unique_ptr<ZoomLevelDelegate>();
 }
+#endif  // !defined(OS_ANDROID)
 
 base::FilePath ShellBrowserContext::GetPath() const {
   return path_;
@@ -151,9 +159,8 @@ ShellBrowserContext::CreateURLRequestContextGetter(
     ProtocolHandlerMap* protocol_handlers,
     URLRequestInterceptorScopedVector request_interceptors) {
   return new ShellURLRequestContextGetter(
-      ignore_certificate_errors_, GetPath(),
+      ignore_certificate_errors_, off_the_record_, GetPath(),
       BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
-      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE),
       protocol_handlers, std::move(request_interceptors), net_log_);
 }
 
@@ -198,15 +205,15 @@ BrowserPluginGuestManager* ShellBrowserContext::GetGuestManager() {
 }
 
 storage::SpecialStoragePolicy* ShellBrowserContext::GetSpecialStoragePolicy() {
-  return NULL;
+  return nullptr;
 }
 
 PushMessagingService* ShellBrowserContext::GetPushMessagingService() {
-  return NULL;
+  return nullptr;
 }
 
 SSLHostStateDelegate* ShellBrowserContext::GetSSLHostStateDelegate() {
-  return NULL;
+  return nullptr;
 }
 
 PermissionManager* ShellBrowserContext::GetPermissionManager() {
@@ -215,10 +222,19 @@ PermissionManager* ShellBrowserContext::GetPermissionManager() {
   return permission_manager_.get();
 }
 
+BackgroundFetchDelegate* ShellBrowserContext::GetBackgroundFetchDelegate() {
+  return nullptr;
+}
+
 BackgroundSyncController* ShellBrowserContext::GetBackgroundSyncController() {
   if (!background_sync_controller_)
     background_sync_controller_.reset(new MockBackgroundSyncController());
   return background_sync_controller_.get();
+}
+
+BrowsingDataRemoverDelegate*
+ShellBrowserContext::GetBrowsingDataRemoverDelegate() {
+  return nullptr;
 }
 
 }  // namespace content

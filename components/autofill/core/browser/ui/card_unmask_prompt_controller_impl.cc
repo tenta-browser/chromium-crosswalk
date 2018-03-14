@@ -173,13 +173,12 @@ CardUnmaskPromptControllerImpl::GetCloseReasonEvent() {
     return unmasking_number_of_attempts_ == 1
         ? AutofillMetrics::UNMASK_PROMPT_UNMASKED_CARD_FIRST_ATTEMPT
         : AutofillMetrics::UNMASK_PROMPT_UNMASKED_CARD_AFTER_FAILED_ATTEMPTS;
-  } else {
-    return AllowsRetry(unmasking_result_)
-        ? AutofillMetrics::
-            UNMASK_PROMPT_CLOSED_FAILED_TO_UNMASK_RETRIABLE_FAILURE
-        : AutofillMetrics::
-            UNMASK_PROMPT_CLOSED_FAILED_TO_UNMASK_NON_RETRIABLE_FAILURE;
   }
+  return AllowsRetry(unmasking_result_)
+             ? AutofillMetrics::
+                   UNMASK_PROMPT_CLOSED_FAILED_TO_UNMASK_RETRIABLE_FAILURE
+             : AutofillMetrics::
+                   UNMASK_PROMPT_CLOSED_FAILED_TO_UNMASK_NON_RETRIABLE_FAILURE;
 }
 
 void CardUnmaskPromptControllerImpl::OnUnmaskResponse(
@@ -225,25 +224,34 @@ base::string16 CardUnmaskPromptControllerImpl::GetWindowTitle() const {
       ShouldRequestExpirationDate()
           ? IDS_AUTOFILL_CARD_UNMASK_PROMPT_EXPIRED_TITLE
           : IDS_AUTOFILL_CARD_UNMASK_PROMPT_TITLE,
-      card_.TypeAndLastFourDigits());
+      card_.NetworkOrBankNameAndLastFourDigits());
 #endif
 }
 
 base::string16 CardUnmaskPromptControllerImpl::GetInstructionsMessage() const {
+// The prompt for server cards should reference Google Payments, whereas the
+// prompt for local cards should not.
 #if defined(OS_IOS)
   int ids;
   if (reason_ == AutofillClient::UNMASK_FOR_AUTOFILL &&
       ShouldRequestExpirationDate()) {
-    ids = IDS_AUTOFILL_CARD_UNMASK_PROMPT_INSTRUCTIONS_EXPIRED;
+    ids = card_.record_type() == autofill::CreditCard::LOCAL_CARD
+              ? IDS_AUTOFILL_CARD_UNMASK_PROMPT_INSTRUCTIONS_EXPIRED_LOCAL_CARD
+              : IDS_AUTOFILL_CARD_UNMASK_PROMPT_INSTRUCTIONS_EXPIRED;
   } else {
-    ids = IDS_AUTOFILL_CARD_UNMASK_PROMPT_INSTRUCTIONS;
+    ids = card_.record_type() == autofill::CreditCard::LOCAL_CARD
+              ? IDS_AUTOFILL_CARD_UNMASK_PROMPT_INSTRUCTIONS_LOCAL_CARD
+              : IDS_AUTOFILL_CARD_UNMASK_PROMPT_INSTRUCTIONS;
   }
   // The iOS UI shows the card details in the instructions text since they
   // don't fit in the title.
-  return l10n_util::GetStringFUTF16(ids, card_.TypeAndLastFourDigits());
+  return l10n_util::GetStringFUTF16(ids,
+                                    card_.NetworkOrBankNameAndLastFourDigits());
 #else
   return l10n_util::GetStringUTF16(
-      IDS_AUTOFILL_CARD_UNMASK_PROMPT_INSTRUCTIONS);
+      card_.record_type() == autofill::CreditCard::LOCAL_CARD
+          ? IDS_AUTOFILL_CARD_UNMASK_PROMPT_INSTRUCTIONS_LOCAL_CARD
+          : IDS_AUTOFILL_CARD_UNMASK_PROMPT_INSTRUCTIONS);
 #endif
 }
 
@@ -252,8 +260,8 @@ base::string16 CardUnmaskPromptControllerImpl::GetOkButtonLabel() const {
 }
 
 int CardUnmaskPromptControllerImpl::GetCvcImageRid() const {
-  return card_.type() == kAmericanExpressCard ? IDR_CREDIT_CARD_CVC_HINT_AMEX
-                                              : IDR_CREDIT_CARD_CVC_HINT;
+  return card_.network() == kAmericanExpressCard ? IDR_CREDIT_CARD_CVC_HINT_AMEX
+                                                 : IDR_CREDIT_CARD_CVC_HINT;
 }
 
 bool CardUnmaskPromptControllerImpl::ShouldRequestExpirationDate() const {
@@ -281,7 +289,7 @@ bool CardUnmaskPromptControllerImpl::InputCvcIsValid(
     const base::string16& input_text) const {
   base::string16 trimmed_text;
   base::TrimWhitespace(input_text, base::TRIM_ALL, &trimmed_text);
-  return IsValidCreditCardSecurityCode(trimmed_text, card_.type());
+  return IsValidCreditCardSecurityCode(trimmed_text, card_.network());
 }
 
 bool CardUnmaskPromptControllerImpl::InputExpirationIsValid(
@@ -310,7 +318,7 @@ bool CardUnmaskPromptControllerImpl::InputExpirationIsValid(
 }
 
 int CardUnmaskPromptControllerImpl::GetExpectedCvcLength() const {
-  return GetCvcLengthForCardType(card_.type());
+  return GetCvcLengthForCardType(card_.network());
 }
 
 base::TimeDelta CardUnmaskPromptControllerImpl::GetSuccessMessageDuration()

@@ -16,12 +16,12 @@ const int kInvalidDelegateId = -1;
 
 namespace content {
 
-AecDumpMessageFilter* AecDumpMessageFilter::g_filter = NULL;
+AecDumpMessageFilter* AecDumpMessageFilter::g_filter = nullptr;
 
 AecDumpMessageFilter::AecDumpMessageFilter(
     const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
     const scoped_refptr<base::SingleThreadTaskRunner>& main_task_runner)
-    : sender_(NULL),
+    : sender_(nullptr),
       delegate_id_counter_(1),
       io_task_runner_(io_task_runner),
       main_task_runner_(main_task_runner) {
@@ -31,7 +31,7 @@ AecDumpMessageFilter::AecDumpMessageFilter(
 
 AecDumpMessageFilter::~AecDumpMessageFilter() {
   DCHECK_EQ(g_filter, this);
-  g_filter = NULL;
+  g_filter = nullptr;
 }
 
 // static
@@ -48,13 +48,9 @@ void AecDumpMessageFilter::AddDelegate(
   int id = delegate_id_counter_++;
   delegates_[id] = delegate;
 
-  if (override_aec3_) {
-    delegate->OnAec3Enable(*override_aec3_);
-  }
-
   io_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&AecDumpMessageFilter::RegisterAecDumpConsumer, this, id));
+      base::BindOnce(&AecDumpMessageFilter::RegisterAecDumpConsumer, this, id));
 }
 
 void AecDumpMessageFilter::RemoveDelegate(
@@ -68,7 +64,13 @@ void AecDumpMessageFilter::RemoveDelegate(
 
   io_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&AecDumpMessageFilter::UnregisterAecDumpConsumer, this, id));
+      base::BindOnce(&AecDumpMessageFilter::UnregisterAecDumpConsumer, this,
+                     id));
+}
+
+base::Optional<bool> AecDumpMessageFilter::GetOverrideAec3() const {
+  DCHECK(main_task_runner_->BelongsToCurrentThread());
+  return override_aec3_;
 }
 
 void AecDumpMessageFilter::Send(IPC::Message* message) {
@@ -114,10 +116,10 @@ void AecDumpMessageFilter::OnFilterRemoved() {
 
 void AecDumpMessageFilter::OnChannelClosing() {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
-  sender_ = NULL;
+  sender_ = nullptr;
   main_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&AecDumpMessageFilter::DoChannelClosingOnDelegates, this));
+      base::BindOnce(&AecDumpMessageFilter::DoChannelClosingOnDelegates, this));
 }
 
 void AecDumpMessageFilter::OnEnableAecDump(
@@ -125,21 +127,21 @@ void AecDumpMessageFilter::OnEnableAecDump(
     IPC::PlatformFileForTransit file_handle) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
   main_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&AecDumpMessageFilter::DoEnableAecDump, this, id,
-                            file_handle));
+      FROM_HERE, base::BindOnce(&AecDumpMessageFilter::DoEnableAecDump, this,
+                                id, file_handle));
 }
 
 void AecDumpMessageFilter::OnDisableAecDump() {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
   main_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&AecDumpMessageFilter::DoDisableAecDump, this));
+      FROM_HERE, base::BindOnce(&AecDumpMessageFilter::DoDisableAecDump, this));
 }
 
-void AecDumpMessageFilter::OnEnableAec3(int id, bool enable) {
+void AecDumpMessageFilter::OnEnableAec3(bool enable) {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
   main_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&AecDumpMessageFilter::DoEnableAec3, this, id, enable));
+      base::BindOnce(&AecDumpMessageFilter::DoEnableAec3, this, enable));
 }
 
 void AecDumpMessageFilter::DoEnableAecDump(
@@ -185,13 +187,16 @@ int AecDumpMessageFilter::GetIdForDelegate(
   return kInvalidDelegateId;
 }
 
-void AecDumpMessageFilter::DoEnableAec3(int id, bool enable) {
+void AecDumpMessageFilter::DoEnableAec3(bool enable) {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
-  DelegateMap::iterator it = delegates_.find(id);
-  if (it != delegates_.end()) {
-    it->second->OnAec3Enable(enable);
-  }
+  // TODO(grunell): Remove enabling on delegates when clients have changed to
+  // enable before creating streams.
+  for (auto delegate : delegates_)
+    delegate.second->OnAec3Enable(enable);
   override_aec3_ = enable;
+  io_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&AecDumpMessageFilter::Send, this,
+                                new AudioProcessingMsg_Aec3Enabled()));
 }
 
 }  // namespace content

@@ -6,6 +6,7 @@
 
 #include "base/atomicops.h"
 #include "base/macros.h"
+#include "base/memory/singleton.h"
 #include "base/synchronization/cancellation_flag.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
@@ -110,7 +111,7 @@ void CPUThrottlingThread::InstallSignalHandler() {
 void CPUThrottlingThread::RestoreSignalHandler() {
   if (!signal_handler_installed_)
     return;
-  sigaction(SIGUSR2, &old_signal_handler_, 0);
+  sigaction(SIGUSR2, &old_signal_handler_, nullptr);
   signal_handler_installed_ = false;
 }
 
@@ -186,9 +187,8 @@ void CPUThrottlingThread::Stop() {
 #endif
 }
 
-DevToolsCPUThrottler::DevToolsCPUThrottler() {}
-
-DevToolsCPUThrottler::~DevToolsCPUThrottler() {}
+DevToolsCPUThrottler::DevToolsCPUThrottler() = default;
+DevToolsCPUThrottler::~DevToolsCPUThrottler() = default;
 
 void DevToolsCPUThrottler::SetThrottlingRate(double rate) {
   if (rate <= 1) {
@@ -202,6 +202,11 @@ void DevToolsCPUThrottler::SetThrottlingRate(double rate) {
   } else {
     throttling_thread_.reset(new CPUThrottlingThread(rate));
   }
+}
+
+// static
+DevToolsCPUThrottler* DevToolsCPUThrottler::GetInstance() {
+  return base::Singleton<DevToolsCPUThrottler>::get();
 }
 
 }  // namespace content

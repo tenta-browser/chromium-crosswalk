@@ -68,7 +68,7 @@ const char kIsAdditionalField[] = "isAdditional";
 
 void GetUiDevToolsTargets(base::ListValue& targets) {
   for (const auto& client_pair :
-       ui::devtools::UiDevToolsServer::GetClientNamesAndUrls()) {
+       ui_devtools::UiDevToolsServer::GetClientNamesAndUrls()) {
     auto target_data = base::MakeUnique<base::DictionaryValue>();
     target_data->SetString(kNameField, client_pair.first);
     target_data->SetString(kUrlField, client_pair.second);
@@ -353,42 +353,35 @@ void InspectUI::Inspect(const std::string& source_id,
                         const std::string& target_id) {
   scoped_refptr<DevToolsAgentHost> target = FindTarget(source_id, target_id);
   if (target) {
-    const std::string target_type = target->GetType();
     Profile* profile = Profile::FromBrowserContext(
         web_ui()->GetWebContents()->GetBrowserContext());
     DevToolsWindow::OpenDevToolsWindow(target, profile);
-    ForceUpdateIfNeeded(source_id, target_type);
   }
 }
 
 void InspectUI::Activate(const std::string& source_id,
                          const std::string& target_id) {
   scoped_refptr<DevToolsAgentHost> target = FindTarget(source_id, target_id);
-  if (target) {
-    const std::string target_type = target->GetType();
+  if (target)
     target->Activate();
-    ForceUpdateIfNeeded(source_id, target_type);
-  }
 }
 
 void InspectUI::Close(const std::string& source_id,
                       const std::string& target_id) {
   scoped_refptr<DevToolsAgentHost> target = FindTarget(source_id, target_id);
   if (target) {
-    const std::string target_type = target->GetType();
     target->Close();
-    ForceUpdateIfNeeded(source_id, target_type);
+    DevToolsTargetsUIHandler* handler = FindTargetHandler(source_id);
+    if (handler)
+      handler->ForceUpdate();
   }
 }
 
 void InspectUI::Reload(const std::string& source_id,
                        const std::string& target_id) {
   scoped_refptr<DevToolsAgentHost> target = FindTarget(source_id, target_id);
-  if (target) {
-    const std::string target_type = target->GetType();
+  if (target)
     target->Reload();
-    ForceUpdateIfNeeded(source_id, target_type);
-  }
 }
 
 void InspectUI::Open(const std::string& source_id,
@@ -613,17 +606,6 @@ void InspectUI::PopulateTargets(const std::string& source,
 
 void InspectUI::PopulateAdditionalTargets(const base::ListValue& targets) {
   web_ui()->CallJavascriptFunctionUnsafe("populateAdditionalTargets", targets);
-}
-
-void InspectUI::ForceUpdateIfNeeded(const std::string& source_id,
-                                    const std::string& target_type) {
-  // TODO(dgozman): remove this after moving discovery to protocol.
-  // See crbug.com/398049.
-  if (target_type != content::DevToolsAgentHost::kTypeServiceWorker)
-    return;
-  DevToolsTargetsUIHandler* handler = FindTargetHandler(source_id);
-  if (handler)
-    handler->ForceUpdate();
 }
 
 void InspectUI::PopulatePortStatus(const base::Value& status) {

@@ -8,14 +8,15 @@
 #include <stdint.h>
 
 #include <algorithm>
-#include <deque>
 #include <limits>
 #include <memory>
 
 #include "base/base64.h"
+#include "base/containers/circular_deque.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
 #include "base/rand_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -192,8 +193,6 @@ void CreatePassport(const std::string& domain,
 
 }  // namespace
 
-namespace chrome {
-
 class InternalAuthVerificationService {
  public:
   InternalAuthVerificationService()
@@ -226,7 +225,7 @@ class InternalAuthVerificationService {
     }
 
     // Record used tick to prevent reuse.
-    std::deque<int64_t>::iterator it =
+    base::circular_deque<int64_t>::iterator it =
         std::lower_bound(used_ticks_.begin(), used_ticks_.end(), tick);
     DCHECK(it == used_ticks_.end() || *it != tick);
     used_ticks_.insert(it, tick);
@@ -311,7 +310,7 @@ class InternalAuthVerificationService {
   // Keeps track of ticks of successfully verified passports to prevent their
   // reuse. Size of this container is kept reasonably low by purging outdated
   // ticks.
-  std::deque<int64_t> used_ticks_;
+  base::circular_deque<int64_t> used_ticks_;
 
   // Some ticks before |dark_tick_| were purged from |used_ticks_| container.
   // That means that we must not trust any tick less than or equal to dark tick.
@@ -320,18 +319,14 @@ class InternalAuthVerificationService {
   DISALLOW_COPY_AND_ASSIGN(InternalAuthVerificationService);
 };
 
-}  // namespace chrome
-
 namespace {
 
-static base::LazyInstance<chrome::InternalAuthVerificationService>::
-    DestructorAtExit g_verification_service = LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<InternalAuthVerificationService>::DestructorAtExit
+    g_verification_service = LAZY_INSTANCE_INITIALIZER;
 static base::LazyInstance<base::Lock>::Leaky
     g_verification_service_lock = LAZY_INSTANCE_INITIALIZER;
 
 }  // namespace
-
-namespace chrome {
 
 class InternalAuthGenerationService : public base::ThreadChecker {
  public:
@@ -388,8 +383,7 @@ class InternalAuthGenerationService : public base::ThreadChecker {
       int idx = static_cast<int>(used_ticks_.size()) -
           static_cast<int>(current_tick - tick + 1);
       if (idx < 0 || used_ticks_[idx] != tick) {
-        DCHECK(used_ticks_.end() ==
-            std::find(used_ticks_.begin(), used_ticks_.end(), tick));
+        DCHECK(!base::ContainsValue(used_ticks_, tick));
         return tick;
       }
     }
@@ -423,21 +417,17 @@ class InternalAuthGenerationService : public base::ThreadChecker {
 
   std::unique_ptr<crypto::HMAC> engine_;
   int64_t key_regeneration_tick_;
-  std::deque<int64_t> used_ticks_;
+  base::circular_deque<int64_t> used_ticks_;
 
   DISALLOW_COPY_AND_ASSIGN(InternalAuthGenerationService);
 };
 
-}  // namespace chrome
-
 namespace {
 
-static base::LazyInstance<chrome::InternalAuthGenerationService>::
-    DestructorAtExit g_generation_service = LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<InternalAuthGenerationService>::DestructorAtExit
+    g_generation_service = LAZY_INSTANCE_INITIALIZER;
 
 }  // namespace
-
-namespace chrome {
 
 // static
 bool InternalAuthVerification::VerifyPassport(
@@ -477,4 +467,3 @@ void InternalAuthGeneration::GenerateNewKey() {
   g_generation_service.Get().GenerateNewKey();
 }
 
-}  // namespace chrome

@@ -30,11 +30,14 @@
 
 #include "platform/graphics/LoggingCanvas.h"
 
+#include <unicode/unistr.h>
+#include "build/build_config.h"
 #include "platform/geometry/IntSize.h"
 #include "platform/graphics/ImageBuffer.h"
 #include "platform/graphics/skia/ImagePixelLocker.h"
 #include "platform/graphics/skia/SkiaUtils.h"
-#include "platform/image-encoders/PNGImageEncoder.h"
+#include "platform/image-encoders/ImageEncoder.h"
+#include "platform/wtf/ByteSwap.h"
 #include "platform/wtf/HexNumber.h"
 #include "platform/wtf/text/Base64.h"
 #include "platform/wtf/text/TextEncoding.h"
@@ -220,7 +223,7 @@ std::unique_ptr<JSONObject> ObjectForSkPath(const SkPath& path) {
   std::unique_ptr<JSONObject> path_item = JSONObject::Create();
   path_item->SetString("fillType", FillTypeName(path.getFillType()));
   path_item->SetString("convexity", ConvexityName(path.getConvexity()));
-  path_item->SetBoolean("isRect", path.isRect(0));
+  path_item->SetBoolean("isRect", path.isRect(nullptr));
   SkPath::Iter iter(path, false);
   SkPoint points[4];
   std::unique_ptr<JSONArray> path_points_array = JSONArray::Create();
@@ -249,8 +252,6 @@ String ColorTypeName(SkColorType color_type) {
       return "None";
     case kAlpha_8_SkColorType:
       return "A8";
-    case kIndex_8_SkColorType:
-      return "Index8";
     case kRGB_565_SkColorType:
       return "RGB565";
     case kARGB_4444_SkColorType:
@@ -266,20 +267,22 @@ String ColorTypeName(SkColorType color_type) {
 std::unique_ptr<JSONObject> ObjectForBitmapData(const SkBitmap& bitmap) {
   Vector<unsigned char> output;
 
-  if (sk_sp<SkImage> image = SkImage::MakeFromBitmap(bitmap)) {
-    ImagePixelLocker pixel_locker(image, kUnpremul_SkAlphaType,
-                                  kRGBA_8888_SkColorType);
-    ImageDataBuffer image_data(
-        IntSize(image->width(), image->height()),
-        static_cast<const unsigned char*>(pixel_locker.Pixels()));
+  SkPixmap src;
+  bool peekResult = bitmap.peekPixels(&src);
+  DCHECK(peekResult);
 
-    PNGImageEncoder::Encode(image_data, &output);
+  SkPngEncoder::Options options;
+  options.fFilterFlags = SkPngEncoder::FilterFlag::kSub;
+  options.fZLibLevel = 3;
+  options.fUnpremulBehavior = SkTransferFunctionBehavior::kIgnore;
+  if (!ImageEncoder::Encode(&output, src, options)) {
+    return nullptr;
   }
 
   std::unique_ptr<JSONObject> data_item = JSONObject::Create();
   data_item->SetString(
       "base64",
-      WTF::Base64Encode(reinterpret_cast<char*>(output.Data()), output.size()));
+      WTF::Base64Encode(reinterpret_cast<char*>(output.data()), output.size()));
   data_item->SetString("mimeType", "image/png");
   return data_item;
 }
@@ -326,15 +329,15 @@ String StringForSkColor(const SkColor& color) {
   Vector<LChar, 9> result;
   result.push_back('#');
   HexNumber::AppendUnsignedAsHex(color, result);
-  return String(result.Data(), result.size());
+  return String(result.data(), result.size());
 }
 
 void AppendFlagToString(String* flags_string, bool is_set, const String& name) {
   if (!is_set)
     return;
   if (flags_string->length())
-    flags_string->Append("|");
-  flags_string->Append(name);
+    flags_string->append("|");
+  flags_string->append(name);
 }
 
 String StringForSkPaintFlags(const SkPaint& paint) {
@@ -504,25 +507,28 @@ String ClipOpName(SkClipOp op) {
 String SaveLayerFlagsToString(SkCanvas::SaveLayerFlags flags) {
   String flags_string = "";
   if (flags & SkCanvas::kIsOpaque_SaveLayerFlag)
-    flags_string.Append("kIsOpaque_SaveLayerFlag ");
+    flags_string.append("kIsOpaque_SaveLayerFlag ");
   if (flags & SkCanvas::kPreserveLCDText_SaveLayerFlag)
-    flags_string.Append("kPreserveLCDText_SaveLayerFlag ");
+    flags_string.append("kPreserveLCDText_SaveLayerFlag ");
   return flags_string;
 }
 
-String TextEncodingCanonicalName(SkPaint::TextEncoding encoding) {
-  String name = TextEncodingName(encoding);
-  if (encoding == SkPaint::kUTF16_TextEncoding ||
-      encoding == SkPaint::kUTF32_TextEncoding)
-    name.Append("LE");
-  return name;
-}
-
-String StringForUTFText(const void* text,
-                        size_t length,
-                        SkPaint::TextEncoding encoding) {
-  return WTF::TextEncoding(TextEncodingCanonicalName(encoding))
-      .Decode((const char*)text, length);
+String StringForUTF32LEText(const void* text, size_t byte_length) {
+  icu::UnicodeString utf16;
+#if defined(ARCH_CPU_BIG_ENDIAN)
+  // Swap LE to BE
+  size_t char_length = length / sizeof(UChar32);
+  WTF::Vector<UChar32> utf32be(char_length);
+  for (size_t i = 0; i < char_length; ++i)
+    utf32be[i] = WTF::Bswap32(static_cast<UChar32*>(text)[i]);
+  utf16 = icu::UnicodeString::fromUTF32(utf32be.data(),
+                                        static_cast<int32_t>(byte_length));
+#else
+  utf16 = icu::UnicodeString::fromUTF32(reinterpret_cast<const UChar32*>(text),
+                                        static_cast<int32_t>(byte_length));
+#endif
+  return String(icu::toUCharPtr(utf16.getBuffer()),
+                static_cast<unsigned>(utf16.length()));
 }
 
 String StringForText(const void* text,
@@ -531,16 +537,19 @@ String StringForText(const void* text,
   SkPaint::TextEncoding encoding = paint.getTextEncoding();
   switch (encoding) {
     case SkPaint::kUTF8_TextEncoding:
+      return WTF::TextEncoding("UTF-8").Decode(
+          reinterpret_cast<const char*>(text), byte_length);
     case SkPaint::kUTF16_TextEncoding:
+      return WTF::TextEncoding("UTF-16LE")
+          .Decode(reinterpret_cast<const char*>(text), byte_length);
     case SkPaint::kUTF32_TextEncoding:
-      return StringForUTFText(text, byte_length, encoding);
+      return StringForUTF32LEText(text, byte_length);
     case SkPaint::kGlyphID_TextEncoding: {
       WTF::Vector<SkUnichar> data_vector(byte_length / 2);
-      SkUnichar* text_data = data_vector.Data();
+      SkUnichar* text_data = data_vector.data();
       paint.glyphsToUnichars(static_cast<const uint16_t*>(text),
                              byte_length / 2, text_data);
-      return WTF::UTF32LittleEndianEncoding().Decode(
-          reinterpret_cast<const char*>(text_data), byte_length * 2);
+      return StringForUTF32LEText(text, byte_length);
     }
     default:
       NOTREACHED();
@@ -578,11 +587,11 @@ JSONObject* AutoLogger::LogItemWithParams(const String& name) {
   JSONObject* item = LogItem(name);
   std::unique_ptr<JSONObject> params = JSONObject::Create();
   item->SetObject("params", std::move(params));
-  return item->GetObject("params");
+  return item->GetJSONObject("params");
 }
 
-LoggingCanvas::LoggingCanvas(int width, int height)
-    : InterceptingCanvasBase(width, height), log_(JSONArray::Create()) {}
+LoggingCanvas::LoggingCanvas()
+    : InterceptingCanvasBase(0, 0), log_(JSONArray::Create()) {}
 
 void LoggingCanvas::onDrawPaint(const SkPaint& paint) {
   AutoLogger logger(this);
@@ -905,18 +914,18 @@ std::unique_ptr<JSONArray> LoggingCanvas::Log() {
 }
 
 #ifndef NDEBUG
-String RecordAsDebugString(const PaintRecord* record) {
-  const SkIRect bounds = record->cullRect().roundOut();
-  LoggingCanvas canvas(bounds.width(), bounds.height());
-  record->playback(&canvas);
-  std::unique_ptr<JSONObject> record_as_json = JSONObject::Create();
-  record_as_json->SetObject("cullRect", ObjectForSkRect(record->cullRect()));
-  record_as_json->SetArray("operations", canvas.Log());
-  return record_as_json->ToPrettyJSONString();
+std::unique_ptr<JSONArray> RecordAsJSON(const PaintRecord& record) {
+  LoggingCanvas canvas;
+  record.Playback(&canvas);
+  return canvas.Log();
 }
 
-void ShowPaintRecord(const PaintRecord* record) {
-  WTFLogAlways("%s\n", RecordAsDebugString(record).Utf8().Data());
+String RecordAsDebugString(const PaintRecord& record) {
+  return RecordAsJSON(record)->ToPrettyJSONString();
+}
+
+void ShowPaintRecord(const PaintRecord& record) {
+  DLOG(INFO) << RecordAsDebugString(record).Utf8().data();
 }
 #endif
 

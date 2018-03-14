@@ -36,6 +36,7 @@ P2PInvalidationService::P2PInvalidationService(
 }
 
 P2PInvalidationService::~P2PInvalidationService() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
 
 void P2PInvalidationService::UpdateCredentials(const std::string& username,
@@ -73,7 +74,7 @@ std::string P2PInvalidationService::GetInvalidatorClientId() const {
 }
 
 InvalidationLogger* P2PInvalidationService::GetInvalidationLogger() {
-  return NULL;
+  return nullptr;
 }
 
 void P2PInvalidationService::RequestDetailedStatus(

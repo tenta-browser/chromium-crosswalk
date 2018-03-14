@@ -73,9 +73,10 @@ bool SyncMessageFilter::Send(Message* message) {
   bool shutdown = false;
   scoped_refptr<mojo::SyncHandleRegistry> registry =
       mojo::SyncHandleRegistry::current();
-  registry->RegisterEvent(shutdown_event_,
-                          base::Bind(&OnEventReady, &shutdown));
-  registry->RegisterEvent(&done_event, base::Bind(&OnEventReady, &done));
+  auto on_shutdown_callback = base::Bind(&OnEventReady, &shutdown);
+  auto on_done_callback = base::Bind(&OnEventReady, &done);
+  registry->RegisterEvent(shutdown_event_, on_shutdown_callback);
+  registry->RegisterEvent(&done_event, on_done_callback);
 
   const bool* stop_flags[] = { &done, &shutdown };
   registry->Wait(stop_flags, 2);
@@ -84,8 +85,8 @@ bool SyncMessageFilter::Send(Message* message) {
                           "SyncMessageFilter::Send", &done_event);
   }
 
-  registry->UnregisterEvent(shutdown_event_);
-  registry->UnregisterEvent(&done_event);
+  registry->UnregisterEvent(shutdown_event_, on_shutdown_callback);
+  registry->UnregisterEvent(&done_event, on_done_callback);
 
   {
     base::AutoLock auto_lock(lock_);
@@ -146,7 +147,7 @@ SyncMessageFilter::SyncMessageFilter(base::WaitableEvent* shutdown_event)
       listener_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       shutdown_event_(shutdown_event) {}
 
-SyncMessageFilter::~SyncMessageFilter() {}
+SyncMessageFilter::~SyncMessageFilter() = default;
 
 void SyncMessageFilter::SendOnIOThread(Message* message) {
   if (channel_) {
@@ -184,7 +185,7 @@ void SyncMessageFilter::GetGenericRemoteAssociatedInterface(
     // Attach the associated interface to a disconnected pipe, so that the
     // associated interface pointer can be used to make calls (which are
     // dropped).
-    mojo::GetIsolatedInterface(std::move(handle));
+    mojo::AssociateWithDisconnectedPipe(std::move(handle));
     return;
   }
 

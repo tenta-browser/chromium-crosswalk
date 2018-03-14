@@ -33,17 +33,16 @@ EasyUnlockSettingsHandler* EasyUnlockSettingsHandler::Create(
     content::WebUIDataSource* html_source,
     Profile* profile) {
   EasyUnlockService* easy_unlock_service = EasyUnlockService::Get(profile);
+  // The service is not created for LockScreenApp profiles or "off the record".
+  if (!easy_unlock_service)
+    return nullptr;
+
   bool allowed = easy_unlock_service->IsAllowed();
   html_source->AddBoolean("easyUnlockAllowed", allowed);
   html_source->AddBoolean("easyUnlockEnabled",
                           allowed ? easy_unlock_service->IsEnabled() : false);
   if (!allowed)
     return nullptr;
-
-  html_source->AddBoolean(
-      "easyUnlockProximityDetectionAllowed",
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          proximity_auth::switches::kEnableProximityDetection));
 
   return new EasyUnlockSettingsHandler(profile);
 }
@@ -86,9 +85,8 @@ void EasyUnlockSettingsHandler::OnJavascriptDisallowed() {
 }
 
 void EasyUnlockSettingsHandler::OnTurnOffOperationStatusChanged() {
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("easy-unlock-turn-off-flow-status"),
-                         base::Value(GetTurnOffFlowStatus()));
+  FireWebUIListener("easy-unlock-turn-off-flow-status",
+                    base::Value(GetTurnOffFlowStatus()));
 }
 
 void EasyUnlockSettingsHandler::SendEnabledStatus() {

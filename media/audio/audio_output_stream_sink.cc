@@ -23,8 +23,7 @@ AudioOutputStreamSink::AudioOutputStreamSink()
       audio_task_runner_(AudioManager::Get()->GetTaskRunner()),
       stream_(NULL) {}
 
-AudioOutputStreamSink::~AudioOutputStreamSink() {
-}
+AudioOutputStreamSink::~AudioOutputStreamSink() = default;
 
 void AudioOutputStreamSink::Initialize(const AudioParameters& params,
                                        RenderCallback* callback) {
@@ -79,6 +78,10 @@ OutputDeviceInfo AudioOutputStreamSink::GetOutputDeviceInfo() {
   return OutputDeviceInfo();
 }
 
+bool AudioOutputStreamSink::IsOptimizedForHardwareParameters() {
+  return true;
+}
+
 bool AudioOutputStreamSink::CurrentThreadIsRenderingThread() {
   NOTIMPLEMENTED();
   return false;
@@ -97,7 +100,7 @@ int AudioOutputStreamSink::OnMoreData(base::TimeDelta delay,
                                          prior_frames_skipped, dest);
 }
 
-void AudioOutputStreamSink::OnError(AudioOutputStream* stream) {
+void AudioOutputStreamSink::OnError() {
   // Note: Runs on the audio thread created by the OS.
   base::AutoLock al(callback_lock_);
   if (active_render_callback_)

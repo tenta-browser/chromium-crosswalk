@@ -25,18 +25,18 @@
 
 #include "bindings/modules/v8/V8BindingForModules.h"
 
-#include "bindings/core/v8/SerializationTag.h"
-#include "bindings/core/v8/SerializedScriptValue.h"
 #include "bindings/core/v8/ToV8ForCore.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8BindingForTesting.h"
-#include "bindings/core/v8/V8PerIsolateData.h"
+#include "bindings/core/v8/serialization/SerializationTag.h"
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
 #include "bindings/modules/v8/ToV8ForModules.h"
 #include "modules/indexeddb/IDBAny.h"
 #include "modules/indexeddb/IDBKey.h"
 #include "modules/indexeddb/IDBKeyPath.h"
 #include "modules/indexeddb/IDBValue.h"
 #include "platform/SharedBuffer.h"
+#include "platform/bindings/V8PerIsolateData.h"
 #include "public/platform/WebBlobInfo.h"
 #include "public/platform/WebData.h"
 #include "public/platform/WebString.h"
@@ -132,15 +132,10 @@ void CheckKeyPathNumberValue(v8::Isolate* isolate,
 
 // SerializedScriptValue header format offsets are inferred from the Blink and
 // V8 serialization code. The code below DCHECKs that
-constexpr static size_t kSSVHeaderBlinkVersionOffset = 0;
-constexpr static size_t kSSVHeaderBlinkVersionTagOffset = 1;
-constexpr static size_t kSSVHeaderV8VersionOffset = 2;
-constexpr static size_t kSSVHeaderV8VersionTagOffset = 3;
-
-// 13 is v8::internal::kLatestVersion in v8/src/value-serializer.cc at the
-// time when this test was written. Unlike Blink, V8 does not currently export
-// its serialization version, so this number might get stale.
-constexpr static unsigned char kV8LatestKnownVersion = 13;
+constexpr static size_t kSSVHeaderBlinkVersionTagOffset = 0;
+constexpr static size_t kSSVHeaderBlinkVersionOffset = 1;
+constexpr static size_t kSSVHeaderV8VersionTagOffset = 2;
+// constexpr static size_t kSSVHeaderV8VersionOffset = 3;
 
 // Follows the same steps as the IndexedDB value serialization code.
 void SerializeV8Value(v8::Local<v8::Value> value,
@@ -149,7 +144,7 @@ void SerializeV8Value(v8::Local<v8::Value> value,
   NonThrowableExceptionState non_throwable_exception_state;
 
   SerializedScriptValue::SerializeOptions options;
-  RefPtr<SerializedScriptValue> serialized_value =
+  scoped_refptr<SerializedScriptValue> serialized_value =
       SerializedScriptValue::Serialize(isolate, value, options,
                                        non_throwable_exception_state);
   serialized_value->ToWireBytes(*wire_bytes);
@@ -161,23 +156,24 @@ void SerializeV8Value(v8::Local<v8::Value> value,
   // C4309 (truncation of constant value). This happens because VersionTag is
   // 0xFF.
   const unsigned char* wire_data =
-      reinterpret_cast<unsigned char*>(wire_bytes->Data());
+      reinterpret_cast<unsigned char*>(wire_bytes->data());
+  ASSERT_EQ(static_cast<unsigned char>(kVersionTag),
+            wire_data[kSSVHeaderBlinkVersionTagOffset]);
   ASSERT_EQ(
       static_cast<unsigned char>(SerializedScriptValue::kWireFormatVersion),
       wire_data[kSSVHeaderBlinkVersionOffset]);
-  ASSERT_EQ(static_cast<unsigned char>(kVersionTag),
-            wire_data[kSSVHeaderBlinkVersionTagOffset]);
 
-  ASSERT_GE(static_cast<unsigned char>(kV8LatestKnownVersion),
-            wire_data[kSSVHeaderV8VersionOffset]);
   ASSERT_EQ(static_cast<unsigned char>(kVersionTag),
             wire_data[kSSVHeaderV8VersionTagOffset]);
+  // TODO(jbroman): Use the compile-time constant for V8 data format version.
+  // ASSERT_EQ(v8::ValueSerializer::GetCurrentDataFormatVersion(),
+  //           wire_data[kSSVHeaderV8VersionOffset]);
 }
 
-PassRefPtr<IDBValue> CreateIDBValue(v8::Isolate* isolate,
-                                    Vector<char>& wire_bytes,
-                                    double primary_key,
-                                    const WebString& key_path) {
+scoped_refptr<IDBValue> CreateIDBValue(v8::Isolate* isolate,
+                                       Vector<char>& wire_bytes,
+                                       double primary_key,
+                                       const WebString& key_path) {
   WebData web_data(SharedBuffer::AdoptVector(wire_bytes));
   Vector<WebBlobInfo> web_blob_info;
   WebIDBKey web_idb_key = WebIDBKey::CreateNumber(primary_key);
@@ -317,11 +313,11 @@ TEST(DeserializeIDBValueTest, CurrentVersions) {
   Vector<char> object_bytes;
   v8::Local<v8::Object> empty_object = v8::Object::New(isolate);
   SerializeV8Value(empty_object, isolate, &object_bytes);
-  RefPtr<IDBValue> idb_value =
+  scoped_refptr<IDBValue> idb_value =
       CreateIDBValue(isolate, object_bytes, 42.0, "foo");
 
   v8::Local<v8::Value> v8_value = DeserializeIDBValue(
-      isolate, scope.GetContext()->Global(), idb_value.Get());
+      isolate, scope.GetContext()->Global(), idb_value.get());
   EXPECT_TRUE(!scope.GetExceptionState().HadException());
 
   ASSERT_TRUE(v8_value->IsObject());
@@ -349,11 +345,11 @@ TEST(DeserializeIDBValueTest, FutureV8Version) {
   // the serialized value uses a newer format version.
   //
   // http://crbug.com/703704 has a reproduction for this test's circumstances.
-  RefPtr<IDBValue> idb_value =
+  scoped_refptr<IDBValue> idb_value =
       CreateIDBValue(isolate, object_bytes, 42.0, "foo");
 
   v8::Local<v8::Value> v8_value = DeserializeIDBValue(
-      isolate, scope.GetContext()->Global(), idb_value.Get());
+      isolate, scope.GetContext()->Global(), idb_value.get());
   EXPECT_TRUE(!scope.GetExceptionState().HadException());
   EXPECT_TRUE(v8_value->IsNull());
 }
@@ -367,11 +363,11 @@ TEST(DeserializeIDBValueTest, InjectionIntoNonObject) {
   Vector<char> object_bytes;
   v8::Local<v8::Number> number = v8::Number::New(isolate, 42.0);
   SerializeV8Value(number, isolate, &object_bytes);
-  RefPtr<IDBValue> idb_value =
+  scoped_refptr<IDBValue> idb_value =
       CreateIDBValue(isolate, object_bytes, 42.0, "foo");
 
   v8::Local<v8::Value> v8_value = DeserializeIDBValue(
-      isolate, scope.GetContext()->Global(), idb_value.Get());
+      isolate, scope.GetContext()->Global(), idb_value.get());
   EXPECT_TRUE(!scope.GetExceptionState().HadException());
   ASSERT_TRUE(v8_value->IsNumber());
   v8::Local<v8::Number> v8_number = v8_value.As<v8::Number>();
@@ -387,11 +383,11 @@ TEST(DeserializeIDBValueTest, NestedInjectionIntoNonObject) {
   Vector<char> object_bytes;
   v8::Local<v8::Number> number = v8::Number::New(isolate, 42.0);
   SerializeV8Value(number, isolate, &object_bytes);
-  RefPtr<IDBValue> idb_value =
+  scoped_refptr<IDBValue> idb_value =
       CreateIDBValue(isolate, object_bytes, 42.0, "foo.bar");
 
   v8::Local<v8::Value> v8_value = DeserializeIDBValue(
-      isolate, scope.GetContext()->Global(), idb_value.Get());
+      isolate, scope.GetContext()->Global(), idb_value.get());
   EXPECT_TRUE(!scope.GetExceptionState().HadException());
   ASSERT_TRUE(v8_value->IsNumber());
   v8::Local<v8::Number> v8_number = v8_value.As<v8::Number>();

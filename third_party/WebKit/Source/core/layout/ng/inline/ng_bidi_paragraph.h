@@ -5,6 +5,7 @@
 #ifndef NGBidiParagraph_h
 #define NGBidiParagraph_h
 
+#include "platform/text/TextDirection.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/Vector.h"
@@ -35,8 +36,21 @@ class NGBidiParagraph {
   // called.
   bool SetParagraph(const String&, const ComputedStyle&);
 
-  // Returns whether the paragraph is LTR, RTL, or MIXED.
-  UBiDiDirection Direction() const { return ubidi_getDirection(ubidi_); }
+  // @return the entire text is unidirectional.
+  bool IsUnidirectional() const {
+    return ubidi_getDirection(ubidi_) != UBIDI_MIXED;
+  }
+
+  // The base direction (a.k.a. paragraph direction) of this block.
+  // This is determined by the 'direction' property of the block, or by the
+  // heuristic rules defined in UAX#9 if 'unicode-bidi: plaintext'.
+  TextDirection BaseDirection() const { return base_direction_; }
+
+  // Compute the base direction for a given string using the heuristic
+  // rules defined in UAX#9.
+  // This is generally determined by the first strong character.
+  // http://unicode.org/reports/tr9/#The_Paragraph_Level
+  static TextDirection BaseDirectionForString(const StringView&);
 
   // Returns the end offset of a logical run that starts from the |start|
   // offset.
@@ -50,6 +64,7 @@ class NGBidiParagraph {
 
  private:
   UBiDi* ubidi_ = nullptr;
+  TextDirection base_direction_ = TextDirection::kLtr;
 };
 
 }  // namespace blink

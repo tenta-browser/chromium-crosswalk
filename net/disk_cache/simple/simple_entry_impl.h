@@ -8,9 +8,9 @@
 #include <stdint.h>
 
 #include <memory>
-#include <queue>
 #include <string>
 
+#include "base/containers/queue.h"
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
@@ -19,6 +19,7 @@
 #include "net/disk_cache/disk_cache.h"
 #include "net/disk_cache/simple/simple_entry_format.h"
 #include "net/disk_cache/simple/simple_entry_operation.h"
+#include "net/disk_cache/simple/simple_synchronous_entry.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_with_source.h"
 
@@ -34,9 +35,11 @@ class NetLog;
 
 namespace disk_cache {
 
+class BackendCleanupTracker;
 class SimpleBackendImpl;
-class SimpleSynchronousEntry;
 class SimpleEntryStat;
+class SimpleFileTracker;
+class SimpleSynchronousEntry;
 struct SimpleEntryCreationResults;
 
 // SimpleEntryImpl is the IO thread interface to an entry in the very simple
@@ -61,9 +64,11 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
 
   SimpleEntryImpl(net::CacheType cache_type,
                   const base::FilePath& path,
+                  scoped_refptr<BackendCleanupTracker> cleanup_tracker,
                   uint64_t entry_hash,
                   OperationsMode operations_mode,
                   SimpleBackendImpl* backend,
+                  SimpleFileTracker* file_tracker,
                   net::NetLog* net_log);
 
   void SetActiveEntryProxy(
@@ -87,6 +92,12 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   // alone. In that case, the SimpleSynchronousEntry will read the key from disk
   // and it will be set.
   void SetKey(const std::string& key);
+
+  // SetCreatePendingDoom() should be called before CreateEntry() if the
+  // creation should suceed optimistically but not do any I/O until
+  // NotifyDoomBeforeCreateComplete() is called.
+  void SetCreatePendingDoom();
+  void NotifyDoomBeforeCreateComplete();
 
   // From Entry:
   void Doom() override;
@@ -192,11 +203,12 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
 
   void CloseInternal();
 
-  void ReadDataInternal(int index,
-                        int offset,
-                        net::IOBuffer* buf,
-                        int buf_len,
-                        const CompletionCallback& callback);
+  int ReadDataInternal(bool sync_possible,
+                       int index,
+                       int offset,
+                       net::IOBuffer* buf,
+                       int buf_len,
+                       const CompletionCallback& callback);
 
   void WriteDataInternal(int index,
                          int offset,
@@ -245,18 +257,23 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
                               std::unique_ptr<int> result);
 
   // Called after an asynchronous read. Updates |crc32s_| if possible.
-  void ReadOperationComplete(int stream_index,
-                             int offset,
-                             const CompletionCallback& completion_callback,
-                             std::unique_ptr<uint32_t> read_crc32,
-                             std::unique_ptr<SimpleEntryStat> entry_stat,
-                             std::unique_ptr<int> result);
+  void ReadOperationComplete(
+      int stream_index,
+      int offset,
+      const CompletionCallback& completion_callback,
+      std::unique_ptr<SimpleSynchronousEntry::CRCRequest> crc_request,
+      std::unique_ptr<SimpleEntryStat> entry_stat,
+      std::unique_ptr<int> result);
 
   // Called after an asynchronous write completes.
+  // |buf| parameter brings back a reference to net::IOBuffer to the original
+  // thread, so that we can reduce cross thread malloc/free pair.
+  // See http://crbug.com/708644 for details.
   void WriteOperationComplete(int stream_index,
                               const CompletionCallback& completion_callback,
                               std::unique_ptr<SimpleEntryStat> entry_stat,
-                              std::unique_ptr<int> result);
+                              std::unique_ptr<int> result,
+                              net::IOBuffer* buf);
 
   void ReadSparseOperationComplete(
       const CompletionCallback& completion_callback,
@@ -277,17 +294,17 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
                              State state_to_restore,
                              int result);
 
-  // Called after validating the checksums on an entry. Passes through the
-  // original result if successful, propagates the error if the checksum does
-  // not validate.
-  void ChecksumOperationComplete(int original_result,
-                                 int stream_index,
-                                 const CompletionCallback& completion_callback,
-                                 std::unique_ptr<int> result);
+  // Reports reads result potentially refining status based on |crc_result|.
+  // |crc_result| is permitted to be null.
+  void RecordReadResultConsideringChecksum(
+      int result,
+      std::unique_ptr<SimpleSynchronousEntry::CRCRequest> crc_result) const;
 
-  // Called after completion of asynchronous IO and receiving file metadata for
-  // the entry in |entry_stat|. Updates the metadata in the entry and in the
-  // index to make them available on next IO operations.
+  // Called after completion of an operation, to either incoproprate file info
+  // received from I/O done on the worker pool, or to simply bump the
+  // timestamps. Updates the metadata both in |this| and in the index.
+  // Stream size information in particular may be important for following
+  // operations.
   void UpdateDataFromEntryStat(const SimpleEntryStat& entry_stat);
 
   int64_t GetDiskUsage() const;
@@ -296,8 +313,14 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   void RecordReadIsParallelizable(const SimpleEntryOperation& operation) const;
   void RecordWriteDependencyType(const SimpleEntryOperation& operation) const;
 
-  // Reads from the stream 0 data kept in memory.
-  int ReadStream0Data(net::IOBuffer* buf, int offset, int buf_len);
+  // Completes a read from the stream data kept in memory, logging metrics
+  // and updating metadata. Returns the # of bytes read successfully.
+  // This asumes the caller has already range-checked offset and buf_len
+  // appropriately.
+  int ReadFromBuffer(net::GrowableIOBuffer* in_buf,
+                     int offset,
+                     int buf_len,
+                     net::IOBuffer* out_buf);
 
   // Copies data from |buf| to the internal in-memory buffer for stream 0. If
   // |truncate| is set to true, the target buffer will be truncated at |offset|
@@ -313,6 +336,9 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
                   int length,
                   int stream_index);
 
+  // We want all async I/O on entries to complete before recycling the dir.
+  scoped_refptr<BackendCleanupTracker> cleanup_tracker_;
+
   std::unique_ptr<ActiveEntryProxy> active_entry_proxy_;
 
   // All nonstatic SimpleEntryImpl methods should always be called on the IO
@@ -320,11 +346,13 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   base::ThreadChecker io_thread_checker_;
 
   const base::WeakPtr<SimpleBackendImpl> backend_;
+  SimpleFileTracker* const file_tracker_;
   const net::CacheType cache_type_;
   const scoped_refptr<base::TaskRunner> worker_pool_;
   const base::FilePath path_;
   const uint64_t entry_hash_;
   const bool use_optimistic_operations_;
+  bool is_initial_stream1_read_;  // used for metrics only.
   std::string key_;
 
   // |last_used_|, |last_modified_| and |data_size_| are copied from the
@@ -341,6 +369,12 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   int open_count_;
 
   bool doomed_;
+
+  enum {
+    CREATE_NORMAL,
+    CREATE_OPTIMISTIC_PENDING_DOOM,
+    CREATE_OPTIMISTIC_PENDING_DOOM_FOLLOWED_BY_DOOM,
+  } optimistic_create_pending_doom_state_;
 
   State state_;
 
@@ -371,7 +405,7 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   // would leak the SimpleSynchronousEntry.
   SimpleSynchronousEntry* synchronous_entry_;
 
-  std::queue<SimpleEntryOperation> pending_operations_;
+  base::queue<SimpleEntryOperation> pending_operations_;
 
   net::NetLogWithSource net_log_;
 
@@ -387,6 +421,11 @@ class NET_EXPORT_PRIVATE SimpleEntryImpl : public Entry,
   // used to write HTTP headers, the memory consumption of keeping it in memory
   // is acceptable.
   scoped_refptr<net::GrowableIOBuffer> stream_0_data_;
+
+  // Sometimes stream 1 data is prefetched when stream 0 is first read.
+  // If a write to the stream occurs on the entry the prefetch buffer is
+  // discarded. It may also be null if it wasn't prefetched in the first place.
+  scoped_refptr<net::GrowableIOBuffer> stream_1_prefetch_data_;
 };
 
 }  // namespace disk_cache

@@ -12,7 +12,7 @@
 #include "base/callback.h"
 #include "base/synchronization/lock.h"
 #include "content/common/content_export.h"
-#include "content/common/input/input_event_ack_state.h"
+#include "content/public/common/input_event_ack_state.h"
 #include "content/renderer/input/input_handler_manager_client.h"
 #include "content/renderer/input/main_thread_event_queue.h"
 #include "ipc/message_filter.h"
@@ -42,8 +42,7 @@ class Sender;
 namespace content {
 
 class CONTENT_EXPORT InputEventFilter : public InputHandlerManagerClient,
-                                        public IPC::MessageFilter,
-                                        public MainThreadEventQueueClient {
+                                        public IPC::MessageFilter {
  public:
   InputEventFilter(
       const base::Callback<void(const IPC::Message&)>& main_listener,
@@ -61,7 +60,9 @@ class CONTENT_EXPORT InputEventFilter : public InputHandlerManagerClient,
   // InputHostMsg_HandleInputEvent_ACK.
   //
   void SetInputHandlerManager(InputHandlerManager*) override;
-  void RegisterRoutingID(int routing_id) override;
+  void RegisterRoutingID(
+      int routing_id,
+      const scoped_refptr<MainThreadEventQueue>& input_event_queue) override;
   void UnregisterRoutingID(int routing_id) override;
   void RegisterAssociatedRenderFrameRoutingID(
       int render_frame_routing_id,
@@ -76,34 +77,16 @@ class CONTENT_EXPORT InputEventFilter : public InputHandlerManagerClient,
       int routing_id,
       ui::WebScopedInputEvent event,
       const ui::LatencyInfo& latency_info) override;
-
-  void NotifyInputEventHandled(int routing_id,
-                               blink::WebInputEvent::Type type,
-                               blink::WebInputEventResult result,
-                               InputEventAckState ack_result) override;
-  void ProcessRafAlignedInput(int routing_id,
-                              base::TimeTicks frame_time) override;
+  void SetWhiteListedTouchAction(int routing_id,
+                                 cc::TouchAction touch_action,
+                                 uint32_t unique_touch_event_id,
+                                 InputEventAckState ack_state) override;
 
   // IPC::MessageFilter methods:
   void OnFilterAdded(IPC::Channel* channel) override;
   void OnFilterRemoved() override;
   void OnChannelClosing() override;
   bool OnMessageReceived(const IPC::Message& message) override;
-
-  // MainThreadEventQueueClient methods:
-  void HandleEventOnMainThread(int routing_id,
-                               const blink::WebCoalescedInputEvent* event,
-                               const ui::LatencyInfo& latency,
-                               InputEventDispatchType dispatch_type) override;
-  // Send an InputEventAck IPC message. |touch_event_id| represents
-  // the unique event id for the original WebTouchEvent and should
-  // be 0 if otherwise. See WebInputEventTraits::GetUniqueTouchEventId.
-  void SendInputEventAck(int routing_id,
-                         blink::WebInputEvent::Type type,
-                         InputEventAckState ack_result,
-                         uint32_t touch_event_id) override;
-
-  void NeedsMainFrame(int routing_id) override;
 
  private:
   ~InputEventFilter() override;
@@ -118,6 +101,14 @@ class CONTENT_EXPORT InputEventFilter : public InputHandlerManagerClient,
       ui::WebScopedInputEvent event,
       const ui::LatencyInfo& latency_info,
       std::unique_ptr<ui::DidOverscrollParams> overscroll_params);
+  void SendInputEventAck(
+      int routing_id,
+      blink::WebInputEvent::Type event_type,
+      int unique_touch_event_id,
+      InputEventAckState ack_state,
+      const ui::LatencyInfo& latency_info,
+      std::unique_ptr<ui::DidOverscrollParams> overscroll_params,
+      base::Optional<cc::TouchAction> touch_action);
   void SendMessage(std::unique_ptr<IPC::Message> message);
   void SendMessageOnIOThread(std::unique_ptr<IPC::Message> message);
 
@@ -149,8 +140,6 @@ class CONTENT_EXPORT InputEventFilter : public InputHandlerManagerClient,
   // Maps RenderFrame routing ids to RenderView routing ids so that
   // events sent down the two routing pipes can be handled synchronously.
   AssociatedRoutes associated_routes_;
-
-  blink::scheduler::RendererScheduler* renderer_scheduler_;
 };
 
 }  // namespace content

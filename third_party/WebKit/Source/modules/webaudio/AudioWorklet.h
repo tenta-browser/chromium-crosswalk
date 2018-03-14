@@ -11,30 +11,59 @@
 
 namespace blink {
 
-class LocalFrame;
-class ThreadedWorkletMessagingProxy;
-class WorkletGlobalScopeProxy;
+class AudioWorkletHandler;
+class AudioWorkletMessagingProxy;
+class BaseAudioContext;
+class CrossThreadAudioParamInfo;
+class MessagePortChannel;
 
 class MODULES_EXPORT AudioWorklet final : public Worklet {
+  DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(AudioWorklet);
   WTF_MAKE_NONCOPYABLE(AudioWorklet);
 
  public:
-  static AudioWorklet* Create(LocalFrame*);
-  ~AudioWorklet() override;
+  // When the AudioWorklet runtime flag is not enabled, this constructor returns
+  // |nullptr|.
+  static AudioWorklet* Create(BaseAudioContext*);
 
-  void Initialize() final;
-  bool IsInitialized() const final;
+  ~AudioWorklet() = default;
 
-  WorkletGlobalScopeProxy* GetWorkletGlobalScopeProxy() const final;
+  void CreateProcessor(AudioWorkletHandler*, MessagePortChannel);
 
-  DECLARE_VIRTUAL_TRACE();
+  // Invoked by AudioWorkletMessagingProxy. Notifies |context_| when
+  // AudioWorkletGlobalScope finishes the first script evaluation and is ready
+  // for the worklet operation. Can be used for other post-evaluation tasks
+  // in AudioWorklet or BaseAudioContext.
+  void NotifyGlobalScopeIsUpdated();
+
+  WebThread* GetBackingThread();
+
+  const Vector<CrossThreadAudioParamInfo> GetParamInfoListForProcessor(
+      const String& name);
+
+  bool IsProcessorRegistered(const String& name);
+
+  // Returns |true| when a AudioWorkletMessagingProxy and a WorkletBackingThread
+  // are ready.
+  bool IsReady();
+
+  void Trace(blink::Visitor*) override;
 
  private:
-  explicit AudioWorklet(LocalFrame*);
+  explicit AudioWorklet(BaseAudioContext*);
 
-  // The proxy outlives the worklet as it is used to perform thread shutdown,
-  // it deletes itself once this has occurred.
-  ThreadedWorkletMessagingProxy* worklet_messaging_proxy_;
+  // Implements Worklet
+  bool NeedsToCreateGlobalScope() final;
+  WorkletGlobalScopeProxy* CreateGlobalScope() final;
+
+  // Returns |nullptr| if there is no active WorkletGlobalScope().
+  AudioWorkletMessagingProxy* GetMessagingProxy();
+
+  // To catch the first global scope update and notify the context.
+  bool worklet_started_ = false;
+
+  Member<BaseAudioContext> context_;
 };
 
 }  // namespace blink

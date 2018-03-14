@@ -83,10 +83,17 @@ class AX_EXPORT AXTreeDelegate {
       AXIntListAttribute attr,
       const std::vector<int32_t>& old_value,
       const std::vector<int32_t>& new_value) {}
+  virtual void OnStringListAttributeChanged(
+      AXTree* tree,
+      AXNode* node,
+      AXStringListAttribute attr,
+      const std::vector<std::string>& old_value,
+      const std::vector<std::string>& new_value) {}
 
   // Called when tree data changes.
-  virtual void OnTreeDataChanged(AXTree* tree) = 0;
-
+  virtual void OnTreeDataChanged(AXTree* tree,
+                                 const ui::AXTreeData& old_data,
+                                 const ui::AXTreeData& new_data) = 0;
   // Called just before a node is deleted. Its id and data will be valid,
   // but its links to parents and children are invalid. This is called
   // in the middle of an update, the tree may be in an invalid state!
@@ -156,6 +163,7 @@ class AX_EXPORT AXTree {
   virtual ~AXTree();
 
   virtual void SetDelegate(AXTreeDelegate* delegate);
+  AXTreeDelegate* delegate() const { return delegate_; }
 
   AXNode* root() const { return root_; }
 
@@ -170,6 +178,40 @@ class AX_EXPORT AXTree {
   virtual bool Unserialize(const AXTreeUpdate& update);
 
   virtual void UpdateData(const AXTreeData& data);
+
+  // Convert any rectangle from the local coordinate space of one node in
+  // the tree, to bounds in the coordinate space of the tree.
+  // If set, updates |offscreen| boolean to be true if the node is offscreen
+  // relative to its rootWebArea. Callers should initialize |offscreen|
+  // to false: this method may get called multiple times in a row and
+  // |offscreen| will be propagated.
+  // If |clip_bounds| is true, result bounds will be clipped.
+  gfx::RectF RelativeToTreeBounds(const AXNode* node,
+                                  gfx::RectF node_bounds,
+                                  bool* offscreen = nullptr,
+                                  bool clip_bounds = true) const;
+
+  // Get the bounds of a node in the coordinate space of the tree.
+  // If set, updates |offscreen| boolean to be true if the node is offscreen
+  // relative to its rootWebArea. Callers should initialize |offscreen|
+  // to false: this method may get called multiple times in a row and
+  // |offscreen| will be propagated.
+  // If |clip_bounds| is true, result bounds will be clipped.
+  gfx::RectF GetTreeBounds(const AXNode* node,
+                           bool* offscreen = nullptr,
+                           bool clip_bounds = true) const;
+
+  // Given a node ID attribute (one where IsNodeIdIntAttribute is true),
+  // and a destination node ID, return a set of all source node IDs that
+  // have that relationship attribute between them and the destination.
+  std::set<int32_t> GetReverseRelations(AXIntAttribute attr, int32_t dst_id);
+
+  // Given a node ID list attribute (one where
+  // IsNodeIdIntListAttribute is true), and a destination node ID,
+  // return a set of all source node IDs that have that relationship
+  // attribute between them and the destination.
+  std::set<int32_t> GetReverseRelations(AXIntListAttribute attr,
+                                        int32_t dst_id);
 
   // Return a multi-line indented string representation, for logging.
   std::string ToString() const;
@@ -192,6 +234,8 @@ class AX_EXPORT AXTree {
                   AXTreeUpdateState* update_state);
 
   void CallNodeChangeCallbacks(AXNode* node, const AXNodeData& new_data);
+
+  void UpdateReverseRelations(AXNode* node, const AXNodeData& new_data);
 
   void OnRootChanged();
 
@@ -225,6 +269,15 @@ class AX_EXPORT AXTree {
   base::hash_map<int32_t, AXNode*> id_map_;
   std::string error_;
   AXTreeData data_;
+
+  // Map from an int attribute (if IsNodeIdIntAttribute is true) to
+  // a reverse mapping from target nodes to source nodes.
+  std::map<AXIntAttribute, std::map<int32_t, std::set<int32_t>>>
+      int_reverse_relations_;
+  // Map from an int list attribute (if IsNodeIdIntListAttribute is true) to
+  // a reverse mapping from target nodes to source nodes.
+  std::map<AXIntListAttribute, std::map<int32_t, std::set<int32_t>>>
+      intlist_reverse_relations_;
 };
 
 }  // namespace ui

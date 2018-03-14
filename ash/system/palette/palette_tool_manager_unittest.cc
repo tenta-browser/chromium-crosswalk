@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "ash/system/palette/palette_tool.h"
 #include "ash/system/palette/palette_tool_manager.h"
 #include "base/bind.h"
@@ -48,18 +50,19 @@ class PaletteToolManagerTest : public ::testing::Test,
  public:
   PaletteToolManagerTest()
       : palette_tool_manager_(new PaletteToolManager(this)) {}
-  ~PaletteToolManagerTest() override {}
+  ~PaletteToolManagerTest() override = default;
 
  protected:
   // PaletteToolManager::Delegate:
   void HidePalette() override {}
   void HidePaletteImmediately() override {}
   void OnActiveToolChanged() override { ++tool_changed_count_; }
-  WmWindow* GetWindow() override {
+  aura::Window* GetWindow() override {
     NOTREACHED();
     return nullptr;
   }
-  void RecordPaletteOptionsUsage(PaletteTrayOptions option) override {}
+  void RecordPaletteOptionsUsage(PaletteTrayOptions option,
+                                 PaletteInvocationMethod method) override {}
   void RecordPaletteModeCancellation(PaletteModeCancelType type) override {}
 
   // PaletteTool::Delegate:
@@ -92,8 +95,11 @@ TEST_F(PaletteToolManagerTest, MultipleToolsActivateDeactivate) {
   TestTool* action_2 =
       BuildTool(PaletteGroup::ACTION, PaletteToolId::CAPTURE_REGION);
   TestTool* mode_1 = BuildTool(PaletteGroup::MODE, PaletteToolId::MAGNIFY);
+
+  EXPECT_FALSE(palette_tool_manager_->HasTool(PaletteToolId::LASER_POINTER));
   TestTool* mode_2 =
       BuildTool(PaletteGroup::MODE, PaletteToolId::LASER_POINTER);
+  EXPECT_TRUE(palette_tool_manager_->HasTool(PaletteToolId::LASER_POINTER));
 
   // Enable mode 1.
   EXPECT_EQ(0, tool_changed_count_);

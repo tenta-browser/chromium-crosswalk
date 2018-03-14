@@ -35,7 +35,6 @@ source_set("display") {
       deps += [
         "//chromeos",
         "//services/ui/public/interfaces/display",
-        "//skia",
         "//ui/display/manager",
         "//ui/display/mojo:interfaces",
         "//ui/ozone",
@@ -54,10 +53,11 @@ source_set("display") {
   }
 }
 
-if (use_ozone && is_chromeos) {
-  test("display_service_unittests") {
+if (is_chromeos) {
+  source_set("tests") {
+    testonly = true
+
     sources = [
-      "run_all_unittests.cc",
       "screen_manager_ozone_internal_unittests.cc",
     ]
 
@@ -69,7 +69,7 @@ if (use_ozone && is_chromeos) {
       "//testing/gmock",
       "//testing/gtest",
       "//ui/base",
-      "//ui/display",
+      "//ui/display/manager",
       "//ui/events/devices",
       "//ui/gfx",
       "//ui/gfx:test_support",

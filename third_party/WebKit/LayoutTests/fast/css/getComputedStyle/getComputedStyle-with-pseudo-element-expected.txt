@@ -1,6 +1,5 @@
 Test for WebKit bug 24021: pseudo-element styles not accessible / retrievable via DOM methods
 
-
 Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 
 Middle
@@ -43,10 +42,10 @@ PASS Expected '0px' for margin in the computed style for element with id testBef
 PASS Expected '10px 20px 30px 40px' for padding in the computed style for element with id testBeforeAfterTable and pseudo-element :after and got '10px 20px 30px 40px'
 PASS Expected '5px solid rgb(255, 0, 0)' for border in the computed style for element with id testBeforeAfterTable and pseudo-element :before and got '5px solid rgb(255, 0, 0)'
 PASS Expected '10px dotted rgb(0, 0, 255)' for border in the computed style for element with id testBeforeAfterTable and pseudo-element :after and got '10px dotted rgb(0, 0, 255)'
-PASS Expected 'auto' for height in the computed style for element with id testBeforeAfterInline and pseudo-element :before and got 'auto'
-PASS Expected 'auto' for width in the computed style for element with id testBeforeAfterInline and pseudo-element :before and got 'auto'
-PASS Expected 'auto' for height in the computed style for element with id testBeforeAfterInline and pseudo-element :after and got 'auto'
-PASS Expected 'auto' for width in the computed style for element with id testBeforeAfterInline and pseudo-element :after and got 'auto'
+PASS Expected '250px' for height in the computed style for element with id testBeforeAfterInline and pseudo-element :before and got '250px'
+PASS Expected '350px' for width in the computed style for element with id testBeforeAfterInline and pseudo-element :before and got '350px'
+PASS Expected '200px' for height in the computed style for element with id testBeforeAfterInline and pseudo-element :after and got '200px'
+PASS Expected '300px' for width in the computed style for element with id testBeforeAfterInline and pseudo-element :after and got '300px'
 PASS Expected '10px 20px 30px 40px' for margin in the computed style for element with id testBeforeAfterInline and pseudo-element :before and got '10px 20px 30px 40px'
 PASS Expected '0px' for padding in the computed style for element with id testBeforeAfterInline and pseudo-element :before and got '0px'
 PASS Expected '0px' for margin in the computed style for element with id testBeforeAfterInline and pseudo-element :after and got '0px'
@@ -63,6 +62,6 @@ PASS Expected 'rgb(165, 42, 42)' for color in the computed style for element wit
 PASS Expected 'rgb(165, 42, 42)' for color in the computed style for element with id testNoPseudoElement and pseudo-element :garbage and got 'rgb(165, 42, 42)'
 PASS Expected '100px' for height in the computed style for element with id testNoPseudoElement and pseudo-element null and got '100px'
 PASS Expected '100px' for width in the computed style for element with id testNoPseudoElement and pseudo-element null and got '100px'
-PASS Expected '100px' for height in the computed style for element with id testNoPseudoElement and pseudo-element :after and got '100px'
-PASS Expected '100px' for width in the computed style for element with id testNoPseudoElement and pseudo-element :after and got '100px'
+PASS Expected 'auto' for height in the computed style for element with id testNoPseudoElement and pseudo-element :after and got 'auto'
+PASS Expected 'auto' for width in the computed style for element with id testNoPseudoElement and pseudo-element :after and got 'auto'
 PASS Expected '0.5' for opacity in the computed style for element with id testHardwareAcceleratedCompositing and pseudo-element :before and got '0.5'

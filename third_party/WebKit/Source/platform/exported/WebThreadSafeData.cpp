@@ -55,12 +55,15 @@ size_t WebThreadSafeData::size() const {
 
 const char* WebThreadSafeData::Data() const {
   if (private_.IsNull())
-    return 0;
-  return private_->Data();
+    return nullptr;
+  return private_->data();
 }
 
-WebThreadSafeData::WebThreadSafeData(PassRefPtr<RawData> data)
-    : private_(data) {}
+WebThreadSafeData::WebThreadSafeData(scoped_refptr<RawData> data)
+    : private_(std::move(data)) {}
+
+WebThreadSafeData::WebThreadSafeData(scoped_refptr<RawData>&& data)
+    : private_(std::move(data)) {}
 
 WebThreadSafeData::WebThreadSafeData(const WebThreadSafeData& other) {
   private_ = other.private_;
@@ -72,8 +75,8 @@ WebThreadSafeData& WebThreadSafeData::operator=(
   return *this;
 }
 
-WebThreadSafeData& WebThreadSafeData::operator=(PassRefPtr<RawData> data) {
-  private_ = data;
+WebThreadSafeData& WebThreadSafeData::operator=(scoped_refptr<RawData> data) {
+  private_ = std::move(data);
   return *this;
 }
 

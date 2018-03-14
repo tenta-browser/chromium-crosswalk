@@ -31,7 +31,7 @@
 #ifndef MutationRecord_h
 #define MutationRecord_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
 
@@ -43,8 +43,7 @@ template <typename NodeType>
 class StaticNodeTypeList;
 using StaticNodeList = StaticNodeTypeList<Node>;
 
-class MutationRecord : public GarbageCollectedFinalized<MutationRecord>,
-                       public ScriptWrappable {
+class MutationRecord : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -69,15 +68,13 @@ class MutationRecord : public GarbageCollectedFinalized<MutationRecord>,
 
   virtual StaticNodeList* addedNodes() = 0;
   virtual StaticNodeList* removedNodes() = 0;
-  virtual Node* previousSibling() { return 0; }
-  virtual Node* nextSibling() { return 0; }
+  virtual Node* previousSibling() { return nullptr; }
+  virtual Node* nextSibling() { return nullptr; }
 
   virtual const AtomicString& attributeName() { return g_null_atom; }
   virtual const AtomicString& attributeNamespace() { return g_null_atom; }
 
   virtual String oldValue() { return String(); }
-
-  DEFINE_INLINE_VIRTUAL_TRACE() {}
 };
 
 }  // namespace blink

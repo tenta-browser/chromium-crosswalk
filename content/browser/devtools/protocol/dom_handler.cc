@@ -24,8 +24,9 @@ void DOMHandler::Wire(UberDispatcher* dispatcher) {
   DOM::Dispatcher::wire(dispatcher, this);
 }
 
-void DOMHandler::SetRenderFrameHost(RenderFrameHostImpl* host) {
-  host_ = host;
+void DOMHandler::SetRenderer(RenderProcessHost* process_host,
+                             RenderFrameHostImpl* frame_host) {
+  host_ = frame_host;
 }
 
 Response DOMHandler::Disable() {
@@ -33,8 +34,10 @@ Response DOMHandler::Disable() {
 }
 
 Response DOMHandler::SetFileInputFiles(
-    DOM::NodeId node_id,
-    std::unique_ptr<protocol::Array<std::string>> files) {
+    std::unique_ptr<protocol::Array<std::string>> files,
+    Maybe<DOM::NodeId> node_id,
+    Maybe<DOM::BackendNodeId> backend_node_id,
+    Maybe<String> in_object_id) {
   if (host_) {
     for (size_t i = 0; i < files->length(); i++) {
 #if defined(OS_WIN)

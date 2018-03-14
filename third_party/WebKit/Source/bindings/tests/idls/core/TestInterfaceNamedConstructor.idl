@@ -28,7 +28,6 @@
 
 [
     ActiveScriptWrappable,
-    DependentLifetime,
     NamedConstructor=Audio(
         DOMString stringArg,
         [Default=Undefined] optional boolean defaultUndefinedOptionalBooleanArg,
@@ -37,7 +36,7 @@
         optional DOMString defaultNullStringOptionalstringArg = null,
         optional DOMString optionalStringArg),
     ConstructorCallWith=Document,
-    RaisesException=Constructor,
+    RaisesException=Constructor
 ] interface TestInterfaceNamedConstructor {
     // An attribute of type {interface_name}ConstructorConstructor is generated
     // in *Constructors.idl file, which is a partial interface for the global

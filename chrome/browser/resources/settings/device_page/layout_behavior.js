@@ -208,8 +208,8 @@ var LayoutBehavior = {
     assert(bounds);
     this.calculatedBoundsMap_.set(
         displayId,
-        /** @type {!chrome.system.display.Bounds} */ (
-            Object.assign({}, bounds)));
+        /** @type {!chrome.system.display.Bounds} */
+        (Object.assign({}, bounds)));
   },
 
   /**
@@ -293,7 +293,7 @@ var LayoutBehavior = {
    */
   findChildren_: function(parentId, recurse) {
     var children = [];
-    this.displayLayoutMap_.forEach(function(value, key) {
+    this.displayLayoutMap_.forEach((value, key) => {
       var childId = key;
       if (childId != parentId && value.parentId == parentId) {
         // Insert immediate children at the front of the array.
@@ -303,7 +303,7 @@ var LayoutBehavior = {
           children = children.concat(this.findChildren_(childId, true));
         }
       }
-    }.bind(this));
+    });
     return children;
   },
 

@@ -11,11 +11,13 @@
 
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
-#import "chrome/browser/ui/cocoa/omnibox_decoration_bubble_controller.h"
+#import "chrome/browser/ui/cocoa/base_bubble_controller.h"
 #include "chrome/browser/ui/page_info/page_info_ui.h"
 #include "content/public/browser/web_contents_observer.h"
 
+class LocationBarDecoration;
 class PageInfoUIBridge;
+@class InspectLinkView;
 
 namespace content {
 class WebContents;
@@ -25,13 +27,9 @@ namespace net {
 class X509Certificate;
 }
 
-namespace security_state {
-struct SecurityInfo;
-}  // namespace security_state
-
 // This NSWindowController subclass manages the InfoBubbleWindow and view that
-// are displayed when the user clicks the favicon or security lock icon.
-@interface PageInfoBubbleController : OmniboxDecorationBubbleController {
+// are displayed when the user clicks the omnibox security indicator icon.
+@interface PageInfoBubbleController : BaseBubbleController {
  @private
   content::WebContents* webContents_;
 
@@ -62,7 +60,7 @@ struct SecurityInfo;
   NSTextField* resetDecisionsField_;
 
   // The link button for revoking certificate decisions.
-  // This link only shows when there is an acrive certificate exception.
+  // This link only shows when there is an active certificate exception.
   NSButton* resetDecisionsButton_;
 
   // The server certificate from the identity info. This should always be
@@ -75,14 +73,14 @@ struct SecurityInfo;
   // Container for the site settings section.
   NSView* siteSettingsSectionView_;
 
+  // Container for certificate info in the site settings section.
+  InspectLinkView* certificateView_;
+
   // Container for cookies info in the site settings section.
-  NSView* cookiesView_;
+  InspectLinkView* cookiesView_;
 
   // Container for permission info in the site settings section.
   NSView* permissionsView_;
-
-  // Whether the permissionView_ shows anything.
-  BOOL permissionsPresent_;
 
   // The link button for showing site settings.
   NSButton* siteSettingsButton_;
@@ -94,6 +92,21 @@ struct SecurityInfo;
   // Bridge which implements the PageInfoUI interface and forwards
   // methods on to this class.
   std::unique_ptr<PageInfoUIBridge> bridge_;
+
+  // The omnibox icon the bubble is anchored to. The icon is set as active
+  // when the bubble is opened, and inactive when the bubble is closed.
+  // Usually we would override OmniboxDecorationBubbleController but the page
+  // info icon has a race condition where it might switch between
+  // LocationIconDecoration and SecurityStateBubbleDecoration.
+  LocationBarDecoration* decoration_;  // Weak.
+
+  // The button for changing password decisions.
+  // This button only shows when there is an password reuse event.
+  NSButton* changePasswordButton_;
+
+  // The button for whitelisting password reuse decisions.
+  // This button only shows when there is an password reuse event.
+  NSButton* whitelistPasswordReuseButton_;
 }
 
 // Designated initializer. The controller will release itself when the bubble
@@ -118,18 +131,6 @@ class PageInfoUIBridge : public content::WebContentsObserver,
   explicit PageInfoUIBridge(content::WebContents* web_contents);
   ~PageInfoUIBridge() override;
 
-  // Creates a |PageInfoBubbleController| and displays the UI. |parent|
-  // is the currently active window. |profile| points to the currently active
-  // profile. |web_contents| points to the WebContents that wraps the currently
-  // active tab. |virtual_url| is the virtual GURL of the currently active
-  // tab. |security_info| is the |security_state::SecurityInfo| of the
-  // connection to the website in the currently active tab.
-  static void Show(gfx::NativeWindow parent,
-                   Profile* profile,
-                   content::WebContents* web_contents,
-                   const GURL& virtual_url,
-                   const security_state::SecurityInfo& security_info);
-
   void set_bubble_controller(PageInfoBubbleController* bubble_controller);
 
   // WebContentsObserver implementation.
@@ -140,6 +141,11 @@ class PageInfoUIBridge : public content::WebContentsObserver,
   void SetPermissionInfo(const PermissionInfoList& permission_info_list,
                          ChosenObjectInfoList chosen_object_info_list) override;
   void SetIdentityInfo(const IdentityInfo& identity_info) override;
+
+ protected:
+  // WebContentsObserver implementation.
+  void DidFinishNavigation(
+      content::NavigationHandle* navigation_handle) override;
 
  private:
   // The WebContents the bubble UI is attached to.

@@ -7,6 +7,7 @@
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/strings/string_util.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "content/browser/media/media_browsertest.h"
 #include "content/public/test/browser_test_utils.h"
@@ -14,6 +15,7 @@
 #include "content/shell/browser/shell.h"
 #include "media/base/media_switches.h"
 #include "media/media_features.h"
+#include "third_party/libaom/av1_features.h"
 #include "ui/display/display_switches.h"
 
 #if defined(OS_ANDROID)
@@ -70,9 +72,11 @@ namespace content {
 
 class MediaCanPlayTypeTest : public MediaBrowserTest {
  public:
-  MediaCanPlayTypeTest() : url_("about:blank") { }
+  MediaCanPlayTypeTest() : url_("about:blank") {}
 
-  void SetUpOnMainThread() override { NavigateToURL(shell(), url_); }
+  void SetUpOnMainThread() override {
+    NavigateToURL(shell(), url_);
+  }
 
   std::string CanPlay(const std::string& type) {
     std::string command("document.createElement('video').canPlayType(");
@@ -198,12 +202,6 @@ class MediaCanPlayTypeTest : public MediaBrowserTest {
     EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"avc3, vorbis\"'"));
     EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"avc1.4D401E, vorbis\"'"));
     EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"avc3.64001F, vorbis\"'"));
-
-    EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"flac\"'"));
-    EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"avc1, flac\"'"));
-    EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"avc3, flac\"'"));
-    EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"avc1.4D401E, flac\"'"));
-    EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"avc3.64001F, flac\"'"));
 
     EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"opus\"'"));
     EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"avc1, opus\"'"));
@@ -397,7 +395,6 @@ class MediaCanPlayTypeTest : public MediaBrowserTest {
     EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"vp9.0, 1\"'"));
     EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"vp08\"'"));
     EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"vp09\"'"));
-    EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"vp09.00.10.08\"'"));
 
     EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"theora\"'"));
     EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"theora, vorbis\"'"));
@@ -553,6 +550,7 @@ class MediaCanPlayTypeTest : public MediaBrowserTest {
               CanPlay("'" + mime + "; codecs=\"hvc1.1.6.L93.B0,mp4a.40.5\"'"));
 
     EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"vp09.00.10.08\"'"));
+    EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"flac\"'"));
 
     EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"ac-3\"'"));
     EXPECT_EQ(kNot, CanPlay("'" + mime + "; codecs=\"ec-3\"'"));
@@ -581,6 +579,37 @@ class MediaCanPlayTypeTest : public MediaBrowserTest {
   GURL url_;
   DISALLOW_COPY_AND_ASSIGN(MediaCanPlayTypeTest);
 };
+
+#if BUILDFLAG(ENABLE_AV1_DECODER)
+class AV1MediaCanPlayTypeTest : public MediaCanPlayTypeTest {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    scoped_feature_list_.InitAndEnableFeature(media::kAv1Decoder);
+    MediaCanPlayTypeTest::SetUpCommandLine(command_line);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+// Note: This must be a separate test since features can not be changed after
+// the initial navigation.
+IN_PROC_BROWSER_TEST_F(AV1MediaCanPlayTypeTest, CodecSupportTest_av1) {
+  // TODO(dalecurtis): This is not the correct final string. Fix before enabling
+  // by default. This test needs to be merged into the existing mp4 and webm
+  // before release as well. http://crbug.com/784607
+  EXPECT_EQ(kProbably, CanPlay("'video/webm; codecs=\"av1\"'"));
+  EXPECT_EQ(kPropProbably, CanPlay("'video/mp4; codecs=\"av1\"'"));
+}
+#endif  // BUILDFLAG(ENABLE_AV1_DECODER)
+
+IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_av1_unsupported) {
+  // TODO(dalecurtis): This is not the correct final string. Fix before enabling
+  // by default. This test needs to be merged into the existing mp4 and webm
+  // before release as well. http://crbug.com/784607
+  EXPECT_EQ(kNot, CanPlay("'video/webm; codecs=\"av1\"'"));
+  EXPECT_EQ(kNot, CanPlay("'video/mp4; codecs=\"av1\"'"));
+}
 
 IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_wav) {
   EXPECT_EQ(kMaybe, CanPlay("'audio/wav'"));
@@ -684,15 +713,17 @@ IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_flac) {
   EXPECT_EQ(kProbably, CanPlay("'audio/flac'"));
   EXPECT_EQ(kProbably, CanPlay("'audio/ogg; codecs=\"flac\"'"));
 
+  // See CodecSupportTest_mp4 for more flac combos.
+  EXPECT_EQ(kPropProbably, CanPlay("'audio/mp4; codecs=\"flac\"'"));
+  EXPECT_EQ(kPropProbably, CanPlay("'video/mp4; codecs=\"flac\"'"));
+
   EXPECT_EQ(kNot, CanPlay("'video/flac'"));
   EXPECT_EQ(kNot, CanPlay("'video/x-flac'"));
   EXPECT_EQ(kNot, CanPlay("'audio/x-flac'"));
   EXPECT_EQ(kNot, CanPlay("'application/x-flac'"));
   EXPECT_EQ(kNot, CanPlay("'audio/flac; codecs=\"flac\"'"));
 
-  EXPECT_EQ(kNot, CanPlay("'video/mp4; codecs=\"flac\"'"));
   EXPECT_EQ(kNot, CanPlay("'video/webm; codecs=\"flac\"'"));
-  EXPECT_EQ(kNot, CanPlay("'audio/mp4; codecs=\"flac\"'"));
   EXPECT_EQ(kNot, CanPlay("'audio/webm; codecs=\"flac\"'"));
   EXPECT_EQ(kNot, CanPlay("'audio/flac; codecs=\"avc1\"'"));
   EXPECT_EQ(kNot, CanPlay("'audio/flac; codecs=\"avc3\"'"));
@@ -734,6 +765,8 @@ IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_mp3) {
   EXPECT_EQ(kNot, CanPlay("'audio/mpeg; codecs=\"mp4a.40.2\"'"));
   EXPECT_EQ(kNot, CanPlay("'audio/mpeg; codecs=\"mp4a.40.02\"'"));
 
+  EXPECT_EQ(kNot, CanPlay("'audio/mpeg; codecs=\"flac\"'"));
+
   TestMPEGUnacceptableCombinations("audio/mpeg");
 
   // audio/mp3 does not allow any codecs parameter
@@ -752,6 +785,8 @@ IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_mp3) {
   EXPECT_EQ(kNot, CanPlay("'audio/mp3; codecs=\"mp4a.6B\"'"));
   EXPECT_EQ(kNot, CanPlay("'audio/mp3; codecs=\"mp4a.40.2\"'"));
   EXPECT_EQ(kNot, CanPlay("'audio/mp3; codecs=\"mp4a.40.02\"'"));
+
+  EXPECT_EQ(kNot, CanPlay("'audio/mp3; codecs=\"flac\"'"));
 
   TestMPEGUnacceptableCombinations("audio/mp3");
   EXPECT_EQ(kNot, CanPlay("'audio/mp3; codecs=\"mp3\"'"));
@@ -773,6 +808,8 @@ IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_mp3) {
   EXPECT_EQ(kNot, CanPlay("'audio/x-mp3; codecs=\"mp4a.40.2\"'"));
   EXPECT_EQ(kNot, CanPlay("'audio/x-mp3; codecs=\"mp4a.40.02\"'"));
 
+  EXPECT_EQ(kNot, CanPlay("'audio/x-mp3; codecs=\"flac\"'"));
+
   TestMPEGUnacceptableCombinations("audio/x-mp3");
   EXPECT_EQ(kNot, CanPlay("'audio/x-mp3; codecs=\"mp3\"'"));
 }
@@ -786,6 +823,8 @@ IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_mp4) {
   EXPECT_EQ(kPropMaybe, CanPlay("'video/mp4; codecs=\"avc1, mp4a.40\"'"));
   EXPECT_EQ(kPropMaybe, CanPlay("'video/mp4; codecs=\"avc3, mp4a.40\"'"));
   EXPECT_EQ(kPropMaybe, CanPlay("'video/mp4; codecs=\"avc1, avc3\"'"));
+  EXPECT_EQ(kPropMaybe, CanPlay("'video/mp4; codecs=\"avc1, flac\"'"));
+  EXPECT_EQ(kPropMaybe, CanPlay("'video/mp4; codecs=\"avc3, flac\"'"));
 
   EXPECT_EQ(kPropProbably, CanPlay("'video/mp4; codecs=\"avc1.42E01E\"'"));
   EXPECT_EQ(kPropProbably, CanPlay("'video/mp4; codecs=\"avc1.42101E\"'"));
@@ -851,11 +890,14 @@ IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_mp4) {
   EXPECT_EQ(kHevcSupported,
             CanPlay("'video/mp4; codecs=\"hvc1.1.6.L93.B0, mp4a.40.5\"'"));
 
-  // switches::kEnableVp9InMp4 is enabled in MediaBrowserTest.
   EXPECT_EQ(kPropProbably, CanPlay("'video/mp4; codecs=\"vp09.00.10.08\"'"));
+  EXPECT_EQ(kPropProbably, CanPlay("'video/mp4; codecs=\"flac\"'"));
+  EXPECT_EQ(kPropProbably,
+            CanPlay("'video/mp4; codecs=\"avc1.4D401E, flac\"'"));
+  EXPECT_EQ(kPropProbably,
+            CanPlay("'video/mp4; codecs=\"avc3.64001F, flac\"'"));
 
   TestMPEGUnacceptableCombinations("video/mp4");
-  EXPECT_EQ(kNot, CanPlay("'video/mp4; codecs=\"flac\"'"));
   // This result is incorrect. See https://crbug.com/592889.
   EXPECT_EQ(kPropProbably, CanPlay("'video/mp4; codecs=\"mp3\"'"));
 
@@ -927,6 +969,8 @@ IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_mp4) {
   EXPECT_EQ(kNot, CanPlay("'video/x-m4v; codecs=\"avc1.640028,mp4a.a6\"'"));
   EXPECT_EQ(kNot, CanPlay("'video/x-m4v; codecs=\"avc1.640028,mp4a.A6\"'"));
 
+  EXPECT_EQ(kNot, CanPlay("'video/x-m4v; codecs=\"flac\"'"));
+
   TestMPEGUnacceptableCombinations("video/x-m4v");
 
   EXPECT_EQ(kPropMaybe, CanPlay("'audio/mp4'"));
@@ -942,6 +986,8 @@ IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_mp4) {
   EXPECT_EQ(kPropProbably, CanPlay("'audio/mp4; codecs=\"mp4a.40.5\"'"));
   EXPECT_EQ(kPropProbably, CanPlay("'audio/mp4; codecs=\"mp4a.40.05\"'"));
   EXPECT_EQ(kPropProbably, CanPlay("'audio/mp4; codecs=\"mp4a.40.29\"'"));
+
+  EXPECT_EQ(kPropProbably, CanPlay("'audio/mp4; codecs=\"flac\"'"));
 
   EXPECT_EQ(kNot, CanPlay("'audio/mp4; codecs=\"avc1\"'"));
   EXPECT_EQ(kNot, CanPlay("'audio/mp4; codecs=\"avc3\"'"));
@@ -966,7 +1012,6 @@ IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_mp4) {
   EXPECT_EQ(kNot, CanPlay("'audio/mp4; codecs=\"mp4a.A6\"'"));
 
   TestMPEGUnacceptableCombinations("audio/mp4");
-  EXPECT_EQ(kNot, CanPlay("'audio/mp4; codecs=\"flac\"'"));
   // This result is incorrect. See https://crbug.com/592889.
   EXPECT_EQ(kPropProbably, CanPlay("'audio/mp4; codecs=\"mp3\"'"));
 
@@ -1008,6 +1053,8 @@ IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_mp4) {
   EXPECT_EQ(kNot, CanPlay("'audio/x-m4a; codecs=\"ec-3\"'"));
   EXPECT_EQ(kNot, CanPlay("'audio/x-m4a; codecs=\"mp4a.a6\"'"));
   EXPECT_EQ(kNot, CanPlay("'audio/x-m4a; codecs=\"mp4a.A6\"'"));
+
+  EXPECT_EQ(kNot, CanPlay("'video/x-m4a; codecs=\"flac\"'"));
 
   TestMPEGUnacceptableCombinations("audio/x-m4a");
 }
@@ -1489,72 +1536,43 @@ IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_Mpeg2TsAudio) {
   EXPECT_EQ(kNot, CanPlay("'audio/mp2t; codecs=\"mp4a.40.2\"'"));
 }
 
-// New VP9 string is behind a variety of flags depending on container and
-// whether HDR is enabled.
-struct CanPlayTypeNewVp9Params {
-  const std::string command_line_flag;
-  const std::string container;
-  const char* prop_probably;
-  const char* prop_maybe;
-};
-
-class MediaCanPlayNewVp9TypeTest
-    : public MediaCanPlayTypeTest,
-      public ::testing::WithParamInterface<CanPlayTypeNewVp9Params> {
- public:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    const CanPlayTypeNewVp9Params& params = GetParam();
-    if (!params.command_line_flag.empty())
-      command_line->AppendSwitch(params.command_line_flag);
-  }
-};
-
 // See more complete codec string testing in media/base/video_codecs_unittest.cc
-IN_PROC_BROWSER_TEST_P(MediaCanPlayNewVp9TypeTest,
-                       CodecSupportTest_NewVp9Variants) {
-  const CanPlayTypeNewVp9Params& params = GetParam();
+IN_PROC_BROWSER_TEST_F(MediaCanPlayTypeTest, CodecSupportTest_NewVp9Variants) {
+  const std::string kSupportedMimeTypes[] = {"video/webm", "video/mp4"};
+  for (const auto& mime_type : kSupportedMimeTypes) {
+    // MP4 support is conditional on supporting proprietary codecs.
+    const char* kTestProbably = kProbably;
+    if (base::EndsWith(mime_type, "mp4", base::CompareCase::SENSITIVE))
+      kTestProbably = kPropProbably;
 
-  // E.g. "'video/webm; "
-  std::string mime_prefix = "'" + params.container + "; ";
+// Profile 2 and 3 support is currently disabled on ARM and MIPS.
+#if defined(ARCH_CPU_ARM_FAMILY) || defined(ARCH_CPU_MIPS_FAMILY)
+    const char* kVP9Profile2And3Probably = kNot;
+#else
+    const char* kVP9Profile2And3Probably = kTestProbably;
+#endif
 
-  // Malformed codecs string never allowed.
-  EXPECT_EQ(kNot, CanPlay(mime_prefix + "codecs=\"vp09.00.-1.08\"'"));
+    // E.g. "'video/webm; "
+    std::string prefix = "'" + mime_type + "; ";
 
-  const char* new_vp9_probably = params.prop_probably;
-  const char* new_vp9_maybe = params.prop_maybe;
+    // Malformed codecs string never allowed.
+    EXPECT_EQ(kNot, CanPlay(prefix + "codecs=\"vp09.00.-1.08\"'"));
 
-  // Test a few valid strings.
-  EXPECT_EQ(new_vp9_probably,
-            CanPlay(mime_prefix + "codecs=\"vp09.00.10.08\"'"));
-  EXPECT_EQ(new_vp9_probably,
-            CanPlay(mime_prefix + "codecs=\"vp09.00.10.08.00.01.01.01.00\"'"));
+    // Test a few valid strings.
+    EXPECT_EQ(kTestProbably, CanPlay(prefix + "codecs=\"vp09.00.10.08\"'"));
+    EXPECT_EQ(kTestProbably,
+              CanPlay(prefix + "codecs=\"vp09.00.10.08.00.01.01.01.00\"'"));
+    EXPECT_EQ(kTestProbably,
+              CanPlay(prefix + "codecs=\"vp09.00.10.08.01.02.02.02.00\"'"));
 
-  // Platform support is sadly ambiguous for profiles > 0.
-  // TODO(chcunningham): Plumb proper querying of platform support - give a firm
-  // answer.
-  EXPECT_EQ(new_vp9_maybe, CanPlay(mime_prefix + "codecs=\"vp09.01.10.08\"'"));
-  EXPECT_EQ(new_vp9_maybe, CanPlay(mime_prefix + "codecs=\"vp09.02.10.08\"'"));
-  EXPECT_EQ(new_vp9_maybe, CanPlay(mime_prefix + "codecs=\"vp09.03.10.08\"'"));
+    // Profiles 0 and 1 are always supported supported. Profiles 2 and 3 are
+    // only supported on certain architectures.
+    EXPECT_EQ(kTestProbably, CanPlay(prefix + "codecs=\"vp09.01.10.08\"'"));
+    EXPECT_EQ(kVP9Profile2And3Probably,
+              CanPlay(prefix + "codecs=\"vp09.02.10.08\"'"));
+    EXPECT_EQ(kVP9Profile2And3Probably,
+              CanPlay(prefix + "codecs=\"vp09.03.10.08\"'"));
+  }
 }
-
-const CanPlayTypeNewVp9Params kNewVp9ParamVariants[] = {
-    // Expect CanPlay(...) = kNotEmpty when command line flag empty.
-    {"", "video/mp4", kNot, kNot},
-    {"", "video/webm", kNot, kNot},
-    // Expect CanPlay(...) = kProbably/kMaybe for MP4, but not for WebM for
-    // these command line flags.
-    {switches::kEnableVp9InMp4, "video/mp4", kPropProbably, kPropMaybe},
-    {switches::kEnableVp9InMp4, "video/webm", kNot, kNot},
-    // Expect CanPlay(...) = kProbably/kMaybe for WebM, but not for MP4 for
-    // these command line flags.
-    {switches::kEnableHDR, "video/mp4", kNot, kNot},
-    {switches::kEnableNewVp9CodecString, "video/mp4", kNot, kNot},
-    {switches::kEnableHDR, "video/webm", kProbably, kMaybe},
-    {switches::kEnableNewVp9CodecString, "video/webm", kProbably, kMaybe},
-};
-
-INSTANTIATE_TEST_CASE_P(CodecSupportTest_NewVp9String,
-                        MediaCanPlayNewVp9TypeTest,
-                        ::testing::ValuesIn(kNewVp9ParamVariants));
 
 }  // namespace content

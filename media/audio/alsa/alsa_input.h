@@ -27,7 +27,8 @@ class AudioManagerBase;
 // Provides an input stream for audio capture based on the ALSA PCM interface.
 // This object is not thread safe and all methods should be invoked in the
 // thread that created the object.
-class AlsaPcmInputStream : public AgcAudioStream<AudioInputStream> {
+class MEDIA_EXPORT AlsaPcmInputStream
+    : public AgcAudioStream<AudioInputStream> {
  public:
   // Pass this to the constructor if you want to attempt auto-selection
   // of the audio recording device.
@@ -63,9 +64,6 @@ class AlsaPcmInputStream : public AgcAudioStream<AudioInputStream> {
 
   // Recovers from any device errors if possible.
   bool Recover(int error);
-
-  // Utility function for talking with the ALSA API.
-  snd_pcm_sframes_t GetCurrentDelay();
 
   // Non-refcounted pointer back to the audio manager.
   // The AudioManager indirectly holds on to stream objects, so we don't

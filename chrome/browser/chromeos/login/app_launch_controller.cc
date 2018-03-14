@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/login/app_launch_controller.h"
 
+#include "ash/shell.h"
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
@@ -14,6 +15,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
+#include "base/syslog_logging.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -23,12 +25,13 @@
 #include "chrome/browser/chromeos/app_mode/startup_app_launcher.h"
 #include "chrome/browser/chromeos/login/enterprise_user_session_metrics.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host.h"
-#include "chrome/browser/chromeos/login/ui/login_display_host_impl.h"
+#include "chrome/browser/chromeos/login/ui/login_display_host_webui.h"
 #include "chrome/browser/chromeos/login/ui/webui_login_view.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/ash/ash_util.h"
 #include "chrome/browser/ui/webui/chromeos/login/app_launch_splash_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chromeos/settings/cros_settings_names.h"
@@ -39,6 +42,7 @@
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/common/features/feature_session_type.h"
 #include "net/base/network_change_notifier.h"
+#include "ui/keyboard/keyboard_util.h"
 
 namespace chromeos {
 
@@ -56,7 +60,17 @@ enum KioskLaunchType {
 };
 
 // Application install splash screen minimum show time in milliseconds.
-const int kAppInstallSplashScreenMinTimeMS = 3000;
+constexpr int kAppInstallSplashScreenMinTimeMS = 3000;
+
+// Parameters for test:
+bool skip_splash_wait = false;
+int network_wait_time_in_seconds = 10;
+base::Closure* network_timeout_callback = nullptr;
+AppLaunchController::ReturnBoolCallback* can_configure_network_callback =
+    nullptr;
+AppLaunchController::ReturnBoolCallback*
+    need_owner_auth_to_configure_network_callback = nullptr;
+bool block_app_launch = false;
 
 bool IsEnterpriseManaged() {
   return g_browser_process->platform_part()
@@ -85,15 +99,6 @@ void RecordKioskLaunchUMA(bool is_auto_launch) {
 
 }  // namespace
 
-// static
-bool AppLaunchController::skip_splash_wait_ = false;
-int AppLaunchController::network_wait_time_ = 10;
-base::Closure* AppLaunchController::network_timeout_callback_ = NULL;
-AppLaunchController::ReturnBoolCallback*
-    AppLaunchController::can_configure_network_callback_ = NULL;
-AppLaunchController::ReturnBoolCallback*
-    AppLaunchController::need_owner_auth_to_configure_network_callback_ = NULL;
-
 ////////////////////////////////////////////////////////////////////////////////
 // AppLaunchController::AppWindowWatcher
 
@@ -109,8 +114,8 @@ class AppLaunchController::AppWindowWatcher
         weak_factory_(this) {
     if (!window_registry_->GetAppWindowsForApp(app_id).empty()) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(&AppWindowWatcher::NotifyAppWindowCreated,
-                                weak_factory_.GetWeakPtr()));
+          FROM_HERE, base::BindOnce(&AppWindowWatcher::NotifyAppWindowCreated,
+                                    weak_factory_.GetWeakPtr()));
       return;
     } else {
       window_registry_->AddObserver(this);
@@ -127,9 +132,7 @@ class AppLaunchController::AppWindowWatcher
     }
   }
 
-  void NotifyAppWindowCreated() {
-    controller_->OnAppWindowCreated();
-  }
+  void NotifyAppWindowCreated() { controller_->OnAppWindowCreated(); }
 
   AppLaunchController* controller_;
   std::string app_id_;
@@ -154,11 +157,11 @@ AppLaunchController::AppLaunchController(const std::string& app_id,
 }
 
 AppLaunchController::~AppLaunchController() {
-  app_launch_splash_screen_view_->SetDelegate(NULL);
+  app_launch_splash_screen_view_->SetDelegate(nullptr);
 }
 
 void AppLaunchController::StartAppLaunch(bool is_auto_launch) {
-  DVLOG(1) << "Starting kiosk mode...";
+  SYSLOG(INFO) << "Starting kiosk mode...";
 
   RecordKioskLaunchUMA(is_auto_launch);
 
@@ -207,30 +210,35 @@ void AppLaunchController::StartAppLaunch(bool is_auto_launch) {
 
 // static
 void AppLaunchController::SkipSplashWaitForTesting() {
-  skip_splash_wait_ = true;
+  skip_splash_wait = true;
 }
 
 // static
 void AppLaunchController::SetNetworkWaitForTesting(int wait_time_secs) {
-  network_wait_time_ = wait_time_secs;
+  network_wait_time_in_seconds = wait_time_secs;
 }
 
 // static
 void AppLaunchController::SetNetworkTimeoutCallbackForTesting(
     base::Closure* callback) {
-  network_timeout_callback_ = callback;
+  network_timeout_callback = callback;
 }
 
 // static
 void AppLaunchController::SetCanConfigureNetworkCallbackForTesting(
-    ReturnBoolCallback* can_configure_network_callback) {
-  can_configure_network_callback_ = can_configure_network_callback;
+    ReturnBoolCallback* callback) {
+  can_configure_network_callback = callback;
 }
 
 // static
 void AppLaunchController::SetNeedOwnerAuthToConfigureNetworkCallbackForTesting(
-    ReturnBoolCallback* need_owner_auth_callback) {
-  need_owner_auth_to_configure_network_callback_ = need_owner_auth_callback;
+    ReturnBoolCallback* callback) {
+  need_owner_auth_to_configure_network_callback = callback;
+}
+
+// static
+void AppLaunchController::SetBlockAppLaunchForTesting(bool block) {
+  block_app_launch = block;
 }
 
 void AppLaunchController::OnConfigureNetwork() {
@@ -256,10 +264,9 @@ void AppLaunchController::OnOwnerSigninSuccess() {
   signin_screen_.reset();
 }
 
-void AppLaunchController::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
+void AppLaunchController::Observe(int type,
+                                  const content::NotificationSource& source,
+                                  const content::NotificationDetails& details) {
   DCHECK_EQ(chrome::NOTIFICATION_LOGIN_OR_LOCK_WEBUI_VISIBLE, type);
   DCHECK(!webui_visible_);
   webui_visible_ = true;
@@ -297,11 +304,20 @@ void AppLaunchController::OnNetworkStateChanged(bool online) {
 }
 
 void AppLaunchController::OnProfileLoaded(Profile* profile) {
-  DVLOG(1) << "Profile loaded... Starting app launch.";
+  SYSLOG(INFO) << "Profile loaded... Starting app launch.";
   profile_ = profile;
 
   // This is needed to trigger input method extensions being loaded.
   profile_->InitChromeOSPreferences();
+
+  // Reset virtual keyboard to use IME engines in app profile early.
+  if (!ash_util::IsRunningInMash()) {
+    if (keyboard::IsKeyboardEnabled())
+      ash::Shell::Get()->CreateKeyboard();
+  } else {
+    // TODO(xiyuan): Update with mash VK work http://crbug.com/648733
+    NOTIMPLEMENTED();
+  }
 
   kiosk_profile_loader_.reset();
   startup_app_launcher_.reset(
@@ -334,24 +350,24 @@ void AppLaunchController::CleanUp() {
 
 void AppLaunchController::OnNetworkWaitTimedout() {
   DCHECK(waiting_for_network_);
-  LOG(WARNING) << "OnNetworkWaitTimedout... connection = "
-               <<  net::NetworkChangeNotifier::GetConnectionType();
+  SYSLOG(WARNING) << "OnNetworkWaitTimedout... connection = "
+                  << net::NetworkChangeNotifier::GetConnectionType();
   network_wait_timedout_ = true;
 
   MaybeShowNetworkConfigureUI();
 
-  if (network_timeout_callback_)
-    network_timeout_callback_->Run();
+  if (network_timeout_callback)
+    network_timeout_callback->Run();
 }
 
 void AppLaunchController::OnAppWindowCreated() {
-  DVLOG(1) << "App window created, closing splash screen.";
+  SYSLOG(INFO) << "App window created, closing splash screen.";
   CleanUp();
 }
 
 bool AppLaunchController::CanConfigureNetwork() {
-  if (can_configure_network_callback_)
-    return can_configure_network_callback_->Run();
+  if (can_configure_network_callback)
+    return can_configure_network_callback->Run();
 
   if (IsEnterpriseManaged()) {
     bool should_prompt;
@@ -369,8 +385,8 @@ bool AppLaunchController::CanConfigureNetwork() {
 }
 
 bool AppLaunchController::NeedOwnerAuthToConfigureNetwork() {
-  if (need_owner_auth_to_configure_network_callback_)
-    return need_owner_auth_to_configure_network_callback_->Run();
+  if (need_owner_auth_to_configure_network_callback)
+    return need_owner_auth_to_configure_network_callback->Run();
 
   return !IsEnterpriseManaged();
 }
@@ -410,8 +426,7 @@ void AppLaunchController::InitializeNetwork() {
   // after a brief wait time.
   waiting_for_network_ = true;
   network_wait_timer_.Start(
-      FROM_HERE,
-      base::TimeDelta::FromSeconds(network_wait_time_),
+      FROM_HERE, base::TimeDelta::FromSeconds(network_wait_time_in_seconds),
       this, &AppLaunchController::OnNetworkWaitTimedout);
 
   app_launch_splash_screen_view_->UpdateAppLaunchState(
@@ -444,8 +459,8 @@ void AppLaunchController::OnInstallingApp() {
   app_launch_splash_screen_view_->ToggleNetworkConfig(false);
 
   // We have connectivity at this point, so we can skip the network
-  // configuration dialog if it is being shown.
-  if (showing_network_dialog_) {
+  // configuration dialog if it is being shown and not explicitly requested.
+  if (showing_network_dialog_ && !network_config_requested_) {
     app_launch_splash_screen_view_->Show(app_id_);
     showing_network_dialog_ = false;
     launch_splash_start_time_ = base::TimeTicks::Now().ToInternalValue();
@@ -454,6 +469,9 @@ void AppLaunchController::OnInstallingApp() {
 
 void AppLaunchController::OnReadyToLaunch() {
   launcher_ready_ = true;
+
+  if (block_app_launch)
+    return;
 
   if (network_config_requested_)
     return;
@@ -473,13 +491,12 @@ void AppLaunchController::OnReadyToLaunch() {
 
   // Enforce that we show app install splash screen for some minimum amount
   // of time.
-  if (!skip_splash_wait_ && time_taken_ms < kAppInstallSplashScreenMinTimeMS) {
+  if (!skip_splash_wait && time_taken_ms < kAppInstallSplashScreenMinTimeMS) {
     splash_wait_timer_.Start(
         FROM_HERE,
-        base::TimeDelta::FromMilliseconds(
-            kAppInstallSplashScreenMinTimeMS - time_taken_ms),
-        this,
-        &AppLaunchController::OnReadyToLaunch);
+        base::TimeDelta::FromMilliseconds(kAppInstallSplashScreenMinTimeMS -
+                                          time_taken_ms),
+        this, &AppLaunchController::OnReadyToLaunch);
     return;
   }
 
@@ -487,7 +504,7 @@ void AppLaunchController::OnReadyToLaunch() {
 }
 
 void AppLaunchController::OnLaunchSucceeded() {
-  DVLOG(1) << "Kiosk launch succeeded, wait for app window.";
+  SYSLOG(INFO) << "Kiosk launch succeeded, wait for app window.";
   app_launch_splash_screen_view_->UpdateAppLaunchState(
       AppLaunchSplashScreenView::APP_LAUNCH_STATE_WAITING_APP_WINDOW);
 
@@ -497,7 +514,7 @@ void AppLaunchController::OnLaunchSucceeded() {
 
 void AppLaunchController::OnLaunchFailed(KioskAppLaunchError::Error error) {
   DCHECK_NE(KioskAppLaunchError::NONE, error);
-  LOG(ERROR) << "Kiosk launch failed, error=" << error;
+  SYSLOG(ERROR) << "Kiosk launch failed, error=" << error;
 
   // Reboot on the recoverable cryptohome errors.
   if (error == KioskAppLaunchError::CRYPTOHOMED_NOT_RUNNING ||
@@ -518,4 +535,4 @@ bool AppLaunchController::IsShowingNetworkConfigScreen() {
   return network_config_requested_;
 }
 
-}   // namespace chromeos
+}  // namespace chromeos

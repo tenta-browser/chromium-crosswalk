@@ -27,14 +27,12 @@
 #ifndef WebGLUniformLocation_h
 #define WebGLUniformLocation_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/webgl/WebGLProgram.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
-class WebGLUniformLocation final
-    : public GarbageCollected<WebGLUniformLocation>,
-      public ScriptWrappable {
+class WebGLUniformLocation final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -44,7 +42,7 @@ class WebGLUniformLocation final
 
   GLint Location() const;
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  protected:
   WebGLUniformLocation(WebGLProgram*, GLint location);

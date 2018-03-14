@@ -14,16 +14,16 @@ InstalledAppProviderImplDefault::~InstalledAppProviderImplDefault() {}
 
 void InstalledAppProviderImplDefault::FilterInstalledApps(
     std::vector<blink::mojom::RelatedApplicationPtr> related_apps,
-    const FilterInstalledAppsCallback& callback) {
+    FilterInstalledAppsCallback callback) {
   // Do not return any results (in the default implementation, there are no
   // installed related apps).
-  callback.Run(std::vector<blink::mojom::RelatedApplicationPtr>());
+  std::move(callback).Run(std::vector<blink::mojom::RelatedApplicationPtr>());
 }
 
 // static
 void InstalledAppProviderImplDefault::Create(
-    mojo::InterfaceRequest<blink::mojom::InstalledAppProvider> request) {
-  mojo::MakeStrongBinding(base::MakeUnique<InstalledAppProviderImplDefault>(),
+    blink::mojom::InstalledAppProviderRequest request) {
+  mojo::MakeStrongBinding(std::make_unique<InstalledAppProviderImplDefault>(),
                           std::move(request));
 }
 

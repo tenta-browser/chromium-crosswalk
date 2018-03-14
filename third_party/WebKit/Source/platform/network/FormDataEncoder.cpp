@@ -43,7 +43,7 @@ static inline void Append(Vector<char>& buffer, const char* string) {
 }
 
 static inline void Append(Vector<char>& buffer, const CString& string) {
-  buffer.Append(string.Data(), string.length());
+  buffer.Append(string.data(), string.length());
 }
 
 static inline void AppendPercentEncoded(Vector<char>& buffer, unsigned char c) {
@@ -58,7 +58,7 @@ static void AppendQuotedString(Vector<char>& buffer, const CString& string) {
   // if there is an encoding form they can handle.
   size_t length = string.length();
   for (size_t i = 0; i < length; ++i) {
-    char c = string.Data()[i];
+    char c = string.data()[i];
 
     switch (c) {
       case 0x0a:
@@ -79,7 +79,7 @@ static void AppendQuotedString(Vector<char>& buffer, const CString& string) {
 WTF::TextEncoding FormDataEncoder::EncodingFromAcceptCharset(
     const String& accept_charset,
     const WTF::TextEncoding& fallback_encoding) {
-  ASSERT(fallback_encoding.IsValid());
+  DCHECK(fallback_encoding.IsValid());
 
   String normalized_accept_charset = accept_charset;
   normalized_accept_charset.Replace(',', ' ');
@@ -164,11 +164,36 @@ void FormDataEncoder::AddFilenameToMultiPartHeader(
     Vector<char>& buffer,
     const WTF::TextEncoding& encoding,
     const String& filename) {
-  // FIXME: This loses data irreversibly if the filename includes characters you
-  // can't encode in the website's character set.
+  // Characters that cannot be encoded using the form's encoding will
+  // be escaped using numeric character references, e.g. &#128514; for
+  // 😂.
+  //
+  // This behavior is intended to match existing Firefox and Edge
+  // behavior.
+  //
+  // This aspect of multipart file upload (how to replace filename
+  // characters not representable in the form charset) is not
+  // currently specified in HTML, though it may be a good candidate
+  // for future standardization. An HTML issue tracker entry has
+  // been added for this: https://github.com/whatwg/html/issues/3223
+  //
+  // This behavior also exactly matches the already-standardized
+  // replacement behavior from HTML for entity names and values in
+  // multipart form data. The HTML standard specifically overrides RFC
+  // 7578 in this case and leaves the actual substitution mechanism
+  // implementation-defined.
+  //
+  // See also:
+  //
+  // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#multipart-form-data
+  // https://www.chromestatus.com/features/5634575908732928
+  // https://crbug.com/661819
+  // https://encoding.spec.whatwg.org/#concept-encoding-process
+  // https://tools.ietf.org/html/rfc7578#section-4.2
+  // https://tools.ietf.org/html/rfc5987#section-3.2
   Append(buffer, "; filename=\"");
-  AppendQuotedString(
-      buffer, encoding.Encode(filename, WTF::kQuestionMarksForUnencodables));
+  AppendQuotedString(buffer,
+                     encoding.Encode(filename, WTF::kEntitiesForUnencodables));
   Append(buffer, '"');
 }
 
@@ -212,7 +237,7 @@ void FormDataEncoder::EncodeStringAsFormData(Vector<char>& buffer,
   // http://www.w3.org/TR/html4/interact/forms.html#h-17.13.4.1
   unsigned length = string.length();
   for (unsigned i = 0; i < length; ++i) {
-    unsigned char c = string.Data()[i];
+    unsigned char c = string.data()[i];
 
     if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
         (c >= '0' && c <= '9') || (c != '\0' && strchr(kSafeCharacters, c))) {
@@ -222,7 +247,7 @@ void FormDataEncoder::EncodeStringAsFormData(Vector<char>& buffer,
     } else {
       if (mode == kNormalizeCRLF) {
         if (c == '\n' ||
-            (c == '\r' && (i + 1 >= length || string.Data()[i + 1] != '\n'))) {
+            (c == '\r' && (i + 1 >= length || string.data()[i + 1] != '\n'))) {
           Append(buffer, "%0D%0A");
         } else if (c != '\r') {
           AppendPercentEncoded(buffer, c);

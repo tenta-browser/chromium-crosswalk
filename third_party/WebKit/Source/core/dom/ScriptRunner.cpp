@@ -26,24 +26,26 @@
 #include "core/dom/ScriptRunner.h"
 
 #include <algorithm>
+#include "bindings/core/v8/ScriptStreamer.h"
 #include "core/dom/Document.h"
 #include "core/dom/ScriptLoader.h"
-#include "core/dom/TaskRunnerHelper.h"
 #include "platform/heap/Handle.h"
+#include "platform/runtime_enabled_features.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebScheduler.h"
+#include "public/platform/TaskType.h"
 #include "public/platform/WebThread.h"
 
 namespace blink {
 
 ScriptRunner::ScriptRunner(Document* document)
     : document_(document),
-      task_runner_(TaskRunnerHelper::Get(TaskType::kNetworking, document)),
+      task_runner_(document->GetTaskRunner(TaskType::kNetworking)),
       number_of_in_order_scripts_with_pending_notification_(0),
       is_suspended_(false) {
   DCHECK(document);
 #ifndef NDEBUG
-  has_ever_been_suspended_ = false;
+  number_of_extra_tasks_ = 0;
 #endif
 }
 
@@ -54,6 +56,7 @@ void ScriptRunner::QueueScriptForExecution(ScriptLoader* script_loader,
   switch (execution_type) {
     case kAsync:
       pending_async_scripts_.insert(script_loader);
+      TryStream(script_loader);
       break;
 
     case kInOrder:
@@ -74,7 +77,9 @@ void ScriptRunner::PostTask(const WebTraceLocation& web_trace_location) {
 
 void ScriptRunner::Suspend() {
 #ifndef NDEBUG
-  has_ever_been_suspended_ = true;
+  // Resume will re-post tasks for all available scripts.
+  number_of_extra_tasks_ += async_scripts_to_execute_soon_.size() +
+                            in_order_scripts_to_execute_soon_.size();
 #endif
 
   is_suspended_ = true;
@@ -96,10 +101,6 @@ void ScriptRunner::Resume() {
 void ScriptRunner::ScheduleReadyInOrderScripts() {
   while (!pending_in_order_scripts_.IsEmpty() &&
          pending_in_order_scripts_.front()->IsReady()) {
-    // A ScriptLoader that failed is responsible for cancelling itself
-    // notifyScriptLoadError(); it continues this draining of ready scripts.
-    if (pending_in_order_scripts_.front()->ErrorOccurred())
-      break;
     in_order_scripts_to_execute_soon_.push_back(
         pending_in_order_scripts_.TakeFirst());
     PostTask(BLINK_FROM_HERE);
@@ -121,7 +122,7 @@ void ScriptRunner::NotifyScriptReady(ScriptLoader* script_loader,
       async_scripts_to_execute_soon_.push_back(script_loader);
 
       PostTask(BLINK_FROM_HERE);
-
+      TryStreamAny();
       break;
 
     case kInOrder:
@@ -148,26 +149,9 @@ bool ScriptRunner::RemovePendingInOrderScript(ScriptLoader* script_loader) {
   return true;
 }
 
-void ScriptRunner::NotifyScriptLoadError(ScriptLoader* script_loader,
-                                         AsyncExecutionType execution_type) {
-  switch (execution_type) {
-    case kAsync: {
-      // See notifyScriptReady() comment.
-      SECURITY_CHECK(pending_async_scripts_.Contains(script_loader));
-      pending_async_scripts_.erase(script_loader);
-      break;
-    }
-    case kInOrder: {
-      SECURITY_CHECK(RemovePendingInOrderScript(script_loader));
-      ScheduleReadyInOrderScripts();
-      break;
-    }
-    case kNone: {
-      NOTREACHED();
-      break;
-    }
-  }
-  document_->DecrementLoadEventDelayCount();
+void ScriptRunner::NotifyScriptStreamerFinished() {
+  PostTask(BLINK_FROM_HERE);
+  TryStreamAny();
 }
 
 void ScriptRunner::MovePendingScript(Document& old_document,
@@ -200,7 +184,7 @@ void ScriptRunner::MovePendingScript(Document& old_document,
 
 void ScriptRunner::MovePendingScript(ScriptRunner* new_runner,
                                      ScriptLoader* script_loader) {
-  auto it = pending_async_scripts_.Find(script_loader);
+  auto it = pending_async_scripts_.find(script_loader);
   if (it != pending_async_scripts_.end()) {
     new_runner->QueueScriptForExecution(script_loader, kAsync);
     pending_async_scripts_.erase(it);
@@ -213,39 +197,127 @@ void ScriptRunner::MovePendingScript(ScriptRunner* new_runner,
   }
 }
 
-// Returns true if task was run, and false otherwise.
-bool ScriptRunner::ExecuteTaskFromQueue(
-    HeapDeque<Member<ScriptLoader>>* task_queue) {
-  if (task_queue->IsEmpty())
+bool ScriptRunner::ExecuteInOrderTask() {
+  if (in_order_scripts_to_execute_soon_.IsEmpty())
     return false;
-  task_queue->TakeFirst()->Execute();
+
+  PendingScript* pending_script = in_order_scripts_to_execute_soon_.front()
+                                      ->GetPendingScriptIfScriptIsAsync();
+  if (pending_script && pending_script->IsCurrentlyStreaming())
+    return false;
+
+  in_order_scripts_to_execute_soon_.TakeFirst()->Execute();
 
   document_->DecrementLoadEventDelayCount();
   return true;
+}
+
+bool ScriptRunner::ExecuteAsyncTask() {
+  for (auto iter = async_scripts_to_execute_soon_.begin();
+       iter != async_scripts_to_execute_soon_.end(); ++iter) {
+    PendingScript* pending_script = (*iter)->GetPendingScriptIfScriptIsAsync();
+    if (!pending_script || !pending_script->IsCurrentlyStreaming()) {
+      ScriptLoader* loader = *iter;
+      async_scripts_to_execute_soon_.erase(iter);
+      loader->Execute();
+      document_->DecrementLoadEventDelayCount();
+      return true;
+    }
+  }
+  return false;
 }
 
 void ScriptRunner::ExecuteTask() {
   if (is_suspended_)
     return;
 
-  if (ExecuteTaskFromQueue(&async_scripts_to_execute_soon_))
+  if (ExecuteAsyncTask())
     return;
 
-  if (ExecuteTaskFromQueue(&in_order_scripts_to_execute_soon_))
+  if (ExecuteInOrderTask())
     return;
 
 #ifndef NDEBUG
-  // Extra tasks should be posted only when we resume after suspending.
-  DCHECK(has_ever_been_suspended_);
+  // Extra tasks should be posted only when we resume after suspending,
+  // or when we stream a script. These should all be accounted for in
+  // number_of_extra_tasks_.
+  DCHECK_GT(number_of_extra_tasks_--, 0);
 #endif
 }
 
-DEFINE_TRACE(ScriptRunner) {
+void ScriptRunner::TryStreamAny() {
+  if (is_suspended_)
+    return;
+
+  if (!RuntimeEnabledFeatures::WorkStealingInScriptRunnerEnabled())
+    return;
+
+  // Look through async_scripts_to_execute_soon_, and stream any one of them.
+  for (auto script_loader : async_scripts_to_execute_soon_) {
+    if (DoTryStream(script_loader))
+      return;
+  }
+}
+
+void ScriptRunner::TryStream(ScriptLoader* script_loader) {
+  if (!is_suspended_)
+    DoTryStream(script_loader);
+}
+
+bool ScriptRunner::DoTryStream(ScriptLoader* script_loader) {
+  // Checks that all callers should have already done.
+  DCHECK(!is_suspended_);
+  DCHECK(script_loader);
+
+  // Currently, we support streaming only for async scripts.
+  DCHECK(pending_async_scripts_.find(script_loader) !=
+             pending_async_scripts_.end() ||
+         std::find(async_scripts_to_execute_soon_.begin(),
+                   async_scripts_to_execute_soon_.end(),
+                   script_loader) != async_scripts_to_execute_soon_.end());
+
+  PendingScript* pending_script =
+      script_loader->GetPendingScriptIfScriptIsAsync();
+  if (!pending_script)
+    return false;
+
+#ifndef NDEBUG
+  bool was_already_streaming = pending_script->IsCurrentlyStreaming();
+#endif
+
+  bool success = pending_script->StartStreamingIfPossible(
+      ScriptStreamer::kAsync,
+      WTF::Bind(&ScriptRunner::NotifyScriptStreamerFinished,
+                WrapPersistent(this)));
+#ifndef NDEBUG
+  if (was_already_streaming) {
+    DCHECK(!success);
+  } else {
+    DCHECK_EQ(success, pending_script->IsCurrentlyStreaming());
+  }
+  if (success)
+    number_of_extra_tasks_++;
+#endif
+  return success;
+}
+
+void ScriptRunner::Trace(blink::Visitor* visitor) {
   visitor->Trace(document_);
   visitor->Trace(pending_in_order_scripts_);
   visitor->Trace(pending_async_scripts_);
   visitor->Trace(async_scripts_to_execute_soon_);
   visitor->Trace(in_order_scripts_to_execute_soon_);
+}
+
+void ScriptRunner::TraceWrappers(const ScriptWrappableVisitor* visitor) const {
+  for (const auto& loader : pending_in_order_scripts_)
+    visitor->TraceWrappers(loader);
+  for (const auto& loader : pending_async_scripts_)
+    visitor->TraceWrappers(loader);
+  for (const auto& loader : async_scripts_to_execute_soon_)
+    visitor->TraceWrappers(loader);
+  for (const auto& loader : in_order_scripts_to_execute_soon_)
+    visitor->TraceWrappers(loader);
 }
 
 }  // namespace blink

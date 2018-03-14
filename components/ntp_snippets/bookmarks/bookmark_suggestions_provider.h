@@ -9,14 +9,12 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/weak_ptr.h"
 #include "components/bookmarks/browser/bookmark_model_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/ntp_snippets/category.h"
 #include "components/ntp_snippets/category_status.h"
 #include "components/ntp_snippets/content_suggestions_provider.h"
-
-class PrefRegistrySimple;
-class PrefService;
 
 namespace ntp_snippets {
 
@@ -25,11 +23,8 @@ class BookmarkSuggestionsProvider : public ContentSuggestionsProvider,
                                     public bookmarks::BookmarkModelObserver {
  public:
   BookmarkSuggestionsProvider(ContentSuggestionsProvider::Observer* observer,
-                              bookmarks::BookmarkModel* bookmark_model,
-                              PrefService* pref_service);
+                              bookmarks::BookmarkModel* bookmark_model);
   ~BookmarkSuggestionsProvider() override;
-
-  static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
  private:
   // ContentSuggestionsProvider implementation.
@@ -37,18 +32,18 @@ class BookmarkSuggestionsProvider : public ContentSuggestionsProvider,
   CategoryInfo GetCategoryInfo(Category category) override;
   void DismissSuggestion(const ContentSuggestion::ID& suggestion_id) override;
   void FetchSuggestionImage(const ContentSuggestion::ID& suggestion_id,
-                            const ImageFetchedCallback& callback) override;
+                            ImageFetchedCallback callback) override;
   void Fetch(const Category& category,
              const std::set<std::string>& known_suggestion_ids,
-             const FetchDoneCallback& callback) override;
+             FetchDoneCallback callback) override;
   void ClearHistory(
       base::Time begin,
       base::Time end,
       const base::Callback<bool(const GURL& url)>& filter) override;
-  void ClearCachedSuggestions(Category category) override;
+  void ClearCachedSuggestions() override;
   void GetDismissedSuggestionsForDebugging(
       Category category,
-      const DismissedSuggestionsCallback& callback) override;
+      DismissedSuggestionsCallback callback) override;
   void ClearDismissedSuggestionsForDebugging(Category category) override;
 
   // bookmarks::BookmarkModelObserver implementation.
@@ -104,6 +99,7 @@ class BookmarkSuggestionsProvider : public ContentSuggestionsProvider,
   const Category provided_category_;
   bookmarks::BookmarkModel* bookmark_model_;
   bool fetch_requested_;
+  bool fetch_in_progress_;
 
   base::Time node_to_change_last_visit_date_;
   base::Time end_of_list_last_visit_date_;
@@ -112,6 +108,8 @@ class BookmarkSuggestionsProvider : public ContentSuggestionsProvider,
   // deciding which bookmarks to suggest. Should we also consider visits on
   // desktop platforms?
   bool consider_bookmark_visits_from_desktop_;
+
+  base::WeakPtrFactory<BookmarkSuggestionsProvider> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkSuggestionsProvider);
 };

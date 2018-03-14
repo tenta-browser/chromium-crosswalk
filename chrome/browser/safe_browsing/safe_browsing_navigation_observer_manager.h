@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_SAFE_BROWSING_SAFE_BROWSING_NAVIGATION_OBSERVER_MANAGER_H_
 #define CHROME_BROWSER_SAFE_BROWSING_SAFE_BROWSING_NAVIGATION_OBSERVER_MANAGER_H_
 
-#include <deque>
+#include "base/containers/circular_deque.h"
 #include "base/feature_list.h"
 #include "base/supports_user_data.h"
-#include "components/safe_browsing/csd.pb.h"
+#include "components/safe_browsing/proto/csd.pb.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "third_party/protobuf/src/google/protobuf/repeated_field.h"
 #include "url/gurl.h"
@@ -30,6 +30,10 @@ class ReferrerChainData : public base::SupportsUserData::Data {
   explicit ReferrerChainData(std::unique_ptr<ReferrerChain> referrer_chain);
   ~ReferrerChainData() override;
   ReferrerChain* GetReferrerChain();
+
+  // Unique user data key used to get and set referrer chain data in
+  // DownloadItem.
+  static const char kDownloadReferrerChainDataKey[];
 
  private:
   std::unique_ptr<ReferrerChain> referrer_chain_;
@@ -85,7 +89,7 @@ struct NavigationEventList {
   }
 
  private:
-  std::deque<std::unique_ptr<NavigationEvent>> navigation_events_;
+  base::circular_deque<std::unique_ptr<NavigationEvent>> navigation_events_;
   const std::size_t size_limit_;
 };
 
@@ -95,8 +99,6 @@ struct NavigationEventList {
 class SafeBrowsingNavigationObserverManager
     : public base::RefCountedThreadSafe<SafeBrowsingNavigationObserverManager> {
  public:
-  static const base::Feature kDownloadAttribution;
-
   // For UMA histogram counting. Do NOT change order.
   enum AttributionResult {
     SUCCESS = 1,                   // Identified referrer chain is not empty.
@@ -113,16 +115,20 @@ class SafeBrowsingNavigationObserverManager
   // kUserGestureTTLInSecond.
   static bool IsUserGestureExpired(const base::Time& timestamp);
 
-  // Helper function to strip empty ref fragment from a URL. Many pages
-  // end up with a "#" at the end of their URLs due to navigation triggered by
+  // Helper function to strip ref fragment from a URL. Many pages end up with a
+  // fragment (e.g. http://bar.com/index.html#foo) at the end due to in-page
+  // navigation or a single "#" at the end due to navigation triggered by
   // href="#" and javascript onclick function. We don't want to have separate
   // entries for these cases in the maps.
-  static GURL ClearEmptyRef(const GURL& url);
+  static GURL ClearURLRef(const GURL& url);
 
   // Checks if we should enable observing navigations for safe browsing purpose.
-  // Return true if the safe browsing service and the |kDownloadAttribution|
-  // feature are both enabled, and safe browsing service is initialized.
+  // Return true if the safe browsing safe browsing service is enabled and
+  // initialized.
   static bool IsEnabledAndReady(Profile* profile);
+
+  // Sanitize referrer chain by only keeping origin information of all URLs.
+  static void SanitizeReferrerChain(ReferrerChain* referrer_chain);
 
   SafeBrowsingNavigationObserverManager();
 
@@ -221,7 +227,7 @@ class SafeBrowsingNavigationObserverManager
   void CleanUpNavigationEvents();
 
   // Remove stale entries from user_gesture_map_ if they are older than
-  // kUserGestureTTLInSecond (1 sec).
+  // kNavigationFootprintTTLInSecond (2 minutes).
   void CleanUpUserGestures();
 
   // Remove stale entries from host_to_ip_map_ if they are older than

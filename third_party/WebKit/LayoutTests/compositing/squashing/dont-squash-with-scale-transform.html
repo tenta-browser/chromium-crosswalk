@@ -18,12 +18,11 @@ onload = function() {
     if (window.internals) {
         var layers = JSON.parse(internals.layerTreeAsText(document, internals.LAYER_TREE_INCLUDES_DEBUG_INFO))["layers"];
 
-        // The scale-transform layer can't be squashed
-        assert_true(layers[3].compositingReasons[1] == "Layer was separately composited because it could not be squashed.");
-        assert_true(layers[3].squashingDisallowedReasons[0] == "Cannot squash layers with transforms that are not identity or translation.");
-
-        // ...but the translate-transform one can.
-        assert_true(layers[4].compositingReasons[0] == "Secondary layer, home for a group of squashable content");
+        var willChangeDIVLayer = internals.runtimeFlags.rootLayerScrollingEnabled ? layers[4] : layers[2];
+        var scaleTransformDIVLayer = internals.runtimeFlags.rootLayerScrollingEnabled ? layers[5] : layers[3];
+        // Both transformed layers squash together after the will-change layer.
+        assert_true(willChangeDIVLayer.compositingReasons[0] == "Has a will-change compositing hint");
+        assert_true(scaleTransformDIVLayer.compositingReasons[0] == "Secondary layer, home for a group of squashable content");
     }
 };
 </script>

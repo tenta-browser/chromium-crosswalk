@@ -5,23 +5,23 @@
 #ifndef FramePainter_h
 #define FramePainter_h
 
+#include "base/macros.h"
 #include "core/paint/PaintPhase.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
 class CullRect;
-class FrameView;
 class GraphicsContext;
 class IntRect;
+class LocalFrameView;
 class Scrollbar;
 
 class FramePainter {
   STACK_ALLOCATED();
-  WTF_MAKE_NONCOPYABLE(FramePainter);
 
  public:
-  explicit FramePainter(const FrameView& frame_view)
+  explicit FramePainter(const LocalFrameView& frame_view)
       : frame_view_(&frame_view) {}
 
   void Paint(GraphicsContext&, const GlobalPaintFlags, const CullRect&);
@@ -32,10 +32,12 @@ class FramePainter {
  private:
   void PaintScrollbar(GraphicsContext&, Scrollbar&, const IntRect&);
 
-  const FrameView& GetFrameView();
+  const LocalFrameView& GetFrameView();
 
-  Member<const FrameView> frame_view_;
+  Member<const LocalFrameView> frame_view_;
   static bool in_paint_contents_;
+
+  DISALLOW_COPY_AND_ASSIGN(FramePainter);
 };
 
 }  // namespace blink

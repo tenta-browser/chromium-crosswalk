@@ -63,6 +63,7 @@ Console.ConsoleViewport = class {
     this._headSelection = null;
     this._itemCount = 0;
     this._cumulativeHeights = new Int32Array(0);
+    this._muteCopyHandler = false;
 
     // Listen for any changes to descendants and trigger a refresh. This ensures
     // that items updated asynchronously will not break stick-to-bottom behavior
@@ -89,10 +90,18 @@ Console.ConsoleViewport = class {
       this._observer.disconnect();
   }
 
+  copyWithStyles() {
+    this._muteCopyHandler = true;
+    this.element.ownerDocument.execCommand('copy');
+    this._muteCopyHandler = false;
+  }
+
   /**
    * @param {!Event} event
    */
   _onCopy(event) {
+    if (this._muteCopyHandler)
+      return;
     var text = this._selectedText();
     if (!text)
       return;
@@ -148,7 +157,7 @@ Console.ConsoleViewport = class {
     var height = 0;
     this._cumulativeHeights = new Int32Array(this._itemCount);
     for (var i = 0; i < this._itemCount; ++i) {
-      if (firstActiveIndex <= i && i <= lastActiveIndex)
+      if (firstActiveIndex <= i && i - firstActiveIndex < this._renderedItems.length && i <= lastActiveIndex)
         height += this._renderedItems[i - firstActiveIndex].element().offsetHeight;
       else
         height += this._provider.fastHeight(i);
@@ -420,8 +429,11 @@ Console.ConsoleViewport = class {
     }
 
     var textLines = [];
-    for (var i = startSelection.item; i <= endSelection.item; ++i)
-      textLines.push(this._providerElement(i).element().deepTextContent());
+    for (var i = startSelection.item; i <= endSelection.item; ++i) {
+      var element = this._providerElement(i).element();
+      var lineContent = element.childTextNodes().map(Components.Linkifier.untruncatedNodeText).join('');
+      textLines.push(lineContent);
+    }
 
     var endSelectionElement = this._providerElement(endSelection.item).element();
     if (endSelection.node && endSelection.node.isSelfOrDescendant(endSelectionElement)) {
@@ -440,23 +452,33 @@ Console.ConsoleViewport = class {
 
   /**
    * @param {!Element} itemElement
-   * @param {!Node} container
+   * @param {!Node} selectionNode
    * @param {number} offset
    * @return {number}
    */
-  _textOffsetInNode(itemElement, container, offset) {
-    if (container.nodeType !== Node.TEXT_NODE) {
-      if (offset < container.childNodes.length) {
-        container = /** @type {!Node} */ (container.childNodes.item(offset));
+  _textOffsetInNode(itemElement, selectionNode, offset) {
+    // If the selectionNode is not a TextNode, we may need to convert a child offset into a character offset.
+    if (selectionNode.nodeType !== Node.TEXT_NODE) {
+      if (offset < selectionNode.childNodes.length) {
+        selectionNode = /** @type {!Node} */ (selectionNode.childNodes.item(offset));
         offset = 0;
       } else {
-        offset = container.textContent.length;
+        offset = selectionNode.textContent.length;
       }
     }
+
     var chars = 0;
     var node = itemElement;
-    while ((node = node.traverseNextTextNode(itemElement)) && !node.isSelfOrDescendant(container))
-      chars += node.textContent.length;
+    while ((node = node.traverseNextNode(itemElement)) && node !== selectionNode) {
+      if (node.nodeType !== Node.TEXT_NODE || node.parentElement.nodeName === 'STYLE' ||
+          node.parentElement.nodeName === 'SCRIPT')
+        continue;
+      chars += Components.Linkifier.untruncatedNodeText(node).length;
+    }
+    // If the selected node text was truncated, treat any non-zero offset as the full length.
+    var untruncatedContainerLength = Components.Linkifier.untruncatedNodeText(selectionNode).length;
+    if (offset > 0 && untruncatedContainerLength !== selectionNode.textContent.length)
+      offset = untruncatedContainerLength;
     return chars + offset;
   }
 

@@ -35,9 +35,9 @@ AudioDeviceListenerWin::AudioDeviceListenerWin(const base::Closure& listener_cb)
     : listener_cb_(listener_cb), tick_clock_(new base::DefaultTickClock()) {
   // CreateDeviceEnumerator can fail on some installations of Windows such
   // as "Windows Server 2008 R2" where the desktop experience isn't available.
-  ScopedComPtr<IMMDeviceEnumerator> device_enumerator(
+  Microsoft::WRL::ComPtr<IMMDeviceEnumerator> device_enumerator(
       CoreAudioUtil::CreateDeviceEnumerator());
-  if (!device_enumerator.get())
+  if (!device_enumerator.Get())
     return;
 
   HRESULT hr = device_enumerator->RegisterEndpointNotificationCallback(this);
@@ -52,7 +52,7 @@ AudioDeviceListenerWin::AudioDeviceListenerWin(const base::Closure& listener_cb)
 
 AudioDeviceListenerWin::~AudioDeviceListenerWin() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (device_enumerator_.get()) {
+  if (device_enumerator_.Get()) {
     HRESULT hr =
         device_enumerator_->UnregisterEndpointNotificationCallback(this);
     LOG_IF(ERROR, FAILED(hr)) << "UnregisterEndpointNotificationCallback() "
@@ -138,7 +138,7 @@ STDMETHODIMP AudioDeviceListenerWin::OnDefaultDeviceChanged(
   DVLOG(1) << "OnDefaultDeviceChanged() "
            << "new_default_device: "
            << (new_default_device_id
-                   ? CoreAudioUtil::GetFriendlyName(new_device_id)
+                   ? CoreAudioUtil::GetFriendlyName(new_device_id, flow, role)
                    : "no device")
            << ", flow: " << FlowToString(flow)
            << ", role: " << RoleToString(role)

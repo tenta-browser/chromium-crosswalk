@@ -20,17 +20,13 @@ window.onload = function() {
   var image = document.querySelector('img');
 
   image.onload = function() {
-    runAfterLayoutAndPaint(window.testRunner ? changeColorProfile : profileChanged);
+    runAfterLayoutAndPaint(loadedImage);
   };
 
   image.src = 'resources/color-profile-image-data-url.svg';
 };
 
-function changeColorProfile() {
-  window.testRunner.setColorProfile('sRGB', profileChanged);
-}
-
-function profileChanged() {
+function loadedImage() {
   setTimeout(drawImageToCanvas, 0, document.querySelector('img'));
 }
 
@@ -41,15 +37,7 @@ function drawImageToCanvas(image) {
   canvas.getContext('2d').drawImage(image, 0, 0);
 
   if (window.testRunner)
-    runAfterLayoutAndPaint(setWhackedColorProfile);
-}
-
-function setWhackedColorProfile() {
-  window.testRunner.setColorProfile('colorSpin', done);
-}
-
-function done() {
-  setTimeout(function() { window.testRunner.notifyDone() }, 0);
+    setTimeout(function() { window.testRunner.notifyDone() }, 0);
 }
 
 if (window.testRunner) {

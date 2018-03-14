@@ -12,6 +12,10 @@
 
 class Profile;
 
+namespace content {
+class StoragePartition;
+}
+
 class ChromeAutocompleteProviderClient : public AutocompleteProviderClient {
  public:
   explicit ChromeAutocompleteProviderClient(Profile* profile);
@@ -29,6 +33,8 @@ class ChromeAutocompleteProviderClient : public AutocompleteProviderClient {
   InMemoryURLIndex* GetInMemoryURLIndex() override;
   TemplateURLService* GetTemplateURLService() override;
   const TemplateURLService* GetTemplateURLService() const override;
+  ContextualSuggestionsService* GetContextualSuggestionsService(
+      bool create_if_necessary) const override;
   const SearchTermsData& GetSearchTermsData() const override;
   scoped_refptr<ShortcutsBackend> GetShortcutsBackend() override;
   scoped_refptr<ShortcutsBackend> GetShortcutsBackendIfExists() override;
@@ -42,6 +48,7 @@ class ChromeAutocompleteProviderClient : public AutocompleteProviderClient {
   bool IsOffTheRecord() const override;
   bool SearchSuggestEnabled() const override;
   bool TabSyncEnabledAndUnencrypted() const override;
+  bool IsAuthenticated() const override;
   void Classify(
       const base::string16& text,
       bool prefer_keyword,
@@ -53,13 +60,23 @@ class ChromeAutocompleteProviderClient : public AutocompleteProviderClient {
       history::KeywordID keyword_id,
       const base::string16& term) override;
   void PrefetchImage(const GURL& url) override;
+  void StartServiceWorker(const GURL& destination_url) override;
   void OnAutocompleteControllerResultReady(
       AutocompleteController* controller) override;
+  bool IsTabOpenWithURL(const GURL& url) override;
+
+  // For testing.
+  void set_storage_partition(content::StoragePartition* storage_partition) {
+    storage_partition_ = storage_partition;
+  }
 
  private:
   Profile* profile_;
   ChromeAutocompleteSchemeClassifier scheme_classifier_;
   UIThreadSearchTermsData search_terms_data_;
+
+  // Injectable storage partitiion, used for testing.
+  content::StoragePartition* storage_partition_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeAutocompleteProviderClient);
 };

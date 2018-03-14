@@ -20,8 +20,8 @@
 #include "third_party/WebKit/public/web/WebAssociatedURLLoader.h"
 #include "third_party/WebKit/public/web/WebAssociatedURLLoaderClient.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
 #include "third_party/WebKit/public/web/WebKit.h"
+#include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebSecurityPolicy.h"
 
 namespace content {
@@ -135,12 +135,12 @@ void AssociatedResourceFetcherImpl::SetServiceWorkerMode(
   request_.SetServiceWorkerMode(service_worker_mode);
 }
 
-void AssociatedResourceFetcherImpl::SetCachePolicy(
-    blink::WebCachePolicy policy) {
+void AssociatedResourceFetcherImpl::SetCacheMode(
+    blink::mojom::FetchCacheMode mode) {
   DCHECK(!request_.IsNull());
   DCHECK(!loader_);
 
-  request_.SetCachePolicy(policy);
+  request_.SetCacheMode(mode);
 }
 
 void AssociatedResourceFetcherImpl::SetLoaderOptions(
@@ -152,8 +152,10 @@ void AssociatedResourceFetcherImpl::SetLoaderOptions(
 }
 
 void AssociatedResourceFetcherImpl::Start(
-    blink::WebFrame* frame,
+    blink::WebLocalFrame* frame,
     blink::WebURLRequest::RequestContext request_context,
+    network::mojom::FetchRequestMode fetch_request_mode,
+    network::mojom::FetchCredentialsMode fetch_credentials_mode,
     blink::WebURLRequest::FrameType frame_type,
     const Callback& callback) {
   DCHECK(!loader_);
@@ -164,7 +166,9 @@ void AssociatedResourceFetcherImpl::Start(
 
   request_.SetRequestContext(request_context);
   request_.SetFrameType(frame_type);
-  request_.SetFirstPartyForCookies(frame->GetDocument().FirstPartyForCookies());
+  request_.SetSiteForCookies(frame->GetDocument().SiteForCookies());
+  request_.SetFetchRequestMode(fetch_request_mode);
+  request_.SetFetchCredentialsMode(fetch_credentials_mode);
 
   client_.reset(new ClientImpl(callback));
 

@@ -16,19 +16,16 @@ void BeginScrollDisplayItem::Replay(GraphicsContext& context) const {
 }
 
 void BeginScrollDisplayItem::AppendToWebDisplayItemList(
-    const IntRect& visual_rect,
+    const LayoutSize&,
     WebDisplayItemList* list) const {
   WebDisplayItemList::ScrollContainerId scroll_container_id = &Client();
   list->AppendScrollItem(current_offset_, scroll_container_id);
 }
 
-#ifndef NDEBUG
-void BeginScrollDisplayItem::DumpPropertiesAsDebugString(
-    WTF::StringBuilder& string_builder) const {
-  PairedBeginDisplayItem::DumpPropertiesAsDebugString(string_builder);
-  string_builder.Append(WTF::String::Format(", currentOffset: [%d,%d]",
-                                            current_offset_.Width(),
-                                            current_offset_.Height()));
+#if DCHECK_IS_ON()
+void BeginScrollDisplayItem::PropertiesAsJSON(JSONObject& json) const {
+  PairedBeginDisplayItem::PropertiesAsJSON(json);
+  json.SetString("currentOffset", current_offset_.ToString());
 }
 #endif
 
@@ -37,7 +34,7 @@ void EndScrollDisplayItem::Replay(GraphicsContext& context) const {
 }
 
 void EndScrollDisplayItem::AppendToWebDisplayItemList(
-    const IntRect& visual_rect,
+    const LayoutSize&,
     WebDisplayItemList* list) const {
   list->AppendEndScrollItem();
 }

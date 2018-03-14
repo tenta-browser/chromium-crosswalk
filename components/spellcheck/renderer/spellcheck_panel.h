@@ -6,42 +6,57 @@
 #define COMPONENTS_SPELLCHECK_RENDERER_SPELLCHECK_PANEL_H
 
 #include "base/macros.h"
+#include "components/spellcheck/common/spellcheck_panel.mojom.h"
 #include "components/spellcheck/spellcheck_build_features.h"
-#include "content/public/renderer/render_view_observer.h"
-#include "content/public/renderer/render_view_observer_tracker.h"
-#include "third_party/WebKit/public/web/WebSpellCheckClient.h"
+#include "content/public/renderer/render_frame_observer.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
+#include "third_party/WebKit/public/platform/WebSpellCheckPanelHostClient.h"
 
-// TODO(xiaochengh): Only Mac has spelling panel. Remove the #if checks in this
-// class, which seem unnecessary, and make sure that this class is compiled and
-// used only on Mac.
-class SpellCheckPanel
-    : public content::RenderViewObserver,
-      public content::RenderViewObserverTracker<SpellCheckPanel>,
-      public blink::WebSpellCheckClient {
+#if !BUILDFLAG(HAS_SPELLCHECK_PANEL)
+#error "Spellcheck panel should be enabled."
+#endif
+
+namespace service_manager {
+class LocalInterfaceProvider;
+}
+
+class SpellCheckPanel : public content::RenderFrameObserver,
+                        public blink::WebSpellCheckPanelHostClient,
+                        public spellcheck::mojom::SpellCheckPanel {
  public:
-  explicit SpellCheckPanel(content::RenderView* render_view);
+  SpellCheckPanel(content::RenderFrame* render_frame,
+                  service_manager::BinderRegistry* registry,
+                  service_manager::LocalInterfaceProvider* embedder_provider);
   ~SpellCheckPanel() override;
 
-  // RenderViewObserver implementation.
-  bool OnMessageReceived(const IPC::Message& message) override;
-
  private:
-  // RenderViewObserver implementation.
+  // content::RenderFrameObserver:
   void OnDestruct() override;
 
-  // blink::WebSpellCheckClient implementation.
-  void ShowSpellingUI(bool show) override;
+  // blink::WebSpellCheckPanelHostClient:
   bool IsShowingSpellingUI() override;
+  void ShowSpellingUI(bool show) override;
   void UpdateSpellingUIWithMisspelledWord(
       const blink::WebString& word) override;
 
-#if BUILDFLAG(USE_BROWSER_SPELLCHECKER)
-  void OnAdvanceToNextMisspelling();
-  void OnToggleSpellPanel(bool is_currently_visible);
-#endif
+  // Binds browser requests for the frame SpellCheckPanel interface.
+  void SpellCheckPanelRequest(
+      spellcheck::mojom::SpellCheckPanelRequest request);
 
-  // True if the browser is showing the spelling panel for us.
+  // spellcheck::mojom::SpellCheckPanel:
+  void ToggleSpellPanel(bool visible) override;
+  void AdvanceToNextMisspelling() override;
+
+  spellcheck::mojom::SpellCheckPanelHostPtr GetSpellCheckPanelHost();
+
+  // SpellCheckPanel bindings.
+  mojo::BindingSet<spellcheck::mojom::SpellCheckPanel> bindings_;
+
+  // True if the browser is showing the spelling panel.
   bool spelling_panel_visible_;
+
+  service_manager::LocalInterfaceProvider* embedder_provider_;
 
   DISALLOW_COPY_AND_ASSIGN(SpellCheckPanel);
 };

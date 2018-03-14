@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "build/build_config.h"
@@ -60,8 +61,10 @@ app_list::AppListView* DemoAppListViewDelegate::InitView(
   gfx::NativeView container = window_context;
 
   view_ = new app_list::AppListView(this);
-  view_->InitAsBubble(container, 0);
-  view_->SetAnchorPoint(gfx::Point(300, 300));
+  app_list::AppListView::InitParams params;
+  params.parent = container;
+  view_->Initialize(params);
+  view_->MaybeSetAnchorPoint(gfx::Point(300, 300));
 
   // Populate some apps.
   GetTestModel()->PopulateApps(kInitialItems);
@@ -83,7 +86,7 @@ void DemoAppListViewDelegate::Dismiss() {
 void DemoAppListViewDelegate::ViewClosing() {
   base::MessageLoop* message_loop = base::MessageLoopForUI::current();
   message_loop->task_runner()->DeleteSoon(FROM_HERE, this);
-  message_loop->QuitWhenIdle();
+  base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 views::View* DemoAppListViewDelegate::CreateStartPageWebView(

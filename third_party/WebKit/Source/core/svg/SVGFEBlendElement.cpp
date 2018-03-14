@@ -20,8 +20,8 @@
 
 #include "core/svg/SVGFEBlendElement.h"
 
-#include "core/SVGNames.h"
 #include "core/svg/graphics/filters/SVGFilterBuilder.h"
+#include "core/svg_names.h"
 #include "platform/graphics/filters/FEBlend.h"
 
 namespace blink {
@@ -29,7 +29,7 @@ namespace blink {
 static WebBlendMode ToWebBlendMode(SVGFEBlendElement::Mode mode) {
 #define MAP_BLEND_MODE(MODENAME)           \
   case SVGFEBlendElement::kMode##MODENAME: \
-    return kWebBlendMode##MODENAME
+    return WebBlendMode::k##MODENAME
 
   switch (mode) {
     MAP_BLEND_MODE(Normal);
@@ -50,7 +50,7 @@ static WebBlendMode ToWebBlendMode(SVGFEBlendElement::Mode mode) {
     MAP_BLEND_MODE(Luminosity);
     default:
       NOTREACHED();
-      return kWebBlendModeNormal;
+      return WebBlendMode::kNormal;
   }
 #undef MAP_BLEND_MODE
 }
@@ -109,7 +109,7 @@ inline SVGFEBlendElement::SVGFEBlendElement(Document& document)
   AddToPropertyMap(mode_);
 }
 
-DEFINE_TRACE(SVGFEBlendElement) {
+void SVGFEBlendElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(in1_);
   visitor->Trace(in2_);
   visitor->Trace(mode_);

@@ -8,8 +8,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
@@ -26,26 +28,25 @@ class Timer;
 
 namespace content {
 
+class DevToolsAgentHostImpl;
 class DevToolsIOContext;
-class DevToolsSession;
 
 namespace protocol {
 
-class TracingHandler : public DevToolsDomainHandler,
-                       public Tracing::Backend {
+class TracingHandler : public DevToolsDomainHandler, public Tracing::Backend {
  public:
   enum Target { Browser, Renderer };
-  TracingHandler(Target target,
-                 int frame_tree_node_id,
-                 DevToolsIOContext* io_context);
-  ~TracingHandler() override;
+  CONTENT_EXPORT TracingHandler(Target target,
+                                int frame_tree_node_id,
+                                DevToolsIOContext* io_context);
+  CONTENT_EXPORT ~TracingHandler() override;
 
-  static TracingHandler* FromSession(DevToolsSession* session);
+  static std::vector<TracingHandler*> ForAgentHost(DevToolsAgentHostImpl* host);
 
   void Wire(UberDispatcher* dispatcher) override;
   Response Disable() override;
 
-  void OnTraceDataCollected(const std::string& trace_fragment);
+  void OnTraceDataCollected(std::unique_ptr<std::string> trace_fragment);
   void OnTraceComplete();
   void OnTraceToStreamComplete(const std::string& stream_handle);
 
@@ -65,17 +66,36 @@ class TracingHandler : public DevToolsDomainHandler,
   bool did_initiate_recording() { return did_initiate_recording_; }
 
  private:
+  friend class TracingHandlerTest;
+
+  struct TraceDataBufferState {
+   public:
+    std::string data;
+    size_t pos = 0;
+    int open_braces = 0;
+    bool in_string = false;
+    bool slashed = false;
+    size_t offset = 0;
+  };
+
   void OnRecordingEnabled(std::unique_ptr<StartCallback> callback);
   void OnBufferUsage(float percent_full, size_t approximate_event_count);
   void OnCategoriesReceived(std::unique_ptr<GetCategoriesCallback> callback,
                             const std::set<std::string>& category_set);
   void OnMemoryDumpFinished(std::unique_ptr<RequestMemoryDumpCallback> callback,
-                            uint64_t dump_guid,
-                            bool success);
+                            bool success,
+                            uint64_t dump_id);
+
+  // Assuming that the input is a potentially incomplete string representation
+  // of a comma separated list of JSON objects, return the longest prefix that
+  // is a valid list and store the rest to be used in subsequent calls.
+  CONTENT_EXPORT std::string UpdateTraceDataBuffer(
+      const std::string& trace_fragment);
 
   void SetupTimer(double usage_reporting_interval);
   void StopTracing(
-      const scoped_refptr<TracingController::TraceDataSink>& trace_data_sink);
+      const scoped_refptr<TracingController::TraceDataEndpoint>& endpoint,
+      const std::string& agent_label);
   bool IsTracing() const;
   static bool IsStartupTracingActive();
   CONTENT_EXPORT static base::trace_event::TraceConfig
@@ -90,6 +110,7 @@ class TracingHandler : public DevToolsDomainHandler,
   int frame_tree_node_id_;
   bool did_initiate_recording_;
   bool return_as_stream_;
+  TraceDataBufferState trace_data_buffer_state_;
   base::WeakPtrFactory<TracingHandler> weak_factory_;
 
   FRIEND_TEST_ALL_PREFIXES(TracingHandlerTest,

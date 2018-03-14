@@ -81,7 +81,7 @@ GPUInfo::GPUInfo()
       dx_diagnostics_info_state(kCollectInfoNone),
 #endif
       jpeg_decode_accelerator_supported(false)
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
       ,
       system_visual(0),
       rgba_visual(0)
@@ -134,6 +134,7 @@ void GPUInfo::EnumerateFields(Enumerator* enumerator) const {
     bool in_process_gpu;
     bool passthrough_cmd_decoder;
     bool supports_overlays;
+    bool can_support_threaded_texture_mailbox;
     CollectInfoResult basic_info_state;
     CollectInfoResult context_info_state;
 #if defined(OS_WIN)
@@ -144,7 +145,7 @@ void GPUInfo::EnumerateFields(Enumerator* enumerator) const {
     VideoEncodeAcceleratorSupportedProfiles
         video_encode_accelerator_supported_profiles;
     bool jpeg_decode_accelerator_supported;
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
     VisualID system_visual;
     VisualID rgba_visual;
 #endif
@@ -193,6 +194,8 @@ void GPUInfo::EnumerateFields(Enumerator* enumerator) const {
   enumerator->AddBool("inProcessGpu", in_process_gpu);
   enumerator->AddBool("passthroughCmdDecoder", passthrough_cmd_decoder);
   enumerator->AddBool("supportsOverlays", supports_overlays);
+  enumerator->AddBool("canSupportThreadedTextureMailbox",
+                      can_support_threaded_texture_mailbox);
   enumerator->AddInt("basicInfoState", basic_info_state);
   enumerator->AddInt("contextInfoState", context_info_state);
 #if defined(OS_WIN)
@@ -208,7 +211,7 @@ void GPUInfo::EnumerateFields(Enumerator* enumerator) const {
     EnumerateVideoEncodeAcceleratorSupportedProfile(profile, enumerator);
   enumerator->AddBool("jpegDecodeAcceleratorSupported",
       jpeg_decode_accelerator_supported);
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
   enumerator->AddInt64("systemVisual", system_visual);
   enumerator->AddInt64("rgbaVisual", rgba_visual);
 #endif

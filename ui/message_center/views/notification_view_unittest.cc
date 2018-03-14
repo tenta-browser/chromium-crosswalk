@@ -9,6 +9,7 @@
 #include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -26,9 +27,11 @@
 #include "ui/message_center/notification_list.h"
 #include "ui/message_center/notification_types.h"
 #include "ui/message_center/views/constants.h"
-#include "ui/message_center/views/message_center_controller.h"
+#include "ui/message_center/views/message_view_delegate.h"
 #include "ui/message_center/views/message_view_factory.h"
 #include "ui/message_center/views/notification_button.h"
+#include "ui/message_center/views/notification_control_buttons_view.h"
+#include "ui/message_center/views/padded_button.h"
 #include "ui/message_center/views/proportional_image_view.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/layout/fill_layout.h"
@@ -36,21 +39,16 @@
 #include "ui/views/test/widget_test.h"
 #include "ui/views/widget/widget_delegate.h"
 
+#if defined(OS_WIN)
+#include "ui/base/win/shell.h"
+#endif
+
 namespace message_center {
-
-// A test delegate used for tests that deal with the notification settings
-// button.
-class NotificationSettingsDelegate : public NotificationDelegate {
-  bool ShouldDisplaySettingsButton() override { return true; }
-
- private:
-  ~NotificationSettingsDelegate() override {}
-};
 
 /* Test fixture ***************************************************************/
 
 class NotificationViewTest : public views::ViewsTestBase,
-                             public MessageCenterController {
+                             public MessageViewDelegate {
  public:
   NotificationViewTest();
   ~NotificationViewTest() override;
@@ -65,16 +63,15 @@ class NotificationViewTest : public views::ViewsTestBase,
   Notification* notification() { return notification_.get(); }
   RichNotificationData* data() { return data_.get(); }
 
-  // Overridden from MessageCenterController:
+  // Overridden from MessageViewDelegate:
   void ClickOnNotification(const std::string& notification_id) override;
   void RemoveNotification(const std::string& notification_id,
                           bool by_user) override;
-  std::unique_ptr<ui::MenuModel> CreateMenuModel(
-      const NotifierId& notifier_id,
-      const base::string16& display_source) override;
-  bool HasClickedListener(const std::string& notification_id) override;
   void ClickOnNotificationButton(const std::string& notification_id,
                                  int button_index) override;
+  void ClickOnNotificationButtonWithReply(const std::string& notification_id,
+                                          int button_index,
+                                          const base::string16& reply) override;
   void ClickOnSettingsButton(const std::string& notification_id) override;
   void UpdateNotificationSize(const std::string& notification_id) override;
 
@@ -160,8 +157,12 @@ class NotificationViewTest : public views::ViewsTestBase,
     }
   }
 
-  views::ImageButton* GetCloseButton() {
-    return notification_view()->close_button();
+  views::Button* GetCloseButton() {
+    return notification_view()->control_buttons_view_->close_button();
+  }
+
+  views::Button* GetSettingsButton() {
+    return notification_view()->control_buttons_view_->settings_button();
   }
 
   void UpdateNotificationViews() {
@@ -232,8 +233,21 @@ void NotificationViewTest::SetUp() {
   notification_->set_image(CreateTestImage(320, 240));
 
   // Then create a new NotificationView with that single notification.
-  notification_view_.reset(static_cast<NotificationView*>(
-      MessageViewFactory::Create(this, *notification_, true)));
+  notification_view_.reset(new NotificationView(this, *notification_));
+
+  // It depends on platform whether shadows are added.
+  // See MessageViewFactory::Create.
+  bool is_nested = true;
+#if defined(OS_LINUX)
+  is_nested = false;
+#endif
+#if defined(OS_WIN)
+  if (!ui::win::IsAeroGlassEnabled())
+    is_nested = false;
+#endif
+  if (is_nested)
+    notification_view_->SetIsNested();
+
   notification_view_->set_owned_by_client();
 
   views::Widget::InitParams init_params(
@@ -263,22 +277,17 @@ void NotificationViewTest::RemoveNotification(
   removed_ids_.insert(notification_id);
 }
 
-std::unique_ptr<ui::MenuModel> NotificationViewTest::CreateMenuModel(
-    const NotifierId& notifier_id,
-    const base::string16& display_source) {
-  // For this test, this method should not be invoked.
-  NOTREACHED();
-  return nullptr;
-}
-
-bool NotificationViewTest::HasClickedListener(
-    const std::string& notification_id) {
-  return true;
-}
-
 void NotificationViewTest::ClickOnNotificationButton(
     const std::string& notification_id,
     int button_index) {
+  // For this test, this method should not be invoked.
+  NOTREACHED();
+}
+
+void NotificationViewTest::ClickOnNotificationButtonWithReply(
+    const std::string& notification_id,
+    int button_index,
+    const base::string16& reply) {
   // For this test, this method should not be invoked.
   NOTREACHED();
 }
@@ -308,31 +317,35 @@ TEST_F(NotificationViewTest, CreateOrUpdateTest) {
   notification()->set_message(base::ASCIIToUTF16(""));
   notification()->set_icon(gfx::Image());
 
-  notification_view()->CreateOrUpdateViews(*notification());
+  notification_view()->UpdateWithNotification(*notification());
   EXPECT_TRUE(NULL == notification_view()->title_view_);
   EXPECT_TRUE(NULL == notification_view()->message_view_);
   EXPECT_TRUE(NULL == notification_view()->image_view_);
-  EXPECT_TRUE(NULL == notification_view()->settings_button_view_);
+  // Notification must have a control buttons view.
+  EXPECT_TRUE(NULL != notification_view()->control_buttons_view_);
+  // Notification is not pinned and have a close button by default.
+  EXPECT_TRUE(NULL != GetCloseButton());
+  // Notification doesn't have a settings button by default.
+  EXPECT_TRUE(NULL == GetSettingsButton());
   // We still expect an icon view for all layouts.
   EXPECT_TRUE(NULL != notification_view()->icon_view_);
 }
 
 TEST_F(NotificationViewTest, CreateOrUpdateTestSettingsButton) {
-  scoped_refptr<NotificationSettingsDelegate> delegate =
-      new NotificationSettingsDelegate();
-  Notification notf(NOTIFICATION_TYPE_BASE_FORMAT,
-                    std::string("notification id"), base::UTF8ToUTF16("title"),
-                    base::UTF8ToUTF16("message"), CreateTestImage(80, 80),
-                    base::UTF8ToUTF16("display source"),
-                    GURL("https://hello.com"),
-                    NotifierId(NotifierId::APPLICATION, "extension_id"),
-                    *data(), delegate.get());
+  data()->settings_button_handler = SettingsButtonHandler::TRAY;
+  Notification notf(
+      NOTIFICATION_TYPE_BASE_FORMAT, std::string("notification id"),
+      base::UTF8ToUTF16("title"), base::UTF8ToUTF16("message"),
+      CreateTestImage(80, 80), base::UTF8ToUTF16("display source"),
+      GURL("https://hello.com"),
+      NotifierId(NotifierId::APPLICATION, "extension_id"), *data(), nullptr);
 
-  notification_view()->CreateOrUpdateViews(notf);
+  notification_view()->UpdateWithNotification(notf);
   EXPECT_TRUE(NULL != notification_view()->title_view_);
   EXPECT_TRUE(NULL != notification_view()->message_view_);
   EXPECT_TRUE(NULL != notification_view()->context_message_view_);
-  EXPECT_TRUE(NULL != notification_view()->settings_button_view_);
+  EXPECT_TRUE(NULL != GetCloseButton());
+  EXPECT_TRUE(NULL != GetSettingsButton());
   EXPECT_TRUE(NULL != notification_view()->icon_view_);
 
   EXPECT_TRUE(NULL == notification_view()->image_view_);
@@ -341,21 +354,21 @@ TEST_F(NotificationViewTest, CreateOrUpdateTestSettingsButton) {
 TEST_F(NotificationViewTest, TestLineLimits) {
   notification()->set_image(CreateTestImage(0, 0));
   notification()->set_context_message(base::ASCIIToUTF16(""));
-  notification_view()->CreateOrUpdateViews(*notification());
+  notification_view()->UpdateWithNotification(*notification());
 
   EXPECT_EQ(5, notification_view()->GetMessageLineLimit(0, 360));
   EXPECT_EQ(5, notification_view()->GetMessageLineLimit(1, 360));
   EXPECT_EQ(3, notification_view()->GetMessageLineLimit(2, 360));
 
   notification()->set_image(CreateTestImage(2, 2));
-  notification_view()->CreateOrUpdateViews(*notification());
+  notification_view()->UpdateWithNotification(*notification());
 
   EXPECT_EQ(2, notification_view()->GetMessageLineLimit(0, 360));
   EXPECT_EQ(2, notification_view()->GetMessageLineLimit(1, 360));
   EXPECT_EQ(1, notification_view()->GetMessageLineLimit(2, 360));
 
   notification()->set_context_message(base::ASCIIToUTF16("foo"));
-  notification_view()->CreateOrUpdateViews(*notification());
+  notification_view()->UpdateWithNotification(*notification());
 
   EXPECT_TRUE(notification_view()->context_message_view_ != NULL);
 
@@ -448,10 +461,10 @@ TEST_F(NotificationViewTest, TestImageSizing) {
 
 TEST_F(NotificationViewTest, UpdateButtonsStateTest) {
   notification()->set_buttons(CreateButtons(2));
-  notification_view()->CreateOrUpdateViews(*notification());
+  notification_view()->UpdateWithNotification(*notification());
   widget()->Show();
 
-  EXPECT_EQ(views::CustomButton::STATE_NORMAL,
+  EXPECT_EQ(views::Button::STATE_NORMAL,
             notification_view()->action_buttons_[0]->state());
 
   // Now construct a mouse move event 1 pixel inside the boundary of the action
@@ -463,12 +476,12 @@ TEST_F(NotificationViewTest, UpdateButtonsStateTest) {
                       ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
   widget()->OnMouseEvent(&move);
 
-  EXPECT_EQ(views::CustomButton::STATE_HOVERED,
+  EXPECT_EQ(views::Button::STATE_HOVERED,
             notification_view()->action_buttons_[0]->state());
 
-  notification_view()->CreateOrUpdateViews(*notification());
+  notification_view()->UpdateWithNotification(*notification());
 
-  EXPECT_EQ(views::CustomButton::STATE_HOVERED,
+  EXPECT_EQ(views::Button::STATE_HOVERED,
             notification_view()->action_buttons_[0]->state());
 
   // Now construct a mouse move event 1 pixel outside the boundary of the
@@ -478,18 +491,18 @@ TEST_F(NotificationViewTest, UpdateButtonsStateTest) {
                         ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
   widget()->OnMouseEvent(&move);
 
-  EXPECT_EQ(views::CustomButton::STATE_NORMAL,
+  EXPECT_EQ(views::Button::STATE_NORMAL,
             notification_view()->action_buttons_[0]->state());
 }
 
 TEST_F(NotificationViewTest, UpdateButtonCountTest) {
   notification()->set_buttons(CreateButtons(2));
-  notification_view()->CreateOrUpdateViews(*notification());
+  notification_view()->UpdateWithNotification(*notification());
   widget()->Show();
 
-  EXPECT_EQ(views::CustomButton::STATE_NORMAL,
+  EXPECT_EQ(views::Button::STATE_NORMAL,
             notification_view()->action_buttons_[0]->state());
-  EXPECT_EQ(views::CustomButton::STATE_NORMAL,
+  EXPECT_EQ(views::Button::STATE_NORMAL,
             notification_view()->action_buttons_[1]->state());
 
   // Now construct a mouse move event 1 pixel inside the boundary of the action
@@ -503,15 +516,15 @@ TEST_F(NotificationViewTest, UpdateButtonCountTest) {
       views::test::WidgetTest::GetEventSink(widget())->OnEventFromSource(&move);
   EXPECT_FALSE(details.dispatcher_destroyed);
 
-  EXPECT_EQ(views::CustomButton::STATE_HOVERED,
+  EXPECT_EQ(views::Button::STATE_HOVERED,
             notification_view()->action_buttons_[0]->state());
-  EXPECT_EQ(views::CustomButton::STATE_NORMAL,
+  EXPECT_EQ(views::Button::STATE_NORMAL,
             notification_view()->action_buttons_[1]->state());
 
   notification()->set_buttons(CreateButtons(1));
-  notification_view()->CreateOrUpdateViews(*notification());
+  notification_view()->UpdateWithNotification(*notification());
 
-  EXPECT_EQ(views::CustomButton::STATE_HOVERED,
+  EXPECT_EQ(views::Button::STATE_HOVERED,
             notification_view()->action_buttons_[0]->state());
   EXPECT_EQ(1u, notification_view()->action_buttons_.size());
 
@@ -522,33 +535,28 @@ TEST_F(NotificationViewTest, UpdateButtonCountTest) {
                         ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
   widget()->OnMouseEvent(&move);
 
-  EXPECT_EQ(views::CustomButton::STATE_NORMAL,
+  EXPECT_EQ(views::Button::STATE_NORMAL,
             notification_view()->action_buttons_[0]->state());
 }
 
 TEST_F(NotificationViewTest, SettingsButtonTest) {
-  scoped_refptr<NotificationSettingsDelegate> delegate =
-      new NotificationSettingsDelegate();
-  Notification notf(NOTIFICATION_TYPE_BASE_FORMAT,
-                    std::string("notification id"), base::UTF8ToUTF16("title"),
-                    base::UTF8ToUTF16("message"), CreateTestImage(80, 80),
-                    base::UTF8ToUTF16("display source"),
-                    GURL("https://hello.com"),
-                    NotifierId(NotifierId::APPLICATION, "extension_id"),
-                    *data(), delegate.get());
-  notification_view()->CreateOrUpdateViews(notf);
+  data()->settings_button_handler = SettingsButtonHandler::TRAY;
+  Notification notf(
+      NOTIFICATION_TYPE_BASE_FORMAT, std::string("notification id"),
+      base::UTF8ToUTF16("title"), base::UTF8ToUTF16("message"),
+      CreateTestImage(80, 80), base::UTF8ToUTF16("display source"),
+      GURL("https://hello.com"),
+      NotifierId(NotifierId::APPLICATION, "extension_id"), *data(), nullptr);
+  notification_view()->UpdateWithNotification(notf);
   widget()->Show();
-  notification_view()->Layout();
 
-  EXPECT_TRUE(NULL != notification_view()->settings_button_view_);
-  EXPECT_EQ(views::CustomButton::STATE_NORMAL,
-            notification_view()->settings_button_view_->state());
+  EXPECT_TRUE(NULL != GetSettingsButton());
+  EXPECT_EQ(views::Button::STATE_NORMAL, GetSettingsButton()->state());
 
   // Now construct a mouse move event 1 pixel inside the boundary of the action
   // button.
   gfx::Point cursor_location(1, 1);
-  views::View::ConvertPointToScreen(notification_view()->settings_button_view_,
-                                    &cursor_location);
+  views::View::ConvertPointToScreen(GetSettingsButton(), &cursor_location);
   ui::MouseEvent move(ui::ET_MOUSE_MOVED, cursor_location, cursor_location,
                       ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
   widget()->OnMouseEvent(&move);
@@ -556,8 +564,7 @@ TEST_F(NotificationViewTest, SettingsButtonTest) {
       views::test::WidgetTest::GetEventSink(widget())->OnEventFromSource(&move);
   EXPECT_FALSE(details.dispatcher_destroyed);
 
-  EXPECT_EQ(views::CustomButton::STATE_HOVERED,
-            notification_view()->settings_button_view_->state());
+  EXPECT_EQ(views::Button::STATE_HOVERED, GetSettingsButton()->state());
 
   // Now construct a mouse move event 1 pixel outside the boundary of the
   // widget.
@@ -566,8 +573,7 @@ TEST_F(NotificationViewTest, SettingsButtonTest) {
                         ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
   widget()->OnMouseEvent(&move);
 
-  EXPECT_EQ(views::CustomButton::STATE_NORMAL,
-            notification_view()->settings_button_view_->state());
+  EXPECT_EQ(views::Button::STATE_NORMAL, GetSettingsButton()->state());
 }
 
 TEST_F(NotificationViewTest, ViewOrderingTest) {
@@ -724,11 +730,31 @@ TEST_F(NotificationViewTest, SlideOutPinned) {
   EXPECT_FALSE(IsRemoved(notification_id));
 }
 
+TEST_F(NotificationViewTest, SlideOutForceDisablePinned) {
+  ui::ScopedAnimationDurationScaleMode zero_duration_scope(
+      ui::ScopedAnimationDurationScaleMode::ZERO_DURATION);
+
+  notification()->set_pinned(true);
+  notification_view()->set_force_disable_pinned();
+  UpdateNotificationViews();
+  std::string notification_id = notification()->id();
+
+  BeginScroll();
+  ScrollBy(-200);
+  EXPECT_FALSE(IsRemoved(notification_id));
+  EXPECT_EQ(-200.f, GetNotificationSlideAmount());
+  EndScroll();
+  EXPECT_TRUE(IsRemoved(notification_id));
+}
+
 TEST_F(NotificationViewTest, Pinned) {
   notification()->set_pinned(true);
-
   UpdateNotificationViews();
   EXPECT_EQ(NULL, GetCloseButton());
+
+  notification_view()->set_force_disable_pinned();
+  UpdateNotificationViews();
+  EXPECT_TRUE(GetCloseButton());
 }
 
 #endif // defined(OS_CHROMEOS)

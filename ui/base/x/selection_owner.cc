@@ -5,15 +5,14 @@
 #include "ui/base/x/selection_owner.h"
 
 #include <algorithm>
-#include <X11/Xlib.h>
-#include <X11/Xatom.h>
 
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "ui/base/x/selection_utils.h"
-#include "ui/base/x/x11_util.h"
 #include "ui/base/x/x11_window_event_manager.h"
 #include "ui/events/platform/x11/x11_event_source.h"
+#include "ui/gfx/x/x11.h"
+#include "ui/gfx/x/x11_atom_cache.h"
 
 namespace ui {
 
@@ -25,9 +24,6 @@ const char kMultiple[] = "MULTIPLE";
 const char kSaveTargets[] = "SAVE_TARGETS";
 const char kTargets[] = "TARGETS";
 const char kTimestamp[] = "TIMESTAMP";
-
-const char* kAtomsToCache[] = {kAtomPair, kIncr,      kMultiple, kSaveTargets,
-                               kTargets,  kTimestamp, NULL};
 
 // The period of |incremental_transfer_abort_timer_|. Arbitrary but must be <=
 // than kIncrementalTransferTimeoutMs.
@@ -55,28 +51,22 @@ size_t GetMaxRequestSize(XDisplay* display) {
 bool GetAtomPairArrayProperty(XID window,
                               XAtom property,
                               std::vector<std::pair<XAtom,XAtom> >* value) {
-  XAtom type = None;
+  XAtom type = x11::None;
   int format = 0;  // size in bits of each item in 'property'
   unsigned long num_items = 0;
   unsigned char* properties = NULL;
   unsigned long remaining_bytes = 0;
 
-  int result = XGetWindowProperty(gfx::GetXDisplay(),
-                                  window,
-                                  property,
-                                  0,          // offset into property data to
-                                              // read
-                                  (~0L),      // entire array
-                                  False,      // deleted
-                                  AnyPropertyType,
-                                  &type,
-                                  &format,
-                                  &num_items,
-                                  &remaining_bytes,
-                                  &properties);
+  int result = XGetWindowProperty(gfx::GetXDisplay(), window, property,
+                                  0,           // offset into property data to
+                                               // read
+                                  (~0L),       // entire array
+                                  x11::False,  // deleted
+                                  AnyPropertyType, &type, &format, &num_items,
+                                  &remaining_bytes, &properties);
   gfx::XScopedPtr<unsigned char> scoped_properties(properties);
 
-  if (result != Success)
+  if (result != x11::Success)
     return false;
 
   // GTK does not require |type| to be kAtomPair.
@@ -98,16 +88,15 @@ SelectionOwner::SelectionOwner(XDisplay* x_display,
     : x_display_(x_display),
       x_window_(x_window),
       selection_name_(selection_name),
-      max_request_size_(GetMaxRequestSize(x_display)),
-      atom_cache_(x_display_, kAtomsToCache) {
-}
+      max_request_size_(GetMaxRequestSize(x_display)) {}
 
 SelectionOwner::~SelectionOwner() {
   // If we are the selection owner, we need to release the selection so we
   // don't receive further events. However, we don't call ClearSelectionOwner()
   // because we don't want to do this indiscriminately.
   if (XGetSelectionOwner(x_display_, selection_name_) == x_window_)
-    XSetSelectionOwner(x_display_, selection_name_, None, CurrentTime);
+    XSetSelectionOwner(x_display_, selection_name_, x11::None,
+                       x11::CurrentTime);
 }
 
 void SelectionOwner::RetrieveTargets(std::vector<XAtom>* targets) {
@@ -130,7 +119,7 @@ void SelectionOwner::TakeOwnershipOfSelection(
 }
 
 void SelectionOwner::ClearSelectionOwner() {
-  XSetSelectionOwner(x_display_, selection_name_, None, CurrentTime);
+  XSetSelectionOwner(x_display_, selection_name_, x11::None, x11::CurrentTime);
   format_map_ = SelectionFormatMap();
 }
 
@@ -146,10 +135,10 @@ void SelectionOwner::OnSelectionRequest(const XEvent& event) {
   reply.xselection.requestor = requestor;
   reply.xselection.selection = event.xselectionrequest.selection;
   reply.xselection.target = requested_target;
-  reply.xselection.property = None;  // Indicates failure
+  reply.xselection.property = x11::None;  // Indicates failure
   reply.xselection.time = event.xselectionrequest.time;
 
-  if (requested_target == atom_cache_.GetAtom(kMultiple)) {
+  if (requested_target == gfx::GetAtom(kMultiple)) {
     // The contents of |requested_property| should be a list of
     // <target,property> pairs.
     std::vector<std::pair<XAtom,XAtom> > conversions;
@@ -163,18 +152,14 @@ void SelectionOwner::OnSelectionRequest(const XEvent& event) {
                                                    conversions[i].second);
         conversion_results.push_back(conversions[i].first);
         conversion_results.push_back(
-            conversion_successful ? conversions[i].second : None);
+            conversion_successful ? conversions[i].second : x11::None);
       }
 
       // Set the property to indicate which conversions succeeded. This matches
       // what GTK does.
       XChangeProperty(
-          x_display_,
-          requestor,
-          requested_property,
-          atom_cache_.GetAtom(kAtomPair),
-          32,
-          PropModeReplace,
+          x_display_, requestor, requested_property, gfx::GetAtom(kAtomPair),
+          32, PropModeReplace,
           reinterpret_cast<const unsigned char*>(&conversion_results.front()),
           conversion_results.size());
 
@@ -186,7 +171,7 @@ void SelectionOwner::OnSelectionRequest(const XEvent& event) {
   }
 
   // Send off the reply.
-  XSendEvent(x_display_, requestor, False, 0, &reply);
+  XSendEvent(x_display_, requestor, x11::False, 0, &reply);
 }
 
 void SelectionOwner::OnSelectionClear(const XEvent& event) {
@@ -215,10 +200,10 @@ void SelectionOwner::OnPropertyEvent(const XEvent& event) {
 bool SelectionOwner::ProcessTarget(XAtom target,
                                    XID requestor,
                                    XAtom property) {
-  XAtom multiple_atom = atom_cache_.GetAtom(kMultiple);
-  XAtom save_targets_atom = atom_cache_.GetAtom(kSaveTargets);
-  XAtom targets_atom = atom_cache_.GetAtom(kTargets);
-  XAtom timestamp_atom = atom_cache_.GetAtom(kTimestamp);
+  XAtom multiple_atom = gfx::GetAtom(kMultiple);
+  XAtom save_targets_atom = gfx::GetAtom(kSaveTargets);
+  XAtom targets_atom = gfx::GetAtom(kTargets);
+  XAtom timestamp_atom = gfx::GetAtom(kTimestamp);
 
   if (target == multiple_atom || target == save_targets_atom)
     return false;
@@ -255,14 +240,9 @@ bool SelectionOwner::ProcessTarget(XAtom target,
       // the size of X requests. Notify the selection requestor that the data
       // will be sent incrementally by returning data of type "INCR".
       long length = it->second->size();
-      XChangeProperty(x_display_,
-                      requestor,
-                      property,
-                      atom_cache_.GetAtom(kIncr),
-                      32,
+      XChangeProperty(x_display_, requestor, property, gfx::GetAtom(kIncr), 32,
                       PropModeReplace,
-                      reinterpret_cast<unsigned char*>(&length),
-                      1);
+                      reinterpret_cast<unsigned char*>(&length), 1);
 
       // Wait for the selection requestor to indicate that it has processed
       // the selection result before sending the first chunk of data. The
@@ -272,7 +252,7 @@ bool SelectionOwner::ProcessTarget(XAtom target,
           base::TimeDelta::FromMilliseconds(kIncrementalTransferTimeoutMs);
       incremental_transfers_.push_back(IncrementalTransfer(
           requestor, target, property,
-          base::MakeUnique<XScopedEventSelector>(requestor, PropertyChangeMask),
+          std::make_unique<XScopedEventSelector>(requestor, PropertyChangeMask),
           it->second, 0, timeout));
 
       // Start a timer to abort the data transfer in case that the selection

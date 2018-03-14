@@ -87,7 +87,6 @@ enum WebAXRole {
   kWebAXRoleAudio,
   kWebAXRoleBanner,
   kWebAXRoleBlockquote,
-  kWebAXRoleBusyIndicator,
   kWebAXRoleButton,
   kWebAXRoleCanvas,
   kWebAXRoleCaption,
@@ -96,7 +95,8 @@ enum WebAXRole {
   kWebAXRoleColorWell,
   kWebAXRoleColumnHeader,
   kWebAXRoleColumn,
-  kWebAXRoleComboBox,
+  kWebAXRoleComboBoxGrouping,
+  kWebAXRoleComboBoxMenuButton,
   kWebAXRoleComplementary,
   kWebAXRoleContentInfo,
   kWebAXRoleDate,
@@ -109,7 +109,6 @@ enum WebAXRole {
   kWebAXRoleDialog,
   kWebAXRoleDirectory,
   kWebAXRoleDisclosureTriangle,
-  kWebAXRoleDiv,
   kWebAXRoleDocument,
   kWebAXRoleEmbeddedObject,
   kWebAXRoleFeed,
@@ -117,13 +116,13 @@ enum WebAXRole {
   kWebAXRoleFigure,
   kWebAXRoleFooter,
   kWebAXRoleForm,
+  kWebAXRoleGenericContainer,
   kWebAXRoleGrid,
   kWebAXRoleGroup,
   kWebAXRoleHeading,
   kWebAXRoleIframePresentational,
   kWebAXRoleIframe,
   kWebAXRoleIgnored,
-  kWebAXRoleImageMapLink,
   kWebAXRoleImageMap,
   kWebAXRoleImage,
   kWebAXRoleInlineTextBox,
@@ -154,7 +153,6 @@ enum WebAXRole {
   kWebAXRoleNavigation,
   kWebAXRoleNone,
   kWebAXRoleNote,
-  kWebAXRoleOutline,
   kWebAXRoleParagraph,
   kWebAXRolePopUpButton,
   kWebAXRolePre,
@@ -163,15 +161,11 @@ enum WebAXRole {
   kWebAXRoleRadioButton,
   kWebAXRoleRadioGroup,
   kWebAXRoleRegion,
-  kWebAXRoleRootWebArea,
   kWebAXRoleRowHeader,
   kWebAXRoleRow,
   kWebAXRoleRuby,
-  kWebAXRoleRuler,
   kWebAXRoleSVGRoot,
-  kWebAXRoleScrollArea,
   kWebAXRoleScrollBar,
-  kWebAXRoleSeamlessWebArea,
   kWebAXRoleSearch,
   kWebAXRoleSearchBox,
   kWebAXRoleSlider,
@@ -182,7 +176,6 @@ enum WebAXRole {
   kWebAXRoleStaticText,
   kWebAXRoleStatus,
   kWebAXRoleSwitch,
-  kWebAXRoleTabGroup,
   kWebAXRoleTabList,
   kWebAXRoleTabPanel,
   kWebAXRoleTab,
@@ -190,6 +183,7 @@ enum WebAXRole {
   kWebAXRoleTable,
   kWebAXRoleTerm,
   kWebAXRoleTextField,
+  kWebAXRoleTextFieldWithComboBox,
   kWebAXRoleTime,
   kWebAXRoleTimer,
   kWebAXRoleToggleButton,
@@ -200,39 +194,20 @@ enum WebAXRole {
   kWebAXRoleUserInterfaceTooltip,
   kWebAXRoleVideo,
   kWebAXRoleWebArea,
-  kWebAXRoleWindow,
 };
 
-// Accessibility states, used as a bitmask.
-enum WebAXState {
-  kWebAXStateBusy,
-  kWebAXStateChecked,
-  kWebAXStateEnabled,
-  kWebAXStateExpanded,
-  kWebAXStateFocusable,
-  kWebAXStateFocused,
-  kWebAXStateHaspopup,
-  kWebAXStateHovered,
-  kWebAXStateInvisible,
-  kWebAXStateLinked,
-  kWebAXStateMultiline,
-  kWebAXStateMultiselectable,
-  kWebAXStateOffscreen,
-  kWebAXStatePressed,
-  kWebAXStateProtected,
-  kWebAXStateReadonly,
-  kWebAXStateRequired,
-  kWebAXStateSelectable,
-  kWebAXStateSelected,
-  kWebAXStateVertical,
-  kWebAXStateVisited,
-};
-
-enum class WebAXSupportedAction {
+enum class WebAXDefaultActionVerb {
   kNone = 0,
   kActivate,
   kCheck,
   kClick,
+
+  // A click will be performed on one of the object's ancestors.
+  // This happens when the object itself is not clickable, but one of its
+  // ancestors has click handlers attached which are able to capture the click
+  // as it bubbles up.
+  kClickAncestor,
+
   kJump,
   kOpen,
   kPress,
@@ -255,6 +230,13 @@ enum WebAXSortDirection {
   kWebAXSortDirectionAscending,
   kWebAXSortDirectionDescending,
   kWebAXSortDirectionOther
+};
+
+enum WebAXCheckedState {
+  kWebAXCheckedUndefined = 0,
+  kWebAXCheckedFalse,
+  kWebAXCheckedTrue,
+  kWebAXCheckedMixed
 };
 
 // Expanded State.
@@ -296,10 +278,20 @@ enum WebAXInvalidState {
   kWebAXInvalidStateOther
 };
 
+// State of a form control or editors
+enum WebAXRestriction {
+  kWebAXRestrictionNone = 0,  // Enabled control or other object not disabled
+  kWebAXRestrictionReadOnly,
+  kWebAXRestrictionDisabled,
+};
+
 enum WebAXMarkerType {
   kWebAXMarkerTypeSpelling = 1 << 0,
   kWebAXMarkerTypeGrammar = 1 << 1,
-  kWebAXMarkerTypeTextMatch = 1 << 2
+  kWebAXMarkerTypeTextMatch = 1 << 2,
+  // Skip DocumentMarker::MarkerType::Composition
+  kWebAXMarkerTypeActiveSuggestion = 1 << 4,
+  kWebAXMarkerTypeSuggestion = 1 << 5,
 };
 
 // Used for exposing text attributes.
@@ -317,6 +309,7 @@ enum WebAXTextStyle {
 enum WebAXNameFrom {
   kWebAXNameFromUninitialized = -1,
   kWebAXNameFromAttribute = 0,
+  kWebAXNameFromAttributeExplicitlyEmpty,
   kWebAXNameFromCaption,
   kWebAXNameFromContents,
   kWebAXNameFromPlaceholder,
@@ -356,7 +349,9 @@ enum WebAXTextAffinity {
 // Sparse attributes of a WebAXObject whose value is either true or
 // false. In order for it to be a sparse attribute the default value
 // must be false.
-enum class WebAXBoolAttribute {};
+enum class WebAXBoolAttribute {
+  kAriaBusy,
+};
 
 // Sparse attributes of a WebAXObject whose value is a string.
 // In order for it to be a sparse attribute the default value
@@ -371,6 +366,7 @@ enum class WebAXStringAttribute {
 // sparse attribute the default value must be the null WebAXObject.
 enum class WebAXObjectAttribute {
   kAriaActiveDescendant,
+  kAriaDetails,
   kAriaErrorMessage,
 };
 
@@ -380,7 +376,6 @@ enum class WebAXObjectAttribute {
 // empty vector.
 enum class WebAXObjectVectorAttribute {
   kAriaControls,
-  kAriaDetails,
   kAriaFlowTo,
 };
 

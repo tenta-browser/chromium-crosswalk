@@ -4,8 +4,9 @@
 
 #include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 
-#include "ash/accessibility_types.h"
 #include "ash/magnifier/magnification_controller.h"
+#include "ash/public/cpp/accessibility_types.h"
+#include "ash/public/cpp/ash_pref_names.h"
 #include "ash/shell.h"
 #include "base/command_line.h"
 #include "base/macros.h"
@@ -34,6 +35,7 @@
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/ime/chromeos/component_extension_ime_manager.h"
+#include "ui/base/ime/chromeos/extension_ime_util.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
 
 using chromeos::input_method::InputMethodManager;
@@ -49,20 +51,19 @@ namespace chromeos {
 
 namespace {
 
-const char kTestUserName[] = "owner@invalid.domain";
+constexpr char kTestUserName[] = "owner@invalid.domain";
+constexpr char kTestUserGaiaId[] = "9876543210";
 
-const int kTestAutoclickDelayMs = 2000;
+constexpr int kTestAutoclickDelayMs = 2000;
 
 // Test user name for supervised user. The domain part must be matched with
 // user_manager::kSupervisedUserDomain.
-const char kTestSupervisedUserName[] = "test@locally-managed.localhost";
+constexpr char kTestSupervisedUserName[] = "test@locally-managed.localhost";
 
 class MockAccessibilityObserver {
  public:
-  MockAccessibilityObserver() : observed_(false),
-                                observed_enabled_(false),
-                                observed_type_(-1)
-  {
+  MockAccessibilityObserver()
+      : observed_(false), observed_enabled_(false), observed_type_(-1) {
     AccessibilityManager* accessibility_manager = AccessibilityManager::Get();
     CHECK(accessibility_manager);
     accessibility_subscription_ = accessibility_manager->RegisterCallback(
@@ -159,7 +160,12 @@ bool IsMonoAudioEnabled() {
 }
 
 Profile* GetProfile() {
-  Profile* profile = ProfileManager::GetActiveUserProfile();
+  // ProfileManager::GetActiveUserProfile() does not load user profile
+  // implicitly any more. Use ProfileHelper::GetProfileByUserIdHashForTest() to
+  // do an explicit load.
+  Profile* const profile = ProfileHelper::GetProfileByUserIdHashForTest(
+      user_manager::UserManager::Get()->GetActiveUser()->username_hash());
+
   DCHECK(profile);
   return profile;
 }
@@ -168,56 +174,74 @@ PrefService* GetPrefs() {
   return GetProfile()->GetPrefs();
 }
 
+// Simulates how UserSessionManager starts a user session by loading user
+// profile and marking session as started.
+void StartUserSession(const AccountId& account_id) {
+  ProfileHelper::GetProfileByUserIdHashForTest(
+      user_manager::UserManager::Get()->FindUser(account_id)->username_hash());
+
+  session_manager::SessionManager::Get()->SessionStarted();
+}
+
+void SetAlwaysShowMenuEnabled(bool enabled) {
+  GetPrefs()->SetBoolean(ash::prefs::kShouldAlwaysShowAccessibilityMenu,
+                         enabled);
+}
+
 void SetLargeCursorEnabledPref(bool enabled) {
-  GetPrefs()->SetBoolean(prefs::kAccessibilityLargeCursorEnabled, enabled);
+  GetPrefs()->SetBoolean(ash::prefs::kAccessibilityLargeCursorEnabled, enabled);
 }
 
 void SetHighContrastEnabledPref(bool enabled) {
-  GetPrefs()->SetBoolean(prefs::kAccessibilityHighContrastEnabled, enabled);
+  GetPrefs()->SetBoolean(ash::prefs::kAccessibilityHighContrastEnabled,
+                         enabled);
 }
 
 void SetSpokenFeedbackEnabledPref(bool enabled) {
-  GetPrefs()->SetBoolean(prefs::kAccessibilitySpokenFeedbackEnabled, enabled);
+  GetPrefs()->SetBoolean(ash::prefs::kAccessibilitySpokenFeedbackEnabled,
+                         enabled);
 }
 
 void SetAutoclickEnabledPref(bool enabled) {
-  GetPrefs()->SetBoolean(prefs::kAccessibilityAutoclickEnabled, enabled);
+  GetPrefs()->SetBoolean(ash::prefs::kAccessibilityAutoclickEnabled, enabled);
 }
 
 void SetAutoclickDelayPref(int delay_ms) {
-  GetPrefs()->SetInteger(prefs::kAccessibilityAutoclickDelayMs, delay_ms);
+  GetPrefs()->SetInteger(ash::prefs::kAccessibilityAutoclickDelayMs, delay_ms);
 }
 
 void SetVirtualKeyboardEnabledPref(bool enabled) {
-  GetPrefs()->SetBoolean(prefs::kAccessibilityVirtualKeyboardEnabled, enabled);
+  GetPrefs()->SetBoolean(ash::prefs::kAccessibilityVirtualKeyboardEnabled,
+                         enabled);
 }
 
 void SetMonoAudioEnabledPref(bool enabled) {
-  GetPrefs()->SetBoolean(prefs::kAccessibilityMonoAudioEnabled, enabled);
+  GetPrefs()->SetBoolean(ash::prefs::kAccessibilityMonoAudioEnabled, enabled);
 }
 
 bool GetLargeCursorEnabledFromPref() {
-  return GetPrefs()->GetBoolean(prefs::kAccessibilityLargeCursorEnabled);
+  return GetPrefs()->GetBoolean(ash::prefs::kAccessibilityLargeCursorEnabled);
 }
 
 bool GetHighContrastEnabledFromPref() {
-  return GetPrefs()->GetBoolean(prefs::kAccessibilityHighContrastEnabled);
+  return GetPrefs()->GetBoolean(ash::prefs::kAccessibilityHighContrastEnabled);
 }
 
 bool GetSpokenFeedbackEnabledFromPref() {
-  return GetPrefs()->GetBoolean(prefs::kAccessibilitySpokenFeedbackEnabled);
+  return GetPrefs()->GetBoolean(
+      ash::prefs::kAccessibilitySpokenFeedbackEnabled);
 }
 
 bool GetAutoclickEnabledFromPref() {
-  return GetPrefs()->GetBoolean(prefs::kAccessibilityAutoclickEnabled);
+  return GetPrefs()->GetBoolean(ash::prefs::kAccessibilityAutoclickEnabled);
 }
 
 int GetAutoclickDelayFromPref() {
-  return GetPrefs()->GetInteger(prefs::kAccessibilityAutoclickDelayMs);
+  return GetPrefs()->GetInteger(ash::prefs::kAccessibilityAutoclickDelayMs);
 }
 
 bool GetMonoAudioEnabledFromPref() {
-  return GetPrefs()->GetBoolean(prefs::kAccessibilityMonoAudioEnabled);
+  return GetPrefs()->GetBoolean(ash::prefs::kAccessibilityMonoAudioEnabled);
 }
 
 bool IsBrailleImeActive() {
@@ -225,9 +249,8 @@ bool IsBrailleImeActive() {
   std::unique_ptr<InputMethodDescriptors> descriptors =
       imm->GetActiveIMEState()->GetActiveInputMethods();
   for (InputMethodDescriptors::const_iterator i = descriptors->begin();
-       i != descriptors->end();
-       ++i) {
-    if (i->id() == extension_misc::kBrailleImeEngineId)
+       i != descriptors->end(); ++i) {
+    if (i->id() == extension_ime_util::kBrailleImeEngineId)
       return true;
   }
   return false;
@@ -236,8 +259,9 @@ bool IsBrailleImeActive() {
 bool IsBrailleImeCurrent() {
   InputMethodManager* imm = InputMethodManager::Get();
   return imm->GetActiveIMEState()->GetCurrentInputMethod().id() ==
-         extension_misc::kBrailleImeEngineId;
+         extension_ime_util::kBrailleImeEngineId;
 }
+
 }  // anonymous namespace
 
 class AccessibilityManagerTest : public InProcessBrowserTest {
@@ -257,8 +281,8 @@ class AccessibilityManagerTest : public InProcessBrowserTest {
 
   void SetUpOnMainThread() override {
     // Sets the login-screen profile.
-    AccessibilityManager::Get()->
-        SetProfileForTest(ProfileHelper::GetSigninProfile());
+    AccessibilityManager::Get()->SetProfileForTest(
+        ProfileHelper::GetSigninProfile());
     default_autoclick_delay_ = GetAutoclickDelay();
   }
 
@@ -280,7 +304,8 @@ class AccessibilityManagerTest : public InProcessBrowserTest {
 
   MockBrailleController braille_controller_;
 
-  const AccountId test_account_id_ = AccountId::FromUserEmail(kTestUserName);
+  const AccountId test_account_id_ =
+      AccountId::FromUserEmailGaiaId(kTestUserName, kTestUserGaiaId);
 
   DISALLOW_COPY_AND_ASSIGN(AccessibilityManagerTest);
 };
@@ -297,7 +322,7 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, Login) {
 
   // Logs in.
   auto* session_manager = session_manager::SessionManager::Get();
-  session_manager->CreateSession(test_account_id_, kTestUserName);
+  session_manager->CreateSession(test_account_id_, kTestUserName, false);
 
   // Confirms that the features still disabled just after login.
   EXPECT_FALSE(IsLargeCursorEnabled());
@@ -308,7 +333,7 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, Login) {
   EXPECT_FALSE(IsMonoAudioEnabled());
   EXPECT_EQ(default_autoclick_delay(), GetAutoclickDelay());
 
-  session_manager->SessionStarted();
+  StartUserSession(test_account_id_);
 
   // Confirms that the features are still disabled just after login.
   EXPECT_FALSE(IsLargeCursorEnabled());
@@ -366,8 +391,8 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, BrailleOnLoginScreen) {
 IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, TypePref) {
   // Logs in.
   auto* session_manager = session_manager::SessionManager::Get();
-  session_manager->CreateSession(test_account_id_, kTestUserName);
-  session_manager->SessionStarted();
+  session_manager->CreateSession(test_account_id_, kTestUserName, false);
+  StartUserSession(test_account_id_);
 
   // Confirms that the features are disabled just after login.
   EXPECT_FALSE(IsLargeCursorEnabled());
@@ -435,7 +460,7 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, TypePref) {
 IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, ResumeSavedPref) {
   // Loads the profile of the user.
   auto* session_manager = session_manager::SessionManager::Get();
-  session_manager->CreateSession(test_account_id_, kTestUserName);
+  session_manager->CreateSession(test_account_id_, kTestUserName, false);
 
   // Sets the pref to enable large cursor before login.
   SetLargeCursorEnabledPref(true);
@@ -467,7 +492,7 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, ResumeSavedPref) {
   EXPECT_FALSE(IsMonoAudioEnabled());
 
   // Logs in.
-  session_manager->SessionStarted();
+  StartUserSession(test_account_id_);
 
   // Confirms that features are enabled by restoring from pref just after login.
   EXPECT_TRUE(IsLargeCursorEnabled());
@@ -485,8 +510,8 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest,
 
   // Logs in.
   auto* session_manager = session_manager::SessionManager::Get();
-  session_manager->CreateSession(test_account_id_, kTestUserName);
-  session_manager->SessionStarted();
+  session_manager->CreateSession(test_account_id_, kTestUserName, false);
+  StartUserSession(test_account_id_);
 
   EXPECT_FALSE(observer.observed());
   observer.reset();
@@ -494,64 +519,56 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest,
   SetSpokenFeedbackEnabled(true);
   EXPECT_TRUE(observer.observed());
   EXPECT_TRUE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
   EXPECT_TRUE(IsSpokenFeedbackEnabled());
 
   observer.reset();
   SetSpokenFeedbackEnabled(false);
   EXPECT_TRUE(observer.observed());
   EXPECT_FALSE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
   EXPECT_FALSE(IsSpokenFeedbackEnabled());
 
   observer.reset();
   SetHighContrastEnabled(true);
   EXPECT_TRUE(observer.observed());
   EXPECT_TRUE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
   EXPECT_TRUE(IsHighContrastEnabled());
 
   observer.reset();
   SetHighContrastEnabled(false);
   EXPECT_TRUE(observer.observed());
   EXPECT_FALSE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
   EXPECT_FALSE(IsHighContrastEnabled());
 
   observer.reset();
   SetVirtualKeyboardEnabled(true);
   EXPECT_TRUE(observer.observed());
   EXPECT_TRUE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_VIRTUAL_KEYBOARD);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_VIRTUAL_KEYBOARD);
   EXPECT_TRUE(IsVirtualKeyboardEnabled());
 
   observer.reset();
   SetVirtualKeyboardEnabled(false);
   EXPECT_TRUE(observer.observed());
   EXPECT_FALSE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_VIRTUAL_KEYBOARD);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_VIRTUAL_KEYBOARD);
   EXPECT_FALSE(IsVirtualKeyboardEnabled());
 
   observer.reset();
   SetMonoAudioEnabled(true);
   EXPECT_TRUE(observer.observed());
   EXPECT_TRUE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_MONO_AUDIO);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_MONO_AUDIO);
   EXPECT_TRUE(IsMonoAudioEnabled());
 
   observer.reset();
   SetMonoAudioEnabled(false);
   EXPECT_TRUE(observer.observed());
   EXPECT_FALSE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_MONO_AUDIO);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_MONO_AUDIO);
   EXPECT_FALSE(IsMonoAudioEnabled());
 }
 
@@ -561,8 +578,8 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest,
 
   // Logs in.
   auto* session_manager = session_manager::SessionManager::Get();
-  session_manager->CreateSession(test_account_id_, kTestUserName);
-  session_manager->SessionStarted();
+  session_manager->CreateSession(test_account_id_, kTestUserName, false);
+  StartUserSession(test_account_id_);
 
   EXPECT_FALSE(observer.observed());
   observer.reset();
@@ -570,70 +587,62 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest,
   SetSpokenFeedbackEnabledPref(true);
   EXPECT_TRUE(observer.observed());
   EXPECT_TRUE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
   EXPECT_TRUE(IsSpokenFeedbackEnabled());
 
   observer.reset();
   SetSpokenFeedbackEnabledPref(false);
   EXPECT_TRUE(observer.observed());
   EXPECT_FALSE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_SPOKEN_FEEDBACK);
   EXPECT_FALSE(IsSpokenFeedbackEnabled());
 
   observer.reset();
   SetHighContrastEnabledPref(true);
   EXPECT_TRUE(observer.observed());
   EXPECT_TRUE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
   EXPECT_TRUE(IsHighContrastEnabled());
 
   observer.reset();
   SetHighContrastEnabledPref(false);
   EXPECT_TRUE(observer.observed());
   EXPECT_FALSE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_HIGH_CONTRAST_MODE);
   EXPECT_FALSE(IsHighContrastEnabled());
 
   observer.reset();
   SetVirtualKeyboardEnabledPref(true);
   EXPECT_TRUE(observer.observed());
   EXPECT_TRUE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_VIRTUAL_KEYBOARD);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_VIRTUAL_KEYBOARD);
   EXPECT_TRUE(IsVirtualKeyboardEnabled());
 
   observer.reset();
   SetVirtualKeyboardEnabledPref(false);
   EXPECT_TRUE(observer.observed());
   EXPECT_FALSE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_VIRTUAL_KEYBOARD);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_VIRTUAL_KEYBOARD);
   EXPECT_FALSE(IsVirtualKeyboardEnabled());
 
   observer.reset();
   SetMonoAudioEnabledPref(true);
   EXPECT_TRUE(observer.observed());
   EXPECT_TRUE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_MONO_AUDIO);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_MONO_AUDIO);
   EXPECT_TRUE(IsMonoAudioEnabled());
 
   observer.reset();
   SetMonoAudioEnabledPref(false);
   EXPECT_TRUE(observer.observed());
   EXPECT_FALSE(observer.observed_enabled());
-  EXPECT_EQ(observer.observed_type(),
-            ACCESSIBILITY_TOGGLE_MONO_AUDIO);
+  EXPECT_EQ(observer.observed_type(), ACCESSIBILITY_TOGGLE_MONO_AUDIO);
   EXPECT_FALSE(IsMonoAudioEnabled());
 }
 
 class AccessibilityManagerUserTypeTest
     : public AccessibilityManagerTest,
-      public ::testing::WithParamInterface<const char*> {
+      public ::testing::WithParamInterface<AccountId> {
  protected:
   AccessibilityManagerUserTypeTest() {}
   virtual ~AccessibilityManagerUserTypeTest() {}
@@ -645,9 +654,10 @@ class AccessibilityManagerUserTypeTest
 INSTANTIATE_TEST_CASE_P(
     UserTypeInstantiation,
     AccessibilityManagerUserTypeTest,
-    ::testing::Values(kTestUserName,
-                      user_manager::GuestAccountId().GetUserEmail().c_str(),
-                      kTestSupervisedUserName));
+    ::testing::Values(AccountId::FromUserEmailGaiaId(kTestUserName,
+                                                     kTestUserGaiaId),
+                      user_manager::GuestAccountId(),
+                      AccountId::FromUserEmail(kTestSupervisedUserName)));
 
 IN_PROC_BROWSER_TEST_P(AccessibilityManagerUserTypeTest,
                        EnableOnLoginScreenAndLogin) {
@@ -671,9 +681,9 @@ IN_PROC_BROWSER_TEST_P(AccessibilityManagerUserTypeTest,
   EXPECT_TRUE(IsMonoAudioEnabled());
 
   // Logs in.
-  const AccountId account_id = AccountId::FromUserEmail(GetParam());
+  const AccountId account_id = GetParam();
   auto* session_manager = session_manager::SessionManager::Get();
-  session_manager->CreateSession(account_id, account_id.GetUserEmail());
+  session_manager->CreateSession(account_id, account_id.GetUserEmail(), false);
 
   // Confirms that the features are still enabled just after login.
   EXPECT_TRUE(IsLargeCursorEnabled());
@@ -683,7 +693,7 @@ IN_PROC_BROWSER_TEST_P(AccessibilityManagerUserTypeTest,
   EXPECT_EQ(kTestAutoclickDelayMs, GetAutoclickDelay());
   EXPECT_TRUE(IsMonoAudioEnabled());
 
-  session_manager->SessionStarted();
+  StartUserSession(account_id);
 
   // Confirms that the features keep enabled after session starts.
   EXPECT_TRUE(IsLargeCursorEnabled());
@@ -704,10 +714,10 @@ IN_PROC_BROWSER_TEST_P(AccessibilityManagerUserTypeTest,
 
 IN_PROC_BROWSER_TEST_P(AccessibilityManagerUserTypeTest, BrailleWhenLoggedIn) {
   // Logs in.
-  const AccountId account_id = AccountId::FromUserEmail(GetParam());
+  const AccountId account_id = GetParam();
   auto* session_manager = session_manager::SessionManager::Get();
-  session_manager->CreateSession(account_id, account_id.GetUserEmail());
-  session_manager->SessionStarted();
+  session_manager->CreateSession(account_id, account_id.GetUserEmail(), false);
+  StartUserSession(account_id);
   // This object watches for IME preference changes and reflects those in
   // the IME framework state.
   chromeos::Preferences prefs;
@@ -752,8 +762,8 @@ IN_PROC_BROWSER_TEST_P(AccessibilityManagerUserTypeTest, BrailleWhenLoggedIn) {
 IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, AccessibilityMenuVisibility) {
   // Log in.
   auto* session_manager = session_manager::SessionManager::Get();
-  session_manager->CreateSession(test_account_id_, kTestUserName);
-  session_manager->SessionStarted();
+  session_manager->CreateSession(test_account_id_, kTestUserName, false);
+  StartUserSession(test_account_id_);
 
   // Confirms that the features are disabled.
   EXPECT_FALSE(IsLargeCursorEnabled());
@@ -763,6 +773,13 @@ IN_PROC_BROWSER_TEST_F(AccessibilityManagerTest, AccessibilityMenuVisibility) {
   EXPECT_FALSE(ShouldShowAccessibilityMenu());
   EXPECT_FALSE(IsVirtualKeyboardEnabled());
   EXPECT_FALSE(IsMonoAudioEnabled());
+
+  // Check "should always show menu" pref.
+  EXPECT_FALSE(ShouldShowAccessibilityMenu());
+  SetAlwaysShowMenuEnabled(true);
+  EXPECT_TRUE(ShouldShowAccessibilityMenu());
+  SetAlwaysShowMenuEnabled(false);
+  EXPECT_FALSE(ShouldShowAccessibilityMenu());
 
   // Check large cursor.
   SetLargeCursorEnabled(true);

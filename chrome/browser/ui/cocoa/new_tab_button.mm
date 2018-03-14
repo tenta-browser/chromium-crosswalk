@@ -338,7 +338,6 @@ CGFloat LineWidthFromContext(CGContextRef context) {
 
   NSImage* newTabButtonImage =
       [[[NSImage alloc] initWithSize:newTabButtonImageSize] autorelease];
-  [newTabButtonImage setCacheMode:NSImageCacheAlways];
   [newTabButtonImage addRepresentation:imageRep];
 
   return newTabButtonImage;
@@ -428,6 +427,9 @@ CGFloat LineWidthFromContext(CGContextRef context) {
   [strokeColor set];
   [bezierPath stroke];
 
+  BOOL isRTL = cocoa_l10n_util::ShouldDoExperimentalRTLLayout();
+  CGFloat buttonWidth = newTabButtonImageSize.width;
+
   // Bottom edge.
   const CGFloat kBottomEdgeX = 9;
   const CGFloat kBottomEdgeY = 1.2825;
@@ -435,6 +437,10 @@ CGFloat LineWidthFromContext(CGContextRef context) {
   NSPoint bottomEdgeStart = NSMakePoint(kBottomEdgeX, kBottomEdgeY);
   NSPoint bottomEdgeEnd = NSMakePoint(kBottomEdgeX + kBottomEdgeWidth,
                                       kBottomEdgeY);
+  if (isRTL) {
+    bottomEdgeStart.x = buttonWidth - bottomEdgeStart.x;
+    bottomEdgeEnd.x = buttonWidth - bottomEdgeEnd.x;
+  }
   NSBezierPath* bottomEdgePath = [NSBezierPath bezierPath];
   [bottomEdgePath moveToPoint:bottomEdgeStart];
   [bottomEdgePath lineToPoint:bottomEdgeEnd];
@@ -477,6 +483,10 @@ CGFloat LineWidthFromContext(CGContextRef context) {
 
   // Shadow beneath the bottom or top edge.
   if (!NSEqualPoints(shadowStart, NSZeroPoint)) {
+    if (isRTL) {
+      shadowStart.x = buttonWidth - shadowStart.x;
+      shadowEnd.x = buttonWidth - shadowEnd.x;
+    }
     NSBezierPath* shadowPath = [NSBezierPath bezierPath];
     [shadowPath moveToPoint:shadowStart];
     [shadowPath lineToPoint:shadowEnd];

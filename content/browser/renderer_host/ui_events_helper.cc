@@ -74,10 +74,10 @@ bool MakeUITouchEventsFromWebTouchEvents(
     // ui events start in the co-ordinate space of the EventDispatcher.
     gfx::PointF location;
     if (coordinate_system == LOCAL_COORDINATES)
-      location = point.position;
+      location = point.PositionInWidget();
     else
-      location = point.screen_position;
-    auto uievent = base::MakeUnique<ui::TouchEvent>(
+      location = point.PositionInScreen();
+    auto uievent = std::make_unique<ui::TouchEvent>(
         type, gfx::Point(), timestamp,
         ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, point.id,
                            point.radius_x, point.radius_y, point.force),
@@ -88,6 +88,16 @@ bool MakeUITouchEventsFromWebTouchEvents(
     list->push_back(std::move(uievent));
   }
   return true;
+}
+
+bool InputEventAckStateIsSetNonBlocking(InputEventAckState ack_state) {
+  switch (ack_state) {
+    case INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING:
+    case INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING_DUE_TO_FLING:
+      return true;
+    default:
+      return false;
+  }
 }
 
 }  // namespace content

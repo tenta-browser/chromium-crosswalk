@@ -90,6 +90,9 @@ Host.UserMetrics.Action = {
   SelectCommandFromCommandMenu: 25,
   ChangeInspectedNodeInElementsPanel: 26,
   StyleRuleCopied: 27,
+  CoverageStarted: 28,
+  Audits2Started: 29,
+  Audits2Finished: 30
 };
 
 Host.UserMetrics._PanelCodes = {
@@ -109,7 +112,8 @@ Host.UserMetrics._PanelCodes = {
   'drawer-sensors': 14,
   'drawer-sources.search': 15,
   security: 16,
-  js_profiler: 17
+  js_profiler: 17,
+  audits2: 18,
 };
 
 /** @type {!Host.UserMetrics} */

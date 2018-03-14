@@ -169,7 +169,7 @@ class VisitedLinkTest : public testing::Test {
     bool result = master_->Init();
     if (result && wait_for_io_complete) {
       // Wait for all pending file I/O to be completed.
-      content::RunAllBlockingPoolTasksUntilIdle();
+      content::RunAllTasksUntilIdle();
     }
     return result;
   }
@@ -178,10 +178,10 @@ class VisitedLinkTest : public testing::Test {
   // and TearDown will do this to make sure eveything is shiny before quitting.
   void ClearDB() {
     if (master_.get())
-      master_.reset(NULL);
+      master_.reset(nullptr);
 
     // Wait for all pending file I/O to be completed.
-    content::RunAllBlockingPoolTasksUntilIdle();
+    content::RunAllTasksUntilIdle();
   }
 
   // Loads the database from disk and makes sure that the same URLs are present
@@ -529,8 +529,7 @@ class VisitCountingContext : public mojom::VisitedLinkNotificationSink {
         binding_(this) {}
 
   void Bind(mojo::ScopedMessagePipeHandle handle) {
-    binding_.Bind(mojo::MakeRequest<mojom::VisitedLinkNotificationSink>(
-        std::move(handle)));
+    binding_.Bind(mojom::VisitedLinkNotificationSinkRequest(std::move(handle)));
   }
 
   void WaitForUpdate() {
@@ -626,8 +625,7 @@ class VisitedLinkRenderProcessHostFactory
  public:
   VisitedLinkRenderProcessHostFactory() : context_(new VisitCountingContext) {}
   content::RenderProcessHost* CreateRenderProcessHost(
-      content::BrowserContext* browser_context,
-      content::SiteInstance* site_instance) const override {
+      content::BrowserContext* browser_context) const override {
     return new VisitRelayingRenderProcessHost(browser_context, context_.get());
   }
 
@@ -685,7 +683,7 @@ class VisitedLinkEventsTest : public content::RenderViewHostTestHarness {
 
 TEST_F(VisitedLinkEventsTest, Coalescence) {
   // Waiting complete rebuild the table.
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   // After rebuild table expect reset event.
   EXPECT_EQ(1, context()->reset_event_count());
@@ -746,7 +744,7 @@ TEST_F(VisitedLinkEventsTest, Basics) {
       base::string16(), MSG_ROUTING_NONE, MSG_ROUTING_NONE, false);
 
   // Waiting complete rebuild the table.
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   // After rebuild table expect reset event.
   EXPECT_EQ(1, context()->reset_event_count());
@@ -778,7 +776,7 @@ TEST_F(VisitedLinkEventsTest, TabVisibility) {
       base::string16(), MSG_ROUTING_NONE, MSG_ROUTING_NONE, false);
 
   // Waiting complete rebuild the table.
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   // After rebuild table expect reset event.
   EXPECT_EQ(1, context()->reset_event_count());
@@ -863,17 +861,17 @@ class VisitedLinkCompletelyResetEventTest : public VisitedLinkEventsTest {
                               &delegate_, true, true, visited_file, 0));
     master->Init();
     // Waiting complete create the table.
-    content::RunAllBlockingPoolTasksUntilIdle();
+    content::RunAllTasksUntilIdle();
 
     master.reset();
     // Wait for all pending file I/O to be completed.
-    content::RunAllBlockingPoolTasksUntilIdle();
+    content::RunAllTasksUntilIdle();
   }
 };
 
 TEST_F(VisitedLinkCompletelyResetEventTest, LoadTable) {
   // Waiting complete loading the table.
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   context()->binding().FlushForTesting();
 

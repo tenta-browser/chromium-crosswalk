@@ -22,7 +22,7 @@ namespace content {
 // static
 scoped_refptr<EmbeddedWorkerRegistry> EmbeddedWorkerRegistry::Create(
     const base::WeakPtr<ServiceWorkerContextCore>& context) {
-  return make_scoped_refptr(new EmbeddedWorkerRegistry(context, 0));
+  return base::WrapRefCounted(new EmbeddedWorkerRegistry(context, 0));
 }
 
 // static
@@ -36,17 +36,12 @@ scoped_refptr<EmbeddedWorkerRegistry> EmbeddedWorkerRegistry::Create(
   return registry;
 }
 
-std::unique_ptr<EmbeddedWorkerInstance> EmbeddedWorkerRegistry::CreateWorker() {
-  std::unique_ptr<EmbeddedWorkerInstance> worker(
-      new EmbeddedWorkerInstance(context_, next_embedded_worker_id_));
+std::unique_ptr<EmbeddedWorkerInstance> EmbeddedWorkerRegistry::CreateWorker(
+    ServiceWorkerVersion* owner_version) {
+  std::unique_ptr<EmbeddedWorkerInstance> worker(new EmbeddedWorkerInstance(
+      context_, owner_version, next_embedded_worker_id_));
   worker_map_[next_embedded_worker_id_++] = worker.get();
   return worker;
-}
-
-ServiceWorkerStatusCode EmbeddedWorkerRegistry::StopWorker(
-    int process_id, int embedded_worker_id) {
-  return Send(process_id,
-              new EmbeddedWorkerMsg_StopWorker(embedded_worker_id));
 }
 
 bool EmbeddedWorkerRegistry::OnMessageReceived(const IPC::Message& message,
@@ -79,133 +74,25 @@ void EmbeddedWorkerRegistry::Shutdown() {
   }
 }
 
-void EmbeddedWorkerRegistry::OnWorkerReadyForInspection(
-    int process_id,
-    int embedded_worker_id) {
-  EmbeddedWorkerInstance* worker =
-      GetWorkerForMessage(process_id, embedded_worker_id);
-  if (!worker)
-    return;
-  worker->OnReadyForInspection();
-}
-
-void EmbeddedWorkerRegistry::OnWorkerScriptLoaded(int process_id,
-                                                  int embedded_worker_id) {
-  EmbeddedWorkerInstance* worker =
-      GetWorkerForMessage(process_id, embedded_worker_id);
-  if (!worker)
-    return;
-  worker->OnScriptLoaded();
-}
-
-void EmbeddedWorkerRegistry::OnWorkerThreadStarted(int process_id,
-                                                   int thread_id,
-                                                   int embedded_worker_id) {
-  EmbeddedWorkerInstance* worker =
-      GetWorkerForMessage(process_id, embedded_worker_id);
-  if (!worker)
-    return;
-  worker->OnThreadStarted(thread_id);
-}
-
-void EmbeddedWorkerRegistry::OnWorkerScriptLoadFailed(int process_id,
-                                                      int embedded_worker_id) {
-  EmbeddedWorkerInstance* worker =
-      GetWorkerForMessage(process_id, embedded_worker_id);
-  if (!worker)
-    return;
-  worker->OnScriptLoadFailed();
-}
-
-void EmbeddedWorkerRegistry::OnWorkerScriptEvaluated(int process_id,
-                                                     int embedded_worker_id,
-                                                     bool success) {
-  EmbeddedWorkerInstance* worker =
-      GetWorkerForMessage(process_id, embedded_worker_id);
-  if (!worker)
-    return;
-  worker->OnScriptEvaluated(success);
-}
-
-void EmbeddedWorkerRegistry::OnWorkerStarted(
-    int process_id, int embedded_worker_id) {
-  EmbeddedWorkerInstance* worker =
-      GetWorkerForMessage(process_id, embedded_worker_id);
-  if (!worker)
-    return;
-
+bool EmbeddedWorkerRegistry::OnWorkerStarted(int process_id,
+                                             int embedded_worker_id) {
   if (!base::ContainsKey(worker_process_map_, process_id) ||
       !base::ContainsKey(worker_process_map_[process_id], embedded_worker_id)) {
-    return;
+    return false;
   }
 
-  worker->OnStarted();
   lifetime_tracker_.StartTiming(embedded_worker_id);
+  return true;
 }
 
-void EmbeddedWorkerRegistry::OnWorkerStopped(
-    int process_id, int embedded_worker_id) {
-  EmbeddedWorkerInstance* worker =
-      GetWorkerForMessage(process_id, embedded_worker_id);
-  if (!worker)
-    return;
+void EmbeddedWorkerRegistry::OnWorkerStopped(int process_id,
+                                             int embedded_worker_id) {
   worker_process_map_[process_id].erase(embedded_worker_id);
-  worker->OnStopped();
   lifetime_tracker_.StopTiming(embedded_worker_id);
-}
-
-void EmbeddedWorkerRegistry::OnReportException(
-    int embedded_worker_id,
-    const base::string16& error_message,
-    int line_number,
-    int column_number,
-    const GURL& source_url) {
-  EmbeddedWorkerInstance* worker = GetWorker(embedded_worker_id);
-  if (!worker)
-    return;
-  worker->OnReportException(error_message, line_number, column_number,
-                            source_url);
-}
-
-void EmbeddedWorkerRegistry::OnReportConsoleMessage(
-    int embedded_worker_id,
-    int source_identifier,
-    int message_level,
-    const base::string16& message,
-    int line_number,
-    const GURL& source_url) {
-  EmbeddedWorkerInstance* worker = GetWorker(embedded_worker_id);
-  if (!worker)
-    return;
-  worker->OnReportConsoleMessage(source_identifier, message_level, message,
-                                 line_number, source_url);
 }
 
 void EmbeddedWorkerRegistry::OnDevToolsAttached(int embedded_worker_id) {
   lifetime_tracker_.AbortTiming(embedded_worker_id);
-}
-
-void EmbeddedWorkerRegistry::RemoveProcess(int process_id) {
-  std::map<int, std::set<int> >::iterator found =
-      worker_process_map_.find(process_id);
-  if (found != worker_process_map_.end()) {
-    const std::set<int>& worker_set = worker_process_map_[process_id];
-    for (std::set<int>::const_iterator it = worker_set.begin();
-         it != worker_set.end();
-         ++it) {
-      int embedded_worker_id = *it;
-      DCHECK(base::ContainsKey(worker_map_, embedded_worker_id));
-      // RemoveProcess is typically called after the running workers on the
-      // process have been stopped, so if there is a running worker at this
-      // point somehow the worker thread has lost contact with the browser
-      // process.
-      // Set the worker's status to STOPPED so a new thread can be created for
-      // this version. Use OnDetached rather than OnStopped so UMA doesn't
-      // record it as a normal stoppage.
-      worker_map_[embedded_worker_id]->OnDetached();
-    }
-    worker_process_map_.erase(found);
-  }
 }
 
 EmbeddedWorkerInstance* EmbeddedWorkerRegistry::GetWorker(

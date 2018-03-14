@@ -45,7 +45,7 @@ cr.define('print_preview', function() {
      * @private {HTMLElement}
      */
     this.checkbox_ = null;
-  };
+  }
 
   CheckboxTicketItemElement.prototype = {
 
@@ -69,8 +69,9 @@ cr.define('print_preview', function() {
 
     /** Initializes container and checkbox */
     decorate: function() {
-      this.container_ = document.getElementById(this.cssId_);
-      this.checkbox_ = this.container_.querySelector('.checkbox');
+      this.container_ = $(this.cssId_);
+      this.checkbox_ = /** @type {HTMLElement} */ (
+          this.container_.querySelector('.checkbox'));
     },
 
     /** Resets container and checkbox. */
@@ -86,7 +87,7 @@ cr.define('print_preview', function() {
 
     /**
      * Called when the ticket item changes. Updates the UI state.
-     * @param {!print_preview.SettingsSection.OtherOptionsSettings}
+     * @param {!print_preview.OtherOptionsSettings}
      *     otherOptionsSettings The settings section that this element is part
      *     of.
      */
@@ -102,7 +103,7 @@ cr.define('print_preview', function() {
      */
     isVisible: function(collapseContent) {
       return this.ticketItem_.isCapabilityAvailable() &&
-             (!this.collapsible_ || !collapseContent);
+          (!this.collapsible_ || !collapseContent);
     },
 
     /**
@@ -111,7 +112,7 @@ cr.define('print_preview', function() {
      *     collapsed.
      */
     setVisibility: function(collapseContent) {
-      setIsVisible(this.container_, this.isVisible(collapseContent));
+      setIsVisible(assert(this.container_), this.isVisible(collapseContent));
     },
 
   };
@@ -119,8 +120,6 @@ cr.define('print_preview', function() {
   /**
    * UI component that renders checkboxes for various print options.
    * @param {!print_preview.ticket_items.Duplex} duplex Duplex ticket item.
-   * @param {!print_preview.ticket_items.FitToPage} fitToPage Fit-to-page ticket
-   *     item.
    * @param {!print_preview.ticket_items.CssBackground} cssBackground CSS
    *     background ticket item.
    * @param {!print_preview.ticket_items.SelectionOnly} selectionOnly Selection
@@ -133,15 +132,14 @@ cr.define('print_preview', function() {
    * @extends {print_preview.SettingsSection}
    */
   function OtherOptionsSettings(
-      duplex, fitToPage, cssBackground, selectionOnly, headerFooter,
-      rasterize) {
+      duplex, cssBackground, selectionOnly, headerFooter, rasterize) {
     print_preview.SettingsSection.call(this);
     /**
      * @private {boolean} rasterizeEnabled Whether the print as image feature is
      *     enabled.
      */
     this.rasterizeEnabled_ = (!cr.isWindows && !cr.isMac) &&
-                             loadTimeData.getBoolean('printPdfAsImageEnabled');
+        loadTimeData.getBoolean('printPdfAsImageEnabled');
 
     /**
      * @private {!Array<!CheckboxTicketItemElement>} checkbox ticket item
@@ -149,22 +147,21 @@ cr.define('print_preview', function() {
      *      Selection only must always be the last element in the array.
      */
     this.elements_ = [
-      new CheckboxTicketItemElement(headerFooter, true,
-                                    'header-footer-container'),
-      new CheckboxTicketItemElement(fitToPage, false,
-                                    'fit-to-page-container'),
+      new CheckboxTicketItemElement(
+          headerFooter, true, 'header-footer-container'),
       new CheckboxTicketItemElement(duplex, false, 'duplex-container'),
-      new CheckboxTicketItemElement(cssBackground, true,
-                                    'css-background-container'),
-      new CheckboxTicketItemElement(selectionOnly, true,
-                                    'selection-only-container')
+      new CheckboxTicketItemElement(
+          cssBackground, true, 'css-background-container'),
+      new CheckboxTicketItemElement(
+          selectionOnly, true, 'selection-only-container')
     ];
     if (this.rasterizeEnabled_) {
-      this.elements_.splice(4, 0,
-                            new CheckboxTicketItemElement(rasterize, true,
-                                'rasterize-container'));
+      this.elements_.splice(
+          this.elements_.length - 1, 0,
+          new CheckboxTicketItemElement(
+              rasterize, true, 'rasterize-container'));
     }
-  };
+  }
 
   OtherOptionsSettings.prototype = {
     __proto__: print_preview.SettingsSection.prototype,
@@ -189,7 +186,7 @@ cr.define('print_preview', function() {
        * element, as this checkbox is enabled based on whether the user has
        * selected something in the page, which is different logic from the
        * other elements. */
-      for (var i = 0; i < this.elements_.length - 1; i++)
+      for (let i = 0; i < this.elements_.length - 1; i++)
         this.elements_[i].checkbox.disabled = !isEnabled;
     },
 
@@ -198,8 +195,7 @@ cr.define('print_preview', function() {
       print_preview.SettingsSection.prototype.enterDocument.call(this);
       this.elements_.forEach(function(element) {
         this.tracker.add(
-            element.checkbox,
-            'click',
+            assert(element.checkbox), 'click',
             element.onCheckboxClick.bind(element));
         this.tracker.add(
             element.ticketItem,
@@ -211,13 +207,13 @@ cr.define('print_preview', function() {
     /** @override */
     exitDocument: function() {
       print_preview.SettingsSection.prototype.exitDocument.call(this);
-      for (var i = 0; i < this.elements_.length; i++)
+      for (let i = 0; i < this.elements_.length; i++)
         this.elements_[i].exitDocument();
     },
 
     /** @override */
     decorateInternal: function() {
-      for (var i = 0; i < this.elements_.length; i++)
+      for (let i = 0; i < this.elements_.length; i++)
         this.elements_[i].decorate();
       $('rasterize-container').hidden = !this.rasterizeEnabled_;
     },
@@ -225,7 +221,7 @@ cr.define('print_preview', function() {
     /** @override */
     updateUiStateInternal: function() {
       if (this.isAvailable()) {
-        for (var i = 0; i < this.elements_.length; i++)
+        for (let i = 0; i < this.elements_.length; i++)
           this.elements_[i].setVisibility(this.collapseContent);
       }
       print_preview.SettingsSection.prototype.updateUiStateInternal.call(this);
@@ -241,7 +237,5 @@ cr.define('print_preview', function() {
   };
 
   // Export
-  return {
-    OtherOptionsSettings: OtherOptionsSettings
-  };
+  return {OtherOptionsSettings: OtherOptionsSettings};
 });

@@ -24,7 +24,7 @@ bool operator != (const StackFrame& lhs, const StackFrame& rhs) {
   return !(lhs.value == rhs.value);
 }
 
-Backtrace::Backtrace(): frame_count(0) {}
+Backtrace::Backtrace() = default;
 
 bool operator==(const Backtrace& lhs, const Backtrace& rhs) {
   if (lhs.frame_count != rhs.frame_count) return false;
@@ -48,10 +48,12 @@ bool operator==(const AllocationContext& lhs, const AllocationContext& rhs) {
 bool operator!=(const AllocationContext& lhs, const AllocationContext& rhs) {
   return !(lhs == rhs);
 }
+
 }  // namespace trace_event
 }  // namespace base
 
-namespace BASE_HASH_NAMESPACE {
+namespace std {
+
 using base::trace_event::AllocationContext;
 using base::trace_event::Backtrace;
 using base::trace_event::StackFrame;
@@ -65,9 +67,7 @@ size_t hash<Backtrace>::operator()(const Backtrace& backtrace) const {
   for (size_t i = 0; i != backtrace.frame_count; ++i) {
     values[i] = backtrace.frames[i].value;
   }
-  return base::SuperFastHash(
-      reinterpret_cast<const char*>(values),
-      static_cast<int>(backtrace.frame_count * sizeof(*values)));
+  return base::PersistentHash(values, backtrace.frame_count * sizeof(*values));
 }
 
 size_t hash<AllocationContext>::operator()(const AllocationContext& ctx) const {
@@ -85,4 +85,4 @@ size_t hash<AllocationContext>::operator()(const AllocationContext& ctx) const {
   return (backtrace_hash * 3) + type_hash;
 }
 
-}  // BASE_HASH_NAMESPACE
+}  // namespace std

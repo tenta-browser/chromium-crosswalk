@@ -6,14 +6,13 @@ package org.chromium.chrome.browser.searchwidget;
 
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.chrome.browser.ntp.NewTabPage;
-import org.chromium.chrome.browser.omnibox.LocationBarLayout;
-import org.chromium.chrome.browser.search_engines.TemplateUrlService;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.toolbar.ToolbarDataProvider;
+import org.chromium.components.security_state.ConnectionSecurityLevel;
 
-class SearchBoxDataProvider implements ToolbarDataProvider, TemplateUrlService.LoadListener {
+class SearchBoxDataProvider implements ToolbarDataProvider {
     private Tab mTab;
-    private String mVerbatimUrl;
 
     /**
      * Called when native library is loaded and a tab has been initialized.
@@ -21,21 +20,7 @@ class SearchBoxDataProvider implements ToolbarDataProvider, TemplateUrlService.L
      */
     public void onNativeLibraryReady(Tab tab) {
         assert LibraryLoader.isInitialized();
-
         mTab = tab;
-
-        TemplateUrlService service = TemplateUrlService.getInstance();
-        service.registerLoadListener(this);
-        service.load();
-    }
-
-    @Override
-    public void onTemplateUrlServiceLoaded() {
-        // For zero suggest, the default search engine's URL is used as the first suggestion.
-        TemplateUrlService service = TemplateUrlService.getInstance();
-        String searchEngineUrl = service.getSearchEngineUrlFromTemplateUrl(
-                service.getDefaultSearchEngineTemplateUrl().getKeyword());
-        mVerbatimUrl = LocationBarLayout.splitPathFromUrlDisplayText(searchEngineUrl).first;
     }
 
     @Override
@@ -50,6 +35,12 @@ class SearchBoxDataProvider implements ToolbarDataProvider, TemplateUrlService.L
     }
 
     @Override
+    public Profile getProfile() {
+        if (mTab == null) return null;
+        return mTab.getProfile();
+    }
+
+    @Override
     public String getText() {
         return null;
     }
@@ -57,6 +48,11 @@ class SearchBoxDataProvider implements ToolbarDataProvider, TemplateUrlService.L
     @Override
     public Tab getTab() {
         return mTab;
+    }
+
+    @Override
+    public boolean hasTab() {
+        return mTab != null;
     }
 
     @Override
@@ -71,6 +67,36 @@ class SearchBoxDataProvider implements ToolbarDataProvider, TemplateUrlService.L
 
     @Override
     public String getCurrentUrl() {
-        return mVerbatimUrl;
+        return SearchWidgetProvider.getDefaultSearchEngineUrl();
+    }
+
+    @Override
+    public boolean shouldShowGoogleG(String urlBarText) {
+        return false;
+    }
+
+    @Override
+    public boolean isOfflinePage() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldShowSecurityIcon() {
+        return false;
+    }
+
+    @Override
+    public boolean shouldShowVerboseStatus() {
+        return false;
+    }
+
+    @Override
+    public int getSecurityLevel() {
+        return ConnectionSecurityLevel.NONE;
+    }
+
+    @Override
+    public int getSecurityIconResource() {
+        return 0;
     }
 }

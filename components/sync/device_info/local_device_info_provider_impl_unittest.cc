@@ -5,10 +5,10 @@
 #include "components/sync/device_info/local_device_info_provider_impl.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/sync/base/get_session_name.h"
+#include "components/version_info/version_string.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace syncer {
@@ -22,7 +22,7 @@ class LocalDeviceInfoProviderImplTest : public testing::Test {
   ~LocalDeviceInfoProviderImplTest() override {}
 
   void SetUp() override {
-    provider_ = base::MakeUnique<LocalDeviceInfoProviderImpl>(
+    provider_ = std::make_unique<LocalDeviceInfoProviderImpl>(
         version_info::Channel::UNKNOWN,
         version_info::GetVersionStringWithModifier("UNKNOWN"), false);
   }
@@ -36,8 +36,7 @@ class LocalDeviceInfoProviderImplTest : public testing::Test {
   void StartInitializeProvider() { StartInitializeProvider(kLocalDeviceGuid); }
 
   void StartInitializeProvider(const std::string& guid) {
-    provider_->Initialize(guid, kSigninScopedDeviceId,
-                          message_loop_.task_runner());
+    provider_->Initialize(guid, kSigninScopedDeviceId);
   }
 
   void FinishInitializeProvider() {
@@ -66,7 +65,7 @@ class LocalDeviceInfoProviderImplTest : public testing::Test {
   bool called_back_;
 
  private:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 TEST_F(LocalDeviceInfoProviderImplTest, OnInitializedCallback) {

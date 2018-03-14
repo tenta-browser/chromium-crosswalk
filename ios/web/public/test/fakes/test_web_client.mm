@@ -5,9 +5,14 @@
 #import "ios/web/public/test/fakes/test_web_client.h"
 
 #include "base/logging.h"
+#include "ios/web/public/features.h"
 #include "ios/web/test/test_url_constants.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "url/gurl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace web {
 
@@ -16,15 +21,9 @@ TestWebClient::TestWebClient()
 
 TestWebClient::~TestWebClient() {}
 
-void TestWebClient::AddAdditionalSchemes(
-    std::vector<url::SchemeWithType>* additional_standard_schemes) const {
-  url::SchemeWithType web_ui_scheme = {kTestWebUIScheme,
-                                       url::SCHEME_WITHOUT_PORT};
-  additional_standard_schemes->push_back(web_ui_scheme);
-
-  url::SchemeWithType native_scheme = {kTestNativeContentScheme,
-                                       url::SCHEME_WITHOUT_PORT};
-  additional_standard_schemes->push_back(native_scheme);
+void TestWebClient::AddAdditionalSchemes(Schemes* schemes) const {
+  schemes->standard_schemes.push_back(kTestWebUIScheme);
+  schemes->standard_schemes.push_back(kTestNativeContentScheme);
 }
 
 bool TestWebClient::IsAppSpecificURL(const GURL& url) const {
@@ -34,17 +33,18 @@ bool TestWebClient::IsAppSpecificURL(const GURL& url) const {
 
 base::RefCountedMemory* TestWebClient::GetDataResourceBytes(
     int resource_id) const {
-  if (!ResourceBundle::HasSharedInstance())
+  if (!ui::ResourceBundle::HasSharedInstance())
     return nullptr;
-  return ResourceBundle::GetSharedInstance().LoadDataResourceBytes(resource_id);
+  return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytes(
+      resource_id);
 }
 
 NSString* TestWebClient::GetEarlyPageScript(BrowserState* browser_state) const {
-  return early_page_script_ ? early_page_script_.get() : @"";
+  return early_page_script_ ? early_page_script_ : @"";
 }
 
 void TestWebClient::SetEarlyPageScript(NSString* page_script) {
-  early_page_script_.reset([page_script copy]);
+  early_page_script_ = [page_script copy];
 }
 
 void TestWebClient::AllowCertificateError(

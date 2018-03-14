@@ -4,12 +4,14 @@
 
 #include "chrome/utility/importer/ie_importer_win.h"
 
+#include <objbase.h>
 #include <ole2.h>
 #include <intshcut.h>
 #include <shlobj.h>
 #include <stddef.h>
 #include <urlhist.h>
 #include <wininet.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <map>
@@ -27,10 +29,8 @@
 #include "base/time/time.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_co_mem.h"
-#include "base/win/scoped_comptr.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/scoped_propvariant.h"
-#include "base/win/windows_version.h"
 #include "chrome/common/importer/edge_importer_utils_win.h"
 #include "chrome/common/importer/ie_importer_utils_win.h"
 #include "chrome/common/importer/imported_bookmark_entry.h"
@@ -52,8 +52,6 @@ const base::char16 kSearchScopePath[] =
   L"Software\\Microsoft\\Internet Explorer\\SearchScopes";
 const base::char16 kIEVersionKey[] =
   L"Software\\Microsoft\\Internet Explorer";
-const base::char16 kIEToolbarKey[] =
-  L"Software\\Microsoft\\Internet Explorer\\Toolbar";
 
 // NTFS stream name of favicon image data.
 const base::char16 kFaviconStreamName[] = L":favicon:$DATA";
@@ -289,14 +287,15 @@ void SortBookmarksInIEOrder(
 // representing it.
 bool LoadInternetShortcut(
     const base::string16& file,
-    base::win::ScopedComPtr<IUniformResourceLocator>* shortcut) {
-  base::win::ScopedComPtr<IUniformResourceLocator> url_locator;
-  if (FAILED(url_locator.CreateInstance(CLSID_InternetShortcut, NULL,
-                                        CLSCTX_INPROC_SERVER)))
+    Microsoft::WRL::ComPtr<IUniformResourceLocator>* shortcut) {
+  Microsoft::WRL::ComPtr<IUniformResourceLocator> url_locator;
+  if (FAILED(::CoCreateInstance(CLSID_InternetShortcut, NULL,
+                                CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&url_locator))))
     return false;
 
-  base::win::ScopedComPtr<IPersistFile> persist_file;
-  if (FAILED(persist_file.QueryFrom(url_locator.get())))
+  Microsoft::WRL::ComPtr<IPersistFile> persist_file;
+  if (FAILED(url_locator.CopyTo(persist_file.GetAddressOf())))
     return false;
 
   // Loads the Internet Shortcut from persistent storage.
@@ -317,13 +316,13 @@ GURL ReadURLFromInternetShortcut(IUniformResourceLocator* url_locator) {
 
 // Reads the URL of the favicon of the internet shortcut.
 GURL ReadFaviconURLFromInternetShortcut(IUniformResourceLocator* url_locator) {
-  base::win::ScopedComPtr<IPropertySetStorage> property_set_storage;
-  if (FAILED(property_set_storage.QueryFrom(url_locator)))
+  Microsoft::WRL::ComPtr<IPropertySetStorage> property_set_storage;
+  if (FAILED(url_locator->QueryInterface(IID_PPV_ARGS(&property_set_storage))))
     return GURL();
 
-  base::win::ScopedComPtr<IPropertyStorage> property_storage;
+  Microsoft::WRL::ComPtr<IPropertyStorage> property_storage;
   if (FAILED(property_set_storage->Open(FMTID_Intshcut, STGM_READ,
-                                        property_storage.Receive()))) {
+                                        property_storage.GetAddressOf()))) {
     return GURL();
   }
 
@@ -507,13 +506,13 @@ void IEImporter::ImportHistory() {
                                   url::kFileScheme};
   int total_schemes = arraysize(kSchemes);
 
-  base::win::ScopedComPtr<IUrlHistoryStg2> url_history_stg2;
-  if (FAILED(url_history_stg2.CreateInstance(CLSID_CUrlHistory, NULL,
-                                             CLSCTX_INPROC_SERVER))) {
+  Microsoft::WRL::ComPtr<IUrlHistoryStg2> url_history_stg2;
+  if (FAILED(::CoCreateInstance(CLSID_CUrlHistory, NULL, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&url_history_stg2)))) {
     return;
   }
-  base::win::ScopedComPtr<IEnumSTATURL> enum_url;
-  if (SUCCEEDED(url_history_stg2->EnumUrls(enum_url.Receive()))) {
+  Microsoft::WRL::ComPtr<IEnumSTATURL> enum_url;
+  if (SUCCEEDED(url_history_stg2->EnumUrls(enum_url.GetAddressOf()))) {
     std::vector<ImporterURLRow> rows;
     STATURL stat_url;
 
@@ -588,8 +587,8 @@ void IEImporter::ImportPasswordsIE6() {
     return;
   }
 
-  base::win::ScopedComPtr<IPStore, &IID_IPStore> pstore;
-  HRESULT result = PStoreCreateInstance(pstore.Receive(), 0, 0, 0);
+  Microsoft::WRL::ComPtr<IPStore> pstore;
+  HRESULT result = PStoreCreateInstance(pstore.GetAddressOf(), 0, 0, 0);
   if (result != S_OK) {
     FreeLibrary(pstorec_dll);
     return;
@@ -598,9 +597,9 @@ void IEImporter::ImportPasswordsIE6() {
   std::vector<AutoCompleteInfo> ac_list;
 
   // Enumerates AutoComplete items in the protected database.
-  base::win::ScopedComPtr<IEnumPStoreItems, &IID_IEnumPStoreItems> item;
-  result = pstore->EnumItems(0, &AutocompleteGUID,
-                             &AutocompleteGUID, 0, item.Receive());
+  Microsoft::WRL::ComPtr<IEnumPStoreItems> item;
+  result = pstore->EnumItems(0, &AutocompleteGUID, &AutocompleteGUID, 0,
+                             item.GetAddressOf());
   if (result != PST_E_OK) {
     pstore.Reset();
     FreeLibrary(pstorec_dll);
@@ -762,8 +761,8 @@ void IEImporter::ImportSearchEngines() {
 }
 
 void IEImporter::ImportHomepage() {
-  const wchar_t* kIEHomepage = L"Start Page";
-  const wchar_t* kIEDefaultHomepage = L"Default_Page_URL";
+  static constexpr wchar_t kIEHomepage[] = L"Start Page";
+  static constexpr wchar_t kIEDefaultHomepage[] = L"Default_Page_URL";
 
   base::string16 key_path(importer::GetIESettingsKey());
 
@@ -799,26 +798,17 @@ bool IEImporter::GetFavoritesInfo(IEImporter::FavoritesInfo* info) {
 
   // IE stores the favorites in the Favorites under user profile's folder.
   wchar_t buffer[MAX_PATH];
-  if (FAILED(SHGetFolderPath(NULL, CSIDL_FAVORITES, NULL,
-                             SHGFP_TYPE_CURRENT, buffer)))
+  if (FAILED(SHGetFolderPath(NULL, CSIDL_FAVORITES, NULL, SHGFP_TYPE_CURRENT,
+                             buffer))) {
     return false;
-  info->path = base::FilePath(buffer);
-
-  // There is a Links folder under Favorites folder in Windows Vista, but it
-  // is not recording in Vista's registry. So in Vista, we assume the Links
-  // folder is under Favorites folder since it looks like there is not name
-  // different in every language version of Windows Vista.
-  if (base::win::GetVersion() < base::win::VERSION_VISTA) {
-    // The Link folder name is stored in the registry.
-    DWORD buffer_length = sizeof(buffer);
-    base::win::RegKey reg_key(HKEY_CURRENT_USER, kIEToolbarKey, KEY_READ);
-    if (reg_key.ReadValue(L"LinksFolderName", buffer,
-                          &buffer_length, NULL) != ERROR_SUCCESS)
-      return false;
-    info->links_folder = buffer;
-  } else {
-    info->links_folder = L"Links";
   }
+
+  // There is a Links folder under Favorites folder since Windows Vista, but it
+  // is not recording in Vista's registry. So we assume the Links folder is
+  // under Favorites folder since it looks like there is not name different in
+  // every language version of Windows.
+  info->path = base::FilePath(buffer);
+  info->links_folder = L"Links";
 
   return true;
 }
@@ -853,10 +843,10 @@ void IEImporter::ParseFavoritesFolder(
       continue;
 
     // Skip the bookmark with invalid URL.
-    base::win::ScopedComPtr<IUniformResourceLocator> url_locator;
+    Microsoft::WRL::ComPtr<IUniformResourceLocator> url_locator;
     if (!LoadInternetShortcut(*it, &url_locator))
       continue;
-    GURL url = ReadURLFromInternetShortcut(url_locator.get());
+    GURL url = ReadURLFromInternetShortcut(url_locator.Get());
     if (!url.is_valid())
       continue;
     // Skip default bookmarks. go.microsoft.com redirects to
@@ -867,7 +857,7 @@ void IEImporter::ParseFavoritesFolder(
     if (url.host() == "go.microsoft.com")
       continue;
     // Read favicon.
-    UpdateFaviconMap(*it, url, url_locator.get(), &favicon_map);
+    UpdateFaviconMap(*it, url, url_locator.Get(), &favicon_map);
 
     // Make the relative path from the Favorites folder, without the basename.
     // ex. Suppose that the Favorites folder is C:\Users\Foo\Favorites.

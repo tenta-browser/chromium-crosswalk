@@ -4,8 +4,8 @@
 
 #include "core/dom/ChildFrameDisconnector.h"
 
-#include "core/dom/shadow/ElementShadow.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ElementShadow.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/html/HTMLFrameOwnerElement.h"
 #include "platform/wtf/Assertions.h"
 
@@ -43,7 +43,8 @@ void ChildFrameDisconnector::CollectFrameOwners(Node& root) {
   for (Node* child = root.firstChild(); child; child = child->nextSibling())
     CollectFrameOwners(*child);
 
-  ElementShadow* shadow = root.IsElementNode() ? ToElement(root).Shadow() : 0;
+  ElementShadow* shadow =
+      root.IsElementNode() ? ToElement(root).Shadow() : nullptr;
   if (shadow)
     CollectFrameOwners(*shadow);
 }

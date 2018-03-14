@@ -11,7 +11,7 @@
 #import "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #import "ios/public/provider/chrome/browser/ui/text_field_styling.h"
 #import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
-#import "ios/third_party/material_roboto_font_loader_ios/src/src/MaterialRobotoFontLoader.h"
+#import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -31,8 +31,6 @@ const CGFloat kUICVCSpacing = 20;
 const CGFloat kTextFieldHeight = 50;
 // Width of the date text fields.
 const CGFloat kDateTextFieldWidth = 40;
-// Width of the CVC text field.
-const CGFloat kCVCTextFieldWidth = 60;
 }
 
 @interface CVCCell ()<UITextFieldDelegate>
@@ -117,7 +115,7 @@ const CGFloat kCVCTextFieldWidth = 60;
 
     _instructionsTextLabel = [[UILabel alloc] init];
     _instructionsTextLabel.font =
-        [[MDFRobotoFontLoader sharedInstance] mediumFontOfSize:14];
+        [[MDCTypography fontLoader] mediumFontOfSize:14];
     _instructionsTextLabel.textColor = [[MDCPalette greyPalette] tint500];
     _instructionsTextLabel.numberOfLines = 0;
     _instructionsTextLabel.lineBreakMode = NSLineBreakByWordWrapping;
@@ -125,8 +123,7 @@ const CGFloat kCVCTextFieldWidth = 60;
     [contentView addSubview:_instructionsTextLabel];
 
     _errorLabel = [[UILabel alloc] init];
-    _errorLabel.font =
-        [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:12];
+    _errorLabel.font = [[MDCTypography fontLoader] regularFontOfSize:12];
     _errorLabel.textColor = [[MDCPalette cr_redPalette] tint500];
     _errorLabel.numberOfLines = 0;
     _errorLabel.lineBreakMode = NSLineBreakByWordWrapping;
@@ -141,6 +138,7 @@ const CGFloat kCVCTextFieldWidth = 60;
         ios::GetChromeBrowserProvider()->CreateStyledTextField(CGRectZero);
     _monthInput.placeholder = l10n_util::GetNSString(
         IDS_IOS_AUTOFILL_DIALOG_PLACEHOLDER_EXPIRY_MONTH);
+    _monthInput.accessibilityIdentifier = @"month_textField";
     _monthInput.keyboardType = UIKeyboardTypeNumberPad;
     _monthInput.delegate = self;
     _monthInput.translatesAutoresizingMaskIntoConstraints = NO;
@@ -156,6 +154,7 @@ const CGFloat kCVCTextFieldWidth = 60;
         ios::GetChromeBrowserProvider()->CreateStyledTextField(CGRectZero);
     _yearInput.placeholder =
         l10n_util::GetNSString(IDS_IOS_AUTOFILL_DIALOG_PLACEHOLDER_EXPIRY_YEAR);
+    _yearInput.accessibilityIdentifier = @"year_textField";
     _yearInput.keyboardType = UIKeyboardTypeNumberPad;
     _yearInput.delegate = self;
     _yearInput.translatesAutoresizingMaskIntoConstraints = NO;
@@ -169,6 +168,7 @@ const CGFloat kCVCTextFieldWidth = 60;
         ios::GetChromeBrowserProvider()->CreateStyledTextField(CGRectZero);
     _CVCInput.placeholder =
         l10n_util::GetNSString(IDS_AUTOFILL_DIALOG_PLACEHOLDER_CVC);
+    _CVCInput.accessibilityIdentifier = @"CVC_textField";
     _CVCInput.keyboardType = UIKeyboardTypeNumberPad;
     _CVCInput.delegate = self;
     _CVCInput.translatesAutoresizingMaskIntoConstraints = NO;
@@ -180,7 +180,7 @@ const CGFloat kCVCTextFieldWidth = 60;
 
     _buttonForNewCard = [UIButton buttonWithType:UIButtonTypeCustom];
     _buttonForNewCard.titleLabel.font =
-        [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:12];
+        [[MDCTypography fontLoader] regularFontOfSize:12];
     [_buttonForNewCard
         setTitle:l10n_util::GetNSString(IDS_AUTOFILL_CARD_UNMASK_NEW_CARD_LINK)
         forState:UIControlStateNormal];
@@ -251,7 +251,6 @@ const CGFloat kCVCTextFieldWidth = 60;
       // CVC content - CVC input
       [_CVCInput.leadingAnchor
           constraintEqualToAnchor:_CVCContainerView.leadingAnchor],
-      [_CVCInput.widthAnchor constraintEqualToConstant:kCVCTextFieldWidth],
       [_CVCInput.firstBaselineAnchor
           constraintEqualToAnchor:_monthInput.firstBaselineAnchor],
       [_CVCInput.bottomAnchor

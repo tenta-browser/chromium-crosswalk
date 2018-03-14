@@ -6,7 +6,7 @@
 
 #include "base/macros.h"
 #include "base/test/histogram_tester.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/tabs/tab_strip_model_impl.h"
 #include "chrome/browser/ui/tabs/test_tab_strip_model_delegate.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
@@ -36,7 +36,7 @@ class NoUnloadListenerTabStripModelDelegate : public TestTabStripModelDelegate {
 
 TEST_F(TabStripModelStatsRecorderTest, BasicTabLifecycle) {
   NoUnloadListenerTabStripModelDelegate delegate;
-  TabStripModel tabstrip(&delegate, profile());
+  TabStripModelImpl tabstrip(&delegate, profile());
 
   TabStripModelStatsRecorder recorder;
   tabstrip.AddObserver(&recorder);
@@ -64,7 +64,6 @@ TEST_F(TabStripModelStatsRecorderTest, BasicTabLifecycle) {
   tester.ExpectUniqueSample(
       "Tabs.StateTransfer.Target_Inactive",
       static_cast<int>(TabStripModelStatsRecorder::TabState::ACTIVE), 1);
-  tester.ExpectTotalCount("Tabs.StateTransfer.Time_Inactive_Active", 1);
   tester.ExpectUniqueSample(
       "Tabs.StateTransfer.NumberOfOtherTabsActivatedBeforeMadeActive", 1, 1);
 
@@ -81,7 +80,6 @@ TEST_F(TabStripModelStatsRecorderTest, BasicTabLifecycle) {
   tester.ExpectBucketCount(
       "Tabs.StateTransfer.Target_Inactive",
       static_cast<int>(TabStripModelStatsRecorder::TabState::CLOSED), 1);
-  tester.ExpectTotalCount("Tabs.StateTransfer.Time_Inactive_Closed", 1);
 
   // Close the active first tab.
   tabstrip.CloseSelectedTabs();
@@ -96,8 +94,8 @@ TEST_F(TabStripModelStatsRecorderTest, BasicTabLifecycle) {
 
 TEST_F(TabStripModelStatsRecorderTest, ObserveMultipleTabStrips) {
   NoUnloadListenerTabStripModelDelegate delegate;
-  TabStripModel tabstrip1(&delegate, profile());
-  TabStripModel tabstrip2(&delegate, profile());
+  TabStripModelImpl tabstrip1(&delegate, profile());
+  TabStripModelImpl tabstrip2(&delegate, profile());
 
   TabStripModelStatsRecorder recorder;
   tabstrip1.AddObserver(&recorder);
@@ -165,7 +163,7 @@ TEST_F(TabStripModelStatsRecorderTest, ObserveMultipleTabStrips) {
 TEST_F(TabStripModelStatsRecorderTest,
        NumberOfOtherTabsActivatedBeforeMadeActive) {
   NoUnloadListenerTabStripModelDelegate delegate;
-  TabStripModel tabstrip(&delegate, profile());
+  TabStripModelImpl tabstrip(&delegate, profile());
 
   TabStripModelStatsRecorder recorder;
   tabstrip.AddObserver(&recorder);
@@ -195,7 +193,7 @@ TEST_F(TabStripModelStatsRecorderTest,
 TEST_F(TabStripModelStatsRecorderTest,
        NumberOfOtherTabsActivatedBeforeMadeActive_CycleTabs) {
   NoUnloadListenerTabStripModelDelegate delegate;
-  TabStripModel tabstrip(&delegate, profile());
+  TabStripModelImpl tabstrip(&delegate, profile());
 
   TabStripModelStatsRecorder recorder;
   tabstrip.AddObserver(&recorder);

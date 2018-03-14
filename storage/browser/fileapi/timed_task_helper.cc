@@ -36,14 +36,13 @@ TimedTaskHelper::~TimedTaskHelper() {
 }
 
 bool TimedTaskHelper::IsRunning() const {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   return tracker_ != NULL;
 }
 
-void TimedTaskHelper::Start(
-    const tracked_objects::Location& posted_from,
-    base::TimeDelta delay,
-    const base::Closure& user_task) {
+void TimedTaskHelper::Start(const base::Location& posted_from,
+                            base::TimeDelta delay,
+                            const base::Closure& user_task) {
   posted_from_ = posted_from;
   delay_ = delay;
   user_task_ = user_task;
@@ -51,7 +50,7 @@ void TimedTaskHelper::Start(
 }
 
 void TimedTaskHelper::Reset() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DCHECK(!user_task_.is_null());
   desired_run_time_ = base::TimeTicks::Now() + delay_;
 
@@ -72,7 +71,7 @@ void TimedTaskHelper::Fired(std::unique_ptr<Tracker> tracker) {
 }
 
 void TimedTaskHelper::OnFired(std::unique_ptr<Tracker> tracker) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   base::TimeTicks now = base::TimeTicks::Now();
   if (desired_run_time_ > now) {
     PostDelayedTask(std::move(tracker), desired_run_time_ - now);

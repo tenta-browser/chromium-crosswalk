@@ -5,20 +5,20 @@
 #include "bindings/core/v8/RejectedPromises.h"
 
 #include <memory>
-#include "bindings/core/v8/ScopedPersistent.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/V8Binding.h"
-#include "bindings/core/v8/V8PerIsolateData.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/events/PromiseRejectionEvent.h"
 #include "core/inspector/ThreadDebugger.h"
 #include "platform/WebTaskRunner.h"
+#include "platform/bindings/ScopedPersistent.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8PerIsolateData.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/wtf/Functional.h"
 #include "platform/wtf/PtrUtil.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebScheduler.h"
 #include "public/platform/WebThread.h"
 
 namespace blink {
@@ -63,7 +63,7 @@ class RejectedPromises::Message final {
     // Either collected or https://crbug.com/450330
     if (value.IsEmpty() || !value->IsPromise())
       return;
-    ASSERT(!HasHandler());
+    DCHECK(!HasHandler());
 
     EventTarget* target = execution_context->ErrorEventTarget();
     if (target && !execution_context->ShouldSanitizeScriptError(resource_name_,
@@ -127,19 +127,21 @@ class RejectedPromises::Message final {
   }
 
   void MakePromiseWeak() {
-    ASSERT(!promise_.IsEmpty() && !promise_.IsWeak());
+    DCHECK(!promise_.IsEmpty());
+    DCHECK(!promise_.IsWeak());
     promise_.SetWeak(this, &Message::DidCollectPromise);
     exception_.SetWeak(this, &Message::DidCollectException);
   }
 
   void MakePromiseStrong() {
-    ASSERT(!promise_.IsEmpty() && promise_.IsWeak());
+    DCHECK(!promise_.IsEmpty());
+    DCHECK(promise_.IsWeak());
     promise_.ClearWeak();
     exception_.ClearWeak();
   }
 
   bool HasHandler() {
-    ASSERT(!IsCollected());
+    DCHECK(!IsCollected());
     ScriptState::Scope scope(script_state_);
     v8::Local<v8::Value> value = promise_.NewLocal(script_state_->GetIsolate());
     return v8::Local<v8::Promise>::Cast(value)->HasHandler();
@@ -220,9 +222,9 @@ void RejectedPromises::HandlerAdded(v8::PromiseRejectMessage data) {
           ->TimerTaskRunner()
           ->PostTask(BLINK_FROM_HERE,
                      WTF::Bind(&RejectedPromises::RevokeNow,
-                               RefPtr<RejectedPromises>(this),
+                               scoped_refptr<RejectedPromises>(this),
                                WTF::Passed(std::move(message))));
-      reported_as_errors_.erase(i);
+      reported_as_errors_.EraseAt(i);
       return;
     }
   }
@@ -230,7 +232,7 @@ void RejectedPromises::HandlerAdded(v8::PromiseRejectMessage data) {
 
 std::unique_ptr<RejectedPromises::MessageQueue>
 RejectedPromises::CreateMessageQueue() {
-  return WTF::MakeUnique<MessageQueue>();
+  return std::make_unique<MessageQueue>();
 }
 
 void RejectedPromises::Dispose() {
@@ -252,16 +254,17 @@ void RejectedPromises::ProcessQueue() {
       ->CurrentThread()
       ->Scheduler()
       ->TimerTaskRunner()
-      ->PostTask(BLINK_FROM_HERE, WTF::Bind(&RejectedPromises::ProcessQueueNow,
-                                            PassRefPtr<RejectedPromises>(this),
-                                            WTF::Passed(std::move(queue))));
+      ->PostTask(BLINK_FROM_HERE,
+                 WTF::Bind(&RejectedPromises::ProcessQueueNow,
+                           scoped_refptr<RejectedPromises>(this),
+                           WTF::Passed(std::move(queue))));
 }
 
 void RejectedPromises::ProcessQueueNow(std::unique_ptr<MessageQueue> queue) {
   // Remove collected handlers.
   for (size_t i = 0; i < reported_as_errors_.size();) {
     if (reported_as_errors_.at(i)->IsCollected())
-      reported_as_errors_.erase(i);
+      reported_as_errors_.EraseAt(i);
     else
       ++i;
   }
@@ -274,9 +277,10 @@ void RejectedPromises::ProcessQueueNow(std::unique_ptr<MessageQueue> queue) {
       message->Report();
       message->MakePromiseWeak();
       reported_as_errors_.push_back(std::move(message));
-      if (reported_as_errors_.size() > kMaxReportedHandlersPendingResolution)
-        reported_as_errors_.erase(0,
-                                  kMaxReportedHandlersPendingResolution / 10);
+      if (reported_as_errors_.size() > kMaxReportedHandlersPendingResolution) {
+        reported_as_errors_.EraseAt(0,
+                                    kMaxReportedHandlersPendingResolution / 10);
+      }
     }
   }
 }

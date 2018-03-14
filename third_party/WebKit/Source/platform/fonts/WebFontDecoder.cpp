@@ -30,17 +30,18 @@
 
 #include "platform/fonts/WebFontDecoder.h"
 
+#include "build/build_config.h"
 #include "platform/Histogram.h"
 #include "platform/SharedBuffer.h"
 #include "platform/fonts/FontCache.h"
 #include "platform/graphics/skia/SkiaUtils.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
-#include "platform/wtf/CurrentTime.h"
+#include "platform/wtf/Time.h"
 #include "public/platform/Platform.h"
-#include "third_party/harfbuzz-ng/src/hb.h"
 #include "third_party/ots/include/ots-memory-stream.h"
 #include "third_party/skia/include/core/SkStream.h"
 
+#include <hb.h>
 #include <stdarg.h>
 
 namespace blink {
@@ -63,7 +64,7 @@ void BlinkOTSContext::Message(int level, const char* format, ...) {
   va_list args;
   va_start(args, format);
 
-#if COMPILER(MSVC)
+#if defined(COMPILER_MSVC)
   int result = _vscprintf(format, args);
 #else
   char ch;
@@ -79,10 +80,10 @@ void BlinkOTSContext::Message(int level, const char* format, ...) {
     buffer.Grow(len + 1);
 
     va_start(args, format);
-    vsnprintf(buffer.Data(), buffer.size(), format, args);
+    vsnprintf(buffer.data(), buffer.size(), format, args);
     va_end(args);
     error_string_ =
-        StringImpl::Create(reinterpret_cast<const LChar*>(buffer.Data()), len);
+        StringImpl::Create(reinterpret_cast<const LChar*>(buffer.data()), len);
   }
 }
 
@@ -150,8 +151,7 @@ void RecordDecodeSpeedHistogram(const char* data,
     if (data[0] == 'w' && data[1] == 'O' && data[2] == 'F' && data[3] == 'F') {
       DEFINE_THREAD_SAFE_STATIC_LOCAL(
           CustomCountHistogram, woff_histogram,
-          new CustomCountHistogram("WebFont.DecodeSpeed.WOFF", 1000, 300000,
-                                   50));
+          ("WebFont.DecodeSpeed.WOFF", 1000, 300000, 50));
       woff_histogram.Count(kb_per_second);
       return;
     }
@@ -159,8 +159,7 @@ void RecordDecodeSpeedHistogram(const char* data,
     if (data[0] == 'w' && data[1] == 'O' && data[2] == 'F' && data[3] == '2') {
       DEFINE_THREAD_SAFE_STATIC_LOCAL(
           CustomCountHistogram, woff2_histogram,
-          new CustomCountHistogram("WebFont.DecodeSpeed.WOFF2", 1000, 300000,
-                                   50));
+          ("WebFont.DecodeSpeed.WOFF2", 1000, 300000, 50));
       woff2_histogram.Count(kb_per_second);
       return;
     }
@@ -168,7 +167,7 @@ void RecordDecodeSpeedHistogram(const char* data,
 
   DEFINE_THREAD_SAFE_STATIC_LOCAL(
       CustomCountHistogram, sfnt_histogram,
-      new CustomCountHistogram("WebFont.DecodeSpeed.SFNT", 1000, 300000, 50));
+      ("WebFont.DecodeSpeed.SFNT", 1000, 300000, 50));
   sfnt_histogram.Count(kb_per_second);
 }
 
@@ -199,7 +198,8 @@ sk_sp<SkTypeface> WebFontDecoder::Decode(SharedBuffer* buffer) {
   ots::ExpandingMemoryStream output(buffer->size(), kMaxWebFontSize);
   double start = CurrentTime();
   BlinkOTSContext ots_context;
-  const char* data = buffer->Data();
+  SharedBuffer::DeprecatedFlatData flattened_buffer(buffer);
+  const char* data = flattened_buffer.Data();
 
   TRACE_EVENT_BEGIN0("blink", "DecodeFont");
   bool ok = ots_context.Process(&output, reinterpret_cast<const uint8_t*>(data),
@@ -215,13 +215,16 @@ sk_sp<SkTypeface> WebFontDecoder::Decode(SharedBuffer* buffer) {
   RecordDecodeSpeedHistogram(data, buffer->size(), CurrentTime() - start,
                              decoded_length);
 
+  // TODO(fmalita): we can avoid this copy by processing into a
+  // SkDynamicMemoryWStream-backed OTSStream.
   sk_sp<SkData> sk_data = SkData::MakeWithCopy(output.get(), decoded_length);
-  SkMemoryStream* stream = new SkMemoryStream(sk_data);
-#if OS(WIN)
+  std::unique_ptr<SkStreamAsset> stream(new SkMemoryStream(sk_data));
+#if defined(OS_WIN)
   sk_sp<SkTypeface> typeface(
-      FontCache::GetFontCache()->FontManager()->createFromStream(stream));
+      FontCache::GetFontCache()->FontManager()->makeFromStream(
+          std::move(stream)));
 #else
-  sk_sp<SkTypeface> typeface = SkTypeface::MakeFromStream(stream);
+  sk_sp<SkTypeface> typeface = SkTypeface::MakeFromStream(stream.release());
 #endif
   if (!typeface) {
     SetErrorString("Not a valid font data");

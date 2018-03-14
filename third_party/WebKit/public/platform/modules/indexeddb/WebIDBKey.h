@@ -66,22 +66,22 @@ class WebIDBKey {
   BLINK_EXPORT void AssignNumber(double);
   BLINK_EXPORT void AssignInvalid();
   BLINK_EXPORT void AssignNull();
-#if !BLINK_WEB_IMPLEMENTATION && BLINK_IMPLEMENTATION && \
-    defined(COMPONENT_BUILD)
-  void Reset() { private_.Reset(); }
-#else
   BLINK_EXPORT void Reset();
-#endif
 
   BLINK_EXPORT WebIDBKeyType KeyType() const;
   BLINK_EXPORT bool IsValid() const;
-  BLINK_EXPORT WebVector<WebIDBKey> Array() const;  // Only valid for ArrayType.
-  BLINK_EXPORT WebData Binary() const;       // Only valid for BinaryType.
-  BLINK_EXPORT WebString GetString() const;  // Only valid for StringType.
-  BLINK_EXPORT double Date() const;          // Only valid for DateType.
-  BLINK_EXPORT double Number() const;        // Only valid for NumberType.
+  // Only valid for ArrayType.
+  BLINK_EXPORT WebVector<WebIDBKey> Array() const;
+  // Only valid for BinaryType.
+  BLINK_EXPORT WebData Binary() const;
+  // Only valid for StringType.
+  BLINK_EXPORT WebString GetString() const;
+  // Only valid for DateType.
+  BLINK_EXPORT double Date() const;
+  // Only valid for NumberType.
+  BLINK_EXPORT double Number() const;
 
-#if BLINK_IMPLEMENTATION
+#if INSIDE_BLINK
   WebIDBKey(IDBKey* value) : private_(value) {}
   WebIDBKey& operator=(IDBKey* value) {
     private_ = value;

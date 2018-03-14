@@ -1,4 +1,4 @@
-# ![Mojo Graphic](https://goo.gl/e0Hpks) Mojo C++ System API
+# Mojo C++ System API
 This document is a subset of the [Mojo documentation](/mojo).
 
 [TOC]
@@ -103,29 +103,19 @@ mojo::ScopedDataPipeConsumerHandle consumer;
 mojo::CreateDataPipe(null, &producer, &consumer);
 ```
 
-// Reads from a data pipe. See |MojoReadData()| for complete documentation.
-inline MojoResult ReadDataRaw(DataPipeConsumerHandle data_pipe_consumer,
-                              void* elements,
-                              uint32_t* num_bytes,
-                              MojoReadDataFlags flags) {
-  return MojoReadData(data_pipe_consumer.value(), elements, num_bytes, flags);
-}
-
-// Begins a two-phase read
 C++ helpers which correspond directly to the
 [Data Pipe C API](/mojo/public/c/system#Data-Pipes) for immediate and two-phase
 I/O are provided as well. For example:
 
 ``` cpp
 uint32_t num_bytes = 7;
-mojo::WriteDataRaw(producer.get(), "hihihi",
-                   &num_bytes, MOJO_WRITE_DATA_FLAG_NONE);
+producer.WriteData("hihihi", &num_bytes, MOJO_WRITE_DATA_FLAG_NONE);
 
 // Some time later...
 
 char buffer[64];
 uint32_t num_bytes = 64;
-mojo::ReadDataRaw(consumer.get(), buffer, &num_bytes, MOJO_READ_DATA_FLAG_NONE);
+consumer.ReadData(buffer, &num_bytes, MOJO_READ_DATA_FLAG_NONE);
 ```
 
 See [data_pipe.h](https://cs.chromium.org/chromium/src/mojo/public/cpp/system/data_pipe.h)
@@ -137,7 +127,7 @@ A new shared buffers can be allocated like so:
 
 ``` cpp
 mojo::ScopedSharedBufferHandle buffer =
-    mojo::ScopedSharedBufferHandle::Create(4096);
+    mojo::SharedBufferHandle::Create(4096);
 ```
 
 This new handle can be cloned arbitrarily many times by using the underlying
@@ -216,8 +206,8 @@ if (message_pipe.handle0->QuerySignalsState().readable()) {
 The [`mojo::SimpleWatcher`](https://cs.chromium.org/chromium/src/mojo/public/cpp/system/simple_watcher.h)
 class serves as a convenient helper for using the [low-level watcher API](/mojo/public/c/system#Signals-Watchers)
 to watch a handle for signaling state changes. A `SimpleWatcher` is bound to a
-single thread and always dispatches its notifications on a
-`base::SingleThreadTaskRunner`.
+single sequence and always dispatches its notifications on a
+`base::SequencedTaskRunner`.
 
 `SimpleWatcher` has two possible modes of operation, selected at construction
 time by the `mojo::SimpleWatcher::ArmingPolicy` enum:
@@ -279,7 +269,7 @@ WriteABunchOfStuff(pipe.handle1.get());
 
 ## Synchronous Waiting
 
-The C++ System API defines some utilities to block a calling thread while
+The C++ System API defines some utilities to block a calling sequence while
 waiting for one or more handles to change signaling state in an interesting way.
 These threads combine usage of the [low-level Watcher API](/mojo/public/c/system#Signals-Watchers)
 with common synchronization primitives (namely `base::WaitableEvent`.)
@@ -293,8 +283,9 @@ for a more detailed API reference.
 
 ### Waiting On a Single Handle
 
-The `mojo::Wait` function simply blocks the calling thread until a given signal
-mask is either partially satisfied or fully unsatisfiable on a given handle.
+The `mojo::Wait` function simply blocks the calling sequence until a given
+signal mask is either partially satisfied or fully unsatisfiable on a given
+handle.
 
 ``` cpp
 mojo::MessagePipe pipe;
@@ -352,9 +343,9 @@ set of (not-owned) Mojo handles and `base::WaitableEvent`s, which may be
 explicitly added to or removed from the set at any time.
 
 The `WaitSet` may be waited upon repeatedly, each time blocking the calling
-thread until either one of the handles attains an interesting signaling state or
-one of the events is signaled. For example let's suppose we want to wait up to 5
-seconds for either one of two handles to become readable:
+sequence until either one of the handles attains an interesting signaling state
+or one of the events is signaled. For example let's suppose we want to wait up
+to 5 seconds for either one of two handles to become readable:
 
 ``` cpp
 base::WaitableEvent timeout_event(

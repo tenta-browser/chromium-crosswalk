@@ -5,9 +5,11 @@
 #include "extensions/renderer/js_extension_bindings_system.h"
 
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
-#include "content/public/child/v8_value_converter.h"
+#include "base/timer/elapsed_timer.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/renderer/v8_value_converter.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_api.h"
 #include "extensions/common/extension_urls.h"
@@ -17,7 +19,11 @@
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_handlers/externally_connectable.h"
 #include "extensions/renderer/binding_generating_native_handler.h"
+#include "extensions/renderer/event_bindings.h"
+#include "extensions/renderer/event_bookkeeper.h"
+#include "extensions/renderer/ipc_message_sender.h"
 #include "extensions/renderer/renderer_extension_registry.h"
+#include "extensions/renderer/request_sender.h"
 #include "extensions/renderer/resource_bundle_source_map.h"
 #include "extensions/renderer/script_context.h"
 #include "gin/converter.h"
@@ -26,8 +32,6 @@
 namespace extensions {
 
 namespace {
-
-static const char kEventDispatchFunction[] = "dispatchEvent";
 
 // Gets |field| from |object| or creates it as an empty object if it doesn't
 // exist.
@@ -117,19 +121,6 @@ v8::Local<v8::Object> GetOrCreateBindObjectIfAvailable(
   return bind_object.IsEmpty() ? GetOrCreateChrome(context) : bind_object;
 }
 
-// Determines if a ScriptContext can connect to any externally_connectable-
-// enabled extension.
-bool IsRuntimeAvailableToContext(ScriptContext* context) {
-  for (const auto& extension :
-       *RendererExtensionRegistry::Get()->GetMainThreadExtensionSet()) {
-    ExternallyConnectableInfo* info = static_cast<ExternallyConnectableInfo*>(
-        extension->GetManifestData(manifest_keys::kExternallyConnectable));
-    if (info && info->matches.MatchesURL(context->url()))
-      return true;
-  }
-  return false;
-}
-
 // Creates the event bindings if necessary for the given |context|.
 void MaybeCreateEventBindings(ScriptContext* context) {
   // chrome.Event is part of the public API (although undocumented). Make it
@@ -148,8 +139,12 @@ void MaybeCreateEventBindings(ScriptContext* context) {
 
 JsExtensionBindingsSystem::JsExtensionBindingsSystem(
     ResourceBundleSourceMap* source_map,
-    std::unique_ptr<RequestSender> request_sender)
-    : source_map_(source_map), request_sender_(std::move(request_sender)) {}
+    std::unique_ptr<IPCMessageSender> ipc_message_sender)
+    : source_map_(source_map),
+      ipc_message_sender_(std::move(ipc_message_sender)),
+      request_sender_(
+          std::make_unique<RequestSender>(ipc_message_sender_.get())),
+      messaging_service_(this) {}
 
 JsExtensionBindingsSystem::~JsExtensionBindingsSystem() {}
 
@@ -166,6 +161,8 @@ void JsExtensionBindingsSystem::WillReleaseScriptContext(
 
 void JsExtensionBindingsSystem::UpdateBindingsForContext(
     ScriptContext* context) {
+  base::ElapsedTimer timer;
+
   v8::HandleScope handle_scope(context->isolate());
   v8::Context::Scope context_scope(context->v8_context());
 
@@ -178,12 +175,10 @@ void JsExtensionBindingsSystem::UpdateBindingsForContext(
       // Hard-code registration of any APIs that are exposed to webpage-like
       // contexts, because it's too expensive to run the full bindings code.
       // All of the same permission checks will still apply.
-      if (context->GetAvailability("app").is_available())
-        RegisterBinding("app", "app", context);
-      if (context->GetAvailability("webstore").is_available())
-        RegisterBinding("webstore", "webstore", context);
-      if (context->GetAvailability("dashboardPrivate").is_available())
-        RegisterBinding("dashboardPrivate", "dashboardPrivate", context);
+      for (const char* feature_name : kWebAvailableFeatures) {
+        if (context->GetAvailability(feature_name).is_available())
+          RegisterBinding(feature_name, feature_name, context);
+      }
       if (IsRuntimeAvailableToContext(context))
         RegisterBinding("runtime", "runtime", context);
       break;
@@ -195,6 +190,7 @@ void JsExtensionBindingsSystem::UpdateBindingsForContext(
     case Feature::BLESSED_EXTENSION_CONTEXT:
     case Feature::UNBLESSED_EXTENSION_CONTEXT:
     case Feature::CONTENT_SCRIPT_CONTEXT:
+    case Feature::LOCK_SCREEN_EXTENSION_CONTEXT:
     case Feature::WEBUI_CONTEXT: {
       // Extension context; iterate through all the APIs and bind the available
       // ones.
@@ -208,7 +204,7 @@ void JsExtensionBindingsSystem::UpdateBindingsForContext(
 
         // If this API has a parent feature (and isn't marked 'noparent'),
         // then this must be a function or event, so we should not register.
-        if (api_feature_provider->GetParent(map_entry.second.get()) != nullptr)
+        if (api_feature_provider->GetParent(*map_entry.second) != nullptr)
           continue;
 
         // Skip chrome.test if this isn't a test.
@@ -232,6 +228,8 @@ void JsExtensionBindingsSystem::UpdateBindingsForContext(
       break;
     }
   }
+
+  LogUpdateBindingsForContextTime(context->context_type(), timer.Elapsed());
 }
 
 void JsExtensionBindingsSystem::HandleResponse(int request_id,
@@ -239,37 +237,34 @@ void JsExtensionBindingsSystem::HandleResponse(int request_id,
                                                const base::ListValue& response,
                                                const std::string& error) {
   request_sender_->HandleResponse(request_id, success, response, error);
+  ipc_message_sender_->SendOnRequestResponseReceivedIPC(request_id);
 }
 
 RequestSender* JsExtensionBindingsSystem::GetRequestSender() {
   return request_sender_.get();
 }
 
+IPCMessageSender* JsExtensionBindingsSystem::GetIPCMessageSender() {
+  return ipc_message_sender_.get();
+}
+
+RendererMessagingService* JsExtensionBindingsSystem::GetMessagingService() {
+  return &messaging_service_;
+}
+
 void JsExtensionBindingsSystem::DispatchEventInContext(
     const std::string& event_name,
     const base::ListValue* event_args,
-    const base::DictionaryValue* filtering_info,
+    const EventFilteringInfo* filtering_info,
     ScriptContext* context) {
-  v8::HandleScope handle_scope(context->isolate());
-  v8::Context::Scope context_scope(context->v8_context());
+  EventBindings::DispatchEventInContext(event_name, event_args, filtering_info,
+                                        context);
+}
 
-  std::vector<v8::Local<v8::Value>> arguments;
-  arguments.push_back(gin::StringToSymbol(context->isolate(), event_name));
-
-  {
-    std::unique_ptr<content::V8ValueConverter> converter(
-        content::V8ValueConverter::create());
-    arguments.push_back(
-        converter->ToV8Value(event_args, context->v8_context()));
-    if (filtering_info && !filtering_info->empty()) {
-      arguments.push_back(
-          converter->ToV8Value(filtering_info, context->v8_context()));
-    }
-  }
-
-  context->module_system()->CallModuleMethodSafe(
-      kEventBindings, kEventDispatchFunction, arguments.size(),
-      arguments.data());
+bool JsExtensionBindingsSystem::HasEventListenerInContext(
+    const std::string& event_name,
+    ScriptContext* context) {
+  return EventBookkeeper::Get()->HasListener(context, event_name);
 }
 
 void JsExtensionBindingsSystem::RegisterBinding(

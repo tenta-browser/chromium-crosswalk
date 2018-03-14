@@ -14,22 +14,25 @@
 
 namespace {
 
-// Invokes RecreateLayer() on all the children of |to_clone|, adding the newly
-// cloned children to |parent|.
+// Invokes |map_func| on all the children of |to_clone|, adding the newly
+// cloned children to |parent|. If |map_func| returns nullptr on
+// the layer owner, all its layer's children will not be cloned.
 //
 // WARNING: It is assumed that |parent| is ultimately owned by a LayerTreeOwner.
-void CloneChildren(ui::Layer* to_clone, ui::Layer* parent) {
+void CloneChildren(ui::Layer* to_clone,
+                   ui::Layer* parent,
+                   const wm::MapLayerFunc& map_func) {
   typedef std::vector<ui::Layer*> Layers;
   // Make a copy of the children since RecreateLayer() mutates it.
   Layers children(to_clone->children());
   for (Layers::const_iterator i = children.begin(); i != children.end(); ++i) {
     ui::LayerOwner* owner = (*i)->owner();
-    ui::Layer* old_layer = owner ? owner->RecreateLayer().release() : NULL;
+    ui::Layer* old_layer = owner ? map_func.Run(owner).release() : NULL;
     if (old_layer) {
       parent->Add(old_layer);
       // RecreateLayer() moves the existing children to the new layer. Create a
       // copy of those.
-      CloneChildren(owner->layer(), old_layer);
+      CloneChildren(owner->layer(), old_layer, map_func);
     }
   }
 }
@@ -56,23 +59,20 @@ namespace wm {
 void ActivateWindow(aura::Window* window) {
   DCHECK(window);
   DCHECK(window->GetRootWindow());
-  aura::client::GetActivationClient(window->GetRootWindow())->ActivateWindow(
-      window);
+  GetActivationClient(window->GetRootWindow())->ActivateWindow(window);
 }
 
 void DeactivateWindow(aura::Window* window) {
   DCHECK(window);
   DCHECK(window->GetRootWindow());
-  aura::client::GetActivationClient(window->GetRootWindow())->DeactivateWindow(
-      window);
+  GetActivationClient(window->GetRootWindow())->DeactivateWindow(window);
 }
 
-bool IsActiveWindow(aura::Window* window) {
+bool IsActiveWindow(const aura::Window* window) {
   DCHECK(window);
   if (!window->GetRootWindow())
     return false;
-  aura::client::ActivationClient* client =
-      aura::client::GetActivationClient(window->GetRootWindow());
+  const ActivationClient* client = GetActivationClient(window->GetRootWindow());
   return client && client->GetActiveWindow() == window;
 }
 
@@ -80,8 +80,7 @@ bool CanActivateWindow(aura::Window* window) {
   DCHECK(window);
   if (!window->GetRootWindow())
     return false;
-  aura::client::ActivationClient* client =
-      aura::client::GetActivationClient(window->GetRootWindow());
+  ActivationClient* client = GetActivationClient(window->GetRootWindow());
   return client && client->CanActivateWindow(window);
 }
 
@@ -118,28 +117,59 @@ void SetWindowFullscreen(aura::Window* window, bool fullscreen) {
   }
 }
 
+bool WindowStateIs(aura::Window* window, ui::WindowShowState state) {
+  return window->GetProperty(aura::client::kShowStateKey) == state;
+}
+
+void SetWindowState(aura::Window* window, ui::WindowShowState state) {
+  window->SetProperty(aura::client::kShowStateKey, state);
+}
+
+void Unminimize(aura::Window* window) {
+  DCHECK_EQ(window->GetProperty(aura::client::kShowStateKey),
+            ui::SHOW_STATE_MINIMIZED);
+  window->SetProperty(
+      aura::client::kShowStateKey,
+      window->GetProperty(aura::client::kPreMinimizedShowStateKey));
+  // Clear the property only when the window is actually unminimized.
+  if (window->GetProperty(aura::client::kShowStateKey) !=
+      ui::SHOW_STATE_MINIMIZED) {
+    window->ClearProperty(aura::client::kPreMinimizedShowStateKey);
+  }
+}
+
 aura::Window* GetActivatableWindow(aura::Window* window) {
-  aura::client::ActivationClient* client =
-      aura::client::GetActivationClient(window->GetRootWindow());
+  ActivationClient* client = GetActivationClient(window->GetRootWindow());
   return client ? client->GetActivatableWindow(window) : NULL;
 }
 
 aura::Window* GetToplevelWindow(aura::Window* window) {
-  aura::client::ActivationClient* client =
-      aura::client::GetActivationClient(window->GetRootWindow());
+  ActivationClient* client = GetActivationClient(window->GetRootWindow());
   return client ? client->GetToplevelWindow(window) : NULL;
 }
 
 std::unique_ptr<ui::LayerTreeOwner> RecreateLayers(ui::LayerOwner* root) {
   DCHECK(root->OwnsLayer());
-  auto old_layer = base::MakeUnique<ui::LayerTreeOwner>(root->RecreateLayer());
-  CloneChildren(root->layer(), old_layer->root());
+  return RecreateLayersWithClosure(root, base::Bind([](ui::LayerOwner* owner) {
+                                     return owner->RecreateLayer();
+                                   }));
+}
+
+std::unique_ptr<ui::LayerTreeOwner> RecreateLayersWithClosure(
+    ui::LayerOwner* root,
+    const MapLayerFunc& map_func) {
+  DCHECK(root->OwnsLayer());
+  auto layer = map_func.Run(root);
+  if (!layer)
+    return nullptr;
+  auto old_layer = std::make_unique<ui::LayerTreeOwner>(std::move(layer));
+  CloneChildren(root->layer(), old_layer->root(), map_func);
   return old_layer;
 }
 
 std::unique_ptr<ui::LayerTreeOwner> MirrorLayers(
     ui::LayerOwner* root, bool sync_bounds) {
-  auto mirror = base::MakeUnique<ui::LayerTreeOwner>(root->layer()->Mirror());
+  auto mirror = std::make_unique<ui::LayerTreeOwner>(root->layer()->Mirror());
   MirrorChildren(root->layer(), mirror->root(), sync_bounds);
   return mirror;
 }
@@ -150,13 +180,15 @@ aura::Window* GetTransientParent(aura::Window* window) {
 }
 
 const aura::Window* GetTransientParent(const aura::Window* window) {
-  const TransientWindowManager* manager = TransientWindowManager::Get(window);
+  const TransientWindowManager* manager =
+      TransientWindowManager::GetIfExists(window);
   return manager ? manager->transient_parent() : NULL;
 }
 
 const std::vector<aura::Window*>& GetTransientChildren(
     const aura::Window* window) {
-  const TransientWindowManager* manager = TransientWindowManager::Get(window);
+  const TransientWindowManager* manager =
+      TransientWindowManager::GetIfExists(window);
   if (manager)
     return manager->transient_children();
 
@@ -165,11 +197,11 @@ const std::vector<aura::Window*>& GetTransientChildren(
 }
 
 void AddTransientChild(aura::Window* parent, aura::Window* child) {
-  TransientWindowManager::Get(parent)->AddTransientChild(child);
+  TransientWindowManager::GetOrCreate(parent)->AddTransientChild(child);
 }
 
 void RemoveTransientChild(aura::Window* parent, aura::Window* child) {
-  TransientWindowManager::Get(parent)->RemoveTransientChild(child);
+  TransientWindowManager::GetOrCreate(parent)->RemoveTransientChild(child);
 }
 
 bool HasTransientAncestor(const aura::Window* window,

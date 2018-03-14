@@ -8,6 +8,7 @@
 #include "ash/test/ash_test_base.h"
 #include "ash/test/child_modal_window.h"
 #include "ash/wm/window_util.h"
+#include "services/ui/public/interfaces/window_manager.mojom.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/test/test_window_delegate.h"
@@ -22,7 +23,7 @@
 
 namespace ash {
 
-typedef test::AshTestBase WindowModalityControllerTest;
+using WindowModalityControllerTest = AshTestBase;
 
 namespace {
 
@@ -320,7 +321,7 @@ TEST_F(WindowModalityControllerTest, ChangeCapture) {
 // capture window if the current capture window is in the hierarchy of the child
 // modal window's modal parent window.
 TEST_F(WindowModalityControllerTest, ReleaseCapture) {
-  // Create a window hierachy like this:
+  // Create a window hierarchy like this:
   //            _______________w0______________
   //            |               |              |
   //           w1     <------   w3             w2
@@ -380,7 +381,7 @@ class TouchTrackerWindowDelegate : public aura::test::TestWindowDelegate {
  public:
   TouchTrackerWindowDelegate()
       : received_touch_(false), last_event_type_(ui::ET_UNKNOWN) {}
-  ~TouchTrackerWindowDelegate() override {}
+  ~TouchTrackerWindowDelegate() override = default;
 
   void reset() {
     received_touch_ = false;
@@ -412,6 +413,11 @@ TEST_F(WindowModalityControllerTest, TouchEvent) {
   TouchTrackerWindowDelegate d11;
   std::unique_ptr<aura::Window> w11(CreateTestWindowInShellWithDelegate(
       &d11, -11, gfx::Rect(20, 20, 50, 50)));
+  // Make |w11| non-resizable to avoid touch events inside its transient parent
+  // |w1| from going to |w11| because of EasyResizeWindowTargeter.
+  w11->SetProperty(aura::client::kResizeBehaviorKey,
+                   ui::mojom::kResizeBehaviorCanMaximize |
+                       ui::mojom::kResizeBehaviorCanMinimize);
   ui::test::EventGenerator generator(Shell::GetPrimaryRootWindow(),
                                      gfx::Point(10, 10));
 

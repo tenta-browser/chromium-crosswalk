@@ -1,30 +1,39 @@
 <!DOCTYPE html>
 <script src="../resources/testharness.js"></script>
 <script src="../resources/testharnessreport.js"></script>
+<script src="resources/comparisons.js"></script>
 
 <script>
+let EPSILON = 1e-6;
 
-test(function() {
-  var calcLength = new CSSCalcLength({px: 10, percent: 3.2});
-  assert_throws(null, function() { new CSSPerspective(calcLength) });
-}, "Constructor should throw an error for CSSCalcLengths with a percentage type");
+test(() => {
+  let perspective = new CSSPerspective(new CSSUnitValue(10, 'px'));
 
-test(function() {
-  var simpleLength = new CSSSimpleLength(10, 'percent');
-  assert_throws(null, function() { new CSSPerspective(simpleLength) });
-}, "Constructor should throw an error for CSSSimpleLengths with a percentage type");
+  assert_equals(perspective.toString(), 'perspective(10px)');
+}, "toString should return perspective(<CSSNumericValue.cssString()>)");
 
-test(function() {
-  var simpleLength = new CSSSimpleLength(10, 'px');
-  var calcLength = new CSSCalcLength({px: 10, em: 3.2});
-  var perspectiveTransformSimple = new CSSPerspective(simpleLength);
-  var perspectiveTransformCalc = new CSSPerspective(calcLength);
+test(() => {
+  // Obtained by doing $0.style.transform = perspective(10px);
+  // getComputedStyle($0).transform
+  let expectedMatrix = new DOMMatrixReadOnly(
+      [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -0.1, 0, 0, 0, 1]);
+  let transformValue = new CSSTransformValue([new CSSPerspective(CSS.px(10))]);
+  assert_matrix_approx_equals(
+      transformValue.toMatrix(), expectedMatrix, EPSILON);
+}, "toMatrix when used in a CSSTransformValue produces correct matrix");
 
-  assert_equals(perspectiveTransformSimple.cssText, 'perspective(10px)');
-  assert_equals(perspectiveTransformCalc.cssText,'perspective(calc(3.2em + 10px))');
-}, "cssText should return a string of form perspective(<CSSLengthValue.cssString()>)");
+test(() => {
+  let transformValue = new CSSTransformValue([new CSSPerspective(CSS.em(10))]);
+  assert_throws(new TypeError(), () => {
+    transformValue.toMatrix();
+  });
+}, "toMatrix throws TypeError if relative units are used");
+
+test(() => {
+  let expectedMatrix = new DOMMatrixReadOnly();
+  let transformValue = new CSSTransformValue([new CSSPerspective(CSS.px(-10))]);
+  assert_matrix_approx_equals(transformValue.toMatrix(), expectedMatrix, EPSILON);
+}, "toMatrix is the identity when perspective is negative (which is invalid)");
 
 </script>
 
-<body>
-</body>

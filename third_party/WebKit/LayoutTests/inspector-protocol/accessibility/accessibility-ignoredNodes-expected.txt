@@ -1,37 +1,4 @@
-Non-hidden div for comparison
-non-hidden treeitem
-hidden non-treeitem
- Buttons are leaf nodes
-Descendant of aria-hidden node
-List item also presentational
-Div in list isn't presentational
-Content within label refers to label container     
-
-WebArea
-  tree
-    *Ignored
-{
-  "nodeId": "<string>",
-  "ignored": true,
-  "ignoredReasons": [
-    {
-      "name": "ancestorDisallowsChild",
-      "value": {
-        "type": "idref",
-        "relatedNodes": [
-          {
-            "nodeResult": "div"
-          }
-        ]
-      }
-    }
-  ],
-  "role": {
-    "type": "internalRole",
-    "value": "Ignored"
-  },
-  "domNode": "div"
-}
+Tests accessibility values of ignored nodes.
 
 WebArea
   img
@@ -41,7 +8,7 @@ WebArea
   "ignored": true,
   "ignoredReasons": [
     {
-      "name": "ancestorDisallowsChild",
+      "name": "ancestorIsLeafNode",
       "value": {
         "type": "idref",
         "relatedNodes": [
@@ -92,7 +59,7 @@ WebArea
   "ignored": true,
   "ignoredReasons": [
     {
-      "name": "ariaHidden",
+      "name": "ariaHiddenElement",
       "value": {
         "type": "boolean",
         "value": true
@@ -113,7 +80,7 @@ WebArea
   "ignored": true,
   "ignoredReasons": [
     {
-      "name": "ariaHiddenRoot",
+      "name": "ariaHiddenSubtree",
       "value": {
         "type": "idref",
         "relatedNodes": [
@@ -178,14 +145,21 @@ WebArea
 }
 
 WebArea
-  *Div
+  GenericContainer
+  img
+  button "Buttons are leaf nodes"
+  text "List item also presentational"
+  *GenericContainer
     text "Div in list isn't presentational"
+  checkbox "Content within label refers to label container"
+  GenericContainer
+  combobox
 {
   "nodeId": "<string>",
   "ignored": false,
   "role": {
     "type": "internalRole",
-    "value": "Div"
+    "value": "GenericContainer"
   },
   "name": {
     "type": "computedString",
@@ -357,6 +331,13 @@ WebArea
 }
 
 WebArea
+  GenericContainer
+  img
+  button "Buttons are leaf nodes"
+  text "List item also presentational"
+  GenericContainer
+  checkbox "Content within label refers to label container"
+  GenericContainer
   *combobox
     MenuListPopup
       menuitem "Options should be"
@@ -412,5 +393,90 @@ WebArea
     }
   ],
   "domNode": "select"
+}
+
+WebArea
+  combobox
+    MenuListPopup
+      *menuitem "Options should be"
+      menuitem "sent down even though"
+      menuitem "they are grandchildren"
+{
+  "nodeId": "<string>",
+  "ignored": false,
+  "role": {
+    "type": "role",
+    "value": "menuitem"
+  },
+  "name": {
+    "type": "computedString",
+    "value": "Options should be",
+    "sources": [
+      {
+        "type": "relatedElement",
+        "attribute": "aria-labelledby"
+      },
+      {
+        "type": "attribute",
+        "attribute": "aria-label"
+      },
+      {
+        "type": "contents",
+        "value": {
+          "type": "computedString",
+          "value": "Options should be"
+        }
+      }
+    ]
+  },
+  "properties": [],
+  "domNode": "option"
+}
+
+WebArea
+  *Ignored
+{
+  "nodeId": "<string>",
+  "ignored": true,
+  "ignoredReasons": [
+    {
+      "name": "inertElement",
+      "value": {
+        "type": "boolean",
+        "value": true
+      }
+    }
+  ],
+  "role": {
+    "type": "internalRole",
+    "value": "Ignored"
+  },
+  "domNode": "button"
+}
+
+WebArea
+  *Ignored
+{
+  "nodeId": "<string>",
+  "ignored": true,
+  "ignoredReasons": [
+    {
+      "name": "inertSubtree",
+      "value": {
+        "type": "idref",
+        "relatedNodes": [
+          {
+            "idref": "inert-root",
+            "nodeResult": "div#inert-root"
+          }
+        ]
+      }
+    }
+  ],
+  "role": {
+    "type": "internalRole",
+    "value": "Ignored"
+  },
+  "domNode": "button"
 }
 

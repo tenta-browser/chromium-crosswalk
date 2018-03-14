@@ -20,7 +20,7 @@
 
 #include "core/svg/SVGPathElement.h"
 
-#include "core/dom/StyleChangeReason.h"
+#include "core/css/StyleChangeReason.h"
 #include "core/layout/svg/LayoutSVGPath.h"
 #include "core/svg/SVGMPathElement.h"
 #include "core/svg/SVGPathQuery.h"
@@ -35,7 +35,7 @@ inline SVGPathElement::SVGPathElement(Document& document)
   AddToPropertyMap(path_);
 }
 
-DEFINE_TRACE(SVGPathElement) {
+void SVGPathElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(path_);
   SVGGeometryElement::Trace(visitor);
 }
@@ -72,13 +72,7 @@ float SVGPathElement::getTotalLength() {
 SVGPointTearOff* SVGPathElement::getPointAtLength(float length) {
   GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
   FloatPoint point = SVGPathQuery(PathByteStream()).GetPointAtLength(length);
-  return SVGPointTearOff::Create(SVGPoint::Create(point), 0,
-                                 kPropertyIsNotAnimVal);
-}
-
-unsigned SVGPathElement::getPathSegAtLength(float length) {
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
-  return SVGPathQuery(PathByteStream()).GetPathSegIndexAtLength(length);
+  return SVGPointTearOff::CreateDetached(point);
 }
 
 void SVGPathElement::SvgAttributeChanged(const QualifiedName& attr_name) {
@@ -111,14 +105,14 @@ void SVGPathElement::SvgAttributeChanged(const QualifiedName& attr_name) {
 void SVGPathElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,
     const AtomicString& value,
-    MutableStylePropertySet* style) {
+    MutableCSSPropertyValueSet* style) {
   SVGAnimatedPropertyBase* property = PropertyFromAttribute(name);
   if (property == path_) {
     SVGAnimatedPath* path = this->GetPath();
     // If this is a <use> instance, return the referenced path to maximize
     // geometry sharing.
     if (const SVGElement* element = CorrespondingElement())
-      path = toSVGPathElement(element)->GetPath();
+      path = ToSVGPathElement(element)->GetPath();
     AddPropertyToPresentationAttributeStyle(style, property->CssPropertyId(),
                                             path->CssValue());
     return;
@@ -132,8 +126,8 @@ void SVGPathElement::InvalidateMPathDependencies() {
   // dependencies manually.
   if (SVGElementSet* dependencies = SetOfIncomingReferences()) {
     for (SVGElement* element : *dependencies) {
-      if (isSVGMPathElement(*element))
-        toSVGMPathElement(element)->TargetPathChanged();
+      if (auto* mpath = ToSVGMPathElementOrNull(*element))
+        mpath->TargetPathChanged();
     }
   }
 }
@@ -151,10 +145,8 @@ void SVGPathElement::RemovedFrom(ContainerNode* root_parent) {
 }
 
 FloatRect SVGPathElement::GetBBox() {
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
-
   // We want the exact bounds.
-  return SVGPathElement::AsPath().BoundingRect(Path::BoundsType::kExact);
+  return SVGPathElement::AsPath().BoundingRect();
 }
 
 }  // namespace blink

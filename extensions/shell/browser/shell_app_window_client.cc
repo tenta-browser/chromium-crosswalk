@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "extensions/browser/app_window/app_window.h"
-#include "extensions/shell/browser/desktop_controller.h"
+#include "extensions/shell/browser/shell_app_delegate.h"
 
 namespace extensions {
 
@@ -20,7 +20,14 @@ ShellAppWindowClient::~ShellAppWindowClient() {
 AppWindow* ShellAppWindowClient::CreateAppWindow(
     content::BrowserContext* context,
     const Extension* extension) {
-  return DesktopController::instance()->CreateAppWindow(context, extension);
+  return new AppWindow(context, new ShellAppDelegate, extension);
+}
+
+AppWindow* ShellAppWindowClient::CreateAppWindowForLockScreenAction(
+    content::BrowserContext* context,
+    const Extension* extension,
+    api::app_runtime::ActionType action) {
+  return nullptr;
 }
 
 void ShellAppWindowClient::OpenDevToolsWindow(

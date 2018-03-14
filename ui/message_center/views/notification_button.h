@@ -7,7 +7,7 @@
 
 #include "base/macros.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/views/controls/button/custom_button.h"
+#include "ui/views/controls/button/button.h"
 #include "ui/views/painter.h"
 #include "ui/views/view.h"
 
@@ -19,7 +19,7 @@ class Label;
 namespace message_center {
 
 // NotificationButtons render the action buttons of notifications.
-class NotificationButton : public views::CustomButton {
+class NotificationButton : public views::Button {
  public:
   NotificationButton(views::ButtonListener* listener);
   ~NotificationButton() override;
@@ -28,21 +28,18 @@ class NotificationButton : public views::CustomButton {
   void SetTitle(const base::string16& title);
 
   // Overridden from views::View:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   int GetHeightForWidth(int width) const override;
-  void OnPaint(gfx::Canvas* canvas) override;
   void OnFocus() override;
-  void OnBlur() override;
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;
 
-  // Overridden from views::CustomButton:
+  // Overridden from views::Button:
   void StateChanged(ButtonState old_state) override;
 
  private:
   views::ImageView* icon_;
   views::Label* title_;
-  std::unique_ptr<views::Painter> focus_painter_;
 
   DISALLOW_COPY_AND_ASSIGN(NotificationButton);
 };

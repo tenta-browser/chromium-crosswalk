@@ -11,6 +11,7 @@
 
 #include "base/memory/ptr_util.h"
 #include "content/browser/service_worker/service_worker_register_job_base.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
 
 namespace content {
 
@@ -20,7 +21,7 @@ bool IsRegisterJob(const ServiceWorkerRegisterJobBase& job) {
   return job.GetType() == ServiceWorkerRegisterJobBase::REGISTRATION_JOB;
 }
 
-}
+}  // namespace
 
 ServiceWorkerJobCoordinator::JobQueue::JobQueue() = default;
 
@@ -102,14 +103,14 @@ ServiceWorkerJobCoordinator::~ServiceWorkerJobCoordinator() {
 }
 
 void ServiceWorkerJobCoordinator::Register(
-    const GURL& pattern,
     const GURL& script_url,
+    const blink::mojom::ServiceWorkerRegistrationOptions& options,
     ServiceWorkerProviderHost* provider_host,
     const ServiceWorkerRegisterJob::RegistrationCallback& callback) {
   std::unique_ptr<ServiceWorkerRegisterJobBase> job(
-      new ServiceWorkerRegisterJob(context_, pattern, script_url));
+      new ServiceWorkerRegisterJob(context_, script_url, options));
   ServiceWorkerRegisterJob* queued_job = static_cast<ServiceWorkerRegisterJob*>(
-      job_queues_[pattern].Push(std::move(job)));
+      job_queues_[options.scope].Push(std::move(job)));
   queued_job->AddCallback(callback, provider_host);
 }
 

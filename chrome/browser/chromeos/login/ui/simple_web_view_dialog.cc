@@ -12,7 +12,7 @@
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/chromeos/login/helper.h"
 #include "chrome/browser/chromeos/login/ui/captive_portal_window_proxy.h"
-#include "chrome/browser/command_updater.h"
+#include "chrome/browser/command_updater_impl.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ssl/security_state_tab_helper.h"
@@ -20,6 +20,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model_delegate.h"
 #include "chrome/browser/ui/view_ids.h"
+#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/toolbar/reload_button.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
@@ -36,7 +37,6 @@
 #include "ui/views/background.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/layout/grid_layout.h"
-#include "ui/views/layout/layout_constants.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
@@ -58,7 +58,7 @@ const SkColor kDialogColor = SK_ColorWHITE;
 class ToolbarRowView : public views::View {
  public:
   ToolbarRowView() {
-    set_background(views::Background::CreateSolidBackground(kDialogColor));
+    SetBackground(views::CreateSolidBackground(kDialogColor));
   }
 
   ~ToolbarRowView() override {}
@@ -67,26 +67,28 @@ class ToolbarRowView : public views::View {
             views::View* forward,
             views::View* reload,
             views::View* location_bar) {
-    GridLayout* layout = new GridLayout(this);
-    SetLayoutManager(layout);
+    GridLayout* layout = GridLayout::CreateAndInstall(this);
 
+    const int related_horizontal_spacing =
+        ChromeLayoutProvider::Get()->GetDistanceMetric(
+            views::DISTANCE_RELATED_CONTROL_HORIZONTAL);
     // Back button.
     views::ColumnSet* column_set = layout->AddColumnSet(0);
     column_set->AddColumn(GridLayout::CENTER, GridLayout::CENTER, 0,
                           GridLayout::USE_PREF, 0, 0);
-    column_set->AddPaddingColumn(0, views::kRelatedControlHorizontalSpacing);
+    column_set->AddPaddingColumn(0, related_horizontal_spacing);
     // Forward button.
     column_set->AddColumn(GridLayout::CENTER, GridLayout::CENTER, 0,
                           GridLayout::USE_PREF, 0, 0);
-    column_set->AddPaddingColumn(0, views::kRelatedControlHorizontalSpacing);
+    column_set->AddPaddingColumn(0, related_horizontal_spacing);
     // Reload button.
     column_set->AddColumn(GridLayout::CENTER, GridLayout::CENTER, 0,
                           GridLayout::USE_PREF, 0, 0);
-    column_set->AddPaddingColumn(0, views::kRelatedControlHorizontalSpacing);
+    column_set->AddPaddingColumn(0, related_horizontal_spacing);
     // Location bar.
     column_set->AddColumn(GridLayout::FILL, GridLayout::CENTER, 1,
                           GridLayout::FIXED, kLocationBarHeight, 0);
-    column_set->AddPaddingColumn(0, views::kRelatedControlHorizontalSpacing);
+    column_set->AddPaddingColumn(0, related_horizontal_spacing);
 
     layout->StartRow(0, 0);
     layout->AddView(back);
@@ -130,7 +132,7 @@ SimpleWebViewDialog::SimpleWebViewDialog(Profile* profile)
       location_bar_(NULL),
       web_view_(NULL),
       bubble_model_delegate_(new StubBubbleModelDelegate) {
-  command_updater_.reset(new CommandUpdater(this));
+  command_updater_.reset(new CommandUpdaterImpl(this));
   command_updater_->UpdateCommandEnabled(IDC_BACK, true);
   command_updater_->UpdateCommandEnabled(IDC_FORWARD, true);
   command_updater_->UpdateCommandEnabled(IDC_STOP, true);
@@ -168,7 +170,7 @@ void SimpleWebViewDialog::Init() {
   toolbar_model_.reset(
       new ToolbarModelImpl(this, content::kMaxURLDisplayChars));
 
-  set_background(views::Background::CreateSolidBackground(kDialogColor));
+  SetBackground(views::CreateSolidBackground(kDialogColor));
 
   // Back/Forward buttons.
   back_ = new views::ImageButton(this);
@@ -190,8 +192,8 @@ void SimpleWebViewDialog::Init() {
   forward_->set_id(VIEW_ID_FORWARD_BUTTON);
 
   // Location bar.
-  location_bar_ = new LocationBarView(NULL, profile_, command_updater_.get(),
-                                      this, true);
+  location_bar_ =
+      new LocationBarView(NULL, profile_, command_updater_.get(), this, true);
 
   // Reload button.
   reload_ = new ReloadButton(profile_, command_updater_.get());
@@ -207,8 +209,7 @@ void SimpleWebViewDialog::Init() {
   toolbar_row->Init(back_, forward_, reload_, location_bar_);
 
   // Layout.
-  GridLayout* layout = new GridLayout(this);
-  SetLayoutManager(layout);
+  GridLayout* layout = GridLayout::CreateAndInstall(this);
 
   views::ColumnSet* column_set = layout->AddColumnSet(0);
   column_set->AddColumn(GridLayout::FILL, GridLayout::FILL, 1,
@@ -272,7 +273,7 @@ void SimpleWebViewDialog::NavigationStateChanged(
 }
 
 void SimpleWebViewDialog::LoadingStateChanged(WebContents* source,
-    bool to_different_document) {
+                                              bool to_different_document) {
   bool is_loading = source->IsLoading();
   UpdateReload(is_loading && to_different_document, false);
   command_updater_->UpdateCommandEnabled(IDC_STOP, is_loading);
@@ -295,18 +296,12 @@ SimpleWebViewDialog::GetContentSettingBubbleModelDelegate() {
   return bubble_model_delegate_.get();
 }
 
-void SimpleWebViewDialog::ShowPageInfo(content::WebContents* web_contents) {
-  NOTIMPLEMENTED();
-  // TODO (markusheintz@): implement this
-}
-
 content::WebContents* SimpleWebViewDialog::GetActiveWebContents() const {
   return web_view_->web_contents();
 }
 
-void SimpleWebViewDialog::ExecuteCommandWithDisposition(
-    int id,
-    WindowOpenDisposition) {
+void SimpleWebViewDialog::ExecuteCommandWithDisposition(int id,
+                                                        WindowOpenDisposition) {
   WebContents* web_contents = web_view_->web_contents();
   switch (id) {
     case IDC_BACK:
@@ -340,22 +335,21 @@ void SimpleWebViewDialog::ExecuteCommandWithDisposition(
 void SimpleWebViewDialog::LoadImages() {
   const ui::ThemeProvider* tp = GetThemeProvider();
 
-  back_->SetImage(views::CustomButton::STATE_NORMAL,
-                  tp->GetImageSkiaNamed(IDR_BACK));
-  back_->SetImage(views::CustomButton::STATE_HOVERED,
+  back_->SetImage(views::Button::STATE_NORMAL, tp->GetImageSkiaNamed(IDR_BACK));
+  back_->SetImage(views::Button::STATE_HOVERED,
                   tp->GetImageSkiaNamed(IDR_BACK_H));
-  back_->SetImage(views::CustomButton::STATE_PRESSED,
+  back_->SetImage(views::Button::STATE_PRESSED,
                   tp->GetImageSkiaNamed(IDR_BACK_P));
-  back_->SetImage(views::CustomButton::STATE_DISABLED,
+  back_->SetImage(views::Button::STATE_DISABLED,
                   tp->GetImageSkiaNamed(IDR_BACK_D));
 
-  forward_->SetImage(views::CustomButton::STATE_NORMAL,
+  forward_->SetImage(views::Button::STATE_NORMAL,
                      tp->GetImageSkiaNamed(IDR_FORWARD));
-  forward_->SetImage(views::CustomButton::STATE_HOVERED,
+  forward_->SetImage(views::Button::STATE_HOVERED,
                      tp->GetImageSkiaNamed(IDR_FORWARD_H));
-  forward_->SetImage(views::CustomButton::STATE_PRESSED,
+  forward_->SetImage(views::Button::STATE_PRESSED,
                      tp->GetImageSkiaNamed(IDR_FORWARD_P));
-  forward_->SetImage(views::CustomButton::STATE_DISABLED,
+  forward_->SetImage(views::Button::STATE_DISABLED,
                      tp->GetImageSkiaNamed(IDR_FORWARD_D));
 
   reload_->LoadImages();

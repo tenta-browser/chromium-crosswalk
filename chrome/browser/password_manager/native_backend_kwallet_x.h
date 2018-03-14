@@ -65,6 +65,7 @@ class NativeBackendKWallet : public PasswordStoreX::NativeBackend {
       std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) override;
   bool GetAllLogins(
       std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) override;
+  scoped_refptr<base::SequencedTaskRunner> GetBackgroundTaskRunner() override;
 
  protected:
   // Invalid handle returned by WalletHandle().
@@ -94,9 +95,9 @@ class NativeBackendKWallet : public PasswordStoreX::NativeBackend {
 
   // Initialization.
   InitResult InitWallet();
-  void InitOnDBThread(scoped_refptr<dbus::Bus> optional_bus,
-                      base::WaitableEvent* event,
-                      bool* success);
+  void InitOnBackgroundTaskRunner(scoped_refptr<dbus::Bus> optional_bus,
+                                  base::WaitableEvent* event,
+                                  bool* success);
 
   // Overwrites |forms| with all credentials matching |signon_realm|. Returns
   // true on success.

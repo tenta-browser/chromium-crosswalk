@@ -10,7 +10,6 @@
 
 #include "base/macros.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
-#include "services/service_manager/public/cpp/interface_factory.h"
 #include "services/ui/public/interfaces/window_tree.mojom.h"
 #include "services/ui/ws/window_server_service_test_base.h"
 #include "ui/aura/mus/property_converter.h"
@@ -29,11 +28,9 @@ namespace ui {
 // WindowServer. SetUp() connects to the WindowServer and blocks until OnEmbed()
 // has been invoked. window_manager() can be used to access the WindowServer
 // established as part of SetUp().
-class WindowServerTestBase
-    : public WindowServerServiceTestBase,
-      public aura::WindowTreeClientDelegate,
-      public aura::WindowManagerDelegate,
-      public service_manager::InterfaceFactory<mojom::WindowTreeClient> {
+class WindowServerTestBase : public WindowServerServiceTestBase,
+                             public aura::WindowTreeClientDelegate,
+                             public aura::WindowManagerDelegate {
  public:
   WindowServerTestBase();
   ~WindowServerTestBase() override;
@@ -75,7 +72,7 @@ class WindowServerTestBase
   void TearDown() override;
 
   // WindowServerServiceTestBase:
-  void OnBindInterface(const service_manager::ServiceInfo& source_info,
+  void OnBindInterface(const service_manager::BindSourceInfo& source_info,
                        const std::string& interface_name,
                        mojo::ScopedMessagePipeHandle interface_pipe) override;
 
@@ -90,6 +87,10 @@ class WindowServerTestBase
 
   // WindowManagerDelegate:
   void SetWindowManagerClient(aura::WindowManagerClient* client) override;
+  void OnWmConnected() override;
+  void OnWmAcceleratedWidgetAvailableForDisplay(
+      int64_t display_id,
+      gfx::AcceleratedWidget widget) override {}
   void OnWmSetBounds(aura::Window* window, const gfx::Rect& bounds) override;
   bool OnWmSetProperty(
       aura::Window* window,
@@ -118,6 +119,7 @@ class WindowServerTestBase
       const ui::Event& event,
       std::unordered_map<std::string, std::vector<uint8_t>>* properties)
       override;
+  void OnCursorTouchVisibleChanged(bool enabled) override;
   void OnWmPerformMoveLoop(aura::Window* window,
                            mojom::MoveLoopSource source,
                            const gfx::Point& cursor_location,
@@ -130,9 +132,8 @@ class WindowServerTestBase
   bool IsWindowActive(aura::Window* window) override;
   void OnWmDeactivateWindow(aura::Window* window) override;
 
-  // InterfaceFactory<WindowTreeClient>:
-  void Create(const service_manager::Identity& remote_identity,
-              mojo::InterfaceRequest<mojom::WindowTreeClient> request) override;
+  void BindWindowTreeClientRequest(
+      mojom::WindowTreeClientRequest request);
 
  private:
   // Removes |window_tree_host| from |window_tree_hosts_| and deletes it.

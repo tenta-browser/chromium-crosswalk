@@ -15,10 +15,6 @@
 #include "net/base/upload_element_reader.h"
 #include "storage/browser/storage_browser_export.h"
 
-namespace base {
-class SingleThreadTaskRunner;
-}
-
 namespace net {
 class IOBuffer;
 }
@@ -26,17 +22,13 @@ class IOBuffer;
 namespace storage {
 class BlobDataHandle;
 class BlobReader;
-class FileSystemContext;
 
 // This class is a wrapper around the BlobReader to make it conform
 // to the net::UploadElementReader interface, and it also holds around the
 // handle to the blob so it stays in memory while we read it.
-class STORAGE_EXPORT UploadBlobElementReader
-    : NON_EXPORTED_BASE(public net::UploadElementReader) {
+class STORAGE_EXPORT UploadBlobElementReader : public net::UploadElementReader {
  public:
-  UploadBlobElementReader(std::unique_ptr<BlobDataHandle> handle,
-                          FileSystemContext* file_system_context,
-                          base::SingleThreadTaskRunner* file_task_runner);
+  explicit UploadBlobElementReader(std::unique_ptr<BlobDataHandle> handle);
   ~UploadBlobElementReader() override;
 
   int Init(const net::CompletionCallback& callback) override;
@@ -55,8 +47,6 @@ class STORAGE_EXPORT UploadBlobElementReader
 
  private:
   std::unique_ptr<BlobDataHandle> handle_;
-  scoped_refptr<FileSystemContext> file_system_context_;
-  scoped_refptr<base::SingleThreadTaskRunner> file_runner_;
   std::unique_ptr<BlobReader> reader_;
 
   DISALLOW_COPY_AND_ASSIGN(UploadBlobElementReader);

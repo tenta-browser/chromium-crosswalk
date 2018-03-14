@@ -52,12 +52,14 @@ void OnLargeIconAvailable(const JavaRef<jobject>& j_callback,
 
   Java_LargeIconCallback_onLargeIconAvailable(
       env, j_callback, j_bitmap, fallback.background_color,
-      fallback.is_default_background_color);
+      fallback.is_default_background_color,
+      static_cast<int>(result.bitmap.icon_type));
 }
 
 }  // namespace
 
-static jlong Init(JNIEnv* env, const JavaParamRef<jclass>& clazz) {
+static jlong JNI_LargeIconBridge_Init(JNIEnv* env,
+                                      const JavaParamRef<jclass>& clazz) {
   return reinterpret_cast<intptr_t>(new LargeIconBridge());
 }
 
@@ -98,9 +100,4 @@ jboolean LargeIconBridge::GetLargeIconForURL(
       &cancelable_task_tracker_);
 
   return true;
-}
-
-// static
-bool LargeIconBridge::RegisterLargeIconBridge(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }

@@ -50,6 +50,7 @@ extern const char kAlsaVolumeElementName[];
 extern const char kAlsaMuteDeviceName[];
 extern const char kAlsaMuteElementName[];
 extern const char kMaxOutputVolumeDba1m[];
+extern const char kAudioOutputChannels[];
 
 // Memory pressure switches
 extern const char kMemPressureSystemReservedKb[];
@@ -57,10 +58,13 @@ extern const char kMemPressureSystemReservedKb[];
 // GPU process switches
 extern const char kCastInitialScreenWidth[];
 extern const char kCastInitialScreenHeight[];
-extern const char kUseDoubleBuffering[];
+extern const char kGraphicsBufferCount[];
 
 // Graphics switches
 extern const char kDesktopWindow1080p[];
+
+// UI switches
+extern const char kEnableInput[];
 
 }  // namespace switches
 

@@ -46,18 +46,15 @@ class CORE_EXPORT StyleSheetResourceClient : public ResourceClient {
   virtual void SetCSSStyleSheet(const String& /* href */,
                                 const KURL& /* baseURL */,
                                 ReferrerPolicy,
-                                const String& /* charset */,
+                                const WTF::TextEncoding&,
                                 const CSSStyleSheetResource*) {}
   virtual void SetXSLStyleSheet(const String& /* href */,
                                 const KURL& /* baseURL */,
                                 const String& /* sheet */) {}
 
-  // This gets called on the very first appendData call for the
-  // CSSStyleSheetResource. Note this is not called for StyleSheetResources
-  // other than CSSStyleSheetResources.
-  virtual void DidAppendFirstData(const CSSStyleSheetResource*) {}
-
-  DEFINE_INLINE_TRACE() { ResourceClient::Trace(visitor); }
+  void Trace(blink::Visitor* visitor) override {
+    ResourceClient::Trace(visitor);
+  }
 };
 
 }  // namespace blink

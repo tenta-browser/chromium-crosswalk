@@ -5,13 +5,14 @@
 #ifndef MOJO_EDK_SYSTEM_CHANNEL_H_
 #define MOJO_EDK_SYSTEM_CHANNEL_H_
 
-#include "base/logging.h"
+#include <vector>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/process/process_handle.h"
 #include "base/task_runner.h"
+#include "build/build_config.h"
 #include "mojo/edk/embedder/connection_params.h"
-#include "mojo/edk/embedder/platform_handle_vector.h"
 #include "mojo/edk/embedder/scoped_platform_handle.h"
 
 namespace mojo {
@@ -109,6 +110,15 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
     };
     static_assert(sizeof(MachPortsExtraHeader) == 2,
                   "sizeof(MachPortsExtraHeader) must be 2 bytes");
+#elif defined(OS_FUCHSIA)
+    struct HandleInfoEntry {
+      // The FDIO type associated with one or more handles, or zero for handles
+      // that do not belong to FDIO.
+      uint8_t type;
+      // Zero for non-FDIO handles, otherwise the number of handles to consume
+      // to generate an FDIO file-descriptor wrapper.
+      uint8_t count;
+    };
 #elif defined(OS_WIN)
     struct HandleEntry {
       // The windows HANDLE. HANDLEs are guaranteed to fit inside 32-bits.
@@ -124,6 +134,11 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
     // |payload_size| bytes plus a header, plus |max_handles| platform handles.
     Message(size_t payload_size, size_t max_handles);
     Message(size_t payload_size, size_t max_handles, MessageType message_type);
+    Message(size_t capacity, size_t payload_size, size_t max_handles);
+    Message(size_t capacity,
+            size_t max_handles,
+            size_t payload_size,
+            MessageType message_type);
     ~Message();
 
     // Constructs a Message from serialized message data.
@@ -131,6 +146,18 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
 
     const void* data() const { return data_; }
     size_t data_num_bytes() const { return size_; }
+
+    // The current capacity of the message buffer, not counting internal header
+    // data.
+    size_t capacity() const;
+
+    // Extends the portion of the total message capacity which contains
+    // meaningful payload data. Storage capacity which falls outside of this
+    // range is not transmitted when the message is sent.
+    //
+    // If the message's current capacity is not large enough to accommodate the
+    // new payload size, it will be reallocated accordingly.
+    void ExtendPayload(size_t new_payload_size);
 
     const void* extra_header() const;
     void* mutable_extra_header();
@@ -152,13 +179,13 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
 
     // Note: SetHandles() and TakeHandles() invalidate any previous value of
     // handles().
-    void SetHandles(ScopedPlatformHandleVectorPtr new_handles);
-    ScopedPlatformHandleVectorPtr TakeHandles();
+    void SetHandles(std::vector<ScopedPlatformHandle> new_handles);
+    std::vector<ScopedPlatformHandle> TakeHandles();
     // Version of TakeHandles that returns a vector of platform handles suitable
     // for transfer over an underlying OS mechanism. i.e. file descriptors over
     // a unix domain socket. Any handle that cannot be transferred this way,
     // such as Mach ports, will be removed.
-    ScopedPlatformHandleVectorPtr TakeHandlesForTransport();
+    std::vector<ScopedPlatformHandle> TakeHandlesForTransport();
 
 #if defined(OS_WIN)
     // Prepares the handles in this message for use in a different process.
@@ -168,17 +195,27 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
     // duplication.
     static bool RewriteHandles(base::ProcessHandle from_process,
                                base::ProcessHandle to_process,
-                               PlatformHandleVector* handles);
+                               std::vector<ScopedPlatformHandle>* handles);
 #endif
 
     void SetVersionForTest(uint16_t version_number);
 
    private:
-    size_t size_ = 0;
-    size_t max_handles_ = 0;
+    // The message data buffer.
     char* data_ = nullptr;
 
-    ScopedPlatformHandleVectorPtr handle_vector_;
+    // The capacity of the buffer at |data_|.
+    size_t capacity_ = 0;
+
+    // The size of the message. This is the portion of |data_| that should
+    // be transmitted if the message is written to a channel. Includes all
+    // headers and user payload.
+    size_t size_ = 0;
+
+    // Maximum number of handles which may be attached to this message.
+    size_t max_handles_ = 0;
+
+    std::vector<ScopedPlatformHandle> handle_vector_;
 
 #if defined(OS_WIN)
     // On Windows, handles are serialised into the extra header section.
@@ -191,6 +228,21 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
     DISALLOW_COPY_AND_ASSIGN(Message);
   };
 
+  // Error types which may be reported by a Channel instance to its delegate.
+  enum class Error {
+    // The remote end of the channel has been closed, either explicitly or
+    // because the process which hosted it is gone.
+    kDisconnected,
+
+    // For connection-oriented channels (e.g. named pipes), an unexpected error
+    // occurred during channel connection.
+    kConnectionFailed,
+
+    // Some incoming data failed validation, implying either a buggy or
+    // compromised sender.
+    kReceivedMalformedData,
+  };
+
   // Delegate methods are called from the I/O task runner with which the Channel
   // was created (see Channel::Create).
   class Delegate {
@@ -200,12 +252,13 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
     // Notify of a received message. |payload| is not owned and must not be
     // retained; it will be null if |payload_size| is 0. |handles| are
     // transferred to the callee.
-    virtual void OnChannelMessage(const void* payload,
-                                  size_t payload_size,
-                                  ScopedPlatformHandleVectorPtr handles) = 0;
+    virtual void OnChannelMessage(
+        const void* payload,
+        size_t payload_size,
+        std::vector<ScopedPlatformHandle> handles) = 0;
 
     // Notify that an error has occured and the Channel will cease operation.
-    virtual void OnChannelError() = 0;
+    virtual void OnChannelError(Error error) = 0;
   };
 
   // Creates a new Channel around a |platform_handle|, taking ownership of the
@@ -260,7 +313,7 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
 
   // Called by the implementation when something goes horribly wrong. It is NOT
   // OK to call this synchronously from any public interface methods.
-  void OnError();
+  void OnError(Error error);
 
   // Retrieves the set of platform handles read for a given message.
   // |extra_header| and |extra_header_size| correspond to the extra header data.
@@ -277,14 +330,14 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
       size_t num_handles,
       const void* extra_header,
       size_t extra_header_size,
-      ScopedPlatformHandleVectorPtr* handles) = 0;
+      std::vector<ScopedPlatformHandle>* handles) = 0;
 
   // Handles a received control message. Returns |true| if the message is
   // accepted, or |false| otherwise.
   virtual bool OnControlMessage(Message::MessageType message_type,
                                 const void* payload,
                                 size_t payload_size,
-                                ScopedPlatformHandleVectorPtr handles);
+                                std::vector<ScopedPlatformHandle> handles);
 
  private:
   friend class base::RefCountedThreadSafe<Channel>;

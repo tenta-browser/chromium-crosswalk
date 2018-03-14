@@ -53,15 +53,14 @@ ACTION_P(ReturnBuffer, buffer) {
   arg0.Run(buffer.get() ? DemuxerStream::kOk : DemuxerStream::kAborted, buffer);
 }
 
-MATCHER(ContainsInvalidDataLog, "") {
-  return CONTAINS_STRING(arg, "Invalid data");
+MATCHER(ContainsFailedToSendLog, "") {
+  return CONTAINS_STRING(arg, "Failed to send");
 }
 
 class FFmpegVideoDecoderTest : public testing::Test {
  public:
   FFmpegVideoDecoderTest()
-      : media_log_(new StrictMock<MockMediaLog>()),
-        decoder_(new FFmpegVideoDecoder(media_log_)),
+      : decoder_(new FFmpegVideoDecoder(&media_log_)),
         decode_cb_(base::Bind(&FFmpegVideoDecoderTest::DecodeDone,
                               base::Unretained(this))) {
     FFmpegGlue::InitializeFFmpeg();
@@ -205,7 +204,7 @@ class FFmpegVideoDecoderTest : public testing::Test {
 
   MOCK_METHOD1(DecodeDone, void(DecodeStatus));
 
-  scoped_refptr<StrictMock<MockMediaLog>> media_log_;
+  StrictMock<MockMediaLog> media_log_;
 
   base::MessageLoop message_loop_;
   std::unique_ptr<FFmpegVideoDecoder> decoder_;
@@ -231,9 +230,9 @@ TEST_F(FFmpegVideoDecoderTest, Initialize_Normal) {
 TEST_F(FFmpegVideoDecoderTest, Initialize_OpenDecoderFails) {
   // Specify Theora w/o extra data so that avcodec_open2() fails.
   VideoDecoderConfig config(kCodecTheora, VIDEO_CODEC_PROFILE_UNKNOWN,
-                            kVideoFormat, COLOR_SPACE_UNSPECIFIED, kCodedSize,
-                            kVisibleRect, kNaturalSize, EmptyExtraData(),
-                            Unencrypted());
+                            kVideoFormat, COLOR_SPACE_UNSPECIFIED,
+                            VIDEO_ROTATION_0, kCodedSize, kVisibleRect,
+                            kNaturalSize, EmptyExtraData(), Unencrypted());
   InitializeWithConfigWithResult(config, false);
 }
 
@@ -263,7 +262,7 @@ TEST_F(FFmpegVideoDecoderTest, DecodeFrame_Normal) {
   ASSERT_EQ(1U, output_frames_.size());
 }
 
-// Verify current behavior for 0 byte frames. FFmpeg simply ignores
+// Verify current behavior for 0 byte frames. FFmpegVideoDecoder simply ignores
 // the 0 byte frames.
 TEST_F(FFmpegVideoDecoderTest, DecodeFrame_0ByteFrame) {
   Initialize();
@@ -285,7 +284,7 @@ TEST_F(FFmpegVideoDecoderTest, DecodeFrame_0ByteFrame) {
 TEST_F(FFmpegVideoDecoderTest, DecodeFrame_DecodeError) {
   Initialize();
 
-  EXPECT_MEDIA_LOG(ContainsInvalidDataLog());
+  EXPECT_MEDIA_LOG(ContainsFailedToSendLog());
 
   // The error is only raised on the second decode attempt, so we expect at
   // least one successful decode but we don't expect valid frame to be decoded.
@@ -305,7 +304,7 @@ TEST_F(FFmpegVideoDecoderTest, DecodeFrame_DecodeError) {
 TEST_F(FFmpegVideoDecoderTest, DecodeFrame_DecodeErrorAtEndOfStream) {
   Initialize();
 
-  EXPECT_MEDIA_LOG(ContainsInvalidDataLog());
+  EXPECT_MEDIA_LOG(ContainsFailedToSendLog());
 
   EXPECT_EQ(DecodeStatus::DECODE_ERROR,
             DecodeSingleFrame(corrupt_i_frame_buffer_));

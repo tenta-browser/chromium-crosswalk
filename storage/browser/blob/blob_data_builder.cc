@@ -10,6 +10,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/files/file.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/string_number_conversions.h"
@@ -60,9 +61,11 @@ BlobDataBuilder::BlobDataBuilder(const std::string& uuid) : uuid_(uuid) {}
 
 BlobDataBuilder::BlobDataBuilder(BlobDataBuilder&&) = default;
 BlobDataBuilder& BlobDataBuilder::operator=(BlobDataBuilder&&) = default;
-BlobDataBuilder::~BlobDataBuilder() {}
+BlobDataBuilder::~BlobDataBuilder() = default;
 
-void BlobDataBuilder::AppendIPCDataElement(const DataElement& ipc_data) {
+void BlobDataBuilder::AppendIPCDataElement(
+    const DataElement& ipc_data,
+    const scoped_refptr<FileSystemContext>& file_system_context) {
   uint64_t length = ipc_data.length();
   switch (ipc_data.type()) {
     case DataElement::TYPE_BYTES:
@@ -76,16 +79,19 @@ void BlobDataBuilder::AppendIPCDataElement(const DataElement& ipc_data) {
       break;
     case DataElement::TYPE_FILE_FILESYSTEM:
       AppendFileSystemFile(ipc_data.filesystem_url(), ipc_data.offset(), length,
-                           ipc_data.expected_modification_time());
+                           ipc_data.expected_modification_time(),
+                           file_system_context);
       break;
     case DataElement::TYPE_BLOB:
       // This is a temporary item that will be deconstructed later in
       // BlobStorageContext.
       AppendBlob(ipc_data.blob_uuid(), ipc_data.offset(), ipc_data.length());
       break;
+    case DataElement::TYPE_RAW_FILE:
     case DataElement::TYPE_BYTES_DESCRIPTION:
     case DataElement::TYPE_UNKNOWN:
     case DataElement::TYPE_DISK_CACHE_ENTRY:  // This type can't be sent by IPC.
+    case DataElement::TYPE_DATA_PIPE:
       NOTREACHED();
       break;
   }
@@ -111,8 +117,19 @@ bool BlobDataBuilder::PopulateFutureData(size_t index,
                                          const char* data,
                                          size_t offset,
                                          size_t length) {
-  DCHECK_LT(index, items_.size());
   DCHECK(data);
+
+  char* target = GetFutureDataPointerToPopulate(index, offset, length);
+  if (!target)
+    return false;
+  std::memcpy(target, data, length);
+  return true;
+}
+
+char* BlobDataBuilder::GetFutureDataPointerToPopulate(size_t index,
+                                                      size_t offset,
+                                                      size_t length) {
+  DCHECK_LT(index, items_.size());
   DataElement* element = items_[index]->data_element_ptr();
 
   // We lazily allocate our data buffer by waiting until the first
@@ -128,16 +145,15 @@ bool BlobDataBuilder::PopulateFutureData(size_t index,
   }
   if (element->type() != DataElement::TYPE_BYTES) {
     DVLOG(1) << "Invalid item type.";
-    return false;
+    return nullptr;
   }
   base::CheckedNumeric<size_t> checked_end = offset;
   checked_end += length;
   if (!checked_end.IsValid() || checked_end.ValueOrDie() > element->length()) {
     DVLOG(1) << "Invalid offset or length.";
-    return false;
+    return nullptr;
   }
-  std::memcpy(element->mutable_bytes() + offset, data, length);
-  return true;
+  return element->mutable_bytes() + offset;
 }
 
 size_t BlobDataBuilder::AppendFutureFile(uint64_t offset,
@@ -204,12 +220,14 @@ void BlobDataBuilder::AppendFileSystemFile(
     const GURL& url,
     uint64_t offset,
     uint64_t length,
-    const base::Time& expected_modification_time) {
+    const base::Time& expected_modification_time,
+    scoped_refptr<FileSystemContext> file_system_context) {
   DCHECK_GT(length, 0ul);
   std::unique_ptr<DataElement> element(new DataElement());
   element->SetToFileSystemUrlRange(url, offset, length,
                                    expected_modification_time);
-  items_.push_back(new BlobDataItem(std::move(element)));
+  items_.push_back(
+      new BlobDataItem(std::move(element), std::move(file_system_context)));
 }
 
 void BlobDataBuilder::AppendDiskCacheEntry(

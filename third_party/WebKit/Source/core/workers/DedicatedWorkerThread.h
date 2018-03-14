@@ -35,38 +35,33 @@
 
 namespace blink {
 
-class InProcessWorkerObjectProxy;
-class WorkerThreadStartupData;
+class DedicatedWorkerObjectProxy;
+struct GlobalScopeCreationParams;
 
 class CORE_EXPORT DedicatedWorkerThread : public WorkerThread {
  public:
   static std::unique_ptr<DedicatedWorkerThread> Create(
-      PassRefPtr<WorkerLoaderProxy>,
-      InProcessWorkerObjectProxy&,
-      double time_origin);
+      ThreadableLoadingContext*,
+      DedicatedWorkerObjectProxy&);
   ~DedicatedWorkerThread() override;
 
   WorkerBackingThread& GetWorkerBackingThread() override {
     return *worker_backing_thread_;
   }
   void ClearWorkerBackingThread() override;
-  InProcessWorkerObjectProxy& WorkerObjectProxy() const {
+  DedicatedWorkerObjectProxy& WorkerObjectProxy() const {
     return worker_object_proxy_;
   }
-
- protected:
-  DedicatedWorkerThread(PassRefPtr<WorkerLoaderProxy>,
-                        InProcessWorkerObjectProxy&,
-                        double time_origin);
-  WorkerOrWorkletGlobalScope* CreateWorkerGlobalScope(
-      std::unique_ptr<WorkerThreadStartupData>) override;
 
  private:
   friend class DedicatedWorkerThreadForTest;
 
+  DedicatedWorkerThread(ThreadableLoadingContext*, DedicatedWorkerObjectProxy&);
+  WorkerOrWorkletGlobalScope* CreateWorkerGlobalScope(
+      std::unique_ptr<GlobalScopeCreationParams>) override;
+
   std::unique_ptr<WorkerBackingThread> worker_backing_thread_;
-  InProcessWorkerObjectProxy& worker_object_proxy_;
-  double time_origin_;
+  DedicatedWorkerObjectProxy& worker_object_proxy_;
 };
 
 }  // namespace blink

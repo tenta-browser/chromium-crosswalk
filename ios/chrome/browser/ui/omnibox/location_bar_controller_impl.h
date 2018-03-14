@@ -9,10 +9,10 @@
 
 #include <memory>
 
-#include "base/mac/scoped_nsobject.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/omnibox/browser/omnibox_view.h"
-#include "ios/shared/chrome/browser/ui/omnibox/location_bar_controller.h"
+#include "ios/chrome/browser/ui/omnibox/location_bar_controller.h"
+#include "ios/chrome/browser/ui/omnibox/omnibox_view_ios.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
 
@@ -24,23 +24,29 @@ namespace web {
 class WebState;
 }
 
+@protocol BrowserCommands;
 @protocol LocationBarDelegate;
+@class PageInfoBridge;
 class OmniboxViewIOS;
 @class OmniboxClearButtonBridge;
 @protocol OmniboxPopupPositioner;
-@class OmniboxTextFieldIOS;
-@protocol PreloadProvider;
+@class LocationBarView;
 class ToolbarModel;
+class OmniboxPopupViewIOS;
 
 // Concrete implementation of the LocationBarController interface.
-class LocationBarControllerImpl : public LocationBarController {
+class LocationBarControllerImpl : public LocationBarController,
+                                  public LeftImageProvider {
  public:
-  LocationBarControllerImpl(OmniboxTextFieldIOS* field,
+  LocationBarControllerImpl(LocationBarView* location_bar_view,
                             ios::ChromeBrowserState* browser_state,
-                            id<PreloadProvider> preloader,
-                            id<OmniboxPopupPositioner> positioner,
-                            id<LocationBarDelegate> delegate);
+                            id<LocationBarDelegate> delegate,
+                            id<BrowserCommands> dispatcher);
   ~LocationBarControllerImpl() override;
+
+  // Creates a popup view and wires it to |edit_view_|.
+  std::unique_ptr<OmniboxPopupViewIOS> CreatePopupView(
+      id<OmniboxPopupPositioner> positioner);
 
   // OmniboxEditController implementation
   void OnAutocompleteAccept(const GURL& url,
@@ -65,6 +71,9 @@ class LocationBarControllerImpl : public LocationBarController {
   OmniboxView* GetLocationEntry() override;
   bool IsShowingPlaceholderWhileCollapsed() override;
 
+  // LeftImageProvider implementation.
+  void SetLeftImage(int ImageId) override;
+
  private:
   // Installs a UIButton that serves as the location icon and lock icon.  This
   // button is installed as a left view of |field_|.
@@ -82,13 +91,17 @@ class LocationBarControllerImpl : public LocationBarController {
   void UpdateRightDecorations();
 
   bool show_hint_text_;
-  base::scoped_nsobject<UIButton> clear_text_button_;
+  __strong UIButton* clear_text_button_;
   std::unique_ptr<OmniboxViewIOS> edit_view_;
-  base::scoped_nsobject<OmniboxClearButtonBridge> clear_button_bridge_;
-  // |field_| should be __weak but is included from non-ARC code.
-  __unsafe_unretained OmniboxTextFieldIOS* field_;
-  // |delegate_| should be __weak but is included from non-ARC code.
-  __unsafe_unretained id<LocationBarDelegate> delegate_;
+
+  __strong OmniboxClearButtonBridge* clear_button_bridge_;
+  // A bridge from a UIControl action to the dispatcher to display a page
+  // info popup.
+  __strong PageInfoBridge* page_info_bridge_;
+  LocationBarView* location_bar_view_;
+  __weak id<LocationBarDelegate> delegate_;
+  // Dispatcher to send commands from the location bar.
+  __weak id<BrowserCommands> dispatcher_;
   bool is_showing_placeholder_while_collapsed_;
 };
 

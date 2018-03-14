@@ -29,21 +29,20 @@
 #ifndef SQLResultSet_h
 #define SQLResultSet_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/webdatabase/DatabaseBasicTypes.h"
 #include "modules/webdatabase/SQLResultSetRowList.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
 class ExceptionState;
 
-class SQLResultSet final : public GarbageCollected<SQLResultSet>,
-                           public ScriptWrappable {
+class SQLResultSet final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   static SQLResultSet* Create() { return new SQLResultSet; }
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
   SQLResultSetRowList* rows() const;
 

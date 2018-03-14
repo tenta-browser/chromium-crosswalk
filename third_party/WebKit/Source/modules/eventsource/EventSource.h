@@ -35,7 +35,7 @@
 #include <memory>
 #include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "core/dom/ContextLifecycleObserver.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/loader/ThreadableLoader.h"
 #include "core/loader/ThreadableLoaderClient.h"
 #include "modules/ModulesExport.h"
@@ -88,7 +88,7 @@ class MODULES_EXPORT EventSource final
 
   // ContextLifecycleObserver
   //
-  // Note: We don't need to inherit from SuspendableObject since
+  // Note: We don't need to inherit from PausableObject since
   // ScopedPageLoadDeferrer calls Page::setDefersLoading() and
   // it defers delivery of events from the loader, and therefore
   // the methods of this class for receiving asynchronous events
@@ -98,7 +98,7 @@ class MODULES_EXPORT EventSource final
   // ScriptWrappable
   bool HasPendingActivity() const final;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   EventSource(ExecutionContext*, const KURL&, const EventSourceInit&);
@@ -111,7 +111,6 @@ class MODULES_EXPORT EventSource final
   void DidReceiveData(const char*, unsigned) override;
   void DidFinishLoading(unsigned long, double) override;
   void DidFail(const ResourceError&) override;
-  void DidFailAccessControlCheck(const ResourceError&) override;
   void DidFailRedirectCheck() override;
 
   void OnMessageEvent(const AtomicString& event,

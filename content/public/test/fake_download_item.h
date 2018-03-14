@@ -80,23 +80,40 @@ class FakeDownloadItem : public DownloadItem {
   void SetReceivedBytes(int64_t received_bytes);
   int64_t GetReceivedBytes() const override;
 
+  void SetTotalBytes(int64_t total_bytes);
+  int64_t GetTotalBytes() const override;
+
   void SetLastAccessTime(base::Time time) override;
   base::Time GetLastAccessTime() const override;
+
+  void SetIsTransient(bool is_transient);
+  bool IsTransient() const override;
+
+  void SetIsDone(bool is_done);
+  bool IsDone() const override;
+
+  void SetETag(const std::string& etag);
+  const std::string& GetETag() const override;
+
+  void SetLastModifiedTime(const std::string& last_modified_time);
+  const std::string& GetLastModifiedTime() const override;
 
   // The methods below are not supported and are not expected to be called.
   void ValidateDangerousDownload() override;
   void StealDangerousDownload(bool delete_file_afterward,
                               const AcquireFileCallback& callback) override;
+
+  void Remove() override;
+  bool removed() const { return removed_; }
+
   void Pause() override;
   void Resume() override;
   void Cancel(bool user_cancel) override;
-  void Remove() override;
   void OpenDownload() override;
   void ShowDownloadInShell() override;
   bool IsPaused() const override;
   bool IsTemporary() const override;
   bool CanResume() const override;
-  bool IsDone() const override;
   const GURL& GetReferrerUrl() const override;
   const GURL& GetSiteUrl() const override;
   const GURL& GetTabUrl() const override;
@@ -107,8 +124,6 @@ class FakeDownloadItem : public DownloadItem {
   std::string GetRemoteAddress() const override;
   bool HasUserGesture() const override;
   ui::PageTransition GetTransitionType() const override;
-  const std::string& GetLastModifiedTime() const override;
-  const std::string& GetETag() const override;
   bool IsSavePackageDownload() const override;
   const base::FilePath& GetFullPath() const override;
   const base::FilePath& GetForcedFilePath() const override;
@@ -122,7 +137,6 @@ class FakeDownloadItem : public DownloadItem {
   int64_t CurrentSpeed() const override;
   int PercentComplete() const override;
   bool AllDataSaved() const override;
-  int64_t GetTotalBytes() const override;
   const std::vector<DownloadItem::ReceivedSlice>& GetReceivedSlices()
       const override;
   bool CanShowInFolder() override;
@@ -131,10 +145,10 @@ class FakeDownloadItem : public DownloadItem {
   bool GetOpenWhenComplete() const override;
   bool GetAutoOpened() override;
   bool GetOpened() const override;
-  bool IsTransient() const override;
   BrowserContext* GetBrowserContext() const override;
   WebContents* GetWebContents() const override;
-  void OnContentCheckCompleted(DownloadDangerType danger_type) override;
+  void OnContentCheckCompleted(DownloadDangerType danger_type,
+                               DownloadInterruptReason reason) override;
   void SetOpenWhenComplete(bool open) override;
   void SetOpened(bool opened) override;
   void SetDisplayName(const base::FilePath& name) override;
@@ -148,6 +162,7 @@ class FakeDownloadItem : public DownloadItem {
   std::vector<GURL> url_chain_;
   base::FilePath file_path_;
   bool is_file_externally_removed_ = false;
+  bool removed_ = false;
   base::Time start_time_;
   base::Time end_time_;
   base::Time last_access_time_;
@@ -160,6 +175,11 @@ class FakeDownloadItem : public DownloadItem {
   DownloadInterruptReason last_reason_ =
       DownloadInterruptReason::DOWNLOAD_INTERRUPT_REASON_NONE;
   int64_t received_bytes_ = 0;
+  int64_t total_bytes_ = 0;
+  bool is_transient_ = false;
+  bool is_done_ = false;
+  std::string etag_;
+  std::string last_modified_time_;
 
   // The members below are to be returned by methods, which return by reference.
   std::string dummy_string;

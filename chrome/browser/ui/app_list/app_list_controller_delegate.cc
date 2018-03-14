@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/app_list/app_list_controller_delegate.h"
 
+#include "ash/app_list/model/app_list_item.h"
+#include "ash/app_list/model/app_list_model.h"
 #include "base/metrics/histogram_macros.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_util.h"
@@ -23,10 +25,9 @@
 #include "extensions/common/manifest_url_handlers.h"
 #include "net/base/url_util.h"
 #include "rlz/features/features.h"
-#include "ui/app_list/app_list_folder_item.h"
-#include "ui/app_list/app_list_item.h"
-#include "ui/app_list/app_list_model.h"
 #include "ui/app_list/app_list_switches.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/rect.h"
 
 #if BUILDFLAG(ENABLE_RLZ)
@@ -51,7 +52,13 @@ AppListControllerDelegate::~AppListControllerDelegate() {}
 
 void AppListControllerDelegate::ViewClosing() {}
 
-gfx::Rect AppListControllerDelegate::GetAppListBounds() {
+int64_t AppListControllerDelegate::GetAppListDisplayId() {
+  auto* screen = display::Screen::GetScreen();
+  return screen ? screen->GetDisplayNearestWindow(GetAppListWindow()).id()
+                : display::kInvalidDisplayId;
+}
+
+gfx::Rect AppListControllerDelegate::GetAppInfoDialogBounds() {
   return gfx::Rect();
 }
 
@@ -102,10 +109,7 @@ void AppListControllerDelegate::DoShowAppInfoFlow(
   // Since the AppListControllerDelegate is a leaky singleton, passing its raw
   // pointer around is OK.
   ShowAppInfoInAppList(
-      GetAppListWindow(),
-      GetAppListBounds(),
-      profile,
-      extension,
+      GetAppListWindow(), GetAppInfoDialogBounds(), profile, extension,
       base::Bind(&AppListControllerDelegate::OnCloseChildDialog,
                  base::Unretained(this)));
 }

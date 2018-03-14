@@ -5,9 +5,12 @@
 #import "ios/chrome/browser/ui/settings/content_settings_collection_view_controller.h"
 
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/ui/collection_view/cells/collection_view_detail_item.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_controller_test.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/web/public/test/test_web_thread_bundle.h"
+#include "testing/gtest_mac.h"
+#include "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -34,17 +37,21 @@ class ContentSettingsCollectionViewControllerTest
   std::unique_ptr<TestChromeBrowserState> chrome_browser_state_;
 };
 
-TEST_F(ContentSettingsCollectionViewControllerTest, TestModel) {
+// Tests that there are 3 sections in Content Settings if mailto: URL
+// rewriting feature is enabled.
+TEST_F(ContentSettingsCollectionViewControllerTest,
+       TestModelWithMailToUrlRewriting) {
   CreateController();
   CheckController();
   CheckTitleWithId(IDS_IOS_CONTENT_SETTINGS_TITLE);
 
-  int expectedNumberOfItems = 2;
   ASSERT_EQ(1, NumberOfSections());
-  EXPECT_EQ(expectedNumberOfItems, NumberOfItemsInSection(0));
+  ASSERT_EQ(3, NumberOfItemsInSection(0));
   CheckDetailItemTextWithIds(IDS_IOS_BLOCK_POPUPS, IDS_IOS_SETTING_ON, 0, 0);
   CheckDetailItemTextWithIds(IDS_IOS_TRANSLATE_SETTING, IDS_IOS_SETTING_ON, 0,
                              1);
+  CollectionViewDetailItem* item = GetCollectionViewItem(0, 2);
+  EXPECT_NSEQ(l10n_util::GetNSString(IDS_IOS_COMPOSE_EMAIL_SETTING), item.text);
 }
 
 }  // namespace

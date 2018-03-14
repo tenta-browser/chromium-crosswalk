@@ -5,6 +5,7 @@
 #include "ash/system/tray/tray_popup_utils.h"
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 #include "ash/ash_constants.h"
@@ -12,15 +13,15 @@
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/session/session_controller.h"
 #include "ash/shell.h"
-#include "ash/system/tray/fixed_sized_image_view.h"
 #include "ash/system/tray/hover_highlight_view.h"
 #include "ash/system/tray/size_range_layout.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_popup_item_style.h"
-#include "base/memory/ptr_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/color_palette.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/paint_vector_icon.h"
+#include "ui/native_theme/native_theme.h"
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop_highlight.h"
 #include "ui/views/animation/ink_drop_impl.h"
@@ -48,8 +49,9 @@ namespace {
 // stretched horizontally and centered vertically.
 std::unique_ptr<views::LayoutManager> CreateDefaultCenterLayoutManager() {
   // TODO(bruthig): Use constants instead of magic numbers.
-  auto box_layout =
-      base::MakeUnique<views::BoxLayout>(views::BoxLayout::kVertical, 4, 8, 0);
+  auto box_layout = std::make_unique<views::BoxLayout>(
+      views::BoxLayout::kVertical,
+      gfx::Insets(8, kTrayPopupLabelHorizontalPadding));
   box_layout->set_main_axis_alignment(
       views::BoxLayout::MAIN_AXIS_ALIGNMENT_CENTER);
   box_layout->set_cross_axis_alignment(
@@ -60,8 +62,8 @@ std::unique_ptr<views::LayoutManager> CreateDefaultCenterLayoutManager() {
 // Creates a layout manager that positions Views horizontally. The Views will be
 // centered along the horizontal and vertical axis.
 std::unique_ptr<views::LayoutManager> CreateDefaultEndsLayoutManager() {
-  auto box_layout = base::MakeUnique<views::BoxLayout>(
-      views::BoxLayout::kHorizontal, 0, 0, 0);
+  auto box_layout =
+      std::make_unique<views::BoxLayout>(views::BoxLayout::kHorizontal);
   box_layout->set_main_axis_alignment(
       views::BoxLayout::MAIN_AXIS_ALIGNMENT_CENTER);
   box_layout->set_cross_axis_alignment(
@@ -123,7 +125,7 @@ class BorderlessLabelButton : public views::LabelButton {
     TrayPopupUtils::ConfigureTrayPopupButton(this);
   }
 
-  ~BorderlessLabelButton() override {}
+  ~BorderlessLabelButton() override = default;
 
   // views::LabelButton:
   int GetHeightForWidth(int width) const override { return kMenuButtonSize; }
@@ -174,13 +176,14 @@ TriView* TrayPopupUtils::CreateDefaultRowView() {
   return tri_view;
 }
 
-TriView* TrayPopupUtils::CreateSubHeaderRowView() {
-  TriView* tri_view = CreateMultiTargetRowView();
-  tri_view->SetInsets(gfx::Insets(0, kTrayPopupPaddingHorizontal, 0, 0));
-  tri_view->SetContainerVisible(TriView::Container::START, false);
-  tri_view->SetContainerLayout(
-      TriView::Container::END,
-      CreateDefaultLayoutManager(TriView::Container::END));
+TriView* TrayPopupUtils::CreateSubHeaderRowView(bool start_visible) {
+  TriView* tri_view = CreateDefaultRowView();
+  if (!start_visible) {
+    tri_view->SetInsets(gfx::Insets(
+        0, kTrayPopupPaddingHorizontal - kTrayPopupLabelHorizontalPadding, 0,
+        0));
+    tri_view->SetContainerVisible(TriView::Container::START, false);
+  }
   return tri_view;
 }
 
@@ -194,11 +197,11 @@ TriView* TrayPopupUtils::CreateMultiTargetRowView() {
   ConfigureDefaultSizeAndFlex(tri_view, TriView::Container::END);
 
   tri_view->SetContainerLayout(TriView::Container::START,
-                               base::MakeUnique<views::FillLayout>());
+                               std::make_unique<views::FillLayout>());
   tri_view->SetContainerLayout(TriView::Container::CENTER,
-                               base::MakeUnique<views::FillLayout>());
+                               std::make_unique<views::FillLayout>());
   tri_view->SetContainerLayout(TriView::Container::END,
-                               base::MakeUnique<views::FillLayout>());
+                               std::make_unique<views::FillLayout>());
 
   return tri_view;
 }
@@ -206,25 +209,24 @@ TriView* TrayPopupUtils::CreateMultiTargetRowView() {
 views::Label* TrayPopupUtils::CreateDefaultLabel() {
   views::Label* label = new views::Label();
   label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  label->SetBorder(
-      views::CreateEmptyBorder(0, 0, 0, kTrayPopupLabelRightPadding));
   // Frequently the label will paint to a layer that's non-opaque, so subpixel
   // rendering won't work unless we explicitly set a background. See
   // crbug.com/686363
-  label->set_background(
-      views::Background::CreateSolidBackground(kBackgroundColor));
-  label->SetBackgroundColor(kBackgroundColor);
+  label->SetBackground(views::CreateThemedSolidBackground(
+      label, ui::NativeTheme::kColorId_BubbleBackground));
   return label;
 }
 
 views::ImageView* TrayPopupUtils::CreateMainImageView() {
-  return new FixedSizedImageView(kTrayPopupItemMinStartWidth,
-                                 kTrayPopupItemMinHeight);
+  auto* image = new views::ImageView;
+  image->SetPreferredSize(
+      gfx::Size(kTrayPopupItemMinStartWidth, kTrayPopupItemMinHeight));
+  return image;
 }
 
 views::ImageView* TrayPopupUtils::CreateMoreImageView() {
-  views::ImageView* image =
-      new FixedSizedImageView(kMenuIconSize, kMenuIconSize);
+  auto* image = new views::ImageView;
+  image->SetPreferredSize(gfx::Size(gfx::Size(kMenuIconSize, kMenuIconSize)));
   image->EnableCanvasFlippingForRTLUI(true);
   image->SetImage(
       gfx::CreateVectorIcon(kSystemMenuArrowRightIcon, kMenuIconColor));
@@ -233,7 +235,8 @@ views::ImageView* TrayPopupUtils::CreateMoreImageView() {
 
 views::Slider* TrayPopupUtils::CreateSlider(views::SliderListener* listener) {
   views::Slider* slider = new views::Slider(listener);
-  slider->SetBorder(views::CreateEmptyBorder(gfx::Insets(0, 16)));
+  slider->SetBorder(views::CreateEmptyBorder(
+      gfx::Insets(0, kTrayPopupSliderHorizontalPadding)));
   return slider;
 }
 
@@ -247,7 +250,6 @@ views::ToggleButton* TrayPopupUtils::CreateToggleButton(
       (kTrayToggleButtonWidth - toggle_size.width()) / 2;
   toggle->SetBorder(views::CreateEmptyBorder(
       gfx::Insets(vertical_padding, horizontal_padding)));
-  toggle->SetFocusPainter(CreateFocusPainter());
   toggle->SetAccessibleName(l10n_util::GetStringUTF16(accessible_name_id));
   return toggle;
 }
@@ -257,11 +259,8 @@ std::unique_ptr<views::Painter> TrayPopupUtils::CreateFocusPainter() {
       kFocusBorderColor, kFocusBorderThickness, gfx::InsetsF());
 }
 
-void TrayPopupUtils::ConfigureTrayPopupButton(views::CustomButton* button) {
-  // All buttons that call into here want this focus painter, but
-  // SetFocusPainter is defined separately on derived classes and isn't part of
-  // CustomButton. TODO(estade): Address this.
-  // button->SetFocusPainter(TrayPopupUtils::CreateFocusPainter());
+void TrayPopupUtils::ConfigureTrayPopupButton(views::Button* button) {
+  button->SetFocusPainter(TrayPopupUtils::CreateFocusPainter());
   button->SetFocusForPlatform();
 
   button->SetInkDropMode(views::InkDropHostView::InkDropMode::ON);
@@ -272,8 +271,8 @@ void TrayPopupUtils::ConfigureTrayPopupButton(views::CustomButton* button) {
 
 void TrayPopupUtils::ConfigureAsStickyHeader(views::View* view) {
   view->set_id(VIEW_ID_STICKY_HEADER);
-  view->set_background(
-      views::Background::CreateSolidBackground(kBackgroundColor));
+  view->SetBackground(views::CreateThemedSolidBackground(
+      view, ui::NativeTheme::kColorId_BubbleBackground));
   view->SetBorder(
       views::CreateEmptyBorder(gfx::Insets(kMenuSeparatorVerticalPadding, 0)));
   view->SetPaintToLayer();
@@ -326,7 +325,7 @@ std::unique_ptr<views::InkDrop> TrayPopupUtils::CreateInkDrop(
     TrayPopupInkDropStyle ink_drop_style,
     views::InkDropHostView* host) {
   std::unique_ptr<views::InkDropImpl> ink_drop =
-      base::MakeUnique<views::InkDropImpl>(host, host->size());
+      std::make_unique<views::InkDropImpl>(host, host->size());
   ink_drop->SetAutoHighlightMode(
       views::InkDropImpl::AutoHighlightMode::SHOW_ON_RIPPLE);
   ink_drop->SetShowHighlightOnHover(false);
@@ -339,7 +338,7 @@ std::unique_ptr<views::InkDropRipple> TrayPopupUtils::CreateInkDropRipple(
     const views::View* host,
     const gfx::Point& center_point,
     SkColor color) {
-  return base::MakeUnique<views::FloodFillInkDropRipple>(
+  return std::make_unique<views::FloodFillInkDropRipple>(
       host->size(), TrayPopupUtils::GetInkDropInsets(ink_drop_style),
       center_point, color, kTrayPopupInkDropRippleOpacity);
 }
@@ -370,13 +369,13 @@ std::unique_ptr<views::InkDropMask> TrayPopupUtils::CreateInkDropMask(
           GetInkDropBounds(TrayPopupInkDropStyle::HOST_CENTERED, host);
       const int radius =
           std::min(mask_bounds.width(), mask_bounds.height()) / 2;
-      return base::MakeUnique<views::CircleInkDropMask>(
+      return std::make_unique<views::CircleInkDropMask>(
           layer_size, mask_bounds.CenterPoint(), radius);
     }
     case TrayPopupInkDropStyle::INSET_BOUNDS: {
       const gfx::Insets mask_insets =
           GetInkDropInsets(TrayPopupInkDropStyle::INSET_BOUNDS);
-      return base::MakeUnique<views::RoundRectInkDropMask>(
+      return std::make_unique<views::RoundRectInkDropMask>(
           layer_size, mask_insets, kTrayPopupInkDropCornerRadius);
     }
     case TrayPopupInkDropStyle::FILL_BOUNDS:
@@ -427,13 +426,8 @@ views::Separator* TrayPopupUtils::CreateListSubHeaderSeparator() {
   return separator;
 }
 
-bool TrayPopupUtils::CanOpenWebUISettings(LoginStatus status) {
-  // TODO(tdanderson): Consider moving this into ShellPort, or introduce a
-  // CanShowSettings() method in each delegate type that has a
-  // ShowSettings() method.
-  return status != LoginStatus::NOT_LOGGED_IN &&
-         status != LoginStatus::LOCKED &&
-         !Shell::Get()->session_controller()->IsInSecondaryLoginScreen();
+bool TrayPopupUtils::CanOpenWebUISettings() {
+  return Shell::Get()->session_controller()->ShouldEnableSettings();
 }
 
 void TrayPopupUtils::InitializeAsCheckableRow(HoverHighlightView* container,

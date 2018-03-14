@@ -7,6 +7,7 @@
 #include "base/memory/ptr_util.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_provider_client.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
+#include "chrome/browser/autocomplete/contextual_suggestions_service_factory.h"
 #include "chrome/browser/autocomplete/in_memory_url_index_factory.h"
 #include "chrome/browser/autocomplete/shortcuts_backend_factory.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
@@ -38,12 +39,14 @@ AutocompleteClassifierFactory* AutocompleteClassifierFactory::GetInstance() {
 std::unique_ptr<KeyedService> AutocompleteClassifierFactory::BuildInstanceFor(
     content::BrowserContext* context) {
   Profile* profile = static_cast<Profile*>(context);
+  auto provider_client =
+      base::MakeUnique<ChromeAutocompleteProviderClient>(profile);
+  auto controller = base::WrapUnique(new AutocompleteController(
+      std::move(provider_client), NULL,
+      AutocompleteClassifier::DefaultOmniboxProviders()));
   return base::MakeUnique<AutocompleteClassifier>(
-      base::WrapUnique(new AutocompleteController(
-          base::WrapUnique(new ChromeAutocompleteProviderClient(profile)), NULL,
-          AutocompleteClassifier::DefaultOmniboxProviders())),
-      std::unique_ptr<AutocompleteSchemeClassifier>(
-          new ChromeAutocompleteSchemeClassifier(profile)));
+      std::move(controller),
+      base::MakeUnique<ChromeAutocompleteSchemeClassifier>(profile));
 }
 
 AutocompleteClassifierFactory::AutocompleteClassifierFactory()
@@ -59,6 +62,7 @@ AutocompleteClassifierFactory::AutocompleteClassifierFactory()
   //   DependsOn(PrefServiceFactory::GetInstance());
   DependsOn(ShortcutsBackendFactory::GetInstance());
   DependsOn(InMemoryURLIndexFactory::GetInstance());
+  DependsOn(ContextualSuggestionsServiceFactory::GetInstance());
 }
 
 AutocompleteClassifierFactory::~AutocompleteClassifierFactory() {

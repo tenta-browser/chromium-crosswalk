@@ -4,6 +4,7 @@
 
 #include "chrome/installer/util/advanced_firewall_manager_win.h"
 
+#include <objbase.h>
 #include <stddef.h>
 
 #include "base/guid.h"
@@ -22,17 +23,18 @@ AdvancedFirewallManager::~AdvancedFirewallManager() {}
 
 bool AdvancedFirewallManager::Init(const base::string16& app_name,
                                    const base::FilePath& app_path) {
-  firewall_rules_ = NULL;
-  HRESULT hr = firewall_policy_.CreateInstance(CLSID_NetFwPolicy2);
+  firewall_rules_ = nullptr;
+  HRESULT hr = ::CoCreateInstance(CLSID_NetFwPolicy2, nullptr, CLSCTX_ALL,
+                                  IID_PPV_ARGS(&firewall_policy_));
   if (FAILED(hr)) {
     DLOG(ERROR) << logging::SystemErrorCodeToString(hr);
-    firewall_policy_ = NULL;
+    firewall_policy_ = nullptr;
     return false;
   }
-  hr = firewall_policy_->get_Rules(firewall_rules_.Receive());
+  hr = firewall_policy_->get_Rules(firewall_rules_.GetAddressOf());
   if (FAILED(hr)) {
     DLOG(ERROR) << logging::SystemErrorCodeToString(hr);
-    firewall_rules_ = NULL;
+    firewall_rules_ = nullptr;
     return false;
   }
   app_name_ = app_name;
@@ -64,7 +66,7 @@ bool AdvancedFirewallManager::IsFirewallEnabled() {
 }
 
 bool AdvancedFirewallManager::HasAnyRule() {
-  std::vector<base::win::ScopedComPtr<INetFwRule> > rules;
+  std::vector<Microsoft::WRL::ComPtr<INetFwRule>> rules;
   GetAllRules(&rules);
   return !rules.empty();
 }
@@ -78,19 +80,19 @@ bool AdvancedFirewallManager::AddUDPRule(const base::string16& rule_name,
   DeleteRuleByName(rule_name);
 
   // Create the rule and add it to the rule set (only succeeds if elevated).
-  base::win::ScopedComPtr<INetFwRule> udp_rule =
+  Microsoft::WRL::ComPtr<INetFwRule> udp_rule =
       CreateUDPRule(rule_name, description, port);
-  if (!udp_rule.get())
+  if (!udp_rule.Get())
     return false;
 
-  HRESULT hr = firewall_rules_->Add(udp_rule.get());
+  HRESULT hr = firewall_rules_->Add(udp_rule.Get());
   DLOG_IF(ERROR, FAILED(hr)) << logging::SystemErrorCodeToString(hr);
   return SUCCEEDED(hr);
 }
 
 void AdvancedFirewallManager::DeleteRuleByName(
     const base::string16& rule_name) {
-  std::vector<base::win::ScopedComPtr<INetFwRule> > rules;
+  std::vector<Microsoft::WRL::ComPtr<INetFwRule>> rules;
   GetAllRules(&rules);
   for (size_t i = 0; i < rules.size(); ++i) {
     base::win::ScopedBstr name;
@@ -102,7 +104,7 @@ void AdvancedFirewallManager::DeleteRuleByName(
 }
 
 void AdvancedFirewallManager::DeleteRule(
-    base::win::ScopedComPtr<INetFwRule> rule) {
+    Microsoft::WRL::ComPtr<INetFwRule> rule) {
   // Rename rule to unique name and delete by unique name. We can't just delete
   // rule by name. Multiple rules with the same name and different app are
   // possible.
@@ -113,23 +115,24 @@ void AdvancedFirewallManager::DeleteRule(
 }
 
 void AdvancedFirewallManager::DeleteAllRules() {
-  std::vector<base::win::ScopedComPtr<INetFwRule> > rules;
+  std::vector<Microsoft::WRL::ComPtr<INetFwRule>> rules;
   GetAllRules(&rules);
   for (size_t i = 0; i < rules.size(); ++i) {
     DeleteRule(rules[i]);
   }
 }
 
-base::win::ScopedComPtr<INetFwRule> AdvancedFirewallManager::CreateUDPRule(
+Microsoft::WRL::ComPtr<INetFwRule> AdvancedFirewallManager::CreateUDPRule(
     const base::string16& rule_name,
     const base::string16& description,
     uint16_t port) {
-  base::win::ScopedComPtr<INetFwRule> udp_rule;
+  Microsoft::WRL::ComPtr<INetFwRule> udp_rule;
 
-  HRESULT hr = udp_rule.CreateInstance(CLSID_NetFwRule);
+  HRESULT hr = ::CoCreateInstance(CLSID_NetFwRule, nullptr, CLSCTX_ALL,
+                                  IID_PPV_ARGS(&udp_rule));
   if (FAILED(hr)) {
     DLOG(ERROR) << logging::SystemErrorCodeToString(hr);
-    return base::win::ScopedComPtr<INetFwRule>();
+    return Microsoft::WRL::ComPtr<INetFwRule>();
   }
 
   udp_rule->put_Name(base::win::ScopedBstr(rule_name.c_str()));
@@ -149,16 +152,16 @@ base::win::ScopedComPtr<INetFwRule> AdvancedFirewallManager::CreateUDPRule(
 }
 
 void AdvancedFirewallManager::GetAllRules(
-    std::vector<base::win::ScopedComPtr<INetFwRule> >* rules) {
-  base::win::ScopedComPtr<IUnknown> rules_enum_unknown;
-  HRESULT hr = firewall_rules_->get__NewEnum(rules_enum_unknown.Receive());
+    std::vector<Microsoft::WRL::ComPtr<INetFwRule>>* rules) {
+  Microsoft::WRL::ComPtr<IUnknown> rules_enum_unknown;
+  HRESULT hr = firewall_rules_->get__NewEnum(rules_enum_unknown.GetAddressOf());
   if (FAILED(hr)) {
     DLOG(ERROR) << logging::SystemErrorCodeToString(hr);
     return;
   }
 
-  base::win::ScopedComPtr<IEnumVARIANT> rules_enum;
-  hr = rules_enum.QueryFrom(rules_enum_unknown.get());
+  Microsoft::WRL::ComPtr<IEnumVARIANT> rules_enum;
+  hr = rules_enum_unknown.CopyTo(rules_enum.GetAddressOf());
   if (FAILED(hr)) {
     DLOG(ERROR) << logging::SystemErrorCodeToString(hr);
     return;
@@ -175,8 +178,8 @@ void AdvancedFirewallManager::GetAllRules(
       DLOG(ERROR) << "Unexpected type";
       continue;
     }
-    base::win::ScopedComPtr<INetFwRule> rule;
-    hr = rule.QueryFrom(V_DISPATCH(rule_var.ptr()));
+    Microsoft::WRL::ComPtr<INetFwRule> rule;
+    hr = V_DISPATCH(rule_var.ptr())->QueryInterface(IID_PPV_ARGS(&rule));
     if (FAILED(hr)) {
       DLOG(ERROR) << logging::SystemErrorCodeToString(hr);
       continue;

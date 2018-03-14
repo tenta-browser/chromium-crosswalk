@@ -27,8 +27,8 @@
 #define IdentifiersFactory_h
 
 #include "core/CoreExport.h"
-#include "wtf/Allocator.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/Allocator.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -44,11 +44,12 @@ class CORE_EXPORT IdentifiersFactory {
 
   static String RequestId(unsigned long identifier);
 
+  // Returns embedder-provided frame token that is consistent across processes
+  // and can be used for request / call attribution to the context frame.
   static String FrameId(LocalFrame*);
   static LocalFrame* FrameById(InspectedFrames*, const String&);
 
   static String LoaderId(DocumentLoader*);
-  static DocumentLoader* LoaderById(InspectedFrames*, const String&);
 
  private:
   static String AddProcessIdPrefixTo(int id);

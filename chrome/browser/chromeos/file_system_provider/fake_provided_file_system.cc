@@ -243,8 +243,8 @@ AbortCallback FakeProvidedFileSystem::ReadFile(
         (current_offset + 1 < *entry->metadata->size) && (current_length - 1);
     const int task_id =
         tracker_.PostTask(base::ThreadTaskRunnerHandle::Get().get(), FROM_HERE,
-                          base::Bind(callback, 1 /* chunk_length */, has_more,
-                                     base::File::FILE_OK));
+                          base::BindOnce(callback, 1 /* chunk_length */,
+                                         has_more, base::File::FILE_OK));
     task_ids.push_back(task_id);
     current_offset++;
     current_length--;
@@ -408,12 +408,6 @@ void FakeProvidedFileSystem::Configure(
     const storage::AsyncFileUtil::StatusCallback& callback) {
   NOTREACHED();
   callback.Run(base::File::FILE_ERROR_SECURITY);
-}
-
-std::unique_ptr<ProvidedFileSystemInterface> FakeProvidedFileSystem::Create(
-    Profile* profile,
-    const ProvidedFileSystemInfo& file_system_info) {
-  return base::MakeUnique<FakeProvidedFileSystem>(file_system_info);
 }
 
 base::WeakPtr<ProvidedFileSystemInterface>

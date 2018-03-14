@@ -13,7 +13,9 @@ import android.view.ViewGroup;
 
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.chrome.browser.device.DeviceClassManager;
+import org.chromium.chrome.browser.infobar.InfoBar;
+import org.chromium.chrome.browser.infobar.InfoBarContainer;
+import org.chromium.chrome.browser.util.AccessibilityUtil;
 
 /**
  * Manager for the snackbar showing at the bottom of activity. There should be only one
@@ -24,8 +26,7 @@ import org.chromium.chrome.browser.device.DeviceClassManager;
  * during {@link #DEFAULT_SNACKBAR_DURATION_MS} milliseconds, it will call
  * {@link SnackbarController#onDismissNoAction(Object)}.
  */
-public class SnackbarManager implements OnClickListener {
-
+public class SnackbarManager implements OnClickListener, InfoBarContainer.InfoBarContainerObserver {
     /**
      * Interface that shows the ability to provide a snackbar manager. Activities implementing this
      * interface must call {@link SnackbarManager#onStart()} and {@link SnackbarManager#onStop()} in
@@ -47,13 +48,13 @@ public class SnackbarManager implements OnClickListener {
          * Called when the user clicks the action button on the snackbar.
          * @param actionData Data object passed when showing this specific snackbar.
          */
-        void onAction(Object actionData);
+        default void onAction(Object actionData) { }
 
         /**
          * Called when the snackbar is dismissed by tiemout or UI enviroment change.
          * @param actionData Data object associated with the dismissed snackbar entry.
          */
-        void onDismissNoAction(Object actionData);
+        default void onDismissNoAction(Object actionData) { }
     }
 
     private static final int DEFAULT_SNACKBAR_DURATION_MS = 3000;
@@ -159,6 +160,24 @@ public class SnackbarManager implements OnClickListener {
         updateView();
     }
 
+    // InfoBarContainerObserver implementation.
+    @Override
+    public void onAddInfoBar(InfoBarContainer container, InfoBar infoBar, boolean isFirst) {
+        // Bring Snackbars to the foreground so that it's not blocked by infobars.
+        if (isShowing()) {
+            mView.bringToFront();
+        }
+    }
+
+    @Override
+    public void onRemoveInfoBar(InfoBarContainer container, InfoBar infoBar, boolean isLast) {}
+
+    @Override
+    public void onInfoBarContainerAttachedToWindow(boolean hasInfobars) {}
+
+    @Override
+    public void onInfoBarContainerShownRatioChanged(InfoBarContainer container, float shownRatio) {}
+
     /**
      * Temporarily changes the parent {@link ViewGroup} of the snackbar. If a snackbar is currently
      * showing, this method removes the snackbar from its original parent, and attaches it to the
@@ -214,7 +233,7 @@ public class SnackbarManager implements OnClickListener {
     private int getDuration(Snackbar snackbar) {
         int durationMs = snackbar.getDuration();
         if (durationMs == 0) {
-            durationMs = DeviceClassManager.isAccessibilityModeEnabled(mActivity)
+            durationMs = AccessibilityUtil.isAccessibilityEnabled()
                     ? sAccessibilitySnackbarDurationMs : sSnackbarDurationMs;
         }
         return durationMs;

@@ -10,18 +10,25 @@
 #include <unordered_set>
 #include <vector>
 
+#include "base/command_line.h"
 #include "base/containers/adapters.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task_scheduler/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/task_manager/providers/browser_process_task_provider.h"
 #include "chrome/browser/task_manager/providers/child_process_task_provider.h"
+#include "chrome/browser/task_manager/providers/fallback_task_provider.h"
+#include "chrome/browser/task_manager/providers/render_process_host_task_provider.h"
 #include "chrome/browser/task_manager/providers/web_contents/web_contents_task_provider.h"
 #include "chrome/browser/task_manager/sampling/shared_sampler.h"
+#include "chrome/common/chrome_switches.h"
+#include "components/nacl/common/features.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/gpu_data_manager.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/child_process_host.h"
+#include "services/resource_coordinator/public/cpp/memory_instrumentation/memory_instrumentation.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/task_manager/providers/arc/arc_process_task_provider.h"
@@ -32,13 +39,6 @@ namespace task_manager {
 
 namespace {
 
-scoped_refptr<base::SequencedTaskRunner> GetBlockingPoolRunner() {
-  base::SequencedWorkerPool* blocking_pool =
-      content::BrowserThread::GetBlockingPool();
-  return blocking_pool->GetSequencedTaskRunner(
-      blocking_pool->GetSequenceToken());
-}
-
 base::LazyInstance<TaskManagerImpl>::DestructorAtExit
     lazy_task_manager_instance = LAZY_INSTANCE_INITIALIZER;
 
@@ -48,24 +48,36 @@ TaskManagerImpl::TaskManagerImpl()
     : on_background_data_ready_callback_(
           base::Bind(&TaskManagerImpl::OnTaskGroupBackgroundCalculationsDone,
                      base::Unretained(this))),
-      blocking_pool_runner_(GetBlockingPoolRunner()),
+      blocking_pool_runner_(base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+           base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
       shared_sampler_(new SharedSampler(blocking_pool_runner_)),
-      is_running_(false) {
+      is_running_(false),
+      waiting_for_memory_dump_(false),
+      weak_ptr_factory_(this) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   task_providers_.emplace_back(new BrowserProcessTaskProvider());
   task_providers_.emplace_back(new ChildProcessTaskProvider());
-  task_providers_.emplace_back(new WebContentsTaskProvider());
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kTaskManagerShowExtraRenderers)) {
+    task_providers_.emplace_back(new WebContentsTaskProvider());
+  } else {
+    std::unique_ptr<TaskProvider> primary_subprovider(
+        new WebContentsTaskProvider());
+    std::unique_ptr<TaskProvider> secondary_subprovider(
+        new RenderProcessHostTaskProvider());
+    task_providers_.emplace_back(new FallbackTaskProvider(
+        std::move(primary_subprovider), std::move(secondary_subprovider)));
+  }
+
 #if defined(OS_CHROMEOS)
   if (arc::IsArcAvailable())
     task_providers_.emplace_back(new ArcProcessTaskProvider());
 #endif  // defined(OS_CHROMEOS)
-
-  content::GpuDataManager::GetInstance()->AddObserver(this);
 }
 
 TaskManagerImpl::~TaskManagerImpl() {
-  content::GpuDataManager::GetInstance()->RemoveObserver(this);
 }
 
 // static
@@ -87,8 +99,8 @@ void TaskManagerImpl::KillTask(TaskId task_id) {
   GetTaskByTaskId(task_id)->Kill();
 }
 
-double TaskManagerImpl::GetCpuUsage(TaskId task_id) const {
-  return GetTaskGroupByTaskId(task_id)->cpu_usage();
+double TaskManagerImpl::GetPlatformIndependentCPUUsage(TaskId task_id) const {
+  return GetTaskGroupByTaskId(task_id)->platform_independent_cpu_usage();
 }
 
 base::Time TaskManagerImpl::GetStartTime(TaskId task_id) const {
@@ -107,6 +119,10 @@ base::TimeDelta TaskManagerImpl::GetCpuTime(TaskId task_id) const {
   NOTIMPLEMENTED();
   return base::TimeDelta();
 #endif
+}
+
+int64_t TaskManagerImpl::GetMemoryFootprintUsage(TaskId task_id) const {
+  return GetTaskGroupByTaskId(task_id)->footprint_bytes();
 }
 
 int64_t TaskManagerImpl::GetPhysicalMemoryUsage(TaskId task_id) const {
@@ -145,12 +161,20 @@ int TaskManagerImpl::GetIdleWakeupsPerSecond(TaskId task_id) const {
   return GetTaskGroupByTaskId(task_id)->idle_wakeups_per_second();
 }
 
+int TaskManagerImpl::GetHardFaultsPerSecond(TaskId task_id) const {
+#if defined(OS_WIN)
+  return GetTaskGroupByTaskId(task_id)->hard_faults_per_second();
+#else
+  return -1;
+#endif
+}
+
 int TaskManagerImpl::GetNaClDebugStubPort(TaskId task_id) const {
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   return GetTaskGroupByTaskId(task_id)->nacl_debug_stub_port();
 #else
   return -2;
-#endif  // !defined(DISABLE_NACL)
+#endif  // BUILDFLAG(ENABLE_NACL)
 }
 
 void TaskManagerImpl::GetGDIHandles(TaskId task_id,
@@ -235,11 +259,20 @@ void TaskManagerImpl::GetTerminationStatus(TaskId task_id,
 }
 
 int64_t TaskManagerImpl::GetNetworkUsage(TaskId task_id) const {
-  return GetTaskByTaskId(task_id)->network_usage();
+  return GetTaskByTaskId(task_id)->network_usage_rate();
+}
+
+int64_t TaskManagerImpl::GetCumulativeNetworkUsage(TaskId task_id) const {
+  return GetTaskByTaskId(task_id)->cumulative_network_usage();
 }
 
 int64_t TaskManagerImpl::GetProcessTotalNetworkUsage(TaskId task_id) const {
-  return GetTaskGroupByTaskId(task_id)->per_process_network_usage();
+  return GetTaskGroupByTaskId(task_id)->per_process_network_usage_rate();
+}
+
+int64_t TaskManagerImpl::GetCumulativeProcessTotalNetworkUsage(
+    TaskId task_id) const {
+  return GetTaskGroupByTaskId(task_id)->cumulative_per_process_network_usage();
 }
 
 int64_t TaskManagerImpl::GetSqliteMemoryUsed(TaskId task_id) const {
@@ -397,8 +430,7 @@ TaskId TaskManagerImpl::GetTaskIdForWebContents(
   if (!web_contents)
     return -1;
   content::RenderFrameHost* rfh = web_contents->GetMainFrame();
-  Task* task =
-      GetTaskByPidOrRoute(0, rfh->GetProcess()->GetID(), rfh->GetRoutingID());
+  Task* task = GetTaskByRoute(rfh->GetProcess()->GetID(), rfh->GetRoutingID());
   if (!task)
     return -1;
   return task->task_id();
@@ -452,6 +484,28 @@ void TaskManagerImpl::TaskUnresponsive(Task* task) {
   NotifyObserversOnTaskUnresponsive(task->task_id());
 }
 
+// static
+void TaskManagerImpl::OnMultipleBytesTransferredUI(BytesTransferredMap params) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  for (const auto& entry : params) {
+    const BytesTransferredKey& process_info = entry.first;
+    const BytesTransferredParam& bytes_transferred = entry.second;
+
+    if (!GetInstance()->UpdateTasksWithBytesTransferred(process_info,
+                                                        bytes_transferred)) {
+      // We can't match a task to the notification.  That might mean the
+      // tab that started a download was closed, or the request may have had
+      // no originating task associated with it in the first place.
+      //
+      // Orphaned/unaccounted activity is credited to the Browser process.
+      BytesTransferredKey browser_process_key = {
+          content::ChildProcessHost::kInvalidUniqueID, MSG_ROUTING_NONE};
+      GetInstance()->UpdateTasksWithBytesTransferred(browser_process_key,
+                                                     bytes_transferred);
+    }
+  }
+}
+
 void TaskManagerImpl::OnVideoMemoryUsageStatsUpdate(
     const gpu::VideoMemoryUsageStats& gpu_memory_stats) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -459,32 +513,36 @@ void TaskManagerImpl::OnVideoMemoryUsageStatsUpdate(
   gpu_memory_stats_ = gpu_memory_stats;
 }
 
-// static
-void TaskManagerImpl::OnMultipleBytesReadUI(
-    std::vector<BytesReadParam>* params) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(params);
-
-  for (BytesReadParam& param : *params) {
-    if (!GetInstance()->UpdateTasksWithBytesRead(param)) {
-      // We can't match a task to the notification.  That might mean the
-      // tab that started a download was closed, or the request may have had
-      // no originating task associated with it in the first place.
-      // We attribute orphaned/unaccounted activity to the Browser process.
-      DCHECK(param.origin_pid || (param.child_id != -1));
-
-      param.origin_pid = 0;
-      param.child_id = param.route_id = -1;
-
-      GetInstance()->UpdateTasksWithBytesRead(param);
-    }
+void TaskManagerImpl::OnReceivedMemoryDump(
+    bool success,
+    memory_instrumentation::mojom::GlobalMemoryDumpPtr dump) {
+  waiting_for_memory_dump_ = false;
+  if (!success)
+    return;
+  for (const memory_instrumentation::mojom::ProcessMemoryDumpPtr& pmd :
+       dump->process_dumps) {
+    auto it = task_groups_by_proc_id_.find(pmd->pid);
+    if (it == task_groups_by_proc_id_.end())
+      continue;
+    it->second->set_footprint_bytes(pmd->os_dump->private_footprint_kb * 1024);
   }
 }
 
 void TaskManagerImpl::Refresh() {
   if (IsResourceRefreshEnabled(REFRESH_TYPE_GPU_MEMORY)) {
-    content::GpuDataManager::GetInstance()->
-        RequestVideoMemoryUsageStatsUpdate();
+    content::GpuDataManager::GetInstance()->RequestVideoMemoryUsageStatsUpdate(
+        base::Bind(&TaskManagerImpl::OnVideoMemoryUsageStatsUpdate,
+                   weak_ptr_factory_.GetWeakPtr()));
+  }
+
+  if (IsResourceRefreshEnabled(REFRESH_TYPE_MEMORY_FOOTPRINT) &&
+      !waiting_for_memory_dump_) {
+    // The callback keeps this object alive until the callback is invoked.
+    waiting_for_memory_dump_ = true;
+    auto callback = base::Bind(&TaskManagerImpl::OnReceivedMemoryDump,
+                               weak_ptr_factory_.GetWeakPtr());
+    memory_instrumentation::MemoryInstrumentation::GetInstance()
+        ->RequestGlobalDump(std::move(callback));
   }
 
   for (auto& groups_itr : task_groups_by_proc_id_) {
@@ -505,7 +563,8 @@ void TaskManagerImpl::StartUpdating() {
   for (const auto& provider : task_providers_)
     provider->SetObserver(this);
 
-  io_thread_helper_manager_.reset(new IoThreadHelperManager);
+  io_thread_helper_manager_.reset(new IoThreadHelperManager(
+      base::BindRepeating(&TaskManagerImpl::OnMultipleBytesTransferredUI)));
 }
 
 void TaskManagerImpl::StopUpdating() {
@@ -524,25 +583,24 @@ void TaskManagerImpl::StopUpdating() {
   sorted_task_ids_.clear();
 }
 
-Task* TaskManagerImpl::GetTaskByPidOrRoute(int origin_pid,
-                                           int child_id,
-                                           int route_id) const {
+Task* TaskManagerImpl::GetTaskByRoute(int child_id, int route_id) const {
   for (const auto& task_provider : task_providers_) {
-    Task* task =
-        task_provider->GetTaskOfUrlRequest(origin_pid, child_id, route_id);
+    Task* task = task_provider->GetTaskOfUrlRequest(child_id, route_id);
     if (task)
       return task;
   }
   return nullptr;
 }
 
-bool TaskManagerImpl::UpdateTasksWithBytesRead(const BytesReadParam& param) {
+bool TaskManagerImpl::UpdateTasksWithBytesTransferred(
+    const BytesTransferredKey& key,
+    const BytesTransferredParam& param) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  Task* task =
-      GetTaskByPidOrRoute(param.origin_pid, param.child_id, param.route_id);
+  Task* task = GetTaskByRoute(key.child_id, key.route_id);
   if (task) {
-    task->OnNetworkBytesRead(param.byte_count);
+    task->OnNetworkBytesRead(param.byte_read_count);
+    task->OnNetworkBytesSent(param.byte_sent_count);
     return true;
   }
 

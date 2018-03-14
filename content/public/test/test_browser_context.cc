@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/files/file_path.h"
+#include "base/single_thread_task_runner.h"
 #include "base/test/null_task_runner.h"
 #include "content/public/browser/permission_manager.h"
 #include "content/public/test/mock_resource_context.h"
@@ -78,17 +79,19 @@ base::FilePath TestBrowserContext::GetPath() const {
   return browser_context_dir_.GetPath();
 }
 
+#if !defined(OS_ANDROID)
 std::unique_ptr<ZoomLevelDelegate> TestBrowserContext::CreateZoomLevelDelegate(
     const base::FilePath& partition_path) {
   return std::unique_ptr<ZoomLevelDelegate>();
 }
+#endif  // !defined(OS_ANDROID)
 
 bool TestBrowserContext::IsOffTheRecord() const {
   return is_off_the_record_;
 }
 
 DownloadManagerDelegate* TestBrowserContext::GetDownloadManagerDelegate() {
-  return NULL;
+  return nullptr;
 }
 
 ResourceContext* TestBrowserContext::GetResourceContext() {
@@ -99,7 +102,7 @@ ResourceContext* TestBrowserContext::GetResourceContext() {
 }
 
 BrowserPluginGuestManager* TestBrowserContext::GetGuestManager() {
-  return NULL;
+  return nullptr;
 }
 
 storage::SpecialStoragePolicy* TestBrowserContext::GetSpecialStoragePolicy() {
@@ -107,7 +110,7 @@ storage::SpecialStoragePolicy* TestBrowserContext::GetSpecialStoragePolicy() {
 }
 
 PushMessagingService* TestBrowserContext::GetPushMessagingService() {
-  return NULL;
+  return nullptr;
 }
 
 SSLHostStateDelegate* TestBrowserContext::GetSSLHostStateDelegate() {
@@ -120,6 +123,10 @@ PermissionManager* TestBrowserContext::GetPermissionManager() {
   return permission_manager_.get();
 }
 
+BackgroundFetchDelegate* TestBrowserContext::GetBackgroundFetchDelegate() {
+  return nullptr;
+}
+
 BackgroundSyncController* TestBrowserContext::GetBackgroundSyncController() {
   if (!background_sync_controller_)
     background_sync_controller_.reset(new MockBackgroundSyncController());
@@ -127,9 +134,17 @@ BackgroundSyncController* TestBrowserContext::GetBackgroundSyncController() {
   return background_sync_controller_.get();
 }
 
+BrowsingDataRemoverDelegate*
+TestBrowserContext::GetBrowsingDataRemoverDelegate() {
+  // Most BrowsingDataRemover tests do not require a delegate
+  // (not even a mock one).
+  return nullptr;
+}
+
 net::URLRequestContextGetter* TestBrowserContext::CreateRequestContext(
       content::ProtocolHandlerMap* protocol_handlers,
       content::URLRequestInterceptorScopedVector request_interceptors) {
+  request_interceptors_ = std::move(request_interceptors);
   return GetRequestContext();
 }
 
@@ -139,18 +154,19 @@ TestBrowserContext::CreateRequestContextForStoragePartition(
     bool in_memory,
     ProtocolHandlerMap* protocol_handlers,
     URLRequestInterceptorScopedVector request_interceptors) {
+  request_interceptors_ = std::move(request_interceptors);
   return nullptr;
 }
 
 net::URLRequestContextGetter* TestBrowserContext::CreateMediaRequestContext() {
-  return NULL;
+  return nullptr;
 }
 
 net::URLRequestContextGetter*
 TestBrowserContext::CreateMediaRequestContextForStoragePartition(
     const base::FilePath& partition_path,
     bool in_memory) {
-  return NULL;
+  return nullptr;
 }
 
 }  // namespace content

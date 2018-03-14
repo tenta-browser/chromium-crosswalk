@@ -35,9 +35,9 @@
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/extensions/window_controller.h"
 #include "chrome/browser/extensions/window_controller_list.h"
-#include "chrome/browser/memory/tab_manager.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/resource_coordinator/tab_manager.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/apps/chrome_app_delegate.h"
@@ -95,9 +95,11 @@
 #include "ui/base/models/list_selection_model.h"
 #include "ui/base/ui_base_types.h"
 
-#if defined(USE_ASH)
-#include "chrome/browser/extensions/api/tabs/ash_panel_contents.h"  // nogncheck
-#include "extensions/browser/app_window/app_window_registry.h"  // nogncheck
+#if defined(OS_CHROMEOS)
+#include "ash/public/cpp/window_properties.h"
+#include "ash/public/interfaces/window_pin_type.mojom.h"
+#include "chrome/browser/ui/browser_command_controller.h"
+#include "ui/aura/window.h"
 #endif
 
 using content::BrowserThread;
@@ -215,6 +217,7 @@ ui::WindowShowState ConvertToWindowShowState(windows::WindowState state) {
     case windows::WINDOW_STATE_MAXIMIZED:
       return ui::SHOW_STATE_MAXIMIZED;
     case windows::WINDOW_STATE_FULLSCREEN:
+    case windows::WINDOW_STATE_LOCKED_FULLSCREEN:
       return ui::SHOW_STATE_FULLSCREEN;
     case windows::WINDOW_STATE_NONE:
       return ui::SHOW_STATE_DEFAULT;
@@ -239,6 +242,7 @@ bool IsValidStateForWindowsCreateFunction(
              !is_panel;
     case windows::WINDOW_STATE_MAXIMIZED:
     case windows::WINDOW_STATE_FULLSCREEN:
+    case windows::WINDOW_STATE_LOCKED_FULLSCREEN:
       // If maximised/fullscreen, default focused state should be focused.
       return !(create_data->focused && !*create_data->focused) && !has_bound &&
              !is_panel;
@@ -250,6 +254,28 @@ bool IsValidStateForWindowsCreateFunction(
   NOTREACHED();
   return true;
 }
+
+#if defined(OS_CHROMEOS)
+bool IsWindowTrustedPinned(ui::BaseWindow* base_window) {
+  aura::Window* window = base_window->GetNativeWindow();
+  ash::mojom::WindowPinType type = window->GetProperty(ash::kWindowPinTypeKey);
+  return type == ash::mojom::WindowPinType::TRUSTED_PINNED;
+}
+
+void SetWindowTrustedPinned(ui::BaseWindow* base_window, bool trusted_pinned) {
+  aura::Window* window = base_window->GetNativeWindow();
+  // TRUSTED_PINNED is used here because that one locks the window fullscreen
+  // without allowing the user to exit (as opposed to regular PINNED).
+  window->SetProperty(ash::kWindowPinTypeKey,
+                      trusted_pinned ? ash::mojom::WindowPinType::TRUSTED_PINNED
+                                     : ash::mojom::WindowPinType::NONE);
+}
+
+bool ExtensionHasLockedFullscreenPermission(const Extension* extension) {
+  return extension->permissions_data()->HasAPIPermission(
+      APIPermission::kLockWindowFullscreenPrivate);
+}
+#endif  // defined(OS_CHROMEOS)
 
 }  // namespace
 
@@ -485,11 +511,6 @@ ExtensionFunction::ResponseAction WindowsCreateFunction::Run() {
 
   Browser::Type window_type = Browser::TYPE_TABBED;
 
-#if defined(USE_ASH)
-  bool create_ash_panel = false;
-  bool saw_focus_key = false;
-#endif  // defined(USE_ASH)
-
   gfx::Rect window_bounds;
   bool focused = true;
   std::string extension_id;
@@ -509,18 +530,6 @@ ExtensionFunction::ResponseAction WindowsCreateFunction::Run() {
 
       case windows::CREATE_TYPE_PANEL: {
         extension_id = extension()->id();
-#if defined(USE_ASH)
-      // Only ChromeOS' version of chrome.windows.create would create a panel
-      // window. It is whitelisted to Hangouts extension for limited time until
-      // it transitioned to other types of windows.
-        for (const char* id : extension_misc::kHangoutsExtensionIds) {
-          if (extension_id == id) {
-            create_ash_panel = true;
-            break;
-          }
-        }
-#endif  // defined(USE_ASH)
-        // Everything else gets POPUP instead of PANEL.
         // TODO(dimich): Eventually, remove the 'panel' values form valid
         // window.create parameters. However, this is a more breaking change, so
         // for now simply treat it as a POPUP.
@@ -565,38 +574,9 @@ ExtensionFunction::ResponseAction WindowsCreateFunction::Run() {
     if (create_data->height)
       window_bounds.set_height(*create_data->height);
 
-    if (create_data->focused) {
+    if (create_data->focused)
       focused = *create_data->focused;
-#if defined(USE_ASH)
-      saw_focus_key = true;
-#endif
-    }
   }
-
-#if defined(USE_ASH)
-  if (create_ash_panel) {
-    if (urls.empty())
-      urls.push_back(GURL(chrome::kChromeUINewTabURL));
-
-    AppWindow::CreateParams create_params;
-    create_params.window_type = AppWindow::WINDOW_TYPE_V1_PANEL;
-    create_params.window_key = extension_id;
-    create_params.window_spec.bounds = window_bounds;
-    create_params.focused = saw_focus_key && focused;
-    AppWindow* app_window =
-        new AppWindow(window_profile, new ChromeAppDelegate(true), extension());
-    AshPanelContents* ash_panel_contents = new AshPanelContents(app_window);
-    app_window->Init(urls[0], ash_panel_contents, render_frame_host(),
-                     create_params);
-    WindowController* window_controller =
-        WindowControllerList::GetInstance()->FindWindowById(
-            app_window->session_id().id());
-    if (!window_controller)
-      return RespondNow(Error(kUnknownErrorDoNotUse));
-    return RespondNow(
-        OneArgument(window_controller->CreateWindowValueWithTabs(extension())));
-  }
-#endif  // defined(USE_ASH)
 
   // Create a new BrowserWindow.
   Browser::CreateParams create_params(window_type, window_profile,
@@ -611,6 +591,13 @@ ExtensionFunction::ResponseAction WindowsCreateFunction::Run() {
   }
   create_params.initial_show_state = ui::SHOW_STATE_NORMAL;
   if (create_data && create_data->state) {
+#if defined(OS_CHROMEOS)
+    if (create_data->state == windows::WINDOW_STATE_LOCKED_FULLSCREEN &&
+        !ExtensionHasLockedFullscreenPermission(extension())) {
+      return RespondNow(
+          Error(keys::kMissingLockWindowFullscreenPrivatePermission));
+    }
+#endif
     create_params.initial_show_state =
         ConvertToWindowShowState(create_data->state);
   }
@@ -621,8 +608,16 @@ ExtensionFunction::ResponseAction WindowsCreateFunction::Run() {
     chrome::NavigateParams navigate_params(new_window, url,
                                            ui::PAGE_TRANSITION_LINK);
     navigate_params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+
+    // Depending on the |setSelfAsOpener| option, we need to put the new
+    // contents in the same BrowsingInstance as their opener.  See also
+    // https://crbug.com/713888.
+    bool set_self_as_opener = create_data->set_self_as_opener &&  // present?
+                              *create_data->set_self_as_opener;  // set to true?
+    navigate_params.opener = set_self_as_opener ? render_frame_host() : nullptr;
     navigate_params.source_site_instance =
         render_frame_host()->GetSiteInstance();
+
     chrome::Navigate(&navigate_params);
   }
 
@@ -645,6 +640,16 @@ ExtensionFunction::ResponseAction WindowsCreateFunction::Run() {
     chrome::NewTab(new_window);
   }
   chrome::SelectNumberedTab(new_window, 0);
+
+#if defined(OS_CHROMEOS)
+  // Lock the window fullscreen only after the new tab has been created
+  // (otherwise the tabstrip is empty).
+  if (create_data &&
+      create_data->state == windows::WINDOW_STATE_LOCKED_FULLSCREEN) {
+    SetWindowTrustedPinned(new_window->window(), true);
+    new_window->command_controller()->LockedFullscreenStateChanged();
+  }
+#endif
 
   if (focused)
     new_window->window()->Show();
@@ -682,6 +687,35 @@ ExtensionFunction::ResponseAction WindowsUpdateFunction::Run() {
   // Report UMA stats to decide when to remove the deprecated "docked" windows
   // state (crbug.com/703733).
   ReportRequestedWindowState(params->update_info.state);
+
+#if defined(OS_CHROMEOS)
+  const bool is_window_trusted_pinned =
+      IsWindowTrustedPinned(controller->window());
+  // Don't allow locked fullscreen operations on a window without the proper
+  // permission (also don't allow any operations on a locked window if the
+  // extension doesn't have the permission).
+  if ((is_window_trusted_pinned ||
+       params->update_info.state == windows::WINDOW_STATE_LOCKED_FULLSCREEN) &&
+      !ExtensionHasLockedFullscreenPermission(extension())) {
+    return RespondNow(
+        Error(keys::kMissingLockWindowFullscreenPrivatePermission));
+  }
+  // state will be WINDOW_STATE_NONE if the state parameter wasn't passed from
+  // the JS side, and in that case we don't want to change the locked state.
+  if (is_window_trusted_pinned &&
+      params->update_info.state != windows::WINDOW_STATE_LOCKED_FULLSCREEN &&
+      params->update_info.state != windows::WINDOW_STATE_NONE) {
+    SetWindowTrustedPinned(controller->window(), false);
+    controller->GetBrowser()->command_controller()->
+        LockedFullscreenStateChanged();
+  } else if (!is_window_trusted_pinned &&
+             params->update_info.state ==
+                 windows::WINDOW_STATE_LOCKED_FULLSCREEN) {
+    SetWindowTrustedPinned(controller->window(), true);
+    controller->GetBrowser()->command_controller()->
+        LockedFullscreenStateChanged();
+  }
+#endif
 
   ui::WindowShowState show_state =
       ConvertToWindowShowState(params->update_info.state);
@@ -781,6 +815,14 @@ ExtensionFunction::ResponseAction WindowsRemoveFunction::Run() {
                                            &controller, &error)) {
     return RespondNow(Error(error));
   }
+
+#if defined(OS_CHROMEOS)
+  if (IsWindowTrustedPinned(controller->window()) &&
+      !ExtensionHasLockedFullscreenPermission(extension())) {
+    return RespondNow(
+        Error(keys::kMissingLockWindowFullscreenPrivatePermission));
+  }
+#endif
 
   WindowController::Reason reason;
   if (!controller->CanClose(&reason)) {
@@ -925,10 +967,15 @@ ExtensionFunction::ResponseAction TabsQueryFunction::Run() {
     TabStripModel* tab_strip = browser->tab_strip_model();
     for (int i = 0; i < tab_strip->count(); ++i) {
       WebContents* web_contents = tab_strip->GetWebContentsAt(i);
-      memory::TabManager* tab_manager = g_browser_process->GetTabManager();
+      resource_coordinator::TabManager* tab_manager =
+          g_browser_process->GetTabManager();
 
       if (index > -1 && i != index)
         continue;
+
+      if (!web_contents) {
+        continue;
+      }
 
       if (!MatchesBool(params->query_info.highlighted.get(),
                        tab_strip->IsTabSelected(i))) {
@@ -1138,7 +1185,7 @@ ExtensionFunction::ResponseAction TabsHighlightFunction::Run() {
     return RespondNow(Error(keys::kNoHighlightedTabError));
 
   selection.set_active(active_index);
-  browser->tab_strip_model()->SetSelectionFromModel(selection);
+  browser->tab_strip_model()->SetSelectionFromModel(std::move(selection));
   return RespondNow(OneArgument(
       browser->extension_window_controller()->CreateWindowValueWithTabs(
           extension())));
@@ -1211,9 +1258,17 @@ bool TabsUpdateFunction::RunAsync() {
 
   // Navigate the tab to a new location if the url is different.
   bool is_async = false;
-  if (params->update_properties.url.get() &&
-      !UpdateURL(*params->update_properties.url, tab_id, &is_async)) {
-    return false;
+  if (params->update_properties.url.get()) {
+    std::string updated_url = *params->update_properties.url;
+    if (browser->profile()->GetProfileType() == Profile::INCOGNITO_PROFILE &&
+        !chrome::IsURLAllowedInIncognito(GURL(updated_url),
+                                         browser->profile())) {
+      error_ = ErrorUtils::FormatErrorMessage(
+          keys::kURLsNotAllowedInIncognitoError, updated_url);
+      return false;
+    }
+    if (!UpdateURL(updated_url, tab_id, &is_async))
+      return false;
   }
 
   bool active = false;
@@ -1269,8 +1324,11 @@ bool TabsUpdateFunction::RunAsync() {
 
   if (params->update_properties.opener_tab_id.get()) {
     int opener_id = *params->update_properties.opener_tab_id;
-
     WebContents* opener_contents = NULL;
+    if (opener_id == tab_id) {
+      error_ = "Cannot set a tab's opener to itself.";
+      return false;
+    }
     if (!ExtensionTabUtil::GetTabById(opener_id, browser_context(),
                                       include_incognito(), nullptr, nullptr,
                                       &opener_contents, nullptr))
@@ -1765,7 +1823,7 @@ bool TabsDetectLanguageFunction::RunAsync() {
     // returned.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &TabsDetectLanguageFunction::GotLanguage, this,
             chrome_translate_client->GetLanguageState().original_language()));
     return true;

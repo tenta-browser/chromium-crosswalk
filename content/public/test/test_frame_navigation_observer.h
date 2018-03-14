@@ -24,11 +24,13 @@ class TestFrameNavigationObserver : public WebContentsObserver {
 
   ~TestFrameNavigationObserver() override;
 
-  // Runs a nested message loop and blocks until the full load has
+  ui::PageTransition transition_type() { return transition_type_.value(); }
+
+  // Runs a nested run loop and blocks until the full load has
   // completed.
   void Wait();
 
-  // Runs a nested message loop and blocks until the navigation in the
+  // Runs a nested run loop and blocks until the navigation in the
   // associated FrameTreeNode has committed.
   void WaitForCommit();
 
@@ -50,6 +52,9 @@ class TestFrameNavigationObserver : public WebContentsObserver {
   // If true, this object is waiting for commit only, not for the full load
   // of the document.
   bool wait_for_commit_;
+
+  // Saved parameters from NavigationHandle.
+  base::Optional<ui::PageTransition> transition_type_;
 
   // The RunLoop used to spin the message loop.
   base::RunLoop run_loop_;

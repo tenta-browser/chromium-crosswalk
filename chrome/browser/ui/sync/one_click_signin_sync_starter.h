@@ -17,17 +17,12 @@
 #include "chrome/browser/ui/sync/profile_signin_confirmation_helper.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service.h"
 #include "components/signin/core/browser/signin_tracker.h"
-#include "content/public/browser/web_contents_observer.h"
 
 class Browser;
 
 namespace browser_sync {
 class ProfileSyncService;
 }  // namespace browser_sync
-
-namespace content {
-class WebContents;
-}  // namespace content
 
 namespace syncer {
 class SyncSetupInProgressHandle;
@@ -38,7 +33,6 @@ class SyncSetupInProgressHandle;
 // the job is done.
 class OneClickSigninSyncStarter : public SigninTracker::Observer,
                                   public chrome::BrowserListObserver,
-                                  public content::WebContentsObserver,
                                   public LoginUIService::Observer {
  public:
   enum ProfileMode {
@@ -69,11 +63,6 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
     // to configure which data types to sync before sync is enabled.
     CONFIGURE_SYNC_FIRST,
 
-    // Starts the process of re-authenticating the user via SigninManager,
-    // and once completed, redirects the user to the settings page, but doesn't
-    // display the configure sync UI.
-    SHOW_SETTINGS_WITHOUT_CONFIGURE,
-
     // The process should be aborted because the undo button has been pressed.
     UNDO_SYNC
   };
@@ -103,11 +92,6 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
   // OneClickSigninSyncStarter from a browser, provide both.
   // If |display_confirmation| is true, the user will be prompted to confirm the
   // signin before signin completes.
-  // |web_contents| is used to show the sync UI if it's showing a blank page
-  // and not about to be closed. It can be NULL.
-  // If |web_contents| is non-NULL and the |continue_url| is non-empty, the
-  // |web_contents| will be navigated to the |continue_url| once both signin and
-  // Sync setup are complete.
   // |callback| is always executed before OneClickSigninSyncStarter is deleted.
   // It can be empty.
   OneClickSigninSyncStarter(Profile* profile,
@@ -116,12 +100,11 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
                             const std::string& email,
                             const std::string& password,
                             const std::string& refresh_token,
+                            signin_metrics::AccessPoint signin_access_point,
+                            signin_metrics::Reason signin_reason,
                             ProfileMode profile_mode,
                             StartSyncMode start_mode,
-                            content::WebContents* web_contents,
                             ConfirmationRequired display_confirmation,
-                            const GURL& current_url,
-                            const GURL& continue_url,
                             Callback callback);
 
   // chrome::BrowserListObserver override.
@@ -142,7 +125,6 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
   friend class OneClickSigninSyncStarterTest;
   FRIEND_TEST_ALL_PREFIXES(OneClickSigninSyncStarterTest, CallbackSigninFailed);
   FRIEND_TEST_ALL_PREFIXES(OneClickSigninSyncStarterTest, CallbackNull);
-  FRIEND_TEST_ALL_PREFIXES(OneClickSigninSyncStarterTest, LoadContinueUrl);
 
   // Initializes the internals of the OneClickSigninSyncStarter object. Can also
   // be used to re-initialize the object to refer to a newly created profile.
@@ -163,7 +145,7 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
    public:
     SigninDialogDelegate(
         base::WeakPtr<OneClickSigninSyncStarter> sync_starter);
-    virtual ~SigninDialogDelegate();
+    ~SigninDialogDelegate() override;
     void OnCancelSignin() override;
     void OnContinueSignin() override;
     void OnSigninWithNewProfile() override;
@@ -185,6 +167,13 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
   // Called to create a new profile, which is then signed in with the
   // in-progress auth credentials currently stored in this object.
   void CreateNewSignedInProfile();
+
+  // Opens a browser window for new profile showing the sign-in page.
+  void CancelSigninAndStartNewSigninInNewProfile(Profile* new_profile);
+
+  // Copies the sign-in credentials to |new_profile| and starts syncing in
+  // |new_profile|.
+  void CopyCredentialsToNewProfileAndFinishSignin(Profile* new_profile);
 
   // Helper function that loads policy with the cached |dm_token_| and
   // |client_id|, then completes the signin process.
@@ -218,35 +207,23 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
   // call FinishProfileSyncServiceSetup() function.
   browser_sync::ProfileSyncService* GetProfileSyncService();
 
+  // Finishes the setup of the profile sync service.
   void FinishProfileSyncServiceSetup();
-
-  // Displays the settings UI and brings up the advanced sync settings
-  // dialog if |configure_sync| is true. The web contents provided to the
-  // constructor is used if it's showing a blank page and not about to be
-  // closed. Otherwise, a new tab or an existing settings tab is used.
-  void ShowSettingsPage(bool configure_sync);
-
-  // Displays a settings page in the provided web contents. |sub_page| can be
-  // empty to show the main settings page.
-  void ShowSettingsPageInWebContents(content::WebContents* contents,
-                                     const std::string& sub_page);
 
   // Shows the post-signin confirmation bubble. If |custom_message| is empty,
   // the default "You are signed in" message is displayed.
   void DisplayFinalConfirmationBubble(const base::string16& custom_message);
 
+  // Displays the sync confirmation modal dialog.
   void DisplayModalSyncConfirmationWindow();
-
-  // Loads the |continue_url_| in the current tab.
-  void LoadContinueUrl();
 
   Profile* profile_;
   Browser* browser_;
+  signin_metrics::AccessPoint signin_access_point_;
+  signin_metrics::Reason signin_reason_;
   std::unique_ptr<SigninTracker> signin_tracker_;
   StartSyncMode start_mode_;
   ConfirmationRequired confirmation_required_;
-  GURL current_url_;
-  GURL continue_url_;
 
   // Callback executed when sync setup succeeds or fails.
   Callback sync_setup_completed_callback_;

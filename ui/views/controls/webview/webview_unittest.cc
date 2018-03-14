@@ -10,12 +10,10 @@
 
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
-#include "base/test/scoped_task_scheduler.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/test_browser_context.h"
-#include "content/public/test/test_browser_thread.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/web_contents_tester.h"
 #include "content/test/test_content_browser_client.h"
 #include "ui/events/event.h"
@@ -132,13 +130,7 @@ class WebViewTestWebContentsDelegate : public content::WebContentsDelegate {
 // Provides functionality to test a WebView.
 class WebViewUnitTest : public views::test::WidgetTest {
  public:
-  WebViewUnitTest()
-      : ui_thread_(content::BrowserThread::UI, base::MessageLoop::current()),
-        scoped_task_scheduler_(base::MessageLoop::current()),
-        file_blocking_thread_(content::BrowserThread::FILE_USER_BLOCKING,
-                              base::MessageLoop::current()),
-        io_thread_(content::BrowserThread::IO, base::MessageLoop::current()),
-        top_level_widget_(nullptr) {}
+  WebViewUnitTest() = default;
 
   ~WebViewUnitTest() override {}
 
@@ -185,15 +177,12 @@ class WebViewUnitTest : public views::test::WidgetTest {
   }
 
  private:
-  content::TestBrowserThread ui_thread_;
-  base::test::ScopedTaskScheduler scoped_task_scheduler_;
-  content::TestBrowserThread file_blocking_thread_;
-  content::TestBrowserThread io_thread_;
+  content::TestBrowserThreadBundle test_browser_thread_bundle_;
   std::unique_ptr<content::TestBrowserContext> browser_context_;
   content::TestContentBrowserClient test_browser_client_;
 
-  Widget* top_level_widget_;
-  WebView* web_view_;
+  Widget* top_level_widget_ = nullptr;
+  WebView* web_view_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(WebViewUnitTest);
 };
@@ -326,19 +315,31 @@ TEST_F(WebViewUnitTest, EmbeddedFullscreenDuringScreenCapture_Layout) {
   delegate.set_is_fullscreened(true);
   static_cast<content::WebContentsObserver*>(web_view())->
       DidToggleFullscreenModeForTab(true, false);
-  EXPECT_EQ(gfx::Rect(18, 26, 64, 48), holder()->bounds());
+
+  // The expected size should be scaled to whichever dimension matches the
+  // holder first, with the other scaled from the capture size to match the
+  // holder.  So 100, 100 holder size and 64, 48 capture size gives:
+  // 100 / 64 * 48 = 75
+  // The positioning centers the unmatched holder/capture dimension, giving:
+  // (100 - 75 = 25) / 2 = 12
+  EXPECT_EQ(gfx::Rect(0, 12, 100, 75), holder()->bounds());
 
   // Resize the WebView so that its width is smaller than the capture width.
   // Expect the holder to be scaled-down, letterboxed style.
-  web_view()->SetBoundsRect(gfx::Rect(0, 0, 32, 32));
-  EXPECT_EQ(gfx::Rect(0, 4, 32, 24), holder()->bounds());
+  web_view()->SetBoundsRect(gfx::Rect(0, 0, 32, 100));
+  EXPECT_EQ(gfx::Rect(0, 38, 32, 24), holder()->bounds());
+
+  // Resize the WebView so that its height is smaller than the capture height.
+  // Expect the holder to be scaled-down, pillarboxed style.
+  web_view()->SetBoundsRect(gfx::Rect(0, 0, 100, 24));
+  EXPECT_EQ(gfx::Rect(34, 0, 32, 24), holder()->bounds());
 
   // Transition back out of fullscreen mode a final time and confirm the bounds
   // of the holder fill the entire WebView once again.
   delegate.set_is_fullscreened(false);
   static_cast<content::WebContentsObserver*>(web_view())->
       DidToggleFullscreenModeForTab(false, false);
-  EXPECT_EQ(gfx::Rect(0, 0, 32, 32), holder()->bounds());
+  EXPECT_EQ(gfx::Rect(0, 0, 100, 24), holder()->bounds());
 }
 
 // Tests that a WebView correctly switches between WebContentses when one of
@@ -372,7 +373,7 @@ TEST_F(WebViewUnitTest, EmbeddedFullscreenDuringScreenCapture_Switching) {
   static_cast<content::WebContentsObserver*>(web_view())->
       DidToggleFullscreenModeForTab(true, false);
   EXPECT_EQ(web_contents1->GetNativeView(), holder()->native_view());
-  EXPECT_EQ(gfx::Rect(18, 26, 64, 48), holder()->bounds());
+  EXPECT_EQ(gfx::Rect(0, 12, 100, 75), holder()->bounds());
 
   // When setting the WebContents to nullptr, the native view should become
   // unset.
@@ -383,7 +384,7 @@ TEST_F(WebViewUnitTest, EmbeddedFullscreenDuringScreenCapture_Switching) {
   // instance, expect the native view and layout to reflect that.
   web_view()->SetWebContents(web_contents1.get());
   EXPECT_EQ(web_contents1->GetNativeView(), holder()->native_view());
-  EXPECT_EQ(gfx::Rect(18, 26, 64, 48), holder()->bounds());
+  EXPECT_EQ(gfx::Rect(0, 12, 100, 75), holder()->bounds());
 
   // Now, switch to a different, non-null WebContents instance and check that
   // the native view has changed and the holder is filling WebView again.
@@ -394,7 +395,7 @@ TEST_F(WebViewUnitTest, EmbeddedFullscreenDuringScreenCapture_Switching) {
   // Finally, switch back to the first WebContents (still fullscreened).
   web_view()->SetWebContents(web_contents1.get());
   EXPECT_EQ(web_contents1->GetNativeView(), holder()->native_view());
-  EXPECT_EQ(gfx::Rect(18, 26, 64, 48), holder()->bounds());
+  EXPECT_EQ(gfx::Rect(0, 12, 100, 75), holder()->bounds());
 }
 
 // Tests that clicking anywhere within the bounds of WebView, and either outside
@@ -424,7 +425,7 @@ TEST_F(WebViewUnitTest, EmbeddedFullscreenDuringScreenCapture_ClickToFocus) {
   delegate.set_is_fullscreened(true);
   static_cast<content::WebContentsObserver*>(web_view())->
       DidToggleFullscreenModeForTab(true, false);
-  EXPECT_EQ(gfx::Rect(18, 21, 64, 48), holder()->bounds());
+  EXPECT_EQ(gfx::Rect(0, 7, 100, 75), holder()->bounds());
 
   // Focus the other widget.
   something_to_focus->RequestFocus();

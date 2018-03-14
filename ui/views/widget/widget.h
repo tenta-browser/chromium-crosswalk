@@ -109,7 +109,8 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
                             public FocusTraversable,
                             public ui::NativeThemeObserver {
  public:
-  typedef std::set<Widget*> Widgets;
+  using Widgets = std::set<Widget*>;
+  using ShapeRects = std::vector<gfx::Rect>;
 
   enum FrameType {
     FRAME_TYPE_DEFAULT,         // Use whatever the default would be.
@@ -465,7 +466,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // Default behavior is to animate both show and hide.
   void SetVisibilityAnimationTransition(VisibilityTransition transition);
 
-  // Starts a nested message loop that moves the window. This can be used to
+  // Starts a nested run loop that moves the window. This can be used to
   // start a window move operation from a mouse or touch event. This returns
   // when the move completes. |drag_offset| is the offset from the top left
   // corner of the window to the point where the cursor is dragging, and is used
@@ -484,7 +485,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
   // Sets a shape on the widget. Passing a NULL |shape| reverts the widget to
   // be rectangular.
-  void SetShape(std::unique_ptr<SkRegion> shape);
+  void SetShape(std::unique_ptr<ShapeRects> shape);
 
   // Hides the widget then closes it after a return to the message loop.
   virtual void Close();
@@ -501,7 +502,8 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
   // Shows the widget. The widget is activated if during initialization the
   // can_activate flag in the InitParams structure is set to true.
-  virtual void Show();
+  void Show();
+
   // Hides the widget.
   void Hide();
 
@@ -640,13 +642,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // changed.
   void ThemeChanged();
 
-  // Notifies the view hierarchy contained in this widget that locale resources
-  // changed.
-  void LocaleChanged();
-
   // Notifies the view hierarchy contained in this widget that the device scale
   // factor changed.
-  void DeviceScaleFactorChanged(float device_scale_factor);
+  void DeviceScaleFactorChanged(float old_device_scale_factor,
+                                float new_device_scale_factor);
 
   void SetFocusTraversableParent(FocusTraversable* parent);
   void SetFocusTraversableParentView(View* parent_view);
@@ -858,7 +857,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
  private:
   friend class ComboboxTest;
-  friend class CustomButtonTest;
+  friend class ButtonTest;
   friend class TextfieldTest;
   friend class ViewAuraTest;
 

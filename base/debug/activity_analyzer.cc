@@ -5,6 +5,7 @@
 #include "base/debug/activity_analyzer.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/files/file.h"
 #include "base/files/file_path.h"
@@ -12,6 +13,7 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 
@@ -21,10 +23,26 @@ namespace debug {
 namespace {
 // An empty snapshot that can be returned when there otherwise is none.
 LazyInstance<ActivityUserData::Snapshot>::Leaky g_empty_user_data_snapshot;
+
+// DO NOT CHANGE VALUES. This is logged persistently in a histogram.
+enum AnalyzerCreationError {
+  kInvalidMemoryMappedFile,
+  kPmaBadFile,
+  kPmaUninitialized,
+  kPmaDeleted,
+  kPmaCorrupt,
+  kAnalyzerCreationErrorMax  // Keep this last.
+};
+
+void LogAnalyzerCreationError(AnalyzerCreationError error) {
+  UMA_HISTOGRAM_ENUMERATION("ActivityTracker.Collect.AnalyzerCreationError",
+                            error, kAnalyzerCreationErrorMax);
+}
+
 }  // namespace
 
-ThreadActivityAnalyzer::Snapshot::Snapshot() {}
-ThreadActivityAnalyzer::Snapshot::~Snapshot() {}
+ThreadActivityAnalyzer::Snapshot::Snapshot() = default;
+ThreadActivityAnalyzer::Snapshot::~Snapshot() = default;
 
 ThreadActivityAnalyzer::ThreadActivityAnalyzer(
     const ThreadActivityTracker& tracker)
@@ -42,7 +60,7 @@ ThreadActivityAnalyzer::ThreadActivityAnalyzer(
                                  PersistentMemoryAllocator::kSizeAny),
                              allocator->GetAllocSize(reference)) {}
 
-ThreadActivityAnalyzer::~ThreadActivityAnalyzer() {}
+ThreadActivityAnalyzer::~ThreadActivityAnalyzer() = default;
 
 void ThreadActivityAnalyzer::AddGlobalInformation(
     GlobalActivityAnalyzer* global) {
@@ -63,9 +81,35 @@ void ThreadActivityAnalyzer::AddGlobalInformation(
 
 GlobalActivityAnalyzer::GlobalActivityAnalyzer(
     std::unique_ptr<PersistentMemoryAllocator> allocator)
-    : allocator_(std::move(allocator)), allocator_iterator_(allocator_.get()) {}
+    : allocator_(std::move(allocator)),
+      analysis_stamp_(0LL),
+      allocator_iterator_(allocator_.get()) {
+  DCHECK(allocator_);
+}
 
-GlobalActivityAnalyzer::~GlobalActivityAnalyzer() {}
+GlobalActivityAnalyzer::~GlobalActivityAnalyzer() = default;
+
+// static
+std::unique_ptr<GlobalActivityAnalyzer>
+GlobalActivityAnalyzer::CreateWithAllocator(
+    std::unique_ptr<PersistentMemoryAllocator> allocator) {
+  if (allocator->GetMemoryState() ==
+      PersistentMemoryAllocator::MEMORY_UNINITIALIZED) {
+    LogAnalyzerCreationError(kPmaUninitialized);
+    return nullptr;
+  }
+  if (allocator->GetMemoryState() ==
+      PersistentMemoryAllocator::MEMORY_DELETED) {
+    LogAnalyzerCreationError(kPmaDeleted);
+    return nullptr;
+  }
+  if (allocator->IsCorrupt()) {
+    LogAnalyzerCreationError(kPmaCorrupt);
+    return nullptr;
+  }
+
+  return WrapUnique(new GlobalActivityAnalyzer(std::move(allocator)));
+}
 
 #if !defined(OS_NACL)
 // static
@@ -75,17 +119,44 @@ std::unique_ptr<GlobalActivityAnalyzer> GlobalActivityAnalyzer::CreateWithFile(
   // the analyzer and any trackers that my still be active.
   std::unique_ptr<MemoryMappedFile> mmfile(new MemoryMappedFile());
   mmfile->Initialize(file_path, MemoryMappedFile::READ_WRITE);
-  if (!mmfile->IsValid())
+  if (!mmfile->IsValid()) {
+    LogAnalyzerCreationError(kInvalidMemoryMappedFile);
     return nullptr;
+  }
 
-  if (!FilePersistentMemoryAllocator::IsFileAcceptable(*mmfile, true))
+  if (!FilePersistentMemoryAllocator::IsFileAcceptable(*mmfile, true)) {
+    LogAnalyzerCreationError(kPmaBadFile);
     return nullptr;
+  }
 
-  return WrapUnique(
-      new GlobalActivityAnalyzer(MakeUnique<FilePersistentMemoryAllocator>(
-          std::move(mmfile), 0, 0, base::StringPiece(), true)));
+  return CreateWithAllocator(std::make_unique<FilePersistentMemoryAllocator>(
+      std::move(mmfile), 0, 0, StringPiece(), /*readonly=*/true));
 }
 #endif  // !defined(OS_NACL)
+
+// static
+std::unique_ptr<GlobalActivityAnalyzer>
+GlobalActivityAnalyzer::CreateWithSharedMemory(
+    std::unique_ptr<SharedMemory> shm) {
+  if (shm->mapped_size() == 0 ||
+      !SharedPersistentMemoryAllocator::IsSharedMemoryAcceptable(*shm)) {
+    return nullptr;
+  }
+  return CreateWithAllocator(std::make_unique<SharedPersistentMemoryAllocator>(
+      std::move(shm), 0, StringPiece(), /*readonly=*/true));
+}
+
+// static
+std::unique_ptr<GlobalActivityAnalyzer>
+GlobalActivityAnalyzer::CreateWithSharedMemoryHandle(
+    const SharedMemoryHandle& handle,
+    size_t size) {
+  std::unique_ptr<SharedMemory> shm(
+      new SharedMemory(handle, /*readonly=*/true));
+  if (!shm->Map(size))
+    return nullptr;
+  return CreateWithSharedMemory(std::move(shm));
+}
 
 int64_t GlobalActivityAnalyzer::GetFirstProcess() {
   PrepareAllAnalyzers();
@@ -190,7 +261,7 @@ std::vector<std::string> GlobalActivityAnalyzer::GetLogMessages() {
 }
 
 std::vector<GlobalActivityTracker::ModuleInfo>
-GlobalActivityAnalyzer::GetModules() {
+GlobalActivityAnalyzer::GetModules(int64_t pid) {
   std::vector<GlobalActivityTracker::ModuleInfo> modules;
 
   PersistentMemoryAllocator::Iterator iter(allocator_.get());
@@ -199,6 +270,13 @@ GlobalActivityAnalyzer::GetModules() {
       (record =
            iter.GetNextOfObject<GlobalActivityTracker::ModuleInfoRecord>()) !=
       nullptr) {
+    int64_t process_id;
+    int64_t create_stamp;
+    if (!OwningProcess::GetOwningProcessId(&record->owner, &process_id,
+                                           &create_stamp) ||
+        pid != process_id || create_stamp > analysis_stamp_) {
+      continue;
+    }
     GlobalActivityTracker::ModuleInfo info;
     if (record->DecodeTo(&info, allocator_->GetAllocSize(
                                     allocator_->GetAsReference(record)))) {
@@ -215,12 +293,17 @@ GlobalActivityAnalyzer::GetProgramLocationFromAddress(uint64_t address) {
   return { 0, 0 };
 }
 
-GlobalActivityAnalyzer::UserDataSnapshot::UserDataSnapshot() {}
+bool GlobalActivityAnalyzer::IsDataComplete() const {
+  DCHECK(allocator_);
+  return !allocator_->IsFull();
+}
+
+GlobalActivityAnalyzer::UserDataSnapshot::UserDataSnapshot() = default;
 GlobalActivityAnalyzer::UserDataSnapshot::UserDataSnapshot(
     const UserDataSnapshot& rhs) = default;
 GlobalActivityAnalyzer::UserDataSnapshot::UserDataSnapshot(
     UserDataSnapshot&& rhs) = default;
-GlobalActivityAnalyzer::UserDataSnapshot::~UserDataSnapshot() {}
+GlobalActivityAnalyzer::UserDataSnapshot::~UserDataSnapshot() = default;
 
 void GlobalActivityAnalyzer::PrepareAllAnalyzers() {
   // Record the time when analysis started.

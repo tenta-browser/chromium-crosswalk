@@ -1,13 +1,16 @@
 <!DOCTYPE html>
 <script src="../../resources/testharness.js"></script>
 <script src="../../resources/testharnessreport.js"></script>
+<script src="../../resources/testdriver.js"></script>
+<script src="../../resources/testdriver-vendor.js"></script>
 <script src="../../resources/bluetooth/bluetooth-helpers.js"></script>
 <script>
 'use strict';
-promise_test(() => {
-  return setBluetoothFakeAdapter('BlocklistTestAdapter')
+bluetooth_test(() => {
+  return setUpPreconnectedDevice({
+    knownServiceUUIDs: ['human_interface_device']})
     .then(() => assert_promise_rejects_with_message(
-      requestDeviceWithKeyDown({
+      requestDeviceWithTrustedClick({
         filters: [{services: ['human_interface_device']}]}),
       new DOMException(
         'requestDevice() called with a filter containing a blocklisted UUID. ' +

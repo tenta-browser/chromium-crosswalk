@@ -4,7 +4,6 @@
 
 #include "modules/device_orientation/DeviceMotionController.h"
 
-#include "core/dom/Document.h"
 #include "core/frame/Deprecation.h"
 #include "core/frame/HostsUsingFeatures.h"
 #include "core/frame/Settings.h"
@@ -46,10 +45,10 @@ void DeviceMotionController::DidAddEventListener(
   if (GetDocument().GetFrame()) {
     if (GetDocument().IsSecureContext()) {
       UseCounter::Count(GetDocument().GetFrame(),
-                        UseCounter::kDeviceMotionSecureOrigin);
+                        WebFeature::kDeviceMotionSecureOrigin);
     } else {
       Deprecation::CountDeprecation(GetDocument().GetFrame(),
-                                    UseCounter::kDeviceMotionInsecureOrigin);
+                                    WebFeature::kDeviceMotionInsecureOrigin);
       HostsUsingFeatures::CountAnyWorld(
           GetDocument(),
           HostsUsingFeatures::Feature::kDeviceMotionInsecureHost);
@@ -101,7 +100,7 @@ const AtomicString& DeviceMotionController::EventTypeName() const {
   return EventTypeNames::devicemotion;
 }
 
-DEFINE_TRACE(DeviceMotionController) {
+void DeviceMotionController::Trace(blink::Visitor* visitor) {
   DeviceSingleWindowEventController::Trace(visitor);
   Supplement<Document>::Trace(visitor);
 }

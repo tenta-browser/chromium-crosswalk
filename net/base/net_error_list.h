@@ -404,6 +404,13 @@ NET_ERROR(READ_IF_READY_NOT_IMPLEMENTED, -174)
 //    is unlikely.
 NET_ERROR(SSL_VERSION_INTERFERENCE, -175)
 
+// No socket buffer space is available.
+NET_ERROR(NO_BUFFER_SPACE, -176)
+
+// There were no common signature algorithms between our client certificate
+// private key and the server's preferences.
+NET_ERROR(SSL_CLIENT_AUTH_NO_COMMON_ALGORITHMS, -1478)
+
 // Certificate error codes
 //
 // The values of certificate error codes must be consecutive.
@@ -528,6 +535,9 @@ NET_ERROR(DISALLOWED_URL_SCHEME, -301)
 // The scheme of the URL is unknown.
 NET_ERROR(UNKNOWN_URL_SCHEME, -302)
 
+// Attempting to load an URL resulted in a redirect to an invalid URL.
+NET_ERROR(INVALID_REDIRECT, -303)
+
 // Attempting to load an URL resulted in too many redirects.
 NET_ERROR(TOO_MANY_REDIRECTS, -310)
 
@@ -589,8 +599,8 @@ NET_ERROR(ENCODING_CONVERSION_FAILED, -333)
 // The server sent an FTP directory listing in a format we do not understand.
 NET_ERROR(UNRECOGNIZED_FTP_DIRECTORY_LISTING_FORMAT, -334)
 
-// Attempted use of an unknown SPDY stream id.
-NET_ERROR(INVALID_SPDY_STREAM, -335)
+// Obsolete.  Was only logged in NetLog when an HTTP/2 pushed stream expired.
+// NET_ERROR(INVALID_SPDY_STREAM, -335)
 
 // There are no supported proxies in the provided list.
 NET_ERROR(NO_SUPPORTED_PROXIES, -336)
@@ -642,8 +652,11 @@ NET_ERROR(RESPONSE_HEADERS_MULTIPLE_CONTENT_DISPOSITION, -349)
 // The HTTP response contained multiple Location headers.
 NET_ERROR(RESPONSE_HEADERS_MULTIPLE_LOCATION, -350)
 
-// SPDY server refused the stream. Client should retry. This should never be a
-// user-visible error.
+// HTTP/2 server refused the request without processing, and sent either a
+// GOAWAY frame with error code NO_ERROR and Last-Stream-ID lower than the
+// stream id corresponding to the request indicating that this request has not
+// been processed yet, or a RST_STREAM frame with error code REFUSED_STREAM.
+// Client MAY retry (on a different connection).  See RFC7540 Section 8.1.4.
 NET_ERROR(SPDY_SERVER_REFUSED_STREAM, -351)
 
 // SPDY server didn't respond to the PING message.
@@ -716,10 +729,6 @@ NET_ERROR(CONTENT_DECODING_INIT_FAILED, -371)
 // SpdyStream layer.
 NET_ERROR(SPDY_RST_STREAM_NO_ERROR_RECEIVED, -372)
 
-// Received HTTP status code 421 Misdirected Request (RFC7540 Section 9.1.2).
-// The client MAY retry the request over a different connection.
-NET_ERROR(MISDIRECTED_REQUEST, -373)
-
 // The cache does not have the requested entry.
 NET_ERROR(CACHE_MISS, -400)
 
@@ -761,6 +770,11 @@ NET_ERROR(CACHE_LOCK_TIMEOUT, -409)
 // Received a challenge after the transaction has read some data, and the
 // credentials aren't available.  There isn't a way to get them at that point.
 NET_ERROR(CACHE_AUTH_FAILURE_AFTER_READ, -410)
+
+// Internal not-quite error code for the HTTP cache. In-memory hints suggest
+// that the cache entry would not have been useable with the transaction's
+// current configuration (e.g. load flags, mode, etc.)
+NET_ERROR(CACHE_ENTRY_NOT_SUITABLE, -411)
 
 // The server's response was insecure (e.g. there was a cert error).
 NET_ERROR(INSECURE_RESPONSE, -501)

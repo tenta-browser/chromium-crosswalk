@@ -35,18 +35,30 @@
 #include "core/dom/DOMException.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
+#include "core/frame/Deprecation.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Navigator.h"
 #include "core/frame/UseCounter.h"
+#include "core/inspector/ConsoleMessage.h"
 #include "modules/webmidi/MIDIAccessInitializer.h"
 #include "modules/webmidi/MIDIOptions.h"
+#include "third_party/WebKit/common/feature_policy/feature_policy_feature.h"
 
 namespace blink {
+namespace {
+
+const char kFeaturePolicyErrorMessage[] =
+    "Midi has been disabled in this document by Feature Policy.";
+const char kFeaturePolicyConsoleWarning[] =
+    "Midi access has been blocked because of a Feature Policy applied to the "
+    "current document. See https://goo.gl/EuHzyv for more details.";
+
+}  // namespace
 
 NavigatorWebMIDI::NavigatorWebMIDI(Navigator& navigator)
     : Supplement<Navigator>(navigator) {}
 
-DEFINE_TRACE(NavigatorWebMIDI) {
+void NavigatorWebMIDI::Trace(blink::Visitor* visitor) {
   Supplement<Navigator>::Trace(visitor);
 }
 
@@ -79,9 +91,35 @@ ScriptPromise NavigatorWebMIDI::requestMIDIAccess(ScriptState* script_state,
         DOMException::Create(kAbortError, "The frame is not working."));
   }
 
+  Document& document = *ToDocument(ExecutionContext::From(script_state));
+  if (options.hasSysex() && options.sysex()) {
+    UseCounter::Count(
+        document,
+        WebFeature::kRequestMIDIAccessWithSysExOption_ObscuredByFootprinting);
+    UseCounter::CountCrossOriginIframe(
+        document,
+        WebFeature::
+            kRequestMIDIAccessIframeWithSysExOption_ObscuredByFootprinting);
+  }
   UseCounter::CountCrossOriginIframe(
-      *ToDocument(ExecutionContext::From(script_state)),
-      UseCounter::kRequestMIDIAccessIframe);
+      document, WebFeature::kRequestMIDIAccessIframe_ObscuredByFootprinting);
+
+  if (RuntimeEnabledFeatures::FeaturePolicyForPermissionsEnabled()) {
+    if (!document.GetFrame()->IsFeatureEnabled(
+            FeaturePolicyFeature::kMidiFeature)) {
+      UseCounter::Count(document, WebFeature::kMidiDisabledByFeaturePolicy);
+      document.AddConsoleMessage(
+          ConsoleMessage::Create(kJSMessageSource, kWarningMessageLevel,
+                                 kFeaturePolicyConsoleWarning));
+      return ScriptPromise::RejectWithDOMException(
+          script_state,
+          DOMException::Create(kSecurityError, kFeaturePolicyErrorMessage));
+    }
+  } else {
+    Deprecation::CountDeprecationFeaturePolicy(
+        document, FeaturePolicyFeature::kMidiFeature);
+  }
+
   return MIDIAccessInitializer::Start(script_state, options);
 }
 

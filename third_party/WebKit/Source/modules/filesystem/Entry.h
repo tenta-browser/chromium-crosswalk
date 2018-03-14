@@ -31,7 +31,6 @@
 #ifndef Entry_h
 #define Entry_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/ModulesExport.h"
 #include "modules/filesystem/DOMFileSystem.h"
 #include "modules/filesystem/EntryBase.h"
@@ -45,7 +44,7 @@ class ErrorCallback;
 class MetadataCallback;
 class VoidCallback;
 
-class MODULES_EXPORT Entry : public EntryBase, public ScriptWrappable {
+class MODULES_EXPORT Entry : public EntryBase {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -75,7 +74,7 @@ class MODULES_EXPORT Entry : public EntryBase, public ScriptWrappable {
                  ErrorCallback* = nullptr) const;
   String toURL(ScriptState*) const;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  protected:
   Entry(DOMFileSystemBase*, const String& full_path);

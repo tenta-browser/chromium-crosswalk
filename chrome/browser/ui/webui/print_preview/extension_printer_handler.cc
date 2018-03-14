@@ -18,6 +18,8 @@
 #include "base/strings/string_split.h"
 #include "base/task_scheduler/post_task.h"
 #include "chrome/browser/printing/pwg_raster_converter.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/webui/print_preview/printer_capabilities.h"
 #include "components/cloud_devices/common/cloud_device_description.h"
 #include "components/cloud_devices/common/printer_description.h"
 #include "device/base/device_client.h"
@@ -33,6 +35,7 @@
 #include "extensions/common/permissions/usb_device_permission.h"
 #include "extensions/common/permissions/usb_device_permission_data.h"
 #include "extensions/common/value_builder.h"
+#include "printing/print_job_constants.h"
 #include "printing/pwg_raster_settings.h"
 
 using device::UsbDevice;
@@ -69,24 +72,21 @@ UpdateJobFileInfoOnWorkerThread(
 // Callback to PWG raster conversion.
 // Posts a task to update print job with info about file containing converted
 // PWG raster data.
-void UpdateJobFileInfo(
-    std::unique_ptr<extensions::PrinterProviderPrintJob> job,
-    const ExtensionPrinterHandler::PrintJobCallback& callback,
-    bool success,
-    const base::FilePath& pwg_file_path) {
+void UpdateJobFileInfo(std::unique_ptr<extensions::PrinterProviderPrintJob> job,
+                       ExtensionPrinterHandler::PrintJobCallback callback,
+                       bool success,
+                       const base::FilePath& pwg_file_path) {
   if (!success) {
-    callback.Run(std::move(job));
+    std::move(callback).Run(std::move(job));
     return;
   }
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::TaskTraits()
-                     .WithShutdownBehavior(
-                         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-                     .MayBlock(),
-      base::Bind(&UpdateJobFileInfoOnWorkerThread, pwg_file_path,
-                 base::Passed(&job)),
-      callback);
+      FROM_HERE,
+      {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::BindOnce(&UpdateJobFileInfoOnWorkerThread, pwg_file_path,
+                     std::move(job)),
+      std::move(callback));
 }
 
 bool HasUsbPrinterProviderPermissions(const Extension* extension) {
@@ -122,9 +122,8 @@ bool ParseProvisionalUsbPrinterId(const std::string& printer_id,
 
 }  // namespace
 
-ExtensionPrinterHandler::ExtensionPrinterHandler(
-    content::BrowserContext* browser_context)
-    : browser_context_(browser_context), weak_ptr_factory_(this) {}
+ExtensionPrinterHandler::ExtensionPrinterHandler(Profile* profile)
+    : profile_(profile), weak_ptr_factory_(this) {}
 
 ExtensionPrinterHandler::~ExtensionPrinterHandler() {
 }
@@ -137,13 +136,15 @@ void ExtensionPrinterHandler::Reset() {
 }
 
 void ExtensionPrinterHandler::StartGetPrinters(
-    const PrinterHandler::GetPrintersCallback& callback) {
+    const AddedPrintersCallback& callback,
+    GetPrintersDoneCallback done_callback) {
   // Assume that there can only be one printer enumeration occuring at once.
   DCHECK_EQ(pending_enumeration_count_, 0);
   pending_enumeration_count_ = 1;
+  done_callback_ = std::move(done_callback);
 
   bool extension_supports_usb_printers = false;
-  ExtensionRegistry* registry = ExtensionRegistry::Get(browser_context_);
+  ExtensionRegistry* registry = ExtensionRegistry::Get(profile_);
   for (const auto& extension : registry->enabled_extensions()) {
     if (UsbPrinterManifestData::Get(extension.get()) &&
         HasUsbPrinterProviderPermissions(extension.get())) {
@@ -161,7 +162,7 @@ void ExtensionPrinterHandler::StartGetPrinters(
   }
 
   extensions::PrinterProviderAPIFactory::GetInstance()
-      ->GetForBrowserContext(browser_context_)
+      ->GetForBrowserContext(profile_)
       ->DispatchGetPrintersRequested(
           base::Bind(&ExtensionPrinterHandler::WrapGetPrintersCallback,
                      weak_ptr_factory_.GetWeakPtr(), callback));
@@ -169,13 +170,13 @@ void ExtensionPrinterHandler::StartGetPrinters(
 
 void ExtensionPrinterHandler::StartGetCapability(
     const std::string& destination_id,
-    const PrinterHandler::GetCapabilityCallback& callback) {
+    GetCapabilityCallback callback) {
   extensions::PrinterProviderAPIFactory::GetInstance()
-      ->GetForBrowserContext(browser_context_)
+      ->GetForBrowserContext(profile_)
       ->DispatchGetCapabilityRequested(
           destination_id,
-          base::Bind(&ExtensionPrinterHandler::WrapGetCapabilityCallback,
-                     weak_ptr_factory_.GetWeakPtr(), callback, destination_id));
+          base::BindOnce(&ExtensionPrinterHandler::WrapGetCapabilityCallback,
+                         weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void ExtensionPrinterHandler::StartPrint(
@@ -184,10 +185,9 @@ void ExtensionPrinterHandler::StartPrint(
     const base::string16& job_title,
     const std::string& ticket_json,
     const gfx::Size& page_size,
-    const scoped_refptr<base::RefCountedMemory>& print_data,
-    const PrinterHandler::PrintCallback& callback) {
-  std::unique_ptr<extensions::PrinterProviderPrintJob> print_job(
-      new extensions::PrinterProviderPrintJob());
+    const scoped_refptr<base::RefCountedBytes>& print_data,
+    PrintCallback callback) {
+  auto print_job = base::MakeUnique<extensions::PrinterProviderPrintJob>();
   print_job->printer_id = destination_id;
   print_job->job_title = job_title;
   print_job->ticket_json = ticket_json;
@@ -206,50 +206,51 @@ void ExtensionPrinterHandler::StartPrint(
     // the same way as it's done with PWG raster.
     print_job->content_type = kContentTypePdf;
     print_job->document_bytes = print_data;
-    DispatchPrintJob(callback, std::move(print_job));
+    DispatchPrintJob(std::move(callback), std::move(print_job));
     return;
   }
 
   cloud_devices::CloudDeviceDescription ticket;
   if (!ticket.InitFromString(ticket_json)) {
-    WrapPrintCallback(callback, false, kInvalidTicketPrintError);
+    WrapPrintCallback(std::move(callback),
+                      base::Value(kInvalidTicketPrintError));
     return;
   }
 
   print_job->content_type = kContentTypePWGRaster;
-  ConvertToPWGRaster(print_data, printer_description, ticket, page_size,
-                     std::move(print_job),
-                     base::Bind(&ExtensionPrinterHandler::DispatchPrintJob,
-                                weak_ptr_factory_.GetWeakPtr(), callback));
+  ConvertToPWGRaster(
+      print_data, printer_description, ticket, page_size, std::move(print_job),
+      base::BindOnce(&ExtensionPrinterHandler::DispatchPrintJob,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void ExtensionPrinterHandler::StartGrantPrinterAccess(
     const std::string& printer_id,
-    const PrinterHandler::GetPrinterInfoCallback& callback) {
+    GetPrinterInfoCallback callback) {
   std::string extension_id;
   std::string device_guid;
   if (!ParseProvisionalUsbPrinterId(printer_id, &extension_id, &device_guid)) {
-    callback.Run(base::DictionaryValue());
+    std::move(callback).Run(base::DictionaryValue());
     return;
   }
 
   device::UsbService* service = device::DeviceClient::Get()->GetUsbService();
   scoped_refptr<UsbDevice> device = service->GetDevice(device_guid);
   if (!device) {
-    callback.Run(base::DictionaryValue());
+    std::move(callback).Run(base::DictionaryValue());
     return;
   }
 
   DevicePermissionsManager* permissions_manager =
-      DevicePermissionsManager::Get(browser_context_);
+      DevicePermissionsManager::Get(profile_);
   permissions_manager->AllowUsbDevice(extension_id, device);
 
   extensions::PrinterProviderAPIFactory::GetInstance()
-      ->GetForBrowserContext(browser_context_)
+      ->GetForBrowserContext(profile_)
       ->DispatchGetUsbPrinterInfoRequested(
           extension_id, device,
-          base::Bind(&ExtensionPrinterHandler::WrapGetPrinterInfoCallback,
-                     weak_ptr_factory_.GetWeakPtr(), callback));
+          base::BindOnce(&ExtensionPrinterHandler::WrapGetPrinterInfoCallback,
+                         weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void ExtensionPrinterHandler::SetPWGRasterConverterForTesting(
@@ -263,7 +264,7 @@ void ExtensionPrinterHandler::ConvertToPWGRaster(
     const cloud_devices::CloudDeviceDescription& ticket,
     const gfx::Size& page_size,
     std::unique_ptr<extensions::PrinterProviderPrintJob> job,
-    const ExtensionPrinterHandler::PrintJobCallback& callback) {
+    PrintJobCallback callback) {
   if (!pwg_raster_converter_) {
     pwg_raster_converter_ = PWGRasterConverter::CreateDefault();
   }
@@ -271,61 +272,70 @@ void ExtensionPrinterHandler::ConvertToPWGRaster(
       data.get(),
       PWGRasterConverter::GetConversionSettings(printer_description, page_size),
       PWGRasterConverter::GetBitmapSettings(printer_description, ticket),
-      base::Bind(&UpdateJobFileInfo, base::Passed(&job), callback));
+      base::BindOnce(&UpdateJobFileInfo, std::move(job), std::move(callback)));
 }
 
 void ExtensionPrinterHandler::DispatchPrintJob(
-    const PrinterHandler::PrintCallback& callback,
+    PrintCallback callback,
     std::unique_ptr<extensions::PrinterProviderPrintJob> print_job) {
   if (print_job->document_path.empty() && !print_job->document_bytes) {
-    WrapPrintCallback(callback, false, kInvalidDataPrintError);
+    WrapPrintCallback(std::move(callback), base::Value(kInvalidDataPrintError));
     return;
   }
 
   extensions::PrinterProviderAPIFactory::GetInstance()
-      ->GetForBrowserContext(browser_context_)
+      ->GetForBrowserContext(profile_)
       ->DispatchPrintRequested(
-          *print_job, base::Bind(&ExtensionPrinterHandler::WrapPrintCallback,
-                                 weak_ptr_factory_.GetWeakPtr(), callback));
+          *print_job,
+          base::BindOnce(&ExtensionPrinterHandler::WrapPrintCallback,
+                         weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void ExtensionPrinterHandler::WrapGetPrintersCallback(
-    const PrinterHandler::GetPrintersCallback& callback,
+    const AddedPrintersCallback& callback,
     const base::ListValue& printers,
     bool done) {
   DCHECK_GT(pending_enumeration_count_, 0);
+  if (!printers.empty())
+    callback.Run(printers);
+
   if (done)
     pending_enumeration_count_--;
-
-  callback.Run(printers, pending_enumeration_count_ == 0);
+  if (pending_enumeration_count_ == 0)
+    std::move(done_callback_).Run();
 }
 
 void ExtensionPrinterHandler::WrapGetCapabilityCallback(
-    const PrinterHandler::GetCapabilityCallback& callback,
-    const std::string& destination_id,
+    GetCapabilityCallback callback,
     const base::DictionaryValue& capability) {
-  callback.Run(destination_id, capability);
+  auto capabilities = std::make_unique<base::DictionaryValue>();
+  std::unique_ptr<base::DictionaryValue> cdd =
+      printing::ValidateCddForPrintPreview(capability);
+  // Leave |capabilities| empty if |cdd| is empty.
+  if (!cdd->empty()) {
+    capabilities->SetKey(printing::kSettingCapabilities,
+                         base::Value::FromUniquePtrValue(std::move(cdd)));
+  }
+  std::move(callback).Run(std::move(capabilities));
 }
 
-void ExtensionPrinterHandler::WrapPrintCallback(
-    const PrinterHandler::PrintCallback& callback,
-    bool success,
-    const std::string& status) {
-  callback.Run(success, status);
+void ExtensionPrinterHandler::WrapPrintCallback(PrintCallback callback,
+                                                const base::Value& status) {
+  std::move(callback).Run(status);
 }
 
 void ExtensionPrinterHandler::WrapGetPrinterInfoCallback(
-    const PrinterHandler::GetPrinterInfoCallback& callback,
+    GetPrinterInfoCallback callback,
     const base::DictionaryValue& printer_info) {
-  callback.Run(printer_info);
+  std::move(callback).Run(printer_info);
 }
 
 void ExtensionPrinterHandler::OnUsbDevicesEnumerated(
-    const PrinterHandler::GetPrintersCallback& callback,
+    const AddedPrintersCallback& callback,
     const std::vector<scoped_refptr<UsbDevice>>& devices) {
-  ExtensionRegistry* registry = ExtensionRegistry::Get(browser_context_);
+  ExtensionRegistry* registry = ExtensionRegistry::Get(profile_);
   DevicePermissionsManager* permissions_manager =
-      DevicePermissionsManager::Get(browser_context_);
+      DevicePermissionsManager::Get(profile_);
 
   ListBuilder printer_list;
 
@@ -338,7 +348,7 @@ void ExtensionPrinterHandler::OnUsbDevicesEnumerated(
     const extensions::DevicePermissions* device_permissions =
         permissions_manager->GetForExtension(extension->id());
     for (const auto& device : devices) {
-      if (manifest_data->SupportsDevice(device)) {
+      if (manifest_data->SupportsDevice(*device)) {
         std::unique_ptr<extensions::UsbDevicePermission::CheckParam> param =
             extensions::UsbDevicePermission::CheckParam::ForUsbDevice(
                 extension.get(), device.get());
@@ -368,5 +378,9 @@ void ExtensionPrinterHandler::OnUsbDevicesEnumerated(
 
   DCHECK_GT(pending_enumeration_count_, 0);
   pending_enumeration_count_--;
-  callback.Run(*printer_list.Build().get(), pending_enumeration_count_ == 0);
+  std::unique_ptr<base::ListValue> list = printer_list.Build();
+  if (!list->empty())
+    callback.Run(*list);
+  if (pending_enumeration_count_ == 0)
+    std::move(done_callback_).Run();
 }

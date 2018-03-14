@@ -26,9 +26,9 @@
  */
 
 #include "platform/transforms/TransformationMatrix.h"
-#if HAVE(MIPS_MSA_INTRINSICS)
-#include "platform/cpu/mips/CommonMacrosMSA.h"
-#endif
+
+#include <cmath>
+#include <cstdlib>
 
 #include "platform/geometry/FloatBox.h"
 #include "platform/geometry/FloatQuad.h"
@@ -37,16 +37,17 @@
 #include "platform/geometry/LayoutRect.h"
 #include "platform/transforms/AffineTransform.h"
 #include "platform/transforms/Rotation.h"
-
 #include "platform/wtf/Assertions.h"
+#include "platform/wtf/CPU.h"
 #include "platform/wtf/MathExtras.h"
 #include "platform/wtf/text/WTFString.h"
 
-#include <cmath>
-#include <cstdlib>
-
-#if CPU(X86_64)
+#if defined(ARCH_CPU_X86_64)
 #include <emmintrin.h>
+#endif
+
+#if HAVE_MIPS_MSA_INTRINSICS
+#include "platform/cpu/mips/CommonMacrosMSA.h"
 #endif
 
 namespace blink {
@@ -150,7 +151,7 @@ static double Determinant4x4(const TransformationMatrix::Matrix4& m) {
          d1 * Determinant3x3(a2, a3, a4, b2, b3, b4, c2, c3, c4);
 }
 
-#if !CPU(ARM64) && !HAVE(MIPS_MSA_INTRINSICS)
+#if !defined(ARCH_CPU_ARM64) && !HAVE_MIPS_MSA_INTRINSICS
 // adjoint( original_matrix, inverse_matrix )
 //
 //   calculate the adjoint of a 4x4 matrix
@@ -225,7 +226,7 @@ static bool Inverse(const TransformationMatrix::Matrix4& matrix,
   if (fabs(det) < kSmallNumber)
     return false;
 
-#if CPU(ARM64)
+#if defined(ARCH_CPU_ARM64)
   double rdet = 1 / det;
   const double* mat = &(matrix[0][0]);
   double* pr = &(result[0][0]);
@@ -339,7 +340,7 @@ static bool Inverse(const TransformationMatrix::Matrix4& matrix,
       : "memory", "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v16", "v17",
         "v18", "v19", "v20", "v21", "v22", "v23", "24", "25", "v26", "v27",
         "v28", "v29", "v30");
-#elif HAVE(MIPS_MSA_INTRINSICS)
+#elif HAVE_MIPS_MSA_INTRINSICS
   const double rDet = 1 / det;
   const double* mat = &(matrix[0][0]);
   v2f64 mat0, mat1, mat2, mat3, mat4, mat5, mat6, mat7;
@@ -868,7 +869,7 @@ FloatQuad TransformationMatrix::ProjectQuad(const FloatQuad& q,
 }
 
 static float ClampEdgeValue(float f) {
-  ASSERT(!std::isnan(f));
+  DCHECK(!std::isnan(f));
   return clampTo(f, (-LayoutUnit::Max() / 2).ToFloat(),
                  (LayoutUnit::Max() / 2).ToFloat());
 }
@@ -1280,7 +1281,7 @@ TransformationMatrix& TransformationMatrix::Zoom(double zoom_factor) {
 // blink_platform_unittests, therefore the ARM64 branch is not tested by CQ.
 TransformationMatrix& TransformationMatrix::Multiply(
     const TransformationMatrix& mat) {
-#if CPU(ARM64)
+#if defined(ARCH_CPU_ARM64)
   double* left_matrix = &(matrix_[0][0]);
   const double* right_matrix = &(mat.matrix_[0][0]);
   asm volatile(
@@ -1340,7 +1341,7 @@ TransformationMatrix& TransformationMatrix::Multiply(
       : "memory", "x9", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23",
         "v24", "v25", "v26", "v27", "v28", "v29", "v30", "v31", "v0", "v1",
         "v2", "v3", "v4", "v5", "v6", "v7");
-#elif HAVE(MIPS_MSA_INTRINSICS)
+#elif HAVE_MIPS_MSA_INTRINSICS
   v2f64 v_right_m0, v_right_m1, v_right_m2, v_right_m3, v_right_m4, v_right_m5,
       v_right_m6, v_right_m7;
   v2f64 v_left_m0, v_left_m1, v_left_m2, v_left_m3, v_left_m4, v_left_m5,
@@ -1835,7 +1836,7 @@ bool TransformationMatrix::IsIntegerTranslation() const {
 }
 
 FloatSize TransformationMatrix::To2DTranslation() const {
-  ASSERT(IsIdentityOr2DTranslation());
+  DCHECK(IsIdentityOr2DTranslation());
   return FloatSize(matrix_[3][0], matrix_[3][1]);
 }
 

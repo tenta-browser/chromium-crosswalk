@@ -36,6 +36,7 @@
 #include "platform/geometry/IntRect.h"
 #include "platform/geometry/LayoutRect.h"
 #include "platform/graphics/GraphicsContext.h"
+#include "platform/graphics/Image.h"
 #include "platform/graphics/paint/CullRect.h"
 #include "platform/graphics/paint/DisplayItem.h"
 #include "platform/transforms/AffineTransform.h"
@@ -79,10 +80,10 @@ struct CORE_EXPORT PaintInfo {
   // phases in PaintPhase.h for details.
   PaintInfo ForDescendants() const {
     PaintInfo result(*this);
-    if (phase == kPaintPhaseDescendantOutlinesOnly)
-      result.phase = kPaintPhaseOutline;
-    else if (phase == kPaintPhaseDescendantBlockBackgroundsOnly)
-      result.phase = kPaintPhaseBlockBackground;
+    if (phase == PaintPhase::kDescendantOutlinesOnly)
+      result.phase = PaintPhase::kOutline;
+    else if (phase == PaintPhase::kDescendantBlockBackgroundsOnly)
+      result.phase = PaintPhase::kBlockBackground;
     return result;
   }
 
@@ -116,7 +117,16 @@ struct CORE_EXPORT PaintInfo {
 
   const CullRect& GetCullRect() const { return cull_rect_; }
 
-  void UpdateCullRect(const AffineTransform& local_to_parent_transform);
+  void UpdateCullRect(const AffineTransform& local_to_parent_transform) {
+    cull_rect_.UpdateCullRect(local_to_parent_transform);
+  }
+
+  void UpdateCullRectForScrollingContents(
+      const IntRect& overflow_clip_rect,
+      const AffineTransform& local_to_parent_transform) {
+    cull_rect_.UpdateForScrollingContents(overflow_clip_rect,
+                                          local_to_parent_transform);
+  }
 
   // FIXME: Introduce setters/getters at some point. Requires a lot of changes
   // throughout layout/.
@@ -125,9 +135,9 @@ struct CORE_EXPORT PaintInfo {
 
  private:
   CullRect cull_rect_;
-  const LayoutBoxModelObject* paint_container_;  // the box model object that
-                                                 // originates the current
-                                                 // painting
+
+  // The box model object that originates the current painting.
+  const LayoutBoxModelObject* paint_container_;
 
   const PaintLayerFlags paint_flags_;
   const GlobalPaintFlags global_paint_flags_;
@@ -136,6 +146,8 @@ struct CORE_EXPORT PaintInfo {
   friend class SVGPaintContext;
   friend class SVGShapePainter;
 };
+
+Image::ImageDecodingMode GetImageDecodingMode(Node*);
 
 }  // namespace blink
 

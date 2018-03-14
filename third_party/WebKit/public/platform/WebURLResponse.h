@@ -31,13 +31,16 @@
 #ifndef WebURLResponse_h
 #define WebURLResponse_h
 
-#include "public/platform/WebCString.h"
+#include <memory>
+
+#include "base/time/time.h"
+#include "net/http/http_response_info.h"
 #include "public/platform/WebCommon.h"
 #include "public/platform/WebSecurityStyle.h"
 #include "public/platform/WebString.h"
 #include "public/platform/WebVector.h"
-#include "public/platform/modules/serviceworker/WebServiceWorkerResponseType.h"
-#include <memory>
+#include "public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
+#include "services/network/public/interfaces/fetch_api.mojom-shared.h"
 
 namespace blink {
 
@@ -159,7 +162,7 @@ class WebURLResponse {
 
   BLINK_PLATFORM_EXPORT void SetHTTPLoadInfo(const WebHTTPLoadInfo&);
 
-  BLINK_PLATFORM_EXPORT void SetResponseTime(long long);
+  BLINK_PLATFORM_EXPORT void SetResponseTime(base::Time);
 
   BLINK_PLATFORM_EXPORT WebString MimeType() const;
   BLINK_PLATFORM_EXPORT void SetMIMEType(const WebString&);
@@ -193,6 +196,8 @@ class WebURLResponse {
   BLINK_PLATFORM_EXPORT void SetAppCacheManifestURL(const WebURL&);
 
   BLINK_PLATFORM_EXPORT void SetHasMajorCertificateErrors(bool);
+  BLINK_PLATFORM_EXPORT void SetIsLegacySymantecCert(bool);
+  BLINK_PLATFORM_EXPORT void SetCertValidityStart(base::Time);
 
   BLINK_PLATFORM_EXPORT void SetSecurityStyle(WebSecurityStyle);
 
@@ -214,17 +219,14 @@ class WebURLResponse {
   BLINK_PLATFORM_EXPORT bool WasFetchedViaServiceWorker() const;
   BLINK_PLATFORM_EXPORT void SetWasFetchedViaServiceWorker(bool);
 
-  // Flag whether this request was loaded using a foreign fetch service worker.
-  BLINK_PLATFORM_EXPORT void SetWasFetchedViaForeignFetch(bool);
-
   // Flag whether the fallback request with skip service worker flag was
   // required. See ServiceWorkerResponseInfo::was_fallback_required() for
   // details.
   BLINK_PLATFORM_EXPORT void SetWasFallbackRequiredByServiceWorker(bool);
 
-  // The type of the response which was served by the ServiceWorker.
-  BLINK_PLATFORM_EXPORT void SetServiceWorkerResponseType(
-      WebServiceWorkerResponseType);
+  // The type of the response which was returned by the ServiceWorker.
+  BLINK_PLATFORM_EXPORT void SetResponseTypeViaServiceWorker(
+      network::mojom::FetchResponseType);
 
   // The URL list of the Response object the ServiceWorker passed to
   // respondWith(). See ServiceWorkerResponseInfo::url_list_via_service_worker()
@@ -247,6 +249,7 @@ class WebURLResponse {
 
   // The headers that should be exposed according to CORS. Only guaranteed
   // to be set if the response was served by a ServiceWorker.
+  BLINK_PLATFORM_EXPORT WebVector<WebString> CorsExposedHeaderNames() const;
   BLINK_PLATFORM_EXPORT void SetCorsExposedHeaderNames(
       const WebVector<WebString>&);
 
@@ -269,14 +272,18 @@ class WebURLResponse {
   BLINK_PLATFORM_EXPORT unsigned short RemotePort() const;
   BLINK_PLATFORM_EXPORT void SetRemotePort(unsigned short);
 
+  // ALPN negotiated protocol of the socket which fetched this resource.
+  BLINK_PLATFORM_EXPORT WebString AlpnNegotiatedProtocol() const;
+  BLINK_PLATFORM_EXPORT void SetAlpnNegotiatedProtocol(const WebString&);
+
+  // Information about the type of connection used to fetch this resource.
+  BLINK_PLATFORM_EXPORT net::HttpResponseInfo::ConnectionInfo ConnectionInfo()
+      const;
+  BLINK_PLATFORM_EXPORT void SetConnectionInfo(
+      net::HttpResponseInfo::ConnectionInfo);
+
   // Original size of the response before decompression.
   BLINK_PLATFORM_EXPORT void SetEncodedDataLength(long long);
-
-  // Original size of the response body before decompression.
-  BLINK_PLATFORM_EXPORT void AddToEncodedBodyLength(long long);
-
-  // Size of the response body after removing any content encoding.
-  BLINK_PLATFORM_EXPORT void AddToDecodedBodyLength(long long);
 
   // Extra data associated with the underlying resource response. Resource
   // responses can be copied. If non-null, each copy of a resource response
@@ -292,15 +299,15 @@ class WebURLResponse {
 #if INSIDE_BLINK
  protected:
   // Permit subclasses to set arbitrary ResourceResponse pointer as
-  // |m_resourceResponse|. |m_ownedResourceResponse| is not set in this case.
+  // |resource_response_|. |owned_resource_response_| is not set in this case.
   BLINK_PLATFORM_EXPORT explicit WebURLResponse(ResourceResponse&);
 #endif
 
  private:
   struct ResourceResponseContainer;
 
-  // If this instance owns a ResourceResponse then |m_ownedResourceResponse|
-  // is non-null and |m_resourceResponse| points to the ResourceResponse
+  // If this instance owns a ResourceResponse then |owned_resource_response_|
+  // is non-null and |resource_response_| points to the ResourceResponse
   // instance it contains.
   std::unique_ptr<ResourceResponseContainer> owned_resource_response_;
 

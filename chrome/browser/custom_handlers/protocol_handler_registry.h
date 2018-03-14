@@ -49,13 +49,11 @@ class ProtocolHandlerRegistry : public KeyedService {
     virtual void RegisterExternalHandler(const std::string& protocol);
     virtual void DeregisterExternalHandler(const std::string& protocol);
     virtual bool IsExternalHandlerRegistered(const std::string& protocol);
-    virtual scoped_refptr<shell_integration::DefaultProtocolClientWorker>
-    CreateShellWorker(
-        const shell_integration::DefaultWebClientWorkerCallback& callback,
-        const std::string& protocol);
     virtual void RegisterWithOSAsDefaultClient(
         const std::string& protocol,
         ProtocolHandlerRegistry* registry);
+    virtual void CheckDefaultClientWithOS(const std::string& protocol,
+                                          ProtocolHandlerRegistry* registry);
   };
 
   // Forward declaration of the internal implementation class.

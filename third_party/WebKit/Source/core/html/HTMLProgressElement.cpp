@@ -22,11 +22,11 @@
 
 #include "bindings/core/v8/ExceptionMessages.h"
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/HTMLNames.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/html/shadow/ProgressShadowElement.h"
+#include "core/html_names.h"
 #include "core/layout/LayoutProgress.h"
 #include "core/layout/api/LayoutProgressItem.h"
 
@@ -39,7 +39,7 @@ const double HTMLProgressElement::kInvalidPosition = -2;
 
 HTMLProgressElement::HTMLProgressElement(Document& document)
     : LabelableElement(progressTag, document), value_(nullptr) {
-  UseCounter::Count(document, UseCounter::kProgressElement);
+  UseCounter::Count(document, WebFeature::kProgressElement);
 }
 
 HTMLProgressElement::~HTMLProgressElement() {}
@@ -54,11 +54,11 @@ LayoutObject* HTMLProgressElement::CreateLayoutObject(
     const ComputedStyle& style) {
   if (!style.HasAppearance()) {
     UseCounter::Count(GetDocument(),
-                      UseCounter::kProgressElementWithNoneAppearance);
+                      WebFeature::kProgressElementWithNoneAppearance);
     return LayoutObject::CreateObject(this, style);
   }
   UseCounter::Count(GetDocument(),
-                    UseCounter::kProgressElementWithProgressBarAppearance);
+                    WebFeature::kProgressElementWithProgressBarAppearance);
   return new LayoutProgress(this);
 }
 
@@ -81,7 +81,7 @@ void HTMLProgressElement::ParseAttribute(
   }
 }
 
-void HTMLProgressElement::AttachLayoutTree(const AttachContext& context) {
+void HTMLProgressElement::AttachLayoutTree(AttachContext& context) {
   LabelableElement::AttachLayoutTree(context);
   if (LayoutProgressItem layout_item = LayoutProgressItem(GetLayoutProgress()))
     layout_item.UpdateFromElement();
@@ -152,7 +152,7 @@ bool HTMLProgressElement::ShouldAppearIndeterminate() const {
   return !IsDeterminate();
 }
 
-DEFINE_TRACE(HTMLProgressElement) {
+void HTMLProgressElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(value_);
   LabelableElement::Trace(visitor);
 }

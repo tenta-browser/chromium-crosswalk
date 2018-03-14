@@ -26,40 +26,6 @@
 #include "url/gurl.h"
 
 namespace storage {
-namespace {
-
-class FileStreamReaderProviderImpl
-    : public BlobReader::FileStreamReaderProvider {
- public:
-  explicit FileStreamReaderProviderImpl(FileSystemContext* file_system_context)
-      : file_system_context_(file_system_context) {}
-  ~FileStreamReaderProviderImpl() override {}
-
-  std::unique_ptr<FileStreamReader> CreateForLocalFile(
-      base::TaskRunner* task_runner,
-      const base::FilePath& file_path,
-      int64_t initial_offset,
-      const base::Time& expected_modification_time) override {
-    return base::WrapUnique(FileStreamReader::CreateForLocalFile(
-        task_runner, file_path, initial_offset, expected_modification_time));
-  }
-
-  std::unique_ptr<FileStreamReader> CreateFileStreamReader(
-      const GURL& filesystem_url,
-      int64_t offset,
-      int64_t max_bytes_to_read,
-      const base::Time& expected_modification_time) override {
-    return file_system_context_->CreateFileStreamReader(
-        storage::FileSystemURL(file_system_context_->CrackURL(filesystem_url)),
-        offset, max_bytes_to_read, expected_modification_time);
-  }
-
- private:
-  scoped_refptr<FileSystemContext> file_system_context_;
-  DISALLOW_COPY_AND_ASSIGN(FileStreamReaderProviderImpl);
-};
-
-}  // namespace
 
 BlobDataHandle::BlobDataHandleShared::BlobDataHandleShared(
     const std::string& uuid,
@@ -75,13 +41,8 @@ BlobDataHandle::BlobDataHandleShared::BlobDataHandleShared(
   context_->IncrementBlobRefCount(uuid);
 }
 
-std::unique_ptr<BlobReader> BlobDataHandle::CreateReader(
-    FileSystemContext* file_system_context,
-    base::SequencedTaskRunner* file_task_runner) const {
-  return std::unique_ptr<BlobReader>(new BlobReader(
-      this, std::unique_ptr<BlobReader::FileStreamReaderProvider>(
-                new FileStreamReaderProviderImpl(file_system_context)),
-      file_task_runner));
+std::unique_ptr<BlobReader> BlobDataHandle::CreateReader() const {
+  return base::WrapUnique(new BlobReader(this));
 }
 
 BlobDataHandle::BlobDataHandleShared::~BlobDataHandleShared() {
@@ -102,13 +63,13 @@ BlobDataHandle::BlobDataHandle(const std::string& uuid,
                                        size,
                                        context)) {
   DCHECK(io_task_runner_.get());
-  DCHECK(io_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
 }
 
 BlobDataHandle::BlobDataHandle(const BlobDataHandle& other) = default;
 
 BlobDataHandle::~BlobDataHandle() {
-  if (!io_task_runner_->RunsTasksOnCurrentThread()) {
+  if (!io_task_runner_->RunsTasksInCurrentSequence()) {
     BlobDataHandleShared* raw = shared_.get();
     raw->AddRef();
     shared_ = nullptr;
@@ -120,25 +81,28 @@ BlobDataHandle& BlobDataHandle::operator=(
     const BlobDataHandle& other) = default;
 
 bool BlobDataHandle::IsBeingBuilt() const {
-  DCHECK(io_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
   if (!shared_->context_)
     return false;
   return BlobStatusIsPending(GetBlobStatus());
 }
 
 bool BlobDataHandle::IsBroken() const {
-  DCHECK(io_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
   if (!shared_->context_)
     return true;
   return BlobStatusIsError(GetBlobStatus());
 }
 
 BlobStatus BlobDataHandle::GetBlobStatus() const {
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
+  if (!shared_->context_)
+    return BlobStatus::ERR_REFERENCED_BLOB_BROKEN;
   return shared_->context_->GetBlobStatus(shared_->uuid_);
 }
 
 void BlobDataHandle::RunOnConstructionComplete(const BlobStatusCallback& done) {
-  DCHECK(io_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
   if (!shared_->context_.get()) {
     done.Run(BlobStatus::ERR_INVALID_CONSTRUCTION_ARGUMENTS);
     return;
@@ -146,8 +110,17 @@ void BlobDataHandle::RunOnConstructionComplete(const BlobStatusCallback& done) {
   shared_->context_->RunOnConstructionComplete(shared_->uuid_, done);
 }
 
+void BlobDataHandle::RunOnConstructionBegin(const BlobStatusCallback& done) {
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
+  if (!shared_->context_.get()) {
+    done.Run(BlobStatus::ERR_INVALID_CONSTRUCTION_ARGUMENTS);
+    return;
+  }
+  shared_->context_->RunOnConstructionBegin(shared_->uuid_, done);
+}
+
 std::unique_ptr<BlobDataSnapshot> BlobDataHandle::CreateSnapshot() const {
-  DCHECK(io_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
   if (!shared_->context_.get())
     return nullptr;
   return shared_->context_->CreateSnapshot(shared_->uuid_);

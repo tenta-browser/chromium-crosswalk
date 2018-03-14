@@ -22,7 +22,6 @@
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/resource_request_details.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/event_router.h"
@@ -348,8 +347,7 @@ void WebNavigationTabObserver::DidFailLoad(
     content::RenderFrameHost* render_frame_host,
     const GURL& validated_url,
     int error_code,
-    const base::string16& error_description,
-    bool was_ignored_by_handler) {
+    const base::string16& error_description) {
   // When showing replacement content, we might get load signals for frames
   // that weren't reguarly loaded.
   if (!navigation_state_.IsValidFrame(render_frame_host))
@@ -389,6 +387,8 @@ void WebNavigationTabObserver::DidOpenRequestedURL(
 
   WebNavigationAPI* api = WebNavigationAPI::GetFactoryInstance()->Get(
       web_contents()->GetBrowserContext());
+  if (!api)
+    return;  // Possible in unit tests.
   WebNavigationEventRouter* router = api->web_navigation_event_router_.get();
   if (!router)
     return;
@@ -417,8 +417,10 @@ void WebNavigationTabObserver::DispatchCachedOnBeforeNavigate() {
 
 void WebNavigationTabObserver::HandleCommit(
     content::NavigationHandle* navigation_handle) {
-  bool is_reference_fragment_navigation = IsReferenceFragmentNavigation(
-      navigation_handle->GetRenderFrameHost(), navigation_handle->GetURL());
+  bool is_reference_fragment_navigation =
+      navigation_handle->IsSameDocument() &&
+      IsReferenceFragmentNavigation(navigation_handle->GetRenderFrameHost(),
+                                    navigation_handle->GetURL());
 
   navigation_state_.StartTrackingDocumentLoad(
       navigation_handle->GetRenderFrameHost(), navigation_handle->GetURL(),
@@ -452,7 +454,7 @@ void WebNavigationTabObserver::HandleError(
   helpers::DispatchOnErrorOccurred(navigation_handle);
 }
 
-// See also NavigationController::IsURLInPageNavigation.
+// See also NavigationController::IsURLSameDocumentNavigation.
 bool WebNavigationTabObserver::IsReferenceFragmentNavigation(
     content::RenderFrameHost* render_frame_host,
     const GURL& url) {
@@ -574,12 +576,12 @@ void WebNavigationAPI::Shutdown() {
 }
 
 static base::LazyInstance<BrowserContextKeyedAPIFactory<WebNavigationAPI>>::
-    DestructorAtExit g_factory = LAZY_INSTANCE_INITIALIZER;
+    DestructorAtExit g_web_navigation_api_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
 BrowserContextKeyedAPIFactory<WebNavigationAPI>*
 WebNavigationAPI::GetFactoryInstance() {
-  return g_factory.Pointer();
+  return g_web_navigation_api_factory.Pointer();
 }
 
 void WebNavigationAPI::OnListenerAdded(const EventListenerInfo& details) {

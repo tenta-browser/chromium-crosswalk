@@ -20,9 +20,9 @@
 #include "base/memory/weak_ptr.h"
 #include "base/stl_util.h"
 #include "base/synchronization/lock.h"
-#include "cc/output/context_provider.h"
 #include "cc/test/ordered_texture_map.h"
 #include "cc/test/test_texture.h"
+#include "components/viz/common/gpu/context_provider.h"
 #include "gpu/command_buffer/common/sync_token.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/gfx/geometry/rect.h"
@@ -153,10 +153,15 @@ class TestWebGraphicsContext3D {
   virtual void deleteShader(GLuint id);
 
   virtual void texStorage2DEXT(GLenum target,
-                               GLint levels,
-                               GLuint internalformat,
-                               GLint width,
-                               GLint height) {}
+                               GLsizei levels,
+                               GLenum internalformat,
+                               GLsizei width,
+                               GLsizei height) {}
+  virtual void texStorage2DImageCHROMIUM(GLenum target,
+                                         GLenum internalformat,
+                                         GLenum bufferusage,
+                                         GLsizei width,
+                                         GLsizei height) {}
 
   virtual GLuint createQueryEXT();
   virtual void deleteQueryEXT(GLuint query) {}
@@ -187,13 +192,10 @@ class TestWebGraphicsContext3D {
                              const void* pixels) {}
 
   virtual void genMailboxCHROMIUM(GLbyte* mailbox);
-  virtual void produceTextureCHROMIUM(GLenum target,
-                                      const GLbyte* mailbox) { }
+  virtual void produceTextureCHROMIUM(GLenum target, const GLbyte* mailbox) {}
   virtual void produceTextureDirectCHROMIUM(GLuint texture,
                                             GLenum target,
                                             const GLbyte* mailbox) {}
-  virtual void consumeTextureCHROMIUM(GLenum target,
-                                      const GLbyte* mailbox) { }
   virtual GLuint createAndConsumeTextureCHROMIUM(GLenum target,
                                                  const GLbyte* mailbox);
 
@@ -255,8 +257,7 @@ class TestWebGraphicsContext3D {
                           const void* data,
                           GLenum usage);
   virtual void pixelStorei(GLenum pname, GLint param);
-  virtual void* mapBufferCHROMIUM(GLenum target,
-                                  GLenum access);
+  virtual void* mapBufferCHROMIUM(GLenum target, GLenum access);
   virtual GLboolean unmapBufferCHROMIUM(GLenum target);
 
   virtual GLuint createImageCHROMIUM(ClientBuffer buffer,
@@ -344,14 +345,26 @@ class TestWebGraphicsContext3D {
   void set_support_texture_half_float_linear(bool support) {
     test_capabilities_.texture_half_float_linear = support;
   }
+  void set_support_texture_norm16(bool support) {
+    test_capabilities_.texture_norm16 = support;
+  }
   void set_msaa_is_slow(bool msaa_is_slow) {
     test_capabilities_.msaa_is_slow = msaa_is_slow;
   }
   void set_gpu_rasterization(bool gpu_rasterization) {
     test_capabilities_.gpu_rasterization = gpu_rasterization;
   }
+  void set_avoid_stencil_buffers(bool avoid_stencil_buffers) {
+    test_capabilities_.avoid_stencil_buffers = avoid_stencil_buffers;
+  }
   void set_enable_dc_layers(bool support) {
     test_capabilities_.dc_layers = support;
+  }
+  void set_support_multisample_compatibility(bool support) {
+    test_capabilities_.multisample_compatibility = support;
+  }
+  void set_support_texture_storage_image(bool support) {
+    test_capabilities_.texture_storage_image = support;
   }
 
   // When this context is lost, all contexts in its share group are also lost.
@@ -393,6 +406,9 @@ class TestWebGraphicsContext3D {
   gfx::Rect update_rect() const { return update_rect_; }
 
   UpdateType last_update_type() { return last_update_type_; }
+
+  size_t NumFramebuffers() const;
+  size_t NumRenderbuffers() const;
 
  protected:
   struct TextureTargets {

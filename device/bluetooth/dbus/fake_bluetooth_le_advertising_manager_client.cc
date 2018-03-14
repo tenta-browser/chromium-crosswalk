@@ -26,10 +26,10 @@ constexpr uint16_t kMaxIntervalMs = 10240;
 }  // namespace
 
 FakeBluetoothLEAdvertisingManagerClient::
-    FakeBluetoothLEAdvertisingManagerClient() {}
+    FakeBluetoothLEAdvertisingManagerClient() = default;
 
 FakeBluetoothLEAdvertisingManagerClient::
-    ~FakeBluetoothLEAdvertisingManagerClient() {}
+    ~FakeBluetoothLEAdvertisingManagerClient() = default;
 
 void FakeBluetoothLEAdvertisingManagerClient::Init(dbus::Bus* bus) {}
 
@@ -105,6 +105,15 @@ void FakeBluetoothLEAdvertisingManagerClient::SetAdvertisingInterval(
                        "Invalid interval.");
     return;
   }
+  callback.Run();
+}
+
+void FakeBluetoothLEAdvertisingManagerClient::ResetAdvertising(
+    const dbus::ObjectPath& object_path,
+    const base::Closure& callback,
+    const ErrorCallback& error_callback) {
+  currently_registered_.clear();
+  service_provider_map_.clear();
   callback.Run();
 }
 

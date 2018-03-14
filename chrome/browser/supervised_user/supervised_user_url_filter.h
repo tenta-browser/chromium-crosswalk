@@ -13,7 +13,7 @@
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
 #include "base/values.h"
 #include "chrome/browser/safe_search_api/safe_search_url_checker.h"
 #include "chrome/browser/supervised_user/supervised_user_site_list.h"
@@ -41,7 +41,7 @@ class URLRequestContextGetter;
 //   * User-specified manual overrides (allow or block) for either sites
 //     (hostnames) or exact URLs, which take precedence over the previous
 //     sources.
-class SupervisedUserURLFilter : public base::NonThreadSafe {
+class SupervisedUserURLFilter {
  public:
   enum FilteringBehavior {
     ALLOW,
@@ -50,10 +50,10 @@ class SupervisedUserURLFilter : public base::NonThreadSafe {
     INVALID
   };
 
-  using FilteringBehaviorCallback =
-      base::Callback<void(FilteringBehavior,
-                          supervised_user_error_page::FilteringBehaviorReason,
-                          bool /* uncertain */)>;
+  using FilteringBehaviorCallback = base::OnceCallback<void(
+      FilteringBehavior,
+      supervised_user_error_page::FilteringBehaviorReason,
+      bool /* uncertain */)>;
 
   class Observer {
    public:
@@ -124,7 +124,7 @@ class SupervisedUserURLFilter : public base::NonThreadSafe {
   // Returns true if |callback| was called synchronously.
   bool GetFilteringBehaviorForURLWithAsyncChecks(
       const GURL& url,
-      const FilteringBehaviorCallback& callback) const;
+      FilteringBehaviorCallback callback) const;
 
   // Gets all the whitelists that the url is part of. Returns id->name of each
   // whitelist.
@@ -189,7 +189,7 @@ class SupervisedUserURLFilter : public base::NonThreadSafe {
       bool manual_only,
       supervised_user_error_page::FilteringBehaviorReason* reason) const;
 
-  void CheckCallback(const FilteringBehaviorCallback& callback,
+  void CheckCallback(FilteringBehaviorCallback callback,
                      const GURL& url,
                      SafeSearchURLChecker::Classification classification,
                      bool uncertain) const;
@@ -218,6 +218,8 @@ class SupervisedUserURLFilter : public base::NonThreadSafe {
   re2::RE2 google_web_cache_query_regex_;
 
   scoped_refptr<base::TaskRunner> blocking_task_runner_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   base::WeakPtrFactory<SupervisedUserURLFilter> weak_ptr_factory_;
 

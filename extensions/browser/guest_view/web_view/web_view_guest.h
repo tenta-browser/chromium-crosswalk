@@ -13,8 +13,6 @@
 #include "base/observer_list.h"
 #include "components/guest_view/browser/guest_view.h"
 #include "content/public/browser/javascript_dialog_manager.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/guest_view/web_view/javascript_dialog_helper.h"
 #include "extensions/browser/guest_view/web_view/web_view_find_helper.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest_delegate.h"
@@ -36,8 +34,7 @@ class WebViewInternalFindFunction;
 // a particular embedder WebContents. This happens on either initial navigation
 // or through the use of the New Window API, when a new window is attached to
 // a particular <webview>.
-class WebViewGuest : public guest_view::GuestView<WebViewGuest>,
-                     public content::NotificationObserver {
+class WebViewGuest : public guest_view::GuestView<WebViewGuest> {
  public:
   // Clean up state when this GuestView is being destroyed. See
   // GuestViewBase::CleanUp().
@@ -58,6 +55,14 @@ class WebViewGuest : public guest_view::GuestView<WebViewGuest>,
                                              std::string* partition_domain,
                                              std::string* partition_name,
                                              bool* in_memory);
+
+  // Opposite of GetGuestPartitionConfigForSite: Creates a specially formatted
+  // URL used by the SiteInstance associated with the WebViewGuest. See
+  // GetGuestPartitionConfigForSite for the URL format.
+  static GURL GetSiteForGuestPartitionConfig(
+      const std::string& partition_domain,
+      const std::string& partition_name,
+      bool in_memory);
 
   // Returns the WebView partition ID associated with the render process
   // represented by |render_process_host|, if any. Otherwise, an empty string is
@@ -166,7 +171,6 @@ class WebViewGuest : public guest_view::GuestView<WebViewGuest>,
   void SetFullscreenState(bool is_fullscreen);
 
   // GuestViewBase implementation.
-  bool CanRunInDetachedState() const final;
   void CreateWebContents(const base::DictionaryValue& create_params,
                          const WebContentsCreatedCallback& callback) final;
   void DidAttachToEmbedder() final;
@@ -191,14 +195,8 @@ class WebViewGuest : public guest_view::GuestView<WebViewGuest>,
   bool IsAutoSizeSupported() const final;
   void SetContextMenuPosition(const gfx::Point& position) final;
   void SignalWhenReady(const base::Closure& callback) final;
-  bool ShouldHandleFindRequestsForEmbedder() const final;
   void WillAttachToEmbedder() final;
   void WillDestroy() final;
-
-  // NotificationObserver implementation.
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) final;
 
   // WebContentsDelegate implementation.
   bool DidAddMessageToConsole(content::WebContents* source,
@@ -256,10 +254,15 @@ class WebViewGuest : public guest_view::GuestView<WebViewGuest>,
   void RequestToLockMouse(content::WebContents* web_contents,
                           bool user_gesture,
                           bool last_unlocked_by_target) override;
+  void OnAudioStateChanged(content::WebContents* web_contents,
+                           bool audible) final;
 
   // WebContentsObserver implementation.
   void DidStartNavigation(content::NavigationHandle* navigation_handle) final;
+  void DidRedirectNavigation(
+      content::NavigationHandle* navigation_handle) final;
   void DidFinishNavigation(content::NavigationHandle* navigation_handle) final;
+  void DocumentOnLoadCompletedInMainFrame() final;
   void RenderProcessGone(base::TerminationStatus status) final;
   void UserAgentOverrideSet(const std::string& user_agent) final;
   void FrameNameChanged(content::RenderFrameHost* render_frame_host,
@@ -267,14 +270,6 @@ class WebViewGuest : public guest_view::GuestView<WebViewGuest>,
 
   // Informs the embedder of a frame name change.
   void ReportFrameNameChange(const std::string& name);
-
-  // Called after the load handler is called in the guest's main frame.
-  void LoadHandlerCalled();
-
-  // Called when a redirect notification occurs.
-  void LoadRedirect(const GURL& old_url,
-                    const GURL& new_url,
-                    bool is_top_level);
 
   void PushWebViewStateToIOThread();
   static void RemoveWebViewStateFromIOThread(
@@ -311,6 +306,8 @@ class WebViewGuest : public guest_view::GuestView<WebViewGuest>,
 
   void ApplyAttributes(const base::DictionaryValue& params);
 
+  void SetTransparency();
+
   // Identifies the set of rules registries belonging to this guest.
   int rules_registry_id_;
 
@@ -319,8 +316,6 @@ class WebViewGuest : public guest_view::GuestView<WebViewGuest>,
 
   base::ObserverList<ScriptExecutionObserver> script_observers_;
   std::unique_ptr<ScriptExecutor> script_executor_;
-
-  content::NotificationRegistrar notification_registrar_;
 
   // True if the user agent is overridden.
   bool is_overriding_user_agent_;

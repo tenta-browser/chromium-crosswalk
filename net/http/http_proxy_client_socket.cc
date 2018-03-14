@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/profiler/scoped_tracker.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "net/base/auth.h"
@@ -97,9 +96,10 @@ const HttpResponseInfo* HttpProxyClientSocket::GetConnectResponseInfo() const {
   return response_.headers.get() ? &response_ : NULL;
 }
 
-HttpStream* HttpProxyClientSocket::CreateConnectResponseStream() {
-  return new ProxyConnectRedirectHttpStream(
-      redirect_has_load_timing_info_ ? &redirect_load_timing_info_ : NULL);
+std::unique_ptr<HttpStream>
+HttpProxyClientSocket::CreateConnectResponseStream() {
+  return std::make_unique<ProxyConnectRedirectHttpStream>(
+      redirect_has_load_timing_info_ ? &redirect_load_timing_info_ : nullptr);
 }
 
 
@@ -255,8 +255,9 @@ int HttpProxyClientSocket::PrepareForAuthRestart() {
   if (!response_.headers.get())
     return ERR_CONNECTION_RESET;
 
-  // If the connection can't be reused, just return ERR_CONNECTION_CLOSED.
-  // The request should be retried at a higher layer.
+  // If the connection can't be reused, return
+  // ERR_UNABLE_TO_REUSE_CONNECTION_FOR_PROXY_AUTH.  The request will be retried
+  // at a higher layer.
   if (!response_.headers->IsKeepAlive() ||
       !http_stream_parser_->CanFindEndOfResponse() ||
       !transport_->socket()->IsConnected()) {

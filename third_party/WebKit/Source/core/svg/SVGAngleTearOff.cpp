@@ -129,8 +129,9 @@ void SVGAngleTearOff::setValueAsString(const String& value,
   CommitChange();
 }
 
-DEFINE_TRACE_WRAPPERS(SVGAngleTearOff) {
-  visitor->TraceWrappers(contextElement());
+SVGAngleTearOff* SVGAngleTearOff::CreateDetached() {
+  return Create(SVGAngle::Create(), nullptr, kPropertyIsNotAnimVal,
+                QualifiedName::Null());
 }
 
 }  // namespace blink

@@ -32,53 +32,24 @@
 
 #include <memory>
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/SerializedScriptValue.h"
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/frame/csp/ContentSecurityPolicy.h"
+#include "core/inspector/ThreadDebugger.h"
 #include "core/origin_trials/OriginTrialContext.h"
+#include "core/workers/DedicatedWorkerObjectProxy.h"
 #include "core/workers/DedicatedWorkerThread.h"
-#include "core/workers/InProcessWorkerObjectProxy.h"
+#include "core/workers/GlobalScopeCreationParams.h"
 #include "core/workers/WorkerClients.h"
-#include "core/workers/WorkerThreadStartupData.h"
+#include "platform/bindings/ScriptState.h"
 
 namespace blink {
 
-DedicatedWorkerGlobalScope* DedicatedWorkerGlobalScope::Create(
-    DedicatedWorkerThread* thread,
-    std::unique_ptr<WorkerThreadStartupData> startup_data,
-    double time_origin) {
-  // Note: startupData is finalized on return. After the relevant parts has been
-  // passed along to the created 'context'.
-  DedicatedWorkerGlobalScope* context = new DedicatedWorkerGlobalScope(
-      startup_data->script_url_, startup_data->user_agent_, thread, time_origin,
-      std::move(startup_data->starter_origin_privilege_data_),
-      startup_data->worker_clients_);
-  context->ApplyContentSecurityPolicyFromVector(
-      *startup_data->content_security_policy_headers_);
-  context->SetWorkerSettings(std::move(startup_data->worker_settings_));
-  if (!startup_data->referrer_policy_.IsNull())
-    context->ParseAndSetReferrerPolicy(startup_data->referrer_policy_);
-  context->SetAddressSpace(startup_data->address_space_);
-  OriginTrialContext::AddTokens(context,
-                                startup_data->origin_trial_tokens_.get());
-  return context;
-}
-
 DedicatedWorkerGlobalScope::DedicatedWorkerGlobalScope(
-    const KURL& url,
-    const String& user_agent,
+    std::unique_ptr<GlobalScopeCreationParams> creation_params,
     DedicatedWorkerThread* thread,
-    double time_origin,
-    std::unique_ptr<SecurityOrigin::PrivilegeData>
-        starter_origin_privilege_data,
-    WorkerClients* worker_clients)
-    : WorkerGlobalScope(url,
-                        user_agent,
-                        thread,
-                        time_origin,
-                        std::move(starter_origin_privilege_data),
-                        worker_clients) {}
+    double time_origin)
+    : WorkerGlobalScope(std::move(creation_params), thread, time_origin) {}
 
 DedicatedWorkerGlobalScope::~DedicatedWorkerGlobalScope() {}
 
@@ -88,24 +59,27 @@ const AtomicString& DedicatedWorkerGlobalScope::InterfaceName() const {
 
 void DedicatedWorkerGlobalScope::postMessage(
     ScriptState* script_state,
-    PassRefPtr<SerializedScriptValue> message,
+    scoped_refptr<SerializedScriptValue> message,
     const MessagePortArray& ports,
     ExceptionState& exception_state) {
   // Disentangle the port in preparation for sending it to the remote context.
-  MessagePortChannelArray channels = MessagePort::DisentanglePorts(
+  auto channels = MessagePort::DisentanglePorts(
       ExecutionContext::From(script_state), ports, exception_state);
   if (exception_state.HadException())
     return;
+  ThreadDebugger* debugger = ThreadDebugger::From(script_state->GetIsolate());
+  v8_inspector::V8StackTraceId stack_id =
+      debugger->StoreCurrentStackTrace("postMessage");
   WorkerObjectProxy().PostMessageToWorkerObject(std::move(message),
-                                                std::move(channels));
+                                                std::move(channels), stack_id);
 }
 
-InProcessWorkerObjectProxy& DedicatedWorkerGlobalScope::WorkerObjectProxy()
+DedicatedWorkerObjectProxy& DedicatedWorkerGlobalScope::WorkerObjectProxy()
     const {
   return static_cast<DedicatedWorkerThread*>(GetThread())->WorkerObjectProxy();
 }
 
-DEFINE_TRACE(DedicatedWorkerGlobalScope) {
+void DedicatedWorkerGlobalScope::Trace(blink::Visitor* visitor) {
   WorkerGlobalScope::Trace(visitor);
 }
 

@@ -6,6 +6,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "base/mac/availability.h"
 #import "base/mac/scoped_objc_class_swizzler.h"
 #include "base/mac/sdk_forward_declarations.h"
 #include "base/strings/utf_string_conversions.h"
@@ -41,7 +42,8 @@ using base::ASCIIToUTF16;
 @property BOOL animatesToDestination;
 @property NSInteger numberOfValidItemsForDrop;
 @property NSDraggingFormation draggingFormation;
-@property(readonly) NSSpringLoadingHighlight springLoadingHighlight;
+@property(readonly)
+    NSSpringLoadingHighlight springLoadingHighlight API_AVAILABLE(macos(10.11));
 
 @end
 
@@ -194,7 +196,8 @@ class DragDropClientMacTest : public WidgetTest {
   }
 
   void TearDown() override {
-    widget_->CloseNow();
+    if (widget_)
+      widget_->CloseNow();
     WidgetTest::TearDown();
   }
 
@@ -292,6 +295,40 @@ TEST_F(DragDropClientMacTest, PasteboardToOSExchangeTest) {
   [pasteboard->get() setString:@"text" forType:NSPasteboardTypeString];
   EXPECT_EQ(DragUpdate(pasteboard->get()), NSDragOperationCopy);
   EXPECT_EQ(Drop(), NSDragOperationMove);
+}
+
+// View object that will close Widget on drop.
+class DragDropCloseView : public DragDropView {
+ public:
+  DragDropCloseView() {}
+
+  // View:
+  int OnPerformDrop(const ui::DropTargetEvent& event) override {
+    GetWidget()->CloseNow();
+    return ui::DragDropTypes::DRAG_MOVE;
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(DragDropCloseView);
+};
+
+// Tests that closing Widget on OnPerformDrop does not crash.
+TEST_F(DragDropClientMacTest, CloseWidgetOnDrop) {
+  OSExchangeData data;
+  const base::string16& text = ASCIIToUTF16("text");
+  data.SetString(text);
+  SetData(data);
+
+  target_ = new DragDropCloseView();
+  widget_->GetContentsView()->AddChildView(target_);
+  target_->SetBoundsRect(gfx::Rect(0, 0, 100, 100));
+  target_->set_formats(ui::OSExchangeData::STRING | ui::OSExchangeData::URL);
+
+  EXPECT_EQ(DragUpdate(nil), NSDragOperationCopy);
+  EXPECT_EQ(Drop(), NSDragOperationMove);
+
+  // OnPerformDrop() will have deleted the widget.
+  widget_ = nullptr;
 }
 
 }  // namespace test

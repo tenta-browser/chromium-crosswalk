@@ -45,6 +45,11 @@ public abstract class StatusItem extends OptionalLeaf implements StatusCardViewH
         public void performAction(Context context) {
             assert false;
         }
+
+        @Override
+        protected void visitOptionalItem(NodeVisitor visitor) {
+            visitor.visitNoSuggestionsItem();
+        }
     }
 
     @Override
@@ -55,7 +60,10 @@ public abstract class StatusItem extends OptionalLeaf implements StatusCardViewH
 
     @Override
     protected void onBindViewHolder(NewTabPageViewHolder holder) {
-        assert holder instanceof StatusCardViewHolder;
-        ((StatusCardViewHolder) holder).onBindViewHolder(this);
+        ((StatusCardViewHolder) holder).onBindViewHolder(this, null);
+    }
+
+    public void setVisible(boolean visible) {
+        setVisibilityInternal(visible);
     }
 }

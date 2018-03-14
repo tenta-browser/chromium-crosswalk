@@ -25,8 +25,9 @@
 #include "core/dom/Text.h"
 #include "core/editing/EditingUtilities.h"
 #include "core/editing/Editor.h"
-#include "core/frame/FrameView.h"
+#include "core/editing/FrameSelection.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/HTMLFrameOwnerElement.h"
 #include "core/layout/LayoutBox.h"
 #include "core/layout/LayoutObject.h"
@@ -52,7 +53,7 @@ class SubtargetGeometry {
  public:
   SubtargetGeometry(Node* node, const FloatQuad& quad)
       : node_(node), quad_(quad) {}
-  DEFINE_INLINE_TRACE() { visitor->Trace(node_); }
+  void Trace(blink::Visitor* visitor) { visitor->Trace(node_); }
 
   Node* GetNode() const { return node_; }
   FloatQuad Quad() const { return quad_; }
@@ -91,7 +92,7 @@ bool NodeRespondsToTapGesture(Node* node) {
     // Tapping on a text field or other focusable item should trigger
     // adjustment, except that iframe elements are hard-coded to support focus
     // but the effect is often invisible so they should be excluded.
-    if (element->IsMouseFocusable() && !isHTMLIFrameElement(element))
+    if (element->IsMouseFocusable() && !IsHTMLIFrameElement(element))
       return true;
     // Accept nodes that has a CSS effect when touched.
     if (element->ChildrenOrSiblingsAffectedByActive() ||
@@ -109,7 +110,7 @@ bool NodeIsZoomTarget(Node* node) {
   if (node->IsTextNode() || node->IsShadowRoot())
     return false;
 
-  ASSERT(node->GetLayoutObject());
+  DCHECK(node->GetLayoutObject());
   return node->GetLayoutObject()->IsBox();
 }
 
@@ -117,7 +118,7 @@ bool ProvidesContextMenuItems(Node* node) {
   // This function tries to match the nodes that receive special context-menu
   // items in ContextMenuController::populate(), and should be kept uptodate
   // with those.
-  ASSERT(node->GetLayoutObject() || node->IsShadowRoot());
+  DCHECK(node->GetLayoutObject() || node->IsShadowRoot());
   if (!node->GetLayoutObject())
     return false;
   node->GetDocument().UpdateStyleAndLayoutTree();
@@ -140,7 +141,7 @@ bool ProvidesContextMenuItems(Node* node) {
       return true;
     // Only the selected part of the layoutObject is a valid target, but this
     // will be corrected in appendContextSubtargetsForNode.
-    if (node->GetLayoutObject()->GetSelectionState() != SelectionNone)
+    if (node->GetLayoutObject()->GetSelectionState() != SelectionState::kNone)
       return true;
   }
   return false;
@@ -160,7 +161,7 @@ static inline void AppendBasicSubtargetsForNode(
     Node* node,
     SubtargetGeometryList& subtargets) {
   // Node guaranteed to have layoutObject due to check in node filter.
-  ASSERT(node->GetLayoutObject());
+  DCHECK(node->GetLayoutObject());
 
   Vector<FloatQuad> quads;
   node->GetLayoutObject()->AbsoluteQuads(quads);
@@ -173,7 +174,7 @@ static inline void AppendContextSubtargetsForNode(
     SubtargetGeometryList& subtargets) {
   // This is a variant of appendBasicSubtargetsForNode that adds special
   // subtargets for selected or auto-selectable parts of text nodes.
-  ASSERT(node->GetLayoutObject());
+  DCHECK(node->GetLayoutObject());
 
   if (!node->IsTextNode())
     return AppendBasicSubtargetsForNode(node, subtargets);
@@ -202,28 +203,31 @@ static inline void AppendContextSubtargetsForNode(
       last_offset = offset;
     }
   } else {
-    if (text_layout_object->GetSelectionState() == SelectionNone)
+    if (text_layout_object->GetSelectionState() == SelectionState::kNone)
       return AppendBasicSubtargetsForNode(node, subtargets);
+    const FrameSelection& frame_selection =
+        text_layout_object->GetFrame()->Selection();
     // If selected, make subtargets out of only the selected part of the text.
     int start_pos, end_pos;
     switch (text_layout_object->GetSelectionState()) {
-      case SelectionInside:
+      case SelectionState::kInside:
         start_pos = 0;
         end_pos = text_layout_object->TextLength();
         break;
-      case SelectionStart:
-        text_layout_object->SelectionStartEnd(start_pos, end_pos);
+      case SelectionState::kStart:
+        start_pos = frame_selection.LayoutSelectionStart().value();
         end_pos = text_layout_object->TextLength();
         break;
-      case SelectionEnd:
-        text_layout_object->SelectionStartEnd(start_pos, end_pos);
+      case SelectionState::kEnd:
         start_pos = 0;
+        end_pos = frame_selection.LayoutSelectionEnd().value();
         break;
-      case SelectionBoth:
-        text_layout_object->SelectionStartEnd(start_pos, end_pos);
+      case SelectionState::kStartAndEnd:
+        start_pos = frame_selection.LayoutSelectionStart().value();
+        end_pos = frame_selection.LayoutSelectionEnd().value();
         break;
       default:
-        ASSERT_NOT_REACHED();
+        NOTREACHED();
         return;
     }
     Vector<FloatQuad> quads;
@@ -235,7 +239,7 @@ static inline void AppendContextSubtargetsForNode(
 static inline void AppendZoomableSubtargets(Node* node,
                                             SubtargetGeometryList& subtargets) {
   LayoutBox* layout_object = ToLayoutBox(node->GetLayoutObject());
-  ASSERT(layout_object);
+  DCHECK(layout_object);
 
   Vector<FloatQuad> quads;
   FloatRect border_box_rect(layout_object->BorderBoxRect());
@@ -320,7 +324,7 @@ void CompileSubtargetList(const HeapVector<Member<Node>>& intersected_nodes,
     // preferred even when contained in an element that monitors all
     // click-events.
     Node* responding_node = responder_map.at(candidate);
-    ASSERT(responding_node);
+    DCHECK(responding_node);
     if (ancestors_to_responders_set.Contains(responding_node))
       continue;
     // Consolidate bounds for editable content.
@@ -406,7 +410,7 @@ float HybridDistanceFunction(const IntPoint& touch_hotspot,
   return hybrid_score;
 }
 
-FloatPoint ContentsToRootFrame(FrameView* view, FloatPoint pt) {
+FloatPoint ContentsToRootFrame(LocalFrameView* view, FloatPoint pt) {
   int x = static_cast<int>(pt.X() + 0.5f);
   int y = static_cast<int>(pt.Y() + 0.5f);
   IntPoint adjusted = view->ContentsToRootFrame(IntPoint(x, y));
@@ -431,7 +435,7 @@ bool SnapTo(const SubtargetGeometry& geom,
             const IntPoint& touch_point,
             const IntRect& touch_area,
             IntPoint& adjusted_point) {
-  FrameView* view = geom.GetNode()->GetDocument().View();
+  LocalFrameView* view = geom.GetNode()->GetDocument().View();
   FloatQuad quad = geom.Quad();
 
   if (quad.IsRectilinear()) {

@@ -23,13 +23,18 @@
 #ifndef CachedUAStyle_h
 #define CachedUAStyle_h
 
-#include <memory>
-#include "core/style/ComputedStyle.h"
+#include "core/css/StyleColor.h"
+#include "core/style/FillLayer.h"
+#include "core/style/NinePieceImage.h"
+#include "platform/LengthSize.h"
+#include "platform/graphics/Color.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/PtrUtil.h"
 
 namespace blink {
+
+class ComputedStyle;
 
 // LayoutTheme::AdjustStyle wants the background and borders
 // as specified by the UA sheets, excluding any author rules.
@@ -38,21 +43,44 @@ namespace blink {
 class CachedUAStyle {
   USING_FAST_MALLOC(CachedUAStyle);
   WTF_MAKE_NONCOPYABLE(CachedUAStyle);
+  friend class ComputedStyle;
 
  public:
   static std::unique_ptr<CachedUAStyle> Create(const ComputedStyle* style) {
     return WTF::WrapUnique(new CachedUAStyle(style));
   }
 
-  BorderData border;
+  bool BorderColorEquals(const ComputedStyle& other) const;
+  bool BorderWidthEquals(const ComputedStyle& other) const;
+  bool BorderRadiiEquals(const ComputedStyle& other) const;
+  bool BorderStyleEquals(const ComputedStyle& other) const;
+
+  LengthSize top_left_;
+  LengthSize top_right_;
+  LengthSize bottom_left_;
+  LengthSize bottom_right_;
+  Color border_left_color;
+  Color border_right_color;
+  Color border_top_color;
+  Color border_bottom_color;
+  bool border_left_color_is_current_color;
+  bool border_right_color_is_current_color;
+  bool border_top_color_is_current_color;
+  bool border_bottom_color_is_current_color;
+  unsigned border_left_style : 4;    // EBorderStyle
+  unsigned border_right_style : 4;   // EBorderStyle
+  unsigned border_top_style : 4;     // EBorderStyle
+  unsigned border_bottom_style : 4;  // EBorderStyle
+  float border_left_width;
+  float border_right_width;
+  float border_top_width;
+  float border_bottom_width;
+  NinePieceImage border_image;
   FillLayer background_layers;
   StyleColor background_color;
 
  private:
-  explicit CachedUAStyle(const ComputedStyle* style)
-      : border(style->Border()),
-        background_layers(style->BackgroundLayers()),
-        background_color(style->BackgroundColor()) {}
+  explicit CachedUAStyle(const ComputedStyle*);
 };
 
 }  // namespace blink

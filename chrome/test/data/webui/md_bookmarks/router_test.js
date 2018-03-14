@@ -12,14 +12,16 @@ suite('<bookmarks-router>', function() {
   }
 
   setup(function() {
+    var nodes = testTree(createFolder('1', [createFolder('2', [])]));
     store = new bookmarks.TestStore({
-      nodes: testTree(createFolder('1', [createFolder('2', [])])),
+      nodes: nodes,
+      folderOpenState: getAllFoldersOpenState(nodes),
       selectedFolder: '1',
       search: {
         term: '',
       },
     });
-    bookmarks.Store.instance_ = store;
+    store.replaceSingleton();
 
     router = document.createElement('bookmarks-router');
     replaceBody(router);
@@ -43,6 +45,11 @@ suite('<bookmarks-router>', function() {
 
     return Promise.resolve().then(function() {
       assertEquals('chrome://bookmarks/?id=2', window.location.href);
+      store.data.selectedFolder = '1';
+      store.notifyObservers();
+    }).then(function() {
+      // Selecting Bookmarks bar clears route.
+      assertEquals('chrome://bookmarks/', window.location.href);
     });
   });
 
@@ -62,6 +69,13 @@ suite('<bookmarks-router>', function() {
           assertEquals('chrome://bookmarks/?q=bloop', window.location.href);
         });
   });
+
+  test('bookmarks bar selected with empty route', function() {
+    navigateTo('/?id=2');
+    navigateTo('/');
+    assertEquals('select-folder', store.lastAction.name);
+    assertEquals('1', store.lastAction.id);
+  });
 });
 
 suite('URL preload', function() {
@@ -75,8 +89,6 @@ suite('URL preload', function() {
     window.history.replaceState({}, '', url);
 
     chrome.bookmarks.getTree = function(callback) {
-      console.log('getTree');
-      console.log(window.location.href);
       callback([
         createFolder(
             '0',
@@ -115,5 +127,14 @@ suite('URL preload', function() {
     var state = bookmarks.Store.getInstance().data;
     assertEquals('2', state.selectedFolder);
     assertDeepEquals(['21'], bookmarks.util.getDisplayedList(state));
+  });
+
+  test('loading an invalid folder URL selects the Bookmarks Bar', function() {
+    setupWithUrl('/?id=42');
+    var state = bookmarks.Store.getInstance().data;
+    assertEquals('1', state.selectedFolder);
+    return Promise.resolve().then(function() {
+      assertEquals('chrome://bookmarks/', window.location.href);
+    });
   });
 });

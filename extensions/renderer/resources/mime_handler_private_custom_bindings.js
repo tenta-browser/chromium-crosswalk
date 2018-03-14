@@ -6,21 +6,20 @@
  * Custom bindings for the mime handler API.
  */
 
-var binding = require('binding').Binding.create('mimeHandlerPrivate');
+var binding =
+    apiBridge || require('binding').Binding.create('mimeHandlerPrivate');
+var utils = require('utils');
 
 var NO_STREAM_ERROR =
     'Streams are only available from a mime handler view guest.';
 var STREAM_ABORTED_ERROR = 'Stream has been aborted.';
 
-var servicePromise = Promise.all([
-    requireAsync('content/public/renderer/frame_interfaces'),
-    requireAsync('extensions/common/api/mime_handler.mojom'),
-]).then(function(modules) {
-  var frameInterfaces = modules[0];
-  var mojom = modules[1];
-  return new mojom.MimeHandlerServicePtr(
-      frameInterfaces.getInterface(mojom.MimeHandlerService.name));
-});
+loadScript('mojo_bindings');
+loadScript('extensions/common/api/mime_handler.mojom');
+
+var servicePtr = new extensions.mimeHandler.MimeHandlerServicePtr;
+Mojo.bindInterface(extensions.mimeHandler.MimeHandlerService.name,
+                   mojo.makeRequest(servicePtr).handle);
 
 // Stores a promise to the GetStreamInfo() result to avoid making additional
 // calls in response to getStreamInfo() calls.
@@ -31,25 +30,23 @@ function throwNoStreamError() {
 }
 
 function createStreamInfoPromise() {
-  return servicePromise.then(function(service) {
-    return service.getStreamInfo();
-  }).then(function(result) {
-    if (!result.stream_info)
+  return servicePtr.getStreamInfo().then(function(result) {
+    if (!result.streamInfo)
       throw new Error(STREAM_ABORTED_ERROR);
-    return result.stream_info;
+    return result.streamInfo;
   }, throwNoStreamError);
 }
 
 function constructStreamInfoDict(streamInfo) {
   var headers = {};
-  for (var header of streamInfo.response_headers) {
+  for (var header of streamInfo.responseHeaders) {
     headers[header[0]] = header[1];
   }
   return {
-    mimeType: streamInfo.mime_type,
-    originalUrl: streamInfo.original_url,
-    streamUrl: streamInfo.stream_url,
-    tabId: streamInfo.tab_id,
+    mimeType: streamInfo.mimeType,
+    originalUrl: streamInfo.originalUrl,
+    streamUrl: streamInfo.streamUrl,
+    tabId: streamInfo.tabId,
     embedded: !!streamInfo.embedded,
     responseHeaders: headers,
   };
@@ -57,17 +54,20 @@ function constructStreamInfoDict(streamInfo) {
 
 binding.registerCustomHook(function(bindingsAPI) {
   var apiFunctions = bindingsAPI.apiFunctions;
-  apiFunctions.setHandleRequestWithPromise('getStreamInfo', function() {
+  utils.handleRequestWithPromiseDoNotUse(
+      apiFunctions, 'mimeHandlerPrivate', 'getStreamInfo',
+      function() {
     if (!streamInfoPromise)
       streamInfoPromise = createStreamInfoPromise();
     return streamInfoPromise.then(constructStreamInfoDict);
   });
 
-  apiFunctions.setHandleRequestWithPromise('abortStream', function() {
-    return servicePromise.then(function(service) {
-      return service.abortStream().then(function() {});
-    }).catch(throwNoStreamError);
+  utils.handleRequestWithPromiseDoNotUse(
+      apiFunctions, 'mimeHandlerPrivate', 'abortStream',
+      function() {
+    return servicePtr.abortStream().then(function() {});
   });
 });
 
-exports.$set('binding', binding.generate());
+if (!apiBridge)
+  exports.$set('binding', binding.generate());

@@ -26,16 +26,15 @@
 #ifndef FileList_h
 #define FileList_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
 #include "core/fileapi/File.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/Vector.h"
+#include "platform/wtf/Vector.h"
 
 namespace blink {
 
-class CORE_EXPORT FileList final : public GarbageCollected<FileList>,
-                                   public ScriptWrappable {
+class CORE_EXPORT FileList final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -45,11 +44,11 @@ class CORE_EXPORT FileList final : public GarbageCollected<FileList>,
   File* item(unsigned index) const;
 
   bool IsEmpty() const { return files_.IsEmpty(); }
-  void Clear() { files_.Clear(); }
+  void clear() { files_.clear(); }
   void Append(File* file) { files_.push_back(file); }
   Vector<String> PathsForUserVisibleFiles() const;
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   FileList();

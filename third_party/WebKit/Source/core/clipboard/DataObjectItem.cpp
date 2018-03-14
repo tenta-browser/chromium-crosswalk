@@ -78,7 +78,7 @@ DataObjectItem* DataObjectItem::CreateFromHTML(const String& html,
 }
 
 DataObjectItem* DataObjectItem::CreateFromSharedBuffer(
-    PassRefPtr<SharedBuffer> buffer,
+    scoped_refptr<SharedBuffer> buffer,
     const KURL& source_url,
     const String& filename_extension,
     const AtomicString& content_disposition) {
@@ -118,14 +118,14 @@ File* DataObjectItem::GetAsFile() const {
   if (source_ == kInternalSource) {
     if (file_)
       return file_.Get();
-    ASSERT(shared_buffer_);
+    DCHECK(shared_buffer_);
     // FIXME: This code is currently impossible--we never populate
     // m_sharedBuffer when dragging in. At some point though, we may need to
     // support correctly converting a shared buffer into a file.
     return nullptr;
   }
 
-  ASSERT(source_ == kPasteboardSource);
+  DCHECK_EQ(source_, kPasteboardSource);
   if (GetType() == kMimeTypeImagePng) {
     WebBlobInfo blob_info = Platform::Current()->Clipboard()->ReadImage(
         WebClipboard::kBufferStandard);
@@ -141,12 +141,12 @@ File* DataObjectItem::GetAsFile() const {
 }
 
 String DataObjectItem::GetAsString() const {
-  ASSERT(kind_ == kStringKind);
+  DCHECK_EQ(kind_, kStringKind);
 
   if (source_ == kInternalSource)
     return data_;
 
-  ASSERT(source_ == kPasteboardSource);
+  DCHECK_EQ(source_, kPasteboardSource);
 
   WebClipboard::Buffer buffer = Pasteboard::GeneralPasteboard()->GetBuffer();
   String data;
@@ -185,7 +185,7 @@ String DataObjectItem::FileSystemId() const {
   return file_system_id_;
 }
 
-DEFINE_TRACE(DataObjectItem) {
+void DataObjectItem::Trace(blink::Visitor* visitor) {
   visitor->Trace(file_);
 }
 

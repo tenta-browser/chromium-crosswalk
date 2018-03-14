@@ -6,15 +6,14 @@
 
 #include <stddef.h>
 
-#include <memory>
 #include <vector>
 
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
 #include "base/values.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/content_settings/core/common/content_settings_utils.h"
 
 namespace {
 
@@ -70,9 +69,7 @@ std::string ContentSettingToString(ContentSetting setting) {
 
 bool ContentSettingFromString(const std::string& name,
                               ContentSetting* setting) {
-  // We are starting the index from 1, as |CONTENT_SETTING_DEFAULT| is not
-  // a recognized content setting.
-  for (size_t i = 1; i < arraysize(kContentSettingsStringMapping); ++i) {
+  for (size_t i = 0; i < arraysize(kContentSettingsStringMapping); ++i) {
     if (name == kContentSettingsStringMapping[i].content_setting_str) {
       *setting = kContentSettingsStringMapping[i].content_setting;
       return true;
@@ -120,34 +117,6 @@ PatternPair ParsePatternString(const std::string& pattern_str) {
   return pattern_pair;
 }
 
-ContentSetting ValueToContentSetting(const base::Value* value) {
-  ContentSetting setting = CONTENT_SETTING_DEFAULT;
-  bool valid = ParseContentSettingValue(value, &setting);
-  DCHECK(valid);
-  return setting;
-}
-
-bool ParseContentSettingValue(const base::Value* value,
-                              ContentSetting* setting) {
-  if (!value) {
-    *setting = CONTENT_SETTING_DEFAULT;
-    return true;
-  }
-  int int_value = -1;
-  if (!value->GetAsInteger(&int_value))
-    return false;
-  *setting = IntToContentSetting(int_value);
-  return *setting != CONTENT_SETTING_DEFAULT;
-}
-
-std::unique_ptr<base::Value> ContentSettingToValue(ContentSetting setting) {
-  if (setting <= CONTENT_SETTING_DEFAULT ||
-      setting >= CONTENT_SETTING_NUM_SETTINGS) {
-    return nullptr;
-  }
-  return base::MakeUnique<base::Value>(setting);
-}
-
 void GetRendererContentSettingRules(const HostContentSettingsMap* map,
                                     RendererContentSettingRules* rules) {
 #if !defined(OS_ANDROID)
@@ -158,12 +127,10 @@ void GetRendererContentSettingRules(const HostContentSettingsMap* map,
 #else
   // Android doesn't use image content settings, so ALLOW rule is added for
   // all origins.
-  rules->image_rules.push_back(
-      ContentSettingPatternSource(ContentSettingsPattern::Wildcard(),
-                                  ContentSettingsPattern::Wildcard(),
-                                  CONTENT_SETTING_ALLOW,
-                                  std::string(),
-                                  map->is_incognito()));
+  rules->image_rules.push_back(ContentSettingPatternSource(
+      ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
+      ContentSettingToValue(CONTENT_SETTING_ALLOW), std::string(),
+      map->is_incognito()));
 #endif
   map->GetSettingsForOneType(
       CONTENT_SETTINGS_TYPE_JAVASCRIPT,
@@ -173,6 +140,9 @@ void GetRendererContentSettingRules(const HostContentSettingsMap* map,
       CONTENT_SETTINGS_TYPE_AUTOPLAY,
       ResourceIdentifier(),
       &(rules->autoplay_rules));
+  map->GetSettingsForOneType(CONTENT_SETTINGS_TYPE_CLIENT_HINTS,
+                             ResourceIdentifier(),
+                             &(rules->client_hints_rules));
 }
 
 bool IsMorePermissive(ContentSetting a, ContentSetting b) {

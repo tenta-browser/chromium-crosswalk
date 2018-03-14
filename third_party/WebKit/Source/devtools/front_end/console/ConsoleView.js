@@ -40,24 +40,51 @@ Console.ConsoleView = class extends UI.VBox {
     this._searchableView = new UI.SearchableView(this);
     this._searchableView.setPlaceholder(Common.UIString('Find string in logs'));
     this._searchableView.setMinimalSearchQuerySize(0);
-    this._searchableView.show(this.element);
+    this._badgePool = new ProductRegistry.BadgePool();
+    this._sidebar = new Console.ConsoleSidebar(this._badgePool);
+    this._sidebar.addEventListener(Console.ConsoleSidebar.Events.FilterSelected, this._onFilterChanged.bind(this));
+    this._isSidebarOpen = false;
 
+    var toolbar = new UI.Toolbar('', this.element);
+    var isLogManagementEnabled = Runtime.experiments.isEnabled('logManagement');
+    if (isLogManagementEnabled) {
+      this._splitWidget =
+          new UI.SplitWidget(true /* isVertical */, false /* secondIsSidebar */, 'console.sidebar.width', 100);
+      this._splitWidget.setMainWidget(this._searchableView);
+      this._splitWidget.setSidebarWidget(this._sidebar);
+      this._splitWidget.hideSidebar();
+      this._splitWidget.show(this.element);
+      toolbar.appendToolbarItem(this._splitWidget.createShowHideSidebarButton('console sidebar'));
+      this._splitWidget.addEventListener(UI.SplitWidget.Events.ShowModeChanged, event => {
+        this._isSidebarOpen = event.data === UI.SplitWidget.ShowMode.Both;
+        this._filter._levelMenuButton.setEnabled(!this._isSidebarOpen);
+        this._onFilterChanged();
+      });
+    } else {
+      this._searchableView.show(this.element);
+    }
     this._contentsElement = this._searchableView.element;
-    this._contentsElement.classList.add('console-view');
+    this.element.classList.add('console-view');
+
     /** @type {!Array.<!Console.ConsoleViewMessage>} */
     this._visibleViewMessages = [];
     this._urlToMessageCount = {};
     this._hiddenByFilterCount = 0;
+    /** @type {!Set<!Console.ConsoleViewMessage>} */
+    this._shouldBeHiddenCache = new Set();
+
+    /** @type {!Map<string, !Array<!Console.ConsoleViewMessage>>} */
+    this._groupableMessages = new Map();
+    /** @type {!Map<string, !Console.ConsoleViewMessage>} */
+    this._groupableMessageTitle = new Map();
 
     /**
      * @type {!Array.<!Console.ConsoleView.RegexMatchRange>}
      */
     this._regexMatchRanges = [];
-    this._filter = new Console.ConsoleViewFilter(this._updateMessageList.bind(this));
+    this._filter = new Console.ConsoleViewFilter(this._onFilterChanged.bind(this));
 
-    this._executionContextComboBox = new UI.ToolbarComboBox(null, 'console-context');
-    this._executionContextComboBox.setMaxWidth(80);
-    this._consoleContextSelector = new Console.ConsoleContextSelector(this._executionContextComboBox.selectElement());
+    this._consoleContextSelector = new Console.ConsoleContextSelector();
 
     this._filterStatusText = new UI.ToolbarText();
     this._filterStatusText.element.classList.add('dimmed');
@@ -65,15 +92,18 @@ Console.ConsoleView = class extends UI.VBox {
     this._showSettingsPaneButton = new UI.ToolbarSettingToggle(
         this._showSettingsPaneSetting, 'largeicon-settings-gear', Common.UIString('Console settings'));
     this._progressToolbarItem = new UI.ToolbarItem(createElement('div'));
+    this._groupSimilarSetting = Common.settings.moduleSetting('consoleGroupSimilar');
+    this._groupSimilarSetting.addChangeListener(() => this._updateMessageList());
+    var groupSimilarToggle = new UI.ToolbarSettingCheckbox(this._groupSimilarSetting, Common.UIString('Group similar'));
 
-    var toolbar = new UI.Toolbar('', this._contentsElement);
     toolbar.appendToolbarItem(UI.Toolbar.createActionButton(
         /** @type {!UI.Action }*/ (UI.actionRegistry.action('console.clear'))));
     toolbar.appendSeparator();
-    toolbar.appendToolbarItem(this._executionContextComboBox);
+    toolbar.appendToolbarItem(this._consoleContextSelector.toolbarItem());
     toolbar.appendSeparator();
     toolbar.appendToolbarItem(this._filter._textFilterUI);
-    toolbar.appendToolbarItem(this._filter._levelComboBox);
+    toolbar.appendToolbarItem(this._filter._levelMenuButton);
+    toolbar.appendToolbarItem(groupSimilarToggle);
     toolbar.appendToolbarItem(this._progressToolbarItem);
     toolbar.appendSpacer();
     toolbar.appendToolbarItem(this._filterStatusText);
@@ -86,6 +116,13 @@ Console.ConsoleView = class extends UI.VBox {
     this._hideNetworkMessagesCheckbox = new UI.ToolbarSettingCheckbox(
         this._filter._hideNetworkMessagesSetting, this._filter._hideNetworkMessagesSetting.title(),
         Common.UIString('Hide network'));
+    var filterByExecutionContextCheckbox = new UI.ToolbarSettingCheckbox(
+        this._filter._filterByExecutionContextSetting,
+        Common.UIString('Only show messages from the current context (top, iframe, worker, extension)'),
+        Common.UIString('Selected context only'));
+    var filterConsoleAPICheckbox = new UI.ToolbarSettingCheckbox(
+        Common.moduleSetting('consoleAPIFilterEnabled'), Common.UIString('Only show messages from console API methods'),
+        Common.UIString('User messages only'));
     var monitoringXHREnabledSetting = Common.moduleSetting('monitoringXHREnabled');
     this._timestampsSetting = Common.moduleSetting('consoleTimestampsEnabled');
     this._consoleHistoryAutocompleteSetting = Common.moduleSetting('consoleHistoryAutocomplete');
@@ -98,7 +135,9 @@ Console.ConsoleView = class extends UI.VBox {
     settingsToolbarLeft.makeVertical();
     settingsToolbarLeft.appendToolbarItem(this._hideNetworkMessagesCheckbox);
     settingsToolbarLeft.appendToolbarItem(this._preserveLogCheckbox);
-    settingsToolbarLeft.appendToolbarItem(this._filter._filterByExecutionContextCheckbox);
+    settingsToolbarLeft.appendToolbarItem(filterByExecutionContextCheckbox);
+    if (!isLogManagementEnabled)
+      settingsToolbarLeft.appendToolbarItem(filterConsoleAPICheckbox);
 
     var settingsToolbarRight = new UI.Toolbar('', settingsPane.element);
     settingsToolbarRight.makeVertical();
@@ -136,9 +175,8 @@ Console.ConsoleView = class extends UI.VBox {
     this._registerShortcuts();
 
     this._messagesElement.addEventListener('contextmenu', this._handleContextMenuEvent.bind(this), false);
-    monitoringXHREnabledSetting.addChangeListener(this._monitoringXHREnabledSettingChanged, this);
 
-    this._linkifier = new Components.Linkifier();
+    this._linkifier = new Components.Linkifier(Console.ConsoleViewMessage.MaxLengthForLinks);
 
     /** @type {!Array.<!Console.ConsoleViewMessage>} */
     this._consoleMessages = [];
@@ -178,8 +216,6 @@ Console.ConsoleView = class extends UI.VBox {
     ConsoleModel.consoleModel.addEventListener(
         ConsoleModel.ConsoleModel.Events.CommandEvaluated, this._commandEvaluated, this);
     ConsoleModel.consoleModel.messages().forEach(this._addConsoleMessage, this);
-    if (this._consoleMessages.length)
-      this._viewport.invalidate();
   }
 
   /**
@@ -193,6 +229,23 @@ Console.ConsoleView = class extends UI.VBox {
 
   static clearConsole() {
     ConsoleModel.consoleModel.requestClearMessages();
+  }
+
+  _onFilterChanged() {
+    this._filter._currentFilter.levelsMask = this._isSidebarOpen ? Console.ConsoleFilter.allLevelsFilterValue() :
+                                                                   this._filter._messageLevelFiltersSetting.get();
+    this._cancelBuildHiddenCache();
+    if (this._immediatelyFilterMessagesForTest) {
+      for (var viewMessage of this._consoleMessages)
+        this._computeShouldMessageBeVisible(viewMessage);
+      this._updateMessageList();
+      return;
+    }
+    this._buildHiddenCache(0, this._consoleMessages.slice());
+  }
+
+  _setImmediatelyFilterMessagesForTest() {
+    this._immediatelyFilterMessagesForTest = true;
   }
 
   /**
@@ -276,20 +329,20 @@ Console.ConsoleView = class extends UI.VBox {
     }
 
     var consoleMessage = new ConsoleModel.ConsoleMessage(
-        null, ConsoleModel.ConsoleMessage.MessageSource.Other, level, message.text, undefined, undefined, undefined,
-        undefined, undefined, undefined, undefined, message.timestamp);
+        null, ConsoleModel.ConsoleMessage.MessageSource.Other, level, message.text,
+        ConsoleModel.ConsoleMessage.MessageType.System, undefined, undefined, undefined, undefined, undefined,
+        undefined, message.timestamp);
     this._addConsoleMessage(consoleMessage);
   }
 
   _consoleTimestampsSettingChanged() {
     this._updateMessageList();
     this._consoleMessages.forEach(viewMessage => viewMessage.updateTimestamp());
+    this._groupableMessageTitle.forEach(viewMessage => viewMessage.updateTimestamp());
   }
 
   _executionContextChanged() {
     this._prompt.clearAutocomplete();
-    if (this._filter._filterByExecutionContextCheckbox.checked())
-      this._updateMessageList();
   }
 
   /**
@@ -382,10 +435,11 @@ Console.ConsoleView = class extends UI.VBox {
   }
 
   _updateFilterStatus() {
-    this._filterStatusText.setText(Common.UIString(
-        this._hiddenByFilterCount === 1 ? '1 item hidden by filters' :
-                                          this._hiddenByFilterCount + ' items hidden by filters'));
+    if (this._hiddenByFilterCount === this._lastShownHiddenByFilterCount)
+      return;
+    this._filterStatusText.setText(Common.UIString(this._hiddenByFilterCount + ' hidden'));
     this._filterStatusText.setVisible(!!this._hiddenByFilterCount);
+    this._lastShownHiddenByFilterCount = this._hiddenByFilterCount;
   }
 
   /**
@@ -400,24 +454,23 @@ Console.ConsoleView = class extends UI.VBox {
    * @param {!ConsoleModel.ConsoleMessage} message
    */
   _addConsoleMessage(message) {
-    /**
-     * @param {!Console.ConsoleViewMessage} viewMessage1
-     * @param {!Console.ConsoleViewMessage} viewMessage2
-     * @return {number}
-     */
-    function compareTimestamps(viewMessage1, viewMessage2) {
-      return ConsoleModel.ConsoleMessage.timestampComparator(
-          viewMessage1.consoleMessage(), viewMessage2.consoleMessage());
-    }
-
-    if (message.type === ConsoleModel.ConsoleMessage.MessageType.Command ||
-        message.type === ConsoleModel.ConsoleMessage.MessageType.Result) {
-      message.timestamp =
-          this._consoleMessages.length ? this._consoleMessages.peekLast().consoleMessage().timestamp : 0;
-    }
     var viewMessage = this._createViewMessage(message);
     message[this._viewMessageSymbol] = viewMessage;
-    var insertAt = this._consoleMessages.upperBound(viewMessage, compareTimestamps);
+    if (message.type === ConsoleModel.ConsoleMessage.MessageType.Command ||
+        message.type === ConsoleModel.ConsoleMessage.MessageType.Result) {
+      var lastMessage = this._consoleMessages.peekLast();
+      viewMessage[Console.ConsoleView._messageSortingTimeSymbol] =
+          lastMessage ? lastMessage[Console.ConsoleView._messageSortingTimeSymbol] : 0;
+    } else {
+      viewMessage[Console.ConsoleView._messageSortingTimeSymbol] = viewMessage.consoleMessage().timestamp;
+    }
+
+    var insertAt;
+    if (!this._consoleMessages.length ||
+        timeComparator(viewMessage, this._consoleMessages[this._consoleMessages.length - 1]) > 0)
+      insertAt = this._consoleMessages.length;
+    else
+      insertAt = this._consoleMessages.upperBound(viewMessage, timeComparator);
     var insertedInMiddle = insertAt < this._consoleMessages.length;
     this._consoleMessages.splice(insertAt, 0, viewMessage);
 
@@ -426,7 +479,24 @@ Console.ConsoleView = class extends UI.VBox {
     else
       this._urlToMessageCount[message.url] = 1;
 
-    if (!insertedInMiddle) {
+    this._filter.onMessageAdded(message);
+    this._sidebar.onMessageAdded(viewMessage);
+
+    // If we already have similar messages, go slow path.
+    var shouldGoIntoGroup = false;
+    if (message.isGroupable()) {
+      var groupKey = viewMessage.groupKey();
+      shouldGoIntoGroup = this._groupSimilarSetting.get() && this._groupableMessages.has(groupKey);
+      var list = this._groupableMessages.get(groupKey);
+      if (!list) {
+        list = [];
+        this._groupableMessages.set(groupKey, list);
+      }
+      list.push(viewMessage);
+    }
+
+    this._computeShouldMessageBeVisible(viewMessage);
+    if (!shouldGoIntoGroup && !insertedInMiddle) {
       this._appendMessageToEnd(viewMessage);
       this._updateFilterStatus();
       this._searchableView.updateSearchMatchesCount(this._regexMatchRanges.length);
@@ -436,6 +506,15 @@ Console.ConsoleView = class extends UI.VBox {
 
     this._scheduleViewportRefresh();
     this._consoleMessageAddedForTest(viewMessage);
+
+    /**
+     * @param {!Console.ConsoleViewMessage} viewMessage1
+     * @param {!Console.ConsoleViewMessage} viewMessage2
+     */
+    function timeComparator(viewMessage1, viewMessage2) {
+      return viewMessage1[Console.ConsoleView._messageSortingTimeSymbol] -
+          viewMessage2[Console.ConsoleView._messageSortingTimeSymbol];
+    }
   }
 
   /**
@@ -458,21 +537,41 @@ Console.ConsoleView = class extends UI.VBox {
 
   /**
    * @param {!Console.ConsoleViewMessage} viewMessage
+   * @return {boolean}
    */
-  _appendMessageToEnd(viewMessage) {
-    if (!this._filter.shouldBeVisible(viewMessage)) {
+  _shouldMessageBeVisible(viewMessage) {
+    return !this._shouldBeHiddenCache.has(viewMessage);
+  }
+
+  /**
+   * @param {!Console.ConsoleViewMessage} viewMessage
+   */
+  _computeShouldMessageBeVisible(viewMessage) {
+    if (this._filter.shouldBeVisible(viewMessage) &&
+        (!this._isSidebarOpen || this._sidebar.shouldBeVisible(viewMessage)))
+      this._shouldBeHiddenCache.delete(viewMessage);
+    else
+      this._shouldBeHiddenCache.add(viewMessage);
+  }
+
+  /**
+   * @param {!Console.ConsoleViewMessage} viewMessage
+   * @param {boolean=} preventCollapse
+   */
+  _appendMessageToEnd(viewMessage, preventCollapse) {
+    if (!this._shouldMessageBeVisible(viewMessage)) {
       this._hiddenByFilterCount++;
       return;
     }
 
-    if (this._tryToCollapseMessages(viewMessage, this._visibleViewMessages.peekLast()))
+    if (!preventCollapse && this._tryToCollapseMessages(viewMessage, this._visibleViewMessages.peekLast()))
       return;
 
     var lastMessage = this._visibleViewMessages.peekLast();
     if (viewMessage.consoleMessage().type === ConsoleModel.ConsoleMessage.MessageType.EndGroup) {
       if (lastMessage && !this._currentGroup.messagesHidden())
         lastMessage.incrementCloseGroupDecorationCount();
-      this._currentGroup = this._currentGroup.parentGroup();
+      this._currentGroup = this._currentGroup.parentGroup() || this._currentGroup;
       return;
     }
     if (!this._currentGroup.messagesHidden()) {
@@ -502,24 +601,30 @@ Console.ConsoleView = class extends UI.VBox {
     var nestingLevel = this._currentGroup.nestingLevel();
     switch (message.type) {
       case ConsoleModel.ConsoleMessage.MessageType.Command:
-        return new Console.ConsoleCommand(message, this._linkifier, nestingLevel);
+        return new Console.ConsoleCommand(message, this._linkifier, this._badgePool, nestingLevel);
       case ConsoleModel.ConsoleMessage.MessageType.Result:
-        return new Console.ConsoleCommandResult(message, this._linkifier, nestingLevel);
+        return new Console.ConsoleCommandResult(message, this._linkifier, this._badgePool, nestingLevel);
       case ConsoleModel.ConsoleMessage.MessageType.StartGroupCollapsed:
       case ConsoleModel.ConsoleMessage.MessageType.StartGroup:
-        return new Console.ConsoleGroupViewMessage(message, this._linkifier, nestingLevel);
+        return new Console.ConsoleGroupViewMessage(message, this._linkifier, this._badgePool, nestingLevel);
       default:
-        return new Console.ConsoleViewMessage(message, this._linkifier, nestingLevel);
+        return new Console.ConsoleViewMessage(message, this._linkifier, this._badgePool, nestingLevel);
     }
   }
 
   _consoleCleared() {
+    this._cancelBuildHiddenCache();
     this._currentMatchRangeIndex = -1;
     this._consoleMessages = [];
+    this._groupableMessages.clear();
+    this._groupableMessageTitle.clear();
+    this._sidebar.clear();
     this._updateMessageList();
     this._hidePromptSuggestBox();
     this._viewport.setStickToBottom(true);
     this._linkifier.reset();
+    this._badgePool.reset();
+    this._filter.clear();
   }
 
   _handleContextMenuEvent(event) {
@@ -529,33 +634,24 @@ Console.ConsoleView = class extends UI.VBox {
       return;
     }
 
-    function monitoringXHRItemAction() {
-      Common.moduleSetting('monitoringXHREnabled').set(!Common.moduleSetting('monitoringXHREnabled').get());
-    }
-    contextMenu.appendCheckboxItem(
-        Common.UIString('Log XMLHttpRequests'), monitoringXHRItemAction,
-        Common.moduleSetting('monitoringXHREnabled').get());
-
     var sourceElement = event.target.enclosingNodeOrSelfWithClass('console-message-wrapper');
     var consoleMessage = sourceElement ? sourceElement.message.consoleMessage() : null;
 
-    var filterSubMenu = contextMenu.appendSubMenuItem(Common.UIString('Filter'));
+    var filterSubMenu = contextMenu.headerSection().appendSubMenuItem(Common.UIString('Filter'));
 
     if (consoleMessage && consoleMessage.url) {
-      var menuTitle =
-          Common.UIString.capitalize('Hide ^messages from %s', new Common.ParsedURL(consoleMessage.url).displayName);
-      filterSubMenu.appendItem(menuTitle, this._filter.addMessageURLFilter.bind(this._filter, consoleMessage.url));
+      var menuTitle = Common.UIString('Hide messages from %s', new Common.ParsedURL(consoleMessage.url).displayName);
+      filterSubMenu.headerSection().appendItem(
+          menuTitle, this._filter.addMessageURLFilter.bind(this._filter, consoleMessage.url));
     }
 
-    filterSubMenu.appendSeparator();
-    var unhideAll = filterSubMenu.appendItem(
-        Common.UIString.capitalize('Unhide ^all'), this._filter.removeMessageURLFilter.bind(this._filter));
-    filterSubMenu.appendSeparator();
+    var unhideAll = filterSubMenu.footerSection().appendItem(
+        Common.UIString('Unhide all'), this._filter.removeMessageURLFilter.bind(this._filter));
 
     var hasFilters = false;
 
     for (var url in this._filter.messageURLFilters()) {
-      filterSubMenu.appendCheckboxItem(
+      filterSubMenu.defaultSection().appendCheckboxItem(
           String.sprintf('%s (%d)', new Common.ParsedURL(url).displayName, this._urlToMessageCount[url]),
           this._filter.removeMessageURLFilter.bind(this._filter, url), true);
       hasFilters = true;
@@ -564,21 +660,24 @@ Console.ConsoleView = class extends UI.VBox {
     filterSubMenu.setEnabled(hasFilters || (consoleMessage && consoleMessage.url));
     unhideAll.setEnabled(hasFilters);
 
-    contextMenu.appendSeparator();
-    contextMenu.appendAction('console.clear');
-    contextMenu.appendAction('console.clear.history');
-    contextMenu.appendItem(Common.UIString('Save as...'), this._saveConsole.bind(this));
+    contextMenu.defaultSection().appendAction('console.clear');
+    contextMenu.defaultSection().appendAction('console.clear.history');
+    contextMenu.saveSection().appendItem(Common.UIString('Save as...'), this._saveConsole.bind(this));
+    if (this.element.hasSelection()) {
+      contextMenu.clipboardSection().appendItem(
+          Common.UIString('Copy visible styled selection'), this._viewport.copyWithStyles.bind(this._viewport));
+    }
 
     var request = consoleMessage ? consoleMessage.request : null;
-    if (request && request.resourceType() === Common.resourceTypes.XHR) {
-      contextMenu.appendSeparator();
-      contextMenu.appendItem(Common.UIString('Replay XHR'), request.replayXHR.bind(request));
+    if (request && SDK.NetworkManager.canReplayRequest(request)) {
+      contextMenu.debugSection().appendItem(
+          Common.UIString('Replay XHR'), SDK.NetworkManager.replayRequest.bind(null, request));
     }
 
     contextMenu.show();
   }
 
-  _saveConsole() {
+  async _saveConsole() {
     var url = SDK.targetManager.mainTarget().inspectedURL();
     var parsedURL = url.asParsedURL();
     var filename = String.sprintf('%s-%d.log', parsedURL ? parsedURL.host : 'console', Date.now());
@@ -590,57 +689,71 @@ Console.ConsoleView = class extends UI.VBox {
 
     /** @const */
     var chunkSize = 350;
+
+    if (!await stream.open(filename))
+      return;
+    this._progressToolbarItem.element.appendChild(progressIndicator.element);
+
     var messageIndex = 0;
-
-    stream.open(filename, openCallback.bind(this));
-
-    /**
-     * @param {boolean} accepted
-     * @this {Console.ConsoleView}
-     */
-    function openCallback(accepted) {
-      if (!accepted)
-        return;
-      this._progressToolbarItem.element.appendChild(progressIndicator.element);
-      writeNextChunk.call(this, stream);
-    }
-
-    /**
-     * @param {!Common.OutputStream} stream
-     * @param {string=} error
-     * @this {Console.ConsoleView}
-     */
-    function writeNextChunk(stream, error) {
-      if (messageIndex >= this.itemCount() || error) {
-        stream.close();
-        progressIndicator.done();
-        return;
-      }
+    while (messageIndex < this.itemCount() && !progressIndicator.isCanceled()) {
       var messageContents = [];
       for (var i = 0; i < chunkSize && i + messageIndex < this.itemCount(); ++i) {
         var message = this.itemElement(messageIndex + i);
         messageContents.push(message.toExportString());
       }
       messageIndex += i;
-      stream.write(messageContents.join('\n') + '\n', writeNextChunk.bind(this));
+      await stream.write(messageContents.join('\n') + '\n');
       progressIndicator.setWorked(messageIndex);
     }
+
+    stream.close();
+    progressIndicator.done();
   }
 
   /**
-   * @param {!Console.ConsoleViewMessage} lastMessage
-   * @param {?Console.ConsoleViewMessage=} viewMessage
+   * @param {!Console.ConsoleViewMessage} viewMessage
+   * @param {!Console.ConsoleViewMessage=} lastMessage
    * @return {boolean}
    */
-  _tryToCollapseMessages(lastMessage, viewMessage) {
+  _tryToCollapseMessages(viewMessage, lastMessage) {
     var timestampsShown = this._timestampsSetting.get();
-    if (!timestampsShown && viewMessage && !lastMessage.consoleMessage().isGroupMessage() &&
-        lastMessage.consoleMessage().isEqual(viewMessage.consoleMessage())) {
-      viewMessage.incrementRepeatCount();
+    if (!timestampsShown && lastMessage && !viewMessage.consoleMessage().isGroupMessage() &&
+        viewMessage.consoleMessage().isEqual(lastMessage.consoleMessage())) {
+      lastMessage.incrementRepeatCount();
+      if (viewMessage.isLastInSimilarGroup())
+        lastMessage.setInSimilarGroup(true, true);
       return true;
     }
 
     return false;
+  }
+
+  /**
+   * @param {number} startIndex
+   * @param {!Array<!Console.ConsoleViewMessage>} viewMessages
+   */
+  _buildHiddenCache(startIndex, viewMessages) {
+    var startTime = Date.now();
+    for (var i = startIndex; i < viewMessages.length; ++i) {
+      this._computeShouldMessageBeVisible(viewMessages[i]);
+      if (i % 10 === 0 && Date.now() - startTime > 12)
+        break;
+    }
+
+    if (i === viewMessages.length) {
+      this._updateMessageList();
+      return;
+    }
+    this._buildHiddenCacheTimeout =
+        this.element.window().requestAnimationFrame(this._buildHiddenCache.bind(this, i, viewMessages));
+  }
+
+  _cancelBuildHiddenCache() {
+    this._shouldBeHiddenCache.clear();
+    if (this._buildHiddenCacheTimeout) {
+      this.element.window().cancelAnimationFrame(this._buildHiddenCacheTimeout);
+      delete this._buildHiddenCacheTimeout;
+    }
   }
 
   _updateMessageList() {
@@ -653,40 +766,92 @@ Console.ConsoleView = class extends UI.VBox {
       this._visibleViewMessages[i].resetIncrementRepeatCount();
     }
     this._visibleViewMessages = [];
-    for (var i = 0; i < this._consoleMessages.length; ++i)
-      this._appendMessageToEnd(this._consoleMessages[i]);
+    if (this._groupSimilarSetting.get()) {
+      this._addGroupableMessagesToEnd();
+    } else {
+      for (var i = 0; i < this._consoleMessages.length; ++i) {
+        this._consoleMessages[i].setInSimilarGroup(false);
+        this._appendMessageToEnd(this._consoleMessages[i]);
+      }
+    }
     this._updateFilterStatus();
     this._searchableView.updateSearchMatchesCount(this._regexMatchRanges.length);
     this._viewport.invalidate();
   }
 
-  /**
-   * @param {!Common.Event} event
-   */
-  _monitoringXHREnabledSettingChanged(event) {
-    var enabled = /** @type {boolean} */ (event.data);
-    SDK.targetManager.targets().forEach(function(target) {
-      target.networkAgent().setMonitoringXHREnabled(enabled);
-    });
+  _addGroupableMessagesToEnd() {
+    /** @type {!Set<!ConsoleModel.ConsoleMessage>} */
+    var alreadyAdded = new Set();
+    for (var i = 0; i < this._consoleMessages.length; ++i) {
+      var viewMessage = this._consoleMessages[i];
+      var message = viewMessage.consoleMessage();
+      if (alreadyAdded.has(message))
+        continue;
+
+      if (!message.isGroupable()) {
+        this._appendMessageToEnd(viewMessage);
+        alreadyAdded.add(message);
+        continue;
+      }
+
+      var key = viewMessage.groupKey();
+      var viewMessagesInGroup = this._groupableMessages.get(key);
+      if (!viewMessagesInGroup || viewMessagesInGroup.length < 5) {
+        viewMessage.setInSimilarGroup(false);
+        this._appendMessageToEnd(viewMessage);
+        alreadyAdded.add(message);
+        continue;
+      }
+
+      if (!viewMessagesInGroup.find(x => this._shouldMessageBeVisible(x))) {
+        // Optimize for speed.
+        alreadyAdded.addAll(viewMessagesInGroup);
+        continue;
+      }
+
+      // Create artificial group start and end messages.
+      var startGroupViewMessage = this._groupableMessageTitle.get(key);
+      if (!startGroupViewMessage) {
+        var startGroupMessage = new ConsoleModel.ConsoleMessage(
+            null, message.source, message.level, viewMessage.groupTitle(),
+            ConsoleModel.ConsoleMessage.MessageType.StartGroupCollapsed);
+        startGroupViewMessage = this._createViewMessage(startGroupMessage);
+        this._groupableMessageTitle.set(key, startGroupViewMessage);
+      }
+      startGroupViewMessage.setRepeatCount(viewMessagesInGroup.length);
+      this._appendMessageToEnd(startGroupViewMessage);
+
+      for (var viewMessageInGroup of viewMessagesInGroup) {
+        viewMessageInGroup.setInSimilarGroup(true, viewMessagesInGroup.peekLast() === viewMessageInGroup);
+        this._appendMessageToEnd(viewMessageInGroup, true);
+        alreadyAdded.add(viewMessageInGroup.consoleMessage());
+      }
+
+      var endGroupMessage = new ConsoleModel.ConsoleMessage(
+          null, message.source, message.level, message.messageText, ConsoleModel.ConsoleMessage.MessageType.EndGroup);
+      this._appendMessageToEnd(this._createViewMessage(endGroupMessage));
+    }
   }
 
   /**
    * @param {!Event} event
    */
   _messagesClicked(event) {
-    var targetElement = event.deepElementFromPoint();
-
     // Do not focus prompt if messages have selection.
-    if (!targetElement || targetElement.isComponentSelectionCollapsed()) {
+    if (!this._messagesElement.hasSelection()) {
       var clickedOutsideMessageList = event.target === this._messagesElement;
       if (clickedOutsideMessageList)
         this._prompt.moveCaretToEndOfPrompt();
+      // Prevent scrolling when expanding objects in console, but focus the prompt anyway.
+      var oldScrollTop = this._viewport.element.scrollTop;
       this.focus();
+      this._viewport.element.scrollTop = oldScrollTop;
     }
+    // TODO: fix this.
     var groupMessage = event.target.enclosingNodeOrSelfWithClass('console-group-title');
     if (!groupMessage)
       return;
-    var consoleGroupViewMessage = groupMessage.parentElement.message;
+    var consoleGroupViewMessage = groupMessage.message;
     consoleGroupViewMessage.setCollapsed(!consoleGroupViewMessage.collapsed());
     this._updateMessageList();
   }
@@ -776,9 +941,9 @@ Console.ConsoleView = class extends UI.VBox {
    */
   _commandEvaluated(event) {
     var data =
-        /** @type {{result: ?SDK.RemoteObject, text: string, commandMessage: !ConsoleModel.ConsoleMessage, exceptionDetails: (!Protocol.Runtime.ExceptionDetails|undefined)}} */
+        /** @type {{result: ?SDK.RemoteObject, commandMessage: !ConsoleModel.ConsoleMessage, exceptionDetails: (!Protocol.Runtime.ExceptionDetails|undefined)}} */
         (event.data);
-    this._prompt.history().pushHistoryItem(data.text);
+    this._prompt.history().pushHistoryItem(data.commandMessage.messageText);
     this._consoleHistorySetting.set(
         this._prompt.history().historyData().slice(-Console.ConsoleView.persistedHistorySize));
     this._printResult(data.result, data.commandMessage, data.exceptionDetails);
@@ -1001,53 +1166,155 @@ Console.ConsoleView = class extends UI.VBox {
 
 Console.ConsoleView.persistedHistorySize = 300;
 
-/**
- * @unrestricted
- */
 Console.ConsoleViewFilter = class {
   /**
    * @param {function()} filterChangedCallback
    */
   constructor(filterChangedCallback) {
-    this._filterByExecutionContextCheckbox = new UI.ToolbarCheckbox(
-        Common.UIString('Selected context only'),
-        Common.UIString('Only show messages from the current context (top, iframe, worker, extension)'),
-        filterChangedCallback);
     this._filterChanged = filterChangedCallback;
 
     this._messageURLFiltersSetting = Common.settings.createSetting('messageURLFilters', {});
-    this._messageLevelFiltersSetting =
-        Common.settings.createSetting('messageLevelFilters2', ConsoleModel.ConsoleMessage.MessageLevel.Info);
+    this._messageLevelFiltersSetting = Console.ConsoleViewFilter.levelFilterSetting();
     this._hideNetworkMessagesSetting = Common.moduleSetting('hideNetworkMessages');
+    this._filterByExecutionContextSetting = Common.moduleSetting('selectedContextFilterEnabled');
+    this._filterByConsoleAPISetting = Common.moduleSetting('consoleAPIFilterEnabled');
 
-    this._messageURLFiltersSetting.addChangeListener(this._filterChanged);
-    this._messageLevelFiltersSetting.addChangeListener(this._filterChanged);
-    this._hideNetworkMessagesSetting.addChangeListener(this._filterChanged);
+    this._messageURLFiltersSetting.addChangeListener(this._onFilterChanged.bind(this));
+    this._messageLevelFiltersSetting.addChangeListener(this._onFilterChanged.bind(this));
+    this._hideNetworkMessagesSetting.addChangeListener(this._onFilterChanged.bind(this));
+    this._filterByExecutionContextSetting.addChangeListener(this._onFilterChanged.bind(this));
+    this._filterByConsoleAPISetting.addChangeListener(this._onFilterChanged.bind(this));
+    UI.context.addFlavorChangeListener(SDK.ExecutionContext, this._onFilterChanged, this);
 
-    this._textFilterUI = new UI.ToolbarInput(Common.UIString('Filter'), 0.2, 1, true);
-    this._textFilterUI.addEventListener(UI.ToolbarInput.Event.TextChanged, this._textFilterChanged, this);
+    var filterKeys = Object.values(Console.ConsoleFilter.FilterType);
+    this._suggestionBuilder = new UI.FilterSuggestionBuilder(filterKeys);
+    this._textFilterUI = new UI.ToolbarInput(
+        Common.UIString('Filter'), 0.2, 1, Common.UIString('e.g. /event\\d/ -cdn url:a.com'),
+        this._suggestionBuilder.completions.bind(this._suggestionBuilder));
+    this._textFilterUI.addEventListener(UI.ToolbarInput.Event.TextChanged, this._onFilterChanged, this);
+    this._filterParser = new TextUtils.FilterParser(filterKeys);
+    this._currentFilter = new Console.ConsoleFilter('', [], null, this._messageLevelFiltersSetting.get());
+    this._updateCurrentFilter();
 
-    var levels = [
-      {value: ConsoleModel.ConsoleMessage.MessageLevel.Verbose, label: Common.UIString('Verbose')},
-      {value: ConsoleModel.ConsoleMessage.MessageLevel.Info, label: Common.UIString('Info'), default: true},
-      {value: ConsoleModel.ConsoleMessage.MessageLevel.Warning, label: Common.UIString('Warnings')},
-      {value: ConsoleModel.ConsoleMessage.MessageLevel.Error, label: Common.UIString('Errors')}
-    ];
+    this._levelLabels = {};
+    this._levelLabels[ConsoleModel.ConsoleMessage.MessageLevel.Verbose] = Common.UIString('Verbose');
+    this._levelLabels[ConsoleModel.ConsoleMessage.MessageLevel.Info] = Common.UIString('Info');
+    this._levelLabels[ConsoleModel.ConsoleMessage.MessageLevel.Warning] = Common.UIString('Warnings');
+    this._levelLabels[ConsoleModel.ConsoleMessage.MessageLevel.Error] = Common.UIString('Errors');
 
-    this._levelComboBox =
-        new UI.ToolbarSettingComboBox(levels, this._messageLevelFiltersSetting, Common.UIString('Level'));
+    this._levelMenuButton = new UI.ToolbarButton('');
+    this._levelMenuButton.turnIntoSelect();
+    this._levelMenuButton.addEventListener(UI.ToolbarButton.Events.Click, this._showLevelContextMenu.bind(this));
+
+    this._updateLevelMenuButtonText();
+    this._messageLevelFiltersSetting.addChangeListener(this._updateLevelMenuButtonText.bind(this));
   }
 
-  _textFilterChanged() {
-    this._filterText = this._textFilterUI.value();
-    this._filterRegex = null;
-    if (this._filterText.startsWith('/') && this._filterText.endsWith('/')) {
-      try {
-        this._filterRegex = new RegExp(this._filterText.substring(1, this._filterText.length - 1), 'i');
-      } catch (e) {
-      }
+  /**
+   * @param {!ConsoleModel.ConsoleMessage} message
+   */
+  onMessageAdded(message) {
+    if (message.type === ConsoleModel.ConsoleMessage.MessageType.Command ||
+        message.type === ConsoleModel.ConsoleMessage.MessageType.Result || message.isGroupMessage())
+      return;
+    if (message.context)
+      this._suggestionBuilder.addItem(Console.ConsoleFilter.FilterType.Context, message.context);
+    if (message.source)
+      this._suggestionBuilder.addItem(Console.ConsoleFilter.FilterType.Source, message.source);
+    if (message.url)
+      this._suggestionBuilder.addItem(Console.ConsoleFilter.FilterType.Url, message.url);
+  }
+
+  /**
+   * @return {!Common.Setting}
+   */
+  static levelFilterSetting() {
+    return Common.settings.createSetting('messageLevelFilters', Console.ConsoleFilter.defaultLevelsFilterValue());
+  }
+
+  _updateCurrentFilter() {
+    var parsedFilters = this._filterParser.parse(this._textFilterUI.value());
+
+    if (this._hideNetworkMessagesSetting.get()) {
+      parsedFilters.push({
+        key: Console.ConsoleFilter.FilterType.Source,
+        text: ConsoleModel.ConsoleMessage.MessageSource.Network,
+        negative: true
+      });
     }
+
+    if (this._filterByConsoleAPISetting.get()) {
+      parsedFilters.push({
+        key: Console.ConsoleFilter.FilterType.Source,
+        text: ConsoleModel.ConsoleMessage.MessageSource.ConsoleAPI,
+        negative: false
+      });
+    }
+
+    var blockedURLs = Object.keys(this._messageURLFiltersSetting.get());
+    var urlFilters = blockedURLs.map(url => ({key: Console.ConsoleFilter.FilterType.Url, text: url, negative: true}));
+    parsedFilters = parsedFilters.concat(urlFilters);
+
+    this._currentFilter.executionContext =
+        this._filterByExecutionContextSetting.get() ? UI.context.flavor(SDK.ExecutionContext) : null;
+    this._currentFilter.parsedFilters = parsedFilters;
+    this._currentFilter.levelsMask = this._messageLevelFiltersSetting.get();
+  }
+
+  _onFilterChanged() {
+    this._updateCurrentFilter();
     this._filterChanged();
+  }
+
+  _updateLevelMenuButtonText() {
+    var isAll = true;
+    var isDefault = true;
+    var allValue = Console.ConsoleFilter.allLevelsFilterValue();
+    var defaultValue = Console.ConsoleFilter.defaultLevelsFilterValue();
+
+    var text = null;
+    var levels = this._messageLevelFiltersSetting.get();
+    for (var name of Object.values(ConsoleModel.ConsoleMessage.MessageLevel)) {
+      isAll = isAll && levels[name] === allValue[name];
+      isDefault = isDefault && levels[name] === defaultValue[name];
+      if (levels[name])
+        text = text ? Common.UIString('Custom levels') : Common.UIString('%s only', this._levelLabels[name]);
+    }
+    if (isAll)
+      text = Common.UIString('All levels');
+    else if (isDefault)
+      text = Common.UIString('Default levels');
+    else
+      text = text || Common.UIString('Hide all');
+    this._levelMenuButton.setText(text);
+  }
+
+  /**
+   * @param {!Common.Event} event
+   */
+  _showLevelContextMenu(event) {
+    var mouseEvent = /** @type {!Event} */ (event.data);
+    var setting = this._messageLevelFiltersSetting;
+    var levels = setting.get();
+
+    var contextMenu = new UI.ContextMenu(
+        mouseEvent, true /* useSoftMenu */, this._levelMenuButton.element.totalOffsetLeft(),
+        this._levelMenuButton.element.totalOffsetTop() + this._levelMenuButton.element.offsetHeight);
+    contextMenu.headerSection().appendItem(
+        Common.UIString('Default'), () => setting.set(Console.ConsoleFilter.defaultLevelsFilterValue()));
+    for (var level in this._levelLabels) {
+      contextMenu.defaultSection().appendCheckboxItem(
+          this._levelLabels[level], toggleShowLevel.bind(null, level), levels[level]);
+    }
+    contextMenu.show();
+
+    /**
+     * @param {string} level
+     */
+    function toggleShowLevel(level) {
+      levels[level] = !levels[level];
+      setting.set(levels);
+    }
   }
 
   /**
@@ -1085,53 +1352,21 @@ Console.ConsoleViewFilter = class {
    * @return {boolean}
    */
   shouldBeVisible(viewMessage) {
-    var message = viewMessage.consoleMessage();
-    var executionContext = UI.context.flavor(SDK.ExecutionContext);
+    return this._currentFilter.shouldBeVisible(viewMessage);
+  }
 
-    if (this._filterByExecutionContextCheckbox.checked() && executionContext) {
-      if (message.runtimeModel() !== executionContext.runtimeModel)
-        return false;
-      if (message.executionContextId && message.executionContextId !== executionContext.id)
-        return false;
-    }
-
-    if (this._hideNetworkMessagesSetting.get() &&
-        viewMessage.consoleMessage().source === ConsoleModel.ConsoleMessage.MessageSource.Network)
-      return false;
-
-    if (viewMessage.consoleMessage().isGroupMessage())
-      return true;
-
-    if (message.type === ConsoleModel.ConsoleMessage.MessageType.Result ||
-        message.type === ConsoleModel.ConsoleMessage.MessageType.Command)
-      return true;
-
-    if (message.url && this._messageURLFiltersSetting.get()[message.url])
-      return false;
-
-    var filterOrdinal = ConsoleModel.ConsoleMessage.MessageLevel.ordinal(
-        /** @type {!ConsoleModel.ConsoleMessage.MessageLevel} */ (this._messageLevelFiltersSetting.get()));
-    if (message.level && ConsoleModel.ConsoleMessage.MessageLevel.ordinal(message.level) < filterOrdinal)
-      return false;
-
-    if (this._filterRegex) {
-      if (!viewMessage.matchesFilterRegex(this._filterRegex))
-        return false;
-    } else if (this._filterText) {
-      if (!viewMessage.matchesFilterText(this._filterText))
-        return false;
-    }
-
-    return true;
+  clear() {
+    this._suggestionBuilder.clear();
   }
 
   reset() {
     this._messageURLFiltersSetting.set({});
-    this._messageLevelFiltersSetting.set(ConsoleModel.ConsoleMessage.MessageLevel.Info);
-    this._filterByExecutionContextCheckbox.inputElement.checked = false;
+    this._messageLevelFiltersSetting.set(Console.ConsoleFilter.defaultLevelsFilterValue());
+    this._filterByExecutionContextSetting.set(false);
+    this._filterByConsoleAPISetting.set(false);
     this._hideNetworkMessagesSetting.set(false);
     this._textFilterUI.setValue('');
-    this._textFilterChanged();
+    this._onFilterChanged();
   }
 };
 
@@ -1142,10 +1377,11 @@ Console.ConsoleCommand = class extends Console.ConsoleViewMessage {
   /**
    * @param {!ConsoleModel.ConsoleMessage} message
    * @param {!Components.Linkifier} linkifier
+   * @param {!ProductRegistry.BadgePool} badgePool
    * @param {number} nestingLevel
    */
-  constructor(message, linkifier, nestingLevel) {
-    super(message, linkifier, nestingLevel);
+  constructor(message, linkifier, badgePool, nestingLevel) {
+    super(message, linkifier, badgePool, nestingLevel);
   }
 
   /**
@@ -1188,17 +1424,15 @@ Console.ConsoleCommand = class extends Console.ConsoleViewMessage {
  */
 Console.ConsoleCommand.MaxLengthToIgnoreHighlighter = 10000;
 
-/**
- * @unrestricted
- */
 Console.ConsoleCommandResult = class extends Console.ConsoleViewMessage {
   /**
    * @param {!ConsoleModel.ConsoleMessage} message
    * @param {!Components.Linkifier} linkifier
+   * @param {!ProductRegistry.BadgePool} badgePool
    * @param {number} nestingLevel
    */
-  constructor(message, linkifier, nestingLevel) {
-    super(message, linkifier, nestingLevel);
+  constructor(message, linkifier, badgePool, nestingLevel) {
+    super(message, linkifier, badgePool, nestingLevel);
   }
 
   /**
@@ -1218,9 +1452,6 @@ Console.ConsoleCommandResult = class extends Console.ConsoleViewMessage {
   }
 };
 
-/**
- * @unrestricted
- */
 Console.ConsoleGroup = class {
   /**
    * @param {?Console.ConsoleGroup} parentGroup
@@ -1258,14 +1489,12 @@ Console.ConsoleGroup = class {
    * @return {?Console.ConsoleGroup}
    */
   parentGroup() {
-    return this._parentGroup || this;
+    return this._parentGroup;
   }
 };
 
-
 /**
  * @implements {UI.ActionDelegate}
- * @unrestricted
  */
 Console.ConsoleView.ActionDelegate = class {
   /**
@@ -1277,6 +1506,7 @@ Console.ConsoleView.ActionDelegate = class {
   handleAction(context, actionId) {
     switch (actionId) {
       case 'console.show':
+        InspectorFrontendHost.bringToFront();
         Common.console.show();
         return true;
       case 'console.clear':
@@ -1294,3 +1524,6 @@ Console.ConsoleView.ActionDelegate = class {
  * @typedef {{messageIndex: number, matchIndex: number}}
  */
 Console.ConsoleView.RegexMatchRange;
+
+/** @type {symbol} */
+Console.ConsoleView._messageSortingTimeSymbol = Symbol('messageSortingTime');

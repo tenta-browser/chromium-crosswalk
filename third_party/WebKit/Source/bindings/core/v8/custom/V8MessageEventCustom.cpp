@@ -30,15 +30,15 @@
 
 #include "bindings/core/v8/V8MessageEvent.h"
 
-#include "bindings/core/v8/SerializedScriptValue.h"
-#include "bindings/core/v8/SerializedScriptValueFactory.h"
+#include "bindings/core/v8/IDLTypes.h"
+#include "bindings/core/v8/NativeValueTraitsImpl.h"
 #include "bindings/core/v8/V8ArrayBuffer.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8Blob.h"
 #include "bindings/core/v8/V8EventTarget.h"
 #include "bindings/core/v8/V8MessagePort.h"
-#include "bindings/core/v8/V8PrivateProperty.h"
 #include "bindings/core/v8/V8Window.h"
+#include "platform/bindings/V8PrivateProperty.h"
 
 namespace blink {
 
@@ -54,7 +54,7 @@ void V8MessageEvent::dataAttributeGetterCustom(
     return;
   }
 
-  MessageEvent* event = V8MessageEvent::toImpl(info.Holder());
+  MessageEvent* event = V8MessageEvent::ToImpl(info.Holder());
 
   v8::Local<v8::Value> result;
   switch (event->GetDataType()) {
@@ -66,12 +66,12 @@ void V8MessageEvent::dataAttributeGetterCustom(
       break;
 
     case MessageEvent::kDataTypeSerializedScriptValue:
-      if (SerializedScriptValue* serialized_value =
-              event->DataAsSerializedScriptValue()) {
+      if (UnpackedSerializedScriptValue* unpacked_value =
+              event->DataAsUnpackedSerializedScriptValue()) {
         MessagePortArray ports = event->ports();
         SerializedScriptValue::DeserializeOptions options;
         options.message_ports = &ports;
-        result = serialized_value->Deserialize(isolate, options);
+        result = unpacked_value->Deserialize(isolate, options);
       } else {
         result = v8::Null(isolate);
       }
@@ -101,27 +101,28 @@ void V8MessageEvent::initMessageEventMethodCustom(
   ExceptionState exception_state(info.GetIsolate(),
                                  ExceptionState::kExecutionContext,
                                  "MessageEvent", "initMessageEvent");
-  MessageEvent* event = V8MessageEvent::toImpl(info.Holder());
+  MessageEvent* event = V8MessageEvent::ToImpl(info.Holder());
   TOSTRING_VOID(V8StringResource<>, type_arg, info[0]);
   bool can_bubble_arg = false;
   bool cancelable_arg = false;
-  if (!V8Call(info[1]->BooleanValue(info.GetIsolate()->GetCurrentContext()),
-              can_bubble_arg) ||
-      !V8Call(info[2]->BooleanValue(info.GetIsolate()->GetCurrentContext()),
-              cancelable_arg))
+  if (!info[1]
+           ->BooleanValue(info.GetIsolate()->GetCurrentContext())
+           .To(&can_bubble_arg) ||
+      !info[2]
+           ->BooleanValue(info.GetIsolate()->GetCurrentContext())
+           .To(&cancelable_arg))
     return;
   v8::Local<v8::Value> data_arg = info[3];
   TOSTRING_VOID(V8StringResource<>, origin_arg, info[4]);
   TOSTRING_VOID(V8StringResource<>, last_event_id_arg, info[5]);
   EventTarget* source_arg =
-      V8EventTarget::toImplWithTypeCheck(info.GetIsolate(), info[6]);
+      V8EventTarget::ToImplWithTypeCheck(info.GetIsolate(), info[6]);
   MessagePortArray* port_array = nullptr;
   const int kPortArrayIndex = 7;
   if (!IsUndefinedOrNull(info[kPortArrayIndex])) {
     port_array = new MessagePortArray;
-    *port_array = ToMemberNativeArray<MessagePort>(
-        info[kPortArrayIndex], kPortArrayIndex + 1, info.GetIsolate(),
-        exception_state);
+    *port_array = NativeValueTraits<IDLSequence<MessagePort>>::NativeValue(
+        info.GetIsolate(), info[kPortArrayIndex], exception_state);
     if (exception_state.HadException())
       return;
   }

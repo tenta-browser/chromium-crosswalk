@@ -5,33 +5,28 @@
 package org.chromium.chrome.browser.notifications;
 
 import android.annotation.TargetApi;
-import android.app.Notification;
 import android.content.Context;
+import android.os.Build;
 
-import org.chromium.base.BuildInfo;
-import org.chromium.base.Log;
-
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
+import org.chromium.chrome.browser.notifications.channels.ChannelsInitializer;
 
 /**
  * Builder to be used on Android O until we target O and these APIs are in the support library.
  */
-@TargetApi(26 /* Build.VERSION_CODES.O */)
+@TargetApi(Build.VERSION_CODES.O)
 public class NotificationBuilderForO extends NotificationBuilder {
     private static final String TAG = "NotifBuilderForO";
 
-    public NotificationBuilderForO(Context context, @ChannelDefinitions.ChannelId String channelId,
-            ChannelsInitializer channelsInitializer) {
+    public NotificationBuilderForO(
+            Context context, String channelId, ChannelsInitializer channelsInitializer) {
         super(context);
-        assert BuildInfo.isAtLeastO();
-        channelsInitializer.ensureInitialized(channelId);
-        // TODO(crbug.com/707804) Stop using reflection once compileSdkVersion is high enough.
-        try {
-            Method setChannel = Notification.Builder.class.getMethod("setChannel", String.class);
-            setChannel.invoke(mBuilder, channelId);
-        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException e) {
-            Log.e(TAG, "Error setting channel on notification builder:", e);
+        assert Build.VERSION.SDK_INT >= Build.VERSION_CODES.O;
+        if (channelId == null) {
+            // The channelId may be null if the notification will be posted by another app that
+            // does not target O or sets its own channels. E.g. Web apk notifications.
+            return;
         }
+        channelsInitializer.ensureInitialized(channelId);
+        mBuilder.setChannelId(channelId);
     }
 }

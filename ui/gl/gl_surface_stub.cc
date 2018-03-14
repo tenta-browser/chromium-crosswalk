@@ -11,6 +11,7 @@ void GLSurfaceStub::Destroy() {
 
 bool GLSurfaceStub::Resize(const gfx::Size& size,
                            float scale_factor,
+                           ColorSpace color_space,
                            bool has_alpha) {
   return true;
 }
@@ -19,7 +20,8 @@ bool GLSurfaceStub::IsOffscreen() {
   return false;
 }
 
-gfx::SwapResult GLSurfaceStub::SwapBuffers() {
+gfx::SwapResult GLSurfaceStub::SwapBuffers(
+    const PresentationCallback& callback) {
   return gfx::SwapResult::SWAP_ACK;
 }
 

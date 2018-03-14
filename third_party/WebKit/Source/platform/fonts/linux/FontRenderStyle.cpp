@@ -4,6 +4,7 @@
 
 #include "platform/fonts/linux/FontRenderStyle.h"
 
+#include "build/build_config.h"
 #include "platform/LayoutTestSupport.h"
 #include "platform/fonts/FontDescription.h"
 #include "public/platform/Platform.h"
@@ -52,7 +53,7 @@ FontRenderStyle FontRenderStyle::QuerySystem(const CString& family,
                                              float text_size,
                                              SkFontStyle font_style) {
   WebFontRenderStyle style;
-#if OS(ANDROID)
+#if defined(OS_ANDROID)
   style.SetDefaults();
 #else
   // If the font name is missing (i.e. probably a web font) or the sandbox is
@@ -65,7 +66,7 @@ FontRenderStyle FontRenderStyle::QuerySystem(const CString& family,
     const int size_and_style = (((int)text_size) << 2) | (((int)is_bold) << 1) |
                                (((int)is_italic) << 0);
     Platform::Current()->GetSandboxSupport()->GetWebFontRenderStyleForStrike(
-        family.Data(), size_and_style, &style);
+        family.data(), size_and_style, &style);
   }
 #endif
 
@@ -98,24 +99,25 @@ FontRenderStyle FontRenderStyle::QuerySystem(const CString& family,
   return result;
 }
 
-void FontRenderStyle::ApplyToPaint(SkPaint& paint,
-                                   float device_scale_factor) const {
-  paint.setAntiAlias(use_anti_alias);
-  paint.setHinting(static_cast<SkPaint::Hinting>(hint_style));
-  paint.setEmbeddedBitmapText(use_bitmaps);
-  paint.setAutohinted(use_auto_hint);
+void FontRenderStyle::ApplyToPaintFont(PaintFont& font,
+                                       float device_scale_factor) const {
+  auto sk_hint_style = static_cast<SkPaint::Hinting>(hint_style);
+  font.SetAntiAlias(use_anti_alias);
+  font.SetHinting(sk_hint_style);
+  font.SetEmbeddedBitmapText(use_bitmaps);
+  font.SetAutohinted(use_auto_hint);
   if (use_anti_alias)
-    paint.setLCDRenderText(use_subpixel_rendering);
+    font.SetLcdRenderText(use_subpixel_rendering);
 
   // Do not enable subpixel text on low-dpi if full hinting is requested.
-  bool use_subpixel_text = (paint.getHinting() != SkPaint::kFull_Hinting ||
-                            device_scale_factor > 1.0f);
+  bool use_subpixel_text =
+      (sk_hint_style != SkPaint::kFull_Hinting || device_scale_factor > 1.0f);
 
   // TestRunner specifically toggles the subpixel positioning flag.
   if (use_subpixel_text && !LayoutTestSupport::IsRunningLayoutTest())
-    paint.setSubpixelText(true);
+    font.SetSubpixelText(true);
   else
-    paint.setSubpixelText(use_subpixel_positioning);
+    font.SetSubpixelText(use_subpixel_positioning);
 }
 
 }  // namespace blink

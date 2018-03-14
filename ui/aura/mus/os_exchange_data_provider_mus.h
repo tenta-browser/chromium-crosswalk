@@ -68,7 +68,7 @@ class AURA_EXPORT OSExchangeDataProviderMus
 // per operating system. Now we have to have at least two providers per OS,
 // leading to the following warts, which will remain until we clean all the
 // callsites up.
-#if (!defined(OS_CHROMEOS) && defined(USE_X11)) || defined(OS_WIN)
+#if defined(USE_X11) || defined(OS_WIN)
   void SetFileContents(const base::FilePath& filename,
                        const std::string& file_contents) override;
 #endif
@@ -89,8 +89,8 @@ class AURA_EXPORT OSExchangeDataProviderMus
 #if defined(USE_AURA) || defined(OS_MACOSX)
   void SetDragImage(const gfx::ImageSkia& image,
                     const gfx::Vector2d& cursor_offset) override;
-  const gfx::ImageSkia& GetDragImage() const override;
-  const gfx::Vector2d& GetDragImageOffset() const override;
+  gfx::ImageSkia GetDragImage() const override;
+  gfx::Vector2d GetDragImageOffset() const override;
 #endif
 
  private:

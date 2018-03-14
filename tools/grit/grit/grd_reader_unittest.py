@@ -18,6 +18,7 @@ from grit import grd_reader
 from grit import util
 from grit.node import base
 from grit.node import empty
+from grit.node import message
 
 
 class GrdReaderUnittest(unittest.TestCase):
@@ -210,7 +211,14 @@ class GrdReaderUnittest(unittest.TestCase):
     hello = root.GetNodeById('IDS_HELLO')
     self.failUnless(hello.GetCliques()[0].GetId() == 'IDS_HELLO')
 
-  def testPartInclusion(self):
+  def testPartInclusionAndCorrectSource(self):
+    arbitrary_path_grd = u'''\
+        <grit-part>
+          <message name="IDS_TEST5" desc="test5">test5</message>
+        </grit-part>'''
+    arbitrary_path_grd_file = os.path.join(
+      util.TempDir({'arbitrary_path.grp': arbitrary_path_grd}).GetPath(),
+      'arbitrary_path.grp')
     top_grd = u'''\
         <grit latest_public_release="2" current_release="3">
           <release seq="3">
@@ -219,9 +227,10 @@ class GrdReaderUnittest(unittest.TestCase):
                 test
               </message>
               <part file="sub.grp" />
+              <part file="%s" />
             </messages>
           </release>
-        </grit>'''
+        </grit>''' % arbitrary_path_grd_file
     sub_grd = u'''\
         <grit-part>
           <message name="IDS_TEST2" desc="test2">test2</message>
@@ -252,12 +261,29 @@ class GrdReaderUnittest(unittest.TestCase):
                   test3
                 </message>
               </part>
+              <part file="%s">
+                <message desc="test5" name="IDS_TEST5">
+                  test5
+                </message>
+              </part>
             </messages>
           </release>
-        </grit>'''
+        </grit>''' % arbitrary_path_grd_file
+
     with util.TempDir({'sub.grp': sub_grd,
                        'subsub.grp': subsub_grd}) as temp_dir:
       output = grd_reader.Parse(StringIO.StringIO(top_grd), temp_dir.GetPath())
+      correct_sources = {
+        'IDS_TEST': None,
+        'IDS_TEST2': temp_dir.GetPath('sub.grp'),
+        'IDS_TEST3': temp_dir.GetPath('sub.grp'),
+        'IDS_TEST4': temp_dir.GetPath('subsub.grp'),
+        'IDS_TEST5': arbitrary_path_grd_file,
+      }
+    for node in output.ActiveDescendants():
+      with node:
+        if isinstance(node, message.MessageNode):
+          self.assertEqual(correct_sources[node.attrs.get('name')], node.source)
     self.assertEqual(expected_output.split(), output.FormatXml().split())
 
   def testPartInclusionFailure(self):
@@ -272,6 +298,7 @@ class GrdReaderUnittest(unittest.TestCase):
         (exception.UnexpectedContent, u'<part file="x">fnord</part>'),
         (exception.UnexpectedChild,
          u'<part file="x"><output filename="x" type="y" /></part>'),
+        (exception.FileNotFound, u'<part file="yet_created_x" />'),
     ]
     for raises, data in part_failures:
       data = StringIO.StringIO(template % data)

@@ -7,25 +7,40 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
-#include "chrome/common/chrome_switches.h"
 #include "content/public/browser/browser_context.h"
+#include "ui/message_center/notifier_id.h"
+
+NotificationCommon::Metadata::~Metadata() = default;
+
+PersistentNotificationMetadata::PersistentNotificationMetadata() {
+  type = NotificationHandler::Type::WEB_PERSISTENT;
+}
+
+PersistentNotificationMetadata::~PersistentNotificationMetadata() = default;
+
+// static
+const PersistentNotificationMetadata* PersistentNotificationMetadata::From(
+    const Metadata* metadata) {
+  if (!metadata || metadata->type != NotificationHandler::Type::WEB_PERSISTENT)
+    return nullptr;
+
+  return static_cast<const PersistentNotificationMetadata*>(metadata);
+}
 
 // static
 void NotificationCommon::OpenNotificationSettings(
     content::BrowserContext* browser_context) {
 #if defined(OS_ANDROID)
+  // Android settings are opened directly from Java
   NOTIMPLEMENTED();
+#elif defined(OS_CHROMEOS)
+  chrome::ShowContentSettingsExceptionsForProfile(
+      Profile::FromBrowserContext(browser_context),
+      CONTENT_SETTINGS_TYPE_NOTIFICATIONS);
 #else
-  Profile* profile = Profile::FromBrowserContext(browser_context);
-  DCHECK(profile);
-
-  if (switches::SettingsWindowEnabled()) {
-    chrome::ShowContentSettingsExceptionsInWindow(
-        profile, CONTENT_SETTINGS_TYPE_NOTIFICATIONS);
-  } else {
-    chrome::ScopedTabbedBrowserDisplayer browser_displayer(profile);
-    chrome::ShowContentSettingsExceptions(browser_displayer.browser(),
-                                          CONTENT_SETTINGS_TYPE_NOTIFICATIONS);
-  }
-#endif  // defined(OS_ANDROID)
+  chrome::ScopedTabbedBrowserDisplayer browser_displayer(
+      Profile::FromBrowserContext(browser_context));
+  chrome::ShowContentSettingsExceptions(browser_displayer.browser(),
+                                        CONTENT_SETTINGS_TYPE_NOTIFICATIONS);
+#endif
 }

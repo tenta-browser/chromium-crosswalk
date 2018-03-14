@@ -4,8 +4,9 @@
 
 #include "core/input/EventHandlingUtil.h"
 
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
+#include "core/layout/LayoutEmbeddedContent.h"
 #include "core/layout/api/LayoutViewItem.h"
 #include "core/paint/PaintLayer.h"
 #include "platform/scroll/ScrollableArea.h"
@@ -83,6 +84,10 @@ PaintLayer* LayerForNode(Node* node) {
   return layer;
 }
 
+bool IsInDocument(EventTarget* n) {
+  return n && n->ToNode() && n->ToNode()->isConnected();
+}
+
 ScrollableArea* AssociatedScrollableArea(const PaintLayer* layer) {
   if (PaintLayerScrollableArea* scrollable_area = layer->GetScrollableArea()) {
     if (scrollable_area->ScrollsOverflow())
@@ -90,14 +95,6 @@ ScrollableArea* AssociatedScrollableArea(const PaintLayer* layer) {
   }
 
   return nullptr;
-}
-
-Element* ParentElementIfNeeded(Node* node) {
-  if (!node)
-    return nullptr;
-  if (node->IsElementNode())
-    return ToElement(node);
-  return FlatTreeTraversal::ParentElement(*node);
 }
 
 ContainerNode* ParentForClickEvent(const Node& node) {
@@ -111,7 +108,7 @@ ContainerNode* ParentForClickEvent(const Node& node) {
 
 LayoutPoint ContentPointFromRootFrame(LocalFrame* frame,
                                       const IntPoint& point_in_root_frame) {
-  FrameView* view = frame->View();
+  LocalFrameView* view = frame->View();
   // FIXME: Is it really OK to use the wrong coordinates here when view is 0?
   // Historically the code would just crash; this is clearly no worse than that.
   return view ? view->RootFrameToContents(point_in_root_frame)
@@ -130,6 +127,29 @@ MouseEventWithHitTestResults PerformMouseEventHitTest(
       ContentPointFromRootFrame(frame,
                                 FlooredIntPoint(mev.PositionInRootFrame())),
       mev);
+}
+
+LocalFrame* SubframeForTargetNode(Node* node) {
+  if (!node)
+    return nullptr;
+
+  LayoutObject* layout_object = node->GetLayoutObject();
+  if (!layout_object || !layout_object->IsLayoutEmbeddedContent())
+    return nullptr;
+
+  LocalFrameView* frame_view =
+      ToLayoutEmbeddedContent(layout_object)->ChildFrameView();
+  if (!frame_view)
+    return nullptr;
+
+  return &frame_view->GetFrame();
+}
+
+LocalFrame* SubframeForHitTestResult(
+    const MouseEventWithHitTestResults& hit_test_result) {
+  if (!hit_test_result.IsOverEmbeddedContentView())
+    return nullptr;
+  return SubframeForTargetNode(hit_test_result.InnerNode());
 }
 
 }  // namespace EventHandlingUtil

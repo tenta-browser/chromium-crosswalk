@@ -331,8 +331,8 @@ void ExternalInstallError::OnInstallPromptDone(
   // response (which can happen, e.g., if an uninstall fails), be sure to remove
   // the error directly in order to ensure it's not called twice.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&ExternalInstallError::RemoveError,
-                            weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&ExternalInstallError::RemoveError,
+                                weak_factory_.GetWeakPtr()));
 
   switch (result) {
     case ExtensionInstallPrompt::Result::ACCEPTED:
@@ -348,7 +348,6 @@ void ExternalInstallError::OnInstallPromptDone(
             ->extension_service()
             ->UninstallExtension(extension_id_,
                                  extensions::UNINSTALL_REASON_INSTALL_CANCELED,
-                                 base::Bind(&base::DoNothing),
                                  nullptr);  // Ignore error.
         UMA_HISTOGRAM_BOOLEAN("Extensions.ExternalWarningUninstallationResult",
                               uninstallation_result);

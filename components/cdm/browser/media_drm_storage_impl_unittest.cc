@@ -7,8 +7,10 @@
 #include <memory>
 
 #include "base/run_loop.h"
-#include "base/test/test_message_loop.h"
+#include "base/unguessable_token.h"
 #include "components/prefs/testing_pref_service.h"
+#include "content/public/test/navigation_simulator.h"
+#include "content/test/test_render_frame_host.h"
 #include "media/mojo/services/mojo_media_drm_storage.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
@@ -18,30 +20,33 @@
 
 namespace cdm {
 
+namespace {
+
 const char kMediaDrmStorage[] = "media.media_drm_storage";
 const char kTestOrigin[] = "https://www.testorigin.com:80";
 
-class MediaDrmStorageImplTest : public ::testing::Test {
+content::RenderFrameHost* SimulateNavigation(content::RenderFrameHost* rfh,
+                                             const GURL& url) {
+  auto navigation_simulator =
+      content::NavigationSimulator::CreateRendererInitiated(url, rfh);
+  navigation_simulator->Commit();
+  return navigation_simulator->GetFinalRenderFrameHost();
+}
+
+}  // namespace
+
+class MediaDrmStorageImplTest : public content::RenderViewHostTestHarness {
  public:
   MediaDrmStorageImplTest() {}
 
   void SetUp() override {
+    RenderViewHostTestHarness::SetUp();
+
     pref_service_.reset(new TestingPrefServiceSimple());
     PrefRegistrySimple* registry = pref_service_->registry();
     MediaDrmStorageImpl::RegisterProfilePrefs(registry);
 
-    media::mojom::MediaDrmStoragePtr media_drm_storage_ptr;
-    auto request = mojo::MakeRequest(&media_drm_storage_ptr);
-
-    media_drm_storage_.reset(
-        new media::MojoMediaDrmStorage(std::move(media_drm_storage_ptr)));
-
-    // The created object will be destroyed on connection error.
-    new MediaDrmStorageImpl(nullptr,  // Use null RenderFrameHost for testing.
-                            pref_service_.get(), url::Origin(GURL(kTestOrigin)),
-                            std::move(request));
-
-    media_drm_storage_->Initialize(url::Origin(GURL(kTestOrigin)));
+    media_drm_storage_ = CreateAndInitMediaDrmStorage(&origin_id_);
   }
 
   void TearDown() override {
@@ -51,6 +56,37 @@ class MediaDrmStorageImplTest : public ::testing::Test {
 
  protected:
   using SessionData = media::MediaDrmStorage::SessionData;
+
+  std::unique_ptr<media::MediaDrmStorage> CreateAndInitMediaDrmStorage(
+      base::UnguessableToken* origin_id) {
+    DCHECK(origin_id);
+
+    media::mojom::MediaDrmStoragePtr media_drm_storage_ptr;
+    auto request = mojo::MakeRequest(&media_drm_storage_ptr);
+
+    auto media_drm_storage = base::MakeUnique<media::MojoMediaDrmStorage>(
+        std::move(media_drm_storage_ptr));
+
+    content::RenderFrameHost* rfh = web_contents()->GetMainFrame();
+    content::RenderFrameHostTester::For(rfh)->InitializeRenderFrameIfNeeded();
+    rfh = SimulateNavigation(rfh, GURL(kTestOrigin));
+
+    // The created object will be destroyed on connection error.
+    new MediaDrmStorageImpl(rfh, pref_service_.get(), std::move(request));
+
+    media_drm_storage->Initialize(base::BindOnce(
+        [](base::UnguessableToken* out_origin_id,
+           const base::UnguessableToken& origin_id) {
+          DCHECK(origin_id);
+          *out_origin_id = origin_id;
+        },
+        origin_id));
+
+    base::RunLoop().RunUntilIdle();
+
+    DCHECK(*origin_id);
+    return media_drm_storage;
+  }
 
   void OnProvisioned() {
     media_drm_storage_->OnProvisioned(ExpectResult(true));
@@ -117,10 +153,21 @@ class MediaDrmStorageImplTest : public ::testing::Test {
     EXPECT_EQ(expected_session_data->mime_type, session_data->mime_type);
   }
 
-  base::TestMessageLoop message_loop_;
   std::unique_ptr<TestingPrefServiceSimple> pref_service_;
   std::unique_ptr<media::MediaDrmStorage> media_drm_storage_;
+  base::UnguessableToken origin_id_;
 };
+
+// TODO(yucliu): Test origin ID is re-generated after clearing licenses.
+TEST_F(MediaDrmStorageImplTest, Initialize_OriginIdNotChanged) {
+  OnProvisioned();
+  base::RunLoop().RunUntilIdle();
+
+  base::UnguessableToken origin_id;
+  std::unique_ptr<media::MediaDrmStorage> storage =
+      CreateAndInitMediaDrmStorage(&origin_id);
+  EXPECT_EQ(origin_id, origin_id_);
+}
 
 TEST_F(MediaDrmStorageImplTest, OnProvisioned) {
   OnProvisioned();
@@ -143,7 +190,7 @@ TEST_F(MediaDrmStorageImplTest, OnProvisioned_Twice) {
 }
 
 TEST_F(MediaDrmStorageImplTest, SaveSession_Unprovisioned) {
-  SavePersistentSession("session_id", {1, 0}, "mime/type", false);
+  SaveAndLoadPersistentSession("session_id", {1, 0}, "mime/type1");
   base::RunLoop().RunUntilIdle();
 }
 

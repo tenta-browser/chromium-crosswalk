@@ -117,6 +117,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapter
                                       BluetoothDevice* device,
                                       const std::string& old_address) {}
 
+// TODO(crbug.com/732991): Update comment and fix redundant #ifs throughout.
 #if defined(OS_CHROMEOS) || defined(OS_LINUX)
     // This function is implemented for ChromeOS only, and the support for
     // Android, MaxOS and Windows should be added on demand in the future.
@@ -134,6 +135,23 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapter
     virtual void DeviceRemoved(BluetoothAdapter* adapter,
                                BluetoothDevice* device) {}
 
+    // Deprecated GATT Added/Removed Events NOTE:
+    //
+    // The series of Observer methods for Service, Characteristic, & Descriptor
+    // Added/Removed events should be removed.  They are rarely used and add
+    // API & implementation complexity.  They are not reliable for cross
+    // platform use, and devices that modify their attribute table have not been
+    // tested or supported.
+    //
+    // New code should use Observer::GattServicesDiscovered and then call
+    //   GetGattService(s)
+    //   GetCharacteristic(s)
+    //   GetDescriptor(s)
+    //
+    // TODO(710352): Remove Service, Characteristic, & Descriptor Added/Removed.
+
+    // See "Deprecated GATT Added/Removed Events NOTE" above.
+    //
     // Called when a new GATT service |service| is added to the device |device|,
     // as the service is received from the device. Don't cache |service|. Store
     // its identifier instead (i.e. BluetoothRemoteGattService::GetIdentifier).
@@ -141,6 +159,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapter
                                   BluetoothDevice* device,
                                   BluetoothRemoteGattService* service) {}
 
+    // See "Deprecated GATT Added/Removed Events NOTE" above.
+    //
     // Called when the GATT service |service| is removed from the device
     // |device|. This can happen if the attribute database of the remote device
     // changes or when |device| gets removed.
@@ -148,11 +168,14 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapter
                                     BluetoothDevice* device,
                                     BluetoothRemoteGattService* service) {}
 
-    // Called when all the GATT Services in |device| have been discovered
-    // and GattServiceAdded has been called for each service.
+    // Called when the GATT discovery process has completed for all services,
+    // characteristics, and descriptors in |device|.
     virtual void GattServicesDiscovered(BluetoothAdapter* adapter,
                                         BluetoothDevice* device) {}
 
+    // TODO(782494): Deprecated & not functional on all platforms. Use
+    // GattServicesDiscovered.
+    //
     // Called when all characteristic and descriptor discovery procedures are
     // known to be completed for the GATT service |service|. This method will be
     // called after the initial discovery of a GATT service and will usually be
@@ -161,6 +184,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapter
         BluetoothAdapter* adapter,
         BluetoothRemoteGattService* service) {}
 
+    // See "Deprecated GATT Added/Removed Events NOTE" above.
+    //
     // Called when properties of the remote GATT service |service| have changed.
     // This will get called for properties such as UUID, as well as for changes
     // to the list of known characteristics and included services. Observers
@@ -169,6 +194,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapter
     virtual void GattServiceChanged(BluetoothAdapter* adapter,
                                     BluetoothRemoteGattService* service) {}
 
+    // See "Deprecated GATT Added/Removed Events NOTE" above.
+    //
     // Called when the remote GATT characteristic |characteristic| has been
     // discovered. Use this to issue any initial read/write requests to the
     // characteristic but don't cache the pointer as it may become invalid.
@@ -183,12 +210,16 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapter
         BluetoothAdapter* adapter,
         BluetoothRemoteGattCharacteristic* characteristic) {}
 
+    // See "Deprecated GATT Added/Removed Events NOTE" above.
+    //
     // Called when a GATT characteristic |characteristic| has been removed from
     // the system.
     virtual void GattCharacteristicRemoved(
         BluetoothAdapter* adapter,
         BluetoothRemoteGattCharacteristic* characteristic) {}
 
+    // See "Deprecated GATT Added/Removed Events NOTE" above.
+    //
     // Called when the remote GATT characteristic descriptor |descriptor| has
     // been discovered. Don't cache the arguments as the pointers may become
     // invalid. Instead, use the specially assigned identifier to obtain a
@@ -197,6 +228,8 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapter
         BluetoothAdapter* adapter,
         BluetoothRemoteGattDescriptor* descriptor) {}
 
+    // See "Deprecated GATT Added/Removed Events NOTE" above.
+    //
     // Called when a GATT characteristic descriptor |descriptor| has been
     // removed from the system.
     virtual void GattDescriptorRemoved(
@@ -262,7 +295,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapter
   // Returns a weak pointer to an existing adapter for testing purposes only.
   base::WeakPtr<BluetoothAdapter> GetWeakPtrForTesting();
 
-#if defined(OS_CHROMEOS) || defined(OS_LINUX)
+#if defined(OS_LINUX)
   // Shutdown the adapter: tear down and clean up all objects owned by
   // BluetoothAdapter. After this call, the BluetoothAdapter will behave as if
   // no Bluetooth controller exists in the local system. |IsPresent| will return
@@ -444,7 +477,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapter
       const CreateAdvertisementCallback& callback,
       const AdvertisementErrorCallback& error_callback) = 0;
 
-#if defined(OS_CHROMEOS) || defined(OS_LINUX)
+#if defined(OS_LINUX)
   // Sets the interval between two consecutive advertisements. Valid ranges
   // for the interval are from 20ms to 10.24 seconds, with min <= max.
   // Note: This is a best effort. The actual interval may vary non-trivially
@@ -454,6 +487,12 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapter
   virtual void SetAdvertisingInterval(
       const base::TimeDelta& min,
       const base::TimeDelta& max,
+      const base::Closure& callback,
+      const AdvertisementErrorCallback& error_callback) = 0;
+
+  // Resets advertising on this adapter. This will unregister all existing
+  // advertisements and will stop advertising them.
+  virtual void ResetAdvertising(
       const base::Closure& callback,
       const AdvertisementErrorCallback& error_callback) = 0;
 #endif

@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "base/gtest_prod_util.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -107,7 +108,12 @@ class TranslateUIDelegate {
   // Returns true if the current webpage is blacklisted.
   bool IsSiteBlacklisted();
 
-  // Sets the value if the current webpage is blacklisted.
+  // Returns true if the site of the current webpage can be blacklisted.
+  bool CanBlacklistSite();
+
+  // Sets the blacklisted state for the host of the current page. If
+  // value is true, the current host will be blacklisted and translations
+  // will not be offered for that site.
   void SetSiteBlacklist(bool value);
 
   // Returns true if the webpage in the current original language should be
@@ -122,6 +128,8 @@ class TranslateUIDelegate {
   bool ShouldAlwaysTranslateBeCheckedByDefault();
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(TranslateUIDelegateTest, GetPageHost);
+
   // Gets the host of the page being translated, or an empty string if no URL is
   // associated with the current page.
   std::string GetPageHost();

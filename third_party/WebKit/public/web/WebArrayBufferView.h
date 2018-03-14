@@ -29,8 +29,8 @@
 #ifndef WebArrayBufferView_h
 #define WebArrayBufferView_h
 
-#include "../platform/WebCommon.h"
-#include "../platform/WebPrivatePtr.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebPrivatePtr.h"
 
 namespace v8 {
 class Value;
@@ -59,7 +59,7 @@ class WebArrayBufferView {
   BLINK_EXPORT static WebArrayBufferView* CreateFromV8Value(
       v8::Local<v8::Value>);
 
-#if BLINK_IMPLEMENTATION
+#if INSIDE_BLINK
   WebArrayBufferView(DOMArrayBufferView*);
   WebArrayBufferView& operator=(DOMArrayBufferView*);
   operator DOMArrayBufferView*() const;

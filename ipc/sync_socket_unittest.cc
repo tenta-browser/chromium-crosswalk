@@ -100,7 +100,7 @@ class SyncSocketServerListener : public IPC::Listener {
 
   // When the client responds, it sends back a shutdown message,
   // which causes the message loop to exit.
-  void OnMsgClassShutdown() { base::MessageLoop::current()->QuitWhenIdle(); }
+  void OnMsgClassShutdown() { base::RunLoop::QuitCurrentWhenIdleDeprecated(); }
 
   IPC::Channel* chan_;
 
@@ -121,8 +121,7 @@ DEFINE_IPC_CHANNEL_MOJO_TEST_CLIENT(SyncSocketServerClient) {
 // a response from the server.
 class SyncSocketClientListener : public IPC::Listener {
  public:
-  SyncSocketClientListener() {
-  }
+  SyncSocketClientListener() = default;
 
   void Init(base::SyncSocket* socket, IPC::Channel* chan) {
     socket_ = socket;
@@ -153,7 +152,7 @@ class SyncSocketClientListener : public IPC::Listener {
     EXPECT_EQ(0U, socket_->Peek());
     IPC::Message* msg = new MsgClassShutdown();
     EXPECT_TRUE(chan_->Send(msg));
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   base::SyncSocket* socket_;

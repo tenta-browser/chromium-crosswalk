@@ -17,10 +17,6 @@
 #include "components/sync/model/metadata_change_list.h"
 #include "components/sync/model/model_error.h"
 
-namespace base {
-class SequencedTaskRunner;
-}  // namespace base
-
 namespace syncer {
 
 // ModelTypeStore is leveldb backed store for model type's data, metadata and
@@ -124,24 +120,13 @@ class ModelTypeStore {
       base::Callback<void(base::Optional<ModelError> error,
                           std::unique_ptr<MetadataBatch> metadata_batch)>;
 
-  // CreateStore takes |path| and |blocking_task_runner|. Here is how to get
-  // task runner in production code:
-  //
-  // base::SequencedWorkerPool* worker_pool =
-  //     content::BrowserThread::GetBlockingPool();
-  // scoped_refptr<base::SequencedTaskRunner> blocking_task_runner(
-  //     worker_pool->GetSequencedTaskRunnerWithShutdownBehavior(
-  //         worker_pool->GetNamedSequenceToken(path),
-  //         base::SequencedWorkerPool::SKIP_ON_SHUTDOWN));
-  //
-  // In test get task runner from MessageLoop::task_runner().
-  static void CreateStore(
-      ModelType type,
-      const std::string& path,
-      scoped_refptr<base::SequencedTaskRunner> blocking_task_runner,
-      const InitCallback& callback);
-  // Creates store object backed by in-memory leveldb database. It is used in
-  // tests.
+  // CreateStore takes |path|, and will run blocking calls on a task runner
+  // scoped to the given path. Tests likely don't want to use this method.
+  static void CreateStore(const std::string& path,
+                          ModelType type,
+                          const InitCallback& callback);
+  // Creates store object backed by in-memory leveldb database, gets its task
+  // runner from MessageLoop::task_runner(), and should only be used in tests.
   static void CreateInMemoryStoreForTest(ModelType type,
                                          const InitCallback& callback);
 
@@ -197,7 +182,7 @@ class ModelTypeStore {
 
 // Typedef for a store factory that has all params bound except InitCallback.
 using ModelTypeStoreFactory =
-    base::Callback<void(const ModelTypeStore::InitCallback&)>;
+    base::Callback<void(ModelType type, const ModelTypeStore::InitCallback&)>;
 
 }  // namespace syncer
 

@@ -83,7 +83,7 @@ bool WebcamPrivateAPI::OpenSerialWebcam(
       device_path, extension_id,
       base::Bind(&WebcamPrivateAPI::OnOpenSerialWebcam,
                  weak_ptr_factory_.GetWeakPtr(), extension_id, device_path,
-                 make_scoped_refptr(visca_webcam), callback));
+                 base::WrapRefCounted(visca_webcam), callback));
   return true;
 }
 
@@ -115,25 +115,22 @@ void WebcamPrivateAPI::OnOpenSerialWebcam(
 bool WebcamPrivateAPI::GetDeviceId(const std::string& extension_id,
                                    const std::string& webcam_id,
                                    std::string* device_id) {
-  url::Origin security_origin(
+  url::Origin security_origin = url::Origin::Create(
       extensions::Extension::GetBaseURLFromExtensionId(extension_id));
 
   return content::GetMediaDeviceIDForHMAC(
       content::MEDIA_DEVICE_VIDEO_CAPTURE,
-      browser_context_->GetResourceContext()->GetMediaDeviceIDSalt(),
-      security_origin,
-      webcam_id,
+      browser_context_->GetMediaDeviceIDSalt(), security_origin, webcam_id,
       device_id);
 }
 
 std::string WebcamPrivateAPI::GetWebcamId(const std::string& extension_id,
                                           const std::string& device_id) {
-  url::Origin security_origin(
+  url::Origin security_origin = url::Origin::Create(
       extensions::Extension::GetBaseURLFromExtensionId(extension_id));
 
   return content::GetHMACForMediaDeviceID(
-      browser_context_->GetResourceContext()->GetMediaDeviceIDSalt(),
-      security_origin, device_id);
+      browser_context_->GetMediaDeviceIDSalt(), security_origin, device_id);
 }
 
 WebcamResource* WebcamPrivateAPI::FindWebcamResource(
@@ -205,7 +202,7 @@ void WebcamPrivateOpenSerialWebcamFunction::OnOpenWebcam(
     const std::string& webcam_id,
     bool success) {
   if (success) {
-    SetResult(base::MakeUnique<base::Value>(webcam_id));
+    SetResult(std::make_unique<base::Value>(webcam_id));
     SendResponse(true);
   } else {
     SetError(kOpenSerialWebcamError);
@@ -323,8 +320,14 @@ void WebcamPrivateSetFunction::OnSetWebcamParameters(bool success) {
 }
 
 WebcamPrivateGetFunction::WebcamPrivateGetFunction()
-    : pan_(0),
+    : min_pan_(0),
+      max_pan_(0),
+      pan_(0),
+      min_tilt_(0),
+      max_tilt_(0),
       tilt_(0),
+      min_zoom_(0),
+      max_zoom_(0),
       zoom_(0),
       get_pan_(false),
       get_tilt_(false),
@@ -358,7 +361,9 @@ bool WebcamPrivateGetFunction::RunAsync() {
 
 void WebcamPrivateGetFunction::OnGetWebcamParameters(InquiryType type,
                                                      bool success,
-                                                     int value) {
+                                                     int value,
+                                                     int min_value,
+                                                     int max_value) {
   if (!success_)
     return;
   success_ = success_ && success;
@@ -369,23 +374,45 @@ void WebcamPrivateGetFunction::OnGetWebcamParameters(InquiryType type,
   } else {
     switch (type) {
       case INQUIRY_PAN:
+        min_pan_ = min_value;
+        max_pan_ = max_value;
         pan_ = value;
         get_pan_ = true;
         break;
       case INQUIRY_TILT:
+        min_tilt_ = min_value;
+        max_tilt_ = max_value;
         tilt_ = value;
         get_tilt_ = true;
         break;
       case INQUIRY_ZOOM:
+        min_zoom_ = min_value;
+        max_zoom_ = max_value;
         zoom_ = value;
         get_zoom_ = true;
         break;
     }
     if (get_pan_ && get_tilt_ && get_zoom_) {
-      webcam_private::WebcamConfiguration result;
-      result.pan.reset(new double(pan_));
-      result.tilt.reset(new double(tilt_));
-      result.zoom.reset(new double(zoom_));
+      webcam_private::WebcamCurrentConfiguration result;
+      if (min_pan_ != max_pan_) {
+        result.pan_range = std::make_unique<webcam_private::Range>();
+        result.pan_range->min = min_pan_;
+        result.pan_range->max = max_pan_;
+      }
+      if (min_tilt_ != max_tilt_) {
+        result.tilt_range = std::make_unique<webcam_private::Range>();
+        result.tilt_range->min = min_tilt_;
+        result.tilt_range->max = max_tilt_;
+      }
+      if (min_zoom_ != max_zoom_) {
+        result.zoom_range = std::make_unique<webcam_private::Range>();
+        result.zoom_range->min = min_zoom_;
+        result.zoom_range->max = max_zoom_;
+      }
+
+      result.pan = pan_;
+      result.tilt = tilt_;
+      result.zoom = zoom_;
       SetResult(result.ToValue());
       SendResponse(true);
     }

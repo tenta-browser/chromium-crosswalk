@@ -8,13 +8,15 @@
 #include <stddef.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
 #include "base/strings/string16.h"
+#include "base/strings/utf_offset_string_conversions.h"
 #include "base/time/time.h"
-#include "components/history/core/browser/history_match.h"
 #include "components/history/core/browser/history_types.h"
+#include "components/omnibox/browser/history_match.h"
 #include "components/omnibox/browser/in_memory_url_index_types.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 
@@ -122,9 +124,10 @@ struct ScoredHistoryMatch : public history::HistoryMatch {
   // url_matches and title_matches in the process so they only reflect matches
   // used for scoring.  (For instance, some mid-word matches are not given
   // credit in scoring.)  Requires that |url_matches| and |title_matches| are
-  // sorted.
+  // sorted. |adjustments| must contain any adjustments used to format |url|.
   float GetTopicalityScore(const int num_terms,
-                           const base::string16& cleaned_up_url,
+                           const GURL& url,
+                           const base::OffsetAdjuster::Adjustments& adjustments,
                            const WordStarts& terms_to_word_starts_offsets,
                            const RowWordStarts& word_starts);
 
@@ -173,14 +176,6 @@ struct ScoredHistoryMatch : public history::HistoryMatch {
 
   // Typed visits to page score this, compared to 1 for untyped visits.
   static float typed_value_;
-
-  // True if we should fix a bug in frequency scoring relating to how we
-  // extrapolate frecency when the URL has been visited few times.
-  static bool fix_few_visits_bug_;
-
-  // Determines whether GetFrequency() returns a score based on on the weighted
-  // sum of visit scores instead of the weighted average.
-  static bool frequency_uses_sum_;
 
   // The maximum number of recent visits to examine in GetFrequency().
   static size_t max_visits_to_score_;

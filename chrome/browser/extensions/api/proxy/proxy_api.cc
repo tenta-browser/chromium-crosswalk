@@ -103,7 +103,7 @@ std::unique_ptr<base::Value> ProxyPrefTransformer::ExtensionToBrowserPref(
   // When ExtensionToBrowserPref is called, the format of |extension_pref|
   // has been verified already by the extension API to match the schema
   // defined in the extension API JSON.
-  CHECK(extension_pref->IsType(base::Value::Type::DICTIONARY));
+  CHECK(extension_pref->is_dict());
   const base::DictionaryValue* config =
       static_cast<const base::DictionaryValue*>(extension_pref);
 
@@ -140,7 +140,7 @@ std::unique_ptr<base::Value> ProxyPrefTransformer::ExtensionToBrowserPref(
 
 std::unique_ptr<base::Value> ProxyPrefTransformer::BrowserToExtensionPref(
     const base::Value* browser_pref) {
-  CHECK(browser_pref->IsType(base::Value::Type::DICTIONARY));
+  CHECK(browser_pref->is_dict());
 
   // This is a dictionary wrapper that exposes the proxy configuration stored in
   // the browser preferences.
@@ -171,26 +171,26 @@ std::unique_ptr<base::Value> ProxyPrefTransformer::BrowserToExtensionPref(
       // A PAC URL either point to a PAC script or contain a base64 encoded
       // PAC script. In either case we build a PacScript dictionary as defined
       // in the extension API.
-      base::DictionaryValue* pac_dict = helpers::CreatePacScriptDict(config);
+      std::unique_ptr<base::DictionaryValue> pac_dict =
+          helpers::CreatePacScriptDict(config);
       if (!pac_dict)
         return nullptr;
-      extension_pref->Set(keys::kProxyConfigPacScript, pac_dict);
+      extension_pref->Set(keys::kProxyConfigPacScript, std::move(pac_dict));
       break;
     }
     case ProxyPrefs::MODE_FIXED_SERVERS: {
       // Build ProxyRules dictionary according to the extension API.
-      base::DictionaryValue* proxy_rules_dict =
+      std::unique_ptr<base::DictionaryValue> proxy_rules_dict =
           helpers::CreateProxyRulesDict(config);
       if (!proxy_rules_dict)
         return nullptr;
-      extension_pref->Set(keys::kProxyConfigRules, proxy_rules_dict);
+      extension_pref->Set(keys::kProxyConfigRules, std::move(proxy_rules_dict));
       break;
     }
     case ProxyPrefs::kModeCount:
       NOTREACHED();
   }
-  // TODO(crbug.com/703565): remove std::move() once compiler support improves.
-  return std::move(extension_pref);
+  return extension_pref;
 }
 
 }  // namespace extensions

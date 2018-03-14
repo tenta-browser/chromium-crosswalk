@@ -12,21 +12,19 @@
 
 namespace content {
 
-class ResourceRequestBodyImpl;
-
-bool RegisterResourceRequestBody(JNIEnv* env);
+class ResourceRequestBody;
 
 // Returns an instance of org.chromium.content_public.common.ResourceRequestBody
 // that contains serialized representation of the |native_object|.
 base::android::ScopedJavaLocalRef<jobject>
 ConvertResourceRequestBodyToJavaObject(
     JNIEnv* env,
-    const scoped_refptr<ResourceRequestBodyImpl>& native_object);
+    const scoped_refptr<ResourceRequestBody>& native_object);
 
 // Reconstructs the native C++ content::ResourceRequestBody object based on
 // org.chromium.content_public.common.ResourceRequestBody (|java_object|) passed
 // in as an argument.
-scoped_refptr<ResourceRequestBodyImpl> ExtractResourceRequestBodyFromJavaObject(
+scoped_refptr<ResourceRequestBody> ExtractResourceRequestBodyFromJavaObject(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& java_object);
 

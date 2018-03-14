@@ -9,11 +9,11 @@ import urlparse
 #
 # Operating systems:
 #     win, xp, vista, win7, win8, win10, mac, leopard, snowleopard,
-#     lion, mountainlion, mavericks, yosemite, sierra, linux, chromeos,
-#     android
+#     lion, mountainlion, mavericks, yosemite, sierra, highsierra,
+#     linux, chromeos, android
 #
 # Browser types:
-#     android-webview-shell, android-content-shell, debug, release
+#     android-webview-instrumentation, android-content-shell, debug, release
 #
 # ASAN conditions:
 #     asan, no_asan
@@ -24,14 +24,14 @@ import urlparse
 
 WIN_CONDITIONS = ['xp', 'vista', 'win7', 'win8', 'win10']
 MAC_CONDITIONS = ['leopard', 'snowleopard', 'lion', 'mountainlion',
-                  'mavericks', 'yosemite', 'sierra']
+                  'mavericks', 'yosemite', 'sierra', 'highsierra']
 
 OS_CONDITIONS = ['win', 'mac', 'linux', 'chromeos', 'android'] + \
                 WIN_CONDITIONS + MAC_CONDITIONS
 
 BROWSER_TYPE_CONDITIONS = [
-    'android-webview-shell', 'android-content-shell', 'android-chromium',
-    'debug', 'release']
+    'android-webview-instrumentation', 'android-content-shell',
+    'android-chromium', 'debug', 'debug_x64', 'release', 'release_x64']
 
 ASAN_CONDITIONS = ['asan', 'no_asan']
 
@@ -90,8 +90,8 @@ class Expectation(object):
       android
 
     Browser types:
-      android-webview-shell, android-content-shell, android-chromium,
-      debug, release
+      android-webview-instrumentation, android-content-shell,
+      android-chromium, debug, debug_x64, release, release_x64
 
     Sample usage in SetExpectations in subclasses:
       self.Fail('gl-enable-vertex-attrib.html',

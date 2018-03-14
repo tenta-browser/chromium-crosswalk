@@ -4,6 +4,8 @@
 
 package org.chromium.content.browser.framehost;
 
+import org.chromium.base.Callback;
+import org.chromium.base.UnguessableToken;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.content_public.browser.RenderFrameHost;
@@ -31,6 +33,8 @@ public class RenderFrameHostImpl implements RenderFrameHost {
                 new InterfaceProvider(CoreImpl.getInstance()
                                               .acquireNativeHandle(nativeInterfaceProviderHandle)
                                               .toMessagePipeHandle());
+
+        mDelegate.renderFrameCreated(this);
     }
 
     @CalledByNative
@@ -44,6 +48,7 @@ public class RenderFrameHostImpl implements RenderFrameHost {
     @CalledByNative
     private void clearNativePtr() {
         mNativeRenderFrameHostAndroid = 0;
+        mDelegate.renderFrameDeleted(this);
     }
 
     /**
@@ -62,6 +67,15 @@ public class RenderFrameHostImpl implements RenderFrameHost {
     }
 
     @Override
+    public void getCanonicalUrlForSharing(Callback<String> callback) {
+        if (mNativeRenderFrameHostAndroid == 0) {
+            callback.onResult(null);
+            return;
+        }
+        nativeGetCanonicalUrlForSharing(mNativeRenderFrameHostAndroid, callback);
+    }
+
+    @Override
     public InterfaceProvider getRemoteInterfaces() {
         return mInterfaceProvider;
     }
@@ -77,5 +91,17 @@ public class RenderFrameHostImpl implements RenderFrameHost {
         return mIncognito;
     }
 
+    /**
+     * Return the AndroidOverlay routing token for this RenderFrameHostImpl.
+     */
+    public UnguessableToken getAndroidOverlayRoutingToken() {
+        if (mNativeRenderFrameHostAndroid == 0) return null;
+        return nativeGetAndroidOverlayRoutingToken(mNativeRenderFrameHostAndroid);
+    }
+
     private native String nativeGetLastCommittedURL(long nativeRenderFrameHostAndroid);
+    private native void nativeGetCanonicalUrlForSharing(
+            long nativeRenderFrameHostAndroid, Callback<String> callback);
+    private native UnguessableToken nativeGetAndroidOverlayRoutingToken(
+            long nativeRenderFrameHostAndroid);
 }

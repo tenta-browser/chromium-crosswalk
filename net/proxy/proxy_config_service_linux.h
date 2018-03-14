@@ -23,6 +23,7 @@
 
 namespace base {
 class SingleThreadTaskRunner;
+class SequencedTaskRunner;
 }  // namespace base
 
 namespace net {
@@ -46,13 +47,14 @@ class NET_EXPORT_PRIVATE ProxyConfigServiceLinux : public ProxyConfigService {
     // one, in the concrete implementations. Returns true on success. Must be
     // called before using other methods, and should be called on the thread
     // running the glib main loop.
-    // One of |glib_task_runner| and |file_task_runner| will be
-    // used for gconf/gsettings calls or reading necessary files, depending on
-    // the implementation.
-    virtual bool Init(
-        const scoped_refptr<base::SingleThreadTaskRunner>& glib_task_runner,
-        const scoped_refptr<base::SingleThreadTaskRunner>&
-            file_task_runner) = 0;
+    // This interface supports both GNOME and KDE implementations. In the
+    // case of GNOME, the glib_task_runner will be used for interacting with
+    // gconf/gsettings as those APIs have thread affinity. Whereas in the case
+    // of KDE, its configuration files will be monitored at well-known locations
+    // and glib_task_runner will not be used. Instead, blocking file I/O
+    // operations will be posted directly using the task scheduler.
+    virtual bool Init(const scoped_refptr<base::SingleThreadTaskRunner>&
+                          glib_task_runner) = 0;
 
     // Releases the gconf/gsettings client, which clears cached directories and
     // stops notifications.
@@ -65,8 +67,8 @@ class NET_EXPORT_PRIVATE ProxyConfigServiceLinux : public ProxyConfigService {
     // Returns the message loop for the thread on which this object
     // handles notifications, and also on which it must be destroyed.
     // Returns NULL if it does not matter.
-    virtual const scoped_refptr<base::SingleThreadTaskRunner>&
-        GetNotificationTaskRunner() = 0;
+    virtual const scoped_refptr<base::SequencedTaskRunner>&
+    GetNotificationTaskRunner() = 0;
 
     // Returns the source of proxy settings.
     virtual ProxyConfigSource GetConfigSource() = 0;
@@ -140,28 +142,29 @@ class NET_EXPORT_PRIVATE ProxyConfigServiceLinux : public ProxyConfigService {
     DISALLOW_COPY_AND_ASSIGN(SettingGetter);
   };
 
-  // ProxyConfigServiceLinux is created on the UI thread, and
+  // ProxyConfigServiceLinux is created on the glib thread, and
   // SetUpAndFetchInitialConfig() is immediately called to synchronously
   // fetch the original configuration and set up change notifications on
-  // the UI thread.
+  // the ProxyConfigService's main SequencedTaskRunner, which is passed to its
+  // constructor (Which may or may not run tasks on the glib thread).
   //
   // Past that point, it is accessed periodically through the
   // ProxyConfigService interface (GetLatestProxyConfig, AddObserver,
-  // RemoveObserver) from the IO thread.
+  // RemoveObserver) from the main TaskRunner.
   //
   // Setting change notification callbacks can occur at any time and are
-  // run on either the UI thread (gconf/gsettings) or the file thread
-  // (KDE). The new settings are fetched on that thread, and the resulting
-  // proxy config is posted to the IO thread through
-  // Delegate::SetNewProxyConfig(). We then notify observers on the IO
-  // thread of the configuration change.
+  // run on either the glib thread (gconf/gsettings) or a separate file thread
+  // (KDE). The new settings are fetched on that thread, and the resulting proxy
+  // config is posted to the main TaskRunner through
+  // Delegate::SetNewProxyConfig(). We then notify observers on that TaskRunner
+  // of the configuration change.
   //
-  // ProxyConfigServiceLinux is deleted from the IO thread.
+  // ProxyConfigServiceLinux is deleted from the main TaskRunner.
   //
   // The substance of the ProxyConfigServiceLinux implementation is
   // wrapped in the Delegate ref counted class. On deleting the
   // ProxyConfigServiceLinux, Delegate::OnDestroy() is posted to either
-  // the UI thread (gconf/gsettings) or the file thread (KDE) where change
+  // the glib thread (gconf/gsettings) or a file thread (KDE) where change
   // notifications will be safely stopped before releasing Delegate.
 
   class Delegate : public base::RefCountedThreadSafe<Delegate> {
@@ -177,14 +180,12 @@ class NET_EXPORT_PRIVATE ProxyConfigServiceLinux : public ProxyConfigService {
     // gsettings, or kioslaverc are used, also enables notifications for
     // setting changes. gconf/gsettings must only be accessed from the
     // thread running the default glib main loop, and so this method
-    // must be called from the UI thread. The message loop for the IO
-    // thread is specified so that notifications can post tasks to it
-    // (and for assertions). The message loop for the file thread is
-    // used to read any files needed to determine proxy settings.
+    // must be called from the glib thread. The message loop for the
+    // ProxyConfigService's main SequencedTaskRunner is specified so that
+    // notifications can post tasks to it (and for assertions).
     void SetUpAndFetchInitialConfig(
         const scoped_refptr<base::SingleThreadTaskRunner>& glib_task_runner,
-        const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
-        const scoped_refptr<base::SingleThreadTaskRunner>& file_task_runner);
+        const scoped_refptr<base::SequencedTaskRunner>& main_task_runner);
 
     // Handler for setting change notifications: fetches a new proxy
     // configuration from settings, and if this config is different
@@ -193,17 +194,18 @@ class NET_EXPORT_PRIVATE ProxyConfigServiceLinux : public ProxyConfigService {
     // Left public for simplicity.
     void OnCheckProxyConfigSettings();
 
-    // Called from IO thread.
+    // Called on the service's main TaskRunner.
     void AddObserver(Observer* observer);
     void RemoveObserver(Observer* observer);
     ProxyConfigService::ConfigAvailability GetLatestProxyConfig(
         ProxyConfig* config);
 
-    // Posts a call to OnDestroy() to the UI or FILE thread, depending on the
-    // setting getter in use. Called from ProxyConfigServiceLinux's destructor.
+    // Posts a call to OnDestroy() to the glib or a file task runner,
+    // depending on the setting getter in use. Called from
+    // ProxyConfigServiceLinux's destructor.
     void PostDestroyTask();
-    // Safely stops change notifications. Posted to either the UI or FILE
-    // thread, depending on the setting getter in use.
+    // Safely stops change notifications. Posted to either the glib thread or
+    // sequenced task runner, depending on the setting getter in use.
     void OnDestroy();
 
    private:
@@ -233,7 +235,7 @@ class NET_EXPORT_PRIVATE ProxyConfigServiceLinux : public ProxyConfigService {
     // and the configuration is valid.
     bool GetConfigFromSettings(ProxyConfig* config);
 
-    // This method is posted from the UI thread to the IO thread to
+    // This method is posted from the glib thread to the main TaskRunner to
     // carry the new config information.
     void SetNewProxyConfig(const ProxyConfig& new_config);
 
@@ -244,11 +246,11 @@ class NET_EXPORT_PRIVATE ProxyConfigServiceLinux : public ProxyConfigService {
     std::unique_ptr<SettingGetter> setting_getter_;
 
     // Cached proxy configuration, to be returned by
-    // GetLatestProxyConfig. Initially populated from the UI thread, but
-    // afterwards only accessed from the IO thread.
+    // GetLatestProxyConfig. Initially populated from the glib thread, but
+    // afterwards only accessed from the main TaskRunner.
     ProxyConfig cached_config_;
 
-    // A copy kept on the UI thread of the last seen proxy config, so as
+    // A copy kept on the glib thread of the last seen proxy config, so as
     // to avoid posting a call to SetNewProxyConfig when we get a
     // notification but the config has not actually changed.
     ProxyConfig reference_config_;
@@ -263,9 +265,9 @@ class NET_EXPORT_PRIVATE ProxyConfigServiceLinux : public ProxyConfigService {
     // is not thread safe, any use of gconf must be done on the thread running
     // this loop.
     scoped_refptr<base::SingleThreadTaskRunner> glib_task_runner_;
-    // Task runner for the IO thread. GetLatestProxyConfig() is called from
-    // the thread running this loop.
-    scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
+    // Task runner for the main TaskRunner. GetLatestProxyConfig() is called
+    // from the thread running this loop.
+    scoped_refptr<base::SequencedTaskRunner> main_task_runner_;
 
     base::ObserverList<Observer> observers_;
 
@@ -287,18 +289,15 @@ class NET_EXPORT_PRIVATE ProxyConfigServiceLinux : public ProxyConfigService {
 
   void SetupAndFetchInitialConfig(
       const scoped_refptr<base::SingleThreadTaskRunner>& glib_task_runner,
-      const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
-      const scoped_refptr<base::SingleThreadTaskRunner>& file_task_runner) {
-    delegate_->SetUpAndFetchInitialConfig(glib_task_runner,
-                                          io_task_runner,
-                                          file_task_runner);
+      const scoped_refptr<base::SequencedTaskRunner>& io_task_runner) {
+    delegate_->SetUpAndFetchInitialConfig(glib_task_runner, io_task_runner);
   }
   void OnCheckProxyConfigSettings() {
     delegate_->OnCheckProxyConfigSettings();
   }
 
   // ProxyConfigService methods:
-  // Called from IO thread.
+  // Called from main TaskRunner.
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;
   ProxyConfigService::ConfigAvailability GetLatestProxyConfig(

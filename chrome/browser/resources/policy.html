@@ -6,7 +6,7 @@
 <title i18n-content="title"></title>
 
 <link rel="stylesheet" href="chrome://resources/css/chrome_shared.css">
-<link rel="stylesheet" href="uber/uber_shared.css">
+<link rel="stylesheet" href="uber_shared.css">
 <link rel="stylesheet" href="chrome://policy/policy.css">
 
 <script src="chrome://resources/js/action_link.js"></script>
@@ -15,16 +15,14 @@
 <script src="chrome://resources/js/cr/ui/focus_outline_manager.js"></script>
 <script src="chrome://resources/js/load_time_data.js"></script>
 <script src="chrome://resources/js/util.js"></script>
-<script src="chrome://policy/uber_utils.js"></script>
 </head>
 
-<body class="uber-frame">
+<body>
   <div id="filter-overlay" class="page">
     <header>
       <input id="filter" class="search-field-container" type="search"
           i18n-values="placeholder:filterPlaceholder;
                        aria-label:filterPlaceholder" incremental>
-      </input>
     </header>
   </div>
   <div class="page">
@@ -32,8 +30,12 @@
       <h1 i18n-content="title"></h1>
     </header>
     <section class="reload-show-unset-section">
-      <div class="reload-policies-button">
+      <div class="left-aligned-button">
         <button id="reload-policies" i18n-content="reloadPolicies"></button>
+      </div>
+      <div class="left-aligned-button">
+        <button id="export-policies" i18n-content="exportPoliciesJSON">
+        </button>
       </div>
       <div class="chrome-for-work">
          <a href="http://g.co/chromeent/learn" target="_blank">
@@ -41,7 +43,7 @@
       </div>
       <div id="show-unset-container" class="show-unset-checkbox">
         <label>
-          <input id="show-unset" type="checkbox"></input>
+          <input id="show-unset" type="checkbox">
           <span i18n-content="showUnset"></span>
         </label>
       </div>
@@ -58,8 +60,12 @@
     <fieldset id="status-box-template">
       <legend class="legend"></legend>
       <div class="status-entry" hidden>
-        <div class="label" i18n-content="labelDomain"></div>
-        <div class="domain"></div>
+        <div class="label" i18n-content="labelEnterpriseEnrollmentDomain"></div>
+        <div class="enterprise-enrollment-domain"></div>
+      </div>
+      <div class="status-entry" hidden>
+        <div class="label" i18n-content="labelEnterpriseDisplayDomain"></div>
+        <div class="enterprise-display-domain"></div>
       </div>
       <div class="status-entry" hidden>
         <div class="label" i18n-content="labelUsername"></div>
@@ -107,7 +113,9 @@
             <div class="source elide"></div>
           </td>
           <td class="name-column">
-            <div class="name elide"></div>
+            <div class="name elide">
+              <a class="name-link" target="_blank"></a>
+            </div>
           </td>
           <td class="value-column">
             <div class="value-container">
@@ -129,5 +137,6 @@
 
 <script src="chrome://policy/strings.js"></script>
 <script src="chrome://resources/js/i18n_template.js"></script>
+<script src="chrome://policy/policy_base.js"></script>
 <script src="chrome://policy/policy.js"></script>
 </html>

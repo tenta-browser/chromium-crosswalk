@@ -8,7 +8,6 @@
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/window_animation_types.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm/window_state_aura.h"
 #include "ash/wm/workspace_controller.h"
 #include "base/time/time.h"
 #include "ui/aura/test/test_windows.h"
@@ -23,9 +22,10 @@ using aura::Window;
 using ui::Layer;
 
 namespace ash {
-class WindowAnimationsTest : public ash::test::AshTestBase {
+
+class WindowAnimationsTest : public AshTestBase {
  public:
-  WindowAnimationsTest() {}
+  WindowAnimationsTest() = default;
 
   void TearDown() override { AshTestBase::TearDown(); }
 

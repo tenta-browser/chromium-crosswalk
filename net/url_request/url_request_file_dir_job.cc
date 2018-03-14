@@ -6,10 +6,12 @@
 
 #include "base/bind.h"
 #include "base/compiler_specific.h"
+#include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "net/base/directory_listing.h"
@@ -37,8 +39,12 @@ URLRequestFileDirJob::URLRequestFileDirJob(URLRequest* request,
       weak_factory_(this) {}
 
 void URLRequestFileDirJob::StartAsync() {
-  lister_.Start();
-  NotifyHeadersComplete();
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::Bind(&base::MakeAbsoluteFilePath, dir_path_),
+      base::Bind(&URLRequestFileDirJob::DidMakeAbsolutePath,
+                 weak_factory_.GetWeakPtr()));
 }
 
 void URLRequestFileDirJob::Start() {
@@ -92,6 +98,8 @@ void URLRequestFileDirJob::OnListFile(
   // We wait to write out the header until we get the first file, so that we
   // can catch errors from DirectoryLister and show an error page.
   if (!wrote_header_) {
+    wrote_header_ = true;
+
 #if defined(OS_WIN)
     const base::string16& title = dir_path_.value();
 #elif defined(OS_POSIX)
@@ -104,22 +112,33 @@ void URLRequestFileDirJob::OnListFile(
         base::SysNativeMBToWide(dir_path_.value()));
 #endif
     data_.append(GetDirectoryListingHeader(title));
-    wrote_header_ = true;
+
+    // If this isn't top level directory, add a link to the parent directory.
+    // To figure this out, first normalize |dir_path_| by stripping it of
+    // trailing separators. Then compare the resulting |stripped_dir_path| to
+    // its DirName(). For the top level directory, e.g. "/" or "c:\\", the
+    // normalized path is equal to its DirName().
+    base::FilePath stripped_dir_path = dir_path_.StripTrailingSeparators();
+    if (stripped_dir_path != stripped_dir_path.DirName()) {
+      data_.append(GetParentDirectoryLink());
+    }
   }
 
-#if defined(OS_WIN)
-  std::string raw_bytes;  // Empty on Windows means UTF-8 encoded name.
-#elif defined(OS_POSIX)
-  // TOOD(jungshik): The same issue as for the directory name.
+  // Skip the current and parent directory entries in the listing.
+  // GetParentDirectoryLink() takes care of them.
   base::FilePath filename = data.info.GetName();
-  const std::string& raw_bytes = filename.value();
+  if (filename.value() != base::FilePath::kCurrentDirectory &&
+      filename.value() != base::FilePath::kParentDirectory) {
+#if defined(OS_WIN)
+    std::string raw_bytes;  // Empty on Windows means UTF-8 encoded name.
+#elif defined(OS_POSIX)
+    // TODO(jungshik): The same issue as for the directory name.
+    const std::string& raw_bytes = filename.value();
 #endif
-  data_.append(GetDirectoryListingEntry(
-      data.info.GetName().LossyDisplayName(),
-      raw_bytes,
-      data.info.IsDirectory(),
-      data.info.GetSize(),
-      data.info.GetLastModifiedTime()));
+    data_.append(GetDirectoryListingEntry(
+        filename.LossyDisplayName(), raw_bytes, data.info.IsDirectory(),
+        data.info.GetSize(), data.info.GetLastModifiedTime()));
+  }
 
   // TODO(darin): coalesce more?
   CompleteRead(OK);
@@ -134,7 +153,19 @@ void URLRequestFileDirJob::OnListDone(int error) {
   CompleteRead(list_complete_result_);
 }
 
-URLRequestFileDirJob::~URLRequestFileDirJob() {}
+URLRequestFileDirJob::~URLRequestFileDirJob() = default;
+
+void URLRequestFileDirJob::DidMakeAbsolutePath(
+    const base::FilePath& absolute_path) {
+  if (network_delegate() && !network_delegate()->CanAccessFile(
+                                *request(), dir_path_, absolute_path)) {
+    NotifyStartError(URLRequestStatus::FromError(ERR_ACCESS_DENIED));
+    return;
+  }
+
+  lister_.Start();
+  NotifyHeadersComplete();
+}
 
 void URLRequestFileDirJob::CompleteRead(Error error) {
   DCHECK_LE(error, OK);
@@ -149,7 +180,7 @@ void URLRequestFileDirJob::CompleteRead(Error error) {
     result = ReadBuffer(read_buffer_->data(), read_buffer_length_);
     if (result >= 0) {
       // We completed the read, so reset the read buffer.
-      read_buffer_ = NULL;
+      read_buffer_ = nullptr;
       read_buffer_length_ = 0;
     } else {
       NOTREACHED();
@@ -168,7 +199,8 @@ int URLRequestFileDirJob::ReadBuffer(char* buf, int buf_size) {
     memcpy(buf, &data_[0], count);
     data_.erase(0, count);
     return count;
-  } else if (list_complete_) {
+  }
+  if (list_complete_) {
     // EOF
     return list_complete_result_;
   }

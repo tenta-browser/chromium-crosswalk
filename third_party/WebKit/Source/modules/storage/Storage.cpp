@@ -25,8 +25,8 @@
 
 #include "modules/storage/Storage.h"
 
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/ExceptionState.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
@@ -41,43 +41,12 @@ Storage::Storage(LocalFrame* frame, StorageArea* storage_area)
   DCHECK(storage_area_);
 }
 
-String Storage::AnonymousNamedGetter(const AtomicString& name,
-                                     ExceptionState& exception_state) {
-  bool found = Contains(name, exception_state);
-  if (exception_state.HadException() || !found)
-    return String();
-  String result = getItem(name, exception_state);
-  if (exception_state.HadException())
-    return String();
-  return result;
-}
-
-bool Storage::AnonymousNamedSetter(const AtomicString& name,
-                                   const AtomicString& value,
-                                   ExceptionState& exception_state) {
-  setItem(name, value, exception_state);
-  return true;
-}
-
-DeleteResult Storage::AnonymousNamedDeleter(const AtomicString& name,
-                                            ExceptionState& exception_state) {
-  bool found = Contains(name, exception_state);
-  if (!found)
-    return kDeleteUnknownProperty;
-  if (exception_state.HadException())
-    return kDeleteReject;
-  removeItem(name, exception_state);
-  if (exception_state.HadException())
-    return kDeleteReject;
-  return kDeleteSuccess;
-}
-
 void Storage::NamedPropertyEnumerator(Vector<String>& names,
                                       ExceptionState& exception_state) {
   unsigned length = this->length(exception_state);
   if (exception_state.HadException())
     return;
-  names.Resize(length);
+  names.resize(length);
   for (unsigned i = 0; i < length; ++i) {
     String key = this->key(i, exception_state);
     if (exception_state.HadException())
@@ -100,8 +69,9 @@ bool Storage::NamedPropertyQuery(const AtomicString& name,
   return true;
 }
 
-DEFINE_TRACE(Storage) {
+void Storage::Trace(blink::Visitor* visitor) {
   visitor->Trace(storage_area_);
+  ScriptWrappable::Trace(visitor);
   ContextClient::Trace(visitor);
 }
 

@@ -49,7 +49,7 @@ class CORE_EXPORT CSSToLengthConversionData {
   DISALLOW_NEW();
 
  public:
-  class FontSizes {
+  class CORE_EXPORT FontSizes {
     DISALLOW_NEW();
 
    public:
@@ -68,11 +68,11 @@ class CORE_EXPORT CSSToLengthConversionData {
     const Font* font_;
   };
 
-  class ViewportSize {
+  class CORE_EXPORT ViewportSize {
     DISALLOW_NEW();
 
    public:
-    ViewportSize() {}
+    ViewportSize() = default;
     ViewportSize(double width, double height) : size_(width, height) {}
     explicit ViewportSize(const LayoutViewItem&);
 

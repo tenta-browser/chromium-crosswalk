@@ -8,50 +8,23 @@
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "platform/scheduler/base/task_queue_impl.h"
-#include "platform/scheduler/child/scheduler_tqm_delegate.h"
 
 namespace blink {
 namespace scheduler {
 
 SchedulerHelper::SchedulerHelper(
-    scoped_refptr<SchedulerTqmDelegate> task_queue_manager_delegate,
-    const char* tracing_category,
-    const char* disabled_by_default_tracing_category,
-    const char* disabled_by_default_verbose_tracing_category)
-    : SchedulerHelper(task_queue_manager_delegate,
-                      tracing_category,
-                      disabled_by_default_tracing_category,
-                      disabled_by_default_verbose_tracing_category,
-                      TaskQueue::Spec(TaskQueue::QueueType::DEFAULT)
-                          .SetShouldMonitorQuiescence(true)) {}
-
-SchedulerHelper::SchedulerHelper(
-    scoped_refptr<SchedulerTqmDelegate> task_queue_manager_delegate,
-    const char* tracing_category,
-    const char* disabled_by_default_tracing_category,
-    const char* disabled_by_default_verbose_tracing_category,
-    TaskQueue::Spec default_task_queue_spec)
-    : task_queue_manager_delegate_(task_queue_manager_delegate),
-      task_queue_manager_(
-          new TaskQueueManager(task_queue_manager_delegate,
-                               tracing_category,
-                               disabled_by_default_tracing_category,
-                               disabled_by_default_verbose_tracing_category)),
-      control_task_runner_(
-          NewTaskQueue(TaskQueue::Spec(TaskQueue::QueueType::CONTROL)
-                           .SetShouldNotifyObservers(false))),
-      default_task_runner_(NewTaskQueue(default_task_queue_spec)),
-      observer_(nullptr),
-      tracing_category_(tracing_category),
-      disabled_by_default_tracing_category_(
-          disabled_by_default_tracing_category) {
-  control_task_runner_->SetQueuePriority(TaskQueue::CONTROL_PRIORITY);
-
+    std::unique_ptr<TaskQueueManager> task_queue_manager)
+    : task_queue_manager_(std::move(task_queue_manager)), observer_(nullptr) {
   task_queue_manager_->SetWorkBatchSize(4);
+}
 
-  DCHECK(task_queue_manager_delegate_);
-  task_queue_manager_delegate_->SetDefaultTaskRunner(
-      default_task_runner_.get());
+void SchedulerHelper::InitDefaultQueues(
+    scoped_refptr<TaskQueue> default_task_queue,
+    scoped_refptr<TaskQueue> control_task_queue) {
+  control_task_queue->SetQueuePriority(TaskQueue::kControlPriority);
+
+  DCHECK(task_queue_manager_);
+  task_queue_manager_->SetDefaultTaskRunner(default_task_queue);
 }
 
 SchedulerHelper::~SchedulerHelper() {
@@ -60,34 +33,10 @@ SchedulerHelper::~SchedulerHelper() {
 
 void SchedulerHelper::Shutdown() {
   CheckOnValidThread();
-  if (task_queue_manager_)
-    task_queue_manager_->SetObserver(nullptr);
-  task_queue_manager_.reset();
-  task_queue_manager_delegate_->RestoreDefaultTaskRunner();
-}
-
-void SchedulerHelper::SetRecordTaskDelayHistograms(
-    bool record_task_delay_histograms) {
   if (!task_queue_manager_)
     return;
-
-  task_queue_manager_->SetRecordTaskDelayHistograms(
-      record_task_delay_histograms);
-}
-
-scoped_refptr<TaskQueue> SchedulerHelper::NewTaskQueue(
-    const TaskQueue::Spec& spec) {
-  DCHECK(task_queue_manager_.get());
-  return task_queue_manager_->NewTaskQueue(spec);
-}
-
-scoped_refptr<TaskQueue> SchedulerHelper::DefaultTaskRunner() {
-  CheckOnValidThread();
-  return default_task_runner_;
-}
-
-scoped_refptr<TaskQueue> SchedulerHelper::ControlTaskRunner() {
-  return control_task_runner_;
+  task_queue_manager_->SetObserver(nullptr);
+  task_queue_manager_.reset();
 }
 
 size_t SchedulerHelper::GetNumberOfPendingTasks() const {
@@ -103,11 +52,6 @@ void SchedulerHelper::SetWorkBatchSizeForTesting(size_t work_batch_size) {
 TaskQueueManager* SchedulerHelper::GetTaskQueueManagerForTesting() {
   CheckOnValidThread();
   return task_queue_manager_.get();
-}
-
-const scoped_refptr<SchedulerTqmDelegate>&
-SchedulerHelper::scheduler_tqm_delegate() const {
-  return task_queue_manager_delegate_;
 }
 
 bool SchedulerHelper::GetAndClearSystemIsQuiescentBit() {
@@ -173,23 +117,30 @@ void SchedulerHelper::UnregisterTimeDomain(TimeDomain* time_domain) {
     task_queue_manager_->UnregisterTimeDomain(time_domain);
 }
 
-void SchedulerHelper::OnUnregisterTaskQueue(
-    const scoped_refptr<TaskQueue>& queue) {
+void SchedulerHelper::OnTriedToExecuteBlockedTask() {
   if (observer_)
-    observer_->OnUnregisterTaskQueue(queue);
+    observer_->OnTriedToExecuteBlockedTask();
 }
 
-void SchedulerHelper::OnTriedToExecuteBlockedTask(
-    const TaskQueue& queue,
-    const base::PendingTask& task) {
+void SchedulerHelper::OnBeginNestedRunLoop() {
   if (observer_)
-    observer_->OnTriedToExecuteBlockedTask(queue, task);
+    observer_->OnBeginNestedRunLoop();
 }
 
-TaskQueue* SchedulerHelper::CurrentlyExecutingTaskQueue() const {
-  if (!task_queue_manager_)
-    return nullptr;
-  return task_queue_manager_->currently_executing_task_queue();
+void SchedulerHelper::OnExitNestedRunLoop() {
+  if (observer_)
+    observer_->OnExitNestedRunLoop();
+}
+
+base::TickClock* SchedulerHelper::GetClock() const {
+  return task_queue_manager_->GetClock();
+}
+
+base::TimeTicks SchedulerHelper::NowTicks() const {
+  if (task_queue_manager_)
+    return task_queue_manager_->NowTicks();
+  // We may need current time for tracing when shutting down worker thread.
+  return base::TimeTicks::Now();
 }
 
 }  // namespace scheduler

@@ -16,6 +16,7 @@
 #include "components/proxy_config/proxy_config_dictionary.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
 #include "components/ssl_config/ssl_config_prefs.h"
+#include "content/public/common/content_switches.h"
 #include "ui/base/ui_base_switches.h"
 
 namespace {
@@ -37,7 +38,7 @@ class TestCommandLinePrefStore : public ChromeCommandLinePrefStore {
   void VerifyProxyMode(ProxyPrefs::ProxyMode expected_mode) {
     const base::Value* value = NULL;
     ASSERT_TRUE(GetValue(proxy_config::prefs::kProxy, &value));
-    ASSERT_EQ(base::Value::Type::DICTIONARY, value->GetType());
+    ASSERT_EQ(base::Value::Type::DICTIONARY, value->type());
     ProxyConfigDictionary dict(
         static_cast<const base::DictionaryValue*>(value)->CreateDeepCopy());
     ProxyPrefs::ProxyMode actual_mode;
@@ -49,7 +50,7 @@ class TestCommandLinePrefStore : public ChromeCommandLinePrefStore {
                              size_t cipher_count) {
     const base::Value* value = NULL;
     ASSERT_TRUE(GetValue(ssl_config::prefs::kCipherSuiteBlacklist, &value));
-    ASSERT_EQ(base::Value::Type::LIST, value->GetType());
+    ASSERT_EQ(base::Value::Type::LIST, value->type());
     const base::ListValue* list_value =
         static_cast<const base::ListValue*>(value);
     ASSERT_EQ(cipher_count, list_value->GetSize());
@@ -121,7 +122,7 @@ TEST(ChromeCommandLinePrefStoreTest, MultipleSwitches) {
 
   const base::Value* value = NULL;
   ASSERT_TRUE(store->GetValue(proxy_config::prefs::kProxy, &value));
-  ASSERT_EQ(base::Value::Type::DICTIONARY, value->GetType());
+  ASSERT_EQ(base::Value::Type::DICTIONARY, value->type());
   ProxyConfigDictionary dict(
       static_cast<const base::DictionaryValue*>(value)->CreateDeepCopy());
 

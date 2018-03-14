@@ -9,11 +9,13 @@ import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.preference.Preference;
 import android.preference.PreferenceFragment;
+import android.support.v7.content.res.AppCompatResources;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
+import org.chromium.chrome.browser.preferences.PreferenceUtils;
 
 /**
  * Autofill credit cards fragment, which allows the user to edit credit cards.
@@ -23,7 +25,8 @@ public class AutofillCreditCardsFragment
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        addPreferencesFromResource(R.xml.autofill_and_payments_preference_fragment_screen);
+        PreferenceUtils.addPreferencesFromResource(
+                this, R.xml.autofill_and_payments_preference_fragment_screen);
         getActivity().setTitle(R.string.autofill_credit_cards_title);
     }
 
@@ -45,7 +48,8 @@ public class AutofillCreditCardsFragment
             Preference pref = new Preference(getActivity());
             pref.setTitle(card.getObfuscatedNumber());
             pref.setSummary(card.getFormattedExpirationDate(getActivity()));
-            pref.setIcon(card.getIssuerIconDrawableId());
+            pref.setIcon(
+                    AppCompatResources.getDrawable(getActivity(), card.getIssuerIconDrawableId()));
 
             if (card.getIsLocal()) {
                 pref.setFragment(AutofillLocalCardEditor.class.getName());

@@ -10,6 +10,7 @@
 #include <memory>
 
 #import "ios/chrome/browser/content_suggestions/content_suggestions_mediator.h"
+#import "ios/chrome/browser/content_suggestions/content_suggestions_metrics_recorder.h"
 #import "ios/chrome/browser/ui/content_suggestions/content_suggestions_data_source.h"
 
 namespace favicon {
@@ -25,18 +26,26 @@ class MostVisitedSites;
 }
 
 @protocol ContentSuggestionsCommands;
+@protocol ContentSuggestionsGestureCommands;
+@protocol ContentSuggestionsHeaderProvider;
 @class ContentSuggestionIdentifier;
+class GURL;
+class LargeIconCache;
+class NotificationPromoWhatsNew;
 
 // Mediator for ContentSuggestions. Makes the interface between a
 // ntp_snippets::ContentSuggestionsService and the Objective-C services using
 // its data.
-@interface ContentSuggestionsMediator : NSObject<ContentSuggestionsDataSource>
+@interface ContentSuggestionsMediator
+    : NSObject<ContentSuggestionsDataSource,
+               ContentSuggestionsMetricsRecorderDelegate>
 
 // Initialize the mediator with the |contentService| to mediate.
 - (nullable instancetype)
 initWithContentService:
     (nonnull ntp_snippets::ContentSuggestionsService*)contentService
       largeIconService:(nonnull favicon::LargeIconService*)largeIconService
+        largeIconCache:(nullable LargeIconCache*)largeIconCache
        mostVisitedSite:
            (std::unique_ptr<ntp_tiles::MostVisitedSites>)mostVisitedSites
     NS_DESIGNATED_INITIALIZER;
@@ -44,13 +53,28 @@ initWithContentService:
 - (nullable instancetype)init NS_UNAVAILABLE;
 
 // Command handler for the mediator.
-@property(nonatomic, weak, nullable) id<ContentSuggestionsCommands>
-    commandHandler;
+@property(nonatomic, weak, nullable)
+    id<ContentSuggestionsCommands, ContentSuggestionsGestureCommands>
+        commandHandler;
 
-// Dismisses the suggestion from the content suggestions service. It doesn't
-// change the UI.
-- (void)dismissSuggestion:
-    (nonnull ContentSuggestionIdentifier*)suggestionIdentifier;
+@property(nonatomic, weak, nullable) id<ContentSuggestionsHeaderProvider>
+    headerProvider;
+
+// Whether to force the reload the Reading List section next time it is updated.
+// Reset to NO after actual reload.
+@property(nonatomic, assign) BOOL readingListNeedsReload;
+
+// The notification promo owned by this mediator.
+- (nonnull NotificationPromoWhatsNew*)notificationPromo;
+
+// Blacklists the URL from the Most Visited sites.
+- (void)blacklistMostVisitedURL:(GURL)URL;
+
+// Whitelists the URL from the Most Visited sites.
+- (void)whitelistMostVisitedURL:(GURL)URL;
+
+// Get the maximum number of sites shown.
++ (NSUInteger)maxSitesShown;
 
 @end
 

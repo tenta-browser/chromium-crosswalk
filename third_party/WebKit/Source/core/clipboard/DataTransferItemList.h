@@ -31,9 +31,10 @@
 #ifndef DataTransferItemList_h
 #define DataTransferItemList_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "core/CoreExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/Forward.h"
+#include "platform/wtf/Forward.h"
 
 namespace blink {
 
@@ -44,9 +45,7 @@ class File;
 
 class ExceptionState;
 
-class DataTransferItemList final
-    : public GarbageCollected<DataTransferItemList>,
-      public ScriptWrappable {
+class CORE_EXPORT DataTransferItemList final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -61,7 +60,7 @@ class DataTransferItemList final
                         ExceptionState&);
   DataTransferItem* add(File*);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   DataTransferItemList(DataTransfer*, DataObject*);

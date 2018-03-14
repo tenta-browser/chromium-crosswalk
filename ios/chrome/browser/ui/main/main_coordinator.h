@@ -7,16 +7,17 @@
 
 #import "ios/chrome/browser/chrome_root_coordinator.h"
 
-#import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 
-@class MainViewController;
+#import "ios/chrome/browser/ui/main/view_controller_swapping.h"
 
 @interface MainCoordinator : ChromeRootCoordinator
 
 // The view controller this coordinator creates and manages.
 // (This is only public while the view controller architecture is being
 // refactored).
-@property(nonatomic, readonly, nullable) MainViewController* mainViewController;
+@property(nonatomic, weak, readonly, nullable)
+    UIViewController<ViewControllerSwapping>* mainViewController;
 
 @end
 

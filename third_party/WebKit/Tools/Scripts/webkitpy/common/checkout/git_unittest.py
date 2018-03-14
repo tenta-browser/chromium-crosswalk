@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import sys
 import unittest
 
 from webkitpy.common.system.executive import Executive, ScriptError
@@ -11,17 +12,22 @@ from webkitpy.common.system.filesystem_mock import MockFileSystem
 from webkitpy.common.checkout.git import Git
 
 
+# These tests could likely be run on Windows if we first used Git.find_executable_name.
+@unittest.skipIf(sys.platform == 'win32', 'fails on Windows')
 class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
 
     def setUp(self):
         self.executive = Executive()
         self.filesystem = FileSystem()
+
         self.original_cwd = self.filesystem.getcwd()
 
         # Set up fresh git repository with one commit.
         self.untracking_checkout_path = self._mkdtemp(suffix='-git_unittest_untracking')
         self._run(['git', 'init', self.untracking_checkout_path])
+
         self._chdir(self.untracking_checkout_path)
+        self._set_user_config()
         self._write_text_file('foo_file', 'foo')
         self._run(['git', 'add', 'foo_file'])
         self._run(['git', 'commit', '-am', 'dummy commit'])
@@ -31,6 +37,7 @@ class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
         self.tracking_git_checkout_path = self._mkdtemp(suffix='-git_unittest_tracking')
         self._run(['git', 'clone', '--quiet', self.untracking_checkout_path, self.tracking_git_checkout_path])
         self._chdir(self.tracking_git_checkout_path)
+        self._set_user_config()
         self.tracking_git = Git(cwd=self.tracking_git_checkout_path, filesystem=self.filesystem, executive=self.executive)
 
     def tearDown(self):
@@ -38,8 +45,9 @@ class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
         self._run(['rm', '-rf', self.tracking_git_checkout_path])
         self._run(['rm', '-rf', self.untracking_checkout_path])
 
-    def _join(self, *comps):
-        return self.filesystem.join(*comps)
+    def _set_user_config(self):
+        self._run(['git', 'config', '--local', 'user.name', 'Fake'])
+        self._run(['git', 'config', '--local', 'user.email', 'fake@example.com'])
 
     def _chdir(self, path):
         self.filesystem.chdir(path)
@@ -50,9 +58,6 @@ class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
 
     def _mkdtemp(self, **kwargs):
         return str(self.filesystem.mkdtemp(**kwargs))
-
-    def _remove(self, path):
-        self.filesystem.remove(path)
 
     def _run(self, *args, **kwargs):
         return self.executive.run_command(*args, **kwargs)
@@ -65,9 +70,9 @@ class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
         git = self.untracking_git
         self._mkdir('added_dir')
         self._write_text_file('added_dir/added_file', 'new stuff')
-        print self._run(['ls', 'added_dir'])
-        print self._run(['pwd'])
-        print self._run(['cat', 'added_dir/added_file'])
+        self._run(['ls', 'added_dir'])
+        self._run(['pwd'])
+        self._run(['cat', 'added_dir/added_file'])
         git.add_list(['added_dir/added_file'])
         self.assertIn('added_dir/added_file', git.added_files())
 
@@ -138,7 +143,6 @@ class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
         self._write_text_file('test_file_commit1', 'contents')
         self._run(['git', 'add', 'test_file_commit1'])
         git.commit_locally_with_message('message')
-        git._patch_order = lambda: ''  # pylint: disable=protected-access
         patch = git.create_patch()
         self.assertNotRegexpMatches(patch, r'Subversion Revision:')
 
@@ -151,7 +155,6 @@ class GitTestWithRealFilesystemAndExecutive(unittest.TestCase):
 
         # Even if diff.noprefix is enabled, create_patch() produces diffs with prefixes.
         self._run(['git', 'config', 'diff.noprefix', 'true'])
-        git._patch_order = lambda: ''  # pylint: disable=protected-access
         patch = git.create_patch()
         self.assertRegexpMatches(patch, r'^diff --git a/test_file_commit1 b/test_file_commit1')
 
@@ -180,35 +183,12 @@ Date:   Mon Sep 28 19:10:30 2015 -0700
         git = self.tracking_git
         self.assertEqual(git._commit_position_from_git_log(git_log), 1234567)
 
-    def test_timestamp_of_revision(self):
-        # This tests a protected method. pylint: disable=protected-access
-        self._chdir(self.tracking_git_checkout_path)
-        git = self.tracking_git
-        position_regex = git._commit_position_regex_for_timestamp()
-        git.most_recent_log_matching(position_regex, git.checkout_root)
-
 
 class GitTestWithMock(unittest.TestCase):
 
     def make_git(self):
         git = Git(cwd='.', executive=MockExecutive(), filesystem=MockFileSystem())
-        git.read_git_config = lambda *args, **kw: 'MOCKKEY:MOCKVALUE'
         return git
-
-    def _assert_timestamp_of_revision(self, canned_git_output, expected):
-        git = self.make_git()
-        git.find_checkout_root = lambda path: ''
-        git.run = lambda args: canned_git_output
-        self.assertEqual(git.timestamp_of_revision('some-path', '12345'), expected)
-
-    def test_timestamp_of_revision_utc(self):
-        self._assert_timestamp_of_revision('Date: 2013-02-08 08:05:49 +0000', '2013-02-08T08:05:49Z')
-
-    def test_timestamp_of_revision_positive_timezone(self):
-        self._assert_timestamp_of_revision('Date: 2013-02-08 01:02:03 +0130', '2013-02-07T23:32:03Z')
-
-    def test_timestamp_of_revision_pacific_timezone(self):
-        self._assert_timestamp_of_revision('Date: 2013-02-08 01:55:21 -0800', '2013-02-08T09:55:21Z')
 
     def test_unstaged_files(self):
         git = self.make_git()

@@ -36,6 +36,7 @@
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/events/event.h"
+#include "ui/views/border.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/combobox/combobox.h"
@@ -59,8 +60,8 @@ class ComboboxWithWidth : public views::Combobox {
         width_(width) {
   }
   ~ComboboxWithWidth() override {}
-  gfx::Size GetPreferredSize() const override {
-    gfx::Size size = Combobox::GetPreferredSize();
+  gfx::Size CalculatePreferredSize() const override {
+    gfx::Size size = Combobox::CalculatePreferredSize();
     size.set_width(width_);
     return size;
   }
@@ -328,6 +329,8 @@ int UserCertComboboxModel::GetItemCount() const {
       CertLibrary::Get()->NumCertificates(CertLibrary::CERT_TYPE_USER);
   if (num_certs == 0)
     return 1;  // "None installed"
+  if (owner_->ManagedUserCertNotFound())
+    return 1;  // Empty: no user cert found, but managed (not editable).
   return num_certs;
 }
 
@@ -341,6 +344,9 @@ base::string16 UserCertComboboxModel::GetItemAt(int index) {
   if (CertLibrary::Get()->NumCertificates(CertLibrary::CERT_TYPE_USER) == 0)
     return l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_USER_CERT_NONE_INSTALLED);
+  if (owner_->ManagedUserCertNotFound())
+    return base::string16();  // Empty: no user cert found, but managed (not
+                              // editable).
   return CertLibrary::Get()->GetCertDisplayStringAt(
       CertLibrary::CERT_TYPE_USER, index);
 }
@@ -491,7 +497,7 @@ bool WifiConfigView::CaCertActive() const {
 }
 
 void WifiConfigView::UpdateDialogButtons() {
-  parent_->GetDialogClientView()->UpdateDialogButtons();
+  parent_->DialogModelChanged();
 }
 
 void WifiConfigView::RefreshEapFields() {
@@ -656,7 +662,7 @@ void WifiConfigView::OnPerformAction(views::Combobox* combobox) {
   UpdateErrorLabel();
 }
 
-void WifiConfigView::OnCertificatesLoaded(bool initial_load) {
+void WifiConfigView::OnCertificatesLoaded() {
   RefreshEapFields();
   UpdateDialogButtons();
   UpdateErrorLabel();
@@ -674,20 +680,17 @@ bool WifiConfigView::Login() {
   bool only_policy_autoconnect =
       onc::PolicyAllowsOnlyPolicyNetworksToAutoconnect(!share_network);
   if (only_policy_autoconnect) {
-    properties.SetBooleanWithoutPathExpansion(shill::kAutoConnectProperty,
-                                              false);
+    properties.SetKey(shill::kAutoConnectProperty, base::Value(false));
   }
 
   if (service_path_.empty()) {
     // TODO(stevenjb): Support modifying existing EAP configurations.
     // Will probably wait to do this in WebUI instead.
-    properties.SetStringWithoutPathExpansion(
-        shill::kTypeProperty, shill::kTypeWifi);
+    properties.SetKey(shill::kTypeProperty, base::Value(shill::kTypeWifi));
     shill_property_util::SetSSID(GetSsid(), &properties);
-    properties.SetStringWithoutPathExpansion(
-        shill::kModeProperty, shill::kModeManaged);
-    properties.SetBooleanWithoutPathExpansion(
-        shill::kSaveCredentialsProperty, GetSaveCredentials());
+    properties.SetKey(shill::kModeProperty, base::Value(shill::kModeManaged));
+    properties.SetKey(shill::kSaveCredentialsProperty,
+                      base::Value(GetSaveCredentials()));
     std::string security_class = shill::kSecurityNone;
     if (!eap_method_combobox_) {
       switch (security_combobox_->selected_index()) {
@@ -703,15 +706,15 @@ bool WifiConfigView::Login() {
       }
       std::string passphrase = GetPassphrase();
       if (!passphrase.empty()) {
-        properties.SetStringWithoutPathExpansion(
-            shill::kPassphraseProperty, GetPassphrase());
+        properties.SetKey(shill::kPassphraseProperty,
+                          base::Value(GetPassphrase()));
       }
     } else {
       security_class = shill::kSecurity8021x;
       SetEapProperties(&properties, false /* not configured */);
     }
-    properties.SetStringWithoutPathExpansion(
-        shill::kSecurityClassProperty, security_class);
+    properties.SetKey(shill::kSecurityClassProperty,
+                      base::Value(security_class));
 
     // Configure and connect to network.
     NetworkConnect::Get()->CreateConfigurationAndConnect(&properties,
@@ -725,21 +728,20 @@ bool WifiConfigView::Login() {
     }
     if (eap_method_combobox_) {
       SetEapProperties(&properties, true /* configured */);
-      properties.SetBooleanWithoutPathExpansion(
-          shill::kSaveCredentialsProperty, GetSaveCredentials());
+      properties.SetKey(shill::kSaveCredentialsProperty,
+                        base::Value(GetSaveCredentials()));
     } else {
       const std::string passphrase = GetPassphrase();
       if (!passphrase.empty()) {
-        properties.SetStringWithoutPathExpansion(
-            shill::kPassphraseProperty, passphrase);
+        properties.SetKey(shill::kPassphraseProperty, base::Value(passphrase));
       }
     }
     if (network->type() == shill::kTypeEthernet) {
       // When configuring an ethernet service, we actually configure the
       // EthernetEap service, which exists in the Profile only.
       // See crbug.com/126870 for more info.
-      properties.SetStringWithoutPathExpansion(shill::kTypeProperty,
-                                               shill::kTypeEthernetEap);
+      properties.SetKey(shill::kTypeProperty,
+                        base::Value(shill::kTypeEthernetEap));
       share_network = false;
       NetworkConnect::Get()->CreateConfiguration(&properties, share_network);
     } else {
@@ -873,24 +875,23 @@ std::string WifiConfigView::GetEapAnonymousIdentity() const {
 
 void WifiConfigView::SetEapProperties(base::DictionaryValue* properties,
                                       bool configured) {
-  properties->SetStringWithoutPathExpansion(
-      shill::kEapIdentityProperty, GetEapIdentity());
-  properties->SetStringWithoutPathExpansion(
-      shill::kEapMethodProperty, GetEapMethod());
-  properties->SetStringWithoutPathExpansion(
-      shill::kEapPhase2AuthProperty, GetEapPhase2Auth());
-  properties->SetStringWithoutPathExpansion(
-      shill::kEapAnonymousIdentityProperty, GetEapAnonymousIdentity());
-  properties->SetStringWithoutPathExpansion(
-      shill::kEapSubjectMatchProperty, GetEapSubjectMatch());
+  properties->SetKey(shill::kEapIdentityProperty,
+                     base::Value(GetEapIdentity()));
+  properties->SetKey(shill::kEapMethodProperty, base::Value(GetEapMethod()));
+  properties->SetKey(shill::kEapPhase2AuthProperty,
+                     base::Value(GetEapPhase2Auth()));
+  properties->SetKey(shill::kEapAnonymousIdentityProperty,
+                     base::Value(GetEapAnonymousIdentity()));
+  properties->SetKey(shill::kEapSubjectMatchProperty,
+                     base::Value(GetEapSubjectMatch()));
 
   SetEapClientCertProperties(properties);
 
-  properties->SetBooleanWithoutPathExpansion(
-      shill::kEapUseSystemCasProperty, GetEapUseSystemCas());
+  properties->SetKey(shill::kEapUseSystemCasProperty,
+                     base::Value(GetEapUseSystemCas()));
   if (!configured || passphrase_textfield_->changed()) {
-    properties->SetStringWithoutPathExpansion(
-        shill::kEapPasswordProperty, GetPassphrase());
+    properties->SetKey(shill::kEapPasswordProperty,
+                       base::Value(GetPassphrase()));
   }
   auto pem_list = base::MakeUnique<base::ListValue>();
   std::string ca_cert_pem = GetEapServerCaCertPEM();
@@ -904,6 +905,10 @@ void WifiConfigView::Cancel() {
 }
 
 void WifiConfigView::Init(bool show_8021x) {
+  views::LayoutProvider* provider = views::LayoutProvider::Get();
+  SetBorder(views::CreateEmptyBorder(
+      provider->GetDialogInsetsForContentType(views::TEXT, views::TEXT)));
+
   const NetworkState* network = GetNetworkState();
   if (network) {
     if (network->type() == shill::kTypeWifi) {
@@ -938,8 +943,7 @@ void WifiConfigView::Init(bool show_8021x) {
       ParseUIProperty(&passphrase_ui_data_, network, ::onc::wifi::kPassphrase);
   }
 
-  views::GridLayout* layout = views::GridLayout::CreatePanel(this);
-  views::LayoutProvider* provider = views::LayoutProvider::Get();
+  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
 
   const int column_view_set_id = 0;
   views::ColumnSet* column_set = layout->AddColumnSet(column_view_set_id);
@@ -1117,6 +1121,7 @@ void WifiConfigView::Init(bool show_8021x) {
                                  views::DISTANCE_RELATED_CONTROL_VERTICAL));
 
     // User certificate
+    managed_user_cert_not_found_ = false;
     layout->StartRow(0, column_view_set_id);
     base::string16 user_cert_label_text = l10n_util::GetStringUTF16(
         IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_CERT);
@@ -1198,20 +1203,20 @@ void WifiConfigView::Init(bool show_8021x) {
             IDS_OPTIONS_SETTINGS_INTERNET_OPTIONS_PASSPHRASE_HIDE));
     passphrase_visible_button_->SetImage(
         views::ImageButton::STATE_NORMAL,
-        *ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-            IDR_NETWORK_SHOW_PASSWORD));
+        *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+            IDR_SHOW_PASSWORD));
     passphrase_visible_button_->SetImage(
         views::ImageButton::STATE_HOVERED,
-        *ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-            IDR_NETWORK_SHOW_PASSWORD_HOVER));
+        *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+            IDR_SHOW_PASSWORD_HOVER));
     passphrase_visible_button_->SetToggledImage(
         views::ImageButton::STATE_NORMAL,
-        ResourceBundle::GetSharedInstance().
-        GetImageSkiaNamed(IDR_NETWORK_HIDE_PASSWORD));
+        ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+            IDR_HIDE_PASSWORD));
     passphrase_visible_button_->SetToggledImage(
         views::ImageButton::STATE_HOVERED,
-        ResourceBundle::GetSharedInstance().
-        GetImageSkiaNamed(IDR_NETWORK_HIDE_PASSWORD_HOVER));
+        ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+            IDR_HIDE_PASSWORD_HOVER));
     passphrase_visible_button_->SetImageAlignment(
         views::ImageButton::ALIGN_CENTER, views::ImageButton::ALIGN_MIDDLE);
     layout->AddView(passphrase_visible_button_);
@@ -1403,6 +1408,17 @@ void WifiConfigView::InitFromProperties(
           CertLibrary::Get()->GetUserCertIndexByPkcs11Id(pkcs11_id);
       if (cert_index >= 0)
         user_cert_combobox_->SetSelectedIndex(cert_index);
+    } else if (!user_cert_ui_data_.IsEditable() &&
+               CertLibrary::Get()->NumCertificates(
+                   CertLibrary::CERT_TYPE_USER) > 0) {
+      // The cert is not configured (e.g. policy-provided client cert pattern
+      // did not match anything), and the cert selection is not editable
+      // (probably because the network is configured by policy). In this case,
+      // we don't want to display the first certificate in the list, as that
+      // would be misleading.
+      managed_user_cert_not_found_ = true;
+      user_cert_combobox_->ModelChanged();
+      user_cert_combobox_->SetSelectedIndex(0);
     }
   }
 

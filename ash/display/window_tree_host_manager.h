@@ -39,7 +39,6 @@ class AshWindowTreeHost;
 struct AshWindowTreeHostInitParams;
 class CursorWindowController;
 class FocusActivationStore;
-class InputMethodEventHandler;
 class MirrorWindowController;
 class RootWindowController;
 
@@ -54,6 +53,8 @@ class ASH_EXPORT WindowTreeHostManager
   // TODO(oshima): Consider moving this to display::DisplayObserver.
   class ASH_EXPORT Observer {
    public:
+    virtual ~Observer() {}
+
     // Invoked only once after all displays are initialized
     // after startup.
     virtual void OnDisplaysInitialized() {}
@@ -69,8 +70,24 @@ class ASH_EXPORT WindowTreeHostManager
     // Invoked in WindowTreeHostManager::Shutdown().
     virtual void OnWindowTreeHostManagerShutdown() {}
 
-   protected:
-    virtual ~Observer() {}
+    // Invoked when an existing AshWindowTreeHost is reused for a new display.
+    // This happens when all displays are removed, and then a new display is
+    // added.
+    virtual void OnWindowTreeHostReusedForDisplay(
+        AshWindowTreeHost* window_tree_host,
+        const display::Display& display) {}
+
+    // Called when the primary display is changed to an existing display. This
+    // results in swapping the display ids the two WindowTreeHosts are
+    // associated with. At the time this is called the ids have already been
+    // swapped.
+    // When there is more than one display and the primary display is removed
+    // internally the WindowTreeHosts for the two displays are swapped and then
+    // the WindowTreeHosts for the non-primary that was swapped with is deleted.
+    // This function is also called in this case as well (after the swap, before
+    // the deletion).
+    virtual void OnWindowTreeHostsSwappedDisplays(AshWindowTreeHost* host1,
+                                                  AshWindowTreeHost* host2) {}
   };
 
   WindowTreeHostManager();
@@ -146,23 +163,19 @@ class ASH_EXPORT WindowTreeHostManager
                                uint32_t metrics) override;
 
   // aura::WindowTreeHostObserver overrides:
-  void OnHostResized(const aura::WindowTreeHost* host) override;
+  void OnHostResized(aura::WindowTreeHost* host) override;
 
   // display::DisplayManager::Delegate overrides:
   void CreateOrUpdateMirroringDisplay(
       const display::DisplayInfoList& info_list) override;
   void CloseMirroringDisplayIfNotNecessary() override;
   void PreDisplayConfigurationChange(bool clear_focus) override;
-  void PostDisplayConfigurationChange(bool must_clear_window) override;
+  void PostDisplayConfigurationChange() override;
   display::DisplayConfigurator* display_configurator() override;
 
   // ui::internal::InputMethodDelegate overrides:
   ui::EventDispatchDetails DispatchKeyEventPostIME(
       ui::KeyEvent* event) override;
-
-  InputMethodEventHandler* input_method_event_handler() {
-    return input_method_event_handler_.get();
-  }
 
  private:
   FRIEND_TEST_ALL_PREFIXES(WindowTreeHostManagerTest, BoundsUpdated);
@@ -195,7 +208,6 @@ class ASH_EXPORT WindowTreeHostManager
   std::unique_ptr<MirrorWindowController> mirror_window_controller_;
 
   std::unique_ptr<ui::InputMethod> input_method_;
-  std::unique_ptr<InputMethodEventHandler> input_method_event_handler_;
 
   // Stores the current cursor location (in native coordinates and screen
   // coordinates respectively). The locations are used to restore the cursor

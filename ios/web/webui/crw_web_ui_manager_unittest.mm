@@ -9,7 +9,6 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#import "base/mac/scoped_nsobject.h"
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
@@ -28,6 +27,10 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace web {
 
 // Path for test favicon file.
@@ -36,12 +39,8 @@ const char kFaviconPath[] = "ios/web/test/data/testfavicon.png";
 const char kTestWebUIUrl[] = "testwebui://test/";
 // URL for mock favicon.
 const char kFaviconUrl[] = "testwebui://favicon/";
-// Name of test Mojo module.
-const char kMojoModuleName[] = "test-mojo-module";
 // HTML for mock WebUI page.
 NSString* kHtml = @"<html>Hello World</html>";
-// Mojo module for WebUI page.
-NSString* kMojoModule = @"service_provider.connect('Test');";
 
 // Mock of WebStateImpl to check that LoadHtml and ExecuteJavaScript are called
 // as expected.
@@ -78,14 +77,9 @@ class MockURLFetcherBlockAdapter : public URLFetcherBlockAdapter {
       favicon_path = favicon_path.AppendASCII(kFaviconPath);
       NSData* favicon = [NSData
           dataWithContentsOfFile:base::SysUTF8ToNSString(favicon_path.value())];
-      completion_handler_.get()(favicon, this);
-    } else if (url_.path().find(kMojoModuleName) != std::string::npos) {
-      completion_handler_.get()(
-          [kMojoModule dataUsingEncoding:NSUTF8StringEncoding], this);
-
+      completion_handler_(favicon, this);
     } else if (url_.scheme().find("test") != std::string::npos) {
-      completion_handler_.get()([kHtml dataUsingEncoding:NSUTF8StringEncoding],
-                                this);
+      completion_handler_([kHtml dataUsingEncoding:NSUTF8StringEncoding], this);
     } else {
       NOTREACHED();
     }
@@ -95,7 +89,7 @@ class MockURLFetcherBlockAdapter : public URLFetcherBlockAdapter {
   // The URL to fetch.
   const GURL url_;
   // Callback for resource load.
-  base::mac::ScopedBlock<URLFetcherBlockAdapterCompletion> completion_handler_;
+  URLFetcherBlockAdapterCompletion completion_handler_;
 };
 
 }  // namespace web
@@ -127,8 +121,8 @@ class CRWWebUIManagerTest : public web::WebTest {
     test_browser_state_.reset(new TestBrowserState());
     WebState::CreateParams params(test_browser_state_.get());
     web_state_impl_.reset(new MockWebStateImpl(params));
-    web_ui_manager_.reset(
-        [[CRWTestWebUIManager alloc] initWithWebState:web_state_impl_.get()]);
+    web_ui_manager_ =
+        [[CRWTestWebUIManager alloc] initWithWebState:web_state_impl_.get()];
   }
 
   // TestBrowserState for creation of WebStateImpl.
@@ -137,7 +131,7 @@ class CRWWebUIManagerTest : public web::WebTest {
   // calls.
   std::unique_ptr<MockWebStateImpl> web_state_impl_;
   // WebUIManager for testing.
-  base::scoped_nsobject<CRWTestWebUIManager> web_ui_manager_;
+  CRWTestWebUIManager* web_ui_manager_;
 };
 
 // Tests that CRWWebUIManager observes provisional navigation and invokes an
@@ -146,30 +140,7 @@ TEST_F(CRWWebUIManagerTest, LoadWebUI) {
   base::string16 html(base::SysNSStringToUTF16(kHtml));
   GURL url(kTestWebUIUrl);
   EXPECT_CALL(*web_state_impl_, LoadWebUIHtml(html, url));
-  web_state_impl_->OnProvisionalNavigationStarted(url);
+  [web_ui_manager_ loadWebUIForURL:url];
 }
 
-// Tests that CRWWebUIManager responds to OnScriptCommandReceieved call and runs
-// JavaScript to fetch a mojo resource.
-TEST_F(CRWWebUIManagerTest, HandleLoadMojoRequest) {
-  // Create mock JavaScript message to request a mojo resource.
-  std::unique_ptr<base::ListValue> arguments(new base::ListValue());
-  arguments->AppendString(kMojoModuleName);
-  const char kTestLoadId[] = "test-load-id";
-  arguments->AppendString(kTestLoadId);
-  base::DictionaryValue message;
-  message.SetString("message", "webui.loadMojo");
-  message.Set("arguments", std::move(arguments));
-
-  // Create expected JavaScript to call.
-  std::string expected_javascript = base::StringPrintf(
-      "%s__crWeb.webUIModuleLoadNotifier.moduleLoadCompleted(\"%s\", \"%s\");",
-      base::SysNSStringToUTF8(kMojoModule).c_str(), kMojoModuleName,
-      kTestLoadId);
-
-  EXPECT_CALL(*web_state_impl_,
-              ExecuteJavaScript(base::UTF8ToUTF16(expected_javascript)));
-  web_state_impl_->OnScriptCommandReceived("webui.loadMojo", message,
-                                           GURL(kTestWebUIUrl), false);
-}
 }  // namespace web

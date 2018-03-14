@@ -7,31 +7,8 @@
 
 #import <UIKit/UIKit.h>
 
-#include "base/mac/scoped_nsobject.h"
 #include "base/strings/string16.h"
-
-@protocol OmniboxTextFieldDelegate<UITextFieldDelegate>
-
-@optional
-// Called when the OmniboxTextField performs a copy operation.  Returns YES if
-// the delegate handled the copy operation itself.  If the delegate returns NO,
-// the field must perform the copy.  Some platforms (iOS 4) do not expose an API
-// that allows the delegate to handle the copy.
-- (BOOL)onCopy;
-
-// Called when the OmniboxTextField performs a 'Copy URL' operation.
-- (BOOL)onCopyURL;
-
-// Returns true if the 'Copy URL' operation can performed (i.e. the text in the
-// omnibox still reflects the current navigation entry).
-- (BOOL)canCopyURL;
-
-// Called before the OmniboxTextField performs a paste operation.
-- (void)willPaste;
-
-// Called when the backspace button is tapped in the OmniboxTextField.
-- (void)onDeleteBackward;
-@end
+#import "ios/chrome/browser/ui/omnibox/omnibox_text_field_delegate.h"
 
 // Enum type specifying the direction of fade animations.
 typedef enum {
@@ -62,12 +39,6 @@ typedef enum {
 // |text|.
 - (void)setText:(NSAttributedString*)text userTextLength:(size_t)userTextLength;
 
-// Sets |chipText_|.
-- (void)setChipText:(NSString*)text;
-
-// Returns YES if the omnibox is currently showing a query refinement chip.
-- (BOOL)isShowingQueryRefinementChip;
-
 // Inserts the given |text| into the text field.  The text replaces the current
 // selection, if there is one; otherwise the text is inserted at the current
 // cursor position.  This method should only be called while editing.
@@ -93,19 +64,6 @@ typedef enum {
 // on older version of iOS.
 - (NSString*)markedText;
 
-// Display a placeholder image. There is no iOS concept of placeholder images,
-// circumventing it by using leftView property of UITextField and controlling
-// its visibility programatically.
-- (void)showPlaceholderImage;
-
-// Hide a placeholder image. There is no iOS concept of placeholder images,
-// circumventing it by using leftView property of UITextField and controlling
-// its visibility programatically.
-- (void)hidePlaceholderImage;
-
-// Select which placeholder image to display.
-- (void)setPlaceholderImage:(int)imageId;
-
 // Initial touch on the Omnibox triggers a "pre-edit" state. The current
 // URL is shown without any insertion point. First character typed replaces
 // the URL. A second touch turns on the insertion point. |preEditStaticLabel|
@@ -114,9 +72,6 @@ typedef enum {
 - (void)enterPreEditState;
 - (void)exitPreEditState;
 - (BOOL)isPreEditing;
-
-// Enable or disable the padlock button.
-- (void)enableLeftViewButton:(BOOL)isEnabled;
 
 // Returns the current selected text range as an NSRange.
 - (NSRange)selectedNSRange;
@@ -133,10 +88,8 @@ typedef enum {
 // property.
 - (UIColor*)displayedTextColor;
 
-// Fade in/out the text and auxillary views depending on |style|.
+// Fade in/out the text and auxiliary views depending on |style|.
 - (void)animateFadeWithStyle:(OmniboxTextFieldFadeStyle)style;
-// Reverses animations added by |-animateFadeWithStyle:|.
-- (void)reverseFadeAnimations;
 // Called when animations added by |-animateFadeWithStyle:| can be removed.
 - (void)cleanUpFadeAnimations;
 
@@ -149,6 +102,11 @@ typedef enum {
 @property(nonatomic, strong) UIColor* selectedTextBackgroundColor;
 @property(nonatomic, strong) UIColor* placeholderTextColor;
 @property(nonatomic, assign) BOOL incognito;
+
+- (void)addExpandOmniboxAnimations:(UIViewPropertyAnimator*)animator
+    API_AVAILABLE(ios(10.0));
+- (void)addContractOmniboxAnimations:(UIViewPropertyAnimator*)animator
+    API_AVAILABLE(ios(10.0));
 
 @end
 

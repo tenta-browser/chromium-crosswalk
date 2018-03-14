@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.signin;
 
 import android.accounts.Account;
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.os.AsyncTask;
 
@@ -16,12 +17,10 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.browser.invalidation.InvalidationServiceFactory;
-import org.chromium.chrome.browser.preferences.ChromePreferenceManager;
-import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.signin.SigninManager.SignInCallback;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
-import org.chromium.components.signin.AccountManagerHelper;
+import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.components.sync.AndroidSyncSettings;
 
@@ -53,19 +52,19 @@ public class SigninHelper {
     private static final String ACCOUNT_RENAME_EVENT_INDEX_PREFS_KEY =
             "prefs_sync_account_rename_event_index";
 
+    @SuppressLint("StaticFieldLeak")
     private static SigninHelper sInstance;
 
     /**
      * Retrieve more detailed information from account changed intents.
      */
-    public static interface AccountChangeEventChecker {
-        public List<String> getAccountChangeEvents(
-                Context context, int index, String accountName);
+    public interface AccountChangeEventChecker {
+        List<String> getAccountChangeEvents(Context context, int index, String accountName);
     }
 
     /**
      * Uses GoogleAuthUtil.getAccountChangeEvents to detect if account
-     * renaming has occured.
+     * renaming has occurred.
      */
     public static final class SystemAccountChangeEventChecker
             implements SigninHelper.AccountChangeEventChecker {
@@ -75,7 +74,7 @@ public class SigninHelper {
             try {
                 List<AccountChangeEvent> list = GoogleAuthUtil.getAccountChangeEvents(
                         context, index, accountName);
-                List<String> result = new ArrayList<String>(list.size());
+                List<String> result = new ArrayList<>(list.size());
                 for (AccountChangeEvent e : list) {
                     if (e.getChangeType() == GoogleAuthUtil.CHANGE_TYPE_ACCOUNT_RENAMED_TO) {
                         result.add(e.getChangeData());
@@ -89,7 +88,7 @@ public class SigninHelper {
             } catch (GoogleAuthException e) {
                 Log.w(TAG, "Failed to get change events", e);
             }
-            return new ArrayList<String>(0);
+            return new ArrayList<>(0);
         }
     }
 
@@ -135,19 +134,6 @@ public class SigninHelper {
 
         Account syncAccount = mChromeSigninController.getSignedInUser();
         if (syncAccount == null) {
-            ChromePreferenceManager chromePreferenceManager = ChromePreferenceManager.getInstance();
-            if (chromePreferenceManager.getShowSigninPromo()) return;
-
-            // Never shows a signin promo if user has manually disconnected.
-            String lastSyncAccountName =
-                    PrefServiceBridge.getInstance().getSyncLastAccountName();
-            if (lastSyncAccountName != null && !lastSyncAccountName.isEmpty()) return;
-
-            if (!chromePreferenceManager.getSigninPromoShown()
-                    && AccountManagerHelper.get().getGoogleAccountNames().size() > 0) {
-                chromePreferenceManager.setShowSigninPromo(true);
-            }
-
             return;
         }
 
@@ -223,22 +209,19 @@ public class SigninHelper {
 
         // TODO(acleung): Deal with passphrase or just prompt user to re-enter it?
         // Perform a sign-out with a callback to sign-in again.
-        mSigninManager.signOut(new Runnable() {
-            @Override
-            public void run() {
-                // Clear the shared perf only after signOut is successful.
-                // If Chrome dies, we can try it again on next run.
-                // Otherwise, if re-sign-in fails, we'll just leave chrome
-                // signed-out.
-                clearNewSignedInAccountName(mContext);
-                performResignin(newName);
-            }
+        mSigninManager.signOut(() -> {
+            // Clear the shared perf only after signOut is successful.
+            // If Chrome dies, we can try it again on next run.
+            // Otherwise, if re-sign-in fails, we'll just leave chrome
+            // signed-out.
+            clearNewSignedInAccountName(mContext);
+            performResignin(newName);
         });
     }
 
     private void performResignin(String newName) {
         // This is the correct account now.
-        final Account account = AccountManagerHelper.createAccountFromName(newName);
+        final Account account = AccountManagerFacade.createAccountFromName(newName);
 
         mSigninManager.signIn(account, null, new SignInCallback() {
             @Override
@@ -255,7 +238,7 @@ public class SigninHelper {
     }
 
     private static boolean accountExists(Context context, Account account) {
-        Account[] accounts = AccountManagerHelper.get().getGoogleAccounts();
+        Account[] accounts = AccountManagerFacade.get().tryGetGoogleAccounts();
         for (Account a : accounts) {
             if (a.equals(account)) {
                 return true;
@@ -333,7 +316,7 @@ public class SigninHelper {
                         // We need to check if that account is further renamed.
                         newName = name;
                         if (!accountExists(
-                                context, AccountManagerHelper.createAccountFromName(newName))) {
+                                    context, AccountManagerFacade.createAccountFromName(newName))) {
                             newIndex = 0; // Start from the beginning of the new account.
                             continue outerLoop;
                         }

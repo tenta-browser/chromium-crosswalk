@@ -6,7 +6,6 @@
 // creation, attaching, and destruction.
 
 var CreateEvent = require('guestViewEvents').CreateEvent;
-var EventBindings = require('event_bindings');
 var GuestViewInternal = getInternalApi ?
     getInternalApi('guestViewInternal') :
     require('binding').Binding.create('guestViewInternal').generate();
@@ -94,7 +93,7 @@ GuestViewImpl.prototype.performNextAction = function() {
   // Make sure that there is not already an action in progress, and that there
   // exists a queued action to perform.
   if (!this.pendingAction && this.actionQueue.length) {
-    this.pendingAction = this.actionQueue.shift();
+    this.pendingAction = $Array.shift(this.actionQueue);
     this.pendingAction();
   }
 };

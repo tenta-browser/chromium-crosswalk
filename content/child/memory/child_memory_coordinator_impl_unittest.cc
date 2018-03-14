@@ -28,7 +28,9 @@ class MockMemoryCoordinatorHandle : public mojom::MemoryCoordinatorHandle {
 
   mojom::MemoryCoordinatorHandlePtr Bind() {
     DCHECK(!binding_.is_bound());
-    return binding_.CreateInterfacePtrAndBind();
+    mojom::MemoryCoordinatorHandlePtr handle;
+    binding_.Bind(mojo::MakeRequest(&handle));
+    return handle;
   }
 
   mojom::ChildMemoryCoordinatorPtr& child() { return child_; }
@@ -123,8 +125,8 @@ class MemoryCoordinatorTestThread : public base::Thread,
   void CheckLastState(base::MemoryState state) {
     task_runner()->PostTask(
         FROM_HERE,
-        base::Bind(&MemoryCoordinatorTestThread::CheckLastStateInternal,
-                   base::Unretained(this), state));
+        base::BindOnce(&MemoryCoordinatorTestThread::CheckLastStateInternal,
+                       base::Unretained(this), state));
   }
 
  private:

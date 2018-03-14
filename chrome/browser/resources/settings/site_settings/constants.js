@@ -7,15 +7,16 @@ cr.exportPath('settings');
 /**
  * All possible contentSettingsTypes that we currently support configuring in
  * the UI. Both top-level categories and content settings that represent
- * individual permissions under Site Details should appear here. This is a
- * subset of the constants found in site_settings_helper.cc and the values
- * should be kept in sync.
+ * individual permissions under Site Details should appear here.
+ * This should be kept in sync with the |kContentSettingsTypeGroupNames| array
+ * in chrome/browser/ui/webui/site_settings_helper.cc
  * @enum {string}
  */
 settings.ContentSettingsTypes = {
   COOKIES: 'cookies',
   IMAGES: 'images',
   JAVASCRIPT: 'javascript',
+  SOUND: 'sound',
   PLUGINS: 'plugins',  // AKA Flash.
   POPUPS: 'popups',
   GEOLOCATION: 'location',
@@ -29,26 +30,45 @@ settings.ContentSettingsTypes = {
   MIDI_DEVICES: 'midi-sysex',
   USB_DEVICES: 'usb-chooser-data',
   ZOOM_LEVELS: 'zoom-levels',
-// <if expr="chromeos">
   PROTECTED_CONTENT: 'protectedContent',
-// </if>
-  SUBRESOURCE_FILTER: 'subresource-filter',
+  ADS: 'ads',
+  CLIPBOARD: 'clipboard',
 };
 
 /**
- * Contains the possible string values for a given contentSettingsType.
+ * Contains the possible string values for a given ContentSettingsTypes.
+ * This should be kept in sync with the |ContentSetting| enum in
+ * components/content_settings/core/common/content_settings.h
  * @enum {string}
- *
- * TODO(dschuyler): This should be rename as ContentSetting to maintain
- * nomenclature with C++.
  */
-settings.PermissionValues = {
+settings.ContentSetting = {
   DEFAULT: 'default',
   ALLOW: 'allow',
   BLOCK: 'block',
   ASK: 'ask',
   SESSION_ONLY: 'session_only',
   IMPORTANT_CONTENT: 'detect_important_content',
+};
+
+/**
+ * Contains the possible sources of a ContentSetting.
+ * This should be kept in sync with the |SiteSettingSource| enum in
+ * chrome/browser/ui/webui/site_settings_helper.h
+ * @enum {string}
+ */
+settings.SiteSettingSource = {
+  ADS_BLOCKED: 'ads-blocked',
+  ADS_FILTER_BLACKLIST: 'ads-filter-blacklist',
+  DEFAULT: 'default',
+  // This source is for the Protected Media Identifier / Protected Content
+  // content setting only, which is only available on ChromeOS.
+  DRM_DISABLED: 'drm-disabled',
+  EMBARGO: 'embargo',
+  EXTENSION: 'extension',
+  INSECURE_ORIGIN: 'insecure-origin',
+  KILL_SWITCH: 'kill-switch',
+  POLICY: 'policy',
+  PREFERENCE: 'preference',
 };
 
 /**

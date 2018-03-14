@@ -15,14 +15,13 @@ namespace ash {
 // the tests?
 class AshTestHelperTest : public testing::Test {
  public:
-  AshTestHelperTest() {}
-  ~AshTestHelperTest() override {}
+  AshTestHelperTest() = default;
+  ~AshTestHelperTest() override = default;
 
   void SetUp() override {
     testing::Test::SetUp();
-    ash_test_environment_ = test::AshTestEnvironment::Create();
-    ash_test_helper_.reset(
-        new test::AshTestHelper(ash_test_environment_.get()));
+    ash_test_environment_ = AshTestEnvironment::Create();
+    ash_test_helper_.reset(new AshTestHelper(ash_test_environment_.get()));
     ash_test_helper_->SetUp(true);
   }
 
@@ -31,13 +30,13 @@ class AshTestHelperTest : public testing::Test {
     testing::Test::TearDown();
   }
 
-  test::AshTestHelper* ash_test_helper() { return ash_test_helper_.get(); }
+  AshTestHelper* ash_test_helper() { return ash_test_helper_.get(); }
 
  protected:
-  std::unique_ptr<test::AshTestEnvironment> ash_test_environment_;
+  std::unique_ptr<AshTestEnvironment> ash_test_environment_;
 
  private:
-  std::unique_ptr<test::AshTestHelper> ash_test_helper_;
+  std::unique_ptr<AshTestHelper> ash_test_helper_;
 
   DISALLOW_COPY_AND_ASSIGN(AshTestHelperTest);
 };

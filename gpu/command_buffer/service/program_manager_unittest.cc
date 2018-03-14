@@ -29,6 +29,7 @@
 
 using ::testing::_;
 using ::testing::DoAll;
+using ::testing::Exactly;
 using ::testing::InSequence;
 using ::testing::MatcherCast;
 using ::testing::Pointee;
@@ -47,8 +48,6 @@ const uint32_t kMaxDrawBuffers = 8;
 const uint32_t kMaxDualSourceDrawBuffers = 8;
 const uint32_t kMaxVertexAttribs = 8;
 
-void ShaderCacheCb(const std::string& key, const std::string& shader) {}
-
 uint32_t ComputeOffset(const void* start, const void* position) {
   return static_cast<const uint8_t*>(position) -
          static_cast<const uint8_t*>(start);
@@ -56,7 +55,8 @@ uint32_t ComputeOffset(const void* start, const void* position) {
 
 }  // namespace anonymous
 
-class ProgramManagerTestBase : public GpuServiceTest {
+class ProgramManagerTestBase : public GpuServiceTest,
+                               public GLES2DecoderClient {
  protected:
   virtual void SetupProgramManager() {
     manager_.reset(new ProgramManager(
@@ -85,6 +85,14 @@ class ProgramManagerTestBase : public GpuServiceTest {
     feature_info_ = nullptr;
     GpuServiceTest::TearDown();
   }
+
+  void OnConsoleMessage(int32_t id, const std::string& message) override {}
+  void CacheShader(const std::string& key, const std::string& shader) override {
+  }
+  void OnFenceSyncRelease(uint64_t release) override {}
+  bool OnWaitSyncToken(const gpu::SyncToken&) override { return false; }
+  void OnDescheduleUntilFinished() override {}
+  void OnRescheduleAfterFinished() override {}
 
   std::unique_ptr<ProgramManager> manager_;
   GpuPreferences gpu_preferences_;
@@ -180,19 +188,24 @@ class ProgramManagerWithShaderTest : public ProgramManagerTestBase {
   static const char* kAttrib1Name;
   static const char* kAttrib2Name;
   static const char* kAttrib3Name;
+  static const char* kAttrib4Name;
   static const GLint kAttrib1Size = 1;
   static const GLint kAttrib2Size = 1;
   static const GLint kAttrib3Size = 1;
+  static const GLint kAttrib4Size = 1;
   static const GLenum kAttrib1Precision = GL_MEDIUM_FLOAT;
   static const GLenum kAttrib2Precision = GL_HIGH_FLOAT;
-  static const GLenum kAttrib3Precision = GL_LOW_FLOAT;
+  static const GLenum kAttrib3Precision = GL_LOW_INT;
+  static const GLenum kAttrib4Precision = GL_HIGH_FLOAT;
   static const bool kAttribStaticUse = true;
   static const GLint kAttrib1Location = 0;
   static const GLint kAttrib2Location = 1;
   static const GLint kAttrib3Location = 2;
+  static const GLint kAttrib4Location = 3;
   static const GLenum kAttrib1Type = GL_FLOAT_VEC4;
   static const GLenum kAttrib2Type = GL_FLOAT_VEC2;
-  static const GLenum kAttrib3Type = GL_FLOAT_VEC3;
+  static const GLenum kAttrib3Type = GL_INT_VEC3;
+  static const GLenum kAttrib4Type = GL_FLOAT_MAT3x2;
   static const GLint kInvalidAttribLocation = 30;
   static const GLint kBadAttribIndex = kNumVertexAttribs;
 
@@ -283,8 +296,7 @@ class ProgramManagerWithShaderTest : public ProgramManagerTestBase {
 
     program->AttachShader(&shader_manager_, vertex_shader);
     program->AttachShader(&shader_manager_, fragment_shader);
-    program->Link(NULL, Program::kCountOnlyStaticallyUsed,
-                  base::Bind(&ShaderCacheCb));
+    program->Link(NULL, Program::kCountOnlyStaticallyUsed, this);
     return program;
   }
 
@@ -312,8 +324,7 @@ class ProgramManagerWithShaderTest : public ProgramManagerTestBase {
       SetupShaderExpectations(kAttribs, kNumAttribs, kUniforms, kNumUniforms,
                               service_id);
     }
-    program->Link(NULL, Program::kCountOnlyStaticallyUsed,
-                  base::Bind(&ShaderCacheCb));
+    program->Link(NULL, Program::kCountOnlyStaticallyUsed, this);
     GLint link_status;
     program->GetProgramiv(GL_LINK_STATUS, &link_status);
     return (static_cast<bool>(link_status) == expected_link_status);
@@ -454,9 +465,18 @@ class ProgramManagerWithShaderTest : public ProgramManagerTestBase {
 
 ProgramManagerWithShaderTest::AttribInfo
     ProgramManagerWithShaderTest::kAttribs[] = {
-  { kAttrib1Name, kAttrib1Size, kAttrib1Type, kAttrib1Location, },
-  { kAttrib2Name, kAttrib2Size, kAttrib2Type, kAttrib2Location, },
-  { kAttrib3Name, kAttrib3Size, kAttrib3Type, kAttrib3Location, },
+        {
+            kAttrib1Name, kAttrib1Size, kAttrib1Type, kAttrib1Location,
+        },
+        {
+            kAttrib2Name, kAttrib2Size, kAttrib2Type, kAttrib2Location,
+        },
+        {
+            kAttrib3Name, kAttrib3Size, kAttrib3Type, kAttrib3Location,
+        },
+        {
+            kAttrib4Name, kAttrib4Size, kAttrib4Type, kAttrib4Location,
+        },
 };
 
 // GCC requires these declarations, but MSVC requires they not be present
@@ -471,12 +491,15 @@ const GLuint ProgramManagerWithShaderTest::kFragmentShaderServiceId;
 const GLint ProgramManagerWithShaderTest::kAttrib1Size;
 const GLint ProgramManagerWithShaderTest::kAttrib2Size;
 const GLint ProgramManagerWithShaderTest::kAttrib3Size;
+const GLint ProgramManagerWithShaderTest::kAttrib4Size;
 const GLint ProgramManagerWithShaderTest::kAttrib1Location;
 const GLint ProgramManagerWithShaderTest::kAttrib2Location;
 const GLint ProgramManagerWithShaderTest::kAttrib3Location;
+const GLint ProgramManagerWithShaderTest::kAttrib4Location;
 const GLenum ProgramManagerWithShaderTest::kAttrib1Type;
 const GLenum ProgramManagerWithShaderTest::kAttrib2Type;
 const GLenum ProgramManagerWithShaderTest::kAttrib3Type;
+const GLenum ProgramManagerWithShaderTest::kAttrib4Type;
 const GLint ProgramManagerWithShaderTest::kInvalidAttribLocation;
 const GLint ProgramManagerWithShaderTest::kBadAttribIndex;
 const GLint ProgramManagerWithShaderTest::kUniform1Size;
@@ -535,6 +558,7 @@ const size_t ProgramManagerWithShaderTest::kNumUniforms =
 const char* ProgramManagerWithShaderTest::kAttrib1Name = "attrib1";
 const char* ProgramManagerWithShaderTest::kAttrib2Name = "attrib2";
 const char* ProgramManagerWithShaderTest::kAttrib3Name = "attrib3";
+const char* ProgramManagerWithShaderTest::kAttrib4Name = "attrib4";
 const char* ProgramManagerWithShaderTest::kUniform1Name = "uniform1";
 const char* ProgramManagerWithShaderTest::kUniform2Name = "uniform2";
 const char* ProgramManagerWithShaderTest::kUniform2NameWithArrayIndex =
@@ -575,12 +599,58 @@ TEST_F(ProgramManagerWithShaderTest, GetAttribInfo) {
   EXPECT_TRUE(program->GetAttribInfo(kInvalidIndex) == NULL);
 }
 
+TEST_F(ProgramManagerWithShaderTest, GetAttribInfoByLocation) {
+  const GLint kInvalidLocation = 1000;
+  const Program* program = SetupDefaultProgram();
+  ASSERT_TRUE(program != NULL);
+
+  // attrib2 is a vec2, takes 1 location
+  const Program::VertexAttrib* expected_info = program->GetAttribInfo(1);
+  EXPECT_EQ(1u, expected_info->location_count);
+  const Program::VertexAttrib* info =
+      program->GetAttribInfoByLocation(kAttrib2Location);
+  EXPECT_EQ(expected_info, info);
+
+  // attrib4 is a mat3x2, takes 3 locations (1 per column)
+  expected_info = program->GetAttribInfo(3);
+  EXPECT_EQ(3u, expected_info->location_count);
+  info = program->GetAttribInfoByLocation(kAttrib4Location);
+  EXPECT_EQ(expected_info, info);
+  info = program->GetAttribInfoByLocation(kAttrib4Location + 1);
+  EXPECT_EQ(expected_info, info);
+  info = program->GetAttribInfoByLocation(kAttrib4Location + 2);
+  EXPECT_EQ(expected_info, info);
+
+  EXPECT_TRUE(program->GetAttribInfoByLocation(kInvalidLocation) == NULL);
+}
+
 TEST_F(ProgramManagerWithShaderTest, GetAttribLocation) {
   const char* kInvalidName = "foo";
   const Program* program = SetupDefaultProgram();
   ASSERT_TRUE(program != NULL);
   EXPECT_EQ(kAttrib2Location, program->GetAttribLocation(kAttrib2Name));
   EXPECT_EQ(-1, program->GetAttribLocation(kInvalidName));
+}
+
+TEST_F(ProgramManagerWithShaderTest, VertexArrayMasks) {
+  const Program* program = SetupDefaultProgram();
+  ASSERT_TRUE(program != NULL);
+
+  std::vector<uint32_t> active_mask = program->vertex_input_active_mask();
+  ASSERT_EQ(1u, active_mask.size());
+  uint32_t expected = 0x3 << 0 |              // attrib1
+                      0x3 << 2 |              // attrib2
+                      0x3 << 4 |              // attrib3
+                      (0x3 * 0b010101) << 6;  // attrib4
+  EXPECT_EQ(expected, active_mask[0]);
+
+  std::vector<uint32_t> base_type_mask = program->vertex_input_base_type_mask();
+  ASSERT_EQ(1u, base_type_mask.size());
+  expected = SHADER_VARIABLE_FLOAT << 0 |              // attrib1
+             SHADER_VARIABLE_FLOAT << 2 |              // attrib2
+             SHADER_VARIABLE_INT << 4 |                // attrib3
+             (SHADER_VARIABLE_FLOAT * 0b010101) << 6;  // attrib4
+  EXPECT_EQ(expected, base_type_mask[0]);
 }
 
 TEST_F(ProgramManagerWithShaderTest, GetUniformInfo) {
@@ -762,11 +832,10 @@ TEST_F(ProgramManagerWithShaderTest, GLDriverReturnsGLUnderscoreUniform) {
   ASSERT_TRUE(program != NULL);
   EXPECT_TRUE(program->AttachShader(&shader_manager_, vshader));
   EXPECT_TRUE(program->AttachShader(&shader_manager_, fshader));
-  program->Link(NULL, Program::kCountOnlyStaticallyUsed,
-                base::Bind(&ShaderCacheCb));
+  program->Link(NULL, Program::kCountOnlyStaticallyUsed, this);
   GLint value = 0;
   program->GetProgramiv(GL_ACTIVE_ATTRIBUTES, &value);
-  EXPECT_EQ(3, value);
+  EXPECT_EQ(4, value);
   // Check that we didn't skip the "gl_" uniform.
   program->GetProgramiv(GL_ACTIVE_UNIFORMS, &value);
   EXPECT_EQ(3, value);
@@ -827,8 +896,7 @@ TEST_F(ProgramManagerWithShaderTest, SimilarArrayNames) {
   ASSERT_TRUE(program != NULL);
   EXPECT_TRUE(program->AttachShader(&shader_manager_, vshader));
   EXPECT_TRUE(program->AttachShader(&shader_manager_, fshader));
-  program->Link(NULL, Program::kCountOnlyStaticallyUsed,
-                base::Bind(&ShaderCacheCb));
+  program->Link(NULL, Program::kCountOnlyStaticallyUsed, this);
 
   // Check that we get the correct locations.
   EXPECT_EQ(kUniform2FakeLocation,
@@ -922,8 +990,7 @@ TEST_F(ProgramManagerWithShaderTest, GLDriverReturnsWrongTypeInfo) {
   ASSERT_TRUE(program!= NULL);
   EXPECT_TRUE(program->AttachShader(&shader_manager_, vshader));
   EXPECT_TRUE(program->AttachShader(&shader_manager_, fshader));
-  program->Link(NULL, Program::kCountOnlyStaticallyUsed,
-                base::Bind(&ShaderCacheCb));
+  program->Link(NULL, Program::kCountOnlyStaticallyUsed, this);
   // Check that we got the good type, not the bad.
   // Check Attribs
   for (unsigned index = 0; index < kNumAttribs; ++index) {
@@ -943,7 +1010,8 @@ TEST_F(ProgramManagerWithShaderTest, GLDriverReturnsWrongTypeInfo) {
     EXPECT_TRUE(it->second.findInfoByMappedName(
         attrib_info->name, &info, &original_name));
     EXPECT_EQ(info->type, attrib_info->type);
-    EXPECT_EQ(static_cast<GLint>(info->arraySize), attrib_info->size);
+    EXPECT_EQ(static_cast<GLint>(info->getOutermostArraySize()),
+              attrib_info->size);
     EXPECT_EQ(original_name, attrib_info->name);
   }
   // Check Uniforms
@@ -963,7 +1031,8 @@ TEST_F(ProgramManagerWithShaderTest, GLDriverReturnsWrongTypeInfo) {
     EXPECT_TRUE(it->second.findInfoByMappedName(
         uniform_info->name, &info, &original_name));
     EXPECT_EQ(info->type, uniform_info->type);
-    EXPECT_EQ(static_cast<GLint>(info->arraySize), uniform_info->size);
+    EXPECT_EQ(static_cast<GLint>(info->getOutermostArraySize()),
+              uniform_info->size);
     EXPECT_EQ(original_name, uniform_info->name);
   }
 }
@@ -1554,7 +1623,8 @@ TEST_F(ProgramManagerWithShaderTest, BindAttribLocationConflicts) {
         vshader->GetAttribInfo(it->first);
     ASSERT_TRUE(variable_info != NULL);
     EXPECT_EQ(it->second.type, variable_info->type);
-    EXPECT_EQ(it->second.arraySize, variable_info->arraySize);
+    EXPECT_EQ(it->second.getOutermostArraySize(),
+              variable_info->getOutermostArraySize());
     EXPECT_EQ(it->second.precision, variable_info->precision);
     EXPECT_EQ(it->second.staticUse, variable_info->staticUse);
     EXPECT_EQ(it->second.name, variable_info->name);
@@ -1975,8 +2045,7 @@ TEST_F(ProgramManagerWithShaderTest, ClearWithSamplerTypes) {
     const size_t kNumUniforms = arraysize(kUniforms);
     SetupShaderExpectations(kAttribs, kNumAttribs, kUniforms, kNumUniforms,
                             kServiceProgramId);
-    program->Link(NULL, Program::kCountOnlyStaticallyUsed,
-                  base::Bind(&ShaderCacheCb));
+    program->Link(NULL, Program::kCountOnlyStaticallyUsed, this);
     SetupExpectationsForClearingUniforms(kUniforms, kNumUniforms);
     manager_->ClearUniforms(program);
   }
@@ -2041,8 +2110,7 @@ TEST_F(ProgramManagerWithShaderTest, BindUniformLocation) {
   const size_t kNumUniforms = arraysize(kUniforms);
   SetupShaderExpectations(kAttribs, kNumAttribs, kUniforms, kNumUniforms,
                           kServiceProgramId);
-  program->Link(NULL, Program::kCountOnlyStaticallyUsed,
-                base::Bind(&ShaderCacheCb));
+  program->Link(NULL, Program::kCountOnlyStaticallyUsed, this);
 
   EXPECT_EQ(kUniform1DesiredLocation,
             program->GetUniformFakeLocation(kUniform1Name));
@@ -2050,6 +2118,38 @@ TEST_F(ProgramManagerWithShaderTest, BindUniformLocation) {
             program->GetUniformFakeLocation(kUniform3Name));
   EXPECT_EQ(kUniform3DesiredLocation,
             program->GetUniformFakeLocation(kUniform3NameWithArrayIndex));
+}
+
+TEST_F(ProgramManagerWithShaderTest, ZeroSizeUniformMarkedInvalid) {
+  UniformInfo kInvalidUniforms[] = {
+      {
+          kUniform1Name, 0 /* invalid size */, kUniform1Type,
+          kUniform1FakeLocation, kUniform1RealLocation,
+          kUniform1DesiredLocation, kUniform1Name,
+      },
+  };
+  const size_t kNumInvalidUniforms = arraysize(kInvalidUniforms);
+
+  SetupShaderExpectations(kAttribs, kNumAttribs, kInvalidUniforms,
+                          kNumInvalidUniforms, kServiceProgramId);
+
+  Shader* vertex_shader = shader_manager_.CreateShader(
+      kVertexShaderClientId, kVertexShaderServiceId, GL_VERTEX_SHADER);
+  Shader* fragment_shader = shader_manager_.CreateShader(
+      kFragmentShaderClientId, kFragmentShaderServiceId, GL_FRAGMENT_SHADER);
+  EXPECT_TRUE(vertex_shader != NULL);
+  EXPECT_TRUE(fragment_shader != NULL);
+  TestHelper::SetShaderStates(gl_.get(), vertex_shader, true);
+  TestHelper::SetShaderStates(gl_.get(), fragment_shader, true);
+
+  Program* program =
+      manager_->CreateProgram(kClientProgramId, kServiceProgramId);
+  ASSERT_TRUE(program != NULL);
+  program->AttachShader(&shader_manager_, vertex_shader);
+  program->AttachShader(&shader_manager_, fragment_shader);
+  program->Link(NULL, Program::kCountOnlyStaticallyUsed, this);
+
+  EXPECT_FALSE(program->IsValid());
 }
 
 class ProgramManagerWithCacheTest : public ProgramManagerTestBase {
@@ -2103,6 +2203,13 @@ class ProgramManagerWithCacheTest : public ProgramManagerTestBase {
   void SetShadersCompiled() {
     TestHelper::SetShaderStates(gl_.get(), vertex_shader_, true);
     TestHelper::SetShaderStates(gl_.get(), fragment_shader_, true);
+  }
+
+  void SetShadersCompiled(const std::string& compilation_options_string) {
+    TestHelper::SetShaderStates(gl_.get(), vertex_shader_, true,
+                                compilation_options_string);
+    TestHelper::SetShaderStates(gl_.get(), fragment_shader_, true,
+                                compilation_options_string);
   }
 
   void SetProgramCached() {
@@ -2184,6 +2291,16 @@ class ProgramManagerWithCacheTest : public ProgramManagerTestBase {
         nullptr, 0, service_program_id);
   }
 
+  void SetExpectationsForProgramNotLoaded() {
+    EXPECT_CALL(*cache_.get(),
+                LoadLinkedProgram(
+                    program_->service_id(), vertex_shader_, fragment_shader_,
+                    &program_->bind_attrib_location_map(),
+                    program_->effective_transform_feedback_varyings(),
+                    program_->effective_transform_feedback_buffer_mode(), _))
+        .Times(Exactly(0));
+  }
+
   void SetExpectationsForProgramLink() {
     SetExpectationsForProgramLink(kServiceProgramId);
   }
@@ -2256,8 +2373,7 @@ TEST_F(ProgramManagerWithCacheTest, CacheProgramOnSuccessfulLink) {
   SetShadersCompiled();
   SetExpectationsForProgramLink();
   SetExpectationsForProgramCached();
-  EXPECT_TRUE(program_->Link(NULL, Program::kCountOnlyStaticallyUsed,
-                             base::Bind(&ShaderCacheCb)));
+  EXPECT_TRUE(program_->Link(NULL, Program::kCountOnlyStaticallyUsed, this));
 }
 
 TEST_F(ProgramManagerWithCacheTest, LoadProgramOnProgramCacheHit) {
@@ -2270,8 +2386,18 @@ TEST_F(ProgramManagerWithCacheTest, LoadProgramOnProgramCacheHit) {
   SetExpectationsForNotCachingProgram();
   SetExpectationsForProgramLoadSuccess();
 
-  EXPECT_TRUE(program_->Link(NULL, Program::kCountOnlyStaticallyUsed,
-                             base::Bind(&ShaderCacheCb)));
+  EXPECT_TRUE(program_->Link(NULL, Program::kCountOnlyStaticallyUsed, this));
+}
+
+TEST_F(ProgramManagerWithCacheTest, RelinkOnChangedCompileOptions) {
+  SetShadersCompiled("a");
+  SetProgramCached();
+  SetExpectationsForProgramCached();
+
+  SetShadersCompiled("b");
+  SetExpectationsForProgramLink();
+  SetExpectationsForProgramNotLoaded();
+  EXPECT_TRUE(program_->Link(NULL, Program::kCountOnlyStaticallyUsed, this));
 }
 
 class ProgramManagerWithPathRenderingTest
@@ -2394,8 +2520,7 @@ TEST_P(ProgramManagerWithPathRenderingTest, BindFragmentInputLocation) {
       gl_.get(), feature_info_.get(), nullptr, 0, nullptr, 0,
       kFragmentInputExpectationInfos, arraysize(kFragmentInputExpectationInfos),
       nullptr, 0, kServiceProgramId);
-  program->Link(NULL, Program::kCountOnlyStaticallyUsed,
-                base::Bind(&ShaderCacheCb));
+  program->Link(NULL, Program::kCountOnlyStaticallyUsed, this);
   const Program::FragmentInputInfo* info1 =
       program->GetFragmentInputInfoByFakeLocation(
           kFragmentInput1DesiredLocation);

@@ -4,13 +4,13 @@
 
 #include "chromeos/network/proxy/proxy_config_service_impl.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
-#include "base/threading/worker_pool.h"
 #include "base/values.h"
 #include "chromeos/network/network_profile.h"
 #include "chromeos/network/network_profile_handler.h"
@@ -56,7 +56,6 @@ ProxyConfigServiceImpl::ProxyConfigServiceImpl(
     : PrefProxyConfigTrackerImpl(
           profile_prefs ? profile_prefs : local_state_prefs,
           io_task_runner),
-      active_config_state_(ProxyPrefs::CONFIG_UNSET),
       profile_prefs_(profile_prefs),
       local_state_prefs_(local_state_prefs),
       pointer_factory_(this) {
@@ -193,7 +192,7 @@ ProxyConfigServiceImpl::GetActiveProxyConfigDictionary(
     bool value_exists = pref->GetValue()->GetAsDictionary(&proxy_config_value);
     DCHECK(value_exists);
 
-    return base::MakeUnique<ProxyConfigDictionary>(
+    return std::make_unique<ProxyConfigDictionary>(
         proxy_config_value->CreateDeepCopy());
   }
 
@@ -212,7 +211,7 @@ ProxyConfigServiceImpl::GetActiveProxyConfigDictionary(
                                            network->profile_path(), onc_source))
     return proxy_config;
 
-  return base::MakeUnique<ProxyConfigDictionary>(
+  return std::make_unique<ProxyConfigDictionary>(
       ProxyConfigDictionary::CreateDirect());
 }
 
@@ -257,38 +256,25 @@ void ProxyConfigServiceImpl::DetermineEffectiveConfigFromDefaultNetwork() {
                           network_config, ignore_proxy, &effective_config_state,
                           &effective_config);
 
-  // Activate effective proxy and store into |active_config_|.
-  // If last update didn't complete, we definitely update now.
-  bool update_now = update_pending();
-  if (!update_now) {  // Otherwise, only update now if there're changes.
-    update_now = active_config_state_ != effective_config_state ||
-                 (active_config_state_ != ProxyPrefs::CONFIG_UNSET &&
-                  !active_config_.Equals(effective_config));
+  // If effective config is from system (i.e. network), it's considered a
+  // special kind of prefs that ranks below policy/extension but above
+  // others, so bump it up to CONFIG_OTHER_PRECEDE to force its precedence
+  // when PrefProxyConfigTrackerImpl pushes it to ChromeProxyConfigService.
+  if (effective_config_state == ProxyPrefs::CONFIG_SYSTEM)
+    effective_config_state = ProxyPrefs::CONFIG_OTHER_PRECEDE;
+  // If config is manual, add rule to bypass local host.
+  if (effective_config.proxy_rules().type !=
+      net::ProxyConfig::ProxyRules::TYPE_NO_RULES) {
+    effective_config.proxy_rules().bypass_rules.AddRuleToBypassLocal();
   }
-  if (update_now) {  // Activate and store new effective config.
-    active_config_state_ = effective_config_state;
-    if (active_config_state_ != ProxyPrefs::CONFIG_UNSET)
-      active_config_ = effective_config;
-    // If effective config is from system (i.e. network), it's considered a
-    // special kind of prefs that ranks below policy/extension but above
-    // others, so bump it up to CONFIG_OTHER_PRECEDE to force its precedence
-    // when PrefProxyConfigTrackerImpl pushes it to ChromeProxyConfigService.
-    if (effective_config_state == ProxyPrefs::CONFIG_SYSTEM)
-      effective_config_state = ProxyPrefs::CONFIG_OTHER_PRECEDE;
-    // If config is manual, add rule to bypass local host.
-    if (effective_config.proxy_rules().type !=
-        net::ProxyConfig::ProxyRules::TYPE_NO_RULES) {
-      effective_config.proxy_rules().bypass_rules.AddRuleToBypassLocal();
-    }
-    PrefProxyConfigTrackerImpl::OnProxyConfigChanged(effective_config_state,
-                                                     effective_config);
-    if (VLOG_IS_ON(1) && !update_pending()) {  // Update was successful.
-      std::unique_ptr<base::DictionaryValue> config_dict(
-          effective_config.ToValue());
-      VLOG(1) << this << ": Proxy changed: "
-              << ProxyPrefs::ConfigStateToDebugString(active_config_state_)
-              << ", " << *config_dict;
-    }
+  PrefProxyConfigTrackerImpl::OnProxyConfigChanged(effective_config_state,
+                                                   effective_config);
+  if (VLOG_IS_ON(1)) {
+    std::unique_ptr<base::DictionaryValue> config_dict(
+        effective_config.ToValue());
+    VLOG(1) << this << ": Proxy changed: "
+            << ProxyPrefs::ConfigStateToDebugString(effective_config_state)
+            << ", " << *config_dict;
   }
 }
 

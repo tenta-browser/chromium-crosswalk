@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
@@ -46,13 +47,16 @@ class ProxyRunner : public IPC::Listener {
     std::unique_ptr<IPC::ChannelFactory> factory;
     if (for_server) {
       factory = IPC::ChannelMojo::CreateServerFactory(
-          std::move(pipe), ipc_task_runner);
+          std::move(pipe), ipc_task_runner,
+          base::ThreadTaskRunnerHandle::Get());
     } else {
       factory = IPC::ChannelMojo::CreateClientFactory(
-          std::move(pipe), ipc_task_runner);
+          std::move(pipe), ipc_task_runner,
+          base::ThreadTaskRunnerHandle::Get());
     }
-    channel_ = IPC::ChannelProxy::Create(
-        std::move(factory), this, ipc_task_runner);
+    channel_ =
+        IPC::ChannelProxy::Create(std::move(factory), this, ipc_task_runner,
+                                  base::ThreadTaskRunnerHandle::Get());
   }
 
   void ShutDown() { channel_.reset(); }
@@ -91,15 +95,21 @@ class TestDriverMessageFilter
     return true;
   }
 
+  void OnFilterRemoved() override {
+    // Check that the bindings are cleared by
+    // BrowserAssociatedInterface::ClearBindings() callbacks.
+    EXPECT_FALSE(internal_state_->bindings_.has_value());
+  }
+
   // mojom::BrowserAssociatedInterfaceTestDriver:
   void ExpectString(const std::string& expected) override {
     next_expected_string_ = expected;
   }
 
-  void RequestQuit(const RequestQuitCallback& callback) override {
+  void RequestQuit(RequestQuitCallback callback) override {
     EXPECT_EQ(kNumTestMessages, message_count_);
-    callback.Run();
-    base::MessageLoop::current()->QuitWhenIdle();
+    std::move(callback).Run();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   std::string next_expected_string_;
@@ -112,7 +122,7 @@ class TestClientRunner {
       : client_thread_("Test client") {
     client_thread_.Start();
     client_thread_.task_runner()->PostTask(
-        FROM_HERE, base::Bind(&RunTestClient, base::Passed(&pipe)));
+        FROM_HERE, base::BindOnce(&RunTestClient, base::Passed(&pipe)));
   }
 
   ~TestClientRunner() {
@@ -141,9 +151,7 @@ class TestClientRunner {
 
     driver->RequestQuit(base::MessageLoop::QuitWhenIdleClosure());
 
-    base::MessageLoop::ScopedNestableTaskAllower allow_nested_loops(
-        base::MessageLoop::current());
-    base::RunLoop().Run();
+    base::RunLoop(base::RunLoop::Type::kNestableTasksAllowed).Run();
 
     proxy.ShutDown();
     io_thread.Stop();

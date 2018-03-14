@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "gin/handle.h"
@@ -32,15 +31,13 @@ class Result : public Wrappable<Result> {
   int count() const { return count_; }
   void set_count(int count) { count_ = count; }
 
-  void Quit() {
-    base::MessageLoop::current()->QuitNow();
-  }
+  void Quit() { base::RunLoop::QuitCurrentDeprecated(); }
 
  private:
   Result() : count_(0) {
   }
 
-  ~Result() override {}
+  ~Result() override = default;
 
   ObjectTemplateBuilder GetObjectTemplateBuilder(
       v8::Isolate* isolate) override {
@@ -67,12 +64,6 @@ struct TestHelper {
                           result->GetWrapper(isolate).ToLocalChecked());
   }
 
-  void QuitSoon(base::MessageLoop* message_loop) {
-    message_loop->task_runner()->PostDelayedTask(
-        FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
-        base::TimeDelta::FromMilliseconds(0));
-  }
-
   ShellRunnerDelegate delegate;
   std::unique_ptr<ShellRunner> runner;
   Runner::Scope scope;
@@ -94,8 +85,7 @@ TEST_F(TimerUnittest, OneShot) {
   helper.runner->Run(source, "script");
   EXPECT_EQ(0, helper.result->count());
 
-  helper.QuitSoon(&message_loop_);
-  base::RunLoop().Run();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1, helper.result->count());
 }
 
@@ -110,8 +100,7 @@ TEST_F(TimerUnittest, OneShotCancel) {
   helper.runner->Run(source, "script");
   EXPECT_EQ(0, helper.result->count());
 
-  helper.QuitSoon(&message_loop_);
-  base::RunLoop().Run();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(0, helper.result->count());
 }
 
@@ -121,12 +110,15 @@ TEST_F(TimerUnittest, Repeating) {
   // TODO(aa): Cannot do: if (++result.count == 3) because of v8 bug. Create
   // test case and report.
   std::string source =
-     "timer.createRepeating(0, function() {"
-     "  result.count++;"
-     "  if (result.count == 3) {"
-     "    result.quit();"
-     "  }"
-     "});";
+      "var t = timer.createRepeating(0, function() {"
+      "  result.count++;"
+      "  if (result.count == 3) {"
+      "    /* Cancel the timer to prevent a hang when ScopedTaskEnvironment "
+      "       flushes main thread tasks. */"
+      "    t.cancel();"
+      "    result.quit();"
+      "  }"
+      "});";
 
   helper.runner->Run(source, "script");
   EXPECT_EQ(0, helper.result->count());
@@ -146,9 +138,8 @@ TEST_F(TimerUnittest, TimerCallbackToDestroyedRunner) {
   EXPECT_EQ(0, helper.result->count());
 
   // Destroy runner, which should destroy the timer object we created.
-  helper.QuitSoon(&message_loop_);
   helper.runner.reset(NULL);
-  base::RunLoop().Run();
+  base::RunLoop().RunUntilIdle();
 
   // Timer should not have run because it was deleted.
   EXPECT_EQ(0, helper.result->count());

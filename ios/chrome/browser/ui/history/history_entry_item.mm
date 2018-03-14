@@ -14,12 +14,11 @@
 #include "ios/chrome/browser/favicon/ios_chrome_large_icon_service_factory.h"
 #import "ios/chrome/browser/ui/history/favicon_view.h"
 #import "ios/chrome/browser/ui/history/favicon_view_provider.h"
-#import "ios/chrome/browser/ui/history/history_entry.h"
 #include "ios/chrome/browser/ui/rtl_geometry.h"
-#import "ios/chrome/browser/ui/uikit_ui_util.h"
+#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
-#import "ios/third_party/material_roboto_font_loader_ios/src/src/MaterialRobotoFontLoader.h"
+#import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -91,7 +90,8 @@ NSString* FormattedTitle(const base::string16& title, const GURL& url) {
 @synthesize timestamp = _timestamp;
 
 - (instancetype)initWithType:(NSInteger)type
-                historyEntry:(const history::HistoryEntry&)entry
+                historyEntry:
+                    (const history::BrowsingHistoryService::HistoryEntry&)entry
                 browserState:(ios::ChromeBrowserState*)browserState
                     delegate:(id<HistoryEntryItemDelegate>)delegate {
   self = [super initWithType:type];
@@ -196,8 +196,7 @@ NSString* FormattedTitle(const base::string16& title, const GURL& url) {
   FaviconView* faviconView = self.faviconViewProvider.faviconView;
   [cell.faviconViewContainer addSubview:faviconView];
   [faviconView setTranslatesAutoresizingMaskIntoConstraints:NO];
-  AddSameSizeConstraint(faviconView, cell.faviconViewContainer);
-  AddSameCenterConstraints(faviconView, cell.faviconViewContainer);
+  AddSameConstraints(faviconView, cell.faviconViewContainer);
 
   cell.textLabel.text = self.text;
   cell.detailTextLabel.text = self.detailText;
@@ -241,18 +240,16 @@ NSString* FormattedTitle(const base::string16& title, const GURL& url) {
     _faviconViewContainer = [[UIView alloc] initWithFrame:CGRectZero];
 
     _textLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    [_textLabel
-        setFont:[[MDFRobotoFontLoader sharedInstance] mediumFontOfSize:16]];
+    [_textLabel setFont:[[MDCTypography fontLoader] mediumFontOfSize:16]];
     [_textLabel setTextColor:[[MDCPalette greyPalette] tint900]];
 
     _detailTextLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     [_detailTextLabel
-        setFont:[[MDFRobotoFontLoader sharedInstance] regularFontOfSize:14]];
+        setFont:[[MDCTypography fontLoader] regularFontOfSize:14]];
     [_detailTextLabel setTextColor:[[MDCPalette greyPalette] tint600]];
 
     _timeLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    [_timeLabel
-        setFont:[[MDFRobotoFontLoader sharedInstance] mediumFontOfSize:14]];
+    [_timeLabel setFont:[[MDCTypography fontLoader] mediumFontOfSize:14]];
     [_timeLabel setTextColor:[[MDCPalette greyPalette] tint600]];
     _timeLabel.textAlignment =
         UseRTLLayout() ? NSTextAlignmentLeft : NSTextAlignmentRight;

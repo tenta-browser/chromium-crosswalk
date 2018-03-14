@@ -6,10 +6,11 @@
 
 #include <algorithm>
 
+#include "ash/app_list/model/search_result.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/app_list/app_list_constants.h"
+#include "ui/app_list/app_list_features.h"
 #include "ui/app_list/app_list_switches.h"
-#include "ui/app_list/search_result.h"
 #include "ui/app_list/views/search_result_actions_view.h"
 #include "ui/app_list/views/search_result_list_view.h"
 #include "ui/gfx/canvas.h"
@@ -25,46 +26,27 @@ namespace app_list {
 
 namespace {
 
-const int kPreferredWidth = 300;
-const int kPreferredHeight = 56;
-const int kIconLeftPadding = 16;
-const int kIconRightPadding = 24;
-const int kTextTrailPadding = 16;
-const int kSeparatorPadding = 62;
-const int kBorderSize = 1;
-const SkColor kSeparatorColor = SkColorSetRGB(0xE1, 0xE1, 0xE1);
-
+constexpr int kPreferredWidth = 640;
+constexpr int kPreferredHeight = 48;
+constexpr int kIconLeftRightPadding = 19;
+constexpr int kTextTrailPadding = 16;
 // Extra margin at the right of the rightmost action icon.
-const int kActionButtonRightMargin = 8;
+constexpr int kActionButtonRightMargin = 8;
+
+// Matched text color, #000 87%.
+constexpr SkColor kMatchedTextColor =
+    SkColorSetARGBMacro(0xDE, 0x00, 0x00, 0x00);
+// Default text color, #000 54%.
+constexpr SkColor kDefaultTextColor =
+    SkColorSetARGBMacro(0x8A, 0x00, 0x00, 0x00);
+// URL color.
+constexpr SkColor kUrlColor = SkColorSetARGBMacro(0xFF, 0x33, 0x67, 0xD6);
+// Row selected color, #000 8%.
+constexpr SkColor kRowSelectedColor =
+    SkColorSetARGBMacro(0x14, 0x00, 0x00, 0x00);
 
 int GetIconViewWidth() {
-  return kListIconSize + kIconLeftPadding + kIconRightPadding;
-}
-
-// Creates a RenderText of given |text| and |styles|. Caller takes ownership
-// of returned RenderText.
-gfx::RenderText* CreateRenderText(const base::string16& text,
-                                  const SearchResult::Tags& tags) {
-  gfx::RenderText* render_text = gfx::RenderText::CreateInstance();
-  render_text->SetText(text);
-  render_text->SetColor(kResultDefaultTextColor);
-
-  for (SearchResult::Tags::const_iterator it = tags.begin();
-       it != tags.end();
-       ++it) {
-    // NONE means default style so do nothing.
-    if (it->styles == SearchResult::Tag::NONE)
-      continue;
-
-    if (it->styles & SearchResult::Tag::MATCH)
-      render_text->ApplyWeight(gfx::Font::Weight::BOLD, it->range);
-    if (it->styles & SearchResult::Tag::DIM)
-      render_text->ApplyColor(kResultDimmedTextColor, it->range);
-    else if (it->styles & SearchResult::Tag::URL)
-      render_text->ApplyColor(kResultURLTextColor, it->range);
-  }
-
-  return render_text;
+  return kListIconSize + 2 * kIconLeftRightPadding;
 }
 
 }  // namespace
@@ -73,14 +55,15 @@ gfx::RenderText* CreateRenderText(const base::string16& text,
 const char SearchResultView::kViewClassName[] = "ui/app_list/SearchResultView";
 
 SearchResultView::SearchResultView(SearchResultListView* list_view)
-    : views::CustomButton(this),
-      result_(NULL),
-      is_last_result_(false),
+    : views::Button(this),
       list_view_(list_view),
       icon_(new views::ImageView),
       badge_icon_(new views::ImageView),
       actions_view_(new SearchResultActionsView(this)),
-      progress_bar_(new views::ProgressBar) {
+      progress_bar_(new views::ProgressBar),
+      is_app_list_focus_enabled_(features::IsAppListFocusEnabled()) {
+  if (is_app_list_focus_enabled_)
+    SetFocusBehavior(FocusBehavior::ALWAYS);
   icon_->set_can_process_events_within_subtree(false);
   badge_icon_->set_can_process_events_within_subtree(false);
 
@@ -123,23 +106,20 @@ void SearchResultView::ClearSelectedAction() {
 }
 
 void SearchResultView::UpdateTitleText() {
-  if (!result_ || result_->title().empty()) {
+  if (!result_ || result_->title().empty())
     title_text_.reset();
-  } else {
-    title_text_.reset(CreateRenderText(result_->title(),
-                                       result_->title_tags()));
-  }
+  else
+    CreateTitleRenderText();
 
   UpdateAccessibleName();
 }
 
 void SearchResultView::UpdateDetailsText() {
-  if (!result_ || result_->details().empty()) {
+  if (!result_ || result_->details().empty())
     details_text_.reset();
-  } else {
-    details_text_.reset(CreateRenderText(result_->details(),
-                                         result_->details_tags()));
-  }
+  else
+
+    CreateDetailsRenderText();
 
   UpdateAccessibleName();
 }
@@ -156,15 +136,72 @@ base::string16 SearchResultView::ComputeAccessibleName() const {
   return accessible_name;
 }
 
+void SearchResultView::SetSelected(bool selected) {
+  if (selected_ == selected)
+    return;
+  selected_ = selected;
+
+  if (is_app_list_focus_enabled_ && selected_) {
+    ScrollRectToVisible(GetLocalBounds());
+    NotifyAccessibilityEvent(ui::AX_EVENT_SELECTION, true);
+  }
+  SchedulePaint();
+}
+
 void SearchResultView::UpdateAccessibleName() {
   SetAccessibleName(ComputeAccessibleName());
+}
+
+void SearchResultView::CreateTitleRenderText() {
+  std::unique_ptr<gfx::RenderText> render_text(
+      gfx::RenderText::CreateInstance());
+  render_text->SetText(result_->title());
+  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+  render_text->SetFontList(
+      rb.GetFontList(ui::ResourceBundle::BaseFont).DeriveWithSizeDelta(2));
+  // When result is an omnibox non-url search, the matched tag indicates
+  // proposed query. For all other cases, the matched tag indicates typed search
+  // query.
+  render_text->SetColor(result_->is_omnibox_search() ? kDefaultTextColor
+                                                     : kMatchedTextColor);
+  const SearchResult::Tags& tags = result_->title_tags();
+  for (const auto& tag : tags) {
+    if (tag.styles & SearchResult::Tag::URL) {
+      render_text->ApplyColor(kUrlColor, tag.range);
+    } else if (tag.styles & SearchResult::Tag::MATCH) {
+      render_text->ApplyColor(
+          result_->is_omnibox_search() ? kMatchedTextColor : kDefaultTextColor,
+          tag.range);
+    }
+  }
+  title_text_ = std::move(render_text);
+}
+
+void SearchResultView::CreateDetailsRenderText() {
+  // Ensures single line row for omnibox non-url search result.
+  if (result_->is_omnibox_search()) {
+    details_text_.reset();
+    return;
+  }
+  std::unique_ptr<gfx::RenderText> render_text(
+      gfx::RenderText::CreateInstance());
+  render_text->SetText(result_->details());
+  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+  render_text->SetFontList(rb.GetFontList(ui::ResourceBundle::BaseFont));
+  render_text->SetColor(kDefaultTextColor);
+  const SearchResult::Tags& tags = result_->details_tags();
+  for (const auto& tag : tags) {
+    if (tag.styles & SearchResult::Tag::URL)
+      render_text->ApplyColor(kUrlColor, tag.range);
+  }
+  details_text_ = std::move(render_text);
 }
 
 const char* SearchResultView::GetClassName() const {
   return kViewClassName;
 }
 
-gfx::Size SearchResultView::GetPreferredSize() const {
+gfx::Size SearchResultView::CalculatePreferredSize() const {
   return gfx::Size(kPreferredWidth, kPreferredHeight);
 }
 
@@ -176,22 +213,24 @@ void SearchResultView::Layout() {
   gfx::Rect icon_bounds(rect);
   icon_bounds.set_width(GetIconViewWidth());
   const int top_bottom_padding = (rect.height() - kListIconSize) / 2;
-  icon_bounds.Inset(kIconLeftPadding, top_bottom_padding, kIconRightPadding,
-                    top_bottom_padding);
+  icon_bounds.Inset(kIconLeftRightPadding, top_bottom_padding,
+                    kIconLeftRightPadding, top_bottom_padding);
   icon_bounds.Intersect(rect);
   icon_->SetBoundsRect(icon_bounds);
 
-  gfx::Rect badge_icon_bounds(
-      icon_bounds.right() - kListBadgeIconSize + kListBadgeIconOffsetX,
-      icon_bounds.bottom() - kListBadgeIconSize + kListBadgeIconOffsetY,
-      kListBadgeIconSize, kListBadgeIconSize);
+  gfx::Rect badge_icon_bounds;
+
+  badge_icon_bounds = gfx::Rect(icon_bounds.right() - kListBadgeIconSize / 2,
+                                icon_bounds.bottom() - kListBadgeIconSize / 2,
+                                kListBadgeIconSize, kListBadgeIconSize);
+
   badge_icon_bounds.Intersect(rect);
   badge_icon_->SetBoundsRect(badge_icon_bounds);
 
   const int max_actions_width =
       (rect.right() - kActionButtonRightMargin - icon_bounds.right()) / 2;
-  int actions_width = std::min(max_actions_width,
-                               actions_view_->GetPreferredSize().width());
+  int actions_width =
+      std::min(max_actions_width, actions_view_->GetPreferredSize().width());
 
   gfx::Rect actions_bounds(rect);
   actions_bounds.set_x(rect.right() - kActionButtonRightMargin - actions_width);
@@ -202,8 +241,7 @@ void SearchResultView::Layout() {
   const int progress_height = progress_bar_->GetPreferredSize().height();
   const gfx::Rect progress_bounds(
       rect.right() - kActionButtonRightMargin - progress_width,
-      rect.y() + (rect.height() - progress_height) / 2,
-      progress_width,
+      rect.y() + (rect.height() - progress_height) / 2, progress_width,
       progress_height);
   progress_bar_->SetBoundsRect(progress_bounds);
 }
@@ -215,8 +253,12 @@ bool SearchResultView::OnKeyPressed(const ui::KeyEvent& event) {
 
   switch (event.key_code()) {
     case ui::VKEY_TAB: {
-      int new_selected = actions_view_->selected_action()
-          + (event.IsShiftDown() ? -1 : 1);
+      if (is_app_list_focus_enabled_) {
+        // Let FocusManager handle default focus move.
+        return false;
+      }
+      int new_selected =
+          actions_view_->selected_action() + (event.IsShiftDown() ? -1 : 1);
       actions_view_->SetSelectedAction(new_selected);
       return actions_view_->IsValidActionIndex(new_selected);
     }
@@ -240,35 +282,12 @@ void SearchResultView::ChildPreferredSizeChanged(views::View* child) {
   Layout();
 }
 
-void SearchResultView::OnPaint(gfx::Canvas* canvas) {
+void SearchResultView::PaintButtonContents(gfx::Canvas* canvas) {
   gfx::Rect rect(GetContentsBounds());
   if (rect.IsEmpty())
     return;
 
   gfx::Rect content_rect(rect);
-  const bool selected = list_view_->IsResultViewSelected(this);
-  const bool hover = state() == STATE_HOVERED || state() == STATE_PRESSED;
-
-  canvas->FillRect(content_rect, kCardBackgroundColor);
-
-  // Possibly call FillRect a second time (these colours are partially
-  // transparent, so the previous FillRect is not redundant).
-  if (selected)
-    canvas->FillRect(content_rect, kSelectedColor);
-  else if (hover)
-    canvas->FillRect(content_rect, kHighlightedColor);
-
-  if (!is_last_result_) {
-    gfx::Rect line_rect = content_rect;
-    line_rect.set_height(kBorderSize);
-    line_rect.set_y(content_rect.bottom() - kBorderSize);
-    line_rect.set_x(kSeparatorPadding);
-    canvas->FillRect(line_rect, kSeparatorColor);
-  }
-
-  gfx::Rect border_bottom = gfx::SubtractRects(rect, content_rect);
-  canvas->FillRect(border_bottom, kResultBorderColor);
-
   gfx::Rect text_bounds(rect);
   text_bounds.set_x(GetIconViewWidth());
   if (actions_view_->visible()) {
@@ -281,24 +300,38 @@ void SearchResultView::OnPaint(gfx::Canvas* canvas) {
                           kTextTrailPadding - progress_bar_->bounds().width() -
                           kActionButtonRightMargin);
   }
-  text_bounds.set_x(GetMirroredXWithWidthInView(text_bounds.x(),
-                                                text_bounds.width()));
+  text_bounds.set_x(
+      GetMirroredXWithWidthInView(text_bounds.x(), text_bounds.width()));
+
+  // Set solid color background to avoid broken text. See crbug.com/746563.
+  // This should be drawn before selected color which is semi-transparent.
+  canvas->FillRect(text_bounds, kCardBackgroundColor);
+
+  // Possibly call FillRect a second time (these colours are partially
+  // transparent, so the previous FillRect is not redundant).
+  if (is_app_list_focus_enabled_ ? selected()
+                                 : list_view_->IsResultViewSelected(this)) {
+    canvas->FillRect(content_rect, kRowSelectedColor);
+  }
+
+  gfx::Rect border_bottom = gfx::SubtractRects(rect, content_rect);
+  canvas->FillRect(border_bottom, kResultBorderColor);
 
   if (title_text_ && details_text_) {
     gfx::Size title_size(text_bounds.width(),
                          title_text_->GetStringSize().height());
     gfx::Size details_size(text_bounds.width(),
                            details_text_->GetStringSize().height());
-    int total_height = title_size.height() + + details_size.height();
+    int total_height = title_size.height() + details_size.height();
     int y = text_bounds.y() + (text_bounds.height() - total_height) / 2;
 
-    title_text_->SetDisplayRect(gfx::Rect(gfx::Point(text_bounds.x(), y),
-                                          title_size));
+    title_text_->SetDisplayRect(
+        gfx::Rect(gfx::Point(text_bounds.x(), y), title_size));
     title_text_->Draw(canvas);
 
     y += title_size.height();
-    details_text_->SetDisplayRect(gfx::Rect(gfx::Point(text_bounds.x(), y),
-                                            details_size));
+    details_text_->SetDisplayRect(
+        gfx::Rect(gfx::Point(text_bounds.x(), y), details_size));
     details_text_->Draw(canvas);
   } else if (title_text_) {
     gfx::Size title_size(text_bounds.width(),
@@ -308,6 +341,16 @@ void SearchResultView::OnPaint(gfx::Canvas* canvas) {
     title_text_->SetDisplayRect(centered_title_rect);
     title_text_->Draw(canvas);
   }
+}
+
+void SearchResultView::OnFocus() {
+  SetSelected(true);
+  Button::OnFocus();
+}
+
+void SearchResultView::OnBlur() {
+  SetSelected(false);
+  Button::OnBlur();
 }
 
 void SearchResultView::ButtonPressed(views::Button* sender,
@@ -406,8 +449,8 @@ void SearchResultView::ShowContextMenuForView(views::View* source,
   if (!menu_model)
     return;
 
-  context_menu_runner_.reset(new views::MenuRunner(
-      menu_model, views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::ASYNC));
+  context_menu_runner_.reset(
+      new views::MenuRunner(menu_model, views::MenuRunner::HAS_MNEMONICS));
   context_menu_runner_->RunMenuAt(GetWidget(), NULL,
                                   gfx::Rect(point, gfx::Size()),
                                   views::MENU_ANCHOR_TOPLEFT, source_type);

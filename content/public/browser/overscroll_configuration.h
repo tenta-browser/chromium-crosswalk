@@ -10,16 +10,20 @@
 namespace content {
 
 // Sets and retrieves various overscroll related configuration values.
-enum OverscrollConfig {
-  OVERSCROLL_CONFIG_NONE,
-  OVERSCROLL_CONFIG_HORIZ_THRESHOLD_COMPLETE,
-  OVERSCROLL_CONFIG_VERT_THRESHOLD_COMPLETE,
-  OVERSCROLL_CONFIG_HORIZ_THRESHOLD_START_TOUCHPAD,
-  OVERSCROLL_CONFIG_HORIZ_THRESHOLD_START_TOUCHSCREEN,
-  OVERSCROLL_CONFIG_VERT_THRESHOLD_START,
-  OVERSCROLL_CONFIG_HORIZ_RESIST_AFTER,
-  OVERSCROLL_CONFIG_VERT_RESIST_AFTER,
-  OVERSCROLL_CONFIG_COUNT
+enum class OverscrollConfig {
+  // Threshold to complete touchpad overscroll, in terms of the percentage of
+  // the display size.
+  THRESHOLD_COMPLETE_TOUCHPAD,
+
+  // Threshold to complete touchscreen overscroll, in terms of the percentage of
+  // the display size.
+  THRESHOLD_COMPLETE_TOUCHSCREEN,
+
+  // Threshold to start touchpad overscroll, in DIPs.
+  THRESHOLD_START_TOUCHPAD,
+
+  // Threshold to start touchscreen overscroll, in DIPs.
+  THRESHOLD_START_TOUCHSCREEN,
 };
 
 CONTENT_EXPORT float GetOverscrollConfig(OverscrollConfig config);

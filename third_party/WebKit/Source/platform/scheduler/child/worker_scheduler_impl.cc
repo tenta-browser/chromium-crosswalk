@@ -4,13 +4,17 @@
 
 #include "platform/scheduler/child/worker_scheduler_impl.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_event_argument.h"
-#include "platform/scheduler/base/time_converter.h"
-#include "platform/scheduler/child/scheduler_tqm_delegate.h"
-#include "public/platform/scheduler/base/task_queue.h"
+#include "platform/Histogram.h"
+#include "platform/scheduler/base/task_queue.h"
+#include "platform/scheduler/base/task_queue_manager.h"
+#include "platform/scheduler/child/worker_scheduler_helper.h"
 
 namespace blink {
 namespace scheduler {
@@ -20,9 +24,6 @@ namespace {
 // the renderer thread.
 constexpr base::TimeDelta kWorkerThreadLoadTrackerReportingInterval =
     base::TimeDelta::FromSeconds(1);
-// Start reporting the load right away.
-constexpr base::TimeDelta kWorkerThreadLoadTrackerWaitingPeriodBeforeReporting =
-    base::TimeDelta::FromSeconds(0);
 
 void ReportWorkerTaskLoad(base::TimeTicks time, double load) {
   int load_percentage = static_cast<int>(load * 100);
@@ -32,31 +33,37 @@ void ReportWorkerTaskLoad(base::TimeTicks time, double load) {
   UMA_HISTOGRAM_PERCENTAGE("WorkerScheduler.WorkerThreadLoad", load_percentage);
 }
 
+// TODO(scheduler-dev): Remove conversions when Blink starts using
+// base::TimeTicks instead of doubles for time.
+base::TimeTicks MonotonicTimeInSecondsToTimeTicks(
+    double monotonic_time_in_seconds) {
+  return base::TimeTicks() +
+         base::TimeDelta::FromSecondsD(monotonic_time_in_seconds);
+}
+
 }  // namespace
 
 WorkerSchedulerImpl::WorkerSchedulerImpl(
-    scoped_refptr<SchedulerTqmDelegate> main_task_runner)
-    : helper_(main_task_runner,
-              "worker.scheduler",
-              TRACE_DISABLED_BY_DEFAULT("worker.scheduler"),
-              TRACE_DISABLED_BY_DEFAULT("worker.scheduler.debug")),
-      idle_helper_(&helper_,
+    std::unique_ptr<TaskQueueManager> task_queue_manager)
+    : WorkerScheduler(
+          std::make_unique<WorkerSchedulerHelper>(std::move(task_queue_manager),
+                                                  this)),
+      idle_helper_(helper_.get(),
                    this,
-                   "worker.scheduler",
-                   TRACE_DISABLED_BY_DEFAULT("worker.scheduler"),
                    "WorkerSchedulerIdlePeriod",
-                   base::TimeDelta::FromMilliseconds(300)),
-      idle_canceled_delayed_task_sweeper_("worker.scheduler",
-                                          &helper_,
+                   base::TimeDelta::FromMilliseconds(300),
+                   helper_->NewTaskQueue(TaskQueue::Spec("worker_idle_tq"))),
+      idle_canceled_delayed_task_sweeper_(helper_.get(),
                                           idle_helper_.IdleTaskRunner()),
-      load_tracker_(helper_.scheduler_tqm_delegate()->NowTicks(),
+      load_tracker_(helper_->NowTicks(),
                     base::Bind(&ReportWorkerTaskLoad),
-                    kWorkerThreadLoadTrackerReportingInterval,
-                    kWorkerThreadLoadTrackerWaitingPeriodBeforeReporting) {
+                    kWorkerThreadLoadTrackerReportingInterval),
+      worker_thread_task_duration_reporter_(
+          "RendererScheduler.TaskDurationPerThreadType") {
   initialized_ = false;
-  thread_start_time_ = helper_.scheduler_tqm_delegate()->NowTicks();
+  thread_start_time_ = helper_->NowTicks();
   load_tracker_.Resume(thread_start_time_);
-  helper_.AddTaskTimeObserver(this);
+  helper_->AddTaskTimeObserver(this);
   TRACE_EVENT_OBJECT_CREATED_WITH_ID(
       TRACE_DISABLED_BY_DEFAULT("worker.scheduler"), "WorkerScheduler", this);
 }
@@ -64,23 +71,24 @@ WorkerSchedulerImpl::WorkerSchedulerImpl(
 WorkerSchedulerImpl::~WorkerSchedulerImpl() {
   TRACE_EVENT_OBJECT_DELETED_WITH_ID(
       TRACE_DISABLED_BY_DEFAULT("worker.scheduler"), "WorkerScheduler", this);
-  helper_.RemoveTaskTimeObserver(this);
+  helper_->RemoveTaskTimeObserver(this);
 }
 
-void WorkerSchedulerImpl::Init() {
-  initialized_ = true;
-  idle_helper_.EnableLongIdlePeriod();
-}
-
-scoped_refptr<TaskQueue> WorkerSchedulerImpl::DefaultTaskRunner() {
+scoped_refptr<base::SingleThreadTaskRunner>
+WorkerSchedulerImpl::DefaultTaskRunner() {
   DCHECK(initialized_);
-  return helper_.DefaultTaskRunner();
+  return helper_->DefaultWorkerTaskQueue();
 }
 
 scoped_refptr<SingleThreadIdleTaskRunner>
 WorkerSchedulerImpl::IdleTaskRunner() {
   DCHECK(initialized_);
   return idle_helper_.IdleTaskRunner();
+}
+
+scoped_refptr<base::SingleThreadTaskRunner>
+WorkerSchedulerImpl::IPCTaskRunner() {
+  return base::ThreadTaskRunnerHandle::Get();
 }
 
 bool WorkerSchedulerImpl::CanExceedIdleDeadlineIfRequired() const {
@@ -96,19 +104,19 @@ bool WorkerSchedulerImpl::ShouldYieldForHighPriorityWork() {
 void WorkerSchedulerImpl::AddTaskObserver(
     base::MessageLoop::TaskObserver* task_observer) {
   DCHECK(initialized_);
-  helper_.AddTaskObserver(task_observer);
+  helper_->AddTaskObserver(task_observer);
 }
 
 void WorkerSchedulerImpl::RemoveTaskObserver(
     base::MessageLoop::TaskObserver* task_observer) {
   DCHECK(initialized_);
-  helper_.RemoveTaskObserver(task_observer);
+  helper_->RemoveTaskObserver(task_observer);
 }
 
 void WorkerSchedulerImpl::Shutdown() {
   DCHECK(initialized_);
-  load_tracker_.RecordIdle(helper_.scheduler_tqm_delegate()->NowTicks());
-  base::TimeTicks end_time = helper_.scheduler_tqm_delegate()->NowTicks();
+  load_tracker_.RecordIdle(helper_->NowTicks());
+  base::TimeTicks end_time = helper_->NowTicks();
   base::TimeDelta delta = end_time - thread_start_time_;
 
   // The lifetime could be radically different for different workers,
@@ -117,11 +125,29 @@ void WorkerSchedulerImpl::Shutdown() {
   UMA_HISTOGRAM_CUSTOM_TIMES(
       "WorkerThread.Runtime", delta, base::TimeDelta::FromSeconds(1),
       base::TimeDelta::FromDays(1), 50 /* bucket count */);
-  helper_.Shutdown();
+  helper_->Shutdown();
+}
+
+scoped_refptr<WorkerTaskQueue> WorkerSchedulerImpl::DefaultTaskQueue() {
+  DCHECK(initialized_);
+  return helper_->DefaultWorkerTaskQueue();
+}
+
+void WorkerSchedulerImpl::Init() {
+  initialized_ = true;
+  idle_helper_.EnableLongIdlePeriod();
+}
+
+void WorkerSchedulerImpl::OnTaskCompleted(WorkerTaskQueue* worker_task_queue,
+                                          const TaskQueue::Task& task,
+                                          base::TimeTicks start,
+                                          base::TimeTicks end) {
+  worker_thread_task_duration_reporter_.RecordTask(ThreadType::kWorkerThread,
+                                                   end - start);
 }
 
 SchedulerHelper* WorkerSchedulerImpl::GetSchedulerHelperForTesting() {
-  return &helper_;
+  return helper_.get();
 }
 
 bool WorkerSchedulerImpl::CanEnterLongIdlePeriod(base::TimeTicks,
@@ -133,20 +159,20 @@ base::TimeTicks WorkerSchedulerImpl::CurrentIdleTaskDeadlineForTesting() const {
   return idle_helper_.CurrentIdleTaskDeadline();
 }
 
-void WorkerSchedulerImpl::WillProcessTask(TaskQueue* task_queue,
-                                          double start_time) {}
+void WorkerSchedulerImpl::WillProcessTask(double start_time) {}
 
-void WorkerSchedulerImpl::DidProcessTask(TaskQueue* task_queue,
-                                         double start_time,
-                                         double end_time) {
+void WorkerSchedulerImpl::DidProcessTask(double start_time, double end_time) {
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(CustomCountHistogram, task_time_counter,
+                                  ("WorkerThread.Task.Time", 0, 10000000, 50));
+  task_time_counter.Count((end_time - start_time) *
+                          base::Time::kMicrosecondsPerSecond);
+
   base::TimeTicks start_time_ticks =
       MonotonicTimeInSecondsToTimeTicks(start_time);
   base::TimeTicks end_time_ticks = MonotonicTimeInSecondsToTimeTicks(end_time);
 
   load_tracker_.RecordTaskTime(start_time_ticks, end_time_ticks);
 }
-
-void WorkerSchedulerImpl::OnBeginNestedMessageLoop() {}
 
 }  // namespace scheduler
 }  // namespace blink

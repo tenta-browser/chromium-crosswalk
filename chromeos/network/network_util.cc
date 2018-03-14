@@ -12,6 +12,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
+#include "base/values.h"
 #include "chromeos/login/login_state.h"
 #include "chromeos/network/device_state.h"
 #include "chromeos/network/managed_network_configuration_handler.h"
@@ -33,23 +34,20 @@ WifiAccessPoint::WifiAccessPoint()
 
 WifiAccessPoint::WifiAccessPoint(const WifiAccessPoint& other) = default;
 
-WifiAccessPoint::~WifiAccessPoint() {
-}
+WifiAccessPoint::~WifiAccessPoint() = default;
 
-CellTower::CellTower() {}
+CellTower::CellTower() = default;
 
 CellTower::CellTower(const CellTower& other) = default;
 
-CellTower::~CellTower() {}
+CellTower::~CellTower() = default;
 
-CellularScanResult::CellularScanResult() {
-}
+CellularScanResult::CellularScanResult() = default;
 
 CellularScanResult::CellularScanResult(const CellularScanResult& other) =
     default;
 
-CellularScanResult::~CellularScanResult() {
-}
+CellularScanResult::~CellularScanResult() = default;
 
 namespace network_util {
 
@@ -175,11 +173,10 @@ std::unique_ptr<base::DictionaryValue> TranslateNetworkStateToONC(
     if (device) {
       std::unique_ptr<base::DictionaryValue> device_dict(
           new base::DictionaryValue);
-      device_dict->SetBooleanWithoutPathExpansion(
-          shill::kProviderRequiresRoamingProperty,
-          device->provider_requires_roaming());
+      device_dict->SetKey(shill::kProviderRequiresRoamingProperty,
+                          base::Value(device->provider_requires_roaming()));
       shill_dictionary->SetWithoutPathExpansion(shill::kDeviceProperty,
-                                                device_dict.release());
+                                                std::move(device_dict));
     }
   }
 

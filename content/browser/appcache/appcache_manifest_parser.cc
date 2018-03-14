@@ -37,6 +37,7 @@
 #include "base/i18n/icu_string_conversions.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "url/gurl.h"
 
@@ -57,7 +58,13 @@ bool HasPatternMatchingAnnotation(const wchar_t* line_p,
   return annotation == L"isPattern";
 }
 
+bool ScopeMatches(const GURL& manifest_url, const GURL& namespace_url) {
+  return base::StartsWith(namespace_url.spec(),
+                          manifest_url.GetWithoutFilename().spec(),
+                          base::CompareCase::SENSITIVE);
 }
+
+}  // namespace
 
 enum Mode {
   EXPLICIT,
@@ -73,10 +80,7 @@ enum InterceptVerb {
   UNKNOWN_VERB,
 };
 
-AppCacheManifest::AppCacheManifest()
-    : online_whitelist_all(false),
-      did_ignore_intercept_namespaces(false) {
-}
+AppCacheManifest::AppCacheManifest() {}
 
 AppCacheManifest::~AppCacheManifest() {}
 
@@ -99,6 +103,7 @@ bool ParseManifest(const GURL& manifest_url, const char* data, int length,
   DCHECK(manifest.online_whitelist_namespaces.empty());
   DCHECK(!manifest.online_whitelist_all);
   DCHECK(!manifest.did_ignore_intercept_namespaces);
+  DCHECK(!manifest.did_ignore_fallback_namespaces);
 
   Mode mode = EXPLICIT;
 
@@ -223,7 +228,7 @@ bool ParseManifest(const GURL& manifest_url, const char* data, int length,
                 is_pattern));
       }
     } else if (mode == INTERCEPT) {
-      if (parse_mode != PARSE_MANIFEST_ALLOWING_INTERCEPTS) {
+      if (parse_mode != PARSE_MANIFEST_ALLOWING_DANGEROUS_FEATURES) {
         manifest.did_ignore_intercept_namespaces = true;
         continue;
       }
@@ -267,16 +272,8 @@ bool ParseManifest(const GURL& manifest_url, const char* data, int length,
         ++line_p;
 
       // Look for a type value we understand, otherwise skip the line.
-      InterceptVerb verb = UNKNOWN_VERB;
       std::wstring type(type_start, line_p - type_start);
-      if (type == L"return") {
-        verb = RETURN;
-      } else if (type == L"execute" &&
-                 base::CommandLine::ForCurrentProcess()->HasSwitch(
-                    kEnableExecutableHandlers)) {
-        verb = EXECUTE;
-      }
-      if (verb == UNKNOWN_VERB)
+      if (type != L"return")
         continue;
 
       // Skip whitespace separating type from the target_url.
@@ -304,9 +301,8 @@ bool ParseManifest(const GURL& manifest_url, const char* data, int length,
         continue;
 
       bool is_pattern = HasPatternMatchingAnnotation(line_p, line_end);
-      manifest.intercept_namespaces.push_back(
-          AppCacheNamespace(APPCACHE_INTERCEPT_NAMESPACE, namespace_url,
-                    target_url, is_pattern, verb == EXECUTE));
+      manifest.intercept_namespaces.push_back(AppCacheNamespace(
+          APPCACHE_INTERCEPT_NAMESPACE, namespace_url, target_url, is_pattern));
     } else if (mode == FALLBACK) {
       const wchar_t* line_p = line.c_str();
       const wchar_t* line_end = line_p + line.length();
@@ -335,6 +331,13 @@ bool ParseManifest(const GURL& manifest_url, const char* data, int length,
       // as the manifest's URL.
       if (manifest_url.GetOrigin() != namespace_url.GetOrigin()) {
         continue;
+      }
+
+      if (parse_mode != PARSE_MANIFEST_ALLOWING_DANGEROUS_FEATURES) {
+        if (!ScopeMatches(manifest_url, namespace_url)) {
+          manifest.did_ignore_fallback_namespaces = true;
+          continue;
+        }
       }
 
       // Skip whitespace separating fallback namespace from URL.

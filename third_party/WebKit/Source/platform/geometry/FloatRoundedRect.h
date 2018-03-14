@@ -227,6 +227,15 @@ inline bool operator==(const FloatRoundedRect& a, const FloatRoundedRect& b) {
   return a.Rect() == b.Rect() && a.GetRadii() == b.GetRadii();
 }
 
+inline bool operator!=(const FloatRoundedRect& a, const FloatRoundedRect& b) {
+  return !(a == b);
+}
+
+PLATFORM_EXPORT std::ostream& operator<<(std::ostream&,
+                                         const FloatRoundedRect&);
+PLATFORM_EXPORT std::ostream& operator<<(std::ostream&,
+                                         const FloatRoundedRect::Radii&);
+
 // Redeclared here to avoid ODR issues.
 // See platform/testing/GeometryPrinters.h.
 void PrintTo(const FloatRoundedRect&, std::ostream*);

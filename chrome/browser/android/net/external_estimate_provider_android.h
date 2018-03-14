@@ -31,14 +31,6 @@ class ExternalEstimateProviderAndroid : public net::ExternalEstimateProvider {
 
   ~ExternalEstimateProviderAndroid() override;
 
-  // net::ExternalEstimateProvider implementation:
-  bool GetRTT(base::TimeDelta* rtt) const override;
-  bool GetDownstreamThroughputKbps(
-      int32_t* downstream_throughput_kbps) const override;
-  bool GetUpstreamThroughputKbps(
-      int32_t* upstream_throughput_kbps) const override;
-  bool GetTimeSinceLastUpdate(
-      base::TimeDelta* time_since_last_update) const override;
   void SetUpdatedEstimateDelegate(
       net::ExternalEstimateProvider::UpdatedEstimateDelegate* delegate)
       override;
@@ -55,9 +47,24 @@ class ExternalEstimateProviderAndroid : public net::ExternalEstimateProvider {
   // Protected for testing.
   void NotifyUpdatedEstimateAvailable() const;
 
+  // Returns the estimated RTT value. If the estimate is unavailable, a negative
+  // value is returned. Protected for testing.
+  virtual base::TimeDelta GetRTT() const;
+
+  // Returns the estimated downstream throughput (in Kbps -- Kilobits
+  // per second) is available.  If the estimate is unavailable, a negative value
+  // is returned. Protected for testing.
+  virtual int32_t GetDownstreamThroughputKbps() const;
+
  private:
+  // Creates the corresponding Java object.
+  void CreateJavaObject();
+
+  // net::ExternalEstimateProvider:
+  void ClearCachedEstimate() override;
+
   // Value returned if valid value is unavailable.
-  int32_t no_value_ = -1;
+  const int32_t no_value_ = -1;
 
   base::android::ScopedJavaGlobalRef<jobject> j_external_estimate_provider_;
 
@@ -74,8 +81,6 @@ class ExternalEstimateProviderAndroid : public net::ExternalEstimateProvider {
 
   DISALLOW_COPY_AND_ASSIGN(ExternalEstimateProviderAndroid);
 };
-
-bool RegisterExternalEstimateProviderAndroid(JNIEnv* env);
 
 }  // namespace android
 }  // namespace chrome

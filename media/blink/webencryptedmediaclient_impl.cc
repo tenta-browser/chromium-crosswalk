@@ -53,7 +53,7 @@ class WebEncryptedMediaClientImpl::Reporter {
       : uma_name_(kKeySystemSupportUMAPrefix + key_system_for_uma),
         is_request_reported_(false),
         is_support_reported_(false) {}
-  ~Reporter() {}
+  ~Reporter() = default;
 
   void ReportRequested() {
     if (is_request_reported_)
@@ -86,20 +86,17 @@ class WebEncryptedMediaClientImpl::Reporter {
 };
 
 WebEncryptedMediaClientImpl::WebEncryptedMediaClientImpl(
-    base::Callback<bool(void)> are_secure_codecs_supported_cb,
     CdmFactory* cdm_factory,
     MediaPermission* media_permission,
-    const scoped_refptr<MediaLog>& media_log)
-    : are_secure_codecs_supported_cb_(are_secure_codecs_supported_cb),
-      cdm_factory_(cdm_factory),
+    MediaLog* media_log)
+    : cdm_factory_(cdm_factory),
       key_system_config_selector_(KeySystems::GetInstance(), media_permission),
       media_log_(media_log),
       weak_factory_(this) {
   DCHECK(cdm_factory_);
 }
 
-WebEncryptedMediaClientImpl::~WebEncryptedMediaClientImpl() {
-}
+WebEncryptedMediaClientImpl::~WebEncryptedMediaClientImpl() = default;
 
 void WebEncryptedMediaClientImpl::RequestMediaKeySystemAccess(
     blink::WebEncryptedMediaRequest request) {
@@ -112,7 +109,7 @@ void WebEncryptedMediaClientImpl::RequestMediaKeySystemAccess(
 
   key_system_config_selector_.SelectConfig(
       request.KeySystem(), request.SupportedConfigurations(),
-      request.GetSecurityOrigin(), are_secure_codecs_supported_cb_.Run(),
+      request.GetSecurityOrigin(),
       base::Bind(&WebEncryptedMediaClientImpl::OnRequestSucceeded,
                  weak_factory_.GetWeakPtr(), request),
       base::Bind(&WebEncryptedMediaClientImpl::OnRequestNotSupported,
@@ -154,9 +151,14 @@ void WebEncryptedMediaClientImpl::OnRequestSucceeded(
 }
 
 void WebEncryptedMediaClientImpl::OnRequestNotSupported(
-    blink::WebEncryptedMediaRequest request,
-    const blink::WebString& error_message) {
-  request.RequestNotSupported(error_message);
+    blink::WebEncryptedMediaRequest request) {
+  // The rejection message when the key system is not supported or when none of
+  // the requested configurations is supported should always be the same to help
+  // avoid leaking information unnecessarily. See https://crbug.com/760720
+  const char kUnsupportedKeySystemOrConfigMessage[] =
+      "Unsupported keySystem or supportedConfigurations.";
+
+  request.RequestNotSupported(kUnsupportedKeySystemOrConfigMessage);
 }
 
 WebEncryptedMediaClientImpl::Reporter* WebEncryptedMediaClientImpl::GetReporter(

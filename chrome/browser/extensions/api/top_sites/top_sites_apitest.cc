@@ -57,7 +57,7 @@ class TopSitesExtensionTest : public InProcessBrowserTest {
  private:
   void OnTopSitesAvailable(const history::MostVisitedURLList& data) {
     if (waiting_) {
-      base::MessageLoop::current()->QuitWhenIdle();
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
       waiting_ = false;
     }
     top_sites_inited_ = true;

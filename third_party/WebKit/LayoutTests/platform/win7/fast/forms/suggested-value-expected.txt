@@ -8,7 +8,12 @@ instead of "initial value".
 |   this.value="initial value"
 |   <shadow:root>
 |     <div>
-|       id="inner-editor"
+|       id="placeholder"
+|       pseudo="-internal-input-suggested"
+|       style="display: block !important;"
+|       shadow:pseudoId="-internal-input-suggested"
+|       "suggested value"
+|     <div>
 |       "suggested value"
 | <input>
 |   id="month"
@@ -64,9 +69,11 @@ instead of "initial value".
 |   id="textarea"
 |   this.value="initial value"
 |   <shadow:root>
+|       id="placeholder"
+|       pseudo="-internal-input-suggestedx"
+|       style="display: block !important;"
+|       shadow:pseudoId="-internal-input-suggested"
 |     <div>
-|       id="inner-editor"
-|       "suggested value"
 | <select>
 |   id="select"
 |   <option>

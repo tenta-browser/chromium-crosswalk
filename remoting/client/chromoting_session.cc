@@ -6,6 +6,8 @@
 
 #include <stdint.h>
 
+#include <algorithm>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/format_macros.h"
@@ -15,10 +17,11 @@
 #include "net/socket/client_socket_factory.h"
 #include "remoting/base/chromium_url_request.h"
 #include "remoting/base/chromoting_event.h"
-#include "remoting/client/audio_player.h"
+#include "remoting/base/service_urls.h"
+#include "remoting/client/audio/audio_player.h"
 #include "remoting/client/chromoting_client_runtime.h"
 #include "remoting/client/client_telemetry_logger.h"
-#include "remoting/client/native_device_keymap.h"
+#include "remoting/client/input/native_device_keymap.h"
 #include "remoting/protocol/chromium_port_allocator_factory.h"
 #include "remoting/protocol/chromium_socket_factory.h"
 #include "remoting/protocol/client_authentication_config.h"
@@ -42,6 +45,27 @@ const bool kXmppUseTls = true;
 // Interval at which to log performance statistics, if enabled.
 const int kPerfStatsIntervalMs = 60000;
 
+// Default DPI to assume for old clients that use notifyClientResolution.
+const int kDefaultDPI = 96;
+
+// Used by NormalizeclientResolution. See comment below.
+const int kMinDimension = 640;
+
+// Normalizes the resolution so that both dimensions are not smaller than
+// kMinDimension.
+void NormalizeClientResolution(protocol::ClientResolution* resolution) {
+  int min_dimension =
+      std::min(resolution->dips_width(), resolution->dips_height());
+  if (min_dimension >= kMinDimension) {
+    return;
+  }
+
+  // Always scale by integer to prevent blurry interpolation.
+  int scale = std::ceil(((float)kMinDimension) / min_dimension);
+  resolution->set_dips_width(resolution->dips_width() * scale);
+  resolution->set_dips_height(resolution->dips_height() * scale);
+}
+
 }  // namespace
 
 ChromotingSession::ChromotingSession(
@@ -50,7 +74,7 @@ ChromotingSession::ChromotingSession(
     std::unique_ptr<protocol::VideoRenderer> video_renderer,
     base::WeakPtr<protocol::AudioStub> audio_player,
     const ConnectToHostInfo& info,
-    protocol::ClientAuthenticationConfig& client_auth_config)
+    const protocol::ClientAuthenticationConfig& client_auth_config)
     : delegate_(delegate),
       connection_info_(info),
       client_auth_config_(client_auth_config),
@@ -76,9 +100,7 @@ ChromotingSession::ChromotingSession(
 
 ChromotingSession::~ChromotingSession() {
   DCHECK(runtime_->network_task_runner()->BelongsToCurrentThread());
-  if (client_) {
-    ReleaseResources();
-  }
+  ReleaseResources();
 }
 
 void ChromotingSession::Connect() {
@@ -144,6 +166,12 @@ void ChromotingSession::ProvideSecret(const std::string& pin,
                                       bool create_pairing,
                                       const std::string& device_name) {
   DCHECK(runtime_->ui_task_runner()->BelongsToCurrentThread());
+
+  // TODO(nicholss): |pin| here is not used. Maybe there was an api refactor and
+  // this was not cleaned up. The auth pin providing mechanism seems to be call
+  // ProvideSecret, and then call the auth callback. When session moves to
+  // Connected state, this chromoing session calls RequestPairing  based on
+  // create_pairing.
 
   create_pairing_ = create_pairing;
 
@@ -229,6 +257,31 @@ void ChromotingSession::SendTouchEvent(
   client_->input_stub()->InjectTouchEvent(touch_event);
 }
 
+void ChromotingSession::SendClientResolution(int dips_width,
+                                             int dips_height,
+                                             int scale) {
+  if (!runtime_->network_task_runner()->BelongsToCurrentThread()) {
+    runtime_->network_task_runner()->PostTask(
+        FROM_HERE, base::Bind(&ChromotingSession::SendClientResolution,
+                              GetWeakPtr(), dips_width, dips_height, scale));
+    return;
+  }
+
+  protocol::ClientResolution client_resolution;
+  client_resolution.set_dips_width(dips_width);
+  client_resolution.set_dips_height(dips_height);
+  client_resolution.set_x_dpi(scale * kDefaultDPI);
+  client_resolution.set_y_dpi(scale * kDefaultDPI);
+  NormalizeClientResolution(&client_resolution);
+
+  // Include the legacy width & height in physical pixels for use by older
+  // hosts.
+  client_resolution.set_width_deprecated(dips_width * scale);
+  client_resolution.set_height_deprecated(dips_height * scale);
+
+  client_->host_stub()->NotifyClientResolution(client_resolution);
+}
+
 void ChromotingSession::EnableVideoChannel(bool enable) {
   if (!runtime_->network_task_runner()->BelongsToCurrentThread()) {
     runtime_->network_task_runner()->PostTask(
@@ -280,6 +333,11 @@ void ChromotingSession::OnConnectionState(
   runtime_->ui_task_runner()->PostTask(
       FROM_HERE, base::Bind(&ChromotingSession::Delegate::OnConnectionState,
                             delegate_, state, error));
+
+  if (state == protocol::ConnectionToHost::CLOSED ||
+      state == protocol::ConnectionToHost::FAILED) {
+    ReleaseResources();
+  }
 }
 
 void ChromotingSession::OnConnectionReady(bool ready) {
@@ -375,6 +433,8 @@ void ChromotingSession::ConnectToHostOnNetworkThread() {
           protocol::NetworkSettings(
               protocol::NetworkSettings::NAT_TRAVERSAL_FULL),
           protocol::TransportRole::CLIENT);
+  transport_context->set_ice_config_url(
+      ServiceUrls::GetInstance()->ice_config_url(), runtime_->token_getter());
 
 #if defined(ENABLE_WEBRTC_REMOTING_CLIENT)
   if (connection_info_.flags.find("useWebrtc") != std::string::npos) {
@@ -452,7 +512,13 @@ void ChromotingSession::ReleaseResources() {
   client_context_.reset();
   cursor_shape_stub_.reset();
 
-  weak_factory_.InvalidateWeakPtrs();
+  // Weak factory can only be invalidated once (due to DCHECK in it). After that
+  // the instance will no longer be usable. This is a design flaw that makes the
+  // instance no longer reusable after the caller calls Disconnect. Ideally we
+  // should factor out a Core that lives between (Connect, Disconnect).
+  if (weak_ptr_) {
+    weak_factory_.InvalidateWeakPtrs();
+  }
 }
 
 }  // namespace remoting

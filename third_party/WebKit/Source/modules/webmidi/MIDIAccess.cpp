@@ -115,7 +115,7 @@ MIDIInputMap* MIDIAccess::inputs() const {
   }
   if (inputs.size() != ids.size()) {
     // There is id duplication that violates the spec.
-    inputs.Clear();
+    inputs.clear();
   }
   return new MIDIInputMap(inputs);
 }
@@ -132,7 +132,7 @@ MIDIOutputMap* MIDIAccess::outputs() const {
   }
   if (outputs.size() != ids.size()) {
     // There is id duplication that violates the spec.
-    outputs.Clear();
+    outputs.clear();
   }
   return new MIDIOutputMap(outputs);
 }
@@ -229,7 +229,7 @@ void MIDIAccess::ContextDestroyed(ExecutionContext*) {
   accessor_.reset();
 }
 
-DEFINE_TRACE(MIDIAccess) {
+void MIDIAccess::Trace(blink::Visitor* visitor) {
   visitor->Trace(inputs_);
   visitor->Trace(outputs_);
   EventTargetWithInlineData::Trace(visitor);

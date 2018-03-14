@@ -31,11 +31,28 @@ Elements.StylesSidebarPane = class extends Elements.ElementsSidebarPane {
   constructor() {
     super();
     this.setMinimumSize(96, 26);
+    this.registerRequiredCSS('elements/stylesSidebarPane.css');
+    this.element.tabIndex = -1;
 
     Common.moduleSetting('colorFormat').addChangeListener(this.update.bind(this));
     Common.moduleSetting('textEditorIndent').addChangeListener(this.update.bind(this));
 
-    this._sectionsContainer = this.element.createChild('div');
+    /** @type {?UI.Widget} */
+    this._currentToolbarPane = null;
+    /** @type {?UI.Widget} */
+    this._animatedToolbarPane = null;
+    /** @type {?UI.Widget} */
+    this._pendingWidget = null;
+    /** @type {?UI.ToolbarToggle} */
+    this._pendingWidgetToggle = null;
+    this._toolbarPaneElement = this._createStylesSidebarToolbar();
+
+    this._sectionsContainer = this.contentElement.createChild('div');
+    UI.ARIAUtils.markAsTree(this._sectionsContainer);
+    this._sectionsContainer.addEventListener('keydown', this._sectionsContainerKeyDown.bind(this), false);
+    this._sectionsContainer.addEventListener('focusin', this._sectionsContainerFocusChanged.bind(this), false);
+    this._sectionsContainer.addEventListener('focusout', this._sectionsContainerFocusChanged.bind(this), false);
+
     this._swatchPopoverHelper = new InlineEditor.SwatchPopoverHelper();
     this._linkifier = new Components.Linkifier(Elements.StylesSidebarPane._maxLinkLength, /* useLinkDecorator */ true);
     /** @type {?Elements.StylePropertyHighlighter} */
@@ -50,13 +67,14 @@ Elements.StylesSidebarPane = class extends Elements.ElementsSidebarPane {
     this._mouseDownTreeElementIsName = false;
     this._mouseDownTreeElementIsValue = false;
 
-    this.element.classList.add('styles-pane');
+    this.contentElement.classList.add('styles-pane');
 
     /** @type {!Array<!Elements.SectionBlock>} */
     this._sectionBlocks = [];
     Elements.StylesSidebarPane._instance = this;
     UI.context.addFlavorChangeListener(SDK.DOMNode, this.forceUpdate, this);
-    this.element.addEventListener('copy', this._clipboardCopy.bind(this));
+    this.contentElement.addEventListener('copy', this._clipboardCopy.bind(this));
+    this._resizeThrottler = new Common.Throttler(100);
   }
 
   /**
@@ -117,16 +135,17 @@ Elements.StylesSidebarPane = class extends Elements.ElementsSidebarPane {
    * @param {string} placeholder
    * @param {!Element} container
    * @param {function(?RegExp)} filterCallback
+   * @param {string} activeClassName
    * @return {!Element}
    */
-  static createPropertyFilterElement(placeholder, container, filterCallback) {
-    var input = createElement('input');
+  static createPropertyFilterElement(placeholder, container, filterCallback, activeClassName) {
+    var input = createElementWithClass('input');
     input.placeholder = placeholder;
 
     function searchHandler() {
       var regex = input.value ? new RegExp(input.value.escapeForRegExp(), 'i') : null;
       filterCallback(regex);
-      container.classList.toggle('styles-filter-engaged', !!input.value);
+      container.classList.toggle(activeClassName, !!input.value);
     }
     input.addEventListener('input', searchHandler, false);
 
@@ -174,6 +193,48 @@ Elements.StylesSidebarPane = class extends Elements.ElementsSidebarPane {
   /**
    * @param {!Event} event
    */
+  _sectionsContainerKeyDown(event) {
+    var activeElement = this._sectionsContainer.ownerDocument.deepActiveElement();
+    if (!activeElement)
+      return;
+    var section = activeElement._section;
+    if (!section)
+      return;
+
+    switch (event.key) {
+      case 'ArrowUp':
+      case 'ArrowLeft':
+        var sectionToFocus = section.previousSibling() || section.lastSibling();
+        sectionToFocus.element.focus();
+        event.consume(true);
+        break;
+      case 'ArrowDown':
+      case 'ArrowRight':
+        var sectionToFocus = section.nextSibling() || section.firstSibling();
+        sectionToFocus.element.focus();
+        event.consume(true);
+        break;
+      case 'Home':
+        section.firstSibling().element.focus();
+        event.consume(true);
+        break;
+      case 'End':
+        section.lastSibling().element.focus();
+        event.consume(true);
+        break;
+    }
+  }
+
+  _sectionsContainerFocusChanged() {
+    // When a styles section is focused, shift+tab should leave the section.
+    // Leaving tabIndex = 0 on the first element would cause it to be focused instead.
+    if (this._sectionBlocks[0] && this._sectionBlocks[0].sections[0])
+      this._sectionBlocks[0].sections[0].element.tabIndex = this._sectionsContainer.hasFocus() ? -1 : 0;
+  }
+
+  /**
+   * @param {!Event} event
+   */
   _onAddButtonLongClick(event) {
     var cssModel = this.cssModel();
     if (!cssModel)
@@ -193,11 +254,10 @@ Elements.StylesSidebarPane = class extends Elements.ElementsSidebarPane {
     var contextMenu = new UI.ContextMenu(event);
     for (var i = 0; i < contextMenuDescriptors.length; ++i) {
       var descriptor = contextMenuDescriptors[i];
-      contextMenu.appendItem(descriptor.text, descriptor.handler);
+      contextMenu.defaultSection().appendItem(descriptor.text, descriptor.handler);
     }
-    if (!contextMenu.isEmpty())
-      contextMenu.appendSeparator();
-    contextMenu.appendItem('inspector-stylesheet', this._createNewRuleInViaInspectorStyleSheet.bind(this));
+    contextMenu.footerSection().appendItem(
+        'inspector-stylesheet', this._createNewRuleInViaInspectorStyleSheet.bind(this));
     contextMenu.show();
 
     /**
@@ -221,7 +281,7 @@ Elements.StylesSidebarPane = class extends Elements.ElementsSidebarPane {
   /**
    * @param {?RegExp} regex
    */
-  onFilterChanged(regex) {
+  _onFilterChanged(regex) {
     this._filterRegex = regex;
     this._updateFilter();
   }
@@ -234,11 +294,10 @@ Elements.StylesSidebarPane = class extends Elements.ElementsSidebarPane {
     if (!node)
       return;
 
-    var fullRefresh = Runtime.experiments.isEnabled('liveSASS');
     for (var section of this.allSections()) {
       if (section.isBlank)
         continue;
-      section.update(fullRefresh || section === editedSection);
+      section.update(section === editedSection);
     }
 
     if (this._filterRegex)
@@ -252,6 +311,22 @@ Elements.StylesSidebarPane = class extends Elements.ElementsSidebarPane {
    */
   doUpdate() {
     return this._fetchMatchedCascade().then(this._innerRebuildUpdate.bind(this));
+  }
+
+  /**
+   * @override
+   */
+  onResize() {
+    this._resizeThrottler.schedule(this._innerResize.bind(this));
+  }
+
+  /**
+   * @return {!Promise}
+   */
+  _innerResize() {
+    var width = this.contentElement.getBoundingClientRect().width + 'px';
+    this.allSections().forEach(section => section.propertiesTreeOutline.element.style.width = width);
+    return Promise.resolve();
   }
 
   _resetCache() {
@@ -285,7 +360,7 @@ Elements.StylesSidebarPane = class extends Elements.ElementsSidebarPane {
   setEditingStyle(editing) {
     if (this._isEditingStyle === editing)
       return;
-    this.element.classList.toggle('is-editing-style', editing);
+    this.contentElement.classList.toggle('is-editing-style', editing);
     this._isEditingStyle = editing;
   }
 
@@ -309,9 +384,26 @@ Elements.StylesSidebarPane = class extends Elements.ElementsSidebarPane {
   }
 
   /**
+   * @return {number}
+   */
+  _focusedSectionIndex() {
+    var index = 0;
+    for (var block of this._sectionBlocks) {
+      for (var section of block.sections) {
+        if (section.element.hasFocus())
+          return index;
+        index++;
+      }
+    }
+    return -1;
+  }
+
+  /**
    * @param {?SDK.CSSMatchedStyles} matchedStyles
    */
   _innerRebuildUpdate(matchedStyles) {
+    var focusedIndex = this._focusedSectionIndex();
+
     this._linkifier.reset();
     this._sectionsContainer.removeChildren();
     this._sectionBlocks = [];
@@ -343,14 +435,22 @@ Elements.StylesSidebarPane = class extends Elements.ElementsSidebarPane {
         block.sections.push(new Elements.KeyframePropertiesSection(this, matchedStyles, keyframe.style));
       this._sectionBlocks.push(block);
     }
-
+    var index = 0;
     for (var block of this._sectionBlocks) {
       var titleElement = block.titleElement();
       if (titleElement)
         this._sectionsContainer.appendChild(titleElement);
-      for (var section of block.sections)
+      for (var section of block.sections) {
         this._sectionsContainer.appendChild(section.element);
+        if (index === focusedIndex)
+          section.element.focus();
+        index++;
+      }
     }
+    if (focusedIndex >= index)
+      this._sectionBlocks[0].sections[0].element.focus();
+
+    this._sectionsContainerFocusChanged();
 
     if (this._filterRegex)
       this._updateFilter();
@@ -391,43 +491,29 @@ Elements.StylesSidebarPane = class extends Elements.ElementsSidebarPane {
     return blocks;
   }
 
-  _createNewRuleInViaInspectorStyleSheet() {
+  async _createNewRuleInViaInspectorStyleSheet() {
     var cssModel = this.cssModel();
     var node = this.node();
     if (!cssModel || !node)
       return;
     this._userOperation = true;
-    cssModel.requestViaInspectorStylesheet(node, onViaInspectorStyleSheet.bind(this));
 
-    /**
-     * @param {?SDK.CSSStyleSheetHeader} styleSheetHeader
-     * @this {Elements.StylesSidebarPane}
-     */
-    function onViaInspectorStyleSheet(styleSheetHeader) {
-      this._userOperation = false;
-      this._createNewRuleInStyleSheet(styleSheetHeader);
-    }
+    var styleSheetHeader = await cssModel.requestViaInspectorStylesheet(/** @type {!SDK.DOMNode} */ (node));
+
+    this._userOperation = false;
+    await this._createNewRuleInStyleSheet(styleSheetHeader);
   }
 
   /**
    * @param {?SDK.CSSStyleSheetHeader} styleSheetHeader
    */
-  _createNewRuleInStyleSheet(styleSheetHeader) {
+  async _createNewRuleInStyleSheet(styleSheetHeader) {
     if (!styleSheetHeader)
       return;
-    styleSheetHeader.requestContent().then(onStyleSheetContent.bind(this, styleSheetHeader.id));
-
-    /**
-     * @param {string} styleSheetId
-     * @param {?string} text
-     * @this {Elements.StylesSidebarPane}
-     */
-    function onStyleSheetContent(styleSheetId, text) {
-      text = text || '';
-      var lines = text.split('\n');
-      var range = TextUtils.TextRange.createFromLocation(lines.length - 1, lines[lines.length - 1].length);
-      this._addBlankSection(this._sectionBlocks[0].sections[0], styleSheetId, range);
-    }
+    var text = await styleSheetHeader.requestContent() || '';
+    var lines = text.split('\n');
+    var range = TextUtils.TextRange.createFromLocation(lines.length - 1, lines[lines.length - 1].length);
+    this._addBlankSection(this._sectionBlocks[0].sections[0], styleSheetHeader.id, range);
   }
 
   /**
@@ -500,6 +586,94 @@ Elements.StylesSidebarPane = class extends Elements.ElementsSidebarPane {
    */
   _clipboardCopy(event) {
     Host.userMetrics.actionTaken(Host.UserMetrics.Action.StyleRuleCopied);
+  }
+
+  /**
+   * @return {!Element}
+   */
+  _createStylesSidebarToolbar() {
+    var container = this.contentElement.createChild('div', 'styles-sidebar-pane-toolbar-container');
+    var hbox = container.createChild('div', 'hbox styles-sidebar-pane-toolbar');
+    var filterContainerElement = hbox.createChild('div', 'styles-sidebar-pane-filter-box');
+    var filterInput = Elements.StylesSidebarPane.createPropertyFilterElement(
+        Common.UIString('Filter'), hbox, this._onFilterChanged.bind(this), 'styles-filter-engaged');
+    UI.ARIAUtils.setAccessibleName(filterInput, Common.UIString('Filter Styles'));
+    filterContainerElement.appendChild(filterInput);
+    var toolbar = new UI.Toolbar('styles-pane-toolbar', hbox);
+    toolbar.makeToggledGray();
+    toolbar.appendLocationItems('styles-sidebarpane-toolbar');
+    var toolbarPaneContainer = container.createChild('div', 'styles-sidebar-toolbar-pane-container');
+    var toolbarPaneContent = toolbarPaneContainer.createChild('div', 'styles-sidebar-toolbar-pane');
+
+    return toolbarPaneContent;
+  }
+
+  /**
+   * @param {?UI.Widget} widget
+   * @param {?UI.ToolbarToggle} toggle
+   */
+  showToolbarPane(widget, toggle) {
+    if (this._pendingWidgetToggle)
+      this._pendingWidgetToggle.setToggled(false);
+    this._pendingWidgetToggle = toggle;
+
+    if (this._animatedToolbarPane)
+      this._pendingWidget = widget;
+    else
+      this._startToolbarPaneAnimation(widget);
+
+    if (widget && toggle)
+      toggle.setToggled(true);
+  }
+
+  /**
+   * @param {?UI.Widget} widget
+   */
+  _startToolbarPaneAnimation(widget) {
+    if (widget === this._currentToolbarPane)
+      return;
+
+    if (widget && this._currentToolbarPane) {
+      this._currentToolbarPane.detach();
+      widget.show(this._toolbarPaneElement);
+      this._currentToolbarPane = widget;
+      this._currentToolbarPane.focus();
+      return;
+    }
+
+    this._animatedToolbarPane = widget;
+
+    if (this._currentToolbarPane)
+      this._toolbarPaneElement.style.animationName = 'styles-element-state-pane-slideout';
+    else if (widget)
+      this._toolbarPaneElement.style.animationName = 'styles-element-state-pane-slidein';
+
+    if (widget)
+      widget.show(this._toolbarPaneElement);
+
+    var listener = onAnimationEnd.bind(this);
+    this._toolbarPaneElement.addEventListener('animationend', listener, false);
+
+    /**
+     * @this {!Elements.StylesSidebarPane}
+     */
+    function onAnimationEnd() {
+      this._toolbarPaneElement.style.removeProperty('animation-name');
+      this._toolbarPaneElement.removeEventListener('animationend', listener, false);
+
+      if (this._currentToolbarPane)
+        this._currentToolbarPane.detach();
+
+      this._currentToolbarPane = this._animatedToolbarPane;
+      if (this._currentToolbarPane)
+        this._currentToolbarPane.focus();
+      this._animatedToolbarPane = null;
+
+      if (this._pendingWidget) {
+        this._startToolbarPaneAnimation(this._pendingWidget);
+        this._pendingWidget = null;
+      }
+    }
   }
 };
 
@@ -584,15 +758,21 @@ Elements.StylePropertiesSection = class {
 
     var rule = style.parentRule;
     this.element = createElementWithClass('div', 'styles-section matched-styles monospace');
+    this.element.tabIndex = -1;
+    UI.ARIAUtils.markAsTreeitem(this.element);
+    this._editing = false;
+    this.element.addEventListener('keydown', this._onKeyDown.bind(this), false);
     this.element._section = this;
+    this._innerElement = this.element.createChild('div');
 
-    this._titleElement = this.element.createChild('div', 'styles-section-title ' + (rule ? 'styles-selector' : ''));
+    this._titleElement = this._innerElement.createChild('div', 'styles-section-title ' + (rule ? 'styles-selector' : ''));
 
     this.propertiesTreeOutline = new UI.TreeOutlineInShadow();
+    this.propertiesTreeOutline.setFocusable(false);
     this.propertiesTreeOutline.registerRequiredCSS('elements/stylesSectionTree.css');
     this.propertiesTreeOutline.element.classList.add('style-properties', 'matched-styles', 'monospace');
     this.propertiesTreeOutline.section = this;
-    this.element.appendChild(this.propertiesTreeOutline.element);
+    this._innerElement.appendChild(this.propertiesTreeOutline.element);
 
     var selectorContainer = createElement('div');
     this._selectorElement = createElementWithClass('span', 'selector');
@@ -607,7 +787,7 @@ Elements.StylePropertiesSection = class {
     selectorContainer.addEventListener('mousedown', this._handleEmptySpaceMouseDown.bind(this), false);
     selectorContainer.addEventListener('click', this._handleSelectorContainerClick.bind(this), false);
 
-    var closeBrace = this.element.createChild('div', 'sidebar-pane-closing-brace');
+    var closeBrace = this._innerElement.createChild('div', 'sidebar-pane-closing-brace');
     closeBrace.textContent = '}';
 
     this._createHoverMenuToolbar(closeBrace);
@@ -645,6 +825,9 @@ Elements.StylePropertiesSection = class {
       this.element.classList.add('read-only');
       this.propertiesTreeOutline.element.classList.add('read-only');
     }
+
+    var throttler = new Common.Throttler(100);
+    this._scheduleHeightUpdate = () => throttler.schedule(this._manuallySetHeight.bind(this));
 
     this._hoverableSelectorsMode = false;
     this._markSelectorMatches();
@@ -705,6 +888,26 @@ Elements.StylePropertiesSection = class {
   }
 
   /**
+   * @param {!Event} event
+   */
+  _onKeyDown(event) {
+    if (this._editing || !this.editable || event.altKey || event.ctrlKey || event.metaKey)
+      return;
+    switch (event.key) {
+      case 'Enter':
+      case ' ':
+        this._startEditingAtFirstPosition();
+        event.consume(true);
+        break;
+      default:
+        // Filter out non-printable key strokes.
+        if (event.key.length === 1)
+          this.addNewBlankProperty(0).startEditing();
+        break;
+    }
+  }
+
+  /**
    * @param {boolean} isHovered
    */
   _setSectionHovered(isHovered) {
@@ -735,25 +938,30 @@ Elements.StylePropertiesSection = class {
     var textShadowButton = new UI.ToolbarButton(Common.UIString('Add text-shadow'), 'largeicon-text-shadow');
     textShadowButton.addEventListener(
         UI.ToolbarButton.Events.Click, this._onInsertShadowPropertyClick.bind(this, 'text-shadow'));
+    textShadowButton.element.tabIndex = -1;
     items.push(textShadowButton);
 
     var boxShadowButton = new UI.ToolbarButton(Common.UIString('Add box-shadow'), 'largeicon-box-shadow');
     boxShadowButton.addEventListener(
         UI.ToolbarButton.Events.Click, this._onInsertShadowPropertyClick.bind(this, 'box-shadow'));
+    boxShadowButton.element.tabIndex = -1;
     items.push(boxShadowButton);
 
     var colorButton = new UI.ToolbarButton(Common.UIString('Add color'), 'largeicon-foreground-color');
     colorButton.addEventListener(UI.ToolbarButton.Events.Click, this._onInsertColorPropertyClick, this);
+    colorButton.element.tabIndex = -1;
     items.push(colorButton);
 
     var backgroundButton = new UI.ToolbarButton(Common.UIString('Add background-color'), 'largeicon-background-color');
     backgroundButton.addEventListener(UI.ToolbarButton.Events.Click, this._onInsertBackgroundColorPropertyClick, this);
+    backgroundButton.element.tabIndex = -1;
     items.push(backgroundButton);
 
     var newRuleButton = null;
     if (this._style.parentRule) {
       newRuleButton = new UI.ToolbarButton(Common.UIString('Insert Style Rule Below'), 'largeicon-add');
       newRuleButton.addEventListener(UI.ToolbarButton.Events.Click, this._onNewRuleClick, this);
+      newRuleButton.element.tabIndex = -1;
       items.push(newRuleButton);
     }
 
@@ -762,10 +970,12 @@ Elements.StylePropertiesSection = class {
       sectionToolbar.appendToolbarItem(items[i]);
 
     var menuButton = new UI.ToolbarButton(Common.UIString('More tools\u2026'), 'largeicon-menu');
+    menuButton.element.tabIndex = -1;
     sectionToolbar.appendToolbarItem(menuButton);
     setItemsVisibility.call(this, items, false);
     sectionToolbar.element.addEventListener('mouseenter', setItemsVisibility.bind(this, items, true));
     sectionToolbar.element.addEventListener('mouseleave', setItemsVisibility.bind(this, items, false));
+    UI.ARIAUtils.markAsHidden(sectionToolbar.element);
 
     /**
      * @param {!Array<!UI.ToolbarButton>} items
@@ -815,7 +1025,7 @@ Elements.StylePropertiesSection = class {
   _onMouseOutSelector() {
     if (this._hoverTimer)
       clearTimeout(this._hoverTimer);
-    SDK.DOMModel.hideDOMNodeHighlight();
+    SDK.OverlayModel.hideDOMNodeHighlight();
   }
 
   _onMouseEnterSelector() {
@@ -825,11 +1035,11 @@ Elements.StylePropertiesSection = class {
   }
 
   _highlight() {
-    SDK.DOMModel.hideDOMNodeHighlight();
+    SDK.OverlayModel.hideDOMNodeHighlight();
     var node = this._parentPane.node();
-    var domModel = node.domModel();
     var selectors = this._style.parentRule ? this._style.parentRule.selectorText() : undefined;
-    domModel.highlightDOMNodeWithConfig(node.id, {mode: 'all', showInfo: undefined, selectors: selectors});
+    node.domModel().overlayModel().highlightDOMNodeWithConfig(
+        node.id, {mode: 'all', showInfo: undefined, selectors: selectors});
   }
 
   /**
@@ -1244,21 +1454,7 @@ Elements.StylePropertiesSection = class {
    * @param {!Event} event
    */
   _handleEmptySpaceClick(event) {
-    if (!this.editable)
-      return;
-
-    var targetElement = event.deepElementFromPoint();
-    if (targetElement && !targetElement.isComponentSelectionCollapsed())
-      return;
-
-    if (!event.target.isComponentSelectionCollapsed())
-      return;
-
-    if (this.propertiesTreeOutline.element.shadowRoot.firstChild &&
-        !this.propertiesTreeOutline.element.shadowRoot.firstChild.isComponentSelectionCollapsed())
-      return;
-
-    if (this._checkWillCancelEditing())
+    if (!this.editable || this.element.hasSelection() || this._checkWillCancelEditing())
       return;
 
     if (event.target.classList.contains('header') || this.element.classList.contains('read-only') ||
@@ -1299,6 +1495,7 @@ Elements.StylePropertiesSection = class {
         this._editingMediaCommitted.bind(this, media), this._editingMediaCancelled.bind(this, element), undefined,
         this._editingMediaBlurHandler.bind(this));
     UI.InplaceEditor.startEditing(element, config);
+    this._startEditing();
 
     element.getComponentSelection().selectAllChildren(element);
     this._parentPane.setEditingStyle(true);
@@ -1315,6 +1512,7 @@ Elements.StylePropertiesSection = class {
     this._parentPane.setEditingStyle(false);
     var parentMediaElement = element.enclosingNodeOrSelfWithClass('media');
     parentMediaElement.classList.remove('editing-media');
+    this._stopEditing();
   }
 
   /**
@@ -1383,7 +1581,7 @@ Elements.StylePropertiesSection = class {
       event.consume(true);
       return;
     }
-    this._startEditingOnMouseEvent();
+    this._startEditingAtFirstPosition();
     event.consume(true);
   }
 
@@ -1403,18 +1601,14 @@ Elements.StylePropertiesSection = class {
       Common.Revealer.reveal(uiLocation, !focus);
   }
 
-  _startEditingOnMouseEvent() {
+  _startEditingAtFirstPosition() {
     if (!this.editable || this._isSASSStyle())
       return;
 
-    var rule = this._style.parentRule;
-    if (!rule && !this.propertiesTreeOutline.rootElement().childCount()) {
-      this.addNewBlankProperty().startEditing();
+    if (!this._style.parentRule) {
+      this._moveEditorFromSelector('forward');
       return;
     }
-
-    if (!rule)
-      return;
 
     this.startEditingSelector();
   }
@@ -1425,11 +1619,13 @@ Elements.StylePropertiesSection = class {
       return;
 
     element.scrollIntoViewIfNeeded(false);
-    element.textContent = element.textContent;  // Reset selector marks in group.
+    // Reset selector marks in group, and normalize whitespace.
+    element.textContent = element.textContent.replace(/\s+/g, ' ').trim();
 
     var config =
         new UI.InplaceEditor.Config(this.editingSelectorCommitted.bind(this), this.editingSelectorCancelled.bind(this));
     UI.InplaceEditor.startEditing(this._selectorElement, config);
+    this._startEditing();
 
     element.getComponentSelection().selectAllChildren(element);
     this._parentPane.setEditingStyle(true);
@@ -1546,6 +1742,7 @@ Elements.StylePropertiesSection = class {
 
   _editingSelectorEnded() {
     this._parentPane.setEditingStyle(false);
+    this._stopEditing();
   }
 
   editingSelectorCancelled() {
@@ -1554,6 +1751,30 @@ Elements.StylePropertiesSection = class {
     // Mark the selectors in group if necessary.
     // This is overridden by BlankStylePropertiesSection.
     this._markSelectorMatches();
+  }
+
+  _startEditing() {
+    this._manuallySetHeight();
+    this.element.addEventListener('input', this._scheduleHeightUpdate, true);
+    this._editing = true;
+  }
+
+  /**
+   * @return {!Promise}
+   */
+  _manuallySetHeight() {
+    this.element.style.height = (this._innerElement.clientHeight + 1) + 'px';
+    this.element.style.contain = 'strict';
+    return Promise.resolve();
+  }
+
+  _stopEditing() {
+    this.element.style.removeProperty('height');
+    this.element.style.removeProperty('contain');
+    this.element.removeEventListener('input', this._scheduleHeightUpdate, true);
+    this._editing = false;
+    if (this._parentPane.element.hasFocus())
+      this.element.focus();
   }
 };
 
@@ -1646,11 +1867,11 @@ Elements.BlankStylePropertiesSection = class extends Elements.StylePropertiesSec
         this.propertiesTreeOutline.element.classList.add('no-affect');
 
       this._updateRuleOrigin();
-      if (this.element.parentElement)  // Might have been detached already.
-        this._moveEditorFromSelector(moveDirection);
 
       this._parentPane._userOperation = false;
       this._editingSelectorEnded();
+      if (this.element.parentElement)  // Might have been detached already.
+        this._moveEditorFromSelector(moveDirection);
       this._markSelectorMatches();
 
       this._editingSelectorCommittedForTest();
@@ -1891,29 +2112,10 @@ Elements.StylePropertyTreeElement = class extends UI.TreeElement {
     var swatchIcon = new Elements.ColorSwatchPopoverIcon(this, swatchPopoverHelper, swatch);
 
     /**
-     * @param {?Array<string>} backgroundColors
+     * @param {?SDK.CSSModel.ContrastInfo} contrastInfo
      */
-    function computedCallback(backgroundColors) {
-      // TODO(aboxhall): distinguish between !backgroundColors (no text) and
-      // !backgroundColors.length (no computed bg color)
-      if (!backgroundColors || !backgroundColors.length)
-        return;
-      // TODO(samli): figure out what to do in the case of multiple background colors (i.e. gradients)
-      var bgColorText = backgroundColors[0];
-      var bgColor = Common.Color.parse(bgColorText);
-      if (!bgColor)
-        return;
-
-      // If we have a semi-transparent background color over an unknown
-      // background, draw the line for the "worst case" scenario: where
-      // the unknown background is the same color as the text.
-      if (bgColor.hasAlpha) {
-        var blendedRGBA = [];
-        Common.Color.blendColors(bgColor.rgba(), color.rgba(), blendedRGBA);
-        bgColor = new Common.Color(blendedRGBA, Common.Color.Format.RGBA);
-      }
-
-      swatchIcon.setContrastColor(bgColor);
+    function computedCallback(contrastInfo) {
+      swatchIcon.setContrastInfo(contrastInfo);
     }
 
     if (Runtime.experiments.isEnabled('colorContrastRatio') && this.property.name === 'color' &&
@@ -2200,7 +2402,7 @@ Elements.StylePropertyTreeElement = class extends UI.TreeElement {
    * @param {!Event} event
    */
   _mouseClick(event) {
-    if (!event.target.isComponentSelectionCollapsed())
+    if (event.target.hasSelection())
       return;
 
     event.consume(true);
@@ -2369,6 +2571,8 @@ Elements.StylePropertyTreeElement = class extends UI.TreeElement {
 
     this._prompt = new Elements.StylesSidebarPane.CSSPropertyPrompt(cssCompletions, cssVariables, this, isEditingName);
     this._prompt.setAutocompletionTimeout(0);
+    if (section)
+      section._startEditing();
 
     // Do not live-edit "content" property of pseudo elements. crbug.com/433889
     if (!isEditingName && (!this._parentPane.node().pseudoType() || this.name !== 'content'))
@@ -2396,7 +2600,6 @@ Elements.StylePropertyTreeElement = class extends UI.TreeElement {
     var result;
 
     if (isEnterKey(event)) {
-      event.preventDefault();
       result = 'forward';
     } else if (event.keyCode === UI.KeyboardShortcut.Keys.Esc.code || event.key === 'Escape') {
       result = 'cancel';
@@ -2566,6 +2769,7 @@ Elements.StylePropertyTreeElement = class extends UI.TreeElement {
         (isPropertySplitPaste || moveToOther || (!moveDirection && !isEditingName) || (isEditingName && blankInput));
     var section = /** @type {!Elements.StylePropertiesSection} */ (this.section());
     if (((userInput !== context.previousContent || isDirtyViaPaste) && !this._newProperty) || shouldCommitNewProperty) {
+      this._parentPane.element.focus();
       section._afterUpdate = moveToNextCallback.bind(this, this._newProperty, !blankInput, section);
       var propertyText;
       if (blankInput || (this._newProperty && this.valueElement.textContent.isWhitespace())) {
@@ -2663,6 +2867,9 @@ Elements.StylePropertyTreeElement = class extends UI.TreeElement {
       this._prompt.detach();
       this._prompt = null;
     }
+    var section = this.section();
+    if (section)
+      section._stopEditing();
   }
 
   styleTextAppliedForTest() {
@@ -3047,7 +3254,7 @@ Elements.StylesSidebarPropertyRenderer = class {
       hrefUrl = Common.ParsedURL.completeURL(this._rule.resourceURL(), url);
     else if (this._node)
       hrefUrl = this._node.resolveURL(url);
-    container.appendChild(Components.Linkifier.linkifyURL(hrefUrl || url, url, '', undefined, undefined, true));
+    container.appendChild(Components.Linkifier.linkifyURL(hrefUrl || url, {text: url, preventClick: true}));
     container.createTextChild(')');
     return container;
   }

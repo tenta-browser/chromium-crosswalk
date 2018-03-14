@@ -7,28 +7,13 @@
 
 #include <stdint.h>
 
-#include <string>
-
 #include "base/files/file_path.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
+#include "components/offline_pages/core/client_id.h"
 #include "url/gurl.h"
 
 namespace offline_pages {
-
-struct ClientId {
-  // The namespace for the id (of course 'namespace' is a reserved word, so...)
-  std::string name_space;
-  // The id in the client's namespace.  Opaque to us.
-  std::string id;
-
-  ClientId();
-  ClientId(std::string name_space, std::string id);
-
-  bool operator==(const ClientId& client_id) const;
-
-  bool operator<(const ClientId& client_id) const;
-};
 
 // Metadata of the offline page.
 struct OfflinePageItem {
@@ -51,10 +36,18 @@ struct OfflinePageItem {
                   const base::FilePath& file_path,
                   int64_t file_size,
                   const base::Time& creation_time);
+  OfflinePageItem(const GURL& url,
+                  int64_t offline_id,
+                  const ClientId& client_id,
+                  const base::FilePath& file_path,
+                  int64_t file_size,
+                  const base::Time& creation_time,
+                  const std::string& origin_package);
   OfflinePageItem(const OfflinePageItem& other);
   ~OfflinePageItem();
 
   bool operator==(const OfflinePageItem& other) const;
+  bool operator<(const OfflinePageItem& other) const;
 
   // The URL of the page. This is the last committed URL. In the case that
   // redirects occur, access |original_url| for the original URL.
@@ -84,6 +77,20 @@ struct OfflinePageItem {
   // The original URL of the page if not empty. Otherwise, this is set to empty
   // and |url| should be accessed instead.
   GURL original_url;
+  // The app, if any, that the item was saved on behalf of.
+  // Empty string implies Chrome.
+  std::string request_origin;
+  // System download id.
+  int64_t system_download_id;
+  // The most recent time when the file was discovered missing.
+  // NULL time implies the file is not missing.
+  base::Time file_missing_time;
+  // Number of attemps for upgrading the MHTML page into new format.
+  int upgrade_attempt;
+  // Digest of the page calculated when page is saved, in order to tell if the
+  // page can be trusted. This field will always be an empty string for
+  // temporary and shared pages.
+  std::string digest;
 };
 
 }  // namespace offline_pages

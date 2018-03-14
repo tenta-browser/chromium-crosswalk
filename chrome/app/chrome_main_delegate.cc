@@ -21,6 +21,7 @@
 #include "base/process/process_handle.h"
 #include "base/process/process_info.h"
 #include "base/strings/string_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event_impl.h"
 #include "build/build_config.h"
@@ -38,7 +39,8 @@
 #include "chrome/common/features.h"
 #include "chrome/common/logging_chrome.h"
 #include "chrome/common/profiling.h"
-#include "chrome/common/switch_utils.h"
+#include "chrome/common/profiling/memlog_allocator_shim.h"
+#include "chrome/common/profiling/memlog_stream.h"
 #include "chrome/common/trace_event_args_whitelist.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/gpu/chrome_content_gpu_client.h"
@@ -47,14 +49,18 @@
 #include "components/component_updater/component_updater_paths.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/crash/content/app/crash_reporter_client.h"
+#include "components/crash/core/common/crash_key.h"
+#include "components/nacl/common/features.h"
 #include "components/version_info/version_info.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/service_names.mojom.h"
 #include "extensions/common/constants.h"
 #include "pdf/features.h"
 #include "ppapi/features/features.h"
 #include "printing/features/features.h"
+#include "services/service_manager/embedder/switches.h"
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_switches.h"
@@ -69,6 +75,7 @@
 #include "chrome/browser/downgrade/user_data_downgrade.h"
 #include "chrome/child/v8_breakpad_support_win.h"
 #include "chrome/common/child_process_logging.h"
+#include "chrome_elf/chrome_elf_main.h"
 #include "sandbox/win/src/sandbox.h"
 #include "ui/base/resource/resource_bundle_win.h"
 #endif
@@ -86,10 +93,12 @@
 #if defined(OS_POSIX)
 #include <locale.h>
 #include <signal.h>
+
 #include "chrome/app/chrome_crash_reporter_client.h"
+#include "chrome/app/shutdown_signal_handlers_posix.h"
 #endif
 
-#if !defined(DISABLE_NACL) && defined(OS_LINUX)
+#if BUILDFLAG(ENABLE_NACL) && defined(OS_LINUX)
 #include "components/nacl/common/nacl_paths.h"
 #include "components/nacl/zygote/nacl_fork_delegate_linux.h"
 #endif
@@ -100,10 +109,12 @@
 #include "chromeos/chromeos_paths.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/hugepage_text/hugepage_text.h"
+#include "components/metrics/leak_detector/leak_detector.h"
 #endif
 
 #if defined(OS_ANDROID)
 #include "base/android/java_exception_reporter.h"
+#include "chrome/browser/android/crash/pure_java_exception_handler.h"
 #include "chrome/common/descriptors_android.h"
 #else
 // Diagnostics is only available on non-android platforms.
@@ -119,6 +130,7 @@
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
 #include "components/crash/content/app/breakpad_linux.h"
+#include "v8/include/v8.h"
 #endif
 
 #if defined(OS_LINUX)
@@ -130,11 +142,7 @@
 #include "components/crash/content/app/crashpad.h"
 #endif
 
-#if defined(OS_CHROMEOS)
-#include "components/metrics/leak_detector/leak_detector.h"
-#endif
-
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
 #include "components/nacl/common/nacl_switches.h"
 #include "components/nacl/renderer/plugin/ppapi_entrypoints.h"
 #endif
@@ -170,7 +178,15 @@ base::LazyInstance<ChromeCrashReporterClient>::Leaky g_chrome_crash_client =
 #endif
 
 extern int NaClMain(const content::MainFunctionParams&);
+
+#if !defined(OS_CHROMEOS)
 extern int CloudPrintServiceProcessMain(const content::MainFunctionParams&);
+#endif
+
+const char* const ChromeMainDelegate::kNonWildcardDomainNonPortSchemes[] = {
+    extensions::kExtensionScheme, chrome::kChromeSearchScheme};
+const size_t ChromeMainDelegate::kNonWildcardDomainNonPortSchemesSize =
+    arraysize(kNonWildcardDomainNonPortSchemes);
 
 namespace {
 
@@ -250,14 +266,17 @@ void AdjustLinuxOOMScore(const std::string& process_type) {
     score = kPluginScore + kScoreBump;
   } else if (process_type == switches::kUtilityProcess ||
              process_type == switches::kGpuProcess ||
-             process_type == switches::kCloudPrintServiceProcess) {
+             process_type == switches::kCloudPrintServiceProcess ||
+             process_type == service_manager::switches::kProcessTypeService) {
     score = kMiscScore;
-#ifndef DISABLE_NACL
+#if BUILDFLAG(ENABLE_NACL)
   } else if (process_type == switches::kNaClLoaderProcess ||
              process_type == switches::kNaClLoaderNonSfiProcess) {
     score = kPluginScore;
 #endif
   } else if (process_type == switches::kZygoteProcess ||
+             process_type ==
+                 service_manager::switches::kProcessTypeServiceManager ||
              process_type.empty()) {
     // For zygotes and unlabeled process types, we want to still make
     // them killable by the OOM killer.
@@ -284,14 +303,14 @@ void AdjustLinuxOOMScore(const std::string& process_type) {
 // and resources loaded.
 bool SubprocessNeedsResourceBundle(const std::string& process_type) {
   return
-#if defined(OS_POSIX) && !defined(OS_MACOSX)
+#if defined(OS_LINUX)
       // The zygote process opens the resources for the renderers.
       process_type == switches::kZygoteProcess ||
 #endif
 #if defined(OS_MACOSX)
       // Mac needs them too for scrollbar related images and for sandbox
       // profiles.
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
       process_type == switches::kNaClLoaderProcess ||
 #endif
       process_type == switches::kPpapiPluginProcess ||
@@ -365,19 +384,14 @@ struct MainFunction {
 // Initializes the user data dir. Must be called before InitializeLocalState().
 void InitializeUserDataDir(base::CommandLine* command_line) {
 #if defined(OS_WIN)
+  // Reach out to chrome_elf for the truth on the user data directory.
+  // Note that in tests, this links to chrome_elf_test_stubs.
   wchar_t user_data_dir_buf[MAX_PATH], invalid_user_data_dir_buf[MAX_PATH];
 
-  using GetUserDataDirectoryThunkFunction =
-      void (*)(wchar_t*, size_t, wchar_t*, size_t);
-  HMODULE elf_module = GetModuleHandle(chrome::kChromeElfDllName);
-  if (elf_module) {
-    // If we're in a test, chrome_elf won't be loaded.
-    GetUserDataDirectoryThunkFunction get_user_data_directory_thunk =
-        reinterpret_cast<GetUserDataDirectoryThunkFunction>(
-            GetProcAddress(elf_module, "GetUserDataDirectoryThunk"));
-    get_user_data_directory_thunk(
-        user_data_dir_buf, arraysize(user_data_dir_buf),
-        invalid_user_data_dir_buf, arraysize(invalid_user_data_dir_buf));
+  // In tests this may return false, implying the user data dir should be unset.
+  if (GetUserDataDirectoryThunk(user_data_dir_buf, arraysize(user_data_dir_buf),
+                                invalid_user_data_dir_buf,
+                                arraysize(invalid_user_data_dir_buf))) {
     base::FilePath user_data_dir(user_data_dir_buf);
     if (invalid_user_data_dir_buf[0] != 0) {
       chrome::SetInvalidSpecifiedUserDataDir(
@@ -386,16 +400,6 @@ void InitializeUserDataDir(base::CommandLine* command_line) {
     }
     CHECK(PathService::OverrideAndCreateIfNeeded(chrome::DIR_USER_DATA,
                                                  user_data_dir, false, true));
-  } else {
-    // In tests, just respect the flag if given.
-    base::FilePath user_data_dir =
-        command_line->GetSwitchValuePath(switches::kUserDataDir);
-    if (!user_data_dir.empty()) {
-      if (user_data_dir.EndsWithSeparator())
-        user_data_dir = user_data_dir.StripTrailingSeparators();
-      CHECK(PathService::OverrideAndCreateIfNeeded(chrome::DIR_USER_DATA,
-                                                   user_data_dir, false, true));
-    }
   }
 #else  // OS_WIN
   base::FilePath user_data_dir =
@@ -544,6 +548,9 @@ bool ChromeMainDelegate::BasicStartupComplete(int* exit_code) {
 #if defined(OS_WIN) && !defined(CHROME_MULTIPLE_DLL_BROWSER)
   v8_breakpad_support::SetUp();
 #endif
+#if defined(OS_LINUX) && !defined(OS_ANDROID)
+  breakpad::SetFirstChanceExceptionHandler(v8::V8::TryHandleSignal);
+#endif
 
 #if defined(OS_POSIX)
   if (HandleVersionSwitches(command_line)) {
@@ -574,12 +581,12 @@ bool ChromeMainDelegate::BasicStartupComplete(int* exit_code) {
 #if defined(OS_CHROMEOS)
   chromeos::RegisterPathProvider();
 #endif
-#if !defined(DISABLE_NACL) && defined(OS_LINUX)
+#if BUILDFLAG(ENABLE_NACL) && defined(OS_LINUX)
   nacl::RegisterPathProvider();
 #endif
 
-  ContentSettingsPattern::SetNonWildcardDomainNonPortScheme(
-      extensions::kExtensionScheme);
+  ContentSettingsPattern::SetNonWildcardDomainNonPortSchemes(
+      kNonWildcardDomainNonPortSchemes, kNonWildcardDomainNonPortSchemesSize);
 
 // No support for ANDROID yet as DiagnosticsController needs wchar support.
 // TODO(gspencer): That's not true anymore, or at least there are no w-string
@@ -681,6 +688,14 @@ bool ChromeMainDelegate::BasicStartupComplete(int* exit_code) {
 
   content::SetContentClient(&chrome_content_client_);
 
+  // The TLS slot used by the memlog allocator shim needs to be initialized
+  // early to ensure that it gets assigned a low slot number. If it gets
+  // initialized too late, the glibc TLS system will require a malloc call in
+  // order to allocate storage for a higher slot number. Since malloc is hooked,
+  // this causes re-entrancy into the allocator shim, while the TLS object is
+  // partially-initialized, which the TLS object is supposed to protect again.
+  profiling::InitTLSSlot();
+
 #if defined (OS_CHROMEOS)
   // The TLS slot used by metrics::LeakDetector needs to be initialized early to
   // ensure that it gets assigned a low slow number. If it gets initialized too
@@ -758,6 +773,8 @@ void ChromeMainDelegate::PreSandboxStartup() {
   std::string process_type =
       command_line.GetSwitchValueASCII(switches::kProcessType);
 
+  crash_reporter::InitializeCrashKeys();
+
 #if defined(OS_POSIX)
   crash_reporter::SetCrashReporterClient(g_chrome_crash_client.Pointer());
 #endif
@@ -818,7 +835,7 @@ void ChromeMainDelegate::PreSandboxStartup() {
     // Initialize ResourceBundle which handles files loaded from external
     // sources.  The language should have been passed in to us from the
     // browser process as a command line flag.
-#if defined(DISABLE_NACL)
+#if !BUILDFLAG(ENABLE_NACL)
     DCHECK(command_line.HasSwitch(switches::kLang) ||
            process_type == switches::kZygoteProcess ||
            process_type == switches::kGpuProcess ||
@@ -848,8 +865,18 @@ void ChromeMainDelegate::PreSandboxStartup() {
     int pak_fd = global_descriptors->Get(kAndroidLocalePakDescriptor);
     base::MemoryMappedFile::Region pak_region =
         global_descriptors->GetRegion(kAndroidLocalePakDescriptor);
-    ResourceBundle::InitSharedInstanceWithPakFileRegion(base::File(pak_fd),
-                                                        pak_region);
+    ui::ResourceBundle::InitSharedInstanceWithPakFileRegion(base::File(pak_fd),
+                                                            pak_region);
+
+    // Load secondary locale .pak file if it exists.
+    pak_fd = global_descriptors->MaybeGet(kAndroidSecondaryLocalePakDescriptor);
+    if (pak_fd != -1) {
+      pak_region = global_descriptors->GetRegion(
+          kAndroidSecondaryLocalePakDescriptor);
+      ui::ResourceBundle::GetSharedInstance()
+          .LoadSecondaryLocaleDataWithPakFileRegion(base::File(pak_fd),
+                                                    pak_region);
+    }
 
     int extra_pak_keys[] = {
       kAndroidChrome100PercentPakDescriptor,
@@ -858,7 +885,7 @@ void ChromeMainDelegate::PreSandboxStartup() {
     for (size_t i = 0; i < arraysize(extra_pak_keys); ++i) {
       pak_fd = global_descriptors->Get(extra_pak_keys[i]);
       pak_region = global_descriptors->GetRegion(extra_pak_keys[i]);
-      ResourceBundle::GetSharedInstance().AddDataPackFromFileRegion(
+      ui::ResourceBundle::GetSharedInstance().AddDataPackFromFileRegion(
           base::File(pak_fd), pak_region, ui::SCALE_FACTOR_100P);
     }
 
@@ -872,7 +899,7 @@ void ChromeMainDelegate::PreSandboxStartup() {
 
     base::FilePath resources_pack_path;
     PathService::Get(chrome::FILE_RESOURCES_PACK, &resources_pack_path);
-    ResourceBundle::GetSharedInstance().AddDataPackFromPath(
+    ui::ResourceBundle::GetSharedInstance().AddDataPackFromPath(
         resources_pack_path, ui::SCALE_FACTOR_NONE);
 #endif
     CHECK(!loaded_locale.empty()) << "Locale could not be found for " <<
@@ -885,7 +912,7 @@ void ChromeMainDelegate::PreSandboxStartup() {
     ChromeContentUtilityClient::PreSandboxStartup();
   }
 
-  chrome::InitializePDF();
+  InitializePDF();
 #endif
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
@@ -895,6 +922,7 @@ void ChromeMainDelegate::PreSandboxStartup() {
     if (process_type.empty()) {
       breakpad::InitCrashReporter(process_type);
       base::android::InitJavaExceptionReporter();
+      UninstallPureJavaExceptionHandler();
     } else {
       breakpad::InitNonBrowserCrashReporterForAndroid(process_type);
       base::android::InitJavaExceptionReporterForChildProcess();
@@ -922,7 +950,7 @@ void ChromeMainDelegate::SandboxInitialized(const std::string& process_type) {
 #endif
 
 #if defined(CHROME_MULTIPLE_DLL_CHILD) || !defined(CHROME_MULTIPLE_DLL_BROWSER)
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   ChromeContentClient::SetNaClEntryFunctions(
       nacl_plugin::PPP_GetInterface,
       nacl_plugin::PPP_InitializeModule,
@@ -945,7 +973,8 @@ int ChromeMainDelegate::RunProcess(
 // Android.
 #if !defined(OS_ANDROID)
   static const MainFunction kMainFunctions[] = {
-#if BUILDFLAG(ENABLE_PRINT_PREVIEW) && !defined(CHROME_MULTIPLE_DLL_CHILD)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW) && !defined(CHROME_MULTIPLE_DLL_CHILD) && \
+    !defined(OS_CHROMEOS)
     {switches::kCloudPrintServiceProcess, CloudPrintServiceProcessMain},
 #endif
 
@@ -955,13 +984,13 @@ int ChromeMainDelegate::RunProcess(
 
     // This entry is not needed on Linux, where the NaCl loader
     // process is launched via nacl_helper instead.
-#if !defined(DISABLE_NACL) && !defined(CHROME_MULTIPLE_DLL_BROWSER) && \
+#if BUILDFLAG(ENABLE_NACL) && !defined(CHROME_MULTIPLE_DLL_BROWSER) && \
     !defined(OS_LINUX)
     {switches::kNaClLoaderProcess, NaClMain},
 #else
-    { "<invalid>", NULL },  // To avoid constant array of size 0
-                            // when DISABLE_NACL and CHROME_MULTIPLE_DLL_CHILD
-#endif  // DISABLE_NACL
+    {"<invalid>", NULL},  // To avoid constant array of size 0
+                          // when NaCl disabled and CHROME_MULTIPLE_DLL_CHILD
+#endif
   };
 
   for (size_t i = 0; i < arraysize(kMainFunctions); ++i) {
@@ -975,7 +1004,7 @@ int ChromeMainDelegate::RunProcess(
 
 void ChromeMainDelegate::ProcessExiting(const std::string& process_type) {
   if (SubprocessNeedsResourceBundle(process_type))
-    ResourceBundle::CleanupSharedInstance();
+    ui::ResourceBundle::CleanupSharedInstance();
 #if !defined(OS_ANDROID)
   logging::CleanupChromeLogging();
 #else
@@ -987,7 +1016,7 @@ void ChromeMainDelegate::ProcessExiting(const std::string& process_type) {
 #if defined(OS_MACOSX)
 bool ChromeMainDelegate::ProcessRegistersWithSystemProcess(
     const std::string& process_type) {
-#if defined(DISABLE_NACL)
+#if !BUILDFLAG(ENABLE_NACL)
   return false;
 #else
   return process_type == switches::kNaClLoaderProcess;
@@ -1001,7 +1030,7 @@ bool ChromeMainDelegate::ShouldSendMachPort(const std::string& process_type) {
 
 bool ChromeMainDelegate::DelaySandboxInitialization(
     const std::string& process_type) {
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   // NaClLoader does this in NaClMainPlatformDelegate::EnableSandbox().
   // No sandbox needed for relauncher.
   if (process_type == switches::kNaClLoaderProcess)
@@ -1009,15 +1038,15 @@ bool ChromeMainDelegate::DelaySandboxInitialization(
 #endif
   return process_type == switches::kRelauncherProcess;
 }
-#elif defined(OS_POSIX) && !defined(OS_ANDROID)
+#elif defined(OS_LINUX)
 void ChromeMainDelegate::ZygoteStarting(
     std::vector<std::unique_ptr<content::ZygoteForkDelegate>>* delegates) {
 #if defined(OS_CHROMEOS)
     chromeos::ReloadElfTextInHugePages();
 #endif
 
-#if !defined(DISABLE_NACL)
-  nacl::AddNaClZygoteForkDelegates(delegates);
+#if BUILDFLAG(ENABLE_NACL)
+    nacl::AddNaClZygoteForkDelegates(delegates);
 #endif
 }
 
@@ -1041,7 +1070,7 @@ void ChromeMainDelegate::ZygoteForked() {
   crash_keys::SetCrashKeysFromCommandLine(*command_line);
 }
 
-#endif  // OS_MACOSX
+#endif  // defined(OS_LINUX)
 
 content::ContentBrowserClient*
 ChromeMainDelegate::CreateContentBrowserClient() {
@@ -1090,4 +1119,14 @@ bool ChromeMainDelegate::ShouldEnableProfilerRecording() {
       // Don't enable instrumentation.
       return false;
   }
+}
+
+service_manager::ProcessType ChromeMainDelegate::OverrideProcessType() {
+  const auto& command_line = *base::CommandLine::ForCurrentProcess();
+  if (command_line.GetSwitchValueASCII(switches::kProcessType) ==
+      service_manager::switches::kProcessTypeService) {
+    // Don't mess with embedded service command lines.
+    return service_manager::ProcessType::kDefault;
+  }
+  return service_manager::ProcessType::kDefault;
 }

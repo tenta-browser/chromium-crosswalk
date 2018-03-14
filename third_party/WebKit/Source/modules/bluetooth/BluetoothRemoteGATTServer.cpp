@@ -4,19 +4,19 @@
 
 #include "modules/bluetooth/BluetoothRemoteGATTServer.h"
 
+#include <utility>
 #include "bindings/core/v8/CallbackPromiseAdapter.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
 #include "core/dom/DOMException.h"
 #include "core/dom/ExceptionCode.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "modules/bluetooth/Bluetooth.h"
 #include "modules/bluetooth/BluetoothDevice.h"
 #include "modules/bluetooth/BluetoothError.h"
 #include "modules/bluetooth/BluetoothRemoteGATTService.h"
 #include "modules/bluetooth/BluetoothUUID.h"
 #include "mojo/public/cpp/bindings/associated_interface_ptr.h"
-#include <utility>
 
 namespace blink {
 
@@ -84,9 +84,10 @@ void BluetoothRemoteGATTServer::Dispose() {
   client_bindings_.CloseAllBindings();
 }
 
-DEFINE_TRACE(BluetoothRemoteGATTServer) {
+void BluetoothRemoteGATTServer::Trace(blink::Visitor* visitor) {
   visitor->Trace(active_algorithms_);
   visitor->Trace(device_);
+  ScriptWrappable::Trace(visitor);
   ContextLifecycleObserver::Trace(visitor);
 }
 

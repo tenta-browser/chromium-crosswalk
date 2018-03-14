@@ -12,12 +12,12 @@
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/service_worker/service_worker_provider_host.h"
 #include "content/browser/service_worker/service_worker_test_utils.h"
-#include "content/common/resource_request_body_impl.h"
 #include "content/common/service_worker/service_worker_utils.h"
 #include "content/public/common/request_context_frame_type.h"
 #include "content/public/common/request_context_type.h"
 #include "content/public/common/resource_type.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_job.h"
@@ -43,9 +43,10 @@ class ServiceWorkerRequestHandlerTest : public testing::Test {
 
     // An empty host.
     std::unique_ptr<ServiceWorkerProviderHost> host =
-        CreateProviderHostForWindow(
-            helper_->mock_render_process_id(), kMockProviderId,
-            true /* is_parent_frame_secure */, context()->AsWeakPtr());
+        CreateProviderHostForWindow(helper_->mock_render_process_id(),
+                                    kMockProviderId,
+                                    true /* is_parent_frame_secure */,
+                                    context()->AsWeakPtr(), &remote_endpoint_);
     provider_host_ = host->AsWeakPtr();
     context()->AddProviderHost(std::move(host));
   }
@@ -63,7 +64,8 @@ class ServiceWorkerRequestHandlerTest : public testing::Test {
                                                  const std::string& method) {
     std::unique_ptr<net::URLRequest> request =
         url_request_context_.CreateRequest(GURL(url), net::DEFAULT_PRIORITY,
-                                           &url_request_delegate_);
+                                           &url_request_delegate_,
+                                           TRAFFIC_ANNOTATION_FOR_TESTS);
     request->set_method(method);
     return request;
   }
@@ -74,10 +76,11 @@ class ServiceWorkerRequestHandlerTest : public testing::Test {
     ServiceWorkerRequestHandler::InitializeHandler(
         request, context_wrapper(), &blob_storage_context_,
         helper_->mock_render_process_id(), kMockProviderId, skip_service_worker,
-        FETCH_REQUEST_MODE_NO_CORS, FETCH_CREDENTIALS_MODE_OMIT,
-        FetchRedirectMode::FOLLOW_MODE, resource_type,
-        REQUEST_CONTEXT_TYPE_HYPERLINK, REQUEST_CONTEXT_FRAME_TYPE_TOP_LEVEL,
-        nullptr);
+        network::mojom::FetchRequestMode::kNoCORS,
+        network::mojom::FetchCredentialsMode::kOmit,
+        FetchRedirectMode::FOLLOW_MODE, std::string() /* integrity */,
+        false /* keepalive */, resource_type, REQUEST_CONTEXT_TYPE_HYPERLINK,
+        REQUEST_CONTEXT_FRAME_TYPE_TOP_LEVEL, nullptr);
   }
 
   static ServiceWorkerRequestHandler* GetHandler(net::URLRequest* request) {
@@ -109,6 +112,7 @@ class ServiceWorkerRequestHandlerTest : public testing::Test {
   net::URLRequestContext url_request_context_;
   net::TestDelegate url_request_delegate_;
   storage::BlobStorageContext blob_storage_context_;
+  ServiceWorkerRemoteProviderEndpoint remote_endpoint_;
 };
 
 TEST_F(ServiceWorkerRequestHandlerTest, InitializeHandler_FTP) {

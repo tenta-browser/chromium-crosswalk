@@ -13,11 +13,15 @@
 extern NSString* const kSettingsAccountsId;
 // The accessibility identifier of the header of the accounts list.
 extern NSString* const kSettingsHeaderId;
+// The accessibility identifier of the add account cell.
+extern NSString* const kSettingsAccountsAddAccountCellId;
 // The accessibility identifier of the signout cell.
 extern NSString* const kSettingsAccountsSignoutCellId;
 // The accessibility identifier of the sync account cell.
 extern NSString* const kSettingsAccountsSyncCellId;
 
+@protocol ApplicationCommands;
+@protocol ApplicationSettingsCommands;
 namespace ios {
 class ChromeBrowserState;
 }  // namespace ios
@@ -35,7 +39,8 @@ class ChromeBrowserState;
            closeSettingsOnAddAccount:(BOOL)closeSettingsOnAddAccount
     NS_DESIGNATED_INITIALIZER;
 
-- (instancetype)initWithStyle:(CollectionViewControllerStyle)style
+- (instancetype)initWithLayout:(UICollectionViewLayout*)layout
+                         style:(CollectionViewControllerStyle)style
     NS_UNAVAILABLE;
 
 @end

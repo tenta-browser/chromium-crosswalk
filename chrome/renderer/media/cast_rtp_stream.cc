@@ -208,7 +208,7 @@ class CastVideoSink : public base::SupportsWeakPtr<CastVideoSink>,
     void WillConnectToTrack(
         base::WeakPtr<CastVideoSink> sink,
         scoped_refptr<media::cast::VideoFrameInput> frame_input) {
-      DCHECK(main_task_runner_->RunsTasksOnCurrentThread());
+      DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
       sink_ = sink;
       frame_input_ = std::move(frame_input);
     }
@@ -216,7 +216,7 @@ class CastVideoSink : public base::SupportsWeakPtr<CastVideoSink>,
     void OnVideoFrame(const scoped_refptr<media::VideoFrame>& video_frame,
                       base::TimeTicks estimated_capture_time) {
       main_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&CastVideoSink::DidReceiveFrame, sink_));
+          FROM_HERE, base::BindOnce(&CastVideoSink::DidReceiveFrame, sink_));
 
       const base::TimeTicks timestamp = estimated_capture_time.is_null()
                                             ? base::TimeTicks::Now()
@@ -234,11 +234,10 @@ class CastVideoSink : public base::SupportsWeakPtr<CastVideoSink>,
         frame = media::WrapAsI420VideoFrame(video_frame);
 
       // Used by chrome/browser/extension/api/cast_streaming/performance_test.cc
-      TRACE_EVENT_INSTANT2(
-          "cast_perf_test", "MediaStreamVideoSink::OnVideoFrame",
-          TRACE_EVENT_SCOPE_THREAD,
-          "timestamp",  timestamp.ToInternalValue(),
-          "time_delta", frame->timestamp().ToInternalValue());
+      TRACE_EVENT_INSTANT2("cast_perf_test", "ConsumeVideoFrame",
+                           TRACE_EVENT_SCOPE_THREAD, "timestamp",
+                           (timestamp - base::TimeTicks()).InMicroseconds(),
+                           "time_delta", frame->timestamp().InMicroseconds());
       frame_input_->InsertRawVideoFrame(frame, timestamp);
     }
 
@@ -584,6 +583,5 @@ void CastRtpStream::DidEncounterError(const std::string& message) {
   base::WeakPtr<CastRtpStream> ptr = weak_factory_.GetWeakPtr();
   error_callback_.Run(message);
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&CastRtpStream::Stop, ptr));
+      FROM_HERE, base::BindOnce(&CastRtpStream::Stop, ptr));
 }

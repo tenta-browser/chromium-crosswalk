@@ -6,19 +6,21 @@
 
 #include <list>
 #include <map>
+#include <memory>
 
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/root_window_controller.h"
 #include "ash/shell.h"
 #include "ash/wm/mru_window_tracker.h"
+#include "ash/wm/window_mirror_view.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm_window.h"
+#include "ash/wm/window_util.h"
 #include "base/command_line.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/label.h"
@@ -28,6 +30,7 @@
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/wm/core/visibility_controller.h"
+#include "ui/wm/core/window_animations.h"
 
 namespace ash {
 
@@ -45,7 +48,7 @@ class LayerFillBackgroundPainter : public views::Background {
   explicit LayerFillBackgroundPainter(std::unique_ptr<views::Painter> painter)
       : painter_(std::move(painter)) {}
 
-  ~LayerFillBackgroundPainter() override {}
+  ~LayerFillBackgroundPainter() override = default;
 
   void Paint(gfx::Canvas* canvas, views::View* view) const override {
     views::Painter::PaintPainterAt(canvas, painter_.get(),
@@ -60,17 +63,19 @@ class LayerFillBackgroundPainter : public views::Background {
 
 }  // namespace
 
-// This view represents a single WmWindow by displaying a title and a thumbnail
-// of the window's contents.
+// This view represents a single aura::Window by displaying a title and a
+// thumbnail of the window's contents.
 class WindowPreviewView : public views::View, public aura::WindowObserver {
  public:
-  explicit WindowPreviewView(WmWindow* window)
+  explicit WindowPreviewView(aura::Window* window)
       : window_title_(new views::Label),
         preview_background_(new views::View),
-        mirror_view_(window->CreateViewWithRecreatedLayers().release()),
+        mirror_view_(
+            new wm::WindowMirrorView(window,
+                                     /*trilinear_filtering_on_init=*/true)),
         window_observer_(this) {
-    window_observer_.Add(window->aura_window());
-    window_title_->SetText(window->aura_window()->GetTitle());
+    window_observer_.Add(window);
+    window_title_->SetText(window->GetTitle());
     window_title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
     window_title_->SetEnabledColor(SK_ColorWHITE);
     window_title_->SetAutoColorReadabilityEnabled(false);
@@ -87,19 +92,18 @@ class WindowPreviewView : public views::View, public aura::WindowObserver {
     AddChildView(window_title_);
 
     // Preview padding is black at 50% opacity.
-    preview_background_->set_background(
-        views::Background::CreateSolidBackground(
-            SkColorSetA(SK_ColorBLACK, 0xFF / 2)));
+    preview_background_->SetBackground(
+        views::CreateSolidBackground(SkColorSetA(SK_ColorBLACK, 0xFF / 2)));
     AddChildView(preview_background_);
 
     AddChildView(mirror_view_);
 
     SetFocusBehavior(FocusBehavior::ALWAYS);
   }
-  ~WindowPreviewView() override {}
+  ~WindowPreviewView() override = default;
 
   // views::View:
-  gfx::Size GetPreferredSize() const override {
+  gfx::Size CalculatePreferredSize() const override {
     gfx::Size size = GetSizeForPreviewArea();
     size.Enlarge(0, window_title_->GetPreferredSize().height());
     return size;
@@ -227,16 +231,18 @@ class WindowCycleView : public views::WidgetDelegateView {
     const int kInsideBorderPaddingDip = 64;
     const int kBetweenChildPaddingDip = 10;
     views::BoxLayout* layout = new views::BoxLayout(
-        views::BoxLayout::kHorizontal, kInsideBorderPaddingDip,
-        kInsideBorderPaddingDip, kBetweenChildPaddingDip);
+        views::BoxLayout::kHorizontal, gfx::Insets(kInsideBorderPaddingDip),
+        kBetweenChildPaddingDip);
     layout->set_cross_axis_alignment(
         views::BoxLayout::CROSS_AXIS_ALIGNMENT_START);
     mirror_container_->SetLayoutManager(layout);
     mirror_container_->SetPaintToLayer();
     mirror_container_->layer()->SetFillsBoundsOpaquely(false);
 
-    for (WmWindow* window : windows) {
+    for (auto* window : windows) {
       // |mirror_container_| owns |view|.
+      // The |mirror_view_| in |view| will use trilinear filtering in
+      // InitLayerOwner().
       views::View* view = new WindowPreviewView(window);
       window_view_map_[window] = view;
       mirror_container_->AddChildView(view);
@@ -245,7 +251,7 @@ class WindowCycleView : public views::WidgetDelegateView {
     // The background needs to be painted to fill the layer, not the View,
     // because the layer animates bounds changes but the View's bounds change
     // immediately.
-    highlight_view_->set_background(new LayerFillBackgroundPainter(
+    highlight_view_->SetBackground(std::make_unique<LayerFillBackgroundPainter>(
         views::Painter::CreateRoundRectWith1PxBorderPainter(
             SkColorSetA(SK_ColorWHITE, 0x4D), SkColorSetA(SK_ColorWHITE, 0x33),
             kBackgroundCornerRadius)));
@@ -257,9 +263,9 @@ class WindowCycleView : public views::WidgetDelegateView {
     AddChildView(mirror_container_);
   }
 
-  ~WindowCycleView() override {}
+  ~WindowCycleView() override = default;
 
-  void SetTargetWindow(WmWindow* target) {
+  void SetTargetWindow(aura::Window* target) {
     target_window_ = target;
     if (GetWidget()) {
       Layout();
@@ -268,8 +274,8 @@ class WindowCycleView : public views::WidgetDelegateView {
     }
   }
 
-  void HandleWindowDestruction(WmWindow* destroying_window,
-                               WmWindow* new_target) {
+  void HandleWindowDestruction(aura::Window* destroying_window,
+                               aura::Window* new_target) {
     auto view_iter = window_view_map_.find(destroying_window);
     views::View* preview = view_iter->second;
     views::View* parent = preview->parent();
@@ -289,7 +295,7 @@ class WindowCycleView : public views::WidgetDelegateView {
   }
 
   // views::WidgetDelegateView overrides:
-  gfx::Size GetPreferredSize() const override {
+  gfx::Size CalculatePreferredSize() const override {
     return mirror_container_->GetPreferredSize();
   }
 
@@ -368,13 +374,13 @@ class WindowCycleView : public views::WidgetDelegateView {
     return window_view_map_[target_window_];
   }
 
-  WmWindow* target_window() { return target_window_; }
+  aura::Window* target_window() { return target_window_; }
 
  private:
-  std::map<WmWindow*, views::View*> window_view_map_;
+  std::map<aura::Window*, views::View*> window_view_map_;
   views::View* mirror_container_;
   views::View* highlight_view_;
-  WmWindow* target_window_;
+  aura::Window* target_window_;
 
   DISALLOW_COPY_AND_ASSIGN(WindowCycleView);
 };
@@ -385,8 +391,8 @@ WindowCycleList::WindowCycleList(const WindowList& windows)
   if (!ShouldShowUi())
     Shell::Get()->mru_window_tracker()->SetIgnoreActivations(true);
 
-  for (WmWindow* window : windows_)
-    window->aura_window()->AddObserver(this);
+  for (auto* window : windows_)
+    window->AddObserver(this);
 
   if (ShouldShowUi()) {
     if (g_disable_initial_delay) {
@@ -402,13 +408,13 @@ WindowCycleList::~WindowCycleList() {
   if (!ShouldShowUi())
     Shell::Get()->mru_window_tracker()->SetIgnoreActivations(false);
 
-  for (WmWindow* window : windows_)
-    window->aura_window()->RemoveObserver(this);
+  for (auto* window : windows_)
+    window->RemoveObserver(this);
 
   if (!windows_.empty() && user_did_accept_) {
-    WmWindow* target_window = windows_[current_index_];
+    auto* target_window = windows_[current_index_];
     target_window->Show();
-    target_window->GetWindowState()->Activate();
+    wm::GetWindowState(target_window)->Activate();
   }
 
   if (cycle_ui_widget_)
@@ -430,9 +436,9 @@ void WindowCycleList::Step(WindowCycleController::Direction direction) {
   // When there is only one window, we should give feedback to the user. If the
   // window is minimized, we should also show it.
   if (windows_.size() == 1) {
-    windows_[0]->Animate(::wm::WINDOW_ANIMATION_TYPE_BOUNCE);
+    ::wm::AnimateWindow(windows_[0], ::wm::WINDOW_ANIMATION_TYPE_BOUNCE);
     windows_[0]->Show();
-    windows_[0]->GetWindowState()->Activate();
+    wm::GetWindowState(windows_[0])->Activate();
     return;
   }
 
@@ -442,7 +448,8 @@ void WindowCycleList::Step(WindowCycleController::Direction direction) {
     // Special case the situation where we're cycling forward but the MRU window
     // is not active. This occurs when all windows are minimized. The starting
     // window should be the first one rather than the second.
-    if (direction == WindowCycleController::FORWARD && !windows_[0]->IsActive())
+    if (direction == WindowCycleController::FORWARD &&
+        !wm::IsActiveWindow(windows_[0]))
       current_index_ = -1;
   }
 
@@ -470,8 +477,7 @@ void WindowCycleList::DisableInitialDelayForTesting() {
 void WindowCycleList::OnWindowDestroying(aura::Window* window) {
   window->RemoveObserver(this);
 
-  WindowList::iterator i =
-      std::find(windows_.begin(), windows_.end(), WmWindow::Get(window));
+  WindowList::iterator i = std::find(windows_.begin(), windows_.end(), window);
   // TODO(oshima): Change this back to DCHECK once crbug.com/483491 is fixed.
   CHECK(i != windows_.end());
   int removed_index = static_cast<int>(i - windows_.begin());
@@ -482,10 +488,9 @@ void WindowCycleList::OnWindowDestroying(aura::Window* window) {
   }
 
   if (cycle_view_) {
-    WmWindow* new_target_window =
+    auto* new_target_window =
         windows_.empty() ? nullptr : windows_[current_index_];
-    cycle_view_->HandleWindowDestruction(WmWindow::Get(window),
-                                         new_target_window);
+    cycle_view_->HandleWindowDestruction(window, new_target_window);
     if (windows_.empty()) {
       // This deletes us.
       Shell::Get()->window_cycle_controller()->CancelCycling();
@@ -532,10 +537,11 @@ void WindowCycleList::InitWindowCycleView() {
   params.name = "WindowCycleList (Alt+Tab)";
   // TODO(estade): make sure nothing untoward happens when the lock screen
   // or a system modal dialog is shown.
-  WmWindow* root_window = Shell::GetWmRootWindowForNewWindows();
-  root_window->GetRootWindowController()->ConfigureWidgetInitParamsForContainer(
-      widget, kShellWindowId_OverlayContainer, &params);
-  gfx::Rect widget_rect = root_window->GetDisplayNearestWindow().bounds();
+  aura::Window* root_window = Shell::GetRootWindowForNewWindows();
+  params.parent = root_window->GetChildById(kShellWindowId_OverlayContainer);
+  gfx::Rect widget_rect = display::Screen::GetScreen()
+                              ->GetDisplayNearestWindow(root_window)
+                              .bounds();
   const int widget_height = cycle_view_->GetPreferredSize().height();
   widget_rect.set_y(widget_rect.y() +
                     (widget_rect.height() - widget_height) / 2);

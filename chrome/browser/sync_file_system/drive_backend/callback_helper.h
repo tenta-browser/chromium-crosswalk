@@ -37,7 +37,7 @@ template <typename T>
 class CallbackHolder {
  public:
   CallbackHolder(const scoped_refptr<base::SequencedTaskRunner>& task_runner,
-                 const tracked_objects::Location& from_here,
+                 const base::Location& from_here,
                  const base::Callback<T>& callback)
       : task_runner_(task_runner),
         from_here_(from_here),
@@ -52,12 +52,12 @@ class CallbackHolder {
   }
 
   base::SequencedTaskRunner* task_runner() const { return task_runner_.get(); }
-  const tracked_objects::Location& from_here() const { return from_here_; }
+  const base::Location& from_here() const { return from_here_; }
   const base::Callback<T>& callback() const { return *callback_; }
 
  private:
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
-  const tracked_objects::Location from_here_;
+  const base::Location from_here_;
   std::unique_ptr<base::Callback<T>> callback_;
 
   DISALLOW_COPY_AND_ASSIGN(CallbackHolder);
@@ -66,19 +66,12 @@ class CallbackHolder {
 template <typename>
 struct RelayToTaskRunnerHelper;
 
-template <>
-struct RelayToTaskRunnerHelper<void()> {
-  static void Run(CallbackHolder<void()>* holder) {
-    holder->task_runner()->PostTask(holder->from_here(), holder->callback());
-  }
-};
-
 template <typename... Args>
 struct RelayToTaskRunnerHelper<void(Args...)> {
   static void Run(CallbackHolder<void(Args...)>* holder, Args... args) {
     holder->task_runner()->PostTask(
         holder->from_here(),
-        base::Bind(holder->callback(), RebindForward(args)...));
+        base::BindOnce(holder->callback(), RebindForward(args)...));
   }
 };
 
@@ -87,9 +80,9 @@ struct RelayToTaskRunnerHelper<void(Args...)> {
 template <typename T>
 base::Callback<T> RelayCallbackToTaskRunner(
     const scoped_refptr<base::SequencedTaskRunner>& task_runner,
-    const tracked_objects::Location& from_here,
+    const base::Location& from_here,
     const base::Callback<T>& callback) {
-  DCHECK(task_runner->RunsTasksOnCurrentThread());
+  DCHECK(task_runner->RunsTasksInCurrentSequence());
 
   if (callback.is_null())
     return base::Callback<T>();
@@ -101,7 +94,7 @@ base::Callback<T> RelayCallbackToTaskRunner(
 
 template <typename T>
 base::Callback<T> RelayCallbackToCurrentThread(
-    const tracked_objects::Location& from_here,
+    const base::Location& from_here,
     const base::Callback<T>& callback) {
   return RelayCallbackToTaskRunner(
       base::ThreadTaskRunnerHandle::Get(),

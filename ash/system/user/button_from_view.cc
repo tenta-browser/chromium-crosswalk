@@ -12,13 +12,14 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_node_data.h"
-#include "ui/gfx/canvas.h"
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop.h"
 #include "ui/views/animation/ink_drop_highlight.h"
 #include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/animation/ink_drop_mask.h"
+#include "ui/views/background.h"
 #include "ui/views/layout/fill_layout.h"
+#include "ui/views/painter.h"
 
 namespace ash {
 namespace tray {
@@ -26,7 +27,7 @@ namespace tray {
 ButtonFromView::ButtonFromView(views::View* content,
                                views::ButtonListener* listener,
                                TrayPopupInkDropStyle ink_drop_style)
-    : CustomButton(listener),
+    : Button(listener),
       content_(content),
       ink_drop_style_(ink_drop_style),
       button_hovered_(false),
@@ -41,9 +42,14 @@ ButtonFromView::ButtonFromView(views::View* content,
   // Only make it focusable when we are active/interested in clicks.
   if (listener)
     SetFocusForPlatform();
+
+  SetFocusPainter(TrayPopupUtils::CreateFocusPainter());
+
+  SetBackground(views::CreateThemedSolidBackground(
+      this, ui::NativeTheme::kColorId_BubbleBackground));
 }
 
-ButtonFromView::~ButtonFromView() {}
+ButtonFromView::~ButtonFromView() = default;
 
 void ButtonFromView::OnMouseEntered(const ui::MouseEvent& event) {
   button_hovered_ = true;
@@ -53,29 +59,9 @@ void ButtonFromView::OnMouseExited(const ui::MouseEvent& event) {
   button_hovered_ = false;
 }
 
-void ButtonFromView::OnPaint(gfx::Canvas* canvas) {
-  View::OnPaint(canvas);
-  if (HasFocus()) {
-    gfx::RectF rect(GetLocalBounds());
-    canvas->DrawSolidFocusRect(rect, kFocusBorderColor, kFocusBorderThickness);
-  }
-}
-
-void ButtonFromView::OnFocus() {
-  View::OnFocus();
-  // Adding focus frame.
-  SchedulePaint();
-}
-
-void ButtonFromView::OnBlur() {
-  View::OnBlur();
-  // Removing focus frame.
-  SchedulePaint();
-}
-
 void ButtonFromView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  views::CustomButton::GetAccessibleNodeData(node_data);
-  // If no label has been explicitly set via CustomButton::SetAccessibleName(),
+  views::Button::GetAccessibleNodeData(node_data);
+  // If no label has been explicitly set via Button::SetAccessibleName(),
   // use the content's label.
   if (node_data->GetStringAttribute(ui::AX_ATTR_NAME).empty()) {
     ui::AXNodeData content_data;
@@ -85,7 +71,7 @@ void ButtonFromView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
 }
 
 void ButtonFromView::Layout() {
-  CustomButton::Layout();
+  Button::Layout();
   if (ink_drop_container_)
     ink_drop_container_->SetBoundsRect(GetLocalBounds());
 }

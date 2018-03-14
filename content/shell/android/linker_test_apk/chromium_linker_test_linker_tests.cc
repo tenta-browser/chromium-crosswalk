@@ -7,8 +7,6 @@
 // Unlike the content of linker_jni.cc, it is part of the content library and
 // can thus use base/ and the C++ STL.
 
-#include "content/shell/android/linker_test_apk/chromium_linker_test_linker_tests.h"
-
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -198,18 +196,17 @@ jboolean RunChecks(bool in_browser_process, bool need_relros) {
 
 }  // namespace
 
-jboolean CheckForSharedRelros(JNIEnv* env,
-                              const JavaParamRef<jclass>& clazz,
-                              jboolean in_browser_process) {
+jboolean JNI_LinkerTests_CheckForSharedRelros(JNIEnv* env,
+                                              const JavaParamRef<jclass>& clazz,
+                                              jboolean in_browser_process) {
   return RunChecks(in_browser_process, true);
 }
 
-jboolean CheckForNoSharedRelros(JNIEnv* env,
-                                const JavaParamRef<jclass>& clazz,
-                                jboolean in_browser_process) {
+jboolean JNI_LinkerTests_CheckForNoSharedRelros(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    jboolean in_browser_process) {
   return RunChecks(in_browser_process, false);
 }
-
-bool RegisterLinkerTestsJni(JNIEnv* env) { return RegisterNativesImpl(env); }
 
 }  // namespace content

@@ -27,6 +27,7 @@
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/app_window/native_app_window.h"
 #include "extensions/browser/extensions_browser_client.h"
+#include "extensions/common/api/app_runtime.h"
 #include "extensions/common/api/app_window.h"
 #include "extensions/common/features/simple_feature.h"
 #include "extensions/common/image_util.h"
@@ -44,39 +45,47 @@ namespace Create = app_window::Create;
 namespace extensions {
 
 namespace app_window_constants {
-const char kInvalidWindowId[] =
+constexpr char kInvalidWindowId[] =
     "The window id can not be more than 256 characters long.";
-const char kInvalidColorSpecification[] =
+constexpr char kInvalidColorSpecification[] =
     "The color specification could not be parsed.";
-const char kColorWithFrameNone[] = "Windows with no frame cannot have a color.";
-const char kInactiveColorWithoutColor[] =
+constexpr char kColorWithFrameNone[] =
+    "Windows with no frame cannot have a color.";
+constexpr char kInactiveColorWithoutColor[] =
     "frame.inactiveColor must be used with frame.color.";
-const char kConflictingBoundsOptions[] =
+constexpr char kConflictingBoundsOptions[] =
     "The $1 property cannot be specified for both inner and outer bounds.";
-const char kAlwaysOnTopPermission[] =
+constexpr char kAlwaysOnTopPermission[] =
     "The \"app.window.alwaysOnTop\" permission is required.";
-const char kInvalidUrlParameter[] =
+constexpr char kInvalidUrlParameter[] =
     "The URL used for window creation must be local for security reasons.";
-const char kAlphaEnabledWrongChannel[] =
+constexpr char kAlphaEnabledWrongChannel[] =
     "The alphaEnabled option requires dev channel or newer.";
-const char kAlphaEnabledMissingPermission[] =
+constexpr char kAlphaEnabledMissingPermission[] =
     "The alphaEnabled option requires app.window.alpha permission.";
-const char kAlphaEnabledNeedsFrameNone[] =
+constexpr char kAlphaEnabledNeedsFrameNone[] =
     "The alphaEnabled option can only be used with \"frame: 'none'\".";
-const char kImeWindowMissingPermission[] =
+constexpr char kImeWindowMissingPermission[] =
     "Extensions require the \"app.window.ime\" permission to create windows.";
-const char kImeOptionIsNotSupported[] =
+constexpr char kImeOptionIsNotSupported[] =
     "The \"ime\" option is not supported for platform app.";
 #if !defined(OS_CHROMEOS)
-const char kImeWindowUnsupportedPlatform[] =
+constexpr char kImeWindowUnsupportedPlatform[] =
     "The \"ime\" option can only be used on ChromeOS.";
 #else
-const char kImeWindowMustBeImeWindowOrPanel[] =
+constexpr char kImeWindowMustBeImeWindowOrPanel[] =
     "IME extensions must create ime window ( with \"ime: true\" and "
     "\"frame: 'none'\") or panel window (with \"type: panel\").";
 #endif
-const char kShowInShelfWindowKeyNotSet[] =
+constexpr char kShowInShelfWindowKeyNotSet[] =
     "The \"showInShelf\" option requires the \"id\" option to be set.";
+constexpr char kLockScreenActionRequiresLockScreenContext[] =
+    "The lockScreenAction option requires lock screen app context.";
+constexpr char kLockScreenActionRequiresLockScreenPermission[] =
+    "The lockScreenAction option requires lockScreen permission.";
+constexpr char kAppWindowCreationFailed[] = "Failed to create the app window.";
+constexpr char kPrematureWindowClose[] =
+    "App window is closed before ready to commit first navigation.";
 }  // namespace app_window_constants
 
 const char kNoneFrameOption[] = "none";
@@ -195,7 +204,7 @@ ExtensionFunction::ResponseAction AppWindowCreateFunction::Run() {
 
           std::unique_ptr<base::DictionaryValue> result(
               new base::DictionaryValue);
-          result->Set("frameId", new base::Value(frame_id));
+          result->SetInteger("frameId", frame_id);
           existing_window->GetSerializedState(result.get());
           result->SetBoolean("existingWindow", true);
           return RespondNow(OneArgument(std::move(result)));
@@ -356,11 +365,42 @@ ExtensionFunction::ResponseAction AppWindowCreateFunction::Run() {
     }
   }
 
+  api::app_runtime::ActionType action_type = api::app_runtime::ACTION_TYPE_NONE;
+  if (options &&
+      options->lock_screen_action != api::app_runtime::ACTION_TYPE_NONE) {
+    if (source_context_type() != Feature::LOCK_SCREEN_EXTENSION_CONTEXT) {
+      return RespondNow(Error(
+          app_window_constants::kLockScreenActionRequiresLockScreenContext));
+    }
+
+    if (!extension()->permissions_data()->HasAPIPermission(
+            APIPermission::kLockScreen)) {
+      return RespondNow(Error(
+          app_window_constants::kLockScreenActionRequiresLockScreenPermission));
+    }
+
+    action_type = options->lock_screen_action;
+    create_params.show_on_lock_screen = true;
+  }
+
   create_params.creator_process_id =
       render_frame_host()->GetProcess()->GetID();
 
-  AppWindow* app_window =
-      AppWindowClient::Get()->CreateAppWindow(browser_context(), extension());
+  AppWindow* app_window = nullptr;
+  if (action_type == api::app_runtime::ACTION_TYPE_NONE) {
+    app_window =
+        AppWindowClient::Get()->CreateAppWindow(browser_context(), extension());
+  } else {
+    app_window = AppWindowClient::Get()->CreateAppWindowForLockScreenAction(
+        browser_context(), extension(), action_type);
+  }
+
+  // App window client might refuse to create an app window, e.g. when the app
+  // attempts to create a lock screen action handler window when the action was
+  // not requested.
+  if (!app_window)
+    return RespondNow(Error(app_window_constants::kAppWindowCreationFailed));
+
   app_window->Init(url, new AppWindowContentsImpl(app_window),
                    render_frame_host(), create_params);
 
@@ -376,8 +416,8 @@ ExtensionFunction::ResponseAction AppWindowCreateFunction::Run() {
     frame_id = created_frame->GetRoutingID();
 
   std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue);
-  result->Set("frameId", new base::Value(frame_id));
-  result->Set("id", new base::Value(app_window->window_key()));
+  result->SetInteger("frameId", frame_id);
+  result->SetString("id", app_window->window_key());
   app_window->GetSerializedState(result.get());
   ResponseValue result_arg = OneArgument(std::move(result));
 
@@ -395,12 +435,27 @@ ExtensionFunction::ResponseAction AppWindowCreateFunction::Run() {
   // been told to navigate, and blink has been correctly initialized in the
   // renderer.
   if (content::IsBrowserSideNavigationEnabled()) {
-    // SetOnFirstCommitCallback() will respond asynchronously.
-    app_window->SetOnFirstCommitCallback(base::Bind(
-        &AppWindowCreateFunction::Respond, this, base::Passed(&result_arg)));
+    // SetOnFirstCommitOrWindowClosedCallback() will respond asynchronously.
+    app_window->SetOnFirstCommitOrWindowClosedCallback(
+        base::Bind(&AppWindowCreateFunction::
+                       OnAppWindowReadyToCommitFirstNavigationOrClosed,
+                   this, base::Passed(&result_arg)));
     return RespondLater();
   }
   return RespondNow(std::move(result_arg));
+}
+
+void AppWindowCreateFunction::OnAppWindowReadyToCommitFirstNavigationOrClosed(
+    ResponseValue result_arg,
+    bool ready_to_commit) {
+  DCHECK(!did_respond());
+
+  if (!ready_to_commit) {
+    Respond(Error(app_window_constants::kPrematureWindowClose));
+    return;
+  }
+
+  Respond(std::move(result_arg));
 }
 
 bool AppWindowCreateFunction::GetBoundsSpec(

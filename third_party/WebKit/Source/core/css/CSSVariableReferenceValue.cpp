@@ -6,8 +6,9 @@
 
 namespace blink {
 
-DEFINE_TRACE_AFTER_DISPATCH(CSSVariableReferenceValue) {
+void CSSVariableReferenceValue::TraceAfterDispatch(blink::Visitor* visitor) {
   CSSValue::TraceAfterDispatch(visitor);
+  visitor->Trace(parser_context_);
 }
 
 String CSSVariableReferenceValue::CustomCSSText() const {

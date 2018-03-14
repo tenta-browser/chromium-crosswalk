@@ -14,9 +14,11 @@ import android.preference.PreferenceFragment;
 import android.preference.PreferenceScreen;
 import android.text.SpannableString;
 import android.text.style.ForegroundColorSpan;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 
 import org.chromium.base.ApiCompatibilityUtils;
-import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.PasswordUIView;
@@ -42,6 +44,7 @@ public class SavePasswordsPreferences extends PreferenceFragment
     // Keys for name/password dictionaries.
     public static final String PASSWORD_LIST_URL = "url";
     public static final String PASSWORD_LIST_NAME = "name";
+    public static final String PASSWORD_LIST_PASSWORD = "password";
 
     // Used to pass the password id into a new activity.
     public static final String PASSWORD_LIST_ID = "id";
@@ -49,13 +52,13 @@ public class SavePasswordsPreferences extends PreferenceFragment
     public static final String PREF_SAVE_PASSWORDS_SWITCH = "save_passwords_switch";
     public static final String PREF_AUTOSIGNIN_SWITCH = "autosignin_switch";
 
-    @VisibleForTesting
-    public static final String CREDENTIAL_MANAGER_API = "CredentialManagementAPI";
-
     private static final String PREF_CATEGORY_SAVED_PASSWORDS = "saved_passwords";
     private static final String PREF_CATEGORY_EXCEPTIONS = "exceptions";
     private static final String PREF_MANAGE_ACCOUNT_LINK = "manage_account_link";
     private static final String PREF_CATEGORY_SAVED_PASSWORDS_NO_TEXT = "saved_passwords_no_text";
+
+    // Name of the feature controlling the password export functionality.
+    private static final String EXPORT_PASSWORDS = "password-export";
 
     private static final int ORDER_SWITCH = 0;
     private static final int ORDER_AUTO_SIGNIN_CHECKBOX = 1;
@@ -78,6 +81,25 @@ public class SavePasswordsPreferences extends PreferenceFragment
         getActivity().setTitle(R.string.prefs_saved_passwords);
         setPreferenceScreen(getPreferenceManager().createPreferenceScreen(getActivity()));
         mPasswordManagerHandler.addObserver(this);
+        if (ChromeFeatureList.isEnabled(EXPORT_PASSWORDS)) {
+            setHasOptionsMenu(true);
+        }
+    }
+
+    @Override
+    public void onCreateOptionsMenu(Menu menu, MenuInflater inflater) {
+        menu.clear();
+        inflater.inflate(R.menu.save_password_preferences_action_bar_menu, menu);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        int id = item.getItemId();
+        if (id == R.id.export_passwords) {
+            // TODO(crbug.com/788701): Trigger the exporting dialogue here.
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
     }
 
     /**
@@ -95,6 +117,12 @@ public class SavePasswordsPreferences extends PreferenceFragment
     public boolean onPreferenceChange(Preference preference, Object newValue) {
         rebuildPasswordLists();
         return true;
+    }
+
+    @Override
+    public void onDetach() {
+        super.onDetach();
+        ReauthenticationManager.setLastReauthTimeMillis(0);
     }
 
     void rebuildPasswordLists() {
@@ -139,12 +167,14 @@ public class SavePasswordsPreferences extends PreferenceFragment
             PreferenceScreen screen = getPreferenceManager().createPreferenceScreen(getActivity());
             String url = saved.getUrl();
             String name = saved.getUserName();
+            String password = saved.getPassword();
             screen.setTitle(url);
             screen.setOnPreferenceClickListener(this);
             screen.setSummary(name);
             Bundle args = screen.getExtras();
             args.putString(PASSWORD_LIST_NAME, name);
             args.putString(PASSWORD_LIST_URL, url);
+            args.putString(PASSWORD_LIST_PASSWORD, password);
             args.putInt(PASSWORD_LIST_ID, i);
             profileCategory.addPreference(screen);
         }
@@ -200,17 +230,15 @@ public class SavePasswordsPreferences extends PreferenceFragment
     public boolean onPreferenceClick(Preference preference) {
         if (preference == mLinkPref) {
             Intent intent = new Intent(
-                    Intent.ACTION_VIEW,
-                    Uri.parse(PasswordUIView.getAccountDashboardURL()));
+                    Intent.ACTION_VIEW, Uri.parse(PasswordUIView.getAccountDashboardURL()));
             intent.setPackage(getActivity().getPackageName());
             getActivity().startActivity(intent);
         } else {
             // Launch preference activity with PasswordEntryEditor fragment with
             // intent extras specifying the object.
-            Intent intent = PreferencesLauncher.createIntentForSettingsPage(getActivity(),
-                    PasswordEntryEditor.class.getName());
-            intent.putExtra(Preferences.EXTRA_SHOW_FRAGMENT_ARGUMENTS,
-                    preference.getExtras());
+            Intent intent = PreferencesLauncher.createIntentForSettingsPage(
+                    getActivity(), PasswordEntryEditor.class.getName());
+            intent.putExtra(Preferences.EXTRA_SHOW_FRAGMENT_ARGUMENTS, preference.getExtras());
             startActivity(intent);
         }
         return true;
@@ -247,9 +275,6 @@ public class SavePasswordsPreferences extends PreferenceFragment
     }
 
     private void createAutoSignInCheckbox() {
-        if (!ChromeFeatureList.isEnabled(CREDENTIAL_MANAGER_API)) {
-            return;
-        }
         mAutoSignInSwitch = new ChromeBaseCheckBoxPreference(getActivity(), null);
         mAutoSignInSwitch.setKey(PREF_AUTOSIGNIN_SWITCH);
         mAutoSignInSwitch.setTitle(R.string.passwords_auto_signin_title);
@@ -278,7 +303,7 @@ public class SavePasswordsPreferences extends PreferenceFragment
         if (getPreferenceScreen().findPreference(PREF_MANAGE_ACCOUNT_LINK) == null) {
             if (mLinkPref == null) {
                 ForegroundColorSpan colorSpan = new ForegroundColorSpan(
-                        ApiCompatibilityUtils.getColor(getResources(), R.color.pref_accent_color));
+                        ApiCompatibilityUtils.getColor(getResources(), R.color.google_blue_700));
                 SpannableString title = SpanApplier.applySpans(
                         getString(R.string.manage_passwords_text),
                         new SpanApplier.SpanInfo("<link>", "</link>", colorSpan));

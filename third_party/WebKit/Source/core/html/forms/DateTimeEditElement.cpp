@@ -26,16 +26,15 @@
 #include "core/html/forms/DateTimeEditElement.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/HTMLNames.h"
+#include "core/css/StyleChangeReason.h"
 #include "core/dom/Document.h"
-#include "core/dom/StyleChangeReason.h"
 #include "core/dom/Text.h"
 #include "core/events/MouseEvent.h"
 #include "core/html/forms/DateTimeFieldElements.h"
 #include "core/html/forms/DateTimeFieldsState.h"
 #include "core/html/shadow/ShadowElementNames.h"
+#include "core/html_names.h"
 #include "core/style/ComputedStyle.h"
-#include "core/style/StyleInheritedData.h"
 #include "platform/fonts/FontCache.h"
 #include "platform/text/DateTimeFormat.h"
 #include "platform/text/PlatformLocale.h"
@@ -523,15 +522,15 @@ DateTimeEditElement::DateTimeEditElement(Document& document,
 
 DateTimeEditElement::~DateTimeEditElement() {}
 
-DEFINE_TRACE(DateTimeEditElement) {
+void DateTimeEditElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(fields_);
   visitor->Trace(edit_control_owner_);
   HTMLDivElement::Trace(visitor);
 }
 
 inline Element* DateTimeEditElement::FieldsWrapperElement() const {
-  DCHECK(FirstChild());
-  return ToElementOrDie(FirstChild());
+  DCHECK(firstChild());
+  return ToElementOrDie(firstChild());
 }
 
 void DateTimeEditElement::AddField(DateTimeFieldElement* field) {
@@ -564,13 +563,13 @@ DateTimeEditElement* DateTimeEditElement::Create(
   return container;
 }
 
-PassRefPtr<ComputedStyle> DateTimeEditElement::CustomStyleForLayoutObject() {
+scoped_refptr<ComputedStyle> DateTimeEditElement::CustomStyleForLayoutObject() {
   // FIXME: This is a kind of layout. We might want to introduce new
   // layoutObject.
-  RefPtr<ComputedStyle> original_style = OriginalStyleForLayoutObject();
-  RefPtr<ComputedStyle> style = ComputedStyle::Clone(*original_style);
+  scoped_refptr<ComputedStyle> original_style = OriginalStyleForLayoutObject();
+  scoped_refptr<ComputedStyle> style = ComputedStyle::Clone(*original_style);
   float width = 0;
-  for (Node* child = FieldsWrapperElement()->FirstChild(); child;
+  for (Node* child = FieldsWrapperElement()->firstChild(); child;
        child = child->nextSibling()) {
     if (!child->IsElementNode())
       continue;
@@ -589,7 +588,7 @@ PassRefPtr<ComputedStyle> DateTimeEditElement::CustomStyleForLayoutObject() {
   }
   style->SetWidth(Length(ceilf(width), kFixed));
   style->SetUnique();
-  return style.Release();
+  return style;
 }
 
 void DateTimeEditElement::DidBlurFromField(WebFocusType focus_type) {
@@ -607,7 +606,7 @@ void DateTimeEditElement::DisabledStateChanged() {
 }
 
 DateTimeFieldElement* DateTimeEditElement::FieldAt(size_t field_index) const {
-  return field_index < fields_.size() ? fields_[field_index].Get() : 0;
+  return field_index < fields_.size() ? fields_[field_index].Get() : nullptr;
 }
 
 size_t DateTimeEditElement::FieldIndexOf(
@@ -735,9 +734,9 @@ void DateTimeEditElement::GetLayout(const LayoutParameters& layout_parameters,
       focused_field ? focused_field->ShadowPseudoId() : g_null_atom;
 
   DateTimeEditBuilder builder(*this, layout_parameters, date_value);
-  Node* last_child_to_be_removed = fields_wrapper->LastChild();
+  Node* last_child_to_be_removed = fields_wrapper->lastChild();
   if (!builder.Build(layout_parameters.date_time_format) || fields_.IsEmpty()) {
-    last_child_to_be_removed = fields_wrapper->LastChild();
+    last_child_to_be_removed = fields_wrapper->lastChild();
     builder.Build(layout_parameters.fallback_date_time_format);
   }
 
@@ -754,8 +753,8 @@ void DateTimeEditElement::GetLayout(const LayoutParameters& layout_parameters,
   }
 
   if (last_child_to_be_removed) {
-    for (Node* child_node = fields_wrapper->FirstChild(); child_node;
-         child_node = fields_wrapper->FirstChild()) {
+    for (Node* child_node = fields_wrapper->firstChild(); child_node;
+         child_node = fields_wrapper->firstChild()) {
       fields_wrapper->RemoveChild(child_node);
       if (child_node == last_child_to_be_removed)
         break;

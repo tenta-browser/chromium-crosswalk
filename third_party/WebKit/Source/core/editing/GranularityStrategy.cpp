@@ -6,6 +6,10 @@
 
 #include "core/editing/EditingUtilities.h"
 #include "core/editing/FrameSelection.h"
+#include "core/editing/SelectionTemplate.h"
+#include "core/editing/VisiblePosition.h"
+#include "core/editing/VisibleSelection.h"
+#include "core/editing/VisibleUnits.h"
 
 namespace blink {
 
@@ -40,12 +44,12 @@ static VisiblePosition NextWordBound(const VisiblePosition& pos,
   bool next_bound_if_on_bound =
       word_bound_adjust == BoundAdjust::kNextBoundIfOnBound;
   if (direction == SearchDirection::kSearchForward) {
-    EWordSide word_side =
-        next_bound_if_on_bound ? kRightWordIfOnBoundary : kLeftWordIfOnBoundary;
+    EWordSide word_side = next_bound_if_on_bound ? kNextWordIfOnBoundary
+                                                 : kPreviousWordIfOnBoundary;
     return EndOfWord(pos, word_side);
   }
-  EWordSide word_side =
-      next_bound_if_on_bound ? kLeftWordIfOnBoundary : kRightWordIfOnBoundary;
+  EWordSide word_side = next_bound_if_on_bound ? kPreviousWordIfOnBoundary
+                                               : kNextWordIfOnBoundary;
   return StartOfWord(pos, word_side);
 }
 
@@ -69,7 +73,7 @@ SelectionInDOMTree CharacterGranularityStrategy::UpdateExtent(
   const VisiblePosition& extent_position =
       VisiblePositionForContentsPoint(extent_point, frame);
   const VisibleSelection& selection =
-      frame->Selection().ComputeVisibleSelectionInDOMTreeDeprecated();
+      frame->Selection().ComputeVisibleSelectionInDOMTree();
   if (extent_position.IsNull() || selection.VisibleBase().DeepEquivalent() ==
                                       extent_position.DeepEquivalent())
     return selection.AsSelection();
@@ -82,7 +86,7 @@ SelectionInDOMTree CharacterGranularityStrategy::UpdateExtent(
 
 DirectionGranularityStrategy::DirectionGranularityStrategy()
     : state_(StrategyState::kCleared),
-      granularity_(kCharacterGranularity),
+      granularity_(TextGranularity::kCharacter),
       offset_(0) {}
 
 DirectionGranularityStrategy::~DirectionGranularityStrategy() {}
@@ -93,7 +97,7 @@ SelectionStrategy DirectionGranularityStrategy::GetType() const {
 
 void DirectionGranularityStrategy::Clear() {
   state_ = StrategyState::kCleared;
-  granularity_ = kCharacterGranularity;
+  granularity_ = TextGranularity::kCharacter;
   offset_ = 0;
   diff_extent_point_from_extent_position_ = IntSize();
 }
@@ -102,12 +106,12 @@ SelectionInDOMTree DirectionGranularityStrategy::UpdateExtent(
     const IntPoint& extent_point,
     LocalFrame* frame) {
   const VisibleSelection& selection =
-      frame->Selection().ComputeVisibleSelectionInDOMTreeDeprecated();
+      frame->Selection().ComputeVisibleSelectionInDOMTree();
 
   if (state_ == StrategyState::kCleared)
     state_ = StrategyState::kExpanding;
 
-  VisiblePosition old_offset_extent_position = selection.VisibleExtent();
+  const VisiblePosition& old_offset_extent_position = selection.VisibleExtent();
   IntPoint old_extent_location = PositionLocation(old_offset_extent_position);
 
   IntPoint old_offset_extent_point =
@@ -137,7 +141,7 @@ SelectionInDOMTree DirectionGranularityStrategy::UpdateExtent(
   bool vertical_change = new_offset_location.Y() != old_extent_location.Y();
   if (vertical_change) {
     offset_ = 0;
-    granularity_ = kCharacterGranularity;
+    granularity_ = TextGranularity::kCharacter;
     new_offset_extent_point = extent_point;
     new_offset_extent_position =
         VisiblePositionForContentsPoint(extent_point, frame);
@@ -169,7 +173,7 @@ SelectionInDOMTree DirectionGranularityStrategy::UpdateExtent(
   bool this_move_shrunk_selection;
   if (new_offset_extent_position.DeepEquivalent() ==
       old_offset_extent_position.DeepEquivalent()) {
-    if (granularity_ == kCharacterGranularity)
+    if (granularity_ == TextGranularity::kCharacter)
       return selection.AsSelection();
 
     // If we are in Word granularity, we cannot exit here, since we may pass
@@ -203,7 +207,7 @@ SelectionInDOMTree DirectionGranularityStrategy::UpdateExtent(
                                         ? SearchDirection::kSearchForward
                                         : SearchDirection::kSearchBackwards,
                                     BoundAdjust::kNextBoundIfOnBound);
-      granularity_ = kCharacterGranularity;
+      granularity_ = TextGranularity::kCharacter;
     } else {
       // Calculate the word boundary based on |oldExtentWithGranularity|.
       // If selection was shrunk in the last update and the extent is now
@@ -234,13 +238,13 @@ SelectionInDOMTree DirectionGranularityStrategy::UpdateExtent(
         !extent_base_order_switched && !selection_expanded;
 
     if (expanded_beyond_word_boundary)
-      granularity_ = kWordGranularity;
+      granularity_ = TextGranularity::kWord;
     else if (this_move_shrunk_selection)
-      granularity_ = kCharacterGranularity;
+      granularity_ = TextGranularity::kCharacter;
   }
 
   VisiblePosition new_selection_extent = new_offset_extent_position;
-  if (granularity_ == kWordGranularity) {
+  if (granularity_ == TextGranularity::kWord) {
     // Determine the bounds of the word where the extent is located.
     // Set the selection extent to one of the two bounds depending on
     // whether the extent is passed the middle of the word.
@@ -259,7 +263,7 @@ SelectionInDOMTree DirectionGranularityStrategy::UpdateExtent(
         offset_extent_before_middle ? bound_before_extent : bound_after_extent;
     // Update the offset if selection expanded in word granularity.
     if (new_selection_extent.DeepEquivalent() !=
-            selection.VisibleExtent().DeepEquivalent() &&
+            old_offset_extent_position.DeepEquivalent() &&
         ((new_extent_base_order > 0 && !offset_extent_before_middle) ||
          (new_extent_base_order < 0 && offset_extent_before_middle))) {
       offset_ = PositionLocation(new_selection_extent).X() - extent_point.X();
@@ -269,7 +273,7 @@ SelectionInDOMTree DirectionGranularityStrategy::UpdateExtent(
   // Only update the state if the selection actually changed as a result of
   // this move.
   if (new_selection_extent.DeepEquivalent() !=
-      selection.VisibleExtent().DeepEquivalent())
+      old_offset_extent_position.DeepEquivalent())
     state_ = this_move_shrunk_selection ? StrategyState::kShrinking
                                         : StrategyState::kExpanding;
 

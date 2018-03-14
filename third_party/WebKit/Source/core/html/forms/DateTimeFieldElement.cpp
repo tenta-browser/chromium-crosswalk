@@ -25,11 +25,11 @@
 
 #include "core/html/forms/DateTimeFieldElement.h"
 
-#include "core/HTMLNames.h"
+#include "core/css/StyleChangeReason.h"
 #include "core/dom/Document.h"
-#include "core/dom/StyleChangeReason.h"
 #include "core/dom/Text.h"
 #include "core/events/KeyboardEvent.h"
+#include "core/html_names.h"
 #include "core/layout/TextRunConstructor.h"
 #include "core/style/ComputedStyle.h"
 #include "platform/text/PlatformLocale.h"
@@ -45,7 +45,7 @@ DateTimeFieldElement::DateTimeFieldElement(Document& document,
                                            FieldOwner& field_owner)
     : HTMLSpanElement(document), field_owner_(&field_owner) {}
 
-DEFINE_TRACE(DateTimeFieldElement) {
+void DateTimeFieldElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(field_owner_);
   HTMLSpanElement::Trace(visitor);
 }
@@ -207,7 +207,7 @@ bool DateTimeFieldElement::SupportsFocus() const {
 }
 
 void DateTimeFieldElement::UpdateVisibleValue(EventBehavior event_behavior) {
-  Text* const text_node = ToText(FirstChild());
+  Text* const text_node = ToText(firstChild());
   const String new_visible_value = VisibleValue();
   DCHECK_GT(new_visible_value.length(), 0u);
 

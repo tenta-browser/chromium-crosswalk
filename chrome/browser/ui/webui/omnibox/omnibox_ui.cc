@@ -20,9 +20,10 @@ OmniboxUI::OmniboxUI(content::WebUI* web_ui) : MojoWebUIController(web_ui) {
       content::WebUIDataSource::Create(chrome::kChromeUIOmniboxHost);
   source->AddResourcePath("omnibox.css", IDR_OMNIBOX_CSS);
   source->AddResourcePath("omnibox.js", IDR_OMNIBOX_JS);
-  source->AddResourcePath("chrome/browser/ui/webui/omnibox/omnibox.mojom",
+  source->AddResourcePath("chrome/browser/ui/webui/omnibox/omnibox.mojom.js",
                           IDR_OMNIBOX_MOJO_JS);
   source->SetDefaultResource(IDR_OMNIBOX_HTML);
+  source->UseGzip();
 
   content::WebUIDataSource::Add(Profile::FromWebUI(web_ui), source);
 }
@@ -30,7 +31,7 @@ OmniboxUI::OmniboxUI(content::WebUI* web_ui) : MojoWebUIController(web_ui) {
 OmniboxUI::~OmniboxUI() {}
 
 void OmniboxUI::BindUIHandler(
-    mojo::InterfaceRequest<mojom::OmniboxPageHandler> request) {
+    mojom::OmniboxPageHandlerRequest request) {
   omnibox_handler_.reset(
       new OmniboxPageHandler(Profile::FromWebUI(web_ui()), std::move(request)));
 }

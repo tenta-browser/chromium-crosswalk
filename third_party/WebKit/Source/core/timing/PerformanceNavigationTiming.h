@@ -32,7 +32,8 @@ class CORE_EXPORT PerformanceNavigationTiming final
  public:
   PerformanceNavigationTiming(LocalFrame*,
                               ResourceTimingInfo*,
-                              double time_origin);
+                              double time_origin,
+                              PerformanceServerTimingVector&);
 
   // Attributes inheritted from PerformanceEntry.
   DOMHighResTimeStamp duration() const override;
@@ -57,10 +58,10 @@ class CORE_EXPORT PerformanceNavigationTiming final
   DOMHighResTimeStamp redirectEnd() const override;
   DOMHighResTimeStamp responseEnd() const override;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  protected:
-  void BuildJSONValue(V8ObjectBuilder&) const override;
+  void BuildJSONValue(ScriptState*, V8ObjectBuilder&) const override;
 
  private:
   ~PerformanceNavigationTiming() override;
@@ -80,8 +81,10 @@ class CORE_EXPORT PerformanceNavigationTiming final
 
   bool GetAllowRedirectDetails() const;
 
-  double time_origin_;
-  RefPtr<ResourceTimingInfo> resource_timing_info_;
+  AtomicString AlpnNegotiatedProtocol() const override;
+  AtomicString ConnectionInfo() const override;
+
+  scoped_refptr<ResourceTimingInfo> resource_timing_info_;
 };
 }  // namespace blink
 

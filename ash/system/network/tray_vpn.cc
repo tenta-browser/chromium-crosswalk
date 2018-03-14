@@ -4,18 +4,17 @@
 
 #include "ash/system/network/tray_vpn.h"
 
+#include "ash/metrics/user_metrics_recorder.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/session/session_controller.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/network/network_icon.h"
 #include "ash/system/network/network_icon_animation.h"
 #include "ash/system/network/network_icon_animation_observer.h"
-#include "ash/system/network/network_state_list_detailed_view.h"
 #include "ash/system/network/vpn_list.h"
+#include "ash/system/network/vpn_list_view.h"
 #include "ash/system/tray/system_tray.h"
-#include "ash/system/tray/system_tray_delegate.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_item_more.h"
 #include "ash/system/tray/tray_popup_item_style.h"
@@ -45,7 +44,7 @@ class VpnDefaultView : public TrayItemMore,
   static bool ShouldShow() {
     // Show the VPN entry in the ash tray bubble if at least one third-party VPN
     // provider is installed.
-    if (Shell::Get()->vpn_list()->HaveThirdPartyVPNProviders())
+    if (Shell::Get()->vpn_list()->HaveThirdPartyOrArcVPNProviders())
       return true;
 
     // Also show the VPN entry if at least one VPN network is configured.
@@ -146,20 +145,16 @@ TrayVPN::TrayVPN(SystemTray* system_tray)
   network_state_observer_.reset(new TrayNetworkStateObserver(this));
 }
 
-TrayVPN::~TrayVPN() {}
-
-views::View* TrayVPN::CreateTrayView(LoginStatus status) {
-  return NULL;
-}
+TrayVPN::~TrayVPN() = default;
 
 views::View* TrayVPN::CreateDefaultView(LoginStatus status) {
-  CHECK(default_ == NULL);
+  CHECK(default_ == nullptr);
   if (!chromeos::NetworkHandler::IsInitialized())
-    return NULL;
+    return nullptr;
   if (status == LoginStatus::NOT_LOGGED_IN)
-    return NULL;
+    return nullptr;
   if (!tray::VpnDefaultView::ShouldShow())
-    return NULL;
+    return nullptr;
 
   const bool is_in_secondary_login_screen =
       Shell::Get()->session_controller()->IsInSecondaryLoginScreen();
@@ -172,32 +167,26 @@ views::View* TrayVPN::CreateDefaultView(LoginStatus status) {
 }
 
 views::View* TrayVPN::CreateDetailedView(LoginStatus status) {
-  CHECK(detailed_ == NULL);
+  CHECK(detailed_ == nullptr);
   if (!chromeos::NetworkHandler::IsInitialized())
-    return NULL;
+    return nullptr;
 
-  ShellPort::Get()->RecordUserMetricsAction(UMA_STATUS_AREA_DETAILED_VPN_VIEW);
-  detailed_ = new tray::NetworkStateListDetailedView(
-      this, tray::NetworkStateListDetailedView::LIST_TYPE_VPN, status);
+  Shell::Get()->metrics()->RecordUserMetricsAction(
+      UMA_STATUS_AREA_DETAILED_VPN_VIEW);
+  detailed_ = new tray::VPNListView(this, status);
   detailed_->Init();
   return detailed_;
 }
 
-void TrayVPN::DestroyTrayView() {}
-
-void TrayVPN::DestroyDefaultView() {
-  default_ = NULL;
+void TrayVPN::OnDefaultViewDestroyed() {
+  default_ = nullptr;
 }
 
-void TrayVPN::DestroyDetailedView() {
-  detailed_ = NULL;
+void TrayVPN::OnDetailedViewDestroyed() {
+  detailed_ = nullptr;
 }
 
-void TrayVPN::UpdateAfterLoginStatusChange(LoginStatus status) {}
-
-void TrayVPN::UpdateAfterShelfAlignmentChange(ShelfAlignment alignment) {}
-
-void TrayVPN::NetworkStateChanged() {
+void TrayVPN::NetworkStateChanged(bool /* notify_a11y */) {
   if (default_)
     default_->Update();
   if (detailed_)

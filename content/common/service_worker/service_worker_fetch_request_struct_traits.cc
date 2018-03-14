@@ -10,64 +10,11 @@
 
 namespace mojo {
 
-namespace {
-
-// Struct traits context for the FetchAPIRequest type. Since getters are invoked
-// twice when serializing the type, this reduces the load for heavy members.
-struct ServiceWorkerFetchRequestStructTraitsContext {
-  ServiceWorkerFetchRequestStructTraitsContext() = default;
-  ~ServiceWorkerFetchRequestStructTraitsContext() = default;
-
-  std::map<std::string, std::string> headers;
-};
-
-}  // namespace
-
-using blink::mojom::FetchCredentialsMode;
 using blink::mojom::FetchRedirectMode;
-using blink::mojom::FetchRequestMode;
 using blink::mojom::RequestContextFrameType;
 using blink::mojom::RequestContextType;
 using blink::mojom::ServiceWorkerFetchType;
-
-FetchCredentialsMode
-EnumTraits<FetchCredentialsMode, content::FetchCredentialsMode>::ToMojom(
-    content::FetchCredentialsMode input) {
-  switch (input) {
-    case content::FETCH_CREDENTIALS_MODE_OMIT:
-      return FetchCredentialsMode::OMIT;
-    case content::FETCH_CREDENTIALS_MODE_SAME_ORIGIN:
-      return FetchCredentialsMode::SAME_ORIGIN;
-    case content::FETCH_CREDENTIALS_MODE_INCLUDE:
-      return FetchCredentialsMode::INCLUDE;
-    case content::FETCH_CREDENTIALS_MODE_PASSWORD:
-      return FetchCredentialsMode::PASSWORD;
-  }
-
-  NOTREACHED();
-  return FetchCredentialsMode::OMIT;
-}
-
-bool EnumTraits<FetchCredentialsMode, content::FetchCredentialsMode>::FromMojom(
-    FetchCredentialsMode input,
-    content::FetchCredentialsMode* out) {
-  switch (input) {
-    case FetchCredentialsMode::OMIT:
-      *out = content::FETCH_CREDENTIALS_MODE_OMIT;
-      return true;
-    case FetchCredentialsMode::SAME_ORIGIN:
-      *out = content::FETCH_CREDENTIALS_MODE_SAME_ORIGIN;
-      return true;
-    case FetchCredentialsMode::INCLUDE:
-      *out = content::FETCH_CREDENTIALS_MODE_INCLUDE;
-      return true;
-    case FetchCredentialsMode::PASSWORD:
-      *out = content::FETCH_CREDENTIALS_MODE_PASSWORD;
-      return true;
-  }
-
-  return false;
-}
+using network::mojom::FetchRequestMode;
 
 FetchRedirectMode
 EnumTraits<FetchRedirectMode, content::FetchRedirectMode>::ToMojom(
@@ -97,50 +44,6 @@ bool EnumTraits<FetchRedirectMode, content::FetchRedirectMode>::FromMojom(
       return true;
     case FetchRedirectMode::MANUAL:
       *out = content::FetchRedirectMode::MANUAL_MODE;
-      return true;
-  }
-
-  return false;
-}
-
-FetchRequestMode
-EnumTraits<FetchRequestMode, content::FetchRequestMode>::ToMojom(
-    content::FetchRequestMode input) {
-  switch (input) {
-    case content::FETCH_REQUEST_MODE_SAME_ORIGIN:
-      return FetchRequestMode::SAME_ORIGIN;
-    case content::FETCH_REQUEST_MODE_NO_CORS:
-      return FetchRequestMode::NO_CORS;
-    case content::FETCH_REQUEST_MODE_CORS:
-      return FetchRequestMode::CORS;
-    case content::FETCH_REQUEST_MODE_CORS_WITH_FORCED_PREFLIGHT:
-      return FetchRequestMode::CORS_WITH_FORCED_PREFLIGHT;
-    case content::FETCH_REQUEST_MODE_NAVIGATE:
-      return FetchRequestMode::NAVIGATE;
-  }
-
-  NOTREACHED();
-  return FetchRequestMode::NO_CORS;
-}
-
-bool EnumTraits<FetchRequestMode, content::FetchRequestMode>::FromMojom(
-    FetchRequestMode input,
-    content::FetchRequestMode* out) {
-  switch (input) {
-    case FetchRequestMode::SAME_ORIGIN:
-      *out = content::FETCH_REQUEST_MODE_SAME_ORIGIN;
-      return true;
-    case FetchRequestMode::NO_CORS:
-      *out = content::FETCH_REQUEST_MODE_NO_CORS;
-      return true;
-    case FetchRequestMode::CORS:
-      *out = content::FETCH_REQUEST_MODE_CORS;
-      return true;
-    case FetchRequestMode::CORS_WITH_FORCED_PREFLIGHT:
-      *out = content::FETCH_REQUEST_MODE_CORS_WITH_FORCED_PREFLIGHT;
-      return true;
-    case FetchRequestMode::NAVIGATE:
-      *out = content::FETCH_REQUEST_MODE_NAVIGATE;
       return true;
   }
 
@@ -381,8 +284,6 @@ EnumTraits<ServiceWorkerFetchType, content::ServiceWorkerFetchType>::ToMojom(
   switch (input) {
     case content::ServiceWorkerFetchType::FETCH:
       return ServiceWorkerFetchType::FETCH;
-    case content::ServiceWorkerFetchType::FOREIGN_FETCH:
-      return ServiceWorkerFetchType::FOREIGN_FETCH;
   }
 
   NOTREACHED();
@@ -396,37 +297,18 @@ bool EnumTraits<ServiceWorkerFetchType, content::ServiceWorkerFetchType>::
     case ServiceWorkerFetchType::FETCH:
       *out = content::ServiceWorkerFetchType::FETCH;
       return true;
-    case ServiceWorkerFetchType::FOREIGN_FETCH:
-      *out = content::ServiceWorkerFetchType::FOREIGN_FETCH;
-      return true;
   }
 
   return false;
 }
 
-void* StructTraits<blink::mojom::FetchAPIRequestDataView,
-                   content::ServiceWorkerFetchRequest>::
-    SetUpContext(const content::ServiceWorkerFetchRequest& request) {
-  ServiceWorkerFetchRequestStructTraitsContext* context =
-      new ServiceWorkerFetchRequestStructTraitsContext();
-  context->headers.insert(request.headers.begin(), request.headers.end());
-
-  return context;
-}
-
-void StructTraits<blink::mojom::FetchAPIRequestDataView,
-                  content::ServiceWorkerFetchRequest>::
-    TearDownContext(const content::ServiceWorkerFetchRequest& request,
-                    void* context) {
-  delete static_cast<ServiceWorkerFetchRequestStructTraitsContext*>(context);
-}
-
-const std::map<std::string, std::string>&
+std::map<std::string, std::string>
 StructTraits<blink::mojom::FetchAPIRequestDataView,
              content::ServiceWorkerFetchRequest>::
-    headers(const content::ServiceWorkerFetchRequest& request, void* context) {
-  return static_cast<ServiceWorkerFetchRequestStructTraitsContext*>(context)
-      ->headers;
+    headers(const content::ServiceWorkerFetchRequest& request) {
+  std::map<std::string, std::string> header_map;
+  header_map.insert(request.headers.begin(), request.headers.end());
+  return header_map;
 }
 
 bool StructTraits<blink::mojom::FetchAPIRequestDataView,
@@ -442,6 +324,7 @@ bool StructTraits<blink::mojom::FetchAPIRequestDataView,
       !data.ReadBlobUuid(&blob_uuid) || !data.ReadReferrer(&out->referrer) ||
       !data.ReadCredentialsMode(&out->credentials_mode) ||
       !data.ReadRedirectMode(&out->redirect_mode) ||
+      !data.ReadIntegrity(&out->integrity) ||
       !data.ReadClientId(&out->client_id) ||
       !data.ReadFetchType(&out->fetch_type)) {
     return false;
@@ -453,6 +336,11 @@ bool StructTraits<blink::mojom::FetchAPIRequestDataView,
     out->blob_uuid = blob_uuid.value();
     out->blob_size = data.blob_size();
   }
+  blink::mojom::BlobPtr blob = data.TakeBlob<blink::mojom::BlobPtr>();
+  if (blob)
+    out->blob = base::MakeRefCounted<storage::BlobHandle>(std::move(blob));
+  out->cache_mode = data.cache_mode();
+  out->keepalive = data.keepalive();
   out->is_reload = data.is_reload();
   return true;
 }

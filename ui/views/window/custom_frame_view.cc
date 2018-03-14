@@ -17,7 +17,6 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/path.h"
-#include "ui/resources/grit/ui_resources.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/resources/grit/views_resources.h"
@@ -186,9 +185,9 @@ void CustomFrameView::GetWindowMask(const gfx::Size& size,
 }
 
 void CustomFrameView::ResetWindowControls() {
-  restore_button_->SetState(CustomButton::STATE_NORMAL);
-  minimize_button_->SetState(CustomButton::STATE_NORMAL);
-  maximize_button_->SetState(CustomButton::STATE_NORMAL);
+  restore_button_->SetState(Button::STATE_NORMAL);
+  minimize_button_->SetState(Button::STATE_NORMAL);
+  maximize_button_->SetState(Button::STATE_NORMAL);
   // The close button isn't affected by this constraint.
 }
 
@@ -247,7 +246,7 @@ void CustomFrameView::Layout() {
   LayoutClientView();
 }
 
-gfx::Size CustomFrameView::GetPreferredSize() const {
+gfx::Size CustomFrameView::CalculatePreferredSize() const {
   return frame_->non_client_view()->GetWindowBoundsForClientBounds(
       gfx::Rect(frame_->client_view()->GetPreferredSize())).size();
 }
@@ -599,11 +598,11 @@ ImageButton* CustomFrameView::InitWindowCaptionButton(
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   ImageButton* button = new ImageButton(this);
   button->SetAccessibleName(l10n_util::GetStringUTF16(accessibility_string_id));
-  button->SetImage(CustomButton::STATE_NORMAL,
+  button->SetImage(Button::STATE_NORMAL,
                    rb.GetImageNamed(normal_image_id).ToImageSkia());
-  button->SetImage(CustomButton::STATE_HOVERED,
+  button->SetImage(Button::STATE_HOVERED,
                    rb.GetImageNamed(hot_image_id).ToImageSkia());
-  button->SetImage(CustomButton::STATE_PRESSED,
+  button->SetImage(Button::STATE_PRESSED,
                    rb.GetImageNamed(pushed_image_id).ToImageSkia());
   AddChildView(button);
   return button;

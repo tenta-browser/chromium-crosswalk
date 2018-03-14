@@ -7,12 +7,12 @@
 
 #include <map>
 #include <memory>
-#include <queue>
 #include <tuple>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
+#include "base/containers/queue.h"
 #include "base/files/file_path.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_string_value_serializer.h"
@@ -20,6 +20,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -49,12 +50,15 @@
 #include "extensions/common/api/web_request.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/features/feature.h"
+#include "google_apis/gaia/gaia_urls.h"
 #include "net/base/auth.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/request_priority.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/base/upload_file_element_reader.h"
 #include "net/dns/mock_host_resolver.h"
+#include "net/http/http_response_headers.h"
+#include "net/http/http_util.h"
 #include "net/log/net_log_with_source.h"
 #include "net/log/test_net_log.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
@@ -62,6 +66,11 @@
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest-message.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if defined(OS_CHROMEOS)
+#include "chromeos/login/scoped_test_public_session_login_state.h"
+#include "components/crx_file/id_util.h"
+#endif
 
 namespace helpers = extension_web_request_api_helpers;
 namespace keys = extension_web_request_api_constants;
@@ -106,14 +115,6 @@ static void EventHandledOnIOThread(
   ExtensionWebRequestEventRouter::GetInstance()->OnEventHandled(
       profile, extension_id, event_name, sub_event_name, request_id,
       response);
-}
-
-// Searches |key| in |collection| by iterating over its elements and returns
-// true if found.
-template <typename Collection, typename Key>
-bool Contains(const Collection& collection, const Key& key) {
-  return std::find(collection.begin(), collection.end(), key) !=
-      collection.end();
 }
 
 // Returns whether |warnings| contains an extension for |extension_id|.
@@ -177,7 +178,7 @@ class TestIPCSender : public IPC::Sender {
     return true;
   }
 
-  std::queue<base::Closure> task_queue_;
+  base::queue<base::Closure> task_queue_;
   SentMessages sent_messages_;
 };
 
@@ -218,7 +219,6 @@ class ExtensionWebRequestTest : public testing::Test {
   BooleanPrefMember enable_referrers_;
   TestIPCSender ipc_sender_;
   scoped_refptr<EventRouterForwarder> event_router_;
-  scoped_refptr<InfoMap> extension_info_map_;
   std::unique_ptr<ChromeNetworkDelegate> network_delegate_;
   std::unique_ptr<net::TestURLRequestContext> context_;
 };
@@ -605,7 +605,7 @@ TEST_F(ExtensionWebRequestTest, AccessRequestBodyData) {
   std::unique_ptr<const base::Value> form_data =
       base::JSONReader::Read(kFormData);
   ASSERT_TRUE(form_data.get() != NULL);
-  ASSERT_TRUE(form_data->GetType() == base::Value::Type::DICTIONARY);
+  ASSERT_TRUE(form_data->type() == base::Value::Type::DICTIONARY);
   // Contents of raw.
   base::ListValue raw;
   extensions::subtle::AppendKeyValuePair(
@@ -799,6 +799,72 @@ TEST_F(ExtensionWebRequestTest, MinimalAccessRequestBodyData) {
 
   EXPECT_EQ(i, ipc_sender_.sent_end());
 }
+
+#if defined(OS_CHROMEOS)
+// Tests that proper filtering is applied in public session (non-whitelisted
+// extension gets some things filtered out, while there's no filtering applied
+// for a whitelisted extension).
+TEST_F(ExtensionWebRequestTest, ProperFilteringInPublicSession) {
+  chromeos::ScopedTestPublicSessionLoginState state;
+  const std::string kEventName(web_request::OnBeforeRequest::kEventName);
+  ExtensionWebRequestEventRouter::RequestFilter filter;
+  // Whitelisted extension (User Agent Switcher).
+  const std::string extension_id1("djflhoibgkdhkhhcedjiklpkjnoahfmg");
+  const std::string extension_id2 =
+      crx_file::id_util::GenerateId("nonwhitelisted");
+  int extra_info_spec_body = 0;
+  ASSERT_TRUE(GenerateInfoSpec("requestBody", &extra_info_spec_body));
+  base::WeakPtrFactory<TestIPCSender> ipc_sender_factory(&ipc_sender_);
+
+  bool kExpected[] = {
+    true,
+    false,
+  };
+
+  ExtensionWebRequestEventRouter::GetInstance()->AddEventListener(
+      &profile_, extension_id1, extension_id1, events::FOR_TEST, kEventName,
+      kEventName + "/1", filter, extra_info_spec_body, 0, 0,
+      ipc_sender_factory.GetWeakPtr());
+  ExtensionWebRequestEventRouter::GetInstance()->AddEventListener(
+      &profile_, extension_id2, extension_id2, events::FOR_TEST, kEventName,
+      kEventName + "/1", filter, extra_info_spec_body, 0, 0,
+      ipc_sender_factory.GetWeakPtr());
+
+  // Only one request is sent, but more than one event will be triggered.
+  for (size_t i = 1; i < arraysize(kExpected); ++i)
+    ipc_sender_.PushTask(base::Bind(&base::DoNothing));
+
+  const std::vector<char> part_of_body(1);
+  FireURLRequestWithData("POST", nullptr, part_of_body, part_of_body);
+
+  base::RunLoop().RunUntilIdle();
+
+  // Clean-up
+  ExtensionWebRequestEventRouter::EventListener::ID id1(
+      &profile_, extension_id1, kEventName + "/1", 0, 0);
+  ExtensionWebRequestEventRouter::EventListener::ID id2(
+      &profile_, extension_id2, kEventName + "/1", 0, 0);
+  ExtensionWebRequestEventRouter::GetInstance()->RemoveEventListener(id1,
+                                                                     false);
+  ExtensionWebRequestEventRouter::GetInstance()->RemoveEventListener(id2,
+                                                                     false);
+
+  TestIPCSender::SentMessages::const_iterator i = ipc_sender_.sent_begin();
+
+  for (size_t test = 0; test < arraysize(kExpected); ++test, ++i) {
+    SCOPED_TRACE(testing::Message("iteration number ") << test);
+    EXPECT_NE(i, ipc_sender_.sent_end());
+    IPC::Message* message = i->get();
+    const base::DictionaryValue* details = nullptr;
+    ExtensionMsg_DispatchEvent::Param param;
+    GetPartOfMessageArguments(message, &details, &param);
+    ASSERT_TRUE(details != nullptr);
+    EXPECT_EQ(kExpected[test], details->HasKey(keys::kRequestBodyKey));
+  }
+
+  EXPECT_EQ(i, ipc_sender_.sent_end());
+}
+#endif
 
 TEST_F(ExtensionWebRequestTest, NoAccessRequestBodyData) {
   // We verify that URLRequest body is NOT accessible to OnBeforeRequest
@@ -1025,7 +1091,6 @@ class ExtensionWebRequestHeaderModificationTest
   BooleanPrefMember enable_referrers_;
   TestIPCSender ipc_sender_;
   scoped_refptr<EventRouterForwarder> event_router_;
-  scoped_refptr<InfoMap> extension_info_map_;
   std::unique_ptr<ChromeNetworkDelegate> network_delegate_;
   std::unique_ptr<net::MockHostResolver> host_resolver_;
   std::unique_ptr<net::TestURLRequestContext> context_;
@@ -1492,6 +1557,7 @@ TEST(ExtensionWebRequestHelpersTest, TestCalculateOnHeadersReceivedDelta) {
       "Key2: Value2, Bar\r\n"
       "Key3: Value3\r\n"
       "Key5: Value5, end5\r\n"
+      "X-Chrome-ID-Consistency-Response: Value6\r\n"
       "\r\n";
   scoped_refptr<net::HttpResponseHeaders> base_headers(
       new net::HttpResponseHeaders(
@@ -1504,23 +1570,51 @@ TEST(ExtensionWebRequestHelpersTest, TestCalculateOnHeadersReceivedDelta) {
   // Key3 is deleted
   new_headers.push_back(ResponseHeader("Key4", "Value4"));  // Added
   new_headers.push_back(ResponseHeader("Key5", "Value5, end5"));  // Unchanged
-  GURL effective_new_url;
+  new_headers.push_back(ResponseHeader("X-Chrome-ID-Consistency-Response",
+                                       "Value1"));  // Modified
+  GURL url;
 
-  std::unique_ptr<EventResponseDelta> delta(CalculateOnHeadersReceivedDelta(
-      "extid", base::Time::Now(), cancel, effective_new_url, base_headers.get(),
-      &new_headers));
+  // The X-Chrome-ID-Consistency-Response is a protected header, but only for
+  // Gaia URLs. It should be modifiable when sent from anywhere else.
+  // Non-Gaia URL:
+  std::unique_ptr<EventResponseDelta> delta(
+      CalculateOnHeadersReceivedDelta("extid", base::Time::Now(), cancel, url,
+                                      url, base_headers.get(), &new_headers));
+  ASSERT_TRUE(delta.get());
+  EXPECT_TRUE(delta->cancel);
+  EXPECT_EQ(3u, delta->added_response_headers.size());
+  EXPECT_TRUE(base::ContainsValue(delta->added_response_headers,
+                                  ResponseHeader("Key2", "Value1")));
+  EXPECT_TRUE(base::ContainsValue(delta->added_response_headers,
+                                  ResponseHeader("Key4", "Value4")));
+  EXPECT_TRUE(base::ContainsValue(
+      delta->added_response_headers,
+      ResponseHeader("X-Chrome-ID-Consistency-Response", "Value1")));
+  EXPECT_EQ(3u, delta->deleted_response_headers.size());
+  EXPECT_TRUE(base::ContainsValue(delta->deleted_response_headers,
+                                  ResponseHeader("Key2", "Value2, Bar")));
+  EXPECT_TRUE(base::ContainsValue(delta->deleted_response_headers,
+                                  ResponseHeader("Key3", "Value3")));
+  EXPECT_TRUE(base::ContainsValue(
+      delta->deleted_response_headers,
+      ResponseHeader("X-Chrome-ID-Consistency-Response", "Value6")));
+
+  // Gaia URL:
+  delta.reset(CalculateOnHeadersReceivedDelta(
+      "extid", base::Time::Now(), cancel, GaiaUrls::GetInstance()->gaia_url(),
+      url, base_headers.get(), &new_headers));
   ASSERT_TRUE(delta.get());
   EXPECT_TRUE(delta->cancel);
   EXPECT_EQ(2u, delta->added_response_headers.size());
-  EXPECT_TRUE(Contains(delta->added_response_headers,
-                       ResponseHeader("Key2", "Value1")));
-  EXPECT_TRUE(Contains(delta->added_response_headers,
-                       ResponseHeader("Key4", "Value4")));
+  EXPECT_TRUE(base::ContainsValue(delta->added_response_headers,
+                                  ResponseHeader("Key2", "Value1")));
+  EXPECT_TRUE(base::ContainsValue(delta->added_response_headers,
+                                  ResponseHeader("Key4", "Value4")));
   EXPECT_EQ(2u, delta->deleted_response_headers.size());
-  EXPECT_TRUE(Contains(delta->deleted_response_headers,
-                        ResponseHeader("Key2", "Value2, Bar")));
-  EXPECT_TRUE(Contains(delta->deleted_response_headers,
-                       ResponseHeader("Key3", "Value3")));
+  EXPECT_TRUE(base::ContainsValue(delta->deleted_response_headers,
+                                  ResponseHeader("Key2", "Value2, Bar")));
+  EXPECT_TRUE(base::ContainsValue(delta->deleted_response_headers,
+                                  ResponseHeader("Key3", "Value3")));
 }
 
 TEST(ExtensionWebRequestHelpersTest, TestCalculateOnAuthRequiredDelta) {

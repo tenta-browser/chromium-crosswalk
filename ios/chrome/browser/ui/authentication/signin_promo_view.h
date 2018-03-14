@@ -7,7 +7,10 @@
 
 #import <UIKit/UIKit.h>
 
+#include "components/signin/core/browser/signin_metrics.h"
+
 @class MDCFlatButton;
+@protocol SigninPromoViewDelegate;
 
 typedef NS_ENUM(NSInteger, SigninPromoViewMode) {
   // No identity available on the device.
@@ -16,6 +19,11 @@ typedef NS_ENUM(NSInteger, SigninPromoViewMode) {
   // without entering their credentials.
   SigninPromoViewModeWarmState,
 };
+
+extern NSString* const kSigninPromoViewId;
+extern NSString* const kSigninPromoPrimaryButtonId;
+extern NSString* const kSigninPromoSecondaryButtonId;
+extern NSString* const kSigninPromoCloseButtonId;
 
 // This class creates an image view, a label and 2 buttons. This view can be
 // configured with 2 modes : "Cold State" and "Warm State".
@@ -31,11 +39,14 @@ typedef NS_ENUM(NSInteger, SigninPromoViewMode) {
 //   - the title for |secondaryButton|
 @interface SigninPromoView : UIView
 
+@property(nonatomic, weak) id<SigninPromoViewDelegate> delegate;
 @property(nonatomic) SigninPromoViewMode mode;
 @property(nonatomic, readonly) UIImageView* imageView;
 @property(nonatomic, readonly) UILabel* textLabel;
 @property(nonatomic, readonly) MDCFlatButton* primaryButton;
 @property(nonatomic, readonly) MDCFlatButton* secondaryButton;
+// Hidden by default.
+@property(nonatomic, readonly) UIButton* closeButton;
 
 // Horizontal padding used for |textLabel|, |primaryButton| and
 // |secondaryButton|. Used to compute the preferred max layout width of
@@ -48,6 +59,9 @@ typedef NS_ENUM(NSInteger, SigninPromoViewMode) {
 // using CircularImageFromImage() (so if the image is not squared, it will be
 // cropped first). Must only be called in the "Warm State" mode.
 - (void)setProfileImage:(UIImage*)image;
+
+// Resets the view to be reused.
+- (void)prepareForReuse;
 
 @end
 

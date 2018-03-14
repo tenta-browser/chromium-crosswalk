@@ -5,11 +5,17 @@
     "service_manager:connector": {
       "provides": {
         "browser": [
+          "blink::mojom::OomIntervention",
+          "blink::mojom::WebDatabase",
           "content::mojom::Child",
+          "content::mojom::ChildControl",
+          "content::mojom::ChildHistogramFetcher",
+          "content::mojom::ChildHistogramFetcherFactory",
           "content::mojom::EmbeddedWorkerInstanceClient",
           "content::mojom::EmbeddedWorkerSetup",
           "content::mojom::FrameFactory",
           "content::mojom::RenderWidgetWindowTreeClientFactory",
+          "content::mojom::SharedWorkerFactory",
           "IPC::mojom::ChannelBootstrap",
           "visitedlink::mojom::VisitedLinkNotificationSink",
           "web_cache::mojom::WebCache"
@@ -19,17 +25,15 @@
         ]
       },
       "requires": {
+        "*": [ "app" ],
         "content_browser": [ "renderer" ],
+        "metrics": [ "url_keyed_metrics" ],
         "device": [
-          "device:battery_monitor",
-          "device:generic_sensor",
           "device:power_monitor",
           "device:screen_orientation",
           "device:sensors",
-          "device:time_zone_monitor",
-          "device:vibration"
+          "device:time_zone_monitor"
         ],
-        "network": [ "url_loader" ],
         "ui": [
           "discardable_memory",
           "gpu_client"
@@ -42,10 +46,30 @@
           "blink::mojom::AppBannerController",
           "blink::mojom::EngagementClient",
           "blink::mojom::InstallationService",
+          "blink::mojom::ManifestManager",
+          "blink::mojom::MediaDevicesListener",
+          "blink::mojom::TextSuggestionBackend",
           "content::mojom::ImageDownloader",
-          "mojom::MediaDevicesListener"
+          "content::mojom::FrameInputHandler",
+          "content::mojom::MediaStreamDispatcher",
+          "content::mojom::Widget"
         ]
       },
+      "requires": {
+        "content_browser": [ "renderer" ]
+      }
+    },
+    "navigation:dedicated_worker": {
+      "requires": {
+        "content_browser": [ "renderer" ]
+      }
+    },
+    "navigation:service_worker": {
+      "requires": {
+        "content_browser": [ "renderer" ]
+      }
+    },
+    "navigation:shared_worker": {
       "requires": {
         "content_browser": [ "renderer" ]
       }
@@ -73,6 +97,12 @@
     "v8_snapshot_64_data" : [{
       "path": "assets/snapshot_blob_64.bin",
       "platform": "android"
-    }]
+    }],
+    "v8_context_snapshot_data" : [
+      {
+        "path": "v8_context_snapshot.bin",
+        "platform": "linux"
+      }
+    ]
   }
 }

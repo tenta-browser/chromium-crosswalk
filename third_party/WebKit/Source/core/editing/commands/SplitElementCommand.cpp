@@ -26,9 +26,9 @@
 #include "core/editing/commands/SplitElementCommand.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/HTMLNames.h"
 #include "core/dom/Element.h"
 #include "core/editing/EditingUtilities.h"
+#include "core/html_names.h"
 #include "platform/wtf/Assertions.h"
 
 namespace blink {
@@ -47,7 +47,7 @@ void SplitElementCommand::ExecuteApply() {
     return;
 
   HeapVector<Member<Node>> children;
-  for (Node* node = element2_->FirstChild(); node != at_child_;
+  for (Node* node = element2_->firstChild(); node != at_child_;
        node = node->nextSibling())
     children.push_back(node);
 
@@ -82,7 +82,7 @@ void SplitElementCommand::DoUnapply() {
   NodeVector children;
   GetChildNodes(*element1_, children);
 
-  Node* ref_child = element2_->FirstChild();
+  Node* ref_child = element2_->firstChild();
 
   for (const auto& child : children)
     element2_->InsertBefore(child, ref_child, IGNORE_EXCEPTION_FOR_TESTING);
@@ -102,7 +102,7 @@ void SplitElementCommand::DoReapply() {
   ExecuteApply();
 }
 
-DEFINE_TRACE(SplitElementCommand) {
+void SplitElementCommand::Trace(blink::Visitor* visitor) {
   visitor->Trace(element1_);
   visitor->Trace(element2_);
   visitor->Trace(at_child_);

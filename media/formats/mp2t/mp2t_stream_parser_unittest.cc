@@ -174,6 +174,7 @@ class Mp2tStreamParserTest : public testing::Test {
   }
 
  protected:
+  MediaLog media_log_;
   std::unique_ptr<Mp2tStreamParser> parser_;
   int segment_count_;
   int config_count_;
@@ -358,7 +359,7 @@ class Mp2tStreamParserTest : public testing::Test {
         base::Bind(&Mp2tStreamParserTest::OnNewSegment, base::Unretained(this)),
         base::Bind(&Mp2tStreamParserTest::OnEndOfSegment,
                    base::Unretained(this)),
-        new MediaLog());
+        &media_log_);
   }
 
   bool ParseMpeg2TsFile(const std::string& filename, int append_bytes) {
@@ -503,6 +504,19 @@ TEST_F(Mp2tStreamParserTest, HLSSampleAES) {
     EXPECT_EQ(decrypted_audio_buffers[i], unencrypted_audio_buffer);
   }
 }
+
+TEST_F(Mp2tStreamParserTest, PrepareForHLSSampleAES) {
+  InitializeParser();
+  ParseMpeg2TsFile("bear-1280x720-hls-with-CAT.bin", 2048);
+  parser_->Flush();
+  EncryptionScheme video_encryption_scheme =
+      current_video_config_.encryption_scheme();
+  EXPECT_TRUE(video_encryption_scheme.is_encrypted());
+  EncryptionScheme audio_encryption_scheme =
+      current_audio_config_.encryption_scheme();
+  EXPECT_TRUE(audio_encryption_scheme.is_encrypted());
+}
+
 #endif
 
 }  // namespace mp2t

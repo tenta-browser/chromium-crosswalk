@@ -45,9 +45,9 @@ void HitTestCache::AddCachedResult(const HitTestResult& result,
   if (!result.IsCacheable())
     return;
 
-  // If the result was a hit test on an LayoutPart and the request allowed
-  // querying of the layout part; then the part hasn't been loaded yet.
-  if (result.IsOverFrameViewBase() &&
+  // If the result was a hit test on an LayoutEmbeddedContent and the request
+  // allowed querying of the layout part; then the part hasn't been loaded yet.
+  if (result.IsOverEmbeddedContentView() &&
       result.GetHitTestRequest().AllowsChildFrameContent())
     return;
 
@@ -58,7 +58,7 @@ void HitTestCache::AddCachedResult(const HitTestResult& result,
   if (dom_tree_version != dom_tree_version_)
     Clear();
   if (items_.size() < HIT_TEST_CACHE_SIZE)
-    items_.Resize(update_index_ + 1);
+    items_.resize(update_index_ + 1);
 
   items_.at(update_index_).CacheValues(result);
   dom_tree_version_ = dom_tree_version;
@@ -70,10 +70,10 @@ void HitTestCache::AddCachedResult(const HitTestResult& result,
 
 void HitTestCache::Clear() {
   update_index_ = 0;
-  items_.Clear();
+  items_.clear();
 }
 
-DEFINE_TRACE(HitTestCache) {
+void HitTestCache::Trace(blink::Visitor* visitor) {
   visitor->Trace(items_);
 }
 

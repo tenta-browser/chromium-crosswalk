@@ -8,7 +8,7 @@ import android.content.Context;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 
-import junit.framework.Assert;
+import org.junit.Assert;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.chrome.browser.omnibox.AutocompleteController;
@@ -143,9 +143,8 @@ public class OmniboxTestUtils {
         }
 
         @Override
-        public void start(
-                Profile profile, String url ,
-                final String text, boolean preventInlineAutocomplete) {
+        public void start(Profile profile, String url, final String text, int cursorPosition,
+                boolean preventInlineAutocomplete, boolean focusedFromFakebox) {
             mStartAutocompleteCalled = true;
             mSuggestionsDispatcher = new Runnable() {
                 @Override
@@ -166,7 +165,7 @@ public class OmniboxTestUtils {
         }
 
         @Override
-        public void startZeroSuggest(Profile profile, String omniboxText, String url,
+        public void startZeroSuggest(Profile profile, String omniboxText, String url, String title,
                 boolean focusedFromFakebox) {
             mZeroSuggestCalledCount++;
         }
@@ -210,20 +209,11 @@ public class OmniboxTestUtils {
 
         @Override
         public void start(Profile profile, String url, String text, int cursorPosition,
-                boolean preventInlineAutocomplete) {
-        }
+                boolean preventInlineAutocomplete, boolean focusedFromFakebox) {}
 
         @Override
-        public final void start(
-                Profile profile, String url,
-                final String text, boolean preventInlineAutocomplete) {
-            start(profile, url, text, -1, preventInlineAutocomplete);
-        }
-
-        @Override
-        public void startZeroSuggest(Profile profile, String omniboxText, String url,
-                boolean focusedFromFakebox) {
-        }
+        public void startZeroSuggest(Profile profile, String omniboxText, String url, String title,
+                boolean focusedFromFakebox) {}
 
         @Override
         public void stop(boolean clear) {}
@@ -328,16 +318,37 @@ public class OmniboxTestUtils {
      * @param locationBar The LocationBar who owns the suggestions.
      */
     public static void waitForOmniboxSuggestions(final LocationBarLayout locationBar) {
+        waitForOmniboxSuggestions(locationBar, CriteriaHelper.DEFAULT_MAX_TIME_TO_POLL);
+    }
+
+    /**
+     * Waits for a non-empty list of omnibox suggestions is shown.
+     *
+     * @param locationBar The LocationBar who owns the suggestions.
+     * @param maxPollTimeMs The maximum time to wait for the suggestions to be visible.
+     */
+    public static void waitForOmniboxSuggestions(
+            final LocationBarLayout locationBar, long maxPollTimeMs) {
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 LocationBarLayout.OmniboxSuggestionsList suggestionsList =
                         locationBar.getSuggestionList();
-                return suggestionsList != null
-                        && suggestionsList.isShown()
-                        && suggestionsList.getCount() >= 1;
+                if (suggestionsList == null) {
+                    updateFailureReason("suggestionList is null");
+                    return false;
+                }
+                if (!suggestionsList.isShown()) {
+                    updateFailureReason("suggestionList is not shown");
+                    return false;
+                }
+                if (suggestionsList.getCount() == 0) {
+                    updateFailureReason("suggestionList has no entries");
+                    return false;
+                }
+                return true;
             }
-        });
+        }, maxPollTimeMs, CriteriaHelper.DEFAULT_POLLING_INTERVAL);
     }
 
     /**

@@ -13,6 +13,7 @@
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -21,13 +22,14 @@ namespace search_provider_logos {
 
 LogoMetadata GetExampleMetadata() {
   LogoMetadata metadata;
-  metadata.source_url = "http://google.com/mylogo";
+  metadata.source_url = GURL("http://google.com/mylogo");
   metadata.fingerprint = "LC4JVIZ5HVITQFKH0V70";
   EXPECT_TRUE(base::Time::FromString("98-05-05 05:05:06 GMT",
                                      &metadata.expiration_time));
   metadata.can_show_after_expiration = true;
-  metadata.on_click_url = "https://www.google.com/search?q=chicken";
-  metadata.animated_url = "http://www.google.com/logos/doodle.png";
+  metadata.type = LogoType::ANIMATED;
+  metadata.on_click_url = GURL("https://www.google.com/search?q=chicken");
+  metadata.animated_url = GURL("http://www.google.com/logos/doodle.png");
   metadata.alt_text = "A logo about chickens";
   metadata.mime_type = "image/jpeg";
   return metadata;
@@ -35,12 +37,15 @@ LogoMetadata GetExampleMetadata() {
 
 LogoMetadata GetExampleMetadata2() {
   LogoMetadata metadata;
-  metadata.source_url = "https://www.example.com/thebestlogo?size=large";
+  metadata.source_url = GURL("https://www.example.com/thebestlogo?size=large");
   metadata.fingerprint = "bh4PLHdnEaQAPxNGRyMao1rOmVFTXuOdVhdrMmPV";
   EXPECT_TRUE(base::Time::FromString("17-04-04 07:10:58 GMT",
                                      &metadata.expiration_time));
   metadata.can_show_after_expiration = false;
-  metadata.on_click_url = "http://www.example.co.uk/welcome.php#top";
+  metadata.type = LogoType::INTERACTIVE;
+  metadata.on_click_url = GURL("http://www.example.co.uk/welcome.php#top");
+  metadata.full_page_url =
+      GURL("http://www.example.co.uk/welcome.php#fpdoodle");
   metadata.alt_text = "This is a logo";
   metadata.mime_type = "image/png";
   return metadata;
@@ -55,17 +60,17 @@ base::RefCountedString* CreateExampleImage(size_t num_bytes) {
   return encoded_image_str;
 }
 
-EncodedLogo GetExampleLogo() {
-  EncodedLogo logo;
-  logo.encoded_image = CreateExampleImage(837);
-  logo.metadata = GetExampleMetadata();
+std::unique_ptr<EncodedLogo> GetExampleLogo() {
+  auto logo = base::MakeUnique<EncodedLogo>();
+  logo->encoded_image = CreateExampleImage(837);
+  logo->metadata = GetExampleMetadata();
   return logo;
 }
 
-EncodedLogo GetExampleLogo2() {
-  EncodedLogo logo;
-  logo.encoded_image = CreateExampleImage(345);
-  logo.metadata = GetExampleMetadata2();
+std::unique_ptr<EncodedLogo> GetExampleLogo2() {
+  auto logo = base::MakeUnique<EncodedLogo>();
+  logo->encoded_image = CreateExampleImage(345);
+  logo->metadata = GetExampleMetadata2();
   return logo;
 }
 
@@ -76,7 +81,9 @@ void ExpectMetadataEqual(const LogoMetadata& expected_metadata,
   EXPECT_EQ(expected_metadata.can_show_after_expiration,
             actual_metadata.can_show_after_expiration);
   EXPECT_EQ(expected_metadata.expiration_time, actual_metadata.expiration_time);
+  EXPECT_EQ(expected_metadata.type, actual_metadata.type);
   EXPECT_EQ(expected_metadata.on_click_url, actual_metadata.on_click_url);
+  EXPECT_EQ(expected_metadata.full_page_url, actual_metadata.full_page_url);
   EXPECT_EQ(expected_metadata.animated_url, actual_metadata.animated_url);
   EXPECT_EQ(expected_metadata.alt_text, actual_metadata.alt_text);
   EXPECT_EQ(expected_metadata.mime_type, actual_metadata.mime_type);
@@ -106,27 +113,27 @@ class LogoCacheTest : public ::testing::Test {
   }
 
   void InitCache() {
-    cache_.reset(new LogoCache(
-        cache_parent_dir_.GetPath().Append(FILE_PATH_LITERAL("cache"))));
+    cache_ = base::MakeUnique<LogoCache>(
+        cache_parent_dir_.GetPath().Append(FILE_PATH_LITERAL("cache")));
   }
 
   void ExpectMetadata(const LogoMetadata* expected_metadata) {
     const LogoMetadata* retrieved_metadata = cache_->GetCachedLogoMetadata();
     if (expected_metadata) {
-      ASSERT_TRUE(retrieved_metadata != NULL);
+      ASSERT_TRUE(retrieved_metadata);
       ExpectMetadataEqual(*expected_metadata, *retrieved_metadata);
     } else {
-      ASSERT_TRUE(retrieved_metadata == NULL);
+      ASSERT_FALSE(retrieved_metadata);
     }
   }
 
   void ExpectLogo(const EncodedLogo* expected_logo) {
     std::unique_ptr<EncodedLogo> retrieved_logo(cache_->GetCachedLogo());
     if (expected_logo) {
-      ASSERT_TRUE(retrieved_logo.get() != NULL);
+      ASSERT_TRUE(retrieved_logo.get());
       ExpectLogosEqual(*expected_logo, *retrieved_logo);
     } else {
-      ASSERT_TRUE(retrieved_logo.get() == NULL);
+      ASSERT_FALSE(retrieved_logo.get());
     }
   }
 
@@ -157,7 +164,7 @@ TEST(LogoCacheSerializationTest, DeserializeCorruptMetadata) {
   int logo_num_bytes = 33;
   std::unique_ptr<LogoMetadata> metadata =
       LogoCache::LogoMetadataFromString("", &logo_num_bytes);
-  ASSERT_TRUE(metadata.get() == NULL);
+  ASSERT_FALSE(metadata);
 
   LogoMetadata example_metadata = GetExampleMetadata2();
   std::string corrupt_str;
@@ -165,21 +172,21 @@ TEST(LogoCacheSerializationTest, DeserializeCorruptMetadata) {
       example_metadata, logo_num_bytes, &corrupt_str);
   corrupt_str.append("@");
   metadata = LogoCache::LogoMetadataFromString(corrupt_str, &logo_num_bytes);
-  ASSERT_TRUE(metadata.get() == NULL);
+  ASSERT_FALSE(metadata);
 }
 
 TEST_F(LogoCacheTest, StoreAndRetrieveMetadata) {
   // Expect no metadata at first.
-  ExpectMetadata(NULL);
+  ExpectMetadata(nullptr);
 
   // Set initial metadata.
-  EncodedLogo logo = GetExampleLogo();
-  LogoMetadata& metadata = logo.metadata;
-  cache_->SetCachedLogo(&logo);
+  std::unique_ptr<EncodedLogo> logo = GetExampleLogo();
+  LogoMetadata& metadata = logo->metadata;
+  cache_->SetCachedLogo(logo.get());
   ExpectMetadata(&metadata);
 
   // Update metadata.
-  metadata.on_click_url = "http://anotherwebsite.com";
+  metadata.on_click_url = GURL("http://anotherwebsite.com");
   cache_->UpdateCachedLogoMetadata(metadata);
   ExpectMetadata(&metadata);
 
@@ -194,42 +201,42 @@ TEST_F(LogoCacheTest, StoreAndRetrieveMetadata) {
 
 TEST_F(LogoCacheTest, StoreAndRetrieveLogo) {
   // Expect no metadata at first.
-  ExpectLogo(NULL);
+  ExpectLogo(nullptr);
 
   // Set initial logo.
-  EncodedLogo logo = GetExampleLogo();
-  cache_->SetCachedLogo(&logo);
-  ExpectLogo(&logo);
+  std::unique_ptr<EncodedLogo> logo = GetExampleLogo();
+  cache_->SetCachedLogo(logo.get());
+  ExpectLogo(logo.get());
 
-  // Update logo to NULL.
-  cache_->SetCachedLogo(NULL);
-  ExpectLogo(NULL);
+  // Update logo to null.
+  cache_->SetCachedLogo(nullptr);
+  ExpectLogo(nullptr);
 
   // Read logo back from disk.
   SimulateRestart();
-  ExpectLogo(NULL);
+  ExpectLogo(nullptr);
 
   // Update logo.
   logo = GetExampleLogo2();
-  cache_->SetCachedLogo(&logo);
-  ExpectLogo(&logo);
+  cache_->SetCachedLogo(logo.get());
+  ExpectLogo(logo.get());
 
   // Read logo back from disk.
   SimulateRestart();
-  ExpectLogo(&logo);
+  ExpectLogo(logo.get());
 }
 
 TEST_F(LogoCacheTest, RetrieveCorruptMetadata) {
   // Set initial logo.
-  EncodedLogo logo = GetExampleLogo2();
-  cache_->SetCachedLogo(&logo);
-  ExpectLogo(&logo);
+  std::unique_ptr<EncodedLogo> logo = GetExampleLogo2();
+  cache_->SetCachedLogo(logo.get());
+  ExpectLogo(logo.get());
 
-  // Corrupt metadata and expect NULL for both logo and metadata.
+  // Corrupt metadata and expect null for both logo and metadata.
   SimulateRestart();
   ShortenFile(cache_->GetMetadataPath());
-  ExpectMetadata(NULL);
-  ExpectLogo(NULL);
+  ExpectMetadata(nullptr);
+  ExpectLogo(nullptr);
 
   // Ensure corrupt cache files are deleted.
   EXPECT_FALSE(base::PathExists(cache_->GetMetadataPath()));
@@ -238,16 +245,17 @@ TEST_F(LogoCacheTest, RetrieveCorruptMetadata) {
 
 TEST_F(LogoCacheTest, RetrieveCorruptLogo) {
   // Set initial logo.
-  EncodedLogo logo = GetExampleLogo();
-  cache_->SetCachedLogo(&logo);
-  ExpectLogo(&logo);
+  std::unique_ptr<EncodedLogo> logo = GetExampleLogo();
+  cache_->SetCachedLogo(logo.get());
+  ExpectLogo(logo.get());
 
-  // Corrupt logo and expect NULL.
+  // Corrupt logo and expect nullptr.
   SimulateRestart();
   ShortenFile(cache_->GetLogoPath());
-  ExpectLogo(NULL);
-  // Once the logo is noticed to be NULL, the metadata should also be cleared.
-  ExpectMetadata(NULL);
+  ExpectLogo(nullptr);
+
+  // Once the logo is noticed to be null, the metadata should also be cleared.
+  ExpectMetadata(nullptr);
 
   // Ensure corrupt cache files are deleted.
   EXPECT_FALSE(base::PathExists(cache_->GetMetadataPath()));

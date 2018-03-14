@@ -33,8 +33,8 @@
 #include "core/dom/ContainerNode.h"
 #include "core/dom/Document.h"
 #include "core/dom/NodeTraversal.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalDOMWindow.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/HTMLFrameOwnerElement.h"
 #include "core/layout/LayoutObject.h"
 #include "core/page/Page.h"
@@ -44,7 +44,7 @@ namespace blink {
 
 static IntRect ConvertToContentCoordinatesWithoutCollapsingToZero(
     const IntRect& rect_in_viewport,
-    const FrameView* view) {
+    const LocalFrameView* view) {
   IntRect rect_in_contents = view->ViewportToContents(rect_in_viewport);
   if (rect_in_viewport.Width() > 0 && !rect_in_contents.Width())
     rect_in_contents.SetWidth(1);
@@ -57,14 +57,6 @@ static Node* NodeInsideFrame(Node* node) {
   if (node->IsFrameOwnerElement())
     return ToHTMLFrameOwnerElement(node)->contentDocument();
   return nullptr;
-}
-
-IntRect SmartClipData::RectInViewport() const {
-  return rect_in_viewport_;
-}
-
-const String& SmartClipData::ClipData() const {
-  return string_;
 }
 
 SmartClip::SmartClip(LocalFrame* frame) : frame_(frame) {}
@@ -87,7 +79,7 @@ SmartClipData SmartClip::DataForRect(const IntRect& crop_rect_in_viewport) {
   CollectOverlappingChildNodes(best_node, crop_rect_in_viewport, hit_nodes);
 
   if (hit_nodes.IsEmpty() || hit_nodes.size() == best_node->CountChildren()) {
-    hit_nodes.Clear();
+    hit_nodes.clear();
     hit_nodes.push_back(best_node);
   }
 
@@ -100,7 +92,6 @@ SmartClipData SmartClip::DataForRect(const IntRect& crop_rect_in_viewport) {
   }
 
   return SmartClipData(
-      best_node,
       frame_->GetDocument()->View()->ContentsToViewport(united_rects),
       collected_text.ToString());
 }
@@ -202,9 +193,9 @@ Node* SmartClip::FindBestOverlappingNode(Node* root_node,
 // image in the smart clip. It seems to want to include sprites created from
 // CSS background images but to skip actual backgrounds.
 bool SmartClip::ShouldSkipBackgroundImage(Node* node) {
-  ASSERT(node);
+  DCHECK(node);
   // Apparently we're only interested in background images on spans and divs.
-  if (!isHTMLSpanElement(*node) && !isHTMLDivElement(*node))
+  if (!IsHTMLSpanElement(*node) && !IsHTMLDivElement(*node))
     return true;
 
   // This check actually makes a bit of sense. If you're going to sprite an
@@ -243,7 +234,7 @@ String SmartClip::ExtractTextFromNode(Node* node) {
   StringBuilder result;
   for (Node& current_node : NodeTraversal::InclusiveDescendantsOf(*node)) {
     const ComputedStyle* style = current_node.EnsureComputedStyle();
-    if (style && style->UserSelect() == SELECT_NONE)
+    if (style && style->UserSelect() == EUserSelect::kNone)
       continue;
 
     if (Node* node_from_frame = NodeInsideFrame(&current_node))

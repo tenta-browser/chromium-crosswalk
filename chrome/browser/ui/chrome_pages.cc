@@ -6,7 +6,6 @@
 
 #include <stddef.h>
 
-#include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -14,6 +13,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
+#include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/download/download_shelf.h"
 #include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -25,16 +25,16 @@
 #include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
-#include "chrome/browser/ui/settings_window_manager.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/browser/ui/webui/options/content_settings_handler.h"
+#include "chrome/browser/ui/webui/md_bookmarks/md_bookmarks_ui.h"
 #include "chrome/browser/ui/webui/site_settings_helper.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
+#include "components/bookmarks/browser/bookmark_model.h"
+#include "components/bookmarks/browser/bookmark_node.h"
 #include "components/signin/core/browser/signin_header_helper.h"
-#include "components/signin/core/common/profile_management_switches.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/common/constants.h"
@@ -47,12 +47,9 @@
 #endif
 
 #if defined(OS_CHROMEOS)
-#include "base/feature_list.h"
 #include "chrome/browser/chromeos/genius_app/app_id.h"
-#include "chrome/common/chrome_features.h"
-#include "chrome/grit/generated_resources.h"
+#include "chrome/browser/ui/settings_window_manager_chromeos.h"
 #include "extensions/browser/extension_registry.h"
-#include "ui/base/l10n/l10n_util.h"
 #endif
 
 #if !defined(OS_ANDROID)
@@ -67,15 +64,12 @@ namespace {
 
 const char kHashMark[] = "#";
 
-void OpenBookmarkManagerWithHash(Browser* browser,
-                                 const std::string& action,
-                                 int64_t node_id) {
-  base::RecordAction(UserMetricsAction("ShowBookmarkManager"));
-  base::RecordAction(UserMetricsAction("ShowBookmarks"));
-  NavigateParams params(GetSingletonTabNavigateParams(
-      browser,
-      GURL(kChromeUIBookmarksURL).Resolve(base::StringPrintf(
-          "/#%s%s", action.c_str(), base::Int64ToString(node_id).c_str()))));
+void OpenBookmarkManagerForNode(Browser* browser, int64_t node_id) {
+  GURL url = GURL(kChromeUIBookmarksURL)
+                 .Resolve(base::StringPrintf(
+                     MdBookmarksUI::IsEnabled() ? "/?id=%s" : "/#%s",
+                     base::Int64ToString(node_id).c_str()));
+  NavigateParams params(GetSingletonTabNavigateParams(browser, url));
   params.path_behavior = NavigateParams::IGNORE_AND_NAVIGATE;
   ShowSingletonTabOverwritingNTP(browser, params);
 }
@@ -92,11 +86,16 @@ void NavigateToSingletonTab(Browser* browser, const GURL& url) {
 // is created.
 void ShowHelpImpl(Browser* browser, Profile* profile, HelpSource source) {
   base::RecordAction(UserMetricsAction("ShowHelpTab"));
-#if defined(OS_CHROMEOS) && defined(OFFICIAL_BUILD)
+#if defined(OS_CHROMEOS) && defined(GOOGLE_CHROME_BUILD)
   const extensions::Extension* extension =
       extensions::ExtensionRegistry::Get(profile)->GetExtensionById(
           genius_app::kGeniusAppId,
           extensions::ExtensionRegistry::EVERYTHING);
+  if (!extension) {
+    DCHECK(base::CommandLine::ForCurrentProcess()->HasSwitch(
+        switches::kDisableDefaultApps));
+    return;
+  }
   extensions::AppLaunchSource app_launch_source(extensions::SOURCE_UNTRACKED);
   switch (source) {
     case HELP_SOURCE_KEYBOARD:
@@ -141,20 +140,15 @@ void ShowHelpImpl(Browser* browser, Profile* profile, HelpSource source) {
 }
 
 std::string GenerateContentSettingsExceptionsSubPage(ContentSettingsType type) {
-  if (!base::FeatureList::IsEnabled(features::kMaterialDesignSettings)) {
-    return kDeprecatedOptionsContentSettingsExceptionsSubPage +
-           std::string(kHashMark) +
-           site_settings::ContentSettingsTypeToGroupName(type);
-  }
-
   // In MD Settings, the exceptions no longer have a separate subpage.
   // This list overrides the group names defined in site_settings_helper for the
   // purposes of URL generation for MD Settings only. We need this because some
   // of the old group names are no longer appropriate: i.e. "plugins" =>
   // "flash".
   //
-  // TODO(tommycli): Update the group names defined in site_settings_helper once
-  // Options is removed from Chrome. Then this list will no longer be needed.
+  // TODO(crbug.com/728353): Update the group names defined in
+  // site_settings_helper once Options is removed from Chrome. Then this list
+  // will no longer be needed.
   typedef std::map<ContentSettingsType, std::string> ContentSettingPathMap;
   CR_DEFINE_STATIC_LOCAL(
       ContentSettingPathMap, kSettingsPathOverrides,
@@ -162,8 +156,9 @@ std::string GenerateContentSettingsExceptionsSubPage(ContentSettingsType type) {
         {CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC, "backgroundSync"},
         {CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC, "microphone"},
         {CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA, "camera"},
+        {CONTENT_SETTINGS_TYPE_MIDI_SYSEX, "midiDevices"},
         {CONTENT_SETTINGS_TYPE_PLUGINS, "flash"},
-        {CONTENT_SETTINGS_TYPE_SUBRESOURCE_FILTER, "subresourceFilter"},
+        {CONTENT_SETTINGS_TYPE_ADS, "ads"},
         {CONTENT_SETTINGS_TYPE_PPAPI_BROKER, "unsandboxedPlugins"}}));
   const auto it = kSettingsPathOverrides.find(type);
   const std::string content_type_path =
@@ -174,25 +169,19 @@ std::string GenerateContentSettingsExceptionsSubPage(ContentSettingsType type) {
   return std::string(kContentSettingsSubPage) + "/" + content_type_path;
 }
 
-#if defined(OS_CHROMEOS)
-std::string GenerateContentSettingsSearchQueryPath(int query_message_id) {
-  return std::string(chrome::kDeprecatedOptionsSearchSubPage) + kHashMark +
-         l10n_util::GetStringUTF8(query_message_id);
-}
-#endif
-
 }  // namespace
 
 void ShowBookmarkManager(Browser* browser) {
   base::RecordAction(UserMetricsAction("ShowBookmarkManager"));
-  base::RecordAction(UserMetricsAction("ShowBookmarks"));
-  ShowSingletonTabOverwritingNTP(
-      browser,
+  NavigateParams params(
       GetSingletonTabNavigateParams(browser, GURL(kChromeUIBookmarksURL)));
+  params.path_behavior = NavigateParams::IGNORE_AND_STAY_PUT;
+  ShowSingletonTabOverwritingNTP(browser, params);
 }
 
 void ShowBookmarkManagerForNode(Browser* browser, int64_t node_id) {
-  OpenBookmarkManagerWithHash(browser, std::string(), node_id);
+  base::RecordAction(UserMetricsAction("ShowBookmarkManager"));
+  OpenBookmarkManagerForNode(browser, node_id);
 }
 
 void ShowHistory(Browser* browser) {
@@ -231,16 +220,9 @@ void ShowExtensions(Browser* browser,
 
 void ShowConflicts(Browser* browser) {
 #if defined(OS_WIN)
-  EnumerateModulesModel* model = EnumerateModulesModel::GetInstance();
-  GURL conflict_url = model->GetConflictUrl();
-  if (conflict_url.is_valid()) {
-    ShowSingletonTab(browser, conflict_url);
-    model->AcknowledgeConflictNotification();
-    return;
-  }
+  EnumerateModulesModel::GetInstance()->AcknowledgeConflictNotification();
 #endif
 
-  base::RecordAction(UserMetricsAction("AboutConflicts"));
   ShowSingletonTab(browser, GURL(kChromeUIConflictsURL));
 }
 
@@ -250,6 +232,10 @@ void ShowHelp(Browser* browser, HelpSource source) {
 
 void ShowHelpForProfile(Profile* profile, HelpSource source) {
   ShowHelpImpl(NULL, profile, source);
+}
+
+void ShowBetaForum(Browser* browser) {
+  ShowSingletonTab(browser, GURL(kChromeBetaForumURL));
 }
 
 void ShowPolicy(Browser* browser) {
@@ -264,13 +250,6 @@ void ShowSlow(Browser* browser) {
 
 GURL GetSettingsUrl(const std::string& sub_page) {
   return GURL(std::string(kChromeUISettingsURL) + sub_page);
-}
-
-bool IsSettingsSubPage(const GURL& url, const std::string& sub_page) {
-  return (url.SchemeIs(content::kChromeUIScheme) &&
-          (url.host_piece() == chrome::kChromeUISettingsHost ||
-           url.host_piece() == chrome::kChromeUISettingsFrameHost) &&
-          url.path_piece() == "/" + sub_page);
 }
 
 bool IsTrustedPopupWindowWithScheme(const Browser* browser,
@@ -293,11 +272,11 @@ void ShowSettings(Browser* browser) {
 }
 
 void ShowSettingsSubPage(Browser* browser, const std::string& sub_page) {
-  if (::switches::SettingsWindowEnabled()) {
-    ShowSettingsSubPageForProfile(browser->profile(), sub_page);
-    return;
-  }
+#if defined(OS_CHROMEOS)
+  ShowSettingsSubPageForProfile(browser->profile(), sub_page);
+#else
   ShowSettingsSubPageInTabbedBrowser(browser, sub_page);
+#endif
 }
 
 void ShowSettingsSubPageForProfile(Profile* profile,
@@ -305,40 +284,15 @@ void ShowSettingsSubPageForProfile(Profile* profile,
   std::string sub_page_path = sub_page;
 
 #if defined(OS_CHROMEOS)
-  if (!base::FeatureList::IsEnabled(features::kMaterialDesignSettings)) {
-    if (sub_page == chrome::kAccessibilitySubPage) {
-      sub_page_path = GenerateContentSettingsSearchQueryPath(
-          IDS_OPTIONS_SETTINGS_SECTION_TITLE_ACCESSIBILITY);
-    } else if (sub_page == chrome::kBluetoothSubPage) {
-      sub_page_path = GenerateContentSettingsSearchQueryPath(
-          IDS_OPTIONS_SETTINGS_SECTION_TITLE_BLUETOOTH);
-    } else if (sub_page == chrome::kDateTimeSubPage) {
-      sub_page_path = GenerateContentSettingsSearchQueryPath(
-          IDS_OPTIONS_SETTINGS_SECTION_TITLE_DATETIME);
-    } else if (sub_page == chrome::kStylusSubPage ||
-               sub_page == chrome::kPowerSubPage) {
-      sub_page_path += "-overlay";
-    }
-  } else {
-    if (sub_page == chrome::kPowerSubPage) {
-      // TODO(stevenjbj/derat): Remove this once we have a 'power' subpage,
-      // crbug.com/633455.
-      sub_page_path = "device";
-    }
-  }
-#endif
-
-  if (::switches::SettingsWindowEnabled()) {
-    base::RecordAction(base::UserMetricsAction("ShowOptions"));
-    SettingsWindowManager::GetInstance()->ShowChromePageForProfile(
-        profile, GetSettingsUrl(sub_page_path));
-    return;
-  }
+  base::RecordAction(base::UserMetricsAction("ShowOptions"));
+  SettingsWindowManager::GetInstance()->ShowChromePageForProfile(
+      profile, GetSettingsUrl(sub_page_path));
+#else
   Browser* browser = chrome::FindTabbedBrowser(profile, false);
-  if (!browser) {
+  if (!browser)
     browser = new Browser(Browser::CreateParams(profile, true));
-  }
   ShowSettingsSubPageInTabbedBrowser(browser, sub_page_path);
+#endif
 }
 
 void ShowSettingsSubPageInTabbedBrowser(Browser* browser,
@@ -356,12 +310,34 @@ void ShowContentSettingsExceptions(Browser* browser,
       browser, GenerateContentSettingsExceptionsSubPage(content_settings_type));
 }
 
-void ShowContentSettingsExceptionsInWindow(
+void ShowContentSettingsExceptionsForProfile(
     Profile* profile,
     ContentSettingsType content_settings_type) {
-  DCHECK(switches::SettingsWindowEnabled());
   ShowSettingsSubPageForProfile(
       profile, GenerateContentSettingsExceptionsSubPage(content_settings_type));
+}
+
+void ShowSiteSettings(Browser* browser, const GURL& url) {
+  // If a valid non-file origin, open a settings page specific to the current
+  // origin of the page. Otherwise, open Content Settings.
+  url::Origin site_origin = url::Origin::Create(url);
+  std::string link_destination(chrome::kChromeUIContentSettingsURL);
+  // TODO(https://crbug.com/444047): Site Details should work with file:// urls
+  // when this bug is fixed, so add it to the whitelist when that happens.
+  if (!site_origin.unique() && (url.SchemeIsHTTPOrHTTPS() ||
+                                url.SchemeIs(extensions::kExtensionScheme))) {
+    std::string origin_string = site_origin.Serialize();
+    url::RawCanonOutputT<char> percent_encoded_origin;
+    url::EncodeURIComponent(origin_string.c_str(), origin_string.length(),
+                            &percent_encoded_origin);
+    link_destination = chrome::kChromeUISiteDetailsPrefixURL +
+                       std::string(percent_encoded_origin.data(),
+                                   percent_encoded_origin.length());
+  }
+  browser->OpenURL(
+      content::OpenURLParams(GURL(link_destination), content::Referrer(),
+                             WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                             ui::PAGE_TRANSITION_TYPED, false));
 }
 
 void ShowContentSettings(Browser* browser,
@@ -389,15 +365,15 @@ void ShowImportDialog(Browser* browser) {
 
 void ShowAboutChrome(Browser* browser) {
   base::RecordAction(UserMetricsAction("AboutChrome"));
-  if (::switches::SettingsWindowEnabled()) {
-    SettingsWindowManager::GetInstance()->ShowChromePageForProfile(
-        browser->profile(), GURL(kChromeUIHelpURL));
-    return;
-  }
+#if defined(OS_CHROMEOS)
+  SettingsWindowManager::GetInstance()->ShowChromePageForProfile(
+      browser->profile(), GURL(kChromeUIHelpURL));
+#else
   NavigateParams params(
       GetSingletonTabNavigateParams(browser, GURL(kChromeUIHelpURL)));
   params.path_behavior = NavigateParams::IGNORE_AND_NAVIGATE;
   ShowSingletonTabOverwritingNTP(browser, params);
+#endif
 }
 
 void ShowSearchEngineSettings(Browser* browser) {
@@ -412,37 +388,38 @@ void ShowBrowserSignin(Browser* browser,
   SigninManagerBase* manager =
       SigninManagerFactory::GetForProfile(original_profile);
   DCHECK(manager->IsSigninAllowed());
-  // If the browser's profile is an incognito profile, make sure to use
-  // a browser window from the original profile.  The user cannot sign in
-  // from an incognito window.
-  bool switched_browser = false;
-  std::unique_ptr<ScopedTabbedBrowserDisplayer> displayer;
-  if (browser->profile()->IsOffTheRecord()) {
-    switched_browser = true;
-    displayer.reset(new ScopedTabbedBrowserDisplayer(original_profile));
-    browser = displayer->browser();
-  }
 
-  // Since the extension is a separate application, it might steal focus
-  // away from Chrome, and accidentally close the avatar bubble. The same will
-  // happen if we had to switch browser windows to show the sign in page. In
-  // this case, fallback to the full-tab signin page.
-  bool show_avatar_bubble =
-      access_point != signin_metrics::AccessPoint::ACCESS_POINT_EXTENSIONS &&
-      !switched_browser;
+  // If the browser's profile is an incognito profile, make sure to use
+  // a browser window from the original profile. The user cannot sign in
+  // from an incognito window.
+  auto displayer =
+      base::MakeUnique<ScopedTabbedBrowserDisplayer>(original_profile);
+  browser = displayer->browser();
+
 #if defined(OS_CHROMEOS)
   // ChromeOS doesn't have the avatar bubble.
-  show_avatar_bubble = false;
-#endif
+  const bool can_show_avatar_bubble = false;
+#else
+  // The sign-in modal dialog is presented as a tab-modal dialog (which is
+  // automatically dismissed when the page navigates). Displaying the dialog on
+  // a new tab that loads any page will lead to it being dismissed as soon as
+  // the new tab is loaded. So the sign-in dialog must only be presented on top
+  // of an existing tab.
+  //
+  // If ScopedTabbedBrowserDisplayer had to create a (non-incognito) Browser*,
+  // it won't have any tabs yet. Fallback to the full-tab sign-in flow in this
+  // case.
+  const bool can_show_avatar_bubble = !browser->tab_strip_model()->empty();
+#endif  // defined(OS_CHROMEOS)
 
-  if (show_avatar_bubble) {
+  if (can_show_avatar_bubble) {
     browser->window()->ShowAvatarBubbleFromAvatarButton(
         BrowserWindow::AVATAR_BUBBLE_MODE_SIGNIN,
         signin::ManageAccountsParams(), access_point, false);
   } else {
     NavigateToSingletonTab(
         browser,
-        signin::GetPromoURL(
+        signin::GetPromoURLForTab(
             access_point, signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT,
             false));
     DCHECK_GT(browser->tab_strip_model()->count(), 0);

@@ -26,7 +26,6 @@
 #include "platform/graphics/GraphicsLayer.h"
 
 #include <memory>
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/animation/CompositorAnimation.h"
 #include "platform/animation/CompositorAnimationHost.h"
 #include "platform/animation/CompositorAnimationPlayer.h"
@@ -35,6 +34,8 @@
 #include "platform/animation/CompositorFloatAnimationCurve.h"
 #include "platform/animation/CompositorTargetProperty.h"
 #include "platform/graphics/CompositorElementId.h"
+#include "platform/graphics/test/FakeScrollableArea.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/scroll/ScrollableArea.h"
 #include "platform/testing/FakeGraphicsLayer.h"
 #include "platform/testing/FakeGraphicsLayerClient.h"
@@ -47,29 +48,35 @@
 #include "public/platform/WebCompositorSupport.h"
 #include "public/platform/WebLayer.h"
 #include "public/platform/WebLayerTreeView.h"
-#include "public/platform/WebScheduler.h"
 #include "public/platform/WebThread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
 
-class GraphicsLayerTest : public testing::Test {
+class GraphicsLayerTest : public ::testing::Test {
  public:
   GraphicsLayerTest() {
     clip_layer_ = WTF::WrapUnique(new FakeGraphicsLayer(&client_));
     scroll_elasticity_layer_ = WTF::WrapUnique(new FakeGraphicsLayer(&client_));
+    page_scale_layer_ = WTF::WrapUnique(new FakeGraphicsLayer(&client_));
     graphics_layer_ = WTF::WrapUnique(new FakeGraphicsLayer(&client_));
+    graphics_layer_->SetDrawsContent(true);
     clip_layer_->AddChild(scroll_elasticity_layer_.get());
-    scroll_elasticity_layer_->AddChild(graphics_layer_.get());
-    graphics_layer_->PlatformLayer()->SetScrollClipLayer(
-        clip_layer_->PlatformLayer());
+    scroll_elasticity_layer_->AddChild(page_scale_layer_.get());
+    page_scale_layer_->AddChild(graphics_layer_.get());
+    graphics_layer_->PlatformLayer()->SetScrollable(
+        clip_layer_->PlatformLayer()->Bounds());
     platform_layer_ = graphics_layer_->PlatformLayer();
     layer_tree_view_ = WTF::WrapUnique(new WebLayerTreeViewImplForTesting);
     DCHECK(layer_tree_view_);
     layer_tree_view_->SetRootLayer(*clip_layer_->PlatformLayer());
-    layer_tree_view_->RegisterViewportLayers(
-        scroll_elasticity_layer_->PlatformLayer(), clip_layer_->PlatformLayer(),
-        graphics_layer_->PlatformLayer(), 0);
+    WebLayerTreeView::ViewportLayers viewport_layers;
+    viewport_layers.overscroll_elasticity =
+        scroll_elasticity_layer_->PlatformLayer();
+    viewport_layers.page_scale = page_scale_layer_->PlatformLayer();
+    viewport_layers.inner_viewport_container = clip_layer_->PlatformLayer();
+    viewport_layers.inner_viewport_scroll = graphics_layer_->PlatformLayer();
+    layer_tree_view_->RegisterViewportLayers(viewport_layers);
     layer_tree_view_->SetViewportSize(WebSize(1, 1));
   }
 
@@ -81,14 +88,19 @@ class GraphicsLayerTest : public testing::Test {
   WebLayerTreeView* LayerTreeView() { return layer_tree_view_.get(); }
 
  protected:
+  bool PaintWithoutCommit(GraphicsLayer& layer, const IntRect* interest_rect) {
+    return layer.PaintWithoutCommit(interest_rect);
+  }
+
   WebLayer* platform_layer_;
   std::unique_ptr<FakeGraphicsLayer> graphics_layer_;
+  std::unique_ptr<FakeGraphicsLayer> page_scale_layer_;
   std::unique_ptr<FakeGraphicsLayer> scroll_elasticity_layer_;
   std::unique_ptr<FakeGraphicsLayer> clip_layer_;
+  FakeGraphicsLayerClient client_;
 
  private:
-  std::unique_ptr<WebLayerTreeView> layer_tree_view_;
-  FakeGraphicsLayerClient client_;
+  std::unique_ptr<WebLayerTreeViewImplForTesting> layer_tree_view_;
 };
 
 class AnimationPlayerForTesting : public CompositorAnimationPlayerClient {
@@ -127,7 +139,7 @@ TEST_F(GraphicsLayerTest, updateLayerShouldFlattenTransformWithAnimations) {
   host.AddTimeline(*compositor_timeline);
   compositor_timeline->PlayerAttached(player);
 
-  platform_layer_->SetElementId(CompositorElementId(platform_layer_->Id(), 0));
+  platform_layer_->SetElementId(CompositorElementId(platform_layer_->Id()));
 
   player.CompositorPlayer()->AttachElement(platform_layer_->GetElementId());
   ASSERT_TRUE(player.CompositorPlayer()->IsElementAttached());
@@ -159,47 +171,27 @@ TEST_F(GraphicsLayerTest, updateLayerShouldFlattenTransformWithAnimations) {
   host.RemoveTimeline(*compositor_timeline.get());
 }
 
-class FakeScrollableArea : public GarbageCollectedFinalized<FakeScrollableArea>,
-                           public ScrollableArea {
-  USING_GARBAGE_COLLECTED_MIXIN(FakeScrollableArea);
+TEST_F(GraphicsLayerTest, Paint) {
+  IntRect interest_rect(1, 2, 3, 4);
+  EXPECT_TRUE(PaintWithoutCommit(*graphics_layer_, &interest_rect));
+  graphics_layer_->GetPaintController().CommitNewDisplayItems();
 
- public:
-  static FakeScrollableArea* Create() { return new FakeScrollableArea; }
+  client_.SetNeedsRepaint(true);
+  EXPECT_TRUE(PaintWithoutCommit(*graphics_layer_, &interest_rect));
+  graphics_layer_->GetPaintController().CommitNewDisplayItems();
 
-  bool IsActive() const override { return false; }
-  int ScrollSize(ScrollbarOrientation) const override { return 100; }
-  bool IsScrollCornerVisible() const override { return false; }
-  IntRect ScrollCornerRect() const override { return IntRect(); }
-  int VisibleWidth() const override { return 10; }
-  int VisibleHeight() const override { return 10; }
-  IntSize ContentsSize() const override { return IntSize(100, 100); }
-  bool ScrollbarsCanBeActive() const override { return false; }
-  IntRect ScrollableAreaBoundingBox() const override { return IntRect(); }
-  void ScrollControlWasSetNeedsPaintInvalidation() override {}
-  bool UserInputScrollable(ScrollbarOrientation) const override { return true; }
-  bool ShouldPlaceVerticalScrollbarOnLeft() const override { return false; }
-  int PageStep(ScrollbarOrientation) const override { return 0; }
-  IntSize MinimumScrollOffsetInt() const override { return IntSize(); }
-  IntSize MaximumScrollOffsetInt() const override {
-    return ContentsSize() - IntSize(VisibleWidth(), VisibleHeight());
-  }
+  client_.SetNeedsRepaint(false);
+  EXPECT_FALSE(PaintWithoutCommit(*graphics_layer_, &interest_rect));
 
-  void UpdateScrollOffset(const ScrollOffset& offset, ScrollType) override {
-    scroll_offset_ = offset;
-  }
-  ScrollOffset GetScrollOffset() const override { return scroll_offset_; }
-  IntSize ScrollOffsetInt() const override {
-    return FlooredIntSize(scroll_offset_);
-  }
+  interest_rect.Move(IntSize(10, 20));
+  EXPECT_TRUE(PaintWithoutCommit(*graphics_layer_, &interest_rect));
+  graphics_layer_->GetPaintController().CommitNewDisplayItems();
+  EXPECT_FALSE(PaintWithoutCommit(*graphics_layer_, &interest_rect));
 
-  RefPtr<WebTaskRunner> GetTimerTaskRunner() const final {
-    return Platform::Current()->CurrentThread()->Scheduler()->TimerTaskRunner();
-  }
-
-  DEFINE_INLINE_VIRTUAL_TRACE() { ScrollableArea::Trace(visitor); }
-
- private:
-  ScrollOffset scroll_offset_;
-};
+  graphics_layer_->SetNeedsDisplay();
+  EXPECT_TRUE(PaintWithoutCommit(*graphics_layer_, &interest_rect));
+  graphics_layer_->GetPaintController().CommitNewDisplayItems();
+  EXPECT_FALSE(PaintWithoutCommit(*graphics_layer_, &interest_rect));
+}
 
 }  // namespace blink

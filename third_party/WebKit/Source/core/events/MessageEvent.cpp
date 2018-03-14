@@ -27,11 +27,11 @@
 
 #include "core/events/MessageEvent.h"
 
+#include <memory>
 #include "bindings/core/v8/ExceptionMessages.h"
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/V8ArrayBuffer.h"
-#include "bindings/core/v8/V8PrivateProperty.h"
-#include <memory>
+#include "platform/bindings/V8PrivateProperty.h"
 
 namespace blink {
 
@@ -74,7 +74,7 @@ MessageEvent::MessageEvent(const String& origin,
   DCHECK(IsValidSource(source_.Get()));
 }
 
-MessageEvent::MessageEvent(PassRefPtr<SerializedScriptValue> data,
+MessageEvent::MessageEvent(scoped_refptr<SerializedScriptValue> data,
                            const String& origin,
                            const String& last_event_id,
                            EventTarget* source,
@@ -82,33 +82,35 @@ MessageEvent::MessageEvent(PassRefPtr<SerializedScriptValue> data,
                            const String& suborigin)
     : Event(EventTypeNames::message, false, false),
       data_type_(kDataTypeSerializedScriptValue),
-      data_as_serialized_script_value_(std::move(data)),
+      data_as_serialized_script_value_(
+          SerializedScriptValue::Unpack(std::move(data))),
       origin_(origin),
       last_event_id_(last_event_id),
       source_(source),
       ports_(ports) {
   if (data_as_serialized_script_value_)
-    data_as_serialized_script_value_
+    data_as_serialized_script_value_->Value()
         ->RegisterMemoryAllocatedWithCurrentScriptContext();
   DCHECK(IsValidSource(source_.Get()));
 }
 
-MessageEvent::MessageEvent(PassRefPtr<SerializedScriptValue> data,
+MessageEvent::MessageEvent(scoped_refptr<SerializedScriptValue> data,
                            const String& origin,
                            const String& last_event_id,
                            EventTarget* source,
-                           MessagePortChannelArray channels,
+                           Vector<MessagePortChannel> channels,
                            const String& suborigin)
     : Event(EventTypeNames::message, false, false),
       data_type_(kDataTypeSerializedScriptValue),
-      data_as_serialized_script_value_(std::move(data)),
+      data_as_serialized_script_value_(
+          SerializedScriptValue::Unpack(std::move(data))),
       origin_(origin),
       last_event_id_(last_event_id),
       source_(source),
       channels_(std::move(channels)),
       suborigin_(suborigin) {
   if (data_as_serialized_script_value_)
-    data_as_serialized_script_value_
+    data_as_serialized_script_value_->Value()
         ->RegisterMemoryAllocatedWithCurrentScriptContext();
   DCHECK(IsValidSource(source_.Get()));
 }
@@ -169,13 +171,14 @@ void MessageEvent::initMessageEvent(const AtomicString& type,
   last_event_id_ = last_event_id;
   source_ = source;
   ports_ = ports;
+  is_ports_dirty_ = true;
   suborigin_ = "";
 }
 
 void MessageEvent::initMessageEvent(const AtomicString& type,
                                     bool can_bubble,
                                     bool cancelable,
-                                    PassRefPtr<SerializedScriptValue> data,
+                                    scoped_refptr<SerializedScriptValue> data,
                                     const String& origin,
                                     const String& last_event_id,
                                     EventTarget* source,
@@ -186,15 +189,17 @@ void MessageEvent::initMessageEvent(const AtomicString& type,
   initEvent(type, can_bubble, cancelable);
 
   data_type_ = kDataTypeSerializedScriptValue;
-  data_as_serialized_script_value_ = std::move(data);
+  data_as_serialized_script_value_ =
+      SerializedScriptValue::Unpack(std::move(data));
   origin_ = origin;
   last_event_id_ = last_event_id;
   source_ = source;
   ports_ = ports;
+  is_ports_dirty_ = true;
   suborigin_ = "";
 
   if (data_as_serialized_script_value_)
-    data_as_serialized_script_value_
+    data_as_serialized_script_value_->Value()
         ->RegisterMemoryAllocatedWithCurrentScriptContext();
 }
 
@@ -217,6 +222,7 @@ void MessageEvent::initMessageEvent(const AtomicString& type,
   last_event_id_ = last_event_id;
   source_ = source;
   ports_ = ports;
+  is_ports_dirty_ = true;
   suborigin_ = "";
 }
 
@@ -224,29 +230,22 @@ const AtomicString& MessageEvent::InterfaceName() const {
   return EventNames::MessageEvent;
 }
 
-MessagePortArray MessageEvent::ports(bool& is_null) const {
+MessagePortArray MessageEvent::ports() {
   // TODO(bashi): Currently we return a copied array because the binding
   // layer could modify the content of the array while executing JS callbacks.
   // Avoid copying once we can make sure that the binding layer won't
   // modify the content.
-  if (ports_) {
-    is_null = false;
-    return *ports_;
-  }
-  is_null = true;
-  return MessagePortArray();
-}
-
-MessagePortArray MessageEvent::ports() const {
-  bool unused;
-  return ports(unused);
+  is_ports_dirty_ = false;
+  return ports_ ? *ports_ : MessagePortArray();
 }
 
 void MessageEvent::EntangleMessagePorts(ExecutionContext* context) {
   ports_ = MessagePort::EntanglePorts(*context, std::move(channels_));
+  is_ports_dirty_ = true;
 }
 
-DEFINE_TRACE(MessageEvent) {
+void MessageEvent::Trace(blink::Visitor* visitor) {
+  visitor->Trace(data_as_serialized_script_value_);
   visitor->Trace(data_as_blob_);
   visitor->Trace(data_as_array_buffer_);
   visitor->Trace(source_);

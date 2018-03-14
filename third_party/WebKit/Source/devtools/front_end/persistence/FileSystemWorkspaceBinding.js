@@ -33,7 +33,7 @@
  */
 Persistence.FileSystemWorkspaceBinding = class {
   /**
-   * @param {!Workspace.IsolatedFileSystemManager} isolatedFileSystemManager
+   * @param {!Persistence.IsolatedFileSystemManager} isolatedFileSystemManager
    * @param {!Workspace.Workspace} workspace
    */
   constructor(isolatedFileSystemManager, workspace) {
@@ -41,11 +41,11 @@ Persistence.FileSystemWorkspaceBinding = class {
     this._workspace = workspace;
     this._eventListeners = [
       this._isolatedFileSystemManager.addEventListener(
-          Workspace.IsolatedFileSystemManager.Events.FileSystemAdded, this._onFileSystemAdded, this),
+          Persistence.IsolatedFileSystemManager.Events.FileSystemAdded, this._onFileSystemAdded, this),
       this._isolatedFileSystemManager.addEventListener(
-          Workspace.IsolatedFileSystemManager.Events.FileSystemRemoved, this._onFileSystemRemoved, this),
+          Persistence.IsolatedFileSystemManager.Events.FileSystemRemoved, this._onFileSystemRemoved, this),
       this._isolatedFileSystemManager.addEventListener(
-          Workspace.IsolatedFileSystemManager.Events.FileSystemFilesChanged, this._fileSystemFilesChanged, this)
+          Persistence.IsolatedFileSystemManager.Events.FileSystemFilesChanged, this._fileSystemFilesChanged, this)
     ];
     /** @type {!Map.<string, !Persistence.FileSystemWorkspaceBinding.FileSystem>} */
     this._boundFileSystems = new Map();
@@ -68,6 +68,16 @@ Persistence.FileSystemWorkspaceBinding = class {
     var baseURL =
         /** @type {!Persistence.FileSystemWorkspaceBinding.FileSystem}*/ (uiSourceCode.project())._fileSystemBaseURL;
     return uiSourceCode.url().substring(baseURL.length).split('/');
+  }
+
+  /**
+   * @param {!Workspace.Project} project
+   * @return {string}
+   */
+  static fileSystemType(project) {
+    var fileSystem =
+        /** @type {!Persistence.FileSystemWorkspaceBinding.FileSystem}*/ (project)._fileSystem;
+    return fileSystem.type();
   }
 
   /**
@@ -106,14 +116,14 @@ Persistence.FileSystemWorkspaceBinding = class {
   }
 
   /**
-   * @return {!Workspace.IsolatedFileSystemManager}
+   * @return {!Persistence.IsolatedFileSystemManager}
    */
   fileSystemManager() {
     return this._isolatedFileSystemManager;
   }
 
   /**
-   * @param {!Array<!Workspace.IsolatedFileSystem>} fileSystems
+   * @param {!Array<!Persistence.IsolatedFileSystem>} fileSystems
    */
   _onFileSystemsLoaded(fileSystems) {
     for (var fileSystem of fileSystems)
@@ -124,12 +134,12 @@ Persistence.FileSystemWorkspaceBinding = class {
    * @param {!Common.Event} event
    */
   _onFileSystemAdded(event) {
-    var fileSystem = /** @type {!Workspace.IsolatedFileSystem} */ (event.data);
+    var fileSystem = /** @type {!Persistence.IsolatedFileSystem} */ (event.data);
     this._addFileSystem(fileSystem);
   }
 
   /**
-   * @param {!Workspace.IsolatedFileSystem} fileSystem
+   * @param {!Persistence.IsolatedFileSystem} fileSystem
    */
   _addFileSystem(fileSystem) {
     var boundFileSystem = new Persistence.FileSystemWorkspaceBinding.FileSystem(this, fileSystem, this._workspace);
@@ -140,7 +150,7 @@ Persistence.FileSystemWorkspaceBinding = class {
    * @param {!Common.Event} event
    */
   _onFileSystemRemoved(event) {
-    var fileSystem = /** @type {!Workspace.IsolatedFileSystem} */ (event.data);
+    var fileSystem = /** @type {!Persistence.IsolatedFileSystem} */ (event.data);
     var boundFileSystem = this._boundFileSystems.get(fileSystem.path());
     boundFileSystem.dispose();
     this._boundFileSystems.remove(fileSystem.path());
@@ -150,24 +160,26 @@ Persistence.FileSystemWorkspaceBinding = class {
    * @param {!Common.Event} event
    */
   _fileSystemFilesChanged(event) {
-    var paths = /** @type {!Workspace.IsolatedFileSystemManager.FilesChangedData} */ (event.data);
-    forEachFile.call(this, paths.changed, (path, fileSystem) => fileSystem._fileChanged(path));
-    forEachFile.call(this, paths.added, (path, fileSystem) => fileSystem._fileChanged(path));
-    forEachFile.call(this, paths.removed, (path, fileSystem) => fileSystem.removeUISourceCode(path));
+    var paths = /** @type {!Persistence.IsolatedFileSystemManager.FilesChangedData} */ (event.data);
+    for (var fileSystemPath of paths.changed.keysArray()) {
+      var fileSystem = this._boundFileSystems.get(fileSystemPath);
+      if (!fileSystem)
+        continue;
+      paths.changed.get(fileSystemPath).forEach(path => fileSystem._fileChanged(path));
+    }
 
-    /**
-     * @param {!Array<string>} filePaths
-     * @param {function(string, !Persistence.FileSystemWorkspaceBinding.FileSystem)} callback
-     * @this {Persistence.FileSystemWorkspaceBinding}
-     */
-    function forEachFile(filePaths, callback) {
-      for (var filePath of filePaths) {
-        for (var fileSystemPath of this._boundFileSystems.keys()) {
-          if (!filePath.startsWith(fileSystemPath))
-            continue;
-          callback(filePath, this._boundFileSystems.get(fileSystemPath));
-        }
-      }
+    for (var fileSystemPath of paths.added.keysArray()) {
+      var fileSystem = this._boundFileSystems.get(fileSystemPath);
+      if (!fileSystem)
+        continue;
+      paths.added.get(fileSystemPath).forEach(path => fileSystem._fileChanged(path));
+    }
+
+    for (var fileSystemPath of paths.removed.keysArray()) {
+      var fileSystem = this._boundFileSystems.get(fileSystemPath);
+      if (!fileSystem)
+        continue;
+      paths.removed.get(fileSystemPath).forEach(path => fileSystem.removeUISourceCode(path));
     }
   }
 
@@ -184,22 +196,12 @@ Persistence.FileSystemWorkspaceBinding._styleSheetExtensions = new Set(['css', '
 Persistence.FileSystemWorkspaceBinding._documentExtensions = new Set(['htm', 'html', 'asp', 'aspx', 'phtml', 'jsp']);
 Persistence.FileSystemWorkspaceBinding._scriptExtensions = new Set([
   'asp', 'aspx', 'c', 'cc', 'cljs', 'coffee', 'cpp', 'cs', 'dart', 'java', 'js',
-  'jsp', 'jsx',  'h', 'm',  'mm',   'py',     'sh',  'ts', 'tsx',  'ls'
+  'jsp', 'jsx',  'h', 'm',  'mjs',  'mm',     'py',  'sh', 'ts',   'tsx',  'ls'
 ]);
 
-Persistence.FileSystemWorkspaceBinding._imageExtensions = Workspace.IsolatedFileSystem.ImageExtensions;
+Persistence.FileSystemWorkspaceBinding._imageExtensions = Persistence.IsolatedFileSystem.ImageExtensions;
 
-Persistence.FileSystemWorkspaceBinding._binaryExtensions = new Set([
-  // Executable extensions, roughly taken from https://en.wikipedia.org/wiki/Comparison_of_executable_file_formats
-  'cmd', 'com', 'exe',
-  // Archive extensions, roughly taken from https://en.wikipedia.org/wiki/List_of_archive_formats
-  'a', 'ar', 'iso', 'tar', 'bz2', 'gz', 'lz', 'lzma', 'z', '7z', 'apk', 'arc', 'cab', 'dmg', 'jar', 'pak', 'rar', 'zip',
-  // Audio file extensions, roughly taken from https://en.wikipedia.org/wiki/Audio_file_format#List_of_formats
-  '3gp', 'aac', 'aiff', 'flac', 'm4a', 'mmf', 'mp3', 'ogg', 'oga', 'raw', 'sln', 'wav', 'wma', 'webm',
-  // Video file extensions, roughly taken from https://en.wikipedia.org/wiki/Video_file_format
-  'mkv', 'flv', 'vob', 'ogv', 'gif', 'gifv', 'avi', 'mov', 'qt', 'mp4', 'm4p', 'm4v', 'mpg', 'mpeg'
-]);
-
+Persistence.FileSystemWorkspaceBinding._binaryExtensions = Persistence.IsolatedFileSystem.BinaryExtensions;
 
 /**
  * @implements {Workspace.Project}
@@ -208,7 +210,7 @@ Persistence.FileSystemWorkspaceBinding._binaryExtensions = new Set([
 Persistence.FileSystemWorkspaceBinding.FileSystem = class extends Workspace.ProjectStore {
   /**
    * @param {!Persistence.FileSystemWorkspaceBinding} fileSystemWorkspaceBinding
-   * @param {!Workspace.IsolatedFileSystem} isolatedFileSystem
+   * @param {!Persistence.IsolatedFileSystem} isolatedFileSystem
    * @param {!Workspace.Workspace} workspace
    */
   constructor(fileSystemWorkspaceBinding, isolatedFileSystem, workspace) {
@@ -224,6 +226,8 @@ Persistence.FileSystemWorkspaceBinding.FileSystem = class extends Workspace.Proj
     this._fileSystemParentURL = this._fileSystemBaseURL.substr(0, fileSystemPath.lastIndexOf('/') + 1);
     this._fileSystemWorkspaceBinding = fileSystemWorkspaceBinding;
     this._fileSystemPath = fileSystemPath;
+    /** @type {!Set<string>} */
+    this._creatingFilesGuard = new Set();
 
     workspace.addProject(this);
     this.populate();
@@ -234,6 +238,15 @@ Persistence.FileSystemWorkspaceBinding.FileSystem = class extends Workspace.Proj
    */
   fileSystemPath() {
     return this._fileSystemPath;
+  }
+
+  /**
+   * @override
+   * @param {!Workspace.UISourceCode} uiSourceCode
+   * @return {string}
+   */
+  mimeType(uiSourceCode) {
+    return Common.ResourceType.mimeFromURL(uiSourceCode.url()) || 'text/plain';
   }
 
   /**
@@ -284,28 +297,21 @@ Persistence.FileSystemWorkspaceBinding.FileSystem = class extends Workspace.Proj
   }
 
   /**
+   * @param {!Workspace.UISourceCode} uiSourceCode
+   * @return {!Promise<?Blob>}
+   */
+  requestFileBlob(uiSourceCode) {
+    return this._fileSystem.requestFileBlob(this._filePathForUISourceCode(uiSourceCode));
+  }
+
+  /**
    * @override
    * @param {!Workspace.UISourceCode} uiSourceCode
-   * @param {function(?string)} callback
+   * @param {function(?string, boolean)} callback
    */
   requestFileContent(uiSourceCode, callback) {
     var filePath = this._filePathForUISourceCode(uiSourceCode);
-    var isImage =
-        Persistence.FileSystemWorkspaceBinding._imageExtensions.has(Common.ParsedURL.extractExtension(filePath));
-
-    this._fileSystem.requestFileContent(filePath, isImage ? base64CallbackWrapper : callback);
-
-    /**
-     * @param {?string} result
-     */
-    function base64CallbackWrapper(result) {
-      if (!result) {
-        callback(result);
-        return;
-      }
-      var index = result.indexOf(',');
-      callback(result.substring(index + 1));
-    }
+    this._fileSystem.requestFileContent(filePath, callback);
   }
 
   /**
@@ -320,11 +326,12 @@ Persistence.FileSystemWorkspaceBinding.FileSystem = class extends Workspace.Proj
    * @override
    * @param {!Workspace.UISourceCode} uiSourceCode
    * @param {string} newContent
+   * @param {boolean} isBase64
    * @param {function(?string)} callback
    */
-  setFileContent(uiSourceCode, newContent, callback) {
+  setFileContent(uiSourceCode, newContent, isBase64, callback) {
     var filePath = this._filePathForUISourceCode(uiSourceCode);
-    this._fileSystem.setFileContent(filePath, newContent, callback.bind(this, ''));
+    this._fileSystem.setFileContent(filePath, newContent, isBase64, callback.bind(this, ''));
   }
 
   /**
@@ -390,21 +397,20 @@ Persistence.FileSystemWorkspaceBinding.FileSystem = class extends Workspace.Proj
    * @param {string} query
    * @param {boolean} caseSensitive
    * @param {boolean} isRegex
-   * @param {function(!Array.<!Common.ContentProvider.SearchMatch>)} callback
+   * @return {!Promise<!Array<!Common.ContentProvider.SearchMatch>>}
    */
-  searchInFileContent(uiSourceCode, query, caseSensitive, isRegex, callback) {
-    var filePath = this._filePathForUISourceCode(uiSourceCode);
-    this._fileSystem.requestFileContent(filePath, contentCallback);
+  searchInFileContent(uiSourceCode, query, caseSensitive, isRegex) {
+    return new Promise(resolve => {
+      var filePath = this._filePathForUISourceCode(uiSourceCode);
+      this._fileSystem.requestFileContent(filePath, contentCallback);
 
-    /**
-     * @param {?string} content
-     */
-    function contentCallback(content) {
-      var result = [];
-      if (content !== null)
-        result = Common.ContentProvider.performSearchInContent(content, query, caseSensitive, isRegex);
-      callback(result);
-    }
+      /**
+       * @param {?string} content
+       */
+      function contentCallback(content) {
+        resolve(content ? Common.ContentProvider.performSearchInContent(content, query, caseSensitive, isRegex) : []);
+      }
+    });
   }
 
   /**
@@ -412,39 +418,23 @@ Persistence.FileSystemWorkspaceBinding.FileSystem = class extends Workspace.Proj
    * @param {!Workspace.ProjectSearchConfig} searchConfig
    * @param {!Array.<string>} filesMathingFileQuery
    * @param {!Common.Progress} progress
-   * @param {function(!Array.<string>)} callback
+   * @return {!Promise<!Array<string>>}
    */
-  findFilesMatchingSearchRequest(searchConfig, filesMathingFileQuery, progress, callback) {
+  async findFilesMatchingSearchRequest(searchConfig, filesMathingFileQuery, progress) {
     var result = filesMathingFileQuery;
     var queriesToRun = searchConfig.queries().slice();
     if (!queriesToRun.length)
       queriesToRun.push('');
     progress.setTotalWork(queriesToRun.length);
-    searchNextQuery.call(this);
 
-    /**
-     * @this {Persistence.FileSystemWorkspaceBinding.FileSystem}
-     */
-    function searchNextQuery() {
-      if (!queriesToRun.length) {
-        progress.done();
-        callback(result);
-        return;
-      }
-      var query = queriesToRun.shift();
-      this._fileSystem.searchInPath(searchConfig.isRegex() ? '' : query, progress, innerCallback.bind(this));
-    }
-
-    /**
-     * @param {!Array.<string>} files
-     * @this {Persistence.FileSystemWorkspaceBinding.FileSystem}
-     */
-    function innerCallback(files) {
-      files = files.sort();
+    for (var query of queriesToRun) {
+      var files = await this._fileSystem.searchInPath(searchConfig.isRegex() ? '' : query, progress);
+      result = result.intersectOrdered(files.sort(), String.naturalOrderComparator);
       progress.worked(1);
-      result = result.intersectOrdered(files, String.naturalOrderComparator);
-      searchNextQuery.call(this);
     }
+
+    progress.done();
+    return result;
   }
 
   /**
@@ -460,10 +450,7 @@ Persistence.FileSystemWorkspaceBinding.FileSystem = class extends Workspace.Proj
    * @return {string}
    */
   _extensionForPath(path) {
-    var extensionIndex = path.lastIndexOf('.');
-    if (extensionIndex === -1)
-      return '';
-    return path.substring(extensionIndex + 1).toLowerCase();
+    return Common.ParsedURL.extractExtension(path);
   }
 
   populate() {
@@ -509,35 +496,19 @@ Persistence.FileSystemWorkspaceBinding.FileSystem = class extends Workspace.Proj
    * @param {string} path
    * @param {?string} name
    * @param {string} content
-   * @param {function(?Workspace.UISourceCode)} callback
+   * @param {boolean=} isBase64
+   * @return {!Promise<?Workspace.UISourceCode>}
    */
-  createFile(path, name, content, callback) {
-    this._fileSystem.createFile(path, name, innerCallback.bind(this));
-    var createFilePath;
-
-    /**
-     * @param {?string} filePath
-     * @this {Persistence.FileSystemWorkspaceBinding.FileSystem}
-     */
-    function innerCallback(filePath) {
-      if (!filePath) {
-        callback(null);
-        return;
-      }
-      createFilePath = filePath;
-      if (!content) {
-        contentSet.call(this);
-        return;
-      }
-      this._fileSystem.setFileContent(filePath, content, contentSet.bind(this));
-    }
-
-    /**
-     * @this {Persistence.FileSystemWorkspaceBinding.FileSystem}
-     */
-    function contentSet() {
-      callback(this._addFile(createFilePath));
-    }
+  async createFile(path, name, content, isBase64) {
+    var guardFileName = this._fileSystemPath + path + (!path.endsWith('/') ? '/' : '') + name;
+    this._creatingFilesGuard.add(guardFileName);
+    var filePath = await this._fileSystem.createFile(path, name);
+    if (!filePath)
+      return null;
+    if (content)
+      await new Promise(resolve => this._fileSystem.setFileContent(filePath, content, isBase64 || false, resolve));
+    this._creatingFilesGuard.delete(guardFileName);
+    return this._addFile(filePath);
   }
 
   /**
@@ -574,6 +545,9 @@ Persistence.FileSystemWorkspaceBinding.FileSystem = class extends Workspace.Proj
    * @param {string} path
    */
   _fileChanged(path) {
+    // Ignore files that are being created but do not have content yet.
+    if (this._creatingFilesGuard.has(path))
+      return;
     var uiSourceCode = this.uiSourceCodeForURL(path);
     if (!uiSourceCode) {
       var contentType = Persistence.FileSystemWorkspaceBinding._contentTypeForExtension(this._extensionForPath(path));

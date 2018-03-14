@@ -7,7 +7,7 @@
 #include "core/dom/Document.h"
 #include "core/frame/LocalFrame.h"
 #include "platform/wtf/Functional.h"
-#include "public/platform/InterfaceProvider.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 
 #include <utility>
 
@@ -56,7 +56,7 @@ void InstalledAppController::GetInstalledRelatedApps(
   // TODO(mgiuca): This roundtrip to content could be eliminated if the Manifest
   // class was moved from content into Blink.
   related_apps_fetcher_->GetManifestRelatedApplications(
-      WTF::MakeUnique<GetRelatedAppsCallbacks>(this, std::move(callbacks)));
+      std::make_unique<GetRelatedAppsCallbacks>(this, std::move(callbacks)));
 }
 
 void InstalledAppController::ProvideTo(
@@ -105,7 +105,7 @@ void InstalledAppController::FilterByInstalledApps(
   }
 
   if (!provider_) {
-    GetSupplementable()->GetInterfaceProvider()->GetInterface(
+    GetSupplementable()->GetInterfaceProvider().GetInterface(
         mojo::MakeRequest(&provider_));
     // TODO(mgiuca): Set a connection error handler. This requires a refactor to
     // work like NavigatorShare.cpp (retain a persistent list of clients to
@@ -135,7 +135,7 @@ void InstalledAppController::OnFilterInstalledApps(
       blink::WebVector<blink::WebRelatedApplication>(applications));
 }
 
-DEFINE_TRACE(InstalledAppController) {
+void InstalledAppController::Trace(blink::Visitor* visitor) {
   Supplement<LocalFrame>::Trace(visitor);
   ContextLifecycleObserver::Trace(visitor);
 }

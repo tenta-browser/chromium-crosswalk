@@ -1,4 +1,4 @@
-// Copyright (c) 2016 The Chromium Authors. All rights reserved.
+// Copyright (c) 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,23 @@
 #include <stdint.h>
 #include <string>
 
+#include "net/quic/core/quic_bandwidth.h"
+#include "net/quic/core/quic_error_codes.h"
+#include "net/quic/core/quic_time.h"
+#include "net/quic/core/quic_types.h"
 #include "net/quic/platform/api/quic_export.h"
 #include "net/quic/quartc/quartc_stream_interface.h"
 
 namespace net {
+
+// Structure holding stats exported by a QuartcSession.
+struct QUIC_EXPORT_PRIVATE QuartcSessionStats {
+  // Bandwidth estimate in bits per second.
+  QuicBandwidth bandwidth_estimate = QuicBandwidth::Zero();
+
+  // Smoothed round-trip time.
+  QuicTime::Delta smoothed_rtt = QuicTime::Delta::Zero();
+};
 
 // Given a PacketTransport, provides a way to send and receive separate streams
 // of reliable, in-order, encrypted data. For example, this can build on top of
@@ -42,12 +55,39 @@ class QUIC_EXPORT_PRIVATE QuartcSessionInterface {
                                     uint8_t* result,
                                     size_t result_len) = 0;
 
+  // Closes the connection with the given human-readable error details.
+  // The connection closes with the QUIC_CONNECTION_CANCELLED error code to
+  // indicate the application closed it.
+  //
+  // Informs the peer that the connection has been closed.  This prevents the
+  // peer from waiting until the connection times out.
+  //
+  // Cleans up the underlying QuicConnection's state.  Closing the connection
+  // makes it safe to delete the QuartcSession.
+  virtual void CloseConnection(const std::string& error_details) = 0;
+
   // For forward-compatibility. More parameters could be added through the
   // struct without changing the API.
   struct OutgoingStreamParameters {};
 
   virtual QuartcStreamInterface* CreateOutgoingStream(
       const OutgoingStreamParameters& params) = 0;
+
+  // If the given stream is still open, sends a reset frame to cancel it.
+  // Note:  This method cancels a stream by QuicStreamId rather than by pointer
+  // (or by a method on QuartcStreamInterface) because QuartcSession (and not
+  // the caller) owns the streams.  Streams may finish and be deleted before the
+  // caller tries to cancel them, rendering the caller's pointers invalid.
+  virtual void CancelStream(QuicStreamId stream_id) = 0;
+
+  // This method verifies if a stream is still open and stream pointer can be
+  // used. When true is returned, the interface pointer is good for making a
+  // call immediately on the same thread, but may be rendered invalid by ANY
+  // other QUIC activity.
+  virtual bool IsOpenStream(QuicStreamId stream_id) = 0;
+
+  // Gets stats associated with this Quartc session.
+  virtual QuartcSessionStats GetStats() = 0;
 
   // Send and receive packets, like a virtual UDP socket. For example, this
   // could be implemented by WebRTC's IceTransport.

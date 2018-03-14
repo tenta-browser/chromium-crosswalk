@@ -29,16 +29,17 @@
 #ifndef MessageEvent_h
 #define MessageEvent_h
 
-#include "bindings/core/v8/SerializedScriptValue.h"
+#include <memory>
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
+#include "bindings/core/v8/serialization/UnpackedSerializedScriptValue.h"
 #include "core/CoreExport.h"
-#include "core/dom/DOMArrayBuffer.h"
 #include "core/dom/MessagePort.h"
-#include "core/events/Event.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/Event.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/events/MessageEventInit.h"
 #include "core/fileapi/Blob.h"
-#include "wtf/Compiler.h"
-#include <memory>
+#include "core/typed_arrays/DOMArrayBuffer.h"
+#include "platform/wtf/Compiler.h"
 
 namespace blink {
 
@@ -55,7 +56,7 @@ class CORE_EXPORT MessageEvent final : public Event {
     return new MessageEvent(origin, last_event_id, source, ports, suborigin);
   }
   static MessageEvent* Create(MessagePortArray* ports,
-                              PassRefPtr<SerializedScriptValue> data,
+                              scoped_refptr<SerializedScriptValue> data,
                               const String& origin = String(),
                               const String& last_event_id = String(),
                               EventTarget* source = nullptr,
@@ -63,8 +64,8 @@ class CORE_EXPORT MessageEvent final : public Event {
     return new MessageEvent(std::move(data), origin, last_event_id, source,
                             ports, suborigin);
   }
-  static MessageEvent* Create(MessagePortChannelArray channels,
-                              PassRefPtr<SerializedScriptValue> data,
+  static MessageEvent* Create(Vector<MessagePortChannel> channels,
+                              scoped_refptr<SerializedScriptValue> data,
                               const String& origin = String(),
                               const String& last_event_id = String(),
                               EventTarget* source = nullptr,
@@ -103,7 +104,7 @@ class CORE_EXPORT MessageEvent final : public Event {
   void initMessageEvent(const AtomicString& type,
                         bool can_bubble,
                         bool cancelable,
-                        PassRefPtr<SerializedScriptValue> data,
+                        scoped_refptr<SerializedScriptValue> data,
                         const String& origin,
                         const String& last_event_id,
                         EventTarget* source,
@@ -121,10 +122,10 @@ class CORE_EXPORT MessageEvent final : public Event {
   const String& suborigin() const { return suborigin_; }
   const String& lastEventId() const { return last_event_id_; }
   EventTarget* source() const { return source_.Get(); }
-  MessagePortArray ports(bool& is_null) const;
-  MessagePortArray ports() const;
+  MessagePortArray ports();
+  bool isPortsDirty() const { return is_ports_dirty_; }
 
-  MessagePortChannelArray ReleaseChannels() { return std::move(channels_); }
+  Vector<MessagePortChannel> ReleaseChannels() { return std::move(channels_); }
 
   const AtomicString& InterfaceName() const override;
 
@@ -140,7 +141,13 @@ class CORE_EXPORT MessageEvent final : public Event {
     DCHECK_EQ(data_type_, kDataTypeScriptValue);
     return data_as_script_value_;
   }
+  // Use with caution. Since the data has already been unpacked, the underlying
+  // SerializedScriptValue will no longer contain transferred contents.
   SerializedScriptValue* DataAsSerializedScriptValue() const {
+    DCHECK_EQ(data_type_, kDataTypeSerializedScriptValue);
+    return data_as_serialized_script_value_->Value();
+  }
+  UnpackedSerializedScriptValue* DataAsUnpackedSerializedScriptValue() const {
     DCHECK_EQ(data_type_, kDataTypeSerializedScriptValue);
     return data_as_serialized_script_value_.Get();
   }
@@ -157,14 +164,9 @@ class CORE_EXPORT MessageEvent final : public Event {
     return data_as_array_buffer_.Get();
   }
 
-  void SetSerializedData(PassRefPtr<SerializedScriptValue> data) {
-    DCHECK(!data_as_serialized_script_value_);
-    data_as_serialized_script_value_ = std::move(data);
-  }
-
   void EntangleMessagePorts(ExecutionContext*);
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   WARN_UNUSED_RESULT v8::Local<v8::Object> AssociateWithWrapper(
       v8::Isolate*,
@@ -179,17 +181,17 @@ class CORE_EXPORT MessageEvent final : public Event {
                EventTarget* source,
                MessagePortArray*,
                const String& suborigin);
-  MessageEvent(PassRefPtr<SerializedScriptValue> data,
+  MessageEvent(scoped_refptr<SerializedScriptValue> data,
                const String& origin,
                const String& last_event_id,
                EventTarget* source,
                MessagePortArray*,
                const String& suborigin);
-  MessageEvent(PassRefPtr<SerializedScriptValue> data,
+  MessageEvent(scoped_refptr<SerializedScriptValue> data,
                const String& origin,
                const String& last_event_id,
                EventTarget* source,
-               MessagePortChannelArray,
+               Vector<MessagePortChannel>,
                const String& suborigin);
 
   MessageEvent(const String& data,
@@ -202,18 +204,19 @@ class CORE_EXPORT MessageEvent final : public Event {
 
   DataType data_type_;
   ScriptValue data_as_script_value_;
-  RefPtr<SerializedScriptValue> data_as_serialized_script_value_;
+  Member<UnpackedSerializedScriptValue> data_as_serialized_script_value_;
   String data_as_string_;
   Member<Blob> data_as_blob_;
   Member<DOMArrayBuffer> data_as_array_buffer_;
   String origin_;
   String last_event_id_;
   Member<EventTarget> source_;
-  // m_ports are the MessagePorts in an entangled state, and m_channels are
+  // ports_ are the MessagePorts in an entangled state, and channels_ are
   // the MessageChannels in a disentangled state. Only one of them can be
-  // non-empty at a time. entangleMessagePorts() moves between the states.
+  // non-empty at a time. EntangleMessagePorts() moves between the states.
   Member<MessagePortArray> ports_;
-  MessagePortChannelArray channels_;
+  bool is_ports_dirty_ = true;
+  Vector<MessagePortChannel> channels_;
   String suborigin_;
 };
 

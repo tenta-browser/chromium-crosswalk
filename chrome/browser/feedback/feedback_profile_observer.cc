@@ -7,10 +7,10 @@
 #include "base/callback.h"
 #include "base/task_scheduler/post_task.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/feedback/feedback_uploader_chrome.h"
+#include "chrome/browser/feedback/feedback_uploader_factory_chrome.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/feedback/feedback_report.h"
-#include "components/feedback/feedback_uploader.h"
-#include "components/feedback/feedback_uploader_factory.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
@@ -51,21 +51,20 @@ void FeedbackProfileObserver::Observe(
 void FeedbackProfileObserver::QueueSingleReport(
     feedback::FeedbackUploader* uploader,
     const std::string& data) {
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE, base::Bind(&FeedbackUploader::QueueReport,
-                                               uploader->AsWeakPtr(), data));
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::BindOnce(&FeedbackUploaderChrome::QueueReport,
+                                         uploader->AsWeakPtr(), data));
 }
 
 void FeedbackProfileObserver::QueueUnsentReports(
     content::BrowserContext* context) {
-  feedback::FeedbackUploader* uploader =
-      feedback::FeedbackUploaderFactory::GetForBrowserContext(context);
-  base::PostTaskWithTraits(
-      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                     base::TaskPriority::BACKGROUND),
-      base::Bind(
+  feedback::FeedbackUploaderChrome* uploader =
+      feedback::FeedbackUploaderFactoryChrome::GetForBrowserContext(context);
+  uploader->task_runner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(
           &FeedbackReport::LoadReportsAndQueue,
-          uploader->GetFeedbackReportsPath(),
+          uploader->feedback_reports_path(),
           base::Bind(&FeedbackProfileObserver::QueueSingleReport, uploader)));
 }
 

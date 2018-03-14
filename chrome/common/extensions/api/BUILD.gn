@@ -25,7 +25,6 @@ schema_sources = [
   "braille_display_private.idl",
   "browser.idl",
   "chrome_web_view_internal.json",
-  "cloud_print_private.json",
   "command_line_private.json",
   "content_settings.json",
   "context_menus_internal.json",
@@ -42,12 +41,9 @@ schema_sources = [
   "downloads_internal.idl",
   "easy_unlock_private.idl",
   "experience_sampling_private.json",
-  "feedback_private.idl",
-  "file_system.idl",
   "font_settings.json",
   "gcm.json",
   "history.json",
-  "hotword_private.idl",
   "i18n.json",
   "identity.idl",
   "identity_private.idl",
@@ -112,7 +108,6 @@ if (is_chromeos) {
     "input_ime.json",
     "input_method_private.json",
     "launcher_search_provider.idl",
-    "log_private.idl",
     "platform_keys.idl",
     "platform_keys_internal.idl",
     "quick_unlock_private.idl",
@@ -124,21 +119,28 @@ if (is_chromeos) {
 } else if (is_linux || is_win) {
   schema_sources += [ "input_ime.json" ]
 }
+
+if (enable_app_list) {
+  schema_sources += [
+    # TODO(tapted): Move this into chromeos_schema_files.
+    "launcher_page.idl",
+  ]
+}
+
+if (enable_print_preview && !is_chromeos) {
+  schema_sources += [ "cloud_print_private.json" ]
+}
+
 if (enable_service_discovery) {
   schema_sources += [ "mdns.idl" ]
 }
+
 if (enable_webrtc) {
   schema_sources += [
     "cast_streaming_receiver_session.idl",
     "cast_streaming_rtp_stream.idl",
     "cast_streaming_session.idl",
     "cast_streaming_udp_transport.idl",
-  ]
-}
-if (enable_app_list) {
-  schema_sources += [
-    # TODO(tapted): Move this into chromeos_schema_files.
-    "launcher_page.idl",
   ]
 }
 
@@ -180,7 +182,6 @@ json_schema_api("api") {
     "proxy.json",
     "tts_engine.json",
     "tts.json",
-    "types_private.json",
     "webstore.json",
   ]
   if (is_chromeos) {
@@ -221,9 +222,9 @@ json_schema_api("api_registration") {
     # include generated headers from these targets.
     # TODO(brettw) this should be made unnecessary if possible.
     ":api",
-    "//components/metrics/proto",
     "//components/sync",
     "//skia",
+    "//third_party/metrics_proto",
     "//ui/accessibility:ax_gen",
   ]
   if (is_chromeos) {

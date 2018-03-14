@@ -31,9 +31,9 @@
 #ifndef CryptoKey_h
 #define CryptoKey_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/ModulesExport.h"
 #include "modules/crypto/NormalizeAlgorithm.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/text/WTFString.h"
@@ -43,9 +43,7 @@ namespace blink {
 
 class CryptoResult;
 
-class MODULES_EXPORT CryptoKey final
-    : public GarbageCollectedFinalized<CryptoKey>,
-      public ScriptWrappable {
+class MODULES_EXPORT CryptoKey final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -58,7 +56,7 @@ class MODULES_EXPORT CryptoKey final
   String type() const;
   bool extractable() const;
   ScriptValue algorithm(ScriptState*);
-  Vector<String> usages() const;
+  ScriptValue usages(ScriptState*);
 
   const WebCryptoKey& Key() const { return key_; }
 
@@ -73,8 +71,6 @@ class MODULES_EXPORT CryptoKey final
   static bool ParseUsageMask(const Vector<String>&,
                              WebCryptoKeyUsageMask&,
                              CryptoResult*);
-
-  DEFINE_INLINE_TRACE() {}
 
  protected:
   explicit CryptoKey(const WebCryptoKey&);

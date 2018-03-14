@@ -41,10 +41,22 @@ var gDefaultAudioCodec = null;
 var gDefaultVideoCodec = null;
 
 /**
+ * Flag to indicate if HW or SW video codec is preferred.
+ * @private
+ */
+var gDefaultPreferHwVideoCodec = null;
+
+/**
  * Flag to indicate if Opus Dtx should be enabled.
  * @private
  */
 var gOpusDtx = false;
+
+/** @private */
+var gNegotiationNeededCount = 0;
+
+/** @private */
+var gTrackEvents = [];
 
 // Public interface to tests. These are expected to be called with
 // ExecuteJavascript invocations from the browser tests and will return answers
@@ -119,9 +131,14 @@ function setDefaultAudioCodec(audioCodec) {
  *     video codec, e.g. the first one in the list on the 'm=video' SDP offer
  *     line. |videoCodec| is the case-sensitive codec name, e.g. 'VP8' or
  *     'H264'.
+ * @param {bool} preferHwVideoCodec specifies what codec to use from the
+ *     'm=video' line when there are multiple codecs with the name |videoCodec|.
+ *     If true, it will return the last codec with that name, and if false, it
+ *     will return the first codec with that name.
  */
-function setDefaultVideoCodec(videoCodec) {
+function setDefaultVideoCodec(videoCodec, preferHwVideoCodec) {
   gDefaultVideoCodec = videoCodec;
+  gDefaultPreferHwVideoCodec = preferHwVideoCodec;
   returnToTest('ok');
 }
 
@@ -153,7 +170,8 @@ function createLocalOffer(constraints) {
         }
         if (gDefaultVideoCodec !== null) {
           localOffer.sdp = setSdpDefaultVideoCodec(localOffer.sdp,
-                                                   gDefaultVideoCodec);
+                                                   gDefaultVideoCodec,
+                                                   gDefaultPreferHwVideoCodec);
         }
         if (gOpusDtx) {
           localOffer.sdp = setOpusDtxEnabled(localOffer.sdp);
@@ -243,6 +261,30 @@ function verifyDefaultCodecs(sessionDescJson) {
     }
   }
   returnToTest('ok-verified');
+}
+
+/**
+ * Verifies that the peer connection's local description contains one of
+ * |certificate|'s fingerprints.
+ *
+ * Returns 'ok-verified' on success.
+ */
+function verifyLocalDescriptionContainsCertificate(certificate) {
+  let localDescription = peerConnection_().localDescription;
+  if (localDescription == null)
+    throw failTest('localDescription is null.');
+  for (let i = 0; i < certificate.getFingerprints().length; ++i) {
+    let fingerprintSdp = 'a=fingerprint:' +
+        certificate.getFingerprints()[i].algorithm + ' ' +
+        certificate.getFingerprints()[i].value.toUpperCase();
+    if (localDescription.sdp.includes(fingerprintSdp)) {
+      returnToTest('ok-verified');
+      return;
+    }
+  }
+  if (!localDescription.sdp.includes('a=fingerprint'))
+    throw failTest('localDescription does not contain any fingerprints.');
+  throw failTest('Certificate fingerprint not found in localDescription.');
 }
 
 /**
@@ -430,6 +472,40 @@ function getLastGatheringState() {
   returnToTest(gIceGatheringState);
 }
 
+/**
+ * Returns "ok-negotiation-count-is-" followed by the number of times
+ * onnegotiationneeded has fired. This will include any currently queued
+ * negotiationneeded events.
+ */
+function getNegotiationNeededCount() {
+  window.setTimeout(function() {
+    returnToTest('ok-negotiation-count-is-' + gNegotiationNeededCount);
+  }, 0);
+}
+
+/**
+ * Gets the track and stream IDs of each "ontrack" event that has been fired on
+ * the peer connection in chronological order.
+ *
+ * Returns "ok-" followed by a series of space-separated
+ * "RTCTrackEvent <track id> <stream ids>".
+ */
+function getTrackEvents() {
+  let result = '';
+  gTrackEvents.forEach(function(event) {
+    if (event.receiver.track != event.track)
+      throw failTest('RTCTrackEvent\'s track does not match its receiver\'s.');
+    let eventString = 'RTCTrackEvent ' + event.track.id;
+    event.streams.forEach(function(stream) {
+      eventString += ' ' + stream.id;
+    });
+    if (result.length)
+      result += ' ';
+    result += eventString;
+  });
+  returnToTest('ok-' + result);
+}
+
 // Internals.
 
 /** @private */
@@ -443,6 +519,8 @@ function createPeerConnection_(rtcConfig) {
   peerConnection.onremovestream = removeStreamCallback_;
   peerConnection.onicecandidate = iceCallback_;
   peerConnection.onicegatheringstatechange = iceGatheringCallback_;
+  peerConnection.onnegotiationneeded = negotiationNeededCallback_;
+  peerConnection.ontrack = onTrackCallback_;
   return peerConnection;
 }
 
@@ -464,6 +542,15 @@ function iceGatheringCallback_() {
   gIceGatheringState = peerConnection.iceGatheringState;
 }
 
+/** @private */
+function negotiationNeededCallback_() {
+  ++gNegotiationNeededCount;
+}
+
+/** @private */
+function onTrackCallback_(event) {
+  gTrackEvents.push(event);
+}
 
 /** @private */
 function setLocalDescription(peerConnection, sessionDescription) {

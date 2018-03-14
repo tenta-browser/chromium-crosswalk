@@ -5,26 +5,39 @@
 #ifndef MOJO_COMMON_COMMON_CUSTOM_TYPES_STRUCT_TRAITS_H_
 #define MOJO_COMMON_COMMON_CUSTOM_TYPES_STRUCT_TRAITS_H_
 
+#include "base/containers/span.h"
 #include "base/files/file.h"
 #include "base/i18n/rtl.h"
+#include "base/process/process_handle.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/memory_allocator_dump_guid.h"
 #include "base/unguessable_token.h"
 #include "base/version.h"
 #include "mojo/common/file.mojom-shared.h"
+#include "mojo/common/memory_allocator_dump_cross_process_uid.mojom-shared.h"
 #include "mojo/common/mojo_common_export.h"
+#include "mojo/common/process_id.mojom-shared.h"
 #include "mojo/common/string16.mojom-shared.h"
 #include "mojo/common/text_direction.mojom-shared.h"
-#include "mojo/common/time.mojom-shared.h"
+#include "mojo/common/thread_priority.mojom-shared.h"
 #include "mojo/common/unguessable_token.mojom-shared.h"
 #include "mojo/common/version.mojom-shared.h"
 
 namespace mojo {
 
 template <>
+struct StructTraits<common::mojom::String16DataView, base::StringPiece16> {
+  static base::span<const uint16_t> data(base::StringPiece16 str) {
+    return base::make_span(reinterpret_cast<const uint16_t*>(str.data()),
+                           str.size());
+  }
+};
+
+template <>
 struct StructTraits<common::mojom::String16DataView, base::string16> {
-  static ConstCArray<uint16_t> data(const base::string16& str) {
-    return ConstCArray<uint16_t>(str.size(),
-                                 reinterpret_cast<const uint16_t*>(str.data()));
+  static base::span<const uint16_t> data(const base::string16& str) {
+    return StructTraits<common::mojom::String16DataView,
+                        base::StringPiece16>::data(str);
   }
 
   static bool Read(common::mojom::String16DataView data, base::string16* out);
@@ -63,14 +76,14 @@ struct StructTraits<common::mojom::UnguessableTokenDataView,
 };
 
 template <>
-struct StructTraits<common::mojom::TimeDeltaDataView, base::TimeDelta> {
-  static int64_t microseconds(const base::TimeDelta& delta) {
-    return delta.InMicroseconds();
+struct StructTraits<common::mojom::ProcessIdDataView, base::ProcessId> {
+  static uint32_t pid(const base::ProcessId& process_id) {
+    return static_cast<uint32_t>(process_id);
   }
 
-  static bool Read(common::mojom::TimeDeltaDataView data,
-                   base::TimeDelta* delta) {
-    *delta = base::TimeDelta::FromMicroseconds(data.microseconds());
+  static bool Read(common::mojom::ProcessIdDataView data,
+                   base::ProcessId* process_id) {
+    *process_id = static_cast<base::ProcessId>(data.pid());
     return true;
   }
 };
@@ -91,6 +104,26 @@ struct EnumTraits<common::mojom::TextDirection, base::i18n::TextDirection> {
       base::i18n::TextDirection text_direction);
   static bool FromMojom(common::mojom::TextDirection input,
                         base::i18n::TextDirection* out);
+};
+
+template <>
+struct EnumTraits<common::mojom::ThreadPriority, base::ThreadPriority> {
+  static common::mojom::ThreadPriority ToMojom(
+      base::ThreadPriority thread_priority);
+  static bool FromMojom(common::mojom::ThreadPriority input,
+                        base::ThreadPriority* out);
+};
+
+template <>
+struct StructTraits<common::mojom::MemoryAllocatorDumpCrossProcessUidDataView,
+                    base::trace_event::MemoryAllocatorDumpGuid> {
+  static uint64_t value(const base::trace_event::MemoryAllocatorDumpGuid& id) {
+    return id.ToUint64();
+  }
+
+  static bool Read(
+      common::mojom::MemoryAllocatorDumpCrossProcessUidDataView data,
+      base::trace_event::MemoryAllocatorDumpGuid* out);
 };
 
 }  // namespace mojo

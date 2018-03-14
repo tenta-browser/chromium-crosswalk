@@ -13,6 +13,7 @@
 #include "components/prefs/persistent_pref_store.h"
 #include "components/prefs/pref_filter.h"
 #include "components/prefs/pref_service.h"
+#include "components/prefs/pref_value_store.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "components/sync_preferences/pref_service_syncable_factory.h"
@@ -34,8 +35,8 @@ void HandleReadError(PersistentPrefStore::PrefReadError error) {
 void PrepareFactory(sync_preferences::PrefServiceSyncableFactory* factory,
                     const base::FilePath& pref_filename,
                     base::SequencedTaskRunner* pref_io_task_runner) {
-  factory->set_user_prefs(make_scoped_refptr(new JsonPrefStore(
-      pref_filename, pref_io_task_runner, std::unique_ptr<PrefFilter>())));
+  factory->set_user_prefs(base::MakeRefCounted<JsonPrefStore>(
+      pref_filename, pref_io_task_runner, std::unique_ptr<PrefFilter>()));
 
   factory->set_read_error_callback(base::Bind(&HandleReadError));
   factory->SetPrefModelAssociatorClient(
@@ -80,5 +81,5 @@ CreateIncognitoBrowserStatePrefs(
   overlay_pref_names.push_back(proxy_config::prefs::kProxy);
   return base::WrapUnique(pref_service->CreateIncognitoPrefService(
       nullptr,  // incognito_extension_pref_store
-      overlay_pref_names));
+      overlay_pref_names, nullptr));
 }

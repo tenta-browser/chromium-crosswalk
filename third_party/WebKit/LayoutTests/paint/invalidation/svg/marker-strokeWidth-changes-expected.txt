@@ -4,17 +4,17 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGPath path id='path'",
-          "rect": [121, 126, 68, 68],
+          "rect": [113, 118, 84, 84],
           "reason": "style change"
         },
         {
           "object": "LayoutSVGContainer g",
-          "rect": [122, 127, 66, 66],
-          "reason": "bounds change"
+          "rect": [114, 119, 82, 82],
+          "reason": "geometry"
         }
       ]
     }
@@ -22,7 +22,7 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutSVGContainer g",
-      "reason": "bounds change"
+      "reason": "geometry"
     },
     {
       "object": "LayoutSVGPath path id='path'",

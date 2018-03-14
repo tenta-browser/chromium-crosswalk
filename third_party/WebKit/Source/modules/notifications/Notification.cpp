@@ -31,17 +31,16 @@
 #include "modules/notifications/Notification.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/SerializedScriptValueFactory.h"
 #include "bindings/core/v8/SourceLocation.h"
+#include "bindings/core/v8/serialization/SerializedScriptValueFactory.h"
 #include "bindings/modules/v8/V8NotificationAction.h"
 #include "core/dom/Document.h"
-#include "core/dom/DocumentUserGestureToken.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/dom/ScopedWindowFocusAllowedIndicator.h"
-#include "core/dom/TaskRunnerHelper.h"
-#include "core/events/Event.h"
+#include "core/dom/UserGestureIndicator.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/Deprecation.h"
+#include "core/frame/LocalFrame.h"
 #include "core/frame/PerformanceMonitor.h"
 #include "core/frame/UseCounter.h"
 #include "core/probe/CoreProbes.h"
@@ -49,12 +48,15 @@
 #include "modules/notifications/NotificationData.h"
 #include "modules/notifications/NotificationManager.h"
 #include "modules/notifications/NotificationOptions.h"
+#include "modules/notifications/NotificationPermissionCallback.h"
 #include "modules/notifications/NotificationResourcesLoader.h"
-#include "platform/RuntimeEnabledFeatures.h"
-#include "platform/UserGestureIndicator.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/instrumentation/resource_coordinator/FrameResourceCoordinator.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/Functional.h"
 #include "public/platform/Platform.h"
+#include "public/platform/TaskType.h"
 #include "public/platform/WebSecurityOrigin.h"
 #include "public/platform/modules/notifications/WebNotificationAction.h"
 #include "public/platform/modules/notifications/WebNotificationConstants.h"
@@ -63,8 +65,8 @@
 namespace blink {
 namespace {
 
-WebNotificationManager* GetNotificationManager() {
-  return Platform::Current()->GetNotificationManager();
+WebNotificationManager* GetWebNotificationManager() {
+  return Platform::Current()->GetWebNotificationManager();
 }
 
 }  // namespace
@@ -75,7 +77,7 @@ Notification* Notification::Create(ExecutionContext* context,
                                    ExceptionState& exception_state) {
   // The Notification constructor may be disabled through a runtime feature when
   // the platform does not support non-persistent notifications.
-  if (!RuntimeEnabledFeatures::notificationConstructorEnabled()) {
+  if (!RuntimeEnabledFeatures::NotificationConstructorEnabled()) {
     exception_state.ThrowTypeError(
         "Illegal constructor. Use ServiceWorkerRegistration.showNotification() "
         "instead.");
@@ -96,17 +98,19 @@ Notification* Notification::Create(ExecutionContext* context,
   }
 
   if (context->IsSecureContext()) {
-    UseCounter::Count(context, UseCounter::kNotificationSecureOrigin);
-    if (context->IsDocument())
+    UseCounter::Count(context, WebFeature::kNotificationSecureOrigin);
+    if (context->IsDocument()) {
       UseCounter::CountCrossOriginIframe(
-          *ToDocument(context), UseCounter::kNotificationAPISecureOriginIframe);
+          *ToDocument(context), WebFeature::kNotificationAPISecureOriginIframe);
+    }
   } else {
     Deprecation::CountDeprecation(context,
-                                  UseCounter::kNotificationInsecureOrigin);
-    if (context->IsDocument())
+                                  WebFeature::kNotificationInsecureOrigin);
+    if (context->IsDocument()) {
       Deprecation::CountDeprecationCrossOriginIframe(
           *ToDocument(context),
-          UseCounter::kNotificationAPIInsecureOriginIframe);
+          WebFeature::kNotificationAPIInsecureOriginIframe);
+    }
   }
 
   WebNotificationData data =
@@ -117,6 +121,15 @@ Notification* Notification::Create(ExecutionContext* context,
   Notification* notification =
       new Notification(context, Type::kNonPersistent, data);
   notification->SchedulePrepareShow();
+
+  Document* document = context->IsDocument() ? ToDocument(context) : nullptr;
+  if (document && document->GetFrame()) {
+    if (auto* frame_resource_coordinator =
+            document->GetFrame()->GetFrameResourceCoordinator()) {
+      frame_resource_coordinator->OnNonPersistentNotificationCreated();
+    }
+  }
+
   return notification;
 }
 
@@ -138,7 +151,7 @@ Notification::Notification(ExecutionContext* context,
       type_(type),
       state_(State::kLoading),
       data_(data) {
-  DCHECK(GetNotificationManager());
+  DCHECK(GetWebNotificationManager());
 }
 
 Notification::~Notification() {}
@@ -147,15 +160,20 @@ void Notification::SchedulePrepareShow() {
   DCHECK_EQ(state_, State::kLoading);
   DCHECK(!prepare_show_method_runner_);
 
-  prepare_show_method_runner_ =
-      AsyncMethodRunner<Notification>::Create(this, &Notification::PrepareShow);
+  prepare_show_method_runner_ = AsyncMethodRunner<Notification>::Create(
+      this, &Notification::PrepareShow,
+      GetExecutionContext()->GetTaskRunner(TaskType::kMiscPlatformAPI));
   prepare_show_method_runner_->RunAsync();
 }
 
 void Notification::PrepareShow() {
   DCHECK_EQ(state_, State::kLoading);
-  if (NotificationManager::From(GetExecutionContext())
-          ->GetPermissionStatus(GetExecutionContext()) !=
+  if (!GetExecutionContext()->IsSecureContext()) {
+    DispatchErrorEvent();
+    return;
+  }
+
+  if (NotificationManager::From(GetExecutionContext())->GetPermissionStatus() !=
       mojom::blink::PermissionStatus::GRANTED) {
     DispatchErrorEvent();
     return;
@@ -172,8 +190,8 @@ void Notification::DidLoadResources(NotificationResourcesLoader* loader) {
   SecurityOrigin* origin = GetExecutionContext()->GetSecurityOrigin();
   DCHECK(origin);
 
-  GetNotificationManager()->Show(WebSecurityOrigin(origin), data_,
-                                 loader->GetResources(), this);
+  GetWebNotificationManager()->Show(WebSecurityOrigin(origin), data_,
+                                    loader->GetResources(), this);
   loader_.Clear();
 
   state_ = State::kShowing;
@@ -186,12 +204,13 @@ void Notification::close() {
   // Schedule the "close" event to be fired for non-persistent notifications.
   // Persistent notifications won't get such events for programmatic closes.
   if (type_ == Type::kNonPersistent) {
-    TaskRunnerHelper::Get(TaskType::kUserInteraction, GetExecutionContext())
+    GetExecutionContext()
+        ->GetTaskRunner(TaskType::kUserInteraction)
         ->PostTask(BLINK_FROM_HERE, WTF::Bind(&Notification::DispatchCloseEvent,
                                               WrapPersistent(this)));
     state_ = State::kClosing;
 
-    GetNotificationManager()->Close(this);
+    GetWebNotificationManager()->Close(this);
     return;
   }
 
@@ -200,8 +219,8 @@ void Notification::close() {
   SecurityOrigin* origin = GetExecutionContext()->GetSecurityOrigin();
   DCHECK(origin);
 
-  GetNotificationManager()->ClosePersistent(WebSecurityOrigin(origin),
-                                            data_.tag, notification_id_);
+  GetWebNotificationManager()->ClosePersistent(WebSecurityOrigin(origin),
+                                               data_.tag, notification_id_);
 }
 
 void Notification::DispatchShowEvent() {
@@ -210,9 +229,10 @@ void Notification::DispatchShowEvent() {
 
 void Notification::DispatchClickEvent() {
   ExecutionContext* context = GetExecutionContext();
-  UserGestureIndicator gesture_indicator(DocumentUserGestureToken::Create(
-      context->IsDocument() ? ToDocument(context) : nullptr,
-      UserGestureToken::kNewGesture));
+  Document* document = context->IsDocument() ? ToDocument(context) : nullptr;
+  std::unique_ptr<UserGestureIndicator> gesture_indicator =
+      Frame::NotifyUserActivation(document ? document->GetFrame() : nullptr,
+                                  UserGestureToken::kNewGesture);
   ScopedWindowFocusAllowedIndicator window_focus_allowed(GetExecutionContext());
   DispatchEvent(Event::Create(EventTypeNames::click));
 }
@@ -298,7 +318,7 @@ bool Notification::requireInteraction() const {
 
 ScriptValue Notification::data(ScriptState* script_state) {
   const WebVector<char>& serialized_data = data_.data;
-  RefPtr<SerializedScriptValue> serialized_value =
+  scoped_refptr<SerializedScriptValue> serialized_value =
       SerializedScriptValue::Create(serialized_data.Data(),
                                     serialized_data.size());
 
@@ -354,36 +374,57 @@ String Notification::PermissionString(
   return "denied";
 }
 
-String Notification::permission(ScriptState* script_state) {
-  ExecutionContext* context = ExecutionContext::From(script_state);
-  return PermissionString(
-      NotificationManager::From(context)->GetPermissionStatus(context));
+String Notification::permission(ExecutionContext* context) {
+  // Permission is always denied for insecure contexts. Skip the sync IPC call.
+  if (!context->IsSecureContext())
+    return PermissionString(mojom::blink::PermissionStatus::DENIED);
+
+  mojom::blink::PermissionStatus status =
+      NotificationManager::From(context)->GetPermissionStatus();
+
+  // Permission can only be requested from top-level frames and same-origin
+  // iframes. This should be reflected in calls getting permission status.
+  //
+  // TODO(crbug.com/758603): Move this check to the browser process when the
+  // NotificationService connection becomes frame-bound.
+  if (status == mojom::blink::PermissionStatus::ASK && context->IsDocument()) {
+    LocalFrame* frame = ToDocument(context)->GetFrame();
+    if (!frame || frame->IsCrossOriginSubframe())
+      status = mojom::blink::PermissionStatus::DENIED;
+  }
+
+  return PermissionString(status);
 }
 
 ScriptPromise Notification::requestPermission(
     ScriptState* script_state,
     NotificationPermissionCallback* deprecated_callback) {
   ExecutionContext* context = ExecutionContext::From(script_state);
-  if (!context->IsSecureContext()) {
-    Deprecation::CountDeprecation(
-        context, UseCounter::kNotificationPermissionRequestedInsecureOrigin);
-  }
+  Document* doc = ToDocumentOrNull(context);
 
-  if (context->IsDocument()) {
-    LocalFrame* frame = ToDocument(context)->GetFrame();
-    if (frame && !frame->IsMainFrame()) {
-      Deprecation::CountDeprecation(
-          context, UseCounter::kNotificationPermissionRequestedIframe);
-    }
-  }
-
-  if (!UserGestureIndicator::ProcessingUserGesture()) {
+  probe::breakableLocation(context, "Notification.requestPermission");
+  if (!Frame::HasTransientUserActivation(doc ? doc->GetFrame() : nullptr)) {
     PerformanceMonitor::ReportGenericViolation(
         context, PerformanceMonitor::kDiscouragedAPIUse,
         "Only request notification permission in response to a user gesture.",
         0, nullptr);
   }
-  probe::breakableLocation(context, "Notification.requestPermission");
+
+  // Sites cannot request notification permission from insecure contexts.
+  if (!context->IsSecureContext()) {
+    Deprecation::CountDeprecation(
+        context, WebFeature::kNotificationPermissionRequestedInsecureOrigin);
+  }
+
+  // Sites cannot request notification permission from cross-origin iframes,
+  // but they can use notifications if permission had already been granted.
+  if (context->IsDocument()) {
+    LocalFrame* frame = ToDocument(context)->GetFrame();
+    if (!frame || frame->IsCrossOriginSubframe()) {
+      Deprecation::CountDeprecation(
+          context, WebFeature::kNotificationPermissionRequestedIframe);
+    }
+  }
 
   return NotificationManager::From(context)->RequestPermission(
       script_state, deprecated_callback);
@@ -403,7 +444,7 @@ const AtomicString& Notification::InterfaceName() const {
 }
 
 void Notification::ContextDestroyed(ExecutionContext*) {
-  GetNotificationManager()->NotifyDelegateDestroyed(this);
+  GetWebNotificationManager()->NotifyDelegateDestroyed(this);
 
   state_ = State::kClosed;
 
@@ -423,7 +464,7 @@ bool Notification::HasPendingActivity() const {
   return false;
 }
 
-DEFINE_TRACE(Notification) {
+void Notification::Trace(blink::Visitor* visitor) {
   visitor->Trace(prepare_show_method_runner_);
   visitor->Trace(loader_);
   EventTargetWithInlineData::Trace(visitor);

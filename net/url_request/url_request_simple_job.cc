@@ -13,7 +13,6 @@
 #include "base/single_thread_task_runner.h"
 #include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "base/threading/worker_pool.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_request_headers.h"
@@ -63,7 +62,7 @@ bool URLRequestSimpleJob::GetCharset(std::string* charset) {
   return true;
 }
 
-URLRequestSimpleJob::~URLRequestSimpleJob() {}
+URLRequestSimpleJob::~URLRequestSimpleJob() = default;
 
 int URLRequestSimpleJob::ReadRawData(IOBuffer* buf, int buf_size) {
   buf_size = std::min(static_cast<int64_t>(buf_size),
@@ -74,9 +73,8 @@ int URLRequestSimpleJob::ReadRawData(IOBuffer* buf, int buf_size) {
   // Do memory copy asynchronously on a thread that is not the network thread.
   // See crbug.com/422489.
   base::PostTaskWithTraitsAndReply(
-      FROM_HERE, base::TaskTraits().WithShutdownBehavior(
-                     base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN),
-      base::Bind(&CopyData, make_scoped_refptr(buf), buf_size, data_,
+      FROM_HERE, {base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::Bind(&CopyData, base::WrapRefCounted(buf), buf_size, data_,
                  next_data_offset_),
       base::Bind(&URLRequestSimpleJob::ReadRawDataComplete,
                  weak_factory_.GetWeakPtr(), buf_size));

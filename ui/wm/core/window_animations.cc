@@ -11,10 +11,12 @@
 
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/time/time.h"
 #include "ui/aura/client/aura_constants.h"
@@ -118,8 +120,7 @@ class HidingWindowAnimationObserverBase : public aura::WindowObserver {
   void OnAnimationCompleted() {
     // Window may have been destroyed by this point.
     if (window_) {
-      aura::client::AnimationHost* animation_host =
-          aura::client::GetAnimationHost(window_);
+      AnimationHost* animation_host = GetAnimationHost(window_);
       if (animation_host)
         animation_host->OnWindowHidingAnimationCompleted();
       window_->RemoveObserver(this);
@@ -144,12 +145,30 @@ class HidingWindowAnimationObserverBase : public aura::WindowObserver {
   DISALLOW_COPY_AND_ASSIGN(HidingWindowAnimationObserverBase);
 };
 
+class HidingWindowMetricsReporter : public ui::AnimationMetricsReporter {
+ public:
+  HidingWindowMetricsReporter() = default;
+  ~HidingWindowMetricsReporter() override = default;
+
+  void Report(int value) override {
+    UMA_HISTOGRAM_PERCENTAGE("Ash.Window.AnimationSmoothness.Hide", value);
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(HidingWindowMetricsReporter);
+};
+
+base::LazyInstance<HidingWindowMetricsReporter>::Leaky g_reporter_hide =
+    LAZY_INSTANCE_INITIALIZER;
+
 }  // namespace
 
 DEFINE_UI_CLASS_PROPERTY_KEY(int,
                           kWindowVisibilityAnimationTypeKey,
                           WINDOW_VISIBILITY_ANIMATION_TYPE_DEFAULT);
-DEFINE_UI_CLASS_PROPERTY_KEY(int, kWindowVisibilityAnimationDurationKey, 0);
+DEFINE_UI_CLASS_PROPERTY_KEY(base::TimeDelta,
+                             kWindowVisibilityAnimationDurationKey,
+                             base::TimeDelta());
 DEFINE_UI_CLASS_PROPERTY_KEY(WindowVisibilityAnimationTransition,
                           kWindowVisibilityAnimationTransitionKey,
                           ANIMATE_BOTH);
@@ -197,13 +216,13 @@ const int kWindowAnimation_Bounce_GrowShrinkDurationPercent = 40;
 
 base::TimeDelta GetWindowVisibilityAnimationDuration(
     const aura::Window& window) {
-  int duration =
+  base::TimeDelta duration =
       window.GetProperty(kWindowVisibilityAnimationDurationKey);
-  if (duration == 0 && window.type() == ui::wm::WINDOW_TYPE_MENU) {
+  if (duration.is_zero() && window.type() == aura::client::WINDOW_TYPE_MENU) {
     return base::TimeDelta::FromMilliseconds(
         kDefaultAnimationDurationForMenuMS);
   }
-  return base::TimeDelta::FromInternalValue(duration);
+  return duration;
 }
 
 // Gets/sets the WindowVisibilityAnimationType associated with a window.
@@ -211,8 +230,8 @@ base::TimeDelta GetWindowVisibilityAnimationDuration(
 int GetWindowVisibilityAnimationType(aura::Window* window) {
   int type = window->GetProperty(kWindowVisibilityAnimationTypeKey);
   if (type == WINDOW_VISIBILITY_ANIMATION_TYPE_DEFAULT) {
-    return (window->type() == ui::wm::WINDOW_TYPE_MENU ||
-            window->type() == ui::wm::WINDOW_TYPE_TOOLTIP)
+    return (window->type() == aura::client::WINDOW_TYPE_MENU ||
+            window->type() == aura::client::WINDOW_TYPE_TOOLTIP)
                ? WINDOW_VISIBILITY_ANIMATION_TYPE_FADE
                : WINDOW_VISIBILITY_ANIMATION_TYPE_DROP;
   }
@@ -241,8 +260,7 @@ gfx::Rect GetLayerWorldBoundsAfterTransform(ui::Layer* layer,
 // animation will fit inside of it.
 void AugmentWindowSize(aura::Window* window,
                        const gfx::Transform& end_transform) {
-  aura::client::AnimationHost* animation_host =
-      aura::client::GetAnimationHost(window);
+  AnimationHost* animation_host = GetAnimationHost(window);
   if (!animation_host)
     return;
 
@@ -285,7 +303,7 @@ void AnimateShowWindowCommon(aura::Window* window,
     // Property sets within this scope will be implicitly animated.
     ui::ScopedLayerAnimationSettings settings(window->layer()->GetAnimator());
     base::TimeDelta duration = GetWindowVisibilityAnimationDuration(*window);
-    if (duration.ToInternalValue() > 0)
+    if (duration > base::TimeDelta())
       settings.SetTransitionDuration(duration);
 
     window->layer()->SetTransform(end_transform);
@@ -301,8 +319,14 @@ void AnimateHideWindowCommon(aura::Window* window,
 
   // Property sets within this scope will be implicitly animated.
   ScopedHidingAnimationSettings hiding_settings(window);
+  hiding_settings.layer_animation_settings()->SetAnimationMetricsReporter(
+      g_reporter_hide.Pointer());
+  // Render surface caching may not provide a benefit when animating the opacity
+  // of a single layer.
+  if (!window->layer()->children().empty())
+    hiding_settings.layer_animation_settings()->CacheRenderSurface();
   base::TimeDelta duration = GetWindowVisibilityAnimationDuration(*window);
-  if (duration.ToInternalValue() > 0)
+  if (duration > base::TimeDelta())
     hiding_settings.layer_animation_settings()->SetTransitionDuration(duration);
 
   window->layer()->SetOpacity(kWindowAnimation_HideOpacity);
@@ -356,12 +380,12 @@ std::unique_ptr<ui::LayerAnimationElement> CreateGrowShrinkElement(
     aura::Window* window,
     bool grow) {
   std::unique_ptr<ui::InterpolatedTransform> scale =
-      base::MakeUnique<ui::InterpolatedScale>(
+      std::make_unique<ui::InterpolatedScale>(
           gfx::Point3F(kWindowAnimation_Bounce_Scale,
                        kWindowAnimation_Bounce_Scale, 1),
           gfx::Point3F(1, 1, 1));
   std::unique_ptr<ui::InterpolatedTransform> scale_about_pivot =
-      base::MakeUnique<ui::InterpolatedTransformAboutPivot>(
+      std::make_unique<ui::InterpolatedTransformAboutPivot>(
           gfx::Point(window->bounds().width() * 0.5,
                      window->bounds().height() * 0.5),
           std::move(scale));
@@ -382,7 +406,7 @@ void AnimateBounce(aura::Window* window) {
   scoped_settings.SetPreemptionStrategy(
       ui::LayerAnimator::REPLACE_QUEUED_ANIMATIONS);
   std::unique_ptr<ui::LayerAnimationSequence> sequence =
-      base::MakeUnique<ui::LayerAnimationSequence>();
+      std::make_unique<ui::LayerAnimationSequence>();
   sequence->AddElement(CreateGrowShrinkElement(window, true));
   sequence->AddElement(ui::LayerAnimationElement::CreatePauseElement(
       ui::LayerAnimationElement::BOUNDS,
@@ -454,22 +478,22 @@ void AddLayerAnimationsForRotate(aura::Window* window, bool show) {
   transform.ApplyPerspectiveDepth(kWindowAnimation_Rotate_PerspectiveDepth);
   transform.Translate(-xcenter, 0);
   std::unique_ptr<ui::InterpolatedTransform> perspective =
-      base::MakeUnique<ui::InterpolatedConstantTransform>(transform);
+      std::make_unique<ui::InterpolatedConstantTransform>(transform);
 
   std::unique_ptr<ui::InterpolatedTransform> scale =
-      base::MakeUnique<ui::InterpolatedScale>(
+      std::make_unique<ui::InterpolatedScale>(
           1, kWindowAnimation_Rotate_ScaleFactor);
   std::unique_ptr<ui::InterpolatedTransform> scale_about_pivot =
-      base::MakeUnique<ui::InterpolatedTransformAboutPivot>(
+      std::make_unique<ui::InterpolatedTransformAboutPivot>(
           gfx::Point(xcenter, kWindowAnimation_Rotate_TranslateY),
           std::move(scale));
 
   std::unique_ptr<ui::InterpolatedTransform> translation =
-      base::MakeUnique<ui::InterpolatedTranslation>(
+      std::make_unique<ui::InterpolatedTranslation>(
           gfx::PointF(), gfx::PointF(0, kWindowAnimation_Rotate_TranslateY));
 
   std::unique_ptr<ui::InterpolatedTransform> rotation =
-      base::MakeUnique<ui::InterpolatedAxisAngleRotation>(
+      std::make_unique<ui::InterpolatedAxisAngleRotation>(
           gfx::Vector3dF(1, 0, 0), 0, kWindowAnimation_Rotate_DegreesX);
 
   scale_about_pivot->SetChild(std::move(perspective));
@@ -614,14 +638,12 @@ bool HasWindowVisibilityAnimationTransition(
 
 void SetWindowVisibilityAnimationDuration(aura::Window* window,
                                           const base::TimeDelta& duration) {
-  window->SetProperty(kWindowVisibilityAnimationDurationKey,
-                      static_cast<int>(duration.ToInternalValue()));
+  window->SetProperty(kWindowVisibilityAnimationDurationKey, duration);
 }
 
 base::TimeDelta GetWindowVisibilityAnimationDuration(
     const aura::Window& window) {
-  return base::TimeDelta::FromInternalValue(
-      window.GetProperty(kWindowVisibilityAnimationDurationKey));
+  return window.GetProperty(kWindowVisibilityAnimationDurationKey);
 }
 
 void SetWindowVisibilityAnimationVerticalPosition(aura::Window* window,

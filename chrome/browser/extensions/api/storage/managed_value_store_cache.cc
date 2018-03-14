@@ -14,7 +14,6 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/extensions/api/storage/policy_value_store.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/policy/profile_policy_connector_factory.h"
@@ -26,6 +25,8 @@
 #include "components/policy/core/common/schema_map.h"
 #include "components/policy/core/common/schema_registry.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/browser/api/storage/backend_task_runner.h"
+#include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
@@ -53,9 +54,6 @@ class ExtensionRegistry;
 namespace storage = api::storage;
 
 namespace {
-
-const char kLoadSchemasBackgroundTaskTokenName[] =
-    "load_managed_storage_schemas_token";
 
 // Only extension settings are stored in the managed namespace - not apps.
 const ValueStoreFactory::ModelType kManagedModelType =
@@ -94,7 +92,7 @@ class ManagedValueStoreCache::ExtensionTracker
 
   // Loads the schemas of the |extensions| and passes a ComponentMap to
   // Register().
-  static void LoadSchemasOnBlockingPool(
+  static void LoadSchemasOnFileTaskRunner(
       std::unique_ptr<ExtensionSet> extensions,
       base::WeakPtr<ExtensionTracker> self);
   void Register(const policy::ComponentMap* components);
@@ -174,12 +172,10 @@ void ManagedValueStoreCache::ExtensionTracker::LoadSchemas(
       added->Remove(to_remove);
   }
 
-  // Load the schema files in a background thread.
-  BrowserThread::PostBlockingPoolSequencedTask(
-      kLoadSchemasBackgroundTaskTokenName, FROM_HERE,
-      base::Bind(&ExtensionTracker::LoadSchemasOnBlockingPool,
-                 base::Passed(&added),
-                 weak_factory_.GetWeakPtr()));
+  GetExtensionFileTaskRunner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&ExtensionTracker::LoadSchemasOnFileTaskRunner,
+                     base::Passed(&added), weak_factory_.GetWeakPtr()));
 }
 
 bool ManagedValueStoreCache::ExtensionTracker::UsesManagedStorage(
@@ -188,10 +184,10 @@ bool ManagedValueStoreCache::ExtensionTracker::UsesManagedStorage(
 }
 
 // static
-void ManagedValueStoreCache::ExtensionTracker::LoadSchemasOnBlockingPool(
+void ManagedValueStoreCache::ExtensionTracker::LoadSchemasOnFileTaskRunner(
     std::unique_ptr<ExtensionSet> extensions,
     base::WeakPtr<ExtensionTracker> self) {
-  DCHECK(BrowserThread::GetBlockingPool()->RunsTasksOnCurrentThread());
+  base::AssertBlockingAllowed();
   std::unique_ptr<policy::ComponentMap> components(new policy::ComponentMap);
 
   for (ExtensionSet::const_iterator it = extensions->begin();
@@ -216,8 +212,8 @@ void ManagedValueStoreCache::ExtensionTracker::LoadSchemasOnBlockingPool(
   }
 
   BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::Bind(&ExtensionTracker::Register, self,
-                                     base::Owned(components.release())));
+                          base::BindOnce(&ExtensionTracker::Register, self,
+                                         base::Owned(components.release())));
 }
 
 void ManagedValueStoreCache::ExtensionTracker::Register(
@@ -260,7 +256,7 @@ ManagedValueStoreCache::ManagedValueStoreCache(
 }
 
 ManagedValueStoreCache::~ManagedValueStoreCache() {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(IsOnBackendSequence());
   // Delete the PolicyValueStores on FILE.
   store_map_.clear();
 }
@@ -274,13 +270,13 @@ void ManagedValueStoreCache::ShutdownOnUI() {
 void ManagedValueStoreCache::RunWithValueStoreForExtension(
     const StorageCallback& callback,
     scoped_refptr<const Extension> extension) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(IsOnBackendSequence());
   callback.Run(GetStoreFor(extension->id()));
 }
 
 void ManagedValueStoreCache::DeleteStorageSoon(
     const std::string& extension_id) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(IsOnBackendSequence());
   // It's possible that the store exists, but hasn't been loaded yet
   // (because the extension is unloaded, for example). Open the database to
   // clear it if it exists.
@@ -328,12 +324,10 @@ void ManagedValueStoreCache::OnPolicyUpdated(const policy::PolicyNamespace& ns,
     return;
   }
 
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&ManagedValueStoreCache::UpdatePolicyOnFILE,
-                 base::Unretained(this),
-                 ns.component_id,
-                 base::Passed(current.DeepCopy())));
+  GetBackendTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(&ManagedValueStoreCache::UpdatePolicyOnBackend,
+                                base::Unretained(this), ns.component_id,
+                                base::Passed(current.DeepCopy())));
 }
 
 // static
@@ -347,10 +341,10 @@ policy::PolicyDomain ManagedValueStoreCache::GetPolicyDomain(Profile* profile) {
 #endif
 }
 
-void ManagedValueStoreCache::UpdatePolicyOnFILE(
+void ManagedValueStoreCache::UpdatePolicyOnBackend(
     const std::string& extension_id,
     std::unique_ptr<policy::PolicyMap> current_policy) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(IsOnBackendSequence());
 
   if (!HasStore(extension_id) && current_policy->empty()) {
     // Don't create the store now if there are no policies configured for this
@@ -364,7 +358,7 @@ void ManagedValueStoreCache::UpdatePolicyOnFILE(
 
 PolicyValueStore* ManagedValueStoreCache::GetStoreFor(
     const std::string& extension_id) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(IsOnBackendSequence());
 
   auto it = store_map_.find(extension_id);
   if (it != store_map_.end())

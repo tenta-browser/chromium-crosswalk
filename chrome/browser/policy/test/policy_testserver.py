@@ -49,7 +49,12 @@ Example:
   "current_key_index": 0,
   "robot_api_auth_code": "",
   "invalidation_source": 1025,
-  "invalidation_name": "UENUPOL"
+  "invalidation_name": "UENUPOL",
+  "available_licenses" : {
+      "annual": 10,
+      "perpetual": 20
+   }
+
 }
 
 """
@@ -95,10 +100,6 @@ except ImportError:
 
 # ASN.1 object identifier for PKCS#1/RSA.
 PKCS1_RSA_OID = '\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01'
-
-# List of bad machine identifiers that trigger the |valid_serial_number_missing|
-# flag to be set set in the policy fetch response.
-BAD_MACHINE_IDS = [ '123490EN400015' ]
 
 # List of machines that trigger the server to send kiosk enrollment response
 # for the register request.
@@ -183,6 +184,12 @@ SIGNING_KEYS = [
        },
     },
 ]
+
+LICENSE_TYPES = {
+  'perpetual': dm.LicenseType.CDM_PERPETUAL,
+  'annual': dm.LicenseType.CDM_ANNUAL,
+  'kiosk': dm.LicenseType.KIOSK,
+}
 
 class PolicyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
   """Decodes and handles device management requests from clients.
@@ -315,6 +322,8 @@ class PolicyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
       response = self.ProcessDeviceAttributeUpdatePermissionRequest()
     elif request_type == 'device_attribute_update':
       response = self.ProcessDeviceAttributeUpdateRequest()
+    elif request_type == 'check_device_license':
+      response = self.ProcessCheckDeviceLicenseRequest()
     elif request_type == 'remote_commands':
       response = self.ProcessRemoteCommandsRequest()
     elif request_type == 'check_android_management':
@@ -669,6 +678,27 @@ class PolicyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
 
     return (200, response)
 
+  def ProcessCheckDeviceLicenseRequest(self):
+    """Handles a device license check request.
+
+    Returns:
+      A tuple of HTTP status code and response data to send to the client.
+    """
+    response = dm.DeviceManagementResponse()
+    license_response = response.check_device_license_response
+    policy = self.server.GetPolicies()
+    selection_mode = dm.CheckDeviceLicenseResponse.ADMIN_SELECTION
+    if ('available_licenses' in policy):
+      available_licenses = policy['available_licenses']
+      selection_mode = dm.CheckDeviceLicenseResponse.USER_SELECTION
+      for license_type in available_licenses:
+        license = license_response.license_availability.add()
+        license.license_type.license_type = LICENSE_TYPES[license_type]
+        license.available_licenses = available_licenses[license_type]
+    license_response.license_selection_mode = (selection_mode)
+
+    return (200, response)
+
   def ProcessRemoteCommandsRequest(self):
     """Handles a remote command request.
 
@@ -695,6 +725,54 @@ class PolicyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     else:
       return (403, response)
 
+  def SetProtoRepeatedField(self, group_message, field, field_value):
+    assert type(field_value) == list
+    entries = group_message.__getattribute__(field.name)
+    if field.message_type is None:
+      for list_item in field_value:
+        entries.append(list_item)
+    else:
+      # This field is itself a protobuf.
+      sub_type = field.message_type
+      for sub_value in field_value:
+        assert type(sub_value) == dict
+        # Add a new sub-protobuf per list entry.
+        sub_message = entries.add()
+        # Now iterate over its fields and recursively add them.
+        for sub_field in sub_message.DESCRIPTOR.fields:
+          if sub_field.name in sub_value:
+            sub_field_value = sub_value[sub_field.name]
+            self.SetProtobufMessageField(sub_message,
+                                         sub_field, sub_field_value)
+
+  def SetProtoMessageField(self, group_message, field, field_value):
+    if field.message_type.name == 'StringList':
+      assert type(field_value) == list
+      entries = group_message.__getattribute__(field.name).entries
+      for list_item in field_value:
+        entries.append(list_item)
+    else:
+      assert type(field_value) == dict
+      sub_message = group_message.__getattribute__(field.name)
+      for sub_field in sub_message.DESCRIPTOR.fields:
+        if sub_field.name in field_value:
+          sub_field_value = field_value[sub_field.name]
+          self.SetProtobufMessageField(sub_message, sub_field, sub_field_value)
+
+  def SetProtoField(self, group_message, field, field_value):
+    if field.type == field.TYPE_BOOL:
+      assert type(field_value) == bool
+    elif field.type == field.TYPE_STRING:
+      assert type(field_value) == str or type(field_value) == unicode
+    elif (field.type == field.TYPE_INT64 or
+          field.type == field.TYPE_INT32 or
+          field.type == field.TYPE_ENUM):
+      assert type(field_value) == int
+    else:
+      return False
+    group_message.__setattr__(field.name, field_value)
+    return True
+
   def SetProtobufMessageField(self, group_message, field, field_value):
     """Sets a field in a protobuf message.
 
@@ -705,40 +783,11 @@ class PolicyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
       field_value: The value to set.
     """
     if field.label == field.LABEL_REPEATED:
-      assert type(field_value) == list
-      entries = group_message.__getattribute__(field.name)
-      if field.message_type is None:
-        for list_item in field_value:
-          entries.append(list_item)
-      else:
-        # This field is itself a protobuf.
-        sub_type = field.message_type
-        for sub_value in field_value:
-          assert type(sub_value) == dict
-          # Add a new sub-protobuf per list entry.
-          sub_message = entries.add()
-          # Now iterate over its fields and recursively add them.
-          for sub_field in sub_message.DESCRIPTOR.fields:
-            if sub_field.name in sub_value:
-              value = sub_value[sub_field.name]
-              self.SetProtobufMessageField(sub_message, sub_field, value)
-      return
-    elif field.type == field.TYPE_BOOL:
-      assert type(field_value) == bool
-    elif field.type == field.TYPE_STRING:
-      assert type(field_value) == str or type(field_value) == unicode
-    elif field.type == field.TYPE_INT64:
-      assert type(field_value) == int
-    elif (field.type == field.TYPE_MESSAGE and
-          field.message_type.name == 'StringList'):
-      assert type(field_value) == list
-      entries = group_message.__getattribute__(field.name).entries
-      for list_item in field_value:
-        entries.append(list_item)
-      return
-    else:
+      self.SetProtoRepeatedField(group_message, field, field_value)
+    elif field.type == field.TYPE_MESSAGE:
+      self.SetProtoMessageField(group_message, field, field_value)
+    elif not self.SetProtoField(group_message, field, field_value):
       raise Exception('Unknown field type %s' % field.type)
-    group_message.__setattr__(field.name, field_value)
 
   def GatherDevicePolicySettings(self, settings, policies):
     """Copies all the policies from a dictionary into a protobuf of type
@@ -838,9 +887,6 @@ class PolicyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
       username: The username for the response. May be None.
     """
 
-    if msg.machine_id:
-      self.server.UpdateMachineId(token_info['device_token'], msg.machine_id)
-
     # Response is only given if the scope is specified in the config file.
     # Normally 'google/chromeos/device', 'google/chromeos/user' and
     # 'google/chromeos/publicaccount' should be accepted.
@@ -905,8 +951,6 @@ class PolicyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     policy_data.request_token = token_info['device_token']
     policy_data.policy_value = payload
     policy_data.machine_name = token_info['machine_name']
-    policy_data.valid_serial_number_missing = (
-        token_info['machine_id'] in BAD_MACHINE_IDS)
     policy_data.settings_entity_id = msg.settings_entity_id
     policy_data.service_account_identity = policy.get(
         'service_account_identity',
@@ -1240,17 +1284,6 @@ class PolicyTestServer(testserver_base.BrokenPipeHandlerMixIn,
     }
     self.WriteClientState()
     return self._registered_tokens[dmtoken]
-
-  def UpdateMachineId(self, dmtoken, machine_id):
-    """Updates the machine identifier for a registered device.
-
-    Args:
-      dmtoken: The device management token provided by the client.
-      machine_id: Updated hardware identifier value.
-    """
-    if dmtoken in self._registered_tokens:
-      self._registered_tokens[dmtoken]['machine_id'] = machine_id
-      self.WriteClientState()
 
   def UpdateStateKeys(self, dmtoken, state_keys):
     """Updates the state keys for a given client.

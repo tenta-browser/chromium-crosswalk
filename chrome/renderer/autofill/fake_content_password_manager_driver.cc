@@ -4,6 +4,8 @@
 
 #include "chrome/renderer/autofill/fake_content_password_manager_driver.h"
 
+#include "testing/gtest/include/gtest/gtest.h"
+
 FakeContentPasswordManagerDriver::FakeContentPasswordManagerDriver() {}
 
 FakeContentPasswordManagerDriver::~FakeContentPasswordManagerDriver() {}
@@ -42,11 +44,15 @@ void FakeContentPasswordManagerDriver::InPageNavigation(
 void FakeContentPasswordManagerDriver::PresaveGeneratedPassword(
     const autofill::PasswordForm& password_form) {
   called_presave_generated_password_ = true;
+  password_is_generated_ = true;
+  EXPECT_EQ(autofill::PasswordForm::TYPE_GENERATED, password_form.type);
 }
 
 void FakeContentPasswordManagerDriver::PasswordNoLongerGenerated(
     const autofill::PasswordForm& password_form) {
   called_password_no_longer_generated_ = true;
+  password_is_generated_ = false;
+  EXPECT_EQ(autofill::PasswordForm::TYPE_GENERATED, password_form.type);
 }
 
 void FakeContentPasswordManagerDriver::ShowPasswordSuggestions(
@@ -67,9 +73,19 @@ void FakeContentPasswordManagerDriver::ShowNotSecureWarning(
   called_show_not_secure_warning_ = true;
 }
 
+void FakeContentPasswordManagerDriver::ShowManualFallbackSuggestion(
+    base::i18n::TextDirection text_direction,
+    const gfx::RectF& bounds) {
+  called_manual_fallback_suggestion_ = true;
+}
+
 void FakeContentPasswordManagerDriver::RecordSavePasswordProgress(
     const std::string& log) {
   called_record_save_progress_ = true;
+}
+
+void FakeContentPasswordManagerDriver::UserModifiedPasswordField() {
+  called_user_modified_password_field_ = true;
 }
 
 void FakeContentPasswordManagerDriver::SaveGenerationFieldDetectedByClassifier(
@@ -77,4 +93,20 @@ void FakeContentPasswordManagerDriver::SaveGenerationFieldDetectedByClassifier(
     const base::string16& generation_field) {
   called_save_generation_field_ = true;
   save_generation_field_ = generation_field;
+}
+
+void FakeContentPasswordManagerDriver::CheckSafeBrowsingReputation(
+    const GURL& form_action,
+    const GURL& frame_url) {
+  called_check_safe_browsing_reputation_cnt_++;
+}
+
+void FakeContentPasswordManagerDriver::ShowManualFallbackForSaving(
+    const autofill::PasswordForm& password_form) {
+  called_show_manual_fallback_for_saving_count_++;
+  last_fallback_for_saving_was_for_generated_password_ = password_is_generated_;
+}
+
+void FakeContentPasswordManagerDriver::HideManualFallbackForSaving() {
+  called_show_manual_fallback_for_saving_count_ = 0;
 }

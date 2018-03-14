@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef CONTENT_PUBLIC_TEST_WEB_CONTENTS_BINDING_SET_TEST_BINDER_H_
+#define CONTENT_PUBLIC_TEST_WEB_CONTENTS_BINDING_SET_TEST_BINDER_H_
+
 #include "content/public/browser/web_contents_binding_set.h"
 
 #include "mojo/public/cpp/bindings/associated_interface_request.h"
@@ -25,10 +28,11 @@ class WebContentsBindingSetTestBinder : public WebContentsBindingSet::Binder {
   // Binder:
   void OnRequestForFrame(RenderFrameHost* render_frame_host,
                          mojo::ScopedInterfaceEndpointHandle handle) override {
-    mojo::AssociatedInterfaceRequest<Interface> request;
-    request.Bind(std::move(handle));
-    BindRequest(render_frame_host, std::move(request));
+    BindRequest(render_frame_host,
+                mojo::AssociatedInterfaceRequest<Interface>(std::move(handle)));
   }
 };
 
 }  // namespace content
+
+#endif  // CONTENT_PUBLIC_TEST_WEB_CONTENTS_BINDING_SET_TEST_BINDER_H_

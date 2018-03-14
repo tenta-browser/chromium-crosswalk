@@ -6,16 +6,16 @@
 // from Blink are valid.
 
 #include "base/macros.h"
-#include "content/common/input/touch_action.h"
 #include "content/public/common/screen_orientation_values.h"
 #include "media/base/mime_util.h"
+#include "third_party/WebKit/public/platform/WebMenuSourceType.h"
 #include "third_party/WebKit/public/platform/WebTextInputMode.h"
 #include "third_party/WebKit/public/platform/WebTextInputType.h"
 #include "third_party/WebKit/public/platform/modules/screen_orientation/WebScreenOrientationLockType.h"
 #include "third_party/WebKit/public/web/WebFrameSerializerCacheControlPolicy.h"
-#include "third_party/WebKit/public/web/WebTouchAction.h"
 #include "ui/base/ime/text_input_mode.h"
 #include "ui/base/ime/text_input_type.h"
+#include "ui/base/ui_base_types.h"
 
 namespace content {
 
@@ -90,20 +90,20 @@ STATIC_ASSERT_ENUM(blink::kWebTextInputTypeContentEditable,
 STATIC_ASSERT_ENUM(blink::kWebTextInputTypeDateTimeField,
                    ui::TEXT_INPUT_TYPE_DATE_TIME_FIELD);
 
-// Check blink::WebTouchAction and content::TouchAction is kept in sync.
-STATIC_ASSERT_ENUM(blink::kWebTouchActionNone, TOUCH_ACTION_NONE);
-STATIC_ASSERT_ENUM(blink::kWebTouchActionPanLeft, TOUCH_ACTION_PAN_LEFT);
-STATIC_ASSERT_ENUM(blink::kWebTouchActionPanRight, TOUCH_ACTION_PAN_RIGHT);
-STATIC_ASSERT_ENUM(blink::kWebTouchActionPanX, TOUCH_ACTION_PAN_X);
-STATIC_ASSERT_ENUM(blink::kWebTouchActionPanUp, TOUCH_ACTION_PAN_UP);
-STATIC_ASSERT_ENUM(blink::kWebTouchActionPanDown, TOUCH_ACTION_PAN_DOWN);
-STATIC_ASSERT_ENUM(blink::kWebTouchActionPanY, TOUCH_ACTION_PAN_Y);
-STATIC_ASSERT_ENUM(blink::kWebTouchActionPan, TOUCH_ACTION_PAN);
-STATIC_ASSERT_ENUM(blink::kWebTouchActionPinchZoom, TOUCH_ACTION_PINCH_ZOOM);
-STATIC_ASSERT_ENUM(blink::kWebTouchActionManipulation,
-                   TOUCH_ACTION_MANIPULATION);
-STATIC_ASSERT_ENUM(blink::kWebTouchActionDoubleTapZoom,
-                   TOUCH_ACTION_DOUBLE_TAP_ZOOM);
-STATIC_ASSERT_ENUM(blink::kWebTouchActionAuto, TOUCH_ACTION_AUTO);
+// WebMenuSourceType
+STATIC_ASSERT_ENUM(blink::kMenuSourceNone, ui::MENU_SOURCE_NONE);
+STATIC_ASSERT_ENUM(blink::kMenuSourceMouse, ui::MENU_SOURCE_MOUSE);
+STATIC_ASSERT_ENUM(blink::kMenuSourceKeyboard, ui::MENU_SOURCE_KEYBOARD);
+STATIC_ASSERT_ENUM(blink::kMenuSourceTouch, ui::MENU_SOURCE_TOUCH);
+STATIC_ASSERT_ENUM(blink::kMenuSourceTouchEditMenu,
+                   ui::MENU_SOURCE_TOUCH_EDIT_MENU);
+STATIC_ASSERT_ENUM(blink::kMenuSourceLongPress, ui::MENU_SOURCE_LONG_PRESS);
+STATIC_ASSERT_ENUM(blink::kMenuSourceLongTap, ui::MENU_SOURCE_LONG_TAP);
+STATIC_ASSERT_ENUM(blink::kMenuSourceTouchHandle, ui::MENU_SOURCE_TOUCH_HANDLE);
+STATIC_ASSERT_ENUM(blink::kMenuSourceStylus, ui::MENU_SOURCE_STYLUS);
+STATIC_ASSERT_ENUM(blink::kMenuSourceAdjustSelection,
+                   ui::MENU_SOURCE_ADJUST_SELECTION);
+STATIC_ASSERT_ENUM(blink::kMenuSourceAdjustSelectionReset,
+                   ui::MENU_SOURCE_ADJUST_SELECTION_RESET);
 
 } // namespace content

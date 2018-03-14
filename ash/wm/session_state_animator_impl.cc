@@ -4,13 +4,14 @@
 
 #include "ash/wm/session_state_animator_impl.h"
 
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
 #include "ash/wm/wm_window_animations.h"
 #include "base/barrier_closure.h"
-#include "base/memory/ptr_util.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/compositor/layer_animation_observer.h"
@@ -43,8 +44,8 @@ gfx::Transform GetSlowCloseTransform() {
   gfx::Size root_size = Shell::GetPrimaryRootWindow()->bounds().size();
   gfx::Transform transform;
   transform.Translate(
-      floor(0.5 * (1.0 - kSlowCloseSizeRatio) * root_size.width() + 0.5),
-      floor(0.5 * (1.0 - kSlowCloseSizeRatio) * root_size.height() + 0.5));
+      std::round(0.5 * (1.0 - kSlowCloseSizeRatio) * root_size.width()),
+      std::round(0.5 * (1.0 - kSlowCloseSizeRatio) * root_size.height()));
   transform.Scale(kSlowCloseSizeRatio, kSlowCloseSizeRatio);
   return transform;
 }
@@ -55,8 +56,8 @@ gfx::Transform GetFastCloseTransform() {
   gfx::Size root_size = Shell::GetPrimaryRootWindow()->bounds().size();
   gfx::Transform transform;
 
-  transform.Translate(floor(0.5 * root_size.width() + 0.5),
-                      floor(0.5 * root_size.height() + 0.5));
+  transform.Translate(std::round(0.5 * root_size.width()),
+                      std::round(0.5 * root_size.height()));
   transform.Scale(kMinimumScale, kMinimumScale);
   return transform;
 }
@@ -257,9 +258,9 @@ void StartGrayscaleBrightnessAnimationForWindow(
   ui::LayerAnimator* animator = window->layer()->GetAnimator();
 
   std::unique_ptr<ui::LayerAnimationSequence> brightness_sequence =
-      base::MakeUnique<ui::LayerAnimationSequence>();
+      std::make_unique<ui::LayerAnimationSequence>();
   std::unique_ptr<ui::LayerAnimationSequence> grayscale_sequence =
-      base::MakeUnique<ui::LayerAnimationSequence>();
+      std::make_unique<ui::LayerAnimationSequence>();
 
   std::unique_ptr<ui::LayerAnimationElement> brightness_element =
       ui::LayerAnimationElement::CreateBrightnessElement(target, duration);
@@ -290,7 +291,7 @@ class CallbackAnimationObserver : public ui::LayerAnimationObserver {
  public:
   explicit CallbackAnimationObserver(base::Closure callback)
       : callback_(callback) {}
-  ~CallbackAnimationObserver() override {}
+  ~CallbackAnimationObserver() override = default;
 
  private:
   // Overridden from ui::LayerAnimationObserver:
@@ -394,12 +395,12 @@ void GetContainersInRootWindow(int container_mask,
     containers->push_back(
         Shell::GetContainer(root_window, kShellWindowId_WallpaperContainer));
   }
-  if (container_mask & SessionStateAnimator::LAUNCHER) {
+  if (container_mask & SessionStateAnimator::SHELF) {
     containers->push_back(
         Shell::GetContainer(root_window, kShellWindowId_ShelfContainer));
   }
   if (container_mask & SessionStateAnimator::NON_LOCK_SCREEN_CONTAINERS) {
-    // TODO(antrim): Figure out a way to eliminate a need to exclude launcher
+    // TODO(antrim): Figure out a way to eliminate a need to exclude shelf
     // in such way.
     aura::Window* non_lock_screen_containers = Shell::GetContainer(
         root_window, kShellWindowId_NonLockScreenContainersContainer);
@@ -442,8 +443,8 @@ class SessionStateAnimatorImpl::AnimationSequence
       public ui::LayerAnimationObserver {
  public:
   explicit AnimationSequence(SessionStateAnimatorImpl* animator,
-                             base::Closure callback)
-      : SessionStateAnimator::AnimationSequence(callback),
+                             base::OnceClosure callback)
+      : SessionStateAnimator::AnimationSequence(std::move(callback)),
         animator_(animator),
         sequences_attached_(0),
         sequences_completed_(0) {}
@@ -456,7 +457,7 @@ class SessionStateAnimatorImpl::AnimationSequence
   }
 
  private:
-  ~AnimationSequence() override {}
+  ~AnimationSequence() override = default;
 
   // ui::LayerAnimationObserver:
   void OnLayerAnimationEnded(ui::LayerAnimationSequence* sequence) override {
@@ -512,9 +513,9 @@ bool SessionStateAnimatorImpl::TestApi::RootWindowIsAnimated(
   return IsLayerAnimated(layer, type);
 }
 
-SessionStateAnimatorImpl::SessionStateAnimatorImpl() {}
+SessionStateAnimatorImpl::SessionStateAnimatorImpl() = default;
 
-SessionStateAnimatorImpl::~SessionStateAnimatorImpl() {}
+SessionStateAnimatorImpl::~SessionStateAnimatorImpl() = default;
 
 // Fills |containers| with the containers described by |container_mask|.
 void SessionStateAnimatorImpl::GetContainers(
@@ -546,11 +547,11 @@ void SessionStateAnimatorImpl::StartAnimationWithCallback(
     int container_mask,
     AnimationType type,
     AnimationSpeed speed,
-    base::Closure callback) {
+    base::OnceClosure callback) {
   aura::Window::Windows containers;
   GetContainers(container_mask, &containers);
   base::Closure animation_done_closure =
-      base::BarrierClosure(containers.size(), callback);
+      base::BarrierClosure(containers.size(), std::move(callback));
   for (aura::Window::Windows::const_iterator it = containers.begin();
        it != containers.end(); ++it) {
     ui::LayerAnimationObserver* observer =
@@ -560,8 +561,8 @@ void SessionStateAnimatorImpl::StartAnimationWithCallback(
 }
 
 SessionStateAnimator::AnimationSequence*
-SessionStateAnimatorImpl::BeginAnimationSequence(base::Closure callback) {
-  return new AnimationSequence(this, callback);
+SessionStateAnimatorImpl::BeginAnimationSequence(base::OnceClosure callback) {
+  return new AnimationSequence(this, std::move(callback));
 }
 
 bool SessionStateAnimatorImpl::IsWallpaperHidden() const {

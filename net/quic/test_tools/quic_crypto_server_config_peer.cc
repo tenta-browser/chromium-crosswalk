@@ -7,16 +7,11 @@
 #include "net/quic/test_tools/mock_clock.h"
 #include "net/quic/test_tools/mock_random.h"
 #include "net/quic/test_tools/quic_test_utils.h"
-#include "testing/gtest/include/gtest/gtest.h"
 
 using std::string;
 
 namespace net {
 namespace test {
-
-ProofSource* QuicCryptoServerConfigPeer::GetProofSource() {
-  return server_config_->proof_source_.get();
-}
 
 QuicReferenceCountedPointer<QuicCryptoServerConfig::Config>
 QuicCryptoServerConfigPeer::GetPrimaryConfig() {
@@ -88,11 +83,6 @@ QuicCryptoServerConfigPeer::ValidateSingleSourceAddressToken(
   EXPECT_EQ(1, tokens.tokens_size());
   return server_config_->ValidateSingleSourceAddressToken(tokens.tokens(0), ip,
                                                           now);
-}
-
-string QuicCryptoServerConfigPeer::NewServerNonce(QuicRandom* rand,
-                                                  QuicWallTime now) const {
-  return server_config_->NewServerNonce(rand, now);
 }
 
 void QuicCryptoServerConfigPeer::CheckConfigs(

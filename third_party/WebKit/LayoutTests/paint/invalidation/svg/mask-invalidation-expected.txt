@@ -4,17 +4,22 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGContainer g id='root'",
           "rect": [50, 50, 453, 299],
-          "reason": "bounds change"
+          "reason": "geometry"
         },
         {
           "object": "LayoutSVGRect rect",
           "rect": [50, 50, 453, 299],
-          "reason": "layoutObject removal"
+          "reason": "disappeared"
+        },
+        {
+          "object": "LayoutSVGRect rect",
+          "rect": [100, 100, 403, 249],
+          "reason": "appeared"
         }
       ]
     }
@@ -22,19 +27,15 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutSVGRect rect",
-      "reason": "layoutObject removal"
-    },
-    {
-      "object": "LayoutSVGRect rect id='maskRect'",
-      "reason": "subtree"
+      "reason": "disappeared"
     },
     {
       "object": "LayoutSVGContainer g id='root'",
-      "reason": "bounds change"
+      "reason": "geometry"
     },
     {
       "object": "LayoutSVGRect rect",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     }
   ]
 }

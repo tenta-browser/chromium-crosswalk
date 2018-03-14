@@ -24,17 +24,16 @@ bool CreateEncryptedPayloadForTesting(const base::StringPiece& payload,
                                       IncomingMessage* message) {
   DCHECK(message);
 
-  std::string private_key, public_key_x509, public_key;
+  std::string private_key, public_key;
 
   // Create an ephemeral key-pair for the sender.
-  if (!CreateP256KeyPair(&private_key, &public_key_x509, &public_key))
+  if (!CreateP256KeyPair(&private_key, &public_key))
     return false;
 
   std::string shared_secret;
 
   // Calculate the shared secret between the sender and its peer.
-  if (!ComputeSharedP256Secret(private_key, public_key_x509, peer_public_key,
-                               &shared_secret)) {
+  if (!ComputeSharedP256Secret(private_key, peer_public_key, &shared_secret)) {
     return false;
   }
 
@@ -44,13 +43,14 @@ bool CreateEncryptedPayloadForTesting(const base::StringPiece& payload,
   const size_t salt_size = GCMMessageCryptographer::kSaltSize;
   crypto::RandBytes(base::WriteInto(&salt, salt_size + 1), salt_size);
 
-  GCMMessageCryptographer cryptographer(peer_public_key, public_key,
-                                        auth_secret.as_string());
+  GCMMessageCryptographer cryptographer(
+      GCMMessageCryptographer::Version::DRAFT_03);
 
   size_t record_size;
   std::string ciphertext;
 
-  if (!cryptographer.Encrypt(payload, shared_secret, salt, &record_size,
+  if (!cryptographer.Encrypt(peer_public_key, public_key, shared_secret,
+                             auth_secret, salt, payload, &record_size,
                              &ciphertext)) {
     return false;
   }

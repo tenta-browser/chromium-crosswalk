@@ -27,9 +27,9 @@
 #define Range_h
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
 #include "core/dom/RangeBoundaryPoint.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/geometry/FloatRect.h"
 #include "platform/geometry/IntRect.h"
 #include "platform/heap/Handle.h"
@@ -37,8 +37,8 @@
 
 namespace blink {
 
-class ClientRect;
-class ClientRectList;
+class DOMRect;
+class DOMRectList;
 class ContainerNode;
 class Document;
 class DocumentFragment;
@@ -48,8 +48,7 @@ class Node;
 class NodeWithIndex;
 class Text;
 
-class CORE_EXPORT Range final : public GarbageCollected<Range>,
-                                public ScriptWrappable {
+class CORE_EXPORT Range final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -140,19 +139,17 @@ class CORE_EXPORT Range final : public GarbageCollected<Range>,
   Node* PastLastNode() const;
 
   // Not transform-friendly
-  void TextRects(Vector<IntRect>&, bool use_selection_height = false) const;
   IntRect BoundingBox() const;
 
   // Transform-friendly
-  void TextQuads(Vector<FloatQuad>&, bool use_selection_height = false) const;
   void GetBorderAndTextQuads(Vector<FloatQuad>&) const;
   FloatRect BoundingRect() const;
 
   void NodeChildrenWillBeRemoved(ContainerNode&);
   void NodeWillBeRemoved(Node&);
 
-  void DidInsertText(Node*, unsigned offset, unsigned length);
-  void DidRemoveText(Node*, unsigned offset, unsigned length);
+  void DidInsertText(const CharacterData&, unsigned offset, unsigned length);
+  void DidRemoveText(const CharacterData&, unsigned offset, unsigned length);
   void DidMergeTextNodes(const NodeWithIndex& old_node, unsigned offset);
   void DidSplitTextNode(const Text& old_node);
   void UpdateOwnerDocumentIfNeeded();
@@ -162,12 +159,12 @@ class CORE_EXPORT Range final : public GarbageCollected<Range>,
   // for details.
   void expand(const String&, ExceptionState&);
 
-  ClientRectList* getClientRects() const;
-  ClientRect* getBoundingClientRect() const;
+  DOMRectList* getClientRects() const;
+  DOMRect* getBoundingClientRect() const;
 
   static Node* CheckNodeWOffset(Node*, unsigned offset, ExceptionState&);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   explicit Range(Document&);

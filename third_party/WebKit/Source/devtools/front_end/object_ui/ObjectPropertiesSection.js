@@ -129,18 +129,23 @@ ObjectUI.ObjectPropertiesSection = class extends UI.TreeOutlineInShadow {
    */
   static valueElementForFunctionDescription(description, includePreview, defaultName) {
     var valueElement = createElementWithClass('span', 'object-value-function');
-    var text = description ? description.replace(/^function [gs]et /, 'function ') : '';
+    var text = '';
+    if (description) {
+      text = description.replace(/^function [gs]et /, 'function ')
+                 .replace(/^function [gs]et\(/, 'function\(')
+                 .replace(/^[gs]et /, '');
+    }
     defaultName = defaultName || '';
 
     // This set of best-effort regular expressions captures common function descriptions.
     // Ideally, some parser would provide prefix, arguments, function body text separately.
-    var isAsync = text.startsWith('async function ');
-    var isGenerator = text.startsWith('function* ');
+    var asyncMatch = text.match(/^(async\s+function)/);
+    var isGenerator = text.startsWith('function*');
     var isGeneratorShorthand = text.startsWith('*');
-    var isBasic = !isGenerator && text.startsWith('function ');
+    var isBasic = !isGenerator && text.startsWith('function');
     var isClass = text.startsWith('class ') || text.startsWith('class{');
     var firstArrowIndex = text.indexOf('=>');
-    var isArrow = !isAsync && !isGenerator && !isBasic && !isClass && firstArrowIndex > 0;
+    var isArrow = !asyncMatch && !isGenerator && !isBasic && !isClass && firstArrowIndex > 0;
 
     var textAfterPrefix;
     if (isClass) {
@@ -150,18 +155,18 @@ ObjectUI.ObjectPropertiesSection = class extends UI.TreeOutlineInShadow {
       if (classNameMatch)
         className = classNameMatch[0].trim() || defaultName;
       addElements('class', textAfterPrefix, className);
-    } else if (isAsync) {
-      textAfterPrefix = text.substring('async function'.length);
-      addElements('async function', textAfterPrefix, nameAndArguments(textAfterPrefix));
+    } else if (asyncMatch) {
+      textAfterPrefix = text.substring(asyncMatch[1].length);
+      addElements('async \u0192', textAfterPrefix, nameAndArguments(textAfterPrefix));
     } else if (isGenerator) {
       textAfterPrefix = text.substring('function*'.length);
-      addElements('function*', textAfterPrefix, nameAndArguments(textAfterPrefix));
+      addElements('\u0192*', textAfterPrefix, nameAndArguments(textAfterPrefix));
     } else if (isGeneratorShorthand) {
       textAfterPrefix = text.substring('*'.length);
-      addElements('function*', textAfterPrefix, nameAndArguments(textAfterPrefix));
+      addElements('\u0192*', textAfterPrefix, nameAndArguments(textAfterPrefix));
     } else if (isBasic) {
       textAfterPrefix = text.substring('function'.length);
-      addElements('function', textAfterPrefix, nameAndArguments(textAfterPrefix));
+      addElements('\u0192', textAfterPrefix, nameAndArguments(textAfterPrefix));
     } else if (isArrow) {
       const maxArrowFunctionCharacterLength = 60;
       var abbreviation = text;
@@ -171,7 +176,7 @@ ObjectUI.ObjectPropertiesSection = class extends UI.TreeOutlineInShadow {
         abbreviation = text.substring(0, firstArrowIndex + 2) + ' {\u2026}';
       addElements('', text, abbreviation);
     } else {
-      addElements('function', text, nameAndArguments(text));
+      addElements('\u0192', text, nameAndArguments(text));
     }
     valueElement.title = description || '';
     return valueElement;
@@ -306,8 +311,8 @@ ObjectUI.ObjectPropertiesSection = class extends UI.TreeOutlineInShadow {
         Common.Revealer.reveal(value);
         event.consume(true);
       }, false);
-      valueElement.addEventListener('mousemove', () => SDK.DOMModel.highlightObjectAsDOMNode(value), false);
-      valueElement.addEventListener('mouseleave', () => SDK.DOMModel.hideDOMNodeHighlight(), false);
+      valueElement.addEventListener('mousemove', () => SDK.OverlayModel.highlightObjectAsDOMNode(value), false);
+      valueElement.addEventListener('mouseleave', () => SDK.OverlayModel.hideDOMNodeHighlight(), false);
       return valueElement;
     }
 
@@ -598,7 +603,7 @@ ObjectUI.ObjectPropertyTreeElement = class extends UI.TreeElement {
     if (treeNode.childCount())
       return;
     var title = createElementWithClass('div', 'gray-info-message');
-    title.textContent = emptyPlaceholder || Common.UIString('No Properties');
+    title.textContent = emptyPlaceholder || Common.UIString('No properties');
     var infoElement = new UI.TreeElement(title);
     treeNode.appendChild(infoElement);
   }
@@ -738,7 +743,10 @@ ObjectUI.ObjectPropertyTreeElement = class extends UI.TreeElement {
       return null;
 
     var valueElement = createElementWithClass('span', 'value');
-    valueElement.setTextContentTruncatedIfNeeded(value.description || '');
+    if (value.description === 'Object')
+      valueElement.textContent = '';
+    else
+      valueElement.setTextContentTruncatedIfNeeded(value.description || '');
     valueElement.classList.add('object-value-' + (value.subtype || value.type));
     valueElement.title = value.description || '';
     return valueElement;
@@ -806,9 +814,7 @@ ObjectUI.ObjectPropertyTreeElement = class extends UI.TreeElement {
     if (property.value)
       contextMenu.appendApplicableItems(property.value);
     var copyPathHandler = InspectorFrontendHost.copyText.bind(InspectorFrontendHost, this.nameElement.title);
-    contextMenu.beforeShow(() => {
-      contextMenu.appendItem(Common.UIString.capitalize('Copy ^property ^path'), copyPathHandler);
-    });
+    contextMenu.clipboardSection().appendItem(Common.UIString('Copy property path'), copyPathHandler);
     contextMenu.show();
   }
 
@@ -816,7 +822,7 @@ ObjectUI.ObjectPropertyTreeElement = class extends UI.TreeElement {
     if (this._prompt || !this.treeOutline._editable || this._readOnly)
       return;
 
-    this._editableDiv = this.listItemElement.createChild('span');
+    this._editableDiv = this.listItemElement.createChild('span', 'editable-div');
 
     var text = this.property.value.description;
     if (this.property.value.type === 'string' && typeof text === 'string')
@@ -872,7 +878,7 @@ ObjectUI.ObjectPropertyTreeElement = class extends UI.TreeElement {
    */
   _promptKeyDown(originalContent, event) {
     if (isEnterKey(event)) {
-      event.consume(true);
+      event.consume();
       this._editingCommitted(originalContent);
       return;
     }
@@ -886,33 +892,25 @@ ObjectUI.ObjectPropertyTreeElement = class extends UI.TreeElement {
   /**
    * @param {string} expression
    */
-  _applyExpression(expression) {
+  async _applyExpression(expression) {
     var property = SDK.RemoteObject.toCallArgument(this.property.symbol || this.property.name);
-    expression = expression.trim();
-    if (expression)
-      this.property.parentObject.setPropertyValue(property, expression, callback.bind(this));
-    else
-      this.property.parentObject.deleteProperty(property, callback.bind(this));
+    expression = SDK.RuntimeModel.wrapObjectLiteralExpressionIfNeeded(expression.trim());
+    var errorPromise = expression ? this.property.parentObject.setPropertyValue(property, expression) :
+                                    this.property.parentObject.deleteProperty(property);
+    var error = await errorPromise;
+    if (error) {
+      this.update();
+      return;
+    }
 
-    /**
-     * @param {?Protocol.Error} error
-     * @this {ObjectUI.ObjectPropertyTreeElement}
-     */
-    function callback(error) {
-      if (error) {
-        this.update();
-        return;
-      }
-
-      if (!expression) {
-        // The property was deleted, so remove this tree element.
-        this.parent.removeChild(this);
-      } else {
-        // Call updateSiblings since their value might be based on the value that just changed.
-        var parent = this.parent;
-        parent.invalidateChildren();
-        parent.onpopulate();
-      }
+    if (!expression) {
+      // The property was deleted, so remove this tree element.
+      this.parent.removeChild(this);
+    } else {
+      // Call updateSiblings since their value might be based on the value that just changed.
+      var parent = this.parent;
+      parent.invalidateChildren();
+      parent.onpopulate();
     }
   }
 

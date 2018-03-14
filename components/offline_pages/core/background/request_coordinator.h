@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -34,6 +35,7 @@ class OfflinerPolicy;
 class Offliner;
 class SavePageRequest;
 class ClientPolicyController;
+class OfflinePagesUkmReporter;
 
 // Coordinates queueing and processing save page later requests.
 class RequestCoordinator : public KeyedService,
@@ -73,6 +75,7 @@ class RequestCoordinator : public KeyedService,
   struct SavePageLaterParams {
     SavePageLaterParams();
     SavePageLaterParams(const SavePageLaterParams& other);
+    ~SavePageLaterParams();
 
     // The last committed URL of the page to save.
     GURL url;
@@ -88,6 +91,9 @@ class RequestCoordinator : public KeyedService,
 
     // The original URL of the page to save. Empty if no redirect occurs.
     GURL original_url;
+
+    // The origin of the request, if any.
+    std::string request_origin;
   };
 
   // Callback specifying which request IDs were actually removed.
@@ -98,12 +104,16 @@ class RequestCoordinator : public KeyedService,
   typedef base::Callback<void(std::vector<std::unique_ptr<SavePageRequest>>)>
       GetRequestsCallback;
 
+  // Callback for stopping the background offlining.
+  typedef base::Callback<void(int64_t request_id)> CancelCallback;
+
   RequestCoordinator(std::unique_ptr<OfflinerPolicy> policy,
                      std::unique_ptr<Offliner> offliner,
                      std::unique_ptr<RequestQueue> queue,
                      std::unique_ptr<Scheduler> scheduler,
                      net::NetworkQualityEstimator::NetworkQualityProvider*
-                         network_quality_estimator);
+                         network_quality_estimator,
+                     std::unique_ptr<OfflinePagesUkmReporter> ukm_reporter);
 
   ~RequestCoordinator() override;
 
@@ -112,7 +122,7 @@ class RequestCoordinator : public KeyedService,
   int64_t SavePageLater(const SavePageLaterParams& save_page_later_params);
 
   // Remove a list of requests by |request_id|.  This removes requests from the
-  // request queue, and cancels an in-progress prerender.
+  // request queue, and cancels an in-progress offliner.
   void RemoveRequests(const std::vector<int64_t>& request_ids,
                       const RemoveRequestsCallback& callback);
 
@@ -284,9 +294,9 @@ class RequestCoordinator : public KeyedService,
   // Handle updating of request status after cancel is called. Will call
   // HandleCancelRecordResultCallback for UMA handling
   void HandleCancelUpdateStatusCallback(
-      const Offliner::CancelCallback& next_callback,
+      const CancelCallback& next_callback,
       Offliner::RequestStatus stop_status,
-      int64_t offline_id);
+      const SavePageRequest& canceled_request);
   void UpdateStatusForCancel(Offliner::RequestStatus stop_status);
   void ResetActiveRequestCallback(int64_t offline_id);
   void StartSchedulerCallback(int64_t offline_id);
@@ -335,9 +345,9 @@ class RequestCoordinator : public KeyedService,
 
   void HandleWatchdogTimeout();
 
-  // Cancels an in progress pre-rendering, and updates state appropriately.
-  void StopPrerendering(const Offliner::CancelCallback& callback,
-                        Offliner::RequestStatus stop_status);
+  // Cancels an in progress offlining, and updates state appropriately.
+  void StopOfflining(const CancelCallback& callback,
+                     Offliner::RequestStatus stop_status);
 
   // Marks attempt on the request and sends it to offliner in continuation.
   void SendRequestToOffliner(const SavePageRequest& request);
@@ -396,6 +406,10 @@ class RequestCoordinator : public KeyedService,
                        const std::string& name_space,
                        std::unique_ptr<UpdateRequestsResult> result);
 
+  // Reports offliner status through UMA and event logger.
+  void RecordOfflinerResult(const SavePageRequest& request,
+                            Offliner::RequestStatus status);
+
   void SetDeviceConditionsForTest(const DeviceConditions& current_conditions) {
     use_test_device_conditions_ = true;
     current_conditions_.reset(new DeviceConditions(current_conditions));
@@ -436,8 +450,11 @@ class RequestCoordinator : public KeyedService,
   // Unowned pointer to the Network Quality Estimator.
   net::NetworkQualityEstimator::NetworkQualityProvider*
       network_quality_estimator_;
-  // Holds copy of the active request, if any.
-  std::unique_ptr<SavePageRequest> active_request_;
+  // Object that can record Url Keyed Metrics (UKM).
+  std::unique_ptr<OfflinePagesUkmReporter> ukm_reporter_;
+  net::EffectiveConnectionType network_quality_at_request_start_;
+  // Holds an ID of the currently active request.
+  int64_t active_request_id_;
   // Status of the most recent offlining.
   Offliner::RequestStatus last_offlining_status_;
   // A set of request_ids that we are holding off until the download manager is
@@ -467,7 +484,7 @@ class RequestCoordinator : public KeyedService,
   //   it was completed or cancelled), the task will remove it.
   // Currently it's used as LIFO.
   // TODO(romax): see if LIFO is a good idea or change to FIFO. crbug.com/705106
-  std::deque<int64_t> prioritized_requests_;
+  base::circular_deque<int64_t> prioritized_requests_;
   // Allows us to pass a weak pointer to callbacks.
   base::WeakPtrFactory<RequestCoordinator> weak_ptr_factory_;
 

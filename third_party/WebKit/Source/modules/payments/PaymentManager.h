@@ -6,48 +6,39 @@
 #define PaymentManager_h
 
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "components/payments/content/payment_app.mojom-blink.h"
 #include "modules/ModulesExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
+#include "public/platform/modules/payments/payment_app.mojom-blink.h"
 
 namespace blink {
 
-class PaymentAppManifest;
 class PaymentInstruments;
-class ScriptPromiseResolver;
-class ScriptState;
 class ServiceWorkerRegistration;
 
-class MODULES_EXPORT PaymentManager final
-    : public GarbageCollectedFinalized<PaymentManager>,
-      public ScriptWrappable {
+class MODULES_EXPORT PaymentManager final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
   WTF_MAKE_NONCOPYABLE(PaymentManager);
 
  public:
   static PaymentManager* Create(ServiceWorkerRegistration*);
 
-  ScriptPromise setManifest(ScriptState*, const PaymentAppManifest&);
-  ScriptPromise getManifest(ScriptState*);
-
   PaymentInstruments* instruments();
 
-  DECLARE_TRACE();
+  const String& userHint();
+  void setUserHint(const String&);
+
+  void Trace(blink::Visitor*);
 
  private:
   explicit PaymentManager(ServiceWorkerRegistration*);
 
-  void OnSetManifest(ScriptPromiseResolver*,
-                     payments::mojom::blink::PaymentAppManifestError);
-  void OnGetManifest(ScriptPromiseResolver*,
-                     payments::mojom::blink::PaymentAppManifestPtr,
-                     payments::mojom::blink::PaymentAppManifestError);
   void OnServiceConnectionError();
 
   Member<ServiceWorkerRegistration> registration_;
-  Member<PaymentInstruments> instruments_;
   payments::mojom::blink::PaymentManagerPtr manager_;
+  Member<PaymentInstruments> instruments_;
+  String user_hint_;
 };
 
 }  // namespace blink

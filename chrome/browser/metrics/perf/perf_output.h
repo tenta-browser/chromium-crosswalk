@@ -11,6 +11,7 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "chromeos/dbus/pipe_reader.h"
@@ -27,22 +28,18 @@ class PerfOutputCall {
   // - The empty string if there was an error.
   using DoneCallback = base::Callback<void(const std::string& perf_stdout)>;
 
-  PerfOutputCall(scoped_refptr<base::TaskRunner> blocking_task_runner,
-                 base::TimeDelta duration,
+  PerfOutputCall(base::TimeDelta duration,
                  const std::vector<std::string>& perf_args,
                  const DoneCallback& callback);
   ~PerfOutputCall();
 
  private:
   // Internal callbacks.
-  void OnIOComplete();
-  void OnGetPerfOutputError(const std::string& error_name,
-                            const std::string& error_message);
+  void OnIOComplete(base::Optional<std::string> data);
+  void OnGetPerfOutput(bool success);
 
-  // Used to run IO tasks.
-  scoped_refptr<base::TaskRunner> blocking_task_runner_;
   // Used to capture perf data written to a pipe.
-  std::unique_ptr<chromeos::PipeReaderForString> perf_data_pipe_reader_;
+  std::unique_ptr<chromeos::PipeReader> perf_data_pipe_reader_;
 
   // Saved arguments.
   base::TimeDelta duration_;

@@ -35,6 +35,9 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
+using testing::ElementsAre;
+using testing::Key;
+
 using net::test::IsError;
 using net::test::IsOk;
 
@@ -176,16 +179,15 @@ class TestResolveProxyDelegate : public ProxyDelegate {
   TestResolveProxyDelegate()
       : on_resolve_proxy_called_(false),
         add_proxy_(false),
-        remove_proxy_(false),
-        proxy_service_(nullptr) {}
+        remove_proxy_(false) {}
 
   void OnResolveProxy(const GURL& url,
                       const std::string& method,
-                      const ProxyService& proxy_service,
+                      const ProxyRetryInfoMap& proxy_retry_info,
                       ProxyInfo* result) override {
     method_ = method;
     on_resolve_proxy_called_ = true;
-    proxy_service_ = &proxy_service;
+    proxy_retry_info_ = proxy_retry_info;
     DCHECK(!add_proxy_ || !remove_proxy_);
     if (add_proxy_) {
       result->UseNamedProxy("delegate_proxy.com");
@@ -208,8 +210,8 @@ class TestResolveProxyDelegate : public ProxyDelegate {
     remove_proxy_ = remove_proxy;
   }
 
-  const ProxyService* proxy_service() const {
-    return proxy_service_;
+  const ProxyRetryInfoMap& proxy_retry_info() const {
+    return proxy_retry_info_;
   }
 
   void OnTunnelConnectCompleted(const HostPortPair& endpoint,
@@ -231,16 +233,13 @@ class TestResolveProxyDelegate : public ProxyDelegate {
       ProxyServer* alternative_proxy_server) const override {}
   void OnAlternativeProxyBroken(
       const ProxyServer& alternative_proxy_server) override {}
-  ProxyServer GetDefaultAlternativeProxy() const override {
-    return ProxyServer();
-  }
 
  private:
   bool on_resolve_proxy_called_;
   bool add_proxy_;
   bool remove_proxy_;
   std::string method_;
-  const ProxyService* proxy_service_;
+  ProxyRetryInfoMap proxy_retry_info_;
 };
 
 // A test network delegate that exercises the OnProxyFallback callback.
@@ -252,7 +251,7 @@ class TestProxyFallbackProxyDelegate : public ProxyDelegate {
   // ProxyDelegate implementation:
   void OnResolveProxy(const GURL& url,
                       const std::string& method,
-                      const ProxyService& proxy_service,
+                      const ProxyRetryInfoMap& proxy_retry_info,
                       ProxyInfo* result) override {}
   void OnTunnelConnectCompleted(const HostPortPair& endpoint,
                                 const HostPortPair& proxy_server,
@@ -277,9 +276,6 @@ class TestProxyFallbackProxyDelegate : public ProxyDelegate {
       ProxyServer* alternative_proxy_server) const override {}
   void OnAlternativeProxyBroken(
       const ProxyServer& alternative_proxy_server) override {}
-  ProxyServer GetDefaultAlternativeProxy() const override {
-    return ProxyServer();
-  }
 
   bool on_proxy_fallback_called() const {
     return on_proxy_fallback_called_;
@@ -375,7 +371,7 @@ TEST_F(ProxyServiceTest, Direct) {
   MockAsyncProxyResolverFactory* factory =
       new MockAsyncProxyResolverFactory(false);
   ProxyService service(
-      base::MakeUnique<MockProxyConfigService>(ProxyConfig::CreateDirect()),
+      std::make_unique<MockProxyConfigService>(ProxyConfig::CreateDirect()),
       base::WrapUnique(factory), nullptr);
 
   GURL url("http://www.google.com/");
@@ -407,11 +403,11 @@ TEST_F(ProxyServiceTest, Direct) {
 
 TEST_F(ProxyServiceTest, OnResolveProxyCallbackAddProxy) {
   ProxyConfig config;
-  config.proxy_rules().ParseFromString("foopy1:8080");
+  config.proxy_rules().ParseFromString("badproxy:8080,foopy1:8080");
   config.set_auto_detect(false);
   config.proxy_rules().bypass_rules.ParseFromString("*.org");
 
-  ProxyService service(base::MakeUnique<MockProxyConfigService>(config),
+  ProxyService service(std::make_unique<MockProxyConfigService>(config),
                        nullptr, nullptr);
 
   GURL url("http://www.google.com/");
@@ -421,17 +417,28 @@ TEST_F(ProxyServiceTest, OnResolveProxyCallbackAddProxy) {
   TestCompletionCallback callback;
   BoundTestNetLog log;
 
-  // First, warm up the ProxyService.
+  // First, warm up the ProxyService and fake an error to mark the first server
+  // as bad.
   int rv = service.ResolveProxy(url, std::string(), &info, callback.callback(),
                                 nullptr, nullptr, log.bound());
   EXPECT_THAT(rv, IsOk());
+  EXPECT_EQ("badproxy:8080", info.proxy_server().ToURI());
+
+  TestCompletionCallback callback2;
+  rv = service.ReconsiderProxyAfterError(
+      url, std::string(), ERR_PROXY_CONNECTION_FAILED, &info,
+      callback2.callback(), nullptr, nullptr, NetLogWithSource());
+  EXPECT_THAT(rv, IsOk());
+  EXPECT_EQ("foopy1:8080", info.proxy_server().ToURI());
+
+  service.ReportSuccess(info, nullptr);
 
   // Verify that network delegate is invoked.
   TestResolveProxyDelegate delegate;
   rv = service.ResolveProxy(url, "GET", &info, callback.callback(), nullptr,
                             &delegate, log.bound());
   EXPECT_TRUE(delegate.on_resolve_proxy_called());
-  EXPECT_EQ(&service, delegate.proxy_service());
+  EXPECT_THAT(delegate.proxy_retry_info(), ElementsAre(Key("badproxy:8080")));
   EXPECT_EQ(delegate.method(), "GET");
 
   // Verify that the ProxyDelegate's behavior is stateless across
@@ -467,7 +474,7 @@ TEST_F(ProxyServiceTest, OnResolveProxyCallbackRemoveProxy) {
   config.set_auto_detect(false);
   config.proxy_rules().bypass_rules.ParseFromString("*.org");
 
-  ProxyService service(base::MakeUnique<MockProxyConfigService>(config),
+  ProxyService service(std::make_unique<MockProxyConfigService>(config),
                        nullptr, nullptr);
 
   GURL url("http://www.google.com/");
@@ -1082,7 +1089,8 @@ TEST_F(ProxyServiceTest, ProxyResolverFailsParsingJavaScriptMandatoryPac) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::MakeUnique<DoNothingDhcpProxyScriptFetcher>());
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Start resolve request.
   GURL url("http://www.google.com/");
@@ -1701,7 +1709,7 @@ TEST_F(ProxyServiceTest, ProxyBypassList) {
   config.set_auto_detect(false);
   config.proxy_rules().bypass_rules.ParseFromString("*.org");
 
-  ProxyService service(base::MakeUnique<MockProxyConfigService>(config),
+  ProxyService service(std::make_unique<MockProxyConfigService>(config),
                        nullptr, nullptr);
 
   int rv;
@@ -1742,7 +1750,7 @@ TEST_F(ProxyServiceTest, MarkProxiesAsBadTests) {
 
   EXPECT_EQ(3u, additional_bad_proxies.size());
 
-  ProxyService service(base::MakeUnique<MockProxyConfigService>(config),
+  ProxyService service(std::make_unique<MockProxyConfigService>(config),
                        nullptr, nullptr);
   ProxyInfo proxy_info;
   proxy_info.UseProxyList(proxy_list);
@@ -1763,7 +1771,7 @@ TEST_F(ProxyServiceTest, PerProtocolProxyTests) {
   config.proxy_rules().ParseFromString("http=foopy1:8080;https=foopy2:8080");
   config.set_auto_detect(false);
   {
-    ProxyService service(base::MakeUnique<MockProxyConfigService>(config),
+    ProxyService service(std::make_unique<MockProxyConfigService>(config),
                          nullptr, nullptr);
     GURL test_url("http://www.msn.com");
     ProxyInfo info;
@@ -1776,7 +1784,7 @@ TEST_F(ProxyServiceTest, PerProtocolProxyTests) {
     EXPECT_EQ("foopy1:8080", info.proxy_server().ToURI());
   }
   {
-    ProxyService service(base::MakeUnique<MockProxyConfigService>(config),
+    ProxyService service(std::make_unique<MockProxyConfigService>(config),
                          nullptr, nullptr);
     GURL test_url("ftp://ftp.google.com");
     ProxyInfo info;
@@ -1789,7 +1797,7 @@ TEST_F(ProxyServiceTest, PerProtocolProxyTests) {
     EXPECT_EQ("direct://", info.proxy_server().ToURI());
   }
   {
-    ProxyService service(base::MakeUnique<MockProxyConfigService>(config),
+    ProxyService service(std::make_unique<MockProxyConfigService>(config),
                          nullptr, nullptr);
     GURL test_url("https://webbranch.techcu.com");
     ProxyInfo info;
@@ -1803,7 +1811,7 @@ TEST_F(ProxyServiceTest, PerProtocolProxyTests) {
   }
   {
     config.proxy_rules().ParseFromString("foopy1:8080");
-    ProxyService service(base::MakeUnique<MockProxyConfigService>(config),
+    ProxyService service(std::make_unique<MockProxyConfigService>(config),
                          nullptr, nullptr);
     GURL test_url("http://www.microsoft.com");
     ProxyInfo info;
@@ -1825,7 +1833,7 @@ TEST_F(ProxyServiceTest, ProxyConfigSourcePropagates) {
     ProxyConfig config;
     config.set_source(PROXY_CONFIG_SOURCE_TEST);
     config.proxy_rules().ParseFromString("https=foopy2:8080");
-    ProxyService service(base::MakeUnique<MockProxyConfigService>(config),
+    ProxyService service(std::make_unique<MockProxyConfigService>(config),
                          nullptr, nullptr);
     GURL test_url("http://www.google.com");
     ProxyInfo info;
@@ -1841,7 +1849,7 @@ TEST_F(ProxyServiceTest, ProxyConfigSourcePropagates) {
     ProxyConfig config;
     config.set_source(PROXY_CONFIG_SOURCE_TEST);
     config.proxy_rules().ParseFromString("https=foopy2:8080");
-    ProxyService service(base::MakeUnique<MockProxyConfigService>(config),
+    ProxyService service(std::make_unique<MockProxyConfigService>(config),
                          nullptr, nullptr);
     GURL test_url("https://www.google.com");
     ProxyInfo info;
@@ -1856,7 +1864,7 @@ TEST_F(ProxyServiceTest, ProxyConfigSourcePropagates) {
   {
     ProxyConfig config;
     config.set_source(PROXY_CONFIG_SOURCE_TEST);
-    ProxyService service(base::MakeUnique<MockProxyConfigService>(config),
+    ProxyService service(std::make_unique<MockProxyConfigService>(config),
                          nullptr, nullptr);
     GURL test_url("http://www.google.com");
     ProxyInfo info;
@@ -1880,7 +1888,7 @@ TEST_F(ProxyServiceTest, DefaultProxyFallbackToSOCKS) {
             config.proxy_rules().type);
 
   {
-    ProxyService service(base::WrapUnique(new MockProxyConfigService(config)),
+    ProxyService service(std::make_unique<MockProxyConfigService>(config),
                          nullptr, nullptr);
     GURL test_url("http://www.msn.com");
     ProxyInfo info;
@@ -1893,7 +1901,7 @@ TEST_F(ProxyServiceTest, DefaultProxyFallbackToSOCKS) {
     EXPECT_EQ("foopy1:8080", info.proxy_server().ToURI());
   }
   {
-    ProxyService service(base::WrapUnique(new MockProxyConfigService(config)),
+    ProxyService service(std::make_unique<MockProxyConfigService>(config),
                          nullptr, nullptr);
     GURL test_url("ftp://ftp.google.com");
     ProxyInfo info;
@@ -1906,7 +1914,7 @@ TEST_F(ProxyServiceTest, DefaultProxyFallbackToSOCKS) {
     EXPECT_EQ("socks4://foopy2:1080", info.proxy_server().ToURI());
   }
   {
-    ProxyService service(base::WrapUnique(new MockProxyConfigService(config)),
+    ProxyService service(std::make_unique<MockProxyConfigService>(config),
                          nullptr, nullptr);
     GURL test_url("https://webbranch.techcu.com");
     ProxyInfo info;
@@ -1919,7 +1927,7 @@ TEST_F(ProxyServiceTest, DefaultProxyFallbackToSOCKS) {
     EXPECT_EQ("socks4://foopy2:1080", info.proxy_server().ToURI());
   }
   {
-    ProxyService service(base::WrapUnique(new MockProxyConfigService(config)),
+    ProxyService service(std::make_unique<MockProxyConfigService>(config),
                          nullptr, nullptr);
     GURL test_url("unknown://www.microsoft.com");
     ProxyInfo info;
@@ -2020,7 +2028,8 @@ TEST_F(ProxyServiceTest, InitialPACScriptDownload) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::WrapUnique(new DoNothingDhcpProxyScriptFetcher()));
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Start 3 requests.
 
@@ -2127,7 +2136,8 @@ TEST_F(ProxyServiceTest, ChangeScriptFetcherWhilePACDownloadInProgress) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::WrapUnique(new DoNothingDhcpProxyScriptFetcher()));
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Start 2 jobs.
 
@@ -2157,7 +2167,8 @@ TEST_F(ProxyServiceTest, ChangeScriptFetcherWhilePACDownloadInProgress) {
 
   fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::WrapUnique(new DoNothingDhcpProxyScriptFetcher()));
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Nothing has been sent to the factory yet.
   EXPECT_TRUE(factory->pending_requests().empty());
@@ -2187,7 +2198,8 @@ TEST_F(ProxyServiceTest, CancelWhilePACFetching) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::WrapUnique(new DoNothingDhcpProxyScriptFetcher()));
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Start 3 requests.
   ProxyInfo info1;
@@ -2285,7 +2297,8 @@ TEST_F(ProxyServiceTest, FallbackFromAutodetectToCustomPac) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::WrapUnique(new DoNothingDhcpProxyScriptFetcher()));
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Start 2 requests.
 
@@ -2368,7 +2381,8 @@ TEST_F(ProxyServiceTest, FallbackFromAutodetectToCustomPac2) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::WrapUnique(new DoNothingDhcpProxyScriptFetcher()));
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Start 2 requests.
 
@@ -2444,7 +2458,8 @@ TEST_F(ProxyServiceTest, FallbackFromAutodetectToCustomToManual) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::WrapUnique(new DoNothingDhcpProxyScriptFetcher()));
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Start 2 jobs.
 
@@ -2506,7 +2521,8 @@ TEST_F(ProxyServiceTest, BypassDoesntApplyToPac) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::WrapUnique(new DoNothingDhcpProxyScriptFetcher()));
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Start 1 requests.
 
@@ -2575,7 +2591,8 @@ TEST_F(ProxyServiceTest, DeleteWhileInitProxyResolverHasOutstandingFetch) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::WrapUnique(new DoNothingDhcpProxyScriptFetcher()));
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Start 1 request.
 
@@ -2625,7 +2642,7 @@ TEST_F(ProxyServiceTest, ResetProxyConfigService) {
   ProxyConfig config1;
   config1.proxy_rules().ParseFromString("foopy1:8080");
   config1.set_auto_detect(false);
-  ProxyService service(base::MakeUnique<MockProxyConfigService>(config1),
+  ProxyService service(std::make_unique<MockProxyConfigService>(config1),
                        nullptr, nullptr);
 
   ProxyInfo info;
@@ -2639,7 +2656,7 @@ TEST_F(ProxyServiceTest, ResetProxyConfigService) {
   ProxyConfig config2;
   config2.proxy_rules().ParseFromString("foopy2:8080");
   config2.set_auto_detect(false);
-  service.ResetConfigService(base::MakeUnique<MockProxyConfigService>(config2));
+  service.ResetConfigService(std::make_unique<MockProxyConfigService>(config2));
   TestCompletionCallback callback2;
   rv = service.ResolveProxy(GURL("http://request2"), std::string(), &info,
                             callback2.callback(), nullptr, nullptr,
@@ -2716,7 +2733,8 @@ TEST_F(ProxyServiceTest, NetworkChangeTriggersPacRefetch) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::MakeUnique<DoNothingDhcpProxyScriptFetcher>());
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Disable the "wait after IP address changes" hack, so this unit-test can
   // complete quickly.
@@ -2838,7 +2856,8 @@ TEST_F(ProxyServiceTest, PACScriptRefetchAfterFailure) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::WrapUnique(new DoNothingDhcpProxyScriptFetcher()));
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Start 1 request.
 
@@ -2945,7 +2964,8 @@ TEST_F(ProxyServiceTest, PACScriptRefetchAfterContentChange) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::WrapUnique(new DoNothingDhcpProxyScriptFetcher()));
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Start 1 request.
 
@@ -3058,7 +3078,8 @@ TEST_F(ProxyServiceTest, PACScriptRefetchAfterContentUnchanged) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::WrapUnique(new DoNothingDhcpProxyScriptFetcher()));
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Start 1 request.
 
@@ -3168,7 +3189,8 @@ TEST_F(ProxyServiceTest, PACScriptRefetchAfterSuccess) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::WrapUnique(new DoNothingDhcpProxyScriptFetcher()));
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Start 1 request.
 
@@ -3323,7 +3345,8 @@ TEST_F(ProxyServiceTest, PACScriptRefetchAfterActivity) {
 
   MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
   service.SetProxyScriptFetchers(
-      fetcher, base::WrapUnique(new DoNothingDhcpProxyScriptFetcher()));
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
 
   // Start 1 request.
 
@@ -3447,7 +3470,7 @@ TEST_F(ProxyServiceTest, SynchronousWithFixedConfiguration) {
   MockAsyncProxyResolverFactory* factory =
       new MockAsyncProxyResolverFactory(false);
 
-  ProxyService service(base::WrapUnique(new MockProxyConfigService(config)),
+  ProxyService service(std::make_unique<MockProxyConfigService>(config),
                        base::WrapUnique(factory), nullptr);
 
   GURL url("http://www.google.com/");
@@ -3683,6 +3706,69 @@ TEST_F(ProxyServiceTest, SanitizeUrlForPacScriptCryptographic) {
         GURL(test.sanitized_url),
         helper.SanitizeUrl(raw_url, ProxyService::SanitizeUrlPolicy::SAFE));
   }
+}
+
+TEST_F(ProxyServiceTest, OnShutdownWithLiveRequest) {
+  MockProxyConfigService* config_service =
+      new MockProxyConfigService("http://foopy/proxy.pac");
+
+  MockAsyncProxyResolver resolver;
+  MockAsyncProxyResolverFactory* factory =
+      new MockAsyncProxyResolverFactory(true);
+
+  ProxyService service(base::WrapUnique(config_service),
+                       base::WrapUnique(factory), nullptr);
+
+  MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
+  service.SetProxyScriptFetchers(
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
+
+  ProxyInfo info;
+  TestCompletionCallback callback;
+  ProxyService::PacRequest* request;
+  int rv = service.ResolveProxy(GURL("http://request/"), std::string(), &info,
+                                callback.callback(), &request, nullptr,
+                                NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+
+  // The first request should have triggered download of PAC script.
+  EXPECT_TRUE(fetcher->has_pending_request());
+  EXPECT_EQ(GURL("http://foopy/proxy.pac"), fetcher->pending_request_url());
+
+  service.OnShutdown();
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
+  EXPECT_FALSE(fetcher->has_pending_request());
+  EXPECT_TRUE(info.is_direct());
+}
+
+TEST_F(ProxyServiceTest, OnShutdownFollowedByRequest) {
+  MockProxyConfigService* config_service =
+      new MockProxyConfigService("http://foopy/proxy.pac");
+
+  MockAsyncProxyResolver resolver;
+  MockAsyncProxyResolverFactory* factory =
+      new MockAsyncProxyResolverFactory(true);
+
+  ProxyService service(base::WrapUnique(config_service),
+                       base::WrapUnique(factory), nullptr);
+
+  MockProxyScriptFetcher* fetcher = new MockProxyScriptFetcher;
+  service.SetProxyScriptFetchers(
+      base::WrapUnique(fetcher),
+      std::make_unique<DoNothingDhcpProxyScriptFetcher>());
+
+  service.OnShutdown();
+
+  ProxyInfo info;
+  TestCompletionCallback callback;
+  ProxyService::PacRequest* request;
+  int rv = service.ResolveProxy(GURL("http://request/"), std::string(), &info,
+                                callback.callback(), &request, nullptr,
+                                NetLogWithSource());
+  EXPECT_THAT(rv, IsOk());
+  EXPECT_FALSE(fetcher->has_pending_request());
+  EXPECT_TRUE(info.is_direct());
 }
 
 }  // namespace net

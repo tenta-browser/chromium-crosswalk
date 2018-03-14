@@ -28,8 +28,7 @@ class CdmFactory;
 
 // A mojom::ContentDecryptionModule implementation backed by a
 // media::ContentDecryptionModule.
-class MEDIA_MOJO_EXPORT MojoCdmService
-    : NON_EXPORTED_BASE(public mojom::ContentDecryptionModule) {
+class MEDIA_MOJO_EXPORT MojoCdmService : public mojom::ContentDecryptionModule {
  public:
   // Get the CDM associated with |cdm_id|, which is unique per process.
   // Can be called on any thread. The returned CDM is not guaranteed to be
@@ -43,49 +42,49 @@ class MEDIA_MOJO_EXPORT MojoCdmService
       int cdm_id);
 
   // Constructs a MojoCdmService and strongly binds it to the |request|.
-  MojoCdmService(base::WeakPtr<MojoCdmServiceContext> context,
-                 CdmFactory* cdm_factory);
+  MojoCdmService(MojoCdmServiceContext* context, CdmFactory* cdm_factory);
 
   ~MojoCdmService() final;
 
   // mojom::ContentDecryptionModule implementation.
   void SetClient(mojom::ContentDecryptionModuleClientPtr client) final;
   void Initialize(const std::string& key_system,
-                  const std::string& security_origin,
-                  mojom::CdmConfigPtr cdm_config,
-                  const InitializeCallback& callback) final;
+                  const url::Origin& security_origin,
+                  const CdmConfig& cdm_config,
+                  InitializeCallback callback) final;
   void SetServerCertificate(const std::vector<uint8_t>& certificate_data,
-                            const SetServerCertificateCallback& callback) final;
+                            SetServerCertificateCallback callback) final;
+  void GetStatusForPolicy(HdcpVersion min_hdcp_version,
+                          GetStatusForPolicyCallback callback) final;
   void CreateSessionAndGenerateRequest(
       CdmSessionType session_type,
       EmeInitDataType init_data_type,
       const std::vector<uint8_t>& init_data,
-      const CreateSessionAndGenerateRequestCallback& callback) final;
+      CreateSessionAndGenerateRequestCallback callback) final;
   void LoadSession(CdmSessionType session_type,
                    const std::string& session_id,
-                   const LoadSessionCallback& callback) final;
+                   LoadSessionCallback callback) final;
   void UpdateSession(const std::string& session_id,
                      const std::vector<uint8_t>& response,
-                     const UpdateSessionCallback& callback) final;
+                     UpdateSessionCallback callback) final;
   void CloseSession(const std::string& session_id,
-                    const CloseSessionCallback& callback) final;
+                    CloseSessionCallback callback) final;
   void RemoveSession(const std::string& session_id,
-                     const RemoveSessionCallback& callback) final;
+                     RemoveSessionCallback callback) final;
 
   // Get CDM to be used by the media pipeline.
   scoped_refptr<::media::ContentDecryptionModule> GetCdm();
 
  private:
   // Callback for CdmFactory::Create().
-  void OnCdmCreated(const InitializeCallback& callback,
+  void OnCdmCreated(InitializeCallback callback,
                     const scoped_refptr<::media::ContentDecryptionModule>& cdm,
                     const std::string& error_message);
 
   // Callbacks for firing session events.
-  void OnSessionMessage(
-      const std::string& session_id,
-      ::media::ContentDecryptionModule::MessageType message_type,
-      const std::vector<uint8_t>& message);
+  void OnSessionMessage(const std::string& session_id,
+                        ::media::CdmMessageType message_type,
+                        const std::vector<uint8_t>& message);
   void OnSessionKeysChange(const std::string& session_id,
                            bool has_additional_usable_key,
                            CdmKeysInfo keys_info);
@@ -101,7 +100,7 @@ class MEDIA_MOJO_EXPORT MojoCdmService
   // living in the same process.
   static int next_cdm_id_;
 
-  base::WeakPtr<MojoCdmServiceContext> context_;
+  MojoCdmServiceContext* const context_ = nullptr;
 
   CdmFactory* cdm_factory_;
   scoped_refptr<::media::ContentDecryptionModule> cdm_;

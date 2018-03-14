@@ -16,6 +16,7 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
@@ -134,15 +135,18 @@ FileBrowserHandlerList FindFileBrowserHandlersForURL(
       const FileBrowserHandler* handler = handler_iter->get();
       if (!handler->MatchesURL(lowercase_url))
         continue;
+
       // Filter out Files app from handling ZIP files via a handler, as it's
-      // now handled by new ZIP unpacker extension based on File System Provider
-      // API.
+      // now handled by:
+      // - ZIP unpacker extension based on File System Provider API
+      // - Zip Archiver native extension component
       const URLPattern zip_pattern(URLPattern::SCHEME_EXTENSION,
                                    "chrome-extension://*/*.zip");
       if (handler->extension_id() == kFileManagerAppId &&
           zip_pattern.MatchesURL(selected_file_url) &&
-          !base::CommandLine::ForCurrentProcess()->HasSwitch(
-              chromeos::switches::kDisableNewZIPUnpacker)) {
+          (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+               chromeos::switches::kDisableNewZIPUnpacker) ||
+           chromeos::switches::IsZipArchiverUnpackerEnabled())) {
         continue;
       }
       results.push_back(handler);
@@ -218,7 +222,6 @@ FileBrowserHandlerExecutor::SetupFileAccessPermissions(
     scoped_refptr<storage::FileSystemContext> file_system_context_handler,
     const scoped_refptr<const Extension>& handler_extension,
     const std::vector<FileSystemURL>& file_urls) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
   DCHECK(handler_extension.get());
 
   storage::ExternalFileSystemBackend* backend =
@@ -290,12 +293,9 @@ void FileBrowserHandlerExecutor::Execute(
   scoped_refptr<storage::FileSystemContext> file_system_context(
       util::GetFileSystemContextForExtensionId(profile_, extension_->id()));
 
-  BrowserThread::PostTaskAndReplyWithResult(
-      BrowserThread::FILE,
-      FROM_HERE,
-      base::Bind(&SetupFileAccessPermissions,
-                 file_system_context,
-                 extension_,
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
+      base::Bind(&SetupFileAccessPermissions, file_system_context, extension_,
                  file_urls),
       base::Bind(&FileBrowserHandlerExecutor::ExecuteAfterSetupFileAccess,
                  weak_ptr_factory_.GetWeakPtr()));
@@ -356,7 +356,7 @@ void FileBrowserHandlerExecutor::ExecuteFileActionsOnUIThread(
     }
     queue->AddPendingTask(
         profile_, extension_->id(),
-        base::Bind(
+        base::BindOnce(
             &FileBrowserHandlerExecutor::SetupPermissionsAndDispatchEvent,
             weak_ptr_factory_.GetWeakPtr(),
             base::Passed(std::move(file_definition_list)),
@@ -408,10 +408,9 @@ void FileBrowserHandlerExecutor::SetupPermissionsAndDispatchEvent(
 
   details->Set("entries", std::move(file_entries));
   event_args->Append(std::move(details));
-  std::unique_ptr<extensions::Event> event(new extensions::Event(
+  auto event = base::MakeUnique<extensions::Event>(
       extensions::events::FILE_BROWSER_HANDLER_ON_EXECUTE,
-      "fileBrowserHandler.onExecute", std::move(event_args)));
-  event->restrict_to_browser_context = profile_;
+      "fileBrowserHandler.onExecute", std::move(event_args), profile_);
   router->DispatchEventToExtension(extension_->id(), std::move(event));
 
   ExecuteDoneOnUIThread(true);

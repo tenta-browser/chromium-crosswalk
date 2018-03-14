@@ -53,6 +53,7 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
       this._canAddAttributes = true;
     this._searchQuery = null;
     this._expandedChildrenLimit = Elements.ElementsTreeElement.InitialChildrenLimit;
+    this._decorationsThrottler = new Common.Throttler(100);
   }
 
   /**
@@ -101,15 +102,16 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
   }
 
   /**
-   * @param {!UI.ContextSubMenuItem} subMenu
+   * @param {!UI.ContextMenu} contextMenu
    * @param {!SDK.DOMNode} node
    */
-  static populateForcedPseudoStateItems(subMenu, node) {
-    const pseudoClasses = ['active', 'hover', 'focus', 'visited'];
+  static populateForcedPseudoStateItems(contextMenu, node) {
+    const pseudoClasses = ['active', 'hover', 'focus', 'visited', 'focus-within'];
     var forcedPseudoState = node.domModel().cssModel().pseudoState(node);
+    var stateMenu = contextMenu.debugSection().appendSubMenuItem(Common.UIString('Force state'));
     for (var i = 0; i < pseudoClasses.length; ++i) {
       var pseudoClassForced = forcedPseudoState.indexOf(pseudoClasses[i]) >= 0;
-      subMenu.appendCheckboxItem(
+      stateMenu.defaultSection().appendCheckboxItem(
           ':' + pseudoClasses[i], setPseudoStateCallback.bind(null, pseudoClasses[i], !pseudoClassForced),
           pseudoClassForced, false);
     }
@@ -287,7 +289,7 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
    * @override
    */
   expandRecursively() {
-    this._node.getSubtree(-1, UI.TreeElement.prototype.expandRecursively.bind(this, Number.MAX_VALUE));
+    this._node.getSubtree(-1).then(UI.TreeElement.prototype.expandRecursively.bind(this, Number.MAX_VALUE));
   }
 
   /**
@@ -459,32 +461,35 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
   populateTagContextMenu(contextMenu, event) {
     // Add attribute-related actions.
     var treeElement = this._elementCloseTag ? this.treeOutline.findTreeElement(this._node) : this;
-    contextMenu.appendItem(
-        Common.UIString.capitalize('Add ^attribute'), treeElement._addNewAttribute.bind(treeElement));
+    contextMenu.editSection().appendItem(
+        Common.UIString('Add attribute'), treeElement._addNewAttribute.bind(treeElement));
 
     var attribute = event.target.enclosingNodeOrSelfWithClass('webkit-html-attribute');
     var newAttribute = event.target.enclosingNodeOrSelfWithClass('add-attribute');
     if (attribute && !newAttribute) {
-      contextMenu.appendItem(
-          Common.UIString.capitalize('Edit ^attribute'),
-          this._startEditingAttribute.bind(this, attribute, event.target));
+      contextMenu.editSection().appendItem(
+          Common.UIString('Edit attribute'), this._startEditingAttribute.bind(this, attribute, event.target));
     }
     this.populateNodeContextMenu(contextMenu);
     Elements.ElementsTreeElement.populateForcedPseudoStateItems(contextMenu, treeElement.node());
-    contextMenu.appendSeparator();
     this.populateScrollIntoView(contextMenu);
+    contextMenu.viewSection().appendItem(Common.UIString('Focus'), async () => {
+      await this._node.focus();
+    });
   }
 
   /**
    * @param {!UI.ContextMenu} contextMenu
    */
   populateScrollIntoView(contextMenu) {
-    contextMenu.appendItem(Common.UIString.capitalize('Scroll into ^view'), this._scrollIntoView.bind(this));
+    contextMenu.viewSection().appendItem(Common.UIString('Scroll into view'), () => this._node.scrollIntoView());
   }
 
   populateTextContextMenu(contextMenu, textNode) {
-    if (!this._editing)
-      contextMenu.appendItem(Common.UIString.capitalize('Edit ^text'), this._startEditingTextNode.bind(this, textNode));
+    if (!this._editing) {
+      contextMenu.editSection().appendItem(
+          Common.UIString('Edit text'), this._startEditingTextNode.bind(this, textNode));
+    }
     this.populateNodeContextMenu(contextMenu);
   }
 
@@ -492,51 +497,49 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
     // Add free-form node-related actions.
     var isEditable = this.hasEditableNode();
     if (isEditable && !this._editing)
-      contextMenu.appendItem(Common.UIString('Edit as HTML'), this._editAsHTML.bind(this));
+      contextMenu.editSection().appendItem(Common.UIString('Edit as HTML'), this._editAsHTML.bind(this));
     var isShadowRoot = this._node.isShadowRoot();
 
     // Place it here so that all "Copy"-ing items stick together.
-    var copyMenu = contextMenu.appendSubMenuItem(Common.UIString('Copy'));
+    var copyMenu = contextMenu.clipboardSection().appendSubMenuItem(Common.UIString('Copy'));
     var createShortcut = UI.KeyboardShortcut.shortcutToString;
     var modifier = UI.KeyboardShortcut.Modifiers.CtrlOrMeta;
     var treeOutline = this.treeOutline;
     var menuItem;
     if (!isShadowRoot) {
-      menuItem = copyMenu.appendItem(
+      var section = copyMenu.section();
+      menuItem = section.appendItem(
           Common.UIString('Copy outerHTML'), treeOutline.performCopyOrCut.bind(treeOutline, false, this._node));
       menuItem.setShortcut(createShortcut('V', modifier));
     }
     if (this._node.nodeType() === Node.ELEMENT_NODE)
-      copyMenu.appendItem(Common.UIString.capitalize('Copy selector'), this._copyCSSPath.bind(this));
+      section.appendItem(Common.UIString('Copy selector'), this._copyCSSPath.bind(this));
     if (!isShadowRoot)
-      copyMenu.appendItem(Common.UIString('Copy XPath'), this._copyXPath.bind(this));
+      section.appendItem(Common.UIString('Copy XPath'), this._copyXPath.bind(this));
     if (!isShadowRoot) {
-      menuItem = copyMenu.appendItem(
+      menuItem = copyMenu.clipboardSection().appendItem(
           Common.UIString('Cut element'), treeOutline.performCopyOrCut.bind(treeOutline, true, this._node),
           !this.hasEditableNode());
       menuItem.setShortcut(createShortcut('X', modifier));
-      menuItem = copyMenu.appendItem(
+      menuItem = copyMenu.clipboardSection().appendItem(
           Common.UIString('Copy element'), treeOutline.performCopyOrCut.bind(treeOutline, false, this._node));
       menuItem.setShortcut(createShortcut('C', modifier));
-      menuItem = copyMenu.appendItem(
+      menuItem = copyMenu.clipboardSection().appendItem(
           Common.UIString('Paste element'), treeOutline.pasteNode.bind(treeOutline, this._node),
           !treeOutline.canPaste(this._node));
       menuItem.setShortcut(createShortcut('V', modifier));
     }
 
-    contextMenu.appendSeparator();
-    menuItem = contextMenu.appendCheckboxItem(
+    menuItem = contextMenu.debugSection().appendCheckboxItem(
         Common.UIString('Hide element'), treeOutline.toggleHideElement.bind(treeOutline, this._node),
         treeOutline.isToggledToHidden(this._node));
     menuItem.setShortcut(UI.shortcutRegistry.shortcutTitleForAction('elements.hide-element'));
 
     if (isEditable)
-      contextMenu.appendItem(Common.UIString('Delete element'), this.remove.bind(this));
-    contextMenu.appendSeparator();
+      contextMenu.editSection().appendItem(Common.UIString('Delete element'), this.remove.bind(this));
 
-    contextMenu.appendItem(Common.UIString('Expand all'), this.expandRecursively.bind(this));
-    contextMenu.appendItem(Common.UIString('Collapse all'), this.collapseRecursively.bind(this));
-    contextMenu.appendSeparator();
+    contextMenu.viewSection().appendItem(Common.UIString('Expand all'), this.expandRecursively.bind(this));
+    contextMenu.viewSection().appendItem(Common.UIString('Collapse all'), this.collapseRecursively.bind(this));
   }
 
   _startEditing() {
@@ -734,12 +737,12 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
   /**
    * @param {function(string, string)} commitCallback
    * @param {function()} disposeCallback
-   * @param {?Protocol.Error} error
-   * @param {string} initialValue
+   * @param {?string} maybeInitialValue
    */
-  _startEditingAsHTML(commitCallback, disposeCallback, error, initialValue) {
-    if (error)
+  _startEditingAsHTML(commitCallback, disposeCallback, maybeInitialValue) {
+    if (maybeInitialValue === null)
       return;
+    var initialValue = maybeInitialValue;  // To suppress a compiler warning.
     if (this._editing)
       return;
 
@@ -1086,9 +1089,20 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
     if (this.isClosingTag())
       return;
 
-    var node = this._node;
-    if (node.nodeType() !== Node.ELEMENT_NODE)
+    if (this._node.nodeType() !== Node.ELEMENT_NODE)
       return;
+
+    this._decorationsThrottler.schedule(this._updateDecorationsInternal.bind(this));
+  }
+
+  /**
+   * @return {!Promise}
+   */
+  _updateDecorationsInternal() {
+    if (!this.treeOutline)
+      return Promise.resolve();
+
+    var node = this._node;
 
     if (!this.treeOutline._decoratorExtensions)
       /** @type {!Array.<!Runtime.Extension>} */
@@ -1127,7 +1141,7 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
       (n === node ? decorations : descendantDecorations).push(decoration);
     }
 
-    Promise.all(promises).then(updateDecorationsUI.bind(this));
+    return Promise.all(promises).then(updateDecorationsUI.bind(this));
 
     /**
      * @this {Elements.ElementsTreeElement}
@@ -1264,42 +1278,73 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
         value = value.trimMiddle(60);
       var link = node.nodeName().toLowerCase() === 'a' ?
           UI.createExternalLink(rewrittenHref, value, '', true) :
-          Components.Linkifier.linkifyURL(rewrittenHref, value, '', undefined, undefined, true);
+          Components.Linkifier.linkifyURL(rewrittenHref, {text: value, preventClick: true});
       link[Elements.ElementsTreeElement.HrefSymbol] = rewrittenHref;
       return link;
     }
 
-    if (node && (name === 'src' || name === 'href')) {
+    var nodeName = node ? node.nodeName().toLowerCase() : '';
+    if (nodeName && (name === 'src' || name === 'href'))
       attrValueElement.appendChild(linkifyValue.call(this, value));
-    } else if (
-        node && (node.nodeName().toLowerCase() === 'img' || node.nodeName().toLowerCase() === 'source') &&
-        name === 'srcset') {
-      var sources = value.split(',');
-      for (var i = 0; i < sources.length; ++i) {
-        if (i > 0)
-          attrValueElement.createTextChild(', ');
-        var source = sources[i].trim();
-        var indexOfSpace = source.indexOf(' ');
-        var url, tail;
-
-        if (indexOfSpace === -1) {
-          url = source;
-        } else {
-          url = source.substring(0, indexOfSpace);
-          tail = source.substring(indexOfSpace);
-        }
-
-        attrValueElement.appendChild(linkifyValue.call(this, url));
-
-        if (tail)
-          attrValueElement.createTextChild(tail);
-      }
-    } else {
+    else if ((nodeName === 'img' || nodeName === 'source') && name === 'srcset')
+      attrValueElement.appendChild(linkifySrcset.call(this, value));
+    else
       setValueWithEntities.call(this, attrValueElement, value);
-    }
 
     if (hasText)
       attrSpanElement.createTextChild('"');
+
+    /**
+     * @param {string} value
+     * @return {!DocumentFragment}
+     * @this {!Elements.ElementsTreeElement}
+     */
+    function linkifySrcset(value) {
+      // Splitting normally on commas or spaces will break on valid srcsets "foo 1x,bar 2x" and "data:,foo 1x".
+      // 1) Let the index of the next space be `indexOfSpace`.
+      // 2a) If the character at `indexOfSpace - 1` is a comma, collect the preceding characters up to
+      //     `indexOfSpace - 1` as a URL and repeat step 1).
+      // 2b) Else, collect the preceding characters as a URL.
+      // 3) Collect the characters from `indexOfSpace` up to the next comma as the size descriptor and repeat step 1).
+      // https://html.spec.whatwg.org/multipage/embedded-content.html#parse-a-srcset-attribute
+      var fragment = createDocumentFragment();
+      var i = 0;
+      while (value.length) {
+        if (i++ > 0)
+          fragment.createTextChild(' ');
+        value = value.trim();
+        // The url and descriptor may end with a separating comma.
+        var url = '';
+        var descriptor = '';
+        var indexOfSpace = value.search(/\s/);
+        if (indexOfSpace === -1) {
+          url = value;
+        } else if (indexOfSpace > 0 && value[indexOfSpace - 1] === ',') {
+          url = value.substring(0, indexOfSpace);
+        } else {
+          url = value.substring(0, indexOfSpace);
+          var indexOfComma = value.indexOf(',', indexOfSpace);
+          if (indexOfComma !== -1)
+            descriptor = value.substring(indexOfSpace, indexOfComma + 1);
+          else
+            descriptor = value.substring(indexOfSpace);
+        }
+
+        if (url) {
+          // Up to one trailing comma should be removed from `url`.
+          if (url.endsWith(',')) {
+            fragment.appendChild(linkifyValue.call(this, url.substring(0, url.length - 1)));
+            fragment.createTextChild(',');
+          } else {
+            fragment.appendChild(linkifyValue.call(this, url));
+          }
+        }
+        if (descriptor)
+          fragment.createTextChild(descriptor);
+        value = value.substring(url.length + descriptor.length);
+      }
+      return fragment;
+    }
   }
 
   /**
@@ -1552,7 +1597,7 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
     }
 
     var node = this._node;
-    node.getOuterHTML(this._startEditingAsHTML.bind(this, commitChange, disposeCallback));
+    node.getOuterHTML().then(this._startEditingAsHTML.bind(this, commitChange, disposeCallback));
   }
 
   _copyCSSPath() {
@@ -1584,23 +1629,6 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
 
     this._highlightResult = [];
     UI.highlightSearchResults(this.listItemElement, matchRanges, this._highlightResult);
-  }
-
-  _scrollIntoView() {
-    function scrollIntoViewCallback(object) {
-      /**
-       * @suppressReceiverCheck
-       * @this {!Element}
-       */
-      function scrollIntoView() {
-        this.scrollIntoViewIfNeeded(true);
-      }
-
-      if (object)
-        object.callFunction(scrollIntoView);
-    }
-
-    this._node.resolveToObject('', scrollIntoViewCallback);
   }
 
   _editAsHTML() {

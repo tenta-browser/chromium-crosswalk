@@ -1,35 +1,40 @@
 # Chromium docs
 
 This directory contains chromium project documentation in
-[Gitiles-flavored Markdown](https://gerrit.googlesource.com/gitiles/+/master/Documentation/markdown.md).
-It is automatically
-[rendered by Gitiles](https://chromium.googlesource.com/chromium/src/+/master/docs/).
+[Gitiles-flavored Markdown].  It is automatically [rendered by Gitiles].
+
+[Gitiles-flavored Markdown]: https://gerrit.googlesource.com/gitiles/+/master/Documentation/markdown.md
+[rendered by Gitiles]: https://chromium.googlesource.com/chromium/src/+/master/docs/
 
 If you add new documents, please also add a link to them in the Document Index
 below.
 
 [TOC]
 
-## Style guide
+## Creating Documentation
 
-Markdown documents must follow the [style guide](https://github.com/google/styleguide/tree/gh-pages/docguide).
+Markdown documents must follow the
+[style guide](https://github.com/google/styleguide/tree/gh-pages/docguide).
 
-## Previewing changes
-
-You can preview your local changes using [md_browser](../tools/md_browser/):
+### Preview local changes using [md_browser](../tools/md_browser/):
 
 ```bash
 # in chromium checkout
 ./tools/md_browser/md_browser.py
 ```
 
-To review someone else's changes, apply them locally first:
+This is only an estimate. The **gitiles** view may differ.
 
-```bash
-# in chromium checkout
-git cl patch <CL number or URL>
-./tools/md_browser/md_browser.py
-```
+### Review changes online with gerrit's links to gitiles:
+
+1.  Upload a patch to gerrit, or receive a review request.
+    e.g. https://chromium-review.googlesource.com/c/572236
+2.  View a specific .md file.
+    e.g. https://chromium-review.googlesource.com/c/572236/2/docs/README.md
+3.  Click on **gitiles** link at top of page.
+
+This **gitiles** view is the authoritative view, exactly the same as will be
+used when committed.
 
 ## Document Index
 
@@ -56,6 +61,9 @@ git cl patch <CL number or URL>
 *   [Cr User Manual](cr_user_manual.md) - Manual for `cr`, a tool that tries to
     hide some of the tools used for working on Chromium behind an abstraction
     layer
+
+### Design Docs
+*   See [design/README.md](design/README.md)
 
 ### Integrated Development Environment (IDE) Set Up Guides
 *   [Android Studio](android_studio.md) - Android Studio for Android builds
@@ -92,8 +100,14 @@ git cl patch <CL number or URL>
 
 ### General Development
 *   [Code Reviews](code_reviews.md) - Code review requirements and guidelines
+*   [Respectful Code Reviews](cr_respect.md) - A guide for code reviewers
+*   [Respectful Changes](cl_respect.md) - A guide for code authors
 *   [Closure Compilation](closure_compilation.md) - The _Closure_ JavaScript
     compiler
+*   [Threading and Tasks in Chrome](threading_and_tasks.md) - How to run tasks
+    and handle thread safety in Chrome.
+*   [Subtle Threading Bugs and Patterns to Avoid Them](subtle_threading_bugs.md) -
+    Threading pitfalls to avoid.
 *   [Callback<> and Bind()](callback.md) - All about Callbacks, Closures, and
     Bind().
 *   [Views Platform Styling](ui/views/platform_style.md) - How views are styled
@@ -119,6 +133,11 @@ git cl patch <CL number or URL>
     more performant
 *   [ES6 Support in Chromium](es6_chromium.md) - Implementation of ECMAScript6
     features in Chromium
+*   [Adding a new feature flag in chrome://flags](how_to_add_your_feature_flag.md) - Quick
+    guide to add a new feature flag to experiment your feature.
+*   [Guidelines for considering branch dates in project planning](release_branch_guidance.md) -
+    What to do (and not to do) around branch dates when scheduling your project
+    work.
 
 ### Testing
 *   [Running and Debugging Layout Tests](testing/layout_tests.md)
@@ -218,8 +237,6 @@ git cl patch <CL number or URL>
     Setting up profiling for `content_shell` on Android
 *   [Working Remotely with Android](working_remotely_with_android.md) - Building
     on a remote machine for an Android device connected to your local machine
-*   [Using FindBugs for Android](use_find_bugs_for_android.md) - Using the open
-    source static analysis tool findbugs on the Java code.
 *   [Android Test Instructions](android_test_instructions.md) - Running a build
     on an Android device or emulator.
 *   [Android Debugging](android_debugging_instructions.md) - Tools and tips for
@@ -235,6 +252,7 @@ git cl patch <CL number or URL>
     iOS app open links in Chrome.
 *   [User Agent in Chrome for iOS](ios/user_agent.md) - Notes on User Agent
     strings using Chrome for iOS.
+*   [Running iOS test suites locally](ios/testing.md)
 
 ### Media
 *   [Audio Focus Handling](media/audio_focus.md) - How multiple MediaSession
@@ -287,6 +305,8 @@ git cl patch <CL number or URL>
     used to automatically set proxy settings.
 *   [Installing Chromium OS on VMWare](installation_at_vmware.md) - How to
     install Chromium OS on VMWare.
+*   [User Data Directory](user_data_dir.md) - How the user data and cache
+    directories are determined on all platforms.
 
 ### Probably Obsolete
 *   [Old ChromeOS build instructions](old_chromeos_build_instructions.md)

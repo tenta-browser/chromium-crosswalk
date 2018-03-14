@@ -3,9 +3,10 @@
 // found in the LICENSE file.
 
 #include <string>
+#include <utility>
 
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
 #include "components/component_updater/timer.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -16,30 +17,34 @@ namespace component_updater {
 
 class ComponentUpdaterTimerTest : public testing::Test {
  public:
-  ComponentUpdaterTimerTest() {}
+  ComponentUpdaterTimerTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI) {}
   ~ComponentUpdaterTimerTest() override {}
 
  private:
-  base::MessageLoopForUI message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 TEST_F(ComponentUpdaterTimerTest, Start) {
   class TimerClientFake {
    public:
-    TimerClientFake(int max_count, const base::Closure& quit_closure)
-        : max_count_(max_count), quit_closure_(quit_closure), count_(0) {}
+    TimerClientFake(int max_count, base::OnceClosure quit_closure)
+        : max_count_(max_count),
+          quit_closure_(std::move(quit_closure)),
+          count_(0) {}
 
     void OnTimerEvent() {
       ++count_;
       if (count_ >= max_count_)
-        quit_closure_.Run();
+        std::move(quit_closure_).Run();
     }
 
     int count() const { return count_; }
 
    private:
     const int max_count_;
-    const base::Closure quit_closure_;
+    base::OnceClosure quit_closure_;
 
     int count_;
   };

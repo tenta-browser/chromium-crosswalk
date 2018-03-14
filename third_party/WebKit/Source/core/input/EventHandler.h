@@ -26,11 +26,14 @@
 #ifndef EventHandler_h
 #define EventHandler_h
 
+#include "base/memory/scoped_refptr.h"
 #include "core/CoreExport.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "core/events/TextEventInputType.h"
 #include "core/input/GestureManager.h"
 #include "core/input/KeyboardEventManager.h"
 #include "core/input/MouseEventManager.h"
+#include "core/input/MouseWheelEventManager.h"
 #include "core/input/PointerEventManager.h"
 #include "core/input/ScrollManager.h"
 #include "core/layout/HitTestRequest.h"
@@ -38,16 +41,15 @@
 #include "core/page/EventWithHitTestResults.h"
 #include "core/style/ComputedStyleConstants.h"
 #include "platform/Cursor.h"
-#include "platform/UserGestureIndicator.h"
 #include "platform/geometry/LayoutPoint.h"
 #include "platform/heap/Handle.h"
 #include "platform/scroll/ScrollTypes.h"
+#include "platform/wtf/Forward.h"
+#include "platform/wtf/HashMap.h"
+#include "platform/wtf/HashTraits.h"
 #include "public/platform/WebInputEvent.h"
 #include "public/platform/WebInputEventResult.h"
-#include "wtf/Forward.h"
-#include "wtf/HashMap.h"
-#include "wtf/HashTraits.h"
-#include "wtf/RefPtr.h"
+#include "public/platform/WebMenuSourceType.h"
 
 namespace blink {
 
@@ -65,7 +67,6 @@ class HitTestResult;
 class LayoutObject;
 class LocalFrame;
 class Node;
-class OptionalCursor;
 class ScrollableArea;
 class Scrollbar;
 class SelectionController;
@@ -81,7 +82,7 @@ class CORE_EXPORT EventHandler final
 
  public:
   explicit EventHandler(LocalFrame&);
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
   void Clear();
 
@@ -95,7 +96,7 @@ class CORE_EXPORT EventHandler final
 
   void StopAutoscroll();
 
-  void DispatchFakeMouseMoveEventSoon();
+  void DispatchFakeMouseMoveEventSoon(MouseEventManager::FakeMouseMoveReason);
   void DispatchFakeMouseMoveEventSoonInQuad(const FloatQuad&);
 
   HitTestResult HitTestResultAtPoint(
@@ -124,6 +125,10 @@ class CORE_EXPORT EventHandler final
   // testing.
   bool CursorUpdatePending();
 
+  // Return whether sending a fake mouse move is currently pending.  Used for
+  // testing.
+  bool FakeMouseMovePending() const;
+
   void SetResizingFrameSet(HTMLFrameSetElement*);
 
   void ResizeScrollableAreaDestroyed();
@@ -142,6 +147,8 @@ class CORE_EXPORT EventHandler final
       const WebMouseEvent&,
       const Vector<WebMouseEvent>& coalesced_events);
   void HandleMouseLeaveEvent(const WebMouseEvent&);
+
+  WebInputEventResult HandlePointerEvent(const WebPointerEvent&);
 
   WebInputEventResult HandleMousePressEvent(const WebMouseEvent&);
   WebInputEventResult HandleMouseReleaseEvent(const WebMouseEvent&);
@@ -193,16 +200,19 @@ class CORE_EXPORT EventHandler final
   WebInputEventResult SendContextMenuEvent(
       const WebMouseEvent&,
       Node* override_target_node = nullptr);
-  WebInputEventResult SendContextMenuEventForKey(
-      Element* override_target_element = nullptr);
+  WebInputEventResult ShowNonLocatedContextMenu(
+      Element* override_target_element = nullptr,
+      WebMenuSourceType = kMenuSourceNone);
 
   // Returns whether pointerId is active or not
   bool IsPointerEventActive(int);
 
   void SetPointerCapture(int, EventTarget*);
   void ReleasePointerCapture(int, EventTarget*);
+  void ReleaseMousePointerCapture();
   bool HasPointerCapture(int, const EventTarget*) const;
   bool HasProcessedPointerCapture(int, const EventTarget*) const;
+  void ProcessPendingPointerCaptureForPointerLock(const WebMouseEvent&);
 
   void ElementRemoved(EventTarget*);
 
@@ -229,7 +239,7 @@ class CORE_EXPORT EventHandler final
 
   void NotifyElementActivated();
 
-  PassRefPtr<UserGestureToken> TakeLastMouseDownGestureToken() {
+  scoped_refptr<UserGestureToken> TakeLastMouseDownGestureToken() {
     return std::move(last_mouse_down_user_gesture_token_);
   }
 
@@ -256,7 +266,30 @@ class CORE_EXPORT EventHandler final
 
   bool IsTouchPointerIdActiveOnFrame(int, LocalFrame*) const;
 
+  // Clears drag target and related states. It is called when drag is done or
+  // canceled.
+  void ClearDragState();
+
  private:
+  enum NoCursorChangeType { kNoCursorChange };
+
+  class OptionalCursor {
+   public:
+    OptionalCursor(NoCursorChangeType) : is_cursor_change_(false) {}
+    OptionalCursor(const Cursor& cursor)
+        : is_cursor_change_(true), cursor_(cursor) {}
+
+    bool IsCursorChange() const { return is_cursor_change_; }
+    const Cursor& GetCursor() const {
+      DCHECK(is_cursor_change_);
+      return cursor_;
+    }
+
+   private:
+    bool is_cursor_change_;
+    Cursor cursor_;
+  };
+
   WebInputEventResult HandleMouseMoveOrLeaveEvent(
       const WebMouseEvent&,
       const Vector<WebMouseEvent>&,
@@ -278,6 +311,9 @@ class CORE_EXPORT EventHandler final
 
   bool ShouldApplyTouchAdjustment(const WebGestureEvent&) const;
 
+  bool IsSelectingLink(const HitTestResult&);
+  bool ShouldShowIBeamForNode(const Node*, const HitTestResult&);
+  bool ShouldShowResizeForNode(const Node*, const HitTestResult&);
   OptionalCursor SelectCursor(const HitTestResult&);
   OptionalCursor SelectAutoCursor(const HitTestResult&,
                                   Node*,
@@ -306,10 +342,6 @@ class CORE_EXPORT EventHandler final
       const String& canvas_region_id,
       const WebMouseEvent&,
       const Vector<WebMouseEvent>& coalesced_events);
-
-  // Clears drag target and related states. It is called when drag is done or
-  // canceled.
-  void ClearDragState();
 
   WebInputEventResult PassMousePressEventToSubframe(
       MouseEventWithHitTestResults&,
@@ -364,10 +396,11 @@ class CORE_EXPORT EventHandler final
 
   Member<HTMLFrameSetElement> frame_set_being_resized_;
 
-  RefPtr<UserGestureToken> last_mouse_down_user_gesture_token_;
+  scoped_refptr<UserGestureToken> last_mouse_down_user_gesture_token_;
 
   Member<ScrollManager> scroll_manager_;
   Member<MouseEventManager> mouse_event_manager_;
+  Member<MouseWheelEventManager> mouse_wheel_event_manager_;
   Member<KeyboardEventManager> keyboard_event_manager_;
   Member<PointerEventManager> pointer_event_manager_;
   Member<GestureManager> gesture_manager_;
@@ -384,6 +417,25 @@ class CORE_EXPORT EventHandler final
   // triggering |touchstart| event was canceled. This suppresses mouse event
   // firing for the current gesture sequence (i.e. until next GestureTapDown).
   bool suppress_mouse_events_from_gestures_;
+
+  // ShouldShowIBeamForNode's unit tests:
+  FRIEND_TEST_ALL_PREFIXES(EventHandlerTest, HitOnNothingDoesNotShowIBeam);
+  FRIEND_TEST_ALL_PREFIXES(EventHandlerTest, HitOnTextShowsIBeam);
+  FRIEND_TEST_ALL_PREFIXES(EventHandlerTest,
+                           HitOnUserSelectNoneDoesNotShowIBeam);
+  FRIEND_TEST_ALL_PREFIXES(EventHandlerTest, ChildCanOverrideUserSelectNone);
+  FRIEND_TEST_ALL_PREFIXES(EventHandlerTest,
+                           ShadowChildCanOverrideUserSelectNone);
+  FRIEND_TEST_ALL_PREFIXES(EventHandlerTest, ChildCanOverrideUserSelectText);
+  FRIEND_TEST_ALL_PREFIXES(EventHandlerTest,
+                           ShadowChildCanOverrideUserSelectText);
+  FRIEND_TEST_ALL_PREFIXES(EventHandlerTest, InputFieldsCanStartSelection);
+  FRIEND_TEST_ALL_PREFIXES(EventHandlerTest, ImagesCannotStartSelection);
+  FRIEND_TEST_ALL_PREFIXES(EventHandlerTest, AnchorTextCannotStartSelection);
+  FRIEND_TEST_ALL_PREFIXES(EventHandlerTest,
+                           EditableAnchorTextCanStartSelection);
+  FRIEND_TEST_ALL_PREFIXES(EventHandlerTest,
+                           ReadOnlyInputDoesNotInheritUserSelect);
 };
 
 }  // namespace blink

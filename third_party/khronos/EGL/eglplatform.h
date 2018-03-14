@@ -2,7 +2,7 @@
 #define __eglplatform_h_
 
 /*
-** Copyright (c) 2007-2009 The Khronos Group Inc.
+** Copyright (c) 2007-2016 The Khronos Group Inc.
 **
 ** Permission is hereby granted, free of charge, to any person obtaining a
 ** copy of this software and/or associated documentation files (the
@@ -25,7 +25,7 @@
 */
 
 /* Platform-specific types and definitions for egl.h
- * $Revision: 12306 $ on $Date: 2010-08-25 09:51:28 -0700 (Wed, 25 Aug 2010) $
+ * $Revision: 30994 $ on $Date: 2015-04-30 13:36:48 -0700 (Thu, 30 Apr 2015) $
  *
  * Adopters may modify khrplatform.h and this file to suit their platform.
  * You are encouraged to submit all modifications to the Khronos group so that
@@ -77,17 +77,16 @@ typedef HDC     EGLNativeDisplayType;
 typedef HBITMAP EGLNativePixmapType;
 typedef HWND    EGLNativeWindowType;
 
-#elif defined(__WINSCW__) || defined(__SYMBIAN32__)  /* Symbian */
+#elif defined(__APPLE__) || defined(__WINSCW__) || \
+    defined(__SYMBIAN32__) /* Symbian */
 
 typedef int   EGLNativeDisplayType;
 typedef void *EGLNativeWindowType;
 typedef void *EGLNativePixmapType;
 
-// From Android NDK.
 #elif defined(__ANDROID__) || defined(ANDROID)
 
-#include <android/native_window.h>
-
+struct ANativeWindow;
 struct egl_native_pixmap_t;
 
 typedef struct ANativeWindow*           EGLNativeWindowType;
@@ -110,19 +109,6 @@ typedef Display *EGLNativeDisplayType;
 typedef Pixmap   EGLNativePixmapType;
 typedef Window   EGLNativeWindowType;
 
-#elif defined(__APPLE__)
-
-// TODO(gman): these are place holders.
-typedef void          *EGLNativeDisplayType;
-typedef int            EGLNativePixmapType;
-#ifdef __OBJC__
-@class NSView;
-typedef NSView *EGLNativeWindowType;
-#else
-struct NSView;
-typedef struct NSView *EGLNativeWindowType;
-#endif  // __OBJC__
-
 #else
 #error "Platform not recognized"
 #endif
@@ -141,5 +127,13 @@ typedef EGLNativeWindowType  NativeWindowType;
  * integer type.
  */
 typedef khronos_int32_t EGLint;
+
+
+/* C++ / C typecast macros for special EGL handle values */
+#if defined(__cplusplus)
+#define EGL_CAST(type, value) (static_cast<type>(value))
+#else
+#define EGL_CAST(type, value) ((type) (value))
+#endif
 
 #endif /* __eglplatform_h */

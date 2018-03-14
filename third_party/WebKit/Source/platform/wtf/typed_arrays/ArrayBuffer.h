@@ -26,9 +26,10 @@
 #ifndef ArrayBuffer_h
 #define ArrayBuffer_h
 
+#include "base/allocator/partition_allocator/oom.h"
+#include "base/memory/scoped_refptr.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/HashSet.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/RefCounted.h"
 #include "platform/wtf/WTFExport.h"
 #include "platform/wtf/typed_arrays/ArrayBufferContents.h"
@@ -40,27 +41,27 @@ class ArrayBufferView;
 
 class WTF_EXPORT ArrayBuffer : public RefCounted<ArrayBuffer> {
  public:
-  static inline PassRefPtr<ArrayBuffer> Create(unsigned num_elements,
-                                               unsigned element_byte_size);
-  static inline PassRefPtr<ArrayBuffer> Create(ArrayBuffer*);
-  static inline PassRefPtr<ArrayBuffer> Create(const void* source,
-                                               unsigned byte_length);
-  static inline PassRefPtr<ArrayBuffer> Create(ArrayBufferContents&);
+  static inline scoped_refptr<ArrayBuffer> Create(unsigned num_elements,
+                                                  unsigned element_byte_size);
+  static inline scoped_refptr<ArrayBuffer> Create(ArrayBuffer*);
+  static inline scoped_refptr<ArrayBuffer> Create(const void* source,
+                                                  unsigned byte_length);
+  static inline scoped_refptr<ArrayBuffer> Create(ArrayBufferContents&);
 
-  static inline PassRefPtr<ArrayBuffer> CreateOrNull(
+  static inline scoped_refptr<ArrayBuffer> CreateOrNull(
       unsigned num_elements,
       unsigned element_byte_size);
 
-  // Only for use by DOMArrayBuffer::createUninitializedOrNull().
-  static inline PassRefPtr<ArrayBuffer> CreateUninitializedOrNull(
+  // Only for use by DOMArrayBuffer::CreateUninitializedOrNull().
+  static inline scoped_refptr<ArrayBuffer> CreateUninitializedOrNull(
       unsigned num_elements,
       unsigned element_byte_size);
 
-  static inline PassRefPtr<ArrayBuffer> CreateShared(
+  static inline scoped_refptr<ArrayBuffer> CreateShared(
       unsigned num_elements,
       unsigned element_byte_size);
-  static inline PassRefPtr<ArrayBuffer> CreateShared(const void* source,
-                                                     unsigned byte_length);
+  static inline scoped_refptr<ArrayBuffer> CreateShared(const void* source,
+                                                        unsigned byte_length);
 
   inline void* Data();
   inline const void* Data() const;
@@ -72,8 +73,8 @@ class WTF_EXPORT ArrayBuffer : public RefCounted<ArrayBuffer> {
 
   // Creates a new ArrayBuffer object with copy of bytes in this object
   // ranging from |begin| upto but not including |end|.
-  inline PassRefPtr<ArrayBuffer> Slice(int begin, int end) const;
-  inline PassRefPtr<ArrayBuffer> Slice(int begin) const;
+  inline scoped_refptr<ArrayBuffer> Slice(int begin, int end) const;
+  inline scoped_refptr<ArrayBuffer> Slice(int begin) const;
 
   void AddView(ArrayBufferView*);
   void RemoveView(ArrayBufferView*);
@@ -89,20 +90,21 @@ class WTF_EXPORT ArrayBuffer : public RefCounted<ArrayBuffer> {
   inline explicit ArrayBuffer(ArrayBufferContents&);
 
  private:
-  static inline PassRefPtr<ArrayBuffer> Create(
+  static inline scoped_refptr<ArrayBuffer> Create(
       unsigned num_elements,
       unsigned element_byte_size,
       ArrayBufferContents::InitializationPolicy);
-  static inline PassRefPtr<ArrayBuffer> CreateOrNull(
+  static inline scoped_refptr<ArrayBuffer> CreateOrNull(
       unsigned num_elements,
       unsigned element_byte_size,
       ArrayBufferContents::InitializationPolicy);
-  static inline PassRefPtr<ArrayBuffer> CreateShared(
+  static inline scoped_refptr<ArrayBuffer> CreateShared(
       unsigned num_elements,
       unsigned element_byte_size,
       ArrayBufferContents::InitializationPolicy);
 
-  inline PassRefPtr<ArrayBuffer> SliceImpl(unsigned begin, unsigned end) const;
+  inline scoped_refptr<ArrayBuffer> SliceImpl(unsigned begin,
+                                              unsigned end) const;
   inline unsigned ClampIndex(int index) const;
   static inline int ClampValue(int x, int left, int right);
 
@@ -120,59 +122,61 @@ int ArrayBuffer::ClampValue(int x, int left, int right) {
   return x;
 }
 
-PassRefPtr<ArrayBuffer> ArrayBuffer::Create(unsigned num_elements,
-                                            unsigned element_byte_size) {
+scoped_refptr<ArrayBuffer> ArrayBuffer::Create(unsigned num_elements,
+                                               unsigned element_byte_size) {
   return Create(num_elements, element_byte_size,
                 ArrayBufferContents::kZeroInitialize);
 }
 
-PassRefPtr<ArrayBuffer> ArrayBuffer::Create(ArrayBuffer* other) {
+scoped_refptr<ArrayBuffer> ArrayBuffer::Create(ArrayBuffer* other) {
   // TODO(binji): support creating a SharedArrayBuffer by copying another
   // ArrayBuffer?
   DCHECK(!other->IsShared());
   return ArrayBuffer::Create(other->Data(), other->ByteLength());
 }
 
-PassRefPtr<ArrayBuffer> ArrayBuffer::Create(const void* source,
-                                            unsigned byte_length) {
+scoped_refptr<ArrayBuffer> ArrayBuffer::Create(const void* source,
+                                               unsigned byte_length) {
   ArrayBufferContents contents(byte_length, 1, ArrayBufferContents::kNotShared,
                                ArrayBufferContents::kDontInitialize);
   if (UNLIKELY(!contents.Data()))
     OOM_CRASH();
-  RefPtr<ArrayBuffer> buffer = AdoptRef(new ArrayBuffer(contents));
+  scoped_refptr<ArrayBuffer> buffer = base::AdoptRef(new ArrayBuffer(contents));
   memcpy(buffer->Data(), source, byte_length);
-  return buffer.Release();
+  return buffer;
 }
 
-PassRefPtr<ArrayBuffer> ArrayBuffer::Create(ArrayBufferContents& contents) {
-  RELEASE_ASSERT(contents.DataMaybeShared());
-  return AdoptRef(new ArrayBuffer(contents));
+scoped_refptr<ArrayBuffer> ArrayBuffer::Create(ArrayBufferContents& contents) {
+  CHECK(contents.DataMaybeShared());
+  return base::AdoptRef(new ArrayBuffer(contents));
 }
 
-PassRefPtr<ArrayBuffer> ArrayBuffer::CreateOrNull(unsigned num_elements,
-                                                  unsigned element_byte_size) {
+scoped_refptr<ArrayBuffer> ArrayBuffer::CreateOrNull(
+    unsigned num_elements,
+    unsigned element_byte_size) {
   return CreateOrNull(num_elements, element_byte_size,
                       ArrayBufferContents::kZeroInitialize);
 }
 
-PassRefPtr<ArrayBuffer> ArrayBuffer::CreateUninitializedOrNull(
+scoped_refptr<ArrayBuffer> ArrayBuffer::CreateUninitializedOrNull(
     unsigned num_elements,
     unsigned element_byte_size) {
   return CreateOrNull(num_elements, element_byte_size,
                       ArrayBufferContents::kDontInitialize);
 }
 
-PassRefPtr<ArrayBuffer> ArrayBuffer::Create(
+scoped_refptr<ArrayBuffer> ArrayBuffer::Create(
     unsigned num_elements,
     unsigned element_byte_size,
     ArrayBufferContents::InitializationPolicy policy) {
   ArrayBufferContents contents(num_elements, element_byte_size,
                                ArrayBufferContents::kNotShared, policy);
-  RELEASE_ASSERT(contents.Data());
-  return AdoptRef(new ArrayBuffer(contents));
+  if (UNLIKELY(!contents.Data()))
+    OOM_CRASH();
+  return base::AdoptRef(new ArrayBuffer(contents));
 }
 
-PassRefPtr<ArrayBuffer> ArrayBuffer::CreateOrNull(
+scoped_refptr<ArrayBuffer> ArrayBuffer::CreateOrNull(
     unsigned num_elements,
     unsigned element_byte_size,
     ArrayBufferContents::InitializationPolicy policy) {
@@ -180,37 +184,38 @@ PassRefPtr<ArrayBuffer> ArrayBuffer::CreateOrNull(
                                ArrayBufferContents::kNotShared, policy);
   if (!contents.Data())
     return nullptr;
-  return AdoptRef(new ArrayBuffer(contents));
+  return base::AdoptRef(new ArrayBuffer(contents));
 }
 
-PassRefPtr<ArrayBuffer> ArrayBuffer::CreateShared(unsigned num_elements,
-                                                  unsigned element_byte_size) {
+scoped_refptr<ArrayBuffer> ArrayBuffer::CreateShared(
+    unsigned num_elements,
+    unsigned element_byte_size) {
   return CreateShared(num_elements, element_byte_size,
                       ArrayBufferContents::kZeroInitialize);
 }
 
-PassRefPtr<ArrayBuffer> ArrayBuffer::CreateShared(const void* source,
-                                                  unsigned byte_length) {
+scoped_refptr<ArrayBuffer> ArrayBuffer::CreateShared(const void* source,
+                                                     unsigned byte_length) {
   ArrayBufferContents contents(byte_length, 1, ArrayBufferContents::kShared,
                                ArrayBufferContents::kDontInitialize);
-  RELEASE_ASSERT(contents.DataShared());
-  RefPtr<ArrayBuffer> buffer = AdoptRef(new ArrayBuffer(contents));
+  CHECK(contents.DataShared());
+  scoped_refptr<ArrayBuffer> buffer = base::AdoptRef(new ArrayBuffer(contents));
   memcpy(buffer->DataShared(), source, byte_length);
-  return buffer.Release();
+  return buffer;
 }
 
-PassRefPtr<ArrayBuffer> ArrayBuffer::CreateShared(
+scoped_refptr<ArrayBuffer> ArrayBuffer::CreateShared(
     unsigned num_elements,
     unsigned element_byte_size,
     ArrayBufferContents::InitializationPolicy policy) {
   ArrayBufferContents contents(num_elements, element_byte_size,
                                ArrayBufferContents::kShared, policy);
-  RELEASE_ASSERT(contents.DataShared());
-  return AdoptRef(new ArrayBuffer(contents));
+  CHECK(contents.DataShared());
+  return base::AdoptRef(new ArrayBuffer(contents));
 }
 
 ArrayBuffer::ArrayBuffer(ArrayBufferContents& contents)
-    : first_view_(0), is_neutered_(false) {
+    : first_view_(nullptr), is_neutered_(false) {
   if (contents.IsShared())
     contents.ShareWith(contents_);
   else
@@ -245,16 +250,16 @@ unsigned ArrayBuffer::ByteLength() const {
   return contents_.SizeInBytes();
 }
 
-PassRefPtr<ArrayBuffer> ArrayBuffer::Slice(int begin, int end) const {
+scoped_refptr<ArrayBuffer> ArrayBuffer::Slice(int begin, int end) const {
   return SliceImpl(ClampIndex(begin), ClampIndex(end));
 }
 
-PassRefPtr<ArrayBuffer> ArrayBuffer::Slice(int begin) const {
+scoped_refptr<ArrayBuffer> ArrayBuffer::Slice(int begin) const {
   return SliceImpl(ClampIndex(begin), ByteLength());
 }
 
-PassRefPtr<ArrayBuffer> ArrayBuffer::SliceImpl(unsigned begin,
-                                               unsigned end) const {
+scoped_refptr<ArrayBuffer> ArrayBuffer::SliceImpl(unsigned begin,
+                                                  unsigned end) const {
   unsigned size = begin <= end ? end - begin : 0;
   return ArrayBuffer::Create(static_cast<const char*>(Data()) + begin, size);
 }

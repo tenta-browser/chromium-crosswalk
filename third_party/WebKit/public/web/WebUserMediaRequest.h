@@ -43,8 +43,23 @@ class WebDocument;
 class WebMediaConstraints;
 class WebMediaStream;
 
-class WebUserMediaRequest {
+class BLINK_EXPORT WebUserMediaRequest {
  public:
+  enum class Error {
+    kNotSupported,
+    kSecurityError,
+    kPermissionDenied,
+    kPermissionDismissed,
+    kInvalidState,
+    kDevicesNotFound,
+    kTabCapture,
+    kScreenCapture,
+    kCapture,
+    kTrackStart,
+    kFailedDueToShutdown,
+    kKillSwitchOn
+  };
+
   WebUserMediaRequest() {}
   WebUserMediaRequest(const WebUserMediaRequest& request) { Assign(request); }
   ~WebUserMediaRequest() { Reset(); }
@@ -54,41 +69,34 @@ class WebUserMediaRequest {
     return *this;
   }
 
-  BLINK_EXPORT void Reset();
+  void Reset();
   bool IsNull() const { return private_.IsNull(); }
-  BLINK_EXPORT bool Equals(const WebUserMediaRequest&) const;
-  BLINK_EXPORT void Assign(const WebUserMediaRequest&);
+  bool Equals(const WebUserMediaRequest&) const;
+  void Assign(const WebUserMediaRequest&);
 
-  BLINK_EXPORT bool Audio() const;
-  BLINK_EXPORT bool Video() const;
-  BLINK_EXPORT WebMediaConstraints AudioConstraints() const;
-  BLINK_EXPORT WebMediaConstraints VideoConstraints() const;
+  bool Audio() const;
+  bool Video() const;
+  WebMediaConstraints AudioConstraints() const;
+  WebMediaConstraints VideoConstraints() const;
 
-  BLINK_EXPORT WebSecurityOrigin GetSecurityOrigin() const;
-  BLINK_EXPORT WebDocument OwnerDocument() const;
+  // Flag tied to whether or not the similarly named Origin Trial is
+  // enabled. Will be removed at end of trial. See: http://crbug.com/789152.
+  bool ShouldDisableHardwareNoiseSuppression() const;
 
-  BLINK_EXPORT void RequestSucceeded(const WebMediaStream&);
+  WebSecurityOrigin GetSecurityOrigin() const;
+  WebDocument OwnerDocument() const;
 
-  BLINK_EXPORT void RequestDenied(const WebString& description = WebString());
-  BLINK_EXPORT void RequestFailedConstraint(
-      const WebString& constraint_name,
-      const WebString& description = WebString());
-  BLINK_EXPORT void RequestFailedUASpecific(
-      const WebString& name,
-      const WebString& constraint_name = WebString(),
-      const WebString& description = WebString());
+  void RequestSucceeded(const WebMediaStream&);
 
-  // DEPRECATED
-  BLINK_EXPORT void RequestFailed(const WebString& description = WebString()) {
-    RequestDenied(description);
-  }
+  void RequestFailedConstraint(const WebString& constraint_name,
+                               const WebString& description = WebString());
+  void RequestFailed(Error name, const WebString& description = WebString());
 
   // For testing in content/
-  BLINK_EXPORT static WebUserMediaRequest CreateForTesting(
-      const WebMediaConstraints& audio,
-      const WebMediaConstraints& video);
+  static WebUserMediaRequest CreateForTesting(const WebMediaConstraints& audio,
+                                              const WebMediaConstraints& video);
 
-#if BLINK_IMPLEMENTATION
+#if INSIDE_BLINK
   WebUserMediaRequest(UserMediaRequest*);
   operator UserMediaRequest*() const;
 #endif

@@ -6,308 +6,29 @@
 
 #include "platform/fonts/CharacterRange.h"
 #include "platform/fonts/SimpleFontData.h"
-#include "platform/fonts/shaping/ShapeResultBloberizer.h"
 #include "platform/fonts/shaping/ShapeResultInlineHeaders.h"
 #include "platform/geometry/FloatPoint.h"
-#include "platform/text/Character.h"
-#include "platform/text/TextBreakIterator.h"
 #include "platform/text/TextDirection.h"
 
 namespace blink {
-
-namespace {
-
-inline bool IsSkipInkException(const ShapeResultBloberizer& bloberizer,
-                               const TextRun& run,
-                               unsigned character_index) {
-  // We want to skip descenders in general, but it is undesirable renderings for
-  // CJK characters.
-  return bloberizer.GetType() == ShapeResultBloberizer::Type::kTextIntercepts &&
-         !run.Is8Bit() &&
-         Character::IsCJKIdeographOrSymbol(run.CodepointAt(character_index));
-}
-
-inline void AddGlyphToBloberizer(ShapeResultBloberizer& bloberizer,
-                                 float advance,
-                                 hb_direction_t direction,
-                                 const SimpleFontData* font_data,
-                                 const HarfBuzzRunGlyphData& glyph_data,
-                                 const TextRun& run,
-                                 unsigned character_index) {
-  FloatPoint start_offset = HB_DIRECTION_IS_HORIZONTAL(direction)
-                                ? FloatPoint(advance, 0)
-                                : FloatPoint(0, advance);
-  if (!IsSkipInkException(bloberizer, run, character_index))
-    bloberizer.Add(glyph_data.glyph, font_data,
-                   start_offset + glyph_data.offset);
-}
-
-inline void AddEmphasisMark(ShapeResultBloberizer& bloberizer,
-                            const GlyphData& emphasis_data,
-                            FloatPoint glyph_center,
-                            float mid_glyph_offset) {
-  const SimpleFontData* emphasis_font_data = emphasis_data.font_data;
-  DCHECK(emphasis_font_data);
-
-  bool is_vertical =
-      emphasis_font_data->PlatformData().IsVerticalAnyUpright() &&
-      emphasis_font_data->VerticalData();
-
-  if (!is_vertical) {
-    bloberizer.Add(emphasis_data.glyph, emphasis_font_data,
-                   mid_glyph_offset - glyph_center.X());
-  } else {
-    bloberizer.Add(
-        emphasis_data.glyph, emphasis_font_data,
-        FloatPoint(-glyph_center.X(), mid_glyph_offset - glyph_center.Y()));
-  }
-}
-
-inline unsigned CountGraphemesInCluster(const UChar* str,
-                                        unsigned str_length,
-                                        uint16_t start_index,
-                                        uint16_t end_index) {
-  if (start_index > end_index) {
-    uint16_t temp_index = start_index;
-    start_index = end_index;
-    end_index = temp_index;
-  }
-  uint16_t length = end_index - start_index;
-  DCHECK_LE(static_cast<unsigned>(start_index + length), str_length);
-  TextBreakIterator* cursor_pos_iterator =
-      CursorMovementIterator(&str[start_index], length);
-
-  int cursor_pos = cursor_pos_iterator->current();
-  int num_graphemes = -1;
-  while (0 <= cursor_pos) {
-    cursor_pos = cursor_pos_iterator->next();
-    num_graphemes++;
-  }
-  return std::max(0, num_graphemes);
-}
-
-}  // anonymous namespace
-
-float ShapeResultBuffer::FillGlyphsForResult(ShapeResultBloberizer& bloberizer,
-                                             const ShapeResult& result,
-                                             const TextRunPaintInfo& run_info,
-                                             float initial_advance,
-                                             unsigned run_offset) {
-  auto total_advance = initial_advance;
-
-  for (const auto& run : result.runs_) {
-    total_advance = run->ForEachGlyphInRange(
-        total_advance, run_info.from, run_info.to, run_offset,
-        [&](const HarfBuzzRunGlyphData& glyph_data, float total_advance,
-            uint16_t character_index) -> bool {
-
-          AddGlyphToBloberizer(bloberizer, total_advance, run->direction_,
-                               run->font_data_.Get(), glyph_data, run_info.run,
-                               character_index);
-          return true;
-        });
-  }
-
-  return total_advance;
-}
-
-float ShapeResultBuffer::FillTextEmphasisGlyphsForRun(
-    ShapeResultBloberizer& bloberizer,
-    const ShapeResult::RunInfo* run,
-    const TextRunPaintInfo& run_info,
-    const GlyphData& emphasis_data,
-    float initial_advance,
-    unsigned run_offset) {
-  if (!run)
-    return 0;
-
-  unsigned graphemes_in_cluster = 1;
-  float cluster_advance = 0;
-
-  FloatPoint glyph_center =
-      emphasis_data.font_data->BoundsForGlyph(emphasis_data.glyph).Center();
-
-  const auto& text_run = run_info.run;
-  const auto from = run_info.from;
-  const auto to = run_info.to;
-
-  TextDirection direction = text_run.Direction();
-
-  // A "cluster" in this context means a cluster as it is used by HarfBuzz:
-  // The minimal group of characters and corresponding glyphs, that cannot be
-  // broken down further from a text shaping point of view.  A cluster can
-  // contain multiple glyphs and grapheme clusters, with mutually overlapping
-  // boundaries. Below we count grapheme clusters per HarfBuzz clusters, then
-  // linearly split the sum of corresponding glyph advances by the number of
-  // grapheme clusters in order to find positions for emphasis mark drawing.
-  uint16_t cluster_start = static_cast<uint16_t>(
-      direction == TextDirection::kRtl
-          ? run->start_index_ + run->num_characters_ + run_offset
-          : run->GlyphToCharacterIndex(0) + run_offset);
-
-  float advance_so_far = initial_advance;
-  const unsigned num_glyphs = run->glyph_data_.size();
-  for (unsigned i = 0; i < num_glyphs; ++i) {
-    const HarfBuzzRunGlyphData& glyph_data = run->glyph_data_[i];
-    uint16_t current_character_index =
-        run->start_index_ + glyph_data.character_index + run_offset;
-    bool is_run_end = (i + 1 == num_glyphs);
-    bool is_cluster_end =
-        is_run_end || (run->GlyphToCharacterIndex(i + 1) + run_offset !=
-                       current_character_index);
-
-    if ((direction == TextDirection::kRtl && current_character_index >= to) ||
-        (direction != TextDirection::kRtl && current_character_index < from)) {
-      advance_so_far += glyph_data.advance;
-      direction == TextDirection::kRtl ? --cluster_start : ++cluster_start;
-      continue;
-    }
-
-    cluster_advance += glyph_data.advance;
-
-    if (text_run.Is8Bit()) {
-      float glyph_advance_x = glyph_data.advance;
-      if (Character::CanReceiveTextEmphasis(
-              text_run[current_character_index])) {
-        AddEmphasisMark(bloberizer, emphasis_data, glyph_center,
-                        advance_so_far + glyph_advance_x / 2);
-      }
-      advance_so_far += glyph_advance_x;
-    } else if (is_cluster_end) {
-      uint16_t cluster_end;
-      if (direction == TextDirection::kRtl)
-        cluster_end = current_character_index;
-      else
-        cluster_end = static_cast<uint16_t>(
-            is_run_end ? run->start_index_ + run->num_characters_ + run_offset
-                       : run->GlyphToCharacterIndex(i + 1) + run_offset);
-
-      graphemes_in_cluster = CountGraphemesInCluster(
-          text_run.Characters16(), text_run.CharactersLength(), cluster_start,
-          cluster_end);
-      if (!graphemes_in_cluster || !cluster_advance)
-        continue;
-
-      float glyph_advance_x = cluster_advance / graphemes_in_cluster;
-      for (unsigned j = 0; j < graphemes_in_cluster; ++j) {
-        // Do not put emphasis marks on space, separator, and control
-        // characters.
-        if (Character::CanReceiveTextEmphasis(
-                text_run[current_character_index]))
-          AddEmphasisMark(bloberizer, emphasis_data, glyph_center,
-                          advance_so_far + glyph_advance_x / 2);
-        advance_so_far += glyph_advance_x;
-      }
-      cluster_start = cluster_end;
-      cluster_advance = 0;
-    }
-  }
-  return advance_so_far - initial_advance;
-}
-
-float ShapeResultBuffer::FillFastHorizontalGlyphs(
-    const TextRun& text_run,
-    ShapeResultBloberizer& bloberizer) const {
-  DCHECK(!HasVerticalOffsets());
-  DCHECK_NE(bloberizer.GetType(), ShapeResultBloberizer::Type::kTextIntercepts);
-
-  float advance = 0;
-
-  for (unsigned i = 0; i < results_.size(); ++i) {
-    const auto& word_result = IsLeftToRightDirection(text_run.Direction())
-                                  ? results_[i]
-                                  : results_[results_.size() - 1 - i];
-    DCHECK(!word_result->HasVerticalOffsets());
-
-    for (const auto& run : word_result->runs_) {
-      DCHECK(run);
-      DCHECK(HB_DIRECTION_IS_HORIZONTAL(run->direction_));
-
-      advance = run->ForEachGlyph(
-          advance,
-          [&](const HarfBuzzRunGlyphData& glyph_data,
-              float total_advance) -> bool {
-            DCHECK(!glyph_data.offset.Height());
-            bloberizer.Add(glyph_data.glyph, run->font_data_.Get(),
-                           total_advance + glyph_data.offset.Width());
-            return true;
-          });
-    }
-  }
-
-  return advance;
-}
-
-float ShapeResultBuffer::FillGlyphs(const TextRunPaintInfo& run_info,
-                                    ShapeResultBloberizer& bloberizer) const {
-  // Fast path: full run with no vertical offsets, no text intercepts.
-  if (!run_info.from && run_info.to == run_info.run.length() &&
-      !HasVerticalOffsets() &&
-      bloberizer.GetType() != ShapeResultBloberizer::Type::kTextIntercepts) {
-    return FillFastHorizontalGlyphs(run_info.run, bloberizer);
-  }
-
-  float advance = 0;
-
-  if (run_info.run.Rtl()) {
-    unsigned word_offset = run_info.run.length();
-    for (unsigned j = 0; j < results_.size(); j++) {
-      unsigned resolved_index = results_.size() - 1 - j;
-      const RefPtr<const ShapeResult>& word_result = results_[resolved_index];
-      word_offset -= word_result->NumCharacters();
-      advance = FillGlyphsForResult(bloberizer, *word_result, run_info, advance,
-                                    word_offset);
-    }
-  } else {
-    unsigned word_offset = 0;
-    for (const auto& word_result : results_) {
-      advance = FillGlyphsForResult(bloberizer, *word_result, run_info, advance,
-                                    word_offset);
-      word_offset += word_result->NumCharacters();
-    }
-  }
-
-  return advance;
-}
-
-void ShapeResultBuffer::FillTextEmphasisGlyphs(
-    const TextRunPaintInfo& run_info,
-    const GlyphData& emphasis_data,
-    ShapeResultBloberizer& bloberizer) const {
-  float advance = 0;
-  unsigned word_offset = run_info.run.Rtl() ? run_info.run.length() : 0;
-
-  for (unsigned j = 0; j < results_.size(); j++) {
-    unsigned resolved_index = run_info.run.Rtl() ? results_.size() - 1 - j : j;
-    const RefPtr<const ShapeResult>& word_result = results_[resolved_index];
-    for (unsigned i = 0; i < word_result->runs_.size(); i++) {
-      unsigned resolved_offset =
-          word_offset - (run_info.run.Rtl() ? word_result->NumCharacters() : 0);
-      advance += FillTextEmphasisGlyphsForRun(
-          bloberizer, word_result->runs_[i].get(), run_info, emphasis_data,
-          advance, resolved_offset);
-    }
-    word_offset += word_result->NumCharacters() * (run_info.run.Rtl() ? -1 : 1);
-  }
-}
 
 // TODO(eae): This is a bit of a hack to allow reuse of the implementation
 // for both ShapeResultBuffer and single ShapeResult use cases. Ideally the
 // logic should move into ShapeResult itself and then the ShapeResultBuffer
 // implementation may wrap that.
 CharacterRange ShapeResultBuffer::GetCharacterRange(
-    RefPtr<const ShapeResult> result,
+    scoped_refptr<const ShapeResult> result,
     TextDirection direction,
     float total_width,
     unsigned from,
     unsigned to) {
-  Vector<RefPtr<const ShapeResult>, 64> results;
+  Vector<scoped_refptr<const ShapeResult>, 64> results;
   results.push_back(result);
   return GetCharacterRangeInternal(results, direction, total_width, from, to);
 }
 
 CharacterRange ShapeResultBuffer::GetCharacterRangeInternal(
-    const Vector<RefPtr<const ShapeResult>, 64>& results,
+    const Vector<scoped_refptr<const ShapeResult>, 64>& results,
     TextDirection direction,
     float total_width,
     unsigned absolute_from,
@@ -317,6 +38,8 @@ CharacterRange ShapeResultBuffer::GetCharacterRangeInternal(
   float to_x = 0;
   bool found_from_x = false;
   bool found_to_x = false;
+  float min_y = 0;
+  float max_y = 0;
 
   if (direction == TextDirection::kRtl)
     current_x = total_width;
@@ -329,7 +52,7 @@ CharacterRange ShapeResultBuffer::GetCharacterRangeInternal(
 
   unsigned total_num_characters = 0;
   for (unsigned j = 0; j < results.size(); j++) {
-    const RefPtr<const ShapeResult> result = results[j];
+    const scoped_refptr<const ShapeResult> result = results[j];
     if (direction == TextDirection::kRtl) {
       // Convert logical offsets to visual offsets, because results are in
       // logical order while runs are in visual order.
@@ -363,6 +86,11 @@ CharacterRange ShapeResultBuffer::GetCharacterRangeInternal(
         to -= num_characters;
       }
 
+      if (found_from_x || found_to_x) {
+        min_y = std::min(min_y, result->Bounds().Y());
+        max_y = std::max(max_y, result->Bounds().MaxY());
+      }
+
       if (found_from_x && found_to_x)
         break;
       current_x += result->runs_[i]->width_;
@@ -390,8 +118,8 @@ CharacterRange ShapeResultBuffer::GetCharacterRangeInternal(
   if (!found_to_x && !found_from_x)
     from_x = to_x = 0;
   if (from_x < to_x)
-    return CharacterRange(from_x, to_x);
-  return CharacterRange(to_x, from_x);
+    return CharacterRange(from_x, to_x, -min_y, max_y);
+  return CharacterRange(to_x, from_x, -min_y, max_y);
 }
 
 CharacterRange ShapeResultBuffer::GetCharacterRange(TextDirection direction,
@@ -416,9 +144,9 @@ void ShapeResultBuffer::AddRunInfoRanges(const ShapeResult::RunInfo& run_info,
 
     // To match getCharacterRange we flip ranges to ensure start <= end.
     if (end < start)
-      ranges.push_back(CharacterRange(end, start));
+      ranges.push_back(CharacterRange(end, start, 0, 0));
     else
-      ranges.push_back(CharacterRange(start, end));
+      ranges.push_back(CharacterRange(start, end, 0, 0));
   }
 }
 
@@ -427,7 +155,7 @@ Vector<CharacterRange> ShapeResultBuffer::IndividualCharacterRanges(
     float total_width) const {
   Vector<CharacterRange> ranges;
   float current_x = direction == TextDirection::kRtl ? total_width : 0;
-  for (const RefPtr<const ShapeResult> result : results_) {
+  for (const scoped_refptr<const ShapeResult> result : results_) {
     if (direction == TextDirection::kRtl)
       current_x -= result->Width();
     unsigned run_count = result->runs_.size();
@@ -450,7 +178,7 @@ int ShapeResultBuffer::OffsetForPosition(const TextRun& run,
   if (run.Rtl()) {
     total_offset = run.length();
     for (unsigned i = results_.size(); i; --i) {
-      const RefPtr<const ShapeResult>& word_result = results_[i - 1];
+      const scoped_refptr<const ShapeResult>& word_result = results_[i - 1];
       if (!word_result)
         continue;
       total_offset -= word_result->NumCharacters();
@@ -485,7 +213,7 @@ Vector<ShapeResultBuffer::RunFontData> ShapeResultBuffer::GetRunFontData()
   for (const auto& result : results_) {
     for (const auto& run : result->runs_) {
       font_data.push_back(
-          RunFontData({run->font_data_.Get(), run->glyph_data_.size()}));
+          RunFontData({run->font_data_.get(), run->glyph_data_.size()}));
     }
   }
   return font_data;
@@ -501,7 +229,8 @@ GlyphData ShapeResultBuffer::EmphasisMarkGlyphData(
 
       return GlyphData(
           run->glyph_data_[0].glyph,
-          run->font_data_->EmphasisMarkFontData(font_description).Get());
+          run->font_data_->EmphasisMarkFontData(font_description).get(),
+          run->CanvasRotation());
     }
   }
 

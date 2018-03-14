@@ -12,12 +12,11 @@
 
 namespace blink {
 
-class FrameView;
 class LayoutAPIShim;
 class LocalFrame;
+class LocalFrameView;
 class LayoutViewItem;
 class Node;
-class ObjectPaintProperties;
 
 class LayoutItem {
   DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
@@ -26,9 +25,9 @@ class LayoutItem {
   explicit LayoutItem(LayoutObject* layout_object)
       : layout_object_(layout_object) {}
 
-  LayoutItem(std::nullptr_t) : layout_object_(0) {}
+  LayoutItem(std::nullptr_t) : layout_object_(nullptr) {}
 
-  LayoutItem() : layout_object_(0) {}
+  LayoutItem() : layout_object_(nullptr) {}
 
   // TODO(leviw): This should be "explicit operator bool", but
   // using this operator allows the API to be landed in pieces.
@@ -57,7 +56,9 @@ class LayoutItem {
 
   bool IsTextControl() const { return layout_object_->IsTextControl(); }
 
-  bool IsLayoutPart() const { return layout_object_->IsLayoutPart(); }
+  bool IsLayoutEmbeddedContent() const {
+    return layout_object_->IsLayoutEmbeddedContent();
+  }
 
   bool IsEmbeddedObject() const { return layout_object_->IsEmbeddedObject(); }
 
@@ -109,7 +110,7 @@ class LayoutItem {
     return layout_object_->MutableStyleRef();
   }
 
-  void SetStyle(PassRefPtr<ComputedStyle> style) {
+  void SetStyle(scoped_refptr<ComputedStyle> style) {
     layout_object_->SetStyle(std::move(style));
   }
 
@@ -119,7 +120,7 @@ class LayoutItem {
 
   LayoutViewItem View() const;
 
-  FrameView* GetFrameView() const {
+  LocalFrameView* GetFrameView() const {
     return layout_object_->GetDocument().View();
   }
 
@@ -161,7 +162,7 @@ class LayoutItem {
   }
 
   void SetShouldDoFullPaintInvalidation(
-      PaintInvalidationReason reason = kPaintInvalidationFull) {
+      PaintInvalidationReason reason = PaintInvalidationReason::kFull) {
     layout_object_->SetShouldDoFullPaintInvalidation(reason);
   }
 
@@ -170,8 +171,10 @@ class LayoutItem {
         ->SetShouldDoFullPaintInvalidationIncludingNonCompositingDescendants();
   }
 
-  void ComputeLayerHitTestRects(LayerHitTestRects& layer_rects) const {
-    layout_object_->ComputeLayerHitTestRects(layer_rects);
+  void ComputeLayerHitTestRects(LayerHitTestRects& layer_rects,
+                                TouchAction supported_fast_actions) const {
+    layout_object_->ComputeLayerHitTestRects(layer_rects,
+                                             supported_fast_actions);
   }
 
   FloatPoint LocalToAbsolute(const FloatPoint& local_point = FloatPoint(),
@@ -201,10 +204,6 @@ class LayoutItem {
     return layout_object_->NeedsOverflowRecalcAfterStyleChange();
   }
 
-  void InvalidateTreeIfNeeded(const PaintInvalidationState& state) {
-    layout_object_->InvalidateTreeIfNeeded(state);
-  }
-
   CompositingState GetCompositingState() const {
     return layout_object_->GetCompositingState();
   }
@@ -217,19 +216,15 @@ class LayoutItem {
                                                           flags);
   }
 
-  Color ResolveColor(int color_property) const {
+  Color ResolveColor(CSSPropertyID color_property) const {
     return layout_object_->ResolveColor(color_property);
-  }
-
-  const ObjectPaintProperties* PaintProperties() const {
-    return layout_object_->PaintProperties();
   }
 
   void InvalidatePaintRectangle(const LayoutRect& dirty_rect) const {
     layout_object_->InvalidatePaintRectangle(dirty_rect);
   }
 
-  PassRefPtr<ComputedStyle> GetUncachedPseudoStyle(
+  scoped_refptr<ComputedStyle> GetUncachedPseudoStyle(
       const PseudoStyleRequest& pseudo_style_request,
       const ComputedStyle* parent_style = nullptr) const {
     return layout_object_->GetUncachedPseudoStyle(pseudo_style_request,

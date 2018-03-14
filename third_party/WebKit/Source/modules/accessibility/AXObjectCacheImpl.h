@@ -30,43 +30,55 @@
 #define AXObjectCacheImpl_h
 
 #include <memory>
-#include "core/dom/AXObjectCache.h"
+#include "core/dom/AXObjectCacheBase.h"
+#include "core/dom/ContextLifecycleObserver.h"
 #include "modules/ModulesExport.h"
 #include "modules/accessibility/AXObject.h"
+#include "mojo/public/cpp/bindings/binding.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/HashMap.h"
 #include "platform/wtf/HashSet.h"
+#include "public/platform/modules/permissions/permission.mojom-blink.h"
+#include "public/platform/modules/permissions/permission_status.mojom-blink.h"
 
 namespace blink {
 
 class AbstractInlineTextBox;
+class AXRelationCache;
 class HTMLAreaElement;
-class FrameView;
+class LocalFrameView;
 
 // This class should only be used from inside the accessibility directory.
-class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCache {
+class MODULES_EXPORT AXObjectCacheImpl
+    : public AXObjectCacheBase,
+      public mojom::blink::PermissionObserver {
   WTF_MAKE_NONCOPYABLE(AXObjectCacheImpl);
 
  public:
   static AXObjectCache* Create(Document&);
 
   explicit AXObjectCacheImpl(Document&);
-  ~AXObjectCacheImpl();
-  DECLARE_VIRTUAL_TRACE();
+  virtual ~AXObjectCacheImpl();
+  virtual void Trace(blink::Visitor*);
 
+  Document& GetDocument() { return *document_; }
   AXObject* FocusedObject();
 
   void Dispose() override;
 
   void SelectionChanged(Node*) override;
+  void UpdateReverseRelations(const AXObject* relation_source,
+                              const Vector<String>& target_ids);
   void ChildrenChanged(Node*) override;
   void ChildrenChanged(LayoutObject*) override;
+  void ChildrenChanged(AccessibleNode*) override;
   void CheckedStateChanged(Node*) override;
   virtual void ListboxOptionStateChanged(HTMLOptionElement*);
   virtual void ListboxSelectedChildrenChanged(HTMLSelectElement*);
   virtual void ListboxActiveIndexChanged(HTMLSelectElement*);
   virtual void RadiobuttonRemovedFromGroup(HTMLInputElement*);
 
+  void Remove(AccessibleNode*) override;
   void Remove(LayoutObject*) override;
   void Remove(Node*) override;
   void Remove(AbstractInlineTextBox*) override;
@@ -76,7 +88,7 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCache {
   // Called by a node when text or a text equivalent (e.g. alt) attribute is
   // changed.
   void TextChanged(LayoutObject*) override;
-  void TextChanged(AXObject*);
+  void TextChanged(AXObject*, Node* node_for_relation_update = nullptr);
   // Called when a node has just been attached, so we can make sure we have the
   // right subclass of AXObject.
   void UpdateCacheAfterNodeIsAttached(Node*) override;
@@ -88,6 +100,7 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCache {
   void HandleInitialFocus() override;
   void HandleTextFormControlChanged(Node*) override;
   void HandleEditableTextContentChanged(Node*) override;
+  void HandleTextMarkerDataAdded(Node* start, Node* end) override;
   void HandleValueChanged(Node*) override;
   void HandleUpdateActiveMenuOption(LayoutMenuList*, int option_index) override;
   void DidShowMenuListPopup(LayoutMenuList*) override;
@@ -103,7 +116,7 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCache {
   void InlineTextBoxesUpdated(LineLayoutItem) override;
 
   // Called when the scroll offset changes.
-  void HandleScrollPositionChanged(FrameView*) override;
+  void HandleScrollPositionChanged(LocalFrameView*) override;
   void HandleScrollPositionChanged(LayoutObject*) override;
 
   // Called when scroll bars are added / removed (as the view resizes).
@@ -123,12 +136,14 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCache {
 
   // used for objects without backing elements
   AXObject* GetOrCreate(AccessibilityRole);
-  AXObject* GetOrCreate(LayoutObject*);
+  AXObject* GetOrCreate(AccessibleNode*);
+  AXObject* GetOrCreate(LayoutObject*) override;
   AXObject* GetOrCreate(Node*);
   AXObject* GetOrCreate(AbstractInlineTextBox*);
 
   // will only return the AXObject if it already exists
-  AXObject* Get(Node*);
+  AXObject* Get(AccessibleNode*);
+  AXObject* Get(const Node*) override;
   AXObject* Get(LayoutObject*);
   AXObject* Get(AbstractInlineTextBox*);
 
@@ -136,10 +151,10 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCache {
 
   void Remove(AXID);
 
-  void ChildrenChanged(AXObject*);
+  void ChildrenChanged(AXObject*, Node* node_for_relation_update = nullptr);
 
   void HandleActiveDescendantChanged(Node*);
-  void HandleAriaRoleChanged(Node*);
+  void HandlePossibleRoleChange(Node*);
   void HandleAriaExpandedChange(Node*);
   void HandleAriaSelectedChanged(Node*);
 
@@ -182,11 +197,15 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCache {
                       const Vector<String>& id_vector,
                       HeapVector<Member<AXObject>>& owned_children);
 
-  // Given an element in the DOM tree that was either just added or whose id
-  // just changed, check to see if another object wants to be its parent due to
-  // aria-owns. If so, update the tree by calling childrenChanged() on the
-  // potential owner, possibly reparenting this element.
-  void UpdateTreeIfElementIdIsAriaOwned(Element*);
+  // Synchronously returns whether or not we currently have permission to
+  // call AOM event listeners.
+  bool CanCallAOMEventListeners() const;
+
+  // This is called when an accessibility event is triggered and there are
+  // AOM event listeners registered that would have been called.
+  // Asynchronously requests permission from the user. If permission is
+  // granted, it only applies to the next event received.
+  void RequestAOMEventListenerPermission();
 
  protected:
   void PostPlatformNotification(AXObject*, AXNotification);
@@ -201,51 +220,28 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCache {
   HeapHashMap<AXID, Member<AXObject>> objects_;
   // LayoutObject and AbstractInlineTextBox are not on the Oilpan heap so we
   // do not use HeapHashMap for those mappings.
+  HeapHashMap<Member<AccessibleNode>, AXID> accessible_node_mapping_;
   HashMap<LayoutObject*, AXID> layout_object_mapping_;
-  HeapHashMap<Member<Node>, AXID> node_object_mapping_;
+  HeapHashMap<Member<const Node>, AXID> node_object_mapping_;
   HashMap<AbstractInlineTextBox*, AXID> inline_text_box_object_mapping_;
   int modification_count_;
 
   HashSet<AXID> ids_in_use_;
+
+  std::unique_ptr<AXRelationCache> relation_cache_;
 
 #if DCHECK_IS_ON()
   // Verified when finalizing.
   bool has_been_disposed_ = false;
 #endif
 
-  //
-  // Aria-owns
-  //
-
-  // Map from the AXID of the owner to the AXIDs of the children.
-  // This is a validated map, it doesn't contain illegal, duplicate,
-  // or cyclical matches, or references to IDs that don't exist.
-  HashMap<AXID, Vector<AXID>> aria_owner_to_children_mapping_;
-
-  // Map from the AXID of a child to the AXID of the parent that owns it.
-  HashMap<AXID, AXID> aria_owned_child_to_owner_mapping_;
-
-  // Map from the AXID of a child to the AXID of its real parent in the tree if
-  // we ignored aria-owns. This is needed in case the owner no longer wants to
-  // own it.
-  HashMap<AXID, AXID> aria_owned_child_to_real_parent_mapping_;
-
-  // Map from the AXID of any object with an aria-owns attribute to the set of
-  // ids of its children. This is *unvalidated*, it includes ids that may not
-  // currently exist in the tree.
-  HashMap<AXID, HashSet<String>> aria_owner_to_ids_mapping_;
-
-  // Map from an ID (the ID attribute of a DOM element) to the set of elements
-  // that want to own that ID. This is *unvalidated*, it includes possible
-  // duplicates.  This is used so that when an element with an ID is added to
-  // the tree or changes its ID, we can quickly determine if it affects an
-  // aria-owns relationship.
-  HashMap<String, std::unique_ptr<HashSet<AXID>>> id_to_aria_owners_mapping_;
-
   TaskRunnerTimer<AXObjectCacheImpl> notification_post_timer_;
   HeapVector<std::pair<Member<AXObject>, AXNotification>>
       notifications_to_post_;
   void NotificationPostTimerFired(TimerBase*);
+
+  // ContextLifecycleObserver overrides.
+  void ContextDestroyed(ExecutionContext*) override;
 
   AXObject* FocusedImageMapUIElement(HTMLAreaElement*);
 
@@ -253,14 +249,33 @@ class MODULES_EXPORT AXObjectCacheImpl : public AXObjectCache {
 
   void TextChanged(Node*);
   bool NodeIsTextControl(const Node*);
+  AXObject* NearestExistingAncestor(Node*);
 
   Settings* GetSettings();
+
+  // Start listenening for updates to the AOM accessibility event permission.
+  void AddPermissionStatusListener();
+
+  // mojom::blink::PermissionObserver implementation.
+  // Called when we get an updated AOM event listener permission value from
+  // the browser.
+  void OnPermissionStatusChange(mojom::PermissionStatus);
+
+  // Must be called an entire subtree of accessible objects are no longer valid.
+  void InvalidateTableSubtree(AXObject* subtree);
+
+  // Whether the user has granted permission for the user to install event
+  // listeners for accessibility events using the AOM.
+  mojom::PermissionStatus accessibility_event_permission_;
+  // The permission service, enabling us to check for event listener
+  // permission.
+  mojom::blink::PermissionServicePtr permission_service_;
+  mojo::Binding<mojom::blink::PermissionObserver> permission_observer_binding_;
 };
 
 // This is the only subclass of AXObjectCache.
 DEFINE_TYPE_CASTS(AXObjectCacheImpl, AXObjectCache, cache, true, true);
 
-bool NodeHasRole(Node*, const String& role);
 // This will let you know if aria-hidden was explicitly set to false.
 bool IsNodeAriaVisible(Node*);
 

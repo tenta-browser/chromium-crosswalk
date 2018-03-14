@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/input_method/input_method_engine.h"
+#include "base/stl_util.h"
 
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -134,13 +135,13 @@ void InputMethodEngine::UpdateComposition(
     const ui::CompositionText& composition_text,
     uint32_t cursor_pos,
     bool is_visible) {
-  composition_.CopyFrom(composition_text);
+  composition_ = composition_text;
 
   // Use a black thin underline by default.
-  if (composition_.underlines.empty()) {
-    composition_.underlines.push_back(
-        ui::CompositionUnderline(0, composition_.text.length(), SK_ColorBLACK,
-                                 false /* thick */, SK_ColorTRANSPARENT));
+  if (composition_.ime_text_spans.empty()) {
+    composition_.ime_text_spans.push_back(ui::ImeTextSpan(
+        ui::ImeTextSpan::Type::kComposition, 0, composition_.text.length(),
+        SK_ColorBLACK, false /* thick */, SK_ColorTRANSPARENT));
   }
 
   ui::IMEInputContextHandlerInterface* input_context =
@@ -149,7 +150,7 @@ void InputMethodEngine::UpdateComposition(
   // until the key event is handled.
   if (input_context && !handling_key_event_) {
     input_context->UpdateCompositionText(composition_, cursor_pos, is_visible);
-    composition_.Clear();
+    composition_ = ui::CompositionText();
   } else {
     composition_changed_ = true;
   }
@@ -252,11 +253,11 @@ bool InputMethodEngine::IsSpecialPage(ui::InputMethod* input_method) {
   }
 
   // Checks if the last committed url is whitelisted url.
-  url::Origin origin(url);
+  url::Origin origin = url::Origin::Create(url);
   std::vector<GURL> whitelist_urls{GURL(url::kAboutBlankURL),
                                    GURL(chrome::kChromeUINewTabURL)};
   for (const GURL& whitelist_url : whitelist_urls) {
-    if (url::Origin(whitelist_url).IsSameOriginWith(origin))
+    if (url::Origin::Create(whitelist_url).IsSameOriginWith(origin))
       return false;
   }
   return true;
@@ -268,16 +269,14 @@ bool InputMethodEngine::IsValidKeyForAllPages(ui::KeyEvent* ui_event) {
                                                            ui::VKEY_RETURN};
   if (ui_event->GetDomKey().IsCharacter() && !ui_event->IsControlDown() &&
       !ui_event->IsCommandDown()) {
-    return std::find(invalid_character_keycodes.begin(),
-                     invalid_character_keycodes.end(),
-                     ui_event->key_code()) == invalid_character_keycodes.end();
+    return !base::ContainsValue(invalid_character_keycodes,
+                                ui_event->key_code());
   }
 
   // Whitelists Backspace key and arrow keys.
   std::vector<ui::KeyboardCode> whitelist_keycodes{
       ui::VKEY_BACK, ui::VKEY_LEFT, ui::VKEY_RIGHT, ui::VKEY_UP, ui::VKEY_DOWN};
-  return std::find(whitelist_keycodes.begin(), whitelist_keycodes.end(),
-                   ui_event->key_code()) != whitelist_keycodes.end();
+  return base::ContainsValue(whitelist_keycodes, ui_event->key_code());
 }
 
 }  // namespace input_method

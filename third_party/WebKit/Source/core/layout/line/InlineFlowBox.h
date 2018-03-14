@@ -97,14 +97,8 @@ class InlineFlowBox : public InlineBox {
   void SetNextLineBox(InlineFlowBox* n) { next_line_box_ = n; }
   void SetPreviousLineBox(InlineFlowBox* p) { prev_line_box_ = p; }
 
-  InlineBox* FirstChild() const {
-    CheckConsistency();
-    return first_child_;
-  }
-  InlineBox* LastChild() const {
-    CheckConsistency();
-    return last_child_;
-  }
+  InlineBox* FirstChild() const { return first_child_; }
+  InlineBox* LastChild() const { return last_child_; }
 
   bool IsLeaf() const final { return false; }
 
@@ -116,7 +110,8 @@ class InlineFlowBox : public InlineBox {
       Vector<InlineBox*>::iterator last);
   void CollectLeafBoxesInLogicalOrder(
       Vector<InlineBox*>&,
-      CustomInlineBoxRangeReverse custom_reverse_implementation = 0) const;
+      CustomInlineBoxRangeReverse custom_reverse_implementation =
+          nullptr) const;
 
   DISABLE_CFI_PERF
   void SetConstructed() final {
@@ -227,21 +222,21 @@ class InlineFlowBox : public InlineBox {
   void ComputeLogicalBoxHeights(RootInlineBox*,
                                 LayoutUnit& max_position_top,
                                 LayoutUnit& max_position_bottom,
-                                int& max_ascent,
-                                int& max_descent,
+                                LayoutUnit& max_ascent,
+                                LayoutUnit& max_descent,
                                 bool& set_max_ascent,
                                 bool& set_max_descent,
                                 bool no_quirks_mode,
                                 GlyphOverflowAndFallbackFontsMap&,
                                 FontBaseline,
                                 VerticalPositionCache&);
-  void AdjustMaxAscentAndDescent(int& max_ascent,
-                                 int& max_descent,
+  void AdjustMaxAscentAndDescent(LayoutUnit& max_ascent,
+                                 LayoutUnit& max_descent,
                                  int max_position_top,
                                  int max_position_bottom);
   void PlaceBoxesInBlockDirection(LayoutUnit logical_top,
                                   LayoutUnit max_height,
-                                  int max_ascent,
+                                  LayoutUnit max_ascent,
                                   bool no_quirks_mode,
                                   LayoutUnit& line_top,
                                   LayoutUnit& line_bottom,
@@ -275,14 +270,13 @@ class InlineFlowBox : public InlineBox {
                               LayoutUnit block_right_edge,
                               LayoutUnit ellipsis_width,
                               LayoutUnit& truncated_width,
-                              bool&,
+                              InlineBox**,
                               LayoutUnit logical_left_offset) override;
 
   bool HasTextChildren() const { return has_text_children_; }
   bool HasTextDescendants() const { return has_text_descendants_; }
   void SetHasTextDescendants() { has_text_descendants_ = true; }
 
-  void CheckConsistency() const;
   void SetHasBadChildList();
 
   // Line visual and layout overflow are in the coordinate space of the block.
@@ -314,6 +308,20 @@ class InlineFlowBox : public InlineBox {
     if (!GetLineLayoutItem().IsHorizontalWritingMode())
       result = result.TransposedRect();
     return result;
+  }
+  LayoutUnit LogicalRightLayoutOverflow() const {
+    if (overflow_) {
+      return IsHorizontal() ? overflow_->LayoutOverflowRect().MaxX()
+                            : overflow_->LayoutOverflowRect().MaxY();
+    }
+    return LogicalRight();
+  }
+  LayoutUnit LogicalLeftLayoutOverflow() const {
+    if (overflow_) {
+      return IsHorizontal() ? overflow_->LayoutOverflowRect().X()
+                            : overflow_->LayoutOverflowRect().Y();
+    }
+    return LogicalLeft();
   }
 
   LayoutRect VisualOverflowRect(LayoutUnit line_top,
@@ -392,10 +400,10 @@ class InlineFlowBox : public InlineBox {
                                 logical_visual_overflow, line_top, line_bottom);
   }
 
-  LayoutUnit MaxLogicalBottomForUnderline(LineLayoutItem decoration_object,
-                                          LayoutUnit max_logical_bottom) const;
-  LayoutUnit MinLogicalTopForUnderline(LineLayoutItem decoration_object,
-                                       LayoutUnit min_logical_top) const;
+  LayoutUnit FarthestPositionForUnderline(LineLayoutItem decorating_box,
+                                          LineVerticalPositionType,
+                                          FontBaseline,
+                                          LayoutUnit current) const;
 
  private:
   void PlaceBoxRangeInInlineDirection(InlineBox* first_child,
@@ -426,6 +434,9 @@ class InlineFlowBox : public InlineBox {
   void AddReplacedChildOverflow(const InlineBox*,
                                 LayoutRect& logical_layout_overflow,
                                 LayoutRect& logical_visual_overflow);
+  bool HasEmphasisMarkBefore(const InlineTextBox*) const;
+  bool HasEmphasisMarkOver(const InlineTextBox*) const;
+  bool HasEmphasisMarkUnder(const InlineTextBox*) const;
 
   void SetLayoutOverflow(const LayoutRect&, const LayoutRect&);
   void SetVisualOverflow(const LayoutRect&, const LayoutRect&);
@@ -482,10 +493,6 @@ class InlineFlowBox : public InlineBox {
 };
 
 DEFINE_INLINE_BOX_TYPE_CASTS(InlineFlowBox);
-
-#if !DCHECK_IS_ON()
-inline void InlineFlowBox::CheckConsistency() const {}
-#endif
 
 inline void InlineFlowBox::SetHasBadChildList() {
 #if DCHECK_IS_ON()

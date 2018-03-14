@@ -94,7 +94,8 @@ class NET_EXPORT URLFetcher {
 
   // Used by SetURLRequestUserData.  The callback should make a fresh
   // base::SupportsUserData::Data object every time it's called.
-  typedef base::Callback<base::SupportsUserData::Data*()> CreateDataCallback;
+  typedef base::Callback<std::unique_ptr<base::SupportsUserData::Data>()>
+      CreateDataCallback;
 
   // Used by SetUploadStreamFactory. The callback should assign a fresh upload
   // data stream every time it's called.
@@ -312,6 +313,11 @@ class NET_EXPORT URLFetcher {
   // be called after the OnURLFetchComplete callback has run and if
   // the request has not failed.
   virtual HostPortPair GetSocketAddress() const = 0;
+
+  // Returns the proxy server that proxied the request. Must only be called
+  // after the OnURLFetchComplete callback has run and the request has not
+  // failed.
+  virtual const ProxyServer& ProxyServerUsed() const = 0;
 
   // Returns true if the request was delivered through a proxy.  Must only
   // be called after the OnURLFetchComplete callback has run and the request

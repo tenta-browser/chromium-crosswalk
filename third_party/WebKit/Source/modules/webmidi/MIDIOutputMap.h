@@ -5,13 +5,12 @@
 #ifndef MIDIOutputMap_h
 #define MIDIOutputMap_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/webmidi/MIDIOutput.h"
 #include "modules/webmidi/MIDIPortMap.h"
 
 namespace blink {
 
-class MIDIOutputMap : public MIDIPortMap<MIDIOutput>, public ScriptWrappable {
+class MIDIOutputMap : public MIDIPortMap<MIDIOutput> {
   DEFINE_WRAPPERTYPEINFO();
 
  public:

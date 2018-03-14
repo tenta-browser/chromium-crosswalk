@@ -6,18 +6,9 @@
 #define CONTENT_BROWSER_COMPOSITOR_IMAGE_TRANSPORT_FACTORY_H_
 
 #include <memory>
-#include <string>
 
-#include "base/memory/ref_counted.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
-#include "gpu/ipc/common/surface_handle.h"
-#include "ui/gfx/native_widget_types.h"
-#include "ui/latency/latency_info.h"
-
-namespace gfx {
-enum class SwapResult;
-}
 
 namespace ui {
 class Compositor;
@@ -25,17 +16,11 @@ class ContextFactory;
 class ContextFactoryPrivate;
 }
 
-namespace display_compositor {
+namespace viz {
 class GLHelper;
 }
 
-namespace gpu {
-class GpuChannelEstablishFactory;
-}
-
 namespace content {
-
-class FrameSinkManagerHost;
 
 // This class provides the interface for creating the support for the
 // cross-process image transport, both for creating the shared surface handle
@@ -45,19 +30,19 @@ class CONTENT_EXPORT ImageTransportFactory {
  public:
   virtual ~ImageTransportFactory() {}
 
-  // Initializes the global transport factory.
-  static void Initialize();
-
-  // Initializes the global transport factory for unit tests using the provided
-  // context factory.
-  static void InitializeForUnitTests(
-      std::unique_ptr<ImageTransportFactory> factory);
+  // Sets the global transport factory.
+  static void SetFactory(std::unique_ptr<ImageTransportFactory> factory);
 
   // Terminates the global transport factory.
   static void Terminate();
 
   // Gets the factory instance.
   static ImageTransportFactory* GetInstance();
+
+  // Whether gpu compositing is being used or is disabled for software
+  // compositing. Clients of the compositor should give resources that match
+  // the appropriate mode.
+  virtual bool IsGpuCompositingDisabled() = 0;
 
   // Gets the image transport factory as a context factory for the compositor.
   virtual ui::ContextFactory* GetContextFactory() = 0;
@@ -70,13 +55,7 @@ class CONTENT_EXPORT ImageTransportFactory {
   // Gets a GLHelper instance, associated with the shared context. This
   // GLHelper will get destroyed whenever the shared context is lost
   // (ImageTransportFactoryObserver::OnLostResources is called).
-  virtual display_compositor::GLHelper* GetGLHelper() = 0;
-
-  // Gets the frame sink manager host instance.
-  virtual FrameSinkManagerHost* GetFrameSinkManagerHost() = 0;
-
-  virtual void SetGpuChannelEstablishFactory(
-      gpu::GpuChannelEstablishFactory* factory) = 0;
+  virtual viz::GLHelper* GetGLHelper() = 0;
 
 #if defined(OS_MACOSX)
   // Called with |suspended| as true when the ui::Compositor has been

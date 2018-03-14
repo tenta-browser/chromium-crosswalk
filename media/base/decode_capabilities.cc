@@ -7,20 +7,28 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "media/base/media_switches.h"
+#include "third_party/libaom/av1_features.h"
 #include "ui/display/display_switches.h"
+
+#if !defined(MEDIA_DISABLE_LIBVPX)
+// VPX_CODEC_DISABLE_COMPAT excludes parts of the libvpx API that provide
+// backwards compatibility for legacy applications using the library.
+#define VPX_CODEC_DISABLE_COMPAT 1
+extern "C" {
+#include "third_party/libvpx/source/libvpx/vpx/vp8dx.h"      // nogncheck
+#include "third_party/libvpx/source/libvpx/vpx/vpx_codec.h"  // nogncheck
+}
+#endif
 
 namespace media {
 
 bool IsColorSpaceSupported(const media::VideoColorSpace& color_space) {
-  bool color_management =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kEnableHDR) ||
-      base::FeatureList::IsEnabled(media::kVideoColorManagement);
   switch (color_space.primaries) {
     case media::VideoColorSpace::PrimaryID::EBU_3213_E:
     case media::VideoColorSpace::PrimaryID::INVALID:
       return false;
 
-    // Transfers supported without color management.
+    // Transfers supported before color management.
     case media::VideoColorSpace::PrimaryID::BT709:
     case media::VideoColorSpace::PrimaryID::UNSPECIFIED:
     case media::VideoColorSpace::PrimaryID::BT470M:
@@ -35,13 +43,11 @@ bool IsColorSpaceSupported(const media::VideoColorSpace& color_space) {
     case media::VideoColorSpace::PrimaryID::SMPTEST428_1:
     case media::VideoColorSpace::PrimaryID::SMPTEST431_2:
     case media::VideoColorSpace::PrimaryID::SMPTEST432_1:
-      if (!color_management)
-        return false;
       break;
   }
 
   switch (color_space.transfer) {
-    // Transfers supported without color management.
+    // Transfers supported before color management.
     case media::VideoColorSpace::TransferID::UNSPECIFIED:
     case media::VideoColorSpace::TransferID::GAMMA22:
     case media::VideoColorSpace::TransferID::BT709:
@@ -62,8 +68,6 @@ bool IsColorSpaceSupported(const media::VideoColorSpace& color_space) {
     case media::VideoColorSpace::TransferID::IEC61966_2_4:
     case media::VideoColorSpace::TransferID::SMPTEST428_1:
     case media::VideoColorSpace::TransferID::ARIB_STD_B67:
-      if (!color_management)
-        return false;
       break;
 
     // Never supported.
@@ -72,7 +76,7 @@ bool IsColorSpaceSupported(const media::VideoColorSpace& color_space) {
   }
 
   switch (color_space.matrix) {
-    // Supported without color management.
+    // Supported before color management.
     case media::VideoColorSpace::MatrixID::BT709:
     case media::VideoColorSpace::MatrixID::UNSPECIFIED:
     case media::VideoColorSpace::MatrixID::BT470BG:
@@ -87,8 +91,6 @@ bool IsColorSpaceSupported(const media::VideoColorSpace& color_space) {
     case media::VideoColorSpace::MatrixID::YCOCG:
     case media::VideoColorSpace::MatrixID::YDZDX:
     case media::VideoColorSpace::MatrixID::BT2020_CL:
-      if (!color_management)
-        return false;
       break;
 
     // Never supported.
@@ -100,6 +102,28 @@ bool IsColorSpaceSupported(const media::VideoColorSpace& color_space) {
     return false;
 
   return true;
+}
+
+bool IsVp9ProfileSupported(VideoCodecProfile profile) {
+#if !defined(MEDIA_DISABLE_LIBVPX)
+  // High bit depth capabilities may be toggled via LibVPX config flags.
+  static bool vpx_supports_high_bit_depth =
+      (vpx_codec_get_caps(vpx_codec_vp9_dx()) & VPX_CODEC_CAP_HIGHBITDEPTH) !=
+      0;
+
+  switch (profile) {
+    // LibVPX always supports Profiles 0 and 1.
+    case VP9PROFILE_PROFILE0:
+    case VP9PROFILE_PROFILE1:
+      return true;
+    case VP9PROFILE_PROFILE2:
+    case VP9PROFILE_PROFILE3:
+      return vpx_supports_high_bit_depth;
+    default:
+      NOTREACHED();
+  }
+#endif
+  return false;
 }
 
 bool IsSupportedAudioConfig(const AudioConfig& config) {
@@ -140,10 +164,18 @@ bool IsSupportedAudioConfig(const AudioConfig& config) {
 // specific logic for Android (move from MimeUtilIntenral).
 bool IsSupportedVideoConfig(const VideoConfig& config) {
   switch (config.codec) {
+    case media::kCodecAV1:
+#if BUILDFLAG(ENABLE_AV1_DECODER)
+      return base::FeatureList::IsEnabled(kAv1Decoder) &&
+             IsColorSpaceSupported(config.color_space);
+#else
+      return false;
+#endif
+
     case media::kCodecVP9:
       // Color management required for HDR to not look terrible.
-      return IsColorSpaceSupported(config.color_space);
-
+      return IsColorSpaceSupported(config.color_space) &&
+             IsVp9ProfileSupported(config.profile);
     case media::kCodecH264:
     case media::kCodecVP8:
     case media::kCodecTheora:

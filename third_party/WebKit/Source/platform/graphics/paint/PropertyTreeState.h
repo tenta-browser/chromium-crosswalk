@@ -15,9 +15,7 @@
 namespace blink {
 
 // A complete set of paint properties including those that are inherited from
-// other objects.  RefPtrs are used to guard against use-after-free bugs and
-// DCHECKs ensure PropertyTreeState never retains the last reference to a
-// property tree node.
+// other objects.  RefPtrs are used to guard against use-after-free bugs.
 class PLATFORM_EXPORT PropertyTreeState {
   USING_FAST_MALLOC(PropertyTreeState);
 
@@ -25,35 +23,24 @@ class PLATFORM_EXPORT PropertyTreeState {
   PropertyTreeState(const TransformPaintPropertyNode* transform,
                     const ClipPaintPropertyNode* clip,
                     const EffectPaintPropertyNode* effect)
-      : transform_(transform), clip_(clip), effect_(effect) {
-    DCHECK(!transform_ || !transform_->HasOneRef());
-    DCHECK(!clip_ || !clip_->HasOneRef());
-    DCHECK(!effect_ || !effect_->HasOneRef());
-  }
+      : transform_(transform), clip_(clip), effect_(effect) {}
 
   bool HasDirectCompositingReasons() const;
 
   const TransformPaintPropertyNode* Transform() const {
-    DCHECK(!transform_ || !transform_->HasOneRef());
-    return transform_.Get();
+    return transform_.get();
   }
-  void SetTransform(RefPtr<const TransformPaintPropertyNode> node) {
+  void SetTransform(scoped_refptr<const TransformPaintPropertyNode> node) {
     transform_ = std::move(node);
   }
 
-  const ClipPaintPropertyNode* Clip() const {
-    DCHECK(!clip_ || !clip_->HasOneRef());
-    return clip_.Get();
-  }
-  void SetClip(RefPtr<const ClipPaintPropertyNode> node) {
+  const ClipPaintPropertyNode* Clip() const { return clip_.get(); }
+  void SetClip(scoped_refptr<const ClipPaintPropertyNode> node) {
     clip_ = std::move(node);
   }
 
-  const EffectPaintPropertyNode* Effect() const {
-    DCHECK(!effect_ || !effect_->HasOneRef());
-    return effect_.Get();
-  }
-  void SetEffect(RefPtr<const EffectPaintPropertyNode> node) {
+  const EffectPaintPropertyNode* Effect() const { return effect_.get(); }
+  void SetEffect(scoped_refptr<const EffectPaintPropertyNode> node) {
     effect_ = std::move(node);
   }
 
@@ -62,51 +49,14 @@ class PLATFORM_EXPORT PropertyTreeState {
   // Returns the compositor element id, if any, for this property state. If
   // neither the effect nor transform nodes have a compositor element id then a
   // default instance is returned.
-  const CompositorElementId GetCompositorElementId() const;
+  const CompositorElementId GetCompositorElementId(
+      const CompositorElementIdSet& element_ids) const;
 
-  enum InnermostNode {
-    kNone,  // None means that all nodes are their root values
-    kTransform,
-    kClip,
-    kEffect,
-  };
-
-  // There is always a well-defined order in which the transform, clip
-  // and effects of a PropertyTreeState apply. This method returns which
-  // of them applies first to content drawn with this PropertyTreeState.
-  // Note that it may be the case that multiple nodes from the same tree apply
-  // before any from another tree. This can happen, for example, if multiple
-  // effects or clips apply to a descendant transform state from the transform
-  // node.
-  //
-  // This method is meant to be used in concert with
-  // |PropertyTreeStateIterator|, which allows one to iterate over the nodes in
-  // the order in which they apply.
-  //
-  // Example:
-  //
-  //  Transform tree      Clip tree      Effect tree
-  //  ~~~~~~~~~~~~~~      ~~~~~~~~~      ~~~~~~~~~~~
-  //       Root              Root            Root
-  //        |                 |               |
-  //        T                 C               E
-  //
-  // Suppose that PropertyTreeState(T, C, E).innerMostNode() is E, and
-  // PropertytreeState(T, C, Root).innermostNode() is C. Then a PaintChunk
-  // that has propertyTreeState = PropertyTreeState(T, C, E) can be painted
-  // with the following display list structure:
-  //
-  // [BeginTransform] [BeginClip] [BeginEffect] PaintChunk drawings
-  //    [EndEffect] [EndClip] [EndTransform]
-  //
-  // The PropertyTreeStateIterator will behave like this:
-  //
-  // PropertyTreeStateIterator iterator(PropertyTreeState(T, C, E));
-  // DCHECK(iterator.innermostNode() == Effect);
-  // DCHECK(iterator.next()->innermostNode() == Clip);
-  // DCHECK(iterator.next()->innermostNode() == Transform);
-  // DCHECK(iterator.next()->innermostNode() == None);
-  InnermostNode GetInnermostNode() const;
+  void ClearChangedToRoot() const {
+    Transform()->ClearChangedToRoot();
+    Clip()->ClearChangedToRoot();
+    Effect()->ClearChangedToRoot();
+  }
 
 #if DCHECK_IS_ON()
   // Dumps the tree from this state up to the root as a string.
@@ -114,30 +64,15 @@ class PLATFORM_EXPORT PropertyTreeState {
 #endif
 
  private:
-  RefPtr<const TransformPaintPropertyNode> transform_;
-  RefPtr<const ClipPaintPropertyNode> clip_;
-  RefPtr<const EffectPaintPropertyNode> effect_;
+  scoped_refptr<const TransformPaintPropertyNode> transform_;
+  scoped_refptr<const ClipPaintPropertyNode> clip_;
+  scoped_refptr<const EffectPaintPropertyNode> effect_;
 };
 
 inline bool operator==(const PropertyTreeState& a, const PropertyTreeState& b) {
   return a.Transform() == b.Transform() && a.Clip() == b.Clip() &&
          a.Effect() == b.Effect();
 }
-
-// Iterates over the sequence transforms, clips and effects for a
-// PropertyTreeState between that state and the "root" state (all nodes equal
-// to *::Root()), in the order that they apply.
-//
-// See also PropertyTreeState::innermostNode for a more detailed example.
-class PLATFORM_EXPORT PropertyTreeStateIterator {
- public:
-  PropertyTreeStateIterator(const PropertyTreeState& properties)
-      : properties_(properties) {}
-  const PropertyTreeState* Next();
-
- private:
-  PropertyTreeState properties_;
-};
 
 #if DCHECK_IS_ON()
 

@@ -6,8 +6,10 @@
 #define CHROMECAST_PUBLIC_MEDIA_AUDIO_POST_PROCESSOR_SHLIB_H_
 
 #include <string>
+#include <vector>
 
 #include "chromecast_export.h"
+#include "volume_control.h"
 
 namespace chromecast {
 namespace media {
@@ -18,7 +20,7 @@ class AudioPostProcessor;
 // Creates an AudioPostProcessor.
 // This is applicable only to Alsa CMA backend.
 // Please refer to
-// chromecast/media/cma/backend/alsa/post_processors/governor_shlib.cc
+// chromecast/media/cma/backend/post_processors/governor_shlib.cc
 // as an example, but OEM's implementations should not have any
 // Chromium dependencies.
 // Called from StreamMixerAlsa when shared objects are listed in
@@ -31,6 +33,9 @@ AudioPostProcessorShlib_Create(const std::string& config, int channels);
 namespace chromecast {
 namespace media {
 
+// The maximum amount of data that will ever be processed in one call.
+const int kMaxAudioWriteTimeMilliseconds = 20;
+
 // Interface for AudioPostProcessors used for applying DSP in StreamMixerAlsa.
 class AudioPostProcessor {
  public:
@@ -40,21 +45,23 @@ class AudioPostProcessor {
   virtual bool SetSampleRate(int sample_rate) = 0;
 
   // Processes audio frames from |data|, overwriting contents.
-  // |data| will always be 32-bit planar float.
+  // |data| will always be 32-bit interleaved float.
   // |frames| is the number of audio frames in data and is
   // always non-zero and less than or equal to 20ms of audio.
   // AudioPostProcessor must always provide |frames| frames of data back
   // (may output 0’s)
-  // |volume| is the attenuation level (multiplier) of the stream.
-  // |volume| is between 0 and 1 inclusive.
-  // AudioPostProcessor should assume that it has already been applied.
-  // TODO(bshaya): Change |volume| to Cast System Volume.
+  // |system_volume| is the Cast Volume applied to the stream
+  // (normalized to 0-1). It is the same as the cast volume set via alsa.
+  // |volume_dbfs| is the actual attenuation in dBFS (-inf to 0), equivalent to
+  // VolumeMap::VolumeToDbFS(|volume|).
+  // AudioPostProcessor should assume that volume has already been applied.
   // Returns the current rendering delay of the filter in frames,
   // or negative if an error occurred during processing.
   // If an error occurred during processing, |data| should be unchanged.
-  virtual int ProcessFrames(const std::vector<float*>& data,
+  virtual int ProcessFrames(float* data,
                             int frames,
-                            float volume) = 0;
+                            float system_volume,
+                            float volume_dbfs) = 0;
 
   // Returns the number of frames of silence it will take for the
   // processor to come to rest.
@@ -65,6 +72,20 @@ class AudioPostProcessor {
   // This is not expected to be real-time;
   // It should only change when SetSampleRate is called.
   virtual int GetRingingTimeInFrames() = 0;
+
+  // Sends a message to the PostProcessor. Implementations are responsible
+  // for the format and parsing of messages.
+  // OEM's do not need to implement this method.
+  virtual void UpdateParameters(const std::string& message) {}
+
+  // Set content type to the PostProcessor so it could change processing
+  // settings accordingly.
+  virtual void SetContentType(AudioContentType content_type) {}
+
+  // Called when device is playing as part of a stereo pair.
+  // |channel| is the playout channel on this device (0 for left, 1 for right).
+  // or -1 if the device is not part of a stereo pair.
+  virtual void SetPlayoutChannel(int channel) {}
 
   virtual ~AudioPostProcessor() = default;
 };

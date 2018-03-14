@@ -3,11 +3,9 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/page_info/permission_menu_model.h"
-#include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/base/l10n/l10n_util.h"
 
 namespace {
 
@@ -42,6 +40,7 @@ TEST_F(PermissionMenuModelTest, TestDefault) {
   permission.type = CONTENT_SETTINGS_TYPE_COOKIES;
   permission.setting = CONTENT_SETTING_ALLOW;
   permission.default_setting = CONTENT_SETTING_ALLOW;
+  permission.source = content_settings::SETTING_SOURCE_USER;
   permission.is_incognito = false;
   PermissionMenuModel model(profile(), GURL("http://www.google.com"),
                             permission, callback.callback());
@@ -57,18 +56,12 @@ TEST_F(PermissionMenuModelTest, TestDefaultMediaHttp) {
     permission.type = type;
     permission.setting = CONTENT_SETTING_ALLOW;
     permission.default_setting = CONTENT_SETTING_ALLOW;
+    permission.source = content_settings::SETTING_SOURCE_USER;
     permission.is_incognito = false;
     PermissionMenuModel model(profile(), GURL("http://www.google.com"),
                               permission, callback.callback());
     EXPECT_EQ(2, model.GetItemCount());
   }
-}
-
-TEST_F(PermissionMenuModelTest, TestAllowBlock) {
-  TestCallback callback;
-  PermissionMenuModel model(profile(), GURL("http://www.google.com"),
-                            CONTENT_SETTING_ALLOW, callback.callback());
-  EXPECT_EQ(2, model.GetItemCount());
 }
 
 TEST_F(PermissionMenuModelTest, TestIncognitoNotifications) {
@@ -77,11 +70,30 @@ TEST_F(PermissionMenuModelTest, TestIncognitoNotifications) {
   permission.type = CONTENT_SETTINGS_TYPE_NOTIFICATIONS;
   permission.setting = CONTENT_SETTING_ASK;
   permission.default_setting = CONTENT_SETTING_ASK;
+  permission.source = content_settings::SETTING_SOURCE_USER;
 
   permission.is_incognito = false;
   PermissionMenuModel regular_model(profile(), GURL("https://www.google.com"),
                                     permission, callback.callback());
   EXPECT_EQ(3, regular_model.GetItemCount());
+
+  permission.is_incognito = true;
+  PermissionMenuModel incognito_model(profile(), GURL("https://www.google.com"),
+                                      permission, callback.callback());
+  EXPECT_EQ(2, incognito_model.GetItemCount());
+}
+
+TEST_F(PermissionMenuModelTest, TestSubresourceFilter) {
+  TestCallback callback;
+  PageInfoUI::PermissionInfo permission;
+  permission.type = CONTENT_SETTINGS_TYPE_ADS;
+  permission.setting = CONTENT_SETTING_BLOCK;
+  permission.default_setting = CONTENT_SETTING_BLOCK;
+  permission.source = content_settings::SETTING_SOURCE_USER;
+  permission.is_incognito = false;
+  PermissionMenuModel model(profile(), GURL("http://www.google.com"),
+                            permission, callback.callback());
+  EXPECT_EQ(2, model.GetItemCount());
 
   permission.is_incognito = true;
   PermissionMenuModel incognito_model(profile(), GURL("https://www.google.com"),

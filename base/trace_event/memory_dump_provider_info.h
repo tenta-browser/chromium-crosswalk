@@ -31,7 +31,7 @@ namespace trace_event {
 // At any time, there is at most one instance of this class for each instance
 // of a given MemoryDumpProvider, but there might be several scoped_refptr
 // holding onto each of this. Specifically:
-// - In nominal conditions, there is a refptr for each registerd MDP in the
+// - In nominal conditions, there is a refptr for each registered MDP in the
 //   MDM's |dump_providers_| list.
 // - In most cases, the only refptr (in the |dump_providers_| list) is destroyed
 //   by MDM::UnregisterDumpProvider().
@@ -58,7 +58,8 @@ struct BASE_EXPORT MemoryDumpProviderInfo
                          const char* name,
                          scoped_refptr<SequencedTaskRunner> task_runner,
                          const MemoryDumpProvider::Options& options,
-                         bool whitelisted_for_background_mode);
+                         bool whitelisted_for_background_mode,
+                         bool whitelisted_for_summary_mode);
 
   // It is safe to access the const fields below from any thread as they are
   // never mutated.
@@ -79,6 +80,9 @@ struct BASE_EXPORT MemoryDumpProviderInfo
 
   // True if the dump provider is whitelisted for background mode.
   const bool whitelisted_for_background_mode;
+
+  // True if the dump provider is whitelisted for summary mode.
+  const bool whitelisted_for_summary_mode;
 
   // These fields below, instead, are not thread safe and can be mutated only:
   // - On the |task_runner|, when not null (i.e. for thread-bound MDPS).

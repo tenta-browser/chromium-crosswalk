@@ -4,6 +4,7 @@
 
 import argparse
 import base64
+import collections
 import gzip
 import io
 import json
@@ -16,36 +17,14 @@ import urllib
 import urllib2
 
 
+from core import benchmark_finders
 from core import path_util
 
-from telemetry import benchmark
-from telemetry import decorators
-from telemetry.core import discover
 from telemetry.util import command_line
 from telemetry.util import matching
 
 
-# Unsupported Perf bisect bots.
-EXCLUDED_BOTS = {
-    'win_xp_perf_bisect',  # Goma issues: crbug.com/330900
-    'win_perf_bisect_builder',
-    'win64_nv_tester',
-    'winx64_bisect_builder',
-    'linux_perf_bisect_builder',
-    'mac_perf_bisect_builder',
-    'android_perf_bisect_builder',
-    'android_arm64_perf_bisect_builder',
-    # Bisect FYI bots are not meant for testing actual perf regressions.
-    # Hardware configuration on these bots is different from actual bisect bot
-    # and these bots runs E2E integration tests for auto-bisect
-    # using dummy benchmarks.
-    'linux_fyi_perf_bisect',
-    'mac_fyi_perf_bisect',
-    'win_fyi_perf_bisect',
-    'winx64_fyi_perf_bisect',
-}
-
-INCLUDE_BOTS = [
+ALL_CONFIG_BOTS = [
     'all',
     'all-win',
     'all-mac',
@@ -96,8 +75,20 @@ _MILO_MASTER_ENDPOINT = ('https://luci-milo.appspot.com/prpc/milo.Buildbot/'
 _MILO_RESPONSE_PREFIX = ')]}\'\n'
 
 
-assert not set(DEFAULT_TRYBOTS) & set(EXCLUDED_BOTS), (
-    'A trybot cannot present in both Default as well as Excluded bots lists.')
+def _IsPerfBisectBot(builder):
+  return (
+      builder.endswith('_perf_bisect') and
+      # Bisect FYI bots are not meant for testing actual perf regressions.
+      # Hardware configuration on these bots is different from actual bisect bot
+      # and these bots runs E2E integration tests for auto-bisect
+      # using dummy benchmarks.
+      not builder.endswith('fyi_perf_bisect')
+      # Individual bisect bots may be blacklisted here.
+  )
+
+
+assert all(_IsPerfBisectBot(builder) for builder in DEFAULT_TRYBOTS), (
+    'A default trybot is being exluded by the perf bisect bot filter.')
 
 
 class TrybotError(Exception):
@@ -134,7 +125,7 @@ def _ProcessMiloData(data):
 def _GetTrybotList(builders):
   builders = ['%s' % bot.replace('_perf_bisect', '').replace('_', '-')
               for bot in builders]
-  builders.extend(INCLUDE_BOTS)
+  builders.extend(ALL_CONFIG_BOTS)
   return sorted(builders)
 
 
@@ -146,41 +137,31 @@ def _GetBotPlatformFromTrybotName(trybot_name):
     raise TrybotError('Trybot "%s" unsupported for tryjobs.' % trybot_name)
 
 
+def _GetPlatformVariantFromBuilderName(builder):
+  bot_platform = _GetBotPlatformFromTrybotName(builder)
+  # Special case for platform variants that need special configs.
+  if bot_platform == 'win' and 'x64' in builder:
+    return 'win-x64'
+  elif bot_platform == 'android' and 'webview' in builder:
+    return 'android-webview'
+  else:
+    return bot_platform
+
+
 def _GetBuilderNames(trybot_name, builders):
   """Return platform and its available bot name as dictionary."""
-  os_names = ['linux', 'android', 'mac', 'win']
-  if 'all' not in trybot_name:
-    bot = ['%s_perf_bisect' % trybot_name.replace('-', '_')]
-    bot_platform = _GetBotPlatformFromTrybotName(trybot_name)
-    if 'x64' in trybot_name:
-      bot_platform += '-x64'
-    return {bot_platform: bot}
-
-  platform_and_bots = {}
-  for os_name in os_names:
-    platform_and_bots[os_name] = [bot for bot in builders if os_name in bot]
-
-  # Special case for Windows x64, consider it as separate platform
-  # config config should contain target_arch=x64 and --browser=release_x64.
-  win_x64_bots = [
-      win_bot for win_bot in platform_and_bots['win']
-      if 'x64' in win_bot]
-  # Separate out non x64 bits win bots
-  platform_and_bots['win'] = list(
-      set(platform_and_bots['win']) - set(win_x64_bots))
-  platform_and_bots['win-x64'] = win_x64_bots
-
-  if 'all-win' in trybot_name:
-    return {'win': platform_and_bots['win'],
-            'win-x64': platform_and_bots['win-x64']}
-  if 'all-mac' in trybot_name:
-    return {'mac': platform_and_bots['mac']}
-  if 'all-android' in trybot_name:
-    return {'android': platform_and_bots['android']}
-  if 'all-linux' in trybot_name:
-    return {'linux': platform_and_bots['linux']}
-
-  return platform_and_bots
+  if trybot_name in ALL_CONFIG_BOTS:
+    platform_prefix = trybot_name[4:]
+    platform_and_bots = collections.defaultdict(list)
+    for builder in builders:
+      bot_platform = _GetPlatformVariantFromBuilderName(builder)
+      if bot_platform.startswith(platform_prefix):
+        platform_and_bots[bot_platform].append(builder)
+    return platform_and_bots
+  else:
+    builder = '%s_perf_bisect' % trybot_name.replace('-', '_')
+    bot_platform = _GetPlatformVariantFromBuilderName(builder)
+    return {bot_platform: [builder]}
 
 
 _GIT_CMD = 'git'
@@ -250,7 +231,7 @@ class Trybot(command_line.ArgParseCommand):
         data = _ProcessMiloData(f.read())
         builders = data.get('builders', {}).keys()
         # Exclude unsupported bots like win xp and some dummy bots.
-        cls._builders = [bot for bot in builders if bot not in EXCLUDED_BOTS]
+        cls._builders = [bot for bot in builders if _IsPerfBisectBot(bot)]
 
     return cls._builders
 
@@ -271,10 +252,8 @@ class Trybot(command_line.ArgParseCommand):
     for arg in extra_args:
       if arg == '--browser' or arg.startswith('--browser='):
         parser.error('--browser=... is not allowed when running trybot.')
-    all_benchmarks = discover.DiscoverClasses(
-        start_dir=path_util.GetPerfBenchmarksDir(),
-        top_level_dir=path_util.GetPerfDir(),
-        base_class=benchmark.Benchmark).values()
+    all_benchmarks = benchmark_finders.GetAllPerfBenchmarks()
+    all_benchmarks.extend(benchmark_finders.GetAllContribBenchmarks())
     all_benchmark_names = [b.Name() for b in all_benchmarks]
     all_benchmarks_by_names = {b.Name(): b for b in all_benchmarks}
     benchmark_class = all_benchmarks_by_names.get(options.benchmark_name, None)
@@ -297,8 +276,8 @@ class Trybot(command_line.ArgParseCommand):
     """Return whether benchmark will be disabled on trybot platform.
 
     Note that we cannot tell with certainty whether the benchmark will be
-    disabled on the trybot platform since the disable logic in ShouldDisable()
-    can be very dynamic and can only be verified on the trybot server platform.
+    disabled on the trybot platform since the disable logic can be very dynamic
+    and can only be verified on the trybot server platform.
 
     We are biased on the side of enabling the benchmark, and attempt to
     early discover whether the benchmark will be disabled as our best.
@@ -312,32 +291,11 @@ class Trybot(command_line.ArgParseCommand):
       disabled, and |reason| is a string that shows the reason why we think the
       benchmark is disabled for sure.
     """
-    benchmark_name = benchmark_class.Name()
-    benchmark_disabled_strings = decorators.GetDisabledAttributes(
-        benchmark_class)
-    if 'all' in benchmark_disabled_strings:
-      return True, 'Benchmark %s is disabled on all platform.' % benchmark_name
-    if trybot_name == 'all':
-      return False, ''
-    trybot_platform = _GetBotPlatformFromTrybotName(trybot_name)
-    if trybot_platform in benchmark_disabled_strings:
-      return True, (
-          "Benchmark %s is disabled on %s, and trybot's platform is %s." %
-          (benchmark_name, ', '.join(benchmark_disabled_strings),
-           trybot_platform))
-    benchmark_enabled_strings = decorators.GetEnabledAttributes(benchmark_class)
-    if (benchmark_enabled_strings and
-        trybot_platform not in benchmark_enabled_strings and
-        'all' not in benchmark_enabled_strings):
-      return True, (
-          "Benchmark %s is only enabled on %s, and trybot's platform is %s." %
-          (benchmark_name, ', '.join(benchmark_enabled_strings),
-           trybot_platform))
-    if benchmark_class.ShouldDisable != benchmark.Benchmark.ShouldDisable:
-      logging.warning(
-          'Benchmark %s has ShouldDisable() method defined. If your trybot run '
-          'does not produce any results, it is possible that the benchmark '
-          'is disabled on the target trybot platform.', benchmark_name)
+    # TODO(rnephew): This method has been a noop for awhile now. Decorators and
+    # ShouldDisable() are deprecated in favor of StoryExpectations(). That
+    # is in turn being replaced by 1-click disabling via SoM. Once 1-click
+    # diabling is ready this should be updated to use it.
+    del benchmark_class, trybot_name  # unused until updated.
     return False, ''
 
   @classmethod
@@ -359,17 +317,17 @@ class Trybot(command_line.ArgParseCommand):
         help=("""specify the repo path where the patch is created.'
 This argument should only be used if the changes are made outside chromium repo.
 E.g.,
-1) Assume you are running run_benchmarks command from $HOME/cr/src/ direcory:'
+1) Assume you are running run_benchmarks command from $HOME/cr/src/ directory:'
   a) If your changes are in $HOME/cr/src/v8, then --repo_path=v8 or
      --repo-path=$HOME/cr/src/v8
   b) If your changes are in $HOME/cr/src/third_party/catapult, then
      --repo_path=third_party/catapult or
      --repo_path = $HOME/cr/src/third_party/catapult'
   c) If your changes are not relative to src/ e.g. you created changes in some
-     other direcotry say $HOME/mydir/v8/v8/, then the
+     other directory say $HOME/mydir/v8/v8/, then the
      --repo_path=$HOME/mydir/v8/v8
-2) Assume you are running run_benchmarks command not relatvie to src i.e.,
-   you are running from $HOME/mydir/ direcory:'
+2) Assume you are running run_benchmarks command not relative to src i.e.,
+   you are running from $HOME/mydir/ directory:'
    a) If your changes are in $HOME/cr/src/v8, then --repo-path=$HOME/cr/src/v8
    b) If your changes are in $HOME/cr/src/third_party/catapult, then
       --repo_path=$HOME/cr/src/third_party/catapult'
@@ -389,7 +347,7 @@ E.g.,
     """Sends a tryjob to a perf trybot.
 
     This creates a branch, telemetry-tryjob, switches to that branch, edits
-    the bisect config, commits it, uploads the CL to rietveld, and runs a
+    the bisect config, commits it, uploads the CL, and runs a
     tryjob on the given bot.
     """
     if extra_args is None:
@@ -427,12 +385,19 @@ E.g.,
     arguments.insert(0, 'src/tools/perf/run_benchmark')
     if bot_platform == 'android':
       arguments.insert(1, '--browser=android-chromium')
-    elif any('x64' in bot for bot in self._builder_names[bot_platform]):
+    elif bot_platform == 'android-webview':
+      arguments.insert(1, '--browser=android-webview')
+    elif bot_platform == 'win-x64':
       arguments.insert(1, '--browser=release_x64')
       target_arch = 'x64'
     else:
-
       arguments.insert(1, '--browser=release')
+
+    dummy_parser = argparse.ArgumentParser()
+    dummy_parser.add_argument('--output-format', action='append')
+    args, _ = dummy_parser.parse_known_args(arguments)
+    if not args.output_format or 'html' not in args.output_format:
+      arguments.append('--output-format=html')
 
     command = ' '.join(arguments)
 
@@ -482,7 +447,7 @@ E.g.,
     if output:
       raise TrybotError(
           'Cannot send a try job with a dirty tree.\nPlease commit locally and '
-          'upload your changes to rietveld in %s repository.' % repo_path)
+          'upload your changes for review in %s repository.' % repo_path)
 
     return (repo_name, branch_name)
 
@@ -549,12 +514,11 @@ E.g.,
       except OSError:
         pass
 
-    # Make sure the local commits are uploaded to rietveld.
     if not json_output.get('issue'):
       raise TrybotError(
           'PLEASE NOTE: The workflow for Perf Try jobs is changed. '
           'In order to run the perf try job, you must first upload your '
-          'changes to rietveld.')
+          'changes for review.')
     return json_output.get('issue_url')
 
   def _AttemptTryjob(self, options, extra_args):
@@ -589,10 +553,10 @@ E.g.,
               branch_name, repo_info.get('url'))
         deps_override = {repo_info.get('src'): options.deps_revision}
 
-      rietveld_url = self._GetChangeList()
+      review_url = self._GetChangeList()
       print ('\nRunning try job....\nview progress here %s.'
              '\n\tRepo Name: %s\n\tPath: %s\n\tBranch: %s' % (
-                 rietveld_url, repo_name, repo_path, branch_name))
+                 review_url, repo_name, repo_path, branch_name))
 
       for bot_platform in self._builder_names:
         if not self._builder_names[bot_platform]:
@@ -642,4 +606,4 @@ E.g.,
       git_try_command.extend(['-b', bot])
 
     RunGit(git_try_command, error_msg_on_fail)
-    print 'Perf Try job sent to rietveld for %s platform.' % bot_platform
+    print 'Perf Try job started for %s platform.' % bot_platform

@@ -17,7 +17,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/browser/notifications/notification_id_generator.h"
-#include "content/browser/service_worker/service_worker_context_observer.h"
+#include "content/browser/service_worker/service_worker_context_core_observer.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/platform_notification_context.h"
@@ -27,6 +27,10 @@ class GURL;
 
 namespace base {
 class SequencedTaskRunner;
+}
+
+namespace url {
+class Origin;
 }
 
 namespace content {
@@ -42,8 +46,8 @@ class ServiceWorkerContextWrapper;
 // defined in this interface must only be called on the IO thread unless
 // otherwise specified.
 class CONTENT_EXPORT PlatformNotificationContextImpl
-    : NON_EXPORTED_BASE(public PlatformNotificationContext),
-      NON_EXPORTED_BASE(public ServiceWorkerContextObserver) {
+    : public PlatformNotificationContext,
+      public ServiceWorkerContextCoreObserver {
  public:
   // Constructs a new platform notification context. If |path| is non-empty, the
   // database will be initialized in the "Platform Notifications" subdirectory
@@ -63,9 +67,9 @@ class CONTENT_EXPORT PlatformNotificationContextImpl
   // Creates a BlinkNotificationServiceImpl that is owned by this context. Must
   // be called on the UI thread, although the service will be created on and
   // bound to the IO thread.
-  void CreateService(
-      int render_process_id,
-      mojo::InterfaceRequest<blink::mojom::NotificationService> request);
+  void CreateService(int render_process_id,
+                     const url::Origin& origin,
+                     blink::mojom::NotificationServiceRequest request);
 
   // Removes |service| from the list of owned services, for example because the
   // Mojo pipe disconnected. Must be called on the IO thread.
@@ -91,7 +95,7 @@ class CONTENT_EXPORT PlatformNotificationContextImpl
       int64_t service_worker_registration_id,
       const ReadAllResultCallback& callback) override;
 
-  // ServiceWorkerContextObserver implementation.
+  // ServiceWorkerContextCoreObserver implementation.
   void OnRegistrationDeleted(int64_t registration_id,
                              const GURL& pattern) override;
   void OnStorageWiped() override;
@@ -110,6 +114,7 @@ class CONTENT_EXPORT PlatformNotificationContextImpl
   void ShutdownOnIO();
   void CreateServiceOnIO(
       int render_process_id,
+      const url::Origin& origin,
       ResourceContext* resource_context,
       mojo::InterfaceRequest<blink::mojom::NotificationService> request);
 

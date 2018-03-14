@@ -7,22 +7,25 @@
 
 #include <stdint.h>
 #include <memory>
-#include <set>
 #include <string>
 #include <utility>
 
 #include "base/atomic_ref_count.h"
 #include "base/callback.h"
+#include "base/containers/flat_set.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/weak_ptr.h"
+#include "base/optional.h"
+#include "base/strings/string_piece.h"
 #include "base/threading/thread_checker.h"
+#include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "media/audio/audio_io.h"
 #include "media/audio/audio_manager.h"
 #include "media/audio/audio_power_monitor.h"
 #include "media/audio/audio_source_diverter.h"
-#include "media/audio/simple_sources.h"
 #include "media/base/media_export.h"
 
 // An AudioOutputController controls an AudioOutputStream and provides data
@@ -65,7 +68,7 @@ class MEDIA_EXPORT AudioOutputController
     : public base::RefCountedThreadSafe<AudioOutputController>,
       public AudioOutputStream::AudioSourceCallback,
       public AudioSourceDiverter,
-      NON_EXPORTED_BASE(public AudioManager::AudioDeviceListener)  {
+      public AudioManager::AudioDeviceListener {
  public:
   // An event handler that receives events from the AudioOutputController. The
   // following methods are called on the audio manager thread.
@@ -75,6 +78,7 @@ class MEDIA_EXPORT AudioOutputController
     virtual void OnControllerPlaying() = 0;
     virtual void OnControllerPaused() = 0;
     virtual void OnControllerError() = 0;
+    virtual void OnLog(base::StringPiece message) = 0;
 
    protected:
     virtual ~EventHandler() {}
@@ -143,34 +147,17 @@ class MEDIA_EXPORT AudioOutputController
   //
   // It is safe to call this method more than once. Calls after the first one
   // will have no effect.
-  void Close(const base::Closure& closed_task);
+  void Close(base::OnceClosure closed_task);
 
   // Sets the volume of the audio output stream.
   void SetVolume(double volume);
-
-  // Calls |callback| (on the caller's thread) with the current output
-  // device ID.
-  void GetOutputDeviceId(
-      base::Callback<void(const std::string&)> callback) const;
-
-  // Changes which output device to use. If desired, you can provide a
-  // callback that will be notified (on the thread you called from)
-  // when the function has completed execution.
-  //
-  // Changing the output device causes the controller to go through
-  // the same state transition back to the current state as a call to
-  // OnDeviceChange (unless it is currently diverting, see
-  // Start/StopDiverting below, in which case the state transition
-  // will happen when StopDiverting is called).
-  void SwitchOutputDevice(const std::string& output_device_id,
-                          const base::Closure& callback);
 
   // AudioSourceCallback implementation.
   int OnMoreData(base::TimeDelta delay,
                  base::TimeTicks delay_timestamp,
                  int prior_frames_skipped,
                  AudioBus* dest) override;
-  void OnError(AudioOutputStream* stream) override;
+  void OnError() override;
 
   // AudioDeviceListener implementation.  When called AudioOutputController will
   // shutdown the existing |stream_|, transition to the kRecreating state,
@@ -208,6 +195,33 @@ class MEDIA_EXPORT AudioOutputController
   ~AudioOutputController() override;
 
  private:
+  // Used to store various stats about a stream. The lifetime of this object is
+  // from play until pause. The underlying physical stream may be changed when
+  // resuming playback, hence separate stats are logged for each play/pause
+  // cycle.
+  class ErrorStatisticsTracker {
+   public:
+    ErrorStatisticsTracker();
+
+    // Note: the destructor takes care of logging all of the stats.
+    ~ErrorStatisticsTracker();
+
+    // Called to indicate an error callback was fired for the stream.
+    void RegisterError();
+
+    // This function should be called from the stream callback thread.
+    void OnMoreDataCalled();
+
+   private:
+    void WedgeCheck();
+
+    bool error_during_callback_ = false;
+
+    // Flags when we've asked for a stream to start but it never did.
+    base::AtomicRefCount on_more_io_data_called_;
+    base::OneShotTimer wedge_timer_;
+  };
+
   AudioOutputController(AudioManager* audio_manager, EventHandler* handler,
                         const AudioParameters& params,
                         const std::string& output_device_id,
@@ -219,8 +233,6 @@ class MEDIA_EXPORT AudioOutputController
   void DoPause();
   void DoClose();
   void DoSetVolume(double volume);
-  std::string DoGetOutputDeviceId() const;
-  void DoSwitchOutputDevice(const std::string& output_device_id);
   void DoReportError();
   void DoStartDiverting(AudioOutputStream* to_stream);
   void DoStopDiverting();
@@ -233,12 +245,12 @@ class MEDIA_EXPORT AudioOutputController
   // Helper method that stops, closes, and NULLs |*stream_|.
   void DoStopCloseAndClearStream();
 
-  // Checks if a stream was started successfully but never calls OnMoreData().
-  void WedgeCheck();
-
   // Send audio data to each duplication target.
   void BroadcastDataToDuplicationTargets(std::unique_ptr<AudioBus> audio_bus,
                                          base::TimeTicks reference_time);
+
+  // Log the current average power level measured by power_monitor_.
+  void LogAudioPowerLevel(const std::string& call_name);
 
   AudioManager* const audio_manager_;
   const AudioParameters params_;
@@ -253,9 +265,11 @@ class MEDIA_EXPORT AudioOutputController
   // When non-NULL, audio is being diverted to this stream.
   AudioOutputStream* diverting_to_stream_;
 
-  // The targets for audio stream to be copied to.
-  std::set<AudioPushSink*> duplication_targets_;
-  base::Lock duplication_targets_lock_;
+  // The targets for audio stream to be copied to. |should_duplicate_| is set to
+  // 1 when the OnMoreData() call should proxy the data to
+  // BroadcastDataToDuplicationTargets().
+  base::flat_set<AudioPushSink*> duplication_targets_;
+  base::AtomicRefCount should_duplicate_;
 
   // The current volume of the audio stream.
   double volume_;
@@ -272,19 +286,24 @@ class MEDIA_EXPORT AudioOutputController
   // Scans audio samples from OnMoreData() as input to compute power levels.
   AudioPowerMonitor power_monitor_;
 
-  // Flags when we've asked for a stream to start but it never did.
-  base::AtomicRefCount on_more_io_data_called_;
-  std::unique_ptr<base::OneShotTimer> wedge_timer_;
+  // Updated each time a power measurement is logged.
+  base::TimeTicks last_audio_level_log_time_;
 
-  // Flag which indicates errors received during Stop/Close should be ignored.
-  // These errors are generally harmless since a fresh stream is about to be
-  // recreated, but if forwarded, renderer side clients may consider them
-  // catastrophic and abort their operations.
+  // Used for keeping track of and logging stats. Created when a stream starts
+  // and destroyed when a stream stops. Also reset every time there is a stream
+  // being created due to device changes.
+  base::Optional<ErrorStatisticsTracker> stats_tracker_;
+
+  // WeakPtrFactory and WeakPtr for ignoring errors which occur arround a
+  // Stop/Close cycle; e.g., device changes. These errors are generally harmless
+  // since a fresh stream is about to be recreated, but if forwarded, renderer
+  // side clients may consider them catastrophic and abort their operations.
   //
-  // If |stream_| is started then |ignore_errors_during_stop_close_| must only
-  // be accessed while |error_lock_| is held.
-  bool ignore_errors_during_stop_close_;
-  base::Lock error_lock_;
+  // |weak_this_for_errors_| must not be reassigned while a stream is active or
+  // we'll have concurrent access from different threads. Only the factory may
+  // be used to invalidate WeakPtrs while the stream is active.
+  base::WeakPtr<AudioOutputController> weak_this_for_errors_;
+  base::WeakPtrFactory<AudioOutputController> weak_factory_for_errors_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioOutputController);
 };

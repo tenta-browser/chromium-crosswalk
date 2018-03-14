@@ -16,6 +16,7 @@
 #include "content/browser/media/capture/audio_mirroring_manager.h"
 #include "content/browser/media/media_internals.h"
 #include "content/browser/renderer_host/media/audio_input_device_manager.h"
+#include "content/browser/renderer_host/media/audio_output_authorization_handler.h"
 #include "content/browser/renderer_host/media/audio_output_delegate_impl.h"
 #include "content/browser/renderer_host/media/audio_sync_reader.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
@@ -35,23 +36,16 @@ namespace content {
 
 namespace {
 
-void UMALogDeviceAuthorizationTime(base::TimeTicks auth_start_time) {
-  UMA_HISTOGRAM_CUSTOM_TIMES("Media.Audio.OutputDeviceAuthorizationTime",
-                             base::TimeTicks::Now() - auth_start_time,
-                             base::TimeDelta::FromMilliseconds(1),
-                             base::TimeDelta::FromMilliseconds(5000), 50);
-}
-
 // Check that the routing ID references a valid RenderFrameHost, and run
 // |callback| on the IO thread with true if the ID is valid.
 void ValidateRenderFrameId(int render_process_id,
                            int render_frame_id,
-                           const base::Callback<void(bool)>& callback) {
+                           base::OnceCallback<void(bool)> callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   const bool frame_exists =
       !!RenderFrameHost::FromID(render_process_id, render_frame_id);
   BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                          base::Bind(callback, frame_exists));
+                          base::BindOnce(std::move(callback), frame_exists));
 }
 
 }  // namespace
@@ -63,33 +57,21 @@ AudioRendererHost::AudioRendererHost(int render_process_id,
                                      media::AudioManager* audio_manager,
                                      media::AudioSystem* audio_system,
                                      AudioMirroringManager* mirroring_manager,
-                                     MediaStreamManager* media_stream_manager,
-                                     const std::string& salt)
+                                     MediaStreamManager* media_stream_manager)
     : BrowserMessageFilter(AudioMsgStart),
       render_process_id_(render_process_id),
       audio_manager_(audio_manager),
       mirroring_manager_(mirroring_manager),
       media_stream_manager_(media_stream_manager),
-      salt_(salt),
-      validate_render_frame_id_function_(&ValidateRenderFrameId),
       authorization_handler_(audio_system,
                              media_stream_manager,
-                             render_process_id_,
-                             salt) {
+                             render_process_id_) {
   DCHECK(audio_manager_);
 }
 
 AudioRendererHost::~AudioRendererHost() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(delegates_.empty());
-}
-
-void AudioRendererHost::GetOutputControllers(
-    const RenderProcessHost::GetAudioOutputControllersCallback&
-        callback) const {
-  BrowserThread::PostTaskAndReplyWithResult(
-      BrowserThread::IO, FROM_HERE,
-      base::Bind(&AudioRendererHost::DoGetOutputControllers, this), callback);
 }
 
 void AudioRendererHost::OnChannelClosing() {
@@ -106,7 +88,7 @@ void AudioRendererHost::OnDestruct() const {
 
 void AudioRendererHost::OnStreamCreated(
     int stream_id,
-    base::SharedMemory* shared_memory,
+    const base::SharedMemory* shared_memory,
     std::unique_ptr<base::CancelableSyncSocket> foreign_socket) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
@@ -121,11 +103,11 @@ void AudioRendererHost::OnStreamCreated(
     return;
   }
 
-  base::SharedMemoryHandle foreign_memory_handle;
   base::SyncSocket::TransitDescriptor socket_descriptor;
-  size_t shared_memory_size = shared_memory->requested_size();
 
-  if (!(shared_memory->ShareToProcess(PeerHandle(), &foreign_memory_handle) &&
+  base::SharedMemoryHandle foreign_memory_handle =
+      shared_memory->handle().Duplicate();
+  if (!(foreign_memory_handle.IsValid() &&
         foreign_socket->PrepareTransitDescriptor(PeerHandle(),
                                                  &socket_descriptor))) {
     // Something went wrong in preparing the IPC handles.
@@ -133,9 +115,8 @@ void AudioRendererHost::OnStreamCreated(
     return;
   }
 
-  Send(new AudioMsg_NotifyStreamCreated(
-      stream_id, foreign_memory_handle, socket_descriptor,
-      base::checked_cast<uint32_t>(shared_memory_size)));
+  Send(new AudioMsg_NotifyStreamCreated(stream_id, foreign_memory_handle,
+                                        socket_descriptor));
 }
 
 void AudioRendererHost::OnStreamError(int stream_id) {
@@ -154,17 +135,6 @@ void AudioRendererHost::DidValidateRenderFrame(int stream_id, bool is_valid) {
   DLOG(WARNING) << "Render frame for stream (id=" << stream_id
                 << ") no longer exists.";
   OnStreamError(stream_id);
-}
-
-RenderProcessHost::AudioOutputControllerList
-AudioRendererHost::DoGetOutputControllers() const {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-
-  RenderProcessHost::AudioOutputControllerList controllers;
-  for (const auto& delegate : delegates_)
-    controllers.push_back(delegate->GetController());
-
-  return controllers;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -208,38 +178,32 @@ void AudioRendererHost::OnRequestDeviceAuthorization(
   // Unretained is ok here since |this| owns |authorization_handler_| and
   // |authorization_handler_| owns the callback.
   authorization_handler_.RequestDeviceAuthorization(
-      render_frame_id, session_id, device_id, security_origin,
-      base::Bind(&AudioRendererHost::AuthorizationCompleted,
-                 base::Unretained(this), stream_id, security_origin,
-                 auth_start_time));
+      render_frame_id, session_id, device_id,
+      base::BindOnce(&AudioRendererHost::AuthorizationCompleted,
+                     base::Unretained(this), stream_id, auth_start_time));
 }
 
 void AudioRendererHost::AuthorizationCompleted(
     int stream_id,
-    const url::Origin& security_origin,
     base::TimeTicks auth_start_time,
     media::OutputDeviceStatus status,
-    bool should_send_id,
     const media::AudioParameters& params,
-    const std::string& raw_device_id) {
+    const std::string& raw_device_id,
+    const std::string& device_id_for_renderer) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  AudioOutputAuthorizationHandler::UMALogDeviceAuthorizationTime(
+      auth_start_time);
+
   auto auth_data = authorizations_.find(stream_id);
   if (auth_data == authorizations_.end())
     return;  // Stream was closed before finishing authorization
 
-  UMALogDeviceAuthorizationTime(auth_start_time);
   if (status == media::OUTPUT_DEVICE_STATUS_OK) {
     auth_data->second.first = true;
     auth_data->second.second = raw_device_id;
-    if (should_send_id) {
-      std::string hashed_id = MediaStreamManager::GetHMACForMediaDeviceID(
-          salt_, security_origin, raw_device_id);
-      Send(new AudioMsg_NotifyDeviceAuthorized(stream_id, status, params,
-                                               hashed_id));
-    } else {
-      Send(new AudioMsg_NotifyDeviceAuthorized(stream_id, status, params,
-                                               std::string()));
-    }
+    Send(new AudioMsg_NotifyDeviceAuthorized(stream_id, status, params,
+                                             device_id_for_renderer));
   } else {
     authorizations_.erase(auth_data);
     Send(new AudioMsg_NotifyDeviceAuthorized(
@@ -297,10 +261,10 @@ void AudioRendererHost::OnCreateStream(int stream_id,
   // force-close the stream later if validation fails.
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(validate_render_frame_id_function_, render_process_id_,
-                 render_frame_id,
-                 base::Bind(&AudioRendererHost::DidValidateRenderFrame, this,
-                            stream_id)));
+      base::BindOnce(&ValidateRenderFrameId, render_process_id_,
+                     render_frame_id,
+                     base::BindOnce(&AudioRendererHost::DidValidateRenderFrame,
+                                    this, stream_id)));
 
   MediaObserver* const media_observer =
       GetContentClient()->browser()->GetMediaObserver();
@@ -308,13 +272,17 @@ void AudioRendererHost::OnCreateStream(int stream_id,
   MediaInternals* const media_internals = MediaInternals::GetInstance();
   std::unique_ptr<media::AudioLog> audio_log = media_internals->CreateAudioLog(
       media::AudioLogFactory::AUDIO_OUTPUT_CONTROLLER);
+  audio_log->OnCreated(stream_id, params, device_unique_id);
   media_internals->SetWebContentsTitleForAudioLogEntry(
       stream_id, render_process_id_, render_frame_id, audio_log.get());
-  delegates_.push_back(
-      base::WrapUnique<media::AudioOutputDelegate>(new AudioOutputDelegateImpl(
-          this, audio_manager_, std::move(audio_log), mirroring_manager_,
-          media_observer, stream_id, render_frame_id, render_process_id_,
-          params, device_unique_id)));
+  auto delegate = AudioOutputDelegateImpl::Create(
+      this, audio_manager_, std::move(audio_log), mirroring_manager_,
+      media_observer, stream_id, render_frame_id, render_process_id_, params,
+      device_unique_id);
+  if (delegate)
+    delegates_.push_back(std::move(delegate));
+  else
+    SendErrorMessage(stream_id);
 }
 
 void AudioRendererHost::OnPlayStream(int stream_id) {

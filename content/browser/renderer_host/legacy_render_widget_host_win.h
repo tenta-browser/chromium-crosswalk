@@ -9,11 +9,11 @@
 #include <atlcrack.h>
 #include <atlwin.h>
 #include <oleacc.h>
+#include <wrl/client.h>
 
 #include <memory>
 
 #include "base/macros.h"
-#include "base/win/scoped_comptr.h"
 #include "content/common/content_export.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -24,6 +24,7 @@ class DirectManipulationHelper;
 }  // namespace gfx
 
 namespace ui {
+class AXSystemCaretWin;
 class WindowEventTarget;
 }
 
@@ -55,14 +56,15 @@ class RenderWidgetHostViewAura;
 // HWND instead of the DesktopWindowTreeHostWin.
 class CONTENT_EXPORT LegacyRenderWidgetHostHWND
     : public ATL::CWindowImpl<LegacyRenderWidgetHostHWND,
-                              NON_EXPORTED_BASE(ATL::CWindow),
-                              ATL::CWinTraits<WS_CHILD> > {
+                              ATL::CWindow,
+                              ATL::CWinTraits<WS_CHILD>> {
  public:
   DECLARE_WND_CLASS_EX(L"Chrome_RenderWidgetHostHWND", CS_DBLCLKS, 0);
 
   typedef ATL::CWindowImpl<LegacyRenderWidgetHostHWND,
-                           NON_EXPORTED_BASE(ATL::CWindow),
-                           ATL::CWinTraits<WS_CHILD> > Base;
+                           ATL::CWindow,
+                           ATL::CWinTraits<WS_CHILD>>
+      Base;
 
   // Creates and returns an instance of the LegacyRenderWidgetHostHWND class on
   // successful creation of a child window parented to the parent window passed
@@ -105,7 +107,7 @@ class CONTENT_EXPORT LegacyRenderWidgetHostHWND
   void UpdateParent(HWND parent);
   HWND GetParent();
 
-  IAccessible* window_accessible() { return window_accessible_.get(); }
+  IAccessible* window_accessible() { return window_accessible_.Get(); }
 
   // Functions to show and hide the window.
   void Show();
@@ -119,6 +121,9 @@ class CONTENT_EXPORT LegacyRenderWidgetHostHWND
   void set_host(RenderWidgetHostViewAura* host) {
     host_ = host;
   }
+
+  // Changes the position of the system caret used for accessibility.
+  void MoveCaretTo(const gfx::Rect& bounds);
 
  protected:
   void OnFinalMessage(HWND hwnd) override;
@@ -152,12 +157,15 @@ class CONTENT_EXPORT LegacyRenderWidgetHostHWND
   LRESULT OnSize(UINT message, WPARAM w_param, LPARAM l_param);
   LRESULT OnWindowPosChanged(UINT message, WPARAM w_param, LPARAM l_param);
 
-  base::win::ScopedComPtr<IAccessible> window_accessible_;
+  Microsoft::WRL::ComPtr<IAccessible> window_accessible_;
 
   // Set to true if we turned on mouse tracking.
   bool mouse_tracking_enabled_;
 
   RenderWidgetHostViewAura* host_;
+
+  // Some assistive software need to track the location of the caret.
+  std::unique_ptr<ui::AXSystemCaretWin> ax_system_caret_;
 
   // This class provides functionality to register the legacy window as a
   // Direct Manipulation consumer. This allows us to support smooth scroll

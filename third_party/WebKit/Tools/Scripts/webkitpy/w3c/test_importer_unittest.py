@@ -2,37 +2,271 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import collections
+import datetime
+import json
 
 from webkitpy.common.checkout.git_mock import MockGit
 from webkitpy.common.host_mock import MockHost
+from webkitpy.common.net.buildbot import Build
+from webkitpy.common.net.git_cl import CLStatus
+from webkitpy.common.net.git_cl import TryJobStatus
+from webkitpy.common.net.git_cl_mock import MockGitCL
+from webkitpy.common.system.executive_mock import MockCall
 from webkitpy.common.system.executive_mock import MockExecutive
 from webkitpy.common.system.log_testing import LoggingTestCase
-from webkitpy.w3c.test_importer import TestImporter
-
-
-MockChromiumCommit = collections.namedtuple('ChromiumCommit', ('sha', 'position'))
+from webkitpy.layout_tests.builder_list import BuilderList
+from webkitpy.w3c.chromium_commit_mock import MockChromiumCommit
+from webkitpy.w3c.local_wpt import LocalWPT
+from webkitpy.w3c.local_wpt_mock import MockLocalWPT
+from webkitpy.w3c.test_importer import TestImporter, ROTATIONS_URL
+from webkitpy.w3c.wpt_github_mock import MockWPTGitHub
 
 
 class TestImporterTest(LoggingTestCase):
 
-    def test_abort_on_exportable_commits(self):
-        importer = TestImporter(MockHost())
-        importer.exportable_but_not_exported_commits = lambda _: [
-            MockChromiumCommit(sha='deadbeef', position=123)]
-        importer.checkout_is_okay = lambda _: True
-        return_code = importer.main(['wpt'])
-        self.assertEqual(return_code, 0)
+    def test_update_expectations_for_cl_no_results(self):
+        host = MockHost()
+        host.filesystem.write_text_file(
+            '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
+        importer = TestImporter(host)
+        importer.git_cl = MockGitCL(host, results=None)
+        success = importer.update_expectations_for_cl()
+        self.assertFalse(success)
         self.assertLog([
-            'INFO: Cloning repo: https://chromium.googlesource.com/external/w3c/web-platform-tests.git\n',
-            'INFO: Local path: /mock-checkout/third_party/WebKit/wpt\n',
-            'INFO: There were exportable but not-yet-exported commits:\n',
-            'INFO:   https://chromium.googlesource.com/chromium/src/+/deadbeef\n',
-            'INFO: Aborting import to prevent clobbering these commits.\n',
-            'INFO: Deleting temp repo directory /mock-checkout/third_party/WebKit/wpt.\n',
+            'INFO: Triggering try jobs for updating expectations.\n',
+            'ERROR: No initial try job results, aborting.\n',
+        ])
+        self.assertEqual(importer.git_cl.calls[-1], ['git', 'cl', 'set-close'])
+
+    def test_update_expectations_for_cl_closed_cl(self):
+        host = MockHost()
+        host.filesystem.write_text_file(
+            '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
+        importer = TestImporter(host)
+        importer.git_cl = MockGitCL(host, results=CLStatus(
+            status='closed',
+            try_job_results={
+                Build('builder-a', 123): TryJobStatus('COMPLETED', 'SUCCESS'),
+            },
+        ))
+        success = importer.update_expectations_for_cl()
+        self.assertFalse(success)
+        self.assertLog([
+            'INFO: Triggering try jobs for updating expectations.\n',
+            'ERROR: The CL was closed, aborting.\n',
         ])
 
-    def test_update_test_expectations(self):
+    def test_update_expectations_for_cl_all_jobs_pass(self):
+        host = MockHost()
+        host.filesystem.write_text_file(
+            '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
+        importer = TestImporter(host)
+        importer.git_cl = MockGitCL(host, results=CLStatus(
+            status='lgtm',
+            try_job_results={
+                Build('builder-a', 123): TryJobStatus('COMPLETED', 'SUCCESS'),
+            },
+        ))
+        success = importer.update_expectations_for_cl()
+        self.assertLog([
+            'INFO: Triggering try jobs for updating expectations.\n',
+            'INFO: All jobs finished.\n',
+        ])
+        self.assertTrue(success)
+
+    def test_update_expectations_for_cl_fail_but_no_changes(self):
+        host = MockHost()
+        host.filesystem.write_text_file(
+            '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
+        importer = TestImporter(host)
+        importer.git_cl = MockGitCL(host, results=CLStatus(
+            status='lgtm',
+            try_job_results={
+                Build('builder-a', 123): TryJobStatus('COMPLETED', 'FAILURE'),
+            },
+        ))
+        importer.fetch_new_expectations_and_baselines = lambda: None
+        success = importer.update_expectations_for_cl()
+        self.assertTrue(success)
+        self.assertLog([
+            'INFO: Triggering try jobs for updating expectations.\n',
+            'INFO: All jobs finished.\n',
+        ])
+
+    def test_run_commit_queue_for_cl_pass(self):
+        host = MockHost()
+        host.filesystem.write_text_file(
+            '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
+        importer = TestImporter(host)
+        # Only the latest job for each builder is counted.
+        importer.git_cl = MockGitCL(host, results=CLStatus(
+            status='lgtm',
+            try_job_results={
+                Build('cq-builder-a', 120): TryJobStatus('COMPLETED', 'FAILURE'),
+                Build('cq-builder-a', 123): TryJobStatus('COMPLETED', 'SUCCESS'),
+            },
+        ))
+        success = importer.run_commit_queue_for_cl()
+        self.assertTrue(success)
+        self.assertLog([
+            'INFO: Triggering CQ try jobs.\n',
+            'INFO: All jobs finished.\n',
+            'INFO: CQ appears to have passed; trying to commit.\n',
+            'INFO: Update completed.\n',
+        ])
+        self.assertEqual(importer.git_cl.calls, [
+            ['git', 'cl', 'try'],
+            ['git', 'cl', 'upload', '-f', '--send-mail'],
+            ['git', 'cl', 'set-commit'],
+        ])
+
+    def test_run_commit_queue_for_cl_fails(self):
+        host = MockHost()
+        host.filesystem.write_text_file(
+            '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
+        importer = TestImporter(host)
+        importer.git_cl = MockGitCL(host, results=CLStatus(
+            status='lgtm',
+            try_job_results={
+                Build('cq-builder-a', 120): TryJobStatus('COMPLETED', 'SUCCESS'),
+                Build('cq-builder-a', 123): TryJobStatus('COMPLETED', 'FAILURE'),
+                Build('cq-builder-b', 200): TryJobStatus('COMPLETED', 'SUCCESS'),
+            },
+        ))
+        importer.fetch_new_expectations_and_baselines = lambda: None
+        success = importer.run_commit_queue_for_cl()
+        self.assertFalse(success)
+        self.assertLog([
+            'INFO: Triggering CQ try jobs.\n',
+            'INFO: All jobs finished.\n',
+            'ERROR: CQ appears to have failed; aborting.\n',
+        ])
+        self.assertEqual(importer.git_cl.calls, [
+            ['git', 'cl', 'try'],
+            ['git', 'cl', 'set-close'],
+        ])
+
+    def test_run_commit_queue_for_cl_closed_cl(self):
+        host = MockHost()
+        host.filesystem.write_text_file(
+            '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
+        importer = TestImporter(host)
+        importer.git_cl = MockGitCL(host, results=CLStatus(
+            status='closed',
+            try_job_results={
+                Build('cq-builder-a', 120): TryJobStatus('COMPLETED', 'SUCCESS'),
+                Build('cq-builder-b', 200): TryJobStatus('COMPLETED', 'SUCCESS'),
+            },
+        ))
+        success = importer.run_commit_queue_for_cl()
+        self.assertFalse(success)
+        self.assertLog([
+            'INFO: Triggering CQ try jobs.\n',
+            'ERROR: The CL was closed; aborting.\n',
+        ])
+        self.assertEqual(importer.git_cl.calls, [
+            ['git', 'cl', 'try'],
+        ])
+
+    def test_run_commit_queue_for_cl_only_checks_non_blink_bots(self):
+        host = MockHost()
+        host.filesystem.write_text_file(
+            '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
+        host.builders = BuilderList({
+            'fakeos_blink_rel': {
+                'port_name': 'test-fakeos',
+                'specifiers': ['FakeOS', 'Release'],
+                'is_try_builder': True,
+            }
+        })
+        importer = TestImporter(host)
+        importer.git_cl = MockGitCL(host, results=CLStatus(
+            status='lgtm',
+            try_job_results={
+                Build('fakeos_blink_rel', 123): TryJobStatus('COMPLETED', 'FAILURE'),
+                Build('cq-builder-b', 200): TryJobStatus('COMPLETED', 'SUCCESS'),
+            },
+        ))
+        importer.fetch_new_expectations_and_baselines = lambda: None
+        success = importer.run_commit_queue_for_cl()
+        self.assertTrue(success)
+        self.assertLog([
+            'INFO: Triggering CQ try jobs.\n',
+            'INFO: All jobs finished.\n',
+            'INFO: CQ appears to have passed; trying to commit.\n',
+            'INFO: Update completed.\n',
+        ])
+        self.assertEqual(importer.git_cl.calls, [
+            ['git', 'cl', 'try'],
+            ['git', 'cl', 'upload', '-f', '--send-mail'],
+            ['git', 'cl', 'set-commit'],
+        ])
+
+    def test_run_commit_queue_for_cl_timeout(self):
+        host = MockHost()
+        importer = TestImporter(host)
+        # The simulates the case where importer.git_cl.wait_for_try_jobs returns
+        # None, which would normally happen if we time out waiting for results.
+        importer.git_cl = MockGitCL(host, results=None)
+        success = importer.run_commit_queue_for_cl()
+        self.assertFalse(success)
+        self.assertLog([
+            'INFO: Triggering CQ try jobs.\n',
+            'ERROR: Timed out waiting for CQ; aborting.\n'
+        ])
+        self.assertEqual(
+            importer.git_cl.calls,
+            [['git', 'cl', 'try'], ['git', 'cl', 'set-close']])
+
+    def test_apply_exportable_commits_locally(self):
+        # TODO(robertma): Consider using MockLocalWPT.
+        host = MockHost()
+        importer = TestImporter(host, wpt_github=MockWPTGitHub(pull_requests=[]))
+        importer.wpt_git = MockGit(cwd='/tmp/wpt', executive=host.executive)
+        fake_commit = MockChromiumCommit(
+            host, subject='My fake commit',
+            patch=(
+                'Fake patch contents...\n'
+                '--- a/third_party/WebKit/LayoutTests/external/wpt/css/css-ui-3/outline-004.html\n'
+                '+++ b/third_party/WebKit/LayoutTests/external/wpt/css/css-ui-3/outline-004.html\n'
+                '@@ -20,7 +20,7 @@\n'
+                '...'))
+        importer.exportable_but_not_exported_commits = lambda _: [fake_commit]
+        applied = importer.apply_exportable_commits_locally(LocalWPT(host))
+        self.assertEqual(applied, [fake_commit])
+        # This assertion is implementation details of LocalWPT.apply_patch.
+        # TODO(robertma): Move this to local_wpt_unittest.py.
+        self.assertEqual(host.executive.full_calls, [
+            MockCall(
+                ['git', 'apply', '-'],
+                {
+                    'input': (
+                        'Fake patch contents...\n'
+                        '--- a/css/css-ui-3/outline-004.html\n'
+                        '+++ b/css/css-ui-3/outline-004.html\n'
+                        '@@ -20,7 +20,7 @@\n'
+                        '...'),
+                    'cwd': '/tmp/wpt',
+                    'env': None
+                }),
+            MockCall(
+                ['git', 'add', '.'],
+                kwargs={'input': None, 'cwd': '/tmp/wpt', 'env': None})
+        ])
+        self.assertEqual(importer.wpt_git.local_commits(),
+                         [['Applying patch 14fd77e88e42147c57935c49d9e3b2412b8491b7']])
+
+    def test_apply_exportable_commits_locally_returns_none_on_failure(self):
+        host = MockHost()
+        wpt_github = MockWPTGitHub(pull_requests=[])
+        importer = TestImporter(host, wpt_github=wpt_github)
+        commit = MockChromiumCommit(host, subject='My fake commit')
+        importer.exportable_but_not_exported_commits = lambda _: [commit]
+        local_wpt = MockLocalWPT(apply_patch=['Failed'])    # Failure to apply patch.
+        applied = importer.apply_exportable_commits_locally(local_wpt)
+        self.assertIsNone(applied)
+
+    def test_update_all_test_expectations_files(self):
         host = MockHost()
         host.filesystem.files['/mock-checkout/third_party/WebKit/LayoutTests/TestExpectations'] = (
             'Bug(test) some/test/a.html [ Failure ]\n'
@@ -53,16 +287,30 @@ class TestImporterTest(LoggingTestCase):
             ('Bug(test) new/a.html [ Failure ]\n'
              'Bug(test) new/c.html [ Failure ]\n'))
 
+    def test_get_directory_owners(self):
+        host = MockHost()
+        host.filesystem.write_text_file('/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
+        host.filesystem.write_text_file('/mock-checkout/third_party/WebKit/LayoutTests/external/wpt/foo/OWNERS',
+                                        'someone@chromium.org\n')
+        importer = TestImporter(host)
+        importer.chromium_git.changed_files = lambda: ['third_party/WebKit/LayoutTests/external/wpt/foo/x.html']
+        self.assertEqual(importer.get_directory_owners(), {('someone@chromium.org',): ['external/wpt/foo']})
+
+    def test_get_directory_owners_no_changed_files(self):
+        host = MockHost()
+        host.filesystem.write_text_file('/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
+        host.filesystem.write_text_file('/mock-checkout/third_party/WebKit/LayoutTests/external/wpt/foo/OWNERS',
+                                        'someone@chromium.org\n')
+        importer = TestImporter(host)
+        self.assertEqual(importer.get_directory_owners(), {})
+
     # Tests for protected methods - pylint: disable=protected-access
 
     def test_commit_changes(self):
         host = MockHost()
         importer = TestImporter(host)
-        importer._has_changes = lambda: True
         importer._commit_changes('dummy message')
-        self.assertEqual(
-            host.executive.calls,
-            [['git', 'commit', '--all', '-F', '-']])
+        self.assertEqual(importer.chromium_git.local_commits(), [['dummy message']])
 
     def test_commit_message(self):
         importer = TestImporter(MockHost())
@@ -70,7 +318,7 @@ class TestImporterTest(LoggingTestCase):
             importer._commit_message('aaaa', '1111'),
             'Import 1111\n\n'
             'Using wpt-import in Chromium aaaa.\n\n'
-            'NOEXPORT=true')
+            'No-Export: true')
 
     def test_cl_description_with_empty_environ(self):
         host = MockHost()
@@ -79,9 +327,14 @@ class TestImporterTest(LoggingTestCase):
         description = importer._cl_description(directory_owners={})
         self.assertEqual(
             description,
-            ('Last commit message\n\n'
-             'TBR=qyearsley@chromium.org\n'
-             'NOEXPORT=true'))
+            'Last commit message\n\n'
+            'Note to sheriffs: This CL imports external tests and adds\n'
+            'expectations for those tests; if this CL is large and causes\n'
+            'a few new failures, please fix the failures by adding new\n'
+            'lines to TestExpectations rather than reverting. See:\n'
+            'https://chromium.googlesource.com'
+            '/chromium/src/+/master/docs/testing/web_platform_tests.md\n\n'
+            'No-Export: true')
         self.assertEqual(host.executive.calls, [['git', 'log', '-1', '--format=%B']])
 
     def test_cl_description_with_environ_variables(self):
@@ -92,24 +345,19 @@ class TestImporterTest(LoggingTestCase):
         importer.host.environ['BUILDBOT_BUILDERNAME'] = 'b'
         importer.host.environ['BUILDBOT_BUILDNUMBER'] = '123'
         description = importer._cl_description(directory_owners={})
-        self.assertEqual(
-            description,
-            ('Last commit message\n'
-             'Build: https://build.chromium.org/p/my.master/builders/b/builds/123\n\n'
-             'TBR=qyearsley@chromium.org\n'
-             'NOEXPORT=true'))
+        self.assertIn(
+            'Build: https://build.chromium.org/p/my.master/builders/b/builds/123\n\n',
+            description)
         self.assertEqual(host.executive.calls, [['git', 'log', '-1', '--format=%B']])
 
     def test_cl_description_moves_noexport_tag(self):
         host = MockHost()
-        host.executive = MockExecutive(output='Summary\n\nNOEXPORT=true\n\n')
+        host.executive = MockExecutive(output='Summary\n\nNo-Export: true\n\n')
         importer = TestImporter(host)
         description = importer._cl_description(directory_owners={})
-        self.assertEqual(
-            description,
-            ('Summary\n\n'
-             'TBR=qyearsley@chromium.org\n'
-             'NOEXPORT=true'))
+        self.assertIn(
+            'No-Export: true',
+            description)
 
     def test_cl_description_with_directory_owners(self):
         host = MockHost()
@@ -119,17 +367,89 @@ class TestImporterTest(LoggingTestCase):
             ('someone@chromium.org',): ['external/wpt/foo', 'external/wpt/bar'],
             ('x@chromium.org', 'y@chromium.org'): ['external/wpt/baz'],
         })
-        self.assertEqual(
-            description,
-            ('Last commit message\n\n'
-             'Directory owners for changes in this CL:\n'
-             'someone@chromium.org:\n'
-             '  external/wpt/foo\n'
-             '  external/wpt/bar\n'
-             'x@chromium.org, y@chromium.org:\n'
-             '  external/wpt/baz\n\n'
-             'TBR=qyearsley@chromium.org\n'
-             'NOEXPORT=true'))
+        self.assertIn(
+            'Directory owners for changes in this CL:\n'
+            'someone@chromium.org:\n'
+            '  external/wpt/foo\n'
+            '  external/wpt/bar\n'
+            'x@chromium.org, y@chromium.org:\n'
+            '  external/wpt/baz\n\n',
+            description)
+
+    def test_tbr_reviewer_no_response_uses_backup(self):
+        host = MockHost()
+        importer = TestImporter(host)
+        self.assertEqual('qyearsley', importer.tbr_reviewer())
+        self.assertLog([
+            'ERROR: Exception while fetching current sheriff: '
+            'No JSON object could be decoded\n'
+        ])
+
+    def test_tbr_reviewer_nobody_on_rotation(self):
+        host = MockHost()
+        yesterday = (datetime.date.fromtimestamp(host.time()) -
+                     datetime.timedelta(days=1)).isoformat()
+        host.web.urls[ROTATIONS_URL] = json.dumps({
+            'calendar': [
+                {
+                    'date': yesterday,
+                    'participants': [['some-sheriff']],
+                },
+            ],
+            'rotations': ['ecosystem_infra']
+        })
+        importer = TestImporter(host)
+        self.assertEqual('qyearsley', importer.tbr_reviewer())
+        self.assertLog([])
+
+        today = datetime.date.fromtimestamp(host.time()).isoformat()
+        host.web.urls[ROTATIONS_URL] = json.dumps({
+            'calendar': [
+                {
+                    'date': today,
+                    'participants': [[''], ['some-sheriff']],
+                },
+            ],
+            'rotations': ['ecosystem_infra', 'other-rotation']
+        })
+        self.assertEqual('qyearsley', importer.tbr_reviewer())
+        self.assertLog([])
+
+    def test_tbr_reviewer(self):
+        host = MockHost()
+        today = datetime.date.fromtimestamp(host.time()).isoformat()
+        host.web.urls[ROTATIONS_URL] = json.dumps({
+            'calendar': [
+                {
+                    'date': '2017-01-01',
+                    'participants': [['other-sheriff'], ['last-sheriff']],
+                },
+                {
+                    'date': today,
+                    'participants': [['other-sheriff'], ['current-sheriff']],
+                },
+            ],
+            'rotations': ['other-rotation', 'ecosystem_infra']
+        })
+        importer = TestImporter(host)
+        self.assertEqual('current-sheriff', importer.tbr_reviewer())
+        self.assertLog([])
+
+    def test_tbr_reviewer_with_full_email_address(self):
+        host = MockHost()
+        today = datetime.date.fromtimestamp(host.time()).isoformat()
+        host.web.urls[ROTATIONS_URL] = json.dumps({
+            'calendar': [
+                {
+                    'date': today,
+                    'participants': [['external@example.com']],
+                },
+            ],
+            'rotations': ['ecosystem_infra']
+        })
+        importer = TestImporter(host)
+        self.assertEqual('external@example.com', importer.tbr_reviewer())
+        self.assertLog([])
 
     def test_generate_manifest_successful_run(self):
         # This test doesn't test any aspect of the real manifest script, it just
@@ -138,75 +458,105 @@ class TestImporterTest(LoggingTestCase):
         importer = TestImporter(host)
         blink_path = '/mock-checkout/third_party/WebKit'
         host.filesystem.write_text_file(blink_path + '/LayoutTests/external/wpt/MANIFEST.json', '{}')
-        importer._generate_manifest(blink_path + '/LayoutTests/external/wpt')
+        importer._generate_manifest()
         self.assertEqual(
             host.executive.calls,
             [
                 [
                     'python',
-                    blink_path + '/Tools/Scripts/webkitpy/thirdparty/wpt/wpt/manifest',
+                    blink_path + '/Tools/Scripts/webkitpy/thirdparty/wpt/wpt/wpt',
+                    'manifest',
                     '--work',
                     '--tests-root',
                     blink_path + '/LayoutTests/external/wpt',
-                ],
-                [
-                    'git',
-                    'add',
-                    blink_path + '/LayoutTests/external/WPT_BASE_MANIFEST.json',
                 ]
             ])
+        self.assertEqual(importer.chromium_git.added_paths,
+                         {blink_path + '/LayoutTests/external/WPT_BASE_MANIFEST.json'})
 
-    def test_get_directory_owners(self):
+    def test_only_wpt_manifest_changed(self):
         host = MockHost()
+        importer = TestImporter(host)
+        importer.chromium_git.changed_files = lambda: [
+            'third_party/WebKit/LayoutTests/external/WPT_BASE_MANIFEST.json',
+            'third_party/WebKit/LayoutTests/external/wpt/foo/x.html']
+        self.assertFalse(importer._only_wpt_manifest_changed())
+
+        importer.chromium_git.changed_files = lambda: [
+            'third_party/WebKit/LayoutTests/external/WPT_BASE_MANIFEST.json']
+        self.assertTrue(importer._only_wpt_manifest_changed())
+
+    def test_delete_orphaned_baselines_basic(self):
+        host = MockHost()
+        importer = TestImporter(host)
+        dest_path = importer.dest_path
         host.filesystem.write_text_file(
-            '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations',
-            '## Owners: someone@chromium.org\n'
-            '# external/wpt/foo [ Pass ]\n')
-        git = MockGit()
-        git.changed_files = lambda: ['third_party/WebKit/LayoutTests/external/wpt/foo/x.html']
-        host.git = lambda: git
-        importer = TestImporter(host)
-        self.assertEqual(importer.get_directory_owners(), {('someone@chromium.org',): ['external/wpt/foo']})
+            dest_path + '/MANIFEST.json',
+            json.dumps({
+                'items': {
+                    'testharness': {
+                        'a.html': [['/a.html', {}]],
+                    },
+                    'manual': {},
+                    'reftest': {},
+                },
+            }))
+        host.filesystem.write_text_file(dest_path + '/a.html', '')
+        host.filesystem.write_text_file(dest_path + '/a-expected.txt', '')
+        host.filesystem.write_text_file(dest_path + '/orphaned-expected.txt', '')
+        importer._delete_orphaned_baselines()
+        self.assertFalse(host.filesystem.exists(dest_path + '/orphaned-expected.txt'))
+        self.assertTrue(host.filesystem.exists(dest_path + '/a-expected.txt'))
 
-    def test_get_directory_owners_no_changed_files(self):
+    def test_delete_orphaned_baselines_worker_js_tests(self):
+        # This test checks that baselines for existing tests shouldn't be
+        # deleted, even if the test name isn't the same as the file name.
         host = MockHost()
+        importer = TestImporter(host)
+        dest_path = importer.dest_path
         host.filesystem.write_text_file(
-            '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations',
-            '## Owners: someone@chromium.org\n'
-            '# external/wpt/foo [ Pass ]\n')
-        importer = TestImporter(host)
-        self.assertEqual(importer.get_directory_owners(), {})
+            dest_path + '/MANIFEST.json',
+            json.dumps({
+                'items': {
+                    'testharness': {
+                        'a.any.js': [
+                            ['/a.any.html', {}],
+                            ['/a.any.worker.html', {}],
+                        ],
+                        'b.worker.js': [['/b.worker.html', {}]],
+                        'c.html': [
+                            ['/c.html?q=1', {}],
+                            ['/c.html?q=2', {}],
+                        ],
+                    },
+                    'manual': {},
+                    'reftest': {},
+                },
+            }))
+        host.filesystem.write_text_file(dest_path + '/a.any.js', '')
+        host.filesystem.write_text_file(dest_path + '/a.any-expected.txt', '')
+        host.filesystem.write_text_file(dest_path + '/a.any.worker-expected.txt', '')
+        host.filesystem.write_text_file(dest_path + '/b.worker.js', '')
+        host.filesystem.write_text_file(dest_path + '/b.worker-expected.txt', '')
+        host.filesystem.write_text_file(dest_path + '/c.html', '')
+        host.filesystem.write_text_file(dest_path + '/c-expected.txt', '')
+        importer._delete_orphaned_baselines()
+        self.assertTrue(host.filesystem.exists(dest_path + '/a.any-expected.txt'))
+        self.assertTrue(host.filesystem.exists(dest_path + '/a.any.worker-expected.txt'))
+        self.assertTrue(host.filesystem.exists(dest_path + '/b.worker-expected.txt'))
+        self.assertTrue(host.filesystem.exists(dest_path + '/c-expected.txt'))
 
-    def test_cc_part(self):
-        directory_owners = {
-            ('someone@chromium.org',): ['external/wpt/foo', 'external/wpt/bar'],
-            ('x@chromium.org', 'y@chromium.org'): ['external/wpt/baz'],
-        }
-        self.assertEqual(
-            TestImporter._cc_part(directory_owners),
-            ['--cc=someone@chromium.org', '--cc=x@chromium.org', '--cc=y@chromium.org'])
-
-    def test_delete_orphaned_baselines(self):
+    def test_clear_out_dest_path(self):
         host = MockHost()
-        dest_path = '/mock-checkout/third_party/WebKit/LayoutTests/external/wpt'
-        host.filesystem.write_text_file(dest_path + '/b-expected.txt', '')
-        host.filesystem.write_text_file(dest_path + '/b.x-expected.txt', '')
-        host.filesystem.write_text_file(dest_path + '/b.x.html', '')
         importer = TestImporter(host)
-        importer._delete_orphaned_baselines(dest_path)
-        self.assertFalse(host.filesystem.exists(dest_path + '/b-expected.txt'))
-        self.assertTrue(host.filesystem.exists(dest_path + '/b.x-expected.txt'))
-        self.assertTrue(host.filesystem.exists(dest_path + '/b.x.html'))
-
-    def test_keeps_owners_files_and_baselines(self):
-        host = MockHost()
-        dest_path = '/mock-checkout/third_party/WebKit/LayoutTests/external/wpt'
+        dest_path = importer.dest_path
         host.filesystem.write_text_file(dest_path + '/foo-test.html', '')
         host.filesystem.write_text_file(dest_path + '/foo-test-expected.txt', '')
         host.filesystem.write_text_file(dest_path + '/OWNERS', '')
         host.filesystem.write_text_file(dest_path + '/bar/baz/OWNERS', '')
-        importer = TestImporter(host)
-        importer._clear_out_dest_path(dest_path)
+        # When the destination path is cleared, OWNERS files and baselines
+        # are kept.
+        importer._clear_out_dest_path()
         self.assertFalse(host.filesystem.exists(dest_path + '/foo-test.html'))
         self.assertTrue(host.filesystem.exists(dest_path + '/foo-test-expected.txt'))
         self.assertTrue(host.filesystem.exists(dest_path + '/OWNERS'))

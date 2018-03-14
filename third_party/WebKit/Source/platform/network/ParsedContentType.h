@@ -33,30 +33,22 @@
 #define ParsedContentType_h
 
 #include "platform/PlatformExport.h"
+#include "platform/network/ParsedContentHeaderFieldParameters.h"
 #include "platform/wtf/Allocator.h"
-#include "platform/wtf/HashMap.h"
-#include "platform/wtf/text/StringHash.h"
+#include "platform/wtf/Optional.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
-// ParsedContentType parses the constructor argument as specified in RFC2045
-// and stores the result.
+// ParsedContentType parses the content of a Content-Type header field as
+// specified in RFC2045 into MIME type and parameters and stores them.
 // FIXME: add support for comments.
 class PLATFORM_EXPORT ParsedContentType final {
   STACK_ALLOCATED();
 
  public:
-  // When |Relaxed| is specified, the parser parses parameter values in a sloppy
-  // manner, i.e., only ';' and '"' are treated as special characters.
-  // See https://chromiumcodereview.appspot.com/23043002.
-  // When |Strict| is specified, the parser does not allow multiple values
-  // for the same parameter. Some RFCs based on RFC2045 (e.g. RFC6838) note that
-  // "It is an error for a specific parameter to be specified more than once."
-  enum class Mode {
-    kNormal,
-    kRelaxed,
-    kStrict,
-  };
+  using Mode = ParsedContentHeaderFieldParameters::Mode;
+
   explicit ParsedContentType(const String&, Mode = Mode::kNormal);
 
   String MimeType() const { return mime_type_; }
@@ -64,20 +56,19 @@ class PLATFORM_EXPORT ParsedContentType final {
 
   // Note that in the case of multiple values for the same name, the last value
   // is returned.
-  String ParameterValueForName(const String&) const;
-  size_t ParameterCount() const;
+  String ParameterValueForName(const String& name) const {
+    return IsValid() ? parameters_->ParameterValueForName(name) : String();
+  }
+  const ParsedContentHeaderFieldParameters& GetParameters() const {
+    DCHECK(IsValid());
+    return *parameters_;
+  }
 
-  bool IsValid() const { return is_valid_; }
+  bool IsValid() const { return !!parameters_; }
 
  private:
-  bool Parse(const String&);
-
-  const Mode mode_;
-  bool is_valid_;
-
-  typedef HashMap<String, String> KeyValuePairs;
-  KeyValuePairs parameters_;
   String mime_type_;
+  WTF::Optional<ParsedContentHeaderFieldParameters> parameters_;
 };
 
 }  // namespace blink

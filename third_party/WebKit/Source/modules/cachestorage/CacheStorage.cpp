@@ -7,7 +7,6 @@
 #include <memory>
 #include <utility>
 #include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/DOMException.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
@@ -15,8 +14,10 @@
 #include "modules/cachestorage/CacheStorageError.h"
 #include "modules/fetch/Request.h"
 #include "modules/fetch/Response.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/network/http_names.h"
 #include "platform/wtf/PtrUtil.h"
-#include "public/platform/modules/serviceworker/WebServiceWorkerCacheError.h"
+#include "public/platform/modules/cache_storage/cache_storage.mojom-blink.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerCacheStorage.h"
 
 namespace blink {
@@ -61,11 +62,11 @@ class CacheStorage::Callbacks final
     resolver_.Clear();
   }
 
-  void OnError(WebServiceWorkerCacheError reason) override {
+  void OnError(mojom::CacheStorageError reason) override {
     if (!resolver_->GetExecutionContext() ||
         resolver_->GetExecutionContext()->IsContextDestroyed())
       return;
-    if (reason == kWebServiceWorkerCacheErrorNotFound)
+    if (reason == mojom::CacheStorageError::kErrorNotFound)
       resolver_->Resolve(false);
     else
       resolver_->Reject(CacheStorageError::CreateException(reason));
@@ -100,14 +101,16 @@ class CacheStorage::WithCacheCallbacks final
     resolver_.Clear();
   }
 
-  void OnError(WebServiceWorkerCacheError reason) override {
+  void OnError(mojom::CacheStorageError reason) override {
     if (!resolver_->GetExecutionContext() ||
         resolver_->GetExecutionContext()->IsContextDestroyed())
       return;
-    if (reason == kWebServiceWorkerCacheErrorNotFound)
+    if (reason == mojom::CacheStorageError::kErrorNotFound ||
+        reason == mojom::CacheStorageError::kErrorStorage) {
       resolver_->Resolve();
-    else
+    } else {
       resolver_->Reject(CacheStorageError::CreateException(reason));
+    }
     resolver_.Clear();
   }
 
@@ -136,15 +139,17 @@ class CacheStorage::MatchCallbacks
     resolver_.Clear();
   }
 
-  void OnError(WebServiceWorkerCacheError reason) override {
+  void OnError(mojom::CacheStorageError reason) override {
     if (!resolver_->GetExecutionContext() ||
         resolver_->GetExecutionContext()->IsContextDestroyed())
       return;
-    if (reason == kWebServiceWorkerCacheErrorNotFound ||
-        reason == kWebServiceWorkerCacheErrorCacheNameNotFound)
+    if (reason == mojom::CacheStorageError::kErrorNotFound ||
+        reason == mojom::CacheStorageError::kErrorStorage ||
+        reason == mojom::CacheStorageError::kErrorCacheNameNotFound) {
       resolver_->Resolve();
-    else
+    } else {
       resolver_->Reject(CacheStorageError::CreateException(reason));
+    }
     resolver_.Clear();
   }
 
@@ -174,14 +179,16 @@ class CacheStorage::DeleteCallbacks final
     resolver_.Clear();
   }
 
-  void OnError(WebServiceWorkerCacheError reason) override {
+  void OnError(mojom::CacheStorageError reason) override {
     if (!resolver_->GetExecutionContext() ||
         resolver_->GetExecutionContext()->IsContextDestroyed())
       return;
-    if (reason == kWebServiceWorkerCacheErrorNotFound)
+    if (reason == mojom::CacheStorageError::kErrorNotFound ||
+        reason == mojom::CacheStorageError::kErrorStorage) {
       resolver_->Resolve(false);
-    else
+    } else {
       resolver_->Reject(CacheStorageError::CreateException(reason));
+    }
     resolver_.Clear();
   }
 
@@ -212,7 +219,7 @@ class CacheStorage::KeysCallbacks final
     resolver_.Clear();
   }
 
-  void OnError(WebServiceWorkerCacheError reason) override {
+  void OnError(mojom::CacheStorageError reason) override {
     if (!resolver_->GetExecutionContext() ||
         resolver_->GetExecutionContext()->IsContextDestroyed())
       return;
@@ -226,8 +233,8 @@ class CacheStorage::KeysCallbacks final
 
 CacheStorage* CacheStorage::Create(
     GlobalFetch::ScopedFetcher* fetcher,
-    WebServiceWorkerCacheStorage* web_cache_storage) {
-  return new CacheStorage(fetcher, WTF::WrapUnique(web_cache_storage));
+    std::unique_ptr<WebServiceWorkerCacheStorage> web_cache_storage) {
+  return new CacheStorage(fetcher, std::move(web_cache_storage));
 }
 
 ScriptPromise CacheStorage::open(ScriptState* script_state,
@@ -241,7 +248,7 @@ ScriptPromise CacheStorage::open(ScriptState* script_state,
 
   if (web_cache_storage_) {
     web_cache_storage_->DispatchOpen(
-        WTF::MakeUnique<WithCacheCallbacks>(cache_name, this, resolver),
+        std::make_unique<WithCacheCallbacks>(cache_name, this, resolver),
         cache_name);
   } else {
     resolver->Reject(CreateNoImplementationException());
@@ -260,7 +267,7 @@ ScriptPromise CacheStorage::has(ScriptState* script_state,
   const ScriptPromise promise = resolver->Promise();
 
   if (web_cache_storage_) {
-    web_cache_storage_->DispatchHas(WTF::MakeUnique<Callbacks>(resolver),
+    web_cache_storage_->DispatchHas(std::make_unique<Callbacks>(resolver),
                                     cache_name);
   } else {
     resolver->Reject(CreateNoImplementationException());
@@ -269,9 +276,9 @@ ScriptPromise CacheStorage::has(ScriptState* script_state,
   return promise;
 }
 
-ScriptPromise CacheStorage::deleteFunction(ScriptState* script_state,
-                                           const String& cache_name,
-                                           ExceptionState& exception_state) {
+ScriptPromise CacheStorage::Delete(ScriptState* script_state,
+                                   const String& cache_name,
+                                   ExceptionState& exception_state) {
   if (!CommonChecks(script_state, exception_state))
     return ScriptPromise();
 
@@ -280,7 +287,7 @@ ScriptPromise CacheStorage::deleteFunction(ScriptState* script_state,
 
   if (web_cache_storage_) {
     web_cache_storage_->DispatchDelete(
-        WTF::MakeUnique<DeleteCallbacks>(cache_name, this, resolver),
+        std::make_unique<DeleteCallbacks>(cache_name, this, resolver),
         cache_name);
   } else {
     resolver->Reject(CreateNoImplementationException());
@@ -298,7 +305,7 @@ ScriptPromise CacheStorage::keys(ScriptState* script_state,
   const ScriptPromise promise = resolver->Promise();
 
   if (web_cache_storage_)
-    web_cache_storage_->DispatchKeys(WTF::MakeUnique<KeysCallbacks>(resolver));
+    web_cache_storage_->DispatchKeys(std::make_unique<KeysCallbacks>(resolver));
   else
     resolver->Reject(CreateNoImplementationException());
 
@@ -309,14 +316,14 @@ ScriptPromise CacheStorage::match(ScriptState* script_state,
                                   const RequestInfo& request,
                                   const CacheQueryOptions& options,
                                   ExceptionState& exception_state) {
-  ASSERT(!request.isNull());
+  DCHECK(!request.IsNull());
   if (!CommonChecks(script_state, exception_state))
     return ScriptPromise();
 
-  if (request.isRequest())
-    return MatchImpl(script_state, request.getAsRequest(), options);
+  if (request.IsRequest())
+    return MatchImpl(script_state, request.GetAsRequest(), options);
   Request* new_request =
-      Request::Create(script_state, request.getAsUSVString(), exception_state);
+      Request::Create(script_state, request.GetAsUSVString(), exception_state);
   if (exception_state.HadException())
     return ScriptPromise();
   return MatchImpl(script_state, new_request, options);
@@ -336,12 +343,13 @@ ScriptPromise CacheStorage::MatchImpl(ScriptState* script_state,
     return promise;
   }
 
-  if (web_cache_storage_)
-    web_cache_storage_->DispatchMatch(WTF::MakeUnique<MatchCallbacks>(resolver),
-                                      web_request,
-                                      Cache::ToWebQueryParams(options));
-  else
+  if (web_cache_storage_) {
+    web_cache_storage_->DispatchMatch(
+        std::make_unique<MatchCallbacks>(resolver), web_request,
+        Cache::ToWebQueryParams(options));
+  } else {
     resolver->Reject(CreateNoImplementationException());
+  }
 
   return promise;
 }
@@ -358,8 +366,9 @@ void CacheStorage::Dispose() {
   web_cache_storage_.reset();
 }
 
-DEFINE_TRACE(CacheStorage) {
+void CacheStorage::Trace(blink::Visitor* visitor) {
   visitor->Trace(scoped_fetcher_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

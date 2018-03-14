@@ -4,29 +4,22 @@
 
 import("//build/config/chrome_build.gni")
 import("//build/config/features.gni")
-import("//build/config/linux/pkg_config.gni")
+import("//build/config/freetype/freetype.gni")
 import("//build/config/ui.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
-
-declare_args() {
-  # Blink uses a cutting-edge version of Harfbuzz; most Linux distros do not
-  # contain a new enough version of the code to work correctly. However,
-  # ChromeOS chroots (i.e, real ChromeOS builds for devices) do contain a
-  # new enough version of the library, and so this variable exists so that
-  # ChromeOS can build against the system lib and keep binary sizes smaller.
-  use_system_harfbuzz = false
-}
+import("//third_party/harfbuzz-ng/harfbuzz.gni")
 
 if (use_system_harfbuzz) {
   import("//build/config/linux/pkg_config.gni")
-  pkg_config("harfbuzz_pkgconfig") {
+  pkg_config("harfbuzz_from_pkgconfig") {
+    visibility = [
+      "//third_party:freetype_harfbuzz",
+      "//third_party/freetype:freetype_source",
+    ]
     packages = [ "harfbuzz" ]
   }
-  group("harfbuzz-ng") {
-    public_configs = [ ":harfbuzz_pkgconfig" ]
-  }
 } else {
-  config("harfbuzz-ng_config") {
+  config("harfbuzz_config") {
     include_dirs = [ "src" ]
   }
 
@@ -48,17 +41,9 @@ if (use_system_harfbuzz) {
     }
   }
 
-  # See also chrome/browser/ui/libgtkui/BUILD.gn which pulls this.
-  config("pangoft2_link_hack") {
-    if (is_linux && use_pango && !is_chromeos && !is_official_build &&
-        current_cpu != "arm" && current_cpu != "mipsel" && !is_component_build) {
-      # These symbols are referenced from libpangoft2, which will be
-      # dynamically linked later.
-      ldflags = [ "-Wl,-uhb_ft_face_create_cached,-uhb_glib_get_unicode_funcs" ]
-    }
-  }
+  source_set("harfbuzz_source") {
+    visibility = [ "//third_party:freetype_harfbuzz" ]
 
-  static_library("harfbuzz-ng") {
     sources = [
       "src/hb-atomic-private.hh",
       "src/hb-blob.cc",
@@ -76,10 +61,11 @@ if (use_system_harfbuzz) {
       "src/hb-face-private.hh",
       "src/hb-face.cc",
       "src/hb-face.h",
-      "src/hb-fallback-shape.cc",
       "src/hb-font-private.hh",
       "src/hb-font.cc",
       "src/hb-font.h",
+      "src/hb-ft.cc",
+      "src/hb-ft.h",
       "src/hb-icu.cc",
       "src/hb-icu.h",
       "src/hb-mutex-private.hh",
@@ -138,10 +124,12 @@ if (use_system_harfbuzz) {
       "src/hb-ot-var-avar-table.hh",
       "src/hb-ot-var-fvar-table.hh",
       "src/hb-ot-var-hvar-table.hh",
+      "src/hb-ot-var-mvar-table.hh",
       "src/hb-ot-var.cc",
       "src/hb-ot-var.h",
       "src/hb-ot.h",
       "src/hb-private.hh",
+      "src/hb-set-digest-private.hh",
       "src/hb-set-private.hh",
       "src/hb-set.cc",
       "src/hb-set.h",
@@ -167,9 +155,23 @@ if (use_system_harfbuzz) {
       "HAVE_OT",
       "HAVE_ICU",
       "HAVE_ICU_BUILTIN",
-      "HB_NO_MT",
+      "HAVE_INTEL_ATOMIC_PRIMITIVES",
     ]
 
+    if (is_component_build) {
+      if (is_win) {
+        defines += [ "HB_EXTERN=__declspec (dllexport) extern" ]
+      } else {
+        configs -= [ "//build/config/gcc:symbol_visibility_hidden" ]
+        configs += [ "//build/config/gcc:symbol_visibility_default" ]
+      }
+    }
+
+    if (use_system_freetype) {
+      configs += [ "//build/linux:freetype_from_pkgconfig" ]
+    } else {
+      configs += [ "//third_party/freetype:freetype_config" ]
+    }
     configs -= [ "//build/config/compiler:chromium_code" ]
     configs += [
       "//build/config/compiler:no_chromium_code",
@@ -178,7 +180,7 @@ if (use_system_harfbuzz) {
       # correctly.
       ":harfbuzz_warnings",
     ]
-    public_configs = [ ":harfbuzz-ng_config" ]
+    public_configs = [ ":harfbuzz_config" ]
 
     deps = [
       "//third_party/icu:icuuc",
@@ -197,20 +199,6 @@ if (use_system_harfbuzz) {
       ]
     }
 
-    # When without -fvisibility=hidden for pango to use the harfbuzz
-    # in the tree, all symbols pango needs must be included, or
-    # pango uses mixed versions of harfbuzz and leads to crash.
-    # See crbug.com/462689.
-    if (is_linux && use_pango && !is_chromeos && !is_official_build &&
-        current_cpu != "arm" && current_cpu != "mipsel") {
-      deps += [ "//build/config/freetype" ]
-      configs -= [ "//build/config/gcc:symbol_visibility_hidden" ]
-      configs += [ "//build/config/gcc:symbol_visibility_default" ]
-      sources += [
-        "src/hb-ft.cc",
-        "src/hb-ft.h",
-      ]
-    }
     if (use_glib) {
       configs += [ "//build/config/linux:glib" ]
       sources += [
@@ -226,7 +214,7 @@ fuzzer_test("harfbuzz_fuzzer") {
     "fuzz/harfbuzz_fuzzer.cc",
   ]
   deps = [
-    ":harfbuzz-ng",
+    "//third_party:freetype_harfbuzz",
   ]
   libfuzzer_options = [ "max_len=16800" ]
   seed_corpus = "fuzz/seed_corpus"

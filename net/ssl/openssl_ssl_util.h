@@ -10,13 +10,13 @@
 #include "net/base/net_export.h"
 #include "net/cert/x509_certificate.h"
 #include "net/log/net_log_parameters_callback.h"
-#include "third_party/boringssl/src/include/openssl/x509.h"
+#include "third_party/boringssl/src/include/openssl/base.h"
 
 namespace crypto {
 class OpenSSLErrStackTracer;
 }
 
-namespace tracked_objects {
+namespace base {
 class Location;
 }
 
@@ -24,7 +24,7 @@ namespace net {
 
 // Puts a net error, |err|, on the error stack in OpenSSL. The file and line are
 // extracted from |posted_from|. The function code of the error is left as 0.
-void OpenSSLPutNetError(const tracked_objects::Location& posted_from, int err);
+void OpenSSLPutNetError(const base::Location& posted_from, int err);
 
 // Utility to construct the appropriate set & clear masks for use the OpenSSL
 // options and mode configuration functions. (SSL_set_options etc)
@@ -78,11 +78,12 @@ NetLogParametersCallback CreateNetLogOpenSSLErrorCallback(
 // this SSL connection.
 int GetNetSSLVersion(SSL* ssl);
 
-bssl::UniquePtr<X509> OSCertHandleToOpenSSL(
-    X509Certificate::OSCertHandle os_handle);
-
-bssl::UniquePtr<STACK_OF(X509)> OSCertHandlesToOpenSSL(
-    const X509Certificate::OSCertHandles& os_handles);
+// Configures |ssl| to send the specified certificate and either |pkey| or
+// |custom_key|. This is a wrapper over |SSL_set_chain_and_key|.
+bool SetSSLChainAndKey(SSL* ssl,
+                       X509Certificate* cert,
+                       EVP_PKEY* pkey,
+                       const SSL_PRIVATE_KEY_METHOD* custom_key);
 
 }  // namespace net
 

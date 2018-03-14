@@ -25,13 +25,13 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/recovery/recovery_install_global_error_factory.h"
 #include "chrome/browser/search/search.h"
-#include "chrome/browser/sync/sync_global_error_factory.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window.h"
 #import "chrome/browser/ui/cocoa/app_menu/app_menu_controller.h"
 #import "chrome/browser/ui/cocoa/background_gradient_view.h"
+#include "chrome/browser/ui/cocoa/browser_dialogs_views_mac.h"
 #include "chrome/browser/ui/cocoa/drag_util.h"
 #import "chrome/browser/ui/cocoa/extensions/browser_action_button.h"
 #import "chrome/browser/ui/cocoa/extensions/browser_actions_container_view.h"
@@ -58,8 +58,6 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/theme_resources.h"
-#include "components/metrics/proto/omnibox_event.pb.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
@@ -69,11 +67,11 @@
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/url_fixer.h"
 #include "content/public/browser/web_contents.h"
+#include "third_party/metrics_proto/omnibox_event.pb.h"
 #import "ui/base/cocoa/menu_controller.h"
 #import "ui/base/cocoa/nsview_additions.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
-#include "ui/base/material_design/material_design_controller.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/image/image.h"
 
@@ -238,7 +236,6 @@ class NotificationBridge : public AppMenuIconController::Delegate {
     // Browser), so |commands_| may not be valid any more.
 
     // Start global error services now so we badge the menu correctly.
-    SyncGlobalErrorFactory::GetForProfile(profile);
     RecoveryInstallGlobalErrorFactory::GetForProfile(profile);
   }
   return self;
@@ -251,10 +248,14 @@ class NotificationBridge : public AppMenuIconController::Delegate {
 // reason is not guaranteed to be called (http://crbug.com/526276), so implement
 // both.
 - (void)awakeFromNib {
-  [self viewDidLoad];
+  [self viewDidLoadImpl];
 }
 
 - (void)viewDidLoad {
+  [self viewDidLoadImpl];
+}
+
+- (void)viewDidLoadImpl {
   // Temporary: collect information about a potentially missing or inaccessible
   // nib (https://crbug.com/685985)
   NSString* nibPath = [self.nibBundle pathForResource:@"Toolbar" ofType:@"nib"];
@@ -596,6 +597,10 @@ class NotificationBridge : public AppMenuIconController::Delegate {
   // Allow the |locationBarView_| to update itself to match the browser window
   // theme.
   locationBarView_->OnAddedToWindow();
+}
+
+- (BOOL)locationBarHasFocus {
+  return [autocompleteTextFieldEditor_ window] != nil;
 }
 
 - (void)focusLocationBar:(BOOL)selectAll {
@@ -966,6 +971,10 @@ class NotificationBridge : public AppMenuIconController::Delegate {
   if (dX == 0)
     return;
 
+  if (dX < 0) {
+    // Clip to the minimum width. Speculative fix for crbug.com/746944.
+    dX = std::max(dX, -location_bar_flex);
+  }
   // Ensure that the location bar is in its proper place.
   locationFrame.size.width += dX;
   if (cocoa_l10n_util::ShouldDoExperimentalRTLLayout())
@@ -992,7 +1001,7 @@ class NotificationBridge : public AppMenuIconController::Delegate {
 - (NSPoint)appMenuBubblePoint {
   NSRect frame = appMenuButton_.frame;
   NSPoint point;
-  if (ui::MaterialDesignController::IsSecondaryUiMaterial()) {
+  if (chrome::ShowAllDialogsWithViewsToolkit()) {
     // Use the bottom right for MD-style anchoring (no arrow).
     point = NSMakePoint(NSMaxX(frame), NSMinY(frame));
   } else {

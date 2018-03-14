@@ -11,6 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -22,22 +23,22 @@
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/lazy_instance.h"
+#include "base/memory/protected_memory.h"
+#include "base/memory/protected_memory_cfi.h"
 #include "base/native_library.h"
 #include "base/pickle.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/posix/unix_domain_socket_linux.h"
+#include "base/posix/unix_domain_socket.h"
 #include "base/rand_util.h"
 #include "base/strings/safe_sprintf.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/sys_info.h"
 #include "build/build_config.h"
 #include "content/common/font_config_ipc_linux.h"
-#include "content/common/sandbox_linux/sandbox_debug_handling_linux.h"
-#include "content/common/sandbox_linux/sandbox_linux.h"
 #include "content/common/zygote_commands_linux.h"
+#include "content/public/common/common_sandbox_support_linux.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
-#include "content/public/common/sandbox_linux.h"
 #include "content/public/common/zygote_fork_delegate_linux.h"
 #include "content/zygote/zygote_linux.h"
 #include "media/media_features.h"
@@ -47,6 +48,9 @@
 #include "sandbox/linux/services/namespace_sandbox.h"
 #include "sandbox/linux/services/thread_helpers.h"
 #include "sandbox/linux/suid/client/setuid_sandbox_client.h"
+#include "services/service_manager/sandbox/linux/sandbox_debug_handling_linux.h"
+#include "services/service_manager/sandbox/linux/sandbox_linux.h"
+#include "services/service_manager/sandbox/sandbox.h"
 #include "third_party/WebKit/public/web/linux/WebFontRendering.h"
 #include "third_party/boringssl/src/include/openssl/crypto.h"
 #include "third_party/boringssl/src/include/openssl/rand.h"
@@ -54,26 +58,18 @@
 #include "third_party/skia/include/ports/SkFontConfigInterface.h"
 #include "third_party/skia/include/ports/SkFontMgr_android.h"
 
-#if defined(OS_LINUX)
-#include <sys/prctl.h>
-#endif
-
 #if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/common/pepper_plugin_list.h"
 #include "content/public/common/pepper_plugin_info.h"
 #endif
 
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+#include "content/public/common/cdm_info.h"
+#include "content/public/common/content_client.h"
+#endif
+
 #if BUILDFLAG(ENABLE_WEBRTC)
 #include "third_party/webrtc_overrides/init_webrtc.h"  // nogncheck
-#endif
-
-#if defined(SANITIZER_COVERAGE)
-#include <sanitizer/common_interface_defs.h>
-#include <sanitizer/coverage_interface.h>
-#endif
-
-#if BUILDFLAG(ENABLE_CDM_HOST_VERIFICATION)
-#include "content/common/media/cdm_host_files.h"
 #endif
 
 namespace content {
@@ -96,38 +92,45 @@ void RunTwoClosures(const base::Closure* first, const base::Closure* second) {
   second->Run();
 }
 
-}  // namespace
+bool ReadTimeStruct(base::PickleIterator* iter,
+                    struct tm* output,
+                    char* timezone_out,
+                    size_t timezone_out_len) {
+  int result;
+  if (!iter->ReadInt(&result))
+    return false;
+  output->tm_sec = result;
+  if (!iter->ReadInt(&result))
+    return false;
+  output->tm_min = result;
+  if (!iter->ReadInt(&result))
+    return false;
+  output->tm_hour = result;
+  if (!iter->ReadInt(&result))
+    return false;
+  output->tm_mday = result;
+  if (!iter->ReadInt(&result))
+    return false;
+  output->tm_mon = result;
+  if (!iter->ReadInt(&result))
+    return false;
+  output->tm_year = result;
+  if (!iter->ReadInt(&result))
+    return false;
+  output->tm_wday = result;
+  if (!iter->ReadInt(&result))
+    return false;
+  output->tm_yday = result;
+  if (!iter->ReadInt(&result))
+    return false;
+  output->tm_isdst = result;
+  if (!iter->ReadInt(&result))
+    return false;
+  output->tm_gmtoff = result;
 
-// See https://chromium.googlesource.com/chromium/src/+/master/docs/linux_zygote.md
-
-static void ProxyLocaltimeCallToBrowser(time_t input, struct tm* output,
-                                        char* timezone_out,
-                                        size_t timezone_out_len) {
-  base::Pickle request;
-  request.WriteInt(LinuxSandbox::METHOD_LOCALTIME);
-  request.WriteString(
-      std::string(reinterpret_cast<char*>(&input), sizeof(input)));
-
-  uint8_t reply_buf[512];
-  const ssize_t r = base::UnixDomainSocket::SendRecvMsg(
-      GetSandboxFD(), reply_buf, sizeof(reply_buf), NULL, request);
-  if (r == -1) {
-    memset(output, 0, sizeof(struct tm));
-    return;
-  }
-
-  base::Pickle reply(reinterpret_cast<char*>(reply_buf), r);
-  base::PickleIterator iter(reply);
-  std::string result;
   std::string timezone;
-  if (!iter.ReadString(&result) ||
-      !iter.ReadString(&timezone) ||
-      result.size() != sizeof(struct tm)) {
-    memset(output, 0, sizeof(struct tm));
-    return;
-  }
-
-  memcpy(output, result.data(), sizeof(struct tm));
+  if (!iter->ReadString(&timezone))
+    return false;
   if (timezone_out_len) {
     const size_t copy_len = std::min(timezone_out_len - 1, timezone.size());
     memcpy(timezone_out, timezone.data(), copy_len);
@@ -138,9 +141,40 @@ static void ProxyLocaltimeCallToBrowser(time_t input, struct tm* output,
     auto ret_pair = g_timezones.Get().insert(timezone);
     output->tm_zone = ret_pair.first->c_str();
   }
+
+  return true;
+}
+
+}  // namespace
+
+// See https://chromium.googlesource.com/chromium/src/+/master/docs/linux_zygote.md
+
+static void ProxyLocaltimeCallToBrowser(time_t input, struct tm* output,
+                                        char* timezone_out,
+                                        size_t timezone_out_len) {
+  base::Pickle request;
+  request.WriteInt(service_manager::SandboxLinux::METHOD_LOCALTIME);
+  request.WriteString(
+      std::string(reinterpret_cast<char*>(&input), sizeof(input)));
+
+  memset(output, 0, sizeof(struct tm));
+
+  uint8_t reply_buf[512];
+  const ssize_t r = base::UnixDomainSocket::SendRecvMsg(
+      GetSandboxFD(), reply_buf, sizeof(reply_buf), nullptr, request);
+  if (r == -1) {
+    return;
+  }
+
+  base::Pickle reply(reinterpret_cast<char*>(reply_buf), r);
+  base::PickleIterator iter(reply);
+  if (!ReadTimeStruct(&iter, output, timezone_out, timezone_out_len)) {
+    memset(output, 0, sizeof(struct tm));
+  }
 }
 
 static bool g_am_zygote_or_renderer = false;
+static bool g_use_localtime_override = true;
 
 // Sandbox interception of libc calls.
 //
@@ -165,9 +199,9 @@ static bool g_am_zygote_or_renderer = false;
 //
 // Our replacement functions can check this global and either proxy
 // the call to the browser over the sandbox IPC
-// (https://chromium.googlesource.com/chromium/src/+/master/docs/linux_sandbox_ipc.md) or they can use
-// dlsym with RTLD_NEXT to resolve the symbol, ignoring any symbols in the
-// current module.
+// (https://chromium.googlesource.com/chromium/src/+/master/docs/linux_sandbox_ipc.md)
+// or they can use dlsym with RTLD_NEXT to resolve the symbol, ignoring any
+// symbols in the current module.
 //
 // Other avenues:
 //
@@ -182,23 +216,32 @@ typedef struct tm* (*LocaltimeFunction)(const time_t* timep);
 typedef struct tm* (*LocaltimeRFunction)(const time_t* timep,
                                          struct tm* result);
 
-static pthread_once_t g_libc_localtime_funcs_guard = PTHREAD_ONCE_INIT;
-static LocaltimeFunction g_libc_localtime;
-static LocaltimeFunction g_libc_localtime64;
-static LocaltimeRFunction g_libc_localtime_r;
-static LocaltimeRFunction g_libc_localtime64_r;
+struct LibcFunctions {
+  LocaltimeFunction localtime;
+  LocaltimeFunction localtime64;
+  LocaltimeRFunction localtime_r;
+  LocaltimeRFunction localtime64_r;
+};
+
+static pthread_once_t g_libc_funcs_guard = PTHREAD_ONCE_INIT;
+// The libc function pointers are stored in read-only memory after being
+// dynamically resolved as a security mitigation to prevent the pointer from
+// being tampered with. See crbug.com/771365 for details.
+static PROTECTED_MEMORY_SECTION base::ProtectedMemory<LibcFunctions>
+    g_libc_funcs;
 
 static void InitLibcLocaltimeFunctions() {
-  g_libc_localtime = reinterpret_cast<LocaltimeFunction>(
-      dlsym(RTLD_NEXT, "localtime"));
-  g_libc_localtime64 = reinterpret_cast<LocaltimeFunction>(
-      dlsym(RTLD_NEXT, "localtime64"));
-  g_libc_localtime_r = reinterpret_cast<LocaltimeRFunction>(
-      dlsym(RTLD_NEXT, "localtime_r"));
-  g_libc_localtime64_r = reinterpret_cast<LocaltimeRFunction>(
-      dlsym(RTLD_NEXT, "localtime64_r"));
+  auto writer = base::AutoWritableMemory::Create(g_libc_funcs);
+  g_libc_funcs->localtime =
+      reinterpret_cast<LocaltimeFunction>(dlsym(RTLD_NEXT, "localtime"));
+  g_libc_funcs->localtime64 =
+      reinterpret_cast<LocaltimeFunction>(dlsym(RTLD_NEXT, "localtime64"));
+  g_libc_funcs->localtime_r =
+      reinterpret_cast<LocaltimeRFunction>(dlsym(RTLD_NEXT, "localtime_r"));
+  g_libc_funcs->localtime64_r =
+      reinterpret_cast<LocaltimeRFunction>(dlsym(RTLD_NEXT, "localtime64_r"));
 
-  if (!g_libc_localtime || !g_libc_localtime_r) {
+  if (!g_libc_funcs->localtime || !g_libc_funcs->localtime_r) {
     // http://code.google.com/p/chromium/issues/detail?id=16800
     //
     // Nvidia's libGL.so overrides dlsym for an unknown reason and replaces
@@ -210,14 +253,14 @@ static void InitLibcLocaltimeFunctions() {
                   "http://code.google.com/p/chromium/issues/detail?id=16800";
   }
 
-  if (!g_libc_localtime)
-    g_libc_localtime = gmtime;
-  if (!g_libc_localtime64)
-    g_libc_localtime64 = g_libc_localtime;
-  if (!g_libc_localtime_r)
-    g_libc_localtime_r = gmtime_r;
-  if (!g_libc_localtime64_r)
-    g_libc_localtime64_r = g_libc_localtime_r;
+  if (!g_libc_funcs->localtime)
+    g_libc_funcs->localtime = gmtime;
+  if (!g_libc_funcs->localtime64)
+    g_libc_funcs->localtime64 = g_libc_funcs->localtime;
+  if (!g_libc_funcs->localtime_r)
+    g_libc_funcs->localtime_r = gmtime_r;
+  if (!g_libc_funcs->localtime64_r)
+    g_libc_funcs->localtime64_r = g_libc_funcs->localtime_r;
 }
 
 // Define localtime_override() function with asm name "localtime", so that all
@@ -229,7 +272,7 @@ struct tm* localtime_override(const time_t* timep) __asm__ ("localtime");
 
 __attribute__ ((__visibility__("default")))
 struct tm* localtime_override(const time_t* timep) {
-  if (g_am_zygote_or_renderer) {
+  if (g_am_zygote_or_renderer && g_use_localtime_override) {
     static struct tm time_struct;
     static char timezone_string[64];
     ProxyLocaltimeCallToBrowser(*timep, &time_struct, timezone_string,
@@ -237,9 +280,9 @@ struct tm* localtime_override(const time_t* timep) {
     return &time_struct;
   }
 
-  CHECK_EQ(0, pthread_once(&g_libc_localtime_funcs_guard,
-                           InitLibcLocaltimeFunctions));
-  struct tm* res = g_libc_localtime(timep);
+  CHECK_EQ(0, pthread_once(&g_libc_funcs_guard, InitLibcLocaltimeFunctions));
+  struct tm* res =
+      base::UnsanitizedCfiCall(g_libc_funcs, &LibcFunctions::localtime)(timep);
 #if defined(MEMORY_SANITIZER)
   if (res) __msan_unpoison(res, sizeof(*res));
   if (res->tm_zone) __msan_unpoison_string(res->tm_zone);
@@ -253,7 +296,7 @@ struct tm* localtime64_override(const time_t* timep) __asm__ ("localtime64");
 
 __attribute__ ((__visibility__("default")))
 struct tm* localtime64_override(const time_t* timep) {
-  if (g_am_zygote_or_renderer) {
+  if (g_am_zygote_or_renderer && g_use_localtime_override) {
     static struct tm time_struct;
     static char timezone_string[64];
     ProxyLocaltimeCallToBrowser(*timep, &time_struct, timezone_string,
@@ -261,9 +304,9 @@ struct tm* localtime64_override(const time_t* timep) {
     return &time_struct;
   }
 
-  CHECK_EQ(0, pthread_once(&g_libc_localtime_funcs_guard,
-                           InitLibcLocaltimeFunctions));
-  struct tm* res = g_libc_localtime64(timep);
+  CHECK_EQ(0, pthread_once(&g_libc_funcs_guard, InitLibcLocaltimeFunctions));
+  struct tm* res = base::UnsanitizedCfiCall(g_libc_funcs,
+                                            &LibcFunctions::localtime64)(timep);
 #if defined(MEMORY_SANITIZER)
   if (res) __msan_unpoison(res, sizeof(*res));
   if (res->tm_zone) __msan_unpoison_string(res->tm_zone);
@@ -277,14 +320,14 @@ struct tm* localtime_r_override(const time_t* timep,
 
 __attribute__ ((__visibility__("default")))
 struct tm* localtime_r_override(const time_t* timep, struct tm* result) {
-  if (g_am_zygote_or_renderer) {
-    ProxyLocaltimeCallToBrowser(*timep, result, NULL, 0);
+  if (g_am_zygote_or_renderer && g_use_localtime_override) {
+    ProxyLocaltimeCallToBrowser(*timep, result, nullptr, 0);
     return result;
   }
 
-  CHECK_EQ(0, pthread_once(&g_libc_localtime_funcs_guard,
-                           InitLibcLocaltimeFunctions));
-  struct tm* res = g_libc_localtime_r(timep, result);
+  CHECK_EQ(0, pthread_once(&g_libc_funcs_guard, InitLibcLocaltimeFunctions));
+  struct tm* res = base::UnsanitizedCfiCall(
+      g_libc_funcs, &LibcFunctions::localtime_r)(timep, result);
 #if defined(MEMORY_SANITIZER)
   if (res) __msan_unpoison(res, sizeof(*res));
   if (res->tm_zone) __msan_unpoison_string(res->tm_zone);
@@ -298,14 +341,14 @@ struct tm* localtime64_r_override(const time_t* timep,
 
 __attribute__ ((__visibility__("default")))
 struct tm* localtime64_r_override(const time_t* timep, struct tm* result) {
-  if (g_am_zygote_or_renderer) {
-    ProxyLocaltimeCallToBrowser(*timep, result, NULL, 0);
+  if (g_am_zygote_or_renderer && g_use_localtime_override) {
+    ProxyLocaltimeCallToBrowser(*timep, result, nullptr, 0);
     return result;
   }
 
-  CHECK_EQ(0, pthread_once(&g_libc_localtime_funcs_guard,
-                           InitLibcLocaltimeFunctions));
-  struct tm* res = g_libc_localtime64_r(timep, result);
+  CHECK_EQ(0, pthread_once(&g_libc_funcs_guard, InitLibcLocaltimeFunctions));
+  struct tm* res = base::UnsanitizedCfiCall(
+      g_libc_funcs, &LibcFunctions::localtime64_r)(timep, result);
 #if defined(MEMORY_SANITIZER)
   if (res) __msan_unpoison(res, sizeof(*res));
   if (res->tm_zone) __msan_unpoison_string(res->tm_zone);
@@ -329,11 +372,27 @@ void PreloadPepperPlugins() {
                            << plugin.path.value() << " "
                            << error.ToString();
 
-      (void)library;  // Prevent release-mode warning.
+      ignore_result(library);  // Prevent release-mode warning.
     }
   }
 }
 #endif
+
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+// Loads registered library CDMs but does not initialize them. This is needed by
+// the zygote on Linux to get access to the CDMs before entering the sandbox.
+void PreloadLibraryCdms() {
+  std::vector<CdmInfo> cdms;
+  GetContentClient()->AddContentDecryptionModules(&cdms, nullptr);
+  for (const auto& cdm : cdms) {
+    base::NativeLibraryLoadError error;
+    base::NativeLibrary library = base::LoadNativeLibrary(cdm.path, &error);
+    VLOG_IF(1, !library) << "Unable to load CDM " << cdm.path.value()
+                         << " (error: " << error.ToString() << ")";
+    ignore_result(library);  // Prevent release-mode warning.
+  }
+}
+#endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
 
 // This function triggers the static and lazy construction of objects that need
 // to be created before imposing the sandbox.
@@ -363,12 +422,12 @@ static void ZygotePreSandboxInit() {
   // Ensure access to the Pepper plugins before the sandbox is turned on.
   PreloadPepperPlugins();
 #endif
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+  // Ensure access to the library CDMs before the sandbox is turned on.
+  PreloadLibraryCdms();
+#endif
 #if BUILDFLAG(ENABLE_WEBRTC)
   InitializeWebRtcModule();
-#endif
-
-#if BUILDFLAG(ENABLE_CDM_HOST_VERIFICATION)
-  CdmHostFiles::CreateGlobalInstance();
 #endif
 
   SkFontConfigInterface::SetGlobal(
@@ -454,7 +513,7 @@ static bool EnterSuidSandbox(sandbox::SetuidSandboxClient* setuid_sandbox,
     CHECK(CreateInitProcessReaper(post_fork_parent_callback));
   }
 
-  CHECK(SandboxDebugHandling::SetDumpableStatusAndHandlers());
+  CHECK(service_manager::SandboxDebugHandling::SetDumpableStatusAndHandlers());
   return true;
 }
 
@@ -462,10 +521,9 @@ static void DropAllCapabilities(int proc_fd) {
   CHECK(sandbox::Credentials::DropAllCapabilities(proc_fd));
 }
 
-static void EnterNamespaceSandbox(LinuxSandbox* linux_sandbox,
+static void EnterNamespaceSandbox(service_manager::SandboxLinux* linux_sandbox,
                                   base::Closure* post_fork_parent_callback) {
-  linux_sandbox->EngageNamespaceSandbox();
-
+  linux_sandbox->EngageNamespaceSandbox(true /* from_zygote */);
   if (getpid() == 1) {
     base::Closure drop_all_caps_callback =
         base::Bind(&DropAllCapabilities, linux_sandbox->proc_fd());
@@ -475,87 +533,18 @@ static void EnterNamespaceSandbox(LinuxSandbox* linux_sandbox,
   }
 }
 
-#if defined(SANITIZER_COVERAGE)
-static int g_sanitizer_message_length = 1 * 1024 * 1024;
-
-// A helper process which collects code coverage data from the renderers over a
-// socket and dumps it to a file. See http://crbug.com/336212 for discussion.
-static void SanitizerCoverageHelper(int socket_fd, int file_fd) {
-  std::unique_ptr<char[]> buffer(new char[g_sanitizer_message_length]);
-  while (true) {
-    ssize_t received_size = HANDLE_EINTR(
-        recv(socket_fd, buffer.get(), g_sanitizer_message_length, 0));
-    PCHECK(received_size >= 0);
-    if (received_size == 0)
-      // All clients have closed the socket. We should die.
-      _exit(0);
-    PCHECK(file_fd >= 0);
-    ssize_t written_size = 0;
-    while (written_size < received_size) {
-      ssize_t write_res =
-          HANDLE_EINTR(write(file_fd, buffer.get() + written_size,
-                             received_size - written_size));
-      PCHECK(write_res >= 0);
-      written_size += write_res;
-    }
-    PCHECK(0 == HANDLE_EINTR(fsync(file_fd)));
-  }
-}
-
-// fds[0] is the read end, fds[1] is the write end.
-static void CreateSanitizerCoverageSocketPair(int fds[2]) {
-  PCHECK(0 == socketpair(AF_UNIX, SOCK_SEQPACKET, 0, fds));
-  PCHECK(0 == shutdown(fds[0], SHUT_WR));
-  PCHECK(0 == shutdown(fds[1], SHUT_RD));
-
-  // Find the right buffer size for sending coverage data.
-  // The kernel will silently set the buffer size to the allowed maximum when
-  // the specified size is too large, so we set our desired size and read it
-  // back.
-  int* buf_size = &g_sanitizer_message_length;
-  socklen_t option_length = sizeof(*buf_size);
-  PCHECK(0 == setsockopt(fds[1], SOL_SOCKET, SO_SNDBUF,
-                         buf_size, option_length));
-  PCHECK(0 == getsockopt(fds[1], SOL_SOCKET, SO_SNDBUF,
-                         buf_size, &option_length));
-  DCHECK_EQ(sizeof(*buf_size), option_length);
-  // The kernel returns the doubled buffer size.
-  *buf_size /= 2;
-  PCHECK(*buf_size > 0);
-}
-
-static pid_t ForkSanitizerCoverageHelper(
-    int child_fd,
-    int parent_fd,
-    base::ScopedFD file_fd,
-    const std::vector<int>& extra_fds_to_close) {
-  pid_t pid = fork();
-  PCHECK(pid >= 0);
-  if (pid == 0) {
-    // In the child.
-    PCHECK(0 == IGNORE_EINTR(close(parent_fd)));
-    CloseFds(extra_fds_to_close);
-    SanitizerCoverageHelper(child_fd, file_fd.get());
-    _exit(0);
-  } else {
-    // In the parent.
-    PCHECK(0 == IGNORE_EINTR(close(child_fd)));
-    return pid;
-  }
-}
-
-#endif  // defined(SANITIZER_COVERAGE)
-
-static void EnterLayerOneSandbox(LinuxSandbox* linux_sandbox,
+static void EnterLayerOneSandbox(service_manager::SandboxLinux* linux_sandbox,
                                  const bool using_layer1_sandbox,
                                  base::Closure* post_fork_parent_callback) {
   DCHECK(linux_sandbox);
 
   ZygotePreSandboxInit();
 
-  // Check that the pre-sandbox initialization didn't spawn threads.
+// Check that the pre-sandbox initialization didn't spawn threads.
+// It's not just our code which may do so - some system-installed libraries
+// are known to be culprits, e.g. lttng.
 #if !defined(THREAD_SANITIZER)
-  DCHECK(sandbox::ThreadHelpers::IsSingleThreaded());
+  CHECK(sandbox::ThreadHelpers::IsSingleThreaded());
 #endif
 
   sandbox::SetuidSandboxClient* setuid_sandbox =
@@ -576,26 +565,7 @@ bool ZygoteMain(
   g_am_zygote_or_renderer = true;
 
   std::vector<int> fds_to_close_post_fork;
-
-  LinuxSandbox* linux_sandbox = LinuxSandbox::GetInstance();
-
-#if defined(SANITIZER_COVERAGE)
-  const std::string sancov_file_name =
-      "zygote." + base::Uint64ToString(base::RandUint64());
-  base::ScopedFD sancov_file_fd(
-      __sanitizer_maybe_open_cov_file(sancov_file_name.c_str()));
-  int sancov_socket_fds[2] = {-1, -1};
-  CreateSanitizerCoverageSocketPair(sancov_socket_fds);
-  linux_sandbox->sanitizer_args()->coverage_sandboxed = 1;
-  linux_sandbox->sanitizer_args()->coverage_fd = sancov_socket_fds[1];
-  linux_sandbox->sanitizer_args()->coverage_max_block_size =
-      g_sanitizer_message_length;
-  // Zygote termination will block until the helper process exits, which will
-  // not happen until the write end of the socket is closed everywhere. Make
-  // sure the init process does not hold on to it.
-  fds_to_close_post_fork.push_back(sancov_socket_fds[0]);
-  fds_to_close_post_fork.push_back(sancov_socket_fds[1]);
-#endif  // SANITIZER_COVERAGE
+  auto* linux_sandbox = service_manager::SandboxLinux::GetInstance();
 
   // Skip pre-initializing sandbox under --no-sandbox for crbug.com/444900.
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -617,10 +587,15 @@ bool ZygoteMain(
 
   if (using_layer1_sandbox) {
     // Let the ZygoteHost know we're booting up.
-    CHECK(base::UnixDomainSocket::SendMsg(kZygoteSocketPairFd,
-                                          kZygoteBootMessage,
-                                          sizeof(kZygoteBootMessage),
-                                          std::vector<int>()));
+    if (!base::UnixDomainSocket::SendMsg(
+            kZygoteSocketPairFd, kZygoteBootMessage, sizeof(kZygoteBootMessage),
+            std::vector<int>())) {
+      // This is not a CHECK failure because the browser process could either
+      // crash or quickly exit while the zygote is starting. In either case a
+      // zygote crash is not useful. http://crbug.com/692227
+      PLOG(ERROR) << "Failed sending zygote boot message";
+      _exit(1);
+    }
   }
 
   VLOG(1) << "ZygoteMain: initializing " << fork_delegates.size()
@@ -647,33 +622,24 @@ bool ZygoteMain(
   std::vector<pid_t> extra_children;
   std::vector<int> extra_fds;
 
-#if defined(SANITIZER_COVERAGE)
-  pid_t sancov_helper_pid = ForkSanitizerCoverageHelper(
-      sancov_socket_fds[0], sancov_socket_fds[1], std::move(sancov_file_fd),
-      sandbox_fds_to_close_post_fork);
-  // It's important that the zygote reaps the helper before dying. Otherwise,
-  // the destruction of the PID namespace could kill the helper before it
-  // completes its I/O tasks. |sancov_helper_pid| will exit once the last
-  // renderer holding the write end of |sancov_socket_fds| closes it.
-  extra_children.push_back(sancov_helper_pid);
-  // Sanitizer code in the renderers will inherit the write end of the socket
-  // from the zygote. We must keep it open until the very end of the zygote's
-  // lifetime, even though we don't explicitly use it.
-  extra_fds.push_back(sancov_socket_fds[1]);
-#endif  // SANITIZER_COVERAGE
-
   const int sandbox_flags = linux_sandbox->GetStatus();
 
-  const bool setuid_sandbox_engaged = sandbox_flags & kSandboxLinuxSUID;
+  const bool setuid_sandbox_engaged =
+      sandbox_flags & service_manager::SandboxLinux::kSUID;
   CHECK_EQ(using_setuid_sandbox, setuid_sandbox_engaged);
 
-  const bool namespace_sandbox_engaged = sandbox_flags & kSandboxLinuxUserNS;
+  const bool namespace_sandbox_engaged =
+      sandbox_flags & service_manager::SandboxLinux::kUserNS;
   CHECK_EQ(using_namespace_sandbox, namespace_sandbox_engaged);
 
   Zygote zygote(sandbox_flags, std::move(fork_delegates), extra_children,
                 extra_fds);
   // This function call can return multiple times, once per fork().
   return zygote.ProcessRequests();
+}
+
+void DisableLocaltimeOverride() {
+  g_use_localtime_override = false;
 }
 
 }  // namespace content

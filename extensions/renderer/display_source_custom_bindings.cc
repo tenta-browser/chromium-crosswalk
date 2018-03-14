@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #include "base/bind.h"
-#include "content/public/child/v8_value_converter.h"
+#include "content/public/renderer/v8_value_converter.h"
 #include "extensions/renderer/extension_bindings_system.h"
 #include "extensions/renderer/script_context.h"
 #include "third_party/WebKit/public/platform/WebMediaStream.h"
@@ -16,8 +16,6 @@
 #include "v8/include/v8.h"
 
 namespace extensions {
-
-using content::V8ValueConverter;
 
 namespace {
 const char kErrorNotSupported[] = "Not supported";
@@ -136,9 +134,9 @@ void DisplaySourceCustomBindings::StartSession(
       GetChildValue(start_info, "authenticationInfo", isolate);
   if (!auth_info_v8_val->IsNull()) {
     CHECK(auth_info_v8_val->IsObject());
-    std::unique_ptr<V8ValueConverter> converter(V8ValueConverter::create());
-    std::unique_ptr<base::Value> auth_info_val(
-        converter->FromV8Value(auth_info_v8_val, context()->v8_context()));
+    std::unique_ptr<base::Value> auth_info_val =
+        content::V8ValueConverter::Create()->FromV8Value(
+            auth_info_v8_val, context()->v8_context());
     CHECK(auth_info_val);
     auth_info = DisplaySourceAuthInfo::FromValue(*auth_info_val);
   }

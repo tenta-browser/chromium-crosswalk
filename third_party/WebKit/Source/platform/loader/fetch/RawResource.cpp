@@ -26,12 +26,16 @@
 #include "platform/loader/fetch/RawResource.h"
 
 #include <memory>
-#include "platform/HTTPNames.h"
+#include "mojo/public/cpp/system/data_pipe.h"
 #include "platform/loader/fetch/FetchParameters.h"
 #include "platform/loader/fetch/MemoryCache.h"
 #include "platform/loader/fetch/ResourceClientWalker.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
 #include "platform/loader/fetch/ResourceLoader.h"
+#include "platform/network/http_names.h"
+#include "platform/scheduler/child/web_scheduler.h"
+#include "public/platform/Platform.h"
+#include "public/platform/WebThread.h"
 
 namespace blink {
 
@@ -121,11 +125,12 @@ RawResource::RawResource(const ResourceRequest& resource_request,
     : Resource(resource_request, type, options) {}
 
 void RawResource::AppendData(const char* data, size_t length) {
-  Resource::AppendData(data, length);
-
-  ResourceClientWalker<RawResourceClient> w(Clients());
-  while (RawResourceClient* c = w.Next())
-    c->DataReceived(this, data, length);
+  if (data_pipe_writer_) {
+    DCHECK_EQ(kDoNotBufferData, GetDataBufferingPolicy());
+    data_pipe_writer_->Write(data, length);
+  } else {
+    Resource::AppendData(data, length);
+  }
 }
 
 void RawResource::DidAddClient(ResourceClient* c) {
@@ -144,12 +149,10 @@ void RawResource::DidAddClient(ResourceClient* c) {
       return;
   }
 
-  if (!GetResponse().IsNull())
-    client->ResponseReceived(this, GetResponse(), nullptr);
-  if (!HasClient(c))
-    return;
-  if (Data())
-    client->DataReceived(this, Data()->Data(), Data()->size());
+  if (!GetResponse().IsNull()) {
+    client->ResponseReceived(this, GetResponse(),
+                             std::move(data_consumer_handle_));
+  }
   if (!HasClient(c))
     return;
   Resource::DidAddClient(client);
@@ -183,25 +186,26 @@ void RawResource::WillNotFollowRedirect() {
 void RawResource::ResponseReceived(
     const ResourceResponse& response,
     std::unique_ptr<WebDataConsumerHandle> handle) {
-  bool is_successful_revalidation =
-      IsCacheValidator() && response.HttpStatusCode() == 304;
+  if (response.WasFallbackRequiredByServiceWorker()) {
+    // The ServiceWorker asked us to re-fetch the request. This resource must
+    // not be reused.
+    // Note: This logic is needed here because DocumentThreadableLoader handles
+    // CORS independently from ResourceLoader. Fix it.
+    if (IsMainThread())
+      GetMemoryCache()->Remove(this);
+  }
+
   Resource::ResponseReceived(response, nullptr);
 
+  DCHECK(!handle || !data_consumer_handle_);
+  if (!handle && Clients().size() > 0)
+    handle = std::move(data_consumer_handle_);
   ResourceClientWalker<RawResourceClient> w(Clients());
   DCHECK(Clients().size() <= 1 || !handle);
   while (RawResourceClient* c = w.Next()) {
     // |handle| is cleared when passed, but it's not a problem because |handle|
     // is null when there are two or more clients, as asserted.
     c->ResponseReceived(this, this->GetResponse(), std::move(handle));
-  }
-
-  // If we successfully revalidated, we won't get appendData() calls. Forward
-  // the data to clients now instead. Note: |m_data| can be null when no data is
-  // appended to the original resource.
-  if (is_successful_revalidation && Data()) {
-    ResourceClientWalker<RawResourceClient> w(Clients());
-    while (RawResourceClient* c = w.Next())
-      c->DataReceived(this, Data()->Data(), Data()->size());
   }
 }
 
@@ -232,6 +236,66 @@ void RawResource::ReportResourceTimingToClients(
     c->DidReceiveResourceTiming(this, info);
 }
 
+bool RawResource::MatchPreload(const FetchParameters& params,
+                               WebTaskRunner* task_runner) {
+  if (!Resource::MatchPreload(params, task_runner))
+    return false;
+
+  // This is needed to call Platform::Current() below. Remove this branch
+  // when the calls are removed.
+  if (!IsMainThread())
+    return false;
+
+  if (!params.GetResourceRequest().UseStreamOnResponse())
+    return true;
+
+  if (ErrorOccurred())
+    return true;
+
+  // A preloaded resource is not for streaming.
+  DCHECK(!GetResourceRequest().UseStreamOnResponse());
+  DCHECK_EQ(GetDataBufferingPolicy(), kBufferData);
+
+  // Preloading for raw resources are not cached.
+  DCHECK(!IsMainThread() || !GetMemoryCache()->Contains(this));
+
+  constexpr auto kCapacity = 32 * 1024;
+  mojo::ScopedDataPipeProducerHandle producer;
+  mojo::ScopedDataPipeConsumerHandle consumer;
+  MojoCreateDataPipeOptions options;
+  options.struct_size = sizeof(MojoCreateDataPipeOptions);
+  options.flags = MOJO_CREATE_DATA_PIPE_OPTIONS_FLAG_NONE;
+  options.element_num_bytes = 1;
+  options.capacity_num_bytes = kCapacity;
+
+  MojoResult result = mojo::CreateDataPipe(&options, &producer, &consumer);
+  if (result != MOJO_RESULT_OK)
+    return false;
+
+  data_consumer_handle_ =
+      Platform::Current()->CreateDataConsumerHandle(std::move(consumer));
+  data_pipe_writer_ = std::make_unique<BufferingDataPipeWriter>(
+      std::move(producer), task_runner);
+
+  if (Data()) {
+    Data()->ForEachSegment(
+        [this](const char* segment, size_t size, size_t offset) -> bool {
+          return data_pipe_writer_->Write(segment, size);
+        });
+  }
+  SetDataBufferingPolicy(kDoNotBufferData);
+
+  if (IsLoaded())
+    data_pipe_writer_->Finish();
+  return true;
+}
+
+void RawResource::NotifyFinished() {
+  if (data_pipe_writer_)
+    data_pipe_writer_->Finish();
+  Resource::NotifyFinished();
+}
+
 void RawResource::SetDefersLoading(bool defers) {
   if (Loader())
     Loader()->SetDefersLoading(defers);
@@ -242,19 +306,17 @@ static bool ShouldIgnoreHeaderForCacheReuse(AtomicString header_name) {
   // isn't complete.
   DEFINE_STATIC_LOCAL(
       HashSet<AtomicString>, headers,
-      ({
-          "Cache-Control", "If-Modified-Since", "If-None-Match", "Origin",
-          "Pragma", "Purpose", "Referer", "User-Agent",
-          HTTPNames::X_DevTools_Emulate_Network_Conditions_Client_Id,
-          HTTPNames::X_DevTools_Request_Id,
-      }));
+      ({"Cache-Control", "If-Modified-Since", "If-None-Match", "Origin",
+        "Pragma", "Purpose", "Referer", "User-Agent",
+        HTTPNames::X_DevTools_Emulate_Network_Conditions_Client_Id}));
   return headers.Contains(header_name);
 }
 
 static bool IsCacheableHTTPMethod(const AtomicString& method) {
   // Per http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html#sec13.10,
   // these methods always invalidate the cache entry.
-  return method != "POST" && method != "PUT" && method != "DELETE";
+  return method != HTTPNames::POST && method != HTTPNames::PUT &&
+         method != "DELETE";
 }
 
 bool RawResource::CanReuse(const FetchParameters& new_fetch_parameters) const {
@@ -298,7 +360,7 @@ bool RawResource::CanReuse(const FetchParameters& new_fetch_parameters) const {
       return false;
   }
 
-  return true;
+  return Resource::CanReuse(new_fetch_parameters);
 }
 
 RawResourceClientStateChecker::RawResourceClientStateChecker()

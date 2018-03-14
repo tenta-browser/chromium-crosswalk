@@ -18,7 +18,7 @@
 #include "third_party/libjingle_xmpp/xmpp/jid.h"
 #include "third_party/libjingle_xmpp/xmpp/saslmechanism.h"
 #include "third_party/libjingle_xmpp/xmpp/xmppengineimpl.h"
-#include "third_party/webrtc/base/base64.h"
+#include "third_party/webrtc/rtc_base/base64.h"
 
 using rtc::ConstantLabel;
 
@@ -84,7 +84,7 @@ XmppLoginTask::Advance() {
     const XmlElement * element = NULL;
 
 #if !defined(NDEBUG)
-    LOG(LS_VERBOSE) << "XmppLoginTask::Advance - "
+    RTC_LOG(LS_VERBOSE) << "XmppLoginTask::Advance - "
       << rtc::ErrorName(state_, LOGINTASK_STATES);
 #endif
 

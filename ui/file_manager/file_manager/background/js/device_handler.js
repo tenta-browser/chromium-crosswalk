@@ -199,6 +199,14 @@ DeviceHandler.Notification.FORMAT_FAIL = new DeviceHandler.Notification(
     'FORMATTING_FINISHED_FAILURE_MESSAGE');
 
 /**
+ * @type {DeviceHandler.Notification}
+ * @const
+ */
+DeviceHandler.Notification.RENAME_FAIL = new DeviceHandler.Notification(
+    'renameFail', 'RENAMING_OF_DEVICE_FAILED_TITLE',
+    'RENAMING_OF_DEVICE_FINISHED_FAILURE_MESSAGE');
+
+/**
  * Shows the notification for the device path.
  * @param {string} devicePath Device path.
  * @param {string=} opt_message Message overrides the default message.
@@ -306,6 +314,9 @@ DeviceHandler.prototype.onDeviceChanged_ = function(event) {
     case 'format_fail':
       DeviceHandler.Notification.FORMAT_START.hide(event.devicePath);
       DeviceHandler.Notification.FORMAT_FAIL.show(event.devicePath);
+      break;
+    case 'rename_fail':
+      DeviceHandler.Notification.RENAME_FAIL.show(event.devicePath);
       break;
     default:
       console.error('Unknown event type: ' + event.type);
@@ -487,14 +498,14 @@ DeviceHandler.prototype.onMount_ = function(event) {
             return importer.getMediaDirectory(root);
           })
       .then(
-          /**
+          (/**
            * @param {!DirectoryEntry} directory
            * @this {DeviceHandler}
            */
           function(directory) {
             return importer.isPhotosAppImportEnabled()
                 .then(
-                    /**
+                    (/**
                      * @param {boolean} appEnabled
                      * @this {DeviceHandler}
                      */
@@ -506,8 +517,8 @@ DeviceHandler.prototype.onMount_ = function(event) {
                         this.openMediaDirectory_(
                             metadata.volumeId, null, directory.fullPath);
                       }
-                    }.bind(this));
-          }.bind(this))
+                    }).bind(this));
+          }).bind(this))
       .catch(
         function(error) {
           if (metadata.deviceType && metadata.devicePath) {

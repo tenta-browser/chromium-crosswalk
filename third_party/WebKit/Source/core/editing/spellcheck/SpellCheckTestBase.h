@@ -5,25 +5,19 @@
 #ifndef SpellCheckTestBase_h
 #define SpellCheckTestBase_h
 
-#include "core/editing/EditingTestBase.h"
+#include "core/editing/testing/EditingTestBase.h"
 #include "core/loader/EmptyClients.h"
 #include "core/testing/DummyPageHolder.h"
 
 namespace blink {
 
+class SpellChecker;
+
 class SpellCheckTestBase : public EditingTestBase {
  protected:
   void SetUp() override;
 
- private:
-  class DummySpellCheckerClient : public EmptySpellCheckerClient {
-   public:
-    virtual ~DummySpellCheckerClient() {}
-
-    bool IsSpellCheckingEnabled() override { return true; }
-  };
-
-  std::unique_ptr<DummySpellCheckerClient> spell_checker_client_;
+  SpellChecker& GetSpellChecker() const;
 };
 
 }  // namespace blink

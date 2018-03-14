@@ -31,9 +31,9 @@ Polymer({
     var browserProxy = settings.AboutPageBrowserProxyImpl.getInstance();
     browserProxy.pageReady();
 
-    browserProxy.getVersionInfo().then(function(versionInfo) {
+    browserProxy.getVersionInfo().then(versionInfo => {
       this.versionInfo_ = versionInfo;
-    }.bind(this));
+    });
 
     this.updateChannelInfo_();
   },
@@ -41,13 +41,13 @@ Polymer({
   /** @private */
   updateChannelInfo_: function() {
     var browserProxy = settings.AboutPageBrowserProxyImpl.getInstance();
-    browserProxy.getChannelInfo().then(function(info) {
+    browserProxy.getChannelInfo().then(info => {
       // Display the target channel for the 'Currently on' message.
       this.currentlyOnChannelText_ = this.i18n(
           'aboutCurrentlyOnChannel',
           this.i18n(settings.browserChannelToI18nId(info.targetChannel)));
       this.canChangeChannel_ = info.canChangeChannel;
-    }.bind(this));
+    });
   },
 
   /**
@@ -65,7 +65,8 @@ Polymer({
    * @private
    */
   getChangeChannelIndicatorSourceName_: function(canChangeChannel) {
-    return loadTimeData.getBoolean('aboutEnterpriseManaged') ? '' :
+    return loadTimeData.getBoolean('aboutEnterpriseManaged') ?
+        '' :
         loadTimeData.getString('ownerEmail');
   },
 
@@ -94,7 +95,7 @@ Polymer({
   /** @private */
   onChannelSwitcherDialogClosed_: function() {
     this.showChannelSwitcherDialog_ = false;
-    this.$$('paper-button').focus();
+    cr.ui.focusWithoutInk(assert(this.$$('paper-button')));
     this.updateChannelInfo_();
   },
 });

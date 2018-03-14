@@ -8,6 +8,7 @@ import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.os.Build;
@@ -21,16 +22,22 @@ import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.FieldTrialList;
 import org.chromium.base.Log;
+import org.chromium.base.StrictModeContext;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.chrome.browser.ApplicationLifetime;
+import org.chromium.base.annotations.CalledByNative;
+import org.chromium.base.library_loader.LibraryLoader;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
-import org.chromium.chrome.browser.firstrun.FirstRunGlueImpl;
+import org.chromium.chrome.browser.firstrun.FirstRunUtils;
+import org.chromium.chrome.browser.locale.LocaleManager;
+import org.chromium.chrome.browser.metrics.UmaSessionStats;
+import org.chromium.chrome.browser.omnibox.OmniboxPlaceholderFieldTrial;
 import org.chromium.chrome.browser.preferences.ChromePreferenceManager;
+import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.tabmodel.DocumentModeAssassin;
-import org.chromium.chrome.browser.webapps.ChromeWebApkHost;
-import org.chromium.components.signin.AccountManagerHelper;
+import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.List;
@@ -44,15 +51,20 @@ public class FeatureUtilities {
     private static final String HERB_EXPERIMENT_NAME = "TabManagementExperiment";
     private static final String HERB_EXPERIMENT_FLAVOR_PARAM = "type";
 
+    private static final String SYNTHETIC_CHROME_HOME_EXPERIMENT_NAME = "SyntheticChromeHome";
+    private static final String ENABLED_EXPERIMENT_GROUP = "Enabled";
+    private static final String DISABLED_EXPERIMENT_GROUP = "Disabled";
+
+    private static final long CHROME_HOME_MAX_ENABLED_TIME_MS = 60000; // 60 seconds.
+
     private static Boolean sHasGoogleAccountAuthenticator;
     private static Boolean sHasRecognitionIntentHandler;
     private static Boolean sChromeHomeEnabled;
+    private static boolean sChromeHomeNeedsUpdate;
+    private static String sChromeHomeSwipeLogicType;
 
     private static String sCachedHerbFlavor;
     private static boolean sIsHerbFlavorCached;
-
-    /** Used to track if cached command line flags should be refreshed. */
-    private static CommandLine.ResetListener sResetListener;
 
     /**
      * Determines whether or not the {@link RecognizerIntent#ACTION_WEB_SEARCH} {@link Intent}
@@ -89,7 +101,7 @@ public class FeatureUtilities {
     @VisibleForTesting
     static boolean hasGoogleAccountAuthenticator(Context context) {
         if (sHasGoogleAccountAuthenticator == null) {
-            AccountManagerHelper accountHelper = AccountManagerHelper.get();
+            AccountManagerFacade accountHelper = AccountManagerFacade.get();
             sHasGoogleAccountAuthenticator = accountHelper.hasGoogleAccountAuthenticator();
         }
         return sHasGoogleAccountAuthenticator;
@@ -97,7 +109,7 @@ public class FeatureUtilities {
 
     @VisibleForTesting
     static boolean hasGoogleAccounts(Context context) {
-        return AccountManagerHelper.get().hasGoogleAccounts();
+        return AccountManagerFacade.get().hasGoogleAccounts();
     }
 
     @SuppressLint("InlinedApi")
@@ -131,7 +143,7 @@ public class FeatureUtilities {
      */
     public static boolean isDocumentModeEligible(Context context) {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
-                && !DeviceFormFactor.isTablet(context);
+                && !DeviceFormFactor.isTablet();
     }
 
     /**
@@ -185,9 +197,33 @@ public class FeatureUtilities {
      */
     public static void cacheNativeFlags() {
         cacheHerbFlavor();
-        ChromeWebApkHost.cacheEnabledStateForNextLaunch();
         cacheChromeHomeEnabled();
-        FirstRunGlueImpl.cacheFirstRunPrefs();
+        FirstRunUtils.cacheFirstRunPrefs();
+        OmniboxPlaceholderFieldTrial.cacheOmniboxPlaceholderGroup();
+
+        // Propagate DONT_PREFETCH_LIBRARIES feature value to LibraryLoader. This can't
+        // be done in LibraryLoader itself because it lives in //base and can't depend
+        // on ChromeFeatureList.
+        LibraryLoader.setDontPrefetchLibrariesOnNextRuns(
+                ChromeFeatureList.isEnabled(ChromeFeatureList.DONT_PREFETCH_LIBRARIES));
+    }
+
+    public static void notifyChromeHomeStatusChanged(boolean isChromeHomeEnabled) {
+        nativeNotifyChromeHomeStatusChanged(isChromeHomeEnabled);
+    }
+
+    /**
+     * Finalize any static settings that will change when the browser restarts.
+     */
+    public static void finalizePendingFeatures() {
+        if (sChromeHomeNeedsUpdate) {
+            // Clear the Chrome Home flag so that it can be re-cached below.
+            sChromeHomeEnabled = null;
+            // Re-cache the Chrome Home state.
+            cacheChromeHomeEnabled();
+            notifyChromeHomeStatusChanged(isChromeHomeEnabled());
+            sChromeHomeNeedsUpdate = false;
+        }
     }
 
     /**
@@ -236,35 +272,152 @@ public class FeatureUtilities {
     }
 
     /**
-     * Cache whether or not Chrome Home is enabled.
+     * Cache whether or not Chrome Home and related features are enabled. If this method is called
+     * multiple times, the existing cached state is cleared and re-computed.
      */
     public static void cacheChromeHomeEnabled() {
-        Context context = ContextUtils.getApplicationContext();
-
         // Chrome Home doesn't work with tablets.
-        if (DeviceFormFactor.isTablet(context)) return;
+        if (DeviceFormFactor.isTablet()) return;
 
         boolean isChromeHomeEnabled = ChromeFeatureList.isEnabled(ChromeFeatureList.CHROME_HOME);
         ChromePreferenceManager manager = ChromePreferenceManager.getInstance();
-        boolean valueChanged = isChromeHomeEnabled != manager.isChromeHomeEnabled();
         manager.setChromeHomeEnabled(isChromeHomeEnabled);
-        sChromeHomeEnabled = isChromeHomeEnabled;
 
-        // If the cached value changed, restart chrome.
-        if (valueChanged) ApplicationLifetime.terminate(true);
+        PrefServiceBridge.getInstance().setChromeHomePersonalizedOmniboxSuggestionsEnabled(
+                areChromeHomePersonalizedOmniboxSuggestionsEnabled());
+
+        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.CHROME_HOME_PROMO)
+                && manager.isChromeHomeUserPreferenceSet()) {
+            manager.clearChromeHomeUserPreference();
+        }
+
+        if (manager.isChromeHomeUserPreferenceSet()) {
+            RecordHistogram.recordBooleanHistogram(
+                    "Android.ChromeHome.UserPreference.Enabled", manager.isChromeHomeUserEnabled());
+        }
+
+        UmaSessionStats.registerSyntheticFieldTrial(SYNTHETIC_CHROME_HOME_EXPERIMENT_NAME,
+                isChromeHomeEnabled() ? ENABLED_EXPERIMENT_GROUP : DISABLED_EXPERIMENT_GROUP);
+    }
+
+    private static boolean areChromeHomePersonalizedOmniboxSuggestionsEnabled() {
+        LocaleManager localeManager = LocaleManager.getInstance();
+        return isChromeHomeEnabled() && !localeManager.hasCompletedSearchEnginePromo()
+                && !localeManager.hasShownSearchEnginePromoThisSession()
+                && ChromeFeatureList.isEnabled(
+                           ChromeFeatureList.CHROME_HOME_PERSONALIZED_OMNIBOX_SUGGESTIONS);
+    }
+
+    /**
+     * Update the user's setting for Chrome Home. This is a user-facing setting different from the
+     * one in chrome://flags. This setting will take prescience over the one in flags.
+     * @param enabled Whether or not the feature should be enabled.
+     */
+    public static void switchChromeHomeUserSetting(boolean enabled) {
+        ChromePreferenceManager.getInstance().setChromeHomeUserEnabled(enabled);
+        sChromeHomeNeedsUpdate = sChromeHomeEnabled != null && enabled != sChromeHomeEnabled;
     }
 
     /**
      * @return Whether or not chrome should attach the toolbar to the bottom of the screen.
      */
+    @CalledByNative
     public static boolean isChromeHomeEnabled() {
+        if (DeviceFormFactor.isTablet()) return false;
+
         if (sChromeHomeEnabled == null) {
-            sChromeHomeEnabled = ChromePreferenceManager.getInstance().isChromeHomeEnabled();
+            boolean isUserPreferenceSet = false;
+            ChromePreferenceManager prefManager = ChromePreferenceManager.getInstance();
+
+            // Allow disk access for preferences while Chrome Home is in experimentation.
+            StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
+            try {
+                if (ChromePreferenceManager.getInstance().isChromeHomeUserPreferenceSet()) {
+                    isUserPreferenceSet = true;
+                    sChromeHomeEnabled = prefManager.isChromeHomeUserEnabled();
+                } else {
+                    sChromeHomeEnabled = prefManager.isChromeHomeEnabled();
+                }
+            } finally {
+                StrictMode.setThreadPolicy(oldPolicy);
+            }
+
+            // If the browser has been initialized by this point, check the experiment as well to
+            // avoid the restart logic in cacheChromeHomeEnabled.
+            if (ChromeFeatureList.isInitialized() && !isUserPreferenceSet) {
+                boolean chromeHomeExperimentEnabled =
+                        ChromeFeatureList.isEnabled(ChromeFeatureList.CHROME_HOME);
+
+                if (chromeHomeExperimentEnabled != sChromeHomeEnabled) {
+                    sChromeHomeEnabled = chromeHomeExperimentEnabled;
+                    ChromePreferenceManager.getInstance().setChromeHomeEnabled(
+                            chromeHomeExperimentEnabled);
+                }
+            }
+            ChromePreferenceManager.setChromeHomeEnabledDate(sChromeHomeEnabled);
+        }
+        return sChromeHomeEnabled;
+    }
+
+    /**
+     * Resets whether Chrome Home is enabled for tests. After this is called, the next call to
+     * #isChromeHomeEnabled() will retrieve the value from shared preferences.
+     */
+    public static void resetChromeHomeEnabledForTests() {
+        sChromeHomeEnabled = null;
+    }
+
+    /**
+     * @return The type of swipe logic used for opening the bottom sheet in Chrome Home. Null is
+     *         returned if the command line is not initialized or no experiment is specified.
+     */
+    public static String getChromeHomeSwipeLogicType() {
+        if (sChromeHomeSwipeLogicType == null && CommandLine.isInitialized()) {
+            CommandLine instance = CommandLine.getInstance();
+            sChromeHomeSwipeLogicType =
+                    instance.getSwitchValue(ChromeSwitches.CHROME_HOME_SWIPE_LOGIC);
         }
 
-        return sChromeHomeEnabled;
+        return sChromeHomeSwipeLogicType;
+    }
+
+    /**
+     * @return Whether the Chrome Home promo should be shown for cold-start.
+     */
+    public static boolean shouldShowChromeHomePromoForStartup() {
+        if (DeviceFormFactor.isTablet()) return false;
+
+        // The preference will be set if the promo has been seen before. If that is the case, do not
+        // show it again.
+        ChromePreferenceManager prefManager = ChromePreferenceManager.getInstance();
+        boolean isChromeHomePrefSet = prefManager.isChromeHomeUserPreferenceSet();
+        if (isChromeHomePrefSet) return false;
+
+        if (isChromeHomeEnabled()
+                && ChromeFeatureList.isEnabled(ChromeFeatureList.CHROME_HOME_PROMO_INFO_ONLY)) {
+            long chromeHomeEnabledDate = System.currentTimeMillis();
+
+            try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
+                SharedPreferences sharedPreferences = ContextUtils.getAppSharedPreferences();
+                chromeHomeEnabledDate = sharedPreferences.getLong(
+                        ChromePreferenceManager.CHROME_HOME_SHARED_PREFERENCES_KEY,
+                        chromeHomeEnabledDate);
+            }
+
+            long timeDeadlineForPromo = chromeHomeEnabledDate + CHROME_HOME_MAX_ENABLED_TIME_MS;
+
+            // If Chrome Home has been enabled for < 60 seconds, show the info dialog.
+            return System.currentTimeMillis() < timeDeadlineForPromo;
+        } else if (!isChromeHomeEnabled()
+                && ChromeFeatureList.isEnabled(ChromeFeatureList.CHROME_HOME_PROMO)
+                && ChromeFeatureList.isEnabled(ChromeFeatureList.CHROME_HOME_PROMO_ON_STARTUP)) {
+            return true;
+        }
+
+        return false;
     }
 
     private static native void nativeSetCustomTabVisible(boolean visible);
     private static native void nativeSetIsInMultiWindowMode(boolean isInMultiWindowMode);
+    private static native void nativeNotifyChromeHomeStatusChanged(boolean isChromeHomeEnabled);
 }

@@ -23,6 +23,7 @@ class Profile;
 namespace net {
 class CookieStore;
 class URLRequestContext;
+class URLRequestContextBuilder;
 }  // namespace net
 
 // OffTheRecordProfile owns a OffTheRecordProfileIOData::Handle, which holds a
@@ -65,9 +66,6 @@ class OffTheRecordProfileIOData : public ProfileIOData {
             content::URLRequestInterceptorScopedVector
                 request_interceptors) const;
 
-    // Returns the DevToolsNetworkControllerHandle attached to ProfileIOData.
-    DevToolsNetworkControllerHandle* GetDevToolsNetworkControllerHandle() const;
-
    private:
     typedef std::map<StoragePartitionDescriptor,
                      scoped_refptr<ChromeURLRequestContextGetter>,
@@ -107,12 +105,13 @@ class OffTheRecordProfileIOData : public ProfileIOData {
   explicit OffTheRecordProfileIOData(Profile::ProfileType profile_type);
   ~OffTheRecordProfileIOData() override;
 
-  void InitializeInternal(
-      std::unique_ptr<ChromeNetworkDelegate> chrome_network_delegate,
-      ProfileParams* profile_params,
-      content::ProtocolHandlerMap* protocol_handlers,
-      content::URLRequestInterceptorScopedVector request_interceptors)
-      const override;
+  void InitializeInternal(net::URLRequestContextBuilder* builder,
+                          ProfileParams* profile_params,
+                          content::ProtocolHandlerMap* protocol_handlers,
+                          content::URLRequestInterceptorScopedVector
+                              request_interceptors) const override;
+  void OnMainRequestContextCreated(
+      ProfileParams* profile_params) const override;
   void InitializeExtensionsRequestContext(
       ProfileParams* profile_params) const override;
   net::URLRequestContext* InitializeAppRequestContext(
@@ -141,8 +140,6 @@ class OffTheRecordProfileIOData : public ProfileIOData {
       const StoragePartitionDescriptor& partition_descriptor) const override;
 
   mutable std::unique_ptr<net::CookieStore> extensions_cookie_store_;
-
-  mutable std::unique_ptr<net::URLRequestJobFactory> extensions_job_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(OffTheRecordProfileIOData);
 };

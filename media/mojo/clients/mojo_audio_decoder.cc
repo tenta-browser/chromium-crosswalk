@@ -24,6 +24,8 @@ MojoAudioDecoder::MojoAudioDecoder(
     mojom::AudioDecoderPtr remote_decoder)
     : task_runner_(task_runner),
       remote_decoder_info_(remote_decoder.PassInterface()),
+      writer_capacity_(
+          GetDefaultDecoderBufferConverterCapacity(DemuxerStream::AUDIO)),
       client_binding_(this) {
   DVLOG(1) << __func__;
 }
@@ -70,7 +72,7 @@ void MojoAudioDecoder::Initialize(const AudioDecoderConfig& config,
   // Using base::Unretained(this) is safe because |this| owns |remote_decoder_|,
   // and the callback won't be dispatched if |remote_decoder_| is destroyed.
   remote_decoder_->Initialize(
-      mojom::AudioDecoderConfig::From(config), cdm_id,
+      config, cdm_id,
       base::Bind(&MojoAudioDecoder::OnInitialized, base::Unretained(this)));
 }
 
@@ -141,7 +143,7 @@ void MojoAudioDecoder::BindRemoteDecoder() {
       base::Bind(&MojoAudioDecoder::OnConnectionError, base::Unretained(this)));
 
   mojom::AudioDecoderClientAssociatedPtrInfo client_ptr_info;
-  client_binding_.Bind(&client_ptr_info);
+  client_binding_.Bind(mojo::MakeRequest(&client_ptr_info));
 
   remote_decoder_->Construct(std::move(client_ptr_info));
 }
@@ -179,7 +181,8 @@ void MojoAudioDecoder::OnInitialized(bool success,
   if (success && !mojo_decoder_buffer_writer_) {
     mojo::ScopedDataPipeConsumerHandle remote_consumer_handle;
     mojo_decoder_buffer_writer_ = MojoDecoderBufferWriter::Create(
-        DemuxerStream::AUDIO, &remote_consumer_handle);
+        writer_capacity_, &remote_consumer_handle);
+
     // Pass consumer end to |remote_decoder_|.
     remote_decoder_->SetDataSource(std::move(remote_consumer_handle));
   }

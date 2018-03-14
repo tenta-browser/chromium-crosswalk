@@ -408,23 +408,19 @@ void VpnService::CreateConfiguration(const std::string& extension_id,
       CreateConfigurationInternal(extension_id, configuration_name, key);
 
   base::DictionaryValue properties;
-  properties.SetStringWithoutPathExpansion(shill::kTypeProperty,
-                                           shill::kTypeVPN);
-  properties.SetStringWithoutPathExpansion(shill::kNameProperty,
-                                           configuration_name);
-  properties.SetStringWithoutPathExpansion(shill::kProviderHostProperty,
-                                           extension_id);
-  properties.SetStringWithoutPathExpansion(shill::kObjectPathSuffixProperty,
-                                           configuration->key());
-  properties.SetStringWithoutPathExpansion(shill::kProviderTypeProperty,
-                                           shill::kProviderThirdPartyVpn);
-  properties.SetStringWithoutPathExpansion(shill::kProfileProperty,
-                                           profile->path);
+  properties.SetKey(shill::kTypeProperty, base::Value(shill::kTypeVPN));
+  properties.SetKey(shill::kNameProperty, base::Value(configuration_name));
+  properties.SetKey(shill::kProviderHostProperty, base::Value(extension_id));
+  properties.SetKey(shill::kObjectPathSuffixProperty,
+                    base::Value(configuration->key()));
+  properties.SetKey(shill::kProviderTypeProperty,
+                    base::Value(shill::kProviderThirdPartyVpn));
+  properties.SetKey(shill::kProfileProperty, base::Value(profile->path));
 
   // Note: This will not create an entry in |policy_util|. TODO(pneubeck):
   // Determine the correct thing to do here, crbug.com/459278.
   std::string guid = base::GenerateGUID();
-  properties.SetStringWithoutPathExpansion(shill::kGuidProperty, guid);
+  properties.SetKey(shill::kGuidProperty, base::Value(guid));
 
   network_configuration_handler_->CreateShillConfiguration(
       properties, NetworkConfigurationObserver::SOURCE_EXTENSION_INSTALL,
@@ -553,7 +549,7 @@ void VpnService::OnExtensionUninstalled(
 void VpnService::OnExtensionUnloaded(
     content::BrowserContext* browser_context,
     const extensions::Extension* extension,
-    extensions::UnloadedExtensionInfo::Reason reason) {
+    extensions::UnloadedExtensionReason reason) {
   if (browser_context != browser_context_) {
     NOTREACHED();
     return;
@@ -566,8 +562,8 @@ void VpnService::OnExtensionUnloaded(
         static_cast<uint32_t>(api_vpn::VPN_CONNECTION_STATE_FAILURE),
         base::Bind(base::DoNothing), base::Bind(DoNothingFailureCallback));
   }
-  if (reason == extensions::UnloadedExtensionInfo::REASON_DISABLE ||
-      reason == extensions::UnloadedExtensionInfo::REASON_BLACKLIST) {
+  if (reason == extensions::UnloadedExtensionReason::DISABLE ||
+      reason == extensions::UnloadedExtensionReason::BLACKLIST) {
     DestroyConfigurationsForExtension(extension);
   }
 }

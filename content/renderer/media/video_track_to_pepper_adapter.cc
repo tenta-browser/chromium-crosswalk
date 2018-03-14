@@ -12,7 +12,6 @@
 #include "base/synchronization/lock.h"
 #include "base/trace_event/trace_event.h"
 #include "content/public/renderer/media_stream_video_sink.h"
-#include "content/renderer/media/media_stream.h"
 #include "content/renderer/media/media_stream_registry_interface.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/capture/video_capture_types.h"
@@ -29,10 +28,7 @@ namespace content {
 class PpFrameReceiver : public MediaStreamVideoSink {
  public:
   PpFrameReceiver(blink::WebMediaStreamTrack track)
-    : track_(track),
-      reader_(NULL),
-      weak_factory_(this) {
-  }
+      : track_(track), reader_(nullptr), weak_factory_(this) {}
 
   ~PpFrameReceiver() override {}
 
@@ -138,7 +134,7 @@ VideoTrackToPepperAdapter::SourceInfo::SourceInfo(
 }
 
 VideoTrackToPepperAdapter::SourceInfo::~SourceInfo() {
-  receiver_->SetReader(NULL);
+  receiver_->SetReader(nullptr);
 }
 
 }  // namespace content

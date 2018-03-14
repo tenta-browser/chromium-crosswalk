@@ -27,19 +27,13 @@
 #define Position_h
 
 #include "core/CoreExport.h"
-#include "core/dom/ContainerNode.h"
-#include "core/editing/EditingBoundary.h"
 #include "core/editing/EditingStrategy.h"
 #include "platform/heap/Handle.h"
-#include "platform/text/TextDirection.h"
 #include "platform/wtf/Assertions.h"
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
 class Node;
-enum class TextAffinity;
 class TreeScope;
 
 enum class PositionAnchorType : unsigned {
@@ -51,6 +45,7 @@ enum class PositionAnchorType : unsigned {
 };
 
 // Instances of |PositionTemplate<Strategy>| are immutable.
+// TODO(editing-dev): Make constructor of |PositionTemplate| take |const Node*|.
 template <typename Strategy>
 class CORE_TEMPLATE_CLASS_EXPORT PositionTemplate {
   DISALLOW_NEW();
@@ -62,15 +57,19 @@ class CORE_TEMPLATE_CLASS_EXPORT PositionTemplate {
   static const TreeScope* CommonAncestorTreeScope(
       const PositionTemplate<Strategy>&,
       const PositionTemplate<Strategy>& b);
-  static PositionTemplate<Strategy> EditingPositionOf(Node* anchor_node,
+  static PositionTemplate<Strategy> EditingPositionOf(const Node* anchor_node,
                                                       int offset);
 
   // For creating before/after positions:
-  PositionTemplate(Node* anchor_node, PositionAnchorType);
+  PositionTemplate(const Node* anchor_node, PositionAnchorType);
 
   // For creating offset positions:
-  // FIXME: This constructor should eventually go away. See bug 63040.
-  PositionTemplate(Node* anchor_node, int offset);
+  PositionTemplate(const Node& anchor_node, int offset);
+  // TODO(editing-dev): We should not pass |nullptr| as |anchor_node| for
+  // |Position| constructor.
+  // TODO(editing-dev): This constructor should eventually go away. See bug
+  // http://wkb.ug/63040.
+  PositionTemplate(const Node* anchor_node, int offset);
 
   PositionTemplate(const PositionTemplate&);
 
@@ -152,15 +151,20 @@ class CORE_TEMPLATE_CLASS_EXPORT PositionTemplate {
   Node* AnchorNode() const { return anchor_node_.Get(); }
 
   Document* GetDocument() const {
-    return anchor_node_ ? &anchor_node_->GetDocument() : 0;
+    return anchor_node_ ? &anchor_node_->GetDocument() : nullptr;
   }
-  bool IsConnected() const {
-    return anchor_node_ && anchor_node_->isConnected();
-  }
+
+  // For PositionInFlatTree, it requires an ancestor traversal to compute the
+  // value of IsConnected(), which can be expensive.
+  // TODO(crbug.com/761173): Rename to |ComputeIsConnected()| to indicate the
+  // cost.
+  bool IsConnected() const;
+
+  bool IsValidFor(const Document&) const;
 
   bool IsNull() const { return !anchor_node_; }
   bool IsNotNull() const { return anchor_node_; }
-  bool IsOrphan() const { return anchor_node_ && !anchor_node_->isConnected(); }
+  bool IsOrphan() const { return anchor_node_ && !IsConnected(); }
 
   // Note: Comparison of positions require both parameters are non-null. You
   // should check null-position before comparing them.
@@ -183,18 +187,18 @@ class CORE_TEMPLATE_CLASS_EXPORT PositionTemplate {
   bool AtStartOfTree() const;
   bool AtEndOfTree() const;
 
-  static PositionTemplate<Strategy> BeforeNode(Node* anchor_node);
-  static PositionTemplate<Strategy> AfterNode(Node* anchor_node);
+  static PositionTemplate<Strategy> BeforeNode(const Node& anchor_node);
+  static PositionTemplate<Strategy> AfterNode(const Node& anchor_node);
   static PositionTemplate<Strategy> InParentBeforeNode(const Node& anchor_node);
   static PositionTemplate<Strategy> InParentAfterNode(const Node& anchor_node);
-  static int LastOffsetInNode(Node* anchor_node);
-  static PositionTemplate<Strategy> FirstPositionInNode(Node* anchor_node);
-  static PositionTemplate<Strategy> LastPositionInNode(Node* anchor_node);
-  static int MinOffsetForNode(Node* anchor_node, int offset);
+  static int LastOffsetInNode(const Node& anchor_node);
+  static PositionTemplate<Strategy> FirstPositionInNode(
+      const Node& anchor_node);
+  static PositionTemplate<Strategy> LastPositionInNode(const Node& anchor_node);
   static PositionTemplate<Strategy> FirstPositionInOrBeforeNode(
-      Node* anchor_node);
+      const Node& anchor_node);
   static PositionTemplate<Strategy> LastPositionInOrAfterNode(
-      Node* anchor_node);
+      const Node& anchor_node);
 
   String ToAnchorTypeAndOffsetString() const;
 #ifndef NDEBUG
@@ -202,13 +206,15 @@ class CORE_TEMPLATE_CLASS_EXPORT PositionTemplate {
   void ShowTreeForThisInFlatTree() const;
 #endif
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   bool IsAfterAnchorOrAfterChildren() const {
     return IsAfterAnchor() || IsAfterChildren();
   }
 
+  // TODO(editing-dev): Since we should consider |Position| is constant in
+  // tree, we should use |Member<const Node>|. see http://crbug.com/735327
   Member<Node> anchor_node_;
   // m_offset can be the offset inside m_anchorNode, or if
   // editingIgnoresContent(m_anchorNode) returns true, then other places in

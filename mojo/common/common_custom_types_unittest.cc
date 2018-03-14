@@ -7,9 +7,12 @@
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/numerics/safe_math.h"
+#include "base/process/process_handle.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "mojo/common/common_custom_types_struct_traits.h"
+#include "mojo/common/process_id.mojom.h"
 #include "mojo/common/test_common_custom_types.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -68,8 +71,8 @@ class TestFilePathImpl : public TestFilePath {
 
   // TestFilePath implementation:
   void BounceFilePath(const base::FilePath& in,
-                      const BounceFilePathCallback& callback) override {
-    callback.Run(in);
+                      BounceFilePathCallback callback) override {
+    std::move(callback).Run(in);
   }
 
  private:
@@ -83,8 +86,8 @@ class TestUnguessableTokenImpl : public TestUnguessableToken {
 
   // TestUnguessableToken implementation:
   void BounceNonce(const base::UnguessableToken& in,
-                   const BounceNonceCallback& callback) override {
-    callback.Run(in);
+                   BounceNonceCallback callback) override {
+    std::move(callback).Run(in);
   }
 
  private:
@@ -97,18 +100,18 @@ class TestTimeImpl : public TestTime {
       : binding_(this, std::move(request)) {}
 
   // TestTime implementation:
-  void BounceTime(base::Time in, const BounceTimeCallback& callback) override {
-    callback.Run(in);
+  void BounceTime(base::Time in, BounceTimeCallback callback) override {
+    std::move(callback).Run(in);
   }
 
   void BounceTimeDelta(base::TimeDelta in,
-                       const BounceTimeDeltaCallback& callback) override {
-    callback.Run(in);
+                       BounceTimeDeltaCallback callback) override {
+    std::move(callback).Run(in);
   }
 
   void BounceTimeTicks(base::TimeTicks in,
-                       const BounceTimeTicksCallback& callback) override {
-    callback.Run(in);
+                       BounceTimeTicksCallback callback) override {
+    std::move(callback).Run(in);
   }
 
  private:
@@ -121,20 +124,19 @@ class TestValueImpl : public TestValue {
       : binding_(this, std::move(request)) {}
 
   // TestValue implementation:
-  void BounceDictionaryValue(
-      std::unique_ptr<base::DictionaryValue> in,
-      const BounceDictionaryValueCallback& callback) override {
-    callback.Run(std::move(in));
+  void BounceDictionaryValue(std::unique_ptr<base::DictionaryValue> in,
+                             BounceDictionaryValueCallback callback) override {
+    std::move(callback).Run(std::move(in));
   }
 
   void BounceListValue(std::unique_ptr<base::ListValue> in,
-                       const BounceListValueCallback& callback) override {
-    callback.Run(std::move(in));
+                       BounceListValueCallback callback) override {
+    std::move(callback).Run(std::move(in));
   }
 
   void BounceValue(std::unique_ptr<base::Value> in,
-                   const BounceValueCallback& callback) override {
-    callback.Run(std::move(in));
+                   BounceValueCallback callback) override {
+    std::move(callback).Run(std::move(in));
   }
 
  private:
@@ -148,8 +150,8 @@ class TestString16Impl : public TestString16 {
 
   // TestString16 implementation:
   void BounceString16(const base::string16& in,
-                      const BounceString16Callback& callback) override {
-    callback.Run(in);
+                      BounceString16Callback callback) override {
+    std::move(callback).Run(in);
   }
 
  private:
@@ -162,8 +164,8 @@ class TestFileImpl : public TestFile {
       : binding_(this, std::move(request)) {}
 
   // TestFile implementation:
-  void BounceFile(base::File in, const BounceFileCallback& callback) override {
-    callback.Run(std::move(in));
+  void BounceFile(base::File in, BounceFileCallback callback) override {
+    std::move(callback).Run(std::move(in));
   }
 
  private:
@@ -176,10 +178,9 @@ class TestTextDirectionImpl : public TestTextDirection {
       : binding_(this, std::move(request)) {}
 
   // TestTextDirection:
-  void BounceTextDirection(
-      base::i18n::TextDirection in,
-      const BounceTextDirectionCallback& callback) override {
-    callback.Run(in);
+  void BounceTextDirection(base::i18n::TextDirection in,
+                           BounceTextDirectionCallback callback) override {
+    std::move(callback).Run(in);
   }
 
  private:
@@ -224,6 +225,15 @@ TEST_F(CommonCustomTypesTest, UnguessableToken) {
   ptr->BounceNonce(token, ExpectResponse(&token, run_loop.QuitClosure()));
 
   run_loop.Run();
+}
+
+TEST_F(CommonCustomTypesTest, ProcessId) {
+  base::ProcessId pid = base::GetCurrentProcId();
+  base::ProcessId out_pid = base::kNullProcessId;
+  ASSERT_NE(pid, out_pid);
+  EXPECT_TRUE(mojom::ProcessId::Deserialize(mojom::ProcessId::Serialize(&pid),
+                                            &out_pid));
+  EXPECT_EQ(pid, out_pid);
 }
 
 TEST_F(CommonCustomTypesTest, Time) {
@@ -274,39 +284,39 @@ TEST_F(CommonCustomTypesTest, Value) {
   ASSERT_TRUE(ptr->BounceValue(nullptr, &output));
   EXPECT_FALSE(output);
 
-  auto input = base::MakeUnique<base::Value>();
+  auto input = std::make_unique<base::Value>();
   ASSERT_TRUE(ptr->BounceValue(input->CreateDeepCopy(), &output));
-  EXPECT_TRUE(base::Value::Equals(input.get(), output.get()));
+  EXPECT_EQ(*input, *output);
 
-  input = base::MakeUnique<base::Value>(123);
+  input = std::make_unique<base::Value>(123);
   ASSERT_TRUE(ptr->BounceValue(input->CreateDeepCopy(), &output));
-  EXPECT_TRUE(base::Value::Equals(input.get(), output.get()));
+  EXPECT_EQ(*input, *output);
 
-  input = base::MakeUnique<base::Value>(1.23);
+  input = std::make_unique<base::Value>(1.23);
   ASSERT_TRUE(ptr->BounceValue(input->CreateDeepCopy(), &output));
-  EXPECT_TRUE(base::Value::Equals(input.get(), output.get()));
+  EXPECT_EQ(*input, *output);
 
-  input = base::MakeUnique<base::Value>(false);
+  input = std::make_unique<base::Value>(false);
   ASSERT_TRUE(ptr->BounceValue(input->CreateDeepCopy(), &output));
-  EXPECT_TRUE(base::Value::Equals(input.get(), output.get()));
+  EXPECT_EQ(*input, *output);
 
-  input = base::MakeUnique<base::Value>("test string");
+  input = std::make_unique<base::Value>("test string");
   ASSERT_TRUE(ptr->BounceValue(input->CreateDeepCopy(), &output));
-  EXPECT_TRUE(base::Value::Equals(input.get(), output.get()));
+  EXPECT_EQ(*input, *output);
 
   input = base::Value::CreateWithCopiedBuffer("mojo", 4);
   ASSERT_TRUE(ptr->BounceValue(input->CreateDeepCopy(), &output));
-  EXPECT_TRUE(base::Value::Equals(input.get(), output.get()));
+  EXPECT_EQ(*input, *output);
 
-  auto dict = base::MakeUnique<base::DictionaryValue>();
+  auto dict = std::make_unique<base::DictionaryValue>();
   dict->SetBoolean("bool", false);
   dict->SetInteger("int", 2);
   dict->SetString("string", "some string");
   dict->SetBoolean("nested.bool", true);
   dict->SetInteger("nested.int", 9);
   dict->Set("some_binary", base::Value::CreateWithCopiedBuffer("mojo", 4));
-  dict->Set("null_value", base::MakeUnique<base::Value>());
-  dict->SetIntegerWithoutPathExpansion("non_nested.int", 10);
+  dict->Set("null_value", std::make_unique<base::Value>());
+  dict->SetKey("non_nested.int", base::Value(10));
   {
     std::unique_ptr<base::ListValue> dict_list(new base::ListValue());
     dict_list->AppendString("string");
@@ -316,18 +326,18 @@ TEST_F(CommonCustomTypesTest, Value) {
 
   std::unique_ptr<base::DictionaryValue> dict_output;
   ASSERT_TRUE(ptr->BounceDictionaryValue(dict->CreateDeepCopy(), &dict_output));
-  EXPECT_TRUE(base::Value::Equals(dict.get(), dict_output.get()));
+  EXPECT_EQ(*dict, *dict_output);
 
   input = std::move(dict);
   ASSERT_TRUE(ptr->BounceValue(input->CreateDeepCopy(), &output));
-  EXPECT_TRUE(base::Value::Equals(input.get(), output.get()));
+  EXPECT_EQ(*input, *output);
 
-  auto list = base::MakeUnique<base::ListValue>();
+  auto list = std::make_unique<base::ListValue>();
   list->AppendString("string");
   list->AppendDouble(42.1);
   list->AppendBoolean(true);
   list->Append(base::Value::CreateWithCopiedBuffer("mojo", 4));
-  list->Append(base::MakeUnique<base::Value>());
+  list->Append(std::make_unique<base::Value>());
   {
     std::unique_ptr<base::DictionaryValue> list_dict(
         new base::DictionaryValue());
@@ -336,11 +346,11 @@ TEST_F(CommonCustomTypesTest, Value) {
   }
   std::unique_ptr<base::ListValue> list_output;
   ASSERT_TRUE(ptr->BounceListValue(list->CreateDeepCopy(), &list_output));
-  EXPECT_TRUE(base::Value::Equals(list.get(), list_output.get()));
+  EXPECT_EQ(*list, *list_output);
 
   input = std::move(list);
   ASSERT_TRUE(ptr->BounceValue(input->CreateDeepCopy(), &output));
-  ASSERT_TRUE(base::Value::Equals(input.get(), output.get()));
+  ASSERT_EQ(*input, *output);
 }
 
 TEST_F(CommonCustomTypesTest, String16) {

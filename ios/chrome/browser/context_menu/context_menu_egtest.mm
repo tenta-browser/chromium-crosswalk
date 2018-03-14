@@ -6,7 +6,7 @@
 #import <UIKit/UIKit.h>
 #import <XCTest/XCTest.h>
 
-#include "base/strings/sys_string_conversions.h"
+#include "base/ios/ios_util.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
@@ -14,15 +14,15 @@
 #import "ios/chrome/test/app/tab_test_util.h"
 #include "ios/chrome/test/app/web_view_interaction_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
-#import "ios/chrome/test/earl_grey/chrome_assertions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
+#import "ios/testing/earl_grey/disabled_test_macros.h"
 #import "ios/testing/wait_util.h"
 #import "ios/web/public/test/earl_grey/web_view_matchers.h"
-#import "ios/web/public/test/http_server.h"
-#import "ios/web/public/test/http_server_util.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#import "ios/web/public/test/http_server/http_server_util.h"
 #include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -99,7 +99,7 @@ void SelectTabAtIndexInCurrentMode(NSUInteger index) {
                                                           block:^BOOL {
                                                             return NO;
                                                           }];
-  [myCondition waitWithTimeout:1U];
+  [myCondition waitWithTimeout:1];
 
   chrome_test_util::SelectTabAtIndexInCurrentMode(index);
 }
@@ -129,7 +129,7 @@ void SelectTabAtIndexInCurrentMode(NSUInteger index) {
   GURL imageURL = web::test::HttpServer::MakeUrl(kUrlChromiumLogoImg);
   web::test::SetUpFileBasedHttpServer();
   [ChromeEarlGrey loadURL:pageURL];
-  chrome_test_util::AssertMainTabCount(1U);
+  [ChromeEarlGrey waitForMainTabCount:1];
 
   LongPressElementAndTapOnButton(kChromiumImageID, OpenImageButton());
 
@@ -137,7 +137,7 @@ void SelectTabAtIndexInCurrentMode(NSUInteger index) {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(
                                           imageURL.GetContent())]
       assertWithMatcher:grey_notNil()];
-  chrome_test_util::AssertMainTabCount(1U);
+  [ChromeEarlGrey waitForMainTabCount:1];
 }
 
 // Tests that selecting "Open Image in New Tab" from the context menu properly
@@ -147,7 +147,7 @@ void SelectTabAtIndexInCurrentMode(NSUInteger index) {
   GURL imageURL = web::test::HttpServer::MakeUrl(kUrlChromiumLogoImg);
   web::test::SetUpFileBasedHttpServer();
   [ChromeEarlGrey loadURL:pageURL];
-  chrome_test_util::AssertMainTabCount(1U);
+  [ChromeEarlGrey waitForMainTabCount:1];
 
   LongPressElementAndTapOnButton(kChromiumImageID, OpenImageInNewTabButton());
 
@@ -157,11 +157,18 @@ void SelectTabAtIndexInCurrentMode(NSUInteger index) {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(
                                           imageURL.GetContent())]
       assertWithMatcher:grey_notNil()];
-  chrome_test_util::AssertMainTabCount(2U);
+  [ChromeEarlGrey waitForMainTabCount:2];
 }
 
 // Tests "Open in New Tab" on context menu.
 - (void)testContextMenuOpenInNewTab {
+  // TODO(crbug.com/764691): This test is flaky on iOS 11.  The bots retry
+  // failures, so this test sometimes appears green because it passes on the
+  // retry.
+  if (base::ios::IsRunningOnIOS11OrLater()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 11.");
+  }
+
   // Set up test simple http server.
   std::map<GURL, std::string> responses;
   GURL initialURL = web::test::HttpServer::MakeUrl(kUrlInitialPage);
@@ -174,7 +181,7 @@ void SelectTabAtIndexInCurrentMode(NSUInteger index) {
 
   web::test::SetUpSimpleHttpServer(responses);
   [ChromeEarlGrey loadURL:initialURL];
-  chrome_test_util::AssertMainTabCount(1U);
+  [ChromeEarlGrey waitForMainTabCount:1];
 
   LongPressElementAndTapOnButton(kDestinationLinkID, OpenLinkInNewTabButton());
 
@@ -184,83 +191,7 @@ void SelectTabAtIndexInCurrentMode(NSUInteger index) {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(
                                           destinationURL.GetContent())]
       assertWithMatcher:grey_notNil()];
-  chrome_test_util::AssertMainTabCount(2U);
-}
-
-// Tests "Open in New Tab" on context menu  on a link that requires scrolling
-// on the page to verify that context menu can be properly triggered in the
-// current screen view.
-- (void)testContextMenuOpenInNewTabFromTallPage {
-  // Set up test simple http server.
-  std::map<GURL, std::string> responses;
-  GURL initialURL =
-      web::test::HttpServer::MakeUrl("http://scenarioContextMenuOpenInNewTab");
-  GURL destinationURL = web::test::HttpServer::MakeUrl("http://destination");
-
-  // The initial page contains a link to the destination page that is below a
-  // really tall div so that scrolling is required.
-  responses[initialURL] =
-      "<div style='height:4000px'></div>"
-      "<a style='margin-left:50px' href='" +
-      destinationURL.spec() + "' id='link'>link</a>";
-  responses[destinationURL] = kDestinationHtml;
-
-  web::test::SetUpSimpleHttpServer(responses);
-  [ChromeEarlGrey loadURL:initialURL];
-  chrome_test_util::AssertMainTabCount(1U);
-
-  // Scroll down on the web view to make the link visible.
-  // grey_swipeFastInDirecton will quickly scroll towards the bottom, and then
-  // grey_scrollToContentEdge guarantees the content edge is reached. Two
-  // methods are used because the first one is much faster, but doesn't
-  // guarantee the link becomes visible.
-  // TODO(crbug.com/702272): Try to replace this with one EarlGrey method call.
-  [[EarlGrey
-      selectElementWithMatcher:WebViewScrollView(
-                                   chrome_test_util::GetCurrentWebState())]
-      performAction:grey_swipeFastInDirection(kGREYDirectionUp)];
-  [[EarlGrey
-      selectElementWithMatcher:WebViewScrollView(
-                                   chrome_test_util::GetCurrentWebState())]
-      performAction:grey_scrollToContentEdge(kGREYContentEdgeBottom)];
-
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewContainingText(
-                                          kDestinationLinkID)]
-      assertWithMatcher:grey_notNil()];
-
-  LongPressElementAndTapOnButton(kDestinationLinkID, OpenLinkInNewTabButton());
-
-  // Earl Grey cannot preperly synchronize some animations, so adding a
-  // WaitUntilCondition to wait for the new tab opening animation to finish
-  // and the scroll view to become interactable.
-  ConditionBlock condition = ^{
-    NSError* error = nil;
-    [[EarlGrey
-        selectElementWithMatcher:WebViewScrollView(
-                                     chrome_test_util::GetCurrentWebState())]
-        assertWithMatcher:grey_interactable()
-                    error:&error];
-    return !error;
-  };
-  GREYAssert(testing::WaitUntilConditionOrTimeout(
-                 testing::kWaitForUIElementTimeout, condition),
-             @"Web view did not become interactable");
-
-  // Make the toolbar visible by scrolling up on the web view to select the
-  // newly opened tab.
-  [[EarlGrey
-      selectElementWithMatcher:WebViewScrollView(
-                                   chrome_test_util::GetCurrentWebState())]
-      performAction:grey_swipeFastInDirection(kGREYDirectionDown)];
-  [ChromeEarlGreyUI waitForToolbarVisible:YES];
-
-  SelectTabAtIndexInCurrentMode(1U);
-
-  // Verify url and tab count.
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(
-                                          destinationURL.GetContent())]
-      assertWithMatcher:grey_notNil()];
-  chrome_test_util::AssertMainTabCount(2U);
+  [ChromeEarlGrey waitForMainTabCount:2];
 }
 
 @end

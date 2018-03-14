@@ -10,7 +10,11 @@ package org.chromium.webapk.lib.common;
 public final class WebApkMetaDataKeys {
     public static final String SHELL_APK_VERSION = "org.chromium.webapk.shell_apk.shellApkVersion";
     public static final String RUNTIME_HOST = "org.chromium.webapk.shell_apk.runtimeHost";
+    public static final String RUNTIME_HOST_APPLICATION_NAME =
+            "org.chromium.webapk.shell_apk.runtimeHostApplicationName";
     public static final String START_URL = "org.chromium.webapk.shell_apk.startUrl";
+    public static final String LOGGED_INTENT_URL_PARAM =
+            "org.chromium.webapk.shell_apk.loggedIntentUrlParam";
     public static final String NAME = "org.chromium.webapk.shell_apk.name";
     public static final String SHORT_NAME = "org.chromium.webapk.shell_apk.shortName";
     public static final String SCOPE = "org.chromium.webapk.shell_apk.scope";
@@ -26,4 +30,6 @@ public final class WebApkMetaDataKeys {
     public static final String ICON_URLS_AND_ICON_MURMUR2_HASHES =
             "org.chromium.webapk.shell_apk.iconUrlsAndIconMurmur2Hashes";
     public static final String WEB_MANIFEST_URL = "org.chromium.webapk.shell_apk.webManifestUrl";
+    public static final String BADGE_ICON_ID = "org.chromium.webapk.shell_apk.badgeIconId";
+    public static final String SHARE_TEMPLATE = "org.chromium.webapk.shell_apk.shareTemplate";
 }

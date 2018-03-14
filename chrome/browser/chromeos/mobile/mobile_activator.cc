@@ -21,6 +21,8 @@
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
@@ -102,7 +104,8 @@ std::string CellularConfigDocument::GetErrorMessage(const std::string& code) {
 }
 
 void CellularConfigDocument::LoadCellularConfigFile() {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::AssertBlockingAllowed();
+
   // Load partner customization startup manifest if it is available.
   base::FilePath config_path(kCellularConfigPath);
   if (!base::PathExists(config_path))
@@ -131,7 +134,7 @@ bool CellularConfigDocument::LoadFromFile(const base::FilePath& config_path) {
   std::unique_ptr<base::Value> root =
       base::JSONReader::Read(config, base::JSON_ALLOW_TRAILING_COMMAS);
   DCHECK(root.get() != NULL);
-  if (!root.get() || root->GetType() != base::Value::Type::DICTIONARY) {
+  if (!root.get() || !root->is_dict()) {
     LOG(WARNING) << "Bad cellular config file";
     return false;
   }
@@ -271,10 +274,11 @@ void MobileActivator::InitiateActivation(const std::string& service_path) {
 
   ChangeState(network, PLAN_ACTIVATION_PAGE_LOADING, "");
 
-  BrowserThread::PostTaskAndReply(BrowserThread::FILE, FROM_HERE,
-      base::Bind(&CellularConfigDocument::LoadCellularConfigFile,
-                 cellular_config_.get()),
-      base::Bind(&MobileActivator::ContinueActivation, AsWeakPtr()));
+  base::PostTaskWithTraitsAndReply(
+      FROM_HERE, {base::TaskPriority::BACKGROUND, base::MayBlock()},
+      base::BindOnce(&CellularConfigDocument::LoadCellularConfigFile,
+                     cellular_config_.get()),
+      base::BindOnce(&MobileActivator::ContinueActivation, AsWeakPtr()));
 }
 
 void MobileActivator::ContinueActivation() {

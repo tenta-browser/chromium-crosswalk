@@ -33,7 +33,7 @@ IdTargetObserverRegistry* IdTargetObserverRegistry::Create() {
   return new IdTargetObserverRegistry();
 }
 
-DEFINE_TRACE(IdTargetObserverRegistry) {
+void IdTargetObserverRegistry::Trace(blink::Visitor* visitor) {
   visitor->Trace(registry_);
   visitor->Trace(notifying_observers_in_set_);
 }
@@ -55,7 +55,7 @@ void IdTargetObserverRegistry::RemoveObserver(const AtomicString& id,
   if (id.IsEmpty() || registry_.IsEmpty())
     return;
 
-  IdToObserverSetMap::iterator iter = registry_.Find(id.Impl());
+  IdToObserverSetMap::iterator iter = registry_.find(id.Impl());
 
   ObserverSet* set = iter->value.Get();
   set->erase(observer);

@@ -11,11 +11,12 @@
 #       Path to .grd file.
 #
 #   source_is_generated (optional, defaults to false)
-#       Declares that the input is generated so that grit_info is not run
-#       on the file when compute_grit_inputs_for_analyze is set (because the
-#       file will not exist at analyze time). For "analyze" to be correct in
-#       this case, the inputs to the grit file must either be listed in the
-#       inputs variable or are listed as inputs to dependencies of this target.
+#       Declares that the input (or one of its dependencies) is generated so
+#       that grit_info is not run on the file when
+#       compute_grit_inputs_for_analyze is set (because the file will not
+#       exist at analyze time). For "analyze" to be correct in this case, the
+#       inputs to the grit file must either be listed in the inputs variable
+#       or are listed as inputs to dependencies of this target.
 #
 #   inputs  (optional)
 #       List of additional files, required for grit to process source file.
@@ -62,9 +63,6 @@
 #   depfile_dir (optional)
 #       If set, used to store the depfile and corresponding stamp file.
 #       Defaults to output_dir
-#
-#   use_qualified_include (optional)
-#       If set to false, output_dir is added to include_dirs.
 #
 #   configs (optional)
 #       List of additional configs to be applied to the generated target.
@@ -165,13 +163,6 @@ if (use_aura) {
   ]
 }
 
-if (use_ash) {
-  grit_defines += [
-    "-D",
-    "use_ash",
-  ]
-}
-
 if (use_nss_certs) {
   grit_defines += [
     "-D",
@@ -232,13 +223,6 @@ if (current_toolchain != host_toolchain) {
       "win32",
     ]
   }
-}
-
-if (enable_media_router) {
-  grit_defines += [
-    "-D",
-    "enable_media_router",
-  ]
 }
 
 # TODO(aberent): Enable for other platforms once the build machines have
@@ -340,22 +324,24 @@ template("grit") {
   grit_outputs =
       get_path_info(rebase_path(invoker.outputs, ".", output_dir), "abspath")
 
+  # Add .info output for all pak files
+  set_sources_assignment_filter([ "*.pak" ])
+  sources = grit_outputs
+  pak_grit_outputs = grit_outputs - sources
+  sources = []
+  pak_info_outputs = []
+  foreach(output, pak_grit_outputs) {
+    pak_info_outputs += [ "${output}.info" ]
+  }
+
   # The config and the action below get this visibility son only the generated
   # source set can depend on them. The variable "target_name" will get
   # overwritten inside the inner classes so we need to compute it here.
   target_visibility = [ ":$target_name" ]
 
-  # The current grit setup makes an file in $output_dir/grit/foo.h that
-  # the source code expects to include via "grit/foo.h". It would be nice to
-  # change this to including absolute paths relative to the root gen directory
-  # (like "mycomponent/foo.h"). This config sets up the include path.
+  # This config sets up flags needed for enable_resource_whitelist_generation.
   grit_config = target_name + "_grit_config"
   config(grit_config) {
-    if (defined(invoker.use_qualified_include) &&
-        !invoker.use_qualified_include) {
-      include_dirs = [ output_dir ]
-    }
-
     if ((is_linux || is_android) && enable_resource_whitelist_generation) {
       cflags = [
         "-Wunknown-pragmas",
@@ -379,7 +365,7 @@ template("grit") {
     }
 
     depfile = "$depfile_dir/${grit_output_name}_stamp.d"
-    outputs = [ "${depfile}.stamp" ] + grit_outputs
+    outputs = [ "${depfile}.stamp" ] + grit_outputs + pak_info_outputs
 
     args = [
              "-i",
@@ -420,7 +406,10 @@ template("grit") {
         "--js-minifier",
         js_minifier_command,
       ]
-      inputs += [ _js_minifier ]
+      inputs += [
+        _js_minifier,
+        "//third_party/closure_compiler/compiler/compiler.jar",
+      ]
     }
 
     # Must be after the args are computed since they are re-used.

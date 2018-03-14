@@ -36,10 +36,6 @@ void FocusableBorder::SetColorId(
 }
 
 void FocusableBorder::Paint(const View& view, gfx::Canvas* canvas) {
-  // In harmony, the focus indicator is a FocusRing.
-  if (ui::MaterialDesignController::IsSecondaryUiMaterial() && view.HasFocus())
-    return;
-
   cc::PaintFlags flags;
   flags.setStyle(cc::PaintFlags::kStroke_Style);
   flags.setColor(GetCurrentColor(view));
@@ -54,7 +50,7 @@ void FocusableBorder::Paint(const View& view, gfx::Canvas* canvas) {
   flags.setStrokeWidth(SkIntToScalar(stroke_width_px));
 
   // Scale the rect and snap to pixel boundaries.
-  gfx::RectF rect(gfx::ScaleToEnclosingRect(view.GetLocalBounds(), dsf));
+  gfx::RectF rect(gfx::ScaleToEnclosedRect(view.GetLocalBounds(), dsf));
   rect.Inset(gfx::InsetsF(stroke_width_px / 2.0f));
 
   SkPath path;
@@ -82,13 +78,21 @@ void FocusableBorder::SetInsets(int top, int left, int bottom, int right) {
   insets_.Set(top, left, bottom, right);
 }
 
+void FocusableBorder::SetInsets(int vertical, int horizontal) {
+  SetInsets(vertical, horizontal, vertical, horizontal);
+}
+
 SkColor FocusableBorder::GetCurrentColor(const View& view) const {
   ui::NativeTheme::ColorId color_id =
       ui::NativeTheme::kColorId_UnfocusedBorderColor;
-  if (override_color_id_)
+  if (override_color_id_) {
     color_id = *override_color_id_;
-  else if (view.HasFocus())
+  } else if (view.HasFocus() &&
+             !ui::MaterialDesignController::IsSecondaryUiMaterial()) {
+    // Note with --secondary-ui-md there is a FocusRing indicator, so the border
+    // retains its unfocused color.
     color_id = ui::NativeTheme::kColorId_FocusedBorderColor;
+  }
 
   SkColor color = view.GetNativeTheme()->GetSystemColor(color_id);
   if (ui::MaterialDesignController::IsSecondaryUiMaterial() &&

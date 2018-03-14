@@ -10,7 +10,7 @@
 #include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "content/public/common/url_utils.h"
-#include "content/renderer/web_frame_utils.h"
+#include "content/renderer/render_frame_impl.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
@@ -37,10 +37,10 @@ namespace {
 
 // Returns |true| if |web_frame| contains (or should be assumed to contain)
 // a html document.
-bool DoesFrameContainHtmlDocument(const WebFrame& web_frame,
+bool DoesFrameContainHtmlDocument(WebFrame* web_frame,
                                   const WebElement& element) {
-  if (web_frame.IsWebLocalFrame()) {
-    WebDocument doc = web_frame.GetDocument();
+  if (web_frame->IsWebLocalFrame()) {
+    WebDocument doc = web_frame->ToWebLocalFrame()->GetDocument();
     return doc.IsHTMLDocument() || doc.IsXHTMLDocument();
   }
 
@@ -68,10 +68,10 @@ void GetSavableResourceLinkForElement(
 
   // See whether to report this element as a subframe.
   WebFrame* web_frame = WebFrame::FromFrameOwnerElement(element);
-  if (web_frame && DoesFrameContainHtmlDocument(*web_frame, element)) {
+  if (web_frame && DoesFrameContainHtmlDocument(web_frame, element)) {
     SavableSubframe subframe;
     subframe.original_url = element_url;
-    subframe.routing_id = GetRoutingIdForFrameOrProxy(web_frame);
+    subframe.routing_id = RenderFrame::GetRoutingIdForWebFrame(web_frame);
     result->subframes->push_back(subframe);
     return;
   }
@@ -96,7 +96,7 @@ void GetSavableResourceLinkForElement(
 
 }  // namespace
 
-bool GetSavableResourceLinksForFrame(WebFrame* current_frame,
+bool GetSavableResourceLinksForFrame(WebLocalFrame* current_frame,
                                      SavableResourcesResult* result) {
   // Get current frame's URL.
   GURL current_frame_url = current_frame->GetDocument().Url();
@@ -125,7 +125,7 @@ bool GetSavableResourceLinksForFrame(WebFrame* current_frame,
 }
 
 WebString GetSubResourceLinkFromElement(const WebElement& element) {
-  const char* attribute_name = NULL;
+  const char* attribute_name = nullptr;
   if (element.HasHTMLTagName("img") || element.HasHTMLTagName("frame") ||
       element.HasHTMLTagName("iframe") || element.HasHTMLTagName("script")) {
     attribute_name = "src";

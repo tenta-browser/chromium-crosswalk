@@ -6,11 +6,9 @@
 
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
 #include "ash/wm/window_positioning_utils.h"
 #include "ash/wm/window_properties.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm_window.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/compositor/dip_util.h"
@@ -30,7 +28,6 @@ void ScreenPositionController::ConvertHostPointToRelativeToRootWindow(
   gfx::Point point_in_root(*point);
   root_window->GetHost()->ConvertPixelsToDIP(&point_in_root);
 
-#if defined(USE_X11) || defined(USE_OZONE)
   gfx::Rect host_bounds(root_window->GetHost()->GetBoundsInPixels().size());
   if (!host_bounds.Contains(*point)) {
     // This conversion is necessary to deal with X's passive input
@@ -68,13 +65,13 @@ void ScreenPositionController::ConvertHostPointToRelativeToRootWindow(
       }
     }
   }
-#endif
+
   *target_root = root_window;
   *point = point_in_root;
 }
 
 void ScreenPositionController::ConvertPointToScreen(const aura::Window* window,
-                                                    gfx::Point* point) {
+                                                    gfx::PointF* point) {
   const aura::Window* root = window->GetRootWindow();
   aura::Window::ConvertPointToTarget(window, root, point);
   const gfx::Point display_origin =
@@ -87,7 +84,7 @@ void ScreenPositionController::ConvertPointToScreen(const aura::Window* window,
 
 void ScreenPositionController::ConvertPointFromScreen(
     const aura::Window* window,
-    gfx::Point* point) {
+    gfx::PointF* point) {
   const aura::Window* root = window->GetRootWindow();
   const gfx::Point display_origin =
       display::Screen::GetScreen()
@@ -103,10 +100,9 @@ void ScreenPositionController::ConvertHostPointToScreen(
     gfx::Point* point) {
   aura::Window* root = root_window->GetRootWindow();
   aura::Window* target_root = nullptr;
-  ConvertHostPointToRelativeToRootWindow(
-      root, WmWindow::ToAuraWindows(ShellPort::Get()->GetAllRootWindows()),
-      point, &target_root);
-  ConvertPointToScreen(target_root, point);
+  ConvertHostPointToRelativeToRootWindow(root, Shell::GetAllRootWindows(),
+                                         point, &target_root);
+  aura::client::ScreenPositionClient::ConvertPointToScreen(target_root, point);
 }
 
 void ScreenPositionController::SetBounds(aura::Window* window,
@@ -117,7 +113,7 @@ void ScreenPositionController::SetBounds(aura::Window* window,
     return;
   }
 
-  wm::SetBoundsInScreen(WmWindow::Get(window), bounds, display);
+  wm::SetBoundsInScreen(window, bounds, display);
 }
 
 }  // namespace ash

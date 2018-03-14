@@ -25,31 +25,20 @@ class ShellDelegateImpl : public ShellDelegate {
 
   // ShellDelegate:
   ::service_manager::Connector* GetShellConnector() const override;
-  bool IsIncognitoAllowed() const override;
-  bool IsMultiProfilesEnabled() const override;
   bool IsRunningInForcedAppMode() const override;
-  bool CanShowWindowForUser(WmWindow* window) const override;
+  bool CanShowWindowForUser(aura::Window* window) const override;
   bool IsForceMaximizeOnFirstRun() const override;
   void PreInit() override;
   void PreShutdown() override;
-  void Exit() override;
-  keyboard::KeyboardUI* CreateKeyboardUI() override;
+  std::unique_ptr<keyboard::KeyboardUI> CreateKeyboardUI() override;
   void OpenUrlFromArc(const GURL& url) override;
-  ShelfDelegate* CreateShelfDelegate(ShelfModel* model) override;
-  SystemTrayDelegate* CreateSystemTrayDelegate() override;
+  NetworkingConfigDelegate* GetNetworkingConfigDelegate() override;
+  std::unique_ptr<ScreenshotDelegate> CreateScreenshotDelegate() override;
   std::unique_ptr<WallpaperDelegate> CreateWallpaperDelegate() override;
-  SessionStateDelegate* CreateSessionStateDelegate() override;
   AccessibilityDelegate* CreateAccessibilityDelegate() override;
-  std::unique_ptr<PaletteDelegate> CreatePaletteDelegate() override;
-  ui::MenuModel* CreateContextMenu(WmShelf* wm_shelf,
-                                   const ShelfItem* item) override;
-  GPUSupport* CreateGPUSupport() override;
   base::string16 GetProductName() const override;
   gfx::Image GetDeprecatedAcceleratorImage() const override;
-  bool IsTouchscreenEnabledInPrefs(bool use_local_state) const override;
-  void SetTouchscreenEnabledInPrefs(bool enabled,
-                                    bool use_local_state) override;
-  void UpdateTouchscreenStatusFromPrefs() override;
+  ui::InputDeviceControllerClient* GetInputDeviceControllerClient() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ShellDelegateImpl);

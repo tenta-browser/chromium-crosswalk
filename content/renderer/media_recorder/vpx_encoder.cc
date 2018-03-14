@@ -56,8 +56,8 @@ VpxEncoder::VpxEncoder(
 VpxEncoder::~VpxEncoder() {
   main_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&VpxEncoder::ShutdownEncoder, base::Passed(&encoding_thread_),
-                 base::Passed(&encoder_)));
+      base::BindOnce(&VpxEncoder::ShutdownEncoder,
+                     base::Passed(&encoding_thread_), base::Passed(&encoder_)));
 }
 
 bool VpxEncoder::CanEncodeAlphaChannel() {
@@ -70,7 +70,7 @@ void VpxEncoder::EncodeOnEncodingTaskRunner(scoped_refptr<VideoFrame> frame,
   DCHECK(encoding_task_runner_->BelongsToCurrentThread());
 
   const gfx::Size frame_size = frame->visible_rect().size();
-  const base::TimeDelta duration = EstimateFrameDuration(frame);
+  base::TimeDelta duration = EstimateFrameDuration(frame);
   const media::WebmMuxer::VideoParameters video_params(frame);
 
   if (!IsInitialized(codec_config_) ||
@@ -79,6 +79,8 @@ void VpxEncoder::EncodeOnEncodingTaskRunner(scoped_refptr<VideoFrame> frame,
   }
 
   const bool frame_has_alpha = frame->format() == media::PIXEL_FORMAT_YV12A;
+  // Split the duration between two encoder instances if alpha is encoded.
+  duration = frame_has_alpha ? duration / 2 : duration;
   if (frame_has_alpha && (!IsInitialized(alpha_codec_config_) ||
                           gfx::Size(alpha_codec_config_.g_w,
                                     alpha_codec_config_.g_h) != frame_size)) {
@@ -128,9 +130,9 @@ void VpxEncoder::EncodeOnEncodingTaskRunner(scoped_refptr<VideoFrame> frame,
 
   origin_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(OnFrameEncodeCompleted, on_encoded_video_callback_,
-                 video_params, base::Passed(&data), base::Passed(&alpha_data),
-                 capture_timestamp, keyframe));
+      base::BindOnce(OnFrameEncodeCompleted, on_encoded_video_callback_,
+                     video_params, base::Passed(&data),
+                     base::Passed(&alpha_data), capture_timestamp, keyframe));
 }
 
 void VpxEncoder::DoEncode(vpx_codec_ctx_t* const encoder,
@@ -172,9 +174,9 @@ void VpxEncoder::DoEncode(vpx_codec_ctx_t* const encoder,
       << " -" << vpx_codec_error_detail(encoder);
 
   *keyframe = false;
-  vpx_codec_iter_t iter = NULL;
-  const vpx_codec_cx_pkt_t* pkt = NULL;
-  while ((pkt = vpx_codec_get_cx_data(encoder, &iter)) != NULL) {
+  vpx_codec_iter_t iter = nullptr;
+  const vpx_codec_cx_pkt_t* pkt = nullptr;
+  while ((pkt = vpx_codec_get_cx_data(encoder, &iter)) != nullptr) {
     if (pkt->kind != VPX_CODEC_CX_FRAME_PKT)
       continue;
     output_data->assign(static_cast<char*>(pkt->data.frame.buf),

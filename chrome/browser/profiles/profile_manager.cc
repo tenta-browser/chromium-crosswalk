@@ -22,6 +22,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/trace_event/trace_event.h"
 #include "base/value_conversions.h"
 #include "build/build_config.h"
@@ -30,12 +32,11 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
-#include "chrome/browser/download/download_service.h"
-#include "chrome/browser/download/download_service_factory.h"
+#include "chrome/browser/download/download_core_service.h"
+#include "chrome/browser/download/download_core_service_factory.h"
 #include "chrome/browser/invalidation/profile_invalidation_provider_factory.h"
 #include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings.h"
 #include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings_factory.h"
-#include "chrome/browser/password_manager/password_manager_setting_migrator_service_factory.h"
 #include "chrome/browser/password_manager/password_store_factory.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/bookmark_model_loaded_observer.h"
@@ -75,7 +76,6 @@
 #include "components/invalidation/impl/profile_invalidation_provider.h"
 #include "components/invalidation/public/invalidation_service.h"
 #include "components/password_manager/core/browser/password_store.h"
-#include "components/password_manager/sync/browser/password_manager_setting_migrator_service.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/search_engines/default_search_manager.h"
@@ -83,7 +83,7 @@
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/gaia_cookie_manager_service.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/signin/core/common/signin_pref_names.h"
+#include "components/signin/core/browser/signin_pref_names.h"
 #include "components/sync/base/stop_source.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
@@ -106,6 +106,7 @@
 #if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 #include "chrome/browser/supervised_user/child_accounts/child_account_service.h"
 #include "chrome/browser/supervised_user/child_accounts/child_account_service_factory.h"
+#include "chrome/browser/supervised_user/supervised_user_constants.h"
 #include "chrome/browser/supervised_user/supervised_user_service.h"
 #include "chrome/browser/supervised_user/supervised_user_service_factory.h"
 #endif
@@ -127,9 +128,10 @@
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
+#include "components/user_manager/user_type.h"
 #endif
 
-#if !defined(OS_ANDROID) && !defined(OS_IOS) && !defined(OS_CHROMEOS)
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
 #include "chrome/browser/profiles/profile_statistics.h"
 #include "chrome/browser/profiles/profile_statistics_factory.h"
 #endif
@@ -166,7 +168,7 @@ int64_t ComputeFilesSize(const base::FilePath& directory,
 
 // Simple task to log the size of the current profile.
 void ProfileSizeTask(const base::FilePath& path, int enabled_app_count) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::AssertBlockingAllowed();
   const int64_t kBytesInOneMB = 1024 * 1024;
 
   int64_t size = ComputeFilesSize(path, FILE_PATH_LITERAL("*"));
@@ -269,17 +271,15 @@ void ProfileCleanedUp(const base::Value* profile_path_value) {
 }
 
 #if defined(OS_CHROMEOS)
-void CheckCryptohomeIsMounted(chromeos::DBusMethodCallStatus call_status,
-                              bool is_mounted) {
-  if (call_status != chromeos::DBUS_METHOD_CALL_SUCCESS) {
+void CheckCryptohomeIsMounted(base::Optional<bool> result) {
+  if (!result.has_value()) {
     LOG(ERROR) << "IsMounted call failed.";
     return;
   }
-  if (!is_mounted)
-    LOG(ERROR) << "Cryptohome is not mounted.";
-}
 
-#endif
+  LOG_IF(ERROR, !result.value()) << "Cryptohome is not mounted.";
+}
+#endif  // OS_CHROMEOS
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 
@@ -337,9 +337,9 @@ bool IsProfileEphemeral(ProfileAttributesStorage* storage,
 }
 #endif
 
-#if !defined(OS_ANDROID) && !defined(OS_IOS) && !defined(OS_CHROMEOS)
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
 void SignOut(SigninManager* signin_manager) {
-  signin_manager->SignOut(
+  signin_manager->SignOutAndRemoveAllAccounts(
       signin_metrics::AUTHENTICATION_FAILED_WITH_FORCE_SIGNIN,
       signin_metrics::SignoutDelete::IGNORE_METRIC);
 }
@@ -383,6 +383,7 @@ ProfileManager::ProfileManager(const base::FilePath& user_data_dir)
 }
 
 ProfileManager::~ProfileManager() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 }
 
 #if BUILDFLAG(ENABLE_SESSION_SERVICE)
@@ -486,6 +487,13 @@ Profile* ProfileManager::GetActiveUserProfile() {
   return profile;
 }
 
+// static
+Profile* ProfileManager::CreateInitialProfile() {
+  ProfileManager* const profile_manager = g_browser_process->profile_manager();
+  return profile_manager->GetProfile(profile_manager->user_data_dir().Append(
+      profile_manager->GetInitialProfileDir()));
+}
+
 Profile* ProfileManager::GetProfile(const base::FilePath& profile_dir) {
   TRACE_EVENT0("browser", "ProfileManager::GetProfile");
 
@@ -505,7 +513,12 @@ bool ProfileManager::LoadProfile(const std::string& profile_name,
                                  bool incognito,
                                  const ProfileLoadedCallback& callback) {
   const base::FilePath profile_path = user_data_dir().AppendASCII(profile_name);
+  return LoadProfileByPath(profile_path, incognito, callback);
+}
 
+bool ProfileManager::LoadProfileByPath(const base::FilePath& profile_path,
+                                       bool incognito,
+                                       const ProfileLoadedCallback& callback) {
   ProfileAttributesEntry* entry = nullptr;
   if (!GetProfileAttributesStorage().GetProfileAttributesWithPath(profile_path,
                                                                   &entry)) {
@@ -629,13 +642,12 @@ Profile* ProfileManager::GetLastUsedProfile(
 
     base::FilePath profile_path(user_data_dir);
     Profile* profile = GetProfileByPath(profile_path.Append(profile_dir));
-    // If we get here, it means the user has logged in but the profile has not
-    // finished initializing, so treat the user as not having logged in.
-    if (!profile) {
-      DLOG(WARNING) << "Calling GetLastUsedProfile() before profile "
-                    << "initialization is completed. Returning login profile.";
-      return GetActiveUserOrOffTheRecordProfileFromPath(user_data_dir);
-    }
+
+    // Accessing a user profile before it is loaded may lead to policy exploit.
+    // See http://crbug.com/689206.
+    LOG_IF(FATAL, !profile) << "Calling GetLastUsedProfile() before profile "
+                            << "initialization is completed.";
+
     return profile->IsGuestSession() ? profile->GetOffTheRecordProfile() :
                                        profile;
   }
@@ -816,8 +828,8 @@ void ProfileManager::ScheduleProfileForDeletion(
     // Cancel all in-progress downloads before deleting the profile to prevent a
     // "Do you want to exit Google Chrome and cancel the downloads?" prompt
     // (crbug.com/336725).
-    DownloadService* service =
-        DownloadServiceFactory::GetForBrowserContext(profile);
+    DownloadCoreService* service =
+        DownloadCoreServiceFactory::GetForBrowserContext(profile);
     service->CancelDownloads();
     DCHECK_EQ(0, service->NonMaliciousDownloadCount());
 
@@ -888,8 +900,11 @@ void ProfileManager::CleanUpEphemeralProfiles() {
   // This uses a separate loop, because deleting the profile from the
   // ProfileInfoCache will modify indices.
   for (const base::FilePath& profile_path : profiles_to_delete) {
-    BrowserThread::PostTask(BrowserThread::FILE, FROM_HERE,
-                            base::Bind(&NukeProfileFromDisk, profile_path));
+    base::PostTaskWithTraits(
+        FROM_HERE,
+        {base::MayBlock(), base::TaskPriority::BACKGROUND,
+         base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+        base::BindOnce(&NukeProfileFromDisk, profile_path));
 
     storage.RemoveProfile(profile_path);
   }
@@ -913,14 +928,16 @@ void ProfileManager::CleanUpDeletedProfiles() {
       if (base::PathExists(profile_path)) {
         LOG(WARNING) << "Files of a deleted profile still exist after restart. "
                         "Cleaning up now.";
-        BrowserThread::PostTaskAndReply(
-            BrowserThread::FILE, FROM_HERE,
-            base::Bind(&NukeProfileFromDisk, profile_path),
-            base::Bind(&ProfileCleanedUp, &value));
+        base::PostTaskWithTraitsAndReply(
+            FROM_HERE,
+            {base::MayBlock(), base::TaskPriority::BACKGROUND,
+             base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+            base::BindOnce(&NukeProfileFromDisk, profile_path),
+            base::BindOnce(&ProfileCleanedUp, &value));
       } else {
         // Everything is fine, the profile was removed on shutdown.
         BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                                base::Bind(&ProfileCleanedUp, &value));
+                                base::BindOnce(&ProfileCleanedUp, &value));
       }
     } else {
       LOG(ERROR) << "Found invalid profile path in deleted_profiles: "
@@ -977,14 +994,26 @@ void ProfileManager::InitProfileUserPrefs(Profile* profile) {
   if (!profile->GetPrefs()->HasPrefPath(prefs::kProfileName))
     profile->GetPrefs()->SetString(prefs::kProfileName, profile_name);
 
+#if defined(OS_CHROMEOS)
+  const user_manager::User* user =
+      chromeos::ProfileHelper::Get()->GetUserByProfile(profile);
+  if (user && user->GetType() == user_manager::USER_TYPE_CHILD) {
+    profile->GetPrefs()->SetString(prefs::kSupervisedUserId,
+                                   supervised_users::kChildAccountSUID);
+  }
+#endif
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   bool force_supervised_user_id =
 #if defined(OS_CHROMEOS)
       g_browser_process->platform_part()
               ->profile_helper()
               ->GetSigninProfileDir() != profile->GetPath() &&
+      g_browser_process->platform_part()
+              ->profile_helper()
+              ->GetLockScreenAppProfilePath() != profile->GetPath() &&
 #endif
       command_line->HasSwitch(switches::kSupervisedUserId);
+
   if (force_supervised_user_id) {
     supervised_user_id =
         command_line->GetSwitchValueASCII(switches::kSupervisedUserId);
@@ -995,14 +1024,12 @@ void ProfileManager::InitProfileUserPrefs(Profile* profile) {
                                    supervised_user_id);
   }
 #if !defined(OS_ANDROID)
-  if (StartupBrowserCreator::UseConsolidatedFlow()) {
-    // TODO(pmonette): Fix IsNewProfile() to handle the case where the profile
-    // is new even if the "Preferences" file already existed (For example: The
-    // master_preferences file is dumped into the default profile on first run,
-    // before profile creation).
-    if (profile->IsNewProfile() || first_run::IsChromeFirstRun())
-      profile->GetPrefs()->SetBoolean(prefs::kHasSeenWelcomePage, false);
-  }
+  // TODO(pmonette): Fix IsNewProfile() to handle the case where the profile is
+  // new even if the "Preferences" file already existed. (For example: The
+  // master_preferences file is dumped into the default profile on first run,
+  // before profile creation.)
+  if (profile->IsNewProfile() || first_run::IsChromeFirstRun())
+    profile->GetPrefs()->SetBoolean(prefs::kHasSeenWelcomePage, false);
 #endif
 }
 
@@ -1036,7 +1063,7 @@ void ProfileManager::Observe(
       // our profile directory is the one that's mounted, and that it's mounted
       // as the current user.
       chromeos::DBusThreadManager::Get()->GetCryptohomeClient()->IsMounted(
-          base::Bind(&CheckCryptohomeIsMounted));
+          base::BindOnce(&CheckCryptohomeIsMounted));
 
       // Confirm that we hadn't loaded the new profile previously.
       base::FilePath default_profile_dir = user_data_dir_.Append(
@@ -1187,17 +1214,6 @@ void ProfileManager::DoFinalInit(Profile* profile, bool go_off_the_record) {
       chrome::NOTIFICATION_PROFILE_ADDED,
       content::Source<Profile>(profile),
       content::NotificationService::NoDetails());
-
-#if !defined(OS_ANDROID) && !defined(OS_IOS) && !defined(OS_CHROMEOS)
-  // Record statistics to ProfileInfoCache if statistics were not recorded
-  // during shutdown, i.e. the last shutdown was a system shutdown or a crash.
-  if (!profile->IsGuestSession() && !profile->IsSystemProfile() &&
-      !profile->IsNewProfile() && !go_off_the_record &&
-      profile->GetLastSessionExitType() != Profile::EXIT_NORMAL) {
-    ProfileStatisticsFactory::GetForProfile(profile)->GatherStatistics(
-        profiles::ProfileStatisticsCallback());
-  }
-#endif
 }
 
 void ProfileManager::DoFinalInitForServices(Profile* profile,
@@ -1205,31 +1221,22 @@ void ProfileManager::DoFinalInitForServices(Profile* profile,
   TRACE_EVENT0("browser", "ProfileManager::DoFinalInitForServices");
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  // Ensure that the HostContentSettingsMap has been created before the
-  // ExtensionSystem is initialized otherwise the ExtensionSystem will be
-  // registered twice
-  HostContentSettingsMap* content_settings_map =
-    HostContentSettingsMapFactory::GetForProfile(profile);
-
   bool extensions_enabled = !go_off_the_record;
 #if defined(OS_CHROMEOS)
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableLoginScreenApps) &&
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableLoginScreenApps) &&
       chromeos::ProfileHelper::IsSigninProfile(profile)) {
+    extensions_enabled = true;
+  }
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          chromeos::switches::kDisableLockScreenApps) &&
+      chromeos::ProfileHelper::IsLockScreenAppProfile(profile)) {
     extensions_enabled = true;
   }
 #endif
   extensions::ExtensionSystem::Get(profile)->InitForRegularProfile(
       extensions_enabled);
-  // During tests, when |profile| is an instance of TestingProfile,
-  // ExtensionSystem might not create an ExtensionService.
-  // This block is duplicated in the HostContentSettingsMapFactory
-  // ::BuildServiceInstanceFor method, it should be called once when both the
-  // HostContentSettingsMap and the extension_service are set up.
-  if (extensions::ExtensionSystem::Get(profile)->extension_service()) {
-    extensions::ExtensionSystem::Get(profile)->extension_service()->
-        RegisterContentSettings(content_settings_map);
-  }
+
   // Set the block extensions bit on the ExtensionService. There likely are no
   // blockable extensions to block.
   ProfileAttributesEntry* entry;
@@ -1276,14 +1283,6 @@ void ProfileManager::DoFinalInitForServices(Profile* profile,
       ->SetupInvalidationsOnProfileLoad(invalidation_service);
   AccountReconcilorFactory::GetForProfile(profile);
 
-  // Service is responsible for migration of the legacy password manager
-  // preference which controls behaviour of the Chrome to the new preference
-  // which controls password management behaviour on Chrome and Android. After
-  // migration will be performed for all users it's planned to remove the
-  // migration code, rough time estimates are Q1 2016.
-  PasswordManagerSettingMigratorServiceFactory::GetForProfile(profile)
-      ->InitializeMigration(ProfileSyncServiceFactory::GetForProfile(profile));
-
 #if defined(OS_ANDROID)
   // TODO(b/678590): create services during profile startup.
   // Service is responsible for fetching content snippets for the NTP.
@@ -1302,9 +1301,11 @@ void ProfileManager::DoFinalInitLogging(Profile* profile) {
 #endif
 
   // Log the profile size after a reasonable startup delay.
-  BrowserThread::PostDelayedTask(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&ProfileSizeTask, profile->GetPath(), enabled_app_count),
+  base::PostDelayedTaskWithTraits(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::BindOnce(&ProfileSizeTask, profile->GetPath(), enabled_app_count),
       base::TimeDelta::FromSeconds(112));
 }
 
@@ -1341,9 +1342,9 @@ Profile* ProfileManager::GetActiveUserOrOffTheRecordProfileFromPath(
 
   default_profile_dir = default_profile_dir.Append(GetInitialProfileDir());
   ProfileInfo* profile_info = GetProfileInfoByPath(default_profile_dir);
-  // Fallback to default off-the-record profile, if user profile has not fully
-  // loaded yet.
-  if (profile_info && !profile_info->created)
+  // Fallback to default off-the-record profile, if user profile has not started
+  // loading or has not fully loaded yet.
+  if (!profile_info || !profile_info->created)
     default_profile_dir = profiles::GetDefaultProfileDir(user_data_dir);
 
   Profile* profile = GetProfile(default_profile_dir);
@@ -1469,19 +1470,12 @@ void ProfileManager::EnsureActiveProfileExistsBeforeDeletion(
                      new_profile_name, new_avatar_url, std::string());
 }
 
-void ProfileManager::FinishDeletingProfile(
+void ProfileManager::OnLoadProfileForProfileDeletion(
     const base::FilePath& profile_dir,
-    const base::FilePath& new_active_profile_dir) {
-  // Update the last used profile pref before closing browser windows. This
-  // way the correct last used profile is set for any notification observers.
-  profiles::SetLastUsedProfile(
-      new_active_profile_dir.BaseName().MaybeAsASCII());
-
+    Profile* profile) {
   ProfileAttributesStorage& storage = GetProfileAttributesStorage();
   // TODO(sail): Due to bug 88586 we don't delete the profile instance. Once we
   // start deleting the profile instance we need to close background apps too.
-  Profile* profile = GetProfileByPath(profile_dir);
-
   if (profile) {
     // TODO: Migrate additional code in this block to observe this notification
     // instead of being implemented here.
@@ -1513,8 +1507,9 @@ void ProfileManager::FinishDeletingProfile(
     ProfileMetrics::LogProfileDelete(entry->IsAuthenticated());
     // Some platforms store passwords in keychains. They should be removed.
     scoped_refptr<password_manager::PasswordStore> password_store =
-        PasswordStoreFactory::GetForProfile(
-            profile, ServiceAccessType::EXPLICIT_ACCESS).get();
+        PasswordStoreFactory::GetForProfile(profile,
+                                            ServiceAccessType::EXPLICIT_ACCESS)
+            .get();
     if (password_store.get()) {
       password_store->RemoveLoginsCreatedBetween(
           base::Time(), base::Time::Max(), base::Closure());
@@ -1523,18 +1518,38 @@ void ProfileManager::FinishDeletingProfile(
     // The Profile Data doesn't get wiped until Chrome closes. Since we promised
     // that the user's data would be removed, do so immediately.
     profiles::RemoveBrowsingDataForProfile(profile_dir);
+
+    // Clean-up pref data that won't be cleaned up by deleting the profile dir.
+    profile->GetPrefs()->OnStoreDeletionFromDisk();
   } else {
-    // It is safe to delete a not yet loaded Profile from disk.
-    BrowserThread::PostTask(
-        BrowserThread::FILE, FROM_HERE,
-        base::Bind(&NukeProfileFromDisk, profile_dir));
+    // We failed to load the profile, but it's safe to delete a not yet loaded
+    // Profile from disk.
+    base::PostTaskWithTraits(FROM_HERE,
+                             {base::MayBlock(), base::TaskPriority::BACKGROUND,
+                              base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+                             base::BindOnce(&NukeProfileFromDisk, profile_dir));
   }
 
-  // Queue even a profile that was nuked so it will be MarkedForDeletion and so
-  // CreateProfileAsync can't create it.
-  MarkProfileDirectoryForDeletion(profile_dir);
   storage.RemoveProfile(profile_dir);
   ProfileMetrics::UpdateReportedProfilesStatistics(this);
+}
+
+void ProfileManager::FinishDeletingProfile(
+    const base::FilePath& profile_dir,
+    const base::FilePath& new_active_profile_dir) {
+  // Update the last used profile pref before closing browser windows. This
+  // way the correct last used profile is set for any notification observers.
+  profiles::SetLastUsedProfile(
+      new_active_profile_dir.BaseName().MaybeAsASCII());
+
+  // Attempt to load the profile before deleting it to properly clean up
+  // profile-specific data stored outside the profile directory.
+  LoadProfileByPath(profile_dir, false,
+                    base::Bind(&ProfileManager::OnLoadProfileForProfileDeletion,
+                               base::Unretained(this), profile_dir));
+
+  // Prevents CreateProfileAsync from re-creating the profile.
+  MarkProfileDirectoryForDeletion(profile_dir);
 }
 #endif  // !defined(OS_ANDROID)
 
@@ -1542,10 +1557,10 @@ ProfileManager::ProfileInfo* ProfileManager::RegisterProfile(
     Profile* profile,
     bool created) {
   TRACE_EVENT0("browser", "ProfileManager::RegisterProfile");
-  ProfileInfo* info = new ProfileInfo(profile, created);
-  profiles_info_.insert(
-      std::make_pair(profile->GetPath(), linked_ptr<ProfileInfo>(info)));
-  return info;
+  auto info = base::MakeUnique<ProfileInfo>(profile, created);
+  ProfileInfo* info_raw = info.get();
+  profiles_info_.insert(std::make_pair(profile->GetPath(), std::move(info)));
+  return info_raw;
 }
 
 ProfileManager::ProfileInfo* ProfileManager::GetProfileInfoByPath(
@@ -1580,19 +1595,20 @@ void ProfileManager::AddProfileToStorage(Profile* profile) {
     bool has_entry = storage.GetProfileAttributesWithPath(profile->GetPath(),
                                                           &entry);
     if (has_entry) {
-#if !defined(OS_ANDROID) && !defined(OS_IOS) && !defined(OS_CHROMEOS)
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
       bool was_authenticated_status = entry->IsAuthenticated();
 #endif
       // The ProfileAttributesStorage's info must match the Signin Manager.
       entry->SetAuthInfo(account_info.gaia, username);
-#if !defined(OS_ANDROID) && !defined(OS_IOS) && !defined(OS_CHROMEOS)
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
       // Sign out if force-sign-in policy is enabled and profile is not signed
       // in.
       if (signin_util::IsForceSigninEnabled() && was_authenticated_status &&
           !entry->IsAuthenticated()) {
         BrowserThread::PostTask(
             BrowserThread::UI, FROM_HERE,
-            base::Bind(&SignOut, static_cast<SigninManager*>(signin_manager)));
+            base::BindOnce(&SignOut,
+                           static_cast<SigninManager*>(signin_manager)));
       }
 #endif
       return;
@@ -1632,8 +1648,10 @@ void ProfileManager::SetNonPersonalProfilePrefs(Profile* profile) {
 
 bool ProfileManager::ShouldGoOffTheRecord(Profile* profile) {
 #if defined(OS_CHROMEOS)
-  if (chromeos::ProfileHelper::IsSigninProfile(profile))
+  if (chromeos::ProfileHelper::IsSigninProfile(profile) ||
+      chromeos::ProfileHelper::IsLockScreenAppProfile(profile)) {
     return true;
+  }
 #endif
   return profile->IsGuestSession() || profile->IsSystemProfile();
 }
@@ -1707,16 +1725,6 @@ void ProfileManager::BrowserListObserver::OnBrowserRemoved(
     // Delete if the profile is an ephemeral profile.
     g_browser_process->profile_manager()
         ->ScheduleForcedEphemeralProfileForDeletion(path);
-  } else {
-#if !defined(OS_ANDROID) && !defined(OS_IOS) && !defined(OS_CHROMEOS)
-    // Gather statistics and store into ProfileInfoCache. For incognito profile
-    // we gather the statistics of its parent profile instead, because a window
-    // of the parent profile was open.
-    if (!profile->IsSystemProfile() && !original_profile->IsSystemProfile()) {
-      ProfileStatisticsFactory::GetForProfile(original_profile)->
-          GatherStatistics(profiles::ProfileStatisticsCallback());
-    }
-#endif
   }
 }
 

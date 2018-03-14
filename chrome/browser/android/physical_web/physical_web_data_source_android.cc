@@ -4,8 +4,6 @@
 
 #include "chrome/browser/android/physical_web/physical_web_data_source_android.h"
 
-#include <jni.h>
-
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/memory/ptr_util.h"
@@ -83,7 +81,7 @@ std::unique_ptr<physical_web::MetadataList>
   JNIEnv* env = AttachCurrentThread();
 
   auto pw_collection = base::MakeUnique<PhysicalWebCollection>();
-  Java_UrlManager_getPwCollection(env, url_manager_.obj(),
+  Java_UrlManager_getPwCollection(env, url_manager_,
                                   reinterpret_cast<long>(pw_collection.get()));
 
   return pw_collection->GetMetadataList();
@@ -117,12 +115,8 @@ void PhysicalWebDataSourceAndroid::OnDistanceChanged(
                           distance_estimate);
 }
 
-// static
-bool PhysicalWebDataSourceAndroid::RegisterPhysicalWebDataSource(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
-static jlong Init(JNIEnv* env, const JavaParamRef<jobject>& obj) {
+static jlong JNI_UrlManager_Init(JNIEnv* env,
+                                 const JavaParamRef<jobject>& obj) {
   physical_web::PhysicalWebDataSource* data_source =
       g_browser_process->GetPhysicalWebDataSource();
   return reinterpret_cast<intptr_t>(data_source);

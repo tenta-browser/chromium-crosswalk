@@ -25,6 +25,8 @@ var bluetoothApis = bluetoothApis || {
 Polymer({
   is: 'settings-bluetooth-page',
 
+  behaviors: [PrefsBehavior],
+
   properties: {
     /** Preferences state. */
     prefs: {
@@ -63,6 +65,20 @@ Polymer({
     adapterState_: {
       type: Object,
       notify: true,
+    },
+
+    /** @private {!Map<string, string>} */
+    focusConfig_: {
+      type: Object,
+      value: function() {
+        var map = new Map();
+        if (settings.routes.BLUETOOTH_DEVICES) {
+          map.set(
+              settings.routes.BLUETOOTH_DEVICES.path,
+              '#bluetoothDevices .subpage-arrow');
+        }
+        return map;
+      },
     },
 
     /**
@@ -165,7 +181,7 @@ Polymer({
   },
 
   /**
-   * @param {Event} e
+   * @param {!Event} e
    * @private
    */
   stopTap_: function(e) {
@@ -173,7 +189,7 @@ Polymer({
   },
 
   /**
-   * @param {Event} e
+   * @param {!Event} e
    * @private
    */
   onSubpageArrowTap_: function(e) {
@@ -189,17 +205,20 @@ Polymer({
     }
     this.bluetoothToggleDisabled_ = true;
     this.bluetoothPrivate.setAdapterState(
-        {powered: this.bluetoothToggleState_}, function() {
-          if (chrome.runtime.lastError) {
-            console.error(
-                'Error enabling bluetooth: ' +
-                chrome.runtime.lastError.message);
+        {powered: this.bluetoothToggleState_}, () => {
+          var error = chrome.runtime.lastError;
+          if (error && error != 'Error setting adapter properties: powered') {
+            console.error('Error enabling bluetooth: ' + error.message);
+            return;
           }
+          this.setPrefValue(
+              'ash.user.bluetooth.adapter_enabled',
+              this.bluetoothToggleState_);
         });
   },
 
   /** @private */
   openSubpage_: function() {
-    settings.navigateTo(settings.Route.BLUETOOTH_DEVICES);
+    settings.navigateTo(settings.routes.BLUETOOTH_DEVICES);
   }
 });

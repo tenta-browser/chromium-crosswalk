@@ -12,25 +12,25 @@
 
 namespace chromeos {
 
-// A special case non-shill type.
-CHROMEOS_EXPORT extern const char kTypeTether[];
-
 class CHROMEOS_EXPORT NetworkTypePattern {
  public:
   // Matches any network.
   static NetworkTypePattern Default();
 
-  // Matches wireless (WiFi, cellular, etc.) networks
+  // Matches wireless (WiFi, Cellular, etc.) networks
   static NetworkTypePattern Wireless();
 
-  // Matches cellular or wimax networks.
+  // Matches Cellular, WiMAX, or Tether networks.
   static NetworkTypePattern Mobile();
 
   // Matches non virtual networks.
   static NetworkTypePattern NonVirtual();
 
-  // Matches ethernet networks (with or without EAP).
+  // Matches ethernet networks.
   static NetworkTypePattern Ethernet();
+
+  // Matches ethernet or ethernet EAP networks.
+  static NetworkTypePattern EthernetOrEthernetEAP();
 
   static NetworkTypePattern WiFi();
   static NetworkTypePattern Cellular();

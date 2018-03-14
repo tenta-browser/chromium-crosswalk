@@ -12,6 +12,7 @@ import android.util.Property;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
+import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.ui.interpolators.BakedBezierInterpolator;
 
@@ -26,7 +27,7 @@ public class NumberRollView extends FrameLayout {
     private TextView mDownNumber;
     private float mNumber;
     private Animator mLastRollAnimator;
-    private int mContentDescriptionStringId;
+    private int mStringId;
 
     /**
      * A Property wrapper around the <code>number</code> functionality handled by the
@@ -83,11 +84,11 @@ public class NumberRollView extends FrameLayout {
     }
 
     /**
-     * @param pluralStringId The id of the string to use for the content description. The string
-     *                       must be a plural that has one placeholder for a quantity.
+     * @param stringId The id of the string to use for the description. The string must be a plural
+     *                 that has one placeholder for a quantity.
      */
-    public void setContentDescriptionString(int pluralStringId) {
-        mContentDescriptionStringId = pluralStringId;
+    public void setString(int stringId) {
+        mStringId = stringId;
     }
 
     /**
@@ -106,22 +107,23 @@ public class NumberRollView extends FrameLayout {
         int upNumber = downNumber + 1;
 
         NumberFormat numberFormatter = NumberFormat.getIntegerInstance();
-        String newString = numberFormatter.format(upNumber);
+        String newString;
+        if (mStringId != 0) {
+            newString = getResources().getQuantityString(mStringId, upNumber, upNumber);
+        } else {
+            newString = numberFormatter.format(upNumber);
+        }
         if (!newString.equals(mUpNumber.getText().toString())) {
             mUpNumber.setText(newString);
-            if (mContentDescriptionStringId != 0) {
-                mUpNumber.setContentDescription(getResources().getQuantityString(
-                        mContentDescriptionStringId, upNumber, upNumber));
-            }
         }
 
-        newString = numberFormatter.format(downNumber);
+        if (mStringId != 0) {
+            newString = getResources().getQuantityString(mStringId, downNumber, downNumber);
+        } else {
+            newString = numberFormatter.format(downNumber);
+        }
         if (!newString.equals(mDownNumber.getText().toString())) {
             mDownNumber.setText(newString);
-            if (mContentDescriptionStringId != 0) {
-                mDownNumber.setContentDescription(getResources().getQuantityString(
-                        mContentDescriptionStringId, downNumber, downNumber));
-            }
         }
 
         float offset = number % 1.0f;
@@ -131,5 +133,11 @@ public class NumberRollView extends FrameLayout {
 
         mUpNumber.setAlpha(offset);
         mDownNumber.setAlpha(1.0f - offset);
+    }
+
+    /** Ends any in-progress animations. */
+    @VisibleForTesting
+    public void endAnimationsForTesting() {
+        if (mLastRollAnimator != null) mLastRollAnimator.end();
     }
 }

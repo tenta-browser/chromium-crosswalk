@@ -19,7 +19,7 @@ const AtomicString& PresentationConnectionList::InterfaceName() const {
   return EventTargetNames::PresentationConnectionList;
 }
 
-const HeapVector<Member<PresentationConnection>>&
+const HeapVector<Member<ReceiverPresentationConnection>>&
 PresentationConnectionList::connections() const {
   return connections_;
 }
@@ -29,15 +29,27 @@ void PresentationConnectionList::AddedEventListener(
     RegisteredEventListener& registered_listener) {
   EventTargetWithInlineData::AddedEventListener(event_type,
                                                 registered_listener);
-  if (event_type == EventTypeNames::connectionavailable)
+  if (event_type == EventTypeNames::connectionavailable) {
     UseCounter::Count(
         GetExecutionContext(),
-        UseCounter::kPresentationRequestConnectionAvailableEventListener);
+        WebFeature::kPresentationRequestConnectionAvailableEventListener);
+  }
 }
 
 void PresentationConnectionList::AddConnection(
-    PresentationConnection* connection) {
+    ReceiverPresentationConnection* connection) {
   connections_.push_back(connection);
+}
+
+bool PresentationConnectionList::RemoveConnection(
+    ReceiverPresentationConnection* connection) {
+  for (size_t i = 0; i < connections_.size(); i++) {
+    if (connections_[i] == connection) {
+      connections_.EraseAt(i);
+      return true;
+    }
+  }
+  return false;
 }
 
 void PresentationConnectionList::DispatchConnectionAvailableEvent(
@@ -50,7 +62,7 @@ bool PresentationConnectionList::IsEmpty() {
   return connections_.IsEmpty();
 }
 
-DEFINE_TRACE(PresentationConnectionList) {
+void PresentationConnectionList::Trace(blink::Visitor* visitor) {
   visitor->Trace(connections_);
   EventTargetWithInlineData::Trace(visitor);
   ContextClient::Trace(visitor);

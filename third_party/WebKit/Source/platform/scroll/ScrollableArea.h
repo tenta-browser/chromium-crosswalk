@@ -27,32 +27,32 @@
 #define ScrollableArea_h
 
 #include "platform/PlatformExport.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/geometry/FloatQuad.h"
 #include "platform/geometry/LayoutRect.h"
 #include "platform/graphics/Color.h"
 #include "platform/heap/Handle.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/scroll/ScrollAnimatorBase.h"
 #include "platform/scroll/ScrollTypes.h"
 #include "platform/scroll/Scrollbar.h"
 #include "platform/wtf/MathExtras.h"
 #include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/Vector.h"
-#include "public/platform/WebLayerScrollClient.h"
 
 namespace blink {
 
 class CompositorAnimationHost;
 class CompositorAnimationTimeline;
 class GraphicsLayer;
-class HostWindow;
 class LayoutBox;
 class LayoutObject;
 class PaintLayer;
+class PlatformChromeClient;
 class ProgrammaticScrollAnimator;
 struct ScrollAlignment;
 class ScrollAnchor;
 class ScrollAnimatorBase;
+class SmoothScrollSequencer;
 class CompositorAnimationTimeline;
 
 enum IncludeScrollbarsInRect {
@@ -60,14 +60,13 @@ enum IncludeScrollbarsInRect {
   kIncludeScrollbars,
 };
 
-class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin,
-                                       public WebLayerScrollClient {
+class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin {
   WTF_MAKE_NONCOPYABLE(ScrollableArea);
 
  public:
-  static int PixelsPerLineStep(HostWindow*);
+  static int PixelsPerLineStep(PlatformChromeClient*);
   static float MinFractionToStepWhenPaging();
-  static int MaxOverlapBetweenPages();
+  int MaxOverlapBetweenPages() const;
 
   // Convert a non-finite scroll value (Infinity, -Infinity, NaN) to 0 as
   // per http://dev.w3.org/csswg/cssom-view/#normalize-non_finite-values.
@@ -75,10 +74,11 @@ class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin,
     return std::isfinite(value) ? value : 0.0;
   }
 
-  // The window that hosts the ScrollableArea. The ScrollableArea will
-  // communicate scrolls and repaints to the host window in the window's
-  // coordinate space.
-  virtual HostWindow* GetHostWindow() const { return 0; }
+  virtual PlatformChromeClient* GetChromeClient() const { return nullptr; }
+
+  virtual SmoothScrollSequencer* GetSmoothScrollSequencer() const {
+    return nullptr;
+  }
 
   virtual ScrollResult UserScroll(ScrollGranularity, const ScrollOffset&);
 
@@ -102,7 +102,9 @@ class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin,
   virtual LayoutRect ScrollIntoView(const LayoutRect& rect_in_content,
                                     const ScrollAlignment& align_x,
                                     const ScrollAlignment& align_y,
-                                    ScrollType = kProgrammaticScroll);
+                                    bool is_smooth,
+                                    ScrollType = kProgrammaticScroll,
+                                    bool is_for_scroll_sequence = false);
 
   static bool ScrollBehaviorFromString(const String&, ScrollBehavior&);
 
@@ -170,7 +172,7 @@ class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin,
   // TODO(szager): Now that scroll offsets are floats everywhere, can we get rid
   // of this?
   virtual bool ShouldUseIntegerScrollOffset() const {
-    return !RuntimeEnabledFeatures::fractionalScrollOffsetsEnabled();
+    return !RuntimeEnabledFeatures::FractionalScrollOffsetsEnabled();
   }
 
   virtual bool IsActive() const = 0;
@@ -182,31 +184,31 @@ class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin,
   virtual void GetTickmarks(Vector<IntRect>&) const {}
 
   // Convert points and rects between the scrollbar and its containing
-  // FrameViewBase. The client needs to implement these in order to be aware of
-  // layout effects like CSS transforms.
-  virtual IntRect ConvertFromScrollbarToContainingFrameViewBase(
+  // EmbeddedContentView. The client needs to implement these in order to be
+  // aware of layout effects like CSS transforms.
+  virtual IntRect ConvertFromScrollbarToContainingEmbeddedContentView(
       const Scrollbar& scrollbar,
       const IntRect& scrollbar_rect) const {
-    return scrollbar.FrameViewBase::ConvertToContainingFrameViewBase(
-        scrollbar_rect);
+    IntRect local_rect = scrollbar_rect;
+    local_rect.MoveBy(scrollbar.Location());
+    return local_rect;
   }
-  virtual IntRect ConvertFromContainingFrameViewBaseToScrollbar(
-      const Scrollbar& scrollbar,
-      const IntRect& parent_rect) const {
-    return scrollbar.FrameViewBase::ConvertFromContainingFrameViewBase(
-        parent_rect);
-  }
-  virtual IntPoint ConvertFromScrollbarToContainingFrameViewBase(
-      const Scrollbar& scrollbar,
-      const IntPoint& scrollbar_point) const {
-    return scrollbar.FrameViewBase::ConvertToContainingFrameViewBase(
-        scrollbar_point);
-  }
-  virtual IntPoint ConvertFromContainingFrameViewBaseToScrollbar(
+  virtual IntPoint ConvertFromContainingEmbeddedContentViewToScrollbar(
       const Scrollbar& scrollbar,
       const IntPoint& parent_point) const {
-    return scrollbar.FrameViewBase::ConvertFromContainingFrameViewBase(
-        parent_point);
+    NOTREACHED();
+    return parent_point;
+  }
+  virtual IntPoint ConvertFromScrollbarToContainingEmbeddedContentView(
+      const Scrollbar& scrollbar,
+      const IntPoint& scrollbar_point) const {
+    NOTREACHED();
+    return scrollbar_point;
+  }
+  virtual IntPoint ConvertFromRootFrame(
+      const IntPoint& point_in_root_frame) const {
+    NOTREACHED();
+    return point_in_root_frame;
   }
 
   virtual Scrollbar* HorizontalScrollbar() const { return nullptr; }
@@ -237,7 +239,7 @@ class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin,
   }
 
   virtual IntRect VisibleContentRect(
-      IncludeScrollbarsInRect = kExcludeScrollbars) const;
+      IncludeScrollbarsInRect = kExcludeScrollbars) const = 0;
   virtual int VisibleHeight() const { return VisibleContentRect().Height(); }
   virtual int VisibleWidth() const { return VisibleContentRect().Width(); }
   virtual IntSize ContentsSize() const = 0;
@@ -251,6 +253,7 @@ class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin,
   // of the top-level FrameView.
   virtual IntRect ScrollableAreaBoundingBox() const = 0;
 
+  virtual CompositorElementId GetCompositorElementId() const = 0;
   virtual bool ScrollAnimatorEnabled() const { return false; }
 
   // NOTE: Only called from Internals for testing.
@@ -261,7 +264,7 @@ class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin,
 
   // Let subclasses provide a way of asking for and servicing scroll
   // animations.
-  virtual bool ScheduleAnimation();
+  virtual bool ScheduleAnimation() { return false; }
   virtual void ServiceScrollAnimations(double monotonic_time);
   virtual void UpdateCompositorScrollAnimations();
   virtual void RegisterForAnimation() {}
@@ -295,10 +298,10 @@ class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin,
   }
 
   virtual GraphicsLayer* LayerForContainer() const;
-  virtual GraphicsLayer* LayerForScrolling() const { return 0; }
-  virtual GraphicsLayer* LayerForHorizontalScrollbar() const { return 0; }
-  virtual GraphicsLayer* LayerForVerticalScrollbar() const { return 0; }
-  virtual GraphicsLayer* LayerForScrollCorner() const { return 0; }
+  virtual GraphicsLayer* LayerForScrolling() const { return nullptr; }
+  virtual GraphicsLayer* LayerForHorizontalScrollbar() const { return nullptr; }
+  virtual GraphicsLayer* LayerForVerticalScrollbar() const { return nullptr; }
+  virtual GraphicsLayer* LayerForScrollCorner() const { return nullptr; }
   bool HasLayerForHorizontalScrollbar() const;
   bool HasLayerForVerticalScrollbar() const;
   bool HasLayerForScrollCorner() const;
@@ -341,9 +344,6 @@ class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin,
   virtual int HorizontalScrollbarHeight(
       OverlayScrollbarClipBehavior = kIgnorePlatformOverlayScrollbarSize) const;
 
-  // Returns the widget associated with this ScrollableArea.
-  virtual FrameViewBase* GetFrameViewBase() { return nullptr; }
-
   virtual LayoutBox* GetLayoutBox() const { return nullptr; }
 
   // Maps a quad from the coordinate system of a LayoutObject contained by the
@@ -354,7 +354,7 @@ class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin,
                                               const LayoutObject*,
                                               unsigned = 0) const;
 
-  virtual bool IsFrameView() const { return false; }
+  virtual bool IsLocalFrameView() const { return false; }
   virtual bool IsPaintLayerScrollableArea() const { return false; }
   virtual bool IsRootFrameViewport() const { return false; }
 
@@ -364,7 +364,7 @@ class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin,
 
   // Need to promptly let go of owned animator objects.
   EAGERLY_FINALIZE();
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   virtual void ClearScrollableArea();
 
@@ -374,12 +374,14 @@ class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin,
 
   // Returns the task runner to be used for scrollable area timers.
   // Ideally a frame-specific throttled one can be used.
-  virtual RefPtr<WebTaskRunner> GetTimerTaskRunner() const = 0;
+  virtual scoped_refptr<WebTaskRunner> GetTimerTaskRunner() const = 0;
 
   // Callback for compositor-side scrolling.
-  void DidScroll(const gfx::ScrollOffset&) override;
+  virtual void DidScroll(const gfx::ScrollOffset&);
 
   virtual void ScrollbarFrameRectChanged() {}
+
+  virtual ScrollbarTheme& GetPageScrollbarTheme() const = 0;
 
  protected:
   ScrollableArea();
@@ -418,7 +420,10 @@ class PLATFORM_EXPORT ScrollableArea : public GarbageCollectedMixin,
   virtual void ScrollbarVisibilityChanged() {}
 
  private:
-  void ProgrammaticScrollHelper(const ScrollOffset&, ScrollBehavior);
+  FRIEND_TEST_ALL_PREFIXES(ScrollableAreaTest,
+                           PopupOverlayScrollbarShouldNotFadeOut);
+
+  void ProgrammaticScrollHelper(const ScrollOffset&, ScrollBehavior, bool);
   void UserScrollHelper(const ScrollOffset&, ScrollBehavior);
 
   void FadeOverlayScrollbarsTimerFired(TimerBase*);

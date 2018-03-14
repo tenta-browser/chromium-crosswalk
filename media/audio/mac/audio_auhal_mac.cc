@@ -198,7 +198,9 @@ bool AUHALStream::Open() {
   if (configured) {
     DCHECK(audio_unit_);
     DCHECK(audio_unit_->is_valid());
-    hardware_latency_ = GetHardwareLatency();
+    hardware_latency_ = AudioManagerMac::GetHardwareLatency(
+        audio_unit_->audio_unit(), device_, kAudioDevicePropertyScopeOutput,
+        params_.sample_rate());
   }
 
   return configured;
@@ -242,10 +244,7 @@ void AUHALStream::Start(AudioSourceCallback* callback) {
 
   stopped_ = false;
   audio_fifo_.reset();
-  {
-    base::AutoLock auto_lock(source_lock_);
-    source_ = callback;
-  }
+  source_ = callback;
 
   OSStatus result = AudioOutputUnitStart(audio_unit_->audio_unit());
   if (result == noErr)
@@ -253,7 +252,7 @@ void AUHALStream::Start(AudioSourceCallback* callback) {
 
   Stop();
   OSSTATUS_DLOG(ERROR, result) << "AudioOutputUnitStart() failed.";
-  callback->OnError(this);
+  callback->OnError();
 }
 
 void AUHALStream::Stop() {
@@ -266,10 +265,9 @@ void AUHALStream::Stop() {
   OSSTATUS_DLOG_IF(ERROR, result != noErr, result)
       << "AudioOutputUnitStop() failed.";
   if (result != noErr)
-    source_->OnError(this);
+    source_->OnError();
   ReportAndResetStats();
-  base::AutoLock auto_lock(source_lock_);
-  source_ = NULL;
+  source_ = nullptr;
   stopped_ = true;
 }
 
@@ -328,11 +326,7 @@ OSStatus AUHALStream::Render(AudioUnitRenderActionFlags* flags,
 }
 
 void AUHALStream::ProvideInput(int frame_delay, AudioBus* dest) {
-  base::AutoLock auto_lock(source_lock_);
-  if (!source_) {
-    dest->Zero();
-    return;
-  }
+  DCHECK(source_);
 
   const base::TimeTicks playout_time =
       current_playout_time_ +
@@ -360,41 +354,6 @@ OSStatus AUHALStream::InputProc(void* user_data,
 
   return audio_output->Render(flags, output_time_stamp, bus_number,
                               number_of_frames, io_data);
-}
-
-base::TimeDelta AUHALStream::GetHardwareLatency() {
-  DCHECK(audio_unit_);
-
-  // Get audio unit latency.
-  Float64 audio_unit_latency_sec;
-  UInt32 size = sizeof(audio_unit_latency_sec);
-  OSStatus result = AudioUnitGetProperty(
-      audio_unit_->audio_unit(), kAudioUnitProperty_Latency,
-      kAudioUnitScope_Global, 0, &audio_unit_latency_sec, &size);
-  if (result != noErr) {
-    OSSTATUS_DLOG(WARNING, result) << "Could not get AudioUnit latency";
-    return base::TimeDelta();
-  }
-
-  // Get output audio device latency.
-  static const AudioObjectPropertyAddress property_address = {
-      kAudioDevicePropertyLatency, kAudioDevicePropertyScopeOutput,
-      kAudioObjectPropertyElementMaster};
-
-  UInt32 device_latency_frames = 0;
-  size = sizeof(device_latency_frames);
-  result = AudioObjectGetPropertyData(device_, &property_address, 0, NULL,
-                                      &size, &device_latency_frames);
-  if (result != noErr) {
-    OSSTATUS_DLOG(WARNING, result) << "Could not get audio device latency";
-    return base::TimeDelta();
-  }
-
-  int latency_frames = audio_unit_latency_sec * output_format_.mSampleRate +
-                       device_latency_frames;
-
-  return AudioTimestampHelper::FramesToTime(latency_frames,
-                                            params_.sample_rate());
 }
 
 base::TimeTicks AUHALStream::GetPlayoutTime(

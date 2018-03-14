@@ -5,9 +5,14 @@
 #include "chrome/browser/chromeos/extensions/quick_unlock_private/quick_unlock_private_api.h"
 
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "chrome/browser/chromeos/login/quick_unlock/quick_unlock_factory.h"
 #include "chrome/browser/chromeos/login/quick_unlock/quick_unlock_storage.h"
+#include "chrome/browser/chromeos/login/supervised/supervised_user_authentication.h"
+#include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
+#include "chrome/browser/chromeos/login/users/supervised_user_manager.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/signin/easy_unlock_service.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/login/auth/extended_authenticator.h"
 #include "chromeos/login/auth/user_context.h"
@@ -66,7 +71,7 @@ bool AreModesEqual(const QuickUnlockModeList& a, const QuickUnlockModeList& b) {
   // This is a slow comparison algorithm, but the number of entries in |a| and
   // |b| will always be very low (0-3 items) so it doesn't matter.
   for (size_t i = 0; i < a.size(); ++i) {
-    if (std::find(b.begin(), b.end(), a[i]) == b.end())
+    if (!base::ContainsValue(b, a[i]))
       return false;
   }
 
@@ -280,7 +285,10 @@ QuickUnlockPrivateGetCredentialRequirementsFunction::Run() {
 QuickUnlockPrivateSetModesFunction::QuickUnlockPrivateSetModesFunction()
     : chrome_details_(this) {}
 
-QuickUnlockPrivateSetModesFunction::~QuickUnlockPrivateSetModesFunction() {}
+QuickUnlockPrivateSetModesFunction::~QuickUnlockPrivateSetModesFunction() {
+  if (extended_authenticator_)
+    extended_authenticator_->SetConsumer(nullptr);
+}
 
 void QuickUnlockPrivateSetModesFunction::SetAuthenticatorAllocatorForTesting(
     const QuickUnlockPrivateSetModesFunction::AuthenticatorAllocator&
@@ -326,13 +334,23 @@ ExtensionFunction::ResponseAction QuickUnlockPrivateSetModesFunction::Run() {
     }
   }
 
-  user_manager::User* user = chromeos::ProfileHelper::Get()->GetUserByProfile(
-      chrome_details_.GetProfile());
+  const user_manager::User* const user =
+      chromeos::ProfileHelper::Get()->GetUserByProfile(
+          chrome_details_.GetProfile());
   chromeos::UserContext user_context(user->GetAccountId());
   user_context.SetKey(chromeos::Key(params_->account_password));
 
+  // Alter |user_context| if the user is supervised.
+  if (user->GetType() == user_manager::USER_TYPE_SUPERVISED) {
+    user_context = chromeos::ChromeUserManager::Get()
+                       ->GetSupervisedUserManager()
+                       ->GetAuthentication()
+                       ->TransformKey(user_context);
+  }
+
   // Lazily allocate the authenticator. We do this here, instead of in the ctor,
   // so that tests can install a fake.
+  DCHECK(!extended_authenticator_);
   if (authenticator_allocator_.is_null())
     extended_authenticator_ = chromeos::ExtendedAuthenticator::Create(this);
   else
@@ -348,8 +366,9 @@ ExtensionFunction::ResponseAction QuickUnlockPrivateSetModesFunction::Run() {
 
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::Bind(&chromeos::ExtendedAuthenticator::AuthenticateToCheck,
-                 extended_authenticator_.get(), user_context, base::Closure()));
+      base::BindOnce(&chromeos::ExtendedAuthenticator::AuthenticateToCheck,
+                     extended_authenticator_.get(), user_context,
+                     base::Closure()));
 
   return RespondLater();
 }
@@ -370,6 +389,9 @@ void QuickUnlockPrivateSetModesFunction::OnAuthSuccess(
 
   if (!AreModesEqual(initial_modes, updated_modes))
     FireEvent(updated_modes);
+
+  EasyUnlockService::Get(chrome_details_.GetProfile())
+      ->HandleUserReauth(user_context);
 
   Respond(ArgumentList(SetModes::Results::Create(true)));
   Release();  // Balanced in Run().

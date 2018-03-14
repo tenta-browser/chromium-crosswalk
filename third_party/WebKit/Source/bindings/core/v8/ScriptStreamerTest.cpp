@@ -8,17 +8,19 @@
 
 #include "bindings/core/v8/ScriptSourceCode.h"
 #include "bindings/core/v8/ScriptStreamerThread.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8BindingForTesting.h"
 #include "bindings/core/v8/V8ScriptRunner.h"
+#include "core/dom/ClassicPendingScript.h"
 #include "core/dom/ClassicScript.h"
-#include "core/dom/Element.h"
-#include "core/dom/PendingScript.h"
+#include "core/dom/MockScriptElementBase.h"
 #include "core/frame/Settings.h"
 #include "platform/heap/Handle.h"
+#include "platform/loader/fetch/ScriptFetchOptions.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/testing/UnitTestHelpers.h"
+#include "platform/wtf/text/TextEncoding.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebScheduler.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "v8/include/v8.h"
 
@@ -34,11 +36,22 @@ class ScriptStreamingTest : public ::testing::Test {
                                  ->Scheduler()
                                  ->LoadingTaskRunner()),
         settings_(Settings::Create()),
-        resource_request_("http://www.streaming-test.com/"),
-        resource_(ScriptResource::Create(resource_request_, "UTF-8")),
-        pending_script_(PendingScript::CreateForTesting(resource_.Get())) {
+        dummy_document_(Document::CreateForTest()) {
+    resource_ = ScriptResource::CreateForTest(
+        KURL("http://www.streaming-test.com/"), UTF8Encoding());
     resource_->SetStatus(ResourceStatus::kPending);
-    pending_script_ = PendingScript::CreateForTesting(resource_.Get());
+
+    MockScriptElementBase* element = MockScriptElementBase::Create();
+    // Basically we are not interested in ScriptElementBase* calls, just making
+    // the method(s) to return default values.
+    EXPECT_CALL(*element, IntegrityAttributeValue())
+        .WillRepeatedly(::testing::Return(String()));
+    EXPECT_CALL(*element, GetDocument())
+        .WillRepeatedly(::testing::ReturnRef(*dummy_document_.Get()));
+    EXPECT_CALL(*element, Loader()).WillRepeatedly(::testing::Return(nullptr));
+
+    pending_script_ =
+        ClassicPendingScript::CreateExternalForTest(element, resource_.Get());
     ScriptStreamer::SetSmallScriptThresholdForTesting(0);
   }
 
@@ -47,7 +60,9 @@ class ScriptStreamingTest : public ::testing::Test {
       pending_script_->Dispose();
   }
 
-  PendingScript* GetPendingScript() const { return pending_script_.Get(); }
+  ClassicPendingScript* GetPendingScript() const {
+    return pending_script_.Get();
+  }
 
  protected:
   void AppendData(const char* data) {
@@ -70,7 +85,7 @@ class ScriptStreamingTest : public ::testing::Test {
   }
 
   void Finish() {
-    resource_->Finish();
+    resource_->FinishForTest();
     resource_->SetStatus(ResourceStatus::kCached);
   }
 
@@ -83,17 +98,18 @@ class ScriptStreamingTest : public ::testing::Test {
     testing::RunPendingTasks();
   }
 
-  RefPtr<WebTaskRunner> loading_task_runner_;
+  scoped_refptr<WebTaskRunner> loading_task_runner_;
   std::unique_ptr<Settings> settings_;
   // The Resource and PendingScript where we stream from. These don't really
   // fetch any data outside the test; the test controls the data by calling
   // ScriptResource::appendData.
-  ResourceRequest resource_request_;
   Persistent<ScriptResource> resource_;
-  Persistent<PendingScript> pending_script_;
+  Persistent<ClassicPendingScript> pending_script_;
+
+  Persistent<Document> dummy_document_;
 };
 
-class TestPendingScriptClient
+class TestPendingScriptClient final
     : public GarbageCollectedFinalized<TestPendingScriptClient>,
       public PendingScriptClient {
   USING_GARBAGE_COLLECTED_MIXIN(TestPendingScriptClient);
@@ -130,15 +146,15 @@ TEST_F(ScriptStreamingTest, CompilingStreamedScript) {
   EXPECT_TRUE(client->Finished());
   bool error_occurred = false;
   ScriptSourceCode source_code = GetPendingScript()
-                                     ->GetSource(KURL(), error_occurred)
+                                     ->GetSource(NullURL(), error_occurred)
                                      ->GetScriptSourceCode();
   EXPECT_FALSE(error_occurred);
   EXPECT_TRUE(source_code.Streamer());
   v8::TryCatch try_catch(scope.GetIsolate());
   v8::Local<v8::Script> script;
-  EXPECT_TRUE(V8ScriptRunner::CompileScript(source_code, scope.GetIsolate(),
-                                            kSharableCrossOrigin,
-                                            kV8CacheOptionsDefault)
+  EXPECT_TRUE(V8ScriptRunner::CompileScript(
+                  scope.GetScriptState(), source_code, ScriptFetchOptions(),
+                  kSharableCrossOrigin, kV8CacheOptionsDefault)
                   .ToLocal(&script));
   EXPECT_FALSE(try_catch.HasCaught());
 }
@@ -170,15 +186,15 @@ TEST_F(ScriptStreamingTest, CompilingStreamedScriptWithParseError) {
 
   bool error_occurred = false;
   ScriptSourceCode source_code = GetPendingScript()
-                                     ->GetSource(KURL(), error_occurred)
+                                     ->GetSource(NullURL(), error_occurred)
                                      ->GetScriptSourceCode();
   EXPECT_FALSE(error_occurred);
   EXPECT_TRUE(source_code.Streamer());
   v8::TryCatch try_catch(scope.GetIsolate());
   v8::Local<v8::Script> script;
-  EXPECT_FALSE(V8ScriptRunner::CompileScript(source_code, scope.GetIsolate(),
-                                             kSharableCrossOrigin,
-                                             kV8CacheOptionsDefault)
+  EXPECT_FALSE(V8ScriptRunner::CompileScript(
+                   scope.GetScriptState(), source_code, ScriptFetchOptions(),
+                   kSharableCrossOrigin, kV8CacheOptionsDefault)
                    .ToLocal(&script));
   EXPECT_TRUE(try_catch.HasCaught());
 }
@@ -238,7 +254,7 @@ TEST_F(ScriptStreamingTest, SuppressingStreaming) {
 
   bool error_occurred = false;
   ScriptSourceCode source_code = GetPendingScript()
-                                     ->GetSource(KURL(), error_occurred)
+                                     ->GetSource(NullURL(), error_occurred)
                                      ->GetScriptSourceCode();
   EXPECT_FALSE(error_occurred);
   // ScriptSourceCode doesn't refer to the streamer, since we have suppressed
@@ -266,7 +282,7 @@ TEST_F(ScriptStreamingTest, EmptyScripts) {
 
   bool error_occurred = false;
   ScriptSourceCode source_code = GetPendingScript()
-                                     ->GetSource(KURL(), error_occurred)
+                                     ->GetSource(NullURL(), error_occurred)
                                      ->GetScriptSourceCode();
   EXPECT_FALSE(error_occurred);
   EXPECT_FALSE(source_code.Streamer());
@@ -293,7 +309,7 @@ TEST_F(ScriptStreamingTest, SmallScripts) {
 
   bool error_occurred = false;
   ScriptSourceCode source_code = GetPendingScript()
-                                     ->GetSource(KURL(), error_occurred)
+                                     ->GetSource(NullURL(), error_occurred)
                                      ->GetScriptSourceCode();
   EXPECT_FALSE(error_occurred);
   EXPECT_FALSE(source_code.Streamer());
@@ -323,15 +339,15 @@ TEST_F(ScriptStreamingTest, ScriptsWithSmallFirstChunk) {
   EXPECT_TRUE(client->Finished());
   bool error_occurred = false;
   ScriptSourceCode source_code = GetPendingScript()
-                                     ->GetSource(KURL(), error_occurred)
+                                     ->GetSource(NullURL(), error_occurred)
                                      ->GetScriptSourceCode();
   EXPECT_FALSE(error_occurred);
   EXPECT_TRUE(source_code.Streamer());
   v8::TryCatch try_catch(scope.GetIsolate());
   v8::Local<v8::Script> script;
-  EXPECT_TRUE(V8ScriptRunner::CompileScript(source_code, scope.GetIsolate(),
-                                            kSharableCrossOrigin,
-                                            kV8CacheOptionsDefault)
+  EXPECT_TRUE(V8ScriptRunner::CompileScript(
+                  scope.GetScriptState(), source_code, ScriptFetchOptions(),
+                  kSharableCrossOrigin, kV8CacheOptionsDefault)
                   .ToLocal(&script));
   EXPECT_FALSE(try_catch.HasCaught());
 }
@@ -340,7 +356,7 @@ TEST_F(ScriptStreamingTest, EncodingChanges) {
   // It's possible that the encoding of the Resource changes after we start
   // loading it.
   V8TestingScope scope;
-  resource_->SetEncoding("windows-1252");
+  resource_->SetEncodingForTest("windows-1252");
 
   ScriptStreamer::StartStreaming(
       GetPendingScript(), ScriptStreamer::kParsingBlocking, settings_.get(),
@@ -348,7 +364,7 @@ TEST_F(ScriptStreamingTest, EncodingChanges) {
   TestPendingScriptClient* client = new TestPendingScriptClient;
   GetPendingScript()->WatchForLoad(client);
 
-  resource_->SetEncoding("UTF-8");
+  resource_->SetEncodingForTest("UTF-8");
   // \xec\x92\x81 are the raw bytes for \uc481.
   AppendData(
       "function foo() { var foob\xec\x92\x81r = 13; return foob\xec\x92\x81r; "
@@ -360,15 +376,15 @@ TEST_F(ScriptStreamingTest, EncodingChanges) {
   EXPECT_TRUE(client->Finished());
   bool error_occurred = false;
   ScriptSourceCode source_code = GetPendingScript()
-                                     ->GetSource(KURL(), error_occurred)
+                                     ->GetSource(NullURL(), error_occurred)
                                      ->GetScriptSourceCode();
   EXPECT_FALSE(error_occurred);
   EXPECT_TRUE(source_code.Streamer());
   v8::TryCatch try_catch(scope.GetIsolate());
   v8::Local<v8::Script> script;
-  EXPECT_TRUE(V8ScriptRunner::CompileScript(source_code, scope.GetIsolate(),
-                                            kSharableCrossOrigin,
-                                            kV8CacheOptionsDefault)
+  EXPECT_TRUE(V8ScriptRunner::CompileScript(
+                  scope.GetScriptState(), source_code, ScriptFetchOptions(),
+                  kSharableCrossOrigin, kV8CacheOptionsDefault)
                   .ToLocal(&script));
   EXPECT_FALSE(try_catch.HasCaught());
 }
@@ -377,7 +393,9 @@ TEST_F(ScriptStreamingTest, EncodingFromBOM) {
   // Byte order marks should be removed before giving the data to V8. They
   // will also affect encoding detection.
   V8TestingScope scope;
-  resource_->SetEncoding("windows-1252");  // This encoding is wrong on purpose.
+
+  // This encoding is wrong on purpose.
+  resource_->SetEncodingForTest("windows-1252");
 
   ScriptStreamer::StartStreaming(
       GetPendingScript(), ScriptStreamer::kParsingBlocking, settings_.get(),
@@ -396,17 +414,34 @@ TEST_F(ScriptStreamingTest, EncodingFromBOM) {
   EXPECT_TRUE(client->Finished());
   bool error_occurred = false;
   ScriptSourceCode source_code = GetPendingScript()
-                                     ->GetSource(KURL(), error_occurred)
+                                     ->GetSource(NullURL(), error_occurred)
                                      ->GetScriptSourceCode();
   EXPECT_FALSE(error_occurred);
   EXPECT_TRUE(source_code.Streamer());
   v8::TryCatch try_catch(scope.GetIsolate());
   v8::Local<v8::Script> script;
-  EXPECT_TRUE(V8ScriptRunner::CompileScript(source_code, scope.GetIsolate(),
-                                            kSharableCrossOrigin,
-                                            kV8CacheOptionsDefault)
+  EXPECT_TRUE(V8ScriptRunner::CompileScript(
+                  scope.GetScriptState(), source_code, ScriptFetchOptions(),
+                  kSharableCrossOrigin, kV8CacheOptionsDefault)
                   .ToLocal(&script));
   EXPECT_FALSE(try_catch.HasCaught());
+}
+
+// A test for crbug.com/711703. Should not crash.
+TEST_F(ScriptStreamingTest, GarbageCollectDuringStreaming) {
+  V8TestingScope scope;
+  ScriptStreamer::StartStreaming(
+      GetPendingScript(), ScriptStreamer::kParsingBlocking, settings_.get(),
+      scope.GetScriptState(), loading_task_runner_);
+
+  TestPendingScriptClient* client = new TestPendingScriptClient;
+  GetPendingScript()->WatchForLoad(client);
+  EXPECT_FALSE(client->Finished());
+
+  pending_script_ = nullptr;
+  ThreadState::Current()->CollectGarbage(BlinkGC::kNoHeapPointersOnStack,
+                                         BlinkGC::kGCWithSweep,
+                                         BlinkGC::kForcedGC);
 }
 
 }  // namespace

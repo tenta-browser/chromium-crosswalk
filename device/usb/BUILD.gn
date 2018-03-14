@@ -16,8 +16,6 @@ generated_ids = "$target_gen_dir/usb_ids_gen.cc"
 
 static_library("usb") {
   sources = [
-    "android/usb_jni_registrar.cc",
-    "android/usb_jni_registrar.h",
     "usb_configuration_android.cc",
     "usb_configuration_android.h",
     "usb_descriptors.cc",
@@ -26,8 +24,6 @@ static_library("usb") {
     "usb_device.h",
     "usb_device_android.cc",
     "usb_device_android.h",
-    "usb_device_filter.cc",
-    "usb_device_filter.h",
     "usb_device_handle.cc",
     "usb_device_handle.h",
     "usb_device_handle_android.cc",
@@ -40,8 +36,6 @@ static_library("usb") {
     "usb_device_win.h",
     "usb_endpoint_android.cc",
     "usb_endpoint_android.h",
-    "usb_ids.cc",
-    "usb_ids.h",
     "usb_interface_android.cc",
     "usb_interface_android.h",
     "usb_service.cc",
@@ -52,16 +46,19 @@ static_library("usb") {
     "usb_service_win.h",
     "webusb_descriptors.cc",
     "webusb_descriptors.h",
-    generated_ids,
   ]
 
   deps = [
-    ":usb_device_ids",
-    "//base",
     "//base/third_party/dynamic_annotations",
     "//components/device_event_log",
     "//device/base",
+    "//device/usb/public/interfaces",
     "//net",
+  ]
+
+  public_deps = [
+    "//base",
+    "//url",
   ]
 
   if (use_udev) {
@@ -74,6 +71,13 @@ static_library("usb") {
 
   if (is_android) {
     deps += [ ":jni_headers" ]
+  } else {
+    deps += [ ":usb_device_ids" ]
+    sources += [
+      "usb_ids.cc",
+      "usb_ids.h",
+      generated_ids,
+    ]
   }
 
   if (is_win || is_mac) {

@@ -109,7 +109,7 @@ class CapturingDestructionObserver
   // DestructionObserver implementation:
   void WillDestroyCurrentMessageLoop() override {
     event_list_->push_back(THREAD_EVENT_MESSAGE_LOOP_DESTROYED);
-    event_list_ = NULL;
+    event_list_ = nullptr;
   }
 
  private:
@@ -295,7 +295,7 @@ TEST_F(ThreadTest, DISABLED_StopOnNonOwningThreadIsDeath) {
 
 TEST_F(ThreadTest, TransferOwnershipAndStop) {
   std::unique_ptr<Thread> a =
-      base::MakeUnique<Thread>("TransferOwnershipAndStop");
+      std::make_unique<Thread>("TransferOwnershipAndStop");
   EXPECT_TRUE(a->StartAndWaitForTesting());
   EXPECT_TRUE(a->IsRunning());
 

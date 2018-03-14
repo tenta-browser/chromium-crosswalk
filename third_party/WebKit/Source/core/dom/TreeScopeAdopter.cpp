@@ -27,12 +27,13 @@
 #include "core/dom/TreeScopeAdopter.h"
 
 #include "core/dom/Attr.h"
+#include "core/dom/ElementShadow.h"
 #include "core/dom/Node.h"
 #include "core/dom/NodeRareData.h"
 #include "core/dom/NodeTraversal.h"
-#include "core/dom/custom/CustomElement.h"
-#include "core/dom/shadow/ElementShadow.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
+#include "core/html/custom/CustomElement.h"
+#include "platform/bindings/TraceWrapperMember.h"
 
 namespace blink {
 
@@ -72,7 +73,8 @@ void TreeScopeAdopter::MoveTreeToNewScope(Node& root) const {
       continue;
     Element& element = ToElement(node);
 
-    if (HeapVector<Member<Attr>>* attrs = element.GetAttrNodeList()) {
+    if (HeapVector<TraceWrapperMember<Attr>>* attrs =
+            element.GetAttrNodeList()) {
       for (const auto& attr : *attrs)
         MoveTreeToNewScope(*attr);
     }
@@ -80,8 +82,16 @@ void TreeScopeAdopter::MoveTreeToNewScope(Node& root) const {
     for (ShadowRoot* shadow = element.YoungestShadowRoot(); shadow;
          shadow = shadow->OlderShadowRoot()) {
       shadow->SetParentTreeScope(NewScope());
-      if (will_move_to_new_document)
+      if (will_move_to_new_document) {
+        if (shadow->GetType() == ShadowRootType::V0) {
+          new_document.SetShadowCascadeOrder(
+              ShadowCascadeOrder::kShadowCascadeV0);
+        } else if (shadow->IsV1()) {
+          new_document.SetShadowCascadeOrder(
+              ShadowCascadeOrder::kShadowCascadeV1);
+        }
         MoveTreeToNewDocument(*shadow, old_document, new_document);
+      }
     }
   }
 }
@@ -97,7 +107,8 @@ void TreeScopeAdopter::MoveTreeToNewDocument(Node& root,
       continue;
     Element& element = ToElement(node);
 
-    if (HeapVector<Member<Attr>>* attrs = element.GetAttrNodeList()) {
+    if (HeapVector<TraceWrapperMember<Attr>>* attrs =
+            element.GetAttrNodeList()) {
       for (const auto& attr : *attrs)
         MoveTreeToNewDocument(*attr, old_document, new_document);
     }
@@ -110,7 +121,8 @@ void TreeScopeAdopter::MoveTreeToNewDocument(Node& root,
 
 #if DCHECK_IS_ON()
 static bool g_did_move_to_new_document_was_called = false;
-static Document* g_old_document_did_move_to_new_document_was_called_with = 0;
+static Document* g_old_document_did_move_to_new_document_was_called_with =
+    nullptr;
 
 void TreeScopeAdopter::EnsureDidMoveToNewDocumentWasCalled(
     Document& old_document) {

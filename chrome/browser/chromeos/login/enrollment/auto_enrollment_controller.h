@@ -12,6 +12,7 @@
 #include "base/callback_list.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/chromeos/policy/auto_enrollment_client.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
@@ -61,14 +62,24 @@ class AutoEnrollmentController {
   // build status.
   static Mode GetMode();
 
+  // Returns whether the auto-enrollment check is required. When
+  // kCheckEnrollmentKey VPD entry is present, it is explicitly stating whether
+  // the forced re-enrollment is required or not. Otherwise, for backward
+  // compatibility with devices upgrading from an older version of Chrome OS,
+  // the kActivateDateKey VPD entry is queried. If it's missing, FRE is not
+  // required. This enables factories to start full guest sessions for testing,
+  // see http://crbug.com/397354 for more context. The requirement for the
+  // machine serial number to be present is a sanity-check to ensure that the
+  // VPD has actually been read successfully. If VPD read failed, the FRE check
+  // is required.
+  static FRERequirement GetFRERequirement();
+
   AutoEnrollmentController();
   ~AutoEnrollmentController();
 
-  // Starts the auto-enrollment check.
+  // Starts the auto-enrollment check.  Safe to call multiple times: aborts in
+  // case a check is currently running or a decision has already been made.
   void Start();
-
-  // Stops any pending auto-enrollment checking.
-  void Cancel();
 
   // Retry checking.
   void Retry();
@@ -104,9 +115,7 @@ class AutoEnrollmentController {
   // here, it is logged only, without changing the flow after that, because
   // the FWMP is used only for newer devices.
   void OnFirmwareManagementParametersRemoved(
-      chromeos::DBusMethodCallStatus call_status,
-      bool result,
-      const cryptohome::BaseReply& reply);
+      base::Optional<cryptohome::BaseReply> reply);
 
   // Handles timeout of the safeguard timer and stops waiting for a result.
   void Timeout();

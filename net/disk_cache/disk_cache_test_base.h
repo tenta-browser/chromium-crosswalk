@@ -12,12 +12,19 @@
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/test/scoped_async_task_scheduler.h"
 #include "base/threading/thread.h"
 #include "net/base/cache_type.h"
 #include "net/disk_cache/disk_cache.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
+
+namespace base {
+namespace test {
+
+class ScopedTaskEnvironment;
+
+}  // namespace test
+}  // namespace base
 
 namespace net {
 
@@ -32,6 +39,7 @@ class BackendImpl;
 class Entry;
 class MemBackendImpl;
 class SimpleBackendImpl;
+class SimpleFileTracker;
 
 }  // namespace disk_cache
 
@@ -56,13 +64,6 @@ class DiskCacheTest : public PlatformTest {
 
  private:
   base::ScopedTempDir temp_dir_;
-  std::unique_ptr<base::MessageLoop> message_loop_;
-
-  // Use a ScopedAsyncTaskScheduler instead of a ScopedTaskScheduler to allow
-  // disk_cache::InFlightIO::WaitForPendingIO to wait for TaskScheduler tasks
-  // from the main thread using WaitableEvents (this wouldn't work if
-  // TaskScheduler tasks ran on the main thread).
-  base::test::ScopedAsyncTaskScheduler scoped_async_task_scheduler_;
 };
 
 // Provides basic support for cache related tests.
@@ -80,10 +81,16 @@ class DiskCacheTestWithCache : public DiskCacheTest {
     std::unique_ptr<disk_cache::Backend::Iterator> iterator_;
   };
 
+  // Assumes NetTestSuite is available.
   DiskCacheTestWithCache();
+
+  // Does not take ownership of |scoped_task_env|, and will not use it past
+  // TearDown(). Does not require NetTestSuite.
+  explicit DiskCacheTestWithCache(
+      base::test::ScopedTaskEnvironment* scoped_task_env);
   ~DiskCacheTestWithCache() override;
 
-  void CreateBackend(uint32_t flags, base::Thread* thread);
+  void CreateBackend(uint32_t flags);
 
   void InitCache();
   void SimulateCrash();
@@ -176,6 +183,7 @@ class DiskCacheTestWithCache : public DiskCacheTest {
   // initialized. The implementation pointers can be NULL.
   std::unique_ptr<disk_cache::Backend> cache_;
   disk_cache::BackendImpl* cache_impl_;
+  std::unique_ptr<disk_cache::SimpleFileTracker> simple_file_tracker_;
   disk_cache::SimpleBackendImpl* simple_cache_impl_;
   disk_cache::MemBackendImpl* mem_cache_;
 
@@ -196,8 +204,8 @@ class DiskCacheTestWithCache : public DiskCacheTest {
  private:
   void InitMemoryCache();
   void InitDiskCache();
+  base::test::ScopedTaskEnvironment* scoped_task_env_;
 
-  base::Thread cache_thread_;
   DISALLOW_COPY_AND_ASSIGN(DiskCacheTestWithCache);
 };
 

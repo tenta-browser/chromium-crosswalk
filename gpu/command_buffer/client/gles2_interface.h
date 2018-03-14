@@ -9,7 +9,13 @@
 
 #include "base/compiler_specific.h"
 
+namespace cc {
+class ClientTransferCacheEntry;
+class DisplayItemList;
+}
+
 extern "C" typedef struct _ClientBuffer* ClientBuffer;
+extern "C" typedef struct _GLColorSpace* GLColorSpace;
 
 namespace gpu {
 namespace gles2 {

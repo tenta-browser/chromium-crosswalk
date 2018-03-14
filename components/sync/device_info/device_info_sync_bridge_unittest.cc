@@ -9,7 +9,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
@@ -77,7 +76,7 @@ DeviceInfoSpecifics CreateSpecifics(int suffix, Time last_updated_timestamp) {
 }
 
 std::unique_ptr<DeviceInfo> CreateModel(int suffix) {
-  return base::MakeUnique<DeviceInfo>(
+  return std::make_unique<DeviceInfo>(
       base::StringPrintf(kGuidFormat, suffix),
       base::StringPrintf(kClientNameFormat, suffix),
       base::StringPrintf(kChromeVersionFormat, suffix),
@@ -158,19 +157,6 @@ EntityChangeList EntityAddList(
   return changes;
 }
 
-// Similar helper to EntityAddList(...), only wraps in a EntityDataMap for a
-// merge call. Order is irrelevant, since the map sorts by key. Should not
-// contain multiple specifics with the same guid.
-EntityDataMap InlineEntityDataMap(
-    const std::vector<DeviceInfoSpecifics>& specifics_list) {
-  EntityDataMap map;
-  for (const auto& specifics : specifics_list) {
-    EXPECT_EQ(map.end(), map.find(specifics.cache_guid()));
-    map[specifics.cache_guid()] = SpecificsToEntity(specifics);
-  }
-  return map;
-}
-
 }  // namespace
 
 class DeviceInfoSyncBridgeTest : public testing::Test,
@@ -193,24 +179,15 @@ class DeviceInfoSyncBridgeTest : public testing::Test,
 
   void OnDeviceInfoChange() override { change_count_++; }
 
-  std::unique_ptr<ModelTypeChangeProcessor> CreateModelTypeChangeProcessor(
-      ModelType type,
-      ModelTypeSyncBridge* bridge) {
-    auto processor = base::MakeUnique<RecordingModelTypeChangeProcessor>();
-    processor_ = processor.get();
-    return std::move(processor);
-  }
-
   // Initialized the bridge based on the current local device and store. Can
   // only be called once per run, as it passes |store_|.
   void InitializeBridge() {
     ASSERT_TRUE(store_);
-    bridge_ = base::MakeUnique<DeviceInfoSyncBridge>(
+    bridge_ = std::make_unique<DeviceInfoSyncBridge>(
         provider_.get(),
         base::Bind(&ModelTypeStoreTestUtil::MoveStoreToCallback,
                    base::Passed(&store_)),
-        base::Bind(&DeviceInfoSyncBridgeTest::CreateModelTypeChangeProcessor,
-                   base::Unretained(this)));
+        RecordingModelTypeChangeProcessor::FactoryForBridgeTest(&processor_));
     bridge_->AddObserver(this);
   }
 
@@ -244,10 +221,7 @@ class DeviceInfoSyncBridgeTest : public testing::Test,
     return bridge_.get();
   }
 
-  RecordingModelTypeChangeProcessor* processor() {
-    EXPECT_TRUE(processor_);
-    return processor_;
-  }
+  const RecordingModelTypeChangeProcessor& processor() { return *processor_; }
 
   const OneShotTimer& pulse_timer() { return bridge()->pulse_timer_; }
 
@@ -333,7 +307,7 @@ TEST_F(DeviceInfoSyncBridgeTest, EmptyDataReconciliationSlowLoad) {
 }
 
 TEST_F(DeviceInfoSyncBridgeTest, LocalProviderSubscription) {
-  set_provider(base::MakeUnique<LocalDeviceInfoProviderMock>());
+  set_provider(std::make_unique<LocalDeviceInfoProviderMock>());
   InitializeAndPump();
 
   EXPECT_EQ(0u, bridge()->GetAllDeviceInfo().size());
@@ -347,9 +321,9 @@ TEST_F(DeviceInfoSyncBridgeTest, LocalProviderSubscription) {
 
 // Metadata shouldn't be loaded before the provider is initialized.
 TEST_F(DeviceInfoSyncBridgeTest, LocalProviderInitRace) {
-  set_provider(base::MakeUnique<LocalDeviceInfoProviderMock>());
+  set_provider(std::make_unique<LocalDeviceInfoProviderMock>());
   InitializeAndPump();
-  EXPECT_FALSE(processor()->metadata());
+  EXPECT_FALSE(processor().metadata());
 
   EXPECT_EQ(0u, bridge()->GetAllDeviceInfo().size());
   local_device()->Initialize(CreateModel(1));
@@ -359,7 +333,7 @@ TEST_F(DeviceInfoSyncBridgeTest, LocalProviderInitRace) {
   ASSERT_EQ(1u, devices.size());
   EXPECT_TRUE(local_device()->GetLocalDeviceInfo()->Equals(*devices[0]));
 
-  EXPECT_TRUE(processor()->metadata());
+  EXPECT_TRUE(processor().metadata());
 }
 
 // Simulate shutting down sync during the ModelTypeStore callbacks. The pulse
@@ -408,7 +382,7 @@ TEST_F(DeviceInfoSyncBridgeTest, TestWithLocalMetadata) {
   const DeviceInfoList devices = bridge()->GetAllDeviceInfo();
   ASSERT_EQ(1u, devices.size());
   EXPECT_TRUE(local_device()->GetLocalDeviceInfo()->Equals(*devices[0]));
-  EXPECT_EQ(1u, processor()->put_multimap().size());
+  EXPECT_EQ(1u, processor().put_multimap().size());
 }
 
 TEST_F(DeviceInfoSyncBridgeTest, TestWithLocalDataAndMetadata) {
@@ -420,9 +394,9 @@ TEST_F(DeviceInfoSyncBridgeTest, TestWithLocalDataAndMetadata) {
   ASSERT_EQ(2u, bridge()->GetAllDeviceInfo().size());
   VerifyEqual(specifics,
               *bridge()->GetDeviceInfo(specifics.cache_guid()).get());
-  EXPECT_TRUE(processor()->metadata());
+  EXPECT_TRUE(processor().metadata());
   EXPECT_EQ(state.encryption_key_name(),
-            processor()->metadata()->GetModelTypeState().encryption_key_name());
+            processor().metadata()->GetModelTypeState().encryption_key_name());
 }
 
 TEST_F(DeviceInfoSyncBridgeTest, GetData) {
@@ -514,9 +488,9 @@ TEST_F(DeviceInfoSyncBridgeTest, ApplySyncChangesStore) {
   ASSERT_TRUE(info);
   VerifyEqual(specifics, *info.get());
 
-  EXPECT_TRUE(processor()->metadata());
+  EXPECT_TRUE(processor().metadata());
   EXPECT_EQ(state.encryption_key_name(),
-            processor()->metadata()->GetModelTypeState().encryption_key_name());
+            processor().metadata()->GetModelTypeState().encryption_key_name());
 }
 
 TEST_F(DeviceInfoSyncBridgeTest, ApplySyncChangesWithLocalGuid) {
@@ -532,7 +506,7 @@ TEST_F(DeviceInfoSyncBridgeTest, ApplySyncChangesWithLocalGuid) {
   EXPECT_EQ(1, change_count());
   // Ensure |last_updated| is about now, plus or minus a little bit.
   const Time last_updated(ProtoTimeToTime(processor()
-                                              ->put_multimap()
+                                              .put_multimap()
                                               .begin()
                                               ->second->specifics.device_info()
                                               .last_updated_timestamp()));
@@ -584,16 +558,16 @@ TEST_F(DeviceInfoSyncBridgeTest, MergeEmpty) {
   InitializeAndPump();
   EXPECT_EQ(1, change_count());
   auto error = bridge()->MergeSyncData(bridge()->CreateMetadataChangeList(),
-                                       EntityDataMap());
+                                       EntityChangeList());
   EXPECT_FALSE(error);
   EXPECT_EQ(1, change_count());
   // TODO(skym): Stop sending local twice. The first of the two puts will
   // probably happen before the processor is tracking metadata yet, and so there
   // should not be much overhead.
-  EXPECT_EQ(2u, processor()->put_multimap().size());
-  EXPECT_EQ(2u, processor()->put_multimap().count(
+  EXPECT_EQ(2u, processor().put_multimap().size());
+  EXPECT_EQ(2u, processor().put_multimap().count(
                     local_device()->GetLocalDeviceInfo()->guid()));
-  EXPECT_EQ(0u, processor()->delete_set().size());
+  EXPECT_EQ(0u, processor().delete_set().size());
 }
 
 TEST_F(DeviceInfoSyncBridgeTest, MergeWithData) {
@@ -615,9 +589,9 @@ TEST_F(DeviceInfoSyncBridgeTest, MergeWithData) {
       bridge()->CreateMetadataChangeList();
   metadata_changes->UpdateModelTypeState(state);
 
-  auto error = bridge()->MergeSyncData(
-      std::move(metadata_changes),
-      InlineEntityDataMap({conflict_remote, unique_remote}));
+  auto error =
+      bridge()->MergeSyncData(std::move(metadata_changes),
+                              EntityAddList({conflict_remote, unique_remote}));
   EXPECT_FALSE(error);
   EXPECT_EQ(2, change_count());
 
@@ -629,17 +603,17 @@ TEST_F(DeviceInfoSyncBridgeTest, MergeWithData) {
               *bridge()->GetDeviceInfo(unique_remote.cache_guid()).get());
   VerifyEqual(conflict_remote, *bridge()->GetDeviceInfo(conflict_guid).get());
 
-  // bridge should have told the processor about the existance of unique_local.
-  EXPECT_TRUE(processor()->delete_set().empty());
-  EXPECT_EQ(3u, processor()->put_multimap().size());
-  EXPECT_EQ(1u, processor()->put_multimap().count(unique_local.cache_guid()));
-  const auto& it = processor()->put_multimap().find(unique_local.cache_guid());
-  ASSERT_NE(processor()->put_multimap().end(), it);
+  // bridge should have told the processor about the existence of unique_local.
+  EXPECT_TRUE(processor().delete_set().empty());
+  EXPECT_EQ(3u, processor().put_multimap().size());
+  EXPECT_EQ(1u, processor().put_multimap().count(unique_local.cache_guid()));
+  const auto& it = processor().put_multimap().find(unique_local.cache_guid());
+  ASSERT_NE(processor().put_multimap().end(), it);
   VerifyEqual(unique_local, it->second->specifics.device_info());
 
   RestartBridge();
   EXPECT_EQ(state.encryption_key_name(),
-            processor()->metadata()->GetModelTypeState().encryption_key_name());
+            processor().metadata()->GetModelTypeState().encryption_key_name());
 }
 
 TEST_F(DeviceInfoSyncBridgeTest, MergeLocalGuid) {
@@ -651,12 +625,12 @@ TEST_F(DeviceInfoSyncBridgeTest, MergeLocalGuid) {
   InitializeAndPump();
 
   auto error = bridge()->MergeSyncData(bridge()->CreateMetadataChangeList(),
-                                       InlineEntityDataMap({specifics}));
+                                       EntityAddList({specifics}));
   EXPECT_FALSE(error);
   EXPECT_EQ(0, change_count());
   EXPECT_EQ(1u, bridge()->GetAllDeviceInfo().size());
-  EXPECT_TRUE(processor()->delete_set().empty());
-  EXPECT_TRUE(processor()->put_multimap().empty());
+  EXPECT_TRUE(processor().delete_set().empty());
+  EXPECT_TRUE(processor().put_multimap().empty());
 }
 
 TEST_F(DeviceInfoSyncBridgeTest, MergeLocalGuidBeforeReconcile) {
@@ -667,7 +641,7 @@ TEST_F(DeviceInfoSyncBridgeTest, MergeLocalGuidBeforeReconcile) {
   // EntityData because its cache guid is the same the local device's.
   auto error = bridge()->MergeSyncData(
       bridge()->CreateMetadataChangeList(),
-      InlineEntityDataMap({CreateSpecifics(kDefaultLocalSuffix)}));
+      EntityAddList({CreateSpecifics(kDefaultLocalSuffix)}));
   EXPECT_FALSE(error);
   EXPECT_EQ(0, change_count());
   EXPECT_EQ(0u, bridge()->GetAllDeviceInfo().size());
@@ -682,13 +656,13 @@ TEST_F(DeviceInfoSyncBridgeTest, ClearProviderAndMerge) {
 
   local_device()->Clear();
   auto error1 = bridge()->MergeSyncData(bridge()->CreateMetadataChangeList(),
-                                        InlineEntityDataMap({specifics}));
+                                        EntityAddList({specifics}));
   EXPECT_FALSE(error1);
   EXPECT_EQ(1u, bridge()->GetAllDeviceInfo().size());
 
   local_device()->Initialize(CreateModel(kDefaultLocalSuffix));
   auto error2 = bridge()->MergeSyncData(bridge()->CreateMetadataChangeList(),
-                                        InlineEntityDataMap({specifics}));
+                                        EntityAddList({specifics}));
   EXPECT_FALSE(error2);
   EXPECT_EQ(2u, bridge()->GetAllDeviceInfo().size());
 }
@@ -721,38 +695,38 @@ TEST_F(DeviceInfoSyncBridgeTest, CountActiveDevices) {
 }
 
 TEST_F(DeviceInfoSyncBridgeTest, MultipleOnProviderInitialized) {
-  set_provider(base::MakeUnique<LocalDeviceInfoProviderMock>());
+  set_provider(std::make_unique<LocalDeviceInfoProviderMock>());
   InitializeAndPump();
-  EXPECT_EQ(nullptr, processor()->metadata());
+  EXPECT_EQ(nullptr, processor().metadata());
 
   // Verify the processor was given metadata.
   local_device()->Initialize(CreateModel(0));
   base::RunLoop().RunUntilIdle();
-  const MetadataBatch* metadata = processor()->metadata();
+  const MetadataBatch* metadata = processor().metadata();
   EXPECT_NE(nullptr, metadata);
 
   // Pointer address of metadata should remain constant because the processor
   // should not have been given new metadata.
   local_device()->Initialize(CreateModel(0));
   base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(metadata, processor()->metadata());
+  EXPECT_EQ(metadata, processor().metadata());
 }
 
 TEST_F(DeviceInfoSyncBridgeTest, SendLocalData) {
   InitializeAndPump();
   EXPECT_EQ(1, change_count());
-  EXPECT_EQ(1u, processor()->put_multimap().size());
+  EXPECT_EQ(1u, processor().put_multimap().size());
 
   ForcePulse();
   EXPECT_EQ(2, change_count());
-  EXPECT_EQ(2u, processor()->put_multimap().size());
+  EXPECT_EQ(2u, processor().put_multimap().size());
 
   // After clearing, pulsing should no-op and not result in a processor put or
   // a notification to observers.
   local_device()->Clear();
   ForcePulse();
   EXPECT_EQ(2, change_count());
-  EXPECT_EQ(2u, processor()->put_multimap().size());
+  EXPECT_EQ(2u, processor().put_multimap().size());
 }
 
 TEST_F(DeviceInfoSyncBridgeTest, DisableSync) {

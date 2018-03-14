@@ -11,7 +11,6 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "net/cert/x509_certificate.h"
 #include "net/ssl/client_cert_store_nss.h"
 
 namespace chromeos {
@@ -36,8 +35,7 @@ class ClientCertStoreChromeOS : public net::ClientCertStore {
     // Returns true if |cert| is allowed to be used as a client certificate
     // (e.g. for a certain browser context or user).
     // This is only called once initialization is finished, see Init().
-    virtual bool IsCertAllowed(
-        const scoped_refptr<net::X509Certificate>& cert) const = 0;
+    virtual bool IsCertAllowed(CERTCertificate* cert) const = 0;
   };
 
   // This ClientCertStore will return client certs from NSS certificate
@@ -51,21 +49,18 @@ class ClientCertStoreChromeOS : public net::ClientCertStore {
 
   // net::ClientCertStore:
   void GetClientCerts(const net::SSLCertRequestInfo& cert_request_info,
-                      net::CertificateList* selected_certs,
-                      const base::Closure& callback) override;
+                      const ClientCertListCallback& callback) override;
 
  private:
   void GotAdditionalCerts(const net::SSLCertRequestInfo* request,
-                          net::CertificateList* selected_certs,
-                          const base::Closure& callback,
-                          const net::CertificateList& additional_certs);
+                          const ClientCertListCallback& callback,
+                          net::ClientCertIdentityList additional_certs);
 
-  void GetAndFilterCertsOnWorkerThread(
-      std::unique_ptr<crypto::CryptoModuleBlockingPasswordDelegate>
+  net::ClientCertIdentityList GetAndFilterCertsOnWorkerThread(
+      scoped_refptr<crypto::CryptoModuleBlockingPasswordDelegate>
           password_delegate,
       const net::SSLCertRequestInfo* request,
-      const net::CertificateList& additional_certs,
-      net::CertificateList* selected_certs);
+      net::ClientCertIdentityList additional_certs);
 
   std::unique_ptr<CertificateProvider> cert_provider_;
   std::unique_ptr<CertFilter> cert_filter_;

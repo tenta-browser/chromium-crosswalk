@@ -17,19 +17,32 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "chrome/browser/chromeos/arc/arc_session_manager.h"
-#include "components/arc/arc_service.h"
+#include "chrome/browser/chromeos/arc/fileapi/arc_file_system_bridge.h"
 #include "components/arc/common/file_system.mojom.h"
-#include "components/arc/instance_holder.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "components/arc/connection_observer.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "storage/browser/fileapi/watcher_manager.h"
+
+class BrowserContextKeyedServiceFactory;
+
+namespace chromeos {
+class RecentArcMediaSourceTest;
+}  // namespace chromeos
+
+namespace content {
+class BrowserContext;
+}  // namespace content
 
 namespace arc {
 
+class ArcBridgeService;
+
 // Runs ARC file system operations.
 //
-// This is an abstraction layer on top of mojom::FileSystemInstance. All ARC
-// file system operations should go through this class, rather than invoking
-// mojom::FileSystemInstance directly.
+// This is an abstraction layer on top of mojom::FileSystemInstance. ARC file
+// system operations from chrome to the ARC container which can be initiated
+// before the ARC container gets ready should go through this class, rather than
+// invoking mojom::FileSystemInstance directly.
 //
 // When ARC is disabled or ARC has already booted, file system operations are
 // performed immediately. While ARC boot is under progress, file operations are
@@ -49,21 +62,24 @@ namespace arc {
 //
 // All member functions must be called on the UI thread.
 class ArcFileSystemOperationRunner
-    : public ArcService,
-      public mojom::FileSystemHost,
+    : public KeyedService,
+      public ArcFileSystemBridge::Observer,
       public ArcSessionManager::Observer,
-      public InstanceHolder<mojom::FileSystemInstance>::Observer {
+      public ConnectionObserver<mojom::FileSystemInstance> {
  public:
   using GetFileSizeCallback = mojom::FileSystemInstance::GetFileSizeCallback;
+  using GetMimeTypeCallback = mojom::FileSystemInstance::GetMimeTypeCallback;
   using OpenFileToReadCallback =
       mojom::FileSystemInstance::OpenFileToReadCallback;
   using GetDocumentCallback = mojom::FileSystemInstance::GetDocumentCallback;
   using GetChildDocumentsCallback =
       mojom::FileSystemInstance::GetChildDocumentsCallback;
-  using AddWatcherCallback = base::Callback<void(int64_t watcher_id)>;
-  using RemoveWatcherCallback = base::Callback<void(bool success)>;
+  using GetRecentDocumentsCallback =
+      mojom::FileSystemInstance::GetRecentDocumentsCallback;
+  using AddWatcherCallback = base::OnceCallback<void(int64_t watcher_id)>;
+  using RemoveWatcherCallback = base::OnceCallback<void(bool success)>;
   using ChangeType = storage::WatcherManager::ChangeType;
-  using WatcherCallback = base::Callback<void(ChangeType type)>;
+  using WatcherCallback = base::RepeatingCallback<void(ChangeType type)>;
 
   class Observer {
    public:
@@ -77,20 +93,24 @@ class ArcFileSystemOperationRunner
     virtual ~Observer() = default;
   };
 
-  // For supporting ArcServiceManager::GetService<T>().
-  static const char kArcServiceName[];
+  // Returns singleton instance for the given BrowserContext,
+  // or nullptr if the browser |context| is not allowed to use ARC.
+  static ArcFileSystemOperationRunner* GetForBrowserContext(
+      content::BrowserContext* context);
 
   // Creates an instance suitable for unit tests.
   // This instance will run all operations immediately without deferring by
   // default. Also, deferring can be enabled/disabled by calling
   // SetShouldDefer() from friend classes.
   static std::unique_ptr<ArcFileSystemOperationRunner> CreateForTesting(
+      content::BrowserContext* context,
       ArcBridgeService* bridge_service);
 
-  // The standard constructor. A production instance should be created by
-  // this constructor.
-  ArcFileSystemOperationRunner(ArcBridgeService* bridge_service,
-                               const Profile* profile);
+  // Returns Factory instance for ArcFileSystemOperationRunner.
+  static BrowserContextKeyedServiceFactory* GetFactory();
+
+  ArcFileSystemOperationRunner(content::BrowserContext* context,
+                               ArcBridgeService* bridge_service);
   ~ArcFileSystemOperationRunner() override;
 
   // Adds or removes observers.
@@ -98,39 +118,50 @@ class ArcFileSystemOperationRunner
   void RemoveObserver(Observer* observer);
 
   // Runs file system operations. See file_system.mojom for documentation.
-  void GetFileSize(const GURL& url, const GetFileSizeCallback& callback);
-  void OpenFileToRead(const GURL& url, const OpenFileToReadCallback& callback);
+  void GetFileSize(const GURL& url, GetFileSizeCallback callback);
+  void GetMimeType(const GURL& url, GetMimeTypeCallback callback);
+  void OpenFileToRead(const GURL& url, OpenFileToReadCallback callback);
   void GetDocument(const std::string& authority,
                    const std::string& document_id,
-                   const GetDocumentCallback& callback);
+                   GetDocumentCallback callback);
   void GetChildDocuments(const std::string& authority,
                          const std::string& parent_document_id,
-                         const GetChildDocumentsCallback& callback);
+                         GetChildDocumentsCallback callback);
+  void GetRecentDocuments(const std::string& authority,
+                          const std::string& root_id,
+                          GetRecentDocumentsCallback callback);
   void AddWatcher(const std::string& authority,
                   const std::string& document_id,
                   const WatcherCallback& watcher_callback,
-                  const AddWatcherCallback& callback);
-  void RemoveWatcher(int64_t watcher_id, const RemoveWatcherCallback& callback);
+                  AddWatcherCallback callback);
+  void RemoveWatcher(int64_t watcher_id, RemoveWatcherCallback callback);
 
-  // FileSystemHost overrides:
+  // KeyedService overrides:
+  void Shutdown() override;
+
+  // ArcFileSystemBridge::Observer overrides:
   void OnDocumentChanged(int64_t watcher_id, ChangeType type) override;
 
   // ArcSessionManager::Observer overrides:
   void OnArcPlayStoreEnabledChanged(bool enabled) override;
 
-  // InstanceHolder<mojom::FileSystemInstance>::Observer overrides:
-  void OnInstanceReady() override;
-  void OnInstanceClosed() override;
+  // ConnectionObserver<mojom::FileSystemInstance> overrides:
+  void OnConnectionReady() override;
+  void OnConnectionClosed() override;
+
+  // Returns true if operations will be deferred.
+  bool WillDefer() const { return should_defer_; }
 
  private:
   friend class ArcFileSystemOperationRunnerTest;
+  friend class chromeos::RecentArcMediaSourceTest;
 
-  ArcFileSystemOperationRunner(ArcBridgeService* bridge_service,
-                               const Profile* profile,
+  ArcFileSystemOperationRunner(content::BrowserContext* context,
+                               ArcBridgeService* bridge_service,
                                bool set_should_defer_by_events);
 
   void OnWatcherAdded(const WatcherCallback& watcher_callback,
-                      const AddWatcherCallback& callback,
+                      AddWatcherCallback callback,
                       int64_t watcher_id);
 
   // Called whenever ARC states related to |should_defer_| are changed.
@@ -141,9 +172,9 @@ class ArcFileSystemOperationRunner
   // deferring.
   void SetShouldDefer(bool should_defer);
 
-  // Profile this runner is associated with. This can be nullptr in
-  // unit tests.
-  const Profile* const profile_;
+  // Maybe nullptr in unittests.
+  content::BrowserContext* const context_;
+  ArcBridgeService* const arc_bridge_service_;  // Owned by ArcServiceManager
 
   // Indicates if this instance should enable/disable deferring by events.
   // Usually true, but set to false in unit tests.
@@ -155,14 +186,12 @@ class ArcFileSystemOperationRunner
   bool should_defer_ = false;
 
   // List of deferred operations.
-  std::vector<base::Closure> deferred_operations_;
+  std::vector<base::OnceClosure> deferred_operations_;
 
   // Map from a watcher ID to a watcher callback.
   std::map<int64_t, WatcherCallback> watcher_callbacks_;
 
   base::ObserverList<Observer> observer_list_;
-
-  mojo::Binding<mojom::FileSystemHost> binding_;
 
   base::WeakPtrFactory<ArcFileSystemOperationRunner> weak_ptr_factory_;
 

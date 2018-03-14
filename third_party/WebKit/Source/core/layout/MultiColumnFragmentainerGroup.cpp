@@ -39,19 +39,28 @@ MultiColumnFragmentainerGroup::BlockOffsetInEnclosingFragmentationContext()
 
 LayoutUnit MultiColumnFragmentainerGroup::LogicalHeightInFlowThreadAt(
     unsigned column_index) const {
-  if (!column_height_)
-    return LayoutUnit();
+  DCHECK(IsLogicalHeightKnown());
+  LayoutUnit column_height = ColumnLogicalHeight();
   LayoutUnit logical_top = LogicalTopInFlowThreadAt(column_index);
-  LayoutUnit logical_bottom = logical_top + column_height_;
+  LayoutUnit logical_bottom = logical_top + column_height;
   if (logical_bottom > LogicalBottomInFlowThread()) {
-    DCHECK_EQ(column_index + 1, ActualColumnCount());
+    DCHECK_GE(column_index + 1, ActualColumnCount());
+    // Stay within the bounds of the flow thread. We need this clamping when
+    // we're dealing with the last column, and also if we're given a column
+    // index *after* the last column. Height should obviously be 0 then. We may
+    // be called with a column index that's one entry past the end if we're
+    // dealing with zero-height content at the very end of the flow thread, and
+    // this location is at a column boundary.
     logical_bottom = LogicalBottomInFlowThread();
+    // If the column index is out of bounds, the height better become zero.
+    DCHECK(column_index + 1 == ActualColumnCount() ||
+           logical_bottom <= logical_top);
   }
   return (logical_bottom - logical_top).ClampNegativeToZero();
 }
 
 void MultiColumnFragmentainerGroup::ResetColumnHeight() {
-  max_column_height_ = CalculateMaxColumnHeight();
+  max_logical_height_ = CalculateMaxColumnHeight();
 
   LayoutMultiColumnFlowThread* flow_thread =
       column_set_.MultiColumnFlowThread();
@@ -64,7 +73,8 @@ void MultiColumnFragmentainerGroup::ResetColumnHeight() {
       // fragmentation context, in order to tell how much content this
       // MultiColumnFragmentainerGroup can hold, and when we need to append a
       // new one.
-      column_height_ = max_column_height_;
+      is_logical_height_known_ = true;
+      logical_height_ = max_logical_height_;
       return;
     }
   }
@@ -75,17 +85,19 @@ void MultiColumnFragmentainerGroup::ResetColumnHeight() {
   // height, we have to balance and shrink the height and lay out the columns
   // over again.
   if (LayoutUnit logical_height = flow_thread->ColumnHeightAvailable()) {
+    is_logical_height_known_ = true;
     SetAndConstrainColumnHeight(HeightAdjustedForRowOffset(logical_height));
   } else {
-    column_height_ = LayoutUnit();
+    is_logical_height_known_ = false;
+    logical_height_ = LayoutUnit();
   }
 }
 
 bool MultiColumnFragmentainerGroup::RecalculateColumnHeight(
     LayoutMultiColumnSet& column_set) {
-  LayoutUnit old_column_height = column_height_;
+  LayoutUnit old_column_height = logical_height_;
 
-  max_column_height_ = CalculateMaxColumnHeight();
+  max_logical_height_ = CalculateMaxColumnHeight();
 
   // Only the last row may have auto height, and thus be balanced. There are no
   // good reasons to balance the preceding rows, and that could potentially lead
@@ -116,10 +128,14 @@ bool MultiColumnFragmentainerGroup::RecalculateColumnHeight(
   } else {
     // The position of the column set may have changed, in which case height
     // available for columns may have changed as well.
-    SetAndConstrainColumnHeight(column_height_);
+    SetAndConstrainColumnHeight(logical_height_);
   }
 
-  if (column_height_ == old_column_height)
+  // We may not have found our final height yet, but at least we've found a
+  // height.
+  is_logical_height_known_ = true;
+
+  if (logical_height_ == old_column_height)
     return false;  // No change. We're done.
 
   return true;  // Need another pass.
@@ -211,8 +227,8 @@ LayoutPoint MultiColumnFragmentainerGroup::VisualPointToFlowThreadPoint(
                                     : column_rect.Height();
       if (local_point.X() < 0)
         local_point = LayoutPoint(LayoutUnit(), column_start);
-      else if (local_point.X() > LogicalHeight())
-        local_point = LayoutPoint(LogicalHeight(), column_start);
+      else if (local_point.X() > ColumnLogicalHeight())
+        local_point = LayoutPoint(ColumnLogicalHeight(), column_start);
     }
     return LayoutPoint(local_point.X() + LogicalTopInFlowThreadAt(column_index),
                        local_point.Y());
@@ -223,8 +239,8 @@ LayoutPoint MultiColumnFragmentainerGroup::VisualPointToFlowThreadPoint(
                                   : column_rect.Width();
     if (local_point.Y() < 0)
       local_point = LayoutPoint(column_start, LayoutUnit());
-    else if (local_point.Y() > LogicalHeight())
-      local_point = LayoutPoint(column_start, LogicalHeight());
+    else if (local_point.Y() > ColumnLogicalHeight())
+      local_point = LayoutPoint(column_start, ColumnLogicalHeight());
   }
   return LayoutPoint(local_point.X(),
                      local_point.Y() + LogicalTopInFlowThreadAt(column_index));
@@ -294,30 +310,33 @@ unsigned MultiColumnFragmentainerGroup::ActualColumnCount() const {
   // We must always return a value of 1 or greater. Column count = 0 is a
   // meaningless situation, and will confuse and cause problems in other parts
   // of the code.
-  if (!column_height_)
+  if (!IsLogicalHeightKnown())
     return 1;
-
   // Our flow thread portion determines our column count. We have as many
   // columns as needed to fit all the content.
   LayoutUnit flow_thread_portion_height = LogicalHeightInFlowThread();
   if (!flow_thread_portion_height)
     return 1;
 
-  unsigned count = (flow_thread_portion_height / column_height_).Floor();
+  LayoutUnit column_height = ColumnLogicalHeight();
+  unsigned count = (flow_thread_portion_height / column_height).Floor();
   // flowThreadPortionHeight may be saturated, so detect the remainder manually.
-  if (count * column_height_ < flow_thread_portion_height)
+  if (count * column_height < flow_thread_portion_height)
     count++;
   DCHECK_GE(count, 1u);
   return count;
 }
 
+void MultiColumnFragmentainerGroup::UpdateFromNG(LayoutUnit logical_height) {
+  logical_height_ = logical_height;
+  is_logical_height_known_ = true;
+}
+
 LayoutUnit MultiColumnFragmentainerGroup::HeightAdjustedForRowOffset(
     LayoutUnit height) const {
-  // Let's avoid zero height, as that would cause an infinite amount of columns
-  // to be created.
-  return std::max(
-      height - LogicalTop() - column_set_.LogicalTopFromMulticolContentEdge(),
-      LayoutUnit(1));
+  LayoutUnit adjusted_height =
+      height - LogicalTop() - column_set_.LogicalTopFromMulticolContentEdge();
+  return adjusted_height.ClampNegativeToZero();
 }
 
 LayoutUnit MultiColumnFragmentainerGroup::CalculateMaxColumnHeight() const {
@@ -342,9 +361,9 @@ LayoutUnit MultiColumnFragmentainerGroup::CalculateMaxColumnHeight() const {
 
 void MultiColumnFragmentainerGroup::SetAndConstrainColumnHeight(
     LayoutUnit new_height) {
-  column_height_ = new_height;
-  if (column_height_ > max_column_height_)
-    column_height_ = max_column_height_;
+  logical_height_ = new_height;
+  if (logical_height_ > max_logical_height_)
+    logical_height_ = max_logical_height_;
 }
 
 LayoutUnit MultiColumnFragmentainerGroup::RebalanceColumnHeightIfNeeded()
@@ -352,15 +371,15 @@ LayoutUnit MultiColumnFragmentainerGroup::RebalanceColumnHeightIfNeeded()
   if (ActualColumnCount() <= column_set_.UsedColumnCount()) {
     // With the current column height, the content fits without creating
     // overflowing columns. We're done.
-    return column_height_;
+    return logical_height_;
   }
 
-  if (column_height_ >= max_column_height_) {
+  if (logical_height_ >= max_logical_height_) {
     // We cannot stretch any further. We'll just have to live with the
     // overflowing columns. This typically happens if the max column height is
     // less than the height of the tallest piece of unbreakable content (e.g.
     // lines).
-    return column_height_;
+    return logical_height_;
   }
 
   MinimumSpaceShortageFinder shortage_finder(
@@ -370,7 +389,7 @@ LayoutUnit MultiColumnFragmentainerGroup::RebalanceColumnHeightIfNeeded()
       column_set_.UsedColumnCount()) {
     // Too many forced breaks to allow any implicit breaks. Initial balancing
     // should already have set a good height. There's nothing more we should do.
-    return column_height_;
+    return logical_height_;
   }
 
   // If the initial guessed column height wasn't enough, stretch it now. Stretch
@@ -381,9 +400,9 @@ LayoutUnit MultiColumnFragmentainerGroup::RebalanceColumnHeightIfNeeded()
   DCHECK_NE(min_space_shortage,
             LayoutUnit::Max());  // If this happens, we probably have a bug.
   if (min_space_shortage == LayoutUnit::Max())
-    return column_height_;  // So bail out rather than looping infinitely.
+    return logical_height_;  // So bail out rather than looping infinitely.
 
-  return column_height_ + min_space_shortage;
+  return logical_height_ + min_space_shortage;
 }
 
 LayoutRect MultiColumnFragmentainerGroup::ColumnRectAt(
@@ -402,7 +421,7 @@ LayoutRect MultiColumnFragmentainerGroup::ColumnRectAt(
                              column_logical_width -
                              column_index * (column_logical_width + column_gap);
   } else {
-    column_logical_top += column_index * (column_height_ + column_gap);
+    column_logical_top += column_index * (ColumnLogicalHeight() + column_gap);
   }
 
   LayoutRect column_rect(column_logical_left, column_logical_top,
@@ -422,6 +441,12 @@ LayoutRect MultiColumnFragmentainerGroup::FlowThreadPortionRectAt(
   return LayoutRect(logical_top, LayoutUnit(), portion_logical_height,
                     column_set_.PageLogicalWidth());
 }
+
+// Clamp "infinite" clips to a number of pixels that can be losslessly
+// converted to and from floating point, to avoid loss of precision.
+// Note that tables have something similar, see
+// TableLayoutAlgorithm::kTableMaxWidth.
+static const int kMulticolMaxClipPixels = 1000000;
 
 LayoutRect MultiColumnFragmentainerGroup::FlowThreadPortionOverflowRectAt(
     unsigned column_index,
@@ -459,7 +484,9 @@ LayoutRect MultiColumnFragmentainerGroup::FlowThreadPortionOverflowRectAt(
   // multicol container, in which case it should allow overflow. It will also
   // be clipped in the middle of adjacent column gaps. Care is taken here to
   // avoid rounding errors.
-  LayoutRect overflow_rect(LayoutRect::InfiniteIntRect());
+  LayoutRect overflow_rect(
+      IntRect(-kMulticolMaxClipPixels, -kMulticolMaxClipPixels,
+              2 * kMulticolMaxClipPixels, 2 * kMulticolMaxClipPixels));
   LayoutUnit column_gap = column_set_.ColumnGap();
   if (column_set_.IsHorizontalWritingMode()) {
     if (!is_first_column_in_multicol_container)
@@ -498,10 +525,11 @@ unsigned MultiColumnFragmentainerGroup::ColumnIndexAtOffset(
   if (offset_in_flow_thread < logical_top_in_flow_thread_)
     return 0;
 
-  if (!column_height_)
+  if (!IsLogicalHeightKnown())
     return 0;
+  LayoutUnit column_height = ColumnLogicalHeight();
   unsigned column_index =
-      ((offset_in_flow_thread - logical_top_in_flow_thread_) / column_height_)
+      ((offset_in_flow_thread - logical_top_in_flow_thread_) / column_height)
           .Floor();
   if (page_boundary_rule == LayoutBox::kAssociateWithFormerPage &&
       column_index > 0 &&
@@ -520,7 +548,7 @@ unsigned MultiColumnFragmentainerGroup::ColumnIndexAtVisualPoint(
   bool is_horizontal_writing_mode = column_set_.IsHorizontalWritingMode();
   LayoutUnit column_length_in_column_progression_direction =
       is_column_progression_inline ? column_set_.PageLogicalWidth()
-                                   : LogicalHeight();
+                                   : ColumnLogicalHeight();
   LayoutUnit offset_in_column_progression_direction =
       is_horizontal_writing_mode == is_column_progression_inline
           ? visual_point.X()
@@ -547,9 +575,9 @@ void MultiColumnFragmentainerGroup::ColumnIntervalForBlockRangeInFlowThread(
     unsigned& first_column,
     unsigned& last_column) const {
   logical_top_in_flow_thread =
-      std::max(logical_top_in_flow_thread, this->LogicalTopInFlowThread());
-  logical_bottom_in_flow_thread = std::min(logical_bottom_in_flow_thread,
-                                           this->LogicalBottomInFlowThread());
+      std::max(logical_top_in_flow_thread, LogicalTopInFlowThread());
+  logical_bottom_in_flow_thread =
+      std::min(logical_bottom_in_flow_thread, LogicalBottomInFlowThread());
   first_column = ColumnIndexAtOffset(logical_top_in_flow_thread,
                                      LayoutBox::kAssociateWithLatterPage);
   if (logical_bottom_in_flow_thread <= logical_top_in_flow_thread) {

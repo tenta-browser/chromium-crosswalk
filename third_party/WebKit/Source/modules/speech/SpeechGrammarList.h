@@ -26,18 +26,16 @@
 #ifndef SpeechGrammarList_h
 #define SpeechGrammarList_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/ModulesExport.h"
 #include "modules/speech/SpeechGrammar.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
 class ScriptState;
 
-class MODULES_EXPORT SpeechGrammarList final
-    : public GarbageCollected<SpeechGrammarList>,
-      public ScriptWrappable {
+class MODULES_EXPORT SpeechGrammarList final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -49,7 +47,7 @@ class MODULES_EXPORT SpeechGrammarList final
   void addFromUri(ScriptState*, const String& src, double weight = 1.0);
   void addFromString(const String&, double weight = 1.0);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   SpeechGrammarList();

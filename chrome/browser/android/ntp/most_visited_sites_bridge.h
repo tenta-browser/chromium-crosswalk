@@ -25,31 +25,43 @@ class MostVisitedSitesBridge {
 
   void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
 
+  void OnHomePageStateChanged(JNIEnv* env,
+                              const base::android::JavaParamRef<jobject>& obj);
+
   void SetObserver(JNIEnv* env,
                    const base::android::JavaParamRef<jobject>& obj,
                    const base::android::JavaParamRef<jobject>& j_observer,
                    jint num_sites);
+
+  void SetHomePageClient(JNIEnv* env,
+                         const base::android::JavaParamRef<jobject>& obj,
+                         const base::android::JavaParamRef<jobject>& j_client);
 
   void AddOrRemoveBlacklistedUrl(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jstring>& j_url,
       jboolean add_url);
-  void RecordPageImpression(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jintArray>& jtile_types,
-      const base::android::JavaParamRef<jintArray>& jsources,
-      const base::android::JavaParamRef<jobjectArray>& jtile_urls);
+  void RecordPageImpression(JNIEnv* env,
+                            const base::android::JavaParamRef<jobject>& obj,
+                            jint jtiles_count);
+  void RecordTileImpression(JNIEnv* env,
+                            const base::android::JavaParamRef<jobject>& obj,
+                            jint jindex,
+                            jint jvisual_type,
+                            jint jicon_type,
+                            jint jtitle_source,
+                            jint jsource,
+                            jlong jdata_generation_time_ms,
+                            const base::android::JavaParamRef<jstring>& jurl);
   void RecordOpenedMostVisitedItem(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       jint index,
       jint tile_type,
-      jint source);
-
-  // Registers JNI methods.
-  static bool Register(JNIEnv* env);
+      jint title_source,
+      jint source,
+      jlong jdata_generation_time_ms);
 
  private:
   ~MostVisitedSitesBridge();
@@ -58,6 +70,7 @@ class MostVisitedSitesBridge {
   std::unique_ptr<JavaObserver> java_observer_;
 
   std::unique_ptr<ntp_tiles::MostVisitedSites> most_visited_;
+  Profile* profile_;
 
   DISALLOW_COPY_AND_ASSIGN(MostVisitedSitesBridge);
 };

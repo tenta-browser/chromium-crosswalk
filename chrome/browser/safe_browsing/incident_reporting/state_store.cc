@@ -6,14 +6,15 @@
 
 #include <utility>
 
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident.h"
 #include "chrome/browser/safe_browsing/incident_reporting/platform_state_store.h"
-#include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
 
 namespace safe_browsing {
 
@@ -39,13 +40,13 @@ void StateStore::Transaction::MarkAsReported(IncidentType type,
                                              IncidentDigest digest) {
   std::string type_string(base::IntToString(static_cast<int32_t>(type)));
   base::DictionaryValue* incidents_sent = GetPrefDict();
-  base::DictionaryValue* type_dict = nullptr;
-  if (!incidents_sent->GetDictionaryWithoutPathExpansion(type_string,
-                                                         &type_dict)) {
-    type_dict = new base::DictionaryValue();
-    incidents_sent->SetWithoutPathExpansion(type_string, type_dict);
+  base::Value* type_dict =
+      incidents_sent->FindKeyOfType(type_string, base::Value::Type::DICTIONARY);
+  if (!type_dict) {
+    type_dict = incidents_sent->SetKey(
+        type_string, base::Value(base::Value::Type::DICTIONARY));
   }
-  type_dict->SetStringWithoutPathExpansion(key, base::UintToString(digest));
+  type_dict->SetKey(key, base::Value(base::UintToString(digest)));
 }
 
 void StateStore::Transaction::Clear(IncidentType type, const std::string& key) {
@@ -167,9 +168,8 @@ bool StateStore::HasBeenReported(IncidentType type,
 
 void StateStore::CleanLegacyValues(Transaction* transaction) {
   static const IncidentType kLegacyTypes[] = {
-      // TODO(grt): remove in M44 (crbug.com/451173).
-      IncidentType::OMNIBOX_INTERACTION,
-  };
+      IncidentType::OBSOLETE_BLACKLIST_LOAD,
+      IncidentType::OBSOLETE_SUSPICIOUS_MODULE};
 
   for (IncidentType type : kLegacyTypes)
     transaction->ClearForType(type);

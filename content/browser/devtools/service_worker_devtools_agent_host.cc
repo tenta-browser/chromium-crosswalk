@@ -23,7 +23,7 @@ void TerminateServiceWorkerOnIO(
     int64_t version_id) {
   if (ServiceWorkerContextCore* context = context_weak.get()) {
     if (ServiceWorkerVersion* version = context->GetLiveVersion(version_id))
-      version->StopWorker(base::Bind(&StatusNoOp));
+      version->StopWorker(base::BindOnce(&base::DoNothing));
   }
 }
 
@@ -32,9 +32,9 @@ void UnregisterServiceWorkerOnIO(
     int64_t version_id) {
   if (ServiceWorkerContextCore* context = context_weak.get()) {
     if (ServiceWorkerVersion* version = context->GetLiveVersion(version_id)) {
-        version->StopWorker(base::Bind(&StatusNoOp));
-        context->UnregisterServiceWorker(
-            version->scope(), base::Bind(&StatusNoOp));
+      version->StopWorker(base::BindOnce(&base::DoNothing));
+      context->UnregisterServiceWorker(version->scope(),
+                                       base::Bind(&StatusNoOp));
     }
   }
 }
@@ -55,7 +55,8 @@ ServiceWorkerDevToolsAgentHost::ServiceWorkerDevToolsAgentHost(
     WorkerId worker_id,
     const ServiceWorkerIdentifier& service_worker,
     bool is_installed_version)
-    : WorkerDevToolsAgentHost(worker_id),
+    : WorkerDevToolsAgentHost(service_worker.devtools_worker_token(),
+                              worker_id),
       service_worker_(new ServiceWorkerIdentifier(service_worker)),
       version_installed_time_(is_installed_version ? base::Time::Now()
                                                    : base::Time()) {
@@ -68,7 +69,7 @@ std::string ServiceWorkerDevToolsAgentHost::GetType() {
 
 std::string ServiceWorkerDevToolsAgentHost::GetTitle() {
   if (RenderProcessHost* host = RenderProcessHost::FromID(worker_id().first)) {
-    return base::StringPrintf("Worker pid:%d",
+    return base::StringPrintf("Worker pid:%" CrPRIdPid,
                               base::GetProcId(host->GetHandle()));
   }
   return "";
@@ -87,25 +88,24 @@ void ServiceWorkerDevToolsAgentHost::Reload() {
 
 bool ServiceWorkerDevToolsAgentHost::Close() {
   BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-      base::Bind(&TerminateServiceWorkerOnIO,
-                  service_worker_->context_weak(),
-                  service_worker_->version_id()));
+                          base::BindOnce(&TerminateServiceWorkerOnIO,
+                                         service_worker_->context_weak(),
+                                         service_worker_->version_id()));
   return true;
 }
 
 void ServiceWorkerDevToolsAgentHost::UnregisterWorker() {
   BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-      base::Bind(&UnregisterServiceWorkerOnIO,
-                  service_worker_->context_weak(),
-                  service_worker_->version_id()));
+                          base::BindOnce(&UnregisterServiceWorkerOnIO,
+                                         service_worker_->context_weak(),
+                                         service_worker_->version_id()));
 }
 
 void ServiceWorkerDevToolsAgentHost::OnAttachedStateChanged(bool attached) {
-  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-      base::Bind(&SetDevToolsAttachedOnIO,
-                  service_worker_->context_weak(),
-                  service_worker_->version_id(),
-                  attached));
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&SetDevToolsAttachedOnIO, service_worker_->context_weak(),
+                     service_worker_->version_id(), attached));
 }
 
 void ServiceWorkerDevToolsAgentHost::WorkerVersionInstalled() {
@@ -119,12 +119,9 @@ void ServiceWorkerDevToolsAgentHost::WorkerVersionDoomed() {
 void ServiceWorkerDevToolsAgentHost::NavigationPreloadRequestSent(
     const std::string& request_id,
     const ResourceRequest& request) {
-  if (!session())
-    return;
-  if (protocol::NetworkHandler* network_handler =
-          protocol::NetworkHandler::FromSession(session())) {
-    network_handler->NavigationPreloadRequestSent(worker_id().first, request_id,
-                                                  request);
+  for (auto* network : protocol::NetworkHandler::ForAgentHost(this)) {
+    network->NavigationPreloadRequestSent(worker_id().first, request_id,
+                                          request);
   }
 }
 
@@ -132,24 +129,17 @@ void ServiceWorkerDevToolsAgentHost::NavigationPreloadResponseReceived(
     const std::string& request_id,
     const GURL& url,
     const ResourceResponseHead& head) {
-  if (!session())
-    return;
-  if (protocol::NetworkHandler* network_handler =
-          protocol::NetworkHandler::FromSession(session())) {
-    network_handler->NavigationPreloadResponseReceived(worker_id().first,
-                                                       request_id, url, head);
+  for (auto* network : protocol::NetworkHandler::ForAgentHost(this)) {
+    network->NavigationPreloadResponseReceived(worker_id().first, request_id,
+                                               url, head);
   }
 }
 
 void ServiceWorkerDevToolsAgentHost::NavigationPreloadCompleted(
     const std::string& request_id,
-    const ResourceRequestCompletionStatus& completion_status) {
-  if (!session())
-    return;
-  if (protocol::NetworkHandler* network_handler =
-          protocol::NetworkHandler::FromSession(session())) {
-    network_handler->NavigationPreloadCompleted(request_id, completion_status);
-  }
+    const network::URLLoaderCompletionStatus& status) {
+  for (auto* network : protocol::NetworkHandler::ForAgentHost(this))
+    network->NavigationPreloadCompleted(request_id, status);
 }
 
 int64_t ServiceWorkerDevToolsAgentHost::service_worker_version_id() const {

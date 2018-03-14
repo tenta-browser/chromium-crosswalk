@@ -202,7 +202,7 @@ class PermissionMessageCombinationsUnittest : public testing::Test {
   scoped_refptr<const Extension> app_;
   // Whitelist a known extension id so we can test all permissions. This ID
   // will be used for each test app.
-  extensions::SimpleFeature::ScopedWhitelistForTest whitelisted_extension_id_;
+  SimpleFeature::ScopedThreadUnsafeWhitelistForTest whitelisted_extension_id_;
 
   DISALLOW_COPY_AND_ASSIGN(PermissionMessageCombinationsUnittest);
 };
@@ -1130,9 +1130,8 @@ TEST_F(PermissionMessageCombinationsUnittest, PermissionMessageCombos) {
 
 }
 
-// Tests that the 'plugin' manifest key produces the correct permission.
+// Tests that the deprecated 'plugins' manifest key produces no permission.
 TEST_F(PermissionMessageCombinationsUnittest, PluginPermission) {
-  // Extensions can have plugins.
   CreateAndInstall(
       "{"
       "  'plugins': ["
@@ -1140,26 +1139,6 @@ TEST_F(PermissionMessageCombinationsUnittest, PluginPermission) {
       "  ]"
       "}");
 
-#ifdef OS_CHROMEOS
-  ASSERT_TRUE(CheckManifestProducesPermissions());
-#else
-  ASSERT_TRUE(CheckManifestProducesPermissions(
-      "Read and change all your data on your computer and the websites you "
-      "visit"));
-#endif
-
-  // Apps can't have plugins.
-  CreateAndInstall(
-      "{"
-      "  'app': {"
-      "    'background': {"
-      "      'scripts': ['background.js']"
-      "    }"
-      "  },"
-      "  'plugins': ["
-      "    { 'path': 'extension_plugin.dll' }"
-      "  ]"
-      "}");
   ASSERT_TRUE(CheckManifestProducesPermissions());
 }
 
@@ -1185,6 +1164,19 @@ TEST_F(PermissionMessageCombinationsUnittest, ClipboardPermissionMessages) {
   CreateAndInstall(base::StringPrintf(kManifest, "'clipboardWrite'"));
   ASSERT_TRUE(
       CheckManifestProducesPermissions("Modify data you copy and paste"));
+}
+
+TEST_F(PermissionMessageCombinationsUnittest, NewTabPagePermissionMessages) {
+  const char kManifest[] =
+      "{"
+      "  'chrome_url_overrides': {"
+      "    'newtab': 'newtab.html'"
+      "  }"
+      "}";
+
+  CreateAndInstall(kManifest);
+  ASSERT_TRUE(CheckManifestProducesPermissions(
+      "Replace the page you see when opening a new tab"));
 }
 
 // TODO(sashab): Add a test that checks that messages are generated correctly

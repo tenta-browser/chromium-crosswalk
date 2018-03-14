@@ -77,8 +77,7 @@ public class CustomTabTabPersistencePolicy implements TabPersistencePolicy {
             if (sStateDirectory == null) {
                 sStateDirectory = new File(
                         TabPersistentStore.getOrCreateBaseStateDirectory(), SAVED_STATE_DIRECTORY);
-                StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
-                StrictMode.allowThreadDiskWrites();
+                StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskWrites();
                 try {
                     if (!sStateDirectory.exists() && !sStateDirectory.mkdirs()) {
                         Log.e(TAG, "Failed to create state folder: " + sStateDirectory);
@@ -126,7 +125,7 @@ public class CustomTabTabPersistencePolicy implements TabPersistencePolicy {
 
     @Override
     @Nullable
-    public String getStateToBeMergedFileName() {
+    public List<String> getStateToBeMergedFileNames() {
         return null;
     }
 

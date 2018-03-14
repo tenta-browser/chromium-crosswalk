@@ -26,8 +26,8 @@
 #ifndef WebSpeechRecognitionHandle_h
 #define WebSpeechRecognitionHandle_h
 
-#include "../platform/WebCommon.h"
-#include "../platform/WebPrivatePtr.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebPrivatePtr.h"
 
 namespace blink {
 
@@ -58,7 +58,7 @@ class WebSpeechRecognitionHandle {
   BLINK_EXPORT bool Equals(const WebSpeechRecognitionHandle&) const;
   BLINK_EXPORT bool LessThan(const WebSpeechRecognitionHandle&) const;
 
-#if BLINK_IMPLEMENTATION
+#if INSIDE_BLINK
   WebSpeechRecognitionHandle(SpeechRecognition*);
   operator SpeechRecognition*() const;
 #endif

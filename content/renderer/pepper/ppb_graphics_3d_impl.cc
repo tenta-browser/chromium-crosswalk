@@ -12,6 +12,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "content/common/gpu_stream_constants.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/web_preferences.h"
@@ -69,7 +70,7 @@ PP_Resource PPB_Graphics3D_Impl::CreateRaw(
     gpu::Capabilities* capabilities,
     base::SharedMemoryHandle* shared_state_handle,
     gpu::CommandBufferId* command_buffer_id) {
-  PPB_Graphics3D_API* share_api = NULL;
+  PPB_Graphics3D_API* share_api = nullptr;
   if (share_context) {
     EnterResourceNoLock<PPB_Graphics3D_API> enter(share_context, true);
     if (enter.failed())
@@ -112,9 +113,11 @@ gpu::CommandBuffer::State PPB_Graphics3D_Impl::WaitForTokenInRange(
 }
 
 gpu::CommandBuffer::State PPB_Graphics3D_Impl::WaitForGetOffsetInRange(
+    uint32_t set_get_buffer_count,
     int32_t start,
     int32_t end) {
-  return GetCommandBuffer()->WaitForGetOffsetInRange(start, end);
+  return GetCommandBuffer()->WaitForGetOffsetInRange(set_get_buffer_count,
+                                                     start, end);
 }
 
 void PPB_Graphics3D_Impl::EnsureWorkVisible() {
@@ -135,6 +138,7 @@ void PPB_Graphics3D_Impl::ReturnFrontBuffer(const gpu::Mailbox& mailbox,
                                             const gpu::SyncToken& sync_token,
                                             bool is_lost) {
   command_buffer_->ReturnFrontBuffer(mailbox, sync_token, is_lost);
+  mailboxes_to_reuse_.push_back(mailbox);
 }
 
 bool PPB_Graphics3D_Impl::BindToInstance(bool bind) {
@@ -181,19 +185,20 @@ int32_t PPB_Graphics3D_Impl::DoSwapBuffers(const gpu::SyncToken& sync_token,
     // Don't need to check for NULL from GetPluginInstance since when we're
     // bound, we know our instance is valid.
     bool is_overlay_candidate = use_image_chromium_;
-    cc::TextureMailbox texture_mailbox(
-        taken_front_buffer_, sync_token,
-// TODO(reveman): Get texture target from browser process.
+    // TODO(reveman): Get texture target from browser process.
+    uint32_t target = GL_TEXTURE_2D;
 #if defined(OS_MACOSX)
-        use_image_chromium_ ? GL_TEXTURE_RECTANGLE_ARB : GL_TEXTURE_2D,
-#else
-        use_image_chromium_ ? GL_TEXTURE_EXTERNAL_OES : GL_TEXTURE_2D,
+    if (use_image_chromium_)
+      target = GL_TEXTURE_RECTANGLE_ARB;
 #endif
-        size, is_overlay_candidate, false);
+    viz::TransferableResource resource =
+        viz::TransferableResource::MakeGLOverlay(taken_front_buffer_, GL_LINEAR,
+                                                 target, sync_token, size,
+                                                 is_overlay_candidate);
     taken_front_buffer_.SetZero();
     HostGlobals::Get()
         ->GetInstance(pp_instance())
-        ->CommitTextureMailbox(texture_mailbox);
+        ->CommitTransferableResource(resource);
     commit_pending_ = true;
   } else {
     // Wait for the command to complete on the GPU to allow for throttling.
@@ -222,7 +227,7 @@ bool PPB_Graphics3D_Impl::InitRaw(
 
   const WebPreferences& prefs = render_frame->GetWebkitPreferences();
 
-  // 3D access might be disabled or blacklisted.
+  // 3D access might be disabled.
   if (!prefs.pepper_3d_enabled)
     return false;
 
@@ -234,11 +239,19 @@ bool PPB_Graphics3D_Impl::InitRaw(
   RenderThreadImpl* render_thread = RenderThreadImpl::current();
   if (!render_thread)
     return false;
+  if (render_thread->IsGpuCompositingDisabled())
+    return false;
 
   scoped_refptr<gpu::GpuChannelHost> channel =
       render_thread->EstablishGpuChannelSync();
   if (!channel)
     return false;
+  // 3D access might be blacklisted.
+  if (channel->gpu_feature_info()
+          .status_values[gpu::GPU_FEATURE_TYPE_ACCELERATED_WEBGL] ==
+      gpu::kGpuFeatureStatusBlacklisted) {
+    return false;
+  }
 
   has_alpha_ = requested_attribs.alpha_size > 0;
 
@@ -246,7 +259,7 @@ bool PPB_Graphics3D_Impl::InitRaw(
   attrib_helper.should_use_native_gmb_for_backbuffer = use_image_chromium_;
   attrib_helper.context_type = gpu::gles2::CONTEXT_TYPE_OPENGLES2;
 
-  gpu::CommandBufferProxyImpl* share_buffer = NULL;
+  gpu::CommandBufferProxyImpl* share_buffer = nullptr;
   if (!plugin_instance->is_flash_plugin())
     UMA_HISTOGRAM_BOOLEAN("Pepper.Graphics3DHasShareGroup", !!share_context);
   if (share_context) {
@@ -255,11 +268,13 @@ bool PPB_Graphics3D_Impl::InitRaw(
     share_buffer = share_graphics->GetCommandBufferProxy();
   }
 
-  command_buffer_ = gpu::CommandBufferProxyImpl::Create(
-      std::move(channel), gpu::kNullSurfaceHandle, share_buffer,
-      gpu::GPU_STREAM_DEFAULT, gpu::GpuStreamPriority::NORMAL, attrib_helper,
-      GURL::EmptyGURL(), base::ThreadTaskRunnerHandle::Get());
-  if (!command_buffer_)
+  command_buffer_ = std::make_unique<gpu::CommandBufferProxyImpl>(
+      std::move(channel), kGpuStreamIdDefault,
+      base::ThreadTaskRunnerHandle::Get());
+  auto result = command_buffer_->Initialize(
+      gpu::kNullSurfaceHandle, share_buffer, kGpuStreamPriorityDefault,
+      attrib_helper, GURL::EmptyGURL());
+  if (result != gpu::ContextResult::kSuccess)
     return false;
 
   command_buffer_->SetGpuControlClient(this);
@@ -307,8 +322,8 @@ void PPB_Graphics3D_Impl::OnGpuControlLostContext() {
   // Send context lost to plugin. This may have been caused by a PPAPI call, so
   // avoid re-entering.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&PPB_Graphics3D_Impl::SendContextLost,
-                            weak_ptr_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&PPB_Graphics3D_Impl::SendContextLost,
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
 void PPB_Graphics3D_Impl::OnGpuControlLostContextMaybeReentrant() {

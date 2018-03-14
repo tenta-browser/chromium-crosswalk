@@ -8,17 +8,17 @@
 #include <memory>
 #include <string>
 
-#include "base/callback.h"
 #include "base/memory/weak_ptr.h"
-#include "extensions/renderer/api_binding_types.h"
-#include "extensions/renderer/api_bindings_system.h"
-#include "extensions/renderer/event_emitter.h"
+#include "extensions/renderer/bindings/api_binding_types.h"
+#include "extensions/renderer/bindings/api_bindings_system.h"
+#include "extensions/renderer/bindings/event_emitter.h"
 #include "extensions/renderer/extension_bindings_system.h"
+#include "extensions/renderer/feature_cache.h"
+#include "extensions/renderer/js_renderer_messaging_service.h"
 #include "v8/include/v8.h"
 
-struct ExtensionHostMsg_Request_Params;
-
 namespace extensions {
+class IPCMessageSender;
 class ScriptContext;
 
 // The implementation of the Bindings System for extensions code with native
@@ -29,20 +29,8 @@ class ScriptContext;
 // Designed to be used in a single thread, but for all contexts on that thread.
 class NativeExtensionBindingsSystem : public ExtensionBindingsSystem {
  public:
-  using SendRequestIPCMethod =
-      base::Callback<void(ScriptContext*,
-                          const ExtensionHostMsg_Request_Params&,
-                          binding::RequestThread)>;
-  using SendEventListenerIPCMethod =
-      base::Callback<void(binding::EventListenersChanged,
-                          ScriptContext*,
-                          const std::string& event_name,
-                          const base::DictionaryValue* filter,
-                          bool was_manual)>;
-
-  NativeExtensionBindingsSystem(
-      const SendRequestIPCMethod& send_request_ipc,
-      const SendEventListenerIPCMethod& send_event_listener_ipc);
+  explicit NativeExtensionBindingsSystem(
+      std::unique_ptr<IPCMessageSender> ipc_message_sender);
   ~NativeExtensionBindingsSystem() override;
 
   // ExtensionBindingsSystem:
@@ -51,13 +39,26 @@ class NativeExtensionBindingsSystem : public ExtensionBindingsSystem {
   void UpdateBindingsForContext(ScriptContext* context) override;
   void DispatchEventInContext(const std::string& event_name,
                               const base::ListValue* event_args,
-                              const base::DictionaryValue* filtering_info,
+                              const EventFilteringInfo* filtering_info,
                               ScriptContext* context) override;
+  bool HasEventListenerInContext(const std::string& event_name,
+                                 ScriptContext* context) override;
   void HandleResponse(int request_id,
                       bool success,
                       const base::ListValue& response,
                       const std::string& error) override;
   RequestSender* GetRequestSender() override;
+  IPCMessageSender* GetIPCMessageSender() override;
+  RendererMessagingService* GetMessagingService() override;
+  void OnExtensionPermissionsUpdated(const ExtensionId& id) override;
+  void OnExtensionRemoved(const ExtensionId& id) override;
+
+  APIBindingsSystem* api_system() { return &api_system_; }
+
+  // Returns the API with the given |name| for the given |context|. Used for
+  // testing purposes.
+  v8::Local<v8::Object> GetAPIObjectForTesting(ScriptContext* context,
+                                               const std::string& api_name);
 
  private:
   // Handles sending a given |request|, forwarding it on to the send_ipc_ after
@@ -82,7 +83,9 @@ class NativeExtensionBindingsSystem : public ExtensionBindingsSystem {
                                             v8::Local<v8::String> name);
 
   // Gets the chrome.runtime API binding.
-  static v8::Local<v8::Object> GetRuntime(v8::Local<v8::Context> context);
+  static v8::Local<v8::Object> GetLastErrorParents(
+      v8::Local<v8::Context> context,
+      v8::Local<v8::Object>* secondary_parent);
 
   // Callback to get an API binding for an internal API.
   static void GetInternalAPI(const v8::FunctionCallbackInfo<v8::Value>& info);
@@ -94,15 +97,16 @@ class NativeExtensionBindingsSystem : public ExtensionBindingsSystem {
   void GetJSBindingUtil(v8::Local<v8::Context> context,
                         v8::Local<v8::Value>* binding_util_out);
 
-  // Handler to send request IPCs. Abstracted out for testing purposes.
-  SendRequestIPCMethod send_request_ipc_;
-
-  // Handler to notify the browser of event registrations. Abstracted out for
-  // testing purposes.
-  SendEventListenerIPCMethod send_event_listener_ipc_;
+  std::unique_ptr<IPCMessageSender> ipc_message_sender_;
 
   // The APIBindingsSystem associated with this class.
   APIBindingsSystem api_system_;
+
+  // TODO(devlin): For now, native bindings still use JS hooks for messaging.
+  // Swap this out for NativeRendererMessagingService when it's ready.
+  JSRendererMessagingService messaging_service_;
+
+  FeatureCache feature_cache_;
 
   // A function to acquire an internal API.
   v8::Eternal<v8::FunctionTemplate> get_internal_api_;

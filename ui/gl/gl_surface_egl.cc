@@ -30,20 +30,19 @@
 #include "ui/gl/gl_image.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface_stub.h"
-#include "ui/gl/gl_switches.h"
+#include "ui/gl/gl_utils.h"
 #include "ui/gl/scoped_make_current.h"
 #include "ui/gl/sync_control_vsync_provider.h"
 
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
-extern "C" {
-#include <X11/Xlib.h>
-#define Status int
-}
+#if defined(USE_X11)
+#include "ui/gfx/x/x11.h"
+
 #include "ui/base/x/x11_util_internal.h"  // nogncheck
 #endif
 
 #if defined(OS_ANDROID)
 #include <android/native_window_jni.h>
+#include "base/android/build_info.h"
 #endif
 
 #if !defined(EGL_FIXED_SIZE_ANGLE)
@@ -53,6 +52,13 @@ extern "C" {
 #if !defined(EGL_OPENGL_ES3_BIT)
 #define EGL_OPENGL_ES3_BIT 0x00000040
 #endif
+
+// Not present egl/eglext.h yet.
+
+#ifndef EGL_EXT_gl_colorspace_display_p3
+#define EGL_EXT_gl_colorspace_display_p3 1
+#define EGL_GL_COLORSPACE_DISPLAY_P3_EXT 0x3363
+#endif /* EGL_EXT_gl_colorspace_display_p3 */
 
 // From ANGLE's egl/eglext.h.
 
@@ -73,6 +79,9 @@ extern "C" {
 #define EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE 0x320A
 #define EGL_PLATFORM_ANGLE_DEVICE_TYPE_WARP_ANGLE 0x320B
 #define EGL_PLATFORM_ANGLE_DEVICE_TYPE_REFERENCE_ANGLE 0x320C
+
+// Hidden enum for the NULL D3D device type.
+#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_NULL_ANGLE 0x6AC0
 #endif /* EGL_ANGLE_platform_angle_d3d */
 
 #ifndef EGL_ANGLE_platform_angle_opengl
@@ -109,6 +118,11 @@ extern "C" {
 #define EGL_FLEXIBLE_SURFACE_COMPATIBILITY_SUPPORTED_ANGLE 0x33A6
 #endif /* EGL_ANGLE_flexible_surface_compatibility */
 
+#ifndef EGL_ANGLE_display_robust_resource_initialization
+#define EGL_ANGLE_display_robust_resource_initialization 1
+#define EGL_DISPLAY_ROBUST_RESOURCE_INITIALIZATION_ANGLE 0x3453
+#endif /* EGL_ANGLE_display_robust_resource_initialization */
+
 using ui::GetLastEGLErrorString;
 
 namespace gl {
@@ -128,7 +142,28 @@ bool g_egl_sync_control_supported = false;
 bool g_egl_window_fixed_size_supported = false;
 bool g_egl_surfaceless_context_supported = false;
 bool g_egl_surface_orientation_supported = false;
+bool g_egl_context_priority_supported = false;
+bool g_egl_khr_colorspace = false;
+bool g_egl_ext_colorspace_display_p3 = false;
 bool g_use_direct_composition = false;
+bool g_egl_robust_resource_init_supported = false;
+bool g_egl_display_texture_share_group_supported = false;
+bool g_egl_create_context_client_arrays_supported = false;
+bool g_egl_android_native_fence_sync_supported = false;
+
+const char kSwapEventTraceCategories[] = "gpu";
+
+constexpr size_t kMaxTimestampsSupportable = 9;
+
+struct TraceSwapEventsInitializer {
+  TraceSwapEventsInitializer()
+      : value(*TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED(
+            kSwapEventTraceCategories)) {}
+  const unsigned char& value;
+};
+
+static base::LazyInstance<TraceSwapEventsInitializer>::Leaky
+    g_trace_swap_enabled = LAZY_INSTANCE_INITIALIZER;
 
 class EGLSyncControlVSyncProvider : public SyncControlVSyncProvider {
  public:
@@ -172,18 +207,24 @@ class EGLSyncControlVSyncProvider : public SyncControlVSyncProvider {
 
 EGLDisplay GetPlatformANGLEDisplay(EGLNativeDisplayType native_display,
                                    EGLenum platform_type,
-                                   bool warpDevice) {
+                                   bool warpDevice,
+                                   bool nullDevice) {
   std::vector<EGLint> display_attribs;
 
   display_attribs.push_back(EGL_PLATFORM_ANGLE_TYPE_ANGLE);
   display_attribs.push_back(platform_type);
 
   if (warpDevice) {
+    DCHECK(!nullDevice);
     display_attribs.push_back(EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE);
     display_attribs.push_back(EGL_PLATFORM_ANGLE_DEVICE_TYPE_WARP_ANGLE);
+  } else if (nullDevice) {
+    DCHECK(!warpDevice);
+    display_attribs.push_back(EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE);
+    display_attribs.push_back(EGL_PLATFORM_ANGLE_DEVICE_TYPE_NULL_ANGLE);
   }
 
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
   // ANGLE_NULL doesn't use the visual, and may run without X11 where we can't
   // get it anyway.
   if (platform_type != EGL_PLATFORM_ANGLE_TYPE_NULL_ANGLE) {
@@ -209,20 +250,29 @@ EGLDisplay GetDisplayFromType(DisplayType display_type,
     case SWIFT_SHADER:
       return eglGetDisplay(native_display);
     case ANGLE_D3D9:
-      return GetPlatformANGLEDisplay(native_display,
-                                     EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE, false);
+      return GetPlatformANGLEDisplay(
+          native_display, EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE, false, false);
     case ANGLE_D3D11:
       return GetPlatformANGLEDisplay(
-          native_display, EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE, false);
+          native_display, EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE, false, false);
+    case ANGLE_D3D11_NULL:
+      return GetPlatformANGLEDisplay(
+          native_display, EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE, false, true);
     case ANGLE_OPENGL:
       return GetPlatformANGLEDisplay(
-          native_display, EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE, false);
+          native_display, EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE, false, false);
+    case ANGLE_OPENGL_NULL:
+      return GetPlatformANGLEDisplay(
+          native_display, EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE, false, true);
     case ANGLE_OPENGLES:
       return GetPlatformANGLEDisplay(
-          native_display, EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE, false);
+          native_display, EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE, false, false);
+    case ANGLE_OPENGLES_NULL:
+      return GetPlatformANGLEDisplay(
+          native_display, EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE, false, true);
     case ANGLE_NULL:
-      return GetPlatformANGLEDisplay(native_display,
-                                     EGL_PLATFORM_ANGLE_TYPE_NULL_ANGLE, false);
+      return GetPlatformANGLEDisplay(
+          native_display, EGL_PLATFORM_ANGLE_TYPE_NULL_ANGLE, false, false);
     default:
       NOTREACHED();
       return EGL_NO_DISPLAY;
@@ -287,7 +337,7 @@ EGLConfig ChooseConfig(GLSurfaceFormat format, bool surfaceless) {
   EGLint stencil_size = format.GetStencilBits();
   EGLint samples = format.GetSamples();
 
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
   // If we're using ANGLE_NULL, we may not have a display, in which case we
   // can't use XVisualManager.
   if (g_native_display) {
@@ -452,9 +502,10 @@ void GetEGLInitDisplays(bool supports_angle_d3d,
     } else {
       if (requested_renderer == kANGLEImplementationD3D11Name) {
         init_displays->push_back(ANGLE_D3D11);
-      }
-      if (requested_renderer == kANGLEImplementationD3D9Name) {
+      } else if (requested_renderer == kANGLEImplementationD3D9Name) {
         init_displays->push_back(ANGLE_D3D9);
+      } else if (requested_renderer == kANGLEImplementationD3D11NULLName) {
+        init_displays->push_back(ANGLE_D3D11_NULL);
       }
     }
   }
@@ -466,9 +517,12 @@ void GetEGLInitDisplays(bool supports_angle_d3d,
     } else {
       if (requested_renderer == kANGLEImplementationOpenGLName) {
         init_displays->push_back(ANGLE_OPENGL);
-      }
-      if (requested_renderer == kANGLEImplementationOpenGLESName) {
+      } else if (requested_renderer == kANGLEImplementationOpenGLESName) {
         init_displays->push_back(ANGLE_OPENGLES);
+      } else if (requested_renderer == kANGLEImplementationOpenGLNULLName) {
+        init_displays->push_back(ANGLE_OPENGL_NULL);
+      } else if (requested_renderer == kANGLEImplementationOpenGLESNULLName) {
+        init_displays->push_back(ANGLE_OPENGLES_NULL);
       }
     }
   }
@@ -525,14 +579,40 @@ bool GLSurfaceEGL::InitializeOneOff(EGLNativeDisplayType native_display) {
       HasEGLExtension("EGL_ANGLE_window_fixed_size");
   g_egl_surface_orientation_supported =
       HasEGLExtension("EGL_ANGLE_surface_orientation");
+  g_egl_khr_colorspace = HasEGLExtension("EGL_KHR_gl_colorspace");
+  g_egl_ext_colorspace_display_p3 =
+      HasEGLExtension("EGL_EXT_gl_colorspace_display_p3");
+  // According to https://source.android.com/compatibility/android-cdd.html the
+  // EGL_IMG_context_priority extension is mandatory for Virtual Reality High
+  // Performance support, but due to a bug in Android Nougat the extension
+  // isn't being reported even when it's present. As a fallback, check if other
+  // related extensions that were added for VR support are present, and assume
+  // that this implies context priority is also supported. See also:
+  // https://github.com/googlevr/gvr-android-sdk/issues/330
+  g_egl_context_priority_supported =
+      HasEGLExtension("EGL_IMG_context_priority") ||
+      (HasEGLExtension("EGL_ANDROID_front_buffer_auto_refresh") &&
+       HasEGLExtension("EGL_ANDROID_create_native_client_buffer"));
 
+#if defined(OS_WIN)
   // Need EGL_ANGLE_flexible_surface_compatibility to allow surfaces with and
-  // without alpha to be bound to the same context.
+  // without alpha to be bound to the same context. Blacklist direct composition
+  // if MCTU.dll or MCTUX.dll are injected. These are user mode drivers for
+  // display adapters from Magic Control Technology Corporation.
   g_use_direct_composition =
       HasEGLExtension("EGL_ANGLE_direct_composition") &&
       HasEGLExtension("EGL_ANGLE_flexible_surface_compatibility") &&
       !base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisableDirectComposition);
+          switches::kDisableDirectComposition) &&
+      !GetModuleHandle(TEXT("MCTU.dll")) && !GetModuleHandle(TEXT("MCTUX.dll"));
+#endif
+
+  g_egl_display_texture_share_group_supported =
+      HasEGLExtension("EGL_ANGLE_display_texture_share_group");
+  g_egl_create_context_client_arrays_supported =
+      HasEGLExtension("EGL_ANGLE_create_context_client_arrays");
+  g_egl_robust_resource_init_supported =
+      HasEGLExtension("EGL_ANGLE_robust_resource_initialization");
 
   // TODO(oetuaho@nvidia.com): Surfaceless is disabled on Android as a temporary
   // workaround, since code written for Android WebView takes different paths
@@ -562,14 +642,40 @@ bool GLSurfaceEGL::InitializeOneOff(EGLNativeDisplayType native_display) {
     }
   }
 #endif
+
+  // The native fence sync extension is a bit complicated. It's reported as
+  // present for ChromeOS, but Android currently doesn't report this extension
+  // even when it's present, and older devices may export a useless wrapper
+  // function. See crbug.com/775707 for details. In short, if the symbol is
+  // present and we're on Android N or newer, assume that it's usable even if
+  // the extension wasn't reported.
+  g_egl_android_native_fence_sync_supported =
+      g_driver_egl.ext.b_EGL_ANDROID_native_fence_sync;
+#if defined(OS_ANDROID)
+  if (base::android::BuildInfo::GetInstance()->sdk_int() >=
+          base::android::SDK_VERSION_NOUGAT &&
+      g_driver_egl.fn.eglDupNativeFenceFDANDROIDFn) {
+    g_egl_android_native_fence_sync_supported = true;
+  }
+#endif
+
   initialized_ = true;
+  return true;
+}
+
+// static
+bool GLSurfaceEGL::InitializeExtensionSettingsOneOff() {
+  if (!initialized_)
+    return false;
+  g_driver_egl.UpdateConditionalExtensionBindings();
+  g_egl_extensions = eglQueryString(g_display, EGL_EXTENSIONS);
 
   return true;
 }
 
 // static
 void GLSurfaceEGL::ShutdownOneOff() {
-  ResetANGLEPlatform(g_display);
+  angle::ResetPlatform(g_display);
 
   if (g_display != EGL_NO_DISPLAY)
     eglTerminate(g_display);
@@ -584,6 +690,9 @@ void GLSurfaceEGL::ShutdownOneOff() {
   g_egl_surface_orientation_supported = false;
   g_use_direct_composition = false;
   g_egl_surfaceless_context_supported = false;
+  g_egl_robust_resource_init_supported = false;
+  g_egl_display_texture_share_group_supported = false;
+  g_egl_create_context_client_arrays_supported = false;
 
   initialized_ = false;
 }
@@ -627,8 +736,29 @@ bool GLSurfaceEGL::IsEGLSurfacelessContextSupported() {
 }
 
 // static
+bool GLSurfaceEGL::IsEGLContextPrioritySupported() {
+  return g_egl_context_priority_supported;
+}
+
+// static
 bool GLSurfaceEGL::IsDirectCompositionSupported() {
   return g_use_direct_composition;
+}
+
+bool GLSurfaceEGL::IsRobustResourceInitSupported() {
+  return g_egl_robust_resource_init_supported;
+}
+
+bool GLSurfaceEGL::IsDisplayTextureShareGroupSupported() {
+  return g_egl_display_texture_share_group_supported;
+}
+
+bool GLSurfaceEGL::IsCreateContextClientArraysSupported() {
+  return g_egl_create_context_client_arrays_supported;
+}
+
+bool GLSurfaceEGL::IsAndroidNativeFenceSyncSupported() {
+  return g_egl_android_native_fence_sync_supported;
 }
 
 GLSurfaceEGL::~GLSurfaceEGL() {}
@@ -670,8 +800,7 @@ EGLDisplay GLSurfaceEGL::InitializeDisplay(
 
   for (size_t disp_index = 0; disp_index < init_displays.size(); ++disp_index) {
     DisplayType display_type = init_displays[disp_index];
-    EGLDisplay display =
-        GetDisplayFromType(display_type, g_native_display);
+    EGLDisplay display = GetDisplayFromType(display_type, g_native_display);
     if (display == EGL_NO_DISPLAY) {
       LOG(ERROR) << "EGL display query failed with error "
                  << GetLastEGLErrorString();
@@ -679,7 +808,7 @@ EGLDisplay GLSurfaceEGL::InitializeDisplay(
 
     // Init ANGLE platform now that we have the global display.
     if (supports_angle_d3d || supports_angle_opengl || supports_angle_null) {
-      if (!InitializeANGLEPlatform(display)) {
+      if (!angle::InitializePlatform(display)) {
         LOG(ERROR) << "ANGLE Platform initialization failed.";
       }
     }
@@ -706,12 +835,13 @@ NativeViewGLSurfaceEGL::NativeViewGLSurfaceEGL(
     std::unique_ptr<gfx::VSyncProvider> vsync_provider)
     : window_(window),
       size_(1, 1),
-      enable_fixed_size_angle_(false),
+      enable_fixed_size_angle_(true),
       surface_(NULL),
       supports_post_sub_buffer_(false),
       supports_swap_buffer_with_damage_(false),
       flips_vertically_(false),
-      vsync_provider_external_(std::move(vsync_provider)) {
+      vsync_provider_external_(std::move(vsync_provider)),
+      use_egl_timestamps_(false) {
 #if defined(OS_ANDROID)
   if (window)
     ANativeWindow_acquire(window);
@@ -776,6 +906,34 @@ bool NativeViewGLSurfaceEGL::Initialize(GLSurfaceFormat format) {
     egl_window_attributes.push_back(EGL_TRUE);
   }
 
+  switch (format_.GetColorSpace()) {
+    case GLSurfaceFormat::COLOR_SPACE_UNSPECIFIED:
+      break;
+    case GLSurfaceFormat::COLOR_SPACE_SRGB:
+      // Note that COLORSPACE_LINEAR refers to the sRGB color space, but
+      // without opting into sRGB blending. It is equivalent to
+      // COLORSPACE_SRGB with Disable(FRAMEBUFFER_SRGB).
+      if (g_egl_khr_colorspace) {
+        egl_window_attributes.push_back(EGL_GL_COLORSPACE_KHR);
+        egl_window_attributes.push_back(EGL_GL_COLORSPACE_LINEAR_KHR);
+      }
+      break;
+    case GLSurfaceFormat::COLOR_SPACE_DISPLAY_P3:
+      // Note that it is not the case that
+      //   COLORSPACE_SRGB is to COLORSPACE_LINEAR_KHR
+      // as
+      //   COLORSPACE_DISPLAY_P3 is to COLORSPACE_DISPLAY_P3_LINEAR
+      // COLORSPACE_DISPLAY_P3 is equivalent to COLORSPACE_LINEAR, except with
+      // with the P3 gamut instead of the the sRGB gamut.
+      // COLORSPACE_DISPLAY_P3_LINEAR has a linear transfer function, and is
+      // intended for use with 16-bit formats.
+      if (g_egl_khr_colorspace && g_egl_ext_colorspace_display_p3) {
+        egl_window_attributes.push_back(EGL_GL_COLORSPACE_KHR);
+        egl_window_attributes.push_back(EGL_GL_COLORSPACE_DISPLAY_P3_EXT);
+      }
+      break;
+  }
+
   egl_window_attributes.push_back(EGL_NONE);
   // Create a surface for the native window.
   surface_ = eglCreateWindowSurface(
@@ -800,9 +958,59 @@ bool NativeViewGLSurfaceEGL::Initialize(GLSurfaceFormat format) {
 
   if (!vsync_provider_external_ && EGLSyncControlVSyncProvider::IsSupported()) {
     vsync_provider_internal_ =
-        base::MakeUnique<EGLSyncControlVSyncProvider>(surface_);
+        std::make_unique<EGLSyncControlVSyncProvider>(surface_);
   }
+
   return true;
+}
+
+bool NativeViewGLSurfaceEGL::SupportsSwapTimestamps() const {
+  return g_driver_egl.ext.b_EGL_ANDROID_get_frame_timestamps;
+}
+
+void NativeViewGLSurfaceEGL::SetEnableSwapTimestamps() {
+  DCHECK(g_driver_egl.ext.b_EGL_ANDROID_get_frame_timestamps);
+
+  // If frame timestamps are supported, set the proper attribute to enable the
+  // feature and then cache the timestamps supported by the underlying
+  // implementation. EGL_DISPLAY_PRESENT_TIME_ANDROID support, in particular,
+  // is spotty.
+  // Clear the supported timestamps here to protect against Initialize() being
+  // called twice.
+  supported_egl_timestamps_.clear();
+  supported_event_names_.clear();
+
+  eglSurfaceAttrib(GetDisplay(), surface_, EGL_TIMESTAMPS_ANDROID, EGL_TRUE);
+
+  static const struct {
+    EGLint egl_name;
+    const char* name;
+  } all_timestamps[kMaxTimestampsSupportable] = {
+      {EGL_REQUESTED_PRESENT_TIME_ANDROID, "Queue"},
+      {EGL_RENDERING_COMPLETE_TIME_ANDROID, "WritesDone"},
+      {EGL_COMPOSITION_LATCH_TIME_ANDROID, "LatchedForDisplay"},
+      {EGL_FIRST_COMPOSITION_START_TIME_ANDROID, "1stCompositeCpu"},
+      {EGL_LAST_COMPOSITION_START_TIME_ANDROID, "NthCompositeCpu"},
+      {EGL_FIRST_COMPOSITION_GPU_FINISHED_TIME_ANDROID, "GpuCompositeDone"},
+      {EGL_DISPLAY_PRESENT_TIME_ANDROID, "ScanOutStart"},
+      {EGL_DEQUEUE_READY_TIME_ANDROID, "DequeueReady"},
+      {EGL_READS_DONE_TIME_ANDROID, "ReadsDone"},
+  };
+
+  supported_egl_timestamps_.reserve(kMaxTimestampsSupportable);
+  supported_event_names_.reserve(kMaxTimestampsSupportable);
+  for (const auto& ts : all_timestamps) {
+    if (!eglGetFrameTimestampSupportedANDROID(GetDisplay(), surface_,
+                                              ts.egl_name))
+      continue;
+
+    // Stored in separate vectors so we can pass the egl timestamps
+    // directly to the EGL functions.
+    supported_egl_timestamps_.push_back(ts.egl_name);
+    supported_event_names_.push_back(ts.name);
+  }
+
+  use_egl_timestamps_ = !supported_egl_timestamps_.empty();
 }
 
 bool NativeViewGLSurfaceEGL::InitializeNativeWindow() {
@@ -825,7 +1033,9 @@ bool NativeViewGLSurfaceEGL::IsOffscreen() {
   return false;
 }
 
-gfx::SwapResult NativeViewGLSurfaceEGL::SwapBuffers() {
+gfx::SwapResult NativeViewGLSurfaceEGL::SwapBuffers(
+    const PresentationCallback& callback) {
+  // TODO(penghuang): Provide presentation feedback. https://crbug.com/776877
   TRACE_EVENT2("gpu", "NativeViewGLSurfaceEGL:RealSwapBuffers",
       "width", GetSize().width(),
       "height", GetSize().height());
@@ -835,13 +1045,139 @@ gfx::SwapResult NativeViewGLSurfaceEGL::SwapBuffers() {
     return gfx::SwapResult::SWAP_FAILED;
   }
 
+  EGLuint64KHR newFrameId = 0;
+  bool newFrameIdIsValid = true;
+  if (use_egl_timestamps_) {
+    newFrameIdIsValid =
+        !!eglGetNextFrameIdANDROID(GetDisplay(), surface_, &newFrameId);
+  }
+
   if (!eglSwapBuffers(GetDisplay(), surface_)) {
     DVLOG(1) << "eglSwapBuffers failed with error "
              << GetLastEGLErrorString();
     return gfx::SwapResult::SWAP_FAILED;
   }
 
+  if (use_egl_timestamps_) {
+    UpdateSwapEvents(newFrameId, newFrameIdIsValid);
+  }
+
   return gfx::SwapResult::SWAP_ACK;
+}
+
+void NativeViewGLSurfaceEGL::UpdateSwapEvents(EGLuint64KHR newFrameId,
+                                              bool newFrameIdIsValid) {
+  // Queue info for the frame just swapped.
+  swap_info_queue_.push({newFrameIdIsValid, newFrameId});
+
+  // Make sure we have a frame old enough that all it's timstamps should
+  // be available by now.
+  constexpr int kFramesAgoToGetServerTimestamps = 4;
+  if (swap_info_queue_.size() <= kFramesAgoToGetServerTimestamps)
+    return;
+
+  // TraceEvents if needed.
+  // If we weren't able to get a valid frame id before the swap, we can't get
+  // its timestamps now.
+  const SwapInfo& old_swap_info = swap_info_queue_.front();
+  if (old_swap_info.frame_id_is_valid && g_trace_swap_enabled.Get().value)
+    TraceSwapEvents(old_swap_info.frame_id);
+
+  swap_info_queue_.pop();
+}
+
+void NativeViewGLSurfaceEGL::TraceSwapEvents(EGLuint64KHR oldFrameId) {
+  // We shouldn't be calling eglGetFrameTimestampsANDROID with more timestamps
+  // than it supports.
+  DCHECK_LE(supported_egl_timestamps_.size(), kMaxTimestampsSupportable);
+
+  // Get the timestamps.
+  std::vector<EGLnsecsANDROID> egl_timestamps(supported_egl_timestamps_.size(),
+                                              EGL_TIMESTAMP_INVALID_ANDROID);
+  if (!eglGetFrameTimestampsANDROID(
+          GetDisplay(), surface_, oldFrameId,
+          static_cast<EGLint>(supported_egl_timestamps_.size()),
+          supported_egl_timestamps_.data(), egl_timestamps.data())) {
+    TRACE_EVENT_INSTANT0("gpu", "eglGetFrameTimestamps:Failed",
+                         TRACE_EVENT_SCOPE_THREAD);
+    return;
+  }
+
+  // Track supported and valid time/name pairs.
+  struct TimeNamePair {
+    base::TimeTicks time;
+    const char* name;
+  };
+
+  std::vector<TimeNamePair> tracePairs;
+  tracePairs.reserve(supported_egl_timestamps_.size());
+  for (size_t i = 0; i < egl_timestamps.size(); i++) {
+    // Although a timestamp of 0 is technically valid, we shouldn't expect to
+    // see it in practice. 0's are more likely due to a known linux kernel bug
+    // that inadvertently discards timestamp information when merging two
+    // retired fences.
+    if (egl_timestamps[i] == 0 ||
+        egl_timestamps[i] == EGL_TIMESTAMP_INVALID_ANDROID ||
+        egl_timestamps[i] == EGL_TIMESTAMP_PENDING_ANDROID) {
+      continue;
+    }
+    // TODO(brianderson): Replace FromInternalValue usage.
+    tracePairs.push_back(
+        {base::TimeTicks::FromInternalValue(
+             egl_timestamps[i] / base::TimeTicks::kNanosecondsPerMicrosecond),
+         supported_event_names_[i]});
+  }
+  if (tracePairs.empty()) {
+    TRACE_EVENT_INSTANT0("gpu", "TraceSwapEvents:NoValidTimestamps",
+                         TRACE_EVENT_SCOPE_THREAD);
+    return;
+  }
+
+  // Sort the pairs so we can trace them in order.
+  std::sort(tracePairs.begin(), tracePairs.end(),
+            [](auto& a, auto& b) { return a.time < b.time; });
+
+  // Trace the overall range under which the sub events will be nested.
+  // Add an epsilon since the trace viewer interprets timestamp ranges
+  // as closed on the left and open on the right. i.e.: [begin, end).
+  // The last sub event isn't nested properly without the epsilon.
+  auto epsilon = base::TimeDelta::FromMicroseconds(1);
+  static const char* SwapEvents = "SwapEvents";
+  const int64_t trace_id = oldFrameId;
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
+      kSwapEventTraceCategories, SwapEvents, trace_id, tracePairs.front().time);
+  TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP1(
+      kSwapEventTraceCategories, SwapEvents, trace_id,
+      tracePairs.back().time + epsilon, "id", trace_id);
+
+  // Trace the first event, which does not have a range before it.
+  TRACE_EVENT_NESTABLE_ASYNC_INSTANT_WITH_TIMESTAMP0(
+      kSwapEventTraceCategories, tracePairs.front().name, trace_id,
+      tracePairs.front().time);
+
+  // Trace remaining events and their ranges.
+  // Use the first characters to represent events still pending.
+  // This helps color code the remaining events in the viewer, which makes
+  // it obvious:
+  //   1) when the order of events are different between frames and
+  //   2) if multiple events occurred very close together.
+  std::string valid_symbols(tracePairs.size(), '\0');
+  for (size_t i = 0; i < valid_symbols.size(); i++)
+    valid_symbols[i] = tracePairs[i].name[0];
+
+  const char* pending_symbols = valid_symbols.c_str();
+  for (size_t i = 1; i < tracePairs.size(); i++) {
+    pending_symbols++;
+    TRACE_EVENT_COPY_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
+        kSwapEventTraceCategories, pending_symbols, trace_id,
+        tracePairs[i - 1].time);
+    TRACE_EVENT_COPY_NESTABLE_ASYNC_END_WITH_TIMESTAMP0(
+        kSwapEventTraceCategories, pending_symbols, trace_id,
+        tracePairs[i].time);
+    TRACE_EVENT_NESTABLE_ASYNC_INSTANT_WITH_TIMESTAMP0(
+        kSwapEventTraceCategories, tracePairs[i].name, trace_id,
+        tracePairs[i].time);
+  }
 }
 
 gfx::Size NativeViewGLSurfaceEGL::GetSize() {
@@ -859,6 +1195,7 @@ gfx::Size NativeViewGLSurfaceEGL::GetSize() {
 
 bool NativeViewGLSurfaceEGL::Resize(const gfx::Size& size,
                                     float scale_factor,
+                                    ColorSpace color_space,
                                     bool has_alpha) {
   if (size == GetSize())
     return true;
@@ -911,7 +1248,9 @@ bool NativeViewGLSurfaceEGL::BuffersFlipped() const {
 }
 
 gfx::SwapResult NativeViewGLSurfaceEGL::SwapBuffersWithDamage(
-    const std::vector<int>& rects) {
+    const std::vector<int>& rects,
+    const PresentationCallback& callback) {
+  // TODO(penghuang): Provide presentation feedback. https://crbug.com/776877
   DCHECK(supports_swap_buffer_with_damage_);
   if (!CommitAndClearPendingOverlays()) {
     DVLOG(1) << "Failed to commit pending overlay planes.";
@@ -928,10 +1267,13 @@ gfx::SwapResult NativeViewGLSurfaceEGL::SwapBuffersWithDamage(
   return gfx::SwapResult::SWAP_ACK;
 }
 
-gfx::SwapResult NativeViewGLSurfaceEGL::PostSubBuffer(int x,
-                                                      int y,
-                                                      int width,
-                                                      int height) {
+gfx::SwapResult NativeViewGLSurfaceEGL::PostSubBuffer(
+    int x,
+    int y,
+    int width,
+    int height,
+    const PresentationCallback& callback) {
+  // TODO(penghuang): Provide presentation feedback. https://crbug.com/776877
   DCHECK(supports_post_sub_buffer_);
   if (!CommitAndClearPendingOverlays()) {
     DVLOG(1) << "Failed to commit pending overlay planes.";
@@ -959,7 +1301,9 @@ bool NativeViewGLSurfaceEGL::SupportsCommitOverlayPlanes() {
 #endif
 }
 
-gfx::SwapResult NativeViewGLSurfaceEGL::CommitOverlayPlanes() {
+gfx::SwapResult NativeViewGLSurfaceEGL::CommitOverlayPlanes(
+    const PresentationCallback& callback) {
+  // TODO(penghuang): Provide presentation feedback. https://crbug.com/776877
   DCHECK(SupportsCommitOverlayPlanes());
   // Here we assume that the overlays scheduled on this surface will display
   // themselves to the screen right away in |CommitAndClearPendingOverlays|,
@@ -1025,7 +1369,7 @@ bool PbufferGLSurfaceEGL::Initialize(GLSurfaceFormat format) {
   // to use a compatible config. We expect the client to request RGB565
   // onscreen surface also for this to work (with the exception of
   // fullscreen video).
-  if (base::SysInfo::IsLowEndDevice())
+  if (base::SysInfo::AmountOfPhysicalMemoryMB() <= 512)
     format.SetRGB565();
 #endif
 
@@ -1084,7 +1428,8 @@ bool PbufferGLSurfaceEGL::IsOffscreen() {
   return true;
 }
 
-gfx::SwapResult PbufferGLSurfaceEGL::SwapBuffers() {
+gfx::SwapResult PbufferGLSurfaceEGL::SwapBuffers(
+    const PresentationCallback& callback) {
   NOTREACHED() << "Attempted to call SwapBuffers on a PbufferGLSurfaceEGL.";
   return gfx::SwapResult::SWAP_FAILED;
 }
@@ -1095,6 +1440,7 @@ gfx::Size PbufferGLSurfaceEGL::GetSize() {
 
 bool PbufferGLSurfaceEGL::Resize(const gfx::Size& size,
                                  float scale_factor,
+                                 ColorSpace color_space,
                                  bool has_alpha) {
   if (size == size_)
     return true;
@@ -1167,7 +1513,8 @@ bool SurfacelessEGL::IsSurfaceless() const {
   return true;
 }
 
-gfx::SwapResult SurfacelessEGL::SwapBuffers() {
+gfx::SwapResult SurfacelessEGL::SwapBuffers(
+    const PresentationCallback& callback) {
   LOG(ERROR) << "Attempted to call SwapBuffers with SurfacelessEGL.";
   return gfx::SwapResult::SWAP_FAILED;
 }
@@ -1178,6 +1525,7 @@ gfx::Size SurfacelessEGL::GetSize() {
 
 bool SurfacelessEGL::Resize(const gfx::Size& size,
                             float scale_factor,
+                            ColorSpace color_space,
                             bool has_alpha) {
   size_ = size;
   return true;

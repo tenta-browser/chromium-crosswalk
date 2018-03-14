@@ -12,6 +12,7 @@
 #include "build/build_config.h"
 #include "components/rappor/public/rappor_utils.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "ui/events/blink/web_input_event_traits.h"
@@ -27,63 +28,18 @@ using ui::LatencyInfo;
 namespace content {
 namespace {
 
-void UpdateLatencyCoordinatesImpl(const blink::WebTouchEvent& touch,
-                                  LatencyInfo* latency,
-                                  float device_scale_factor) {
-  for (uint32_t i = 0; i < touch.touches_length; ++i) {
-    gfx::PointF coordinate(touch.touches[i].position.x * device_scale_factor,
-                           touch.touches[i].position.y * device_scale_factor);
-    if (!latency->AddInputCoordinate(coordinate))
-      break;
-  }
-}
-
-void UpdateLatencyCoordinatesImpl(const WebGestureEvent& gesture,
-                                  LatencyInfo* latency,
-                                  float device_scale_factor) {
-  latency->AddInputCoordinate(gfx::PointF(gesture.x * device_scale_factor,
-                                          gesture.y * device_scale_factor));
-}
-
-void UpdateLatencyCoordinatesImpl(const WebMouseEvent& mouse,
-                                  LatencyInfo* latency,
-                                  float device_scale_factor) {
-  latency->AddInputCoordinate(
-      gfx::PointF(mouse.PositionInWidget().x * device_scale_factor,
-                  mouse.PositionInWidget().y * device_scale_factor));
-}
-
-void UpdateLatencyCoordinatesImpl(const WebMouseWheelEvent& wheel,
-                                  LatencyInfo* latency,
-                                  float device_scale_factor) {
-  latency->AddInputCoordinate(
-      gfx::PointF(wheel.PositionInWidget().x * device_scale_factor,
-                  wheel.PositionInWidget().y * device_scale_factor));
-}
-
-void UpdateLatencyCoordinates(const WebInputEvent& event,
-                              float device_scale_factor,
-                              LatencyInfo* latency) {
-  if (WebInputEvent::IsMouseEventType(event.GetType())) {
-    UpdateLatencyCoordinatesImpl(static_cast<const WebMouseEvent&>(event),
-                                 latency, device_scale_factor);
-  } else if (WebInputEvent::IsGestureEventType(event.GetType())) {
-    UpdateLatencyCoordinatesImpl(static_cast<const WebGestureEvent&>(event),
-                                 latency, device_scale_factor);
-  } else if (WebInputEvent::IsTouchEventType(event.GetType())) {
-    UpdateLatencyCoordinatesImpl(static_cast<const WebTouchEvent&>(event),
-                                 latency, device_scale_factor);
-  } else if (event.GetType() == WebInputEvent::kMouseWheel) {
-    UpdateLatencyCoordinatesImpl(static_cast<const WebMouseWheelEvent&>(event),
-                                 latency, device_scale_factor);
-  }
+ukm::SourceId GenerateUkmSourceId() {
+  ukm::UkmRecorder* ukm_recorder = ukm::UkmRecorder::Get();
+  return ukm_recorder ? ukm_recorder->GetNewSourceID() : ukm::kInvalidSourceId;
 }
 
 std::string WebInputEventTypeToInputModalityString(WebInputEvent::Type type) {
   if (type == blink::WebInputEvent::kMouseWheel) {
     return "Wheel";
   } else if (WebInputEvent::IsKeyboardEventType(type)) {
-    return "Key";
+    // We should only be reporting latency for key presses.
+    DCHECK(type == WebInputEvent::kRawKeyDown || type == WebInputEvent::kChar);
+    return "KeyPress";
   } else if (WebInputEvent::IsMouseEventType(type)) {
     return "Mouse";
   } else if (WebInputEvent::IsTouchEventType(type)) {
@@ -123,16 +79,79 @@ void AddLatencyInfoComponentIds(LatencyInfo* latency,
   }
 }
 
+void RecordEQTAccuracy(base::TimeDelta queueing_time,
+                       base::TimeDelta expected_queueing_time) {
+  float queueing_time_ms = queueing_time.InMillisecondsF();
+
+  if (queueing_time_ms < 10) {
+    UMA_HISTOGRAM_TIMES(
+        "RendererScheduler."
+        "ExpectedQueueingTimeWhenQueueingTime_LessThan.10ms",
+        expected_queueing_time);
+  }
+
+  if (queueing_time_ms < 150) {
+    UMA_HISTOGRAM_TIMES(
+        "RendererScheduler."
+        "ExpectedQueueingTimeWhenQueueingTime_LessThan.150ms",
+        expected_queueing_time);
+  }
+
+  if (queueing_time_ms < 300) {
+    UMA_HISTOGRAM_TIMES(
+        "RendererScheduler."
+        "ExpectedQueueingTimeWhenQueueingTime_LessThan.300ms",
+        expected_queueing_time);
+  }
+
+  if (queueing_time_ms < 450) {
+    UMA_HISTOGRAM_TIMES(
+        "RendererScheduler."
+        "ExpectedQueueingTimeWhenQueueingTime_LessThan.450ms",
+        expected_queueing_time);
+  }
+
+  if (queueing_time_ms > 10) {
+    UMA_HISTOGRAM_TIMES(
+        "RendererScheduler."
+        "ExpectedQueueingTimeWhenQueueingTime_GreaterThan.10ms",
+        expected_queueing_time);
+  }
+
+  if (queueing_time_ms > 150) {
+    UMA_HISTOGRAM_TIMES(
+        "RendererScheduler."
+        "ExpectedQueueingTimeWhenQueueingTime_GreaterThan.150ms",
+        expected_queueing_time);
+  }
+
+  if (queueing_time_ms > 300) {
+    UMA_HISTOGRAM_TIMES(
+        "RendererScheduler."
+        "ExpectedQueueingTimeWhenQueueingTime_GreaterThan.300ms",
+        expected_queueing_time);
+  }
+
+  if (queueing_time_ms > 450) {
+    UMA_HISTOGRAM_TIMES(
+        "RendererScheduler."
+        "ExpectedQueueingTimeWhenQueueingTime_GreaterThan.450ms",
+        expected_queueing_time);
+  }
+}
+
 }  // namespace
 
-RenderWidgetHostLatencyTracker::RenderWidgetHostLatencyTracker()
-    : last_event_id_(0),
+RenderWidgetHostLatencyTracker::RenderWidgetHostLatencyTracker(
+    bool metric_sampling,
+    RenderWidgetHostDelegate* delegate)
+    : LatencyTracker(metric_sampling, GenerateUkmSourceId()),
+      last_event_id_(0),
       latency_component_id_(0),
-      device_scale_factor_(1),
       has_seen_first_gesture_scroll_update_(false),
       active_multi_finger_gesture_(false),
       touch_start_default_prevented_(false),
-      render_widget_host_delegate_(nullptr) {}
+      render_widget_host_delegate_(delegate) {}
 
 RenderWidgetHostLatencyTracker::~RenderWidgetHostLatencyTracker() {}
 
@@ -154,16 +173,18 @@ void RenderWidgetHostLatencyTracker::ComputeInputLatencyHistograms(
   if (latency.coalesced())
     return;
 
-  if (type != blink::WebInputEvent::kMouseWheel &&
-      !WebInputEvent::IsTouchEventType(type)) {
+  if (latency.source_event_type() == ui::SourceEventType::UNKNOWN ||
+      latency.source_event_type() == ui::SourceEventType::OTHER) {
     return;
   }
 
+  // The event will have gone through OnInputEvent(). So the BEGIN_RWH component
+  // should always be available here.
   LatencyInfo::LatencyComponent rwh_component;
-  if (!latency.FindLatency(ui::INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT,
-                           latency_component_id, &rwh_component)) {
-    return;
-  }
+  bool found_component =
+      latency.FindLatency(ui::INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT,
+                          latency_component_id, &rwh_component);
+  DCHECK(found_component);
   DCHECK_EQ(rwh_component.event_count, 1u);
 
   bool multi_finger_touch_gesture =
@@ -173,26 +194,43 @@ void RenderWidgetHostLatencyTracker::ComputeInputLatencyHistograms(
   if (latency.FindLatency(ui::INPUT_EVENT_LATENCY_UI_COMPONENT, 0,
                           &ui_component)) {
     DCHECK_EQ(ui_component.event_count, 1u);
+    CONFIRM_EVENT_TIMES_EXIST(ui_component, rwh_component);
     base::TimeDelta ui_delta =
         rwh_component.last_event_time - ui_component.first_event_time;
 
-    if (type == blink::WebInputEvent::kMouseWheel) {
-      UMA_HISTOGRAM_CUSTOM_COUNTS("Event.Latency.Browser.WheelUI",
-                                  ui_delta.InMicroseconds(), 1, 20000, 100);
+    if (latency.source_event_type() == ui::SourceEventType::WHEEL) {
+      UMA_HISTOGRAM_CUSTOM_COUNTS(
+          "Event.Latency.Browser.WheelUI",
+          std::max(static_cast<int64_t>(0), ui_delta.InMicroseconds()), 1,
+          20000, 100);
+    } else if (latency.source_event_type() == ui::SourceEventType::TOUCH) {
+      UMA_HISTOGRAM_CUSTOM_COUNTS(
+          "Event.Latency.Browser.TouchUI",
+          std::max(static_cast<int64_t>(0), ui_delta.InMicroseconds()), 1,
+          20000, 100);
+    } else if (latency.source_event_type() == ui::SourceEventType::KEY_PRESS) {
+      UMA_HISTOGRAM_CUSTOM_COUNTS(
+          "Event.Latency.Browser.KeyPressUI",
+          std::max(static_cast<int64_t>(0), ui_delta.InMicroseconds()), 1,
+          20000, 50);
     } else {
-      DCHECK(WebInputEvent::IsTouchEventType(type));
-      UMA_HISTOGRAM_CUSTOM_COUNTS("Event.Latency.Browser.TouchUI",
-                                  ui_delta.InMicroseconds(), 1, 20000, 100);
+      // We should only report these histograms for wheel, touch and keyboard.
+      NOTREACHED();
     }
   }
 
-  // Both tap and scroll gestures depend on the disposition of the touch start
-  // and the current touch. For touch start, touch_start_default_prevented_ ==
-  // (ack_result == INPUT_EVENT_ACK_STATE_CONSUMED).
-  bool action_prevented = touch_start_default_prevented_ ||
-                          ack_result == INPUT_EVENT_ACK_STATE_CONSUMED;
+  bool action_prevented = ack_result == INPUT_EVENT_ACK_STATE_CONSUMED;
+  // Touchscreen tap and scroll gestures depend on the disposition of the touch
+  // start and the current touch. For touch start,
+  // touch_start_default_prevented_ == (ack_result ==
+  // INPUT_EVENT_ACK_STATE_CONSUMED).
+  if (WebInputEvent::IsTouchEventType(type))
+    action_prevented |= touch_start_default_prevented_;
 
   std::string event_name = WebInputEvent::GetName(type);
+
+  if (latency.source_event_type() == ui::KEY_PRESS)
+    event_name = "KeyPress";
 
   std::string default_action_status =
       action_prevented ? "DefaultPrevented" : "DefaultAllowed";
@@ -205,6 +243,10 @@ void RenderWidgetHostLatencyTracker::ComputeInputLatencyHistograms(
       UMA_HISTOGRAM_INPUT_LATENCY_MILLISECONDS(
           "Event.Latency.QueueingTime." + event_name + default_action_status,
           rwh_component, main_component);
+
+      RecordEQTAccuracy(
+          main_component.last_event_time - rwh_component.first_event_time,
+          latency.expected_queueing_time_on_dispatch());
     }
   }
 
@@ -232,6 +274,15 @@ void RenderWidgetHostLatencyTracker::OnInputEvent(
     const blink::WebInputEvent& event,
     LatencyInfo* latency) {
   DCHECK(latency);
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  OnEventStart(latency);
+  if (!set_url_for_ukm_ && render_widget_host_delegate_ &&
+      ukm_source_id() != ukm::kInvalidSourceId) {
+    render_widget_host_delegate_->UpdateUrlForUkmSource(ukm::UkmRecorder::Get(),
+                                                        ukm_source_id());
+    set_url_for_ukm_ = true;
+  }
 
   if (event.GetType() == WebInputEvent::kTouchStart) {
     const WebTouchEvent& touch_event =
@@ -240,14 +291,21 @@ void RenderWidgetHostLatencyTracker::OnInputEvent(
     active_multi_finger_gesture_ = touch_event.touches_length != 1;
   }
 
-  if (latency->FindLatency(ui::INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT,
-                           latency_component_id_, NULL)) {
-    return;
+  if (latency->source_event_type() == ui::KEY_PRESS) {
+    DCHECK(event.GetType() == WebInputEvent::kChar ||
+           event.GetType() == WebInputEvent::kRawKeyDown);
   }
+
+  // This is the only place to add the BEGIN_RWH component. So this component
+  // should not already be present in the latency info.
+  bool found_component =
+      latency->FindLatency(ui::INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT,
+                           latency_component_id_, nullptr);
+  DCHECK(!found_component);
 
   if (event.TimeStampSeconds() &&
       !latency->FindLatency(ui::INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 0,
-                            NULL)) {
+                            nullptr)) {
     base::TimeTicks timestamp_now = base::TimeTicks::Now();
     base::TimeTicks timestamp_original =
         base::TimeTicks() +
@@ -271,8 +329,6 @@ void RenderWidgetHostLatencyTracker::OnInputEvent(
   latency->AddLatencyNumberWithTraceName(
       ui::INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT, latency_component_id_,
       ++last_event_id_, WebInputEvent::GetName(event.GetType()));
-
-  UpdateLatencyCoordinates(event, device_scale_factor_, latency);
 
   if (event.GetType() == blink::WebInputEvent::kGestureScrollBegin) {
     has_seen_first_gesture_scroll_update_ = false;
@@ -320,8 +376,9 @@ void RenderWidgetHostLatencyTracker::OnInputEventAck(
 
   latency->AddLatencyNumber(ui::INPUT_EVENT_LATENCY_ACK_RWH_COMPONENT, 0, 0);
   // If this event couldn't have caused a gesture event, and it didn't trigger
-  // rendering, we're done processing it.
-  if (!rendering_scheduled) {
+  // rendering, we're done processing it. If the event got coalesced then
+  // terminate it as well.
+  if (!rendering_scheduled || latency->coalesced()) {
     latency->AddLatencyNumber(
         ui::INPUT_EVENT_LATENCY_TERMINATED_NO_SWAP_COMPONENT, 0, 0);
   }
@@ -335,21 +392,14 @@ void RenderWidgetHostLatencyTracker::OnSwapCompositorFrame(
   DCHECK(latencies);
   for (LatencyInfo& latency : *latencies) {
     AddLatencyInfoComponentIds(&latency, latency_component_id_);
-    latency.AddLatencyNumber(ui::DISPLAY_COMPOSITOR_RECEIVED_FRAME_COMPONENT, 0,
-                             0);
   }
-}
-
-void RenderWidgetHostLatencyTracker::SetDelegate(
-    RenderWidgetHostDelegate* delegate) {
-  render_widget_host_delegate_ = delegate;
 }
 
 void RenderWidgetHostLatencyTracker::ReportRapporScrollLatency(
     const std::string& name,
     const LatencyInfo::LatencyComponent& start_component,
     const LatencyInfo::LatencyComponent& end_component) {
-  CONFIRM_VALID_TIMING(start_component, end_component)
+  CONFIRM_EVENT_TIMES_EXIST(start_component, end_component)
   rappor::RapporService* rappor_service =
       GetContentClient()->browser()->GetRapporService();
   if (rappor_service && render_widget_host_delegate_) {
@@ -358,8 +408,9 @@ void RenderWidgetHostLatencyTracker::ReportRapporScrollLatency(
     render_widget_host_delegate_->AddDomainInfoToRapporSample(sample.get());
     sample->SetUInt64Field(
         "Latency",
-        (end_component.last_event_time - start_component.first_event_time)
-            .InMicroseconds(),
+        std::max(static_cast<int64_t>(0), (end_component.last_event_time -
+                                           start_component.first_event_time)
+                                              .InMicroseconds()),
         rappor::NO_NOISE);
     rappor_service->RecordSample(name, std::move(sample));
   }

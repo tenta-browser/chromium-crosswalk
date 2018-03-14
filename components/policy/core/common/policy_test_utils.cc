@@ -11,6 +11,7 @@
 #include "base/callback.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -48,7 +49,7 @@ bool PolicyServiceIsEmpty(const PolicyService* service) {
   if (!map.empty()) {
     base::DictionaryValue dict;
     for (PolicyMap::const_iterator it = map.begin(); it != map.end(); ++it)
-      dict.SetWithoutPathExpansion(it->first, it->second.value->DeepCopy());
+      dict.SetKey(it->first, it->second.value->Clone());
     LOG(WARNING) << "There are pre-existing policies in this machine: " << dict;
   }
   return map.empty();
@@ -56,7 +57,7 @@ bool PolicyServiceIsEmpty(const PolicyService* service) {
 
 #if defined(OS_IOS) || defined(OS_MACOSX)
 CFPropertyListRef ValueToProperty(const base::Value& value) {
-  switch (value.GetType()) {
+  switch (value.type()) {
     case base::Value::Type::NONE:
       return kCFNull;
 

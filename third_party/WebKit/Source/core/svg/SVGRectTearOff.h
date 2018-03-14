@@ -31,25 +31,23 @@
 #ifndef SVGRectTearOff_h
 #define SVGRectTearOff_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGRect.h"
 #include "core/svg/properties/SVGPropertyTearOff.h"
 
 namespace blink {
 
-class SVGRectTearOff : public SVGPropertyTearOff<SVGRect>,
-                       public ScriptWrappable {
+class SVGRectTearOff : public SVGPropertyTearOff<SVGRect> {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static SVGRectTearOff* Create(
-      SVGRect* target,
-      SVGElement* context_element,
-      PropertyIsAnimValType property_is_anim_val,
-      const QualifiedName& attribute_name = QualifiedName::Null()) {
+  static SVGRectTearOff* Create(SVGRect* target,
+                                SVGElement* context_element,
+                                PropertyIsAnimValType property_is_anim_val,
+                                const QualifiedName& attribute_name) {
     return new SVGRectTearOff(target, context_element, property_is_anim_val,
                               attribute_name);
   }
+  static SVGRectTearOff* CreateDetached(const FloatRect&);
 
   void setX(float, ExceptionState&);
   void setY(float, ExceptionState&);
@@ -60,13 +58,11 @@ class SVGRectTearOff : public SVGPropertyTearOff<SVGRect>,
   float width() { return Target()->Width(); }
   float height() { return Target()->Height(); }
 
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
-
  private:
   SVGRectTearOff(SVGRect*,
                  SVGElement* context_element,
                  PropertyIsAnimValType,
-                 const QualifiedName& attribute_name = QualifiedName::Null());
+                 const QualifiedName& attribute_name);
 };
 
 }  // namespace blink

@@ -15,9 +15,10 @@ import android.content.Context;
 import android.os.Bundle;
 import android.text.TextUtils;
 
+import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.components.signin.test.util.AccountHolder;
-import org.chromium.components.signin.test.util.MockAccountManager;
+import org.chromium.components.signin.test.util.FakeAccountManagerDelegate;
 
 import java.io.IOException;
 
@@ -34,8 +35,7 @@ public class ChromeSigninUtils {
     private static final String GOOGLE_ACCOUNT_TYPE = "com.google";
 
     private AccountManager mAccountManager;
-    private MockAccountManager mMockAccountManager;
-    private Context mContext;
+    private FakeAccountManagerDelegate mFakeAccountManagerDelegate;
     private Context mTargetContext;
 
     /**
@@ -45,10 +45,11 @@ public class ChromeSigninUtils {
      * with.
      */
     public ChromeSigninUtils(Instrumentation instrumentation) {
-        mContext = instrumentation.getContext();
         mTargetContext = instrumentation.getTargetContext();
         mAccountManager = AccountManager.get(mTargetContext);
-        mMockAccountManager = new MockAccountManager(mContext, mTargetContext);
+        mFakeAccountManagerDelegate = new FakeAccountManagerDelegate(
+                FakeAccountManagerDelegate.DISABLE_PROFILE_DATA_SOURCE);
+        AccountManagerFacade.overrideAccountManagerFacadeForTests(mFakeAccountManagerDelegate);
     }
 
     /**
@@ -76,17 +77,17 @@ public class ChromeSigninUtils {
         }
 
         Account account = new Account(username, GOOGLE_ACCOUNT_TYPE);
-        mMockAccountManager = new MockAccountManager(mContext, mTargetContext, account);
         AccountHolder accountHolder = AccountHolder.builder(account).password(password).build();
-        mMockAccountManager.addAccountHolderExplicitly(accountHolder);
+        mFakeAccountManagerDelegate.addAccountHolderBlocking(accountHolder);
     }
 
     /**
      * Removes all fake accounts from the OS.
      */
-    public void removeAllFakeAccountsFromOs() {
-        for (Account acct : mMockAccountManager.getAccountsByType(GOOGLE_ACCOUNT_TYPE)) {
-            mMockAccountManager.removeAccountHolderExplicitly(AccountHolder.builder(acct).build());
+    public void removeAllFakeAccountsFromOs() throws Exception {
+        for (Account acct : mFakeAccountManagerDelegate.getAccountsSyncNoThrow()) {
+            mFakeAccountManagerDelegate.removeAccountHolderBlocking(
+                    AccountHolder.builder(acct).build());
         }
     }
 
@@ -97,11 +98,7 @@ public class ChromeSigninUtils {
      * @return {@code true} if fake account is on OS, false otherwise.
      */
     public boolean isExistingFakeAccountOnOs(String username) {
-        if (mMockAccountManager.getAccountsByType(GOOGLE_ACCOUNT_TYPE).length == 0) {
-            return false;
-        }
-
-        for (Account acct : mMockAccountManager.getAccountsByType(GOOGLE_ACCOUNT_TYPE)) {
+        for (Account acct : mFakeAccountManagerDelegate.getAccountsSyncNoThrow()) {
             if (username.equals(acct.name)) {
                 return true;
             }

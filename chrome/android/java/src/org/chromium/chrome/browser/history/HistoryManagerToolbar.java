@@ -12,6 +12,7 @@ import android.view.View;
 
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.widget.selection.SelectableListToolbar;
 
@@ -42,6 +43,13 @@ public class HistoryManagerToolbar extends SelectableListToolbar<HistoryItem> {
     }
 
     @Override
+    protected void showNormalView() {
+        super.showNormalView();
+        updateInfoMenuItem(
+                mManager.shouldShowInfoButton(), mManager.shouldShowInfoHeaderIfAvailable());
+    }
+
+    @Override
     public void onSelectionStateChange(List<HistoryItem> selectedItems) {
         boolean wasSelectionEnabled = mIsSelectionEnabled;
         super.onSelectionStateChange(selectedItems);
@@ -67,11 +75,20 @@ public class HistoryManagerToolbar extends SelectableListToolbar<HistoryItem> {
         }
     }
 
+    @Override
+    protected void onDataChanged(int numItems) {
+        super.onDataChanged(numItems);
+        updateInfoMenuItem(
+                mManager.shouldShowInfoButton(), mManager.shouldShowInfoHeaderIfAvailable());
+    }
+
     /**
      * Should be called when the user's sign in state changes.
      */
     public void onSignInStateChange() {
         updateMenuItemVisibility();
+        updateInfoMenuItem(
+                mManager.shouldShowInfoButton(), mManager.shouldShowInfoHeaderIfAvailable());
     }
 
     private void updateMenuItemVisibility() {
@@ -79,7 +96,7 @@ public class HistoryManagerToolbar extends SelectableListToolbar<HistoryItem> {
         // be added back until the user refreshes the history UI. This could happen if the user is
         // signed in to an account that cannot remove browsing history or has incognito disabled and
         // signs out.
-        if (!PrefServiceBridge.getInstance().canDeleteBrowsingHistory()) {
+        if (!PrefServiceBridge.getInstance().getBoolean(Pref.ALLOW_DELETING_BROWSER_HISTORY)) {
             getMenu().removeItem(R.id.selection_mode_delete_menu_id);
         }
         if (!PrefServiceBridge.getInstance().isIncognitoModeEnabled()) {

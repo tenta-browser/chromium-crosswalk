@@ -20,48 +20,39 @@
 #ifndef DOMMimeType_h
 #define DOMMimeType_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "base/memory/scoped_refptr.h"
 #include "core/dom/ContextLifecycleObserver.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/plugins/PluginData.h"
 #include "platform/wtf/Forward.h"
-#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
 class DOMPlugin;
 class LocalFrame;
 
-class DOMMimeType final : public GarbageCollectedFinalized<DOMMimeType>,
-                          public ScriptWrappable,
-                          public ContextClient {
+class DOMMimeType final : public ScriptWrappable, public ContextClient {
   USING_GARBAGE_COLLECTED_MIXIN(DOMMimeType);
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static DOMMimeType* Create(PassRefPtr<PluginData> plugin_data,
-                             LocalFrame* frame,
-                             unsigned index) {
-    return new DOMMimeType(std::move(plugin_data), frame, index);
+  static DOMMimeType* Create(LocalFrame* frame,
+                             const MimeClassInfo& mime_class_info) {
+    return new DOMMimeType(frame, mime_class_info);
   }
-  virtual ~DOMMimeType();
 
   const String& type() const;
   String suffixes() const;
   const String& description() const;
   DOMPlugin* enabledPlugin() const;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
-  DOMMimeType(PassRefPtr<PluginData>, LocalFrame*, unsigned index);
+  DOMMimeType(LocalFrame*, const MimeClassInfo&);
 
-  const MimeClassInfo& GetMimeClassInfo() const {
-    return plugin_data_->Mimes()[index_];
-  }
-
-  RefPtr<PluginData> plugin_data_;
-  unsigned index_;
+  Member<const MimeClassInfo> mime_class_info_;
 };
 
 }  // namespace blink

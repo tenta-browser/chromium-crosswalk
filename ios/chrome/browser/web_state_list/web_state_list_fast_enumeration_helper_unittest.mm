@@ -8,6 +8,7 @@
 #include "base/memory/ptr_util.h"
 #import "ios/chrome/browser/web_state_list/fake_web_state_list_delegate.h"
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
+#import "ios/chrome/browser/web_state_list/web_state_opener.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
 #import "net/base/mac/url_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -44,15 +45,12 @@ class WebStateListFastEnumerationHelperTest : public PlatformTest {
       : web_state_list_(&web_state_list_delegate_) {}
 
   NSArray* ArrayFromWebStateList() {
-    id<WebStateProxyFactory> proxy =
+    WebStateListFastEnumerationHelper helper(
+        &web_state_list_,
         [[WebStateProxyFactoryForWebStateListFastEnumerationHelperTest alloc]
-            init];
-    WebStateListFastEnumerationHelper* helper =
-        [[WebStateListFastEnumerationHelper alloc]
-            initWithWebStateList:&web_state_list_
-                    proxyFactory:proxy];
+            init]);
     NSMutableArray* array = [NSMutableArray array];
-    for (id wrapper in helper) {
+    for (id wrapper in helper.GetFastEnumeration()) {
       // NSArray* cannot store a nil pointer. The NSFastEnumeration protocol
       // allows returning nil as one of the value in the iterated container,
       // so skip the value in that case (see NilWrapper test).
@@ -67,8 +65,9 @@ class WebStateListFastEnumerationHelperTest : public PlatformTest {
       auto test_web_state = base::MakeUnique<web::TestWebState>();
       test_web_state->SetCurrentURL(GURL(urls[index]));
 
-      web_state_list_.InsertWebState(web_state_list_.count(),
-                                     std::move(test_web_state));
+      web_state_list_.InsertWebState(
+          web_state_list_.count(), std::move(test_web_state),
+          WebStateList::INSERT_FORCE_INDEX, WebStateOpener());
     }
   }
 

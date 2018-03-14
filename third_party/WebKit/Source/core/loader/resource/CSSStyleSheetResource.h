@@ -29,11 +29,14 @@
 #include "core/CoreExport.h"
 #include "core/loader/resource/StyleSheetResource.h"
 #include "platform/heap/Handle.h"
+#include "platform/loader/fetch/TextResourceDecoderOptions.h"
+#include "platform/wtf/text/TextEncoding.h"
 
 namespace blink {
 
 class CSSParserContext;
 class FetchParameters;
+class KURL;
 class ResourceClient;
 class ResourceFetcher;
 class StyleSheetContents;
@@ -43,39 +46,40 @@ class CORE_EXPORT CSSStyleSheetResource final : public StyleSheetResource {
   enum class MIMETypeCheck { kStrict, kLax };
 
   static CSSStyleSheetResource* Fetch(FetchParameters&, ResourceFetcher*);
-  static CSSStyleSheetResource* CreateForTest(const ResourceRequest&,
-                                              const String& charset);
+  static CSSStyleSheetResource* CreateForTest(const KURL&,
+                                              const WTF::TextEncoding&);
 
   ~CSSStyleSheetResource() override;
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
-  const String SheetText(MIMETypeCheck = MIMETypeCheck::kStrict) const;
+  const String SheetText(const CSSParserContext*,
+                         MIMETypeCheck = MIMETypeCheck::kStrict) const;
 
   void DidAddClient(ResourceClient*) override;
 
-  StyleSheetContents* RestoreParsedStyleSheet(const CSSParserContext*);
+  StyleSheetContents* CreateParsedStyleSheetFromCache(const CSSParserContext*);
   void SaveParsedStyleSheet(StyleSheetContents*);
-
-  void AppendData(const char* data, size_t length) override;
 
  private:
   class CSSStyleSheetResourceFactory : public ResourceFactory {
    public:
     CSSStyleSheetResourceFactory()
-        : ResourceFactory(Resource::kCSSStyleSheet) {}
+        : ResourceFactory(Resource::kCSSStyleSheet,
+                          TextResourceDecoderOptions::kCSSContent) {}
 
-    Resource* Create(const ResourceRequest& request,
-                     const ResourceLoaderOptions& options,
-                     const String& charset) const override {
-      return new CSSStyleSheetResource(request, options, charset);
+    Resource* Create(
+        const ResourceRequest& request,
+        const ResourceLoaderOptions& options,
+        const TextResourceDecoderOptions& decoder_options) const override {
+      return new CSSStyleSheetResource(request, options, decoder_options);
     }
   };
   CSSStyleSheetResource(const ResourceRequest&,
                         const ResourceLoaderOptions&,
-                        const String& charset);
+                        const TextResourceDecoderOptions&);
 
-  bool CanUseSheet(MIMETypeCheck) const;
-  void CheckNotify() override;
+  bool CanUseSheet(const CSSParserContext*, MIMETypeCheck) const;
+  void NotifyFinished() override;
 
   void SetParsedStyleSheetCache(StyleSheetContents*);
   void SetDecodedSheetText(const String&);
@@ -89,8 +93,6 @@ class CORE_EXPORT CSSStyleSheetResource final : public StyleSheetResource {
   String decoded_sheet_text_;
 
   Member<StyleSheetContents> parsed_style_sheet_cache_;
-
-  bool did_notify_first_data_;
 };
 
 DEFINE_RESOURCE_TYPE_CASTS(CSSStyleSheet);

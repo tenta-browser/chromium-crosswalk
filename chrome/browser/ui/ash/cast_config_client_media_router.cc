@@ -20,8 +20,8 @@
 #include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/media/router/media_routes_observer.h"
 #include "chrome/browser/media/router/media_sinks_observer.h"
-#include "chrome/browser/media/router/media_source_helper.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/common/media_router/media_source_helper.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
@@ -94,9 +94,10 @@ class CastDeviceCache : public media_router::MediaRoutesObserver,
 CastDeviceCache::CastDeviceCache(
     ash::mojom::CastConfigClient* cast_config_client)
     : MediaRoutesObserver(GetMediaRouter()),
-      MediaSinksObserver(GetMediaRouter(),
-                         media_router::MediaSourceForDesktop(),
-                         url::Origin(GURL(chrome::kChromeUIMediaRouterURL))),
+      MediaSinksObserver(
+          GetMediaRouter(),
+          media_router::MediaSourceForDesktop(),
+          url::Origin::Create(GURL(chrome::kChromeUIMediaRouterURL))),
       cast_config_client_(cast_config_client) {}
 
 CastDeviceCache::~CastDeviceCache() {}
@@ -155,7 +156,7 @@ CastConfigClientMediaRouter::CastConfigClientMediaRouter() : binding_(this) {
 
   // Register this object as the client interface implementation.
   ash::mojom::CastConfigClientAssociatedPtrInfo ptr_info;
-  binding_.Bind(&ptr_info);
+  binding_.Bind(mojo::MakeRequest(&ptr_info));
   cast_config_->SetClient(std::move(ptr_info));
 }
 
@@ -196,6 +197,10 @@ void CastConfigClientMediaRouter::RequestDeviceRefresh() {
     sr->sink->id = sink.id();
     sr->sink->name = sink.name();
     sr->sink->domain = sink.domain().value_or(std::string());
+    // TODO(crbug.com/788854): Replace SinkIconType with
+    // ash::mojom::SinkIconType.
+    sr->sink->sink_icon_type =
+        static_cast<ash::mojom::SinkIconType>(sink.icon_type());
     items.push_back(std::move(sr));
   }
 
@@ -227,7 +232,7 @@ void CastConfigClientMediaRouter::CastToSink(ash::mojom::CastSinkPtr sink) {
   // TODO(imcheng): Pass in tab casting timeout.
   GetMediaRouter()->CreateRoute(
       media_router::MediaSourceForDesktop().id(), sink->id,
-      url::Origin(GURL("http://cros-cast-origin/")), nullptr,
+      url::Origin::Create(GURL("http://cros-cast-origin/")), nullptr,
       std::vector<media_router::MediaRouteResponseCallback>(),
       base::TimeDelta(), false);
 }

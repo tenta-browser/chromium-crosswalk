@@ -28,6 +28,7 @@
 #include "base/version.h"
 #include "base/win/registry.h"
 #include "chrome/install_static/install_details.h"
+#include "chrome/install_static/install_modes.h"
 #include "chrome/install_static/install_util.h"
 #include "chrome/installer/setup/installer_state.h"
 #include "chrome/installer/setup/persistent_histogram_storage.h"
@@ -261,20 +262,6 @@ void AddChromeWorkItems(const InstallationState& original_state,
       temp_path.value(),
       check_for_duplicates ? WorkItem::CHECK_DUPLICATES :
                              WorkItem::ALWAYS_MOVE);
-
-  // Notify the shell of renaming the folder. This is for fixing an issue that
-  // the temp folder (e.g., "\Temp\source30163_39131\Chrome-bin\...") shows up
-  // in the callstack backtrace. (https://crbug.com/710698)
-  install_list->AddCallbackWorkItem(base::Bind(
-      [](const base::FilePath& src, const base::FilePath& target,
-         const CallbackWorkItem& work_item) {
-        if (!work_item.IsRollback()) {
-          SHChangeNotify(SHCNE_RENAMEFOLDER, SHCNF_PATH | SHCNF_FLUSHNOWAIT,
-                         src.value().c_str(), target.value().c_str());
-        }
-        return true;
-      },
-      src_path, target_path));
 
   // Delete any old_chrome.exe if present (ignore failure if it's in use).
   install_list
@@ -671,6 +658,19 @@ bool AppendPostInstallTasks(const InstallerState& installer_state,
     // installations for the same type of install (system or per user).
     AddDeleteUninstallEntryForMSIWorkItems(installer_state, product,
                                            post_install_task_list);
+  }
+
+  // Add a best-effort item to create the ClientStateMedium key for system-level
+  // installs. This is ordinarily done by Google Update prior to running
+  // Chrome's installer. Do it here as well so that the key exists for manual
+  // installs.
+  if (install_static::kUseGoogleUpdateIntegration &&
+      installer_state.system_install()) {
+    const base::string16 path =
+        install_static::InstallDetails::Get().GetClientStateMediumKeyPath();
+    post_install_task_list
+        ->AddCreateRegKeyWorkItem(HKEY_LOCAL_MACHINE, path, KEY_WOW64_32KEY)
+        ->set_best_effort(true);
   }
 
   return true;

@@ -15,7 +15,6 @@
 #include "chrome/browser/chromeos/login/users/wallpaper/wallpaper_manager.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/signin/core/account_id/account_id.h"
 #include "components/strings/grit/components_strings.h"
@@ -42,11 +41,11 @@ WebUILoginDisplay::~WebUILoginDisplay() {
 // LoginDisplay implementation: ------------------------------------------------
 
 WebUILoginDisplay::WebUILoginDisplay(LoginDisplay::Delegate* delegate)
-    : LoginDisplay(delegate, gfx::Rect()) {}
+    : LoginDisplay(delegate) {}
 
 void WebUILoginDisplay::ClearAndEnablePassword() {
   if (webui_handler_)
-      webui_handler_->ClearAndEnablePassword();
+    webui_handler_->ClearAndEnablePassword();
 }
 
 void WebUILoginDisplay::Init(const user_manager::UserList& users,
@@ -55,7 +54,7 @@ void WebUILoginDisplay::Init(const user_manager::UserList& users,
                              bool allow_new_user) {
   // Testing that the delegate has been set.
   DCHECK(delegate_);
-  SignInScreenController::Get()->Init(users, show_guest);
+  SignInScreenController::Get()->Init(users);
   show_guest_ = show_guest;
   show_users_changed_ = (show_users_ != show_users);
   show_users_ = show_users;
@@ -109,7 +108,7 @@ void WebUILoginDisplay::ShowError(int error_msg_id,
                                   HelpAppLauncher::HelpTopic help_topic_id) {
   VLOG(1) << "Show error, error_id: " << error_msg_id
           << ", attempts:" << login_attempts
-          <<  ", help_topic_id: " << help_topic_id;
+          << ", help_topic_id: " << help_topic_id;
   if (!webui_handler_)
     return;
 
@@ -136,15 +135,15 @@ void WebUILoginDisplay::ShowError(int error_msg_id,
         input_method::InputMethodManager::Get();
     if (ime_manager->GetImeKeyboard()->CapsLockIsEnabled()) {
       // TODO(ivankr): use a format string instead of concatenation.
-      error_text += "\n" +
-          l10n_util::GetStringUTF8(IDS_LOGIN_ERROR_CAPS_LOCK_HINT);
+      error_text +=
+          "\n" + l10n_util::GetStringUTF8(IDS_LOGIN_ERROR_CAPS_LOCK_HINT);
     }
 
     // Display a hint to switch keyboards if there are other active input
     // methods.
     if (ime_manager->GetActiveIMEState()->GetNumActiveInputMethods() > 1) {
-      error_text += "\n" +
-          l10n_util::GetStringUTF8(IDS_LOGIN_ERROR_KEYBOARD_SWITCH_HINT);
+      error_text +=
+          "\n" + l10n_util::GetStringUTF8(IDS_LOGIN_ERROR_KEYBOARD_SWITCH_HINT);
     }
   }
 
@@ -224,15 +223,11 @@ void WebUILoginDisplay::MigrateUserData(const std::string& old_password) {
 }
 
 void WebUILoginDisplay::LoadWallpaper(const AccountId& account_id) {
-  WallpaperManager::Get()->SetUserWallpaperDelayed(account_id);
+  WallpaperManager::Get()->ShowUserWallpaper(account_id);
 }
 
 void WebUILoginDisplay::LoadSigninWallpaper() {
-  if (!WallpaperManager::Get()->SetDeviceWallpaperIfApplicable(
-          user_manager::SignInAccountId())) {
-    WallpaperManager::Get()->SetDefaultWallpaperDelayed(
-        user_manager::SignInAccountId());
-  }
+  WallpaperManager::Get()->ShowSigninWallpaper();
 }
 
 void WebUILoginDisplay::OnSigninScreenReady() {
@@ -288,9 +283,8 @@ void WebUILoginDisplay::SetWebUIHandler(
   SignInScreenController::Get()->SetWebUIHandler(webui_handler_);
 }
 
-void WebUILoginDisplay::ShowSigninScreenForCreds(
-    const std::string& username,
-    const std::string& password) {
+void WebUILoginDisplay::ShowSigninScreenForCreds(const std::string& username,
+                                                 const std::string& password) {
   if (webui_handler_)
     webui_handler_->ShowSigninScreenForCreds(username, password);
 }

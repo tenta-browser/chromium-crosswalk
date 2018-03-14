@@ -34,13 +34,18 @@ const char kSupportedAudioContainer[] = "audio/webm";
 const char kUnsupportedContainer[] = "video/foo";
 
 // TODO(sandersd): Extended codec variants (requires proprietary codec support).
-const char kSupportedVideoCodec[] = "vp8";
+// TODO(xhwang): Platform Opus is not available on all Android versions, where
+// some encrypted Opus related tests may fail. See PlatformHasOpusSupport()
+// for more details.
 const char kSupportedAudioCodec[] = "opus";
+const char kSupportedVideoCodec[] = "vp8";
 const char kUnsupportedCodec[] = "foo";
 const char kUnsupportedCodecs[] = "vp8,foo";
 const char kSupportedVideoCodecs[] = "vp8,vp8";
 
 const char kDefaultSecurityOrigin[] = "https://example.com/";
+
+const char kClearKey[] = "org.w3.clearkey";
 
 // The IDL for MediaKeySystemConfiguration specifies some defaults, so
 // create a config object that mimics what would be created if an empty
@@ -76,11 +81,11 @@ blink::WebMediaKeySystemConfiguration UsableConfiguration() {
 
 class FakeKeySystems : public KeySystems {
  public:
-  ~FakeKeySystems() override {
-  }
+  ~FakeKeySystems() override = default;
 
   bool IsSupportedKeySystem(const std::string& key_system) const override {
-    if (key_system == kSupported)
+    // Based on EME spec, Clear Key key system is always supported.
+    if (key_system == kSupported || key_system == kClearKey)
       return true;
     return false;
   }
@@ -190,6 +195,7 @@ class FakeKeySystems : public KeySystems {
 
 class FakeMediaPermission : public MediaPermission {
  public:
+  // MediaPermission implementation.
   void HasPermission(Type type,
                      const GURL& security_origin,
                      const PermissionStatusCB& permission_status_cb) override {
@@ -204,8 +210,11 @@ class FakeMediaPermission : public MediaPermission {
     permission_status_cb.Run(is_granted);
   }
 
+  bool IsEncryptedMediaEnabled() override { return is_encrypted_media_enabled; }
+
   int requests = 0;
   bool is_granted = false;
+  bool is_encrypted_media_enabled = true;
 };
 
 }  // namespace
@@ -221,7 +230,7 @@ class KeySystemConfigSelectorTest : public testing::Test {
     succeeded_count_ = 0;
     not_supported_count_ = 0;
     KeySystemConfigSelector(key_systems_.get(), media_permission_.get())
-        .SelectConfig(key_system_, configs_, security_origin_, false,
+        .SelectConfig(key_system_, configs_, security_origin_,
                       base::Bind(&KeySystemConfigSelectorTest::OnSucceeded,
                                  base::Unretained(this)),
                       base::Bind(&KeySystemConfigSelectorTest::OnNotSupported,
@@ -266,7 +275,7 @@ class KeySystemConfigSelectorTest : public testing::Test {
     config_ = result;
   }
 
-  void OnNotSupported(const blink::WebString&) { not_supported_count_++; }
+  void OnNotSupported() { not_supported_count_++; }
 
   std::unique_ptr<FakeKeySystems> key_systems_;
   std::unique_ptr<FakeMediaPermission> media_permission_;
@@ -371,6 +380,32 @@ TEST_F(KeySystemConfigSelectorTest, KeySystem_NonAscii) {
 
 TEST_F(KeySystemConfigSelectorTest, KeySystem_Unsupported) {
   key_system_ = kUnsupported;
+  configs_.push_back(UsableConfiguration());
+  ASSERT_TRUE(SelectConfigReturnsError());
+}
+
+TEST_F(KeySystemConfigSelectorTest, KeySystem_ClearKey) {
+  key_system_ = kClearKey;
+  configs_.push_back(UsableConfiguration());
+  ASSERT_TRUE(SelectConfigReturnsConfig());
+}
+
+// --- Disable EncryptedMedia ---
+
+TEST_F(KeySystemConfigSelectorTest, EncryptedMediaDisabled_ClearKey) {
+  media_permission_->is_encrypted_media_enabled = false;
+
+  // Clear Key key system is always supported.
+  key_system_ = kClearKey;
+  configs_.push_back(UsableConfiguration());
+  ASSERT_TRUE(SelectConfigReturnsConfig());
+}
+
+TEST_F(KeySystemConfigSelectorTest, EncryptedMediaDisabled_Supported) {
+  media_permission_->is_encrypted_media_enabled = false;
+
+  // Other key systems are not supported.
+  key_system_ = kSupported;
   configs_.push_back(UsableConfiguration());
   ASSERT_TRUE(SelectConfigReturnsError());
 }

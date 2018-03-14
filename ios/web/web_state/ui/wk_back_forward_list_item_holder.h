@@ -7,7 +7,6 @@
 
 #import <WebKit/WebKit.h>
 
-#import "base/ios/weak_nsobject.h"
 #import "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
 #include "base/supports_user_data.h"
@@ -23,6 +22,8 @@ class NavigationItem;
 // thus needs to be preserved (e.g., WKNavigationType, MIME type).
 class WKBackForwardListItemHolder : public base::SupportsUserData::Data {
  public:
+  ~WKBackForwardListItemHolder() override;
+
   // Returns the WKBackForwardListItemHolder for the NavigationItem |item|.
   // Lazily attaches one if it does not exist. |item| cannot be null.
   static web::WKBackForwardListItemHolder* FromNavigationItem(
@@ -33,9 +34,7 @@ class WKBackForwardListItemHolder : public base::SupportsUserData::Data {
   // |back_forward_list_item| may return nil (f.e. when the
   // parent WKBackForwardList is deallocated).
   WKBackForwardListItem* back_forward_list_item() const { return item_; }
-  void set_back_forward_list_item(WKBackForwardListItem* item) {
-    item_.reset(item);
-  }
+  void set_back_forward_list_item(WKBackForwardListItem* item) { item_ = item; }
 
   // Accessors for |navigation_type_|. Use these to get/set the association
   // between a NavigationItem and a WKNavigationType.
@@ -56,11 +55,10 @@ class WKBackForwardListItemHolder : public base::SupportsUserData::Data {
 
  private:
   WKBackForwardListItemHolder();
-  ~WKBackForwardListItemHolder() override;
 
   // Weak pointer to a WKBackForwardListItem. Becomes nil if the parent
   // WKBackForwardList is deallocated.
-  base::WeakNSObject<WKBackForwardListItem> item_;
+  __weak WKBackForwardListItem* item_ = nil;
 
   // The navigation type for the associated NavigationItem.
   WKNavigationType navigation_type_;

@@ -7,7 +7,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <cmath>
 #include <limits>
 #include <memory>
 #include <string>
@@ -22,11 +21,14 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/extensions/api/url_handlers/url_handlers_parser.h"
+#include "chrome/common/extensions/manifest_handlers/app_theme_color_info.h"
 #include "chrome/common/web_application_info.h"
 #include "crypto/sha2.h"
 #include "extensions/common/constants.h"
@@ -36,6 +38,8 @@
 #include "extensions/common/manifest_constants.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/codec/png_codec.h"
+#include "ui/gfx/color_utils.h"
+#include "ui/gfx/geometry/safe_integer_conversions.h"
 #include "url/gurl.h"
 
 namespace extensions {
@@ -47,6 +51,7 @@ using base::Time;
 namespace {
 
 const char kIconsDirName[] = "icons";
+const char kScopeUrlHandlerId[] = "scope";
 
 // Create the public key for the converted web app.
 //
@@ -66,6 +71,54 @@ std::string GenerateKey(const GURL& app_url) {
 
 }  // namespace
 
+std::unique_ptr<base::DictionaryValue> CreateURLHandlersForBookmarkApp(
+    const GURL& scope_url,
+    const base::string16& title) {
+  auto matches = base::MakeUnique<base::ListValue>();
+  matches->AppendString(scope_url.GetOrigin().Resolve(scope_url.path()).spec() +
+                        "*");
+
+  auto scope_handler = base::MakeUnique<base::DictionaryValue>();
+  scope_handler->SetList(keys::kMatches, std::move(matches));
+  // The URL handler title is not used anywhere but we set it to the
+  // web app's title just in case.
+  scope_handler->SetString(keys::kUrlHandlerTitle, base::UTF16ToUTF8(title));
+
+  auto url_handlers = base::MakeUnique<base::DictionaryValue>();
+  // Use "scope" as the url handler's identifier.
+  url_handlers->SetDictionary(kScopeUrlHandlerId, std::move(scope_handler));
+  return url_handlers;
+}
+
+GURL GetScopeURLFromBookmarkApp(const Extension* extension) {
+  DCHECK(extension->from_bookmark());
+  const std::vector<UrlHandlerInfo>* url_handlers =
+      UrlHandlers::GetUrlHandlers(extension);
+  if (!url_handlers)
+    return GURL();
+
+  // A Bookmark app created by us should only have a url_handler with id
+  // kScopeUrlHandlerId. This URL handler should have a single pattern which
+  // corresponds to the web manifest's scope. The URL handler's pattern should
+  // be the Web Manifest's scope's origin + path with a wildcard, '*', appended
+  // to it.
+  auto handler_it = std::find_if(
+      url_handlers->begin(), url_handlers->end(),
+      [](const UrlHandlerInfo& info) { return info.id == kScopeUrlHandlerId; });
+  if (handler_it == url_handlers->end()) {
+    return GURL();
+  }
+
+  const auto& patterns = handler_it->patterns;
+  DCHECK(patterns.size() == 1);
+  const auto& pattern_iter = patterns.begin();
+  // Remove the '*' character at the end (which was added when creating the URL
+  // handler, see CreateURLHandlersForBookmarkApp()).
+  const std::string& pattern_str = pattern_iter->GetAsString();
+  DCHECK_EQ(pattern_str.back(), '*');
+  return GURL(pattern_str.substr(0, pattern_str.size() - 1));
+}
+
 // Generates a version for the converted app using the current date. This isn't
 // really needed, but it seems like useful information.
 std::string ConvertTimeToExtensionVersion(const Time& create_time) {
@@ -78,14 +131,12 @@ std::string ConvertTimeToExtensionVersion(const Time& create_time) {
       (create_time_exploded.minute * Time::kMicrosecondsPerMinute) +
       (create_time_exploded.hour * Time::kMicrosecondsPerHour));
   double day_fraction = micros / Time::kMicrosecondsPerDay;
-  double stamp = day_fraction * std::numeric_limits<uint16_t>::max();
+  int stamp =
+      gfx::ToRoundedInt(day_fraction * std::numeric_limits<uint16_t>::max());
 
-  // Ghetto-round, since VC++ doesn't have round().
-  stamp = stamp >= (floor(stamp) + 0.5) ? (stamp + 1) : stamp;
-
-  return base::StringPrintf(
-      "%i.%i.%i.%i", create_time_exploded.year, create_time_exploded.month,
-      create_time_exploded.day_of_month, static_cast<uint16_t>(stamp));
+  return base::StringPrintf("%i.%i.%i.%i", create_time_exploded.year,
+                            create_time_exploded.month,
+                            create_time_exploded.day_of_month, stamp);
 }
 
 scoped_refptr<Extension> ConvertWebAppToExtension(
@@ -115,6 +166,16 @@ scoped_refptr<Extension> ConvertWebAppToExtension(
   if (web_app.generated_icon_color != SK_ColorTRANSPARENT) {
     root->SetString(keys::kAppIconColor, image_util::GenerateHexColorString(
                                              web_app.generated_icon_color));
+  }
+
+  if (web_app.theme_color) {
+    root->SetString(keys::kAppThemeColor, color_utils::SkColorToRgbaString(
+                                              web_app.theme_color.value()));
+  }
+
+  if (!web_app.scope.is_empty()) {
+    root->SetDictionary(keys::kUrlHandlers, CreateURLHandlersForBookmarkApp(
+                                                web_app.scope, web_app.title));
   }
 
   // Add the icons and linked icon information.

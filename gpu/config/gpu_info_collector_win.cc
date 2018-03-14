@@ -24,6 +24,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/scoped_native_library.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
@@ -31,11 +32,8 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread.h"
-#include "base/threading/worker_pool.h"
 #include "base/trace_event/trace_event.h"
 #include "base/win/scoped_com_initializer.h"
-#include "base/win/scoped_comptr.h"
-#include "base/win/windows_version.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface_egl.h"
 
@@ -85,18 +83,8 @@ CollectInfoResult CollectDriverInfoD3D(const std::wstring& device_id,
                         {0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18}};
 
   // create device info for the display device
-  HDEVINFO device_info;
-  if (base::win::GetVersion() <= base::win::VERSION_XP) {
-    // Collection of information on all adapters is much slower on XP (almost
-    // 100ms), and not very useful (as it's not going to use the GPU anyway), so
-    // just collect information on the current device. http://crbug.com/456178
-    device_info =
-        SetupDiGetClassDevsW(NULL, device_id.c_str(), NULL,
-                             DIGCF_PRESENT | DIGCF_PROFILE | DIGCF_ALLCLASSES);
-  } else {
-    device_info =
-        SetupDiGetClassDevsW(&display_class, NULL, NULL, DIGCF_PRESENT);
-  }
+  HDEVINFO device_info =
+      ::SetupDiGetClassDevs(&display_class, NULL, NULL, DIGCF_PRESENT);
   if (device_info == INVALID_HANDLE_VALUE) {
     LOG(ERROR) << "Creating device info failed";
     return kCollectInfoNonFatalFailure;
@@ -111,7 +99,7 @@ CollectInfoResult CollectDriverInfoD3D(const std::wstring& device_id,
 
   std::vector<GPUDriver> drivers;
 
-  int primary_device = -1;
+  size_t primary_device = std::numeric_limits<size_t>::max();
   bool found_amd = false;
   bool found_intel = false;
 
@@ -210,7 +198,7 @@ CollectInfoResult CollectDriverInfoD3D(const std::wstring& device_id,
       for (size_t i = 0; i < drivers.size(); ++i) {
         const GPUDriver& driver = drivers[i];
         if (driver.device.vendor_id == 0x1002) {
-          if (static_cast<int>(i) == primary_device)
+          if (i == primary_device)
             amd_is_primary = true;
           gpu_info->gpu = driver.device;
         } else {
@@ -227,7 +215,7 @@ CollectInfoResult CollectDriverInfoD3D(const std::wstring& device_id,
   } else {
     for (size_t i = 0; i < drivers.size(); ++i) {
       const GPUDriver& driver = drivers[i];
-      if (static_cast<int>(i) == primary_device) {
+      if (i == primary_device) {
         found = true;
         gpu_info->gpu = driver.device;
         gpu_info->driver_vendor = driver.driver_vendor;

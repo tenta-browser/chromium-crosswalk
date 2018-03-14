@@ -6,9 +6,15 @@
 
 #include <stdint.h>
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
+#include "base/strings/stringprintf.h"
 #include "chromeos/dbus/biod/fake_biod_client.h"
+#include "chromeos/dbus/biod/messages.pb.h"
 #include "dbus/bus.h"
 #include "dbus/message.h"
 #include "dbus/object_path.h"
@@ -19,9 +25,8 @@ namespace chromeos {
 namespace {
 
 // D-Bus response handler for methods that use void callbacks.
-void OnVoidResponse(const VoidDBusMethodCallback& callback,
-                    dbus::Response* response) {
-  callback.Run(response ? DBUS_METHOD_CALL_SUCCESS : DBUS_METHOD_CALL_FAILURE);
+void OnVoidResponse(VoidDBusMethodCallback callback, dbus::Response* response) {
+  std::move(callback).Run(response != nullptr);
 }
 
 }  // namespace
@@ -31,7 +36,7 @@ class BiodClientImpl : public BiodClient {
  public:
   BiodClientImpl() : weak_ptr_factory_(this) {}
 
-  ~BiodClientImpl() override {}
+  ~BiodClientImpl() override = default;
 
   // BiodClient overrides:
   void AddObserver(Observer* observer) override {
@@ -49,6 +54,14 @@ class BiodClientImpl : public BiodClient {
   void StartEnrollSession(const std::string& user_id,
                           const std::string& label,
                           const ObjectPathCallback& callback) override {
+    // If we are already in enroll session, just return an invalid ObjectPath.
+    // The one who initially start the enroll session will have control
+    // over the life cycle of the session.
+    if (current_enroll_session_path_) {
+      callback.Run(dbus::ObjectPath());
+      return;
+    }
+
     dbus::MethodCall method_call(
         biod::kBiometricsManagerInterface,
         biod::kBiometricsManagerStartEnrollSessionMethod);
@@ -58,8 +71,8 @@ class BiodClientImpl : public BiodClient {
 
     biod_proxy_->CallMethod(
         &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        base::Bind(&BiodClientImpl::OnStartEnrollSession,
-                   weak_ptr_factory_.GetWeakPtr(), callback));
+        base::BindOnce(&BiodClientImpl::OnStartEnrollSession,
+                       weak_ptr_factory_.GetWeakPtr(), callback));
   }
 
   void GetRecordsForUser(const std::string& user_id,
@@ -72,29 +85,37 @@ class BiodClientImpl : public BiodClient {
 
     biod_proxy_->CallMethod(
         &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        base::Bind(&BiodClientImpl::OnGetRecordsForUser,
-                   weak_ptr_factory_.GetWeakPtr(), callback));
+        base::BindOnce(&BiodClientImpl::OnGetRecordsForUser,
+                       weak_ptr_factory_.GetWeakPtr(), callback));
   }
 
-  void DestroyAllRecords(const VoidDBusMethodCallback& callback) override {
+  void DestroyAllRecords(VoidDBusMethodCallback callback) override {
     dbus::MethodCall method_call(
         biod::kBiometricsManagerInterface,
         biod::kBiometricsManagerDestroyAllRecordsMethod);
 
-    biod_proxy_->CallMethod(&method_call,
-                            dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-                            base::Bind(&OnVoidResponse, callback));
+    biod_proxy_->CallMethod(
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        base::BindOnce(&OnVoidResponse, std::move(callback)));
   }
 
   void StartAuthSession(const ObjectPathCallback& callback) override {
+    // If we are already in auth session, just return an invalid ObjectPath.
+    // The one who initially start the auth session will have control
+    // over the life cycle of the session.
+    if (current_auth_session_path_) {
+      callback.Run(dbus::ObjectPath(std::string()));
+      return;
+    }
+
     dbus::MethodCall method_call(
         biod::kBiometricsManagerInterface,
         biod::kBiometricsManagerStartAuthSessionMethod);
 
     biod_proxy_->CallMethod(
         &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        base::Bind(&BiodClientImpl::OnStartAuthSession,
-                   weak_ptr_factory_.GetWeakPtr(), callback));
+        base::BindOnce(&BiodClientImpl::OnStartAuthSession,
+                       weak_ptr_factory_.GetWeakPtr(), callback));
   }
 
   void RequestType(const BiometricTypeCallback& callback) override {
@@ -106,37 +127,45 @@ class BiodClientImpl : public BiodClient {
 
     biod_proxy_->CallMethod(
         &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        base::Bind(&BiodClientImpl::OnRequestType,
-                   weak_ptr_factory_.GetWeakPtr(), callback));
+        base::BindOnce(&BiodClientImpl::OnRequestType,
+                       weak_ptr_factory_.GetWeakPtr(), callback));
   }
 
-  void CancelEnrollSession(const dbus::ObjectPath& enroll_session_path,
-                           const VoidDBusMethodCallback& callback) override {
+  void CancelEnrollSession(VoidDBusMethodCallback callback) override {
+    if (!current_enroll_session_path_) {
+      std::move(callback).Run(true);
+      return;
+    }
     dbus::MethodCall method_call(biod::kEnrollSessionInterface,
                                  biod::kEnrollSessionCancelMethod);
 
-    dbus::ObjectProxy* enroll_session_proxy =
-        bus_->GetObjectProxy(biod::kBiodServiceName, enroll_session_path);
-    enroll_session_proxy->CallMethod(&method_call,
-                                     dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-                                     base::Bind(&OnVoidResponse, callback));
+    dbus::ObjectProxy* enroll_session_proxy = bus_->GetObjectProxy(
+        biod::kBiodServiceName, *current_enroll_session_path_);
+    enroll_session_proxy->CallMethod(
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        base::BindOnce(&OnVoidResponse, std::move(callback)));
+    current_enroll_session_path_.reset();
   }
 
-  void EndAuthSession(const dbus::ObjectPath& auth_session_path,
-                      const VoidDBusMethodCallback& callback) override {
+  void EndAuthSession(VoidDBusMethodCallback callback) override {
+    if (!current_auth_session_path_) {
+      std::move(callback).Run(true);
+      return;
+    }
     dbus::MethodCall method_call(biod::kAuthSessionInterface,
                                  biod::kAuthSessionEndMethod);
 
-    dbus::ObjectProxy* auth_session_proxy =
-        bus_->GetObjectProxy(biod::kBiodServiceName, auth_session_path);
-    auth_session_proxy->CallMethod(&method_call,
-                                   dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-                                   base::Bind(&OnVoidResponse, callback));
+    dbus::ObjectProxy* auth_session_proxy = bus_->GetObjectProxy(
+        biod::kBiodServiceName, *current_auth_session_path_);
+    auth_session_proxy->CallMethod(
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        base::BindOnce(&OnVoidResponse, std::move(callback)));
+    current_auth_session_path_.reset();
   }
 
   void SetRecordLabel(const dbus::ObjectPath& record_path,
                       const std::string& label,
-                      const VoidDBusMethodCallback& callback) override {
+                      VoidDBusMethodCallback callback) override {
     dbus::MethodCall method_call(biod::kRecordInterface,
                                  biod::kRecordSetLabelMethod);
     dbus::MessageWriter writer(&method_call);
@@ -144,21 +173,21 @@ class BiodClientImpl : public BiodClient {
 
     dbus::ObjectProxy* record_proxy =
         bus_->GetObjectProxy(biod::kBiodServiceName, record_path);
-    record_proxy->CallMethod(&method_call,
-                             dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-                             base::Bind(&OnVoidResponse, callback));
+    record_proxy->CallMethod(
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        base::BindOnce(&OnVoidResponse, std::move(callback)));
   }
 
   void RemoveRecord(const dbus::ObjectPath& record_path,
-                    const VoidDBusMethodCallback& callback) override {
+                    VoidDBusMethodCallback callback) override {
     dbus::MethodCall method_call(biod::kRecordInterface,
                                  biod::kRecordRemoveMethod);
 
     dbus::ObjectProxy* record_proxy =
         bus_->GetObjectProxy(biod::kBiodServiceName, record_path);
-    record_proxy->CallMethod(&method_call,
-                             dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-                             base::Bind(&OnVoidResponse, callback));
+    record_proxy->CallMethod(
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        base::BindOnce(&OnVoidResponse, std::move(callback)));
   }
 
   void RequestRecordLabel(const dbus::ObjectPath& record_path,
@@ -173,16 +202,17 @@ class BiodClientImpl : public BiodClient {
         bus_->GetObjectProxy(biod::kBiodServiceName, record_path);
     record_proxy->CallMethod(
         &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        base::Bind(&BiodClientImpl::OnRequestRecordLabel,
-                   weak_ptr_factory_.GetWeakPtr(), callback));
+        base::BindOnce(&BiodClientImpl::OnRequestRecordLabel,
+                       weak_ptr_factory_.GetWeakPtr(), callback));
   }
 
  protected:
   void Init(dbus::Bus* bus) override {
     bus_ = bus;
 
-    biod_proxy_ = bus->GetObjectProxy(biod::kBiodServiceName,
-                                      dbus::ObjectPath(biod::kBiodServicePath));
+    dbus::ObjectPath fpc_bio_path = dbus::ObjectPath(base::StringPrintf(
+        "%s/%s", biod::kBiodServicePath, biod::kFpcBiometricsManagerName));
+    biod_proxy_ = bus->GetObjectProxy(biod::kBiodServiceName, fpc_bio_path);
 
     biod_proxy_->SetNameOwnerChangedCallback(
         base::Bind(&BiodClientImpl::NameOwnerChangedReceived,
@@ -225,6 +255,8 @@ class BiodClientImpl : public BiodClient {
       }
     }
 
+    if (result.IsValid())
+      current_enroll_session_path_ = std::make_unique<dbus::ObjectPath>(result);
     callback.Run(result);
   }
 
@@ -253,6 +285,8 @@ class BiodClientImpl : public BiodClient {
       }
     }
 
+    if (result.IsValid())
+      current_auth_session_path_ = std::make_unique<dbus::ObjectPath>(result);
     callback.Run(result);
   }
 
@@ -268,7 +302,7 @@ class BiodClientImpl : public BiodClient {
       }
     }
 
-    callback.Run(static_cast<biod::BiometricType>(result));
+    callback.Run(result);
   }
 
   void OnRequestRecordLabel(const LabelCallback& callback,
@@ -276,7 +310,7 @@ class BiodClientImpl : public BiodClient {
     std::string result;
     if (response) {
       dbus::MessageReader reader(response);
-      if (!reader.PopString(&result))
+      if (!reader.PopVariantOfString(&result))
         LOG(ERROR) << biod::kRecordLabelProperty << " had incorrect response.";
     }
 
@@ -293,6 +327,9 @@ class BiodClientImpl : public BiodClient {
 
   void NameOwnerChangedReceived(const std::string& /* old_owner */,
                                 const std::string& new_owner) {
+    current_enroll_session_path_.reset();
+    current_auth_session_path_.reset();
+
     if (!new_owner.empty()) {
       for (auto& observer : observers_)
         observer.BiodServiceRestarted();
@@ -301,18 +338,19 @@ class BiodClientImpl : public BiodClient {
 
   void EnrollScanDoneReceived(dbus::Signal* signal) {
     dbus::MessageReader reader(signal);
-    uint32_t scan_result;
-    bool enroll_session_complete;
-    if (!reader.PopUint32(&scan_result) ||
-        !reader.PopBool(&enroll_session_complete)) {
-      LOG(ERROR) << "Error reading signal from biometrics: "
-                 << signal->ToString();
+    biod::EnrollScanDone protobuf;
+    if (!reader.PopArrayOfBytesAsProto(&protobuf)) {
+      LOG(ERROR) << "Unable to decode protocol buffer from "
+                 << biod::kBiometricsManagerEnrollScanDoneSignal << " signal.";
       return;
     }
 
+    int percent_complete =
+        protobuf.has_percent_complete() ? protobuf.percent_complete() : -1;
+
     for (auto& observer : observers_) {
-      observer.BiodEnrollScanDoneReceived(
-          static_cast<biod::ScanResult>(scan_result), enroll_session_complete);
+      observer.BiodEnrollScanDoneReceived(protobuf.scan_result(),
+                                          protobuf.done(), percent_complete);
     }
   }
 
@@ -331,16 +369,16 @@ class BiodClientImpl : public BiodClient {
     while (array_reader.HasMoreData()) {
       dbus::MessageReader entry_reader(nullptr);
       std::string user_id;
-      std::vector<std::string> labels;
+      std::vector<dbus::ObjectPath> paths;
       if (!array_reader.PopDictEntry(&entry_reader) ||
           !entry_reader.PopString(&user_id) ||
-          !entry_reader.PopArrayOfStrings(&labels)) {
+          !entry_reader.PopArrayOfObjectPaths(&paths)) {
         LOG(ERROR) << "Error reading signal from biometrics: "
                    << signal->ToString();
         return;
       }
 
-      matches[user_id] = std::move(labels);
+      matches[user_id] = std::move(paths);
     }
 
     for (auto& observer : observers_) {
@@ -357,6 +395,8 @@ class BiodClientImpl : public BiodClient {
   dbus::Bus* bus_ = nullptr;
   dbus::ObjectProxy* biod_proxy_ = nullptr;
   base::ObserverList<Observer> observers_;
+  std::unique_ptr<dbus::ObjectPath> current_enroll_session_path_;
+  std::unique_ptr<dbus::ObjectPath> current_auth_session_path_;
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
@@ -365,9 +405,9 @@ class BiodClientImpl : public BiodClient {
   DISALLOW_COPY_AND_ASSIGN(BiodClientImpl);
 };
 
-BiodClient::BiodClient() {}
+BiodClient::BiodClient() = default;
 
-BiodClient::~BiodClient() {}
+BiodClient::~BiodClient() = default;
 
 // static
 BiodClient* BiodClient::Create(DBusClientImplementationType type) {

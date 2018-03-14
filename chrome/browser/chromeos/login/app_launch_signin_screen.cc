@@ -24,12 +24,9 @@ namespace chromeos {
 
 user_manager::UserManager* AppLaunchSigninScreen::test_user_manager_ = NULL;
 
-AppLaunchSigninScreen::AppLaunchSigninScreen(
-    OobeUI* oobe_ui, Delegate* delegate)
-    : oobe_ui_(oobe_ui),
-      delegate_(delegate),
-      webui_handler_(NULL) {
-}
+AppLaunchSigninScreen::AppLaunchSigninScreen(OobeUI* oobe_ui,
+                                             Delegate* delegate)
+    : oobe_ui_(oobe_ui), delegate_(delegate), webui_handler_(NULL) {}
 
 AppLaunchSigninScreen::~AppLaunchSigninScreen() {
   oobe_ui_->ResetSigninScreenHandlerDelegate();
@@ -50,8 +47,7 @@ void AppLaunchSigninScreen::InitOwnerUserList() {
 
   owner_user_list_.clear();
   for (user_manager::UserList::const_iterator it = all_users.begin();
-       it != all_users.end();
-       ++it) {
+       it != all_users.end(); ++it) {
     user_manager::User* user = *it;
     if (user->GetAccountId().GetUserEmail() == owner_email) {
       owner_user_list_.push_back(user);
@@ -90,9 +86,8 @@ void AppLaunchSigninScreen::Login(const UserContext& user_context,
   authenticator_ = UserSessionManager::GetInstance()->CreateAuthenticator(this);
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::Bind(&Authenticator::AuthenticateToUnlock,
-                 authenticator_.get(),
-                 user_context));
+      base::BindOnce(&Authenticator::AuthenticateToUnlock, authenticator_.get(),
+                     user_context));
 }
 
 void AppLaunchSigninScreen::MigrateUserData(const std::string& old_password) {
@@ -101,11 +96,9 @@ void AppLaunchSigninScreen::MigrateUserData(const std::string& old_password) {
 
 void AppLaunchSigninScreen::LoadWallpaper(const AccountId& account_id) {}
 
-void AppLaunchSigninScreen::LoadSigninWallpaper() {
-}
+void AppLaunchSigninScreen::LoadSigninWallpaper() {}
 
-void AppLaunchSigninScreen::OnSigninScreenReady() {
-}
+void AppLaunchSigninScreen::OnSigninScreenReady() {}
 
 void AppLaunchSigninScreen::OnGaiaScreenReady() {}
 
@@ -140,12 +133,6 @@ void AppLaunchSigninScreen::ShowWrongHWIDScreen() {
 void AppLaunchSigninScreen::SetWebUIHandler(
     LoginDisplayWebUIHandler* webui_handler) {
   webui_handler_ = webui_handler;
-}
-
-void AppLaunchSigninScreen::ShowSigninScreenForCreds(
-    const std::string& username,
-    const std::string& password) {
-  NOTREACHED();
 }
 
 const user_manager::UserList& AppLaunchSigninScreen::GetUsers() const {
@@ -215,12 +202,11 @@ void AppLaunchSigninScreen::HandleGetUsers() {
   const user_manager::UserList& users = GetUsers();
 
   for (user_manager::UserList::const_iterator it = users.begin();
-       it != users.end();
-       ++it) {
-    proximity_auth::ScreenlockBridge::LockHandler::AuthType initial_auth_type =
+       it != users.end(); ++it) {
+    proximity_auth::mojom::AuthType initial_auth_type =
         UserSelectionScreen::ShouldForceOnlineSignIn(*it)
-            ? proximity_auth::ScreenlockBridge::LockHandler::ONLINE_SIGN_IN
-            : proximity_auth::ScreenlockBridge::LockHandler::OFFLINE_PASSWORD;
+            ? proximity_auth::mojom::AuthType::ONLINE_SIGN_IN
+            : proximity_auth::mojom::AuthType::OFFLINE_PASSWORD;
     auto user_dict = base::MakeUnique<base::DictionaryValue>();
     UserSelectionScreen::FillUserDictionary(
         *it, true,               /* is_owner */
@@ -230,7 +216,7 @@ void AppLaunchSigninScreen::HandleGetUsers() {
     users_list.Append(std::move(user_dict));
   }
 
-  webui_handler_->LoadUsers(users_list, false);
+  webui_handler_->LoadUsers(users, users_list);
 }
 
 void AppLaunchSigninScreen::CheckUserStatus(const AccountId& account_id) {}

@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef CONTENT_COMMON_ACCESSIBILITY_MESSAGES_H_
+#define CONTENT_COMMON_ACCESSIBILITY_MESSAGES_H_
+
 // IPC messages for accessibility.
-// Multiply-included message file, hence no include guard.
 
 #include "content/common/ax_content_node_data.h"
 #include "content/common/content_export.h"
@@ -46,6 +48,7 @@ IPC_STRUCT_TRAITS_BEGIN(content::AXContentNodeData)
   IPC_STRUCT_TRAITS_MEMBER(id)
   IPC_STRUCT_TRAITS_MEMBER(role)
   IPC_STRUCT_TRAITS_MEMBER(state)
+  IPC_STRUCT_TRAITS_MEMBER(actions)
   IPC_STRUCT_TRAITS_MEMBER(location)
   IPC_STRUCT_TRAITS_MEMBER(transform)
   IPC_STRUCT_TRAITS_MEMBER(string_attributes)
@@ -148,13 +151,6 @@ IPC_MESSAGE_ROUTED2(AccessibilityMsg_HitTest,
                     gfx::Point /* location to test */,
                     ui::AXEvent /* event to fire */)
 
-// Relay a request from assistive technology to set accessibility focus
-// to a given node. On platforms where this is used (currently Android),
-// inline text boxes are only computed for the node with accessibility focus,
-// rather than for the whole tree.
-IPC_MESSAGE_ROUTED1(AccessibilityMsg_SetAccessibilityFocus,
-                    int /* object id */)
-
 // Tells the render view that a AccessibilityHostMsg_Events
 // message was processed and it can send additional events. The argument
 // must be the same as the ack_token passed to AccessibilityHostMsg_Events.
@@ -207,9 +203,10 @@ IPC_MESSAGE_ROUTED1(
     AccessibilityHostMsg_FindInPageResultParams)
 
 // Sent in response to AccessibilityMsg_HitTest.
-IPC_MESSAGE_ROUTED3(AccessibilityHostMsg_ChildFrameHitTestResult,
+IPC_MESSAGE_ROUTED4(AccessibilityHostMsg_ChildFrameHitTestResult,
                     gfx::Point /* location tested */,
-                    int /* node id of result */,
+                    int /* routing id of child frame */,
+                    int /* browser plugin instance id of child frame */,
                     ui::AXEvent /* event to fire */)
 
 // Sent in response to AccessibilityMsg_SnapshotTree. The callback id that was
@@ -218,3 +215,5 @@ IPC_MESSAGE_ROUTED3(AccessibilityHostMsg_ChildFrameHitTestResult,
 IPC_MESSAGE_ROUTED2(AccessibilityHostMsg_SnapshotResponse,
                     int /* callback_id */,
                     content::AXContentTreeUpdate)
+
+#endif  // CONTENT_COMMON_ACCESSIBILITY_MESSAGES_H_

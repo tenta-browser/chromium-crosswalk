@@ -6,12 +6,13 @@
 
 #include <utility>
 
-#include "chrome/browser/prefs/pref_service_syncable_util.h"
+#include "base/feature_list.h"
 #include "chrome/browser/profiles/off_the_record_profile_impl.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/chrome_features.h"
+#include "components/content_settings/core/browser/content_settings_pref_provider.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
-#include "components/sync_preferences/pref_service_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/features/features.h"
 
@@ -27,6 +28,10 @@
 #include "chrome/browser/supervised_user/supervised_user_settings_service.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service_factory.h"
 #endif
+
+#if defined(OS_ANDROID)
+#include "chrome/browser/notifications/notification_channels_provider_android.h"
+#endif  // OS_ANDROID
 
 HostContentSettingsMapFactory::HostContentSettingsMapFactory()
     : RefcountedBrowserContextKeyedServiceFactory(
@@ -74,26 +79,18 @@ scoped_refptr<RefcountedKeyedService>
     GetForProfile(profile->GetOriginalProfile());
   }
 
+  bool store_last_modified = base::FeatureList::IsEnabled(features::kTabsInCbd);
+
   scoped_refptr<HostContentSettingsMap> settings_map(new HostContentSettingsMap(
       profile->GetPrefs(),
       profile->GetProfileType() == Profile::INCOGNITO_PROFILE,
-      profile->GetProfileType() == Profile::GUEST_PROFILE));
-
-  sync_preferences::PrefServiceSyncable* pref_service =
-      PrefServiceSyncableFromProfile(profile);
-  if (pref_service) {
-    pref_service->RegisterMergeDataFinishedCallback(
-        base::Bind(&HostContentSettingsMap::MigrateDomainScopedSettings,
-                   settings_map->GetWeakPtr(), true /* after_sync */));
-  }
+      profile->GetProfileType() == Profile::GUEST_PROFILE,
+      store_last_modified));
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  ExtensionService *ext_service =
-      extensions::ExtensionSystem::Get(profile)->extension_service();
-  // This may be null in testing or when the extenion_service hasn't been
-  // initialized, in which case it will be registered then.
-  if (ext_service)
-    ext_service->RegisterContentSettings(settings_map.get());
+  // These must be registered before before the HostSettings are passed over to
+  // the IOThread.  Simplest to do this on construction.
+  ExtensionService::RegisterContentSettings(settings_map.get(), profile);
 #endif // BUILDFLAG(ENABLE_EXTENSIONS)
 #if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   SupervisedUserSettingsService* supervised_service =
@@ -107,6 +104,22 @@ scoped_refptr<RefcountedKeyedService>
   }
 #endif // BUILDFLAG(ENABLE_SUPERVISED_USERS)
 
+#if defined(OS_ANDROID)
+    auto channels_provider =
+        base::MakeUnique<NotificationChannelsProviderAndroid>();
+    if (base::FeatureList::IsEnabled(features::kSiteNotificationChannels)) {
+      channels_provider->MigrateToChannelsIfNecessary(
+          profile->GetPrefs(), settings_map->GetPrefProvider());
+      settings_map->RegisterUserModifiableProvider(
+          HostContentSettingsMap::NOTIFICATION_ANDROID_PROVIDER,
+          std::move(channels_provider));
+    } else {
+      // TODO(crbug.com/758553): Remove this unmigration code and the feature
+      // flag once we're confident a kill-switch is no longer necessary (M63?).
+      channels_provider->UnmigrateChannelsIfNecessary(
+          profile->GetPrefs(), settings_map->GetPrefProvider());
+  }
+#endif  // defined (OS_ANDROID)
   return settings_map;
 }
 

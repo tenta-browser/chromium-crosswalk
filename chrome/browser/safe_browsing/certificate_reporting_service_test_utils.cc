@@ -4,19 +4,23 @@
 
 #include "chrome/browser/safe_browsing/certificate_reporting_service_test_utils.h"
 
+#include "base/strings/string_piece.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "components/certificate_reporting/encrypted_cert_logger.pb.h"
 #include "components/certificate_reporting/error_report.h"
+#include "components/encrypted_messages/encrypted_message.pb.h"
+#include "components/encrypted_messages/message_encrypter.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_utils.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/base/upload_data_stream.h"
+#include "net/http/http_response_headers.h"
 #include "net/url_request/url_request_filter.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/boringssl/src/include/openssl/curve25519.h"
 
 namespace {
 
+static const char kHkdfLabel[] = "certificate report";
 const uint32_t kServerPublicKeyTestVersion = 16;
 
 void SetUpURLHandlersOnIOThread(
@@ -41,16 +45,21 @@ std::string GetUploadData(net::URLRequest* request) {
 std::string GetReportContents(net::URLRequest* request,
                               const uint8_t* server_private_key) {
   std::string serialized_report(GetUploadData(request));
-  certificate_reporting::EncryptedCertLoggerRequest encrypted_request;
-  EXPECT_TRUE(encrypted_request.ParseFromString(serialized_report));
+  encrypted_messages::EncryptedMessage encrypted_message;
+  EXPECT_TRUE(encrypted_message.ParseFromString(serialized_report));
   EXPECT_EQ(kServerPublicKeyTestVersion,
-            encrypted_request.server_public_key_version());
-  EXPECT_EQ(certificate_reporting::EncryptedCertLoggerRequest::
-                AEAD_ECDH_AES_128_CTR_HMAC_SHA256,
-            encrypted_request.algorithm());
+            encrypted_message.server_public_key_version());
+  EXPECT_EQ(
+      encrypted_messages::EncryptedMessage::AEAD_ECDH_AES_128_CTR_HMAC_SHA256,
+      encrypted_message.algorithm());
   std::string decrypted_report;
-  EXPECT_TRUE(certificate_reporting::ErrorReporter::DecryptErrorReport(
-      server_private_key, encrypted_request, &decrypted_report));
+  // TODO(estark): kHkdfLabel needs to include the null character in the label
+  // due to a matching error in the server for the case of certificate
+  // reporting, the strlen + 1 can be removed once that error is fixed.
+  // https://crbug.com/517746
+  EXPECT_TRUE(encrypted_messages::DecryptMessageForTesting(
+      server_private_key, base::StringPiece(kHkdfLabel, strlen(kHkdfLabel) + 1),
+      encrypted_message, &decrypted_report));
   return decrypted_report;
 }
 
@@ -70,6 +79,7 @@ namespace certificate_reporting_test_utils {
 
 RequestObserver::RequestObserver()
     : num_events_to_wait_for_(0u), num_received_events_(0u) {}
+
 RequestObserver::~RequestObserver() {}
 
 void RequestObserver::Wait(unsigned int num_events_to_wait_for) {
@@ -162,6 +172,7 @@ DelayableCertReportURLRequestJob::DelayableCertReportURLRequestJob(
       weak_factory_(this) {}
 
 DelayableCertReportURLRequestJob::~DelayableCertReportURLRequestJob() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
                                    destruction_callback_);
 }
@@ -186,14 +197,12 @@ int DelayableCertReportURLRequestJob::ReadRawData(net::IOBuffer* buf,
   return 0;
 }
 
-int DelayableCertReportURLRequestJob::GetResponseCode() const {
-  // Report sender ignores responses. Return empty response.
-  return 200;
-}
-
 void DelayableCertReportURLRequestJob::GetResponseInfo(
     net::HttpResponseInfo* info) {
   // Report sender ignores responses. Return empty response.
+  if (!should_fail_) {
+    info->headers = new net::HttpResponseHeaders("HTTP/1.1 200 OK");
+  }
 }
 
 void DelayableCertReportURLRequestJob::Resume() {
@@ -212,18 +221,19 @@ void DelayableCertReportURLRequestJob::Resume() {
   // Start reading asynchronously as would a normal network request.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&DelayableCertReportURLRequestJob::NotifyHeadersComplete,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&DelayableCertReportURLRequestJob::NotifyHeadersComplete,
+                     weak_factory_.GetWeakPtr()));
 }
 
 CertReportJobInterceptor::CertReportJobInterceptor(
     ReportSendingResult expected_report_result,
     const uint8_t* server_private_key)
     : expected_report_result_(expected_report_result),
-      server_private_key_(server_private_key),
-      weak_factory_(this) {}
+      server_private_key_(server_private_key) {}
 
-CertReportJobInterceptor::~CertReportJobInterceptor() {}
+CertReportJobInterceptor::~CertReportJobInterceptor() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
+}
 
 net::URLRequestJob* CertReportJobInterceptor::MaybeInterceptRequest(
     net::URLRequest* request,
@@ -232,11 +242,7 @@ net::URLRequestJob* CertReportJobInterceptor::MaybeInterceptRequest(
 
   const std::string serialized_report =
       GetReportContents(request, server_private_key_);
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
-      base::Bind(&CertReportJobInterceptor::RequestCreated,
-                 weak_factory_.GetWeakPtr(), serialized_report,
-                 expected_report_result_));
+  RequestCreated(serialized_report, expected_report_result_);
 
   if (expected_report_result_ == REPORTS_FAIL) {
     return new DelayableCertReportURLRequestJob(
@@ -269,16 +275,16 @@ void CertReportJobInterceptor::SetFailureMode(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&CertReportJobInterceptor::SetFailureModeOnIOThread,
-                 weak_factory_.GetWeakPtr(), expected_report_result));
+      base::BindOnce(&CertReportJobInterceptor::SetFailureModeOnIOThread,
+                     base::Unretained(this), expected_report_result));
 }
 
 void CertReportJobInterceptor::Resume() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&CertReportJobInterceptor::ResumeOnIOThread,
-                 base::Unretained(this)));
+      base::BindOnce(&CertReportJobInterceptor::ResumeOnIOThread,
+                     base::Unretained(this)));
 }
 
 RequestObserver* CertReportJobInterceptor::request_created_observer() const {
@@ -307,8 +313,11 @@ void CertReportJobInterceptor::ResumeOnIOThread() {
 void CertReportJobInterceptor::RequestCreated(
     const std::string& serialized_report,
     ReportSendingResult expected_report_result) const {
-  request_created_observer_.OnRequest(serialized_report,
-                                      expected_report_result);
+  content::BrowserThread::PostTask(
+      content::BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&RequestObserver::OnRequest,
+                     base::Unretained(&request_created_observer_),
+                     serialized_report, expected_report_result));
 }
 
 void CertReportJobInterceptor::RequestDestructed(
@@ -388,9 +397,9 @@ void CertificateReportingServiceTestHelper::SetUpInterceptor() {
       new CertReportJobInterceptor(REPORTS_FAIL, server_private_key_);
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&SetUpURLHandlersOnIOThread,
-                 base::Passed(std::unique_ptr<net::URLRequestInterceptor>(
-                     url_request_interceptor_))));
+      base::BindOnce(&SetUpURLHandlersOnIOThread,
+                     base::Passed(std::unique_ptr<net::URLRequestInterceptor>(
+                         url_request_interceptor_))));
 }
 
 void CertificateReportingServiceTestHelper::SetFailureMode(
@@ -442,6 +451,50 @@ void CertificateReportingServiceTestHelper::ExpectNoRequests(
         0u,
         service->GetReporterForTesting()->inflight_report_count_for_testing());
   }
+}
+
+EventHistogramTester::EventHistogramTester() {}
+
+EventHistogramTester::~EventHistogramTester() {
+  if (submitted_) {
+    histogram_tester_.ExpectBucketCount(
+        CertificateReportingService::kReportEventHistogram,
+        static_cast<int>(CertificateReportingService::ReportOutcome::SUBMITTED),
+        submitted_);
+  }
+  if (failed_) {
+    histogram_tester_.ExpectBucketCount(
+        CertificateReportingService::kReportEventHistogram,
+        static_cast<int>(CertificateReportingService::ReportOutcome::FAILED),
+        failed_);
+  }
+  if (successful_) {
+    histogram_tester_.ExpectBucketCount(
+        CertificateReportingService::kReportEventHistogram,
+        static_cast<int>(
+            CertificateReportingService::ReportOutcome::SUCCESSFUL),
+        successful_);
+  }
+  if (dropped_) {
+    histogram_tester_.ExpectBucketCount(
+        CertificateReportingService::kReportEventHistogram,
+        static_cast<int>(
+            CertificateReportingService::ReportOutcome::DROPPED_OR_IGNORED),
+        dropped_);
+  }
+  histogram_tester_.ExpectTotalCount(
+      CertificateReportingService::kReportEventHistogram,
+      submitted_ + failed_ + successful_ + dropped_);
+}
+
+void EventHistogramTester::SetExpectedValues(int submitted,
+                                             int failed,
+                                             int successful,
+                                             int dropped) {
+  submitted_ = submitted;
+  failed_ = failed;
+  successful_ = successful;
+  dropped_ = dropped;
 }
 
 }  // namespace certificate_reporting_test_utils

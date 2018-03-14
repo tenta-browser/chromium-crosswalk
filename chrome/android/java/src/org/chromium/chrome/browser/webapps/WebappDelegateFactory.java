@@ -9,8 +9,14 @@ import android.text.TextUtils;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.chrome.browser.ShortcutHelper;
+import org.chromium.chrome.browser.SingleTabActivity;
+import org.chromium.chrome.browser.contextmenu.ChromeContextMenuPopulator;
+import org.chromium.chrome.browser.contextmenu.ContextMenuPopulator;
+import org.chromium.chrome.browser.fullscreen.ComposedBrowserControlsVisibilityDelegate;
 import org.chromium.chrome.browser.tab.BrowserControlsVisibilityDelegate;
+import org.chromium.chrome.browser.tab.InterceptNavigationDelegateImpl;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabContextMenuItemDelegate;
 import org.chromium.chrome.browser.tab.TabDelegateFactory;
 import org.chromium.chrome.browser.tab.TabWebContentsDelegateAndroid;
 import org.chromium.chrome.browser.util.IntentUtils;
@@ -18,9 +24,9 @@ import org.chromium.webapk.lib.client.WebApkNavigationClient;
 
 /**
  * A {@link TabDelegateFactory} class to be used in all {@link Tab} instances owned by a
- * {@link FullScreenActivity}.
+ * {@link SingleTabActivity}.
  */
-public class WebappDelegateFactory extends FullScreenDelegateFactory {
+public class WebappDelegateFactory extends TabDelegateFactory {
     private static class WebappWebContentsDelegateAndroid extends TabWebContentsDelegateAndroid {
         private final WebappActivity mActivity;
 
@@ -37,7 +43,7 @@ public class WebappDelegateFactory extends FullScreenDelegateFactory {
             // compatibility we relaunch it the hard way.
             String startUrl = mActivity.getWebappInfo().uri().toString();
 
-            String webApkPackageName = mActivity.getWebappInfo().webApkPackageName();
+            String webApkPackageName = mActivity.getWebappInfo().apkPackageName();
             if (!TextUtils.isEmpty(webApkPackageName)) {
                 Intent intent = WebApkNavigationClient.createLaunchWebApkIntent(
                         webApkPackageName, startUrl, false /* forceNavigation */);
@@ -64,12 +70,32 @@ public class WebappDelegateFactory extends FullScreenDelegateFactory {
     }
 
     @Override
+    public ContextMenuPopulator createContextMenuPopulator(Tab tab) {
+        return new ChromeContextMenuPopulator(
+                new TabContextMenuItemDelegate(tab), ChromeContextMenuPopulator.WEB_APP_MODE);
+    }
+
+    @Override
     public TabWebContentsDelegateAndroid createWebContentsDelegate(Tab tab) {
         return new WebappWebContentsDelegateAndroid(mActivity, tab);
     }
 
     @Override
     public BrowserControlsVisibilityDelegate createBrowserControlsVisibilityDelegate(Tab tab) {
-        return new WebappBrowserControlsDelegate(mActivity, tab);
+        return new ComposedBrowserControlsVisibilityDelegate(
+                new WebappBrowserControlsDelegate(mActivity, tab),
+                // Ensures browser controls hiding is delayed after activity start.
+                mActivity.getFullscreenManager().getBrowserVisibilityDelegate());
+    }
+
+    @Override
+    public InterceptNavigationDelegateImpl createInterceptNavigationDelegate(Tab tab) {
+        return new WebappInterceptNavigationDelegate(mActivity, tab);
+    }
+
+    @Override
+    public boolean canShowAppBanners(Tab tab) {
+        // Do not show banners when we are in a standalone activity.
+        return false;
     }
 }

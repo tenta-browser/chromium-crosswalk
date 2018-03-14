@@ -7,13 +7,12 @@
 #include "core/dom/Document.h"
 #include "core/frame/csp/CSPDirectiveList.h"
 #include "core/html/HTMLScriptElement.h"
-#include "core/loader/DocumentLoader.h"
-#include "core/testing/DummyPageHolder.h"
+#include "core/testing/NullExecutionContext.h"
 #include "platform/Crypto.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/loader/fetch/IntegrityMetadata.h"
 #include "platform/loader/fetch/ResourceRequest.h"
 #include "platform/network/ContentSecurityPolicyParsers.h"
+#include "platform/testing/RuntimeEnabledFeaturesTestHelpers.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SchemeRegistry.h"
 #include "platform/weborigin/SecurityOrigin.h"
@@ -27,19 +26,23 @@ class ContentSecurityPolicyTest : public ::testing::Test {
  public:
   ContentSecurityPolicyTest()
       : csp(ContentSecurityPolicy::Create()),
-        secure_url(kParsedURLString, "https://example.test/image.png"),
+        secure_url("https://example.test/image.png"),
         secure_origin(SecurityOrigin::Create(secure_url)) {}
 
  protected:
-  virtual void SetUp() {
-    document = Document::Create();
-    document->SetSecurityOrigin(secure_origin);
+  virtual void SetUp() { execution_context = CreateExecutionContext(); }
+
+  NullExecutionContext* CreateExecutionContext() {
+    NullExecutionContext* context = new NullExecutionContext();
+    context->SetUpSecurityContext();
+    context->SetSecurityOrigin(secure_origin);
+    return context;
   }
 
   Persistent<ContentSecurityPolicy> csp;
   KURL secure_url;
-  RefPtr<SecurityOrigin> secure_origin;
-  Persistent<Document> document;
+  scoped_refptr<SecurityOrigin> secure_origin;
+  Persistent<NullExecutionContext> execution_context;
 };
 
 TEST_F(ContentSecurityPolicyTest, ParseInsecureRequestPolicy) {
@@ -56,65 +59,66 @@ TEST_F(ContentSecurityPolicyTest, ParseInsecureRequestPolicy) {
 
   // Enforced
   for (const auto& test : cases) {
-    SCOPED_TRACE(testing::Message() << "[Enforce] Header: `" << test.header
-                                    << "`");
+    SCOPED_TRACE(::testing::Message()
+                 << "[Enforce] Header: `" << test.header << "`");
     csp = ContentSecurityPolicy::Create();
     csp->DidReceiveHeader(test.header, kContentSecurityPolicyHeaderTypeEnforce,
                           kContentSecurityPolicyHeaderSourceHTTP);
     EXPECT_EQ(test.expected_policy, csp->GetInsecureRequestPolicy());
 
-    document = Document::Create();
-    document->SetSecurityOrigin(secure_origin);
-    document->SetURL(secure_url);
-    csp->BindToExecutionContext(document.Get());
-    EXPECT_EQ(test.expected_policy, document->GetInsecureRequestPolicy());
+    execution_context = CreateExecutionContext();
+    execution_context->SetSecurityOrigin(secure_origin);
+    execution_context->SetURL(secure_url);
+    csp->BindToExecutionContext(execution_context.Get());
+    EXPECT_EQ(test.expected_policy,
+              execution_context->GetInsecureRequestPolicy());
     bool expect_upgrade = test.expected_policy & kUpgradeInsecureRequests;
     EXPECT_EQ(expect_upgrade,
-              document->InsecureNavigationsToUpgrade()->Contains(
-                  document->Url().Host().Impl()->GetHash()));
+              execution_context->InsecureNavigationsToUpgrade()->Contains(
+                  execution_context->Url().Host().Impl()->GetHash()));
   }
 
   // Report-Only
   for (const auto& test : cases) {
-    SCOPED_TRACE(testing::Message() << "[Report-Only] Header: `" << test.header
-                                    << "`");
+    SCOPED_TRACE(::testing::Message()
+                 << "[Report-Only] Header: `" << test.header << "`");
     csp = ContentSecurityPolicy::Create();
     csp->DidReceiveHeader(test.header, kContentSecurityPolicyHeaderTypeReport,
                           kContentSecurityPolicyHeaderSourceHTTP);
     EXPECT_EQ(kLeaveInsecureRequestsAlone, csp->GetInsecureRequestPolicy());
 
-    document = Document::Create();
-    document->SetSecurityOrigin(secure_origin);
-    csp->BindToExecutionContext(document.Get());
+    execution_context = CreateExecutionContext();
+    execution_context->SetSecurityOrigin(secure_origin);
+    csp->BindToExecutionContext(execution_context.Get());
     EXPECT_EQ(kLeaveInsecureRequestsAlone,
-              document->GetInsecureRequestPolicy());
-    EXPECT_FALSE(document->InsecureNavigationsToUpgrade()->Contains(
+              execution_context->GetInsecureRequestPolicy());
+    EXPECT_FALSE(execution_context->InsecureNavigationsToUpgrade()->Contains(
         secure_origin->Host().Impl()->GetHash()));
   }
 }
 
 TEST_F(ContentSecurityPolicyTest, ParseEnforceTreatAsPublicAddressDisabled) {
-  RuntimeEnabledFeatures::setCorsRFC1918Enabled(false);
-  document->SetAddressSpace(kWebAddressSpacePrivate);
-  EXPECT_EQ(kWebAddressSpacePrivate, document->AddressSpace());
+  ScopedCorsRFC1918ForTest cors_rfc1918(false);
+  execution_context->SetAddressSpace(kWebAddressSpacePrivate);
+  EXPECT_EQ(kWebAddressSpacePrivate, execution_context->AddressSpace());
 
   csp->DidReceiveHeader("treat-as-public-address",
                         kContentSecurityPolicyHeaderTypeEnforce,
                         kContentSecurityPolicyHeaderSourceHTTP);
-  csp->BindToExecutionContext(document.Get());
-  EXPECT_EQ(kWebAddressSpacePrivate, document->AddressSpace());
+  csp->BindToExecutionContext(execution_context.Get());
+  EXPECT_EQ(kWebAddressSpacePrivate, execution_context->AddressSpace());
 }
 
 TEST_F(ContentSecurityPolicyTest, ParseEnforceTreatAsPublicAddressEnabled) {
-  RuntimeEnabledFeatures::setCorsRFC1918Enabled(true);
-  document->SetAddressSpace(kWebAddressSpacePrivate);
-  EXPECT_EQ(kWebAddressSpacePrivate, document->AddressSpace());
+  ScopedCorsRFC1918ForTest cors_rfc1918(true);
+  execution_context->SetAddressSpace(kWebAddressSpacePrivate);
+  EXPECT_EQ(kWebAddressSpacePrivate, execution_context->AddressSpace());
 
   csp->DidReceiveHeader("treat-as-public-address",
                         kContentSecurityPolicyHeaderTypeEnforce,
                         kContentSecurityPolicyHeaderSourceHTTP);
-  csp->BindToExecutionContext(document.Get());
-  EXPECT_EQ(kWebAddressSpacePublic, document->AddressSpace());
+  csp->BindToExecutionContext(execution_context.Get());
+  EXPECT_EQ(kWebAddressSpacePublic, execution_context->AddressSpace());
 }
 
 TEST_F(ContentSecurityPolicyTest, CopyStateFrom) {
@@ -125,24 +129,27 @@ TEST_F(ContentSecurityPolicyTest, CopyStateFrom) {
                         kContentSecurityPolicyHeaderTypeReport,
                         kContentSecurityPolicyHeaderSourceHTTP);
 
-  KURL example_url(KURL(), "http://example.com");
-  KURL not_example_url(KURL(), "http://not-example.com");
+  KURL example_url(NullURL(), "http://example.com");
+  KURL not_example_url(NullURL(), "http://not-example.com");
 
   ContentSecurityPolicy* csp2 = ContentSecurityPolicy::Create();
   csp2->CopyStateFrom(csp.Get());
   EXPECT_FALSE(csp2->AllowScriptFromSource(
       example_url, String(), IntegrityMetadataSet(), kParserInserted,
       ResourceRequest::RedirectStatus::kNoRedirect,
-      SecurityViolationReportingPolicy::kSuppressReporting));
+      SecurityViolationReportingPolicy::kSuppressReporting,
+      ContentSecurityPolicy::CheckHeaderType::kCheckReportOnly));
   EXPECT_TRUE(csp2->AllowPluginType(
       "application/x-type-1", "application/x-type-1", example_url,
       SecurityViolationReportingPolicy::kSuppressReporting));
   EXPECT_TRUE(csp2->AllowImageFromSource(
       example_url, ResourceRequest::RedirectStatus::kNoRedirect,
-      SecurityViolationReportingPolicy::kSuppressReporting));
+      SecurityViolationReportingPolicy::kSuppressReporting,
+      ContentSecurityPolicy::CheckHeaderType::kCheckReportOnly));
   EXPECT_FALSE(csp2->AllowImageFromSource(
       not_example_url, ResourceRequest::RedirectStatus::kNoRedirect,
-      SecurityViolationReportingPolicy::kSuppressReporting));
+      SecurityViolationReportingPolicy::kSuppressReporting,
+      ContentSecurityPolicy::CheckHeaderType::kCheckReportOnly));
   EXPECT_FALSE(csp2->AllowPluginType(
       "application/x-type-2", "application/x-type-2", example_url,
       SecurityViolationReportingPolicy::kSuppressReporting));
@@ -156,8 +163,8 @@ TEST_F(ContentSecurityPolicyTest, CopyPluginTypesFrom) {
                         kContentSecurityPolicyHeaderTypeEnforce,
                         kContentSecurityPolicyHeaderSourceHTTP);
 
-  KURL example_url(KURL(), "http://example.com");
-  KURL not_example_url(KURL(), "http://not-example.com");
+  KURL example_url(NullURL(), "http://example.com");
+  KURL not_example_url(NullURL(), "http://not-example.com");
 
   ContentSecurityPolicy* csp2 = ContentSecurityPolicy::Create();
   csp2->CopyPluginTypesFrom(csp.Get());
@@ -199,7 +206,7 @@ TEST_F(ContentSecurityPolicyTest, IsFrameAncestorsEnforced) {
 // Tests that frame-ancestors directives are discarded from policies
 // delivered in <meta> elements.
 TEST_F(ContentSecurityPolicyTest, FrameAncestorsInMeta) {
-  csp->BindToExecutionContext(document.Get());
+  csp->BindToExecutionContext(execution_context.Get());
   csp->DidReceiveHeader("frame-ancestors 'none';",
                         kContentSecurityPolicyHeaderTypeEnforce,
                         kContentSecurityPolicyHeaderSourceMeta);
@@ -213,13 +220,13 @@ TEST_F(ContentSecurityPolicyTest, FrameAncestorsInMeta) {
 // Tests that sandbox directives are discarded from policies
 // delivered in <meta> elements.
 TEST_F(ContentSecurityPolicyTest, SandboxInMeta) {
-  csp->BindToExecutionContext(document.Get());
+  csp->BindToExecutionContext(execution_context.Get());
   csp->DidReceiveHeader("sandbox;", kContentSecurityPolicyHeaderTypeEnforce,
                         kContentSecurityPolicyHeaderSourceMeta);
-  EXPECT_FALSE(document->GetSecurityOrigin()->IsUnique());
+  EXPECT_FALSE(execution_context->GetSecurityOrigin()->IsUnique());
   csp->DidReceiveHeader("sandbox;", kContentSecurityPolicyHeaderTypeEnforce,
                         kContentSecurityPolicyHeaderSourceHTTP);
-  EXPECT_TRUE(document->GetSecurityOrigin()->IsUnique());
+  EXPECT_TRUE(execution_context->GetSecurityOrigin()->IsUnique());
 }
 
 // Tests that report-uri directives are discarded from policies
@@ -228,7 +235,7 @@ TEST_F(ContentSecurityPolicyTest, ReportURIInMeta) {
   String policy = "img-src 'none'; report-uri http://foo.test";
   Vector<UChar> characters;
   policy.AppendTo(characters);
-  const UChar* begin = characters.Data();
+  const UChar* begin = characters.data();
   const UChar* end = begin + characters.size();
   CSPDirectiveList* directive_list(CSPDirectiveList::Create(
       csp, begin, end, kContentSecurityPolicyHeaderTypeEnforce,
@@ -244,8 +251,8 @@ TEST_F(ContentSecurityPolicyTest, ReportURIInMeta) {
 // plugin, but not to subresource requests that the plugin itself
 // makes. https://crbug.com/603952
 TEST_F(ContentSecurityPolicyTest, ObjectSrc) {
-  KURL url(KURL(), "https://example.test");
-  csp->BindToExecutionContext(document.Get());
+  KURL url(NullURL(), "https://example.test");
+  csp->BindToExecutionContext(execution_context.Get());
   csp->DidReceiveHeader("object-src 'none';",
                         kContentSecurityPolicyHeaderTypeEnforce,
                         kContentSecurityPolicyHeaderSourceMeta);
@@ -267,8 +274,8 @@ TEST_F(ContentSecurityPolicyTest, ObjectSrc) {
 }
 
 TEST_F(ContentSecurityPolicyTest, ConnectSrc) {
-  KURL url(KURL(), "https://example.test");
-  csp->BindToExecutionContext(document.Get());
+  KURL url(NullURL(), "https://example.test");
+  csp->BindToExecutionContext(execution_context.Get());
   csp->DidReceiveHeader("connect-src 'none';",
                         kContentSecurityPolicyHeaderTypeEnforce,
                         kContentSecurityPolicyHeaderSourceMeta);
@@ -301,10 +308,10 @@ TEST_F(ContentSecurityPolicyTest, ConnectSrc) {
 // Tests that requests for scripts and styles are blocked
 // if `require-sri-for` delivered in HTTP header requires integrity be present
 TEST_F(ContentSecurityPolicyTest, RequireSRIForInHeaderMissingIntegrity) {
-  KURL url(KURL(), "https://example.test");
+  KURL url(NullURL(), "https://example.test");
   // Enforce
   Persistent<ContentSecurityPolicy> policy = ContentSecurityPolicy::Create();
-  policy->BindToExecutionContext(document.Get());
+  policy->BindToExecutionContext(execution_context.Get());
   policy->DidReceiveHeader("require-sri-for script style",
                            kContentSecurityPolicyHeaderTypeEnforce,
                            kContentSecurityPolicyHeaderSourceHTTP);
@@ -345,7 +352,7 @@ TEST_F(ContentSecurityPolicyTest, RequireSRIForInHeaderMissingIntegrity) {
       SecurityViolationReportingPolicy::kSuppressReporting));
   // Report
   policy = ContentSecurityPolicy::Create();
-  policy->BindToExecutionContext(document.Get());
+  policy->BindToExecutionContext(execution_context.Get());
   policy->DidReceiveHeader("require-sri-for script style",
                            kContentSecurityPolicyHeaderTypeReport,
                            kContentSecurityPolicyHeaderSourceHTTP);
@@ -389,14 +396,14 @@ TEST_F(ContentSecurityPolicyTest, RequireSRIForInHeaderMissingIntegrity) {
 // Tests that requests for scripts and styles are allowed
 // if `require-sri-for` delivered in HTTP header requires integrity be present
 TEST_F(ContentSecurityPolicyTest, RequireSRIForInHeaderPresentIntegrity) {
-  KURL url(KURL(), "https://example.test");
+  KURL url(NullURL(), "https://example.test");
   IntegrityMetadataSet integrity_metadata;
   integrity_metadata.insert(
-      IntegrityMetadata("1234", kHashAlgorithmSha384).ToPair());
-  csp->BindToExecutionContext(document.Get());
+      IntegrityMetadata("1234", IntegrityAlgorithm::kSha384).ToPair());
+  csp->BindToExecutionContext(execution_context.Get());
   // Enforce
   Persistent<ContentSecurityPolicy> policy = ContentSecurityPolicy::Create();
-  policy->BindToExecutionContext(document.Get());
+  policy->BindToExecutionContext(execution_context.Get());
   policy->DidReceiveHeader("require-sri-for script style",
                            kContentSecurityPolicyHeaderTypeEnforce,
                            kContentSecurityPolicyHeaderSourceHTTP);
@@ -433,7 +440,7 @@ TEST_F(ContentSecurityPolicyTest, RequireSRIForInHeaderPresentIntegrity) {
   // Content-Security-Policy-Report-Only is not supported in meta element,
   // so nothing should be blocked
   policy = ContentSecurityPolicy::Create();
-  policy->BindToExecutionContext(document.Get());
+  policy->BindToExecutionContext(execution_context.Get());
   policy->DidReceiveHeader("require-sri-for script style",
                            kContentSecurityPolicyHeaderTypeReport,
                            kContentSecurityPolicyHeaderSourceHTTP);
@@ -472,10 +479,10 @@ TEST_F(ContentSecurityPolicyTest, RequireSRIForInHeaderPresentIntegrity) {
 // Tests that requests for scripts and styles are blocked
 // if `require-sri-for` delivered in meta tag requires integrity be present
 TEST_F(ContentSecurityPolicyTest, RequireSRIForInMetaMissingIntegrity) {
-  KURL url(KURL(), "https://example.test");
+  KURL url(NullURL(), "https://example.test");
   // Enforce
   Persistent<ContentSecurityPolicy> policy = ContentSecurityPolicy::Create();
-  policy->BindToExecutionContext(document.Get());
+  policy->BindToExecutionContext(execution_context.Get());
   policy->DidReceiveHeader("require-sri-for script style",
                            kContentSecurityPolicyHeaderTypeEnforce,
                            kContentSecurityPolicyHeaderSourceMeta);
@@ -517,7 +524,7 @@ TEST_F(ContentSecurityPolicyTest, RequireSRIForInMetaMissingIntegrity) {
   // Content-Security-Policy-Report-Only is not supported in meta element,
   // so nothing should be blocked
   policy = ContentSecurityPolicy::Create();
-  policy->BindToExecutionContext(document.Get());
+  policy->BindToExecutionContext(execution_context.Get());
   policy->DidReceiveHeader("require-sri-for script style",
                            kContentSecurityPolicyHeaderTypeReport,
                            kContentSecurityPolicyHeaderSourceMeta);
@@ -561,14 +568,14 @@ TEST_F(ContentSecurityPolicyTest, RequireSRIForInMetaMissingIntegrity) {
 // Tests that requests for scripts and styles are allowed
 // if `require-sri-for` delivered meta tag requires integrity be present
 TEST_F(ContentSecurityPolicyTest, RequireSRIForInMetaPresentIntegrity) {
-  KURL url(KURL(), "https://example.test");
+  KURL url(NullURL(), "https://example.test");
   IntegrityMetadataSet integrity_metadata;
   integrity_metadata.insert(
-      IntegrityMetadata("1234", kHashAlgorithmSha384).ToPair());
-  csp->BindToExecutionContext(document.Get());
+      IntegrityMetadata("1234", IntegrityAlgorithm::kSha384).ToPair());
+  csp->BindToExecutionContext(execution_context.Get());
   // Enforce
   Persistent<ContentSecurityPolicy> policy = ContentSecurityPolicy::Create();
-  policy->BindToExecutionContext(document.Get());
+  policy->BindToExecutionContext(execution_context.Get());
   policy->DidReceiveHeader("require-sri-for script style",
                            kContentSecurityPolicyHeaderTypeEnforce,
                            kContentSecurityPolicyHeaderSourceMeta);
@@ -605,7 +612,7 @@ TEST_F(ContentSecurityPolicyTest, RequireSRIForInMetaPresentIntegrity) {
   // Content-Security-Policy-Report-Only is not supported in meta element,
   // so nothing should be blocked
   policy = ContentSecurityPolicy::Create();
-  policy->BindToExecutionContext(document.Get());
+  policy->BindToExecutionContext(execution_context.Get());
   policy->DidReceiveHeader("require-sri-for script style",
                            kContentSecurityPolicyHeaderTypeReport,
                            kContentSecurityPolicyHeaderSourceMeta);
@@ -659,16 +666,16 @@ TEST_F(ContentSecurityPolicyTest, NonceSinglePolicy) {
   };
 
   for (const auto& test : cases) {
-    SCOPED_TRACE(testing::Message() << "Policy: `" << test.policy << "`, URL: `"
-                                    << test.url << "`, Nonce: `" << test.nonce
-                                    << "`");
-    KURL resource = KURL(KURL(), test.url);
+    SCOPED_TRACE(::testing::Message()
+                 << "Policy: `" << test.policy << "`, URL: `" << test.url
+                 << "`, Nonce: `" << test.nonce << "`");
+    KURL resource = KURL(NullURL(), test.url);
 
     unsigned expected_reports = test.allowed ? 0u : 1u;
 
     // Single enforce-mode policy should match `test.expected`:
     Persistent<ContentSecurityPolicy> policy = ContentSecurityPolicy::Create();
-    policy->BindToExecutionContext(document.Get());
+    policy->BindToExecutionContext(execution_context.Get());
     policy->DidReceiveHeader(test.policy,
                              kContentSecurityPolicyHeaderTypeEnforce,
                              kContentSecurityPolicyHeaderSourceHTTP);
@@ -681,12 +688,15 @@ TEST_F(ContentSecurityPolicyTest, NonceSinglePolicy) {
 
     // Single report-mode policy should always be `true`:
     policy = ContentSecurityPolicy::Create();
-    policy->BindToExecutionContext(document.Get());
+    policy->BindToExecutionContext(execution_context.Get());
     policy->DidReceiveHeader(test.policy,
                              kContentSecurityPolicyHeaderTypeReport,
                              kContentSecurityPolicyHeaderSourceHTTP);
     EXPECT_TRUE(policy->AllowScriptFromSource(
-        resource, String(test.nonce), IntegrityMetadataSet(), kParserInserted));
+        resource, String(test.nonce), IntegrityMetadataSet(), kParserInserted,
+        ResourceRequest::RedirectStatus::kNoRedirect,
+        SecurityViolationReportingPolicy::kReport,
+        ContentSecurityPolicy::CheckHeaderType::kCheckReportOnly));
     // If this is expected to generate a violation, we should have sent a
     // report, even though we don't deny access in `allowScriptFromSource`:
     EXPECT_EQ(expected_reports, policy->violation_reports_sent_.size());
@@ -710,53 +720,62 @@ TEST_F(ContentSecurityPolicyTest, NonceInline) {
   String context_url;
   String content;
   WTF::OrdinalNumber context_line;
+
+  // We need document for HTMLScriptElement tests.
+  Document* document = Document::CreateForTest();
+  document->SetSecurityOrigin(secure_origin);
+
   for (const auto& test : cases) {
-    SCOPED_TRACE(testing::Message() << "Policy: `" << test.policy
-                                    << "`, Nonce: `" << test.nonce << "`");
+    SCOPED_TRACE(::testing::Message() << "Policy: `" << test.policy
+                                      << "`, Nonce: `" << test.nonce << "`");
 
     unsigned expected_reports = test.allowed ? 0u : 1u;
     HTMLScriptElement* element = HTMLScriptElement::Create(*document, true);
 
     // Enforce 'script-src'
     Persistent<ContentSecurityPolicy> policy = ContentSecurityPolicy::Create();
-    policy->BindToExecutionContext(document.Get());
+    policy->BindToExecutionContext(document);
     policy->DidReceiveHeader(String("script-src ") + test.policy,
                              kContentSecurityPolicyHeaderTypeEnforce,
                              kContentSecurityPolicyHeaderSourceHTTP);
-    EXPECT_EQ(test.allowed, policy->AllowInlineScript(element, context_url,
-                                                      String(test.nonce),
-                                                      context_line, content));
+    EXPECT_EQ(test.allowed,
+              policy->AllowInlineScript(
+                  element, context_url, String(test.nonce), context_line,
+                  content, ContentSecurityPolicy::InlineType::kBlock));
     EXPECT_EQ(expected_reports, policy->violation_reports_sent_.size());
 
     // Enforce 'style-src'
     policy = ContentSecurityPolicy::Create();
-    policy->BindToExecutionContext(document.Get());
+    policy->BindToExecutionContext(document);
     policy->DidReceiveHeader(String("style-src ") + test.policy,
                              kContentSecurityPolicyHeaderTypeEnforce,
                              kContentSecurityPolicyHeaderSourceHTTP);
     EXPECT_EQ(test.allowed,
-              policy->AllowInlineStyle(element, context_url, String(test.nonce),
-                                       context_line, content));
+              policy->AllowInlineStyle(
+                  element, context_url, String(test.nonce), context_line,
+                  content, ContentSecurityPolicy::InlineType::kBlock));
     EXPECT_EQ(expected_reports, policy->violation_reports_sent_.size());
 
     // Report 'script-src'
     policy = ContentSecurityPolicy::Create();
-    policy->BindToExecutionContext(document.Get());
+    policy->BindToExecutionContext(document);
     policy->DidReceiveHeader(String("script-src ") + test.policy,
                              kContentSecurityPolicyHeaderTypeReport,
                              kContentSecurityPolicyHeaderSourceHTTP);
     EXPECT_TRUE(policy->AllowInlineScript(
-        element, context_url, String(test.nonce), context_line, content));
+        element, context_url, String(test.nonce), context_line, content,
+        ContentSecurityPolicy::InlineType::kBlock));
     EXPECT_EQ(expected_reports, policy->violation_reports_sent_.size());
 
     // Report 'style-src'
     policy = ContentSecurityPolicy::Create();
-    policy->BindToExecutionContext(document.Get());
+    policy->BindToExecutionContext(document);
     policy->DidReceiveHeader(String("style-src ") + test.policy,
                              kContentSecurityPolicyHeaderTypeReport,
                              kContentSecurityPolicyHeaderSourceHTTP);
     EXPECT_TRUE(policy->AllowInlineStyle(
-        element, context_url, String(test.nonce), context_line, content));
+        element, context_url, String(test.nonce), context_line, content,
+        ContentSecurityPolicy::InlineType::kBlock));
     EXPECT_EQ(expected_reports, policy->violation_reports_sent_.size());
   }
 }
@@ -810,60 +829,78 @@ TEST_F(ContentSecurityPolicyTest, NonceMultiplePolicy) {
   };
 
   for (const auto& test : cases) {
-    SCOPED_TRACE(testing::Message() << "Policy: `" << test.policy1 << "`/`"
-                                    << test.policy2 << "`, URL: `" << test.url
-                                    << "`, Nonce: `" << test.nonce << "`");
-    KURL resource = KURL(KURL(), test.url);
+    SCOPED_TRACE(::testing::Message() << "Policy: `" << test.policy1 << "`/`"
+                                      << test.policy2 << "`, URL: `" << test.url
+                                      << "`, Nonce: `" << test.nonce << "`");
+    KURL resource = KURL(NullURL(), test.url);
 
     unsigned expected_reports =
         test.allowed1 != test.allowed2 ? 1u : (test.allowed1 ? 0u : 2u);
 
     // Enforce / Report
     Persistent<ContentSecurityPolicy> policy = ContentSecurityPolicy::Create();
-    policy->BindToExecutionContext(document.Get());
+    policy->BindToExecutionContext(execution_context.Get());
     policy->DidReceiveHeader(test.policy1,
                              kContentSecurityPolicyHeaderTypeEnforce,
                              kContentSecurityPolicyHeaderSourceHTTP);
     policy->DidReceiveHeader(test.policy2,
                              kContentSecurityPolicyHeaderTypeReport,
                              kContentSecurityPolicyHeaderSourceHTTP);
-    EXPECT_EQ(test.allowed1, policy->AllowScriptFromSource(
-                                 resource, String(test.nonce),
-                                 IntegrityMetadataSet(), kParserInserted));
+    EXPECT_EQ(test.allowed1,
+              policy->AllowScriptFromSource(
+                  resource, String(test.nonce), IntegrityMetadataSet(),
+                  kParserInserted, ResourceRequest::RedirectStatus::kNoRedirect,
+                  SecurityViolationReportingPolicy::kReport,
+                  ContentSecurityPolicy::CheckHeaderType::kCheckEnforce));
+    EXPECT_TRUE(policy->AllowScriptFromSource(
+        resource, String(test.nonce), IntegrityMetadataSet(), kParserInserted,
+        ResourceRequest::RedirectStatus::kNoRedirect,
+        SecurityViolationReportingPolicy::kReport,
+        ContentSecurityPolicy::CheckHeaderType::kCheckReportOnly));
     EXPECT_EQ(expected_reports, policy->violation_reports_sent_.size());
 
     // Report / Enforce
     policy = ContentSecurityPolicy::Create();
-    policy->BindToExecutionContext(document.Get());
+    policy->BindToExecutionContext(execution_context.Get());
     policy->DidReceiveHeader(test.policy1,
                              kContentSecurityPolicyHeaderTypeReport,
                              kContentSecurityPolicyHeaderSourceHTTP);
     policy->DidReceiveHeader(test.policy2,
                              kContentSecurityPolicyHeaderTypeEnforce,
                              kContentSecurityPolicyHeaderSourceHTTP);
-    EXPECT_EQ(test.allowed2, policy->AllowScriptFromSource(
-                                 resource, String(test.nonce),
-                                 IntegrityMetadataSet(), kParserInserted));
+    EXPECT_TRUE(policy->AllowScriptFromSource(
+        resource, String(test.nonce), IntegrityMetadataSet(), kParserInserted,
+        ResourceRequest::RedirectStatus::kNoRedirect,
+        SecurityViolationReportingPolicy::kReport,
+        ContentSecurityPolicy::CheckHeaderType::kCheckReportOnly));
+    EXPECT_EQ(test.allowed2,
+              policy->AllowScriptFromSource(
+                  resource, String(test.nonce), IntegrityMetadataSet(),
+                  kParserInserted, ResourceRequest::RedirectStatus::kNoRedirect,
+                  SecurityViolationReportingPolicy::kReport,
+                  ContentSecurityPolicy::CheckHeaderType::kCheckEnforce));
     EXPECT_EQ(expected_reports, policy->violation_reports_sent_.size());
 
     // Enforce / Enforce
     policy = ContentSecurityPolicy::Create();
-    policy->BindToExecutionContext(document.Get());
+    policy->BindToExecutionContext(execution_context.Get());
     policy->DidReceiveHeader(test.policy1,
                              kContentSecurityPolicyHeaderTypeEnforce,
                              kContentSecurityPolicyHeaderSourceHTTP);
     policy->DidReceiveHeader(test.policy2,
                              kContentSecurityPolicyHeaderTypeEnforce,
                              kContentSecurityPolicyHeaderSourceHTTP);
-    EXPECT_EQ(
-        test.allowed1 && test.allowed2,
-        policy->AllowScriptFromSource(resource, String(test.nonce),
-                                      IntegrityMetadataSet(), kParserInserted));
+    EXPECT_EQ(test.allowed1 && test.allowed2,
+              policy->AllowScriptFromSource(
+                  resource, String(test.nonce), IntegrityMetadataSet(),
+                  kParserInserted, ResourceRequest::RedirectStatus::kNoRedirect,
+                  SecurityViolationReportingPolicy::kReport,
+                  ContentSecurityPolicy::CheckHeaderType::kCheckEnforce));
     EXPECT_EQ(expected_reports, policy->violation_reports_sent_.size());
 
     // Report / Report
     policy = ContentSecurityPolicy::Create();
-    policy->BindToExecutionContext(document.Get());
+    policy->BindToExecutionContext(execution_context.Get());
     policy->DidReceiveHeader(test.policy1,
                              kContentSecurityPolicyHeaderTypeReport,
                              kContentSecurityPolicyHeaderSourceHTTP);
@@ -871,7 +908,10 @@ TEST_F(ContentSecurityPolicyTest, NonceMultiplePolicy) {
                              kContentSecurityPolicyHeaderTypeReport,
                              kContentSecurityPolicyHeaderSourceHTTP);
     EXPECT_TRUE(policy->AllowScriptFromSource(
-        resource, String(test.nonce), IntegrityMetadataSet(), kParserInserted));
+        resource, String(test.nonce), IntegrityMetadataSet(), kParserInserted,
+        ResourceRequest::RedirectStatus::kNoRedirect,
+        SecurityViolationReportingPolicy::kReport,
+        ContentSecurityPolicy::CheckHeaderType::kCheckReportOnly));
     EXPECT_EQ(expected_reports, policy->violation_reports_sent_.size());
   }
 }
@@ -900,31 +940,31 @@ TEST_F(ContentSecurityPolicyTest, ShouldEnforceEmbeddersPolicy) {
 
   for (const auto& test : cases) {
     ResourceResponse response;
-    response.SetURL(KURL(kParsedURLString, test.resource_url));
+    response.SetURL(KURL(test.resource_url));
     EXPECT_EQ(ContentSecurityPolicy::ShouldEnforceEmbeddersPolicy(
-                  response, secure_origin.Get()),
+                  response, secure_origin.get()),
               test.inherits);
 
     response.SetHTTPHeaderField(HTTPNames::Allow_CSP_From, AtomicString("*"));
     EXPECT_TRUE(ContentSecurityPolicy::ShouldEnforceEmbeddersPolicy(
-        response, secure_origin.Get()));
+        response, secure_origin.get()));
 
     response.SetHTTPHeaderField(HTTPNames::Allow_CSP_From,
                                 AtomicString("* not a valid header"));
     EXPECT_EQ(ContentSecurityPolicy::ShouldEnforceEmbeddersPolicy(
-                  response, secure_origin.Get()),
+                  response, secure_origin.get()),
               test.inherits);
 
     response.SetHTTPHeaderField(HTTPNames::Allow_CSP_From,
                                 AtomicString("http://example.test"));
     EXPECT_EQ(ContentSecurityPolicy::ShouldEnforceEmbeddersPolicy(
-                  response, secure_origin.Get()),
+                  response, secure_origin.get()),
               test.inherits);
 
     response.SetHTTPHeaderField(HTTPNames::Allow_CSP_From,
                                 AtomicString("https://example.test"));
     EXPECT_TRUE(ContentSecurityPolicy::ShouldEnforceEmbeddersPolicy(
-        response, secure_origin.Get()));
+        response, secure_origin.get()));
   }
 }
 
@@ -1011,10 +1051,10 @@ TEST_F(ContentSecurityPolicyTest, Subsumes) {
 
 TEST_F(ContentSecurityPolicyTest, RequestsAllowedWhenBypassingCSP) {
   KURL base;
-  document = Document::Create();
-  document->SetSecurityOrigin(secure_origin);  // https://example.com
-  document->SetURL(secure_url);                // https://example.com
-  csp->BindToExecutionContext(document.Get());
+  execution_context = CreateExecutionContext();
+  execution_context->SetSecurityOrigin(secure_origin);  // https://example.com
+  execution_context->SetURL(secure_url);                // https://example.com
+  csp->BindToExecutionContext(execution_context.Get());
   csp->DidReceiveHeader("default-src https://example.com",
                         kContentSecurityPolicyHeaderTypeEnforce,
                         kContentSecurityPolicyHeaderSourceHTTP);
@@ -1051,10 +1091,10 @@ TEST_F(ContentSecurityPolicyTest, RequestsAllowedWhenBypassingCSP) {
 }
 TEST_F(ContentSecurityPolicyTest, FilesystemAllowedWhenBypassingCSP) {
   KURL base;
-  document = Document::Create();
-  document->SetSecurityOrigin(secure_origin);  // https://example.com
-  document->SetURL(secure_url);                // https://example.com
-  csp->BindToExecutionContext(document.Get());
+  execution_context = CreateExecutionContext();
+  execution_context->SetSecurityOrigin(secure_origin);  // https://example.com
+  execution_context->SetURL(secure_url);                // https://example.com
+  csp->BindToExecutionContext(execution_context.Get());
   csp->DidReceiveHeader("default-src https://example.com",
                         kContentSecurityPolicyHeaderTypeEnforce,
                         kContentSecurityPolicyHeaderSourceHTTP);
@@ -1096,10 +1136,10 @@ TEST_F(ContentSecurityPolicyTest, FilesystemAllowedWhenBypassingCSP) {
 
 TEST_F(ContentSecurityPolicyTest, BlobAllowedWhenBypassingCSP) {
   KURL base;
-  document = Document::Create();
-  document->SetSecurityOrigin(secure_origin);  // https://example.com
-  document->SetURL(secure_url);                // https://example.com
-  csp->BindToExecutionContext(document.Get());
+  execution_context = CreateExecutionContext();
+  execution_context->SetSecurityOrigin(secure_origin);  // https://example.com
+  execution_context->SetURL(secure_url);                // https://example.com
+  csp->BindToExecutionContext(execution_context.Get());
   csp->DidReceiveHeader("default-src https://example.com",
                         kContentSecurityPolicyHeaderTypeEnforce,
                         kContentSecurityPolicyHeaderSourceHTTP);
@@ -1135,6 +1175,106 @@ TEST_F(ContentSecurityPolicyTest, BlobAllowedWhenBypassingCSP) {
 
   SchemeRegistry::RemoveURLSchemeRegisteredAsBypassingContentSecurityPolicy(
       "https");
+}
+
+TEST_F(ContentSecurityPolicyTest, IsValidCSPAttrTest) {
+  // Empty string is invalid
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(""));
+
+  // Policy with single directive
+  EXPECT_TRUE(
+      ContentSecurityPolicy::IsValidCSPAttr("base-uri http://example.com"));
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "invalid-policy-name http://example.com"));
+
+  // Policy with multiple directives
+  EXPECT_TRUE(ContentSecurityPolicy::IsValidCSPAttr(
+      "base-uri http://example.com 'self'; child-src http://example.com; "
+      "default-src http://example.com"));
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "default-src http://example.com; "
+      "invalid-policy-name http://example.com"));
+
+  // 'self', 'none'
+  EXPECT_TRUE(ContentSecurityPolicy::IsValidCSPAttr("script-src 'self'"));
+  EXPECT_TRUE(ContentSecurityPolicy::IsValidCSPAttr("default-src 'none'"));
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr("script-src 'slef'"));
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr("default-src 'non'"));
+
+  // invalid ascii character
+  EXPECT_FALSE(
+      ContentSecurityPolicy::IsValidCSPAttr("script-src https:  \x08"));
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "script-src 127.0.0.1%2F%DFisnotSorB%2F"));
+
+  // paths on script-src
+  EXPECT_TRUE(ContentSecurityPolicy::IsValidCSPAttr("script-src 127.0.0.1:*/"));
+  EXPECT_TRUE(
+      ContentSecurityPolicy::IsValidCSPAttr("script-src 127.0.0.1:*/path"));
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "script-src 127.0.0.1:*/path?query=string"));
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "script-src 127.0.0.1:*/path#anchor"));
+  EXPECT_TRUE(
+      ContentSecurityPolicy::IsValidCSPAttr("script-src 127.0.0.1:8000/"));
+  EXPECT_TRUE(
+      ContentSecurityPolicy::IsValidCSPAttr("script-src 127.0.0.1:8000/path"));
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "script-src 127.0.0.1:8000/path?query=string"));
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "script-src 127.0.0.1:8000/path#anchor"));
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "script-src 127.0.0.1:8000/thisisa;pathwithasemicolon"));
+
+  // script-src invalid hosts
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr("script-src http:/"));
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr("script-src http://"));
+  EXPECT_FALSE(
+      ContentSecurityPolicy::IsValidCSPAttr("script-src http:/127.0.0.1"));
+  EXPECT_FALSE(
+      ContentSecurityPolicy::IsValidCSPAttr("script-src http:///127.0.0.1"));
+  EXPECT_FALSE(
+      ContentSecurityPolicy::IsValidCSPAttr("script-src http://127.0.0.1:/"));
+  EXPECT_FALSE(
+      ContentSecurityPolicy::IsValidCSPAttr("script-src https://127.?.0.1:*"));
+  EXPECT_FALSE(
+      ContentSecurityPolicy::IsValidCSPAttr("script-src https://127.0.0.1:"));
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "script-src https://127.0.0.1:\t*   "));
+
+  // script-src host wildcards
+  EXPECT_TRUE(
+      ContentSecurityPolicy::IsValidCSPAttr("script-src http://*.0.1:8000"));
+  EXPECT_TRUE(
+      ContentSecurityPolicy::IsValidCSPAttr("script-src http://*.0.1:8000/"));
+  EXPECT_TRUE(
+      ContentSecurityPolicy::IsValidCSPAttr("script-src http://*.0.1:*"));
+  EXPECT_TRUE(
+      ContentSecurityPolicy::IsValidCSPAttr("script-src http://*.0.1:*/"));
+
+  // missing semicolon
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "default-src 'self' script-src example.com"));
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "script-src 'self' object-src 'self' style-src *"));
+
+  // 'none' with other sources
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "script-src http://127.0.0.1:8000 'none'"));
+  EXPECT_FALSE(
+      ContentSecurityPolicy::IsValidCSPAttr("script-src 'none' 'none' 'none'"));
+
+  // comma separated
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "script-src 'none', object-src 'none'"));
+
+  // reporting not allowed
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "script-src 'none'; report-uri http://example.com/reporting"));
+  EXPECT_FALSE(ContentSecurityPolicy::IsValidCSPAttr(
+      "report-uri relative-path/reporting;"
+      "base-uri http://example.com 'self'"));
+  // TODO(andypaicu): when `report-to` is implemented, add tests here.
 }
 
 }  // namespace blink

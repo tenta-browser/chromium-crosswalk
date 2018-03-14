@@ -5,8 +5,8 @@
 #include "ui/views/views_delegate.h"
 
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
-#include "ui/views/layout/layout_constants.h"
 #include "ui/views/views_touch_selection_controller_factory.h"
 #include "ui/views/widget/native_widget_private.h"
 
@@ -31,7 +31,7 @@ ViewsDelegate::ViewsDelegate()
 
 #if defined(USE_AURA)
   touch_selection_menu_runner_ =
-      base::MakeUnique<TouchSelectionMenuRunnerViews>();
+      std::make_unique<TouchSelectionMenuRunnerViews>();
 #endif
 }
 
@@ -135,9 +135,5 @@ int ViewsDelegate::GetAppbarAutohideEdges(HMONITOR monitor,
   return EDGE_BOTTOM;
 }
 #endif
-
-scoped_refptr<base::TaskRunner> ViewsDelegate::GetBlockingPoolTaskRunner() {
-  return nullptr;
-}
 
 }  // namespace views

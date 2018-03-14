@@ -5,8 +5,7 @@
 #ifndef UI_AURA_MUS_INPUT_METHOD_MUS_H_
 #define UI_AURA_MUS_INPUT_METHOD_MUS_H_
 
-#include <deque>
-
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/service_manager/public/cpp/connector.h"
@@ -34,15 +33,16 @@ class AURA_EXPORT InputMethodMus : public ui::InputMethodBase {
   ~InputMethodMus() override;
 
   void Init(service_manager::Connector* connector);
-  void DispatchKeyEvent(ui::KeyEvent* event,
-                        std::unique_ptr<EventResultCallback> ack_callback);
+  ui::EventDispatchDetails DispatchKeyEvent(
+      ui::KeyEvent* event,
+      std::unique_ptr<EventResultCallback> ack_callback) WARN_UNUSED_RESULT;
 
   // Overridden from ui::InputMethod:
   void OnFocus() override;
   void OnBlur() override;
   bool OnUntranslatedIMEMessage(const base::NativeEvent& event,
                                 NativeEventResult* result) override;
-  void DispatchKeyEvent(ui::KeyEvent* event) override;
+  ui::EventDispatchDetails DispatchKeyEvent(ui::KeyEvent* event) override;
   void OnTextInputTypeChanged(const ui::TextInputClient* client) override;
   void OnCaretBoundsChanged(const ui::TextInputClient* client) override;
   void CancelComposition(const ui::TextInputClient* client) override;
@@ -54,9 +54,9 @@ class AURA_EXPORT InputMethodMus : public ui::InputMethodBase {
   friend TextInputClientImpl;
 
   // Called from DispatchKeyEvent() to call to the InputMethod.
-  void SendKeyEventToInputMethod(
+  ui::EventDispatchDetails SendKeyEventToInputMethod(
       const ui::KeyEvent& event,
-      std::unique_ptr<EventResultCallback> ack_callback);
+      std::unique_ptr<EventResultCallback> ack_callback) WARN_UNUSED_RESULT;
 
   // Overridden from ui::InputMethodBase:
   void OnDidChangeFocusedClient(ui::TextInputClient* focused_before,
@@ -79,7 +79,7 @@ class AURA_EXPORT InputMethodMus : public ui::InputMethodBase {
   Window* window_;
 
   // May be null in tests.
-  ui::mojom::IMEServerPtr ime_server_;
+  ui::mojom::IMEDriverPtr ime_driver_;
   ui::mojom::InputMethodPtr input_method_ptr_;
   // Typically this is the same as |input_method_ptr_|, but it may be mocked
   // in tests.
@@ -89,7 +89,7 @@ class AURA_EXPORT InputMethodMus : public ui::InputMethodBase {
   // Callbacks supplied to DispatchKeyEvent() are added here while awaiting
   // the response from the server. These are removed when the response is
   // received (ProcessKeyEventCallback()).
-  std::deque<std::unique_ptr<EventResultCallback>> pending_callbacks_;
+  base::circular_deque<std::unique_ptr<EventResultCallback>> pending_callbacks_;
 
   DISALLOW_COPY_AND_ASSIGN(InputMethodMus);
 };

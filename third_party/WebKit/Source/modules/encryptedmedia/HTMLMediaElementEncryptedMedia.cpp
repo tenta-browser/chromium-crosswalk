@@ -7,19 +7,21 @@
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8ThrowException.h"
+#include "bindings/core/v8/V8ThrowDOMException.h"
 #include "core/dom/DOMException.h"
-#include "core/dom/DOMTypedArray.h"
 #include "core/dom/ExceptionCode.h"
-#include "core/dom/TaskRunnerHelper.h"
-#include "core/html/HTMLMediaElement.h"
+#include "core/html/media/HTMLMediaElement.h"
+#include "core/inspector/ConsoleMessage.h"
+#include "core/typed_arrays/DOMTypedArray.h"
 #include "modules/encryptedmedia/ContentDecryptionModuleResultPromise.h"
 #include "modules/encryptedmedia/EncryptedMediaUtils.h"
 #include "modules/encryptedmedia/MediaEncryptedEvent.h"
 #include "modules/encryptedmedia/MediaKeys.h"
 #include "platform/ContentDecryptionModuleResult.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/wtf/Functional.h"
+#include "platform/wtf/text/StringBuilder.h"
+#include "public/platform/TaskType.h"
 
 #define EME_LOG_LEVEL 3
 
@@ -33,7 +35,7 @@ class SetMediaKeysHandler : public ScriptPromiseResolver {
   static ScriptPromise Create(ScriptState*, HTMLMediaElement&, MediaKeys*);
   ~SetMediaKeysHandler() override;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   SetMediaKeysHandler(ScriptState*, HTMLMediaElement&, MediaKeys*);
@@ -63,27 +65,36 @@ typedef Function<void(ExceptionCode, const String&)> FailureCallback;
 class SetContentDecryptionModuleResult final
     : public ContentDecryptionModuleResult {
  public:
-  SetContentDecryptionModuleResult(std::unique_ptr<SuccessCallback> success,
-                                   std::unique_ptr<FailureCallback> failure)
+  SetContentDecryptionModuleResult(SuccessCallback success,
+                                   FailureCallback failure)
       : success_callback_(std::move(success)),
         failure_callback_(std::move(failure)) {}
 
   // ContentDecryptionModuleResult implementation.
   void Complete() override {
     DVLOG(EME_LOG_LEVEL) << __func__ << ": promise resolved.";
-    (*success_callback_)();
+    std::move(success_callback_).Run();
   }
 
   void CompleteWithContentDecryptionModule(
       WebContentDecryptionModule*) override {
     NOTREACHED();
-    (*failure_callback_)(kInvalidStateError, "Unexpected completion.");
+    std::move(failure_callback_)
+        .Run(kInvalidStateError, "Unexpected completion.");
   }
 
   void CompleteWithSession(
       WebContentDecryptionModuleResult::SessionStatus status) override {
     NOTREACHED();
-    (*failure_callback_)(kInvalidStateError, "Unexpected completion.");
+    std::move(failure_callback_)
+        .Run(kInvalidStateError, "Unexpected completion.");
+  }
+
+  void CompleteWithKeyStatus(
+      WebEncryptedMediaKeyInformation::KeyStatus key_status) override {
+    NOTREACHED();
+    std::move(failure_callback_)
+        .Run(kInvalidStateError, "Unexpected completion.");
   }
 
   void CompleteWithError(WebContentDecryptionModuleException code,
@@ -104,13 +115,13 @@ class SetContentDecryptionModuleResult final
     DVLOG(EME_LOG_LEVEL) << __func__ << ": promise rejected with code " << code
                          << " and message: " << result.ToString();
 
-    (*failure_callback_)(WebCdmExceptionToExceptionCode(code),
-                         result.ToString());
+    std::move(failure_callback_)
+        .Run(WebCdmExceptionToExceptionCode(code), result.ToString());
   }
 
  private:
-  std::unique_ptr<SuccessCallback> success_callback_;
-  std::unique_ptr<FailureCallback> failure_callback_;
+  SuccessCallback success_callback_;
+  FailureCallback failure_callback_;
 };
 
 ScriptPromise SetMediaKeysHandler::Create(ScriptState* script_state,
@@ -118,7 +129,7 @@ ScriptPromise SetMediaKeysHandler::Create(ScriptState* script_state,
                                           MediaKeys* media_keys) {
   SetMediaKeysHandler* handler =
       new SetMediaKeysHandler(script_state, element, media_keys);
-  handler->SuspendIfNeeded();
+  handler->PauseIfNeeded();
   handler->KeepAliveWhilePending();
   return handler->Promise();
 }
@@ -130,13 +141,14 @@ SetMediaKeysHandler::SetMediaKeysHandler(ScriptState* script_state,
       element_(element),
       new_media_keys_(media_keys),
       made_reservation_(false),
-      timer_(TaskRunnerHelper::Get(TaskType::kMiscPlatformAPI, script_state),
+      timer_(ExecutionContext::From(script_state)
+                 ->GetTaskRunner(TaskType::kMiscPlatformAPI),
              this,
              &SetMediaKeysHandler::TimerFired) {
   DVLOG(EME_LOG_LEVEL) << __func__;
 
   // 5. Run the following steps in parallel.
-  timer_.StartOneShot(0, BLINK_FROM_HERE);
+  timer_.StartOneShot(TimeDelta(), BLINK_FROM_HERE);
 }
 
 SetMediaKeysHandler::~SetMediaKeysHandler() {}
@@ -181,9 +193,9 @@ void SetMediaKeysHandler::ClearExistingMediaKeys() {
       //       attribute to decrypt media data and remove the association
       //       with the media element.
       // (All 3 steps handled as needed in Chromium.)
-      std::unique_ptr<SuccessCallback> success_callback = WTF::Bind(
+      SuccessCallback success_callback = WTF::Bind(
           &SetMediaKeysHandler::SetNewMediaKeys, WrapPersistent(this));
-      std::unique_ptr<FailureCallback> failure_callback =
+      FailureCallback failure_callback =
           WTF::Bind(&SetMediaKeysHandler::ClearFailed, WrapPersistent(this));
       ContentDecryptionModuleResult* result =
           new SetContentDecryptionModuleResult(std::move(success_callback),
@@ -212,9 +224,9 @@ void SetMediaKeysHandler::SetNewMediaKeys() {
     //       algorithm on the media element.
     //       (Handled in Chromium).
     if (element_->GetWebMediaPlayer()) {
-      std::unique_ptr<SuccessCallback> success_callback =
+      SuccessCallback success_callback =
           WTF::Bind(&SetMediaKeysHandler::Finish, WrapPersistent(this));
-      std::unique_ptr<FailureCallback> failure_callback =
+      FailureCallback failure_callback =
           WTF::Bind(&SetMediaKeysHandler::SetFailed, WrapPersistent(this));
       ContentDecryptionModuleResult* result =
           new SetContentDecryptionModuleResult(std::move(success_callback),
@@ -263,7 +275,7 @@ void SetMediaKeysHandler::Fail(ExceptionCode code,
   // Reject promise with an appropriate error.
   ScriptState::Scope scope(GetScriptState());
   v8::Isolate* isolate = GetScriptState()->GetIsolate();
-  Reject(V8ThrowException::CreateDOMException(isolate, code, error_message));
+  Reject(V8ThrowDOMException::CreateDOMException(isolate, code, error_message));
 }
 
 void SetMediaKeysHandler::ClearFailed(ExceptionCode code,
@@ -300,7 +312,7 @@ void SetMediaKeysHandler::SetFailed(ExceptionCode code,
   Fail(code, error_message);
 }
 
-DEFINE_TRACE(SetMediaKeysHandler) {
+void SetMediaKeysHandler::Trace(blink::Visitor* visitor) {
   visitor->Trace(element_);
   visitor->Trace(new_media_keys_);
   ScriptPromiseResolver::Trace(visitor);
@@ -351,18 +363,18 @@ ScriptPromise HTMLMediaElementEncryptedMedia::setMediaKeys(
 
   // From http://w3c.github.io/encrypted-media/#setMediaKeys
 
-  // 1. If mediaKeys and the mediaKeys attribute are the same object,
-  //    return a resolved promise.
-  if (this_element.media_keys_ == media_keys)
-    return ScriptPromise::CastUndefined(script_state);
-
-  // 2. If this object's attaching media keys value is true, return a
+  // 1. If this object's attaching media keys value is true, return a
   //    promise rejected with an InvalidStateError.
   if (this_element.is_attaching_media_keys_) {
     return ScriptPromise::RejectWithDOMException(
         script_state, DOMException::Create(kInvalidStateError,
                                            "Another request is in progress."));
   }
+
+  // 2. If mediaKeys and the mediaKeys attribute are the same object,
+  //    return a resolved promise.
+  if (this_element.media_keys_ == media_keys)
+    return ScriptPromise::CastUndefined(script_state);
 
   // 3. Let this object's attaching media keys value be true.
   this_element.is_attaching_media_keys_ = true;
@@ -400,6 +412,13 @@ void HTMLMediaElementEncryptedMedia::Encrypted(
     // so don't return the initData. However, they still get an event.
     event = CreateEncryptedEvent(WebEncryptedMediaInitDataType::kUnknown,
                                  nullptr, 0);
+    media_element_->GetExecutionContext()->AddConsoleMessage(
+        ConsoleMessage::Create(kJSMessageSource, kWarningMessageLevel,
+                               "Media element must be CORS-same-origin with "
+                               "the embedding page. If cross-origin, you "
+                               "should use the `crossorigin` attribute and "
+                               "make sure CORS headers on the media data "
+                               "response are CORS-same-origin."));
   }
 
   event->SetTarget(media_element_);
@@ -441,10 +460,10 @@ void HTMLMediaElementEncryptedMedia::DidResumePlaybackBlockedForKey() {
 
 WebContentDecryptionModule*
 HTMLMediaElementEncryptedMedia::ContentDecryptionModule() {
-  return media_keys_ ? media_keys_->ContentDecryptionModule() : 0;
+  return media_keys_ ? media_keys_->ContentDecryptionModule() : nullptr;
 }
 
-DEFINE_TRACE(HTMLMediaElementEncryptedMedia) {
+void HTMLMediaElementEncryptedMedia::Trace(blink::Visitor* visitor) {
   visitor->Trace(media_element_);
   visitor->Trace(media_keys_);
   Supplement<HTMLMediaElement>::Trace(visitor);

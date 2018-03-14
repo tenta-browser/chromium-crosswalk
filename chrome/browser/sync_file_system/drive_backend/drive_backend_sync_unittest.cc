@@ -5,14 +5,17 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <algorithm>
-#include <stack>
 #include <utility>
 
+#include "base/containers/stack.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/task_scheduler/task_scheduler.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/sync_file_system/drive_backend/callback_helper.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_constants.h"
@@ -40,8 +43,7 @@
 #include "net/url_request/url_request_context_getter.h"
 #include "storage/browser/fileapi/file_system_context.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/leveldatabase/src/helpers/memenv/memenv.h"
-#include "third_party/leveldatabase/src/include/leveldb/env.h"
+#include "third_party/leveldatabase/leveldb_chrome.h"
 
 #define FPL(a) FILE_PATH_LITERAL(a)
 
@@ -84,22 +86,16 @@ class DriveBackendSyncTest : public testing::Test,
 
   void SetUp() override {
     ASSERT_TRUE(base_dir_.CreateUniqueTempDir());
-    in_memory_env_.reset(leveldb::NewMemEnv(leveldb::Env::Default()));
+    in_memory_env_.reset(leveldb_chrome::NewMemEnv(leveldb::Env::Default()));
 
     io_task_runner_ = content::BrowserThread::GetTaskRunnerForThread(
         content::BrowserThread::IO);
-    scoped_refptr<base::SequencedWorkerPool> worker_pool(
-        content::BrowserThread::GetBlockingPool());
-    worker_task_runner_ =
-        worker_pool->GetSequencedTaskRunnerWithShutdownBehavior(
-            worker_pool->GetSequenceToken(),
-            base::SequencedWorkerPool::SKIP_ON_SHUTDOWN);
-    file_task_runner_ = content::BrowserThread::GetTaskRunnerForThread(
-        content::BrowserThread::FILE);
+    worker_task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
+        {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
+    file_task_runner_ = io_task_runner_;
     scoped_refptr<base::SequencedTaskRunner> drive_task_runner =
-        worker_pool->GetSequencedTaskRunnerWithShutdownBehavior(
-            worker_pool->GetSequenceToken(),
-            base::SequencedWorkerPool::SKIP_ON_SHUTDOWN);
+        base::CreateSequencedTaskRunnerWithTraits(
+            {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
 
     RegisterSyncableFileSystem();
     local_sync_service_ = LocalFileSyncService::CreateForTesting(
@@ -112,24 +108,24 @@ class DriveBackendSyncTest : public testing::Test,
     ASSERT_TRUE(drive::test_util::SetUpTestEntries(drive_service.get()));
 
     std::unique_ptr<drive::DriveUploaderInterface> uploader(
-        new drive::DriveUploader(drive_service.get(), file_task_runner_.get()));
+        new drive::DriveUploader(drive_service.get(), file_task_runner_.get(),
+                                 nullptr));
 
     fake_drive_service_helper_.reset(new FakeDriveServiceHelper(
         drive_service.get(), uploader.get(),
         kSyncRootFolderTitle));
 
-    remote_sync_service_.reset(
-        new SyncEngine(base::ThreadTaskRunnerHandle::Get(),  // ui_task_runner
-                       worker_task_runner_.get(), drive_task_runner.get(),
-                       worker_pool.get(), base_dir_.GetPath(),
-                       nullptr,  // task_logger
-                       nullptr,  // notification_manager
-                       nullptr,  // extension_service
-                       nullptr,  // signin_manager
-                       nullptr,  // token_service
-                       nullptr,  // request_context
-                       nullptr,  // drive_service
-                       in_memory_env_.get()));
+    remote_sync_service_.reset(new SyncEngine(
+        base::ThreadTaskRunnerHandle::Get(),  // ui_task_runner
+        worker_task_runner_.get(), drive_task_runner.get(), base_dir_.GetPath(),
+        nullptr,  // task_logger
+        nullptr,  // notification_manager
+        nullptr,  // extension_service
+        nullptr,  // signin_manager
+        nullptr,  // token_service
+        nullptr,  // request_context
+        nullptr,  // drive_service
+        in_memory_env_.get()));
     remote_sync_service_->AddServiceObserver(this);
     remote_sync_service_->InitializeForTesting(std::move(drive_service),
                                                std::move(uploader),
@@ -155,7 +151,7 @@ class DriveBackendSyncTest : public testing::Test,
     local_sync_service_.reset();
     remote_sync_service_.reset();
 
-    content::RunAllBlockingPoolTasksUntilIdle();
+    base::TaskScheduler::GetInstance()->FlushForTesting();
     RevokeSyncableFileSystem();
   }
 
@@ -512,7 +508,7 @@ class DriveBackendSyncTest : public testing::Test,
       return 0;
 
     CannedSyncableFileSystem* file_system = file_systems_[app_id];
-    std::stack<base::FilePath> folders;
+    base::stack<base::FilePath> folders;
     folders.push(base::FilePath());  // root folder
 
     size_t result = 1;
@@ -597,11 +593,9 @@ class DriveBackendSyncTest : public testing::Test,
     base::RunLoop run_loop;
     worker_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&SyncWorker::CallOnIdleForTesting,
-                   base::Unretained(sync_worker()),
-                   RelayCallbackToCurrentThread(
-                       FROM_HERE,
-                       run_loop.QuitClosure())));
+        base::BindOnce(
+            &SyncWorker::CallOnIdleForTesting, base::Unretained(sync_worker()),
+            RelayCallbackToCurrentThread(FROM_HERE, run_loop.QuitClosure())));
     run_loop.Run();
   }
 

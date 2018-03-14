@@ -13,11 +13,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/command_line.h"
-#include "base/strings/string_number_conversions.h"
 #include "gpu/command_buffer/tests/gl_manager.h"
 #include "gpu/command_buffer/tests/gl_test_utils.h"
-#include "gpu/config/gpu_switches.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/gl_version_info.h"
@@ -166,6 +163,7 @@ void getExpectedColor(GLenum src_internal_format,
       setColor(0, 0, 0, color[0], adjusted_color);
       break;
     case GL_R8:
+    case GL_R16_EXT:
       setColor(color[0], 0, 0, 255, adjusted_color);
       break;
     case GL_LUMINANCE:
@@ -263,6 +261,50 @@ void getExpectedColor(GLenum src_internal_format,
   }
 }
 
+std::unique_ptr<uint8_t[]> getTextureDataAndExpectedRGBA(
+    FormatType src_format_type,
+    FormatType dest_format_type,
+    GLsizei width,
+    GLsizei height,
+    uint8_t* expected_color,
+    uint8_t* expected_mask) {
+  const int src_channel_count = gles2::GLES2Util::ElementsPerGroup(
+      src_format_type.format, src_format_type.type);
+  uint8_t color[4] = {1u, 63u, 127u, 255u};
+  getExpectedColor(src_format_type.internal_format,
+                   dest_format_type.internal_format, color, expected_color,
+                   expected_mask);
+  if (src_format_type.type == GL_UNSIGNED_BYTE) {
+    std::unique_ptr<uint8_t[]> pixels(
+        new uint8_t[width * height * src_channel_count]);
+    for (int i = 0; i < width * height * src_channel_count;
+         i += src_channel_count) {
+      for (int j = 0; j < src_channel_count; ++j)
+        pixels[i + j] = color[j];
+    }
+    return pixels;
+  } else if (src_format_type.type == GL_UNSIGNED_SHORT) {
+    uint16_t color_16bit[4] = {1u << 8, 63u << 8, 127u << 8, 255u << 8};
+    std::unique_ptr<uint8_t[]> data(
+        new uint8_t[width * height * src_channel_count * sizeof(uint16_t)]);
+    uint16_t* pixels = reinterpret_cast<uint16_t*>(data.get());
+    int16_t flip_sign = -1;
+    for (int i = 0; i < width * height * src_channel_count;
+         i += src_channel_count) {
+      for (int j = 0; j < src_channel_count; ++j) {
+        // Introduce an offset to the value to check. Expected value should be
+        // the same as without the offset.
+        flip_sign *= -1;
+        pixels[i + j] =
+            color_16bit[j] + flip_sign * (0x7F * (i + j)) / (width * height);
+      }
+    }
+    return data;
+  }
+  NOTREACHED();
+  return nullptr;
+}
+
 }  // namespace
 
 // A collection of tests that exercise the GL_CHROMIUM_copy_texture extension.
@@ -351,20 +393,11 @@ class GLCopyTextureCHROMIUMTest
                       FormatType dest_format_type,
                       GLint dest_level,
                       bool is_es3) {
-    const int src_channel_count = gles2::GLES2Util::ElementsPerGroup(
-        src_format_type.format, src_format_type.type);
-    uint8_t color[4] = {1u, 63u, 127u, 255u};
-    std::unique_ptr<uint8_t[]> pixels(new uint8_t[width_ * height_ * 4]);
-    for (int i = 0; i < width_ * height_ * src_channel_count;
-         i += src_channel_count)
-      for (int j = 0; j < src_channel_count; ++j)
-        pixels[i + j] = color[j];
     uint8_t expected_color[4];
     uint8_t mask[4];
-    getExpectedColor(src_format_type.internal_format,
-                     dest_format_type.internal_format, color, expected_color,
-                     mask);
-
+    std::unique_ptr<uint8_t[]> pixels =
+        getTextureDataAndExpectedRGBA(src_format_type, dest_format_type, width_,
+                                      height_, expected_color, mask);
     GLenum source_target = GL_TEXTURE_2D;
     glGenTextures(2, textures_);
     glBindTexture(source_target, textures_[0]);
@@ -489,15 +522,13 @@ class GLCopyTextureCHROMIUMES3Test : public GLCopyTextureCHROMIUMTest {
     GLManager::Options options;
     options.context_type = gles2::CONTEXT_TYPE_OPENGLES3;
     options.size = gfx::Size(64, 64);
-    base::CommandLine command_line(*base::CommandLine::ForCurrentProcess());
+    GpuDriverBugWorkarounds workarounds;
 #if defined(OS_MACOSX)
     // Sampling of seamless integer cube map texture has bug on Intel GEN7 gpus
     // on Mac OSX, see crbug.com/658930.
-    command_line.AppendSwitchASCII(
-        switches::kGpuDriverBugWorkarounds,
-        base::IntToString(gpu::DISABLE_TEXTURE_CUBE_MAP_SEAMLESS));
+    workarounds.disable_texture_cube_map_seamless = true;
 #endif
-    gl_.InitializeWithCommandLine(options, command_line);
+    gl_.InitializeWithWorkarounds(options, workarounds);
 
     width_ = 8;
     height_ = 8;
@@ -526,6 +557,18 @@ class GLCopyTextureCHROMIUMES3Test : public GLCopyTextureCHROMIUMTest {
   bool ShouldSkipSRGBEXT() const {
     DCHECK(!ShouldSkipTest());
     return !gl_.decoder()->GetFeatureInfo()->feature_flags().ext_srgb;
+  }
+
+  bool ShouldSkipNorm16() const {
+    DCHECK(!ShouldSkipTest());
+#if (defined(OS_MACOSX) || defined(OS_WIN) || defined(OS_LINUX)) && \
+    (defined(ARCH_CPU_X86) || defined(ARCH_CPU_X86_64))
+    // Make sure it's tested; it is safe to assume that the flag is always true
+    // on desktop.
+    EXPECT_TRUE(
+        gl_.decoder()->GetFeatureInfo()->feature_flags().ext_texture_norm16);
+#endif
+    return !gl_.decoder()->GetFeatureInfo()->feature_flags().ext_texture_norm16;
   }
 };
 
@@ -577,6 +620,12 @@ TEST_P(GLCopyTextureCHROMIUMTest, Basic) {
 TEST_P(GLCopyTextureCHROMIUMES3Test, FormatCombinations) {
   if (ShouldSkipTest())
     return;
+  if (gl_.gpu_preferences().use_passthrough_cmd_decoder) {
+    // TODO(geofflang): anglebug.com/1932
+    LOG(INFO)
+        << "Passthrough command decoder expected failure. Skipping test...";
+    return;
+  }
   CopyType copy_type = GetParam();
 
   FormatType src_format_types[] = {
@@ -588,6 +637,7 @@ TEST_P(GLCopyTextureCHROMIUMES3Test, FormatCombinations) {
       {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE},
       {GL_BGRA_EXT, GL_BGRA_EXT, GL_UNSIGNED_BYTE},
       {GL_BGRA8_EXT, GL_BGRA_EXT, GL_UNSIGNED_BYTE},
+      {GL_R16_EXT, GL_RED, GL_UNSIGNED_SHORT},
   };
 
   FormatType dest_format_types[] = {
@@ -649,6 +699,8 @@ TEST_P(GLCopyTextureCHROMIUMES3Test, FormatCombinations) {
       if ((dest_format_type.internal_format == GL_SRGB_EXT ||
            dest_format_type.internal_format == GL_SRGB_ALPHA_EXT) &&
           ShouldSkipSRGBEXT())
+        continue;
+      if (src_format_type.internal_format == GL_R16_EXT && ShouldSkipNorm16())
         continue;
 
       RunCopyTexture(GL_TEXTURE_2D, copy_type, src_format_type, 0,
@@ -880,6 +932,12 @@ TEST_P(GLCopyTextureCHROMIUMTest, CopyTextureLevel) {
 TEST_P(GLCopyTextureCHROMIUMES3Test, CopyTextureLevel) {
   if (ShouldSkipTest())
     return;
+  if (gl_.gpu_preferences().use_passthrough_cmd_decoder) {
+    // TODO(geofflang): anglebug.com/1932
+    LOG(INFO)
+        << "Passthrough command decoder expected failure. Skipping test...";
+    return;
+  }
   CopyType copy_type = GetParam();
 
   // Copy from RGBA source texture to dest texture.

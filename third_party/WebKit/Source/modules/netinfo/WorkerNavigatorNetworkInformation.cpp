@@ -4,10 +4,10 @@
 
 #include "modules/netinfo/WorkerNavigatorNetworkInformation.h"
 
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/workers/WorkerNavigator.h"
 #include "modules/netinfo/NetworkInformation.h"
+#include "platform/bindings/ScriptState.h"
 
 namespace blink {
 
@@ -48,14 +48,14 @@ NetworkInformation* WorkerNavigatorNetworkInformation::connection(
       .connection(context);
 }
 
-DEFINE_TRACE(WorkerNavigatorNetworkInformation) {
+void WorkerNavigatorNetworkInformation::Trace(blink::Visitor* visitor) {
   visitor->Trace(connection_);
   Supplement<WorkerNavigator>::Trace(visitor);
 }
 
 NetworkInformation* WorkerNavigatorNetworkInformation::connection(
     ExecutionContext* context) {
-  ASSERT(context);
+  DCHECK(context);
   if (!connection_)
     connection_ = NetworkInformation::Create(context);
   return connection_.Get();

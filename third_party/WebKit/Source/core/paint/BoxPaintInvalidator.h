@@ -5,6 +5,7 @@
 #ifndef BoxPaintInvalidator_h
 #define BoxPaintInvalidator_h
 
+#include "core/CoreExport.h"
 #include "platform/graphics/PaintInvalidationReason.h"
 #include "platform/wtf/Allocator.h"
 
@@ -14,7 +15,7 @@ class LayoutBox;
 class LayoutRect;
 struct PaintInvalidatorContext;
 
-class BoxPaintInvalidator {
+class CORE_EXPORT BoxPaintInvalidator {
   STACK_ALLOCATED();
 
  public:
@@ -24,19 +25,25 @@ class BoxPaintInvalidator {
 
   static void BoxWillBeDestroyed(const LayoutBox&);
 
-  PaintInvalidationReason InvalidatePaintIfNeeded();
+  PaintInvalidationReason InvalidatePaint();
 
  private:
-  bool BackgroundGeometryDependsOnLayoutOverflowRect();
+  friend class BoxPaintInvalidatorTest;
+
+  bool BackgroundGeometryDependsOnLayoutOverflowRect() const;
   bool BackgroundPaintsOntoScrollingContentsLayer();
   bool ShouldFullyInvalidateBackgroundOnLayoutOverflowChange(
       const LayoutRect& old_layout_overflow,
-      const LayoutRect& new_layout_overflow);
-  void InvalidateScrollingContentsBackgroundIfNeeded();
+      const LayoutRect& new_layout_overflow) const;
+  bool ViewBackgroundShouldFullyInvalidate() const;
+
+  enum BackgroundInvalidationType { kNone = 0, kIncremental, kFull };
+  BackgroundInvalidationType ComputeBackgroundInvalidation();
+  void InvalidateScrollingContentsBackground(BackgroundInvalidationType);
 
   PaintInvalidationReason ComputePaintInvalidationReason();
 
-  bool IncrementallyInvalidatePaint(PaintInvalidationReason,
+  void IncrementallyInvalidatePaint(PaintInvalidationReason,
                                     const LayoutRect& old_rect,
                                     const LayoutRect& new_rect);
 

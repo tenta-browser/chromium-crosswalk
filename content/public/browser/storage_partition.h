@@ -13,6 +13,7 @@
 #include "base/files/file_path.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
+#include "content/public/common/url_loader_factory.mojom.h"
 #include "net/cookies/cookie_store.h"
 
 class GURL;
@@ -44,12 +45,20 @@ class AppCacheService;
 class BrowserContext;
 class CacheStorageContext;
 class DOMStorageContext;
-class HostZoomLevelContext;
-class HostZoomMap;
 class IndexedDBContext;
 class PlatformNotificationContext;
 class ServiceWorkerContext;
+
+#if !defined(OS_ANDROID)
+class HostZoomLevelContext;
+class HostZoomMap;
 class ZoomLevelDelegate;
+#endif  // !defined(OS_ANDROID)
+
+namespace mojom {
+class NetworkContext;
+class URLLoaderFactory;
+}
 
 // Defines what persistent state a child process can access.
 //
@@ -62,6 +71,13 @@ class CONTENT_EXPORT StoragePartition {
   virtual base::FilePath GetPath() = 0;
   virtual net::URLRequestContextGetter* GetURLRequestContext() = 0;
   virtual net::URLRequestContextGetter* GetMediaURLRequestContext() = 0;
+  virtual mojom::NetworkContext* GetNetworkContext() = 0;
+  // Returns a pointer to a URLLoaderFactory owned by the storage partition.
+  // Prefer to use this instead of creating a new URLLoaderFactory when issuing
+  // requests from the Browser process, to share resources. The returned
+  // URLLoaderFactory should not be sent to subprocesses, due to its
+  // permissions.
+  virtual mojom::URLLoaderFactory* GetURLLoaderFactoryForBrowserProcess() = 0;
   virtual storage::QuotaManager* GetQuotaManager() = 0;
   virtual AppCacheService* GetAppCacheService() = 0;
   virtual storage::FileSystemContext* GetFileSystemContext() = 0;
@@ -70,9 +86,11 @@ class CONTENT_EXPORT StoragePartition {
   virtual IndexedDBContext* GetIndexedDBContext() = 0;
   virtual ServiceWorkerContext* GetServiceWorkerContext() = 0;
   virtual CacheStorageContext* GetCacheStorageContext() = 0;
+#if !defined(OS_ANDROID)
   virtual HostZoomMap* GetHostZoomMap() = 0;
   virtual HostZoomLevelContext* GetHostZoomLevelContext() = 0;
   virtual ZoomLevelDelegate* GetZoomLevelDelegate() = 0;
+#endif  // !defined(OS_ANDROID)
   virtual PlatformNotificationContext* GetPlatformNotificationContext() = 0;
 
   enum : uint32_t {
@@ -102,8 +120,7 @@ class CONTENT_EXPORT StoragePartition {
   // inside this StoragePartition for the given |storage_origin|.
   // Note session dom storage is not cleared even if you specify
   // REMOVE_DATA_MASK_LOCAL_STORAGE.
-  // |callback| is called when data deletion is done or at least the deletion is
-  // scheduled.
+  // No notification is dispatched upon completion.
   //
   // TODO(ajwong): Right now, the embedder may have some
   // URLRequestContextGetter objects that the StoragePartition does not know
@@ -113,8 +130,7 @@ class CONTENT_EXPORT StoragePartition {
   virtual void ClearDataForOrigin(uint32_t remove_mask,
                                   uint32_t quota_storage_remove_mask,
                                   const GURL& storage_origin,
-                                  net::URLRequestContextGetter* rq_context,
-                                  const base::Closure& callback) = 0;
+                                  net::URLRequestContextGetter* rq_context) = 0;
 
   // A callback type to check if a given origin matches a storage policy.
   // Can be passed empty/null where used, which means the origin will always
@@ -139,7 +155,7 @@ class CONTENT_EXPORT StoragePartition {
                          const OriginMatcherFunction& origin_matcher,
                          const base::Time begin,
                          const base::Time end,
-                         const base::Closure& callback) = 0;
+                         base::OnceClosure callback) = 0;
 
   // Similar to ClearData().
   // Deletes all data out for the StoragePartition.
@@ -159,7 +175,7 @@ class CONTENT_EXPORT StoragePartition {
                          const CookieMatcherFunction& cookie_matcher,
                          const base::Time begin,
                          const base::Time end,
-                         const base::Closure& callback) = 0;
+                         base::OnceClosure callback) = 0;
 
   // Clears the HTTP and media caches associated with this StoragePartition's
   // request contexts. If |begin| and |end| are not null, only entries with
@@ -169,7 +185,7 @@ class CONTENT_EXPORT StoragePartition {
       const base::Time begin,
       const base::Time end,
       const base::Callback<bool(const GURL&)>& url_matcher,
-      const base::Closure& callback) = 0;
+      base::OnceClosure callback) = 0;
 
   // Write any unwritten data to disk.
   // Note: this method does not sync the data - it only ensures that any
@@ -178,6 +194,11 @@ class CONTENT_EXPORT StoragePartition {
 
   // Clear the bluetooth allowed devices map. For test use only.
   virtual void ClearBluetoothAllowedDevicesMapForTesting() = 0;
+
+  // Overrides the network URLLoaderFactory for subsequent requests. Passing a
+  // null pointer will restore the default behavior.
+  virtual void SetNetworkFactoryForTesting(
+      mojom::URLLoaderFactory* test_factory) = 0;
 
  protected:
   virtual ~StoragePartition() {}

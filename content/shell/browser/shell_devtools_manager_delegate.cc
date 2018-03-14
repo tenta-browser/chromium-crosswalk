@@ -28,8 +28,10 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/common/user_agent.h"
+#include "content/shell/browser/layout_test/secondary_test_window_observer.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/common/shell_content_client.h"
+#include "content/shell/common/shell_switches.h"
 #include "content/shell/grit/shell_resources.h"
 #include "net/base/net_errors.h"
 #include "net/log/net_log_source.h"
@@ -166,12 +168,13 @@ void ShellDevToolsManagerDelegate::StartHttpHandler(
   frontend_url = base::StringPrintf(kFrontEndURL, GetWebKitRevision().c_str());
 #endif
   DevToolsAgentHost::StartRemoteDebuggingServer(
-      CreateSocketFactory(),
-      frontend_url,
-      browser_context->GetPath(),
-      base::FilePath(),
-      std::string(),
-      GetShellUserAgent());
+      CreateSocketFactory(), frontend_url, browser_context->GetPath(),
+      base::FilePath());
+
+  const base::CommandLine& command_line =
+      *base::CommandLine::ForCurrentProcess();
+  if (command_line.HasSwitch(switches::kRemoteDebuggingPipe))
+    DevToolsAgentHost::StartRemoteDebuggingPipeHandler();
 }
 
 // static
@@ -193,6 +196,8 @@ ShellDevToolsManagerDelegate::CreateNewTarget(const GURL& url) {
                                         url,
                                         nullptr,
                                         gfx::Size());
+  if (switches::IsRunLayoutTestSwitchPresent())
+    SecondaryTestWindowObserver::CreateForWebContents(shell->web_contents());
   return DevToolsAgentHost::GetOrCreateFor(shell->web_contents());
 }
 
@@ -200,8 +205,9 @@ std::string ShellDevToolsManagerDelegate::GetDiscoveryPageHTML() {
 #if defined(OS_ANDROID)
   return std::string();
 #else
-  return ResourceBundle::GetSharedInstance().GetRawDataResource(
-      IDR_CONTENT_SHELL_DEVTOOLS_DISCOVERY_PAGE).as_string();
+  return ui::ResourceBundle::GetSharedInstance()
+      .GetRawDataResource(IDR_CONTENT_SHELL_DEVTOOLS_DISCOVERY_PAGE)
+      .as_string();
 #endif
 }
 

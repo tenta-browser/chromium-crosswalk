@@ -63,8 +63,8 @@ void NaClBrowserDelegateImpl::ShowMissingArchInfobar(int render_process_id,
                                                      int render_view_id) {
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::Bind(&NaClInfoBarDelegate::Create, render_process_id,
-                 render_view_id));
+      base::BindOnce(&NaClInfoBarDelegate::Create, render_process_id,
+                     render_view_id));
 }
 
 bool NaClBrowserDelegateImpl::DialogsAreSuppressed() {
@@ -183,8 +183,8 @@ bool NaClBrowserDelegateImpl::IsNonSfiModeAllowed(
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   const extensions::ExtensionSet* extension_set =
       &GetExtensionInfoMap(profile_directory)->extensions();
-  return chrome::IsExtensionOrSharedModuleWhitelisted(
-      manifest_url, extension_set, allowed_nonsfi_origins_);
+  return IsExtensionOrSharedModuleWhitelisted(manifest_url, extension_set,
+                                              allowed_nonsfi_origins_);
 #else
   return false;
 #endif

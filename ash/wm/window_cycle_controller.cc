@@ -4,8 +4,11 @@
 
 #include "ash/wm/window_cycle_controller.h"
 
+#include "ash/metrics/task_switch_metrics_recorder.h"
 #include "ash/metrics/task_switch_source.h"
+#include "ash/metrics/user_metrics_recorder.h"
 #include "ash/public/cpp/shell_window_ids.h"
+#include "ash/public/cpp/window_properties.h"
 #include "ash/session/session_controller.h"
 #include "ash/shell.h"
 #include "ash/shell_port.h"
@@ -14,8 +17,8 @@
 #include "ash/wm/window_cycle_event_filter.h"
 #include "ash/wm/window_cycle_list.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm_window.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/metrics/user_metrics.h"
 
 namespace ash {
 
@@ -23,7 +26,7 @@ namespace {
 
 // Returns the most recently active window from the |window_list| or nullptr
 // if the list is empty.
-WmWindow* GetActiveWindow(const MruWindowTracker::WindowList& window_list) {
+aura::Window* GetActiveWindow(const WindowCycleList::WindowList& window_list) {
   return window_list.empty() ? nullptr : window_list[0];
 }
 
@@ -32,9 +35,9 @@ WmWindow* GetActiveWindow(const MruWindowTracker::WindowList& window_list) {
 //////////////////////////////////////////////////////////////////////////////
 // WindowCycleController, public:
 
-WindowCycleController::WindowCycleController() {}
+WindowCycleController::WindowCycleController() = default;
 
-WindowCycleController::~WindowCycleController() {}
+WindowCycleController::~WindowCycleController() = default;
 
 // static
 bool WindowCycleController::CanCycle() {
@@ -55,7 +58,7 @@ void WindowCycleController::HandleCycleWindow(Direction direction) {
 }
 
 void WindowCycleController::StartCycling() {
-  MruWindowTracker::WindowList window_list =
+  WindowCycleList::WindowList window_list =
       Shell::Get()->mru_window_tracker()->BuildMruWindowList();
   // Exclude windows:
   // - non user positionable windows, such as extension popups.
@@ -66,12 +69,13 @@ void WindowCycleController::StartCycling() {
   //   don't manually remove it, the window cycling UI won't crash or misbehave,
   //   but there will be a flicker as the target window changes. Also exclude
   //   unselectable windows such as extension popups.
-  auto window_is_ineligible = [](WmWindow* window) {
-    wm::WindowState* state = window->GetWindowState();
+  auto window_is_ineligible = [](aura::Window* window) {
+    wm::WindowState* state = wm::GetWindowState(window);
     return !state->IsUserPositionable() || state->is_dragged() ||
            window->GetRootWindow()
-               ->GetChildByShellWindowId(kShellWindowId_AppListContainer)
-               ->Contains(window);
+               ->GetChildById(kShellWindowId_AppListContainer)
+               ->Contains(window) ||
+           !window->GetProperty(kShowInOverviewKey);
   };
   window_list.erase(std::remove_if(window_list.begin(), window_list.end(),
                                    window_is_ineligible),
@@ -82,7 +86,7 @@ void WindowCycleController::StartCycling() {
   window_cycle_list_.reset(new WindowCycleList(window_list));
   event_filter_ = ShellPort::Get()->CreateWindowCycleEventFilter();
   cycle_start_time_ = base::Time::Now();
-  ShellPort::Get()->RecordUserMetricsAction(UMA_WINDOW_CYCLE);
+  base::RecordAction(base::UserMetricsAction("WindowCycleController_Cycle"));
   UMA_HISTOGRAM_COUNTS_100("Ash.WindowCycleController.Items",
                            window_list.size());
 }
@@ -109,7 +113,7 @@ void WindowCycleController::StopCycling() {
                            window_cycle_list_->current_index() + 1);
   window_cycle_list_.reset();
 
-  WmWindow* active_window_after_window_cycle =
+  aura::Window* active_window_after_window_cycle =
       GetActiveWindow(Shell::Get()->mru_window_tracker()->BuildMruWindowList());
 
   // Remove our key event filter.
@@ -119,7 +123,7 @@ void WindowCycleController::StopCycling() {
 
   if (active_window_after_window_cycle != nullptr &&
       active_window_before_window_cycle_ != active_window_after_window_cycle) {
-    ShellPort::Get()->RecordTaskSwitchMetric(
+    Shell::Get()->metrics()->task_switch_metrics_recorder().OnTaskSwitch(
         TaskSwitchSource::WINDOW_CYCLE_CONTROLLER);
   }
   active_window_before_window_cycle_ = nullptr;

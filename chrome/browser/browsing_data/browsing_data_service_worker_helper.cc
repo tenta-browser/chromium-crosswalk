@@ -33,7 +33,7 @@ void GetAllOriginsInfoCallback(
   }
 
   BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::Bind(callback, result));
+                          base::BindOnce(callback, result));
 }
 
 void EmptySuccessCallback(bool success) {}
@@ -52,21 +52,20 @@ void BrowsingDataServiceWorkerHelper::StartFetching(
     const FetchCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!callback.is_null());
-  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                          base::Bind(&BrowsingDataServiceWorkerHelper::
-                                         FetchServiceWorkerUsageInfoOnIOThread,
-                                     this, callback));
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&BrowsingDataServiceWorkerHelper::
+                         FetchServiceWorkerUsageInfoOnIOThread,
+                     this, callback));
 }
 
 void BrowsingDataServiceWorkerHelper::DeleteServiceWorkers(const GURL& origin) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(
           &BrowsingDataServiceWorkerHelper::DeleteServiceWorkersOnIOThread,
-          this,
-          origin));
+          this, origin));
 }
 
 void BrowsingDataServiceWorkerHelper::FetchServiceWorkerUsageInfoOnIOThread(
@@ -75,7 +74,7 @@ void BrowsingDataServiceWorkerHelper::FetchServiceWorkerUsageInfoOnIOThread(
   DCHECK(!callback.is_null());
 
   service_worker_context_->GetAllOriginsInfo(
-      base::Bind(&GetAllOriginsInfoCallback, callback));
+      base::BindOnce(&GetAllOriginsInfoCallback, callback));
 }
 
 void BrowsingDataServiceWorkerHelper::DeleteServiceWorkersOnIOThread(
@@ -152,8 +151,8 @@ void CannedBrowsingDataServiceWorkerHelper::StartFetching(
     result.push_back(info);
   }
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE, base::Bind(callback, result));
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::BindOnce(callback, result));
 }
 
 void CannedBrowsingDataServiceWorkerHelper::DeleteServiceWorkers(

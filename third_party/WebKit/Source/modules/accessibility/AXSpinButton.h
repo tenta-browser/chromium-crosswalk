@@ -39,7 +39,7 @@ class AXSpinButton final : public AXMockObject {
  public:
   static AXSpinButton* Create(AXObjectCacheImpl&);
   ~AXSpinButton() override;
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   void SetSpinButtonElement(SpinButtonElement* spin_button) {
     spin_button_element_ = spin_button;
@@ -70,12 +70,13 @@ class AXSpinButtonPart final : public AXMockObject {
   explicit AXSpinButtonPart(AXObjectCacheImpl&);
   bool is_incrementor_ : 1;
 
-  bool Press() override;
+  bool OnNativeClickAction() override;
   AccessibilityRole RoleValue() const override { return kButtonRole; }
   bool IsSpinButtonPart() const override { return true; }
   void GetRelativeBounds(AXObject** out_container,
                          FloatRect& out_bounds_in_container,
-                         SkMatrix44& out_container_transform) const override;
+                         SkMatrix44& out_container_transform,
+                         bool* clips_children = nullptr) const override;
 };
 
 DEFINE_AX_OBJECT_TYPE_CASTS(AXSpinButton, IsNativeSpinButton());

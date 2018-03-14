@@ -33,18 +33,16 @@
 
 #include "WebBlobData.h"
 #include "WebData.h"
-#include "WebNonCopyable.h"
 #include "WebString.h"
 #include "WebURL.h"
 
 #if INSIDE_BLINK
-#include "wtf/PassRefPtr.h"
+#include "base/memory/scoped_refptr.h"
 #endif
 
 namespace blink {
 
 class EncodedFormData;
-class WebHTTPBodyPrivate;
 
 class WebHTTPBody {
  public:
@@ -61,8 +59,8 @@ class WebHTTPBody {
 
   ~WebHTTPBody() { Reset(); }
 
-  WebHTTPBody() : private_(0) {}
-  WebHTTPBody(const WebHTTPBody& b) : private_(0) { Assign(b); }
+  WebHTTPBody() {}
+  WebHTTPBody(const WebHTTPBody& b) { Assign(b); }
   WebHTTPBody& operator=(const WebHTTPBody& b) {
     Assign(b);
     return *this;
@@ -84,18 +82,14 @@ class WebHTTPBody {
   // Append to the list of elements.
   BLINK_PLATFORM_EXPORT void AppendData(const WebData&);
   BLINK_PLATFORM_EXPORT void AppendFile(const WebString&);
-  // Passing -1 to fileLength means to the end of the file.
+  // Passing -1 to |file_length| means to the end of the file.
   BLINK_PLATFORM_EXPORT void AppendFileRange(const WebString&,
                                              long long file_start,
                                              long long file_length,
                                              double modification_time);
   BLINK_PLATFORM_EXPORT void AppendBlob(const WebString& uuid);
 
-  // Append a resource which is identified by the FileSystem URL.
-  BLINK_PLATFORM_EXPORT void AppendFileSystemURLRange(const WebURL&,
-                                                      long long start,
-                                                      long long length,
-                                                      double modification_time);
+  BLINK_PLATFORM_EXPORT void SetUniqueBoundary();
 
   // Identifies a particular form submission instance. A value of 0 is
   // used to indicate an unspecified identifier.
@@ -106,17 +100,15 @@ class WebHTTPBody {
   BLINK_PLATFORM_EXPORT void SetContainsPasswordData(bool);
 
 #if INSIDE_BLINK
-  BLINK_PLATFORM_EXPORT WebHTTPBody(WTF::PassRefPtr<EncodedFormData>);
-  BLINK_PLATFORM_EXPORT WebHTTPBody& operator=(
-      WTF::PassRefPtr<EncodedFormData>);
-  BLINK_PLATFORM_EXPORT operator WTF::PassRefPtr<EncodedFormData>() const;
+  BLINK_PLATFORM_EXPORT WebHTTPBody(scoped_refptr<EncodedFormData>);
+  BLINK_PLATFORM_EXPORT WebHTTPBody& operator=(scoped_refptr<EncodedFormData>);
+  BLINK_PLATFORM_EXPORT operator scoped_refptr<EncodedFormData>() const;
 #endif
 
  private:
-  BLINK_PLATFORM_EXPORT void Assign(WebHTTPBodyPrivate*);
   BLINK_PLATFORM_EXPORT void EnsureMutable();
 
-  WebHTTPBodyPrivate* private_;
+  WebPrivatePtr<EncodedFormData> private_;
 };
 
 }  // namespace blink

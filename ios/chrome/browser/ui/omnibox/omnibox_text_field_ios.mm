@@ -7,17 +7,21 @@
 #import <CoreText/CoreText.h>
 
 #include "base/command_line.h"
+#include "base/ios/ios_util.h"
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
 
 #include "base/strings/sys_string_conversions.h"
 #include "components/grit/components_scaled_resources.h"
 #include "components/omnibox/browser/autocomplete_input.h"
+#include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/autocomplete/autocomplete_scheme_classifier_impl.h"
+#include "ios/chrome/browser/experimental_flags.h"
 #import "ios/chrome/browser/ui/animation_util.h"
 #include "ios/chrome/browser/ui/omnibox/omnibox_util.h"
 #import "ios/chrome/browser/ui/reversed_animation.h"
 #include "ios/chrome/browser/ui/rtl_geometry.h"
+#import "ios/chrome/browser/ui/toolbar/public/web_toolbar_controller_constants.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #import "ios/chrome/common/material_timing.h"
@@ -36,20 +40,12 @@
 #endif
 
 namespace {
+
 const CGFloat kFontSize = 16;
-const CGFloat kEditingRectX = 16;
-const CGFloat kEditingRectWidthInset = 10;
-const CGFloat kTextInset = 8;
-const CGFloat kTextInsetWithChip = 3;
-const CGFloat kTextInsetNoLeftView = 12;
-const CGFloat kImageInset = 9;
+const CGFloat kEditingRectWidthInset = 12;
 const CGFloat kClearButtonRightMarginIphone = 7;
 const CGFloat kClearButtonRightMarginIpad = 12;
-// Amount to shift the origin.x of the text areas so they're centered within the
-// omnibox border.
-const CGFloat kTextAreaLeadingOffset = -2;
 
-// TODO(rohitrao): Should this be pulled from somewhere else?
 const CGFloat kStarButtonWidth = 36;
 const CGFloat kVoiceSearchButtonWidth = 36.0;
 
@@ -64,9 +60,6 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
 
 @interface OmniboxTextFieldIOS ()
 
-// Current image id used in left view.
-@property(nonatomic, assign) NSUInteger leftViewImageId;
-
 // Gets the bounds of the rect covering the URL.
 - (CGRect)preEditLabelRectForBounds:(CGRect)bounds;
 // Creates the UILabel if it doesn't already exist and adds it as a
@@ -76,8 +69,6 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
 // to contain the correct inline autocomplete text.
 - (void)setTextInternal:(NSAttributedString*)text
      autocompleteLength:(NSUInteger)autocompleteLength;
-// Display an image or chip text in the left accessory view.
-- (void)updateLeftView;
 // Override deleteBackward so that backspace can clear query refinement chips.
 - (void)deleteBackward;
 // Returns the layers affected by animations added by |-animateFadeWithStyle:|.
@@ -90,24 +81,14 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
 
 @end
 
-#pragma mark -
-#pragma mark OmniboxTextFieldIOS
-
 @implementation OmniboxTextFieldIOS {
-  // Currently selected chip text. Nil if no chip.
-  NSString* _chipText;
   UILabel* _selection;
   UILabel* _preEditStaticLabel;
   UIFont* _font;
   UIColor* _displayedTextColor;
   UIColor* _displayedTintColor;
-
-  // The 'Copy URL' menu item is sometimes shown in the edit menu, so keep it
-  // around to make adding/removing easier.
-  UIMenuItem* _copyUrlMenuItem;
 }
 
-@synthesize leftViewImageId = _leftViewImageId;
 @synthesize preEditText = _preEditText;
 @synthesize clearingPreEditText = _clearingPreEditText;
 @synthesize selectedTextBackgroundColor = _selectedTextBackgroundColor;
@@ -148,6 +129,11 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
     [self setSpellCheckingType:UITextSpellCheckingTypeNo];
     [self setTextAlignment:NSTextAlignmentNatural];
     [self setKeyboardType:(UIKeyboardType)UIKeyboardTypeWebSearch];
+#if defined(__IPHONE_11_0) && (__IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_11_0)
+    if (@available(iOS 11.0, *)) {
+      [self setSmartQuotesType:UITextSmartQuotesTypeNo];
+    }
+#endif
 
     // Sanity check:
     DCHECK([self conformsToProtocol:@protocol(UITextInput)]);
@@ -162,6 +148,42 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
 - (instancetype)initWithCoder:(nonnull NSCoder*)aDecoder {
   NOTREACHED();
   return nil;
+}
+
+- (void)addExpandOmniboxAnimations:(UIViewPropertyAnimator*)animator
+    API_AVAILABLE(ios(10.0)) {
+  __weak OmniboxTextFieldIOS* weakSelf = self;
+  [self rightView].alpha = 0;
+  [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
+    UIView* trailingView = [weakSelf rightView];
+    CGRect finalTrailingViewFrame = trailingView.frame;
+    trailingView.frame =
+        CGRectLayoutOffset(trailingView.frame, kPositionAnimationLeadingOffset);
+    [UIViewPropertyAnimator
+        runningPropertyAnimatorWithDuration:0.2
+                                      delay:0.1
+                                    options:UIViewAnimationOptionCurveEaseOut
+                                 animations:^{
+                                   trailingView.alpha = 1.0;
+                                   trailingView.frame = finalTrailingViewFrame;
+                                 }
+                                 completion:nil];
+  }];
+}
+
+- (void)addContractOmniboxAnimations:(UIViewPropertyAnimator*)animator
+    API_AVAILABLE(ios(10.0)) {
+  UIView* trailingView = [self rightView];
+  [animator addAnimations:^{
+    trailingView.alpha = 0;
+    trailingView.frame.origin = CGPointMake(
+        trailingView.frame.origin.x + kPositionAnimationLeadingOffset,
+        trailingView.frame.origin.y);
+  }];
+
+  [animator addCompletion:^(UIViewAnimatingPosition finalPosition) {
+    self.rightView = nil;
+  }];
 }
 
 // Enforces that the delegate is an OmniboxTextFieldDelegate.
@@ -249,8 +271,16 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   _preEditStaticLabel.textColor = _displayedTextColor;
   _preEditStaticLabel.lineBreakMode = NSLineBreakByTruncatingHead;
 
-  NSDictionary* attributes =
-      @{NSBackgroundColorAttributeName : [self selectedTextBackgroundColor]};
+  NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
+  // URLs have their text direction set to to LTR (avoids RTL characters
+  // making the URL render from right to left, as per the URL rendering standard
+  // described here: https://url.spec.whatwg.org/#url-rendering
+  [style setBaseWritingDirection:NSWritingDirectionLeftToRight];
+  NSDictionary* attributes = @{
+    NSBackgroundColorAttributeName : [self selectedTextBackgroundColor],
+    NSParagraphStyleAttributeName : style
+  };
+
   NSAttributedString* preEditString =
       [[NSAttributedString alloc] initWithString:self.text
                                       attributes:attributes];
@@ -284,10 +314,10 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   // ends at the same x coord as the blue selection box.
   CGSize textSize =
       [_preEditStaticLabel.text cr_pixelAlignedSizeWithFont:_font];
-  BOOL isLTR = [self bestTextAlignment] == NSTextAlignmentLeft;
+  // Note, this does not need to support RTL, as URLs are always LTR.
   return textSize.width < _preEditStaticLabel.frame.size.width
-             ? (isLTR ? NSTextAlignmentLeft : NSTextAlignmentRight)
-             : (isLTR ? NSTextAlignmentRight : NSTextAlignmentLeft);
+             ? NSTextAlignmentLeft
+             : NSTextAlignmentRight;
 }
 
 - (void)layoutSubviews {
@@ -321,11 +351,6 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
 // Returns whether we are processing the first touch event on the text field.
 - (BOOL)isPreEditing {
   return !![self preEditText];
-}
-
-- (void)enableLeftViewButton:(BOOL)isEnabled {
-  if ([self leftView])
-    [(UIButton*)[self leftView] setEnabled:isEnabled];
 }
 
 - (NSString*)nsDisplayedText {
@@ -383,72 +408,6 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   [self hideTextAndCursor];
 }
 
-- (BOOL)isShowingQueryRefinementChip {
-  return (_chipText && ([self isFirstResponder] || [self isPreEditing]));
-}
-
-- (void)updateLeftView {
-  const CGFloat kChipTextTopInset = 3.0;
-  const CGFloat kChipTextLeftInset = 3.0;
-
-  UIButton* leftViewButton = (UIButton*)self.leftView;
-  // Only set the chip image if the omnibox is in focus.
-  if ([self isShowingQueryRefinementChip]) {
-    [leftViewButton setTitle:_chipText forState:UIControlStateNormal];
-    [leftViewButton setImage:nil forState:UIControlStateNormal];
-    [leftViewButton
-        setTitleEdgeInsets:UIEdgeInsetsMake(kChipTextTopInset,
-                                            kChipTextLeftInset, 0, 0)];
-    // For iPhone, the left view is only updated when not in editing mode (i.e.
-    // the text field is not first responder).
-  } else if (_leftViewImageId && (IsIPadIdiom() || ![self isFirstResponder])) {
-    UIImage* image = [NativeImage(_leftViewImageId)
-        imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-    UIImageView* imageView = [[UIImageView alloc] initWithImage:image];
-    [leftViewButton setImage:imageView.image forState:UIControlStateNormal];
-    [leftViewButton setTitle:nil forState:UIControlStateNormal];
-    UIColor* tint = [UIColor whiteColor];
-    if (!_incognito) {
-      switch (_leftViewImageId) {
-        case IDR_IOS_LOCATION_BAR_HTTP:
-          tint = [UIColor darkGrayColor];
-          break;
-        case IDR_IOS_OMNIBOX_HTTPS_VALID:
-          tint = skia::UIColorFromSkColor(gfx::kGoogleGreen700);
-          break;
-        case IDR_IOS_OMNIBOX_HTTPS_POLICY_WARNING:
-          tint = skia::UIColorFromSkColor(gfx::kGoogleYellow700);
-          break;
-        case IDR_IOS_OMNIBOX_HTTPS_INVALID:
-          tint = skia::UIColorFromSkColor(gfx::kGoogleRed700);
-          break;
-        default:
-          tint = [UIColor darkGrayColor];
-      }
-    }
-    [leftViewButton setTintColor:tint];
-  } else {
-    // Reset the chip text.
-    [leftViewButton setTitle:_chipText forState:UIControlStateNormal];
-  }
-  // Normally this isn't needed, but there is a bug in iOS 7.1+ where setting
-  // the image while disabled doesn't always honor UIControlStateNormal.
-  // crbug.com/355077
-  [leftViewButton setNeedsLayout];
-
-  [leftViewButton sizeToFit];
-  self.leftView.isAccessibilityElement =
-      self.attributedText.length != 0 && leftViewButton.isEnabled;
-
-  // -sizeToFit doesn't take into account the left inset, so expand the width of
-  // the button by |kChipTextLeftInset|.
-  if ([self isShowingQueryRefinementChip]) {
-    CGRect frame = leftViewButton.frame;
-    frame.size.width += kChipTextLeftInset;
-    leftViewButton.frame = frame;
-  }
-}
-
 - (void)deleteBackward {
   // Must test for the onDeleteBackward method, since it's optional.
   if ([[self delegate] respondsToSelector:@selector(onDeleteBackward)])
@@ -485,15 +444,35 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
     [self clearAutocompleteText];
   }
 
-  self.attributedText = fieldText;
+  // The following BOOL was introduced to workaround a UIKit bug
+  // (crbug.com/737589, rdar/32817402). The bug relates to third party keyboards
+  // that check the value of textDocumentProxy.documentContextBeforeInput to
+  // show keyboard suggestions. It appears that calling setAttributedText during
+  // an EditingChanged UIControlEvent somehow triggers this bug. The reason we
+  // update the attributed text here is to change the colors of the omnibox
+  // (such as host, protocol) when !self.editing, but also to hide real
+  // UITextField text under the _selection text when self.editing. Since we will
+  // correct the omnibox editing text color anytime |self.text| is different
+  // than |fieldText|, it seems it's OK to skip calling self.attributedText
+  // during the condition added below. If we change mobile omnibox to match
+  // desktop and also color the omnibox while self.editing, this workaround will
+  // no longer work. The check for |autocompleteLength| reduces the scope of
+  // this workaround, without it having introduced crbug.com/740075.
+  BOOL updateText = YES;
+  if (experimental_flags::IsThirdPartyKeyboardWorkaroundEnabled()) {
+    updateText =
+        (!self.editing || ![self.text isEqualToString:fieldText.string] ||
+         autocompleteLength == 0);
+  }
+  if (updateText) {
+    self.attributedText = fieldText;
+  }
 
   // iOS changes the font to .LastResort when some unexpected unicode strings
   // are used (e.g. 𝗲𝗺𝗽𝗵𝗮𝘀𝗶𝘀).  Setting the NSFontAttributeName in the
   // attributed string to -systemFontOfSize fixes part of the problem, but the
   // baseline changes so text is out of alignment.
   [self setFont:_font];
-  // TODO(justincohen): Find a better place to put this, and consolidate it with
-  // the same call in omniboxViewIOS.
   [self updateTextDirection];
 }
 
@@ -524,7 +503,8 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   } else {
     NSMutableParagraphStyle* style = [[NSMutableParagraphStyle alloc] init];
     // URLs have their text direction set to to LTR (avoids RTL characters
-    // making the URL render from right to left, as per RFC 3987 Section 4.1).
+    // making the URL render from right to left, as per the URL rendering
+    // standard described here: https://url.spec.whatwg.org/#url-rendering
     [style setBaseWritingDirection:NSWritingDirectionLeftToRight];
 
     // Set linebreak mode to 'clipping' to ensure the text is never elided.
@@ -556,15 +536,19 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
 
   NSTextAlignment alignment = [self bestTextAlignment];
   [self setTextAlignment:alignment];
-  UITextWritingDirection writingDirection =
-      alignment == NSTextAlignmentLeft ? UITextWritingDirectionLeftToRight
-                                       : UITextWritingDirectionRightToLeft;
-  [self
-      setBaseWritingDirection:writingDirection
-                     forRange:[self
-                                  textRangeFromPosition:[self
-                                                            beginningOfDocument]
-                                             toPosition:[self endOfDocument]]];
+  if (!base::ios::IsRunningOnIOS11OrLater()) {
+    // TODO(crbug.com/730461): Remove this entire block once it's been tested
+    // on trunk.
+    UITextWritingDirection writingDirection =
+        alignment == NSTextAlignmentLeft ? UITextWritingDirectionLeftToRight
+                                         : UITextWritingDirectionRightToLeft;
+    [self
+        setBaseWritingDirection:writingDirection
+                       forRange:
+                           [self
+                               textRangeFromPosition:[self beginningOfDocument]
+                                          toPosition:[self endOfDocument]]];
+  }
 }
 
 - (void)setPlaceholder:(NSString*)placeholder {
@@ -594,16 +578,6 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
 
   NSUInteger autocompleteLength = [text length] - userTextLength;
   [self setTextInternal:text autocompleteLength:autocompleteLength];
-}
-
-- (void)setChipText:(NSString*)chipName {
-  _chipText = nil;
-  if ([chipName length]) {
-    if ([self bestAlignmentForText:chipName] == NSTextAlignmentLeft)
-      chipName = [chipName stringByAppendingString:@":"];
-    _chipText = [chipName copy];
-  }
-  [self updateLeftView];
 }
 
 - (BOOL)hasAutocompleteText {
@@ -651,13 +625,6 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
 
   LayoutRect textRectLayout =
       LayoutRectForRectInBoundingRect(newBounds, bounds);
-  CGFloat textInset = [self leftViewMode] == UITextFieldViewModeAlways
-                          ? kTextInset
-                          : kTextInsetNoLeftView;
-  // Shift the text right and reduce the width to create empty space between the
-  // left view and the omnibox text.
-  textRectLayout.position.leading += textInset + kTextAreaLeadingOffset;
-  textRectLayout.size.width -= textInset - kTextAreaLeadingOffset;
 
   if (IsIPadIdiom()) {
     if (!IsCompactTablet()) {
@@ -666,10 +633,6 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
       textRectLayout.size.width += self.rightView.bounds.size.width -
                                    kVoiceSearchButtonWidth - kStarButtonWidth;
     }
-  } else if (![self isShowingQueryRefinementChip] && self.leftView.alpha == 0) {
-    CGFloat xDiff = textRectLayout.position.leading - kEditingRectX;
-    textRectLayout.position.leading = kEditingRectX;
-    textRectLayout.size.width += xDiff;
   }
 
   return LayoutRectGetRect(textRectLayout);
@@ -687,20 +650,13 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
 
   LayoutRect editingRectLayout =
       LayoutRectForRectInBoundingRect(newBounds, bounds);
-  editingRectLayout.position.leading += kTextAreaLeadingOffset;
-  editingRectLayout.position.leading +=
-      ([self isShowingQueryRefinementChip]) ? kTextInsetWithChip : kTextInset;
-  editingRectLayout.size.width -= kTextInset + kEditingRectWidthInset;
+  editingRectLayout.size.width -= kEditingRectWidthInset;
   if (IsIPadIdiom()) {
     if (!IsCompactTablet() && !self.rightView) {
       // Normally the clear button shrinks the edit box, but if the rightView
       // isn't set, shrink behind the mic icons.
       editingRectLayout.size.width -= kVoiceSearchButtonWidth;
     }
-  } else if (![self isShowingQueryRefinementChip]) {
-    CGFloat xDiff = editingRectLayout.position.leading - kEditingRectX;
-    editingRectLayout.position.leading = kEditingRectX;
-    editingRectLayout.size.width += xDiff;
   }
   // Don't let the edit rect extend over the clear button.  The right view
   // is hidden during animations, so fake its width here.
@@ -727,6 +683,7 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   // First find how much (if any) of the scheme/host needs to be clipped so that
   // the end of the TLD fits in |rect|. Note that if the omnibox is currently
   // displaying a search query the prefix is not clipped.
+
   CGFloat widthOfClippedPrefix = 0;
   url::Component scheme, host;
   AutocompleteInput::ParseForEmphasizeComponents(
@@ -779,6 +736,13 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
 
 // Enumerate url components (host, path) and draw each one in different rect.
 - (void)drawTextInRect:(CGRect)rect {
+  if (base::ios::IsRunningOnOrLater(11, 1, 0)) {
+    // -[UITextField drawTextInRect:] ignores the argument, so we can't do
+    // anything on 11.1 and up.
+    [super drawTextInRect:rect];
+    return;
+  }
+
   // Save and restore the graphics state because rectForDrawTextInRect may
   // apply an image mask to fade out beginning and/or end of the URL.
   gfx::ScopedCGContextSaveGState saver(UIGraphicsGetCurrentContext());
@@ -790,26 +754,7 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   // will also activate the text field.
   if (point.y < 0)
     point.y = 0;
-  UIView* view = [super hitTest:point withEvent:event];
-
-  // For some reason when the |leftView| has interaction enabled, hitTest
-  // returns the leftView even when |point| is 50 pixels to the right.  Tapping
-  // the hint text will fire the leftView, causing b/6281652. Fails especially
-  // on iPad and iPhone devices in landscape mode.
-  // TODO(crbug.com/546295): Check to see if this UIKit bug is fixed, and remove
-  // this workaround.
-  UIView* leftView = [self leftView];
-  if (leftView) {
-    if (leftView == view && !CGRectContainsPoint([leftView frame], point)) {
-      return self;
-    } else if ([self leftViewMode] == UITextFieldViewModeAlways) {
-      CGRect targetFrame = CGRectInset([leftView frame], -5, -5);
-      if (CGRectContainsPoint(targetFrame, point)) {
-        return leftView;
-      }
-    }
-  }
-  return view;
+  return [super hitTest:point withEvent:event];
 }
 
 - (BOOL)isTextFieldLTR {
@@ -869,14 +814,6 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
 }
 
 - (CGRect)layoutLeftViewForBounds:(CGRect)bounds {
-  if ([self leftView]) {
-    CGSize imageSize = [[self leftView] bounds].size;
-    LayoutRect leftViewLayout =
-        LayoutRectMake(kImageInset, CGRectGetWidth(bounds),
-                       floor((bounds.size.height - imageSize.height) / 2.0),
-                       imageSize.width, imageSize.height);
-    return LayoutRectGetRect(leftViewLayout);
-  }
   return CGRectZero;
 }
 
@@ -918,29 +855,9 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   return layers;
 }
 
-- (void)reverseFadeAnimations {
-  ReverseAnimationsForKeyForLayers(kOmniboxFadeAnimationKey,
-                                   [self fadeAnimationLayers]);
-}
-
 - (void)cleanUpFadeAnimations {
   RemoveAnimationForKeyFromLayers(kOmniboxFadeAnimationKey,
                                   [self fadeAnimationLayers]);
-}
-
-#pragma mark - Placeholder image handling methods.
-
-- (void)setPlaceholderImage:(int)imageId {
-  _leftViewImageId = imageId;
-  [self updateLeftView];
-}
-
-- (void)showPlaceholderImage {
-  [self setLeftViewMode:UITextFieldViewModeAlways];
-}
-
-- (void)hidePlaceholderImage {
-  [self setLeftViewMode:UITextFieldViewModeNever];
 }
 
 #pragma mark - Copy/Paste
@@ -980,51 +897,7 @@ NSString* const kOmniboxFadeAnimationKey = @"OmniboxFadeAnimation";
   return NSMakeRange(start, length);
 }
 
-- (BOOL)becomeFirstResponder {
-  if (![super becomeFirstResponder])
-    return NO;
-
-  if (!_copyUrlMenuItem) {
-    NSString* const kTitle = l10n_util::GetNSString(IDS_IOS_COPY_URL);
-    _copyUrlMenuItem =
-        [[UIMenuItem alloc] initWithTitle:kTitle action:@selector(copyUrl:)];
-  }
-
-  // Add the "Copy URL" menu item to the |sharedMenuController| if necessary.
-  UIMenuController* menuController = [UIMenuController sharedMenuController];
-  if (menuController.menuItems) {
-    if (![menuController.menuItems containsObject:_copyUrlMenuItem]) {
-      menuController.menuItems =
-          [menuController.menuItems arrayByAddingObject:_copyUrlMenuItem];
-    }
-  } else {
-    menuController.menuItems = [NSArray arrayWithObject:_copyUrlMenuItem];
-  }
-  return YES;
-}
-
-- (BOOL)resignFirstResponder {
-  if (![super resignFirstResponder])
-    return NO;
-
-  // Remove the "Copy URL" menu item from the |sharedMenuController|.
-  UIMenuController* menuController = [UIMenuController sharedMenuController];
-  NSMutableArray* menuItems =
-      [NSMutableArray arrayWithArray:menuController.menuItems];
-  [menuItems removeObject:_copyUrlMenuItem];
-  menuController.menuItems = menuItems;
-  return YES;
-}
-
-- (void)copyUrl:(id)sender {
-  [[self delegate] onCopyURL];
-}
-
 - (BOOL)canPerformAction:(SEL)action withSender:(id)sender {
-  if (action == @selector(copyUrl:)) {
-    return [[self delegate] canCopyURL];
-  }
-
   // Disable the "Define" menu item.  iOS7 implements this with a private
   // selector.  Avoid using private APIs by instead doing a string comparison.
   if ([NSStringFromSelector(action) hasSuffix:@"define:"]) {

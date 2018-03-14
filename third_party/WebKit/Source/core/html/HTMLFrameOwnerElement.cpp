@@ -24,40 +24,33 @@
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/dom/AXObjectCache.h"
 #include "core/dom/ExceptionCode.h"
-#include "core/events/Event.h"
-#include "core/frame/FrameView.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
-#include "core/layout/LayoutPart.h"
-#include "core/layout/api/LayoutPartItem.h"
+#include "core/frame/LocalFrameView.h"
+#include "core/frame/RemoteFrameView.h"
+#include "core/layout/LayoutEmbeddedContent.h"
+#include "core/layout/api/LayoutEmbeddedContentItem.h"
+#include "core/loader/DocumentLoader.h"
 #include "core/loader/FrameLoadRequest.h"
 #include "core/loader/FrameLoader.h"
 #include "core/page/Page.h"
 #include "core/plugins/PluginView.h"
+#include "platform/heap/HeapAllocator.h"
 #include "platform/weborigin/SecurityOrigin.h"
+#include "public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
 
 namespace blink {
 
-typedef HeapHashMap<Member<FrameViewBase>, Member<FrameView>>
-    FrameViewBaseToParentMap;
-static FrameViewBaseToParentMap& WidgetNewParentMap() {
-  DEFINE_STATIC_LOCAL(FrameViewBaseToParentMap, map,
-                      (new FrameViewBaseToParentMap));
-  return map;
-}
+namespace {
 
-using FrameViewBaseSet = HeapHashSet<Member<FrameViewBase>>;
-static FrameViewBaseSet& WidgetsPendingTemporaryRemovalFromParent() {
-  // FrameViewBases in this set will not leak because it will be cleared in
-  // HTMLFrameOwnerElement::UpdateSuspendScope::performDeferredWidgetTreeOperations.
-  DEFINE_STATIC_LOCAL(FrameViewBaseSet, set, (new FrameViewBaseSet));
+using PluginSet = PersistentHeapHashSet<Member<PluginView>>;
+PluginSet& PluginsPendingDispose() {
+  DEFINE_STATIC_LOCAL(PluginSet, set, ());
   return set;
 }
 
-static FrameViewBaseSet& WidgetsPendingDispose() {
-  DEFINE_STATIC_LOCAL(FrameViewBaseSet, set, (new FrameViewBaseSet));
-  return set;
-}
+}  // namespace
 
 SubframeLoadingDisabler::SubtreeRootSet&
 SubframeLoadingDisabler::DisabledSubtreeRoots() {
@@ -65,92 +58,35 @@ SubframeLoadingDisabler::DisabledSubtreeRoots() {
   return nodes;
 }
 
-static unsigned g_update_suspend_count = 0;
+// static
+int HTMLFrameOwnerElement::PluginDisposeSuspendScope::suspend_count_ = 0;
 
-HTMLFrameOwnerElement::UpdateSuspendScope::UpdateSuspendScope() {
-  ++g_update_suspend_count;
-}
+void HTMLFrameOwnerElement::PluginDisposeSuspendScope::
+    PerformDeferredPluginDispose() {
+  DCHECK_EQ(suspend_count_, 1);
+  suspend_count_ = 0;
 
-void HTMLFrameOwnerElement::UpdateSuspendScope::
-    PerformDeferredWidgetTreeOperations() {
-  FrameViewBaseToParentMap map;
-  WidgetNewParentMap().Swap(map);
-  for (const auto& frame_view_base : map) {
-    FrameViewBase* child = frame_view_base.key.Get();
-    FrameView* current_parent = ToFrameView(child->Parent());
-    FrameView* new_parent = frame_view_base.value;
-    if (new_parent != current_parent) {
-      if (current_parent)
-        current_parent->RemoveChild(child);
-      if (new_parent)
-        new_parent->AddChild(child);
-      if (current_parent && !new_parent)
-        child->Dispose();
-    }
+  PluginSet dispose_set;
+  PluginsPendingDispose().swap(dispose_set);
+  for (const auto& plugin : dispose_set) {
+    plugin->Dispose();
   }
-
-  {
-    FrameViewBaseSet set;
-    WidgetsPendingTemporaryRemovalFromParent().Swap(set);
-    for (const auto& frame_view_base : set) {
-      FrameView* current_parent = ToFrameView(frame_view_base->Parent());
-      if (current_parent)
-        current_parent->RemoveChild(frame_view_base.Get());
-    }
-  }
-
-  {
-    FrameViewBaseSet set;
-    WidgetsPendingDispose().Swap(set);
-    for (const auto& frame_view_base : set) {
-      frame_view_base->Dispose();
-    }
-  }
-}
-
-HTMLFrameOwnerElement::UpdateSuspendScope::~UpdateSuspendScope() {
-  DCHECK_GT(g_update_suspend_count, 0u);
-  if (g_update_suspend_count == 1)
-    PerformDeferredWidgetTreeOperations();
-  --g_update_suspend_count;
-}
-
-// Unlike moveWidgetToParentSoon, this will not call dispose the Widget.
-void TemporarilyRemoveWidgetFromParentSoon(FrameViewBase* frame_view_base) {
-  if (g_update_suspend_count) {
-    WidgetsPendingTemporaryRemovalFromParent().insert(frame_view_base);
-  } else {
-    if (ToFrameView(frame_view_base->Parent()))
-      ToFrameView(frame_view_base->Parent())->RemoveChild(frame_view_base);
-  }
-}
-
-void MoveWidgetToParentSoon(FrameViewBase* child, FrameView* parent) {
-  if (!g_update_suspend_count) {
-    if (parent) {
-      parent->AddChild(child);
-    } else if (ToFrameView(child->Parent())) {
-      ToFrameView(child->Parent())->RemoveChild(child);
-      child->Dispose();
-    }
-    return;
-  }
-  WidgetNewParentMap().Set(child, parent);
 }
 
 HTMLFrameOwnerElement::HTMLFrameOwnerElement(const QualifiedName& tag_name,
                                              Document& document)
     : HTMLElement(tag_name, document),
       content_frame_(nullptr),
-      widget_(nullptr),
-      sandbox_flags_(kSandboxNone) {}
+      embedded_content_view_(nullptr),
+      sandbox_flags_(kSandboxNone),
+      did_load_non_empty_document_(false) {}
 
-LayoutPart* HTMLFrameOwnerElement::GetLayoutPart() const {
+LayoutEmbeddedContent* HTMLFrameOwnerElement::GetLayoutEmbeddedContent() const {
   // HTMLObjectElement and HTMLEmbedElement may return arbitrary layoutObjects
   // when using fallback content.
-  if (!GetLayoutObject() || !GetLayoutObject()->IsLayoutPart())
+  if (!GetLayoutObject() || !GetLayoutObject()->IsLayoutEmbeddedContent())
     return nullptr;
-  return ToLayoutPart(GetLayoutObject());
+  return ToLayoutEmbeddedContent(GetLayoutObject());
 }
 
 void HTMLFrameOwnerElement::SetContentFrame(Frame& frame) {
@@ -177,13 +113,29 @@ void HTMLFrameOwnerElement::ClearContentFrame() {
 }
 
 void HTMLFrameOwnerElement::DisconnectContentFrame() {
+  if (!ContentFrame())
+    return;
+
+  // Removing a subframe that was still loading can impact the result of
+  // AllDescendantsAreComplete that is consulted by Document::ShouldComplete.
+  // Therefore we might need to re-check this after removing the subframe.  The
+  // re-check is not needed for local frames (which will handle re-checking from
+  // FrameLoader::DidFinishNavigation that responds to LocalFrame::Detach).
+  // OTOH, re-checking is required for OOPIFs - see https://crbug.com/779433.
+  Document& parent_doc = GetDocument();
+  bool have_to_check_if_parent_is_completed = !parent_doc.IsLoadCompleted() &&
+                                              ContentFrame()->IsRemoteFrame() &&
+                                              ContentFrame()->IsLoading();
+
   // FIXME: Currently we don't do this in removedFrom because this causes an
   // unload event in the subframe which could execute script that could then
   // reach up into this document and then attempt to look back down. We should
   // see if this behavior is really needed as Gecko does not allow this.
-  if (Frame* frame = ContentFrame()) {
-    frame->Detach(FrameDetachType::kRemove);
-  }
+  ContentFrame()->Detach(FrameDetachType::kRemove);
+
+  // Check if removing the subframe caused |parent_doc| to finish loading.
+  if (have_to_check_if_parent_is_completed)
+    parent_doc.CheckCompleted();
 }
 
 HTMLFrameOwnerElement::~HTMLFrameOwnerElement() {
@@ -195,50 +147,64 @@ HTMLFrameOwnerElement::~HTMLFrameOwnerElement() {
 Document* HTMLFrameOwnerElement::contentDocument() const {
   return (content_frame_ && content_frame_->IsLocalFrame())
              ? ToLocalFrame(content_frame_)->GetDocument()
-             : 0;
+             : nullptr;
 }
 
 DOMWindow* HTMLFrameOwnerElement::contentWindow() const {
-  return content_frame_ ? content_frame_->DomWindow() : 0;
+  return content_frame_ ? content_frame_->DomWindow() : nullptr;
 }
 
 void HTMLFrameOwnerElement::SetSandboxFlags(SandboxFlags flags) {
   sandbox_flags_ = flags;
-  // Don't notify about updates if contentFrame() is null, for example when
+  // Recalculate the container policy in case the allow-same-origin flag has
+  // changed.
+  container_policy_ = ConstructContainerPolicy(nullptr, nullptr);
+
+  // Don't notify about updates if ContentFrame() is null, for example when
   // the subframe hasn't been created yet.
-  if (ContentFrame())
-    GetDocument().GetFrame()->Loader().Client()->DidChangeSandboxFlags(
-        ContentFrame(), flags);
+  if (ContentFrame()) {
+    GetDocument().GetFrame()->Client()->DidChangeFramePolicy(
+        ContentFrame(), sandbox_flags_, container_policy_);
+  }
 }
 
 bool HTMLFrameOwnerElement::IsKeyboardFocusable() const {
   return content_frame_ && HTMLElement::IsKeyboardFocusable();
 }
 
-void HTMLFrameOwnerElement::DisposeWidgetSoon(FrameViewBase* frame_view_base) {
-  if (g_update_suspend_count) {
-    WidgetsPendingDispose().insert(frame_view_base);
-    return;
+void HTMLFrameOwnerElement::DisposePluginSoon(PluginView* plugin) {
+  if (PluginDisposeSuspendScope::suspend_count_) {
+    PluginsPendingDispose().insert(plugin);
+    PluginDisposeSuspendScope::suspend_count_ |= 1;
+  } else
+    plugin->Dispose();
+}
+
+void HTMLFrameOwnerElement::UpdateContainerPolicy(Vector<String>* messages,
+                                                  bool* old_syntax) {
+  container_policy_ = ConstructContainerPolicy(messages, old_syntax);
+  // Don't notify about updates if ContentFrame() is null, for example when
+  // the subframe hasn't been created yet.
+  if (ContentFrame()) {
+    GetDocument().GetFrame()->Client()->DidChangeFramePolicy(
+        ContentFrame(), sandbox_flags_, container_policy_);
   }
-  frame_view_base->Dispose();
 }
 
 void HTMLFrameOwnerElement::FrameOwnerPropertiesChanged() {
-  // Don't notify about updates if contentFrame() is null, for example when
+  // Don't notify about updates if ContentFrame() is null, for example when
   // the subframe hasn't been created yet.
-  if (ContentFrame())
-    GetDocument().GetFrame()->Loader().Client()->DidChangeFrameOwnerProperties(
-        this);
+  if (ContentFrame()) {
+    GetDocument().GetFrame()->Client()->DidChangeFrameOwnerProperties(this);
+  }
 }
 
 void HTMLFrameOwnerElement::DispatchLoad() {
   DispatchScopedEvent(Event::Create(EventTypeNames::load));
 }
 
-const WebVector<WebFeaturePolicyFeature>&
-HTMLFrameOwnerElement::AllowedFeatures() const {
-  DEFINE_STATIC_LOCAL(WebVector<WebFeaturePolicyFeature>, features, ());
-  return features;
+const ParsedFeaturePolicy& HTMLFrameOwnerElement::ContainerPolicy() const {
+  return container_policy_;
 }
 
 Document* HTMLFrameOwnerElement::getSVGDocument(
@@ -249,76 +215,83 @@ Document* HTMLFrameOwnerElement::getSVGDocument(
   return nullptr;
 }
 
-void HTMLFrameOwnerElement::SetWidget(FrameViewBase* frame_view_base) {
-  if (frame_view_base == widget_)
+void HTMLFrameOwnerElement::SetEmbeddedContentView(
+    EmbeddedContentView* embedded_content_view) {
+  if (embedded_content_view == embedded_content_view_)
     return;
 
   Document* doc = contentDocument();
   if (doc && doc->GetFrame()) {
-    bool will_be_display_none = !frame_view_base;
+    bool will_be_display_none = !embedded_content_view;
     if (IsDisplayNone() != will_be_display_none) {
       doc->WillChangeFrameOwnerProperties(
           MarginWidth(), MarginHeight(), ScrollingMode(), will_be_display_none);
     }
   }
 
-  if (widget_) {
-    if (widget_->Parent())
-      MoveWidgetToParentSoon(widget_.Get(), 0);
-    widget_ = nullptr;
+  if (embedded_content_view_) {
+    if (embedded_content_view_->IsAttached()) {
+      embedded_content_view_->DetachFromLayout();
+      if (embedded_content_view_->IsPluginView())
+        DisposePluginSoon(ToPluginView(embedded_content_view_));
+      else
+        embedded_content_view_->Dispose();
+    }
   }
 
-  widget_ = frame_view_base;
+  embedded_content_view_ = embedded_content_view;
   FrameOwnerPropertiesChanged();
 
-  LayoutPart* layout_part = ToLayoutPart(GetLayoutObject());
-  LayoutPartItem layout_part_item = LayoutPartItem(layout_part);
-  if (layout_part_item.IsNull())
+  LayoutEmbeddedContent* layout_embedded_content =
+      ToLayoutEmbeddedContent(GetLayoutObject());
+  LayoutEmbeddedContentItem layout_embedded_content_item =
+      LayoutEmbeddedContentItem(layout_embedded_content);
+  if (layout_embedded_content_item.IsNull())
     return;
 
-  if (widget_) {
-    layout_part_item.UpdateOnWidgetChange();
+  if (embedded_content_view_) {
+    // TODO(crbug.com/729196): Trace why LocalFrameView::DetachFromLayout
+    // crashes.  Perhaps view is getting reattached while document is shutting
+    // down.
+    if (doc) {
+      CHECK_NE(doc->Lifecycle().GetState(), DocumentLifecycle::kStopping);
+    }
+    layout_embedded_content_item.UpdateOnEmbeddedContentViewChange();
 
-    DCHECK_EQ(GetDocument().View(), layout_part_item.GetFrameView());
-    DCHECK(layout_part_item.GetFrameView());
-    MoveWidgetToParentSoon(widget_.Get(), layout_part_item.GetFrameView());
+    DCHECK_EQ(GetDocument().View(),
+              layout_embedded_content_item.GetFrameView());
+    DCHECK(layout_embedded_content_item.GetFrameView());
+    embedded_content_view_->AttachToLayout();
   }
 
   if (AXObjectCache* cache = GetDocument().ExistingAXObjectCache())
-    cache->ChildrenChanged(layout_part);
+    cache->ChildrenChanged(layout_embedded_content);
 }
 
-FrameViewBase* HTMLFrameOwnerElement::ReleaseWidget() {
-  if (!widget_)
+EmbeddedContentView* HTMLFrameOwnerElement::ReleaseEmbeddedContentView() {
+  if (!embedded_content_view_)
     return nullptr;
-  if (widget_->Parent())
-    TemporarilyRemoveWidgetFromParentSoon(widget_.Get());
-  LayoutPart* layout_part = ToLayoutPart(GetLayoutObject());
-  if (layout_part) {
+  if (embedded_content_view_->IsAttached())
+    embedded_content_view_->DetachFromLayout();
+  LayoutEmbeddedContent* layout_embedded_content =
+      ToLayoutEmbeddedContent(GetLayoutObject());
+  if (layout_embedded_content) {
     if (AXObjectCache* cache = GetDocument().ExistingAXObjectCache())
-      cache->ChildrenChanged(layout_part);
+      cache->ChildrenChanged(layout_embedded_content);
   }
-  return widget_.Release();
-}
-
-FrameViewBase* HTMLFrameOwnerElement::OwnedWidget() const {
-  return widget_.Get();
+  return embedded_content_view_.Release();
 }
 
 bool HTMLFrameOwnerElement::LoadOrRedirectSubframe(
     const KURL& url,
     const AtomicString& frame_name,
     bool replace_current_item) {
-  LocalFrame* parent_frame = GetDocument().GetFrame();
+  UpdateContainerPolicy();
+
   if (ContentFrame()) {
     ContentFrame()->Navigate(GetDocument(), url, replace_current_item,
                              UserGestureStatus::kNone);
     return true;
-  }
-
-  if (!GetDocument().GetSecurityOrigin()->CanDisplay(url)) {
-    FrameLoader::ReportLocalLoadFailed(parent_frame, url.GetString());
-    return false;
   }
 
   if (!SubframeLoadingDisabler::CanLoadFrame(*this))
@@ -328,22 +301,35 @@ bool HTMLFrameOwnerElement::LoadOrRedirectSubframe(
       Page::kMaxNumberOfFrames)
     return false;
 
-  FrameLoadRequest frame_load_request(&GetDocument(), url, "_self",
-                                      kCheckContentSecurityPolicy);
+  LocalFrame* child_frame =
+      GetDocument().GetFrame()->Client()->CreateFrame(frame_name, this);
+  DCHECK_EQ(ContentFrame(), child_frame);
+  if (!child_frame)
+    return false;
 
+  ResourceRequest request(url);
   ReferrerPolicy policy = ReferrerPolicyAttribute();
-  if (policy != kReferrerPolicyDefault)
-    frame_load_request.GetResourceRequest().SetHTTPReferrer(
-        SecurityPolicy::GenerateReferrer(policy, url,
-                                         GetDocument().OutgoingReferrer()));
+  if (policy != kReferrerPolicyDefault) {
+    request.SetHTTPReferrer(SecurityPolicy::GenerateReferrer(
+        policy, url, GetDocument().OutgoingReferrer()));
+  }
 
-  return parent_frame->Loader().Client()->CreateFrame(frame_load_request,
-                                                      frame_name, this);
+  FrameLoadType child_load_type = kFrameLoadTypeInitialInChildFrame;
+  if (!GetDocument().LoadEventFinished() &&
+      GetDocument().Loader()->LoadType() ==
+          kFrameLoadTypeReloadBypassingCache) {
+    child_load_type = kFrameLoadTypeReloadBypassingCache;
+    request.SetCacheMode(mojom::FetchCacheMode::kBypassCache);
+  }
+
+  child_frame->Loader().Load(FrameLoadRequest(&GetDocument(), request),
+                             child_load_type);
+  return true;
 }
 
-DEFINE_TRACE(HTMLFrameOwnerElement) {
+void HTMLFrameOwnerElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(content_frame_);
-  visitor->Trace(widget_);
+  visitor->Trace(embedded_content_view_);
   HTMLElement::Trace(visitor);
   FrameOwner::Trace(visitor);
 }

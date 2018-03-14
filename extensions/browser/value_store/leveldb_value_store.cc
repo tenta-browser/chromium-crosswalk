@@ -18,16 +18,15 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/threading/sequenced_task_runner_handle.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/process_memory_dump.h"
-#include "content/public/browser/browser_thread.h"
 #include "third_party/leveldatabase/env_chromium.h"
 #include "third_party/leveldatabase/src/include/leveldb/iterator.h"
 #include "third_party/leveldatabase/src/include/leveldb/write_batch.h"
 
 using base::StringPiece;
-using content::BrowserThread;
 
 namespace {
 
@@ -39,12 +38,14 @@ const char kCannotSerialize[] = "Cannot serialize value to JSON";
 LeveldbValueStore::LeveldbValueStore(const std::string& uma_client_name,
                                      const base::FilePath& db_path)
     : LazyLevelDb(uma_client_name, db_path) {
-  base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
-      this, "LeveldbValueStore", base::ThreadTaskRunnerHandle::Get());
+  base::trace_event::MemoryDumpManager::GetInstance()
+      ->RegisterDumpProviderWithSequencedTaskRunner(
+          this, "LeveldbValueStore", base::SequencedTaskRunnerHandle::Get(),
+          base::trace_event::MemoryDumpProvider::Options());
 }
 
 LeveldbValueStore::~LeveldbValueStore() {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::AssertBlockingAllowed();
   base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
       this);
 }
@@ -74,11 +75,11 @@ ValueStore::ReadResult LeveldbValueStore::Get(const std::string& key) {
 
 ValueStore::ReadResult LeveldbValueStore::Get(
     const std::vector<std::string>& keys) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::AssertBlockingAllowed();
 
   Status status = EnsureDbIsOpen();
   if (!status.ok())
-    return MakeReadResult(status);
+    return ReadResult(std::move(status));
 
   std::unique_ptr<base::DictionaryValue> settings(new base::DictionaryValue());
 
@@ -86,20 +87,20 @@ ValueStore::ReadResult LeveldbValueStore::Get(
     std::unique_ptr<base::Value> setting;
     status.Merge(Read(key, &setting));
     if (!status.ok())
-      return MakeReadResult(status);
+      return ReadResult(std::move(status));
     if (setting)
       settings->SetWithoutPathExpansion(key, std::move(setting));
   }
 
-  return MakeReadResult(std::move(settings), status);
+  return ReadResult(std::move(settings), std::move(status));
 }
 
 ValueStore::ReadResult LeveldbValueStore::Get() {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::AssertBlockingAllowed();
 
   Status status = EnsureDbIsOpen();
   if (!status.ok())
-    return MakeReadResult(status);
+    return ReadResult(std::move(status));
 
   base::JSONReader json_reader;
   std::unique_ptr<base::DictionaryValue> settings(new base::DictionaryValue());
@@ -110,50 +111,50 @@ ValueStore::ReadResult LeveldbValueStore::Get() {
     std::unique_ptr<base::Value> value =
         json_reader.Read(StringPiece(it->value().data(), it->value().size()));
     if (!value) {
-      return MakeReadResult(
-          Status(CORRUPTION, Delete(key).ok() ? VALUE_RESTORE_DELETE_SUCCESS
-                                              : VALUE_RESTORE_DELETE_FAILURE,
-                 kInvalidJson));
+      return ReadResult(Status(CORRUPTION,
+                               Delete(key).ok() ? VALUE_RESTORE_DELETE_SUCCESS
+                                                : VALUE_RESTORE_DELETE_FAILURE,
+                               kInvalidJson));
     }
     settings->SetWithoutPathExpansion(key, std::move(value));
   }
 
   if (!it->status().ok()) {
     status.Merge(ToValueStoreError(it->status()));
-    return MakeReadResult(status);
+    return ReadResult(std::move(status));
   }
 
-  return MakeReadResult(std::move(settings), status);
+  return ReadResult(std::move(settings), std::move(status));
 }
 
 ValueStore::WriteResult LeveldbValueStore::Set(WriteOptions options,
                                                const std::string& key,
                                                const base::Value& value) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::AssertBlockingAllowed();
 
   Status status = EnsureDbIsOpen();
   if (!status.ok())
-    return MakeWriteResult(status);
+    return WriteResult(std::move(status));
 
   leveldb::WriteBatch batch;
   std::unique_ptr<ValueStoreChangeList> changes(new ValueStoreChangeList());
   status.Merge(AddToBatch(options, key, value, &batch, changes.get()));
   if (!status.ok())
-    return MakeWriteResult(status);
+    return WriteResult(std::move(status));
 
   status.Merge(WriteToDb(&batch));
-  return status.ok() ? MakeWriteResult(std::move(changes), status)
-                     : MakeWriteResult(status);
+  return status.ok() ? WriteResult(std::move(changes), std::move(status))
+                     : WriteResult(std::move(status));
 }
 
 ValueStore::WriteResult LeveldbValueStore::Set(
     WriteOptions options,
     const base::DictionaryValue& settings) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::AssertBlockingAllowed();
 
   Status status = EnsureDbIsOpen();
   if (!status.ok())
-    return MakeWriteResult(status);
+    return WriteResult(std::move(status));
 
   leveldb::WriteBatch batch;
   std::unique_ptr<ValueStoreChangeList> changes(new ValueStoreChangeList());
@@ -163,26 +164,26 @@ ValueStore::WriteResult LeveldbValueStore::Set(
     status.Merge(
         AddToBatch(options, it.key(), it.value(), &batch, changes.get()));
     if (!status.ok())
-      return MakeWriteResult(status);
+      return WriteResult(std::move(status));
   }
 
   status.Merge(WriteToDb(&batch));
-  return status.ok() ? MakeWriteResult(std::move(changes), status)
-                     : MakeWriteResult(status);
+  return status.ok() ? WriteResult(std::move(changes), std::move(status))
+                     : WriteResult(std::move(status));
 }
 
 ValueStore::WriteResult LeveldbValueStore::Remove(const std::string& key) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::AssertBlockingAllowed();
   return Remove(std::vector<std::string>(1, key));
 }
 
 ValueStore::WriteResult LeveldbValueStore::Remove(
     const std::vector<std::string>& keys) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::AssertBlockingAllowed();
 
   Status status = EnsureDbIsOpen();
   if (!status.ok())
-    return MakeWriteResult(status);
+    return WriteResult(std::move(status));
 
   leveldb::WriteBatch batch;
   std::unique_ptr<ValueStoreChangeList> changes(new ValueStoreChangeList());
@@ -191,7 +192,7 @@ ValueStore::WriteResult LeveldbValueStore::Remove(
     std::unique_ptr<base::Value> old_value;
     status.Merge(Read(key, &old_value));
     if (!status.ok())
-      return MakeWriteResult(status);
+      return WriteResult(std::move(status));
 
     if (old_value) {
       changes->push_back(ValueStoreChange(key, std::move(old_value), nullptr));
@@ -202,21 +203,21 @@ ValueStore::WriteResult LeveldbValueStore::Remove(
   leveldb::Status ldb_status = db()->Write(leveldb::WriteOptions(), &batch);
   if (!ldb_status.ok() && !ldb_status.IsNotFound()) {
     status.Merge(ToValueStoreError(ldb_status));
-    return MakeWriteResult(status);
+    return WriteResult(std::move(status));
   }
-  return MakeWriteResult(std::move(changes), status);
+  return WriteResult(std::move(changes), std::move(status));
 }
 
 ValueStore::WriteResult LeveldbValueStore::Clear() {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::AssertBlockingAllowed();
 
   std::unique_ptr<ValueStoreChangeList> changes(new ValueStoreChangeList());
 
   ReadResult read_result = Get();
-  if (!read_result->status().ok())
-    return MakeWriteResult(read_result->status());
+  if (!read_result.status().ok())
+    return WriteResult(read_result.PassStatus());
 
-  base::DictionaryValue& whole_db = read_result->settings();
+  base::DictionaryValue& whole_db = read_result.settings();
   while (!whole_db.empty()) {
     std::string next_key = base::DictionaryValue::Iterator(whole_db).key();
     std::unique_ptr<base::Value> next_value;
@@ -226,7 +227,7 @@ ValueStore::WriteResult LeveldbValueStore::Clear() {
   }
 
   DeleteDbFile();
-  return MakeWriteResult(std::move(changes), read_result->status());
+  return WriteResult(std::move(changes), read_result.PassStatus());
 }
 
 bool LeveldbValueStore::WriteToDbForTest(leveldb::WriteBatch* batch) {
@@ -239,31 +240,26 @@ bool LeveldbValueStore::WriteToDbForTest(leveldb::WriteBatch* batch) {
 bool LeveldbValueStore::OnMemoryDump(
     const base::trace_event::MemoryDumpArgs& args,
     base::trace_event::ProcessMemoryDump* pmd) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::AssertBlockingAllowed();
 
   // Return true so that the provider is not disabled.
   if (!db())
     return true;
 
-  std::string value;
-  uint64_t size;
-  bool res = db()->GetProperty("leveldb.approximate-memory-usage", &value);
-  DCHECK(res);
-  res = base::StringToUint64(value, &size);
-  DCHECK(res);
+  // All leveldb databases are already dumped by leveldb_env::DBTracker. Add
+  // an edge to the existing dump.
+  auto* tracker_dump =
+      leveldb_env::DBTracker::GetOrCreateAllocatorDump(pmd, db());
+  if (!tracker_dump)
+    return true;
 
   auto* dump = pmd->CreateAllocatorDump(base::StringPrintf(
-      "leveldb/value_store/%s/0x%" PRIXPTR, open_histogram_name().c_str(),
+      "extensions/value_store/%s/0x%" PRIXPTR, open_histogram_name(),
       reinterpret_cast<uintptr_t>(this)));
   dump->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
-                  base::trace_event::MemoryAllocatorDump::kUnitsBytes, size);
-
-  // Memory is allocated from system allocator (malloc).
-  const char* system_allocator_name =
-      base::trace_event::MemoryDumpManager::GetInstance()
-          ->system_allocator_pool_name();
-  if (system_allocator_name)
-    pmd->AddSuballocation(dump->guid(), system_allocator_name);
+                  base::trace_event::MemoryAllocatorDump::kUnitsBytes,
+                  tracker_dump->GetSizeInternal());
+  pmd->AddOwnershipEdge(dump->guid(), tracker_dump->guid());
 
   return true;
 }

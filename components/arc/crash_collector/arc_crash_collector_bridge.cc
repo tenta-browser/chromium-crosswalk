@@ -10,8 +10,12 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/memory/singleton.h"
 #include "base/process/launch.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/task_scheduler/task_traits.h"
 #include "components/arc/arc_bridge_service.h"
+#include "components/arc/arc_browser_context_keyed_service_factory_base.h"
 #include "mojo/edk/embedder/embedder.h"
 
 namespace {
@@ -24,11 +28,9 @@ void RunCrashReporter(const std::string& crash_type,
                       const std::string& board,
                       const std::string& cpu_abi,
                       mojo::edk::ScopedPlatformHandle pipe) {
-  base::FileHandleMappingVector fd_map = {
-      std::make_pair(pipe.get().handle, STDIN_FILENO)};
-
   base::LaunchOptions options;
-  options.fds_to_remap = &fd_map;
+  options.fds_to_remap.push_back(
+      std::make_pair(pipe.get().handle, STDIN_FILENO));
 
   auto process =
       base::LaunchProcess({kCrashReporterPath, "--arc_java_crash=" + crash_type,
@@ -47,27 +49,44 @@ void RunCrashReporter(const std::string& crash_type,
 }  // namespace
 
 namespace arc {
+namespace {
+
+// Singleton factory for ArcCrashCollectorBridge.
+class ArcCrashCollectorBridgeFactory
+    : public internal::ArcBrowserContextKeyedServiceFactoryBase<
+          ArcCrashCollectorBridge,
+          ArcCrashCollectorBridgeFactory> {
+ public:
+  // Factory name used by ArcBrowserContextKeyedServiceFactoryBase.
+  static constexpr const char* kName = "ArcCrashCollectorBridgeFactory";
+
+  static ArcCrashCollectorBridgeFactory* GetInstance() {
+    return base::Singleton<ArcCrashCollectorBridgeFactory>::get();
+  }
+
+ private:
+  friend base::DefaultSingletonTraits<ArcCrashCollectorBridgeFactory>;
+  ArcCrashCollectorBridgeFactory() = default;
+  ~ArcCrashCollectorBridgeFactory() override = default;
+};
+
+}  // namespace
+
+// static
+ArcCrashCollectorBridge* ArcCrashCollectorBridge::GetForBrowserContext(
+    content::BrowserContext* context) {
+  return ArcCrashCollectorBridgeFactory::GetForBrowserContext(context);
+}
 
 ArcCrashCollectorBridge::ArcCrashCollectorBridge(
-    ArcBridgeService* bridge,
-    scoped_refptr<base::TaskRunner> blocking_task_runner)
-    : ArcService(bridge),
-      blocking_task_runner_(blocking_task_runner),
-      binding_(this) {
-  arc_bridge_service()->crash_collector()->AddObserver(this);
+    content::BrowserContext* context,
+    ArcBridgeService* bridge_service)
+    : arc_bridge_service_(bridge_service) {
+  arc_bridge_service_->crash_collector()->SetHost(this);
 }
 
 ArcCrashCollectorBridge::~ArcCrashCollectorBridge() {
-  arc_bridge_service()->crash_collector()->RemoveObserver(this);
-}
-
-void ArcCrashCollectorBridge::OnInstanceReady() {
-  mojom::CrashCollectorHostPtr host_ptr;
-  binding_.Bind(mojo::MakeRequest(&host_ptr));
-  auto* instance = ARC_GET_INSTANCE_FOR_METHOD(
-      arc_bridge_service()->crash_collector(), Init);
-  DCHECK(instance);
-  instance->Init(std::move(host_ptr));
+  arc_bridge_service_->crash_collector()->SetHost(nullptr);
 }
 
 void ArcCrashCollectorBridge::DumpCrash(const std::string& type,
@@ -75,9 +94,10 @@ void ArcCrashCollectorBridge::DumpCrash(const std::string& type,
   mojo::edk::ScopedPlatformHandle pipe_handle;
   mojo::edk::PassWrappedPlatformHandle(pipe.release().value(), &pipe_handle);
 
-  blocking_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&RunCrashReporter, type, device_, board_, cpu_abi_,
-                            base::Passed(std::move(pipe_handle))));
+  base::PostTaskWithTraits(
+      FROM_HERE, {base::WithBaseSyncPrimitives()},
+      base::BindOnce(&RunCrashReporter, type, device_, board_, cpu_abi_,
+                     base::Passed(std::move(pipe_handle))));
 }
 
 void ArcCrashCollectorBridge::SetBuildProperties(const std::string& device,

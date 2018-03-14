@@ -55,6 +55,26 @@ class SafeBrowsingService;
 // extended reporting preferences.
 class CertificateReportingService : public KeyedService {
  public:
+  // Events for UMA. Do not rename or remove values, add new values to the end.
+  // Public for testing.
+  enum class ReportOutcome {
+    // A report is submitted. This includes failed and successful uploads as
+    // well as uploads that never return a response.
+    SUBMITTED = 0,
+    // A report submission failed, either because of a net error or a non-HTTP
+    // 200 response from the server.
+    FAILED = 1,
+    // A report submission was successfully sent, receiving an HTTP 200 response
+    // from the server.
+    SUCCESSFUL = 2,
+    // A report was dropped from the reporting queue because it was older
+    // than report TTL, or it was ignored because the queue was full and the
+    // report was older than the oldest report in the queue. Does not include
+    // reports that were cleared because of a SafeBrowsing preference change.
+    DROPPED_OR_IGNORED = 3,
+    EVENT_COUNT = 4
+  };
+
   // Represents a report to be sent.
   struct Report {
     int report_id;
@@ -126,7 +146,14 @@ class CertificateReportingService : public KeyedService {
 
    private:
     void SendInternal(const Report& report);
-    void ErrorCallback(int report_id, const GURL& url, int error);
+    // Called when a report upload fails either because of a net error or a
+    // non-HTTP 200 response code. See
+    // TransportSecurityState::ReportSenderInterface for parameters.
+    void ErrorCallback(int report_id,
+                       const GURL& url,
+                       int net_error,
+                       int http_response_code);
+    // Called when a report upload is successful.
     void SuccessCallback(int report_id);
 
     std::unique_ptr<certificate_reporting::ErrorReporter> error_reporter_;
@@ -145,6 +172,9 @@ class CertificateReportingService : public KeyedService {
 
     DISALLOW_COPY_AND_ASSIGN(Reporter);
   };
+
+  // Public for testing.
+  static const char kReportEventHistogram[];
 
   CertificateReportingService(
       safe_browsing::SafeBrowsingService* safe_browsing_service,

@@ -12,6 +12,7 @@
 #include "base/mac/scoped_nsobject.h"
 #import "chrome/browser/ui/cocoa/has_weak_browser_pointer.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_controller_target.h"
+#import "chrome/browser/ui/cocoa/tabs/tab_strip_model_observer_bridge.h"
 #import "chrome/browser/ui/cocoa/url_drop_target.h"
 #include "chrome/browser/ui/tabs/hover_tab_selector.h"
 #include "chrome/browser/ui/tabs/tab_utils.h"
@@ -25,7 +26,6 @@
 @class TabStripView;
 
 class Browser;
-class TabStripModelObserverBridge;
 class TabStripModel;
 
 namespace content {
@@ -36,14 +36,14 @@ class WebContents;
 // Delegating TabStripModelObserverBridge's events (in lieu of directly
 // subscribing to TabStripModelObserverBridge events, as TabStripController
 // does) is necessary to guarantee a proper order of subviews layout updates,
-// otherwise it might trigger unnesessary content relayout, UI flickering etc.
+// otherwise it might trigger unnecessary content relayout, UI flickering etc.
 @protocol TabStripControllerDelegate
 
 // Stripped down version of TabStripModelObserverBridge:selectTabWithContents.
 - (void)onActivateTabWithContents:(content::WebContents*)contents;
 
 // Stripped down version of TabStripModelObserverBridge:tabChangedWithContents.
-- (void)onTabChanged:(TabStripModelObserver::TabChangeType)change
+- (void)onTabChanged:(TabChangeType)change
         withContents:(content::WebContents*)contents;
 
 // Stripped down version of TabStripModelObserverBridge:tabDetachedWithContents.
@@ -51,7 +51,8 @@ class WebContents;
 
 // Stripped down version of
 // TabStripModelObserverBridge:onTabInsertedInForeground.
-- (void)onTabInsertedInForeground:(BOOL)inForeground;
+- (void)onTabInsertedWithContents:(content::WebContents*)contents
+                     inForeground:(BOOL)inForeground;
 
 @end
 
@@ -64,7 +65,8 @@ class WebContents;
 // http://www.chromium.org/developers/design-documents/tab-strip-mac
 @interface TabStripController : NSObject<TabControllerTarget,
                                          URLDropTargetController,
-                                         HasWeakBrowserPointer> {
+                                         HasWeakBrowserPointer,
+                                         TabStripModelBridge> {
  @private
   base::scoped_nsobject<TabStripView> tabStripView_;
   NSView* switchView_;  // weak
@@ -156,6 +158,9 @@ class WebContents;
   // added in fullscreen in 10.10+.
   base::scoped_nsobject<CustomWindowControlsView> customWindowControls_;
   base::scoped_nsobject<CrTrackingArea> customWindowControlsTrackingArea_;
+
+  // The set stores the WebContens that were hiding their throbbers.
+  std::set<content::WebContents*> wasHidingThrobberSet_;
 }
 
 @property(nonatomic) CGFloat leadingIndentForControls;
@@ -259,7 +264,7 @@ class WebContents;
 - (BOOL)inRapidClosureMode;
 
 // Returns YES if the user is allowed to drag tabs on the strip at this moment.
-// For example, this returns NO if there are any pending tab close animtations.
+// For example, this returns NO if there are any pending tab close animations.
 - (BOOL)tabDraggingAllowed;
 
 // Default height for tabs.

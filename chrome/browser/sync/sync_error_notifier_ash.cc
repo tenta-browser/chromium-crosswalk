@@ -4,11 +4,12 @@
 
 #include "chrome/browser/sync/sync_error_notifier_ash.h"
 
-#include "ash/system/system_notifier.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/notifications/notification.h"
+#include "chrome/browser/chromeos/login/user_flow.h"
+#include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
@@ -20,31 +21,26 @@
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/signin/core/account_id/account_id.h"
+#include "components/user_manager/user_manager.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/message_center/notification.h"
 #include "ui/message_center/notification_delegate.h"
-
-#if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/login/user_flow.h"
-#include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
-#include "components/user_manager/user_manager.h"
-#endif
+#include "ui/message_center/public/cpp/message_center_constants.h"
+#include "ui/message_center/public/cpp/message_center_switches.h"
 
 namespace {
 
 const char kProfileSyncNotificationId[] = "chrome://settings/sync/";
 
 // A simple notification delegate for the sync setup button.
-class SyncNotificationDelegate : public NotificationDelegate {
+// TODO(estade): should this use a generic notification delegate?
+class SyncNotificationDelegate : public message_center::NotificationDelegate {
  public:
-  SyncNotificationDelegate(const std::string& id,
-                           Profile* profile);
+  explicit SyncNotificationDelegate(Profile* profile);
 
   // NotificationDelegate:
   void Click() override;
-  void ButtonClick(int button_index) override;
-  std::string id() const override;
 
  protected:
   ~SyncNotificationDelegate() override;
@@ -52,34 +48,19 @@ class SyncNotificationDelegate : public NotificationDelegate {
  private:
   void ShowSyncSetup();
 
-  // Unique id of the notification.
-  const std::string id_;
-
   Profile* profile_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncNotificationDelegate);
 };
 
-SyncNotificationDelegate::SyncNotificationDelegate(
-    const std::string& id,
-    Profile* profile)
-    : id_(id),
-      profile_(profile) {
-}
+SyncNotificationDelegate::SyncNotificationDelegate(Profile* profile)
+    : profile_(profile) {}
 
 SyncNotificationDelegate::~SyncNotificationDelegate() {
 }
 
 void SyncNotificationDelegate::Click() {
   ShowSyncSetup();
-}
-
-void SyncNotificationDelegate::ButtonClick(int button_index) {
-  ShowSyncSetup();
-}
-
-std::string SyncNotificationDelegate::id() const {
-  return id_;
 }
 
 void SyncNotificationDelegate::ShowSyncSetup() {
@@ -137,7 +118,6 @@ void SyncErrorNotifier::OnErrorChanged() {
     return;
   }
 
-#if defined(OS_CHROMEOS)
   if (user_manager::UserManager::IsInitialized()) {
     chromeos::UserFlow* user_flow =
         chromeos::ChromeUserManager::Get()->GetCurrentUserFlow();
@@ -148,7 +128,6 @@ void SyncErrorNotifier::OnErrorChanged() {
     if (!user_flow->ShouldLaunchBrowser())
       return;
   }
-#endif
 
   // Error state just got triggered. There shouldn't be previous notification.
   // Let's display one.
@@ -157,33 +136,35 @@ void SyncErrorNotifier::OnErrorChanged() {
              notification_id_, NotificationUIManager::GetProfileID(profile_)) ==
          nullptr);
 
-  // Add an accept button to launch the sync setup settings subpage.
-  message_center::RichNotificationData data;
-  data.buttons.push_back(message_center::ButtonInfo(
-      l10n_util::GetStringUTF16(IDS_SYNC_NOTIFICATION_ACCEPT)));
-
-  // Set the delegate for the notification's sync setup button.
-  SyncNotificationDelegate* delegate =
-      new SyncNotificationDelegate(notification_id_, profile_);
-
   message_center::NotifierId notifier_id(
-      message_center::NotifierId::SYSTEM_COMPONENT,
-      kProfileSyncNotificationId);
+      message_center::NotifierId::SYSTEM_COMPONENT, kProfileSyncNotificationId);
 
   // Set |profile_id| for multi-user notification blocker.
   notifier_id.profile_id =
       multi_user_util::GetAccountIdFromProfile(profile_).GetUserEmail();
 
   // Add a new notification.
-  Notification notification(
-      message_center::NOTIFICATION_TYPE_SIMPLE,
+  message_center::Notification notification(
+      message_center::NOTIFICATION_TYPE_SIMPLE, notification_id_,
       l10n_util::GetStringUTF16(IDS_SYNC_ERROR_BUBBLE_VIEW_TITLE),
       l10n_util::GetStringUTF16(IDS_SYNC_PASSPHRASE_ERROR_BUBBLE_VIEW_MESSAGE),
-      ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-          IDR_NOTIFICATION_ALERT),
-      notifier_id,
-      base::string16(),  // display_source
-      GURL(notification_id_), notification_id_, data, delegate);
+      message_center::IsNewStyleNotificationEnabled()
+          ? gfx::Image()
+          : ui::ResourceBundle::GetSharedInstance().GetImageNamed(
+                IDR_NOTIFICATION_ALERT),
+      l10n_util::GetStringUTF16(IDS_SIGNIN_ERROR_DISPLAY_SOURCE),
+      GURL(notification_id_), notifier_id,
+      message_center::RichNotificationData(),
+      new SyncNotificationDelegate(profile_));
+  if (message_center::IsNewStyleNotificationEnabled()) {
+    notification.set_accent_color(
+        message_center::kSystemNotificationColorWarning);
+    notification.set_small_image(gfx::Image(gfx::CreateVectorIcon(
+        kNotificationWarningIcon, message_center::kSmallImageSizeMD,
+        message_center::kSystemNotificationColorWarning)));
+    notification.set_vector_small_image(kNotificationWarningIcon);
+  }
+
   notification_ui_manager->Add(notification, profile_);
   notification_displayed_ = true;
 }

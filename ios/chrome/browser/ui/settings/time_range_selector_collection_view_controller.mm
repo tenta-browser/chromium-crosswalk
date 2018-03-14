@@ -4,9 +4,7 @@
 
 #import "ios/chrome/browser/ui/settings/time_range_selector_collection_view_controller.h"
 
-#import "base/ios/weak_nsobject.h"
 #import "base/mac/foundation_util.h"
-#import "base/mac/scoped_nsobject.h"
 #include "components/browsing_data/core/pref_names.h"
 #include "components/prefs/pref_member.h"
 #include "components/prefs/pref_service.h"
@@ -15,6 +13,10 @@
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/third_party/material_components_ios/src/components/CollectionCells/src/MaterialCollectionCells.h"
 #include "ui/base/l10n/l10n_util_mac.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -35,7 +37,8 @@ const int kStringIDS[] = {
     IDS_IOS_CLEAR_BROWSING_DATA_TIME_RANGE_OPTION_PAST_DAY,
     IDS_IOS_CLEAR_BROWSING_DATA_TIME_RANGE_OPTION_PAST_WEEK,
     IDS_IOS_CLEAR_BROWSING_DATA_TIME_RANGE_OPTION_LAST_FOUR_WEEKS,
-    IDS_IOS_CLEAR_BROWSING_DATA_TIME_RANGE_OPTION_BEGINNING_OF_TIME};
+    IDS_IOS_CLEAR_BROWSING_DATA_TIME_RANGE_OPTION_BEGINNING_OF_TIME,
+    IDS_IOS_CLEAR_BROWSING_DATA_TIME_RANGE_OPTION_OLDER_THAN_30_DAYS};
 
 static_assert(
     arraysize(kStringIDS) ==
@@ -47,8 +50,7 @@ static_assert(
 @interface TimeRangeSelectorCollectionViewController () {
   // Instance of the parent view controller needed in order to set the time
   // range for the browsing data deletion.
-  base::WeakNSProtocol<id<TimeRangeSelectorCollectionViewControllerDelegate>>
-      _weakDelegate;
+  __weak id<TimeRangeSelectorCollectionViewControllerDelegate> _weakDelegate;
   IntegerPrefMember timeRangePref_;
 }
 
@@ -66,12 +68,16 @@ static_assert(
 - (instancetype)
 initWithPrefs:(PrefService*)prefs
      delegate:(id<TimeRangeSelectorCollectionViewControllerDelegate>)delegate {
-  self = [super initWithStyle:CollectionViewControllerStyleAppBar];
+  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+  self =
+      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
   if (self) {
-    _weakDelegate.reset(delegate);
+    _weakDelegate = delegate;
     self.title = l10n_util::GetNSString(
         IDS_IOS_CLEAR_BROWSING_DATA_TIME_RANGE_SELECTOR_TITLE);
     timeRangePref_.Init(browsing_data::prefs::kDeleteTimePeriod, prefs);
+    // TODO(crbug.com/764578): -loadModel should not be called from
+    // initializer. A possible fix is to move this call to -viewDidLoad.
     [self loadModel];
     self.shouldHideDoneButton = YES;
   }
@@ -126,8 +132,7 @@ initWithPrefs:(PrefService*)prefs
     }
   }
 
-  [self reconfigureCellsForItems:modifiedItems
-         inSectionWithIdentifier:SectionIdentifierOptions];
+  [self reconfigureCellsForItems:modifiedItems];
 }
 
 - (void)updatePrefValue:(int)prefValue {
@@ -138,7 +143,7 @@ initWithPrefs:(PrefService*)prefs
 - (CollectionViewTextItem*)timeRangeItemWithOption:(ItemType)itemOption
                                      textMessageID:(int)textMessageID {
   CollectionViewTextItem* item =
-      [[[CollectionViewTextItem alloc] initWithType:itemOption] autorelease];
+      [[CollectionViewTextItem alloc] initWithType:itemOption];
   [item setText:l10n_util::GetNSString(textMessageID)];
   [item setAccessibilityTraits:UIAccessibilityTraitButton];
   return item;

@@ -9,6 +9,7 @@
 
 #include <memory>
 
+#include "base/containers/flat_set.h"
 #include "base/memory/ref_counted_memory.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image.h"
@@ -20,17 +21,27 @@ struct FallbackIconStyle;
 
 typedef int64_t FaviconID;
 
-// Defines the icon types. They are also stored in icon_type field of favicons
-// table.
+// Defines the icon types.
+//
+// IMPORTANT: these values must stay in sync with the FaviconType enum in
+// tools/metrics/histograms/enum.xml.
+//
 // The values of the IconTypes are used to select the priority in which favicon
-// data is returned in HistoryBackend and ThumbnailDatabase. Data for the
-// largest IconType takes priority if data for multiple IconTypes is available.
-enum IconType {
-  INVALID_ICON = 0x0,
-  FAVICON = 1 << 0,
-  TOUCH_ICON = 1 << 1,
-  TOUCH_PRECOMPOSED_ICON = 1 << 2
+// data is returned in HistoryBackend and ThumbnailDatabase.
+//
+// A Java counterpart will be generated for this enum.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.favicon
+enum class IconType {
+  kInvalid = 0,
+  kFavicon,
+  kTouchIcon,
+  kTouchPrecomposedIcon,
+  kWebManifestIcon,
+  kMax = kWebManifestIcon,
+  kCount
 };
+
+using IconTypeSet = base::flat_set<IconType>;
 
 // Defines a gfx::Image of size desired_size_in_dip composed of image
 // representations for each of the desired scale factors.
@@ -73,6 +84,11 @@ struct FaviconRawBitmapResult {
 
   // The icon type of the containing favicon.
   IconType icon_type;
+
+  // Indicates whether the bitmap was fetched upon visiting a page. Value
+  // false means that it was fetched on-demand by the UI of chrome, without
+  // visiting the page.
+  bool fetched_because_of_page_visit;
 };
 
 // Define type with same structure as FaviconRawBitmapResult for passing data to
@@ -103,7 +119,8 @@ struct LargeIconResult {
 // Contains either the gfx::Image if the favicon database has a sufficiently
 // large favicon bitmap and the style of the fallback icon otherwise.
 struct LargeIconImageResult {
-  explicit LargeIconImageResult(const gfx::Image& image_in);
+  explicit LargeIconImageResult(const gfx::Image& image_in,
+                                const GURL& icon_url_in);
 
   // Takes ownership of |fallback_icon_style_in|.
   explicit LargeIconImageResult(FallbackIconStyle* fallback_icon_style_in);
@@ -114,9 +131,41 @@ struct LargeIconImageResult {
   // large one.
   gfx::Image image;
 
+  // The URL of the containing favicon. Specified only if |image| is not empty.
+  GURL icon_url;
+
   // The fallback icon style if a sufficiently large icon isn't available. This
   // uses the dominant color of a smaller icon as the background if available.
   std::unique_ptr<FallbackIconStyle> fallback_icon_style;
+};
+
+// Enumeration listing all possible outcomes for fetch attempts from Google
+// favicon server. Used for UMA enum GoogleFaviconServerRequestStatus, so do not
+// change existing values. Insert new values at the end, and update the
+// histogram definition.
+enum class GoogleFaviconServerRequestStatus {
+  // Request sent out and the favicon successfully fetched.
+  SUCCESS = 0,
+  // Request sent out and a connection error occurred (no valid HTTP response
+  // recevied).
+  FAILURE_CONNECTION_ERROR = 1,
+  // Request sent out and a HTTP error received.
+  FAILURE_HTTP_ERROR = 2,
+  // Request not sent out (previous HTTP error in cache).
+  FAILURE_HTTP_ERROR_CACHED = 3,
+  // Request sent out and favicon fetched but writing to database failed.
+  FAILURE_ON_WRITE = 4,
+  // Request not sent out (the request or the fetcher was invalid).
+  DEPRECATED_FAILURE_INVALID = 5,
+  // Request not sent out (the target URL was an IP address or its scheme was
+  // not http(s)).
+  FAILURE_TARGET_URL_SKIPPED = 6,
+  // Request not sent out (the target URL was not valid).
+  FAILURE_TARGET_URL_INVALID = 7,
+  // Request not sent out (the server URL was not valid).
+  FAILURE_SERVER_URL_INVALID = 8,
+  // Insert new values here.
+  COUNT
 };
 
 }  // namespace favicon_base

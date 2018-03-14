@@ -165,7 +165,7 @@ Audits.AuditsPanel = class extends UI.PanelWithSidebar {
   wasShown() {
     super.wasShown();
     if (!this._visibleView)
-      this._auditsItemTreeElement.select();
+      this._auditsItemTreeElement.select(true);
   }
 
   /**
@@ -378,7 +378,7 @@ Audits.AuditRuleResult = class {
    * @return {!Element}
    */
   static linkifyDisplayName(url) {
-    return Components.Linkifier.linkifyURL(url, Bindings.displayNameForURL(url));
+    return Components.Linkifier.linkifyURL(url, {text: Bindings.displayNameForURL(url)});
   }
 
   /**

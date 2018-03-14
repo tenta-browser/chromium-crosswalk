@@ -10,8 +10,11 @@
 #include <climits>
 
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/i18n/break_iterator.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
+#include "base/numerics/ranges.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -19,6 +22,7 @@
 #include "build/build_config.h"
 #include "cc/paint/paint_canvas.h"
 #include "cc/paint/paint_shader.h"
+#include "cc/paint/paint_text_blob.h"
 #include "third_party/icu/source/common/unicode/rbbi.h"
 #include "third_party/icu/source/common/unicode/utf16.h"
 #include "third_party/skia/include/core/SkDrawLooper.h"
@@ -53,29 +57,25 @@ const SkColor kDefaultColor = SK_ColorBLACK;
 // Default color used for drawing selection background.
 const SkColor kDefaultSelectionBackgroundColor = SK_ColorGRAY;
 
-// Fraction of the text size to lower a strike through below the baseline.
-const SkScalar kStrikeThroughOffset = (-SK_Scalar1 * 6 / 21);
+// Fraction of the text size to raise the center of a strike-through line above
+// the baseline.
+const SkScalar kStrikeThroughOffset = (SK_Scalar1 * 65 / 252);
 // Fraction of the text size to lower an underline below the baseline.
 const SkScalar kUnderlineOffset = (SK_Scalar1 / 9);
-// Fraction of the text size to use for a strike through or under-line.
-const SkScalar kLineThickness = (SK_Scalar1 / 18);
-// Fraction of the text size to use for a top margin of a diagonal strike.
-const SkScalar kDiagonalStrikeMarginOffset = (SK_Scalar1 / 4);
+// Default fraction of the text size to use for a strike-through or underline.
+const SkScalar kLineThicknessFactor = (SK_Scalar1 / 18);
 
 // Invalid value of baseline.  Assigning this value to |baseline_| causes
 // re-calculation of baseline.
 const int kInvalidBaseline = INT_MAX;
-
-int round(float value) {
-  return static_cast<int>(floor(value + 0.5f));
-}
 
 // Given |font| and |display_width|, returns the width of the fade gradient.
 int CalculateFadeGradientWidth(const FontList& font_list, int display_width) {
   // Fade in/out about 3 characters of the beginning/end of the string.
   // Use a 1/3 of the display width if the display width is very short.
   const int narrow_width = font_list.GetExpectedTextWidth(3);
-  const int gradient_width = std::min(narrow_width, round(display_width / 3.f));
+  const int gradient_width =
+      std::min(narrow_width, gfx::ToRoundedInt(display_width / 3.f));
   DCHECK_GE(gradient_width, 0);
   return gradient_width;
 }
@@ -105,11 +105,11 @@ void AddFadeEffect(const Rect& text_rect,
 
 // Creates a SkShader to fade the text, with |left_part| specifying the left
 // fade effect, if any, and |right_part| specifying the right fade effect.
-sk_sp<SkShader> CreateFadeShader(const FontList& font_list,
-                                 const Rect& text_rect,
-                                 const Rect& left_part,
-                                 const Rect& right_part,
-                                 SkColor color) {
+sk_sp<cc::PaintShader> CreateFadeShader(const FontList& font_list,
+                                        const Rect& text_rect,
+                                        const Rect& left_part,
+                                        const Rect& right_part,
+                                        SkColor color) {
   // The shader should only specify transparency of the fade itself, not the
   // original transparency, which will be applied by the actual renderer.
   DCHECK_EQ(SkColorGetA(color), static_cast<uint8_t>(0xff));
@@ -121,8 +121,10 @@ sk_sp<SkShader> CreateFadeShader(const FontList& font_list,
   const float width_fraction =
       text_rect.width() / static_cast<float>(font_list.GetExpectedTextWidth(4));
   const SkAlpha kAlphaAtZeroWidth = 51;
-  const SkAlpha alpha = (width_fraction < 1) ?
-      static_cast<SkAlpha>(round((1 - width_fraction) * kAlphaAtZeroWidth)) : 0;
+  const SkAlpha alpha =
+      (width_fraction < 1)
+          ? gfx::ToRoundedInt((1 - width_fraction) * kAlphaAtZeroWidth)
+          : 0;
   const SkColor fade_color = SkColorSetA(color, alpha);
 
   std::vector<SkScalar> positions;
@@ -144,9 +146,9 @@ sk_sp<SkShader> CreateFadeShader(const FontList& font_list,
 
   const SkPoint points[2] = { PointToSkPoint(text_rect.origin()),
                               PointToSkPoint(text_rect.top_right()) };
-  return
-      SkGradientShader::MakeLinear(&points[0], &colors[0], &positions[0],
-                                   colors.size(), SkShader::kClamp_TileMode);
+  return cc::PaintShader::MakeLinearGradient(&points[0], &colors[0],
+                                             &positions[0], colors.size(),
+                                             SkShader::kClamp_TileMode);
 }
 
 // Converts a FontRenderParams::Hinting value to the corresponding
@@ -189,15 +191,8 @@ void RestoreBreakList(RenderText* render_text, BreakList<T>* break_list) {
 
 namespace internal {
 
-// Value of |underline_thickness_| that indicates that underline metrics have
-// not been set explicitly.
-const SkScalar kUnderlineMetricsNotSet = -1.0f;
-
 SkiaTextRenderer::SkiaTextRenderer(Canvas* canvas)
-    : canvas_(canvas),
-      canvas_skia_(canvas->sk_canvas()),
-      underline_thickness_(kUnderlineMetricsNotSet),
-      underline_position_(0.0f) {
+    : canvas_(canvas), canvas_skia_(canvas->sk_canvas()) {
   DCHECK(canvas_skia_);
   flags_.setTextEncoding(cc::PaintFlags::kGlyphID_TextEncoding);
   flags_.setStyle(cc::PaintFlags::kFill_Style);
@@ -231,111 +226,50 @@ void SkiaTextRenderer::SetForegroundColor(SkColor foreground) {
   flags_.setColor(foreground);
 }
 
-void SkiaTextRenderer::SetShader(sk_sp<SkShader> shader) {
-  flags_.setShader(cc::WrapSkShader(std::move(shader)));
-}
-
-void SkiaTextRenderer::SetUnderlineMetrics(SkScalar thickness,
-                                           SkScalar position) {
-  underline_thickness_ = thickness;
-  underline_position_ = position;
+void SkiaTextRenderer::SetShader(sk_sp<cc::PaintShader> shader) {
+  flags_.setShader(std::move(shader));
 }
 
 void SkiaTextRenderer::DrawPosText(const SkPoint* pos,
                                    const uint16_t* glyphs,
                                    size_t glyph_count) {
-  const size_t byte_length = glyph_count * sizeof(glyphs[0]);
-  canvas_skia_->drawPosText(&glyphs[0], byte_length, &pos[0], flags_);
-}
+  SkTextBlobBuilder builder;
+  const auto& run_buffer = builder.allocRunPos(flags_.ToSkPaint(), glyph_count);
 
-void SkiaTextRenderer::DrawDecorations(int x, int y, int width, bool underline,
-                                       bool strike, bool diagonal_strike) {
-  if (underline)
-    DrawUnderline(x, y, width);
-  if (strike)
-    DrawStrike(x, y, width);
-  if (diagonal_strike) {
-    if (!diagonal_)
-      diagonal_.reset(new DiagonalStrike(canvas_, Point(x, y), flags_));
-    diagonal_->AddPiece(width, flags_.getColor());
-  } else if (diagonal_) {
-    EndDiagonalStrike();
-  }
-}
+  static_assert(sizeof(*glyphs) == sizeof(*run_buffer.glyphs), "");
+  memcpy(run_buffer.glyphs, glyphs, glyph_count * sizeof(*glyphs));
 
-void SkiaTextRenderer::EndDiagonalStrike() {
-  if (diagonal_) {
-    diagonal_->Draw();
-    diagonal_.reset();
-  }
+  static_assert(sizeof(*pos) == 2 * sizeof(*run_buffer.pos), "");
+  memcpy(run_buffer.pos, pos, glyph_count * sizeof(*pos));
+
+  // TODO(vmpstr): In order to OOP raster this, we would have to plumb PaintFont
+  // here instead of |flags_|.
+  canvas_skia_->drawTextBlob(
+      base::MakeRefCounted<cc::PaintTextBlob>(builder.make(),
+                                              std::vector<cc::PaintTypeface>{}),
+      0, 0, flags_);
 }
 
 void SkiaTextRenderer::DrawUnderline(int x, int y, int width) {
   SkScalar x_scalar = SkIntToScalar(x);
+  const SkScalar text_size = flags_.getTextSize();
   SkRect r = SkRect::MakeLTRB(
-      x_scalar, y + underline_position_, x_scalar + width,
-      y + underline_position_ + underline_thickness_);
-  if (underline_thickness_ == kUnderlineMetricsNotSet) {
-    const SkScalar text_size = flags_.getTextSize();
-    r.fTop = text_size * kUnderlineOffset + y;
-    r.fBottom = r.fTop + text_size * kLineThickness;
-  }
+      x_scalar, y + text_size * kUnderlineOffset, x_scalar + width,
+      y + (text_size * (kUnderlineOffset + kLineThicknessFactor)));
   canvas_skia_->drawRect(r, flags_);
 }
 
-void SkiaTextRenderer::DrawStrike(int x, int y, int width) const {
+void SkiaTextRenderer::DrawStrike(int x,
+                                  int y,
+                                  int width,
+                                  SkScalar thickness_factor) {
   const SkScalar text_size = flags_.getTextSize();
-  const SkScalar height = text_size * kLineThickness;
-  const SkScalar offset = text_size * kStrikeThroughOffset + y;
+  const SkScalar height = text_size * thickness_factor;
+  const SkScalar top = y - text_size * kStrikeThroughOffset - height / 2;
   SkScalar x_scalar = SkIntToScalar(x);
   const SkRect r =
-      SkRect::MakeLTRB(x_scalar, offset, x_scalar + width, offset + height);
+      SkRect::MakeLTRB(x_scalar, top, x_scalar + width, top + height);
   canvas_skia_->drawRect(r, flags_);
-}
-
-SkiaTextRenderer::DiagonalStrike::DiagonalStrike(Canvas* canvas,
-                                                 Point start,
-                                                 const cc::PaintFlags& flags)
-    : canvas_(canvas), start_(start), flags_(flags), total_length_(0) {}
-
-SkiaTextRenderer::DiagonalStrike::~DiagonalStrike() {
-}
-
-void SkiaTextRenderer::DiagonalStrike::AddPiece(int length, SkColor color) {
-  pieces_.push_back(Piece(length, color));
-  total_length_ += length;
-}
-
-void SkiaTextRenderer::DiagonalStrike::Draw() {
-  const SkScalar text_size = flags_.getTextSize();
-  const SkScalar offset = text_size * kDiagonalStrikeMarginOffset;
-  const int thickness = SkScalarCeilToInt(text_size * kLineThickness * 2);
-  const int height = SkScalarCeilToInt(text_size - offset);
-  const Point end = start_ + Vector2d(total_length_, -height);
-  const int clip_height = height + 2 * thickness;
-
-  flags_.setAntiAlias(true);
-  flags_.setStrokeWidth(SkIntToScalar(thickness));
-
-  const bool clipped = pieces_.size() > 1;
-  int x = start_.x();
-
-  for (size_t i = 0; i < pieces_.size(); ++i) {
-    flags_.setColor(pieces_[i].second);
-
-    if (clipped) {
-      canvas_->Save();
-      canvas_->ClipRect(
-          Rect(x, end.y() - thickness, pieces_[i].first, clip_height));
-    }
-
-    canvas_->DrawLine(start_, end, flags_);
-
-    if (clipped)
-      canvas_->Restore();
-
-    x += pieces_[i].first;
-  }
 }
 
 StyleIterator::StyleIterator(const BreakList<SkColor>& colors,
@@ -581,23 +515,46 @@ void RenderText::SetDisplayRect(const Rect& r) {
 }
 
 void RenderText::SetCursorPosition(size_t position) {
-  MoveCursorTo(position, false);
+  size_t cursor = std::min(position, text().length());
+  if (IsValidCursorIndex(cursor)) {
+    SetSelectionModel(SelectionModel(
+        cursor, (cursor == 0) ? CURSOR_FORWARD : CURSOR_BACKWARD));
+  }
 }
 
 void RenderText::MoveCursor(BreakType break_type,
                             VisualCursorDirection direction,
                             SelectionBehavior selection_behavior) {
   SelectionModel cursor(cursor_position(), selection_model_.caret_affinity());
+
+  // Ensure |cursor| is at the "end" of the current selection, since this
+  // determines which side should grow or shrink. If the prior change to the
+  // selection wasn't from cursor movement, the selection may be undirected. Or,
+  // the selection may be collapsing. In these cases, pick the "end" using
+  // |direction| (e.g. the arrow key) rather than the current selection range.
+  if ((!has_directed_selection_ || selection_behavior == SELECTION_NONE) &&
+      !selection().is_empty()) {
+    SelectionModel start = GetSelectionModelForSelectionStart();
+    int start_x = GetCursorBounds(start, true).x();
+    int end_x = GetCursorBounds(cursor, true).x();
+
+    // Use the selection start if it is left (when |direction| is CURSOR_LEFT)
+    // or right (when |direction| is CURSOR_RIGHT) of the selection end.
+    if (direction == CURSOR_RIGHT ? start_x > end_x : start_x < end_x) {
+      // In this case, a direction has been chosen that doesn't match
+      // |selection_model|, so the range must be reversed to place the cursor at
+      // the other end. Note the affinity won't matter: only the affinity of
+      // |start| (which points "in" to the selection) determines the movement.
+      Range range = selection_model_.selection();
+      selection_model_ = SelectionModel(Range(range.end(), range.start()),
+                                        selection_model_.caret_affinity());
+      cursor = start;
+    }
+  }
+
   // Cancelling a selection moves to the edge of the selection.
   if (break_type != LINE_BREAK && !selection().is_empty() &&
       selection_behavior == SELECTION_NONE) {
-    SelectionModel selection_start = GetSelectionModelForSelectionStart();
-    int start_x = GetCursorBounds(selection_start, true).x();
-    int cursor_x = GetCursorBounds(cursor, true).x();
-    // Use the selection start if it is left (when |direction| is CURSOR_LEFT)
-    // or right (when |direction| is CURSOR_RIGHT) of the selection end.
-    if (direction == CURSOR_RIGHT ? start_x > cursor_x : start_x < cursor_x)
-      cursor = selection_start;
     // Use the nearest word boundary in the proper |direction| for word breaks.
     if (break_type == WORD_BREAK)
       cursor = GetAdjacentSelectionModel(cursor, break_type, direction);
@@ -642,15 +599,16 @@ void RenderText::MoveCursor(BreakType break_type,
       break;
   }
 
-  MoveCursorTo(cursor);
+  SetSelection(cursor);
+  has_directed_selection_ = true;
 }
 
-bool RenderText::MoveCursorTo(const SelectionModel& model) {
+bool RenderText::SetSelection(const SelectionModel& model) {
   // Enforce valid selection model components.
   size_t text_length = text().length();
-  Range range(std::min(model.selection().start(),
-                       static_cast<uint32_t>(text_length)),
-              std::min(model.caret_pos(), text_length));
+  Range range(
+      std::min(model.selection().start(), static_cast<uint32_t>(text_length)),
+      std::min(model.caret_pos(), text_length));
   // The current model only supports caret positions at valid cursor indices.
   if (!IsValidCursorIndex(range.start()) || !IsValidCursorIndex(range.end()))
     return false;
@@ -660,11 +618,11 @@ bool RenderText::MoveCursorTo(const SelectionModel& model) {
   return changed;
 }
 
-bool RenderText::MoveCursorTo(const gfx::Point& point, bool select) {
+bool RenderText::MoveCursorToPoint(const gfx::Point& point, bool select) {
   gfx::SelectionModel model = FindCursorPosition(point);
   if (select)
     model.set_selection_start(selection().start());
-  return MoveCursorTo(model);
+  return SetSelection(model);
 }
 
 bool RenderText::SelectRange(const Range& range) {
@@ -689,8 +647,8 @@ bool RenderText::IsPointInSelection(const Point& point) {
 }
 
 void RenderText::ClearSelection() {
-  SetSelectionModel(SelectionModel(cursor_position(),
-                                   selection_model_.caret_affinity()));
+  SetSelectionModel(
+      SelectionModel(cursor_position(), selection_model_.caret_affinity()));
 }
 
 void RenderText::SelectAll(bool reversed) {
@@ -876,17 +834,26 @@ Rect RenderText::GetCursorBounds(const SelectionModel& caret,
       insert_mode ? caret.caret_affinity() : CURSOR_FORWARD;
   int x = 0, width = 1;
   Size size = GetStringSize();
-  if (caret_pos == (caret_affinity == CURSOR_BACKWARD ? 0 : text().length())) {
-    // The caret is attached to the boundary. Always return a 1-dip width caret,
-    // since there is nothing to overtype.
-    if ((GetDisplayTextDirection() == base::i18n::RIGHT_TO_LEFT)
-        == (caret_pos == 0)) {
+
+  // Check whether the caret is attached to a boundary. Always return a 1-dip
+  // width caret at the boundary. Avoid calling IndexOfAdjacentGrapheme(), since
+  // it is slow and can impact browser startup here.
+  // In insert mode, index 0 is always a boundary. The end, however, is not at a
+  // boundary when the string ends in RTL text and there is LTR text around it.
+  const bool at_boundary =
+      (insert_mode && caret_pos == 0) ||
+      caret_pos == (caret_affinity == CURSOR_BACKWARD ? 0 : text().length());
+  if (at_boundary) {
+    const bool rtl = GetDisplayTextDirection() == base::i18n::RIGHT_TO_LEFT;
+    if (rtl == (caret_pos == 0))
       x = size.width();
-    }
   } else {
-    size_t grapheme_start = (caret_affinity == CURSOR_FORWARD) ?
-        caret_pos : IndexOfAdjacentGrapheme(caret_pos, CURSOR_BACKWARD);
-    Range xspan(GetGlyphBounds(grapheme_start));
+    // Find the next grapheme continuing in the current direction. This
+    // determines the substring range that should be highlighted.
+    size_t caret_end = IndexOfAdjacentGrapheme(caret_pos, caret_affinity);
+    if (caret_end < caret_pos)
+      std::swap(caret_end, caret_pos);
+    const Range xspan = GetCursorSpan(Range(caret_pos, caret_end));
     if (insert_mode) {
       x = (caret_affinity == CURSOR_BACKWARD) ? xspan.end() : xspan.start();
     } else {  // overtype mode
@@ -1041,6 +1008,7 @@ RenderText::RenderText()
       directionality_mode_(DIRECTIONALITY_FROM_TEXT),
       text_direction_(base::i18n::UNKNOWN_DIRECTION),
       cursor_enabled_(true),
+      has_directed_selection_(kSelectionIsAlwaysDirected),
       selection_color_(kDefaultColor),
       selection_background_focused_color_(kDefaultSelectionBackgroundColor),
       focused_(false),
@@ -1063,7 +1031,8 @@ RenderText::RenderText()
       subpixel_rendering_suppressed_(false),
       clip_to_display_rect_(true),
       baseline_(kInvalidBaseline),
-      cached_bounds_and_offset_valid_(false) {}
+      cached_bounds_and_offset_valid_(false),
+      strike_thickness_factor_(kLineThicknessFactor) {}
 
 SelectionModel RenderText::GetAdjacentSelectionModel(
     const SelectionModel& current,
@@ -1113,6 +1082,7 @@ void RenderText::SetSelectionModel(const SelectionModel& model) {
   DCHECK_LE(model.selection().GetMax(), text().length());
   selection_model_ = model;
   cached_bounds_and_offset_valid_ = false;
+  has_directed_selection_ = kSelectionIsAlwaysDirected;
 }
 
 void RenderText::OnTextColorChanged() {
@@ -1327,6 +1297,27 @@ base::i18n::TextDirection RenderText::GetTextDirection(
       case DIRECTIONALITY_FORCE_RTL:
         text_direction_ = base::i18n::RIGHT_TO_LEFT;
         break;
+      case DIRECTIONALITY_AS_URL:
+        // Rendering as a URL implies left-to-right paragraph direction.
+        // URL Standard specifies that a URL "should be rendered as if it were
+        // in a left-to-right embedding".
+        // https://url.spec.whatwg.org/#url-rendering
+        //
+        // Consider logical string for domain "ABC.com/hello" (where ABC are
+        // Hebrew (RTL) characters). The normal Bidi algorithm renders this as
+        // "com/hello.CBA"; by forcing LTR, it is rendered as "CBA.com/hello".
+        //
+        // Note that this only applies a LTR embedding at the top level; it
+        // doesn't change the Bidi algorithm, so there are still some URLs that
+        // will render in a confusing order. Consider the logical string
+        // "abc.COM/HELLO/world", which will render as "abc.OLLEH/MOC/world".
+        // See https://crbug.com/351639.
+        //
+        // Note that the LeftToRightUrls feature flag enables additional
+        // behaviour for DIRECTIONALITY_AS_URL, but the left-to-right embedding
+        // behaviour is always enabled, regardless of the flag.
+        text_direction_ = base::i18n::LEFT_TO_RIGHT;
+        break;
       default:
         NOTREACHED();
     }
@@ -1401,14 +1392,6 @@ int RenderText::DetermineBaselineCenteringText(const int display_height,
   return baseline + std::max(min_shift, std::min(max_shift, baseline_shift));
 }
 
-void RenderText::MoveCursorTo(size_t position, bool select) {
-  size_t cursor = std::min(position, text().length());
-  if (IsValidCursorIndex(cursor))
-    SetSelectionModel(SelectionModel(
-        Range(select ? selection().start() : cursor, cursor),
-        (cursor == 0) ? CURSOR_FORWARD : CURSOR_BACKWARD));
-}
-
 void RenderText::OnTextAttributeChanged() {
   layout_text_.clear();
   display_text_.clear();
@@ -1418,8 +1401,7 @@ void RenderText::OnTextAttributeChanged() {
   if (obscured_) {
     size_t obscured_text_length =
         static_cast<size_t>(UTF16IndexToOffset(text_, 0, text_.length()));
-    layout_text_.assign(obscured_text_length,
-                        RenderText::kPasswordReplacementChar);
+    layout_text_.assign(obscured_text_length, kPasswordReplacementChar);
 
     if (obscured_reveal_index_ >= 0 &&
         obscured_reveal_index_ < static_cast<int>(text_.length())) {
@@ -1504,11 +1486,34 @@ base::string16 RenderText::Elide(const base::string16& text,
 
   StringSlicer slicer(text, ellipsis, elide_in_middle, elide_at_beginning);
 
-  // Use binary search to compute the elided text.
+  // Use binary(-like) search to compute the elided text.  In particular, do
+  // an interpolation search, which is a binary search in which each guess
+  // is an attempt to smartly calculate the right point rather than blindly
+  // guessing midway between the endpoints.
   size_t lo = 0;
   size_t hi = text.length() - 1;
+  size_t guess = std::string::npos;
+  // These two widths are not exactly right but they're good enough to provide
+  // some guidance to the search.  For example, |text_width| is actually the
+  // length of text.length(), not text.length()-1.
+  float lo_width = 0;
+  float hi_width = text_width;
   const base::i18n::TextDirection text_direction = GetTextDirection(text);
-  for (size_t guess = (lo + hi) / 2; lo <= hi; guess = (lo + hi) / 2) {
+  while (lo <= hi) {
+    // Linearly interpolate between |lo| and |hi|, which correspond to widths
+    // of |lo_width| and |hi_width| to estimate at what position
+    // |available_width| would be at.  Because |lo_width| and |hi_width| are
+    // both estimates (may be off by a little because, for example, |lo_width|
+    // may have been calculated from |lo| minus one, not |lo|), we clamp to the
+    // the valid range.
+    // |last_guess| is merely used to verify that we're not repeating guesses.
+    const size_t last_guess = guess;
+    guess = lo + static_cast<size_t>(ToRoundedInt((available_width - lo_width) *
+                                                  (hi - lo) /
+                                                  (hi_width - lo_width)));
+    guess = base::ClampToRange(guess, lo, hi);
+    DCHECK_NE(last_guess, guess);
+
     // Restore colors. They will be truncated to size by SetText.
     render_text->colors_ = colors_;
     base::string16 new_text =
@@ -1549,11 +1554,15 @@ base::string16 RenderText::Elide(const base::string16& text,
       break;
     if (guess_width > available_width) {
       hi = guess - 1;
+      hi_width = guess_width;
       // Move back on the loop terminating condition when the guess is too wide.
-      if (hi < lo)
+      if (hi < lo) {
         lo = hi;
+        lo_width = guess_width;
+      }
     } else {
       lo = guess + 1;
+      lo_width = guess_width;
     }
   }
 

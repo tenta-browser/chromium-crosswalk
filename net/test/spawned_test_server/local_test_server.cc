@@ -24,7 +24,7 @@ bool AppendArgumentFromJSONValue(const std::string& key,
                                  const base::Value& value_node,
                                  base::CommandLine* command_line) {
   std::string argument_name = "--" + key;
-  switch (value_node.GetType()) {
+  switch (value_node.type()) {
     case base::Value::Type::NONE:
       command_line->AppendArg(argument_name);
       break;
@@ -57,10 +57,8 @@ bool AppendArgumentFromJSONValue(const std::string& key,
 
 }  // namespace
 
-LocalTestServer::LocalTestServer(Type type,
-                                 const std::string& host,
-                                 const base::FilePath& document_root)
-    : BaseTestServer(type, host) {
+LocalTestServer::LocalTestServer(Type type, const base::FilePath& document_root)
+    : BaseTestServer(type) {
   if (!Init(document_root))
     NOTREACHED();
 }
@@ -90,11 +88,9 @@ bool LocalTestServer::GetTestServerPath(base::FilePath* testserver_path) const {
   return true;
 }
 
-bool LocalTestServer::Start() {
-  return StartInBackground() && BlockUntilStarted();
-}
-
 bool LocalTestServer::StartInBackground() {
+  DCHECK(!started());
+
   base::ThreadRestrictions::ScopedAllowIO allow_io_from_test_code;
 
   // Get path to Python server script.

@@ -25,33 +25,77 @@
 
 #include "modules/gamepad/Gamepad.h"
 
+#include <algorithm>
+
 namespace blink {
 
-Gamepad::Gamepad() : index_(0), timestamp_(0), display_id_(0) {}
+Gamepad::Gamepad()
+    : index_(0),
+      timestamp_(0),
+      display_id_(0),
+      is_axis_data_dirty_(true),
+      is_button_data_dirty_(true) {}
 
 Gamepad::~Gamepad() {}
 
-void Gamepad::SetAxes(unsigned count, const double* data) {
-  axes_.Resize(count);
-  if (count)
-    std::copy(data, data + count, axes_.begin());
+const Gamepad::DoubleVector& Gamepad::axes() {
+  is_axis_data_dirty_ = false;
+  return axes_;
 }
 
-void Gamepad::SetButtons(unsigned count, const WebGamepadButton* data) {
+void Gamepad::SetAxes(unsigned count, const double* data) {
+  bool skip_update =
+      axes_.size() == count && std::equal(data, data + count, axes_.begin());
+  if (skip_update)
+    return;
+
+  axes_.resize(count);
+  if (count)
+    std::copy(data, data + count, axes_.begin());
+  is_axis_data_dirty_ = true;
+}
+
+const GamepadButtonVector& Gamepad::buttons() {
+  is_button_data_dirty_ = false;
+  return buttons_;
+}
+
+void Gamepad::SetButtons(unsigned count, const device::GamepadButton* data) {
+  bool skip_update =
+      buttons_.size() == count &&
+      std::equal(data, data + count, buttons_.begin(),
+                 [](const device::GamepadButton& device_gamepad_button,
+                    const Member<GamepadButton>& gamepad_button) {
+                   return gamepad_button->IsEqual(device_gamepad_button);
+                 });
+  if (skip_update)
+    return;
+
   if (buttons_.size() != count) {
-    buttons_.Resize(count);
+    buttons_.resize(count);
     for (unsigned i = 0; i < count; ++i)
       buttons_[i] = GamepadButton::Create();
   }
-  for (unsigned i = 0; i < count; ++i) {
-    buttons_[i]->SetValue(data[i].value);
-    buttons_[i]->SetPressed(data[i].pressed);
-    buttons_[i]->SetTouched(data[i].touched || data[i].pressed ||
-                            (data[i].value > 0.0f));
-  }
+  for (unsigned i = 0; i < count; ++i)
+    buttons_[i]->UpdateValuesFrom(data[i]);
+  is_button_data_dirty_ = true;
 }
 
-void Gamepad::SetPose(const WebGamepadPose& pose) {
+void Gamepad::SetVibrationActuator(
+    const device::GamepadHapticActuator& actuator) {
+  if (!actuator.not_null) {
+    if (vibration_actuator_)
+      vibration_actuator_ = nullptr;
+    return;
+  }
+
+  if (!vibration_actuator_)
+    vibration_actuator_ = GamepadHapticActuator::Create(index_);
+
+  vibration_actuator_->SetType(actuator.type);
+}
+
+void Gamepad::SetPose(const device::GamepadPose& pose) {
   if (!pose.not_null) {
     if (pose_)
       pose_ = nullptr;
@@ -64,15 +108,15 @@ void Gamepad::SetPose(const WebGamepadPose& pose) {
   pose_->SetPose(pose);
 }
 
-void Gamepad::SetHand(const WebGamepadHand& hand) {
+void Gamepad::SetHand(const device::GamepadHand& hand) {
   switch (hand) {
-    case kGamepadHandNone:
+    case device::GamepadHand::kNone:
       hand_ = "";
       break;
-    case kGamepadHandLeft:
+    case device::GamepadHand::kLeft:
       hand_ = "left";
       break;
-    case kGamepadHandRight:
+    case device::GamepadHand::kRight:
       hand_ = "right";
       break;
     default:
@@ -80,9 +124,11 @@ void Gamepad::SetHand(const WebGamepadHand& hand) {
   }
 }
 
-DEFINE_TRACE(Gamepad) {
+void Gamepad::Trace(blink::Visitor* visitor) {
   visitor->Trace(buttons_);
+  visitor->Trace(vibration_actuator_);
   visitor->Trace(pose_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

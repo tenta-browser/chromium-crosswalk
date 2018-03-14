@@ -25,14 +25,18 @@
 
 #include "platform/wtf/Vector.h"
 
+#include <memory>
 #include "platform/wtf/HashSet.h"
 #include "platform/wtf/Optional.h"
 #include "platform/wtf/PtrUtil.h"
+#include "platform/wtf/WTFTestHelper.h"
 #include "platform/wtf/text/WTFString.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include <memory>
 
 namespace WTF {
+
+HashSet<void*> g_constructed_wrapped_ints;
+unsigned LivenessCounter::live_ = 0;
 
 namespace {
 
@@ -40,7 +44,7 @@ TEST(VectorTest, Basic) {
   Vector<int> int_vector;
   EXPECT_TRUE(int_vector.IsEmpty());
   EXPECT_EQ(0ul, int_vector.size());
-  EXPECT_EQ(0ul, int_vector.Capacity());
+  EXPECT_EQ(0ul, int_vector.capacity());
 }
 
 TEST(VectorTest, Reverse) {
@@ -66,7 +70,7 @@ TEST(VectorTest, Reverse) {
   EXPECT_EQ(13, int_vector[4]);
 }
 
-TEST(VectorTest, Remove) {
+TEST(VectorTest, EraseAtIndex) {
   Vector<int> int_vector;
   int_vector.push_back(0);
   int_vector.push_back(1);
@@ -79,21 +83,41 @@ TEST(VectorTest, Remove) {
   EXPECT_EQ(2, int_vector[2]);
   EXPECT_EQ(3, int_vector[3]);
 
-  int_vector.erase(2, 0);
+  int_vector.EraseAt(2, 0);
   EXPECT_EQ(4u, int_vector.size());
   EXPECT_EQ(2, int_vector[2]);
 
-  int_vector.erase(2, 1);
+  int_vector.EraseAt(2, 1);
   EXPECT_EQ(3u, int_vector.size());
   EXPECT_EQ(3, int_vector[2]);
 
-  int_vector.erase(0, 0);
+  int_vector.EraseAt(0, 0);
   EXPECT_EQ(3u, int_vector.size());
   EXPECT_EQ(0, int_vector[0]);
 
-  int_vector.erase(0);
+  int_vector.EraseAt(0);
   EXPECT_EQ(2u, int_vector.size());
   EXPECT_EQ(1, int_vector[0]);
+}
+
+TEST(VectorTest, Erase) {
+  Vector<int> int_vector({0, 1, 2, 3});
+
+  EXPECT_EQ(4u, int_vector.size());
+  EXPECT_EQ(0, int_vector[0]);
+  EXPECT_EQ(1, int_vector[1]);
+  EXPECT_EQ(2, int_vector[2]);
+  EXPECT_EQ(3, int_vector[3]);
+
+  auto first = int_vector.erase(int_vector.begin());
+  EXPECT_EQ(3u, int_vector.size());
+  EXPECT_EQ(1, *first);
+  EXPECT_EQ(int_vector.begin(), first);
+
+  auto last = std::lower_bound(int_vector.begin(), int_vector.end(), 3);
+  auto end = int_vector.erase(last);
+  EXPECT_EQ(2u, int_vector.size());
+  EXPECT_EQ(int_vector.end(), end);
 }
 
 TEST(VectorTest, Iterator) {
@@ -142,19 +166,6 @@ TEST(VectorTest, ReverseIterator) {
   EXPECT_TRUE(end == it);
 }
 
-class DestructCounter {
- public:
-  explicit DestructCounter(int i, int* destruct_number)
-      : i_(i), destruct_number_(destruct_number) {}
-
-  ~DestructCounter() { ++(*destruct_number_); }
-  int Get() const { return i_; }
-
- private:
-  int i_;
-  int* destruct_number_;
-};
-
 typedef WTF::Vector<std::unique_ptr<DestructCounter>> OwnPtrVector;
 
 TEST(VectorTest, OwnPtr) {
@@ -188,13 +199,13 @@ TEST(VectorTest, OwnPtr) {
 
   EXPECT_EQ(0, vector[0]->Get());
   EXPECT_EQ(1, vector[1]->Get());
-  vector.erase(0);
+  vector.EraseAt(0);
   EXPECT_EQ(1, vector[0]->Get());
   EXPECT_EQ(1u, vector.size());
   EXPECT_EQ(1, destruct_number);
 
   std::unique_ptr<DestructCounter> own_counter1 = std::move(vector[0]);
-  vector.erase(0);
+  vector.EraseAt(0);
   ASSERT_EQ(counter1, own_counter1->Get());
   ASSERT_EQ(0u, vector.size());
   ASSERT_EQ(1, destruct_number);
@@ -213,35 +224,14 @@ TEST(VectorTest, OwnPtr) {
   EXPECT_EQ(count, vector.size());
 
   OwnPtrVector copy_vector;
-  vector.Swap(copy_vector);
+  vector.swap(copy_vector);
   EXPECT_EQ(0, destruct_number);
   EXPECT_EQ(count, copy_vector.size());
   EXPECT_EQ(0u, vector.size());
 
-  copy_vector.Clear();
+  copy_vector.clear();
   EXPECT_EQ(count, static_cast<size_t>(destruct_number));
 }
-
-class MoveOnly {
- public:
-  explicit MoveOnly(int i = 0) : i_(i) {}
-
-  MoveOnly(MoveOnly&& other) : i_(other.i_) { other.i_ = 0; }
-
-  MoveOnly& operator=(MoveOnly&& other) {
-    if (this != &other) {
-      i_ = other.i_;
-      other.i_ = 0;
-    }
-    return *this;
-  }
-
-  int Value() const { return i_; }
-
- private:
-  WTF_MAKE_NONCOPYABLE(MoveOnly);
-  int i_;
-};
 
 TEST(VectorTest, MoveOnlyType) {
   WTF::Vector<MoveOnly> vector;
@@ -252,16 +242,16 @@ TEST(VectorTest, MoveOnlyType) {
   ASSERT_EQ(1, vector.front().Value());
   ASSERT_EQ(2, vector.back().Value());
 
-  vector.erase(0);
+  vector.EraseAt(0);
   EXPECT_EQ(2, vector[0].Value());
   EXPECT_EQ(1u, vector.size());
 
   MoveOnly move_only(std::move(vector[0]));
-  vector.erase(0);
+  vector.EraseAt(0);
   ASSERT_EQ(2, move_only.Value());
   ASSERT_EQ(0u, vector.size());
 
-  size_t count = vector.Capacity() + 1;
+  size_t count = vector.capacity() + 1;
   for (size_t i = 0; i < count; i++)
     vector.push_back(
         MoveOnly(i + 1));  // +1 to distinguish from default-constructed.
@@ -272,43 +262,13 @@ TEST(VectorTest, MoveOnlyType) {
     EXPECT_EQ(static_cast<int>(i + 1), vector[i].Value());
 
   WTF::Vector<MoveOnly> other_vector;
-  vector.Swap(other_vector);
+  vector.swap(other_vector);
   EXPECT_EQ(count, other_vector.size());
   EXPECT_EQ(0u, vector.size());
 
   vector = std::move(other_vector);
   EXPECT_EQ(count, vector.size());
 }
-
-// WrappedInt class will fail if it was memmoved or memcpyed.
-static HashSet<void*> g_constructed_wrapped_ints;
-class WrappedInt {
- public:
-  WrappedInt(int i = 0) : original_this_ptr_(this), i_(i) {
-    g_constructed_wrapped_ints.insert(this);
-  }
-
-  WrappedInt(const WrappedInt& other) : original_this_ptr_(this), i_(other.i_) {
-    g_constructed_wrapped_ints.insert(this);
-  }
-
-  WrappedInt& operator=(const WrappedInt& other) {
-    i_ = other.i_;
-    return *this;
-  }
-
-  ~WrappedInt() {
-    EXPECT_EQ(original_this_ptr_, this);
-    EXPECT_TRUE(g_constructed_wrapped_ints.Contains(this));
-    g_constructed_wrapped_ints.erase(this);
-  }
-
-  int Get() const { return i_; }
-
- private:
-  void* original_this_ptr_;
-  int i_;
-};
 
 TEST(VectorTest, SwapWithInlineCapacity) {
   const size_t kInlineCapacity = 2;
@@ -318,7 +278,7 @@ TEST(VectorTest, SwapWithInlineCapacity) {
   vector_b.push_back(WrappedInt(2));
 
   EXPECT_EQ(vector_a.size(), vector_b.size());
-  vector_a.Swap(vector_b);
+  vector_a.swap(vector_b);
 
   EXPECT_EQ(1u, vector_a.size());
   EXPECT_EQ(2, vector_a.at(0).Get());
@@ -328,7 +288,7 @@ TEST(VectorTest, SwapWithInlineCapacity) {
   vector_a.push_back(WrappedInt(3));
 
   EXPECT_GT(vector_a.size(), vector_b.size());
-  vector_a.Swap(vector_b);
+  vector_a.swap(vector_b);
 
   EXPECT_EQ(1u, vector_a.size());
   EXPECT_EQ(1, vector_a.at(0).Get());
@@ -337,7 +297,7 @@ TEST(VectorTest, SwapWithInlineCapacity) {
   EXPECT_EQ(3, vector_b.at(1).Get());
 
   EXPECT_LT(vector_a.size(), vector_b.size());
-  vector_a.Swap(vector_b);
+  vector_a.swap(vector_b);
 
   EXPECT_EQ(2u, vector_a.size());
   EXPECT_EQ(2, vector_a.at(0).Get());
@@ -347,7 +307,7 @@ TEST(VectorTest, SwapWithInlineCapacity) {
 
   vector_a.push_back(WrappedInt(4));
   EXPECT_GT(vector_a.size(), kInlineCapacity);
-  vector_a.Swap(vector_b);
+  vector_a.swap(vector_b);
 
   EXPECT_EQ(1u, vector_a.size());
   EXPECT_EQ(1, vector_a.at(0).Get());
@@ -356,7 +316,7 @@ TEST(VectorTest, SwapWithInlineCapacity) {
   EXPECT_EQ(3, vector_b.at(1).Get());
   EXPECT_EQ(4, vector_b.at(2).Get());
 
-  vector_b.Swap(vector_a);
+  vector_b.swap(vector_a);
 }
 
 #if defined(ANNOTATE_CONTIGUOUS_CONTAINER)
@@ -365,7 +325,7 @@ TEST(VectorTest, ContainerAnnotations) {
   vector_a.push_back(10);
   vector_a.ReserveCapacity(32);
 
-  volatile int* int_pointer_a = vector_a.Data();
+  volatile int* int_pointer_a = vector_a.data();
   EXPECT_DEATH(int_pointer_a[1] = 11, "container-overflow");
   vector_a.push_back(11);
   int_pointer_a[1] = 11;
@@ -373,28 +333,28 @@ TEST(VectorTest, ContainerAnnotations) {
   EXPECT_DEATH((void)int_pointer_a[2], "container-overflow");
   vector_a.ShrinkToFit();
   vector_a.ReserveCapacity(16);
-  int_pointer_a = vector_a.Data();
+  int_pointer_a = vector_a.data();
   EXPECT_DEATH((void)int_pointer_a[2], "container-overflow");
 
   Vector<int> vector_b(vector_a);
   vector_b.ReserveCapacity(16);
-  volatile int* int_pointer_b = vector_b.Data();
+  volatile int* int_pointer_b = vector_b.data();
   EXPECT_DEATH((void)int_pointer_b[2], "container-overflow");
 
   Vector<int> vector_c((Vector<int>(vector_a)));
-  volatile int* int_pointer_c = vector_c.Data();
+  volatile int* int_pointer_c = vector_c.data();
   EXPECT_DEATH((void)int_pointer_c[2], "container-overflow");
   vector_c.push_back(13);
-  vector_c.Swap(vector_b);
+  vector_c.swap(vector_b);
 
-  volatile int* int_pointer_b2 = vector_b.Data();
-  volatile int* int_pointer_c2 = vector_c.Data();
+  volatile int* int_pointer_b2 = vector_b.data();
+  volatile int* int_pointer_c2 = vector_c.data();
   int_pointer_b2[2] = 13;
   EXPECT_DEATH((void)int_pointer_b2[3], "container-overflow");
   EXPECT_DEATH((void)int_pointer_c2[2], "container-overflow");
 
   vector_b = vector_c;
-  volatile int* int_pointer_b3 = vector_b.Data();
+  volatile int* int_pointer_b3 = vector_b.data();
   EXPECT_DEATH((void)int_pointer_b3[2], "container-overflow");
 }
 #endif  // defined(ANNOTATE_CONTIGUOUS_CONTAINER)
@@ -427,11 +387,11 @@ TEST(VectorTest, AppendFirst) {
   vector.push_back("string");
   // Test passes if it does not crash (reallocation did not make
   // the input reference stale).
-  size_t limit = vector.Capacity() + 1;
+  size_t limit = vector.capacity() + 1;
   for (size_t i = 0; i < limit; i++)
     vector.push_back(vector.front());
 
-  limit = vector.Capacity() + 1;
+  limit = vector.capacity() + 1;
   for (size_t i = 0; i < limit; i++)
     vector.push_back(const_cast<const WTF::String&>(vector.front()));
 }
@@ -441,7 +401,7 @@ TEST(VectorTest, AppendFirst) {
 // https://bugs.chromium.org/p/chromium/issues/detail?id=592767
 //
 // where deleted copy assignment operator made canMoveWithMemcpy true because
-// of the implementation of IsTriviallyMoveAssignable<T>.
+// of the implementation of std::is_trivially_move_assignable<T>.
 
 class MojoMoveOnlyType final {
  public:
@@ -455,9 +415,9 @@ class MojoMoveOnlyType final {
   void operator=(const MojoMoveOnlyType&) = delete;
 };
 
-static_assert(!IsTriviallyMoveAssignable<MojoMoveOnlyType>::value,
+static_assert(!std::is_trivially_move_assignable<MojoMoveOnlyType>::value,
               "MojoMoveOnlyType isn't trivially move assignable.");
-static_assert(!IsTriviallyCopyAssignable<MojoMoveOnlyType>::value,
+static_assert(!std::is_trivially_copy_assignable<MojoMoveOnlyType>::value,
               "MojoMoveOnlyType isn't trivially copy assignable.");
 
 static_assert(!VectorTraits<MojoMoveOnlyType>::kCanMoveWithMemcpy,
@@ -465,35 +425,25 @@ static_assert(!VectorTraits<MojoMoveOnlyType>::kCanMoveWithMemcpy,
 static_assert(!VectorTraits<MojoMoveOnlyType>::kCanCopyWithMemcpy,
               "MojoMoveOnlyType can't be copied with memcpy.");
 
-class LivenessCounter {
- public:
-  void Ref() { live_++; }
-  void Deref() { live_--; }
-
-  static unsigned live_;
-};
-
-unsigned LivenessCounter::live_ = 0;
-
 class VectorWithDifferingInlineCapacityTest
     : public ::testing::TestWithParam<size_t> {};
 
 template <size_t inlineCapacity>
-void TestDestructorAndConstructorCallsWhenSwappingWithInlineCapacity() {
+void TestVectorDestructorAndConstructorCallsWhenSwappingWithInlineCapacity() {
   LivenessCounter::live_ = 0;
   LivenessCounter counter;
   EXPECT_EQ(0u, LivenessCounter::live_);
 
-  Vector<RefPtr<LivenessCounter>, inlineCapacity> vector;
-  Vector<RefPtr<LivenessCounter>, inlineCapacity> vector2;
+  Vector<scoped_refptr<LivenessCounter>, inlineCapacity> vector;
+  Vector<scoped_refptr<LivenessCounter>, inlineCapacity> vector2;
   vector.push_back(&counter);
   vector2.push_back(&counter);
   EXPECT_EQ(2u, LivenessCounter::live_);
 
   for (unsigned i = 0; i < 13; i++) {
     for (unsigned j = 0; j < 13; j++) {
-      vector.Clear();
-      vector2.Clear();
+      vector.clear();
+      vector2.clear();
       EXPECT_EQ(0u, LivenessCounter::live_);
 
       for (unsigned k = 0; k < j; k++)
@@ -506,7 +456,7 @@ void TestDestructorAndConstructorCallsWhenSwappingWithInlineCapacity() {
       EXPECT_EQ(i + j, LivenessCounter::live_);
       EXPECT_EQ(i, vector2.size());
 
-      vector.Swap(vector2);
+      vector.swap(vector2);
       EXPECT_EQ(i + j, LivenessCounter::live_);
       EXPECT_EQ(i, vector.size());
       EXPECT_EQ(j, vector2.size());
@@ -515,41 +465,41 @@ void TestDestructorAndConstructorCallsWhenSwappingWithInlineCapacity() {
       unsigned size2 = vector2.size();
 
       for (unsigned k = 0; k < 5; k++) {
-        vector.Swap(vector2);
+        vector.swap(vector2);
         std::swap(size, size2);
         EXPECT_EQ(i + j, LivenessCounter::live_);
         EXPECT_EQ(size, vector.size());
         EXPECT_EQ(size2, vector2.size());
 
         vector2.push_back(&counter);
-        vector2.erase(0);
+        vector2.EraseAt(0);
       }
     }
   }
 }
 
 TEST(VectorTest, SwapWithConstructorsAndDestructors) {
-  TestDestructorAndConstructorCallsWhenSwappingWithInlineCapacity<0>();
-  TestDestructorAndConstructorCallsWhenSwappingWithInlineCapacity<2>();
-  TestDestructorAndConstructorCallsWhenSwappingWithInlineCapacity<10>();
+  TestVectorDestructorAndConstructorCallsWhenSwappingWithInlineCapacity<0>();
+  TestVectorDestructorAndConstructorCallsWhenSwappingWithInlineCapacity<2>();
+  TestVectorDestructorAndConstructorCallsWhenSwappingWithInlineCapacity<10>();
 }
 
 template <size_t inlineCapacity>
-void TestValuesMovedAndSwappedWithInlineCapacity() {
+void TestVectorValuesMovedAndSwappedWithInlineCapacity() {
   Vector<unsigned, inlineCapacity> vector;
   Vector<unsigned, inlineCapacity> vector2;
 
   for (unsigned size = 0; size < 13; size++) {
     for (unsigned size2 = 0; size2 < 13; size2++) {
-      vector.Clear();
-      vector2.Clear();
+      vector.clear();
+      vector2.clear();
       for (unsigned i = 0; i < size; i++)
         vector.push_back(i);
       for (unsigned i = 0; i < size2; i++)
         vector2.push_back(i + 42);
       EXPECT_EQ(size, vector.size());
       EXPECT_EQ(size2, vector2.size());
-      vector.Swap(vector2);
+      vector.swap(vector2);
       for (unsigned i = 0; i < size; i++)
         EXPECT_EQ(i, vector2[i]);
       for (unsigned i = 0; i < size2; i++)
@@ -559,9 +509,9 @@ void TestValuesMovedAndSwappedWithInlineCapacity() {
 }
 
 TEST(VectorTest, ValuesMovedAndSwappedWithInlineCapacity) {
-  TestValuesMovedAndSwappedWithInlineCapacity<0>();
-  TestValuesMovedAndSwappedWithInlineCapacity<2>();
-  TestValuesMovedAndSwappedWithInlineCapacity<10>();
+  TestVectorValuesMovedAndSwappedWithInlineCapacity<0>();
+  TestVectorValuesMovedAndSwappedWithInlineCapacity<2>();
+  TestVectorValuesMovedAndSwappedWithInlineCapacity<10>();
 }
 
 TEST(VectorTest, UniquePtr) {
@@ -584,7 +534,7 @@ TEST(VectorTest, UniquePtr) {
   vector.Grow(4);
   ASSERT_EQ(4u, vector.size());
   EXPECT_TRUE(!vector[3]);
-  vector.erase(3);
+  vector.EraseAt(3);
   vector[0] = Pointer(new int(-1));
   ASSERT_EQ(3u, vector.size());
   EXPECT_EQ(-1, *vector[0]);

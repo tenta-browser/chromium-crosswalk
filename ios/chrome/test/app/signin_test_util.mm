@@ -9,20 +9,28 @@
 #import "base/test/ios/wait_util.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/account_tracker_service.h"
-#include "components/signin/core/common/signin_pref_names.h"
+#include "components/signin/core/browser/signin_pref_names.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
+#include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/signin/account_tracker_service_factory.h"
 #import "ios/chrome/browser/signin/authentication_service.h"
 #include "ios/chrome/browser/signin/authentication_service_factory.h"
 #include "ios/chrome/browser/signin/gaia_auth_fetcher_ios.h"
+#import "ios/chrome/browser/ui/authentication/signin_promo_view.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/public/provider/chrome/browser/chrome_browser_provider.h"
+#import "ios/public/provider/chrome/browser/signin/fake_chrome_identity.h"
 #import "ios/public/provider/chrome/browser/signin/fake_chrome_identity_service.h"
 #include "net/http/http_status_code.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_status.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -38,7 +46,8 @@ class MergeSessionFakeURLFetcherFactory : public net::FakeURLFetcherFactory {
       int id,
       const GURL& url,
       net::URLFetcher::RequestType request_type,
-      net::URLFetcherDelegate* d) override {
+      net::URLFetcherDelegate* d,
+      net::NetworkTrafficAnnotationTag traffic_annotation) override {
     const GURL kMergeSessionURL =
         GURL("https://accounts.google.com/MergeSession");
     url::Replacements<char> replacements;
@@ -46,8 +55,8 @@ class MergeSessionFakeURLFetcherFactory : public net::FakeURLFetcherFactory {
     replacements.ClearQuery();
     if (url.ReplaceComponents(replacements) != kMergeSessionURL) {
       // URL is not a MergeSession GET. Use the default method.
-      return net::FakeURLFetcherFactory::CreateURLFetcher(id, url, request_type,
-                                                          d);
+      return net::FakeURLFetcherFactory::CreateURLFetcher(
+          id, url, request_type, d, traffic_annotation);
     }
     // Actual MergeSession request. Answer is ignored by the AccountReconcilor,
     // so it can also be empty.
@@ -152,9 +161,8 @@ bool SignOutAndClearAccounts() {
   // Clear known identities.
   ios::ChromeIdentityService* identity_service =
       ios::GetChromeBrowserProvider()->GetChromeIdentityService();
-  base::scoped_nsobject<NSArray> identities(
-      [identity_service->GetAllIdentities() copy]);
-  for (ChromeIdentity* identity in identities.get()) {
+  NSArray* identities([identity_service->GetAllIdentities() copy]);
+  for (ChromeIdentity* identity in identities) {
     identity_service->ForgetIdentity(identity, nil);
   }
 
@@ -165,6 +173,20 @@ bool SignOutAndClearAccounts() {
         base::TimeDelta::FromSecondsD(0.01));
   }
   return !identity_service->HasIdentities();
+}
+
+void ResetMockAuthentication() {
+  ios::FakeChromeIdentityService::GetInstanceFromChromeProvider()
+      ->SetFakeMDMError(false);
+}
+
+void ResetSigninPromoPreferences() {
+  ios::ChromeBrowserState* browser_state = GetOriginalBrowserState();
+  PrefService* prefs = browser_state->GetPrefs();
+  prefs->SetInteger(prefs::kIosBookmarkSigninPromoDisplayedCount, 0);
+  prefs->SetBoolean(prefs::kIosBookmarkPromoAlreadySeen, false);
+  prefs->SetInteger(prefs::kIosSettingsSigninPromoDisplayedCount, 0);
+  prefs->SetBoolean(prefs::kIosSettingsPromoAlreadySeen, false);
 }
 
 }  // namespace chrome_test_util

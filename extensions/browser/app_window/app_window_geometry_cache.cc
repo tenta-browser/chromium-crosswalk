@@ -113,7 +113,7 @@ void AppWindowGeometryCache::SyncToStorage() {
          it != eit;
          ++it) {
       std::unique_ptr<base::DictionaryValue> value =
-          base::MakeUnique<base::DictionaryValue>();
+          std::make_unique<base::DictionaryValue>();
       const gfx::Rect& bounds = it->second.bounds;
       const gfx::Rect& screen_bounds = it->second.screen_bounds;
       DCHECK(!bounds.IsEmpty());
@@ -196,7 +196,7 @@ void AppWindowGeometryCache::OnExtensionLoaded(
 void AppWindowGeometryCache::OnExtensionUnloaded(
     content::BrowserContext* browser_context,
     const Extension* extension,
-    UnloadedExtensionInfo::Reason reason) {
+    UnloadedExtensionReason reason) {
   SyncToStorage();
   cache_.erase(extension->id());
 }

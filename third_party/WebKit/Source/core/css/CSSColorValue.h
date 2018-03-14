@@ -7,7 +7,7 @@
 
 #include "core/css/CSSValue.h"
 #include "platform/graphics/Color.h"
-#include "platform/wtf/PassRefPtr.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -31,7 +31,7 @@ class CSSColorValue : public CSSValue {
     return color_ == other.color_;
   }
 
-  DEFINE_INLINE_TRACE_AFTER_DISPATCH() {
+  void TraceAfterDispatch(blink::Visitor* visitor) {
     CSSValue::TraceAfterDispatch(visitor);
   }
 

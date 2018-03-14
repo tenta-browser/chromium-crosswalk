@@ -5,7 +5,7 @@
 import("//chromecast/chromecast.gni")
 import("//testing/test.gni")
 
-source_set("reboot_util") {
+cast_source_set("reboot_util") {
   sources = [
     "reboot_util.h",
     "reboot_util_core.cc",
@@ -37,7 +37,7 @@ test("cast_reboot_unittests") {
 
 # Target for OEM partners to override reboot shared library, i.e.
 # libcast_reboot_1.0.so.
-shared_library("libcast_reboot_1.0") {
+cast_shared_library("libcast_reboot_1.0") {
   sources = [
     "reboot_dummy.cc",
   ]

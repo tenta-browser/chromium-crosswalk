@@ -21,9 +21,10 @@
 
 #include "core/css/CSSPrimitiveValue.h"
 
+#include "build/build_config.h"
 #include "core/css/CSSCalculationValue.h"
-#include "core/css/CSSHelper.h"
 #include "core/css/CSSMarkup.h"
+#include "core/css/CSSResolutionUnits.h"
 #include "core/css/CSSToLengthConversionData.h"
 #include "core/css/CSSValuePool.h"
 #include "platform/LayoutUnit.h"
@@ -62,6 +63,7 @@ CSSPrimitiveValue::UnitCategory CSSPrimitiveValue::UnitTypeToUnitCategory(
     case UnitType::kPixels:
     case UnitType::kCentimeters:
     case UnitType::kMillimeters:
+    case UnitType::kQuarterMillimeters:
     case UnitType::kInches:
     case UnitType::kPoints:
     case UnitType::kPicas:
@@ -125,14 +127,6 @@ CSSPrimitiveValue* CSSPrimitiveValue::Create(double value, UnitType type) {
     default:
       return new CSSPrimitiveValue(value, type);
   }
-}
-
-using CSSTextCache =
-    PersistentHeapHashMap<WeakMember<const CSSPrimitiveValue>, String>;
-
-static CSSTextCache& CssTextCache() {
-  DEFINE_STATIC_LOCAL(CSSTextCache, cache, ());
-  return cache;
 }
 
 CSSPrimitiveValue::UnitType CSSPrimitiveValue::TypeWithCalcResolved() const {
@@ -224,11 +218,10 @@ void CSSPrimitiveValue::Init(UnitType type) {
 
 void CSSPrimitiveValue::Init(CSSCalcValue* c) {
   Init(UnitType::kCalc);
-  has_cached_css_text_ = false;
   value_.calc = c;
 }
 
-CSSPrimitiveValue::~CSSPrimitiveValue() {}
+CSSPrimitiveValue::~CSSPrimitiveValue() = default;
 
 double CSSPrimitiveValue::ComputeSeconds() const {
   DCHECK(IsTime() ||
@@ -263,6 +256,12 @@ double CSSPrimitiveValue::ComputeDegrees() const {
       NOTREACHED();
       return 0;
   }
+}
+
+double CSSPrimitiveValue::ComputeDotsPerPixel() const {
+  UnitType current_type = TypeWithCalcResolved();
+  DCHECK(IsResolution(current_type));
+  return GetDoubleValue() * ConversionToCanonicalUnitsScaleFactor(current_type);
 }
 
 template <>
@@ -365,6 +364,9 @@ double CSSPrimitiveValue::ConversionToCanonicalUnitsScaleFactor(
     case UnitType::kMillimeters:
       factor = kCssPixelsPerMillimeter;
       break;
+    case UnitType::kQuarterMillimeters:
+      factor = kCssPixelsPerQuarterMillimeter;
+      break;
     case UnitType::kInches:
       factor = kCssPixelsPerInch;
       break;
@@ -442,6 +444,7 @@ bool CSSPrimitiveValue::UnitTypeToLengthUnitType(UnitType unit_type,
     case CSSPrimitiveValue::UnitType::kPixels:
     case CSSPrimitiveValue::UnitType::kCentimeters:
     case CSSPrimitiveValue::UnitType::kMillimeters:
+    case CSSPrimitiveValue::UnitType::kQuarterMillimeters:
     case CSSPrimitiveValue::UnitType::kInches:
     case CSSPrimitiveValue::UnitType::kPoints:
     case CSSPrimitiveValue::UnitType::kPicas:
@@ -511,15 +514,14 @@ CSSPrimitiveValue::UnitType CSSPrimitiveValue::LengthUnitTypeToUnitType(
   return CSSPrimitiveValue::UnitType::kUnknown;
 }
 
-static String FormatNumber(double number, const StringView& suffix) {
-#if OS(WIN) && _MSC_VER < 1900
+static String FormatNumber(double number, const char* suffix) {
+#if defined(OS_WIN) && _MSC_VER < 1900
   unsigned oldFormat = _set_output_format(_TWO_DIGIT_EXPONENT);
 #endif
-  String result = String::Format("%.6g", number);
-#if OS(WIN) && _MSC_VER < 1900
+  String result = String::Format("%.6g%s", number, suffix);
+#if defined(OS_WIN) && _MSC_VER < 1900
   _set_output_format(oldFormat);
 #endif
-  result.Append(suffix);
   return result;
 }
 
@@ -552,6 +554,8 @@ const char* CSSPrimitiveValue::UnitTypeToString(UnitType type) {
       return "dpcm";
     case UnitType::kMillimeters:
       return "mm";
+    case UnitType::kQuarterMillimeters:
+      return "q";
     case UnitType::kInches:
       return "in";
     case UnitType::kPoints:
@@ -597,11 +601,6 @@ const char* CSSPrimitiveValue::UnitTypeToString(UnitType type) {
 }
 
 String CSSPrimitiveValue::CustomCSSText() const {
-  if (has_cached_css_text_) {
-    DCHECK(CssTextCache().Contains(this));
-    return CssTextCache().at(this);
-  }
-
   String text;
   switch (GetType()) {
     case UnitType::kUnknown:
@@ -623,6 +622,7 @@ String CSSPrimitiveValue::CustomCSSText() const {
     case UnitType::kDotsPerInch:
     case UnitType::kDotsPerCentimeter:
     case UnitType::kMillimeters:
+    case UnitType::kQuarterMillimeters:
     case UnitType::kInches:
     case UnitType::kPoints:
     case UnitType::kPicas:
@@ -653,9 +653,6 @@ String CSSPrimitiveValue::CustomCSSText() const {
       break;
   }
 
-  DCHECK(!CssTextCache().Contains(this));
-  CssTextCache().Set(this, text);
-  has_cached_css_text_ = true;
   return text;
 }
 
@@ -678,6 +675,7 @@ bool CSSPrimitiveValue::Equals(const CSSPrimitiveValue& other) const {
     case UnitType::kDotsPerInch:
     case UnitType::kDotsPerCentimeter:
     case UnitType::kMillimeters:
+    case UnitType::kQuarterMillimeters:
     case UnitType::kInches:
     case UnitType::kPoints:
     case UnitType::kPicas:
@@ -710,7 +708,7 @@ bool CSSPrimitiveValue::Equals(const CSSPrimitiveValue& other) const {
   return false;
 }
 
-DEFINE_TRACE_AFTER_DISPATCH(CSSPrimitiveValue) {
+void CSSPrimitiveValue::TraceAfterDispatch(blink::Visitor* visitor) {
   switch (GetType()) {
     case UnitType::kCalc:
       visitor->Trace(value_.calc);

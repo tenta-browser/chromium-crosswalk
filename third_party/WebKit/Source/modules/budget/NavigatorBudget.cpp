@@ -4,6 +4,8 @@
 
 #include "modules/budget/NavigatorBudget.h"
 
+#include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameClient.h"
 #include "core/frame/Navigator.h"
 #include "modules/budget/BudgetService.h"
 
@@ -31,18 +33,22 @@ NavigatorBudget& NavigatorBudget::From(Navigator& navigator) {
   return *navigator_budget;
 }
 
-BudgetService* NavigatorBudget::budget() {
-  if (!budget_)
-    budget_ = BudgetService::Create();
+BudgetService* NavigatorBudget::budget(ExecutionContext* context) {
+  if (!budget_) {
+    if (auto* interface_provider = context->GetInterfaceProvider()) {
+      budget_ = BudgetService::Create(interface_provider);
+    }
+  }
   return budget_.Get();
 }
 
 // static
-BudgetService* NavigatorBudget::budget(Navigator& navigator) {
-  return NavigatorBudget::From(navigator).budget();
+BudgetService* NavigatorBudget::budget(ExecutionContext* context,
+                                       Navigator& navigator) {
+  return NavigatorBudget::From(navigator).budget(context);
 }
 
-DEFINE_TRACE(NavigatorBudget) {
+void NavigatorBudget::Trace(blink::Visitor* visitor) {
   visitor->Trace(budget_);
   Supplement<Navigator>::Trace(visitor);
 }

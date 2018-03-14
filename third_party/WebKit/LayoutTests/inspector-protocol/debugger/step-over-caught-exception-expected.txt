@@ -1,5 +1,4 @@
-CONSOLE MESSAGE: line 16: completed
-CONSOLE MESSAGE: line 16: completed
+Tests that stepping over caught exception does not pause.
 testFunction:13
 testFunction:15
 testFunction:13

@@ -13,6 +13,7 @@
 #include "base/macros.h"
 #include "chrome/browser/chromeos/login/user_flow.h"
 #include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
+#include "components/prefs/testing_pref_service.h"
 #include "components/user_manager/fake_user_manager.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_image/user_image.h"
@@ -44,6 +45,10 @@ class FakeChromeUserManager : public ChromeUserManager {
   const user_manager::User* AddUserWithAffiliation(const AccountId& account_id,
                                                    bool is_affiliated);
 
+  // Creates the instance returned by |GetLocalState()| (which returns nullptr
+  // by default).
+  void CreateLocalState();
+
   // user_manager::UserManager override.
   void Shutdown() override;
   const user_manager::UserList& GetUsers() const override;
@@ -54,7 +59,8 @@ class FakeChromeUserManager : public ChromeUserManager {
   const AccountId& GetOwnerAccountId() const override;
   void UserLoggedIn(const AccountId& account_id,
                     const std::string& user_id_hash,
-                    bool browser_restart) override;
+                    bool browser_restart,
+                    bool is_child) override;
   void SwitchActiveUser(const AccountId& account_id) override;
   void SwitchToLastActiveUser() override;
   void OnSessionStarted() override;
@@ -80,8 +86,7 @@ class FakeChromeUserManager : public ChromeUserManager {
   void SaveUserDisplayEmail(const AccountId& account_id,
                             const std::string& display_email) override;
   std::string GetUserDisplayEmail(const AccountId& account_id) const override;
-  void SaveUserType(const AccountId& account_id,
-                    const user_manager::UserType& user_type) override;
+  void SaveUserType(const user_manager::User* user) override;
   void UpdateUserAccountData(const AccountId& account_id,
                              const UserAccountData& account_data) override;
   bool IsCurrentUserOwner() const override;
@@ -99,8 +104,10 @@ class FakeChromeUserManager : public ChromeUserManager {
   bool IsLoggedInAsStub() const override;
   bool IsUserNonCryptohomeDataEphemeral(
       const AccountId& account_id) const override;
-  void ChangeUserChildStatus(user_manager::User* user, bool is_child) override;
   bool AreSupervisedUsersAllowed() const override;
+  bool IsGuestSessionAllowed() const override;
+  bool IsGaiaUserAllowed(const user_manager::User& user) const override;
+  bool IsUserAllowed(const user_manager::User& user) const override;
   PrefService* GetLocalState() const override;
   bool GetPlatformKnownUserId(const std::string& user_email,
                               const std::string& gaia_id,
@@ -146,7 +153,6 @@ class FakeChromeUserManager : public ChromeUserManager {
                         bool is_current_user_owner) const override;
 
   // UserManagerInterface override.
-  BootstrapManager* GetBootstrapManager() override;
   MultiProfileUserController* GetMultiProfileUserController() override;
   UserImageManager* GetUserImageManager(const AccountId& account_id) override;
   SupervisedUserManager* GetSupervisedUserManager() override;
@@ -171,10 +177,6 @@ class FakeChromeUserManager : public ChromeUserManager {
     owner_account_id_ = owner_account_id;
   }
 
-  void set_bootstrap_manager(BootstrapManager* bootstrap_manager) {
-    bootstrap_manager_ = bootstrap_manager;
-  }
-
   void set_multi_profile_user_controller(
       MultiProfileUserController* controller) {
     multi_profile_user_controller_ = controller;
@@ -194,7 +196,6 @@ class FakeChromeUserManager : public ChromeUserManager {
   bool fake_ephemeral_users_enabled_ = false;
   bool current_user_new_ = false;
 
-  BootstrapManager* bootstrap_manager_ = nullptr;
   MultiProfileUserController* multi_profile_user_controller_ = nullptr;
 
   // If set this is the active user. If empty, the first created user is the
@@ -205,6 +206,8 @@ class FakeChromeUserManager : public ChromeUserManager {
   mutable std::unique_ptr<UserFlow> default_flow_;
 
   using FlowMap = std::map<AccountId, UserFlow*>;
+
+  std::unique_ptr<TestingPrefServiceSimple> local_state_;
 
   // Specific flows by user e-mail.
   // Keys should be canonicalized before access.

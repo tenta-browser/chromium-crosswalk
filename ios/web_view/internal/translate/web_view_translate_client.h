@@ -8,26 +8,32 @@
 #include <memory>
 #include <string>
 
-#import "base/ios/weak_nsobject.h"
 #include "components/translate/core/browser/translate_client.h"
 #include "components/translate/core/browser/translate_step.h"
 #include "components/translate/core/common/translate_errors.h"
 #import "components/translate/ios/browser/ios_translate_driver.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 #import "ios/web/public/web_state/web_state_user_data.h"
-#import "ios/web_view/public/cwv_translate_delegate.h"
+
+@class CWVTranslationController;
 
 class PrefService;
+
+namespace metrics {
+class TranslateEventProto;
+}  // namespace metrics
 
 namespace translate {
 class TranslateAcceptLanguages;
 class TranslatePrefs;
 class TranslateManager;
+
+struct LanguageDetectionDetails;
 }  // namespace translate
 
 namespace web {
 class WebState;
-}
+}  // namespace web
 
 namespace ios_web_view {
 
@@ -36,25 +42,26 @@ class WebViewTranslateClient
       public web::WebStateObserver,
       public web::WebStateUserData<WebViewTranslateClient> {
  public:
-  // Sets the delegate passed by the embedder.
-  // |delegate| is assumed to outlive this WebViewTranslateClient.
-  void set_translate_delegate(id<CWVTranslateDelegate> delegate) {
-    delegate_.reset(delegate);
-  }
-
- private:
-  friend class web::WebStateUserData<WebViewTranslateClient>;
-
-  // The lifetime of WebViewTranslateClient is managed by WebStateUserData.
-  explicit WebViewTranslateClient(web::WebState* web_state);
   ~WebViewTranslateClient() override;
 
+  // This |controller| is assumed to outlive this WebViewTranslateClient.
+  void set_translation_controller(CWVTranslationController* controller) {
+    translation_controller_ = controller;
+  }
+
+  translate::TranslateManager* translate_manager() {
+    return translate_manager_.get();
+  }
+
   // TranslateClient implementation.
-  translate::TranslateDriver* GetTranslateDriver() override;
+  translate::IOSTranslateDriver* GetTranslateDriver() override;
   PrefService* GetPrefs() override;
   std::unique_ptr<translate::TranslatePrefs> GetTranslatePrefs() override;
   translate::TranslateAcceptLanguages* GetTranslateAcceptLanguages() override;
   int GetInfobarIconID() const override;
+  void RecordLanguageDetectionEvent(
+      const translate::LanguageDetectionDetails& details) const override;
+  void RecordTranslateEvent(const metrics::TranslateEventProto&) override;
   std::unique_ptr<infobars::InfoBar> CreateInfoBar(
       std::unique_ptr<translate::TranslateInfoBarDelegate> delegate)
       const override;
@@ -66,14 +73,20 @@ class WebViewTranslateClient
   bool IsTranslatableURL(const GURL& url) override;
   void ShowReportLanguageDetectionErrorUI(const GURL& report_url) override;
 
+ private:
+  friend class web::WebStateUserData<WebViewTranslateClient>;
+
+  // The lifetime of WebViewTranslateClient is managed by WebStateUserData.
+  explicit WebViewTranslateClient(web::WebState* web_state);
+
   // web::WebStateObserver implementation.
-  void WebStateDestroyed() override;
+  void WebStateDestroyed(web::WebState* web_state) override;
 
   std::unique_ptr<translate::TranslateManager> translate_manager_;
   translate::IOSTranslateDriver translate_driver_;
 
-  // Delegate provided by the embedder.
-  base::WeakNSProtocol<id<CWVTranslateDelegate>> delegate_;
+  // ObjC class that wraps this class.
+  __weak CWVTranslationController* translation_controller_ = nil;
 
   DISALLOW_COPY_AND_ASSIGN(WebViewTranslateClient);
 };

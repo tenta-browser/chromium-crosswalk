@@ -4,11 +4,13 @@
 
 #include "core/input/GestureManager.h"
 
+#include "build/build_config.h"
 #include "core/dom/Document.h"
-#include "core/dom/DocumentUserGestureToken.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "core/editing/SelectionController.h"
 #include "core/events/GestureEvent.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/frame/VisualViewport.h"
 #include "core/input/EventHandler.h"
@@ -16,6 +18,7 @@
 #include "core/input/InputDeviceCapabilities.h"
 #include "core/page/ChromeClient.h"
 #include "core/page/Page.h"
+#include "public/web/WebTappedInfo.h"
 
 namespace blink {
 
@@ -38,7 +41,7 @@ void GestureManager::Clear() {
   last_show_press_timestamp_.reset();
 }
 
-DEFINE_TRACE(GestureManager) {
+void GestureManager::Trace(blink::Visitor* visitor) {
   visitor->Trace(frame_);
   visitor->Trace(scroll_manager_);
   visitor->Trace(mouse_event_manager_);
@@ -56,7 +59,7 @@ HitTestRequest::HitTestRequestType GestureManager::GetHitTypeForGestureType(
     case WebInputEvent::kGestureTapCancel:
       // A TapDownCancel received when no element is active shouldn't really be
       // changing hover state.
-      if (!frame_->GetDocument()->ActiveHoverElement())
+      if (!frame_->GetDocument()->GetActiveElement())
         hit_type |= HitTestRequest::kReadOnly;
       return hit_type | HitTestRequest::kRelease;
     case WebInputEvent::kGestureTap:
@@ -134,7 +137,7 @@ WebInputEventResult GestureManager::HandleGestureTapDown(
 
 WebInputEventResult GestureManager::HandleGestureTap(
     const GestureEventWithHitTestResults& targeted_event) {
-  FrameView* frame_view(frame_->View());
+  LocalFrameView* frame_view(frame_->View());
   const WebGestureEvent& gesture_event = targeted_event.Event();
   HitTestRequest::HitTestRequestType hit_type =
       GetHitTypeForGestureType(gesture_event.GetType());
@@ -175,9 +178,9 @@ WebInputEventResult GestureManager::HandleGestureTap(
   // FIXME: Use a hit-test cache to avoid unnecessary hit tests.
   // http://crbug.com/398920
   if (current_hit_test.InnerNode()) {
-    LocalFrame* main_frame = frame_->LocalFrameRoot();
-    if (main_frame && main_frame->View())
-      main_frame->View()->UpdateLifecycleToCompositingCleanPlusScrolling();
+    LocalFrame& main_frame = frame_->LocalFrameRoot();
+    if (main_frame.View())
+      main_frame.View()->UpdateLifecycleToCompositingCleanPlusScrolling();
     adjusted_point = frame_view->RootFrameToContents(
         FlooredIntPoint(gesture_event.PositionInRootFrame()));
     current_hit_test = EventHandlingUtil::HitTestResultInFrame(
@@ -188,10 +191,10 @@ WebInputEventResult GestureManager::HandleGestureTap(
   IntPoint tapped_position =
       FlooredIntPoint(gesture_event.PositionInRootFrame());
   Node* tapped_node = current_hit_test.InnerNode();
-  Element* tapped_element =
-      EventHandlingUtil::ParentElementIfNeeded(tapped_node);
-  UserGestureIndicator gesture_indicator(DocumentUserGestureToken::Create(
-      tapped_node ? &tapped_node->GetDocument() : nullptr));
+  Element* tapped_element = current_hit_test.InnerElement();
+  std::unique_ptr<UserGestureIndicator> gesture_indicator =
+      Frame::NotifyUserActivation(
+          tapped_node ? tapped_node->GetDocument().GetFrame() : nullptr);
 
   mouse_event_manager_->SetClickElement(tapped_element);
 
@@ -238,9 +241,9 @@ WebInputEventResult GestureManager::HandleGestureTap(
   // FIXME: Use a hit-test cache to avoid unnecessary hit tests.
   // http://crbug.com/398920
   if (current_hit_test.InnerNode()) {
-    LocalFrame* main_frame = frame_->LocalFrameRoot();
-    if (main_frame && main_frame->View())
-      main_frame->View()->UpdateAllLifecyclePhases();
+    LocalFrame& main_frame = frame_->LocalFrameRoot();
+    if (main_frame.View())
+      main_frame.View()->UpdateAllLifecyclePhases();
     adjusted_point = frame_view->RootFrameToContents(tapped_position);
     current_hit_test = EventHandlingUtil::HitTestResultInFrame(
         frame_, adjusted_point, hit_type);
@@ -298,9 +301,9 @@ WebInputEventResult GestureManager::HandleGestureTap(
     IntPoint tapped_position_in_viewport =
         frame_->GetPage()->GetVisualViewport().RootFrameToViewport(
             tapped_position);
-    frame_->GetChromeClient().ShowUnhandledTapUIIfNeeded(
-        tapped_position_in_viewport, tapped_node,
-        dom_tree_changed || style_changed);
+    WebTappedInfo tapped_info(dom_tree_changed, style_changed, tapped_node,
+                              tapped_position_in_viewport);
+    frame_->GetChromeClient().ShowUnhandledTapUIIfNeeded(tapped_info);
   }
   return event_result;
 }
@@ -332,10 +335,8 @@ WebInputEventResult GestureManager::HandleGestureLongPress(
 
   Node* inner_node = hit_test_result.InnerNode();
   if (inner_node && inner_node->GetLayoutObject() &&
-      selection_controller_->HandleGestureLongPress(gesture_event,
-                                                    hit_test_result)) {
+      selection_controller_->HandleGestureLongPress(hit_test_result)) {
     mouse_event_manager_->FocusDocumentView();
-    return WebInputEventResult::kHandledSystem;
   }
 
   return SendContextMenuEventForGesture(targeted_event);
@@ -343,7 +344,7 @@ WebInputEventResult GestureManager::HandleGestureLongPress(
 
 WebInputEventResult GestureManager::HandleGestureLongTap(
     const GestureEventWithHitTestResults& targeted_event) {
-#if !OS(ANDROID)
+#if !defined(OS_ANDROID)
   if (long_tap_should_invoke_context_menu_) {
     long_tap_should_invoke_context_menu_ = false;
     Node* inner_node = targeted_event.GetHitTestResult().InnerNode();
@@ -389,11 +390,10 @@ WebInputEventResult GestureManager::SendContextMenuEventForGesture(
     event_type = WebInputEvent::kMouseUp;
 
   WebMouseEvent mouse_event(
-      event_type, gesture_event, WebPointerProperties::Button::kRight,
-      /* clickCount */ 1,
+      event_type, gesture_event, WebPointerProperties::Button::kNoButton,
+      /* clickCount */ 0,
       static_cast<WebInputEvent::Modifiers>(
-          modifiers | WebInputEvent::Modifiers::kRightButtonDown |
-          WebInputEvent::kIsCompatibilityEventForTouch),
+          modifiers | WebInputEvent::kIsCompatibilityEventForTouch),
       gesture_event.TimeStampSeconds());
 
   if (!suppress_mouse_events_from_gestures_ && frame_->View()) {
@@ -415,12 +415,12 @@ WebInputEventResult GestureManager::SendContextMenuEventForGesture(
 WebInputEventResult GestureManager::HandleGestureShowPress() {
   last_show_press_timestamp_ = TimeTicks::Now();
 
-  FrameView* view = frame_->View();
+  LocalFrameView* view = frame_->View();
   if (!view)
     return WebInputEventResult::kNotHandled;
   if (ScrollAnimatorBase* scroll_animator = view->ExistingScrollAnimator())
     scroll_animator->CancelAnimation();
-  const FrameView::ScrollableAreaSet* areas = view->ScrollableAreas();
+  const LocalFrameView::ScrollableAreaSet* areas = view->ScrollableAreas();
   if (!areas)
     return WebInputEventResult::kNotHandled;
   for (const ScrollableArea* scrollable_area : *areas) {

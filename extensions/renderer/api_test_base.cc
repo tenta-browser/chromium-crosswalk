@@ -7,11 +7,13 @@
 #include <utility>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/location.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_piece.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "extensions/common/extension_features.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/renderer/dispatcher.h"
 #include "extensions/renderer/process_info_native_handler.h"
@@ -120,12 +122,13 @@ ApiTestEnvironment::~ApiTestEnvironment() {
 
 void ApiTestEnvironment::RegisterModules() {
   v8_schema_registry_.reset(new V8SchemaRegistry);
-  const std::vector<std::pair<const char*, int>> resources =
+  const std::vector<Dispatcher::JsResourceInfo> resources =
       Dispatcher::GetJsResources();
   for (const auto& resource : resources) {
-    if (base::StringPiece(resource.first) !=
-        "test_environment_specific_bindings")
-      env()->RegisterModule(resource.first, resource.second);
+    if (base::StringPiece(resource.name) !=
+        "test_environment_specific_bindings") {
+      env()->RegisterModule(resource.name, resource.id, resource.gzipped);
+    }
   }
   Dispatcher::RegisterNativeHandlers(env()->module_system(),
                                      env()->context(),
@@ -176,6 +179,11 @@ void ApiTestEnvironment::RegisterModules() {
 }
 
 void ApiTestEnvironment::InitializeEnvironment() {
+  // With native bindings, we use the actual bindings system to set up the
+  // context, so there's no need to provide these stubs.
+  if (base::FeatureList::IsEnabled(features::kNativeCrxBindings))
+    return;
+
   gin::Dictionary global(env()->isolate(),
                          env()->context()->v8_context()->Global());
   gin::Dictionary navigator(gin::Dictionary::CreateEmpty(env()->isolate()));
@@ -183,8 +191,6 @@ void ApiTestEnvironment::InitializeEnvironment() {
   global.Set("navigator", navigator);
   gin::Dictionary chrome(gin::Dictionary::CreateEmpty(env()->isolate()));
   global.Set("chrome", chrome);
-  gin::Dictionary extension(gin::Dictionary::CreateEmpty(env()->isolate()));
-  chrome.Set("extension", extension);
   gin::Dictionary runtime(gin::Dictionary::CreateEmpty(env()->isolate()));
   chrome.Set("runtime", runtime);
 }
@@ -222,6 +228,9 @@ void ApiTestEnvironment::RunTestInner(const std::string& test_name,
       FAIL() << "Failed to run test \"" << test_name << "\"";
     }
   };
+
+  ASSERT_FALSE(
+      env()->module_system()->Require("testBody").ToLocalChecked().IsEmpty());
   env()->module_system()->CallModuleMethodSafe(
       "testBody", test_name, 0, nullptr,
       base::Bind(callback, &did_run, quit_closure, test_name));
@@ -230,9 +239,6 @@ void ApiTestEnvironment::RunTestInner(const std::string& test_name,
 
 void ApiTestEnvironment::RunPromisesAgain() {
   v8::MicrotasksScope::PerformCheckpoint(env()->isolate());
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&ApiTestEnvironment::RunPromisesAgain,
-                            base::Unretained(this)));
 }
 
 ApiTestBase::ApiTestBase() {

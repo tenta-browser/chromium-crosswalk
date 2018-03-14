@@ -11,28 +11,49 @@
 #include "base/files/file.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
-#include "base/task_runner.h"
+#include "base/metrics/histogram_macros_local.h"
 #include "jni/MinidumpUploadService_jni.h"
 #include "ui/base/text/bytes_formatting.h"
 
+namespace {
+
+enum class UnsuccessfulUploadListState {
+  FORCED,
+  PENDING,
+  NOT_UPLOADED,
+  OTHER_FILENAME_SUFFIX,
+  FAILED_TO_LOAD_FILE_INFO,
+  FAILED_TO_LOAD_FILE_SIZE,
+  FAILED_TO_FIND_DASH,
+  ADDING_AN_UPLOAD_ENTRY,
+  COUNT
+};
+
+// TODO(isherman): This is a temporary histogram for debugging
+// [ https://crbug.com/772159 ] and should be removed once that bug is closed.
+void RecordUnsuccessfulUploadListState(UnsuccessfulUploadListState state) {
+  LOCAL_HISTOGRAM_ENUMERATION(
+      "Debug.Crash.Android.LoadUnsuccessfulUploadListState", state,
+      UnsuccessfulUploadListState::COUNT);
+}
+
+}  // namespace
+
 CrashUploadListAndroid::CrashUploadListAndroid(
-    Delegate* delegate,
-    const base::FilePath& upload_log_path,
-    scoped_refptr<base::TaskRunner> task_runner)
-    : CrashUploadList(delegate, upload_log_path, std::move(task_runner)) {}
+    const base::FilePath& upload_log_path)
+    : TextLogUploadList(upload_log_path) {}
 
 CrashUploadListAndroid::~CrashUploadListAndroid() {}
 
-void CrashUploadListAndroid::LoadUploadList(
-    std::vector<UploadList::UploadInfo>* uploads) {
-  // This will load the list of successfully uploaded logs.
-  CrashUploadList::LoadUploadList(uploads);
-
-  LoadUnsuccessfulUploadList(uploads);
+std::vector<UploadList::UploadInfo> CrashUploadListAndroid::LoadUploadList() {
+  // First load the list of successfully uploaded logs.
+  std::vector<UploadInfo> uploads = TextLogUploadList::LoadUploadList();
+  // Then load the unsuccessful uploads.
+  LoadUnsuccessfulUploadList(&uploads);
+  return uploads;
 }
 
-void CrashUploadListAndroid::RequestSingleCrashUpload(
-    const std::string& local_id) {
+void CrashUploadListAndroid::RequestSingleUpload(const std::string& local_id) {
   JNIEnv* env = base::android::AttachCurrentThread();
   base::android::ScopedJavaLocalRef<jstring> j_local_id =
       base::android::ConvertUTF8ToJavaString(env, local_id);
@@ -50,23 +71,35 @@ void CrashUploadListAndroid::LoadUnsuccessfulUploadList(
   for (base::FilePath file = files.Next(); !file.empty(); file = files.Next()) {
     UploadList::UploadInfo::State upload_state;
     if (file.value().find(manually_forced_uploads) != std::string::npos) {
+      RecordUnsuccessfulUploadListState(UnsuccessfulUploadListState::FORCED);
       upload_state = UploadList::UploadInfo::State::Pending_UserRequested;
     } else if (file.value().find(pending_uploads) != std::string::npos) {
+      RecordUnsuccessfulUploadListState(UnsuccessfulUploadListState::PENDING);
       upload_state = UploadList::UploadInfo::State::Pending;
     } else if (file.value().find(skipped_uploads) != std::string::npos) {
+      RecordUnsuccessfulUploadListState(
+          UnsuccessfulUploadListState::NOT_UPLOADED);
       upload_state = UploadList::UploadInfo::State::NotUploaded;
     } else {
       // The |file| is something other than a minidump file, e.g. a logcat file.
+      RecordUnsuccessfulUploadListState(
+          UnsuccessfulUploadListState::OTHER_FILENAME_SUFFIX);
       continue;
     }
 
     base::File::Info info;
-    if (!base::GetFileInfo(file, &info))
+    if (!base::GetFileInfo(file, &info)) {
+      RecordUnsuccessfulUploadListState(
+          UnsuccessfulUploadListState::FAILED_TO_LOAD_FILE_INFO);
       continue;
+    }
 
     int64_t file_size = 0;
-    if (!base::GetFileSize(file, &file_size))
+    if (!base::GetFileSize(file, &file_size)) {
+      RecordUnsuccessfulUploadListState(
+          UnsuccessfulUploadListState::FAILED_TO_LOAD_FILE_SIZE);
       continue;
+    }
 
     // Crash reports can have multiple extensions (e.g. foo.dmp, foo.dmp.try1,
     // foo.skipped.try0).
@@ -78,9 +111,14 @@ void CrashUploadListAndroid::LoadUnsuccessfulUploadList(
     // chromium-renderer-minidump-f297dbcba7a2d0bb.
     std::string id = file.value();
     std::size_t pos = id.find_last_of("-");
-    if (pos == std::string::npos)
+    if (pos == std::string::npos) {
+      RecordUnsuccessfulUploadListState(
+          UnsuccessfulUploadListState::FAILED_TO_FIND_DASH);
       continue;
+    }
 
+    RecordUnsuccessfulUploadListState(
+        UnsuccessfulUploadListState::ADDING_AN_UPLOAD_ENTRY);
     id = id.substr(pos + 1);
     UploadList::UploadInfo upload(id, info.creation_time, upload_state,
                                   ui::FormatBytes(file_size));

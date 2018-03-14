@@ -30,13 +30,17 @@ using content::NavigationThrottle;
 namespace {
 
 // Regexes matching
-const char kGetFlashURLCanonicalRegex[] = "(?i)get\\.adobe\\.com/.*flash.*";
-const char kGetFlashURLSecondaryRegex[] =
+const char kGetFlashURLCanonicalRegex[] = "(?i)get2?\\.adobe\\.com/.*flash.*";
+const char kGetFlashURLSecondaryGoRegex[] =
     "(?i)(www\\.)?(adobe|macromedia)\\.com/go/"
     "((?i).*get[-_]?flash|getfp10android|.*fl(ash)player|.*flashpl|"
     ".*flash_player|flash_completion|flashpm|.*flashdownload|d65_flplayer|"
     "fp_jp|runtimes_fp|[a-z_-]{3,6}h-m-a-?2|chrome|download_player|"
     "gnav_fl|pdcredirect).*";
+const char kGetFlashURLSecondaryDownloadRegex[] =
+    "(?i)(www\\.)?(adobe|macromedia)\\.com/shockwave/download/download.cgi";
+const char kGetFlashURLSecondaryDownloadQuery[] =
+    "P1_Prod_Version=ShockwaveFlash";
 
 void DoNothing(ContentSetting result) {}
 
@@ -62,7 +66,8 @@ void FlashDownloadInterception::InterceptFlashDownloadNavigation(
   HostContentSettingsMap* host_content_settings_map =
       HostContentSettingsMapFactory::GetForProfile(profile);
   ContentSetting flash_setting = PluginUtils::GetFlashPluginContentSetting(
-      host_content_settings_map, url::Origin(source_url), source_url, nullptr);
+      host_content_settings_map, url::Origin::Create(source_url), source_url,
+      nullptr);
   flash_setting = PluginsFieldTrial::EffectiveContentSetting(
       host_content_settings_map, CONTENT_SETTINGS_TYPE_PLUGINS, flash_setting);
 
@@ -72,8 +77,9 @@ void FlashDownloadInterception::InterceptFlashDownloadNavigation(
         CONTENT_SETTINGS_TYPE_PLUGINS, web_contents->GetMainFrame(),
         web_contents->GetLastCommittedURL(), true, base::Bind(&DoNothing));
   } else if (flash_setting == CONTENT_SETTING_BLOCK) {
-    TabSpecificContentSettings::FromWebContents(web_contents)
-        ->FlashDownloadBlocked();
+    auto* settings = TabSpecificContentSettings::FromWebContents(web_contents);
+    if (settings)
+      settings->FlashDownloadBlocked();
   }
 
   // If the content setting has been already changed, do nothing.
@@ -107,9 +113,11 @@ bool FlashDownloadInterception::ShouldStopFlashDownloadAction(
   std::string target_url_str =
       target_url.ReplaceComponents(replacements).GetContent();
   if (RE2::FullMatch(target_url_str, kGetFlashURLCanonicalRegex) ||
-      RE2::FullMatch(target_url_str, kGetFlashURLSecondaryRegex)) {
+      RE2::FullMatch(target_url_str, kGetFlashURLSecondaryGoRegex) ||
+      (RE2::FullMatch(target_url_str, kGetFlashURLSecondaryDownloadRegex) &&
+       target_url.query() == kGetFlashURLSecondaryDownloadQuery)) {
     ContentSetting flash_setting = PluginUtils::GetFlashPluginContentSetting(
-        host_content_settings_map, url::Origin(source_url), source_url,
+        host_content_settings_map, url::Origin::Create(source_url), source_url,
         nullptr);
     flash_setting = PluginsFieldTrial::EffectiveContentSetting(
         host_content_settings_map, CONTENT_SETTINGS_TYPE_PLUGINS,
@@ -153,5 +161,5 @@ FlashDownloadInterception::MaybeCreateThrottleFor(NavigationHandle* handle) {
   }
 
   return base::MakeUnique<navigation_interception::InterceptNavigationThrottle>(
-      handle, base::Bind(&InterceptNavigation, source_url), true);
+      handle, base::Bind(&InterceptNavigation, source_url));
 }

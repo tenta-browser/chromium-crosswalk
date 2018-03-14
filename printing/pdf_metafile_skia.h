@@ -12,6 +12,7 @@
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "cc/paint/paint_canvas.h"
+#include "printing/common/pdf_metafile_utils.h"
 #include "printing/metafile.h"
 #include "skia/ext/platform_canvas.h"
 
@@ -20,12 +21,6 @@
 #endif
 
 namespace printing {
-
-enum SkiaDocumentType {
-  PDF_SKIA_DOCUMENT_TYPE,
-  // MSKP is an experimental, fragile, and diagnostic-only document type.
-  MSKP_SKIA_DOCUMENT_TYPE,
-};
 
 struct PdfMetafileSkiaData;
 
@@ -51,15 +46,15 @@ class PRINTING_EXPORT PdfMetafileSkia : public Metafile {
   gfx::Rect GetPageBounds(unsigned int page_number) const override;
   unsigned int GetPageCount() const override;
 
-  skia::NativeDrawingContext context() const override;
+  printing::NativeDrawingContext context() const override;
 
 #if defined(OS_WIN)
-  bool Playback(skia::NativeDrawingContext hdc,
+  bool Playback(printing::NativeDrawingContext hdc,
                 const RECT* rect) const override;
-  bool SafePlayback(skia::NativeDrawingContext hdc) const override;
+  bool SafePlayback(printing::NativeDrawingContext hdc) const override;
 #elif defined(OS_MACOSX)
   bool RenderPage(unsigned int page_number,
-                  skia::NativeDrawingContext context,
+                  printing::NativeDrawingContext context,
                   const CGRect rect,
                   const MacRenderPageParams& params) const override;
 #endif

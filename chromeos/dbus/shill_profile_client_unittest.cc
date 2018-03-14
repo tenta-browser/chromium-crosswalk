@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/test/mock_callback.h"
@@ -107,10 +110,10 @@ TEST_F(ShillProfileClientTest, GetProperties) {
   writer.CloseContainer(&array_writer);
 
   // Create the expected value.
-  base::ListValue* entries = new base::ListValue;
+  auto entries = std::make_unique<base::ListValue>();
   entries->AppendString(kExampleEntryPath);
   base::DictionaryValue value;
-  value.SetWithoutPathExpansion(shill::kEntriesProperty, entries);
+  value.SetWithoutPathExpansion(shill::kEntriesProperty, std::move(entries));
   // Set expectations.
   PrepareForMethodCall(shill::kGetPropertiesFunction,
                        base::Bind(&ExpectNoArgument),
@@ -142,8 +145,7 @@ TEST_F(ShillProfileClientTest, GetEntry) {
 
   // Create the expected value.
   base::DictionaryValue value;
-  value.SetWithoutPathExpansion(shill::kTypeProperty,
-                                new base::Value(shill::kTypeWifi));
+  value.SetKey(shill::kTypeProperty, base::Value(shill::kTypeWifi));
   // Set expectations.
   PrepareForMethodCall(shill::kGetEntryFunction,
                        base::Bind(&ExpectStringArgument, kExampleEntryPath),
@@ -165,8 +167,7 @@ TEST_F(ShillProfileClientTest, DeleteEntry) {
 
   // Create the expected value.
   base::DictionaryValue value;
-  value.SetWithoutPathExpansion(shill::kOfflineModeProperty,
-                                new base::Value(true));
+  value.SetKey(shill::kOfflineModeProperty, base::Value(true));
   // Set expectations.
   PrepareForMethodCall(shill::kDeleteEntryFunction,
                        base::Bind(&ExpectStringArgument, kExampleEntryPath),

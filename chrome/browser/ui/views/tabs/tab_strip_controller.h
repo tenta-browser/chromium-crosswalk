@@ -6,13 +6,14 @@
 #define CHROME_BROWSER_UI_VIEWS_TABS_TAB_STRIP_CONTROLLER_H_
 
 #include "base/strings/string16.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_types.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/ui_base_types.h"
 
 class GURL;
 class Tab;
-class TabStrip;
+class TabStripImpl;
 
 namespace gfx {
 class Point;
@@ -73,9 +74,6 @@ class TabStripController {
                                      const gfx::Point& p,
                                      ui::MenuSourceType source_type) = 0;
 
-  // Updates the loading animations of all the tabs.
-  virtual void UpdateLoadingAnimations() = 0;
-
   // Returns true if the associated TabStrip's delegate supports tab moving or
   // detaching. Used by the Frame to determine if dragging on the Tab
   // itself should move the window in cases where there's only one
@@ -90,7 +88,7 @@ class TabStripController {
 
   // Return true if this tab strip is compatible with the provided tab strip.
   // Compatible tab strips can transfer tabs during drag and drop.
-  virtual bool IsCompatibleWith(TabStrip* other) const = 0;
+  virtual bool IsCompatibleWith(TabStripImpl* other) const = 0;
 
   // Creates the new tab.
   virtual void CreateNewTab() = 0;
@@ -126,6 +124,9 @@ class TabStripController {
 
   // Returns the accessible tab name.
   virtual base::string16 GetAccessibleTabName(const Tab* tab) const = 0;
+
+  // Returns the profile associated with the Tabstrip.
+  virtual Profile* GetProfile() const = 0;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_TABS_TAB_STRIP_CONTROLLER_H_

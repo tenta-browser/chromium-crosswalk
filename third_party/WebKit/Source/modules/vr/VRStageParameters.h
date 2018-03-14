@@ -5,16 +5,15 @@
 #ifndef VRStageParameters_h
 #define VRStageParameters_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "core/dom/DOMTypedArray.h"
+#include "core/typed_arrays/DOMTypedArray.h"
 #include "device/vr/vr_service.mojom-blink.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 
 namespace blink {
 
-class VRStageParameters final : public GarbageCollected<VRStageParameters>,
-                                public ScriptWrappable {
+class VRStageParameters final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -29,7 +28,7 @@ class VRStageParameters final : public GarbageCollected<VRStageParameters>,
 
   void Update(const device::mojom::blink::VRStageParametersPtr&);
 
-  DECLARE_VIRTUAL_TRACE()
+  void Trace(blink::Visitor*) override;
 
  private:
   Member<DOMFloat32Array> standing_transform_;

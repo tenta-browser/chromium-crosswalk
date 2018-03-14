@@ -24,6 +24,7 @@ component("mus") {
     "mus_client.h",
     "mus_client_observer.h",
     "mus_export.h",
+    "mus_property_mirror.h",
     "pointer_watcher_event_router.cc",
     "pointer_watcher_event_router.h",
     "screen_mus.cc",
@@ -47,7 +48,6 @@ component("mus") {
     "//base:i18n",
     "//base/third_party/dynamic_annotations",
     "//cc",
-    "//cc/surfaces",
     "//mojo/common",
     "//mojo/public/cpp/bindings",
     "//net",
@@ -75,6 +75,7 @@ component("mus") {
     "//ui/platform_window/stub",
     "//ui/views",
     "//ui/wm",
+    "//ui/wm/public",
   ]
 
   if (is_linux && !is_android) {
@@ -123,7 +124,7 @@ static_library("test_support") {
     "//mojo/edk/system",
     "//services/catalog:lib",
     "//services/service_manager/background:lib",
-    "//services/service_manager/public/cpp:sources",
+    "//services/service_manager/public/cpp",
     "//services/ui/common:mus_common",
     "//testing/gtest",
     "//ui/aura",
@@ -136,8 +137,13 @@ static_library("test_support") {
     "//ui/views:test_support_internal",
   ]
 
+  if (use_ozone) {
+    deps += [ "//ui/ozone" ]
+  }
+
   data_deps = [
     ":views_mus_tests_catalog",
+    "//services/ui/ime/test_ime_driver",
     "//ui/resources:ui_test_pak_data",
   ]
 }
@@ -237,6 +243,7 @@ test("views_mus_interactive_ui_tests") {
     ":mus",
     ":test_support",
     "//base",
+    "//mojo/edk/system",
     "//testing/gmock",
     "//testing/gtest",
     "//ui/aura",
@@ -250,6 +257,7 @@ test("views_mus_interactive_ui_tests") {
     "//ui/views",
     "//ui/views:test_support_internal",
     "//ui/wm",
+    "//ui/wm/public",
   ]
 
   data_deps = [

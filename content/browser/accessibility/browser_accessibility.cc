@@ -13,22 +13,14 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
+#include "content/browser/accessibility/browser_accessibility_state_impl.h"
 #include "content/common/accessibility_messages.h"
 #include "ui/accessibility/ax_role_properties.h"
 #include "ui/accessibility/ax_text_utils.h"
-#include "ui/accessibility/platform/ax_platform_unique_id.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/rect_f.h"
 
 namespace content {
-
-namespace {
-
-// Map from unique_id to BrowserAccessibility
-using UniqueIDMap = base::hash_map<int32_t, BrowserAccessibility*>;
-base::LazyInstance<UniqueIDMap>::DestructorAtExit g_unique_id_map =
-    LAZY_INSTANCE_INITIALIZER;
-}
 
 #if !defined(PLATFORM_HAS_NATIVE_ACCESSIBILITY_IMPL)
 // static
@@ -38,40 +30,15 @@ BrowserAccessibility* BrowserAccessibility::Create() {
 #endif
 
 BrowserAccessibility::BrowserAccessibility()
-    : manager_(nullptr),
-      node_(nullptr),
-      unique_id_(ui::GetNextAXPlatformNodeUniqueId()),
-      platform_node_(nullptr) {
-  g_unique_id_map.Get()[unique_id_] = this;
-}
+    : manager_(nullptr), node_(nullptr) {}
 
 BrowserAccessibility::~BrowserAccessibility() {
-  if (unique_id_)
-    g_unique_id_map.Get().erase(unique_id_);
-  if (platform_node_)
-    platform_node_->Destroy();
-}
-
-// static
-BrowserAccessibility* BrowserAccessibility::GetFromUniqueID(int32_t unique_id) {
-  auto iter = g_unique_id_map.Get().find(unique_id);
-  if (iter == g_unique_id_map.Get().end())
-    return nullptr;
-
-  return iter->second;
 }
 
 void BrowserAccessibility::Init(BrowserAccessibilityManager* manager,
     ui::AXNode* node) {
   manager_ = manager;
   node_ = node;
-
-// Here we create the AXPlatformNode which contains a platform-specific
-// implementation of requried accessibility APIS for this node. At this point,
-// we only are creating this object for Windows. See http://crbug.com/703369
-#if defined(OS_WIN)
-  platform_node_ = ui::AXPlatformNode::Create(this);
-#endif
 }
 
 bool BrowserAccessibility::PlatformIsLeaf() const {
@@ -82,10 +49,7 @@ bool BrowserAccessibility::PlatformIsLeaf() const {
   // implementation details, but we want to expose them as leaves to platform
   // accessibility APIs because screen readers might be confused if they find
   // any children.
-  // Note that if a combo box, search box or text field are not native, they
-  // might present a menu of choices using aria-owns which should not be hidden
-  // from tree.
-  if (IsNativeTextControl() || IsTextOnlyObject())
+  if (IsPlainTextField() || IsTextOnlyObject())
     return true;
 
   // Roles whose children are only presentational according to the ARIA and
@@ -137,6 +101,11 @@ bool BrowserAccessibility::IsDescendantOf(
   return false;
 }
 
+bool BrowserAccessibility::IsDocument() const {
+  return GetRole() == ui::AX_ROLE_ROOT_WEB_AREA ||
+         GetRole() == ui::AX_ROLE_WEB_AREA;
+}
+
 bool BrowserAccessibility::IsTextOnlyObject() const {
   return GetRole() == ui::AX_ROLE_STATIC_TEXT ||
          GetRole() == ui::AX_ROLE_LINE_BREAK ||
@@ -168,6 +137,7 @@ BrowserAccessibility* BrowserAccessibility::PlatformGetChild(
 
 bool BrowserAccessibility::PlatformIsChildOfLeaf() const {
   BrowserAccessibility* ancestor = InternalGetParent();
+
   while (ancestor) {
     if (ancestor->PlatformIsLeaf())
       return true;
@@ -338,10 +308,6 @@ BrowserAccessibility* BrowserAccessibility::InternalGetParent() const {
   return nullptr;
 }
 
-int32_t BrowserAccessibility::GetIndexInParent() const {
-  return node_ ? node_->index_in_parent() : -1;
-}
-
 int32_t BrowserAccessibility::GetId() const {
   return node_ ? node_->id() : -1;
 }
@@ -364,15 +330,12 @@ BrowserAccessibility::GetHtmlAttributes() const {
 }
 
 gfx::Rect BrowserAccessibility::GetFrameBoundsRect() const {
-  gfx::RectF bounds = GetLocation();
-  FixEmptyBounds(&bounds);
-  return RelativeToAbsoluteBounds(bounds, true);
+  return RelativeToAbsoluteBounds(gfx::RectF(), true);
 }
 
-gfx::Rect BrowserAccessibility::GetPageBoundsRect() const {
-  gfx::RectF bounds = GetLocation();
-  FixEmptyBounds(&bounds);
-  return RelativeToAbsoluteBounds(bounds, false);
+gfx::Rect BrowserAccessibility::GetPageBoundsRect(bool* offscreen,
+                                                  bool clip_bounds) const {
+  return RelativeToAbsoluteBounds(gfx::RectF(), false, offscreen, clip_bounds);
 }
 
 gfx::Rect BrowserAccessibility::GetPageBoundsForRange(int start, int len)
@@ -383,7 +346,7 @@ gfx::Rect BrowserAccessibility::GetPageBoundsForRange(int start, int len)
   // Standard text fields such as textarea have an embedded div inside them that
   // holds all the text.
   // TODO(nektar): This is fragile! Replace with code that flattens tree.
-  if (IsSimpleTextControl() && InternalChildCount() == 1)
+  if (IsPlainTextField() && InternalChildCount() == 1)
     return InternalGetChild(0)->GetPageBoundsForRange(start, len);
 
   if (GetRole() != ui::AX_ROLE_STATIC_TEXT) {
@@ -517,22 +480,20 @@ gfx::Rect BrowserAccessibility::GetScreenBoundsForRange(int start, int len)
 
 base::string16 BrowserAccessibility::GetValue() const {
   base::string16 value = GetString16Attribute(ui::AX_ATTR_VALUE);
-  // Some screen readers like Jaws and older versions of VoiceOver require a
-  // value to be set in text fields with rich content, even though the same
-  // information is available on the children.
-  if (value.empty() &&
-      (IsSimpleTextControl() || IsRichTextControl()) &&
-      !IsNativeTextControl())
-    value = GetInnerText();
+  // Some screen readers like Jaws and VoiceOver require a value to be set in
+  // text fields with rich content, even though the same information is
+  // available on the children.
+  if (value.empty() && IsRichTextField())
+    return GetInnerText();
   return value;
 }
 
 BrowserAccessibility* BrowserAccessibility::ApproximateHitTest(
     const gfx::Point& point) {
   // The best result found that's a child of this object.
-  BrowserAccessibility* child_result = NULL;
+  BrowserAccessibility* child_result = nullptr;
   // The best result that's an indirect descendant like grandchild, etc.
-  BrowserAccessibility* descendant_result = NULL;
+  BrowserAccessibility* descendant_result = nullptr;
 
   // Walk the children recursively looking for the BrowserAccessibility that
   // most tightly encloses the specified point. Walk backwards so that in
@@ -573,17 +534,8 @@ BrowserAccessibility* BrowserAccessibility::ApproximateHitTest(
 }
 
 void BrowserAccessibility::Destroy() {
-  // Allow the object to fire a TextRemoved notification.
-  manager()->NotifyAccessibilityEvent(
-      BrowserAccessibilityEvent::FromTreeChange,
-      ui::AX_EVENT_HIDE,
-      this);
-  node_ = NULL;
-  manager_ = NULL;
-
-  if (unique_id_)
-    g_unique_id_map.Get().erase(unique_id_);
-  unique_id_ = 0;
+  node_ = nullptr;
+  manager_ = nullptr;
 
   NativeReleaseReference();
 }
@@ -754,161 +706,20 @@ bool BrowserAccessibility::GetHtmlAttribute(
   return GetData().GetHtmlAttribute(html_attr, value);
 }
 
-bool BrowserAccessibility::GetAriaTristate(
-    const char* html_attr,
-    bool* is_defined,
-    bool* is_mixed) const {
-  *is_defined = false;
-  *is_mixed = false;
-
-  base::string16 value;
-  if (!GetHtmlAttribute(html_attr, &value) ||
-      value.empty() ||
-      base::EqualsASCII(value, "undefined")) {
-    return false;  // Not set (and *is_defined is also false)
-  }
-
-  *is_defined = true;
-
-  if (base::EqualsASCII(value, "true"))
-    return true;
-
-  if (base::EqualsASCII(value, "mixed"))
-    *is_mixed = true;
-
-  return false;  // Not set.
-}
-
-BrowserAccessibility* BrowserAccessibility::GetTable() const {
-  BrowserAccessibility* table = const_cast<BrowserAccessibility*>(this);
-  while (table && !table->IsTableOrGridOrTreeGridRole())
-    table = table->PlatformGetParent();
-  return table;
-}
-
-BrowserAccessibility* BrowserAccessibility::GetTableCell(int index) const {
-  if (!IsTableOrGridOrTreeGridRole() && !IsCellOrTableHeaderRole())
-    return nullptr;
-
-  BrowserAccessibility* table = GetTable();
-  if (!table)
-    return nullptr;
-  const std::vector<int32_t>& unique_cell_ids =
-      table->GetIntListAttribute(ui::AX_ATTR_UNIQUE_CELL_IDS);
-  if (index < 0 || index >= static_cast<int>(unique_cell_ids.size()))
-    return nullptr;
-  return table->manager_->GetFromID(unique_cell_ids[index]);
-}
-
-BrowserAccessibility* BrowserAccessibility::GetTableCell(int row,
-                                                         int column) const {
-  if (!IsTableOrGridOrTreeGridRole() && !IsCellOrTableHeaderRole())
-    return nullptr;
-  if (row < 0 || row >= GetTableRowCount() || column < 0 ||
-      column >= GetTableColumnCount()) {
-    return nullptr;
-  }
-
-  BrowserAccessibility* table = GetTable();
-  if (!table)
-    return nullptr;
-
-  // In contrast to unique cell IDs, these are duplicated whenever a cell spans
-  // multiple columns or rows.
-  const std::vector<int32_t>& cell_ids =
-      table->GetIntListAttribute(ui::AX_ATTR_CELL_IDS);
-  DCHECK_EQ(GetTableRowCount() * GetTableColumnCount(),
-            static_cast<int>(cell_ids.size()));
-  int position = row * GetTableColumnCount() + column;
-  if (position < 0 || position >= static_cast<int>(cell_ids.size()))
-    return nullptr;
-  return table->manager_->GetFromID(cell_ids[position]);
-}
-
-int BrowserAccessibility::GetTableCellIndex() const {
-  if (!IsCellOrTableHeaderRole())
-    return -1;
-
-  BrowserAccessibility* table = GetTable();
-  if (!table)
-    return -1;
-
-  const std::vector<int32_t>& unique_cell_ids =
-      table->GetIntListAttribute(ui::AX_ATTR_UNIQUE_CELL_IDS);
-  auto iter =
-      std::find(unique_cell_ids.begin(), unique_cell_ids.end(), GetId());
-  if (iter == unique_cell_ids.end())
-    return -1;
-
-  return std::distance(unique_cell_ids.begin(), iter);
-}
-
-int BrowserAccessibility::GetTableColumn() const {
-  return GetIntAttribute(ui::AX_ATTR_TABLE_CELL_COLUMN_INDEX);
-}
-
-int BrowserAccessibility::GetTableColumnCount() const {
-  BrowserAccessibility* table = GetTable();
-  if (!table)
-    return 0;
-
-  return table->GetIntAttribute(ui::AX_ATTR_TABLE_COLUMN_COUNT);
-}
-
-int BrowserAccessibility::GetTableColumnSpan() const {
-  if (!IsCellOrTableHeaderRole())
-    return 0;
-
-  int column_span;
-  if (GetIntAttribute(ui::AX_ATTR_TABLE_CELL_COLUMN_SPAN, &column_span))
-    return column_span;
-  return 1;
-}
-
-int BrowserAccessibility::GetTableRow() const {
-  return GetIntAttribute(ui::AX_ATTR_TABLE_CELL_ROW_INDEX);
-}
-
-int BrowserAccessibility::GetTableRowCount() const {
-  BrowserAccessibility* table = GetTable();
-  if (!table)
-    return 0;
-
-  return table->GetIntAttribute(ui::AX_ATTR_TABLE_ROW_COUNT);
-}
-
-int BrowserAccessibility::GetTableRowSpan() const {
-  if (!IsCellOrTableHeaderRole())
-    return 0;
-
-  int row_span;
-  if (GetIntAttribute(ui::AX_ATTR_TABLE_CELL_ROW_SPAN, &row_span))
-    return row_span;
-  return 1;
-}
-
 base::string16 BrowserAccessibility::GetText() const {
   return GetInnerText();
 }
 
 bool BrowserAccessibility::HasState(ui::AXState state_enum) const {
-  return (GetState() >> state_enum) & 1;
+  return GetData().HasState(state_enum);
 }
 
-bool BrowserAccessibility::IsCellOrTableHeaderRole() const {
-  return (GetRole() == ui::AX_ROLE_CELL ||
-          GetRole() == ui::AX_ROLE_COLUMN_HEADER ||
-          GetRole() == ui::AX_ROLE_ROW_HEADER);
-}
-
-bool BrowserAccessibility::IsTableOrGridOrTreeGridRole() const {
-  return (GetRole() == ui::AX_ROLE_TABLE ||
-          GetRole() == ui::AX_ROLE_GRID ||
-          GetRole() == ui::AX_ROLE_TREE_GRID);
+bool BrowserAccessibility::HasAction(ui::AXAction action_enum) const {
+  return GetData().HasAction(action_enum);
 }
 
 bool BrowserAccessibility::HasCaret() const {
-  if (IsSimpleTextControl() && HasIntAttribute(ui::AX_ATTR_TEXT_SEL_START) &&
+  if (IsPlainTextField() && HasIntAttribute(ui::AX_ATTR_TEXT_SEL_START) &&
       HasIntAttribute(ui::AX_ATTR_TEXT_SEL_END)) {
     return true;
   }
@@ -939,91 +750,28 @@ bool BrowserAccessibility::IsClickable() const {
   return ui::IsRoleClickable(GetRole());
 }
 
-bool BrowserAccessibility::IsControl() const {
-  switch (GetRole()) {
-    case ui::AX_ROLE_BUTTON:
-    case ui::AX_ROLE_CHECK_BOX:
-    case ui::AX_ROLE_COLOR_WELL:
-    case ui::AX_ROLE_COMBO_BOX:
-    case ui::AX_ROLE_DISCLOSURE_TRIANGLE:
-    case ui::AX_ROLE_LIST_BOX:
-    case ui::AX_ROLE_MENU:
-    case ui::AX_ROLE_MENU_BAR:
-    case ui::AX_ROLE_MENU_BUTTON:
-    case ui::AX_ROLE_MENU_ITEM:
-    case ui::AX_ROLE_MENU_ITEM_CHECK_BOX:
-    case ui::AX_ROLE_MENU_ITEM_RADIO:
-    case ui::AX_ROLE_MENU_LIST_OPTION:
-    case ui::AX_ROLE_MENU_LIST_POPUP:
-    case ui::AX_ROLE_POP_UP_BUTTON:
-    case ui::AX_ROLE_RADIO_BUTTON:
-    case ui::AX_ROLE_SCROLL_BAR:
-    case ui::AX_ROLE_SEARCH_BOX:
-    case ui::AX_ROLE_SLIDER:
-    case ui::AX_ROLE_SPIN_BUTTON:
-    case ui::AX_ROLE_SWITCH:
-    case ui::AX_ROLE_TAB:
-    case ui::AX_ROLE_TEXT_FIELD:
-    case ui::AX_ROLE_TOGGLE_BUTTON:
-    case ui::AX_ROLE_TREE:
-      return true;
-    default:
-      return false;
-  }
+bool BrowserAccessibility::IsPlainTextField() const {
+  // We need to check both the role and editable state, because some ARIA text
+  // fields may in fact not be editable, whilst some editable fields might not
+  // have the role.
+  return !HasState(ui::AX_STATE_RICHLY_EDITABLE) &&
+         (GetRole() == ui::AX_ROLE_TEXT_FIELD ||
+          GetRole() == ui::AX_ROLE_TEXT_FIELD_WITH_COMBO_BOX ||
+          GetRole() == ui::AX_ROLE_SEARCH_BOX ||
+          GetBoolAttribute(ui::AX_ATTR_EDITABLE_ROOT));
 }
 
-bool BrowserAccessibility::IsMenuRelated() const {
-  switch (GetRole()) {
-    case ui::AX_ROLE_MENU:
-    case ui::AX_ROLE_MENU_BAR:
-    case ui::AX_ROLE_MENU_BUTTON:
-    case ui::AX_ROLE_MENU_ITEM:
-    case ui::AX_ROLE_MENU_ITEM_CHECK_BOX:
-    case ui::AX_ROLE_MENU_ITEM_RADIO:
-    case ui::AX_ROLE_MENU_LIST_OPTION:
-    case ui::AX_ROLE_MENU_LIST_POPUP:
-      return true;
-    default:
-      return false;
-  }
+bool BrowserAccessibility::IsRichTextField() const {
+  return GetBoolAttribute(ui::AX_ATTR_EDITABLE_ROOT) &&
+         HasState(ui::AX_STATE_RICHLY_EDITABLE);
 }
 
-bool BrowserAccessibility::IsNativeTextControl() const {
-  const std::string& html_tag = GetStringAttribute(ui::AX_ATTR_HTML_TAG);
-  if (html_tag == "input") {
-    std::string input_type;
-    if (!GetHtmlAttribute("type", &input_type))
-      return true;
-    return input_type.empty() || input_type == "email" ||
-           input_type == "password" || input_type == "search" ||
-           input_type == "tel" || input_type == "text" || input_type == "url" ||
-           input_type == "number";
-  }
-  return html_tag == "textarea";
+bool BrowserAccessibility::HasExplicitlyEmptyName() const {
+  return GetIntAttribute(ui::AX_ATTR_NAME_FROM) ==
+         ui::AX_NAME_FROM_ATTRIBUTE_EXPLICITLY_EMPTY;
 }
 
-bool BrowserAccessibility::IsSimpleTextControl() const {
-  // Time fields, color wells and spinner buttons might also use text fields as
-  // constituent parts, but they are not considered text fields as a whole.
-  switch (GetRole()) {
-    case ui::AX_ROLE_COMBO_BOX:
-    case ui::AX_ROLE_SEARCH_BOX:
-      return true;
-    case ui::AX_ROLE_TEXT_FIELD:
-      return !HasState(ui::AX_STATE_RICHLY_EDITABLE);
-    default:
-      return false;
-  }
-}
-
-// Indicates if this object is at the root of a rich edit text control.
-bool BrowserAccessibility::IsRichTextControl() const {
-  return HasState(ui::AX_STATE_RICHLY_EDITABLE) &&
-         (!PlatformGetParent() ||
-          !PlatformGetParent()->HasState(ui::AX_STATE_RICHLY_EDITABLE));
-}
-
-std::string BrowserAccessibility::ComputeAccessibleNameFromDescendants() {
+std::string BrowserAccessibility::ComputeAccessibleNameFromDescendants() const {
   std::string name;
   for (size_t i = 0; i < InternalChildCount(); ++i) {
     BrowserAccessibility* child = InternalGetChild(i);
@@ -1051,12 +799,12 @@ std::vector<int> BrowserAccessibility::GetLineStartOffsets() const {
   return node()->GetOrComputeLineStartOffsets();
 }
 
-BrowserAccessibility::AXPlatformPositionInstance
+BrowserAccessibilityPosition::AXPositionInstance
 BrowserAccessibility::CreatePositionAt(int offset,
                                        ui::AXTextAffinity affinity) const {
   DCHECK(manager_);
-  return AXPlatformPosition::CreateTextPosition(manager_->ax_tree_id(), GetId(),
-                                                offset, affinity);
+  return BrowserAccessibilityPosition::CreateTextPosition(
+      manager_->ax_tree_id(), GetId(), offset, affinity);
 }
 
 base::string16 BrowserAccessibility::GetInnerText() const {
@@ -1069,76 +817,68 @@ base::string16 BrowserAccessibility::GetInnerText() const {
   return text;
 }
 
-void BrowserAccessibility::FixEmptyBounds(gfx::RectF* bounds) const {
-  if (bounds->width() > 0 && bounds->height() > 0)
-    return;
-
-  for (size_t i = 0; i < InternalChildCount(); ++i) {
-    // Compute the bounds of each child - this calls FixEmptyBounds
-    // recursively if necessary.
-    BrowserAccessibility* child = InternalGetChild(i);
-    gfx::Rect child_bounds = child->GetPageBoundsRect();
-
-    // Ignore children that don't have valid bounds themselves.
-    if (child_bounds.width() == 0 || child_bounds.height() == 0)
-      continue;
-
-    // For the first valid child, just set the bounds to that child's bounds.
-    if (bounds->width() == 0 || bounds->height() == 0) {
-      *bounds = gfx::RectF(child_bounds);
-      continue;
-    }
-
-    // Union each additional child's bounds.
-    bounds->Union(gfx::RectF(child_bounds));
-  }
-}
-
 gfx::Rect BrowserAccessibility::RelativeToAbsoluteBounds(
     gfx::RectF bounds,
-    bool frame_only) const {
+    bool frame_only,
+    bool* offscreen,
+    bool clip_bounds) const {
   const BrowserAccessibility* node = this;
   while (node) {
-    if (node->GetData().transform)
-      node->GetData().transform->TransformRect(&bounds);
+    bounds = node->manager()->ax_tree()->RelativeToTreeBounds(
+        node->node(), bounds, offscreen, clip_bounds);
 
-    const BrowserAccessibility* container =
-        node->manager()->GetFromID(node->GetData().offset_container_id);
-    if (!container) {
-      if (node == node->manager()->GetRoot() && !frame_only) {
-        container = node->PlatformGetParent();
-      } else {
-        container = node->manager()->GetRoot();
-      }
-    }
-
-    if (!container || container == node)
-      break;
-
-    gfx::RectF container_bounds = container->GetLocation();
-    bounds.Offset(container_bounds.x(), container_bounds.y());
-
-    if (container->manager()->UseRootScrollOffsetsWhenComputingBounds() ||
-        container->PlatformGetParent()) {
+    // On some platforms we need to unapply root scroll offsets.
+    const BrowserAccessibility* root = node->manager()->GetRoot();
+    if (!node->manager()->UseRootScrollOffsetsWhenComputingBounds() &&
+        !root->PlatformGetParent()) {
       int sx = 0;
       int sy = 0;
-      if (container->GetIntAttribute(ui::AX_ATTR_SCROLL_X, &sx) &&
-          container->GetIntAttribute(ui::AX_ATTR_SCROLL_Y, &sy)) {
-        bounds.Offset(-sx, -sy);
+      if (root->GetIntAttribute(ui::AX_ATTR_SCROLL_X, &sx) &&
+          root->GetIntAttribute(ui::AX_ATTR_SCROLL_Y, &sy)) {
+        bounds.Offset(sx, sy);
       }
     }
 
-    node = container;
+    if (frame_only)
+      break;
+
+    node = root->PlatformGetParent();
   }
 
   return gfx::ToEnclosingRect(bounds);
 }
 
+bool BrowserAccessibility::IsOffscreen() const {
+  bool offscreen = false;
+  RelativeToAbsoluteBounds(gfx::RectF(), false, &offscreen);
+  return offscreen;
+}
+
+gfx::NativeViewAccessible BrowserAccessibility::GetNativeViewAccessible() {
+  // TODO(703369) On Windows, where we have started to migrate to an
+  // AXPlatformNode implementation, the BrowserAccessibilityWin subclass has
+  // overridden this method. On all other platforms, this method should not be
+  // called yet. In the future, when all subclasses have moved over to be
+  // implemented by AXPlatformNode, we may make this method completely virtual.
+  NOTREACHED();
+  return nullptr;
+}
+
+//
 // AXPlatformNodeDelegate.
+//
 const ui::AXNodeData& BrowserAccessibility::GetData() const {
   CR_DEFINE_STATIC_LOCAL(ui::AXNodeData, empty_data, ());
   if (node_)
     return node_->data();
+  else
+    return empty_data;
+}
+
+const ui::AXTreeData& BrowserAccessibility::GetTreeData() const {
+  CR_DEFINE_STATIC_LOCAL(ui::AXTreeData, empty_data, ());
+  if (manager())
+    return manager()->GetTreeData();
   else
     return empty_data;
 }
@@ -1149,18 +889,31 @@ gfx::NativeWindow BrowserAccessibility::GetTopLevelWidget() {
 }
 
 gfx::NativeViewAccessible BrowserAccessibility::GetParent() {
-  NOTREACHED();
-  return nullptr;
+  auto* parent = PlatformGetParent();
+  if (parent)
+    return parent->GetNativeViewAccessible();
+
+  if (!manager_)
+    return nullptr;
+
+  BrowserAccessibilityDelegate* delegate =
+      manager_->GetDelegateFromRootManager();
+  if (!delegate)
+    return nullptr;
+
+  return delegate->AccessibilityGetNativeViewAccessible();
 }
 
 int BrowserAccessibility::GetChildCount() {
-  NOTREACHED();
-  return -1;
+  return PlatformChildCount();
 }
 
 gfx::NativeViewAccessible BrowserAccessibility::ChildAtIndex(int index) {
-  NOTREACHED();
-  return nullptr;
+  auto* child = PlatformGetChild(index);
+  if (!child)
+    return nullptr;
+
+  return child->GetNativeViewAccessible();
 }
 
 gfx::Rect BrowserAccessibility::GetScreenBoundsRect() const {
@@ -1174,25 +927,81 @@ gfx::Rect BrowserAccessibility::GetScreenBoundsRect() const {
 }
 
 gfx::NativeViewAccessible BrowserAccessibility::HitTestSync(int x, int y) {
-  NOTREACHED();
-  return nullptr;
+  auto* accessible = manager_->CachingAsyncHitTest(gfx::Point(x, y));
+  if (!accessible)
+    return nullptr;
+
+  return accessible->GetNativeViewAccessible();
 }
 
 gfx::NativeViewAccessible BrowserAccessibility::GetFocus() {
-  NOTREACHED();
+  auto* focused = manager()->GetFocus();
+  if (!focused)
+    return nullptr;
+
+  return focused->GetNativeViewAccessible();
+}
+
+ui::AXPlatformNode* BrowserAccessibility::GetFromNodeID(int32_t id) {
+  // Not all BrowserAccessibility subclasses can return an AXPlatformNode yet.
+  // So, here we just return nullptr.
   return nullptr;
+}
+
+int BrowserAccessibility::GetIndexInParent() const {
+  return node_ ? node_->index_in_parent() : -1;
 }
 
 gfx::AcceleratedWidget
 BrowserAccessibility::GetTargetForNativeAccessibilityEvent() {
-  NOTREACHED();
-  return gfx::kNullAcceleratedWidget;
+  BrowserAccessibilityDelegate* root_delegate =
+      manager()->GetDelegateFromRootManager();
+  if (!root_delegate)
+    return gfx::kNullAcceleratedWidget;
+  return root_delegate->AccessibilityGetAcceleratedWidget();
 }
 
 bool BrowserAccessibility::AccessibilityPerformAction(
     const ui::AXActionData& data) {
-  NOTREACHED();
+  if (data.action == ui::AX_ACTION_DO_DEFAULT) {
+    manager_->DoDefaultAction(*this);
+    return true;
+  }
+
+  if (data.action == ui::AX_ACTION_FOCUS) {
+    manager_->SetFocus(*this);
+    return true;
+  }
+
+  if (data.action == ui::AX_ACTION_SCROLL_TO_POINT) {
+    // target_point is in screen coordinates.  We need to convert this to frame
+    // coordinates because that's what BrowserAccessiblity cares about.
+    gfx::Point target =
+        data.target_point -
+        manager_->GetRootManager()->GetViewBounds().OffsetFromOrigin();
+
+    manager_->ScrollToPoint(*this, target);
+    return true;
+  }
+
+  if (data.action == ui::AX_ACTION_SCROLL_TO_MAKE_VISIBLE) {
+    // target_rect is in screen coordinates.  We need to convert this to frame
+    // coordinates because that's what BrowserAccessiblity cares about.
+    gfx::Rect target =
+        data.target_rect -
+        manager_->GetRootManager()->GetViewBounds().OffsetFromOrigin();
+
+    manager_->ScrollToMakeVisible(*this, target);
+    return true;
+  }
+
   return false;
+}
+
+bool BrowserAccessibility::ShouldIgnoreHoveredStateForTesting() {
+  BrowserAccessibilityStateImpl* accessibility_state =
+      BrowserAccessibilityStateImpl::GetInstance();
+  return accessibility_state->disable_hot_tracking_for_testing();
 }
 
 }  // namespace content

@@ -66,7 +66,6 @@ target(link_target_type, "ipc_service_sources") {
     "//ui/gfx/geometry",
     "//ui/gl",
     "//ui/gl/init",
-    "//ui/latency",
     "//url",
   ]
   deps = [
@@ -74,19 +73,28 @@ target(link_target_type, "ipc_service_sources") {
     "//gpu/command_buffer/common:common_sources",
     "//gpu/command_buffer/service:service_sources",
     "//gpu/config:config_sources",
+    "//gpu/config:crash_keys",
     "//gpu/ipc/common:ipc_common_sources",
   ]
   libs = []
+  ldflags = []
   if (is_win) {
     sources += [
-      "child_window_surface_win.cc",
-      "child_window_surface_win.h",
       "child_window_win.cc",
       "child_window_win.h",
+      "direct_composition_child_surface_win.cc",
+      "direct_composition_child_surface_win.h",
       "direct_composition_surface_win.cc",
       "direct_composition_surface_win.h",
+      "gpu_memory_buffer_factory_dxgi.cc",
+      "gpu_memory_buffer_factory_dxgi.h",
       "image_transport_surface_win.cc",
     ]
+    libs += [
+      "dxgi.lib",
+      "dwmapi.lib",
+    ]
+    ldflags += [ "/DELAYLOAD:dxgi.dll" ]
   }
   if (is_mac) {
     sources += [
@@ -105,6 +113,8 @@ target(link_target_type, "ipc_service_sources") {
   }
   if (is_android) {
     sources += [
+      "gpu_memory_buffer_factory_android_hardware_buffer.cc",
+      "gpu_memory_buffer_factory_android_hardware_buffer.h",
       "image_transport_surface_android.cc",
       "stream_texture_android.cc",
       "stream_texture_android.h",
@@ -124,6 +134,9 @@ target(link_target_type, "ipc_service_sources") {
   if (use_ozone) {
     deps += [ "//ui/ozone" ]
   }
+  if (is_fuchsia) {
+    sources += [ "image_transport_surface_fuchsia.cc" ]
+  }
 }
 
 source_set("test_support") {
@@ -137,6 +150,7 @@ source_set("test_support") {
   ]
   deps = [
     "//gpu/ipc/common",
+    "//ui/gl:test_support",
   ]
 }
 
@@ -179,6 +193,9 @@ test("gpu_ipc_service_unittests") {
   }
   if (is_linux) {
     sources += [ "gpu_memory_buffer_factory_native_pixmap_unittest.cc" ]
+  }
+  if (is_win) {
+    sources += [ "gpu_memory_buffer_factory_dxgi_unittest.cc" ]
   }
   if (use_ozone) {
     deps += [ "//ui/ozone" ]

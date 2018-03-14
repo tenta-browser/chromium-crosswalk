@@ -6,26 +6,12 @@
 
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
+#include "components/dom_distiller/core/url_constants.h"
 #include "url/gurl.h"
 
-namespace {
+namespace navigation_metrics {
 
-// This enum is used in building the histogram. So, this is append only,
-// any new scheme should be added at the end, before SCHEME_MAX
-enum Scheme {
-  SCHEME_UNKNOWN,
-  SCHEME_HTTP,
-  SCHEME_HTTPS,
-  SCHEME_FILE,
-  SCHEME_FTP,
-  SCHEME_DATA,
-  SCHEME_JAVASCRIPT,
-  SCHEME_ABOUT,
-  SCHEME_CHROME,
-  SCHEME_BLOB,
-  SCHEME_FILESYSTEM,
-  SCHEME_MAX,
-};
+namespace {
 
 const char* const kSchemeNames[] = {
     "unknown",
@@ -39,52 +25,53 @@ const char* const kSchemeNames[] = {
     "chrome",
     url::kBlobScheme,
     url::kFileSystemScheme,
-    "max",
+    "chrome-native",
+    "chrome-search",
+    dom_distiller::kDomDistillerScheme,
+    "chrome-devtools",
+    "chrome-extension",
+    "view-source",
+    "externalfile",
 };
 
-static_assert(arraysize(kSchemeNames) == SCHEME_MAX + 1,
-              "kSchemeNames should have SCHEME_MAX + 1 elements");
+static_assert(arraysize(kSchemeNames) == static_cast<int>(Scheme::COUNT),
+              "kSchemeNames should have Scheme::COUNT elements");
 
 }  // namespace
 
-namespace navigation_metrics {
+Scheme GetScheme(const GURL& url) {
+  for (int i = static_cast<int>(Scheme::HTTP);
+       i < static_cast<int>(Scheme::COUNT); ++i) {
+    if (url.SchemeIs(kSchemeNames[i]))
+      return static_cast<Scheme>(i);
+  }
+  return Scheme::UNKNOWN;
+}
 
 void RecordMainFrameNavigation(const GURL& url,
-                               bool is_in_page,
-                               bool is_off_the_record,
-                               bool have_already_seen_origin) {
-  Scheme scheme = SCHEME_UNKNOWN;
-  for (int i = 1; i < SCHEME_MAX; ++i) {
-    if (url.SchemeIs(kSchemeNames[i])) {
-      scheme = static_cast<Scheme>(i);
-      break;
-    }
-  }
-
-  if (!have_already_seen_origin) {
-    if (is_off_the_record) {
-      UMA_HISTOGRAM_ENUMERATION("Navigation.SchemePerUniqueOriginOTR", scheme,
-                                SCHEME_MAX);
-    } else {
-      UMA_HISTOGRAM_ENUMERATION("Navigation.SchemePerUniqueOrigin", scheme,
-                                SCHEME_MAX);
-    }
-  }
-
-  UMA_HISTOGRAM_ENUMERATION("Navigation.MainFrameScheme", scheme, SCHEME_MAX);
-  if (!is_in_page) {
+                               bool is_same_document,
+                               bool is_off_the_record) {
+  Scheme scheme = GetScheme(url);
+  UMA_HISTOGRAM_ENUMERATION("Navigation.MainFrameScheme", scheme,
+                            Scheme::COUNT);
+  if (!is_same_document) {
     UMA_HISTOGRAM_ENUMERATION("Navigation.MainFrameSchemeDifferentPage", scheme,
-                              SCHEME_MAX);
+                              Scheme::COUNT);
   }
 
   if (is_off_the_record) {
     UMA_HISTOGRAM_ENUMERATION("Navigation.MainFrameSchemeOTR", scheme,
-                              SCHEME_MAX);
-    if (!is_in_page) {
+                              Scheme::COUNT);
+    if (!is_same_document) {
       UMA_HISTOGRAM_ENUMERATION("Navigation.MainFrameSchemeDifferentPageOTR",
-                                scheme, SCHEME_MAX);
+                                scheme, Scheme::COUNT);
     }
   }
+}
+
+void RecordOmniboxURLNavigation(const GURL& url) {
+  UMA_HISTOGRAM_ENUMERATION("Omnibox.URLNavigationScheme", GetScheme(url),
+                            Scheme::COUNT);
 }
 
 }  // namespace navigation_metrics

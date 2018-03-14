@@ -31,8 +31,8 @@
 #ifndef DeprecatedStorageInfo_h
 #define DeprecatedStorageInfo_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/quota/DeprecatedStorageQuota.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 
@@ -43,9 +43,7 @@ class StorageErrorCallback;
 class StorageQuotaCallback;
 class StorageUsageCallback;
 
-class DeprecatedStorageInfo final
-    : public GarbageCollected<DeprecatedStorageInfo>,
-      public ScriptWrappable {
+class DeprecatedStorageInfo final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -67,7 +65,7 @@ class DeprecatedStorageInfo final
                     StorageQuotaCallback*,
                     StorageErrorCallback*);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   DeprecatedStorageInfo();

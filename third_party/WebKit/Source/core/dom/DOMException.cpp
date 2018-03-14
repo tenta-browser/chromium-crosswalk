@@ -158,7 +158,7 @@ static const CoreException* GetErrorEntry(ExceptionCode ec) {
   size_t table_size = WTF_ARRAY_LENGTH(kCoreExceptions);
   size_t table_index = ec - kIndexSizeError;
 
-  return table_index < table_size ? &kCoreExceptions[table_index] : 0;
+  return table_index < table_size ? &kCoreExceptions[table_index] : nullptr;
 }
 
 static int GetErrorCode(const String& name) {
@@ -193,10 +193,6 @@ DOMException* DOMException::Create(ExceptionCode ec,
 
 DOMException* DOMException::Create(const String& message, const String& name) {
   return new DOMException(GetErrorCode(name), name, message, message);
-}
-
-String DOMException::toString() const {
-  return name() + ": " + message();
 }
 
 String DOMException::ToStringForConsole() const {

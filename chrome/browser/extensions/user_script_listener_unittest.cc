@@ -10,6 +10,7 @@
 #include "base/files/file_util.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/threading/thread.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -23,6 +24,7 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/resource_throttle.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/test_utils.h"
 #include "extensions/browser/extension_registry.h"
 #include "net/base/request_priority.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
@@ -35,7 +37,7 @@
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
-#include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
+#include "components/user_manager/scoped_user_manager.h"
 #endif
 
 using content::ResourceThrottle;
@@ -47,6 +49,7 @@ namespace {
 const char kMatchingUrl[] = "http://google.com/";
 const char kNotMatchingUrl[] = "http://example.com/";
 const char kTestData[] = "Hello, World!";
+const void* kUserDataKey = &kUserDataKey;
 
 class ThrottleDelegate : public base::SupportsUserData::Data,
                          public ResourceThrottle::Delegate {
@@ -59,7 +62,6 @@ class ThrottleDelegate : public base::SupportsUserData::Data,
   // ResourceThrottle::Delegate implementation:
   void Resume() override { request_->Start(); }
   void Cancel() override { NOTREACHED(); }
-  void CancelAndIgnore() override { NOTREACHED(); }
   void CancelWithError(int error_code) override { NOTREACHED(); }
 
  private:
@@ -150,9 +152,8 @@ class UserScriptListenerTest : public testing::Test {
 
   void SetUp() override {
 #if defined(OS_CHROMEOS)
-    user_manager_enabler_ =
-        base::MakeUnique<chromeos::ScopedUserManagerEnabler>(
-            new chromeos::FakeChromeUserManager());
+    user_manager_enabler_ = std::make_unique<user_manager::ScopedUserManager>(
+        std::make_unique<chromeos::FakeChromeUserManager>());
 #endif
     ASSERT_TRUE(profile_manager_->SetUp());
     profile_ = profile_manager_->CreateTestingProfile("test-profile");
@@ -184,8 +185,8 @@ class UserScriptListenerTest : public testing::Test {
 
     bool defer = false;
     if (throttle) {
-      request->SetUserData(nullptr,
-                           new ThrottleDelegate(request.get(), throttle));
+      request->SetUserData(kUserDataKey, base::MakeUnique<ThrottleDelegate>(
+                                             request.get(), throttle));
 
       throttle->WillStartRequest(&defer);
     }
@@ -206,6 +207,7 @@ class UserScriptListenerTest : public testing::Test {
         .AppendASCII("behllobkkfkfnphdnhnkndlbkcpglgmj")
         .AppendASCII("1.0.0.0");
     UnpackedInstaller::Create(service_)->Load(extension_path);
+    content::RunAllTasksUntilIdle();
   }
 
   void UnloadTestExtension() {
@@ -213,7 +215,7 @@ class UserScriptListenerTest : public testing::Test {
         ExtensionRegistry::Get(profile_)->enabled_extensions();
     ASSERT_FALSE(extensions.is_empty());
     service_->UnloadExtension((*extensions.begin())->id(),
-                              UnloadedExtensionInfo::REASON_DISABLE);
+                              UnloadedExtensionReason::DISABLE);
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
@@ -222,7 +224,7 @@ class UserScriptListenerTest : public testing::Test {
   TestingProfile* profile_;
   ExtensionService* service_;
 #if defined(OS_CHROMEOS)
-  std::unique_ptr<chromeos::ScopedUserManagerEnabler> user_manager_enabler_;
+  std::unique_ptr<user_manager::ScopedUserManager> user_manager_enabler_;
 #endif
 };
 
@@ -230,7 +232,6 @@ namespace {
 
 TEST_F(UserScriptListenerTest, DelayAndUpdate) {
   LoadTestExtension();
-  base::RunLoop().RunUntilIdle();
 
   net::TestDelegate delegate;
   net::TestURLRequestContext context;
@@ -248,7 +249,6 @@ TEST_F(UserScriptListenerTest, DelayAndUpdate) {
 
 TEST_F(UserScriptListenerTest, DelayAndUnload) {
   LoadTestExtension();
-  base::RunLoop().RunUntilIdle();
 
   net::TestDelegate delegate;
   net::TestURLRequestContext context;
@@ -286,7 +286,6 @@ TEST_F(UserScriptListenerTest, NoDelayNoExtension) {
 
 TEST_F(UserScriptListenerTest, NoDelayNotMatching) {
   LoadTestExtension();
-  base::RunLoop().RunUntilIdle();
 
   net::TestDelegate delegate;
   net::TestURLRequestContext context;
@@ -302,7 +301,6 @@ TEST_F(UserScriptListenerTest, NoDelayNotMatching) {
 
 TEST_F(UserScriptListenerTest, MultiProfile) {
   LoadTestExtension();
-  base::RunLoop().RunUntilIdle();
 
   // Fire up a second profile and have it load an extension with a content
   // script.
@@ -348,7 +346,6 @@ TEST_F(UserScriptListenerTest, MultiProfile) {
 // throttles.
 TEST_F(UserScriptListenerTest, ResumeBeforeStart) {
   LoadTestExtension();
-  base::RunLoop().RunUntilIdle();
   net::TestDelegate delegate;
   net::TestURLRequestContext context;
   GURL url(kMatchingUrl);
@@ -358,7 +355,8 @@ TEST_F(UserScriptListenerTest, ResumeBeforeStart) {
   ResourceThrottle* throttle =
       listener_->CreateResourceThrottle(url, content::RESOURCE_TYPE_MAIN_FRAME);
   ASSERT_TRUE(throttle);
-  request->SetUserData(nullptr, new ThrottleDelegate(request.get(), throttle));
+  request->SetUserData(kUserDataKey, base::MakeUnique<ThrottleDelegate>(
+                                         request.get(), throttle));
 
   ASSERT_FALSE(request->is_pending());
 

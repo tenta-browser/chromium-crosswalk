@@ -14,6 +14,8 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/task_scheduler/task_traits.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "components/history/core/browser/top_sites_database.h"
@@ -21,9 +23,11 @@
 
 namespace history {
 
-TopSitesBackend::TopSitesBackend(
-    const scoped_refptr<base::SingleThreadTaskRunner>& db_task_runner)
-    : db_(new TopSitesDatabase()), db_task_runner_(db_task_runner) {
+TopSitesBackend::TopSitesBackend()
+    : db_(new TopSitesDatabase()),
+      db_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
+          {base::TaskPriority::USER_VISIBLE,
+           base::TaskShutdownBehavior::BLOCK_SHUTDOWN, base::MayBlock()})) {
   DCHECK(db_task_runner_);
 }
 
@@ -83,7 +87,7 @@ TopSitesBackend::~TopSitesBackend() {
 }
 
 void TopSitesBackend::InitDBOnDBThread(const base::FilePath& path) {
-  DCHECK(db_task_runner_->BelongsToCurrentThread());
+  DCHECK(db_task_runner_->RunsTasksInCurrentSequence());
   if (!db_->Init(path)) {
     LOG(ERROR) << "Failed to initialize database.";
     db_.reset();
@@ -91,13 +95,13 @@ void TopSitesBackend::InitDBOnDBThread(const base::FilePath& path) {
 }
 
 void TopSitesBackend::ShutdownDBOnDBThread() {
-  DCHECK(db_task_runner_->BelongsToCurrentThread());
+  DCHECK(db_task_runner_->RunsTasksInCurrentSequence());
   db_.reset();
 }
 
 void TopSitesBackend::GetMostVisitedThumbnailsOnDBThread(
     scoped_refptr<MostVisitedThumbnails> thumbnails) {
-  DCHECK(db_task_runner_->BelongsToCurrentThread());
+  DCHECK(db_task_runner_->RunsTasksInCurrentSequence());
 
   if (db_) {
     db_->GetPageThumbnails(&(thumbnails->most_visited),
@@ -114,14 +118,7 @@ void TopSitesBackend::UpdateTopSitesOnDBThread(
 
   base::TimeTicks begin_time = base::TimeTicks::Now();
 
-  for (size_t i = 0; i < delta.deleted.size(); ++i)
-    db_->RemoveURL(delta.deleted[i]);
-
-  for (size_t i = 0; i < delta.added.size(); ++i)
-    db_->SetPageThumbnail(delta.added[i].url, delta.added[i].rank, Images());
-
-  for (size_t i = 0; i < delta.moved.size(); ++i)
-    db_->UpdatePageRank(delta.moved[i].url, delta.moved[i].rank);
+  db_->ApplyDelta(delta);
 
   if (record_or_not == RECORD_HISTOGRAM_YES) {
     UMA_HISTOGRAM_TIMES("History.FirstUpdateTime",
@@ -139,8 +136,8 @@ void TopSitesBackend::SetPageThumbnailOnDBThread(const MostVisitedURL& url,
 }
 
 void TopSitesBackend::ResetDatabaseOnDBThread(const base::FilePath& file_path) {
-  DCHECK(db_task_runner_->BelongsToCurrentThread());
-  db_.reset(NULL);
+  DCHECK(db_task_runner_->RunsTasksInCurrentSequence());
+  db_.reset(nullptr);
   sql::Connection::Delete(db_path_);
   db_.reset(new TopSitesDatabase());
   InitDBOnDBThread(db_path_);

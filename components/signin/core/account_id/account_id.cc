@@ -251,7 +251,7 @@ bool AccountId::Deserialize(const std::string& serialized,
                             AccountId* account_id) {
   base::JSONReader reader;
   std::unique_ptr<const base::Value> value(reader.Read(serialized));
-  const base::DictionaryValue* dictionary_value = NULL;
+  const base::DictionaryValue* dictionary_value = nullptr;
 
   if (!value || !value->GetAsDictionary(&dictionary_value))
     return false;
@@ -317,6 +317,16 @@ bool AccountId::Deserialize(const std::string& serialized,
       return true;
   }
   return false;
+}
+
+std::ostream& operator<<(std::ostream& stream, const AccountId& account_id) {
+  stream << "{id: " << account_id.id_ << ", email: " << account_id.user_email_
+         << ", type: "
+         << static_cast<
+                std::underlying_type<decltype(account_id.account_type_)>::type>(
+                account_id.account_type_)
+         << "}";
+  return stream;
 }
 
 const AccountId& EmptyAccountId() {

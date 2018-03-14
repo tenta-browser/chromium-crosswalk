@@ -7,7 +7,6 @@
 #include <string>
 
 #include "base/strings/utf_string_conversions.h"
-#include "content/renderer/media/media_stream.h"
 #include "content/renderer/media/media_stream_audio_source.h"
 #include "content/renderer/media/media_stream_video_track.h"
 #include "content/renderer/media/mock_media_stream_video_source.h"
@@ -26,14 +25,13 @@ const char kTestStreamLabel[] = "stream_label";
 class MockCDQualityAudioSource : public MediaStreamAudioSource {
  public:
   MockCDQualityAudioSource() : MediaStreamAudioSource(true) {
-    MediaStreamAudioSource::SetFormat(media::AudioParameters(
+    SetFormat(media::AudioParameters(
         media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
         media::CHANNEL_LAYOUT_STEREO,
-        media::AudioParameters::kAudioCDSampleRate,
-        16,
+        media::AudioParameters::kAudioCDSampleRate, 16,
         media::AudioParameters::kAudioCDSampleRate / 100));
-    MediaStreamAudioSource::SetDeviceInfo(StreamDeviceInfo(
-        MEDIA_DEVICE_AUDIO_CAPTURE, "Mock audio device", "mock_audio_device_id",
+    SetDevice(MediaStreamDevice(
+        MEDIA_DEVICE_AUDIO_CAPTURE, "mock_audio_device_id", "Mock audio device",
         media::AudioParameters::kAudioCDSampleRate,
         media::CHANNEL_LAYOUT_STEREO,
         media::AudioParameters::kAudioCDSampleRate / 100));
@@ -53,28 +51,6 @@ void MockMediaStreamRegistry::Init(const std::string& stream_url) {
   const blink::WebVector<blink::WebMediaStreamTrack> webkit_video_tracks;
   const blink::WebString label(kTestStreamLabel);
   test_stream_.Initialize(label, webkit_audio_tracks, webkit_video_tracks);
-  test_stream_.SetExtraData(new MediaStream());
-}
-
-void MockMediaStreamRegistry::AddVideoTrack(
-    const std::string& track_id,
-    const blink::WebMediaConstraints& constraints) {
-  DCHECK(IsOldVideoConstraints());
-  blink::WebMediaStreamSource blink_source;
-  blink_source.Initialize("mock video source id",
-                          blink::WebMediaStreamSource::kTypeVideo,
-                          "mock video source name", false /* remote */);
-  MockMediaStreamVideoSource* native_source =
-      new MockMediaStreamVideoSource(false /* manual get supported formats */);
-  blink_source.SetExtraData(native_source);
-  blink::WebMediaStreamTrack blink_track;
-  blink_track.Initialize(blink::WebString::FromUTF8(track_id), blink_source);
-
-  MediaStreamVideoTrack* native_track = new MediaStreamVideoTrack(
-      native_source, constraints, MediaStreamVideoSource::ConstraintsCallback(),
-      true /* enabled */);
-  blink_track.SetTrackData(native_track);
-  test_stream_.AddTrack(blink_track);
 }
 
 void MockMediaStreamRegistry::AddVideoTrack(
@@ -83,13 +59,11 @@ void MockMediaStreamRegistry::AddVideoTrack(
     const base::Optional<bool>& noise_reduction,
     bool is_screencast,
     double min_frame_rate) {
-  DCHECK(!IsOldVideoConstraints());
   blink::WebMediaStreamSource blink_source;
   blink_source.Initialize("mock video source id",
                           blink::WebMediaStreamSource::kTypeVideo,
                           "mock video source name", false /* remote */);
-  MockMediaStreamVideoSource* native_source =
-      new MockMediaStreamVideoSource(false /* manual get supported formats */);
+  MockMediaStreamVideoSource* native_source = new MockMediaStreamVideoSource();
   blink_source.SetExtraData(native_source);
   blink::WebMediaStreamTrack blink_track;
   blink_track.Initialize(blink::WebString::FromUTF8(track_id), blink_source);
@@ -103,14 +77,8 @@ void MockMediaStreamRegistry::AddVideoTrack(
 }
 
 void MockMediaStreamRegistry::AddVideoTrack(const std::string& track_id) {
-  if (IsOldVideoConstraints()) {
-    blink::WebMediaConstraints constraints;
-    constraints.Initialize();
-    AddVideoTrack(track_id, constraints);
-  } else {
-    AddVideoTrack(track_id, VideoTrackAdapterSettings(), base::Optional<bool>(),
-                  false /* is_screncast */, 0.0 /* min_frame_rate */);
-  }
+  AddVideoTrack(track_id, VideoTrackAdapterSettings(), base::Optional<bool>(),
+                false /* is_screncast */, 0.0 /* min_frame_rate */);
 }
 
 void MockMediaStreamRegistry::AddAudioTrack(const std::string& track_id) {

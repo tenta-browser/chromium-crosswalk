@@ -6,8 +6,9 @@
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/test_activation_delegate.h"
+#include "ash/wm/test_activation_delegate.h"
 #include "ash/wm/window_util.h"
+#include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/cursor_client_observer.h"
 #include "ui/aura/client/focus_client.h"
 #include "ui/aura/env.h"
@@ -40,7 +41,7 @@ class CustomEventHandler : public ui::test::TestEventHandler {
   CustomEventHandler()
       : key_result_(ui::ER_UNHANDLED), mouse_result_(ui::ER_UNHANDLED) {}
 
-  ~CustomEventHandler() override {}
+  ~CustomEventHandler() override = default;
 
   void set_key_event_handling_result(ui::EventResult result) {
     key_result_ = result;
@@ -78,11 +79,11 @@ class CustomEventHandler : public ui::test::TestEventHandler {
 
 namespace ash {
 
-typedef test::AshTestBase WindowManagerTest;
+using WindowManagerTest = AshTestBase;
 
 class NonFocusableDelegate : public aura::test::TestWindowDelegate {
  public:
-  NonFocusableDelegate() {}
+  NonFocusableDelegate() = default;
 
  private:
   bool CanFocus() override { return false; }
@@ -93,7 +94,7 @@ class NonFocusableDelegate : public aura::test::TestWindowDelegate {
 class HitTestWindowDelegate : public aura::test::TestWindowDelegate {
  public:
   HitTestWindowDelegate() : hittest_code_(HTNOWHERE) {}
-  ~HitTestWindowDelegate() override {}
+  ~HitTestWindowDelegate() override = default;
   void set_hittest_code(int hittest_code) { hittest_code_ = hittest_code; }
 
  private:
@@ -198,11 +199,11 @@ TEST_F(WindowManagerTest, Focus) {
             aura::client::GetFocusClient(w12.get())->GetFocusedWindow());
 
   // Set the focus to w123, but make the w1 not activatable.
-  test::TestActivationDelegate activation_delegate(false);
+  TestActivationDelegate activation_delegate(false);
   w123->Focus();
   EXPECT_EQ(w123.get(),
             aura::client::GetFocusClient(w12.get())->GetFocusedWindow());
-  aura::client::SetActivationDelegate(w1.get(), &activation_delegate);
+  ::wm::SetActivationDelegate(w1.get(), &activation_delegate);
 
   // Hiding the focused window will set the focus to NULL because
   // parent window is not focusable.
@@ -215,12 +216,12 @@ TEST_F(WindowManagerTest, Focus) {
   EXPECT_FALSE(keyev.handled() || details.dispatcher_destroyed);
 
   // Set the focus back to w123
-  aura::client::SetActivationDelegate(w1.get(), NULL);
+  ::wm::SetActivationDelegate(w1.get(), NULL);
   w123->Show();
   w123->Focus();
   EXPECT_EQ(w123.get(),
             aura::client::GetFocusClient(w12.get())->GetFocusedWindow());
-  aura::client::SetActivationDelegate(w1.get(), &activation_delegate);
+  ::wm::SetActivationDelegate(w1.get(), &activation_delegate);
 
   // Removing the focused window will set the focus to NULL because
   // parent window is not focusable.
@@ -232,19 +233,19 @@ TEST_F(WindowManagerTest, Focus) {
 
   // Must set to NULL since the activation delegate will be destroyed before
   // the windows.
-  aura::client::SetActivationDelegate(w1.get(), NULL);
+  ::wm::SetActivationDelegate(w1.get(), NULL);
 }
 
 // Various assertion testing for activating windows.
 TEST_F(WindowManagerTest, ActivateOnMouse) {
   aura::Window* root_window = Shell::GetPrimaryRootWindow();
 
-  test::TestActivationDelegate d1;
+  TestActivationDelegate d1;
   aura::test::TestWindowDelegate wd;
   std::unique_ptr<aura::Window> w1(
       CreateTestWindowInShellWithDelegate(&wd, -1, gfx::Rect(10, 10, 50, 50)));
   d1.SetWindow(w1.get());
-  test::TestActivationDelegate d2;
+  TestActivationDelegate d2;
   std::unique_ptr<aura::Window> w2(
       CreateTestWindowInShellWithDelegate(&wd, -2, gfx::Rect(70, 70, 50, 50)));
   d2.SetWindow(w2.get());
@@ -349,13 +350,52 @@ TEST_F(WindowManagerTest, ActivateOnMouse) {
   }
 }
 
+// Tests that Set window property |kActivateOnPointerKey| to false could
+// properly ignore pointer window activation.
+TEST_F(WindowManagerTest, ActivateOnPointerWindowProperty) {
+  // Create two test windows, window1 and window2.
+  aura::test::TestWindowDelegate wd;
+  std::unique_ptr<aura::Window> w1(
+      CreateTestWindowInShellWithDelegate(&wd, -1, gfx::Rect(10, 10, 50, 50)));
+  std::unique_ptr<aura::Window> w2(
+      CreateTestWindowInShellWithDelegate(&wd, -2, gfx::Rect(70, 70, 50, 50)));
+
+  // Activate window1.
+  wm::ActivateWindow(w1.get());
+  EXPECT_TRUE(wm::IsActiveWindow(w1.get()));
+  EXPECT_FALSE(wm::IsActiveWindow(w2.get()));
+
+  // Set window2 not pointer activatable.
+  w2->SetProperty(aura::client::kActivateOnPointerKey, false);
+  // Mouse click on window2.
+  ui::test::EventGenerator generator(Shell::GetPrimaryRootWindow(), w2.get());
+  generator.ClickLeftButton();
+  // Window2 should not become active.
+  EXPECT_FALSE(wm::IsActiveWindow(w2.get()));
+  EXPECT_TRUE(wm::IsActiveWindow(w1.get()));
+
+  // Gesture a tap at window2.
+  generator.GestureTapAt(w2->bounds().CenterPoint());
+  // Window2 should not become active.
+  EXPECT_FALSE(wm::IsActiveWindow(w2.get()));
+  EXPECT_TRUE(wm::IsActiveWindow(w1.get()));
+
+  // Set window2 now pointer activatable.
+  w2->SetProperty(aura::client::kActivateOnPointerKey, true);
+  // Mouse click on window2.
+  generator.ClickLeftButton();
+  // Window2 should become active.
+  EXPECT_TRUE(wm::IsActiveWindow(w2.get()));
+  EXPECT_FALSE(wm::IsActiveWindow(w1.get()));
+}
+
 TEST_F(WindowManagerTest, PanelActivation) {
   aura::test::TestWindowDelegate wd;
   std::unique_ptr<aura::Window> w1(
       CreateTestWindowInShellWithDelegate(&wd, -1, gfx::Rect(10, 10, 50, 50)));
   aura::test::TestWindowDelegate pd;
   std::unique_ptr<aura::Window> p1(CreateTestWindowInShellWithDelegateAndType(
-      &pd, ui::wm::WINDOW_TYPE_PANEL, -1, gfx::Rect(10, 10, 50, 50)));
+      &pd, aura::client::WINDOW_TYPE_PANEL, -1, gfx::Rect(10, 10, 50, 50)));
   aura::client::FocusClient* focus_client =
       aura::client::GetFocusClient(w1.get());
 
@@ -391,12 +431,12 @@ TEST_F(WindowManagerTest, PanelActivation) {
 TEST_F(WindowManagerTest, ActivateOnTouch) {
   aura::Window* root_window = Shell::GetPrimaryRootWindow();
 
-  test::TestActivationDelegate d1;
+  TestActivationDelegate d1;
   aura::test::TestWindowDelegate wd;
   std::unique_ptr<aura::Window> w1(
       CreateTestWindowInShellWithDelegate(&wd, -1, gfx::Rect(10, 10, 50, 50)));
   d1.SetWindow(w1.get());
-  test::TestActivationDelegate d2;
+  TestActivationDelegate d2;
   std::unique_ptr<aura::Window> w2(
       CreateTestWindowInShellWithDelegate(&wd, -2, gfx::Rect(70, 70, 50, 50)));
   d2.SetWindow(w2.get());
@@ -492,7 +532,7 @@ TEST_F(WindowManagerTest, MouseEventCursors) {
   ui::EventSink* sink = host->event_sink();
 
   // Cursor starts as a pointer (set during Shell::Init()).
-  EXPECT_EQ(ui::kCursorPointer, host->last_cursor().native_type());
+  EXPECT_EQ(ui::CursorType::kPointer, host->last_cursor().native_type());
 
   {
     // Resize edges and corners show proper cursors.
@@ -501,7 +541,7 @@ TEST_F(WindowManagerTest, MouseEventCursors) {
                          ui::EventTimeForNow(), 0, 0);
     ui::EventDispatchDetails details = sink->OnEventFromSource(&move1);
     ASSERT_FALSE(details.dispatcher_destroyed);
-    EXPECT_EQ(ui::kCursorSouthResize, host->last_cursor().native_type());
+    EXPECT_EQ(ui::CursorType::kSouthResize, host->last_cursor().native_type());
   }
 
   {
@@ -510,7 +550,8 @@ TEST_F(WindowManagerTest, MouseEventCursors) {
                          ui::EventTimeForNow(), 0, 0);
     ui::EventDispatchDetails details = sink->OnEventFromSource(&move2);
     ASSERT_FALSE(details.dispatcher_destroyed);
-    EXPECT_EQ(ui::kCursorSouthWestResize, host->last_cursor().native_type());
+    EXPECT_EQ(ui::CursorType::kSouthWestResize,
+              host->last_cursor().native_type());
   }
 
   {
@@ -519,7 +560,8 @@ TEST_F(WindowManagerTest, MouseEventCursors) {
                          ui::EventTimeForNow(), 0, 0);
     ui::EventDispatchDetails details = sink->OnEventFromSource(&move1);
     ASSERT_FALSE(details.dispatcher_destroyed);
-    EXPECT_EQ(ui::kCursorSouthEastResize, host->last_cursor().native_type());
+    EXPECT_EQ(ui::CursorType::kSouthEastResize,
+              host->last_cursor().native_type());
   }
 
   {
@@ -528,7 +570,7 @@ TEST_F(WindowManagerTest, MouseEventCursors) {
                          ui::EventTimeForNow(), 0, 0);
     ui::EventDispatchDetails details = sink->OnEventFromSource(&move2);
     ASSERT_FALSE(details.dispatcher_destroyed);
-    EXPECT_EQ(ui::kCursorWestResize, host->last_cursor().native_type());
+    EXPECT_EQ(ui::CursorType::kWestResize, host->last_cursor().native_type());
   }
 
   {
@@ -537,7 +579,7 @@ TEST_F(WindowManagerTest, MouseEventCursors) {
                          ui::EventTimeForNow(), 0, 0);
     ui::EventDispatchDetails details = sink->OnEventFromSource(&move1);
     ASSERT_FALSE(details.dispatcher_destroyed);
-    EXPECT_EQ(ui::kCursorEastResize, host->last_cursor().native_type());
+    EXPECT_EQ(ui::CursorType::kEastResize, host->last_cursor().native_type());
   }
 
   {
@@ -546,7 +588,7 @@ TEST_F(WindowManagerTest, MouseEventCursors) {
                          ui::EventTimeForNow(), 0, 0);
     ui::EventDispatchDetails details = sink->OnEventFromSource(&move2);
     ASSERT_FALSE(details.dispatcher_destroyed);
-    EXPECT_EQ(ui::kCursorNorthResize, host->last_cursor().native_type());
+    EXPECT_EQ(ui::CursorType::kNorthResize, host->last_cursor().native_type());
   }
 
   {
@@ -555,7 +597,8 @@ TEST_F(WindowManagerTest, MouseEventCursors) {
                          ui::EventTimeForNow(), 0, 0);
     ui::EventDispatchDetails details = sink->OnEventFromSource(&move1);
     ASSERT_FALSE(details.dispatcher_destroyed);
-    EXPECT_EQ(ui::kCursorNorthWestResize, host->last_cursor().native_type());
+    EXPECT_EQ(ui::CursorType::kNorthWestResize,
+              host->last_cursor().native_type());
   }
 
   {
@@ -564,7 +607,8 @@ TEST_F(WindowManagerTest, MouseEventCursors) {
                          ui::EventTimeForNow(), 0, 0);
     ui::EventDispatchDetails details = sink->OnEventFromSource(&move2);
     ASSERT_FALSE(details.dispatcher_destroyed);
-    EXPECT_EQ(ui::kCursorNorthEastResize, host->last_cursor().native_type());
+    EXPECT_EQ(ui::CursorType::kNorthEastResize,
+              host->last_cursor().native_type());
   }
 
   {
@@ -574,7 +618,7 @@ TEST_F(WindowManagerTest, MouseEventCursors) {
                          ui::EventTimeForNow(), 0, 0);
     ui::EventDispatchDetails details = sink->OnEventFromSource(&move1);
     ASSERT_FALSE(details.dispatcher_destroyed);
-    EXPECT_EQ(ui::kCursorNull, host->last_cursor().native_type());
+    EXPECT_EQ(ui::CursorType::kNull, host->last_cursor().native_type());
   }
 }
 
@@ -593,7 +637,7 @@ TEST_F(WindowManagerTest, TransformActivate) {
   transform.Rotate(90.0f);
   root_window->GetHost()->SetRootTransform(transform);
 
-  test::TestActivationDelegate d1;
+  TestActivationDelegate d1;
   aura::test::TestWindowDelegate wd;
   std::unique_ptr<aura::Window> w1(
       CreateTestWindowInShellWithDelegate(&wd, 1, gfx::Rect(0, 15, 50, 50)));
@@ -728,7 +772,7 @@ TEST_F(WindowManagerTest, UpdateCursorVisibility) {
   EXPECT_TRUE(cursor_manager->IsMouseEventsEnabled());
 }
 
-// Cursor is hidden on keypress.
+// Tests cursor visibility on key pressed event.
 TEST_F(WindowManagerTest, UpdateCursorVisibilityOnKeyEvent) {
   // TODO: mash doesn't support CursorManager. http://crbug.com/631103.
   if (Shell::GetAshConfig() == Config::MASH)
@@ -748,6 +792,14 @@ TEST_F(WindowManagerTest, UpdateCursorVisibilityOnKeyEvent) {
   // Releasing a key does does not hide the cursor and does not disable mouse
   // events.
   generator.ReleaseKey(ui::VKEY_A, ui::EF_NONE);
+  EXPECT_TRUE(cursor_manager->IsCursorVisible());
+  EXPECT_TRUE(cursor_manager->IsMouseEventsEnabled());
+  // Pressing a key with mouse button pressed does not hide the cursor and does
+  // not disable mouse events.
+  generator.PressLeftButton();
+  generator.PressKey(ui::VKEY_A, ui::EF_NONE);
+  generator.ReleaseKey(ui::VKEY_A, ui::EF_NONE);
+  generator.ReleaseLeftButton();
   EXPECT_TRUE(cursor_manager->IsCursorVisible());
   EXPECT_TRUE(cursor_manager->IsMouseEventsEnabled());
 }
@@ -804,8 +856,8 @@ TEST_F(WindowManagerTest, TestCursorClientObserver) {
   EXPECT_FALSE(observer_b.did_visibility_change());
   EXPECT_FALSE(observer_a.is_cursor_visible());
   EXPECT_FALSE(observer_b.is_cursor_visible());
-  EXPECT_FALSE(observer_a.did_cursor_set_change());
-  EXPECT_FALSE(observer_b.did_cursor_set_change());
+  EXPECT_FALSE(observer_a.did_cursor_size_change());
+  EXPECT_FALSE(observer_b.did_cursor_size_change());
 
   // Keypress should hide the cursor.
   generator.PressKey(ui::VKEY_A, ui::EF_NONE);
@@ -815,11 +867,11 @@ TEST_F(WindowManagerTest, TestCursorClientObserver) {
   EXPECT_FALSE(observer_b.is_cursor_visible());
 
   // Set cursor set.
-  cursor_manager->SetCursorSet(ui::CURSOR_SET_LARGE);
-  EXPECT_TRUE(observer_a.did_cursor_set_change());
-  EXPECT_EQ(ui::CURSOR_SET_LARGE, observer_a.cursor_set());
-  EXPECT_TRUE(observer_b.did_cursor_set_change());
-  EXPECT_EQ(ui::CURSOR_SET_LARGE, observer_b.cursor_set());
+  cursor_manager->SetCursorSize(ui::CursorSize::kLarge);
+  EXPECT_TRUE(observer_a.did_cursor_size_change());
+  EXPECT_EQ(ui::CursorSize::kLarge, observer_a.cursor_size());
+  EXPECT_TRUE(observer_b.did_cursor_size_change());
+  EXPECT_EQ(ui::CursorSize::kLarge, observer_b.cursor_size());
 
   // Mouse move should show the cursor.
   observer_a.reset();
@@ -843,10 +895,10 @@ TEST_F(WindowManagerTest, TestCursorClientObserver) {
   EXPECT_FALSE(observer_a.is_cursor_visible());
 
   // Set back cursor set to normal.
-  cursor_manager->SetCursorSet(ui::CURSOR_SET_NORMAL);
-  EXPECT_TRUE(observer_a.did_cursor_set_change());
-  EXPECT_EQ(ui::CURSOR_SET_NORMAL, observer_a.cursor_set());
-  EXPECT_FALSE(observer_b.did_cursor_set_change());
+  cursor_manager->SetCursorSize(ui::CursorSize::kNormal);
+  EXPECT_TRUE(observer_a.did_cursor_size_change());
+  EXPECT_EQ(ui::CursorSize::kNormal, observer_a.cursor_size());
+  EXPECT_FALSE(observer_b.did_cursor_size_change());
 
   // Mouse move should show the cursor.
   observer_a.reset();

@@ -5,24 +5,29 @@
 #ifndef LayoutNGBlockFlow_h
 #define LayoutNGBlockFlow_h
 
+#include "core/CoreExport.h"
 #include "core/layout/LayoutBlockFlow.h"
-#include "core/layout/ng/ng_block_node.h"
+#include "core/layout/ng/layout_ng_mixin.h"
 
 namespace blink {
 
 // This overrides the default layout block algorithm to use Layout NG.
-class LayoutNGBlockFlow final : public LayoutBlockFlow {
+class CORE_EXPORT LayoutNGBlockFlow : public LayoutNGMixin<LayoutBlockFlow> {
  public:
   explicit LayoutNGBlockFlow(Element*);
-  ~LayoutNGBlockFlow() override = default;
+  ~LayoutNGBlockFlow() override;
 
   void UpdateBlockLayout(bool relayout_children) override;
-  NGBlockNode* BoxForTesting() const { return box_.Get(); }
 
- private:
+  const char* GetName() const override { return "LayoutNGBlockFlow"; }
+
+  static bool LocalVisualRectFor(const LayoutObject*, NGPhysicalOffsetRect*);
+
+ protected:
   bool IsOfType(LayoutObjectType) const override;
 
-  Persistent<NGBlockNode> box_;
+ private:
+  void UpdateOutOfFlowBlockLayout();
 };
 
 DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutNGBlockFlow, IsLayoutNGBlockFlow());

@@ -35,10 +35,12 @@ source_set("common_sources") {
     "command_buffer.h",
     "command_buffer_id.h",
     "constants.h",
+    "context_result.h",
     "debug_marker_manager.cc",
     "debug_marker_manager.h",
     "discardable_handle.cc",
     "discardable_handle.h",
+    "gl2_types.h",
     "gles2_cmd_format.cc",
     "gles2_cmd_format.h",
     "gles2_cmd_format_autogen.h",
@@ -53,11 +55,14 @@ source_set("common_sources") {
     "mailbox.h",
     "mailbox_holder.cc",
     "mailbox_holder.h",
+    "scheduling_priority.cc",
+    "scheduling_priority.h",
     "sync_token.cc",
     "sync_token.h",
     "texture_in_use_response.h",
     "thread_local.h",
     "time.h",
+    "transfer_cache_entry_id.h",
   ]
 
   configs += [ "//gpu:gpu_implementation" ]

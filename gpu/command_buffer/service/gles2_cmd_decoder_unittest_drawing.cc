@@ -10,7 +10,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
-#include "gpu/command_buffer/service/cmd_buffer_engine.h"
 #include "gpu/command_buffer/service/context_group.h"
 #include "gpu/command_buffer/service/context_state.h"
 #include "gpu/command_buffer/service/gl_surface_mock.h"
@@ -42,7 +41,7 @@ using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::SaveArg;
 using ::testing::SetArrayArgument;
-using ::testing::SetArgumentPointee;
+using ::testing::SetArgPointee;
 using ::testing::SetArgPointee;
 using ::testing::StrEq;
 using ::testing::StrictMock;
@@ -318,21 +317,13 @@ TEST_P(GLES2DecoderRGBBackbufferTest, RGBBackbufferColorMaskFBO) {
   const GLenum kFormat = GL_RGB;
   // Use a different texture for framebuffer to avoid drawing feedback loops.
   EXPECT_CALL(*gl_, GenTextures(_, _))
-      .WillOnce(SetArgumentPointee<1>(kNewServiceId))
+      .WillOnce(SetArgPointee<1>(kNewServiceId))
       .RetiresOnSaturation();
   GenHelper<GenTexturesImmediate>(kNewClientId);
   DoBindTexture(GL_TEXTURE_2D, kNewClientId, kNewServiceId);
   // Pass some data so the texture will be marked as cleared.
-  DoTexImage2D(GL_TEXTURE_2D,
-               0,
-               kFormat,
-               kWidth,
-               kHeight,
-               0,
-               kFormat,
-               GL_UNSIGNED_BYTE,
-               kSharedMemoryId,
-               kSharedMemoryOffset);
+  DoTexImage2D(GL_TEXTURE_2D, 0, kFormat, kWidth, kHeight, 0, kFormat,
+               GL_UNSIGNED_BYTE, shared_memory_id_, kSharedMemoryOffset);
   DoBindFramebuffer(
       GL_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
   DoFramebufferTexture2D(GL_FRAMEBUFFER,
@@ -742,16 +733,8 @@ TEST_P(GLES2DecoderWithShaderTest, DrawArraysBadTextureUsesBlack) {
   DoBindTexture(GL_TEXTURE_2D, client_texture_id_, kServiceTextureId);
   // This is an NPOT texture. As the default filtering requires mips
   // this should trigger replacing with black textures before rendering.
-  DoTexImage2D(GL_TEXTURE_2D,
-               0,
-               GL_RGBA,
-               3,
-               1,
-               0,
-               GL_RGBA,
-               GL_UNSIGNED_BYTE,
-               kSharedMemoryId,
-               kSharedMemoryOffset);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 3, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+               shared_memory_id_, kSharedMemoryOffset);
   AddExpectationsForSimulatedAttrib0(kNumVertices, 0);
   {
     InSequence sequence;
@@ -835,17 +818,15 @@ TEST_P(GLES2DecoderWithShaderTest, DrawArraysValidAttributesSucceeds) {
 // Same as DrawArraysValidAttributesSucceeds, but with workaround
 // |init_vertex_attributes|.
 TEST_P(GLES2DecoderManualInitTest, InitVertexAttributes) {
-  base::CommandLine command_line(0, NULL);
-  command_line.AppendSwitchASCII(
-      switches::kGpuDriverBugWorkarounds,
-      base::IntToString(gpu::INIT_VERTEX_ATTRIBUTES));
+  gpu::GpuDriverBugWorkarounds workarounds;
+  workarounds.init_vertex_attributes = true;
   InitState init;
   init.has_alpha = true;
   init.has_depth = true;
   init.request_alpha = true;
   init.request_depth = true;
   init.bind_generates_resource = true;
-  InitDecoderWithCommandLine(init, &command_line);
+  InitDecoderWithWorkarounds(init, workarounds);
   SetupDefaultProgram();
   SetupTexture();
   SetupVertexBuffer();
@@ -1839,10 +1820,10 @@ TEST_P(GLES2DecoderWithShaderTest, DrawArraysClearsAfterTexImage2DNULL) {
   // Expect 2 levels will be cleared.
   SetupClearTextureExpectations(kServiceTextureId, kServiceTextureId,
                                 GL_TEXTURE_2D, GL_TEXTURE_2D, 0, GL_RGBA,
-                                GL_RGBA, GL_UNSIGNED_BYTE, 0, 0, 2, 2);
+                                GL_UNSIGNED_BYTE, 0, 0, 2, 2, 0);
   SetupClearTextureExpectations(kServiceTextureId, kServiceTextureId,
                                 GL_TEXTURE_2D, GL_TEXTURE_2D, 1, GL_RGBA,
-                                GL_RGBA, GL_UNSIGNED_BYTE, 0, 0, 1, 1);
+                                GL_UNSIGNED_BYTE, 0, 0, 1, 1, 0);
   SetupExpectationsForApplyingDefaultDirtyState();
   EXPECT_CALL(*gl_, DrawArrays(GL_TRIANGLES, 0, kNumVertices))
       .Times(1)
@@ -1872,10 +1853,10 @@ TEST_P(GLES2DecoderWithShaderTest, DrawElementsClearsAfterTexImage2DNULL) {
   // Expect 2 levels will be cleared.
   SetupClearTextureExpectations(kServiceTextureId, kServiceTextureId,
                                 GL_TEXTURE_2D, GL_TEXTURE_2D, 0, GL_RGBA,
-                                GL_RGBA, GL_UNSIGNED_BYTE, 0, 0, 2, 2);
+                                GL_UNSIGNED_BYTE, 0, 0, 2, 2, 0);
   SetupClearTextureExpectations(kServiceTextureId, kServiceTextureId,
                                 GL_TEXTURE_2D, GL_TEXTURE_2D, 1, GL_RGBA,
-                                GL_RGBA, GL_UNSIGNED_BYTE, 0, 0, 1, 1);
+                                GL_UNSIGNED_BYTE, 0, 0, 1, 1, 0);
   SetupExpectationsForApplyingDefaultDirtyState();
 
   EXPECT_CALL(*gl_,
@@ -1912,7 +1893,7 @@ TEST_P(GLES2DecoderWithShaderTest, DrawClearsAfterTexImage2DNULLInFBO) {
   SetupAllNeededVertexBuffers();
   // Register a texture id.
   EXPECT_CALL(*gl_, GenTextures(_, _))
-      .WillOnce(SetArgumentPointee<1>(kFBOServiceTextureId))
+      .WillOnce(SetArgPointee<1>(kFBOServiceTextureId))
       .RetiresOnSaturation();
   GenHelper<GenTexturesImmediate>(kFBOClientTextureId);
 
@@ -1976,7 +1957,7 @@ TEST_P(GLES2DecoderWithShaderTest, DrawWitFBOThatCantClearDoesNotDraw) {
 
   // Register a texture id.
   EXPECT_CALL(*gl_, GenTextures(_, _))
-      .WillOnce(SetArgumentPointee<1>(kFBOServiceTextureId))
+      .WillOnce(SetArgPointee<1>(kFBOServiceTextureId))
       .RetiresOnSaturation();
   GenHelper<GenTexturesImmediate>(kFBOClientTextureId);
 
@@ -2073,7 +2054,7 @@ TEST_P(GLES2DecoderManualInitTest, DrawArraysClearsAfterTexImage2DNULLCubemap) {
   for (int ii = 0; ii < 6; ++ii) {
     GLenum face = faces[ii];
     int32_t shm_id =
-        (face == GL_TEXTURE_CUBE_MAP_NEGATIVE_Y) ? 0 : kSharedMemoryId;
+        (face == GL_TEXTURE_CUBE_MAP_NEGATIVE_Y) ? 0 : shared_memory_id_;
     uint32_t shm_offset =
         (face == GL_TEXTURE_CUBE_MAP_NEGATIVE_Y) ? 0 : kSharedMemoryOffset;
     DoTexImage2D(face,
@@ -2101,11 +2082,11 @@ TEST_P(GLES2DecoderManualInitTest, DrawArraysClearsAfterTexImage2DNULLCubemap) {
   SetupClearTextureExpectations(kServiceTextureId, kServiceTextureId,
                                 GL_TEXTURE_CUBE_MAP,
                                 GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, 0, GL_RGBA,
-                                GL_RGBA, GL_UNSIGNED_BYTE, 0, 0, 2, 2);
+                                GL_UNSIGNED_BYTE, 0, 0, 2, 2, 0);
   SetupClearTextureExpectations(kServiceTextureId, kServiceTextureId,
                                 GL_TEXTURE_CUBE_MAP,
                                 GL_TEXTURE_CUBE_MAP_NEGATIVE_Y, 1, GL_RGBA,
-                                GL_RGBA, GL_UNSIGNED_BYTE, 0, 0, 1, 1);
+                                GL_UNSIGNED_BYTE, 0, 0, 1, 1, 0);
   AddExpectationsForSimulatedAttrib0(kNumVertices, 0);
   SetupExpectationsForApplyingDefaultDirtyState();
   EXPECT_CALL(*gl_, DrawArrays(GL_TRIANGLES, 0, kNumVertices))
@@ -2123,7 +2104,7 @@ TEST_P(GLES2DecoderWithShaderTest,
 
   // Register a texture id.
   EXPECT_CALL(*gl_, GenTextures(_, _))
-      .WillOnce(SetArgumentPointee<1>(kFBOServiceTextureId))
+      .WillOnce(SetArgPointee<1>(kFBOServiceTextureId))
       .RetiresOnSaturation();
   GenHelper<GenTexturesImmediate>(kFBOClientTextureId);
 
@@ -2199,22 +2180,14 @@ TEST_P(GLES2DecoderWithShaderTest,
 
   // Register a texture id.
   EXPECT_CALL(*gl_, GenTextures(_, _))
-      .WillOnce(SetArgumentPointee<1>(kFBOServiceTextureId))
+      .WillOnce(SetArgPointee<1>(kFBOServiceTextureId))
       .RetiresOnSaturation();
   GenHelper<GenTexturesImmediate>(kFBOClientTextureId);
 
   // Setup "render to" texture that is cleared.
   DoBindTexture(GL_TEXTURE_2D, kFBOClientTextureId, kFBOServiceTextureId);
-  DoTexImage2D(GL_TEXTURE_2D,
-               0,
-               GL_RGBA,
-               1,
-               1,
-               0,
-               GL_RGBA,
-               GL_UNSIGNED_BYTE,
-               kSharedMemoryId,
-               kSharedMemoryOffset);
+  DoTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+               shared_memory_id_, kSharedMemoryOffset);
   DoBindFramebuffer(
       GL_FRAMEBUFFER, client_framebuffer_id_, kServiceFramebufferId);
   DoFramebufferTexture2D(GL_FRAMEBUFFER,

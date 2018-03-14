@@ -6,6 +6,7 @@
 #import <UIKit/UIKit.h>
 #import <XCTest/XCTest.h>
 
+#include "base/ios/ios_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/browsing_data/core/pref_names.h"
@@ -13,17 +14,19 @@
 #include "components/strings/grit/components_strings.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
+#import "ios/chrome/browser/ui/authentication/signin_earlgrey_utils.h"
+#import "ios/chrome/browser/ui/authentication/signin_promo_view.h"
 #import "ios/chrome/browser/ui/history/history_entry_item.h"
 #import "ios/chrome/browser/ui/settings/clear_browsing_data_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/settings_collection_view_controller.h"
-#include "ios/chrome/browser/ui/tools_menu/tools_menu_constants.h"
+#include "ios/chrome/browser/ui/tools_menu/public/tools_menu_constants.h"
 #import "ios/chrome/browser/ui/tools_menu/tools_popup_controller.h"
+#include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/util/transparent_link_button.h"
 #include "ios/chrome/common/string_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/earl_grey/accessibility_util.h"
-#import "ios/chrome/test/earl_grey/chrome_assertions.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
@@ -32,8 +35,8 @@
 #import "ios/public/provider/chrome/browser/signin/fake_chrome_identity.h"
 #import "ios/public/provider/chrome/browser/signin/fake_chrome_identity_service.h"
 #import "ios/testing/wait_util.h"
-#import "ios/web/public/test/http_server.h"
-#import "ios/web/public/test/http_server_util.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#import "ios/web/public/test/http_server/http_server_util.h"
 #import "net/base/mac/url_conversions.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -44,7 +47,6 @@
 using chrome_test_util::ButtonWithAccessibilityLabelId;
 using chrome_test_util::NavigationBarDoneButton;
 using chrome_test_util::OpenLinkInNewTabButton;
-using chrome_test_util::WebViewContainingText;
 
 namespace {
 char kURL1[] = "http://firstURL";
@@ -133,42 +135,6 @@ id<GREYMatcher> ClearBrowsingDataButton() {
 // Matcher for the clear browsing data action sheet item.
 id<GREYMatcher> ConfirmClearBrowsingDataButton() {
   return ButtonWithAccessibilityLabelId(IDS_IOS_CONFIRM_CLEAR_BUTTON);
-}
-
-// Sign in with a mock identity.
-void MockSignIn() {
-  // Set up a mock identity.
-  ChromeIdentity* identity =
-      [FakeChromeIdentity identityWithEmail:@"foo@gmail.com"
-                                     gaiaID:@"fooID"
-                                       name:@"Fake Foo"];
-  ios::FakeChromeIdentityService::GetInstanceFromChromeProvider()->AddIdentity(
-      identity);
-
-  [ChromeEarlGreyUI openToolsMenu];
-  [[[EarlGrey
-      selectElementWithMatcher:grey_accessibilityID(kToolsMenuSettingsId)]
-         usingSearchAction:grey_scrollToContentEdge(kGREYContentEdgeBottom)
-      onElementWithMatcher:grey_accessibilityID(kToolsMenuTableViewId)]
-      performAction:grey_tap()];
-
-  [[EarlGrey
-      selectElementWithMatcher:grey_accessibilityID(kSettingsSignInCellId)]
-      performAction:grey_tap()];
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabel(
-                                   identity.userEmail)]
-      performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:
-                 chrome_test_util::ButtonWithAccessibilityLabelId(
-                     IDS_IOS_ACCOUNT_CONSISTENCY_SETUP_SIGNIN_BUTTON)]
-      performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:
-                 chrome_test_util::ButtonWithAccessibilityLabelId(
-                     IDS_IOS_ACCOUNT_CONSISTENCY_CONFIRMATION_OK_BUTTON)]
-      performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
-      performAction:grey_tap()];
 }
 }  // namespace
 
@@ -259,8 +225,7 @@ void MockSignIn() {
   // Tap a history entry and assert that navigation to that entry's URL occurs.
   [[EarlGrey selectElementWithMatcher:HistoryEntry(_URL1, kTitle1)]
       performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kResponse1)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kResponse1];
 }
 
 // Tests that history is not changed after performing back navigation.
@@ -270,8 +235,7 @@ void MockSignIn() {
 
   [[EarlGrey selectElementWithMatcher:chrome_test_util::BackButton()]
       performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kResponse1)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kResponse1];
 
   [self openHistoryPanel];
 
@@ -281,40 +245,14 @@ void MockSignIn() {
       assertWithMatcher:grey_notNil()];
 }
 
-// Test that history displays a message about entries only if the user is logged
-// in, and that tapping on the link in the message opens a new tab with the sync
-// help page.
-- (void)testHistoryEntriesStatusCell {
-  [self loadTestURLs];
-  [self openHistoryPanel];
-  // Assert that no message is shown when the user is not signed in.
-  NSRange range;
-  NSString* entriesMessage = ParseStringWithLink(
-      l10n_util::GetNSString(IDS_IOS_HISTORY_NO_SYNCED_RESULTS), &range);
-  [[EarlGrey selectElementWithMatcher:grey_text(entriesMessage)]
-      assertWithMatcher:grey_nil()];
-  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
-      performAction:grey_tap()];
-
-  // Sign in and assert that the page indicates what type of history entries
-  // are shown.
-  MockSignIn();
-  [self openHistoryPanel];
-  // Assert that message about entries is shown. The "history is showing local
-  // entries" message will be shown because sync is not set up for this test.
-  [[EarlGrey selectElementWithMatcher:grey_text(entriesMessage)]
-      assertWithMatcher:grey_notNil()];
-
-  // Tap on "Learn more" link.
-  [[EarlGrey
-      selectElementWithMatcher:grey_kindOfClass([TransparentLinkButton class])]
-      performAction:grey_tap()];
-  // Assert that new tab with the link is opened, hence tab count of 2.
-  chrome_test_util::AssertMainTabCount(2);
-}
-
 // Tests that searching history displays only entries matching the search term.
 - (void)testSearchHistory {
+  // TODO(crbug.com/753098): Re-enable this test on iOS 11 iPad once
+  // grey_typeText works on iOS 11.
+  if (base::ios::IsRunningOnIOS11OrLater() && IsIPadIdiom()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 11.");
+  }
+
   [self loadTestURLs];
   [self openHistoryPanel];
   [[EarlGrey selectElementWithMatcher:SearchIconButton()]
@@ -397,9 +335,9 @@ void MockSignIn() {
   // Include sufficientlyVisible condition for the case of the clear browsing
   // dialog, which also has a "Done" button and is displayed over the history
   // panel.
-  id<GREYMatcher> visibleDoneButton = grey_allOf(
-      ButtonWithAccessibilityLabelId(IDS_IOS_NAVIGATION_BAR_DONE_BUTTON),
-      grey_sufficientlyVisible(), nil);
+  id<GREYMatcher> visibleDoneButton =
+      grey_allOf(chrome_test_util::NavigationBarDoneButton(),
+                 grey_sufficientlyVisible(), nil);
   [[EarlGrey selectElementWithMatcher:visibleDoneButton]
       performAction:grey_tap()];
 
@@ -423,7 +361,7 @@ void MockSignIn() {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(
                                           _URL1.GetContent())]
       assertWithMatcher:grey_notNil()];
-  chrome_test_util::AssertMainTabCount(2);
+  [ChromeEarlGrey waitForMainTabCount:2];
 }
 
 // Tests display and selection of 'Open in New Incognito Tab' in a context menu
@@ -443,8 +381,8 @@ void MockSignIn() {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::OmniboxText(
                                           _URL1.GetContent())]
       assertWithMatcher:grey_notNil()];
-  chrome_test_util::AssertMainTabCount(1);
-  chrome_test_util::AssertIncognitoTabCount(1);
+  [ChromeEarlGrey waitForMainTabCount:1];
+  [ChromeEarlGrey waitForIncognitoTabCount:1];
 }
 
 // Tests display and selection of 'Copy URL' in a context menu on a history
@@ -488,16 +426,13 @@ void MockSignIn() {
 
 - (void)loadTestURLs {
   [ChromeEarlGrey loadURL:_URL1];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kResponse1)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kResponse1];
 
   [ChromeEarlGrey loadURL:_URL2];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kResponse2)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kResponse2];
 
   [ChromeEarlGrey loadURL:_URL3];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kResponse3)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kResponse3];
 }
 
 - (void)openHistoryPanel {

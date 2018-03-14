@@ -8,19 +8,21 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/login_manager_test.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/login/supervised/supervised_user_authentication.h"
 #include "chrome/browser/chromeos/login/supervised/supervised_user_test_base.h"
-#include "chrome/browser/chromeos/login/ui/login_display_host_impl.h"
+#include "chrome/browser/chromeos/login/ui/login_display_host_webui.h"
 #include "chrome/browser/chromeos/login/ui/webui_login_view.h"
 #include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/supervised_user_manager.h"
 #include "chrome/browser/chromeos/net/network_portal_detector_test_impl.h"
 #include "chrome/browser/chromeos/settings/stub_cros_settings_provider.h"
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
+#include "chrome/common/chrome_features.h"
 #include "chromeos/cryptohome/mock_async_method_caller.h"
 #include "chromeos/cryptohome/mock_homedir_methods.h"
 #include "components/sync/model/attachments/attachment_service_proxy_for_test.h"
@@ -43,7 +45,15 @@ class SupervisedUserPasswordTest : public SupervisedUserTestBase {
  public:
   SupervisedUserPasswordTest() : SupervisedUserTestBase() {}
 
+  void SetUpInProcessBrowserTestFixture() override {
+    SupervisedUserTestBase::SetUpInProcessBrowserTestFixture();
+    scoped_feature_list_.InitAndEnableFeature(
+        features::kSupervisedUserCreation);
+  }
+
  private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+
   DISALLOW_COPY_AND_ASSIGN(SupervisedUserPasswordTest);
 };
 
@@ -80,13 +90,13 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserPasswordTest,
       ChromeUserManager::Get()->GetSupervisedUserManager()->GetUserSyncId(
           user->GetAccountId().GetUserEmail());
   base::DictionaryValue password;
-  password.SetIntegerWithoutPathExpansion(
-      kSchemaVersion, SupervisedUserAuthentication::SCHEMA_SALT_HASHED);
-  password.SetIntegerWithoutPathExpansion(kPasswordRevision, 2);
+  password.SetKey(
+      kSchemaVersion,
+      base::Value(SupervisedUserAuthentication::SCHEMA_SALT_HASHED));
+  password.SetKey(kPasswordRevision, base::Value(2));
 
-  password.SetStringWithoutPathExpansion(kPasswordSignature, "signature");
-  password.SetStringWithoutPathExpansion(kEncryptedPassword,
-                                         "new-encrypted-password");
+  password.SetKey(kPasswordSignature, base::Value("signature"));
+  password.SetKey(kEncryptedPassword, base::Value("new-encrypted-password"));
 
   shared_settings_adapter_->AddChange(
       sync_id, supervised_users::kChromeOSPasswordData, password, true, false);
@@ -95,10 +105,9 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserPasswordTest,
 
 // Supervised user signs in for second time, and actual password migration takes
 // place.
-IN_PROC_BROWSER_TEST_F(SupervisedUserPasswordTest,
-                       PasswordChangeFromUserTest) {
+IN_PROC_BROWSER_TEST_F(SupervisedUserPasswordTest, PasswordChangeFromUserTest) {
   EXPECT_CALL(*mock_homedir_methods_, MountEx(_, _, _, _)).Times(1);
-  EXPECT_CALL(*mock_homedir_methods_, UpdateKeyEx(_, _, _, _, _)).Times(1);
+  EXPECT_CALL(*mock_homedir_methods_, UpdateKeyEx(_, _, _, _)).Times(1);
   SigninAsSupervisedUser(false, 0, kTestSupervisedUserDisplayName);
   testing::Mock::VerifyAndClearExpectations(mock_homedir_methods_);
 }
@@ -125,7 +134,7 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserPasswordTest,
 
   SigninAsManager(1);
 
-  EXPECT_CALL(*mock_homedir_methods_, AddKeyEx(_, _, _, _, _)).Times(1);
+  EXPECT_CALL(*mock_homedir_methods_, AddKeyEx(_, _, _, _)).Times(1);
 
   std::string sync_id =
       ChromeUserManager::Get()->GetSupervisedUserManager()->GetUserSyncId(
@@ -144,13 +153,13 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserPasswordTest,
   content::RunAllPendingInMessageLoop();
 
   base::DictionaryValue password;
-  password.SetIntegerWithoutPathExpansion(
-      kSchemaVersion, SupervisedUserAuthentication::SCHEMA_SALT_HASHED);
-  password.SetIntegerWithoutPathExpansion(kPasswordRevision, 2);
+  password.SetKey(
+      kSchemaVersion,
+      base::Value(SupervisedUserAuthentication::SCHEMA_SALT_HASHED));
+  password.SetKey(kPasswordRevision, base::Value(2));
 
-  password.SetStringWithoutPathExpansion(kPasswordSignature, "signature");
-  password.SetStringWithoutPathExpansion(kEncryptedPassword,
-                                         "new-encrypted-password");
+  password.SetKey(kPasswordSignature, base::Value("signature"));
+  password.SetKey(kEncryptedPassword, base::Value("new-encrypted-password"));
   shared_settings_adapter_->AddChange(
       sync_id, supervised_users::kChromeOSPasswordData, password, true, false);
   content::RunAllPendingInMessageLoop();
@@ -162,14 +171,13 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserPasswordTest,
 IN_PROC_BROWSER_TEST_F(SupervisedUserPasswordTest,
                        PasswordChangeFromManagerTest) {
   EXPECT_CALL(*mock_homedir_methods_, MountEx(_, _, _, _)).Times(1);
-  EXPECT_CALL(*mock_homedir_methods_, UpdateKeyEx(_, _, _, _, _)).Times(0);
+  EXPECT_CALL(*mock_homedir_methods_, UpdateKeyEx(_, _, _, _)).Times(0);
   SigninAsSupervisedUser(false, 1, kTestSupervisedUserDisplayName);
   testing::Mock::VerifyAndClearExpectations(mock_homedir_methods_);
 }
 
-IN_PROC_BROWSER_TEST_F(
-    SupervisedUserPasswordTest,
-    PRE_PRE_PRE_PRE_PasswordChangeUserAndManagerTest) {
+IN_PROC_BROWSER_TEST_F(SupervisedUserPasswordTest,
+                       PRE_PRE_PRE_PRE_PasswordChangeUserAndManagerTest) {
   PrepareUsers();
 }
 
@@ -193,13 +201,13 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserPasswordTest,
       ChromeUserManager::Get()->GetSupervisedUserManager()->GetUserSyncId(
           user->GetAccountId().GetUserEmail());
   base::DictionaryValue password;
-  password.SetIntegerWithoutPathExpansion(
-      kSchemaVersion, SupervisedUserAuthentication::SCHEMA_SALT_HASHED);
-  password.SetIntegerWithoutPathExpansion(kPasswordRevision, 2);
+  password.SetKey(
+      kSchemaVersion,
+      base::Value(SupervisedUserAuthentication::SCHEMA_SALT_HASHED));
+  password.SetKey(kPasswordRevision, base::Value(2));
 
-  password.SetStringWithoutPathExpansion(kPasswordSignature, "signature");
-  password.SetStringWithoutPathExpansion(kEncryptedPassword,
-                                         "new-encrypted-password");
+  password.SetKey(kPasswordSignature, base::Value("signature"));
+  password.SetKey(kEncryptedPassword, base::Value("new-encrypted-password"));
 
   shared_settings_adapter_->AddChange(
       sync_id, supervised_users::kChromeOSPasswordData, password, true, false);
@@ -215,7 +223,7 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserPasswordTest,
 
   SigninAsManager(1);
 
-  EXPECT_CALL(*mock_homedir_methods_, AddKeyEx(_, _, _, _, _)).Times(1);
+  EXPECT_CALL(*mock_homedir_methods_, AddKeyEx(_, _, _, _)).Times(1);
 
   std::string sync_id =
       ChromeUserManager::Get()->GetSupervisedUserManager()->GetUserSyncId(
@@ -234,13 +242,13 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserPasswordTest,
   content::RunAllPendingInMessageLoop();
 
   base::DictionaryValue password;
-  password.SetIntegerWithoutPathExpansion(
-      kSchemaVersion, SupervisedUserAuthentication::SCHEMA_SALT_HASHED);
-  password.SetIntegerWithoutPathExpansion(kPasswordRevision, 2);
+  password.SetKey(
+      kSchemaVersion,
+      base::Value(SupervisedUserAuthentication::SCHEMA_SALT_HASHED));
+  password.SetKey(kPasswordRevision, base::Value(2));
 
-  password.SetStringWithoutPathExpansion(kPasswordSignature, "signature");
-  password.SetStringWithoutPathExpansion(kEncryptedPassword,
-                                         "new-encrypted-password");
+  password.SetKey(kPasswordSignature, base::Value("signature"));
+  password.SetKey(kEncryptedPassword, base::Value("new-encrypted-password"));
   shared_settings_adapter_->AddChange(
       sync_id, supervised_users::kChromeOSPasswordData, password, true, false);
   content::RunAllPendingInMessageLoop();
@@ -253,7 +261,7 @@ IN_PROC_BROWSER_TEST_F(SupervisedUserPasswordTest,
 IN_PROC_BROWSER_TEST_F(SupervisedUserPasswordTest,
                        PasswordChangeUserAndManagerTest) {
   EXPECT_CALL(*mock_homedir_methods_, MountEx(_, _, _, _)).Times(1);
-  EXPECT_CALL(*mock_homedir_methods_, UpdateKeyEx(_, _, _, _, _)).Times(0);
+  EXPECT_CALL(*mock_homedir_methods_, UpdateKeyEx(_, _, _, _)).Times(0);
   SigninAsSupervisedUser(false, 1, kTestSupervisedUserDisplayName);
   testing::Mock::VerifyAndClearExpectations(mock_homedir_methods_);
 }

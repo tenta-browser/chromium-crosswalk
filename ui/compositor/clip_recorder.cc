@@ -4,9 +4,8 @@
 
 #include "ui/compositor/clip_recorder.h"
 
-#include "cc/paint/clip_display_item.h"
-#include "cc/paint/clip_path_display_item.h"
 #include "cc/paint/display_item_list.h"
+#include "cc/paint/paint_op_buffer.h"
 #include "ui/compositor/paint_context.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/rect.h"
@@ -16,48 +15,49 @@
 
 namespace ui {
 
-ClipRecorder::ClipRecorder(const PaintContext& context)
-    : context_(context), num_closers_(0) {
-    }
+ClipRecorder::ClipRecorder(const PaintContext& context) : context_(context) {}
 
 ClipRecorder::~ClipRecorder() {
-  for (int i = num_closers_ - 1; i >= 0; --i) {
-    switch (closers_[i]) {
-      case CLIP_RECT:
-        context_.list_->CreateAndAppendPairedEndItem<cc::EndClipDisplayItem>();
-        break;
-      case CLIP_PATH:
-        context_.list_
-            ->CreateAndAppendPairedEndItem<cc::EndClipPathDisplayItem>();
-        break;
-    }
+  for (int i = 0; i < num_closers_; ++i) {
+    // Each restore is part of a separate visual rect, so gets its own
+    // StartPaint/EndPaintOfPairedEnd.
+    context_.list_->StartPaint();
+    context_.list_->push<cc::RestoreOp>();
+    context_.list_->EndPaintOfPairedEnd();
   }
-}
-
-void ClipRecorder::RecordCloser(Closer closer) {
-  DCHECK_LT(num_closers_, kMaxOpCount);
-  closers_[num_closers_++] = closer;
 }
 
 void ClipRecorder::ClipRect(const gfx::Rect& clip_rect) {
   bool antialias = false;
-  context_.list_->CreateAndAppendPairedBeginItem<cc::ClipDisplayItem>(
-      clip_rect, std::vector<SkRRect>(), antialias);
-  RecordCloser(CLIP_RECT);
+
+  context_.list_->StartPaint();
+  context_.list_->push<cc::SaveOp>();
+  context_.list_->push<cc::ClipRectOp>(gfx::RectToSkRect(clip_rect),
+                                       SkClipOp::kIntersect, antialias);
+  context_.list_->EndPaintOfPairedBegin();
+  ++num_closers_;
 }
 
 void ClipRecorder::ClipPath(const gfx::Path& clip_path) {
   bool antialias = false;
-  context_.list_->CreateAndAppendPairedBeginItem<cc::ClipPathDisplayItem>(
-      clip_path, antialias);
-  RecordCloser(CLIP_PATH);
+
+  context_.list_->StartPaint();
+  context_.list_->push<cc::SaveOp>();
+  context_.list_->push<cc::ClipPathOp>(clip_path, SkClipOp::kIntersect,
+                                       antialias);
+  context_.list_->EndPaintOfPairedBegin();
+  ++num_closers_;
 }
 
 void ClipRecorder::ClipPathWithAntiAliasing(const gfx::Path& clip_path) {
   bool antialias = true;
-  context_.list_->CreateAndAppendPairedBeginItem<cc::ClipPathDisplayItem>(
-      clip_path, antialias);
-  RecordCloser(CLIP_PATH);
+
+  context_.list_->StartPaint();
+  context_.list_->push<cc::SaveOp>();
+  context_.list_->push<cc::ClipPathOp>(clip_path, SkClipOp::kIntersect,
+                                       antialias);
+  context_.list_->EndPaintOfPairedBegin();
+  ++num_closers_;
 }
 
 }  // namespace ui

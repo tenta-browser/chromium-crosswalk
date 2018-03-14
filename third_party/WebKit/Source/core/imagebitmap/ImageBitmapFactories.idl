@@ -31,6 +31,7 @@
 // https://html.spec.whatwg.org/#imagebitmapfactories
 
 typedef (HTMLImageElement or
+         SVGImageElement or
          HTMLVideoElement or
          HTMLCanvasElement or
          Blob or
@@ -41,11 +42,11 @@ typedef (HTMLImageElement or
 [
     LegacyTreatAsPartialInterface,
     NoInterfaceObject, // Always used on target of 'implements'
-    Exposed=(Window,Worker),
+    Exposed=(Window,Worker)
 ] interface ImageBitmapFactories {
-    [CallWith=ScriptState, RaisesException] Promise createImageBitmap(
+    [CallWith=ScriptState] Promise createImageBitmap(
         ImageBitmapSource imageBitmap, optional ImageBitmapOptions options);
-    [CallWith=ScriptState, RaisesException] Promise createImageBitmap(
+    [CallWith=ScriptState] Promise createImageBitmap(
         ImageBitmapSource imageBitmap, long sx, long sy, long sw, long sh, optional ImageBitmapOptions options);
 };
 

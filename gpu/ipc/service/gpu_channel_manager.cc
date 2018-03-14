@@ -11,16 +11,20 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/sys_info.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/sync_token.h"
 #include "gpu/command_buffer/service/feature_info.h"
+#include "gpu/command_buffer/service/gpu_tracer.h"
 #include "gpu/command_buffer/service/mailbox_manager.h"
 #include "gpu/command_buffer/service/memory_program_cache.h"
-#include "gpu/command_buffer/service/preemption_flag.h"
-#include "gpu/command_buffer/service/shader_translator_cache.h"
+#include "gpu/command_buffer/service/passthrough_program_cache.h"
+#include "gpu/command_buffer/service/scheduler.h"
+#include "gpu/command_buffer/service/service_utils.h"
 #include "gpu/command_buffer/service/sync_point_manager.h"
 #include "gpu/ipc/common/gpu_messages.h"
 #include "gpu/ipc/service/gpu_channel.h"
@@ -41,16 +45,15 @@ const int kMaxGpuIdleTimeMs = 40;
 // draw.
 const int kMaxKeepAliveTimeMs = 200;
 #endif
-
 }
 
 GpuChannelManager::GpuChannelManager(
     const GpuPreferences& gpu_preferences,
-    const GpuDriverBugWorkarounds& workarounds,
     GpuChannelManagerDelegate* delegate,
     GpuWatchdogThread* watchdog,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
+    Scheduler* scheduler,
     SyncPointManager* sync_point_manager,
     GpuMemoryBufferFactory* gpu_memory_buffer_factory,
     const GpuFeatureInfo& gpu_feature_info,
@@ -58,22 +61,37 @@ GpuChannelManager::GpuChannelManager(
     : task_runner_(task_runner),
       io_task_runner_(io_task_runner),
       gpu_preferences_(gpu_preferences),
-      gpu_driver_bug_workarounds_(workarounds),
+      gpu_driver_bug_workarounds_(
+          gpu_feature_info.enabled_gpu_driver_bug_workarounds),
       delegate_(delegate),
       watchdog_(watchdog),
       share_group_(new gl::GLShareGroup()),
       mailbox_manager_(gles2::MailboxManager::Create(gpu_preferences)),
       gpu_memory_manager_(this),
+      scheduler_(scheduler),
       sync_point_manager_(sync_point_manager),
+      shader_translator_cache_(gpu_preferences_),
       gpu_memory_buffer_factory_(gpu_memory_buffer_factory),
       gpu_feature_info_(gpu_feature_info),
+#if defined(OS_ANDROID)
+      // Runs on GPU main thread and unregisters when the listener is destroyed,
+      // So, Unretained is fine here.
+      application_status_listener_(
+          base::Bind(&GpuChannelManager::OnApplicationStateChange,
+                     base::Unretained(this))),
+      is_running_on_low_end_mode_(base::SysInfo::IsLowEndDevice()),
+      is_backgrounded_for_testing_(false),
+#endif
       exiting_for_lost_context_(false),
       activity_flags_(std::move(activity_flags)),
+      memory_pressure_listener_(
+          base::Bind(&GpuChannelManager::HandleMemoryPressure,
+                     base::Unretained(this))),
       weak_factory_(this) {
-  DCHECK(task_runner);
+  // |application_status_listener_| must be created on the right task runner.
+  DCHECK(task_runner->BelongsToCurrentThread());
   DCHECK(io_task_runner);
-  if (gpu_preferences_.ui_prioritize_in_gpu_process)
-    preemption_flag_ = new PreemptionFlag;
+  DCHECK(scheduler);
 }
 
 GpuChannelManager::~GpuChannelManager() {
@@ -85,36 +103,32 @@ GpuChannelManager::~GpuChannelManager() {
   }
 }
 
+gles2::Outputter* GpuChannelManager::outputter() {
+  if (!outputter_)
+    outputter_.reset(new gles2::TraceOutputter("GpuChannelManager Trace"));
+  return outputter_.get();
+}
+
 gles2::ProgramCache* GpuChannelManager::program_cache() {
-  if (!program_cache_.get() &&
-      !gpu_preferences_.disable_gpu_program_cache) {
+  if (!program_cache_.get()) {
     const GpuDriverBugWorkarounds& workarounds = gpu_driver_bug_workarounds_;
     bool disable_disk_cache =
         gpu_preferences_.disable_gpu_shader_disk_cache ||
         workarounds.disable_program_disk_cache;
-    program_cache_.reset(new gles2::MemoryProgramCache(
-        gpu_preferences_.gpu_program_cache_size, disable_disk_cache,
-        workarounds.disable_program_caching_for_transform_feedback,
-        &activity_flags_));
+
+    // Use the EGL cache control extension for the passthrough decoder.
+    if (gpu_preferences_.use_passthrough_cmd_decoder &&
+        gles2::PassthroughCommandDecoderSupported()) {
+      program_cache_.reset(new gles2::PassthroughProgramCache(
+          gpu_preferences_.gpu_program_cache_size, disable_disk_cache));
+    } else {
+      program_cache_.reset(new gles2::MemoryProgramCache(
+          gpu_preferences_.gpu_program_cache_size, disable_disk_cache,
+          workarounds.disable_program_caching_for_transform_feedback,
+          &activity_flags_));
+    }
   }
   return program_cache_.get();
-}
-
-gles2::ShaderTranslatorCache*
-GpuChannelManager::shader_translator_cache() {
-  if (!shader_translator_cache_.get()) {
-    shader_translator_cache_ =
-        new gles2::ShaderTranslatorCache(gpu_preferences_);
-  }
-  return shader_translator_cache_.get();
-}
-
-gles2::FramebufferCompletenessCache*
-GpuChannelManager::framebuffer_completeness_cache() {
-  if (!framebuffer_completeness_cache_.get())
-    framebuffer_completeness_cache_ =
-        new gles2::FramebufferCompletenessCache;
-  return framebuffer_completeness_cache_.get();
 }
 
 void GpuChannelManager::RemoveChannel(int client_id) {
@@ -130,11 +144,9 @@ GpuChannel* GpuChannelManager::LookupChannel(int32_t client_id) const {
 GpuChannel* GpuChannelManager::EstablishChannel(int client_id,
                                                 uint64_t client_tracing_id,
                                                 bool is_gpu_host) {
-  std::unique_ptr<GpuChannel> gpu_channel = base::MakeUnique<GpuChannel>(
-      this, sync_point_manager_, watchdog_, share_group_, mailbox_manager_,
-      is_gpu_host ? preemption_flag_ : nullptr,
-      is_gpu_host ? nullptr : preemption_flag_, task_runner_, io_task_runner_,
-      client_id, client_tracing_id, is_gpu_host);
+  std::unique_ptr<GpuChannel> gpu_channel = std::make_unique<GpuChannel>(
+      this, scheduler_, sync_point_manager_, share_group_, task_runner_,
+      io_task_runner_, client_id, client_tracing_id, is_gpu_host);
 
   GpuChannel* gpu_channel_ptr = gpu_channel.get();
   gpu_channels_[client_id] = std::move(gpu_channel);
@@ -156,10 +168,9 @@ void GpuChannelManager::InternalDestroyGpuMemoryBufferOnIO(
   gpu_memory_buffer_factory_->DestroyGpuMemoryBuffer(id, client_id);
 }
 
-void GpuChannelManager::DestroyGpuMemoryBuffer(
-    gfx::GpuMemoryBufferId id,
-    int client_id,
-    const SyncToken& sync_token) {
+void GpuChannelManager::DestroyGpuMemoryBuffer(gfx::GpuMemoryBufferId id,
+                                               int client_id,
+                                               const SyncToken& sync_token) {
   if (!sync_point_manager_->WaitOutOfOrder(
           sync_token,
           base::Bind(&GpuChannelManager::InternalDestroyGpuMemoryBuffer,
@@ -169,9 +180,10 @@ void GpuChannelManager::DestroyGpuMemoryBuffer(
   }
 }
 
-void GpuChannelManager::PopulateShaderCache(const std::string& program_proto) {
+void GpuChannelManager::PopulateShaderCache(const std::string& key,
+                                            const std::string& program) {
   if (program_cache())
-    program_cache()->LoadProgram(program_proto);
+    program_cache()->LoadProgram(key, program);
 }
 
 void GpuChannelManager::LoseAllContexts() {
@@ -189,7 +201,7 @@ void GpuChannelManager::MaybeExitOnContextLost() {
                << " from problems.";
     // Signal the message loop to quit to shut down other threads
     // gracefully.
-    base::MessageLoop::current()->QuitNow();
+    base::RunLoop::QuitCurrentDeprecated();
     exiting_for_lost_context_ = true;
   }
 }
@@ -218,8 +230,8 @@ void GpuChannelManager::WakeUpGpu() {
 
 void GpuChannelManager::ScheduleWakeUpGpu() {
   base::TimeTicks now = base::TimeTicks::Now();
-  TRACE_EVENT2("gpu", "GpuChannelManager::ScheduleWakeUp",
-               "idle_time", (now - last_gpu_access_time_).InMilliseconds(),
+  TRACE_EVENT2("gpu", "GpuChannelManager::ScheduleWakeUp", "idle_time",
+               (now - last_gpu_access_time_).InMilliseconds(),
                "keep_awake_time", (now - begin_wake_up_time_).InMilliseconds());
   if (now - last_gpu_access_time_ <
       base::TimeDelta::FromMilliseconds(kMaxGpuIdleTimeMs))
@@ -251,6 +263,72 @@ void GpuChannelManager::DoWakeUpGpu() {
   glFinish();
   DidAccessGpu();
 }
+
+void GpuChannelManager::OnApplicationStateChange(
+    base::android::ApplicationState state) {
+  // TODO(ericrk): Temporarily disable the context release logic due to
+  // https://crbug.com/792120. Re-enable when the fix lands.
+  return;
+
+  if (state != base::android::APPLICATION_STATE_HAS_STOPPED_ACTIVITIES ||
+      !is_running_on_low_end_mode_) {
+    return;
+  }
+
+  // Clear the GL context on low-end devices after a 5 second delay, so that we
+  // don't clear in case the user pressed the home or recents button by mistake
+  // and got back to Chrome quickly.
+  const int64_t kDelayToClearContextMs = 5000;
+
+  task_runner_->PostDelayedTask(
+      FROM_HERE,
+      base::Bind(&GpuChannelManager::OnApplicationBackgrounded,
+                 weak_factory_.GetWeakPtr()),
+      base::TimeDelta::FromMilliseconds(kDelayToClearContextMs));
+  return;
+}
+
+void GpuChannelManager::OnApplicationBackgroundedForTesting() {
+  is_backgrounded_for_testing_ = true;
+  OnApplicationBackgrounded();
+}
+
+void GpuChannelManager::OnApplicationBackgrounded() {
+  // Check if the app is still in background after the delay.
+  auto state = base::android::ApplicationStatusListener::GetState();
+  if (state != base::android::APPLICATION_STATE_HAS_STOPPED_ACTIVITIES &&
+      state != base::android::APPLICATION_STATE_HAS_DESTROYED_ACTIVITIES &&
+      !is_backgrounded_for_testing_) {
+    return;
+  }
+
+  if (!is_running_on_low_end_mode_)
+    return;
+
+  // Delete all the GL contexts when the channel does not use WebGL and Chrome
+  // goes to background on low-end devices.
+  std::vector<int> channels_to_clear;
+  for (auto& kv : gpu_channels_) {
+    // TODO(ssid): WebGL context loss event notification must be sent before
+    // clearing WebGL contexts crbug.com/725306.
+    if (kv.second->HasActiveWebGLContext())
+      continue;
+    channels_to_clear.push_back(kv.first);
+    kv.second->MarkAllContextsLost();
+  }
+  for (int channel : channels_to_clear)
+    RemoveChannel(channel);
+
+  if (program_cache_)
+    program_cache_->Trim(0u);
+}
 #endif
+
+void GpuChannelManager::HandleMemoryPressure(
+    base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level) {
+  if (program_cache_)
+    program_cache_->HandleMemoryPressure(memory_pressure_level);
+  discardable_manager_.HandleMemoryPressure(memory_pressure_level);
+}
 
 }  // namespace gpu

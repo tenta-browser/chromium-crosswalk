@@ -35,11 +35,11 @@
 namespace blink {
 
 SharedBufferChunkReader::SharedBufferChunkReader(
-    PassRefPtr<const SharedBuffer> buffer,
+    scoped_refptr<const SharedBuffer> buffer,
     const Vector<char>& separator)
     : buffer_(std::move(buffer)),
       buffer_position_(0),
-      segment_(0),
+      segment_(nullptr),
       segment_length_(0),
       segment_index_(0),
       reached_end_of_file_(false),
@@ -47,11 +47,11 @@ SharedBufferChunkReader::SharedBufferChunkReader(
       separator_index_(0) {}
 
 SharedBufferChunkReader::SharedBufferChunkReader(
-    PassRefPtr<const SharedBuffer> buffer,
+    scoped_refptr<const SharedBuffer> buffer,
     const char* separator)
     : buffer_(std::move(buffer)),
       buffer_position_(0),
-      segment_(0),
+      segment_(nullptr),
       segment_length_(0),
       segment_index_(0),
       reached_end_of_file_(false),
@@ -64,7 +64,7 @@ void SharedBufferChunkReader::SetSeparator(const Vector<char>& separator) {
 }
 
 void SharedBufferChunkReader::SetSeparator(const char* separator) {
-  separator_.Clear();
+  separator_.clear();
   separator_.Append(separator, strlen(separator));
 }
 
@@ -73,14 +73,14 @@ bool SharedBufferChunkReader::NextChunk(Vector<char>& chunk,
   if (reached_end_of_file_)
     return false;
 
-  chunk.Clear();
+  chunk.clear();
   while (true) {
     while (segment_index_ < segment_length_) {
       char current_character = segment_[segment_index_++];
       if (current_character != separator_[separator_index_]) {
         if (separator_index_ > 0) {
           SECURITY_DCHECK(separator_index_ <= separator_.size());
-          chunk.Append(separator_.Data(), separator_index_);
+          chunk.Append(separator_.data(), separator_index_);
           separator_index_ = 0;
         }
         chunk.push_back(current_character);
@@ -102,11 +102,11 @@ bool SharedBufferChunkReader::NextChunk(Vector<char>& chunk,
     if (!segment_length_) {
       reached_end_of_file_ = true;
       if (separator_index_ > 0)
-        chunk.Append(separator_.Data(), separator_index_);
+        chunk.Append(separator_.data(), separator_index_);
       return !chunk.IsEmpty();
     }
   }
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return false;
 }
 
@@ -117,13 +117,13 @@ String SharedBufferChunkReader::NextChunkAsUTF8StringWithLatin1Fallback(
     return String();
 
   return data.size()
-             ? String::FromUTF8WithLatin1Fallback(data.Data(), data.size())
+             ? String::FromUTF8WithLatin1Fallback(data.data(), data.size())
              : g_empty_string;
 }
 
 size_t SharedBufferChunkReader::Peek(Vector<char>& data,
                                      size_t requested_size) {
-  data.Clear();
+  data.clear();
   if (requested_size <= segment_length_ - segment_index_) {
     data.Append(segment_ + segment_index_, requested_size);
     return requested_size;
@@ -133,7 +133,7 @@ size_t SharedBufferChunkReader::Peek(Vector<char>& data,
   data.Append(segment_ + segment_index_, read_bytes_count);
 
   size_t buffer_position = buffer_position_ + segment_length_;
-  const char* segment = 0;
+  const char* segment = nullptr;
   while (size_t segment_length =
              buffer_->GetSomeData(segment, buffer_position)) {
     if (requested_size <= read_bytes_count + segment_length) {

@@ -37,7 +37,6 @@ sys.path.insert(0, os.path.join(SRC_DIR, 'build'))
 import find_depot_tools
 find_depot_tools.add_depot_tools_to_path()
 import roll_dep_svn
-from gclient import GClientKeywords
 from third_party import upload
 
 # Avoid depot_tools/third_party/upload.py print verbose messages.
@@ -45,7 +44,7 @@ upload.verbosity = 0  # Errors only.
 
 CHROMIUM_GIT_URL = 'https://chromium.googlesource.com/chromium/src.git'
 CL_ISSUE_RE = re.compile('^Issue number: ([0-9]+) \((.*)\)$')
-RIETVELD_URL_RE = re.compile('^https?://(.*)/(.*)')
+REVIEW_URL_RE = re.compile('^https?://(.*)/(.*)')
 ROLL_BRANCH_NAME = 'special_webgl_roll_branch'
 TRYJOB_STATUS_SLEEP_SECONDS = 30
 
@@ -57,7 +56,12 @@ WEBGL_REVISION_TEXT_FILE = os.path.join(
 
 CommitInfo = collections.namedtuple('CommitInfo', ['git_commit',
                                                    'git_repo_url'])
-CLInfo = collections.namedtuple('CLInfo', ['issue', 'url', 'rietveld_server'])
+CLInfo = collections.namedtuple('CLInfo', ['issue', 'url', 'review_server'])
+
+
+def _VarLookup(local_scope):
+  return lambda var_name: local_scope['vars'][var_name]
+
 
 def _PosixPath(path):
   """Convert a possibly-Windows path to a posix-style path."""
@@ -81,10 +85,8 @@ def _ParseDepsFile(filename):
 
 def _ParseDepsDict(deps_content):
   local_scope = {}
-  var = GClientKeywords.VarImpl({}, local_scope)
   global_scope = {
-    'From': GClientKeywords.FromImpl,
-    'Var': var.Lookup,
+    'Var': _VarLookup(local_scope),
     'deps_os': {},
   }
   exec(deps_content, global_scope, local_scope)
@@ -187,13 +189,13 @@ class AutoRoller(object):
     issue_number = int(m.group(1))
     url = m.group(2)
 
-    # Parse the Rietveld host from the URL.
-    m = RIETVELD_URL_RE.match(url)
+    # Parse the codereview host from the URL.
+    m = REVIEW_URL_RE.match(url)
     if not m:
-      logging.error('Cannot parse Rietveld host from URL: %s', url)
+      logging.error('Cannot parse codereview host from URL: %s', url)
       sys.exit(-1)
-    rietveld_server = m.group(1)
-    return CLInfo(issue_number, url, rietveld_server)
+    review_server = m.group(1)
+    return CLInfo(issue_number, url, review_server)
 
   def _GetCurrentBranchName(self):
     return self._RunCommand(
@@ -296,16 +298,6 @@ class AutoRoller(object):
         # Kick off tryjobs.
         base_try_cmd = ['git', 'cl', 'try']
         self._RunCommand(base_try_cmd)
-        if extra_trybots:
-          # Run additional tryjobs.
-          # TODO(kbr): this should not be necessary -- the
-          # CQ_INCLUDE_TRYBOTS directive above should handle it.
-          # http://crbug.com/585237
-          for trybot in extra_trybots:
-            for builder in trybot['buildernames']:
-              self._RunCommand(base_try_cmd + [
-                  '-m', trybot['mastername'],
-                  '-b', builder])
 
       cl_info = self._GetCLInfo()
       print 'Issue: %d URL: %s' % (cl_info.issue, cl_info.url)

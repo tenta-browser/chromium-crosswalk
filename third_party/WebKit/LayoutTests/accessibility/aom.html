@@ -14,20 +14,21 @@ Spec: https://wicg.github.io/aom/spec/
 <button id="button">Click Me</button>
 
 <script>
-if (window.internals)
-    internals.runtimeFlags.accessibilityObjectModelEnabled = true;
+test(function(t) {
+    assert_true(internals.runtimeFlags.accessibilityObjectModelEnabled);
+}, "Make sure that Accessibility Object Model is enabled");
 
 test(function(t) {
     var button = document.getElementById("button");
     assert_equals(button.nodeType, Node.ELEMENT_NODE);
-    assert_not_equals(button.accessibleNode, null);
+    assert_true(Boolean(button.accessibleNode));
 }, "DOM Elements have an AccessibleNode");
 
 test(function(t) {
     var button = document.getElementById("button");
     var staticText = button.firstChild;
     assert_equals(staticText.nodeType, Node.TEXT_NODE);
-    assert_not_equals(staticText.accessibleNode, null);
+    assert_false(Boolean(staticText.accessibleNode));
 }, "DOM Text nodes do not have an AccessibleNode.");
 
 test(function(t) {
@@ -48,24 +49,13 @@ test(function(t) {
     button.setAttribute("role", "checkbox");
     button.setAttribute("aria-label", "Check Me");
 
+    axButton = accessibilityController.accessibleElementById("button");
     assert_equals(axButton.role, "AXRole: AXCheckBox");
     assert_equals(axButton.name, "Check Me");
 
-    assert_equals(aomButton.role, "checkbox");
-    assert_equals(aomButton.label, "Check Me");
-}, "ARIA attributes are reflected into AOM properties");
-
-test(function(t) {
-    var button = document.getElementById("button");
-    var aomButton = button.accessibleNode;
-    var axButton = accessibilityController.accessibleElementById("button");
-
-    button.setAttribute("role", "beyonce");
-
-    assert_equals(axButton.role, "AXRole: AXButton");
-
-    assert_equals(aomButton.role, "beyonce");
-}, "Invalid ARIA roles are still reflected into AOM properties");
+    assert_equals(aomButton.role, null);
+    assert_equals(aomButton.label, null);
+}, "ARIA attributes are not reflected into AOM properties");
 
 test(function(t) {
     var button = document.getElementById("button");
@@ -74,6 +64,7 @@ test(function(t) {
 
     aomButton.role = "slider";
     assert_equals(aomButton.role, "slider");
+    axButton = accessibilityController.accessibleElementById("button");
     assert_equals(axButton.role, "AXRole: AXSlider");
 }, "Test setting AccessibleNode.role");
 
@@ -84,10 +75,12 @@ test(function(t) {
 
     button.removeAttribute("role");
     aomButton.role = null;
+    axButton = accessibilityController.accessibleElementById("button");
     assert_equals(aomButton.role, null);
     assert_equals(axButton.role, "AXRole: AXButton");
 
     aomButton.role = "doctor";
+    axButton = accessibilityController.accessibleElementById("button");
     assert_equals(aomButton.role, "doctor");
     assert_equals(axButton.role, "AXRole: AXButton");
 }, "An invalid role should be ignored if there's no ARIA.");
@@ -98,10 +91,13 @@ test(function(t) {
     var axButton = accessibilityController.accessibleElementById("button");
 
     aomButton.role = "switch checkbox";
+    axButton = accessibilityController.accessibleElementById("button");
+
     assert_equals(aomButton.role, "switch checkbox");
     assert_equals(axButton.role, "AXRole: AXSwitch");
 
     aomButton.role = "tickbox checkbox";
+    axButton = accessibilityController.accessibleElementById("button");
     assert_equals(aomButton.role, "tickbox checkbox");
     assert_equals(axButton.role, "AXRole: AXCheckBox");
 }, "Fallback roles are supported.");
@@ -128,11 +124,13 @@ test(function(t) {
 
     button.setAttribute("role", "textbox");
     button.setAttribute("aria-label", "ARIA");
+    axButton = accessibilityController.accessibleElementById("button2");
     assert_equals(axButton.role, "AXRole: AXTextField");
     assert_equals(axButton.name, "ARIA");
 
     aomButton.role = "radio";
     aomButton.label = "AOM";
+    axButton = accessibilityController.accessibleElementById("button2");
     assert_equals(axButton.role, "AXRole: AXRadioButton");
     assert_equals(axButton.name, "AOM");
 }, "Test that AOM properties override ARIA attributes");
@@ -150,24 +148,22 @@ test(function(t) {
 
     button.setAttribute("role", "textbox");
     button.setAttribute("aria-label", "ARIA");
+    axButton = accessibilityController.accessibleElementById("button3");
     assert_equals(axButton.role, "AXRole: AXTextField");
     assert_equals(axButton.name, "ARIA");
 
     aomButton.role = "radio";
     aomButton.label = "AOM";
+    axButton = accessibilityController.accessibleElementById("button3");
     assert_equals(axButton.role, "AXRole: AXRadioButton");
     assert_equals(axButton.name, "AOM");
 
     aomButton.role = null;
     aomButton.label = null;
-    assert_equals(axButton.role, "AXRole: AXButton");
-    assert_equals(axButton.name, "Click Me");
-
-    button.setAttribute("role", "combobox");
-    button.setAttribute("aria-label", "ARIA 2");
-    assert_equals(axButton.role, "AXRole: AXButton");
-    assert_equals(axButton.name, "Click Me");
-}, "Once an AOM property has been set, ARIA no longer has any effect");
+    axButton = accessibilityController.accessibleElementById("button3");
+    assert_equals(axButton.role, "AXRole: AXTextField");
+    assert_equals(axButton.name, "ARIA");
+}, "Clearing an AOM property falls back on an ARIA attribute");
 </script>
 
 <button id="button4">Click Me</button>
@@ -177,9 +173,9 @@ test(function(t) {
     var aomButton;
     (function() {
         var button = document.getElementById("button4");
-        button.setAttribute("role", "checkbox");
-        button.setAttribute("aria-label", "Check Me");
         aomButton = button.accessibleNode;
+        aomButton.role = "checkbox";
+        aomButton.label = "Check Me";
     })();
     assert_equals(aomButton.role, "checkbox");
     assert_equals(aomButton.label, "Check Me");

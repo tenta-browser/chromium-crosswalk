@@ -7,12 +7,12 @@
 #include "core/dom/DOMException.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/frame/ImageBitmap.h"
 #include "core/frame/LocalFrame.h"
 #include "core/geometry/DOMRect.h"
 #include "core/html/HTMLImageElement.h"
-#include "core/html/HTMLVideoElement.h"
 #include "core/html/ImageData.h"
+#include "core/html/media/HTMLVideoElement.h"
+#include "core/imagebitmap/ImageBitmap.h"
 #include "core/loader/resource/ImageResourceContent.h"
 #include "platform/graphics/Image.h"
 #include "platform/wtf/CheckedNumeric.h"
@@ -23,28 +23,22 @@ namespace blink {
 
 namespace {
 
-mojo::ScopedSharedBufferHandle GetSharedBufferOnData(
-    ScriptPromiseResolver* resolver,
-    uint8_t* data,
-    int size) {
-  DCHECK(data);
-  DCHECK(size);
-  ScriptPromise promise = resolver->Promise();
+skia::mojom::blink::BitmapPtr createBitmapFromData(int width,
+                                                   int height,
+                                                   Vector<uint8_t> bitmapData) {
+  skia::mojom::blink::BitmapPtr bitmap = skia::mojom::blink::Bitmap::New();
 
-  mojo::ScopedSharedBufferHandle shared_buffer_handle =
-      mojo::SharedBufferHandle::Create(size);
-  if (!shared_buffer_handle->is_valid()) {
-    resolver->Reject(
-        DOMException::Create(kInvalidStateError, "Internal allocation error"));
-    return shared_buffer_handle;
-  }
+  bitmap->color_type = (kN32_SkColorType == kRGBA_8888_SkColorType)
+                           ? skia::mojom::blink::ColorType::RGBA_8888
+                           : skia::mojom::blink::ColorType::BGRA_8888;
+  bitmap->alpha_type = skia::mojom::blink::AlphaType::ALPHA_TYPE_OPAQUE;
+  bitmap->profile_type = skia::mojom::blink::ColorProfileType::LINEAR;
+  bitmap->width = width;
+  bitmap->height = height;
+  bitmap->row_bytes = width * 4 /* bytes per pixel */;
+  bitmap->pixel_data = std::move(bitmapData);
 
-  const mojo::ScopedSharedBufferMapping mapped_buffer =
-      shared_buffer_handle->Map(size);
-  DCHECK(mapped_buffer.get());
-  memcpy(mapped_buffer.get(), data, size);
-
-  return shared_buffer_handle;
+  return bitmap;
 }
 
 }  // anonymous namespace
@@ -56,20 +50,20 @@ ScriptPromise ShapeDetector::detect(
   ScriptPromise promise = resolver->Promise();
 
   // ImageDatas cannot be tainted by definition.
-  if (image_source.isImageData())
-    return DetectShapesOnImageData(resolver, image_source.getAsImageData());
+  if (image_source.IsImageData())
+    return DetectShapesOnImageData(resolver, image_source.GetAsImageData());
 
   CanvasImageSource* canvas_image_source;
-  if (image_source.isHTMLImageElement()) {
-    canvas_image_source = image_source.getAsHTMLImageElement();
-  } else if (image_source.isImageBitmap()) {
-    canvas_image_source = image_source.getAsImageBitmap();
-  } else if (image_source.isHTMLVideoElement()) {
-    canvas_image_source = image_source.getAsHTMLVideoElement();
-  } else if (image_source.isHTMLCanvasElement()) {
-    canvas_image_source = image_source.getAsHTMLCanvasElement();
-  } else if (image_source.isOffscreenCanvas()) {
-    canvas_image_source = image_source.getAsOffscreenCanvas();
+  if (image_source.IsHTMLImageElement()) {
+    canvas_image_source = image_source.GetAsHTMLImageElement();
+  } else if (image_source.IsImageBitmap()) {
+    canvas_image_source = image_source.GetAsImageBitmap();
+  } else if (image_source.IsHTMLVideoElement()) {
+    canvas_image_source = image_source.GetAsHTMLVideoElement();
+  } else if (image_source.IsHTMLCanvasElement()) {
+    canvas_image_source = image_source.GetAsHTMLCanvasElement();
+  } else if (image_source.IsOffscreenCanvas()) {
+    canvas_image_source = image_source.GetAsOffscreenCanvas();
   } else {
     NOTREACHED() << "Unsupported CanvasImageSource";
     resolver->Reject(
@@ -84,9 +78,9 @@ ScriptPromise ShapeDetector::detect(
     return promise;
   }
 
-  if (image_source.isHTMLImageElement()) {
+  if (image_source.IsHTMLImageElement()) {
     return DetectShapesOnImageElement(resolver,
-                                      image_source.getAsHTMLImageElement());
+                                      image_source.GetAsHTMLImageElement());
   }
 
   // TODO(mcasas): Check if |video| is actually playing a MediaStream by using
@@ -94,11 +88,10 @@ ScriptPromise ShapeDetector::detect(
   // there is a local WebCam associated, there might be sophisticated ways to
   // detect faces on it. Until then, treat as a normal <video> element.
 
-  const FloatSize size(canvas_image_source->SourceWidth(),
-                       canvas_image_source->SourceHeight());
+  const FloatSize size(canvas_image_source->ElementSize(FloatSize()));
 
   SourceImageStatus source_image_status = kInvalidSourceImageStatus;
-  RefPtr<Image> image = canvas_image_source->GetSourceImageForCanvas(
+  scoped_refptr<Image> image = canvas_image_source->GetSourceImageForCanvas(
       &source_image_status, kPreferNoAcceleration, kSnapshotReasonDrawImage,
       size);
   if (!image || source_image_status != kNormalSourceImageStatus) {
@@ -112,23 +105,18 @@ ScriptPromise ShapeDetector::detect(
   }
 
   SkPixmap pixmap;
-  RefPtr<Uint8Array> pixel_data;
+  scoped_refptr<Uint8Array> pixel_data;
   uint8_t* pixel_data_ptr = nullptr;
   WTF::CheckedNumeric<int> allocation_size = 0;
 
-  sk_sp<SkImage> sk_image = image->ImageForCurrentFrame();
-  // Use |skImage|'s pixels if it has direct access to them.
-  if (sk_image->peekPixels(&pixmap)) {
+  // makeNonTextureImage() will make a raster copy of
+  // PaintImageForCurrentFrame() if needed, otherwise returning the original
+  // SkImage.
+  const sk_sp<SkImage> sk_image =
+      image->PaintImageForCurrentFrame().GetSkImage()->makeNonTextureImage();
+  if (sk_image && sk_image->peekPixels(&pixmap)) {
     pixel_data_ptr = static_cast<uint8_t*>(pixmap.writable_addr());
-    allocation_size = pixmap.getSafeSize();
-  } else if (image_source.isImageBitmap()) {
-    ImageBitmap* image_bitmap = image_source.getAsImageBitmap();
-    pixel_data = image_bitmap->CopyBitmapData(image_bitmap->IsPremultiplied()
-                                                  ? kPremultiplyAlpha
-                                                  : kDontPremultiplyAlpha,
-                                              kN32ColorType);
-    pixel_data_ptr = pixel_data->Data();
-    allocation_size = image_bitmap->Size().Area() * 4 /* bytes per pixel */;
+    allocation_size = pixmap.computeByteSize();
   } else {
     // TODO(mcasas): retrieve the pixels from elsewhere.
     NOTREACHED();
@@ -137,13 +125,13 @@ ScriptPromise ShapeDetector::detect(
     return promise;
   }
 
-  mojo::ScopedSharedBufferHandle shared_buffer_handle = GetSharedBufferOnData(
-      resolver, pixel_data_ptr, allocation_size.ValueOrDefault(0));
-  if (!shared_buffer_handle->is_valid())
-    return promise;
+  WTF::Vector<uint8_t> bitmap_data;
+  bitmap_data.Append(pixel_data_ptr,
+                     static_cast<int>(allocation_size.ValueOrDefault(0)));
 
-  return DoDetect(resolver, std::move(shared_buffer_handle), image->width(),
-                  image->height());
+  return DoDetect(resolver,
+                  createBitmapFromData(image->width(), image->height(),
+                                       std::move(bitmap_data)));
 }
 
 ScriptPromise ShapeDetector::DetectShapesOnImageData(
@@ -159,13 +147,12 @@ ScriptPromise ShapeDetector::DetectShapesOnImageData(
   uint8_t* const data = image_data->data()->Data();
   WTF::CheckedNumeric<int> allocation_size = image_data->Size().Area() * 4;
 
-  mojo::ScopedSharedBufferHandle shared_buffer_handle =
-      GetSharedBufferOnData(resolver, data, allocation_size.ValueOrDefault(0));
-  if (!shared_buffer_handle->is_valid())
-    return promise;
+  WTF::Vector<uint8_t> bitmap_data;
+  bitmap_data.Append(data, static_cast<int>(allocation_size.ValueOrDefault(0)));
 
-  return DoDetect(resolver, std::move(shared_buffer_handle),
-                  image_data->width(), image_data->height());
+  return DoDetect(
+      resolver, createBitmapFromData(image_data->width(), image_data->height(),
+                                     std::move(bitmap_data)));
 }
 
 ScriptPromise ShapeDetector::DetectShapesOnImageElement(
@@ -192,7 +179,8 @@ ScriptPromise ShapeDetector::DetectShapesOnImageElement(
     return promise;
   }
 
-  const sk_sp<SkImage> image = blink_image->ImageForCurrentFrame();
+  const sk_sp<SkImage> image =
+      blink_image->PaintImageForCurrentFrame().GetSkImage();
   DCHECK_EQ(img->naturalWidth(), static_cast<unsigned>(image->width()));
   DCHECK_EQ(img->naturalHeight(), static_cast<unsigned>(image->height()));
 
@@ -204,28 +192,11 @@ ScriptPromise ShapeDetector::DetectShapesOnImageElement(
 
   const SkImageInfo skia_info =
       SkImageInfo::MakeN32(image->width(), image->height(), image->alphaType());
+  size_t rowBytes = skia_info.minRowBytes();
 
-  const uint32_t allocation_size =
-      skia_info.getSafeSize(skia_info.minRowBytes());
+  Vector<uint8_t> bitmap_data(skia_info.computeByteSize(rowBytes));
+  const SkPixmap pixmap(skia_info, bitmap_data.data(), rowBytes);
 
-  mojo::ScopedSharedBufferHandle shared_buffer_handle =
-      mojo::SharedBufferHandle::Create(allocation_size);
-  if (!shared_buffer_handle.is_valid()) {
-    DLOG(ERROR) << "Requested allocation : " << allocation_size
-                << "B, larger than |mojo::edk::kMaxSharedBufferSize| == 16MB ";
-    // TODO(xianglu): For now we reject the promise if the image is too large.
-    // But consider resizing the image to remove restriction on the user side.
-    // Also, add LayoutTests for this case later.
-    resolver->Reject(
-        DOMException::Create(kInvalidStateError, "Image exceeds size limit."));
-    return promise;
-  }
-
-  const mojo::ScopedSharedBufferMapping mapped_buffer =
-      shared_buffer_handle->Map(allocation_size);
-
-  const SkPixmap pixmap(skia_info, mapped_buffer.get(),
-                        skia_info.minRowBytes());
   if (!image->readPixels(pixmap, 0, 0)) {
     resolver->Reject(DOMException::Create(
         kInvalidStateError,
@@ -233,8 +204,9 @@ ScriptPromise ShapeDetector::DetectShapesOnImageElement(
     return promise;
   }
 
-  return DoDetect(resolver, std::move(shared_buffer_handle),
-                  img->naturalWidth(), img->naturalHeight());
+  return DoDetect(
+      resolver, createBitmapFromData(img->naturalWidth(), img->naturalHeight(),
+                                     std::move(bitmap_data)));
 }
 
 }  // namespace blink

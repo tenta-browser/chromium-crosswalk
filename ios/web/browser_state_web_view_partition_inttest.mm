@@ -13,14 +13,18 @@
 #import "base/test/ios/wait_util.h"
 #include "base/test/test_timeouts.h"
 #include "ios/web/public/browser_state.h"
-#import "ios/web/public/test/http_server.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#import "ios/web/public/test/http_server/string_response_provider.h"
 #import "ios/web/public/test/js_test_util.h"
-#import "ios/web/public/test/response_providers/string_response_provider.h"
 #import "ios/web/public/web_view_creation_util.h"
 #import "ios/web/test/web_int_test.h"
 #import "net/base/mac/url_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 // A WKNavigationDelegate that is used to check if a WKWebView has finished
 // a navigation. Used for testing purposes.
@@ -136,18 +140,17 @@ class BrowserStateWebViewPartitionTest : public web::WebIntTest {
 
 // Tests that cookies are partitioned between web views created with a
 // non-OTR BrowserState and an OTR BrowserState.
-// Flaky: crbug/684024
-TEST_F(BrowserStateWebViewPartitionTest, DISABLED_Cookies) {
+TEST_F(BrowserStateWebViewPartitionTest, Cookies) {
   WKWebView* web_view_1 = web::BuildWKWebView(CGRectZero, GetBrowserState());
   LoadTestWebPage(web_view_1);
   SetCookie(@"someCookieName1", @"someCookieValue1", web_view_1);
-  EXPECT_NSEQ(@"someCookieName1=someCookieValue1", GetCookies(web_view_1));
+  ASSERT_NSEQ(@"someCookieName1=someCookieValue1", GetCookies(web_view_1));
 
   WKWebView* web_view_2 = web::BuildWKWebView(CGRectZero, GetOtrBrowserState());
   LoadTestWebPage(web_view_2);
 
   // Test that the cookie has not leaked over to |web_view_2|.
-  EXPECT_NSEQ(@"", GetCookies(web_view_2));
+  ASSERT_NSEQ(@"", GetCookies(web_view_2));
 
   SetCookie(@"someCookieName2", @"someCookieValue2", web_view_2);
   EXPECT_NSEQ(@"someCookieName2=someCookieValue2", GetCookies(web_view_2));

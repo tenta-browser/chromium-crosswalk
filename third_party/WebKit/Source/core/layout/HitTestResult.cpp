@@ -21,21 +21,23 @@
 
 #include "core/layout/HitTestResult.h"
 
-#include "core/HTMLNames.h"
-#include "core/InputTypeNames.h"
+#include "core/dom/FlatTreeTraversal.h"
 #include "core/dom/PseudoElement.h"
-#include "core/dom/shadow/FlatTreeTraversal.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/editing/EditingUtilities.h"
 #include "core/editing/FrameSelection.h"
+#include "core/editing/PositionWithAffinity.h"
+#include "core/editing/VisibleUnits.h"
 #include "core/frame/LocalFrame.h"
 #include "core/html/HTMLAreaElement.h"
 #include "core/html/HTMLImageElement.h"
-#include "core/html/HTMLInputElement.h"
 #include "core/html/HTMLMapElement.h"
-#include "core/html/HTMLMediaElement.h"
-#include "core/html/HTMLTextAreaElement.h"
+#include "core/html/forms/HTMLInputElement.h"
+#include "core/html/forms/HTMLTextAreaElement.h"
+#include "core/html/media/HTMLMediaElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
+#include "core/html_names.h"
+#include "core/input_type_names.h"
 #include "core/layout/LayoutImage.h"
 #include "core/svg/SVGElement.h"
 #include "platform/geometry/Region.h"
@@ -48,7 +50,7 @@ using namespace HTMLNames;
 HitTestResult::HitTestResult()
     : hit_test_request_(HitTestRequest::kReadOnly | HitTestRequest::kActive),
       cacheable_(true),
-      is_over_frame_view_base_(false) {}
+      is_over_embedded_content_view_(false) {}
 
 HitTestResult::HitTestResult(const HitTestRequest& request,
                              const LayoutPoint& point)
@@ -56,7 +58,7 @@ HitTestResult::HitTestResult(const HitTestRequest& request,
       hit_test_request_(request),
       cacheable_(true),
       point_in_inner_node_frame_(point),
-      is_over_frame_view_base_(false) {}
+      is_over_embedded_content_view_(false) {}
 
 HitTestResult::HitTestResult(const HitTestRequest& request,
                              const LayoutPoint& center_point,
@@ -72,7 +74,7 @@ HitTestResult::HitTestResult(const HitTestRequest& request,
       hit_test_request_(request),
       cacheable_(true),
       point_in_inner_node_frame_(center_point),
-      is_over_frame_view_base_(false) {}
+      is_over_embedded_content_view_(false) {}
 
 HitTestResult::HitTestResult(const HitTestRequest& other_request,
                              const HitTestLocation& other)
@@ -80,7 +82,7 @@ HitTestResult::HitTestResult(const HitTestRequest& other_request,
       hit_test_request_(other_request),
       cacheable_(true),
       point_in_inner_node_frame_(hit_test_location_.Point()),
-      is_over_frame_view_base_(false) {}
+      is_over_embedded_content_view_(false) {}
 
 HitTestResult::HitTestResult(const HitTestResult& other)
     : hit_test_location_(other.hit_test_location_),
@@ -92,7 +94,7 @@ HitTestResult::HitTestResult(const HitTestResult& other)
       local_point_(other.LocalPoint()),
       inner_url_element_(other.URLElement()),
       scrollbar_(other.GetScrollbar()),
-      is_over_frame_view_base_(other.IsOverFrameViewBase()),
+      is_over_embedded_content_view_(other.IsOverEmbeddedContentView()),
       canvas_region_id_(other.CanvasRegionId()) {
   // Only copy the NodeSet in case of list hit test.
   list_based_test_result_ = other.list_based_test_result_
@@ -118,7 +120,7 @@ bool HitTestResult::EqualForCacheability(const HitTestResult& other) const {
          local_point_ == other.LocalPoint() &&
          inner_url_element_ == other.URLElement() &&
          scrollbar_ == other.GetScrollbar() &&
-         is_over_frame_view_base_ == other.IsOverFrameViewBase();
+         is_over_embedded_content_view_ == other.IsOverEmbeddedContentView();
 }
 
 void HitTestResult::CacheValues(const HitTestResult& other) {
@@ -134,7 +136,7 @@ void HitTestResult::PopulateFromCachedResult(const HitTestResult& other) {
   local_point_ = other.LocalPoint();
   inner_url_element_ = other.URLElement();
   scrollbar_ = other.GetScrollbar();
-  is_over_frame_view_base_ = other.IsOverFrameViewBase();
+  is_over_embedded_content_view_ = other.IsOverEmbeddedContentView();
   cacheable_ = other.cacheable_;
   canvas_region_id_ = other.CanvasRegionId();
 
@@ -144,7 +146,7 @@ void HitTestResult::PopulateFromCachedResult(const HitTestResult& other) {
                                 : nullptr;
 }
 
-DEFINE_TRACE(HitTestResult) {
+void HitTestResult::Trace(blink::Visitor* visitor) {
   visitor->Trace(inner_node_);
   visitor->Trace(inner_possibly_pseudo_node_);
   visitor->Trace(inner_url_element_);
@@ -155,7 +157,7 @@ DEFINE_TRACE(HitTestResult) {
 PositionWithAffinity HitTestResult::GetPosition() const {
   if (!inner_possibly_pseudo_node_)
     return PositionWithAffinity();
-  LayoutObject* layout_object = this->GetLayoutObject();
+  LayoutObject* layout_object = GetLayoutObject();
   if (!layout_object)
     return PositionWithAffinity();
   if (inner_possibly_pseudo_node_->IsPseudoElement() &&
@@ -166,7 +168,7 @@ PositionWithAffinity HitTestResult::GetPosition() const {
 }
 
 LayoutObject* HitTestResult::GetLayoutObject() const {
-  return inner_node_ ? inner_node_->GetLayoutObject() : 0;
+  return inner_node_ ? inner_node_->GetLayoutObject() : nullptr;
 }
 
 void HitTestResult::SetToShadowHostIfInRestrictedShadowRoot() {
@@ -181,7 +183,7 @@ void HitTestResult::SetToShadowHostIfInRestrictedShadowRoot() {
   // case so that a toolip title in the shadow tree works.
   while (containing_shadow_root &&
          (containing_shadow_root->GetType() == ShadowRootType::kUserAgent ||
-          isSVGUseElement(containing_shadow_root->host()))) {
+          IsSVGUseElement(containing_shadow_root->host()))) {
     shadow_host = &containing_shadow_root->host();
     containing_shadow_root = shadow_host->ContainingShadowRoot();
     SetInnerNode(node->OwnerShadowHost());
@@ -193,14 +195,11 @@ void HitTestResult::SetToShadowHostIfInRestrictedShadowRoot() {
 
 HTMLAreaElement* HitTestResult::ImageAreaForImage() const {
   DCHECK(inner_node_);
-  HTMLImageElement* image_element = nullptr;
-  if (isHTMLImageElement(inner_node_)) {
-    image_element = toHTMLImageElement(inner_node_);
-  } else if (inner_node_->IsInShadowTree()) {
+  HTMLImageElement* image_element = ToHTMLImageElementOrNull(inner_node_);
+  if (!image_element && inner_node_->IsInShadowTree()) {
     if (inner_node_->ContainingShadowRoot()->GetType() ==
         ShadowRootType::kUserAgent) {
-      if (isHTMLImageElement(inner_node_->OwnerShadowHost()))
-        image_element = toHTMLImageElement(inner_node_->OwnerShadowHost());
+      image_element = ToHTMLImageElementOrNull(inner_node_->OwnerShadowHost());
     }
   }
 
@@ -276,27 +275,21 @@ String HitTestResult::Title(TextDirection& dir) const {
 }
 
 const AtomicString& HitTestResult::AltDisplayString() const {
-  Node* inner_node_or_image_map_image = this->InnerNodeOrImageMapImage();
+  Node* inner_node_or_image_map_image = InnerNodeOrImageMapImage();
   if (!inner_node_or_image_map_image)
     return g_null_atom;
 
-  if (isHTMLImageElement(*inner_node_or_image_map_image)) {
-    HTMLImageElement& image =
-        toHTMLImageElement(*inner_node_or_image_map_image);
-    return image.getAttribute(altAttr);
-  }
+  if (auto* image = ToHTMLImageElementOrNull(*inner_node_or_image_map_image))
+    return image->getAttribute(altAttr);
 
-  if (isHTMLInputElement(*inner_node_or_image_map_image)) {
-    HTMLInputElement& input =
-        toHTMLInputElement(*inner_node_or_image_map_image);
-    return input.Alt();
-  }
+  if (auto* input = ToHTMLInputElementOrNull(*inner_node_or_image_map_image))
+    return input->Alt();
 
   return g_null_atom;
 }
 
 Image* HitTestResult::GetImage() const {
-  Node* inner_node_or_image_map_image = this->InnerNodeOrImageMapImage();
+  Node* inner_node_or_image_map_image = InnerNodeOrImageMapImage();
   if (!inner_node_or_image_map_image)
     return nullptr;
 
@@ -321,7 +314,7 @@ IntRect HitTestResult::ImageRect() const {
 }
 
 KURL HitTestResult::AbsoluteImageURL() const {
-  Node* inner_node_or_image_map_image = this->InnerNodeOrImageMapImage();
+  Node* inner_node_or_image_map_image = InnerNodeOrImageMapImage();
   if (!inner_node_or_image_map_image)
     return KURL();
 
@@ -330,16 +323,16 @@ KURL HitTestResult::AbsoluteImageURL() const {
   // even if they don't have a LayoutImage (e.g. because the image didn't load
   // and we are using an alt container). For other elements we don't create alt
   // containers so ensure they contain a loaded image.
-  if (isHTMLImageElement(*inner_node_or_image_map_image) ||
-      (isHTMLInputElement(*inner_node_or_image_map_image) &&
-       toHTMLInputElement(inner_node_or_image_map_image)->type() ==
+  if (IsHTMLImageElement(*inner_node_or_image_map_image) ||
+      (IsHTMLInputElement(*inner_node_or_image_map_image) &&
+       ToHTMLInputElement(inner_node_or_image_map_image)->type() ==
            InputTypeNames::image))
     url_string = ToElement(*inner_node_or_image_map_image).ImageSourceURL();
   else if ((inner_node_or_image_map_image->GetLayoutObject() &&
             inner_node_or_image_map_image->GetLayoutObject()->IsImage()) &&
-           (isHTMLEmbedElement(*inner_node_or_image_map_image) ||
-            isHTMLObjectElement(*inner_node_or_image_map_image) ||
-            isSVGImageElement(*inner_node_or_image_map_image)))
+           (IsHTMLEmbedElement(*inner_node_or_image_map_image) ||
+            IsHTMLObjectElement(*inner_node_or_image_map_image) ||
+            IsSVGImageElement(*inner_node_or_image_map_image)))
     url_string = ToElement(*inner_node_or_image_map_image).ImageSourceURL();
   if (url_string.IsEmpty())
     return KURL();
@@ -396,13 +389,11 @@ bool HitTestResult::IsContentEditable() const {
   if (!inner_node_)
     return false;
 
-  if (isHTMLTextAreaElement(*inner_node_))
-    return !toHTMLTextAreaElement(*inner_node_).IsDisabledOrReadOnly();
+  if (auto* textarea = ToHTMLTextAreaElementOrNull(*inner_node_))
+    return !textarea->IsDisabledOrReadOnly();
 
-  if (isHTMLInputElement(*inner_node_)) {
-    HTMLInputElement& input_element = toHTMLInputElement(*inner_node_);
-    return !input_element.IsDisabledOrReadOnly() && input_element.IsTextField();
-  }
+  if (auto* input = ToHTMLInputElementOrNull(*inner_node_))
+    return !input->IsDisabledOrReadOnly() && input->IsTextField();
 
   return HasEditableStyle(*inner_node_);
 }
@@ -461,7 +452,7 @@ void HitTestResult::Append(const HitTestResult& other) {
     local_point_ = other.LocalPoint();
     point_in_inner_node_frame_ = other.point_in_inner_node_frame_;
     inner_url_element_ = other.URLElement();
-    is_over_frame_view_base_ = other.IsOverFrameViewBase();
+    is_over_embedded_content_view_ = other.IsOverEmbeddedContentView();
     canvas_region_id_ = other.CanvasRegionId();
   }
 
@@ -508,13 +499,11 @@ void HitTestResult::ResolveRectBasedTest(
 }
 
 Element* HitTestResult::InnerElement() const {
-  for (Node* node = inner_node_.Get(); node;
-       node = FlatTreeTraversal::Parent(*node)) {
-    if (node->IsElementNode())
-      return ToElement(node);
-  }
-
-  return nullptr;
+  if (!inner_node_)
+    return nullptr;
+  if (inner_node_->IsElementNode())
+    return ToElement(inner_node_);
+  return FlatTreeTraversal::ParentElement(*inner_node_);
 }
 
 Node* HitTestResult::InnerNodeOrImageMapImage() const {
@@ -522,10 +511,10 @@ Node* HitTestResult::InnerNodeOrImageMapImage() const {
     return nullptr;
 
   HTMLImageElement* image_map_image_element = nullptr;
-  if (isHTMLAreaElement(inner_node_))
-    image_map_image_element = toHTMLAreaElement(inner_node_)->ImageElement();
-  else if (isHTMLMapElement(inner_node_))
-    image_map_image_element = toHTMLMapElement(inner_node_)->ImageElement();
+  if (auto* area = ToHTMLAreaElementOrNull(inner_node_))
+    image_map_image_element = area->ImageElement();
+  else if (auto* map = ToHTMLMapElementOrNull(inner_node_))
+    image_map_image_element = map->ImageElement();
 
   if (!image_map_image_element)
     return inner_node_.Get();

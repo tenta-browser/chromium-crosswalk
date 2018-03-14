@@ -9,7 +9,6 @@
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
-#include "base/profiler/scoped_tracker.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -19,7 +18,7 @@
 #include "components/signin/core/browser/child_account_info_fetcher.h"
 #include "components/signin/core/browser/refresh_token_annotation_request.h"
 #include "components/signin/core/browser/signin_client.h"
-#include "components/signin/core/common/signin_switches.h"
+#include "components/signin/core/browser/signin_switches.h"
 #include "net/url_request/url_request_context_getter.h"
 
 namespace {
@@ -65,6 +64,7 @@ AccountFetcherService::AccountFetcherService()
       child_info_request_(nullptr) {}
 
 AccountFetcherService::~AccountFetcherService() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(shutdown_called_);
 }
 
@@ -141,8 +141,9 @@ void AccountFetcherService::RefreshAllAccountInfo(bool only_fetch_if_invalid) {
 // dependency on signin_manager which we get around by only allowing a single
 // account. This is possible since we only support a single account to be a
 // child anyway.
+#if defined(OS_ANDROID)
 void AccountFetcherService::UpdateChildInfo() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   std::vector<std::string> accounts = token_service_->GetAccounts();
   if (accounts.size() == 1) {
     const std::string& candidate = accounts[0];
@@ -158,9 +159,10 @@ void AccountFetcherService::UpdateChildInfo() {
     ResetChildInfo();
   }
 }
+#endif
 
 void AccountFetcherService::MaybeEnableNetworkFetches() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!profile_loaded_ || !refresh_tokens_loaded_)
     return;
   if (!network_fetches_enabled_) {
@@ -168,7 +170,9 @@ void AccountFetcherService::MaybeEnableNetworkFetches() {
     ScheduleNextRefresh();
   }
   RefreshAllAccountInfo(true);
+#if defined(OS_ANDROID)
   UpdateChildInfo();
+#endif
 }
 
 void AccountFetcherService::RefreshAllAccountsAndScheduleNext() {
@@ -199,7 +203,7 @@ void AccountFetcherService::ScheduleNextRefresh() {
 // Starts fetching user information. This is called periodically to refresh.
 void AccountFetcherService::StartFetchingUserInfo(
     const std::string& account_id) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(network_fetches_enabled_);
 
   std::unique_ptr<AccountInfoFetcher>& request =
@@ -233,12 +237,6 @@ void AccountFetcherService::ResetChildInfo() {
 void AccountFetcherService::RefreshAccountInfo(const std::string& account_id,
                                                bool only_fetch_if_invalid) {
   DCHECK(network_fetches_enabled_);
-  // TODO(robliao): Remove ScopedTracker below once https://crbug.com/422460 is
-  // fixed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "422460 AccountFetcherService::RefreshAccountInfo"));
-
   account_tracker_service_->StartTrackingAccount(account_id);
   const AccountInfo& info =
       account_tracker_service_->GetAccountInfo(account_id);
@@ -322,7 +320,9 @@ void AccountFetcherService::OnRefreshTokenAvailable(
   if (!network_fetches_enabled_)
     return;
   RefreshAccountInfo(account_id, true);
+#if defined(OS_ANDROID)
   UpdateChildInfo();
+#endif
 }
 
 void AccountFetcherService::OnRefreshTokenRevoked(
@@ -336,12 +336,14 @@ void AccountFetcherService::OnRefreshTokenRevoked(
   if (!network_fetches_enabled_)
     return;
   user_info_requests_.erase(account_id);
+#if defined(OS_ANDROID)
   UpdateChildInfo();
+#endif
   account_tracker_service_->StopTrackingAccount(account_id);
 }
 
 void AccountFetcherService::OnRefreshTokensLoaded() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   refresh_tokens_loaded_ = true;
   MaybeEnableNetworkFetches();
 }

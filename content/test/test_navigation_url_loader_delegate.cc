@@ -5,6 +5,7 @@
 #include "content/test/test_navigation_url_loader_delegate.h"
 
 #include "base/run_loop.h"
+#include "content/common/navigation_subresource_loader_params.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/navigation_data.h"
 #include "content/public/browser/stream_handle.h"
@@ -60,21 +61,30 @@ void TestNavigationURLLoaderDelegate::OnResponseStarted(
     const scoped_refptr<ResourceResponse>& response,
     std::unique_ptr<StreamHandle> body,
     mojo::ScopedDataPipeConsumerHandle consumer_handle,
-    const SSLStatus& ssl_status,
+    const net::SSLInfo& ssl_info,
     std::unique_ptr<NavigationData> navigation_data,
     const GlobalRequestID& request_id,
     bool is_download,
-    bool is_stream) {
+    bool is_stream,
+    base::Optional<SubresourceLoaderParams> subresource_loader_params) {
   response_ = response;
   body_ = std::move(body);
   handle_ = std::move(consumer_handle);
+  ssl_info_ = ssl_info;
+  is_download_ = is_download;
   if (response_started_)
     response_started_->Quit();
 }
 
-void TestNavigationURLLoaderDelegate::OnRequestFailed(bool in_cache,
-                                                      int net_error) {
+void TestNavigationURLLoaderDelegate::OnRequestFailed(
+    bool in_cache,
+    int net_error,
+    const base::Optional<net::SSLInfo>& ssl_info,
+    bool should_ssl_errors_be_fatal) {
   net_error_ = net_error;
+  if (ssl_info.has_value())
+    ssl_info_ = ssl_info.value();
+  should_ssl_errors_be_fatal_ = should_ssl_errors_be_fatal;
   if (request_failed_)
     request_failed_->Quit();
 }

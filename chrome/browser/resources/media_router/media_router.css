@@ -3,7 +3,6 @@
  * found in the LICENSE file. */
 
 body {
-  font-family: Roboto;
   font-size: 0.75em;
   margin: 0;
 }
@@ -16,5 +15,5 @@ body {
   display: flex;
   flex-direction: column;
   margin-bottom: 1px;
-  width: calc(100% - 1px);
+  width: calc(var(--dialog-width) - 1px);
 }

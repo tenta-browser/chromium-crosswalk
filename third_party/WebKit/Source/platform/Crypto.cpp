@@ -23,7 +23,7 @@ static WebCryptoAlgorithmId ToWebCryptoAlgorithmId(HashAlgorithm algorithm) {
       return kWebCryptoAlgorithmIdSha512;
   };
 
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return kWebCryptoAlgorithmIdSha256;
 }
 
@@ -36,7 +36,7 @@ bool ComputeDigest(HashAlgorithm algorithm,
   unsigned char* result;
   unsigned result_size;
 
-  ASSERT(crypto);
+  DCHECK(crypto);
 
   std::unique_ptr<WebCryptoDigestor> digestor =
       crypto->CreateDigestor(algorithm_id);
@@ -56,13 +56,13 @@ std::unique_ptr<WebCryptoDigestor> CreateDigestor(HashAlgorithm algorithm) {
 }
 
 void FinishDigestor(WebCryptoDigestor* digestor, DigestValue& digest_result) {
-  unsigned char* result = 0;
+  unsigned char* result = nullptr;
   unsigned result_size = 0;
 
   if (!digestor->Finish(result, result_size))
     return;
 
-  ASSERT(result);
+  DCHECK(result);
 
   digest_result.Append(static_cast<uint8_t*>(result), result_size);
 }

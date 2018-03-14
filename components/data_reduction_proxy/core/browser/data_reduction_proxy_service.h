@@ -16,7 +16,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_metrics.h"
 #include "components/data_reduction_proxy/core/browser/db_data_owner.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_storage_delegate.h"
@@ -42,13 +42,11 @@ class DataReductionProxyIOData;
 class DataReductionProxyPingbackClient;
 class DataReductionProxyServiceObserver;
 class DataReductionProxySettings;
-class DataUseGroup;
 
 // Contains and initializes all Data Reduction Proxy objects that have a
 // lifetime based on the UI thread.
 class DataReductionProxyService
-    : public base::NonThreadSafe,
-      public DataReductionProxyEventStorageDelegate {
+    : public DataReductionProxyEventStorageDelegate {
  public:
   // The caller must ensure that |settings|, |prefs|, |request_context|, and
   // |io_task_runner| remain alive for the lifetime of the
@@ -77,12 +75,16 @@ class DataReductionProxyService
   // final step in initialization.
   bool Initialized() const;
 
+  // Records data usage per host.
+  void UpdateDataUseForHost(int64_t network_bytes,
+                            int64_t original_bytes,
+                            const std::string& host);
+
   // Records daily data savings statistics in |compression_stats_|.
   void UpdateContentLengths(int64_t data_used,
                             int64_t original_size,
                             bool data_reduction_proxy_enabled,
                             DataReductionProxyRequestType request_type,
-                            scoped_refptr<DataUseGroup> data_use_group,
                             const std::string& mime_type);
 
   // Overrides of DataReductionProxyEventStorageDelegate.
@@ -96,16 +98,6 @@ class DataReductionProxyService
 
   // Records whether the Data Reduction Proxy is unreachable or not.
   void SetUnreachable(bool unreachable);
-
-  // Sets if Lo-Fi was active on the last main frame load in
-  // DataReductionProxySettings.
-  void SetLoFiModeActiveOnMainFrame(bool lo_fi_mode_active);
-
-  // Sets Lo-Fi mode off on the IO thread.
-  void SetLoFiModeOff();
-
-  // Initializes the Lo-Fi implicit opt out prefs.
-  void InitializeLoFiPrefs();
 
   // Stores an int64_t value in |prefs_|.
   void SetInt64Pref(const std::string& pref_path, int64_t value);
@@ -155,19 +147,8 @@ class DataReductionProxyService
   FRIEND_TEST_ALL_PREFIXES(DataReductionProxySettingsTest,
                            TestLoFiSessionStateHistograms);
 
-  // Values of the UMA DataReductionProxy.LoFi.SessionState histogram.
-  // This enum must remain synchronized with DataReductionProxyLoFiSessionState
-  // in metrics/histograms/histograms.xml.
-  enum LoFiSessionState {
-    LO_FI_SESSION_STATE_USED = 0,
-    LO_FI_SESSION_STATE_NOT_USED,
-    LO_FI_SESSION_STATE_OPTED_OUT,  // Permanent opt out
-    LO_FI_SESSION_STATE_TEMPORARILY_OPTED_OUT,
-    LO_FI_SESSION_STATE_INDEX_BOUNDARY,
-  };
-
-  // Records UMA for Lo-Fi session state.
-  void RecordLoFiSessionState(LoFiSessionState state);
+  // Loads the Data Reduction Proxy configuration from |prefs_| and applies it.
+  void ReadPersistedClientConfig();
 
   net::URLRequestContextGetter* url_request_context_getter_;
 
@@ -198,6 +179,8 @@ class DataReductionProxyService
   base::ObserverList<DataReductionProxyServiceObserver> observer_list_;
 
   bool initialized_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   base::WeakPtrFactory<DataReductionProxyService> weak_factory_;
 

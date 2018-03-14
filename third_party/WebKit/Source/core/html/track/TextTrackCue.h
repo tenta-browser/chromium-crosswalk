@@ -32,7 +32,7 @@
 #ifndef TextTrackCue_h
 #define TextTrackCue_h
 
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/html/HTMLDivElement.h"
 #include "platform/heap/Handle.h"
 
@@ -97,13 +97,18 @@ class TextTrackCue : public EventTargetWithInlineData {
   DEFINE_ATTRIBUTE_EVENT_LISTENER(enter);
   DEFINE_ATTRIBUTE_EVENT_LISTENER(exit);
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  protected:
   TextTrackCue(double start, double end);
 
+  enum CueMutationAffectsOrder {
+    kCueMutationDoesNotAffectOrder,
+    kCueMutationAffectsOrder
+  };
   void CueWillChange();
-  virtual void CueDidChange();
+  virtual void CueDidChange(
+      CueMutationAffectsOrder = kCueMutationDoesNotAffectOrder);
   DispatchEventResult DispatchEventInternal(Event*) override;
 
  private:

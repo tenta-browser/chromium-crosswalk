@@ -24,6 +24,7 @@
  */
 
 #include "modules/webaudio/AudioNode.h"
+#include "bindings/core/v8/ExceptionMessages.h"
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/dom/ExceptionCode.h"
 #include "modules/webaudio/AudioNodeInput.h"
@@ -57,9 +58,9 @@ AudioHandler::AudioHandler(NodeType node_type,
   SetInternalChannelInterpretation(AudioBus::kSpeakers);
 
 #if DEBUG_AUDIONODE_REFERENCES
-  if (!s_isNodeCountInitialized) {
-    s_isNodeCountInitialized = true;
-    atexit(AudioHandler::printNodeCounts);
+  if (!is_node_count_initialized_) {
+    is_node_count_initialized_ = true;
+    atexit(AudioHandler::PrintNodeCounts);
   }
 #endif
   InstanceCounters::IncrementCounter(InstanceCounters::kAudioHandlerCounter);
@@ -71,10 +72,10 @@ AudioHandler::~AudioHandler() {
   DCHECK(!GetNode());
   InstanceCounters::DecrementCounter(InstanceCounters::kAudioHandlerCounter);
 #if DEBUG_AUDIONODE_REFERENCES
-  --s_nodeCount[getNodeType()];
+  --node_count_[GetNodeType()];
   fprintf(stderr, "[%16p]: %16p: %2d: AudioHandler::~AudioHandler() %d [%d]\n",
-          context(), this, getNodeType(), m_connectionRefCount,
-          s_nodeCount[getNodeType()]);
+          Context(), this, GetNodeType(), connection_ref_count_,
+          node_count_[GetNodeType()]);
 #endif
 }
 
@@ -126,7 +127,7 @@ String AudioHandler::NodeTypeName() const {
       return "MediaStreamAudioDestinationNode";
     case kNodeTypeMediaStreamAudioSource:
       return "MediaStreamAudioSourceNode";
-    case kNodeTypeJavaScript:
+    case kNodeTypeScriptProcessor:
       return "ScriptProcessorNode";
     case kNodeTypeBiquadFilter:
       return "BiquadFilterNode";
@@ -168,9 +169,9 @@ void AudioHandler::SetNodeType(NodeType type) {
   node_type_ = type;
 
 #if DEBUG_AUDIONODE_REFERENCES
-  ++s_nodeCount[type];
+  ++node_count_[type];
   fprintf(stderr, "[%16p]: %16p: %2d: AudioHandler::AudioHandler [%3d]\n",
-          context(), this, getNodeType(), s_nodeCount[getNodeType()]);
+          Context(), this, GetNodeType(), node_count_[GetNodeType()]);
 #endif
 }
 
@@ -210,7 +211,7 @@ void AudioHandler::SetInternalChannelInterpretation(
 void AudioHandler::SetChannelCount(unsigned long channel_count,
                                    ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(Context());
+  BaseAudioContext::GraphAutoLocker locker(Context());
 
   if (channel_count > 0 &&
       channel_count <= BaseAudioContext::MaxNumberOfChannels()) {
@@ -248,7 +249,7 @@ String AudioHandler::GetChannelCountMode() {
 void AudioHandler::SetChannelCountMode(const String& mode,
                                        ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(Context());
+  BaseAudioContext::GraphAutoLocker locker(Context());
 
   ChannelCountMode old_mode = channel_count_mode_;
 
@@ -283,7 +284,7 @@ String AudioHandler::ChannelInterpretation() {
 void AudioHandler::SetChannelInterpretation(const String& interpretation,
                                             ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(Context());
+  BaseAudioContext::GraphAutoLocker locker(Context());
 
   AudioBus::ChannelInterpretation old_mode = channel_interpretation_;
 
@@ -358,14 +359,6 @@ void AudioHandler::CheckNumberOfChannelsForInput(AudioNodeInput* input) {
   input->UpdateInternalBus();
 }
 
-double AudioHandler::TailTime() const {
-  return 0;
-}
-
-double AudioHandler::LatencyTime() const {
-  return 0;
-}
-
 bool AudioHandler::PropagatesSilence() const {
   return last_non_silent_time_ + LatencyTime() + TailTime() <
          Context()->currentTime();
@@ -376,7 +369,7 @@ void AudioHandler::PullInputs(size_t frames_to_process) {
 
   // Process all of the AudioNodes connected to our inputs.
   for (auto& input : inputs_)
-    input->Pull(0, frames_to_process);
+    input->Pull(nullptr, frames_to_process);
 }
 
 bool AudioHandler::InputsAreSilent() {
@@ -400,7 +393,7 @@ void AudioHandler::UnsilenceOutputs() {
 void AudioHandler::EnableOutputsIfNecessary() {
   if (is_disabled_ && connection_ref_count_ > 0) {
     DCHECK(IsMainThread());
-    BaseAudioContext::AutoLocker locker(Context());
+    BaseAudioContext::GraphAutoLocker locker(Context());
 
     is_disabled_ = false;
     for (auto& output : outputs_)
@@ -453,8 +446,8 @@ void AudioHandler::MakeConnection() {
 
 #if DEBUG_AUDIONODE_REFERENCES
   fprintf(stderr, "[%16p]: %16p: %2d: AudioHandler::ref   %3d [%3d]\n",
-          context(), this, getNodeType(), m_connectionRefCount,
-          s_nodeCount[getNodeType()]);
+          Context(), this, GetNodeType(), connection_ref_count_,
+          node_count_[GetNodeType()]);
 #endif
   // See the disabling code in disableOutputsIfNecessary(). This handles
   // the case where a node is being re-connected after being used at least
@@ -491,8 +484,8 @@ void AudioHandler::BreakConnectionWithLock() {
 
 #if DEBUG_AUDIONODE_REFERENCES
   fprintf(stderr, "[%16p]: %16p: %2d: AudioHandler::deref %3d [%3d]\n",
-          context(), this, getNodeType(), m_connectionRefCount,
-          s_nodeCount[getNodeType()]);
+          Context(), this, GetNodeType(), connection_ref_count_,
+          node_count_[GetNodeType()]);
 #endif
 
   if (!connection_ref_count_)
@@ -501,17 +494,17 @@ void AudioHandler::BreakConnectionWithLock() {
 
 #if DEBUG_AUDIONODE_REFERENCES
 
-bool AudioHandler::s_isNodeCountInitialized = false;
-int AudioHandler::s_nodeCount[NodeTypeEnd];
+bool AudioHandler::is_node_count_initialized_ = false;
+int AudioHandler::node_count_[kNodeTypeEnd];
 
-void AudioHandler::printNodeCounts() {
+void AudioHandler::PrintNodeCounts() {
   fprintf(stderr, "\n\n");
   fprintf(stderr, "===========================\n");
   fprintf(stderr, "AudioNode: reference counts\n");
   fprintf(stderr, "===========================\n");
 
-  for (unsigned i = 0; i < NodeTypeEnd; ++i)
-    fprintf(stderr, "%2d: %d\n", i, s_nodeCount[i]);
+  for (unsigned i = 0; i < kNodeTypeEnd; ++i)
+    fprintf(stderr, "%2d: %d\n", i, node_count_[i]);
 
   fprintf(stderr, "===========================\n\n\n");
 }
@@ -545,22 +538,23 @@ void AudioNode::Dispose() {
   DCHECK(IsMainThread());
 #if DEBUG_AUDIONODE_REFERENCES
   fprintf(stderr, "[%16p]: %16p: %2d: AudioNode::dispose %16p\n", context(),
-          this, handler().getNodeType(), m_handler.get());
+          this, Handler().GetNodeType(), handler_.Get());
 #endif
-  BaseAudioContext::AutoLocker locker(context());
+  BaseAudioContext::GraphAutoLocker locker(context());
   Handler().Dispose();
-  if (context()->ContextState() == BaseAudioContext::kRunning)
+  if (context()->ContextState() == BaseAudioContext::kRunning) {
     context()->GetDeferredTaskHandler().AddRenderingOrphanHandler(
-        handler_.Release());
+        std::move(handler_));
+  }
 }
 
-void AudioNode::SetHandler(PassRefPtr<AudioHandler> handler) {
+void AudioNode::SetHandler(scoped_refptr<AudioHandler> handler) {
   DCHECK(handler);
   handler_ = std::move(handler);
 
 #if DEBUG_AUDIONODE_REFERENCES
   fprintf(stderr, "[%16p]: %16p: %2d: AudioNode::AudioNode %16p\n", context(),
-          this, m_handler->getNodeType(), m_handler.get());
+          this, handler_->GetNodeType(), handler_.Get());
 #endif
 }
 
@@ -568,7 +562,7 @@ AudioHandler& AudioNode::Handler() const {
   return *handler_;
 }
 
-DEFINE_TRACE(AudioNode) {
+void AudioNode::Trace(blink::Visitor* visitor) {
   visitor->Trace(context_);
   visitor->Trace(connected_nodes_);
   visitor->Trace(connected_params_);
@@ -596,7 +590,7 @@ AudioNode* AudioNode::connect(AudioNode* destination,
                               unsigned input_index,
                               ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(context());
+  BaseAudioContext::GraphAutoLocker locker(context());
 
   if (context()->IsContextClosed()) {
     exception_state.ThrowDOMException(
@@ -640,7 +634,7 @@ AudioNode* AudioNode::connect(AudioNode* destination,
   // ScriptProcessorNodes with 0 output channels can't be connected to any
   // destination.  If there are no output channels, what would the destination
   // receive?  Just disallow this.
-  if (Handler().GetNodeType() == AudioHandler::kNodeTypeJavaScript &&
+  if (Handler().GetNodeType() == AudioHandler::kNodeTypeScriptProcessor &&
       Handler().NumberOfOutputChannels() == 0) {
     exception_state.ThrowDOMException(kInvalidAccessError,
                                       "cannot connect a ScriptProcessorNode "
@@ -666,7 +660,7 @@ void AudioNode::connect(AudioParam* param,
                         unsigned output_index,
                         ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(context());
+  BaseAudioContext::GraphAutoLocker locker(context());
 
   if (context()->IsContextClosed()) {
     exception_state.ThrowDOMException(
@@ -734,7 +728,7 @@ bool AudioNode::DisconnectFromOutputIfConnected(unsigned output_index,
 
 void AudioNode::disconnect() {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(context());
+  BaseAudioContext::GraphAutoLocker locker(context());
 
   // Disconnect all outgoing connections.
   for (unsigned i = 0; i < numberOfOutputs(); ++i)
@@ -744,7 +738,7 @@ void AudioNode::disconnect() {
 void AudioNode::disconnect(unsigned output_index,
                            ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(context());
+  BaseAudioContext::GraphAutoLocker locker(context());
 
   // Sanity check on the output index.
   if (output_index >= numberOfOutputs()) {
@@ -763,7 +757,7 @@ void AudioNode::disconnect(unsigned output_index,
 void AudioNode::disconnect(AudioNode* destination,
                            ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(context());
+  BaseAudioContext::GraphAutoLocker locker(context());
 
   unsigned number_of_disconnections = 0;
 
@@ -791,7 +785,7 @@ void AudioNode::disconnect(AudioNode* destination,
                            unsigned output_index,
                            ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(context());
+  BaseAudioContext::GraphAutoLocker locker(context());
 
   if (output_index >= numberOfOutputs()) {
     // The output index is out of range. Throw an exception.
@@ -828,7 +822,7 @@ void AudioNode::disconnect(AudioNode* destination,
                            unsigned input_index,
                            ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(context());
+  BaseAudioContext::GraphAutoLocker locker(context());
 
   if (output_index >= numberOfOutputs()) {
     exception_state.ThrowDOMException(
@@ -865,7 +859,7 @@ void AudioNode::disconnect(AudioNode* destination,
 void AudioNode::disconnect(AudioParam* destination_param,
                            ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(context());
+  BaseAudioContext::GraphAutoLocker locker(context());
 
   // The number of disconnection made.
   unsigned number_of_disconnections = 0;
@@ -890,7 +884,7 @@ void AudioNode::disconnect(AudioParam* destination_param,
                            unsigned output_index,
                            ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(context());
+  BaseAudioContext::GraphAutoLocker locker(context());
 
   if (output_index >= Handler().NumberOfOutputs()) {
     // The output index is out of range. Throw an exception.
@@ -915,7 +909,7 @@ void AudioNode::disconnect(AudioParam* destination_param,
 
 void AudioNode::DisconnectWithoutException(unsigned output_index) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(context());
+  BaseAudioContext::GraphAutoLocker locker(context());
 
   // Sanity check input and output indices.
   if (output_index >= Handler().NumberOfOutputs())

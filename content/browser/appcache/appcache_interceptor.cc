@@ -4,11 +4,13 @@
 
 #include "content/browser/appcache/appcache_interceptor.h"
 
-#include "base/debug/crash_logging.h"
+#include <utility>
+
 #include "content/browser/appcache/appcache_backend_impl.h"
 #include "content/browser/appcache/appcache_host.h"
 #include "content/browser/appcache/appcache_request_handler.h"
 #include "content/browser/appcache/appcache_service_impl.h"
+#include "content/browser/appcache/appcache_url_request.h"
 #include "content/browser/appcache/appcache_url_request_job.h"
 #include "content/browser/appcache/chrome_appcache_service.h"
 #include "content/browser/bad_message.h"
@@ -21,9 +23,10 @@ static int kHandlerKey;  // Value is not used.
 
 namespace content {
 
-void AppCacheInterceptor::SetHandler(net::URLRequest* request,
-                                     AppCacheRequestHandler* handler) {
-  request->SetUserData(&kHandlerKey, handler);  // request takes ownership
+void AppCacheInterceptor::SetHandler(
+    net::URLRequest* request,
+    std::unique_ptr<AppCacheRequestHandler> handler) {
+  request->SetUserData(&kHandlerKey, std::move(handler));
 }
 
 AppCacheRequestHandler* AppCacheInterceptor::GetHandler(
@@ -61,10 +64,11 @@ void AppCacheInterceptor::SetExtraRequestInfoForHost(
     ResourceType resource_type,
     bool should_reset_appcache) {
   // Create a handler for this request and associate it with the request.
-  AppCacheRequestHandler* handler =
-      host->CreateRequestHandler(request, resource_type, should_reset_appcache);
+  std::unique_ptr<AppCacheRequestHandler> handler =
+      host->CreateRequestHandler(AppCacheURLRequest::Create(request),
+                                 resource_type, should_reset_appcache);
   if (handler)
-    SetHandler(request, handler);
+    SetHandler(request, std::move(handler));
 }
 
 void AppCacheInterceptor::GetExtraResponseInfo(net::URLRequest* request,
@@ -99,23 +103,12 @@ void AppCacheInterceptor::CompleteCrossSiteTransfer(
   if (!handler->SanityCheckIsSameService(requester_info->appcache_service())) {
     // This can happen when V2 apps and web pages end up in the same storage
     // partition.
-    const GURL& first_party_url_for_cookies =
-        request->first_party_for_cookies();
-    if (first_party_url_for_cookies.is_valid()) {
-      // TODO(lazyboy): Remove this once we know which extensions run into this
-      // issue. See https://crbug.com/612711#c25 for details.
-      base::debug::SetCrashKeyValue("aci_wrong_sp_extension_id",
-                                    first_party_url_for_cookies.host());
-      // No need to explicitly call DumpWithoutCrashing(), since
-      // bad_message::ReceivedBadMessage() below will do that.
-    }
     bad_message::ReceivedBadMessage(requester_info->filter(),
                                     bad_message::ACI_WRONG_STORAGE_PARTITION);
     return;
   }
   DCHECK_NE(kAppCacheNoHostId, new_host_id);
-  handler->CompleteCrossSiteTransfer(new_process_id,
-                                     new_host_id);
+  handler->CompleteCrossSiteTransfer(new_process_id, new_host_id);
 }
 
 void AppCacheInterceptor::MaybeCompleteCrossSiteTransferInOldProcess(
@@ -137,8 +130,10 @@ net::URLRequestJob* AppCacheInterceptor::MaybeInterceptRequest(
     net::URLRequest* request, net::NetworkDelegate* network_delegate) const {
   AppCacheRequestHandler* handler = GetHandler(request);
   if (!handler)
-    return NULL;
-  return handler->MaybeLoadResource(request, network_delegate);
+    return nullptr;
+
+  AppCacheJob* job = handler->MaybeLoadResource(network_delegate);
+  return job ? job->AsURLRequestJob() : nullptr;
 }
 
 net::URLRequestJob* AppCacheInterceptor::MaybeInterceptRedirect(
@@ -147,17 +142,21 @@ net::URLRequestJob* AppCacheInterceptor::MaybeInterceptRedirect(
     const GURL& location) const {
   AppCacheRequestHandler* handler = GetHandler(request);
   if (!handler)
-    return NULL;
-  return handler->MaybeLoadFallbackForRedirect(
-      request, network_delegate, location);
+    return nullptr;
+
+  AppCacheJob* job =
+      handler->MaybeLoadFallbackForRedirect(network_delegate, location);
+  return job ? job->AsURLRequestJob() : nullptr;
 }
 
 net::URLRequestJob* AppCacheInterceptor::MaybeInterceptResponse(
     net::URLRequest* request, net::NetworkDelegate* network_delegate) const {
   AppCacheRequestHandler* handler = GetHandler(request);
   if (!handler)
-    return NULL;
-  return handler->MaybeLoadFallbackForResponse(request, network_delegate);
+    return nullptr;
+
+  AppCacheJob* job = handler->MaybeLoadFallbackForResponse(network_delegate);
+  return job ? job->AsURLRequestJob() : nullptr;
 }
 
 }  // namespace content

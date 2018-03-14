@@ -14,6 +14,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/containers/mru_cache.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
@@ -36,7 +37,6 @@
 
 namespace base {
 class FilePath;
-class SequencedTaskRunner;
 namespace trace_event {
 class ProcessMemoryDump;
 }
@@ -50,7 +50,6 @@ namespace net {
 
 class CertVerifier;
 class CTVerifier;
-class SocketBIOAdapter;
 class SSLCertRequestInfo;
 class SSLInfo;
 
@@ -77,11 +76,9 @@ class SSLClientSocketImpl : public SSLClientSocket,
   }
 
 #if !defined(OS_NACL)
-  // Log SSL key material to |path| on |task_runner|. Must be called before any
-  // SSLClientSockets are created.
-  static void SetSSLKeyLogFile(
-      const base::FilePath& path,
-      const scoped_refptr<base::SequencedTaskRunner>& task_runner);
+  // Log SSL key material to |path|. Must be called before any SSLClientSockets
+  // are created.
+  static void SetSSLKeyLogFile(const base::FilePath& path);
 #endif
 
   // SSLClientSocket implementation.
@@ -91,6 +88,7 @@ class SSLClientSocketImpl : public SSLClientSocket,
                                  TokenBindingType tb_type,
                                  std::vector<uint8_t>* out) override;
   crypto::ECPrivateKey* GetChannelIDKey() const override;
+  SSLErrorDetails GetConnectErrorDetails() const override;
 
   // SSLSocket implementation.
   int ExportKeyingMaterial(const base::StringPiece& label,
@@ -193,27 +191,31 @@ class SSLClientSocketImpl : public SSLClientSocket,
   // the |ssl_info|.signed_certificate_timestamps list.
   void AddCTInfoToSSLInfo(SSLInfo* ssl_info) const;
 
-  // Returns a unique key string for the SSL session cache for
-  // this socket.
+  // Returns a unique key string for the SSL session cache for this socket. This
+  // must not be called if |ssl_session_cache_shard_| is empty.
   std::string GetSessionCacheKey() const;
 
   // Returns true if renegotiations are allowed.
   bool IsRenegotiationAllowed() const;
 
   // Callbacks for operations with the private key.
-  int PrivateKeyTypeCallback();
-  size_t PrivateKeyMaxSignatureLenCallback();
-  ssl_private_key_result_t PrivateKeySignDigestCallback(uint8_t* out,
-                                                        size_t* out_len,
-                                                        size_t max_out,
-                                                        const EVP_MD* md,
-                                                        const uint8_t* in,
-                                                        size_t in_len);
+  ssl_private_key_result_t PrivateKeySignCallback(uint8_t* out,
+                                                  size_t* out_len,
+                                                  size_t max_out,
+                                                  uint16_t algorithm,
+                                                  const uint8_t* in,
+                                                  size_t in_len);
   ssl_private_key_result_t PrivateKeyCompleteCallback(uint8_t* out,
                                                       size_t* out_len,
                                                       size_t max_out);
 
   void OnPrivateKeyComplete(Error error, const std::vector<uint8_t>& signature);
+
+  // Called whenever BoringSSL processes a protocol message.
+  void MessageCallback(int is_write,
+                       int content_type,
+                       const void* buf,
+                       size_t len);
 
   int TokenBindingAdd(const uint8_t** out,
                       size_t* out_len,
@@ -302,7 +304,6 @@ class SSLClientSocketImpl : public SSLClientSocket,
   // session cache. i.e. sessions created with one value will not attempt to
   // resume on the socket with a different value.
   const std::string ssl_session_cache_shard_;
-  int ssl_session_cache_lookup_count_;
 
   enum State {
     STATE_NONE,
@@ -348,8 +349,12 @@ class SSLClientSocketImpl : public SSLClientSocket,
   // True if PKP is bypassed due to a local trust anchor.
   bool pkp_bypassed_;
 
+  SSLErrorDetails connect_error_details_;
+
   NetLogWithSource net_log_;
   base::WeakPtrFactory<SSLClientSocketImpl> weak_factory_;
+
+  DISALLOW_COPY_AND_ASSIGN(SSLClientSocketImpl);
 };
 
 }  // namespace net

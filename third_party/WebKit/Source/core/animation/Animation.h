@@ -32,6 +32,9 @@
 #define Animation_h
 
 #include <memory>
+
+#include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ScriptPromise.h"
@@ -39,18 +42,18 @@
 #include "core/CSSPropertyNames.h"
 #include "core/CoreExport.h"
 #include "core/animation/AnimationEffectReadOnly.h"
+#include "core/animation/CompositorAnimations.h"
+#include "core/animation/DocumentTimeline.h"
 #include "core/dom/ContextLifecycleObserver.h"
 #include "core/dom/DOMException.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "platform/animation/CompositorAnimationDelegate.h"
 #include "platform/animation/CompositorAnimationPlayerClient.h"
 #include "platform/graphics/CompositorElementId.h"
 #include "platform/heap/Handle.h"
-#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
-class AnimationTimeline;
 class CompositorAnimationPlayer;
 class Element;
 class ExceptionState;
@@ -75,7 +78,17 @@ class CORE_EXPORT Animation final : public EventTargetWithInlineData,
   };
 
   static Animation* Create(AnimationEffectReadOnly*, AnimationTimeline*);
-  ~Animation();
+
+  // Web Animations API IDL constructors.
+  static Animation* Create(ExecutionContext*,
+                           AnimationEffectReadOnly*,
+                           ExceptionState&);
+  static Animation* Create(ExecutionContext*,
+                           AnimationEffectReadOnly*,
+                           AnimationTimeline*,
+                           ExceptionState&);
+
+  ~Animation() override;
   void Dispose();
 
   // Returns whether the animation is finished.
@@ -128,8 +141,11 @@ class CORE_EXPORT Animation final : public EventTargetWithInlineData,
 
   double playbackRate() const;
   void setPlaybackRate(double);
-  const AnimationTimeline* timeline() const { return timeline_; }
-  AnimationTimeline* timeline() { return timeline_; }
+  AnimationTimeline* timeline() {
+    return static_cast<AnimationTimeline*>(timeline_);
+  }
+  const DocumentTimeline* TimelineInternal() const { return timeline_; }
+  DocumentTimeline* TimelineInternal() { return timeline_; }
 
   double CalculateStartTime(double current_time) const;
   bool HasStartTime() const { return !IsNull(start_time_); }
@@ -157,11 +173,9 @@ class CORE_EXPORT Animation final : public EventTargetWithInlineData,
   void SetOutdated();
   bool Outdated() { return outdated_; }
 
-  bool CanStartAnimationOnCompositor(
+  CompositorAnimations::FailureCode CheckCanStartAnimationOnCompositor(
       const Optional<CompositorElementIdSet>& composited_element_ids) const;
-  bool IsCandidateForAnimationOnCompositor(
-      const Optional<CompositorElementIdSet>& composited_element_ids) const;
-  bool MaybeStartAnimationOnCompositor(
+  void StartAnimationOnCompositor(
       const Optional<CompositorElementIdSet>& composited_element_ids);
   void CancelAnimationOnCompositor();
   void RestartAnimationOnCompositor();
@@ -175,7 +189,7 @@ class CORE_EXPORT Animation final : public EventTargetWithInlineData,
     return compositor_player_ ? compositor_player_->Player() : nullptr;
   }
 
-  bool Affects(const Element&, CSSPropertyID) const;
+  bool Affects(const Element&, const CSSProperty&) const;
 
   // Returns whether we should continue with the commit for this animation or
   // wait until next commit.
@@ -197,7 +211,11 @@ class CORE_EXPORT Animation final : public EventTargetWithInlineData,
 
   void InvalidateKeyframeEffect(const TreeScope&);
 
-  DECLARE_VIRTUAL_TRACE();
+  bool IsNonCompositedCompositable() const {
+    return is_non_composited_compositable_;
+  }
+
+  void Trace(blink::Visitor*) override;
 
  protected:
   DispatchEventResult DispatchEventInternal(Event*) override;
@@ -205,7 +223,7 @@ class CORE_EXPORT Animation final : public EventTargetWithInlineData,
                           RegisteredEventListener&) override;
 
  private:
-  Animation(ExecutionContext*, AnimationTimeline&, AnimationEffectReadOnly*);
+  Animation(ExecutionContext*, DocumentTimeline&, AnimationEffectReadOnly*);
 
   void ClearOutdated();
   void ForceServiceOnNextFrame();
@@ -223,6 +241,8 @@ class CORE_EXPORT Animation final : public EventTargetWithInlineData,
   void BeginUpdatingState();
   void EndUpdatingState();
 
+  CompositorAnimations::FailureCode CheckCanStartAnimationOnCompositorInternal(
+      const Optional<CompositorElementIdSet>&) const;
   void CreateCompositorPlayer();
   void DestroyCompositorPlayer();
   void AttachCompositorTimeline();
@@ -238,6 +258,8 @@ class CORE_EXPORT Animation final : public EventTargetWithInlineData,
                                                  Member<Animation>,
                                                  Member<DOMException>>;
   void ResolvePromiseMaybeAsync(AnimationPromise*);
+  void RejectAndResetPromise(AnimationPromise*);
+  void RejectAndResetPromiseMaybeAsync(AnimationPromise*);
 
   String id_;
 
@@ -252,7 +274,7 @@ class CORE_EXPORT Animation final : public EventTargetWithInlineData,
   Member<AnimationPromise> ready_promise_;
 
   Member<AnimationEffectReadOnly> content_;
-  Member<AnimationTimeline> timeline_;
+  Member<DocumentTimeline> timeline_;
 
   // Reflects all pausing, including via pauseForTesting().
   bool paused_;
@@ -276,10 +298,9 @@ class CORE_EXPORT Animation final : public EventTargetWithInlineData,
 
   class CompositorState {
     USING_FAST_MALLOC(CompositorState);
-    WTF_MAKE_NONCOPYABLE(CompositorState);
 
    public:
-    CompositorState(Animation& animation)
+    explicit CompositorState(Animation& animation)
         : start_time(animation.start_time_),
           hold_time(animation.hold_time_),
           playback_rate(animation.playback_rate_),
@@ -290,6 +311,7 @@ class CORE_EXPORT Animation final : public EventTargetWithInlineData,
     double playback_rate;
     bool effect_changed;
     CompositorAction pending_action;
+    DISALLOW_COPY_AND_ASSIGN(CompositorState);
   };
 
   enum CompositorPendingChange {
@@ -325,7 +347,7 @@ class CORE_EXPORT Animation final : public EventTargetWithInlineData,
 
     void Detach();
 
-    DEFINE_INLINE_TRACE() { visitor->Trace(animation_); }
+    void Trace(blink::Visitor* visitor) { visitor->Trace(animation_); }
 
     CompositorAnimationPlayer* Player() const {
       return compositor_player_.get();
@@ -353,6 +375,18 @@ class CORE_EXPORT Animation final : public EventTargetWithInlineData,
   bool state_is_being_updated_;
 
   bool effect_suppressed_;
+
+  // crbug.com/758439: In order to have better animation targeting metrics, we'd
+  // like to track whether there are main-thread animations which could be
+  // composited, but is not due to running experiment. This variable is
+  // initially false, it is set to be true after the call to
+  // "CheckCanStartAnimationOnCompositor" according to its return value. In
+  // other words, this bit is true only for an animation that hits the
+  // "Experiment group" for the experiment described in crbug.com/754471.
+  bool is_non_composited_compositable_ = false;
+
+  FRIEND_TEST_ALL_PREFIXES(AnimationAnimationTest,
+                           NoCompositeWithoutCompositedElementId);
 };
 
 }  // namespace blink

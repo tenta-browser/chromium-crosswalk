@@ -27,6 +27,7 @@ enum class WindowTreeChangeType {
   PROPERTY,
   REMOVE_TRANSIENT,
   REORDER,
+  TRANSFORM,
   VISIBLE,
 
   // This covers all cases that aren't used in tests.
@@ -94,9 +95,15 @@ class TestWindowTree : public ui::mojom::WindowTree {
     return last_hit_test_mask_;
   }
 
-  const base::Optional<cc::LocalSurfaceId>& last_local_surface_id() const {
+  const base::Optional<viz::LocalSurfaceId>& last_local_surface_id() const {
     return last_local_surface_id_;
   }
+
+  const gfx::Rect& last_set_window_bounds() const {
+    return last_set_window_bounds_;
+  }
+
+  const std::string& last_wm_action() const { return last_wm_action_; }
 
  private:
   struct Change {
@@ -124,7 +131,10 @@ class TestWindowTree : public ui::mojom::WindowTree {
       uint32_t change_id,
       uint32_t window_id,
       const gfx::Rect& bounds,
-      const base::Optional<cc::LocalSurfaceId>& local_surface_id) override;
+      const base::Optional<viz::LocalSurfaceId>& local_surface_id) override;
+  void SetWindowTransform(uint32_t change_id,
+                          uint32_t window_id,
+                          const gfx::Transform& transform) override;
   void SetClientArea(uint32_t window_id,
                      const gfx::Insets& insets,
                      const base::Optional<std::vector<gfx::Rect>>&
@@ -145,8 +155,8 @@ class TestWindowTree : public ui::mojom::WindowTree {
                         float opacity) override;
   void AttachCompositorFrameSink(
       uint32_t window_id,
-      mojo::InterfaceRequest<cc::mojom::MojoCompositorFrameSink> surface,
-      cc::mojom::MojoCompositorFrameSinkClientPtr client) override;
+      mojo::InterfaceRequest<viz::mojom::CompositorFrameSink> surface,
+      viz::mojom::CompositorFrameSinkClientPtr client) override;
   void AddWindow(uint32_t change_id, uint32_t parent, uint32_t child) override;
   void RemoveWindowFromParent(uint32_t change_id, uint32_t window_id) override;
   void AddTransientWindow(uint32_t change_id,
@@ -157,6 +167,9 @@ class TestWindowTree : public ui::mojom::WindowTree {
   void SetModalType(uint32_t change_id,
                     uint32_t window_id,
                     ui::ModalType modal_type) override;
+  void SetChildModalParent(uint32_t change_id,
+                           Id window_id,
+                           Id parent_window_id) override;
   void ReorderWindow(uint32_t change_id,
                      uint32_t window_id,
                      uint32_t relative_window_id,
@@ -171,24 +184,31 @@ class TestWindowTree : public ui::mojom::WindowTree {
              ui::mojom::WindowTreeClientPtr client,
              uint32_t flags,
              const EmbedCallback& callback) override;
+  void ScheduleEmbed(ui::mojom::WindowTreeClientPtr client,
+                     const ScheduleEmbedCallback& callback) override;
+  void EmbedUsingToken(uint32_t window_id,
+                       const base::UnguessableToken& token,
+                       uint32_t embed_flags,
+                       const EmbedUsingTokenCallback& callback) override;
   void SetFocus(uint32_t change_id, uint32_t window_id) override;
   void SetCanFocus(uint32_t window_id, bool can_focus) override;
   void SetEventTargetingPolicy(uint32_t window_id,
                                ui::mojom::EventTargetingPolicy policy) override;
-  void SetPredefinedCursor(uint32_t change_id,
-                           uint32_t window_id,
-                           ui::mojom::CursorType cursor_id) override;
+  void SetCursor(uint32_t change_id,
+                 Id transport_window_id,
+                 ui::CursorData cursor_data) override;
   void SetWindowTextInputState(uint32_t window_id,
-                               mojo::TextInputStatePtr state) override;
+                               ui::mojom::TextInputStatePtr state) override;
   void SetImeVisibility(uint32_t window_id,
                         bool visible,
-                        mojo::TextInputStatePtr state) override;
+                        ui::mojom::TextInputStatePtr state) override;
   void OnWindowInputEventAck(uint32_t event_id,
                              ui::mojom::EventResult result) override;
   void DeactivateWindow(uint32_t window_id) override;
   void StackAbove(uint32_t change_id, uint32_t above_id,
                   uint32_t below_id) override;
   void StackAtTop(uint32_t change_id, uint32_t window_id) override;
+  void PerformWmAction(uint32_t window_id, const std::string& action) override;
   void GetWindowManagerClient(
       mojo::AssociatedInterfaceRequest<ui::mojom::WindowManagerClient> internal)
       override;
@@ -232,7 +252,11 @@ class TestWindowTree : public ui::mojom::WindowTree {
 
   base::Optional<gfx::Rect> last_hit_test_mask_;
 
-  base::Optional<cc::LocalSurfaceId> last_local_surface_id_;
+  base::Optional<viz::LocalSurfaceId> last_local_surface_id_;
+
+  gfx::Rect last_set_window_bounds_;
+
+  std::string last_wm_action_;
 
   DISALLOW_COPY_AND_ASSIGN(TestWindowTree);
 };

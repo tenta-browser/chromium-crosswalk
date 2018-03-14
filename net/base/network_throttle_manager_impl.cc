@@ -4,9 +4,8 @@
 
 #include "net/base/network_throttle_manager_impl.h"
 
-#include <algorithm>
-
 #include "base/logging.h"
+#include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_tick_clock.h"
 
@@ -154,15 +153,13 @@ void NetworkThrottleManagerImpl::ThrottleImpl::NotifyUnblocked() {
 NetworkThrottleManagerImpl::NetworkThrottleManagerImpl()
     : lifetime_median_estimate_(PercentileEstimator::kMedianPercentile,
                                 kInitialMedianInMs),
-      outstanding_recomputation_timer_(false /* retain_user_task */,
-                                       false /* is_repeating */),
+      outstanding_recomputation_timer_(
+          std::make_unique<base::Timer>(false /* retain_user_task */,
+                                        false /* is_repeating */)),
       tick_clock_(new base::DefaultTickClock()),
-      weak_ptr_factory_(this) {
-  outstanding_recomputation_timer_.SetTaskRunner(
-      base::ThreadTaskRunnerHandle::Get());
-}
+      weak_ptr_factory_(this) {}
 
-NetworkThrottleManagerImpl::~NetworkThrottleManagerImpl() {}
+NetworkThrottleManagerImpl::~NetworkThrottleManagerImpl() = default;
 
 std::unique_ptr<NetworkThrottleManager::Throttle>
 NetworkThrottleManagerImpl::CreateThrottle(
@@ -193,17 +190,21 @@ NetworkThrottleManagerImpl::CreateThrottle(
 void NetworkThrottleManagerImpl::SetTickClockForTesting(
     std::unique_ptr<base::TickClock> tick_clock) {
   tick_clock_ = std::move(tick_clock);
+  DCHECK(!outstanding_recomputation_timer_->IsRunning());
+  outstanding_recomputation_timer_ = std::make_unique<base::Timer>(
+      false /* retain_user_task */, false /* is_repeating */,
+      tick_clock_.get());
 }
 
 bool NetworkThrottleManagerImpl::ConditionallyTriggerTimerForTesting() {
-  if (!outstanding_recomputation_timer_.IsRunning() ||
+  if (!outstanding_recomputation_timer_->IsRunning() ||
       (tick_clock_->NowTicks() <
-       outstanding_recomputation_timer_.desired_run_time())) {
+       outstanding_recomputation_timer_->desired_run_time())) {
     return false;
   }
 
-  base::Closure timer_callback(outstanding_recomputation_timer_.user_task());
-  outstanding_recomputation_timer_.Stop();
+  base::Closure timer_callback(outstanding_recomputation_timer_->user_task());
+  outstanding_recomputation_timer_->Stop();
   timer_callback.Run();
   return true;
 }
@@ -241,10 +242,8 @@ void NetworkThrottleManagerImpl::OnThrottleDestroyed(ThrottleImpl* throttle) {
       break;
   }
 
-  DCHECK(std::find(blocked_throttles_.begin(), blocked_throttles_.end(),
-                   throttle) == blocked_throttles_.end());
-  DCHECK(std::find(outstanding_throttles_.begin(), outstanding_throttles_.end(),
-                   throttle) == outstanding_throttles_.end());
+  DCHECK(!base::ContainsValue(blocked_throttles_, throttle));
+  DCHECK(!base::ContainsValue(outstanding_throttles_, throttle));
 
   // Unblock the throttles if there's some chance there's a throttle to
   // unblock.
@@ -281,14 +280,16 @@ void NetworkThrottleManagerImpl::RecomputeOutstanding() {
   // currently set.
   // This addresses, e.g., situations where a RecomputeOutstanding() races
   // with a running timer which would unblock blocked throttles.
-  if (outstanding_recomputation_timer_.IsRunning())
+  if (outstanding_recomputation_timer_->IsRunning())
     return;
 
   ThrottleImpl* first_throttle(*outstanding_throttles_.begin());
   DCHECK_GE(first_throttle->start_time() + age_horizon, now);
-  outstanding_recomputation_timer_.Start(
-      FROM_HERE, ((first_throttle->start_time() + age_horizon) - now +
-                  base::TimeDelta::FromMilliseconds(kTimerFudgeInMs)),
+
+  outstanding_recomputation_timer_->Start(
+      FROM_HERE,
+      ((first_throttle->start_time() + age_horizon) - now +
+       base::TimeDelta::FromMilliseconds(kTimerFudgeInMs)),
       // Unretained use of |this| is safe because the timer is
       // owned by this object, and will be torn down if this object
       // is destroyed.

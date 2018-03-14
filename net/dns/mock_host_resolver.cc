@@ -4,12 +4,12 @@
 
 #include "net/dns/mock_host_resolver.h"
 
-#include <string>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/location.h"
+#include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
@@ -98,6 +98,7 @@ class MockHostResolverBase::RequestImpl : public HostResolver::Request {
 };
 
 MockHostResolverBase::~MockHostResolverBase() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(requests_.empty());
 }
 
@@ -107,7 +108,7 @@ int MockHostResolverBase::Resolve(const RequestInfo& info,
                                   const CompletionCallback& callback,
                                   std::unique_ptr<Request>* request,
                                   const NetLogWithSource& net_log) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(request);
   last_request_priority_ = priority;
   num_resolve_++;
@@ -142,7 +143,7 @@ int MockHostResolverBase::ResolveFromCache(const RequestInfo& info,
                                            AddressList* addresses,
                                            const NetLogWithSource& net_log) {
   num_resolve_from_cache_++;
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   next_request_id_++;
   int rv = ResolveFromIPLiteralOrCache(info, addresses);
   return rv;
@@ -159,7 +160,7 @@ HostCache* MockHostResolverBase::GetHostCache() {
 }
 
 void MockHostResolverBase::ResolveAllPending() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(ondemand_mode_);
   for (RequestMap::iterator i = requests_.begin(); i != requests_.end(); ++i) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
@@ -226,7 +227,9 @@ int MockHostResolverBase::ResolveProc(const RequestInfo& info,
     base::TimeDelta ttl;
     if (rv == OK)
       ttl = base::TimeDelta::FromSeconds(kCacheEntryTTLSeconds);
-    cache_->Set(key, HostCache::Entry(rv, addr), base::TimeTicks::Now(), ttl);
+    cache_->Set(key,
+                HostCache::Entry(rv, addr, HostCache::Entry::SOURCE_UNKNOWN),
+                base::TimeTicks::Now(), ttl);
   }
   if (rv == OK)
     *addresses = AddressList::CopyWithPort(addr, info.port());
@@ -247,40 +250,26 @@ void MockHostResolverBase::ResolveNow(size_t id) {
 
 //-----------------------------------------------------------------------------
 
-struct RuleBasedHostResolverProc::Rule {
-  enum ResolverType {
-    kResolverTypeFail,
-    kResolverTypeSystem,
-    kResolverTypeIPLiteral,
-  };
+RuleBasedHostResolverProc::Rule::Rule(
+    ResolverType resolver_type,
+    const std::string& host_pattern,
+    AddressFamily address_family,
+    HostResolverFlags host_resolver_flags,
+    const std::string& replacement,
+    const std::string& canonical_name,
+    int latency_ms)
+    : resolver_type(resolver_type),
+      host_pattern(host_pattern),
+      address_family(address_family),
+      host_resolver_flags(host_resolver_flags),
+      replacement(replacement),
+      canonical_name(canonical_name),
+      latency_ms(latency_ms) {}
 
-  ResolverType resolver_type;
-  std::string host_pattern;
-  AddressFamily address_family;
-  HostResolverFlags host_resolver_flags;
-  std::string replacement;
-  std::string canonical_name;
-  int latency_ms;  // In milliseconds.
-
-  Rule(ResolverType resolver_type,
-       const std::string& host_pattern,
-       AddressFamily address_family,
-       HostResolverFlags host_resolver_flags,
-       const std::string& replacement,
-       const std::string& canonical_name,
-       int latency_ms)
-      : resolver_type(resolver_type),
-        host_pattern(host_pattern),
-        address_family(address_family),
-        host_resolver_flags(host_resolver_flags),
-        replacement(replacement),
-        canonical_name(canonical_name),
-        latency_ms(latency_ms) {}
-};
+RuleBasedHostResolverProc::Rule::Rule(const Rule& other) = default;
 
 RuleBasedHostResolverProc::RuleBasedHostResolverProc(HostResolverProc* previous)
-    : HostResolverProc(previous) {
-}
+    : HostResolverProc(previous), modifications_allowed_(true) {}
 
 void RuleBasedHostResolverProc::AddRule(const std::string& host_pattern,
                                         const std::string& replacement) {
@@ -317,9 +306,9 @@ void RuleBasedHostResolverProc::AddIPLiteralRule(
       HOST_RESOLVER_DEFAULT_FAMILY_SET_DUE_TO_NO_IPV6;
   if (!canonical_name.empty())
     flags |= HOST_RESOLVER_CANONNAME;
+
   Rule rule(Rule::kResolverTypeIPLiteral, host_pattern,
-            ADDRESS_FAMILY_UNSPECIFIED, flags, ip_literal, canonical_name,
-            0);
+            ADDRESS_FAMILY_UNSPECIFIED, flags, ip_literal, canonical_name, 0);
   AddRuleInternal(rule);
 }
 
@@ -369,8 +358,23 @@ void RuleBasedHostResolverProc::AddSimulatedFailure(
 }
 
 void RuleBasedHostResolverProc::ClearRules() {
+  CHECK(modifications_allowed_);
   base::AutoLock lock(rule_lock_);
   rules_.clear();
+}
+
+void RuleBasedHostResolverProc::DisableModifications() {
+  CHECK(modifications_allowed_);
+  modifications_allowed_ = false;
+}
+
+RuleBasedHostResolverProc::RuleList RuleBasedHostResolverProc::GetRules() {
+  RuleList rv;
+  {
+    base::AutoLock lock(rule_lock_);
+    rv = rules_;
+  }
+  return rv;
 }
 
 int RuleBasedHostResolverProc::Resolve(const std::string& host,
@@ -415,10 +419,26 @@ int RuleBasedHostResolverProc::Resolve(const std::string& host,
                                         address_family,
                                         host_resolver_flags,
                                         addrlist, os_error);
-        case Rule::kResolverTypeIPLiteral:
-          return ParseAddressList(effective_host,
-                                  r->canonical_name,
-                                  addrlist);
+        case Rule::kResolverTypeIPLiteral: {
+          AddressList raw_addr_list;
+          int result = ParseAddressList(
+              effective_host,
+              !r->canonical_name.empty() ? r->canonical_name : host,
+              &raw_addr_list);
+          // Filter out addresses with the wrong family.
+          *addrlist = AddressList();
+          for (const auto& address : raw_addr_list) {
+            if (address_family == ADDRESS_FAMILY_UNSPECIFIED ||
+                address_family == address.GetFamily()) {
+              addrlist->push_back(address);
+            }
+          }
+          addrlist->set_canonical_name(raw_addr_list.canonical_name());
+
+          if (result == OK && addrlist->empty())
+            return ERR_NAME_NOT_RESOLVED;
+          return result;
+        }
         default:
           NOTREACHED();
           return ERR_UNEXPECTED;
@@ -429,16 +449,35 @@ int RuleBasedHostResolverProc::Resolve(const std::string& host,
                               host_resolver_flags, addrlist, os_error);
 }
 
-RuleBasedHostResolverProc::~RuleBasedHostResolverProc() {
-}
+RuleBasedHostResolverProc::~RuleBasedHostResolverProc() = default;
 
 void RuleBasedHostResolverProc::AddRuleInternal(const Rule& rule) {
+  Rule fixed_rule = rule;
+  // SystemResolverProc expects valid DNS addresses.
+  // So for kResolverTypeSystem rules:
+  // * If the replacement is an IP address, switch to an IP literal rule.
+  // * If it's a non-empty invalid domain name, switch to a fail rule (Empty
+  // domain names mean use a direct lookup).
+  if (fixed_rule.resolver_type == Rule::kResolverTypeSystem) {
+    IPAddress ip_address;
+    bool valid_address = ip_address.AssignFromIPLiteral(fixed_rule.replacement);
+    if (valid_address) {
+      fixed_rule.resolver_type = Rule::kResolverTypeIPLiteral;
+    } else if (!fixed_rule.replacement.empty() &&
+               !IsValidDNSDomain(fixed_rule.replacement)) {
+      // TODO(mmenke): Can this be replaced with a DCHECK instead?
+      fixed_rule.resolver_type = Rule::kResolverTypeFail;
+    }
+  }
+
+  CHECK(modifications_allowed_);
   base::AutoLock lock(rule_lock_);
-  rules_.push_back(rule);
+  rules_.push_back(fixed_rule);
 }
 
 RuleBasedHostResolverProc* CreateCatchAllHostResolverProc() {
   RuleBasedHostResolverProc* catchall = new RuleBasedHostResolverProc(NULL);
+  // Note that IPv6 lookups fail.
   catchall->AddIPLiteralRule("*", "127.0.0.1", "localhost");
 
   // Next add a rules-based layer the use controls.
@@ -464,7 +503,7 @@ int HangingHostResolver::ResolveFromCache(const RequestInfo& info,
 
 //-----------------------------------------------------------------------------
 
-ScopedDefaultHostResolverProc::ScopedDefaultHostResolverProc() {}
+ScopedDefaultHostResolverProc::ScopedDefaultHostResolverProc() = default;
 
 ScopedDefaultHostResolverProc::ScopedDefaultHostResolverProc(
     HostResolverProc* proc) {

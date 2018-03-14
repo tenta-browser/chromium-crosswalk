@@ -6,9 +6,10 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "base/values.h"
-#include "content/public/child/v8_value_converter.h"
+#include "content/public/renderer/v8_value_converter.h"
 #include "extensions/renderer/script_context.h"
 #include "third_party/WebKit/public/platform/WebCryptoAlgorithm.h"
 #include "third_party/WebKit/public/platform/WebCryptoAlgorithmParams.h"
@@ -48,15 +49,16 @@ std::unique_ptr<base::DictionaryValue> WebCryptoAlgorithmToBaseValue(
   std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
   const blink::WebCryptoAlgorithmInfo* info =
       blink::WebCryptoAlgorithm::LookupAlgorithmInfo(algorithm.Id());
-  dict->SetStringWithoutPathExpansion("name", info->name);
+  dict->SetKey("name", base::Value(info->name));
 
   const blink::WebCryptoAlgorithm* hash = nullptr;
 
   const blink::WebCryptoRsaHashedKeyGenParams* rsaHashedKeyGen =
       algorithm.RsaHashedKeyGenParams();
   if (rsaHashedKeyGen) {
-    dict->SetIntegerWithoutPathExpansion("modulusLength",
-                                         rsaHashedKeyGen->ModulusLengthBits());
+    dict->SetKey(
+        "modulusLength",
+        base::Value(static_cast<int>(rsaHashedKeyGen->ModulusLengthBits())));
     const blink::WebVector<unsigned char>& public_exponent =
         rsaHashedKeyGen->PublicExponent();
     dict->SetWithoutPathExpansion(
@@ -81,8 +83,8 @@ std::unique_ptr<base::DictionaryValue> WebCryptoAlgorithmToBaseValue(
         blink::WebCryptoAlgorithm::LookupAlgorithmInfo(hash->Id());
 
     std::unique_ptr<base::DictionaryValue> hash_dict(new base::DictionaryValue);
-    hash_dict->SetStringWithoutPathExpansion("name", hash_info->name);
-    dict->SetWithoutPathExpansion("hash", hash_dict.release());
+    hash_dict->SetKey("name", base::Value(hash_info->name));
+    dict->SetWithoutPathExpansion("hash", std::move(hash_dict));
   }
   // Otherwise, |algorithm| is missing support here or no parameters were
   // required.
@@ -124,10 +126,8 @@ void PlatformKeysNatives::NormalizeAlgorithm(
   if (!algorithm_dict)
     return;
 
-  std::unique_ptr<content::V8ValueConverter> converter(
-      content::V8ValueConverter::create());
-  call_info.GetReturnValue().Set(
-      converter->ToV8Value(algorithm_dict.get(), context()->v8_context()));
+  call_info.GetReturnValue().Set(content::V8ValueConverter::Create()->ToV8Value(
+      algorithm_dict.get(), context()->v8_context()));
 }
 
 }  // namespace extensions

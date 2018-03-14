@@ -47,6 +47,10 @@ class OpenedByDOMTest : public ContentBrowserTest {
     IsolateAllSitesForTesting(command_line);
   }
 
+  void SetUpOnMainThread() override {
+    host_resolver()->AddRule("*", "127.0.0.1");
+  }
+
   bool AttemptCloseFromJavaScript(WebContents* web_contents) {
     CloseTrackingDelegate close_tracking_delegate;
     WebContentsDelegate* old_delegate = web_contents->GetDelegate();
@@ -70,7 +74,7 @@ class OpenedByDOMTest : public ContentBrowserTest {
   Shell* OpenWindowFromJavaScript(Shell* shell, const GURL& url) {
     // Wait for the popup to be created and for it to have navigated.
     ShellAddedObserver new_shell_observer;
-    TestNavigationObserver nav_observer(NULL);
+    TestNavigationObserver nav_observer(nullptr);
     nav_observer.StartWatchingNewWebContents();
     CHECK(ExecuteScript(
         shell, base::StringPrintf("window.open('%s')", url.spec().c_str())));
@@ -114,7 +118,6 @@ IN_PROC_BROWSER_TEST_F(OpenedByDOMTest, Popup) {
 // Tests that window.close() works in a popup window that has navigated a few
 // times and swapped processes.
 IN_PROC_BROWSER_TEST_F(OpenedByDOMTest, CrossProcessPopup) {
-  host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->Start());
 
   GURL url1 = embedded_test_server()->GetURL("/site_isolation/blank.html?1");

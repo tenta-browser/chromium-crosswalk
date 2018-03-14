@@ -19,6 +19,7 @@
 #include "components/content_settings/core/browser/content_settings_origin_identifier_value_map.h"
 #include "components/content_settings/core/browser/content_settings_rule.h"
 #include "components/content_settings/core/browser/content_settings_utils.h"
+#include "components/content_settings/core/common/content_settings_utils.h"
 #include "content/public/browser/browser_thread.h"
 
 using content::BrowserThread;
@@ -27,7 +28,6 @@ using content_settings::Rule;
 using content_settings::RuleIterator;
 using content_settings::OriginIdentifierValueMap;
 using content_settings::ResourceIdentifier;
-using content_settings::ValueToContentSetting;
 
 namespace extensions {
 
@@ -109,8 +109,9 @@ void ContentSettingsStore::SetExtensionContentSetting(
     if (setting == CONTENT_SETTING_DEFAULT) {
       map->DeleteValue(primary_pattern, secondary_pattern, type, identifier);
     } else {
+      // Do not set a timestamp for extension settings.
       map->SetValue(primary_pattern, secondary_pattern, type, identifier,
-                    new base::Value(setting));
+                    base::Time(), new base::Value(setting));
     }
   }
 
@@ -275,7 +276,8 @@ std::unique_ptr<base::ListValue> ContentSettingsStore::GetSettingsForExtension(
           helpers::ContentSettingsTypeToString(key.content_type));
       setting_dict->SetString(keys::kResourceIdentifierKey,
                               key.resource_identifier);
-      ContentSetting content_setting = ValueToContentSetting(rule.value.get());
+      ContentSetting content_setting =
+          content_settings::ValueToContentSetting(rule.value.get());
       DCHECK_NE(CONTENT_SETTING_DEFAULT, content_setting);
 
       std::string setting_string =
@@ -337,6 +339,9 @@ void ContentSettingsStore::SetExtensionContentSettingFromList(
     bool result = content_settings::ContentSettingFromString(
         content_setting_string, &setting);
     DCHECK(result);
+    // The content settings extensions API does not support setting any content
+    // settings to |CONTENT_SETTING_DEFAULT|.
+    DCHECK_NE(CONTENT_SETTING_DEFAULT, setting);
 
     SetExtensionContentSetting(extension_id,
                                primary_pattern,

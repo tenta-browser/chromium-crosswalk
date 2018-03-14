@@ -18,7 +18,9 @@
 #include "base/optional.h"
 #include "content/public/browser/download_interrupt_reasons.h"
 #include "content/public/browser/download_save_info.h"
+#include "content/public/browser/download_source.h"
 #include "content/public/common/referrer.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "storage/browser/blob/blob_data_handle.h"
 #include "url/gurl.h"
@@ -65,7 +67,8 @@ class CONTENT_EXPORT DownloadUrlParameters {
   // associating the download with the main frame of the given WebContents.
   static std::unique_ptr<DownloadUrlParameters> CreateForWebContentsMainFrame(
       WebContents* web_contents,
-      const GURL& url);
+      const GURL& url,
+      const net::NetworkTrafficAnnotationTag& traffic_annotation);
 
   // Constructs a download not associated with a frame.
   //
@@ -79,7 +82,8 @@ class CONTENT_EXPORT DownloadUrlParameters {
   // non-privileged frame.
   DownloadUrlParameters(
       const GURL& url,
-      net::URLRequestContextGetter* url_request_context_getter);
+      net::URLRequestContextGetter* url_request_context_getter,
+      const net::NetworkTrafficAnnotationTag& traffic_annotation);
 
   // The RenderView routing ID must correspond to the RenderView of the
   // RenderFrame, both of which share the same RenderProcess. This may be a
@@ -89,7 +93,8 @@ class CONTENT_EXPORT DownloadUrlParameters {
       int render_process_host_id,
       int render_view_host_routing_id,
       int render_frame_host_routing_id,
-      net::URLRequestContextGetter* url_request_context_getter);
+      net::URLRequestContextGetter* url_request_context_getter,
+      const net::NetworkTrafficAnnotationTag& traffic_annotation);
 
   ~DownloadUrlParameters();
 
@@ -205,9 +210,21 @@ class CONTENT_EXPORT DownloadUrlParameters {
     do_not_prompt_for_login_ = do_not_prompt;
   }
 
+  // Sets whether to download the response body even if the server returns
+  // non-successful HTTP response code, like "HTTP NOT FOUND".
+  void set_fetch_error_body(bool fetch_error_body) {
+    fetch_error_body_ = fetch_error_body;
+  }
+
   // Sets whether the download is to be treated as transient. A transient
-  // download is short-lived and is not shown in the UI.
+  // download is short-lived and is not shown in the UI, and will not prompt
+  // to user for target file path determination.
   void set_transient(bool transient) { transient_ = transient; }
+
+  // Sets the optional guid for the download, the guid serves as the unique
+  // identitfier for the download item. If no guid is provided, download
+  // system will automatically generate one.
+  void set_guid(const std::string& guid) { guid_ = guid; }
 
   // For downloads of blob URLs, the caller can store a BlobDataHandle in the
   // DownloadUrlParameters object so that the blob will remain valid until
@@ -222,6 +239,17 @@ class CONTENT_EXPORT DownloadUrlParameters {
     blob_data_handle_ = std::move(blob_data_handle);
   }
 
+  // For downloads originating from custom tabs, this records the origin
+  // of the custom tab.
+  void set_request_origin(const std::string& origin) {
+    request_origin_ = origin;
+  }
+
+  // Sets the download source, which will be used in metrics recording.
+  void set_download_source(DownloadSource download_source) {
+    download_source_ = download_source;
+  }
+
   const OnStartedCallback& callback() const { return callback_; }
   bool content_initiated() const { return content_initiated_; }
   const std::string& last_modified() const { return last_modified_; }
@@ -234,6 +262,7 @@ class CONTENT_EXPORT DownloadUrlParameters {
   const Referrer& referrer() const { return referrer_; }
   const std::string& referrer_encoding() const { return referrer_encoding_; }
   const base::Optional<url::Origin>& initiator() const { return initiator_; }
+  const std::string& request_origin() const { return request_origin_; }
 
   // These will be -1 if the request is not associated with a frame. See
   // the constructors for more.
@@ -261,7 +290,9 @@ class CONTENT_EXPORT DownloadUrlParameters {
   bool prompt() const { return save_info_.prompt_for_save_location; }
   const GURL& url() const { return url_; }
   bool do_not_prompt_for_login() const { return do_not_prompt_for_login_; }
+  bool fetch_error_body() const { return fetch_error_body_; }
   bool is_transient() const { return transient_; }
+  std::string guid() const { return guid_; }
 
   // STATE_CHANGING: Return the BlobDataHandle.
   std::unique_ptr<storage::BlobDataHandle> GetBlobDataHandle() {
@@ -271,6 +302,12 @@ class CONTENT_EXPORT DownloadUrlParameters {
   // STATE CHANGING: All save_info_ sub-objects will be in an indeterminate
   // state following this call.
   DownloadSaveInfo GetSaveInfo() { return std::move(save_info_); }
+
+  const net::NetworkTrafficAnnotationTag& GetNetworkTrafficAnnotation() {
+    return traffic_annotation_;
+  }
+
+  DownloadSource download_source() const { return download_source_; }
 
  private:
   OnStartedCallback callback_;
@@ -293,8 +330,13 @@ class CONTENT_EXPORT DownloadUrlParameters {
   DownloadSaveInfo save_info_;
   GURL url_;
   bool do_not_prompt_for_login_;
+  bool fetch_error_body_;
   bool transient_;
+  std::string guid_;
   std::unique_ptr<storage::BlobDataHandle> blob_data_handle_;
+  const net::NetworkTrafficAnnotationTag traffic_annotation_;
+  std::string request_origin_;
+  DownloadSource download_source_;
 
   DISALLOW_COPY_AND_ASSIGN(DownloadUrlParameters);
 };

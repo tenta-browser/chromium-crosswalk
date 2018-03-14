@@ -8,7 +8,6 @@
 
 #include "android_webview/common/aw_descriptors.h"
 #include "android_webview/common/aw_paths.h"
-#include "android_webview/common/aw_version_info_values.h"
 #include "android_webview/common/crash_reporter/crash_keys.h"
 #include "base/android/build_info.h"
 #include "base/base_paths_android.h"
@@ -23,6 +22,7 @@
 #include "build/build_config.h"
 #include "components/crash/content/app/breakpad_linux.h"
 #include "components/crash/content/app/crash_reporter_client.h"
+#include "components/version_info/version_info_values.h"
 #include "content/public/common/content_switches.h"
 
 namespace android_webview {
@@ -30,9 +30,9 @@ namespace crash_reporter {
 
 namespace {
 
-// Use a value of 0.1% for WebView Stable to avoid hitting the crash report
-// upload cap.
-const double minidump_generation_user_fraction = 0.001;
+// Use a value of 1% for WebView Stable to avoid hitting the crash report upload
+// cap.
+const double minidump_generation_user_fraction = 0.01;
 
 // Returns whether the current process should be reporting crashes through
 // minidumps. This function should only be called once per process - the return

@@ -14,19 +14,10 @@ header("Suborigin: foobar");
 async_test(t => {
     var xhr = new XMLHttpRequest();
     xhr.onerror = t.step_func_done();
-    xhr.onload = t.unreached_func('XHR succeeded');
-    xhr.open('GET', 'http://127.0.0.1:8000/security/resources/' +
-                    'cors-script.php?cors=false');
-    xhr.setRequestHeader('x-custom-header', 'foobar');
-    xhr.send();
-  }, 'Custom headers causes preflight failure');
-
-async_test(t => {
-    var xhr = new XMLHttpRequest();
-    xhr.onerror = t.step_func_done();
     xhr.onload = t.unreached_func();
+    // without-preflight is attached to distinguish console error outputs.
     xhr.open('GET', 'http://127.0.0.1:8000/security/resources/' +
-                    'cors-script.php?cors=false');
+                    'cors-script.php?cors=false&without-preflight');
     xhr.send();
   }, 'Lack of Access-Control-Allow-Suborigin on response causes failure');
 </script>

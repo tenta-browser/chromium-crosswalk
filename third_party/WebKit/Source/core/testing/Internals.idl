@@ -24,8 +24,15 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+enum EffectiveConnectionType {
+    "slow-2g",
+    "2g",
+    "3g",
+    "4g"
+};
+
 [
-    DoNotCheckConstants,
+    DoNotCheckConstants
 ] interface Internals {
     GCObservation observeGC(any observed);
 
@@ -37,8 +44,6 @@
     unsigned long getResourcePriority (DOMString url, Document document);
     DOMString getResourceHeader (DOMString url, DOMString header, Document document);
 
-    boolean isSharingStyle(Element element1, Element element2);
-
     CSSStyleDeclaration computedStyleIncludingVisitedInfo(Node node);
 
     ShadowRoot createUserAgentShadowRoot(Element host);
@@ -47,6 +52,9 @@
     ShadowRoot youngestShadowRoot(Element host);
     ShadowRoot oldestShadowRoot(Element host);
     [RaisesException] ShadowRoot youngerShadowRoot(Node root);
+
+    void setBrowserControlsState(float top_height, float bottom_height, boolean shrinksLayout);
+    void setBrowserControlsShownRatio(float ratio);
 
     [RaisesException] DOMString shadowRootType(Node root);
     [RaisesException] boolean hasShadowInsertionPoint(Node root);
@@ -63,6 +71,9 @@
     [RaisesException] unsigned long hitTestCacheHits(Document document);
     [RaisesException] Element? elementFromPoint(Document document, double x, double y, boolean ignoreClipping, boolean allowChildFrameContent);
     [RaisesException] void clearHitTestCache(Document document);
+
+    // Allows inspection of the inner editor node.
+    [RaisesException] Element? innerEditorElement(Element container);
 
     // Animation testing.
     [RaisesException] void pauseAnimations(double pauseTime);
@@ -86,7 +97,7 @@
     [RaisesException] Node previousInFlatTree(Node node);
 
     DOMString visiblePlaceholder(Element element);
-
+    boolean isValidationMessageVisible(Element element);
     void selectColorInColorChooser(Element element, DOMString colorValue);
     void endColorChooser(Element element);
 
@@ -96,18 +107,22 @@
     [RaisesException] void setFormControlStateOfHistoryItem(sequence<DOMString> values);
     readonly attribute Window pagePopupWindow;
 
-    [RaisesException] ClientRect absoluteCaretBounds();
+    [RaisesException] DOMRectReadOnly absoluteCaretBounds();
 
-    ClientRect boundingBox(Element element);
+    DOMRectReadOnly boundingBox(Element element);
 
     [RaisesException] void setMarker(Document document, Range range, DOMString markerType);
     [RaisesException] unsigned long markerCountForNode(Node node, DOMString markerType);
     unsigned long activeMarkerCountForNode(Node node);
     [RaisesException] Range markerRangeForNode(Node node, DOMString markerType, unsigned long index);
     [RaisesException] DOMString markerDescriptionForNode(Node node, DOMString markerType, unsigned long index);
+    [RaisesException] unsigned long markerBackgroundColorForNode(Node node, DOMString markerType, unsigned long index);
+    [RaisesException] unsigned long markerUnderlineColorForNode(Node node, DOMString markerType, unsigned long index);
     [RaisesException] void addTextMatchMarker(Range range, DOMString matchStatus);
-    [RaisesException] void addCompositionMarker(Range range, DOMString underlineColorValue, boolean thick, DOMString backgroundColorValue);
-    void setMarkersActive(Node node, unsigned long startOffset, unsigned long endOffset, boolean active);
+    [RaisesException] void addCompositionMarker(Range range, DOMString underlineColorValue, DOMString thicknessValue, DOMString backgroundColorValue);
+    [RaisesException] void addActiveSuggestionMarker(Range range, DOMString underlineColorValue, DOMString thicknessValue, DOMString backgroundColorValue);
+    [RaisesException] void addSuggestionMarker(Range range, sequence<DOMString> suggestions, DOMString suggestionHighlightColorValue, DOMString underlineColorValue, DOMString thicknessValue, DOMString backgroundColorValue);
+    void setTextMatchMarkersActive(Node node, unsigned long startOffset, unsigned long endOffset, boolean active);
     void setMarkedTextMatchesAreHighlighted(Document document, boolean highlight);
 
     [RaisesException] void setFrameViewPosition(Document document, long x, long y);
@@ -120,6 +135,7 @@
     [RaisesException] boolean elementShouldAutoComplete(Element inputElement);
     [RaisesException] DOMString suggestedValue(Element inputElement);
     [RaisesException] void setSuggestedValue(Element inputElement, DOMString value);
+    [RaisesException] void setAutofilledValue(Element inputElement, DOMString value);
     [RaisesException] void setEditingValue(Element inputElement, DOMString value);
     [RaisesException] void setAutofilled(Element inputElement, boolean enabled);
 
@@ -132,23 +148,25 @@
     [RaisesException] Node touchNodeAdjustedToBestClickableNode(long x, long y, long width, long height, Document document);
     [RaisesException] DOMPoint touchPositionAdjustedToBestContextMenuNode(long x, long y, long width, long height, Document document);
     [RaisesException] Node touchNodeAdjustedToBestContextMenuNode(long x, long y, long width, long height, Document document);
-    [RaisesException] ClientRect bestZoomableAreaForTouchPoint(long x, long y, long width, long height, Document document);
+    [RaisesException] DOMRectReadOnly bestZoomableAreaForTouchPoint(long x, long y, long width, long height, Document document);
 
     [RaisesException] long lastSpellCheckRequestSequence(Document document);
     [RaisesException] long lastSpellCheckProcessedSequence(Document document);
-    [RuntimeEnabled=IdleTimeSpellChecking, RaisesException] DOMString idleTimeSpellCheckerState(Document document);
-    [RuntimeEnabled=IdleTimeSpellChecking, RaisesException] void runIdleTimeSpellChecker(Document document);
+    [RaisesException] void cancelCurrentSpellCheckRequest(Document document);
+    [RaisesException] DOMString idleTimeSpellCheckerState(Document document);
+    [RaisesException] void runIdleTimeSpellChecker(Document document);
 
     sequence<DOMString> userPreferredLanguages();
     void setUserPreferredLanguages(sequence<DOMString> languages);
 
     unsigned long mediaKeysCount();
     unsigned long mediaKeySessionCount();
-    unsigned long suspendableObjectCount(Document document);
+    unsigned long pausableObjectCount(Document document);
     unsigned long wheelEventHandlerCount(Document document);
     unsigned long scrollEventHandlerCount(Document document);
     unsigned long touchStartOrMoveEventHandlerCount(Document document);
     unsigned long touchEndOrCancelEventHandlerCount(Document document);
+    unsigned long pointerEventHandlerCount(Document document);
     [RaisesException] LayerRectList touchEventTargetLayerRects(Document document);
 
     [RaisesException] boolean executeCommand(Document document, DOMString name, DOMString value);
@@ -189,7 +207,8 @@
     const unsigned short LAYER_TREE_INCLUDES_ROOT_LAYER = 8;
     const unsigned short LAYER_TREE_INCLUDES_CLIP_AND_SCROLL_PARENTS = 16;
     const unsigned short LAYER_TREE_INCLUDES_COMPOSITING_REASONS = 32;
-    const unsigned short OUTPUT_AS_LAYER_TREE = 64;
+    const unsigned short LAYER_TREE_INCLUDES_PAINT_RECORDS = 64;
+    const unsigned short OUTPUT_AS_LAYER_TREE = 0x4000;
 
     [RaisesException] DOMString layerTreeAsText(Document document, optional unsigned short flags);
     [RaisesException] DOMString elementLayerTreeAsText(Element element, optional unsigned short flags);
@@ -198,13 +217,12 @@
 
     DOMString scrollingStateTreeAsText(Document document);
     [RaisesException] DOMString mainThreadScrollingReasons(Document document);
-    [RaisesException] ClientRectList nonFastScrollableRects(Document document);
+    [RaisesException] DOMRectList nonFastScrollableRects(Document document);
 
     void evictAllResources();
 
     unsigned long numberOfLiveNodes();
     unsigned long numberOfLiveDocuments();
-    DOMString dumpRefCountedInstanceCounts();
 
     DOMString counterValue(Element element);
     [RaisesException] long pageNumber(Element element, optional float pageWidth = 800, optional float pageHeight = 600);
@@ -235,9 +253,6 @@
 
     sequence<DOMString> getReferencedFilePaths();
 
-    [RaisesException] void startStoringCompositedLayerDebugInfo(Document document);
-    [RaisesException] void stopStoringCompositedLayerDebugInfo(Document document);
-
     // These functions both reset the tracked repaint rects. They are intended to be used in the following order:
     //  startTrackingRepaints(), repaintRectsAsText(), stopTrackingRepaints().
     [RaisesException] void startTrackingRepaints(Document document);
@@ -251,13 +266,14 @@
     [RaisesException] void forceFullRepaint(Document document);
 
     // Returns a list of draggable/non-draggable regions in the document.
-    [RaisesException] ClientRectList draggableRegions(Document document);
-    [RaisesException] ClientRectList nonDraggableRegions(Document document);
+    [RaisesException] DOMRectList draggableRegions(Document document);
+    [RaisesException] DOMRectList nonDraggableRegions(Document document);
 
     // Returns a string with information about the mouse cursor used at the specified client location.
     DOMString getCurrentCursorInfo();
 
     readonly attribute boolean cursorUpdatePending;
+    readonly attribute boolean fakeMouseMovePending;
 
     DOMString markerTextForListItem(Element element);
 
@@ -271,6 +287,7 @@
     void forceReload(boolean endToEnd);
 
     DOMString getImageSourceURL(Element element);
+    [RaisesException] void forceImageReload(Element element);
 
     DOMString selectMenuListText(HTMLSelectElement select);
     boolean isSelectPopupVisible(Node node);
@@ -282,7 +299,7 @@
     readonly attribute unsigned long visibleSelectionAnchorOffset;
     readonly attribute Node? visibleSelectionFocusNode;
     readonly attribute unsigned long visibleSelectionFocusOffset;
-    [RaisesException] ClientRect selectionBounds();
+    [RaisesException] DOMRect selectionBounds();
     readonly attribute DOMString textAffinity;
 
     boolean loseSharedGraphicsContext3D();
@@ -314,6 +331,8 @@
 
     // These functions are for testing NetInfo. You must call clearNetworkConnectionInfoOverride() at the end.
     [RaisesException] void setNetworkConnectionInfoOverride(boolean onLine, DOMString type, double downlinkMaxMbps);
+    [RaisesException] void setNetworkQualityInfoOverride(EffectiveConnectionType effective_type, unsigned long transport_rtt_msec, double downlink_throughput_mbps);
+    void setSaveDataEnabled(boolean enabled);
     void clearNetworkConnectionInfoOverride();
 
     // This function is for testing HitRegions on Canvas2D.
@@ -324,6 +343,7 @@
 
     DictionaryTest dictionaryTest();
     RecordTest recordTest();
+    SequenceTest sequenceTest();
     UnionTypesTest unionTypesTest();
     CallbackFunctionTest callbackFunctionTest();
     [RaisesException] void setScrollChain(ScrollState scrollState, sequence<Element> elements);
@@ -344,6 +364,10 @@
     boolean isCSSPropertyUseCounted(Document document, DOMString propertyName);
     boolean isAnimatedCSSPropertyUseCounted(Document document, DOMString propertyName);
 
+    sequence<DOMString> getCSSPropertyLonghands();
+    sequence<DOMString> getCSSPropertyShorthands();
+    sequence<DOMString> getCSSPropertyAliases();
+
     // Returns a promise that is resolved when |feature| is counted on
     // |document|'s UseCounter. When |feature| was already counted, it's
     // immediately resolved.
@@ -356,8 +380,8 @@
     [Unscopable] readonly attribute DOMString unscopableAttribute;
     [Unscopable] DOMString unscopableMethod();
 
-    ClientRectList focusRingRects(Element element);
-    ClientRectList outlineRects(Element element);
+    DOMRectList focusRingRects(Element element);
+    DOMRectList outlineRects(Element element);
     void setCapsLockState(boolean enabled);
 
     // Returns whether the scrollbar was able to be shown or hidden; not all platforms
@@ -370,11 +394,24 @@
 
     DOMString getProgrammaticScrollAnimationState(Node node);
 
-    ClientRect visualRect(Node node);
+    DOMRect visualRect(Node node);
 
     OriginTrialsTest originTrialsTest();
 
     void crash();
 
     void setIsLowEndDevice(boolean isLowEndDevice);
+    boolean isLowEndDevice();
+
+    sequence<DOMString> supportedTextEncodingLabels();
+
+    // When RuntimeEnabledFeatures::PaintUnderInvalidationCheckingEnabled() and
+    // simulateRasterUnderInvalidation(true) is called, all changed pixels will
+    // be reported as raster under-invalidations.
+    void simulateRasterUnderInvalidations(boolean enable);
+
+    // Bypass the threshold of 'script-compile' of long-task attribution in
+    // PerformanceMonitor for testing. "PerformanceObserver should be observing
+    // 'longtask' while calling BypassLongCompileThresholdOnce.
+    [RaisesException] void BypassLongCompileThresholdOnce();
 };

@@ -37,7 +37,6 @@
 
 class SkDrawLooper;
 struct SkPoint;
-class SkShader;
 class SkTypeface;
 
 namespace gfx {
@@ -63,56 +62,21 @@ class GFX_EXPORT SkiaTextRenderer {
   void SetTypeface(sk_sp<SkTypeface> typeface);
   void SetTextSize(SkScalar size);
   void SetForegroundColor(SkColor foreground);
-  void SetShader(sk_sp<SkShader> shader);
-  // Sets underline metrics to use if the text will be drawn with an underline.
-  // If not set, default values based on the size of the text will be used. The
-  // two metrics must be set together.
-  void SetUnderlineMetrics(SkScalar thickness, SkScalar position);
+  void SetShader(sk_sp<cc::PaintShader> shader);
   void DrawSelection(const std::vector<Rect>& selection, SkColor color);
+  // TODO(vmpstr): Change this API to mimic SkCanvas::drawTextBlob instead.
   virtual void DrawPosText(const SkPoint* pos,
                            const uint16_t* glyphs,
                            size_t glyph_count);
-  // Draw underline and strike-through text decorations.
-  // Based on |SkCanvas::DrawTextDecorations()| and constants from:
-  //   third_party/skia/src/core/SkTextFormatParams.h
-  virtual void DrawDecorations(int x, int y, int width, bool underline,
-                               bool strike, bool diagonal_strike);
-  // Finishes any ongoing diagonal strike run.
-  void EndDiagonalStrike();
   void DrawUnderline(int x, int y, int width);
-  void DrawStrike(int x, int y, int width) const;
+  void DrawStrike(int x, int y, int width, SkScalar thickness_factor);
 
  private:
   friend class test::RenderTextTestApi;
 
-  // Helper class to draw a diagonal line with multiple pieces of different
-  // lengths and colors; to support text selection appearances.
-  class DiagonalStrike {
-   public:
-    DiagonalStrike(Canvas* canvas, Point start, const cc::PaintFlags& flags);
-    ~DiagonalStrike();
-
-    void AddPiece(int length, SkColor color);
-    void Draw();
-
-   private:
-    typedef std::pair<int, SkColor> Piece;
-
-    Canvas* canvas_;
-    const Point start_;
-    cc::PaintFlags flags_;
-    int total_length_;
-    std::vector<Piece> pieces_;
-
-    DISALLOW_COPY_AND_ASSIGN(DiagonalStrike);
-  };
-
   Canvas* canvas_;
   cc::PaintCanvas* canvas_skia_;
   cc::PaintFlags flags_;
-  SkScalar underline_thickness_;
-  SkScalar underline_position_;
-  std::unique_ptr<DiagonalStrike> diagonal_;
 
   DISALLOW_COPY_AND_ASSIGN(SkiaTextRenderer);
 };
@@ -209,17 +173,21 @@ void ApplyRenderParams(const FontRenderParams& params,
 class GFX_EXPORT RenderText {
  public:
 #if defined(OS_MACOSX)
-  // The character used for displaying obscured text. Use a bullet character on
-  // Mac.
-  static constexpr base::char16 kPasswordReplacementChar = 0x2022;
-
   // On Mac, while selecting text if the cursor is outside the vertical text
   // bounds, drag to the end of the text.
   static constexpr bool kDragToEndIfOutsideVerticalBounds = true;
+  // Mac supports a selection that is "undirected". When undirected, the cursor
+  // doesn't know which end of the selection it's at until it first moves.
+  static constexpr bool kSelectionIsAlwaysDirected = false;
 #else
-  static constexpr base::char16 kPasswordReplacementChar = '*';
   static constexpr bool kDragToEndIfOutsideVerticalBounds = false;
+  static constexpr bool kSelectionIsAlwaysDirected = true;
 #endif
+
+  // The character used for displaying obscured text. Use a bullet character.
+  // TODO(pbos): This is highly font dependent, consider replacing the character
+  // with a vector glyph.
+  static constexpr base::char16 kPasswordReplacementChar = 0x2022;
 
   virtual ~RenderText();
 
@@ -265,7 +233,10 @@ class GFX_EXPORT RenderText {
   bool clip_to_display_rect() const { return clip_to_display_rect_; }
   void set_clip_to_display_rect(bool clip) { clip_to_display_rect_ = clip; }
 
-  // In an obscured (password) field, all text is drawn as asterisks or bullets.
+  int glyph_spacing() const { return glyph_spacing_; }
+  void set_glyph_spacing(int spacing) { glyph_spacing_ = spacing; }
+
+  // In an obscured (password) field, all text is drawn as bullets.
   bool obscured() const { return obscured_; }
   void SetObscured(bool obscured);
 
@@ -323,10 +294,12 @@ class GFX_EXPORT RenderText {
   }
 
   const SelectionModel& selection_model() const { return selection_model_; }
-
   const Range& selection() const { return selection_model_.selection(); }
-
   size_t cursor_position() const { return selection_model_.caret_pos(); }
+
+  // Set the cursor to |position|, with the caret affinity trailing the previous
+  // grapheme, or if there is no previous grapheme, leading the cursor position.
+  // See SelectionModel::caret_affinity_ for details.
   void SetCursorPosition(size_t position);
 
   // Moves the cursor left or right. Cursor movement is visual, meaning that
@@ -342,13 +315,13 @@ class GFX_EXPORT RenderText {
   // Returns true if the cursor position or selection range changed.
   // If any index in |selection_model| is not a cursorable position (not on a
   // grapheme boundary), it is a no-op and returns false.
-  bool MoveCursorTo(const SelectionModel& selection_model);
+  bool SetSelection(const SelectionModel& selection);
 
   // Moves the cursor to the text index corresponding to |point|. If |select| is
   // true, a selection is made with the current selection start index. If the
   // resultant text indices do not lie on valid grapheme boundaries, it is a no-
   // op and returns false.
-  bool MoveCursorTo(const gfx::Point& point, bool select);
+  bool MoveCursorToPoint(const gfx::Point& point, bool select);
 
   // Set the selection_model_ based on |range|.
   // If the |range| start or end is greater than text length, it is modified
@@ -498,11 +471,12 @@ class GFX_EXPORT RenderText {
   // Helper function to be used in tests for retrieving the substring bounds.
   std::vector<Rect> GetSubstringBoundsForTesting(const gfx::Range& range);
 
-  // Gets the horizontal bounds (relative to the left of the text, not the view)
-  // of the glyph starting at |index|. If the glyph is RTL then the returned
+  // Gets the horizontal span (relative to the left of the text, not the view)
+  // of the sequence of glyphs in |text_range|, over which the cursor will
+  // jump when breaking by characters. If the glyphs are RTL then the returned
   // Range will have is_reversed() true.  (This does not return a Rect because a
   // Rect can't have a negative width.)
-  virtual Range GetGlyphBounds(size_t index) = 0;
+  virtual Range GetCursorSpan(const Range& text_range) = 0;
 
   const Vector2d& GetUpdatedDisplayOffset();
   void SetDisplayOffset(int horizontal_offset);
@@ -523,6 +497,8 @@ class GFX_EXPORT RenderText {
   // Retrieves the text in the given |range|.
   base::string16 GetTextFromRange(const Range& range) const;
 
+  void set_strike_thickness_factor(SkScalar f) { strike_thickness_factor_ = f; }
+
  protected:
   RenderText();
 
@@ -536,6 +512,7 @@ class GFX_EXPORT RenderText {
   const BreakList<BaselineStyle>& baselines() const { return baselines_; }
   const BreakList<Font::Weight>& weights() const { return weights_; }
   const std::vector<BreakList<bool> >& styles() const { return styles_; }
+  SkScalar strike_thickness_factor() const { return strike_thickness_factor_; }
 
   const std::vector<internal::Line>& lines() const { return lines_; }
   void set_lines(std::vector<internal::Line>* lines) { lines_.swap(*lines); }
@@ -595,8 +572,8 @@ class GFX_EXPORT RenderText {
   SelectionModel LineSelectionModel(size_t line_index,
                                     gfx::VisualCursorDirection direction);
 
-  // Sets the selection model, the argument is assumed to be valid.
-  virtual void SetSelectionModel(const SelectionModel& model);
+  // Sets the selection model, |model| is assumed to be valid.
+  void SetSelectionModel(const SelectionModel& model);
 
   // Get the visual bounds containing the logical substring within the |range|.
   // If |range| is empty, the result is empty. These bounds could be visually
@@ -687,13 +664,6 @@ class GFX_EXPORT RenderText {
  private:
   friend class test::RenderTextTestApi;
 
-  // Set the cursor to |position|, with the caret trailing the previous
-  // grapheme, or if there is no previous grapheme, leading the cursor position.
-  // If |select| is false, the selection start is moved to the same position.
-  // If the |position| is not a cursorable position (not on grapheme boundary),
-  // it is a NO-OP.
-  void MoveCursorTo(size_t position, bool select);
-
   // Updates |layout_text_| and |display_text_| as needed (or marks them dirty).
   void OnTextAttributeChanged();
 
@@ -755,6 +725,12 @@ class GFX_EXPORT RenderText {
   // Specifies whether the cursor is enabled. If disabled, no space is reserved
   // for the cursor when positioning text.
   bool cursor_enabled_;
+
+  // Whether the current selection has a known direction. That is, whether a
+  // directional input (e.g. arrow key) has been received for the current
+  // selection to indicate which end of the selection has the caret. When true,
+  // directed inputs preserve (rather than replace) the selection affinity.
+  bool has_directed_selection_;
 
   // The color used for drawing selected text.
   SkColor selection_color_;
@@ -857,6 +833,12 @@ class GFX_EXPORT RenderText {
   // Lines computed by EnsureLayout. These should be invalidated upon
   // OnLayoutTextAttributeChanged and OnDisplayTextAttributeChanged calls.
   std::vector<internal::Line> lines_;
+
+  // The ratio of strike-through line thickness to text height.
+  SkScalar strike_thickness_factor_;
+
+  // Extra spacing placed between glyphs; used for obscured text styling.
+  int glyph_spacing_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(RenderText);
 };

@@ -20,7 +20,7 @@
 namespace blink {
 namespace {
 
-void SetDictionaryMembers(DOMMatrixInit& other) {
+void SetDictionaryMembers(DOMMatrix2DInit& other) {
   if (!other.hasM11())
     other.setM11(other.hasA() ? other.a() : 1);
 
@@ -47,42 +47,57 @@ String GetErrorMessage(const char* a, const char* b) {
 
 }  // namespace
 
-bool DOMMatrixReadOnly::ValidateAndFixup(DOMMatrixInit& other,
-                                         ExceptionState& exception_state) {
-  if (other.hasA() && other.hasM11() && other.a() != other.m11()) {
+bool DOMMatrixReadOnly::ValidateAndFixup2D(DOMMatrix2DInit& other,
+                                           ExceptionState& exception_state) {
+  if (other.hasA() && other.hasM11() && other.a() != other.m11() &&
+      !(std::isnan(other.a()) && std::isnan(other.m11()))) {
     exception_state.ThrowTypeError(GetErrorMessage("a", "m11"));
     return false;
   }
-  if (other.hasB() && other.hasM12() && other.b() != other.m12()) {
+  if (other.hasB() && other.hasM12() && other.b() != other.m12() &&
+      !(std::isnan(other.b()) && std::isnan(other.m12()))) {
     exception_state.ThrowTypeError(GetErrorMessage("b", "m12"));
     return false;
   }
-  if (other.hasC() && other.hasM21() && other.c() != other.m21()) {
+  if (other.hasC() && other.hasM21() && other.c() != other.m21() &&
+      !(std::isnan(other.c()) && std::isnan(other.m21()))) {
     exception_state.ThrowTypeError(GetErrorMessage("c", "m21"));
     return false;
   }
-  if (other.hasD() && other.hasM22() && other.d() != other.m22()) {
+  if (other.hasD() && other.hasM22() && other.d() != other.m22() &&
+      !(std::isnan(other.d()) && std::isnan(other.m22()))) {
     exception_state.ThrowTypeError(GetErrorMessage("d", "m22"));
     return false;
   }
-  if (other.hasE() && other.hasM41() && other.e() != other.m41()) {
+  if (other.hasE() && other.hasM41() && other.e() != other.m41() &&
+      !(std::isnan(other.e()) && std::isnan(other.m41()))) {
     exception_state.ThrowTypeError(GetErrorMessage("e", "m41"));
     return false;
   }
-  if (other.hasF() && other.hasM42() && other.f() != other.m42()) {
+  if (other.hasF() && other.hasM42() && other.f() != other.m42() &&
+      !(std::isnan(other.f()) && std::isnan(other.m42()))) {
     exception_state.ThrowTypeError(GetErrorMessage("f", "m42"));
     return false;
   }
+
+  SetDictionaryMembers(other);
+  return true;
+}
+
+bool DOMMatrixReadOnly::ValidateAndFixup(DOMMatrixInit& other,
+                                         ExceptionState& exception_state) {
+  if (!ValidateAndFixup2D(other, exception_state))
+    return false;
+
   if (other.hasIs2D() && other.is2D() &&
       (other.m31() || other.m32() || other.m13() || other.m23() ||
        other.m43() || other.m14() || other.m24() || other.m34() ||
        other.m33() != 1 || other.m44() != 1)) {
     exception_state.ThrowTypeError(
-        "The is2D member is set to true but the input matrix is 3d matrix.");
+        "The is2D member is set to true but the input matrix is a 3d matrix.");
     return false;
   }
 
-  SetDictionaryMembers(other);
   if (!other.hasIs2D()) {
     bool is2d = !(other.m31() || other.m32() || other.m13() || other.m23() ||
                   other.m43() || other.m14() || other.m24() || other.m34() ||
@@ -92,26 +107,47 @@ bool DOMMatrixReadOnly::ValidateAndFixup(DOMMatrixInit& other,
   return true;
 }
 
-DOMMatrixReadOnly* DOMMatrixReadOnly::Create(ExceptionState& exception_state) {
+DOMMatrixReadOnly* DOMMatrixReadOnly::Create(
+    ExecutionContext* execution_context,
+    ExceptionState& exception_state) {
   return new DOMMatrixReadOnly(TransformationMatrix());
 }
 
-DOMMatrixReadOnly* DOMMatrixReadOnly::Create(const String& transform_list,
-                                             ExceptionState& exception_state) {
-  DOMMatrixReadOnly* matrix = new DOMMatrixReadOnly(TransformationMatrix());
-  matrix->SetMatrixValueFromString(transform_list, exception_state);
-  return matrix;
+DOMMatrixReadOnly* DOMMatrixReadOnly::Create(
+    ExecutionContext* execution_context,
+    StringOrUnrestrictedDoubleSequence& init,
+    ExceptionState& exception_state) {
+  if (init.IsString()) {
+    if (!execution_context->IsDocument()) {
+      exception_state.ThrowTypeError(
+          "DOMMatrix can't be constructed with strings on workers.");
+      return nullptr;
+    }
+
+    DOMMatrixReadOnly* matrix = new DOMMatrixReadOnly(TransformationMatrix());
+    matrix->SetMatrixValueFromString(execution_context, init.GetAsString(),
+                                     exception_state);
+    return matrix;
+  }
+
+  if (init.IsUnrestrictedDoubleSequence()) {
+    const Vector<double>& sequence = init.GetAsUnrestrictedDoubleSequence();
+    if (sequence.size() != 6 && sequence.size() != 16) {
+      exception_state.ThrowTypeError(
+          "The sequence must contain 6 elements for a 2D matrix or 16 elements "
+          "for a 3D matrix.");
+      return nullptr;
+    }
+    return new DOMMatrixReadOnly(sequence, sequence.size());
+  }
+
+  NOTREACHED();
+  return nullptr;
 }
 
-DOMMatrixReadOnly* DOMMatrixReadOnly::Create(Vector<double> sequence,
-                                             ExceptionState& exception_state) {
-  if (sequence.size() != 6 && sequence.size() != 16) {
-    exception_state.ThrowTypeError(
-        "The sequence must contain 6 elements for a 2D matrix or 16 elements "
-        "for a 3D matrix.");
-    return nullptr;
-  }
-  return new DOMMatrixReadOnly(sequence, sequence.size());
+DOMMatrixReadOnly* DOMMatrixReadOnly::CreateForSerialization(double sequence[],
+                                                             int size) {
+  return new DOMMatrixReadOnly(sequence, size);
 }
 
 DOMMatrixReadOnly* DOMMatrixReadOnly::fromFloat32Array(
@@ -142,6 +178,18 @@ DOMMatrixReadOnly* DOMMatrixReadOnly::fromFloat64Array(
                                float64_array.View()->length());
 }
 
+DOMMatrixReadOnly* DOMMatrixReadOnly::fromMatrix2D(
+    DOMMatrix2DInit& other,
+    ExceptionState& exception_state) {
+  if (!ValidateAndFixup2D(other, exception_state)) {
+    DCHECK(exception_state.HadException());
+    return nullptr;
+  }
+  double args[] = {other.m11(), other.m12(), other.m21(),
+                   other.m22(), other.m41(), other.m42()};
+  return new DOMMatrixReadOnly(args, 6);
+}
+
 DOMMatrixReadOnly* DOMMatrixReadOnly::fromMatrix(
     DOMMatrixInit& other,
     ExceptionState& exception_state) {
@@ -149,7 +197,6 @@ DOMMatrixReadOnly* DOMMatrixReadOnly::fromMatrix(
     DCHECK(exception_state.HadException());
     return nullptr;
   }
-
   if (other.is2D()) {
     double args[] = {other.m11(), other.m12(), other.m21(),
                      other.m22(), other.m41(), other.m42()};
@@ -257,7 +304,7 @@ DOMMatrix* DOMMatrixReadOnly::inverse() {
 
 DOMPoint* DOMMatrixReadOnly::transformPoint(const DOMPointInit& point) {
   if (is2D() && point.z() == 0 && point.w() == 1) {
-    double x = point.x() * m11() + point.y() * m12() + m41();
+    double x = point.x() * m11() + point.y() * m21() + m41();
     double y = point.x() * m12() + point.y() * m22() + m42();
     return DOMPoint::Create(x, y, 0, 1);
   }
@@ -303,21 +350,83 @@ NotShared<DOMFloat64Array> DOMMatrixReadOnly::toFloat64Array() const {
   return NotShared<DOMFloat64Array>(DOMFloat64Array::Create(array, 16));
 }
 
-const String DOMMatrixReadOnly::toString() const {
-  std::stringstream stream;
-  if (is2D()) {
-    stream << "matrix(" << a() << ", " << b() << ", " << c() << ", " << d()
-           << ", " << e() << ", " << f();
-  } else {
-    stream << "matrix3d(" << m11() << ", " << m12() << ", " << m13() << ", "
-           << m14() << ", " << m21() << ", " << m22() << ", " << m23() << ", "
-           << m24() << ", " << m31() << ", " << m32() << ", " << m33() << ", "
-           << m34() << ", " << m41() << ", " << m42() << ", " << m43() << ", "
-           << m44();
-  }
-  stream << ")";
+const String DOMMatrixReadOnly::toString(
+    ExceptionState& exception_state) const {
+  const char* kComma = ", ";
+  String result;
 
-  return String(stream.str().c_str());
+  if (is2D()) {
+    if (!std::isfinite(a()) || !std::isfinite(b()) || !std::isfinite(c()) ||
+        !std::isfinite(d()) || !std::isfinite(e()) || !std::isfinite(f())) {
+      exception_state.ThrowDOMException(
+          kInvalidStateError,
+          "DOMMatrix cannot be serialized with NaN or Infinity values.");
+      return String();
+    }
+
+    result.append("matrix(");
+    result.append(String::NumberToStringECMAScript(a()));
+    result.append(kComma);
+    result.append(String::NumberToStringECMAScript(b()));
+    result.append(kComma);
+    result.append(String::NumberToStringECMAScript(c()));
+    result.append(kComma);
+    result.append(String::NumberToStringECMAScript(d()));
+    result.append(kComma);
+    result.append(String::NumberToStringECMAScript(e()));
+    result.append(kComma);
+    result.append(String::NumberToStringECMAScript(f()));
+    result.append(")");
+    return result;
+  }
+
+  if (!std::isfinite(m11()) || !std::isfinite(m12()) || !std::isfinite(m13()) ||
+      !std::isfinite(m14()) || !std::isfinite(m21()) || !std::isfinite(m22()) ||
+      !std::isfinite(m23()) || !std::isfinite(m24()) || !std::isfinite(m31()) ||
+      !std::isfinite(m32()) || !std::isfinite(m33()) || !std::isfinite(m34()) ||
+      !std::isfinite(m41()) || !std::isfinite(m42()) || !std::isfinite(m43()) ||
+      !std::isfinite(m44())) {
+    exception_state.ThrowDOMException(
+        kInvalidStateError,
+        "DOMMatrix cannot be serialized with NaN or Infinity values.");
+    return String();
+  }
+
+  result.append("matrix3d(");
+  result.append(String::NumberToStringECMAScript(m11()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m12()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m13()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m14()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m21()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m22()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m23()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m24()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m31()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m32()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m33()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m34()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m41()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m42()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m43()));
+  result.append(kComma);
+  result.append(String::NumberToStringECMAScript(m44()));
+  result.append(")");
+
+  return result;
 }
 
 ScriptValue DOMMatrixReadOnly::toJSONForBinding(
@@ -351,6 +460,7 @@ ScriptValue DOMMatrixReadOnly::toJSONForBinding(
 }
 
 void DOMMatrixReadOnly::SetMatrixValueFromString(
+    const ExecutionContext* execution_context,
     const String& input_string,
     ExceptionState& exception_state) {
   DEFINE_STATIC_LOCAL(String, identity_matrix2d, ("matrix(1, 0, 0, 1, 0, 0)"));
@@ -358,8 +468,9 @@ void DOMMatrixReadOnly::SetMatrixValueFromString(
   if (string.IsEmpty())
     string = identity_matrix2d;
 
-  const CSSValue* value =
-      CSSParser::ParseSingleValue(CSSPropertyTransform, string);
+  const CSSValue* value = CSSParser::ParseSingleValue(
+      CSSPropertyTransform, string,
+      StrictCSSParserContext(execution_context->GetSecureContextMode()));
 
   if (!value || value->IsCSSWideKeyword()) {
     exception_state.ThrowDOMException(

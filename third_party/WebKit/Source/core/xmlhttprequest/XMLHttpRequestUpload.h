@@ -26,13 +26,12 @@
 #ifndef XMLHttpRequestUpload_h
 #define XMLHttpRequestUpload_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "base/memory/scoped_refptr.h"
 #include "core/xmlhttprequest/XMLHttpRequest.h"
 #include "core/xmlhttprequest/XMLHttpRequestEventTarget.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/Forward.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefPtr.h"
+#include "platform/wtf/Forward.h"
 
 namespace blink {
 
@@ -59,7 +58,7 @@ class XMLHttpRequestUpload final : public XMLHttpRequestEventTarget {
 
   void HandleRequestError(const AtomicString&);
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   explicit XMLHttpRequestUpload(XMLHttpRequest*);

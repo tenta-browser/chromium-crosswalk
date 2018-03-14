@@ -14,12 +14,14 @@
 #include "ui/display/display_change_notifier.h"
 #include "ui/display/display_export.h"
 #include "ui/display/screen.h"
+#include "ui/display/win/color_profile_reader.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/win/singleton_hwnd_observer.h"
 
 namespace gfx {
 class Display;
 class Point;
+class PointF;
 class Rect;
 class Size;
 }   // namespace gfx
@@ -30,7 +32,8 @@ namespace win {
 class DisplayInfo;
 class ScreenWinDisplay;
 
-class DISPLAY_EXPORT ScreenWin : public Screen {
+class DISPLAY_EXPORT ScreenWin : public Screen,
+                                 public ColorProfileReader::Client {
  public:
   ScreenWin();
   ~ScreenWin() override;
@@ -38,7 +41,7 @@ class DISPLAY_EXPORT ScreenWin : public Screen {
   // Converts a screen physical point to a screen DIP point.
   // The DPI scale is performed relative to the display containing the physical
   // point.
-  static gfx::Point ScreenToDIPPoint(const gfx::Point& pixel_point);
+  static gfx::PointF ScreenToDIPPoint(const gfx::PointF& pixel_point);
 
   // Converts a screen DIP point to a screen physical point.
   // The DPI scale is performed relative to the display containing the DIP
@@ -109,6 +112,20 @@ class DISPLAY_EXPORT ScreenWin : public Screen {
   // you are targeting.
   static float GetSystemScaleFactor();
 
+  // Set a callback to use to query the status of HDR. This callback will be
+  // called when the status of HDR may have changed.
+  using RequestHDRStatusCallback = base::Callback<void()>;
+  static void SetRequestHDRStatusCallback(
+      RequestHDRStatusCallback request_hdr_status_callback);
+
+  // Set whether or not to treat all displays as HDR capable. Note that
+  // more precise information about which displays are HDR capable is
+  // available. We make a conscious choice to force all displays to HDR mode if
+  // any display is in HDR mode, under the assumption that the user will be
+  // using the HDR display to view media, and thus will want all media queries
+  // to return that HDR is supported.
+  static void SetHDREnabled(bool hdr_enabled);
+
   // Returns the HWND associated with the NativeView.
   virtual HWND GetHWNDFromNativeView(gfx::NativeView view) const;
 
@@ -116,6 +133,8 @@ class DISPLAY_EXPORT ScreenWin : public Screen {
   virtual gfx::NativeWindow GetNativeWindowFromHWND(HWND hwnd) const;
 
  protected:
+  ScreenWin(bool initialize);
+
   // Screen:
   gfx::Point GetCursorScreenPoint() override;
   bool IsWindowUnderCursor(gfx::NativeWindow window) override;
@@ -133,10 +152,12 @@ class DISPLAY_EXPORT ScreenWin : public Screen {
   gfx::Rect DIPToScreenRectInWindow(
       gfx::NativeView view, const gfx::Rect& dip_rect) const override;
 
+  // ColorProfileReader::Client:
+  void OnColorProfilesChanged() override;
+
   void UpdateFromDisplayInfos(const std::vector<DisplayInfo>& display_infos);
 
   // Virtual to support mocking by unit tests.
-  virtual void Initialize();
   virtual MONITORINFOEX MonitorInfoFromScreenPoint(
       const gfx::Point& screen_point) const;
   virtual MONITORINFOEX MonitorInfoFromScreenRect(const gfx::Rect& screen_rect)
@@ -147,7 +168,9 @@ class DISPLAY_EXPORT ScreenWin : public Screen {
   virtual int GetSystemMetrics(int metric) const;
 
  private:
+  void Initialize();
   void OnWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
+  void UpdateAllDisplaysAndNotify();
 
   // Returns the ScreenWinDisplay closest to or enclosing |hwnd|.
   ScreenWinDisplay GetScreenWinDisplayNearestHWND(HWND hwnd) const;
@@ -192,6 +215,16 @@ class DISPLAY_EXPORT ScreenWin : public Screen {
   // The Displays corresponding to |screen_win_displays_| for GetAllDisplays().
   // This must be updated anytime |screen_win_displays_| is updated.
   std::vector<Display> displays_;
+
+  // A helper to read color profiles from the filesystem.
+  std::unique_ptr<ColorProfileReader> color_profile_reader_;
+
+  // Callback to use to query when the HDR status may have changed.
+  RequestHDRStatusCallback request_hdr_status_callback_;
+
+  // Whether or not HDR mode is enabled for any monitor via the "HDR and
+  // advanced color" setting.
+  bool hdr_enabled_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(ScreenWin);
 };

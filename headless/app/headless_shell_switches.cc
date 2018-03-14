@@ -12,6 +12,13 @@ namespace switches {
 // transparent.
 const char kDefaultBackgroundColor[] = "default-background-color";
 
+// Enable crash reporter for headless.
+const char kEnableCrashReporter[] = "enable-crash-reporter";
+
+// Disable crash reporter for headless. It is enabled by default in official
+// builds.
+const char kDisableCrashReporter[] = "disable-crash-reporter";
+
 // The directory breakpad should store minidumps in.
 const char kCrashDumpsDir[] = "crash-dumps-dir";
 
@@ -26,8 +33,24 @@ const char kDumpDom[] = "dump-dom";
 // Hide scrollbars from screenshots.
 const char kHideScrollbars[] = "hide-scrollbars";
 
+// Specifies which encryption storage backend to use. Possible values are
+// kwallet, kwallet5, gnome, gnome-keyring, gnome-libsecret, basic. Any other
+// value will lead to Chrome detecting the best backend automatically.
+// TODO(crbug.com/571003): Once PasswordStore no longer uses the Keyring or
+// KWallet for storing passwords, rename this flag to stop referencing
+// passwords. Do not rename it sooner, though; developers and testers might
+// rely on it keeping large amounts of testing passwords out of their Keyrings
+// or KWallets.
+const char kPasswordStore[] = "password-store";
+
 // Save a pdf file of the loaded page.
 const char kPrintToPDF[] = "print-to-pdf";
+
+// Specifies a list of hosts for whom we bypass proxy settings and use direct
+// connections. Ignored unless --proxy-server is also specified. This is a
+// comma-separated list of bypass rules. See: "net/proxy/proxy_bypass_rules.h"
+// for the format of these rules.
+const char kProxyBypassList[] = "proxy-bypass-list";
 
 // Uses a specified proxy server, overrides system settings. This switch only
 // affects HTTP and HTTPS requests.
@@ -39,12 +62,27 @@ const char kProxyServer[] = "proxy-server";
 // so exposing it too widely can be a security risk.
 const char kRemoteDebuggingAddress[] = "remote-debugging-address";
 
+// The given value is the fd of a socket already opened by the parent process.
+// This allows automation to provide a listening socket for clients to connect
+// to before chrome is fully fired up. In particular, a parent process can
+// open the port, exec headles chrome, and connect to the devtools port
+// immediately. Waiting for chrome to be ready is then handled by the first
+// read from the port, which will block until chrome is ready. No polling is
+// needed.
+const char kRemoteDebuggingSocketFd[] = "remote-debugging-socket-fd";
+
 // Runs a read-eval-print loop that allows the user to evaluate Javascript
 // expressions.
 const char kRepl[] = "repl";
 
 // Save a screenshot of the loaded page.
 const char kScreenshot[] = "screenshot";
+
+// Causes SSL key material to be logged to the specified file for debugging
+// purposes. See
+// https://developer.mozilla.org/en-US/docs/Mozilla/Projects/NSS/Key_Log_Format
+// for the format.
+const char kSSLKeyLogFile[] = "ssl-key-log-file";
 
 // Issues a stop after the specified number of milliseconds.  This cancels all
 // navigation and causes the DOMContentLoaded event to fire.

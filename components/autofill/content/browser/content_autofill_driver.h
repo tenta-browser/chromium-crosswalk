@@ -25,6 +25,7 @@ class RenderFrameHost;
 namespace autofill {
 
 class AutofillClient;
+class AutofillProvider;
 
 // Class that drives autofill flow in the browser process based on
 // communication from the renderer and from the external world. There is one
@@ -37,7 +38,8 @@ class ContentAutofillDriver : public AutofillDriver,
       content::RenderFrameHost* render_frame_host,
       AutofillClient* client,
       const std::string& app_locale,
-      AutofillManager::AutofillDownloadManagerState enable_download_manager);
+      AutofillManager::AutofillDownloadManagerState enable_download_manager,
+      AutofillProvider* provider);
   ~ContentAutofillDriver() override;
 
   // Gets the driver for |render_frame_host|.
@@ -49,7 +51,6 @@ class ContentAutofillDriver : public AutofillDriver,
   // AutofillDriver:
   bool IsIncognito() const override;
   net::URLRequestContextGetter* GetURLRequestContext() override;
-  base::SequencedWorkerPool* GetBlockingPool() override;
   bool RendererIsAvailable() override;
   void SendFormDataToRenderer(int query_id,
                               RendererFormDataAction action,
@@ -77,13 +78,20 @@ class ContentAutofillDriver : public AutofillDriver,
   void FormSubmitted(const FormData& form) override;
   void TextFieldDidChange(const FormData& form,
                           const FormFieldData& field,
+                          const gfx::RectF& bounding_box,
                           base::TimeTicks timestamp) override;
+  void TextFieldDidScroll(const FormData& form,
+                          const FormFieldData& field,
+                          const gfx::RectF& bounding_box) override;
   void QueryFormFieldAutofill(int32_t id,
                               const FormData& form,
                               const FormFieldData& field,
                               const gfx::RectF& bounding_box) override;
   void HidePopup() override;
   void FocusNoLongerOnForm() override;
+  void FocusOnFormField(const FormData& form,
+                        const FormFieldData& field,
+                        const gfx::RectF& bounding_box) override;
   void DidFillAutofillFormData(const FormData& form,
                                base::TimeTicks timestamp) override;
   void DidPreviewAutofillFormData() override;
@@ -91,14 +99,15 @@ class ContentAutofillDriver : public AutofillDriver,
   void SetDataList(const std::vector<base::string16>& values,
                    const std::vector<base::string16>& labels) override;
 
-  // Called when the frame has navigated.
-  void DidNavigateFrame(content::NavigationHandle* navigation_handle);
+  // Called when the main frame has navigated. Explicitely will not trigger for
+  // subframe navigations. See navigation_handle.h for details.
+  void DidNavigateMainFrame(content::NavigationHandle* navigation_handle);
 
   AutofillExternalDelegate* autofill_external_delegate() {
-    return &autofill_external_delegate_;
+    return autofill_external_delegate_.get();
   }
 
-  AutofillManager* autofill_manager() { return autofill_manager_.get(); }
+  AutofillManager* autofill_manager() { return autofill_manager_; }
   content::RenderFrameHost* render_frame_host() { return render_frame_host_; }
 
   const mojom::AutofillAgentPtr& GetAutofillAgent();
@@ -124,13 +133,18 @@ class ContentAutofillDriver : public AutofillDriver,
   // always be non-NULL and valid for lifetime of |this|.
   content::RenderFrameHost* const render_frame_host_;
 
-  // AutofillManager instance via which this object drives the shared Autofill
+  // AutofillHandler instance via which this object drives the shared Autofill
   // code.
-  std::unique_ptr<AutofillManager> autofill_manager_;
+  std::unique_ptr<AutofillHandler> autofill_handler_;
+
+  // The pointer to autofill_handler_ if it is AutofillManager instance.
+  // TODO: unify autofill_handler_ and autofill_manager_ to a single pointer to
+  // a common root.
+  AutofillManager* autofill_manager_;
 
   // AutofillExternalDelegate instance that this object instantiates in the
   // case where the Autofill native UI is enabled.
-  AutofillExternalDelegate autofill_external_delegate_;
+  std::unique_ptr<AutofillExternalDelegate> autofill_external_delegate_;
 
   KeyPressHandlerManager key_press_handler_manager_;
 

@@ -5,13 +5,13 @@
 #include "modules/indexeddb/IDBObserverChanges.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/ToV8ForCore.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/modules/v8/ToV8ForModules.h"
 #include "bindings/modules/v8/V8BindingForModules.h"
 #include "modules/indexeddb/IDBAny.h"
 #include "modules/indexeddb/IDBObservation.h"
+#include "platform/bindings/ScriptState.h"
 #include "public/platform/modules/indexeddb/WebIDBObservation.h"
 
 namespace blink {
@@ -72,10 +72,11 @@ void IDBObserverChanges::ExtractChanges(
   }
 }
 
-DEFINE_TRACE(IDBObserverChanges) {
+void IDBObserverChanges::Trace(blink::Visitor* visitor) {
   visitor->Trace(database_);
   visitor->Trace(transaction_);
   visitor->Trace(records_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

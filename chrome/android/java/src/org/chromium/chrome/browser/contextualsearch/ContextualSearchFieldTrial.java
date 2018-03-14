@@ -25,16 +25,13 @@ public class ContextualSearchFieldTrial {
     static final String MANDATORY_PROMO_LIMIT = "mandatory_promo_limit";
     static final int MANDATORY_PROMO_DEFAULT_LIMIT = 10;
 
-    private static final String PEEK_PROMO_FORCED = "peek_promo_forced";
-    @VisibleForTesting
-    static final String PEEK_PROMO_ENABLED = "peek_promo_enabled";
-    private static final String PEEK_PROMO_MAX_SHOW_COUNT = "peek_promo_max_show_count";
-    private static final int PEEK_PROMO_DEFAULT_MAX_SHOW_COUNT = 10;
-
     private static final String DISABLE_SEARCH_TERM_RESOLUTION = "disable_search_term_resolution";
-    private static final String ENABLE_BLACKLIST = "enable_blacklist";
+    private static final String WAIT_AFTER_TAP_DELAY_MS = "wait_after_tap_delay_ms";
 
-    // Translation.  All these members are private, except for usage by testing.
+    // ------------
+    // Translation.
+    // ------------
+    // All these members are private, except for usage by testing.
     // Master switch, needed to disable all translate code for Contextual Search in case of an
     // emergency.
     @VisibleForTesting
@@ -44,41 +41,73 @@ public class ContextualSearchFieldTrial {
     static final String ENABLE_ENGLISH_TARGET_TRANSLATION =
             "enable_english_target_translation";
 
+    // ---------------------------------------------
+    // Features for suppression or machine learning.
+    // ---------------------------------------------
     // TODO(donnd): remove all supporting code once short-lived data collection is done.
     private static final String SCREEN_TOP_SUPPRESSION_DPS = "screen_top_suppression_dps";
     private static final String ENABLE_BAR_OVERLAP_COLLECTION = "enable_bar_overlap_collection";
     private static final String BAR_OVERLAP_SUPPRESSION_ENABLED = "enable_bar_overlap_suppression";
+    private static final String WORD_EDGE_SUPPRESSION_ENABLED = "enable_word_edge_suppression";
+    private static final String SHORT_WORD_SUPPRESSION_ENABLED = "enable_short_word_suppression";
+    private static final String NOT_LONG_WORD_SUPPRESSION_ENABLED =
+            "enable_not_long_word_suppression";
+    @VisibleForTesting
+    static final String NOT_AN_ENTITY_SUPPRESSION_ENABLED = "enable_not_an_entity_suppression";
+    // The threshold for tap suppression based on duration.
+    private static final String TAP_DURATION_THRESHOLD_MS = "tap_duration_threshold_ms";
+    // The threshold for tap suppression based on a recent scroll.
+    private static final String RECENT_SCROLL_DURATION_MS = "recent_scroll_duration_ms";
 
     private static final String MINIMUM_SELECTION_LENGTH = "minimum_selection_length";
 
+    // -----------------
+    // Disable switches.
+    // -----------------
     // Safety switch for disabling online-detection.  Also used to disable detection when running
     // tests.
     @VisibleForTesting
     static final String ONLINE_DETECTION_DISABLED = "disable_online_detection";
-
     private static final String DISABLE_AMP_AS_SEPARATE_TAB = "disable_amp_as_separate_tab";
+    // Disable logging for Machine Learning
+    private static final String DISABLE_UKM_RANKER_LOGGING = "disable_ukm_ranker_logging";
+    private static final String DISABLE_SUPPRESS_FOR_SMART_SELECTION =
+            "disable_suppress_for_smart_selection";
 
-    // Privacy-related flags
+    // ----------------------
+    // Privacy-related flags.
+    // ----------------------
     private static final String DISABLE_SEND_HOME_COUNTRY = "disable_send_home_country";
+    private static final String DISABLE_PAGE_CONTENT_NOTIFICATION =
+            "disable_page_content_notification";
 
     // Cached values to avoid repeated and redundant JNI operations.
+    // TODO(donnd): consider creating a single Map to cache these static values.
     private static Boolean sEnabled;
     private static Boolean sDisableSearchTermResolution;
     private static Boolean sIsMandatoryPromoEnabled;
     private static Integer sMandatoryPromoLimit;
-    private static Boolean sIsPeekPromoEnabled;
-    private static Integer sPeekPromoMaxCount;
     private static Boolean sIsTranslationDisabled;
     private static Boolean sIsEnglishTargetTranslationEnabled;
     private static Integer sScreenTopSuppressionDps;
     private static Boolean sIsBarOverlapCollectionEnabled;
     private static Boolean sIsBarOverlapSuppressionEnabled;
+    private static Boolean sIsWordEdgeSuppressionEnabled;
+    private static Boolean sIsShortWordSuppressionEnabled;
+    private static Boolean sIsNotLongWordSuppressionEnabled;
+    private static Boolean sIsNotAnEntitySuppressionEnabled;
     private static Integer sMinimumSelectionLength;
     private static Boolean sIsOnlineDetectionDisabled;
     private static Boolean sIsAmpAsSeparateTabDisabled;
-    private static Boolean sContextualSearchSingleActionsEnabled;
+    private static Boolean sContextualSearchMlTapSuppressionEnabled;
+    private static Boolean sContextualSearchSecondTapMlOverrideEnabled;
     private static Boolean sIsSendHomeCountryDisabled;
-    private static Boolean sContextualSearchUrlActionsEnabled;
+    private static Boolean sIsPageContentNotificationDisabled;
+    private static Boolean sIsUkmRankerLoggingDisabled;
+    private static Boolean sIsSuppressForSmartSelectionDisabled;
+    private static Integer sWaitAfterTapDelayMs;
+    private static Integer sTapDurationThresholdMs;
+    private static Integer sRecentScrollDurationMs;
 
     /**
      * Don't instantiate.
@@ -158,42 +187,6 @@ public class ContextualSearchFieldTrial {
     }
 
     /**
-     * @return Whether the Peek Promo is forcibly enabled (used for testing).
-     */
-    static boolean isPeekPromoForced() {
-        return CommandLine.getInstance().hasSwitch(PEEK_PROMO_FORCED);
-    }
-
-    /**
-     * @return Whether the Peek Promo is enabled.
-     */
-    static boolean isPeekPromoEnabled() {
-        if (sIsPeekPromoEnabled == null) {
-            sIsPeekPromoEnabled = getBooleanParam(PEEK_PROMO_ENABLED);
-        }
-        return sIsPeekPromoEnabled.booleanValue();
-    }
-
-    /**
-     * @return Whether the blacklist is enabled.
-     */
-    static boolean isBlacklistEnabled() {
-        return getBooleanParam(ENABLE_BLACKLIST);
-    }
-
-    /**
-     * @return The maximum number of times the Peek Promo should be displayed.
-     */
-    static int getPeekPromoMaxShowCount() {
-        if (sPeekPromoMaxCount == null) {
-            sPeekPromoMaxCount = getIntParamValueOrDefault(
-                    PEEK_PROMO_MAX_SHOW_COUNT,
-                    PEEK_PROMO_DEFAULT_MAX_SHOW_COUNT);
-        }
-        return sPeekPromoMaxCount.intValue();
-    }
-
-    /**
      * @return Whether all translate code is disabled.
      */
     static boolean isTranslationDisabled() {
@@ -247,6 +240,46 @@ public class ContextualSearchFieldTrial {
     }
 
     /**
+     * @return Whether triggering is suppressed by a tap that's near the edge of a word.
+     */
+    static boolean isWordEdgeSuppressionEnabled() {
+        if (sIsWordEdgeSuppressionEnabled == null) {
+            sIsWordEdgeSuppressionEnabled = getBooleanParam(WORD_EDGE_SUPPRESSION_ENABLED);
+        }
+        return sIsWordEdgeSuppressionEnabled.booleanValue();
+    }
+
+    /**
+     * @return Whether triggering is suppressed by a tap that's in a short word.
+     */
+    static boolean isShortWordSuppressionEnabled() {
+        if (sIsShortWordSuppressionEnabled == null) {
+            sIsShortWordSuppressionEnabled = getBooleanParam(SHORT_WORD_SUPPRESSION_ENABLED);
+        }
+        return sIsShortWordSuppressionEnabled.booleanValue();
+    }
+
+    /**
+     * @return Whether triggering is suppressed by a tap that's not in a long word.
+     */
+    static boolean isNotLongWordSuppressionEnabled() {
+        if (sIsNotLongWordSuppressionEnabled == null) {
+            sIsNotLongWordSuppressionEnabled = getBooleanParam(NOT_LONG_WORD_SUPPRESSION_ENABLED);
+        }
+        return sIsNotLongWordSuppressionEnabled.booleanValue();
+    }
+
+    /**
+     * @return Whether triggering is suppressed for a tap that's not on an entity.
+     */
+    static boolean isNotAnEntitySuppressionEnabled() {
+        if (sIsNotAnEntitySuppressionEnabled == null) {
+            sIsNotAnEntitySuppressionEnabled = getBooleanParam(NOT_AN_ENTITY_SUPPRESSION_ENABLED);
+        }
+        return sIsNotAnEntitySuppressionEnabled.booleanValue();
+    }
+
+    /**
      * @return The minimum valid selection length.
      */
     static int getMinimumSelectionLength() {
@@ -287,32 +320,104 @@ public class ContextualSearchFieldTrial {
         return sIsSendHomeCountryDisabled.booleanValue();
     }
 
-    // ---------------
-    // Features.
-    // ---------------
-
     /**
-     * @return Whether or not single actions based on Contextual Cards is enabled.
+     * @return Whether sending the page content notifications to observers (e.g. icing for
+     *         conversational search) is disabled.
      */
-    static boolean isContextualSearchSingleActionsEnabled() {
-        if (sContextualSearchSingleActionsEnabled == null) {
-            sContextualSearchSingleActionsEnabled =
-                    ChromeFeatureList.isEnabled(ChromeFeatureList.CONTEXTUAL_SEARCH_SINGLE_ACTIONS);
+    static boolean isPageContentNotificationDisabled() {
+        if (sIsPageContentNotificationDisabled == null) {
+            sIsPageContentNotificationDisabled = getBooleanParam(DISABLE_PAGE_CONTENT_NOTIFICATION);
         }
-
-        return sContextualSearchSingleActionsEnabled;
+        return sIsPageContentNotificationDisabled.booleanValue();
     }
 
     /**
-     * @return Whether or not URL actions based on Contextual Cards is enabled.
+     * @return Whether or not logging to Ranker via UKM is disabled.
      */
-    static boolean isContextualSearchUrlActionsEnabled() {
-        if (sContextualSearchUrlActionsEnabled == null) {
-            sContextualSearchUrlActionsEnabled =
-                    ChromeFeatureList.isEnabled(ChromeFeatureList.CONTEXTUAL_SEARCH_URL_ACTIONS);
+    static boolean isUkmRankerLoggingDisabled() {
+        if (sIsUkmRankerLoggingDisabled == null) {
+            sIsUkmRankerLoggingDisabled = getBooleanParam(DISABLE_UKM_RANKER_LOGGING);
         }
+        return sIsUkmRankerLoggingDisabled;
+    }
 
-        return sContextualSearchUrlActionsEnabled;
+    /**
+     * Determines whether the Contextual Search UI is suppressed when Smart Select is active.
+     * This applies to long-press activation of a UI for Smart Select and/or Contextual Search. If
+     * this returns true, the Contextual Search Bar will be allowed to show in response to a
+     * long-press gesture on Android O even when the Smart Select UI may be active.
+     * @return Whether suppression our UI when Smart Select is active has been disabled.
+     */
+    static boolean isSuppressForSmartSelectionDisabled() {
+        if (sIsSuppressForSmartSelectionDisabled == null) {
+            sIsSuppressForSmartSelectionDisabled =
+                    getBooleanParam(DISABLE_SUPPRESS_FOR_SMART_SELECTION);
+        }
+        return sIsSuppressForSmartSelectionDisabled;
+    }
+
+    /**
+     * Gets an amount to delay after a Tap gesture is recognized, in case some user gesture
+     * immediately follows that would prevent the UI from showing.
+     * The classic example is a scroll, which might be a signal that the previous tap was
+     * accidental.
+     * @return The delay in MS after the Tap before showing any UI.
+     */
+    static int getWaitAfterTapDelayMs() {
+        if (sWaitAfterTapDelayMs == null) {
+            sWaitAfterTapDelayMs = getIntParamValueOrDefault(WAIT_AFTER_TAP_DELAY_MS, 0);
+        }
+        return sWaitAfterTapDelayMs.intValue();
+    }
+
+    /**
+     * Gets a threshold for the duration of a tap gesture for categorization as brief or lengthy.
+     * @return The maximum amount of time in milliseconds for a tap gesture that's still considered
+     *         a very brief duration tap.
+     */
+    static int getTapDurationThresholdMs() {
+        if (sTapDurationThresholdMs == null) {
+            sTapDurationThresholdMs = getIntParamValueOrDefault(TAP_DURATION_THRESHOLD_MS, 0);
+        }
+        return sTapDurationThresholdMs.intValue();
+    }
+
+    /**
+     * Gets the duration to use for suppressing Taps after a recent scroll, or {@code 0} if no
+     * suppression is configured.
+     * @return The period of time after a scroll when tap triggering is suppressed.
+     */
+    static int getRecentScrollDurationMs() {
+        if (sRecentScrollDurationMs == null) {
+            sRecentScrollDurationMs = getIntParamValueOrDefault(RECENT_SCROLL_DURATION_MS, 0);
+        }
+        return sRecentScrollDurationMs.intValue();
+    }
+
+    // ---------------------------
+    // Feature-controlled Switches
+    // ---------------------------
+
+    /**
+     * @return Whether or not ML-based Tap suppression is enabled.
+     */
+    static boolean isContextualSearchMlTapSuppressionEnabled() {
+        if (sContextualSearchMlTapSuppressionEnabled == null) {
+            sContextualSearchMlTapSuppressionEnabled = ChromeFeatureList.isEnabled(
+                    ChromeFeatureList.CONTEXTUAL_SEARCH_ML_TAP_SUPPRESSION);
+        }
+        return sContextualSearchMlTapSuppressionEnabled;
+    }
+
+    /**
+     * @return Whether or not to override an ML-based Tap suppression on a second tap.
+     */
+    static boolean isContextualSearchSecondTapMlOverrideEnabled() {
+        if (sContextualSearchSecondTapMlOverrideEnabled == null) {
+            sContextualSearchSecondTapMlOverrideEnabled =
+                    ChromeFeatureList.isEnabled(ChromeFeatureList.CONTEXTUAL_SEARCH_SECOND_TAP);
+        }
+        return sContextualSearchSecondTapMlOverrideEnabled;
     }
 
     // --------------------------------------------------------------------------------------------

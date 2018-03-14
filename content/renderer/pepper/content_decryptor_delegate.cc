@@ -10,6 +10,7 @@
 
 #include "base/callback_helpers.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/trace_event/trace_event.h"
@@ -35,6 +36,7 @@
 #include "ppapi/thunk/ppb_buffer_api.h"
 #include "ui/gfx/geometry/rect.h"
 
+using media::CdmMessageType;
 using media::CdmPromise;
 using media::CdmSessionType;
 using media::ContentDecryptionModule;
@@ -64,7 +66,7 @@ bool MakeBufferResource(PP_Instance instance,
   DCHECK(resource);
 
   if (data.empty()) {
-    resource = NULL;
+    resource = nullptr;
     return true;
   }
 
@@ -139,6 +141,33 @@ bool MakeEncryptedBlockInfo(const scoped_refptr<media::DecoderBuffer>& buffer,
   }
 
   return true;
+}
+
+PP_HdcpVersion MediaHdcpVersionToPpHdcpVersion(
+    media::HdcpVersion hdcp_version) {
+  switch (hdcp_version) {
+    case media::HdcpVersion::kHdcpVersionNone:
+      return PP_HDCPVERSION_NONE;
+    case media::HdcpVersion::kHdcpVersion1_0:
+      return PP_HDCPVERSION_1_0;
+    case media::HdcpVersion::kHdcpVersion1_1:
+      return PP_HDCPVERSION_1_1;
+    case media::HdcpVersion::kHdcpVersion1_2:
+      return PP_HDCPVERSION_1_2;
+    case media::HdcpVersion::kHdcpVersion1_3:
+      return PP_HDCPVERSION_1_3;
+    case media::HdcpVersion::kHdcpVersion1_4:
+      return PP_HDCPVERSION_1_4;
+    case media::HdcpVersion::kHdcpVersion2_0:
+      return PP_HDCPVERSION_2_0;
+    case media::HdcpVersion::kHdcpVersion2_1:
+      return PP_HDCPVERSION_2_1;
+    case media::HdcpVersion::kHdcpVersion2_2:
+      return PP_HDCPVERSION_2_2;
+  }
+
+  NOTREACHED();
+  return PP_HDCPVERSION_2_2;
 }
 
 PP_AudioCodec MediaAudioCodecToPpAudioCodec(media::AudioCodec codec) {
@@ -305,22 +334,16 @@ CdmPromise::Exception PpExceptionTypeToCdmPromiseException(
     PP_CdmExceptionCode exception_code) {
   switch (exception_code) {
     case PP_CDMEXCEPTIONCODE_NOTSUPPORTEDERROR:
-      return CdmPromise::NOT_SUPPORTED_ERROR;
+      return CdmPromise::Exception::NOT_SUPPORTED_ERROR;
     case PP_CDMEXCEPTIONCODE_INVALIDSTATEERROR:
-      return CdmPromise::INVALID_STATE_ERROR;
-    case PP_CDMEXCEPTIONCODE_INVALIDACCESSERROR:
-      return CdmPromise::INVALID_ACCESS_ERROR;
+      return CdmPromise::Exception::INVALID_STATE_ERROR;
+    case PP_CDMEXCEPTIONCODE_TYPEERROR:
+      return CdmPromise::Exception::TYPE_ERROR;
     case PP_CDMEXCEPTIONCODE_QUOTAEXCEEDEDERROR:
-      return CdmPromise::QUOTA_EXCEEDED_ERROR;
-    case PP_CDMEXCEPTIONCODE_UNKNOWNERROR:
-      return CdmPromise::UNKNOWN_ERROR;
-    case PP_CDMEXCEPTIONCODE_CLIENTERROR:
-      return CdmPromise::CLIENT_ERROR;
-    case PP_CDMEXCEPTIONCODE_OUTPUTERROR:
-      return CdmPromise::OUTPUT_ERROR;
+      return CdmPromise::Exception::QUOTA_EXCEEDED_ERROR;
     default:
       NOTREACHED();
-      return CdmPromise::UNKNOWN_ERROR;
+      return CdmPromise::Exception::NOT_SUPPORTED_ERROR;
   }
 }
 
@@ -347,23 +370,21 @@ media::CdmKeyInformation::KeyStatus PpCdmKeyStatusToCdmKeyInformationKeyStatus(
   }
 }
 
-ContentDecryptionModule::MessageType PpCdmMessageTypeToMediaMessageType(
+CdmMessageType PpCdmMessageTypeToMediaMessageType(
     PP_CdmMessageType message_type) {
   switch (message_type) {
     case PP_CDMMESSAGETYPE_LICENSE_REQUEST:
-      return ContentDecryptionModule::LICENSE_REQUEST;
+      return CdmMessageType::LICENSE_REQUEST;
     case PP_CDMMESSAGETYPE_LICENSE_RENEWAL:
-      return ContentDecryptionModule::LICENSE_RENEWAL;
+      return CdmMessageType::LICENSE_RENEWAL;
     case PP_CDMMESSAGETYPE_LICENSE_RELEASE:
-      return ContentDecryptionModule::LICENSE_RELEASE;
+      return CdmMessageType::LICENSE_RELEASE;
     default:
       NOTREACHED();
-      return ContentDecryptionModule::LICENSE_REQUEST;
+      return CdmMessageType::LICENSE_REQUEST;
   }
 }
 
-// TODO(xhwang): Unify EME UMA reporting code when prefixed EME is deprecated.
-// See http://crbug.com/412987 for details.
 void ReportSystemCodeUMA(const std::string& key_system, uint32_t system_code) {
   // Sparse histogram macro does not cache the histogram, so it's safe to use
   // macro with non-static histogram name here.
@@ -429,7 +450,7 @@ void ContentDecryptorDelegate::SetServerCertificate(
     std::unique_ptr<media::SimpleCdmPromise> promise) {
   if (certificate.size() < media::limits::kMinCertificateLength ||
       certificate.size() > media::limits::kMaxCertificateLength) {
-    promise->reject(CdmPromise::INVALID_ACCESS_ERROR, 0,
+    promise->reject(CdmPromise::Exception::TYPE_ERROR, 0,
                     "Incorrect certificate.");
     return;
   }
@@ -440,6 +461,15 @@ void ContentDecryptorDelegate::SetServerCertificate(
           base::checked_cast<uint32_t>(certificate.size()), certificate.data());
   plugin_decryption_interface_->SetServerCertificate(
       pp_instance_, promise_id, certificate_array);
+}
+
+void ContentDecryptorDelegate::GetStatusForPolicy(
+    media::HdcpVersion min_hdcp_version,
+    std::unique_ptr<media::KeyStatusCdmPromise> promise) {
+  uint32_t promise_id = cdm_promise_adapter_.SavePromise(std::move(promise));
+  plugin_decryption_interface_->GetStatusForPolicy(
+      pp_instance_, promise_id,
+      MediaHdcpVersionToPpHdcpVersion(min_hdcp_version));
 }
 
 void ContentDecryptorDelegate::CreateSessionAndGenerateRequest(
@@ -483,7 +513,7 @@ void ContentDecryptorDelegate::CloseSession(
     const std::string& session_id,
     std::unique_ptr<SimpleCdmPromise> promise) {
   if (session_id.length() > media::limits::kMaxSessionIdLength) {
-    promise->reject(CdmPromise::INVALID_ACCESS_ERROR, 0, "Incorrect session.");
+    promise->reject(CdmPromise::Exception::TYPE_ERROR, 0, "Incorrect session.");
     return;
   }
 
@@ -496,7 +526,7 @@ void ContentDecryptorDelegate::RemoveSession(
     const std::string& session_id,
     std::unique_ptr<SimpleCdmPromise> promise) {
   if (session_id.length() > media::limits::kMaxSessionIdLength) {
-    promise->reject(CdmPromise::INVALID_ACCESS_ERROR, 0, "Incorrect session.");
+    promise->reject(CdmPromise::Exception::TYPE_ERROR, 0, "Incorrect session.");
     return;
   }
 
@@ -562,14 +592,14 @@ bool ContentDecryptorDelegate::CancelDecrypt(
       // Release the shared memory as it can still be in use by the plugin.
       // The next Decrypt() call will need to allocate a new shared memory
       // buffer.
-      audio_input_resource_ = NULL;
+      audio_input_resource_ = nullptr;
       decrypt_cb = audio_decrypt_cb_.ResetAndReturn();
       break;
     case Decryptor::kVideo:
       // Release the shared memory as it can still be in use by the plugin.
       // The next Decrypt() call will need to allocate a new shared memory
       // buffer.
-      video_input_resource_ = NULL;
+      video_input_resource_ = nullptr;
       decrypt_cb = video_decrypt_cb_.ResetAndReturn();
       break;
     default:
@@ -578,7 +608,7 @@ bool ContentDecryptorDelegate::CancelDecrypt(
   }
 
   if (!decrypt_cb.is_null())
-    decrypt_cb.Run(Decryptor::kSuccess, NULL);
+    decrypt_cb.Run(Decryptor::kSuccess, nullptr);
 
   return true;
 }
@@ -749,6 +779,13 @@ void ContentDecryptorDelegate::OnPromiseResolved(uint32_t promise_id) {
   cdm_promise_adapter_.ResolvePromise(promise_id);
 }
 
+void ContentDecryptorDelegate::OnPromiseResolvedWithKeyStatus(
+    uint32_t promise_id,
+    PP_CdmKeyStatus key_status) {
+  cdm_promise_adapter_.ResolvePromise(
+      promise_id, PpCdmKeyStatusToCdmKeyInformationKeyStatus(key_status));
+}
+
 void ContentDecryptorDelegate::OnPromiseResolvedWithSession(uint32_t promise_id,
                                                             PP_Var session_id) {
   StringVar* session_id_string = StringVar::FromPPVar(session_id);
@@ -808,7 +845,7 @@ void ContentDecryptorDelegate::OnSessionKeysChange(
   keys_info.reserve(key_count);
   for (uint32_t i = 0; i < key_count; ++i) {
     const auto& info = key_information[i];
-    keys_info.push_back(new media::CdmKeyInformation(
+    keys_info.push_back(std::make_unique<media::CdmKeyInformation>(
         info.key_id, info.key_id_size,
         PpCdmKeyStatusToCdmKeyInformationKeyStatus(info.key_status),
         info.system_code));
@@ -909,19 +946,19 @@ void ContentDecryptorDelegate::DeliverBlock(
   Decryptor::Status status =
       PpDecryptResultToMediaDecryptorStatus(block_info->result);
   if (status != Decryptor::kSuccess) {
-    decrypt_cb.Run(status, NULL);
+    decrypt_cb.Run(status, nullptr);
     return;
   }
 
   EnterResourceNoLock<PPB_Buffer_API> enter(decrypted_block, true);
   if (!enter.succeeded()) {
-    decrypt_cb.Run(Decryptor::kError, NULL);
+    decrypt_cb.Run(Decryptor::kError, nullptr);
     return;
   }
   BufferAutoMapper mapper(enter.object());
   if (!mapper.data() || !mapper.size() ||
       mapper.size() < block_info->data_size) {
-    decrypt_cb.Run(Decryptor::kError, NULL);
+    decrypt_cb.Run(Decryptor::kError, nullptr);
     return;
   }
 
@@ -951,16 +988,16 @@ static uint8_t* GetMappedBuffer(PP_Resource resource,
                                 scoped_refptr<PPB_Buffer_Impl>* ppb_buffer) {
   EnterResourceNoLock<PPB_Buffer_API> enter(resource, true);
   if (!enter.succeeded())
-    return NULL;
+    return nullptr;
 
   uint8_t* mapped_data = static_cast<uint8_t*>(enter.object()->Map());
   if (!enter.object()->IsMapped() || !mapped_data)
-    return NULL;
+    return nullptr;
 
   uint32_t mapped_size = 0;
   if (!enter.object()->Describe(&mapped_size) || !mapped_size) {
     enter.object()->Unmap();
-    return NULL;
+    return nullptr;
   }
 
   *ppb_buffer = static_cast<PPB_Buffer_Impl*>(enter.object());
@@ -992,7 +1029,7 @@ void ContentDecryptorDelegate::DeliverFrame(
       PpDecryptResultToMediaDecryptorStatus(frame_info->result);
   if (status != Decryptor::kSuccess) {
     DCHECK(!frame_info->tracking_info.buffer_id);
-    video_decode_cb.Run(status, NULL);
+    video_decode_cb.Run(status, nullptr);
     return;
   }
 
@@ -1000,7 +1037,7 @@ void ContentDecryptorDelegate::DeliverFrame(
   uint8_t* frame_data = GetMappedBuffer(decrypted_frame, &ppb_buffer);
   if (!frame_data) {
     FreeBuffer(frame_info->tracking_info.buffer_id);
-    video_decode_cb.Run(Decryptor::kError, NULL);
+    video_decode_cb.Run(Decryptor::kError, nullptr);
     return;
   }
 
@@ -1010,7 +1047,7 @@ void ContentDecryptorDelegate::DeliverFrame(
       PpDecryptedFrameFormatToMediaVideoFormat(frame_info->format);
   if (video_pixel_format == media::PIXEL_FORMAT_UNKNOWN) {
     FreeBuffer(frame_info->tracking_info.buffer_id);
-    video_decode_cb.Run(Decryptor::kError, NULL);
+    video_decode_cb.Run(Decryptor::kError, nullptr);
     return;
   }
 
@@ -1027,7 +1064,7 @@ void ContentDecryptorDelegate::DeliverFrame(
               frame_info->tracking_info.timestamp));
   if (!decoded_frame) {
     FreeBuffer(frame_info->tracking_info.buffer_id);
-    video_decode_cb.Run(Decryptor::kError, NULL);
+    video_decode_cb.Run(Decryptor::kError, nullptr);
     return;
   }
   decoded_frame->AddDestructionObserver(
@@ -1091,7 +1128,7 @@ void ContentDecryptorDelegate::CancelDecode(Decryptor::StreamType stream_type) {
       // Release the shared memory as it can still be in use by the plugin.
       // The next DecryptAndDecode() call will need to allocate a new shared
       // memory buffer.
-      audio_input_resource_ = NULL;
+      audio_input_resource_ = nullptr;
       if (!audio_decode_cb_.is_null())
         audio_decode_cb_.ResetAndReturn().Run(Decryptor::kSuccess,
                                               Decryptor::AudioFrames());
@@ -1100,9 +1137,9 @@ void ContentDecryptorDelegate::CancelDecode(Decryptor::StreamType stream_type) {
       // Release the shared memory as it can still be in use by the plugin.
       // The next DecryptAndDecode() call will need to allocate a new shared
       // memory buffer.
-      video_input_resource_ = NULL;
+      video_input_resource_ = nullptr;
       if (!video_decode_cb_.is_null())
-        video_decode_cb_.ResetAndReturn().Run(Decryptor::kSuccess, NULL);
+        video_decode_cb_.ResetAndReturn().Run(Decryptor::kSuccess, nullptr);
       break;
     default:
       NOTREACHED();
@@ -1117,7 +1154,7 @@ bool ContentDecryptorDelegate::MakeMediaBufferResource(
 
   // End of stream buffers are represented as null resources.
   if (buffer->end_of_stream()) {
-    *resource = NULL;
+    *resource = nullptr;
     return true;
   }
 
@@ -1154,7 +1191,7 @@ bool ContentDecryptorDelegate::MakeMediaBufferResource(
 
   BufferAutoMapper mapper(media_resource.get());
   if (!mapper.data() || mapper.size() < data_size) {
-    media_resource = NULL;
+    media_resource = nullptr;
     return false;
   }
   memcpy(mapper.data(), buffer->data(), data_size);
@@ -1257,14 +1294,14 @@ void ContentDecryptorDelegate::SatisfyAllPendingCallbacksOnError() {
   if (!video_decoder_init_cb_.is_null())
     video_decoder_init_cb_.ResetAndReturn().Run(false);
 
-  audio_input_resource_ = NULL;
-  video_input_resource_ = NULL;
+  audio_input_resource_ = nullptr;
+  video_input_resource_ = nullptr;
 
   if (!audio_decrypt_cb_.is_null())
-    audio_decrypt_cb_.ResetAndReturn().Run(media::Decryptor::kError, NULL);
+    audio_decrypt_cb_.ResetAndReturn().Run(media::Decryptor::kError, nullptr);
 
   if (!video_decrypt_cb_.is_null())
-    video_decrypt_cb_.ResetAndReturn().Run(media::Decryptor::kError, NULL);
+    video_decrypt_cb_.ResetAndReturn().Run(media::Decryptor::kError, nullptr);
 
   if (!audio_decode_cb_.is_null()) {
     const media::Decryptor::AudioFrames empty_frames;
@@ -1273,7 +1310,7 @@ void ContentDecryptorDelegate::SatisfyAllPendingCallbacksOnError() {
   }
 
   if (!video_decode_cb_.is_null())
-    video_decode_cb_.ResetAndReturn().Run(media::Decryptor::kError, NULL);
+    video_decode_cb_.ResetAndReturn().Run(media::Decryptor::kError, nullptr);
 
   cdm_promise_adapter_.Clear();
 

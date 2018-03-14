@@ -11,18 +11,17 @@
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/image_fetcher/core/image_fetcher.h"
 #include "components/image_fetcher/core/image_fetcher_delegate.h"
 #include "components/leveldb_proto/proto_database.h"
 #include "components/leveldb_proto/testing/fake_db.h"
 #include "components/suggestions/image_encoder.h"
 #include "components/suggestions/proto/suggestions.pb.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image.h"
-#include "ui/gfx/image/image_skia.h"
 #include "url/gurl.h"
 
 using ::testing::Return;
@@ -41,7 +40,7 @@ const char kInvalidImagePath[] = "files/DOESNOTEXIST";
 
 using leveldb_proto::test::FakeDB;
 
-typedef base::hash_map<std::string, ImageData> EntryMap;
+typedef std::map<std::string, ImageData> EntryMap;
 
 void AddEntry(const ImageData& d, EntryMap* map) { (*map)[d.url()] = d; }
 
@@ -49,10 +48,11 @@ class MockImageFetcher : public ImageFetcher {
  public:
   MockImageFetcher() {}
   virtual ~MockImageFetcher() {}
-  MOCK_METHOD3(StartOrQueueNetworkRequest,
+  MOCK_METHOD4(StartOrQueueNetworkRequest,
                void(const std::string&,
                     const GURL&,
-                    const ImageFetcherCallback&));
+                    const ImageFetcherCallback&,
+                    const net::NetworkTrafficAnnotationTag&));
   MOCK_METHOD1(SetImageFetcherDelegate, void(ImageFetcherDelegate*));
   MOCK_METHOD1(SetDataUseServiceName, void(DataUseServiceName));
   MOCK_METHOD1(SetImageDownloadLimit,
@@ -64,7 +64,7 @@ class MockImageFetcher : public ImageFetcher {
 class ImageManagerTest : public testing::Test {
  public:
   ImageManagerTest()
-      : mock_image_fetcher_(NULL),
+      : mock_image_fetcher_(nullptr),
         num_callback_null_called_(0),
         num_callback_valid_called_(0) {}
 
@@ -74,7 +74,7 @@ class ImageManagerTest : public testing::Test {
   }
 
   void TearDown() override {
-    fake_db_ = NULL;
+    fake_db_ = nullptr;
     db_model_.clear();
     image_manager_.reset();
   }
@@ -127,8 +127,7 @@ class ImageManagerTest : public testing::Test {
     EXPECT_CALL(*mock_image_fetcher_, SetImageFetcherDelegate(_));
     return new ImageManager(base::WrapUnique(mock_image_fetcher_),
                             base::WrapUnique(fake_db),
-                            FakeDB<ImageData>::DirectoryForTestDB(),
-                            base::ThreadTaskRunnerHandle::Get());
+                            FakeDB<ImageData>::DirectoryForTestDB());
   }
 
   EntryMap db_model_;
@@ -178,7 +177,7 @@ TEST_F(ImageManagerTest, GetImageForURLNetwork) {
   InitializeDefaultImageMapAndDatabase(image_manager_.get(), fake_db_);
 
   // We expect the fetcher to go to network and call the callback.
-  EXPECT_CALL(*mock_image_fetcher_, StartOrQueueNetworkRequest(_, _, _));
+  EXPECT_CALL(*mock_image_fetcher_, StartOrQueueNetworkRequest(_, _, _, _));
 
   // Fetch existing URL.
   base::RunLoop run_loop;

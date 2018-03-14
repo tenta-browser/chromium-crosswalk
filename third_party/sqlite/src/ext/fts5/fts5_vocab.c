@@ -11,7 +11,7 @@
 ******************************************************************************
 **
 ** This is an SQLite virtual table module implementing direct access to an
-** existing FTS5 index. The module may create several different types of 
+** existing FTS5 index. The module may create several different types of
 ** tables:
 **
 ** col:
@@ -19,16 +19,21 @@
 **
 **   One row for each term/column combination. The value of $doc is set to
 **   the number of fts5 rows that contain at least one instance of term
-**   $term within column $col. Field $cnt is set to the total number of 
-**   instances of term $term in column $col (in any row of the fts5 table). 
+**   $term within column $col. Field $cnt is set to the total number of
+**   instances of term $term in column $col (in any row of the fts5 table).
 **
 ** row:
 **     CREATE TABLE vocab(term, doc, cnt, PRIMARY KEY(term));
 **
 **   One row for each term in the database. The value of $doc is set to
 **   the number of fts5 rows that contain at least one instance of term
-**   $term. Field $cnt is set to the total number of instances of term 
+**   $term. Field $cnt is set to the total number of instances of term
 **   $term in the database.
+**
+** instance:
+**     CREATE TABLE vocab(term, doc, col, offset, PRIMARY KEY(<all-fields>));
+**
+**   One row for each term instance in the database.
 */
 
 
@@ -44,7 +49,7 @@ struct Fts5VocabTable {
   char *zFts5Db;                  /* Db containing fts5 table */
   sqlite3 *db;                    /* Database handle */
   Fts5Global *pGlobal;            /* FTS5 global object for this database */
-  int eType;                      /* FTS5_VOCAB_COL or ROW */
+  int eType;                      /* FTS5_VOCAB_COL, ROW or INSTANCE */
 };
 
 struct Fts5VocabCursor {
@@ -64,16 +69,22 @@ struct Fts5VocabCursor {
   i64 *aCnt;
   i64 *aDoc;
 
-  /* Output values used by 'row' and 'col' tables */
+  /* Output values used by all tables. */
   i64 rowid;                      /* This table's current rowid value */
   Fts5Buffer term;                /* Current value of 'term' column */
+
+  /* Output values Used by 'instance' tables only */
+  i64 iInstPos;
+  int iInstOff;
 };
 
-#define FTS5_VOCAB_COL    0
-#define FTS5_VOCAB_ROW    1
+#define FTS5_VOCAB_COL      0
+#define FTS5_VOCAB_ROW      1
+#define FTS5_VOCAB_INSTANCE 2
 
 #define FTS5_VOCAB_COL_SCHEMA  "term, col, doc, cnt"
 #define FTS5_VOCAB_ROW_SCHEMA  "term, doc, cnt"
+#define FTS5_VOCAB_INST_SCHEMA "term, doc, col, offset"
 
 /*
 ** Bits for the mask used as the idxNum value by xBestIndex/xFilter.
@@ -84,7 +95,7 @@ struct Fts5VocabCursor {
 
 
 /*
-** Translate a string containing an fts5vocab table type to an 
+** Translate a string containing an fts5vocab table type to an
 ** FTS5_VOCAB_XXX constant. If successful, set *peType to the output
 ** value and return SQLITE_OK. Otherwise, set *pzErr to an error message
 ** and return SQLITE_ERROR.
@@ -100,6 +111,9 @@ static int fts5VocabTableType(const char *zType, char **pzErr, int *peType){
 
     if( sqlite3_stricmp(zCopy, "row")==0 ){
       *peType = FTS5_VOCAB_ROW;
+    }else
+    if( sqlite3_stricmp(zCopy, "instance")==0 ){
+      *peType = FTS5_VOCAB_INSTANCE;
     }else
     {
       *pzErr = sqlite3_mprintf("fts5vocab: unknown table type: %Q", zCopy);
@@ -159,9 +173,10 @@ static int fts5VocabInitVtab(
   sqlite3_vtab **ppVTab,          /* Write the resulting vtab structure here */
   char **pzErr                    /* Write any error message here */
 ){
-  const char *azSchema[] = { 
-    "CREATE TABlE vocab(" FTS5_VOCAB_COL_SCHEMA  ")", 
-    "CREATE TABlE vocab(" FTS5_VOCAB_ROW_SCHEMA  ")"
+  const char *azSchema[] = {
+    "CREATE TABlE vocab(" FTS5_VOCAB_COL_SCHEMA  ")",
+    "CREATE TABlE vocab(" FTS5_VOCAB_ROW_SCHEMA  ")",
+    "CREATE TABlE vocab(" FTS5_VOCAB_INST_SCHEMA ")"
   };
 
   Fts5VocabTable *pRet = 0;
@@ -178,10 +193,10 @@ static int fts5VocabInitVtab(
     const char *zDb = bDb ? argv[3] : argv[1];
     const char *zTab = bDb ? argv[4] : argv[3];
     const char *zType = bDb ? argv[5] : argv[4];
-    int nDb = (int)strlen(zDb)+1; 
+    int nDb = (int)strlen(zDb)+1;
     int nTab = (int)strlen(zTab)+1;
     int eType = 0;
-    
+
     rc = fts5VocabTableType(zType, pzErr, &eType);
     if( rc==SQLITE_OK ){
       assert( eType>=0 && eType<ArraySize(azSchema) );
@@ -233,8 +248,17 @@ static int fts5VocabCreateMethod(
   return fts5VocabInitVtab(db, pAux, argc, argv, ppVtab, pzErr);
 }
 
-/* 
+/*
 ** Implementation of the xBestIndex method.
+**
+** Only constraints of the form:
+**
+**     term <= ?
+**     term == ?
+**     term >= ?
+**
+** are interpreted. Less-than and less-than-or-equal are treated
+** identically, as are greater-than and greater-than-or-equal.
 */
 static int fts5VocabBestIndexMethod(
   sqlite3_vtab *pUnused,
@@ -284,8 +308,8 @@ static int fts5VocabBestIndexMethod(
   ** specifically - "ORDER BY term" or "ORDER BY term ASC" - set the
   ** sqlite3_index_info.orderByConsumed flag to tell the core the results
   ** are already in sorted order.  */
-  if( pInfo->nOrderBy==1 
-   && pInfo->aOrderBy[0].iColumn==0 
+  if( pInfo->nOrderBy==1
+   && pInfo->aOrderBy[0].iColumn==0
    && pInfo->aOrderBy[0].desc==0
   ){
     pInfo->orderByConsumed = 1;
@@ -299,7 +323,7 @@ static int fts5VocabBestIndexMethod(
 ** Implementation of xOpen method.
 */
 static int fts5VocabOpenMethod(
-  sqlite3_vtab *pVTab, 
+  sqlite3_vtab *pVTab,
   sqlite3_vtab_cursor **ppCsr
 ){
   Fts5VocabTable *pTab = (Fts5VocabTable*)pVTab;
@@ -378,6 +402,54 @@ static int fts5VocabCloseMethod(sqlite3_vtab_cursor *pCursor){
   return SQLITE_OK;
 }
 
+static int fts5VocabInstanceNewTerm(Fts5VocabCursor *pCsr){
+  int rc = SQLITE_OK;
+
+  if( sqlite3Fts5IterEof(pCsr->pIter) ){
+    pCsr->bEof = 1;
+  }else{
+    const char *zTerm;
+    int nTerm;
+    zTerm = sqlite3Fts5IterTerm(pCsr->pIter, &nTerm);
+    if( pCsr->nLeTerm>=0 ){
+      int nCmp = MIN(nTerm, pCsr->nLeTerm);
+      int bCmp = memcmp(pCsr->zLeTerm, zTerm, nCmp);
+      if( bCmp<0 || (bCmp==0 && pCsr->nLeTerm<nTerm) ){
+        pCsr->bEof = 1;
+      }
+    }
+
+    sqlite3Fts5BufferSet(&rc, &pCsr->term, nTerm, (const u8*)zTerm);
+  }
+  return rc;
+}
+
+static int fts5VocabInstanceNext(Fts5VocabCursor *pCsr){
+  int eDetail = pCsr->pConfig->eDetail;
+  int rc = SQLITE_OK;
+  Fts5IndexIter *pIter = pCsr->pIter;
+  i64 *pp = &pCsr->iInstPos;
+  int *po = &pCsr->iInstOff;
+
+  while( eDetail==FTS5_DETAIL_NONE
+      || sqlite3Fts5PoslistNext64(pIter->pData, pIter->nData, po, pp)
+  ){
+    pCsr->iInstPos = 0;
+    pCsr->iInstOff = 0;
+
+    rc = sqlite3Fts5IterNextScan(pCsr->pIter);
+    if( rc==SQLITE_OK ){
+      rc = fts5VocabInstanceNewTerm(pCsr);
+      if( eDetail==FTS5_DETAIL_NONE ) break;
+    }
+    if( rc ){
+      pCsr->bEof = 1;
+      break;
+    }
+  }
+
+  return rc;
+}
 
 /*
 ** Advance the cursor to the next row in the table.
@@ -390,13 +462,17 @@ static int fts5VocabNextMethod(sqlite3_vtab_cursor *pCursor){
 
   pCsr->rowid++;
 
+  if( pTab->eType==FTS5_VOCAB_INSTANCE ){
+    return fts5VocabInstanceNext(pCsr);
+  }
+
   if( pTab->eType==FTS5_VOCAB_COL ){
     for(pCsr->iCol++; pCsr->iCol<nCol; pCsr->iCol++){
       if( pCsr->aDoc[pCsr->iCol] ) break;
     }
   }
 
-  if( pTab->eType==FTS5_VOCAB_ROW || pCsr->iCol>=nCol ){
+  if( pTab->eType!=FTS5_VOCAB_COL || pCsr->iCol>=nCol ){
     if( sqlite3Fts5IterEof(pCsr->pIter) ){
       pCsr->bEof = 1;
     }else{
@@ -420,22 +496,26 @@ static int fts5VocabNextMethod(sqlite3_vtab_cursor *pCursor){
 
       assert( pTab->eType==FTS5_VOCAB_COL || pTab->eType==FTS5_VOCAB_ROW );
       while( rc==SQLITE_OK ){
+        int eDetail = pCsr->pConfig->eDetail;
         const u8 *pPos; int nPos;   /* Position list */
         i64 iPos = 0;               /* 64-bit position read from poslist */
         int iOff = 0;               /* Current offset within position list */
 
         pPos = pCsr->pIter->pData;
         nPos = pCsr->pIter->nData;
-        switch( pCsr->pConfig->eDetail ){
-          case FTS5_DETAIL_FULL:
-            pPos = pCsr->pIter->pData;
-            nPos = pCsr->pIter->nData;
-            if( pTab->eType==FTS5_VOCAB_ROW ){
+
+        switch( pTab->eType ){
+          case FTS5_VOCAB_ROW:
+            if( eDetail==FTS5_DETAIL_FULL ){
               while( 0==sqlite3Fts5PoslistNext64(pPos, nPos, &iOff, &iPos) ){
                 pCsr->aCnt[0]++;
               }
-              pCsr->aDoc[0]++;
-            }else{
+            }
+            pCsr->aDoc[0]++;
+            break;
+
+          case FTS5_VOCAB_COL:
+            if( eDetail==FTS5_DETAIL_FULL ){
               int iCol = -1;
               while( 0==sqlite3Fts5PoslistNext64(pPos, nPos, &iOff, &iPos) ){
                 int ii = FTS5_POS2COLUMN(iPos);
@@ -449,13 +529,7 @@ static int fts5VocabNextMethod(sqlite3_vtab_cursor *pCursor){
                   iCol = ii;
                 }
               }
-            }
-            break;
-
-          case FTS5_DETAIL_COLUMNS:
-            if( pTab->eType==FTS5_VOCAB_ROW ){
-              pCsr->aDoc[0]++;
-            }else{
+            }else if( eDetail==FTS5_DETAIL_COLUMNS ){
               while( 0==sqlite3Fts5PoslistNext64(pPos, nPos, &iOff,&iPos) ){
                 assert_nc( iPos>=0 && iPos<nCol );
                 if( iPos>=nCol ){
@@ -464,18 +538,21 @@ static int fts5VocabNextMethod(sqlite3_vtab_cursor *pCursor){
                 }
                 pCsr->aDoc[iPos]++;
               }
+            }else{
+              assert( eDetail==FTS5_DETAIL_NONE );
+              pCsr->aDoc[0]++;
             }
             break;
 
-          default: 
-            assert( pCsr->pConfig->eDetail==FTS5_DETAIL_NONE );
-            pCsr->aDoc[0]++;
+          default:
+            assert( pTab->eType==FTS5_VOCAB_INSTANCE );
             break;
         }
 
         if( rc==SQLITE_OK ){
           rc = sqlite3Fts5IterNextScan(pCsr->pIter);
         }
+        if( pTab->eType==FTS5_VOCAB_INSTANCE ) break;
 
         if( rc==SQLITE_OK ){
           zTerm = sqlite3Fts5IterTerm(pCsr->pIter, &nTerm);
@@ -505,7 +582,9 @@ static int fts5VocabFilterMethod(
   int nUnused,                    /* Number of elements in apVal */
   sqlite3_value **apVal           /* Arguments for the indexing scheme */
 ){
+  Fts5VocabTable *pTab = (Fts5VocabTable*)pCursor->pVtab;
   Fts5VocabCursor *pCsr = (Fts5VocabCursor*)pCursor;
+  int eType = pTab->eType;
   int rc = SQLITE_OK;
 
   int iVal = 0;
@@ -545,19 +624,24 @@ static int fts5VocabFilterMethod(
     }
   }
 
-
   if( rc==SQLITE_OK ){
     rc = sqlite3Fts5IndexQuery(pCsr->pIndex, zTerm, nTerm, f, 0, &pCsr->pIter);
   }
-  if( rc==SQLITE_OK ){
+  if( rc==SQLITE_OK && eType==FTS5_VOCAB_INSTANCE ){
+    rc = fts5VocabInstanceNewTerm(pCsr);
+  }
+  if( rc==SQLITE_OK
+   && !pCsr->bEof
+   && (eType!=FTS5_VOCAB_INSTANCE || pCsr->pConfig->eDetail!=FTS5_DETAIL_NONE)
+  ){
     rc = fts5VocabNextMethod(pCursor);
   }
 
   return rc;
 }
 
-/* 
-** This is the xEof method of the virtual table. SQLite calls this 
+/*
+** This is the xEof method of the virtual table. SQLite calls this
 ** routine to find out if it has reached the end of a result set.
 */
 static int fts5VocabEofMethod(sqlite3_vtab_cursor *pCursor){
@@ -591,12 +675,40 @@ static int fts5VocabColumnMethod(
     }else{
       iVal = pCsr->aCnt[pCsr->iCol];
     }
-  }else{
+  }else if( eType==FTS5_VOCAB_ROW ){
     assert( iCol==1 || iCol==2 );
     if( iCol==1 ){
       iVal = pCsr->aDoc[0];
     }else{
       iVal = pCsr->aCnt[0];
+    }
+  }else{
+    assert( eType==FTS5_VOCAB_INSTANCE );
+    switch( iCol ){
+      case 1:
+        sqlite3_result_int64(pCtx, pCsr->pIter->iRowid);
+        break;
+      case 2: {
+        int ii = -1;
+        if( eDetail==FTS5_DETAIL_FULL ){
+          ii = FTS5_POS2COLUMN(pCsr->iInstPos);
+        }else if( eDetail==FTS5_DETAIL_COLUMNS ){
+          ii = (int)pCsr->iInstPos;
+        }
+        if( ii>=0 && ii<pCsr->pConfig->nCol ){
+          const char *z = pCsr->pConfig->azCol[ii];
+          sqlite3_result_text(pCtx, z, -1, SQLITE_STATIC);
+        }
+        break;
+      }
+      default: {
+        assert( iCol==3 );
+        if( eDetail==FTS5_DETAIL_FULL ){
+          int ii = FTS5_POS2OFFSET(pCsr->iInstPos);
+          sqlite3_result_int(pCtx, ii);
+        }
+        break;
+      }
     }
   }
 
@@ -604,13 +716,13 @@ static int fts5VocabColumnMethod(
   return SQLITE_OK;
 }
 
-/* 
+/*
 ** This is the xRowid method. The SQLite core calls this routine to
 ** retrieve the rowid for the current row of the result set. The
 ** rowid should be written to *pRowid.
 */
 static int fts5VocabRowidMethod(
-  sqlite3_vtab_cursor *pCursor, 
+  sqlite3_vtab_cursor *pCursor,
   sqlite_int64 *pRowid
 ){
   Fts5VocabCursor *pCsr = (Fts5VocabCursor*)pCursor;

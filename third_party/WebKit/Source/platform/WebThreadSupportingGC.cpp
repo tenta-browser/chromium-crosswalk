@@ -5,10 +5,11 @@
 #include "platform/WebThreadSupportingGC.h"
 
 #include <memory>
+#include "platform/MemoryCoordinator.h"
 #include "platform/heap/SafePoint.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/Threading.h"
-#include "public/platform/WebScheduler.h"
 
 namespace blink {
 
@@ -25,6 +26,7 @@ std::unique_ptr<WebThreadSupportingGC> WebThreadSupportingGC::CreateForThread(
 WebThreadSupportingGC::WebThreadSupportingGC(const char* name,
                                              WebThread* thread)
     : thread_(thread) {
+  DCHECK(IsMainThread());
   DCHECK(!name || !thread);
 #if DCHECK_IS_ON()
   // We call this regardless of whether an existing thread is given or not,
@@ -33,22 +35,27 @@ WebThreadSupportingGC::WebThreadSupportingGC(const char* name,
 #endif
   if (!thread_) {
     // If |thread| is not given, create a new one and own it.
-    owning_thread_ = WTF::WrapUnique(Platform::Current()->CreateThread(name));
+    owning_thread_ = Platform::Current()->CreateThread(name);
     thread_ = owning_thread_.get();
   }
+  MemoryCoordinator::RegisterThread(thread_);
 }
 
 WebThreadSupportingGC::~WebThreadSupportingGC() {
+  DCHECK(IsMainThread());
   // WebThread's destructor blocks until all the tasks are processed.
   owning_thread_.reset();
+  MemoryCoordinator::UnregisterThread(thread_);
 }
 
-void WebThreadSupportingGC::Initialize() {
+void WebThreadSupportingGC::InitializeOnThread() {
+  DCHECK(thread_->IsCurrentThread());
   ThreadState::AttachCurrentThread();
-  gc_task_runner_ = WTF::MakeUnique<GCTaskRunner>(thread_);
+  gc_task_runner_ = std::make_unique<GCTaskRunner>(thread_);
 }
 
-void WebThreadSupportingGC::Shutdown() {
+void WebThreadSupportingGC::ShutdownOnThread() {
+  DCHECK(thread_->IsCurrentThread());
 #if defined(LEAK_SANITIZER)
   ThreadState::Current()->ReleaseStaticPersistentNodes();
 #endif

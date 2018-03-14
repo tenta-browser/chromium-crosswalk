@@ -35,25 +35,26 @@
 #include <sstream>
 #include "bindings/core/v8/ExceptionMessages.h"
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/dom/DOMArrayBuffer.h"
-#include "core/dom/DOMArrayBufferView.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/events/Event.h"
-#include "core/events/GenericEventQueue.h"
+#include "core/dom/events/Event.h"
+#include "core/dom/events/MediaElementEventQueue.h"
 #include "core/frame/Deprecation.h"
 #include "core/frame/UseCounter.h"
-#include "core/html/HTMLMediaElement.h"
 #include "core/html/TimeRanges.h"
+#include "core/html/media/HTMLMediaElement.h"
 #include "core/html/track/AudioTrack.h"
 #include "core/html/track/AudioTrackList.h"
 #include "core/html/track/VideoTrack.h"
 #include "core/html/track/VideoTrackList.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
+#include "core/typed_arrays/DOMArrayBufferView.h"
 #include "modules/mediasource/MediaSource.h"
 #include "modules/mediasource/SourceBufferTrackBaseSupplement.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/wtf/MathExtras.h"
+#include "public/platform/TaskType.h"
 #include "public/platform/WebSourceBuffer.h"
 
 #ifndef BLINK_SBLOG
@@ -105,17 +106,17 @@ WTF::String WebTimeRangesToString(const WebTimeRanges& ranges) {
 SourceBuffer* SourceBuffer::Create(
     std::unique_ptr<WebSourceBuffer> web_source_buffer,
     MediaSource* source,
-    GenericEventQueue* async_event_queue) {
+    MediaElementEventQueue* async_event_queue) {
   SourceBuffer* source_buffer =
       new SourceBuffer(std::move(web_source_buffer), source, async_event_queue);
-  source_buffer->SuspendIfNeeded();
+  source_buffer->PauseIfNeeded();
   return source_buffer;
 }
 
 SourceBuffer::SourceBuffer(std::unique_ptr<WebSourceBuffer> web_source_buffer,
                            MediaSource* source,
-                           GenericEventQueue* async_event_queue)
-    : SuspendableObject(source->GetExecutionContext()),
+                           MediaElementEventQueue* async_event_queue)
+    : PausableObject(source->GetExecutionContext()),
       web_source_buffer_(std::move(web_source_buffer)),
       source_(source),
       track_defaults_(TrackDefaultList::Create()),
@@ -129,12 +130,14 @@ SourceBuffer::SourceBuffer(std::unique_ptr<WebSourceBuffer> web_source_buffer,
       pending_append_data_offset_(0),
       append_buffer_async_part_runner_(AsyncMethodRunner<SourceBuffer>::Create(
           this,
-          &SourceBuffer::AppendBufferAsyncPart)),
+          &SourceBuffer::AppendBufferAsyncPart,
+          GetExecutionContext()->GetTaskRunner(TaskType::kMediaElementEvent))),
       pending_remove_start_(-1),
       pending_remove_end_(-1),
       remove_async_part_runner_(AsyncMethodRunner<SourceBuffer>::Create(
           this,
-          &SourceBuffer::RemoveAsyncPart)) {
+          &SourceBuffer::RemoveAsyncPart,
+          GetExecutionContext()->GetTaskRunner(TaskType::kMediaElementEvent))) {
   BLINK_SBLOG << __func__ << " this=" << this;
 
   DCHECK(web_source_buffer_);
@@ -353,21 +356,25 @@ void SourceBuffer::setAppendWindowEnd(double end,
 
 void SourceBuffer::appendBuffer(DOMArrayBuffer* data,
                                 ExceptionState& exception_state) {
-  BLINK_SBLOG << __func__ << " this=" << this << " size=" << data->ByteLength();
+  double media_time = GetMediaTime();
+  BLINK_SBLOG << __func__ << " this=" << this << " media_time=" << media_time
+              << " size=" << data->ByteLength();
   // Section 3.2 appendBuffer()
   // https://dvcs.w3.org/hg/html-media/raw-file/default/media-source/media-source.html#widl-SourceBuffer-appendBuffer-void-ArrayBufferView-data
-  AppendBufferInternal(static_cast<const unsigned char*>(data->Data()),
+  AppendBufferInternal(media_time,
+                       static_cast<const unsigned char*>(data->Data()),
                        data->ByteLength(), exception_state);
 }
 
 void SourceBuffer::appendBuffer(NotShared<DOMArrayBufferView> data,
                                 ExceptionState& exception_state) {
-  BLINK_SBLOG << __func__ << " this=" << this
+  double media_time = GetMediaTime();
+  BLINK_SBLOG << __func__ << " this=" << this << " media_time=" << media_time
               << " size=" << data.View()->byteLength();
   // Section 3.2 appendBuffer()
   // https://dvcs.w3.org/hg/html-media/raw-file/default/media-source/media-source.html#widl-SourceBuffer-appendBuffer-void-ArrayBufferView-data
   AppendBufferInternal(
-      static_cast<const unsigned char*>(data.View()->BaseAddress()),
+      media_time, static_cast<const unsigned char*>(data.View()->BaseAddress()),
       data.View()->byteLength(), exception_state);
 }
 
@@ -400,7 +407,7 @@ void SourceBuffer::abort(ExceptionState& exception_state) {
     // Throwing the exception and aborting these steps is new behavior that
     // is implemented behind the MediaSourceNewAbortAndDuration
     // RuntimeEnabledFeature.
-    if (RuntimeEnabledFeatures::mediaSourceNewAbortAndDurationEnabled()) {
+    if (RuntimeEnabledFeatures::MediaSourceNewAbortAndDurationEnabled()) {
       MediaSource::LogAndThrowDOMException(
           exception_state, kInvalidStateError,
           "Aborting asynchronous remove() operation is disallowed.");
@@ -408,7 +415,7 @@ void SourceBuffer::abort(ExceptionState& exception_state) {
     }
 
     Deprecation::CountDeprecation(source_->MediaElement()->GetDocument(),
-                                  UseCounter::kMediaSourceAbortRemove);
+                                  WebFeature::kMediaSourceAbortRemove);
     CancelRemove();
   }
 
@@ -519,7 +526,7 @@ void SourceBuffer::CancelRemove() {
   pending_remove_end_ = -1;
   updating_ = false;
 
-  if (!RuntimeEnabledFeatures::mediaSourceNewAbortAndDurationEnabled()) {
+  if (!RuntimeEnabledFeatures::MediaSourceNewAbortAndDurationEnabled()) {
     ScheduleEvent(EventTypeNames::abort);
     ScheduleEvent(EventTypeNames::updateend);
   }
@@ -541,7 +548,7 @@ void SourceBuffer::AbortIfUpdating() {
   // 4.1. Abort the buffer append and stream append loop algorithms if they are
   //      running.
   append_buffer_async_part_runner_->Stop();
-  pending_append_data_.Clear();
+  pending_append_data_.clear();
   pending_append_data_offset_ = 0;
 
   // 4.2. Set the updating attribute to false.
@@ -682,6 +689,13 @@ void SourceBuffer::RemoveMediaTracks() {
   // 7-8. TODO(servolk): Remove text tracks once SourceBuffer has text tracks.
 }
 
+double SourceBuffer::GetMediaTime() {
+  double media_time = std::numeric_limits<float>::quiet_NaN();
+  if (source_ && source_->MediaElement())
+    media_time = source_->MediaElement()->currentTime();
+  return media_time;
+}
+
 template <class T>
 T* FindExistingTrackById(const TrackListBase<T>& track_list, const String& id) {
   // According to MSE specification
@@ -794,7 +808,7 @@ bool SourceBuffer::InitializationSegmentReceived(
                   << " failed: tracks mismatch the first init segment.";
       return false;
     }
-#if !LOG_DISABLED
+#if DCHECK_IS_ON()
     const char* log_track_type_str =
         (track_info.track_type == WebMediaPlayer::kAudioTrack) ? "audio"
                                                                : "video";
@@ -1030,18 +1044,42 @@ bool SourceBuffer::InitializationSegmentReceived(
   return true;
 }
 
+void SourceBuffer::NotifyParseWarning(const ParseWarning warning) {
+  switch (warning) {
+    case WebSourceBufferClient::kKeyframeTimeGreaterThanDependant:
+      // Report this problematic GOP structure to help inform follow-up work.
+      // Media engine also records RAPPOR for these, up to once per track, at
+      // Media.OriginUrl.MSE.KeyframeTimeGreaterThanDependant.
+      // TODO(wolenetz): Use the data to scope additional work. See
+      // https://crbug.com/739931.
+      UseCounter::Count(
+          source_->MediaElement()->GetDocument(),
+          WebFeature::kMediaSourceKeyframeTimeGreaterThanDependant);
+      break;
+    case WebSourceBufferClient::kMuxedSequenceMode:
+      // Report this problematic API usage to help inform follow-up work.
+      // Media engine also records RAPPOR for these, up to once per
+      // SourceBuffer, at Media.OriginUrl.MSE.MuxedSequenceModeSourceBuffer.
+      // TODO(wolenetz): Use the data to scope additional work. See
+      // https://crbug.com/737757.
+      UseCounter::Count(source_->MediaElement()->GetDocument(),
+                        WebFeature::kMediaSourceMuxedSequenceMode);
+      break;
+  }
+}
+
 bool SourceBuffer::HasPendingActivity() const {
   return source_;
 }
 
-void SourceBuffer::Suspend() {
-  append_buffer_async_part_runner_->Suspend();
-  remove_async_part_runner_->Suspend();
+void SourceBuffer::Pause() {
+  append_buffer_async_part_runner_->Pause();
+  remove_async_part_runner_->Pause();
 }
 
-void SourceBuffer::Resume() {
-  append_buffer_async_part_runner_->Resume();
-  remove_async_part_runner_->Resume();
+void SourceBuffer::Unpause() {
+  append_buffer_async_part_runner_->Unpause();
+  remove_async_part_runner_->Unpause();
 }
 
 void SourceBuffer::ContextDestroyed(ExecutionContext*) {
@@ -1050,7 +1088,7 @@ void SourceBuffer::ContextDestroyed(ExecutionContext*) {
 }
 
 ExecutionContext* SourceBuffer::GetExecutionContext() const {
-  return SuspendableObject::GetExecutionContext();
+  return PausableObject::GetExecutionContext();
 }
 
 const AtomicString& SourceBuffer::InterfaceName() const {
@@ -1067,10 +1105,11 @@ void SourceBuffer::ScheduleEvent(const AtomicString& event_name) {
   Event* event = Event::Create(event_name);
   event->SetTarget(this);
 
-  async_event_queue_->EnqueueEvent(event);
+  async_event_queue_->EnqueueEvent(BLINK_FROM_HERE, event);
 }
 
-bool SourceBuffer::PrepareAppend(size_t new_data_size,
+bool SourceBuffer::PrepareAppend(double media_time,
+                                 size_t new_data_size,
                                  ExceptionState& exception_state) {
   TRACE_EVENT_ASYNC_BEGIN0("media", "SourceBuffer::prepareAppend", this);
   // http://w3c.github.io/media-source/#sourcebuffer-prepare-append
@@ -1106,7 +1145,7 @@ bool SourceBuffer::PrepareAppend(size_t new_data_size,
   source_->OpenIfInEndedState();
 
   // 5. Run the coded frame eviction algorithm.
-  if (!EvictCodedFrames(new_data_size)) {
+  if (!EvictCodedFrames(media_time, new_data_size)) {
     // 6. If the buffer full flag equals true, then throw a QUOTA_EXCEEDED_ERR
     //    exception and abort these steps.
     BLINK_SBLOG << __func__ << " this=" << this
@@ -1123,7 +1162,7 @@ bool SourceBuffer::PrepareAppend(size_t new_data_size,
   return true;
 }
 
-bool SourceBuffer::EvictCodedFrames(size_t new_data_size) {
+bool SourceBuffer::EvictCodedFrames(double media_time, size_t new_data_size) {
   DCHECK(source_);
   DCHECK(source_->MediaElement());
 
@@ -1133,19 +1172,18 @@ bool SourceBuffer::EvictCodedFrames(size_t new_data_size) {
     return true;
   }
 
-  double current_time = source_->MediaElement()->currentTime();
-  bool result =
-      web_source_buffer_->EvictCodedFrames(current_time, new_data_size);
+  bool result = web_source_buffer_->EvictCodedFrames(media_time, new_data_size);
   if (!result) {
     BLINK_SBLOG << __func__ << " this=" << this
                 << " failed. newDataSize=" << new_data_size
-                << " currentTime=" << current_time << " buffered="
+                << " media_time=" << media_time << " buffered="
                 << WebTimeRangesToString(web_source_buffer_->Buffered());
   }
   return result;
 }
 
-void SourceBuffer::AppendBufferInternal(const unsigned char* data,
+void SourceBuffer::AppendBufferInternal(double media_time,
+                                        const unsigned char* data,
                                         unsigned size,
                                         ExceptionState& exception_state) {
   TRACE_EVENT_ASYNC_BEGIN1("media", "SourceBuffer::appendBuffer", this, "size",
@@ -1154,7 +1192,7 @@ void SourceBuffer::AppendBufferInternal(const unsigned char* data,
   // https://dvcs.w3.org/hg/html-media/raw-file/default/media-source/media-source.html#widl-SourceBuffer-appendBuffer-void-ArrayBufferView-data
 
   // 1. Run the prepare append algorithm.
-  if (!PrepareAppend(size, exception_state)) {
+  if (!PrepareAppend(media_time, size, exception_state)) {
     TRACE_EVENT_ASYNC_END0("media", "SourceBuffer::appendBuffer", this);
     return;
   }
@@ -1212,13 +1250,13 @@ void SourceBuffer::AppendBufferAsyncPart() {
   unsigned char zero = 0;
   unsigned char* append_data = &zero;
   if (append_size)
-    append_data = pending_append_data_.Data() + pending_append_data_offset_;
+    append_data = pending_append_data_.data() + pending_append_data_offset_;
 
   bool append_success =
       web_source_buffer_->Append(append_data, append_size, &timestamp_offset_);
 
   if (!append_success) {
-    pending_append_data_.Clear();
+    pending_append_data_.clear();
     pending_append_data_offset_ = 0;
     AppendError();
   } else {
@@ -1233,7 +1271,7 @@ void SourceBuffer::AppendBufferAsyncPart() {
 
     // 3. Set the updating attribute to false.
     updating_ = false;
-    pending_append_data_.Clear();
+    pending_append_data_.clear();
     pending_append_data_offset_ = 0;
 
     // 4. Queue a task to fire a simple event named update at this SourceBuffer
@@ -1246,7 +1284,9 @@ void SourceBuffer::AppendBufferAsyncPart() {
   }
 
   TRACE_EVENT_ASYNC_END0("media", "SourceBuffer::appendBuffer", this);
-  BLINK_SBLOG << __func__ << " done. this=" << this << " buffered="
+  double media_time = GetMediaTime();
+  BLINK_SBLOG << __func__ << " done. this=" << this
+              << " media_time=" << media_time << " buffered="
               << WebTimeRangesToString(web_source_buffer_->Buffered());
 }
 
@@ -1297,10 +1337,10 @@ void SourceBuffer::AppendError() {
 
   // 5. If decode error is true, then run the end of stream algorithm with the
   // error parameter set to "decode".
-  source_->endOfStream("decode", ASSERT_NO_EXCEPTION);
+  source_->EndOfStreamAlgorithm(WebMediaSource::kEndOfStreamStatusDecodeError);
 }
 
-DEFINE_TRACE(SourceBuffer) {
+void SourceBuffer::Trace(blink::Visitor* visitor) {
   visitor->Trace(source_);
   visitor->Trace(track_defaults_);
   visitor->Trace(async_event_queue_);
@@ -1309,7 +1349,7 @@ DEFINE_TRACE(SourceBuffer) {
   visitor->Trace(audio_tracks_);
   visitor->Trace(video_tracks_);
   EventTargetWithInlineData::Trace(visitor);
-  SuspendableObject::Trace(visitor);
+  PausableObject::Trace(visitor);
 }
 
 }  // namespace blink

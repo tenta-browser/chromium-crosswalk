@@ -43,29 +43,7 @@ TODO(layout-dev): Document with lots of pretty pictures.
 
 ### Inline Layout ###
 
-For inline layout there is a pre-layout pass that prepares the internal data
-structures needed to perform line layout.
-
-The pre-layout pass, triggered by calling `NGInlineNode::PrepareLayout()`, has
-three separate steps or stages that are executed in order:
-
-  - `CollectInlines`: Performs a depth-first scan of the container collecting
-    all non-atomic inlines and `TextNodes`s. Atomic inlines are represented as a
-    unicode object replacement character but are otherwise skipped.
-    Each non-atomic inline and `TextNodes` is fed to a
-    [NGLayoutInlineItemsBuilder](ng_layout_inline_items_builder.h) instance
-    which collects the text content for all non-atomic inlines in the container.
-
-    During this process white-space is collapsed and normalized according to CSS
-    white-space processing rules.
-
-  - `SegmentText`: Performs BiDi segmentation using
-    [NGBidiParagraph](ng_bidi_paragraph.h).
-
-    TODO(kojii): Fill out
-
-  - `ShapeText`: Shapes the resolved BiDi runs using HarfBuzz.
-    TODO(eae): Fill out
+Please refer to the [inline layout README](inline/README.md).
 
 ### Fragment Tree ###
 
@@ -77,8 +55,7 @@ TODO(layout-dev): Document with lots of pretty pictures.
 
 ## Block Flow Algorithm ##
 
-This section contains details specific to the
-[NGBlockLayoutAlgorithm](ng_block_layout_algorithm.h).
+Please refer to the [block flow layout docs](BlockLayout.md).
 
 ### Collapsing Margins ###
 
@@ -87,6 +64,30 @@ TODO(layout-dev): Document with lots of pretty pictures.
 ### Float Positioning ###
 
 TODO(layout-dev): Document with lots of pretty pictures.
+
+### Fragment Caching ###
+
+After layout, we cache the resulting fragment to avoid redoing all of layout
+the next time. You can read the full [design
+document](https://docs.google.com/document/d/1RjH_Ofa8O_ucGvaDCEgsBVECPqUTiQKR3zNyVTr-L_I/edit).
+
+Here's how it works:
+
+* We store the input constraint space and the resulting fragment on the
+  [LayoutNGBlockFlow](layout_ng_block_flow.h). However, we only do that if
+  we have no break token to simplify the initial implementation. We call
+  `LayoutNGBlockFlow::SetCachedLayoutResult` from `NGBlockNode::Layout`.
+* Once cached, `NGBlockNode::Layout` checks at the beginning if we already
+  have a cached result by calling `LayoutNGBlockFlow::CachedLayoutResult`.
+  If that returns a layout result, we return it and are done.
+* `CachedLayoutResult` will always clone the fragment (but without the offset)
+  so that the parent algorithm can position this fragment.
+* We only reuse a layout result if the constraint space is identical (using
+  `operator==`), if there was no break token (a current limitation, we may
+  lift this eventually), and if the node is not marked for layout. We need
+  the `NeedsLayout()` check because we currently have no other way to ensure
+  that relayout happens when style or children change. Eventually we need to
+  rethink this part as we transition away from legacy layout.
 
 ### Code coverage ###
 
@@ -114,3 +115,19 @@ Here is the instruction how to generate a new result.
 `chromium\src>node lcov-result-merger\bin\lcov-result-merger.js *.info output.info`
 * Generate the coverage html from the master lcov file
 `chromium\src>C:\Perl64\bin\perl.exe dynamorio.git\third_party\lcov\genhtml output.info -o output`
+
+### Debugging, logging and testing ###
+Both layout input node subtrees and layout output physical fragment subtrees
+may be dumped, for debugging, logging and testing purposes.
+
+#### For layout input node subtree ####
+Call NGLayoutInputNode::ShowNodeTree() to dump the tree to stderr.
+
+#### For physical fragment subtree ####
+Call NGPhysicalFragment::ShowFragmentTree() to dump the tree to
+stderr. Fragments in the subtree are not required to be marked as placed
+(i.e. know their offset).
+
+A fragment tree may also be dumped to a String, by calling
+NGPhysicalFragment::DumpFragmentTree(). It takes a flag parameter, so that the
+output can be customized to only contain what's relevant for a given purpose.

@@ -31,13 +31,14 @@
 #ifndef CSSAnimations_h
 #define CSSAnimations_h
 
+#include "base/macros.h"
 #include "core/animation/InertEffect.h"
 #include "core/animation/Interpolation.h"
 #include "core/animation/css/CSSAnimationData.h"
 #include "core/animation/css/CSSAnimationUpdate.h"
+#include "core/animation/css/CSSTransitionData.h"
 #include "core/css/CSSKeyframesRule.h"
-#include "core/css/StylePropertySet.h"
-#include "core/css/resolver/StyleResolverState.h"
+#include "core/css/CSSPropertyValueSet.h"
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
 #include "platform/wtf/HashMap.h"
@@ -51,7 +52,6 @@ class StylePropertyShorthand;
 class StyleResolver;
 
 class CSSAnimations final {
-  WTF_MAKE_NONCOPYABLE(CSSAnimations);
   DISALLOW_NEW();
 
  public:
@@ -64,12 +64,11 @@ class CSSAnimations final {
   static bool IsAnimationAffectingProperty(CSSPropertyID);
   static bool IsAffectedByKeyframesFromScope(const Element&, const TreeScope&);
   static bool IsAnimatingCustomProperties(const ElementAnimations*);
-  static bool IsCustomPropertyHandle(const PropertyHandle&);
   static void CalculateAnimationUpdate(CSSAnimationUpdate&,
                                        const Element* animating_element,
                                        Element&,
                                        const ComputedStyle&,
-                                       ComputedStyle* parent_style,
+                                       const ComputedStyle* parent_style,
                                        StyleResolver*);
   static void CalculateCompositorAnimationUpdate(
       CSSAnimationUpdate&,
@@ -103,7 +102,7 @@ class CSSAnimations final {
   }
   void Cancel();
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   class RunningAnimation final
@@ -124,7 +123,7 @@ class CSSAnimations final {
       specified_timing = update.specified_timing;
     }
 
-    DEFINE_INLINE_TRACE() {
+    void Trace(blink::Visitor* visitor) {
       visitor->Trace(animation);
       visitor->Trace(style_rule);
     }
@@ -141,12 +140,12 @@ class CSSAnimations final {
     DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
 
    public:
-    DEFINE_INLINE_TRACE() { visitor->Trace(animation); }
+    void Trace(blink::Visitor* visitor) { visitor->Trace(animation); }
 
     Member<Animation> animation;
-    RefPtr<AnimatableValue> from;
-    RefPtr<AnimatableValue> to;
-    RefPtr<AnimatableValue> reversing_adjusted_start_value;
+    scoped_refptr<const ComputedStyle> from;
+    scoped_refptr<const ComputedStyle> to;
+    scoped_refptr<const ComputedStyle> reversing_adjusted_start_value;
     double reversing_shortening_factor;
   };
 
@@ -157,7 +156,9 @@ class CSSAnimations final {
 
   CSSAnimationUpdate pending_update_;
 
-  ActiveInterpolationsMap previous_active_interpolations_for_animations_;
+  ActiveInterpolationsMap previous_active_interpolations_for_custom_animations_;
+  ActiveInterpolationsMap
+      previous_active_interpolations_for_standard_animations_;
 
   struct TransitionUpdateState {
     STACK_ALLOCATED();
@@ -165,6 +166,7 @@ class CSSAnimations final {
     Member<const Element> animating_element;
     const ComputedStyle& old_style;
     const ComputedStyle& style;
+    scoped_refptr<const ComputedStyle> cloned_style;
     const TransitionMap* active_transitions;
     HashSet<PropertyHandle>& listed_properties;
     const CSSTransitionData& transition_data;
@@ -202,7 +204,7 @@ class CSSAnimations final {
           previous_iteration_(NullValue()) {}
     bool RequiresIterationEvents(const AnimationEffectReadOnly&) override;
     void OnEventCondition(const AnimationEffectReadOnly&) override;
-    DECLARE_VIRTUAL_TRACE();
+    void Trace(blink::Visitor*) override;
 
    private:
     const Element& AnimationTarget() const { return *animation_target_; }
@@ -230,7 +232,7 @@ class CSSAnimations final {
       return false;
     }
     void OnEventCondition(const AnimationEffectReadOnly&) override;
-    DECLARE_VIRTUAL_TRACE();
+    void Trace(blink::Visitor*) override;
 
    private:
     const Element& TransitionTarget() const { return *transition_target_; }
@@ -242,6 +244,8 @@ class CSSAnimations final {
     PropertyHandle property_;
     AnimationEffectReadOnly::Phase previous_phase_;
   };
+
+  DISALLOW_COPY_AND_ASSIGN(CSSAnimations);
 };
 
 }  // namespace blink

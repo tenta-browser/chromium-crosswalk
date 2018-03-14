@@ -33,8 +33,6 @@
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
-#include "chrome/browser/browsing_data/browsing_data_remover.h"
-#include "chrome/browser/browsing_data/browsing_data_remover_factory.h"
 #include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/download/download_prefs.h"
@@ -42,6 +40,7 @@
 #include "chrome/browser/net/chrome_network_delegate.h"
 #include "chrome/browser/net/net_export_helper.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ssl/chrome_expect_ct_reporter.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/url_constants.h"
@@ -52,6 +51,7 @@
 #include "components/url_formatter/url_fixer.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/resource_dispatcher_host.h"
 #include "content/public/browser/storage_partition.h"
@@ -73,7 +73,6 @@
 #include "net/log/net_log_capture_mode.h"
 #include "net/log/net_log_entry.h"
 #include "net/log/net_log_util.h"
-#include "net/log/write_to_file_net_log_observer.h"
 #include "net/proxy/proxy_service.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -87,7 +86,6 @@
 #include "chromeos/dbus/debug_daemon_client.h"
 #include "chromeos/network/onc/onc_certificate_importer_impl.h"
 #include "chromeos/network/onc/onc_utils.h"
-#include "components/user_manager/user.h"
 #endif
 
 using base::Value;
@@ -101,6 +99,31 @@ namespace {
 // page.  All events that occur during this period are grouped together and
 // sent to the page at once, which reduces context switching and CPU usage.
 const int kNetLogEventDelayMilliseconds = 100;
+
+// A Base-64 encoded DER certificate for use in test Expect-CT reports. The
+// contents of the certificate don't matter.
+const char kTestReportCert[] =
+    "MIIDvzCCAqegAwIBAgIBAzANBgkqhkiG9w0BAQsFADBjMQswCQYDVQQGEwJVUzET"
+    "MBEGA1UECAwKQ2FsaWZvcm5pYTEWMBQGA1UEBwwNTW91bnRhaW4gVmlldzEQMA4G"
+    "A1UECgwHVGVzdCBDQTEVMBMGA1UEAwwMVGVzdCBSb290IENBMB4XDTE3MDYwNTE3"
+    "MTA0NloXDTI3MDYwMzE3MTA0NlowYDELMAkGA1UEBhMCVVMxEzARBgNVBAgMCkNh"
+    "bGlmb3JuaWExFjAUBgNVBAcMDU1vdW50YWluIFZpZXcxEDAOBgNVBAoMB1Rlc3Qg"
+    "Q0ExEjAQBgNVBAMMCTEyNy4wLjAuMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCC"
+    "AQoCggEBALS/0pcz5RNbd2W9cxp1KJtHWea3MOhGM21YW9ofCv/k5C3yHfiJ6GQu"
+    "9sPN16OO1/fN59gOEMPnVtL85ebTTuL/gk0YY4ewo97a7wo3e6y1t0PO8gc53xTp"
+    "w6RBPn5oRzSbe2HEGOYTzrO0puC6A+7k6+eq9G2+l1uqBpdQAdB4uNaSsOTiuUOI"
+    "ta4UZH1ScNQFHAkl1eJPyaiC20Exw75EbwvU/b/B7tlivzuPtQDI0d9dShOtceRL"
+    "X9HZckyD2JNAv2zNL2YOBNa5QygkySX9WXD+PfKpCk7Cm8TenldeXRYl5ni2REkp"
+    "nfa/dPuF1g3xZVjyK9aPEEnIAC2I4i0CAwEAAaOBgDB+MAwGA1UdEwEB/wQCMAAw"
+    "HQYDVR0OBBYEFODc4C8HiHQ6n9Mwo3GK+dal5aZTMB8GA1UdIwQYMBaAFJsmC4qY"
+    "qbsduR8c4xpAM+2OF4irMB0GA1UdJQQWMBQGCCsGAQUFBwMBBggrBgEFBQcDAjAP"
+    "BgNVHREECDAGhwR/AAABMA0GCSqGSIb3DQEBCwUAA4IBAQB6FEQuUDRcC5jkX3aZ"
+    "uuTeZEqMVL7JXgvgFqzXsPb8zIdmxr/tEDfwXx2qDf2Dpxts7Fq4vqUwimK4qV3K"
+    "7heLnWV2+FBvV1eeSfZ7AQj+SURkdlyo42r41+t13QUf+Z0ftR9266LSWLKrukeI"
+    "Mxk73hOkm/u8enhTd00dy/FN9dOFBFHseVMspWNxIkdRILgOmiyfQNRgxNYdOf0e"
+    "EfELR8Hn6WjZ8wAbvO4p7RTrzu1c/RZ0M+NLkID56Brbl70GC2h5681LPwAOaZ7/"
+    "mWQ5kekSyJjmLfF12b+h9RVAt5MrXZgk2vNujssgGf4nbWh4KZyQ6qrs778ZdDLm"
+    "yfUn";
 
 // Returns the HostCache for |context|'s primary HostResolver, or NULL if
 // there is none.
@@ -159,7 +182,7 @@ content::WebUIDataSource* CreateNetInternalsHTMLSource() {
   source->SetDefaultResource(IDR_NET_INTERNALS_INDEX_HTML);
   source->AddResourcePath("index.js", IDR_NET_INTERNALS_INDEX_JS);
   source->SetJsonPath("strings.js");
-  source->UseGzip(std::unordered_set<std::string>());
+  source->UseGzip();
   return source;
 }
 
@@ -216,7 +239,7 @@ class NetInternalsMessageHandler
   void OnCertificatesImported(
       const std::string& previous_error,
       bool success,
-      const net::CertificateList& onc_trusted_certificates);
+      net::ScopedCERTCertificateList onc_trusted_certificates);
 #endif
 
  private:
@@ -279,9 +302,12 @@ class NetInternalsMessageHandler::IOThreadImpl
   void OnReloadProxySettings(const base::ListValue* list);
   void OnClearBadProxies(const base::ListValue* list);
   void OnClearHostResolverCache(const base::ListValue* list);
+  void OnDomainSecurityPolicyDelete(const base::ListValue* list);
   void OnHSTSQuery(const base::ListValue* list);
   void OnHSTSAdd(const base::ListValue* list);
-  void OnHSTSDelete(const base::ListValue* list);
+  void OnExpectCTQuery(const base::ListValue* list);
+  void OnExpectCTAdd(const base::ListValue* list);
+  void OnExpectCTTestReport(const base::ListValue* list);
   void OnCloseIdleSockets(const base::ListValue* list);
   void OnFlushSocketPools(const base::ListValue* list);
 #if defined(OS_WIN)
@@ -358,6 +384,13 @@ class NetInternalsMessageHandler::IOThreadImpl
   // Duplicates are allowed.
   ContextGetterList context_getters_;
 
+  // Used to send test Expect-CT reports. Lazily initialized when the first
+  // Expect-CT test report is sent. This is a member variable rather than a
+  // local variable so that it lives long enough to receive the result of
+  // sending a report, which is delivered to the JavaScript via a JavaScript
+  // command.
+  std::unique_ptr<ChromeExpectCTReporter> expect_ct_reporter_;
+
   DISALLOW_COPY_AND_ASSIGN(IOThreadImpl);
 };
 
@@ -374,7 +407,7 @@ NetInternalsMessageHandler::~NetInternalsMessageHandler() {
     proxy_->OnWebUIDeleted();
     // Notify the handler on the IO thread that the renderer is gone.
     BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                            base::Bind(&IOThreadImpl::Detach, proxy_));
+                            base::BindOnce(&IOThreadImpl::Detach, proxy_));
   }
 }
 
@@ -388,9 +421,6 @@ void NetInternalsMessageHandler::RegisterMessages() {
   proxy_->AddRequestContextGetter(
       content::BrowserContext::GetDefaultStoragePartition(profile)->
           GetMediaURLRequestContext());
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  proxy_->AddRequestContextGetter(profile->GetRequestContextForExtensions());
-#endif
 
   web_ui()->RegisterMessageCallback(
       "notifyReady",
@@ -413,6 +443,10 @@ void NetInternalsMessageHandler::RegisterMessages() {
       base::Bind(&IOThreadImpl::CallbackHelper,
                  &IOThreadImpl::OnClearHostResolverCache, proxy_));
   web_ui()->RegisterMessageCallback(
+      "domainSecurityPolicyDelete",
+      base::Bind(&IOThreadImpl::CallbackHelper,
+                 &IOThreadImpl::OnDomainSecurityPolicyDelete, proxy_));
+  web_ui()->RegisterMessageCallback(
       "hstsQuery",
       base::Bind(&IOThreadImpl::CallbackHelper,
                  &IOThreadImpl::OnHSTSQuery, proxy_));
@@ -421,9 +455,15 @@ void NetInternalsMessageHandler::RegisterMessages() {
       base::Bind(&IOThreadImpl::CallbackHelper,
                  &IOThreadImpl::OnHSTSAdd, proxy_));
   web_ui()->RegisterMessageCallback(
-      "hstsDelete",
+      "expectCTQuery", base::Bind(&IOThreadImpl::CallbackHelper,
+                                  &IOThreadImpl::OnExpectCTQuery, proxy_));
+  web_ui()->RegisterMessageCallback(
+      "expectCTAdd", base::Bind(&IOThreadImpl::CallbackHelper,
+                                &IOThreadImpl::OnExpectCTAdd, proxy_));
+  web_ui()->RegisterMessageCallback(
+      "expectCTTestReport",
       base::Bind(&IOThreadImpl::CallbackHelper,
-                 &IOThreadImpl::OnHSTSDelete, proxy_));
+                 &IOThreadImpl::OnExpectCTTestReport, proxy_));
   web_ui()->RegisterMessageCallback(
       "closeIdleSockets",
       base::Bind(&IOThreadImpl::CallbackHelper,
@@ -502,12 +542,11 @@ void NetInternalsMessageHandler::OnRendererReady(const base::ListValue* list) {
 
 void NetInternalsMessageHandler::OnClearBrowserCache(
     const base::ListValue* list) {
-  BrowsingDataRemover* remover =
-      BrowsingDataRemoverFactory::GetForBrowserContext(
-          Profile::FromWebUI(web_ui()));
+  content::BrowsingDataRemover* remover =
+      Profile::GetBrowsingDataRemover(Profile::FromWebUI(web_ui()));
   remover->Remove(base::Time(), base::Time::Max(),
-                  BrowsingDataRemover::DATA_TYPE_CACHE,
-                  BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB);
+                  content::BrowsingDataRemover::DATA_TYPE_CACHE,
+                  content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB);
   // BrowsingDataRemover deletes itself.
 }
 
@@ -593,14 +632,14 @@ void NetInternalsMessageHandler::IOThreadImpl::CallbackHelper(
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(method, io_thread, base::Owned(list_copy)));
+      base::BindOnce(method, io_thread, base::Owned(list_copy)));
 }
 
 void NetInternalsMessageHandler::IOThreadImpl::Detach() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   // Unregister with network stack to observe events.
   if (net_log())
-    net_log()->DeprecatedRemoveObserver(this);
+    net_log()->RemoveObserver(this);
 }
 
 void NetInternalsMessageHandler::IOThreadImpl::OnWebUIDeleted() {
@@ -616,7 +655,7 @@ void NetInternalsMessageHandler::IOThreadImpl::OnRendererReady(
   // pending events, so they won't appear before the status events created for
   // currently active network objects below.
   if (net_log()) {
-    net_log()->DeprecatedRemoveObserver(this);
+    net_log()->RemoveObserver(this);
     PostPendingEntries();
   }
 
@@ -629,7 +668,7 @@ void NetInternalsMessageHandler::IOThreadImpl::OnRendererReady(
   PrePopulateEventList();
 
   // Register with network stack to observe events.
-  io_thread_->net_log()->DeprecatedAddObserver(
+  io_thread_->net_log()->AddObserver(
       this, net::NetLogCaptureMode::IncludeCookiesAndCredentials());
 }
 
@@ -672,11 +711,30 @@ void NetInternalsMessageHandler::IOThreadImpl::OnClearHostResolverCache(
   SendNetInfo(net::NET_INFO_HOST_RESOLVER);
 }
 
+void NetInternalsMessageHandler::IOThreadImpl::OnDomainSecurityPolicyDelete(
+    const base::ListValue* list) {
+  // |list| should be: [<domain to query>].
+  std::string domain;
+  bool result = list->GetString(0, &domain);
+  DCHECK(result);
+  if (!base::IsStringASCII(domain)) {
+    // There cannot be a unicode entry in the HSTS set.
+    return;
+  }
+  net::TransportSecurityState* transport_security_state =
+      GetMainContext()->transport_security_state();
+  if (!transport_security_state)
+    return;
+
+  transport_security_state->DeleteDynamicDataForHost(domain);
+}
+
 void NetInternalsMessageHandler::IOThreadImpl::OnHSTSQuery(
     const base::ListValue* list) {
   // |list| should be: [<domain to query>].
   std::string domain;
-  CHECK(list->GetString(0, &domain));
+  bool get_domain_result = list->GetString(0, &domain);
+  DCHECK(get_domain_result);
   auto result = base::MakeUnique<base::DictionaryValue>();
 
   if (base::IsStringASCII(domain)) {
@@ -685,7 +743,7 @@ void NetInternalsMessageHandler::IOThreadImpl::OnHSTSQuery(
     if (transport_security_state) {
       net::TransportSecurityState::STSState static_sts_state;
       net::TransportSecurityState::PKPState static_pkp_state;
-      const bool found_static = transport_security_state->GetStaticDomainState(
+      bool found_static = transport_security_state->GetStaticDomainState(
           domain, &static_sts_state, &static_pkp_state);
       if (found_static) {
         result->SetInteger("static_upgrade_mode",
@@ -710,13 +768,11 @@ void NetInternalsMessageHandler::IOThreadImpl::OnHSTSQuery(
 
       net::TransportSecurityState::STSState dynamic_sts_state;
       net::TransportSecurityState::PKPState dynamic_pkp_state;
-      const bool found_sts_dynamic =
-          transport_security_state->GetDynamicSTSState(domain,
-                                                       &dynamic_sts_state);
+      bool found_sts_dynamic = transport_security_state->GetDynamicSTSState(
+          domain, &dynamic_sts_state);
 
-      const bool found_pkp_dynamic =
-          transport_security_state->GetDynamicPKPState(domain,
-                                                       &dynamic_pkp_state);
+      bool found_pkp_dynamic = transport_security_state->GetDynamicPKPState(
+          domain, &dynamic_pkp_state);
       if (found_sts_dynamic) {
         result->SetInteger("dynamic_upgrade_mode",
                            static_cast<int>(dynamic_sts_state.upgrade_mode));
@@ -758,18 +814,22 @@ void NetInternalsMessageHandler::IOThreadImpl::OnHSTSAdd(
   // |list| should be: [<domain to query>, <STS include subdomains>, <PKP
   // include subdomains>, <key pins>].
   std::string domain;
-  CHECK(list->GetString(0, &domain));
+  bool result = list->GetString(0, &domain);
+  DCHECK(result);
   if (!base::IsStringASCII(domain)) {
     // Silently fail. The user will get a helpful error if they query for the
     // name.
     return;
   }
   bool sts_include_subdomains;
-  CHECK(list->GetBoolean(1, &sts_include_subdomains));
+  result = list->GetBoolean(1, &sts_include_subdomains);
+  DCHECK(result);
   bool pkp_include_subdomains;
-  CHECK(list->GetBoolean(2, &pkp_include_subdomains));
+  result = list->GetBoolean(2, &pkp_include_subdomains);
+  DCHECK(result);
   std::string hashes_str;
-  CHECK(list->GetString(3, &hashes_str));
+  result = list->GetString(3, &hashes_str);
+  DCHECK(result);
 
   net::TransportSecurityState* transport_security_state =
       GetMainContext()->transport_security_state();
@@ -788,21 +848,110 @@ void NetInternalsMessageHandler::IOThreadImpl::OnHSTSAdd(
                                     hashes, GURL());
 }
 
-void NetInternalsMessageHandler::IOThreadImpl::OnHSTSDelete(
+void NetInternalsMessageHandler::IOThreadImpl::OnExpectCTQuery(
     const base::ListValue* list) {
   // |list| should be: [<domain to query>].
   std::string domain;
-  CHECK(list->GetString(0, &domain));
+  bool domain_result = list->GetString(0, &domain);
+  DCHECK(domain_result);
+  auto result = base::MakeUnique<base::DictionaryValue>();
+
+  if (base::IsStringASCII(domain)) {
+    net::TransportSecurityState* transport_security_state =
+        GetMainContext()->transport_security_state();
+    if (transport_security_state) {
+      net::TransportSecurityState::ExpectCTState dynamic_expect_ct_state;
+      bool found = transport_security_state->GetDynamicExpectCTState(
+          domain, &dynamic_expect_ct_state);
+
+      // TODO(estark): query static Expect-CT state as well.
+      if (found) {
+        result->SetString("dynamic_expect_ct_domain", domain);
+        result->SetDouble("dynamic_expect_ct_observed",
+                          dynamic_expect_ct_state.last_observed.ToDoubleT());
+        result->SetDouble("dynamic_expect_ct_expiry",
+                          dynamic_expect_ct_state.expiry.ToDoubleT());
+        result->SetBoolean("dynamic_expect_ct_enforce",
+                           dynamic_expect_ct_state.enforce);
+        result->SetString("dynamic_expect_ct_report_uri",
+                          dynamic_expect_ct_state.report_uri.spec());
+      }
+
+      result->SetBoolean("result", found);
+    } else {
+      result->SetString("error", "no Expect-CT state active");
+    }
+  } else {
+    result->SetString("error", "non-ASCII domain name");
+  }
+
+  SendJavascriptCommand("receivedExpectCTResult", std::move(result));
+}
+
+void NetInternalsMessageHandler::IOThreadImpl::OnExpectCTAdd(
+    const base::ListValue* list) {
+  // |list| should be: [<domain to add>, <report URI>, <enforce>].
+  std::string domain;
+  bool result = list->GetString(0, &domain);
+  DCHECK(result);
   if (!base::IsStringASCII(domain)) {
-    // There cannot be a unicode entry in the HSTS set.
+    // Silently fail. The user will get a helpful error if they query for the
+    // name.
     return;
   }
+  std::string report_uri_str;
+  result = list->GetString(1, &report_uri_str);
+  DCHECK(result);
+  bool enforce;
+  result = list->GetBoolean(2, &enforce);
+  DCHECK(result);
+
   net::TransportSecurityState* transport_security_state =
       GetMainContext()->transport_security_state();
   if (!transport_security_state)
     return;
 
-  transport_security_state->DeleteDynamicDataForHost(domain);
+  base::Time expiry = base::Time::Now() + base::TimeDelta::FromDays(1000);
+  transport_security_state->AddExpectCT(domain, expiry, enforce,
+                                        GURL(report_uri_str));
+}
+
+void NetInternalsMessageHandler::IOThreadImpl::OnExpectCTTestReport(
+    const base::ListValue* list) {
+  // |list| should be: [<report URI>].
+  std::string report_uri_str;
+  bool result = list->GetString(0, &report_uri_str);
+  DCHECK(result);
+  GURL report_uri(report_uri_str);
+  if (!report_uri.is_valid())
+    return;
+
+  std::string decoded_dummy_cert;
+  DCHECK(base::Base64Decode(kTestReportCert, &decoded_dummy_cert));
+  scoped_refptr<net::X509Certificate> dummy_cert =
+      net::X509Certificate::CreateFromBytes(decoded_dummy_cert.data(),
+                                            decoded_dummy_cert.size());
+  net::SignedCertificateTimestampAndStatusList dummy_sct_list;
+
+  if (!expect_ct_reporter_) {
+    std::unique_ptr<base::Value> success =
+        base::MakeUnique<base::Value>("success");
+    std::unique_ptr<base::Value> failure =
+        base::MakeUnique<base::Value>("failure");
+    expect_ct_reporter_ = base::MakeUnique<ChromeExpectCTReporter>(
+        GetMainContext(),
+        base::Bind(
+            &NetInternalsMessageHandler::IOThreadImpl::SendJavascriptCommand,
+            this, "receivedExpectCTTestReportResult", base::Passed(&success)),
+        base::Bind(
+            &NetInternalsMessageHandler::IOThreadImpl::SendJavascriptCommand,
+            this, "receivedExpectCTTestReportResult", base::Passed(&failure)));
+  }
+
+  // Send a test report with dummy data.
+  expect_ct_reporter_->OnExpectCTFailed(
+      net::HostPortPair("expect-ct-report.test", 443), report_uri,
+      base::Time::Now(), dummy_cert.get(), dummy_cert.get(), dummy_sct_list);
 }
 
 void NetInternalsMessageHandler::IOThreadImpl::OnFlushSocketPools(
@@ -882,7 +1031,7 @@ void NetInternalsMessageHandler::ImportONCFileToNSSDB(
 void NetInternalsMessageHandler::OnCertificatesImported(
     const std::string& previous_error,
     bool success,
-    const net::CertificateList& /* unused onc_trusted_certificates */) {
+    net::ScopedCERTCertificateList /* unused onc_trusted_certificates */) {
   std::string error = previous_error;
   if (!success)
     error += "Some certificates couldn't be imported. ";
@@ -986,8 +1135,8 @@ void NetInternalsMessageHandler::IOThreadImpl::OnSetCaptureMode(
 void NetInternalsMessageHandler::IOThreadImpl::OnAddEntry(
     const net::NetLogEntry& entry) {
   BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                          base::Bind(&IOThreadImpl::AddEntryToQueue, this,
-                                     base::Passed(entry.ToValue())));
+                          base::BindOnce(&IOThreadImpl::AddEntryToQueue, this,
+                                         base::Passed(entry.ToValue())));
 }
 
 // Note that this can be called from ANY THREAD.
@@ -1004,8 +1153,8 @@ void NetInternalsMessageHandler::IOThreadImpl::SendJavascriptCommand(
   }
 
   BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::Bind(&IOThreadImpl::SendJavascriptCommand, this,
-                                     command, base::Passed(&arg)));
+                          base::BindOnce(&IOThreadImpl::SendJavascriptCommand,
+                                         this, command, base::Passed(&arg)));
 }
 
 void NetInternalsMessageHandler::IOThreadImpl::AddEntryToQueue(
@@ -1015,7 +1164,7 @@ void NetInternalsMessageHandler::IOThreadImpl::AddEntryToQueue(
     pending_entries_.reset(new base::ListValue());
     BrowserThread::PostDelayedTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&IOThreadImpl::PostPendingEntries, this),
+        base::BindOnce(&IOThreadImpl::PostPendingEntries, this),
         base::TimeDelta::FromMilliseconds(kNetLogEventDelayMilliseconds));
   }
   pending_entries_->Append(std::move(entry));
@@ -1032,8 +1181,7 @@ void NetInternalsMessageHandler::IOThreadImpl::PrePopulateEventList() {
   std::set<net::URLRequestContext*> contexts;
   for (const auto& getter : context_getters_)
     contexts.insert(getter->GetURLRequestContext());
-  contexts.insert(io_thread_->globals()->proxy_script_fetcher_context.get());
-  contexts.insert(io_thread_->globals()->system_request_context.get());
+  contexts.insert(io_thread_->globals()->system_request_context);
 
   // Add entries for ongoing network objects.
   CreateNetLogEntriesForActiveObjects(contexts, this);

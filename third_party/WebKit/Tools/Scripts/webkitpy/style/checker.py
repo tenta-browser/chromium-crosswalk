@@ -75,15 +75,10 @@ _DEFAULT_OUTPUT_FORMAT = 'emacs'
 # checked, this list should normally include only rules that begin
 # with a "-" sign.
 _BASE_FILTER_RULES = [
-    '-build/endif_comment',
     '-build/include_what_you_use',  # <string> for std::string
-    '-build/storage_class',  # const static
     '-legal/copyright',
-    '-readability/multiline_comment',
-    '-readability/braces',  # int foo() {};
     '-readability/fn_size',
     '-readability/casting',
-    '-readability/function',
     '-runtime/arrays',  # variable length array
     '-runtime/casting',
     '-runtime/sizeof',
@@ -91,7 +86,6 @@ _BASE_FILTER_RULES = [
     '-runtime/virtual',  # virtual dtor
     '-runtime/printf',
     '-runtime/threadsafe_fn',
-    '-runtime/rtti',
     # List Python pep8 categories last.
     #
     # Because much of WebKit's Python code base does not abide by the
@@ -415,6 +409,8 @@ class CheckerDispatcher(object):
         #        for this special case.
         basename = os.path.basename(file_path)
         if basename == 'TestExpectations':
+            # TODO(qyearsley): Replace hard-coded "TestExpectations" with a
+            # list of known "TestExpectations" files. Maybe shared with Port.
             return False
         for skipped_file in _SKIPPED_FILES_WITHOUT_WARNING:
             if self._should_skip_file_path(file_path, skipped_file):
@@ -440,14 +436,18 @@ class CheckerDispatcher(object):
             return FileType.JSON
         elif file_extension == _PYTHON_FILE_EXTENSION:
             return FileType.PYTHON
+        elif not file_extension and os.path.dirname(file_path).endswith(os.path.join('Tools', 'Scripts')):
+            # TODO(qyearsley): Update this when Blink is moved from third_party/WebKit.
+            if os.path.basename(file_path) == 'OWNERS':
+                return FileType.NONE
+            return FileType.PYTHON
         elif file_extension in _XML_FILE_EXTENSIONS:
             return FileType.XML
         elif file_extension == _XCODEPROJ_FILE_EXTENSION:
             return FileType.XCODEPROJ
         elif file_extension == _PNG_FILE_EXTENSION:
             return FileType.PNG
-        elif ((not file_extension and os.path.join('Tools', 'Scripts') in file_path) or
-              file_extension in _TEXT_FILE_EXTENSIONS or os.path.basename(file_path) == 'TestExpectations'):
+        elif file_extension in _TEXT_FILE_EXTENSIONS or os.path.basename(file_path) == 'TestExpectations':
             return FileType.TEXT
         else:
             return FileType.NONE

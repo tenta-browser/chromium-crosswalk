@@ -3,7 +3,6 @@ Tests that Runtime.awaitPromise works.
 Running test: testResolvedPromise
 {
     result : {
-        description : 239
         type : number
         value : 239
     }
@@ -14,7 +13,7 @@ Running test: testRejectedPromise
     exceptionDetails : {
         columnNumber : 0
         exception : {
-            objectId : 0
+            objectId : <number>
             type : object
             value : {
                 a : 1
@@ -31,7 +30,7 @@ Running test: testRejectedPromise
                         columnNumber : 8
                         functionName : 
                         lineNumber : 0
-                        scriptId : 0
+                        scriptId : <number>
                         url : 
                     }
                 ]
@@ -53,8 +52,7 @@ Running test: testRejectedPromiseWithStack
     exceptionDetails : {
         columnNumber : 0
         exception : {
-            description : 239
-            objectId : 0
+            objectId : <number>
             type : number
             value : 239
         }
@@ -66,17 +64,17 @@ Running test: testRejectedPromiseWithStack
             parent : {
                 callFrames : [
                     [0] : {
-                        columnNumber : 4
+                        columnNumber : 6
                         functionName : rejectPromise
-                        lineNumber : 21
-                        scriptId : 0
+                        lineNumber : 14
+                        scriptId : <number>
                         url : 
                     }
                     [1] : {
                         columnNumber : 0
                         functionName : 
                         lineNumber : 0
-                        scriptId : 0
+                        scriptId : <number>
                         url : 
                     }
                 ]
@@ -86,7 +84,6 @@ Running test: testRejectedPromiseWithStack
         text : Uncaught (in promise)
     }
     result : {
-        description : 239
         type : number
         value : 239
     }
@@ -95,7 +92,6 @@ Running test: testRejectedPromiseWithStack
 Running test: testPendingPromise
 {
     result : {
-        description : 239
         type : number
         value : 239
     }

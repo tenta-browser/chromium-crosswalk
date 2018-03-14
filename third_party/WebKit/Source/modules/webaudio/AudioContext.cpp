@@ -13,7 +13,6 @@
 #include "core/frame/UseCounter.h"
 #include "core/timing/DOMWindowPerformance.h"
 #include "core/timing/Performance.h"
-#include "modules/webaudio/AudioBufferCallback.h"
 #include "modules/webaudio/AudioContextOptions.h"
 #include "modules/webaudio/AudioTimestamp.h"
 #include "modules/webaudio/DefaultAudioDestinationNode.h"
@@ -39,7 +38,7 @@ AudioContext* AudioContext::Create(Document& document,
   DCHECK(IsMainThread());
 
   UseCounter::CountCrossOriginIframe(
-      document, UseCounter::kAudioContextCrossOriginIframe);
+      document, WebFeature::kAudioContextCrossOriginIframe);
 
   if (g_hardware_context_count >= kMaxHardwareContexts) {
     exception_state.ThrowDOMException(
@@ -51,14 +50,18 @@ AudioContext* AudioContext::Create(Document& document,
   }
 
   WebAudioLatencyHint latency_hint(WebAudioLatencyHint::kCategoryInteractive);
-  if (context_options.latencyHint().isAudioContextLatencyCategory()) {
+  if (context_options.latencyHint().IsAudioContextLatencyCategory()) {
     latency_hint = WebAudioLatencyHint(
-        context_options.latencyHint().getAsAudioContextLatencyCategory());
+        context_options.latencyHint().GetAsAudioContextLatencyCategory());
+  } else if (context_options.latencyHint().IsDouble()) {
+    // This should be the requested output latency in seconds, without taking
+    // into account double buffering (same as baseLatency).
+    latency_hint =
+        WebAudioLatencyHint(context_options.latencyHint().GetAsDouble());
   }
-  // TODO: add support for latencyHint().isDouble()
 
   AudioContext* audio_context = new AudioContext(document, latency_hint);
-  audio_context->SuspendIfNeeded();
+  audio_context->PauseIfNeeded();
 
   if (!AudioUtilities::IsValidAudioBufferSampleRate(
           audio_context->sampleRate())) {
@@ -87,7 +90,7 @@ AudioContext* AudioContext::Create(Document& document,
   ++g_hardware_context_count;
 #if DEBUG_AUDIONODE_REFERENCES
   fprintf(stderr, "[%16p]: AudioContext::AudioContext(): %u #%u\n",
-          audioContext, audioContext->m_contextId, s_hardwareContextCount);
+          audio_context, audio_context->context_id_, g_hardware_context_count);
 #endif
 
   DEFINE_STATIC_LOCAL(SparseHistogram, max_channel_count_histogram,
@@ -103,7 +106,8 @@ AudioContext* AudioContext::Create(Document& document,
 
 AudioContext::AudioContext(Document& document,
                            const WebAudioLatencyHint& latency_hint)
-    : BaseAudioContext(&document), context_id_(g_context_id++) {
+    : BaseAudioContext(&document, kRealtimeContext),
+      context_id_(g_context_id++) {
   destination_node_ = DefaultAudioDestinationNode::Create(this, latency_hint);
   Initialize();
 }
@@ -111,18 +115,18 @@ AudioContext::AudioContext(Document& document,
 AudioContext::~AudioContext() {
 #if DEBUG_AUDIONODE_REFERENCES
   fprintf(stderr, "[%16p]: AudioContext::~AudioContext(): %u\n", this,
-          m_contextId);
+          context_id_);
 #endif
 }
 
-DEFINE_TRACE(AudioContext) {
+void AudioContext::Trace(blink::Visitor* visitor) {
   visitor->Trace(close_resolver_);
   BaseAudioContext::Trace(visitor);
 }
 
 ScriptPromise AudioContext::suspendContext(ScriptState* script_state) {
   DCHECK(IsMainThread());
-  AutoLocker locker(this);
+  GraphAutoLocker locker(this);
 
   ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
   ScriptPromise promise = resolver->Promise();
@@ -175,7 +179,7 @@ ScriptPromise AudioContext::resumeContext(ScriptState* script_state) {
   // Save the resolver which will get resolved when the destination node starts
   // pulling on the graph again.
   {
-    AutoLocker locker(this);
+    GraphAutoLocker locker(this);
     resume_resolvers_.push_back(resolver);
   }
 
@@ -264,7 +268,29 @@ void AudioContext::StopRendering() {
 }
 
 double AudioContext::baseLatency() const {
-  return FramesPerBuffer() * 2 / static_cast<double>(sampleRate());
+  return FramesPerBuffer() / static_cast<double>(sampleRate());
+}
+
+// TODO(crbug.com/764396): Remove these when fixed.
+void AudioContext::CountValueSetterConflict(bool does_conflict) {
+  ++count_value_setter_calls_;
+  if (does_conflict) {
+    ++count_value_setter_conflicts_;
+  }
+}
+
+void AudioContext::RecordValueSetterStatistics() {
+  DEFINE_STATIC_LOCAL(
+      LinearHistogram, value_setter_conflict_percentage_histogram,
+      ("WebAudio.AudioParam.ValueSetterConflictPercentage", 1, 100, 101));
+
+  value_setter_conflict_percentage_histogram.Count(static_cast<int32_t>(
+      0.5 + 100.0 * count_value_setter_conflicts_ / count_value_setter_calls_));
+
+  UMA_HISTOGRAM_COUNTS_10000("WebAudio.AudioParam.ValueSetterCount",
+                             count_value_setter_calls_);
+  UMA_HISTOGRAM_COUNTS_10000("WebAudio.AudioParam.ValueSetterConflictCount",
+                             count_value_setter_conflicts_);
 }
 
 }  // namespace blink

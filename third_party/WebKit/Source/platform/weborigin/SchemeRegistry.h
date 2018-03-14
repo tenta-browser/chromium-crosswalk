@@ -38,8 +38,12 @@ namespace blink {
 
 using URLSchemesSet = HashSet<String>;
 
-template <typename T>
-using URLSchemesMap = HashMap<String, T>;
+template <typename Mapped, typename MappedTraits>
+using URLSchemesMap = HashMap<String,
+                              Mapped,
+                              DefaultHash<String>::Hash,
+                              HashTraits<String>,
+                              MappedTraits>;
 
 class PLATFORM_EXPORT SchemeRegistry {
   STATIC_ONLY(SchemeRegistry);
@@ -58,7 +62,6 @@ class PLATFORM_EXPORT SchemeRegistry {
   static void RegisterURLSchemeAsSecure(const String&);
   static bool ShouldTreatURLSchemeAsSecure(const String&);
 
-  static void RegisterURLSchemeAsNoAccess(const String&);
   static bool ShouldTreatURLSchemeAsNoAccess(const String&);
 
   // Display-isolated schemes can only be displayed (in the sense of
@@ -84,6 +87,10 @@ class PLATFORM_EXPORT SchemeRegistry {
       const String& scheme);
 
   // Allow non-HTTP schemes to be registered to allow CORS requests.
+  // This is not used in Chromium anymore but left here intentionally
+  // to allow other embedders of Blink to add more schemes
+  // to the CORS-enabled schemes list.
+  // As for now (Nov 2017) it is used by Electron.
   static void RegisterURLSchemeAsCORSEnabled(const String& scheme);
   static bool ShouldTreatURLSchemeAsCORSEnabled(const String& scheme);
 
@@ -140,6 +147,10 @@ class PLATFORM_EXPORT SchemeRegistry {
   static void RegisterURLSchemeBypassingSecureContextCheck(
       const String& scheme);
   static bool SchemeShouldBypassSecureContextCheck(const String& scheme);
+
+  // Schemes that can use 'wasm-eval'.
+  static void RegisterURLSchemeAsAllowingWasmEvalCSP(const String& scheme);
+  static bool SchemeSupportsWasmEvalCSP(const String& scheme);
 
  private:
   static const URLSchemesSet& LocalSchemes();

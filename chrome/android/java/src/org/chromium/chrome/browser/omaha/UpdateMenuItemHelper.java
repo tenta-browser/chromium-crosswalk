@@ -12,6 +12,7 @@ import android.annotation.TargetApi;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
@@ -20,6 +21,8 @@ import android.os.StatFs;
 import android.text.TextUtils;
 import android.view.View;
 import android.view.animation.LinearInterpolator;
+
+import com.google.android.gms.common.GooglePlayServicesUtil;
 
 import org.chromium.base.CommandLine;
 import org.chromium.base.Log;
@@ -45,11 +48,8 @@ public class UpdateMenuItemHelper {
     // VariationsAssociatedData configs
     private static final String FIELD_TRIAL_NAME = "UpdateMenuItem";
     private static final String ENABLED_VALUE = "true";
-    private static final String ENABLE_UPDATE_MENU_ITEM = "enable_update_menu_item";
-    private static final String ENABLE_UPDATE_BADGE = "enable_update_badge";
-    private static final String SHOW_SUMMARY = "show_summary";
-    private static final String USE_NEW_FEATURES_SUMMARY = "use_new_features_summary";
     private static final String CUSTOM_SUMMARY = "custom_summary";
+    private static final String MIN_REQUIRED_STORAGE_MB = "min_required_storage_for_update_mb";
 
     // UMA constants for logging whether the menu item was clicked.
     private static final int ITEM_NOT_CLICKED = 0;
@@ -101,12 +101,6 @@ public class UpdateMenuItemHelper {
      * @param activity The current {@link ChromeActivity}.
      */
     public void checkForUpdateOnBackgroundThread(final ChromeActivity activity) {
-        if (!getBooleanParam(ENABLE_UPDATE_MENU_ITEM)
-                && !getBooleanParam(ChromeSwitches.FORCE_SHOW_UPDATE_MENU_ITEM)
-                && !getBooleanParam(ChromeSwitches.FORCE_SHOW_UPDATE_MENU_BADGE)) {
-            return;
-        }
-
         ThreadUtils.assertOnUiThread();
 
         if (mAlreadyCheckedForUpdates) {
@@ -124,8 +118,7 @@ public class UpdateMenuItemHelper {
                     mUpdateUrl = MarketURLGetter.getMarketUrl(activity);
                     mLatestVersion =
                             VersionNumberGetter.getInstance().getLatestKnownVersion(activity);
-                    mUpdateAvailable = true;
-                    recordInternalStorageSize();
+                    mUpdateAvailable = checkForSufficientStorage();
                 } else {
                     mUpdateAvailable = false;
                 }
@@ -160,11 +153,21 @@ public class UpdateMenuItemHelper {
             return true;
         }
 
-        if (!getBooleanParam(ENABLE_UPDATE_MENU_ITEM)) {
+        if (!isGooglePlayStoreAvailable(activity)) {
             return false;
         }
 
         return updateAvailable(activity);
+    }
+
+    private static boolean isGooglePlayStoreAvailable(Context context) {
+        try {
+            context.getPackageManager().getPackageInfo(
+                    GooglePlayServicesUtil.GOOGLE_PLAY_STORE_PACKAGE, 0);
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -172,18 +175,9 @@ public class UpdateMenuItemHelper {
      * @return The string to use for summary text or the empty string if no summary should be shown.
      */
     public String getMenuItemSummaryText(Context context) {
-        if (!getBooleanParam(SHOW_SUMMARY) && !getBooleanParam(USE_NEW_FEATURES_SUMMARY)
-                && !getBooleanParam(CUSTOM_SUMMARY)) {
-            return "";
-        }
-
         String customSummary = getStringParamValue(CUSTOM_SUMMARY);
         if (!TextUtils.isEmpty(customSummary)) {
             return customSummary;
-        }
-
-        if (getBooleanParam(USE_NEW_FEATURES_SUMMARY)) {
-            return context.getResources().getString(R.string.menu_update_summary_new_features);
         }
 
         return context.getResources().getString(R.string.menu_update_summary_default);
@@ -198,12 +192,15 @@ public class UpdateMenuItemHelper {
             return true;
         }
 
+        if (!isGooglePlayStoreAvailable(activity)) {
+            return false;
+        }
+
         // The badge is hidden if the update menu item has been clicked until there is an
         // even newer version of Chrome available.
         String latestVersionWhenClicked =
                 PrefServiceBridge.getInstance().getLatestVersionWhenClickedUpdateMenuItem();
-        if (!getBooleanParam(ENABLE_UPDATE_BADGE)
-                || TextUtils.equals(latestVersionWhenClicked, mLatestVersion)) {
+        if (TextUtils.equals(latestVersionWhenClicked, mLatestVersion)) {
             return false;
         }
 
@@ -392,7 +389,28 @@ public class UpdateMenuItemHelper {
         return value;
     }
 
-    private void recordInternalStorageSize() {
+    /**
+     * Returns an integer value for a Finch parameter, or the default value if no parameter exists
+     * in the current configuration.  Also checks for a command-line switch with the same name.
+     * @param paramName The name of the Finch parameter (or command-line switch) to get a value for.
+     * @param defaultValue The default value to return when there's no param or switch.
+     * @return An integer value -- either the param or the default.
+     */
+    private static int getIntParamValueOrDefault(String paramName, int defaultValue) {
+        String value = CommandLine.getInstance().getSwitchValue(paramName);
+        if (TextUtils.isEmpty(value)) {
+            value = VariationsAssociatedData.getVariationParamValue(FIELD_TRIAL_NAME, paramName);
+        }
+        if (TextUtils.isEmpty(value)) return defaultValue;
+
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    private boolean checkForSufficientStorage() {
         assert !ThreadUtils.runningOnUiThread();
 
         File path = Environment.getDataDirectory();
@@ -405,6 +423,13 @@ public class UpdateMenuItemHelper {
         }
         RecordHistogram.recordLinearCountHistogram(
                 "GoogleUpdate.InfoBar.InternalStorageSizeAvailable", (int) size, 1, 200, 100);
+        RecordHistogram.recordLinearCountHistogram(
+                "GoogleUpdate.InfoBar.DeviceFreeSpace", (int) size, 1, 1000, 50);
+
+        int minRequiredStorage = getIntParamValueOrDefault(MIN_REQUIRED_STORAGE_MB, -1);
+        if (minRequiredStorage == -1) return true;
+
+        return size >= minRequiredStorage;
     }
 
     @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR2)

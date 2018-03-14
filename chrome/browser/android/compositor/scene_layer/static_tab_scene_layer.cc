@@ -14,15 +14,16 @@
 #include "ui/android/resources/resource_manager_impl.h"
 
 using base::android::JavaParamRef;
+using base::android::JavaRef;
 
 namespace android {
 
-StaticTabSceneLayer::StaticTabSceneLayer(JNIEnv* env, jobject jobj)
+StaticTabSceneLayer::StaticTabSceneLayer(JNIEnv* env,
+                                         const JavaRef<jobject>& jobj)
     : SceneLayer(env, jobj),
       last_set_tab_id_(-1),
       background_color_(SK_ColorWHITE),
-      brightness_(1.f) {
-}
+      brightness_(1.f) {}
 
 StaticTabSceneLayer::~StaticTabSceneLayer() {
 }
@@ -82,14 +83,11 @@ void StaticTabSceneLayer::UpdateTabLayer(
   }
 }
 
-static jlong Init(JNIEnv* env, const JavaParamRef<jobject>& jobj) {
+static jlong JNI_StaticTabSceneLayer_Init(JNIEnv* env,
+                                          const JavaParamRef<jobject>& jobj) {
   // This will automatically bind to the Java object and pass ownership there.
   StaticTabSceneLayer* scene_layer = new StaticTabSceneLayer(env, jobj);
   return reinterpret_cast<intptr_t>(scene_layer);
-}
-
-bool RegisterStaticTabSceneLayer(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace android

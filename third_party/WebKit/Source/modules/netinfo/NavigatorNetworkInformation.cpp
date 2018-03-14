@@ -43,14 +43,14 @@ NetworkInformation* NavigatorNetworkInformation::connection(
 
 NetworkInformation* NavigatorNetworkInformation::connection() {
   if (!connection_ && GetFrame()) {
-    ASSERT(GetFrame()->DomWindow());
+    DCHECK(GetFrame()->DomWindow());
     connection_ = NetworkInformation::Create(
         GetFrame()->DomWindow()->GetExecutionContext());
   }
   return connection_.Get();
 }
 
-DEFINE_TRACE(NavigatorNetworkInformation) {
+void NavigatorNetworkInformation::Trace(blink::Visitor* visitor) {
   visitor->Trace(connection_);
   Supplement<Navigator>::Trace(visitor);
   ContextClient::Trace(visitor);

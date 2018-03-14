@@ -7,12 +7,14 @@
 #include <algorithm>
 
 #include "base/bind.h"
+#include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
 #include "content/browser/bad_message.h"
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/fileapi/browser_file_system_helper.h"
 #include "content/common/fileapi/webblob_messages.h"
+#include "content/public/common/content_features.h"
 #include "ipc/ipc_platform_file.h"
 #include "storage/browser/blob/blob_data_handle.h"
 #include "storage/browser/blob/blob_entry.h"
@@ -79,16 +81,29 @@ void BlobDispatcherHost::OnChannelClosing() {
 bool BlobDispatcherHost::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   // Note: The only time a renderer sends a blob status message is to cancel.
-  IPC_BEGIN_MESSAGE_MAP(BlobDispatcherHost, message)
-    IPC_MESSAGE_HANDLER(BlobStorageMsg_RegisterBlob, OnRegisterBlob)
-    IPC_MESSAGE_HANDLER(BlobStorageMsg_MemoryItemResponse, OnMemoryItemResponse)
-    IPC_MESSAGE_HANDLER(BlobStorageMsg_SendBlobStatus, OnCancelBuildingBlob)
-    IPC_MESSAGE_HANDLER(BlobHostMsg_IncrementRefCount, OnIncrementBlobRefCount)
-    IPC_MESSAGE_HANDLER(BlobHostMsg_DecrementRefCount, OnDecrementBlobRefCount)
-    IPC_MESSAGE_HANDLER(BlobHostMsg_RegisterPublicURL, OnRegisterPublicBlobURL)
-    IPC_MESSAGE_HANDLER(BlobHostMsg_RevokePublicURL, OnRevokePublicBlobURL)
-    IPC_MESSAGE_UNHANDLED(handled = false)
-  IPC_END_MESSAGE_MAP()
+  if (features::IsMojoBlobsEnabled()) {
+    IPC_BEGIN_MESSAGE_MAP(BlobDispatcherHost, message)
+      IPC_MESSAGE_HANDLER(BlobHostMsg_RegisterPublicURL,
+                          OnRegisterPublicBlobURL)
+      IPC_MESSAGE_HANDLER(BlobHostMsg_RevokePublicURL, OnRevokePublicBlobURL)
+      IPC_MESSAGE_UNHANDLED(handled = false)
+    IPC_END_MESSAGE_MAP()
+  } else {
+    IPC_BEGIN_MESSAGE_MAP(BlobDispatcherHost, message)
+      IPC_MESSAGE_HANDLER(BlobStorageMsg_RegisterBlob, OnRegisterBlob)
+      IPC_MESSAGE_HANDLER(BlobStorageMsg_MemoryItemResponse,
+                          OnMemoryItemResponse)
+      IPC_MESSAGE_HANDLER(BlobStorageMsg_SendBlobStatus, OnCancelBuildingBlob)
+      IPC_MESSAGE_HANDLER(BlobHostMsg_IncrementRefCount,
+                          OnIncrementBlobRefCount)
+      IPC_MESSAGE_HANDLER(BlobHostMsg_DecrementRefCount,
+                          OnDecrementBlobRefCount)
+      IPC_MESSAGE_HANDLER(BlobHostMsg_RegisterPublicURL,
+                          OnRegisterPublicBlobURL)
+      IPC_MESSAGE_HANDLER(BlobHostMsg_RevokePublicURL, OnRevokePublicBlobURL)
+      IPC_MESSAGE_UNHANDLED(handled = false)
+    IPC_END_MESSAGE_MAP()
+  }
   return handled;
 }
 
@@ -119,6 +134,9 @@ void BlobDispatcherHost::OnRegisterBlob(
         if (!FileSystemURLIsValid(file_system_context_.get(), filesystem_url) ||
             !security_policy->CanReadFileSystemFile(process_id_,
                                                     filesystem_url)) {
+          DVLOG(1) << "BlobDispatcherHost::OnRegisterBlob(" << uuid
+                   << "): Invalid or prohibited FileSystem URL: "
+                   << filesystem_url.DebugString();
           HostedBlobState hosted_state(
               context->AddBrokenBlob(uuid, content_type, content_disposition,
                                      BlobStatus::ERR_FILE_WRITE_FAILED));
@@ -131,6 +149,9 @@ void BlobDispatcherHost::OnRegisterBlob(
       }
       case storage::DataElement::TYPE_FILE: {
         if (!security_policy->CanReadFile(process_id_, item.path())) {
+          DVLOG(1) << "BlobDispatcherHost::OnRegisterBlob(" << uuid
+                   << "): Invalid or prohibited FilePath: "
+                   << item.path().value();
           HostedBlobState hosted_state(
               context->AddBrokenBlob(uuid, content_type, content_disposition,
                                      BlobStatus::ERR_FILE_WRITE_FAILED));
@@ -149,7 +170,9 @@ void BlobDispatcherHost::OnRegisterBlob(
         // originally created by other processes? If so, is that cool?
         break;
       }
+      case storage::DataElement::TYPE_RAW_FILE:
       case storage::DataElement::TYPE_UNKNOWN:
+      case storage::DataElement::TYPE_DATA_PIPE:
       case storage::DataElement::TYPE_DISK_CACHE_ENTRY: {
         NOTREACHED();  // Should have been caught by IPC deserialization.
         break;
@@ -159,6 +182,7 @@ void BlobDispatcherHost::OnRegisterBlob(
 
   HostedBlobState hosted_state(transport_host_.StartBuildingBlob(
       uuid, content_type, content_disposition, descriptions, context,
+      file_system_context_,
       base::Bind(&BlobDispatcherHost::SendMemoryRequest, base::Unretained(this),
                  uuid),
       base::Bind(&BlobDispatcherHost::SendFinalBlobStatus,
@@ -241,6 +265,8 @@ void BlobDispatcherHost::OnIncrementBlobRefCount(const std::string& uuid) {
     return;
   }
   if (!context->registry().HasEntry(uuid)) {
+    DVLOG(1) << "BlobDispatcherHost::OnIncrementBlobRefCount(" << uuid
+             << "): Unknown UUID.";
     UMA_HISTOGRAM_ENUMERATION("Storage.Blob.InvalidReference", BDH_INCREMENT,
                               BDH_TRACING_ENUM_LAST);
     return;
@@ -263,6 +289,8 @@ void BlobDispatcherHost::OnDecrementBlobRefCount(const std::string& uuid) {
   }
   auto state_it = blobs_inuse_map_.find(uuid);
   if (state_it == blobs_inuse_map_.end()) {
+    DVLOG(1) << "BlobDispatcherHost::OnDecrementBlobRefCount(" << uuid
+             << "): Unknown UUID.";
     UMA_HISTOGRAM_ENUMERATION("Storage.Blob.InvalidReference", BDH_DECREMENT,
                               BDH_TRACING_ENUM_LAST);
     return;
@@ -293,6 +321,9 @@ void BlobDispatcherHost::OnRegisterPublicBlobURL(const GURL& public_url,
   // on the URL is allowed to be rendered in this process.
   if (!public_url.SchemeIsBlob() ||
       !security_policy->CanCommitURL(process_id_, public_url)) {
+    DVLOG(1) << "BlobDispatcherHost::OnRegisterPublicBlobURL("
+             << public_url.spec() << ", " << uuid
+             << "): Invalid or prohibited URL.";
     bad_message::ReceivedBadMessage(this, bad_message::BDH_DISALLOWED_ORIGIN);
     return;
   }
@@ -303,6 +334,8 @@ void BlobDispatcherHost::OnRegisterPublicBlobURL(const GURL& public_url,
   }
   BlobStorageContext* context = this->context();
   if (!IsInUseInHost(uuid) || context->registry().IsURLMapped(public_url)) {
+    DVLOG(1) << "BlobDispatcherHost::OnRegisterPublicBlobURL("
+             << public_url.spec() << ", " << uuid << "): Invalid url or uuid.";
     UMA_HISTOGRAM_ENUMERATION("Storage.Blob.InvalidURLRegister", BDH_INCREMENT,
                               BDH_TRACING_ENUM_LAST);
     return;
@@ -319,6 +352,8 @@ void BlobDispatcherHost::OnRevokePublicBlobURL(const GURL& public_url) {
     return;
   }
   if (!IsUrlRegisteredInHost(public_url)) {
+    DVLOG(1) << "BlobDispatcherHost::OnRevokePublicBlobURL("
+             << public_url.spec() << "): Unknown URL.";
     UMA_HISTOGRAM_ENUMERATION("Storage.Blob.InvalidURLRegister", BDH_DECREMENT,
                               BDH_TRACING_ENUM_LAST);
     return;
@@ -355,7 +390,12 @@ void BlobDispatcherHost::SendFinalBlobStatus(const std::string& uuid,
 }
 
 bool BlobDispatcherHost::IsInUseInHost(const std::string& uuid) {
-  return base::ContainsKey(blobs_inuse_map_, uuid);
+  // IsInUseInHost is not a security check, as renderers can arbitrarily start
+  // using blobs by sending an IncrementRefCount IPC. Furthermore with mojo
+  // blobs it doesn't make sense anymore to try to decide if a blob is in use in
+  // a process, so just always return true in that case.
+  return features::IsMojoBlobsEnabled() ||
+         base::ContainsKey(blobs_inuse_map_, uuid);
 }
 
 bool BlobDispatcherHost::IsUrlRegisteredInHost(const GURL& blob_url) {

@@ -1,28 +1,36 @@
 include_rules = [
+    "+base/callback.h",
     "+base/callback_forward.h",
+    "+base/containers/flat_set.h",
+    "+base/containers/span.h",
     "+base/location.h",
     "+base/logging.h",
+    "+base/memory/ref_counted.h",
+    "+base/memory/scoped_refptr.h",
     "+base/metrics",
     "+base/optional.h",
     "+base/strings",
+    "+base/time",
     "+base/trace_event",
     "-bindings",
     "+cc",
     "-cc/blink",
-    "-core",
-    "-modules",
-    # TODO(toyoshim): Remove following media/midi direct dependency in public
-    # interface once Web MIDI starts calling the Mojo service inside Blink.
-    # http://crbug.com/582327
-    "+media/midi/midi_service.mojom-shared.h",
+    "+components/viz/common",
     "+mojo/public",
-    "+platform",
-    "+platform/weborigin",
+    "+net/http",
     "+public/platform",
     "-public/web",
+    # Enforce to use mojom-shared.h in WebKit/public so that it can compile
+    # inside and outside Blink.
+    "+services/network/public/cpp/cors_error_status.h",
+    "+services/network/public/interfaces/cors.mojom-shared.h",
+    "+services/network/public/interfaces/fetch_api.mojom-shared.h",
     "+services/service_manager/public/interfaces",
     "+third_party/skia",
     "+ui/gfx",
     "+url",
     "-web",
+
+    # Allowed only inside INSIDE_BLINK
+    "+platform",
 ]

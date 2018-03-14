@@ -5,6 +5,14 @@
 a {
   color: var(--google-blue-500);
   text-decoration: none;
+  width: fit-content;
+}
+
+#crosEulaFrame {
+  /* Works around the problem that webview height is not calculated
+   * correctly in flex layout. 207px is derived from en-US locale under
+   * the default 640px height of #eulaDialog. */
+  height: 207px;
 }
 
 #crosEulaFrame,
@@ -34,15 +42,12 @@ a {
 #usageStats {
   --paper-checkbox-size: 16px;
   --paper-checkbox-checked-color: var(--google-blue-500);
+  --paper-checkbox-ink-size: 44px;
   size: 16px;
 }
 
 #usageStatsLabelContainer {
   -webkit-margin-start: 16px;
-}
-
-#usageStatsLabelContainer label {
-  color: rgba(0, 0, 0, .54);
   line-height: 20px;
 }
 

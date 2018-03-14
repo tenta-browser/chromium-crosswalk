@@ -26,10 +26,10 @@
 #include "core/dom/DocumentEncodingData.h"
 #include "core/dom/DocumentFragment.h"
 #include "core/editing/serializers/Serialization.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/csp/ContentSecurityPolicy.h"
 #include "core/xml/DocumentXSLT.h"
 #include "platform/weborigin/SecurityOrigin.h"
@@ -64,27 +64,30 @@ Document* XSLTProcessor::CreateDocumentFromSource(
     const String& source_mime_type,
     Node* source_node,
     LocalFrame* frame) {
+  KURL url = NullURL();
   Document* owner_document = &source_node->GetDocument();
-  bool source_is_document = (source_node == owner_document);
+  if (owner_document == source_node)
+    url = owner_document->Url();
+
+  DocumentInit init = DocumentInit::Create().WithFrame(frame).WithURL(url);
+
   String document_source = source_string;
-
-  Document* result = nullptr;
-  DocumentInit init(source_is_document ? owner_document->Url() : KURL(), frame);
-
   bool force_xhtml = source_mime_type == "text/plain";
   if (force_xhtml)
     TransformTextStringToXHTMLDocumentString(document_source);
 
+  Document* result = nullptr;
+
   if (frame) {
     Document* old_document = frame->GetDocument();
     // Before parsing, we need to save & detach the old document and get the new
-    // document in place. Document::shutdown() tears down the FrameView, so
+    // document in place. Document::Shutdown() tears down the LocalFrameView, so
     // remember whether or not there was one.
     bool has_view = frame->View();
     old_document->Shutdown();
-    // Re-create the FrameView if needed.
+    // Re-create the LocalFrameView if needed.
     if (has_view)
-      frame->Loader().Client()->TransitionToCommittedForNewPage();
+      frame->Client()->TransitionToCommittedForNewPage();
     result = frame->DomWindow()->InstallNewDocument(source_mime_type, init,
                                                     force_xhtml);
 
@@ -92,6 +95,7 @@ Document* XSLTProcessor::CreateDocumentFromSource(
       DocumentXSLT::From(*result).SetTransformSourceDocument(old_document);
       result->UpdateSecurityOrigin(old_document->GetSecurityOrigin());
       result->SetCookieURL(old_document->CookieURL());
+      result->EnforceSandboxFlags(old_document->GetSandboxFlags());
 
       ContentSecurityPolicy* csp = ContentSecurityPolicy::Create();
       csp->CopyStateFrom(old_document->GetContentSecurityPolicy());
@@ -120,7 +124,7 @@ Document* XSLTProcessor::transformToDocument(Node* source_node) {
                          result_encoding))
     return nullptr;
   return CreateDocumentFromSource(result_string, result_encoding,
-                                  result_mime_type, source_node, 0);
+                                  result_mime_type, source_node, nullptr);
 }
 
 DocumentFragment* XSLTProcessor::transformToFragment(Node* source_node,
@@ -164,13 +168,14 @@ void XSLTProcessor::removeParameter(const String& /*namespaceURI*/,
 void XSLTProcessor::reset() {
   stylesheet_.Clear();
   stylesheet_root_node_.Clear();
-  parameters_.Clear();
+  parameters_.clear();
 }
 
-DEFINE_TRACE(XSLTProcessor) {
+void XSLTProcessor::Trace(blink::Visitor* visitor) {
   visitor->Trace(stylesheet_);
   visitor->Trace(stylesheet_root_node_);
   visitor->Trace(document_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

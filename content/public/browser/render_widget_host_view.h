@@ -14,6 +14,7 @@
 #include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
+#include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace gfx {
@@ -27,14 +28,16 @@ class VideoFrame;
 }
 
 namespace ui {
-class TextInputClient;
 class AcceleratedWidgetMac;
+class TextInputClient;
 }
 
 namespace content {
 
 class RenderWidgetHost;
 class RenderWidgetHostViewFrameSubscriber;
+class TouchSelectionControllerClientManager;
+struct ScreenInfo;
 
 // RenderWidgetHostView is an interface implemented by an object that acts as
 // the "View" portion of a RenderWidgetHost. The RenderWidgetHost and its
@@ -78,12 +81,19 @@ class CONTENT_EXPORT RenderWidgetHostView {
   // the top-level frame's renderer this is a no-op as they are already
   // properly transformed; however, coordinates received from an out-of-process
   // iframe renderer process require transformation.
-  virtual gfx::Point TransformPointToRootCoordSpace(
-      const gfx::Point& point) = 0;
-
-  // A floating point variant of the above. PointF values will be snapped to
-  // integral points before transformation.
   virtual gfx::PointF TransformPointToRootCoordSpaceF(
+      const gfx::PointF& point) = 0;
+
+  // A int point variant of the above. Use float version to transform,
+  // then rounded back to int point.
+  gfx::Point TransformPointToRootCoordSpace(const gfx::Point& point) {
+    return gfx::ToRoundedPoint(
+        TransformPointToRootCoordSpaceF(gfx::PointF(point)));
+  }
+
+  // Converts a point in the root view's coordinate space to the coordinate
+  // space of whichever view is used to call this method.
+  virtual gfx::PointF TransformRootPointToViewCoordSpace(
       const gfx::PointF& point) = 0;
 
   // Retrieves the native view used to contain plugins and identify the
@@ -122,14 +132,15 @@ class CONTENT_EXPORT RenderWidgetHostView {
   // Retrieve the bounds of the View, in screen coordinates.
   virtual gfx::Rect GetViewBounds() const = 0;
 
-  // Returns true if the View's context menu is showing.
-  virtual bool IsShowingContextMenu() const = 0;
-
-  // Tells the View whether the context menu is showing.
-  virtual void SetShowingContextMenu(bool showing) = 0;
-
   // Returns the currently selected text.
   virtual base::string16 GetSelectedText() = 0;
+
+  // This only returns non-null on platforms that implement touch
+  // selection editing (TSE), currently Aura and (soon) Android.
+  // TODO(wjmaclean): update this comment when OOPIF TSE is implemented on
+  // Android. https://crbug.com/470662.
+  virtual TouchSelectionControllerClientManager*
+  GetTouchSelectionControllerClientManager() = 0;
 
   // Subclasses should override this method to set the background color. |color|
   // has to be either SK_ColorTRANSPARENT or opaque. If set to
@@ -233,6 +244,9 @@ class CONTENT_EXPORT RenderWidgetHostView {
   // wants to have BeginFrame messages sent to it.  This should only be called
   // when the value has changed.  Views must initially default to false.
   virtual void SetNeedsBeginFrames(bool needs_begin_frames) = 0;
+
+  // This method returns the ScreenInfo used by the view to render.
+  virtual void GetScreenInfo(ScreenInfo* screen_info) = 0;
 
 #if defined(OS_MACOSX)
   // Return the accelerated widget which hosts the CALayers that draw the

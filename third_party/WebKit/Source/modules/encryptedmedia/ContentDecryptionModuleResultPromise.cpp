@@ -5,11 +5,12 @@
 #include "modules/encryptedmedia/ContentDecryptionModuleResultPromise.h"
 
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8ThrowException.h"
+#include "bindings/core/v8/V8ThrowDOMException.h"
 #include "core/dom/DOMException.h"
 #include "core/dom/ExecutionContext.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/wtf/Assertions.h"
+#include "platform/wtf/text/StringBuilder.h"
 #include "public/platform/WebString.h"
 
 namespace blink {
@@ -62,6 +63,13 @@ void ContentDecryptionModuleResultPromise::CompleteWithSession(
   Reject(kInvalidStateError, "Unexpected completion.");
 }
 
+void ContentDecryptionModuleResultPromise::CompleteWithKeyStatus(
+    WebEncryptedMediaKeyInformation::KeyStatus) {
+  if (!IsValidToFulfillPromise())
+    return;
+  Reject(kInvalidStateError, "Unexpected completion.");
+}
+
 void ContentDecryptionModuleResultPromise::CompleteWithError(
     WebContentDecryptionModuleException exception_code,
     unsigned long system_code,
@@ -95,7 +103,7 @@ void ContentDecryptionModuleResultPromise::Reject(ExceptionCode code,
   ScriptState::Scope scope(resolver_->GetScriptState());
   v8::Isolate* isolate = resolver_->GetScriptState()->GetIsolate();
   resolver_->Reject(
-      V8ThrowException::CreateDOMException(isolate, code, error_message));
+      V8ThrowDOMException::CreateDOMException(isolate, code, error_message));
   resolver_.Clear();
 }
 
@@ -112,7 +120,7 @@ bool ContentDecryptionModuleResultPromise::IsValidToFulfillPromise() {
   return GetExecutionContext() && !GetExecutionContext()->IsContextDestroyed();
 }
 
-DEFINE_TRACE(ContentDecryptionModuleResultPromise) {
+void ContentDecryptionModuleResultPromise::Trace(blink::Visitor* visitor) {
   visitor->Trace(resolver_);
   ContentDecryptionModuleResult::Trace(visitor);
 }

@@ -239,10 +239,10 @@ Status FindElement(int interval_ms,
                    std::unique_ptr<base::Value>* value) {
   std::string strategy;
   if (!params.GetString("using", &strategy))
-    return Status(kUnknownError, "'using' must be a string");
+    return Status(kInvalidArgument, "'using' must be a string");
   std::string target;
   if (!params.GetString("value", &target))
-    return Status(kUnknownError, "'value' must be a string");
+    return Status(kInvalidArgument, "'value' must be a string");
 
   std::string script;
   if (only_one)
@@ -264,16 +264,16 @@ Status FindElement(int interval_ms,
     if (status.IsError())
       return status;
 
-    if (!temp->IsType(base::Value::Type::NONE)) {
+    if (!temp->is_none()) {
       if (only_one) {
-        value->reset(temp.release());
+        *value = std::move(temp);
         return Status(kOk);
       } else {
         base::ListValue* result;
         if (!temp->GetAsList(&result))
           return Status(kUnknownError, "script returns unexpected result");
         if (result->GetSize() > 0U) {
-          value->reset(temp.release());
+          *value = std::move(temp);
           return Status(kOk);
         }
       }

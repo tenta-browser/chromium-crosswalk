@@ -8,10 +8,10 @@
 #include <iterator>
 #include <map>
 #include <memory>
-#include <queue>
 #include <set>
 #include <string>
 
+#include "base/containers/queue.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -37,41 +37,9 @@
 
 namespace {
 
-std::string EscapeString(const std::string& value) {
-  std::string result;
-  for (char c : value) {
-    switch (c) {
-      case '\n':
-        result += "&#10;";
-        break;
-      case '\r':
-        result += "&#13;";
-        break;
-      case '\t':
-        result += "&#9;";
-        break;
-      case '"':
-        result += "&quot;";
-        break;
-      case '<':
-        result += "&lt;";
-        break;
-      case '>':
-        result += "&gt;";
-        break;
-      case '&':
-        result += "&amp;";
-        break;
-      default:
-        result += c;
-    }
-  }
-  return result;
-}
-
 struct SemicolonSeparatedWriter {
   void operator()(const std::string& value, std::ostream& out) const {
-    out << EscapeString(value) + ';';
+    out << XmlEscape(value) + ';';
   }
 };
 
@@ -106,12 +74,12 @@ const char kToolsetVersionVs2015[] = "v140";               // Visual Studio 2015
 const char kToolsetVersionVs2017[] = "v141";               // Visual Studio 2017
 const char kProjectVersionVs2013[] = "12.0";               // Visual Studio 2013
 const char kProjectVersionVs2015[] = "14.0";               // Visual Studio 2015
-const char kProjectVersionVs2017[] = "15.0";               // Visual Studio 2015
+const char kProjectVersionVs2017[] = "15.0";               // Visual Studio 2017
 const char kVersionStringVs2013[] = "Visual Studio 2013";  // Visual Studio 2013
 const char kVersionStringVs2015[] = "Visual Studio 2015";  // Visual Studio 2015
 const char kVersionStringVs2017[] = "Visual Studio 2017";  // Visual Studio 2017
 const char kWindowsKitsVersion[] = "10";                   // Windows 10 SDK
-const char kWindowsKitsIncludeVersion[] = "10.0.14393.0";  // Windows 10 SDK
+const char kWindowsKitsDefaultVersion[] = "10.0.15063.0";  // Windows 10 SDK
 
 const char kGuidTypeProject[] = "{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}";
 const char kGuidTypeFolder[] = "{2150E333-8FDC-42A3-9474-1A3956D46DE8}";
@@ -121,7 +89,10 @@ const char kGuidSeedFilter[] = "filter";
 
 const char kConfigurationName[] = "GN";
 
-std::string GetWindowsKitsIncludeDirs() {
+const char kCharSetUnicode[] = "_UNICODE";
+const char kCharSetMultiByte[] = "_MBCS";
+
+std::string GetWindowsKitsIncludeDirs(const std::string& win_kit) {
   std::string kits_path;
 
 #if defined(OS_WIN)
@@ -147,9 +118,8 @@ std::string GetWindowsKitsIncludeDirs() {
                 kWindowsKitsVersion + "\\";
   }
 
-  return kits_path + "Include\\" + kWindowsKitsIncludeVersion + "\\shared;" +
-         kits_path + "Include\\" + kWindowsKitsIncludeVersion + "\\um;" +
-         kits_path + "Include\\" + kWindowsKitsIncludeVersion + "\\winrt;";
+  const std::string kit_prefix = kits_path + "Include\\" + win_kit + "\\";
+  return kit_prefix + "shared;" + kit_prefix + "um;" + kit_prefix + "winrt;";
 }
 
 std::string GetConfigurationType(const Target* target, Err* err) {
@@ -235,7 +205,7 @@ bool FilterTargets(const BuildSettings* build_settings,
     return true;
 
   std::set<Label> labels;
-  std::queue<const Target*> to_process;
+  base::queue<const Target*> to_process;
   for (const Target* target : *targets) {
     labels.insert(target->label());
     to_process.push(target);
@@ -253,6 +223,18 @@ bool FilterTargets(const BuildSettings* build_settings,
     }
   }
 
+  return true;
+}
+
+bool UnicodeTarget(const Target* target) {
+  for (ConfigValuesIterator it(target); !it.done(); it.Next()) {
+    for (const std::string& define : it.cur().defines()) {
+      if (define == kCharSetUnicode)
+        return true;
+      if (define == kCharSetMultiByte)
+        return false;
+    }
+  }
   return true;
 }
 
@@ -291,12 +273,16 @@ VisualStudioWriter::SourceFileCompileTypePair::~SourceFileCompileTypePair() =
 
 VisualStudioWriter::VisualStudioWriter(const BuildSettings* build_settings,
                                        const char* config_platform,
-                                       Version version)
+                                       Version version,
+                                       const std::string& win_kit)
     : build_settings_(build_settings),
       config_platform_(config_platform),
       ninja_path_output_(build_settings->build_dir(),
                          build_settings->root_path_utf8(),
-                         EscapingMode::ESCAPE_NINJA_COMMAND) {
+                         EscapingMode::ESCAPE_NINJA_COMMAND),
+      windows_sdk_version_(win_kit) {
+  DCHECK(!win_kit.empty());
+
   switch (version) {
     case Version::Vs2013:
       project_version_ = kProjectVersionVs2013;
@@ -317,11 +303,10 @@ VisualStudioWriter::VisualStudioWriter(const BuildSettings* build_settings,
       NOTREACHED() << "Not a valid Visual Studio Version: " << version;
   }
 
-  windows_kits_include_dirs_ = GetWindowsKitsIncludeDirs();
+  windows_kits_include_dirs_ = GetWindowsKitsIncludeDirs(win_kit);
 }
 
-VisualStudioWriter::~VisualStudioWriter() {
-}
+VisualStudioWriter::~VisualStudioWriter() = default;
 
 // static
 bool VisualStudioWriter::RunAndWriteFiles(const BuildSettings* build_settings,
@@ -329,11 +314,17 @@ bool VisualStudioWriter::RunAndWriteFiles(const BuildSettings* build_settings,
                                           Version version,
                                           const std::string& sln_name,
                                           const std::string& filters,
+                                          const std::string& win_sdk,
+                                          const std::string& ninja_extra_args,
                                           bool no_deps,
                                           Err* err) {
   std::vector<const Target*> targets;
   if (!FilterTargets(build_settings, builder, filters, no_deps, &targets, err))
     return false;
+
+  std::string win_kit = kWindowsKitsDefaultVersion;
+  if (!win_sdk.empty())
+    win_kit = win_sdk;
 
   const char* config_platform = "Win32";
 
@@ -347,7 +338,7 @@ bool VisualStudioWriter::RunAndWriteFiles(const BuildSettings* build_settings,
       config_platform = "x64";
   }
 
-  VisualStudioWriter writer(build_settings, config_platform, version);
+  VisualStudioWriter writer(build_settings, config_platform, version, win_kit);
   writer.projects_.reserve(targets.size());
   writer.folders_.reserve(targets.size());
 
@@ -360,7 +351,7 @@ bool VisualStudioWriter::RunAndWriteFiles(const BuildSettings* build_settings,
       continue;
     }
 
-    if (!writer.WriteProjectFiles(target, err))
+    if (!writer.WriteProjectFiles(target, ninja_extra_args, err))
       return false;
   }
 
@@ -381,7 +372,9 @@ bool VisualStudioWriter::RunAndWriteFiles(const BuildSettings* build_settings,
   return writer.WriteSolutionFile(sln_name, err);
 }
 
-bool VisualStudioWriter::WriteProjectFiles(const Target* target, Err* err) {
+bool VisualStudioWriter::WriteProjectFiles(const Target* target,
+                                           const std::string& ninja_extra_args,
+                                           Err* err) {
   std::string project_name = target->label().name();
   const char* project_config_platform = config_platform_;
   if (!target->settings()->is_default()) {
@@ -403,7 +396,7 @@ bool VisualStudioWriter::WriteProjectFiles(const Target* target, Err* err) {
   base::FilePath vcxproj_path = build_settings_->GetFullPath(target_file);
   std::string vcxproj_path_str = FilePathToUTF8(vcxproj_path);
 
-  projects_.emplace_back(new SolutionProject(
+  projects_.push_back(std::make_unique<SolutionProject>(
       project_name, vcxproj_path_str,
       MakeGuid(vcxproj_path_str, kGuidSeedProject),
       FilePathToUTF8(build_settings_->GetFullPath(target->label().dir())),
@@ -412,7 +405,7 @@ bool VisualStudioWriter::WriteProjectFiles(const Target* target, Err* err) {
   std::stringstream vcxproj_string_out;
   SourceFileCompileTypePairs source_types;
   if (!WriteProjectFileContents(vcxproj_string_out, *projects_.back(), target,
-                                &source_types, err)) {
+                                ninja_extra_args, &source_types, err)) {
     projects_.pop_back();
     return false;
   }
@@ -433,6 +426,7 @@ bool VisualStudioWriter::WriteProjectFileContents(
     std::ostream& out,
     const SolutionProject& solution_project,
     const Target* target,
+    const std::string& ninja_extra_args,
     SourceFileCompileTypePairs* source_types,
     Err* err) {
   PathOutput path_output(
@@ -467,6 +461,8 @@ bool VisualStudioWriter::WriteProjectFileContents(
     globals->SubElement("RootNamespace")->Text(target->label().name());
     globals->SubElement("IgnoreWarnCompileDuplicatedFilename")->Text("true");
     globals->SubElement("PreferredToolArchitecture")->Text("x64");
+    globals->SubElement("WindowsTargetPlatformVersion")
+        ->Text(windows_sdk_version_);
   }
 
   project.SubElement(
@@ -476,7 +472,9 @@ bool VisualStudioWriter::WriteProjectFileContents(
   {
     std::unique_ptr<XmlElementWriter> configuration = project.SubElement(
         "PropertyGroup", XmlAttributes("Label", "Configuration"));
-    configuration->SubElement("CharacterSet")->Text("Unicode");
+    bool unicode_target = UnicodeTarget(target);
+    configuration->SubElement("CharacterSet")
+        ->Text(unicode_target ? "Unicode" : "MultiByte");
     std::string configuration_type = GetConfigurationType(target, err);
     if (configuration_type.empty())
       return false;
@@ -616,6 +614,7 @@ bool VisualStudioWriter::WriteProjectFileContents(
         std::unique_ptr<XmlElementWriter> build = group->SubElement(
             compile_type, "Include", SourceFileWriter(path_output, file));
         build->SubElement("Command")->Text("call ninja.exe -C $(OutDir) " +
+                                           ninja_extra_args + " " +
                                            tool_outputs[0].value());
         build->SubElement("Outputs")->Text("$(OutDir)" +
                                            tool_outputs[0].value());
@@ -643,8 +642,9 @@ bool VisualStudioWriter::WriteProjectFileContents(
     std::unique_ptr<XmlElementWriter> build =
         project.SubElement("Target", XmlAttributes("Name", "Build"));
     build->SubElement(
-        "Exec", XmlAttributes("Command",
-                              "call ninja.exe -C $(OutDir) " + ninja_target));
+        "Exec",
+        XmlAttributes("Command", "call ninja.exe -C $(OutDir) " +
+                                     ninja_extra_args + " " + ninja_target));
   }
 
   {
@@ -816,9 +816,9 @@ void VisualStudioWriter::ResolveSolutionFolders() {
       project->parent_folder = it->second;
     } else {
       std::string folder_path_str = folder_path.as_string();
-      std::unique_ptr<SolutionEntry> folder(new SolutionEntry(
+      std::unique_ptr<SolutionEntry> folder = std::make_unique<SolutionEntry>(
           FindLastDirComponent(SourceDir(folder_path)).as_string(),
-          folder_path_str, MakeGuid(folder_path_str, kGuidSeedFolder)));
+          folder_path_str, MakeGuid(folder_path_str, kGuidSeedFolder));
       project->parent_folder = folder.get();
       processed_paths[folder_path] = folder.get();
       folders_.push_back(std::move(folder));
@@ -861,10 +861,11 @@ void VisualStudioWriter::ResolveSolutionFolders() {
       if (it != processed_paths.end()) {
         folder = it->second;
       } else {
-        std::unique_ptr<SolutionEntry> new_folder(new SolutionEntry(
-            FindLastDirComponent(SourceDir(parent_path)).as_string(),
-            parent_path.as_string(),
-            MakeGuid(parent_path.as_string(), kGuidSeedFolder)));
+        std::unique_ptr<SolutionEntry> new_folder =
+            std::make_unique<SolutionEntry>(
+                FindLastDirComponent(SourceDir(parent_path)).as_string(),
+                parent_path.as_string(),
+                MakeGuid(parent_path.as_string(), kGuidSeedFolder));
         processed_paths[parent_path] = new_folder.get();
         folder = new_folder.get();
         additional_folders.push_back(std::move(new_folder));

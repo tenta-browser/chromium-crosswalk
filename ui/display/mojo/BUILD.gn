@@ -6,11 +6,12 @@ import("//mojo/public/tools/bindings/mojom.gni")
 
 mojom("interfaces") {
   sources = [
+    "dev_display_controller.mojom",
     "display.mojom",
     "display_constants.mojom",
     "display_layout.mojom",
     "display_mode.mojom",
-    "display_snapshot_mojo.mojom",
+    "display_snapshot.mojom",
     "gamma_ramp_rgb_entry.mojom",
     "native_display_delegate.mojom",
   ]
@@ -18,15 +19,9 @@ mojom("interfaces") {
   public_deps = [
     "//mojo/common:common_custom_types",
     "//ui/gfx/geometry/mojo",
-  ]
-}
-
-mojom("test_interfaces") {
-  sources = [
-    "display_struct_traits_test.mojom",
+    "//ui/gfx/mojo",
   ]
 
-  public_deps = [
-    ":interfaces",
-  ]
+  # TODO(crbug.com/714018): Convert the implementation to use OnceCallback.
+  use_once_callback = false
 }

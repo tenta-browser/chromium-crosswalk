@@ -14,6 +14,7 @@
 
 namespace content {
 class BrowserContext;
+class RenderFrameHost;
 }
 
 namespace extensions {
@@ -25,9 +26,10 @@ class KeepAliveImpl : public KeepAlive, public ExtensionRegistryObserver {
  public:
   // Create a keep alive for |extension| running in |context| and connect it to
   // |request|. When the requester closes its pipe, the keep alive ends.
-  static void Create(content::BrowserContext* context,
+  static void Create(content::BrowserContext* browser_context,
                      const Extension* extension,
-                     KeepAliveRequest request);
+                     KeepAliveRequest request,
+                     content::RenderFrameHost* render_frame_host);
 
  private:
   KeepAliveImpl(content::BrowserContext* context,
@@ -38,7 +40,7 @@ class KeepAliveImpl : public KeepAlive, public ExtensionRegistryObserver {
   // ExtensionRegistryObserver overrides.
   void OnExtensionUnloaded(content::BrowserContext* browser_context,
                            const Extension* extension,
-                           UnloadedExtensionInfo::Reason reason) override;
+                           UnloadedExtensionReason reason) override;
   void OnShutdown(ExtensionRegistry* registry) override;
 
   // Invoked when the mojo connection is disconnected.

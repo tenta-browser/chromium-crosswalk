@@ -32,8 +32,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/pe_image.h"
 #include "base/win/win_util.h"
-#include "breakpad/src/client/windows/common/ipc_protocol.h"
-#include "breakpad/src/client/windows/handler/exception_handler.h"
 #include "components/crash/content/app/crash_keys_win.h"
 #include "components/crash/content/app/crash_reporter_client.h"
 #include "components/crash/content/app/hard_error_handler_win.h"
@@ -41,6 +39,8 @@
 #include "content/public/common/result_codes.h"
 #include "sandbox/win/src/nt_internals.h"
 #include "sandbox/win/src/sidestep/preamble_patcher.h"
+#include "third_party/breakpad/breakpad/src/client/windows/common/ipc_protocol.h"
+#include "third_party/breakpad/breakpad/src/client/windows/handler/exception_handler.h"
 
 #pragma intrinsic(_AddressOfReturnAddress)
 #pragma intrinsic(_ReturnAddress)
@@ -121,40 +121,12 @@ extern "C" void __declspec(dllexport) __cdecl DumpProcessWithoutCrash() {
 
 namespace {
 
-// We need to prevent ICF from folding DumpForHangDebuggingThread() and
-// DumpProcessWithoutCrashThread() together, since that makes them
-// indistinguishable in crash dumps. We do this by making the function
-// bodies unique, and prevent optimization from shuffling things around.
-MSVC_DISABLE_OPTIMIZE()
-MSVC_PUSH_DISABLE_WARNING(4748)
-
 DWORD WINAPI DumpProcessWithoutCrashThread(void*) {
   DumpProcessWithoutCrash();
   return 0;
 }
 
-// The following two functions do exactly the same thing as the two above. But
-// we want the signatures to be different so that we can easily track them in
-// crash reports.
-// TODO(yzshen): Remove when enough information is collected and the hang rate
-// of pepper/renderer processes is reduced.
-DWORD WINAPI DumpForHangDebuggingThread(void*) {
-  DumpProcessWithoutCrash();
-  VLOG(1) << "dumped for hang debugging";
-  return 0;
-}
-
-MSVC_POP_WARNING()
-MSVC_ENABLE_OPTIMIZE()
-
 }  // namespace
-
-// Injects a thread into a remote process to dump state when there is no crash.
-extern "C" HANDLE __declspec(dllexport) __cdecl InjectDumpProcessWithoutCrash(
-    HANDLE process) {
-  return CreateRemoteThread(process, NULL, 0, DumpProcessWithoutCrashThread, 0,
-                            0, NULL);
-}
 
 extern "C" HANDLE __declspec(dllexport) __cdecl InjectDumpForHungInput(
     HANDLE process,
@@ -172,12 +144,6 @@ extern "C" HANDLE __declspec(
   // is deprecated.
   return CreateRemoteThread(process, NULL, 0, DumpProcessWithoutCrashThread, 0,
                             0, NULL);
-}
-
-extern "C" HANDLE __declspec(dllexport) __cdecl
-InjectDumpForHangDebugging(HANDLE process) {
-  return CreateRemoteThread(process, NULL, 0, DumpForHangDebuggingThread,
-                            0, 0, NULL);
 }
 
 // Returns a string containing a list of all modifiers for the loaded profile.

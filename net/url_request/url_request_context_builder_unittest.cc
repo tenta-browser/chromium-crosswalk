@@ -4,12 +4,7 @@
 
 #include "net/url_request/url_request_context_builder.h"
 
-#include <memory>
-
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_scheduler.h"
 #include "build/build_config.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_auth_challenge_tokenizer.h"
@@ -18,6 +13,7 @@
 #include "net/log/net_log_with_source.h"
 #include "net/ssl/ssl_info.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -36,7 +32,7 @@ class MockHttpAuthHandlerFactory : public HttpAuthHandlerFactory {
  public:
   MockHttpAuthHandlerFactory(std::string supported_scheme, int return_code)
       : return_code_(return_code), supported_scheme_(supported_scheme) {}
-  ~MockHttpAuthHandlerFactory() override {}
+  ~MockHttpAuthHandlerFactory() override = default;
 
   int CreateAuthHandler(HttpAuthChallengeTokenizer* challenge,
                         HttpAuth::Target target,
@@ -60,21 +56,17 @@ class MockHttpAuthHandlerFactory : public HttpAuthHandlerFactory {
 
 class URLRequestContextBuilderTest : public PlatformTest {
  protected:
-  URLRequestContextBuilderTest()
-      : scoped_task_scheduler_(base::MessageLoop::current()) {
+  URLRequestContextBuilderTest() {
     test_server_.AddDefaultHandlers(
         base::FilePath(FILE_PATH_LITERAL("net/data/url_request_unittest")));
 #if defined(OS_LINUX) || defined(OS_ANDROID)
     builder_.set_proxy_config_service(
-        base::MakeUnique<ProxyConfigServiceFixed>(ProxyConfig::CreateDirect()));
+        std::make_unique<ProxyConfigServiceFixed>(ProxyConfig::CreateDirect()));
 #endif  // defined(OS_LINUX) || defined(OS_ANDROID)
   }
 
   EmbeddedTestServer test_server_;
   URLRequestContextBuilder builder_;
-
- private:
-  base::test::ScopedTaskScheduler scoped_task_scheduler_;
 };
 
 TEST_F(URLRequestContextBuilderTest, DefaultSettings) {
@@ -83,7 +75,8 @@ TEST_F(URLRequestContextBuilderTest, DefaultSettings) {
   std::unique_ptr<URLRequestContext> context(builder_.Build());
   TestDelegate delegate;
   std::unique_ptr<URLRequest> request(context->CreateRequest(
-      test_server_.GetURL("/echoheader?Foo"), DEFAULT_PRIORITY, &delegate));
+      test_server_.GetURL("/echoheader?Foo"), DEFAULT_PRIORITY, &delegate,
+      TRAFFIC_ANNOTATION_FOR_TESTS));
   request->set_method("GET");
   request->SetExtraRequestHeaderByName("Foo", "Bar", false);
   request->Start();
@@ -97,9 +90,9 @@ TEST_F(URLRequestContextBuilderTest, UserAgent) {
   builder_.set_user_agent("Bar");
   std::unique_ptr<URLRequestContext> context(builder_.Build());
   TestDelegate delegate;
-  std::unique_ptr<URLRequest> request(
-      context->CreateRequest(test_server_.GetURL("/echoheader?User-Agent"),
-                             DEFAULT_PRIORITY, &delegate));
+  std::unique_ptr<URLRequest> request(context->CreateRequest(
+      test_server_.GetURL("/echoheader?User-Agent"), DEFAULT_PRIORITY,
+      &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
   request->set_method("GET");
   request->Start();
   base::RunLoop().Run();
@@ -124,7 +117,7 @@ TEST_F(URLRequestContextBuilderTest, CustomHttpAuthHandlerFactory) {
   const int kBasicReturnCode = OK;
   std::unique_ptr<HttpAuthHandler> handler;
   builder_.SetHttpAuthHandlerFactory(
-      base::MakeUnique<MockHttpAuthHandlerFactory>("ExtraScheme",
+      std::make_unique<MockHttpAuthHandlerFactory>("ExtraScheme",
                                                    kBasicReturnCode));
   std::unique_ptr<URLRequestContext> context(builder_.Build());
   SSLInfo null_ssl_info;

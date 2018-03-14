@@ -29,11 +29,6 @@ using base::android::ScopedJavaLocalRef;
 
 namespace content {
 
-// static
-bool ContentViewRenderView::RegisterContentViewRenderView(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
 ContentViewRenderView::ContentViewRenderView(JNIEnv* env,
                                              jobject obj,
                                              gfx::NativeWindow root_window)
@@ -45,9 +40,9 @@ ContentViewRenderView::~ContentViewRenderView() {
 }
 
 // static
-static jlong Init(JNIEnv* env,
-                  const JavaParamRef<jobject>& obj,
-                  jlong native_root_window) {
+static jlong JNI_ContentViewRenderView_Init(JNIEnv* env,
+                                            const JavaParamRef<jobject>& obj,
+                                            jlong native_root_window) {
   gfx::NativeWindow root_window =
       reinterpret_cast<gfx::NativeWindow>(native_root_window);
   ContentViewRenderView* content_view_render_view =
@@ -69,6 +64,17 @@ void ContentViewRenderView::SetCurrentWebContents(
   compositor_->SetRootLayer(web_contents
                                 ? web_contents->GetNativeView()->GetLayer()
                                 : scoped_refptr<cc::Layer>());
+}
+
+void ContentViewRenderView::OnPhysicalBackingSizeChanged(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    const JavaParamRef<jobject>& jweb_contents,
+    jint width,
+    jint height) {
+  WebContents* web_contents = WebContents::FromJavaWebContents(jweb_contents);
+  gfx::Size size(width, height);
+  web_contents->GetNativeView()->OnPhysicalBackingSizeChanged(size);
 }
 
 void ContentViewRenderView::SurfaceCreated(JNIEnv* env,
@@ -101,7 +107,9 @@ void ContentViewRenderView::SetOverlayVideoMode(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
     bool enabled) {
-  compositor_->SetHasTransparentBackground(enabled);
+  compositor_->SetRequiresAlphaChannel(enabled);
+  compositor_->SetBackgroundColor(enabled ? SK_ColorTRANSPARENT
+                                          : SK_ColorWHITE);
   compositor_->SetNeedsComposite();
 }
 

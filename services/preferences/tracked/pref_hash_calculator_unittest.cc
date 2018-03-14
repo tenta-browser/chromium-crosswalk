@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
@@ -18,7 +19,8 @@ TEST(PrefHashCalculatorTest, TestCurrentAlgorithm) {
   base::Value string_value_2("string value 2");
   base::DictionaryValue dictionary_value_1;
   dictionary_value_1.SetInteger("int value", 1);
-  dictionary_value_1.Set("nested empty map", new base::DictionaryValue);
+  dictionary_value_1.Set("nested empty map",
+                         std::make_unique<base::DictionaryValue>());
   base::DictionaryValue dictionary_value_1_equivalent;
   dictionary_value_1_equivalent.SetInteger("int value", 1);
   base::DictionaryValue dictionary_value_2;
@@ -76,46 +78,46 @@ TEST(PrefHashCalculatorTest, CatchHashChanges) {
   static const char kSeed[] = "0123456789ABCDEF0123456789ABCDEF";
   static const char kDeviceId[] = "test_device_id1";
 
-  auto null_value = base::MakeUnique<base::Value>();
-  std::unique_ptr<base::Value> bool_value(new base::Value(false));
-  std::unique_ptr<base::Value> int_value(new base::Value(1234567890));
-  std::unique_ptr<base::Value> double_value(new base::Value(123.0987654321));
-  std::unique_ptr<base::Value> string_value(
-      new base::Value("testing with special chars:\n<>{}:^^@#$\\/"));
+  auto null_value = std::make_unique<base::Value>();
+  auto bool_value = std::make_unique<base::Value>(false);
+  auto int_value = std::make_unique<base::Value>(1234567890);
+  auto double_value = std::make_unique<base::Value>(123.0987654321);
+  auto string_value = std::make_unique<base::Value>(
+      "testing with special chars:\n<>{}:^^@#$\\/");
 
   // For legacy reasons, we have to support pruning of empty lists/dictionaries
   // and nested empty ists/dicts in the hash generation algorithm.
-  std::unique_ptr<base::DictionaryValue> nested_empty_dict(
-      new base::DictionaryValue);
-  nested_empty_dict->Set("a", new base::DictionaryValue);
-  nested_empty_dict->Set("b", new base::ListValue);
-  std::unique_ptr<base::ListValue> nested_empty_list(new base::ListValue);
-  nested_empty_list->Append(base::MakeUnique<base::DictionaryValue>());
-  nested_empty_list->Append(base::MakeUnique<base::ListValue>());
-  nested_empty_list->Append(nested_empty_dict->CreateDeepCopy());
+  auto nested_empty_dict = std::make_unique<base::DictionaryValue>();
+  nested_empty_dict->Set("a", std::make_unique<base::DictionaryValue>());
+  nested_empty_dict->Set("b", std::make_unique<base::ListValue>());
+  auto nested_empty_list = std::make_unique<base::ListValue>();
+  nested_empty_list->Append(std::make_unique<base::DictionaryValue>());
+  nested_empty_list->Append(std::make_unique<base::ListValue>());
+  nested_empty_list->Append(
+      std::make_unique<base::Value>(nested_empty_dict->Clone()));
 
   // A dictionary with an empty dictionary, an empty list, and nested empty
   // dictionaries/lists in it.
-  std::unique_ptr<base::DictionaryValue> dict_value(new base::DictionaryValue);
-  dict_value->Set("a", new base::Value("foo"));
-  dict_value->Set("d", new base::ListValue);
-  dict_value->Set("b", new base::DictionaryValue);
-  dict_value->Set("c", new base::Value("baz"));
-  dict_value->Set("e", nested_empty_dict.release());
-  dict_value->Set("f", nested_empty_list.release());
+  auto dict_value = std::make_unique<base::DictionaryValue>();
+  dict_value->SetString("a", "foo");
+  dict_value->Set("d", std::make_unique<base::ListValue>());
+  dict_value->Set("b", std::make_unique<base::DictionaryValue>());
+  dict_value->SetString("c", "baz");
+  dict_value->Set("e", std::move(nested_empty_dict));
+  dict_value->Set("f", std::move(nested_empty_list));
 
-  std::unique_ptr<base::ListValue> list_value(new base::ListValue);
+  auto list_value = std::make_unique<base::ListValue>();
   list_value->AppendBoolean(true);
   list_value->AppendInteger(100);
   list_value->AppendDouble(1.0);
 
-  ASSERT_EQ(base::Value::Type::NONE, null_value->GetType());
-  ASSERT_EQ(base::Value::Type::BOOLEAN, bool_value->GetType());
-  ASSERT_EQ(base::Value::Type::INTEGER, int_value->GetType());
-  ASSERT_EQ(base::Value::Type::DOUBLE, double_value->GetType());
-  ASSERT_EQ(base::Value::Type::STRING, string_value->GetType());
-  ASSERT_EQ(base::Value::Type::DICTIONARY, dict_value->GetType());
-  ASSERT_EQ(base::Value::Type::LIST, list_value->GetType());
+  ASSERT_EQ(base::Value::Type::NONE, null_value->type());
+  ASSERT_EQ(base::Value::Type::BOOLEAN, bool_value->type());
+  ASSERT_EQ(base::Value::Type::INTEGER, int_value->type());
+  ASSERT_EQ(base::Value::Type::DOUBLE, double_value->type());
+  ASSERT_EQ(base::Value::Type::STRING, string_value->type());
+  ASSERT_EQ(base::Value::Type::DICTIONARY, dict_value->type());
+  ASSERT_EQ(base::Value::Type::LIST, list_value->type());
 
   // Test every value type independently. Intentionally omits Type::BINARY which
   // isn't even allowed in JSONWriter's input.
@@ -166,13 +168,13 @@ TEST(PrefHashCalculatorTest, CatchHashChanges) {
 
   // Also test every value type together in the same dictionary.
   base::DictionaryValue everything;
-  everything.Set("null", null_value.release());
-  everything.Set("bool", bool_value.release());
-  everything.Set("int", int_value.release());
-  everything.Set("double", double_value.release());
-  everything.Set("string", string_value.release());
-  everything.Set("list", list_value.release());
-  everything.Set("dict", dict_value.release());
+  everything.Set("null", std::move(null_value));
+  everything.Set("bool", std::move(bool_value));
+  everything.Set("int", std::move(int_value));
+  everything.Set("double", std::move(double_value));
+  everything.Set("string", std::move(string_value));
+  everything.Set("list", std::move(list_value));
+  everything.Set("dict", std::move(dict_value));
   static const char kExpectedEverythingValue[] =
       "B97D09BE7005693574DCBDD03D8D9E44FB51F4008B73FB56A49A9FA671A1999B";
   EXPECT_EQ(PrefHashCalculator::VALID,
@@ -191,6 +193,20 @@ TEST(PrefHashCalculatorTest, TestCompatibilityWithLegacyDeviceId) {
       "05ACCBD3B05C45C36CD06190F63EC577112311929D8380E26E5F13182EB68318";
 
   EXPECT_EQ(PrefHashCalculator::VALID_SECURE_LEGACY,
+            PrefHashCalculator(kSeed, kNewDeviceId, kLegacyDeviceId)
+                .Validate("pref.path", &string_value, kExpectedValue));
+}
+
+TEST(PrefHashCalculatorTest, TestNotCompatibleWithEmptyLegacyDeviceId) {
+  static const char kSeed[] = "0123456789ABCDEF0123456789ABCDEF";
+  static const char kNewDeviceId[] = "unused";
+  static const char kLegacyDeviceId[] = "";
+
+  const base::Value string_value("testing with special chars:\n<>{}:^^@#$\\/");
+  static const char kExpectedValue[] =
+      "F14F989B7CAABF3B36ECAE34492C4D8094D2500E7A86D9A3203E54B274C27CB5";
+
+  EXPECT_EQ(PrefHashCalculator::INVALID,
             PrefHashCalculator(kSeed, kNewDeviceId, kLegacyDeviceId)
                 .Validate("pref.path", &string_value, kExpectedValue));
 }

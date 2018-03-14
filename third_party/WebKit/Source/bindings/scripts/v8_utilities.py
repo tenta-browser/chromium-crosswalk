@@ -31,11 +31,14 @@
 Design doc: http://www.chromium.org/developers/design-documents/idl-compiler
 """
 
+import os
 import re
+import sys
 
 from idl_types import IdlTypeBase
 import idl_types
 from idl_definitions import Exposure, IdlInterface, IdlAttribute
+from utilities import to_snake_case
 from v8_globals import includes
 
 ACRONYMS = [
@@ -44,6 +47,7 @@ ACRONYMS = [
     'HTML',
     'IME',
     'JS',
+    'SMIL',
     'SVG',
     'URL',
     'WOFF',
@@ -114,18 +118,7 @@ def uncapitalize(name):
 
 def runtime_enabled_function(name):
     """Returns a function call of a runtime enabled feature."""
-    return 'RuntimeEnabledFeatures::%sEnabled()' % uncapitalize(name)
-
-
-def unique_by(dict_list, key):
-    """Returns elements from a list of dictionaries with unique values for the named key."""
-    keys_seen = set()
-    filtered_list = []
-    for item in dict_list:
-        if item.get(key) not in keys_seen:
-            filtered_list.append(item)
-            keys_seen.add(item.get(key))
-    return filtered_list
+    return 'RuntimeEnabledFeatures::%sEnabled()' % name
 
 
 ################################################################################
@@ -155,6 +148,26 @@ def v8_class_name_or_partial(interface):
     return class_name
 
 
+def build_basename(name, snake_case, prefix=None, ext=None):
+    basename = name
+    if prefix:
+        basename = prefix + name
+    if snake_case:
+        basename = to_snake_case(basename)
+        if not ext:
+            return basename
+        if ext == '.cpp':
+            return basename + '.cc'
+        return basename + ext
+    if ext:
+        return basename + ext
+    return basename
+
+
+def binding_header_basename(name, snake_case):
+    return build_basename(name, snake_case, prefix='V8', ext='.h')
+
+
 ################################################################################
 # Specific extended attributes
 ################################################################################
@@ -172,7 +185,7 @@ def activity_logging_world_list(member, access_type=''):
     if log_activity and not log_activity.startswith(access_type):
         return set()
 
-    includes.add('bindings/core/v8/V8DOMActivityLogger.h')
+    includes.add('platform/bindings/V8DOMActivityLogger.h')
     if 'LogAllWorlds' in extended_attributes:
         return set(['', 'ForMainWorld'])
     return set([''])  # At minimum, include isolated worlds.
@@ -245,7 +258,6 @@ def deprecate_as(member):
 EXPOSED_EXECUTION_CONTEXT_METHOD = {
     'AnimationWorklet': 'IsAnimationWorkletGlobalScope',
     'AudioWorklet': 'IsAudioWorkletGlobalScope',
-    'CompositorWorker': 'IsCompositorWorkerGlobalScope',
     'DedicatedWorker': 'IsDedicatedWorkerGlobalScope',
     'PaintWorklet': 'IsPaintWorkletGlobalScope',
     'ServiceWorker': 'IsServiceWorkerGlobalScope',
@@ -257,7 +269,6 @@ EXPOSED_EXECUTION_CONTEXT_METHOD = {
 
 
 EXPOSED_WORKERS = set([
-    'CompositorWorker',
     'DedicatedWorker',
     'SharedWorker',
     'ServiceWorker',
@@ -321,8 +332,8 @@ def exposed(member, interface):
       => context->isDocument()
 
     EXAMPLE: [Exposed(Window Feature1, Window Feature2)]
-      => context->isDocument() && RuntimeEnabledFeatures::feature1Enabled() ||
-         context->isDocument() && RuntimeEnabledFeatures::feature2Enabled()
+      => context->isDocument() && RuntimeEnabledFeatures::Feature1Enabled() ||
+         context->isDocument() && RuntimeEnabledFeatures::Feature2Enabled()
     """
     exposure_set = ExposureSet(
         extended_attribute_value_as_list(member, 'Exposed'))
@@ -344,16 +355,16 @@ def secure_context(member, interface):
     """Returns C++ code that checks whether an interface/method/attribute/etc. is exposed
     to the current context."""
     if 'SecureContext' in member.extended_attributes or 'SecureContext' in interface.extended_attributes:
-        return "executionContext->IsSecureContext()"
+        return 'executionContext->IsSecureContext()'
     return None
 
 
 # [ImplementedAs]
 def cpp_name(definition_or_member):
     extended_attributes = definition_or_member.extended_attributes
-    if 'ImplementedAs' not in extended_attributes:
-        return definition_or_member.name
-    return extended_attributes['ImplementedAs']
+    if extended_attributes and 'ImplementedAs' in extended_attributes:
+        return extended_attributes['ImplementedAs']
+    return definition_or_member.name
 
 
 def cpp_name_from_interfaces_info(name, interfaces_info):
@@ -389,7 +400,6 @@ def origin_trial_enabled_function_name(definition_or_member):
     An exception is raised if OriginTrialEnabled is used in conjunction with any
     of the following (which must be mutually exclusive with origin trials):
       - RuntimeEnabled
-      - SecureContext
 
     The returned function checks if the IDL member should be enabled.
     Given extended attribute OriginTrialEnabled=FeatureName, return:
@@ -404,12 +414,6 @@ def origin_trial_enabled_function_name(definition_or_member):
     if is_origin_trial_enabled and 'RuntimeEnabled' in extended_attributes:
         raise Exception('[OriginTrialEnabled] and [RuntimeEnabled] must '
                         'not be specified on the same definition: %s'
-                        % definition_or_member.name)
-
-    if is_origin_trial_enabled and 'SecureContext' in extended_attributes:
-        raise Exception('[OriginTrialEnabled] and [SecureContext] must '
-                        'not be specified on the same definition '
-                        '(see https://crbug.com/695123 for workaround): %s'
                         % definition_or_member.name)
 
     if is_origin_trial_enabled:
@@ -430,7 +434,7 @@ def origin_trial_enabled_function_name(definition_or_member):
                         % definition_or_member.name)
 
     if is_feature_policy_enabled:
-        includes.add('bindings/core/v8/ScriptState.h')
+        includes.add('platform/bindings/ScriptState.h')
         includes.add('platform/feature_policy/FeaturePolicy.h')
 
         trial_name = extended_attributes['FeaturePolicy']
@@ -444,12 +448,34 @@ def origin_trial_feature_name(definition_or_member):
     return extended_attributes.get('OriginTrialEnabled') or extended_attributes.get('FeaturePolicy')
 
 
+def origin_trial_function_call(function_name, execution_context=None):
+    """Returns a function call to determine if an origin trial is enabled."""
+    return '{function}({context})'.format(
+        function=function_name,
+        context=execution_context if execution_context else "execution_context")
+
+
+# [ContextEnabled]
+def context_enabled_feature_name(definition_or_member):
+    return definition_or_member.extended_attributes.get('ContextEnabled')
+
+
+# [RuntimeCallStatsCounter]
+def rcs_counter_name(member, generic_counter_name):
+    extended_attribute_defined = 'RuntimeCallStatsCounter' in member.extended_attributes
+    if extended_attribute_defined:
+        counter = 'k' + member.extended_attributes['RuntimeCallStatsCounter']
+    else:
+        counter = generic_counter_name
+    return (counter, extended_attribute_defined)
+
+
 # [RuntimeEnabled]
 def runtime_enabled_feature_name(definition_or_member):
     extended_attributes = definition_or_member.extended_attributes
     if 'RuntimeEnabled' not in extended_attributes:
         return None
-    includes.add('platform/RuntimeEnabledFeatures.h')
+    includes.add('platform/runtime_enabled_features.h')
     return extended_attributes['RuntimeEnabled']
 
 
@@ -471,7 +497,7 @@ def on_instance(interface, member):
     """Returns True if the interface's member needs to be defined on every
     instance object.
 
-    The following members must be defiend on an instance object.
+    The following members must be defined on an instance object.
     - [Unforgeable] members
     - regular members of [Global] or [PrimaryGlobal] interfaces
     """

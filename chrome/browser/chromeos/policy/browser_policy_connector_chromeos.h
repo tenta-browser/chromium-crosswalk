@@ -43,6 +43,7 @@ class ActiveDirectoryPolicyManager;
 class DeviceCloudPolicyInitializer;
 class DeviceLocalAccountPolicyService;
 struct EnrollmentConfig;
+class MinimumVersionPolicyHandler;
 class NetworkConfigurationUpdater;
 class ProxyPolicyProvider;
 class ServerBackedStateKeysBroker;
@@ -77,8 +78,13 @@ class BrowserPolicyConnectorChromeOS
   // Checks whether this is an Active Directory managed enterprise device.
   bool IsActiveDirectoryManaged() const;
 
-  // Returns the enterprise domain if device is managed.
-  std::string GetEnterpriseDomain() const;
+  // Returns the enterprise enrollment domain if device is managed.
+  std::string GetEnterpriseEnrollmentDomain() const;
+
+  // Custom enterprise display domain used in UI if specified, otherwise
+  // defaults to enterprise enrollment domain. The policy needs to be loaded
+  // before the custom display domain can be used.
+  std::string GetEnterpriseDisplayDomain() const;
 
   // Returns the Kerberos realm (aka Windows Domain) if the device is managed by
   // Active Directory.
@@ -128,6 +134,10 @@ class BrowserPolicyConnectorChromeOS
   // May be nullptr, e.g. for devices managed by Active Directory.
   ServerBackedStateKeysBroker* GetStateKeysBroker() const {
     return state_keys_broker_.get();
+  }
+
+  MinimumVersionPolicyHandler* GetMinimumVersionPolicyHandler() const {
+    return minimum_version_policy_handler_.get();
   }
 
   // The browser-global PolicyService is created before Profiles are ready, to
@@ -193,6 +203,8 @@ class BrowserPolicyConnectorChromeOS
       device_remote_commands_invalidator_;
 
   std::unique_ptr<BluetoothPolicyHandler> bluetooth_policy_handler_;
+
+  std::unique_ptr<MinimumVersionPolicyHandler> minimum_version_policy_handler_;
 
   // This policy provider is used on Chrome OS to feed user policy into the
   // global PolicyService instance. This works by installing the cloud policy

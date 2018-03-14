@@ -9,14 +9,11 @@
 #include "ipc/ipc_message_macros.h"
 #include "media/base/ipc/media_param_traits.h"
 #include "media/gpu/ipc/common/create_video_encoder_params.h"
-#include "media/video/jpeg_decode_accelerator.h"
 #include "media/video/video_decode_accelerator.h"
 #include "media/video/video_encode_accelerator.h"
 #include "ui/gfx/ipc/color/gfx_param_traits.h"
 #include "ui/gfx/ipc/geometry/gfx_param_traits.h"
 
-IPC_ENUM_TRAITS_MAX_VALUE(media::JpegDecodeAccelerator::Error,
-                          media::JpegDecodeAccelerator::LARGEST_ERROR_ENUM)
 IPC_ENUM_TRAITS_MAX_VALUE(media::VideoEncodeAccelerator::Error,
                           media::VideoEncodeAccelerator::kErrorMax)
 
@@ -25,12 +22,13 @@ IPC_STRUCT_TRAITS_BEGIN(media::VideoDecodeAccelerator::Config)
   IPC_STRUCT_TRAITS_MEMBER(encryption_scheme)
   IPC_STRUCT_TRAITS_MEMBER(cdm_id)
   IPC_STRUCT_TRAITS_MEMBER(is_deferred_initialization_allowed)
-  IPC_STRUCT_TRAITS_MEMBER(surface_id)
+  IPC_STRUCT_TRAITS_MEMBER(overlay_info)
   IPC_STRUCT_TRAITS_MEMBER(initial_expected_coded_size)
   IPC_STRUCT_TRAITS_MEMBER(supported_output_formats)
   IPC_STRUCT_TRAITS_MEMBER(sps)
   IPC_STRUCT_TRAITS_MEMBER(pps)
-  IPC_STRUCT_TRAITS_MEMBER(color_space)
+  IPC_STRUCT_TRAITS_MEMBER(container_color_space)
+  IPC_STRUCT_TRAITS_MEMBER(target_color_space)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(media::CreateVideoEncoderParams)

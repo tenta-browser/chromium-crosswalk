@@ -5,7 +5,6 @@
 #ifndef COMPONENTS_DOM_DISTILLER_CORE_DOM_DISTILLER_SWITCHES_H_
 #define COMPONENTS_DOM_DISTILLER_CORE_DOM_DISTILLER_SWITCHES_H_
 
-#include "base/base_switches.h"
 #include "base/command_line.h"
 
 namespace switches {
@@ -28,6 +27,7 @@ extern const char kReaderModeFeedback[];
 
 namespace reader_mode_heuristics {
 extern const char kAdaBoost[];
+extern const char kAllArticles[];
 extern const char kOGArticle[];
 extern const char kAlwaysTrue[];
 extern const char kNone[];

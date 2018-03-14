@@ -33,6 +33,7 @@
 #include "platform/wtf/text/StringBuilder.h"
 
 namespace blink {
+namespace cssvalue {
 
 static bool SubimageIsPending(CSSValue* value) {
   if (value->IsImageValue())
@@ -47,12 +48,13 @@ static bool SubimageIsPending(CSSValue* value) {
 }
 
 static bool SubimageKnownToBeOpaque(CSSValue* value,
-                                    const LayoutObject& layout_object) {
+                                    const Document& document,
+                                    const ComputedStyle& style) {
   if (value->IsImageValue())
-    return ToCSSImageValue(value)->KnownToBeOpaque(layout_object);
+    return ToCSSImageValue(value)->KnownToBeOpaque(document, style);
 
   if (value->IsImageGeneratorValue())
-    return ToCSSImageGeneratorValue(value)->KnownToBeOpaque(layout_object);
+    return ToCSSImageGeneratorValue(value)->KnownToBeOpaque(document, style);
 
   NOTREACHED();
 
@@ -65,8 +67,8 @@ static ImageResourceContent* CachedImageForCSSValue(CSSValue* value,
     return nullptr;
 
   if (value->IsImageValue()) {
-    StyleImage* style_image_resource =
-        ToCSSImageValue(value)->CacheImage(document);
+    StyleImage* style_image_resource = ToCSSImageValue(value)->CacheImage(
+        document, FetchParameters::kAllowPlaceholder);
     if (!style_image_resource)
       return nullptr;
 
@@ -86,9 +88,8 @@ static ImageResourceContent* CachedImageForCSSValue(CSSValue* value,
 }
 
 static Image* RenderableImageForCSSValue(CSSValue* value,
-                                         const LayoutObject& layout_object) {
-  ImageResourceContent* cached_image =
-      CachedImageForCSSValue(value, layout_object.GetDocument());
+                                         const Document& document) {
+  ImageResourceContent* cached_image = CachedImageForCSSValue(value, document);
 
   if (!cached_image || cached_image->ErrorOccurred() ||
       cached_image->GetImage()->IsNull())
@@ -101,7 +102,7 @@ static KURL UrlForCSSValue(const CSSValue* value) {
   if (!value->IsImageValue())
     return KURL();
 
-  return KURL(kParsedURLString, ToCSSImageValue(*value).Url());
+  return KURL(ToCSSImageValue(*value).Url());
 }
 
 CSSCrossfadeValue::CSSCrossfadeValue(CSSValue* from_value,
@@ -115,7 +116,7 @@ CSSCrossfadeValue::CSSCrossfadeValue(CSSValue* from_value,
       cached_to_image_(nullptr),
       crossfade_subimage_observer_(this) {}
 
-CSSCrossfadeValue::~CSSCrossfadeValue() {}
+CSSCrossfadeValue::~CSSCrossfadeValue() = default;
 
 void CSSCrossfadeValue::Dispose() {
   if (cached_from_image_) {
@@ -150,11 +151,10 @@ CSSCrossfadeValue* CSSCrossfadeValue::ValueWithURLsMadeAbsolute() {
   return CSSCrossfadeValue::Create(from_value, to_value, percentage_value_);
 }
 
-IntSize CSSCrossfadeValue::FixedSize(const LayoutObject& layout_object,
+IntSize CSSCrossfadeValue::FixedSize(const Document& document,
                                      const FloatSize& default_object_size) {
-  Image* from_image =
-      RenderableImageForCSSValue(from_value_.Get(), layout_object);
-  Image* to_image = RenderableImageForCSSValue(to_value_.Get(), layout_object);
+  Image* from_image = RenderableImageForCSSValue(from_value_.Get(), document);
+  Image* to_image = RenderableImageForCSSValue(to_value_.Get(), document);
 
   if (!from_image || !to_image)
     return IntSize();
@@ -190,10 +190,10 @@ bool CSSCrossfadeValue::IsPending() const {
          SubimageIsPending(to_value_.Get());
 }
 
-bool CSSCrossfadeValue::KnownToBeOpaque(
-    const LayoutObject& layout_object) const {
-  return SubimageKnownToBeOpaque(from_value_.Get(), layout_object) &&
-         SubimageKnownToBeOpaque(to_value_.Get(), layout_object);
+bool CSSCrossfadeValue::KnownToBeOpaque(const Document& document,
+                                        const ComputedStyle& style) const {
+  return SubimageKnownToBeOpaque(from_value_.Get(), document, style) &&
+         SubimageKnownToBeOpaque(to_value_.Get(), document, style);
 }
 
 void CSSCrossfadeValue::LoadSubimages(const Document& document) {
@@ -220,20 +220,22 @@ void CSSCrossfadeValue::LoadSubimages(const Document& document) {
   crossfade_subimage_observer_.SetReady(true);
 }
 
-PassRefPtr<Image> CSSCrossfadeValue::GetImage(const LayoutObject& layout_object,
-                                              const IntSize& size) {
+scoped_refptr<Image> CSSCrossfadeValue::GetImage(
+    const ImageResourceObserver& client,
+    const Document& document,
+    const ComputedStyle&,
+    const IntSize& size) {
   if (size.IsEmpty())
     return nullptr;
 
-  Image* from_image =
-      RenderableImageForCSSValue(from_value_.Get(), layout_object);
-  Image* to_image = RenderableImageForCSSValue(to_value_.Get(), layout_object);
+  Image* from_image = RenderableImageForCSSValue(from_value_.Get(), document);
+  Image* to_image = RenderableImageForCSSValue(to_value_.Get(), document);
 
   if (!from_image || !to_image)
     return Image::NullImage();
 
-  RefPtr<Image> from_image_ref(from_image);
-  RefPtr<Image> to_image_ref(to_image);
+  scoped_refptr<Image> from_image_ref(from_image);
+  scoped_refptr<Image> to_image_ref(to_image);
 
   if (from_image->IsSVGImage())
     from_image_ref = SVGImageForContainer::Create(
@@ -245,19 +247,22 @@ PassRefPtr<Image> CSSCrossfadeValue::GetImage(const LayoutObject& layout_object,
 
   return CrossfadeGeneratedImage::Create(
       from_image_ref, to_image_ref, percentage_value_->GetFloatValue(),
-      FixedSize(layout_object, FloatSize(size)), size);
+      FixedSize(document, FloatSize(size)), size);
 }
 
-void CSSCrossfadeValue::CrossfadeChanged(const IntRect&) {
+void CSSCrossfadeValue::CrossfadeChanged(
+    const IntRect&,
+    ImageResourceObserver::CanDeferInvalidation defer) {
   for (const auto& curr : Clients()) {
-    LayoutObject* client = const_cast<LayoutObject*>(curr.key);
-    client->ImageChanged(static_cast<WrappedImagePtr>(this));
+    ImageResourceObserver* client =
+        const_cast<ImageResourceObserver*>(curr.key);
+    client->ImageChanged(static_cast<WrappedImagePtr>(this), defer);
   }
 }
 
 bool CSSCrossfadeValue::WillRenderImage() const {
   for (const auto& curr : Clients()) {
-    if (const_cast<LayoutObject*>(curr.key)->WillRenderImage())
+    if (const_cast<ImageResourceObserver*>(curr.key)->WillRenderImage())
       return true;
   }
   return false;
@@ -265,9 +270,10 @@ bool CSSCrossfadeValue::WillRenderImage() const {
 
 void CSSCrossfadeValue::CrossfadeSubimageObserverProxy::ImageChanged(
     ImageResourceContent*,
+    CanDeferInvalidation defer,
     const IntRect* rect) {
   if (ready_)
-    owner_value_->CrossfadeChanged(*rect);
+    owner_value_->CrossfadeChanged(*rect, defer);
 }
 
 bool CSSCrossfadeValue::CrossfadeSubimageObserverProxy::WillRenderImage() {
@@ -290,7 +296,7 @@ bool CSSCrossfadeValue::Equals(const CSSCrossfadeValue& other) const {
          DataEquivalent(percentage_value_, other.percentage_value_);
 }
 
-DEFINE_TRACE_AFTER_DISPATCH(CSSCrossfadeValue) {
+void CSSCrossfadeValue::TraceAfterDispatch(blink::Visitor* visitor) {
   visitor->Trace(from_value_);
   visitor->Trace(to_value_);
   visitor->Trace(percentage_value_);
@@ -300,4 +306,5 @@ DEFINE_TRACE_AFTER_DISPATCH(CSSCrossfadeValue) {
   CSSImageGeneratorValue::TraceAfterDispatch(visitor);
 }
 
+}  // namespace cssvalue
 }  // namespace blink

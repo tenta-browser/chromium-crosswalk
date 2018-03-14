@@ -33,10 +33,9 @@
 #include <memory>
 
 #include "bindings/core/v8/BindingSecurity.h"
-#include "bindings/core/v8/DOMWrapperWorld.h"
 #include "bindings/core/v8/ScriptController.h"
 #include "bindings/core/v8/SourceLocation.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8ErrorHandler.h"
 #include "bindings/core/v8/V8Node.h"
 #include "bindings/core/v8/V8Window.h"
@@ -46,6 +45,7 @@
 #include "core/dom/Element.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/dom/StaticNodeList.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "core/events/ErrorEvent.h"
 #include "core/frame/Deprecation.h"
 #include "core/frame/FrameConsole.h"
@@ -64,22 +64,17 @@
 #include "core/workers/MainThreadWorkletGlobalScope.h"
 #include "core/xml/XPathEvaluator.h"
 #include "core/xml/XPathResult.h"
-#include "platform/UserGestureIndicator.h"
-#include "wtf/PtrUtil.h"
-#include "wtf/ThreadingPrimitives.h"
-#include "wtf/text/StringBuilder.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/wtf/PtrUtil.h"
+#include "platform/wtf/ThreadingPrimitives.h"
+#include "platform/wtf/text/StringBuilder.h"
 
 namespace blink {
 
 namespace {
 
-int FrameId(LocalFrame* frame) {
-  ASSERT(frame);
-  return WeakIdentifierMap<LocalFrame>::Identifier(frame);
-}
-
 Mutex& CreationMutex() {
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(Mutex, mutex, (new Mutex));
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(Mutex, mutex, ());
   return mutex;
 }
 
@@ -98,16 +93,16 @@ MainThreadDebugger* MainThreadDebugger::instance_ = nullptr;
 
 MainThreadDebugger::MainThreadDebugger(v8::Isolate* isolate)
     : ThreadDebugger(isolate),
-      task_runner_(WTF::MakeUnique<InspectorTaskRunner>()),
+      task_runner_(std::make_unique<InspectorTaskRunner>()),
       paused_(false) {
   MutexLocker locker(CreationMutex());
-  ASSERT(!instance_);
+  DCHECK(!instance_);
   instance_ = this;
 }
 
 MainThreadDebugger::~MainThreadDebugger() {
   MutexLocker locker(CreationMutex());
-  ASSERT(instance_ == this);
+  DCHECK_EQ(instance_, this);
   instance_ = nullptr;
 }
 
@@ -127,8 +122,8 @@ int MainThreadDebugger::ContextGroupId(ExecutionContext* context) {
 
 void MainThreadDebugger::SetClientMessageLoop(
     std::unique_ptr<ClientMessageLoop> client_message_loop) {
-  ASSERT(!client_message_loop_);
-  ASSERT(client_message_loop);
+  DCHECK(!client_message_loop_);
+  DCHECK(client_message_loop);
   client_message_loop_ = std::move(client_message_loop);
 }
 
@@ -141,7 +136,7 @@ void MainThreadDebugger::DidClearContextsForFrame(LocalFrame* frame) {
 void MainThreadDebugger::ContextCreated(ScriptState* script_state,
                                         LocalFrame* frame,
                                         SecurityOrigin* origin) {
-  ASSERT(IsMainThread());
+  DCHECK(IsMainThread());
   v8::HandleScope handles(script_state->GetIsolate());
   DOMWrapperWorld& world = script_state->World();
   StringBuilder aux_data_builder;
@@ -151,9 +146,8 @@ void MainThreadDebugger::ContextCreated(ScriptState* script_state,
   aux_data_builder.Append(IdentifiersFactory::FrameId(frame));
   aux_data_builder.Append("\"}");
   String aux_data = aux_data_builder.ToString();
-  String human_readable_name = world.IsIsolatedWorld()
-                                   ? world.IsolatedWorldHumanReadableName()
-                                   : String();
+  String human_readable_name =
+      !world.IsMainWorld() ? world.NonMainWorldHumanReadableName() : String();
   String origin_string = origin ? origin->ToRawString() : String();
   v8_inspector::V8ContextInfo context_info(
       script_state->GetContext(), ContextGroupId(frame),
@@ -215,8 +209,8 @@ void MainThreadDebugger::ExceptionThrown(ExecutionContext* context,
 }
 
 int MainThreadDebugger::ContextGroupId(LocalFrame* frame) {
-  LocalFrame* local_frame_root = frame->LocalFrameRoot();
-  return FrameId(local_frame_root);
+  LocalFrame& local_frame_root = frame->LocalFrameRoot();
+  return WeakIdentifierMap<LocalFrame>::Identifier(&local_frame_root);
 }
 
 MainThreadDebugger* MainThreadDebugger::Instance() {
@@ -228,7 +222,7 @@ MainThreadDebugger* MainThreadDebugger::Instance() {
 }
 
 void MainThreadDebugger::InterruptMainThreadAndRun(
-    std::unique_ptr<InspectorTaskRunner::Task> task) {
+    InspectorTaskRunner::Task task) {
   MutexLocker locker(CreationMutex());
   if (instance_) {
     instance_->task_runner_->AppendTask(std::move(task));
@@ -243,11 +237,11 @@ void MainThreadDebugger::runMessageLoopOnPause(int context_group_id) {
   // Do not pause in Context of detached frame.
   if (!paused_frame)
     return;
-  ASSERT(paused_frame == paused_frame->LocalFrameRoot());
+  DCHECK(paused_frame == paused_frame->LocalFrameRoot());
   paused_ = true;
 
-  if (UserGestureToken* token = UserGestureIndicator::CurrentToken())
-    token->SetTimeoutPolicy(UserGestureToken::kHasPaused);
+  UserGestureIndicator::SetTimeoutPolicy(UserGestureToken::kHasPaused);
+
   // Wait for continue or step command.
   if (client_message_loop_)
     client_message_loop_->Run(paused_frame);
@@ -338,7 +332,7 @@ v8::MaybeLocal<v8::Value> MainThreadDebugger::memoryInfo(
     v8::Local<v8::Context> context) {
   ExecutionContext* execution_context = ToExecutionContext(context);
   DCHECK(execution_context);
-  ASSERT(execution_context->IsDocument());
+  DCHECK(execution_context->IsDocument());
   return ToV8(MemoryInfo::Create(), context->Global(), isolate);
 }
 
@@ -360,7 +354,7 @@ void MainThreadDebugger::installAdditionalCommandLineAPI(
 static Node* SecondArgumentAsNode(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
   if (info.Length() > 1) {
-    if (Node* node = V8Node::toImplWithTypeCheck(info.GetIsolate(), info[1]))
+    if (Node* node = V8Node::ToImplWithTypeCheck(info.GetIsolate(), info[1]))
       return node;
   }
   ExecutionContext* execution_context =

@@ -77,7 +77,7 @@ TEST_F(CreditCardFieldTest, Empty) {
 }
 
 TEST_F(CreditCardFieldTest, NonParse) {
-  list_.push_back(base::MakeUnique<AutofillField>());
+  list_.push_back(std::make_unique<AutofillField>());
   Parse();
   ASSERT_EQ(nullptr, field_.get());
 }
@@ -89,12 +89,12 @@ TEST_F(CreditCardFieldTest, ParseCreditCardNoNumber) {
   field.label = ASCIIToUTF16("Exp Month");
   field.name = ASCIIToUTF16("ccmonth");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("month1")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("month1")));
 
   field.label = ASCIIToUTF16("Exp Year");
   field.name = ASCIIToUTF16("ccyear");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("year2")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("year2")));
 
   Parse();
   ASSERT_EQ(nullptr, field_.get());
@@ -107,7 +107,7 @@ TEST_F(CreditCardFieldTest, ParseCreditCardNoDate) {
   field.label = ASCIIToUTF16("Card Number");
   field.name = ASCIIToUTF16("card_number");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number1")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number1")));
 
   Parse();
   ASSERT_EQ(nullptr, field_.get());
@@ -120,17 +120,17 @@ TEST_F(CreditCardFieldTest, ParseMiniumCreditCard) {
   field.label = ASCIIToUTF16("Card Number");
   field.name = ASCIIToUTF16("card_number");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number1")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number1")));
 
   field.label = ASCIIToUTF16("Exp Month");
   field.name = ASCIIToUTF16("ccmonth");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("month2")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("month2")));
 
   field.label = ASCIIToUTF16("Exp Year");
   field.name = ASCIIToUTF16("ccyear");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("year3")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("year3")));
 
   Parse();
   ASSERT_NE(nullptr, field_.get());
@@ -155,32 +155,32 @@ TEST_F(CreditCardFieldTest, ParseFullCreditCard) {
 
   field.label = ASCIIToUTF16("Name on Card");
   field.name = ASCIIToUTF16("name_on_card");
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("name")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("name")));
 
   field.label = ASCIIToUTF16("Card Number");
   field.name = ASCIIToUTF16("card_number");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number")));
 
   field.label = ASCIIToUTF16("Exp Month");
   field.name = ASCIIToUTF16("ccmonth");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("month")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("month")));
 
   field.label = ASCIIToUTF16("Exp Year");
   field.name = ASCIIToUTF16("ccyear");
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("year")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("year")));
 
   field.label = ASCIIToUTF16("Verification");
   field.name = ASCIIToUTF16("verification");
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("cvc")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("cvc")));
 
   field.form_control_type = "select-one";
   field.label = ASCIIToUTF16("Card Type");
   field.name = ASCIIToUTF16("card_type");
   field.option_contents.push_back(ASCIIToUTF16("visa"));
   field.option_values.push_back(ASCIIToUTF16("visa"));
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("type")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("type")));
 
   Parse();
   ASSERT_NE(nullptr, field_.get());
@@ -218,22 +218,22 @@ TEST_F(CreditCardFieldTest, ParseExpMonthYear) {
   field.label = ASCIIToUTF16("Name on Card");
   field.name = ASCIIToUTF16("name_on_card");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("name1")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("name1")));
 
   field.label = ASCIIToUTF16("Card Number");
   field.name = ASCIIToUTF16("card_number");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number2")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number2")));
 
   field.label = ASCIIToUTF16("ExpDate Month / Year");
   field.name = ASCIIToUTF16("ExpDate");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("month3")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("month3")));
 
   field.label = ASCIIToUTF16("ExpDate Month / Year");
   field.name = ASCIIToUTF16("ExpDate");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("year4")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("year4")));
 
   Parse();
   ASSERT_NE(nullptr, field_.get());
@@ -263,22 +263,22 @@ TEST_F(CreditCardFieldTest, ParseExpMonthYear2) {
   field.label = ASCIIToUTF16("Name on Card");
   field.name = ASCIIToUTF16("name_on_card");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("name1")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("name1")));
 
   field.label = ASCIIToUTF16("Card Number");
   field.name = ASCIIToUTF16("card_number");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number2")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number2")));
 
   field.label = ASCIIToUTF16("Expiration date Month / Year");
   field.name = ASCIIToUTF16("ExpDate");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("month3")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("month3")));
 
   field.label = ASCIIToUTF16("Expiration date Month / Year");
   field.name = ASCIIToUTF16("ExpDate");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("year4")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("year4")));
 
   Parse();
   ASSERT_NE(nullptr, field_.get());
@@ -302,6 +302,7 @@ TEST_F(CreditCardFieldTest, ParseExpMonthYear2) {
 }
 
 typedef struct {
+  const std::string cc_fields_form_control_type;
   const std::string label;
   const int max_length;
   const ServerFieldType expected_prediction;
@@ -324,18 +325,19 @@ TEST_P(ParseExpFieldTest, ParseExpField) {
   field.label = ASCIIToUTF16("Name on Card");
   field.name = ASCIIToUTF16("name_on_card");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("name1")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("name1")));
 
+  field.form_control_type = test_case.cc_fields_form_control_type;
   field.label = ASCIIToUTF16("Card Number");
   field.name = ASCIIToUTF16("card_number");
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("num2")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("num2")));
 
   field.label = ASCIIToUTF16(test_case.label);
   if (test_case.max_length != 0) {
     field.max_length = test_case.max_length;
   }
   field.name = ASCIIToUTF16("cc_exp");
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("exp3")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("exp3")));
 
   Parse();
 
@@ -375,68 +377,140 @@ INSTANTIATE_TEST_CASE_P(
     CreditCardFieldTest,
     ParseExpFieldTest,
     testing::Values(
+        // CC fields input_type="text"
         // General label, no maxlength.
-        ParseExpFieldTestCase{"Expiration Date", 0,
+        ParseExpFieldTestCase{"text", "Expiration Date", 0,
                               CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
         // General label, maxlength 4.
-        ParseExpFieldTestCase{"Expiration Date", 4,
+        ParseExpFieldTestCase{"text", "Expiration Date", 4,
                               CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
         // General label, maxlength 5.
-        ParseExpFieldTestCase{"Expiration Date", 5,
+        ParseExpFieldTestCase{"text", "Expiration Date", 5,
                               CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
         // General label, maxlength 6.
-        ParseExpFieldTestCase{"Expiration Date", 6,
+        ParseExpFieldTestCase{"text", "Expiration Date", 6,
                               CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
         // General label, maxlength 7.
-        ParseExpFieldTestCase{"Expiration Date", 7,
+        ParseExpFieldTestCase{"text", "Expiration Date", 7,
                               CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
         // General label, large maxlength.
-        ParseExpFieldTestCase{"Expiration Date", 12,
+        ParseExpFieldTestCase{"text", "Expiration Date", 12,
                               CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
 
         // Unsupported maxlength, general label.
-        ParseExpFieldTestCase{"Expiration Date", 3, UNKNOWN_TYPE},
+        ParseExpFieldTestCase{"text", "Expiration Date", 3, UNKNOWN_TYPE},
         // Unsupported maxlength, two digit year label.
-        ParseExpFieldTestCase{"Expiration Date (MM/YY)", 3, UNKNOWN_TYPE},
+        ParseExpFieldTestCase{"text", "Expiration Date (MM/YY)", 3,
+                              UNKNOWN_TYPE},
         // Unsupported maxlength, four digit year label.
-        ParseExpFieldTestCase{"Expiration Date (MM/YYYY)", 3, UNKNOWN_TYPE},
+        ParseExpFieldTestCase{"text", "Expiration Date (MM/YYYY)", 3,
+                              UNKNOWN_TYPE},
 
         // Two digit year, simple label.
-        ParseExpFieldTestCase{"MM / YY", 0, CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
+        ParseExpFieldTestCase{"text", "MM / YY", 0,
+                              CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
         // Two digit year, with slash (MM/YY).
-        ParseExpFieldTestCase{"Expiration Date (MM/YY)", 0,
+        ParseExpFieldTestCase{"text", "Expiration Date (MM/YY)", 0,
                               CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
         // Two digit year, no slash (MMYY).
-        ParseExpFieldTestCase{"Expiration Date (MMYY)", 4,
+        ParseExpFieldTestCase{"text", "Expiration Date (MMYY)", 4,
                               CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
         // Two digit year, with slash and maxlength (MM/YY).
-        ParseExpFieldTestCase{"Expiration Date (MM/YY)", 5,
+        ParseExpFieldTestCase{"text", "Expiration Date (MM/YY)", 5,
                               CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
         // Two digit year, with slash and large maxlength (MM/YY).
-        ParseExpFieldTestCase{"Expiration Date (MM/YY)", 12,
+        ParseExpFieldTestCase{"text", "Expiration Date (MM/YY)", 12,
                               CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
 
         // Four digit year, simple label.
-        ParseExpFieldTestCase{"MM / YYYY", 0,
+        ParseExpFieldTestCase{"text", "MM / YYYY", 0,
                               CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
         // Four digit year, with slash (MM/YYYY).
-        ParseExpFieldTestCase{"Expiration Date (MM/YYYY)", 0,
+        ParseExpFieldTestCase{"text", "Expiration Date (MM/YYYY)", 0,
                               CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
         // Four digit year, no slash (MMYYYY).
-        ParseExpFieldTestCase{"Expiration Date (MMYYYY)", 6,
+        ParseExpFieldTestCase{"text", "Expiration Date (MMYYYY)", 6,
                               CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
         // Four digit year, with slash and maxlength (MM/YYYY).
-        ParseExpFieldTestCase{"Expiration Date (MM/YYYY)", 7,
+        ParseExpFieldTestCase{"text", "Expiration Date (MM/YYYY)", 7,
                               CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
         // Four digit year, with slash and large maxlength (MM/YYYY).
-        ParseExpFieldTestCase{"Expiration Date (MM/YYYY)", 12,
+        ParseExpFieldTestCase{"text", "Expiration Date (MM/YYYY)", 12,
                               CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
 
         // Four digit year label with restrictive maxlength (4).
-        ParseExpFieldTestCase{"Expiration Date (MM/YYYY)", 4,
+        ParseExpFieldTestCase{"text", "Expiration Date (MM/YYYY)", 4,
                               CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
         // Four digit year label with restrictive maxlength (5).
-        ParseExpFieldTestCase{"Expiration Date (MM/YYYY)", 5,
+        ParseExpFieldTestCase{"text", "Expiration Date (MM/YYYY)", 5,
+                              CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
+
+        // CC fields input_type="number"
+        // General label, no maxlength.
+        ParseExpFieldTestCase{"number", "Expiration Date", 0,
+                              CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
+        // General label, maxlength 4.
+        ParseExpFieldTestCase{"number", "Expiration Date", 4,
+                              CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
+        // General label, maxlength 5.
+        ParseExpFieldTestCase{"number", "Expiration Date", 5,
+                              CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
+        // General label, maxlength 6.
+        ParseExpFieldTestCase{"number", "Expiration Date", 6,
+                              CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
+        // General label, maxlength 7.
+        ParseExpFieldTestCase{"number", "Expiration Date", 7,
+                              CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
+        // General label, large maxlength.
+        ParseExpFieldTestCase{"number", "Expiration Date", 12,
+                              CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
+
+        // Unsupported maxlength, general label.
+        ParseExpFieldTestCase{"number", "Expiration Date", 3, UNKNOWN_TYPE},
+        // Unsupported maxlength, two digit year label.
+        ParseExpFieldTestCase{"number", "Expiration Date (MM/YY)", 3,
+                              UNKNOWN_TYPE},
+        // Unsupported maxlength, four digit year label.
+        ParseExpFieldTestCase{"number", "Expiration Date (MM/YYYY)", 3,
+                              UNKNOWN_TYPE},
+
+        // Two digit year, simple label.
+        ParseExpFieldTestCase{"number", "MM / YY", 0,
+                              CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
+        // Two digit year, with slash (MM/YY).
+        ParseExpFieldTestCase{"number", "Expiration Date (MM/YY)", 0,
+                              CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
+        // Two digit year, no slash (MMYY).
+        ParseExpFieldTestCase{"number", "Expiration Date (MMYY)", 4,
+                              CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
+        // Two digit year, with slash and maxlength (MM/YY).
+        ParseExpFieldTestCase{"number", "Expiration Date (MM/YY)", 5,
+                              CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
+        // Two digit year, with slash and large maxlength (MM/YY).
+        ParseExpFieldTestCase{"number", "Expiration Date (MM/YY)", 12,
+                              CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
+
+        // Four digit year, simple label.
+        ParseExpFieldTestCase{"number", "MM / YYYY", 0,
+                              CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
+        // Four digit year, with slash (MM/YYYY).
+        ParseExpFieldTestCase{"number", "Expiration Date (MM/YYYY)", 0,
+                              CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
+        // Four digit year, no slash (MMYYYY).
+        ParseExpFieldTestCase{"number", "Expiration Date (MMYYYY)", 6,
+                              CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
+        // Four digit year, with slash and maxlength (MM/YYYY).
+        ParseExpFieldTestCase{"number", "Expiration Date (MM/YYYY)", 7,
+                              CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
+        // Four digit year, with slash and large maxlength (MM/YYYY).
+        ParseExpFieldTestCase{"number", "Expiration Date (MM/YYYY)", 12,
+                              CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR},
+
+        // Four digit year label with restrictive maxlength (4).
+        ParseExpFieldTestCase{"number", "Expiration Date (MM/YYYY)", 4,
+                              CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR},
+        // Four digit year label with restrictive maxlength (5).
+        ParseExpFieldTestCase{"number", "Expiration Date (MM/YYYY)", 5,
                               CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR}));
 
 TEST_F(CreditCardFieldTest, ParseCreditCardHolderNameWithCCFullName) {
@@ -446,7 +520,7 @@ TEST_F(CreditCardFieldTest, ParseCreditCardHolderNameWithCCFullName) {
   field.label = ASCIIToUTF16("Name");
   field.name = ASCIIToUTF16("ccfullname");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("name1")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("name1")));
 
   Parse();
   ASSERT_NE(nullptr, field_.get());
@@ -465,13 +539,13 @@ TEST_F(CreditCardFieldTest, ParseMonthControl) {
   field.label = ASCIIToUTF16("Card number:");
   field.name = ASCIIToUTF16("ccnumber");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number1")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number1")));
 
   field.form_control_type = "month";
   field.label = ASCIIToUTF16("Expiration date:");
   field.name = ASCIIToUTF16("ccexp");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("date2")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("date2")));
 
   Parse();
   ASSERT_NE(nullptr, field_.get());
@@ -495,16 +569,16 @@ TEST_F(CreditCardFieldTest, ParseCreditCardExpYear_2DigitMaxLength) {
   field.label = ASCIIToUTF16("Card Number");
   field.name = ASCIIToUTF16("card_number");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number")));
 
   field.label = ASCIIToUTF16("Expiration Date");
   field.name = ASCIIToUTF16("ccmonth");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("month")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("month")));
 
   field.name = ASCIIToUTF16("ccyear");
   field.max_length = 2;
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("year")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("year")));
 
   Parse();
   ASSERT_NE(nullptr, field_.get());
@@ -531,19 +605,19 @@ TEST_F(CreditCardFieldTest, ParseCreditCardNumberWithSplit) {
   field.name = ASCIIToUTF16("card_number_q1");
   field.max_length = 4;
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number1")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number1")));
 
   field.label = ASCIIToUTF16("Card Number");
   field.name = ASCIIToUTF16("card_number_q2");
   field.max_length = 4;
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number2")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number2")));
 
   field.label = ASCIIToUTF16("Card Number");
   field.name = ASCIIToUTF16("card_number_q3");
   field.max_length = 4;
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number3")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number3")));
 
   // For last credit card number input field it simply ignores the |max_length|
   // attribute. So even having a very big number, does not conside it an invalid
@@ -552,17 +626,17 @@ TEST_F(CreditCardFieldTest, ParseCreditCardNumberWithSplit) {
   field.name = ASCIIToUTF16("card_number_q4");
   field.max_length = 20;
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number4")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number4")));
 
   field.label = ASCIIToUTF16("Exp Month");
   field.name = ASCIIToUTF16("ccmonth");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("month5")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("month5")));
 
   field.label = ASCIIToUTF16("Exp Year");
   field.name = ASCIIToUTF16("ccyear");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("year6")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("year6")));
 
   Parse();
   ASSERT_NE(nullptr, field_.get());
@@ -609,27 +683,27 @@ TEST_F(CreditCardFieldTest, ParseMultipleCreditCardNumbers) {
   field.label = ASCIIToUTF16("Name on Card");
   field.name = ASCIIToUTF16("name_on_card");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("name1")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("name1")));
 
   field.label = ASCIIToUTF16("Card Number");
   field.name = ASCIIToUTF16("card_number");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number2")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number2")));
 
   field.label = ASCIIToUTF16("Confirm Card Number");
   field.name = ASCIIToUTF16("confirm_card_number");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number3")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number3")));
 
   field.label = ASCIIToUTF16("Exp Month");
   field.name = ASCIIToUTF16("ccmonth");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("month4")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("month4")));
 
   field.label = ASCIIToUTF16("Exp Year");
   field.name = ASCIIToUTF16("ccyear");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("year5")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("year5")));
 
   Parse();
   ASSERT_NE(nullptr, field_.get());
@@ -664,27 +738,27 @@ TEST_F(CreditCardFieldTest, ParseFirstAndLastNames) {
   field.label = ASCIIToUTF16("First Name on Card");
   field.name = ASCIIToUTF16("cc-fname");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("name1")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("name1")));
 
   field.label = ASCIIToUTF16("Last Name");
   field.name = ASCIIToUTF16("cc-lname");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("name2")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("name2")));
 
   field.label = ASCIIToUTF16("Card Number");
   field.name = ASCIIToUTF16("card_number");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number3")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number3")));
 
   field.label = ASCIIToUTF16("Exp Month");
   field.name = ASCIIToUTF16("ccmonth");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("month4")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("month4")));
 
   field.label = ASCIIToUTF16("Exp Year");
   field.name = ASCIIToUTF16("ccyear");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("year5")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("year5")));
 
   Parse();
   ASSERT_NE(nullptr, field_.get());
@@ -718,29 +792,29 @@ TEST_F(CreditCardFieldTest, ParseConsecutiveCvc) {
 
   field.label = ASCIIToUTF16("Name on Card");
   field.name = ASCIIToUTF16("name_on_card");
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("name")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("name")));
 
   field.label = ASCIIToUTF16("Card Number");
   field.name = ASCIIToUTF16("card_number");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number")));
 
   field.label = ASCIIToUTF16("Exp Month");
   field.name = ASCIIToUTF16("ccmonth");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("month")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("month")));
 
   field.label = ASCIIToUTF16("Exp Year");
   field.name = ASCIIToUTF16("ccyear");
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("year")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("year")));
 
   field.label = ASCIIToUTF16("Verification");
   field.name = ASCIIToUTF16("verification");
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("cvc")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("cvc")));
 
   field.label = ASCIIToUTF16("Verification");
   field.name = ASCIIToUTF16("verification");
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("cvc2")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("cvc2")));
 
   MultipleParses();
 
@@ -776,34 +850,34 @@ TEST_F(CreditCardFieldTest, ParseNonConsecutiveCvc) {
 
   field.label = ASCIIToUTF16("Name on Card");
   field.name = ASCIIToUTF16("name_on_card");
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("name")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("name")));
 
   field.label = ASCIIToUTF16("Card Number");
   field.name = ASCIIToUTF16("card_number");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("number")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("number")));
 
   field.label = ASCIIToUTF16("Exp Month");
   field.name = ASCIIToUTF16("ccmonth");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("month")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("month")));
 
   field.label = ASCIIToUTF16("Exp Year");
   field.name = ASCIIToUTF16("ccyear");
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("year")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("year")));
 
   field.label = ASCIIToUTF16("Verification");
   field.name = ASCIIToUTF16("verification");
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("cvc")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("cvc")));
 
   field.label = ASCIIToUTF16("Unknown");
   field.name = ASCIIToUTF16("unknown");
   list_.push_back(
-      base::MakeUnique<AutofillField>(field, ASCIIToUTF16("unknown")));
+      std::make_unique<AutofillField>(field, ASCIIToUTF16("unknown")));
 
   field.label = ASCIIToUTF16("Verification");
   field.name = ASCIIToUTF16("verification");
-  list_.push_back(base::MakeUnique<AutofillField>(field, ASCIIToUTF16("cvc2")));
+  list_.push_back(std::make_unique<AutofillField>(field, ASCIIToUTF16("cvc2")));
 
   MultipleParses();
 

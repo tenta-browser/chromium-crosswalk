@@ -4,6 +4,9 @@
 
 package org.chromium.chrome.browser.webapps;
 
+import static org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider.CUSTOM_TABS_UI_TYPE_MINIMAL_UI_WEBAPP;
+
+import android.app.PendingIntent;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
@@ -13,14 +16,16 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.StrictMode;
 import android.os.SystemClock;
+import android.support.annotation.IntDef;
+import android.support.annotation.Nullable;
+import android.support.customtabs.CustomTabsService;
+import android.support.customtabs.CustomTabsSessionToken;
+import android.support.customtabs.TrustedWebUtils;
 import android.text.TextUtils;
-import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnSystemUiVisibilityChangeListener;
 import android.view.ViewGroup;
-import android.widget.FrameLayout;
-import android.widget.ImageView;
-import android.widget.TextView;
+import android.widget.RemoteViews;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApiCompatibilityUtils;
@@ -28,39 +33,67 @@ import org.chromium.base.ApplicationStatus;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.blink_public.platform.WebDisplayMode;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.IntentHandler;
+import org.chromium.chrome.browser.SingleTabActivity;
 import org.chromium.chrome.browser.TabState;
+import org.chromium.chrome.browser.appmenu.AppMenuPropertiesDelegate;
+import org.chromium.chrome.browser.browserservices.BrowserSessionContentHandler;
+import org.chromium.chrome.browser.browserservices.BrowserSessionContentUtils;
+import org.chromium.chrome.browser.browserservices.BrowserSessionDataProvider;
+import org.chromium.chrome.browser.browserservices.OriginVerifier;
+import org.chromium.chrome.browser.browserservices.OriginVerifier.OriginVerificationListener;
+import org.chromium.chrome.browser.compositor.layouts.LayoutManager;
+import org.chromium.chrome.browser.customtabs.CustomTabAppMenuPropertiesDelegate;
+import org.chromium.chrome.browser.customtabs.CustomTabLayoutManager;
+import org.chromium.chrome.browser.customtabs.CustomTabsConnection;
+import org.chromium.chrome.browser.document.ChromeLauncherActivity;
 import org.chromium.chrome.browser.document.DocumentUtils;
 import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager;
-import org.chromium.chrome.browser.metrics.WebappUma;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabDelegateFactory;
 import org.chromium.chrome.browser.tab.TabObserver;
+import org.chromium.chrome.browser.tabmodel.document.TabDelegate;
+import org.chromium.chrome.browser.toolbar.ToolbarControlContainer;
 import org.chromium.chrome.browser.util.ColorUtils;
-import org.chromium.chrome.browser.util.UrlUtilities;
+import org.chromium.chrome.browser.widget.TintedDrawable;
 import org.chromium.content.browser.ScreenOrientationProvider;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.NavigationController;
 import org.chromium.net.NetworkChangeNotifier;
 import org.chromium.ui.base.PageTransition;
 
 import java.io.File;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
  * Displays a webapp in a nearly UI-less Chrome (InfoBars still appear).
  */
-public class WebappActivity extends FullScreenActivity {
+public class WebappActivity extends SingleTabActivity {
     public static final String WEBAPP_SCHEME = "webapp";
+    // The activity type of WebappActivity.
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef({ACTIVITY_TYPE_WEBAPP, ACTIVITY_TYPE_WEBAPK, ACTIVITY_TYPE_TWA})
+    public @interface ActivityType {}
+    public static final int ACTIVITY_TYPE_OTHER = -1;
+    public static final int ACTIVITY_TYPE_WEBAPP = 0;
+    public static final int ACTIVITY_TYPE_WEBAPK = 1;
+    public static final int ACTIVITY_TYPE_TWA = 2;
 
     private static final String TAG = "WebappActivity";
+    private static final String HISTOGRAM_NAVIGATION_STATUS = "Webapp.NavigationStatus";
     private static final long MS_BEFORE_NAVIGATING_BACK_FROM_INTERSTITIAL = 1000;
 
     private static final int ENTER_IMMERSIVE_MODE_DELAY_MILLIS = 300;
     private static final int RESTORE_IMMERSIVE_MODE_DELAY_MILLIS = 3000;
-    private static final int IMMERSIVE_MODE_UI_FLAGS = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+    static final int IMMERSIVE_MODE_UI_FLAGS = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
             | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
             | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
             | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION // hide nav bar
@@ -68,21 +101,94 @@ public class WebappActivity extends FullScreenActivity {
             | View.SYSTEM_UI_FLAG_LOW_PROFILE
             | View.SYSTEM_UI_FLAG_IMMERSIVE;
 
+    private final WebappActionsNotificationManager mNotificationManager;
     private final WebappDirectoryManager mDirectoryManager;
 
     protected WebappInfo mWebappInfo;
 
-    private ViewGroup mSplashScreen;
-    private WebappUrlBar mUrlBar;
+    private WebappSplashScreenController mSplashController;
 
     private boolean mIsInitialized;
     private Integer mBrandColor;
 
-    private WebappUma mWebappUma;
-
     private Bitmap mLargestFavicon;
 
     private Runnable mSetImmersiveRunnable;
+
+    private BrowserSessionDataProvider mBrowserSessionDataProvider;
+
+    private TrustedWebContentProvider mTrustedWebContentProvider;
+
+    private class TrustedWebContentProvider
+            implements BrowserSessionContentHandler, OriginVerificationListener {
+        private boolean mVerificationFailed;
+        private OriginVerifier mOriginVerifier;
+
+        @Override
+        public void loadUrlAndTrackFromTimestamp(LoadUrlParams params, long timestamp) {}
+
+        @Override
+        public CustomTabsSessionToken getSession() {
+            return mBrowserSessionDataProvider.getSession();
+        }
+
+        @Override
+        public boolean shouldIgnoreIntent(Intent intent) {
+            return true;
+        }
+
+        @Override
+        public boolean updateCustomButton(int id, Bitmap bitmap, String description) {
+            return false;
+        }
+
+        @Override
+        public boolean updateRemoteViews(
+                RemoteViews remoteViews, int[] clickableIDs, PendingIntent pendingIntent) {
+            return false;
+        }
+
+        @Override
+        public String getCurrentUrl() {
+            if (getActivityTab() == null) return null;
+
+            return getActivityTab().getUrl();
+        }
+
+        /**
+         * Verify the Digital Asset Links declared by the Android native client with the currently
+         * loading origin. See {@link TrustedWebContentProvider#didVerificationFail()} for the
+         * result.
+         */
+        void verifyRelationship() {
+            mOriginVerifier = new OriginVerifier(mTrustedWebContentProvider,
+                    getNativeClientPackageName(), CustomTabsService.RELATION_HANDLE_ALL_URLS);
+            mOriginVerifier.start(mWebappInfo.uri());
+        }
+
+        @Override
+        public void onOriginVerified(String packageName, Uri origin, boolean verified) {
+            mVerificationFailed = !verified;
+            mOriginVerifier.cleanUp();
+            mOriginVerifier = null;
+            if (mVerificationFailed) getFullscreenManager().setPositionsForTabToNonFullscreen();
+        }
+
+        /**
+         * @return Whether origin verification for the corresponding client failed.
+         */
+        boolean didVerificationFail() {
+            return mVerificationFailed;
+        }
+    }
+
+    /** Initialization-on-demand holder. This exists for thread-safe lazy initialization. */
+    private static class Holder {
+        // This static map is used to cache WebappInfo objects between their initial creation in
+        // WebappLauncherActivity and final use in WebappActivity.
+        private static final HashMap<String, WebappInfo> sWebappInfoMap =
+                new HashMap<String, WebappInfo>();
+    }
 
     /**
      * Construct all the variables that shouldn't change.  We do it here both to clarify when the
@@ -92,21 +198,29 @@ public class WebappActivity extends FullScreenActivity {
     public WebappActivity() {
         mWebappInfo = createWebappInfo(null);
         mDirectoryManager = new WebappDirectoryManager();
-        mWebappUma = new WebappUma();
+        mSplashController = new WebappSplashScreenController();
+        mNotificationManager = new WebappActionsNotificationManager(this);
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         if (intent == null) return;
+
+        if (mNotificationManager.handleNotificationAction(intent)) return;
+
         super.onNewIntent(intent);
 
-        WebappInfo newWebappInfo = createWebappInfo(intent);
+        WebappInfo newWebappInfo = popWebappInfo(WebappInfo.idFromIntent(intent));
+        if (newWebappInfo == null) newWebappInfo = createWebappInfo(intent);
+
         if (newWebappInfo == null) {
             Log.e(TAG, "Failed to parse new Intent: " + intent);
             ApiCompatibilityUtils.finishAndRemoveTask(this);
         } else if (newWebappInfo.shouldForceNavigation() && mIsInitialized) {
-            getActivityTab().loadUrl(new LoadUrlParams(
-                    newWebappInfo.uri().toString(), PageTransition.AUTO_TOPLEVEL));
+            LoadUrlParams params =
+                    new LoadUrlParams(newWebappInfo.uri().toString(), PageTransition.AUTO_TOPLEVEL);
+            params.setShouldClearHistoryList(true);
+            getActivityTab().loadUrl(params);
         }
     }
 
@@ -120,11 +234,9 @@ public class WebappActivity extends FullScreenActivity {
 
     protected void initializeUI(Bundle savedInstanceState) {
         // We do not load URL when restoring from saved instance states.
-        if (savedInstanceState == null && mWebappInfo.isInitialized()) {
-            if (TextUtils.isEmpty(getActivityTab().getUrl())) {
-                getActivityTab().loadUrl(new LoadUrlParams(
-                        mWebappInfo.uri().toString(), PageTransition.AUTO_TOPLEVEL));
-            }
+        if (savedInstanceState == null) {
+            getActivityTab().loadUrl(
+                    new LoadUrlParams(mWebappInfo.uri().toString(), PageTransition.AUTO_TOPLEVEL));
         } else {
             if (NetworkChangeNotifier.isOnline()) getActivityTab().reloadIgnoringCache();
         }
@@ -132,20 +244,44 @@ public class WebappActivity extends FullScreenActivity {
         getActivityTab().addObserver(createTabObserver());
         getActivityTab().getTabWebContentsDelegateAndroid().setDisplayMode(
                 mWebappInfo.displayMode());
-        if (mWebappInfo.displayMode() == WebDisplayMode.kFullscreen) {
-            enterImmersiveMode();
-        }
+    }
+
+    @Override
+    protected boolean shouldPreferLightweightFre(Intent intent) {
+        return intent.getBooleanExtra(TrustedWebUtils.EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY, false);
     }
 
     @Override
     public void preInflationStartup() {
-        WebappInfo info = createWebappInfo(getIntent());
+        Intent intent = getIntent();
+        String id = WebappInfo.idFromIntent(intent);
+        WebappInfo info = popWebappInfo(id);
+        // When WebappActivity is killed by the Android OS, and an entry stays in "Android Recents"
+        // (The user does not swipe it away), when WebappActivity is relaunched it is relaunched
+        // with the intent stored in WebappActivity#getIntent() at the time that the WebappActivity
+        // was killed. WebappActivity may be relaunched from:
 
-        String id = "";
-        if (info != null) {
-            mWebappInfo = info;
-            id = info.id();
+        // (A) An intent from WebappLauncherActivity (e.g. as a result of a notification or a deep
+        // link). Android drops the intent from WebappLauncherActivity in favor of
+        // WebappActivity#getIntent() at the time that the WebappActivity was killed.
+
+        // (B) The user selecting the WebappActivity in recents. In case (A) we want to use the
+        // intent sent to WebappLauncherActivity and ignore WebappActivity#getSavedInstanceState().
+        // In case (B) we want to restore to saved tab state.
+        if (info == null) {
+            info = createWebappInfo(intent);
+        } else if (info.shouldForceNavigation()) {
+            // Don't restore to previous page, navigate using WebappInfo retrieved from cache.
+            resetSavedInstanceState();
         }
+
+        if (info == null) {
+            // If {@link info} is null, there isn't much we can do, abort.
+            ApiCompatibilityUtils.finishAndRemoveTask(this);
+            return;
+        }
+
+        mWebappInfo = info;
 
         // Initialize the WebappRegistry and warm up the shared preferences for this web app. No-ops
         // if the registry and this web app are already initialized. Must override Strict Mode to
@@ -160,6 +296,17 @@ public class WebappActivity extends FullScreenActivity {
 
         ScreenOrientationProvider.lockOrientation(
                 getWindowAndroid(), (byte) mWebappInfo.orientation());
+
+        if (intent.hasExtra(TrustedWebUtils.EXTRA_LAUNCH_AS_TRUSTED_WEB_ACTIVITY)) {
+            mBrowserSessionDataProvider = new BrowserSessionDataProvider(intent);
+            mTrustedWebContentProvider = new TrustedWebContentProvider();
+        }
+
+        // When turning on TalkBack on Android, hitting app switcher to bring a WebappActivity to
+        // front will speak "Web App", which is the label of WebappActivity. Therefore, we set title
+        // of the WebappActivity explicitly to make it speak the short name of the Web App.
+        setTitle(mWebappInfo.shortName());
+
         super.preInflationStartup();
     }
 
@@ -171,6 +318,18 @@ public class WebappActivity extends FullScreenActivity {
         }
 
         initializeUI(getSavedInstanceState());
+        LayoutManager layoutDriver = new CustomTabLayoutManager(getCompositorViewHolder());
+        initializeCompositorContent(layoutDriver, findViewById(R.id.url_bar),
+                (ViewGroup) findViewById(android.R.id.content),
+                (ToolbarControlContainer) findViewById(R.id.control_container));
+        getToolbarManager().initializeWithNative(getTabModelSelector(),
+                getFullscreenManager().getBrowserVisibilityDelegate(), getFindToolbarManager(),
+                null, layoutDriver, null, null, null, view -> onToolbarCloseButtonClicked());
+        getToolbarManager().setShowTitle(true);
+        getToolbarManager().setCloseButtonDrawable(null); // Hides close button.
+
+        if (getFullscreenManager() != null) getFullscreenManager().setTab(getActivityTab());
+        mSplashController.onFinishedNativeInit(getActivityTab(), getCompositorViewHolder());
         super.finishNativeInitialization();
         mIsInitialized = true;
     }
@@ -187,17 +346,26 @@ public class WebappActivity extends FullScreenActivity {
     @Override
     public void onStartWithNative() {
         super.onStartWithNative();
+        BrowserSessionContentUtils.setActiveContentHandler(mTrustedWebContentProvider);
         mDirectoryManager.cleanUpDirectories(this, getActivityId());
+        // If WebappStorage is available, check whether to show a disclosure notification. If it's
+        // not available, this check will happen once deferred startup returns with the storage
+        // instance.
+        WebappDataStorage storage =
+                WebappRegistry.getInstance().getWebappDataStorage(mWebappInfo.id());
+        if (storage != null) WebApkDisclosureNotificationManager.maybeShowDisclosure(this, storage);
     }
 
     @Override
     public void onStopWithNative() {
         super.onStopWithNative();
         mDirectoryManager.cancelCleanup();
+        BrowserSessionContentUtils.setActiveContentHandler(null);
         if (getActivityTab() != null) saveState(getActivityDirectory());
         if (getFullscreenManager() != null) {
             getFullscreenManager().setPersistentFullscreenMode(false);
         }
+        WebApkDisclosureNotificationManager.dismissNotification(this);
     }
 
     /**
@@ -208,8 +376,7 @@ public class WebappActivity extends FullScreenActivity {
         File tabFile = new File(activityDirectory, tabFileName);
 
         // Temporarily allowing disk access while fixing. TODO: http://crbug.com/525781
-        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
-        StrictMode.allowThreadDiskWrites();
+        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskWrites();
         try {
             long time = SystemClock.elapsedRealtime();
             TabState.saveState(tabFile, getActivityTab().getState(), false);
@@ -239,7 +406,6 @@ public class WebappActivity extends FullScreenActivity {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT) return;
 
         if (mSetImmersiveRunnable == null) {
-
             final View decor = getWindow().getDecorView();
 
             mSetImmersiveRunnable = new Runnable() {
@@ -266,11 +432,11 @@ public class WebappActivity extends FullScreenActivity {
             });
         }
 
-        asyncSetImmersive(ENTER_IMMERSIVE_MODE_DELAY_MILLIS);
+        asyncSetImmersive(0);
     }
 
     /**
-     * This method no-ops before {@link enterImmersiveMode()) is called explicitly.
+     * This method no-ops before {@link #enterImmersiveMode()} is called explicitly.
      */
     private void asyncSetImmersive(int delayInMills) {
         if (mSetImmersiveRunnable == null) return;
@@ -294,12 +460,18 @@ public class WebappActivity extends FullScreenActivity {
     @Override
     public void onResumeWithNative() {
         super.onResumeWithNative();
-        mWebappUma.commitMetrics();
+        mNotificationManager.maybeShowNotification();
     }
 
     @Override
-    public void onDeferredStartup() {
-        super.onDeferredStartup();
+    public void onPauseWithNative() {
+        mNotificationManager.cancelNotification();
+        super.onPauseWithNative();
+    }
+
+    @Override
+    protected void initDeferredStartupForActivity() {
+        super.initDeferredStartupForActivity();
 
         WebappDataStorage storage =
                 WebappRegistry.getInstance().getWebappDataStorage(mWebappInfo.id());
@@ -310,27 +482,73 @@ public class WebappActivity extends FullScreenActivity {
         }
     }
 
+    @Override
+    protected void recordIntentToCreationTime(long timeMs) {
+        super.recordIntentToCreationTime(timeMs);
+
+        RecordHistogram.recordTimesHistogram(
+                "MobileStartup.IntentToCreationTime.WebApp", timeMs, TimeUnit.MILLISECONDS);
+    }
+
     protected void onDeferredStartupWithStorage(WebappDataStorage storage) {
         updateStorage(storage);
+        WebApkDisclosureNotificationManager.maybeShowDisclosure(this, storage);
     }
 
     protected void onDeferredStartupWithNullStorage() {
-        return;
+        if (isVerified()) {
+            // WebappDataStorage objects are cleared if a user clears Chrome's data. Recreate them
+            // for WebAPKs and TWAs since we need to store metadata for updates and disclosure
+            // notifications.
+            WebappRegistry.getInstance().register(
+                    mWebappInfo.id(), new WebappRegistry.FetchWebappDataStorageCallback() {
+                        @Override
+                        public void onWebappDataStorageRetrieved(WebappDataStorage storage) {
+                            // Initialize the time of the last is-update-needed check with the
+                            // registration time. This prevents checking for updates on the
+                            // first run.
+                            // TODO(yusufo): We should clearly define what can be
+                            // registered through the support library and what happens for Trusted
+                            // Web Activities here.
+                            if (getBrowserSession() == null) {
+                                storage.updateTimeOfLastCheckForUpdatedWebManifest();
+                            }
+
+                            onDeferredStartupWithStorage(storage);
+                        }
+                    });
+        }
     }
 
     @Override
     protected int getControlContainerLayoutId() {
-        return R.layout.webapp_control_container;
+        return R.layout.custom_tabs_control_container;
+    }
+
+    @Override
+    protected int getAppMenuLayoutId() {
+        return R.menu.custom_tabs_menu;
+    }
+
+    @Override
+    protected int getToolbarLayoutId() {
+        return R.layout.custom_tabs_toolbar;
+    }
+
+    @Override
+    protected AppMenuPropertiesDelegate createAppMenuPropertiesDelegate() {
+        return new CustomTabAppMenuPropertiesDelegate(this, CUSTOM_TABS_UI_TYPE_MINIMAL_UI_WEBAPP,
+                new ArrayList<String>(), true /* is opened by Chrome */,
+                true /* should show share */, false /* should show star (bookmarking) */,
+                false /* should show download */);
     }
 
     @Override
     public void postInflationStartup() {
         initializeWebappData();
+        if (getBrowserSession() != null) mTrustedWebContentProvider.verifyRelationship();
 
         super.postInflationStartup();
-        WebappControlContainer controlContainer =
-                (WebappControlContainer) findViewById(R.id.control_container);
-        mUrlBar = (WebappUrlBar) controlContainer.findViewById(R.id.webapp_url_bar);
     }
 
     /**
@@ -348,41 +566,21 @@ public class WebappActivity extends FullScreenActivity {
         return mWebappInfo.scopeUri().toString();
     }
 
-    private void initializeWebappData() {
-        final int backgroundColor = ColorUtils.getOpaqueColor(mWebappInfo.backgroundColor(
-                ApiCompatibilityUtils.getColor(getResources(), R.color.webapp_default_bg)));
-
-        mSplashScreen = new FrameLayout(this);
-        mSplashScreen.setBackgroundColor(backgroundColor);
-
-        ViewGroup contentView = (ViewGroup) findViewById(android.R.id.content);
-        contentView.addView(mSplashScreen);
-
-        mWebappUma.splashscreenVisible();
-        mWebappUma.recordSplashscreenBackgroundColor(mWebappInfo.hasValidBackgroundColor()
-                ? WebappUma.SPLASHSCREEN_COLOR_STATUS_CUSTOM
-                : WebappUma.SPLASHSCREEN_COLOR_STATUS_DEFAULT);
-        mWebappUma.recordSplashscreenThemeColor(mWebappInfo.hasValidThemeColor()
-                ? WebappUma.SPLASHSCREEN_COLOR_STATUS_CUSTOM
-                : WebappUma.SPLASHSCREEN_COLOR_STATUS_DEFAULT);
-
-        initializeSplashScreenWidgets(backgroundColor);
+    public static void addWebappInfo(String id, WebappInfo info) {
+        Holder.sWebappInfoMap.put(id, info);
     }
 
-    protected void initializeSplashScreenWidgets(final int backgroundColor) {
-        WebappDataStorage storage =
-                WebappRegistry.getInstance().getWebappDataStorage(mWebappInfo.id());
-        if (storage == null) {
-            initializeSplashScreenWidgets(backgroundColor, null);
-            return;
+    public static WebappInfo popWebappInfo(String id) {
+        return Holder.sWebappInfoMap.remove(id);
+    }
+
+    private void initializeWebappData() {
+        if (mWebappInfo.displayMode() == WebDisplayMode.FULLSCREEN) {
+            enterImmersiveMode();
         }
 
-        storage.getSplashScreenImage(new WebappDataStorage.FetchCallback<Bitmap>() {
-            @Override
-            public void onDataRetrieved(Bitmap splashImage) {
-                initializeSplashScreenWidgets(backgroundColor, splashImage);
-            }
-        });
+        ViewGroup contentView = (ViewGroup) findViewById(android.R.id.content);
+        mSplashController.showSplashScreen(getActivityType(), contentView, mWebappInfo);
     }
 
     protected void updateStorage(WebappDataStorage storage) {
@@ -397,89 +595,39 @@ public class WebappActivity extends FullScreenActivity {
         // app is not directly launched from the home screen, as this interferes
         // with the heuristic.
         if (mWebappInfo.isLaunchedFromHomescreen()) {
+            boolean previouslyLaunched = storage.hasBeenLaunched();
+            long previousUsageTimestamp = storage.getLastUsedTime();
+            storage.setHasBeenLaunched();
+            // TODO(yusufo): WebappRegistry#unregisterOldWebapps uses this information to delete
+            // WebappDataStorage objects for legacy webapps which haven't been used in a while.
+            // That will need to be updated to not delete anything for a TWA which remains installed
             storage.updateLastUsedTime();
+            onUpdatedLastUsedTime(storage, previouslyLaunched, previousUsageTimestamp);
         }
     }
 
-    protected void initializeSplashScreenWidgets(int backgroundColor, Bitmap splashImage) {
-        Bitmap displayIcon = splashImage == null ? mWebappInfo.icon() : splashImage;
-        int minimiumSizeThreshold = getResources().getDimensionPixelSize(
-                R.dimen.webapp_splash_image_size_minimum);
-        int bigThreshold = getResources().getDimensionPixelSize(
-                R.dimen.webapp_splash_image_size_threshold);
-
-        // Inflate the correct layout for the image.
-        int layoutId;
-        if (displayIcon == null || displayIcon.getWidth() < minimiumSizeThreshold
-                || (displayIcon == mWebappInfo.icon() && mWebappInfo.isIconGenerated())) {
-            mWebappUma.recordSplashscreenIconType(WebappUma.SPLASHSCREEN_ICON_TYPE_NONE);
-            layoutId = R.layout.webapp_splash_screen_no_icon;
-        } else {
-            // The size of the splash screen image determines which layout to use.
-            boolean isUsingSmallSplashImage = displayIcon.getWidth() <= bigThreshold
-                    || displayIcon.getHeight() <= bigThreshold;
-            if (isUsingSmallSplashImage) {
-                layoutId = R.layout.webapp_splash_screen_small;
-            } else {
-                layoutId = R.layout.webapp_splash_screen_large;
-            }
-
-            // Record stats about the splash screen.
-            int splashScreenIconType;
-            if (splashImage == null) {
-                splashScreenIconType = WebappUma.SPLASHSCREEN_ICON_TYPE_FALLBACK;
-            } else if (isUsingSmallSplashImage) {
-                splashScreenIconType = WebappUma.SPLASHSCREEN_ICON_TYPE_CUSTOM_SMALL;
-            } else {
-                splashScreenIconType = WebappUma.SPLASHSCREEN_ICON_TYPE_CUSTOM;
-            }
-            mWebappUma.recordSplashscreenIconType(splashScreenIconType);
-            mWebappUma.recordSplashscreenIconSize(
-                    Math.round(displayIcon.getWidth()
-                            / getResources().getDisplayMetrics().density));
-        }
-
-        ViewGroup subLayout = (ViewGroup) LayoutInflater.from(WebappActivity.this)
-                .inflate(layoutId, mSplashScreen, true);
-
-        // Set up the elements of the splash screen.
-        TextView appNameView = (TextView) subLayout.findViewById(
-                R.id.webapp_splash_screen_name);
-        ImageView splashIconView = (ImageView) subLayout.findViewById(
-                R.id.webapp_splash_screen_icon);
-        appNameView.setText(mWebappInfo.name());
-        if (splashIconView != null) splashIconView.setImageBitmap(displayIcon);
-
-        if (ColorUtils.shouldUseLightForegroundOnBackground(backgroundColor)) {
-            appNameView.setTextColor(ApiCompatibilityUtils.getColor(getResources(),
-                    R.color.webapp_splash_title_light));
-        }
-    }
-
-    private void updateUrlBar() {
-        Tab tab = getActivityTab();
-        if (tab == null || mUrlBar == null) return;
-        mUrlBar.update(tab.getUrl(), tab.getSecurityLevel());
-    }
-
-    private boolean isWebappDomain() {
-        return UrlUtilities.sameDomainOrHost(
-                getActivityTab().getUrl(), getWebappInfo().uri().toString(), true);
-    }
+    /**
+     * Called after updating the last used time in {@link WebappDataStorage}.
+     * @param previouslyLaunched Whether the webapp has been previously launched from the home
+     *     screen.
+     * @param previousUsageTimestamp The previous time that the webapp was used.
+     */
+    protected void onUpdatedLastUsedTime(
+            WebappDataStorage storage, boolean previouslyLaunched, long previousUsageTimestamp) {}
 
     @Override
     protected ChromeFullscreenManager createFullscreenManager() {
         // Disable HTML5 fullscreen in PWA fullscreen mode.
-        return new ChromeFullscreenManager(this, false) {
+        return new ChromeFullscreenManager(this, ChromeFullscreenManager.CONTROLS_POSITION_TOP) {
             @Override
             public void setPersistentFullscreenMode(boolean enabled) {
-                if (mWebappInfo.displayMode() == WebDisplayMode.kFullscreen) return;
+                if (mWebappInfo.displayMode() == WebDisplayMode.FULLSCREEN) return;
                 super.setPersistentFullscreenMode(enabled);
             }
 
             @Override
             public boolean getPersistentFullscreenMode() {
-                if (mWebappInfo.displayMode() == WebDisplayMode.kFullscreen) return false;
+                if (mWebappInfo.displayMode() == WebDisplayMode.FULLSCREEN) return false;
                 return super.getPersistentFullscreenMode();
             }
         };
@@ -489,40 +637,42 @@ public class WebappActivity extends FullScreenActivity {
         return new EmptyTabObserver() {
 
             @Override
-            public void onSSLStateUpdated(Tab tab) {
-                updateUrlBar();
-            }
-
-            @Override
-            public void onDidStartNavigation(Tab tab, String url, boolean isInMainFrame,
-                    boolean isSameDocument, boolean isErrorPage) {
-                if (isInMainFrame && !isSameDocument) updateUrlBar();
-            }
-
-            @Override
             public void onDidFinishNavigation(Tab tab, String url, boolean isInMainFrame,
                     boolean isErrorPage, boolean hasCommitted, boolean isSameDocument,
                     boolean isFragmentNavigation, Integer pageTransition, int errorCode,
                     int httpStatusCode) {
-                if (hasCommitted && isInMainFrame) updateUrlBar();
+                if (hasCommitted && isInMainFrame) {
+                    // Notify the renderer to permanently hide the top controls since they do
+                    // not apply to fullscreen content views.
+                    tab.updateBrowserControlsState(tab.getBrowserControlsStateConstraints(), true);
+
+                    RecordHistogram.recordBooleanHistogram(
+                            HISTOGRAM_NAVIGATION_STATUS, !isErrorPage);
+
+                    updateToolbarCloseButtonVisibility();
+
+                    if (!scopePolicy().isUrlInScope(mWebappInfo, url)) {
+                        // Briefly show the toolbar for off-scope navigations.
+                        getFullscreenManager()
+                                .getBrowserVisibilityDelegate()
+                                .showControlsTransient();
+                    }
+                }
             }
 
             @Override
             public void onDidChangeThemeColor(Tab tab, int color) {
-                if (!isWebappDomain()) return;
                 mBrandColor = color;
                 updateTaskDescription();
             }
 
             @Override
             public void onTitleUpdated(Tab tab) {
-                if (!isWebappDomain()) return;
                 updateTaskDescription();
             }
 
             @Override
             public void onFaviconUpdated(Tab tab, Bitmap icon) {
-                if (!isWebappDomain()) return;
                 // No need to cache the favicon if there is an icon declared in app manifest.
                 if (mWebappInfo.icon() != null) return;
                 if (icon == null) return;
@@ -535,8 +685,6 @@ public class WebappActivity extends FullScreenActivity {
 
             @Override
             public void onDidAttachInterstitialPage(Tab tab) {
-                updateUrlBar();
-
                 int state = ApplicationStatus.getStateForActivity(WebappActivity.this);
                 if (state == ActivityState.PAUSED || state == ActivityState.STOPPED
                         || state == ActivityState.DESTROYED) {
@@ -563,32 +711,83 @@ public class WebappActivity extends FullScreenActivity {
                     }
                 }, MS_BEFORE_NAVIGATING_BACK_FROM_INTERSTITIAL);
             }
-
-            @Override
-            public void onDidDetachInterstitialPage(Tab tab) {
-                updateUrlBar();
-            }
-
-            @Override
-            public void didFirstVisuallyNonEmptyPaint(Tab tab) {
-                hideSplashScreen(WebappUma.SPLASHSCREEN_HIDES_REASON_PAINT);
-            }
-
-            @Override
-            public void onPageLoadFinished(Tab tab) {
-                hideSplashScreen(WebappUma.SPLASHSCREEN_HIDES_REASON_LOAD_FINISHED);
-            }
-
-            @Override
-            public void onPageLoadFailed(Tab tab, int errorCode) {
-                hideSplashScreen(WebappUma.SPLASHSCREEN_HIDES_REASON_LOAD_FAILED);
-            }
-
-            @Override
-            public void onCrash(Tab tab, boolean sadTabShown) {
-                hideSplashScreen(WebappUma.SPLASHSCREEN_HIDES_REASON_CRASH);
-            }
         };
+    }
+
+    protected WebappScopePolicy scopePolicy() {
+        return isVerified() ? WebappScopePolicy.STRICT : WebappScopePolicy.LEGACY;
+    }
+
+    /**
+     * @return The BrowserSession linked with this {@link WebappActivity}. Non-null if and only if
+     *         this is a Trusted Web Activity.
+     */
+    public CustomTabsSessionToken getBrowserSession() {
+        if (mTrustedWebContentProvider == null) return null;
+        return mTrustedWebContentProvider.getSession();
+    }
+
+    /**
+     * @return The actual activity type of {@link WebappActivity}, which to be one of the values in
+     * {@link ActivityType}.
+     *
+     * This function is needed because Webapp, WebAPK and Trusted Web Activity all use {@link
+     * WebappActivity}. This doesn't check whether the TWA is valid as the point is to capture time
+     * by use-case.
+     */
+    public @ActivityType int getActivityType() {
+        if (getBrowserSession() != null) return ACTIVITY_TYPE_TWA;
+        if (getNativeClientPackageName() != null) return ACTIVITY_TYPE_WEBAPK;
+        return ACTIVITY_TYPE_WEBAPP;
+    }
+
+    /**
+     * @return Whether this activity hosts the web content in a way that can be verified either
+     *         through Digital Asset Links (DAL) or browser level confirmation.
+     */
+    protected boolean isVerified() {
+        return mTrustedWebContentProvider != null
+                && mTrustedWebContentProvider.getSession() != null;
+    }
+
+    /**
+     * @return The package name if this Activity is associated with an APK. Null if there is no
+     *         associated Android native client.
+     */
+    public @Nullable String getNativeClientPackageName() {
+        if (getBrowserSession() == null) return null;
+        return CustomTabsConnection.getInstance().getClientPackageNameForSession(
+                getBrowserSession());
+    }
+
+    private void updateToolbarCloseButtonVisibility() {
+        if (WebappBrowserControlsDelegate.shouldShowToolbarCloseButton(this)) {
+            getToolbarManager().setCloseButtonDrawable(
+                    TintedDrawable.constructTintedDrawable(getResources(), R.drawable.btn_close));
+            // Applies light or dark tint to icons depending on the theme color.
+            getToolbarManager().getToolbarLayout().getLocationBar().updateVisualsForState();
+        } else {
+            getToolbarManager().setCloseButtonDrawable(null);
+        }
+    }
+
+    /**
+     * Moves the user back in history to most recent on-origin location.
+     */
+    private void onToolbarCloseButtonClicked() {
+        NavigationController nc = getActivityTab().getWebContents().getNavigationController();
+
+        final int lastIndex = nc.getLastCommittedEntryIndex();
+        int index = lastIndex;
+        while (index > 0
+                && !scopePolicy().isUrlInScope(
+                           getWebappInfo(), nc.getEntryAtIndex(index).getUrl())) {
+            index--;
+        }
+
+        if (index != lastIndex) {
+            nc.goToNavigationIndex(index);
+        }
     }
 
     private void updateTaskDescription() {
@@ -612,10 +811,16 @@ public class WebappActivity extends FullScreenActivity {
 
         int taskDescriptionColor =
                 ApiCompatibilityUtils.getColor(getResources(), R.color.default_primary_color);
+
+        // Don't use the brand color for the status bars if we're in display: fullscreen. This works
+        // around an issue where the status bars go transparent and can't be seen on top of the page
+        // content when users swipe them in or they appear because the on-screen keyboard was
+        // triggered.
         int statusBarColor = Color.BLACK;
-        if (mBrandColor != null) {
+        if (mBrandColor != null && mWebappInfo.displayMode() != WebDisplayMode.FULLSCREEN) {
             taskDescriptionColor = mBrandColor;
             statusBarColor = ColorUtils.getDarkenedColorForStatusBar(mBrandColor);
+            getToolbarManager().updatePrimaryColor(mBrandColor, false);
         }
 
         ApiCompatibilityUtils.setTaskDescription(this, title, icon,
@@ -626,6 +831,41 @@ public class WebappActivity extends FullScreenActivity {
     @Override
     protected void setStatusBarColor(Tab tab, int color) {
         // Intentionally do nothing as WebappActivity explicitly sets status bar color.
+    }
+
+    @Override
+    public boolean onMenuOrKeyboardAction(int id, boolean fromMenu) {
+        if (id == R.id.open_in_browser_id) {
+            openCurrentUrlInChrome();
+            if (fromMenu) {
+                RecordUserAction.record("WebappMenuOpenInChrome");
+            } else {
+                RecordUserAction.record("Webapp.NotificationOpenInChrome");
+            }
+            return true;
+        }
+        return super.onMenuOrKeyboardAction(id, fromMenu);
+    }
+
+    /**
+     * Opens the URL currently being displayed in the browser by reparenting the tab.
+     */
+    private boolean openCurrentUrlInChrome() {
+        Tab tab = getActivityTab();
+        if (tab == null) return false;
+
+        String url = tab.getOriginalUrl();
+        if (TextUtils.isEmpty(url)) {
+            url = IntentHandler.getUrlFromIntent(getIntent());
+        }
+
+        // TODO(piotrs): Bring reparenting back once CCT animation is fixed. See crbug/774326
+        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.setClass(this, ChromeLauncherActivity.class);
+        IntentHandler.startActivityForTrustedIntent(intent);
+
+        return true;
     }
 
     /**
@@ -648,47 +888,14 @@ public class WebappActivity extends FullScreenActivity {
         return mDirectoryManager.getWebappDirectory(this, getActivityId());
     }
 
-    private void hideSplashScreen(final int reason) {
-        if (mSplashScreen == null) return;
-
-        mSplashScreen.animate()
-                .alpha(0f)
-                .withEndAction(new Runnable() {
-                    @Override
-                    public void run() {
-                        ViewGroup contentView =
-                                (ViewGroup) findViewById(android.R.id.content);
-                        if (mSplashScreen == null) return;
-                        contentView.removeView(mSplashScreen);
-                        mSplashScreen = null;
-                        mWebappUma.splashscreenHidden(reason);
-                    }
-                });
-    }
-
-    @VisibleForTesting
-    public boolean isSplashScreenVisibleForTests() {
-        return mSplashScreen != null;
-    }
-
     @VisibleForTesting
     ViewGroup getSplashScreenForTests() {
-        return mSplashScreen;
-    }
-
-    @VisibleForTesting
-    WebappUrlBar getUrlBarForTests() {
-        return mUrlBar;
-    }
-
-    @VisibleForTesting
-    boolean isUrlBarVisible() {
-        return findViewById(R.id.control_container).getVisibility() == View.VISIBLE;
+        return mSplashController.getSplashScreenForTests();
     }
 
     @Override
     public int getControlContainerHeightResource() {
-        return R.dimen.webapp_control_container_height;
+        return R.dimen.custom_tabs_control_container_height;
     }
 
     @Override
@@ -701,10 +908,25 @@ public class WebappActivity extends FullScreenActivity {
         return new WebappDelegateFactory(this);
     }
 
+    @Override
+    protected TabDelegate createTabDelegate(boolean incognito) {
+        return new WebappTabDelegate(incognito, getActivityType(), mWebappInfo.apkPackageName());
+    }
+
     // We're temporarily disable CS on webapp since there are some issues. (http://crbug.com/471950)
     // TODO(changwan): re-enable it once the issues are resolved.
     @Override
     protected boolean isContextualSearchAllowed() {
         return false;
+    }
+
+    /**
+     * @return Whether origin verification for the corresponding client failed. Since the
+     *         verification happens async, this being false during startup may mean the verification
+     *         hasn't finished yet.
+     */
+    boolean didVerificationFail() {
+        if (!isVerified()) return false;
+        return mTrustedWebContentProvider.didVerificationFail();
     }
 }

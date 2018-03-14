@@ -5,25 +5,29 @@
 package org.chromium.chrome.browser.preferences.password;
 
 import android.support.test.InstrumentationRegistry;
+import android.support.test.espresso.Espresso;
+import android.support.test.espresso.action.ViewActions;
+import android.support.test.espresso.matcher.ViewMatchers;
 import android.support.test.filters.SmallTest;
 
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
-import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
-import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.R;
 import org.chromium.chrome.browser.preferences.ChromeBaseCheckBoxPreference;
 import org.chromium.chrome.browser.preferences.ChromeSwitchPreference;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.preferences.Preferences;
 import org.chromium.chrome.browser.preferences.PreferencesTest;
-import org.chromium.content.browser.test.NativeLibraryTestRule;
+import org.chromium.chrome.browser.test.ChromeBrowserTestRule;
+import org.chromium.chrome.test.util.browser.Features;
+import org.chromium.chrome.test.util.browser.Features.EnableFeatures;
 
 /**
  * Tests for the "Save Passwords" settings screen.
@@ -31,12 +35,10 @@ import org.chromium.content.browser.test.NativeLibraryTestRule;
 @RunWith(BaseJUnit4ClassRunner.class)
 public class SavePasswordsPreferencesTest {
     @Rule
-    public NativeLibraryTestRule mActivityTestRule = new NativeLibraryTestRule();
+    public final ChromeBrowserTestRule mBrowserTestRule = new ChromeBrowserTestRule();
 
-    @Before
-    public void setUp() throws Exception {
-        mActivityTestRule.loadNativeLibraryAndInitBrowserProcess();
-    }
+    @Rule
+    public TestRule mProcessor = new Features.InstrumentationProcessor();
 
     /**
      * Ensure that the on/off switch in "Save Passwords" settings actually enables and disables
@@ -100,7 +102,6 @@ public class SavePasswordsPreferencesTest {
      */
     @Test
     @SmallTest
-    @CommandLineFlags.Add("enable-features=" + SavePasswordsPreferences.CREDENTIAL_MANAGER_API)
     @Feature({"Preferences"})
     public void testAutoSignInCheckbox() throws Exception {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
@@ -117,8 +118,6 @@ public class SavePasswordsPreferencesTest {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                Assert.assertTrue(ChromeFeatureList.isEnabled(
-                        SavePasswordsPreferences.CREDENTIAL_MANAGER_API));
                 SavePasswordsPreferences passwordPrefs =
                         (SavePasswordsPreferences) preferences.getFragmentForTest();
                 ChromeBaseCheckBoxPreference onOffSwitch =
@@ -145,8 +144,6 @@ public class SavePasswordsPreferencesTest {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                Assert.assertTrue(ChromeFeatureList.isEnabled(
-                        SavePasswordsPreferences.CREDENTIAL_MANAGER_API));
                 SavePasswordsPreferences passwordPrefs =
                         (SavePasswordsPreferences) preferences2.getFragmentForTest();
                 ChromeBaseCheckBoxPreference onOffSwitch =
@@ -155,5 +152,24 @@ public class SavePasswordsPreferencesTest {
                 Assert.assertFalse(onOffSwitch.isChecked());
             }
         });
+    }
+
+    /**
+     * Ensure that the export menu item is included and hidden behind the overflow menu.
+     */
+    @Test
+    @SmallTest
+    @Feature({"Preferences"})
+    @EnableFeatures("password-export")
+    public void testExportMenuItem() throws Exception {
+        final Preferences preferences =
+                PreferencesTest.startPreferences(InstrumentationRegistry.getInstrumentation(),
+                        SavePasswordsPreferences.class.getName());
+
+        Espresso.openActionBarOverflowOrOptionsMenu(
+                InstrumentationRegistry.getInstrumentation().getTargetContext());
+        Espresso.onView(ViewMatchers.withText(
+                                R.string.save_password_preferences_export_action_title))
+                .perform(ViewActions.click());
     }
 }

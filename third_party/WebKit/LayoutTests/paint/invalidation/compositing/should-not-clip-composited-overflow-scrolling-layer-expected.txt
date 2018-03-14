@@ -4,40 +4,43 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow DIV id='container'",
       "position": [8, 8],
-      "bounds": [400, 300],
-      "shouldFlattenTransform": false,
-      "drawsContent": true
+      "bounds": [400, 300]
     },
     {
       "name": "Scrolling Layer",
+      "position": [8, 8],
       "bounds": [385, 285],
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "Scrolling Contents Layer",
+      "position": [8, 8],
       "bounds": [1000, 1000],
-      "drawsContent": true,
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow DIV id='content'",
           "rect": [0, 0, 1000, 1000],
           "reason": "style change"
         }
-      ]
+      ],
+      "transform": 1
     },
     {
       "name": "Overflow Controls Host Layer",
-      "bounds": [400, 300]
+      "position": [8, 8],
+      "bounds": [400, 300],
+      "drawsContent": false
     },
     {
       "name": "Horizontal Scrollbar Layer",
-      "position": [0, 285],
+      "position": [8, 293],
       "bounds": [385, 15],
+      "drawsContent": false,
       "paintInvalidations": [
         {
           "object": "Horizontal Scrollbar Layer",
@@ -48,8 +51,9 @@
     },
     {
       "name": "Vertical Scrollbar Layer",
-      "position": [385, 0],
+      "position": [393, 8],
       "bounds": [15, 285],
+      "drawsContent": false,
       "paintInvalidations": [
         {
           "object": "Vertical Scrollbar Layer",
@@ -60,9 +64,20 @@
     },
     {
       "name": "Scroll Corner Layer",
-      "position": [385, 285],
-      "bounds": [15, 15],
-      "drawsContent": true
+      "position": [393, 293],
+      "bounds": [15, 15]
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [-500, -400, 0, 1]
+      ],
+      "flattenInheritedTransform": false
     }
   ],
   "objectPaintInvalidations": [

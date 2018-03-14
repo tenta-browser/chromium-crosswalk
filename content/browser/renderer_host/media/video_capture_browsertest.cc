@@ -4,6 +4,7 @@
 
 #include "base/command_line.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
@@ -14,15 +15,21 @@
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/media_switches.h"
 #include "media/capture/video_capture_types.h"
+#include "services/video_capture/public/cpp/constants.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 using testing::_;
 using testing::AtLeast;
+using testing::Bool;
+using testing::Combine;
 using testing::Invoke;
 using testing::InvokeWithoutArgs;
 using testing::Values;
 
 namespace content {
+
+static const char kFakeDeviceFactoryConfigString[] = "device-count=3";
+static const float kFrameRateToRequest = 15.0f;
 
 class MockVideoCaptureControllerEventHandler
     : public VideoCaptureControllerEventHandler {
@@ -59,13 +66,33 @@ class MockMediaStreamProviderListener : public MediaStreamProviderListener {
   MOCK_METHOD2(Aborted, void(MediaStreamType, int));
 };
 
+using DeviceIndex = size_t;
+using Resolution = gfx::Size;
+using ExerciseAcceleratedJpegDecoding = bool;
+using UseMojoService = bool;
+
+// For converting the std::tuple<> used as test parameters back to something
+// human-readable.
 struct TestParams {
-  std::string fake_device_factory_config_string;
+  TestParams() : device_index_to_use(0u) {}
+  TestParams(const std::tuple<DeviceIndex,
+                              Resolution,
+                              ExerciseAcceleratedJpegDecoding,
+                              UseMojoService>& params)
+      : device_index_to_use(std::get<0>(params)),
+        resolution_to_use(std::get<1>(params)),
+        exercise_accelerated_jpeg_decoding(std::get<2>(params)),
+        use_mojo_service(std::get<3>(params)) {}
+
+  media::VideoPixelFormat GetPixelFormatToUse() {
+    return (device_index_to_use == 1u) ? media::PIXEL_FORMAT_Y16
+                                       : media::PIXEL_FORMAT_I420;
+  }
+
   size_t device_index_to_use;
-  media::VideoPixelFormat pixel_format_to_use;
   gfx::Size resolution_to_use;
-  float frame_rate_to_use;
   bool exercise_accelerated_jpeg_decoding;
+  bool use_mojo_service;
 };
 
 struct FrameInfo {
@@ -75,10 +102,25 @@ struct FrameInfo {
   base::TimeDelta timestamp;
 };
 
-class VideoCaptureBrowserTest
-    : public ContentBrowserTest,
-      public ::testing::WithParamInterface<TestParams> {
+// Integration test that exercises the VideoCaptureManager instance running in
+// the Browser process.
+class VideoCaptureBrowserTest : public ContentBrowserTest,
+                                public ::testing::WithParamInterface<
+                                    std::tuple<DeviceIndex,
+                                               Resolution,
+                                               ExerciseAcceleratedJpegDecoding,
+                                               UseMojoService>> {
  public:
+  VideoCaptureBrowserTest() {
+    params_ = TestParams(GetParam());
+    if (params_.use_mojo_service) {
+      scoped_feature_list_.InitAndEnableFeature(
+          video_capture::kMojoVideoCapture);
+    }
+  }
+
+  ~VideoCaptureBrowserTest() override {}
+
   void SetUpAndStartCaptureDeviceOnIOThread(base::Closure continuation) {
     video_capture_manager_ = media_stream_manager_->video_capture_manager();
     ASSERT_TRUE(video_capture_manager_);
@@ -90,15 +132,16 @@ class VideoCaptureBrowserTest
 
   void TearDownCaptureDeviceOnIOThread(base::Closure continuation,
                                        bool post_to_end_of_message_queue) {
-    // StopCaptureForClient must not be called synchronously from either the
+    // DisconnectClient() must not be called synchronously from either the
     // |done_cb| passed to StartCaptureForClient() nor any callback made to a
     // VideoCaptureControllerEventHandler. To satisfy this, we have to post our
     // invocation to the end of the IO message queue.
     if (post_to_end_of_message_queue) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE,
-          base::Bind(&VideoCaptureBrowserTest::TearDownCaptureDeviceOnIOThread,
-                     base::Unretained(this), continuation, false));
+          base::BindOnce(
+              &VideoCaptureBrowserTest::TearDownCaptureDeviceOnIOThread,
+              base::Unretained(this), continuation, false));
       return;
     }
 
@@ -114,11 +157,10 @@ class VideoCaptureBrowserTest
 
  protected:
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitchASCII(
-        switches::kUseFakeDeviceForMediaStream,
-        GetParam().fake_device_factory_config_string);
+    command_line->AppendSwitchASCII(switches::kUseFakeDeviceForMediaStream,
+                                    kFakeDeviceFactoryConfigString);
     command_line->AppendSwitch(switches::kUseFakeUIForMediaStream);
-    if (GetParam().exercise_accelerated_jpeg_decoding) {
+    if (params_.exercise_accelerated_jpeg_decoding) {
       base::CommandLine::ForCurrentProcess()->AppendSwitch(
           switches::kUseFakeJpegDecodeAccelerator);
     } else {
@@ -139,16 +181,16 @@ class VideoCaptureBrowserTest
   void OnDeviceDescriptorsReceived(
       base::Closure continuation,
       const media::VideoCaptureDeviceDescriptors& descriptors) {
-    ASSERT_TRUE(GetParam().device_index_to_use < descriptors.size());
-    const auto& descriptor = descriptors[GetParam().device_index_to_use];
+    ASSERT_TRUE(params_.device_index_to_use < descriptors.size());
+    const auto& descriptor = descriptors[params_.device_index_to_use];
     MediaStreamDevice media_stream_device(
         MEDIA_DEVICE_VIDEO_CAPTURE, descriptor.device_id,
         descriptor.display_name, descriptor.facing);
     session_id_ = video_capture_manager_->Open(media_stream_device);
     media::VideoCaptureParams capture_params;
     capture_params.requested_format = media::VideoCaptureFormat(
-        GetParam().resolution_to_use, GetParam().frame_rate_to_use,
-        GetParam().pixel_format_to_use);
+        params_.resolution_to_use, kFrameRateToRequest,
+        params_.GetPixelFormatToUse());
     video_capture_manager_->ConnectClient(
         session_id_, capture_params, stub_client_id_,
         &mock_controller_event_handler_,
@@ -167,6 +209,9 @@ class VideoCaptureBrowserTest
   }
 
  protected:
+  base::test::ScopedFeatureList scoped_feature_list_;
+
+  TestParams params_;
   MediaStreamManager* media_stream_manager_ = nullptr;
   VideoCaptureManager* video_capture_manager_ = nullptr;
   int session_id_ = 0;
@@ -174,9 +219,25 @@ class VideoCaptureBrowserTest
   MockMediaStreamProviderListener mock_stream_provider_listener_;
   MockVideoCaptureControllerEventHandler mock_controller_event_handler_;
   base::WeakPtr<VideoCaptureController> controller_;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(VideoCaptureBrowserTest);
 };
 
 IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest, StartAndImmediatelyStop) {
+#if defined(OS_ANDROID)
+  // Mojo video capture is currently not supported on Android.
+  // TODO(chfremer): Remove this as soon as https://crbug.com/720500 is
+  // resolved.
+  if (params_.use_mojo_service)
+    return;
+#endif
+  // Mojo video capture currently does not support accelerated jpeg decoding.
+  // TODO(chfremer): Remove this as soon as https://crbug.com/720604 is
+  // resolved.
+  if (params_.use_mojo_service && params_.exercise_accelerated_jpeg_decoding)
+    return;
+
   SetUpRequiringBrowserMainLoopOnMainThread();
   base::RunLoop run_loop;
   auto quit_run_loop_on_current_thread_cb =
@@ -187,19 +248,40 @@ IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest, StartAndImmediatelyStop) {
                  std::move(quit_run_loop_on_current_thread_cb), true);
   BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&VideoCaptureBrowserTest::SetUpAndStartCaptureDeviceOnIOThread,
-                 base::Unretained(this), std::move(after_start_continuation)));
+      base::BindOnce(
+          &VideoCaptureBrowserTest::SetUpAndStartCaptureDeviceOnIOThread,
+          base::Unretained(this), std::move(after_start_continuation)));
   run_loop.Run();
 }
 
 IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest,
                        ReceiveFramesFromFakeCaptureDevice) {
-// TODO(chfremer): This test case is flaky on Android. Find out cause of
-// flakiness and then re-enable. See crbug.com/709039.
 #if defined(OS_ANDROID)
-  if (GetParam().exercise_accelerated_jpeg_decoding)
+  // TODO(chfremer): This test case is flaky on Android. Find out cause of
+  // flakiness and then re-enable. See https://crbug.com/709039.
+  if (params_.exercise_accelerated_jpeg_decoding)
+    return;
+  // Mojo video capture is currently not supported on Android
+  // TODO(chfremer): Remove this as soon as https://crbug.com/720500 is
+  // resolved.
+  if (params_.use_mojo_service)
     return;
 #endif
+  // Mojo video capture currently does not support accelerated jpeg decoding.
+  // TODO(chfremer): Remove this as soon as https://crbug.com/720604 is
+  // resolved.
+  if (params_.use_mojo_service && params_.exercise_accelerated_jpeg_decoding)
+    return;
+  // Only fake device with index 2 delivers MJPEG.
+  if (params_.exercise_accelerated_jpeg_decoding &&
+      params_.device_index_to_use != 2)
+    return;
+  // There is an intermittent use-after-free in GpuChannelHost::Send() during
+  // Browser shutdown, which causes MSan tests to fail.
+  // TODO(chfremer): Remove this as soon as https://crbug.com/725271 is
+  // resolved.
+  if (params_.exercise_accelerated_jpeg_decoding)
+    return;
 
   SetUpRequiringBrowserMainLoopOnMainThread();
 
@@ -216,7 +298,7 @@ IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest,
                  std::move(quit_run_loop_on_current_thread_cb), true);
 
   bool must_wait_for_gpu_decode_to_start = false;
-  if (GetParam().exercise_accelerated_jpeg_decoding) {
+  if (params_.exercise_accelerated_jpeg_decoding) {
     // Since the GPU jpeg decoder is created asynchronously while decoding
     // in software is ongoing, we have to keep pushing frames until a message
     // arrives that tells us that the GPU decoder is being used. Otherwise,
@@ -256,8 +338,9 @@ IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest,
   base::Closure do_nothing;
   BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&VideoCaptureBrowserTest::SetUpAndStartCaptureDeviceOnIOThread,
-                 base::Unretained(this), std::move(do_nothing)));
+      base::BindOnce(
+          &VideoCaptureBrowserTest::SetUpAndStartCaptureDeviceOnIOThread,
+          base::Unretained(this), std::move(do_nothing)));
   run_loop.Run();
 
   EXPECT_FALSE(must_wait_for_gpu_decode_to_start);
@@ -266,9 +349,9 @@ IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest,
   base::TimeDelta previous_timestamp;
   bool first_frame = true;
   for (const auto& frame_info : received_frame_infos) {
-    EXPECT_EQ(GetParam().pixel_format_to_use, frame_info.pixel_format);
+    EXPECT_EQ(params_.GetPixelFormatToUse(), frame_info.pixel_format);
     EXPECT_EQ(media::PIXEL_STORAGE_CPU, frame_info.storage_type);
-    EXPECT_EQ(GetParam().resolution_to_use, frame_info.size);
+    EXPECT_EQ(params_.resolution_to_use, frame_info.size);
     // Timestamps are expected to increase
     if (!first_frame)
       EXPECT_GT(frame_info.timestamp, previous_timestamp);
@@ -277,20 +360,12 @@ IN_PROC_BROWSER_TEST_P(VideoCaptureBrowserTest,
   }
 }
 
-INSTANTIATE_TEST_CASE_P(
-    ,
-    VideoCaptureBrowserTest,
-    Values(TestParams{"fps=25,device-count=2", 0, media::PIXEL_FORMAT_I420,
-                      gfx::Size(1280, 720), 25.0f, false},
-           // The 2nd device outputs Y16
-           TestParams{"fps=25,device-count=2", 1, media::PIXEL_FORMAT_Y16,
-                      gfx::Size(1280, 720), 25.0f, false},
-           TestParams{"fps=15,device-count=2", 1, media::PIXEL_FORMAT_Y16,
-                      gfx::Size(640, 480), 15.0f, false},
-           // The 3rd device outputs MJPEG, which is converted to I420.
-           TestParams{"fps=15,device-count=3", 2, media::PIXEL_FORMAT_I420,
-                      gfx::Size(640, 480), 25.0f, false},
-           TestParams{"fps=6,device-count=3", 2, media::PIXEL_FORMAT_I420,
-                      gfx::Size(640, 480), 6.0f, true}));
+INSTANTIATE_TEST_CASE_P(,
+                        VideoCaptureBrowserTest,
+                        Combine(Values(0, 1, 2),             // DeviceIndex
+                                Values(gfx::Size(640, 480),  // Resolution
+                                       gfx::Size(1280, 720)),
+                                Bool(),    // ExerciseAcceleratedJpegDecoding
+                                Bool()));  // UseMojoService
 
 }  // namespace content

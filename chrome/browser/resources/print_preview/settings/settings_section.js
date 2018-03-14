@@ -25,7 +25,7 @@ cr.define('print_preview', function() {
      * @private {boolean}
      */
     this.collapseContent_ = true;
-  };
+  }
 
   /**
    * Event types dispatched by this class.
@@ -91,8 +91,9 @@ cr.define('print_preview', function() {
      * @protected
      */
     updateUiStateInternal: function(opt_noAnimation) {
-      var hasCollapsibleContent = this.hasCollapsibleContent();
-      var changed = this.hasCollapsibleContentCached_ != hasCollapsibleContent;
+      const hasCollapsibleContent = this.hasCollapsibleContent();
+      const changed =
+          this.hasCollapsibleContentCached_ != hasCollapsibleContent;
       this.hasCollapsibleContentCached_ = hasCollapsibleContent;
 
       if (this.isSectionVisibleInternal())
@@ -116,7 +117,5 @@ cr.define('print_preview', function() {
   };
 
   // Export
-  return {
-    SettingsSection: SettingsSection
-  };
+  return {SettingsSection: SettingsSection};
 });

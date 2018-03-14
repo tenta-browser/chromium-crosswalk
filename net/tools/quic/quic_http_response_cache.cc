@@ -14,7 +14,7 @@
 #include "net/quic/platform/api/quic_map_util.h"
 #include "net/quic/platform/api/quic_ptr_util.h"
 #include "net/quic/platform/api/quic_text_utils.h"
-#include "net/spdy/spdy_http_utils.h"
+#include "net/spdy/chromium/spdy_http_utils.h"
 
 using base::FilePath;
 using base::IntToString;
@@ -41,13 +41,13 @@ QuicHttpResponseCache::ServerPushInfo::ServerPushInfo(
 QuicHttpResponseCache::Response::Response()
     : response_type_(REGULAR_RESPONSE) {}
 
-QuicHttpResponseCache::Response::~Response() {}
+QuicHttpResponseCache::Response::~Response() = default;
 
 QuicHttpResponseCache::ResourceFile::ResourceFile(
     const base::FilePath& file_name)
     : file_name_(file_name), file_name_string_(file_name.AsUTF8Unsafe()) {}
 
-QuicHttpResponseCache::ResourceFile::~ResourceFile() {}
+QuicHttpResponseCache::ResourceFile::~ResourceFile() = default;
 
 void QuicHttpResponseCache::ResourceFile::Read() {
   base::ReadFileToString(FilePath(file_name_), &file_contents_);
@@ -166,7 +166,7 @@ const QuicHttpResponseCache::Response* QuicHttpResponseCache::GetResponse(
   if (it == responses_.end()) {
     DVLOG(1) << "Get response for resource failed: host " << host << " path "
              << path;
-    if (default_response_.get()) {
+    if (default_response_) {
       return default_response_.get();
     }
     return nullptr;
@@ -227,7 +227,7 @@ void QuicHttpResponseCache::AddSpecialResponse(
                   SpdyHeaderBlock());
 }
 
-QuicHttpResponseCache::QuicHttpResponseCache() {}
+QuicHttpResponseCache::QuicHttpResponseCache() = default;
 
 void QuicHttpResponseCache::InitializeFromDirectory(
     const string& cache_directory) {

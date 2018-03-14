@@ -31,9 +31,9 @@
 #ifndef FileReaderSync_h
 #define FileReaderSync_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -44,8 +44,7 @@ class ExecutionContext;
 class FileReaderLoader;
 class ScriptState;
 
-class FileReaderSync final : public GarbageCollected<FileReaderSync>,
-                             public ScriptWrappable {
+class FileReaderSync final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -63,8 +62,6 @@ class FileReaderSync final : public GarbageCollected<FileReaderSync>,
                     const String& encoding,
                     ExceptionState&);
   String readAsDataURL(ScriptState*, Blob*, ExceptionState&);
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   explicit FileReaderSync(ExecutionContext*);

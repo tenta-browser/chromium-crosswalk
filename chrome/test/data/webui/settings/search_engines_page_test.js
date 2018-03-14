@@ -4,31 +4,32 @@
 
 cr.define('settings_search_engines_page', function() {
   /**
+   * @param {string} name
    * @param {boolean} canBeDefault
    * @param {boolean} canBeEdited
    * @param {boolean} canBeRemoved
    * @return {!SearchEngine}
    */
-  var createSampleSearchEngine = function(
-      canBeDefault, canBeEdited, canBeRemoved) {
+  function createSampleSearchEngine(
+      name, canBeDefault, canBeEdited, canBeRemoved) {
     return {
       canBeDefault: canBeDefault,
       canBeEdited: canBeEdited,
       canBeRemoved: canBeRemoved,
       default: false,
-      displayName: "Google displayName",
+      displayName: name + " displayName",
       iconURL: "http://www.google.com/favicon.ico",
       isOmniboxExtension: false,
-      keyword: "google.com",
+      keyword: name,
       modelIndex: 0,
-      name: "Google",
-      url: "https://search.foo.com/search?p=%s",
+      name: name,
+      url: "https://" + name + ".com/search?p=%s",
       urlLocked: false,
     };
-  };
+  }
 
   /** @return {!SearchEngine} */
-  var createSampleOmniboxExtension = function() {
+  function createSampleOmniboxExtension() {
     return {
       canBeDefault: false,
       canBeEdited: false,
@@ -47,7 +48,7 @@ cr.define('settings_search_engines_page', function() {
       url: "chrome-extension://dummyextensionid/?q=%s",
       urlLocked: false
     };
-  };
+  }
 
   function registerDialogTests() {
     suite('AddSearchEngineDialogTests', function() {
@@ -103,7 +104,7 @@ cr.define('settings_search_engines_page', function() {
           browserProxy.resetResolver('validateSearchEngineInput');
           inputElement.fire('input');
           return inputElement.value != '' ?
-              // Expeting validation only on non-empty values.
+              // Expecting validation only on non-empty values.
               browserProxy.whenCalled('validateSearchEngineInput') :
               Promise.resolve();
         };
@@ -146,7 +147,7 @@ cr.define('settings_search_engines_page', function() {
       var browserProxy = null;
 
       /** @type {!SearchEngine} */
-      var searchEngine = createSampleSearchEngine(true, true, true);
+      var searchEngine = createSampleSearchEngine('G', true, true, true);
 
       setup(function() {
         browserProxy = new settings_search.TestSearchEnginesBrowserProxy();
@@ -175,7 +176,7 @@ cr.define('settings_search_engines_page', function() {
 
       test('Remove_Enabled', function() {
         // Open action menu.
-        MockInteractions.tap(entry.$$('paper-icon-button'));
+        MockInteractions.tap(entry.$$('button'));
         var menu = entry.$$('dialog[is=cr-action-menu]');
         assertTrue(menu.open);
 
@@ -192,7 +193,7 @@ cr.define('settings_search_engines_page', function() {
 
       test('MakeDefault_Enabled', function() {
         // Open action menu.
-        MockInteractions.tap(entry.$$('paper-icon-button'));
+        MockInteractions.tap(entry.$$('button'));
         var menu = entry.$$('dialog[is=cr-action-menu]');
         assertTrue(menu.open);
 
@@ -209,7 +210,7 @@ cr.define('settings_search_engines_page', function() {
       // Test that clicking the "edit" button brings up a dialog.
       test('Edit_Enabled', function() {
         // Open action menu.
-        MockInteractions.tap(entry.$$('paper-icon-button'));
+        MockInteractions.tap(entry.$$('button'));
         var menu = entry.$$('dialog[is=cr-action-menu]');
         assertTrue(menu.open);
 
@@ -248,24 +249,25 @@ cr.define('settings_search_engines_page', function() {
 
       test('Remove_Disabled', function() {
         testButtonDisabled(
-            createSampleSearchEngine(true, true, false), 'delete');
+            createSampleSearchEngine('G', true, true, false), 'delete');
       });
 
       test('MakeDefault_Disabled', function() {
         testButtonDisabled(
-            createSampleSearchEngine(false, true, true), 'makeDefault');
+            createSampleSearchEngine('G', false, true, true), 'makeDefault');
       });
 
       test('Edit_Disabled', function() {
-        testButtonDisabled(createSampleSearchEngine(true, false, true), 'edit');
+        testButtonDisabled(
+            createSampleSearchEngine('G', true, false, true), 'edit');
       });
 
       test('All_Disabled', function() {
-        entry.engine = createSampleSearchEngine(true, false, false);
+        entry.engine = createSampleSearchEngine('G', true, false, false);
         Polymer.dom.flush();
         assertTrue(entry.hasAttribute('show-dots_'));
 
-        entry.engine = createSampleSearchEngine(false, false, false);
+        entry.engine = createSampleSearchEngine('G', false, false, false);
         Polymer.dom.flush();
         assertFalse(entry.hasAttribute('show-dots_'));
       });
@@ -281,14 +283,25 @@ cr.define('settings_search_engines_page', function() {
 
       /** @type {!SearchEnginesInfo} */
       var searchEnginesInfo = {
-        defaults: [createSampleSearchEngine()],
-        others: [],
+        defaults: [createSampleSearchEngine(
+            'search_engine_G', false, false, false)],
+        others: [
+          createSampleSearchEngine('search_engine_B', false, false, false),
+          createSampleSearchEngine('search_engine_A', false, false, false),
+        ],
         extensions: [createSampleOmniboxExtension()],
       };
 
       setup(function() {
         browserProxy = new settings_search.TestSearchEnginesBrowserProxy();
-        browserProxy.setSearchEnginesInfo(searchEnginesInfo);
+
+        // Purposefully pass a clone of |searchEnginesInfo| to avoid any
+        // mutations on ground truth data.
+        browserProxy.setSearchEnginesInfo({
+          defaults: searchEnginesInfo.defaults.slice(),
+          others: searchEnginesInfo.others.slice(),
+          extensions: searchEnginesInfo.extensions.slice(),
+        });
         settings.SearchEnginesBrowserProxyImpl.instance_ = browserProxy;
         PolymerTest.clearBody();
         page = document.createElement('settings-search-engines-page');
@@ -320,6 +333,15 @@ cr.define('settings_search_engines_page', function() {
         assertEquals(
             searchEnginesInfo.others.length, othersEntries.length);
 
+        // Ensure that the search engines have reverse alphabetical order in the
+        // model.
+        assertGT(
+            searchEnginesInfo.others[0].name, searchEnginesInfo.others[1].name);
+
+        // Ensure that they are displayed in alphabetical order.
+        assertEquals(searchEnginesInfo.others[1].name, othersEntries[0].name);
+        assertEquals(searchEnginesInfo.others[0].name, othersEntries[1].name);
+
         var extensionEntries = Polymer.dom(page.shadowRoot).
             querySelector('iron-list').items;
         assertEquals(
@@ -329,13 +351,17 @@ cr.define('settings_search_engines_page', function() {
       // Test that the "no other search engines" message is shown/hidden as
       // expected.
       test('NoOtherSearchEnginesMessage', function() {
+        cr.webUIListenerCallback('search-engines-changed', {
+          defaults: [], others: [], extensions: [],
+        });
+
         var message = page.root.querySelector('#noOtherEngines');
         assertTrue(!!message);
         assertFalse(message.hasAttribute('hidden'));
 
         cr.webUIListenerCallback('search-engines-changed', {
           defaults: [],
-          others: [createSampleSearchEngine()],
+          others: [createSampleSearchEngine('G', false, false, false)],
           extensions: [],
         });
         assertTrue(message.hasAttribute('hidden'));
@@ -351,6 +377,70 @@ cr.define('settings_search_engines_page', function() {
         MockInteractions.tap(addSearchEngineButton);
         Polymer.dom.flush();
         assertTrue(!!page.$$('settings-search-engine-dialog'));
+      });
+
+      // Tests that filtering the three search engines lists works, and that the
+      // "no search results" message is shown as expected.
+      test('FilterSearchEngines', function() {
+        Polymer.dom.flush();
+
+        function getListItems(listIndex) {
+          var ironList = listIndex == 2 /* extensions */ ?
+              page.shadowRoot.querySelector('iron-list') :
+              page.shadowRoot.querySelectorAll(
+                  'settings-search-engines-list')[listIndex].shadowRoot.
+                  querySelector('iron-list');
+
+          return ironList.items;
+        }
+
+        function getDefaultEntries() { return getListItems(0); }
+        function getOtherEntries() { return getListItems(1); }
+
+        function assertSearchResults(
+            defaultsCount, othersCount, extensionsCount) {
+          assertEquals(defaultsCount, getListItems(0).length);
+          assertEquals(othersCount, getListItems(1).length);
+          assertEquals(extensionsCount, getListItems(2).length);
+
+          var noResultsElements = Array.from(
+              page.shadowRoot.querySelectorAll('.no-search-results'));
+          assertEquals(defaultsCount > 0, noResultsElements[0].hidden);
+          assertEquals(othersCount > 0, noResultsElements[1].hidden);
+          assertEquals(extensionsCount > 0, noResultsElements[2].hidden);
+        }
+
+        assertSearchResults(1, 2, 1);
+
+        // Search by name
+        page.filter = searchEnginesInfo.defaults[0].name;
+        Polymer.dom.flush();
+        assertSearchResults(1, 0, 0);
+
+        // Search by displayName
+        page.filter = searchEnginesInfo.others[0].displayName;
+        Polymer.dom.flush();
+        assertSearchResults(0, 1, 0);
+
+        // Search by keyword
+        page.filter = searchEnginesInfo.others[1].keyword;
+        Polymer.dom.flush();
+        assertSearchResults(0, 1, 0);
+
+        // Search by URL
+        page.filter = 'search?';
+        Polymer.dom.flush();
+        assertSearchResults(1, 2, 0);
+
+        // Test case where none of the sublists have results.
+        page.filter = 'does not exist';
+        Polymer.dom.flush();
+        assertSearchResults(0, 0, 0);
+
+        // Test case where an 'extension' search engine matches.
+        page.filter = 'extension';
+        Polymer.dom.flush();
+        assertSearchResults(0, 0, 1);
       });
     });
   }
@@ -371,7 +461,7 @@ cr.define('settings_search_engines_page', function() {
         document.body.appendChild(entry);
 
         // Open action menu.
-        MockInteractions.tap(entry.$$('paper-icon-button'));
+        MockInteractions.tap(entry.$$('button'));
       });
 
       teardown(function() { entry.remove(); });
@@ -398,12 +488,8 @@ cr.define('settings_search_engines_page', function() {
     });
   }
 
-  return {
-    registerTests: function() {
-      registerDialogTests();
-      registerSearchEngineEntryTests();
-      registerOmniboxExtensionEntryTests();
-      registerPageTests();
-    },
-  };
+  registerDialogTests();
+  registerSearchEngineEntryTests();
+  registerOmniboxExtensionEntryTests();
+  registerPageTests();
 });

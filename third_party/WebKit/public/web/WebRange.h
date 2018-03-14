@@ -32,8 +32,8 @@
 #define WebRange_h
 
 #include "public/platform/WebCommon.h"
-#if BLINK_IMPLEMENTATION
-#include "core/editing/EphemeralRange.h"
+#if INSIDE_BLINK
+#include "core/editing/Forward.h"
 #endif
 
 namespace blink {
@@ -54,11 +54,11 @@ class WebRange final {
   bool IsNull() const { return start_ == -1 && end_ == -1; }
   bool IsEmpty() const { return start_ == end_; }
 
-#if BLINK_IMPLEMENTATION
-  WebRange(const EphemeralRange&);
-  WebRange(const PlainTextRange&);
+#if INSIDE_BLINK
+  BLINK_EXPORT WebRange(const EphemeralRange&);
+  BLINK_EXPORT WebRange(const PlainTextRange&);
 
-  EphemeralRange CreateEphemeralRange(LocalFrame*) const;
+  BLINK_EXPORT EphemeralRange CreateEphemeralRange(LocalFrame*) const;
 #endif
 
  private:

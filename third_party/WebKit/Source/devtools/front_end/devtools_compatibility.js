@@ -107,13 +107,10 @@
     }
 
     /**
-     * @param {boolean} discoverUsbDevices
-     * @param {boolean} portForwardingEnabled
-     * @param {!Adb.PortForwardingConfig} portForwardingConfig
+     * @param {!Adb.Config} config
      */
-    devicesDiscoveryConfigChanged(discoverUsbDevices, portForwardingEnabled, portForwardingConfig) {
-      this._dispatchOnInspectorFrontendAPI(
-          'devicesDiscoveryConfigChanged', [discoverUsbDevices, portForwardingEnabled, portForwardingConfig]);
+    devicesDiscoveryConfigChanged(config) {
+      this._dispatchOnInspectorFrontendAPI('devicesDiscoveryConfigChanged', [config]);
     }
 
     /**
@@ -158,6 +155,13 @@
     }
 
     /**
+     * @param {!{r: number, g: number, b: number, a: number}} color
+     */
+    eyeDropperPickedColor(color) {
+      this._dispatchOnInspectorFrontendAPI('eyeDropperPickedColor', [color]);
+    }
+
+    /**
      * @param {!Array.<!{fileSystemName: string, rootURL: string, fileSystemPath: string}>} fileSystems
      */
     fileSystemsLoaded(fileSystems) {
@@ -172,10 +176,11 @@
     }
 
     /**
-     * @param {!{fileSystemName: string, rootURL: string, fileSystemPath: string}} fileSystem
+     * @param {?string} error
+     * @param {?{type: string, fileSystemName: string, rootURL: string, fileSystemPath: string}} fileSystem
      */
-    fileSystemAdded(fileSystem) {
-      this._dispatchOnInspectorFrontendAPI('fileSystemAdded', ['', fileSystem]);
+    fileSystemAdded(error, fileSystem) {
+      this._dispatchOnInspectorFrontendAPI('fileSystemAdded', [error, fileSystem]);
     }
 
     /**
@@ -246,9 +251,10 @@
 
     /**
      * @param {string} url
+     * @param {string=} fileSystemPath
      */
-    savedURL(url) {
-      this._dispatchOnInspectorFrontendAPI('savedURL', [url]);
+    savedURL(url, fileSystemPath) {
+      this._dispatchOnInspectorFrontendAPI('savedURL', [url, fileSystemPath]);
     }
 
     /**
@@ -447,7 +453,7 @@
      * @param {string} script
      */
     setInjectedScriptForOrigin(origin, script) {
-      DevToolsHost.setInjectedScriptForOrigin(origin, script);
+      DevToolsAPI.sendMessageToEmbedder('registerExtensionsAPI', [origin, script], null);
     }
 
     /**
@@ -523,10 +529,10 @@
 
     /**
      * @override
-     * @param {string=} fileSystemPath
+     * @param {string=} type
      */
-    addFileSystem(fileSystemPath) {
-      DevToolsAPI.sendMessageToEmbedder('addFileSystem', [fileSystemPath || ''], null);
+    addFileSystem(type) {
+      DevToolsAPI.sendMessageToEmbedder('addFileSystem', [type || ''], null);
     }
 
     /**
@@ -621,6 +627,14 @@
 
     /**
      * @override
+     * @param {boolean} active
+     */
+    setEyeDropperActive(active) {
+      DevToolsAPI.sendMessageToEmbedder('setEyeDropperActive', [active], null);
+    }
+
+    /**
+     * @override
      * @param {!Array<string>} certChain
      */
     showCertificateViewer(certChain) {
@@ -652,14 +666,16 @@
 
     /**
      * @override
-     * @param {boolean} discoverUsbDevices
-     * @param {boolean} portForwardingEnabled
-     * @param {!Adb.PortForwardingConfig} portForwardingConfig
+     * @param {!Adb.Config} config
      */
-    setDevicesDiscoveryConfig(discoverUsbDevices, portForwardingEnabled, portForwardingConfig) {
+    setDevicesDiscoveryConfig(config) {
       DevToolsAPI.sendMessageToEmbedder(
           'setDevicesDiscoveryConfig',
-          [discoverUsbDevices, portForwardingEnabled, JSON.stringify(portForwardingConfig)], null);
+          [
+            config.discoverUsbDevices, config.portForwardingEnabled, JSON.stringify(config.portForwardingConfig),
+            config.networkDiscoveryEnabled, JSON.stringify(config.networkDiscoveryConfig)
+          ],
+          null);
     }
 
     /**

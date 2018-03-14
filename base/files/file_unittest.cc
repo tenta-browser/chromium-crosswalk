@@ -177,6 +177,10 @@ TEST(FileTest, ReadWrite) {
   int bytes_written = file.Write(0, data_to_write, 0);
   EXPECT_EQ(0, bytes_written);
 
+  // Write 0 bytes, with buf=nullptr.
+  bytes_written = file.Write(0, nullptr, 0);
+  EXPECT_EQ(0, bytes_written);
+
   // Write "test" to the file.
   bytes_written = file.Write(0, data_to_write, kTestDataSize);
   EXPECT_EQ(kTestDataSize, bytes_written);
@@ -245,6 +249,10 @@ TEST(FileTest, Append) {
 
   // Write 0 bytes to the file.
   int bytes_written = file.Write(0, data_to_write, 0);
+  EXPECT_EQ(0, bytes_written);
+
+  // Write 0 bytes, with buf=nullptr.
+  bytes_written = file.Write(0, nullptr, 0);
   EXPECT_EQ(0, bytes_written);
 
   // Write "test" to the file.
@@ -326,6 +334,13 @@ TEST(FileTest, Length) {
   EXPECT_EQ(file_size, bytes_read);
   for (int i = 0; i < file_size; i++)
     EXPECT_EQ(data_to_write[i], data_read[i]);
+
+  // Close the file and reopen with base::File::FLAG_CREATE_ALWAYS, and make
+  // sure the file is empty (old file was overridden).
+  file.Close();
+  file.Initialize(file_path,
+                  base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
+  EXPECT_EQ(0, file.GetLength());
 }
 
 // Flakily fails: http://crbug.com/86494

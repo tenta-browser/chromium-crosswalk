@@ -14,11 +14,12 @@
 #include "content/browser/download/parallel_download_utils.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace content {
 namespace {
 
-const int kVerboseLevel = 1;
+const int kDownloadJobVerboseLevel = 1;
 
 }  // namespace
 
@@ -28,16 +29,19 @@ ParallelDownloadJob::ParallelDownloadJob(
     const DownloadCreateInfo& create_info)
     : DownloadJobImpl(download_item, std::move(request_handle), true),
       initial_request_offset_(create_info.offset),
+      initial_received_slices_(download_item->GetReceivedSlices()),
       content_length_(create_info.total_bytes),
       requests_sent_(false),
       is_canceled_(false) {}
 
 ParallelDownloadJob::~ParallelDownloadJob() = default;
 
-void ParallelDownloadJob::Start() {
-  DownloadJobImpl::Start();
-
-  BuildParallelRequestAfterDelay();
+void ParallelDownloadJob::OnDownloadFileInitialized(
+    const DownloadFile::InitializeCallback& callback,
+    DownloadInterruptReason result) {
+  DownloadJobImpl::OnDownloadFileInitialized(callback, result);
+  if (result == DOWNLOAD_INTERRUPT_REASON_NONE)
+    BuildParallelRequestAfterDelay();
 }
 
 void ParallelDownloadJob::Cancel(bool user_cancel) {
@@ -50,7 +54,7 @@ void ParallelDownloadJob::Cancel(bool user_cancel) {
   }
 
   for (auto& worker : workers_)
-    worker.second->Cancel();
+    worker.second->Cancel(user_cancel);
 }
 
 void ParallelDownloadJob::Pause() {
@@ -100,8 +104,8 @@ void ParallelDownloadJob::CancelRequestWithOffset(int64_t offset) {
   }
 
   auto it = workers_.find(offset);
-  if (it != workers_.end())
-    it->second->Cancel();
+  DCHECK(it != workers_.end());
+  it->second->Cancel(false);
 }
 
 void ParallelDownloadJob::BuildParallelRequestAfterDelay() {
@@ -116,23 +120,26 @@ void ParallelDownloadJob::BuildParallelRequestAfterDelay() {
 void ParallelDownloadJob::OnByteStreamReady(
     DownloadWorker* worker,
     std::unique_ptr<ByteStreamReader> stream_reader) {
-  bool success = DownloadJob::AddByteStream(std::move(stream_reader),
-                                            worker->offset(), worker->length());
+  bool success = DownloadJob::AddInputStream(
+      std::make_unique<DownloadManager::InputStream>(std::move(stream_reader)),
+      worker->offset(), worker->length());
   RecordParallelDownloadAddStreamSuccess(success);
 
   // Destroy the request if the sink is gone.
   if (!success) {
-    VLOG(kVerboseLevel)
+    VLOG(kDownloadJobVerboseLevel)
         << "Byte stream arrived after download file is released.";
-    worker->Cancel();
+    worker->Cancel(false);
   }
 }
 
 void ParallelDownloadJob::BuildParallelRequests() {
   DCHECK(!requests_sent_);
   DCHECK(!is_paused());
-  if (is_canceled_)
+  if (is_canceled_ ||
+      download_item_->GetState() != DownloadItem::DownloadState::IN_PROGRESS) {
     return;
+  }
 
   // TODO(qinmin): The size of |slices_to_download| should be no larger than
   // |kParallelRequestCount| unless |kParallelRequestCount| is changed after
@@ -146,7 +153,15 @@ void ParallelDownloadJob::BuildParallelRequests() {
 
   DCHECK(!slices_to_download.empty());
   int64_t first_slice_offset = slices_to_download[0].offset;
-  DCHECK_LE(initial_request_offset_, first_slice_offset);
+
+  // We may build parallel job without slices. The slices can be cleared or
+  // previous session only has one stream writing to disk. In these cases, fall
+  // back to non parallel download.
+  if (initial_request_offset_ > first_slice_offset) {
+    VLOG(kDownloadJobVerboseLevel)
+        << "Received slices data mismatch initial request offset.";
+    return;
+  }
 
   // Create more slices for a new download. The initial request may generate
   // a received slice.
@@ -191,9 +206,25 @@ void ParallelDownloadJob::ForkSubRequests(
   if (slices_to_download.size() < 2)
     return;
 
-  // Assume the first slice to download will be handled by the initial request.
-  for (auto it = slices_to_download.begin() + 1; it != slices_to_download.end();
+  // If the initial request is working on the first hole, don't create parallel
+  // request for this hole.
+  bool skip_first_slice = true;
+  DownloadItem::ReceivedSlices initial_slices_to_download =
+      FindSlicesToDownload(initial_received_slices_);
+  if (initial_slices_to_download.size() > 1) {
+    DCHECK_EQ(initial_request_offset_, initial_slices_to_download[0].offset);
+    int64_t first_hole_max = initial_slices_to_download[0].offset +
+                             initial_slices_to_download[0].received_bytes;
+    skip_first_slice = slices_to_download[0].offset <= first_hole_max;
+  }
+
+  for (auto it = slices_to_download.begin(); it != slices_to_download.end();
        ++it) {
+    if (skip_first_slice) {
+      skip_first_slice = false;
+      continue;
+    }
+
     DCHECK_GE(it->offset, initial_request_offset_);
     CreateRequest(it->offset, it->received_bytes);
   }
@@ -203,15 +234,39 @@ void ParallelDownloadJob::CreateRequest(int64_t offset, int64_t length) {
   DCHECK(download_item_);
 
   std::unique_ptr<DownloadWorker> worker =
-      base::MakeUnique<DownloadWorker>(this, offset, length);
+      std::make_unique<DownloadWorker>(this, offset, length);
 
   StoragePartition* storage_partition =
       BrowserContext::GetStoragePartitionForSite(
           download_item_->GetBrowserContext(), download_item_->GetSiteUrl());
 
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("parallel_download_job", R"(
+        semantics {
+          sender: "Parallel Download"
+          description:
+            "Chrome makes parallel request to speed up download of a file."
+          trigger:
+            "When user starts a download request, if it would be technically "
+            "possible, Chrome starts parallel downloading."
+          data: "None."
+          destination: WEBSITE
+        }
+        policy {
+          cookies_allowed: YES
+          cookies_store: "user"
+          setting: "This feature cannot be disabled in settings."
+          chrome_policy {
+            DownloadRestrictions {
+              DownloadRestrictions: 3
+            }
+          }
+        })");
+  // The parallel requests only use GET method.
   std::unique_ptr<DownloadUrlParameters> download_params(
       new DownloadUrlParameters(download_item_->GetURL(),
-                                storage_partition->GetURLRequestContext()));
+                                storage_partition->GetURLRequestContext(),
+                                traffic_annotation));
   download_params->set_file_path(download_item_->GetFullPath());
   download_params->set_last_modified(download_item_->GetLastModifiedTime());
   download_params->set_etag(download_item_->GetETag());

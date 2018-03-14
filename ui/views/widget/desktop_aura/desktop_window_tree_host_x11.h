@@ -7,9 +7,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <X11/extensions/shape.h>
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
 
 #include "base/cancelable_callback.h"
 #include "base/macros.h"
@@ -22,7 +19,7 @@
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/x/x11_atom_cache.h"
+#include "ui/gfx/x/x11.h"
 #include "ui/views/views_export.h"
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host.h"
 
@@ -93,7 +90,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
             const Widget::InitParams& params) override;
   void OnNativeWidgetCreated(const Widget::InitParams& params) override;
   void OnWidgetInitDone() override;
-  void OnNativeWidgetActivationChanged(bool active) override;
+  void OnActiveWindowChanged(bool active) override;
   std::unique_ptr<corewm::Tooltip> CreateTooltip() override;
   std::unique_ptr<aura::client::DragDropClient> CreateDragDropClient(
       DesktopNativeCursorManager* cursor_manager) override;
@@ -114,7 +111,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   gfx::Rect GetRestoredBounds() const override;
   std::string GetWorkspace() const override;
   gfx::Rect GetWorkAreaBoundsInScreen() const override;
-  void SetShape(std::unique_ptr<SkRegion> native_region) override;
+  void SetShape(std::unique_ptr<Widget::ShapeRects> native_shape) override;
   void Activate() override;
   void Deactivate() override;
   bool IsActive() const override;
@@ -169,6 +166,13 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   void MoveCursorToScreenLocationInPixels(
       const gfx::Point& location_in_pixels) override;
   void OnCursorVisibilityChangedNative(bool show) override;
+
+  // Overridden from display::DisplayObserver via aura::WindowTreeHost:
+  void OnDisplayMetricsChanged(const display::Display& display,
+                               uint32_t changed_metrics) override;
+
+  // Called after the window is maximized or restored.
+  virtual void OnMaximizedStateChanged();
 
  private:
   friend class DesktopWindowTreeHostX11HighDPITest;
@@ -241,11 +245,6 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   // Dispatches a key event.
   void DispatchKeyEvent(ui::KeyEvent* event);
 
-  // Updates the location of |located_event| to be in |host|'s coordinate system
-  // so that it can be dispatched to |host|.
-  void ConvertEventToDifferentHost(ui::LocatedEvent* located_event,
-                                   DesktopWindowTreeHostX11* host);
-
   // Resets the window region for the current widget bounds if necessary.
   void ResetWindowRegion();
 
@@ -278,6 +277,10 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
   // Enables event listening after closing |dialog|.
   void EnableEventListening();
 
+  // Removes |delayed_resize_task_| from the task queue (if it's in
+  // the queue) and adds it back at the end of the queue.
+  void RestartDelayedResizeTask();
+
   // X11 things
   // The display and the native X window hosting the root window.
   XDisplay* xdisplay_;
@@ -288,8 +291,6 @@ class VIEWS_EXPORT DesktopWindowTreeHostX11
 
   // The native root window.
   ::Window x_root_window_;
-
-  ui::X11AtomCache atom_cache_;
 
   // Whether the window is mapped with respect to the X server.
   bool window_mapped_in_server_;

@@ -19,6 +19,7 @@
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_timeouts.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
@@ -39,7 +40,6 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/find_in_page_observer.h"
-#include "components/app_modal/app_modal_dialog.h"
 #include "components/app_modal/app_modal_dialog_queue.h"
 #include "components/app_modal/javascript_app_modal_dialog.h"
 #include "components/bookmarks/browser/bookmark_model.h"
@@ -63,7 +63,7 @@
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
 #include "device/geolocation/geolocation_provider.h"
-#include "device/geolocation/geoposition.h"
+#include "device/geolocation/public/interfaces/geoposition.mojom.h"
 #include "net/base/filename_util.h"
 #include "net/cookies/cookie_constants.h"
 #include "net/cookies/cookie_monster.h"
@@ -108,7 +108,7 @@ class AppModalDialogWaiter : public app_modal::AppModalDialogObserver {
   AppModalDialogWaiter() : dialog_(nullptr) {}
   ~AppModalDialogWaiter() override {}
 
-  app_modal::AppModalDialog* Wait() {
+  app_modal::JavaScriptAppModalDialog* Wait() {
     if (dialog_)
       return dialog_;
     message_loop_runner_ = new content::MessageLoopRunner;
@@ -118,7 +118,7 @@ class AppModalDialogWaiter : public app_modal::AppModalDialogObserver {
   }
 
   // AppModalDialogObserver:
-  void Notify(app_modal::AppModalDialog* dialog) override {
+  void Notify(app_modal::JavaScriptAppModalDialog* dialog) override {
     DCHECK(!dialog_);
     dialog_ = dialog;
     CheckForHangMonitorDisabling(dialog);
@@ -126,17 +126,14 @@ class AppModalDialogWaiter : public app_modal::AppModalDialogObserver {
       message_loop_runner_->Quit();
   }
 
-  static void CheckForHangMonitorDisabling(app_modal::AppModalDialog* dialog) {
+  static void CheckForHangMonitorDisabling(
+      app_modal::JavaScriptAppModalDialog* dialog) {
     // If a test waits for a beforeunload dialog but hasn't disabled the
     // beforeunload hang timer before triggering it, there will be a race
     // between the dialog and the timer and the test will be flaky. We can't
     // disable the timer here, as it's too late, but we can tell when we've won
     // a race that we shouldn't have been in.
-    if (!dialog->IsJavaScriptModalDialog())
-      return;
-
-    auto* js_dialog = static_cast<app_modal::JavaScriptAppModalDialog*>(dialog);
-    if (!js_dialog->is_before_unload_dialog())
+    if (!dialog->is_before_unload_dialog())
       return;
 
     // Unfortunately we don't know which frame spawned this dialog and should
@@ -154,7 +151,7 @@ class AppModalDialogWaiter : public app_modal::AppModalDialogObserver {
   }
 
  private:
-  app_modal::AppModalDialog* dialog_;
+  app_modal::JavaScriptAppModalDialog* dialog_;
   scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(AppModalDialogWaiter);
@@ -281,6 +278,7 @@ void NavigateToURLBlockUntilNavigationsComplete(Browser* browser,
 
 base::FilePath GetTestFilePath(const base::FilePath& dir,
                                const base::FilePath& file) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::FilePath path;
   PathService::Get(chrome::DIR_TEST_DATA, &path);
   return path.Append(dir).Append(file);
@@ -291,6 +289,7 @@ GURL GetTestUrl(const base::FilePath& dir, const base::FilePath& file) {
 }
 
 bool GetRelativeBuildDirectory(base::FilePath* build_dir) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   // This function is used to find the build directory so TestServer can serve
   // built files (nexes, etc).  TestServer expects a path relative to the source
   // root.
@@ -333,7 +332,7 @@ bool GetRelativeBuildDirectory(base::FilePath* build_dir) {
   return true;
 }
 
-app_modal::AppModalDialog* WaitForAppModalDialog() {
+app_modal::JavaScriptAppModalDialog* WaitForAppModalDialog() {
   app_modal::AppModalDialogQueue* dialog_queue =
       app_modal::AppModalDialogQueue::GetInstance();
   if (dialog_queue->HasActiveDialog()) {
@@ -363,6 +362,7 @@ int FindInPage(WebContents* tab,
 }
 
 void DownloadURL(Browser* browser, const GURL& download_url) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::ScopedTempDir downloads_directory;
   ASSERT_TRUE(downloads_directory.CreateUniqueTempDir());
   browser->profile()->GetPrefs()->SetFilePath(prefs::kDownloadDefaultDirectory,
@@ -430,8 +430,10 @@ void GetCookies(const GURL& url,
   *value_size = -1;
   if (url.is_valid() && contents) {
     scoped_refptr<net::URLRequestContextGetter> context_getter =
-        contents->GetRenderProcessHost()->GetStoragePartition()->
-            GetURLRequestContext();
+        contents->GetMainFrame()
+            ->GetProcess()
+            ->GetStoragePartition()
+            ->GetURLRequestContext();
     base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
                               base::WaitableEvent::InitialState::NOT_SIGNALED);
     CHECK(content::BrowserThread::PostTask(
@@ -496,7 +498,7 @@ Browser* BrowserAddedObserver::WaitForSingleNewBrowser() {
 }
 
 void OverrideGeolocation(double latitude, double longitude) {
-  device::Geoposition position;
+  device::mojom::Geoposition position;
   position.latitude = latitude;
   position.longitude = longitude;
   position.altitude = 0.;

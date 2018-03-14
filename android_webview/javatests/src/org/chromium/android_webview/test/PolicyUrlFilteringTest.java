@@ -4,9 +4,17 @@
 
 package org.chromium.android_webview.test;
 
+import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.MediumTest;
 import android.support.test.filters.SmallTest;
 import android.util.Pair;
+
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
 
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.ErrorCodeConversionHelper;
@@ -14,7 +22,7 @@ import org.chromium.android_webview.policy.AwPolicyProvider;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
-import org.chromium.base.test.util.parameter.ParameterizedTest;
+import org.chromium.base.test.util.parameter.SkipCommandLineParameterization;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
 import org.chromium.net.test.util.TestWebServer;
 import org.chromium.policy.AbstractAppRestrictionsProvider;
@@ -26,7 +34,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 
 /** Tests for the policy based URL filtering. */
-public class PolicyUrlFilteringTest extends AwTestBase {
+@RunWith(AwJUnit4ClassRunner.class)
+public class PolicyUrlFilteringTest {
+    @Rule
+    public AwActivityTestRule mActivityTestRule = new AwActivityTestRule();
+
     private TestAwContentsClient mContentsClient;
     private AwContents mAwContents;
     private TestWebServer mWebServer;
@@ -38,70 +50,69 @@ public class PolicyUrlFilteringTest extends AwTestBase {
     private static final String sBlacklistPolicyName = "com.android.browser:URLBlacklist";
     private static final String sWhitelistPolicyName = "com.android.browser:URLWhitelist";
 
-    @Override
+    @Before
     public void setUp() throws Exception {
-        super.setUp();
         mContentsClient = new TestAwContentsClient();
-        mAwContents = createAwTestContainerViewOnMainSync(mContentsClient).getAwContents();
+        mAwContents = mActivityTestRule.createAwTestContainerViewOnMainSync(mContentsClient)
+                              .getAwContents();
         mWebServer = TestWebServer.start();
         mFooTestUrl = mWebServer.setResponse(sFooTestFilePath, "<html><body>foo</body></html>",
                 new ArrayList<Pair<String, String>>());
         mBarTestUrl = mWebServer.setResponse("/bar.html", "<html><body>bar</body></html>",
                 new ArrayList<Pair<String, String>>());
 
-        getInstrumentation().waitForIdleSync();
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 
-    @Override
+    @After
     public void tearDown() throws Exception {
         mWebServer.shutdown();
-        super.tearDown();
     }
 
     // Tests transforming the bundle to native policies, reloading the policies and blocking
     // the navigation.
+    @Test
     @MediumTest
     @Feature({"AndroidWebView", "Policy"})
     // Run in single process only. crbug.com/615484
-    @ParameterizedTest.Set
+    @SkipCommandLineParameterization
     @RetryOnFailure
     public void testBlacklistedUrl() throws Throwable {
         final AwPolicyProvider testProvider =
-                new AwPolicyProvider(getActivity().getApplicationContext());
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                CombinedPolicyProvider.get().registerProvider(testProvider);
-            }
-        });
+                new AwPolicyProvider(mActivityTestRule.getActivity().getApplicationContext());
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> CombinedPolicyProvider.get().registerProvider(testProvider));
 
         navigateAndCheckOutcome(mFooTestUrl, 0 /* error count before */, 0 /* error count after*/);
 
         setFilteringPolicy(testProvider, new String[] {"localhost"}, new String[] {});
 
         navigateAndCheckOutcome(mFooTestUrl, 0 /* error count before */, 1 /* error count after */);
-        assertEquals(ErrorCodeConversionHelper.ERROR_CONNECT,
+        Assert.assertEquals(ErrorCodeConversionHelper.ERROR_CONNECT,
                 mContentsClient.getOnReceivedErrorHelper().getErrorCode());
     }
 
     // Tests getting a successful navigation with a whitelist.
+    @Test
     @MediumTest
     @Feature({"AndroidWebView", "Policy"})
     @Policies.Add({
             @Policies.Item(key = sBlacklistPolicyName, stringArray = {"*"}),
-            @Policies.Item(key = sWhitelistPolicyName, stringArray = {sFooWhitelistFilter})})
+            @Policies.Item(key = sWhitelistPolicyName, stringArray = {sFooWhitelistFilter})
+    })
     // Run in single process only. crbug.com/660517
-    @ParameterizedTest.Set
+    @SkipCommandLineParameterization
     public void testWhitelistedUrl() throws Throwable {
         navigateAndCheckOutcome(mFooTestUrl, 0 /* error count before */, 0 /* error count after */);
 
         // Make sure it goes through the blacklist
         navigateAndCheckOutcome(mBarTestUrl, 0 /* error count before */, 1 /* error count after */);
-        assertEquals(ErrorCodeConversionHelper.ERROR_CONNECT,
+        Assert.assertEquals(ErrorCodeConversionHelper.ERROR_CONNECT,
                 mContentsClient.getOnReceivedErrorHelper().getErrorCode());
     }
 
     // Tests that bad policy values are properly handled
+    @Test
     @SmallTest
     @Feature({"AndroidWebView", "Policy"})
     @Policies.Add({
@@ -126,16 +137,16 @@ public class PolicyUrlFilteringTest extends AwTestBase {
         TestCallbackHelperContainer.OnPageFinishedHelper onPageFinishedHelper =
                 mContentsClient.getOnPageFinishedHelper();
 
-        assertEquals(startingErrorCount, onReceivedErrorHelper.getCallCount());
+        Assert.assertEquals(startingErrorCount, onReceivedErrorHelper.getCallCount());
 
-        loadUrlSync(mAwContents, onPageFinishedHelper, url);
-        assertEquals(url, onPageFinishedHelper.getUrl());
+        mActivityTestRule.loadUrlSync(mAwContents, onPageFinishedHelper, url);
+        Assert.assertEquals(url, onPageFinishedHelper.getUrl());
 
         if (expectedErrorCount > startingErrorCount) {
             onReceivedErrorHelper.waitForCallback(
                     startingErrorCount, expectedErrorCount - startingErrorCount);
         }
-        assertEquals(expectedErrorCount, onReceivedErrorHelper.getCallCount());
+        Assert.assertEquals(expectedErrorCount, onReceivedErrorHelper.getCallCount());
     }
 
     private void setFilteringPolicy(final AwPolicyProvider testProvider,
@@ -148,14 +159,9 @@ public class PolicyUrlFilteringTest extends AwTestBase {
         AbstractAppRestrictionsProvider.setTestRestrictions(
                 PolicyData.asBundle(Arrays.asList(policies)));
 
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                testProvider.refresh();
-            }
-        });
+        ThreadUtils.runOnUiThreadBlocking(() -> testProvider.refresh());
 
         // To avoid race conditions
-        getInstrumentation().waitForIdleSync();
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 }

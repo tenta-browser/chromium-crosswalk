@@ -72,7 +72,7 @@ CA
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="149"/>
-                            <menuItem title="^IDS_CONFIRM_TO_QUIT_OPTION" id="687">
+                            <menuItem title="Warn Before Quitting (⌘Q)" id="687">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
                                     <action selector="toggleConfirmToQuit:" target="483" id="688"/>
@@ -318,6 +318,11 @@ CA
                                     <action selector="commandDispatch:" target="-1" id="0A7-Iy-65Q"/>
                                 </connections>
                             </menuItem>
+                            <menuItem title="^IDS_CUSTOMIZE_TOUCH_BAR" id="679" tag="40251">
+                                <connections>
+                                    <action selector="toggleTouchBarCustomizationPalette:" target="-1" id="680"/>
+                                </connections>
+                            </menuItem>
                             <menuItem isSeparatorItem="YES" id="538"/>
                             <menuItem title="^IDS_STOP_MENU_MAC" tag="33006" keyEquivalent="." id="539">
                                 <connections>
@@ -364,7 +369,7 @@ CA
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="631"/>
-                            <menuItem title="^IDS_DEVELOPER_MENU_MAC" id="501">
+                            <menuItem title="^IDS_DEVELOPER_MENU_MAC" tag="40003" id="501">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <menu key="submenu" title="^IDS_DEVELOPER_MENU_MAC" id="502">
                                     <items>
@@ -384,6 +389,11 @@ CA
                                             <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
                                             <connections>
                                                 <action selector="commandDispatch:" target="-1" id="657"/>
+                                            </connections>
+                                        </menuItem>
+                                         <menuItem title="^IDS_ALLOW_JAVASCRIPT_APPLE_EVENTS_MAC" tag="40253" id="659">
+                                            <connections>
+                                                <action selector="commandDispatch:" target="-1" id="664"/>
                                             </connections>
                                         </menuItem>
                                     </items>
@@ -489,6 +499,24 @@ CA
                                     <action selector="commandDispatch:" target="-1" id="559"/>
                                 </connections>
                             </menuItem>
+                            <menuItem title="^IDS_DUPLICATE_TAB_MAC" tag="34027" id="rsG-Hi-xbu">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="commandDispatch:" target="-1" id="AjB-PF-HrG"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="^IDS_MUTE_SITE_MAC" tag="35012" id="WVg-XQ-yLX">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="commandDispatch:" target="-1" id="LaZ-j6-0bg"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="^IDS_PIN_TAB_MAC" tag="35013" id="VlC-vo-Vrf">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="commandDispatch:" target="-1" id="ou5-3d-iUR"/>
+                                </connections>
+                            </menuItem>
                             <menuItem isSeparatorItem="YES" id="551"/>
                             <menuItem title="^IDS_SHOW_DOWNLOADS_MAC" tag="40012" keyEquivalent="J" id="550">
                                 <connections>
@@ -553,5 +581,6 @@ CA
                 <outlet property="helpMenu_" destination="106" id="667"/>
             </connections>
         </customObject>
+        <menuItem isSeparatorItem="YES" id="4Sz-Jh-Doh"/>
     </objects>
 </document>

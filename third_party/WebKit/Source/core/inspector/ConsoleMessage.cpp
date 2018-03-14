@@ -5,7 +5,11 @@
 #include "core/inspector/ConsoleMessage.h"
 
 #include "bindings/core/v8/SourceLocation.h"
-#include "wtf/CurrentTime.h"
+#include "core/dom/Node.h"
+#include "core/frame/LocalFrame.h"
+#include "platform/wtf/Assertions.h"
+#include "platform/wtf/Time.h"
+#include "public/web/WebConsoleMessage.h"
 
 namespace blink {
 
@@ -60,7 +64,8 @@ ConsoleMessage::ConsoleMessage(MessageSource source,
       message_(message),
       location_(std::move(location)),
       request_identifier_(0),
-      timestamp_(WTF::CurrentTimeMS()) {}
+      timestamp_(WTF::CurrentTimeMS()),
+      frame_(nullptr) {}
 
 ConsoleMessage::~ConsoleMessage() {}
 
@@ -92,6 +97,26 @@ const String& ConsoleMessage::WorkerId() const {
   return worker_id_;
 }
 
-DEFINE_TRACE(ConsoleMessage) {}
+LocalFrame* ConsoleMessage::Frame() const {
+  return frame_;
+}
+
+Vector<DOMNodeId>& ConsoleMessage::Nodes() {
+  return nodes_;
+}
+
+void ConsoleMessage::SetNodes(LocalFrame* frame, Vector<DOMNodeId> nodes) {
+  frame_ = frame;
+  nodes_ = std::move(nodes);
+}
+
+void ConsoleMessage::Trace(blink::Visitor* visitor) {
+  visitor->Trace(frame_);
+}
+
+STATIC_ASSERT_ENUM(WebConsoleMessage::kLevelVerbose, kVerboseMessageLevel);
+STATIC_ASSERT_ENUM(WebConsoleMessage::kLevelInfo, kInfoMessageLevel);
+STATIC_ASSERT_ENUM(WebConsoleMessage::kLevelWarning, kWarningMessageLevel);
+STATIC_ASSERT_ENUM(WebConsoleMessage::kLevelError, kErrorMessageLevel);
 
 }  // namespace blink

@@ -26,8 +26,8 @@
 #ifndef TimeRanges_h
 #define TimeRanges_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Vector.h"
@@ -39,9 +39,7 @@ namespace blink {
 
 class ExceptionState;
 
-class CORE_EXPORT TimeRanges final
-    : public GarbageCollectedFinalized<TimeRanges>,
-      public ScriptWrappable {
+class CORE_EXPORT TimeRanges final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -106,8 +104,6 @@ class CORE_EXPORT TimeRanges final
 
   double Nearest(double new_playback_position,
                  double current_playback_position) const;
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   TimeRanges() {}

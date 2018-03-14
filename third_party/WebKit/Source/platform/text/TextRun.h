@@ -30,7 +30,9 @@
 #include "platform/heap/Heap.h"
 #include "platform/text/TabSize.h"
 #include "platform/text/TextDirection.h"
+#include "platform/text/TextJustify.h"
 #include "platform/wtf/Allocator.h"
+#include "platform/wtf/Optional.h"
 #include "platform/wtf/text/StringView.h"
 #include "platform/wtf/text/WTFString.h"
 
@@ -38,13 +40,6 @@
 #include <unicode/utf16.h>
 
 namespace blink {
-
-enum TextJustify {
-  kTextJustifyAuto = 0x0,
-  kTextJustifyNone = 0x1,
-  kTextJustifyInterWord = 0x2,
-  kTextJustifyDistribute = 0x3
-};
 
 class PLATFORM_EXPORT TextRun final {
   DISALLOW_NEW();
@@ -80,7 +75,7 @@ class PLATFORM_EXPORT TextRun final {
         direction_(static_cast<unsigned>(direction)),
         directional_override_(directional_override),
         disable_spacing_(false),
-        text_justify_(kTextJustifyAuto),
+        text_justify_(static_cast<unsigned>(TextJustify::kAuto)),
         normalize_space_(false),
         tab_size_(0) {
     data_.characters8 = c;
@@ -105,7 +100,7 @@ class PLATFORM_EXPORT TextRun final {
         direction_(static_cast<unsigned>(direction)),
         directional_override_(directional_override),
         disable_spacing_(false),
-        text_justify_(kTextJustifyAuto),
+        text_justify_(static_cast<unsigned>(TextJustify::kAuto)),
         normalize_space_(false),
         tab_size_(0) {
     data_.characters16 = c;
@@ -128,12 +123,12 @@ class PLATFORM_EXPORT TextRun final {
         direction_(static_cast<unsigned>(direction)),
         directional_override_(directional_override),
         disable_spacing_(false),
-        text_justify_(kTextJustifyAuto),
+        text_justify_(static_cast<unsigned>(TextJustify::kAuto)),
         normalize_space_(false),
         tab_size_(0) {
     if (!characters_length_) {
       is8_bit_ = true;
-      data_.characters8 = 0;
+      data_.characters8 = nullptr;
     } else if (string.Is8Bit()) {
       data_.characters8 = string.Characters8();
       is8_bit_ = true;
@@ -155,6 +150,10 @@ class PLATFORM_EXPORT TextRun final {
     result.SetText(Data16(start_offset), length);
     return result;
   }
+
+  // Returns the start index of a sub run if it was created by |SubRun|.
+  // std::numeric_limits<unsigned>::max() if not a sub run.
+  unsigned IndexOfSubRun(const TextRun&) const;
 
   UChar operator[](unsigned i) const {
     SECURITY_DCHECK(i < len_);
@@ -197,6 +196,8 @@ class PLATFORM_EXPORT TextRun final {
     U16_NEXT(Characters16(), i, len_, codepoint);
     return codepoint;
   }
+
+  const void* Bytes() const { return data_.bytes_; }
 
   bool Is8Bit() const { return is8_bit_; }
   unsigned length() const { return len_; }
@@ -276,6 +277,7 @@ class PLATFORM_EXPORT TextRun final {
   union {
     const LChar* characters8;
     const UChar* characters16;
+    const void* bytes_;
   } data_;
   // Marks the end of the characters buffer.  Default equals to m_len.
   unsigned characters_length_;

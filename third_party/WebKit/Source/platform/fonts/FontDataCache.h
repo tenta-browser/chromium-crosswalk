@@ -31,14 +31,15 @@
 #ifndef FontDataCache_h
 #define FontDataCache_h
 
-#include "platform/fonts/FontCache.h"
 #include "platform/fonts/FontPlatformData.h"
+#include "platform/fonts/SimpleFontData.h"
 #include "platform/wtf/HashMap.h"
-#include "platform/wtf/ListHashSet.h"
+#include "platform/wtf/LinkedHashSet.h"
 
 namespace blink {
 
-class SimpleFontData;
+enum ShouldRetain { kRetain, kDoNotRetain };
+enum PurgeSeverity { kPurgeIfNeeded, kForcePurge };
 
 struct FontDataCacheKeyHash {
   STATIC_ONLY(FontDataCacheKeyHash);
@@ -73,16 +74,11 @@ class FontDataCache {
  public:
   FontDataCache() {}
 
-  PassRefPtr<SimpleFontData> Get(const FontPlatformData*,
-                                 ShouldRetain = kRetain,
-                                 bool = false);
+  scoped_refptr<SimpleFontData> Get(const FontPlatformData*,
+                                    ShouldRetain = kRetain,
+                                    bool subpixel_ascent_descent = false);
   bool Contains(const FontPlatformData*) const;
   void Release(const SimpleFontData*);
-
-  // This is used by FontVerticalDataCache to mark all items with vertical data
-  // that are currently in cache as "in cache", which is later used to sweep the
-  // FontVerticalDataCache.
-  void MarkAllVerticalData();
 
   // Purges items in FontDataCache according to provided severity.
   // Returns true if any removal of cache items actually occurred.
@@ -92,11 +88,11 @@ class FontDataCache {
   bool PurgeLeastRecentlyUsed(int count);
 
   typedef HashMap<const FontPlatformData*,
-                  std::pair<RefPtr<SimpleFontData>, unsigned>,
+                  std::pair<scoped_refptr<SimpleFontData>, unsigned>,
                   FontDataCacheKeyHash>
       Cache;
   Cache cache_;
-  ListHashSet<RefPtr<SimpleFontData>> inactive_font_data_;
+  LinkedHashSet<scoped_refptr<SimpleFontData>> inactive_font_data_;
 };
 
 }  // namespace blink

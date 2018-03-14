@@ -76,9 +76,10 @@ void AppWindowContentsImpl::NativeWindowChanged(
                                            "updateAppWindowProperties", args));
 }
 
-void AppWindowContentsImpl::NativeWindowClosed() {
-  content::RenderViewHost* rvh = web_contents_->GetRenderViewHost();
-  rvh->Send(new ExtensionMsg_AppWindowClosed(rvh->GetRoutingID()));
+void AppWindowContentsImpl::NativeWindowClosed(bool send_onclosed) {
+  content::RenderFrameHost* rfh = web_contents_->GetMainFrame();
+  rfh->Send(
+      new ExtensionMsg_AppWindowClosed(rfh->GetRoutingID(), send_onclosed));
 }
 
 void AppWindowContentsImpl::OnWindowReady() {
@@ -97,9 +98,11 @@ WindowController* AppWindowContentsImpl::GetWindowController() const {
   return nullptr;
 }
 
-bool AppWindowContentsImpl::OnMessageReceived(const IPC::Message& message) {
+bool AppWindowContentsImpl::OnMessageReceived(
+    const IPC::Message& message,
+    content::RenderFrameHost* sender) {
   bool handled = true;
-  IPC_BEGIN_MESSAGE_MAP(AppWindowContentsImpl, message)
+  IPC_BEGIN_MESSAGE_MAP_WITH_PARAM(AppWindowContentsImpl, message, sender)
     IPC_MESSAGE_HANDLER(ExtensionHostMsg_UpdateDraggableRegions,
                         UpdateDraggableRegions)
     IPC_MESSAGE_UNHANDLED(handled = false)
@@ -114,8 +117,10 @@ void AppWindowContentsImpl::ReadyToCommitNavigation(
 }
 
 void AppWindowContentsImpl::UpdateDraggableRegions(
+    content::RenderFrameHost* sender,
     const std::vector<DraggableRegion>& regions) {
-  host_->UpdateDraggableRegions(regions);
+  if (!sender->GetParent())  // Only process events from the main frame.
+    host_->UpdateDraggableRegions(regions);
 }
 
 void AppWindowContentsImpl::SuspendRenderFrameHost(

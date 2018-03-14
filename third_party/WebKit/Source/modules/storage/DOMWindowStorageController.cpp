@@ -5,7 +5,7 @@
 #include "modules/storage/DOMWindowStorageController.h"
 
 #include "core/dom/Document.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/page/Page.h"
 #include "modules/storage/DOMWindowStorage.h"
 
@@ -16,7 +16,7 @@ DOMWindowStorageController::DOMWindowStorageController(Document& document)
   document.domWindow()->RegisterEventListenerObserver(this);
 }
 
-DEFINE_TRACE(DOMWindowStorageController) {
+void DOMWindowStorageController::Trace(blink::Visitor* visitor) {
   Supplement<Document>::Trace(visitor);
 }
 

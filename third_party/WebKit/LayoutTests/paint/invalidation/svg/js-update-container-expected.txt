@@ -4,10 +4,15 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGContainer g id='group'",
+          "rect": [0, 0, 76, 76],
+          "reason": "subtree"
+        },
+        {
+          "object": "LayoutSVGRect rect",
           "rect": [0, 0, 76, 76],
           "reason": "subtree"
         },

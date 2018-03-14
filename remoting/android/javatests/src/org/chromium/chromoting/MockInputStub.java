@@ -6,9 +6,8 @@ package org.chromium.chromoting;
 
 import android.graphics.PointF;
 
-import junit.framework.Assert;
+import org.junit.Assert;
 
-import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.chromoting.jni.TouchEventData;
 
 import java.util.Arrays;
@@ -389,7 +388,6 @@ public final class MockInputStub extends Assert implements InputStub {
         mTextEvents.add(new TextEvent(text));
     }
 
-    @SuppressFBWarnings("FE_FLOATING_POINT_EQUALITY")
     @Override
     public void sendTouchEvent(TouchEventData.EventType eventType, TouchEventData[] data) {
         assertNotNull(data);

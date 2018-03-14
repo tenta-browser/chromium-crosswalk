@@ -9,7 +9,9 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "media/base/video_decoder.h"
+#include "media/mojo/clients/mojo_media_log_service.h"
 #include "media/mojo/interfaces/video_decoder.mojom.h"
+#include "media/video/video_decode_accelerator.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
 
 namespace base {
@@ -19,6 +21,7 @@ class SingleThreadTaskRunner;
 namespace media {
 
 class GpuVideoAcceleratorFactories;
+class MediaLog;
 class MojoDecoderBufferWriter;
 
 // A VideoDecoder, for use in the renderer process, that proxies to a
@@ -30,7 +33,9 @@ class MojoVideoDecoder final : public VideoDecoder,
  public:
   MojoVideoDecoder(scoped_refptr<base::SingleThreadTaskRunner> task_runner,
                    GpuVideoAcceleratorFactories* gpu_factories,
-                   mojom::VideoDecoderPtr remote_decoder);
+                   MediaLog* media_log,
+                   mojom::VideoDecoderPtr remote_decoder,
+                   const RequestOverlayInfoCB& request_overlay_info_cb);
   ~MojoVideoDecoder() final;
 
   // VideoDecoder implementation.
@@ -49,8 +54,14 @@ class MojoVideoDecoder final : public VideoDecoder,
 
   // mojom::VideoDecoderClient implementation.
   void OnVideoFrameDecoded(
-      mojom::VideoFramePtr frame,
+      const scoped_refptr<VideoFrame>& frame,
+      bool can_read_without_stalling,
       const base::Optional<base::UnguessableToken>& release_token) final;
+  void RequestOverlayInfo(bool restart_for_transitions) final;
+
+  void set_writer_capacity_for_testing(uint32_t capacity) {
+    writer_capacity_ = capacity;
+  }
 
  private:
   void OnInitializeDone(bool status,
@@ -63,6 +74,9 @@ class MojoVideoDecoder final : public VideoDecoder,
 
   void OnReleaseMailbox(const base::UnguessableToken& release_token,
                         const gpu::SyncToken& release_sync_token);
+
+  // Forwards |overlay_info| to the remote decoder.
+  void OnOverlayInfoChanged(const OverlayInfo& overlay_info);
 
   // Cleans up callbacks and blocks future calls.
   void Stop();
@@ -84,12 +98,20 @@ class MojoVideoDecoder final : public VideoDecoder,
 
   mojom::VideoDecoderPtr remote_decoder_;
   std::unique_ptr<MojoDecoderBufferWriter> mojo_decoder_buffer_writer_;
+
+  uint32_t writer_capacity_ = 0;
+
   bool remote_decoder_bound_ = false;
   bool has_connection_error_ = false;
-  mojo::AssociatedBinding<VideoDecoderClient> client_binding_;
+  mojo::AssociatedBinding<mojom::VideoDecoderClient> client_binding_;
+  MojoMediaLogService media_log_service_;
+  mojo::AssociatedBinding<mojom::MediaLog> media_log_binding_;
+  RequestOverlayInfoCB request_overlay_info_cb_;
+  bool overlay_info_requested_ = false;
 
   bool initialized_ = false;
   bool needs_bitstream_conversion_ = false;
+  bool can_read_without_stalling_ = true;
   int32_t max_decode_requests_ = 1;
 
   base::WeakPtr<MojoVideoDecoder> weak_this_;

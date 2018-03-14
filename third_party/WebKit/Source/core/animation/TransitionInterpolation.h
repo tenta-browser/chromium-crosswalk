@@ -5,6 +5,7 @@
 #ifndef TransitionInterpolation_h
 #define TransitionInterpolation_h
 
+#include "core/CoreExport.h"
 #include "core/animation/CompositorAnimations.h"
 #include "core/animation/Interpolation.h"
 #include "core/animation/InterpolationType.h"
@@ -14,16 +15,38 @@ namespace blink {
 class StyleResolverState;
 class InterpolationType;
 
-class TransitionInterpolation : public Interpolation {
+// See the documentation of Interpolation for general information about this
+// class hierarchy.
+//
+// The primary difference between TransitionInterpolation and other
+// Interpolation subclasses is that it must store additional data required for
+// retargeting transition effects that were sent to the compositor thread.
+// Retargeting a transition involves interrupting an in-progress transition and
+// creating a new transition from the current state to the new end state.
+//
+// The TransitionInterpolation subclass stores the start and end keyframes as
+// InterpolationValue objects, with an InterpolationType object that applies to
+// both InterpolationValues. It additionally stores AnimatableValue objects
+// corresponding to start and end keyframes as communicated to the compositor
+// thread. Together, this is equivalent to representing the start and end
+// keyframes as TransitionPropertySpecificKeyframe objects with the added
+// constraint that they share an InterpolationType.
+// TODO(crbug.com/442163): Store information for communication with the
+// compositor without using AnimatableValue objects.
+//
+// During the effect application phase of animation computation, the current
+// value of the property is applied to the element by calling the Apply
+// function.
+class CORE_EXPORT TransitionInterpolation : public Interpolation {
  public:
-  static PassRefPtr<TransitionInterpolation> Create(
+  static scoped_refptr<TransitionInterpolation> Create(
       const PropertyHandle& property,
       const InterpolationType& type,
       InterpolationValue&& start,
       InterpolationValue&& end,
-      const RefPtr<AnimatableValue> compositor_start,
-      const RefPtr<AnimatableValue> compositor_end) {
-    return AdoptRef(new TransitionInterpolation(
+      const scoped_refptr<AnimatableValue> compositor_start,
+      const scoped_refptr<AnimatableValue> compositor_end) {
+    return base::AdoptRef(new TransitionInterpolation(
         property, type, std::move(start), std::move(end),
         std::move(compositor_start), std::move(compositor_end)));
   }
@@ -36,7 +59,7 @@ class TransitionInterpolation : public Interpolation {
 
   std::unique_ptr<TypedInterpolationValue> GetInterpolatedValue() const;
 
-  RefPtr<AnimatableValue> GetInterpolatedCompositorValue() const;
+  scoped_refptr<AnimatableValue> GetInterpolatedCompositorValue() const;
 
   void Interpolate(int iteration, double fraction) final;
 
@@ -45,8 +68,8 @@ class TransitionInterpolation : public Interpolation {
                           const InterpolationType& type,
                           InterpolationValue&& start,
                           InterpolationValue&& end,
-                          const RefPtr<AnimatableValue> compositor_start,
-                          const RefPtr<AnimatableValue> compositor_end)
+                          const scoped_refptr<AnimatableValue> compositor_start,
+                          const scoped_refptr<AnimatableValue> compositor_end)
       : property_(property),
         type_(type),
         start_(std::move(start)),
@@ -56,9 +79,8 @@ class TransitionInterpolation : public Interpolation {
         compositor_end_(std::move(compositor_end)),
         cached_interpolable_value_(merge_.start_interpolable_value->Clone()) {
     DCHECK(merge_);
-    DCHECK_EQ(
-        compositor_start_ && compositor_end_,
-        CompositorAnimations::IsCompositableProperty(property_.CssProperty()));
+    DCHECK_EQ(compositor_start_ && compositor_end_,
+              property_.GetCSSProperty().IsCompositableProperty());
   }
 
  private:
@@ -70,8 +92,8 @@ class TransitionInterpolation : public Interpolation {
   const InterpolationValue start_;
   const InterpolationValue end_;
   const PairwiseInterpolationValue merge_;
-  const RefPtr<AnimatableValue> compositor_start_;
-  const RefPtr<AnimatableValue> compositor_end_;
+  const scoped_refptr<AnimatableValue> compositor_start_;
+  const scoped_refptr<AnimatableValue> compositor_end_;
 
   mutable double cached_fraction_ = 0;
   mutable int cached_iteration_ = 0;

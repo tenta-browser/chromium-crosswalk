@@ -16,7 +16,9 @@
 
 #include <stdint.h>
 
+#include "base/compiler_specific.h"
 #include "gtest/gtest.h"
+#include "test/gtest_death.h"
 
 #if defined(OS_WIN)
 #include <crtdbg.h>
@@ -40,52 +42,52 @@ TEST(AlignedAllocator, AlignedVector) {
   AlignedVector<NaturalAlignedStruct> natural_aligned_vector;
   natural_aligned_vector.push_back(NaturalAlignedStruct());
   EXPECT_TRUE(
-      IsAligned(&natural_aligned_vector[0], ALIGNOF(NaturalAlignedStruct)));
+      IsAligned(&natural_aligned_vector[0], alignof(NaturalAlignedStruct)));
 
   natural_aligned_vector.resize(3);
   EXPECT_TRUE(
-      IsAligned(&natural_aligned_vector[0], ALIGNOF(NaturalAlignedStruct)));
+      IsAligned(&natural_aligned_vector[0], alignof(NaturalAlignedStruct)));
   EXPECT_TRUE(
-      IsAligned(&natural_aligned_vector[1], ALIGNOF(NaturalAlignedStruct)));
+      IsAligned(&natural_aligned_vector[1], alignof(NaturalAlignedStruct)));
   EXPECT_TRUE(
-      IsAligned(&natural_aligned_vector[2], ALIGNOF(NaturalAlignedStruct)));
+      IsAligned(&natural_aligned_vector[2], alignof(NaturalAlignedStruct)));
 
   // Test a structure that declares its own alignment.
-  struct ALIGNAS(32) AlignedStruct {
+  struct alignas(16) AlignedStruct {
     int i;
   };
-  ASSERT_EQ(ALIGNOF(AlignedStruct), 32u);
+  ASSERT_EQ(alignof(AlignedStruct), 16u);
 
   AlignedVector<AlignedStruct> aligned_vector;
   aligned_vector.push_back(AlignedStruct());
-  EXPECT_TRUE(IsAligned(&aligned_vector[0], ALIGNOF(AlignedStruct)));
+  EXPECT_TRUE(IsAligned(&aligned_vector[0], alignof(AlignedStruct)));
 
   aligned_vector.resize(3);
-  EXPECT_TRUE(IsAligned(&aligned_vector[0], ALIGNOF(AlignedStruct)));
-  EXPECT_TRUE(IsAligned(&aligned_vector[1], ALIGNOF(AlignedStruct)));
-  EXPECT_TRUE(IsAligned(&aligned_vector[2], ALIGNOF(AlignedStruct)));
+  EXPECT_TRUE(IsAligned(&aligned_vector[0], alignof(AlignedStruct)));
+  EXPECT_TRUE(IsAligned(&aligned_vector[1], alignof(AlignedStruct)));
+  EXPECT_TRUE(IsAligned(&aligned_vector[2], alignof(AlignedStruct)));
 
   // Try a custom alignment. Since the structure itself doesn’t specify an
   // alignment constraint, only the base address will be aligned to the
   // requested boundary.
-  AlignedVector<NaturalAlignedStruct, 64> custom_aligned_vector;
+  AlignedVector<NaturalAlignedStruct, 32> custom_aligned_vector;
   custom_aligned_vector.push_back(NaturalAlignedStruct());
-  EXPECT_TRUE(IsAligned(&custom_aligned_vector[0], 64));
+  EXPECT_TRUE(IsAligned(&custom_aligned_vector[0], 32));
 
   // Try a structure with a pretty big alignment request.
-  struct ALIGNAS(1024) BigAlignedStruct {
+  struct alignas(64) BigAlignedStruct {
     int i;
   };
-  ASSERT_EQ(ALIGNOF(BigAlignedStruct), 1024u);
+  ASSERT_EQ(alignof(BigAlignedStruct), 64u);
 
   AlignedVector<BigAlignedStruct> big_aligned_vector;
   big_aligned_vector.push_back(BigAlignedStruct());
-  EXPECT_TRUE(IsAligned(&big_aligned_vector[0], ALIGNOF(BigAlignedStruct)));
+  EXPECT_TRUE(IsAligned(&big_aligned_vector[0], alignof(BigAlignedStruct)));
 
   big_aligned_vector.resize(3);
-  EXPECT_TRUE(IsAligned(&big_aligned_vector[0], ALIGNOF(BigAlignedStruct)));
-  EXPECT_TRUE(IsAligned(&big_aligned_vector[1], ALIGNOF(BigAlignedStruct)));
-  EXPECT_TRUE(IsAligned(&big_aligned_vector[2], ALIGNOF(BigAlignedStruct)));
+  EXPECT_TRUE(IsAligned(&big_aligned_vector[0], alignof(BigAlignedStruct)));
+  EXPECT_TRUE(IsAligned(&big_aligned_vector[1], alignof(BigAlignedStruct)));
+  EXPECT_TRUE(IsAligned(&big_aligned_vector[2], alignof(BigAlignedStruct)));
 }
 
 void BadAlignmentTest() {
@@ -109,7 +111,7 @@ void BadAlignmentTest() {
 }
 
 TEST(AlignedAllocatorDeathTest, BadAlignment) {
-  ASSERT_DEATH(BadAlignmentTest(), "");
+  ASSERT_DEATH_CRASH(BadAlignmentTest(), "");
 }
 
 }  // namespace

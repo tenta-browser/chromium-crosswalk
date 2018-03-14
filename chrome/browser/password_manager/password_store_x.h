@@ -83,14 +83,16 @@ class PasswordStoreX : public password_manager::PasswordStoreDefault {
     virtual bool GetAllLogins(
         std::vector<std::unique_ptr<autofill::PasswordForm>>* forms)
         WARN_UNUSED_RESULT = 0;
+
+    // Returns the background thread in case the backend uses one, or null.
+    virtual scoped_refptr<base::SequencedTaskRunner>
+    GetBackgroundTaskRunner() = 0;
   };
 
-  // Takes ownership of |login_db| and |backend|. |backend| may be NULL in which
-  // case this PasswordStoreX will act the same as PasswordStoreDefault.
-  PasswordStoreX(scoped_refptr<base::SingleThreadTaskRunner> main_thread_runner,
-                 scoped_refptr<base::SingleThreadTaskRunner> db_thread_runner,
-                 std::unique_ptr<password_manager::LoginDatabase> login_db,
-                 NativeBackend* backend);
+  // |backend| may be NULL in which case this PasswordStoreX will act the same
+  // as PasswordStoreDefault.
+  PasswordStoreX(std::unique_ptr<password_manager::LoginDatabase> login_db,
+                 std::unique_ptr<NativeBackend> backend);
 
  private:
   friend class PasswordStoreXTest;
@@ -98,6 +100,8 @@ class PasswordStoreX : public password_manager::PasswordStoreDefault {
   ~PasswordStoreX() override;
 
   // Implements PasswordStore interface.
+  scoped_refptr<base::SequencedTaskRunner> CreateBackgroundTaskRunner()
+      const override;
   password_manager::PasswordStoreChangeList AddLoginImpl(
       const autofill::PasswordForm& form) override;
   password_manager::PasswordStoreChangeList UpdateLoginImpl(
@@ -118,6 +122,8 @@ class PasswordStoreX : public password_manager::PasswordStoreDefault {
       const base::Callback<bool(const GURL&)>& origin_filter) override;
   std::vector<std::unique_ptr<autofill::PasswordForm>> FillMatchingLogins(
       const FormDigest& form) override;
+  std::vector<std::unique_ptr<autofill::PasswordForm>>
+  FillLoginsForSameOrganizationName(const std::string& signon_realm) override;
   bool FillAutofillableLogins(
       std::vector<std::unique_ptr<autofill::PasswordForm>>* forms) override;
   bool FillBlacklistLogins(

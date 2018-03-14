@@ -12,9 +12,10 @@
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
+#include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/values.h"
 #include "base/version.h"
 #include "chrome/browser/net/sth_distributor_provider.h"
@@ -50,70 +51,71 @@ const uint8_t kPublicKeySHA256[32] = {
 
 const char kSTHSetFetcherManifestName[] = "Signed Tree Heads";
 
-STHSetComponentInstallerTraits::STHSetComponentInstallerTraits(
+STHSetComponentInstallerPolicy::STHSetComponentInstallerPolicy(
     net::ct::STHObserver* sth_observer)
     : sth_observer_(sth_observer), weak_ptr_factory_(this) {}
 
-STHSetComponentInstallerTraits::~STHSetComponentInstallerTraits() {}
+STHSetComponentInstallerPolicy::~STHSetComponentInstallerPolicy() {}
 
-bool STHSetComponentInstallerTraits::
+bool STHSetComponentInstallerPolicy::
     SupportsGroupPolicyEnabledComponentUpdates() const {
   return false;
 }
 
 // Public data is delivered via this component, no need for encryption.
-bool STHSetComponentInstallerTraits::RequiresNetworkEncryption() const {
+bool STHSetComponentInstallerPolicy::RequiresNetworkEncryption() const {
   return false;
 }
 
 update_client::CrxInstaller::Result
-STHSetComponentInstallerTraits::OnCustomInstall(
+STHSetComponentInstallerPolicy::OnCustomInstall(
     const base::DictionaryValue& manifest,
     const base::FilePath& install_dir) {
   return update_client::CrxInstaller::Result(0);  // Nothing custom here.
 }
 
-void STHSetComponentInstallerTraits::ComponentReady(
+void STHSetComponentInstallerPolicy::OnCustomUninstall() {}
+
+void STHSetComponentInstallerPolicy::ComponentReady(
     const base::Version& version,
     const base::FilePath& install_dir,
     std::unique_ptr<base::DictionaryValue> manifest) {
-  const base::Closure load_sths_closure = base::Bind(
-      &STHSetComponentInstallerTraits::LoadSTHsFromDisk,
-      weak_ptr_factory_.GetWeakPtr(), GetInstalledPath(install_dir), version);
-
-  content::BrowserThread::PostAfterStartupTask(
-      FROM_HERE, content::BrowserThread::GetBlockingPool(), load_sths_closure);
+  base::PostTaskWithTraits(
+      FROM_HERE, {base::TaskPriority::BACKGROUND, base::MayBlock()},
+      base::BindOnce(&STHSetComponentInstallerPolicy::LoadSTHsFromDisk,
+                     weak_ptr_factory_.GetWeakPtr(),
+                     GetInstalledPath(install_dir), version));
 }
 
 // Called during startup and installation before ComponentReady().
-bool STHSetComponentInstallerTraits::VerifyInstallation(
+bool STHSetComponentInstallerPolicy::VerifyInstallation(
     const base::DictionaryValue& manifest,
     const base::FilePath& install_dir) const {
   return base::PathExists(GetInstalledPath(install_dir));
 }
 
-base::FilePath STHSetComponentInstallerTraits::GetRelativeInstallDir() const {
+base::FilePath STHSetComponentInstallerPolicy::GetRelativeInstallDir() const {
   return base::FilePath(FILE_PATH_LITERAL("CertificateTransparency"));
 }
 
-void STHSetComponentInstallerTraits::GetHash(std::vector<uint8_t>* hash) const {
+void STHSetComponentInstallerPolicy::GetHash(std::vector<uint8_t>* hash) const {
   hash->assign(std::begin(kPublicKeySHA256), std::end(kPublicKeySHA256));
 }
 
-std::string STHSetComponentInstallerTraits::GetName() const {
+std::string STHSetComponentInstallerPolicy::GetName() const {
   return kSTHSetFetcherManifestName;
 }
 
 update_client::InstallerAttributes
-STHSetComponentInstallerTraits::GetInstallerAttributes() const {
+STHSetComponentInstallerPolicy::GetInstallerAttributes() const {
   return update_client::InstallerAttributes();
 }
 
-std::vector<std::string> STHSetComponentInstallerTraits::GetMimeTypes() const {
+std::vector<std::string> STHSetComponentInstallerPolicy::GetMimeTypes() const {
   return std::vector<std::string>();
 }
 
-void STHSetComponentInstallerTraits::LoadSTHsFromDisk(
+void STHSetComponentInstallerPolicy::LoadSTHsFromDisk(
     const base::FilePath& sths_path,
     const base::Version& version) {
   if (sths_path.empty())
@@ -166,7 +168,7 @@ void STHSetComponentInstallerTraits::LoadSTHsFromDisk(
   }
 }
 
-void STHSetComponentInstallerTraits::OnJsonParseSuccess(
+void STHSetComponentInstallerPolicy::OnJsonParseSuccess(
     const std::string& log_id,
     std::unique_ptr<base::Value> parsed_json) {
   net::ct::SignedTreeHead signed_tree_head;
@@ -179,13 +181,14 @@ void STHSetComponentInstallerTraits::OnJsonParseSuccess(
 
   // The log id is not a part of the response, fill in manually.
   signed_tree_head.log_id = log_id;
-  content::BrowserThread::PostTask(
-      content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&net::ct::STHObserver::NewSTHObserved,
-                 base::Unretained(sth_observer_), signed_tree_head));
+  content::BrowserThread::GetTaskRunnerForThread(content::BrowserThread::IO)
+      ->PostTask(
+          FROM_HERE,
+          base::BindOnce(&net::ct::STHObserver::NewSTHObserved,
+                         base::Unretained(sth_observer_), signed_tree_head));
 }
 
-void STHSetComponentInstallerTraits::OnJsonParseError(
+void STHSetComponentInstallerPolicy::OnJsonParseError(
     const std::string& log_id,
     const std::string& error) {
   DVLOG(1) << "STH loading failed: " << error
@@ -201,11 +204,8 @@ void RegisterSTHSetComponent(ComponentUpdateService* cus,
   // The global STHDistributor should have been created by this point.
   DCHECK(distributor);
 
-  std::unique_ptr<ComponentInstallerTraits> traits(
-      new STHSetComponentInstallerTraits(distributor));
-  // |cus| will take ownership of |installer| during installer->Register(cus).
-  DefaultComponentInstaller* installer =
-      new DefaultComponentInstaller(std::move(traits));
+  auto installer = base::MakeRefCounted<ComponentInstaller>(
+      std::make_unique<STHSetComponentInstallerPolicy>(distributor));
   installer->Register(cus, base::Closure());
 }
 

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/containers/circular_deque.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/synchronization/waitable_event.h"
@@ -52,6 +53,7 @@ const int kMaxCompletedTries = 3;
 const bool kPowerRequired = true;
 const bool kUserRequested = true;
 const int kAttemptCount = 1;
+const std::string kRequestOrigin("abc.xyz");
 }  // namespace
 
 class ObserverStub : public RequestCoordinator::Observer {
@@ -213,7 +215,7 @@ class RequestCoordinatorTest : public testing::Test {
 
   void CallConnectionTypeObserver() {
     if (coordinator()->connection_notifier_) {
-      coordinator()->connection_notifier_->OnConnectionTypeChanged(
+      coordinator()->connection_notifier_->OnNetworkChanged(
           GetConnectionType());
     }
   }
@@ -266,6 +268,7 @@ class RequestCoordinatorTest : public testing::Test {
     params.url = kUrl1;
     params.client_id = kClientId1;
     params.user_requested = kUserRequested;
+    params.request_origin = kRequestOrigin;
     return coordinator()->SavePageLater(params);
   }
 
@@ -276,6 +279,7 @@ class RequestCoordinatorTest : public testing::Test {
     params.client_id = kClientId1;
     params.user_requested = kUserRequested;
     params.availability = availability;
+    params.request_origin = kRequestOrigin;
     return coordinator()->SavePageLater(params);
   }
 
@@ -310,7 +314,7 @@ class RequestCoordinatorTest : public testing::Test {
     return coordinator()->disabled_requests_;
   }
 
-  const std::deque<int64_t>& prioritized_requests() {
+  const base::circular_deque<int64_t>& prioritized_requests() {
     return coordinator()->prioritized_requests_;
   }
 
@@ -564,6 +568,7 @@ TEST_F(RequestCoordinatorTest, SavePageLater) {
   params.url = kUrl1;
   params.client_id = kClientId1;
   params.original_url = kUrl2;
+  params.request_origin = kRequestOrigin;
   EXPECT_NE(0, coordinator()->SavePageLater(params));
 
   // Expect that a request got placed on the queue.
@@ -583,6 +588,7 @@ TEST_F(RequestCoordinatorTest, SavePageLater) {
   EXPECT_EQ(kClientId1, last_requests().at(0)->client_id());
   EXPECT_TRUE(last_requests().at(0)->user_requested());
   EXPECT_EQ(kUrl2, last_requests().at(0)->original_url());
+  EXPECT_EQ(kRequestOrigin, last_requests().at(0)->request_origin());
 
   // Expect that the scheduler got notified.
   SchedulerStub* scheduler_stub =
@@ -784,6 +790,12 @@ TEST_F(RequestCoordinatorTest, OfflinerDoneRequestFailedNoRetryFailure) {
   EXPECT_TRUE(observer().completed_called());
   EXPECT_EQ(RequestCoordinator::BackgroundSavePageResult::LOADING_FAILURE,
             observer().last_status());
+  // We should have a histogram entry for the effective network conditions
+  // when this failed request began.
+  histograms().ExpectBucketCount(
+      "OfflinePages.Background.EffectiveConnectionType.OffliningStartType."
+      "bookmark",
+      net::NetworkChangeNotifier::CONNECTION_UNKNOWN, 1);
 }
 
 TEST_F(RequestCoordinatorTest, OfflinerDoneRequestFailedNoNextFailure) {
@@ -842,7 +854,7 @@ TEST_F(RequestCoordinatorTest, OfflinerDoneForegroundCancel) {
   EXPECT_EQ(0L, last_requests().at(0)->completed_attempt_count());
 }
 
-TEST_F(RequestCoordinatorTest, OfflinerDonePrerenderingCancel) {
+TEST_F(RequestCoordinatorTest, OfflinerDoneOffliningCancel) {
   // Add a request to the queue, wait for callbacks to finish.
   offline_pages::SavePageRequest request(kRequestId1, kUrl1, kClientId1,
                                          base::Time::Now(), kUserRequested);
@@ -861,7 +873,7 @@ TEST_F(RequestCoordinatorTest, OfflinerDonePrerenderingCancel) {
 
   // Request still in the queue.
   EXPECT_EQ(1UL, last_requests().size());
-  // Verify prerendering cancel not counted as an attempt after all.
+  // Verify offlining cancel not counted as an attempt after all.
   const std::unique_ptr<SavePageRequest>& found_request =
       last_requests().front();
   EXPECT_EQ(0L, found_request->completed_attempt_count());
@@ -999,7 +1011,8 @@ TEST_F(RequestCoordinatorTest,
   EXPECT_FALSE(OfflinerWasCanceled());
 }
 
-// This tests a StopProcessing call after the prerenderer has been started.
+// This tests a StopProcessing call after the background loading has been
+// started.
 TEST_F(RequestCoordinatorTest,
        StartScheduledProcessingThenStopProcessingLater) {
   // Add a request to the queue, wait for callbacks to finish.
@@ -1028,7 +1041,7 @@ TEST_F(RequestCoordinatorTest,
   EXPECT_TRUE(state() == RequestCoordinatorState::OFFLINING);
   EXPECT_FALSE(state() == RequestCoordinatorState::PICKING);
 
-  // Now we cancel it while the prerenderer is busy.
+  // Now we cancel it while the background loader is busy.
   coordinator()->StopProcessing(Offliner::REQUEST_COORDINATOR_CANCELED);
 
   // Let the async callbacks in the cancel run.
@@ -1099,7 +1112,7 @@ TEST_F(RequestCoordinatorTest, MarkRequestCompleted) {
   coordinator()->MarkRequestCompleted(request_id);
   PumpLoop();
 
-  // Our observer should have seen SUCCESS instead of REMOVED.
+  // Our observer should have seen SUCCESS instead of USER_CANCELED.
   EXPECT_EQ(RequestCoordinator::BackgroundSavePageResult::SUCCESS,
             observer().last_status());
   EXPECT_TRUE(observer().completed_called());
@@ -1301,13 +1314,7 @@ TEST_F(RequestCoordinatorTest, GetAllRequests) {
   EXPECT_EQ(kRequestId2, last_requests().at(1)->request_id());
 }
 
-#if defined(OS_IOS)
-// Flaky on IOS. http://crbug/663311
-#define MAYBE_PauseAndResumeObserver DISABLED_PauseAndResumeObserver
-#else
-#define MAYBE_PauseAndResumeObserver PauseAndResumeObserver
-#endif
-TEST_F(RequestCoordinatorTest, MAYBE_PauseAndResumeObserver) {
+TEST_F(RequestCoordinatorTest, PauseAndResumeObserver) {
   // Set low-end device status to actual status.
   SetIsLowEndDeviceForTest(base::SysInfo::IsLowEndDevice());
 
@@ -1359,7 +1366,7 @@ TEST_F(RequestCoordinatorTest, RemoveRequest) {
   PumpLoop();
 
   EXPECT_TRUE(observer().completed_called());
-  EXPECT_EQ(RequestCoordinator::BackgroundSavePageResult::REMOVED,
+  EXPECT_EQ(RequestCoordinator::BackgroundSavePageResult::USER_CANCELED,
             observer().last_status());
   EXPECT_EQ(1UL, last_remove_results().size());
   EXPECT_EQ(kRequestId1, std::get<0>(last_remove_results().at(0)));

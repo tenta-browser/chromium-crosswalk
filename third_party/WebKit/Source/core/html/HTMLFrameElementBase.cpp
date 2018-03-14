@@ -26,17 +26,17 @@
 #include "bindings/core/v8/BindingSecurity.h"
 #include "bindings/core/v8/ScriptController.h"
 #include "bindings/core/v8/ScriptEventListener.h"
-#include "bindings/core/v8/V8Binding.h"
-#include "core/HTMLNames.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/Attribute.h"
 #include "core/dom/Document.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/RemoteFrame.h"
 #include "core/frame/RemoteFrameView.h"
 #include "core/frame/csp/ContentSecurityPolicy.h"
 #include "core/html/parser/HTMLParserIdioms.h"
+#include "core/html_names.h"
 #include "core/loader/FrameLoader.h"
 #include "core/page/FocusController.h"
 #include "core/page/Page.h"
@@ -164,6 +164,23 @@ void HTMLFrameElementBase::ParseAttribute(
   }
 }
 
+scoped_refptr<SecurityOrigin> HTMLFrameElementBase::GetOriginForFeaturePolicy()
+    const {
+  // Sandboxed frames have a unique origin.
+  if (GetSandboxFlags() & kSandboxOrigin)
+    return SecurityOrigin::CreateUnique();
+
+  // If the frame will inherit its origin from the owner, then use the owner's
+  // origin when constructing the container policy.
+  KURL url = GetDocument().CompleteURL(url_);
+  if (Document::ShouldInheritSecurityOriginFromOwner(url))
+    return GetDocument().GetSecurityOrigin();
+
+  // Other frames should use the origin defined by the absolute URL (this will
+  // be a unique origin for data: URLs)
+  return SecurityOrigin::Create(url);
+}
+
 void HTMLFrameElementBase::SetNameAndOpenURL() {
   frame_name_ = GetNameAttribute();
   OpenURL();
@@ -172,6 +189,9 @@ void HTMLFrameElementBase::SetNameAndOpenURL() {
 Node::InsertionNotificationRequest HTMLFrameElementBase::InsertedInto(
     ContainerNode* insertion_point) {
   HTMLFrameOwnerElement::InsertedInto(insertion_point);
+  // We should never have a content frame at the point where we got inserted
+  // into a tree.
+  SECURITY_CHECK(!ContentFrame());
   return kInsertionShouldCallDidNotifySubtreeInsertions;
 }
 
@@ -182,24 +202,17 @@ void HTMLFrameElementBase::DidNotifySubtreeInsertionsToDocument() {
   if (!SubframeLoadingDisabler::CanLoadFrame(*this))
     return;
 
-  // We should never have a content frame at the point where we got inserted
-  // into a tree.
-  SECURITY_CHECK(!ContentFrame());
-
-  SetNameAndOpenURL();
+  // It's possible that we already have ContentFrame(). Arbitrary user code can
+  // run between InsertedInto() and DidNotifySubtreeInsertionsToDocument().
+  if (!ContentFrame())
+    SetNameAndOpenURL();
 }
 
-void HTMLFrameElementBase::AttachLayoutTree(const AttachContext& context) {
+void HTMLFrameElementBase::AttachLayoutTree(AttachContext& context) {
   HTMLFrameOwnerElement::AttachLayoutTree(context);
 
-  if (GetLayoutPart()) {
-    if (Frame* frame = ContentFrame()) {
-      if (frame->IsLocalFrame())
-        SetWidget(ToLocalFrame(frame)->View());
-      else if (frame->IsRemoteFrame())
-        SetWidget(ToRemoteFrame(frame)->View());
-    }
-  }
+  if (GetLayoutEmbeddedContent() && ContentFrame())
+    SetEmbeddedContentView(ContentFrame()->View());
 }
 
 void HTMLFrameElementBase::SetLocation(const String& str) {

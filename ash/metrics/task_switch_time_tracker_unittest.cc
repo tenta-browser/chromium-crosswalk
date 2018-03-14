@@ -6,7 +6,7 @@
 
 #include <string>
 
-#include "ash/test/task_switch_time_tracker_test_api.h"
+#include "ash/metrics/task_switch_time_tracker_test_api.h"
 #include "base/test/histogram_tester.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -40,22 +40,22 @@ class TaskSwitchTimeTrackerTest : public testing::Test {
   std::unique_ptr<base::HistogramTester> histogram_tester_;
 
   // A Test API that wraps the test target.
-  std::unique_ptr<test::TaskSwitchTimeTrackerTestAPI> time_tracker_test_api_;
+  std::unique_ptr<TaskSwitchTimeTrackerTestAPI> time_tracker_test_api_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TaskSwitchTimeTrackerTest);
 };
 
-TaskSwitchTimeTrackerTest::TaskSwitchTimeTrackerTest() {}
+TaskSwitchTimeTrackerTest::TaskSwitchTimeTrackerTest() = default;
 
-TaskSwitchTimeTrackerTest::~TaskSwitchTimeTrackerTest() {}
+TaskSwitchTimeTrackerTest::~TaskSwitchTimeTrackerTest() = default;
 
 void TaskSwitchTimeTrackerTest::SetUp() {
   testing::Test::SetUp();
 
   histogram_tester_.reset(new base::HistogramTester());
   time_tracker_test_api_.reset(
-      new test::TaskSwitchTimeTrackerTestAPI(kHistogramName));
+      new TaskSwitchTimeTrackerTestAPI(kHistogramName));
   // The TaskSwitchTimeTracker interprets a value of base::TimeTicks() as if the
   // |last_action_time_| has not been set.
   time_tracker_test_api_->Advance(base::TimeDelta::FromMilliseconds(1));

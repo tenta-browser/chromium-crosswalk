@@ -8,7 +8,6 @@
 
 #include "base/files/file_util.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
@@ -804,7 +803,7 @@ class BlockableHostResolver : public HostResolver {
 
     // Indicate to the caller that a request was received.
     EXPECT_TRUE(waiting_for_resolve_);
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 
     // This line is intentionally after action_.Run(), since one of the
     // tests does a cancellation inside of Resolve(), and it is more
@@ -1086,21 +1085,21 @@ TEST_F(ProxyResolverV8TracingWrapperTest, MultipleResolvers) {
   host_resolver0.rules()->AddRule("*", "133.122.100.200");
   std::unique_ptr<ProxyResolver> resolver0 =
       CreateResolver(nullptr, &host_resolver0,
-                     base::WrapUnique(new MockErrorObserver), "dns.js");
+                     std::make_unique<MockErrorObserver>(), "dns.js");
 
   // ------------------------
   // Setup resolver1
   // ------------------------
   std::unique_ptr<ProxyResolver> resolver1 =
       CreateResolver(nullptr, &host_resolver0,
-                     base::WrapUnique(new MockErrorObserver), "dns.js");
+                     std::make_unique<MockErrorObserver>(), "dns.js");
 
   // ------------------------
   // Setup resolver2
   // ------------------------
   std::unique_ptr<ProxyResolver> resolver2 =
       CreateResolver(nullptr, &host_resolver0,
-                     base::WrapUnique(new MockErrorObserver), "simple.js");
+                     std::make_unique<MockErrorObserver>(), "simple.js");
 
   // ------------------------
   // Setup resolver3
@@ -1109,7 +1108,7 @@ TEST_F(ProxyResolverV8TracingWrapperTest, MultipleResolvers) {
   host_resolver3.rules()->AddRule("foo", "166.155.144.33");
   std::unique_ptr<ProxyResolver> resolver3 =
       CreateResolver(nullptr, &host_resolver3,
-                     base::WrapUnique(new MockErrorObserver), "simple_dns.js");
+                     std::make_unique<MockErrorObserver>(), "simple_dns.js");
 
   // ------------------------
   // Queue up work for each resolver (which will be running in parallel).

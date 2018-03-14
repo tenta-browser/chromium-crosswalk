@@ -18,11 +18,9 @@
  * Boston, MA 02110-1301, USA.
  */
 
-// https://dev.w3.org/csswg/cssom/#the-stylesheet-interface
+// https://drafts.csswg.org/cssom/#the-stylesheet-interface
 
-[
-    DependentLifetime,
-] interface StyleSheet {
+interface StyleSheet {
     readonly attribute DOMString type;
     readonly attribute DOMString? href;
     // TODO(foolip): ownerNode should be (Element or ProcessingInstruction).

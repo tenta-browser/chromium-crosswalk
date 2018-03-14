@@ -4,10 +4,17 @@
   "interface_provider_specs": {
     "service_manager:connector": {
       "provides": {
+        // Interfaces needed by a generic client of content browser.
+        "app": [
+          "discardable_memory::mojom::DiscardableSharedMemoryManager",
+          "memory_instrumentation::mojom::Coordinator"
+        ],
+        "font_cache": [
+          "content::mojom::FontCacheWin"
+        ],
         "gpu": [
           "content::mojom::FieldTrialRecorder",
-          "media::mojom::AndroidOverlayProvider",
-          "memory_instrumentation::mojom::Coordinator"
+          "media::mojom::AndroidOverlayProvider"
         ],
         "plugin": [
           "discardable_memory::mojom::DiscardableSharedMemoryManager",
@@ -16,32 +23,43 @@
         "renderer": [
           "blink::mojom::BackgroundFetchService",
           "blink::mojom::BackgroundSyncService",
+          "blink::mojom::BlobRegistry",
           "blink::mojom::BroadcastChannelProvider",
-          "blink::mojom::BudgetService",
           "blink::mojom::Hyphenation",
           "blink::mojom::MimeRegistry",
           "blink::mojom::NotificationService",
           "blink::mojom::OffscreenCanvasProvider",
-          "blink::mojom::PermissionService",
-          "blink::mojom::WebSocket",
+          "blink::mojom::ReportingServiceProxy",
+          "blink::mojom::WebDatabaseHost",
+          "content::mojom::ClipboardHost",
           "content::mojom::FieldTrialRecorder",
+          "content::mojom::FileUtilitiesHost",
+          "content::mojom::FrameSinkProvider",
+          "content::mojom::MediaStreamDispatcherHost",
           "content::mojom::MemoryCoordinatorHandle",
           "content::mojom::PushMessaging",
-          "content::mojom::FrameSinkProvider",
+          "content::mojom::QuotaDispatcherHost",
+          "content::mojom::RendererHost",
+          "content::mojom::ReportingServiceProxy",
           "content::mojom::ServiceWorkerDispatcherHost",
           "content::mojom::StoragePartitionService",
           "content::mojom::URLLoaderFactory",
           "content::mojom::VideoCaptureHost",
+          "content::mojom::WorkerURLLoaderFactoryProvider",
+          "device::mojom::BatteryMonitor",
+          "device::mojom::GamepadHapticsManager",
           "device::mojom::GamepadMonitor",
           "discardable_memory::mojom::DiscardableSharedMemoryManager",
-          "media::mojom::ImageCapture",
+          "media::mojom::VideoDecodePerfHistory",
           "memory_coordinator::mojom::MemoryCoordinatorHandle",
-          "memory_instrumentation::mojom::Coordinator",
-          "payments::mojom::PaymentManager",
-          "shape_detection::mojom::BarcodeDetection",
-          "shape_detection::mojom::FaceDetectionProvider",
-          "shape_detection::mojom::TextDetection",
-          "ui::mojom::Gpu"
+          "metrics::mojom::SingleSampleMetricsProvider",
+          "resource_coordinator::mojom::ProcessCoordinationUnit",
+          "ui::mojom::Gpu",
+          "viz::mojom::SharedBitmapAllocationNotifier",
+          "viz::mojom::CompositingModeReporter"
+        ],
+        "geolocation_config": [
+          "device::mojom::GeolocationConfig"
         ],
         "service_manager:service_factory": [
           "service_manager::mojom::ServiceFactory"
@@ -52,28 +70,55 @@
       },
       "requires": {
         "*": [ "app" ],
-        // In classic ash, the browser supplies ash interfaces to itself.
-        "content_browser": [ "ash" ],
+        "cdm": [ "media:cdm" ],
+        "content_browser": [
+          "geolocation_config"
+        ],
         "content_gpu": [ "browser" ],
         "content_plugin": [ "browser" ],
         "content_renderer": [ "browser" ],
         "content_utility": [ "browser" ],
-        "data_decoder": [ "image_decoder" ],
-        "device": [ "device:wake_lock" ],
+        "data_decoder": [ "image_decoder", "json_parser", "xml_parser" ],
+        "device": [
+          "device:battery_monitor",
+          "device:generic_sensor",
+          "device:geolocation",
+          "device:hid",
+          "device:input_service",
+          "device:nfc",
+          "device:serial",
+          "device:vibration",
+          "device:wake_lock"
+        ],
         "file": [ "file:filesystem", "file:leveldb" ],
         "media": [ "media:media" ],
-        "network": [ "url_loader" ],
-        "ui": [ "display_output_protection" ],
+        "metrics": [ "url_keyed_metrics" ],
+        "network": [
+          "network_service",
+          "test",
+          "url_loader"
+        ],
+        "patch_service": [ "patch_file" ],
+        "ui": [ "arc_manager", "display_output_protection", "video_detector" ],
         "service_manager": [
           "service_manager:client_process",
           "service_manager:instance_name",
+          "service_manager:service_manager",
           "service_manager:user_id"
         ],
         "shape_detection": [
           "barcode_detection",
           "face_detection",
           "text_detection"
-        ]
+        ],
+        "resource_coordinator": [
+          "coordination_unit",
+          "coordination_unit_introspector",
+          "service_callbacks",
+          "page_signal",
+          "tracing"
+        ],
+        "video_capture": [ "capture", "tests" ]
       }
     },
     "navigation:frame": {
@@ -84,30 +129,93 @@
           // impossible this week. Remove once sky/ken fix this.
           "autofill::mojom::AutofillDriver",
           "autofill::mojom::PasswordManagerDriver",
+          "blink::mojom::DedicatedWorkerFactory",
+          "blink::mojom::GeolocationService",
+          "blink::mojom::InsecureInputService",
+          "blink::mojom::KeyboardLockService",
+          "blink::mojom::MediaDevicesDispatcherHost",
           "blink::mojom::MediaSessionService",
+          "blink::mojom::NotificationService",
           "blink::mojom::PermissionService",
           "blink::mojom::PresentationService",
-          "blink::mojom::SensitiveInputVisibilityService",
+          "blink::mojom::TextSuggestionHost",
           "blink::mojom::WebBluetoothService",
           "blink::mojom::WebSocket",
+
           // TODO(beng): figure out how to overlay test interfaces like this.
           "content::mojom::BrowserTarget",
+
+          // InputInjector is only exposed when gpu benchmarking is enabled.
+          "content::mojom::InputInjector",
+
+          "content::mojom::RendererAudioOutputStreamFactory",
+          "content::mojom::SharedWorkerConnector",
+          "device::mojom::Geolocation",
+          "device::mojom::NFC",
+          "device::mojom::SensorProvider",
+          "device::mojom::VibrationManager",
           "device::mojom::VRService",
-          "device::mojom::GeolocationService",
-          "device::mojom::WakeLockService",
-          "device::nfc::mojom::NFC",
+          "device::mojom::WakeLock",
+          "device::mojom::VRService",
           "device::usb::DeviceManager",
           "discardable_memory::mojom::DiscardableSharedMemoryManager",
+          "media::mojom::ImageCapture",
           "media::mojom::InterfaceFactory",
           "media::mojom::RemoterFactory",
           "media::mojom::Renderer",
-          "mojom::MediaDevicesDispatcherHost",
+          "media::mojom::VideoDecodeStatsRecorder",
+          "media::mojom::WatchTimeRecorderProvider",
+          "network::mojom::RestrictedCookieManager",
+          "payments::mojom::PaymentManager",
           "payments::mojom::PaymentRequest",
-          "ui::mojom::Gpu"
+          "resource_coordinator::mojom::FrameCoordinationUnit",
+          "shape_detection::mojom::BarcodeDetection",
+          "shape_detection::mojom::FaceDetectionProvider",
+          "shape_detection::mojom::TextDetection",
+          "ui::mojom::Gpu",
+          "webauth::mojom::Authenticator"
         ]
       },
       "requires": {
         "content_renderer": [ "browser" ]
+      }
+    },
+    "navigation:dedicated_worker": {
+      "provides": {
+        "renderer": [
+          "blink::mojom::NotificationService",
+          "blink::mojom::PermissionService",
+          "payments::mojom::PaymentManager",
+          "shape_detection::mojom::BarcodeDetection",
+          "shape_detection::mojom::FaceDetectionProvider",
+          "shape_detection::mojom::TextDetection"
+        ]
+      }
+    },
+    "navigation:service_worker": {
+      "provides": {
+        "renderer": [
+          "blink::mojom::NotificationService",
+          "blink::mojom::PermissionService",
+          "blink::mojom::WebSocket",
+          "payments::mojom::PaymentManager",
+          "shape_detection::mojom::BarcodeDetection",
+          "shape_detection::mojom::FaceDetectionProvider",
+          "shape_detection::mojom::TextDetection"
+        ]
+      }
+    },
+    "navigation:shared_worker": {
+      "provides": {
+        "renderer": [
+          "blink::mojom::NotificationService",
+          "blink::mojom::PermissionService",
+          "blink::mojom::WebSocket",
+          "payments::mojom::PaymentManager",
+          "shape_detection::mojom::BarcodeDetection",
+          "shape_detection::mojom::FaceDetectionProvider",
+          "shape_detection::mojom::TextDetection"
+        ]
       }
     }
   }

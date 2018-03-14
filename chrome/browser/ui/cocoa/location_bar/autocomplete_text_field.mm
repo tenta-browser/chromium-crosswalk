@@ -8,6 +8,7 @@
 #import "base/mac/mac_util.h"
 #import "base/mac/sdk_forward_declarations.h"
 #include "chrome/browser/themes/theme_service.h"
+#include "chrome/browser/ui/cocoa/browser_dialogs_views_mac.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #include "chrome/browser/ui/cocoa/l10n_util.h"
 #import "chrome/browser/ui/cocoa/location_bar/autocomplete_text_field_cell.h"
@@ -18,7 +19,6 @@
 #import "chrome/browser/ui/cocoa/url_drop_target.h"
 #import "chrome/browser/ui/cocoa/view_id_util.h"
 #import "ui/base/cocoa/nsview_additions.h"
-#include "ui/base/material_design/material_design_controller.h"
 #include "ui/gfx/scoped_ns_graphics_context_save_gstate_mac.h"
 
 namespace {
@@ -51,18 +51,23 @@ const CGFloat kAnimationDuration = 0.2;
                          ? NSRightTextAlignment
                          : NSLeftTextAlignment];
 
-  // Disable Force Touch in the Omnibox. Note that this API is defined in
-  // 10.10.3 and higher so have to check more than just isYosmiteOrLater().
-  // Also, because NSPressureConfiguration is not in the original 10.10 SDK,
-  // use NSClassFromString() to instantiate it (otherwise there's a
-  // linker error).
+  // Disable Force Touch in the Omnibox. Note that this API is documented as
+  // being available in 10.11 or higher, but if the API is available in an older
+  // version we still want to use it. That prevents us from guarding the call
+  // with @available, so instead we use respondsToSelector and silence the
+  // availability warning. Also, because NSPressureConfiguration is not in the
+  // original 10.10 SDK, use NSClassFromString() to instantiate it (otherwise
+  // there's a linker error).
   if (base::mac::IsAtLeastOS10_10() &&
       [self respondsToSelector:@selector(setPressureConfiguration:)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability"
     NSPressureConfiguration* pressureConfiguration =
         [[[NSClassFromString(@"NSPressureConfiguration") alloc]
             initWithPressureBehavior:NSPressureBehaviorPrimaryClick]
                 autorelease];
     [self setPressureConfiguration:pressureConfiguration];
+#pragma clang diagnostic pop
   }
 }
 
@@ -288,23 +293,39 @@ const CGFloat kAnimationDuration = 0.2;
 }
 
 - (NSPoint)bubblePointForDecoration:(LocationBarDecoration*)decoration {
-  NSPoint point;
-  if (ui::MaterialDesignController::IsSecondaryUiMaterial()) {
-    // Under MD, dialogs have no arrow and anchor to corner of the decoration
-    // frame, not a specific point within it. See http://crbug.com/566115.
-    BOOL isLeftDecoration;
-    const NSRect frame =
-        [[self cell] backgroundFrameForDecoration:decoration
-                                          inFrame:[self bounds]
-                                 isLeftDecoration:&isLeftDecoration];
-    point.y = NSMaxY(frame);
-    point.x = isLeftDecoration ? NSMinX(frame) : NSMaxX(frame);
-  } else {
-    const NSRect frame =
-        [[self cell] frameForDecoration:decoration inFrame:[self bounds]];
-    point = decoration->GetBubblePointInFrame(frame);
-  }
+  // Use MD-style anchoring, even if only pilot dialogs are enabled. MD dialogs
+  // have no arrow and align corners. Cocoa dialogs will always have an arrow.
+  // This causes the arrows on Cocoa dialogs to align to the omnibox corner.
+  if (!chrome::ShowPilotDialogsWithViewsToolkit())
+    return [self arrowAnchorPointForDecoration:decoration];
 
+  // Under MD, dialogs have no arrow and anchor to corner of the location bar
+  // frame, not a specific point within it. See http://crbug.com/566115.
+
+  // Inset the omnibox frame by 2 real pixels. This is done because the border
+  // stroke of the omnibox is inside its frame, but bubbles have no border
+  // stroke. The bubble border is part of the shadow drawn by the window server;
+  // outside the bubble frame. In the Y direction, some of that same "gap" must
+  // be kept, otherwise the "border" stroke from the window server shadow would
+  // be drawn inside the omnibox. But since these insets round to integers when
+  // positioning the window, retina needs to use a zero vertical offset to avoid
+  // insetting an entire DIP. This looks OK, since the bubble border and omnibox
+  // border are still drawn flush. TODO(tapted): Convince the borders to overlap
+  // on retina somehow.
+  const CGFloat kStrokeInsetX = 2 * [self cr_lineWidth];
+  const CGFloat kStrokeInsetY = [self cr_lineWidth] == 1.0 ? 1 : 0;
+  const NSRect frame = NSInsetRect([self bounds], kStrokeInsetX, kStrokeInsetY);
+
+  BOOL isLeftDecoration = [[self cell] isLeftDecoration:decoration];
+  NSPoint point = NSMakePoint(isLeftDecoration ? NSMinX(frame) : NSMaxX(frame),
+                              NSMaxY(frame));
+  return [self convertPoint:point toView:nil];
+}
+
+- (NSPoint)arrowAnchorPointForDecoration:(LocationBarDecoration*)decoration {
+  const NSRect frame =
+      [[self cell] frameForDecoration:decoration inFrame:[self bounds]];
+  NSPoint point = decoration->GetBubblePointInFrame(frame);
   return [self convertPoint:point toView:nil];
 }
 
@@ -460,7 +481,7 @@ const CGFloat kAnimationDuration = 0.2;
   if ([event type] == NSLeftMouseDown) {
     LocationBarDecoration* decoration =
         [[self cell] decorationForEvent:event inRect:[self bounds] ofView:self];
-    if (decoration && decoration->AcceptsMousePress())
+    if (decoration && decoration->AcceptsMousePress() != AcceptsPress::NEVER)
       return NO;
   }
 

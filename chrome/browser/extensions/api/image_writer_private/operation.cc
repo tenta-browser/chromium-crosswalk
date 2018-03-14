@@ -8,25 +8,23 @@
 
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
-#include "base/lazy_instance.h"
-#include "base/threading/worker_pool.h"
+#include "base/task_scheduler/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation_manager.h"
+#include "chrome/browser/extensions/api/image_writer_private/unzip_helper.h"
 #include "content/public/browser/browser_thread.h"
-#include "third_party/zlib/google/zip_reader.h"
 
 namespace extensions {
 namespace image_writer {
 
 using content::BrowserThread;
 
+namespace {
+
 const int kMD5BufferSize = 1024;
 
-#if !defined(OS_CHROMEOS)
-static base::LazyInstance<scoped_refptr<ImageWriterUtilityClient>>::
-    DestructorAtExit g_utility_client = LAZY_INSTANCE_INITIALIZER;
-#endif
+}  // namespace
 
 Operation::Operation(base::WeakPtr<OperationManager> manager,
                      const ExtensionId& extension_id,
@@ -41,14 +39,15 @@ Operation::Operation(base::WeakPtr<OperationManager> manager,
 #endif
       stage_(image_writer_api::STAGE_UNKNOWN),
       progress_(0),
-      zip_reader_(new zip::ZipReader),
-      download_folder_(download_folder) {
+      download_folder_(download_folder),
+      task_runner_(
+          base::CreateSequencedTaskRunnerWithTraits(blocking_task_traits())) {
 }
 
 Operation::~Operation() {}
 
 void Operation::Cancel() {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(IsRunningInCorrectSequence());
 
   stage_ = image_writer_api::STAGE_NONE;
 
@@ -56,6 +55,7 @@ void Operation::Cancel() {
 }
 
 void Operation::Abort() {
+  DCHECK(IsRunningInCorrectSequence());
   Error(error::kAborted);
 }
 
@@ -67,15 +67,12 @@ image_writer_api::Stage Operation::GetStage() {
   return stage_;
 }
 
-#if !defined(OS_CHROMEOS)
-// static
-void Operation::SetUtilityClientForTesting(
-    scoped_refptr<ImageWriterUtilityClient> client) {
-  g_utility_client.Get() = client;
+void Operation::PostTask(base::OnceClosure task) {
+  task_runner_->PostTask(FROM_HERE, std::move(task));
 }
-#endif
 
 void Operation::Start() {
+  DCHECK(IsRunningInCorrectSequence());
 #if defined(OS_CHROMEOS)
   if (download_folder_.empty() ||
       !temp_dir_.CreateUniqueTempDirUnderPath(download_folder_)) {
@@ -87,102 +84,61 @@ void Operation::Start() {
   }
 
   AddCleanUpFunction(
-      base::Bind(base::IgnoreResult(&base::ScopedTempDir::Delete),
-                 base::Unretained(&temp_dir_)));
+      base::BindOnce(base::IgnoreResult(&base::ScopedTempDir::Delete),
+                     base::Unretained(&temp_dir_)));
 
   StartImpl();
 }
 
+void Operation::OnUnzipOpenComplete(const base::FilePath& image_path) {
+  DCHECK(IsRunningInCorrectSequence());
+  image_path_ = image_path;
+}
+
 void Operation::Unzip(const base::Closure& continuation) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(IsRunningInCorrectSequence());
   if (IsCancelled()) {
     return;
   }
 
   if (image_path_.Extension() != FILE_PATH_LITERAL(".zip")) {
-    BrowserThread::PostTask(BrowserThread::FILE, FROM_HERE, continuation);
+    PostTask(continuation);
     return;
   }
 
   SetStage(image_writer_api::STAGE_UNZIP);
 
-  if (!(zip_reader_->Open(image_path_) && zip_reader_->AdvanceToNextEntry() &&
-        zip_reader_->OpenCurrentEntryInZip())) {
-    Error(error::kUnzipGenericError);
-    return;
-  }
-
-  if (zip_reader_->HasMore()) {
-    Error(error::kUnzipInvalidArchive);
-    return;
-  }
-
-  // Create a new target to unzip to.  The original file is opened by the
-  // zip_reader_.
-  zip::ZipReader::EntryInfo* entry_info = zip_reader_->current_entry_info();
-  if (entry_info) {
-    image_path_ =
-        temp_dir_.GetPath().Append(entry_info->file_path().BaseName());
-  } else {
-    Error(error::kTempDirError);
-    return;
-  }
-
-  zip_reader_->ExtractCurrentEntryToFilePathAsync(
-      image_path_,
+  auto unzip_helper = base::MakeRefCounted<UnzipHelper>(
+      task_runner(), base::Bind(&Operation::OnUnzipOpenComplete, this),
       base::Bind(&Operation::CompleteAndContinue, this, continuation),
       base::Bind(&Operation::OnUnzipFailure, this),
-      base::Bind(&Operation::OnUnzipProgress,
-                 this,
-                 zip_reader_->current_entry_info()->original_size()));
+      base::Bind(&Operation::OnUnzipProgress, this));
+  unzip_helper->Unzip(image_path_, temp_dir_.GetPath());
 }
 
 void Operation::Finish() {
-  if (!BrowserThread::CurrentlyOn(BrowserThread::FILE)) {
-    BrowserThread::PostTask(
-        BrowserThread::FILE, FROM_HERE, base::Bind(&Operation::Finish, this));
-    return;
-  }
+  DCHECK(IsRunningInCorrectSequence());
 
   CleanUp();
 
   BrowserThread::PostTask(
-      BrowserThread::UI,
-      FROM_HERE,
-      base::Bind(&OperationManager::OnComplete, manager_, extension_id_));
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&OperationManager::OnComplete, manager_, extension_id_));
 }
 
 void Operation::Error(const std::string& error_message) {
-  if (!BrowserThread::CurrentlyOn(BrowserThread::FILE)) {
-    BrowserThread::PostTask(BrowserThread::FILE,
-                            FROM_HERE,
-                            base::Bind(&Operation::Error, this, error_message));
-    return;
-  }
+  DCHECK(IsRunningInCorrectSequence());
 
   BrowserThread::PostTask(
-      BrowserThread::UI,
-      FROM_HERE,
-      base::Bind(&OperationManager::OnError,
-                 manager_,
-                 extension_id_,
-                 stage_,
-                 progress_,
-                 error_message));
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&OperationManager::OnError, manager_, extension_id_,
+                     stage_, progress_, error_message));
 
   CleanUp();
 }
 
 void Operation::SetProgress(int progress) {
-  if (!BrowserThread::CurrentlyOn(BrowserThread::FILE)) {
-    BrowserThread::PostTask(
-        BrowserThread::FILE,
-        FROM_HERE,
-        base::Bind(&Operation::SetProgress,
-                   this,
-                   progress));
-    return;
-  }
+  DCHECK(IsRunningInCorrectSequence());
 
   if (progress <= progress_) {
     return;
@@ -194,80 +150,60 @@ void Operation::SetProgress(int progress) {
 
   progress_ = progress;
 
-  BrowserThread::PostTask(BrowserThread::UI,
-                          FROM_HERE,
-                          base::Bind(&OperationManager::OnProgress,
-                                     manager_,
-                                     extension_id_,
-                                     stage_,
-                                     progress_));
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&OperationManager::OnProgress, manager_, extension_id_,
+                     stage_, progress_));
 }
 
 void Operation::SetStage(image_writer_api::Stage stage) {
-  if (!BrowserThread::CurrentlyOn(BrowserThread::FILE)) {
-    BrowserThread::PostTask(
-        BrowserThread::FILE,
-        FROM_HERE,
-        base::Bind(&Operation::SetStage,
-                   this,
-                   stage));
-    return;
-  }
+  DCHECK(IsRunningInCorrectSequence());
 
-  if (IsCancelled()) {
+  if (IsCancelled())
     return;
-  }
 
   stage_ = stage;
   progress_ = 0;
 
   BrowserThread::PostTask(
-      BrowserThread::UI,
-      FROM_HERE,
-      base::Bind(&OperationManager::OnProgress,
-                 manager_,
-                 extension_id_,
-                 stage_,
-                 progress_));
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&OperationManager::OnProgress, manager_, extension_id_,
+                     stage_, progress_));
 }
 
 bool Operation::IsCancelled() {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(IsRunningInCorrectSequence());
 
   return stage_ == image_writer_api::STAGE_NONE;
 }
 
-void Operation::AddCleanUpFunction(const base::Closure& callback) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
-  cleanup_functions_.push_back(callback);
+void Operation::AddCleanUpFunction(base::OnceClosure callback) {
+  DCHECK(IsRunningInCorrectSequence());
+  cleanup_functions_.push_back(std::move(callback));
 }
 
 void Operation::CompleteAndContinue(const base::Closure& continuation) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(IsRunningInCorrectSequence());
   SetProgress(kProgressComplete);
-  BrowserThread::PostTask(BrowserThread::FILE, FROM_HERE, continuation);
+  PostTask(continuation);
 }
 
 #if !defined(OS_CHROMEOS)
 void Operation::StartUtilityClient() {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
-  if (g_utility_client.Get().get()) {
-    image_writer_client_ = g_utility_client.Get();
-    return;
-  }
+  DCHECK(IsRunningInCorrectSequence());
   if (!image_writer_client_.get()) {
-    image_writer_client_ = new ImageWriterUtilityClient();
-    AddCleanUpFunction(base::Bind(&Operation::StopUtilityClient, this));
+    image_writer_client_ = ImageWriterUtilityClient::Create();
+    AddCleanUpFunction(base::BindOnce(&Operation::StopUtilityClient, this));
   }
 }
 
 void Operation::StopUtilityClient() {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(IsRunningInCorrectSequence());
   image_writer_client_->Shutdown();
 }
 
 void Operation::WriteImageProgress(int64_t total_bytes, int64_t curr_bytes) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(IsRunningInCorrectSequence());
   if (IsCancelled()) {
     return;
   }
@@ -285,7 +221,8 @@ void Operation::GetMD5SumOfFile(
     int64_t file_size,
     int progress_offset,
     int progress_scale,
-    const base::Callback<void(const std::string&)>& callback) {
+    base::OnceCallback<void(const std::string&)> callback) {
+  DCHECK(IsRunningInCorrectSequence());
   if (IsCancelled()) {
     return;
   }
@@ -306,10 +243,14 @@ void Operation::GetMD5SumOfFile(
     }
   }
 
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&Operation::MD5Chunk, this, Passed(std::move(file)), 0,
-                 file_size, progress_offset, progress_scale, callback));
+  PostTask(base::BindOnce(&Operation::MD5Chunk, this, Passed(std::move(file)),
+                          0, file_size, progress_offset, progress_scale,
+                          std::move(callback)));
+}
+
+bool Operation::IsRunningInCorrectSequence() const {
+  base::AssertBlockingAllowed();
+  return task_runner_->RunsTasksInCurrentSequence();
 }
 
 void Operation::MD5Chunk(
@@ -318,7 +259,8 @@ void Operation::MD5Chunk(
     int64_t bytes_total,
     int progress_offset,
     int progress_scale,
-    const base::Callback<void(const std::string&)>& callback) {
+    base::OnceCallback<void(const std::string&)> callback) {
+  DCHECK(IsRunningInCorrectSequence());
   if (IsCancelled())
     return;
 
@@ -332,7 +274,7 @@ void Operation::MD5Chunk(
     // Nothing to read, we are done.
     base::MD5Digest digest;
     base::MD5Final(&digest, &md5_context_);
-    callback.Run(base::MD5DigestToBase16(digest));
+    std::move(callback).Run(base::MD5DigestToBase16(digest));
   } else {
     int len = file.Read(bytes_processed, buffer.get(), read_size);
 
@@ -344,11 +286,10 @@ void Operation::MD5Chunk(
           progress_offset;
       SetProgress(percent_curr);
 
-      BrowserThread::PostTask(
-          BrowserThread::FILE, FROM_HERE,
-          base::Bind(&Operation::MD5Chunk, this, Passed(std::move(file)),
-                     bytes_processed + len, bytes_total, progress_offset,
-                     progress_scale, callback));
+      PostTask(base::BindOnce(&Operation::MD5Chunk, this,
+                              Passed(std::move(file)), bytes_processed + len,
+                              bytes_total, progress_offset, progress_scale,
+                              std::move(callback)));
       // Skip closing the file.
       return;
     } else {
@@ -358,25 +299,22 @@ void Operation::MD5Chunk(
   }
 }
 
-void Operation::OnUnzipFailure() {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
-  Error(error::kUnzipGenericError);
+void Operation::OnUnzipFailure(const std::string& error) {
+  DCHECK(IsRunningInCorrectSequence());
+  Error(error);
 }
 
 void Operation::OnUnzipProgress(int64_t total_bytes, int64_t progress_bytes) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(IsRunningInCorrectSequence());
 
   int progress_percent = kProgressComplete * progress_bytes / total_bytes;
   SetProgress(progress_percent);
 }
 
 void Operation::CleanUp() {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
-  for (std::vector<base::Closure>::iterator it = cleanup_functions_.begin();
-       it != cleanup_functions_.end();
-       ++it) {
-    it->Run();
-  }
+  DCHECK(IsRunningInCorrectSequence());
+  for (base::OnceClosure& cleanup_function : cleanup_functions_)
+    std::move(cleanup_function).Run();
   cleanup_functions_.clear();
 }
 

@@ -15,7 +15,8 @@ void PaintGeneratedImage::Draw(PaintCanvas* canvas,
                                const FloatRect& dest_rect,
                                const FloatRect& src_rect,
                                RespectImageOrientationEnum,
-                               ImageClampingMode) {
+                               ImageClampingMode,
+                               ImageDecodingMode) {
   PaintCanvasAutoRestore ar(canvas, true);
   canvas->clipRect(dest_rect);
   canvas->translate(dest_rect.X(), dest_rect.Y());
@@ -23,7 +24,7 @@ void PaintGeneratedImage::Draw(PaintCanvas* canvas,
     canvas->scale(dest_rect.Width() / src_rect.Width(),
                   dest_rect.Height() / src_rect.Height());
   canvas->translate(-src_rect.X(), -src_rect.Y());
-  SkRect bounds = record_->cullRect();
+  SkRect bounds = src_rect;
   canvas->saveLayer(&bounds, &flags);
   canvas->drawPicture(record_);
 }

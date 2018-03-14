@@ -13,7 +13,15 @@ namespace content {
 struct MHTMLExtraDataPart {
   std::string content_type;
   std::string content_location;
+  std::string extra_headers;
   std::string body;
+
+  MHTMLExtraDataPart();
+  MHTMLExtraDataPart(const MHTMLExtraDataPart& other);
+  MHTMLExtraDataPart(MHTMLExtraDataPart&& other);
+  MHTMLExtraDataPart& operator=(const MHTMLExtraDataPart& other);
+  MHTMLExtraDataPart& operator=(MHTMLExtraDataPart&& other);
+  ~MHTMLExtraDataPart();
 };
 
 // Class used as a data object for WebContents UserData to represent an MHTML
@@ -36,6 +44,7 @@ class MHTMLExtraPartsImpl : public content::MHTMLExtraParts {
   // Creates a MHTMLExtraDataPart and adds it to our vector of parts.
   void AddExtraMHTMLPart(const std::string& content_type,
                          const std::string& content_location,
+                         const std::string& extra_headers,
                          const std::string& body) override;
 
  private:

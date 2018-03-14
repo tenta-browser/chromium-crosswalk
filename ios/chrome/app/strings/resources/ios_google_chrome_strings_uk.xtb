@@ -6,6 +6,7 @@
 <translation id="1759842336958782510">Chrome</translation>
 <translation id="2147651015520127414">Chrome підтвердив, що сертифікат цьому веб-сайту надала компанія <ph name="ISSUER" />.</translation>
 <translation id="2334084861041072223">Авторське право <ph name="YEAR" /> Google Inc. Усі права захищено.</translation>
+<translation id="2342981853652716282">Увійдіть в обліковий запис у Chrome, щоб мати доступ до своїх закладок, паролів та інших даних на всіх пристроях.</translation>
 <translation id="2347208864470321755">Якщо ввімкнути цю функцію, Chrome пропонуватиме перекласти сторінки, написані іншими мовами, за допомогою Перекладача Google. <ph name="BEGIN_LINK" />Докладніше<ph name="END_LINK" /></translation>
 <translation id="2441696206556358796">Щоб зберегти зображення, торкніться кнопки "Налаштування" та надайте Chrome доступ до ваших фото</translation>
 <translation id="2576431527583832481">Chrome став ще кращим! Доступна нова версія.</translation>
@@ -16,8 +17,6 @@
 <translation id="3196546062792660320">З Chrome ви можете заощадити час, розмістивши свої облікові записи в Інтернеті. Додати або вилучити облікові записи можна в налаштуваннях.</translation>
 <translation id="3282568296779691940">Вхід у Chrome</translation>
 <translation id="3345341804167540816">Використовуйте Chrome на всіх пристроях</translation>
-<translation id="3531621179462011934">Щоб мати доступ до налаштувань на всіх своїх пристроях, увійдіть в обліковий запис Chrome.</translation>
-<translation id="3601960512121168237">Подобається Chrome? <ph name="BEGIN_LINK" />Перемістіть його на панель Dock<ph name="END_LINK" /></translation>
 <translation id="3678774398092457402">Зберегти пароль для цього сайту в Chrome?</translation>
 <translation id="384394811301901750">Зараз Google Chrome не може використовувати камеру</translation>
 <translation id="3870154837782082782">Google Inc.</translation>
@@ -43,7 +42,6 @@
 <translation id="7172660552945675509">Порада. <ph name="BEGIN_LINK" />Перемістіть Chrome на панель Dock<ph name="END_LINK" /></translation>
 <translation id="7265369419224458312">Тут ви можете переглядати вкладки, відкриті на комп’ютері. Просто запустіть Chrome на комп’ютері, перейдіть у меню та виберіть "Увійти в Chrome…"</translation>
 <translation id="728488472449859922">Увімкнути сканер QR-кодів у Google Chrome</translation>
-<translation id="7311395200710390977">Щоб швидко відкривати Chrome, <ph name="BEGIN_LINK" />перемістіть його на панель Dock<ph name="END_LINK" /></translation>
 <translation id="7400722733683201933">Про Google Chrome</translation>
 <translation id="7437998757836447326">Вихід із Chrome</translation>
 <translation id="756809126120519699">Дані Chrome видалено</translation>

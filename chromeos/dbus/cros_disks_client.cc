@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
@@ -18,7 +19,6 @@
 #include "base/strings/stringprintf.h"
 #include "base/sys_info.h"
 #include "base/task_runner_util.h"
-#include "base/threading/worker_pool.h"
 #include "base/values.h"
 #include "chromeos/dbus/fake_cros_disks_client.h"
 #include "dbus/bus.h"
@@ -113,10 +113,9 @@ class CrosDisksClientImpl : public CrosDisksClient {
         ComposeMountOptions(mount_label, access_mode, remount);
     writer.AppendArrayOfStrings(mount_options);
     proxy_->CallMethod(&method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-                       base::Bind(&CrosDisksClientImpl::OnMount,
-                                  weak_ptr_factory_.GetWeakPtr(),
-                                  callback,
-                                  error_callback));
+                       base::BindOnce(&CrosDisksClientImpl::OnMount,
+                                      weak_ptr_factory_.GetWeakPtr(), callback,
+                                      error_callback));
   }
 
   // CrosDisksClient override.
@@ -135,10 +134,9 @@ class CrosDisksClientImpl : public CrosDisksClient {
 
     writer.AppendArrayOfStrings(unmount_options);
     proxy_->CallMethod(&method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-                       base::Bind(&CrosDisksClientImpl::OnUnmount,
-                                  weak_ptr_factory_.GetWeakPtr(),
-                                  callback,
-                                  error_callback));
+                       base::BindOnce(&CrosDisksClientImpl::OnUnmount,
+                                      weak_ptr_factory_.GetWeakPtr(), callback,
+                                      error_callback));
   }
 
   // CrosDisksClient override.
@@ -149,10 +147,9 @@ class CrosDisksClientImpl : public CrosDisksClient {
                                  cros_disks::kEnumerateAutoMountableDevices);
     proxy_->CallMethod(
         &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        base::Bind(&CrosDisksClientImpl::OnEnumerateAutoMountableDevices,
-                   weak_ptr_factory_.GetWeakPtr(),
-                   callback,
-                   error_callback));
+        base::BindOnce(&CrosDisksClientImpl::OnEnumerateAutoMountableDevices,
+                       weak_ptr_factory_.GetWeakPtr(), callback,
+                       error_callback));
   }
 
   // CrosDisksClient override.
@@ -162,10 +159,9 @@ class CrosDisksClientImpl : public CrosDisksClient {
                                  cros_disks::kEnumerateMountEntries);
     proxy_->CallMethod(
         &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        base::Bind(&CrosDisksClientImpl::OnEnumerateMountEntries,
-                   weak_ptr_factory_.GetWeakPtr(),
-                   callback,
-                   error_callback));
+        base::BindOnce(&CrosDisksClientImpl::OnEnumerateMountEntries,
+                       weak_ptr_factory_.GetWeakPtr(), callback,
+                       error_callback));
   }
 
   // CrosDisksClient override.
@@ -183,10 +179,24 @@ class CrosDisksClientImpl : public CrosDisksClient {
     std::vector<std::string> format_options;
     writer.AppendArrayOfStrings(format_options);
     proxy_->CallMethod(&method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-                       base::Bind(&CrosDisksClientImpl::OnFormat,
-                                  weak_ptr_factory_.GetWeakPtr(),
-                                  callback,
-                                  error_callback));
+                       base::BindOnce(&CrosDisksClientImpl::OnFormat,
+                                      weak_ptr_factory_.GetWeakPtr(), callback,
+                                      error_callback));
+  }
+
+  void Rename(const std::string& device_path,
+              const std::string& volume_name,
+              const base::Closure& callback,
+              const base::Closure& error_callback) override {
+    dbus::MethodCall method_call(cros_disks::kCrosDisksInterface,
+                                 cros_disks::kRename);
+    dbus::MessageWriter writer(&method_call);
+    writer.AppendString(device_path);
+    writer.AppendString(volume_name);
+    proxy_->CallMethod(&method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                       base::BindOnce(&CrosDisksClientImpl::OnRename,
+                                      weak_ptr_factory_.GetWeakPtr(), callback,
+                                      error_callback));
   }
 
   // CrosDisksClient override.
@@ -197,13 +207,11 @@ class CrosDisksClientImpl : public CrosDisksClient {
                                  cros_disks::kGetDeviceProperties);
     dbus::MessageWriter writer(&method_call);
     writer.AppendString(device_path);
-    proxy_->CallMethod(&method_call,
-                       dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-                       base::Bind(&CrosDisksClientImpl::OnGetDeviceProperties,
-                                  weak_ptr_factory_.GetWeakPtr(),
-                                  device_path,
-                                  callback,
-                                  error_callback));
+    proxy_->CallMethod(
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        base::BindOnce(&CrosDisksClientImpl::OnGetDeviceProperties,
+                       weak_ptr_factory_.GetWeakPtr(), device_path, callback,
+                       error_callback));
   }
 
   // CrosDisksClient override.
@@ -254,6 +262,17 @@ class CrosDisksClientImpl : public CrosDisksClient {
         base::Bind(&CrosDisksClientImpl::OnFormatCompleted,
                    weak_ptr_factory_.GetWeakPtr(),
                    format_completed_handler),
+        base::Bind(&CrosDisksClientImpl::OnSignalConnected,
+                   weak_ptr_factory_.GetWeakPtr()));
+  }
+
+  // CrosDisksClient override.
+  void SetRenameCompletedHandler(
+      const RenameCompletedHandler& rename_completed_handler) override {
+    proxy_->ConnectToSignal(
+        cros_disks::kCrosDisksInterface, cros_disks::kRenameCompleted,
+        base::Bind(&CrosDisksClientImpl::OnRenameCompleted,
+                   weak_ptr_factory_.GetWeakPtr(), rename_completed_handler),
         base::Bind(&CrosDisksClientImpl::OnSignalConnected,
                    weak_ptr_factory_.GetWeakPtr()));
   }
@@ -377,6 +396,17 @@ class CrosDisksClientImpl : public CrosDisksClient {
     callback.Run();
   }
 
+  // Handles the result of Rename and calls |callback| or |error_callback|.
+  void OnRename(const base::Closure& callback,
+                const base::Closure& error_callback,
+                dbus::Response* response) {
+    if (!response) {
+      error_callback.Run();
+      return;
+    }
+    callback.Run();
+  }
+
   // Handles the result of GetDeviceProperties and calls |callback| or
   // |error_callback|.
   void OnGetDeviceProperties(const std::string& device_path,
@@ -427,6 +457,18 @@ class CrosDisksClientImpl : public CrosDisksClient {
     handler.Run(static_cast<FormatError>(error_code), device_path);
   }
 
+  // Handles RenameCompleted signal and calls |handler|.
+  void OnRenameCompleted(RenameCompletedHandler handler, dbus::Signal* signal) {
+    dbus::MessageReader reader(signal);
+    uint32_t error_code = 0;
+    std::string device_path;
+    if (!reader.PopUint32(&error_code) || !reader.PopString(&device_path)) {
+      LOG(ERROR) << "Invalid signal: " << signal->ToString();
+      return;
+    }
+    handler.Run(static_cast<RenameError>(error_code), device_path);
+  }
+
   // Handles the result of signal connection setup.
   void OnSignalConnected(const std::string& interface,
                          const std::string& signal,
@@ -462,8 +504,7 @@ DiskInfo::DiskInfo(const std::string& device_path, dbus::Response* response)
   InitializeFromResponse(response);
 }
 
-DiskInfo::~DiskInfo() {
-}
+DiskInfo::~DiskInfo() = default;
 
 // Initializes |this| from |response| given by the cros-disks service.
 // Below is an example of |response|'s raw message (long string is ellipsized).
@@ -562,6 +603,10 @@ DiskInfo::~DiskInfo() {
 //     string "NativePath"
 //     variant       string "/sys/devices/pci0000:00/0000:00:1d.7/usb1/1-4/...
 //   }
+//   dict entry {
+//     string "FileSystemType"
+//     variant       string "vfat"
+//   }
 // ]
 void DiskInfo::InitializeFromResponse(dbus::Response* response) {
   dbus::MessageReader reader(response);
@@ -597,6 +642,8 @@ void DiskInfo::InitializeFromResponse(dbus::Response* response) {
       cros_disks::kDriveModel, &drive_model_);
   properties->GetStringWithoutPathExpansion(cros_disks::kIdLabel, &label_);
   properties->GetStringWithoutPathExpansion(cros_disks::kIdUuid, &uuid_);
+  properties->GetStringWithoutPathExpansion(cros_disks::kFileSystemType,
+                                            &file_system_type_);
 
   // dbus::PopDataAsValue() pops uint64_t as double.
   // The top 11 bits of uint64_t are dropped by the use of double. But, this
@@ -622,9 +669,9 @@ void DiskInfo::InitializeFromResponse(dbus::Response* response) {
 ////////////////////////////////////////////////////////////////////////////////
 // CrosDisksClient
 
-CrosDisksClient::CrosDisksClient() {}
+CrosDisksClient::CrosDisksClient() = default;
 
-CrosDisksClient::~CrosDisksClient() {}
+CrosDisksClient::~CrosDisksClient() = default;
 
 // static
 CrosDisksClient* CrosDisksClient::Create(DBusClientImplementationType type) {

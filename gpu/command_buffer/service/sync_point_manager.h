@@ -273,12 +273,14 @@ class GPU_EXPORT SyncPointManager {
   // runs on the thread the sync point is released. Clients should use
   // SyncPointClient::Wait because that uses order data to prevent deadlocks.
   bool Wait(const SyncToken& sync_token,
+            SequenceId sequence_id,
             uint32_t wait_order_num,
             const base::Closure& callback);
 
   // Like Wait but runs the callback on the given task runner's thread.
   bool WaitNonThreadSafe(
       const SyncToken& sync_token,
+      SequenceId sequence_id,
       uint32_t wait_order_num,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner,
       const base::Closure& callback);
@@ -287,13 +289,6 @@ class GPU_EXPORT SyncPointManager {
   // should be used with trusted sync tokens only.
   bool WaitOutOfOrder(const SyncToken& trusted_sync_token,
                       const base::Closure& callback);
-
-  // Like WaitOutOfOrder but runs the callback on the given task runner's
-  // thread.
-  bool WaitOutOfOrderNonThreadSafe(
-      const SyncToken& trusted_sync_token,
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-      const base::Closure& callback);
 
   // Used by SyncPointOrderData.
   uint32_t GenerateOrderNumber();

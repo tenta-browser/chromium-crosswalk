@@ -16,16 +16,16 @@ class PointerEvent;
 namespace ash {
 class OverflowBubbleView;
 class OverflowButton;
+class Shelf;
 class ShelfView;
-class WmShelf;
 
 // OverflowBubble shows shelf items that won't fit on the main shelf in a
 // separate bubble.
 class OverflowBubble : public views::PointerWatcher,
                        public views::WidgetObserver {
  public:
-  // |wm_shelf| is the shelf that spawns the bubble.
-  explicit OverflowBubble(WmShelf* wm_shelf);
+  // |shelf| is the shelf that spawns the bubble.
+  explicit OverflowBubble(Shelf* shelf);
   ~OverflowBubble() override;
 
   // Shows an bubble pointing to |overflow_button| with |shelf_view| as its
@@ -45,12 +45,12 @@ class OverflowBubble : public views::PointerWatcher,
   // views::PointerWatcher:
   void OnPointerEventObserved(const ui::PointerEvent& event,
                               const gfx::Point& location_in_screen,
-                              views::Widget* target) override;
+                              gfx::NativeView target) override;
 
   // Overridden from views::WidgetObserver:
   void OnWidgetDestroying(views::Widget* widget) override;
 
-  WmShelf* wm_shelf_;
+  Shelf* shelf_;
   OverflowBubbleView* bubble_;       // Owned by views hierarchy.
   OverflowButton* overflow_button_;  // Owned by ShelfView.
 

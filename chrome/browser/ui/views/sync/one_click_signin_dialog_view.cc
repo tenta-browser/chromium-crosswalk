@@ -9,6 +9,8 @@
 #include "base/callback_helpers.h"
 #include "base/logging.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
@@ -18,7 +20,6 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/events/keycodes/keyboard_codes.h"
-#include "ui/resources/grit/ui_resources.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/image_view.h"
@@ -74,6 +75,9 @@ OneClickSigninDialogView::OneClickSigninDialogView(
       advanced_link_(nullptr),
       learn_more_link_(nullptr) {
   DCHECK(!start_sync_callback_.is_null());
+  set_margins(ChromeLayoutProvider::Get()->GetDialogInsetsForContentType(
+      views::TEXT, views::TEXT));
+  chrome::RecordDialogCreation(chrome::DialogIdentifier::ONE_CLICK_SIGNIN);
 }
 
 OneClickSigninDialogView::~OneClickSigninDialogView() {
@@ -84,7 +88,7 @@ OneClickSigninDialogView::~OneClickSigninDialogView() {
 }
 
 void OneClickSigninDialogView::Init() {
-  views::GridLayout* layout = views::GridLayout::CreatePanel(this);
+  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
 
   // Column set for descriptive text and link.
   views::ColumnSet* cs = layout->AddColumnSet(0);

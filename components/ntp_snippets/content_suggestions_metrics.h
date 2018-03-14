@@ -15,8 +15,12 @@
 namespace ntp_snippets {
 namespace metrics {
 
-void OnPageShown(
-    const std::vector<std::pair<Category, int>>& suggestions_per_category);
+// |is_category_visible| contains true iff the corresponding category can be
+// seen by the user on this page (even if it is empty). It does not depend on
+// whether the user actually saw the category.
+void OnPageShown(const std::vector<Category>& categories,
+                 const std::vector<int>& suggestions_per_category,
+                 const std::vector<bool>& is_category_visible);
 
 // Should only be called once per NTP for each suggestion.
 void OnSuggestionShown(int global_position,
@@ -34,7 +38,9 @@ void OnSuggestionOpened(int global_position,
                         int position_in_category,
                         base::Time publish_date,
                         float score,
-                        WindowOpenDisposition disposition);
+                        WindowOpenDisposition disposition,
+                        bool is_prefetched,
+                        bool is_offline);
 
 void OnSuggestionMenuOpened(int global_position,
                             Category category,
@@ -59,6 +65,12 @@ void OnMoreButtonClicked(Category category, int position);
 void OnCategoryDismissed(Category category);
 
 void RecordRemoteSuggestionsProviderState(bool enabled);
+
+void RecordContentSuggestionDismissed();
+
+void RecordCategoryDismissed();
+
+void RecordFetchAction();
 
 }  // namespace metrics
 }  // namespace ntp_snippets

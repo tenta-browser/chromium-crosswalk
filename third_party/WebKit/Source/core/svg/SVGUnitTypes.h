@@ -20,14 +20,13 @@
 #ifndef SVGUnitTypes_h
 #define SVGUnitTypes_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGEnumeration.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
-class SVGUnitTypes final : public GarbageCollected<SVGUnitTypes>,
-                           public ScriptWrappable {
+class SVGUnitTypes final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -36,8 +35,6 @@ class SVGUnitTypes final : public GarbageCollected<SVGUnitTypes>,
     kSvgUnitTypeUserspaceonuse = 1,
     kSvgUnitTypeObjectboundingbox = 2
   };
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   SVGUnitTypes();  // No instantiation.

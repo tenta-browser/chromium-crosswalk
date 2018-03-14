@@ -30,6 +30,7 @@
 
 #include "platform/mhtml/MHTMLArchive.h"
 
+#include "build/build_config.h"
 #include "platform/DateComponents.h"
 #include "platform/SerializedResource.h"
 #include "platform/SharedBuffer.h"
@@ -40,8 +41,8 @@
 #include "platform/weborigin/SchemeRegistry.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/CryptographicallyRandomNumber.h"
-#include "platform/wtf/CurrentTime.h"
 #include "platform/wtf/DateMath.h"
+#include "platform/wtf/Time.h"
 #include "platform/wtf/text/Base64.h"
 #include "platform/wtf/text/StringBuilder.h"
 
@@ -51,21 +52,33 @@ const char* const kQuotedPrintable = "quoted-printable";
 const char* const kBase64 = "base64";
 const char* const kBinary = "binary";
 
-static String ReplaceNonPrintableCharacters(const String& text) {
-  StringBuilder string_builder;
+static String ConvertToPrintableCharacters(const String& text) {
+  // If the text contains all printable ASCII characters, no need for encoding.
+  bool found_non_printable_char = false;
   for (size_t i = 0; i < text.length(); ++i) {
-    if (IsASCIIPrintable(text[i]))
-      string_builder.Append(text[i]);
-    else
-      string_builder.Append('?');
+    if (!IsASCIIPrintable(text[i])) {
+      found_non_printable_char = true;
+      break;
+    }
   }
-  return string_builder.ToString();
+  if (!found_non_printable_char)
+    return text;
+
+  // Encode the text as sequences of printable ASCII characters per RFC 2047
+  // (https://tools.ietf.org/html/rfc2047). Specially, the encoded text will be
+  // as:   =?utf-8?Q?encoded_text?=
+  // where, "utf-8" is the chosen charset to represent the text and "Q" is the
+  // Quoted-Printable format to convert to 7-bit printable ASCII characters.
+  CString utf8_text = text.Utf8();
+  Vector<char> encoded_text;
+  QuotedPrintableEncode(utf8_text.data(), utf8_text.length(), encoded_text);
+  return "=?utf-8?Q?" + String(encoded_text.data(), encoded_text.size()) + "?=";
 }
 
 MHTMLArchive::MHTMLArchive() {}
 
 MHTMLArchive* MHTMLArchive::Create(const KURL& url,
-                                   PassRefPtr<const SharedBuffer> data) {
+                                   scoped_refptr<const SharedBuffer> data) {
   // MHTML pages can only be loaded from local URLs, http/https URLs, and
   // content URLs(Android specific).  The latter is now allowed due to full
   // sandboxing enforcement on MHTML pages.
@@ -118,7 +131,7 @@ bool MHTMLArchive::CanLoadArchive(const KURL& url) {
     return true;
   if (url.ProtocolIsInHTTPFamily())
     return true;
-#if OS(ANDROID)
+#if defined(OS_ANDROID)
   if (url.ProtocolIs("content"))
     return true;
 #endif
@@ -126,11 +139,12 @@ bool MHTMLArchive::CanLoadArchive(const KURL& url) {
 }
 
 void MHTMLArchive::GenerateMHTMLHeader(const String& boundary,
+                                       const KURL& url,
                                        const String& title,
                                        const String& mime_type,
                                        Vector<char>& output_buffer) {
-  ASSERT(!boundary.IsEmpty());
-  ASSERT(!mime_type.IsEmpty());
+  DCHECK(!boundary.IsEmpty());
+  DCHECK(!mime_type.IsEmpty());
 
   DateComponents now;
   now.SetMillisecondsSinceEpochForDateTime(CurrentTimeMS());
@@ -141,9 +155,14 @@ void MHTMLArchive::GenerateMHTMLHeader(const String& boundary,
 
   StringBuilder string_builder;
   string_builder.Append("From: <Saved by Blink>\r\n");
-  string_builder.Append("Subject: ");
-  // We replace non ASCII characters with '?' characters to match IE's behavior.
-  string_builder.Append(ReplaceNonPrintableCharacters(title));
+
+  // Add the document URL in the MHTML headers in order to avoid complicated
+  // parsing to locate it in the multipart body headers.
+  string_builder.Append("Snapshot-Content-Location: ");
+  string_builder.Append(url.GetString());
+
+  string_builder.Append("\r\nSubject: ");
+  string_builder.Append(ConvertToPrintableCharacters(title));
   string_builder.Append("\r\nDate: ");
   string_builder.Append(date_string);
   string_builder.Append("\r\nMIME-Version: 1.0\r\n");
@@ -157,10 +176,10 @@ void MHTMLArchive::GenerateMHTMLHeader(const String& boundary,
 
   // We use utf8() below instead of ascii() as ascii() replaces CRLFs with ??
   // (we still only have put ASCII characters in it).
-  ASSERT(string_builder.ToString().ContainsOnlyASCII());
+  DCHECK(string_builder.ToString().ContainsOnlyASCII());
   CString ascii_string = string_builder.ToString().Utf8();
 
-  output_buffer.Append(ascii_string.Data(), ascii_string.length());
+  output_buffer.Append(ascii_string.data(), ascii_string.length());
 }
 
 void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
@@ -168,8 +187,8 @@ void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
                                      EncodingPolicy encoding_policy,
                                      const SerializedResource& resource,
                                      Vector<char>& output_buffer) {
-  ASSERT(!boundary.IsEmpty());
-  ASSERT(content_id.IsEmpty() || content_id[0] == '<');
+  DCHECK(!boundary.IsEmpty());
+  DCHECK(content_id.IsEmpty() || content_id[0] == '<');
 
   StringBuilder string_builder;
   string_builder.Append("--");
@@ -186,7 +205,7 @@ void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
     string_builder.Append("\r\n");
   }
 
-  const char* content_encoding = 0;
+  const char* content_encoding = nullptr;
   if (encoding_policy == kUseBinaryEncoding)
     content_encoding = kBinary;
   else if (MIMETypeRegistry::IsSupportedJavaScriptMIMEType(
@@ -209,7 +228,7 @@ void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
   string_builder.Append("\r\n");
 
   CString ascii_string = string_builder.ToString().Utf8();
-  output_buffer.Append(ascii_string.Data(), ascii_string.length());
+  output_buffer.Append(ascii_string.data(), ascii_string.length());
 
   if (!strcmp(content_encoding, kBinary)) {
     const char* data;
@@ -221,15 +240,16 @@ void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
   } else {
     // FIXME: ideally we would encode the content as a stream without having to
     // fetch it all.
-    const char* data = resource.data->Data();
-    size_t data_length = resource.data->size();
+    const SharedBuffer::DeprecatedFlatData flat_data(resource.data);
+    const char* data = flat_data.Data();
+    size_t data_length = flat_data.size();
     Vector<char> encoded_data;
     if (!strcmp(content_encoding, kQuotedPrintable)) {
       QuotedPrintableEncode(data, data_length, encoded_data);
-      output_buffer.Append(encoded_data.Data(), encoded_data.size());
+      output_buffer.Append(encoded_data.data(), encoded_data.size());
       output_buffer.Append("\r\n", 2u);
     } else {
-      ASSERT(!strcmp(content_encoding, kBase64));
+      DCHECK(!strcmp(content_encoding, kBase64));
       // We are not specifying insertLFs = true below as it would cut the lines
       // with LFs and MHTML requires CRLFs.
       Base64Encode(data, data_length, encoded_data);
@@ -239,7 +259,7 @@ void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
       do {
         size_t line_length =
             std::min(encoded_data_length - index, kMaximumLineLength);
-        output_buffer.Append(encoded_data.Data() + index, line_length);
+        output_buffer.Append(encoded_data.data() + index, line_length);
         output_buffer.Append("\r\n", 2u);
         index += kMaximumLineLength;
       } while (index < encoded_data_length);
@@ -249,9 +269,9 @@ void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
 
 void MHTMLArchive::GenerateMHTMLFooterForTesting(const String& boundary,
                                                  Vector<char>& output_buffer) {
-  ASSERT(!boundary.IsEmpty());
+  DCHECK(!boundary.IsEmpty());
   CString ascii_string = String("--" + boundary + "--\r\n").Utf8();
-  output_buffer.Append(ascii_string.Data(), ascii_string.length());
+  output_buffer.Append(ascii_string.data(), ascii_string.length());
 }
 
 void MHTMLArchive::SetMainResource(ArchiveResource* main_resource) {
@@ -270,7 +290,7 @@ ArchiveResource* MHTMLArchive::SubresourceForURL(const KURL& url) const {
   return subresources_.at(url.GetString());
 }
 
-DEFINE_TRACE(MHTMLArchive) {
+void MHTMLArchive::Trace(blink::Visitor* visitor) {
   visitor->Trace(main_resource_);
   visitor->Trace(subresources_);
 }

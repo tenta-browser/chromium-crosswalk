@@ -14,7 +14,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_piece.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "net/base/net_export.h"
@@ -33,10 +33,10 @@ class NetLogWithSource;
 
 // For each hostname that is requested, HostResolver creates a
 // HostResolverImpl::Job. When this job gets dispatched it creates a ProcTask
-// which runs the given HostResolverProc on a worker thread (a WorkerPool
-// thread, in production code.) If requests for that same host are made during
-// the job's lifetime, they are attached to the existing job rather than
-// creating a new one. This avoids doing parallel resolves for the same host.
+// which runs the given HostResolverProc in TaskScheduler. If requests for that
+// same host are made during the job's lifetime, they are attached to the
+// existing job rather than creating a new one. This avoids doing parallel
+// resolves for the same host.
 //
 // The way these classes fit together is illustrated by:
 //
@@ -61,7 +61,6 @@ class NetLogWithSource;
 // Jobs are ordered in the queue based on their priority and order of arrival.
 class NET_EXPORT HostResolverImpl
     : public HostResolver,
-      NON_EXPORTED_BASE(public base::NonThreadSafe),
       public NetworkChangeNotifier::IPAddressObserver,
       public NetworkChangeNotifier::ConnectionTypeObserver,
       public NetworkChangeNotifier::DNSObserver {
@@ -104,8 +103,8 @@ class NET_EXPORT HostResolverImpl
     uint32_t retry_factor;
   };
 
-  // Creates a HostResolver as specified by |options|. Blocking tasks are run on
-  // the WorkerPool.
+  // Creates a HostResolver as specified by |options|. Blocking tasks are run in
+  // TaskScheduler.
   //
   // If Options.enable_caching is true, a cache is created using
   // HostCache::CreateDefaultCache(). Otherwise no cache is used.
@@ -153,6 +152,11 @@ class NET_EXPORT HostResolverImpl
                             AddressList* addresses,
                             HostCache::EntryStaleness* stale_info,
                             const NetLogWithSource& source_net_log);
+  // Returns the number of host cache entries that were restored, or 0 if there
+  // is no cache.
+  size_t LastRestoredCacheSize() const;
+  // Returns the number of entries in the host cache, or 0 if there is no cache.
+  size_t CacheSize() const;
 
   void InitializePersistence(
       const PersistCallback& persist_callback,
@@ -166,14 +170,11 @@ class NET_EXPORT HostResolverImpl
   }
 
  protected:
-  // Just like the public constructor, but allows the task runner used for
-  // blocking tasks to be specified. Intended for testing only.
-  HostResolverImpl(const Options& options,
-                   NetLog* net_log,
-                   scoped_refptr<base::TaskRunner> worker_task_runner);
-
   // Callback from HaveOnlyLoopbackAddresses probe.
   void SetHaveOnlyLoopbackAddresses(bool result);
+
+  // Sets the task runner used for HostResolverProc tasks.
+  void SetTaskRunnerForTesting(scoped_refptr<base::TaskRunner> task_runner);
 
  private:
   friend class HostResolverImplTest;
@@ -195,19 +196,23 @@ class NET_EXPORT HostResolverImpl
   // incompatible, ERR_DNS_CACHE_MISS if entry was not found in cache and
   // HOSTS and is not localhost.
   //
+  // On success, the resulting addresses are written to |addresses|.
+  //
+  // On ERR_DNS_CACHE_MISS and OK, the cache key for the request is written to
+  // |key|. On other errors, it may not be.
+  //
   // If |allow_stale| is true, then stale cache entries can be returned.
   // |stale_info| must be non-null, and will be filled in with details of the
   // entry's staleness (if an entry is returned).
   //
   // If |allow_stale| is false, then stale cache entries will not be returned,
   // and |stale_info| must be null.
-  int ResolveHelper(const Key& key,
-                    const RequestInfo& info,
-                    const IPAddress* ip_address,
-                    AddressList* addresses,
+  int ResolveHelper(const RequestInfo& info,
                     bool allow_stale,
                     HostCache::EntryStaleness* stale_info,
-                    const NetLogWithSource& request_net_log);
+                    const NetLogWithSource& request_net_log,
+                    AddressList* addresses,
+                    Key* key);
 
   // Tries to resolve |key| as an IP, returns true and sets |net_error| if
   // succeeds, returns false otherwise.
@@ -306,13 +311,6 @@ class NET_EXPORT HostResolverImpl
   // and resulted in |net_error|.
   void OnDnsTaskResolve(int net_error);
 
-  void OnCacheEntryEvicted(const HostCache::Key& key,
-                           const HostCache::Entry& entry);
-  void ClearCacheHitCallbacks(const HostCache::Key& key);
-  void MaybeAddCacheHitCallback(const HostCache::Key& key,
-                                const RequestInfo& info);
-  void RunCacheHitCallbacks(const HostCache::Key& key, const RequestInfo& info);
-
   void ApplyPersistentData(std::unique_ptr<const base::Value>);
   std::unique_ptr<const base::Value> GetPersistentData();
 
@@ -364,27 +362,21 @@ class NET_EXPORT HostResolverImpl
   base::TimeTicks last_ipv6_probe_time_;
   bool last_ipv6_probe_result_;
 
-  // True iff ProcTask has successfully resolved a hostname known to have IPv6
-  // addresses using ADDRESS_FAMILY_UNSPECIFIED. Reset on IP address change.
-  bool resolved_known_ipv6_hostname_;
-
   // Any resolver flags that should be added to a request by default.
   HostResolverFlags additional_resolver_flags_;
 
   // Allow fallback to ProcTask if DnsTask fails.
   bool fallback_to_proctask_;
 
-  // Task runner used for DNS lookups using the platform resolver, and other
-  // blocking operations. Usually just the WorkerPool's task runner for slow
-  // tasks, but can be overridden for tests.
-  scoped_refptr<base::TaskRunner> worker_task_runner_;
-
-  std::map<const HostCache::Key, std::vector<RequestInfo::CacheHitCallback>>
-      cache_hit_callbacks_;
+  // Task runner used for DNS lookups using the system resolver. Normally a
+  // TaskScheduler task runner, but can be overridden for tests.
+  scoped_refptr<base::TaskRunner> proc_task_runner_;
 
   bool persist_initialized_;
   PersistCallback persist_callback_;
   base::OneShotTimer persist_timer_;
+
+  THREAD_CHECKER(thread_checker_);
 
   base::WeakPtrFactory<HostResolverImpl> weak_ptr_factory_;
 

@@ -22,7 +22,8 @@ namespace sessions {
 SerializedNavigationEntry
 ContentSerializedNavigationBuilder::FromNavigationEntry(
     int index,
-    const content::NavigationEntry& entry) {
+    const content::NavigationEntry& entry,
+    SerializationOptions serialization_options) {
   SerializedNavigationEntry navigation;
   navigation.index_ = index;
   navigation.unique_id_ = entry.GetUniqueID();
@@ -30,7 +31,8 @@ ContentSerializedNavigationBuilder::FromNavigationEntry(
   navigation.referrer_policy_ = entry.GetReferrer().policy;
   navigation.virtual_url_ = entry.GetVirtualURL();
   navigation.title_ = entry.GetTitle();
-  navigation.encoded_page_state_ = entry.GetPageState().ToEncodedData();
+  if (!(serialization_options & SerializationOptions::EXCLUDE_PAGE_STATE))
+    navigation.encoded_page_state_ = entry.GetPageState().ToEncodedData();
   navigation.transition_type_ = entry.GetTransitionType();
   navigation.has_post_data_ = entry.GetHasPostData();
   navigation.post_id_ = entry.GetPostID();
@@ -38,7 +40,6 @@ ContentSerializedNavigationBuilder::FromNavigationEntry(
   navigation.is_overriding_user_agent_ = entry.GetIsOverridingUserAgent();
   navigation.timestamp_ = entry.GetTimestamp();
   navigation.is_restored_ = entry.IsRestored();
-  entry.GetExtraData(kSearchTermsKey, &navigation.search_terms_);
   if (entry.GetFavicon().valid)
     navigation.favicon_url_ = entry.GetFavicon().url;
   navigation.http_status_code_ = entry.GetHttpStatusCode();
@@ -85,7 +86,6 @@ ContentSerializedNavigationBuilder::ToNavigationEntry(
   entry->SetOriginalRequestURL(navigation->original_request_url_);
   entry->SetIsOverridingUserAgent(navigation->is_overriding_user_agent_);
   entry->SetTimestamp(navigation->timestamp_);
-  entry->SetExtraData(kSearchTermsKey, navigation->search_terms_);
   entry->SetHttpStatusCode(navigation->http_status_code_);
   entry->SetRedirectChain(navigation->redirect_chain_);
 

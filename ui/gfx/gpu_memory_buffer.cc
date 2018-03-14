@@ -4,19 +4,18 @@
 
 #include "ui/gfx/gpu_memory_buffer.h"
 
+#include "ui/gfx/generic_shared_memory_id.h"
+
 namespace gfx {
 
-GpuMemoryBufferHandle::GpuMemoryBufferHandle()
-    : type(EMPTY_BUFFER), id(0), handle(base::SharedMemory::NULLHandle()) {
-}
+GpuMemoryBufferHandle::GpuMemoryBufferHandle() : type(EMPTY_BUFFER), id(0) {}
 
 GpuMemoryBufferHandle::GpuMemoryBufferHandle(
     const GpuMemoryBufferHandle& other) = default;
 
 GpuMemoryBufferHandle::~GpuMemoryBufferHandle() {}
 
-void GpuMemoryBuffer::SetColorSpaceForScanout(
-    const gfx::ColorSpace& color_space) {}
+void GpuMemoryBuffer::SetColorSpace(const gfx::ColorSpace& color_space) {}
 
 GpuMemoryBufferHandle CloneHandleForIPC(
     const GpuMemoryBufferHandle& source_handle) {
@@ -43,10 +42,29 @@ GpuMemoryBufferHandle CloneHandleForIPC(
 #endif
       return handle;
     }
+    case gfx::ANDROID_HARDWARE_BUFFER: {
+      gfx::GpuMemoryBufferHandle handle;
+      handle.type = gfx::ANDROID_HARDWARE_BUFFER;
+      handle.id = source_handle.id;
+      handle.handle = base::SharedMemory::DuplicateHandle(source_handle.handle);
+      return handle;
+    }
     case gfx::IO_SURFACE_BUFFER:
       return source_handle;
+    case gfx::DXGI_SHARED_HANDLE:
+      gfx::GpuMemoryBufferHandle handle;
+      handle.type = gfx::DXGI_SHARED_HANDLE;
+      handle.id = source_handle.id;
+      handle.handle = base::SharedMemory::DuplicateHandle(source_handle.handle);
+      return handle;
   }
   return gfx::GpuMemoryBufferHandle();
+}
+
+base::trace_event::MemoryAllocatorDumpGuid GpuMemoryBuffer::GetGUIDForTracing(
+    uint64_t tracing_process_id) const {
+  return gfx::GetGenericSharedGpuMemoryGUIDForTracing(tracing_process_id,
+                                                      GetId());
 }
 
 }  // namespace gfx

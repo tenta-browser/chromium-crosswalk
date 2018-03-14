@@ -6,12 +6,14 @@
 
 #include <stdint.h>
 #include <array>
+#include <limits>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/sys_byteorder.h"
+#include "base/threading/thread_restrictions.h"
 #include "media/base/audio_bus.h"
 #include "media/base/audio_sample_types.h"
 
@@ -134,27 +136,22 @@ void WriteWavHeader(WavHeaderBuffer* buf,
 }  // namespace
 
 // Manages the debug recording file and writes to it. Can be created on any
-// thread. All the operations must be executed on |task_runner_|. Must be
-// destroyed on |task_runner_|.
+// thread. All the operations must be executed on a thread that has IO
+// permissions.
 class AudioDebugFileWriter::AudioFileWriter {
  public:
   static AudioFileWriterUniquePtr Create(
       const base::FilePath& file_name,
       const AudioParameters& params,
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+      scoped_refptr<base::SequencedTaskRunner> task_runner);
 
   ~AudioFileWriter();
 
   // Write data from |data| to file.
   void Write(const AudioBus* data);
 
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner() {
-    return task_runner_;
-  }
-
  private:
-  AudioFileWriter(const AudioParameters& params,
-                  scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+  explicit AudioFileWriter(const AudioParameters& params);
 
   // Write wave header to file. Called on the |task_runner_| twice: on
   // construction
@@ -179,43 +176,17 @@ class AudioDebugFileWriter::AudioFileWriter {
   std::unique_ptr<int16_t[]> interleaved_data_;
   int interleaved_data_size_;
 
-  // The task runner this class operates on.
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+  SEQUENCE_CHECKER(sequence_checker_);
 };
-
-AudioDebugFileWriter::OnThreadDeleter::OnThreadDeleter() {}
-
-AudioDebugFileWriter::OnThreadDeleter::OnThreadDeleter(
-    const OnThreadDeleter& other)
-    : task_runner_(other.task_runner_) {}
-
-AudioDebugFileWriter::OnThreadDeleter::OnThreadDeleter(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner)
-    : task_runner_(task_runner) {}
-
-AudioDebugFileWriter::OnThreadDeleter::~OnThreadDeleter() {}
-
-// AudioFileWriter deleter. Inspired by
-// content::BrowserThread::DeleteOnFileThread.
-void AudioDebugFileWriter::OnThreadDeleter::operator()(
-    AudioDebugFileWriter::AudioFileWriter* ptr) const {
-  if (!task_runner_->DeleteSoon(FROM_HERE, ptr)) {
-#if defined(UNIT_TEST)
-    // Only logged under unit testing because leaks at shutdown
-    // are acceptable under normal circumstances.
-    LOG(ERROR) << "DeleteSoon failed for AudioDebugFileWriter::AudioFileWriter";
-#endif
-  }
-}
 
 // static
 AudioDebugFileWriter::AudioFileWriterUniquePtr
 AudioDebugFileWriter::AudioFileWriter::Create(
     const base::FilePath& file_name,
     const AudioParameters& params,
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
-  AudioFileWriterUniquePtr file_writer(new AudioFileWriter(params, task_runner),
-                                       OnThreadDeleter(task_runner));
+    scoped_refptr<base::SequencedTaskRunner> task_runner) {
+  AudioFileWriterUniquePtr file_writer(new AudioFileWriter(params),
+                                       base::OnTaskRunnerDeleter(task_runner));
 
   // base::Unretained is safe, because destructor is called on
   // |task_runner|.
@@ -227,21 +198,19 @@ AudioDebugFileWriter::AudioFileWriter::Create(
 }
 
 AudioDebugFileWriter::AudioFileWriter::AudioFileWriter(
-    const AudioParameters& params,
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner)
-    : samples_(0),
-      params_(params),
-      interleaved_data_size_(0),
-      task_runner_(std::move(task_runner)) {}
+    const AudioParameters& params)
+    : samples_(0), params_(params), interleaved_data_size_(0) {
+  DETACH_FROM_SEQUENCE(sequence_checker_);
+}
 
 AudioDebugFileWriter::AudioFileWriter::~AudioFileWriter() {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (file_.IsValid())
     WriteHeader();
 }
 
 void AudioDebugFileWriter::AudioFileWriter::Write(const AudioBus* data) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_EQ(params_.channels(), data->channels());
   if (!file_.IsValid())
     return;
@@ -268,7 +237,7 @@ void AudioDebugFileWriter::AudioFileWriter::Write(const AudioBus* data) {
 }
 
 void AudioDebugFileWriter::AudioFileWriter::WriteHeader() {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!file_.IsValid())
     return;
   WavHeaderBuffer buf;
@@ -282,7 +251,8 @@ void AudioDebugFileWriter::AudioFileWriter::WriteHeader() {
 
 void AudioDebugFileWriter::AudioFileWriter::CreateRecordingFile(
     const base::FilePath& file_name) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  base::AssertBlockingAllowed();
   DCHECK(!file_.IsValid());
 
   file_ = base::File(file_name,
@@ -304,11 +274,10 @@ void AudioDebugFileWriter::AudioFileWriter::CreateRecordingFile(
               << file_.error_details();
 }
 
-AudioDebugFileWriter::AudioDebugFileWriter(
-    const AudioParameters& params,
-    scoped_refptr<base::SingleThreadTaskRunner> file_task_runner)
-    : params_(params), file_task_runner_(std::move(file_task_runner)) {
-  client_sequence_checker_.DetachFromSequence();
+AudioDebugFileWriter::AudioDebugFileWriter(const AudioParameters& params)
+    : params_(params),
+      file_writer_(nullptr, base::OnTaskRunnerDeleter(nullptr)) {
+  DETACH_FROM_SEQUENCE(client_sequence_checker_);
 }
 
 AudioDebugFileWriter::~AudioDebugFileWriter() {
@@ -316,20 +285,20 @@ AudioDebugFileWriter::~AudioDebugFileWriter() {
 }
 
 void AudioDebugFileWriter::Start(const base::FilePath& file_name) {
-  DCHECK(client_sequence_checker_.CalledOnValidSequence());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(client_sequence_checker_);
   DCHECK(!file_writer_);
   file_writer_ = AudioFileWriter::Create(file_name, params_, file_task_runner_);
 }
 
 void AudioDebugFileWriter::Stop() {
-  DCHECK(client_sequence_checker_.CalledOnValidSequence());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(client_sequence_checker_);
   // |file_writer_| is deleted on FILE thread.
   file_writer_.reset();
-  client_sequence_checker_.DetachFromSequence();
+  DETACH_FROM_SEQUENCE(client_sequence_checker_);
 }
 
 void AudioDebugFileWriter::Write(std::unique_ptr<AudioBus> data) {
-  DCHECK(client_sequence_checker_.CalledOnValidSequence());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(client_sequence_checker_);
   if (!file_writer_)
     return;
 
@@ -354,4 +323,4 @@ const base::FilePath::CharType* AudioDebugFileWriter::GetFileNameExtension() {
   return FILE_PATH_LITERAL("wav");
 }
 
-}  // namspace media
+}  // namespace media

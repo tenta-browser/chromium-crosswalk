@@ -21,6 +21,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_node_data.h"
+#include "ui/aura/window.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
@@ -62,6 +63,10 @@
 #include "ui/events/event_utils.h"
 #endif
 
+#if defined(OS_CHROMEOS)
+#include "ui/wm/core/ime_util_chromeos.h"
+#endif
+
 using base::ASCIIToUTF16;
 using base::UTF8ToUTF16;
 using base::WideToUTF16;
@@ -80,7 +85,7 @@ class MockInputMethod : public ui::InputMethodBase {
   // Overridden from InputMethod:
   bool OnUntranslatedIMEMessage(const base::NativeEvent& event,
                                 NativeEventResult* result) override;
-  void DispatchKeyEvent(ui::KeyEvent* key) override;
+  ui::EventDispatchDetails DispatchKeyEvent(ui::KeyEvent* key) override;
   void OnTextInputTypeChanged(const ui::TextInputClient* client) override;
   void OnCaretBoundsChanged(const ui::TextInputClient* client) override {}
   void CancelComposition(const ui::TextInputClient* client) override;
@@ -146,15 +151,13 @@ bool MockInputMethod::OnUntranslatedIMEMessage(const base::NativeEvent& event,
   return false;
 }
 
-void MockInputMethod::DispatchKeyEvent(ui::KeyEvent* key) {
+ui::EventDispatchDetails MockInputMethod::DispatchKeyEvent(ui::KeyEvent* key) {
 // On Mac, emulate InputMethodMac behavior for character events. Composition
 // still needs to be mocked, since it's not possible to generate test events
 // which trigger the appropriate NSResponder action messages for composition.
 #if defined(OS_MACOSX)
-  if (key->is_char()) {
-    ignore_result(DispatchKeyEventPostIME(key));
-    return;
-  }
+  if (key->is_char())
+    return DispatchKeyEventPostIME(key);
 #endif
 
   // Checks whether the key event is from EventGenerator on Windows which will
@@ -162,8 +165,10 @@ void MockInputMethod::DispatchKeyEvent(ui::KeyEvent* key) {
   // The MockInputMethod will insert char on WM_KEYDOWN so ignore WM_CHAR here.
   if (key->is_char() && key->HasNativeEvent()) {
     key->SetHandled();
-    return;
+    return ui::EventDispatchDetails();
   }
+
+  ui::EventDispatchDetails dispatch_details;
 
   bool handled = !IsTextInputTypeNone() && HasComposition();
   ClearStates();
@@ -172,10 +177,13 @@ void MockInputMethod::DispatchKeyEvent(ui::KeyEvent* key) {
     ui::KeyEvent mock_key(ui::ET_KEY_PRESSED,
                           ui::VKEY_PROCESSKEY,
                           key->flags());
-    DispatchKeyEventPostIME(&mock_key);
+    dispatch_details = DispatchKeyEventPostIME(&mock_key);
   } else {
-    DispatchKeyEventPostIME(key);
+    dispatch_details = DispatchKeyEventPostIME(key);
   }
+
+  if (key->handled() || dispatch_details.dispatcher_destroyed)
+    return dispatch_details;
 
   ui::TextInputClient* client = GetTextInputClient();
   if (client) {
@@ -194,6 +202,8 @@ void MockInputMethod::DispatchKeyEvent(ui::KeyEvent* key) {
   }
 
   ClearComposition();
+
+  return dispatch_details;
 }
 
 void MockInputMethod::OnTextInputTypeChanged(
@@ -248,18 +258,14 @@ bool MockInputMethod::HasComposition() {
 }
 
 void MockInputMethod::ClearComposition() {
-  composition_.Clear();
+  composition_ = ui::CompositionText();
   result_text_.clear();
 }
 
 // A Textfield wrapper to intercept OnKey[Pressed|Released]() results.
 class TestTextfield : public views::Textfield {
  public:
-  TestTextfield()
-     : Textfield(),
-       key_handled_(false),
-       key_received_(false),
-       weak_ptr_factory_(this) {}
+  TestTextfield() = default;
 
   // ui::TextInputClient overrides:
   void InsertChar(const ui::KeyEvent& e) override {
@@ -273,13 +279,18 @@ class TestTextfield : public views::Textfield {
 
   bool key_handled() const { return key_handled_; }
   bool key_received() const { return key_received_; }
+  int event_flags() const { return event_flags_; }
 
-  void clear() { key_received_ = key_handled_ = false; }
+  void clear() {
+    key_received_ = key_handled_ = false;
+    event_flags_ = 0;
+  }
 
  private:
   // views::View override:
   void OnKeyEvent(ui::KeyEvent* event) override {
     key_received_ = true;
+    event_flags_ = event->flags();
 
     // Since Textfield::OnKeyPressed() might destroy |this|, get a weak pointer
     // and verify it isn't null before writing the bool value to key_handled_.
@@ -296,10 +307,11 @@ class TestTextfield : public views::Textfield {
       EXPECT_FALSE(key_handled_);
   }
 
-  bool key_handled_;
-  bool key_received_;
+  bool key_handled_ = false;
+  bool key_received_ = false;
+  int event_flags_ = 0;
 
-  base::WeakPtrFactory<TestTextfield> weak_ptr_factory_;
+  base::WeakPtrFactory<TestTextfield> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(TestTextfield);
 };
@@ -336,6 +348,29 @@ class TextfieldDestroyerController : public views::TextfieldController {
 
  private:
   std::unique_ptr<views::Textfield> target_;
+};
+
+// Class that focuses a textfield when it sees a KeyDown event.
+class TextfieldFocuser : public views::View {
+ public:
+  explicit TextfieldFocuser(views::Textfield* textfield)
+      : textfield_(textfield) {
+    SetFocusBehavior(FocusBehavior::ALWAYS);
+  }
+
+  void set_consume(bool consume) { consume_ = consume; }
+
+  // View:
+  bool OnKeyPressed(const ui::KeyEvent& event) override {
+    textfield_->RequestFocus();
+    return consume_;
+  }
+
+ private:
+  bool consume_ = true;
+  views::Textfield* textfield_;
+
+  DISALLOW_COPY_AND_ASSIGN(TextfieldFocuser);
 };
 
 base::string16 GetClipboardText(ui::ClipboardType type) {
@@ -649,6 +684,10 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
   void VerifyTextfieldContextMenuContents(bool textfield_has_selection,
                                           bool can_undo,
                                           ui::MenuModel* menu) {
+    const auto& text = textfield_->text();
+    const bool is_all_selected = !text.empty() &&
+        textfield_->GetSelectedRange().length() == text.length();
+
     EXPECT_EQ(can_undo, menu->IsEnabledAt(0 /* UNDO */));
     EXPECT_TRUE(menu->IsEnabledAt(1 /* Separator */));
     EXPECT_EQ(textfield_has_selection, menu->IsEnabledAt(2 /* CUT */));
@@ -657,7 +696,7 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
               menu->IsEnabledAt(4 /* PASTE */));
     EXPECT_EQ(textfield_has_selection, menu->IsEnabledAt(5 /* DELETE */));
     EXPECT_TRUE(menu->IsEnabledAt(6 /* Separator */));
-    EXPECT_TRUE(menu->IsEnabledAt(7 /* SELECT ALL */));
+    EXPECT_EQ(!is_all_selected, menu->IsEnabledAt(7 /* SELECT ALL */));
   }
 
   void PressMouseButton(ui::EventFlags mouse_button_flags, int extra_flags) {
@@ -722,11 +761,12 @@ class TextfieldTest : public ViewsTestBase, public TextfieldController {
   // Indicates how many times OnAfterUserAction() is called.
   int on_after_user_action_;
 
- private:
   // Position of the mouse for synthetic mouse events.
   gfx::Point mouse_position_;
   ui::ClipboardType copied_to_clipboard_;
   std::unique_ptr<ui::test::EventGenerator> event_generator_;
+
+ private:
   DISALLOW_COPY_AND_ASSIGN(TextfieldTest);
 };
 
@@ -1555,41 +1595,31 @@ TEST_F(TextfieldTest, DragToSelect) {
   EXPECT_EQ(textfield_->text(), textfield_->GetSelectedText());
 }
 
-// This test checks that dragging above the textfield selects to the beginning
-// and dragging below the textfield selects to the end, but only on platforms
-// where that is the expected behavior.
+// Ensures dragging above or below the textfield extends a selection to either
+// end, depending on the relative x offsets of the text and mouse cursors.
 TEST_F(TextfieldTest, DragUpOrDownSelectsToEnd) {
   InitTextfield();
   textfield_->SetText(ASCIIToUTF16("hello world"));
-  const base::string16 expected_up = base::ASCIIToUTF16(
+  const base::string16 expected_left = base::ASCIIToUTF16(
       gfx::RenderText::kDragToEndIfOutsideVerticalBounds ? "hello" : "lo");
-  const base::string16 expected_down = base::ASCIIToUTF16(
+  const base::string16 expected_right = base::ASCIIToUTF16(
       gfx::RenderText::kDragToEndIfOutsideVerticalBounds ? " world" : " w");
-  const int kStartX = GetCursorPositionX(5);
-  const int kDownX = GetCursorPositionX(7);
-  const int kUpX = GetCursorPositionX(3);
-  gfx::Point start_point(kStartX, GetCursorYForTesting());
-  gfx::Point down_point(kDownX, 500);
-  gfx::Point up_point(kUpX, -500);
+  const int right_x = GetCursorPositionX(7);
+  const int left_x = GetCursorPositionX(3);
 
-  MoveMouseTo(start_point);
+  // All drags start from here.
+  MoveMouseTo(gfx::Point(GetCursorPositionX(5), GetCursorYForTesting()));
   PressLeftMouseButton();
-  DragMouseTo(up_point);
-  ReleaseLeftMouseButton();
-  EXPECT_EQ(textfield_->GetSelectedText(), expected_up);
 
-  // Click at |up_point|. This is important because drags do not count as clicks
-  // for the purpose of double-click detection, so if this test doesn't click
-  // somewhere other than |start_point| before the code below runs, the second
-  // click at |start_point| will be interpreted as a double-click instead of the
-  // start of a drag.
-  ClickLeftMouseButton();
-
-  MoveMouseTo(start_point);
-  PressLeftMouseButton();
-  DragMouseTo(down_point);
-  ReleaseLeftMouseButton();
-  EXPECT_EQ(textfield_->GetSelectedText(), expected_down);
+  // Perform one continuous drag, checking the selection at various points.
+  DragMouseTo(gfx::Point(left_x, -500));
+  EXPECT_EQ(expected_left, textfield_->GetSelectedText());  // NW.
+  DragMouseTo(gfx::Point(right_x, -500));
+  EXPECT_EQ(expected_right, textfield_->GetSelectedText());  // NE.
+  DragMouseTo(gfx::Point(right_x, 500));
+  EXPECT_EQ(expected_right, textfield_->GetSelectedText());  // SE.
+  DragMouseTo(gfx::Point(left_x, 500));
+  EXPECT_EQ(expected_left, textfield_->GetSelectedText());  // SW.
 }
 
 #if defined(OS_WIN)
@@ -2272,6 +2302,29 @@ TEST_F(TextfieldTest, CutCopyPaste) {
   EXPECT_EQ(ui::CLIPBOARD_TYPE_LAST, GetAndResetCopiedToClipboard());
 }
 
+TEST_F(TextfieldTest, CutCopyPasteWithEditCommand) {
+  InitTextfield();
+  // Target the "WIDGET". This means that, on Mac, keystrokes will be sent to a
+  // dummy 'Edit' menu which will dispatch into the responder chain as a "cut:"
+  // selector rather than a keydown. This has no effect on other platforms
+  // (events elsewhere always dispatch via a ui::EventProcessor, which is
+  // responsible for finding targets).
+  event_generator_->set_target(ui::test::EventGenerator::Target::WIDGET);
+
+  SendKeyEvent(ui::VKEY_O, false, false);      // Type "o".
+  SendKeyEvent(ui::VKEY_A, false, true);       // Select it.
+  SendKeyEvent(ui::VKEY_C, false, true);       // Copy it.
+  SendKeyEvent(ui::VKEY_RIGHT, false, false);  // Deselect and navigate to end.
+  EXPECT_STR_EQ("o", textfield_->text());
+  SendKeyEvent(ui::VKEY_V, false, true);  // Paste it.
+  EXPECT_STR_EQ("oo", textfield_->text());
+  SendKeyEvent(ui::VKEY_H, false, false);  // Type "h".
+  EXPECT_STR_EQ("ooh", textfield_->text());
+  SendKeyEvent(ui::VKEY_LEFT, true, false);  // Select "h".
+  SendKeyEvent(ui::VKEY_X, false, true);     // Cut it.
+  EXPECT_STR_EQ("oo", textfield_->text());
+}
+
 TEST_F(TextfieldTest, OvertypeMode) {
   InitTextfield();
   // Overtype mode should be disabled (no-op [Insert]).
@@ -2403,11 +2456,11 @@ TEST_F(TextfieldTest, TextCursorPositionInRTLTest) {
 
   InitTextfield();
   // LTR-RTL string in RTL context.
-  int text_cursor_position_prev = test_api_->GetCursorViewOrigin().x();
+  int text_cursor_position_prev = test_api_->GetCursorViewRect().x();
   SendKeyEvent('a');
   SendKeyEvent('b');
   EXPECT_STR_EQ("ab", textfield_->text());
-  int text_cursor_position_new = test_api_->GetCursorViewOrigin().x();
+  int text_cursor_position_new = test_api_->GetCursorViewRect().x();
   // Text cursor stays at same place after inserting new charactors in RTL mode.
   EXPECT_EQ(text_cursor_position_prev, text_cursor_position_new);
 
@@ -2419,11 +2472,11 @@ TEST_F(TextfieldTest, TextCursorPositionInLTRTest) {
   InitTextfield();
 
   // LTR-RTL string in LTR context.
-  int text_cursor_position_prev = test_api_->GetCursorViewOrigin().x();
+  int text_cursor_position_prev = test_api_->GetCursorViewRect().x();
   SendKeyEvent('a');
   SendKeyEvent('b');
   EXPECT_STR_EQ("ab", textfield_->text());
-  int text_cursor_position_new = test_api_->GetCursorViewOrigin().x();
+  int text_cursor_position_new = test_api_->GetCursorViewRect().x();
   // Text cursor moves to right after inserting new charactors in LTR mode.
   EXPECT_LT(text_cursor_position_prev, text_cursor_position_new);
 }
@@ -2797,13 +2850,15 @@ TEST_F(TextfieldTest, SelectionClipboard) {
   EXPECT_EQ(gfx::Range(4, 4), textfield_->GetSelectedRange());
   EXPECT_TRUE(GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION).empty());
 
-  // Middle clicking in the selection should clear the clipboard and selection.
+  // Middle clicking in the selection should insert the selection clipboard
+  // contents into the middle of the selection, and move the cursor to the end
+  // of the pasted content.
   SetClipboardText(ui::CLIPBOARD_TYPE_COPY_PASTE, "foo");
   textfield_->SelectRange(gfx::Range(2, 6));
   textfield_->OnMousePressed(middle);
-  EXPECT_STR_EQ("012301230123", textfield_->text());
-  EXPECT_EQ(gfx::Range(6, 6), textfield_->GetSelectedRange());
-  EXPECT_TRUE(GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION).empty());
+  EXPECT_STR_EQ("0123foo01230123", textfield_->text());
+  EXPECT_EQ(gfx::Range(7, 7), textfield_->GetSelectedRange());
+  EXPECT_STR_EQ("foo", GetClipboardText(ui::CLIPBOARD_TYPE_SELECTION));
 
   // Double and triple clicking should update the clipboard contents.
   textfield_->SetText(ASCIIToUTF16("ab cd ef"));
@@ -2946,6 +3001,42 @@ TEST_F(TextfieldTest, CursorBlinkRestartsOnInsertOrReplace) {
   textfield_->InsertOrReplaceText(base::ASCIIToUTF16("foo"));
   EXPECT_TRUE(test_api_->IsCursorBlinkTimerRunning());
 }
+
+#if defined(OS_CHROMEOS)
+// Check that when accessibility virtual keyboard is enabled, windows are
+// shifted up when focused and restored when focus is lost.
+TEST_F(TextfieldTest, VirtualKeyboardFocusEnsureCaretNotInRect) {
+  InitTextfield();
+
+  aura::Window* root_window = widget_->GetNativeView()->GetRootWindow();
+  int keyboard_height = 200;
+  gfx::Rect root_bounds = root_window->bounds();
+  gfx::Rect orig_widget_bounds = gfx::Rect(0, 300, 400, 200);
+  gfx::Rect shifted_widget_bounds = gfx::Rect(0, 200, 400, 200);
+  gfx::Rect keyboard_view_bounds =
+      gfx::Rect(0, root_bounds.height() - keyboard_height, root_bounds.width(),
+                keyboard_height);
+
+  // Focus the window.
+  widget_->SetBounds(orig_widget_bounds);
+  input_method_->SetFocusedTextInputClient(textfield_);
+  EXPECT_EQ(widget_->GetNativeView()->bounds(), orig_widget_bounds);
+
+  // Simulate virtual keyboard.
+  input_method_->SetOnScreenKeyboardBounds(keyboard_view_bounds);
+
+  // Window should be shifted.
+  EXPECT_EQ(widget_->GetNativeView()->bounds(), shifted_widget_bounds);
+
+  // Detach the textfield from the IME
+  input_method_->DetachTextInputClient(textfield_);
+  wm::RestoreWindowBoundsOnClientFocusLost(
+      widget_->GetNativeView()->GetToplevelWindow());
+
+  // Window should be restored.
+  EXPECT_EQ(widget_->GetNativeView()->bounds(), orig_widget_bounds);
+}
+#endif  // defined(OS_CHROMEOS)
 
 class TextfieldTouchSelectionTest : public TextfieldTest {
  protected:
@@ -3095,21 +3186,19 @@ TEST_F(TextfieldTest, AccessiblePasswordTest) {
   textfield_->SetText(ASCIIToUTF16("password"));
 
   ui::AXNodeData node_data_regular;
-  node_data_regular.state = 0;
   textfield_->GetAccessibleNodeData(&node_data_regular);
   EXPECT_EQ(ui::AX_ROLE_TEXT_FIELD, node_data_regular.role);
   EXPECT_EQ(ASCIIToUTF16("password"),
             node_data_regular.GetString16Attribute(ui::AX_ATTR_VALUE));
-  EXPECT_FALSE(node_data_regular.HasStateFlag(ui::AX_STATE_PROTECTED));
+  EXPECT_FALSE(node_data_regular.HasState(ui::AX_STATE_PROTECTED));
 
   textfield_->SetTextInputType(ui::TEXT_INPUT_TYPE_PASSWORD);
   ui::AXNodeData node_data_protected;
-  node_data_protected.state = 0;
   textfield_->GetAccessibleNodeData(&node_data_protected);
   EXPECT_EQ(ui::AX_ROLE_TEXT_FIELD, node_data_protected.role);
-  EXPECT_EQ(ASCIIToUTF16("********"),
+  EXPECT_EQ(UTF8ToUTF16("••••••••"),
             node_data_protected.GetString16Attribute(ui::AX_ATTR_VALUE));
-  EXPECT_TRUE(node_data_protected.HasStateFlag(ui::AX_STATE_PROTECTED));
+  EXPECT_TRUE(node_data_protected.HasState(ui::AX_STATE_PROTECTED));
 }
 
 // Verify that cursor visibility is controlled by SetCursorEnabled.
@@ -3121,6 +3210,167 @@ TEST_F(TextfieldTest, CursorVisibility) {
 
   textfield_->SetCursorEnabled(true);
   EXPECT_TRUE(test_api_->IsCursorVisible());
+}
+
+// Verify that cursor view height does not exceed the textfield height.
+TEST_F(TextfieldTest, CursorViewHeight) {
+  InitTextfield();
+  textfield_->SetBounds(0, 0, 100, 100);
+  textfield_->SetCursorEnabled(true);
+  SendKeyEvent('a');
+  EXPECT_TRUE(test_api_->IsCursorVisible());
+  EXPECT_GT(textfield_->GetVisibleBounds().height(),
+            test_api_->GetCursorViewRect().height());
+  EXPECT_LE(test_api_->GetCursorViewRect().height(),
+            GetCursorBounds().height());
+
+  // set the cursor height to be higher than the textfield height, verify that
+  // UpdateCursorViewPosition update cursor view height currectly.
+  gfx::Rect cursor_bound(test_api_->GetCursorViewRect());
+  cursor_bound.set_height(150);
+  test_api_->SetCursorViewRect(cursor_bound);
+  SendKeyEvent('b');
+  EXPECT_GT(textfield_->GetVisibleBounds().height(),
+            test_api_->GetCursorViewRect().height());
+  EXPECT_LE(test_api_->GetCursorViewRect().height(),
+            GetCursorBounds().height());
+}
+
+// Verify that cursor view height is independent of its parent view height.
+TEST_F(TextfieldTest, CursorViewHeightAtDiffDSF) {
+  InitTextfield();
+  textfield_->SetBounds(0, 0, 100, 100);
+  textfield_->SetCursorEnabled(true);
+  SendKeyEvent('a');
+  EXPECT_TRUE(test_api_->IsCursorVisible());
+  int height = test_api_->GetCursorViewRect().height();
+
+  // update the size of its parent view size and verify that the height of the
+  // cursor view stays the same.
+  View* parent = textfield_->parent();
+  parent->SetBounds(0, 0, 50, height - 2);
+  SendKeyEvent('b');
+  EXPECT_EQ(height, test_api_->GetCursorViewRect().height());
+}
+
+// Check if the text cursor is always at the end of the textfield after the
+// text overflows from the textfield. If the textfield size changes, check if
+// the text cursor's location is updated accordingly.
+TEST_F(TextfieldTest, TextfieldBoundsChangeTest) {
+  InitTextfield();
+  gfx::Size new_size = gfx::Size(30, 100);
+  textfield_->SetSize(new_size);
+
+  // Insert chars in |textfield_| to make it overflow.
+  SendKeyEvent('a');
+  SendKeyEvent('a');
+  SendKeyEvent('a');
+  SendKeyEvent('a');
+  SendKeyEvent('a');
+  SendKeyEvent('a');
+  SendKeyEvent('a');
+
+  // Check if the cursor continues pointing to the end of the textfield.
+  int prev_x = GetCursorBounds().x();
+  SendKeyEvent('a');
+  EXPECT_EQ(prev_x, GetCursorBounds().x());
+  EXPECT_TRUE(test_api_->IsCursorVisible());
+
+  // Increase the textfield size and check if the cursor moves to the new end.
+  textfield_->SetSize(gfx::Size(40, 100));
+  EXPECT_LT(prev_x, GetCursorBounds().x());
+
+  prev_x = GetCursorBounds().x();
+  // Decrease the textfield size and check if the cursor moves to the new end.
+  textfield_->SetSize(gfx::Size(30, 100));
+  EXPECT_GT(prev_x, GetCursorBounds().x());
+}
+
+// Verify that after creating a new Textfield, the Textfield doesn't
+// automatically receive focus and the text cursor is not visible.
+TEST_F(TextfieldTest, TextfieldInitialization) {
+  TestTextfield* new_textfield = new TestTextfield();
+  new_textfield->set_controller(this);
+  View* container = new View();
+  Widget* widget(new Widget());
+  Widget::InitParams params =
+      CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
+  params.bounds = gfx::Rect(100, 100, 100, 100);
+  widget->Init(params);
+  widget->SetContentsView(container);
+  container->AddChildView(new_textfield);
+
+  new_textfield->SetBoundsRect(params.bounds);
+  new_textfield->set_id(1);
+  test_api_.reset(new TextfieldTestApi(new_textfield));
+  widget->Show();
+  EXPECT_FALSE(new_textfield->HasFocus());
+  EXPECT_FALSE(test_api_->IsCursorVisible());
+  new_textfield->RequestFocus();
+  EXPECT_TRUE(test_api_->IsCursorVisible());
+  widget->Close();
+}
+
+// Verify that if a textfield gains focus during key dispatch that an edit
+// command only results when the event is not consumed.
+TEST_F(TextfieldTest, SwitchFocusInKeyDown) {
+  InitTextfield();
+  TextfieldFocuser* focuser = new TextfieldFocuser(textfield_);
+  widget_->GetContentsView()->AddChildView(focuser);
+
+  focuser->RequestFocus();
+  EXPECT_EQ(focuser, GetFocusedView());
+  SendKeyPress(ui::VKEY_SPACE, 0);
+  EXPECT_EQ(textfield_, GetFocusedView());
+  EXPECT_EQ(base::string16(), textfield_->text());
+
+  focuser->set_consume(false);
+  focuser->RequestFocus();
+  EXPECT_EQ(focuser, GetFocusedView());
+  SendKeyPress(ui::VKEY_SPACE, 0);
+  EXPECT_EQ(textfield_, GetFocusedView());
+  EXPECT_EQ(base::ASCIIToUTF16(" "), textfield_->text());
+}
+
+TEST_F(TextfieldTest, FocusChangesScrollToStart) {
+  const std::string& kText = "abcdef";
+  InitTextfield();
+  textfield_->SetText(ASCIIToUTF16(kText));
+  EXPECT_EQ(base::ASCIIToUTF16(std::string()), textfield_->GetSelectedText());
+  textfield_->AboutToRequestFocusFromTabTraversal(false);
+  EXPECT_EQ(base::ASCIIToUTF16(kText), textfield_->GetSelectedText());
+  if (PlatformStyle::kTextfieldScrollsToStartOnFocusChange)
+    EXPECT_EQ(0U, textfield_->GetCursorPosition());
+  else
+    EXPECT_EQ(kText.size(), textfield_->GetCursorPosition());
+
+  // The OnBlur() behavior below is only meaningful on platforms where textfield
+  // focus moves on focus change.
+  if (!PlatformStyle::kTextfieldScrollsToStartOnFocusChange)
+    return;
+
+  // The cursor is at the start (so that it scrolls in to view), but the
+  // "Select All" is currently undirected. Shift+right will give it a direction
+  // and scroll to the end.
+  SendKeyEvent(ui::VKEY_RIGHT, true, false);
+  EXPECT_EQ(kText.size(), textfield_->GetCursorPosition());
+
+  // And a focus loss should scroll back to the start.
+  textfield_->OnBlur();
+  EXPECT_EQ(0U, textfield_->GetCursorPosition());
+}
+
+TEST_F(TextfieldTest, SendingDeletePreservesShiftFlag) {
+  InitTextfield();
+  SendKeyPress(ui::VKEY_DELETE, 0);
+  EXPECT_EQ(0, textfield_->event_flags());
+  textfield_->clear();
+
+  // Ensure the shift modifier propagates for keys that may be subject to native
+  // key mappings. E.g., on Mac, Delete and Shift+Delete are both
+  // deleteForward:, but the shift modifier should propagate.
+  SendKeyPress(ui::VKEY_DELETE, ui::EF_SHIFT_DOWN);
+  EXPECT_EQ(ui::EF_SHIFT_DOWN, textfield_->event_flags());
 }
 
 }  // namespace views

@@ -4,6 +4,8 @@
 
 #include "components/omnibox/browser/omnibox_client.h"
 
+#include <memory>
+
 #include "base/strings/string_util.h"
 #include "ui/gfx/image/image.h"
 
@@ -47,11 +49,11 @@ bool OmniboxClient::IsPasteAndGoEnabled() const {
   return false;
 }
 
-bool OmniboxClient::IsNewTabPage(const std::string& url) const {
+bool OmniboxClient::IsNewTabPage(const GURL& url) const {
   return false;
 }
 
-bool OmniboxClient::IsHomePage(const std::string& url) const {
+bool OmniboxClient::IsHomePage(const GURL& url) const {
   return false;
 }
 
@@ -73,7 +75,7 @@ gfx::Image OmniboxClient::GetIconIfExtensionMatch(
 }
 
 bool OmniboxClient::ProcessExtensionKeyword(
-    TemplateURL* template_url,
+    const TemplateURL* template_url,
     const AutocompleteMatch& match,
     WindowOpenDisposition disposition,
     OmniboxNavigationObserver* observer) {

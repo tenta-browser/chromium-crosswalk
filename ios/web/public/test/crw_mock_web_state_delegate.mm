@@ -7,6 +7,10 @@
 #import "ios/web/public/web_state/context_menu_params.h"
 #import "ios/web/public/web_state/web_state.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 @implementation CRWMockWebStateDelegate {
   // Backs up the property with the same name.
   std::unique_ptr<web::WebState::OpenURLParams> _openURLParams;
@@ -21,6 +25,14 @@
 @synthesize webStateClosingRequested = _webStateClosingRequested;
 @synthesize repostFormWarningRequested = _repostFormWarningRequested;
 @synthesize authenticationRequested = _authenticationRequested;
+@synthesize shouldPreviewLinkWithURLReturnValue =
+    _shouldPreviewLinkWithURLReturnValue;
+@synthesize linkURL = _linkURL;
+@synthesize previewingViewControllerForLinkWithURLReturnValue =
+    _previewingViewControllerForLinkWithURLReturnValue;
+@synthesize previewingViewController = _previewingViewController;
+@synthesize commitPreviewingViewControllerRequested =
+    _commitPreviewingViewControllerRequested;
 
 - (web::WebState*)webState:(web::WebState*)webState
     createNewWebStateForURL:(const GURL&)URL
@@ -43,11 +55,10 @@
   return webState;
 }
 
-- (BOOL)webState:(web::WebState*)webState
+- (void)webState:(web::WebState*)webState
     handleContextMenu:(const web::ContextMenuParams&)params {
   _webState = webState;
   _contextMenuParams.reset(new web::ContextMenuParams(params));
-  return YES;
 }
 
 - (void)webState:(web::WebState*)webState
@@ -82,6 +93,27 @@
 
 - (BOOL)javaScriptDialogPresenterRequested {
   return _javaScriptDialogPresenterRequested;
+}
+
+- (BOOL)webState:(web::WebState*)webState
+    shouldPreviewLinkWithURL:(const GURL&)linkURL {
+  _webState = webState;
+  _linkURL = linkURL;
+  return _shouldPreviewLinkWithURLReturnValue;
+}
+
+- (UIViewController*)webState:(web::WebState*)webState
+    previewingViewControllerForLinkWithURL:(const GURL&)linkURL {
+  _webState = webState;
+  _linkURL = linkURL;
+  return _previewingViewControllerForLinkWithURLReturnValue;
+}
+
+- (void)webState:(web::WebState*)webState
+    commitPreviewingViewController:(UIViewController*)previewingViewController {
+  _webState = webState;
+  _previewingViewController = previewingViewController;
+  _commitPreviewingViewControllerRequested = YES;
 }
 
 @end

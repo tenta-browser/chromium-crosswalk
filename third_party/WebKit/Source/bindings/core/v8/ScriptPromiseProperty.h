@@ -5,12 +5,12 @@
 #ifndef ScriptPromiseProperty_h
 #define ScriptPromiseProperty_h
 
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromisePropertyBase.h"
 #include "bindings/core/v8/ToV8ForCore.h"
-#include "platform/ScriptForbiddenScope.h"
+#include "platform/bindings/ScriptForbiddenScope.h"
 #include "platform/wtf/Noncopyable.h"
-#include "platform/wtf/PassRefPtr.h"
 
 namespace blink {
 
@@ -72,7 +72,7 @@ class ScriptPromiseProperty : public ScriptPromisePropertyBase {
   // This method keeps the holder object and the property name.
   void Reset();
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   v8::Local<v8::Object> Holder(v8::Isolate*,
@@ -156,7 +156,7 @@ v8::Local<v8::Value>
 ScriptPromiseProperty<HolderType, ResolvedType, RejectedType>::ResolvedValue(
     v8::Isolate* isolate,
     v8::Local<v8::Object> creation_context) {
-  ASSERT(GetState() == kResolved);
+  DCHECK_EQ(GetState(), kResolved);
   if (!resolved_with_undefined_)
     return ToV8(resolved_, creation_context, isolate);
   return v8::Undefined(isolate);
@@ -167,7 +167,7 @@ v8::Local<v8::Value>
 ScriptPromiseProperty<HolderType, ResolvedType, RejectedType>::RejectedValue(
     v8::Isolate* isolate,
     v8::Local<v8::Object> creation_context) {
-  ASSERT(GetState() == kRejected);
+  DCHECK_EQ(GetState(), kRejected);
   return ToV8(rejected_, creation_context, isolate);
 }
 

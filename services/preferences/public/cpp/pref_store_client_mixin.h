@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "base/macros.h"
 #include "base/observer_list.h"
@@ -56,9 +57,16 @@ class PrefStoreClientMixin : public BasePrefStore,
   // prefs::mojom::PreferenceObserver:
   void OnPrefsChanged(std::vector<mojom::PrefUpdatePtr> updates) override;
   void OnInitializationCompleted(bool succeeded) override;
+  void OnPrefChangeAck() override;
 
   void OnPrefChanged(const std::string& key,
-                     std::unique_ptr<base::Value> value);
+                     mojom::PrefUpdateValuePtr update_value);
+
+  // Should this client ignore a write received from the service? The default
+  // implementation never skips writes.
+  virtual bool ShouldSkipWrite(const std::string& key,
+                               const std::vector<std::string>& path,
+                               const base::Value* new_value);
 
   // Cached preferences.
   // If null, indicates that initialization failed.

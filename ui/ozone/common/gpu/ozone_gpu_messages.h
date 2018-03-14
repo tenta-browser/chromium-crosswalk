@@ -16,6 +16,7 @@
 #include "ui/display/types/gamma_ramp_rgb_entry.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/ipc/color/gfx_param_traits.h"
 #include "ui/gfx/ipc/geometry/gfx_param_traits.h"
 #include "ui/gfx/ipc/gfx_param_traits.h"
 #include "ui/gfx/ipc/skia/gfx_skia_param_traits.h"
@@ -34,6 +35,8 @@ IPC_ENUM_TRAITS_MAX_VALUE(display::HDCPState, display::HDCP_STATE_LAST)
 
 IPC_ENUM_TRAITS_MAX_VALUE(gfx::OverlayTransform, gfx::OVERLAY_TRANSFORM_LAST)
 
+IPC_ENUM_TRAITS_MAX_VALUE(ui::OverlayStatus, ui::OVERLAY_STATUS_LAST)
+
 // clang-format off
 IPC_STRUCT_TRAITS_BEGIN(ui::DisplayMode_Params)
   IPC_STRUCT_TRAITS_MEMBER(size)
@@ -49,6 +52,7 @@ IPC_STRUCT_TRAITS_BEGIN(ui::DisplaySnapshot_Params)
   IPC_STRUCT_TRAITS_MEMBER(is_aspect_preserving_scaling)
   IPC_STRUCT_TRAITS_MEMBER(has_overscan)
   IPC_STRUCT_TRAITS_MEMBER(has_color_correction_matrix)
+  IPC_STRUCT_TRAITS_MEMBER(color_space)
   IPC_STRUCT_TRAITS_MEMBER(display_name)
   IPC_STRUCT_TRAITS_MEMBER(sys_path)
   IPC_STRUCT_TRAITS_MEMBER(modes)
@@ -58,7 +62,6 @@ IPC_STRUCT_TRAITS_BEGIN(ui::DisplaySnapshot_Params)
   IPC_STRUCT_TRAITS_MEMBER(has_native_mode)
   IPC_STRUCT_TRAITS_MEMBER(native_mode)
   IPC_STRUCT_TRAITS_MEMBER(product_id)
-  IPC_STRUCT_TRAITS_MEMBER(string_representation)
   IPC_STRUCT_TRAITS_MEMBER(maximum_cursor_size)
 IPC_STRUCT_TRAITS_END()
 
@@ -76,6 +79,10 @@ IPC_STRUCT_TRAITS_BEGIN(ui::OverlayCheck_Params)
   IPC_STRUCT_TRAITS_MEMBER(crop_rect)
   IPC_STRUCT_TRAITS_MEMBER(plane_z_order)
   IPC_STRUCT_TRAITS_MEMBER(is_overlay_candidate)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(ui::OverlayCheckReturn_Params)
+  IPC_STRUCT_TRAITS_MEMBER(status)
 IPC_STRUCT_TRAITS_END()
 
 // clang-format on
@@ -185,6 +192,7 @@ IPC_MESSAGE_CONTROL1(OzoneHostMsg_DisplayControlRelinquished,
 
 // Response to OzoneGpuMsg_CheckOverlayCapabilities. Returns list of supported
 // params.
-IPC_MESSAGE_CONTROL2(OzoneHostMsg_OverlayCapabilitiesReceived,
+IPC_MESSAGE_CONTROL3(OzoneHostMsg_OverlayCapabilitiesReceived,
                      gfx::AcceleratedWidget /* widget */,
-                     std::vector<ui::OverlayCheck_Params> /* overlays */)
+                     std::vector<ui::OverlayCheck_Params> /* overlays */,
+                     std::vector<ui::OverlayCheckReturn_Params> /* returns */)

@@ -36,7 +36,7 @@ class GbmSurfaceless : public gl::SurfacelessEGL {
 
   // gl::GLSurface:
   bool Initialize(gl::GLSurfaceFormat format) override;
-  gfx::SwapResult SwapBuffers() override;
+  gfx::SwapResult SwapBuffers(const PresentationCallback& callback) override;
   bool ScheduleOverlayPlane(int z_order,
                             gfx::OverlayTransform transform,
                             gl::GLImage* image,
@@ -46,14 +46,23 @@ class GbmSurfaceless : public gl::SurfacelessEGL {
   gfx::VSyncProvider* GetVSyncProvider() override;
   bool SupportsAsyncSwap() override;
   bool SupportsPostSubBuffer() override;
-  gfx::SwapResult PostSubBuffer(int x, int y, int width, int height) override;
-  void SwapBuffersAsync(const SwapCompletionCallback& callback) override;
-  void PostSubBufferAsync(int x,
-                          int y,
-                          int width,
-                          int height,
-                          const SwapCompletionCallback& callback) override;
+  gfx::SwapResult PostSubBuffer(int x,
+                                int y,
+                                int width,
+                                int height,
+                                const PresentationCallback& callback) override;
+  void SwapBuffersAsync(
+      const SwapCompletionCallback& completion_callback,
+      const PresentationCallback& presentation_callback) override;
+  void PostSubBufferAsync(
+      int x,
+      int y,
+      int width,
+      int height,
+      const SwapCompletionCallback& completion_callback,
+      const PresentationCallback& presentation_callback) override;
   EGLConfig GetConfig() override;
+  void SetRelyOnImplicitSync() override;
 
  protected:
   ~GbmSurfaceless() override;
@@ -77,12 +86,10 @@ class GbmSurfaceless : public gl::SurfacelessEGL {
   void SubmitFrame();
 
   EGLSyncKHR InsertFence(bool implicit);
-  void FenceRetired(EGLSyncKHR fence, PendingFrame* frame);
+  void FenceRetired(PendingFrame* frame);
 
   void SwapCompleted(const SwapCompletionCallback& callback,
                      gfx::SwapResult result);
-
-  bool IsUniversalDisplayLinkDevice();
 
   GbmSurfaceFactory* surface_factory_;
   std::unique_ptr<DrmWindowProxy> window_;
@@ -93,9 +100,12 @@ class GbmSurfaceless : public gl::SurfacelessEGL {
   std::unique_ptr<gfx::VSyncProvider> vsync_provider_;
   std::vector<std::unique_ptr<PendingFrame>> unsubmitted_frames_;
   bool has_implicit_external_sync_;
-  bool has_image_flush_external_;
   bool last_swap_buffers_result_ = true;
   bool swap_buffers_pending_ = false;
+  bool rely_on_implicit_sync_ = false;
+  // Conservatively assume we begin on a device that requires
+  // explicit synchronization.
+  bool is_on_external_drm_device_ = true;
 
   base::WeakPtrFactory<GbmSurfaceless> weak_factory_;
 

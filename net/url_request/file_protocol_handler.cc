@@ -19,18 +19,12 @@ FileProtocolHandler::FileProtocolHandler(
     const scoped_refptr<base::TaskRunner>& file_task_runner)
     : file_task_runner_(file_task_runner) {}
 
-FileProtocolHandler::~FileProtocolHandler() {}
+FileProtocolHandler::~FileProtocolHandler() = default;
 
 URLRequestJob* FileProtocolHandler::MaybeCreateJob(
     URLRequest* request, NetworkDelegate* network_delegate) const {
   base::FilePath file_path;
   const bool is_file = FileURLToFilePath(request->url(), &file_path);
-
-  // Check file access permissions.
-  if (!network_delegate ||
-      !network_delegate->CanAccessFile(*request, file_path)) {
-    return new URLRequestErrorJob(request, network_delegate, ERR_ACCESS_DENIED);
-  }
 
   // We need to decide whether to create URLRequestFileJob for file access or
   // URLRequestFileDirJob for directory access. To avoid accessing the

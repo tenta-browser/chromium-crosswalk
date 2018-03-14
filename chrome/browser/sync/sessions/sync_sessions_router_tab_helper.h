@@ -30,6 +30,22 @@ class SyncSessionsRouterTabHelper
       content::WebContents* web_contents,
       SyncSessionsWebContentsRouter* session_router);
 
+  // WebContentsObserver implementation.
+  void DidFinishNavigation(
+      content::NavigationHandle* navigation_handle) override;
+  void TitleWasSet(content::NavigationEntry* entry) override;
+  void WebContentsDestroyed() override;
+  void DidFinishLoad(content::RenderFrameHost* render_frame_host,
+                     const GURL& validated_url) override;
+  void DidOpenRequestedURL(content::WebContents* new_contents,
+                           content::RenderFrameHost* source_render_frame_host,
+                           const GURL& url,
+                           const content::Referrer& referrer,
+                           WindowOpenDisposition disposition,
+                           ui::PageTransition transition,
+                           bool started_from_context_menu,
+                           bool renderer_initiated) override;
+
   // Get the tab id of the tab responsible for creating the tab this helper
   // corresponds to. Returns -1 if there is no such tab.
   SessionID::id_type source_tab_id() const { return source_tab_id_; }
@@ -44,23 +60,7 @@ class SyncSessionsRouterTabHelper
   // corresponds to.
   void set_source_tab_id(const SessionID::id_type id) { source_tab_id_ = id; }
 
-  // WebContentsObserver implementation.
-  void DidFinishNavigation(
-      content::NavigationHandle* navigation_handle) override;
-  void TitleWasSet(content::NavigationEntry* entry, bool explicit_set) override;
-  void WebContentsDestroyed() override;
-  void DidFinishLoad(content::RenderFrameHost* render_frame_host,
-                     const GURL& validated_url) override;
-  void DidOpenRequestedURL(content::WebContents* new_contents,
-                           content::RenderFrameHost* source_render_frame_host,
-                           const GURL& url,
-                           const content::Referrer& referrer,
-                           WindowOpenDisposition disposition,
-                           ui::PageTransition transition,
-                           bool started_from_context_menu,
-                           bool renderer_initiated) override;
-
-  void NotifyRouter();
+  void NotifyRouter(bool page_load_completed = false);
 
   // |router_| is a KeyedService and is guaranteed to outlive |this|.
   SyncSessionsWebContentsRouter* router_;

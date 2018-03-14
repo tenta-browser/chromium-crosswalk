@@ -224,7 +224,7 @@ class LayerTreeHostPictureTestChangeLiveTilesRectWithRecycleTree
 
     // picture_'s transform is going to be changing on the compositor thread, so
     // force it to have a transform node by making it scrollable.
-    picture_->SetScrollClipLayerId(root->id());
+    picture_->SetScrollable(root->bounds());
 
     layer_tree_host()->SetRootLayer(root);
     LayerTreeHostPictureTest::SetupTree();
@@ -342,7 +342,7 @@ class LayerTreeHostPictureTestRSLLMembership : public LayerTreeHostPictureTest {
     LayerImpl* gchild = impl->sync_tree()->LayerById(picture_->id());
     FakePictureLayerImpl* picture = static_cast<FakePictureLayerImpl*>(gchild);
 
-    switch (impl->sync_tree()->source_frame_number()) {
+    switch (impl->active_tree()->source_frame_number()) {
       case 0:
         // On 1st commit the layer has tilings.
         EXPECT_GT(picture->tilings()->num_tilings(), 0u);
@@ -359,7 +359,7 @@ class LayerTreeHostPictureTestRSLLMembership : public LayerTreeHostPictureTest {
   }
 
   void DidActivateTreeOnThread(LayerTreeHostImpl* impl) override {
-    LayerImpl* gchild = impl->sync_tree()->LayerById(picture_->id());
+    LayerImpl* gchild = impl->active_tree()->LayerById(picture_->id());
     FakePictureLayerImpl* picture = static_cast<FakePictureLayerImpl*>(gchild);
 
     switch (impl->active_tree()->source_frame_number()) {
@@ -400,7 +400,7 @@ class LayerTreeHostPictureTestRSLLMembership : public LayerTreeHostPictureTest {
   scoped_refptr<FakePictureLayer> picture_;
 };
 
-SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostPictureTestRSLLMembership);
+SINGLE_THREAD_TEST_F(LayerTreeHostPictureTestRSLLMembership);
 
 class LayerTreeHostPictureTestRSLLMembershipWithScale
     : public LayerTreeHostPictureTest {
@@ -412,7 +412,7 @@ class LayerTreeHostPictureTestRSLLMembershipWithScale
 
     pinch_ = Layer::Create();
     pinch_->SetBounds(gfx::Size(500, 500));
-    pinch_->SetScrollClipLayerId(root_clip->id());
+    pinch_->SetScrollable(root_clip->bounds());
     pinch_->SetIsContainerForFixedPositionLayers(true);
     page_scale_layer->AddChild(pinch_);
     root_clip->AddChild(page_scale_layer);
@@ -423,8 +423,11 @@ class LayerTreeHostPictureTestRSLLMembershipWithScale
     picture_->SetBounds(gfx::Size(100, 100));
     pinch_->AddChild(picture_);
 
-    layer_tree_host()->RegisterViewportLayers(NULL, page_scale_layer, pinch_,
-                                              nullptr);
+    LayerTreeHost::ViewportLayers viewport_layers;
+    viewport_layers.page_scale = page_scale_layer;
+    viewport_layers.inner_viewport_container = root_clip;
+    viewport_layers.inner_viewport_scroll = pinch_;
+    layer_tree_host()->RegisterViewportLayers(viewport_layers);
     layer_tree_host()->SetPageScaleFactorAndLimits(1.f, 1.f, 4.f);
     layer_tree_host()->SetRootLayer(root_clip);
     LayerTreeHostPictureTest::SetupTree();
@@ -491,7 +494,7 @@ class LayerTreeHostPictureTestRSLLMembershipWithScale
           // Pinch zoom in to change the scale on the active tree.
           impl->PinchGestureBegin();
           impl->PinchGestureUpdate(2.f, gfx::Point(1, 1));
-          impl->PinchGestureEnd();
+          impl->PinchGestureEnd(gfx::Point(1, 1), true);
         } else if (picture->tilings()->num_tilings() == 1) {
           // If the pinch gesture caused a commit we could get here with a
           // pending tree.
@@ -611,7 +614,7 @@ class LayerTreeHostPictureTestForceRecalculateScales
     FakePictureLayerImpl* normal_layer = static_cast<FakePictureLayerImpl*>(
         impl->active_tree()->LayerById(normal_layer_->id()));
 
-    switch (impl->sync_tree()->source_frame_number()) {
+    switch (impl->active_tree()->source_frame_number()) {
       case 0:
         // On first commit, both layers are at the default scale.
         ASSERT_EQ(1u, will_change_layer->tilings()->num_tilings());
@@ -679,7 +682,7 @@ class LayerTreeHostPictureTestForceRecalculateScales
   scoped_refptr<FakePictureLayer> normal_layer_;
 };
 
-SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostPictureTestForceRecalculateScales);
+SINGLE_THREAD_TEST_F(LayerTreeHostPictureTestForceRecalculateScales);
 
 }  // namespace
 }  // namespace cc

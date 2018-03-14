@@ -25,14 +25,17 @@
 
 #include "core/editing/commands/BreakBlockquoteCommand.h"
 
-#include "core/HTMLNames.h"
 #include "core/dom/NodeTraversal.h"
 #include "core/dom/Text.h"
 #include "core/editing/EditingUtilities.h"
+#include "core/editing/SelectionTemplate.h"
 #include "core/editing/VisiblePosition.h"
+#include "core/editing/VisibleSelection.h"
+#include "core/editing/VisibleUnits.h"
 #include "core/html/HTMLBRElement.h"
 #include "core/html/HTMLElement.h"
 #include "core/html/HTMLQuoteElement.h"
+#include "core/html_names.h"
 #include "core/layout/LayoutListItem.h"
 
 namespace blink {
@@ -87,13 +90,12 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
   if (EndingSelection().IsNone())
     return;
 
-  if (!TopBlockquoteOf(EndingSelection().Start()))
+  if (!TopBlockquoteOf(EndingVisibleSelection().Start()))
     return;
 
   // Delete the current selection.
   if (EndingSelection().IsRange()) {
-    DeleteSelection(editing_state, false, false);
-    if (editing_state->IsAborted())
+    if (!DeleteSelection(editing_state, false, false))
       return;
   }
 
@@ -105,18 +107,17 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
   if (EndingSelection().IsNone())
     return;
 
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
-
-  VisiblePosition visible_pos = EndingSelection().VisibleStart();
+  const VisibleSelection& visible_selection = EndingVisibleSelection();
+  VisiblePosition visible_pos = visible_selection.VisibleStart();
 
   // pos is a position equivalent to the caret.  We use downstream() so that pos
   // will be in the first node that we need to move (there are a few exceptions
   // to this, see below).
-  Position pos = MostForwardCaretPosition(EndingSelection().Start());
+  Position pos = MostForwardCaretPosition(visible_selection.Start());
 
   // Find the top-most blockquote from the start.
   HTMLQuoteElement* const top_blockquote =
-      TopBlockquoteOf(EndingSelection().Start());
+      TopBlockquoteOf(visible_selection.Start());
   if (!top_blockquote || !top_blockquote->parentNode())
     return;
 
@@ -133,10 +134,11 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
     InsertNodeBefore(break_element, top_blockquote, editing_state);
     if (editing_state->IsAborted())
       return;
-    SetEndingSelection(SelectionInDOMTree::Builder()
-                           .Collapse(Position::BeforeNode(break_element))
-                           .SetIsDirectional(EndingSelection().IsDirectional())
-                           .Build());
+    SetEndingSelection(SelectionForUndoStep::From(
+        SelectionInDOMTree::Builder()
+            .Collapse(Position::BeforeNode(*break_element))
+            .SetIsDirectional(EndingSelection().IsDirectional())
+            .Build()));
     RebalanceWhitespace();
     return;
   }
@@ -151,10 +153,11 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
   // If we're inserting the break at the end of the quoted content, we don't
   // need to break the quote.
   if (is_last_vis_pos_in_node) {
-    SetEndingSelection(SelectionInDOMTree::Builder()
-                           .Collapse(Position::BeforeNode(break_element))
-                           .SetIsDirectional(EndingSelection().IsDirectional())
-                           .Build());
+    SetEndingSelection(SelectionForUndoStep::From(
+        SelectionInDOMTree::Builder()
+            .Collapse(Position::BeforeNode(*break_element))
+            .SetIsDirectional(EndingSelection().IsDirectional())
+            .Build()));
     RebalanceWhitespace();
     return;
   }
@@ -196,10 +199,11 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
 
   // If there's nothing inside topBlockquote to move, we're finished.
   if (!start_node->IsDescendantOf(top_blockquote)) {
-    SetEndingSelection(SelectionInDOMTree::Builder()
-                           .Collapse(FirstPositionInOrBeforeNode(start_node))
-                           .SetIsDirectional(EndingSelection().IsDirectional())
-                           .Build());
+    SetEndingSelection(SelectionForUndoStep::From(
+        SelectionInDOMTree::Builder()
+            .Collapse(FirstPositionInOrBeforeNode(*start_node))
+            .SetIsDirectional(EndingSelection().IsDirectional())
+            .Build()));
     return;
   }
 
@@ -224,11 +228,11 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
   for (size_t i = ancestors.size(); i != 0; --i) {
     Element* cloned_child = ancestors[i - 1]->CloneElementWithoutChildren();
     // Preserve list item numbering in cloned lists.
-    if (isHTMLOListElement(*cloned_child)) {
+    if (IsHTMLOListElement(*cloned_child)) {
       Node* list_child_node = i > 1 ? ancestors[i - 2].Get() : start_node;
       // The first child of the cloned list might not be a list item element,
       // find the first one so that we know where to start numbering.
-      while (list_child_node && !isHTMLLIElement(*list_child_node))
+      while (list_child_node && !IsHTMLLIElement(*list_child_node))
         list_child_node = list_child_node->nextSibling();
       if (IsListItem(list_child_node))
         SetNodeAttribute(
@@ -243,7 +247,7 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
     cloned_ancestor = cloned_child;
   }
 
-  MoveRemainingSiblingsToNewParent(start_node, 0, cloned_ancestor,
+  MoveRemainingSiblingsToNewParent(start_node, nullptr, cloned_ancestor,
                                    editing_state);
   if (editing_state->IsAborted())
     return;
@@ -260,7 +264,7 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
          ancestor && ancestor != top_blockquote;
          ancestor = ancestor->parentElement(),
         cloned_parent = cloned_parent->parentElement()) {
-      MoveRemainingSiblingsToNewParent(ancestor->nextSibling(), 0,
+      MoveRemainingSiblingsToNewParent(ancestor->nextSibling(), nullptr,
                                        cloned_parent, editing_state);
       if (editing_state->IsAborted())
         return;
@@ -281,10 +285,11 @@ void BreakBlockquoteCommand::DoApply(EditingState* editing_state) {
     return;
 
   // Put the selection right before the break.
-  SetEndingSelection(SelectionInDOMTree::Builder()
-                         .Collapse(Position::BeforeNode(break_element))
-                         .SetIsDirectional(EndingSelection().IsDirectional())
-                         .Build());
+  SetEndingSelection(SelectionForUndoStep::From(
+      SelectionInDOMTree::Builder()
+          .Collapse(Position::BeforeNode(*break_element))
+          .SetIsDirectional(EndingSelection().IsDirectional())
+          .Build()));
   RebalanceWhitespace();
 }
 

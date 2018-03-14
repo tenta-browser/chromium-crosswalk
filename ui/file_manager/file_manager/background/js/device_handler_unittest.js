@@ -42,11 +42,15 @@ loadTimeData.data = {
   FORMATTING_OF_DEVICE_FINISHED_TITLE: 'FORMATTING_OF_DEVICE_FINISHED_TITLE',
   FORMATTING_FINISHED_SUCCESS_MESSAGE: 'FORMATTING_FINISHED_SUCCESS',
   FORMATTING_OF_DEVICE_FAILED_TITLE: 'FORMATTING_OF_DEVICE_FAILED_TITLE',
-  FORMATTING_FINISHED_FAILURE_MESSAGE: 'FORMATTING_FINISHED_FAILURE'
+  FORMATTING_FINISHED_FAILURE_MESSAGE: 'FORMATTING_FINISHED_FAILURE',
+  RENAMING_OF_DEVICE_FAILED_TITLE: 'RENAMING_OF_DEVICE_FAILED_TITLE',
+  RENAMING_OF_DEVICE_FINISHED_FAILURE_MESSAGE:
+      'RENAMING_OF_DEVICE_FINISHED_FAILURE',
 };
 
 // Set up the test components.
 function setUp() {
+  new MockCommandLinePrivate();
   volumeManager = new MockVolumeManager();
   MockVolumeManager.installMockSingleton(volumeManager);
 
@@ -588,6 +592,29 @@ function testFormatFailed() {
   assertEquals(1, Object.keys(chrome.notifications.items).length);
   assertEquals('FORMATTING_FINISHED_FAILURE',
                chrome.notifications.items['formatFail:/device/path'].message);
+}
+
+function testRenameSucceeded() {
+  chrome.fileManagerPrivate.onDeviceChanged.dispatch(
+      {type: 'rename_start', devicePath: '/device/path'});
+  assertEquals(0, Object.keys(chrome.notifications.items).length);
+
+  chrome.fileManagerPrivate.onDeviceChanged.dispatch(
+      {type: 'rename_success', devicePath: '/device/path'});
+  assertEquals(0, Object.keys(chrome.notifications.items).length);
+}
+
+function testRenameFailed() {
+  chrome.fileManagerPrivate.onDeviceChanged.dispatch(
+      {type: 'rename_start', devicePath: '/device/path'});
+  assertEquals(0, Object.keys(chrome.notifications.items).length);
+
+  chrome.fileManagerPrivate.onDeviceChanged.dispatch(
+      {type: 'rename_fail', devicePath: '/device/path'});
+  assertEquals(1, Object.keys(chrome.notifications.items).length);
+  assertEquals(
+      'RENAMING_OF_DEVICE_FINISHED_FAILURE',
+      chrome.notifications.items['renameFail:/device/path'].message);
 }
 
 function testDeviceHardUnplugged() {

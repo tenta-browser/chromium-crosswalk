@@ -5,6 +5,7 @@
 #include "ui/ozone/platform/drm/gpu/hardware_display_plane_manager_atomic.h"
 
 #include "base/bind.h"
+#include "base/stl_util.h"
 #include "ui/ozone/platform/drm/gpu/crtc_controller.h"
 #include "ui/ozone/platform/drm/gpu/drm_device.h"
 #include "ui/ozone/platform/drm/gpu/hardware_display_plane_atomic.h"
@@ -16,12 +17,11 @@ namespace {
 
 void AtomicPageFlipCallback(std::vector<base::WeakPtr<CrtcController>> crtcs,
                             unsigned int frame,
-                            unsigned int seconds,
-                            unsigned int useconds) {
+                            base::TimeTicks timestamp) {
   for (auto& crtc : crtcs) {
     auto* crtc_ptr = crtc.get();
     if (crtc_ptr)
-      crtc_ptr->OnPageFlipEvent(frame, seconds, useconds);
+      crtc_ptr->OnPageFlipEvent(frame, timestamp);
   }
 }
 
@@ -37,10 +37,7 @@ bool HardwareDisplayPlaneManagerAtomic::Commit(
     HardwareDisplayPlaneList* plane_list,
     bool test_only) {
   for (HardwareDisplayPlane* plane : plane_list->old_plane_list) {
-    bool found =
-        std::find(plane_list->plane_list.begin(), plane_list->plane_list.end(),
-                  plane) != plane_list->plane_list.end();
-    if (!found) {
+    if (!base::ContainsValue(plane_list->plane_list, plane)) {
       // This plane is being released, so we need to zero it.
       plane->set_in_use(false);
       HardwareDisplayPlaneAtomic* atomic_plane =
@@ -77,13 +74,53 @@ bool HardwareDisplayPlaneManagerAtomic::Commit(
   if (!drm_->CommitProperties(plane_list->atomic_property_set.get(), flags,
                               crtcs.size(),
                               base::Bind(&AtomicPageFlipCallback, crtcs))) {
-    PLOG(ERROR) << "Failed to commit properties";
+    if (!test_only) {
+      PLOG(ERROR) << "Failed to commit properties for page flip.";
+    } else {
+      VPLOG(2) << "Failed to commit properties for MODE_ATOMIC_TEST_ONLY.";
+    }
+
     ResetCurrentPlaneList(plane_list);
     return false;
   }
 
   plane_list->plane_list.clear();
   plane_list->atomic_property_set.reset(drmModeAtomicAlloc());
+  return true;
+}
+
+bool HardwareDisplayPlaneManagerAtomic::DisableOverlayPlanes(
+    HardwareDisplayPlaneList* plane_list) {
+  for (HardwareDisplayPlane* plane : plane_list->old_plane_list) {
+    if (plane->type() != HardwareDisplayPlane::kOverlay)
+      continue;
+    plane->set_in_use(false);
+    plane->set_owning_crtc(0);
+
+    HardwareDisplayPlaneAtomic* atomic_plane =
+        static_cast<HardwareDisplayPlaneAtomic*>(plane);
+    atomic_plane->SetPlaneData(plane_list->atomic_property_set.get(), 0, 0,
+                               gfx::Rect(), gfx::Rect(),
+                               gfx::OVERLAY_TRANSFORM_NONE);
+  }
+  // The list of crtcs is only useful if flags contains DRM_MODE_PAGE_FLIP_EVENT
+  // to get the pageflip callback. In this case we don't need to be notified
+  // at the next page flip, so the list of crtcs can be empty.
+  std::vector<base::WeakPtr<CrtcController>> crtcs;
+  bool ret = drm_->CommitProperties(plane_list->atomic_property_set.get(),
+                                    DRM_MODE_ATOMIC_NONBLOCK, crtcs.size(),
+                                    base::Bind(&AtomicPageFlipCallback, crtcs));
+  PLOG_IF(ERROR, !ret) << "Failed to commit properties for page flip.";
+
+  plane_list->atomic_property_set.reset(drmModeAtomicAlloc());
+  return ret;
+}
+
+bool HardwareDisplayPlaneManagerAtomic::ValidatePrimarySize(
+    const OverlayPlane& primary,
+    const drmModeModeInfo& mode) {
+  // Atomic KMS allows for primary planes that don't match the size of
+  // the current mode.
   return true;
 }
 

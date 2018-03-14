@@ -8,33 +8,45 @@
 #include "core/CoreExport.h"
 #include "core/workers/ThreadedMessagingProxyBase.h"
 #include "core/workers/WorkletGlobalScopeProxy.h"
-#include "platform/wtf/WeakPtr.h"
 
 namespace blink {
 
 class ThreadedWorkletObjectProxy;
+class WorkerClients;
 
 class CORE_EXPORT ThreadedWorkletMessagingProxy
     : public ThreadedMessagingProxyBase,
       public WorkletGlobalScopeProxy {
+  USING_GARBAGE_COLLECTED_MIXIN(ThreadedWorkletMessagingProxy);
+
  public:
   // WorkletGlobalScopeProxy implementation.
-  void EvaluateScript(const ScriptSourceCode&) final;
+  void FetchAndInvokeScript(
+      const KURL& module_url_record,
+      WorkletModuleResponsesMap*,
+      network::mojom::FetchCredentialsMode,
+      scoped_refptr<WebTaskRunner> outside_settings_task_runner,
+      WorkletPendingTasks*) final;
+  void WorkletObjectDestroyed() final;
   void TerminateWorkletGlobalScope() final;
 
   void Initialize();
 
- protected:
-  explicit ThreadedWorkletMessagingProxy(ExecutionContext*);
+  void Trace(blink::Visitor*) override;
 
-  ThreadedWorkletObjectProxy& WorkletObjectProxy() {
-    return *worklet_object_proxy_;
-  }
+ protected:
+  ThreadedWorkletMessagingProxy(ExecutionContext*, WorkerClients*);
+
+  ThreadedWorkletObjectProxy& WorkletObjectProxy();
 
  private:
-  std::unique_ptr<ThreadedWorkletObjectProxy> worklet_object_proxy_;
+  friend class ThreadedWorkletMessagingProxyForTest;
 
-  WeakPtrFactory<ThreadedWorkletMessagingProxy> weak_ptr_factory_;
+  virtual std::unique_ptr<ThreadedWorkletObjectProxy> CreateObjectProxy(
+      ThreadedWorkletMessagingProxy*,
+      ParentFrameTaskRunners*);
+
+  std::unique_ptr<ThreadedWorkletObjectProxy> worklet_object_proxy_;
 };
 
 }  // namespace blink

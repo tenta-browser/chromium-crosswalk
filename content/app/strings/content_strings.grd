@@ -168,26 +168,11 @@ below:
       <message name="IDS_DETAILS_WITHOUT_SUMMARY_LABEL" desc="Clickable label to show detailed information or to hide the detailed information.">
         Details
       </message>
-      <message name="IDS_DOWNLOAD_BUTTON_LABEL" desc="Clickable button label to download media file.">
-        Save
-      </message>
-      <message name="IDS_SEARCHABLE_INDEX_INTRO" desc="Text that appears at the start of nearly-obsolete webpages in the form of a 'searchable index'.">
-        This is a searchable index. Enter search keywords: '''
-      </message>
       <message name="IDS_FORM_CALENDAR_CLEAR" desc="Label for a button which clears a date input field.">
         Clear
       </message>
       <message name="IDS_FORM_CALENDAR_TODAY" desc="Label for a button which sets today to a date input field.">
         Today
-      </message>
-      <message name="IDS_FORM_DATE_FORMAT_DAY_IN_MONTH" desc="Short word to indicate which is the day-in-month part in a date format. e.g. 'Day' in 'Month/Day/Year'">
-        Day
-      </message>
-      <message name="IDS_FORM_DATE_FORMAT_MONTH" desc="Short word to indicate which is the month part in a date format. e.g. 'Month' in 'Month/Day/Year'">
-        Month
-      </message>
-      <message name="IDS_FORM_DATE_FORMAT_YEAR" desc="Short word to indicate which is the year part in a date format. e.g. 'Year' in 'Month/Day/Year'">
-        Year
       </message>
       <message name="IDS_FORM_SUBMIT_LABEL" desc="Default label for Submit buttons in forms on webpages.">
         Submit
@@ -219,9 +204,6 @@ below:
       <message name="IDS_FORM_OTHER_MONTH_LABEL" desc="Label for button that opens a full month picker so the user can choose dates other than the ones in the list." meaning="for month label">
         Other...
       </message>
-      <message name="IDS_FORM_OTHER_TIME_LABEL" desc="Label for button that opens a full time picker so the user can choose dates other than the ones in the list." meaning="for time label">
-        Other...
-      </message>
       <message name="IDS_FORM_OTHER_WEEK_LABEL" desc="Label for button that opens a full week picker so the user can choose dates other than the ones in the list." meaning="for week label">
         Other...
       </message>
@@ -245,16 +227,6 @@ below:
       </message>
       <message name="IDS_FORM_WEEK_NUMBER_LABEL" desc="Label for week number column in a calendar.">
         Week
-      </message>
-
-      <message name="IDS_RECENT_SEARCHES_NONE" desc="Label for only item in menu that appears when clicking on the search field image, when no searches have been performed">
-        No recent searches
-      </message>
-      <message name="IDS_RECENT_SEARCHES" desc="label for first item in the menu that appears when clicking on the search field image, used as embedded menu title">
-        Recent Searches
-      </message>
-      <message name="IDS_RECENT_SEARCHES_CLEAR" desc="menu item in Recent Searches menu that empties menu's contents">
-        Clear Recent Searches
       </message>
 
       <message name="IDS_AX_CALENDAR_SHOW_MONTH_SELECTOR" desc="Accessible description of a button to show month selection panel in a calendar picker.">
@@ -294,6 +266,9 @@ below:
       <message name="IDS_AX_ROLE_DESCRIPTION_TERM" desc="Accessibility role description for description term (as in a description list)">
         term
       </message>
+      <message name="IDS_AX_ROLE_DISCLOSURE_TRIANGLE" desc="Accessibility role description for a disclosure triangle, a control shaped like a triangle that expands or collapses to show or hide extra content">
+        disclosure triangle
+      </message>
       <message name="IDS_AX_ROLE_FEED" desc="Accessibility role description for a scrollable list of articles.">
         feed
       </message>
@@ -320,14 +295,8 @@ below:
       <message name="IDS_AX_ROLE_HEADING" desc="Accessibility role description for headings">
         heading
       </message>
-      <message name="IDS_AX_ROLE_IMAGE_MAP" desc="Accessibility role description for image map">
-        image map
-      </message>
       <message name="IDS_AX_ROLE_LINK" desc="Accessibility role description for link">
         link
-      </message>
-      <message name="IDS_AX_ROLE_LIST_MARKER" desc="Accessibility role description for list marker">
-        list marker
       </message>
       <message name="IDS_AX_ROLE_MAIN_CONTENT" desc="Accessibility role description for main content of the document.">
         main
@@ -369,9 +338,6 @@ below:
         <message name="IDS_AX_ROLE_BLOCKQUOTE" desc="Accessibility role description for a blockquote">
           blockquote
         </message>
-        <message name="IDS_AX_ROLE_BUSY_INDICATOR" desc="Accessibility role description for a busy indicator">
-          busy indicator
-        </message>
         <message name="IDS_AX_ROLE_BUTTON" desc="Accessibility role description for a button">
           button
         </message>
@@ -401,9 +367,6 @@ below:
         </message>
         <message name="IDS_AX_ROLE_DIRECTORY" desc="Accessibility role description for a directory, for example a table of contents or list of employees">
           directory
-        </message>
-        <message name="IDS_AX_ROLE_DISCLOSURE_TRIANGLE" desc="Accessibility role description for a disclosure triangle, a control shaped like a triangle that expands or collapses to show or hide extra content">
-          disclosure triangle
         </message>
         <message name="IDS_AX_ROLE_DOCUMENT" desc="Accessibility role description for a document">
           document
@@ -447,9 +410,6 @@ below:
         <message name="IDS_AX_ROLE_NOTE" desc="Accessibility role description for a note">
           note
         </message>
-        <message name="IDS_AX_ROLE_OUTLINE" desc="Accessibility role description for an outline, a presentation of information in a tree-like structure">
-          outline
-        </message>
         <message name="IDS_AX_ROLE_POP_UP_BUTTON" desc="Accessibility role description for a pop up button">
           pop up button
         </message>
@@ -464,9 +424,6 @@ below:
         </message>
         <message name="IDS_AX_ROLE_ROW_HEADER" desc="Accessibility role description for a row header in a table">
           row header
-        </message>
-        <message name="IDS_AX_ROLE_RULER" desc="Accessibility role description for a ruler">
-          ruler
         </message>
         <message name="IDS_AX_ROLE_SCROLL_BAR" desc="Accessibility role description for a scroll bar">
           scroll bar
@@ -558,24 +515,12 @@ below:
         pause
       </message>
 
-      <message name="IDS_AX_MEDIA_SLIDER" desc="Accessibility role description for timeline slider">
-        movie time
-      </message>
-
-      <message name="IDS_AX_MEDIA_SLIDER_THUMB" desc="Accessibility role description for timeline thumb">
-        movie timeline thumb
-      </message>
-
       <message name="IDS_AX_MEDIA_CURRENT_TIME_DISPLAY" desc="Accessibility role description for elapsed time display">
         elapsed time
       </message>
 
       <message name="IDS_AX_MEDIA_TIME_REMAINING_DISPLAY" desc="Accessibility role description for time remaining display">
         remaining time
-      </message>
-
-      <message name="IDS_AX_MEDIA_STATUS_DISPLAY" desc="Accessibility role description for movie status">
-        status
       </message>
 
       <message name="IDS_AX_MEDIA_ENTER_FULL_SCREEN_BUTTON" desc="Accessibility role description for enter fullscreen button">
@@ -642,20 +587,12 @@ below:
         movie time scrubber
       </message>
 
-      <message name="IDS_AX_MEDIA_SLIDER_THUMB_HELP" desc="Accessibility help description for timeline thumb">
-        movie time scrubber thumb
-      </message>
-
       <message name="IDS_AX_MEDIA_CURRENT_TIME_DISPLAY_HELP" desc="Accessibility help description for elapsed time display">
         current time in seconds
       </message>
 
       <message name="IDS_AX_MEDIA_TIME_REMAINING_DISPLAY_HELP" desc="Accessibility help description for time remaining display">
         number of seconds of movie remaining
-      </message>
-
-      <message name="IDS_AX_MEDIA_STATUS_DISPLAY_HELP" desc="Accessibility help description for movie status">
-        current movie status
       </message>
 
       <message name="IDS_AX_MEDIA_ENTER_FULL_SCREEN_BUTTON_HELP" desc="Accessibility help description for enter fullscreen button">
@@ -737,7 +674,7 @@ below:
       <message name="IDS_FORM_VALIDATION_TYPE_MISMATCH_EMAIL_INVALID_LOCAL" desc="Heading or short sentence shown when there is an email field in a form and a user specified an invalid value like 'us,er@example.com'.">
         A part followed by '<ph name="ATSIGN">$1<ex>@</ex></ph>' should not contain the symbol '<ph name="INVALIDCHARACTER">$2<ex>,</ex></ph>'.
       </message>
-      <message name="IDS_FORM_VALIDATION_TYPE_MISMATCH_EMAIL_NO_AT_SIGN" desc="Heading or short sentence shown when there is an email field in a form and a user specified an invalid value liek 'user'.">
+      <message name="IDS_FORM_VALIDATION_TYPE_MISMATCH_EMAIL_NO_AT_SIGN" desc="Heading or short sentence shown when there is an email field in a form and a user specified an invalid value like 'user'.">
         Please include an '<ph name="ATSIGN">$1<ex>@</ex></ph>' in the email address. '<ph name="INVALIDADDRESS">$2<ex>user</ex></ph>' is missing an '<ph name="ATSIGN">$1<ex>@</ex></ph>'.
       </message>
       <message name="IDS_FORM_VALIDATION_TYPE_MISMATCH_MULTIPLE_EMAIL" desc="Heading or short sentence shown there is a field which accepts multiple e-mail addresses and a user specified a value which is not a comma-separated e-mail addresses.">
@@ -845,6 +782,9 @@ below:
       <message name="IDS_MEDIA_OVERFLOW_MENU_CLOSED_CAPTIONS" desc="Media controls overflow menu item label for a closed captions button. The text for this overflow menu should be short.">
         Captions
       </message>
+      <message name="IDS_MEDIA_OVERFLOW_MENU_CLOSED_CAPTIONS_SUBMENU_TITLE" desc="Media controls overflow menu title for the closed captions submenu. The text for this overflow menu should be short.">
+        Options
+      </message>
       <message name="IDS_MEDIA_OVERFLOW_MENU_CAST" desc="Media controls overflow menu item label for a cast button.">
         Cast
       </message>
@@ -872,10 +812,10 @@ below:
       <message name="IDS_MEDIA_OVERFLOW_MENU_DOWNLOAD" desc="Media controls overflow menu item label for a download button.">
        Download
       </message>
-      <message name="IDS_MEDIA_REMOTING_DISABLE_TEXT" desc="Media remoting disable button label.">
-       Play on both screens
+      <message name="IDS_MEDIA_REMOTING_CAST_TEXT" desc="Text message shown to the user when casting a video to a known remote device.">
+       Now casting to <ph name="DEVICE_FRIENDLY_NAME">$1<ex>Living Room TV</ex></ph>
       </message>
-      <message name="IDS_MEDIA_REMOTING_CAST_TEXT" desc="Media remoting cast video text message.">
+      <message name="IDS_MEDIA_REMOTING_CAST_TO_UNKNOWN_DEVICE_TEXT" desc="Text message shown to the user when casting a video to an unknown remote device.">
        Now casting to your TV
       </message>
       <message name="IDS_MEDIA_TRACKS_NO_LABEL" desc="Menu item label for a text track that has no name specified. The number represents the track number in the list of tracks.">

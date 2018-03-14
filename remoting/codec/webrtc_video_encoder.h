@@ -8,8 +8,10 @@
 #include <stdint.h>
 
 #include <memory>
+#include <string>
 
 #include "base/time/time.h"
+#include "third_party/webrtc/common_types.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
 
 namespace webrtc {
@@ -39,6 +41,9 @@ class WebrtcVideoEncoder {
     // Indicates that the encoder should encode this frame as a key frame.
     bool key_frame = false;
 
+    // Target FPS. < 0 means unset.
+    int fps = -1;
+
     // Quantization parameters for the encoder.
     int vpx_min_quantizer = -1;
     int vpx_max_quantizer = -1;
@@ -49,18 +54,40 @@ class WebrtcVideoEncoder {
     std::string data;
     bool key_frame;
     int quantizer;
+    webrtc::VideoCodecType codec;
   };
+
+  enum class EncodeResult {
+    SUCCEEDED,
+
+    // The implementation cannot handle the frame, the size exceeds the
+    // capability of the codec or the implementation.
+    FRAME_SIZE_EXCEEDS_CAPABILITY,
+
+    // Undefined or unhandled error has happened. This error type should be
+    // avoided. A more exact error type is preferred.
+    UNKNOWN_ERROR,
+  };
+
+  // A derived class calls EncodeCallback to return the result of an encoding
+  // request. SUCCEEDED with an empty EncodedFrame (nullptr) indicates the frame
+  // should be dropped (unchanged or empty frame). Otherwise EncodeResult shows
+  // the errors.
+  typedef base::OnceCallback<void(EncodeResult, std::unique_ptr<EncodedFrame>)>
+      EncodeCallback;
 
   virtual ~WebrtcVideoEncoder() {}
 
   // Encode an image stored in |frame|. If frame.updated_region() is empty
   // then the encoder may return a frame (e.g. to top-off previously-encoded
   // portions of the frame to higher quality) or return nullptr to indicate that
-  // there is no work to do. |frame| may be nullptr. This case must be handled
-  // the same as if frame.updated_region() is empty.
-  virtual std::unique_ptr<EncodedFrame> Encode(
-      const webrtc::DesktopFrame* frame,
-      const FrameParams& param) = 0;
+  // there is no work to do. |frame| may be nullptr, which is equivalent to a
+  // frame with an empty updated_region(). |done| callback may be called
+  // synchronously. It must not be called if the encoder is destroyed while
+  // request is pending.
+  virtual void Encode(std::unique_ptr<webrtc::DesktopFrame> frame,
+                      const FrameParams& param,
+                      EncodeCallback done) = 0;
 };
 
 }  // namespace remoting

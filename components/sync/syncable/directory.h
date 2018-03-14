@@ -8,7 +8,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <deque>
 #include <memory>
 #include <set>
 #include <string>
@@ -16,6 +15,7 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/containers/circular_deque.h"
 #include "base/containers/hash_tables.h"
 #include "base/files/file_util.h"
 #include "base/gtest_prod_util.h"
@@ -254,7 +254,7 @@ class Directory {
   // |report_unrecoverable_error_function| may be null.
   // Takes ownership of |store|.
   Directory(
-      DirectoryBackingStore* store,
+      std::unique_ptr<DirectoryBackingStore> store,
       const WeakHandle<UnrecoverableErrorHandler>& unrecoverable_error_handler,
       const base::Closure& report_unrecoverable_error_function,
       NigoriHandler* nigori_handler,
@@ -291,6 +291,10 @@ class Directory {
 
   // Adds memory statistics to |pmd| for chrome://tracing.
   void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd);
+
+  // Estimates memory usage of entries and corresponding indices of type
+  // |model_type|.
+  size_t EstimateMemoryUsageByType(ModelType model_type);
 
   // Gets/Increments transaction version of a model type. Must be called when
   // holding kernel mutex.
@@ -344,7 +348,7 @@ class Directory {
   // Called to set the unrecoverable error on the directory and to propagate
   // the error to upper layers.
   void OnUnrecoverableError(const BaseTransaction* trans,
-                            const tracked_objects::Location& location,
+                            const base::Location& location,
                             const std::string& message);
 
   DeleteJournal* delete_journal();
@@ -500,7 +504,8 @@ class Directory {
                                 AttachmentIdList* ids);
 
   // For new entry creation only.
-  bool InsertEntry(BaseWriteTransaction* trans, EntryKernel* entry);
+  bool InsertEntry(BaseWriteTransaction* trans,
+                   std::unique_ptr<EntryKernel> entry);
 
   // Update the attachment index for |metahandle| removing it from the index
   // under |old_metadata| entries and add it under |new_metadata| entries.
@@ -557,7 +562,7 @@ class Directory {
 
   bool InsertEntry(const ScopedKernelLock& lock,
                    BaseWriteTransaction* trans,
-                   EntryKernel* entry);
+                   std::unique_ptr<EntryKernel> entry);
 
   // Remove each of |metahandle|'s attachment ids from index_by_attachment_id.
   void RemoveFromAttachmentIndex(
@@ -612,7 +617,7 @@ class Directory {
   void GetChildSetForKernel(
       BaseTransaction*,
       EntryKernel* kernel_,
-      std::deque<const OrderedChildSet*>* child_sets) const;
+      base::circular_deque<const OrderedChildSet*>* child_sets) const;
 
   // Append the handles of the children of |parent_id| to |result|.
   void AppendChildHandles(const ScopedKernelLock& lock,
@@ -647,7 +652,7 @@ class Directory {
   // error on it.
   bool unrecoverable_error_set(const BaseTransaction* trans) const;
 
-  Kernel* kernel_;
+  std::unique_ptr<Kernel> kernel_;
 
   std::unique_ptr<DirectoryBackingStore> store_;
 

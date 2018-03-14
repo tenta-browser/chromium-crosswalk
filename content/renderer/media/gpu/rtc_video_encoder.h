@@ -38,10 +38,9 @@ namespace content {
 // the media thread.  RTCVideoEncoder is sychronized by webrtc::VideoSender.
 // webrtc::VideoEncoder methods do not run concurrently. RtcVideoEncoder needs
 // to synchronize RegisterEncodeCompleteCallback and encode complete callback.
-class CONTENT_EXPORT RTCVideoEncoder
-    : NON_EXPORTED_BASE(public webrtc::VideoEncoder) {
+class CONTENT_EXPORT RTCVideoEncoder : public webrtc::VideoEncoder {
  public:
-  RTCVideoEncoder(webrtc::VideoCodecType type,
+  RTCVideoEncoder(media::VideoCodecProfile profile,
                   media::GpuVideoAcceleratorFactories* gpu_factories);
   ~RTCVideoEncoder() override;
 
@@ -59,16 +58,13 @@ class CONTENT_EXPORT RTCVideoEncoder
   int32_t Release() override;
   int32_t SetChannelParameters(uint32_t packet_loss, int64_t rtt) override;
   int32_t SetRates(uint32_t new_bit_rate, uint32_t frame_rate) override;
+  bool SupportsNativeHandle() const override;
 
  private:
   class Impl;
   friend class RTCVideoEncoder::Impl;
 
-  void RecordInitEncodeUMA(int32_t init_retval,
-                           media::VideoCodecProfile profile);
-
-  // The video codec type, as reported to WebRTC.
-  const webrtc::VideoCodecType video_codec_type_;
+  const media::VideoCodecProfile profile_;
 
   // Factory for creating VEAs, shared memory buffers, etc.
   media::GpuVideoAcceleratorFactories* gpu_factories_;

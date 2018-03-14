@@ -1,4 +1,5 @@
 <link rel="import" href="chrome://resources/html/polymer.html">
+
 <link rel="import" href="chrome://resources/html/web_ui_listener_behavior.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button-light.html">
 <link rel="import" href="../icons.html">
@@ -142,9 +143,8 @@
         <div class="secondary" id="flashSecondary">
           [[defaultSettingLabel_(
               default_.plugins,
-              '$i18nPolymer{siteSettingsFlashAllow}',
-              '$i18nPolymer{siteSettingsFlashBlock}',
-              '$i18nPolymer{siteSettingsFlashAskBefore}')]]
+              '$i18nPolymer{siteSettingsFlashAskFirst}',
+              '$i18nPolymer{siteSettingsFlashBlock}')]]
         </div>
       </div>
       <button class="subpage-arrow" is="paper-icon-button-light"
@@ -186,23 +186,23 @@
           aria-describedby="popupsSecondary"></button>
     </div>
     <template is="dom-if" if="[[enableSafeBrowsingSubresourceFilter_]]">
-      <div id="subresource-filter" class="settings-box two-line"
-          category$="[[ContentSettingsTypes.SUBRESOURCE_FILTER]]"
-          data-route="SITE_SETTINGS_SUBRESOURCE_FILTER" on-tap="onTapNavigate_"
+      <div id="ads" class="settings-box two-line"
+          category$="[[ContentSettingsTypes.ADS]]"
+          data-route="SITE_SETTINGS_ADS" on-tap="onTapNavigate_"
           actionable>
-        <iron-icon icon="cr:open-in-new"></iron-icon>
+        <iron-icon icon="settings:ads"></iron-icon>
         <div class="middle">
-          $i18n{siteSettingsSubresourceFilter}
-          <div class="secondary" id="subresourceFilterSecondary">
+          $i18n{siteSettingsAds}
+          <div class="secondary" id="adsSecondary">
             [[defaultSettingLabel_(
-                default_.subresourceFilter,
-                '$i18nPolymer{siteSettingsSubresourceFilterBlock}',
-                '$i18nPolymer{siteSettingsSubresourceFilterAllow}')]]
+                default_.ads,
+                '$i18nPolymer{siteSettingsAllowed}',
+                '$i18nPolymer{siteSettingsAdsBlock}')]]
           </div>
         </div>
         <button class="subpage-arrow" is="paper-icon-button-light"
-            aria-label="$i18n{siteSettingsSubresourceFilter}"
-            aria-describedby="subresourceFilterSecondary"></button>
+            aria-label="$i18n{siteSettingsAds}"
+            aria-describedby="adsSecondary"></button>
       </div>
     </template>
     <div id="background-sync" class="settings-box two-line"
@@ -223,6 +223,26 @@
           aria-label="$i18n{siteSettingsBackgroundSync}"
           aria-describedby="backgroundSyncSecondary"></button>
     </div>
+    <template is="dom-if" if="[[enableSoundContentSetting_]]">
+      <div id="sound" class="settings-box two-line"
+          category$="[[ContentSettingsTypes.SOUND]]"
+          data-route="SITE_SETTINGS_SOUND" on-tap="onTapNavigate_"
+          actionable>
+          <iron-icon icon="settings:volume-up"></iron-icon>
+        <div class="middle">
+          $i18n{siteSettingsSound}
+          <div class="secondary" id="soundSecondary">
+            [[defaultSettingLabel_(
+                default_.sound,
+                '$i18nPolymer{siteSettingsSoundAllow}',
+                '$i18nPolymer{siteSettingsSoundBlock}')]]
+          </div>
+        </div>
+        <button class="subpage-arrow" is="paper-icon-button-light"
+            aria-label="$i18n{siteSettingsSound}"
+            aria-describedby="soundSecondary"></button>
+      </div>
+    </template>
     <div id="automatic-downloads" class="settings-box two-line"
         category$="[[ContentSettingsTypes.AUTOMATIC_DOWNLOADS]]"
         data-route="SITE_SETTINGS_AUTOMATIC_DOWNLOADS"
@@ -297,6 +317,26 @@
           aria-label="$i18n{siteSettingsMidiDevices}"
           aria-describedby="midiDevicesSecondary"></button>
     </div>
+    <template is="dom-if" if="[[enableClipboardContentSetting_]]">
+      <div id="clipboard" class="settings-box two-line"
+           category$="[[ContentSettingsTypes.CLIPBOARD]]"
+           data-route="SITE_SETTINGS_CLIPBOARD" on-tap="onTapNavigate_"
+           actionable>
+        <iron-icon icon="settings:clipboard"></iron-icon>
+        <div class="middle">
+          $i18n{siteSettingsClipboard}
+          <div class="secondary" id="clipboardSecondary">
+            [[defaultSettingLabel_(
+                default_.clipboard,
+                '$i18nPolymer{siteSettingsAskBeforeAccessing}',
+                '$i18nPolymer{siteSettingsBlocked}')]]
+          </div>
+        </div>
+        <button class="subpage-arrow" is="paper-icon-button-light"
+            aria-label="$i18n{siteSettingsClipboard}"
+            aria-describedby="clipboardSecondary"></button>
+      </div>
+    </template>
     <div id="zoom-levels" class="settings-box"
         category$="[[ContentSettingsTypes.ZOOM_LEVELS]]"
         data-route="SITE_SETTINGS_ZOOM_LEVELS" on-tap="onTapNavigate_"

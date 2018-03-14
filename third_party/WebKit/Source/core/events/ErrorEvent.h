@@ -31,13 +31,14 @@
 #ifndef ErrorEvent_h
 #define ErrorEvent_h
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
-#include "bindings/core/v8/SourceLocation.h"
-#include "core/events/ErrorEventInit.h"
-#include "core/events/Event.h"
-#include "wtf/RefPtr.h"
-#include "wtf/text/WTFString.h"
 #include <memory>
+#include "base/memory/scoped_refptr.h"
+#include "bindings/core/v8/SourceLocation.h"
+#include "core/dom/events/Event.h"
+#include "core/events/ErrorEventInit.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/TraceWrapperV8Reference.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -59,9 +60,10 @@ class ErrorEvent final : public Event {
     return new ErrorEvent(message, std::move(location), error, world);
   }
 
-  static ErrorEvent* Create(const AtomicString& type,
+  static ErrorEvent* Create(ScriptState* script_state,
+                            const AtomicString& type,
                             const ErrorEventInit& initializer) {
-    return new ErrorEvent(type, initializer);
+    return new ErrorEvent(script_state, type, initializer);
   }
   static ErrorEvent* CreateSanitizedError(DOMWrapperWorld* world) {
     return new ErrorEvent("Script error.",
@@ -87,11 +89,12 @@ class ErrorEvent final : public Event {
 
   const AtomicString& InterfaceName() const override;
 
-  DOMWrapperWorld* World() const { return world_.Get(); }
+  DOMWrapperWorld* World() const { return world_.get(); }
 
   void SetUnsanitizedMessage(const String&);
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
+  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
 
  private:
   ErrorEvent();
@@ -99,14 +102,14 @@ class ErrorEvent final : public Event {
              std::unique_ptr<SourceLocation>,
              ScriptValue error,
              DOMWrapperWorld*);
-  ErrorEvent(const AtomicString&, const ErrorEventInit&);
+  ErrorEvent(ScriptState*, const AtomicString&, const ErrorEventInit&);
 
   String unsanitized_message_;
   String sanitized_message_;
   std::unique_ptr<SourceLocation> location_;
-  ScriptValue error_;
+  TraceWrapperV8Reference<v8::Value> error_;
 
-  RefPtr<DOMWrapperWorld> world_;
+  scoped_refptr<DOMWrapperWorld> world_;
 };
 
 }  // namespace blink

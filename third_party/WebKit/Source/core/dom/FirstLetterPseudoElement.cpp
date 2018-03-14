@@ -24,8 +24,8 @@
 
 #include "core/dom/FirstLetterPseudoElement.h"
 
+#include "core/css/StyleChangeReason.h"
 #include "core/dom/Element.h"
-#include "core/dom/StyleChangeReason.h"
 #include "core/layout/GeneratedChildren.h"
 #include "core/layout/LayoutObject.h"
 #include "core/layout/LayoutObjectInlines.h"
@@ -57,6 +57,14 @@ static inline bool IsSpaceForFirstLetter(UChar c) {
   return IsSpaceOrNewline(c) || c == kNoBreakSpaceCharacter;
 }
 
+static inline bool IsBetweenSurrogatePair(const String& text, unsigned offset) {
+  if (offset == 0u || offset >= text.length())
+    return false;
+  if (text.Is8Bit())
+    return false;
+  return U16_IS_LEAD(text[offset - 1]) && U16_IS_TRAIL(text[offset]);
+}
+
 unsigned FirstLetterPseudoElement::FirstLetterLength(const String& text) {
   unsigned length = 0;
   unsigned text_length = text.length();
@@ -82,7 +90,8 @@ unsigned FirstLetterPseudoElement::FirstLetterLength(const String& text) {
   // Keep looking for allowed punctuation for the :first-letter.
   for (; length < text_length; ++length) {
     UChar c = text[length];
-    if (!IsPunctuationForFirstLetter(c))
+    if (!IsPunctuationForFirstLetter(c) &&
+        !IsBetweenSurrogatePair(text, length))
       break;
   }
   return length;
@@ -96,15 +105,16 @@ static bool IsInvalidFirstLetterLayoutObject(const LayoutObject* obj) {
 
 LayoutObject* FirstLetterPseudoElement::FirstLetterTextLayoutObject(
     const Element& element) {
-  LayoutObject* parent_layout_object = 0;
+  LayoutObject* parent_layout_object = nullptr;
 
   // If we are looking at a first letter element then we need to find the
   // first letter text layoutObject from the parent node, and not ourselves.
-  if (element.IsFirstLetterPseudoElement())
+  if (element.IsFirstLetterPseudoElement()) {
     parent_layout_object =
         element.ParentOrShadowHostElement()->GetLayoutObject();
-  else
+  } else {
     parent_layout_object = element.GetLayoutObject();
+  }
 
   if (!parent_layout_object ||
       !parent_layout_object->Style()->HasPseudoStyle(kPseudoIdFirstLetter) ||
@@ -128,12 +138,12 @@ LayoutObject* FirstLetterPseudoElement::FirstLetterTextLayoutObject(
     } else if (first_letter_text_layout_object->IsText()) {
       // FIXME: If there is leading punctuation in a different LayoutText than
       // the first letter, we'll not apply the correct style to it.
-      RefPtr<StringImpl> str =
+      scoped_refptr<StringImpl> str =
           ToLayoutText(first_letter_text_layout_object)->IsTextFragment()
               ? ToLayoutTextFragment(first_letter_text_layout_object)
                     ->CompleteText()
               : ToLayoutText(first_letter_text_layout_object)->OriginalText();
-      if (FirstLetterLength(str.Get()) ||
+      if (FirstLetterLength(str.get()) ||
           IsInvalidFirstLetterLayoutObject(first_letter_text_layout_object))
         break;
       first_letter_text_layout_object =
@@ -195,7 +205,7 @@ FirstLetterPseudoElement::~FirstLetterPseudoElement() {
 }
 
 void FirstLetterPseudoElement::UpdateTextFragments() {
-  String old_text = remaining_text_layout_object_->CompleteText();
+  String old_text(remaining_text_layout_object_->CompleteText());
   DCHECK(old_text.Impl());
 
   unsigned length = FirstLetterPseudoElement::FirstLetterLength(old_text);
@@ -231,15 +241,16 @@ void FirstLetterPseudoElement::SetRemainingTextLayoutObject(
   // The text fragment we get our content from is being destroyed. We need
   // to tell our parent element to recalcStyle so we can get cleaned up
   // as well.
-  if (!fragment)
+  if (!fragment) {
     SetNeedsStyleRecalc(
         kLocalStyleChange,
         StyleChangeReasonForTracing::Create(StyleChangeReason::kPseudoClass));
+  }
 
   remaining_text_layout_object_ = fragment;
 }
 
-void FirstLetterPseudoElement::AttachLayoutTree(const AttachContext& context) {
+void FirstLetterPseudoElement::AttachLayoutTree(AttachContext& context) {
   PseudoElement::AttachLayoutTree(context);
   AttachFirstLetterTextLayoutObjects();
 }
@@ -296,6 +307,8 @@ void FirstLetterPseudoElement::AttachFirstLetterTextLayoutObjects() {
           : ToLayoutText(next_layout_object)->OriginalText();
   DCHECK(old_text.Impl());
 
+  // :first-letter inherits from the parent of the text. It may not be
+  // this->Parent() when e.g., <div><span>text</span></div>.
   ComputedStyle* pseudo_style =
       StyleForFirstLetter(next_layout_object->Parent());
   GetLayoutObject()->SetStyle(pseudo_style);
@@ -341,23 +354,34 @@ void FirstLetterPseudoElement::AttachFirstLetterTextLayoutObjects() {
 }
 
 void FirstLetterPseudoElement::DidRecalcStyle() {
-  if (!GetLayoutObject())
+  LayoutObject* layout_object = GetLayoutObject();
+  if (!layout_object)
     return;
+
+  // :first-letter inherits from the parent of the text. It may not be
+  // this->Parent() when e.g., <div><span>text</span></div>.
+  DCHECK(remaining_text_layout_object_);
+  ComputedStyle* pseudo_style =
+      StyleForFirstLetter(remaining_text_layout_object_->Parent());
+  DCHECK(pseudo_style);
+  // TODO(kojii): While setting to GetLayoutObject() looks correct all the time,
+  // as we do so in AttachFirstLetterTextLayoutObjects(), it is required only
+  // when inline box has text children, and can break layout tree when changing
+  // :first-letter to floats. The check in Element::UpdatePseudoElement() does
+  // not catch all such cases.
+  if (!pseudo_style->IsDisplayBlockContainer())
+    layout_object->SetStyle(pseudo_style);
 
   // The layoutObjects inside pseudo elements are anonymous so they don't get
   // notified of recalcStyle and must have
   // the style propagated downward manually similar to
   // LayoutObject::propagateStyleToAnonymousChildren.
-  LayoutObject* layout_object = this->GetLayoutObject();
   for (LayoutObject* child = layout_object->NextInPreOrder(layout_object);
        child; child = child->NextInPreOrder(layout_object)) {
     // We need to re-calculate the correct style for the first letter element
     // and then apply that to the container and the text fragment inside.
-    if (child->Style()->StyleType() == kPseudoIdFirstLetter &&
-        remaining_text_layout_object_) {
-      if (ComputedStyle* pseudo_style =
-              StyleForFirstLetter(remaining_text_layout_object_->Parent()))
-        child->SetPseudoStyle(pseudo_style);
+    if (child->Style()->StyleType() == kPseudoIdFirstLetter) {
+      child->SetPseudoStyle(pseudo_style);
       continue;
     }
 

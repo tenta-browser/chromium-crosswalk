@@ -44,6 +44,9 @@ void WelcomeHandler::OnSyncConfirmationUIClosed(
 
 // Handles backend events necessary when user clicks "Sign in."
 void WelcomeHandler::HandleActivateSignIn(const base::ListValue* args) {
+  result_ = WelcomeResult::ATTEMPTED;
+  base::RecordAction(base::UserMetricsAction("WelcomePage_SignInClicked"));
+
   if (SigninManagerFactory::GetForProfile(profile_)->IsAuthenticated()) {
     // In general, this page isn't shown to signed-in users; however, if one
     // should arrive here, then opening the sign-in dialog will likely lead
@@ -52,7 +55,7 @@ void WelcomeHandler::HandleActivateSignIn(const base::ListValue* args) {
     GoToNewTabPage();
   } else {
     Browser* browser = GetBrowser();
-    browser->signin_view_controller()->ShowModalSignin(
+    browser->signin_view_controller()->ShowSignin(
         profiles::BubbleViewMode::BUBBLE_VIEW_MODE_GAIA_SIGNIN, browser,
         signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE);
   }
@@ -60,7 +63,11 @@ void WelcomeHandler::HandleActivateSignIn(const base::ListValue* args) {
 
 // Handles backend events necessary when user clicks "No thanks."
 void WelcomeHandler::HandleUserDecline(const base::ListValue* args) {
-  result_ = WelcomeResult::DECLINED;
+  // Set the appropriate decline result, based on whether or not the user
+  // attempted to sign in.
+  result_ = (result_ == WelcomeResult::ATTEMPTED)
+                ? WelcomeResult::ATTEMPTED_DECLINED
+                : WelcomeResult::DECLINED;
   GoToNewTabPage();
 }
 
@@ -77,6 +84,7 @@ void WelcomeHandler::RegisterMessages() {
 void WelcomeHandler::GoToNewTabPage() {
   chrome::NavigateParams params(GetBrowser(), GURL(chrome::kChromeUINewTabURL),
                                 ui::PageTransition::PAGE_TRANSITION_LINK);
+  params.source_contents = web_ui()->GetWebContents();
   chrome::Navigate(&params);
 }
 

@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include "base/macros.h"
 #include "base/pickle.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/memory_usage_estimator.h"
@@ -15,20 +16,10 @@
 
 namespace sessions {
 
-// TODO(treib): Remove, not needed anymore. crbug.com/627747
-const char kSearchTermsKey[] = "search_terms";
+// The previous referrer policy value corresponding to |Never|.
+const int kObsoleteReferrerPolicyNever = 2;
 
-SerializedNavigationEntry::SerializedNavigationEntry()
-    : index_(-1),
-      unique_id_(0),
-      transition_type_(ui::PAGE_TRANSITION_TYPED),
-      has_post_data_(false),
-      post_id_(-1),
-      is_overriding_user_agent_(false),
-      http_status_code_(0),
-      is_restored_(false),
-      blocked_state_(STATE_INVALID),
-      password_state_(PASSWORD_STATE_UNKNOWN) {
+SerializedNavigationEntry::SerializedNavigationEntry() {
   referrer_policy_ =
       SerializedNavigationDriver::Get()->GetDefaultReferrerPolicy();
 }
@@ -36,7 +27,21 @@ SerializedNavigationEntry::SerializedNavigationEntry()
 SerializedNavigationEntry::SerializedNavigationEntry(
     const SerializedNavigationEntry& other) = default;
 
-SerializedNavigationEntry::~SerializedNavigationEntry() {}
+SerializedNavigationEntry::SerializedNavigationEntry(
+    SerializedNavigationEntry&& other) noexcept {
+  // VC 2015 can't handle "noexcept = default" constructors. We want the
+  // noexcept to avoid copying in a vector, but don't want to copy everything,
+  // by hand, so fall on the default-generated move operator=.
+  operator=(std::move(other));
+}
+
+SerializedNavigationEntry::~SerializedNavigationEntry() = default;
+
+SerializedNavigationEntry& SerializedNavigationEntry::operator=(
+    const SerializedNavigationEntry& other) = default;
+
+SerializedNavigationEntry& SerializedNavigationEntry::operator=(
+    SerializedNavigationEntry&& other) = default;
 
 SerializedNavigationEntry SerializedNavigationEntry::FromSyncData(
     int index,
@@ -48,14 +53,8 @@ SerializedNavigationEntry SerializedNavigationEntry::FromSyncData(
     navigation.referrer_url_ = GURL(sync_data.referrer());
     navigation.referrer_policy_ = sync_data.correct_referrer_policy();
   } else {
-    int mapped_referrer_policy;
-    if (SerializedNavigationDriver::Get()->MapReferrerPolicyToNewValues(
-            sync_data.obsolete_referrer_policy(), &mapped_referrer_policy)) {
-      navigation.referrer_url_ = GURL(sync_data.referrer());
-    } else {
-      navigation.referrer_url_ = GURL();
-    }
-    navigation.referrer_policy_ = mapped_referrer_policy;
+    navigation.referrer_url_ = GURL();
+    navigation.referrer_policy_ = kObsoleteReferrerPolicyNever;
   }
   navigation.virtual_url_ = GURL(sync_data.virtual_url());
   navigation.title_ = base::UTF8ToUTF16(sync_data.title());
@@ -126,7 +125,6 @@ SerializedNavigationEntry SerializedNavigationEntry::FromSyncData(
   navigation.transition_type_ = static_cast<ui::PageTransition>(transition);
 
   navigation.timestamp_ = base::Time();
-  navigation.search_terms_ = base::UTF8ToUTF16(sync_data.search_terms());
   if (sync_data.has_favicon_url())
     navigation.favicon_url_ = GURL(sync_data.favicon_url());
 
@@ -211,7 +209,7 @@ enum TypeMask {
 // original_request_url_
 // is_overriding_user_agent_
 // timestamp_
-// search_terms_
+// search_terms_ (removed)
 // http_status_code_
 // referrer_policy_
 // extended_info_map_
@@ -236,15 +234,11 @@ void SerializedNavigationEntry::WriteToPickle(int max_size,
   const int type_mask = has_post_data_ ? HAS_POST_DATA : 0;
   pickle->WriteInt(type_mask);
 
-  int mapped_referrer_policy;
-  if (SerializedNavigationDriver::Get()->MapReferrerPolicyToOldValues(
-          referrer_policy_, &mapped_referrer_policy) &&
-      referrer_url_.is_valid()) {
-    WriteStringToPickle(pickle, &bytes_written, max_size, referrer_url_.spec());
-  } else {
-    WriteStringToPickle(pickle, &bytes_written, max_size, std::string());
-  }
-  pickle->WriteInt(mapped_referrer_policy);
+  WriteStringToPickle(pickle, &bytes_written, max_size, referrer_url_.spec());
+
+  // This field was deprecated in m61, but we still write it to the pickle for
+  // forwards compatibility.
+  pickle->WriteInt(kObsoleteReferrerPolicyNever);
 
   // Save info required to override the user agent.
   WriteStringToPickle(
@@ -254,7 +248,9 @@ void SerializedNavigationEntry::WriteToPickle(int max_size,
   pickle->WriteBool(is_overriding_user_agent_);
   pickle->WriteInt64(timestamp_.ToInternalValue());
 
-  WriteString16ToPickle(pickle, &bytes_written, max_size, search_terms_);
+  // The |search_terms_| field was removed. Write an empty string to keep
+  // backwards compatibility.
+  WriteString16ToPickle(pickle, &bytes_written, max_size, base::string16());
 
   pickle->WriteInt(http_status_code_);
 
@@ -294,15 +290,11 @@ bool SerializedNavigationEntry::ReadFromPickle(base::PickleIterator* iterator) {
       referrer_spec = std::string();
     referrer_url_ = GURL(referrer_spec);
 
-    // The "referrer policy" property was added even later, so we fall back to
-    // the default policy if the property is not present.
-    //
-    // Note: due to crbug.com/450589 this value might be incorrect, and a
-    // corrected version is stored later in the pickle.
-    if (!iterator->ReadInt(&referrer_policy_)) {
-      referrer_policy_ =
-          SerializedNavigationDriver::Get()->GetDefaultReferrerPolicy();
-    }
+    // Note: due to crbug.com/450589 the initial referrer policy is incorrect,
+    // and ignored. A correct referrer policy is extracted later (see
+    // |correct_referrer_policy| below).
+    int ignored_referrer_policy;
+    ignore_result(iterator->ReadInt(&ignored_referrer_policy));
 
     // If the original URL can't be found, leave it empty.
     std::string original_request_url_spec;
@@ -321,9 +313,10 @@ bool SerializedNavigationEntry::ReadFromPickle(base::PickleIterator* iterator) {
       timestamp_ = base::Time();
     }
 
-    // If the search terms field can't be found, leave it empty.
-    if (!iterator->ReadString16(&search_terms_))
-      search_terms_.clear();
+    // The |search_terms_| field was removed, but it still exists in the binary
+    // format to keep backwards compatibility. Just get rid of it.
+    base::string16 search_terms;
+    ignore_result(iterator->ReadString16(&search_terms));
 
     if (!iterator->ReadInt(&http_status_code_))
       http_status_code_ = 0;
@@ -333,12 +326,6 @@ bool SerializedNavigationEntry::ReadFromPickle(base::PickleIterator* iterator) {
     if (iterator->ReadInt(&correct_referrer_policy)) {
       referrer_policy_ = correct_referrer_policy;
     } else {
-      int mapped_referrer_policy;
-      if (!SerializedNavigationDriver::Get()->MapReferrerPolicyToNewValues(
-              referrer_policy_, &mapped_referrer_policy)) {
-        referrer_url_ = GURL();
-      }
-      referrer_policy_ = mapped_referrer_policy;
       encoded_page_state_ =
           SerializedNavigationDriver::Get()->StripReferrerFromPageState(
               encoded_page_state_);
@@ -368,14 +355,7 @@ bool SerializedNavigationEntry::ReadFromPickle(base::PickleIterator* iterator) {
 sync_pb::TabNavigation SerializedNavigationEntry::ToSyncData() const {
   sync_pb::TabNavigation sync_data;
   sync_data.set_virtual_url(virtual_url_.spec());
-  int mapped_referrer_policy;
-  if (SerializedNavigationDriver::Get()->MapReferrerPolicyToOldValues(
-          referrer_policy_, &mapped_referrer_policy)) {
-    sync_data.set_referrer(referrer_url_.spec());
-  } else {
-    sync_data.set_referrer(std::string());
-  }
-  sync_data.set_obsolete_referrer_policy(mapped_referrer_policy);
+  sync_data.set_referrer(referrer_url_.spec());
   sync_data.set_correct_referrer_policy(referrer_policy_);
   sync_data.set_title(base::UTF16ToUTF8(title_));
 
@@ -459,8 +439,6 @@ sync_pb::TabNavigation SerializedNavigationEntry::ToSyncData() const {
   // The full-resolution timestamp works as a global ID.
   sync_data.set_global_id(timestamp_.ToInternalValue());
 
-  sync_data.set_search_terms(base::UTF16ToUTF8(search_terms_));
-
   sync_data.set_http_status_code(http_status_code_);
 
   if (favicon_url_.is_valid())
@@ -509,7 +487,6 @@ size_t SerializedNavigationEntry::EstimateMemoryUsage() const {
       EstimateMemoryUsage(title_) +
       EstimateMemoryUsage(encoded_page_state_) +
       EstimateMemoryUsage(original_request_url_) +
-      EstimateMemoryUsage(search_terms_) +
       EstimateMemoryUsage(favicon_url_) +
       EstimateMemoryUsage(redirect_chain_) +
       EstimateMemoryUsage(content_pack_categories_) +

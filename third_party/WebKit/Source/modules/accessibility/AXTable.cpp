@@ -28,6 +28,7 @@
 
 #include "modules/accessibility/AXTable.h"
 
+#include "core/dom/AccessibleNode.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/editing/EditingUtilities.h"
 #include "core/html/HTMLCollection.h"
@@ -113,12 +114,12 @@ bool AXTable::IsDataTable() const {
 
   LayoutTable* table = ToLayoutTable(layout_object_);
   Node* table_node = table->GetNode();
-  if (!isHTMLTableElement(table_node))
+  if (!IsHTMLTableElement(table_node))
     return false;
 
   // Do not consider it a data table if any of its descendants have an ARIA
   // role.
-  HTMLTableElement* table_element = toHTMLTableElement(table_node);
+  HTMLTableElement* table_element = ToHTMLTableElement(table_node);
   if (ElementHasAriaRole(table_element->tHead()))
     return false;
   if (ElementHasAriaRole(table_element->tFoot()))
@@ -355,8 +356,8 @@ bool AXTable::IsTableExposableThroughAccessibility() const {
 
 void AXTable::ClearChildren() {
   AXLayoutObject::ClearChildren();
-  rows_.Clear();
-  columns_.Clear();
+  rows_.clear();
+  columns_.clear();
 
   if (header_container_) {
     header_container_->DetachFromParent();
@@ -378,15 +379,15 @@ void AXTable::AddChildren() {
     return;
 
   LayoutTable* table = ToLayoutTable(layout_object_);
-  AXObjectCacheImpl& ax_cache = AxObjectCache();
+  AXObjectCacheImpl& ax_cache = AXObjectCache();
 
   Node* table_node = table->GetNode();
-  if (!isHTMLTableElement(table_node))
+  if (!IsHTMLTableElement(table_node))
     return;
 
   // Add caption
   if (HTMLTableCaptionElement* caption =
-          toHTMLTableElement(table_node)->caption()) {
+          ToHTMLTableElement(table_node)->caption()) {
     AXObject* caption_object = ax_cache.GetOrCreate(caption);
     if (caption_object && !caption_object->AccessibilityIsIgnored())
       children_.push_back(caption_object);
@@ -450,7 +451,7 @@ AXObject* AXTable::HeaderContainer() {
     return header_container_.Get();
 
   AXMockObject* table_header =
-      ToAXMockObject(AxObjectCache().GetOrCreate(kTableHeaderContainerRole));
+      ToAXMockObject(AXObjectCache().GetOrCreate(kTableHeaderContainerRole));
   table_header->SetParent(this);
 
   header_container_ = table_header;
@@ -496,40 +497,36 @@ void AXTable::RowHeaders(AXObjectVector& headers) {
 }
 
 int AXTable::AriaColumnCount() {
-  if (!HasAttribute(aria_colcountAttr))
+  int32_t col_count;
+  if (!HasAOMPropertyOrARIAAttribute(AOMIntProperty::kColCount, col_count))
     return 0;
 
-  const AtomicString& col_count_value = GetAttribute(aria_colcountAttr);
-  int col_count_int = col_count_value.ToInt();
-
-  if (col_count_int > (int)ColumnCount())
-    return col_count_int;
+  if (col_count > static_cast<int>(ColumnCount()))
+    return col_count;
 
   // Spec says that if all of the columns are present in the DOM, it
   // is not necessary to set this attribute as the user agent can
   // automatically calculate the total number of columns.
   // It returns 0 in order not to set this attribute.
-  if (col_count_int == (int)ColumnCount() || col_count_int != -1)
+  if (col_count == static_cast<int>(ColumnCount()) || col_count != -1)
     return 0;
 
   return -1;
 }
 
 int AXTable::AriaRowCount() {
-  if (!HasAttribute(aria_rowcountAttr))
+  int32_t row_count;
+  if (!HasAOMPropertyOrARIAAttribute(AOMIntProperty::kRowCount, row_count))
     return 0;
 
-  const AtomicString& row_count_value = GetAttribute(aria_rowcountAttr);
-  int row_count_int = row_count_value.ToInt();
-
-  if (row_count_int > (int)RowCount())
-    return row_count_int;
+  if (row_count > static_cast<int>(RowCount()))
+    return row_count;
 
   // Spec says that if all of the rows are present in the DOM, it is
   // not necessary to set this attribute as the user agent can
   // automatically calculate the total number of rows.
   // It returns 0 in order not to set this attribute.
-  if (row_count_int == (int)RowCount() || row_count_int != -1)
+  if (row_count == (int)RowCount() || row_count != -1)
     return 0;
 
   // In the spec, -1 explicitly means an unknown number of rows.
@@ -551,7 +548,7 @@ unsigned AXTable::RowCount() {
 AXTableCell* AXTable::CellForColumnAndRow(unsigned column, unsigned row) {
   UpdateChildrenIfNecessary();
   if (column >= ColumnCount() || row >= RowCount())
-    return 0;
+    return nullptr;
 
   // Iterate backwards through the rows in case the desired cell has a rowspan
   // and exists in a previous row.
@@ -584,7 +581,7 @@ AXTableCell* AXTable::CellForColumnAndRow(unsigned column, unsigned row) {
     }
   }
 
-  return 0;
+  return nullptr;
 }
 
 AccessibilityRole AXTable::RoleValue() const {
@@ -608,7 +605,7 @@ bool AXTable::ComputeAccessibilityIsIgnored(
   return false;
 }
 
-DEFINE_TRACE(AXTable) {
+void AXTable::Trace(blink::Visitor* visitor) {
   visitor->Trace(rows_);
   visitor->Trace(columns_);
   visitor->Trace(header_container_);

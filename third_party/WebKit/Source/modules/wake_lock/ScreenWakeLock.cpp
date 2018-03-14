@@ -8,8 +8,8 @@
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Screen.h"
 #include "core/page/PageVisibilityState.h"
-#include "platform/RuntimeEnabledFeatures.h"
-#include "public/platform/InterfaceProvider.h"
+#include "platform/runtime_enabled_features.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 
 namespace blink {
 
@@ -36,7 +36,7 @@ const char* ScreenWakeLock::SupplementName() {
 
 // static
 ScreenWakeLock* ScreenWakeLock::From(LocalFrame* frame) {
-  if (!RuntimeEnabledFeatures::wakeLockEnabled())
+  if (!RuntimeEnabledFeatures::WakeLockEnabled())
     return nullptr;
   ScreenWakeLock* supplement = static_cast<ScreenWakeLock*>(
       Supplement<LocalFrame>::From(frame, SupplementName()));
@@ -55,7 +55,7 @@ void ScreenWakeLock::ContextDestroyed(ExecutionContext*) {
   setKeepAwake(false);
 }
 
-DEFINE_TRACE(ScreenWakeLock) {
+void ScreenWakeLock::Trace(blink::Visitor* visitor) {
   Supplement<LocalFrame>::Trace(visitor);
   PageVisibilityObserver::Trace(visitor);
   ContextLifecycleObserver::Trace(visitor);
@@ -67,8 +67,7 @@ ScreenWakeLock::ScreenWakeLock(LocalFrame& frame)
       PageVisibilityObserver(frame.GetPage()),
       keep_awake_(false) {
   DCHECK(!service_.is_bound());
-  DCHECK(frame.GetInterfaceProvider());
-  frame.GetInterfaceProvider()->GetInterface(mojo::MakeRequest(&service_));
+  frame.GetInterfaceProvider().GetInterface(mojo::MakeRequest(&service_));
 }
 
 bool ScreenWakeLock::keepAwake() const {

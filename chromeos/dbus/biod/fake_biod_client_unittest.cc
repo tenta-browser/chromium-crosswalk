@@ -4,6 +4,8 @@
 
 #include "chromeos/dbus/biod/fake_biod_client.h"
 
+#include <vector>
+
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/strings/string_util.h"
@@ -13,7 +15,7 @@
 #include "dbus/object_path.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using namespace biod;
+using biod::SCAN_RESULT_SUCCESS;
 
 namespace chromeos {
 
@@ -32,7 +34,7 @@ class FakeBiodClientTest : public testing::Test {
   FakeBiodClientTest()
       : task_runner_(new base::TestSimpleTaskRunner),
         task_runner_handle_(task_runner_) {}
-  ~FakeBiodClientTest() override {}
+  ~FakeBiodClientTest() override = default;
 
   // Returns the stored records for |user_id|. Verified to work in
   // TestGetRecordsForUser.
@@ -63,7 +65,8 @@ class FakeBiodClientTest : public testing::Test {
     for (size_t i = 0; i < fingerprint_data.size(); ++i) {
       fake_biod_client_.SendEnrollScanDone(
           fingerprint_data[i], SCAN_RESULT_SUCCESS,
-          i == fingerprint_data.size() - 1 /* is_complete */);
+          i == fingerprint_data.size() - 1 /* is_complete */,
+          -1 /* percent_complete */);
     }
   }
 
@@ -210,24 +213,33 @@ TEST_F(FakeBiodClientTest, TestAuthenticateWorkflowMultipleUsers) {
   EXPECT_NE(returned_path, dbus::ObjectPath());
 
   // Verify that if a user registers the same finger to two different labels,
-  // both labels are returned as matches.
+  // both ObjectPath that maps to the labels are returned as matches.
+  std::vector<dbus::ObjectPath> record_paths_user1 =
+      GetRecordsForUser(kUserOne);
+  EXPECT_EQ(3u, record_paths_user1.size());
+
   AuthScanMatches expected_auth_scans_matches;
-  expected_auth_scans_matches[kUserOne] = {kLabelTwo, kLabelThree};
+  expected_auth_scans_matches[kUserOne] = {record_paths_user1[1],
+                                           record_paths_user1[2]};
   fake_biod_client_.SendAuthScanDone(kUser1Finger2[0], SCAN_RESULT_SUCCESS);
   EXPECT_EQ(expected_auth_scans_matches, observer.last_auth_scan_matches());
 
   // Verify that a fingerprint associated with one user and one label returns a
-  // match with one user and one label.
+  // match with one user and one ObjectPath that maps to that label.
+  std::vector<dbus::ObjectPath> record_paths_user2 =
+      GetRecordsForUser(kUserTwo);
+  EXPECT_EQ(3u, record_paths_user2.size());
+
   expected_auth_scans_matches.clear();
-  expected_auth_scans_matches[kUserTwo] = {kLabelOne};
+  expected_auth_scans_matches[kUserTwo] = {record_paths_user2[0]};
   fake_biod_client_.SendAuthScanDone(kUser2Finger1[0], SCAN_RESULT_SUCCESS);
   EXPECT_EQ(expected_auth_scans_matches, observer.last_auth_scan_matches());
 
   // Verify if two users register the same fingerprint, the matches contain
   // both users.
   expected_auth_scans_matches.clear();
-  expected_auth_scans_matches[kUserOne] = {kLabelOne};
-  expected_auth_scans_matches[kUserTwo] = {kLabelThree};
+  expected_auth_scans_matches[kUserOne] = {record_paths_user1[0]};
+  expected_auth_scans_matches[kUserTwo] = {record_paths_user2[2]};
   fake_biod_client_.SendAuthScanDone(kUser1Finger1[0], SCAN_RESULT_SUCCESS);
   EXPECT_EQ(expected_auth_scans_matches, observer.last_auth_scan_matches());
 
@@ -258,9 +270,7 @@ TEST_F(FakeBiodClientTest, TestDestroyingRecords) {
   EnrollNTestFingerprints(kTestUserId, kTestLabel, GenerateTestFingerprint(2),
                           2);
   EXPECT_EQ(2u, GetRecordsForUser(kTestUserId).size());
-  DBusMethodCallStatus returned_status;
-  fake_biod_client_.DestroyAllRecords(
-      base::Bind(&test_utils::CopyDBusMethodCallStatus, &returned_status));
+  fake_biod_client_.DestroyAllRecords(EmptyVoidDBusMethodCallback());
   EXPECT_EQ(0u, GetRecordsForUser(kTestUserId).size());
 }
 
@@ -295,10 +305,8 @@ TEST_F(FakeBiodClientTest, TestGetAndSetRecordLabels) {
   // Verify that by setting a new label, getting the label will return the value
   // of the new label.
   const std::string kNewLabelTwo = "Finger 2 New";
-  DBusMethodCallStatus returned_status;
-  fake_biod_client_.SetRecordLabel(
-      enrollment_paths[1], kNewLabelTwo,
-      base::Bind(&test_utils::CopyDBusMethodCallStatus, &returned_status));
+  fake_biod_client_.SetRecordLabel(enrollment_paths[1], kNewLabelTwo,
+                                   EmptyVoidDBusMethodCallback());
   fake_biod_client_.RequestRecordLabel(
       enrollment_paths[1], base::Bind(&test_utils::CopyString, &returned_str));
   task_runner_->RunUntilIdle();

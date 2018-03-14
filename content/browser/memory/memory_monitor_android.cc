@@ -4,7 +4,6 @@
 
 #include "content/browser/memory/memory_monitor_android.h"
 
-#include "base/android/context_utils.h"
 #include "base/android/jni_android.h"
 #include "base/memory/ptr_util.h"
 #include "content/browser/memory/memory_coordinator_impl.h"
@@ -18,8 +17,7 @@ const size_t kMBShift = 20;
 
 void RegisterComponentCallbacks() {
   Java_MemoryMonitorAndroid_registerComponentCallbacks(
-      base::android::AttachCurrentThread(),
-      base::android::GetApplicationContext());
+      base::android::AttachCurrentThread());
 }
 
 }
@@ -40,13 +38,11 @@ class MemoryMonitorAndroidDelegateImpl : public MemoryMonitorAndroid::Delegate {
 void MemoryMonitorAndroidDelegateImpl::GetMemoryInfo(MemoryInfo* out) {
   DCHECK(out);
   JNIEnv* env = base::android::AttachCurrentThread();
-  Java_MemoryMonitorAndroid_getMemoryInfo(
-      env, base::android::GetApplicationContext(),
-      reinterpret_cast<intptr_t>(out));
+  Java_MemoryMonitorAndroid_getMemoryInfo(env, reinterpret_cast<intptr_t>(out));
 }
 
 // Called by JNI to populate ActivityManager.MemoryInfo.
-static void GetMemoryInfoCallback(
+static void JNI_MemoryMonitorAndroid_GetMemoryInfoCallback(
     JNIEnv* env,
     const base::android::JavaParamRef<jclass>& clazz,
     jlong avail_mem,
@@ -65,21 +61,19 @@ static void GetMemoryInfoCallback(
 
 // The maximum level of onTrimMemory (TRIM_MEMORY_COMPLETE).
 const int kTrimMemoryLevelMax = 80;
-const int kTrimMemoryRunningLow = 10;
 const int kTrimMemoryRunningCritical = 15;
 
 // Called by JNI.
-static void OnTrimMemory(JNIEnv* env,
-                         const base::android::JavaParamRef<jclass>& jcaller,
-                         jint level) {
+static void JNI_MemoryMonitorAndroid_OnTrimMemory(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jclass>& jcaller,
+    jint level) {
   DCHECK(level >= 0 && level <= kTrimMemoryLevelMax);
   auto* coordinator = MemoryCoordinatorImpl::GetInstance();
+  DCHECK(coordinator);
 
   if (level >= kTrimMemoryRunningCritical) {
     coordinator->ForceSetMemoryCondition(MemoryCondition::CRITICAL,
-                                         base::TimeDelta::FromMinutes(1));
-  } else if (level >= kTrimMemoryRunningLow) {
-    coordinator->ForceSetMemoryCondition(MemoryCondition::WARNING,
                                          base::TimeDelta::FromMinutes(1));
   }
 }
@@ -90,17 +84,12 @@ std::unique_ptr<MemoryMonitorAndroid> MemoryMonitorAndroid::Create() {
   return base::WrapUnique(new MemoryMonitorAndroid(std::move(delegate)));
 }
 
-// static
-bool MemoryMonitorAndroid::Register(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
 MemoryMonitorAndroid::MemoryMonitorAndroid(std::unique_ptr<Delegate> delegate)
     : delegate_(std::move(delegate)) {
   DCHECK(delegate_.get());
   RegisterComponentCallbacks();
   application_state_listener_ =
-      base::MakeUnique<base::android::ApplicationStatusListener>(
+      std::make_unique<base::android::ApplicationStatusListener>(
           base::Bind(&MemoryMonitorAndroid::OnApplicationStateChange,
                      base::Unretained(this)));
 }

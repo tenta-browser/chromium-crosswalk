@@ -7,6 +7,8 @@
 #include <utility>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -23,6 +25,7 @@
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/frame_navigate_params.h"
+#include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_browser_thread.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
@@ -31,6 +34,20 @@
 #include "extensions/common/features/feature_channel.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/value_builder.h"
+
+#if defined(OS_CHROMEOS)
+#include "base/run_loop.h"
+#include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
+#include "chrome/browser/chromeos/login/users/wallpaper/wallpaper_manager.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/test/base/scoped_testing_local_state.h"
+#include "chrome/test/base/testing_browser_process.h"
+#include "chromeos/chromeos_switches.h"
+#include "chromeos/login/scoped_test_public_session_login_state.h"
+#include "components/browser_sync/browser_sync_switches.h"
+#include "components/signin/core/account_id/account_id.h"
+#include "extensions/browser/extension_dialog_auto_confirm.h"
+#endif
 
 using base::DictionaryValue;
 using base::ListValue;
@@ -65,6 +82,28 @@ enum PermittedFeature {
   PERMITTED_SCRIPT_ONLY,
   PERMITTED_CAPTURE_ONLY,
   PERMITTED_BOTH
+};
+
+class ActiveTabPermissionGranterTestDelegate
+    : public ActiveTabPermissionGranter::Delegate {
+ public:
+  ActiveTabPermissionGranterTestDelegate() {}
+  ~ActiveTabPermissionGranterTestDelegate() override {}
+
+  // ActiveTabPermissionGranterTestDelegate::Delegate
+  bool ShouldGrantActiveTab(const Extension* extension,
+                            content::WebContents* contents) override {
+    return should_grant_;
+  }
+
+  void SetShouldGrant(bool should_grant) {
+    should_grant_ = should_grant;
+  }
+
+ private:
+  bool should_grant_ = false;
+
+  DISALLOW_COPY_AND_ASSIGN(ActiveTabPermissionGranterTestDelegate);
 };
 
 class ActiveTabTest : public ChromeRenderViewHostTestHarness {
@@ -201,7 +240,7 @@ TEST_F(ActiveTabTest, GrantToSinglePage) {
   EXPECT_TRUE(IsBlocked(extension_without_active_tab, mail_google));
 
   // Reloading the page should clear the active permissions.
-  Reload();
+  content::NavigationSimulator::Reload(web_contents());
 
   EXPECT_TRUE(IsBlocked(extension, google));
   EXPECT_TRUE(IsBlocked(another_extension, google));
@@ -295,7 +334,7 @@ TEST_F(ActiveTabTest, Uninstalling) {
   ExtensionRegistry* registry =
       ExtensionRegistry::Get(web_contents()->GetBrowserContext());
   registry->TriggerOnUnloaded(extension.get(),
-                              UnloadedExtensionInfo::REASON_DISABLE);
+                              UnloadedExtensionReason::DISABLE);
 
   // Note: can't EXPECT_FALSE(IsAllowed) here because uninstalled extensions
   // are just that... considered to be uninstalled, and the manager might
@@ -319,14 +358,14 @@ TEST_F(ActiveTabTest, OnlyActiveTab) {
   EXPECT_FALSE(HasTabsPermission(extension, tab_id() + 1));
 }
 
-TEST_F(ActiveTabTest, NavigateInPage) {
+TEST_F(ActiveTabTest, SameDocumentNavigations) {
   GURL google("http://www.google.com");
   NavigateAndCommit(google);
 
   active_tab_permission_granter()->GrantIfRequested(extension.get());
 
-  // Perform an in-page navigation. The extension should not lose the temporary
-  // permission.
+  // Perform a same-document navigation. The extension should not lose the
+  // temporary permission.
   GURL google_h1("http://www.google.com#h1");
   NavigateAndCommit(google_h1);
 
@@ -354,7 +393,7 @@ TEST_F(ActiveTabTest, NavigateInPage) {
   EXPECT_TRUE(IsAllowed(extension, chromium));
   EXPECT_TRUE(IsAllowed(extension, chromium_h1));
 
-  Reload();
+  content::NavigationSimulator::Reload(web_contents());
 
   EXPECT_FALSE(IsAllowed(extension, google));
   EXPECT_FALSE(IsAllowed(extension, google_h1));
@@ -379,6 +418,88 @@ TEST_F(ActiveTabTest, ChromeUrlGrants) {
   EXPECT_FALSE(permissions_data->HasAPIPermissionForTab(
       tab_id() + 1, APIPermission::kTabCaptureForTab));
 }
+
+// Test that the custom platform delegate works as expected.
+TEST_F(ActiveTabTest, Delegate) {
+  auto test_delegate =
+      base::MakeUnique<ActiveTabPermissionGranterTestDelegate>();
+  ActiveTabPermissionGranter::SetPlatformDelegate(test_delegate.get());
+
+  GURL google("http://www.google.com");
+  NavigateAndCommit(google);
+
+  // Not granted because the delegate denies grant.
+  active_tab_permission_granter()->GrantIfRequested(extension.get());
+  EXPECT_TRUE(IsBlocked(extension, google));
+
+  // This time it's granted because the delegate allows it.
+  test_delegate->SetShouldGrant(true);
+  active_tab_permission_granter()->GrantIfRequested(extension.get());
+  EXPECT_TRUE(IsAllowed(extension, google));
+
+  // Cleanup :).
+  ActiveTabPermissionGranter::SetPlatformDelegate(nullptr);
+}
+
+#if defined(OS_CHROMEOS)
+// Test that the platform delegate is being set and the permission is prompted
+// for.
+TEST_F(ActiveTabTest, DelegateIsSet) {
+  // Necessary to prevent instantiation of ProfileSyncService, which messes with
+  // our signin state below.
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(switches::kDisableSync);
+  // Necessary because no ProfileManager instance exists in this test.
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      chromeos::switches::kIgnoreUserProfileMappingForTests);
+
+  // Setup, login a public account user.
+  chromeos::ScopedTestPublicSessionLoginState login_state;
+  std::string user_id = "public@account.user";
+  std::string user_email = user_id;
+  AccountId account_id = AccountId::FromUserEmailGaiaId(user_email, user_id);
+  std::string user_id_hash = chromeos::ProfileHelper::Get()->
+      GetUserIdHashByUserIdForTesting(user_id);
+  ScopedTestingLocalState local_state(TestingBrowserProcess::GetGlobal());
+  chromeos::WallpaperManager::Initialize();
+  g_browser_process->local_state()->SetString(
+      "PublicAccountPendingDataRemoval", user_email);
+  user_manager::UserManager::Get()->UserLoggedIn(account_id, user_id_hash,
+                                                 true /* browser_restart */,
+                                                 false /* is_child */);
+
+  GURL google("http://www.google.com");
+  NavigateAndCommit(google);
+
+  // Grant and verify.
+  {
+    ScopedTestDialogAutoConfirm auto_confirm(
+        ScopedTestDialogAutoConfirm::ACCEPT);
+    active_tab_permission_granter()->GrantIfRequested(extension.get());
+    base::RunLoop().RunUntilIdle();
+    EXPECT_TRUE(IsBlocked(extension, google));
+    active_tab_permission_granter()->GrantIfRequested(extension.get());
+    base::RunLoop().RunUntilIdle();
+    EXPECT_TRUE(IsAllowed(extension, google));
+  }
+
+  // Deny and verify. Use a different extension so it doesn't trigger the cache.
+  {
+    ScopedTestDialogAutoConfirm auto_confirm(
+        ScopedTestDialogAutoConfirm::CANCEL);
+    active_tab_permission_granter()->GrantIfRequested(another_extension.get());
+    base::RunLoop().RunUntilIdle();
+    EXPECT_TRUE(IsBlocked(another_extension, google));
+    active_tab_permission_granter()->GrantIfRequested(another_extension.get());
+    base::RunLoop().RunUntilIdle();
+    EXPECT_TRUE(IsBlocked(another_extension, google));
+  }
+
+  // Cleanup.
+  chromeos::WallpaperManager::Shutdown();
+  delete ActiveTabPermissionGranter::SetPlatformDelegate(nullptr);
+  chromeos::ChromeUserManager::Get()->Shutdown();
+}
+#endif  // defined(OS_CHROMEOS)
 
 }  // namespace
 }  // namespace extensions

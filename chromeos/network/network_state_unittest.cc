@@ -11,9 +11,9 @@
 
 #include "base/i18n/streaming_utf8_validator.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
+#include "chromeos/network/tether_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
@@ -29,12 +29,12 @@ class NetworkStateTest : public testing::Test {
  protected:
   bool SetProperty(const std::string& key, std::unique_ptr<base::Value> value) {
     const bool result = network_state_.PropertyChanged(key, *value);
-    properties_.SetWithoutPathExpansion(key, value.release());
+    properties_.SetWithoutPathExpansion(key, std::move(value));
     return result;
   }
 
   bool SetStringProperty(const std::string& key, const std::string& value) {
-    return SetProperty(key, base::MakeUnique<base::Value>(value));
+    return SetProperty(key, std::make_unique<base::Value>(value));
   }
 
   bool SignalInitialPropertiesReceived() {
@@ -119,7 +119,15 @@ TEST_F(NetworkStateTest, SsidHex) {
       base::HexEncode(wifi_hex_result.c_str(), wifi_hex_result.length());
   EXPECT_TRUE(SetStringProperty(shill::kWifiHexSsid, wifi_hex));
   EXPECT_TRUE(SignalInitialPropertiesReceived());
-  EXPECT_EQ(network_state_.name(), wifi_hex_result);
+  EXPECT_EQ(wifi_hex_result, network_state_.name());
+
+  // Check HexSSID via network state dictionary.
+  base::DictionaryValue dictionary;
+  network_state_.GetStateProperties(&dictionary);
+  std::string value;
+  EXPECT_TRUE(
+      dictionary.GetStringWithoutPathExpansion(shill::kWifiHexSsid, &value));
+  EXPECT_EQ(wifi_hex, value);
 }
 
 // Non-UTF-8 SSID should be preserved in |raw_ssid_| field.
@@ -198,15 +206,29 @@ TEST_F(NetworkStateTest, VPNThirdPartyProvider) {
   EXPECT_TRUE(SetStringProperty(shill::kNameProperty, "VPN"));
 
   std::unique_ptr<base::DictionaryValue> provider(new base::DictionaryValue);
-  provider->SetStringWithoutPathExpansion(shill::kTypeProperty,
-                                          shill::kProviderThirdPartyVpn);
-  provider->SetStringWithoutPathExpansion(
-      shill::kHostProperty, "third-party-vpn-provider-extension-id");
+  provider->SetKey(shill::kTypeProperty,
+                   base::Value(shill::kProviderThirdPartyVpn));
+  provider->SetKey(shill::kHostProperty,
+                   base::Value("third-party-vpn-provider-extension-id"));
   EXPECT_TRUE(SetProperty(shill::kProviderProperty, std::move(provider)));
   SignalInitialPropertiesReceived();
   EXPECT_EQ(network_state_.vpn_provider_type(), shill::kProviderThirdPartyVpn);
-  EXPECT_EQ(network_state_.third_party_vpn_provider_extension_id(),
+  EXPECT_EQ(network_state_.vpn_provider_id(),
             "third-party-vpn-provider-extension-id");
+}
+
+// Arc VPN provider.
+TEST_F(NetworkStateTest, VPNArcProvider) {
+  EXPECT_TRUE(SetStringProperty(shill::kTypeProperty, shill::kTypeVPN));
+  EXPECT_TRUE(SetStringProperty(shill::kNameProperty, "VPN"));
+
+  std::unique_ptr<base::DictionaryValue> provider(new base::DictionaryValue);
+  provider->SetKey(shill::kTypeProperty, base::Value(shill::kProviderArcVpn));
+  provider->SetKey(shill::kHostProperty, base::Value("package.name.foo"));
+  EXPECT_TRUE(SetProperty(shill::kProviderProperty, std::move(provider)));
+  SignalInitialPropertiesReceived();
+  EXPECT_EQ(network_state_.vpn_provider_type(), shill::kProviderArcVpn);
+  EXPECT_EQ(network_state_.vpn_provider_id(), "package.name.foo");
 }
 
 TEST_F(NetworkStateTest, Visible) {
@@ -255,6 +277,37 @@ TEST_F(NetworkStateTest, ConnectionStateNotVisible) {
   EXPECT_EQ(network_state_.connection_state(), shill::kStateDisconnect);
   EXPECT_FALSE(network_state_.IsConnectingState());
   EXPECT_FALSE(network_state_.IsReconnecting());
+}
+
+TEST_F(NetworkStateTest, TetherProperties) {
+  network_state_.set_type(kTypeTether);
+  network_state_.set_carrier("Project Fi");
+  network_state_.set_battery_percentage(85);
+  network_state_.set_tether_has_connected_to_host(true);
+  network_state_.set_signal_strength(75);
+
+  base::DictionaryValue dictionary;
+  network_state_.GetStateProperties(&dictionary);
+
+  int signal_strength;
+  EXPECT_TRUE(dictionary.GetIntegerWithoutPathExpansion(kTetherSignalStrength,
+                                                        &signal_strength));
+  EXPECT_EQ(75, signal_strength);
+
+  int battery_percentage;
+  EXPECT_TRUE(dictionary.GetIntegerWithoutPathExpansion(
+      kTetherBatteryPercentage, &battery_percentage));
+  EXPECT_EQ(85, battery_percentage);
+
+  bool tether_has_connected_to_host;
+  EXPECT_TRUE(dictionary.GetBooleanWithoutPathExpansion(
+      kTetherHasConnectedToHost, &tether_has_connected_to_host));
+  EXPECT_TRUE(tether_has_connected_to_host);
+
+  std::string carrier;
+  EXPECT_TRUE(
+      dictionary.GetStringWithoutPathExpansion(kTetherCarrier, &carrier));
+  EXPECT_EQ("Project Fi", carrier);
 }
 
 }  // namespace chromeos

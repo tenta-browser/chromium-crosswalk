@@ -4,10 +4,14 @@
 
 #include "components/security_state/content/content_utils.h"
 
+#include <string>
+#include <vector>
+
 #include "base/command_line.h"
 #include "base/test/histogram_tester.h"
 #include "components/security_state/core/security_state.h"
 #include "components/security_state/core/switches.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/security_style_explanation.h"
 #include "content/public/browser/security_style_explanations.h"
 #include "net/cert/cert_status_flags.h"
@@ -16,6 +20,8 @@
 #include "net/test/cert_test_util.h"
 #include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/WebKit/public/platform/WebMixedContentContextType.h"
+#include "ui/base/l10n/l10n_util.h"
 
 namespace {
 
@@ -148,9 +154,26 @@ TEST(SecurityStateContentUtilsTest, GetSecurityStyleForMixedContent) {
   EXPECT_TRUE(explanations.displayed_mixed_content);
 }
 
+// Tests that malicious safe browsing data in SecurityInfo triggers an
+// appropriate summary in SecurityStyleExplanations.
+TEST(SecurityStateContentUtilsTest, GetSecurityStyleForSafeBrowsing) {
+  content::SecurityStyleExplanations explanations;
+  security_state::SecurityInfo security_info;
+  security_info.cert_status = 0;
+  security_info.scheme_is_cryptographic = true;
+  security_info.malicious_content_status =
+      security_state::MALICIOUS_CONTENT_STATUS_MALWARE;
+
+  security_info.content_with_cert_errors_status =
+      security_state::CONTENT_STATUS_DISPLAYED_AND_RAN;
+  GetSecurityStyle(security_info, &explanations);
+  EXPECT_EQ(l10n_util::GetStringUTF8(IDS_SAFEBROWSING_WARNING),
+            explanations.summary);
+}
+
 bool FindSecurityStyleExplanation(
     const std::vector<content::SecurityStyleExplanation>& explanations,
-    const char* summary,
+    const std::string& summary,
     content::SecurityStyleExplanation* explanation) {
   for (const auto& entry : explanations) {
     if (entry.summary == summary) {
@@ -162,7 +185,7 @@ bool FindSecurityStyleExplanation(
   return false;
 }
 
-// Test that connection explanations are formated as expected. Note the strings
+// Test that connection explanations are formatted as expected. Note the strings
 // are not translated and so will be the same in any locale.
 TEST(SecurityStateContentUtilsTest, ConnectionExplanation) {
   // Test a modern configuration with a key exchange group.
@@ -181,11 +204,11 @@ TEST(SecurityStateContentUtilsTest, ConnectionExplanation) {
     GetSecurityStyle(security_info, &explanations);
     content::SecurityStyleExplanation explanation;
     ASSERT_TRUE(FindSecurityStyleExplanation(
-        explanations.secure_explanations, "Secure Connection", &explanation));
+        explanations.secure_explanations, "Secure connection", &explanation));
     EXPECT_EQ(
-        "The connection to this site is encrypted and authenticated using a "
-        "strong protocol (TLS 1.2), a strong key exchange (ECDHE_RSA with "
-        "X25519), and a strong cipher (CHACHA20_POLY1305).",
+        "The connection to this site is encrypted and authenticated using TLS "
+        "1.2 (a strong protocol), ECDHE_RSA with X25519 (a strong key "
+        "exchange), and CHACHA20_POLY1305 (a strong cipher).",
         explanation.description);
   }
 
@@ -197,11 +220,11 @@ TEST(SecurityStateContentUtilsTest, ConnectionExplanation) {
     GetSecurityStyle(security_info, &explanations);
     content::SecurityStyleExplanation explanation;
     ASSERT_TRUE(FindSecurityStyleExplanation(
-        explanations.secure_explanations, "Secure Connection", &explanation));
+        explanations.secure_explanations, "Secure connection", &explanation));
     EXPECT_EQ(
-        "The connection to this site is encrypted and authenticated using a "
-        "strong protocol (TLS 1.2), a strong key exchange (ECDHE_RSA), and a "
-        "strong cipher (CHACHA20_POLY1305).",
+        "The connection to this site is encrypted and authenticated using TLS "
+        "1.2 (a strong protocol), ECDHE_RSA (a strong key exchange), and "
+        "CHACHA20_POLY1305 (a strong cipher).",
         explanation.description);
   }
 
@@ -216,12 +239,253 @@ TEST(SecurityStateContentUtilsTest, ConnectionExplanation) {
     GetSecurityStyle(security_info, &explanations);
     content::SecurityStyleExplanation explanation;
     ASSERT_TRUE(FindSecurityStyleExplanation(
-        explanations.secure_explanations, "Secure Connection", &explanation));
+        explanations.secure_explanations, "Secure connection", &explanation));
     EXPECT_EQ(
-        "The connection to this site is encrypted and authenticated using a "
-        "strong protocol (TLS 1.3), a strong key exchange (X25519), and a "
-        "strong cipher (AES_128_GCM).",
+        "The connection to this site is encrypted and authenticated using TLS "
+        "1.3 (a strong protocol), X25519 (a strong key exchange), and "
+        "AES_128_GCM (a strong cipher).",
         explanation.description);
+  }
+}
+
+// Test that obsolete connection explanations are formatted as expected.
+TEST(SecurityStateContentUtilsTest, ObsoleteConnectionExplanation) {
+  security_state::SecurityInfo security_info;
+  security_info.cert_status = net::CERT_STATUS_UNABLE_TO_CHECK_REVOCATION;
+  security_info.scheme_is_cryptographic = true;
+  net::SSLConnectionStatusSetCipherSuite(
+      0xc013 /* TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA */,
+      &security_info.connection_status);
+  net::SSLConnectionStatusSetVersion(net::SSL_CONNECTION_VERSION_TLS1_2,
+                                     &security_info.connection_status);
+  security_info.key_exchange_group = 29;  // X25519
+  security_info.obsolete_ssl_status =
+      net::ObsoleteSSLMask::OBSOLETE_SSL_MASK_CIPHER;
+
+  {
+    content::SecurityStyleExplanations explanations;
+    GetSecurityStyle(security_info, &explanations);
+    content::SecurityStyleExplanation explanation;
+    ASSERT_TRUE(FindSecurityStyleExplanation(explanations.info_explanations,
+                                             "Obsolete connection settings",
+                                             &explanation));
+    EXPECT_EQ(
+        "The connection to this site uses TLS 1.2 (a strong protocol), "
+        "ECDHE_RSA with X25519 (a strong key exchange), and AES_128_CBC with "
+        "HMAC-SHA1 (an obsolete cipher).",
+        explanation.description);
+  }
+}
+
+// Test that a secure content explanation is added as expected.
+TEST(SecurityStateContentUtilsTest, SecureContentExplanation) {
+  // Test a modern configuration with a key exchange group.
+  security_state::SecurityInfo security_info;
+  security_info.cert_status = net::CERT_STATUS_UNABLE_TO_CHECK_REVOCATION;
+  security_info.scheme_is_cryptographic = true;
+  net::SSLConnectionStatusSetCipherSuite(
+      0xcca8 /* TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 */,
+      &security_info.connection_status);
+  net::SSLConnectionStatusSetVersion(net::SSL_CONNECTION_VERSION_TLS1_2,
+                                     &security_info.connection_status);
+  security_info.key_exchange_group = 29;  // X25519
+
+  {
+    content::SecurityStyleExplanations explanations;
+    GetSecurityStyle(security_info, &explanations);
+    content::SecurityStyleExplanation explanation;
+    EXPECT_TRUE(FindSecurityStyleExplanation(
+        explanations.secure_explanations,
+        l10n_util::GetStringUTF8(IDS_SECURE_RESOURCES_SUMMARY), &explanation));
+    EXPECT_EQ(l10n_util::GetStringUTF8(IDS_SECURE_RESOURCES_DESCRIPTION),
+              explanation.description);
+  }
+}
+
+// Test that mixed content explanations are added as expected.
+TEST(SecurityStateContentUtilsTest, MixedContentExplanations) {
+  // Test a modern configuration with a key exchange group.
+  security_state::SecurityInfo security_info;
+  security_info.cert_status = net::CERT_STATUS_UNABLE_TO_CHECK_REVOCATION;
+  security_info.scheme_is_cryptographic = true;
+  net::SSLConnectionStatusSetCipherSuite(
+      0xcca8 /* TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 */,
+      &security_info.connection_status);
+  net::SSLConnectionStatusSetVersion(net::SSL_CONNECTION_VERSION_TLS1_2,
+                                     &security_info.connection_status);
+  security_info.key_exchange_group = 29;  // X25519
+
+  security_info.mixed_content_status =
+      security_state::CONTENT_STATUS_DISPLAYED_AND_RAN;
+  {
+    content::SecurityStyleExplanations explanations;
+    GetSecurityStyle(security_info, &explanations);
+    content::SecurityStyleExplanation explanation;
+    EXPECT_TRUE(FindSecurityStyleExplanation(
+        explanations.neutral_explanations,
+        l10n_util::GetStringUTF8(IDS_MIXED_PASSIVE_CONTENT_SUMMARY),
+        &explanation));
+    EXPECT_EQ(l10n_util::GetStringUTF8(IDS_MIXED_PASSIVE_CONTENT_DESCRIPTION),
+              explanation.description);
+    EXPECT_TRUE(FindSecurityStyleExplanation(
+        explanations.insecure_explanations,
+        l10n_util::GetStringUTF8(IDS_MIXED_ACTIVE_CONTENT_SUMMARY),
+        &explanation));
+    EXPECT_EQ(l10n_util::GetStringUTF8(IDS_MIXED_ACTIVE_CONTENT_DESCRIPTION),
+              explanation.description);
+  }
+
+  security_info.mixed_content_status = security_state::CONTENT_STATUS_DISPLAYED;
+  {
+    content::SecurityStyleExplanations explanations;
+    GetSecurityStyle(security_info, &explanations);
+    content::SecurityStyleExplanation explanation;
+    EXPECT_TRUE(FindSecurityStyleExplanation(
+        explanations.neutral_explanations,
+        l10n_util::GetStringUTF8(IDS_MIXED_PASSIVE_CONTENT_SUMMARY),
+        &explanation));
+    EXPECT_FALSE(FindSecurityStyleExplanation(
+        explanations.insecure_explanations,
+        l10n_util::GetStringUTF8(IDS_MIXED_ACTIVE_CONTENT_SUMMARY),
+        &explanation));
+  }
+
+  security_info.mixed_content_status = security_state::CONTENT_STATUS_RAN;
+  {
+    content::SecurityStyleExplanations explanations;
+    GetSecurityStyle(security_info, &explanations);
+    content::SecurityStyleExplanation explanation;
+    EXPECT_FALSE(FindSecurityStyleExplanation(
+        explanations.neutral_explanations,
+        l10n_util::GetStringUTF8(IDS_MIXED_PASSIVE_CONTENT_SUMMARY),
+        &explanation));
+    EXPECT_TRUE(FindSecurityStyleExplanation(
+        explanations.insecure_explanations,
+        l10n_util::GetStringUTF8(IDS_MIXED_ACTIVE_CONTENT_SUMMARY),
+        &explanation));
+  }
+
+  security_info.contained_mixed_form = true;
+  {
+    content::SecurityStyleExplanations explanations;
+    GetSecurityStyle(security_info, &explanations);
+    content::SecurityStyleExplanation explanation;
+    EXPECT_TRUE(FindSecurityStyleExplanation(
+        explanations.neutral_explanations,
+        l10n_util::GetStringUTF8(IDS_NON_SECURE_FORM_SUMMARY), &explanation));
+    EXPECT_EQ(l10n_util::GetStringUTF8(IDS_NON_SECURE_FORM_DESCRIPTION),
+              explanation.description);
+  }
+}
+
+// Test that cert error explanations are formatted as expected.
+TEST(SecurityStateContentUtilsTest, CertErrorContentExplanations) {
+  // Test a modern configuration with a key exchange group.
+  security_state::SecurityInfo security_info;
+  security_info.cert_status = net::CERT_STATUS_UNABLE_TO_CHECK_REVOCATION;
+  security_info.scheme_is_cryptographic = true;
+  net::SSLConnectionStatusSetCipherSuite(
+      0xcca8 /* TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 */,
+      &security_info.connection_status);
+  net::SSLConnectionStatusSetVersion(net::SSL_CONNECTION_VERSION_TLS1_2,
+                                     &security_info.connection_status);
+  security_info.key_exchange_group = 29;  // X25519
+
+  security_info.content_with_cert_errors_status =
+      security_state::CONTENT_STATUS_DISPLAYED_AND_RAN;
+  {
+    content::SecurityStyleExplanations explanations;
+    GetSecurityStyle(security_info, &explanations);
+    content::SecurityStyleExplanation explanation;
+    EXPECT_TRUE(FindSecurityStyleExplanation(
+        explanations.neutral_explanations,
+        l10n_util::GetStringUTF8(IDS_CERT_ERROR_PASSIVE_CONTENT_SUMMARY),
+        &explanation));
+    EXPECT_EQ(
+        l10n_util::GetStringUTF8(IDS_CERT_ERROR_PASSIVE_CONTENT_DESCRIPTION),
+        explanation.description);
+    EXPECT_TRUE(FindSecurityStyleExplanation(
+        explanations.insecure_explanations,
+        l10n_util::GetStringUTF8(IDS_CERT_ERROR_ACTIVE_CONTENT_SUMMARY),
+        &explanation));
+    EXPECT_EQ(
+        l10n_util::GetStringUTF8(IDS_CERT_ERROR_ACTIVE_CONTENT_DESCRIPTION),
+        explanation.description);
+  }
+
+  security_info.content_with_cert_errors_status =
+      security_state::CONTENT_STATUS_DISPLAYED;
+  {
+    content::SecurityStyleExplanations explanations;
+    GetSecurityStyle(security_info, &explanations);
+    content::SecurityStyleExplanation explanation;
+    EXPECT_TRUE(FindSecurityStyleExplanation(
+        explanations.neutral_explanations,
+        l10n_util::GetStringUTF8(IDS_CERT_ERROR_PASSIVE_CONTENT_SUMMARY),
+        &explanation));
+    ASSERT_FALSE(FindSecurityStyleExplanation(
+        explanations.insecure_explanations,
+        l10n_util::GetStringUTF8(IDS_CERT_ERROR_ACTIVE_CONTENT_SUMMARY),
+        &explanation));
+  }
+
+  security_info.content_with_cert_errors_status =
+      security_state::CONTENT_STATUS_RAN;
+  {
+    content::SecurityStyleExplanations explanations;
+    GetSecurityStyle(security_info, &explanations);
+    content::SecurityStyleExplanation explanation;
+    ASSERT_FALSE(FindSecurityStyleExplanation(
+        explanations.neutral_explanations,
+        l10n_util::GetStringUTF8(IDS_CERT_ERROR_PASSIVE_CONTENT_SUMMARY),
+        &explanation));
+    EXPECT_TRUE(FindSecurityStyleExplanation(
+        explanations.insecure_explanations,
+        l10n_util::GetStringUTF8(IDS_CERT_ERROR_ACTIVE_CONTENT_SUMMARY),
+        &explanation));
+    EXPECT_EQ(
+        l10n_util::GetStringUTF8(IDS_CERT_ERROR_ACTIVE_CONTENT_DESCRIPTION),
+        explanation.description);
+  }
+}
+
+// Test that all mixed content explanations can appear together.
+TEST(SecurityStateContentUtilsTest, MixedContentAndCertErrorExplanations) {
+  // Test a modern configuration with a key exchange group.
+  security_state::SecurityInfo security_info;
+  security_info.cert_status = net::CERT_STATUS_UNABLE_TO_CHECK_REVOCATION;
+  security_info.scheme_is_cryptographic = true;
+  net::SSLConnectionStatusSetCipherSuite(
+      0xcca8 /* TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256 */,
+      &security_info.connection_status);
+  net::SSLConnectionStatusSetVersion(net::SSL_CONNECTION_VERSION_TLS1_2,
+                                     &security_info.connection_status);
+  security_info.key_exchange_group = 29;  // X25519
+
+  security_info.mixed_content_status =
+      security_state::CONTENT_STATUS_DISPLAYED_AND_RAN;
+  security_info.content_with_cert_errors_status =
+      security_state::CONTENT_STATUS_DISPLAYED_AND_RAN;
+  {
+    content::SecurityStyleExplanations explanations;
+    GetSecurityStyle(security_info, &explanations);
+    content::SecurityStyleExplanation explanation;
+    EXPECT_TRUE(FindSecurityStyleExplanation(
+        explanations.neutral_explanations,
+        l10n_util::GetStringUTF8(IDS_MIXED_PASSIVE_CONTENT_SUMMARY),
+        &explanation));
+    EXPECT_TRUE(FindSecurityStyleExplanation(
+        explanations.insecure_explanations,
+        l10n_util::GetStringUTF8(IDS_MIXED_ACTIVE_CONTENT_SUMMARY),
+        &explanation));
+    EXPECT_TRUE(FindSecurityStyleExplanation(
+        explanations.neutral_explanations,
+        l10n_util::GetStringUTF8(IDS_CERT_ERROR_PASSIVE_CONTENT_SUMMARY),
+        &explanation));
+    EXPECT_TRUE(FindSecurityStyleExplanation(
+        explanations.insecure_explanations,
+        l10n_util::GetStringUTF8(IDS_CERT_ERROR_ACTIVE_CONTENT_SUMMARY),
+        &explanation));
   }
 }
 
@@ -238,7 +502,7 @@ TEST(SecurityStateContentUtilsTest, HTTPWarning) {
   EXPECT_EQ(0u, explanations.neutral_explanations.size());
 
   explanations.neutral_explanations.clear();
-  security_info.displayed_credit_card_field_on_http = true;
+  security_info.insecure_input_events.credit_card_field_edited = true;
   security_style = GetSecurityStyle(security_info, &explanations);
   EXPECT_EQ(blink::kWebSecurityStyleNeutral, security_style);
   // Verify one explanation was shown, because Form Not Secure was triggered.
@@ -247,11 +511,43 @@ TEST(SecurityStateContentUtilsTest, HTTPWarning) {
   // Check that when both password and credit card fields get displayed, only
   // one explanation is added.
   explanations.neutral_explanations.clear();
-  security_info.displayed_credit_card_field_on_http = true;
-  security_info.displayed_password_field_on_http = true;
+  security_info.insecure_input_events.credit_card_field_edited = true;
+  security_info.insecure_input_events.password_field_shown = true;
   security_style = GetSecurityStyle(security_info, &explanations);
   EXPECT_EQ(blink::kWebSecurityStyleNeutral, security_style);
   // Verify only one explanation was shown when Form Not Secure is triggered.
+  EXPECT_EQ(1u, explanations.neutral_explanations.size());
+
+  // Verify that two explanations are shown when the Incognito and
+  // FormNotSecure flags are both set.
+  explanations.neutral_explanations.clear();
+  security_info.insecure_input_events.credit_card_field_edited = true;
+  security_info.insecure_input_events.password_field_shown = false;
+  security_info.incognito_downgraded_security_level = true;
+  security_style = GetSecurityStyle(security_info, &explanations);
+  EXPECT_EQ(blink::kWebSecurityStyleNeutral, security_style);
+  EXPECT_EQ(2u, explanations.neutral_explanations.size());
+
+  // Verify that three explanations are shown when the Incognito, FormNotSecure,
+  // and Insecure Field Edit flags are all set.
+  explanations.neutral_explanations.clear();
+  security_info.insecure_input_events.credit_card_field_edited = true;
+  security_info.insecure_input_events.password_field_shown = false;
+  security_info.incognito_downgraded_security_level = true;
+  security_info.field_edit_downgraded_security_level = true;
+  security_style = GetSecurityStyle(security_info, &explanations);
+  EXPECT_EQ(blink::kWebSecurityStyleNeutral, security_style);
+  EXPECT_EQ(3u, explanations.neutral_explanations.size());
+
+  // Verify that one explanation is shown when the Insecure Field Edit flags
+  // alone is set.
+  explanations.neutral_explanations.clear();
+  security_info.insecure_input_events.credit_card_field_edited = false;
+  security_info.insecure_input_events.password_field_shown = false;
+  security_info.incognito_downgraded_security_level = false;
+  security_info.field_edit_downgraded_security_level = true;
+  security_style = GetSecurityStyle(security_info, &explanations);
+  EXPECT_EQ(blink::kWebSecurityStyleNeutral, security_style);
   EXPECT_EQ(1u, explanations.neutral_explanations.size());
 }
 
@@ -277,6 +573,16 @@ TEST(SecurityStateContentUtilsTest, SubjectAltNameWarning) {
   GetSecurityStyle(security_info, &explanations);
   // Verify that no explanation is shown if the subjectAltName is present.
   EXPECT_EQ(0u, explanations.insecure_explanations.size());
+}
+
+// Tests that an explanation using the shorter constructor sets the correct
+// default values for other fields.
+TEST(SecurityStateContentUtilsTest, DefaultSecurityStyleExplanation) {
+  content::SecurityStyleExplanation explanation("summary", "description");
+
+  EXPECT_EQ(false, !!explanation.certificate);
+  EXPECT_EQ(blink::WebMixedContentContextType::kNotMixedContent,
+            explanation.mixed_content_type);
 }
 
 }  // namespace

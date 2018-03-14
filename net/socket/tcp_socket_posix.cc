@@ -8,9 +8,11 @@
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 
+#include "base/atomicops.h"
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/posix/eintr_wrapper.h"
@@ -18,6 +20,7 @@
 #include "base/strings/string_piece.h"
 #include "base/task_scheduler/post_task.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "net/base/address_list.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
@@ -35,19 +38,21 @@
 #include "net/socket/socket_posix.h"
 
 // If we don't have a definition for TCPI_OPT_SYN_DATA, create one.
-#ifndef TCPI_OPT_SYN_DATA
+#if !defined(TCPI_OPT_SYN_DATA)
 #define TCPI_OPT_SYN_DATA 32
+#endif
+
+// Fuchsia defines TCP_INFO, but it's not implemented.
+// TODO(crbug.com/758294): Enable TCP_INFO on Fuchsia once it's implemented
+// there (see NET-160).
+#if defined(TCP_INFO) && !defined(OS_FUCHSIA)
+#define HAVE_TCP_INFO
 #endif
 
 namespace net {
 
 namespace {
 
-// True if OS supports TCP FastOpen.
-bool g_tcp_fastopen_supported = false;
-// True if TCP FastOpen is user-enabled for all connections.
-// TODO(jri): Change global variable to param in HttpNetworkSession::Params.
-bool g_tcp_fastopen_user_enabled = false;
 // True if TCP FastOpen connect-with-write has failed at least once.
 bool g_tcp_fastopen_has_failed = false;
 
@@ -87,34 +92,62 @@ bool SetTCPKeepAlive(int fd, bool enable, int delay) {
 }
 
 #if defined(OS_LINUX) || defined(OS_ANDROID)
-// Checks if the kernel supports TCP FastOpen.
-bool SystemSupportsTCPFastOpen() {
-  const base::FilePath::CharType kTCPFastOpenProcFilePath[] =
-      "/proc/sys/net/ipv4/tcp_fastopen";
-  std::string system_supports_tcp_fastopen;
-  if (!base::ReadFileToString(base::FilePath(kTCPFastOpenProcFilePath),
-                              &system_supports_tcp_fastopen)) {
-    return false;
+// Probes if TCP FastOpen is supported, on another thread.
+class FastOpenProbe {
+ public:
+  // Returns true if TCP FastOpen suport was detected. Returns false if it was
+  // not detected, or the probe has not yet completed.
+  bool IsTCPFastOpenSupported() const {
+    return base::subtle::NoBarrier_Load(&tcp_fastopen_supported_) != 0;
   }
-  // The read value from /proc will be set in its least significant bit if
-  // TCP FastOpen is enabled.
-  int read_int = 0;
-  base::StringToInt(
-      HttpUtil::TrimLWS(base::StringPiece(system_supports_tcp_fastopen)),
-      &read_int);
-  if ((read_int & 0x1) == 1)
-    return true;
-  return false;
-}
 
-void RegisterTCPFastOpenIntentAndSupport(bool user_enabled,
-                                         bool system_supported) {
-  g_tcp_fastopen_supported = system_supported;
-  g_tcp_fastopen_user_enabled = user_enabled;
-}
-#endif
+ private:
+  friend struct base::LazyInstanceTraitsBase<FastOpenProbe>;
 
-#if defined(TCP_INFO)
+  FastOpenProbe() {
+    base::PostTaskWithTraits(
+        FROM_HERE,
+        {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+        base::Bind(&FastOpenProbe::DetectTCPFastOpenSupport,
+                   base::Unretained(this)));
+  }
+
+  ~FastOpenProbe() = default;
+
+  // Checks if the kernel supports TCP FastOpen. Called only once, on startup.
+  void DetectTCPFastOpenSupport() {
+    // Since this method should only be called once, and is the only thing that
+    // modifies |tcp_fastopen_supported_|, no need for this read to be atomic.
+    DCHECK_EQ(tcp_fastopen_supported_, 0);
+
+    const base::FilePath::CharType kTCPFastOpenProcFilePath[] =
+        "/proc/sys/net/ipv4/tcp_fastopen";
+    std::string system_supports_tcp_fastopen;
+    if (!base::ReadFileToString(base::FilePath(kTCPFastOpenProcFilePath),
+                                &system_supports_tcp_fastopen)) {
+      return;
+    }
+    // The read value from /proc will be set in its least significant bit if
+    // TCP FastOpen is enabled.
+    int read_int = 0;
+    base::StringToInt(
+        HttpUtil::TrimLWS(base::StringPiece(system_supports_tcp_fastopen)),
+        &read_int);
+    if ((read_int & 0x1) != 1)
+      return;
+    base::subtle::NoBarrier_Store(&tcp_fastopen_supported_, 1);
+  }
+
+  base::subtle::Atomic32 tcp_fastopen_supported_ = 0;
+
+  DISALLOW_COPY_AND_ASSIGN(FastOpenProbe);
+};
+
+base::LazyInstance<FastOpenProbe>::Leaky g_fast_open_probe =
+    LAZY_INSTANCE_INITIALIZER;
+#endif  // defined(OS_LINUX) || defined(OS_ANDROID)
+
+#if defined(HAVE_TCP_INFO)
 bool GetTcpInfo(SocketDescriptor fd, tcp_info* info) {
   socklen_t info_len = sizeof(tcp_info);
   return getsockopt(fd, IPPROTO_TCP, TCP_INFO, info, &info_len) == 0 &&
@@ -127,22 +160,10 @@ bool GetTcpInfo(SocketDescriptor fd, tcp_info* info) {
 //-----------------------------------------------------------------------------
 
 bool IsTCPFastOpenSupported() {
-  return g_tcp_fastopen_supported;
-}
-
-bool IsTCPFastOpenUserEnabled() {
-  return g_tcp_fastopen_user_enabled;
-}
-
-// This is asynchronous because it needs to do file IO, and it isn't allowed to
-// do that on the IO thread.
-void CheckSupportAndMaybeEnableTCPFastOpen(bool user_enabled) {
 #if defined(OS_LINUX) || defined(OS_ANDROID)
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::TaskTraits().MayBlock().WithShutdownBehavior(
-                     base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN),
-      base::Bind(SystemSupportsTCPFastOpen),
-      base::Bind(RegisterTCPFastOpenIntentAndSupport, user_enabled));
+  return g_fast_open_probe.Get().IsTCPFastOpenSupported();
+#else
+  return false;
 #endif
 }
 
@@ -175,7 +196,7 @@ int TCPSocketPosix::Open(AddressFamily family) {
   return rv;
 }
 
-int TCPSocketPosix::AdoptConnectedSocket(int socket_fd,
+int TCPSocketPosix::AdoptConnectedSocket(SocketDescriptor socket,
                                          const IPEndPoint& peer_address) {
   DCHECK(!socket_);
 
@@ -187,7 +208,17 @@ int TCPSocketPosix::AdoptConnectedSocket(int socket_fd,
   }
 
   socket_.reset(new SocketPosix);
-  int rv = socket_->AdoptConnectedSocket(socket_fd, storage);
+  int rv = socket_->AdoptConnectedSocket(socket, storage);
+  if (rv != OK)
+    socket_.reset();
+  return rv;
+}
+
+int TCPSocketPosix::AdoptUnconnectedSocket(SocketDescriptor socket) {
+  DCHECK(!socket_);
+
+  socket_.reset(new SocketPosix);
+  int rv = socket_->AdoptUnconnectedSocket(socket);
   if (rv != OK)
     socket_.reset();
   return rv;
@@ -288,7 +319,7 @@ int TCPSocketPosix::Read(IOBuffer* buf,
                  // Grab a reference to |buf| so that ReadCompleted() can still
                  // use it when Read() completes, as otherwise, this transfers
                  // ownership of buf to socket.
-                 base::Unretained(this), make_scoped_refptr(buf), callback));
+                 base::Unretained(this), base::WrapRefCounted(buf), callback));
   if (rv != ERR_IO_PENDING)
     rv = HandleReadCompleted(buf, rv);
   return rv;
@@ -320,7 +351,7 @@ int TCPSocketPosix::Write(IOBuffer* buf,
                  // Grab a reference to |buf| so that WriteCompleted() can still
                  // use it when Write() completes, as otherwise, this transfers
                  // ownership of buf to socket.
-                 base::Unretained(this), make_scoped_refptr(buf), callback);
+                 base::Unretained(this), base::WrapRefCounted(buf), callback);
   int rv;
 
   if (use_tcp_fastopen_ && !tcp_fastopen_write_attempted_) {
@@ -370,7 +401,7 @@ int TCPSocketPosix::GetPeerAddress(IPEndPoint* address) const {
 
 int TCPSocketPosix::SetDefaultOptionsForServer() {
   DCHECK(socket_);
-  return SetAddressReuse(true);
+  return AllowAddressReuse();
 }
 
 void TCPSocketPosix::SetDefaultOptionsForClient() {
@@ -381,8 +412,12 @@ void TCPSocketPosix::SetDefaultOptionsForClient() {
   // If SetTCPNoDelay fails, we don't care.
   SetTCPNoDelay(socket_->socket_fd(), true);
 
-  // TCP keep alive wakes up the radio, which is expensive on mobile. Do not
-  // enable it there. It's useful to prevent TCP middleboxes from timing out
+#if !defined(OS_ANDROID) && !defined(OS_IOS) && !defined(OS_FUCHSIA)
+  // TCP keep alive wakes up the radio, which is expensive on mobile.
+  // It's also not implemented on Fuchsia. Do not enable it there.
+  // TODO(crbug.com/758706): Consider enabling keep-alive on Fuchsia.
+  //
+  // It's useful to prevent TCP middleboxes from timing out
   // connection mappings. Packets for timed out connection mappings at
   // middleboxes will either lead to:
   // a) Middleboxes sending TCP RSTs. It's up to higher layers to check for this
@@ -392,36 +427,39 @@ void TCPSocketPosix::SetDefaultOptionsForClient() {
   // are very high (on the order of seconds). Given the number of
   // retransmissions required before killing the connection, this can lead to
   // tens of seconds or even minutes of delay, depending on OS.
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
   const int kTCPKeepAliveSeconds = 45;
 
   SetTCPKeepAlive(socket_->socket_fd(), true, kTCPKeepAliveSeconds);
 #endif
 }
 
-int TCPSocketPosix::SetAddressReuse(bool allow) {
+int TCPSocketPosix::AllowAddressReuse() {
   DCHECK(socket_);
 
-  return SetReuseAddr(socket_->socket_fd(), allow);
+  return SetReuseAddr(socket_->socket_fd(), true);
 }
 
 int TCPSocketPosix::SetReceiveBufferSize(int32_t size) {
   DCHECK(socket_);
+
   return SetSocketReceiveBufferSize(socket_->socket_fd(), size);
 }
 
 int TCPSocketPosix::SetSendBufferSize(int32_t size) {
   DCHECK(socket_);
+
   return SetSocketSendBufferSize(socket_->socket_fd(), size);
 }
 
 bool TCPSocketPosix::SetKeepAlive(bool enable, int delay) {
   DCHECK(socket_);
+
   return SetTCPKeepAlive(socket_->socket_fd(), enable, delay);
 }
 
 bool TCPSocketPosix::SetNoDelay(bool no_delay) {
   DCHECK(socket_);
+
   return SetTCPNoDelay(socket_->socket_fd(), no_delay) == OK;
 }
 
@@ -479,6 +517,12 @@ void TCPSocketPosix::EndLoggingMultipleConnectAttempts(int net_error) {
   } else {
     NOTREACHED();
   }
+}
+
+SocketDescriptor TCPSocketPosix::ReleaseSocketDescriptorForTesting() {
+  SocketDescriptor socket_descriptor = socket_->ReleaseConnectedSocket();
+  socket_.reset();
+  return socket_descriptor;
 }
 
 void TCPSocketPosix::AcceptCompleted(
@@ -731,7 +775,7 @@ int TCPSocketPosix::TcpFastOpenWrite(IOBuffer* buf,
 }
 
 void TCPSocketPosix::NotifySocketPerformanceWatcher() {
-#if defined(TCP_INFO)
+#if defined(HAVE_TCP_INFO)
   // Check if |socket_performance_watcher_| is interested in receiving a RTT
   // update notification.
   if (!socket_performance_watcher_ ||
@@ -771,7 +815,7 @@ void TCPSocketPosix::UpdateTCPFastOpenStatusAfterRead() {
 
   bool getsockopt_success = false;
   bool server_acked_data = false;
-#if defined(TCP_INFO)
+#if defined(HAVE_TCP_INFO)
   // Probe to see the if the socket used TCP FastOpen.
   tcp_info info;
   getsockopt_success = GetTcpInfo(socket_->socket_fd(), &info);
@@ -802,7 +846,7 @@ bool TCPSocketPosix::GetEstimatedRoundTripTime(base::TimeDelta* out_rtt) const {
   if (!socket_)
     return false;
 
-#if defined(TCP_INFO)
+#if defined(HAVE_TCP_INFO)
   tcp_info info;
   if (GetTcpInfo(socket_->socket_fd(), &info)) {
     // tcpi_rtt is zero when the kernel doesn't have an RTT estimate,

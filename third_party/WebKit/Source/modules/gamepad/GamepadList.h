@@ -26,15 +26,14 @@
 #ifndef GamepadList_h
 #define GamepadList_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "device/gamepad/public/cpp/gamepads.h"
 #include "modules/gamepad/Gamepad.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "public/platform/WebGamepads.h"
 
 namespace blink {
 
-class GamepadList final : public GarbageCollected<GamepadList>,
-                          public ScriptWrappable {
+class GamepadList final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -42,13 +41,13 @@ class GamepadList final : public GarbageCollected<GamepadList>,
 
   void Set(unsigned index, Gamepad*);
   Gamepad* item(unsigned index);
-  unsigned length() const { return WebGamepads::kItemsLengthCap; }
+  unsigned length() const { return device::Gamepads::kItemsLengthCap; }
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   GamepadList();
-  Member<Gamepad> items_[WebGamepads::kItemsLengthCap];
+  Member<Gamepad> items_[device::Gamepads::kItemsLengthCap];
 };
 
 }  // namespace blink

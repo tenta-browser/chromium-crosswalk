@@ -236,8 +236,6 @@ SkColor HSLShift(SkColor color, const HSL& shift) {
 void BuildLumaHistogram(const SkBitmap& bitmap, int histogram[256]) {
   DCHECK_EQ(kN32_SkColorType, bitmap.colorType());
 
-  SkAutoLockPixels bitmap_lock(bitmap);
-
   int pixel_width = bitmap.width();
   int pixel_height = bitmap.height();
   for (int y = 0; y < pixel_height; ++y) {
@@ -350,11 +348,11 @@ SkColor DeriveDefaultIconColor(SkColor text_color) {
 }
 
 std::string SkColorToRgbaString(SkColor color) {
-  // We convert the alpha using DoubleToString because StringPrintf will use
+  // We convert the alpha using NumberToString because StringPrintf will use
   // locale specific formatters (e.g., use , instead of . in German).
   return base::StringPrintf(
       "rgba(%s,%s)", SkColorToRgbString(color).c_str(),
-      base::DoubleToString(SkColorGetA(color) / 255.0).c_str());
+      base::NumberToString(SkColorGetA(color) / 255.0).c_str());
 }
 
 std::string SkColorToRgbString(SkColor color) {

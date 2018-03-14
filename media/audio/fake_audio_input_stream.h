@@ -13,8 +13,8 @@
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "media/audio/audio_io.h"
-#include "media/audio/fake_audio_worker.h"
 #include "media/base/audio_parameters.h"
+#include "media/base/fake_audio_worker.h"
 
 namespace media {
 
@@ -53,6 +53,10 @@ class MEDIA_EXPORT FakeAudioInputStream
   // crbug.com/159053 such that video capture device is aware of audio
   // input stream.
   static void BeepOnce();
+
+  // Set the muted state for _all_ FakeAudioInputStreams. The value is global,
+  // so it can be set before any FakeAudioInputStreams have been created.
+  static void SetGlobalMutedState(bool is_muted);
 
  private:
   FakeAudioInputStream(AudioManagerBase* manager,

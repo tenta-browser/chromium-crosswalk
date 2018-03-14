@@ -26,11 +26,12 @@
 #include "modules/webdatabase/Database.h"
 
 #include <memory>
+#include "bindings/modules/v8/v8_database_callback.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/dom/TaskRunnerHelper.h"
 #include "core/html/VoidCallback.h"
 #include "core/inspector/ConsoleMessage.h"
+#include "core/probe/CoreProbes.h"
 #include "modules/webdatabase/ChangeVersionData.h"
 #include "modules/webdatabase/ChangeVersionWrapper.h"
 #include "modules/webdatabase/DatabaseAuthorizer.h"
@@ -53,8 +54,9 @@
 #include "platform/WaitableEvent.h"
 #include "platform/heap/SafePoint.h"
 #include "platform/wtf/Atomics.h"
-#include "platform/wtf/CurrentTime.h"
+#include "platform/wtf/Time.h"
 #include "public/platform/Platform.h"
+#include "public/platform/TaskType.h"
 #include "public/platform/WebDatabaseObserver.h"
 #include "public/platform/WebSecurityOrigin.h"
 
@@ -165,7 +167,7 @@ static bool SetTextValueInDatabase(SQLiteDatabase& db,
 
 // FIXME: move all guid-related functions to a DatabaseVersionTracker class.
 static RecursiveMutex& GuidMutex() {
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(RecursiveMutex, mutex, new RecursiveMutex);
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(RecursiveMutex, mutex, ());
   return mutex;
 }
 
@@ -239,7 +241,8 @@ Database::Database(DatabaseContext* database_context,
   context_thread_security_origin_ =
       database_context_->GetSecurityOrigin()->IsolatedCopy();
 
-  database_authorizer_ = DatabaseAuthorizer::Create(kInfoTableName);
+  database_authorizer_ =
+      DatabaseAuthorizer::Create(database_context, kInfoTableName);
 
   if (name_.IsNull())
     name_ = "";
@@ -258,7 +261,7 @@ Database::Database(DatabaseContext* database_context,
   DCHECK(database_context_->GetDatabaseThread());
   DCHECK(database_context_->IsContextThread());
   database_task_runner_ =
-      TaskRunnerHelper::Get(TaskType::kDatabaseAccess, GetExecutionContext());
+      GetExecutionContext()->GetTaskRunner(TaskType::kDatabaseAccess);
 }
 
 Database::~Database() {
@@ -274,15 +277,17 @@ Database::~Database() {
   DCHECK(!opened_);
 }
 
-DEFINE_TRACE(Database) {
+void Database::Trace(blink::Visitor* visitor) {
   visitor->Trace(database_context_);
   visitor->Trace(sqlite_database_);
   visitor->Trace(database_authorizer_);
+  ScriptWrappable::Trace(visitor);
 }
 
 bool Database::OpenAndVerifyVersion(bool set_version_in_new_database,
                                     DatabaseError& error,
-                                    String& error_message) {
+                                    String& error_message,
+                                    V8DatabaseCallback* creation_callback) {
   WaitableEvent event;
   if (!GetDatabaseContext()->DatabaseThreadAvailable())
     return false;
@@ -293,8 +298,27 @@ bool Database::OpenAndVerifyVersion(bool set_version_in_new_database,
       this, set_version_in_new_database, &event, error, error_message, success);
   GetDatabaseContext()->GetDatabaseThread()->ScheduleTask(std::move(task));
   event.Wait();
+  if (creation_callback) {
+    if (success && IsNew()) {
+      STORAGE_DVLOG(1)
+          << "Scheduling DatabaseCreationCallbackTask for database " << this;
+      probe::AsyncTaskScheduled(GetExecutionContext(), "openDatabase",
+                                creation_callback);
+      GetExecutionContext()
+          ->GetTaskRunner(TaskType::kDatabaseAccess)
+          ->PostTask(
+              BLINK_FROM_HERE,
+              WTF::Bind(&Database::RunCreationCallback, WrapPersistent(this),
+                        WrapPersistentCallbackFunction(creation_callback)));
+    }
+  }
 
   return success;
+}
+
+void Database::RunCreationCallback(V8DatabaseCallback* creation_callback) {
+  probe::AsyncTask async_task(GetExecutionContext(), creation_callback);
+  creation_callback->InvokeAndReportException(nullptr, this);
 }
 
 void Database::Close() {
@@ -468,7 +492,7 @@ bool Database::PerformOpenAndVerify(bool should_set_version_in_new_database,
   {
     MutexLocker locker(GuidMutex());
 
-    GuidVersionMap::iterator entry = GuidToVersionMap().Find(guid_);
+    GuidVersionMap::iterator entry = GuidToVersionMap().find(guid_);
     if (entry != GuidToVersionMap().end()) {
       // Map null string to empty string (see updateGuidVersionMap()).
       current_version =
@@ -828,7 +852,7 @@ void Database::CloseImmediately() {
   if (GetDatabaseContext()->DatabaseThreadAvailable() && Opened()) {
     LogErrorMessage("forcibly closing database");
     GetDatabaseContext()->GetDatabaseThread()->ScheduleTask(
-        DatabaseCloseTask::Create(this, 0));
+        DatabaseCloseTask::Create(this, nullptr));
   }
 }
 
@@ -954,9 +978,9 @@ SecurityOrigin* Database::GetSecurityOrigin() const {
   if (!GetExecutionContext())
     return nullptr;
   if (GetExecutionContext()->IsContextThread())
-    return context_thread_security_origin_.Get();
+    return context_thread_security_origin_.get();
   if (GetDatabaseContext()->GetDatabaseThread()->IsDatabaseThread())
-    return database_thread_security_origin_.Get();
+    return database_thread_security_origin_.get();
   return nullptr;
 }
 
@@ -965,7 +989,7 @@ bool Database::Opened() {
 }
 
 WebTaskRunner* Database::GetDatabaseTaskRunner() const {
-  return database_task_runner_.Get();
+  return database_task_runner_.get();
 }
 
 }  // namespace blink

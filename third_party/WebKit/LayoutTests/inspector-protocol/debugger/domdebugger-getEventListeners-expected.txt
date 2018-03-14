@@ -1,3 +1,4 @@
+Tests how DOMDebugger reports event listeners for nodes.
 Event listeners of window
   type:click
   useCapture:true
@@ -15,21 +16,13 @@ Event listeners of window
   handler.className:Function
   handler.description:function hoverHandler(event) { console.log("hover - button - bubbling"); }
 
-  type:load
-  useCapture:false
-  lineNumber:164
-  columnNumber:18
-  handler.type:function
-  handler.className:Function
-  handler.description:function onload(event) {  runTest();}
-
   type:scroll
   useCapture:false
   lineNumber:1
   columnNumber:54
   handler.type:function
   handler.className:Function
-  handler.description:function (){ consol.log(42) }
+  handler.description:function(){ consol.log(42) }
 
   type:scroll
   useCapture:false
@@ -37,7 +30,7 @@ Event listeners of window
   columnNumber:54
   handler.type:function
   handler.className:Function
-  handler.description:function (){ consol.log(42) }
+  handler.description:function(){ consol.log(42) }
 
 
 Event listeners of div#listeners1
@@ -59,8 +52,8 @@ Event listeners of div#listeners1
 
   type:load
   useCapture:false
-  lineNumber:162
-  columnNumber:33
+  lineNumber:0
+  columnNumber:38
   handler.type:function
   handler.className:Function
   handler.description:function onload(event) {  return 42;}

@@ -7,12 +7,14 @@
 #include <stdint.h>
 
 #include <memory>
+#include <utility>
 
 #include "base/files/file_path.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/loader/intercepting_resource_handler.h"
@@ -27,6 +29,7 @@
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
 #include "content/test/fake_plugin_service.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_context.h"
 #include "ppapi/features/features.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -140,11 +143,11 @@ class TestFakePluginService : public FakePluginService {
     return true;
   }
 
-  void GetPlugins(const GetPluginsCallback& callback) override {
+  void GetPlugins(GetPluginsCallback callback) override {
     is_plugin_stale_ = false;
     std::vector<WebPluginInfo> plugins;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, plugins));
+        FROM_HERE, base::BindOnce(std::move(callback), plugins));
   }
 
  private:
@@ -215,7 +218,8 @@ std::string MimeSniffingResourceHandlerTest::TestAcceptHeaderSetting(
     ResourceType request_resource_type) {
   net::URLRequestContext context;
   std::unique_ptr<net::URLRequest> request(context.CreateRequest(
-      GURL("http://www.google.com"), net::DEFAULT_PRIORITY, nullptr));
+      GURL("http://www.google.com"), net::DEFAULT_PRIORITY, nullptr,
+      TRAFFIC_ANNOTATION_FOR_TESTS));
   return TestAcceptHeaderSettingWithURLRequest(request_resource_type,
                                                request.get());
 }
@@ -231,10 +235,10 @@ MimeSniffingResourceHandlerTest::TestAcceptHeaderSettingWithURLRequest(
                                           0,              // render_view_id
                                           0,              // render_frame_id
                                           is_main_frame,  // is_main_frame
-                                          false,  // parent_is_main_frame
-                                          false,  // allow_download
-                                          true,   // is_async
-                                          PREVIEWS_OFF);  // previews_state
+                                          false,          // allow_download
+                                          true,           // is_async
+                                          PREVIEWS_OFF,   // previews_state
+                                          nullptr);       // navigation_ui_data
 
   std::unique_ptr<TestResourceHandler> scoped_test_handler(
       new TestResourceHandler());
@@ -259,18 +263,19 @@ bool MimeSniffingResourceHandlerTest::TestStreamIsIntercepted(
     ResourceType request_resource_type) {
   net::URLRequestContext context;
   std::unique_ptr<net::URLRequest> request(context.CreateRequest(
-      GURL("http://www.google.com"), net::DEFAULT_PRIORITY, nullptr));
+      GURL("http://www.google.com"), net::DEFAULT_PRIORITY, nullptr,
+      TRAFFIC_ANNOTATION_FOR_TESTS));
   bool is_main_frame = request_resource_type == RESOURCE_TYPE_MAIN_FRAME;
   ResourceRequestInfo::AllocateForTesting(request.get(), request_resource_type,
-                                          nullptr,        // context
-                                          0,              // render_process_id
-                                          0,              // render_view_id
-                                          0,              // render_frame_id
-                                          is_main_frame,  // is_main_frame
-                                          false,  // parent_is_main_frame
+                                          nullptr,         // context
+                                          0,               // render_process_id
+                                          0,               // render_view_id
+                                          0,               // render_frame_id
+                                          is_main_frame,   // is_main_frame
                                           allow_download,  // allow_download
                                           true,            // is_async
-                                          PREVIEWS_OFF);   // previews_state
+                                          PREVIEWS_OFF,    // previews_state
+                                          nullptr);        // navigation_ui_data
 
   TestResourceDispatcherHost host(stream_has_handler_);
   TestResourceDispatcherHostDelegate host_delegate(must_download);
@@ -279,7 +284,7 @@ bool MimeSniffingResourceHandlerTest::TestStreamIsIntercepted(
   TestFakePluginService plugin_service(plugin_available_, plugin_stale_);
 
   std::unique_ptr<InterceptingResourceHandler> intercepting_handler(
-      new InterceptingResourceHandler(base::MakeUnique<TestResourceHandler>(),
+      new InterceptingResourceHandler(std::make_unique<TestResourceHandler>(),
                                       nullptr));
   std::unique_ptr<TestResourceHandler> scoped_test_handler(
       new TestResourceHandler());
@@ -319,18 +324,19 @@ void MimeSniffingResourceHandlerTest::TestHandlerSniffing(
     bool defer_read_completed) {
   net::URLRequestContext context;
   std::unique_ptr<net::URLRequest> request(context.CreateRequest(
-      GURL("http://www.google.com"), net::DEFAULT_PRIORITY, nullptr));
+      GURL("http://www.google.com"), net::DEFAULT_PRIORITY, nullptr,
+      TRAFFIC_ANNOTATION_FOR_TESTS));
   ResourceRequestInfo::AllocateForTesting(request.get(),
                                           RESOURCE_TYPE_MAIN_FRAME,
-                                          nullptr,  // context
-                                          0,        // render_process_id
-                                          0,        // render_view_id
-                                          0,        // render_frame_id
-                                          true,     // is_main_frame
-                                          false,    // parent_is_main_frame
-                                          false,    // allow_download
-                                          true,     // is_async
-                                          PREVIEWS_OFF);  // previews_state
+                                          nullptr,       // context
+                                          0,             // render_process_id
+                                          0,             // render_view_id
+                                          0,             // render_frame_id
+                                          true,          // is_main_frame
+                                          false,         // allow_download
+                                          true,          // is_async
+                                          PREVIEWS_OFF,  // previews_state
+                                          nullptr);      // navigation_ui_data
 
   TestResourceDispatcherHost host(false);
   TestResourceDispatcherHostDelegate host_delegate(false);
@@ -338,7 +344,7 @@ void MimeSniffingResourceHandlerTest::TestHandlerSniffing(
 
   TestFakePluginService plugin_service(plugin_available_, plugin_stale_);
   std::unique_ptr<InterceptingResourceHandler> intercepting_handler(
-      new InterceptingResourceHandler(base::MakeUnique<TestResourceHandler>(),
+      new InterceptingResourceHandler(std::make_unique<TestResourceHandler>(),
                                       nullptr));
 
   std::unique_ptr<TestResourceHandler> scoped_test_handler(
@@ -481,18 +487,19 @@ void MimeSniffingResourceHandlerTest::TestHandlerNoSniffing(
     bool defer_read_completed) {
   net::URLRequestContext context;
   std::unique_ptr<net::URLRequest> request(context.CreateRequest(
-      GURL("http://www.google.com"), net::DEFAULT_PRIORITY, nullptr));
+      GURL("http://www.google.com"), net::DEFAULT_PRIORITY, nullptr,
+      TRAFFIC_ANNOTATION_FOR_TESTS));
   ResourceRequestInfo::AllocateForTesting(request.get(),
                                           RESOURCE_TYPE_MAIN_FRAME,
-                                          nullptr,  // context
-                                          0,        // render_process_id
-                                          0,        // render_view_id
-                                          0,        // render_frame_id
-                                          true,     // is_main_frame
-                                          false,    // parent_is_main_frame
-                                          false,    // allow_download
-                                          true,     // is_async
-                                          PREVIEWS_OFF);  // previews_state
+                                          nullptr,       // context
+                                          0,             // render_process_id
+                                          0,             // render_view_id
+                                          0,             // render_frame_id
+                                          true,          // is_main_frame
+                                          false,         // allow_download
+                                          true,          // is_async
+                                          PREVIEWS_OFF,  // previews_state
+                                          nullptr);      // navigation_ui_data
 
   TestResourceDispatcherHost host(false);
   TestResourceDispatcherHostDelegate host_delegate(false);
@@ -500,7 +507,7 @@ void MimeSniffingResourceHandlerTest::TestHandlerNoSniffing(
 
   TestFakePluginService plugin_service(plugin_available_, plugin_stale_);
   std::unique_ptr<InterceptingResourceHandler> intercepting_handler(
-      new InterceptingResourceHandler(base::MakeUnique<TestResourceHandler>(),
+      new InterceptingResourceHandler(std::make_unique<TestResourceHandler>(),
                                       nullptr));
 
   std::unique_ptr<TestResourceHandler> scoped_test_handler(
@@ -650,7 +657,8 @@ TEST_F(MimeSniffingResourceHandlerTest, AcceptHeaders) {
   // Ensure that if an Accept header is already set, it is not overwritten.
   net::URLRequestContext context;
   std::unique_ptr<net::URLRequest> request(context.CreateRequest(
-      GURL("http://www.google.com"), net::DEFAULT_PRIORITY, nullptr));
+      GURL("http://www.google.com"), net::DEFAULT_PRIORITY, nullptr,
+      TRAFFIC_ANNOTATION_FOR_TESTS));
   request->SetExtraRequestHeaderByName("Accept", "*", true);
   EXPECT_EQ("*", TestAcceptHeaderSettingWithURLRequest(RESOURCE_TYPE_XHR,
                                                        request.get()));
@@ -860,18 +868,19 @@ TEST_F(MimeSniffingResourceHandlerTest, Sniffing) {
 TEST_F(MimeSniffingResourceHandlerTest, 304Handling) {
   net::URLRequestContext context;
   std::unique_ptr<net::URLRequest> request(context.CreateRequest(
-      GURL("http://www.google.com"), net::DEFAULT_PRIORITY, nullptr));
+      GURL("http://www.google.com"), net::DEFAULT_PRIORITY, nullptr,
+      TRAFFIC_ANNOTATION_FOR_TESTS));
   ResourceRequestInfo::AllocateForTesting(request.get(),
                                           RESOURCE_TYPE_MAIN_FRAME,
-                                          nullptr,  // context
-                                          0,        // render_process_id
-                                          0,        // render_view_id
-                                          0,        // render_frame_id
-                                          true,     // is_main_frame
-                                          false,    // parent_is_main_frame
-                                          true,     // allow_download
-                                          true,     // is_async
-                                          PREVIEWS_OFF);  // previews_state
+                                          nullptr,       // context
+                                          0,             // render_process_id
+                                          0,             // render_view_id
+                                          0,             // render_frame_id
+                                          true,          // is_main_frame
+                                          true,          // allow_download
+                                          true,          // is_async
+                                          PREVIEWS_OFF,  // previews_state
+                                          nullptr);      // navigation_ui_data
 
   TestResourceDispatcherHost host(false);
   TestResourceDispatcherHostDelegate host_delegate(false);
@@ -879,7 +888,7 @@ TEST_F(MimeSniffingResourceHandlerTest, 304Handling) {
 
   TestFakePluginService plugin_service(false, false);
   std::unique_ptr<ResourceHandler> intercepting_handler(
-      new InterceptingResourceHandler(base::MakeUnique<TestResourceHandler>(),
+      new InterceptingResourceHandler(std::make_unique<TestResourceHandler>(),
                                       nullptr));
   MimeSniffingResourceHandler mime_sniffing_handler(
       std::unique_ptr<ResourceHandler>(new TestResourceHandler()), &host,
@@ -911,24 +920,25 @@ TEST_F(MimeSniffingResourceHandlerTest, 304Handling) {
 TEST_F(MimeSniffingResourceHandlerTest, FetchShouldDisableMimeSniffing) {
   net::URLRequestContext context;
   std::unique_ptr<net::URLRequest> request(context.CreateRequest(
-      GURL("http://www.google.com"), net::DEFAULT_PRIORITY, nullptr));
+      GURL("http://www.google.com"), net::DEFAULT_PRIORITY, nullptr,
+      TRAFFIC_ANNOTATION_FOR_TESTS));
   ResourceRequestInfo::AllocateForTesting(request.get(),
                                           RESOURCE_TYPE_MAIN_FRAME,
-                                          nullptr,  // context
-                                          0,        // render_process_id
-                                          0,        // render_view_id
-                                          0,        // render_frame_id
-                                          true,     // is_main_frame
-                                          false,    // parent_is_main_frame
-                                          false,    // allow_download
-                                          true,     // is_async
-                                          PREVIEWS_OFF);  // previews_state
+                                          nullptr,       // context
+                                          0,             // render_process_id
+                                          0,             // render_view_id
+                                          0,             // render_frame_id
+                                          true,          // is_main_frame
+                                          false,         // allow_download
+                                          true,          // is_async
+                                          PREVIEWS_OFF,  // previews_state
+                                          nullptr);      // navigation_ui_data
 
   TestResourceDispatcherHost host(false);
 
   TestFakePluginService plugin_service(false, false);
   std::unique_ptr<InterceptingResourceHandler> intercepting_handler(
-      new InterceptingResourceHandler(base::MakeUnique<TestResourceHandler>(),
+      new InterceptingResourceHandler(std::make_unique<TestResourceHandler>(),
                                       nullptr));
 
   std::unique_ptr<TestResourceHandler> scoped_test_handler(

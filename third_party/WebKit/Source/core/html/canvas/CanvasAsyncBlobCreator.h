@@ -6,22 +6,22 @@
 #define CanvasAsyncBlobCreator_h
 
 #include <memory>
+
 #include "bindings/core/v8/ScriptPromiseResolver.h"
+#include "bindings/core/v8/v8_blob_callback.h"
 #include "core/CoreExport.h"
-#include "core/dom/DOMTypedArray.h"
-#include "core/fileapi/BlobCallback.h"
+#include "core/typed_arrays/DOMTypedArray.h"
 #include "core/workers/ParentFrameTaskRunners.h"
 #include "platform/geometry/IntSize.h"
 #include "platform/heap/Handle.h"
+#include "platform/image-encoders/ImageEncoder.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/WebTraceLocation.h"
 
 namespace blink {
 
-class Document;
-class JPEGImageEncoderState;
-class PNGImageEncoderState;
+class ExecutionContext;
 
 class CORE_EXPORT CanvasAsyncBlobCreator
     : public GarbageCollectedFinalized<CanvasAsyncBlobCreator> {
@@ -30,15 +30,15 @@ class CORE_EXPORT CanvasAsyncBlobCreator
       DOMUint8ClampedArray* unpremultiplied_rgba_image_data,
       const String& mime_type,
       const IntSize&,
-      BlobCallback*,
+      V8BlobCallback*,
       double start_time,
-      Document*);
+      ExecutionContext*);
   static CanvasAsyncBlobCreator* Create(
       DOMUint8ClampedArray* unpremultiplied_rgba_image_data,
       const String& mime_type,
       const IntSize&,
       double start_time,
-      Document*,
+      ExecutionContext*,
       ScriptPromiseResolver*);
   void ScheduleAsyncBlobCreation(const double& quality);
   virtual ~CanvasAsyncBlobCreator();
@@ -71,30 +71,27 @@ class CORE_EXPORT CanvasAsyncBlobCreator
   virtual void SignalTaskSwitchInStartTimeoutEventForTesting() {}
   virtual void SignalTaskSwitchInCompleteTimeoutEventForTesting() {}
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  protected:
   CanvasAsyncBlobCreator(DOMUint8ClampedArray* data,
                          MimeType,
                          const IntSize&,
-                         BlobCallback*,
+                         V8BlobCallback*,
                          double,
-                         Document*,
+                         ExecutionContext*,
                          ScriptPromiseResolver*);
   // Methods are virtual for unit testing
-  virtual void ScheduleInitiatePngEncoding();
-  virtual void ScheduleInitiateJpegEncoding(const double&);
-  virtual void IdleEncodeRowsPng(double deadline_seconds);
-  virtual void IdleEncodeRowsJpeg(double deadline_seconds);
+  virtual void ScheduleInitiateEncoding(double quality);
+  virtual void IdleEncodeRows(double deadline_seconds);
   virtual void PostDelayedTaskToCurrentThread(const WebTraceLocation&,
-                                              std::unique_ptr<WTF::Closure>,
+                                              WTF::Closure,
                                               double delay_ms);
   virtual void SignalAlternativeCodePathFinishedForTesting() {}
   virtual void CreateBlobAndReturnResult();
   virtual void CreateNullAndReturnResult();
 
-  void InitiatePngEncoding(double deadline_seconds);
-  void InitiateJpegEncoding(const double& quality, double deadline_seconds);
+  void InitiateEncoding(double quality, double deadline_seconds);
   IdleTaskStatus idle_task_status_;
 
  private:
@@ -102,15 +99,13 @@ class CORE_EXPORT CanvasAsyncBlobCreator
 
   void Dispose();
 
-  std::unique_ptr<PNGImageEncoderState> png_encoder_state_;
-  std::unique_ptr<JPEGImageEncoderState> jpeg_encoder_state_;
   Member<DOMUint8ClampedArray> data_;
-  std::unique_ptr<Vector<unsigned char>> encoded_image_;
+  std::unique_ptr<ImageEncoder> encoder_;
+  Vector<unsigned char> encoded_image_;
   int num_rows_completed_;
-  Member<Document> document_;
+  Member<ExecutionContext> context_;
 
-  const IntSize size_;
-  size_t pixel_row_stride_;
+  SkPixmap src_data_;
   const MimeType mime_type_;
   double start_time_;
   double schedule_initiate_start_time_;
@@ -122,21 +117,20 @@ class CORE_EXPORT CanvasAsyncBlobCreator
   Member<ParentFrameTaskRunners> parent_frame_task_runner_;
 
   // Used for HTMLCanvasElement only
-  Member<BlobCallback> callback_;
+  //
+  // Note: CanvasAsyncBlobCreator is never held by other objects. As soon as
+  // an instance gets created, ScheduleAsyncBlobCreation is invoked, and then
+  // the instance is only held by a task runner (via PostTask). Thus the
+  // instance has only limited lifetime. Hence, Persistent here is okay.
+  V8BlobCallback::Persistent<V8BlobCallback> callback_;
 
   // Used for OffscreenCanvas only
   Member<ScriptPromiseResolver> script_promise_resolver_;
 
-  // PNG
-  bool InitializePngStruct();
-  void ForceEncodeRowsPngOnCurrentThread();  // Similar to idleEncodeRowsPng
-                                             // without deadline
-
-  // JPEG
-  bool InitializeJpegStruct(double quality);
-  void ForceEncodeRowsJpegOnCurrentThread();  // Similar to idleEncodeRowsJpeg
-                                              // without
-                                              // deadline
+  // PNG, JPEG
+  bool InitializeEncoder(double quality);
+  void ForceEncodeRowsOnCurrentThread();  // Similar to IdleEncodeRows
+                                          // without deadline
 
   // WEBP
   void EncodeImageOnEncoderThread(double quality);

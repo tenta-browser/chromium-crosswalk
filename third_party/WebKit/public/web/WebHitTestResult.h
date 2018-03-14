@@ -26,7 +26,7 @@
 #ifndef WebHitTestResult_h
 #define WebHitTestResult_h
 
-#include "../platform/WebPrivatePtr.h"
+#include "public/platform/WebPrivatePtr.h"
 
 namespace blink {
 
@@ -69,9 +69,9 @@ class WebHitTestResult {
   // Return whether an editable input element was hit.
   BLINK_EXPORT bool IsContentEditable() const;
 
-#if BLINK_IMPLEMENTATION
-  WebHitTestResult(const HitTestResult&);
-  WebHitTestResult& operator=(const HitTestResult&);
+#if INSIDE_BLINK
+  BLINK_EXPORT WebHitTestResult(const HitTestResult&);
+  BLINK_EXPORT WebHitTestResult& operator=(const HitTestResult&);
 #endif
 
  protected:

@@ -14,16 +14,28 @@
 
 namespace search_provider_logos {
 
-// Implements AppendFingerprintToLogoURL, defined in logo_tracker.h, for Google
-// doodles.
-GURL GoogleAppendQueryparamsToLogoURL(const GURL& logo_url,
-                                      const std::string& fingerprint,
-                                      bool wants_cta,
-                                      bool gray_background);
+// Returns the URL where the Google doodle can be downloaded, e.g.
+// https://www.google.com/async/ddljson. This depends on the user's
+// Google domain.
+GURL GetGoogleDoodleURL(const GURL& google_base_url);
 
-// Implements ParseLogoResponse, defined in logo_tracker.h, for Google doodles.
-std::unique_ptr<EncodedLogo> GoogleParseLogoResponse(
-    const std::unique_ptr<std::string>& response,
+// Implements AppendQueryparamsToLogoURL, defined in logo_common.h. Using this
+// relies on the caller having prepared the |logo_url| by calling
+// AppendPreliminaryParamsToDoodleURL().
+GURL AppendFingerprintParamToDoodleURL(const GURL& logo_url,
+                                       const std::string& fingerprint);
+
+// Builds the reference URL for the current requested Doodle preset. This URL
+// will have to be processed again to add the fingerprint before making the
+// request to the server, see AppendFingerprintParamToDoodleURL().
+GURL AppendPreliminaryParamsToDoodleURL(bool gray_background,
+                                        const GURL& logo_url);
+
+// Implements ParseLogoResponse, defined in logo_common.h, for Google or
+// third-party doodles.
+std::unique_ptr<EncodedLogo> ParseDoodleLogoResponse(
+    const GURL& base_url,
+    std::unique_ptr<std::string> response,
     base::Time response_time,
     bool* parsing_failed);
 

@@ -12,6 +12,7 @@
 #include "base/memory/memory_coordinator_client.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/weak_ptr.h"
 #include "content/browser/dom_storage/dom_storage_context_impl.h"
 #include "content/common/content_export.h"
 #include "content/common/storage_partition_service.mojom.h"
@@ -34,13 +35,14 @@ namespace content {
 
 class DOMStorageContextImpl;
 class LocalStorageContextMojo;
+class SessionStorageContextMojo;
 
 // This is owned by Storage Partition and encapsulates all its dom storage
 // state.
-class CONTENT_EXPORT DOMStorageContextWrapper :
-    NON_EXPORTED_BASE(public DOMStorageContext),
-    public base::RefCountedThreadSafe<DOMStorageContextWrapper>,
-    public base::MemoryCoordinatorClient {
+class CONTENT_EXPORT DOMStorageContextWrapper
+    : public DOMStorageContext,
+      public base::RefCountedThreadSafe<DOMStorageContextWrapper>,
+      public base::MemoryCoordinatorClient {
  public:
   // If |data_path| is empty, nothing will be saved to disk.
   DOMStorageContextWrapper(
@@ -76,6 +78,12 @@ class CONTENT_EXPORT DOMStorageContextWrapper :
   // See mojom::StoragePartitionService interface.
   void OpenLocalStorage(const url::Origin& origin,
                         mojom::LevelDBWrapperRequest request);
+  void OpenSessionStorage(int64_t namespace_id,
+                          const url::Origin& origin,
+                          mojom::LevelDBWrapperRequest request);
+
+  void SetLocalStorageDatabaseForTesting(
+      leveldb::mojom::LevelDBDatabaseAssociatedPtr database);
 
  private:
   friend class DOMStorageMessageFilter;  // for access to context()
@@ -85,6 +93,10 @@ class CONTENT_EXPORT DOMStorageContextWrapper :
 
   ~DOMStorageContextWrapper() override;
   DOMStorageContextImpl* context() const { return context_.get(); }
+  SessionStorageContextMojo* mojo_session_state() {
+    return mojo_session_state_.get();
+  }
+  base::WeakPtr<SessionStorageContextMojo> GetMojoSessionStateWeakPtr();
 
   // Called on UI thread when the system is under memory pressure.
   void OnMemoryPressure(
@@ -95,12 +107,12 @@ class CONTENT_EXPORT DOMStorageContextWrapper :
 
   void PurgeMemory(DOMStorageContextImpl::PurgeOption purge_option);
 
-  void GotMojoLocalStorageUsage(GetLocalStorageUsageCallback callback,
-                                std::vector<LocalStorageUsageInfo> usage);
-
   // Keep all mojo-ish details together and not bleed them through the public
-  // interface.
-  std::unique_ptr<LocalStorageContextMojo> mojo_state_;
+  // interface. The |mojo_state_| object is owned by this object, but destroyed
+  // asynchronously on the |mojo_task_runner_|.
+  LocalStorageContextMojo* mojo_state_ = nullptr;
+  scoped_refptr<base::SingleThreadTaskRunner> mojo_task_runner_;
+  std::unique_ptr<SessionStorageContextMojo> mojo_session_state_;
 
   // To receive memory pressure signals.
   std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;

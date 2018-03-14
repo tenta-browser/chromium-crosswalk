@@ -27,10 +27,6 @@ class CONTENT_EXPORT SyntheticGestureTarget {
   virtual void DispatchInputEventToPlatform(
       const blink::WebInputEvent& event) = 0;
 
-  // Called by SyntheticGestureController to request a flush at a time
-  // appropriate for the platform, e.g. aligned with vsync.
-  virtual void SetNeedsFlush() = 0;
-
   // Returns the default gesture source type for the target.
   virtual SyntheticGestureParams::GestureSourceType
       GetDefaultSyntheticGestureSourceType() const = 0;
@@ -46,6 +42,11 @@ class CONTENT_EXPORT SyntheticGestureTarget {
   // Returns the minimum number of DIPs two touch pointers have to be apart
   // to perform a pinch-zoom.
   virtual float GetMinScalingSpanInDips() const = 0;
+
+  // If mouse wheels can only specify the number of ticks of some static
+  // multiplier constant, this method returns that constant (in DIPs). If mouse
+  // wheels can specify an arbitrary delta this returns 0.
+  virtual int GetMouseWheelMinimumGranularity() const = 0;
 };
 
 }  // namespace content

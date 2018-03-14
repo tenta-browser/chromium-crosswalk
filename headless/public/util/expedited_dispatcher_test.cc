@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "headless/public/util/navigation_request.h"
@@ -22,8 +23,8 @@ namespace headless {
 
 class ExpeditedDispatcherTest : public ::testing::Test {
  protected:
-  ExpeditedDispatcherTest() {}
-  ~ExpeditedDispatcherTest() override {}
+  ExpeditedDispatcherTest() = default;
+  ~ExpeditedDispatcherTest() override = default;
 
   void SetUp() override {
     expedited_dispatcher_.reset(new ExpeditedDispatcher(loop_.task_runner()));
@@ -91,7 +92,7 @@ class NavigationRequestForTest : public NavigationRequest {
   explicit NavigationRequestForTest(base::Closure* done_closure)
       : done_closure_(done_closure) {}
 
-  ~NavigationRequestForTest() override {}
+  ~NavigationRequestForTest() override = default;
 
   // NavigationRequest implementation:
   void StartProcessing(base::Closure done_callback) override {

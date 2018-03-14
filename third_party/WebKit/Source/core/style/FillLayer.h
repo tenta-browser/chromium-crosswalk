@@ -25,6 +25,7 @@
 #ifndef FillLayer_h
 #define FillLayer_h
 
+#include "base/memory/scoped_refptr.h"
 #include "core/CoreExport.h"
 #include "core/style/ComputedStyleConstants.h"
 #include "core/style/StyleImage.h"
@@ -32,7 +33,6 @@
 #include "platform/LengthSize.h"
 #include "platform/graphics/GraphicsTypes.h"
 #include "platform/wtf/Allocator.h"
-#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
@@ -167,7 +167,7 @@ class CORE_EXPORT FillLayer {
     composite_set_ = true;
   }
   void SetBlendMode(WebBlendMode b) {
-    blend_mode_ = b;
+    blend_mode_ = static_cast<unsigned>(b);
     blend_mode_set_ = true;
   }
   void SetSizeType(EFillSizeType b) { size_type_ = b; }
@@ -210,6 +210,8 @@ class CORE_EXPORT FillLayer {
   bool operator==(const FillLayer&) const;
   bool operator!=(const FillLayer& o) const { return !(*this == o); }
 
+  bool VisuallyEqual(const FillLayer&) const;
+
   bool ContainsImage(StyleImage*) const;
   bool ImagesAreLoaded() const;
 
@@ -225,7 +227,7 @@ class CORE_EXPORT FillLayer {
     return next_ ? next_->HasFixedImage() : false;
   }
 
-  bool ImageOccludesNextLayers(const LayoutObject&) const;
+  bool ImageOccludesNextLayers(const Document&, const ComputedStyle&) const;
   bool HasRepeatXY() const;
   bool ClipOccludesNextLayers() const;
 
@@ -263,7 +265,7 @@ class CORE_EXPORT FillLayer {
     return kCompositeSourceOver;
   }
   static WebBlendMode InitialFillBlendMode(EFillLayerType) {
-    return kWebBlendModeNormal;
+    return WebBlendMode::kNormal;
   }
   static EFillSizeType InitialFillSizeType(EFillLayerType) {
     return kSizeLength;
@@ -280,7 +282,7 @@ class CORE_EXPORT FillLayer {
   static Length InitialFillYPosition(EFillLayerType) {
     return Length(0.0, kPercent);
   }
-  static StyleImage* InitialFillImage(EFillLayerType) { return 0; }
+  static StyleImage* InitialFillImage(EFillLayerType) { return nullptr; }
   static EMaskSourceType InitialFillMaskSourceType(EFillLayerType) {
     return kMaskAlpha;
   }
@@ -290,7 +292,7 @@ class CORE_EXPORT FillLayer {
 
   FillLayer() {}
 
-  bool ImageIsOpaque(const LayoutObject&) const;
+  bool ImageIsOpaque(const Document&, const ComputedStyle&) const;
   bool ImageTilesLayer() const;
 
   FillLayer* next_;

@@ -70,10 +70,10 @@ void LogHostedAppUnlimitedStorageUsage(
     // https://developers.google.com/chrome/whitepapers/storage.
     BrowserThread::PostAfterStartupTask(
         FROM_HERE, BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
-        base::Bind(&storage::QuotaManager::GetUsageAndQuotaForWebApps,
-                   partition->GetQuotaManager(), launch_url,
-                   storage::kStorageTypePersistent,
-                   base::Bind(&ReportQuotaUsage)));
+        base::BindOnce(&storage::QuotaManager::GetUsageAndQuotaForWebApps,
+                       partition->GetQuotaManager(), launch_url,
+                       storage::kStorageTypePersistent,
+                       base::Bind(&ReportQuotaUsage)));
   }
 }
 
@@ -114,6 +114,13 @@ bool ExtensionSpecialStoragePolicy::IsStorageSessionOnly(const GURL& origin) {
   return cookie_settings_->IsCookieSessionOnly(origin);
 }
 
+bool ExtensionSpecialStoragePolicy::IsStorageSessionOnlyOrBlocked(
+    const GURL& origin) {
+  if (cookie_settings_.get() == NULL)
+    return false;
+  return cookie_settings_->IsCookieSessionOnlyOrBlocked(origin);
+}
+
 bool ExtensionSpecialStoragePolicy::HasSessionOnlyOrigins() {
   if (cookie_settings_.get() == NULL)
     return false;
@@ -123,7 +130,7 @@ bool ExtensionSpecialStoragePolicy::HasSessionOnlyOrigins() {
   ContentSettingsForOneType entries;
   cookie_settings_->GetCookieSettings(&entries);
   for (size_t i = 0; i < entries.size(); ++i) {
-    if (entries[i].setting == CONTENT_SETTING_SESSION_ONLY)
+    if (entries[i].GetContentSetting() == CONTENT_SETTING_SESSION_ONLY)
       return true;
   }
   return false;
@@ -255,8 +262,8 @@ void ExtensionSpecialStoragePolicy::NotifyGranted(
   if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&ExtensionSpecialStoragePolicy::NotifyGranted, this,
-                   origin, change_flags));
+        base::BindOnce(&ExtensionSpecialStoragePolicy::NotifyGranted, this,
+                       origin, change_flags));
     return;
   }
   SpecialStoragePolicy::NotifyGranted(origin, change_flags);
@@ -268,8 +275,8 @@ void ExtensionSpecialStoragePolicy::NotifyRevoked(
   if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&ExtensionSpecialStoragePolicy::NotifyRevoked, this,
-                   origin, change_flags));
+        base::BindOnce(&ExtensionSpecialStoragePolicy::NotifyRevoked, this,
+                       origin, change_flags));
     return;
   }
   SpecialStoragePolicy::NotifyRevoked(origin, change_flags);
@@ -279,7 +286,7 @@ void ExtensionSpecialStoragePolicy::NotifyCleared() {
   if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&ExtensionSpecialStoragePolicy::NotifyCleared, this));
+        base::BindOnce(&ExtensionSpecialStoragePolicy::NotifyCleared, this));
     return;
   }
   SpecialStoragePolicy::NotifyCleared();

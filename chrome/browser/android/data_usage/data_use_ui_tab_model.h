@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_ANDROID_DATA_USAGE_DATA_USE_UI_TAB_MODEL_H_
 #define CHROME_BROWSER_ANDROID_DATA_USAGE_DATA_USE_UI_TAB_MODEL_H_
 
+#include <map>
 #include <memory>
 #include <string>
 
-#include "base/containers/hash_tables.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -23,8 +23,6 @@
 namespace content {
 class NavigationEntry;
 }
-
-namespace chrome {
 
 namespace android {
 
@@ -136,7 +134,7 @@ class DataUseUITabModel : public KeyedService,
     const std::string package;
   };
 
-  typedef base::hash_map<SessionID::id_type, DataUseTrackingEvent> TabEvents;
+  typedef std::map<SessionID::id_type, DataUseTrackingEvent> TabEvents;
 
   // DataUseTabModel::TabDataUseObserver implementation:
   void NotifyTrackingStarting(SessionID::id_type tab_id) override;
@@ -199,7 +197,5 @@ class DataUseUITabModel : public KeyedService,
 };
 
 }  // namespace android
-
-}  // namespace chrome
 
 #endif  // CHROME_BROWSER_ANDROID_DATA_USAGE_DATA_USE_UI_TAB_MODEL_H_

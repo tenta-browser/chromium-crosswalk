@@ -9,11 +9,13 @@
 #include <stdint.h>
 
 #include <memory>
+#include <vector>
 
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "content/common/content_export.h"
+#include "storage/browser/blob/blob_data_handle.h"
 
 namespace base {
 class FilePath;
@@ -29,6 +31,8 @@ namespace content {
 class BlobHandle;
 class BrowserContext;
 struct ChromeBlobStorageContextDeleter;
+class ResourceRequestBody;
+class ResourceContext;
 
 // A context class that keeps track of BlobStorageController used by the chrome.
 // There is an instance associated with each BrowserContext. There could be
@@ -43,6 +47,7 @@ class CONTENT_EXPORT ChromeBlobStorageContext
  public:
   ChromeBlobStorageContext();
 
+  // Must be called on the UI thread.
   static ChromeBlobStorageContext* GetFor(
       BrowserContext* browser_context);
 
@@ -52,8 +57,10 @@ class CONTENT_EXPORT ChromeBlobStorageContext
   storage::BlobStorageContext* context() const { return context_.get(); }
 
   // Returns a NULL scoped_ptr on failure.
-  std::unique_ptr<BlobHandle> CreateMemoryBackedBlob(const char* data,
-                                                     size_t length);
+  std::unique_ptr<BlobHandle> CreateMemoryBackedBlob(
+      const char* data,
+      size_t length,
+      const std::string& content_type);
 
   // Returns a NULL scoped_ptr on failure.
   std::unique_ptr<BlobHandle> CreateFileBackedBlob(
@@ -81,6 +88,22 @@ struct ChromeBlobStorageContextDeleter {
     context->DeleteOnCorrectThread();
   }
 };
+
+// Returns the BlobStorageContext associated with the
+// ChromeBlobStorageContext instance passed in.
+storage::BlobStorageContext* GetBlobStorageContext(
+    ChromeBlobStorageContext* blob_storage_context);
+
+using BlobHandles = std::vector<std::unique_ptr<storage::BlobDataHandle>>;
+
+// Attempts to create a vector of BlobDataHandles that ensure any blob data
+// associated with |body| isn't cleaned up until the handles are destroyed.
+// Returns false on failure. This is used for POST and PUT requests.
+bool GetBodyBlobDataHandles(ResourceRequestBody* body,
+                            ResourceContext* resource_context,
+                            BlobHandles* blob_handles);
+
+extern const char kBlobStorageContextKeyName[];
 
 }  // namespace content
 

@@ -5,12 +5,11 @@
 #ifndef MediaControlOverlayEnclosureElement_h
 #define MediaControlOverlayEnclosureElement_h
 
-#include "core/html/shadow/MediaControlElementTypes.h"
+#include "modules/media_controls/elements/MediaControlDivElement.h"
 
 namespace blink {
 
 class Event;
-class EventDispatchHandlingState;
 class MediaControlsImpl;
 
 class MediaControlOverlayEnclosureElement final
@@ -18,8 +17,7 @@ class MediaControlOverlayEnclosureElement final
  public:
   explicit MediaControlOverlayEnclosureElement(MediaControlsImpl&);
 
- private:
-  EventDispatchHandlingState* PreDispatchEventHandler(Event*) override;
+  void DefaultEventHandler(Event*) override;
 };
 
 }  // namespace blink

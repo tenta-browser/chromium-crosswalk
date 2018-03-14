@@ -8,12 +8,20 @@
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/events/base_event_utils.h"
+#include "ui/events/gesture_detection/gesture_configuration.h"
+#include "ui/events/test/event_generator.h"
+#include "ui/views/animation/test/ink_drop_host_view_test_api.h"
+#include "ui/views/animation/test/test_ink_drop.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/test/views_test_base.h"
 
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
 #include "ui/aura/window.h"
 #endif
+
+using views::test::InkDropHostViewTestApi;
+using views::test::TestInkDrop;
 
 namespace {
 
@@ -33,9 +41,10 @@ class TestIconLabelBubbleView : public IconLabelBubbleView {
   };
 
   explicit TestIconLabelBubbleView(const gfx::FontList& font_list)
-      : IconLabelBubbleView(font_list, false), value_(0) {
+      : IconLabelBubbleView(font_list), value_(0), is_bubble_showing_(false) {
     GetImageView()->SetImageSize(gfx::Size(kImageSize, kImageSize));
     SetLabel(base::ASCIIToUTF16("Label"));
+    separator_view()->set_disable_animation_for_test(true);
   }
 
   void SetCurrentAnimationValue(int value) {
@@ -58,6 +67,13 @@ class TestIconLabelBubbleView : public IconLabelBubbleView {
       return SHRINKING;
     return STEADY;
   }
+
+  void HideBubble() {
+    OnWidgetVisibilityChanged(nullptr, false);
+    is_bubble_showing_ = false;
+  }
+
+  bool IsBubbleShowing() const override { return is_bubble_showing_; }
 
  protected:
   // IconLabelBubbleView:
@@ -88,8 +104,14 @@ class TestIconLabelBubbleView : public IconLabelBubbleView {
 
   bool IsShrinking() const override { return state() == SHRINKING; }
 
+  bool ShowBubble(const ui::Event& event) override {
+    is_bubble_showing_ = true;
+    return true;
+  }
+
  private:
   int value_;
+  bool is_bubble_showing_;
   DISALLOW_COPY_AND_ASSIGN(TestIconLabelBubbleView);
 };
 
@@ -99,6 +121,9 @@ class IconLabelBubbleViewTest : public views::ViewsTestBase {
  public:
   IconLabelBubbleViewTest()
       : views::ViewsTestBase(),
+        widget_(nullptr),
+        view_(nullptr),
+        ink_drop_(nullptr),
         steady_reached_(false),
         shrinking_reached_(false),
         minimum_size_reached_(false),
@@ -111,7 +136,22 @@ class IconLabelBubbleViewTest : public views::ViewsTestBase {
   void SetUp() override {
     views::ViewsTestBase::SetUp();
     gfx::FontList font_list;
-    view_.reset(new TestIconLabelBubbleView(font_list));
+
+    CreateWidget();
+    generator_.reset(new ui::test::EventGenerator(widget_->GetNativeWindow()));
+    view_ = new TestIconLabelBubbleView(font_list);
+    view_->SetBoundsRect(gfx::Rect(0, 0, 24, 24));
+    widget_->SetContentsView(view_);
+
+    widget_->Show();
+  }
+
+  void TearDown() override {
+    generator_.reset();
+    if (widget_ && !widget_->IsClosed())
+      widget_->Close();
+
+    ViewsTestBase::TearDown();
   }
 
   void VerifyWithAnimationStep(int step) {
@@ -123,7 +163,28 @@ class IconLabelBubbleViewTest : public views::ViewsTestBase {
     view_->SetLabelVisible(false);
   }
 
+  TestInkDrop* ink_drop() { return ink_drop_; }
+
+  TestIconLabelBubbleView* view() { return view_; }
+
+  ui::test::EventGenerator* generator() { return generator_.get(); }
+
+  void AttachInkDrop() {
+    ink_drop_ = new TestInkDrop();
+    InkDropHostViewTestApi(view_).SetInkDrop(base::WrapUnique(ink_drop_));
+  }
+
  private:
+  void CreateWidget() {
+    DCHECK(!widget_);
+
+    widget_ = new views::Widget;
+    views::Widget::InitParams params =
+        CreateParams(views::Widget::InitParams::TYPE_WINDOW_FRAMELESS);
+    params.bounds = gfx::Rect(0, 0, 200, 200);
+    widget_->Init(params);
+  }
+
   void Reset() {
     view_->SetLabelVisible(true);
     SetValue(0);
@@ -202,7 +263,10 @@ class IconLabelBubbleViewTest : public views::ViewsTestBase {
     return view_->GetImageView()->bounds();
   }
 
-  std::unique_ptr<TestIconLabelBubbleView> view_;
+  views::Widget* widget_;
+  TestIconLabelBubbleView* view_;
+  TestInkDrop* ink_drop_;
+  std::unique_ptr<ui::test::EventGenerator> generator_;
 
   bool steady_reached_;
   bool shrinking_reached_;
@@ -223,9 +287,94 @@ TEST_F(IconLabelBubbleViewTest, AnimateLayout) {
   VerifyWithAnimationStep(25);
 }
 
-#if defined(USE_ASH)
-// Verifies IconLabelBubbleView::GetPreferredSize() doesn't crash when there is
-// a widget but no compositor.
+// Verify that clicking the view a second time hides its bubble.
+TEST_F(IconLabelBubbleViewTest, SecondClick) {
+  generator()->PressLeftButton();
+  EXPECT_FALSE(view()->IsBubbleShowing());
+  generator()->ReleaseLeftButton();
+  EXPECT_TRUE(view()->IsBubbleShowing());
+
+  // Hide the bubble manually. In the browser this would normally happen during
+  // the event processing.
+  generator()->PressLeftButton();
+  view()->HideBubble();
+  EXPECT_FALSE(view()->IsBubbleShowing());
+  generator()->ReleaseLeftButton();
+}
+
+TEST_F(IconLabelBubbleViewTest, MouseInkDropState) {
+  AttachInkDrop();
+  generator()->PressLeftButton();
+  EXPECT_EQ(views::InkDropState::ACTION_PENDING,
+            ink_drop()->GetTargetInkDropState());
+  generator()->ReleaseLeftButton();
+  EXPECT_EQ(views::InkDropState::ACTIVATED,
+            ink_drop()->GetTargetInkDropState());
+  view()->HideBubble();
+  EXPECT_EQ(views::InkDropState::HIDDEN, ink_drop()->GetTargetInkDropState());
+
+  // If the bubble is shown, the InkDropState should not change to
+  // ACTION_PENDING.
+  generator()->PressLeftButton();
+  EXPECT_EQ(views::InkDropState::ACTION_PENDING,
+            ink_drop()->GetTargetInkDropState());
+  generator()->ReleaseLeftButton();
+  EXPECT_EQ(views::InkDropState::ACTIVATED,
+            ink_drop()->GetTargetInkDropState());
+  generator()->PressLeftButton();
+  EXPECT_NE(views::InkDropState::ACTION_PENDING,
+            ink_drop()->GetTargetInkDropState());
+}
+
+// Tests the separator opacity. The separator should disappear when there's
+// an ink drop. Otherwise, it should be visible.
+TEST_F(IconLabelBubbleViewTest, SeparatorOpacity) {
+  views::View* separator_view = view()->separator_view();
+  separator_view->SetPaintToLayer();
+  view()->SetLabel(base::ASCIIToUTF16("x"));
+  EXPECT_EQ(1.0f, separator_view->layer()->opacity());
+
+  AttachInkDrop();
+  generator()->PressLeftButton();
+  view()->InkDropAnimationStarted();
+  EXPECT_EQ(views::InkDropState::ACTION_PENDING,
+            ink_drop()->GetTargetInkDropState());
+  EXPECT_EQ(0.0f, separator_view->layer()->opacity());
+
+  generator()->ReleaseLeftButton();
+  EXPECT_EQ(views::InkDropState::ACTIVATED,
+            ink_drop()->GetTargetInkDropState());
+  EXPECT_EQ(0.0f, separator_view->layer()->opacity());
+
+  view()->HideBubble();
+  view()->InkDropAnimationStarted();
+  EXPECT_EQ(views::InkDropState::HIDDEN, ink_drop()->GetTargetInkDropState());
+  EXPECT_EQ(1.0f, separator_view->layer()->opacity());
+}
+
+#if !defined(OS_MACOSX)
+TEST_F(IconLabelBubbleViewTest, GestureInkDropState) {
+  AttachInkDrop();
+  generator()->GestureTapAt(gfx::Point());
+  EXPECT_EQ(views::InkDropState::ACTIVATED,
+            ink_drop()->GetTargetInkDropState());
+  view()->HideBubble();
+  EXPECT_EQ(views::InkDropState::HIDDEN, ink_drop()->GetTargetInkDropState());
+
+  // If the bubble is shown, the InkDropState should not change to
+  // ACTIVATED.
+  generator()->GestureTapAt(gfx::Point());
+  EXPECT_EQ(views::InkDropState::ACTIVATED,
+            ink_drop()->GetTargetInkDropState());
+  generator()->GestureTapAt(gfx::Point());
+  view()->HideBubble();
+  EXPECT_EQ(views::InkDropState::HIDDEN, ink_drop()->GetTargetInkDropState());
+}
+#endif
+
+#if defined(OS_CHROMEOS)
+// Verifies IconLabelBubbleView::CalculatePreferredSize() doesn't crash when
+// there is a widget but no compositor.
 using IconLabelBubbleViewCrashTest = views::ViewsTestBase;
 
 TEST_F(IconLabelBubbleViewCrashTest,

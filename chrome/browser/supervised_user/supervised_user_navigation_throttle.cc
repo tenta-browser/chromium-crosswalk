@@ -159,8 +159,8 @@ SupervisedUserNavigationThrottle::CheckURL() {
   if (got_result)
     behavior_ = SupervisedUserURLFilter::INVALID;
   if (deferred_)
-    return ThrottleCheckResult::DEFER;
-  return ThrottleCheckResult::PROCEED;
+    return NavigationThrottle::DEFER;
+  return NavigationThrottle::PROCEED;
 }
 
 void SupervisedUserNavigationThrottle::ShowInterstitial(
@@ -200,6 +200,10 @@ SupervisedUserNavigationThrottle::WillRedirectRequest() {
   return CheckURL();
 }
 
+const char* SupervisedUserNavigationThrottle::GetNameForLogging() {
+  return "SupervisedUserNavigationThrottle";
+}
+
 void SupervisedUserNavigationThrottle::OnCheckDone(
     const GURL& url,
     SupervisedUserURLFilter::FilteringBehavior behavior,
@@ -233,17 +237,5 @@ void SupervisedUserNavigationThrottle::OnInterstitialResult(
   if (continue_request)
     Resume();
   else
-    Cancel();
-}
-
-void SupervisedUserNavigationThrottle::Resume() {
-  DCHECK(deferred_);
-  deferred_ = false;
-  navigation_handle()->Resume();
-}
-
-void SupervisedUserNavigationThrottle::Cancel() {
-  DCHECK(deferred_);
-  deferred_ = false;
-  navigation_handle()->CancelDeferredNavigation(CANCEL);
+    CancelDeferredNavigation(CANCEL);
 }

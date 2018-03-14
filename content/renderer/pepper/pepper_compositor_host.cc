@@ -14,21 +14,22 @@
 #include "cc/layers/layer.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/layers/texture_layer.h"
-#include "cc/resources/texture_mailbox.h"
 #include "cc/trees/layer_tree_host.h"
+#include "components/viz/client/client_shared_bitmap_manager.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "content/renderer/pepper/gfx_conversion.h"
 #include "content/renderer/pepper/host_globals.h"
 #include "content/renderer/pepper/pepper_plugin_instance_impl.h"
 #include "content/renderer/pepper/ppb_image_data_impl.h"
 #include "content/renderer/render_thread_impl.h"
+#include "gpu/command_buffer/common/mailbox.h"
+#include "gpu/command_buffer/common/sync_token.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/host/dispatch_host_message.h"
 #include "ppapi/host/ppapi_host.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/thunk/enter.h"
 #include "ppapi/thunk/ppb_image_data_api.h"
-#include "services/ui/public/cpp/bitmap/child_shared_bitmap_manager.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/transform.h"
@@ -149,12 +150,11 @@ PepperCompositorHost::LayerData::LayerData(const LayerData& other) = default;
 
 PepperCompositorHost::LayerData::~LayerData() {}
 
-PepperCompositorHost::PepperCompositorHost(
-    RendererPpapiHost* host,
-    PP_Instance instance,
-    PP_Resource resource)
+PepperCompositorHost::PepperCompositorHost(RendererPpapiHost* host,
+                                           PP_Instance instance,
+                                           PP_Resource resource)
     : ResourceHost(host->GetPpapiHost(), instance, resource),
-      bound_instance_(NULL),
+      bound_instance_(nullptr),
       weak_factory_(this) {
   layer_ = cc::Layer::Create();
   // TODO(penghuang): SetMasksToBounds() can be expensive if the layer is
@@ -192,7 +192,7 @@ void PepperCompositorHost::ViewInitiatedPaint() {
 void PepperCompositorHost::ImageReleased(
     int32_t id,
     std::unique_ptr<base::SharedMemory> shared_memory,
-    std::unique_ptr<cc::SharedBitmap> bitmap,
+    std::unique_ptr<viz::SharedBitmap> bitmap,
     const gpu::SyncToken& sync_token,
     bool is_lost) {
   bitmap.reset();
@@ -281,14 +281,14 @@ void PepperCompositorHost::UpdateLayer(
         static_cast<cc::TextureLayer*>(layer.get()));
     if (!old_layer ||
         new_layer->common.resource_id != old_layer->common.resource_id) {
-      cc::TextureMailbox mailbox(new_layer->texture->mailbox,
-                                 new_layer->texture->sync_token,
-                                 new_layer->texture->target);
-      texture_layer->SetTextureMailbox(mailbox,
-          cc::SingleReleaseCallback::Create(
-              base::Bind(&PepperCompositorHost::ResourceReleased,
-                         weak_factory_.GetWeakPtr(),
-                         new_layer->common.resource_id)));
+      auto resource = viz::TransferableResource::MakeGL(
+          new_layer->texture->mailbox, GL_LINEAR, new_layer->texture->target,
+          new_layer->texture->sync_token);
+      texture_layer->SetTransferableResource(
+          resource,
+          viz::SingleReleaseCallback::Create(base::Bind(
+              &PepperCompositorHost::ResourceReleased,
+              weak_factory_.GetWeakPtr(), new_layer->common.resource_id)));
       // TODO(penghuang): get a damage region from the application and
       // pass it to SetNeedsDisplayRect().
       texture_layer->SetNeedsDisplay();
@@ -314,15 +314,16 @@ void PepperCompositorHost::UpdateLayer(
       DCHECK_EQ(rv, PP_TRUE);
       DCHECK_EQ(desc.stride, desc.size.width * 4);
       DCHECK_EQ(desc.format, PP_IMAGEDATAFORMAT_RGBA_PREMUL);
-      std::unique_ptr<cc::SharedBitmap> bitmap =
+      std::unique_ptr<viz::SharedBitmap> bitmap =
           RenderThreadImpl::current()
               ->shared_bitmap_manager()
               ->GetBitmapForSharedMemory(image_shm.get());
 
-      cc::TextureMailbox mailbox(bitmap.get(), PP_ToGfxSize(desc.size));
-      image_layer->SetTextureMailbox(
-          mailbox,
-          cc::SingleReleaseCallback::Create(base::Bind(
+      auto resource = viz::TransferableResource::MakeSoftware(
+          bitmap->id(), bitmap->sequence_number(), PP_ToGfxSize(desc.size));
+      image_layer->SetTransferableResource(
+          resource,
+          viz::SingleReleaseCallback::Create(base::Bind(
               &PepperCompositorHost::ImageReleased, weak_factory_.GetWeakPtr(),
               new_layer->common.resource_id, base::Passed(&image_shm),
               base::Passed(&bitmap))));
@@ -369,7 +370,7 @@ int32_t PepperCompositorHost::OnHostMsgCommitLayers(
     // plugin and keep current layers set by the previous CommitLayers()
     // unchanged.
     for (size_t i = 0; i < layers.size(); ++i) {
-      const ppapi::CompositorLayerData* old_layer = NULL;
+      const ppapi::CompositorLayerData* old_layer = nullptr;
       if (!reset && i < layers_.size())
         old_layer = &layers_[i].pp_layer;
       int32_t rv = VerifyCommittedLayer(old_layer, &layers[i], &image_shms[i]);
@@ -386,16 +387,16 @@ int32_t PepperCompositorHost::OnHostMsgCommitLayers(
 
   for (size_t i = 0; i < layers.size(); ++i) {
     const ppapi::CompositorLayerData* pp_layer = &layers[i];
-    LayerData* data = i >= layers_.size() ? NULL : &layers_[i];
+    LayerData* data = i >= layers_.size() ? nullptr : &layers_[i];
     DCHECK(!data || data->cc_layer.get());
-    scoped_refptr<cc::Layer> cc_layer = data ? data->cc_layer : NULL;
-    ppapi::CompositorLayerData* old_layer = data ? &data->pp_layer : NULL;
+    scoped_refptr<cc::Layer> cc_layer = data ? data->cc_layer : nullptr;
+    ppapi::CompositorLayerData* old_layer = data ? &data->pp_layer : nullptr;
 
     if (!cc_layer.get()) {
       if (pp_layer->color)
         cc_layer = cc::SolidColorLayer::Create();
       else if (pp_layer->texture || pp_layer->image)
-        cc_layer = cc::TextureLayer::CreateForMailbox(NULL);
+        cc_layer = cc::TextureLayer::CreateForMailbox(nullptr);
       layer_->AddChild(cc_layer);
     }
 

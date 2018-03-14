@@ -112,7 +112,7 @@ void ResourceManagerImpl::RemoveUnusedTints(
 Resource* ResourceManagerImpl::GetStaticResourceWithTint(int res_id,
                                                          SkColor tint_color) {
   if (tinted_resources_.find(tint_color) == tinted_resources_.end()) {
-    tinted_resources_[tint_color] = base::MakeUnique<ResourceMap>();
+    tinted_resources_[tint_color] = std::make_unique<ResourceMap>();
   }
   ResourceMap* resource_map = tinted_resources_[tint_color].get();
 
@@ -231,11 +231,6 @@ bool ResourceManagerImpl::OnMemoryDump(
   }
 
   return true;
-}
-
-// static
-bool ResourceManagerImpl::RegisterResourceManager(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 void ResourceManagerImpl::PreloadResourceFromJava(AndroidResourceType res_type,

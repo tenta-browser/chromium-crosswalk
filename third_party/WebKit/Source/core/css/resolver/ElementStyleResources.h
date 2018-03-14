@@ -24,11 +24,13 @@
 #ifndef ElementStyleResources_h
 #define ElementStyleResources_h
 
+#include "base/macros.h"
 #include "core/CSSPropertyNames.h"
 #include "core/css/CSSPropertyIDTemplates.h"
 #include "platform/CrossOriginAttributeValue.h"
 #include "platform/graphics/Color.h"
 #include "platform/heap/Handle.h"
+#include "platform/loader/fetch/FetchParameters.h"
 #include "platform/wtf/HashMap.h"
 #include "platform/wtf/Noncopyable.h"
 
@@ -49,7 +51,6 @@ class StylePendingImage;
 // Lifetime: per-element style resolve.
 class ElementStyleResources {
   STACK_ALLOCATED();
-  WTF_MAKE_NONCOPYABLE(ElementStyleResources);
 
  public:
   ElementStyleResources(Document&, float device_scale_factor);
@@ -71,11 +72,13 @@ class ElementStyleResources {
   StyleImage* LoadPendingImage(
       ComputedStyle*,
       StylePendingImage*,
+      FetchParameters::PlaceholderImageRequestType,
       CrossOriginAttributeValue = kCrossOriginAttributeNotSet);
 
   Member<Document> document_;
   HashSet<CSSPropertyID> pending_image_properties_;
   float device_scale_factor_;
+  DISALLOW_COPY_AND_ASSIGN(ElementStyleResources);
 };
 
 }  // namespace blink

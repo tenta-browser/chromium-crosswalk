@@ -22,10 +22,8 @@ X11WindowOzone::X11WindowOzone(X11WindowManagerOzone* window_manager,
     : X11WindowBase(delegate, bounds), window_manager_(window_manager) {
   DCHECK(window_manager);
   auto* event_source = X11EventSourceLibevent::GetInstance();
-  if (event_source) {
-    event_source->AddPlatformEventDispatcher(this);
+  if (event_source)
     event_source->AddXEventDispatcher(this);
-  }
 }
 
 X11WindowOzone::~X11WindowOzone() {
@@ -34,23 +32,33 @@ X11WindowOzone::~X11WindowOzone() {
 
 void X11WindowOzone::PrepareForShutdown() {
   auto* event_source = X11EventSourceLibevent::GetInstance();
-  if (event_source) {
-    event_source->RemovePlatformEventDispatcher(this);
+  if (event_source)
     event_source->RemoveXEventDispatcher(this);
-  }
 }
 
 void X11WindowOzone::SetCapture() {
-  window_manager_->GrabEvents(xwindow());
+  window_manager_->GrabEvents(this);
 }
 
 void X11WindowOzone::ReleaseCapture() {
-  window_manager_->UngrabEvents(xwindow());
+  window_manager_->UngrabEvents(this);
 }
 
 void X11WindowOzone::SetCursor(PlatformCursor cursor) {
   X11CursorOzone* cursor_ozone = static_cast<X11CursorOzone*>(cursor);
   XDefineCursor(xdisplay(), xwindow(), cursor_ozone->xcursor());
+}
+
+void X11WindowOzone::CheckCanDispatchNextPlatformEvent(XEvent* xev) {
+  handle_next_event_ = xwindow() == None ? false : IsEventForXWindow(*xev);
+}
+
+void X11WindowOzone::PlatformEventDispatchFinished() {
+  handle_next_event_ = false;
+}
+
+PlatformEventDispatcher* X11WindowOzone::GetPlatformEventDispatcher() {
+  return this;
 }
 
 bool X11WindowOzone::DispatchXEvent(XEvent* xev) {
@@ -62,23 +70,7 @@ bool X11WindowOzone::DispatchXEvent(XEvent* xev) {
 }
 
 bool X11WindowOzone::CanDispatchEvent(const PlatformEvent& platform_event) {
-  if (xwindow() == None)
-    return false;
-
-  // If there is a grab, capture events here.
-  XID grabber = window_manager_->event_grabber();
-  if (grabber != None)
-    return grabber == xwindow();
-
-  // TODO(kylechar): We may need to do something special for TouchEvents similar
-  // to how DrmWindowHost handles them.
-  if (static_cast<Event*>(platform_event)->IsLocatedEvent()) {
-    const LocatedEvent* event =
-        static_cast<const LocatedEvent*>(platform_event);
-    return GetBounds().Contains(event->root_location());
-  }
-
-  return true;
+  return handle_next_event_;
 }
 
 uint32_t X11WindowOzone::DispatchEvent(const PlatformEvent& platform_event) {

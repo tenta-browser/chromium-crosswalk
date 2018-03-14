@@ -8,7 +8,7 @@
 #include "core/CoreExport.h"
 #include "platform/Supplementable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/Noncopyable.h"
+#include "platform/wtf/Noncopyable.h"
 
 namespace blink {
 
@@ -25,7 +25,8 @@ class CORE_EXPORT DOMWindowPerformance final
   static DOMWindowPerformance& From(LocalDOMWindow&);
   static Performance* performance(LocalDOMWindow&);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
+  void TraceWrappers(const ScriptWrappableVisitor*) const override;
 
  private:
   explicit DOMWindowPerformance(LocalDOMWindow&);
@@ -33,7 +34,7 @@ class CORE_EXPORT DOMWindowPerformance final
 
   Performance* performance();
 
-  Member<Performance> performance_;
+  TraceWrapperMember<Performance> performance_;
 };
 
 }  // namespace blink

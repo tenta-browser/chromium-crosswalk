@@ -13,9 +13,6 @@ Polymer({
     /** @type {!Array<!SearchEngine>} */
     engines: Array,
 
-    /** Whether column headers should be displayed */
-    hideHeaders: Boolean,
-
     /**
      * The scroll target that this list should use.
      * @type {?HTMLElement}
@@ -36,7 +33,15 @@ Polymer({
    * Fix height of list if no scrollTarget is present.
    * @return {string}
    */
-  getIronListClass_: function() {
-    return this.scrollTarget ? '' : 'fixed-height-list';
+  getHeightClass: function() {
+    return this.scrollTarget ? '' : 'fixed-height-container';
+  },
+
+  /**
+   * Only scroll when no target is set.
+   * @return {boolean}
+   */
+  isScrollable: function() {
+    return !this.scrollTarget;
   },
 });

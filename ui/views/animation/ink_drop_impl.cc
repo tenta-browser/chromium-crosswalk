@@ -522,13 +522,13 @@ std::unique_ptr<InkDropImpl::HighlightState>
 InkDropImpl::HighlightStateFactory::CreateStartState() {
   switch (highlight_mode_) {
     case InkDropImpl::AutoHighlightMode::NONE:
-      return base::MakeUnique<NoAutoHighlightHiddenState>(
+      return std::make_unique<NoAutoHighlightHiddenState>(
           this, base::TimeDelta(), false);
     case InkDropImpl::AutoHighlightMode::HIDE_ON_RIPPLE:
-      return base::MakeUnique<HideHighlightOnRippleHiddenState>(
+      return std::make_unique<HideHighlightOnRippleHiddenState>(
           this, base::TimeDelta(), false);
     case InkDropImpl::AutoHighlightMode::SHOW_ON_RIPPLE:
-      return base::MakeUnique<ShowHighlightOnRippleHiddenState>(
+      return std::make_unique<ShowHighlightOnRippleHiddenState>(
           this, base::TimeDelta(), false);
   }
   // Required for some compilers.
@@ -542,13 +542,13 @@ InkDropImpl::HighlightStateFactory::CreateHiddenState(
     bool explode) {
   switch (highlight_mode_) {
     case InkDropImpl::AutoHighlightMode::NONE:
-      return base::MakeUnique<NoAutoHighlightHiddenState>(
+      return std::make_unique<NoAutoHighlightHiddenState>(
           this, animation_duration, explode);
     case InkDropImpl::AutoHighlightMode::HIDE_ON_RIPPLE:
-      return base::MakeUnique<HideHighlightOnRippleHiddenState>(
+      return std::make_unique<HideHighlightOnRippleHiddenState>(
           this, animation_duration, explode);
     case InkDropImpl::AutoHighlightMode::SHOW_ON_RIPPLE:
-      return base::MakeUnique<ShowHighlightOnRippleHiddenState>(
+      return std::make_unique<ShowHighlightOnRippleHiddenState>(
           this, animation_duration, explode);
   }
   // Required for some compilers.
@@ -562,13 +562,13 @@ InkDropImpl::HighlightStateFactory::CreateVisibleState(
     bool explode) {
   switch (highlight_mode_) {
     case InkDropImpl::AutoHighlightMode::NONE:
-      return base::MakeUnique<NoAutoHighlightVisibleState>(
+      return std::make_unique<NoAutoHighlightVisibleState>(
           this, animation_duration, explode);
     case InkDropImpl::AutoHighlightMode::HIDE_ON_RIPPLE:
-      return base::MakeUnique<HideHighlightOnRippleVisibleState>(
+      return std::make_unique<HideHighlightOnRippleVisibleState>(
           this, animation_duration, explode);
     case InkDropImpl::AutoHighlightMode::SHOW_ON_RIPPLE:
-      return base::MakeUnique<ShowHighlightOnRippleVisibleState>(
+      return std::make_unique<ShowHighlightOnRippleVisibleState>(
           this, animation_duration, explode);
   }
   // Required for some compilers.
@@ -595,7 +595,7 @@ InkDropImpl::~InkDropImpl() {
   destroying_ = true;
   // Setting a no-op state prevents animations from being triggered on a null
   // |ink_drop_ripple_| as a side effect of the tear down.
-  SetHighlightState(base::MakeUnique<DestroyingHighlightState>());
+  SetHighlightState(std::make_unique<DestroyingHighlightState>());
 
   // Explicitly destroy the InkDropRipple so that this still exists if
   // views::InkDropRippleObserver methods are called on this.
@@ -603,22 +603,12 @@ InkDropImpl::~InkDropImpl() {
   DestroyInkDropHighlight();
 }
 
-void InkDropImpl::SetShowHighlightOnHover(bool show_highlight_on_hover) {
-  show_highlight_on_hover_ = show_highlight_on_hover;
-  highlight_state_->ShowOnHoverChanged();
-}
-
-void InkDropImpl::SetShowHighlightOnFocus(bool show_highlight_on_focus) {
-  show_highlight_on_focus_ = show_highlight_on_focus;
-  highlight_state_->ShowOnFocusChanged();
-}
-
 void InkDropImpl::SetAutoHighlightMode(AutoHighlightMode auto_highlight_mode) {
   // Exit the current state completely first in case state tear down accesses
   // the current |highlight_state_factory_| instance.
   ExitHighlightState();
   highlight_state_factory_ =
-      base::MakeUnique<HighlightStateFactory>(auto_highlight_mode, this);
+      std::make_unique<HighlightStateFactory>(auto_highlight_mode, this);
   SetHighlightState(highlight_state_factory_->CreateStartState());
 }
 
@@ -667,6 +657,20 @@ void InkDropImpl::SetFocused(bool is_focused) {
   highlight_state_->OnFocusChanged();
 }
 
+bool InkDropImpl::IsHighlightFadingInOrVisible() const {
+  return highlight_ && highlight_->IsFadingInOrVisible();
+}
+
+void InkDropImpl::SetShowHighlightOnHover(bool show_highlight_on_hover) {
+  show_highlight_on_hover_ = show_highlight_on_hover;
+  highlight_state_->ShowOnHoverChanged();
+}
+
+void InkDropImpl::SetShowHighlightOnFocus(bool show_highlight_on_focus) {
+  show_highlight_on_focus_ = show_highlight_on_focus;
+  highlight_state_->ShowOnFocusChanged();
+}
+
 void InkDropImpl::DestroyHiddenTargetedAnimations() {
   if (ink_drop_ripple_ &&
       (ink_drop_ripple_->target_ink_drop_state() == InkDropState::HIDDEN ||
@@ -699,10 +703,8 @@ void InkDropImpl::CreateInkDropHighlight() {
   DestroyInkDropHighlight();
 
   highlight_ = ink_drop_host_->CreateInkDropHighlight();
-  // TODO(bruthig): Remove check for null since all CreateInkDropHighlight()
-  // methods should return a valid instance.
-  if (!highlight_)
-    return;
+  DCHECK(highlight_);
+
   highlight_->set_observer(this);
   root_layer_->Add(highlight_->layer());
   AddRootLayerToHostIfNeeded();
@@ -733,20 +735,18 @@ void InkDropImpl::RemoveRootLayerFromHostIfNeeded() {
   }
 }
 
-bool InkDropImpl::IsHighlightFadingInOrVisible() const {
-  return highlight_ && highlight_->IsFadingInOrVisible();
-}
-
 // -----------------------------------------------------------------------------
 // views::InkDropRippleObserver:
 
 void InkDropImpl::AnimationStarted(InkDropState ink_drop_state) {
   highlight_state_->AnimationStarted(ink_drop_state);
+  NotifyInkDropAnimationStarted();
 }
 
 void InkDropImpl::AnimationEnded(InkDropState ink_drop_state,
                                  InkDropAnimationEndedReason reason) {
   highlight_state_->AnimationEnded(ink_drop_state, reason);
+  NotifyInkDropRippleAnimationEnded(ink_drop_state);
   if (reason != InkDropAnimationEndedReason::SUCCESS)
     return;
   // |ink_drop_ripple_| might be null during destruction.
@@ -766,7 +766,9 @@ void InkDropImpl::AnimationEnded(InkDropState ink_drop_state,
 // views::InkDropHighlightObserver:
 
 void InkDropImpl::AnimationStarted(
-    InkDropHighlight::AnimationType animation_type) {}
+    InkDropHighlight::AnimationType animation_type) {
+  NotifyInkDropAnimationStarted();
+}
 
 void InkDropImpl::AnimationEnded(InkDropHighlight::AnimationType animation_type,
                                  InkDropAnimationEndedReason reason) {
@@ -784,10 +786,7 @@ void InkDropImpl::SetHighlight(bool should_highlight,
 
   if (should_highlight) {
     CreateInkDropHighlight();
-    // TODO(bruthig): Remove check for null since all CreateInkDropHighlight()
-    // methods should return a valid instance.
-    if (highlight_)
-      highlight_->FadeIn(animation_duration);
+    highlight_->FadeIn(animation_duration);
   } else {
     highlight_->FadeOut(animation_duration, explode);
   }

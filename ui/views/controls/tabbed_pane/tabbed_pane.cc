@@ -19,6 +19,7 @@
 #include "ui/gfx/animation/tween.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/label.h"
@@ -43,7 +44,7 @@ const gfx::Font::Weight kHoverWeight = gfx::Font::Weight::NORMAL;
 const gfx::Font::Weight kActiveWeight = gfx::Font::Weight::BOLD;
 const gfx::Font::Weight kInactiveWeight = gfx::Font::Weight::NORMAL;
 
-const int kHarmonyTabStripTabHeight = 40;
+const int kHarmonyTabStripTabHeight = 32;
 
 // The View containing the text for each tab in the tab strip.
 class TabLabel : public Label {
@@ -78,7 +79,7 @@ class MdTab : public Tab {
   void OnStateChanged() override;
 
   // Overridden from View:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void OnFocus() override;
   void OnBlur() override;
 
@@ -207,7 +208,7 @@ void Tab::OnGestureEvent(ui::GestureEvent* event) {
   event->SetHandled();
 }
 
-gfx::Size Tab::GetPreferredSize() const {
+gfx::Size Tab::CalculatePreferredSize() const {
   gfx::Size size(preferred_title_size_);
   size.Enlarge(GetInsets().width(), GetInsets().height());
   return size;
@@ -228,9 +229,9 @@ void Tab::SetState(TabState tab_state) {
 void Tab::GetAccessibleNodeData(ui::AXNodeData* data) {
   data->role = ui::AX_ROLE_TAB;
   data->SetName(title()->text());
-  data->AddStateFlag(ui::AX_STATE_SELECTABLE);
+  data->AddState(ui::AX_STATE_SELECTABLE);
   if (selected())
-    data->AddStateFlag(ui::AX_STATE_SELECTED);
+    data->AddState(ui::AX_STATE_SELECTED);
 }
 
 bool Tab::HandleAccessibleAction(const ui::AXActionData& action_data) {
@@ -280,9 +281,11 @@ MdTab::~MdTab() {}
 void MdTab::OnStateChanged() {
   ui::NativeTheme* theme = GetNativeTheme();
 
-  SkColor font_color = selected()
-      ? theme->GetSystemColor(ui::NativeTheme::kColorId_ProminentButtonColor)
-      : theme->GetSystemColor(ui::NativeTheme::kColorId_ButtonEnabledColor);
+  SkColor font_color =
+      selected()
+          ? theme->GetSystemColor(ui::NativeTheme::kColorId_TabTitleColorActive)
+          : theme->GetSystemColor(
+                ui::NativeTheme::kColorId_TabTitleColorInactive);
   title()->SetEnabledColor(font_color);
 
   gfx::Font::Weight font_weight = gfx::Font::Weight::MEDIUM;
@@ -296,8 +299,9 @@ void MdTab::OnStateChanged() {
                                                gfx::Font::NORMAL, font_weight));
 }
 
-gfx::Size MdTab::GetPreferredSize() const {
-  return gfx::Size(Tab::GetPreferredSize().width(), kHarmonyTabStripTabHeight);
+gfx::Size MdTab::CalculatePreferredSize() const {
+  return gfx::Size(Tab::CalculatePreferredSize().width(),
+                   kHarmonyTabStripTabHeight);
 }
 
 void MdTab::OnFocus() {
@@ -319,8 +323,8 @@ const char TabStrip::kViewClassName[] = "TabStrip";
 
 TabStrip::TabStrip() {
   const int kTabStripLeadingEdgePadding = 9;
-  BoxLayout* layout =
-      new BoxLayout(BoxLayout::kHorizontal, kTabStripLeadingEdgePadding, 0, 0);
+  BoxLayout* layout = new BoxLayout(
+      BoxLayout::kHorizontal, gfx::Insets(0, kTabStripLeadingEdgePadding));
   layout->set_main_axis_alignment(BoxLayout::MAIN_AXIS_ALIGNMENT_START);
   layout->set_cross_axis_alignment(BoxLayout::CROSS_AXIS_ALIGNMENT_END);
   layout->SetDefaultFlex(0);
@@ -391,7 +395,7 @@ Tab* TabStrip::GetTabAtDeltaFromSelected(int delta) const {
 }
 
 MdTabStrip::MdTabStrip() {
-  BoxLayout* layout = new BoxLayout(BoxLayout::kHorizontal, 0, 0, 0);
+  BoxLayout* layout = new BoxLayout(BoxLayout::kHorizontal);
   layout->set_main_axis_alignment(BoxLayout::MAIN_AXIS_ALIGNMENT_CENTER);
   layout->set_cross_axis_alignment(BoxLayout::CROSS_AXIS_ALIGNMENT_STRETCH);
   layout->SetDefaultFlex(1);
@@ -400,13 +404,11 @@ MdTabStrip::MdTabStrip() {
   // These durations are taken from the Paper Tabs source:
   // https://github.com/PolymerElements/paper-tabs/blob/master/paper-tabs.html
   // See |selectionBar.expand| and |selectionBar.contract|.
-  const int kExpandAnimationDurationMs = 150;
   expand_animation_.reset(new gfx::LinearAnimation(this));
-  expand_animation_->SetDuration(kExpandAnimationDurationMs);
+  expand_animation_->SetDuration(base::TimeDelta::FromMilliseconds(150));
 
-  const int kContractAnimationDurationMs = 180;
   contract_animation_.reset(new gfx::LinearAnimation(this));
-  contract_animation_->SetDuration(kContractAnimationDurationMs);
+  contract_animation_->SetDuration(base::TimeDelta::FromMilliseconds(180));
 }
 
 MdTabStrip::~MdTabStrip() {}
@@ -415,9 +417,10 @@ void MdTabStrip::OnSelectedTabChanged(Tab* from_tab, Tab* to_tab) {
   DCHECK(!from_tab->selected());
   DCHECK(to_tab->selected());
 
-  animating_from_ =
-      gfx::Range(from_tab->x(), from_tab->x() + from_tab->width());
-  animating_to_ = gfx::Range(to_tab->x(), to_tab->x() + to_tab->width());
+  animating_from_ = gfx::Range(from_tab->GetMirroredX(),
+                               from_tab->GetMirroredX() + from_tab->width());
+  animating_to_ = gfx::Range(to_tab->GetMirroredX(),
+                             to_tab->GetMirroredX() + to_tab->width());
 
   contract_animation_->Stop();
   expand_animation_->Start();
@@ -433,7 +436,7 @@ void MdTabStrip::OnPaintBorder(gfx::Canvas* canvas) {
   canvas->FillRect(gfx::Rect(0, max_y - kUnselectedBorderThickness, width(),
                              kUnselectedBorderThickness),
                    GetNativeTheme()->GetSystemColor(
-                       ui::NativeTheme::kColorId_UnfocusedBorderColor));
+                       ui::NativeTheme::kColorId_TabBottomBorder));
 
   int min_x = 0;
   int max_x = 0;
@@ -478,8 +481,8 @@ void MdTabStrip::OnPaintBorder(gfx::Canvas* canvas) {
       max_x = animating_to_.end();
     }
   } else if (tab) {
-    min_x = tab->x();
-    max_x = tab->x() + tab->width();
+    min_x = tab->GetMirroredX();
+    max_x = tab->GetMirroredX() + tab->width();
   }
 
   DCHECK(min_x != max_x);
@@ -574,7 +577,7 @@ void TabbedPane::SelectTabAt(int index) {
     SelectTab(tab);
 }
 
-gfx::Size TabbedPane::GetPreferredSize() const {
+gfx::Size TabbedPane::CalculatePreferredSize() const {
   gfx::Size size;
   for (int i = 0; i < contents_->child_count(); ++i)
     size.SetToMax(contents_->child_at(i)->GetPreferredSize());

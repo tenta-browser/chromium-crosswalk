@@ -26,14 +26,15 @@
 #ifndef CanvasRenderingContext_h
 #define CanvasRenderingContext_h
 
+#include "base/macros.h"
 #include "core/CoreExport.h"
 #include "core/html/HTMLCanvasElement.h"
 #include "core/html/canvas/CanvasContextCreationAttributes.h"
 #include "core/layout/HitTestCanvasResult.h"
 #include "core/offscreencanvas/OffscreenCanvas.h"
+#include "platform/graphics/CanvasColorParams.h"
 #include "platform/graphics/ColorBehavior.h"
 #include "platform/wtf/HashSet.h"
-#include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/text/StringHash.h"
 #include "public/platform/WebThread.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
@@ -47,21 +48,6 @@ class ImageData;
 class ImageBitmap;
 class WebLayer;
 
-enum CanvasColorSpace {
-  kLegacyCanvasColorSpace,
-  kSRGBCanvasColorSpace,
-  kRec2020CanvasColorSpace,
-  kP3CanvasColorSpace,
-};
-
-enum CanvasPixelFormat {
-  kRGBA8CanvasPixelFormat,
-  kRGB10A2CanvasPixelFormat,
-  kRGBA12CanvasPixelFormat,
-  kF16CanvasPixelFormat,
-};
-
-constexpr const char* kLegacyCanvasColorSpaceName = "legacy-srgb";
 constexpr const char* kSRGBCanvasColorSpaceName = "srgb";
 constexpr const char* kRec2020CanvasColorSpaceName = "rec2020";
 constexpr const char* kP3CanvasColorSpaceName = "p3";
@@ -71,11 +57,8 @@ constexpr const char* kRGB10A2CanvasPixelFormatName = "10-10-10-2";
 constexpr const char* kRGBA12CanvasPixelFormatName = "12-12-12-12";
 constexpr const char* kF16CanvasPixelFormatName = "float16";
 
-class CORE_EXPORT CanvasRenderingContext
-    : public GarbageCollectedFinalized<CanvasRenderingContext>,
-      public ScriptWrappable,
-      public WebThread::TaskObserver {
-  WTF_MAKE_NONCOPYABLE(CanvasRenderingContext);
+class CORE_EXPORT CanvasRenderingContext : public ScriptWrappable,
+                                           public WebThread::TaskObserver {
   USING_PRE_FINALIZER(CanvasRenderingContext, Dispose);
 
  public:
@@ -100,26 +83,15 @@ class CORE_EXPORT CanvasRenderingContext
   static ContextType ContextTypeFromId(const String& id);
   static ContextType ResolveContextTypeAliases(ContextType);
 
-  HTMLCanvasElement* canvas() const { return canvas_; }
+  CanvasRenderingContextHost* Host() const { return host_; }
 
-  CanvasColorSpace ColorSpace() const { return color_space_; };
   WTF::String ColorSpaceAsString() const;
-  CanvasPixelFormat PixelFormat() const { return pixel_format_; };
   WTF::String PixelFormatAsString() const;
-  bool LinearPixelMath() const { return linear_pixel_math_; };
 
-  // The color space in which the the content should be interpreted by the
-  // compositor. This is always defined.
-  gfx::ColorSpace GfxColorSpace() const;
-  // The color space that should be used for SkSurface creation. This may
-  // be nullptr.
-  sk_sp<SkColorSpace> SkSurfaceColorSpace() const;
-  SkColorType ColorType() const;
-  ColorBehavior ColorBehaviorForMediaDrawnToCanvas() const;
-  bool SkSurfacesUseColorSpace() const;
+  const CanvasColorParams& ColorParams() const { return color_params_; }
 
-  virtual PassRefPtr<Image> GetImage(AccelerationHint,
-                                     SnapshotReason) const = 0;
+  virtual scoped_refptr<StaticBitmapImage> GetImage(AccelerationHint,
+                                                    SnapshotReason) const = 0;
   virtual ImageData* ToImageData(SnapshotReason reason) { return nullptr; }
   virtual ContextType GetContextType() const = 0;
   virtual bool IsComposited() const = 0;
@@ -127,6 +99,7 @@ class CORE_EXPORT CanvasRenderingContext
   virtual bool ShouldAntialias() const { return false; }
   virtual void SetIsHidden(bool) = 0;
   virtual bool isContextLost() const { return true; }
+  // TODO(fserb): remove SetCanvasGetContextResult.
   virtual void SetCanvasGetContextResult(RenderingContext&) { NOTREACHED(); };
   virtual void SetOffscreenCanvasGetContextResult(OffscreenRenderingContext&) {
     NOTREACHED();
@@ -171,7 +144,7 @@ class CORE_EXPORT CanvasRenderingContext
   virtual bool Is2d() const { return false; }
   virtual void RestoreCanvasMatrixClipStack(PaintCanvas*) const {}
   virtual void Reset() {}
-  virtual void clearRect(double x, double y, double width, double height) {}
+  virtual void ClearRect(double x, double y, double width, double height) {}
   virtual void DidSetSurfaceSize() {}
   virtual void SetShouldAntialias(bool) {}
   virtual unsigned HitRegionsCount() const { return 0; }
@@ -184,7 +157,6 @@ class CORE_EXPORT CanvasRenderingContext
     return HitTestCanvasResult::Create(String(), nullptr);
   }
   virtual String GetIdFromControl(const Element* element) { return String(); }
-  virtual bool IsAccelerationOptimalForCanvasContent() const { return true; }
   virtual void ResetUsageTracking(){};
 
   // WebGL-specific interface
@@ -196,7 +168,7 @@ class CORE_EXPORT CanvasRenderingContext
     NOTREACHED();
     return nullptr;
   }
-  virtual int ExternallyAllocatedBytesPerPixel() {
+  virtual int ExternallyAllocatedBufferCountPerPixel() {
     NOTREACHED();
     return 0;
   }
@@ -205,38 +177,35 @@ class CORE_EXPORT CanvasRenderingContext
   virtual bool Paint(GraphicsContext&, const IntRect&) { return false; }
 
   // OffscreenCanvas-specific methods
-  OffscreenCanvas* offscreenCanvas() const { return offscreen_canvas_; }
   virtual ImageBitmap* TransferToImageBitmap(ScriptState*) { return nullptr; }
 
   bool WouldTaintOrigin(CanvasImageSource*, SecurityOrigin*);
   void DidMoveToNewDocument(Document*);
 
-  void DetachCanvas() { canvas_ = nullptr; }
-  void DetachOffscreenCanvas() { offscreen_canvas_ = nullptr; }
+  void DetachHost() { host_ = nullptr; }
 
   const CanvasContextCreationAttributes& CreationAttributes() const {
     return creation_attributes_;
   }
 
- protected:
-  CanvasRenderingContext(HTMLCanvasElement*,
-                         OffscreenCanvas*,
-                         const CanvasContextCreationAttributes&);
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
   virtual void Stop() = 0;
+
+ protected:
+  CanvasRenderingContext(CanvasRenderingContextHost*,
+                         const CanvasContextCreationAttributes&);
 
  private:
   void Dispose();
 
-  Member<HTMLCanvasElement> canvas_;
-  Member<OffscreenCanvas> offscreen_canvas_;
+  Member<CanvasRenderingContextHost> host_;
   HashSet<String> clean_urls_;
   HashSet<String> dirty_urls_;
-  CanvasColorSpace color_space_;
-  CanvasPixelFormat pixel_format_;
-  bool linear_pixel_math_ = false;
+  CanvasColorParams color_params_;
   CanvasContextCreationAttributes creation_attributes_;
   bool finalize_frame_scheduled_ = false;
+
+  DISALLOW_COPY_AND_ASSIGN(CanvasRenderingContext);
 };
 
 }  // namespace blink

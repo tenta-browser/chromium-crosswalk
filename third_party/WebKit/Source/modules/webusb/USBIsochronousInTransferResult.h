@@ -5,18 +5,16 @@
 #ifndef USBIsochronousInTransferResult_h
 #define USBIsochronousInTransferResult_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "core/dom/DOMArrayBuffer.h"
-#include "core/dom/DOMDataView.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
+#include "core/typed_arrays/DOMDataView.h"
 #include "modules/webusb/USBIsochronousInTransferPacket.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
-class USBIsochronousInTransferResult final
-    : public GarbageCollectedFinalized<USBIsochronousInTransferResult>,
-      public ScriptWrappable {
+class USBIsochronousInTransferResult final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -50,9 +48,10 @@ class USBIsochronousInTransferResult final
     return packets_;
   }
 
-  DEFINE_INLINE_TRACE() {
+  void Trace(blink::Visitor* visitor) {
     visitor->Trace(data_);
     visitor->Trace(packets_);
+    ScriptWrappable::Trace(visitor);
   }
 
  private:

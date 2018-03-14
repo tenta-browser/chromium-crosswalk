@@ -37,7 +37,7 @@ BluetoothConnectionFinder::~BluetoothConnectionFinder() {
 void BluetoothConnectionFinder::Find(
     const cryptauth::ConnectionFinder::ConnectionCallback&
         connection_callback) {
-  if (!device::BluetoothAdapterFactory::IsBluetoothAdapterAvailable()) {
+  if (!device::BluetoothAdapterFactory::IsBluetoothSupported()) {
     PA_LOG(WARNING) << "Bluetooth is unsupported on this platform. Aborting.";
     return;
   }
@@ -156,7 +156,7 @@ void BluetoothConnectionFinder::UnregisterAsObserver() {
 
   if (adapter_.get()) {
     adapter_->RemoveObserver(this);
-    adapter_ = NULL;
+    adapter_ = nullptr;
   }
 }
 

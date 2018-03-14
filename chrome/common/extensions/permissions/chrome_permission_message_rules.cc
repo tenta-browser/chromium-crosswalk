@@ -332,13 +332,6 @@ ChromePermissionMessageRule::GetAllRules() {
       // Full access permission messages.
       {IDS_EXTENSION_PROMPT_WARNING_DEBUGGER, {APIPermission::kDebugger}, {}},
       {IDS_EXTENSION_PROMPT_WARNING_FULL_ACCESS,
-       {APIPermission::kPlugin},
-       {APIPermission::kDeclarativeWebRequest, APIPermission::kFavicon,
-        APIPermission::kFullAccess, APIPermission::kHostsAll,
-        APIPermission::kHostsAllReadOnly, APIPermission::kProcesses,
-        APIPermission::kTab, APIPermission::kTopSites,
-        APIPermission::kWebNavigation}},
-      {IDS_EXTENSION_PROMPT_WARNING_FULL_ACCESS,
        {APIPermission::kFullAccess},
        {APIPermission::kDeclarativeWebRequest, APIPermission::kFavicon,
         APIPermission::kHostsAll, APIPermission::kHostsAllReadOnly,
@@ -376,6 +369,12 @@ ChromePermissionMessageRule::GetAllRules() {
                              IDS_EXTENSION_PROMPT_WARNING_3_HOSTS_READ_ONLY,
                              IDS_EXTENSION_PROMPT_WARNING_HOSTS_LIST_READ_ONLY),
        {APIPermission::kHostReadOnly},
+       {}},
+
+      // New tab page permission is fairly highly used so rank it quite highly.
+      // Nothing should subsume it.
+      {IDS_EXTENSION_PROMPT_WARNING_NEW_TAB_PAGE_OVERRIDE,
+       {APIPermission::kNewTabPageOverride},
        {}},
 
       // History-related permission messages.
@@ -578,6 +577,10 @@ ChromePermissionMessageRule::GetAllRules() {
        {}},
       {IDS_EXTENSION_PROMPT_WARNING_GEOLOCATION,
        {APIPermission::kGeolocation},
+       {}},
+
+      {IDS_EXTENSION_PROMPT_WARNING_SYSTEM_STORAGE,
+       {APIPermission::kSystemStorage},
        {}},
 
       {IDS_EXTENSION_PROMPT_WARNING_CONTENT_SETTINGS,

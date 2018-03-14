@@ -152,6 +152,7 @@ message VideoDecoderConfig {
     kCodecVP9 = 7;
     kCodecHEVC = 8;
     kCodecDolbyVision = 9;
+    kCodecAV1 = 10;
   }
 
   // Proto version of media::VideoCodecProfile.
@@ -181,6 +182,8 @@ message VideoDecoderConfig {
     DOLBYVISION_PROFILE4 = 20;
     DOLBYVISION_PROFILE5 = 21;
     DOLBYVISION_PROFILE7 = 22;
+    THEORAPROFILE_ANY = 23;
+    AV1PROFILE_PROFILE0 = 24;
   };
 
   // Proto version of media::VideoPixelFormat.
@@ -254,6 +257,7 @@ message PipelineStatistics {
   optional uint32 video_frames_dropped = 4;
   optional int64 audio_memory_usage = 5;
   optional int64 video_memory_usage = 6;
+  optional int64 video_frame_duration_average_usec = 7;
 };
 
 message CdmKeyInformation {
@@ -279,14 +283,15 @@ message CdmKeyInformation {
 enum CdmException {
   NOT_SUPPORTED_ERROR = 0;
   INVALID_STATE_ERROR = 1;
-  INVALID_ACCESS_ERROR = 2;
+  INVALID_ACCESS_ERROR = 2 [deprecated = true];
   QUOTA_EXCEEDED_ERROR = 3;
-  UNKNOWN_ERROR = 4;
-  CLIENT_ERROR = 5;
-  OUTPUT_ERROR = 6;
+  UNKNOWN_ERROR = 4 [deprecated = true];
+  CLIENT_ERROR = 5 [deprecated = true];
+  OUTPUT_ERROR = 6 [deprecated = true];
+  TYPE_ERROR = 7;
 }
 
-// Proto version of media::ContentDecryptionModule::MessageType.
+// Proto version of media::CdmMessageType.
 // NEVER change these numbers or re-use old ones; only add new ones.
 enum CdmMessageType {
   LICENSE_REQUEST = 0;
@@ -336,6 +341,14 @@ message RendererClientOnBufferingStateChange {
   optional State state = 1;
 }
 
+message RendererClientOnAudioConfigChange {
+  optional AudioDecoderConfig audio_decoder_config = 1;
+}
+
+message RendererClientOnVideoConfigChange {
+  optional VideoDecoderConfig video_decoder_config = 1;
+}
+
 message DemuxerStreamReadUntil {
   optional int32 callback_handle = 1;
   optional uint32 count = 2;
@@ -354,6 +367,7 @@ message DemuxerStreamReadUntilCallback {
     kOk = 0;
     kAborted = 1;
     kConfigChanged = 2;
+    kError = 3;
   };
 
   optional Status status = 1;
@@ -472,6 +486,8 @@ message RpcMessage {
     RPC_RC_ONSTATISTICSUPDATE = 2006;
     RPC_RC_ONWAITINGFORDECRYPTIONKEY = 2007;
     RPC_RC_ONDURATIONCHANGE = 2008;
+    RPC_RC_ONAUDIOCONFIGCHANGE = 2009;
+    RPC_RC_ONVIDEOCONFIGCHANGE = 2010;
     // DemuxerStream message
     RPC_DS_INITIALIZE = 3000;
     RPC_DS_READUNTIL = 3001;
@@ -554,9 +570,15 @@ message RpcMessage {
     Size rendererclient_onvideonatualsizechange_rpc = 201;
     // RPC_RC_ONSTATISTICSUPDATE
     PipelineStatistics rendererclient_onstatisticsupdate_rpc = 202;
-    // RPC_RC_ONTIMEUPDATE
+    // RPC_RC_ONBUFFERINGSTATECHANGE
     RendererClientOnBufferingStateChange
         rendererclient_onbufferingstatechange_rpc = 203;
+    // RPC_RC_ONAUDIOCONFIGCHANGE
+    RendererClientOnAudioConfigChange rendererclient_onaudioconfigchange_rpc =
+        204;
+    // RPC_RC_ONVIDEOCONFIGCHANGE
+    RendererClientOnVideoConfigChange rendererclient_onvideoconfigchange_rpc =
+        205;
 
     // RPC_DS_READUNTIL
     DemuxerStreamReadUntil demuxerstream_readuntil_rpc = 300;

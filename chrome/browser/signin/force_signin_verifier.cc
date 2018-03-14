@@ -4,8 +4,11 @@
 
 #include <string>
 
-#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/force_signin_verifier.h"
+
+#include "base/bind.h"
+#include "base/metrics/histogram_macros.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "components/signin/core/browser/signin_manager.h"
@@ -25,15 +28,24 @@ const net::BackoffEntry::Policy kBackoffPolicy = {
 
 }  // namespace
 
+const char kForceSigninVerificationMetricsName[] =
+    "Signin.ForceSigninVerificationRequest";
+const char kForceSigninVerificationSuccessTimeMetricsName[] =
+    "Signin.ForceSigninVerificationTime.Success";
+const char kForceSigninVerificationFailureTimeMetricsName[] =
+    "Signin.ForceSigninVerificationTime.Failure";
+
 ForceSigninVerifier::ForceSigninVerifier(Profile* profile)
     : OAuth2TokenService::Consumer("force_signin_verifier"),
       has_token_verified_(false),
       backoff_entry_(&kBackoffPolicy),
+      creation_time_(base::TimeTicks::Now()),
       oauth2_token_service_(
           ProfileOAuth2TokenServiceFactory::GetForProfile(profile)),
-      signin_manager_(SigninManagerFactory::GetForProfile(profile)),
-      token_request_time_(base::Time::Now()) {
+      signin_manager_(SigninManagerFactory::GetForProfile(profile)) {
   net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
+  UMA_HISTOGRAM_BOOLEAN(kForceSigninVerificationMetricsName,
+                        ShouldSendRequest());
   SendRequest();
 }
 
@@ -45,6 +57,8 @@ void ForceSigninVerifier::OnGetTokenSuccess(
     const OAuth2TokenService::Request* request,
     const std::string& access_token,
     const base::Time& expiration_time) {
+  UMA_HISTOGRAM_MEDIUM_TIMES(kForceSigninVerificationSuccessTimeMetricsName,
+                             base::TimeTicks::Now() - creation_time_);
   has_token_verified_ = true;
   net::NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
   Cancel();
@@ -54,8 +68,10 @@ void ForceSigninVerifier::OnGetTokenFailure(
     const OAuth2TokenService::Request* request,
     const GoogleServiceAuthError& error) {
   if (error.IsPersistentError()) {
+    UMA_HISTOGRAM_MEDIUM_TIMES(kForceSigninVerificationFailureTimeMetricsName,
+                               base::TimeTicks::Now() - creation_time_);
     has_token_verified_ = true;
-    ShowDialog();
+    CloseAllBrowserWindows();
     net::NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
     Cancel();
   } else {
@@ -107,8 +123,14 @@ bool ForceSigninVerifier::ShouldSendRequest() {
          signin_manager_->IsAuthenticated();
 }
 
-void ForceSigninVerifier::ShowDialog() {
-  // TODO(zmin): Show app modal dialog.
+void ForceSigninVerifier::CloseAllBrowserWindows() {
+  // Do not close window if there is ongoing reauth. If it fails later, the
+  // signin process should take care of the signout.
+  if (signin_manager_->AuthInProgress())
+    return;
+  signin_manager_->SignOutAndRemoveAllAccounts(
+      signin_metrics::AUTHENTICATION_FAILED_WITH_FORCE_SIGNIN,
+      signin_metrics::SignoutDelete::IGNORE_METRIC);
 }
 
 OAuth2TokenService::Request* ForceSigninVerifier::GetRequestForTesting() {

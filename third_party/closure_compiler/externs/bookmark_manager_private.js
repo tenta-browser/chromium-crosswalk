@@ -90,8 +90,9 @@ chrome.bookmarkManagerPrivate.startDrag = function(idList, isFromTouch) {};
  * @param {string} parentId The ID of the folder that the drop was made
  * @param {number=} index The index of the position to drop at. If left out the
  * dropped items will be placed at the end of the existing children
+ * @param {Function=} callback
  */
-chrome.bookmarkManagerPrivate.drop = function(parentId, index) {};
+chrome.bookmarkManagerPrivate.drop = function(parentId, index, callback) {};
 
 /**
  * Retrieves a bookmark hierarchy from the given node.  If the node id is
@@ -109,12 +110,6 @@ chrome.bookmarkManagerPrivate.getSubtree = function(id, foldersOnly, callback) {
  * @param {Function} callback
  */
 chrome.bookmarkManagerPrivate.canEdit = function(callback) {};
-
-/**
- * Whether bookmarks can be opened in new windows
- * @param {Function} callback
- */
-chrome.bookmarkManagerPrivate.canOpenNewWindows = function(callback) {};
 
 /**
  * Recursively removes list of bookmarks nodes.

@@ -39,7 +39,8 @@ bool FaviconSQLHandler::Update(const HistoryAndBookmarkRow& row,
   // icon is already in database, just create a new favicon.
   // TODO(pkotwicz): Pass in real pixel size.
   favicon_base::FaviconID favicon_id = thumbnail_db_->AddFavicon(
-      GURL(), favicon_base::FAVICON, row.favicon(), Time::Now(), gfx::Size());
+      GURL(), favicon_base::IconType::kFavicon, row.favicon(),
+      FaviconBitmapType::ON_VISIT, Time::Now(), gfx::Size());
 
   if (!favicon_id)
     return false;
@@ -47,10 +48,10 @@ bool FaviconSQLHandler::Update(const HistoryAndBookmarkRow& row,
   std::vector<favicon_base::FaviconID> favicon_ids;
   for (TableIDRows::const_iterator i = ids_set.begin();
        i != ids_set.end(); ++i) {
-    // Remove all icon mappings to favicons of type FAVICON.
+    // Remove all icon mappings to favicons of type kFavicon.
     std::vector<IconMapping> icon_mappings;
     thumbnail_db_->GetIconMappingsForPageURL(
-        i->url, favicon_base::FAVICON, &icon_mappings);
+        i->url, {favicon_base::IconType::kFavicon}, &icon_mappings);
     for (std::vector<IconMapping>::const_iterator m = icon_mappings.begin();
          m != icon_mappings.end(); ++m) {
       if (!thumbnail_db_->DeleteIconMapping(m->mapping_id))
@@ -104,7 +105,8 @@ bool FaviconSQLHandler::Insert(HistoryAndBookmarkRow* row) {
   // Is it a problem to give a empty URL?
   // TODO(pkotwicz): Pass in real pixel size.
   favicon_base::FaviconID id = thumbnail_db_->AddFavicon(
-      GURL(), favicon_base::FAVICON, row->favicon(), Time::Now(), gfx::Size());
+      GURL(), favicon_base::IconType::kFavicon, row->favicon(),
+      FaviconBitmapType::ON_VISIT, Time::Now(), gfx::Size());
   if (!id)
     return false;
   return thumbnail_db_->AddIconMapping(row->url(), id);

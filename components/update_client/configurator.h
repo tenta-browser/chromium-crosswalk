@@ -15,7 +15,6 @@ class GURL;
 class PrefService;
 
 namespace base {
-class SequencedTaskRunner;
 class Version;
 }
 
@@ -23,9 +22,13 @@ namespace net {
 class URLRequestContextGetter;
 }
 
+namespace service_manager {
+class Connector;
+}
+
 namespace update_client {
 
-class OutOfProcessPatcher;
+class ActivityDataService;
 
 // Controls the component updater behavior.
 // TODO(sorin): this class will be split soon in two. One class controls
@@ -95,10 +98,10 @@ class Configurator : public base::RefCountedThreadSafe<Configurator> {
   // The source of contexts for all the url requests.
   virtual net::URLRequestContextGetter* RequestContext() const = 0;
 
-  // Returns a new out of process patcher. May be NULL for implementations
-  // that patch in-process.
-  virtual scoped_refptr<update_client::OutOfProcessPatcher>
-  CreateOutOfProcessPatcher() const = 0;
+  // Returns a new connector to the service manager. That connector is not bound
+  // to any thread yet.
+  virtual std::unique_ptr<service_manager::Connector>
+  CreateServiceManagerConnector() const = 0;
 
   // True means that this client can handle delta updates.
   virtual bool EnabledDeltas() const = 0;
@@ -116,10 +119,6 @@ class Configurator : public base::RefCountedThreadSafe<Configurator> {
   // True if signing of update checks is enabled.
   virtual bool EnabledCupSigning() const = 0;
 
-  // Gets a task runner to a blocking pool of threads suitable for worker jobs.
-  virtual scoped_refptr<base::SequencedTaskRunner> GetSequencedTaskRunner()
-      const = 0;
-
   // Returns a PrefService that the update_client can use to store persistent
   // update information. The PrefService must outlive the entire update_client,
   // and be safe to access from the thread the update_client is constructed
@@ -128,10 +127,26 @@ class Configurator : public base::RefCountedThreadSafe<Configurator> {
   // persistent storage.
   virtual PrefService* GetPrefService() const = 0;
 
+  // Returns an ActivityDataService that the update_client can use to access
+  // to update information (namely active bit, last active/rollcall days)
+  // normally stored in the user extension profile.
+  // Similar to PrefService, ActivityDataService must outlive the entire
+  // update_client, and be safe to access from the thread the update_client
+  // is constructed on.
+  // Returning null is safe and will disable any functionality that requires
+  // accessing to the information provided by ActivityDataService.
+  virtual ActivityDataService* GetActivityDataService() const = 0;
+
   // Returns true if the Chrome is installed for the current user only, or false
   // if Chrome is installed for all users on the machine. This function must be
   // called only from a blocking pool thread, as it may access the file system.
   virtual bool IsPerUserInstall() const = 0;
+
+  // Returns the key hash corresponding to a CRX trusted by ActionRun. The
+  // CRX payloads are signed with this key, and their integrity is verified
+  // during the unpacking by the action runner. This is a dependency injection
+  // feature to support testing.
+  virtual std::vector<uint8_t> GetRunActionKeyHash() const = 0;
 
  protected:
   friend class base::RefCountedThreadSafe<Configurator>;

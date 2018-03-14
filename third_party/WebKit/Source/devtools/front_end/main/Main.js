@@ -47,6 +47,24 @@ Main.Main = class {
     SDK.ResourceTreeModel.reloadAllPages(hard);
   }
 
+  /**
+   * @param {string} label
+   */
+  static time(label) {
+    if (Host.isUnderTest())
+      return;
+    console.time(label);
+  }
+
+  /**
+   * @param {string} label
+   */
+  static timeEnd(label) {
+    if (Host.isUnderTest())
+      return;
+    console.timeEnd(label);
+  }
+
   _loaded() {
     console.timeStamp('Main._loaded');
     Runtime.setPlatform(Host.platform());
@@ -93,25 +111,28 @@ Main.Main = class {
     // Keep this sorted alphabetically: both keys and values.
     Runtime.experiments.register('accessibilityInspection', 'Accessibility Inspection');
     Runtime.experiments.register('applyCustomStylesheet', 'Allow custom UI themes');
-    Runtime.experiments.register('audits2', 'Audits 2.0', true);
     Runtime.experiments.register('autoAttachToCrossProcessSubframes', 'Auto-attach to cross-process subframes', true);
     Runtime.experiments.register('blackboxJSFramesOnTimeline', 'Blackbox JavaScript frames on Timeline', true);
-    Runtime.experiments.register('changesDrawer', 'Changes drawer', true);
     Runtime.experiments.register('colorContrastRatio', 'Color contrast ratio line in color picker', true);
     Runtime.experiments.register('continueToLocationMarkers', 'Continue to location markers', true);
     Runtime.experiments.register('emptySourceMapAutoStepping', 'Empty sourcemap auto-stepping');
     Runtime.experiments.register('inputEventsOnTimelineOverview', 'Input events on Timeline overview', true);
-    Runtime.experiments.register('liveSASS', 'Live SASS');
+    Runtime.experiments.register('logManagement', 'Log management', true);
     Runtime.experiments.register('networkGroupingRequests', 'Network request groups support', true);
+    Runtime.experiments.register('networkPersistence', 'Override requests with workspace project');
     Runtime.experiments.register('objectPreviews', 'Object previews', true);
+    Runtime.experiments.register('performanceMonitor', 'Performance Monitor', true);
     Runtime.experiments.register('persistence2', 'Persistence 2.0');
     Runtime.experiments.register('sourceDiff', 'Source diff');
+    Runtime.experiments.register('stepIntoAsync', 'Step into async action');
     Runtime.experiments.register('terminalInDrawer', 'Terminal in drawer', true);
 
     // Timeline
+    Runtime.experiments.register('timelineColorByProduct', 'Timeline: color by product', true);
     Runtime.experiments.register('timelineEventInitiators', 'Timeline: event initiators');
     Runtime.experiments.register('timelineFlowEvents', 'Timeline: flow events', true);
     Runtime.experiments.register('timelineInvalidationTracking', 'Timeline: invalidation tracking', true);
+    Runtime.experiments.register('timelineKeepHistory', 'Timeline: keep recording history');
     Runtime.experiments.register('timelineMultipleMainViews', 'Timeline: multiple main views');
     Runtime.experiments.register('timelinePaintTimingMarkers', 'Timeline: paint timing markers', true);
     Runtime.experiments.register('timelinePerFrameTrack', 'Timeline: per-frame tracks', true);
@@ -123,33 +144,33 @@ Main.Main = class {
     Runtime.experiments.cleanUpStaleExperiments();
 
     if (Host.isUnderTest(prefs)) {
-      var testPath = JSON.parse(prefs['testPath'] || '""');
+      var testPath = Runtime.queryParam('test') || JSON.parse(prefs['testPath'] || '""');
       // Enable experiments for testing.
       if (testPath.indexOf('accessibility/') !== -1)
         Runtime.experiments.enableForTest('accessibilityInspection');
-      if (testPath.indexOf('coverage') !== -1)
-        Runtime.experiments.enableForTest('cssTrackerPanel');
-      if (testPath.indexOf('audits2/') !== -1)
-        Runtime.experiments.enableForTest('audits2');
-      if (testPath.indexOf('changes/') !== -1)
-        Runtime.experiments.enableForTest('changesDrawer');
-      if (testPath.indexOf('sass/') !== -1)
-        Runtime.experiments.enableForTest('liveSASS');
+      if (testPath.indexOf('console-sidebar/') !== -1)
+        Runtime.experiments.enableForTest('logManagement');
+      if (testPath.indexOf('overrides/') !== -1)
+        Runtime.experiments.enableForTest('networkPersistence');
     }
 
-    Runtime.experiments.setDefaultExperiments([]);
+    Runtime.experiments.setDefaultExperiments([
+      'continueToLocationMarkers', 'autoAttachToCrossProcessSubframes', 'objectPreviews', 'persistence2',
+      'networkGroupingRequests', 'timelineColorByProduct', 'accessibilityInspection', 'logManagement',
+      'performanceMonitor'
+    ]);
   }
 
   /**
    * @suppressGlobalPropertiesCheck
    */
   _createAppUI() {
-    console.time('Main._createAppUI');
+    Main.Main.time('Main._createAppUI');
 
     UI.viewManager = new UI.ViewManager();
 
     // Request filesystems early, we won't create connections until callback is fired. Things will happen in parallel.
-    Workspace.isolatedFileSystemManager = new Workspace.IsolatedFileSystemManager();
+    Persistence.isolatedFileSystemManager = new Persistence.IsolatedFileSystemManager();
 
     var themeSetting = Common.settings.createSetting('uiTheme', 'default');
     UI.initializeUIUtils(document, themeSetting);
@@ -169,6 +190,7 @@ Main.Main = class {
     ConsoleModel.consoleModel = new ConsoleModel.ConsoleModel();
     SDK.multitargetNetworkManager = new SDK.MultitargetNetworkManager();
     NetworkLog.networkLog = new NetworkLog.NetworkLog();
+    SDK.domDebuggerManager = new SDK.DOMDebuggerManager();
     SDK.targetManager.addEventListener(
         SDK.TargetManager.Events.SuspendStateChanged, this._onSuspendStateChanged.bind(this));
 
@@ -181,10 +203,10 @@ Main.Main = class {
 
     Workspace.fileManager = new Workspace.FileManager();
     Workspace.workspace = new Workspace.Workspace();
-    Common.formatterWorkerPool = new Common.FormatterWorkerPool();
-    Workspace.fileSystemMapping = new Workspace.FileSystemMapping(Workspace.isolatedFileSystemManager);
+    Persistence.fileSystemMapping = new Persistence.FileSystemMapping(Persistence.isolatedFileSystemManager);
 
-    Main.networkProjectManager = new Bindings.NetworkProjectManager(SDK.targetManager, Workspace.workspace);
+    Bindings.networkProjectManager = new Bindings.NetworkProjectManager(SDK.targetManager, Workspace.workspace);
+    Bindings.resourceMapping = new Bindings.ResourceMapping(SDK.targetManager, Workspace.workspace);
     Bindings.presentationConsoleMessageHelper = new Bindings.PresentationConsoleMessageHelper(Workspace.workspace);
     Bindings.cssWorkspaceBinding = new Bindings.CSSWorkspaceBinding(SDK.targetManager, Workspace.workspace);
     Bindings.debuggerWorkspaceBinding = new Bindings.DebuggerWorkspaceBinding(SDK.targetManager, Workspace.workspace);
@@ -192,11 +214,11 @@ Main.Main = class {
         new Bindings.BreakpointManager(null, Workspace.workspace, SDK.targetManager, Bindings.debuggerWorkspaceBinding);
     Extensions.extensionServer = new Extensions.ExtensionServer();
 
-    new Persistence.FileSystemWorkspaceBinding(Workspace.isolatedFileSystemManager, Workspace.workspace);
+    new Persistence.FileSystemWorkspaceBinding(Persistence.isolatedFileSystemManager, Workspace.workspace);
     Persistence.persistence =
-        new Persistence.Persistence(Workspace.workspace, Bindings.breakpointManager, Workspace.fileSystemMapping);
+        new Persistence.Persistence(Workspace.workspace, Bindings.breakpointManager, Persistence.fileSystemMapping);
+    Persistence.networkPersistenceManager = new Persistence.NetworkPersistenceManager(Workspace.workspace);
 
-    new Main.OverlayController();
     new Main.ExecutionContextSelector(SDK.targetManager, UI.context);
     Bindings.blackboxManager = new Bindings.BlackboxManager(Bindings.debuggerWorkspaceBinding);
 
@@ -205,17 +227,15 @@ Main.Main = class {
     new Main.NetworkPanelIndicator();
     new Main.SourcesPanelIndicator();
     new Main.BackendSettingsSync();
-    Components.domBreakpointsSidebarPane = new Components.DOMBreakpointsSidebarPane();
 
     UI.actionRegistry = new UI.ActionRegistry();
     UI.shortcutRegistry = new UI.ShortcutRegistry(UI.actionRegistry, document);
     UI.ShortcutsScreen.registerShortcuts();
     this._registerForwardedShortcuts();
     this._registerMessageSinkListener();
-    new Main.Main.InspectorDomainObserver();
 
     self.runtime.extension(Common.AppProvider).instance().then(this._showAppUI.bind(this));
-    console.timeEnd('Main._createAppUI');
+    Main.Main.timeEnd('Main._createAppUI');
   }
 
   /**
@@ -223,7 +243,7 @@ Main.Main = class {
    * @suppressGlobalPropertiesCheck
    */
   _showAppUI(appProvider) {
-    console.time('Main._showAppUI');
+    Main.Main.time('Main._showAppUI');
     var app = /** @type {!Common.AppProvider} */ (appProvider).createApp();
     // It is important to kick controller lifetime after apps are instantiated.
     Components.dockController.initialize();
@@ -262,17 +282,17 @@ Main.Main = class {
 
     // Allow UI cycles to repaint prior to creating connection.
     setTimeout(this._initializeTarget.bind(this), 0);
-    console.timeEnd('Main._showAppUI');
+    Main.Main.timeEnd('Main._showAppUI');
   }
 
   _initializeTarget() {
-    console.time('Main._initializeTarget');
+    Main.Main.time('Main._initializeTarget');
     SDK.targetManager.connectToMainTarget(webSocketConnectionLost);
 
     InspectorFrontendHost.readyForTest();
     // Asynchronously run the extensions.
     setTimeout(this._lateInitialization.bind(this), 100);
-    console.timeEnd('Main._initializeTarget');
+    Main.Main.timeEnd('Main._initializeTarget');
 
     function webSocketConnectionLost() {
       if (!Main._disconnectedScreenWithReasonWasShown)
@@ -289,8 +309,10 @@ Main.Main = class {
   }
 
   _registerForwardedShortcuts() {
-    /** @const */ var forwardedActions =
-        ['main.toggle-dock', 'debugger.toggle-breakpoints-active', 'debugger.toggle-pause', 'commandMenu.show'];
+    /** @const */ var forwardedActions = [
+      'main.toggle-dock', 'debugger.toggle-breakpoints-active', 'debugger.toggle-pause', 'commandMenu.show',
+      'console.show'
+    ];
     var actionKeys =
         UI.shortcutRegistry.keysForActions(forwardedActions).map(UI.KeyboardShortcut.keyCodeAndModifiersFromKey);
     InspectorFrontendHost.setWhitelistedShortcuts(JSON.stringify(actionKeys));
@@ -401,7 +423,7 @@ Main.Main = class {
    * @param {!Event} event
    */
   _redispatchClipboardEvent(event) {
-    var eventCopy = new CustomEvent('clipboard-' + event.type);
+    var eventCopy = new CustomEvent('clipboard-' + event.type, {bubbles: true});
     eventCopy['original'] = event;
     var document = event.target && event.target.ownerDocument;
     var target = document ? document.deepActiveElement() : null;
@@ -443,41 +465,16 @@ Main.Main = class {
 };
 
 /**
- * @implements {SDK.TargetManager.Observer}
- * @unrestricted
- */
-Main.Main.InspectorDomainObserver = class {
-  constructor() {
-    SDK.targetManager.observeTargets(this, SDK.Target.Capability.Browser);
-  }
-
-  /**
-   * @override
-   * @param {!SDK.Target} target
-   */
-  targetAdded(target) {
-    target.registerInspectorDispatcher(new Main.Main.InspectorDomainDispatcher(target));
-    target.inspectorAgent().enable();
-  }
-
-  /**
-   * @override
-   * @param {!SDK.Target} target
-   */
-  targetRemoved(target) {
-  }
-};
-
-/**
  * @implements {Protocol.InspectorDispatcher}
- * @unrestricted
  */
-Main.Main.InspectorDomainDispatcher = class {
+Main.Main.InspectorModel = class extends SDK.SDKModel {
   /**
    * @param {!SDK.Target} target
    */
   constructor(target) {
-    this._target = target;
+    super(target);
+    target.registerInspectorDispatcher(this);
+    target.inspectorAgent().enable();
   }
 
   /**
@@ -493,11 +490,13 @@ Main.Main.InspectorDomainDispatcher = class {
    * @override
    */
   targetCrashed() {
-    var debuggerModel = this._target.model(SDK.DebuggerModel);
+    var debuggerModel = this.target().model(SDK.DebuggerModel);
     if (debuggerModel)
       Main.TargetCrashedScreen.show(debuggerModel);
   }
 };
+
+SDK.SDKModel.register(Main.Main.InspectorModel, SDK.Target.Capability.Inspector, true);
 
 /**
  * @implements {UI.ActionDelegate}
@@ -587,80 +586,6 @@ Main.Main.SearchActionDelegate = class {
   }
 };
 
-
-/**
- * @implements {UI.ToolbarItem.Provider}
- * @unrestricted
- */
-Main.Main.WarningErrorCounter = class {
-  constructor() {
-    Main.Main.WarningErrorCounter._instanceForTest = this;
-
-    this._counter = createElement('div');
-    this._counter.addEventListener('click', Common.console.show.bind(Common.console), false);
-    this._toolbarItem = new UI.ToolbarItem(this._counter);
-    var shadowRoot = UI.createShadowRootWithCoreStyles(this._counter, 'main/errorWarningCounter.css');
-
-    this._errors = this._createItem(shadowRoot, 'smallicon-error');
-    this._warnings = this._createItem(shadowRoot, 'smallicon-warning');
-    this._titles = [];
-
-    ConsoleModel.consoleModel.addEventListener(ConsoleModel.ConsoleModel.Events.ConsoleCleared, this._update, this);
-    ConsoleModel.consoleModel.addEventListener(ConsoleModel.ConsoleModel.Events.MessageAdded, this._update, this);
-    ConsoleModel.consoleModel.addEventListener(ConsoleModel.ConsoleModel.Events.MessageUpdated, this._update, this);
-    this._update();
-  }
-
-  /**
-   * @param {!Node} shadowRoot
-   * @param {string} iconType
-   * @return {!{item: !Element, text: !Element}}
-   */
-  _createItem(shadowRoot, iconType) {
-    var item = createElementWithClass('span', 'counter-item');
-    var icon = item.createChild('label', '', 'dt-icon-label');
-    icon.type = iconType;
-    var text = icon.createChild('span');
-    shadowRoot.appendChild(item);
-    return {item: item, text: text};
-  }
-
-  /**
-   * @param {!{item: !Element, text: !Element}} item
-   * @param {number} count
-   * @param {boolean} first
-   * @param {string} title
-   */
-  _updateItem(item, count, first, title) {
-    item.item.classList.toggle('hidden', !count);
-    item.item.classList.toggle('counter-item-first', first);
-    item.text.textContent = count;
-    if (count)
-      this._titles.push(title);
-  }
-
-  _update() {
-    var errors = ConsoleModel.consoleModel.errors();
-    var warnings = ConsoleModel.consoleModel.warnings();
-
-    this._titles = [];
-    this._toolbarItem.setVisible(!!(errors || warnings));
-    this._updateItem(this._errors, errors, false, Common.UIString(errors === 1 ? '%d error' : '%d errors', errors));
-    this._updateItem(
-        this._warnings, warnings, !errors, Common.UIString(warnings === 1 ? '%d warning' : '%d warnings', warnings));
-    this._counter.title = this._titles.join(', ');
-    UI.inspectorView.toolbarItemResized();
-  }
-
-  /**
-   * @override
-   * @return {?UI.ToolbarItem}
-   */
-  item() {
-    return this._toolbarItem;
-  }
-};
-
 /**
  * @implements {UI.ToolbarItem.Provider}
  */
@@ -716,8 +641,7 @@ Main.Main.MainMenuItem = class {
       dockItemToolbar.appendToolbarItem(left);
       dockItemToolbar.appendToolbarItem(bottom);
       dockItemToolbar.appendToolbarItem(right);
-      contextMenu.appendCustomItem(dockItemElement);
-      contextMenu.appendSeparator();
+      contextMenu.headerSection().appendCustomItem(dockItemElement);
     }
 
     /**
@@ -728,11 +652,12 @@ Main.Main.MainMenuItem = class {
       contextMenu.discard();
     }
 
-    contextMenu.appendAction(
-        'main.toggle-drawer', UI.inspectorView.drawerVisible() ? Common.UIString('Hide console drawer') :
-                                                                 Common.UIString('Show console drawer'));
+    contextMenu.defaultSection().appendAction(
+        'main.toggle-drawer',
+        UI.inspectorView.drawerVisible() ? Common.UIString('Hide console drawer') :
+                                           Common.UIString('Show console drawer'));
     contextMenu.appendItemsAtLocation('mainMenu');
-    var moreTools = contextMenu.namedSubMenu('mainMenuMoreTools');
+    var moreTools = contextMenu.defaultSection().appendSubMenuItem(Common.UIString('More tools'));
     var extensions = self.runtime.extensions('view', undefined, true);
     for (var extension of extensions) {
       var descriptor = extension.descriptor();
@@ -740,12 +665,45 @@ Main.Main.MainMenuItem = class {
         continue;
       if (descriptor['location'] !== 'drawer-view' && descriptor['location'] !== 'panel')
         continue;
-      moreTools.appendItem(extension.title(), UI.viewManager.showView.bind(UI.viewManager, descriptor['id']));
+      moreTools.defaultSection().appendItem(
+          extension.title(), UI.viewManager.showView.bind(UI.viewManager, descriptor['id']));
     }
 
-    var helpSubMenu = contextMenu.namedSubMenu('mainMenuHelp');
-    helpSubMenu.appendAction('settings.documentation');
-    helpSubMenu.appendItem('Release Notes', () => InspectorFrontendHost.openInNewTab(Help.latestReleaseNote().link));
+    var helpSubMenu = contextMenu.footerSection().appendSubMenuItem(Common.UIString('Help'));
+    helpSubMenu.defaultSection().appendAction('settings.documentation');
+    helpSubMenu.defaultSection().appendItem(
+        'Release Notes', () => InspectorFrontendHost.openInNewTab(Help.latestReleaseNote().link));
+  }
+};
+
+/**
+ * @implements {UI.ToolbarItem.Provider}
+ */
+Main.Main.NodeIndicator = class {
+  constructor() {
+    var element = createElement('div');
+    var shadowRoot = UI.createShadowRootWithCoreStyles(element, 'main/nodeIcon.css');
+    this._element = shadowRoot.createChild('div', 'node-icon');
+    element.addEventListener('click', () => InspectorFrontendHost.openNodeFrontend(), false);
+    this._button = new UI.ToolbarItem(element);
+    this._button.setTitle(Common.UIString('Open dedicated DevTools for Node.js'));
+    SDK.targetManager.addEventListener(SDK.TargetManager.Events.AvailableNodeTargetsChanged, this._update, this);
+    this._button.setVisible(false);
+    this._update();
+  }
+
+  _update() {
+    this._element.classList.toggle('inactive', !SDK.targetManager.availableNodeTargetsCount());
+    if (SDK.targetManager.availableNodeTargetsCount())
+      this._button.setVisible(true);
+  }
+
+  /**
+   * @override
+   * @return {?UI.ToolbarItem}
+   */
+  item() {
+    return this._button;
   }
 };
 
@@ -757,6 +715,7 @@ Main.NetworkPanelIndicator = class {
     var manager = SDK.multitargetNetworkManager;
     manager.addEventListener(SDK.MultitargetNetworkManager.Events.ConditionsChanged, updateVisibility);
     manager.addEventListener(SDK.MultitargetNetworkManager.Events.BlockedPatternsChanged, updateVisibility);
+    manager.addEventListener(SDK.MultitargetNetworkManager.Events.InterceptorsChanged, updateVisibility);
     updateVisibility();
 
     function updateVisibility() {
@@ -764,6 +723,9 @@ Main.NetworkPanelIndicator = class {
       if (manager.isThrottling()) {
         icon = UI.Icon.create('smallicon-warning');
         icon.title = Common.UIString('Network throttling is enabled');
+      } else if (SDK.multitargetNetworkManager.isIntercepting()) {
+        icon = UI.Icon.create('smallicon-warning');
+        icon.title = Common.UIString('Requests may be rewritten');
       } else if (manager.isBlocking()) {
         icon = UI.Icon.create('smallicon-warning');
         icon.title = Common.UIString('Requests may be blocked');
@@ -820,7 +782,8 @@ Main.Main.PauseListener = class {
  */
 Main.Main.InspectedNodeRevealer = class {
   constructor() {
-    SDK.targetManager.addModelListener(SDK.DOMModel, SDK.DOMModel.Events.NodeInspected, this._inspectNode, this);
+    SDK.targetManager.addModelListener(
+        SDK.OverlayModel, SDK.OverlayModel.Events.InspectNodeRequested, this._inspectNode, this);
   }
 
   /**
@@ -933,8 +896,10 @@ Main.BackendSettingsSync = class {
   constructor() {
     this._autoAttachSetting = Common.settings.moduleSetting('autoAttachToCreatedPages');
     this._autoAttachSetting.addChangeListener(this._update, this);
-    this._disableJavascriptSetting = Common.settings.moduleSetting('javaScriptDisabled');
-    this._disableJavascriptSetting.addChangeListener(this._update, this);
+
+    this._adBlockEnabledSetting = Common.settings.moduleSetting('network.adBlockingEnabled');
+    this._adBlockEnabledSetting.addChangeListener(this._update, this);
+
     SDK.targetManager.observeTargets(this, SDK.Target.Capability.Browser);
   }
 
@@ -943,7 +908,7 @@ Main.BackendSettingsSync = class {
    */
   _updateTarget(target) {
     target.pageAgent().setAutoAttachToCreatedPages(this._autoAttachSetting.get());
-    target.emulationAgent().setScriptExecutionDisabled(this._disableJavascriptSetting.get());
+    target.pageAgent().setAdBlockingEnabled(this._adBlockEnabledSetting.get());
   }
 
   _update() {
@@ -956,7 +921,6 @@ Main.BackendSettingsSync = class {
    */
   targetAdded(target) {
     this._updateTarget(target);
-    target.renderingAgent().setShowViewportSizeOnResize(true);
   }
 
   /**

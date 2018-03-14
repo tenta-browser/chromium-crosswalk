@@ -4,11 +4,12 @@
 
 #include "net/cert_net/cert_net_fetcher_impl.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "base/compiler_specific.h"
-#include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/synchronization/lock.h"
 #include "net/cert/cert_net_fetcher.h"
@@ -45,32 +46,32 @@ class RequestContext : public URLRequestContext {
     ProxyConfig no_proxy;
     storage_.set_host_resolver(
         std::unique_ptr<HostResolver>(new MockHostResolver));
-    storage_.set_cert_verifier(base::WrapUnique(new MockCertVerifier));
+    storage_.set_cert_verifier(std::make_unique<MockCertVerifier>());
     storage_.set_transport_security_state(
-        base::WrapUnique(new TransportSecurityState));
+        std::make_unique<TransportSecurityState>());
     storage_.set_cert_transparency_verifier(
-        base::WrapUnique(new MultiLogCTVerifier));
-    storage_.set_ct_policy_enforcer(base::WrapUnique(new CTPolicyEnforcer));
+        std::make_unique<MultiLogCTVerifier>());
+    storage_.set_ct_policy_enforcer(std::make_unique<CTPolicyEnforcer>());
     storage_.set_proxy_service(ProxyService::CreateFixed(no_proxy));
     storage_.set_ssl_config_service(new SSLConfigServiceDefaults);
     storage_.set_http_server_properties(
         std::unique_ptr<HttpServerProperties>(new HttpServerPropertiesImpl()));
 
-    HttpNetworkSession::Params params;
-    params.host_resolver = host_resolver();
-    params.cert_verifier = cert_verifier();
-    params.transport_security_state = transport_security_state();
-    params.cert_transparency_verifier = cert_transparency_verifier();
-    params.ct_policy_enforcer = ct_policy_enforcer();
-    params.proxy_service = proxy_service();
-    params.ssl_config_service = ssl_config_service();
-    params.http_server_properties = http_server_properties();
-    storage_.set_http_network_session(
-        base::MakeUnique<HttpNetworkSession>(params));
-    storage_.set_http_transaction_factory(base::MakeUnique<HttpCache>(
+    HttpNetworkSession::Context session_context;
+    session_context.host_resolver = host_resolver();
+    session_context.cert_verifier = cert_verifier();
+    session_context.transport_security_state = transport_security_state();
+    session_context.cert_transparency_verifier = cert_transparency_verifier();
+    session_context.ct_policy_enforcer = ct_policy_enforcer();
+    session_context.proxy_service = proxy_service();
+    session_context.ssl_config_service = ssl_config_service();
+    session_context.http_server_properties = http_server_properties();
+    storage_.set_http_network_session(std::make_unique<HttpNetworkSession>(
+        HttpNetworkSession::Params(), session_context));
+    storage_.set_http_transaction_factory(std::make_unique<HttpCache>(
         storage_.http_network_session(), HttpCache::DefaultBackend::InMemory(0),
         false /* is_main_cache */));
-    storage_.set_job_factory(base::MakeUnique<URLRequestJobFactoryImpl>());
+    storage_.set_job_factory(std::make_unique<URLRequestJobFactoryImpl>());
   }
 
   ~RequestContext() override { AssertNoURLRequests(); }

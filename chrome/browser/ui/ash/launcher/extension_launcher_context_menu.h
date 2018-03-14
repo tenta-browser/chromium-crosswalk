@@ -11,13 +11,6 @@
 #include "chrome/browser/ui/ash/launcher/launcher_context_menu.h"
 #include "extensions/common/constants.h"
 
-class ChromeLauncherControllerImpl;
-
-namespace ash {
-struct ShelfItem;
-class WmShelf;
-}
-
 namespace extensions {
 class ContextMenuMatcher;
 }
@@ -25,14 +18,12 @@ class ContextMenuMatcher;
 // Context menu shown for an extension item in the shelf.
 class ExtensionLauncherContextMenu : public LauncherContextMenu {
  public:
-  ExtensionLauncherContextMenu(ChromeLauncherControllerImpl* controller,
+  ExtensionLauncherContextMenu(ChromeLauncherController* controller,
                                const ash::ShelfItem* item,
-                               ash::WmShelf* wm_shelf);
+                               int64_t display_id);
   ~ExtensionLauncherContextMenu() override;
 
   // ui::SimpleMenuModel::Delegate overrides:
-  bool IsItemForCommandIdDynamic(int command_id) const override;
-  base::string16 GetLabelForCommandId(int command_id) const override;
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
   void ExecuteCommand(int command_id, int event_flags) override;

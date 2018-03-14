@@ -9,6 +9,7 @@
 
 #include "base/command_line.h"
 #include "base/guid.h"
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/dom_distiller/dom_distiller_service_factory.h"
@@ -378,7 +379,7 @@ IN_PROC_BROWSER_TEST_F(DomDistillerViewerSourceBrowserTest,
   bool result;
   // Execute in isolated world; where all distiller scripts are run.
   EXPECT_TRUE(content::ExecuteScriptInIsolatedWorldAndExtractBool(
-      contents, chrome::ISOLATED_WORLD_ID_CHROME_INTERNAL, kTestDistillerObject,
+      contents, ISOLATED_WORLD_ID_CHROME_INTERNAL, kTestDistillerObject,
       &result));
   EXPECT_TRUE(result);
 }

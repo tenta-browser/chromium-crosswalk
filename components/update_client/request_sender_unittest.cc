@@ -5,13 +5,15 @@
 #include "components/update_client/request_sender.h"
 
 #include <memory>
+#include <utility>
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
-#include "base/test/scoped_task_scheduler.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/update_client/test_configurator.h"
 #include "components/update_client/url_request_post_interceptor.h"
@@ -56,39 +58,36 @@ class RequestSenderTest : public testing::Test {
  protected:
   void Quit();
   void RunThreads();
-  void RunThreadsUntilIdle();
+
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
   scoped_refptr<TestConfigurator> config_;
   std::unique_ptr<RequestSender> request_sender_;
   std::unique_ptr<InterceptorFactory> interceptor_factory_;
 
-  URLRequestPostInterceptor* post_interceptor_1_;  // Owned by the factory.
-  URLRequestPostInterceptor* post_interceptor_2_;  // Owned by the factory.
+  // Owned by the factory.
+  URLRequestPostInterceptor* post_interceptor_1_ = nullptr;
+  URLRequestPostInterceptor* post_interceptor_2_ = nullptr;
 
-  int error_;
+  int error_ = 0;
   std::string response_;
 
  private:
-  base::MessageLoopForIO loop_;
-  base::test::ScopedTaskScheduler scoped_task_scheduler_;
-  base::Closure quit_closure_;
+  base::OnceClosure quit_closure_;
 
   DISALLOW_COPY_AND_ASSIGN(RequestSenderTest);
 };
 
 RequestSenderTest::RequestSenderTest()
-    : post_interceptor_1_(nullptr),
-      post_interceptor_2_(nullptr),
-      error_(0),
-      scoped_task_scheduler_(&loop_) {}
+    : scoped_task_environment_(
+          base::test::ScopedTaskEnvironment::MainThreadType::IO) {}
 
 RequestSenderTest::~RequestSenderTest() {}
 
 void RequestSenderTest::SetUp() {
-  config_ = new TestConfigurator(base::ThreadTaskRunnerHandle::Get(),
-                                 base::ThreadTaskRunnerHandle::Get());
-  interceptor_factory_.reset(
-      new InterceptorFactory(base::ThreadTaskRunnerHandle::Get()));
+  config_ = base::MakeRefCounted<TestConfigurator>();
+  interceptor_factory_ =
+      base::MakeUnique<InterceptorFactory>(base::ThreadTaskRunnerHandle::Get());
   post_interceptor_1_ =
       interceptor_factory_->CreateInterceptorForPath(kUrlPath1);
   post_interceptor_2_ =
@@ -96,41 +95,32 @@ void RequestSenderTest::SetUp() {
   EXPECT_TRUE(post_interceptor_1_);
   EXPECT_TRUE(post_interceptor_2_);
 
-  request_sender_.reset();
+  request_sender_ = nullptr;
 }
 
 void RequestSenderTest::TearDown() {
-  request_sender_.reset();
+  request_sender_ = nullptr;
 
   post_interceptor_1_ = nullptr;
   post_interceptor_2_ = nullptr;
 
-  interceptor_factory_.reset();
+  interceptor_factory_ = nullptr;
 
+  // Run the threads until they are idle to allow the clean up
+  // of the network interceptors on the IO thread.
+  scoped_task_environment_.RunUntilIdle();
   config_ = nullptr;
-
-  RunThreadsUntilIdle();
 }
 
 void RequestSenderTest::RunThreads() {
   base::RunLoop runloop;
   quit_closure_ = runloop.QuitClosure();
   runloop.Run();
-
-  // Since some tests need to drain currently enqueued tasks such as network
-  // intercepts on the IO thread, run the threads until they are
-  // idle. The component updater service won't loop again until the loop count
-  // is set and the service is started.
-  RunThreadsUntilIdle();
-}
-
-void RequestSenderTest::RunThreadsUntilIdle() {
-  base::RunLoop().RunUntilIdle();
 }
 
 void RequestSenderTest::Quit() {
   if (!quit_closure_.is_null())
-    quit_closure_.Run();
+    std::move(quit_closure_).Run();
 }
 
 void RequestSenderTest::RequestSenderComplete(int error,
@@ -148,19 +138,23 @@ TEST_F(RequestSenderTest, RequestSendSuccess) {
   EXPECT_TRUE(post_interceptor_1_->ExpectRequest(
       new PartialMatch("test"), test_file("updatecheck_reply_1.xml")));
 
-  std::vector<GURL> urls;
-  urls.push_back(GURL(kUrl1));
-  urls.push_back(GURL(kUrl2));
-  request_sender_.reset(new RequestSender(config_));
-  request_sender_->Send(false, "test", urls,
-                        base::Bind(&RequestSenderTest::RequestSenderComplete,
-                                   base::Unretained(this)));
+  const std::vector<GURL> urls = {GURL(kUrl1), GURL(kUrl2)};
+  request_sender_ = base::MakeUnique<RequestSender>(config_);
+  request_sender_->Send(
+      false, "test", urls,
+      base::BindOnce(&RequestSenderTest::RequestSenderComplete,
+                     base::Unretained(this)));
   RunThreads();
 
   EXPECT_EQ(1, post_interceptor_1_->GetHitCount())
       << post_interceptor_1_->GetRequestsAsString();
   EXPECT_EQ(1, post_interceptor_1_->GetCount())
       << post_interceptor_1_->GetRequestsAsString();
+
+  EXPECT_EQ(0, post_interceptor_2_->GetHitCount())
+      << post_interceptor_2_->GetRequestsAsString();
+  EXPECT_EQ(0, post_interceptor_2_->GetCount())
+      << post_interceptor_2_->GetRequestsAsString();
 
   // Sanity check the request.
   EXPECT_STREQ("test", post_interceptor_1_->GetRequests()[0].c_str());
@@ -170,7 +164,9 @@ TEST_F(RequestSenderTest, RequestSendSuccess) {
   EXPECT_TRUE(base::StartsWith(response_,
                                "<?xml version='1.0' encoding='UTF-8'?>",
                                base::CompareCase::SENSITIVE));
-  EXPECT_EQ(443ul, response_.size());
+  EXPECT_EQ(505ul, response_.size());
+
+  interceptor_factory_ = nullptr;
 }
 
 // Tests that the request succeeds using the second url after the first url
@@ -180,13 +176,12 @@ TEST_F(RequestSenderTest, RequestSendSuccessWithFallback) {
       post_interceptor_1_->ExpectRequest(new PartialMatch("test"), 403));
   EXPECT_TRUE(post_interceptor_2_->ExpectRequest(new PartialMatch("test")));
 
-  std::vector<GURL> urls;
-  urls.push_back(GURL(kUrl1));
-  urls.push_back(GURL(kUrl2));
-  request_sender_.reset(new RequestSender(config_));
-  request_sender_->Send(false, "test", urls,
-                        base::Bind(&RequestSenderTest::RequestSenderComplete,
-                                   base::Unretained(this)));
+  const std::vector<GURL> urls = {GURL(kUrl1), GURL(kUrl2)};
+  request_sender_ = base::MakeUnique<RequestSender>(config_);
+  request_sender_->Send(
+      false, "test", urls,
+      base::BindOnce(&RequestSenderTest::RequestSenderComplete,
+                     base::Unretained(this)));
   RunThreads();
 
   EXPECT_EQ(1, post_interceptor_1_->GetHitCount())
@@ -210,13 +205,12 @@ TEST_F(RequestSenderTest, RequestSendFailed) {
   EXPECT_TRUE(
       post_interceptor_2_->ExpectRequest(new PartialMatch("test"), 403));
 
-  std::vector<GURL> urls;
-  urls.push_back(GURL(kUrl1));
-  urls.push_back(GURL(kUrl2));
-  request_sender_.reset(new RequestSender(config_));
-  request_sender_->Send(false, "test", urls,
-                        base::Bind(&RequestSenderTest::RequestSenderComplete,
-                                   base::Unretained(this)));
+  const std::vector<GURL> urls = {GURL(kUrl1), GURL(kUrl2)};
+  request_sender_ = base::MakeUnique<RequestSender>(config_);
+  request_sender_->Send(
+      false, "test", urls,
+      base::BindOnce(&RequestSenderTest::RequestSenderComplete,
+                     base::Unretained(this)));
   RunThreads();
 
   EXPECT_EQ(1, post_interceptor_1_->GetHitCount())
@@ -236,10 +230,11 @@ TEST_F(RequestSenderTest, RequestSendFailed) {
 // Tests that the request fails when no urls are provided.
 TEST_F(RequestSenderTest, RequestSendFailedNoUrls) {
   std::vector<GURL> urls;
-  request_sender_.reset(new RequestSender(config_));
-  request_sender_->Send(false, "test", urls,
-                        base::Bind(&RequestSenderTest::RequestSenderComplete,
-                                   base::Unretained(this)));
+  request_sender_ = base::MakeUnique<RequestSender>(config_);
+  request_sender_->Send(
+      false, "test", urls,
+      base::BindOnce(&RequestSenderTest::RequestSenderComplete,
+                     base::Unretained(this)));
   RunThreads();
 
   EXPECT_EQ(-1, error_);
@@ -250,12 +245,12 @@ TEST_F(RequestSenderTest, RequestSendCupError) {
   EXPECT_TRUE(post_interceptor_1_->ExpectRequest(
       new PartialMatch("test"), test_file("updatecheck_reply_1.xml")));
 
-  std::vector<GURL> urls;
-  urls.push_back(GURL(kUrl1));
-  request_sender_.reset(new RequestSender(config_));
-  request_sender_->Send(true, "test", urls,
-                        base::Bind(&RequestSenderTest::RequestSenderComplete,
-                                   base::Unretained(this)));
+  const std::vector<GURL> urls = {GURL(kUrl1)};
+  request_sender_ = base::MakeUnique<RequestSender>(config_);
+  request_sender_->Send(
+      true, "test", urls,
+      base::BindOnce(&RequestSenderTest::RequestSenderComplete,
+                     base::Unretained(this)));
   RunThreads();
 
   EXPECT_EQ(1, post_interceptor_1_->GetHitCount())

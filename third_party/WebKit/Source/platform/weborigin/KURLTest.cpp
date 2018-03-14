@@ -56,31 +56,31 @@ TEST(KURLTest, Getters) {
     bool has_fragment_identifier;
   } cases[] = {
       {"http://www.google.com/foo/blah?bar=baz#ref", "http", "www.google.com",
-       0, "", 0, "/foo/blah", "blah", "bar=baz", "ref", true},
+       0, "", nullptr, "/foo/blah", "blah", "bar=baz", "ref", true},
       {// Non-ASCII code points in the fragment part. fragmentIdentifier()
        // shouldn't return it in percent-encoded form.
        "http://www.google.com/foo/blah?bar=baz#\xce\xb1\xce\xb2", "http",
-       "www.google.com", 0, "", 0, "/foo/blah", "blah", "bar=baz",
-       "\xce\xb1\xce\xb2", true},
-      {"http://foo.com:1234/foo/bar/", "http", "foo.com", 1234, "", 0,
-       "/foo/bar/", "bar", 0, 0, false},
-      {"http://www.google.com?#", "http", "www.google.com", 0, "", 0, "/", 0,
-       "", "", true},
+       "www.google.com", 0, "", nullptr, "/foo/blah", "blah", "bar=baz",
+       "%CE%B1%CE%B2", true},
+      {"http://foo.com:1234/foo/bar/", "http", "foo.com", 1234, "", nullptr,
+       "/foo/bar/", "bar", nullptr, nullptr, false},
+      {"http://www.google.com?#", "http", "www.google.com", 0, "", nullptr, "/",
+       nullptr, "", "", true},
       {"https://me:pass@google.com:23#foo", "https", "google.com", 23, "me",
-       "pass", "/", 0, 0, "foo", true},
-      {"javascript:hello!//world", "javascript", "", 0, "", 0, "hello!//world",
-       "world", 0, 0, false},
+       "pass", "/", nullptr, nullptr, "foo", true},
+      {"javascript:hello!//world", "javascript", "", 0, "", nullptr,
+       "hello!//world", "world", nullptr, nullptr, false},
       {// Recognize a query and a fragment in the path portion of a path
        // URL.
-       "javascript:hello!?#/\\world", "javascript", "", 0, "", 0, "hello!",
-       "hello!", "", "/\\world", true},
+       "javascript:hello!?#/\\world", "javascript", "", 0, "", nullptr,
+       "hello!", "hello!", "", "/\\world", true},
       {// lastPathComponent() method handles "parameters" in a path. path()
        // method doesn't.
-       "http://a.com/hello;world", "http", "a.com", 0, "", 0, "/hello;world",
-       "hello", 0, 0, false},
+       "http://a.com/hello;world", "http", "a.com", 0, "", nullptr,
+       "/hello;world", "hello", nullptr, nullptr, false},
       {// IDNA
        "http://\xe4\xbd\xa0\xe5\xa5\xbd\xe4\xbd\xa0\xe5\xa5\xbd/", "http",
-       "xn--6qqa088eba", 0, "", 0, "/", 0, 0, 0, false},
+       "xn--6qqa088eba", 0, "", nullptr, "/", nullptr, nullptr, nullptr, false},
   };
 
   for (size_t i = 0; i < WTF_ARRAY_LENGTH(cases); i++) {
@@ -88,7 +88,7 @@ TEST(KURLTest, Getters) {
 
     const String& url = String::FromUTF8(c.url);
 
-    const KURL kurl(kParsedURLString, url);
+    const KURL kurl(url);
 
     // Casted to the String (or coverted to using fromUTF8() for
     // expectations which may include non-ASCII code points) so that the
@@ -171,32 +171,32 @@ TEST(KURLTest, Setters) {
        // path
        "/", "http://goo.com:92/?f#b",
        // query
-       0, "http://goo.com:92/#b"},
+       nullptr, "http://goo.com:92/#b"},
   };
 
   for (size_t i = 0; i < WTF_ARRAY_LENGTH(cases); i++) {
-    KURL kurl(kParsedURLString, cases[i].url);
+    KURL kurl(cases[i].url);
 
     kurl.SetProtocol(cases[i].protocol);
-    EXPECT_STREQ(cases[i].expected_protocol, kurl.GetString().Utf8().Data());
+    EXPECT_STREQ(cases[i].expected_protocol, kurl.GetString().Utf8().data());
 
     kurl.SetHost(cases[i].host);
-    EXPECT_STREQ(cases[i].expected_host, kurl.GetString().Utf8().Data());
+    EXPECT_STREQ(cases[i].expected_host, kurl.GetString().Utf8().data());
 
     kurl.SetPort(cases[i].port);
-    EXPECT_STREQ(cases[i].expected_port, kurl.GetString().Utf8().Data());
+    EXPECT_STREQ(cases[i].expected_port, kurl.GetString().Utf8().data());
 
     kurl.SetUser(cases[i].user);
-    EXPECT_STREQ(cases[i].expected_user, kurl.GetString().Utf8().Data());
+    EXPECT_STREQ(cases[i].expected_user, kurl.GetString().Utf8().data());
 
     kurl.SetPass(cases[i].pass);
-    EXPECT_STREQ(cases[i].expected_pass, kurl.GetString().Utf8().Data());
+    EXPECT_STREQ(cases[i].expected_pass, kurl.GetString().Utf8().data());
 
     kurl.SetPath(cases[i].path);
-    EXPECT_STREQ(cases[i].expected_path, kurl.GetString().Utf8().Data());
+    EXPECT_STREQ(cases[i].expected_path, kurl.GetString().Utf8().data());
 
     kurl.SetQuery(cases[i].query);
-    EXPECT_STREQ(cases[i].expected_query, kurl.GetString().Utf8().Data());
+    EXPECT_STREQ(cases[i].expected_query, kurl.GetString().Utf8().data());
 
     // Refs are tested below. On the Safari 3.1 branch, we don't match their
     // KURL since we integrated a fix from their trunk.
@@ -233,12 +233,12 @@ TEST(KURLTest, DecodeURLEscapeSequences) {
   for (size_t i = 0; i < WTF_ARRAY_LENGTH(decode_cases); i++) {
     String input(decode_cases[i].input);
     String str = DecodeURLEscapeSequences(input);
-    EXPECT_STREQ(decode_cases[i].output, str.Utf8().Data());
+    EXPECT_STREQ(decode_cases[i].output, str.Utf8().data());
   }
 
   // Our decode should decode %00
   String zero = DecodeURLEscapeSequences("%00");
-  EXPECT_STRNE("%00", zero.Utf8().Data());
+  EXPECT_STRNE("%00", zero.Utf8().data());
 
   // Decode UTF-8.
   String decoded = DecodeURLEscapeSequences("%e6%bc%a2%e5%ad%97");
@@ -302,7 +302,7 @@ TEST(KURLTest, EncodeWithURLEscapeSequences) {
   EXPECT_EQ(EncodeWithURLEscapeSequences(precomposed), "%C4%99");
 }
 
-TEST(KURLTest, RemoveWhitespace) {
+TEST(KURLTest, AbsoluteRemoveWhitespace) {
   struct {
     const char* input;
     const char* expected;
@@ -325,11 +325,120 @@ TEST(KURLTest, RemoveWhitespace) {
   };
 
   for (const auto& test : cases) {
-    const KURL input(kParsedURLString, test.input);
-    const KURL expected(kParsedURLString, test.expected);
+    const KURL input(test.input);
+    const KURL expected(test.expected);
     EXPECT_EQ(input, expected);
-    EXPECT_TRUE(input.WhitespaceRemoved());
-    EXPECT_FALSE(expected.WhitespaceRemoved());
+  }
+}
+
+TEST(KURLTest, RelativeRemoveWhitespace) {
+  struct {
+    const char* base;
+    const char* relative;
+  } cases[] = {
+      {"http://example.com/", "/path"},   {"http://example.com/", "\n/path"},
+      {"http://example.com/", "\r/path"}, {"http://example.com/", "\t/path"},
+      {"http://example.com/", "/pa\nth"}, {"http://example.com/", "/pa\rth"},
+      {"http://example.com/", "/pa\tth"}, {"http://example.com/", "/path\n"},
+      {"http://example.com/", "/path\r"}, {"http://example.com/", "/path\t"},
+  };
+
+  for (const auto& test : cases) {
+    SCOPED_TRACE(::testing::Message() << test.base << ", " << test.relative);
+    const KURL base(test.base);
+    const KURL expected("http://example.com/path");
+    const KURL actual(base, test.relative);
+    EXPECT_EQ(actual, expected);
+  }
+}
+
+TEST(KURLTest, AbsolutePotentiallyDanglingMarkup) {
+  struct {
+    const char* input;
+    const char* expected;
+    const bool potentially_dangling_markup;
+  } cases[] = {
+      // Just removable whitespace isn't enough:
+      {"ht\ntps://example.com/yay?boo#foo", "https://example.com/yay?boo#foo",
+       false},
+      {"ht\ttps://example.com/yay?boo#foo", "https://example.com/yay?boo#foo",
+       false},
+      {"ht\rtps://example.com/yay?boo#foo", "https://example.com/yay?boo#foo",
+       false},
+      {"https://exa\nmple.com/yay?boo#foo", "https://example.com/yay?boo#foo",
+       false},
+      {"https://exa\tmple.com/yay?boo#foo", "https://example.com/yay?boo#foo",
+       false},
+      {"https://exa\rmple.com/yay?boo#foo", "https://example.com/yay?boo#foo",
+       false},
+      {"https://example.com/y\nay?boo#foo", "https://example.com/yay?boo#foo",
+       false},
+      {"https://example.com/y\tay?boo#foo", "https://example.com/yay?boo#foo",
+       false},
+      {"https://example.com/y\ray?boo#foo", "https://example.com/yay?boo#foo",
+       false},
+      {"https://example.com/yay?b\noo#foo", "https://example.com/yay?boo#foo",
+       false},
+      {"https://example.com/yay?b\too#foo", "https://example.com/yay?boo#foo",
+       false},
+      {"https://example.com/yay?b\roo#foo", "https://example.com/yay?boo#foo",
+       false},
+      {"https://example.com/yay?boo#f\noo", "https://example.com/yay?boo#foo",
+       false},
+      {"https://example.com/yay?boo#f\too", "https://example.com/yay?boo#foo",
+       false},
+      {"https://example.com/yay?boo#f\roo", "https://example.com/yay?boo#foo",
+       false},
+
+      // Likewise, just a brace won't cut it:
+      {"https://example.com/y<ay?boo#foo", "https://example.com/y%3Cay?boo#foo",
+       false},
+      {"https://example.com/yay?b<oo#foo", "https://example.com/yay?b%3Coo#foo",
+       false},
+      {"https://example.com/yay?boo#f<oo", "https://example.com/yay?boo#f<oo",
+       false},
+
+      // Both, however:
+      {"ht\ntps://example.com/y<ay?boo#foo",
+       "https://example.com/y%3Cay?boo#foo", true},
+      {"https://e\nxample.com/y<ay?boo#foo",
+       "https://example.com/y%3Cay?boo#foo", true},
+      {"https://example.com/y<\nay?boo#foo",
+       "https://example.com/y%3Cay?boo#foo", true},
+      {"https://example.com/y<ay?b\noo#foo",
+       "https://example.com/y%3Cay?boo#foo", true},
+      {"https://example.com/y<ay?boo#f\noo",
+       "https://example.com/y%3Cay?boo#foo", true},
+      {"ht\ntps://example.com/yay?b<oo#foo",
+       "https://example.com/yay?b%3Coo#foo", true},
+      {"https://e\nxample.com/yay?b<oo#foo",
+       "https://example.com/yay?b%3Coo#foo", true},
+      {"https://example.com/y\nay?b<oo#foo",
+       "https://example.com/yay?b%3Coo#foo", true},
+      {"https://example.com/yay?b<\noo#foo",
+       "https://example.com/yay?b%3Coo#foo", true},
+      {"https://example.com/yay?b<oo#f\noo",
+       "https://example.com/yay?b%3Coo#foo", true},
+      {"ht\ntps://example.com/yay?boo#f<oo", "https://example.com/yay?boo#f<oo",
+       true},
+      {"https://e\nxample.com/yay?boo#f<oo", "https://example.com/yay?boo#f<oo",
+       true},
+      {"https://example.com/y\nay?boo#f<oo", "https://example.com/yay?boo#f<oo",
+       true},
+      {"https://example.com/yay?b\noo#f<oo", "https://example.com/yay?boo#f<oo",
+       true},
+      {"https://example.com/yay?boo#f<\noo", "https://example.com/yay?boo#f<oo",
+       true},
+  };
+
+  for (const auto& test : cases) {
+    SCOPED_TRACE(::testing::Message() << test.input << ", " << test.expected);
+    const KURL input(NullURL(), test.input);
+    const KURL expected(NullURL(), test.expected);
+    EXPECT_EQ(input, expected) << input.GetString() << expected.GetString();
+    EXPECT_EQ(test.potentially_dangling_markup,
+              input.PotentiallyDanglingMarkup());
+    EXPECT_FALSE(expected.PotentiallyDanglingMarkup());
   }
 }
 
@@ -341,7 +450,7 @@ TEST(KURLTest, ResolveEmpty) {
   const char kAbs[] = "http://www.google.com/";
   KURL resolve_abs(empty_base, kAbs);
   EXPECT_TRUE(resolve_abs.IsValid());
-  EXPECT_STREQ(kAbs, resolve_abs.GetString().Utf8().Data());
+  EXPECT_STREQ(kAbs, resolve_abs.GetString().Utf8().data());
 
   // Resolving a non-relative URL agains the empty one should still error.
   const char kRel[] = "foo.html";
@@ -356,7 +465,7 @@ TEST(KURLTest, ReplaceInvalid) {
 
   EXPECT_FALSE(kurl.IsValid());
   EXPECT_TRUE(kurl.IsEmpty());
-  EXPECT_STREQ("", kurl.GetString().Utf8().Data());
+  EXPECT_STREQ("", kurl.GetString().Utf8().data());
 
   kurl.SetProtocol("http");
   // GKURL will say that a URL with just a scheme is invalid, KURL will not.
@@ -365,23 +474,23 @@ TEST(KURLTest, ReplaceInvalid) {
   // At this point, we do things slightly differently if there is only a scheme.
   // We check the results here to make it more obvious what is going on, but it
   // shouldn't be a big deal if these change.
-  EXPECT_STREQ("http:", kurl.GetString().Utf8().Data());
+  EXPECT_STREQ("http:", kurl.GetString().Utf8().data());
 
   kurl.SetHost("www.google.com");
   EXPECT_TRUE(kurl.IsValid());
   EXPECT_FALSE(kurl.IsEmpty());
-  EXPECT_STREQ("http://www.google.com/", kurl.GetString().Utf8().Data());
+  EXPECT_STREQ("http://www.google.com/", kurl.GetString().Utf8().data());
 
   kurl.SetPort(8000);
   EXPECT_TRUE(kurl.IsValid());
   EXPECT_FALSE(kurl.IsEmpty());
-  EXPECT_STREQ("http://www.google.com:8000/", kurl.GetString().Utf8().Data());
+  EXPECT_STREQ("http://www.google.com:8000/", kurl.GetString().Utf8().data());
 
   kurl.SetPath("/favicon.ico");
   EXPECT_TRUE(kurl.IsValid());
   EXPECT_FALSE(kurl.IsEmpty());
   EXPECT_STREQ("http://www.google.com:8000/favicon.ico",
-               kurl.GetString().Utf8().Data());
+               kurl.GetString().Utf8().data());
 
   // Now let's test that giving an invalid replacement fails. Invalid
   // protocols fail without modifying the URL, which should remain valid.
@@ -398,7 +507,7 @@ TEST(KURLTest, Valid_HTTP_FTP_URLsHaveHosts) {
   url::AddStandardScheme("http-so", url::SCHEME_WITH_PORT);
   url::AddStandardScheme("https-so", url::SCHEME_WITH_PORT);
 
-  KURL kurl(kParsedURLString, "foo://www.google.com/");
+  KURL kurl("foo://www.google.com/");
   EXPECT_TRUE(kurl.SetProtocol("http"));
   EXPECT_TRUE(kurl.ProtocolIs("http"));
   EXPECT_TRUE(kurl.ProtocolIsInHTTPFamily());
@@ -420,131 +529,131 @@ TEST(KURLTest, Valid_HTTP_FTP_URLsHaveHosts) {
   EXPECT_TRUE(kurl.ProtocolIs("ftp"));
   EXPECT_TRUE(kurl.IsValid());
 
-  kurl = KURL(KURL(), "http://");
+  kurl = KURL(NullURL(), "http://");
   EXPECT_FALSE(kurl.ProtocolIs("http"));
 
-  kurl = KURL(KURL(), "http://wide#鸡");
+  kurl = KURL(NullURL(), "http://wide#鸡");
   EXPECT_TRUE(kurl.ProtocolIs("http"));
   EXPECT_EQ(kurl.Protocol(), "http");
 
-  kurl = KURL(KURL(), "http-so://foo");
+  kurl = KURL(NullURL(), "http-so://foo");
   EXPECT_TRUE(kurl.ProtocolIs("http-so"));
 
-  kurl = KURL(KURL(), "https://foo");
+  kurl = KURL(NullURL(), "https://foo");
   EXPECT_TRUE(kurl.ProtocolIs("https"));
 
-  kurl = KURL(KURL(), "https-so://foo");
+  kurl = KURL(NullURL(), "https-so://foo");
   EXPECT_TRUE(kurl.ProtocolIs("https-so"));
 
-  kurl = KURL(KURL(), "ftp://foo");
+  kurl = KURL(NullURL(), "ftp://foo");
   EXPECT_TRUE(kurl.ProtocolIs("ftp"));
 
-  kurl = KURL(KURL(), "http://host/");
+  kurl = KURL(NullURL(), "http://host/");
   EXPECT_TRUE(kurl.IsValid());
   kurl.SetHost("");
   EXPECT_FALSE(kurl.IsValid());
 
-  kurl = KURL(KURL(), "http-so://host/");
+  kurl = KURL(NullURL(), "http-so://host/");
   EXPECT_TRUE(kurl.IsValid());
   kurl.SetHost("");
   EXPECT_FALSE(kurl.IsValid());
 
-  kurl = KURL(KURL(), "https://host/");
+  kurl = KURL(NullURL(), "https://host/");
   EXPECT_TRUE(kurl.IsValid());
   kurl.SetHost("");
   EXPECT_FALSE(kurl.IsValid());
 
-  kurl = KURL(KURL(), "https-so://host/");
+  kurl = KURL(NullURL(), "https-so://host/");
   EXPECT_TRUE(kurl.IsValid());
   kurl.SetHost("");
   EXPECT_FALSE(kurl.IsValid());
 
-  kurl = KURL(KURL(), "ftp://host/");
+  kurl = KURL(NullURL(), "ftp://host/");
   EXPECT_TRUE(kurl.IsValid());
   kurl.SetHost("");
   EXPECT_FALSE(kurl.IsValid());
 
-  kurl = KURL(KURL(), "http:///noodles/pho.php");
-  EXPECT_STREQ("http://noodles/pho.php", kurl.GetString().Utf8().Data());
-  EXPECT_STREQ("noodles", kurl.Host().Utf8().Data());
+  kurl = KURL(NullURL(), "http:///noodles/pho.php");
+  EXPECT_STREQ("http://noodles/pho.php", kurl.GetString().Utf8().data());
+  EXPECT_STREQ("noodles", kurl.Host().Utf8().data());
   EXPECT_TRUE(kurl.IsValid());
 
-  kurl = KURL(KURL(), "https://username:password@/");
+  kurl = KURL(NullURL(), "https://username:password@/");
   EXPECT_FALSE(kurl.IsValid());
 
-  kurl = KURL(KURL(), "https://username:password@host/");
+  kurl = KURL(NullURL(), "https://username:password@host/");
   EXPECT_TRUE(kurl.IsValid());
 }
 
 TEST(KURLTest, Path) {
   const char kInitial[] = "http://www.google.com/path/foo";
-  KURL kurl(kParsedURLString, kInitial);
+  KURL kurl(kInitial);
 
   // Clear by setting a null string.
   String null_string;
   EXPECT_TRUE(null_string.IsNull());
   kurl.SetPath(null_string);
-  EXPECT_STREQ("http://www.google.com/", kurl.GetString().Utf8().Data());
+  EXPECT_STREQ("http://www.google.com/", kurl.GetString().Utf8().data());
 }
 
 // Test that setting the query to different things works. Thq query is handled
 // a littler differently than some of the other components.
 TEST(KURLTest, Query) {
   const char kInitial[] = "http://www.google.com/search?q=awesome";
-  KURL kurl(kParsedURLString, kInitial);
+  KURL kurl(kInitial);
 
   // Clear by setting a null string.
   String null_string;
   EXPECT_TRUE(null_string.IsNull());
   kurl.SetQuery(null_string);
-  EXPECT_STREQ("http://www.google.com/search", kurl.GetString().Utf8().Data());
+  EXPECT_STREQ("http://www.google.com/search", kurl.GetString().Utf8().data());
 
   // Clear by setting an empty string.
-  kurl = KURL(kParsedURLString, kInitial);
+  kurl = KURL(kInitial);
   String empty_string("");
   EXPECT_FALSE(empty_string.IsNull());
   kurl.SetQuery(empty_string);
-  EXPECT_STREQ("http://www.google.com/search?", kurl.GetString().Utf8().Data());
+  EXPECT_STREQ("http://www.google.com/search?", kurl.GetString().Utf8().data());
 
   // Set with something that begins in a question mark.
   const char kQuestion[] = "?foo=bar";
   kurl.SetQuery(kQuestion);
   EXPECT_STREQ("http://www.google.com/search?foo=bar",
-               kurl.GetString().Utf8().Data());
+               kurl.GetString().Utf8().data());
 
   // Set with something that doesn't begin in a question mark.
   const char kQuery[] = "foo=bar";
   kurl.SetQuery(kQuery);
   EXPECT_STREQ("http://www.google.com/search?foo=bar",
-               kurl.GetString().Utf8().Data());
+               kurl.GetString().Utf8().data());
 }
 
 TEST(KURLTest, Ref) {
-  KURL kurl(kParsedURLString, "http://foo/bar#baz");
+  KURL kurl("http://foo/bar#baz");
 
   // Basic ref setting.
-  KURL cur(kParsedURLString, "http://foo/bar");
+  KURL cur("http://foo/bar");
   cur.SetFragmentIdentifier("asdf");
-  EXPECT_STREQ("http://foo/bar#asdf", cur.GetString().Utf8().Data());
+  EXPECT_STREQ("http://foo/bar#asdf", cur.GetString().Utf8().data());
   cur = kurl;
   cur.SetFragmentIdentifier("asdf");
-  EXPECT_STREQ("http://foo/bar#asdf", cur.GetString().Utf8().Data());
+  EXPECT_STREQ("http://foo/bar#asdf", cur.GetString().Utf8().data());
 
   // Setting a ref to the empty string will set it to "#".
-  cur = KURL(kParsedURLString, "http://foo/bar");
+  cur = KURL("http://foo/bar");
   cur.SetFragmentIdentifier("");
-  EXPECT_STREQ("http://foo/bar#", cur.GetString().Utf8().Data());
+  EXPECT_STREQ("http://foo/bar#", cur.GetString().Utf8().data());
   cur = kurl;
   cur.SetFragmentIdentifier("");
-  EXPECT_STREQ("http://foo/bar#", cur.GetString().Utf8().Data());
+  EXPECT_STREQ("http://foo/bar#", cur.GetString().Utf8().data());
 
   // Setting the ref to the null string will clear it altogether.
-  cur = KURL(kParsedURLString, "http://foo/bar");
+  cur = KURL("http://foo/bar");
   cur.SetFragmentIdentifier(String());
-  EXPECT_STREQ("http://foo/bar", cur.GetString().Utf8().Data());
+  EXPECT_STREQ("http://foo/bar", cur.GetString().Utf8().data());
   cur = kurl;
   cur.SetFragmentIdentifier(String());
-  EXPECT_STREQ("http://foo/bar", cur.GetString().Utf8().Data());
+  EXPECT_STREQ("http://foo/bar", cur.GetString().Utf8().data());
 }
 
 TEST(KURLTest, Empty) {
@@ -580,20 +689,20 @@ TEST(KURLTest, Empty) {
   // Test non-hierarchical schemes resolving. The actual URLs will be different.
   // WebKit's one will set the string to "something.gif" and we'll set it to an
   // empty string. I think either is OK, so we just check our behavior.
-  KURL kurl3(KURL(kParsedURLString, "data:foo"), "something.gif");
+  KURL kurl3(KURL("data:foo"), "something.gif");
   EXPECT_TRUE(kurl3.IsEmpty());
   EXPECT_FALSE(kurl3.IsValid());
 
   // Test for weird isNull string input,
   // see: http://bugs.webkit.org/show_bug.cgi?id=16487
-  KURL kurl4(kParsedURLString, kurl.GetString());
+  KURL kurl4(kurl.GetString());
   EXPECT_TRUE(kurl4.IsEmpty());
   EXPECT_FALSE(kurl4.IsValid());
   EXPECT_TRUE(kurl4.GetString().IsNull());
   EXPECT_TRUE(kurl4.GetString().IsEmpty());
 
   // Resolving an empty URL on an invalid string.
-  KURL kurl5(KURL(), "foo.js");
+  KURL kurl5(NullURL(), "foo.js");
   // We'll be empty in this case, but KURL won't be. Should be OK.
   // EXPECT_EQ(kurl5.isEmpty(), kurl5.isEmpty());
   // EXPECT_EQ(kurl5.getString().isEmpty(), kurl5.getString().isEmpty());
@@ -601,14 +710,14 @@ TEST(KURLTest, Empty) {
   EXPECT_FALSE(kurl5.GetString().IsNull());
 
   // Empty string as input
-  KURL kurl6(kParsedURLString, "");
+  KURL kurl6("");
   EXPECT_TRUE(kurl6.IsEmpty());
   EXPECT_FALSE(kurl6.IsValid());
   EXPECT_FALSE(kurl6.GetString().IsNull());
   EXPECT_TRUE(kurl6.GetString().IsEmpty());
 
   // Non-empty but invalid C string as input.
-  KURL kurl7(kParsedURLString, "foo.js");
+  KURL kurl7("foo.js");
   // WebKit will actually say this URL has the string "foo.js" but is invalid.
   // We don't do that.
   // EXPECT_EQ(kurl7.isEmpty(), kurl7.isEmpty());
@@ -618,14 +727,14 @@ TEST(KURLTest, Empty) {
 
 TEST(KURLTest, UserPass) {
   const char* src = "http://user:pass@google.com/";
-  KURL kurl(kParsedURLString, src);
+  KURL kurl(src);
 
   // Clear just the username.
   kurl.SetUser("");
   EXPECT_EQ("http://:pass@google.com/", kurl.GetString());
 
   // Clear just the password.
-  kurl = KURL(kParsedURLString, src);
+  kurl = KURL(src);
   kurl.SetPass("");
   EXPECT_EQ("http://user@google.com/", kurl.GetString());
 
@@ -636,7 +745,7 @@ TEST(KURLTest, UserPass) {
 
 TEST(KURLTest, Offsets) {
   const char* src1 = "http://user:pass@google.com/foo/bar.html?baz=query#ref";
-  KURL kurl1(kParsedURLString, src1);
+  KURL kurl1(src1);
 
   EXPECT_EQ(17u, kurl1.HostStart());
   EXPECT_EQ(27u, kurl1.HostEnd());
@@ -645,7 +754,7 @@ TEST(KURLTest, Offsets) {
   EXPECT_EQ(32u, kurl1.PathAfterLastSlash());
 
   const char* src2 = "http://google.com/foo/";
-  KURL kurl2(kParsedURLString, src2);
+  KURL kurl2(src2);
 
   EXPECT_EQ(7u, kurl2.HostStart());
   EXPECT_EQ(17u, kurl2.HostEnd());
@@ -654,7 +763,7 @@ TEST(KURLTest, Offsets) {
   EXPECT_EQ(22u, kurl2.PathAfterLastSlash());
 
   const char* src3 = "javascript:foobar";
-  KURL kurl3(kParsedURLString, src3);
+  KURL kurl3(src3);
 
   EXPECT_EQ(11u, kurl3.HostStart());
   EXPECT_EQ(11u, kurl3.HostEnd());
@@ -665,7 +774,7 @@ TEST(KURLTest, Offsets) {
 
 TEST(KURLTest, DeepCopy) {
   const char kUrl[] = "http://www.google.com/";
-  KURL src(kParsedURLString, kUrl);
+  KURL src(kUrl);
   EXPECT_TRUE(src.GetString() ==
               kUrl);  // This really just initializes the cache.
   KURL dest = src.Copy();
@@ -679,7 +788,7 @@ TEST(KURLTest, DeepCopy) {
 TEST(KURLTest, DeepCopyInnerURL) {
   const char kUrl[] = "filesystem:http://www.google.com/temporary/test.txt";
   const char kInnerURL[] = "http://www.google.com/temporary";
-  KURL src(kParsedURLString, kUrl);
+  KURL src(kUrl);
   EXPECT_TRUE(src.GetString() == kUrl);
   EXPECT_TRUE(src.InnerURL()->GetString() == kInnerURL);
   KURL dest = src.Copy();
@@ -688,50 +797,50 @@ TEST(KURLTest, DeepCopyInnerURL) {
 }
 
 TEST(KURLTest, LastPathComponent) {
-  KURL url1(kParsedURLString, "http://host/path/to/file.txt");
+  KURL url1("http://host/path/to/file.txt");
   EXPECT_EQ("file.txt", url1.LastPathComponent());
 
-  KURL invalid_utf8(kParsedURLString, "http://a@9%aa%:/path/to/file.txt");
+  KURL invalid_utf8("http://a@9%aa%:/path/to/file.txt");
   EXPECT_EQ(String(), invalid_utf8.LastPathComponent());
 }
 
 TEST(KURLTest, IsHierarchical) {
-  KURL url1(kParsedURLString, "http://host/path/to/file.txt");
+  KURL url1("http://host/path/to/file.txt");
   EXPECT_TRUE(url1.IsHierarchical());
 
-  KURL invalid_utf8(kParsedURLString, "http://a@9%aa%:/path/to/file.txt");
+  KURL invalid_utf8("http://a@9%aa%:/path/to/file.txt");
   EXPECT_FALSE(invalid_utf8.IsHierarchical());
 }
 
 TEST(KURLTest, PathAfterLastSlash) {
-  KURL url1(kParsedURLString, "http://host/path/to/file.txt");
+  KURL url1("http://host/path/to/file.txt");
   EXPECT_EQ(20u, url1.PathAfterLastSlash());
 
-  KURL invalid_utf8(kParsedURLString, "http://a@9%aa%:/path/to/file.txt");
+  KURL invalid_utf8("http://a@9%aa%:/path/to/file.txt");
   EXPECT_EQ(0u, invalid_utf8.PathAfterLastSlash());
 }
 
 TEST(KURLTest, ProtocolIsInHTTPFamily) {
-  KURL url1(kParsedURLString, "http://host/path/to/file.txt");
+  KURL url1("http://host/path/to/file.txt");
   EXPECT_TRUE(url1.ProtocolIsInHTTPFamily());
 
-  KURL invalid_utf8(kParsedURLString, "http://a@9%aa%:/path/to/file.txt");
+  KURL invalid_utf8("http://a@9%aa%:/path/to/file.txt");
   EXPECT_FALSE(invalid_utf8.ProtocolIsInHTTPFamily());
 }
 
 TEST(KURLTest, ProtocolIs) {
-  KURL url1(kParsedURLString, "foo://bar");
+  KURL url1("foo://bar");
   EXPECT_TRUE(url1.ProtocolIs("foo"));
   EXPECT_FALSE(url1.ProtocolIs("foo-bar"));
 
-  KURL url2(kParsedURLString, "foo-bar:");
+  KURL url2("foo-bar:");
   EXPECT_TRUE(url2.ProtocolIs("foo-bar"));
   EXPECT_FALSE(url2.ProtocolIs("foo"));
 
-  KURL invalid_utf8(kParsedURLString, "http://a@9%aa%:");
+  KURL invalid_utf8("http://a@9%aa%:");
   EXPECT_FALSE(invalid_utf8.ProtocolIs("http"));
 
-  KURL capital(KURL(), "HTTP://www.example.text");
+  KURL capital(NullURL(), "HTTP://www.example.text");
   EXPECT_TRUE(capital.ProtocolIs("http"));
   EXPECT_EQ(capital.Protocol(), "http");
 }
@@ -755,9 +864,9 @@ TEST(KURLTest, strippedForUseAsReferrer) {
   };
 
   for (size_t i = 0; i < WTF_ARRAY_LENGTH(referrer_cases); i++) {
-    KURL kurl(kParsedURLString, referrer_cases[i].input);
+    KURL kurl(referrer_cases[i].input);
     String referrer = kurl.StrippedForUseAsReferrer();
-    EXPECT_STREQ(referrer_cases[i].output, referrer.Utf8().Data());
+    EXPECT_STREQ(referrer_cases[i].output, referrer.Utf8().data());
   }
 }
 

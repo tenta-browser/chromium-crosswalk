@@ -4,12 +4,14 @@
 
 #include "core/svg/SVGElementProxy.h"
 
+#include "core/dom/Document.h"
 #include "core/dom/IdTargetObserver.h"
 #include "core/svg/SVGElement.h"
 #include "core/svg/SVGResourceClient.h"
-#include "platform/loader/fetch/FetchInitiatorTypeNames.h"
 #include "platform/loader/fetch/FetchParameters.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
+#include "platform/loader/fetch/fetch_initiator_type_names.h"
 
 namespace blink {
 
@@ -32,7 +34,7 @@ class SVGElementProxy::IdObserver : public IdTargetObserver {
     clients_.clear();
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  virtual void Trace(blink::Visitor* visitor) {
     visitor->Trace(clients_);
     visitor->Trace(tree_scope_);
     IdTargetObserver::Trace(visitor);
@@ -115,7 +117,7 @@ void SVGElementProxy::RemoveClient(SVGResourceClient* client) {
       document_->RemoveClient(client);
     return;
   }
-  auto entry = clients_.Find(client);
+  auto entry = clients_.find(client);
   if (entry == clients_.end())
     return;
   IdObserver* observer = entry->value;
@@ -135,7 +137,9 @@ void SVGElementProxy::RemoveClient(SVGResourceClient* client) {
 void SVGElementProxy::Resolve(Document& document) {
   if (is_local_ || id_.IsEmpty() || url_.IsEmpty())
     return;
-  FetchParameters params(ResourceRequest(url_), FetchInitiatorTypeNames::css);
+  ResourceLoaderOptions options;
+  options.initiator_info.name = FetchInitiatorTypeNames::css;
+  FetchParameters params(ResourceRequest(url_), options);
   document_ = DocumentResource::FetchSVGDocument(params, document.Fetcher());
   url_ = String();
 }
@@ -155,7 +159,7 @@ SVGElement* SVGElementProxy::FindElement(TreeScope& tree_scope) {
   TreeScope* lookup_scope = TreeScopeForLookup(tree_scope);
   if (!lookup_scope)
     return nullptr;
-  if (Element* target_element = lookup_scope->GetElementById(id_)) {
+  if (Element* target_element = lookup_scope->getElementById(id_)) {
     SVGElementProxySet* proxy_set =
         target_element->IsSVGElement()
             ? ToSVGElement(target_element)->ElementProxySet()
@@ -173,7 +177,7 @@ void SVGElementProxy::ContentChanged(TreeScope& tree_scope) {
     observer->ContentChanged();
 }
 
-DEFINE_TRACE(SVGElementProxy) {
+void SVGElementProxy::Trace(blink::Visitor* visitor) {
   visitor->Trace(clients_);
   visitor->Trace(observers_);
   visitor->Trace(document_);
@@ -192,7 +196,7 @@ void SVGElementProxySet::NotifyContentChanged(TreeScope& tree_scope) {
     proxy->ContentChanged(tree_scope);
 }
 
-DEFINE_TRACE(SVGElementProxySet) {
+void SVGElementProxySet::Trace(blink::Visitor* visitor) {
   visitor->Trace(element_proxies_);
 }
 

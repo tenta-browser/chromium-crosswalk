@@ -8,7 +8,7 @@
 #include "base/android/jni_string.h"
 #include "base/logging.h"
 #include "jni/Client_jni.h"
-#include "remoting/client/audio_player_android.h"
+#include "remoting/client/audio/audio_player_android.h"
 #include "remoting/client/chromoting_client_runtime.h"
 #include "remoting/client/chromoting_session.h"
 #include "remoting/client/connect_to_host_info.h"
@@ -146,11 +146,6 @@ void JniClient::HandleExtensionMessage(const std::string& type,
   ScopedJavaLocalRef<jstring> j_message = ConvertUTF8ToJavaString(env, message);
 
   Java_Client_handleExtensionMessage(env, java_client_, j_type, j_message);
-}
-
-// static
-bool JniClient::RegisterJni(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 void JniClient::Connect(
@@ -310,7 +305,7 @@ base::WeakPtr<JniClient> JniClient::GetWeakPtr() {
   return weak_ptr_;
 }
 
-static jlong Init(JNIEnv* env, const JavaParamRef<jobject>& caller) {
+static jlong JNI_Client_Init(JNIEnv* env, const JavaParamRef<jobject>& caller) {
   return reinterpret_cast<intptr_t>(
       new JniClient(base::android::ScopedJavaGlobalRef<jobject>(env, caller)));
 }

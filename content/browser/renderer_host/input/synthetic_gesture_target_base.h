@@ -43,8 +43,6 @@ class SyntheticGestureTargetBase : public SyntheticGestureTarget {
   // SyntheticGestureTarget:
   void DispatchInputEventToPlatform(const blink::WebInputEvent& event) override;
 
-  void SetNeedsFlush() override;
-
   SyntheticGestureParams::GestureSourceType
   GetDefaultSyntheticGestureSourceType() const override;
 
@@ -53,6 +51,8 @@ class SyntheticGestureTargetBase : public SyntheticGestureTarget {
   float GetTouchSlopInDips() const override;
 
   float GetMinScalingSpanInDips() const override;
+
+  int GetMouseWheelMinimumGranularity() const override;
 
  protected:
   RenderWidgetHostImpl* render_widget_host() const { return host_; }

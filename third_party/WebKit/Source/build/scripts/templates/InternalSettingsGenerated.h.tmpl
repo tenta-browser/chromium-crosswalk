@@ -1,22 +1,22 @@
-{% from "macros.tmpl" import license %}
+{% from "templates/macros.tmpl" import license, source_files_for_generated_file %}
 {{ license() }}
+
+{{source_files_for_generated_file(template_file, input_files)}}
 
 #ifndef InternalSettingsGenerated_h
 #define InternalSettingsGenerated_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefCounted.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/RefCounted.h"
+#include "base/memory/scoped_refptr.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
 class Page;
 
-class InternalSettingsGenerated
-    : public GarbageCollectedFinalized<InternalSettingsGenerated>,
-      public ScriptWrappable {
+class InternalSettingsGenerated : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -27,7 +27,7 @@ class InternalSettingsGenerated
   void set{{setting.name|upper_first}}({{setting.type|to_passing_type}} {{setting.name}});
   {% endfor %}
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(Visitor*);
 
  private:
   Member<Page> m_page;

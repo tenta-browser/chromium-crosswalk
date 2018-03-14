@@ -15,11 +15,11 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/time/time.h"
-#include "components/metrics/proto/omnibox_event.pb.h"
-#include "components/metrics/proto/omnibox_input_type.pb.h"
 #include "components/search_engines/search_engine_type.h"
 #include "components/search_engines/template_url_data.h"
 #include "components/search_engines/template_url_id.h"
+#include "third_party/metrics_proto/omnibox_event.pb.h"
+#include "third_party/metrics_proto/omnibox_input_type.pb.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
 #include "url/third_party/mozilla/url_parse.h"
@@ -55,7 +55,6 @@ class TemplateURLRef {
   enum Type {
     SEARCH,
     SUGGEST,
-    INSTANT,
     IMAGE,
     NEW_TAB,
     CONTEXTUAL_SEARCH,
@@ -110,7 +109,7 @@ class TemplateURLRef {
     base::string16 original_query;
 
     // The type the original input query was identified as.
-    metrics::OmniboxInputType::Type input_type;
+    metrics::OmniboxInputType input_type;
 
     // The optional assisted query stats, aka AQS, used for logging purposes.
     // This string contains impressions of all autocomplete matches shown
@@ -146,8 +145,8 @@ class TemplateURLRef {
 
     // If set, ReplaceSearchTerms() will automatically append any extra query
     // params specified via the --extra-search-query-params command-line
-    // argument.  Generally, this should be set when dealing with the search or
-    // instant TemplateURLRefs of the default search engine and the caller cares
+    // argument.  Generally, this should be set when dealing with the search
+    // TemplateURLRefs of the default search engine and the caller cares
     // about the query portion of the URL.  Since neither TemplateURLRef nor
     // indeed TemplateURL know whether a TemplateURL is the default search
     // engine, callers instead must set this manually.
@@ -163,12 +162,6 @@ class TemplateURLRef {
 
     // When searching for an image, the original size of the image.
     gfx::Size image_original_size;
-
-    // If set, ReplaceSearchTerms() will append a param to the TemplateURLRef to
-    // update the search results page incrementally even if that is otherwise
-    // disabled by google.com preferences. See comments on
-    // chrome::ForceInstantResultsParam().
-    bool force_instant_results;
 
     // True if the search was made using the app list search box. Otherwise, the
     // search was made using the omnibox.
@@ -238,20 +231,26 @@ class TemplateURLRef {
   const std::string& GetSearchTermKey(
       const SearchTermsData& search_terms_data) const;
 
-  // If this TemplateURLRef is valid and contains one search term
-  // in its path, this returns the length of the subpath before the search term,
-  // otherwise this returns std::string::npos.
-  size_t GetSearchTermPositionInPath(
-      const SearchTermsData& search_terms_data) const;
-
   // If this TemplateURLRef is valid and contains one search term,
   // this returns the location of the search term,
   // otherwise this returns url::Parsed::QUERY.
   url::Parsed::ComponentType GetSearchTermKeyLocation(
       const SearchTermsData& search_terms_data) const;
 
+  // If this TemplateURLRef is valid and contains one search term,
+  // this returns the fixed prefix before the search term,
+  // otherwise this returns an empty string.
+  const std::string& GetSearchTermValuePrefix(
+      const SearchTermsData& search_terms_data) const;
+
+  // If this TemplateURLRef is valid and contains one search term,
+  // this returns the fixed suffix after the search term,
+  // otherwise this returns an empty string.
+  const std::string& GetSearchTermValueSuffix(
+      const SearchTermsData& search_terms_data) const;
+
   // Converts the specified term in our owner's encoding to a base::string16.
-  base::string16 SearchTermToString16(const std::string& term) const;
+  base::string16 SearchTermToString16(const base::StringPiece& term) const;
 
   // Returns true if this TemplateURLRef has a replacement term of
   // {google:baseURL} or {google:baseSuggestURL}.
@@ -296,14 +295,12 @@ class TemplateURLRef {
     GOOGLE_BASE_SUGGEST_URL,
     GOOGLE_CURRENT_PAGE_URL,
     GOOGLE_CURSOR_POSITION,
-    GOOGLE_FORCE_INSTANT_RESULTS,
     GOOGLE_IMAGE_ORIGINAL_HEIGHT,
     GOOGLE_IMAGE_ORIGINAL_WIDTH,
     GOOGLE_IMAGE_SEARCH_SOURCE,
     GOOGLE_IMAGE_THUMBNAIL,
     GOOGLE_IMAGE_URL,
     GOOGLE_INPUT_TYPE,
-    GOOGLE_INSTANT_EXTENDED_ENABLED,
     GOOGLE_IOS_SEARCH_LANGUAGE,
     GOOGLE_NTP_IS_THEMED,
     GOOGLE_CONTEXTUAL_SEARCH_VERSION,
@@ -320,7 +317,9 @@ class TemplateURLRef {
     GOOGLE_SUGGEST_REQUEST_ID,
     GOOGLE_UNESCAPED_SEARCH_TERMS,
     LANGUAGE,
+    MAIL_RU_REFERRAL_ID,
     SEARCH_TERMS,
+    YANDEX_REFERRAL_ID,
   };
 
   // Used to identify an element of the raw url that can be replaced.
@@ -442,7 +441,6 @@ class TemplateURLRef {
   mutable std::string port_;
   mutable std::string path_;
   mutable std::string search_term_key_;
-  mutable size_t search_term_position_in_path_;
   mutable url::Parsed::ComponentType search_term_key_location_;
   mutable std::string search_term_value_prefix_;
   mutable std::string search_term_value_suffix_;
@@ -482,20 +480,31 @@ class TemplateURL {
   // An AssociatedExtensionInfo represents information about the extension that
   // added the search engine.
   struct AssociatedExtensionInfo {
-    explicit AssociatedExtensionInfo(const std::string& extension_id);
+    AssociatedExtensionInfo(const std::string& extension_id,
+                            base::Time install_time,
+                            bool wants_to_be_default_engine);
     ~AssociatedExtensionInfo();
 
     std::string extension_id;
 
-    // Whether the search engine is supposed to be default.
-    bool wants_to_be_default_engine;
-
     // Used to resolve conflicts when there are multiple extensions specifying
     // the default search engine. The most recently-installed wins.
     base::Time install_time;
+
+    // Whether the search engine is supposed to be default.
+    bool wants_to_be_default_engine;
   };
 
   explicit TemplateURL(const TemplateURLData& data, Type type = NORMAL);
+
+  // Constructor for extension controlled engine. |type| must be
+  // NORMAL_CONTROLLED_BY_EXTENSION or OMNIBOX_API_EXTENSION.
+  TemplateURL(const TemplateURLData& data,
+              Type type,
+              std::string extension_id,
+              base::Time install_time,
+              bool wants_to_be_default_engine);
+
   ~TemplateURL();
 
   // Generates a suitable keyword for the specified url, which must be valid.
@@ -512,11 +521,6 @@ class TemplateURL {
                           const TemplateURLData* data,
                           const SearchTermsData& search_terms_data);
 
-  // Special case for search_terms_replacement_key comparison, because of
-  // its special initialization in TemplateURL constructor.
-  static bool SearchTermsReplacementKeysMatch(const std::string& key1,
-                                              const std::string& key2);
-
   const TemplateURLData& data() const { return data_; }
 
   const base::string16& short_name() const { return data_.short_name(); }
@@ -528,7 +532,6 @@ class TemplateURL {
 
   const std::string& url() const { return data_.url(); }
   const std::string& suggestions_url() const { return data_.suggestions_url; }
-  const std::string& instant_url() const { return data_.instant_url; }
   const std::string& image_url() const { return data_.image_url; }
   const std::string& new_tab_url() const { return data_.new_tab_url; }
   const std::string& contextual_search_url() const {
@@ -540,9 +543,6 @@ class TemplateURL {
   const std::string& suggestions_url_post_params() const {
     return data_.suggestions_url_post_params;
   }
-  const std::string& instant_url_post_params() const {
-    return data_.instant_url_post_params;
-  }
   const std::string& image_url_post_params() const {
     return data_.image_url_post_params;
   }
@@ -550,6 +550,10 @@ class TemplateURL {
     return data_.alternate_urls;
   }
   const GURL& favicon_url() const { return data_.favicon_url; }
+
+  const GURL& logo_url() const { return data_.logo_url; }
+
+  const GURL& doodle_url() const { return data_.doodle_url; }
 
   const GURL& originating_url() const { return data_.originating_url; }
 
@@ -573,17 +577,11 @@ class TemplateURL {
 
   const std::string& sync_guid() const { return data_.sync_guid; }
 
-  // TODO(beaudoin): Rename this when renaming HasSearchTermsReplacementKey().
-  const std::string& search_terms_replacement_key() const {
-    return data_.search_terms_replacement_key;
-  }
-
   const std::vector<TemplateURLRef>& url_refs() const { return url_refs_; }
   const TemplateURLRef& url_ref() const { return *url_ref_; }
   const TemplateURLRef& suggestions_url_ref() const {
     return suggestions_url_ref_;
   }
-  const TemplateURLRef& instant_url_ref() const { return instant_url_ref_; }
   const TemplateURLRef& image_url_ref() const { return image_url_ref_; }
   const TemplateURLRef& new_tab_url_ref() const { return new_tab_url_ref_; }
   const TemplateURLRef& contextual_search_url_ref() const {
@@ -643,14 +641,6 @@ class TemplateURL {
   bool IsSearchURL(const GURL& url,
                    const SearchTermsData& search_terms_data) const;
 
-  // Returns true if the specified |url| contains the search terms replacement
-  // key in either the query or the ref. This method does not verify anything
-  // else about the URL. In particular, it does not check that the domain
-  // matches that of this TemplateURL.
-  // TODO(beaudoin): Rename this to reflect that it really checks for an
-  // InstantExtended capable URL.
-  bool HasSearchTermsReplacementKey(const GURL& url) const;
-
   // Given a |url| corresponding to this TemplateURL, identifies the search
   // terms and replaces them with the ones in |search_terms_args|, leaving the
   // other parameters untouched. If the replacement fails, returns false and
@@ -660,7 +650,7 @@ class TemplateURL {
       const GURL& url,
       const TemplateURLRef::SearchTermsArgs& search_terms_args,
       const SearchTermsData& search_terms_data,
-      GURL* result);
+      GURL* result) const;
 
   // Encodes the search terms from |search_terms_args| so that we know the
   // |input_encoding|. Returns the |encoded_terms| and the
@@ -723,7 +713,6 @@ class TemplateURL {
   TemplateURLRef* url_ref_;
 
   TemplateURLRef suggestions_url_ref_;
-  TemplateURLRef instant_url_ref_;
   TemplateURLRef image_url_ref_;
   TemplateURLRef new_tab_url_ref_;
   TemplateURLRef contextual_search_url_ref_;

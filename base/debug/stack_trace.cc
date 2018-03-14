@@ -209,12 +209,12 @@ const void *const *StackTrace::Addresses(size_t* count) const {
   *count = count_;
   if (count_)
     return trace_;
-  return NULL;
+  return nullptr;
 }
 
 std::string StackTrace::ToString() const {
   std::stringstream stream;
-#if !defined(__UCLIBC__)
+#if !defined(__UCLIBC__) && !defined(_AIX)
   OutputToStream(&stream);
 #endif
   return stream.str();

@@ -13,6 +13,7 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
@@ -23,6 +24,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
+#include "chrome/browser/extensions/activity_log/activity_log_task_runner.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/common/chrome_constants.h"
@@ -38,8 +40,6 @@
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
 #endif
-
-using content::BrowserThread;
 
 namespace extensions {
 
@@ -123,7 +123,7 @@ class FullStreamUIPolicyTest : public testing::Test {
   }
 
   static void TimeoutCallback() {
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
     FAIL() << "Policy test timed out waiting for results";
   }
 
@@ -822,8 +822,8 @@ TEST_F(FullStreamUIPolicyTest, CapReturns) {
   }
 
   policy->Flush();
-  BrowserThread::PostTaskAndReply(
-      BrowserThread::DB, FROM_HERE, base::Bind(&base::DoNothing),
+  GetActivityLogTaskRunner()->PostTaskAndReply(
+      FROM_HERE, base::BindOnce(&base::DoNothing),
       base::MessageLoop::current()->QuitWhenIdleClosure());
   base::RunLoop().Run();
 

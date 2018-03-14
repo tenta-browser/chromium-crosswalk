@@ -10,9 +10,9 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/browser/site_instance_impl.h"
-#include "content/common/resource_request_body_impl.h"
 #include "content/public/common/page_state.h"
 #include "content/public/common/referrer.h"
+#include "content/public/common/resource_request_body.h"
 
 namespace content {
 
@@ -38,6 +38,8 @@ class CONTENT_EXPORT FrameNavigationEntry
                        scoped_refptr<SiteInstanceImpl> source_site_instance,
                        const GURL& url,
                        const Referrer& referrer,
+                       const std::vector<GURL>& redirect_chain,
+                       const PageState& page_state,
                        const std::string& method,
                        int64_t post_id);
 
@@ -132,7 +134,8 @@ class CONTENT_EXPORT FrameNavigationEntry
 
   // The data sent during a POST navigation. Returns nullptr if the navigation
   // is not a POST.
-  scoped_refptr<ResourceRequestBodyImpl> GetPostData() const;
+  scoped_refptr<ResourceRequestBody> GetPostData(
+      std::string* content_type) const;
 
  private:
   friend class base::RefCounted<FrameNavigationEntry>;

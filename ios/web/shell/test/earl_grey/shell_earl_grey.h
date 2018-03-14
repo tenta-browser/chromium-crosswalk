@@ -19,6 +19,19 @@
 // a timeout.
 + (void)loadURL:(const GURL&)URL;
 
+// Waits for the current web view to contain |text|. If the condition is not met
+// within a timeout, a GREYAssert is induced.
++ (void)waitForWebViewContainingText:(const std::string)text;
+
+// Waits for the current web view to contain a css selector matching |selector|.
+// If the condition is not met within a timeout, a GREYAssert is induced.
++ (void)waitForWebViewContainingCSSSelector:(std::string)selector;
+
+// Waits for the current web view to not contain a css selector matching
+// |selector|. If the condition is not met within a timeout, a GREYAssert is
+// induced.
++ (void)waitForWebViewNotContainingCSSSelector:(std::string)selector;
+
 @end
 
 #endif  // IOS_WEB_SHELL_TEST_EARL_GREY_SHELL_EARL_GREY_H_

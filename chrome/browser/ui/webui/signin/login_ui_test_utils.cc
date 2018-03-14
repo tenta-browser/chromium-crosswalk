@@ -111,6 +111,35 @@ void RunLoopFor(base::TimeDelta duration) {
 
 
 namespace login_ui_test_utils {
+class SigninViewControllerTestUtil {
+ public:
+  static bool TryDismissSyncConfirmationDialog(Browser* browser) {
+#if defined(OS_CHROMEOS)
+    NOTREACHED();
+    return false;
+#else
+    SigninViewController* signin_view_controller =
+        browser->signin_view_controller();
+    DCHECK_NE(signin_view_controller, nullptr);
+    if (!signin_view_controller->ShowsModalDialog())
+      return false;
+    content::WebContents* dialog_web_contents =
+        signin_view_controller->GetModalDialogWebContentsForTesting();
+    DCHECK_NE(dialog_web_contents, nullptr);
+    std::string message;
+    std::string js =
+        "if (document.getElementById('confirmButton') == null) {"
+        "  window.domAutomationController.send('NotFound');"
+        "} else {"
+        "  document.getElementById('confirmButton').click();"
+        "  window.domAutomationController.send('Ok');"
+        "}";
+    EXPECT_TRUE(content::ExecuteScriptAndExtractString(dialog_web_contents, js,
+                                                       &message));
+    return message == "Ok";
+#endif
+  }
+};
 
 void WaitUntilUIReady(Browser* browser) {
   std::string message;
@@ -225,7 +254,8 @@ bool SignInWithUI(Browser* browser,
       SigninTrackerFactory::CreateForProfile(browser->profile(),
                                              &signin_observer);
 
-  GURL signin_url = signin::GetPromoURL(access_point, signin_reason, false);
+  GURL signin_url =
+      signin::GetPromoURLForTab(access_point, signin_reason, false);
   DVLOG(1) << "Navigating to " << signin_url;
   // For some tests, the window is not shown yet and this might be the first tab
   // navigation, so GetActiveWebContents() for CURRENT_TAB is NULL. That's why
@@ -252,38 +282,10 @@ bool SignInWithUI(Browser* browser,
                       signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT);
 }
 
-bool TryDismissSyncConfirmationDialog(Browser* browser) {
-#if defined(OS_CHROMEOS)
-  NOTREACHED();
-  return false;
-#else
-  SigninViewController* signin_view_controller =
-      browser->signin_view_controller();
-  DCHECK_NE(signin_view_controller, nullptr);
-  SigninViewControllerDelegate* delegate = signin_view_controller->delegate();
-  if (delegate == nullptr)
-    return false;
-  content::WebContents* dialog_web_contents =
-      delegate->web_contents_for_testing();
-  DCHECK_NE(dialog_web_contents, nullptr);
-  std::string message;
-  std::string js =
-      "if (document.getElementById('confirmButton') == null) {"
-      "  window.domAutomationController.send('NotFound');"
-      "} else {"
-      "  document.getElementById('confirmButton').click();"
-      "  window.domAutomationController.send('Ok');"
-      "}";
-  EXPECT_TRUE(content::ExecuteScriptAndExtractString(dialog_web_contents, js,
-                                                     &message));
-  return message == "Ok";
-#endif
-}
-
 bool DismissSyncConfirmationDialog(Browser* browser, base::TimeDelta timeout) {
   const base::Time expire_time = base::Time::Now() + timeout;
   while (base::Time::Now() <= expire_time) {
-    if (TryDismissSyncConfirmationDialog(browser))
+    if (SigninViewControllerTestUtil::TryDismissSyncConfirmationDialog(browser))
       return true;
     RunLoopFor(base::TimeDelta::FromMilliseconds(1000));
   }

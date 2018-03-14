@@ -22,21 +22,20 @@
 #include "media/audio/mac/audio_auhal_mac.h"
 #include "media/audio/mac/audio_input_mac.h"
 #include "media/audio/mac/audio_low_latency_input_mac.h"
+#include "media/audio/mac/coreaudio_dispatch_override.h"
 #include "media/audio/mac/scoped_audio_unit.h"
 #include "media/base/audio_parameters.h"
+#include "media/base/audio_timestamp_helper.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/channel_layout.h"
 #include "media/base/limits.h"
+#include "media/base/mac/audio_latency_mac.h"
 #include "media/base/media_switches.h"
 
 namespace media {
 
 // Maximum number of output streams that can be open simultaneously.
 static const int kMaxOutputStreams = 50;
-
-// Define bounds for for low-latency input and output streams.
-static const int kMinimumInputOutputBufferSize = 128;
-static const int kMaximumInputOutputBufferSize = 4096;
 
 // Default sample-rate on most Apple hardware.
 static const int kFallbackSampleRate = 44100;
@@ -53,6 +52,9 @@ static AudioObjectPropertyAddress GetAudioObjectPropertyAddress(
       selector, scope, kAudioObjectPropertyElementMaster};
   return property_address;
 }
+
+static const AudioObjectPropertyAddress kNoiseReductionPropertyAddress = {
+    'nzca', kAudioDevicePropertyScopeInput, kAudioObjectPropertyElementMaster};
 
 // Get IO buffer size range from HAL given device id and scope.
 static OSStatus GetIOBufferFrameSizeRange(AudioDeviceID device_id,
@@ -509,13 +511,9 @@ class AudioManagerMac::AudioPowerObserver : public base::PowerObserver {
   DISALLOW_COPY_AND_ASSIGN(AudioPowerObserver);
 };
 
-AudioManagerMac::AudioManagerMac(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
-    AudioLogFactory* audio_log_factory)
-    : AudioManagerBase(std::move(task_runner),
-                       std::move(worker_task_runner),
-                       audio_log_factory),
+AudioManagerMac::AudioManagerMac(std::unique_ptr<AudioThread> audio_thread,
+                                 AudioLogFactory* audio_log_factory)
+    : AudioManagerBase(std::move(audio_thread), audio_log_factory),
       current_sample_rate_(0),
       current_output_device_(kAudioDeviceUnknown),
       in_shutdown_(false) {
@@ -529,13 +527,35 @@ AudioManagerMac::AudioManagerMac(
                             base::Unretained(this)));
 }
 
-AudioManagerMac::~AudioManagerMac() {
-  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+AudioManagerMac::~AudioManagerMac() = default;
+
+void AudioManagerMac::ShutdownOnAudioThread() {
   // We are now in shutdown mode. This flag disables MaybeChangeBufferSize()
   // and IncreaseIOBufferSizeIfPossible() which both touches native Core Audio
   // APIs and they can fail and disrupt tests during shutdown.
   in_shutdown_ = true;
-  Shutdown();
+
+  // Even if tasks to close the streams are enqueued, they would not run
+  // leading to CHECKs getting hit in the destructor about open streams. Close
+  // them explicitly here. crbug.com/608049.
+  for (auto iter = basic_input_streams_.begin();
+       iter != basic_input_streams_.end();) {
+    // Note: Closing the stream will invalidate the iterator.
+    // Increment the iterator before closing the stream.
+    AudioInputStream* stream = *iter++;
+    stream->Close();
+  }
+  for (auto iter = low_latency_input_streams_.begin();
+       iter != low_latency_input_streams_.end();) {
+    // Note: Closing the stream will invalidate the iterator.
+    // Increment the iterator before closing the stream.
+    AudioInputStream* stream = *iter++;
+    stream->Close();
+  }
+  CHECK(basic_input_streams_.empty());
+  CHECK(low_latency_input_streams_.empty());
+
+  AudioManagerBase::ShutdownOnAudioThread();
 }
 
 bool AudioManagerMac::HasAudioOutputDevices() {
@@ -623,10 +643,15 @@ AudioParameters AudioManagerMac::GetInputStreamParameters(
   // http://crbug.com/154352.
   const int buffer_size = ChooseBufferSize(true, sample_rate);
 
-  // TODO(xians): query the native channel layout for the specific device.
-  return AudioParameters(
-      AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout,
-      sample_rate, 16, buffer_size);
+  // TODO(grunell): query the native channel layout for the specific device.
+  AudioParameters params(AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout,
+                         sample_rate, 16, buffer_size);
+
+  if (DeviceSupportsAmbientNoiseReduction(device)) {
+    params.set_effects(AudioParameters::NOISE_SUPPRESSION);
+  }
+
+  return params;
 }
 
 std::string AudioManagerMac::GetAssociatedOutputDeviceID(
@@ -839,11 +864,17 @@ AudioParameters AudioManagerMac::GetPreferredOutputStreamParameters(
   // Allow pass through buffer sizes.  If concurrent input and output streams
   // exist, they will use the smallest buffer size amongst them.  As such, each
   // stream must be able to FIFO requests appropriately when this happens.
-  int buffer_size = ChooseBufferSize(false, hardware_sample_rate);
+  int buffer_size;
   if (has_valid_input_params) {
+    // If passed in via the input_params we allow buffer sizes to go as
+    // low as the the kMinAudioBufferSize, ignoring what
+    // ChooseBufferSize() normally returns.
     buffer_size =
-        std::min(kMaximumInputOutputBufferSize,
-                 std::max(input_params.frames_per_buffer(), buffer_size));
+        std::min(static_cast<int>(limits::kMaxAudioBufferSize),
+                 std::max(input_params.frames_per_buffer(),
+                          static_cast<int>(limits::kMinAudioBufferSize)));
+  } else {
+    buffer_size = ChooseBufferSize(false, hardware_sample_rate);
   }
 
   int hardware_channels;
@@ -870,6 +901,7 @@ AudioParameters AudioManagerMac::GetPreferredOutputStreamParameters(
 
 void AudioManagerMac::InitializeOnAudioThread() {
   DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+  InitializeCoreAudioDispatchOverride();
   power_observer_.reset(new AudioPowerObserver());
 }
 
@@ -890,7 +922,7 @@ void AudioManagerMac::HandleDeviceChanges() {
 }
 
 int AudioManagerMac::ChooseBufferSize(bool is_input, int sample_rate) {
-  // kMinimumInputOutputBufferSize is too small for the output side because
+  // kMinAudioBufferSize is too small for the output side because
   // CoreAudio can get into under-run if the renderer fails delivering data
   // to the browser within the allowed time by the OS. The workaround is to
   // use 256 samples as the default output buffer size for sample rates
@@ -898,20 +930,12 @@ int AudioManagerMac::ChooseBufferSize(bool is_input, int sample_rate) {
   // TODO(xians): Remove this workaround after WebAudio supports user defined
   // buffer size.  See https://github.com/WebAudio/web-audio-api/issues/348
   // for details.
-  int buffer_size = is_input ?
-      kMinimumInputOutputBufferSize : 2 * kMinimumInputOutputBufferSize;
+  int buffer_size =
+      is_input ? limits::kMinAudioBufferSize : 2 * limits::kMinAudioBufferSize;
   const int user_buffer_size = GetUserBufferSize();
-  if (user_buffer_size) {
-    buffer_size = user_buffer_size;
-  } else if (sample_rate > 48000) {
-    // The default buffer size is too small for higher sample rates and may lead
-    // to glitching.  Adjust upwards by multiples of the default size.
-    if (sample_rate <= 96000)
-      buffer_size = 2 * kMinimumInputOutputBufferSize;
-    else if (sample_rate <= 192000)
-      buffer_size = 4 * kMinimumInputOutputBufferSize;
-  }
-
+  buffer_size = user_buffer_size
+                    ? user_buffer_size
+                    : GetMinAudioBufferSizeMacOS(buffer_size, sample_rate);
   return buffer_size;
 }
 
@@ -1054,6 +1078,134 @@ bool AudioManagerMac::MaybeChangeBufferSize(AudioDeviceID device_id,
   return (result == noErr);
 }
 
+// static
+base::TimeDelta AudioManagerMac::GetHardwareLatency(
+    AudioUnit audio_unit,
+    AudioDeviceID device_id,
+    AudioObjectPropertyScope scope,
+    int sample_rate) {
+  if (!audio_unit || device_id == kAudioObjectUnknown) {
+    DLOG(WARNING) << "Audio unit object is NULL or device ID is unknown";
+    return base::TimeDelta();
+  }
+
+  // Get audio unit latency.
+  Float64 audio_unit_latency_sec = 0.0;
+  UInt32 size = sizeof(audio_unit_latency_sec);
+  OSStatus result = AudioUnitGetProperty(audio_unit, kAudioUnitProperty_Latency,
+                                         kAudioUnitScope_Global, 0,
+                                         &audio_unit_latency_sec, &size);
+  OSSTATUS_DLOG_IF(WARNING, result != noErr, result)
+      << "Could not get audio unit latency";
+
+  // Get audio device latency.
+  AudioObjectPropertyAddress property_address = {
+      kAudioDevicePropertyLatency, scope, kAudioObjectPropertyElementMaster};
+  UInt32 device_latency_frames = 0;
+  size = sizeof(device_latency_frames);
+  result = AudioObjectGetPropertyData(device_id, &property_address, 0, nullptr,
+                                      &size, &device_latency_frames);
+  OSSTATUS_DLOG_IF(WARNING, result != noErr, result)
+      << "Could not get audio device latency.";
+
+  // Retrieve stream ids and take the stream latency from the first stream.
+  // There may be multiple streams with different latencies, but since we're
+  // likely using this delay information for a/v sync we must choose one of
+  // them; Apple recommends just taking the first entry.
+  //
+  // TODO(dalecurtis): Refactor all these "get data size" + "get data" calls
+  // into a common utility function that just returns a std::unique_ptr.
+  UInt32 stream_latency_frames = 0;
+  property_address.mSelector = kAudioDevicePropertyStreams;
+  result = AudioObjectGetPropertyDataSize(device_id, &property_address, 0,
+                                          nullptr, &size);
+  if (result == noErr && size >= sizeof(AudioStreamID)) {
+    std::unique_ptr<uint8_t[]> stream_id_storage(new uint8_t[size]);
+    AudioStreamID* stream_ids =
+        reinterpret_cast<AudioStreamID*>(stream_id_storage.get());
+    result = AudioObjectGetPropertyData(device_id, &property_address, 0,
+                                        nullptr, &size, stream_ids);
+    if (result == noErr) {
+      property_address.mSelector = kAudioStreamPropertyLatency;
+      size = sizeof(stream_latency_frames);
+      result =
+          AudioObjectGetPropertyData(stream_ids[0], &property_address, 0,
+                                     nullptr, &size, &stream_latency_frames);
+      OSSTATUS_DLOG_IF(WARNING, result != noErr, result)
+          << "Could not get stream latency for stream #0.";
+    } else {
+      OSSTATUS_DLOG(WARNING, result)
+          << "Could not get audio device stream ids.";
+    }
+  } else {
+    OSSTATUS_DLOG_IF(WARNING, result != noErr, result)
+        << "Could not get audio device stream ids size.";
+  }
+
+  return base::TimeDelta::FromSecondsD(audio_unit_latency_sec) +
+         AudioTimestampHelper::FramesToTime(
+             device_latency_frames + stream_latency_frames, sample_rate);
+}
+
+bool AudioManagerMac::DeviceSupportsAmbientNoiseReduction(
+    AudioDeviceID device_id) {
+  return AudioObjectHasProperty(device_id, &kNoiseReductionPropertyAddress);
+}
+
+bool AudioManagerMac::SuppressNoiseReduction(AudioDeviceID device_id) {
+  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+  DCHECK(DeviceSupportsAmbientNoiseReduction(device_id));
+  NoiseReductionState& state = device_noise_reduction_states_[device_id];
+  if (state.suppression_count == 0) {
+    UInt32 initially_enabled = 0;
+    UInt32 size = sizeof(initially_enabled);
+    OSStatus result =
+        AudioObjectGetPropertyData(device_id, &kNoiseReductionPropertyAddress,
+                                   0, nullptr, &size, &initially_enabled);
+    if (result != noErr)
+      return false;
+
+    if (initially_enabled) {
+      const UInt32 disable = 0;
+      OSStatus result =
+          AudioObjectSetPropertyData(device_id, &kNoiseReductionPropertyAddress,
+                                     0, nullptr, sizeof(disable), &disable);
+      if (result != noErr) {
+        OSSTATUS_DLOG(WARNING, result)
+            << "Failed to disable ambient noise reduction for device: "
+            << std::hex << device_id;
+      }
+      state.initial_state = NoiseReductionState::ENABLED;
+    } else {
+      state.initial_state = NoiseReductionState::DISABLED;
+    }
+  }
+
+  // Only increase the counter if suppression succeeded or is already active.
+  ++state.suppression_count;
+  return true;
+}
+
+void AudioManagerMac::UnsuppressNoiseReduction(AudioDeviceID device_id) {
+  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+  NoiseReductionState& state = device_noise_reduction_states_[device_id];
+  DCHECK_NE(state.suppression_count, 0);
+  --state.suppression_count;
+  if (state.suppression_count == 0) {
+    if (state.initial_state == NoiseReductionState::ENABLED) {
+      const UInt32 enable = 1;
+      OSStatus result =
+          AudioObjectSetPropertyData(device_id, &kNoiseReductionPropertyAddress,
+                                     0, nullptr, sizeof(enable), &enable);
+      if (result != noErr) {
+        OSSTATUS_DLOG(WARNING, result)
+            << "Failed to re-enable ambient noise reduction for device: "
+            << std::hex << device_id;
+      }
+    }
+  }
+}
+
 bool AudioManagerMac::IncreaseIOBufferSizeIfPossible(AudioDeviceID device_id) {
   DCHECK(GetTaskRunner()->BelongsToCurrentThread());
   DVLOG(1) << "IncreaseIOBufferSizeIfPossible(id=0x" << std::hex << device_id
@@ -1185,13 +1337,11 @@ void AudioManagerMac::ReleaseInputStream(AudioInputStream* stream) {
   AudioManagerBase::ReleaseInputStream(stream);
 }
 
-ScopedAudioManagerPtr CreateAudioManager(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+std::unique_ptr<AudioManager> CreateAudioManager(
+    std::unique_ptr<AudioThread> audio_thread,
     AudioLogFactory* audio_log_factory) {
-  return ScopedAudioManagerPtr(
-      new AudioManagerMac(std::move(task_runner), std::move(worker_task_runner),
-                          audio_log_factory));
+  return base::MakeUnique<AudioManagerMac>(std::move(audio_thread),
+                                           audio_log_factory);
 }
 
 }  // namespace media

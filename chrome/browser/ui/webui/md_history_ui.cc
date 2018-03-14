@@ -4,6 +4,11 @@
 
 #include "chrome/browser/ui/webui/md_history_ui.h"
 
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
@@ -21,17 +26,13 @@
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/locale_settings.h"
-#include "chrome/grit/theme_resources.h"
-#include "components/grit/components_scaled_resources.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
-#include "components/search/search.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/resource/resource_bundle.h"
 
 namespace {
 
@@ -67,17 +68,13 @@ content::WebUIDataSource* CreateMdHistoryUIHTMLSource(Profile* profile,
                              IDS_HISTORY_DELETE_PRIOR_VISITS_CONFIRM_BUTTON);
   source->AddLocalizedString("deleteSession",
                              IDS_HISTORY_OTHER_SESSIONS_HIDE_FOR_NOW);
-  source->AddLocalizedString(
-      "deleteWarning", IDS_HISTORY_DELETE_PRIOR_VISITS_WARNING_NO_INCOGNITO);
+  source->AddLocalizedString("deleteWarning",
+                             IDS_HISTORY_DELETE_PRIOR_VISITS_WARNING);
   source->AddLocalizedString("entrySummary", IDS_HISTORY_ENTRY_SUMMARY);
   source->AddLocalizedString("expandSessionButton",
                              IDS_HISTORY_OTHER_SESSIONS_EXPAND_SESSION);
   source->AddLocalizedString("foundSearchResults",
                              IDS_HISTORY_FOUND_SEARCH_RESULTS);
-  source->AddLocalizedString("hasSyncedResults",
-                             IDS_MD_HISTORY_HAS_SYNCED_RESULTS);
-  source->AddLocalizedString("hasSyncedResultsDescription",
-                             IDS_MD_HISTORY_HAS_SYNCED_RESULTS_DESCRIPTION);
   source->AddLocalizedString("historyMenuButton",
                              IDS_MD_HISTORY_HISTORY_MENU_DESCRIPTION);
   source->AddLocalizedString("historyMenuItem",
@@ -95,12 +92,6 @@ content::WebUIDataSource* CreateMdHistoryUIHTMLSource(Profile* profile,
   source->AddLocalizedString("noSearchResults", IDS_HISTORY_NO_SEARCH_RESULTS);
   source->AddLocalizedString("noSyncedResults",
                              IDS_MD_HISTORY_NO_SYNCED_RESULTS);
-  source->AddLocalizedString("rangeAllTime", IDS_HISTORY_RANGE_ALL_TIME);
-  source->AddLocalizedString("rangeWeek", IDS_HISTORY_RANGE_WEEK);
-  source->AddLocalizedString("rangeMonth", IDS_HISTORY_RANGE_MONTH);
-  source->AddLocalizedString("rangeToday", IDS_HISTORY_RANGE_TODAY);
-  source->AddLocalizedString("rangeNext", IDS_HISTORY_RANGE_NEXT);
-  source->AddLocalizedString("rangePrevious", IDS_HISTORY_RANGE_PREVIOUS);
   source->AddLocalizedString("removeBookmark", IDS_HISTORY_REMOVE_BOOKMARK);
   source->AddLocalizedString("removeFromHistory", IDS_HISTORY_REMOVE_PAGE);
   source->AddLocalizedString("removeSelected",
@@ -122,7 +113,7 @@ content::WebUIDataSource* CreateMdHistoryUIHTMLSource(Profile* profile,
       l10n_util::GetStringFUTF16(
           IDS_HISTORY_OTHER_FORMS_OF_HISTORY,
           l10n_util::GetStringUTF16(
-              IDS_SETTINGS_CLEAR_DATA_WEB_HISTORY_URL_IN_HISTORY)));
+              IDS_SETTINGS_CLEAR_DATA_MYACTIVITY_URL_IN_HISTORY)));
 
   PrefService* prefs = profile->GetPrefs();
   bool allow_deleting_history =
@@ -146,7 +137,7 @@ content::WebUIDataSource* CreateMdHistoryUIHTMLSource(Profile* profile,
      IDR_MD_HISTORY_IMAGES_100_SIGN_IN_PROMO_JPG},
     {"images/200/sign_in_promo.jpg",
      IDR_MD_HISTORY_IMAGES_200_SIGN_IN_PROMO_JPG},
-#if !BUILDFLAG(USE_VULCANIZE)
+#if !BUILDFLAG(OPTIMIZE_WEBUI)
     {"app.html", IDR_MD_HISTORY_APP_HTML},
     {"app.js", IDR_MD_HISTORY_APP_JS},
     {"browser_service.html", IDR_MD_HISTORY_BROWSER_SERVICE_HTML},
@@ -176,15 +167,14 @@ content::WebUIDataSource* CreateMdHistoryUIHTMLSource(Profile* profile,
 #endif
   };
 
-  std::unordered_set<std::string> exclude_from_gzip;
-  for (size_t i = 0; i < arraysize(uncompressed_resources); ++i) {
-    const UncompressedResource& resource = uncompressed_resources[i];
+  std::vector<std::string> exclude_from_gzip;
+  for (const auto& resource : uncompressed_resources) {
     source->AddResourcePath(resource.path, resource.idr);
-    exclude_from_gzip.insert(resource.path);
+    exclude_from_gzip.push_back(resource.path);
   }
   source->UseGzip(exclude_from_gzip);
 
-#if BUILDFLAG(USE_VULCANIZE)
+#if BUILDFLAG(OPTIMIZE_WEBUI)
   source->AddResourcePath("app.html",
                           IDR_MD_HISTORY_APP_VULCANIZED_HTML);
   source->AddResourcePath("app.crisper.js",
@@ -214,25 +204,16 @@ MdHistoryUI::MdHistoryUI(content::WebUI* web_ui) : WebUIController(web_ui) {
   web_ui->AddMessageHandler(base::MakeUnique<BrowsingHistoryHandler>());
   web_ui->AddMessageHandler(base::MakeUnique<MetricsHandler>());
 
-  if (search::IsInstantExtendedAPIEnabled()) {
-    web_ui->AddMessageHandler(
-        base::MakeUnique<browser_sync::ForeignSessionHandler>());
-    web_ui->AddMessageHandler(base::MakeUnique<HistoryLoginHandler>(
-        base::Bind(&MdHistoryUI::UpdateDataSource, base::Unretained(this))));
-  }
+  web_ui->AddMessageHandler(
+      base::MakeUnique<browser_sync::ForeignSessionHandler>());
+  web_ui->AddMessageHandler(base::MakeUnique<HistoryLoginHandler>(
+      base::Bind(&MdHistoryUI::UpdateDataSource, base::Unretained(this))));
 
   web_ui->RegisterMessageCallback("menuPromoShown",
       base::Bind(&MdHistoryUI::HandleMenuPromoShown, base::Unretained(this)));
 }
 
 MdHistoryUI::~MdHistoryUI() {}
-
-// static
-base::RefCountedMemory* MdHistoryUI::GetFaviconResourceBytes(
-    ui::ScaleFactor scale_factor) {
-  return ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
-      IDR_HISTORY_FAVICON, scale_factor);
-}
 
 void MdHistoryUI::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry) {

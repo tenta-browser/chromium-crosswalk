@@ -45,8 +45,7 @@ static base::TimeDelta PrecisionCappedDefaultDuration(
   return base::TimeDelta::FromMicroseconds(mult);
 }
 
-WebMTracksParser::WebMTracksParser(const scoped_refptr<MediaLog>& media_log,
-                                   bool ignore_text_tracks)
+WebMTracksParser::WebMTracksParser(MediaLog* media_log, bool ignore_text_tracks)
     : ignore_text_tracks_(ignore_text_tracks),
       media_log_(media_log),
       audio_client_(media_log),
@@ -54,7 +53,7 @@ WebMTracksParser::WebMTracksParser(const scoped_refptr<MediaLog>& media_log,
   Reset();
 }
 
-WebMTracksParser::~WebMTracksParser() {}
+WebMTracksParser::~WebMTracksParser() = default;
 
 void WebMTracksParser::Reset() {
   ResetTrackEntry();
@@ -346,11 +345,26 @@ bool WebMTracksParser::OnString(int id, const std::string& str) {
       return false;
     }
 
+    // This element is specified to be printable ASCII (0x20-0x7F). Here, we
+    // allow also 0x01-0x1F.
+    if (!base::IsStringASCII(str)) {
+      MEDIA_LOG(ERROR, media_log_)
+          << "Tracks CodecID element value must be an ASCII string";
+      return false;
+    }
+
     codec_id_ = str;
     return true;
   }
 
   if (id == kWebMIdName) {
+    // This element is specified to be printable ASCII (0x20-0x7F). Here, we
+    // allow also 0x01-0x1F.
+    if (!base::IsStringASCII(str)) {
+      MEDIA_LOG(ERROR, media_log_)
+          << "Tracks Name element value must be an ASCII string";
+      return false;
+    }
     track_name_ = str;
     return true;
   }

@@ -6,9 +6,9 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/test/mock_callback.h"
 #include "base/values.h"
@@ -139,8 +139,7 @@ TEST_F(ShillManagerClientTest, GetProperties) {
 
   // Create the expected value.
   base::DictionaryValue value;
-  value.SetWithoutPathExpansion(shill::kOfflineModeProperty,
-                                new base::Value(true));
+  value.SetKey(shill::kOfflineModeProperty, base::Value(true));
   // Set expectations.
   PrepareForMethodCall(shill::kGetPropertiesFunction,
                        base::Bind(&ExpectNoArgument),
@@ -180,13 +179,13 @@ TEST_F(ShillManagerClientTest, GetNetworksForGeolocation) {
 
 
   // Create the expected value.
-  base::DictionaryValue type_dict_value;
-  base::ListValue* type_entry_value = new base::ListValue;
-  auto property_dict_value = base::MakeUnique<base::DictionaryValue>();
-  property_dict_value->SetWithoutPathExpansion(
-      shill::kGeoMacAddressProperty, new base::Value("01:23:45:67:89:AB"));
+  auto property_dict_value = std::make_unique<base::DictionaryValue>();
+  property_dict_value->SetKey(shill::kGeoMacAddressProperty,
+                              base::Value("01:23:45:67:89:AB"));
+  auto type_entry_value = std::make_unique<base::ListValue>();
   type_entry_value->Append(std::move(property_dict_value));
-  type_dict_value.SetWithoutPathExpansion("wifi", type_entry_value);
+  base::DictionaryValue type_dict_value;
+  type_dict_value.SetWithoutPathExpansion("wifi", std::move(type_entry_value));
 
   // Set expectations.
   PrepareForMethodCall(shill::kGetNetworksForGeolocation,

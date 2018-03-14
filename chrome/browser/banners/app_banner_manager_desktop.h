@@ -22,22 +22,28 @@ class AppBannerManagerDesktop
     : public AppBannerManager,
       public content::WebContentsUserData<AppBannerManagerDesktop> {
  public:
+  ~AppBannerManagerDesktop() override;
+
   static bool IsEnabled();
+
+  // Turn off triggering on engagement notifications or navigates, for testing
+  // purposes only.
+  static void DisableTriggeringForTesting();
 
  private:
   friend class content::WebContentsUserData<AppBannerManagerDesktop>;
 
   explicit AppBannerManagerDesktop(content::WebContents* web_contents);
-  ~AppBannerManagerDesktop() override;
 
   // AppBannerManager overrides.
   void DidFinishCreatingBookmarkApp(
       const extensions::Extension* extension,
       const WebApplicationInfo& web_app_info) override;
-  bool IsWebAppInstalled(content::BrowserContext* browser_context,
-                         const GURL& start_url,
-                         const GURL& manifest_url) override;
-  void ShowBanner() override;
+  bool IsWebAppConsideredInstalled(content::WebContents* web_contents,
+                                   const GURL& validated_url,
+                                   const GURL& start_url,
+                                   const GURL& manifest_url) override;
+  void ShowBannerUi() override;
 
   // content::WebContentsObserver override.
   void DidFinishLoad(content::RenderFrameHost* render_frame_host,

@@ -23,18 +23,24 @@
          avoid_egl_image_target_texture_reuse)               \
   GPU_OP(AVOID_ONE_COMPONENT_EGL_IMAGES,                     \
          avoid_one_component_egl_images)                     \
+  GPU_OP(AVOID_STENCIL_BUFFERS,                              \
+         avoid_stencil_buffers)                              \
+  GPU_OP(AVOID_USING_IMAGE_FLUSH_EXTERNAL_WITH_EGL_CREATE_IMAGE, \
+         avoid_using_image_flush_external_with_egl_create_image) \
   GPU_OP(BROKEN_EGL_IMAGE_REF_COUNTING,                      \
          broken_egl_image_ref_counting)                      \
   GPU_OP(CLEAR_ALPHA_IN_READPIXELS,                          \
          clear_alpha_in_readpixels)                          \
+  GPU_OP(CLEAR_TO_ZERO_OR_ONE_BROKEN,                        \
+         clear_to_zero_or_one_broken)                        \
   GPU_OP(CLEAR_UNIFORMS_BEFORE_FIRST_PROGRAM_USE,            \
          clear_uniforms_before_first_program_use)            \
   GPU_OP(COUNT_ALL_IN_VARYINGS_PACKING,                      \
          count_all_in_varyings_packing)                      \
-  GPU_OP(CREATE_DEFAULT_GL_CONTEXT,                          \
-         create_default_gl_context)                          \
   GPU_OP(DECODE_ENCODE_SRGB_FOR_GENERATEMIPMAP,              \
          decode_encode_srgb_for_generatemipmap)              \
+  GPU_OP(DEPTH_STENCIL_RENDERBUFFER_RESIZE_EMULATION,        \
+         depth_stencil_renderbuffer_resize_emulation)        \
   GPU_OP(DISABLE_ACCELERATED_VPX_DECODE,                     \
          disable_accelerated_vpx_decode)                     \
   GPU_OP(DISABLE_ANGLE_INSTANCED_ARRAYS,                     \
@@ -49,6 +55,8 @@
          disable_chromium_framebuffer_multisample)           \
   GPU_OP(DISABLE_D3D11,                                      \
          disable_d3d11)                                      \
+  GPU_OP(DISABLE_DELAYED_COPY_NV12,                          \
+         disable_delayed_copy_nv12)                          \
   GPU_OP(DISABLE_DEPTH_TEXTURE,                              \
          disable_depth_texture)                              \
   GPU_OP(DISABLE_DIRECT_COMPOSITION,                         \
@@ -67,8 +75,8 @@
          disable_gl_rgb_format)                              \
   GPU_OP(DISABLE_LARGER_THAN_SCREEN_OVERLAYS,                \
          disable_larger_than_screen_overlays)                \
-  GPU_OP(DISABLE_MULTIMONITOR_MULTISAMPLING,                 \
-         disable_multimonitor_multisampling)                 \
+  GPU_OP(DISABLE_NON_EMPTY_POST_SUB_BUFFERS_FOR_ONSCREEN_SURFACES, \
+         disable_non_empty_post_sub_buffers_for_onscreen_surfaces) \
   GPU_OP(DISABLE_NV12_DXGI_VIDEO,                            \
          disable_nv12_dxgi_video)                            \
   GPU_OP(DISABLE_OVERLAY_CA_LAYERS,                          \
@@ -81,6 +89,8 @@
          disable_program_caching_for_transform_feedback)     \
   GPU_OP(DISABLE_PROGRAM_DISK_CACHE,                         \
          disable_program_disk_cache)                         \
+  GPU_OP(DISABLE_SOFTWARE_TO_ACCELERATED_CANVAS_UPGRADE,     \
+         disable_software_to_accelerated_canvas_upgrade)     \
   GPU_OP(DISABLE_TEXTURE_CUBE_MAP_SEAMLESS,                  \
          disable_texture_cube_map_seamless)                  \
   GPU_OP(DISABLE_TEXTURE_STORAGE,                            \
@@ -91,8 +101,16 @@
          disable_multisampling_color_mask_usage)             \
   GPU_OP(DISABLE_WEBGL_RGB_MULTISAMPLING_USAGE,              \
          disable_webgl_rgb_multisampling_usage)              \
+  GPU_OP(DISALLOW_LARGE_INSTANCED_DRAW,                      \
+         disallow_large_instanced_draw)                      \
+  GPU_OP(DONT_DISABLE_WEBGL_WHEN_COMPOSITOR_CONTEXT_LOST,    \
+         dont_disable_webgl_when_compositor_context_lost)    \
+  GPU_OP(DONT_INITIALIZE_UNINITIALIZED_LOCALS,               \
+         dont_initialize_uninitialized_locals)               \
   GPU_OP(DONT_REMOVE_INVARIANT_FOR_FRAGMENT_INPUT,           \
          dont_remove_invariant_for_fragment_input)           \
+  GPU_OP(DONT_USE_LOOPS_TO_INITIALIZE_VARIABLES,             \
+         dont_use_loops_to_initialize_variables)             \
   GPU_OP(ETC1_POWER_OF_TWO_ONLY,                             \
          etc1_power_of_two_only)                             \
   GPU_OP(EMULATE_ABS_INT_FUNCTION,                           \
@@ -101,6 +119,8 @@
          emulate_isnan_on_float)                             \
   GPU_OP(EXIT_ON_CONTEXT_LOST,                               \
          exit_on_context_lost)                               \
+  GPU_OP(FLUSH_ON_FRAMEBUFFER_CHANGE,                        \
+         flush_on_framebuffer_change)                        \
   GPU_OP(FORCE_CUBE_COMPLETE,                                \
          force_cube_complete)                                \
   GPU_OP(FORCE_CUBE_MAP_POSITIVE_X_ALLOCATION,               \
@@ -109,6 +129,8 @@
          force_discrete_gpu)                                 \
   GPU_OP(FORCE_INTEGRATED_GPU,                               \
          force_integrated_gpu)                               \
+  GPU_OP(FORCE_INT_OR_SRGB_CUBE_TEXTURE_COMPLETE,            \
+         force_int_or_srgb_cube_texture_complete)            \
   GPU_OP(FORCE_UPDATE_SCISSOR_STATE_WHEN_BINDING_FBO0,       \
          force_update_scissor_state_when_binding_fbo0)       \
   GPU_OP(GET_FRAG_DATA_INFO_BUG,                             \
@@ -141,6 +163,8 @@
          max_vertex_uniform_vectors_256)                     \
   GPU_OP(MSAA_IS_SLOW,                                       \
          msaa_is_slow)                                       \
+  GPU_OP(MULTISAMPLE_RENDERBUFFER_RESIZE_EMULATION,          \
+         multisample_renderbuffer_resize_emulation)          \
   GPU_OP(NEEDS_OFFSCREEN_BUFFER_WORKAROUND,                  \
          needs_offscreen_buffer_workaround)                  \
   GPU_OP(PACK_PARAMETERS_WORKAROUND_WITH_PACK_BUFFER,        \
@@ -149,12 +173,16 @@
          rebind_transform_feedback_before_resume)            \
   GPU_OP(REGENERATE_STRUCT_NAMES,                            \
          regenerate_struct_names)                            \
+  GPU_OP(RELY_ON_IMPLICIT_SYNC_FOR_SWAP_BUFFERS,             \
+         rely_on_implicit_sync_for_swap_buffers)             \
   GPU_OP(REMOVE_INVARIANT_AND_CENTROID_FOR_ESSL3,            \
          remove_invariant_and_centroid_for_essl3)            \
   GPU_OP(REMOVE_POW_WITH_CONSTANT_EXPONENT,                  \
          remove_pow_with_constant_exponent)                  \
   GPU_OP(RESET_BASE_MIPMAP_LEVEL_BEFORE_TEXSTORAGE,          \
          reset_base_mipmap_level_before_texstorage)          \
+  GPU_OP(RESET_TEXIMAGE2D_BASE_LEVEL,                        \
+         reset_teximage2d_base_level)                        \
   GPU_OP(RESTORE_SCISSOR_ON_FBO_CHANGE,                      \
          restore_scissor_on_fbo_change)                      \
   GPU_OP(REVERSE_POINT_SPRITE_COORD_ORIGIN,                  \
@@ -195,6 +223,8 @@
          unpack_overlapping_rows_separately_unpack_buffer)   \
   GPU_OP(USE_CLIENT_SIDE_ARRAYS_FOR_STREAM_BUFFERS,          \
          use_client_side_arrays_for_stream_buffers)          \
+  GPU_OP(USE_GPU_DRIVER_WORKAROUND_FOR_TESTING,              \
+         use_gpu_driver_workaround_for_testing)              \
   GPU_OP(USE_INTERMEDIARY_FOR_COPY_TEXTURE_IMAGE,            \
          use_intermediary_for_copy_texture_image)            \
   GPU_OP(USE_NON_ZERO_SIZE_FOR_CLIENT_SIDE_STREAM_BUFFERS,   \
@@ -209,16 +239,8 @@
          validate_multisample_buffer_allocation)             \
   GPU_OP(WAKE_UP_GPU_BEFORE_DRAWING,                         \
          wake_up_gpu_before_drawing)                         \
-  GPU_OP(USE_GPU_DRIVER_WORKAROUND_FOR_TESTING,              \
-         use_gpu_driver_workaround_for_testing)              \
-  GPU_OP(DISALLOW_LARGE_INSTANCED_DRAW,                      \
-         disallow_large_instanced_draw)                      \
-  GPU_OP(DISABLE_SOFTWARE_TO_ACCELERATED_CANVAS_UPGRADE,     \
-         disable_software_to_accelerated_canvas_upgrade)     \
-  GPU_OP(DISABLE_NON_EMPTY_POST_SUB_BUFFERS_FOR_ONSCREEN_SURFACES, \
-         disable_non_empty_post_sub_buffers_for_onscreen_surfaces) \
-  GPU_OP(AVOID_STENCIL_BUFFERS,                              \
-         avoid_stencil_buffers)                              \
+// NOTE: Add new workarounds in alphabetical order.
+
 // clang-format on
 
 namespace gpu {

@@ -58,11 +58,12 @@ class ApacheHTTP(server_base.ServerBase):
         test_dir = self._port_obj.layout_tests_dir()
         document_root = self._filesystem.join(test_dir, 'http', 'tests')
         forms_test_resources_dir = self._filesystem.join(test_dir, 'fast', 'forms', 'resources')
-        imported_resources_dir = self._filesystem.join(test_dir, 'external', 'wpt', 'resources')
         media_resources_dir = self._filesystem.join(test_dir, 'media')
+        webaudio_resources_dir = self._filesystem.join(test_dir, 'webaudio', 'resources')
         mime_types_path = self._filesystem.join(self._port_obj.apache_config_directory(), 'mime.types')
         cert_file = self._filesystem.join(self._port_obj.apache_config_directory(), 'webkit-httpd.pem')
         inspector_sources_dir = self._port_obj.inspector_build_directory()
+        generated_sources_dir = self._port_obj.generated_sources_directory()
 
         self._access_log_path = self._filesystem.join(output_dir, 'access_log.txt')
         self._error_log_path = self._filesystem.join(output_dir, 'error_log.txt')
@@ -74,18 +75,21 @@ class ApacheHTTP(server_base.ServerBase):
             '-f', '%s' % self._port_obj.path_to_apache_config_file(),
             '-C', 'ServerRoot "%s"' % server_root,
             '-C', 'DocumentRoot "%s"' % document_root,
-            '-c', 'AliasMatch /(.*/)?js-test-resources/(.+) "%s/$1resources/$2"' % test_dir,
-            '-c', 'AliasMatch ^/resources/testharness([r.].*) "%s/resources/testharness$1"' % test_dir,
-            '-c', 'Alias /w3c/resources/WebIDLParser.js "%s/webidl2/lib/webidl2.js"' % imported_resources_dir,
+            '-c', 'Alias /js-test-resources "%s/resources"' % test_dir,
+            '-c', 'Alias /geolocation-api/js-test-resources "%s/geolocation-api/resources"' % test_dir,
+            '-c', 'Alias /resources/testharness.js "%s/resources/testharness.js"' % test_dir,
+            '-c', 'Alias /resources/testharnessreport.js "%s/resources/testharnessreport.js"' % test_dir,
             '-c', 'Alias /w3c/resources "%s/resources"' % test_dir,
             '-c', 'Alias /forms-test-resources "%s"' % forms_test_resources_dir,
             '-c', 'Alias /media-resources "%s"' % media_resources_dir,
+            '-c', 'Alias /webaudio-resources "%s"' % webaudio_resources_dir,
+            '-c', 'Alias /inspector-sources "%s"' % inspector_sources_dir,
+            '-c', 'Alias /gen "%s"' % generated_sources_dir,
             '-c', 'TypesConfig "%s"' % mime_types_path,
             '-c', 'CustomLog "%s" common' % self._access_log_path,
             '-c', 'ErrorLog "%s"' % self._error_log_path,
             '-c', 'PidFile %s' % self._pid_file,
             '-c', 'SSLCertificateFile "%s"' % cert_file,
-            '-c', 'Alias /inspector-sources "%s"' % inspector_sources_dir,
             '-c', 'DefaultType None',
         ]
 
@@ -98,6 +102,9 @@ class ApacheHTTP(server_base.ServerBase):
                           '-C', 'User "%s"' % self._port_obj.host.environ.get('USERNAME',
                                                                               self._port_obj.host.environ.get('USER', '')),
                           '-k', 'start']
+
+        if self._port_obj.http_server_requires_http_protocol_options_unsafe():
+            start_cmd += ['-c', 'HttpProtocolOptions Unsafe']
 
         enable_ipv6 = self._port_obj.http_server_supports_ipv6()
         # Perform part of the checks Apache's APR does when trying to listen to

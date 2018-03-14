@@ -32,17 +32,15 @@
 
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ScriptController.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8Binding.h"
-#include "bindings/core/v8/V8PerIsolateData.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/DOMStringList.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/events/EventListener.h"
+#include "core/dom/events/EventListener.h"
 #include "core/frame/LocalFrame.h"
 #include "core/inspector/InspectedFrames.h"
 #include "core/inspector/V8InspectorString.h"
-#include "modules/IndexedDBNames.h"
+#include "modules/indexed_db_names.h"
 #include "modules/indexeddb/GlobalIndexedDB.h"
 #include "modules/indexeddb/IDBCursor.h"
 #include "modules/indexeddb/IDBCursorWithValue.h"
@@ -57,6 +55,8 @@
 #include "modules/indexeddb/IDBOpenDBRequest.h"
 #include "modules/indexeddb/IDBRequest.h"
 #include "modules/indexeddb/IDBTransaction.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8PerIsolateData.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "platform/wtf/Vector.h"
 #include "public/platform/modules/indexeddb/WebIDBCursor.h"
@@ -134,7 +134,7 @@ class GetDatabaseNamesCallback final : public EventListener {
     request_callback_->sendSuccess(std::move(database_names));
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() { EventListener::Trace(visitor); }
+  virtual void Trace(blink::Visitor* visitor) { EventListener::Trace(visitor); }
 
  private:
   GetDatabaseNamesCallback(
@@ -172,7 +172,7 @@ class DeleteCallback final : public EventListener {
     request_callback_->sendSuccess();
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() { EventListener::Trace(visitor); }
+  virtual void Trace(blink::Visitor* visitor) { EventListener::Trace(visitor); }
 
  private:
   DeleteCallback(std::unique_ptr<DeleteDatabaseCallback> request_callback,
@@ -219,12 +219,12 @@ class ExecutableWithDatabase
   virtual void Execute(IDBDatabase*) = 0;
   virtual RequestCallback* GetRequestCallback() = 0;
   ExecutionContext* Context() const {
-    return ExecutionContext::From(script_state_.Get());
+    return ExecutionContext::From(script_state_.get());
   }
-  ScriptState* GetScriptState() const { return script_state_.Get(); }
+  ScriptState* GetScriptState() const { return script_state_.get(); }
 
  private:
-  RefPtr<ScriptState> script_state_;
+  scoped_refptr<ScriptState> script_state_;
 };
 
 template <typename RequestCallback>
@@ -270,7 +270,8 @@ class OpenDatabaseCallback final : public EventListener {
       ExecutableWithDatabase<RequestCallback>* executable_with_database)
       : EventListener(EventListener::kCPPEventListenerType),
         executable_with_database_(executable_with_database) {}
-  RefPtr<ExecutableWithDatabase<RequestCallback>> executable_with_database_;
+  scoped_refptr<ExecutableWithDatabase<RequestCallback>>
+      executable_with_database_;
 };
 
 template <typename RequestCallback>
@@ -310,7 +311,8 @@ class UpgradeDatabaseCallback final : public EventListener {
       ExecutableWithDatabase<RequestCallback>* executable_with_database)
       : EventListener(EventListener::kCPPEventListenerType),
         executable_with_database_(executable_with_database) {}
-  RefPtr<ExecutableWithDatabase<RequestCallback>> executable_with_database_;
+  scoped_refptr<ExecutableWithDatabase<RequestCallback>>
+      executable_with_database_;
 };
 
 static IDBTransaction* TransactionForDatabase(
@@ -319,8 +321,8 @@ static IDBTransaction* TransactionForDatabase(
     const String& object_store_name,
     const String& mode = IndexedDBNames::readonly) {
   DummyExceptionStateForTesting exception_state;
-  StringOrStringSequenceOrDOMStringList scope;
-  scope.setString(object_store_name);
+  StringOrStringSequence scope;
+  scope.SetString(object_store_name);
   IDBTransaction* idb_transaction =
       idb_database->transaction(script_state, scope, mode, exception_state);
   if (exception_state.HadException())
@@ -381,10 +383,10 @@ static std::unique_ptr<KeyPath> KeyPathFromIDBKeyPath(
 class DatabaseLoader final
     : public ExecutableWithDatabase<RequestDatabaseCallback> {
  public:
-  static PassRefPtr<DatabaseLoader> Create(
+  static scoped_refptr<DatabaseLoader> Create(
       ScriptState* script_state,
       std::unique_ptr<RequestDatabaseCallback> request_callback) {
-    return AdoptRef(
+    return base::AdoptRef(
         new DatabaseLoader(script_state, std::move(request_callback)));
   }
 
@@ -566,7 +568,8 @@ class OpenCursorCallback final : public EventListener {
     // Continue cursor before making injected script calls, otherwise
     // transaction might be finished.
     DummyExceptionStateForTesting exception_state;
-    idb_cursor->Continue(nullptr, nullptr, exception_state);
+    idb_cursor->Continue(nullptr, nullptr, IDBRequest::AsyncTraceState(),
+                         exception_state);
     if (exception_state.HadException()) {
       request_callback_->sendFailure(
           Response::Error("Could not continue cursor."));
@@ -574,10 +577,10 @@ class OpenCursorCallback final : public EventListener {
     }
 
     Document* document =
-        ToDocument(ExecutionContext::From(script_state_.Get()));
+        ToDocument(ExecutionContext::From(script_state_.get()));
     if (!document)
       return;
-    ScriptState* script_state = script_state_.Get();
+    ScriptState* script_state = script_state_.get();
     ScriptState::Scope scope(script_state);
     v8::Local<v8::Context> context = script_state->GetContext();
     v8_inspector::StringView object_group =
@@ -600,7 +603,7 @@ class OpenCursorCallback final : public EventListener {
     request_callback_->sendSuccess(std::move(result_), has_more);
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() { EventListener::Trace(visitor); }
+  virtual void Trace(blink::Visitor* visitor) { EventListener::Trace(visitor); }
 
  private:
   OpenCursorCallback(v8_inspector::V8InspectorSession* v8_session,
@@ -618,7 +621,7 @@ class OpenCursorCallback final : public EventListener {
   }
 
   v8_inspector::V8InspectorSession* v8_session_;
-  RefPtr<ScriptState> script_state_;
+  scoped_refptr<ScriptState> script_state_;
   std::unique_ptr<RequestDataCallback> request_callback_;
   int skip_count_;
   unsigned page_size_;
@@ -627,7 +630,7 @@ class OpenCursorCallback final : public EventListener {
 
 class DataLoader final : public ExecutableWithDatabase<RequestDataCallback> {
  public:
-  static PassRefPtr<DataLoader> Create(
+  static scoped_refptr<DataLoader> Create(
       v8_inspector::V8InspectorSession* v8_session,
       ScriptState* script_state,
       std::unique_ptr<RequestDataCallback> request_callback,
@@ -636,7 +639,7 @@ class DataLoader final : public ExecutableWithDatabase<RequestDataCallback> {
       IDBKeyRange* idb_key_range,
       int skip_count,
       unsigned page_size) {
-    return AdoptRef(new DataLoader(
+    return base::AdoptRef(new DataLoader(
         v8_session, script_state, std::move(request_callback),
         object_store_name, index_name, idb_key_range, skip_count, page_size));
   }
@@ -782,7 +785,7 @@ void InspectorIndexedDBAgent::requestDatabaseNames(
   ScriptState::Scope scope(script_state);
   DummyExceptionStateForTesting exception_state;
   IDBRequest* idb_request =
-      idb_factory->getDatabaseNames(script_state, exception_state);
+      idb_factory->GetDatabaseNames(script_state, exception_state);
   if (exception_state.HadException()) {
     request_callback->sendFailure(
         Response::Error("Could not obtain database names."));
@@ -821,7 +824,7 @@ void InspectorIndexedDBAgent::requestDatabase(
   }
 
   ScriptState::Scope scope(script_state);
-  RefPtr<DatabaseLoader> database_loader =
+  scoped_refptr<DatabaseLoader> database_loader =
       DatabaseLoader::Create(script_state, std::move(request_callback));
   database_loader->Start(idb_factory, document->GetSecurityOrigin(),
                          database_name);
@@ -865,7 +868,7 @@ void InspectorIndexedDBAgent::requestData(
   }
 
   ScriptState::Scope scope(script_state);
-  RefPtr<DataLoader> data_loader = DataLoader::Create(
+  scoped_refptr<DataLoader> data_loader = DataLoader::Create(
       v8_session_, script_state, std::move(request_callback), object_store_name,
       index_name, idb_key_range, skip_count, page_size);
   data_loader->Start(idb_factory, document->GetSecurityOrigin(), database_name);
@@ -895,7 +898,7 @@ class ClearObjectStoreListener final : public EventListener {
     request_callback_->sendSuccess();
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() { EventListener::Trace(visitor); }
+  virtual void Trace(blink::Visitor* visitor) { EventListener::Trace(visitor); }
 
  private:
   ClearObjectStoreListener(
@@ -909,12 +912,12 @@ class ClearObjectStoreListener final : public EventListener {
 class ClearObjectStore final
     : public ExecutableWithDatabase<ClearObjectStoreCallback> {
  public:
-  static PassRefPtr<ClearObjectStore> Create(
+  static scoped_refptr<ClearObjectStore> Create(
       ScriptState* script_state,
       const String& object_store_name,
       std::unique_ptr<ClearObjectStoreCallback> request_callback) {
-    return AdoptRef(new ClearObjectStore(script_state, object_store_name,
-                                         std::move(request_callback)));
+    return base::AdoptRef(new ClearObjectStore(script_state, object_store_name,
+                                               std::move(request_callback)));
   }
 
   ClearObjectStore(ScriptState* script_state,
@@ -948,7 +951,7 @@ class ClearObjectStore final
       ExceptionCode ec = exception_state.Code();
       request_callback_->sendFailure(Response::Error(
           String::Format("Could not clear object store '%s': %d",
-                         object_store_name_.Utf8().Data(), ec)));
+                         object_store_name_.Utf8().data(), ec)));
       return;
     }
     idb_transaction->addEventListener(
@@ -991,7 +994,7 @@ void InspectorIndexedDBAgent::clearObjectStore(
   }
 
   ScriptState::Scope scope(script_state);
-  RefPtr<ClearObjectStore> clear_object_store = ClearObjectStore::Create(
+  scoped_refptr<ClearObjectStore> clear_object_store = ClearObjectStore::Create(
       script_state, object_store_name, std::move(request_callback));
   clear_object_store->Start(idb_factory, document->GetSecurityOrigin(),
                             database_name);
@@ -1036,7 +1039,7 @@ void InspectorIndexedDBAgent::deleteDatabase(
       false);
 }
 
-DEFINE_TRACE(InspectorIndexedDBAgent) {
+void InspectorIndexedDBAgent::Trace(blink::Visitor* visitor) {
   visitor->Trace(inspected_frames_);
   InspectorBaseAgent::Trace(visitor);
 }

@@ -4,17 +4,17 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow DIV id='blue' class='flex-item'",
           "rect": [8, 68, 200, 30],
-          "reason": "bounds change"
+          "reason": "geometry"
         },
         {
           "object": "LayoutBlockFlow DIV id='blue' class='flex-item'",
           "rect": [9, 69, 198, 30],
-          "reason": "bounds change"
+          "reason": "geometry"
         }
       ]
     }
@@ -22,7 +22,7 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutBlockFlow DIV id='blue' class='flex-item'",
-      "reason": "bounds change"
+      "reason": "geometry"
     }
   ]
 }

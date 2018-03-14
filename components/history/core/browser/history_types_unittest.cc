@@ -40,14 +40,14 @@ const char kURL2[] = "http://news.google.com/";
 void AddSimpleData(QueryResults* results) {
   GURL url1(kURL1);
   GURL url2(kURL2);
-  URLResult result1(url1, base::Time::Now());
-  URLResult result2(url1, base::Time::Now());
-  URLResult result3(url2, base::Time::Now());
+  std::vector<URLResult> test_vector;
+
+  test_vector.push_back(URLResult(url1, base::Time::Now()));
+  test_vector.push_back(URLResult(url1, base::Time::Now()));
+  test_vector.push_back(URLResult(url2, base::Time::Now()));
 
   // The URLResults are invalid after being inserted.
-  results->AppendURLBySwapping(&result1);
-  results->AppendURLBySwapping(&result2);
-  results->AppendURLBySwapping(&result3);
+  results->SetURLResults(std::move(test_vector));
   CheckHistoryResultConsistency(*results);
 }
 
@@ -88,8 +88,8 @@ TEST(HistoryQueryResult, DeleteRange) {
   // Now delete everything and make sure it's deleted.
   results.DeleteRange(0, 1);
   EXPECT_EQ(0U, results.size());
-  EXPECT_FALSE(results.MatchesForURL(url1, NULL));
-  EXPECT_FALSE(results.MatchesForURL(url2, NULL));
+  EXPECT_FALSE(results.MatchesForURL(url1, nullptr));
+  EXPECT_FALSE(results.MatchesForURL(url2, nullptr));
 }
 
 // Tests insertion and deletion by URL.
@@ -106,7 +106,7 @@ TEST(HistoryQueryResult, ResultDeleteURL) {
 
   // The first one should be gone, and the second one should be at [0].
   size_t match_count;
-  EXPECT_FALSE(results.MatchesForURL(url1, NULL));
+  EXPECT_FALSE(results.MatchesForURL(url1, nullptr));
   const size_t* matches = results.MatchesForURL(url2, &match_count);
   ASSERT_EQ(1U, match_count);
   EXPECT_TRUE(matches[0] == 0);
@@ -114,7 +114,7 @@ TEST(HistoryQueryResult, ResultDeleteURL) {
   // Delete the second URL, there should be nothing left.
   results.DeleteURL(url2);
   EXPECT_EQ(0U, results.size());
-  EXPECT_FALSE(results.MatchesForURL(url2, NULL));
+  EXPECT_FALSE(results.MatchesForURL(url2, nullptr));
 }
 
 }  // namespace history

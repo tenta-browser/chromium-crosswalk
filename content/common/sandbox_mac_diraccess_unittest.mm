@@ -19,8 +19,8 @@ extern "C" {
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/multiprocess_test.h"
-#include "content/common/sandbox_mac.h"
 #include "sandbox/mac/sandbox_compiler.h"
+#include "services/service_manager/sandbox/mac/sandbox_mac.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
 
@@ -39,102 +39,19 @@ class MacDirAccessSandboxTest : public base::MultiProcessTest {
  public:
   bool CheckSandbox(const std::string& directory_to_try) {
     setenv(kSandboxAccessPathKey, directory_to_try.c_str(), 1);
-    base::SpawnChildResult spawn_child = SpawnChild("mac_sandbox_path_access");
-    if (!spawn_child.process.IsValid()) {
+    base::Process child_process = SpawnChild("mac_sandbox_path_access");
+    if (!child_process.IsValid()) {
       LOG(WARNING) << "SpawnChild failed";
       return false;
     }
     int code = -1;
-    if (!spawn_child.process.WaitForExit(&code)) {
+    if (!child_process.WaitForExit(&code)) {
       LOG(WARNING) << "Process::WaitForExit failed";
       return false;
     }
     return code == 0;
   }
 };
-
-TEST_F(MacDirAccessSandboxTest, StringEscape) {
-  const struct string_escape_test_data {
-  const char* to_escape;
-  const char* escaped;
-  } string_escape_cases[] = {
-    {"", ""},
-    {"\b\f\n\r\t\\\"", "\\b\\f\\n\\r\\t\\\\\\\""},
-    {"/'", "/'"},
-    {"sandwich", "sandwich"},
-    {"(sandwich)", "(sandwich)"},
-    {"^\u2135.\u2136$", "^\\u2135.\\u2136$"},
-  };
-
-  for (size_t i = 0; i < arraysize(string_escape_cases); ++i) {
-    std::string out;
-    std::string in(string_escape_cases[i].to_escape);
-    EXPECT_TRUE(Sandbox::QuotePlainString(in, &out));
-    EXPECT_EQ(string_escape_cases[i].escaped, out);
-  }
-}
-
-TEST_F(MacDirAccessSandboxTest, RegexEscape) {
-  const std::string kSandboxEscapeSuffix("(/|$)");
-  const struct regex_test_data {
-    const wchar_t *to_escape;
-    const char* escaped;
-  } regex_cases[] = {
-    {L"", ""},
-    {L"/'", "/'"},  // / & ' characters don't need escaping.
-    {L"sandwich", "sandwich"},
-    {L"(sandwich)", "\\(sandwich\\)"},
-  };
-
-  // Check that all characters whose values are smaller than 32 [1F] are
-  // rejected by the regex escaping code.
-  {
-    std::string out;
-    char fail_string[] = {31, 0};
-    char ok_string[] = {32, 0};
-    EXPECT_FALSE(Sandbox::QuoteStringForRegex(fail_string, &out));
-    EXPECT_TRUE(Sandbox::QuoteStringForRegex(ok_string, &out));
-  }
-
-  // Check that all characters whose values are larger than 126 [7E] are
-  // rejected by the regex escaping code.
-  {
-    std::string out;
-    EXPECT_TRUE(Sandbox::QuoteStringForRegex("}", &out));   // } == 0x7D == 125
-    EXPECT_FALSE(Sandbox::QuoteStringForRegex("~", &out));  // ~ == 0x7E == 126
-    EXPECT_FALSE(
-        Sandbox::QuoteStringForRegex(base::WideToUTF8(L"^\u2135.\u2136$"),
-                                     &out));
-  }
-
-  {
-    for (size_t i = 0; i < arraysize(regex_cases); ++i) {
-      std::string out;
-      std::string in = base::WideToUTF8(regex_cases[i].to_escape);
-      EXPECT_TRUE(Sandbox::QuoteStringForRegex(in, &out));
-      std::string expected("^");
-      expected.append(regex_cases[i].escaped);
-      expected.append(kSandboxEscapeSuffix);
-      EXPECT_EQ(expected, out);
-    }
-  }
-
-  {
-    std::string in_utf8("\\^.$|()[]*+?{}");
-    std::string expected;
-    expected.push_back('^');
-    for (size_t i = 0; i < in_utf8.length(); ++i) {
-      expected.push_back('\\');
-      expected.push_back(in_utf8[i]);
-    }
-    expected.append(kSandboxEscapeSuffix);
-
-    std::string out;
-    EXPECT_TRUE(Sandbox::QuoteStringForRegex(in_utf8, &out));
-    EXPECT_EQ(expected, out);
-
-  }
-}
 
 // A class to handle auto-deleting a directory.
 struct ScopedDirectoryDelete {
@@ -155,13 +72,17 @@ TEST_F(MacDirAccessSandboxTest, SandboxAccess) {
   // This step is important on OS X since the sandbox only understands "real"
   // paths and the paths CreateNewTempDirectory() returns are empirically in
   // /var which is a symlink to /private/var .
-  tmp_dir = Sandbox::GetCanonicalSandboxPath(tmp_dir);
+  tmp_dir = service_manager::SandboxMac::GetCanonicalPath(tmp_dir);
   ScopedDirectory cleanup(&tmp_dir);
 
   const char* sandbox_dir_cases[] = {
-    "simple_dir_name",
-    "^hello++ $",       // Regex.
-    "\\^.$|()[]*+?{}",  // All regex characters.
+      "simple_dir_name",
+      "^hello++ $",       // Regex.
+      "\\^.$|()[]*+?{}",  // All regex characters.
+      "\n",
+      "\tfile\b",
+      "ÖÖÖÖÖ",
+      "ȓȓȓȓȓ",
   };
 
   for (size_t i = 0; i < arraysize(sandbox_dir_cases); ++i) {
@@ -188,10 +109,6 @@ MULTIPROCESS_TEST_MAIN(mac_sandbox_path_access) {
   if (!sandbox_allowed_dir)
     return -1;
 
-  std::string final_allowed_dir;
-  EXPECT_TRUE(
-      Sandbox::QuoteStringForRegex(sandbox_allowed_dir, &final_allowed_dir));
-
   // Build up a sandbox profile that only allows access to a single directory.
   std::string sandbox_profile =
       "(version 1)"
@@ -202,12 +119,11 @@ MULTIPROCESS_TEST_MAIN(mac_sandbox_path_access) {
       "(if (string? perm_dir)"
       "    (begin"
       "       (allow file-read-metadata )"
-      "       (allow file-read* file-write* (regex (string-append #\"\" "
-      "perm_dir)))))";
+      "       (allow file-read* file-write* (subpath perm_dir))))";
 
   // Setup the parameters to pass to the sandbox.
   sandbox::SandboxCompiler compiler(sandbox_profile);
-  CHECK(compiler.InsertStringParam("PERMITTED_DIR", final_allowed_dir));
+  CHECK(compiler.InsertStringParam("PERMITTED_DIR", sandbox_allowed_dir));
 
   // Enable Sandbox.
   std::string error_str;

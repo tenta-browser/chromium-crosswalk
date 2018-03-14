@@ -38,17 +38,19 @@ class AppWindowContentsImpl : public AppWindowContents,
                   const GURL& url) override;
   void LoadContents(int32_t creator_process_id) override;
   void NativeWindowChanged(NativeAppWindow* native_app_window) override;
-  void NativeWindowClosed() override;
+  void NativeWindowClosed(bool send_onclosed) override;
   void OnWindowReady() override;
   content::WebContents* GetWebContents() const override;
   WindowController* GetWindowController() const override;
 
  private:
   // content::WebContentsObserver
-  bool OnMessageReceived(const IPC::Message& message) override;
+  bool OnMessageReceived(const IPC::Message& message,
+                         content::RenderFrameHost* sender) override;
   void ReadyToCommitNavigation(content::NavigationHandle* handle) override;
 
-  void UpdateDraggableRegions(const std::vector<DraggableRegion>& regions);
+  void UpdateDraggableRegions(content::RenderFrameHost* sender,
+                              const std::vector<DraggableRegion>& regions);
   void SuspendRenderFrameHost(content::RenderFrameHost* rfh);
 
   AppWindow* host_;  // This class is owned by |host_|

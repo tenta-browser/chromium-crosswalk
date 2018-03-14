@@ -12,16 +12,17 @@
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
+#include "base/synchronization/lock.h"
 #include "build/build_config.h"
+#include "chrome/common/features.h"
 #include "chrome/common/origin_trials/chrome_origin_trial_policy.h"
+#include "components/nacl/common/features.h"
 #include "content/public/common/content_client.h"
 #include "ppapi/features/features.h"
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/public/common/pepper_plugin_info.h"
 #endif
-
-#include "url/url_util.h"
 
 // Returns the user agent of Chrome.
 std::string GetUserAgent();
@@ -34,9 +35,9 @@ class ChromeContentClient : public content::ContentClient {
   // on-demand and therefore should still appear in navigator.plugins.
   static const char kNotPresent[];
 #endif
-  static const char kPDFPluginName[];
+  static const char kPDFExtensionPluginName[];
+  static const char kPDFInternalPluginName[];
   static const char kPDFPluginPath[];
-  static const char kRemotingViewerPluginPath[];
 
   ChromeContentClient();
   ~ChromeContentClient() override;
@@ -45,7 +46,7 @@ class ChromeContentClient : public content::ContentClient {
   // pointers for built-in plugins. We avoid linking these plugins into
   // chrome_common because then on Windows we would ship them twice because of
   // the split DLL.
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   static void SetNaClEntryFunctions(
       content::PepperPluginInfo::GetInterfaceFunc get_interface,
       content::PepperPluginInfo::PPP_InitializeModuleFunc initialize_module,
@@ -74,7 +75,7 @@ class ChromeContentClient : public content::ContentClient {
       std::vector<content::PepperPluginInfo>* plugins) override;
   void AddContentDecryptionModules(
       std::vector<content::CdmInfo>* cdms,
-      std::vector<content::CdmHostFilePath>* cdm_host_file_paths) override;
+      std::vector<media::CdmHostFilePath>* cdm_host_file_paths) override;
 
   void AddAdditionalSchemes(Schemes* schemes) override;
   std::string GetProduct() const override;
@@ -88,14 +89,7 @@ class ChromeContentClient : public content::ContentClient {
   gfx::Image& GetNativeImageNamed(int resource_id) const override;
   std::string GetProcessTypeNameInEnglish(int type) override;
 
-#if defined(OS_MACOSX)
-  bool GetSandboxProfileForSandboxType(
-      int sandbox_type,
-      int* sandbox_profile_resource_id) const override;
-#endif
-
   bool AllowScriptExtensionForServiceWorker(const GURL& script_url) override;
-
   bool IsSupplementarySiteIsolationModeEnabled() override;
 
   content::OriginTrialPolicy* GetOriginTrialPolicy() override;
@@ -104,7 +98,13 @@ class ChromeContentClient : public content::ContentClient {
   media::MediaDrmBridgeClient* GetMediaDrmBridgeClient() override;
 #endif  // OS_ANDROID
 
+  // This method isn't called by utility processes.
+  void OnServiceManagerConnected(
+      content::ServiceManagerConnection* connection) override;
+
  private:
+  // Used to lock when |origin_trial_policy_| is initialized.
+  base::Lock origin_trial_policy_lock_;
   std::unique_ptr<ChromeOriginTrialPolicy> origin_trial_policy_;
 };
 

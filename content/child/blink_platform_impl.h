@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "base/compiler_specific.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread_local_storage.h"
 #include "base/timer/timer.h"
 #include "base/trace_event/trace_event.h"
@@ -45,16 +46,14 @@ class WebThreadBase;
 
 namespace content {
 
-class NotificationDispatcher;
-class ThreadSafeSender;
 class WebCryptoImpl;
 
-class CONTENT_EXPORT BlinkPlatformImpl
-    : NON_EXPORTED_BASE(public blink::Platform) {
+class CONTENT_EXPORT BlinkPlatformImpl : public blink::Platform {
  public:
   BlinkPlatformImpl();
   explicit BlinkPlatformImpl(
-      scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner);
+      scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> io_thread_task_runner);
   ~BlinkPlatformImpl() override;
 
   // Platform methods (partial implementation):
@@ -76,14 +75,15 @@ class CONTENT_EXPORT BlinkPlatformImpl
   size_t NumberOfProcessors() override;
 
   size_t MaxDecodedImageBytes() override;
+  bool IsLowEndDevice() override;
   uint32_t GetUniqueIdForProcess() override;
   blink::WebString UserAgent() override;
-  blink::WebURLError CancelledError(const blink::WebURL& url) const override;
-  blink::WebThread* CreateThread(const char* name) override;
+  std::unique_ptr<blink::WebThread> CreateThread(const char* name) override;
+  std::unique_ptr<blink::WebThread> CreateWebAudioThread() override;
   blink::WebThread* CurrentThread() override;
   void RecordAction(const blink::UserMetricsAction&) override;
 
-  blink::WebData LoadResource(const char* name) override;
+  blink::WebData GetDataResource(const char* name) override;
   blink::WebString QueryLocalizedString(
       blink::WebLocalizedString::Name name) override;
   virtual blink::WebString queryLocalizedString(
@@ -96,57 +96,39 @@ class CONTENT_EXPORT BlinkPlatformImpl
       const blink::WebString& value1,
       const blink::WebString& value2) override;
   void SuddenTerminationChanged(bool enabled) override {}
-  blink::WebThread* CompositorThread() const override;
-  blink::WebGestureCurve* CreateFlingAnimationCurve(
+  bool IsRendererSideResourceSchedulerEnabled() const final;
+  std::unique_ptr<blink::WebGestureCurve> CreateFlingAnimationCurve(
       blink::WebGestureDevice device_source,
       const blink::WebFloatPoint& velocity,
       const blink::WebSize& cumulative_scroll) override;
-  void DidStartWorkerThread() override;
-  void WillStopWorkerThread() override;
   bool AllowScriptExtensionForServiceWorker(
       const blink::WebURL& script_url) override;
   blink::WebCrypto* Crypto() override;
-  blink::WebNotificationManager* GetNotificationManager() override;
-  blink::WebPushProvider* PushProvider() override;
+  const char* GetBrowserServiceName() const override;
   blink::WebMediaCapabilitiesClient* MediaCapabilitiesClient() override;
 
   blink::WebString DomCodeStringFromEnum(int dom_code) override;
   int DomEnumFromCodeString(const blink::WebString& codeString) override;
   blink::WebString DomKeyStringFromEnum(int dom_key) override;
   int DomKeyEnumFromString(const blink::WebString& key_string) override;
+  bool IsDomKeyForModifier(int dom_key) override;
 
-  // This class does *not* own the compositor thread. It is the responsibility
-  // of the caller to ensure that the compositor thread is cleared before it is
-  // destructed.
-  void SetCompositorThread(blink::scheduler::WebThreadBase* compositor_thread);
+  void WaitUntilWebThreadTLSUpdate(blink::scheduler::WebThreadBase* thread);
 
-  blink::WebFeaturePolicy* CreateFeaturePolicy(
-      const blink::WebFeaturePolicy* parentPolicy,
-      const blink::WebParsedFeaturePolicy& containerPolicy,
-      const blink::WebParsedFeaturePolicy& policyHeader,
-      const blink::WebSecurityOrigin& origin) override;
-  blink::WebFeaturePolicy* DuplicateFeaturePolicyWithOrigin(
-      const blink::WebFeaturePolicy& policy,
-      const blink::WebSecurityOrigin& new_origin) override;
+  scoped_refptr<base::SingleThreadTaskRunner> GetIOTaskRunner() const override;
 
  private:
-  void InternalInit();
-  void WaitUntilWebThreadTLSUpdate(blink::scheduler::WebThreadBase* thread);
   void UpdateWebThreadTLS(blink::WebThread* thread, base::WaitableEvent* event);
 
   bool IsMainThread() const;
 
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
+  scoped_refptr<base::SingleThreadTaskRunner> io_thread_task_runner_;
   WebThemeEngineImpl native_theme_engine_;
   WebFallbackThemeEngineImpl fallback_theme_engine_;
   base::ThreadLocalStorage::Slot current_thread_slot_;
   webcrypto::WebCryptoImpl web_crypto_;
   media::WebMediaCapabilitiesClientImpl media_capabilities_client_;
-
-  scoped_refptr<ThreadSafeSender> thread_safe_sender_;
-  scoped_refptr<NotificationDispatcher> notification_dispatcher_;
-
-  blink::scheduler::WebThreadBase* compositor_thread_;
 };
 
 }  // namespace content

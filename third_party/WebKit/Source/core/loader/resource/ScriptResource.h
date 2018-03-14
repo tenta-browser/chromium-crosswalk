@@ -31,41 +31,34 @@
 #include "platform/loader/fetch/AccessControlStatus.h"
 #include "platform/loader/fetch/IntegrityMetadata.h"
 #include "platform/loader/fetch/ResourceClient.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
+#include "platform/loader/fetch/TextResourceDecoderOptions.h"
 
 namespace blink {
 
-enum class ScriptIntegrityDisposition { kNotChecked = 0, kFailed, kPassed };
-
 class FetchParameters;
+class KURL;
 class ResourceFetcher;
 class ScriptResource;
 
-class CORE_EXPORT ScriptResourceClient : public ResourceClient {
- public:
-  ~ScriptResourceClient() override {}
-  static bool IsExpectedType(ResourceClient* client) {
-    return client->GetResourceClientType() == kScriptType;
-  }
-  ResourceClientType GetResourceClientType() const final { return kScriptType; }
-
-  virtual void NotifyAppendData(ScriptResource* resource) {}
-};
-
 class CORE_EXPORT ScriptResource final : public TextResource {
  public:
-  using ClientType = ScriptResourceClient;
+  using ClientType = ResourceClient;
   static ScriptResource* Fetch(FetchParameters&, ResourceFetcher*);
 
   // Public for testing
-  static ScriptResource* Create(const ResourceRequest& request,
-                                const String& charset) {
-    return new ScriptResource(request, ResourceLoaderOptions(), charset);
+  static ScriptResource* CreateForTest(const KURL& url,
+                                       const WTF::TextEncoding& encoding) {
+    ResourceRequest request(url);
+    request.SetFetchCredentialsMode(
+        network::mojom::FetchCredentialsMode::kOmit);
+    ResourceLoaderOptions options;
+    TextResourceDecoderOptions decoder_options(
+        TextResourceDecoderOptions::kPlainTextContent, encoding);
+    return new ScriptResource(request, options, decoder_options);
   }
 
   ~ScriptResource() override;
-
-  void DidAddClient(ResourceClient*) override;
-  void AppendData(const char*, size_t) override;
 
   void OnMemoryDump(WebMemoryDumpLevelOfDetail,
                     WebProcessMemoryDump*) const override;
@@ -74,25 +67,28 @@ class CORE_EXPORT ScriptResource final : public TextResource {
 
   const String& SourceText();
 
-  static bool MimeTypeAllowedByNosniff(const ResourceResponse&);
-
-  AccessControlStatus CalculateAccessControlStatus(const SecurityOrigin*) const;
+  AccessControlStatus CalculateAccessControlStatus() const;
 
  private:
   class ScriptResourceFactory : public ResourceFactory {
    public:
-    ScriptResourceFactory() : ResourceFactory(Resource::kScript) {}
+    ScriptResourceFactory()
+        : ResourceFactory(Resource::kScript,
+                          TextResourceDecoderOptions::kPlainTextContent) {}
 
-    Resource* Create(const ResourceRequest& request,
-                     const ResourceLoaderOptions& options,
-                     const String& charset) const override {
-      return new ScriptResource(request, options, charset);
+    Resource* Create(
+        const ResourceRequest& request,
+        const ResourceLoaderOptions& options,
+        const TextResourceDecoderOptions& decoder_options) const override {
+      return new ScriptResource(request, options, decoder_options);
     }
   };
 
   ScriptResource(const ResourceRequest&,
                  const ResourceLoaderOptions&,
-                 const String& charset);
+                 const TextResourceDecoderOptions&);
+
+  bool CanUseCacheValidator() const override;
 
   AtomicString source_text_;
 };

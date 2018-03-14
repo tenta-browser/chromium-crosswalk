@@ -4,8 +4,9 @@
 
 #import "ios/chrome/browser/ui/settings/cells/encryption_item.h"
 
+#import "ios/chrome/browser/ui/collection_view/cells/MDCCollectionViewCell+Chrome.h"
 #import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
-#import "ios/third_party/material_roboto_font_loader_ios/src/src/MaterialRobotoFontLoader.h"
+#import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -44,7 +45,7 @@ const CGFloat kVerticalPadding = 16;
 
 - (void)configureCell:(EncryptionCell*)cell {
   [super configureCell:cell];
-  cell.accessoryType = self.accessoryType;
+  [cell cr_setAccessoryType:self.accessoryType];
   cell.textLabel.text = self.text;
   cell.textLabel.textColor =
       [EncryptionCell defaultTextColorForEnabledState:self.enabled];
@@ -70,8 +71,7 @@ const CGFloat kVerticalPadding = 16;
     _textLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [self.contentView addSubview:_textLabel];
 
-    _textLabel.font =
-        [[MDFRobotoFontLoader sharedInstance] mediumFontOfSize:14];
+    _textLabel.font = [[MDCTypography fontLoader] mediumFontOfSize:14];
     _textLabel.numberOfLines = 0;
 
     // Set up the constraints.

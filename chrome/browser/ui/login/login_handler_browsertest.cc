@@ -50,6 +50,10 @@ class LoginPromptBrowserTest : public InProcessBrowserTest {
     auth_map_["testrealm"] = AuthInfo(username_basic_, password_);
   }
 
+  void SetUpOnMainThread() override {
+    host_resolver()->AddRule("*", "127.0.0.1");
+  }
+
  protected:
   struct AuthInfo {
     std::string username_;
@@ -689,8 +693,6 @@ IN_PROC_BROWSER_TEST_F(LoginPromptBrowserTest,
                        BlockCrossdomainPromptForSubresources) {
   const char kTestPage[] = "/login/load_img_from_b.html";
 
-  host_resolver()->AddRule("www.a.com", "127.0.0.1");
-  host_resolver()->AddRule("www.b.com", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->Start());
 
   content::WebContents* contents =
@@ -752,13 +754,45 @@ IN_PROC_BROWSER_TEST_F(LoginPromptBrowserTest,
   EXPECT_EQ(1, observer.auth_needed_count());
 }
 
+// Block same domain image resource if the top level frame is HTTPS and the
+// image resource is HTTP.
+// E.g. Top level: https://example.com, Image resource: http://example.com/image
+IN_PROC_BROWSER_TEST_F(LoginPromptBrowserTest,
+                       BlockCrossdomainPromptForSubresourcesMixedContent) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+  net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
+  https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_OK);
+  https_server.ServeFilesFromSourceDirectory("chrome/test/data");
+  ASSERT_TRUE(https_server.Start());
+
+  content::WebContents* contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  NavigationController* controller = &contents->GetController();
+  LoginPromptBrowserTestObserver observer;
+  observer.Register(content::Source<NavigationController>(controller));
+
+  GURL image_url = embedded_test_server()->GetURL("/auth-basic/index.html");
+  GURL test_page = https_server.GetURL(
+      std::string("/login/load_img_from_same_domain_mixed_content.html?") +
+      image_url.spec());
+  GURL::Replacements replacements;
+  replacements.SetHostStr("a.com");
+  test_page = test_page.ReplaceComponents(replacements);
+  image_url = image_url.ReplaceComponents(replacements);
+
+  WindowedLoadStopObserver load_stop_waiter(controller, 1);
+  browser()->OpenURL(OpenURLParams(test_page, Referrer(),
+                                   WindowOpenDisposition::CURRENT_TAB,
+                                   ui::PAGE_TRANSITION_TYPED, false));
+  load_stop_waiter.Wait();
+  EXPECT_EQ(0, observer.auth_needed_count());
+}
+
 // Allow crossdomain iframe login prompting despite the above.
 IN_PROC_BROWSER_TEST_F(LoginPromptBrowserTest,
                        AllowCrossdomainPromptForSubframes) {
   const char kTestPage[] = "/login/load_iframe_from_b.html";
 
-  host_resolver()->AddRule("www.a.com", "127.0.0.1");
-  host_resolver()->AddRule("www.b.com", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->Start());
 
   content::WebContents* contents =
@@ -1219,7 +1253,6 @@ IN_PROC_BROWSER_TEST_F(LoginPromptBrowserTest,
 // should be shown in the omnibox when the auth dialog is displayed.
 IN_PROC_BROWSER_TEST_F(LoginPromptBrowserTest,
                        ShowCorrectUrlForCrossOriginMainFrameRedirects) {
-  host_resolver()->AddRule("www.a.com", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->Start());
 
   const char kTestPage[] = "/login/cross_origin.html";
@@ -1236,8 +1269,6 @@ IN_PROC_BROWSER_TEST_F(LoginPromptBrowserTest,
 // the omnibox.
 IN_PROC_BROWSER_TEST_F(LoginPromptBrowserTest,
                        CancelLoginInterstitialOnRedirect) {
-  host_resolver()->AddRule("www.a.com", "127.0.0.1");
-  host_resolver()->AddRule("www.b.com", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->Start());
 
   // The test page redirects to www.a.com which triggers an auth dialog.
@@ -1464,7 +1495,6 @@ IN_PROC_BROWSER_TEST_F(LoginPromptBrowserTest,
 
   const char* kTestPage = "/login/load_iframe_from_b.html";
 
-  host_resolver()->AddRule("www.b.com", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->Start());
 
   content::WebContents* contents =

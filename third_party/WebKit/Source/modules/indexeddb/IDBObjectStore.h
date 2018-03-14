@@ -26,8 +26,8 @@
 #ifndef IDBObjectStore_h
 #define IDBObjectStore_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/core/v8/SerializedScriptValue.h"
+#include "base/memory/scoped_refptr.h"
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
 #include "modules/indexeddb/IDBCursor.h"
 #include "modules/indexeddb/IDBIndex.h"
 #include "modules/indexeddb/IDBIndexParameters.h"
@@ -36,7 +36,7 @@
 #include "modules/indexeddb/IDBMetadata.h"
 #include "modules/indexeddb/IDBRequest.h"
 #include "modules/indexeddb/IDBTransaction.h"
-#include "platform/wtf/RefPtr.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/modules/indexeddb/WebIDBCursor.h"
 #include "public/platform/modules/indexeddb/WebIDBDatabase.h"
@@ -48,17 +48,16 @@ class DOMStringList;
 class IDBAny;
 class ExceptionState;
 
-class IDBObjectStore final : public GarbageCollectedFinalized<IDBObjectStore>,
-                             public ScriptWrappable {
+class MODULES_EXPORT IDBObjectStore final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static IDBObjectStore* Create(RefPtr<IDBObjectStoreMetadata> metadata,
+  static IDBObjectStore* Create(scoped_refptr<IDBObjectStoreMetadata> metadata,
                                 IDBTransaction* transaction) {
     return new IDBObjectStore(std::move(metadata), transaction);
   }
   ~IDBObjectStore() {}
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
   const IDBObjectStoreMetadata& Metadata() const { return *metadata_; }
   const IDBKeyPath& IdbKeyPath() const { return Metadata().key_path; }
@@ -102,9 +101,7 @@ class IDBObjectStore final : public GarbageCollectedFinalized<IDBObjectStore>,
                   const ScriptValue&,
                   const ScriptValue& key,
                   ExceptionState&);
-  IDBRequest* deleteFunction(ScriptState*,
-                             const ScriptValue& key,
-                             ExceptionState&);
+  IDBRequest* Delete(ScriptState*, const ScriptValue& key, ExceptionState&);
   IDBRequest* clear(ScriptState*, ExceptionState&);
 
   IDBIndex* createIndex(ScriptState* script_state,
@@ -129,10 +126,12 @@ class IDBObjectStore final : public GarbageCollectedFinalized<IDBObjectStore>,
                   ExceptionState&);
 
   // Used internally and by InspectorIndexedDBAgent:
-  IDBRequest* openCursor(ScriptState*,
-                         IDBKeyRange*,
-                         WebIDBCursorDirection,
-                         WebIDBTaskType = kWebIDBTaskTypeNormal);
+  IDBRequest* openCursor(
+      ScriptState*,
+      IDBKeyRange*,
+      WebIDBCursorDirection,
+      WebIDBTaskType = kWebIDBTaskTypeNormal,
+      IDBRequest::AsyncTraceState = IDBRequest::AsyncTraceState());
 
   void MarkDeleted();
   bool IsDeleted() const { return deleted_; }
@@ -169,7 +168,7 @@ class IDBObjectStore final : public GarbageCollectedFinalized<IDBObjectStore>,
   // IDBIndex metadata for indexes that were deleted in this transaction.
   //
   // Used when a versionchange transaction is aborted.
-  void RevertMetadata(RefPtr<IDBObjectStoreMetadata> previous_metadata);
+  void RevertMetadata(scoped_refptr<IDBObjectStoreMetadata> previous_metadata);
   // This relies on the changes made by RevertMetadata().
   void RevertDeletedIndexMetadata(IDBIndex& deleted_index);
 
@@ -184,7 +183,7 @@ class IDBObjectStore final : public GarbageCollectedFinalized<IDBObjectStore>,
  private:
   using IDBIndexMap = HeapHashMap<String, Member<IDBIndex>>;
 
-  IDBObjectStore(RefPtr<IDBObjectStoreMetadata>, IDBTransaction*);
+  IDBObjectStore(scoped_refptr<IDBObjectStoreMetadata>, IDBTransaction*);
 
   IDBIndex* createIndex(ScriptState*,
                         const String& name,
@@ -202,7 +201,7 @@ class IDBObjectStore final : public GarbageCollectedFinalized<IDBObjectStore>,
 
   // The IDBObjectStoreMetadata is shared with the object store map in the
   // database's metadata.
-  RefPtr<IDBObjectStoreMetadata> metadata_;
+  scoped_refptr<IDBObjectStoreMetadata> metadata_;
   Member<IDBTransaction> transaction_;
   bool deleted_ = false;
 

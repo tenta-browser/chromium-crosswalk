@@ -50,22 +50,6 @@ Polymer({
   },
 
   /**
-   * @param {Event} event
-   * @private
-   */
-  onManageAndroidAppsKeydown_: function(event) {
-    if (event.key != 'Enter' && event.key != ' ')
-      return;
-    this.browserProxy_.showAndroidAppsSettings(true /** keyboardAction */);
-    event.stopPropagation();
-  },
-
-  /** @private */
-  onManageAndroidAppsTap_: function(event) {
-    this.browserProxy_.showAndroidAppsSettings(false /** keyboardAction */);
-  },
-
-  /**
    * @return {boolean}
    * @private
    */
@@ -76,7 +60,7 @@ Polymer({
 
   /**
    * Shows a confirmation dialog when disabling android apps.
-   * @param {Event} event
+   * @param {!Event} event
    * @private
    */
   onRemoveTap_: function(event) {
@@ -90,7 +74,7 @@ Polymer({
   onConfirmDisableDialogConfirm_: function() {
     this.setPrefValue('arc.enabled', false);
     this.$.confirmDisableDialog.close();
-    settings.navigateToPreviousRoute();
+    // Sub-page will be closed in onAndroidAppsInfoUpdate_ call.
   },
 
   /**
@@ -104,6 +88,6 @@ Polymer({
 
   /** @private */
   onConfirmDisableDialogClose_: function() {
-    this.$$('#remove button').focus();
+    cr.ui.focusWithoutInk(assert(this.$$('#remove button')));
   },
 });

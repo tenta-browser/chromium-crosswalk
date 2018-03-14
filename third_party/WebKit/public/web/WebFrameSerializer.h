@@ -31,11 +31,10 @@
 #ifndef WebFrameSerializer_h
 #define WebFrameSerializer_h
 
-#include "../platform/WebCommon.h"
-#include "../platform/WebString.h"
-#include "../platform/WebThreadSafeData.h"
-#include "../platform/WebURL.h"
-#include "../platform/WebVector.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebString.h"
+#include "public/platform/WebThreadSafeData.h"
+#include "public/platform/WebURL.h"
 #include "WebFrameSerializerCacheControlPolicy.h"
 
 namespace blink {
@@ -43,8 +42,6 @@ namespace blink {
 class WebFrameSerializerClient;
 class WebFrame;
 class WebLocalFrame;
-template <typename T>
-class WebVector;
 
 // Serialization of frame contents into html or mhtml.
 class WebFrameSerializer {
@@ -68,6 +65,8 @@ class WebFrameSerializer {
     virtual bool UseBinaryEncoding() = 0;
 
     virtual bool RemovePopupOverlay() = 0;
+
+    virtual bool UsePageProblemDetectors() = 0;
   };
 
   // Generates and returns an MHTML header.

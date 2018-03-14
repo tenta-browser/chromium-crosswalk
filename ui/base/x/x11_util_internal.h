@@ -6,24 +6,15 @@
 #define UI_BASE_X_X11_UTIL_INTERNAL_H_
 
 // This file declares utility functions for X11 (Linux only).
-//
-// These functions require the inclusion of the Xlib headers. Since the Xlib
-// headers pollute so much of the namespace, this should only be included
-// when needed.
-
-extern "C" {
-#include <X11/extensions/Xrender.h>
-#include <X11/extensions/XShm.h>
-#include <X11/Xatom.h>
-#include <X11/Xlib.h>
-}
 
 #include <memory>
 #include <unordered_map>
 
 #include "base/macros.h"
+#include "base/synchronization/lock.h"
 #include "build/build_config.h"
 #include "ui/base/x/ui_base_x_export.h"
+#include "ui/gfx/x/x11.h"
 #include "ui/gfx/x/x11_types.h"
 
 namespace base {
@@ -58,7 +49,6 @@ UI_BASE_X_EXPORT void LogErrorEventDescription(Display* dpy,
 // --------------------------------------------------------------------------
 // Selects a visual with a preference for alpha support on compositing window
 // managers.
-#if !defined(OS_CHROMEOS)
 class UI_BASE_X_EXPORT XVisualManager {
  public:
   static XVisualManager* GetInstance();
@@ -78,6 +68,9 @@ class UI_BASE_X_EXPORT XVisualManager {
   bool OnGPUInfoChanged(bool software_rendering,
                         VisualID default_visual_id,
                         VisualID transparent_visual_id);
+
+  // Are all of the system requirements met for using transparent visuals?
+  bool ArgbVisualAvailable() const;
 
   ~XVisualManager();
 
@@ -99,6 +92,8 @@ class UI_BASE_X_EXPORT XVisualManager {
 
   XVisualManager();
 
+  mutable base::Lock lock_;
+
   std::unordered_map<VisualID, std::unique_ptr<XVisualData>> visuals_;
 
   XDisplay* display_;
@@ -116,7 +111,6 @@ class UI_BASE_X_EXPORT XVisualManager {
 
   DISALLOW_COPY_AND_ASSIGN(XVisualManager);
 };
-#endif
 
 }  // namespace ui
 

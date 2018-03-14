@@ -8,13 +8,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <deque>
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
@@ -32,7 +32,7 @@ class TextTrackConfig;
 // Abstract interface for parsing media byte streams.
 class MEDIA_EXPORT StreamParser {
  public:
-  using BufferQueue = std::deque<scoped_refptr<StreamParserBuffer>>;
+  using BufferQueue = base::circular_deque<scoped_refptr<StreamParserBuffer>>;
 
   // Range of |TrackId| is dependent upon stream parsers. It is currently
   // the key for the buffer's text track config in the applicable
@@ -128,7 +128,7 @@ class MEDIA_EXPORT StreamParser {
       const EncryptedMediaInitDataCB& encrypted_media_init_data_cb,
       const NewMediaSegmentCB& new_segment_cb,
       const EndMediaSegmentCB& end_of_segment_cb,
-      const scoped_refptr<MediaLog>& media_log) = 0;
+      MediaLog* media_log) = 0;
 
   // Called during the reset parser state algorithm.  This flushes the current
   // parser and puts the parser in a state where it can receive data.  This

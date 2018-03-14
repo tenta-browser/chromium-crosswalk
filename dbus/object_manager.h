@@ -41,7 +41,7 @@
 //       dbus::Property<std::string> name;
 //       dbus::Property<uint16_t> version;
 //       dbus::Property<dbus::ObjectPath> parent;
-//       dbus::Property<std::vector<std::string> > children;
+//       dbus::Property<std::vector<std::string>> children;
 //
 //       Properties(dbus::ObjectProxy* object_proxy,
 //                  const PropertyChangedCallback callback)
@@ -211,12 +211,12 @@ public:
 
   // Returns a ObjectProxy pointer for the given |object_path|. Unlike
   // the equivalent method on Bus this will return NULL if the object
-  // manager has not been informed of that object's existance.
+  // manager has not been informed of that object's existence.
   ObjectProxy* GetObjectProxy(const ObjectPath& object_path);
 
   // Returns a PropertySet* pointer for the given |object_path| and
   // |interface_name|, or NULL if the object manager has not been informed of
-  // that object's existance or the interface's properties. The caller should
+  // that object's existence or the interface's properties. The caller should
   // cast the returned pointer to the appropriate type, e.g.:
   //   static_cast<Properties*>(GetProperties(object_path, my_interface));
   PropertySet* GetProperties(const ObjectPath& object_path,

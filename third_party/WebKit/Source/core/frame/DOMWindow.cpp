@@ -5,6 +5,8 @@
 #include "core/frame/DOMWindow.h"
 
 #include <memory>
+
+#include "bindings/core/v8/WindowProxyManager.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/dom/SecurityContext.h"
@@ -16,6 +18,7 @@
 #include "core/frame/Location.h"
 #include "core/frame/Settings.h"
 #include "core/frame/UseCounter.h"
+#include "core/frame/csp/ContentSecurityPolicy.h"
 #include "core/input/InputDeviceCapabilities.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "core/loader/MixedContentChecker.h"
@@ -29,18 +32,19 @@
 
 namespace blink {
 
-DOMWindow::DOMWindow(Frame& frame) : frame_(frame), window_is_closing_(false) {}
+DOMWindow::DOMWindow(Frame& frame)
+    : frame_(frame),
+      window_proxy_manager_(frame.GetWindowProxyManager()),
+      window_is_closing_(false) {}
 
 DOMWindow::~DOMWindow() {
   // The frame must be disconnected before finalization.
   DCHECK(!frame_);
 }
 
-v8::Local<v8::Object> DOMWindow::Wrap(v8::Isolate*,
+v8::Local<v8::Object> DOMWindow::Wrap(v8::Isolate* isolate,
                                       v8::Local<v8::Object> creation_context) {
-  LOG(FATAL) << "DOMWindow must never be wrapped with wrap method.  The "
-                "wrappers must be created at WindowProxy::createContext() and "
-                "setupWindowPrototypeChain().";
+  NOTREACHED();
   return v8::Local<v8::Object>();
 }
 
@@ -48,9 +52,7 @@ v8::Local<v8::Object> DOMWindow::AssociateWithWrapper(
     v8::Isolate*,
     const WrapperTypeInfo*,
     v8::Local<v8::Object> wrapper) {
-  LOG(FATAL) << "DOMWindow must never be wrapped with wrap method.  The "
-                "wrappers must be created at WindowProxy::createContext() and "
-                "setupWindowPrototypeChain().";
+  NOTREACHED();
   return v8::Local<v8::Object>();
 }
 
@@ -104,7 +106,7 @@ DOMWindow* DOMWindow::top() const {
   if (!GetFrame())
     return nullptr;
 
-  return GetFrame()->Tree().Top()->DomWindow();
+  return GetFrame()->Tree().Top().DomWindow();
 }
 
 DOMWindow* DOMWindow::AnonymousIndexedGetter(uint32_t index) const {
@@ -148,7 +150,7 @@ bool DOMWindow::IsInsecureScriptAccess(LocalDOMWindow& calling_window,
   return true;
 }
 
-void DOMWindow::postMessage(PassRefPtr<SerializedScriptValue> message,
+void DOMWindow::postMessage(scoped_refptr<SerializedScriptValue> message,
                             const MessagePortArray& ports,
                             const String& target_origin,
                             LocalDOMWindow* source,
@@ -160,7 +162,7 @@ void DOMWindow::postMessage(PassRefPtr<SerializedScriptValue> message,
 
   // Compute the target origin.  We need to do this synchronously in order
   // to generate the SyntaxError exception correctly.
-  RefPtr<SecurityOrigin> target;
+  scoped_refptr<SecurityOrigin> target;
   if (target_origin == "/") {
     if (!source_document)
       return;
@@ -177,8 +179,8 @@ void DOMWindow::postMessage(PassRefPtr<SerializedScriptValue> message,
     }
   }
 
-  MessagePortChannelArray channels = MessagePort::DisentanglePorts(
-      GetExecutionContext(), ports, exception_state);
+  auto channels = MessagePort::DisentanglePorts(GetExecutionContext(), ports,
+                                                exception_state);
   if (exception_state.HadException())
     return;
 
@@ -202,23 +204,33 @@ void DOMWindow::postMessage(PassRefPtr<SerializedScriptValue> message,
 
   KURL target_url = IsLocalDOMWindow()
                         ? blink::ToLocalDOMWindow(this)->document()->Url()
-                        : KURL(KURL(), GetFrame()
-                                           ->GetSecurityContext()
-                                           ->GetSecurityOrigin()
-                                           ->ToString());
+                        : KURL(NullURL(), GetFrame()
+                                              ->GetSecurityContext()
+                                              ->GetSecurityOrigin()
+                                              ->ToString());
   if (MixedContentChecker::IsMixedContent(source_document->GetSecurityOrigin(),
                                           target_url)) {
-    UseCounter::Count(GetFrame(), UseCounter::kPostMessageFromSecureToInsecure);
+    UseCounter::Count(source->GetFrame(),
+                      WebFeature::kPostMessageFromSecureToInsecure);
   } else if (MixedContentChecker::IsMixedContent(
                  GetFrame()->GetSecurityContext()->GetSecurityOrigin(),
                  source_document->Url())) {
-    UseCounter::Count(GetFrame(), UseCounter::kPostMessageFromInsecureToSecure);
+    UseCounter::Count(source->GetFrame(),
+                      WebFeature::kPostMessageFromInsecureToSecure);
     if (MixedContentChecker::IsMixedContent(
-            GetFrame()->Tree().Top()->GetSecurityContext()->GetSecurityOrigin(),
+            GetFrame()->Tree().Top().GetSecurityContext()->GetSecurityOrigin(),
             source_document->Url())) {
-      UseCounter::Count(GetFrame(),
-                        UseCounter::kPostMessageFromInsecureToSecureToplevel);
+      UseCounter::Count(source->GetFrame(),
+                        WebFeature::kPostMessageFromInsecureToSecureToplevel);
     }
+  }
+
+  if (!source_document->GetContentSecurityPolicy()->AllowConnectToSource(
+          target_url, RedirectStatus::kNoRedirect,
+          SecurityViolationReportingPolicy::kSuppressReporting)) {
+    UseCounter::Count(
+        source->GetFrame(),
+        WebFeature::kPostMessageOutgoingWouldBeBlockedByConnectSrc);
   }
 
   MessageEvent* event =
@@ -290,7 +302,7 @@ String DOMWindow::CrossDomainAccessErrorMessage(
   // there isn't anything else to show other than "null" for its origin.
   KURL target_url = IsLocalDOMWindow()
                         ? blink::ToLocalDOMWindow(this)->document()->Url()
-                        : KURL(KURL(), target_origin->ToString());
+                        : KURL(NullURL(), target_origin->ToString());
   if (GetFrame()->GetSecurityContext()->IsSandboxed(kSandboxOrigin) ||
       calling_window->document()->IsSandboxed(kSandboxOrigin)) {
     message = "Blocked a frame at \"" +
@@ -344,7 +356,7 @@ String DOMWindow::CrossDomainAccessErrorMessage(
   return message + "Protocols, domains, and ports must match.";
 }
 
-void DOMWindow::close(ExecutionContext* context) {
+void DOMWindow::close(LocalDOMWindow* incumbent_window) {
   if (!GetFrame() || !GetFrame()->IsMainFrame())
     return;
 
@@ -353,9 +365,9 @@ void DOMWindow::close(ExecutionContext* context) {
     return;
 
   Document* active_document = nullptr;
-  if (context) {
-    ASSERT(IsMainThread());
-    active_document = ToDocument(context);
+  if (incumbent_window) {
+    DCHECK(IsMainThread());
+    active_document = incumbent_window->document();
     if (!active_document)
       return;
 
@@ -382,7 +394,11 @@ void DOMWindow::close(ExecutionContext* context) {
   if (!GetFrame()->ShouldClose())
     return;
 
-  probe::breakableLocation(context, "DOMWindow.close");
+  ExecutionContext* execution_context = nullptr;
+  if (IsLocalDOMWindow()) {
+    execution_context = blink::ToLocalDOMWindow(this)->GetExecutionContext();
+  }
+  probe::breakableLocation(execution_context, "DOMWindow.close");
 
   page->CloseSoon();
 
@@ -393,7 +409,7 @@ void DOMWindow::close(ExecutionContext* context) {
   window_is_closing_ = true;
 }
 
-void DOMWindow::focus(ExecutionContext* context) {
+void DOMWindow::focus(LocalDOMWindow* incumbent_window) {
   if (!GetFrame())
     return;
 
@@ -401,15 +417,18 @@ void DOMWindow::focus(ExecutionContext* context) {
   if (!page)
     return;
 
-  ASSERT(context);
+  DCHECK(incumbent_window);
+  ExecutionContext* incumbent_execution_context =
+      incumbent_window->GetExecutionContext();
 
-  bool allow_focus = context->IsWindowInteractionAllowed();
+  bool allow_focus = incumbent_execution_context->IsWindowInteractionAllowed();
   if (allow_focus) {
-    context->ConsumeWindowInteraction();
+    incumbent_execution_context->ConsumeWindowInteraction();
   } else {
-    ASSERT(IsMainThread());
-    allow_focus = opener() && (opener() != this) &&
-                  (ToDocument(context)->domWindow() == opener());
+    DCHECK(IsMainThread());
+    allow_focus =
+        opener() && (opener() != this) &&
+        (ToDocument(incumbent_execution_context)->domWindow() == opener());
   }
 
   // If we're a top level window, bring the window to the front.
@@ -426,11 +445,17 @@ InputDeviceCapabilitiesConstants* DOMWindow::GetInputDeviceCapabilities() {
   return input_capabilities_;
 }
 
-DEFINE_TRACE(DOMWindow) {
+void DOMWindow::Trace(blink::Visitor* visitor) {
   visitor->Trace(frame_);
+  visitor->Trace(window_proxy_manager_);
   visitor->Trace(input_capabilities_);
   visitor->Trace(location_);
   EventTargetWithInlineData::Trace(visitor);
+}
+
+void DOMWindow::TraceWrappers(const ScriptWrappableVisitor* visitor) const {
+  visitor->TraceWrappers(location_);
+  EventTargetWithInlineData::TraceWrappers(visitor);
 }
 
 }  // namespace blink

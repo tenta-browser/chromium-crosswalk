@@ -61,7 +61,8 @@ class PLATFORM_EXPORT GraphicsContextState final {
 
   // PaintFlags objects that reflect the current state. If the length of the
   // path to be stroked is known, pass it in for correct dash or dot placement.
-  const PaintFlags& StrokeFlags(int stroked_path_length = 0) const;
+  const PaintFlags& StrokeFlags(const int stroked_path_length = 0,
+                                const int dash_thickness = 0) const;
   const PaintFlags& FillFlags() const { return fill_flags_; }
 
   uint16_t SaveCount() const { return save_count_; }
@@ -87,7 +88,7 @@ class PLATFORM_EXPORT GraphicsContextState final {
   // Shadow. (This will need tweaking if we use draw loopers for other things.)
   SkDrawLooper* DrawLooper() const {
     DCHECK_EQ(fill_flags_.getLooper(), stroke_flags_.getLooper());
-    return fill_flags_.getLooper();
+    return fill_flags_.getLooper().get();
   }
   void SetDrawLooper(sk_sp<SkDrawLooper>);
 
@@ -99,7 +100,7 @@ class PLATFORM_EXPORT GraphicsContextState final {
 
   SkColorFilter* GetColorFilter() const {
     DCHECK_EQ(fill_flags_.getColorFilter(), stroke_flags_.getColorFilter());
-    return fill_flags_.getColorFilter();
+    return fill_flags_.getColorFilter().get();
   }
   void SetColorFilter(sk_sp<SkColorFilter>);
 

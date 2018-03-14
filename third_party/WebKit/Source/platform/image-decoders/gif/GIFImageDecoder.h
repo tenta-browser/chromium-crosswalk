@@ -29,12 +29,13 @@
 #include <memory>
 #include "platform/image-decoders/ImageDecoder.h"
 #include "platform/wtf/Noncopyable.h"
+#include "platform/wtf/Time.h"
+
+namespace blink {
 
 class GIFImageReader;
 
-typedef Vector<unsigned char> GIFRow;
-
-namespace blink {
+using GIFRow = Vector<unsigned char>;
 
 // This class decodes the GIF image format.
 class PLATFORM_EXPORT GIFImageDecoder final : public ImageDecoder {
@@ -50,9 +51,9 @@ class PLATFORM_EXPORT GIFImageDecoder final : public ImageDecoder {
   String FilenameExtension() const override { return "gif"; }
   void OnSetData(SegmentReader* data) override;
   int RepetitionCount() const override;
-  bool FrameIsCompleteAtIndex(size_t) const override;
-  float FrameDurationAtIndex(size_t) const override;
-  // CAUTION: setFailed() deletes |m_reader|.  Be careful to avoid
+  bool FrameIsReceivedAtIndex(size_t) const override;
+  TimeDelta FrameDurationAtIndex(size_t) const override;
+  // CAUTION: SetFailed() deletes |reader_|.  Be careful to avoid
   // accessing deleted memory, especially when calling this from inside
   // GIFImageReader!
   bool SetFailed() override;

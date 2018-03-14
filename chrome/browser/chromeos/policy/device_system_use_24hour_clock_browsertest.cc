@@ -8,6 +8,7 @@
 #include "ash/system/date/system_info_default_view.h"
 #include "ash/system/date/tray_system_info.h"
 #include "ash/system/tray/system_tray.h"
+#include "ash/system/tray/system_tray_test_api.h"
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/macros.h"
@@ -18,11 +19,11 @@
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
-#include "chrome/browser/chromeos/policy/proto/chrome_device_policy.pb.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/system/system_clock.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chromeos/chromeos_switches.h"
+#include "components/policy/proto/chrome_device_policy.pb.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -51,7 +52,7 @@ class SystemUse24HourClockPolicyTest
     // If the login display is still showing, exit gracefully.
     if (LoginDisplayHost::default_host()) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(&chrome::AttemptExit));
+          FROM_HERE, base::BindOnce(&chrome::AttemptExit));
       content::RunMessageLoop();
     }
   }
@@ -73,11 +74,13 @@ class SystemUse24HourClockPolicyTest
         ->ShouldUse24HourClock();
   }
 
+  static ash::TraySystemInfo* GetTraySystemInfo() {
+    return ash::SystemTrayTestApi(ash::Shell::Get()->GetPrimarySystemTray())
+        .tray_system_info();
+  }
+
   static base::HourClockType TestGetPrimarySystemTrayTimeHourType() {
-    const ash::TraySystemInfo* tray_system_info =
-        ash::Shell::Get()
-            ->GetPrimarySystemTray()
-            ->GetTraySystemInfoForTesting();
+    const ash::TraySystemInfo* tray_system_info = GetTraySystemInfo();
     const ash::tray::TimeView* time_tray =
         tray_system_info->GetTimeTrayForTesting();
 
@@ -85,28 +88,20 @@ class SystemUse24HourClockPolicyTest
   }
 
   static bool TestPrimarySystemTrayHasDateDefaultView() {
-    const ash::TraySystemInfo* tray_system_info =
-        ash::Shell::Get()
-            ->GetPrimarySystemTray()
-            ->GetTraySystemInfoForTesting();
+    const ash::TraySystemInfo* tray_system_info = GetTraySystemInfo();
     const ash::SystemInfoDefaultView* system_info_default_view =
         tray_system_info->GetDefaultViewForTesting();
     return system_info_default_view != nullptr;
   }
 
   static void TestPrimarySystemTrayCreateDefaultView() {
-    ash::TraySystemInfo* tray_system_info = ash::Shell::Get()
-                                                ->GetPrimarySystemTray()
-                                                ->GetTraySystemInfoForTesting();
+    ash::TraySystemInfo* tray_system_info = GetTraySystemInfo();
     tray_system_info->CreateDefaultViewForTesting(
         ash::LoginStatus::NOT_LOGGED_IN);
   }
 
   static base::HourClockType TestGetPrimarySystemTrayDateHourType() {
-    const ash::TraySystemInfo* tray_system_info =
-        ash::Shell::Get()
-            ->GetPrimarySystemTray()
-            ->GetTraySystemInfoForTesting();
+    const ash::TraySystemInfo* tray_system_info = GetTraySystemInfo();
     const ash::SystemInfoDefaultView* system_info_default_view =
         tray_system_info->GetDefaultViewForTesting();
 

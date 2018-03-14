@@ -8,13 +8,13 @@
 #include "core/CoreExport.h"
 #include "core/dom/RemoteSecurityContext.h"
 #include "core/frame/Frame.h"
+#include "core/frame/RemoteFrameView.h"
 #include "public/platform/WebFocusType.h"
 
 namespace blink {
 
 class LocalFrame;
 class RemoteFrameClient;
-class RemoteFrameView;
 class WebLayer;
 struct FrameLoadRequest;
 
@@ -25,19 +25,21 @@ class CORE_EXPORT RemoteFrame final : public Frame {
   ~RemoteFrame() override;
 
   // Frame overrides:
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
   void Navigate(Document& origin_document,
                 const KURL&,
                 bool replace_current_item,
                 UserGestureStatus) override;
   void Navigate(const FrameLoadRequest& passed_request) override;
   void Reload(FrameLoadType, ClientRedirectPolicy) override;
+  void AddResourceTiming(const ResourceTimingInfo&) override;
   void Detach(FrameDetachType) override;
   RemoteSecurityContext* GetSecurityContext() const override;
   void PrintNavigationErrorMessage(const Frame&, const char* reason) override {}
   void PrintNavigationWarning(const String&) override {}
   bool PrepareForCommit() override;
   bool ShouldClose() override;
+  void SetIsInert(bool) override;
 
   void SetWebLayer(WebLayer*);
   WebLayer* GetWebLayer() const { return web_layer_; }
@@ -47,7 +49,7 @@ class CORE_EXPORT RemoteFrame final : public Frame {
   void SetView(RemoteFrameView*);
   void CreateView();
 
-  RemoteFrameView* View() const;
+  RemoteFrameView* View() const override;
 
   RemoteFrameClient* Client() const;
 

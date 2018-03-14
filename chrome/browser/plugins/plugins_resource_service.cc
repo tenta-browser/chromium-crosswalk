@@ -14,7 +14,8 @@
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
-#include "components/safe_json/safe_json_parser.h"
+#include "content/public/common/service_manager_connection.h"
+#include "services/data_decoder/public/cpp/safe_json_parser.h"
 #include "url/gurl.h"
 
 namespace {
@@ -32,7 +33,7 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
           destination: GOOGLE_OWNED_SERVICE
         }
         policy {
-          cookies_allowed: false
+          cookies_allowed: NO
           setting: "This feature cannot be disabled in settings."
           policy_exception_justification:
             "Not implemented. AllowOutdatedPlugins policy silences local "
@@ -51,7 +52,7 @@ const int kStartResourceFetchDelayMs = 60 * 1000;
 const int kCacheUpdateDelayMs = 24 * 60 * 60 * 1000;
 
 const char kPluginsServerUrl[] =
-    "https://www.gstatic.com/chrome/config/plugins_2/";
+    "https://www.gstatic.com/chrome/config/plugins_3/";
 
 GURL GetPluginsServerURL() {
   std::string filename;
@@ -82,7 +83,9 @@ PluginsResourceService::PluginsResourceService(PrefService* local_state)
           kCacheUpdateDelayMs,
           g_browser_process->system_request_context(),
           switches::kDisableBackgroundNetworking,
-          base::Bind(safe_json::SafeJsonParser::Parse),
+          base::Bind(data_decoder::SafeJsonParser::Parse,
+                     content::ServiceManagerConnection::GetForProcess()
+                         ->GetConnector()),
           kTrafficAnnotation) {}
 
 void PluginsResourceService::Init() {

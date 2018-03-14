@@ -18,16 +18,17 @@
 #include "base/power_monitor/power_monitor_device_source.h"
 #include "base/process/process_metrics.h"
 #include "base/system_monitor/system_monitor.h"
-#include "base/task_scheduler/initialization_util.h"
 #include "base/task_scheduler/scheduler_worker_pool_params.h"
 #include "base/task_scheduler/task_scheduler.h"
+#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_restrictions.h"
 #import "ios/web/net/cookie_notification_bridge.h"
 #include "ios/web/public/app/web_main_parts.h"
+#include "ios/web/public/global_state/ios_global_state.h"
 #import "ios/web/public/web_client.h"
+#include "ios/web/service_manager_context.h"
 #include "ios/web/web_thread_impl.h"
 #include "ios/web/webui/url_data_manager_ios.h"
-#include "net/base/network_change_notifier.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -35,40 +36,18 @@
 
 namespace web {
 
-namespace {
-
-std::unique_ptr<base::TaskScheduler::InitParams>
-GetDefaultTaskSchedulerInitParams() {
-  using StandbyThreadPolicy =
-      base::SchedulerWorkerPoolParams::StandbyThreadPolicy;
-  return base::MakeUnique<base::TaskScheduler::InitParams>(
-      base::SchedulerWorkerPoolParams(
-          StandbyThreadPolicy::ONE,
-          base::RecommendedMaxNumberOfThreadsInPool(2, 8, 0.1, 0),
-          base::TimeDelta::FromSeconds(30)),
-      base::SchedulerWorkerPoolParams(
-          StandbyThreadPolicy::ONE,
-          base::RecommendedMaxNumberOfThreadsInPool(2, 8, 0.1, 0),
-          base::TimeDelta::FromSeconds(30)),
-      base::SchedulerWorkerPoolParams(
-          StandbyThreadPolicy::ONE,
-          base::RecommendedMaxNumberOfThreadsInPool(3, 8, 0.3, 0),
-          base::TimeDelta::FromSeconds(30)),
-      base::SchedulerWorkerPoolParams(
-          StandbyThreadPolicy::ONE,
-          base::RecommendedMaxNumberOfThreadsInPool(3, 8, 0.3, 0),
-          base::TimeDelta::FromSeconds(30)));
-}
-
-}  // namespace
-
 // The currently-running WebMainLoop.  There can be one or zero.
 // TODO(rohitrao): Desktop uses this to implement
 // ImmediateShutdownAndExitProcess.  If we don't need that functionality, we can
 // remove this.
 WebMainLoop* g_current_web_main_loop = nullptr;
 
-WebMainLoop::WebMainLoop() : result_code_(0), created_threads_(false) {
+WebMainLoop::WebMainLoop()
+    : result_code_(0),
+      created_threads_(false),
+      destroy_message_loop_(base::Bind(&ios_global_state::DestroyMessageLoop)),
+      destroy_network_change_notifier_(
+          base::Bind(&ios_global_state::DestroyNetworkChangeNotifier)) {
   DCHECK(!g_current_web_main_loop);
   g_current_web_main_loop = this;
 }
@@ -79,7 +58,7 @@ WebMainLoop::~WebMainLoop() {
 }
 
 void WebMainLoop::Init() {
-  parts_.reset(web::GetWebClient()->CreateWebMainParts());
+  parts_ = web::GetWebClient()->CreateWebMainParts();
 }
 
 void WebMainLoop::EarlyInitialization() {
@@ -94,11 +73,7 @@ void WebMainLoop::MainMessageLoopStart() {
     parts_->PreMainMessageLoopStart();
   }
 
-  // Create a MessageLoop if one does not already exist for the current thread.
-  if (!base::MessageLoop::current()) {
-    main_message_loop_.reset(new base::MessageLoopForUI);
-  }
-  base::MessageLoopForUI::current()->Attach();
+  ios_global_state::BuildMessageLoop();
 
   InitializeMainThread();
 
@@ -110,20 +85,22 @@ void WebMainLoop::MainMessageLoopStart() {
   std::unique_ptr<base::PowerMonitorSource> power_monitor_source(
       new base::PowerMonitorDeviceSource());
   power_monitor_.reset(new base::PowerMonitor(std::move(power_monitor_source)));
-  network_change_notifier_.reset(net::NetworkChangeNotifier::Create());
+
+  ios_global_state::CreateNetworkChangeNotifier();
 
   if (parts_) {
     parts_->PostMainMessageLoopStart();
   }
 }
 
-void WebMainLoop::CreateStartupTasks() {
+void WebMainLoop::CreateStartupTasks(
+    TaskSchedulerInitParamsCallback init_params_callback) {
   int result = 0;
   result = PreCreateThreads();
   if (result > 0)
     return;
 
-  result = CreateThreads();
+  result = CreateThreads(std::move(init_params_callback));
   if (result > 0)
     return;
 
@@ -144,71 +121,25 @@ int WebMainLoop::PreCreateThreads() {
   return result_code_;
 }
 
-int WebMainLoop::CreateThreads() {
-  auto task_scheduler_init_params =
-      GetWebClient()->GetTaskSchedulerInitParams();
-  if (!task_scheduler_init_params)
-    task_scheduler_init_params = GetDefaultTaskSchedulerInitParams();
-  DCHECK(task_scheduler_init_params);
+int WebMainLoop::CreateThreads(
+    TaskSchedulerInitParamsCallback init_params_callback) {
+  std::unique_ptr<base::TaskScheduler::InitParams> init_params;
+  if (!init_params_callback.is_null()) {
+    init_params = std::move(init_params_callback).Run();
+  }
+  ios_global_state::StartTaskScheduler(init_params.get());
 
-  base::TaskScheduler::CreateAndSetDefaultTaskScheduler(
-      "", *task_scheduler_init_params.get());
-
-  GetWebClient()->PerformExperimentalTaskSchedulerRedirections();
+  base::SequencedWorkerPool::EnableWithRedirectionToTaskSchedulerForProcess();
 
   base::Thread::Options io_message_loop_options;
   io_message_loop_options.message_loop_type = base::MessageLoop::TYPE_IO;
+  io_thread_ = std::make_unique<WebThreadImpl>(WebThread::IO);
+  io_thread_->StartWithOptions(io_message_loop_options);
 
-  // Start threads in the order they occur in the WebThread::ID
-  // enumeration, except for WebThread::UI which is the main
-  // thread.
-  //
-  // Must be size_t so we can increment it.
-  for (size_t thread_id = WebThread::UI + 1; thread_id < WebThread::ID_COUNT;
-       ++thread_id) {
-    std::unique_ptr<WebThreadImpl>* thread_to_start = nullptr;
-    base::Thread::Options options;
+  // Only start IO thread above as this is the only WebThread besides UI (which
+  // is the main thread).
+  static_assert(WebThread::ID_COUNT == 2, "Unhandled WebThread");
 
-    switch (thread_id) {
-      // TODO(rohitrao): We probably do not need all of these threads.  Remove
-      // the ones that serve no purpose.  http://crbug.com/365909
-      case WebThread::DB:
-        thread_to_start = &db_thread_;
-        options.timer_slack = base::TIMER_SLACK_MAXIMUM;
-        break;
-      case WebThread::FILE_USER_BLOCKING:
-        thread_to_start = &file_user_blocking_thread_;
-        break;
-      case WebThread::FILE:
-        thread_to_start = &file_thread_;
-        options = io_message_loop_options;
-        options.timer_slack = base::TIMER_SLACK_MAXIMUM;
-        break;
-      case WebThread::CACHE:
-        thread_to_start = &cache_thread_;
-        options = io_message_loop_options;
-        options.timer_slack = base::TIMER_SLACK_MAXIMUM;
-        break;
-      case WebThread::IO:
-        thread_to_start = &io_thread_;
-        options = io_message_loop_options;
-        break;
-      case WebThread::UI:
-      case WebThread::ID_COUNT:
-      default:
-        NOTREACHED();
-        break;
-    }
-
-    WebThread::ID id = static_cast<WebThread::ID>(thread_id);
-
-    if (thread_to_start) {
-      (*thread_to_start).reset(new WebThreadImpl(id));
-      (*thread_to_start)->StartWithOptions(options);
-    } else {
-      NOTREACHED();
-    }
-  }
   created_threads_ = true;
   return result_code_;
 }
@@ -243,53 +174,20 @@ void WebMainLoop::ShutdownThreadsAndCleanUp() {
     parts_->PostMainMessageLoopRun();
   }
 
-  // Must be size_t so we can subtract from it.
-  for (size_t thread_id = WebThread::ID_COUNT - 1;
-       thread_id >= (WebThread::UI + 1); --thread_id) {
-    // Find the thread object we want to stop. Looping over all valid
-    // WebThread IDs and DCHECKing on a missing case in the switch
-    // statement helps avoid a mismatch between this code and the
-    // WebThread::ID enumeration.
-    //
-    // The destruction order is the reverse order of occurrence in the
-    // WebThread::ID list. The rationale for the order is as
-    // follows (need to be filled in a bit):
-    //
-    //
-    // - The IO thread is the only user of the CACHE thread.
-    //
-    // - (Not sure why DB stops last.)
-    switch (thread_id) {
-      case WebThread::DB:
-        db_thread_.reset();
-        break;
-      case WebThread::FILE_USER_BLOCKING:
-        file_user_blocking_thread_.reset();
-        break;
-      case WebThread::FILE:
-        file_thread_.reset();
-        break;
-      case WebThread::CACHE:
-        cache_thread_.reset();
-        break;
-      case WebThread::IO:
-        io_thread_.reset();
-        break;
-      case WebThread::UI:
-      case WebThread::ID_COUNT:
-      default:
-        NOTREACHED();
-        break;
-    }
-  }
+  service_manager_context_.reset();
 
-  // Close the blocking I/O pool after the other threads. Other threads such
-  // as the I/O thread may need to schedule work like closing files or flushing
-  // data during shutdown, so the blocking pool needs to be available. There
-  // may also be slow operations pending that will block shutdown, so closing
-  // it here (which will block until required operations are complete) gives
-  // more head start for those operations to finish.
-  WebThreadImpl::ShutdownThreadPool();
+  io_thread_.reset();
+
+  // Only stop IO thread above as this is the only WebThread besides UI (which
+  // is the main thread).
+  static_assert(WebThread::ID_COUNT == 2, "Unhandled WebThread");
+
+  // Shutdown TaskScheduler after the other threads. Other threads such as the
+  // I/O thread may need to schedule work like closing files or flushing data
+  // during shutdown, so TaskScheduler needs to be available. There may also be
+  // slow operations pending that will block shutdown, so closing it here (which
+  // will block until required operations are complete) gives more head start
+  // for those operations to finish.
   base::TaskScheduler::GetInstance()->Shutdown();
 
   URLDataManagerIOS::DeleteDataSources();
@@ -309,6 +207,7 @@ void WebMainLoop::InitializeMainThread() {
 
 int WebMainLoop::WebThreadsStarted() {
   cookie_notification_bridge_.reset(new CookieNotificationBridge);
+  service_manager_context_ = base::MakeUnique<ServiceManagerContext>();
   return result_code_;
 }
 

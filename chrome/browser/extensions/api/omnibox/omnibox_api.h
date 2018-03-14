@@ -65,6 +65,11 @@ class ExtensionOmniboxEventRouter {
   static void OnInputCancelled(
       Profile* profile, const std::string& extension_id);
 
+  // The user has deleted an extension omnibox suggestion result.
+  static void OnDeleteSuggestion(Profile* profile,
+                                 const std::string& extension_id,
+                                 const std::string& suggestion_text);
+
  private:
   DISALLOW_COPY_AND_ASSIGN(ExtensionOmniboxEventRouter);
 };
@@ -111,7 +116,7 @@ class OmniboxAPI : public BrowserContextKeyedAPI,
                          const Extension* extension) override;
   void OnExtensionUnloaded(content::BrowserContext* browser_context,
                            const Extension* extension,
-                           UnloadedExtensionInfo::Reason reason) override;
+                           UnloadedExtensionReason reason) override;
 
   // BrowserContextKeyedAPI implementation.
   static const char* service_name() {

@@ -6,16 +6,14 @@
 #define UI_VIEWS_CONTROLS_BUTTON_TOGGLE_BUTTON_H_
 
 #include "ui/gfx/animation/slide_animation.h"
-#include "ui/views/controls/button/custom_button.h"
+#include "ui/views/controls/button/button.h"
 
 namespace views {
-
-class Painter;
 
 // This view presents a button that has two states: on and off. This is similar
 // to a checkbox but has no text and looks more like a two-state horizontal
 // slider.
-class VIEWS_EXPORT ToggleButton : public CustomButton {
+class VIEWS_EXPORT ToggleButton : public Button {
  public:
   static const char kViewClassName[];
 
@@ -25,10 +23,12 @@ class VIEWS_EXPORT ToggleButton : public CustomButton {
   void SetIsOn(bool is_on, bool animate);
   bool is_on() const { return is_on_; }
 
-  void SetFocusPainter(std::unique_ptr<Painter> focus_painter);
+  void set_accepts_events(bool accepts_events) {
+    accepts_events_ = accepts_events;
+  }
 
   // views::View:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
 
  private:
   friend class TestToggleButton;
@@ -47,15 +47,16 @@ class VIEWS_EXPORT ToggleButton : public CustomButton {
 
   // views::View:
   const char* GetClassName() const override;
-  void OnPaint(gfx::Canvas* canvas) override;
-  void OnFocus() override;
-  void OnBlur() override;
+  bool CanAcceptEvent(const ui::Event& event) override;
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
   void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  void OnFocus() override;
+  void OnBlur() override;
 
-  // CustomButton:
+  // Button:
   void NotifyClick(const ui::Event& event) override;
+  void PaintButtonContents(gfx::Canvas* canvas) override;
   void AddInkDropLayer(ui::Layer* ink_drop_layer) override;
   void RemoveInkDropLayer(ui::Layer* ink_drop_layer) override;
   std::unique_ptr<InkDrop> CreateInkDrop() override;
@@ -65,10 +66,13 @@ class VIEWS_EXPORT ToggleButton : public CustomButton {
   // gfx::AnimationDelegate:
   void AnimationProgressed(const gfx::Animation* animation) override;
 
-  bool is_on_;
-  gfx::SlideAnimation slide_animation_;
+  bool is_on_ = false;
+  gfx::SlideAnimation slide_animation_{this};
   ThumbView* thumb_view_;
-  std::unique_ptr<Painter> focus_painter_;
+
+  // When false, this button won't accept input. Different from View::SetEnabled
+  // in that the view retains focus when this is false but not when disabled.
+  bool accepts_events_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(ToggleButton);
 };

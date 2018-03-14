@@ -13,7 +13,6 @@
 #include "base/macros.h"
 #include "mojo/edk/system/atomic_flag.h"
 #include "mojo/edk/system/dispatcher.h"
-#include "mojo/edk/system/message_for_transit.h"
 #include "mojo/edk/system/ports/port_ref.h"
 #include "mojo/edk/system/watcher_set.h"
 
@@ -48,14 +47,10 @@ class MessagePipeDispatcher : public Dispatcher {
   // Dispatcher:
   Type GetType() const override;
   MojoResult Close() override;
-  MojoResult WriteMessage(std::unique_ptr<MessageForTransit> message,
+  MojoResult WriteMessage(std::unique_ptr<ports::UserMessageEvent> message,
                           MojoWriteMessageFlags flags) override;
-  MojoResult ReadMessage(std::unique_ptr<MessageForTransit>* message,
-                         uint32_t* num_bytes,
-                         MojoHandle* handles,
-                         uint32_t* num_handles,
-                         MojoReadMessageFlags flags,
-                         bool read_any_size) override;
+  MojoResult ReadMessage(
+      std::unique_ptr<ports::UserMessageEvent>* message) override;
   HandleSignalsState GetHandleSignalsState() const override;
   MojoResult AddWatcherRef(const scoped_refptr<WatcherDispatcher>& watcher,
                            uintptr_t context) override;
@@ -66,18 +61,17 @@ class MessagePipeDispatcher : public Dispatcher {
                       uint32_t* num_handles) override;
   bool EndSerialize(void* destination,
                     ports::PortName* ports,
-                    PlatformHandle* handles) override;
+                    ScopedPlatformHandle* handles) override;
   bool BeginTransit() override;
   void CompleteTransitAndClose() override;
   void CancelTransit() override;
 
-  static scoped_refptr<Dispatcher> Deserialize(
-      const void* data,
-      size_t num_bytes,
-      const ports::PortName* ports,
-      size_t num_ports,
-      PlatformHandle* handles,
-      size_t num_handles);
+  static scoped_refptr<Dispatcher> Deserialize(const void* data,
+                                               size_t num_bytes,
+                                               const ports::PortName* ports,
+                                               size_t num_ports,
+                                               ScopedPlatformHandle* handles,
+                                               size_t num_handles);
 
  private:
   class PortObserverThunk;

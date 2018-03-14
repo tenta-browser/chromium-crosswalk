@@ -22,12 +22,13 @@ class SecurityOrigin;
 
 class WindowProxyManager : public GarbageCollected<WindowProxyManager> {
  public:
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
   v8::Isolate* GetIsolate() const { return isolate_; }
 
   void ClearForClose();
   void CORE_EXPORT ClearForNavigation();
+  void ClearForSwap();
 
   // Global proxies are passed in a vector to maintain their order: global proxy
   // object for the main world is always first. This is needed to prevent bugs

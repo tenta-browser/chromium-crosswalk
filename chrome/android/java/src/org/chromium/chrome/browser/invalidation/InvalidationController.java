@@ -4,9 +4,11 @@
 
 package org.chromium.chrome.browser.invalidation;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
 import android.os.AsyncTask;
+import android.os.Build;
 import android.os.Handler;
 import android.os.SystemClock;
 
@@ -14,7 +16,6 @@ import com.google.ipc.invalidation.ticl.android2.channel.AndroidGcmController;
 
 import org.chromium.base.ApplicationState;
 import org.chromium.base.ApplicationStatus;
-import org.chromium.base.BuildInfo;
 import org.chromium.base.FieldTrialList;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
@@ -129,6 +130,7 @@ public class InvalidationController implements ApplicationStatus.ApplicationStat
 
     private static final Object LOCK = new Object();
 
+    @SuppressLint("StaticFieldLeak")
     private static InvalidationController sInstance;
 
     private final Context mContext;
@@ -242,7 +244,7 @@ public class InvalidationController implements ApplicationStatus.ApplicationStat
     private void startServiceIfPossible(Intent intent) {
         // The use of background services is restricted when the application is not in foreground
         // for O. See crbug.com/680812.
-        if (BuildInfo.isAtLeastO()) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
                 mContext.startService(intent);
             } catch (IllegalStateException exception) {

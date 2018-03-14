@@ -7,11 +7,12 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "components/password_manager/content/common/credential_manager.mojom.h"
 #include "content/public/renderer/render_view_observer.h"
 #include "third_party/WebKit/public/platform/WebCredentialManagerClient.h"
 #include "third_party/WebKit/public/platform/WebCredentialManagerError.h"
+#include "third_party/WebKit/public/platform/WebCredentialMediationRequirement.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
+#include "third_party/WebKit/public/platform/modules/credentialmanager/credential_manager.mojom.h"
 
 namespace blink {
 class WebCredential;
@@ -46,8 +47,8 @@ class CredentialManagerClient : public blink::WebCredentialManagerClient,
   void DispatchStore(
       const blink::WebCredential& credential,
       WebCredentialManagerClient::NotificationCallbacks* callbacks) override;
-  void DispatchRequireUserMediation(NotificationCallbacks* callbacks) override;
-  void DispatchGet(bool zero_click_only,
+  void DispatchPreventSilentAccess(NotificationCallbacks* callbacks) override;
+  void DispatchGet(blink::WebCredentialMediationRequirement mediation,
                    bool include_passwords,
                    const blink::WebVector<blink::WebURL>& federations,
                    RequestCallbacks* callbacks) override;
@@ -57,8 +58,9 @@ class CredentialManagerClient : public blink::WebCredentialManagerClient,
   void OnDestruct() override;
 
   void ConnectToMojoCMIfNeeded();
+  void OnMojoConnectionError();
 
-  mojom::CredentialManagerPtr mojo_cm_service_;
+  mojom::CredentialManagerAssociatedPtr mojo_cm_service_;
 
   DISALLOW_COPY_AND_ASSIGN(CredentialManagerClient);
 };

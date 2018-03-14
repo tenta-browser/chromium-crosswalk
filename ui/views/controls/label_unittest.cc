@@ -10,19 +10,23 @@
 #include "base/i18n/rtl.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/compositor/canvas_painter.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/render_text.h"
 #include "ui/gfx/switches.h"
+#include "ui/gfx/text_elider.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/views/border.h"
+#include "ui/views/controls/link.h"
 #include "ui/views/test/focus_manager_test.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/widget/widget.h"
@@ -54,7 +58,10 @@ class TestLabel : public Label {
   void SimulatePaint() {
     SkBitmap bitmap;
     SkColor color = SK_ColorTRANSPARENT;
-    Paint(ui::CanvasPainter(&bitmap, bounds().size(), 1.f, color).context());
+    Paint(PaintInfo::CreateRootPaintInfo(
+        ui::CanvasPainter(&bitmap, bounds().size(), 1.f, color, false)
+            .context(),
+        bounds().size()));
   }
 
   // View:
@@ -90,13 +97,32 @@ base::string16 GetClipboardText(ui::ClipboardType clipboard_type) {
   return clipboard_text;
 }
 
+enum class SecondaryUiMode { NON_MD, MD };
+
+std::string SecondaryUiModeToString(
+    const ::testing::TestParamInfo<SecondaryUiMode>& info) {
+  return info.param == SecondaryUiMode::MD ? "MD" : "NonMD";
+}
+
+// Makes an RTL string by mapping 0..6 to [א,ב,ג,ד,ה,ו,ז].
+base::string16 ToRTL(const char* ascii) {
+  base::string16 rtl;
+  for (const char* c = ascii; *c; ++c) {
+    if (*c >= '0' && *c <= '6')
+      rtl += L'\x5d0' + (*c - '0');
+    else
+      rtl += static_cast<base::string16::value_type>(*c);
+  }
+  return rtl;
+}
+
 }  // namespace
 
 class LabelTest : public ViewsTestBase {
  public:
   LabelTest() {}
 
-  // ViewsTestBase overrides:
+  // ViewsTestBase:
   void SetUp() override {
     ViewsTestBase::SetUp();
 
@@ -134,6 +160,14 @@ class LabelTest : public ViewsTestBase {
 // Test fixture for text selection related tests.
 class LabelSelectionTest : public LabelTest {
  public:
+  // Alias this long identifier for more readable tests.
+  static constexpr bool kExtends =
+      gfx::RenderText::kDragToEndIfOutsideVerticalBounds;
+
+  // Some tests use cardinal directions to index an array of points above and
+  // below the label in either visual direction.
+  enum { NW, NORTH, NE, SE, SOUTH, SW };
+
   LabelSelectionTest() {}
 
   // LabelTest overrides:
@@ -148,7 +182,7 @@ class LabelSelectionTest : public LabelTest {
 #endif
     LabelTest::SetUp();
     event_generator_ =
-        base::MakeUnique<ui::test::EventGenerator>(widget()->GetNativeWindow());
+        std::make_unique<ui::test::EventGenerator>(widget()->GetNativeWindow());
   }
 
  protected:
@@ -191,15 +225,29 @@ class LabelSelectionTest : public LabelTest {
     SimulatePaint();
     gfx::RenderText* render_text =
         label()->GetRenderTextForSelectionController();
+    const gfx::Range range(index, index + 1);
     const std::vector<gfx::Rect> bounds =
-        render_text->GetSubstringBoundsForTesting(gfx::Range(index, index + 1));
+        render_text->GetSubstringBoundsForTesting(range);
     DCHECK_EQ(1u, bounds.size());
+    const int mid_y = bounds[0].y() + bounds[0].height() / 2;
 
+    // For single-line text, use the glyph bounds since it gives a better
+    // representation of the midpoint between glyphs when considering selection.
+    // TODO(tapted): When GetCursorSpan() supports returning a vertical range
+    // as well as a horizontal range, just use that here.
+    if (!render_text->multiline())
+      return gfx::Point(render_text->GetCursorSpan(range).start(), mid_y);
+
+    // Otherwise, GetCursorSpan() will give incorrect results. Multiline
+    // editing is not supported (http://crbug.com/248597) so there hasn't been
+    // a need to draw a cursor. Instead, derive a point from the selection
+    // bounds, which always rounds up to an integer after the end of a glyph.
+    // This rounding differs to the glyph bounds, which rounds to nearest
+    // integer. See http://crbug.com/735346.
     const bool rtl =
         render_text->GetDisplayTextDirection() == base::i18n::RIGHT_TO_LEFT;
     // Return Point corresponding to the leading edge of the character.
-    return gfx::Point(rtl ? bounds[0].right() - 1 : bounds[0].x() + 1,
-                      bounds[0].y() + bounds[0].height() / 2);
+    return gfx::Point(rtl ? bounds[0].right() - 1 : bounds[0].x() + 1, mid_y);
   }
 
   size_t GetLineCount() {
@@ -219,6 +267,27 @@ class LabelSelectionTest : public LabelTest {
   std::unique_ptr<ui::test::EventGenerator> event_generator_;
 
   DISALLOW_COPY_AND_ASSIGN(LabelSelectionTest);
+};
+
+// LabelTest harness that runs both with and without secondary UI set to MD.
+class MDLabelTest : public LabelTest,
+                    public ::testing::WithParamInterface<SecondaryUiMode> {
+ public:
+  MDLabelTest() {}
+
+  // LabelTest:
+  void SetUp() override {
+    if (GetParam() == SecondaryUiMode::MD)
+      scoped_feature_list_.InitAndEnableFeature(features::kSecondaryUiMd);
+    else
+      scoped_feature_list_.InitAndDisableFeature(features::kSecondaryUiMd);
+    LabelTest::SetUp();
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+
+  DISALLOW_COPY_AND_ASSIGN(MDLabelTest);
 };
 
 // Crashes on Linux only. http://crbug.com/612406
@@ -300,6 +369,41 @@ TEST_F(LabelTest, ElideBehavior) {
   EXPECT_GT(text.size(), label()->GetDisplayTextForTesting().size());
 
   label()->SetElideBehavior(gfx::NO_ELIDE);
+  EXPECT_EQ(text, label()->GetDisplayTextForTesting());
+}
+
+// Test the minimum width of a Label is correct depending on its ElideBehavior,
+// including |gfx::NO_ELIDE|.
+TEST_F(LabelTest, ElideBehaviorMinimumWidth) {
+  base::string16 text(ASCIIToUTF16("This is example text."));
+  label()->SetText(text);
+
+  // Default should be |gfx::ELIDE_TAIL|.
+  EXPECT_EQ(gfx::ELIDE_TAIL, label()->elide_behavior());
+  gfx::Size size = label()->GetMinimumSize();
+  // Elidable labels have a minimum width that fits |gfx::kEllipsisUTF16|.
+  EXPECT_EQ(gfx::Canvas::GetStringWidth(base::string16(gfx::kEllipsisUTF16),
+                                        label()->font_list()),
+            size.width());
+  label()->SetSize(label()->GetMinimumSize());
+  EXPECT_GT(text.length(), label()->GetDisplayTextForTesting().length());
+
+  // Truncated labels can take up the size they are given, but not exceed that
+  // if the text can't fit.
+  label()->SetElideBehavior(gfx::TRUNCATE);
+  label()->SetSize(gfx::Size(10, 10));
+  size = label()->GetMinimumSize();
+  EXPECT_LT(size.width(), label()->size().width());
+  EXPECT_GT(text.length(), label()->GetDisplayTextForTesting().length());
+
+  // Non-elidable single-line labels should take up their full text size, since
+  // this behavior implies the text should not be cut off.
+  EXPECT_FALSE(label()->multi_line());
+  label()->SetElideBehavior(gfx::NO_ELIDE);
+  size = label()->GetMinimumSize();
+  EXPECT_EQ(text.length(), label()->GetDisplayTextForTesting().length());
+
+  label()->SetSize(label()->GetMinimumSize());
   EXPECT_EQ(text, label()->GetDisplayTextForTesting());
 }
 
@@ -465,7 +569,7 @@ TEST_F(LabelTest, Accessibility) {
   label()->GetAccessibleNodeData(&node_data);
   EXPECT_EQ(ui::AX_ROLE_STATIC_TEXT, node_data.role);
   EXPECT_EQ(label()->text(), node_data.GetString16Attribute(ui::AX_ATTR_NAME));
-  EXPECT_TRUE(node_data.HasStateFlag(ui::AX_STATE_READ_ONLY));
+  EXPECT_FALSE(node_data.HasIntAttribute(ui::AX_ATTR_RESTRICTION));
 }
 
 TEST_F(LabelTest, TextChangeWithoutLayout) {
@@ -503,8 +607,7 @@ TEST_F(LabelTest, SingleLineSizing) {
   EXPECT_EQ(size, label()->GetPreferredSize());
 
   const gfx::Insets border(10, 20, 30, 40);
-  label()->SetBorder(CreateEmptyBorder(border.top(), border.left(),
-                                       border.bottom(), border.right()));
+  label()->SetBorder(CreateEmptyBorder(border));
   const gfx::Size size_with_border = label()->GetPreferredSize();
   EXPECT_EQ(size_with_border.height(), size.height() + border.height());
   EXPECT_EQ(size_with_border.width(), size.width() + border.width());
@@ -583,8 +686,7 @@ TEST_F(LabelTest, MultiLineSizing) {
 
   // Test everything with borders.
   gfx::Insets border(10, 20, 30, 40);
-  label()->SetBorder(CreateEmptyBorder(border.top(), border.left(),
-                                       border.bottom(), border.right()));
+  label()->SetBorder(CreateEmptyBorder(border));
 
   // SizeToFit and borders.
   label()->SizeToFit(0);
@@ -616,6 +718,52 @@ TEST_F(LabelTest, MultiLineSizing) {
             required_size.width() + border.width());
 }
 
+#if !defined(OS_MACOSX)
+// TODO(warx): Remove !defined(OS_MACOSX) once SetMaxLines() is applied to MAC
+// (crbug.com/758720).
+TEST_F(LabelTest, MultiLineSetMaxLines) {
+  // Ensure SetMaxLines clamps the line count of a string with returns.
+  label()->SetText(ASCIIToUTF16("first line\nsecond line\nthird line"));
+  label()->SetMultiLine(true);
+  gfx::Size string_size = label()->GetPreferredSize();
+  label()->SetMaxLines(2);
+  gfx::Size two_line_size = label()->GetPreferredSize();
+  EXPECT_EQ(string_size.width(), two_line_size.width());
+  EXPECT_GT(string_size.height(), two_line_size.height());
+
+  // Ensure GetHeightForWidth also respects SetMaxLines.
+  int height = label()->GetHeightForWidth(string_size.width() / 2);
+  EXPECT_EQ(height, two_line_size.height());
+
+  // Ensure SetMaxLines also works with line wrapping for SizeToFit.
+  label()->SetText(ASCIIToUTF16("A long string that will be wrapped"));
+  label()->SetMaxLines(0);  // Used to get the uncapped height.
+  label()->SizeToFit(0);    // Used to get the uncapped width.
+  label()->SizeToFit(label()->GetPreferredSize().width() / 4);
+  string_size = label()->GetPreferredSize();
+  label()->SetMaxLines(2);
+  two_line_size = label()->GetPreferredSize();
+  EXPECT_EQ(string_size.width(), two_line_size.width());
+  EXPECT_GT(string_size.height(), two_line_size.height());
+
+  // Ensure SetMaxLines also works with line wrapping for SetMaximumWidth.
+  label()->SetMaxLines(0);  // Used to get the uncapped height.
+  label()->SizeToFit(0);    // Used to get the uncapped width.
+  label()->SetMaximumWidth(label()->GetPreferredSize().width() / 4);
+  string_size = label()->GetPreferredSize();
+  label()->SetMaxLines(2);
+  two_line_size = label()->GetPreferredSize();
+  EXPECT_EQ(string_size.width(), two_line_size.width());
+  EXPECT_GT(string_size.height(), two_line_size.height());
+
+  // Ensure SetMaxLines respects the requested inset height.
+  const gfx::Insets border(1, 2, 3, 4);
+  label()->SetBorder(CreateEmptyBorder(border));
+  EXPECT_EQ(two_line_size.height() + border.height(),
+            label()->GetPreferredSize().height());
+}
+#endif
+
 // Verifies if the combination of text eliding and multiline doesn't cause
 // any side effects of size / layout calculation.
 TEST_F(LabelTest, MultiLineSizingWithElide) {
@@ -630,7 +778,7 @@ TEST_F(LabelTest, MultiLineSizingWithElide) {
   label()->SetBoundsRect(gfx::Rect(required_size));
 
   label()->SetElideBehavior(gfx::ELIDE_TAIL);
-  EXPECT_EQ(required_size.ToString(), label()->GetPreferredSize().ToString());
+  EXPECT_EQ(required_size, label()->GetPreferredSize());
   EXPECT_EQ(text, label()->GetDisplayTextForTesting());
 
   label()->SizeToFit(required_size.width() - 1);
@@ -640,12 +788,12 @@ TEST_F(LabelTest, MultiLineSizingWithElide) {
 
   // SetBounds() doesn't change the preferred size.
   label()->SetBounds(0, 0, narrow_size.width() - 1, narrow_size.height());
-  EXPECT_EQ(narrow_size.ToString(), label()->GetPreferredSize().ToString());
+  EXPECT_EQ(narrow_size, label()->GetPreferredSize());
 
   // Paint() doesn't change the preferred size.
   gfx::Canvas canvas;
   label()->OnPaint(&canvas);
-  EXPECT_EQ(narrow_size.ToString(), label()->GetPreferredSize().ToString());
+  EXPECT_EQ(narrow_size, label()->GetPreferredSize());
 }
 
 // Check that labels support GetTooltipHandlerForPoint.
@@ -700,7 +848,7 @@ TEST_F(LabelTest, ResetRenderTextData) {
   label()->SizeToPreferredSize();
   gfx::Size preferred_size = label()->GetPreferredSize();
 
-  EXPECT_NE(gfx::Size().ToString(), preferred_size.ToString());
+  EXPECT_NE(gfx::Size(), preferred_size);
   EXPECT_EQ(0u, label()->lines_.size());
 
   gfx::Canvas canvas(preferred_size, 1.0f, true);
@@ -717,7 +865,7 @@ TEST_F(LabelTest, ResetRenderTextData) {
   EXPECT_EQ(ASCIIToUTF16("Example"), label()->text());
   EXPECT_EQ(0u, label()->lines_.size());
 
-  EXPECT_EQ(preferred_size.ToString(), label()->GetPreferredSize().ToString());
+  EXPECT_EQ(preferred_size, label()->GetPreferredSize());
   EXPECT_EQ(0u, label()->lines_.size());
 
   // RenderText data should be back when it's necessary.
@@ -783,42 +931,74 @@ TEST_F(LabelTest, NoSchedulePaintInOnPaint) {
   EXPECT_EQ(count, label.schedule_paint_count());  // Unchanged.
 }
 
-TEST_F(LabelTest, FocusBounds) {
+TEST_P(MDLabelTest, FocusBounds) {
   label()->SetText(ASCIIToUTF16("Example"));
-  gfx::Size normal_size = label()->GetPreferredSize();
-
-  label()->SetFocusBehavior(View::FocusBehavior::ALWAYS);
-  label()->RequestFocus();
-  gfx::Size focusable_size = label()->GetPreferredSize();
-  // Focusable label requires larger size to paint the focus rectangle.
-  EXPECT_GT(focusable_size.width(), normal_size.width());
-  EXPECT_GT(focusable_size.height(), normal_size.height());
+  Link concrete_link(ASCIIToUTF16("Example"));
+  Label* link = &concrete_link;  // Allow LabelTest to call methods as friend.
+  link->SetFocusBehavior(View::FocusBehavior::NEVER);
 
   label()->SizeToPreferredSize();
-  gfx::Rect focus_bounds = label()->GetFocusBounds();
-  EXPECT_EQ(label()->GetLocalBounds().ToString(), focus_bounds.ToString());
+  link->SizeToPreferredSize();
 
+  // A regular label never draws a focus ring, so it should exactly match the
+  // font height (assuming no glyphs came from fallback fonts).
+  EXPECT_EQ(label()->font_list().GetHeight(),
+            label()->GetFocusRingBounds().height());
+
+  // The test starts by setting the link unfocusable, so it should also match.
+  EXPECT_EQ(link->font_list().GetHeight(), link->GetFocusRingBounds().height());
+
+  // Labels are not focusable unless they are links, so don't change size when
+  // the focus behavior changes.
+  gfx::Size normal_label_size = label()->GetPreferredSize();
+  label()->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+  EXPECT_EQ(normal_label_size, label()->GetPreferredSize());
+
+  gfx::Size normal_link_size = link->GetPreferredSize();
+  link->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+  gfx::Size focusable_link_size = link->GetPreferredSize();
+  if (GetParam() == SecondaryUiMode::MD) {
+    // Everything should match under MD since underlines indicates focus.
+    EXPECT_EQ(normal_label_size, normal_link_size);
+    EXPECT_EQ(normal_link_size, focusable_link_size);
+  } else {
+    // Otherwise, links get bigger in order to paint the focus rectangle.
+    EXPECT_NE(normal_link_size, focusable_link_size);
+    EXPECT_GT(focusable_link_size.width(), normal_link_size.width());
+    EXPECT_GT(focusable_link_size.height(), normal_link_size.height());
+  }
+
+  // Requesting focus doesn't change the preferred size since that would mess up
+  // layout.
+  label()->RequestFocus();
+  EXPECT_EQ(focusable_link_size, link->GetPreferredSize());
+
+  label()->SizeToPreferredSize();
+  gfx::Rect focus_bounds = label()->GetFocusRingBounds();
+  EXPECT_EQ(label()->GetLocalBounds(), focus_bounds);
+
+  gfx::Size focusable_size = normal_label_size;
   label()->SetBounds(
       0, 0, focusable_size.width() * 2, focusable_size.height() * 2);
   label()->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  focus_bounds = label()->GetFocusBounds();
+  focus_bounds = label()->GetFocusRingBounds();
   EXPECT_EQ(0, focus_bounds.x());
   EXPECT_LT(0, focus_bounds.y());
   EXPECT_GT(label()->bounds().bottom(), focus_bounds.bottom());
-  EXPECT_EQ(focusable_size.ToString(), focus_bounds.size().ToString());
+  EXPECT_EQ(focusable_size, focus_bounds.size());
 
   label()->SetHorizontalAlignment(gfx::ALIGN_RIGHT);
-  focus_bounds = label()->GetFocusBounds();
+  focus_bounds = label()->GetFocusRingBounds();
   EXPECT_LT(0, focus_bounds.x());
   EXPECT_EQ(label()->bounds().right(), focus_bounds.right());
   EXPECT_LT(0, focus_bounds.y());
   EXPECT_GT(label()->bounds().bottom(), focus_bounds.bottom());
-  EXPECT_EQ(focusable_size.ToString(), focus_bounds.size().ToString());
+  EXPECT_EQ(focusable_size, focus_bounds.size());
 
   label()->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   label()->SetElideBehavior(gfx::FADE_TAIL);
   label()->SetBounds(0, 0, focusable_size.width() / 2, focusable_size.height());
-  focus_bounds = label()->GetFocusBounds();
+  focus_bounds = label()->GetFocusRingBounds();
   EXPECT_EQ(0, focus_bounds.x());
   EXPECT_EQ(focusable_size.width() / 2, focus_bounds.width());
 }
@@ -828,9 +1008,13 @@ TEST_F(LabelTest, EmptyLabel) {
   label()->RequestFocus();
   label()->SizeToPreferredSize();
 
-  gfx::Rect focus_bounds = label()->GetFocusBounds();
-  EXPECT_FALSE(focus_bounds.IsEmpty());
-  EXPECT_LT(label()->font_list().GetHeight(), focus_bounds.height());
+  Link concrete_link((base::string16()));
+  Label* link = &concrete_link;  // Allow LabelTest to call methods as friend.
+
+  // With no text, neither links nor labels are focusable, and have no size in
+  // any dimension.
+  EXPECT_EQ(gfx::Rect(), label()->GetFocusRingBounds());
+  EXPECT_EQ(gfx::Rect(), link->GetFocusRingBounds());
 }
 
 TEST_F(LabelSelectionTest, Selectable) {
@@ -965,47 +1149,147 @@ TEST_F(LabelSelectionTest, MouseDragMultilineLTR) {
   PerformMouseDragTo(gfx::Point(100, GetCursorPoint(6).y()));
   EXPECT_STR_EQ("cd\nefgh", GetSelectedText());
 
-  PerformMouseDragTo(gfx::Point(GetCursorPoint(3).x(), -5));
-  EXPECT_STR_EQ(gfx::RenderText::kDragToEndIfOutsideVerticalBounds ? "ab" : "c",
-                GetSelectedText());
+  const gfx::Point points[] = {
+      {GetCursorPoint(1).x(), -5},   // NW.
+      {GetCursorPoint(2).x(), -5},   // NORTH.
+      {GetCursorPoint(3).x(), -5},   // NE.
+      {GetCursorPoint(8).x(), 100},  // SE.
+      {GetCursorPoint(7).x(), 100},  // SOUTH.
+      {GetCursorPoint(6).x(), 100},  // SW.
+  };
+  constexpr const char* kExtendLeft = "ab";
+  constexpr const char* kExtendRight = "cd\nefgh";
 
-  PerformMouseDragTo(gfx::Point(GetCursorPoint(7).x(), 100));
-  EXPECT_STR_EQ(gfx::RenderText::kDragToEndIfOutsideVerticalBounds ? "cd\nefgh"
-                                                                   : "cd\nef",
-                GetSelectedText());
+  // For multiline, N* extends left, S* extends right.
+  PerformMouseDragTo(points[NW]);
+  EXPECT_STR_EQ(kExtends ? kExtendLeft : "b", GetSelectedText());
+  PerformMouseDragTo(points[NORTH]);
+  EXPECT_STR_EQ(kExtends ? kExtendLeft : "", GetSelectedText());
+  PerformMouseDragTo(points[NE]);
+  EXPECT_STR_EQ(kExtends ? kExtendLeft : "c", GetSelectedText());
+  PerformMouseDragTo(points[SE]);
+  EXPECT_STR_EQ(kExtends ? kExtendRight : "cd\nefg", GetSelectedText());
+  PerformMouseDragTo(points[SOUTH]);
+  EXPECT_STR_EQ(kExtends ? kExtendRight : "cd\nef", GetSelectedText());
+  PerformMouseDragTo(points[SW]);
+  EXPECT_STR_EQ(kExtends ? kExtendRight : "cd\ne", GetSelectedText());
+}
+
+// Single line fields consider the x offset as well. Ties go to the right.
+TEST_F(LabelSelectionTest, MouseDragSingleLineLTR) {
+  label()->SetText(ASCIIToUTF16("abcdef"));
+  label()->SizeToPreferredSize();
+  ASSERT_TRUE(label()->SetSelectable(true));
+  PerformMousePress(GetCursorPoint(2));
+  const gfx::Point points[] = {
+      {GetCursorPoint(1).x(), -5},   // NW.
+      {GetCursorPoint(2).x(), -5},   // NORTH.
+      {GetCursorPoint(3).x(), -5},   // NE.
+      {GetCursorPoint(3).x(), 100},  // SE.
+      {GetCursorPoint(2).x(), 100},  // SOUTH.
+      {GetCursorPoint(1).x(), 100},  // SW.
+  };
+  constexpr const char* kExtendLeft = "ab";
+  constexpr const char* kExtendRight = "cdef";
+
+  // For single line, western directions extend left, all others extend right.
+  PerformMouseDragTo(points[NW]);
+  EXPECT_STR_EQ(kExtends ? kExtendLeft : "b", GetSelectedText());
+  PerformMouseDragTo(points[NORTH]);
+  EXPECT_STR_EQ(kExtends ? kExtendRight : "", GetSelectedText());
+  PerformMouseDragTo(points[NE]);
+  EXPECT_STR_EQ(kExtends ? kExtendRight : "c", GetSelectedText());
+  PerformMouseDragTo(points[SE]);
+  EXPECT_STR_EQ(kExtends ? kExtendRight : "c", GetSelectedText());
+  PerformMouseDragTo(points[SOUTH]);
+  EXPECT_STR_EQ(kExtends ? kExtendRight : "", GetSelectedText());
+  PerformMouseDragTo(points[SW]);
+  EXPECT_STR_EQ(kExtends ? kExtendLeft : "b", GetSelectedText());
 }
 
 TEST_F(LabelSelectionTest, MouseDragMultilineRTL) {
   label()->SetMultiLine(true);
-  label()->SetText(WideToUTF16(L"\x5d0\x5d1\x5d2\n\x5d3\x5d4\x5d5"));
+  label()->SetText(ToRTL("012\n345"));
+  // Sanity check.
+  EXPECT_EQ(WideToUTF16(L"\x5d0\x5d1\x5d2\n\x5d3\x5d4\x5d5"), label()->text());
+
   label()->SizeToPreferredSize();
   ASSERT_TRUE(label()->SetSelectable(true));
   ASSERT_EQ(2u, GetLineCount());
 
-  PerformMousePress(GetCursorPoint(1));
+  PerformMousePress(GetCursorPoint(1));  // Note: RTL drag starts at 1, not 2.
   PerformMouseDragTo(GetCursorPoint(0));
-  EXPECT_EQ(WideToUTF16(L"\x5d0"), GetSelectedText());
+  EXPECT_EQ(ToRTL("0"), GetSelectedText());
 
   PerformMouseDragTo(GetCursorPoint(6));
-  EXPECT_EQ(WideToUTF16(L"\x5d1\x5d2\n\x5d3\x5d4"), GetSelectedText());
+  EXPECT_EQ(ToRTL("12\n34"), GetSelectedText());
 
   PerformMouseDragTo(gfx::Point(-5, GetCursorPoint(6).y()));
-  EXPECT_EQ(WideToUTF16(L"\x5d1\x5d2\n\x5d3\x5d4\x5d5"), GetSelectedText());
+  EXPECT_EQ(ToRTL("12\n345"), GetSelectedText());
 
   PerformMouseDragTo(gfx::Point(100, GetCursorPoint(6).y()));
-  EXPECT_EQ(WideToUTF16(L"\x5d1\x5d2\n"), GetSelectedText());
+  EXPECT_EQ(ToRTL("12\n"), GetSelectedText());
 
-  PerformMouseDragTo(gfx::Point(GetCursorPoint(2).x(), -5));
-  EXPECT_EQ(gfx::RenderText::kDragToEndIfOutsideVerticalBounds
-                ? WideToUTF16(L"\x5d0")
-                : WideToUTF16(L"\x5d1"),
-            GetSelectedText());
+  const gfx::Point points[] = {
+      {GetCursorPoint(2).x(), -5},   // NW: Now towards the end of the string.
+      {GetCursorPoint(1).x(), -5},   // NORTH,
+      {GetCursorPoint(0).x(), -5},   // NE: Towards the start.
+      {GetCursorPoint(4).x(), 100},  // SE.
+      {GetCursorPoint(5).x(), 100},  // SOUTH.
+      {GetCursorPoint(6).x(), 100},  // SW.
+  };
 
-  PerformMouseDragTo(gfx::Point(GetCursorPoint(6).x(), 100));
-  EXPECT_EQ(gfx::RenderText::kDragToEndIfOutsideVerticalBounds
-                ? WideToUTF16(L"\x5d1\x5d2\n\x5d3\x5d4\x5d5")
-                : WideToUTF16(L"\x5d1\x5d2\n\x5d3\x5d4"),
-            GetSelectedText());
+  // Visual right, so to the beginning of the string for RTL.
+  const base::string16 extend_right = ToRTL("0");
+  const base::string16 extend_left = ToRTL("12\n345");
+
+  // For multiline, N* extends right, S* extends left.
+  PerformMouseDragTo(points[NW]);
+  EXPECT_EQ(kExtends ? extend_right : ToRTL("1"), GetSelectedText());
+  PerformMouseDragTo(points[NORTH]);
+  EXPECT_EQ(kExtends ? extend_right : ToRTL(""), GetSelectedText());
+  PerformMouseDragTo(points[NE]);
+  EXPECT_EQ(kExtends ? extend_right : ToRTL("0"), GetSelectedText());
+  PerformMouseDragTo(points[SE]);
+  EXPECT_EQ(kExtends ? extend_left : ToRTL("12\n"), GetSelectedText());
+  PerformMouseDragTo(points[SOUTH]);
+  EXPECT_EQ(kExtends ? extend_left : ToRTL("12\n3"), GetSelectedText());
+  PerformMouseDragTo(points[SW]);
+  EXPECT_EQ(kExtends ? extend_left : ToRTL("12\n34"), GetSelectedText());
+}
+
+TEST_F(LabelSelectionTest, MouseDragSingleLineRTL) {
+  label()->SetText(ToRTL("0123456"));
+  label()->SizeToPreferredSize();
+  ASSERT_TRUE(label()->SetSelectable(true));
+
+  PerformMousePress(GetCursorPoint(1));
+  const gfx::Point points[] = {
+      {GetCursorPoint(2).x(), -5},   // NW.
+      {GetCursorPoint(1).x(), -5},   // NORTH.
+      {GetCursorPoint(0).x(), -5},   // NE.
+      {GetCursorPoint(0).x(), 100},  // SE.
+      {GetCursorPoint(1).x(), 100},  // SOUTH.
+      {GetCursorPoint(2).x(), 100},  // SW.
+  };
+
+  // Visual right, so to the beginning of the string for RTL.
+  const base::string16 extend_right = ToRTL("0");
+  const base::string16 extend_left = ToRTL("123456");
+
+  // For single line, western directions extend left, all others extend right.
+  PerformMouseDragTo(points[NW]);
+  EXPECT_EQ(kExtends ? extend_left : ToRTL("1"), GetSelectedText());
+  PerformMouseDragTo(points[NORTH]);
+  EXPECT_EQ(kExtends ? extend_right : ToRTL(""), GetSelectedText());
+  PerformMouseDragTo(points[NE]);
+  EXPECT_EQ(kExtends ? extend_right : ToRTL("0"), GetSelectedText());
+  PerformMouseDragTo(points[SE]);
+  EXPECT_EQ(kExtends ? extend_right : ToRTL("0"), GetSelectedText());
+  PerformMouseDragTo(points[SOUTH]);
+  EXPECT_EQ(kExtends ? extend_right : ToRTL(""), GetSelectedText());
+  PerformMouseDragTo(points[SW]);
+  EXPECT_EQ(kExtends ? extend_left : ToRTL("1"), GetSelectedText());
 }
 
 // Verify the initially selected word on a double click, remains selected on
@@ -1118,5 +1402,11 @@ TEST_F(LabelSelectionTest, ContextMenuContents) {
   EXPECT_FALSE(IsMenuCommandEnabled(IDS_APP_COPY));
   EXPECT_FALSE(IsMenuCommandEnabled(IDS_APP_SELECT_ALL));
 }
+
+INSTANTIATE_TEST_CASE_P(,
+                        MDLabelTest,
+                        ::testing::Values(SecondaryUiMode::MD,
+                                          SecondaryUiMode::NON_MD),
+                        &SecondaryUiModeToString);
 
 }  // namespace views

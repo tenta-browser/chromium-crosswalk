@@ -15,14 +15,12 @@
   <link rel="stylesheet" href="common/search_bubble.css">
   <link rel="stylesheet" href="settings/destination_settings.css">
   <link rel="stylesheet" href="settings/color_settings.css">
-  <link rel="stylesheet" href="settings/copies_settings.css">
   <link rel="stylesheet" href="settings/settings_box.css">
   <link rel="stylesheet" href="settings/page_settings.css">
   <link rel="stylesheet" href="settings/margin_settings.css">
   <link rel="stylesheet" href="settings/media_size_settings.css">
   <link rel="stylesheet" href="settings/layout_settings.css">
   <link rel="stylesheet" href="settings/dpi_settings.css">
-  <link rel="stylesheet" href="settings/other_options_settings.css">
   <link rel="stylesheet" href="settings/advanced_options_settings.css">
   <link rel="stylesheet" href="settings/advanced_settings/advanced_settings.css">
   <link rel="stylesheet" href="settings/advanced_settings/advanced_settings_item.css">
@@ -31,12 +29,10 @@
   <link rel="stylesheet" href="previewarea/margin_control_container.css">
   <link rel="stylesheet" href="previewarea/margin_control.css">
   <link rel="stylesheet" href="chrome://resources/css/overlay.css">
-  <link rel="stylesheet" href="no_destinations_promo.css">
 
   <link rel="stylesheet" href="search/destination_list.css">
   <link rel="stylesheet" href="search/destination_list_item.css">
   <link rel="stylesheet" href="search/destination_search.css">
-  <link rel="stylesheet" href="search/fedex_tos.css">
   <link rel="stylesheet" href="search/provisional_destination_resolver.css">
 
   <script src="chrome://resources/js/action_link.js"></script>
@@ -48,6 +44,7 @@
   <script src="chrome://resources/js/cr/ui/focus_outline_manager.js"></script>
   <script src="chrome://resources/js/cr/ui/node_utils.js"></script>
   <script src="chrome://resources/js/event_tracker.js"></script>
+  <script src="chrome://resources/js/webui_listener_tracker.js"></script>
   <script src="chrome://resources/js/load_time_data.js"></script>
   <script src="chrome://resources/js/util.js"></script>
   <script src="chrome://print/print_preview.js"></script>
@@ -75,15 +72,14 @@
         <include src="settings/advanced_options_settings.html">
         <include src="settings/more_settings.html">
       </div>
-      <div id="link-container">
 <if expr="not chromeos">
+      <div id="link-container">
         <div>
           <a is="action-link" id="system-dialog-link" class="navbar-link">
             $i18n{systemDialogOption}
           </a>
           <div id="system-dialog-throbber" hidden class="throbber"></div>
         </div>
-</if>
 <if expr="is_macosx">
         <div>
           <a is="action-link" id="open-pdf-in-preview-link" class="navbar-link">
@@ -93,11 +89,11 @@
         </div>
 </if>
       </div>
+</if>
     </div>
   </div>
   <include src="search/destination_search.html">
   <include src="settings/advanced_settings/advanced_settings.html">
-  <include src="no_destinations_promo.html">
   <div id="main-container">
     <include src="previewarea/preview_area.html">
   </div>
@@ -108,7 +104,6 @@
   <include src="previewarea/margin_control.html">
   <include src="search/destination_list.html">
   <include src="search/destination_list_item.html">
-  <include src="search/fedex_tos.html">
   <include src="search/provisional_destination_resolver.html">
 
   <script src="chrome://resources/js/i18n_template.js"></script>

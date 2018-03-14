@@ -59,18 +59,33 @@ var privateHelpers = {
     chrome.networkingPrivate.onNetworksChanged.addListener(
         this.onNetworkChange);
   },
-  listListener: function(expected, done) {
-    var self = this;
-    this.listenForChanges = function(list) {
+  networkListChangedListener: function(expected, done) {
+    function listener(list) {
       assertEq(expected, list);
-      chrome.networkingPrivate.onNetworkListChanged.removeListener(
-          self.listenForChanges);
+      chrome.networkingPrivate.onNetworkListChanged.removeListener(listener);
       done();
     };
+    this.start = function() {
+      chrome.networkingPrivate.onNetworkListChanged.addListener(listener);
+    };
   },
-  watchForCaptivePortalState: function(expectedGuid,
-                                       expectedState,
-                                       done) {
+  networksChangedListener: function(guid, test, done) {
+    function listener(changes) {
+      for (let c of changes) {
+        if (c != guid)
+          continue;
+        chrome.networkingPrivate.onNetworksChanged.removeListener(listener);
+        chrome.networkingPrivate.getProperties(guid, function(result) {
+          if (test(result))
+            done();
+        });
+      }
+    };
+    this.start = function() {
+      chrome.networkingPrivate.onNetworksChanged.addListener(listener);
+    };
+  },
+  watchForCaptivePortalState: function(expectedGuid, expectedState, done) {
     var self = this;
     this.onPortalDetectionCompleted = function(guid, state) {
       assertEq(expectedGuid, guid);
@@ -81,6 +96,19 @@ var privateHelpers = {
     };
     chrome.networkingPrivate.onPortalDetectionCompleted.addListener(
         self.onPortalDetectionCompleted);
+  },
+  verifyTetherNetwork: function(
+      properties, expectedGuid, expectedName, expectedBatteryPercentage,
+      expectedCarrier, expectedSignalStrength, expectedHasConnectedToHost) {
+    //assertEq(NetworkType.Tether, properties.Type);
+    assertEq(expectedGuid, properties.GUID);
+    assertEq(expectedName,
+             properties.Name.hasOwnProperty('Active') ? properties.Name.Active
+                                                      : properties.Name);
+    assertEq(expectedBatteryPercentage, properties.Tether.BatteryPercentage);
+    assertEq(expectedCarrier, properties.Tether.Carrier);
+    assertEq(expectedHasConnectedToHost, properties.Tether.HasConnectedToHost);
+    assertEq(expectedSignalStrength, properties.Tether.SignalStrength);
   }
 };
 
@@ -261,8 +289,10 @@ var availableTests = [
           WiFi: {
             BSSID: '00:01:02:03:04:05',
             Frequency: 2400,
+            HexSSID: "7769666931",
             Security: 'WEP-PSK',
-            SignalStrength: 40
+            SignalStrength: 40,
+            SSID: "wifi1"
           }
         }, {
           GUID: 'stub_wifi2_guid',
@@ -273,7 +303,9 @@ var availableTests = [
           WiFi: {
             BSSID: '',
             Frequency: 5000,
+            HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
+            SSID: "wifi2_PSK"
           }
         }], result);
 
@@ -293,8 +325,10 @@ var availableTests = [
               WiFi: {
                 BSSID: '00:01:02:03:04:05',
                 Frequency: 2400,
+                HexSSID: "7769666931",
                 Security: 'WEP-PSK',
-                SignalStrength: 40
+                SignalStrength: 40,
+                SSID: "wifi1"
               }
             }], result);
 
@@ -346,8 +380,10 @@ var availableTests = [
           WiFi: {
             BSSID: '00:01:02:03:04:05',
             Frequency: 2400,
+            HexSSID: "7769666931",
             Security: 'WEP-PSK',
-            SignalStrength: 40
+            SignalStrength: 40,
+            SSID: "wifi1"
           }
         }, {
           Connectable: true,
@@ -394,8 +430,10 @@ var availableTests = [
           WiFi: {
             BSSID: '',
             Frequency: 5000,
+            HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
-            SignalStrength: 80
+            SignalStrength: 80,
+            SSID: "wifi2_PSK"
           }
         }], result);
       }));
@@ -415,8 +453,10 @@ var availableTests = [
           WiFi: {
             BSSID: '00:01:02:03:04:05',
             Frequency: 2400,
+            HexSSID: "7769666931",
             Security: 'WEP-PSK',
-            SignalStrength: 40
+            SignalStrength: 40,
+            SSID: "wifi1"
           }
         }, {
           Connectable: true,
@@ -429,8 +469,10 @@ var availableTests = [
           WiFi: {
             BSSID: '',
             Frequency: 5000,
+            HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
-            SignalStrength: 80
+            SignalStrength: 80,
+            SSID: "wifi2_PSK"
           }
         }], result);
       }));
@@ -465,7 +507,9 @@ var availableTests = [
       assertEq([
         {Scanning: false, State: 'Enabled', Type: 'Ethernet'},
         {Scanning: false, State: 'Enabled', Type: 'WiFi'},
-        {State: 'Uninitialized', Type: 'Cellular', SimPresent: true},
+        {State: 'Uninitialized', SIMPresent: true,
+         SIMLockStatus: {LockEnabled: true, LockType: '', RetriesLeft: 3},
+         Type: 'Cellular' },
         {State: 'Disabled', Type: 'WiMAX'},
       ],
                result);
@@ -480,10 +524,21 @@ var availableTests = [
                     'stub_vpn2_guid',
                     'stub_wifi2_guid'];
     var done = chrome.test.callbackAdded();
-    var listener = new privateHelpers.listListener(expected, done);
-    chrome.networkingPrivate.onNetworkListChanged.addListener(
-      listener.listenForChanges);
+    var listener =
+        new privateHelpers.networkListChangedListener(expected, done);
+    listener.start();
     chrome.networkingPrivate.requestNetworkScan();
+  },
+  function requestNetworkScanCellular() {
+    var done = chrome.test.callbackAdded();
+    var listener = new privateHelpers.networksChangedListener(
+        kCellularGuid, function(result) {
+          var cellular = result.Cellular;
+          return cellular && cellular.FoundNetworks &&
+              cellular.FoundNetworks[0].Status == 'available';
+        }, done);
+    listener.start();
+    chrome.networkingPrivate.requestNetworkScan('Cellular');
   },
   function getProperties() {
     chrome.networkingPrivate.getProperties(
@@ -551,6 +606,40 @@ var availableTests = [
           GUID: kCellularGuid,
           Name: 'cellular1',
           Source: 'User',
+          Type: NetworkType.CELLULAR,
+        }, result);
+      }));
+  },
+  function getPropertiesCellularDefault() {
+    chrome.networkingPrivate.getProperties(
+      kCellularGuid,
+      callbackPass(function(result) {
+        assertEq({
+          Cellular: {
+            AllowRoaming: false,
+            Carrier: 'Cellular1_Carrier',
+            ESN: "test_esn",
+            Family: 'GSM',
+            HomeProvider: {
+              Code: '000000',
+              Country: 'us',
+              Name: 'Cellular1_Provider'
+            },
+            ICCID: "test_iccid",
+            IMEI: "test_imei",
+            MDN: "test_mdn",
+            MEID: "test_meid",
+            MIN: "test_min",
+            ModelID:"test_model_id",
+            SIMLockStatus: {LockEnabled: true, LockType: '', RetriesLeft: 3},
+            SignalStrength: 0,
+          },
+          Connectable: false,
+          ConnectionState: ConnectionStateType.NOT_CONNECTED,
+          GUID: kCellularGuid,
+          Name: 'Cellular1_Provider',
+          Priority: 0,
+          Source: 'None',
           Type: NetworkType.CELLULAR,
         }, result);
       }));
@@ -687,8 +776,10 @@ var availableTests = [
           assertEq(network_guid, result.GUID);
           var new_properties = {
             Priority: 1,
+            Type: 'VPN',
             VPN: {
-              Host: 'vpn.host1'
+              Host: 'vpn.host1',
+              Type: 'OpenVPN',
             }
           };
           chrome.networkingPrivate.setProperties(
@@ -724,8 +815,10 @@ var availableTests = [
           WiFi: {
             BSSID: '',
             Frequency: 5000,
+            HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
-            SignalStrength: 80
+            SignalStrength: 80,
+            SSID: "wifi2_PSK"
           }
         }, result);
       }));
@@ -772,9 +865,9 @@ var availableTests = [
                     'stub_wifi1_guid',
                     'stub_vpn2_guid'];
     var done = chrome.test.callbackAdded();
-    var listener = new privateHelpers.listListener(expected, done);
-    chrome.networkingPrivate.onNetworkListChanged.addListener(
-      listener.listenForChanges);
+    var listener =
+        new privateHelpers.networkListChangedListener(expected, done);
+    listener.start();
     var network = 'stub_wifi2_guid';
     chrome.networkingPrivate.startConnect(network, networkCallbackPass());
   },
@@ -785,6 +878,11 @@ var availableTests = [
     });
     chrome.networkingPrivate.onDeviceStateListChanged.addListener(listener);
     chrome.networkingPrivate.disableNetworkType('WiFi');
+  },
+  function onCertificateListsChangedEvent() {
+    chrome.test.listenOnce(
+        chrome.networkingPrivate.onCertificateListsChanged, function() {});
+    chrome.test.sendMessage('eventListenerReady');
   },
   function verifyDestination() {
     chrome.networkingPrivate.verifyDestination(
@@ -883,6 +981,31 @@ var availableTests = [
               }));
         }));
   },
+  function selectCellularMobileNetwork() {
+    chrome.networkingPrivate.getProperties(
+        kCellularGuid, callbackPass(function(result) {
+          // Ensure that there are two found networks and the first is selected.
+          assertTrue(!!result.Cellular.FoundNetworks);
+          assertTrue(result.Cellular.FoundNetworks.length >= 2);
+          assertTrue(result.Cellular.FoundNetworks[0].Status == 'current');
+          assertTrue(result.Cellular.FoundNetworks[1].Status == 'available');
+          // Select the second network
+          var secondNetworkId = result.Cellular.FoundNetworks[1].NetworkId;
+          chrome.networkingPrivate.selectCellularMobileNetwork(
+              kCellularGuid, secondNetworkId, callbackPass(function() {
+                chrome.networkingPrivate.getProperties(
+                    kCellularGuid, callbackPass(function(result) {
+                      // Ensure that the second network is selected.
+                      assertTrue(!!result.Cellular.FoundNetworks);
+                      assertTrue(result.Cellular.FoundNetworks.length >= 2);
+                      assertEq(
+                          'available', result.Cellular.FoundNetworks[0].Status);
+                      assertEq(
+                          'current', result.Cellular.FoundNetworks[1].Status);
+                    }));
+              }));
+        }));
+  },
   function cellularSimPuk() {
     var newPin = '6666';
     var incorrectPin = '2222';
@@ -922,6 +1045,48 @@ var availableTests = [
         AllowOnlyPolicyNetworksToConnect: false,
       }, result);
     }));
+  },
+  function getTetherNetworks() {
+    chrome.networkingPrivate.getNetworks(
+        {networkType: 'Tether'},
+        callbackPass(function(tetherNetworks) {
+          assertEq(2, tetherNetworks.length);
+          privateHelpers.verifyTetherNetwork(tetherNetworks[0], 'tetherGuid1',
+              'tetherName1', 50, 'tetherCarrier1', 75, true);
+          privateHelpers.verifyTetherNetwork(tetherNetworks[1], 'tetherGuid2',
+              'tetherName2', 75, 'tetherCarrier2', 100, false);
+        }));
+  },
+  function getTetherNetworkProperties() {
+    chrome.networkingPrivate.getProperties(
+        'tetherGuid1',
+        callbackPass(function(tetherNetwork) {
+          privateHelpers.verifyTetherNetwork(tetherNetwork, 'tetherGuid1',
+              'tetherName1', 50, 'tetherCarrier1', 75, true);
+        }));
+  },
+  function getTetherNetworkManagedProperties() {
+    chrome.networkingPrivate.getManagedProperties(
+        'tetherGuid1',
+        callbackPass(function(tetherNetwork) {
+          privateHelpers.verifyTetherNetwork(tetherNetwork, 'tetherGuid1',
+              'tetherName1', 50, 'tetherCarrier1', 75, true);
+        }));
+  },
+  function getTetherNetworkState() {
+    chrome.networkingPrivate.getState(
+        'tetherGuid1',
+        callbackPass(function(tetherNetwork) {
+          privateHelpers.verifyTetherNetwork(tetherNetwork, 'tetherGuid1',
+              'tetherName1', 50, 'tetherCarrier1', 75, true);
+        }));
+  },
+  function getCertificateLists() {
+    chrome.networkingPrivate.getCertificateLists(
+        callbackPass(function(certificateLists) {
+          assertEq(1, certificateLists.serverCaCertificates.length);
+          assertEq(0, certificateLists.userCertificates.length);
+        }));
   },
 ];
 

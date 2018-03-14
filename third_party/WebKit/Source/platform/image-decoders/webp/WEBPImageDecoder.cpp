@@ -28,7 +28,10 @@
 
 #include "platform/image-decoders/webp/WEBPImageDecoder.h"
 
-#if CPU(BIG_ENDIAN) || CPU(MIDDLE_ENDIAN)
+#include "build/build_config.h"
+#include "third_party/skia/include/core/SkData.h"
+
+#if defined(ARCH_CPU_BIG_ENDIAN)
 #error Blink assumes a little-endian target.
 #endif
 
@@ -79,7 +82,7 @@ inline void findBlendRangeAtRow(const blink::IntRect& src,
 
 // alphaBlendPremultiplied and alphaBlendNonPremultiplied are separate methods,
 // even though they only differ by one line. This is done so that the compiler
-// can inline blendSrcOverDstPremultiplied() and blensSrcOverDstRaw() calls.
+// can inline BlendSrcOverDstPremultiplied() and BlensSrcOverDstRaw() calls.
 // For GIF images, this optimization reduces decoding time by 15% for 3MB
 // images.
 void alphaBlendPremultiplied(blink::ImageFrame& src,
@@ -120,13 +123,13 @@ WEBPImageDecoder::WEBPImageDecoder(AlphaOption alpha_option,
                                    const ColorBehavior& color_behavior,
                                    size_t max_decoded_bytes)
     : ImageDecoder(alpha_option, color_behavior, max_decoded_bytes),
-      decoder_(0),
+      decoder_(nullptr),
       format_flags_(0),
       frame_background_has_alpha_(false),
-      demux_(0),
+      demux_(nullptr),
       demux_state_(WEBP_DEMUX_PARSING_HEADER),
       have_already_parsed_this_data_(false),
-      repetition_count_(kCAnimationLoopOnce),
+      repetition_count_(kAnimationLoopOnce),
       decoded_height_(0) {
   blend_function_ = (alpha_option == kAlphaPremultiplied)
                         ? alphaBlendPremultiplied
@@ -139,14 +142,14 @@ WEBPImageDecoder::~WEBPImageDecoder() {
 
 void WEBPImageDecoder::Clear() {
   WebPDemuxDelete(demux_);
-  demux_ = 0;
+  demux_ = nullptr;
   consolidated_data_.reset();
   ClearDecoder();
 }
 
 void WEBPImageDecoder::ClearDecoder() {
   WebPIDelete(decoder_);
-  decoder_ = 0;
+  decoder_ = nullptr;
   decoded_height_ = 0;
   frame_background_has_alpha_ = false;
 }
@@ -156,39 +159,59 @@ void WEBPImageDecoder::OnSetData(SegmentReader*) {
 }
 
 int WEBPImageDecoder::RepetitionCount() const {
-  return Failed() ? kCAnimationLoopOnce : repetition_count_;
+  return Failed() ? kAnimationLoopOnce : repetition_count_;
 }
 
-bool WEBPImageDecoder::FrameIsCompleteAtIndex(size_t index) const {
+bool WEBPImageDecoder::FrameIsReceivedAtIndex(size_t index) const {
   if (!demux_ || demux_state_ <= WEBP_DEMUX_PARSING_HEADER)
     return false;
   if (!(format_flags_ & ANIMATION_FLAG))
-    return ImageDecoder::FrameIsCompleteAtIndex(index);
+    return ImageDecoder::FrameIsReceivedAtIndex(index);
   bool frame_is_received_at_index = index < frame_buffer_cache_.size();
   return frame_is_received_at_index;
 }
 
-float WEBPImageDecoder::FrameDurationAtIndex(size_t index) const {
+TimeDelta WEBPImageDecoder::FrameDurationAtIndex(size_t index) const {
   return index < frame_buffer_cache_.size()
              ? frame_buffer_cache_[index].Duration()
-             : 0;
+             : TimeDelta();
 }
 
 bool WEBPImageDecoder::UpdateDemuxer() {
   if (Failed())
     return false;
 
+  const unsigned kWebpHeaderSize = 30;
+  if (data_->size() < kWebpHeaderSize)
+    return IsAllDataReceived() ? SetFailed() : false;
+
   if (have_already_parsed_this_data_)
     return true;
 
   have_already_parsed_this_data_ = true;
 
-  const unsigned kWebpHeaderSize = 30;
-  if (data_->size() < kWebpHeaderSize)
-    return false;  // Await VP8X header so WebPDemuxPartial succeeds.
+  if (consolidated_data_ && consolidated_data_->size() >= data_->size()) {
+    // Less data provided than last time. |consolidated_data_| is guaranteed
+    // to be its own copy of the data, so it is safe to keep it.
+    return true;
+  }
+
+  if (IsAllDataReceived() && !consolidated_data_) {
+    consolidated_data_ = data_->GetAsSkData();
+  } else {
+    buffer_.ReserveCapacity(data_->size());
+    while (buffer_.size() < data_->size()) {
+      const char* segment;
+      const size_t bytes = data_->GetSomeData(segment, buffer_.size());
+      DCHECK(bytes);
+      buffer_.Append(segment, bytes);
+    }
+    DCHECK_EQ(buffer_.size(), data_->size());
+    consolidated_data_ =
+        SkData::MakeWithoutCopy(buffer_.data(), buffer_.size());
+  }
 
   WebPDemuxDelete(demux_);
-  consolidated_data_ = data_->GetAsSkData();
   WebPData input_data = {
       reinterpret_cast<const uint8_t*>(consolidated_data_->data()),
       consolidated_data_->size()};
@@ -211,7 +234,7 @@ bool WEBPImageDecoder::UpdateDemuxer() {
 
     format_flags_ = WebPDemuxGetI(demux_, WEBP_FF_FORMAT_FLAGS);
     if (!(format_flags_ & ANIMATION_FLAG)) {
-      repetition_count_ = kCAnimationNone;
+      repetition_count_ = kAnimationNone;
     } else {
       // Since we have parsed at least one frame, even if partially,
       // the global animation (ANIM) properties have been read since
@@ -219,8 +242,10 @@ bool WEBPImageDecoder::UpdateDemuxer() {
       repetition_count_ = WebPDemuxGetI(demux_, WEBP_FF_LOOP_COUNT);
       // Repetition count is always <= 16 bits.
       DCHECK_EQ(repetition_count_, repetition_count_ & 0xffff);
-      if (!repetition_count_)
-        repetition_count_ = kCAnimationLoopInfinite;
+      // Repetition count is treated as n + 1 cycles for GIF. WebP defines loop
+      // count as the number of cycles, with 0 meaning infinite.
+      repetition_count_ = repetition_count_ == 0 ? kAnimationLoopInfinite
+                                                 : repetition_count_ - 1;
       // FIXME: Implement ICC profile support for animated images.
       format_flags_ &= ~ICCP_FLAG;
     }
@@ -238,7 +263,7 @@ bool WEBPImageDecoder::UpdateDemuxer() {
 }
 
 void WEBPImageDecoder::OnInitFrameBuffer(size_t frame_index) {
-  // ImageDecoder::initFrameBuffer does a DCHECK if |frameIndex| exists.
+  // ImageDecoder::InitFrameBuffer does a DCHECK if |frame_index| exists.
   ImageFrame& buffer = frame_buffer_cache_[frame_index];
 
   const size_t required_previous_frame_index =
@@ -288,7 +313,14 @@ void WEBPImageDecoder::ReadColorProfile() {
       reinterpret_cast<const char*>(chunk_iterator.chunk.bytes);
   size_t profile_size = chunk_iterator.chunk.size;
 
-  SetEmbeddedColorProfile(profile_data, profile_size);
+  sk_sp<SkColorSpace> color_space =
+      SkColorSpace::MakeICC(profile_data, profile_size);
+  if (color_space) {
+    if (color_space->type() == SkColorSpace::kRGB_Type)
+      SetEmbeddedColorSpace(std::move(color_space));
+  } else {
+    DLOG(ERROR) << "Failed to parse image ICC profile";
+  }
 
   WebPDemuxReleaseChunkIterator(&chunk_iterator);
 }
@@ -297,7 +329,7 @@ void WEBPImageDecoder::ApplyPostProcessing(size_t frame_index) {
   ImageFrame& buffer = frame_buffer_cache_[frame_index];
   int width;
   int decoded_height;
-  if (!WebPIDecGetRGB(decoder_, &decoded_height, &width, 0, 0))
+  if (!WebPIDecGetRGB(decoder_, &decoded_height, &width, nullptr, nullptr))
     return;  // See also https://bugs.webkit.org/show_bug.cgi?id=74062
   if (decoded_height <= 0)
     return;
@@ -323,9 +355,9 @@ void WEBPImageDecoder::ApplyPostProcessing(size_t frame_index) {
     for (int y = decoded_height_; y < decoded_height; ++y) {
       const int canvas_y = top + y;
       uint8_t* row = reinterpret_cast<uint8_t*>(buffer.GetAddr(left, canvas_y));
-      xform->apply(kDstFormat, row, kSrcFormat, row, width,
-                   kUnpremul_SkAlphaType);
-
+      bool color_converison_successful = xform->apply(
+          kDstFormat, row, kSrcFormat, row, width, kUnpremul_SkAlphaType);
+      DCHECK(color_converison_successful);
       uint8_t* pixel = row;
       for (int x = 0; x < width; ++x, pixel += 4) {
         const int canvas_x = left + x;
@@ -357,7 +389,7 @@ void WEBPImageDecoder::ApplyPostProcessing(size_t frame_index) {
     } else if (prev_disposal_method == ImageFrame::kDisposeOverwriteBgcolor) {
       const IntRect& prev_rect = prev_buffer.OriginalFrameRect();
       // We need to blend a transparent pixel with the starting value (from just
-      // after the initFrame() call). If the pixel belongs to prevRect, the
+      // after the InitFrame() call). If the pixel belongs to prev_rect, the
       // starting value was fully transparent, so this is a no-op. Otherwise, we
       // need to blend against the pixel from the previous canvas.
       for (int y = decoded_height_; y < decoded_height; ++y) {
@@ -378,7 +410,7 @@ void WEBPImageDecoder::ApplyPostProcessing(size_t frame_index) {
 }
 
 size_t WEBPImageDecoder::DecodeFrameCount() {
-  // If updateDemuxer() fails, return the existing number of frames.  This way
+  // If UpdateDemuxer() fails, return the existing number of frames.  This way
   // if we get halfway through the image before decoding fails, we won't
   // suddenly start reporting that the image has zero frames.
   return UpdateDemuxer() ? WebPDemuxGetI(demux_, WEBP_FF_FRAME_COUNT)
@@ -398,7 +430,7 @@ void WEBPImageDecoder::InitializeNewFrame(size_t index) {
                      animated_frame.width, animated_frame.height);
   buffer->SetOriginalFrameRect(
       Intersection(frame_rect, IntRect(IntPoint(), Size())));
-  buffer->SetDuration(animated_frame.duration);
+  buffer->SetDuration(TimeDelta::FromMilliseconds(animated_frame.duration));
   buffer->SetDisposalMethod(animated_frame.dispose_method ==
                                     WEBP_MUX_DISPOSE_BACKGROUND
                                 ? ImageFrame::kDisposeOverwriteBgcolor
@@ -511,7 +543,7 @@ bool WEBPImageDecoder::DecodeSingleFrame(const uint8_t* data_bytes,
       ClearDecoder();
       return true;
     case VP8_STATUS_SUSPENDED:
-      if (!IsAllDataReceived() && !FrameIsCompleteAtIndex(frame_index)) {
+      if (!IsAllDataReceived() && !FrameIsReceivedAtIndex(frame_index)) {
         ApplyPostProcessing(frame_index);
         return false;
       }

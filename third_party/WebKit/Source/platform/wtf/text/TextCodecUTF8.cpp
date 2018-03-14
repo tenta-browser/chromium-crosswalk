@@ -70,7 +70,7 @@ void TextCodecUTF8::RegisterEncodingNames(EncodingNameRegistrar registrar) {
 }
 
 void TextCodecUTF8::RegisterCodecs(TextCodecRegistrar registrar) {
-  registrar("UTF-8", Create, 0);
+  registrar("UTF-8", Create, nullptr);
 }
 
 static inline int NonASCIISequenceLength(uint8_t first_byte) {
@@ -158,20 +158,27 @@ static inline UChar* AppendCharacter(UChar* destination, int character) {
   return destination;
 }
 
-void TextCodecUTF8::ConsumePartialSequenceByte() {
-  --partial_sequence_size_;
-  memmove(partial_sequence_, partial_sequence_ + 1, partial_sequence_size_);
+void TextCodecUTF8::ConsumePartialSequenceBytes(int num_bytes) {
+  DCHECK_GE(partial_sequence_size_, num_bytes);
+  partial_sequence_size_ -= num_bytes;
+  memmove(partial_sequence_, partial_sequence_ + num_bytes,
+          partial_sequence_size_);
 }
 
-void TextCodecUTF8::HandleError(UChar*& destination,
+void TextCodecUTF8::HandleError(int character,
+                                UChar*& destination,
                                 bool stop_on_error,
                                 bool& saw_error) {
   saw_error = true;
   if (stop_on_error)
     return;
-  // Each error generates a replacement character and consumes one byte.
+  // Each error generates a replacement character and consumes 1-3 bytes.
   *destination++ = kReplacementCharacter;
-  ConsumePartialSequenceByte();
+  DCHECK(IsNonCharacter(character));
+  int num_bytes_consumed = -character;
+  DCHECK_GE(num_bytes_consumed, 1);
+  DCHECK_LE(num_bytes_consumed, 3);
+  ConsumePartialSequenceBytes(num_bytes_consumed);
 }
 
 template <>
@@ -185,7 +192,7 @@ bool TextCodecUTF8::HandlePartialSequence<LChar>(LChar*& destination,
   do {
     if (IsASCII(partial_sequence_[0])) {
       *destination++ = partial_sequence_[0];
-      ConsumePartialSequenceByte();
+      ConsumePartialSequenceBytes(1);
       continue;
     }
     int count = NonASCIISequenceLength(partial_sequence_[0]);
@@ -234,12 +241,12 @@ bool TextCodecUTF8::HandlePartialSequence<UChar>(UChar*& destination,
   do {
     if (IsASCII(partial_sequence_[0])) {
       *destination++ = partial_sequence_[0];
-      ConsumePartialSequenceByte();
+      ConsumePartialSequenceBytes(1);
       continue;
     }
     int count = NonASCIISequenceLength(partial_sequence_[0]);
     if (!count) {
-      HandleError(destination, stop_on_error, saw_error);
+      HandleError(kNonCharacter1, destination, stop_on_error, saw_error);
       if (stop_on_error)
         return false;
       continue;
@@ -255,7 +262,7 @@ bool TextCodecUTF8::HandlePartialSequence<UChar>(UChar*& destination,
           return false;
         }
         // An incomplete partial sequence at the end is an error.
-        HandleError(destination, stop_on_error, saw_error);
+        HandleError(kNonCharacter1, destination, stop_on_error, saw_error);
         if (stop_on_error)
           return false;
         continue;
@@ -267,7 +274,7 @@ bool TextCodecUTF8::HandlePartialSequence<UChar>(UChar*& destination,
     }
     int character = DecodeNonASCIISequence(partial_sequence_, count);
     if (IsNonCharacter(character)) {
-      HandleError(destination, stop_on_error, saw_error);
+      HandleError(character, destination, stop_on_error, saw_error);
       if (stop_on_error)
         return false;
       continue;
@@ -463,8 +470,7 @@ CString TextCodecUTF8::EncodeCommon(const CharType* characters, size_t length) {
   // (3x).
   // Non-BMP characters take two UTF-16 code units and can take up to 4 bytes
   // (2x).
-  if (length > std::numeric_limits<size_t>::max() / 3)
-    CRASH();
+  CHECK_LE(length, std::numeric_limits<size_t>::max() / 3);
   Vector<uint8_t> bytes(length * 3);
 
   size_t i = 0;
@@ -477,10 +483,10 @@ CString TextCodecUTF8::EncodeCommon(const CharType* characters, size_t length) {
     // U+FFFD (REPLACEMENT CHARACTER) here.
     if (0xD800 <= character && character <= 0xDFFF)
       character = kReplacementCharacter;
-    U8_APPEND_UNSAFE(bytes.Data(), bytes_written, character);
+    U8_APPEND_UNSAFE(bytes.data(), bytes_written, character);
   }
 
-  return CString(reinterpret_cast<char*>(bytes.Data()), bytes_written);
+  return CString(reinterpret_cast<char*>(bytes.data()), bytes_written);
 }
 
 CString TextCodecUTF8::Encode(const UChar* characters,

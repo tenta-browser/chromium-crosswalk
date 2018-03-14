@@ -27,31 +27,35 @@
 #ifndef AXObjectCache_h
 #define AXObjectCache_h
 
+#include <memory>
+
+#include "base/macros.h"
 #include "core/CoreExport.h"
 #include "core/dom/Document.h"
-#include <memory>
 
 typedef unsigned AXID;
 
 namespace blink {
 
 class AbstractInlineTextBox;
-class FrameView;
+class AccessibleNode;
 class HTMLCanvasElement;
 class HTMLOptionElement;
 class HTMLSelectElement;
 class LayoutMenuList;
 class LineLayoutItem;
+class LocalFrameView;
 
 class CORE_EXPORT AXObjectCache
-    : public GarbageCollectedFinalized<AXObjectCache> {
-  WTF_MAKE_NONCOPYABLE(AXObjectCache);
+    : public GarbageCollectedFinalized<AXObjectCache>,
+      public ContextLifecycleObserver {
+  USING_GARBAGE_COLLECTED_MIXIN(AXObjectCache);
 
  public:
   static AXObjectCache* Create(Document&);
 
   virtual ~AXObjectCache();
-  DEFINE_INLINE_VIRTUAL_TRACE() {}
+  virtual void Trace(blink::Visitor*);
 
   enum AXNotification {
     kAXActiveDescendantChanged,
@@ -94,12 +98,14 @@ class CORE_EXPORT AXObjectCache
   virtual void SelectionChanged(Node*) = 0;
   virtual void ChildrenChanged(Node*) = 0;
   virtual void ChildrenChanged(LayoutObject*) = 0;
+  virtual void ChildrenChanged(AccessibleNode*) = 0;
   virtual void CheckedStateChanged(Node*) = 0;
   virtual void ListboxOptionStateChanged(HTMLOptionElement*) = 0;
   virtual void ListboxSelectedChildrenChanged(HTMLSelectElement*) = 0;
   virtual void ListboxActiveIndexChanged(HTMLSelectElement*) = 0;
   virtual void RadiobuttonRemovedFromGroup(HTMLInputElement*) = 0;
 
+  virtual void Remove(AccessibleNode*) = 0;
   virtual void Remove(LayoutObject*) = 0;
   virtual void Remove(Node*) = 0;
   virtual void Remove(AbstractInlineTextBox*) = 0;
@@ -119,6 +125,7 @@ class CORE_EXPORT AXObjectCache
                                              Node* new_focused_node) = 0;
   virtual void HandleInitialFocus() = 0;
   virtual void HandleEditableTextContentChanged(Node*) = 0;
+  virtual void HandleTextMarkerDataAdded(Node* start, Node* end) = 0;
   virtual void HandleTextFormControlChanged(Node*) = 0;
   virtual void HandleValueChanged(Node*) = 0;
   virtual void HandleUpdateActiveMenuOption(LayoutMenuList*,
@@ -136,7 +143,7 @@ class CORE_EXPORT AXObjectCache
   virtual void InlineTextBoxesUpdated(LineLayoutItem) = 0;
 
   // Called when the scroll offset changes.
-  virtual void HandleScrollPositionChanged(FrameView*) = 0;
+  virtual void HandleScrollPositionChanged(LocalFrameView*) = 0;
   virtual void HandleScrollPositionChanged(LayoutObject*) = 0;
 
   // Called when scroll bars are added / removed (as the view resizes).
@@ -151,16 +158,19 @@ class CORE_EXPORT AXObjectCache
   typedef AXObjectCache* (*AXObjectCacheCreateFunction)(Document&);
   static void Init(AXObjectCacheCreateFunction);
 
+  // Static helper functions.
+  static bool IsInsideFocusableElementOrARIAWidget(const Node&);
+
  protected:
-  AXObjectCache();
+  AXObjectCache(Document&);
 
  private:
   static AXObjectCacheCreateFunction create_function_;
+  DISALLOW_COPY_AND_ASSIGN(AXObjectCache);
 };
 
 class CORE_EXPORT ScopedAXObjectCache {
   USING_FAST_MALLOC(ScopedAXObjectCache);
-  WTF_MAKE_NONCOPYABLE(ScopedAXObjectCache);
 
  public:
   static std::unique_ptr<ScopedAXObjectCache> Create(Document&);
@@ -173,6 +183,7 @@ class CORE_EXPORT ScopedAXObjectCache {
 
   Persistent<Document> document_;
   Persistent<AXObjectCache> cache_;
+  DISALLOW_COPY_AND_ASSIGN(ScopedAXObjectCache);
 };
 
 }  // namespace blink

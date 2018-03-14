@@ -11,6 +11,7 @@ import android.view.ViewGroup;
 import android.widget.TextView;
 
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.suggestions.SuggestionsConfig;
 import org.chromium.chrome.browser.suggestions.SuggestionsNavigationDelegate;
 import org.chromium.ui.text.NoUnderlineClickableSpan;
 import org.chromium.ui.text.SpanApplier;
@@ -31,6 +32,15 @@ public class Footer extends OptionalLeaf {
         // Nothing to do (the footer view is static).
     }
 
+    @Override
+    public void visitOptionalItem(NodeVisitor visitor) {
+        visitor.visitFooter();
+    }
+
+    public void setVisible(boolean visible) {
+        setVisibilityInternal(visible);
+    }
+
     /**
      * The {@code ViewHolder} for the {@link Footer}.
      */
@@ -42,7 +52,6 @@ public class Footer extends OptionalLeaf {
             NoUnderlineClickableSpan link = new NoUnderlineClickableSpan() {
                 @Override
                 public void onClick(View view) {
-                    // TODO(mvanouwerkerk): Ensure this can be activated when using TalkBack.
                     navigationDelegate.navigateToHelpPage();
                 }
             };
@@ -52,6 +61,15 @@ public class Footer extends OptionalLeaf {
                     root.getResources().getString(R.string.ntp_learn_more_about_suggested_content),
                     new SpanApplier.SpanInfo("<link>", "</link>", link)));
             textView.setMovementMethod(LinkMovementMethod.getInstance());
+
+            if (SuggestionsConfig.useModernLayout()) {
+                itemView.setPadding(itemView.getPaddingLeft(),
+                        root.getResources().getDimensionPixelSize(
+                                R.dimen.chrome_home_suggestions_footer_padding_top),
+                        itemView.getPaddingRight(),
+                        root.getResources().getDimensionPixelSize(
+                                R.dimen.chrome_home_suggestions_footer_padding_bottom));
+            }
         }
     }
 }

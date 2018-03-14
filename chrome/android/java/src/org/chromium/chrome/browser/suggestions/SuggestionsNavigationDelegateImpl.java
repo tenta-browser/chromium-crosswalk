@@ -4,12 +4,16 @@
 
 package org.chromium.chrome.browser.suggestions;
 
-import android.app.Activity;
+import android.support.annotation.Nullable;
 
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.blink_public.web.WebReferrerPolicy;
+import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.NativePageHost;
 import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.bookmarks.BookmarkUtils;
+import org.chromium.chrome.browser.device.DeviceClassManager;
 import org.chromium.chrome.browser.download.DownloadUtils;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.ntp.NewTabPageUma;
@@ -20,6 +24,7 @@ import org.chromium.chrome.browser.offlinepages.OfflinePageBridge;
 import org.chromium.chrome.browser.offlinepages.OfflinePageUtils;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
@@ -29,6 +34,7 @@ import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.common.Referrer;
 import org.chromium.ui.base.PageTransition;
 import org.chromium.ui.mojom.WindowOpenDisposition;
+import org.chromium.ui.widget.Toast;
 
 /**
  * {@link SuggestionsUiDelegate} implementation.
@@ -39,13 +45,13 @@ public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationD
     private static final String NEW_TAB_URL_HELP =
             "https://support.google.com/chrome/?p=new_tab";
 
-    private final Activity mActivity;
+    private final ChromeActivity mActivity;
     private final Profile mProfile;
 
     private final NativePageHost mHost;
     private final TabModelSelector mTabModelSelector;
 
-    public SuggestionsNavigationDelegateImpl(Activity activity, Profile profile,
+    public SuggestionsNavigationDelegateImpl(ChromeActivity activity, Profile profile,
             NativePageHost host, TabModelSelector tabModelSelector) {
         mActivity = activity;
         mProfile = profile;
@@ -90,6 +96,12 @@ public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationD
     }
 
     @Override
+    public void navigateToSuggestionUrl(int windowOpenDisposition, String url) {
+        LoadUrlParams loadUrlParams = new LoadUrlParams(url, PageTransition.AUTO_BOOKMARK);
+        openUrl(windowOpenDisposition, loadUrlParams);
+    }
+
+    @Override
     public void openSnippet(int windowOpenDisposition, SnippetArticle article) {
         NewTabPageUma.recordAction(NewTabPageUma.ACTION_OPENED_SNIPPET);
 
@@ -98,7 +110,8 @@ public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationD
                     || windowOpenDisposition == WindowOpenDisposition.NEW_WINDOW
                     || windowOpenDisposition == WindowOpenDisposition.NEW_BACKGROUND_TAB;
             DownloadUtils.openFile(article.getAssetDownloadFile(),
-                    article.getAssetDownloadMimeType(), article.getAssetDownloadGuid(), false);
+                    article.getAssetDownloadMimeType(), article.getAssetDownloadGuid(), false, null,
+                    null);
             return;
         }
 
@@ -107,11 +120,6 @@ public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationD
             boolean success = openRecentTabSnippet(article);
             assert success;
             return;
-        }
-
-        // TODO(treib): Also track other dispositions. crbug.com/665915
-        if (windowOpenDisposition == WindowOpenDisposition.CURRENT_TAB) {
-            NewTabPageUma.monitorContentSuggestionVisit(mHost.getActiveTab(), article.mCategory);
         }
 
         LoadUrlParams loadUrlParams;
@@ -135,21 +143,26 @@ public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationD
         // to filter out these history entries for NTP tiles.
         // TODO(mastiz): Extend this with support for other categories.
         if (article.mCategory == KnownCategories.ARTICLES) {
-            loadUrlParams.setReferrer(new Referrer(
-                    CHROME_CONTENT_SUGGESTIONS_REFERRER, Referrer.REFERRER_POLICY_ALWAYS));
+            loadUrlParams.setReferrer(new Referrer(CHROME_CONTENT_SUGGESTIONS_REFERRER,
+                    WebReferrerPolicy.ALWAYS));
         }
 
-        openUrl(windowOpenDisposition, loadUrlParams);
+        Tab loadingTab = openUrl(windowOpenDisposition, loadUrlParams);
+        if (loadingTab != null) SuggestionsMetrics.recordVisit(loadingTab, article);
     }
 
     @Override
-    public void openUrl(int windowOpenDisposition, LoadUrlParams loadUrlParams) {
+    @Nullable
+    public Tab openUrl(int windowOpenDisposition, LoadUrlParams loadUrlParams) {
+        Tab loadingTab = null;
+
         switch (windowOpenDisposition) {
             case WindowOpenDisposition.CURRENT_TAB:
-                mHost.loadUrl(loadUrlParams, mTabModelSelector.getCurrentTab().isIncognito());
+                mHost.loadUrl(loadUrlParams, mTabModelSelector.isIncognitoSelected());
+                loadingTab = mHost.getActiveTab();
                 break;
             case WindowOpenDisposition.NEW_BACKGROUND_TAB:
-                openUrlInNewTab(loadUrlParams);
+                loadingTab = openUrlInNewTab(loadUrlParams);
                 break;
             case WindowOpenDisposition.OFF_THE_RECORD:
                 mHost.loadUrl(loadUrlParams, true);
@@ -163,6 +176,8 @@ public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationD
             default:
                 assert false;
         }
+
+        return loadingTab;
     }
 
     private boolean openRecentTabSnippet(SnippetArticle article) {
@@ -179,14 +194,33 @@ public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationD
         tabDelegate.createTabInOtherWindow(loadUrlParams, mActivity, mHost.getParentId());
     }
 
-    private void openUrlInNewTab(LoadUrlParams loadUrlParams) {
-        mTabModelSelector.openNewTab(loadUrlParams, TabLaunchType.FROM_LONGPRESS_BACKGROUND,
-                mHost.getActiveTab(), /* incognito = */ false);
+    private Tab openUrlInNewTab(LoadUrlParams loadUrlParams) {
+        Tab tab = mTabModelSelector.openNewTab(loadUrlParams,
+                TabLaunchType.FROM_LONGPRESS_BACKGROUND, mHost.getActiveTab(),
+                /* incognito = */ false);
+
+        // If the bottom sheet NTP UI is showing, a toast is not necessary because the bottom sheet
+        // will be closed when the overview is hidden due to the new tab creation above.
+        // If animations are disabled in the DeviceClassManager, a toast is already displayed for
+        // all tabs opened in the background.
+        // TODO(twellington): Replace this with an animation.
+        if (mActivity.getBottomSheet() != null && !mActivity.getBottomSheet().isShowingNewTab()
+                && DeviceClassManager.enableAnimations()) {
+            Toast.makeText(mActivity, R.string.open_in_new_tab_toast, Toast.LENGTH_SHORT).show();
+        }
+
+        return tab;
     }
 
     private void saveUrlForOffline(String url) {
-        OfflinePageBridge.getForProfile(mProfile).scheduleDownload(
-                mHost.getActiveTab().getWebContents(), "ntp_suggestions", url,
-                DownloadUiActionFlags.ALL);
+        OfflinePageBridge offlinePageBridge =
+                SuggestionsDependencyFactory.getInstance().getOfflinePageBridge(mProfile);
+        if (mHost.getActiveTab() != null) {
+            offlinePageBridge.scheduleDownload(mHost.getActiveTab().getWebContents(),
+                    OfflinePageBridge.NTP_SUGGESTIONS_NAMESPACE, url, DownloadUiActionFlags.ALL);
+        } else {
+            offlinePageBridge.savePageLater(
+                    url, OfflinePageBridge.NTP_SUGGESTIONS_NAMESPACE, true /* userRequested */);
+        }
     }
 }

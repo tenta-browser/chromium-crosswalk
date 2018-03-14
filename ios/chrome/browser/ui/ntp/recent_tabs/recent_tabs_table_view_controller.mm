@@ -14,14 +14,19 @@
 #include "components/sync/driver/sync_service.h"
 #include "components/sync_sessions/open_tabs_ui_delegate.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
+#include "ios/chrome/browser/experimental_flags.h"
 #import "ios/chrome/browser/metrics/new_tab_page_uma.h"
 #include "ios/chrome/browser/sessions/tab_restore_service_delegate_impl_ios.h"
 #include "ios/chrome/browser/sessions/tab_restore_service_delegate_impl_ios_factory.h"
 #include "ios/chrome/browser/sync/ios_chrome_profile_sync_service_factory.h"
-#import "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
-#import "ios/chrome/browser/ui/commands/generic_chrome_command.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
+#import "ios/chrome/browser/ui/authentication/signin_promo_view.h"
+#import "ios/chrome/browser/ui/authentication/signin_promo_view_configurator.h"
+#import "ios/chrome/browser/ui/authentication/signin_promo_view_consumer.h"
+#import "ios/chrome/browser/ui/authentication/signin_promo_view_mediator.h"
+#include "ios/chrome/browser/ui/commands/application_commands.h"
+#import "ios/chrome/browser/ui/commands/show_signin_command.h"
 #import "ios/chrome/browser/ui/context_menu/context_menu_coordinator.h"
+#import "ios/chrome/browser/ui/ntp/recent_tabs/recent_tabs_handset_view_controller.h"
 #include "ios/chrome/browser/ui/ntp/recent_tabs/synced_sessions.h"
 #import "ios/chrome/browser/ui/ntp/recent_tabs/views/generic_section_header_view.h"
 #import "ios/chrome/browser/ui/ntp/recent_tabs/views/header_of_collapsable_section_protocol.h"
@@ -31,11 +36,13 @@
 #import "ios/chrome/browser/ui/ntp/recent_tabs/views/signed_in_sync_in_progress_view.h"
 #import "ios/chrome/browser/ui/ntp/recent_tabs/views/signed_in_sync_off_view.h"
 #import "ios/chrome/browser/ui/ntp/recent_tabs/views/signed_in_sync_on_no_sessions_view.h"
-#import "ios/chrome/browser/ui/ntp/recent_tabs/views/signed_out_view.h"
 #import "ios/chrome/browser/ui/ntp/recent_tabs/views/spacers_view.h"
+#import "ios/chrome/browser/ui/settings/sync_utils/sync_presenter.h"
+#import "ios/chrome/browser/ui/signin_interaction/public/signin_presenter.h"
 #include "ios/chrome/browser/ui/ui_util.h"
-#import "ios/chrome/browser/ui/uikit_ui_util.h"
 #import "ios/chrome/browser/ui/url_loader.h"
+#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
+#include "ios/chrome/grit/ios_chromium_strings.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/web/public/referrer.h"
 #import "ios/web/public/web_state/context_menu_params.h"
@@ -45,10 +52,10 @@
 #error "This file requires ARC support."
 #endif
 
-namespace {
-
 // Key for saving collapsed session state in the UserDefaults.
 NSString* const kCollapsedSectionsKey = @"ChromeRecentTabsCollapsedSections";
+
+namespace {
 
 // Key for saving whether the Other Device section is collapsed.
 NSString* const kOtherDeviceCollapsedKey = @"OtherDevicesCollapsed";
@@ -58,6 +65,9 @@ NSString* const kRecentlyClosedCollapsedKey = @"RecentlyClosedCollapsed";
 
 // Tag to extract the section headers from the cells.
 enum { kSectionHeader = 1 };
+
+// Margin at the top of the sigin-in promo view.
+const CGFloat kSigninPromoViewTopMargin = 24;
 
 // Types of sections.
 enum SectionType {
@@ -74,9 +84,9 @@ enum CellType {
   CELL_SHOW_FULL_HISTORY,
   CELL_SEPARATOR,
   CELL_OTHER_DEVICES_SECTION_HEADER,
-  CELL_OTHER_DEVICES_SIGNED_OUT,
   CELL_OTHER_DEVICES_SIGNED_IN_SYNC_OFF,
   CELL_OTHER_DEVICES_SIGNED_IN_SYNC_ON_NO_SESSIONS,
+  CELL_OTHER_DEVICES_SIGNIN_PROMO,
   CELL_OTHER_DEVICES_SYNC_IN_PROGRESS,
   CELL_SESSION_SECTION_HEADER,
   CELL_SESSION_TAB_DATA,
@@ -84,7 +94,9 @@ enum CellType {
 
 }  // namespace
 
-@interface RecentTabsTableViewController () {
+@interface RecentTabsTableViewController ()<SigninPromoViewConsumer,
+                                            SigninPresenter,
+                                            SyncPresenter> {
   ios::ChromeBrowserState* _browserState;  // weak
   // The service that manages the recently closed tabs.
   sessions::TabRestoreService* _tabRestoreService;  // weak
@@ -96,18 +108,18 @@ enum CellType {
   std::unique_ptr<synced_sessions::SyncedSessions> _syncedSessions;
   // Handles displaying the context menu for all form factors.
   ContextMenuCoordinator* _contextMenuCoordinator;
+  SigninPromoViewMediator* _signinPromoViewMediator;
 }
 // Returns the type of the section at index |section|.
 - (SectionType)sectionType:(NSInteger)section;
 // Returns the type of the cell at the path |indexPath|.
 - (CellType)cellType:(NSIndexPath*)indexPath;
+// Returns the index of a section based on |sectionType|.
+- (NSInteger)sectionIndexForSectionType:(SectionType)sectionType;
 // Returns the number of sections before the other devices or session sections.
 - (NSInteger)numberOfSectionsBeforeSessionOrOtherDevicesSections;
 // Dismisses the modal containing the Recent Tabs panel (iPhone only).
 - (void)dismissRecentTabsModal;
-// Dismisses the modal containing the Recent Tabs panel, with completion
-// handler (iPhone only).
-- (void)dismissRecentTabsModalWithCompletion:(ProceduralBlock)completion;
 // Opens a new tab with the content of |distantTab|.
 - (void)openTabWithContentOfDistantTab:
     (synced_sessions::DistantTab const*)distantTab;
@@ -143,11 +155,17 @@ enum CellType {
 - (void)removeSessionAtIndexPath:(NSIndexPath*)indexPath;
 // Handles long presses on the UITableView, possibly opening context menus.
 - (void)handleLongPress:(UILongPressGestureRecognizer*)longPressGesture;
+
+// The dispatcher used by this ViewController.
+@property(nonatomic, readonly, weak) id<ApplicationCommands> dispatcher;
+
 @end
 
 @implementation RecentTabsTableViewController
 
 @synthesize delegate = delegate_;
+@synthesize dispatcher = _dispatcher;
+@synthesize handsetCommandHandler = _handsetCommandHandler;
 
 - (instancetype)init {
   NOTREACHED();
@@ -155,7 +173,8 @@ enum CellType {
 }
 
 - (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState
-                              loader:(id<UrlLoader>)loader {
+                              loader:(id<UrlLoader>)loader
+                          dispatcher:(id<ApplicationCommands>)dispatcher {
   self = [super initWithStyle:UITableViewStylePlain];
   if (self) {
     DCHECK(browserState);
@@ -164,17 +183,22 @@ enum CellType {
     _loader = loader;
     _sessionState = SessionsSyncUserState::USER_SIGNED_OUT;
     _syncedSessions.reset(new synced_sessions::SyncedSessions());
+    _dispatcher = dispatcher;
   }
   return self;
 }
 
 - (void)dealloc {
+  [_signinPromoViewMediator signinPromoViewRemoved];
   [self.tableView removeObserver:self forKeyPath:@"contentSize"];
 }
 
 - (void)viewDidLoad {
   [super viewDidLoad];
   self.view.accessibilityIdentifier = @"recent_tabs_view_controller";
+  self.tableView.rowHeight = UITableViewAutomaticDimension;
+  self.tableView.estimatedRowHeight =
+      [SessionTabDataView desiredHeightInUITableViewCell];
   [self.tableView setSeparatorColor:[UIColor clearColor]];
   [self.tableView setDataSource:self];
   [self.tableView setDelegate:self];
@@ -249,7 +273,7 @@ enum CellType {
       }
       switch (_sessionState) {
         case SessionsSyncUserState::USER_SIGNED_OUT:
-          return CELL_OTHER_DEVICES_SIGNED_OUT;
+          return CELL_OTHER_DEVICES_SIGNIN_PROMO;
         case SessionsSyncUserState::USER_SIGNED_IN_SYNC_OFF:
           return CELL_OTHER_DEVICES_SIGNED_IN_SYNC_OFF;
         case SessionsSyncUserState::USER_SIGNED_IN_SYNC_ON_NO_SESSIONS:
@@ -262,6 +286,16 @@ enum CellType {
           return CELL_OTHER_DEVICES_SIGNED_IN_SYNC_ON_NO_SESSIONS;
       }
   }
+}
+
+- (NSInteger)sectionIndexForSectionType:(SectionType)sectionType {
+  NSUInteger sectionCount = [self numberOfSectionsInTableView:self.tableView];
+  for (NSUInteger sectionIndex = 0; sectionIndex < sectionCount;
+       ++sectionIndex) {
+    if ([self sectionType:sectionIndex] == sectionType)
+      return sectionIndex;
+  }
+  return NSNotFound;
 }
 
 - (NSInteger)numberOfSectionsBeforeSessionOrOtherDevicesSections {
@@ -321,17 +355,7 @@ enum CellType {
 #pragma mark - Helpers to open tabs, or show the full history view.
 
 - (void)dismissRecentTabsModal {
-  [self dismissRecentTabsModalWithCompletion:nil];
-}
-
-- (void)dismissRecentTabsModalWithCompletion:(ProceduralBlock)completion {
-  // Recent Tabs are modally presented only on iPhone.
-  if (!IsIPadIdiom()) {
-    // TODO(crbug.com/434683): Use a delegate to dismiss the table view.
-    [self.tableView.window.rootViewController
-        dismissViewControllerAnimated:YES
-                           completion:completion];
-  }
+  [self.handsetCommandHandler dismissRecentTabsWithCompletion:nil];
 }
 
 - (void)openTabWithContentOfDistantTab:
@@ -382,18 +406,15 @@ enum CellType {
 }
 
 - (void)showFullHistory {
-  UIViewController* rootViewController =
-      self.tableView.window.rootViewController;
+  __weak RecentTabsTableViewController* weakSelf = self;
   ProceduralBlock openHistory = ^{
-    GenericChromeCommand* openHistory =
-        [[GenericChromeCommand alloc] initWithTag:IDC_SHOW_HISTORY];
-    [rootViewController chromeExecuteCommand:openHistory];
+    [weakSelf.dispatcher showHistory];
   };
   // Dismiss modal, if shown, and open history.
-  if (IsIPadIdiom()) {
-    openHistory();
+  if (self.handsetCommandHandler) {
+    [self.handsetCommandHandler dismissRecentTabsWithCompletion:openHistory];
   } else {
-    [self dismissRecentTabsModalWithCompletion:openHistory];
+    openHistory();
   }
 }
 
@@ -524,6 +545,11 @@ enum CellType {
   [self.tableView insertSections:indexesToBeInserted
                 withRowAnimation:UITableViewRowAnimationFade];
   [self.tableView endUpdates];
+
+  if (_sessionState != SessionsSyncUserState::USER_SIGNED_OUT) {
+    [_signinPromoViewMediator signinPromoViewRemoved];
+    _signinPromoViewMediator = nil;
+  }
 }
 
 - (NSInteger)numberOfSessionSections {
@@ -736,6 +762,7 @@ enum CellType {
       [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
                              reuseIdentifier:nil];
   UIView* contentView = cell.contentView;
+  CGFloat contentViewTopMargin = 0;
 
   UIView* subview;
   CellType cellType = [self cellType:indexPath];
@@ -772,19 +799,42 @@ enum CellType {
       [subview setTag:kSectionHeader];
       break;
     }
-    case CELL_OTHER_DEVICES_SIGNED_OUT:
-      subview = [[SignedOutView alloc] initWithFrame:CGRectZero];
-      [cell setSelectionStyle:UITableViewCellSelectionStyleNone];
-      break;
     case CELL_OTHER_DEVICES_SIGNED_IN_SYNC_OFF:
       subview = [[SignedInSyncOffView alloc] initWithFrame:CGRectZero
-                                              browserState:_browserState];
+                                              browserState:_browserState
+                                                 presenter:self];
       [cell setSelectionStyle:UITableViewCellSelectionStyleNone];
       break;
     case CELL_OTHER_DEVICES_SIGNED_IN_SYNC_ON_NO_SESSIONS:
       subview = [[SignedInSyncOnNoSessionsView alloc] initWithFrame:CGRectZero];
       [cell setSelectionStyle:UITableViewCellSelectionStyleNone];
       break;
+    case CELL_OTHER_DEVICES_SIGNIN_PROMO: {
+      if (!_signinPromoViewMediator) {
+        _signinPromoViewMediator = [[SigninPromoViewMediator alloc]
+            initWithBrowserState:_browserState
+                     accessPoint:signin_metrics::AccessPoint::
+                                     ACCESS_POINT_RECENT_TABS
+                       presenter:self /* id<SigninPresenter> */];
+        _signinPromoViewMediator.consumer = self;
+      }
+      contentViewTopMargin = kSigninPromoViewTopMargin;
+      SigninPromoView* signinPromoView =
+          [[SigninPromoView alloc] initWithFrame:CGRectZero];
+      signinPromoView.delegate = _signinPromoViewMediator;
+      signinPromoView.textLabel.text =
+          l10n_util::GetNSString(IDS_IOS_SIGNIN_PROMO_RECENT_TABS);
+      signinPromoView.textLabel.preferredMaxLayoutWidth =
+          CGRectGetWidth(self.tableView.bounds) -
+          2 * signinPromoView.horizontalPadding;
+      SigninPromoViewConfigurator* configurator =
+          [_signinPromoViewMediator createConfigurator];
+      [configurator configureSigninPromoView:signinPromoView];
+      subview = signinPromoView;
+      [cell setSelectionStyle:UITableViewCellSelectionStyleNone];
+      [_signinPromoViewMediator signinPromoViewVisible];
+      break;
+    }
     case CELL_OTHER_DEVICES_SYNC_IN_PROGRESS:
       subview = [[SignedInSyncInProgressView alloc] initWithFrame:CGRectZero];
       [cell setSelectionStyle:UITableViewCellSelectionStyleNone];
@@ -823,7 +873,7 @@ enum CellType {
   // RecentlyClosedSectionFooter.
   // clang-format off
   NSArray* constraints = @[
-    @"V:|-0-[view]-0-|",
+    @"V:|-(TopMargin)-[view]-0-|",
     @"H:|-(>=0)-[view(<=548)]-(>=0)-|",
     @"H:[view(==548@500)]"
   ];
@@ -836,7 +886,8 @@ enum CellType {
                                           attribute:NSLayoutAttributeCenterX
                                          multiplier:1
                                            constant:0]];
-  ApplyVisualConstraints(constraints, viewsDictionary, contentView);
+  NSDictionary* metrics = @{ @"TopMargin" : @(contentViewTopMargin) };
+  ApplyVisualConstraintsWithMetrics(constraints, viewsDictionary, metrics);
   return cell;
 }
 
@@ -855,9 +906,9 @@ enum CellType {
     case CELL_SHOW_FULL_HISTORY:
       return indexPath;
     case CELL_SEPARATOR:
-    case CELL_OTHER_DEVICES_SIGNED_OUT:
     case CELL_OTHER_DEVICES_SIGNED_IN_SYNC_OFF:
     case CELL_OTHER_DEVICES_SIGNED_IN_SYNC_ON_NO_SESSIONS:
+    case CELL_OTHER_DEVICES_SIGNIN_PROMO:
     case CELL_OTHER_DEVICES_SYNC_IN_PROGRESS:
       return nil;
   }
@@ -888,9 +939,9 @@ enum CellType {
       [self showFullHistory];
       break;
     case CELL_SEPARATOR:
-    case CELL_OTHER_DEVICES_SIGNED_OUT:
     case CELL_OTHER_DEVICES_SIGNED_IN_SYNC_OFF:
     case CELL_OTHER_DEVICES_SIGNED_IN_SYNC_ON_NO_SESSIONS:
+    case CELL_OTHER_DEVICES_SIGNIN_PROMO:
     case CELL_OTHER_DEVICES_SYNC_IN_PROGRESS:
       NOTREACHED();
       break;
@@ -906,12 +957,12 @@ enum CellType {
       return [ShowFullHistoryView desiredHeightInUITableViewCell];
     case CELL_SEPARATOR:
       return [RecentlyClosedSectionFooter desiredHeightInUITableViewCell];
-    case CELL_OTHER_DEVICES_SIGNED_OUT:
-      return [SignedOutView desiredHeightInUITableViewCell];
     case CELL_OTHER_DEVICES_SIGNED_IN_SYNC_OFF:
       return [SignedInSyncOffView desiredHeightInUITableViewCell];
     case CELL_OTHER_DEVICES_SIGNED_IN_SYNC_ON_NO_SESSIONS:
       return [SignedInSyncOnNoSessionsView desiredHeightInUITableViewCell];
+    case CELL_OTHER_DEVICES_SIGNIN_PROMO:
+      return UITableViewAutomaticDimension;
     case CELL_SESSION_SECTION_HEADER:
       return [SessionSectionHeaderView desiredHeightInUITableViewCell];
     case CELL_CLOSED_TAB_DATA:
@@ -945,6 +996,59 @@ enum CellType {
 
 - (void)scrollViewDidScroll:(UIScrollView*)scrollView {
   [delegate_ recentTabsTableViewContentMoved:self.tableView];
+}
+
+#pragma mark - SigninPromoViewConsumer
+
+- (void)configureSigninPromoWithConfigurator:
+            (SigninPromoViewConfigurator*)configurator
+                             identityChanged:(BOOL)identityChanged {
+  DCHECK(_signinPromoViewMediator);
+  if ([self sectionIsCollapsed:kOtherDeviceCollapsedKey])
+    return;
+  NSInteger sectionIndex =
+      [self sectionIndexForSectionType:OTHER_DEVICES_SECTION];
+  DCHECK(sectionIndex != NSNotFound);
+  NSIndexPath* indexPath =
+      [NSIndexPath indexPathForRow:1 inSection:sectionIndex];
+  if (identityChanged) {
+    [self.tableView reloadRowsAtIndexPaths:@[ indexPath ]
+                          withRowAnimation:UITableViewRowAnimationNone];
+    return;
+  }
+  UITableViewCell* cell = [self.tableView cellForRowAtIndexPath:indexPath];
+  NSArray<UIView*>* contentViews = cell.contentView.subviews;
+  DCHECK(contentViews.count == 1);
+  UIView* subview = contentViews[0];
+  DCHECK([subview isKindOfClass:[SigninPromoView class]]);
+  SigninPromoView* signinPromoView = (SigninPromoView*)subview;
+  [configurator configureSigninPromoView:signinPromoView];
+}
+
+#pragma mark - SyncPresenter
+
+- (void)showReauthenticateSignin {
+  [self.dispatcher
+              showSignin:
+                  [[ShowSigninCommand alloc]
+                      initWithOperation:AUTHENTICATION_OPERATION_REAUTHENTICATE
+                            accessPoint:signin_metrics::AccessPoint::
+                                            ACCESS_POINT_UNKNOWN]
+      baseViewController:self];
+}
+
+- (void)showSyncSettings {
+  [self.dispatcher showSyncSettingsFromViewController:self];
+}
+
+- (void)showSyncPassphraseSettings {
+  [self.dispatcher showSyncPassphraseSettingsFromViewController:self];
+}
+
+#pragma mark - SigninPresenter
+
+- (void)showSignin:(ShowSigninCommand*)command {
+  [self.dispatcher showSignin:command baseViewController:self];
 }
 
 @end

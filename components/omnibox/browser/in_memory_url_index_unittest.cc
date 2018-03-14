@@ -7,7 +7,9 @@
 
 #include <algorithm>
 #include <fstream>
+#include <memory>
 #include <numeric>
+#include <utility>
 
 #include "base/auto_reset.h"
 #include "base/files/file_path.h"
@@ -16,7 +18,6 @@
 #include "base/i18n/case_conversion.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
@@ -24,7 +25,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/sequenced_worker_pool_owner.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/history/core/browser/history_backend.h"
 #include "components/history/core/browser/history_database.h"
 #include "components/history/core/browser/history_service.h"
@@ -124,7 +125,7 @@ void CacheFileSaverObserver::OnCacheSaveFinished(bool succeeded) {
 
 class InMemoryURLIndexTest : public testing::Test {
  public:
-  InMemoryURLIndexTest();
+  InMemoryURLIndexTest() = default;
 
  protected:
   // Test setup.
@@ -169,17 +170,13 @@ class InMemoryURLIndexTest : public testing::Test {
   void ExpectPrivateDataEqual(const URLIndexPrivateData& expected,
                               const URLIndexPrivateData& actual);
 
-  base::MessageLoop message_loop_;
-  base::SequencedWorkerPoolOwner pool_owner_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::ScopedTempDir history_dir_;
   std::unique_ptr<history::HistoryService> history_service_;
-  history::HistoryDatabase* history_database_;
+  history::HistoryDatabase* history_database_ = nullptr;
   std::unique_ptr<TemplateURLService> template_url_service_;
   std::unique_ptr<InMemoryURLIndex> url_index_;
 };
-
-InMemoryURLIndexTest::InMemoryURLIndexTest()
-    : pool_owner_(3, "Background Pool"), history_database_(nullptr) {}
 
 sql::Connection& InMemoryURLIndexTest::GetDB() {
   return history_database_->GetDB();
@@ -296,6 +293,7 @@ void InMemoryURLIndexTest::TearDown() {
   // it is destroyed in order to prevent HistoryService calling dead observer.
   if (url_index_)
     url_index_->Shutdown();
+  scoped_task_environment_.RunUntilIdle();
 }
 
 base::FilePath::StringType InMemoryURLIndexTest::TestDBName() const {
@@ -313,7 +311,7 @@ void InMemoryURLIndexTest::InitializeInMemoryURLIndex() {
   client_schemes_to_whitelist.insert(kClientWhitelistedScheme);
   url_index_.reset(new InMemoryURLIndex(
       nullptr, history_service_.get(), template_url_service_.get(),
-      pool_owner_.pool().get(), base::FilePath(), client_schemes_to_whitelist));
+      base::FilePath(), client_schemes_to_whitelist));
   url_index_->Init();
   url_index_->RebuildFromHistory(history_database_);
 }
@@ -482,6 +480,20 @@ TEST_F(LimitedInMemoryURLIndexTest, Initialization) {
   EXPECT_EQ(17U, private_data.word_map_.size());
 }
 
+TEST_F(InMemoryURLIndexTest, HiddenURLRowsAreIgnored) {
+  history::URLID new_row_id = 87654321;  // Arbitrarily chosen large new row id.
+  history::URLRow new_row =
+      history::URLRow(GURL("http://hidden.com/"), new_row_id++);
+  new_row.set_last_visit(base::Time::Now());
+  new_row.set_hidden(true);
+
+  EXPECT_FALSE(UpdateURL(new_row));
+  EXPECT_EQ(0U, url_index_
+                    ->HistoryItemsForTerms(ASCIIToUTF16("hidden"),
+                                           base::string16::npos, kMaxMatches)
+                    .size());
+}
+
 TEST_F(InMemoryURLIndexTest, Retrieval) {
   // See if a very specific term gives a single result.
   ScoredHistoryMatches matches = url_index_->HistoryItemsForTerms(
@@ -520,11 +532,22 @@ TEST_F(InMemoryURLIndexTest, Retrieval) {
   EXPECT_EQ(ASCIIToUTF16("Practically Perfect Search Result"),
             matches[0].url_info.title());
 
-  // Search which should result in very poor result.
-  // No results since it will be suppressed by default scoring.
-  matches = url_index_->HistoryItemsForTerms(ASCIIToUTF16("qui c"),
+  // Search which should result in very poor result.  (It's a mid-word match
+  // in a hostname.)  No results since it will be suppressed by default scoring.
+  matches = url_index_->HistoryItemsForTerms(ASCIIToUTF16("heinqui"),
                                              base::string16::npos, kMaxMatches);
   EXPECT_EQ(0U, matches.size());
+  // But if the user adds a term that matches well against the same result,
+  // the result should be returned.
+  matches =
+      url_index_->HistoryItemsForTerms(ASCIIToUTF16("heinqui microprocessor"),
+                                       base::string16::npos, kMaxMatches);
+  ASSERT_EQ(1U, matches.size());
+  EXPECT_EQ(18, matches[0].url_info.id());
+  EXPECT_EQ("http://www.theinquirer.net/", matches[0].url_info.url().spec());
+  EXPECT_EQ(ASCIIToUTF16("THE INQUIRER - Microprocessor, Server, Memory, PCS, "
+                         "Graphics, Networking, Storage"),
+            matches[0].url_info.title());
 
   // A URL that comes from the default search engine should not be returned.
   matches = url_index_->HistoryItemsForTerms(ASCIIToUTF16("query"),
@@ -1237,6 +1260,7 @@ TEST_F(InMemoryURLIndexTest, RebuildFromHistoryIfCacheOld) {
     PostSaveToCacheFileTask();
     run_loop.Run();
     EXPECT_TRUE(save_observer.succeeded());
+    url_index_->set_save_cache_observer(nullptr);
   }
 
   // Clear and then prove it's clear before restoring.
@@ -1257,6 +1281,7 @@ TEST_F(InMemoryURLIndexTest, RebuildFromHistoryIfCacheOld) {
     PostRestoreFromCacheFileTask();
     run_loop.Run();
     EXPECT_TRUE(restore_observer.succeeded());
+    url_index_->set_restore_cache_observer(nullptr);
   }
 
   URLIndexPrivateData& new_data(*GetPrivateData());
@@ -1277,54 +1302,52 @@ TEST_F(InMemoryURLIndexTest, CalculateWordStartsOffsets) {
     size_t cursor_position;
     const size_t expected_word_starts_offsets_size;
     const size_t expected_word_starts_offsets[3];
-  } test_cases[] = {
-    /* No punctuations, only cursor position change. */
-    { "ABCD", kInvalid, 1, {0, kInvalid, kInvalid} },
-    { "abcd", 0,        1, {0, kInvalid, kInvalid} },
-    { "AbcD", 1,        2, {0, 0, kInvalid} },
-    { "abcd", 4,        1, {0, kInvalid, kInvalid} },
+  } test_cases[] = {/* No punctuations, only cursor position change. */
+                    {"ABCD", kInvalid, 1, {0, kInvalid, kInvalid}},
+                    {"abcd", 0, 1, {0, kInvalid, kInvalid}},
+                    {"AbcD", 1, 2, {0, 0, kInvalid}},
+                    {"abcd", 4, 1, {0, kInvalid, kInvalid}},
 
-    /* Starting with punctuation. */
-    { ".abcd",  kInvalid, 1, {1, kInvalid, kInvalid} },
-    { ".abcd",  0,        1, {1, kInvalid, kInvalid} },
-    { "!abcd",  1,        2, {1, 0, kInvalid} },
-    { "::abcd", 1,        2, {1, 1, kInvalid} },
-    { ":abcd",  5,        1, {1, kInvalid, kInvalid} },
+                    /* Starting with punctuation. */
+                    {".abcd", kInvalid, 1, {1, kInvalid, kInvalid}},
+                    {".abcd", 0, 1, {1, kInvalid, kInvalid}},
+                    {"!abcd", 1, 2, {1, 0, kInvalid}},
+                    {"::abcd", 1, 2, {1, 1, kInvalid}},
+                    {":abcd", 5, 1, {1, kInvalid, kInvalid}},
 
-    /* Ending with punctuation. */
-    { "abcd://", kInvalid, 1, {0, kInvalid, kInvalid} },
-    { "ABCD://", 0,        1, {0, kInvalid, kInvalid} },
-    { "abcd://", 1,        2, {0, 0, kInvalid} },
-    { "abcd://", 4,        2, {0, 3, kInvalid} },
-    { "abcd://", 7,        1, {0, kInvalid, kInvalid} },
+                    /* Ending with punctuation. */
+                    {"abcd://", kInvalid, 1, {0, kInvalid, kInvalid}},
+                    {"ABCD://", 0, 1, {0, kInvalid, kInvalid}},
+                    {"abcd://", 1, 2, {0, 0, kInvalid}},
+                    {"abcd://", 4, 2, {0, 3, kInvalid}},
+                    {"abcd://", 7, 1, {0, kInvalid, kInvalid}},
 
-    /* Punctuation in the middle. */
-    { "ab.cd", kInvalid, 1, {0, kInvalid, kInvalid} },
-    { "ab.cd", 0,        1, {0, kInvalid, kInvalid} },
-    { "ab!cd", 1,        2, {0, 0, kInvalid} },
-    { "AB.cd", 2,        2, {0, 1, kInvalid} },
-    { "AB.cd", 3,        2, {0, 0, kInvalid} },
-    { "ab:cd", 5,        1, {0, kInvalid, kInvalid} },
+                    /* Punctuation in the middle. */
+                    {"ab.cd", kInvalid, 1, {0, kInvalid, kInvalid}},
+                    {"ab.cd", 0, 1, {0, kInvalid, kInvalid}},
+                    {"ab!cd", 1, 2, {0, 0, kInvalid}},
+                    {"AB.cd", 2, 2, {0, 1, kInvalid}},
+                    {"AB.cd", 3, 2, {0, 0, kInvalid}},
+                    {"ab:cd", 5, 1, {0, kInvalid, kInvalid}},
 
-    /* Hyphenation */
-    { "Ab-cd", kInvalid, 1, {0, kInvalid, kInvalid} },
-    { "ab-cd", 0,        1, {0, kInvalid, kInvalid} },
-    { "-abcd", 0,        1, {1, kInvalid, kInvalid} },
-    { "-abcd", 1,        2, {1, 0, kInvalid} },
-    { "abcd-", 2,        2, {0, 0, kInvalid} },
-    { "abcd-", 4,        2, {0, 1, kInvalid} },
-    { "ab-cd", 5,        1, {0, kInvalid, kInvalid} },
+                    /* Hyphenation */
+                    {"Ab-cd", kInvalid, 1, {0, kInvalid, kInvalid}},
+                    {"ab-cd", 0, 1, {0, kInvalid, kInvalid}},
+                    {"-abcd", 0, 1, {1, kInvalid, kInvalid}},
+                    {"-abcd", 1, 2, {1, 0, kInvalid}},
+                    {"abcd-", 2, 2, {0, 0, kInvalid}},
+                    {"abcd-", 4, 2, {0, 1, kInvalid}},
+                    {"ab-cd", 5, 1, {0, kInvalid, kInvalid}},
 
-    /* Whitespace */
-    { "Ab cd",  kInvalid, 2, {0, 0, kInvalid} },
-    { "ab cd",  0,        2, {0, 0, kInvalid} },
-    { " abcd",  0,        1, {0, kInvalid, kInvalid} },
-    { " abcd",  1,        1, {0, kInvalid, kInvalid} },
-    { "abcd ",  2,        2, {0, 0, kInvalid} },
-    { "abcd :", 4,        2, {0, 1, kInvalid} },
-    { "abcd :", 5,        2, {0, 1, kInvalid} },
-    { "abcd :", 2,        3, {0, 0, 1} }
-  };
+                    /* Whitespace */
+                    {"Ab cd", kInvalid, 2, {0, 0, kInvalid}},
+                    {"ab cd", 0, 2, {0, 0, kInvalid}},
+                    {" abcd", 0, 1, {0, kInvalid, kInvalid}},
+                    {" abcd", 1, 1, {0, kInvalid, kInvalid}},
+                    {"abcd ", 2, 2, {0, 0, kInvalid}},
+                    {"abcd :", 4, 2, {0, 1, kInvalid}},
+                    {"abcd :", 5, 2, {0, 1, kInvalid}},
+                    {"abcd :", 2, 3, {0, 0, 1}}};
 
   for (size_t i = 0; i < arraysize(test_cases); ++i) {
     SCOPED_TRACE(testing::Message()
@@ -1350,9 +1373,49 @@ TEST_F(InMemoryURLIndexTest, CalculateWordStartsOffsets) {
   }
 }
 
+TEST_F(InMemoryURLIndexTest, CalculateWordStartsOffsetsUnderscore) {
+  const struct {
+    const char* search_string;
+    size_t cursor_position;
+    const size_t expected_word_starts_offsets_size;
+    const size_t expected_word_starts_offsets[3];
+  } test_cases[] = {/* No punctuations, only cursor position change. */
+                    /* Underscore */
+                    {"Ab_cd", kInvalid, 1, {0, kInvalid, kInvalid}},
+                    {"ab_cd", 0, 1, {0, kInvalid, kInvalid}},
+                    {"_abcd", 0, 1, {1, kInvalid, kInvalid}},
+                    {"_abcd", 1, 2, {1, 0, kInvalid}},
+                    {"abcd_", 2, 2, {0, 0, kInvalid}},
+                    {"abcd_", 4, 2, {0, 1, kInvalid}},
+                    {"ab_cd", 5, 1, {0, kInvalid, kInvalid}}};
+
+  for (size_t i = 0; i < arraysize(test_cases); ++i) {
+    SCOPED_TRACE(testing::Message()
+                 << "search_string = " << test_cases[i].search_string
+                 << ", cursor_position = " << test_cases[i].cursor_position);
+
+    base::string16 lower_string;
+    String16Vector lower_terms;
+    StringToTerms(test_cases[i].search_string, test_cases[i].cursor_position,
+                  &lower_string, &lower_terms);
+    WordStarts lower_terms_to_word_starts_offsets;
+    URLIndexPrivateData::CalculateWordStartsOffsets(
+        lower_terms, true, &lower_terms_to_word_starts_offsets);
+
+    // Verify against expectations.
+    EXPECT_EQ(test_cases[i].expected_word_starts_offsets_size,
+              lower_terms_to_word_starts_offsets.size());
+    for (size_t j = 0; j < test_cases[i].expected_word_starts_offsets_size;
+         ++j) {
+      EXPECT_EQ(test_cases[i].expected_word_starts_offsets[j],
+                lower_terms_to_word_starts_offsets[j]);
+    }
+  }
+}
+
 class InMemoryURLIndexCacheTest : public testing::Test {
  public:
-  InMemoryURLIndexCacheTest();
+  InMemoryURLIndexCacheTest() = default;
 
  protected:
   void SetUp() override;
@@ -1362,21 +1425,16 @@ class InMemoryURLIndexCacheTest : public testing::Test {
   void set_history_dir(const base::FilePath& dir_path);
   bool GetCacheFilePath(base::FilePath* file_path) const;
 
-  base::MessageLoop message_loop_;
-  base::SequencedWorkerPoolOwner pool_owner_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::ScopedTempDir temp_dir_;
   std::unique_ptr<InMemoryURLIndex> url_index_;
 };
 
-InMemoryURLIndexCacheTest::InMemoryURLIndexCacheTest()
-    : pool_owner_(3, "Background Pool") {}
-
 void InMemoryURLIndexCacheTest::SetUp() {
   ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
   base::FilePath path(temp_dir_.GetPath());
-  url_index_.reset(new InMemoryURLIndex(nullptr, nullptr, nullptr,
-                                        pool_owner_.pool().get(), path,
-                                        SchemeSet()));
+  url_index_.reset(
+      new InMemoryURLIndex(nullptr, nullptr, nullptr, path, SchemeSet()));
 }
 
 void InMemoryURLIndexCacheTest::TearDown() {

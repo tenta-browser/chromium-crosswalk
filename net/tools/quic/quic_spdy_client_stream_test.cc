@@ -11,45 +11,45 @@
 #include "net/quic/core/spdy_utils.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_socket_address.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/quic/platform/api/quic_text_utils.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
+#include "net/quic/test_tools/quic_spdy_session_peer.h"
 #include "net/quic/test_tools/quic_test_utils.h"
-#include "net/tools/quic/quic_client_session.h"
-#include "testing/gmock/include/gmock/gmock.h"
-#include "testing/gtest/include/gtest/gtest.h"
+#include "net/tools/quic/quic_spdy_client_session.h"
 
 using base::IntToString;
 using std::string;
 using testing::StrictMock;
-using testing::TestWithParam;
 
 namespace net {
 namespace test {
 
 namespace {
 
-class MockQuicClientSession : public QuicClientSession {
+class MockQuicSpdyClientSession : public QuicSpdyClientSession {
  public:
-  explicit MockQuicClientSession(QuicConnection* connection,
-                                 QuicClientPushPromiseIndex* push_promise_index)
-      : QuicClientSession(
+  explicit MockQuicSpdyClientSession(
+      QuicConnection* connection,
+      QuicClientPushPromiseIndex* push_promise_index)
+      : QuicSpdyClientSession(
             DefaultQuicConfig(),
             connection,
             QuicServerId("example.com", 443, PRIVACY_MODE_DISABLED),
             &crypto_config_,
             push_promise_index),
         crypto_config_(crypto_test_utils::ProofVerifierForTesting()) {}
-  ~MockQuicClientSession() override {}
+  ~MockQuicSpdyClientSession() override = default;
 
   MOCK_METHOD1(CloseStream, void(QuicStreamId stream_id));
 
  private:
   QuicCryptoClientConfig crypto_config_;
 
-  DISALLOW_COPY_AND_ASSIGN(MockQuicClientSession);
+  DISALLOW_COPY_AND_ASSIGN(MockQuicSpdyClientSession);
 };
 
-class QuicSpdyClientStreamTest : public ::testing::Test {
+class QuicSpdyClientStreamTest : public QuicTest {
  public:
   class StreamVisitor;
 
@@ -64,7 +64,9 @@ class QuicSpdyClientStreamTest : public ::testing::Test {
     headers_[":status"] = "200";
     headers_["content-length"] = "11";
 
-    stream_.reset(new QuicSpdyClientStream(kClientDataStreamId1, &session_));
+    stream_.reset(new QuicSpdyClientStream(
+        QuicSpdySessionPeer::GetNthClientInitiatedStreamId(session_, 0),
+        &session_));
     stream_visitor_.reset(new StreamVisitor());
     stream_->set_visitor(stream_visitor_.get());
   }
@@ -80,7 +82,7 @@ class QuicSpdyClientStreamTest : public ::testing::Test {
   StrictMock<MockQuicConnection>* connection_;
   QuicClientPushPromiseIndex push_promise_index_;
 
-  MockQuicClientSession session_;
+  MockQuicSpdyClientSession session_;
   std::unique_ptr<QuicSpdyClientStream> stream_;
   std::unique_ptr<StreamVisitor> stream_visitor_;
   SpdyHeaderBlock headers_;
@@ -152,17 +154,6 @@ TEST_F(QuicSpdyClientStreamTest, DISABLED_TestFramingExtraData) {
   EXPECT_NE(QUIC_STREAM_NO_ERROR, stream_->stream_error());
 }
 
-TEST_F(QuicSpdyClientStreamTest, TestNoBidirectionalStreaming) {
-  if (FLAGS_quic_reloadable_flag_quic_always_enable_bidi_streaming) {
-    return;
-  }
-  QuicStreamFrame frame(kClientDataStreamId1, false, 3, QuicStringPiece("asd"));
-
-  EXPECT_FALSE(stream_->write_side_closed());
-  stream_->OnStreamFrame(frame);
-  EXPECT_TRUE(stream_->write_side_closed());
-}
-
 TEST_F(QuicSpdyClientStreamTest, ReceivingTrailers) {
   // Test that receiving trailing headers, containing a final offset, results in
   // the stream being closed at that byte offset.
@@ -184,14 +175,9 @@ TEST_F(QuicSpdyClientStreamTest, ReceivingTrailers) {
 
   // Now send the body, which should close the stream as the FIN has been
   // received, as well as all data.
-  if (!FLAGS_quic_reloadable_flag_quic_always_enable_bidi_streaming) {
-    EXPECT_CALL(session_, CloseStream(stream_->id()));
-  }
   stream_->OnStreamFrame(
       QuicStreamFrame(stream_->id(), /*fin=*/false, /*offset=*/0, body_));
-  if (FLAGS_quic_reloadable_flag_quic_always_enable_bidi_streaming) {
-    EXPECT_TRUE(stream_->reading_stopped());
-  }
+  EXPECT_TRUE(stream_->reading_stopped());
 }
 
 }  // namespace

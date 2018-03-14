@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/webui/app_launcher_page_ui.h"
 
+#include <memory>
 #include <string>
 
 #include "base/memory/ptr_util.h"
@@ -12,6 +13,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/app_launcher_login_handler.h"
 #include "chrome/browser/ui/webui/metrics_handler.h"
+#include "chrome/browser/ui/webui/ntp/app_icon_webui_handler.h"
 #include "chrome/browser/ui/webui/ntp/app_launcher_handler.h"
 #include "chrome/browser/ui/webui/ntp/app_resource_cache_factory.h"
 #include "chrome/browser/ui/webui/ntp/core_app_launcher_handler.h"
@@ -21,6 +23,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
@@ -46,6 +49,7 @@ AppLauncherPageUI::AppLauncherPageUI(content::WebUI* web_ui)
     DCHECK(service);
     web_ui->AddMessageHandler(base::MakeUnique<AppLauncherHandler>(service));
     web_ui->AddMessageHandler(base::MakeUnique<CoreAppLauncherHandler>());
+    web_ui->AddMessageHandler(base::MakeUnique<AppIconWebUIHandler>());
     web_ui->AddMessageHandler(base::MakeUnique<MetricsHandler>());
   }
 
@@ -104,11 +108,10 @@ void AppLauncherPageUI::HTMLSource::StartDataRequest(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   NTPResourceCache* resource = AppResourceCacheFactory::GetForProfile(profile_);
-  resource->set_should_show_other_devices_menu(false);
 
   content::WebContents* web_contents = wc_getter.Run();
   content::RenderProcessHost* render_host =
-      web_contents ? web_contents->GetRenderProcessHost() : nullptr;
+      web_contents ? web_contents->GetMainFrame()->GetProcess() : nullptr;
   NTPResourceCache::WindowType win_type = NTPResourceCache::GetWindowType(
       profile_, render_host);
   scoped_refptr<base::RefCountedMemory> html_bytes(

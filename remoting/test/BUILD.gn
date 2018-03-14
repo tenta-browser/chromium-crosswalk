@@ -73,6 +73,7 @@ static_library("test_support") {
     "//net",
     "//remoting/base",
     "//remoting/client",
+    "//remoting/client/audio",
     "//remoting/codec:decoder",
     "//remoting/codec:encoder",
     "//remoting/protocol",
@@ -103,7 +104,7 @@ executable("chromoting_test_driver") {
   deps = [
     ":test_support",
     "//base/test:test_support",
-    "//build/config/sanitizers:deps",
+    "//build/config:exe_and_shlib_deps",
     "//build/win:default_exe_manifest",
     "//testing/gtest",
   ]
@@ -142,7 +143,7 @@ executable("ar_sample_test_driver") {
   deps = [
     ":ar_test_driver_common",
     "//base/test:test_support",
-    "//build/config/sanitizers:deps",
+    "//build/config:exe_and_shlib_deps",
     "//build/win:default_exe_manifest",
     "//testing/gtest",
   ]
@@ -173,6 +174,7 @@ if (enable_remoting_host && !is_android && !is_chromeos) {
 
     deps = [
       ":fake_connection_event_logger",
+      "//base/test:test_support",
       "//third_party/webrtc/modules/desktop_capture",
     ]
 
@@ -193,6 +195,7 @@ if (enable_remoting_host && !is_android && !is_chromeos) {
 
     deps = [
       ":it2me_standalone_host",
+      "//build/config:exe_and_shlib_deps",
     ]
 
     if (is_desktop_linux) {
@@ -207,6 +210,20 @@ if (enable_remoting_host && !is_android && !is_chromeos) {
         "wtsapi32.lib",
       ]
     }
+  }
+
+  # A binary with a specific version of EvaluateCapabilityLocally() for test
+  # purpose only.
+  executable("capability_test_stub") {
+    testonly = true
+    sources = [
+      "capability_test_stub_main.cc",
+    ]
+
+    deps = [
+      "//base",
+      "//build/config:exe_and_shlib_deps",
+    ]
   }
 }
 

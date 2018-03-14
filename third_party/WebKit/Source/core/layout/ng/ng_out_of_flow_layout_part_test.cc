@@ -4,21 +4,14 @@
 
 #include "core/layout/ng/ng_out_of_flow_layout_part.h"
 
-#include "core/layout/LayoutTestHelper.h"
 #include "core/layout/ng/layout_ng_block_flow.h"
+#include "core/layout/ng/ng_layout_result.h"
+#include "core/layout/ng/ng_layout_test.h"
 
 namespace blink {
 namespace {
 
-class NGOutOfFlowLayoutPartTest : public RenderingTest {
- public:
-  NGOutOfFlowLayoutPartTest() {
-    RuntimeEnabledFeatures::setLayoutNGEnabled(true);
-  };
-  ~NGOutOfFlowLayoutPartTest() {
-    RuntimeEnabledFeatures::setLayoutNGEnabled(false);
-  };
-};
+using NGOutOfFlowLayoutPartTest = NGLayoutTest;
 
 // Fixed blocks inside absolute blocks trigger otherwise unused while loop
 // inside NGOutOfFlowLayoutPart::Run.
@@ -62,100 +55,24 @@ TEST_F(NGOutOfFlowLayoutPartTest, FixedInsideAbs) {
       )HTML");
 
   // Test whether the oof fragments have been collected at NG->Legacy boundary.
-  Element* rel = GetDocument().GetElementById("rel");
-  LayoutNGBlockFlow* block_flow = ToLayoutNGBlockFlow(rel->GetLayoutObject());
-  RefPtr<NGConstraintSpace> space =
+  Element* rel = GetDocument().getElementById("rel");
+  LayoutBlockFlow* block_flow = ToLayoutBlockFlow(rel->GetLayoutObject());
+  scoped_refptr<NGConstraintSpace> space =
       NGConstraintSpace::CreateFromLayoutObject(*block_flow);
-  NGBlockNode* node = new NGBlockNode(block_flow);
-  RefPtr<NGLayoutResult> result = node->Layout(space.Get());
-  EXPECT_EQ(result->OutOfFlowDescendants().size(), (size_t)2);
+  scoped_refptr<NGLayoutResult> result =
+      block_flow->CachedLayoutResultForTesting();
+  EXPECT_TRUE(result);
+  EXPECT_EQ(result->OutOfFlowPositionedDescendants().size(), (size_t)2);
 
   // Test the final result.
-  Element* fixed_1 = GetDocument().GetElementById("fixed1");
-  Element* fixed_2 = GetDocument().GetElementById("fixed2");
+  Element* fixed_1 = GetDocument().getElementById("fixed1");
+  Element* fixed_2 = GetDocument().getElementById("fixed2");
   // fixed1 top is static: #abs.top + #pad.height
   EXPECT_EQ(fixed_1->OffsetTop(), LayoutUnit(99));
   // fixed2 top is positioned: #fixed2.top
   EXPECT_EQ(fixed_2->OffsetTop(), LayoutUnit(9));
 };
 
-TEST_F(NGOutOfFlowLayoutPartTest, OrthogonalWritingMode1) {
-  SetBodyInnerHTML(
-      R"HTML(
-    <style>
-      #container {
-        position: relative;
-        writing-mode: horizontal-tb;
-        width: 200px;
-        height: 400px;
-      }
-      #abs-child {
-        position: absolute;
-        top: 10px;
-        writing-mode: vertical-rl;
-        width: auto;
-        height: 30px;
-      }
-    </style>
-    <div id="container">
-      <div id="abs-child"></div>
-    </div>
-    )HTML");
-
-  LayoutNGBlockFlow* block_flow =
-      ToLayoutNGBlockFlow(GetLayoutObjectByElementId("container"));
-  auto* node = new NGBlockNode(block_flow);
-  RefPtr<NGConstraintSpace> space =
-      NGConstraintSpace::CreateFromLayoutObject(*block_flow);
-
-  RefPtr<const NGPhysicalFragment> fragment =
-      node->Layout(space.Get())->PhysicalFragment();
-  EXPECT_EQ(NGPhysicalSize(LayoutUnit(200), LayoutUnit(400)), fragment->Size());
-
-  fragment = ToNGPhysicalBoxFragment(fragment.Get())->Children()[0];
-  EXPECT_EQ(NGPhysicalSize(LayoutUnit(0), LayoutUnit(30)), fragment->Size());
-  EXPECT_EQ(NGPhysicalOffset(LayoutUnit(0), LayoutUnit(10)),
-            fragment->Offset());
-};
-
-TEST_F(NGOutOfFlowLayoutPartTest, OrthogonalWritingMode2) {
-  SetBodyInnerHTML(
-      R"HTML(
-    <style>
-      #container {
-        position: relative;
-        writing-mode: horizontal-tb;
-        width: 200px;
-        height: 400px;
-      }
-      #abs-child {
-        position: absolute;
-        top: 10px;
-        writing-mode: vertical-rl;
-        width: 20%;
-        height: 30px;
-      }
-    </style>
-    <div id="container">
-      <div id="abs-child"></div>
-    </div>
-    )HTML");
-
-  LayoutNGBlockFlow* block_flow =
-      ToLayoutNGBlockFlow(GetLayoutObjectByElementId("container"));
-  auto* node = new NGBlockNode(block_flow);
-  RefPtr<NGConstraintSpace> space =
-      NGConstraintSpace::CreateFromLayoutObject(*block_flow);
-
-  RefPtr<const NGPhysicalFragment> fragment =
-      node->Layout(space.Get())->PhysicalFragment();
-  EXPECT_EQ(NGPhysicalSize(LayoutUnit(200), LayoutUnit(400)), fragment->Size());
-
-  fragment = ToNGPhysicalBoxFragment(fragment.Get())->Children()[0];
-  EXPECT_EQ(NGPhysicalSize(LayoutUnit(40), LayoutUnit(30)), fragment->Size());
-  EXPECT_EQ(NGPhysicalOffset(LayoutUnit(0), LayoutUnit(10)),
-            fragment->Offset());
-};
 
 }  // namespace
 }  // namespace blink

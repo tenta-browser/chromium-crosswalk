@@ -3,66 +3,60 @@
 // found in the LICENSE file.
 
 cr.define('settings_startup_urls_page', function() {
-  /**
-   * @constructor
-   * @implements {settings.StartupUrlsPageBrowserProxy}
-   * @extends {settings.TestBrowserProxy}
-   */
-  function TestStartupUrlsPageBrowserProxy() {
-    settings.TestBrowserProxy.call(this, [
-      'addStartupPage',
-      'editStartupPage',
-      'loadStartupPages',
-      'removeStartupPage',
-      'useCurrentPages',
-      'validateStartupPage',
-    ]);
+  /** @implements {settings.StartupUrlsPageBrowserProxy} */
+  class TestStartupUrlsPageBrowserProxy extends TestBrowserProxy {
+    constructor() {
+      super([
+        'addStartupPage',
+        'editStartupPage',
+        'loadStartupPages',
+        'removeStartupPage',
+        'useCurrentPages',
+        'validateStartupPage',
+      ]);
 
-    /** @private {boolean} */
-    this.urlIsValid_ = true;
-  }
-
-  TestStartupUrlsPageBrowserProxy.prototype = {
-    __proto__: settings.TestBrowserProxy.prototype,
+      /** @private {boolean} */
+      this.urlIsValid_ = true;
+    }
 
     /** @param {boolean} isValid */
-    setUrlValidity: function(isValid) {
+    setUrlValidity(isValid) {
       this.urlIsValid_ = isValid;
-    },
+    }
 
     /** @override */
-    addStartupPage: function(url) {
+    addStartupPage(url) {
       this.methodCalled('addStartupPage', url);
       return Promise.resolve(this.urlIsValid_);
-    },
+    }
 
     /** @override */
-    editStartupPage: function(modelIndex, url) {
+    editStartupPage(modelIndex, url) {
       this.methodCalled('editStartupPage', [modelIndex, url]);
       return Promise.resolve(this.urlIsValid_);
-    },
+    }
 
     /** @override */
-    loadStartupPages: function() {
+    loadStartupPages() {
       this.methodCalled('loadStartupPages');
-    },
+    }
 
     /** @override */
-    removeStartupPage: function(modelIndex) {
+    removeStartupPage(modelIndex) {
       this.methodCalled('removeStartupPage', modelIndex);
-    },
+    }
 
     /** @override */
-    useCurrentPages: function() {
+    useCurrentPages() {
       this.methodCalled('useCurrentPages');
-    },
+    }
 
     /** @override */
-    validateStartupPage: function(url) {
+    validateStartupPage(url) {
       this.methodCalled('validateStartupPage', url);
       return Promise.resolve(this.urlIsValid_);
-    },
-  };
+    }
+  }
 
   suite('StartupUrlDialog', function() {
     /** @type {?SettingsStartupUrlDialogElement} */
@@ -148,7 +142,7 @@ cr.define('settings_startup_urls_page', function() {
     });
 
     /**
-     * Tests that the appropritae browser proxy method is called when the action
+     * Tests that the appropriate browser proxy method is called when the action
      * button is tapped.
      * @param {string} proxyMethodName
      */
@@ -284,7 +278,7 @@ cr.define('settings_startup_urls_page', function() {
       assertFalse(!!page.$$('settings-startup-url-dialog'));
     });
 
-    test('StarupPages_WhenExtensionControlled', function() {
+    test('StartupPages_WhenExtensionControlled', function() {
       assertFalse(!!page.get('prefs.session.startup_urls.controlledBy'));
       assertFalse(!!page.$$('extension-controlled-indicator'));
       assertTrue(!!page.$$('#addPage'));
@@ -344,7 +338,7 @@ cr.define('settings_startup_urls_page', function() {
       Polymer.dom.flush();
       assertTrue(!!element.$$('dialog[is=cr-action-menu]'));
 
-      var removeButton = element.shadowRoot.querySelector('#remove')
+      var removeButton = element.shadowRoot.querySelector('#remove');
       MockInteractions.tap(removeButton);
       return browserProxy.whenCalled('removeStartupPage').then(
           function(modelIndex) {

@@ -55,7 +55,21 @@ action("process_json") {
     "--output-dir",
     rebase_path("$target_gen_dir", root_build_dir),
     "--skip-testing-data",
+    "--os-filter",
   ]
+  if (is_win) {
+    args += [ "win" ]
+  } else if (is_mac) {
+    args += [ "macosx" ]
+  } else if (is_android) {
+    args += [ "android" ]
+  } else if (is_chromeos) {
+    args += [ "chromeos" ]
+  } else if (is_fuchsia) {
+    args += [ "fuchsia" ]
+  } else {
+    args += [ "linux" ]
+  }
 }
 
 source_set("config_sources") {
@@ -91,6 +105,8 @@ source_set("config_sources") {
     "gpu_info_collector_win.cc",
     "gpu_switches.cc",
     "gpu_switches.h",
+    "gpu_switching.cc",
+    "gpu_switching.h",
     "gpu_test_config.cc",
     "gpu_test_config.h",
     "gpu_test_expectations_parser.cc",
@@ -99,13 +115,13 @@ source_set("config_sources") {
     "gpu_util.h",
   ]
 
+  if (is_fuchsia) {
+    sources += [ "gpu_info_collector_fuchsia.cc" ]
+  }
+
   sources += process_json_outputs
 
-  configs += [
-    # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
-    "//build/config/compiler:no_size_t_to_int_warning",
-    "//gpu:gpu_implementation",
-  ]
+  configs += [ "//gpu:gpu_implementation" ]
 
   deps = [
     ":crash_keys",

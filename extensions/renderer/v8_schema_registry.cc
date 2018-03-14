@@ -10,7 +10,7 @@
 
 #include "base/logging.h"
 #include "base/values.h"
-#include "content/public/child/v8_value_converter.h"
+#include "content/public/renderer/v8_value_converter.h"
 #include "extensions/common/extension_api.h"
 #include "extensions/renderer/object_backed_native_handler.h"
 #include "extensions/renderer/script_context.h"
@@ -67,7 +67,7 @@ class SchemaRegistryNativeHandler : public ObjectBackedNativeHandler {
     std::string type;
     if (args[0]->IsArray())
       type = "array";
-    else if (args[0]->IsArrayBuffer())
+    else if (args[0]->IsArrayBuffer() || args[0]->IsArrayBufferView())
       type = "binary";
     else
       type = "object";

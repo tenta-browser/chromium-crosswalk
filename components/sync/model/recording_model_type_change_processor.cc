@@ -6,9 +6,30 @@
 
 #include <utility>
 
+#include "base/bind.h"
+#include "base/memory/ptr_util.h"
+#include "components/sync/model/fake_model_type_sync_bridge.h"
 #include "components/sync/model/metadata_batch.h"
 
 namespace syncer {
+
+namespace {
+
+std::unique_ptr<ModelTypeChangeProcessor> CreateAndAssignProcessor(
+    RecordingModelTypeChangeProcessor** processor_address,
+    bool expect_error,
+    ModelType type,
+    ModelTypeSyncBridge* bridge) {
+  auto processor = std::make_unique<RecordingModelTypeChangeProcessor>();
+  *processor_address = processor.get();
+  if (expect_error)
+    processor->ExpectError();
+  // Not all compilers are smart enough to up cast during copy elision, so we
+  // explicitly create a correctly typed unique_ptr.
+  return base::WrapUnique(processor.release());
+}
+
+}  // namespace
 
 RecordingModelTypeChangeProcessor::RecordingModelTypeChangeProcessor() {}
 
@@ -27,6 +48,19 @@ void RecordingModelTypeChangeProcessor::Delete(
   delete_set_.insert(storage_key);
 }
 
+void RecordingModelTypeChangeProcessor::UpdateStorageKey(
+    const EntityData& entity_data,
+    const std::string& storage_key,
+    MetadataChangeList* metadata_change_list) {
+  update_multimap_.insert(std::make_pair(
+      storage_key, FakeModelTypeSyncBridge::CopyEntityData(entity_data)));
+}
+
+void RecordingModelTypeChangeProcessor::UntrackEntity(
+    const EntityData& entity_data) {
+  untrack_set_.insert(FakeModelTypeSyncBridge::CopyEntityData(entity_data));
+}
+
 void RecordingModelTypeChangeProcessor::ModelReadyToSync(
     std::unique_ptr<MetadataBatch> batch) {
   std::swap(metadata_, batch);
@@ -39,6 +73,15 @@ bool RecordingModelTypeChangeProcessor::IsTrackingMetadata() {
 void RecordingModelTypeChangeProcessor::SetIsTrackingMetadata(
     bool is_tracking) {
   is_tracking_metadata_ = is_tracking;
+}
+
+// static
+ModelTypeSyncBridge::ChangeProcessorFactory
+RecordingModelTypeChangeProcessor::FactoryForBridgeTest(
+    RecordingModelTypeChangeProcessor** processor_address,
+    bool expect_error) {
+  return base::Bind(&CreateAndAssignProcessor,
+                    base::Unretained(processor_address), expect_error);
 }
 
 }  //  namespace syncer

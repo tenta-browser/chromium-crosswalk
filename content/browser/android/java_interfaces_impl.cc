@@ -8,7 +8,6 @@
 
 #include <utility>
 
-#include "base/android/context_utils.h"
 #include "base/android/jni_android.h"
 #include "base/memory/singleton.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
@@ -28,8 +27,7 @@ class JavaInterfaceProviderHolder {
     service_manager::mojom::InterfaceProviderPtr provider;
     JNIEnv* env = base::android::AttachCurrentThread();
     Java_InterfaceRegistrarImpl_createInterfaceRegistryForContext(
-        env, mojo::MakeRequest(&provider).PassMessagePipe().release().value(),
-        base::android::GetApplicationContext());
+        env, mojo::MakeRequest(&provider).PassMessagePipe().release().value());
     interface_provider_.Bind(std::move(provider));
   }
 
@@ -58,7 +56,7 @@ void BindInterfaceRegistryForWebContents(
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_InterfaceRegistrarImpl_createInterfaceRegistryForWebContents(
       env, request.PassMessagePipe().release().value(),
-      web_contents->GetJavaWebContents().obj());
+      web_contents->GetJavaWebContents());
 }
 
 void BindInterfaceRegistryForRenderFrameHost(
@@ -67,7 +65,7 @@ void BindInterfaceRegistryForRenderFrameHost(
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_InterfaceRegistrarImpl_createInterfaceRegistryForRenderFrameHost(
       env, request.PassMessagePipe().release().value(),
-      render_frame_host->GetJavaRenderFrameHost().obj());
+      render_frame_host->GetJavaRenderFrameHost());
 }
 
 }  // namespace content

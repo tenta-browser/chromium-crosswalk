@@ -35,6 +35,7 @@
 #include "url/gurl.h"
 
 using base::android::JavaParamRef;
+using base::android::JavaRef;
 
 namespace {
 
@@ -94,8 +95,9 @@ class TabContentManager::TabReadbackRequest {
 };
 
 // static
-TabContentManager* TabContentManager::FromJavaObject(jobject jobj) {
-  if (!jobj)
+TabContentManager* TabContentManager::FromJavaObject(
+    const JavaRef<jobject>& jobj) {
+  if (jobj.is_null())
     return nullptr;
   return reinterpret_cast<TabContentManager*>(
       Java_TabContentManager_getNativePtr(base::android::AttachCurrentThread(),
@@ -290,9 +292,7 @@ void TabContentManager::UpdateVisibleIds(
   thumbnail_cache_->UpdateVisibleIds(priority_ids, primary_tab_id);
 }
 
-void TabContentManager::RemoveTabThumbnail(JNIEnv* env,
-                                           const JavaParamRef<jobject>& obj,
-                                           jint tab_id) {
+void TabContentManager::NativeRemoveTabThumbnail(int tab_id) {
   TabReadbackRequestMap::iterator readback_iter =
       pending_tab_readbacks_.find(tab_id);
   if (readback_iter != pending_tab_readbacks_.end())
@@ -300,15 +300,10 @@ void TabContentManager::RemoveTabThumbnail(JNIEnv* env,
   thumbnail_cache_->Remove(tab_id);
 }
 
-void TabContentManager::GetDecompressedThumbnail(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    jint tab_id) {
-  base::Callback<void(bool, SkBitmap)> decompress_done_callback =
-      base::Bind(&TabContentManager::OnFinishDecompressThumbnail,
-                 weak_factory_.GetWeakPtr(), reinterpret_cast<int>(tab_id));
-  thumbnail_cache_->DecompressThumbnailFromFile(reinterpret_cast<int>(tab_id),
-                                                decompress_done_callback);
+void TabContentManager::RemoveTabThumbnail(JNIEnv* env,
+                                           const JavaParamRef<jobject>& obj,
+                                           jint tab_id) {
+  NativeRemoveTabThumbnail(tab_id);
 }
 
 void TabContentManager::OnUIResourcesWereEvicted() {
@@ -334,21 +329,17 @@ void TabContentManager::PutThumbnailIntoCache(int tab_id,
     thumbnail_cache_->Put(tab_id, bitmap, thumbnail_scale);
 }
 
-bool RegisterTabContentManager(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
 // ----------------------------------------------------------------------------
 // Native JNI methods
 // ----------------------------------------------------------------------------
 
-jlong Init(JNIEnv* env,
-           const JavaParamRef<jobject>& obj,
-           jint default_cache_size,
-           jint approximation_cache_size,
-           jint compression_queue_max_size,
-           jint write_queue_max_size,
-           jboolean use_approximation_thumbnail) {
+jlong JNI_TabContentManager_Init(JNIEnv* env,
+                                 const JavaParamRef<jobject>& obj,
+                                 jint default_cache_size,
+                                 jint approximation_cache_size,
+                                 jint compression_queue_max_size,
+                                 jint write_queue_max_size,
+                                 jboolean use_approximation_thumbnail) {
   TabContentManager* manager = new TabContentManager(
       env, obj, default_cache_size, approximation_cache_size,
       compression_queue_max_size, write_queue_max_size,

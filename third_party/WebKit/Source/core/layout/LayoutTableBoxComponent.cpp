@@ -10,6 +10,19 @@
 
 namespace blink {
 
+void LayoutTableBoxComponent::InvalidateCollapsedBordersOnStyleChange(
+    const LayoutObject& table_part,
+    LayoutTable& table,
+    const StyleDifference& diff,
+    const ComputedStyle& old_style) {
+  if (!table.ShouldCollapseBorders())
+    return;
+  if (!old_style.BorderEquals(table_part.StyleRef()) ||
+      (diff.TextDecorationOrColorChanged() &&
+       table_part.StyleRef().HasBorderColorReferencingCurrentColor()))
+    table.InvalidateCollapsedBorders();
+}
+
 bool LayoutTableBoxComponent::DoCellsHaveDirtyWidth(
     const LayoutObject& table_part,
     const LayoutTable& table,
@@ -22,16 +35,13 @@ bool LayoutTableBoxComponent::DoCellsHaveDirtyWidth(
   // optimization but now it seems that diff.needsFullLayout() implies
   // tablePart.needsLayout().
   return diff.NeedsFullLayout() && table_part.NeedsLayout() &&
-         table.CollapseBorders() &&
-         !old_style.Border().SizeEquals(table_part.Style()->Border());
+         table.ShouldCollapseBorders() &&
+         !old_style.BorderSizeEquals(*table_part.Style());
 }
 
 void LayoutTableBoxComponent::MutableForPainting::UpdatePaintResult(
     PaintResult paint_result,
     const CullRect& paint_rect) {
-  DCHECK_EQ(layout_object_.GetDocument().Lifecycle().GetState(),
-            DocumentLifecycle::LifecycleState::kInPaint);
-
   // A table row or section may paint large background display item which
   // contains paint operations of the background in each contained cell.
   // The display item can be clipped by the paint rect to avoid painting

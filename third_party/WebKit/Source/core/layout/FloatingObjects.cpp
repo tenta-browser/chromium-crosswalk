@@ -31,6 +31,7 @@
 #include "core/layout/LayoutView.h"
 #include "core/layout/api/LineLayoutBlockFlow.h"
 #include "core/layout/shapes/ShapeOutsideInfo.h"
+#include "core/paint/PaintLayer.h"
 #include "platform/wtf/PtrUtil.h"
 
 namespace blink {
@@ -96,6 +97,15 @@ std::unique_ptr<FloatingObject> FloatingObject::Create(
   new_obj->SetShouldPaint(!layout_object->HasSelfPaintingLayer());
 
   new_obj->SetIsDescendant(true);
+
+  // We set SelfPaintingStatusChanged in case we get to the next compositing
+  // update and still haven't decided who should paint the float. If we've
+  // decided that the current float owner can paint it that step is unnecessary,
+  // so we can clear it now.
+  if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
+      new_obj->ShouldPaint() && layout_object->Layer() &&
+      layout_object->Layer()->SelfPaintingStatusChanged())
+    layout_object->Layer()->ClearSelfPaintingStatusChanged();
 
   return new_obj;
 }
@@ -319,7 +329,7 @@ FloatingObjects::FloatingObjects(const LayoutBlockFlow* layout_object,
       cached_horizontal_writing_mode_(false) {}
 
 void FloatingObjects::Clear() {
-  set_.Clear();
+  set_.clear();
   placed_floats_tree_.Clear();
   left_objects_count_ = 0;
   right_objects_count_ = 0;
@@ -610,6 +620,28 @@ LayoutUnit FloatingObjects::LogicalRightOffset(LayoutUnit fixed_offset,
                                                LayoutUnit logical_top,
                                                LayoutUnit logical_height) {
   ComputeFloatOffsetForLineLayoutAdapter<FloatingObject::kFloatRight> adapter(
+      layout_object_, logical_top, logical_top + logical_height, fixed_offset);
+  PlacedFloatsTree().AllOverlapsWithAdapter(adapter);
+
+  return std::min(fixed_offset, adapter.Offset());
+}
+
+LayoutUnit FloatingObjects::LogicalLeftOffsetForAvoidingFloats(
+    LayoutUnit fixed_offset,
+    LayoutUnit logical_top,
+    LayoutUnit logical_height) {
+  ComputeFloatOffsetForFloatLayoutAdapter<FloatingObject::kFloatLeft> adapter(
+      layout_object_, logical_top, logical_top + logical_height, fixed_offset);
+  PlacedFloatsTree().AllOverlapsWithAdapter(adapter);
+
+  return adapter.Offset();
+}
+
+LayoutUnit FloatingObjects::LogicalRightOffsetForAvoidingFloats(
+    LayoutUnit fixed_offset,
+    LayoutUnit logical_top,
+    LayoutUnit logical_height) {
+  ComputeFloatOffsetForFloatLayoutAdapter<FloatingObject::kFloatRight> adapter(
       layout_object_, logical_top, logical_top + logical_height, fixed_offset);
   PlacedFloatsTree().AllOverlapsWithAdapter(adapter);
 

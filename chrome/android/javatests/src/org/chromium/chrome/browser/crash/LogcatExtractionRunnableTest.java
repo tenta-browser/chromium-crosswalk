@@ -7,17 +7,26 @@ package org.chromium.chrome.browser.crash;
 import android.annotation.TargetApi;
 import android.app.job.JobInfo;
 import android.app.job.JobScheduler;
+import android.app.job.JobWorkItem;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.MediumTest;
 
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
 import org.chromium.base.StreamUtil;
+import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.AdvancedMockContext;
 import org.chromium.components.background_task_scheduler.TaskIds;
 import org.chromium.components.minidump_uploader.CrashFileManager;
-import org.chromium.components.minidump_uploader.CrashTestCase;
+import org.chromium.components.minidump_uploader.CrashTestRule;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -30,7 +39,11 @@ import java.util.List;
 /**
  * Unittests for {@link LogcatExtractionRunnable}.
  */
-public class LogcatExtractionRunnableTest extends CrashTestCase {
+@RunWith(BaseJUnit4ClassRunner.class)
+public class LogcatExtractionRunnableTest {
+    @Rule
+    public CrashTestRule mTestRule = new CrashTestRule();
+
     private File mCrashDir;
 
     private static final String BOUNDARY = "boundary";
@@ -61,6 +74,10 @@ public class LogcatExtractionRunnableTest extends CrashTestCase {
         public void cancelAll() {}
 
         @Override
+        public int enqueue(JobInfo job, JobWorkItem work) {
+            return 0;
+        }
+        @Override
         public List<JobInfo> getAllPendingJobs() {
             return null;
         }
@@ -72,8 +89,8 @@ public class LogcatExtractionRunnableTest extends CrashTestCase {
 
         @Override
         public int schedule(JobInfo job) {
-            assertEquals(TaskIds.CHROME_MINIDUMP_UPLOADING_JOB_ID, job.getId());
-            assertEquals(ChromeMinidumpUploadJobService.class.getName(),
+            Assert.assertEquals(TaskIds.CHROME_MINIDUMP_UPLOADING_JOB_ID, job.getId());
+            Assert.assertEquals(ChromeMinidumpUploadJobService.class.getName(),
                     job.getService().getClassName());
             return JobScheduler.RESULT_SUCCESS;
         }
@@ -90,11 +107,11 @@ public class LogcatExtractionRunnableTest extends CrashTestCase {
         @Override
         public ComponentName startService(Intent intent) {
             ++mNumServiceStarts;
-            assertEquals(1, mNumServiceStarts);
-            assertEquals(
+            Assert.assertEquals(1, mNumServiceStarts);
+            Assert.assertEquals(
                     MinidumpUploadService.class.getName(), intent.getComponent().getClassName());
-            assertEquals(MinidumpUploadService.ACTION_UPLOAD, intent.getAction());
-            assertEquals(new File(mCrashDir, "test.dmp.try0").getAbsolutePath(),
+            Assert.assertEquals(MinidumpUploadService.ACTION_UPLOAD, intent.getAction());
+            Assert.assertEquals(new File(mCrashDir, "test.dmp.try0").getAbsolutePath(),
                     intent.getStringExtra(MinidumpUploadService.FILE_TO_UPLOAD_KEY));
             return super.startService(intent);
         }
@@ -107,12 +124,11 @@ public class LogcatExtractionRunnableTest extends CrashTestCase {
 
             return super.getSystemService(name);
         }
-    };
+    }
 
-    @Override
-    protected void setUp() throws Exception {
-        super.setUp();
-        mCrashDir = new CrashFileManager(mCacheDir).getCrashDirectory();
+    @Before
+    public void setUp() throws Exception {
+        mCrashDir = new CrashFileManager(mTestRule.getCacheDir()).getCrashDirectory();
     }
 
     /**
@@ -140,36 +156,40 @@ public class LogcatExtractionRunnableTest extends CrashTestCase {
         BufferedReader input = null;
         try {
             File minidumpWithLogcat = new File(mCrashDir, filename);
-            assertTrue("Should have created a file containing the logcat and minidump contents",
+            Assert.assertTrue(
+                    "Should have created a file containing the logcat and minidump contents",
                     minidumpWithLogcat.exists());
 
             input = new BufferedReader(new FileReader(minidumpWithLogcat));
-            assertEquals("The first line should be the boundary line.", BOUNDARY, input.readLine());
-            assertEquals("The second line should be the content dispoistion.",
+            Assert.assertEquals(
+                    "The first line should be the boundary line.", BOUNDARY, input.readLine());
+            Assert.assertEquals("The second line should be the content dispoistion.",
                     MinidumpLogcatPrepender.LOGCAT_CONTENT_DISPOSITION, input.readLine());
-            assertEquals("The third line should be the content type.",
+            Assert.assertEquals("The third line should be the content type.",
                     MinidumpLogcatPrepender.LOGCAT_CONTENT_TYPE, input.readLine());
-            assertEquals("The fourth line should be blank, for padding.", "", input.readLine());
+            Assert.assertEquals(
+                    "The fourth line should be blank, for padding.", "", input.readLine());
             for (String expected : LOGCAT) {
-                assertEquals("The logcat contents should match", expected, input.readLine());
+                Assert.assertEquals("The logcat contents should match", expected, input.readLine());
             }
-            assertEquals("The logcat should be followed by the boundary line.", BOUNDARY,
+            Assert.assertEquals("The logcat should be followed by the boundary line.", BOUNDARY,
                     input.readLine());
-            assertEquals(
+            Assert.assertEquals(
                     "The minidump contents should follow.", MINIDUMP_CONTENTS, input.readLine());
-            assertNull("There should be nothing else in the file", input.readLine());
+            Assert.assertNull("There should be nothing else in the file", input.readLine());
         } finally {
             StreamUtil.closeQuietly(input);
         }
     }
 
+    @Test
     @MediumTest
     public void testSimpleExtraction_SansJobScheduler() throws IOException {
         // The JobScheduler API is used as of Android M+.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) return;
 
         final File minidump = createMinidump("test.dmp");
-        Context testContext = new TestContext(getInstrumentation().getTargetContext());
+        Context testContext = new TestContext(InstrumentationRegistry.getTargetContext());
 
         LogcatExtractionRunnable runnable = new TestLogcatExtractionRunnable(testContext, minidump);
         runnable.run();
@@ -177,13 +197,14 @@ public class LogcatExtractionRunnableTest extends CrashTestCase {
         verifyMinidumpWithLogcat("test.dmp.try0");
     }
 
+    @Test
     @MediumTest
     public void testSimpleExtraction_WithJobScheduler() throws IOException {
         // The JobScheduler API is only available as of Android M.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
 
         final File minidump = createMinidump("test.dmp");
-        Context testContext = new TestContext(getInstrumentation().getTargetContext());
+        Context testContext = new TestContext(InstrumentationRegistry.getTargetContext());
 
         LogcatExtractionRunnable runnable = new TestLogcatExtractionRunnable(testContext, minidump);
         runnable.run();

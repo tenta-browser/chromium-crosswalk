@@ -6,6 +6,7 @@
 <translation id="1759842336958782510">Chrome</translation>
 <translation id="2147651015520127414">Chrome hat verifiziert, dass <ph name="ISSUER" /> das Zertifikat dieser Website ausgestellt hat.</translation>
 <translation id="2334084861041072223">Copyright <ph name="YEAR" /> Google Inc. Alle Rechte vorbehalten.</translation>
+<translation id="2342981853652716282">Melden Sie sich in Chrome an, um Daten wie Lesezeichen und Passwörter auf allen Ihren Geräten zu nutzen.</translation>
 <translation id="2347208864470321755">Wenn diese Funktion aktiviert ist, bietet Chrome an, Seiten in anderen Sprachen mithilfe von Google Übersetzer zu übersetzen. <ph name="BEGIN_LINK" />Weitere Informationen<ph name="END_LINK" /></translation>
 <translation id="2441696206556358796">Speichern Sie Bilder, indem Sie auf "Einstellungen" tippen und zulassen, dass Ihre Fotos in Chrome verwendet werden.</translation>
 <translation id="2576431527583832481">Chrome ist jetzt noch besser! Es ist eine neue Version verfügbar.</translation>
@@ -16,8 +17,6 @@
 <translation id="3196546062792660320">Mit Chrome sparen Sie Zeit, da Sie Ihre Konten im Web verwenden können. In den Einstellungen haben Sie die Möglichkeit, Konten hinzuzufügen oder zu entfernen.</translation>
 <translation id="3282568296779691940">In Chrome anmelden</translation>
 <translation id="3345341804167540816">Chrome überall nutzen</translation>
-<translation id="3531621179462011934">Melden Sie sich in Chrome an, um Ihre Einstellungen auf allen Ihren Geräten zu haben.</translation>
-<translation id="3601960512121168237">Sie mögen Chrome? <ph name="BEGIN_LINK" />Ziehen Sie es in Ihr Dock<ph name="END_LINK" /></translation>
 <translation id="3678774398092457402">Soll Chrome Ihr Passwort für diese Website speichern?</translation>
 <translation id="384394811301901750">Google Chrome kann gerade nicht auf die Kamera zugreifen.</translation>
 <translation id="3870154837782082782">Google Inc.</translation>
@@ -43,7 +42,6 @@
 <translation id="7172660552945675509">Tipp: <ph name="BEGIN_LINK" />Ziehen Sie Chrome in Ihr Dock<ph name="END_LINK" /></translation>
 <translation id="7265369419224458312">Greifen Sie hier auf die Tabs zu, die Sie auf Ihrem Computer geöffnet haben. Öffnen Sie dazu Chrome auf Ihrem Computer und wählen Sie im Menü "In Chrome anmelden…" aus.</translation>
 <translation id="728488472449859922">Google Chrome QR-Scanner aktivieren</translation>
-<translation id="7311395200710390977">Für einen schnelleren Zugriff <ph name="BEGIN_LINK" />ziehen Sie Chrome in Ihr Dock<ph name="END_LINK" /></translation>
 <translation id="7400722733683201933">Über Google Chrome</translation>
 <translation id="7437998757836447326">Von Chrome abmelden</translation>
 <translation id="756809126120519699">Gelöschte Chrome-Daten</translation>

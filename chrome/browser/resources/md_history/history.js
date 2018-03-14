@@ -4,7 +4,7 @@
 
 // Send the history query immediately. This allows the query to process during
 // the initial page startup.
-chrome.send('queryHistory', ['', 0, 0, 0, RESULTS_PER_PAGE]);
+chrome.send('queryHistory', ['', RESULTS_PER_PAGE]);
 chrome.send('getForeignSessions');
 
 /** @type {Promise} */
@@ -52,16 +52,13 @@ function historyResult(info, results) {
 /**
  * Called by the history backend after receiving results and after discovering
  * the existence of other forms of browsing history.
- * @param {boolean} hasSyncedResults Whether there are synced results.
  * @param {boolean} includeOtherFormsOfBrowsingHistory Whether to include
  *     a sentence about the existence of other forms of browsing history.
  */
-function showNotification(
-    hasSyncedResults, includeOtherFormsOfBrowsingHistory) {
+function showNotification(includeOtherFormsOfBrowsingHistory) {
   waitForAppUpgrade().then(function() {
     var app = /** @type {HistoryAppElement} */ ($('history-app'));
     app.showSidebarFooter = includeOtherFormsOfBrowsingHistory;
-    app.hasSyncedResults = hasSyncedResults;
   });
 }
 

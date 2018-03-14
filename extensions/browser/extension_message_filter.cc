@@ -10,6 +10,7 @@
 #include "components/keyed_service/content/browser_context_keyed_service_shutdown_notifier_factory.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
+#include "extensions/browser/api/messaging/message_service.h"
 #include "extensions/browser/blob_holder.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/event_router_factory.h"
@@ -17,6 +18,8 @@
 #include "extensions/browser/process_manager.h"
 #include "extensions/browser/process_manager_factory.h"
 #include "extensions/browser/process_map.h"
+#include "extensions/common/api/messaging/message.h"
+#include "extensions/common/api/messaging/port_id.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/manifest_handlers/background_info.h"
@@ -90,12 +93,20 @@ void ExtensionMessageFilter::OverrideThreadForMessage(
     case ExtensionHostMsg_RemoveListener::ID:
     case ExtensionHostMsg_AddLazyListener::ID:
     case ExtensionHostMsg_RemoveLazyListener::ID:
+    case ExtensionHostMsg_AddLazyServiceWorkerListener::ID:
+    case ExtensionHostMsg_RemoveLazyServiceWorkerListener::ID:
     case ExtensionHostMsg_AddFilteredListener::ID:
     case ExtensionHostMsg_RemoveFilteredListener::ID:
     case ExtensionHostMsg_ShouldSuspendAck::ID:
     case ExtensionHostMsg_SuspendAck::ID:
     case ExtensionHostMsg_TransferBlobsAck::ID:
     case ExtensionHostMsg_WakeEventPage::ID:
+    case ExtensionHostMsg_OpenChannelToExtension::ID:
+    case ExtensionHostMsg_OpenChannelToTab::ID:
+    case ExtensionHostMsg_OpenChannelToNativeApp::ID:
+    case ExtensionHostMsg_OpenMessagePort::ID:
+    case ExtensionHostMsg_CloseMessagePort::ID:
+    case ExtensionHostMsg_PostMessage::ID:
       *thread = BrowserThread::UI;
       break;
     default:
@@ -122,6 +133,10 @@ bool ExtensionMessageFilter::OnMessageReceived(const IPC::Message& message) {
                         OnExtensionAddLazyListener)
     IPC_MESSAGE_HANDLER(ExtensionHostMsg_RemoveLazyListener,
                         OnExtensionRemoveLazyListener)
+    IPC_MESSAGE_HANDLER(ExtensionHostMsg_AddLazyServiceWorkerListener,
+                        OnExtensionAddLazyServiceWorkerListener);
+    IPC_MESSAGE_HANDLER(ExtensionHostMsg_RemoveLazyServiceWorkerListener,
+                        OnExtensionRemoveLazyServiceWorkerListener);
     IPC_MESSAGE_HANDLER(ExtensionHostMsg_AddFilteredListener,
                         OnExtensionAddFilteredListener)
     IPC_MESSAGE_HANDLER(ExtensionHostMsg_RemoveFilteredListener,
@@ -134,6 +149,14 @@ bool ExtensionMessageFilter::OnMessageReceived(const IPC::Message& message) {
                         OnExtensionTransferBlobsAck)
     IPC_MESSAGE_HANDLER(ExtensionHostMsg_WakeEventPage,
                         OnExtensionWakeEventPage)
+    IPC_MESSAGE_HANDLER(ExtensionHostMsg_OpenChannelToExtension,
+                        OnOpenChannelToExtension)
+    IPC_MESSAGE_HANDLER(ExtensionHostMsg_OpenChannelToTab, OnOpenChannelToTab)
+    IPC_MESSAGE_HANDLER(ExtensionHostMsg_OpenChannelToNativeApp,
+                        OnOpenChannelToNativeApp)
+    IPC_MESSAGE_HANDLER(ExtensionHostMsg_OpenMessagePort, OnOpenMessagePort)
+    IPC_MESSAGE_HANDLER(ExtensionHostMsg_CloseMessagePort, OnCloseMessagePort)
+    IPC_MESSAGE_HANDLER(ExtensionHostMsg_PostMessage, OnPostMessage)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -141,8 +164,9 @@ bool ExtensionMessageFilter::OnMessageReceived(const IPC::Message& message) {
 
 void ExtensionMessageFilter::OnExtensionAddListener(
     const std::string& extension_id,
-    const GURL& listener_url,
-    const std::string& event_name) {
+    const GURL& listener_or_worker_scope_url,
+    const std::string& event_name,
+    int worker_thread_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -151,10 +175,20 @@ void ExtensionMessageFilter::OnExtensionAddListener(
   if (!process)
     return;
 
+  EventRouter* event_router = GetEventRouter();
   if (crx_file::id_util::IdIsValid(extension_id)) {
-    GetEventRouter()->AddEventListener(event_name, process, extension_id);
-  } else if (listener_url.is_valid()) {
-    GetEventRouter()->AddEventListenerForURL(event_name, process, listener_url);
+    const bool is_service_worker_context = worker_thread_id != kMainThreadId;
+    if (is_service_worker_context) {
+      DCHECK(listener_or_worker_scope_url.is_valid());
+      event_router->AddServiceWorkerEventListener(
+          event_name, process, extension_id, listener_or_worker_scope_url,
+          worker_thread_id);
+    } else {
+      event_router->AddEventListener(event_name, process, extension_id);
+    }
+  } else if (listener_or_worker_scope_url.is_valid()) {
+    event_router->AddEventListenerForURL(event_name, process,
+                                         listener_or_worker_scope_url);
   } else {
     NOTREACHED() << "Tried to add an event listener without a valid "
                  << "extension ID nor listener URL";
@@ -163,8 +197,9 @@ void ExtensionMessageFilter::OnExtensionAddListener(
 
 void ExtensionMessageFilter::OnExtensionRemoveListener(
     const std::string& extension_id,
-    const GURL& listener_url,
-    const std::string& event_name) {
+    const GURL& listener_or_worker_scope_url,
+    const std::string& event_name,
+    int worker_thread_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -174,10 +209,18 @@ void ExtensionMessageFilter::OnExtensionRemoveListener(
     return;
 
   if (crx_file::id_util::IdIsValid(extension_id)) {
-    GetEventRouter()->RemoveEventListener(event_name, process, extension_id);
-  } else if (listener_url.is_valid()) {
+    const bool is_service_worker_context = worker_thread_id != kMainThreadId;
+    if (is_service_worker_context) {
+      DCHECK(listener_or_worker_scope_url.is_valid());
+      GetEventRouter()->RemoveServiceWorkerEventListener(
+          event_name, process, extension_id, listener_or_worker_scope_url,
+          worker_thread_id);
+    } else {
+      GetEventRouter()->RemoveEventListener(event_name, process, extension_id);
+    }
+  } else if (listener_or_worker_scope_url.is_valid()) {
     GetEventRouter()->RemoveEventListenerForURL(event_name, process,
-                                                listener_url);
+                                                listener_or_worker_scope_url);
   } else {
     NOTREACHED() << "Tried to remove an event listener without a valid "
                  << "extension ID nor listener URL";
@@ -185,16 +228,29 @@ void ExtensionMessageFilter::OnExtensionRemoveListener(
 }
 
 void ExtensionMessageFilter::OnExtensionAddLazyListener(
-    const std::string& extension_id, const std::string& event_name) {
+    const std::string& extension_id,
+    const std::string& event_name) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (!browser_context_)
+    return;
+  GetEventRouter()->AddLazyEventListener(event_name, extension_id);
+}
+
+void ExtensionMessageFilter::OnExtensionAddLazyServiceWorkerListener(
+    const std::string& extension_id,
+    const std::string& event_name,
+    const GURL& service_worker_scope) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
 
-  GetEventRouter()->AddLazyEventListener(event_name, extension_id);
+  GetEventRouter()->AddLazyServiceWorkerEventListener(event_name, extension_id,
+                                                      service_worker_scope);
 }
 
 void ExtensionMessageFilter::OnExtensionRemoveLazyListener(
-    const std::string& extension_id, const std::string& event_name) {
+    const std::string& extension_id,
+    const std::string& event_name) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -202,9 +258,22 @@ void ExtensionMessageFilter::OnExtensionRemoveLazyListener(
   GetEventRouter()->RemoveLazyEventListener(event_name, extension_id);
 }
 
+void ExtensionMessageFilter::OnExtensionRemoveLazyServiceWorkerListener(
+    const std::string& extension_id,
+    const std::string& event_name,
+    const GURL& worker_scope_url) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (!browser_context_)
+    return;
+
+  GetEventRouter()->RemoveLazyServiceWorkerEventListener(
+      event_name, extension_id, worker_scope_url);
+}
+
 void ExtensionMessageFilter::OnExtensionAddFilteredListener(
     const std::string& extension_id,
     const std::string& event_name,
+    base::Optional<ServiceWorkerIdentifier> sw_identifier,
     const base::DictionaryValue& filter,
     bool lazy) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -216,12 +285,13 @@ void ExtensionMessageFilter::OnExtensionAddFilteredListener(
     return;
 
   GetEventRouter()->AddFilteredEventListener(event_name, process, extension_id,
-                                             filter, lazy);
+                                             sw_identifier, filter, lazy);
 }
 
 void ExtensionMessageFilter::OnExtensionRemoveFilteredListener(
     const std::string& extension_id,
     const std::string& event_name,
+    base::Optional<ServiceWorkerIdentifier> sw_identifier,
     const base::DictionaryValue& filter,
     bool lazy) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -232,8 +302,8 @@ void ExtensionMessageFilter::OnExtensionRemoveFilteredListener(
   if (!process)
     return;
 
-  GetEventRouter()->RemoveFilteredEventListener(event_name, process,
-                                                extension_id, filter, lazy);
+  GetEventRouter()->RemoveFilteredEventListener(
+      event_name, process, extension_id, sw_identifier, filter, lazy);
 }
 
 void ExtensionMessageFilter::OnExtensionShouldSuspendAck(
@@ -311,6 +381,79 @@ void ExtensionMessageFilter::OnExtensionWakeEventPage(
 
   // The extension has no background page, so there is nothing to wake.
   SendWakeEventPageResponse(request_id, false);
+}
+
+void ExtensionMessageFilter::OnOpenChannelToExtension(
+    int routing_id,
+    const ExtensionMsg_ExternalConnectionInfo& info,
+    const std::string& channel_name,
+    bool include_tls_channel_id,
+    const PortId& port_id) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (browser_context_) {
+    MessageService::Get(browser_context_)
+        ->OpenChannelToExtension(render_process_id_, routing_id, port_id,
+                                 info.source_id, info.target_id,
+                                 info.source_url, channel_name,
+                                 include_tls_channel_id);
+  }
+}
+
+void ExtensionMessageFilter::OnOpenChannelToNativeApp(
+    int routing_id,
+    const std::string& native_app_name,
+    const PortId& port_id) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (!browser_context_)
+    return;
+
+  MessageService::Get(browser_context_)
+      ->OpenChannelToNativeApp(render_process_id_, routing_id, port_id,
+                               native_app_name);
+}
+
+void ExtensionMessageFilter::OnOpenChannelToTab(
+    int routing_id,
+    const ExtensionMsg_TabTargetConnectionInfo& info,
+    const std::string& extension_id,
+    const std::string& channel_name,
+    const PortId& port_id) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (!browser_context_)
+    return;
+
+  MessageService::Get(browser_context_)
+      ->OpenChannelToTab(render_process_id_, routing_id, port_id, info.tab_id,
+                         info.frame_id, extension_id, channel_name);
+}
+
+void ExtensionMessageFilter::OnOpenMessagePort(
+    int routing_id,
+    const PortId& port_id) {
+  if (!browser_context_)
+    return;
+
+  MessageService::Get(browser_context_)
+      ->OpenPort(port_id, render_process_id_, routing_id);
+}
+
+void ExtensionMessageFilter::OnCloseMessagePort(
+    int routing_id,
+    const PortId& port_id,
+    bool force_close) {
+  if (!browser_context_)
+    return;
+
+  MessageService::Get(browser_context_)
+      ->ClosePort(port_id, render_process_id_, routing_id, force_close);
+}
+
+void ExtensionMessageFilter::OnPostMessage(const PortId& port_id,
+                                           const Message& message) {
+  if (!browser_context_)
+    return;
+
+  MessageService::Get(browser_context_)->PostMessage(port_id, message);
 }
 
 void ExtensionMessageFilter::SendWakeEventPageResponse(int request_id,

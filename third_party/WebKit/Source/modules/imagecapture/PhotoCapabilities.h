@@ -5,17 +5,15 @@
 #ifndef PhotoCapabilities_h
 #define PhotoCapabilities_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "media/capture/mojo/image_capture.mojom-blink.h"
 #include "modules/imagecapture/MediaSettingsRange.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
-class PhotoCapabilities final
-    : public GarbageCollectedFinalized<PhotoCapabilities>,
-      public ScriptWrappable {
+class PhotoCapabilities final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -40,7 +38,7 @@ class PhotoCapabilities final
   }
   bool IsRedEyeReductionControllable() const;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   PhotoCapabilities() = default;

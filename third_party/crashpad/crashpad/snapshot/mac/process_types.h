@@ -37,8 +37,10 @@ using Nothing = char[0];
 
 // Some structure definitions differ in 32-bit and 64-bit environments by having
 // additional “reserved” padding fields present only in the 64-bit environment.
-// These Reserved*_64Only* types allow the process_types system to replicate
+// These Reserved*_*Only* types allow the process_types system to replicate
 // these structures more precisely.
+using Reserved32_32Only32 = uint32_t;
+using Reserved32_32Only64 = Nothing;
 using Reserved32_64Only32 = Nothing;
 using Reserved32_64Only64 = uint32_t;
 using Reserved64_64Only32 = Nothing;
@@ -71,6 +73,7 @@ DECLARE_PROCESS_TYPE_TRAITS_CLASS(Generic, 64)
     using Pointer = internal::TraitsGeneric::Pointer;                          \
     using IntPtr = internal::TraitsGeneric::IntPtr;                            \
     using UIntPtr = internal::TraitsGeneric::UIntPtr;                          \
+    using Reserved32_32Only = internal::TraitsGeneric::Reserved32_32Only;      \
     using Reserved32_64Only = internal::TraitsGeneric::Reserved32_64Only;      \
     using Reserved64_64Only = internal::TraitsGeneric::Reserved64_64Only;      \
     using Nothing = internal::TraitsGeneric::Nothing;                          \
@@ -91,12 +94,14 @@ DECLARE_PROCESS_TYPE_TRAITS_CLASS(Generic, 64)
                                                                                \
     /* Returns the size of the object that was read. This is the size of the   \
      * storage in the process that the data is read from, and is not the same  \
-     * as the size of the generic struct. */                                   \
+     * as the size of the generic struct. For versioned and sized structures,  \
+     * the size of the full structure is returned. */                          \
     size_t Size() const { return size_; }                                      \
                                                                                \
     /* Similar to Size(), but computes the expected size of a structure based  \
      * on the process’ bitness. This can be used prior to reading any data     \
-     * from a process. */                                                      \
+     * from a process. For versioned and sized structures,                     \
+     * ExpectedSizeForVersion() and MinimumSize() may also be useful. */       \
     static size_t ExpectedSize(ProcessReader* process_reader);
 
 #define PROCESS_TYPE_STRUCT_MEMBER(member_type, member_name, ...)              \
@@ -110,6 +115,13 @@ DECLARE_PROCESS_TYPE_TRAITS_CLASS(Generic, 64)
     static size_t ExpectedSizeForVersion(                                      \
         ProcessReader* process_reader,                                         \
         decltype(struct_name::version_field) version);
+
+#define PROCESS_TYPE_STRUCT_SIZED(struct_name, size_field)                     \
+  /* Similar to ExpectedSize(), but computes the minimum size of a             \
+   * structure based on the process’ bitness, typically including enough of    \
+   * a structure to contain its size field. This can be used prior to          \
+   * reading any data from a process. */                                       \
+  static size_t MinimumSize(ProcessReader* process_reader);
 
 #define PROCESS_TYPE_STRUCT_END(struct_name)                                   \
    private:                                                                    \
@@ -137,6 +149,7 @@ DECLARE_PROCESS_TYPE_TRAITS_CLASS(Generic, 64)
 #undef PROCESS_TYPE_STRUCT_BEGIN
 #undef PROCESS_TYPE_STRUCT_MEMBER
 #undef PROCESS_TYPE_STRUCT_VERSIONED
+#undef PROCESS_TYPE_STRUCT_SIZED
 #undef PROCESS_TYPE_STRUCT_END
 #undef PROCESS_TYPE_STRUCT_DECLARE
 
@@ -162,6 +175,7 @@ DECLARE_PROCESS_TYPE_TRAITS_CLASS(Generic, 64)
     using Pointer = typename Traits::Pointer;                                  \
     using IntPtr = typename Traits::IntPtr;                                    \
     using UIntPtr = typename Traits::UIntPtr;                                  \
+    using Reserved32_32Only = typename Traits::Reserved32_32Only;              \
     using Reserved32_64Only = typename Traits::Reserved32_64Only;              \
     using Reserved64_64Only = typename Traits::Reserved64_64Only;              \
     using Nothing = typename Traits::Nothing;                                  \
@@ -191,6 +205,10 @@ DECLARE_PROCESS_TYPE_TRAITS_CLASS(Generic, 64)
     static size_t ExpectedSizeForVersion(                                      \
         decltype(struct_name::version_field) version);
 
+#define PROCESS_TYPE_STRUCT_SIZED(struct_name, size_field)                     \
+  /* MinimumSize() is as in the generic user-visible struct above. */          \
+  static size_t MinimumSize();
+
 #define PROCESS_TYPE_STRUCT_END(struct_name)                                   \
    private:                                                                    \
     /* ReadInto() is as in the generic user-visible struct above. */           \
@@ -207,6 +225,7 @@ DECLARE_PROCESS_TYPE_TRAITS_CLASS(Generic, 64)
 #undef PROCESS_TYPE_STRUCT_BEGIN
 #undef PROCESS_TYPE_STRUCT_MEMBER
 #undef PROCESS_TYPE_STRUCT_VERSIONED
+#undef PROCESS_TYPE_STRUCT_SIZED
 #undef PROCESS_TYPE_STRUCT_END
 #undef PROCESS_TYPE_STRUCT_DECLARE_INTERNAL
 

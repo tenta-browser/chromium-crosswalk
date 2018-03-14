@@ -27,6 +27,7 @@ import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.notifications.channels.ChannelDefinitions;
 import org.chromium.chrome.browser.util.UrlUtilities;
 import org.chromium.chrome.browser.widget.RoundedIconGenerator;
 import org.chromium.content.browser.test.NativeLibraryTestRule;
@@ -52,10 +53,11 @@ public class StandardNotificationBuilderTest {
 
     private NotificationBuilderBase createAllOptionsBuilder(
             PendingIntent[] outContentAndDeleteIntents) {
-        if (outContentAndDeleteIntents == null || outContentAndDeleteIntents.length != 2)
+        if (outContentAndDeleteIntents == null || outContentAndDeleteIntents.length != 2) {
             throw new IllegalArgumentException();
+        }
 
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Context context = InstrumentationRegistry.getTargetContext();
 
         Intent contentIntent = new Intent("contentIntent");
         outContentAndDeleteIntents[0] = PendingIntent.getBroadcast(
@@ -77,7 +79,7 @@ public class StandardNotificationBuilderTest {
                 new int[] {Color.GRAY}, 1 /* width */, 1 /* height */, Bitmap.Config.ARGB_8888);
         actionIcon = actionIcon.copy(Bitmap.Config.ARGB_8888, true /* isMutable */);
 
-        return new StandardNotificationBuilder(context)
+        return new StandardNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES)
                 .setTitle("title")
                 .setBody("body")
                 .setOrigin("origin")
@@ -119,7 +121,7 @@ public class StandardNotificationBuilderTest {
         Assert.assertNotNull(picture);
         Assert.assertTrue(picture.getWidth() > 0 && picture.getHeight() > 0);
 
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Context context = InstrumentationRegistry.getTargetContext();
         Bitmap smallIcon =
                 BitmapFactory.decodeResource(context.getResources(), R.drawable.ic_chrome);
         Assert.assertTrue(smallIcon.sameAs(
@@ -173,8 +175,9 @@ public class StandardNotificationBuilderTest {
     @SmallTest
     @Feature({"Browser", "Notifications"})
     public void testSetSmallIcon() {
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        NotificationBuilderBase notificationBuilder = new StandardNotificationBuilder(context);
+        Context context = InstrumentationRegistry.getTargetContext();
+        NotificationBuilderBase notificationBuilder =
+                new StandardNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES);
 
         Bitmap bitmap =
                 BitmapFactory.decodeResource(context.getResources(), R.drawable.chrome_sync_logo);
@@ -195,7 +198,8 @@ public class StandardNotificationBuilderTest {
             Assert.assertTrue(expected.sameAs(result));
 
             // Check using the same bitmap on another builder gives the same result.
-            NotificationBuilderBase otherBuilder = new StandardNotificationBuilder(context);
+            NotificationBuilderBase otherBuilder =
+                    new StandardNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES);
             otherBuilder.setSmallIcon(bitmap);
             Notification otherNotification = otherBuilder.build();
             Assert.assertTrue(expected.sameAs(
@@ -213,9 +217,10 @@ public class StandardNotificationBuilderTest {
     @SmallTest
     @Feature({"Browser", "Notifications"})
     public void testAddTextActionSetsRemoteInput() {
-        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        NotificationBuilderBase notificationBuilder = new StandardNotificationBuilder(
-                context).addTextAction(null, "Action Title", null, "Placeholder");
+        Context context = InstrumentationRegistry.getTargetContext();
+        NotificationBuilderBase notificationBuilder =
+                new StandardNotificationBuilder(context, ChannelDefinitions.CHANNEL_ID_SITES)
+                        .addTextAction(null, "Action Title", null, "Placeholder");
 
         Notification notification = notificationBuilder.build();
 

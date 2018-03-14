@@ -252,12 +252,13 @@ class GLES2_UTILS_EXPORT GLES2Util {
       uint32_t internal_format, uint32_t type, int* r, int* g, int* b, int* a);
 
   // Computes the data size for certain gl commands like glUniform.
-  static bool ComputeDataSize(uint32_t count,
-                              size_t size,
-                              unsigned int elements_per_unit,
-                              uint32_t* dst);
+  template <typename VALUE_TYPE, unsigned int ELEMENTS_PER_UNIT>
+  static bool ComputeDataSize(uint32_t count, uint32_t* dst) {
+    constexpr uint32_t element_size = sizeof(VALUE_TYPE) * ELEMENTS_PER_UNIT;
+    return base::CheckMul(count, element_size).AssignIfValid(dst);
+  }
 
-  #include "../common/gles2_cmd_utils_autogen.h"
+#include "gpu/command_buffer/common/gles2_cmd_utils_autogen.h"
 
  private:
   static std::string GetQualifiedEnumString(
@@ -311,6 +312,13 @@ GLES2_UTILS_EXPORT bool IsWebGLContextType(ContextType context_type);
 GLES2_UTILS_EXPORT bool IsWebGL1OrES2ContextType(ContextType context_type);
 GLES2_UTILS_EXPORT bool IsWebGL2OrES3ContextType(ContextType context_type);
 
+enum ColorSpace {
+  COLOR_SPACE_UNSPECIFIED,
+  COLOR_SPACE_SRGB,
+  COLOR_SPACE_DISPLAY_P3,
+  COLOR_SPACE_LAST = COLOR_SPACE_DISPLAY_P3
+};
+
 struct GLES2_UTILS_EXPORT ContextCreationAttribHelper {
   ContextCreationAttribHelper();
   ContextCreationAttribHelper(const ContextCreationAttribHelper& other);
@@ -318,24 +326,28 @@ struct GLES2_UTILS_EXPORT ContextCreationAttribHelper {
   bool Parse(const std::vector<int32_t>& attribs);
 
   gfx::Size offscreen_framebuffer_size;
-  gl::GpuPreference gpu_preference;
+  gl::GpuPreference gpu_preference = gl::PreferIntegratedGpu;
   // -1 if invalid or unspecified.
-  int32_t alpha_size;
-  int32_t blue_size;
-  int32_t green_size;
-  int32_t red_size;
-  int32_t depth_size;
-  int32_t stencil_size;
-  int32_t samples;
-  int32_t sample_buffers;
-  bool buffer_preserved;
-  bool bind_generates_resource;
-  bool fail_if_major_perf_caveat;
-  bool lose_context_when_out_of_memory;
-  bool should_use_native_gmb_for_backbuffer;
-  bool own_offscreen_surface;
+  int32_t alpha_size = -1;
+  int32_t blue_size = -1;
+  int32_t green_size = -1;
+  int32_t red_size = -1;
+  int32_t depth_size = -1;
+  int32_t stencil_size = -1;
+  int32_t samples = -1;
+  int32_t sample_buffers = -1;
+  bool buffer_preserved = true;
+  bool bind_generates_resource = true;
+  bool fail_if_major_perf_caveat = false;
+  bool lose_context_when_out_of_memory = false;
+  bool should_use_native_gmb_for_backbuffer = false;
+  bool own_offscreen_surface = false;
+  bool single_buffer = false;
+  bool enable_oop_rasterization = false;
+  bool enable_swap_timestamps_if_supported = false;
 
-  ContextType context_type;
+  ContextType context_type = CONTEXT_TYPE_OPENGLES2;
+  ColorSpace color_space = COLOR_SPACE_UNSPECIFIED;
 };
 
 }  // namespace gles2

@@ -14,20 +14,24 @@
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/ui/page_info/page_info_ui.h"
 #include "chrome/browser/usb/usb_chooser_context.h"
 #include "chrome/browser/usb/usb_chooser_context_factory.h"
-#include "chrome/grit/theme_resources.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/infobars/core/infobar.h"
+#include "components/subresource_filter/core/browser/subresource_filter_features.h"
+#include "content/public/browser/ssl_host_state_delegate.h"
 #include "content/public/browser/ssl_status.h"
+#include "content/public/common/content_switches.h"
 #include "device/base/mock_device_client.h"
 #include "device/usb/mock_usb_device.h"
 #include "device/usb/mock_usb_service.h"
@@ -40,6 +44,10 @@
 #include "ppapi/features/features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if defined(OS_ANDROID)
+#include "chrome/browser/android/android_theme_resources.h"
+#endif
 
 using content::SSLStatus;
 using testing::_;
@@ -111,11 +119,7 @@ class PageInfoTest : public ChromeRenderViewHostTestHarness {
     InfoBarService::CreateForWebContents(web_contents());
 
     // Setup mock ui.
-    mock_ui_.reset(new MockPageInfoUI());
-    // Use this rather than gmock's ON_CALL.WillByDefault(Invoke(... because
-    // gmock doesn't handle move-only types well.
-    mock_ui_->set_permission_info_callback_ =
-        base::Bind(&PageInfoTest::SetPermissionInfo, base::Unretained(this));
+    ResetMockUI();
   }
 
   void TearDown() override {
@@ -138,9 +142,17 @@ class PageInfoTest : public ChromeRenderViewHostTestHarness {
     last_chosen_object_info_.clear();
     for (auto& chosen_object_info : chosen_object_info_list)
       last_chosen_object_info_.push_back(std::move(chosen_object_info));
+    last_permission_info_list_ = permission_info_list;
   }
 
-  void ResetMockUI() { mock_ui_.reset(new MockPageInfoUI()); }
+  void ResetMockUI() {
+    mock_ui_.reset(new MockPageInfoUI());
+    // Use this rather than gmock's ON_CALL.WillByDefault(Invoke(... because
+    // gmock doesn't handle move-only types well.
+    mock_ui_->set_permission_info_callback_ =
+        base::Bind(&PageInfoTest::SetPermissionInfo, base::Unretained(this));
+  }
+
 
   void ClearPageInfo() { page_info_.reset(nullptr); }
 
@@ -151,6 +163,9 @@ class PageInfoTest : public ChromeRenderViewHostTestHarness {
   const std::vector<std::unique_ptr<PageInfoUI::ChosenObjectInfo>>&
   last_chosen_object_info() {
     return last_chosen_object_info_;
+  }
+  const PermissionInfoList& last_permission_info_list() {
+    return last_permission_info_list_;
   }
   TabSpecificContentSettings* tab_specific_content_settings() {
     return TabSpecificContentSettings::FromWebContents(web_contents());
@@ -182,9 +197,101 @@ class PageInfoTest : public ChromeRenderViewHostTestHarness {
   GURL url_;
   std::vector<std::unique_ptr<PageInfoUI::ChosenObjectInfo>>
       last_chosen_object_info_;
+  PermissionInfoList last_permission_info_list_;
 };
 
+bool PermissionInfoListContainsPermission(const PermissionInfoList& permissions,
+                                          ContentSettingsType content_type) {
+  for (const auto& permission : permissions) {
+    if (permission.type == content_type)
+      return true;
+  }
+  return false;
+}
+
 }  // namespace
+
+TEST_F(PageInfoTest, NonFactoryDefaultPermissionsShown) {
+  page_info()->PresentSitePermissions();
+  std::vector<ContentSettingsType> expected_visible_permissions;
+
+#if defined(OS_ANDROID)
+  // Geolocation is always allowed to pass through to Android-specific logic to
+  // check for DSE settings (so expect 1 item), but isn't actually shown later
+  // on because this test isn't testing with a default search engine origin.
+  EXPECT_EQ(1uL, last_permission_info_list().size());
+  EXPECT_EQ(CONTENT_SETTINGS_TYPE_GEOLOCATION,
+            last_permission_info_list().back().type);
+#else
+  expected_visible_permissions.push_back(CONTENT_SETTINGS_TYPE_PLUGINS);
+  // Flash is always visible on desktop - see https://crbug.com/791142.
+  EXPECT_EQ(expected_visible_permissions.size(),
+            last_permission_info_list().size());
+  EXPECT_EQ(CONTENT_SETTINGS_TYPE_PLUGINS,
+            last_permission_info_list().back().type);
+#endif
+
+  // Change some default-ask settings away from the default.
+  page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_GEOLOCATION,
+                                       CONTENT_SETTING_ALLOW);
+  expected_visible_permissions.push_back(CONTENT_SETTINGS_TYPE_GEOLOCATION);
+  page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
+                                       CONTENT_SETTING_ALLOW);
+  expected_visible_permissions.push_back(CONTENT_SETTINGS_TYPE_NOTIFICATIONS);
+  page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC,
+                                       CONTENT_SETTING_ALLOW);
+  expected_visible_permissions.push_back(CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC);
+  EXPECT_EQ(expected_visible_permissions.size(),
+            last_permission_info_list().size());
+
+  expected_visible_permissions.push_back(CONTENT_SETTINGS_TYPE_POPUPS);
+  // Change a default-block setting to a user-preference block instead.
+  page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_POPUPS,
+                                       CONTENT_SETTING_BLOCK);
+  EXPECT_EQ(expected_visible_permissions.size(),
+      last_permission_info_list().size());
+
+  expected_visible_permissions.push_back(CONTENT_SETTINGS_TYPE_JAVASCRIPT);
+  // Change a default-allow setting away from the default.
+  page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_JAVASCRIPT,
+                                       CONTENT_SETTING_BLOCK);
+  EXPECT_EQ(expected_visible_permissions.size(),
+      last_permission_info_list().size());
+
+  // Make sure setting a default setting to the default doesn't do anything.
+  page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,
+                                       CONTENT_SETTING_DEFAULT);
+  EXPECT_EQ(expected_visible_permissions.size(),
+      last_permission_info_list().size());
+
+  expected_visible_permissions.pop_back();
+  // Clear the Javascript setting.
+  page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_JAVASCRIPT,
+                                       CONTENT_SETTING_DEFAULT);
+  EXPECT_EQ(expected_visible_permissions.size(),
+      last_permission_info_list().size());
+
+  expected_visible_permissions.push_back(CONTENT_SETTINGS_TYPE_JAVASCRIPT);
+  // Change the default setting for Javascript away from the factory default.
+  page_info()->content_settings_->SetDefaultContentSetting(
+      CONTENT_SETTINGS_TYPE_JAVASCRIPT, CONTENT_SETTING_BLOCK);
+  page_info()->PresentSitePermissions();
+  EXPECT_EQ(expected_visible_permissions.size(),
+      last_permission_info_list().size());
+
+  // Change it back to ALLOW, which is its factory default, but has a source
+  // from the user preference (i.e. it counts as non-factory default).
+  page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_JAVASCRIPT,
+                                       CONTENT_SETTING_ALLOW);
+  EXPECT_EQ(expected_visible_permissions.size(),
+      last_permission_info_list().size());
+
+  // Sanity check the correct permissions are being shown.
+  for (ContentSettingsType type : expected_visible_permissions) {
+    EXPECT_TRUE(PermissionInfoListContainsPermission(
+        last_permission_info_list(), type));
+  }
+}
 
 TEST_F(PageInfoTest, OnPermissionsChanged) {
   // Setup site permissions.
@@ -330,6 +437,20 @@ TEST_F(PageInfoTest, UnwantedSoftware) {
             page_info()->site_identity_status());
 }
 
+#if defined(SAFE_BROWSING_DB_LOCAL)
+TEST_F(PageInfoTest, PasswordReuse) {
+  security_info_.security_level = security_state::DANGEROUS;
+  security_info_.malicious_content_status =
+      security_state::MALICIOUS_CONTENT_STATUS_PASSWORD_REUSE;
+  SetDefaultUIExpectations(mock_ui());
+
+  EXPECT_EQ(PageInfo::SITE_CONNECTION_STATUS_UNENCRYPTED,
+            page_info()->site_connection_status());
+  EXPECT_EQ(PageInfo::SITE_IDENTITY_STATUS_PASSWORD_REUSE,
+            page_info()->site_identity_status());
+}
+#endif
+
 TEST_F(PageInfoTest, HTTPConnection) {
   SetDefaultUIExpectations(mock_ui());
   EXPECT_EQ(PageInfo::SITE_CONNECTION_STATUS_UNENCRYPTED,
@@ -358,6 +479,13 @@ TEST_F(PageInfoTest, HTTPSConnection) {
             page_info()->site_identity_status());
   EXPECT_EQ(base::string16(), page_info()->organization_name());
 }
+
+// Define some dummy constants for Android-only resources.
+#if !defined(OS_ANDROID)
+#define IDR_PAGEINFO_WARNING_MINOR 0
+#define IDR_PAGEINFO_BAD 0
+#define IDR_PAGEINFO_GOOD 0
+#endif
 
 TEST_F(PageInfoTest, InsecureContent) {
   struct TestCase {
@@ -524,9 +652,11 @@ TEST_F(PageInfoTest, InsecureContent) {
               page_info()->site_connection_status());
     EXPECT_EQ(test.expected_site_identity_status,
               page_info()->site_identity_status());
+#if defined(OS_ANDROID)
     EXPECT_EQ(
         test.expected_connection_icon_id,
         PageInfoUI::GetConnectionIconID(page_info()->site_connection_status()));
+#endif
     EXPECT_EQ(base::string16(), page_info()->organization_name());
   }
 }
@@ -598,6 +728,7 @@ TEST_F(PageInfoTest, HTTPSConnectionError) {
   EXPECT_EQ(base::string16(), page_info()->organization_name());
 }
 
+#if defined(OS_CHROMEOS)
 TEST_F(PageInfoTest, HTTPSPolicyCertConnection) {
   security_info_.security_level =
       security_state::SECURE_WITH_POLICY_INSTALLED_CERT;
@@ -618,6 +749,7 @@ TEST_F(PageInfoTest, HTTPSPolicyCertConnection) {
             page_info()->site_identity_status());
   EXPECT_EQ(base::string16(), page_info()->organization_name());
 }
+#endif
 
 TEST_F(PageInfoTest, HTTPSSHA1) {
   security_info_.security_level = security_state::NONE;
@@ -638,8 +770,10 @@ TEST_F(PageInfoTest, HTTPSSHA1) {
   EXPECT_EQ(PageInfo::SITE_IDENTITY_STATUS_DEPRECATED_SIGNATURE_ALGORITHM,
             page_info()->site_identity_status());
   EXPECT_EQ(base::string16(), page_info()->organization_name());
+#if defined(OS_ANDROID)
   EXPECT_EQ(IDR_PAGEINFO_WARNING_MINOR,
             PageInfoUI::GetIdentityIconID(page_info()->site_identity_status()));
+#endif
 }
 
 #if !defined(OS_ANDROID)
@@ -664,10 +798,30 @@ TEST_F(PageInfoTest, ShowInfoBar) {
 
   infobar_service()->RemoveInfoBar(infobar_service()->infobar_at(0));
 }
+
+TEST_F(PageInfoTest, NoInfoBarWhenSoundSettingChanged) {
+  EXPECT_EQ(0u, infobar_service()->infobar_count());
+  page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_SOUND,
+                                       CONTENT_SETTING_BLOCK);
+  page_info()->OnUIClosing();
+  EXPECT_EQ(0u, infobar_service()->infobar_count());
+}
+
+TEST_F(PageInfoTest, ShowInfoBarWhenSoundSettingAndAnotherSettingChanged) {
+  EXPECT_EQ(0u, infobar_service()->infobar_count());
+  page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_JAVASCRIPT,
+                                       CONTENT_SETTING_BLOCK);
+  page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_SOUND,
+                                       CONTENT_SETTING_BLOCK);
+  page_info()->OnUIClosing();
+  EXPECT_EQ(1u, infobar_service()->infobar_count());
+
+  infobar_service()->RemoveInfoBar(infobar_service()->infobar_at(0));
+}
 #endif
 
 TEST_F(PageInfoTest, AboutBlankPage) {
-  SetURL("about:blank");
+  SetURL(url::kAboutBlankURL);
   SetDefaultUIExpectations(mock_ui());
   EXPECT_EQ(PageInfo::SITE_CONNECTION_STATUS_UNENCRYPTED,
             page_info()->site_connection_status());
@@ -678,7 +832,7 @@ TEST_F(PageInfoTest, AboutBlankPage) {
 
 // On desktop, internal URLs aren't handled by PageInfo class. Instead, a
 // custom and simpler bubble is shown, so no need to test.
-#if defined(OS_ANDROID) || defined(OS_IOS)
+#if defined(OS_ANDROID)
 TEST_F(PageInfoTest, InternalPage) {
   SetURL("chrome://bookmarks");
   SetDefaultUIExpectations(mock_ui());
@@ -689,6 +843,71 @@ TEST_F(PageInfoTest, InternalPage) {
   EXPECT_EQ(base::string16(), page_info()->organization_name());
 }
 #endif
+
+// Tests that metrics for the "Re-Enable Warnings" button on PageInfo are being
+// logged correctly.
+TEST_F(PageInfoTest, ReEnableWarningsMetrics) {
+  struct TestCase {
+    const std::string url;
+    const bool button_visible;
+    const bool button_clicked;
+  };
+
+  const TestCase kTestCases[] = {
+      {"https://example.test", false, false},
+      {"https://example.test", true, false},
+      {"https://example.test", true, true},
+  };
+  const char kGenericHistogram[] =
+      "interstitial.ssl.did_user_revoke_decisions2";
+  for (const auto& test : kTestCases) {
+    base::HistogramTester histograms;
+    ResetMockUI();
+    SetURL(test.url);
+    if (test.button_visible) {
+      // In the case where the button should be visible, add an exception to
+      // the profile settings for the site (since the exception is what
+      // will make the button visible).
+      HostContentSettingsMap* content_settings =
+          HostContentSettingsMapFactory::GetForProfile(profile());
+      std::unique_ptr<base::DictionaryValue> dict =
+          std::unique_ptr<base::DictionaryValue>(new base::DictionaryValue());
+      dict->SetKey(
+          "testkey",
+          base::Value(content::SSLHostStateDelegate::CertJudgment::ALLOWED));
+      content_settings->SetWebsiteSettingDefaultScope(
+          url(), GURL(), CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS,
+          std::string(), std::move(dict));
+      page_info();
+      if (test.button_clicked) {
+        page_info()->OnRevokeSSLErrorBypassButtonPressed();
+        ClearPageInfo();
+        histograms.ExpectTotalCount(kGenericHistogram, 1);
+        histograms.ExpectBucketCount(
+            kGenericHistogram,
+            PageInfo::SSLCertificateDecisionsDidRevoke::
+                USER_CERT_DECISIONS_REVOKED,
+            1);
+      } else {  // Case where button is visible but not clicked.
+        ClearPageInfo();
+        histograms.ExpectTotalCount(kGenericHistogram, 1);
+        histograms.ExpectBucketCount(
+            kGenericHistogram,
+            PageInfo::SSLCertificateDecisionsDidRevoke::
+                USER_CERT_DECISIONS_NOT_REVOKED,
+            1);
+      }
+    } else {
+      page_info();
+      ClearPageInfo();
+      // Button is not visible, so check histogram is empty after opening and
+      // closing page info.
+      histograms.ExpectTotalCount(kGenericHistogram, 0);
+    }
+  }
+  // Test class expects PageInfo to exist during Teardown.
+  page_info();
+}
 
 // Tests that metrics are recorded on a PageInfo for pages with
 // various security levels.
@@ -742,4 +961,36 @@ TEST_F(PageInfoTest, SecurityLevelMetrics) {
     histograms.ExpectBucketCount(test.histogram_name,
                                  PageInfo::PageInfoAction::PAGE_INFO_OPENED, 2);
   }
+}
+
+// Tests that the SubresourceFilter setting is omitted correctly.
+TEST_F(PageInfoTest, SubresourceFilterSetting_MatchesActivation) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      subresource_filter::kSafeBrowsingSubresourceFilterExperimentalUI);
+  auto showing_setting = [](const PermissionInfoList& permissions) {
+    return PermissionInfoListContainsPermission(permissions,
+                                                CONTENT_SETTINGS_TYPE_ADS);
+  };
+
+  // By default, the setting should not appear at all.
+  SetURL("https://example.test/");
+  SetDefaultUIExpectations(mock_ui());
+  page_info();
+  EXPECT_FALSE(showing_setting(last_permission_info_list()));
+
+  // Reset state.
+  ResetMockUI();
+  ClearPageInfo();
+  SetDefaultUIExpectations(mock_ui());
+
+  // Now, simulate activation on that origin, which is encoded by the existence
+  // of the website setting. The setting should then appear in page_info.
+  HostContentSettingsMap* content_settings =
+      HostContentSettingsMapFactory::GetForProfile(profile());
+  content_settings->SetWebsiteSettingDefaultScope(
+      url(), GURL(), CONTENT_SETTINGS_TYPE_ADS_DATA, std::string(),
+      base::MakeUnique<base::DictionaryValue>());
+  page_info();
+  EXPECT_TRUE(showing_setting(last_permission_info_list()));
 }

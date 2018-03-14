@@ -14,6 +14,12 @@ Add this to your gdb by amending your ~/.gdbinit as follows:
 Use
   (gdb) p /r any_variable
 to print |any_variable| without using any printers.
+
+To interactively type Python for development of the printers:
+  (gdb) python foo = gdb.parse_and_eval('bar')
+to put the C++ value 'bar' in the current scope into a Python variable 'foo'.
+Then you can interact with that variable:
+  (gdb) python print foo['impl_']
 """
 
 import datetime
@@ -101,26 +107,6 @@ class FilePathPrinter(StringPrinter):
 pp_set.add_printer('FilePath', '^FilePath$', FilePathPrinter)
 
 
-class SizePrinter(Printer):
-    def to_string(self):
-        return '%sx%s' % (self.val['width_'], self.val['height_'])
-pp_set.add_printer('gfx::Size', '^gfx::(Size|SizeF|SizeBase<.*>)$', SizePrinter)
-
-
-class PointPrinter(Printer):
-    def to_string(self):
-        return '%s,%s' % (self.val['x_'], self.val['y_'])
-pp_set.add_printer('gfx::Point', '^gfx::(Point|PointF|PointBase<.*>)$',
-                   PointPrinter)
-
-
-class RectPrinter(Printer):
-    def to_string(self):
-        return '%s %s' % (self.val['origin_'], self.val['size_'])
-pp_set.add_printer('gfx::Rect', '^gfx::(Rect|RectF|RectBase<.*>)$',
-                   RectPrinter)
-
-
 class SmartPtrPrinter(Printer):
     def to_string(self):
         return '%s%s' % (self.typename, typed_ptr(self.ptr()))
@@ -169,7 +155,7 @@ class LocationPrinter(Printer):
         return '%s()@%s:%s' % (self.val['function_name_'].string(),
                                self.val['file_name_'].string(),
                                self.val['line_number_'])
-pp_set.add_printer('tracked_objects::Location', '^tracked_objects::Location$',
+pp_set.add_printer('base::Location', '^base::Location$',
                    LocationPrinter)
 
 
@@ -229,6 +215,59 @@ class TimePrinter(object):
     def to_string(self):
         return str(self._datetime)
 pp_set.add_printer('base::Time', '^base::Time$', TimePrinter)
+
+
+class FlatTreePrinter(object):
+    def __init__(self, val):
+        self.val = val
+
+    def to_string(self):
+        # It would be nice to match the output of std::map which is a little
+        # nicer than printing the vector of pairs. But iterating over it in
+        # Python is much more complicated and this output is reasonable.
+        # (Without this printer, a flat_map will output 7 lines of internal
+        # template goop before the vector contents.)
+        return 'base::flat_tree with ' + str(self.val['impl_']['body_'])
+pp_set.add_printer('base::flat_map', '^base::flat_map<.*>$', FlatTreePrinter)
+pp_set.add_printer('base::flat_set', '^base::flat_set<.*>$', FlatTreePrinter)
+pp_set.add_printer('base::flat_tree', '^base::internal::flat_tree<.*>$',
+                   FlatTreePrinter)
+
+
+class ValuePrinter(object):
+    def __init__(self, val):
+        self.val = val
+
+    def get_type(self):
+        return self.val['type_']
+
+    def to_string(self):
+        typestr = str(self.get_type())
+        # Trim prefix to just get the emum short name.
+        typestr = typestr[typestr.rfind(':') + 1: ]
+
+        if typestr == 'NONE':
+            return 'base::Value of type NONE'
+        if typestr == 'BOOLEAN':
+            valuestr = self.val['bool_value_']
+        if typestr == 'INTEGER':
+            valuestr = self.val['int_value_']
+        if typestr == 'DOUBLE':
+            valuestr = self.val['double_value_']
+        if typestr == 'STRING':
+            valuestr = self.val['string_value_']
+        if typestr == 'BINARY':
+            valuestr = self.val['binary_value_']
+        if typestr == 'DICTIONARY':
+            valuestr = self.val['dict_']
+        if typestr == 'LIST':
+            valuestr = self.val['list_']
+
+        return "base::Value of type %s = %s" % (typestr, str(valuestr))
+pp_set.add_printer('base::Value', '^base::Value$', ValuePrinter)
+pp_set.add_printer('base::ListValue', '^base::ListValue$', ValuePrinter)
+pp_set.add_printer('base::DictionaryValue', '^base::DictionaryValue$',
+                   ValuePrinter)
 
 
 class IpcMessagePrinter(Printer):

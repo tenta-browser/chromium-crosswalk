@@ -3,16 +3,16 @@
 // found in the LICENSE file.
 
 // Counter used to give animations unique names.
-var animationCounter = 0;
+let animationCounter = 0;
 
-var animationEventTracker_ = new EventTracker();
+const animationEventTracker = new EventTracker();
 
 function addAnimation(code) {
-  var name = 'anim' + animationCounter;
+  const name = 'anim' + animationCounter;
   animationCounter++;
-  var rules = document.createTextNode(
-      '@keyframes ' + name + ' {' + code + '}');
-  var el = document.createElement('style');
+  const rules =
+      document.createTextNode('@keyframes ' + name + ' {' + code + '}');
+  const el = document.createElement('style');
   el.type = 'text/css';
   el.appendChild(rules);
   el.setAttribute('id', name);
@@ -47,14 +47,14 @@ function fadeInElement(el, opt_justShow) {
   el.hidden = false;
   el.setAttribute('aria-hidden', 'false');
   el.style.height = 'auto';
-  var height = el.offsetHeight;
+  const height = el.offsetHeight;
   if (opt_justShow) {
     el.style.height = '';
     el.style.opacity = '';
   } else {
     el.style.height = height + 'px';
-    var animName = addAnimation(getFadeInAnimationCode(height));
-    animationEventTracker_.add(
+    const animName = addAnimation(getFadeInAnimationCode(height));
+    animationEventTracker.add(
         el, 'animationend', onFadeInAnimationEnd.bind(el), false);
     el.style.animationName = animName;
   }
@@ -71,10 +71,11 @@ function fadeOutElement(el) {
     return;
   fadeInAnimationCleanup(el);
   el.style.height = 'auto';
-  var height = el.offsetHeight;
+  const height = el.offsetHeight;
   el.style.height = height + 'px';
+  /** @suppress {suspiciousCode} */
   el.offsetHeight;  // Should force an update of the computed style.
-  animationEventTracker_.add(
+  animationEventTracker.add(
       el, 'transitionend', onFadeOutTransitionEnd.bind(el), false);
   el.classList.add('closing');
   el.classList.remove('visible');
@@ -89,7 +90,7 @@ function fadeOutElement(el) {
 function onFadeOutTransitionEnd(event) {
   if (event.propertyName != 'height')
     return;
-  animationEventTracker_.remove(this, 'transitionend');
+  animationEventTracker.remove(this, 'transitionend');
   this.hidden = true;
 }
 
@@ -109,11 +110,11 @@ function onFadeInAnimationEnd(event) {
  */
 function fadeInAnimationCleanup(element) {
   if (element.style.animationName) {
-    var animEl = document.getElementById(element.style.animationName);
+    const animEl = $(element.style.animationName);
     if (animEl)
       animEl.parentNode.removeChild(animEl);
     element.style.animationName = '';
-    animationEventTracker_.remove(element, 'animationend');
+    animationEventTracker.remove(element, 'animationend');
   }
 }
 
@@ -129,14 +130,16 @@ function fadeInOption(el, opt_justShow) {
   // To make the option visible during the first fade in.
   el.hidden = false;
 
-  var leftColumn = el.querySelector('.left-column');
+  const leftColumn =
+      assertInstanceof(el.querySelector('.left-column'), HTMLElement);
   wrapContentsInDiv(leftColumn, ['invisible']);
-  var rightColumn = el.querySelector('.right-column');
+  const rightColumn =
+      assertInstanceof(el.querySelector('.right-column'), HTMLElement);
   wrapContentsInDiv(rightColumn, ['invisible']);
 
-  var toAnimate = el.querySelectorAll('.collapsible');
-  for (var i = 0; i < toAnimate.length; i++)
-    fadeInElement(toAnimate[i], opt_justShow);
+  const toAnimate = el.querySelectorAll('.collapsible');
+  for (let i = 0; i < toAnimate.length; i++)
+    fadeInElement(assertInstanceof(toAnimate[i], HTMLElement), opt_justShow);
   el.classList.add('visible');
 }
 
@@ -150,19 +153,22 @@ function fadeOutOption(el, opt_justHide) {
   if (!el.classList.contains('visible'))
     return;
 
-  var leftColumn = el.querySelector('.left-column');
+  const leftColumn =
+      assertInstanceof(el.querySelector('.left-column'), HTMLElement);
   wrapContentsInDiv(leftColumn, ['visible']);
-  var rightColumn = el.querySelector('.right-column');
-  wrapContentsInDiv(rightColumn, ['visible']);
+  const rightColumn =
+      assertInstanceof(el.querySelector('.right-column'), HTMLElement);
+  if (rightColumn)
+    wrapContentsInDiv(rightColumn, ['visible']);
 
-  var toAnimate = el.querySelectorAll('.collapsible');
-  for (var i = 0; i < toAnimate.length; i++) {
+  const toAnimate = el.querySelectorAll('.collapsible');
+  for (let i = 0; i < toAnimate.length; i++) {
     if (opt_justHide) {
       toAnimate[i].hidden = true;
       toAnimate[i].classList.add('closing');
       toAnimate[i].classList.remove('visible');
     } else {
-      fadeOutElement(toAnimate[i]);
+      fadeOutElement(assertInstanceof(toAnimate[i], HTMLElement));
     }
   }
   el.classList.remove('visible');
@@ -172,11 +178,11 @@ function fadeOutOption(el, opt_justHide) {
  * Wraps the contents of |el| in a div element and attaches css classes
  * |classes| in the new div, only if has not been already done. It is necessary
  * for animating the height of table cells.
- * @param {HTMLElement} el The element to be processed.
- * @param {array} classes The css classes to add.
+ * @param {!HTMLElement} el The element to be processed.
+ * @param {!Array} classes The css classes to add.
  */
 function wrapContentsInDiv(el, classes) {
-  var div = el.querySelector('div');
+  let div = el.querySelector('div');
   if (!div || !div.classList.contains('collapsible')) {
     div = document.createElement('div');
     while (el.childNodes.length > 0)
@@ -186,6 +192,6 @@ function wrapContentsInDiv(el, classes) {
 
   div.className = '';
   div.classList.add('collapsible');
-  for (var i = 0; i < classes.length; i++)
+  for (let i = 0; i < classes.length; i++)
     div.classList.add(classes[i]);
 }

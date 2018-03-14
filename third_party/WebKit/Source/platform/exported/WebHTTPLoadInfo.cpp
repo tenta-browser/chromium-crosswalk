@@ -37,7 +37,7 @@
 namespace blink {
 
 void WebHTTPLoadInfo::Initialize() {
-  private_ = AdoptRef(new ResourceLoadInfo());
+  private_ = base::AdoptRef(new ResourceLoadInfo());
 }
 
 void WebHTTPLoadInfo::Reset() {
@@ -48,10 +48,10 @@ void WebHTTPLoadInfo::Assign(const WebHTTPLoadInfo& r) {
   private_ = r.private_;
 }
 
-WebHTTPLoadInfo::WebHTTPLoadInfo(WTF::PassRefPtr<ResourceLoadInfo> value)
-    : private_(value) {}
+WebHTTPLoadInfo::WebHTTPLoadInfo(scoped_refptr<ResourceLoadInfo> value)
+    : private_(std::move(value)) {}
 
-WebHTTPLoadInfo::operator WTF::PassRefPtr<ResourceLoadInfo>() const {
+WebHTTPLoadInfo::operator scoped_refptr<ResourceLoadInfo>() const {
   return private_.Get();
 }
 

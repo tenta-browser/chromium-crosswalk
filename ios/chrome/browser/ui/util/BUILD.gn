@@ -3,11 +3,14 @@
 # found in the LICENSE file.
 
 source_set("util") {
+  configs += [ "//build/config/compiler:enable_arc" ]
   sources = [
     "CRUILabel+AttributeUtils.h",
     "CRUILabel+AttributeUtils.mm",
     "core_text_util.h",
     "core_text_util.mm",
+    "form_sheet_navigation_controller.h",
+    "form_sheet_navigation_controller.mm",
     "i18n_string.h",
     "i18n_string.mm",
     "label_link_controller.h",
@@ -16,6 +19,8 @@ source_set("util") {
     "label_observer.mm",
     "manual_text_framer.h",
     "manual_text_framer.mm",
+    "named_guide.h",
+    "named_guide.mm",
     "pasteboard_util.h",
     "pasteboard_util.mm",
     "relaxed_bounds_constraints_hittest.h",
@@ -43,16 +48,20 @@ source_set("util") {
 }
 
 source_set("unit_tests") {
+  configs += [ "//build/config/compiler:enable_arc" ]
   testonly = true
   sources = [
     "CRUILabel+AttributeUtils_unittest.mm",
+    "constraints_ui_util_unittest.mm",
     "core_text_util_unittest.mm",
     "label_link_controller_unittest.mm",
     "label_observer_unittest.mm",
     "manual_text_framer_unittest.mm",
+    "named_guide_unittest.mm",
     "text_region_mapper_unittest.mm",
   ]
   deps = [
+    ":constraints_ui",
     ":util",
     "//base",
     "//ios/third_party/material_components_ios",
@@ -60,4 +69,15 @@ source_set("unit_tests") {
     "//testing/gtest",
     "//url",
   ]
+}
+
+source_set("constraints_ui") {
+  sources = [
+    "constraints_ui_util.h",
+    "constraints_ui_util.mm",
+  ]
+  deps = [
+    "//base",
+  ]
+  configs += [ "//build/config/compiler:enable_arc" ]
 }

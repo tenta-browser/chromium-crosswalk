@@ -26,6 +26,7 @@
 #include "modules/webaudio/MediaStreamAudioSourceNode.h"
 
 #include <memory>
+#include "bindings/core/v8/ExceptionState.h"
 #include "core/dom/ExceptionCode.h"
 #include "modules/webaudio/AudioNodeOutput.h"
 #include "modules/webaudio/BaseAudioContext.h"
@@ -49,10 +50,11 @@ MediaStreamAudioSourceHandler::MediaStreamAudioSourceHandler(
   Initialize();
 }
 
-PassRefPtr<MediaStreamAudioSourceHandler> MediaStreamAudioSourceHandler::Create(
+scoped_refptr<MediaStreamAudioSourceHandler>
+MediaStreamAudioSourceHandler::Create(
     AudioNode& node,
     std::unique_ptr<AudioSourceProvider> audio_source_provider) {
-  return AdoptRef(new MediaStreamAudioSourceHandler(
+  return base::AdoptRef(new MediaStreamAudioSourceHandler(
       node, std::move(audio_source_provider)));
 }
 
@@ -82,7 +84,7 @@ void MediaStreamAudioSourceHandler::SetFormat(size_t number_of_channels,
 
     {
       // The context must be locked when changing the number of output channels.
-      BaseAudioContext::AutoLocker context_locker(Context());
+      BaseAudioContext::GraphAutoLocker context_locker(Context());
 
       // Do any necesssary re-configuration to the output's number of channels.
       Output(0).SetNumberOfChannels(number_of_channels);
@@ -174,7 +176,7 @@ MediaStreamAudioSourceNode* MediaStreamAudioSourceNode::Create(
   return Create(*context, *options.mediaStream(), exception_state);
 }
 
-DEFINE_TRACE(MediaStreamAudioSourceNode) {
+void MediaStreamAudioSourceNode::Trace(blink::Visitor* visitor) {
   visitor->Trace(audio_track_);
   visitor->Trace(media_stream_);
   AudioSourceProviderClient::Trace(visitor);

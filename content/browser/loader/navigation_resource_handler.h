@@ -9,31 +9,24 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "content/browser/loader/resource_handler.h"
-#include "content/browser/loader/stream_writer.h"
-
-namespace net {
-class SSLInfo;
-}
+#include "content/browser/loader/layered_resource_handler.h"
+#include "content/public/browser/stream_handle.h"
 
 namespace content {
 class NavigationURLLoaderImplCore;
 class ResourceController;
 class ResourceDispatcherHostDelegate;
-struct SSLStatus;
 
-// PlzNavigate: The leaf ResourceHandler used with NavigationURLLoaderImplCore.
-class NavigationResourceHandler : public ResourceHandler {
+// PlzNavigate: The ResourceHandler used with NavigationURLLoaderImplCore to
+// control the flow of navigation requests.
+class NavigationResourceHandler : public LayeredResourceHandler {
  public:
-  static void GetSSLStatusForRequest(const GURL& url,
-                                     const net::SSLInfo& ssl_info,
-                                     int child_id,
-                                     SSLStatus* ssl_status);
-
   NavigationResourceHandler(
       net::URLRequest* request,
+      std::unique_ptr<ResourceHandler> next_handler,
       NavigationURLLoaderImplCore* core,
-      ResourceDispatcherHostDelegate* resource_dispatcher_host_delegate);
+      ResourceDispatcherHostDelegate* resource_dispatcher_host_delegate,
+      std::unique_ptr<StreamHandle> stream_handle);
   ~NavigationResourceHandler() override;
 
   // Called by the loader the cancel the request.
@@ -45,7 +38,7 @@ class NavigationResourceHandler : public ResourceHandler {
   // Called to proceed with the response.
   void ProceedWithResponse();
 
-  // ResourceHandler implementation.
+  // LayeredResourceHandler implementation.
   void OnRequestRedirected(
       const net::RedirectInfo& redirect_info,
       ResourceResponse* response,
@@ -53,17 +46,9 @@ class NavigationResourceHandler : public ResourceHandler {
   void OnResponseStarted(
       ResourceResponse* response,
       std::unique_ptr<ResourceController> controller) override;
-  void OnWillStart(const GURL& url,
-                   std::unique_ptr<ResourceController> controller) override;
-  void OnWillRead(scoped_refptr<net::IOBuffer>* buf,
-                  int* buf_size,
-                  std::unique_ptr<ResourceController> controller) override;
-  void OnReadCompleted(int bytes_read,
-                       std::unique_ptr<ResourceController> controller) override;
   void OnResponseCompleted(
       const net::URLRequestStatus& status,
       std::unique_ptr<ResourceController> controller) override;
-  void OnDataDownloaded(int bytes_downloaded) override;
 
  private:
   // Clears |core_| and its reference to the resource handler. After calling
@@ -71,10 +56,15 @@ class NavigationResourceHandler : public ResourceHandler {
   // NavigationURLLoader.
   void DetachFromCore();
 
+  // Used to buffer the response and redirect info while waiting for UI thread
+  // checks to execute.
+  scoped_refptr<ResourceResponse> response_;
+  std::unique_ptr<net::RedirectInfo> redirect_info_;
+
   // NavigationResourceHandler has joint ownership of the
   // NavigationURLLoaderImplCore with the NavigationURLLoaderImpl.
   scoped_refptr<NavigationURLLoaderImplCore> core_;
-  StreamWriter writer_;
+  std::unique_ptr<StreamHandle> stream_handle_;
   ResourceDispatcherHostDelegate* resource_dispatcher_host_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(NavigationResourceHandler);

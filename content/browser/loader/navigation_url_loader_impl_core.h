@@ -17,6 +17,10 @@ class URLRequestContextGetter;
 struct RedirectInfo;
 }
 
+namespace storage {
+class FileSystemContext;
+}
+
 namespace content {
 
 class AppCacheNavigationHandleCore;
@@ -27,7 +31,6 @@ class ServiceWorkerNavigationHandleCore;
 class StreamHandle;
 struct GlobalRequestID;
 struct ResourceResponse;
-struct SSLStatus;
 
 // The IO-thread counterpart to the NavigationURLLoaderImpl. It lives on the IO
 // thread and is owned by the UI-thread NavigationURLLoaderImpl and the
@@ -45,6 +48,7 @@ class NavigationURLLoaderImplCore
   // Starts the request.
   void Start(ResourceContext* resource_context,
              net::URLRequestContextGetter* url_request_context_getter,
+             storage::FileSystemContext* upload_file_system_context,
              ServiceWorkerNavigationHandleCore* service_worker_handle_core,
              AppCacheNavigationHandleCore* appcache_handle_core,
              std::unique_ptr<NavigationRequestInfo> request_info,
@@ -71,14 +75,17 @@ class NavigationURLLoaderImplCore
   // Notifies |loader_| on the UI thread that the response started.
   void NotifyResponseStarted(ResourceResponse* response,
                              std::unique_ptr<StreamHandle> body,
-                             const SSLStatus& ssl_status,
+                             const net::SSLInfo& ssl_info,
                              std::unique_ptr<NavigationData> navigation_data,
                              const GlobalRequestID& request_id,
                              bool is_download,
                              bool is_stream);
 
   // Notifies |loader_| on the UI thread that the request failed.
-  void NotifyRequestFailed(bool in_cache, int net_error);
+  void NotifyRequestFailed(bool in_cache,
+                           int net_error,
+                           const base::Optional<net::SSLInfo>& ssl_info,
+                           bool should_ssl_errors_be_fatal);
 
  private:
   friend class base::RefCountedThreadSafe<NavigationURLLoaderImplCore>;
@@ -86,6 +93,8 @@ class NavigationURLLoaderImplCore
 
   base::WeakPtr<NavigationURLLoaderImpl> loader_;
   NavigationResourceHandler* resource_handler_;
+
+  base::WeakPtrFactory<NavigationURLLoaderImplCore> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(NavigationURLLoaderImplCore);
 };

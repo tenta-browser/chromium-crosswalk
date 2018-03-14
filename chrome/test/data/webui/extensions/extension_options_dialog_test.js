@@ -9,100 +9,72 @@ cr.define('extension_options_dialog_tests', function() {
     Layout: 'Layout',
   };
 
-  // These match the variables in options_dialog.js.
-  var MAX_HEIGHT = '600px';
-  var MAX_WIDTH = '600px';
-  var MIN_HEIGHT = '300px';
-  var MIN_WIDTH = '300px';
+  var suiteName = 'ExtensionOptionsDialogTests';
 
-  function registerTests() {
-    suite('ExtensionOptionsDialogTests', function() {
-      /** @type {extensions.OptionsDialog} */
-      var optionsDialog;
+  suite(suiteName, function() {
+    /** @type {extensions.OptionsDialog} */
+    var optionsDialog;
 
-      /** @type {chrome.developerPrivate.ExtensionInfo} */
-      var data;
+    /** @type {chrome.developerPrivate.ExtensionInfo} */
+    var data;
 
-      setup(function() {
-        PolymerTest.clearBody();
-        data = extension_test_util.createExtensionInfo();
-        optionsDialog = new extensions.OptionsDialog();
-        document.body.appendChild(optionsDialog);
+    setup(function() {
+      PolymerTest.clearBody();
+      optionsDialog = new extensions.OptionsDialog();
+      document.body.appendChild(optionsDialog);
+
+      var service = extensions.Service.getInstance();
+      return service.getExtensionsInfo().then(function(info) {
+        assertEquals(1, info.length);
+        data = info[0];
       });
+    });
 
-      test(assert(TestNames.Layout), function() {
-        var dialogElement = optionsDialog.$$('dialog');
-        var isDialogVisible = function() {
-          var rect = dialogElement.getBoundingClientRect();
-          return rect.width * rect.height > 0;
-        };
+    function isDialogVisible() {
+      var dialogElement = optionsDialog.$$('dialog');
+      var rect = dialogElement.getBoundingClientRect();
+      return rect.width * rect.height > 0;
+    }
 
-        // Try showing the dialog.
-        expectFalse(isDialogVisible());
-        optionsDialog.show(data);
-        expectTrue(isDialogVisible());
-        expectEquals(
+    test(assert(TestNames.Layout), function() {
+      // Try showing the dialog.
+      assertFalse(isDialogVisible());
+      optionsDialog.show(data);
+      return test_util.whenAttributeIs(
+          optionsDialog.$.dialog, 'open', '').then(function() {
+        assertTrue(isDialogVisible());
+
+        assertEquals(
             data.name,
-            assert(optionsDialog.$$('#icon-and-name-wrapper span')).
-                textContent.trim());
+            assert(optionsDialog.$$('#icon-and-name-wrapper span'))
+                .textContent.trim());
 
-        var mainDiv = optionsDialog.$.main;
-
-        // To start, the options page should be set to the min width/height.
-        expectEquals(MIN_HEIGHT, mainDiv.style.height);
-        expectEquals(MIN_WIDTH, mainDiv.style.width);
+        var optionEle = optionsDialog.$$('extensionoptions');
 
         var mockOptions = optionsDialog.extensionOptions_;
-        expectEquals(data.id, mockOptions.extension);
+        assertEquals(data.id, mockOptions.extension);
 
-        // Setting the preferred size to something below the min width/height
-        // shouldn't change the actual width/height.
+        // Setting the preferred width to something below the min width
+        // changes the width property. But visually, min-width still prevails.
         mockOptions.onpreferredsizechanged({height: 100, width: 100});
-        expectEquals(MIN_HEIGHT, mainDiv.style.height);
-        expectEquals(MIN_WIDTH, mainDiv.style.width);
+        assertEquals('100px', optionEle.style.width);
+        var computedStyle = window.getComputedStyle(optionEle);
+        assertEquals('300px', computedStyle.minWidth);
 
         // Setting the preferred size to between the min and max dimensions
         // should change the dimensions.
         mockOptions.onpreferredsizechanged({height: 500, width: 400});
-        expectEquals('500px', mainDiv.style.height);
-        expectEquals('400px', mainDiv.style.width);
-
-        // Max values should pin the dialog.
-        mockOptions.onpreferredsizechanged({height: 900, width: 400});
-        expectEquals(MAX_HEIGHT, mainDiv.style.height);
-        expectEquals('400px', mainDiv.style.width);
+        assertEquals('500px', optionEle.style.height);
+        assertEquals('400px', optionEle.style.width);
 
         mockOptions.onclose();
-        expectFalse(isDialogVisible());
-
-        // Try showing a second extension with a longer name.
-        var secondExtension = extension_test_util.createExtensionInfo({
-            name: 'Super long named extension for the win'
-        });
-        optionsDialog.show(secondExtension);
-        expectTrue(isDialogVisible());
-        expectEquals(secondExtension.id, mockOptions.extension);
-        expectEquals(
-            secondExtension.name,
-            assert(optionsDialog.$$('#icon-and-name-wrapper span')).
-                textContent.trim());
-        // The width of the dialog should be set to match the width of the
-        // header, which is greater than the default min width.
-        expectTrue(mainDiv.style.width > MIN_WIDTH, mainDiv.style.height);
-        expectEquals(MIN_HEIGHT, mainDiv.style.height);
-
-        // Going back to an extension with a shorter name should resize the
-        // dialog.
-        optionsDialog.close();
-        optionsDialog.show(data);
-        expectEquals(MIN_HEIGHT, mainDiv.style.height);
-        expectEquals(MIN_WIDTH, mainDiv.style.width);
+        assertFalse(isDialogVisible());
       });
     });
-  }
+  });
 
   return {
-    registerTests: registerTests,
+    suiteName: suiteName,
     TestNames: TestNames,
   };
 });

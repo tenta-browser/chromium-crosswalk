@@ -10,6 +10,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
+#include "base/time/time.h"
 #include "components/subresource_filter/content/browser/verified_ruleset_dealer.h"
 #include "components/subresource_filter/core/common/activation_state.h"
 #include "content/public/browser/navigation_throttle.h"
@@ -52,9 +53,14 @@ class ActivationStateComputingNavigationThrottle
       VerifiedRuleset::Handle* ruleset_handle,
       const ActivationState& page_activation_state);
 
+  void set_destruction_closure(base::OnceClosure closure) {
+    destruction_closure_ = std::move(closure);
+  }
+
   // content::NavigationThrottle:
   content::NavigationThrottle::ThrottleCheckResult WillProcessResponse()
       override;
+  const char* GetNameForLogging() override;
 
   // After the navigation is finished, the client may optionally choose to
   // continue using the DocumentSubresourceFilter that was used to compute the
@@ -63,16 +69,12 @@ class ActivationStateComputingNavigationThrottle
   // frame.
   std::unique_ptr<AsyncDocumentSubresourceFilter> ReleaseFilter();
 
-  AsyncDocumentSubresourceFilter* filter() { return async_filter_.get(); }
+  AsyncDocumentSubresourceFilter* filter() const;
 
   void WillSendActivationToRenderer();
 
  private:
   void OnActivationStateComputed(ActivationState state);
-  void set_filter(
-      std::unique_ptr<AsyncDocumentSubresourceFilter> async_filter) {
-    async_filter_ = std::move(async_filter);
-  }
 
   ActivationStateComputingNavigationThrottle(
       content::NavigationHandle* navigation_handle,
@@ -88,10 +90,15 @@ class ActivationStateComputingNavigationThrottle
   // nullptr until NotifyPageActivationWithRuleset is called.
   VerifiedRuleset::Handle* ruleset_handle_;
 
-  // Becomes true when the throttle manager reaches ReadyToCommitNavigation and
-  // sends an activation IPC to the render process. Makes sure a caller cannot
-  // take ownership of the subresource filter unless an activation IPC is sent
-  // to the renderer.
+  base::TimeTicks defer_timestamp_;
+
+  // Callback to be run in the destructor.
+  base::OnceClosure destruction_closure_;
+
+  // Will become true when the throttle manager reaches ReadyToCommitNavigation.
+  // Makes sure a caller cannot take ownership of the subresource filter unless
+  // the throttle has reached this point. After this point the throttle manager
+  // will send an activation IPC to the render process.
   bool will_send_activation_to_renderer_ = false;
 
   base::WeakPtrFactory<ActivationStateComputingNavigationThrottle>

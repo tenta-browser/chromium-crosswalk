@@ -38,17 +38,18 @@ class CONTENT_EXPORT AppCacheBackendImpl {
                    const GURL& manifest_url);
   void GetResourceList(
       int host_id, std::vector<AppCacheResourceInfo>* resource_infos);
-  bool SelectCacheForWorker(int host_id, int parent_process_id,
-                            int parent_host_id);
   bool SelectCacheForSharedWorker(int host_id, int64_t appcache_id);
   bool MarkAsForeignEntry(int host_id,
                           const GURL& document_url,
                           int64_t cache_document_was_loaded_from);
-  bool GetStatusWithCallback(int host_id, const GetStatusCallback& callback,
+  bool GetStatusWithCallback(int host_id,
+                             GetStatusCallback callback,
                              void* callback_param);
-  bool StartUpdateWithCallback(int host_id, const StartUpdateCallback& callback,
+  bool StartUpdateWithCallback(int host_id,
+                               StartUpdateCallback callback,
                                void* callback_param);
-  bool SwapCacheWithCallback(int host_id, const SwapCacheCallback& callback,
+  bool SwapCacheWithCallback(int host_id,
+                             SwapCacheCallback callback,
                              void* callback_param);
 
   // Returns a pointer to a registered host. The backend retains ownership.
@@ -66,7 +67,7 @@ class CONTENT_EXPORT AppCacheBackendImpl {
   std::unique_ptr<AppCacheHost> TransferHostOut(int host_id);
   void TransferHostIn(int new_host_id, std::unique_ptr<AppCacheHost> host);
 
-  // PlzNaviate
+  // PlzNavigate
   // The AppCacheHost is precreated by the AppCacheNavigationHandleCore class
   // when a navigation is initiated. We register the host with the backend in
   // this function and ignore registrations for this host id from the renderer.

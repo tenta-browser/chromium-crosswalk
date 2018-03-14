@@ -12,7 +12,6 @@
 #include <string>
 #include <vector>
 
-#include "base/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
@@ -21,25 +20,19 @@
 #include "components/autofill/core/browser/autofill_metrics.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/form_types.h"
 #include "components/autofill/core/browser/proto/server.pb.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
-enum UploadRequired {
-  UPLOAD_NOT_REQUIRED,
-  UPLOAD_REQUIRED,
-  USE_UPLOAD_RATES
-};
+enum UploadRequired { UPLOAD_NOT_REQUIRED, UPLOAD_REQUIRED, USE_UPLOAD_RATES };
 
 namespace base {
 class TimeTicks;
 }
 
-namespace rappor {
-class RapporServiceImpl;
-}
-
 namespace ukm {
-class UkmService;
+class UkmRecorder;
 }
 
 namespace autofill {
@@ -55,9 +48,9 @@ class FormStructure {
   virtual ~FormStructure();
 
   // Runs several heuristics against the form fields to determine their possible
-  // types. If |ukm_service| is specified, logs UKM for the form structure
+  // types. If |ukm_recorder| is specified, logs UKM for the form structure
   // corresponding to |source_url_|.
-  void DetermineHeuristicTypes(ukm::UkmService* ukm_service);
+  void DetermineHeuristicTypes(ukm::UkmRecorder* ukm_recorder);
 
   // Encodes the proto |upload| request from this FormStructure.
   // In some cases, a |login_form_signature| is included as part of the upload.
@@ -78,10 +71,8 @@ class FormStructure {
 
   // Parses the field types from the server query response. |forms| must be the
   // same as the one passed to EncodeQueryRequest when constructing the query.
-  // |rappor_service| may be null.
   static void ParseQueryResponse(std::string response,
-                                 const std::vector<FormStructure*>& forms,
-                                 rappor::RapporServiceImpl* rappor_service);
+                                 const std::vector<FormStructure*>& forms);
 
   // Returns predictions using the details from the given |form_structures| and
   // their fields' predicted types.
@@ -112,14 +103,22 @@ class FormStructure {
   // Returns true if this form matches the structural requirements for Autofill.
   bool ShouldBeParsed() const;
 
-  // Returns true if we should query the crowdsourcing server to determine this
-  // form's field types.  If the form includes author-specified types, this will
+  // Returns true if heuristic autofill type detection should be attempted for
+  // this form.
+  bool ShouldRunHeuristics() const;
+
+  // Returns true if we should query the crowd-sourcing server to determine this
+  // form's field types. If the form includes author-specified types, this will
   // return false unless there are password fields in the form. If there are no
   // password fields the assumption is that the author has expressed their
   // intent and crowdsourced data should not be used to override this. Password
   // fields are different because there is no way to specify password generation
   // directly.
-  bool ShouldBeCrowdsourced() const;
+  bool ShouldBeQueried() const;
+
+  // Returns true if we should upload votes for this form to the crowd-sourcing
+  // server.
+  bool ShouldBeUploaded() const;
 
   // Sets the field types to be those set for |cached_form|.
   void UpdateFromCache(const FormStructure& cached_form,
@@ -139,7 +138,6 @@ class FormStructure {
       const base::TimeTicks& load_time,
       const base::TimeTicks& interaction_time,
       const base::TimeTicks& submission_time,
-      rappor::RapporServiceImpl* rappor_service,
       AutofillMetrics::FormInteractionsUkmLogger* form_interactions_ukm_logger,
       bool did_show_suggestions,
       bool observed_submission) const;
@@ -147,7 +145,9 @@ class FormStructure {
   // Log the quality of the heuristics and server predictions for this form
   // structure, if autocomplete attributes are present on the fields (they are
   // used as golden truths).
-  void LogQualityMetricsBasedOnAutocomplete() const;
+  void LogQualityMetricsBasedOnAutocomplete(
+      AutofillMetrics::FormInteractionsUkmLogger* form_interactions_ukm_logger)
+      const;
 
   // Classifies each field in |fields_| based upon its |autocomplete| attribute,
   // if the attribute is available.  The association is stored into the field's
@@ -158,21 +158,6 @@ class FormStructure {
   // Fills |has_author_specified_sections_| with |true| if the attribute
   // specifies a section for at least one field.
   void ParseFieldTypesFromAutocompleteAttributes();
-
-  // Determines whether |type| and |field| match.
-  typedef base::Callback<bool(ServerFieldType type,
-                              const AutofillField& field)>
-      InputFieldComparator;
-
-  // Fills in |fields_| that match |types| (via |matches|) with info from
-  // |get_info|. Uses |address_language_code| to determine line separators when
-  // collapsing street address lines into a single-line input text field.
-  bool FillFields(
-      const std::vector<ServerFieldType>& types,
-      const InputFieldComparator& matches,
-      const base::Callback<base::string16(const AutofillType&)>& get_info,
-      const std::string& address_language_code,
-      const std::string& app_locale);
 
   // Returns the values that can be filled into the form structure for the
   // given type. For example, there's no way to fill in a value of "The Moon"
@@ -186,6 +171,10 @@ class FormStructure {
   // Gets the form's current value for |type|. For example, it may return
   // the contents of a text input or the currently selected <option>.
   base::string16 GetUniqueValue(HtmlFieldType type) const;
+
+  // Rationalize phone number fields in a given section, that is only fill
+  // the fields that are considered composing a first complete phone number.
+  void RationalizePhoneNumbersInSection(std::string section);
 
   const AutofillField* field(size_t index) const;
   AutofillField* field(size_t index);
@@ -212,6 +201,8 @@ class FormStructure {
 
   const GURL& target_url() const { return target_url_; }
 
+  const url::Origin& main_frame_origin() const { return main_frame_origin_; }
+
   bool has_author_specified_types() const {
     return has_author_specified_types_;
   }
@@ -229,6 +220,13 @@ class FormStructure {
   }
   UploadRequired upload_required() const { return upload_required_; }
 
+  void set_form_parsed_timestamp(const base::TimeTicks form_parsed_timestamp) {
+    form_parsed_timestamp_ = form_parsed_timestamp;
+  }
+  base::TimeTicks form_parsed_timestamp() const {
+    return form_parsed_timestamp_;
+  }
+
   bool all_fields_are_passwords() const { return all_fields_are_passwords_; }
 
   bool is_signin_upload() const { return is_signin_upload_; }
@@ -241,6 +239,9 @@ class FormStructure {
   // Returns a FormData containing the data this form structure knows about.
   FormData ToFormData() const;
 
+  // Returns the possible form types.
+  std::set<FormType> GetFormTypes() const;
+
   bool operator==(const FormData& form) const;
   bool operator!=(const FormData& form) const;
 
@@ -249,6 +250,16 @@ class FormStructure {
   friend class FormStructureTest;
   FRIEND_TEST_ALL_PREFIXES(AutofillDownloadTest, QueryAndUploadTest);
   FRIEND_TEST_ALL_PREFIXES(FormStructureTest, FindLongestCommonPrefix);
+  FRIEND_TEST_ALL_PREFIXES(FormStructureTest,
+                           RationalizePhoneNumber_RunsOncePerSection);
+  // A function to fine tune the credit cards related predictions. For example:
+  // lone credit card fields in an otherwise non-credit-card related form is
+  // unlikely to be correct, the function will override that prediction.
+  void RationalizeCreditCardFieldPredictions();
+
+  // A helper function to review the predictions and do appropriate adjustments
+  // when it considers neccessary.
+  void RationalizeFieldTypePredictions();
 
   // Encodes information about this form and its fields into |query_form|.
   void EncodeFormForQuery(
@@ -291,6 +302,9 @@ class FormStructure {
 
   // The target URL.
   GURL target_url_;
+
+  // The origin of the main frame of this form.
+  url::Origin main_frame_origin_;
 
   // The number of fields able to be auto-filled.
   size_t autofill_count_;
@@ -342,6 +356,12 @@ class FormStructure {
   // The unique signature for this form, composed of the target url domain,
   // the form name, and the form field names in a 64-bit hash.
   FormSignature form_signature_;
+
+  // When a form is parsed on this page.
+  base::TimeTicks form_parsed_timestamp_;
+
+  // If phone number rationalization has been performed for a given section.
+  std::map<std::string, bool> phone_rationalized_;
 
   DISALLOW_COPY_AND_ASSIGN(FormStructure);
 };

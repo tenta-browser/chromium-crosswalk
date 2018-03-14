@@ -7,88 +7,104 @@
 #include "core/dom/Document.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "modules/csspaint/CSSPaintDefinition.h"
+#include "modules/csspaint/DocumentPaintDefinition.h"
 #include "modules/csspaint/PaintWorklet.h"
-#include "modules/csspaint/WindowPaintWorklet.h"
 #include "platform/graphics/Image.h"
 
 namespace blink {
 
-CSSPaintImageGenerator* CSSPaintImageGeneratorImpl::Create(const String& name,
-                                                           Document& document,
-                                                           Observer* observer) {
-  LocalDOMWindow* dom_window = document.domWindow();
-  PaintWorklet* paint_worklet =
-      WindowPaintWorklet::From(*dom_window).paintWorklet();
+CSSPaintImageGenerator* CSSPaintImageGeneratorImpl::Create(
+    const String& name,
+    const Document& document,
+    Observer* observer) {
+  PaintWorklet* paint_worklet = PaintWorklet::From(*document.domWindow());
 
-  CSSPaintDefinition* paint_definition = paint_worklet->FindDefinition(name);
+  DCHECK(paint_worklet);
   CSSPaintImageGeneratorImpl* generator;
-  if (!paint_definition) {
-    generator = new CSSPaintImageGeneratorImpl(observer);
-    paint_worklet->AddPendingGenerator(name, generator);
+  if (paint_worklet->GetDocumentDefinitionMap().Contains(name)) {
+    generator = new CSSPaintImageGeneratorImpl(paint_worklet, name);
   } else {
-    generator = new CSSPaintImageGeneratorImpl(paint_definition);
+    generator = new CSSPaintImageGeneratorImpl(observer, paint_worklet, name);
+    paint_worklet->AddPendingGenerator(name, generator);
   }
 
   return generator;
 }
 
 CSSPaintImageGeneratorImpl::CSSPaintImageGeneratorImpl(
-    CSSPaintDefinition* definition)
-    : definition_(definition) {}
+    PaintWorklet* paint_worklet,
+    const String& name)
+    : CSSPaintImageGeneratorImpl(nullptr, paint_worklet, name) {}
 
-CSSPaintImageGeneratorImpl::CSSPaintImageGeneratorImpl(Observer* observer)
-    : observer_(observer) {}
+CSSPaintImageGeneratorImpl::CSSPaintImageGeneratorImpl(
+    Observer* observer,
+    PaintWorklet* paint_worklet,
+    const String& name)
+    : observer_(observer), paint_worklet_(paint_worklet), name_(name) {}
 
 CSSPaintImageGeneratorImpl::~CSSPaintImageGeneratorImpl() {}
 
-void CSSPaintImageGeneratorImpl::SetDefinition(CSSPaintDefinition* definition) {
-  ASSERT(!definition_);
-  definition_ = definition;
-
-  ASSERT(observer_);
+void CSSPaintImageGeneratorImpl::NotifyGeneratorReady() {
+  DCHECK(observer_);
   observer_->PaintImageGeneratorReady();
 }
 
-PassRefPtr<Image> CSSPaintImageGeneratorImpl::Paint(
-    const LayoutObject& layout_object,
-    const IntSize& size,
-    float zoom,
+scoped_refptr<Image> CSSPaintImageGeneratorImpl::Paint(
+    const ImageResourceObserver& observer,
+    const IntSize& container_size,
     const CSSStyleValueVector* data) {
-  return definition_ ? definition_->Paint(layout_object, size, zoom, data)
-                     : nullptr;
+  return paint_worklet_->Paint(name_, observer, container_size, data);
+}
+
+bool CSSPaintImageGeneratorImpl::HasDocumentDefinition() const {
+  return paint_worklet_->GetDocumentDefinitionMap().Contains(name_);
 }
 
 const Vector<CSSPropertyID>&
 CSSPaintImageGeneratorImpl::NativeInvalidationProperties() const {
   DEFINE_STATIC_LOCAL(Vector<CSSPropertyID>, empty_vector, ());
-  return definition_ ? definition_->NativeInvalidationProperties()
-                     : empty_vector;
+  if (!HasDocumentDefinition())
+    return empty_vector;
+  DocumentPaintDefinition* definition =
+      paint_worklet_->GetDocumentDefinitionMap().at(name_);
+  return definition->NativeInvalidationProperties();
 }
 
 const Vector<AtomicString>&
 CSSPaintImageGeneratorImpl::CustomInvalidationProperties() const {
   DEFINE_STATIC_LOCAL(Vector<AtomicString>, empty_vector, ());
-  return definition_ ? definition_->CustomInvalidationProperties()
-                     : empty_vector;
+  if (!HasDocumentDefinition())
+    return empty_vector;
+  DocumentPaintDefinition* definition =
+      paint_worklet_->GetDocumentDefinitionMap().at(name_);
+  return definition->CustomInvalidationProperties();
 }
 
 bool CSSPaintImageGeneratorImpl::HasAlpha() const {
-  return definition_ && definition_->HasAlpha();
+  if (!HasDocumentDefinition())
+    return false;
+  DocumentPaintDefinition* definition =
+      paint_worklet_->GetDocumentDefinitionMap().at(name_);
+  return definition->GetPaintRenderingContext2DSettings().alpha();
 }
 
 const Vector<CSSSyntaxDescriptor>&
 CSSPaintImageGeneratorImpl::InputArgumentTypes() const {
   DEFINE_STATIC_LOCAL(Vector<CSSSyntaxDescriptor>, empty_vector, ());
-  return definition_ ? definition_->InputArgumentTypes() : empty_vector;
+  if (!HasDocumentDefinition())
+    return empty_vector;
+  DocumentPaintDefinition* definition =
+      paint_worklet_->GetDocumentDefinitionMap().at(name_);
+  return definition->InputArgumentTypes();
 }
 
 bool CSSPaintImageGeneratorImpl::IsImageGeneratorReady() const {
-  return definition_;
+  return HasDocumentDefinition();
 }
 
-DEFINE_TRACE(CSSPaintImageGeneratorImpl) {
-  visitor->Trace(definition_);
+void CSSPaintImageGeneratorImpl::Trace(blink::Visitor* visitor) {
   visitor->Trace(observer_);
+  visitor->Trace(paint_worklet_);
   CSSPaintImageGenerator::Trace(visitor);
 }
 

@@ -4,13 +4,12 @@
 
 package org.chromium.base;
 
-import android.content.Context;
-import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.os.Build;
-import android.os.StrictMode;
+import android.os.Build.VERSION;
+import android.text.TextUtils;
 
 import org.chromium.base.annotations.CalledByNative;
 
@@ -19,6 +18,18 @@ import org.chromium.base.annotations.CalledByNative;
  * primarily of use for accessing package information from native code.
  */
 public class BuildInfo {
+    /**
+     * Array index to access field in {@link BuildInfo#getAll()}.
+     */
+    public static final int BRAND_INDEX = 0;
+    public static final int DEVICE_INDEX = 1;
+    public static final int ANDROID_BUILD_ID_INDEX = 2;
+    public static final int MODEL_INDEX = 4;
+    public static final int ANDROID_BUILD_FP_INDEX = 11;
+    public static final int GMS_CORE_VERSION_INDEX = 12;
+    public static final int INSTALLER_PACKAGE_NAME_INDEX = 13;
+    public static final int ABI_NAME_INDEX = 14;
+
     private static final String TAG = "BuildInfo";
     private static final int MAX_FINGERPRINT_LENGTH = 128;
 
@@ -27,19 +38,46 @@ public class BuildInfo {
      */
     private BuildInfo() {}
 
+    @SuppressWarnings("deprecation")
     @CalledByNative
-    public static String getDevice() {
-        return Build.DEVICE;
-    }
+    public static String[] getAll() {
+        try {
+            String packageName = ContextUtils.getApplicationContext().getPackageName();
+            PackageManager pm = ContextUtils.getApplicationContext().getPackageManager();
+            PackageInfo pi = pm.getPackageInfo(packageName, 0);
+            String versionCode = pi.versionCode <= 0 ? "" : Integer.toString(pi.versionCode);
+            String versionName = pi.versionName == null ? "" : pi.versionName;
 
-    @CalledByNative
-    public static String getBrand() {
-        return Build.BRAND;
-    }
+            CharSequence label = pm.getApplicationLabel(pi.applicationInfo);
+            String packageLabel = label == null ? "" : label.toString();
 
-    @CalledByNative
-    public static String getAndroidBuildId() {
-        return Build.ID;
+            String installerPackageName = pm.getInstallerPackageName(packageName);
+            if (installerPackageName == null) {
+                installerPackageName = "";
+            }
+
+            String abiString = null;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                abiString = TextUtils.join(", ", Build.SUPPORTED_ABIS);
+            } else {
+                abiString = "ABI1: " + Build.CPU_ABI + ", ABI2: " + Build.CPU_ABI2;
+            }
+
+            // Use lastUpdateTime when developing locally, since versionCode does not normally
+            // change in this case.
+            long version = pi.versionCode > 10 ? pi.versionCode : pi.lastUpdateTime;
+            String extractedFileSuffix = String.format("@%s", Long.toHexString(version));
+
+            // Do not alter this list without updating callers of it.
+            return new String[] {
+                    Build.BRAND, Build.DEVICE, Build.ID, Build.MANUFACTURER, Build.MODEL,
+                    String.valueOf(Build.VERSION.SDK_INT), Build.TYPE, packageLabel, packageName,
+                    versionCode, versionName, getAndroidBuildFingerprint(), getGMSVersionCode(pm),
+                    installerPackageName, abiString, extractedFileSuffix,
+            };
+        } catch (NameNotFoundException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /**
@@ -47,28 +85,14 @@ public class BuildInfo {
      * 128 characters as this is used for crash and UMA reporting, which should avoid huge
      * strings.
      */
-    @CalledByNative
-    public static String getAndroidBuildFingerprint() {
+    private static String getAndroidBuildFingerprint() {
         return Build.FINGERPRINT.substring(
                 0, Math.min(Build.FINGERPRINT.length(), MAX_FINGERPRINT_LENGTH));
     }
 
-    @CalledByNative
-    public static String getDeviceManufacturer() {
-        return Build.MANUFACTURER;
-    }
-
-    @CalledByNative
-    public static String getDeviceModel() {
-        return Build.MODEL;
-    }
-
-    @CalledByNative
-    public static String getGMSVersionCode() {
+    private static String getGMSVersionCode(PackageManager packageManager) {
         String msg = "gms versionCode not available.";
         try {
-            PackageManager packageManager =
-                    ContextUtils.getApplicationContext().getPackageManager();
             PackageInfo packageInfo = packageManager.getPackageInfo("com.google.android.gms", 0);
             msg = Integer.toString(packageInfo.versionCode);
         } catch (NameNotFoundException e) {
@@ -77,83 +101,21 @@ public class BuildInfo {
         return msg;
     }
 
-    @CalledByNative
-    public static String getPackageVersionCode() {
-        String msg = "versionCode not available.";
-        try {
-            PackageManager pm = ContextUtils.getApplicationContext().getPackageManager();
-            PackageInfo pi = pm.getPackageInfo(getPackageName(), 0);
-            msg = "";
-            if (pi.versionCode > 0) {
-                msg = Integer.toString(pi.versionCode);
-            }
-        } catch (NameNotFoundException e) {
-            Log.d(TAG, msg);
-        }
-        return msg;
-    }
-
-    @CalledByNative
     public static String getPackageVersionName() {
-        String msg = "versionName not available";
-        try {
-            PackageManager pm = ContextUtils.getApplicationContext().getPackageManager();
-            PackageInfo pi = pm.getPackageInfo(getPackageName(), 0);
-            msg = "";
-            if (pi.versionName != null) {
-                msg = pi.versionName;
-            }
-        } catch (NameNotFoundException e) {
-            Log.d(TAG, msg);
-        }
-        return msg;
+        return getAll()[10];
     }
 
     /** Returns a string that is different each time the apk changes. */
-    @CalledByNative
     public static String getExtractedFileSuffix() {
-        PackageManager pm = ContextUtils.getApplicationContext().getPackageManager();
-        try {
-            PackageInfo pi =
-                    pm.getPackageInfo(ContextUtils.getApplicationContext().getPackageName(), 0);
-            // Use lastUpdateTime when developing locally, since versionCode does not normally
-            // change in this case.
-            long version = pi.versionCode > 10 ? pi.versionCode : pi.lastUpdateTime;
-            return "@" + Long.toHexString(version);
-        } catch (PackageManager.NameNotFoundException e) {
-            throw new RuntimeException(e);
-        }
+        return getAll()[15];
     }
 
-    @CalledByNative
     public static String getPackageLabel() {
-        // Third-party code does disk read on the getApplicationInfo call. http://crbug.com/614343
-        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
-        try {
-            PackageManager packageManager =
-                    ContextUtils.getApplicationContext().getPackageManager();
-            ApplicationInfo appInfo = packageManager.getApplicationInfo(
-                    getPackageName(), PackageManager.GET_META_DATA);
-            CharSequence label = packageManager.getApplicationLabel(appInfo);
-            return label != null ? label.toString() : "";
-        } catch (NameNotFoundException e) {
-            return "";
-        } finally {
-            StrictMode.setThreadPolicy(oldPolicy);
-        }
+        return getAll()[7];
     }
 
-    @CalledByNative
     public static String getPackageName() {
-        if (ContextUtils.getApplicationContext() == null) {
-            return "";
-        }
         return ContextUtils.getApplicationContext().getPackageName();
-    }
-
-    @CalledByNative
-    public static String getBuildType() {
-        return Build.TYPE;
     }
 
     /**
@@ -163,22 +125,73 @@ public class BuildInfo {
         return "eng".equals(Build.TYPE) || "userdebug".equals(Build.TYPE);
     }
 
-    @CalledByNative
-    public static int getSdkInt() {
-        return Build.VERSION.SDK_INT;
-    }
+    // The markers Begin:BuildCompat and End:BuildCompat delimit code
+    // that is autogenerated from Android sources.
+    // Begin:BuildCompat O,OMR1,P
 
     /**
-     * @return Whether the current device is running Android O release or newer.
+     * Checks if the device is running on a pre-release version of Android O or newer.
+     * <p>
+     * @return {@code true} if O APIs are available for use, {@code false} otherwise
+     * @deprecated Android O is a finalized release and this method is no longer necessary. It will
+     *             be removed in a future release of the Support Library. Instead use
+     *             {@code Build.SDK_INT >= Build.VERSION_CODES#O}.
      */
+    @Deprecated
     public static boolean isAtLeastO() {
-        return Build.VERSION.SDK_INT >= 26;
+        return VERSION.SDK_INT >= 26;
     }
 
     /**
-     * @return Whether the current app targets the SDK for at least O
+     * Checks if the device is running on a pre-release version of Android O MR1 or newer.
+     * <p>
+     * @return {@code true} if O MR1 APIs are available for use, {@code false} otherwise
+     * @deprecated Android O MR1 is a finalized release and this method is no longer necessary. It
+     *             will be removed in a future release of the Support Library. Instead, use
+     *             {@code Build.SDK_INT >= Build.VERSION_CODES#O_MR1}.
      */
-    public static boolean targetsAtLeastO(Context appContext) {
-        return appContext.getApplicationInfo().targetSdkVersion >= 26;
+    @Deprecated
+    public static boolean isAtLeastOMR1() {
+        return VERSION.SDK_INT >= 27;
     }
+
+    /**
+     * Checks if the device is running on a pre-release version of Android P or newer.
+     * <p>
+     * <strong>Note:</strong> This method will return {@code false} on devices running release
+     * versions of Android. When Android P is finalized for release, this method will be deprecated
+     * and all calls should be replaced with {@code Build.SDK_INT >= Build.VERSION_CODES#P}.
+     *
+     * @return {@code true} if P APIs are available for use, {@code false} otherwise
+     */
+    public static boolean isAtLeastP() {
+        return VERSION.CODENAME.equals("P");
+    }
+
+    /**
+     * Checks if the application targets at least released SDK O
+     */
+    @Deprecated
+    public static boolean targetsAtLeastO() {
+        return ContextUtils.getApplicationContext().getApplicationInfo().targetSdkVersion >= 26;
+    }
+
+    /**
+     * Checks if the application targets at least released SDK OMR1
+     */
+    @Deprecated
+    public static boolean targetsAtLeastOMR1() {
+        return ContextUtils.getApplicationContext().getApplicationInfo().targetSdkVersion >= 27;
+    }
+
+    /**
+     * Checks if the application targets pre-release SDK P
+     */
+    public static boolean targetsAtLeastP() {
+        return isAtLeastP()
+                && ContextUtils.getApplicationContext().getApplicationInfo().targetSdkVersion
+                == Build.VERSION_CODES.CUR_DEVELOPMENT;
+    }
+
+    // End:BuildCompat
 }

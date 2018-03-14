@@ -48,11 +48,11 @@
             style="@style/ToolbarButton"
             android:layout_width="48dp"
             android:layout_height="@dimen/toolbar_height_no_shadow"
-            android:src="@drawable/btn_menu"
+            android:src="@drawable/ic_more_vert_black_24dp"
             android:scaleType="center"
             android:contentDescription="@string/accessibility_toolbar_btn_menu"
             android:paddingStart="2dp"
-            chrome:tint="@color/light_mode_tint"
+            chrome:chrometint="@color/light_mode_tint"
             />
     </LinearLayout>
 </org.chromium.chrome.browser.widget.emptybackground.EmptyBackgroundViewTablet>

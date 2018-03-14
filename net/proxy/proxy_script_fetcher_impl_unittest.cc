@@ -6,12 +6,15 @@
 
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/memory/ref_counted.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
+#include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -27,10 +30,14 @@
 #include "net/http/http_cache.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_server_properties_impl.h"
+#include "net/http/http_transaction_factory.h"
 #include "net/http/transport_security_state.h"
 #include "net/net_features.h"
+#include "net/socket/client_socket_pool_manager.h"
+#include "net/socket/transport_client_socket_pool.h"
 #include "net/ssl/ssl_config_service_defaults.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/test/embedded_test_server/simple_connection_listener.h"
 #include "net/test/gtest_util.h"
 #include "net/url_request/url_request_context_storage.h"
 #include "net/url_request/url_request_file_job.h"
@@ -73,36 +80,36 @@ class RequestContext : public URLRequestContext {
     ProxyConfig no_proxy;
     storage_.set_host_resolver(
         std::unique_ptr<HostResolver>(new MockHostResolver));
-    storage_.set_cert_verifier(base::WrapUnique(new MockCertVerifier));
+    storage_.set_cert_verifier(std::make_unique<MockCertVerifier>());
     storage_.set_transport_security_state(
-        base::WrapUnique(new TransportSecurityState));
+        std::make_unique<TransportSecurityState>());
     storage_.set_cert_transparency_verifier(
-        base::WrapUnique(new MultiLogCTVerifier));
-    storage_.set_ct_policy_enforcer(base::WrapUnique(new CTPolicyEnforcer));
+        std::make_unique<MultiLogCTVerifier>());
+    storage_.set_ct_policy_enforcer(std::make_unique<CTPolicyEnforcer>());
     storage_.set_proxy_service(ProxyService::CreateFixed(no_proxy));
     storage_.set_ssl_config_service(new SSLConfigServiceDefaults);
     storage_.set_http_server_properties(
         std::unique_ptr<HttpServerProperties>(new HttpServerPropertiesImpl()));
 
-    HttpNetworkSession::Params params;
-    params.host_resolver = host_resolver();
-    params.cert_verifier = cert_verifier();
-    params.transport_security_state = transport_security_state();
-    params.cert_transparency_verifier = cert_transparency_verifier();
-    params.ct_policy_enforcer = ct_policy_enforcer();
-    params.proxy_service = proxy_service();
-    params.ssl_config_service = ssl_config_service();
-    params.http_server_properties = http_server_properties();
-    storage_.set_http_network_session(
-        base::MakeUnique<HttpNetworkSession>(params));
-    storage_.set_http_transaction_factory(base::MakeUnique<HttpCache>(
+    HttpNetworkSession::Context session_context;
+    session_context.host_resolver = host_resolver();
+    session_context.cert_verifier = cert_verifier();
+    session_context.transport_security_state = transport_security_state();
+    session_context.cert_transparency_verifier = cert_transparency_verifier();
+    session_context.ct_policy_enforcer = ct_policy_enforcer();
+    session_context.proxy_service = proxy_service();
+    session_context.ssl_config_service = ssl_config_service();
+    session_context.http_server_properties = http_server_properties();
+    storage_.set_http_network_session(std::make_unique<HttpNetworkSession>(
+        HttpNetworkSession::Params(), session_context));
+    storage_.set_http_transaction_factory(std::make_unique<HttpCache>(
         storage_.http_network_session(), HttpCache::DefaultBackend::InMemory(0),
         false));
     std::unique_ptr<URLRequestJobFactoryImpl> job_factory =
-        base::MakeUnique<URLRequestJobFactoryImpl>();
+        std::make_unique<URLRequestJobFactoryImpl>();
 #if !BUILDFLAG(DISABLE_FILE_SUPPORT)
     job_factory->SetProtocolHandler("file",
-                                    base::MakeUnique<FileProtocolHandler>(
+                                    std::make_unique<FileProtocolHandler>(
                                         base::ThreadTaskRunnerHandle::Get()));
 #endif
     storage_.set_job_factory(std::move(job_factory));
@@ -188,13 +195,14 @@ class BasicNetworkDelegate : public NetworkDelegateImpl {
   }
 
   bool OnCanSetCookie(const URLRequest& request,
-                      const std::string& cookie_line,
+                      const net::CanonicalCookie& cookie,
                       CookieOptions* options) override {
     return true;
   }
 
   bool OnCanAccessFile(const URLRequest& request,
-                       const base::FilePath& path) const override {
+                       const base::FilePath& original_path,
+                       const base::FilePath& absolute_path) const override {
     return true;
   }
 
@@ -494,6 +502,83 @@ TEST_F(ProxyScriptFetcherImplTest, DataURLs) {
     int result = pac_fetcher.Fetch(url, &text, callback.callback());
     EXPECT_THAT(result, IsError(ERR_FAILED));
   }
+}
+
+// Makes sure that a request gets through when the socket pool is full, so
+// ProxyScriptFetcherImpl can use the same URLRequestContext as everything else.
+TEST_F(ProxyScriptFetcherImplTest, Priority) {
+  // Enough requests to exceed the per-pool limit, which is also enough to
+  // exceed the per-group limit.
+  int num_requests = 10 + ClientSocketPoolManager::max_sockets_per_pool(
+                              HttpNetworkSession::NORMAL_SOCKET_POOL);
+
+  net::test_server::SimpleConnectionListener connection_listener(
+      num_requests, net::test_server::SimpleConnectionListener::
+                        FAIL_ON_ADDITIONAL_CONNECTIONS);
+  test_server_.SetConnectionListener(&connection_listener);
+  ASSERT_TRUE(test_server_.Start());
+
+  std::vector<std::unique_ptr<ProxyScriptFetcherImpl>> pac_fetchers;
+
+  TestCompletionCallback callback;
+  base::string16 text;
+  for (int i = 0; i < num_requests; i++) {
+    std::unique_ptr<ProxyScriptFetcherImpl> pac_fetcher =
+        std::make_unique<ProxyScriptFetcherImpl>(&context_);
+    GURL url(test_server_.GetURL("/hung"));
+    // Fine to use the same string and callback for all of these, as they should
+    // all hang.
+    int result = pac_fetcher->Fetch(url, &text, callback.callback());
+    EXPECT_THAT(result, IsError(ERR_IO_PENDING));
+    pac_fetchers.push_back(std::move(pac_fetcher));
+  }
+
+  connection_listener.WaitForConnections();
+  // None of the callbacks should have been invoked - all jobs should still be
+  // hung.
+  EXPECT_FALSE(callback.have_result());
+
+  // Need to shut down the server before |connection_listener| is destroyed.
+  EXPECT_TRUE(test_server_.ShutdownAndWaitUntilComplete());
+}
+
+TEST_F(ProxyScriptFetcherImplTest, OnShutdown) {
+  ASSERT_TRUE(test_server_.Start());
+
+  ProxyScriptFetcherImpl pac_fetcher(&context_);
+  base::string16 text;
+  TestCompletionCallback callback;
+  int result = pac_fetcher.Fetch(test_server_.GetURL("/hung"), &text,
+                                 callback.callback());
+  EXPECT_THAT(result, IsError(ERR_IO_PENDING));
+  EXPECT_EQ(1u, context_.url_requests().size());
+
+  pac_fetcher.OnShutdown();
+  EXPECT_EQ(0u, context_.url_requests().size());
+  EXPECT_THAT(callback.WaitForResult(), IsError(ERR_CONTEXT_SHUT_DOWN));
+
+  // Make sure there's no asynchronous completion notification.
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(0u, context_.url_requests().size());
+  EXPECT_FALSE(callback.have_result());
+
+  result = pac_fetcher.Fetch(test_server_.GetURL("/hung"), &text,
+                             callback.callback());
+  EXPECT_THAT(result, IsError(ERR_CONTEXT_SHUT_DOWN));
+}
+
+TEST_F(ProxyScriptFetcherImplTest, OnShutdownWithNoLiveRequest) {
+  ASSERT_TRUE(test_server_.Start());
+
+  ProxyScriptFetcherImpl pac_fetcher(&context_);
+  pac_fetcher.OnShutdown();
+
+  base::string16 text;
+  TestCompletionCallback callback;
+  int result = pac_fetcher.Fetch(test_server_.GetURL("/hung"), &text,
+                                 callback.callback());
+  EXPECT_THAT(result, IsError(ERR_CONTEXT_SHUT_DOWN));
+  EXPECT_EQ(0u, context_.url_requests().size());
 }
 
 }  // namespace

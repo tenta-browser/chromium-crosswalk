@@ -7,26 +7,23 @@
 #include <algorithm>
 #include <memory>
 
+#include "ash/app_list/test_app_list_presenter_impl.h"
 #include "ash/focus_cycler.h"
-#include "ash/public/cpp/config.h"
 #include "ash/public/cpp/shell_window_ids.h"
+#include "ash/public/cpp/window_properties.h"
 #include "ash/scoped_root_window_for_new_windows.h"
 #include "ash/session/session_controller.h"
+#include "ash/session/test_session_controller_client.h"
+#include "ash/shelf/shelf.h"
+#include "ash/shelf/shelf_view_test_api.h"
 #include "ash/shelf/shelf_widget.h"
-#include "ash/shelf/wm_shelf.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/shelf_view_test_api.h"
-#include "ash/test/test_app_list_view_presenter_impl.h"
-#include "ash/test/test_session_controller_client.h"
-#include "ash/test/test_shelf_delegate.h"
-#include "ash/test/test_shell_delegate.h"
+#include "ash/test_shell_delegate.h"
 #include "ash/wm/window_cycle_list.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_util.h"
 #include "ash/wm/wm_event.h"
-#include "ash/wm_window.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/env.h"
@@ -48,7 +45,7 @@ namespace {
 class EventCounter : public ui::EventHandler {
  public:
   EventCounter() : key_events_(0), mouse_events_(0) {}
-  ~EventCounter() override {}
+  ~EventCounter() override = default;
 
   int GetKeyEventCountAndReset() {
     int count = key_events_;
@@ -74,7 +71,7 @@ class EventCounter : public ui::EventHandler {
 };
 
 bool IsWindowMinimized(aura::Window* window) {
-  return WmWindow::Get(window)->GetWindowState()->IsMinimized();
+  return wm::GetWindowState(window)->IsMinimized();
 }
 
 }  // namespace
@@ -83,32 +80,31 @@ using aura::test::CreateTestWindowWithId;
 using aura::test::TestWindowDelegate;
 using aura::Window;
 
-class WindowCycleControllerTest : public test::AshTestBase {
+class WindowCycleControllerTest : public AshTestBase {
  public:
-  WindowCycleControllerTest() {}
-  ~WindowCycleControllerTest() override {}
+  WindowCycleControllerTest() = default;
+  ~WindowCycleControllerTest() override = default;
 
   void SetUp() override {
-    test::AshTestBase::SetUp();
+    AshTestBase::SetUp();
 
     WindowCycleList::DisableInitialDelayForTesting();
 
-    shelf_view_test_.reset(new test::ShelfViewTestAPI(
-        GetPrimaryShelf()->GetShelfViewForTesting()));
+    shelf_view_test_.reset(
+        new ShelfViewTestAPI(GetPrimaryShelf()->GetShelfViewForTesting()));
     shelf_view_test_->SetAnimationDuration(1);
   }
 
   aura::Window* CreatePanelWindow() {
     gfx::Rect rect(100, 100);
     aura::Window* window = CreateTestWindowInShellWithDelegateAndType(
-        NULL, ui::wm::WINDOW_TYPE_PANEL, 0, rect);
-    test::TestShelfDelegate::instance()->AddShelfItem(WmWindow::Get(window));
+        NULL, aura::client::WINDOW_TYPE_PANEL, 0, rect);
     shelf_view_test_->RunMessageLoopUntilAnimationsDone();
     return window;
   }
 
   const aura::Window::Windows GetWindows(WindowCycleController* controller) {
-    return WmWindow::ToAuraWindows(controller->window_cycle_list()->windows());
+    return controller->window_cycle_list()->windows();
   }
 
   const views::Widget* GetWindowCycleListWidget() const {
@@ -119,7 +115,7 @@ class WindowCycleControllerTest : public test::AshTestBase {
   }
 
  private:
-  std::unique_ptr<test::ShelfViewTestAPI> shelf_view_test_;
+  std::unique_ptr<ShelfViewTestAPI> shelf_view_test_;
 
   DISALLOW_COPY_AND_ASSIGN(WindowCycleControllerTest);
 };
@@ -260,6 +256,20 @@ TEST_F(WindowCycleControllerTest, HandleCycleWindow) {
   EXPECT_FALSE(wm::IsActiveWindow(window0.get()));
   EXPECT_FALSE(wm::IsActiveWindow(window1.get()));
   EXPECT_FALSE(wm::IsActiveWindow(window2.get()));
+
+  modal_window.reset();
+  std::unique_ptr<Window> skip_overview_window(
+      CreateTestWindowInShellWithId(-3));
+  skip_overview_window->SetProperty(kShowInOverviewKey, false);
+  wm::ActivateWindow(window0.get());
+  wm::ActivateWindow(skip_overview_window.get());
+  wm::ActivateWindow(window1.get());
+  EXPECT_FALSE(wm::IsActiveWindow(window0.get()));
+  controller->HandleCycleWindow(WindowCycleController::FORWARD);
+  controller->CompleteCycling();
+  EXPECT_TRUE(wm::IsActiveWindow(window0.get()));
+  EXPECT_FALSE(wm::IsActiveWindow(skip_overview_window.get()));
+  EXPECT_FALSE(wm::IsActiveWindow(window1.get()));
 }
 
 // Cycles between a maximized and normal window.
@@ -411,8 +421,7 @@ TEST_F(WindowCycleControllerTest, AlwaysOnTopMultipleRootWindows) {
   EXPECT_EQ(root_windows[0], window1->GetRootWindow());
 
   // Move the active root window to the secondary root and create two windows.
-  ScopedRootWindowForNewWindows root_for_new_windows(
-      WmWindow::Get(root_windows[1]));
+  ScopedRootWindowForNewWindows root_for_new_windows(root_windows[1]);
   std::unique_ptr<Window> window2(CreateTestWindowInShellWithId(2));
   EXPECT_EQ(root_windows[1], window2->GetRootWindow());
 
@@ -481,19 +490,14 @@ TEST_F(WindowCycleControllerTest, MostRecentlyUsed) {
 
 // Tests that beginning window selection hides the app list.
 TEST_F(WindowCycleControllerTest, SelectingHidesAppList) {
-  // TODO: fails in mash because of AppListPresenter. http://crbug.com/696028.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
   // The tested behavior relies on the app list presenter implementation.
-  test::TestAppListViewPresenterImpl app_list_presenter_impl;
+  TestAppListPresenterImpl app_list_presenter_impl;
 
   WindowCycleController* controller = Shell::Get()->window_cycle_controller();
 
   std::unique_ptr<aura::Window> window0(CreateTestWindowInShellWithId(0));
   std::unique_ptr<aura::Window> window1(CreateTestWindowInShellWithId(1));
-  app_list_presenter_impl.Show(
-      display::Screen::GetScreen()->GetPrimaryDisplay().id());
+  app_list_presenter_impl.ShowAndRunLoop(GetPrimaryDisplay().id());
   EXPECT_TRUE(app_list_presenter_impl.IsVisible());
   controller->HandleCycleWindow(WindowCycleController::FORWARD);
   EXPECT_FALSE(app_list_presenter_impl.IsVisible());
@@ -613,10 +617,6 @@ TEST_F(WindowCycleControllerTest, CycleMruPanelDestroyed) {
 
 // Tests that the tab key events are not sent to the window.
 TEST_F(WindowCycleControllerTest, TabKeyNotLeaked) {
-  // TODO: investigate failure in mash. http://crbug.com/698894.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
   std::unique_ptr<Window> w0(CreateTestWindowInShellWithId(0));
   std::unique_ptr<Window> w1(CreateTestWindowInShellWithId(1));
   EventCounter event_count;
@@ -637,10 +637,6 @@ TEST_F(WindowCycleControllerTest, TabKeyNotLeaked) {
 
 // While the UI is active, mouse events are captured.
 TEST_F(WindowCycleControllerTest, MouseEventsCaptured) {
-  // TODO: investigate failure in mash. http://crbug.com/698894.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
   // This delegate allows the window to receive mouse events.
   aura::test::TestWindowDelegate delegate;
   std::unique_ptr<Window> w0(CreateTestWindowInShellWithDelegate(
@@ -715,11 +711,7 @@ TEST_F(WindowCycleControllerTest, TabPastFullscreenWindow) {
 // Tests that the Alt+Tab UI's position isn't affected by the origin of the
 // display it's on. See crbug.com/675718
 TEST_F(WindowCycleControllerTest, MultiDisplayPositioning) {
-  // TODO: investigate failure in mash. http://crbug.com/698894.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
-  int64_t primary_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  int64_t primary_id = GetPrimaryDisplay().id();
   display::DisplayIdList list =
       display::test::CreateDisplayIdListN(2, primary_id, primary_id + 1);
 

@@ -31,9 +31,9 @@
 #ifndef SVGAnimatedInteger_h
 #define SVGAnimatedInteger_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGInteger.h"
 #include "core/svg/properties/SVGAnimatedProperty.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -41,9 +41,10 @@ namespace blink {
 class SVGAnimatedIntegerOptionalInteger;
 
 // SVG Spec: http://www.w3.org/TR/SVG11/types.html#InterfaceSVGAnimatedInteger
-class SVGAnimatedInteger : public SVGAnimatedProperty<SVGInteger>,
-                           public ScriptWrappable {
+class SVGAnimatedInteger : public ScriptWrappable,
+                           public SVGAnimatedProperty<SVGInteger> {
   DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(SVGAnimatedInteger);
 
  public:
   static SVGAnimatedInteger* Create(SVGElement* context_element,
@@ -60,9 +61,9 @@ class SVGAnimatedInteger : public SVGAnimatedProperty<SVGInteger>,
     parent_integer_optional_integer_ = number_optional_integer;
   }
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+  void TraceWrappers(const ScriptWrappableVisitor*) const override;
 
  protected:
   SVGAnimatedInteger(SVGElement* context_element,

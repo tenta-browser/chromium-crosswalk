@@ -5,8 +5,6 @@
 #include "core/workers/ThreadedWorkletObjectProxy.h"
 
 #include <memory>
-#include "bindings/core/v8/ScriptSourceCode.h"
-#include "bindings/core/v8/WorkerOrWorkletScriptController.h"
 #include "core/workers/ThreadedWorkletGlobalScope.h"
 #include "core/workers/ThreadedWorkletMessagingProxy.h"
 #include "core/workers/WorkerThread.h"
@@ -15,7 +13,7 @@
 namespace blink {
 
 std::unique_ptr<ThreadedWorkletObjectProxy> ThreadedWorkletObjectProxy::Create(
-    const WeakPtr<ThreadedWorkletMessagingProxy>& messaging_proxy_weak_ptr,
+    ThreadedWorkletMessagingProxy* messaging_proxy_weak_ptr,
     ParentFrameTaskRunners* parent_frame_task_runners) {
   DCHECK(messaging_proxy_weak_ptr);
   return WTF::WrapUnique(new ThreadedWorkletObjectProxy(
@@ -24,22 +22,27 @@ std::unique_ptr<ThreadedWorkletObjectProxy> ThreadedWorkletObjectProxy::Create(
 
 ThreadedWorkletObjectProxy::~ThreadedWorkletObjectProxy() {}
 
-void ThreadedWorkletObjectProxy::EvaluateScript(const String& source,
-                                                const KURL& script_url,
-                                                WorkerThread* worker_thread) {
+void ThreadedWorkletObjectProxy::FetchAndInvokeScript(
+    const KURL& module_url_record,
+    WorkletModuleResponsesMap* module_responses_map,
+    network::mojom::FetchCredentialsMode credentials_mode,
+    scoped_refptr<WebTaskRunner> outside_settings_task_runner,
+    WorkletPendingTasks* pending_tasks,
+    WorkerThread* worker_thread) {
   ThreadedWorkletGlobalScope* global_scope =
       ToThreadedWorkletGlobalScope(worker_thread->GlobalScope());
-  global_scope->ScriptController()->Evaluate(
-      ScriptSourceCode(source, script_url));
+  global_scope->FetchAndInvokeScript(
+      module_url_record, module_responses_map, credentials_mode,
+      std::move(outside_settings_task_runner), pending_tasks);
 }
 
 ThreadedWorkletObjectProxy::ThreadedWorkletObjectProxy(
-    const WeakPtr<ThreadedWorkletMessagingProxy>& messaging_proxy_weak_ptr,
+    ThreadedWorkletMessagingProxy* messaging_proxy_weak_ptr,
     ParentFrameTaskRunners* parent_frame_task_runners)
     : ThreadedObjectProxyBase(parent_frame_task_runners),
       messaging_proxy_weak_ptr_(messaging_proxy_weak_ptr) {}
 
-WeakPtr<ThreadedMessagingProxyBase>
+CrossThreadWeakPersistent<ThreadedMessagingProxyBase>
 ThreadedWorkletObjectProxy::MessagingProxyWeakPtr() {
   return messaging_proxy_weak_ptr_;
 }

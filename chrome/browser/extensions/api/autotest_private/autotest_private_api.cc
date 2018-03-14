@@ -28,11 +28,12 @@
 #include "extensions/common/permissions/permissions_data.h"
 
 #if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
 #include "chrome/browser/chromeos/system/input_device_settings.h"
+#include "chrome/browser/profiles/profile_manager.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/session_manager_client.h"
-#include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/notification.h"
@@ -337,6 +338,22 @@ AutotestPrivateSetPrimaryButtonRightFunction::Run() {
   return RespondNow(NoArguments());
 }
 
+ExtensionFunction::ResponseAction
+AutotestPrivateSetMouseReverseScrollFunction::Run() {
+  std::unique_ptr<api::autotest_private::SetMouseReverseScroll::Params> params(
+      api::autotest_private::SetMouseReverseScroll::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params.get());
+
+  DVLOG(1) << "AutotestPrivateSetMouseReverseScrollFunction "
+           << params->enabled;
+
+#if defined(OS_CHROMEOS)
+  chromeos::system::InputDeviceSettings::Get()->SetMouseReverseScroll(
+      params->enabled);
+#endif
+  return RespondNow(NoArguments());
+}
+
 // static
 std::string AutotestPrivateGetVisibleNotificationsFunction::ConvertToString(
     message_center::NotificationType type) {
@@ -380,13 +397,52 @@ AutotestPrivateGetVisibleNotificationsFunction::Run() {
   return RespondNow(OneArgument(std::move(values)));
 }
 
+ExtensionFunction::ResponseAction
+AutotestPrivateGetPlayStoreStateFunction::Run() {
+  DVLOG(1) << "AutotestPrivateGetPlayStoreStateFunction";
+  api::autotest_private::PlayStoreState play_store_state;
+  play_store_state.allowed = false;
+#if defined(OS_CHROMEOS)
+  Profile* profile = ProfileManager::GetActiveUserProfile();
+  if (arc::IsArcAllowedForProfile(profile)) {
+    play_store_state.allowed = true;
+    play_store_state.enabled =
+        base::MakeUnique<bool>(arc::IsArcPlayStoreEnabledForProfile(profile));
+    play_store_state.managed = base::MakeUnique<bool>(
+        arc::IsArcPlayStoreEnabledPreferenceManagedForProfile(profile));
+  }
+#endif
+  return RespondNow(OneArgument(play_store_state.ToValue()));
+}
+
+ExtensionFunction::ResponseAction
+AutotestPrivateSetPlayStoreEnabledFunction::Run() {
+  DVLOG(1) << "AutotestPrivateSetPlayStoreEnabledFunction";
+  std::unique_ptr<api::autotest_private::SetPlayStoreEnabled::Params> params(
+      api::autotest_private::SetPlayStoreEnabled::Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+#if defined(OS_CHROMEOS)
+  Profile* profile = ProfileManager::GetActiveUserProfile();
+  if (arc::IsArcAllowedForProfile(profile)) {
+    if (!arc::SetArcPlayStoreEnabledForProfile(profile, params->enabled)) {
+      return RespondNow(
+          Error("ARC enabled state cannot be changed for the current user"));
+    }
+    return RespondNow(NoArguments());
+  } else {
+    return RespondNow(Error("ARC is not available for the current user"));
+  }
+#endif
+  return RespondNow(Error("ARC is not available for the current platform"));
+}
+
 static base::LazyInstance<BrowserContextKeyedAPIFactory<AutotestPrivateAPI>>::
-    DestructorAtExit g_factory = LAZY_INSTANCE_INITIALIZER;
+    DestructorAtExit g_autotest_private_api_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
 BrowserContextKeyedAPIFactory<AutotestPrivateAPI>*
 AutotestPrivateAPI::GetFactoryInstance() {
-  return g_factory.Pointer();
+  return g_autotest_private_api_factory.Pointer();
 }
 
 template <>

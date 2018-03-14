@@ -27,9 +27,6 @@
 
 #include "core/editing/serializers/MarkupAccumulator.h"
 
-#include "core/XLinkNames.h"
-#include "core/XMLNSNames.h"
-#include "core/XMLNames.h"
 #include "core/dom/Attr.h"
 #include "core/dom/CDATASection.h"
 #include "core/dom/Comment.h"
@@ -41,6 +38,9 @@
 #include "core/editing/Editor.h"
 #include "core/html/HTMLElement.h"
 #include "core/html/HTMLTemplateElement.h"
+#include "core/xlink_names.h"
+#include "core/xml_names.h"
+#include "core/xmlns_names.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/wtf/text/CharacterNames.h"
 
@@ -151,6 +151,11 @@ bool MarkupAccumulator::SerializeAsHTMLDocument(const Node& node) const {
   return formatter_.SerializeAsHTMLDocument(node);
 }
 
+std::pair<Node*, Element*> MarkupAccumulator::GetAuxiliaryDOMTree(
+    const Element& element) const {
+  return std::pair<Node*, Element*>();
+}
+
 template <typename Strategy>
 static void SerializeNodesWithNamespaces(MarkupAccumulator& accumulator,
                                          Node& target_node,
@@ -170,13 +175,32 @@ static void SerializeNodesWithNamespaces(MarkupAccumulator& accumulator,
 
   if (!(accumulator.SerializeAsHTMLDocument(target_node) &&
         ElementCannotHaveEndTag(target_node))) {
-    Node* current = isHTMLTemplateElement(target_node)
+    Node* current = IsHTMLTemplateElement(target_node)
                         ? Strategy::FirstChild(
-                              *toHTMLTemplateElement(target_node).content())
+                              *ToHTMLTemplateElement(target_node).content())
                         : Strategy::FirstChild(target_node);
     for (; current; current = Strategy::NextSibling(*current))
       SerializeNodesWithNamespaces<Strategy>(accumulator, *current,
                                              kIncludeNode, &namespace_hash);
+
+    // Traverses other DOM tree, i.e., shadow tree.
+    if (target_node.IsElementNode()) {
+      std::pair<Node*, Element*> auxiliary_pair =
+          accumulator.GetAuxiliaryDOMTree(ToElement(target_node));
+      Node* auxiliary_tree = auxiliary_pair.first;
+      Element* enclosing_element = auxiliary_pair.second;
+      if (auxiliary_tree) {
+        if (auxiliary_pair.second)
+          accumulator.AppendStartTag(*enclosing_element);
+        current = Strategy::FirstChild(*auxiliary_tree);
+        for (; current; current = Strategy::NextSibling(*current)) {
+          SerializeNodesWithNamespaces<Strategy>(accumulator, *current,
+                                                 kIncludeNode, &namespace_hash);
+        }
+        if (enclosing_element)
+          accumulator.AppendEndTag(*enclosing_element);
+      }
+    }
   }
 
   if ((!children_only && target_node.IsElementNode()) &&

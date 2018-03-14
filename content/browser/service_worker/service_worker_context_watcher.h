@@ -11,8 +11,10 @@
 #include <vector>
 
 #include "base/callback.h"
-#include "content/browser/service_worker/service_worker_context_observer.h"
+#include "content/browser/service_worker/service_worker_context_core_observer.h"
 #include "content/browser/service_worker/service_worker_info.h"
+#include "content/common/content_export.h"
+#include "third_party/WebKit/common/service_worker/service_worker_provider_type.mojom.h"
 
 namespace content {
 
@@ -21,8 +23,8 @@ enum class EmbeddedWorkerStatus;
 
 // Used to monitor the status change of the ServiceWorker registrations and
 // versions in the ServiceWorkerContext from UI thread.
-class ServiceWorkerContextWatcher
-    : public ServiceWorkerContextObserver,
+class CONTENT_EXPORT ServiceWorkerContextWatcher
+    : public ServiceWorkerContextCoreObserver,
       public base::RefCountedThreadSafe<ServiceWorkerContextWatcher> {
  public:
   typedef base::Callback<void(
@@ -44,6 +46,8 @@ class ServiceWorkerContextWatcher
 
  private:
   friend class base::RefCountedThreadSafe<ServiceWorkerContextWatcher>;
+  friend class ServiceWorkerContextWatcherTest;
+
   ~ServiceWorkerContextWatcher() override;
 
   void GetStoredRegistrationsOnIOThread();
@@ -65,7 +69,16 @@ class ServiceWorkerContextWatcher
       ServiceWorkerRegistrationInfo::DeleteFlag delete_flag);
   void SendVersionInfo(const ServiceWorkerVersionInfo& version);
 
-  // ServiceWorkerContextObserver implements
+  void RunWorkerRegistrationUpdatedCallback(
+      std::unique_ptr<std::vector<ServiceWorkerRegistrationInfo>>
+          registrations);
+  void RunWorkerVersionUpdatedCallback(
+      std::unique_ptr<std::vector<ServiceWorkerVersionInfo>> versions);
+  void RunWorkerErrorReportedCallback(int64_t registration_id,
+                                      int64_t version_id,
+                                      std::unique_ptr<ErrorInfo> error_info);
+
+  // ServiceWorkerContextCoreObserver implements
   void OnNewLiveRegistration(int64_t registration_id,
                              const GURL& pattern) override;
   void OnNewLiveVersion(const ServiceWorkerVersionInfo& version_info) override;
@@ -90,11 +103,13 @@ class ServiceWorkerContextWatcher
                               int process_id,
                               int thread_id,
                               const ConsoleMessage& message) override;
-  void OnControlleeAdded(int64_t version_id,
-                         const std::string& uuid,
-                         int process_id,
-                         int route_id,
-                         ServiceWorkerProviderType type) override;
+  void OnControlleeAdded(
+      int64_t version_id,
+      const std::string& uuid,
+      int process_id,
+      int route_id,
+      const base::Callback<WebContents*(void)>& web_contents_getter,
+      blink::mojom::ServiceWorkerProviderType type) override;
   void OnControlleeRemoved(int64_t version_id,
                            const std::string& uuid) override;
   void OnRegistrationStored(int64_t registration_id,
@@ -108,6 +123,10 @@ class ServiceWorkerContextWatcher
   WorkerRegistrationUpdatedCallback registration_callback_;
   WorkerVersionUpdatedCallback version_callback_;
   WorkerErrorReportedCallback error_callback_;
+  // Should be used on UI thread only.
+  bool stop_called_ = false;
+  // Should be used on IO thread only.
+  bool is_stopped_ = false;
 };
 
 }  // namespace content

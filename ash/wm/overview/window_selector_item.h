@@ -29,7 +29,7 @@ class ImageButton;
 namespace ash {
 
 class WindowSelector;
-class WmWindow;
+class WindowGrid;
 
 // This class represents an item in overview mode.
 class ASH_EXPORT WindowSelectorItem : public views::ButtonListener,
@@ -48,16 +48,18 @@ class ASH_EXPORT WindowSelectorItem : public views::ButtonListener,
     DISALLOW_COPY_AND_ASSIGN(OverviewCloseButton);
   };
 
-  WindowSelectorItem(WmWindow* window, WindowSelector* window_selector);
+  WindowSelectorItem(aura::Window* window,
+                     WindowSelector* window_selector,
+                     WindowGrid* window_grid);
   ~WindowSelectorItem() override;
 
-  WmWindow* GetWindow();
+  aura::Window* GetWindow();
 
   // Returns the root window on which this item is shown.
-  WmWindow* root_window() { return root_window_; }
+  aura::Window* root_window() { return root_window_; }
 
   // Returns true if |target| is contained in this WindowSelectorItem.
-  bool Contains(const WmWindow* target) const;
+  bool Contains(const aura::Window* target) const;
 
   // Restores and animates the managed window to its non overview mode state.
   void RestoreWindow();
@@ -107,6 +109,10 @@ class ASH_EXPORT WindowSelectorItem : public views::ButtonListener,
   // Called when the window is minimized or unminimized.
   void OnMinimizedStateChanged();
 
+  // Shows the cannot snap warning if currently in splitview, and the associated
+  // window cannot be snapped.
+  void UpdateCannotSnapWarningVisibility();
+
   // Sets if the item is dimmed in the overview. Changing the value will also
   // change the visibility of the transform windows.
   void SetDimmed(bool dimmed);
@@ -121,10 +127,19 @@ class ASH_EXPORT WindowSelectorItem : public views::ButtonListener,
   void OnWindowDestroying(aura::Window* window) override;
   void OnWindowTitleChanged(aura::Window* window) override;
 
+  // Handle the mouse/gesture event and facilitate dragging the item.
+  void HandlePressEvent(const gfx::Point& location_in_screen);
+  void HandleReleaseEvent(const gfx::Point& location_in_screen);
+  void HandleDragEvent(const gfx::Point& location_in_screen);
+  void ActivateDraggedWindow();
+  void ResetDraggedWindowGesture();
+
  private:
   class CaptionContainerView;
   class RoundedContainerView;
   friend class WindowSelectorTest;
+  FRIEND_TEST_ALL_PREFIXES(SplitViewWindowSelectorTest,
+                           OverviewUnsnappableIndicatorVisibility);
 
   enum class HeaderFadeInMode {
     ENTER,
@@ -165,14 +180,23 @@ class ASH_EXPORT WindowSelectorItem : public views::ButtonListener,
   // Allows a test to directly set animation state.
   gfx::SlideAnimation* GetBackgroundViewAnimation();
 
-  WmWindow* GetOverviewWindowForMinimizedStateForTest();
+  aura::Window* GetOverviewWindowForMinimizedStateForTest();
+
+  // Called before dragging. Scales up the window a little bit to indicate its
+  // selection and stacks the window at the top of the Z order in order to keep
+  // it visible while dragging around.
+  void StartDrag();
+
+  // Called after dragging. Inserts the window back to its original stacking
+  // order so that the order of windows is the same as when entering overview.
+  void EndDrag();
 
   // True if the item is being shown in the overview, false if it's being
   // filtered.
   bool dimmed_;
 
   // The root window this item is being displayed on.
-  WmWindow* root_window_;
+  aura::Window* root_window_;
 
   // The contained Window's wrapper.
   ScopedTransformOverviewWindow transform_window_;
@@ -204,6 +228,11 @@ class ASH_EXPORT WindowSelectorItem : public views::ButtonListener,
   // A View for the text label above the window owned by the |background_view_|.
   views::Label* label_view_;
 
+  // A View for the text label in the center of the window warning users that
+  // this window cannot be snapped for splitview. Owned by a container in
+  // |background_view_|.
+  views::Label* cannot_snap_label_view_;
+
   // A close button for the window in this item owned by the |background_view_|.
   OverviewCloseButton* close_button_;
 
@@ -215,6 +244,10 @@ class ASH_EXPORT WindowSelectorItem : public views::ButtonListener,
   // corners. This view can have its color and opacity animated. It has a layer
   // which is the only textured layer used by the |item_widget_|.
   RoundedContainerView* background_view_;
+
+  // Pointer to the WindowGrid that contains |this|. Guaranteed to be non-null
+  // for the lifetime of |this|.
+  WindowGrid* window_grid_;
 
   DISALLOW_COPY_AND_ASSIGN(WindowSelectorItem);
 };

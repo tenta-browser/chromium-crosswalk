@@ -36,6 +36,8 @@ class LineLayoutBlockFlow;
 
 struct BidiStatus;
 
+enum ForceEllipsisOnLine { DoNotForceEllipsis, ForceEllipsis };
+
 class RootInlineBox : public InlineFlowBox {
  public:
   explicit RootInlineBox(LineLayoutItem);
@@ -114,14 +116,15 @@ class RootInlineBox : public InlineFlowBox {
                            LayoutUnit block_right_edge,
                            LayoutUnit ellipsis_width,
                            LayoutUnit logical_left_offset,
-                           bool found_box);
+                           InlineBox** found_box,
+                           ForceEllipsisOnLine = DoNotForceEllipsis);
   // Return the position of the EllipsisBox or -1.
   LayoutUnit PlaceEllipsisBox(bool ltr,
                               LayoutUnit block_left_edge,
                               LayoutUnit block_right_edge,
                               LayoutUnit ellipsis_width,
                               LayoutUnit& truncated_width,
-                              bool& found_box,
+                              InlineBox** found_box,
                               LayoutUnit logical_left_offset) final;
 
   using InlineBox::HasEllipsisBox;
@@ -129,7 +132,7 @@ class RootInlineBox : public InlineFlowBox {
 
   void ClearTruncation() final;
 
-  int BaselinePosition(FontBaseline baseline_type) const final;
+  LayoutUnit BaselinePosition(FontBaseline baseline_type) const final;
   LayoutUnit LineHeight() const final;
 
   void Paint(const PaintInfo&,
@@ -141,9 +144,6 @@ class RootInlineBox : public InlineFlowBox {
                    const LayoutPoint& accumulated_offset,
                    LayoutUnit line_top,
                    LayoutUnit line_bottom) override;
-
-  using InlineBox::HasSelectedChildren;
-  using InlineBox::SetHasSelectedChildren;
 
   SelectionState GetSelectionState() const final;
   InlineBox* FirstSelectedBox() const;
@@ -185,8 +185,8 @@ class RootInlineBox : public InlineFlowBox {
 
   void AscentAndDescentForBox(InlineBox*,
                               GlyphOverflowAndFallbackFontsMap&,
-                              int& ascent,
-                              int& descent,
+                              LayoutUnit& ascent,
+                              LayoutUnit& descent,
                               bool& affects_ascent,
                               bool& affects_descent) const;
   LayoutUnit VerticalPositionForBox(InlineBox*, VerticalPositionCache&);
@@ -220,7 +220,7 @@ class RootInlineBox : public InlineFlowBox {
   // object are stored so that we can create an InlineIterator beginning just
   // after the end of this line.
   LineLayoutItem line_break_obj_;
-  RefPtr<BidiContext> line_break_context_;
+  scoped_refptr<BidiContext> line_break_context_;
 
   // Floats hanging off the line are pushed into this vector during layout. It
   // is only good for as long as the line has not been marked dirty.

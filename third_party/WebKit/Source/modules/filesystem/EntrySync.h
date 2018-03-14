@@ -31,7 +31,6 @@
 #ifndef EntrySync_h
 #define EntrySync_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/filesystem/DOMFileSystemSync.h"
 #include "modules/filesystem/EntryBase.h"
 #include "platform/heap/Handle.h"
@@ -43,7 +42,7 @@ class DirectoryEntrySync;
 class Metadata;
 class ExceptionState;
 
-class EntrySync : public EntryBase, public ScriptWrappable {
+class EntrySync : public EntryBase {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -63,7 +62,7 @@ class EntrySync : public EntryBase, public ScriptWrappable {
   void remove(ExceptionState&) const;
   EntrySync* getParent() const;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  protected:
   EntrySync(DOMFileSystemBase*, const String& full_path);

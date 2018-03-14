@@ -22,8 +22,6 @@
 #include "base/trace_event/memory_dump_provider.h"
 #include "cc/cc_export.h"
 #include "cc/paint/draw_image.h"
-#include "cc/resources/resource_format.h"
-#include "cc/tiles/decoded_draw_image.h"
 #include "cc/tiles/image_decode_cache.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/geometry/rect.h"
@@ -36,15 +34,16 @@ namespace cc {
 // in the cache multiple times at different scales and filter qualities.
 class CC_EXPORT ImageDecodeCacheKey {
  public:
-  static ImageDecodeCacheKey FromDrawImage(const DrawImage& image);
+  static ImageDecodeCacheKey FromDrawImage(const DrawImage& image,
+                                           SkColorType color_type);
 
   ImageDecodeCacheKey(const ImageDecodeCacheKey& other);
 
   bool operator==(const ImageDecodeCacheKey& other) const {
-    // The image_id always has to be the same. However, after that all original
+    // The frame_key always has to be the same. However, after that all original
     // decodes are the same, so if we can use the original decode, return true.
     // If not, then we have to compare every field.
-    return image_id_ == other.image_id_ &&
+    return frame_key_ == other.frame_key_ &&
            can_use_original_size_decode_ ==
                other.can_use_original_size_decode_ &&
            target_color_space_ == other.target_color_space_ &&
@@ -58,7 +57,7 @@ class CC_EXPORT ImageDecodeCacheKey {
     return !(*this == other);
   }
 
-  uint32_t image_id() const { return image_id_; }
+  const PaintImage::FrameKey& frame_key() const { return frame_key_; }
   SkFilterQuality filter_quality() const { return filter_quality_; }
   gfx::Rect src_rect() const { return src_rect_; }
   gfx::Size target_size() const { return target_size_; }
@@ -85,7 +84,7 @@ class CC_EXPORT ImageDecodeCacheKey {
   std::string ToString() const;
 
  private:
-  ImageDecodeCacheKey(uint32_t image_id,
+  ImageDecodeCacheKey(PaintImage::FrameKey frame_key,
                       const gfx::Rect& src_rect,
                       const gfx::Size& size,
                       const gfx::ColorSpace& target_color_space,
@@ -93,7 +92,7 @@ class CC_EXPORT ImageDecodeCacheKey {
                       bool can_use_original_size_decode,
                       bool should_use_subrect);
 
-  uint32_t image_id_;
+  PaintImage::FrameKey frame_key_;
   gfx::Rect src_rect_;
   gfx::Size target_size_;
   gfx::ColorSpace target_color_space_;
@@ -120,17 +119,15 @@ class CC_EXPORT SoftwareImageDecodeCache
 
   enum class DecodeTaskType { USE_IN_RASTER_TASKS, USE_OUT_OF_RASTER_TASKS };
 
-  SoftwareImageDecodeCache(ResourceFormat format,
+  SoftwareImageDecodeCache(SkColorType color_type,
                            size_t locked_memory_limit_bytes);
   ~SoftwareImageDecodeCache() override;
 
   // ImageDecodeCache overrides.
-  bool GetTaskForImageAndRef(const DrawImage& image,
-                             const TracingInfo& tracing_info,
-                             scoped_refptr<TileTask>* task) override;
-  bool GetOutOfRasterDecodeTaskForImageAndRef(
-      const DrawImage& image,
-      scoped_refptr<TileTask>* task) override;
+  TaskResult GetTaskForImageAndRef(const DrawImage& image,
+                                   const TracingInfo& tracing_info) override;
+  TaskResult GetOutOfRasterDecodeTaskForImageAndRef(
+      const DrawImage& image) override;
   void UnrefImage(const DrawImage& image) override;
   DecodedDrawImage GetDecodedImageForDraw(const DrawImage& image) override;
   void DrawWithImageFinished(const DrawImage& image,
@@ -140,6 +137,8 @@ class CC_EXPORT SoftwareImageDecodeCache
   void SetShouldAggressivelyFreeResources(
       bool aggressively_free_resources) override {}
   void ClearCache() override;
+  size_t GetMaximumMemoryLimitBytes() const override;
+  void NotifyImageUnused(const PaintImage::FrameKey& frame_key) override;
 
   // Decode the given image and store it in the cache. This is only called by an
   // image decode task from a worker thread.
@@ -162,8 +161,7 @@ class CC_EXPORT SoftwareImageDecodeCache
    public:
     DecodedImage(const SkImageInfo& info,
                  std::unique_ptr<base::DiscardableMemory> memory,
-                 const SkSize& src_rect_offset,
-                 uint64_t tracing_id);
+                 const SkSize& src_rect_offset);
     ~DecodedImage();
 
     const sk_sp<SkImage>& image() const {
@@ -186,6 +184,7 @@ class CC_EXPORT SoftwareImageDecodeCache
     // scaled image. Either case represents this decode as being valuable and
     // not wasted.
     void mark_used() { usage_stats_.used = true; }
+    void mark_out_of_raster() { usage_stats_.first_lock_out_of_raster = true; }
 
    private:
     struct UsageStats {
@@ -195,6 +194,7 @@ class CC_EXPORT SoftwareImageDecodeCache
       bool used = false;
       bool last_lock_failed = false;
       bool first_lock_wasted = false;
+      bool first_lock_out_of_raster = false;
     };
 
     bool locked_;
@@ -220,7 +220,7 @@ class CC_EXPORT SoftwareImageDecodeCache
     size_t GetCurrentUsageSafe() const;
 
    private:
-    size_t limit_bytes_;
+    const size_t limit_bytes_;
     base::CheckedNumeric<size_t> current_usage_bytes_;
   };
 
@@ -249,31 +249,29 @@ class CC_EXPORT SoftwareImageDecodeCache
   DecodedDrawImage GetDecodedImageForDrawInternal(const ImageKey& key,
                                                   const DrawImage& draw_image);
 
-  // GetOriginalSizeImageDecode is called by DecodeImageInternal when the
+  // GetExactSizeImageDecode is called by DecodeImageInternal when the
   // quality does not scale the image. Like DecodeImageInternal, it should be
   // called with no lock acquired and it returns nullptr if the decoding failed.
-  std::unique_ptr<DecodedImage> GetOriginalSizeImageDecode(
+  std::unique_ptr<DecodedImage> GetExactSizeImageDecode(
       const ImageKey& key,
-      sk_sp<const SkImage> image);
+      const PaintImage& image);
 
-  // GetSubrectImageDecode is similar to GetOriginalSizeImageDecode in that no
-  // scale is performed on the image. However, we extract a subrect (copy it
+  // GetSubrectImageDecode is similar to GetExactSizeImageDecode in that the
+  // image is decoded to exact scale. However, we extract a subrect (copy it
   // out) and only return this subrect in order to cache a smaller amount of
-  // memory. Note that this uses GetOriginalSizeImageDecode to get the initial
+  // memory. Note that this uses GetExactSizeImageDecode to get the initial
   // data, which ensures that we cache an unlocked version of the original image
   // in case we need to extract multiple subrects (as would be the case in an
   // atlas).
-  std::unique_ptr<DecodedImage> GetSubrectImageDecode(
-      const ImageKey& key,
-      sk_sp<const SkImage> image);
+  std::unique_ptr<DecodedImage> GetSubrectImageDecode(const ImageKey& key,
+                                                      const PaintImage& image);
 
   // GetScaledImageDecode is called by DecodeImageInternal when the quality
   // requires the image be scaled. Like DecodeImageInternal, it should be
   // called with no lock acquired and it returns nullptr if the decoding or
   // scaling failed.
-  std::unique_ptr<DecodedImage> GetScaledImageDecode(
-      const ImageKey& key,
-      sk_sp<const SkImage> image);
+  std::unique_ptr<DecodedImage> GetScaledImageDecode(const ImageKey& key,
+                                                     const PaintImage& image);
 
   void RefImage(const ImageKey& key);
   void RefAtRasterImage(const ImageKey& key);
@@ -294,10 +292,14 @@ class CC_EXPORT SoftwareImageDecodeCache
 
   // Helper method to get the different tasks. Note that this should be used as
   // if it was public (ie, all of the locks need to be properly acquired).
-  bool GetTaskForImageAndRefInternal(const DrawImage& image,
-                                     const TracingInfo& tracing_info,
-                                     DecodeTaskType type,
-                                     scoped_refptr<TileTask>* task);
+  TaskResult GetTaskForImageAndRefInternal(const DrawImage& image,
+                                           const TracingInfo& tracing_info,
+                                           DecodeTaskType type);
+
+  void CacheDecodedImages(const ImageKey& key,
+                          std::unique_ptr<DecodedImage> decoded_image);
+  void CleanupDecodedImagesCache(const ImageKey& key,
+                                 ImageMRUCache::iterator it);
 
   std::unordered_map<ImageKey, scoped_refptr<TileTask>, ImageKeyHash>
       pending_in_raster_image_tasks_;
@@ -306,11 +308,20 @@ class CC_EXPORT SoftwareImageDecodeCache
 
   // The members below this comment can only be accessed if the lock is held to
   // ensure that they are safe to access on multiple threads.
+  // The exception is accessing |locked_images_budget_.total_limit_bytes()|,
+  // which is const and thread safe.
   base::Lock lock_;
 
   // Decoded images and ref counts (predecode path).
   ImageMRUCache decoded_images_;
   std::unordered_map<ImageKey, int, ImageKeyHash> decoded_images_ref_counts_;
+
+  // A map of PaintImage::FrameKey to the ImageKeys for cached decodes of this
+  // PaintImage.
+  std::unordered_map<PaintImage::FrameKey,
+                     std::vector<ImageKey>,
+                     PaintImage::FrameKeyHash>
+      frame_key_to_image_keys_;
 
   // Decoded image and ref counts (at-raster decode path).
   ImageMRUCache at_raster_decoded_images_;
@@ -319,11 +330,11 @@ class CC_EXPORT SoftwareImageDecodeCache
 
   MemoryBudget locked_images_budget_;
 
-  ResourceFormat format_;
+  SkColorType color_type_;
   size_t max_items_in_cache_;
-
-  // Used to uniquely identify DecodedImages for memory traces.
-  base::AtomicSequenceNumber next_tracing_id_;
+  // Records the maximum number of items in the cache over the lifetime of the
+  // cache. This is updated anytime we are requested to reduce cache usage.
+  size_t lifetime_max_items_in_cache_ = 0u;
 };
 
 }  // namespace cc

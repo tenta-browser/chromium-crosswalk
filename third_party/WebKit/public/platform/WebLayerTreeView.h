@@ -32,8 +32,14 @@
 #include "WebCompositorMutatorClient.h"
 #include "WebEventListenerProperties.h"
 #include "WebFloatPoint.h"
+#include "WebImageLayer.h"
+#include "WebOverscrollBehavior.h"
 #include "WebSize.h"
-#include "cc/surfaces/frame_sink_id.h"
+#include "base/callback.h"
+#include "components/viz/common/surfaces/frame_sink_id.h"
+
+#include "third_party/skia/include/core/SkImage.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 
 namespace cc {
 class AnimationHost;
@@ -49,6 +55,21 @@ class WebSelection;
 
 class WebLayerTreeView {
  public:
+  // SwapResult mirrors the values of cc::SwapPromise::DidNotSwapReason, and
+  // should be kept consistent with it. SwapResult additionally adds a success
+  // value (kDidSwap).
+  // These values are written to logs. New enum values can be added, but
+  // existing enums must never be renumbered, deleted or reused.
+  enum SwapResult {
+    kDidSwap = 0,
+    kDidNotSwapSwapFails = 1,
+    kDidNotSwapCommitFails = 2,
+    kDidNotSwapCommitNoUpdate = 3,
+    kDidNotSwapActivationFails = 4,
+    kSwapResultMax,
+  };
+  using ReportTimeCallback = base::Callback<void(SwapResult, double)>;
+
   virtual ~WebLayerTreeView() {}
 
   // Initialization and lifecycle --------------------------------------
@@ -63,7 +84,6 @@ class WebLayerTreeView {
   // View properties ---------------------------------------------------
 
   // Viewport size is given in physical pixels.
-  virtual void SetViewportSize(const WebSize& device_viewport_size) {}
   virtual WebSize GetViewportSize() const { return WebSize(); }
 
   virtual void SetDeviceScaleFactor(float) {}
@@ -72,7 +92,7 @@ class WebLayerTreeView {
   virtual void SetBackgroundColor(WebColor) {}
 
   // Sets whether this view is visible. In threaded mode, a view that is not
-  // visible will not composite or trigger updateAnimations() or layout() calls
+  // visible will not composite or trigger UpdateAnimations() or Layout() calls
   // until it becomes visible.
   virtual void SetVisible(bool) {}
 
@@ -106,9 +126,18 @@ class WebLayerTreeView {
                                           WebBrowserControlsState current,
                                           bool animate) {}
 
-  // Set browser controls height. If |shrinkViewport| is set to true, then Blink
-  // shrunk the viewport clip layers by the browser controls height.
-  virtual void SetBrowserControlsHeight(float height, bool shrink_viewport) {}
+  // Set browser controls height. If |shrink_viewport| is set to true, then
+  // Blink shrunk the viewport clip layers by the top and bottom browser
+  // controls height. Top controls will translate the web page down and do not
+  // immediately scroll when hiding. The bottom controls scroll immediately and
+  // never translate the content (only clip it).
+  virtual void SetBrowserControlsHeight(float top_height,
+                                        float bottom_height,
+                                        bool shrink_viewport) {}
+
+  // Set the browser's behavior when overscroll happens, e.g. whether to glow
+  // or navigate.
+  virtual void SetOverscrollBehavior(const WebOverscrollBehavior&) {}
 
   // Flow control and scheduling ---------------------------------------
 
@@ -132,12 +161,17 @@ class WebLayerTreeView {
   // Prevents updates to layer tree from becoming visible.
   virtual void SetDeferCommits(bool defer_commits) {}
 
+  struct ViewportLayers {
+    const WebLayer* overscroll_elasticity = nullptr;
+    const WebLayer* page_scale = nullptr;
+    const WebLayer* inner_viewport_container = nullptr;
+    const WebLayer* outer_viewport_container = nullptr;
+    const WebLayer* inner_viewport_scroll = nullptr;
+    const WebLayer* outer_viewport_scroll = nullptr;
+  };
+
   // Identify key viewport layers to the compositor.
-  virtual void RegisterViewportLayers(
-      const WebLayer* overscroll_elasticity_layer,
-      const WebLayer* page_scale_layer,
-      const WebLayer* inner_viewport_scroll_layer,
-      const WebLayer* outer_viewport_scroll_layer) {}
+  virtual void RegisterViewportLayers(const ViewportLayers& viewport_layers) {}
   virtual void ClearViewportLayers() {}
 
   // Used to update the active selection bounds.
@@ -158,7 +192,7 @@ class WebLayerTreeView {
   virtual void SetHaveScrollEventHandlers(bool) {}
 
   // Returns the FrameSinkId of the widget associated with this layer tree view.
-  virtual cc::FrameSinkId GetFrameSinkId() { return cc::FrameSinkId(); }
+  virtual viz::FrameSinkId GetFrameSinkId() { return viz::FrameSinkId(); }
 
   // Debugging / dangerous ---------------------------------------------
 
@@ -181,6 +215,15 @@ class WebLayerTreeView {
 
   // Toggles scroll bottleneck rects on the HUD layer
   virtual void SetShowScrollBottleneckRects(bool) {}
+
+  // ReportTimeCallback is a callback that should be fired when the
+  // corresponding Swap completes (either with DidSwap or DidNotSwap).
+  virtual void NotifySwapTime(ReportTimeCallback callback) {}
+
+  virtual void RequestBeginMainFrameNotExpected(bool new_state) {}
+
+  virtual void RequestDecode(const PaintImage& image,
+                             base::OnceCallback<void(bool)> callback) {}
 };
 
 }  // namespace blink

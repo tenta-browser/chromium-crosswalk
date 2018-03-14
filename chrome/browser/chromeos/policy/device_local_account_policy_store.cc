@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/memory/ptr_util.h"
+#include "base/sequenced_task_runner.h"
 #include "components/ownership/owner_key_util.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/core/common/external_data_fetcher.h"
@@ -62,8 +63,8 @@ void DeviceLocalAccountPolicyStore::LoadImmediately() {
   RetrievePolicyResponseType response =
       session_manager_client_->BlockingRetrieveDeviceLocalAccountPolicy(
           account_id_, &policy_blob);
-  ValidateLoadedPolicyBlob(false /*validate_in_background*/, policy_blob,
-                           response);
+  ValidateLoadedPolicyBlob(false /*validate_in_background*/, response,
+                           policy_blob);
 }
 
 void DeviceLocalAccountPolicyStore::Store(
@@ -78,8 +79,8 @@ void DeviceLocalAccountPolicyStore::Store(
 
 void DeviceLocalAccountPolicyStore::ValidateLoadedPolicyBlob(
     bool validate_in_background,
-    const std::string& policy_blob,
-    RetrievePolicyResponseType response_type) {
+    RetrievePolicyResponseType response_type,
+    const std::string& policy_blob) {
   if (response_type != RetrievePolicyResponseType::SUCCESS ||
       policy_blob.empty()) {
     status_ = CloudPolicyStore::STATUS_LOAD_ERROR;
@@ -201,7 +202,7 @@ void DeviceLocalAccountPolicyStore::Validate(
   validator->ValidateAgainstCurrentPolicy(
       policy(),
       valid_timestamp_required
-          ? CloudPolicyValidatorBase::TIMESTAMP_FULLY_VALIDATED
+          ? CloudPolicyValidatorBase::TIMESTAMP_VALIDATED
           : CloudPolicyValidatorBase::TIMESTAMP_NOT_VALIDATED,
       CloudPolicyValidatorBase::DM_TOKEN_NOT_REQUIRED,
       CloudPolicyValidatorBase::DEVICE_ID_NOT_REQUIRED);
@@ -218,10 +219,8 @@ void DeviceLocalAccountPolicyStore::Validate(
   validator->ValidateSignature(key->as_string());
 
   if (validate_in_background) {
-    // The Validator will delete itself once validation is
-    // complete.
-    validator.release()->StartValidation(
-        base::Bind(callback, key->as_string()));
+    UserCloudPolicyValidator::StartValidation(
+        std::move(validator), base::Bind(callback, key->as_string()));
   } else {
     validator->RunValidation();
 

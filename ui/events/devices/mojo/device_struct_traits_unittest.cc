@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
+
 #include "base/files/file_path.h"
 #include "base/message_loop/message_loop.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
@@ -22,20 +24,21 @@ class DeviceStructTraitsTest : public testing::Test,
 
  protected:
   mojom::DeviceStructTraitsTestPtr GetTraitsTestProxy() {
-    return traits_test_bindings_.CreateInterfacePtrAndBind(this);
+    mojom::DeviceStructTraitsTestPtr proxy;
+    traits_test_bindings_.AddBinding(this, mojo::MakeRequest(&proxy));
+    return proxy;
   }
 
  private:
   // mojom::DeviceStructTraitsTest:
   void EchoInputDevice(const InputDevice& in,
-                       const EchoInputDeviceCallback& callback) override {
-    callback.Run(in);
+                       EchoInputDeviceCallback callback) override {
+    std::move(callback).Run(in);
   }
 
-  void EchoTouchscreenDevice(
-      const TouchscreenDevice& in,
-      const EchoTouchscreenDeviceCallback& callback) override {
-    callback.Run(in);
+  void EchoTouchscreenDevice(const TouchscreenDevice& in,
+                             EchoTouchscreenDeviceCallback callback) override {
+    std::move(callback).Run(in);
   }
 
   base::MessageLoop loop_;  // A MessageLoop is needed for mojo IPC to work.
@@ -71,7 +74,8 @@ TEST_F(DeviceStructTraitsTest, TouchscreenDevice) {
                           INPUT_DEVICE_UNKNOWN,  // type
                           "Touchscreen Device",  // name
                           gfx::Size(123, 456),   // size
-                          3);                    // touch_points
+                          3,                     // touch_points
+                          true);                 // has_stylus
   // Not setting sys_path intentionally.
   input.vendor_id = 0;
   input.product_id = 0;
@@ -88,6 +92,7 @@ TEST_F(DeviceStructTraitsTest, TouchscreenDevice) {
   EXPECT_EQ(input.product_id, output.product_id);
   EXPECT_EQ(input.size, output.size);
   EXPECT_EQ(input.touch_points, output.touch_points);
+  EXPECT_EQ(input.has_stylus, output.has_stylus);
 }
 
 }  // namespace ui

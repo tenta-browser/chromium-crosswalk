@@ -82,7 +82,7 @@ void XsltUnicodeSortFunction(xsltTransformContextPtr ctxt,
           comp->number = 1;
         } else {
           xsltTransformError(
-              ctxt, 0, sorts[j],
+              ctxt, nullptr, sorts[j],
               "xsltDoSortFunction: no support for data-type = %s\n",
               comp->stype);
           comp->number = 0;  // Use default.
@@ -100,7 +100,7 @@ void XsltUnicodeSortFunction(xsltTransformContextPtr ctxt,
         } else if (xmlStrEqual(comp->order, ToXMLChar("descending"))) {
           comp->descending = 1;
         } else {
-          xsltTransformError(ctxt, 0, sorts[j],
+          xsltTransformError(ctxt, nullptr, sorts[j],
                              "xsltDoSortFunction: invalid value %s for order\n",
                              comp->order);
           comp->descending = 0;  // Use default.
@@ -113,7 +113,7 @@ void XsltUnicodeSortFunction(xsltTransformContextPtr ctxt,
 
   results_tab[0] = xsltComputeSortResult(ctxt, sorts[0]);
   for (int i = 1; i < XSLT_MAX_SORT; ++i)
-    results_tab[i] = 0;
+    results_tab[i] = nullptr;
 
   results = results_tab[0];
 
@@ -170,8 +170,8 @@ void XsltUnicodeSortFunction(xsltTransformContextPtr ctxt,
             String::FromUTF8(
                 reinterpret_cast<const char*>(results[j + incr]->stringval))
                 .AppendTo(string2);
-            tst = collator.Collate(string1.Data(), string1.size(),
-                                   string2.Data(), string2.size());
+            tst = collator.Collate(string1.data(), string1.size(),
+                                   string2.data(), string2.size());
           }
           if (descending)
             tst = -tst;
@@ -225,8 +225,8 @@ void XsltUnicodeSortFunction(xsltTransformContextPtr ctxt,
                 String::FromUTF8(
                     reinterpret_cast<const char*>(res[j + incr]->stringval))
                     .AppendTo(string2);
-                tst = collator.Collate(string1.Data(), string1.size(),
-                                       string2.Data(), string2.size());
+                tst = collator.Collate(string1.data(), string1.size(),
+                                       string2.data(), string2.size());
               }
               if (desc)
                 tst = -tst;
@@ -274,12 +274,12 @@ void XsltUnicodeSortFunction(xsltTransformContextPtr ctxt,
     if (tempstype[j] == 1) {
       // The data-type needs to be recomputed each time.
       xmlFree(const_cast<xmlChar*>(comp->stype));
-      comp->stype = 0;
+      comp->stype = nullptr;
     }
     if (temporder[j] == 1) {
       // The order needs to be recomputed each time.
       xmlFree(const_cast<xmlChar*>(comp->order));
-      comp->order = 0;
+      comp->order = nullptr;
     }
     if (results_tab[j]) {
       for (int i = 0; i < len; ++i)

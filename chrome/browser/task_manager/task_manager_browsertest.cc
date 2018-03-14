@@ -8,8 +8,10 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -17,7 +19,6 @@
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/infobars/infobar_service.h"
-#include "chrome/browser/notifications/notification.h"
 #include "chrome/browser/notifications/notification_test_util.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/profiles/profile.h"
@@ -43,6 +44,7 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/test_navigation_observer.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
 #include "net/dns/mock_host_resolver.h"
@@ -51,6 +53,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/page_transition_types.h"
+#include "url/gurl.h"
 
 using content::WebContents;
 using task_manager::browsertest_util::ColumnSpecifier;
@@ -179,16 +182,15 @@ class TaskManagerUtilityProcessBrowserTest : public TaskManagerBrowserTest {
 
 class TaskManagerMemoryCoordinatorBrowserTest : public TaskManagerBrowserTest {
  public:
-  TaskManagerMemoryCoordinatorBrowserTest() {}
-  ~TaskManagerMemoryCoordinatorBrowserTest() override {}
-
- protected:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitchASCII(switches::kEnableFeatures,
-                                    features::kMemoryCoordinator.name);
+  TaskManagerMemoryCoordinatorBrowserTest() {
+    scoped_feature_list_.InitAndEnableFeature(features::kMemoryCoordinator);
   }
 
+  ~TaskManagerMemoryCoordinatorBrowserTest() override {}
+
  private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+
   DISALLOW_COPY_AND_ASSIGN(TaskManagerMemoryCoordinatorBrowserTest);
 };
 
@@ -214,7 +216,12 @@ class TaskManagerOOPIFBrowserTest : public TaskManagerBrowserTest,
   DISALLOW_COPY_AND_ASSIGN(TaskManagerOOPIFBrowserTest);
 };
 
-INSTANTIATE_TEST_CASE_P(, TaskManagerOOPIFBrowserTest, ::testing::Bool());
+INSTANTIATE_TEST_CASE_P(DefaultIsolation,
+                        TaskManagerOOPIFBrowserTest,
+                        ::testing::Values(false));
+INSTANTIATE_TEST_CASE_P(SitePerProcess,
+                        TaskManagerOOPIFBrowserTest,
+                        ::testing::Values(true));
 
 #if defined(OS_MACOSX) || defined(OS_LINUX)
 #define MAYBE_ShutdownWhileOpen DISABLED_ShutdownWhileOpen
@@ -632,6 +639,9 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, WebWorkerJSHeapMemory) {
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerStatToExceed(
       MatchTab("title1.html"), ColumnSpecifier::V8_MEMORY_USED,
       minimal_heap_size));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerStatToExceed(
+      MatchTab("title1.html"), ColumnSpecifier::MEMORY_FOOTPRINT,
+      minimal_heap_size));
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchAnyTab()));
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchTab("title1.html")));
 }
@@ -663,6 +673,80 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, JSHeapMemory) {
       minimal_heap_size));
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchAnyTab()));
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchTab("title1.html")));
+}
+
+IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, SentDataObserved) {
+  ShowTaskManager();
+  GURL test_gurl = embedded_test_server()->GetURL("/title1.html");
+
+  ui_test_utils::NavigateToURL(browser(), test_gurl);
+  std::string test_js = R"(
+      document.title = 'network use';
+      var mem = new Uint8Array(16 << 20);
+      for (var i = 0; i < mem.length; i += 16) {
+        mem[i] = i;
+      }
+      var formData = new FormData();
+      formData.append('StringKey1', new Blob([mem]));
+      var request =
+          new Request(location.href, {method: 'POST', body: formData});
+      fetch(request).then(response => response.text());
+      )";
+
+  browser()
+      ->tab_strip_model()
+      ->GetActiveWebContents()
+      ->GetMainFrame()
+      ->ExecuteJavaScriptForTests(base::UTF8ToUTF16(test_js));
+  // TODO(cburn): The assertion below currently assumes that the rate
+  // contribution of the entire 16MB upload arrives in a single refresh cycle.
+  // That's true now because it's only reported when the transaction completes,
+  // but if that changes in the future, this assertion may need to change.
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerStatToExceed(
+      MatchTab("network use"), ColumnSpecifier::NETWORK_USE, 16000000));
+}
+
+IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, TotalSentDataObserved) {
+  ShowTaskManager();
+  GURL test_gurl = embedded_test_server()->GetURL("/title1.html");
+
+  ui_test_utils::NavigateToURL(browser(), test_gurl);
+  std::string test_js = R"(
+      document.title = 'network use';
+      var mem = new Uint8Array(16 << 20);
+      for (var i = 0; i < mem.length; i += 16) {
+        mem[i] = i;
+      }
+      var formData = new FormData();
+      formData.append('StringKey1', new Blob([mem]));
+      var request =
+          new Request(location.href, {method: 'POST', body: formData});
+      fetch(request).then(response => response.text());
+      )";
+
+  browser()
+      ->tab_strip_model()
+      ->GetActiveWebContents()
+      ->GetMainFrame()
+      ->ExecuteJavaScriptForTests(base::UTF8ToUTF16(test_js));
+
+  // This test uses |setTimeout| to exceed the Nyquist ratio to ensure that at
+  // least 1 refresh has happened of no traffic.
+  test_js = R"(
+      var request =
+          new Request(location.href, {method: 'POST', body: formData});
+      setTimeout(
+          () => {fetch(request).then(response => response.text())}, 2000);
+      )";
+
+  browser()
+      ->tab_strip_model()
+      ->GetActiveWebContents()
+      ->GetMainFrame()
+      ->ExecuteJavaScriptForTests(base::UTF8ToUTF16(test_js));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerStatToExceed(
+      MatchTab("network use"), ColumnSpecifier::TOTAL_NETWORK_USE,
+      16000000 * 2));
 }
 
 // Checks that task manager counts idle wakeups.
@@ -786,9 +870,116 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, DevToolsOldUndockedWindow) {
   DevToolsWindowTesting::CloseDevToolsWindowSync(devtools);
 }
 
+IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, HistoryNavigationInNewTab) {
+  ShowTaskManager();
+
+  ui_test_utils::NavigateToURL(browser(), GetTestURL());
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchTab("title1.html")));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchAnyTab()));
+
+  ui_test_utils::NavigateToURL(browser(), GURL("about:version"));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchTab("About Version")));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchAnyTab()));
+
+  chrome::GoBack(browser(), WindowOpenDisposition::NEW_BACKGROUND_TAB);
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchTab("About Version")));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchTab("title1.html")));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(2, MatchAnyTab()));
+
+  // In http://crbug.com/738169, the task_manager::Task for the background tab
+  // was created with process id 0, resulting in zero values for all process
+  // metrics. Ensure that this is not the case.
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerStatToExceed(
+      MatchTab("title1.html"), ColumnSpecifier::PROCESS_ID,
+      base::kNullProcessId));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerStatToExceed(
+      MatchTab("title1.html"), ColumnSpecifier::MEMORY_FOOTPRINT, 1000));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerStatToExceed(
+      MatchTab("About Version"), ColumnSpecifier::MEMORY_FOOTPRINT, 1000));
+}
+
+IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest, SubframeHistoryNavigation) {
+  if (!ShouldExpectSubframes())
+    return;  // This test is lame without OOPIFs.
+
+  ShowTaskManager();
+
+  // This URL will have two out-of-process iframe processes (for b.com and
+  // c.com) under --site-per-process: it's an a.com page containing a b.com
+  // <iframe> containing a b.com <iframe> containing a c.com <iframe>.
+  ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(
+                     "a.com", "/cross_site_iframe_factory.html?a(b(b(c)))"));
+
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(1, MatchTab("Cross-site iframe factory")));
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(1, MatchSubframe("http://b.com/")));
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(1, MatchSubframe("http://c.com/")));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(2, MatchAnySubframe()));
+
+  GURL d_url = embedded_test_server()->GetURL(
+      "d.com", "/cross_site_iframe_factory.html?d(e)");
+  ASSERT_TRUE(content::ExecuteScript(
+      browser()->tab_strip_model()->GetActiveWebContents()->GetMainFrame(),
+      "frames[0][0].location.href = '" + d_url.spec() + "';"));
+
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(0, MatchSubframe("http://c.com/")));
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(1, MatchSubframe("http://d.com/")));
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(1, MatchSubframe("http://e.com/")));
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(1, MatchSubframe("http://b.com/")));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(3, MatchAnySubframe()));
+
+  chrome::GoBack(browser(), WindowOpenDisposition::CURRENT_TAB);
+
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(1, MatchSubframe("http://c.com/")));
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(0, MatchSubframe("http://d.com/")));
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(0, MatchSubframe("http://e.com/")));
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(1, MatchSubframe("http://b.com/")));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(2, MatchAnySubframe()));
+
+  chrome::GoForward(browser(), WindowOpenDisposition::CURRENT_TAB);
+
+  // When the subframe appears in the cloned process, it must have a valid
+  // process ID.
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerStatToExceed(
+      MatchSubframe("http://d.com/"), ColumnSpecifier::PROCESS_ID,
+      base::kNullProcessId));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerStatToExceed(
+      MatchSubframe("http://e.com/"), ColumnSpecifier::PROCESS_ID,
+      base::kNullProcessId));
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(0, MatchSubframe("http://c.com/")));
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(1, MatchSubframe("http://d.com/")));
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(1, MatchSubframe("http://e.com/")));
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTaskManagerRows(1, MatchSubframe("http://b.com/")));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(3, MatchAnySubframe()));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchAnyTab()));
+
+  // Subframe processes should report some amount of physical memory usage.
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerStatToExceed(
+      MatchSubframe("http://d.com/"), ColumnSpecifier::MEMORY_FOOTPRINT, 1000));
+  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerStatToExceed(
+      MatchSubframe("http://e.com/"), ColumnSpecifier::MEMORY_FOOTPRINT, 1000));
+}
+
 IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest, KillSubframe) {
   ShowTaskManager();
 
+  content::TestNavigationObserver navigation_observer(
+      browser()->tab_strip_model()->GetActiveWebContents());
   GURL main_url(embedded_test_server()->GetURL(
       "/cross-site/a.com/iframe_cross_site.html"));
   browser()->OpenURL(content::OpenURLParams(main_url, content::Referrer(),
@@ -799,6 +990,7 @@ IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest, KillSubframe) {
       WaitForTaskManagerRows(1, MatchTab("cross-site iframe test")));
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchAnyTab()));
 
+  GURL b_url;
   if (!ShouldExpectSubframes()) {
     ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(0, MatchAnySubframe()));
   } else {
@@ -807,10 +999,22 @@ IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest, KillSubframe) {
     ASSERT_NO_FATAL_FAILURE(
         WaitForTaskManagerRows(1, MatchSubframe("http://c.com/")));
     ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(2, MatchAnySubframe()));
+
+    // Remember |b_url| to be able to later renavigate to the same URL without
+    // doing any process swaps (we want to avoid redirects that would happen
+    // when going through /cross-site/foo.com/..., because
+    // https://crbug.com/642958 wouldn't repro in presence of process swaps).
+    navigation_observer.Wait();
+    b_url = browser()
+                ->tab_strip_model()
+                ->GetActiveWebContents()
+                ->GetAllFrames()[1]
+                ->GetLastCommittedURL();
+    ASSERT_EQ(b_url.host(), "b.com");  // Sanity check of test code / setup.
+
     int subframe_b = FindResourceIndex(MatchSubframe("http://b.com/"));
     ASSERT_NE(-1, subframe_b);
     ASSERT_NE(-1, model()->GetTabId(subframe_b));
-
     model()->Kill(subframe_b);
 
     ASSERT_NO_FATAL_FAILURE(
@@ -833,6 +1037,19 @@ IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest, KillSubframe) {
     ASSERT_NO_FATAL_FAILURE(
         WaitForTaskManagerRows(1, MatchSubframe("http://c.com/")));
     ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchAnySubframe()));
+    ASSERT_NO_FATAL_FAILURE(
+        WaitForTaskManagerRows(1, MatchTab("cross-site iframe test")));
+
+    // Reload the subframe and verify it has re-appeared in the task manager.
+    // This is a regression test for https://crbug.com/642958.
+    ASSERT_TRUE(content::ExecuteScript(
+        browser()->tab_strip_model()->GetActiveWebContents()->GetMainFrame(),
+        "document.getElementById('frame1').src = '" + b_url.spec() + "';"));
+    ASSERT_NO_FATAL_FAILURE(
+        WaitForTaskManagerRows(1, MatchSubframe("http://b.com/")));
+    ASSERT_NO_FATAL_FAILURE(
+        WaitForTaskManagerRows(1, MatchSubframe("http://c.com/")));
+    ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(2, MatchAnySubframe()));
     ASSERT_NO_FATAL_FAILURE(
         WaitForTaskManagerRows(1, MatchTab("cross-site iframe test")));
   }
@@ -945,6 +1162,8 @@ IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest,
 
   // Navigate the tab to a page on a.com with cross-process subframes to
   // b.com and c.com.
+  content::TestNavigationObserver navigation_observer(
+      browser()->tab_strip_model()->GetActiveWebContents());
   GURL a_dotcom(embedded_test_server()->GetURL(
       "/cross-site/a.com/iframe_cross_site.html"));
   browser()->OpenURL(content::OpenURLParams(a_dotcom, content::Referrer(),
@@ -966,10 +1185,11 @@ IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest,
   }
 
   // Navigate the b.com frame back to a.com. It is no longer a cross-site iframe
+  navigation_observer.Wait();
   ASSERT_TRUE(content::ExecuteScript(
       browser()->tab_strip_model()->GetActiveWebContents()->GetMainFrame(),
-      "document.getElementById('frame1').src='/title1.html';"
-      "document.title='aac';"));
+      R"( document.getElementById('frame1').src='/title1.html';
+          document.title='aac'; )"));
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchTab("aac")));
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchAnyTab()));
   if (!ShouldExpectSubframes()) {
@@ -1044,14 +1264,7 @@ IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest,
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(0, MatchAnySubframe()));
 }
 
-// Flaky on Linux http://crbug.com/700684
-#if defined(OS_LINUX)
-#define MAYBE_OrderingOfDependentRows DISABLED_OrderingOfDependentRows
-#else
-#define MAYBE_OrderingOfDependentRows OrderingOfDependentRows
-#endif
-IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest,
-                       MAYBE_OrderingOfDependentRows) {
+IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest, OrderingOfDependentRows) {
   ShowTaskManager();
 
   GURL a_with_frames(embedded_test_server()->GetURL(

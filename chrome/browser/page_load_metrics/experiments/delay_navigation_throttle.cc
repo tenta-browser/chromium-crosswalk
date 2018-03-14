@@ -113,10 +113,14 @@ DelayNavigationThrottle::WillStartRequest() {
   delay_start_time_ = base::TimeTicks::Now();
   task_runner_->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&DelayNavigationThrottle::OnDelayComplete,
-                 weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(&DelayNavigationThrottle::OnDelayComplete,
+                     weak_ptr_factory_.GetWeakPtr()),
       navigation_delay_);
   return content::NavigationThrottle::DEFER;
+}
+
+const char* DelayNavigationThrottle::GetNameForLogging() {
+  return "DelayNavigationThrottle";
 }
 
 void DelayNavigationThrottle::OnDelayComplete() {
@@ -133,5 +137,5 @@ void DelayNavigationThrottle::OnDelayComplete() {
                                         actual_delay);
   }
 
-  navigation_handle()->Resume();
+  Resume();
 }

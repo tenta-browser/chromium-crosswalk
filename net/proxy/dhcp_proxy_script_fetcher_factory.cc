@@ -4,7 +4,6 @@
 
 #include "net/proxy/dhcp_proxy_script_fetcher_factory.h"
 
-#include "base/memory/ptr_util.h"
 #include "net/base/net_errors.h"
 #include "net/proxy/dhcp_proxy_script_fetcher.h"
 
@@ -14,42 +13,16 @@
 
 namespace net {
 
-DhcpProxyScriptFetcherFactory::DhcpProxyScriptFetcherFactory()
-    : feature_enabled_(false) {
-  set_enabled(true);
-}
+DhcpProxyScriptFetcherFactory::DhcpProxyScriptFetcherFactory() {}
+
+DhcpProxyScriptFetcherFactory::~DhcpProxyScriptFetcherFactory() {}
 
 std::unique_ptr<DhcpProxyScriptFetcher> DhcpProxyScriptFetcherFactory::Create(
     URLRequestContext* context) {
-  if (!feature_enabled_) {
-    return base::MakeUnique<DoNothingDhcpProxyScriptFetcher>();
-  } else {
-    DCHECK(IsSupported());
-    std::unique_ptr<DhcpProxyScriptFetcher> ret;
 #if defined(OS_WIN)
-    ret.reset(new DhcpProxyScriptFetcherWin(context));
-#endif
-    DCHECK(ret);
-    return ret;
-  }
-}
-
-void DhcpProxyScriptFetcherFactory::set_enabled(bool enabled) {
-  if (IsSupported()) {
-    feature_enabled_ = enabled;
-  }
-}
-
-bool DhcpProxyScriptFetcherFactory::enabled() const {
-  return feature_enabled_;
-}
-
-// static
-bool DhcpProxyScriptFetcherFactory::IsSupported() {
-#if defined(OS_WIN)
-  return true;
+  return std::make_unique<DhcpProxyScriptFetcherWin>(context);
 #else
-  return false;
+  return std::make_unique<DoNothingDhcpProxyScriptFetcher>();
 #endif
 }
 

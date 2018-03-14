@@ -7,6 +7,7 @@
 import datetime
 import logging
 
+from webkitpy.common.path_finder import PathFinder
 from webkitpy.layout_tests.servers import server_base
 
 
@@ -32,15 +33,16 @@ class WPTServe(server_base.ServerBase):
         fs = self._filesystem
         self._pid_file = fs.join(self._runtime_path, '%s.pid' % self._name)
 
-        path_to_thirdparty = self._port_obj.path_from_webkit_base('Tools', 'Scripts', 'webkitpy', 'thirdparty')
-        path_to_wpt_support = self._port_obj.path_from_webkit_base('Tools', 'Scripts', 'webkitpy', 'thirdparty', 'wpt')
+        finder = PathFinder(fs)
+        path_to_thirdparty = finder.path_from_tools_scripts('webkitpy', 'thirdparty')
+        path_to_wpt_support = finder.path_from_tools_scripts('webkitpy', 'thirdparty', 'wpt')
         path_to_wpt_root = fs.join(path_to_wpt_support, 'wpt')
         path_to_wpt_config = fs.join(path_to_wpt_support, 'wpt.config.json')
         path_to_wpt_tests = fs.abspath(fs.join(self._port_obj.layout_tests_dir(), 'external', 'wpt'))
         path_to_ws_handlers = fs.join(path_to_wpt_tests, 'websockets', 'handlers')
-        serve_script = fs.join(path_to_wpt_root, 'serve')
+        wpt_script = fs.join(path_to_wpt_root, 'wpt')
         start_cmd = [self._port_obj.host.executable,
-                     '-u', serve_script,
+                     '-u', wpt_script, 'serve',
                      '--config', path_to_wpt_config,
                      '--doc_root', path_to_wpt_tests]
 

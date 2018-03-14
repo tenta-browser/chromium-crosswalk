@@ -6,16 +6,16 @@
 
 #include <memory>
 #include "core/dom/DOMNodeIds.h"
+#include "core/dom/NodeComputedStyle.h"
 #include "core/events/GestureEvent.h"
 #include "core/frame/BrowserControls.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/HTMLFrameOwnerElement.h"
 #include "core/input/EventHandler.h"
 #include "core/input/EventHandlingUtil.h"
 #include "core/layout/LayoutBlock.h"
-#include "core/layout/LayoutPart.h"
+#include "core/layout/LayoutEmbeddedContent.h"
 #include "core/layout/api/LayoutViewItem.h"
-#include "core/loader/DocumentLoader.h"
 #include "core/page/AutoscrollController.h"
 #include "core/page/Page.h"
 #include "core/page/scrolling/OverscrollController.h"
@@ -23,8 +23,7 @@
 #include "core/page/scrolling/ScrollState.h"
 #include "core/paint/PaintLayer.h"
 #include "platform/Histogram.h"
-#include "platform/RuntimeEnabledFeatures.h"
-#include "wtf/PtrUtil.h"
+#include "platform/wtf/PtrUtil.h"
 
 namespace blink {
 
@@ -33,14 +32,14 @@ ScrollManager::ScrollManager(LocalFrame& frame) : frame_(frame) {
 }
 
 void ScrollManager::Clear() {
-  last_gesture_scroll_over_frame_view_base_ = false;
+  last_gesture_scroll_over_embedded_content_view_ = false;
   scrollbar_handling_scroll_gesture_ = nullptr;
   resize_scrollable_area_ = nullptr;
   offset_from_resize_corner_ = LayoutSize();
   ClearGestureScrollState();
 }
 
-DEFINE_TRACE(ScrollManager) {
+void ScrollManager::Trace(blink::Visitor* visitor) {
   visitor->Trace(frame_);
   visitor->Trace(scroll_gesture_handling_node_);
   visitor->Trace(previous_gesture_scrolled_element_);
@@ -66,6 +65,11 @@ void ScrollManager::StopAutoscroll() {
     controller->StopAutoscroll();
 }
 
+void ScrollManager::StopMiddleClickAutoscroll() {
+  if (AutoscrollController* controller = GetAutoscrollController())
+    controller->StopMiddleClickAutoscroll(frame_);
+}
+
 bool ScrollManager::MiddleClickAutoscrollInProgress() const {
   return GetAutoscrollController() &&
          GetAutoscrollController()->MiddleClickAutoscrollInProgress();
@@ -77,8 +81,23 @@ AutoscrollController* ScrollManager::GetAutoscrollController() const {
   return nullptr;
 }
 
+static bool CanPropagate(const ScrollState& scroll_state,
+                         const Element& element) {
+  if (!element.GetLayoutBox()->GetScrollableArea())
+    return true;
+
+  return (scroll_state.deltaXHint() == 0 ||
+          element.GetComputedStyle()->OverscrollBehaviorX() ==
+              EOverscrollBehavior::kAuto) &&
+         (scroll_state.deltaYHint() == 0 ||
+          element.GetComputedStyle()->OverscrollBehaviorY() ==
+              EOverscrollBehavior::kAuto);
+}
+
 void ScrollManager::RecomputeScrollChain(const Node& start_node,
+                                         const ScrollState& scroll_state,
                                          std::deque<int>& scroll_chain) {
+  DCHECK(!scroll_chain.size());
   scroll_chain.clear();
 
   DCHECK(start_node.GetLayoutObject());
@@ -103,14 +122,54 @@ void ScrollManager::RecomputeScrollChain(const Node& start_node,
     }
 
     if (cur_element) {
-      scroll_chain.push_front(DOMNodeIds::IdForNode(cur_element));
+      if (CanScroll(scroll_state, *cur_element))
+        scroll_chain.push_front(DOMNodeIds::IdForNode(cur_element));
       if (IsViewportScrollingElement(*cur_element) ||
           cur_element == document_element)
+        break;
+
+      if (!CanPropagate(scroll_state, *cur_element))
         break;
     }
 
     cur_box = cur_box->ContainingBlock();
   }
+}
+
+bool ScrollManager::CanScroll(const ScrollState& scroll_state,
+                              const Element& current_element) {
+  const double delta_x = scroll_state.isBeginning() ? scroll_state.deltaXHint()
+                                                    : scroll_state.deltaX();
+  const double delta_y = scroll_state.isBeginning() ? scroll_state.deltaYHint()
+                                                    : scroll_state.deltaY();
+  if (!delta_x && !delta_y)
+    return true;
+
+  ScrollableArea* scrollable_area = nullptr;
+
+  if (IsViewportScrollingElement(current_element) ||
+      current_element == *(frame_->GetDocument()->documentElement())) {
+    if (!frame_->Tree().Parent() || frame_->Tree().Parent()->IsLocalFrame())
+      return true;
+
+    // For oopif the viewport is added to scroll chain only if it can actually
+    // consume some delta hints.
+    DCHECK(frame_->Tree().Parent()->IsRemoteFrame());
+    scrollable_area =
+        frame_->View() ? frame_->View()->GetScrollableArea() : nullptr;
+  }
+
+  if (!scrollable_area && current_element.GetLayoutBox())
+    scrollable_area = current_element.GetLayoutBox()->GetScrollableArea();
+
+  if (!scrollable_area)
+    return false;
+
+  ScrollOffset current_offset = scrollable_area->GetScrollOffset();
+  ScrollOffset target_offset = current_offset + ScrollOffset(delta_x, delta_y);
+  ScrollOffset clamped_offset =
+      scrollable_area->ClampScrollOffset(target_offset);
+  return clamped_offset != current_offset;
 }
 
 bool ScrollManager::LogicalScroll(ScrollDirection direction,
@@ -143,10 +202,8 @@ bool ScrollManager::LogicalScroll(ScrollDirection direction,
     ScrollResult result =
         cur_box->Scroll(granularity, ToScrollDelta(physical_direction, 1));
 
-    if (result.DidScroll()) {
-      SetFrameWasScrolledByUser();
+    if (result.DidScroll())
       return true;
-    }
 
     cur_box = cur_box->ContainingBlock();
   }
@@ -177,36 +234,28 @@ bool ScrollManager::BubblingScroll(ScrollDirection direction,
       .BubblingScroll(direction, granularity, frame_->DeprecatedLocalOwner());
 }
 
-void ScrollManager::SetFrameWasScrolledByUser() {
-  if (DocumentLoader* document_loader = frame_->Loader().GetDocumentLoader())
-    document_loader->GetInitialScrollState().was_scrolled_by_user = true;
-}
-
-void ScrollManager::CustomizedScroll(const Node& start_node,
-                                     ScrollState& scroll_state) {
+void ScrollManager::CustomizedScroll(ScrollState& scroll_state) {
   if (scroll_state.FullyConsumed())
     return;
 
   if (scroll_state.deltaX() || scroll_state.deltaY())
     frame_->GetDocument()->UpdateStyleAndLayoutIgnorePendingStylesheets();
 
-  if (current_scroll_chain_.empty())
-    RecomputeScrollChain(start_node, current_scroll_chain_);
+  DCHECK(!current_scroll_chain_.empty());
   scroll_state.SetScrollChain(current_scroll_chain_);
 
   scroll_state.distributeToScrollChainDescendant();
 }
 
-uint32_t ScrollManager::ComputeNonCompositedMainThreadScrollingReasons() {
+void ScrollManager::ComputeScrollRelatedMetrics(
+    uint32_t* non_composited_main_thread_scrolling_reasons) {
   // When scrolling on the main thread, the scrollableArea may or may not be
   // composited. Either way, we have recorded either the reasons stored in
   // its layer or the reason NonFastScrollableRegion from the compositor
   // side. Here we record scrolls that occurred on main thread due to a
   // non-composited scroller.
-  if (!scroll_gesture_handling_node_->GetLayoutObject() || !frame_->View())
-    return 0;
-
-  uint32_t non_composited_main_thread_scrolling_reasons = 0;
+  if (!scroll_gesture_handling_node_->GetLayoutObject())
+    return;
 
   for (auto* cur_box =
            scroll_gesture_handling_node_->GetLayoutObject()->EnclosingBox();
@@ -218,41 +267,40 @@ uint32_t ScrollManager::ComputeNonCompositedMainThreadScrollingReasons() {
 
     DCHECK(!scrollable_area->UsesCompositedScrolling() ||
            !scrollable_area->GetNonCompositedMainThreadScrollingReasons());
-    non_composited_main_thread_scrolling_reasons |=
+    *non_composited_main_thread_scrolling_reasons |=
         scrollable_area->GetNonCompositedMainThreadScrollingReasons();
   }
-
-  return non_composited_main_thread_scrolling_reasons;
 }
 
-void ScrollManager::RecordNonCompositedMainThreadScrollingReasons(
-    const WebGestureDevice device) {
+void ScrollManager::RecordScrollRelatedMetrics(const WebGestureDevice device) {
   if (device != kWebGestureDeviceTouchpad &&
       device != kWebGestureDeviceTouchscreen) {
     return;
   }
 
-  uint32_t reasons = ComputeNonCompositedMainThreadScrollingReasons();
-  if (!reasons)
-    return;
-  DCHECK(MainThreadScrollingReason::HasNonCompositedScrollReasons(reasons));
+  uint32_t non_composited_main_thread_scrolling_reasons = 0;
+  ComputeScrollRelatedMetrics(&non_composited_main_thread_scrolling_reasons);
 
-  uint32_t main_thread_scrolling_reason_enum_max =
-      MainThreadScrollingReason::kMainThreadScrollingReasonCount + 1;
-  for (uint32_t i = MainThreadScrollingReason::kNonCompositedReasonsFirst;
-       i <= MainThreadScrollingReason::kNonCompositedReasonsLast; ++i) {
-    unsigned val = 1 << i;
-    if (reasons & val) {
-      if (device == kWebGestureDeviceTouchscreen) {
-        DEFINE_STATIC_LOCAL(EnumerationHistogram, touch_histogram,
-                            ("Renderer4.MainThreadGestureScrollReason",
-                             main_thread_scrolling_reason_enum_max));
-        touch_histogram.Count(i + 1);
-      } else {
-        DEFINE_STATIC_LOCAL(EnumerationHistogram, wheel_histogram,
-                            ("Renderer4.MainThreadWheelScrollReason",
-                             main_thread_scrolling_reason_enum_max));
-        wheel_histogram.Count(i + 1);
+  if (non_composited_main_thread_scrolling_reasons) {
+    DCHECK(MainThreadScrollingReason::HasNonCompositedScrollReasons(
+        non_composited_main_thread_scrolling_reasons));
+    uint32_t main_thread_scrolling_reason_enum_max =
+        MainThreadScrollingReason::kMainThreadScrollingReasonCount + 1;
+    for (uint32_t i = MainThreadScrollingReason::kNonCompositedReasonsFirst;
+         i <= MainThreadScrollingReason::kNonCompositedReasonsLast; ++i) {
+      unsigned val = 1 << i;
+      if (non_composited_main_thread_scrolling_reasons & val) {
+        if (device == kWebGestureDeviceTouchscreen) {
+          DEFINE_STATIC_LOCAL(EnumerationHistogram, touch_histogram,
+                              ("Renderer4.MainThreadGestureScrollReason",
+                               main_thread_scrolling_reason_enum_max));
+          touch_histogram.Count(i + 1);
+        } else {
+          DEFINE_STATIC_LOCAL(EnumerationHistogram, wheel_histogram,
+                              ("Renderer4.MainThreadWheelScrollReason",
+                               main_thread_scrolling_reason_enum_max));
+          wheel_histogram.Count(i + 1);
+        }
       }
     }
   }
@@ -283,14 +331,16 @@ WebInputEventResult ScrollManager::HandleGestureScrollBegin(
   PassScrollGestureEvent(gesture_event,
                          scroll_gesture_handling_node_->GetLayoutObject());
 
-  RecordNonCompositedMainThreadScrollingReasons(gesture_event.source_device);
+  RecordScrollRelatedMetrics(gesture_event.source_device);
 
   current_scroll_chain_.clear();
   std::unique_ptr<ScrollStateData> scroll_state_data =
-      WTF::MakeUnique<ScrollStateData>();
+      std::make_unique<ScrollStateData>();
   IntPoint position = FlooredIntPoint(gesture_event.PositionInRootFrame());
   scroll_state_data->position_x = position.X();
   scroll_state_data->position_y = position.Y();
+  scroll_state_data->delta_x_hint = -gesture_event.DeltaXInRootFrame();
+  scroll_state_data->delta_y_hint = -gesture_event.DeltaYInRootFrame();
   scroll_state_data->is_beginning = true;
   scroll_state_data->from_user_input = true;
   scroll_state_data->is_direct_manipulation =
@@ -298,12 +348,17 @@ WebInputEventResult ScrollManager::HandleGestureScrollBegin(
   scroll_state_data->delta_consumed_for_scroll_sequence =
       delta_consumed_for_scroll_sequence_;
   ScrollState* scroll_state = ScrollState::Create(std::move(scroll_state_data));
-  CustomizedScroll(*scroll_gesture_handling_node_.Get(), *scroll_state);
+  RecomputeScrollChain(*scroll_gesture_handling_node_.Get(), *scroll_state,
+                       current_scroll_chain_);
+  if (current_scroll_chain_.empty())
+    return WebInputEventResult::kNotHandled;
+
+  CustomizedScroll(*scroll_state);
 
   if (gesture_event.source_device == kWebGestureDeviceTouchscreen)
-    UseCounter::Count(frame_->GetDocument(), UseCounter::kScrollByTouch);
+    UseCounter::Count(frame_->GetDocument(), WebFeature::kScrollByTouch);
   else
-    UseCounter::Count(frame_->GetDocument(), UseCounter::kScrollByWheel);
+    UseCounter::Count(frame_->GetDocument(), WebFeature::kScrollByWheel);
 
   return WebInputEventResult::kHandledSystem;
 }
@@ -313,8 +368,22 @@ WebInputEventResult ScrollManager::HandleGestureScrollUpdate(
   DCHECK_EQ(gesture_event.GetType(), WebInputEvent::kGestureScrollUpdate);
 
   Node* node = scroll_gesture_handling_node_.Get();
-  if (!node || !node->GetLayoutObject())
-    return WebInputEventResult::kNotHandled;
+  if (!node || !node->GetLayoutObject()) {
+    if (previous_gesture_scrolled_element_) {
+      // When the scroll_gesture_handling_node_ gets deleted in the middle of
+      // scrolling call HandleGestureScrollEvent to start scrolling a new node
+      // if possible.
+      ClearGestureScrollState();
+      WebGestureEvent scroll_begin =
+          SynthesizeGestureScrollBegin(gesture_event);
+      HandleGestureScrollEvent(scroll_begin);
+      node = scroll_gesture_handling_node_.Get();
+      if (!node || !node->GetLayoutObject())
+        return WebInputEventResult::kNotHandled;
+    } else {
+      return WebInputEventResult::kNotHandled;
+    }
+  }
 
   // Negate the deltas since the gesture event stores finger movement and
   // scrolling occurs in the direction opposite the finger's movement
@@ -340,8 +409,11 @@ WebInputEventResult ScrollManager::HandleGestureScrollUpdate(
     return result;
   }
 
+  if (current_scroll_chain_.empty())
+    return WebInputEventResult::kNotHandled;
+
   std::unique_ptr<ScrollStateData> scroll_state_data =
-      WTF::MakeUnique<ScrollStateData>();
+      std::make_unique<ScrollStateData>();
   scroll_state_data->delta_x = delta.Width();
   scroll_state_data->delta_y = delta.Height();
   scroll_state_data->delta_granularity = static_cast<double>(
@@ -350,7 +422,6 @@ WebInputEventResult ScrollManager::HandleGestureScrollUpdate(
   scroll_state_data->velocity_y = velocity.Height();
   scroll_state_data->position_x = position.X();
   scroll_state_data->position_y = position.Y();
-  scroll_state_data->should_propagate = !gesture_event.PreventPropagation();
   scroll_state_data->is_in_inertial_phase =
       gesture_event.InertialPhase() == WebGestureEvent::kMomentumPhase;
   scroll_state_data->is_direct_manipulation =
@@ -367,7 +438,8 @@ WebInputEventResult ScrollManager::HandleGestureScrollUpdate(
     scroll_state->SetCurrentNativeScrollingElement(
         previous_gesture_scrolled_element_);
   }
-  CustomizedScroll(*node, *scroll_state);
+
+  CustomizedScroll(*scroll_state);
   previous_gesture_scrolled_element_ =
       scroll_state->CurrentNativeScrollingElement();
   delta_consumed_for_scroll_sequence_ =
@@ -382,10 +454,8 @@ WebInputEventResult ScrollManager::HandleGestureScrollUpdate(
     GetPage()->GetOverscrollController().ResetAccumulated(did_scroll_x,
                                                           did_scroll_y);
 
-  if (did_scroll_x || did_scroll_y) {
-    SetFrameWasScrolledByUser();
+  if (did_scroll_x || did_scroll_y)
     return WebInputEventResult::kHandledSystem;
-  }
 
   return WebInputEventResult::kNotHandled;
 }
@@ -396,8 +466,12 @@ WebInputEventResult ScrollManager::HandleGestureScrollEnd(
 
   if (node && node->GetLayoutObject()) {
     PassScrollGestureEvent(gesture_event, node->GetLayoutObject());
+    if (current_scroll_chain_.empty()) {
+      ClearGestureScrollState();
+      return WebInputEventResult::kNotHandled;
+    }
     std::unique_ptr<ScrollStateData> scroll_state_data =
-        WTF::MakeUnique<ScrollStateData>();
+        std::make_unique<ScrollStateData>();
     scroll_state_data->is_ending = true;
     scroll_state_data->is_in_inertial_phase =
         gesture_event.InertialPhase() == WebGestureEvent::kMomentumPhase;
@@ -408,7 +482,7 @@ WebInputEventResult ScrollManager::HandleGestureScrollEnd(
         delta_consumed_for_scroll_sequence_;
     ScrollState* scroll_state =
         ScrollState::Create(std::move(scroll_state_data));
-    CustomizedScroll(*node, *scroll_state);
+    CustomizedScroll(*scroll_state);
   }
 
   ClearGestureScrollState();
@@ -424,11 +498,12 @@ WebInputEventResult ScrollManager::PassScrollGestureEvent(
     LayoutObject* layout_object) {
   DCHECK(gesture_event.IsScrollEvent());
 
-  if (!last_gesture_scroll_over_frame_view_base_ || !layout_object ||
-      !layout_object->IsLayoutPart())
+  if (!last_gesture_scroll_over_embedded_content_view_ || !layout_object ||
+      !layout_object->IsLayoutEmbeddedContent())
     return WebInputEventResult::kNotHandled;
 
-  FrameView* frame_view = ToLayoutPart(layout_object)->ChildFrameView();
+  LocalFrameView* frame_view =
+      ToLayoutEmbeddedContent(layout_object)->ChildFrameView();
 
   if (!frame_view)
     return WebInputEventResult::kNotHandled;
@@ -452,9 +527,6 @@ WebInputEventResult ScrollManager::HandleGestureScrollEvent(
   if (!frame_->View())
     return WebInputEventResult::kNotHandled;
 
-  bool enable_touchpad_scroll_latching =
-      RuntimeEnabledFeatures::touchpadAndWheelScrollLatchingEnabled();
-
   Node* event_target = nullptr;
   Scrollbar* scrollbar = nullptr;
   if (gesture_event.GetType() != WebInputEvent::kGestureScrollBegin) {
@@ -467,7 +539,7 @@ WebInputEventResult ScrollManager::HandleGestureScrollEvent(
     if (document->GetLayoutViewItem().IsNull())
       return WebInputEventResult::kNotHandled;
 
-    FrameView* view = frame_->View();
+    LocalFrameView* view = frame_->View();
     LayoutPoint view_point = view->RootFrameToContents(
         FlooredIntPoint(gesture_event.PositionInRootFrame()));
     HitTestRequest request(HitTestRequest::kReadOnly);
@@ -476,7 +548,8 @@ WebInputEventResult ScrollManager::HandleGestureScrollEvent(
 
     event_target = result.InnerNode();
 
-    last_gesture_scroll_over_frame_view_base_ = result.IsOverFrameViewBase();
+    last_gesture_scroll_over_embedded_content_view_ =
+        result.IsOverEmbeddedContentView();
     scroll_gesture_handling_node_ = event_target;
     previous_gesture_scrolled_element_ = nullptr;
     delta_consumed_for_scroll_sequence_ = false;
@@ -487,21 +560,10 @@ WebInputEventResult ScrollManager::HandleGestureScrollEvent(
 
   if (scrollbar) {
     bool should_update_capture = false;
-    // scrollbar->gestureEvent always returns true for touchpad based GSB
-    // events. Therefore, while mouse is over a fully scrolled scrollbar, GSB
-    // won't propagate to the next scrollable layer.
     if (scrollbar->GestureEvent(gesture_event, &should_update_capture)) {
       if (should_update_capture)
         scrollbar_handling_scroll_gesture_ = scrollbar;
       return WebInputEventResult::kHandledSuppressed;
-    }
-
-    // When touchpad scroll latching is enabled and mouse is over a scrollbar,
-    // GSU events will always latch to the scrollbar even when it hits the
-    // scroll content.
-    if (enable_touchpad_scroll_latching &&
-        gesture_event.GetType() == WebInputEvent::kGestureScrollUpdate) {
-      return WebInputEventResult::kNotHandled;
     }
 
     scrollbar_handling_scroll_gesture_ = nullptr;
@@ -631,6 +693,20 @@ bool ScrollManager::CanHandleGestureEvent(
     }
   }
   return false;
+}
+
+WebGestureEvent ScrollManager::SynthesizeGestureScrollBegin(
+    const WebGestureEvent& update_event) {
+  DCHECK_EQ(update_event.GetType(), WebInputEvent::kGestureScrollUpdate);
+  WebGestureEvent scroll_begin(update_event);
+  scroll_begin.SetType(WebInputEvent::kGestureScrollBegin);
+  scroll_begin.data.scroll_begin.delta_x_hint =
+      update_event.data.scroll_update.delta_x;
+  scroll_begin.data.scroll_begin.delta_y_hint =
+      update_event.data.scroll_update.delta_y;
+  scroll_begin.data.scroll_begin.delta_hint_units =
+      update_event.data.scroll_update.delta_units;
+  return scroll_begin;
 }
 
 }  // namespace blink

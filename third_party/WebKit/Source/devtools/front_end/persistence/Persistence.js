@@ -1,6 +1,7 @@
 // Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
 /**
  * @unrestricted
  */
@@ -8,7 +9,7 @@ Persistence.Persistence = class extends Common.Object {
   /**
    * @param {!Workspace.Workspace} workspace
    * @param {!Bindings.BreakpointManager} breakpointManager
-   * @param {!Workspace.FileSystemMapping} fileSystemMapping
+   * @param {!Persistence.FileSystemMapping} fileSystemMapping
    */
   constructor(workspace, breakpointManager, fileSystemMapping) {
     super();
@@ -32,7 +33,29 @@ Persistence.Persistence = class extends Common.Object {
   }
 
   /**
-   * @param {function(function(!Persistence.PersistenceBinding), function(!Persistence.PersistenceBinding)):{dispose: function()}} mappingFactory
+   * @param {boolean} enabled
+   */
+  setAutomappingEnabled(enabled) {
+    if (this._mapping instanceof Persistence.Automapping)
+      this._mapping.setEnabled(enabled);
+  }
+
+  /**
+   * @param {!Persistence.PersistenceBinding} binding
+   */
+  addBinding(binding) {
+    this._establishBinding(binding);
+  }
+
+  /**
+   * @param {!Persistence.PersistenceBinding} binding
+   */
+  removeBinding(binding) {
+    this._innerRemoveBinding(binding);
+  }
+
+  /**
+   * @param {function(function(!Persistence.PersistenceBinding), function(!Persistence.PersistenceBinding)):!Persistence.MappingSystem} mappingFactory
    */
   _setMappingForTest(mappingFactory) {
     this._mapping.dispose();
@@ -114,7 +137,7 @@ Persistence.Persistence = class extends Common.Object {
   /**
    * @param {!Persistence.PersistenceBinding} binding
    */
-  _onBindingRemoved(binding) {
+  _innerRemoveBinding(binding) {
     binding._removed = true;
     if (binding.network[Persistence.Persistence._binding] !== binding)
       return;
@@ -140,6 +163,13 @@ Persistence.Persistence = class extends Common.Object {
     this._notifyBindingEvent(binding.network);
     this._notifyBindingEvent(binding.fileSystem);
     this.dispatchEventToListeners(Persistence.Persistence.Events.BindingRemoved, binding);
+  }
+
+  /**
+   * @param {!Persistence.PersistenceBinding} binding
+   */
+  _onBindingRemoved(binding) {
+    this._innerRemoveBinding(binding);
   }
 
   /**
@@ -265,13 +295,11 @@ Persistence.Persistence = class extends Common.Object {
   hasUnsavedCommittedChanges(uiSourceCode) {
     if (this._workspace.hasResourceContentTrackingExtensions())
       return false;
-    if (uiSourceCode.url() && Workspace.fileManager.isURLSaved(uiSourceCode.url()))
-      return false;
     if (uiSourceCode.project().canSetFileContent())
       return false;
     if (uiSourceCode[Persistence.Persistence._binding])
       return false;
-    return !!uiSourceCode.history.length;
+    return !!uiSourceCode.hasCommits();
   }
 
   /**
@@ -295,7 +323,7 @@ Persistence.Persistence = class extends Common.Object {
    * @param {function()} listener
    */
   unsubscribeFromBindingEvent(uiSourceCode, listener) {
-    this._subscribedBindingEventListeners.remove(uiSourceCode, listener);
+    this._subscribedBindingEventListeners.delete(uiSourceCode, listener);
   }
 
   /**
@@ -388,6 +416,15 @@ Persistence.PersistenceBinding = class {
     this.exactMatch = exactMatch;
     this._removed = false;
   }
+};
+
+/**
+ * @interface
+ */
+Persistence.MappingSystem = function() {};
+
+Persistence.MappingSystem.prototype = {
+  dispose: function() {}
 };
 
 /** @type {!Persistence.Persistence} */

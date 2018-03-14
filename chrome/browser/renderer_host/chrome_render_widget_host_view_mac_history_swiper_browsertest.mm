@@ -20,6 +20,7 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
+#include "third_party/WebKit/public/platform/WebMouseWheelEvent.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/ocmock_extensions.h"
 #include "ui/events/base_event_utils.h"
@@ -735,6 +736,16 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderWidgetHostViewMacHistorySwiperTest,
   if (!IsHistorySwipingSupported())
     return;
 
+  content::InputEventAckWaiter wheel_end_ack_waiter(
+      GetWebContents()->GetRenderViewHost()->GetWidget(),
+      base::BindRepeating([](content::InputEventAckSource,
+                             content::InputEventAckState,
+                             const blink::WebInputEvent& event) {
+        return event.GetType() == blink::WebInputEvent::kMouseWheel &&
+               static_cast<const blink::WebMouseWheelEvent&>(event).phase ==
+                   blink::WebMouseWheelEvent::kPhaseEnded;
+      }));
+
   ui_test_utils::NavigateToURL(browser(), url_iframe_);
   ASSERT_EQ(url_iframe_, GetWebContents()->GetURL());
   QueueBeginningEvents(0, -1);
@@ -745,6 +756,10 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderWidgetHostViewMacHistorySwiperTest,
 
   QueueEndEvents();
   RunQueuedEvents();
+
+  // Wait for the scroll to end.
+  wheel_end_ack_waiter.Wait();
+
   content::WaitForLoadStop(GetWebContents());
   EXPECT_EQ(url_iframe_, GetWebContents()->GetURL());
 }

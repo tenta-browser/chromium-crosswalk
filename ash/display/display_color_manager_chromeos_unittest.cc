@@ -4,21 +4,22 @@
 
 #include "ash/display/display_color_manager_chromeos.h"
 
+#include <memory>
+
 #include "base/files/file_util.h"
-#include "base/memory/scoped_vector.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/pattern.h"
 #include "base/test/scoped_path_override.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/sequenced_worker_pool_owner.h"
 #include "chromeos/chromeos_paths.h"
 #include "components/quirks/quirks_manager.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/display/fake_display_snapshot.h"
 #include "ui/display/manager/chromeos/test/action_logger_util.h"
 #include "ui/display/manager/chromeos/test/test_native_display_delegate.h"
+#include "ui/display/manager/fake_display_snapshot.h"
 
 namespace ash {
 
@@ -33,9 +34,9 @@ const char kSetFullCTMAction[] =
 
 class DisplayColorManagerForTest : public DisplayColorManager {
  public:
-  DisplayColorManagerForTest(display::DisplayConfigurator* configurator,
-                             base::SequencedWorkerPool* blocking_pool)
-      : DisplayColorManager(configurator, blocking_pool) {}
+  explicit DisplayColorManagerForTest(
+      display::DisplayConfigurator* configurator)
+      : DisplayColorManager(configurator) {}
 
   void SetOnFinishedForTest(base::Closure on_finished_for_test) {
     on_finished_for_test_ = on_finished_for_test;
@@ -113,8 +114,8 @@ class DisplayColorManagerTest : public testing::Test {
         std::unique_ptr<display::NativeDisplayDelegate>(
             native_display_delegate_));
 
-    color_manager_.reset(new DisplayColorManagerForTest(
-        &configurator_, pool_owner_->pool().get()));
+    color_manager_ =
+        std::make_unique<DisplayColorManagerForTest>(&configurator_);
 
     EXPECT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &color_path_));
 
@@ -142,9 +143,11 @@ class DisplayColorManagerTest : public testing::Test {
   }
 
   DisplayColorManagerTest() : test_api_(&configurator_) {}
-  ~DisplayColorManagerTest() override {}
+  ~DisplayColorManagerTest() override = default;
 
  protected:
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  std::unique_ptr<base::SequencedWorkerPoolOwner> pool_owner_;
   std::unique_ptr<base::ScopedPathOverride> path_override_;
   base::FilePath color_path_;
   std::unique_ptr<display::test::ActionLogger> log_;
@@ -153,9 +156,6 @@ class DisplayColorManagerTest : public testing::Test {
   display::test::TestNativeDisplayDelegate*
       native_display_delegate_;  // not owned
   std::unique_ptr<DisplayColorManagerForTest> color_manager_;
-
-  base::MessageLoopForUI ui_message_loop_;
-  std::unique_ptr<base::SequencedWorkerPoolOwner> pool_owner_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DisplayColorManagerTest);

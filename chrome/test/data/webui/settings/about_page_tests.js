@@ -3,90 +3,96 @@
 // found in the LICENSE file.
 
 cr.define('settings_about_page', function() {
-  /**
-   * @constructor
-   * @implements {settings.AboutPageBrowserProxy}
-   * @extends {settings.TestBrowserProxy}
-   */
-  var TestAboutPageBrowserProxy = function() {
-    var methodNames = [
-      'pageReady',
-      'refreshUpdateStatus',
-      'openHelpPage',
-      'openFeedbackDialog',
-    ];
+  /** @implements {settings.AboutPageBrowserProxy} */
+  class TestAboutPageBrowserProxy extends TestBrowserProxy {
+    constructor() {
+      var methodNames = [
+        'pageReady',
+        'refreshUpdateStatus',
+        'openHelpPage',
+        'openFeedbackDialog',
+      ];
 
-    if (cr.isChromeOS) {
-      methodNames.push(
-        'getChannelInfo',
-        'getVersionInfo',
-        'getRegulatoryInfo',
-        'setChannel');
+      if (cr.isChromeOS) {
+        methodNames.push(
+          'getChannelInfo',
+          'getVersionInfo',
+          'getRegulatoryInfo',
+          'refreshTPMFirmwareUpdateStatus',
+          'setChannel');
+      }
+
+      if (cr.isMac)
+        methodNames.push('promoteUpdater');
+
+      super(methodNames);
+
+      /** @private {!UpdateStatus} */
+      this.updateStatus_ = UpdateStatus.UPDATED;
+
+      if (cr.isChromeOS) {
+        /** @private {!VersionInfo} */
+        this.versionInfo_ = {
+          arcVersion: '',
+          osFirmware: '',
+          osVersion: '',
+        };
+
+        /** @private {!ChannelInfo} */
+        this.channelInfo_ = {
+          currentChannel: BrowserChannel.BETA,
+          targetChannel: BrowserChannel.BETA,
+          canChangeChannel: true,
+        };
+
+        /** @private {?RegulatoryInfo} */
+        this.regulatoryInfo_ = null;
+
+        /** @private {!TPMFirmwareUpdateStatus} */
+        this.tpmFirmwareUpdateStatus_ = {
+          updateAvailable: false,
+        };
+      }
     }
-
-    if (cr.isMac)
-      methodNames.push('promoteUpdater');
-
-    settings.TestBrowserProxy.call(this, methodNames);
-
-    /** @private {!UpdateStatus} */
-    this.updateStatus_ = UpdateStatus.UPDATED;
-
-    if (cr.isChromeOS) {
-      /** @private {!VersionInfo} */
-      this.versionInfo_ = {
-        arcVersion: '',
-        osFirmware: '',
-        osVersion: '',
-      };
-
-      /** @private {!ChannelInfo} */
-      this.channelInfo_ = {
-        currentChannel: BrowserChannel.BETA,
-        targetChannel: BrowserChannel.BETA,
-        canChangeChannel: true,
-      };
-
-      /** @private {?RegulatoryInfo} */
-      this.regulatoryInfo_ = null;
-    }
-  };
-
-  TestAboutPageBrowserProxy.prototype = {
-    __proto__: settings.TestBrowserProxy.prototype,
 
     /** @param {!UpdateStatus} updateStatus */
-    setUpdateStatus: function(updateStatus) {
+    setUpdateStatus(updateStatus) {
       this.updateStatus_ = updateStatus;
-    },
+    }
 
-    sendStatusNoInternet: function() {
+    sendStatusNoInternet() {
       cr.webUIListenerCallback('update-status-changed', {
         progress: 0,
         status: UpdateStatus.FAILED,
         message: 'offline',
         connectionTypes: 'no internet',
       });
-    },
+    }
 
     /** @override */
-    pageReady: function() { this.methodCalled('pageReady'); },
+    pageReady() {
+      this.methodCalled('pageReady');
+    }
 
     /** @override */
-    refreshUpdateStatus: function() {
+    refreshUpdateStatus() {
       cr.webUIListenerCallback('update-status-changed', {
         progress: 1,
         status: this.updateStatus_,
       });
       this.methodCalled('refreshUpdateStatus');
-    },
+    }
 
     /** @override */
-    openFeedbackDialog: function() { this.methodCalled('openFeedbackDialog'); },
+    openFeedbackDialog() {
+      this.methodCalled('openFeedbackDialog');
+    }
 
     /** @override */
-    openHelpPage: function() { this.methodCalled('openHelpPage'); },
-  };
+    openHelpPage() {
+      this.methodCalled('openHelpPage');
+    }
+  }
 
   if (cr.isMac) {
     /** @override */
@@ -146,6 +152,20 @@ cr.define('settings_about_page', function() {
         channel, isPowerwashAllowed) {
       this.methodCalled('setChannel', [channel, isPowerwashAllowed]);
     };
+
+    /** @param {!TPMFirmwareUpdateStatus} status */
+    TestAboutPageBrowserProxy.prototype.setTPMFirmwareUpdateStatus = function(
+        status) {
+      this.tpmFirmwareUpdateStatus_ = status;
+    };
+
+    /** @override */
+    TestAboutPageBrowserProxy.prototype.refreshTPMFirmwareUpdateStatus =
+        function() {
+      this.methodCalled('refreshTPMFirmwareUpdateStatus');
+      cr.webUIListenerCallback(
+          'tpm-firmware-update-status-changed', this.tpmFirmwareUpdateStatus_);
+    };
   }
 
 
@@ -201,7 +221,7 @@ cr.define('settings_about_page', function() {
         lifetimeBrowserProxy.reset();
         PolymerTest.clearBody();
         page = document.createElement('settings-about-page');
-        settings.navigateTo(settings.Route.ABOUT);
+        settings.navigateTo(settings.routes.ABOUT);
         document.body.appendChild(page);
         if (!cr.isChromeOS) {
           return aboutBrowserProxy.whenCalled('refreshUpdateStatus');
@@ -209,6 +229,7 @@ cr.define('settings_about_page', function() {
           return Promise.all([
             aboutBrowserProxy.whenCalled('getChannelInfo'),
             aboutBrowserProxy.whenCalled('refreshUpdateStatus'),
+            aboutBrowserProxy.whenCalled('refreshTPMFirmwareUpdateStatus'),
           ]);
         }
       }
@@ -220,7 +241,7 @@ cr.define('settings_about_page', function() {
       test('IconAndMessageUpdates', function() {
         var icon = page.$$('iron-icon');
         assertTrue(!!icon);
-        var statusMessageEl = page.$.updateStatusMessage;
+        var statusMessageEl = page.$$('#updateStatusMessage div');
         var previousMessageText = statusMessageEl.textContent;
 
         fireStatusChanged(UpdateStatus.CHECKING);
@@ -267,8 +288,18 @@ cr.define('settings_about_page', function() {
         var htmlError = 'hello<br>there<br>was<pre>an</pre>error';
         fireStatusChanged(
             UpdateStatus.FAILED, {message: htmlError});
-        var statusMessageEl = page.$.updateStatusMessage;
+        var statusMessageEl = page.$$('#updateStatusMessage div');
         assertEquals(htmlError, statusMessageEl.innerHTML);
+      });
+
+      test('FailedLearnMoreLink', function() {
+        // Check that link is shown when update failed.
+        fireStatusChanged(UpdateStatus.FAILED, {message: 'foo'});
+        assertTrue(!!page.$$('#updateStatusMessage a:not([hidden])'));
+
+        // Check that link is hidden when update hasn't failed.
+        fireStatusChanged(UpdateStatus.UPDATED, {message: ''});
+        assertTrue(!!page.$$('#updateStatusMessage a[hidden]'));
       });
 
       /**
@@ -541,6 +572,27 @@ cr.define('settings_about_page', function() {
             return initNewPage();
           }).then(function() {
             return checkRegulatoryInfo(true);
+          });
+        });
+
+        test('TPMFirmwareUpdate', function() {
+          return initNewPage().then(function() {
+            assertTrue(page.$.aboutTPMFirmwareUpdate.hidden);
+            aboutBrowserProxy.setTPMFirmwareUpdateStatus(
+                {updateAvailable: true});
+            aboutBrowserProxy.refreshTPMFirmwareUpdateStatus();
+          }).then(function() {
+            assertFalse(page.$.aboutTPMFirmwareUpdate.hidden);
+            MockInteractions.tap(page.$.aboutTPMFirmwareUpdate);
+          }).then(function() {
+            var dialog = page.$$('settings-powerwash-dialog');
+            assertTrue(!!dialog);
+            assertTrue(dialog.$.dialog.open);
+            MockInteractions.tap(dialog.$$('#powerwash'));
+            return lifetimeBrowserProxy.whenCalled('factoryReset')
+                .then(function(requestTpmFirmwareUpdate) {
+                  assertTrue(requestTpmFirmwareUpdate);
+                });
           });
         });
       }

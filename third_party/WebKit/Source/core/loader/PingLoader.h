@@ -37,7 +37,6 @@
 #include "platform/Timer.h"
 #include "platform/heap/Handle.h"
 #include "platform/heap/SelfKeepAlive.h"
-#include "platform/loader/fetch/ResourceLoaderOptions.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/Noncopyable.h"
 #include "public/platform/WebURLLoaderClient.h"
@@ -72,7 +71,7 @@ class CORE_EXPORT PingLoader {
                                 const KURL& destination_url);
   static void SendViolationReport(LocalFrame*,
                                   const KURL& report_url,
-                                  PassRefPtr<EncodedFormData> report,
+                                  scoped_refptr<EncodedFormData> report,
                                   ViolationReportType);
 
   // The last argument is guaranteed to be set to the size of payload if

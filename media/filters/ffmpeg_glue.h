@@ -29,7 +29,9 @@
 
 #include <memory>
 
+#include "base/logging.h"
 #include "base/macros.h"
+#include "media/base/container_names.h"
 #include "media/base/media_export.h"
 #include "media/ffmpeg/ffmpeg_deleters.h"
 
@@ -71,11 +73,23 @@ class MEDIA_EXPORT FFmpegGlue {
   // through the FFmpegURLProtocol provided during construction.
   bool OpenContext();
   AVFormatContext* format_context() { return format_context_; }
+  // Returns the container name.
+  // Note that it is only available after calling OpenContext.
+  container_names::MediaContainerName container() const {
+    DCHECK(open_called_);
+    return container_;
+  }
+
+  // Used on Android to switch to using the native MediaPlayer to play HLS.
+  bool detected_hls() { return detected_hls_; }
 
  private:
-  bool open_called_;
-  AVFormatContext* format_context_;
+  bool open_called_ = false;
+  bool detected_hls_ = false;
+  AVFormatContext* format_context_ = nullptr;
   std::unique_ptr<AVIOContext, ScopedPtrAVFree> avio_context_;
+  container_names::MediaContainerName container_ =
+      container_names::CONTAINER_UNKNOWN;
 
   DISALLOW_COPY_AND_ASSIGN(FFmpegGlue);
 };

@@ -15,12 +15,13 @@
 #include "base/files/file_util.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/process/launch.h"
 #include "base/task_scheduler/post_task.h"
-#include "components/feedback/feedback_util.h"
+#include "chrome/browser/browser_process.h"
+#include "chrome/browser/browser_process_platform_part_chromeos.h"
 #include "content/public/browser/browser_thread.h"
-#include "ui/ozone/public/input_controller.h"
-#include "ui/ozone/public/ozone_platform.h"
+#include "services/ui/public/cpp/input_devices/input_device_controller_client.h"
 
 using content::BrowserThread;
 
@@ -51,9 +52,9 @@ const char kUuencodeCommand[] = "/usr/bin/uuencode";
 const int kMaxDeviceTouchEventLogs = 7;
 
 // Clean up intermediate log files dumped during feedback creation.
-void CleanupEventLog(std::unique_ptr<std::vector<base::FilePath>> log_paths) {
-  for (size_t i = 0; i < log_paths->size(); ++i)
-    base::DeleteFile((*log_paths)[i], false);
+void CleanupEventLog(const std::vector<base::FilePath>& log_paths) {
+  for (const base::FilePath& path : log_paths)
+    base::DeleteFile(path, false);
 }
 
 // Check for all known log paths and find the ones whose filenames match a
@@ -85,18 +86,18 @@ std::string GetEventLogListOfOnePrefix(
 // Pack the collected event logs in a way that is compatible with the log
 // analysis tools.
 void PackEventLog(system_logs::SystemLogsResponse* response,
-                  std::unique_ptr<std::vector<base::FilePath>> log_paths) {
+                  const std::vector<base::FilePath>& log_paths) {
   // Combine logs with a command line call that tars them up and uuencode the
-  // result in one string. This is to be compatible with the X11 behavior.
+  // result in one string.
   std::vector<std::pair<std::string, base::CommandLine>> commands;
   base::CommandLine command = base::CommandLine(base::FilePath(kShellCommand));
   command.AppendArg("-c");
 
   // Make a list that contains touchpad (and mouse) event logs only.
   const std::string touchpad_log_list =
-      GetEventLogListOfOnePrefix(*log_paths, kTouchpadGestureLogPrefix,
+      GetEventLogListOfOnePrefix(log_paths, kTouchpadGestureLogPrefix,
                                  kMaxDeviceTouchEventLogs) +
-      GetEventLogListOfOnePrefix(*log_paths, kTouchpadEvdevLogPrefix,
+      GetEventLogListOfOnePrefix(log_paths, kTouchpadEvdevLogPrefix,
                                  kMaxDeviceTouchEventLogs);
   command.AppendArg(std::string(kTarCommand) + touchpad_log_list +
                     " 2>/dev/null | " + kUuencodeCommand +
@@ -110,7 +111,7 @@ void PackEventLog(system_logs::SystemLogsResponse* response,
 
   // Make a list that contains touchscreen event logs only.
   const std::string touchscreen_log_list = GetEventLogListOfOnePrefix(
-      *log_paths, kTouchscreenLogPrefix, kMaxDeviceTouchEventLogs);
+      log_paths, kTouchscreenLogPrefix, kMaxDeviceTouchEventLogs);
   ts_command.AppendArg(std::string(kTarCommand) + touchscreen_log_list +
                        " 2>/dev/null | " + kUuencodeCommand +
                        " -m touchscreen_activity_log.tar");
@@ -125,11 +126,9 @@ void PackEventLog(system_logs::SystemLogsResponse* response,
   }
 
   // Cleanup these temporary log files.
-  base::PostTaskWithTraits(
-      FROM_HERE,
-      base::TaskTraits().MayBlock().WithPriority(
-          base::TaskPriority::BACKGROUND),
-      base::Bind(CleanupEventLog, base::Passed(&log_paths)));
+  base::PostTaskWithTraits(FROM_HERE,
+                           {base::MayBlock(), base::TaskPriority::BACKGROUND},
+                           base::Bind(CleanupEventLog, log_paths));
 }
 
 // Callback for handing the outcome of GetTouchEventLog().
@@ -138,20 +137,14 @@ void PackEventLog(system_logs::SystemLogsResponse* response,
 void OnEventLogCollected(
     std::unique_ptr<system_logs::SystemLogsResponse> response,
     const system_logs::SysLogsSourceCallback& callback,
-    std::unique_ptr<std::vector<base::FilePath>> log_paths) {
+    const std::vector<base::FilePath>& log_paths) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  // We cannot eliminate these temporaries and inline these closures because the
-  // compiler may call release() before get().
-  const base::Closure pack_closure =
-      base::Bind(&PackEventLog, base::Unretained(response.get()),
-                 base::Passed(&log_paths));
-  const base::Closure callback_closure =
-      base::Bind(callback, base::Owned(response.release()));
-  base::PostTaskWithTraitsAndReply(FROM_HERE,
-                                   base::TaskTraits().MayBlock().WithPriority(
-                                       base::TaskPriority::BACKGROUND),
-                                   pack_closure, callback_closure);
+  system_logs::SystemLogsResponse* response_ptr = response.get();
+  base::PostTaskWithTraitsAndReply(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      base::BindOnce(&PackEventLog, response_ptr, log_paths),
+      base::BindOnce(callback, std::move(response)));
 }
 
 // Callback for handing the outcome of GetTouchDeviceStatus().
@@ -161,15 +154,17 @@ void OnEventLogCollected(
 void OnStatusLogCollected(
     std::unique_ptr<system_logs::SystemLogsResponse> response,
     const system_logs::SysLogsSourceCallback& callback,
-    std::unique_ptr<std::string> log) {
+    const std::string& log) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  (*response)[kDeviceStatusLogDataKey] = *log;
+  (*response)[kDeviceStatusLogDataKey] = log;
 
   // Collect touch event logs.
   const base::FilePath kBaseLogPath(kTouchEventLogDir);
-  ui::OzonePlatform::GetInstance()->GetInputController()->GetTouchEventLog(
+  ui::InputDeviceControllerClient* input_device_controller_client =
+      g_browser_process->platform_part()->GetInputDeviceControllerClient();
+  input_device_controller_client->GetTouchEventLog(
       kBaseLogPath,
-      base::Bind(&OnEventLogCollected, base::Passed(&response), callback));
+      base::BindOnce(&OnEventLogCollected, std::move(response), callback));
 }
 
 // Collect touch HUD debug logs. This needs to be done on the UI thread.
@@ -193,12 +188,14 @@ void TouchLogSource::Fetch(const SysLogsSourceCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!callback.is_null());
 
-  std::unique_ptr<SystemLogsResponse> response(new SystemLogsResponse);
+  auto response = std::make_unique<SystemLogsResponse>();
   CollectTouchHudDebugLog(response.get());
 
   // Collect touch device status logs.
-  ui::OzonePlatform::GetInstance()->GetInputController()->GetTouchDeviceStatus(
-      base::Bind(&OnStatusLogCollected, base::Passed(&response), callback));
+  ui::InputDeviceControllerClient* input_device_controller_client =
+      g_browser_process->platform_part()->GetInputDeviceControllerClient();
+  input_device_controller_client->GetTouchDeviceStatus(
+      base::BindOnce(&OnStatusLogCollected, std::move(response), callback));
 }
 
 }  // namespace system_logs

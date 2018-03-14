@@ -32,13 +32,34 @@ class OfflinePageModelQuery {
     EXCLUDE_MATCHING,
   };
 
+  struct URLSearchParams {
+    URLSearchParams();
+    URLSearchParams(const URLSearchParams& params);
+    URLSearchParams(std::set<GURL> url_set,
+                    URLSearchMode search_mode,
+                    bool strip_frag);
+    ~URLSearchParams();
+
+    // The set of urls for matching.
+    std::set<GURL> urls;
+    // The mode for searching. By final url only or both final and original
+    // urls.
+    URLSearchMode mode;
+    // Whether fragments should be stripped. It will *not* work on
+    // *|original_url|*.
+    // TODO(crbug.com/753609): Try to make this also available when matching for
+    // |original_url|.
+    bool strip_fragment;
+  };
+
   OfflinePageModelQuery();
   virtual ~OfflinePageModelQuery();
 
   std::pair<bool, std::set<std::string>> GetRestrictedToNamespaces() const;
   std::pair<Requirement, std::set<int64_t>> GetRestrictedToOfflineIds() const;
   std::pair<Requirement, std::set<ClientId>> GetRestrictedToClientIds() const;
-  std::pair<Requirement, std::set<GURL>> GetRestrictedToUrls() const;
+  std::pair<Requirement, URLSearchParams> GetRestrictedToUrls() const;
+  std::pair<Requirement, std::string> GetRequestOrigin() const;
 
   // This is the workhorse function that is used by the in-memory offline page
   // model, given a page it will find out whether that page matches the query.
@@ -51,7 +72,8 @@ class OfflinePageModelQuery {
 
   std::pair<Requirement, std::set<int64_t>> offline_ids_;
   std::pair<Requirement, std::set<ClientId>> client_ids_;
-  std::pair<Requirement, std::set<GURL>> urls_;
+  std::pair<Requirement, URLSearchParams> urls_;
+  std::pair<Requirement, std::string> request_origin_;
 
   DISALLOW_COPY_AND_ASSIGN(OfflinePageModelQuery);
 };
@@ -80,10 +102,31 @@ class OfflinePageModelQueryBuilder {
   OfflinePageModelQueryBuilder& SetClientIds(Requirement requirement,
                                              const std::vector<ClientId>& ids);
 
+  // Sets the request origin that are valid for this request. If called
+  // multiple times, overwrites the previous request origin restrictions.
+  OfflinePageModelQueryBuilder& SetRequestOrigin(
+      Requirement requirement,
+      const std::string& request_origin);
+
   // Sets the URLs that are valid for this request.  If called multiple times,
   // overwrites previous URL restrictions.
+  // |search_mode| is used to control if the URL will be matched with final
+  // URL only or both final URL and original URL.
+  // If |strip_fragment| is true, *only final* urls will be matched without
+  // fragment.
+  // TODO(crbug.com/753609): Try to unify fragment handling for original and
+  // final urls.
   OfflinePageModelQueryBuilder& SetUrls(Requirement requirement,
-                                        const std::vector<GURL>& urls);
+                                        const std::vector<GURL>& urls,
+                                        URLSearchMode search_mode,
+                                        bool strip_fragment);
+
+  // Only include pages whose namespaces satisfy
+  // ClientPolicyController::IsRemovedOnCacheReset(|namespace|) ==
+  //     |removed_on_cache_reset|
+  // Multiple calls overwrite previous ones.
+  OfflinePageModelQueryBuilder& RequireRemovedOnCacheReset(
+      Requirement removed_on_cache_reset);
 
   // Only include pages whose namespaces satisfy
   // ClientPolicyController::IsSupportedByDownload(|namespace|) ==
@@ -106,6 +149,9 @@ class OfflinePageModelQueryBuilder {
   OfflinePageModelQueryBuilder& RequireRestrictedToOriginalTab(
       Requirement original_tab);
 
+  // Only include results from a single namespace.
+  OfflinePageModelQueryBuilder& RequireNamespace(const std::string& name_space);
+
   // Builds the query using the namespace policies provided by |controller|
   // This resets the internal state.  |controller| should not be |nullptr|.
   std::unique_ptr<OfflinePageModelQuery> Build(
@@ -121,11 +167,15 @@ class OfflinePageModelQueryBuilder {
 
   std::pair<Requirement, std::vector<int64_t>> offline_ids_;
   std::pair<Requirement, std::vector<ClientId>> client_ids_;
-  std::pair<Requirement, std::vector<GURL>> urls_;
+  std::pair<Requirement, OfflinePageModelQuery::URLSearchParams> urls_;
+  std::pair<Requirement, std::string> request_origin_;
 
+  Requirement removed_on_cache_reset_ = Requirement::UNSET;
   Requirement supported_by_download_ = Requirement::UNSET;
   Requirement shown_as_recently_visited_site_ = Requirement::UNSET;
   Requirement restricted_to_original_tab_ = Requirement::UNSET;
+
+  std::unique_ptr<std::string> name_space_;
 
   DISALLOW_COPY_AND_ASSIGN(OfflinePageModelQueryBuilder);
 };

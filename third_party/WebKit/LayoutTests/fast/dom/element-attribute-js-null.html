@@ -137,7 +137,7 @@
                     type: 'HTMLAudioElement',
                     elementToUse: document.createElement('audio'),
                     attributes: [
-                        {name: 'preload', expectedNull: 'auto'},
+                        {name: 'preload', expectedNull: 'metadata'},
                         {name: 'src', expectedNull: 'null', isUrl: true}
                     ]
                 },
@@ -565,7 +565,7 @@
                         {name: 'bgColor', expectedNull: ''},
                         {name: 'ch', expectedNull: 'null'},
                         {name: 'chOff', expectedNull: 'null'},
-                        {name: 'headers', expectedNull: ''},
+                        {name: 'headers', expectedNull: 'null'},
                         {name: 'height', expectedNull: 'null'},
                         {name: 'scope', expectedNull: ''},
                         {name: 'vAlign', expectedNull: 'null'},
@@ -661,7 +661,7 @@
                     elementToUse: document.createElement('video'),
                     attributes: [
                         {name: 'poster', expectedNull: 'null', isUrl: true},
-                        {name: 'preload', expectedNull: 'auto'},
+                        {name: 'preload', expectedNull: 'metadata'},
                         {name: 'src', expectedNull: 'null', isUrl: true}
                     ]
                 }

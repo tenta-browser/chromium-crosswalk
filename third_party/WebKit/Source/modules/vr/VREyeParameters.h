@@ -5,18 +5,17 @@
 #ifndef VREyeParameters_h
 #define VREyeParameters_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "core/dom/DOMTypedArray.h"
+#include "core/typed_arrays/DOMTypedArray.h"
 #include "device/vr/vr_service.mojom-blink.h"
 #include "modules/vr/VRFieldOfView.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 #include "platform/wtf/Forward.h"
 
 namespace blink {
 
-class VREyeParameters final : public GarbageCollected<VREyeParameters>,
-                              public ScriptWrappable {
+class VREyeParameters final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -29,7 +28,7 @@ class VREyeParameters final : public GarbageCollected<VREyeParameters>,
 
   void Update(const device::mojom::blink::VREyeParametersPtr&);
 
-  DECLARE_VIRTUAL_TRACE()
+  virtual void Trace(blink::Visitor*);
 
  private:
   Member<DOMFloat32Array> offset_;

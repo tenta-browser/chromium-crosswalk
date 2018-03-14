@@ -11,8 +11,8 @@ class ToughCompositorPage(page_module.Page):
   def __init__(self, url, page_set):
     super(ToughCompositorPage, self).__init__(
         url=url, page_set=page_set, credentials_path = 'data/credentials.json',
-        shared_page_state_class=shared_page_state.SharedMobilePageState)
-    self.archive_data_file = 'data/tough_compositor_cases.json'
+        shared_page_state_class=shared_page_state.SharedMobilePageState,
+        name=url)
 
   def RunNavigateSteps(self, action_runner):
     super(ToughCompositorPage, self).RunNavigateSteps(action_runner)

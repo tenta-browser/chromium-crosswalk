@@ -124,6 +124,23 @@ const Extension* GetExtension(const AppLaunchParams& params) {
                                         ExtensionRegistry::TERMINATED);
 }
 
+bool IsAllowedToOverrideURL(const extensions::Extension* extension,
+                            const GURL& override_url) {
+  if (extension->web_extent().MatchesURL(override_url))
+    return true;
+
+  if (override_url.GetOrigin() == extension->url())
+    return true;
+
+  if (extension->from_bookmark() &&
+      extensions::AppLaunchInfo::GetFullLaunchURL(extension).GetOrigin() ==
+          override_url.GetOrigin()) {
+    return true;
+  }
+
+  return false;
+}
+
 // Get the launch URL for a given extension, with optional override/fallback.
 // |override_url|, if non-empty, will be preferred over the extension's
 // launch url.
@@ -134,8 +151,7 @@ GURL UrlForExtension(const extensions::Extension* extension,
 
   GURL url;
   if (!override_url.is_empty()) {
-    DCHECK(extension->web_extent().MatchesURL(override_url) ||
-           override_url.GetOrigin() == extension->url());
+    DCHECK(IsAllowedToOverrideURL(extension, override_url));
     url = override_url;
   } else {
     url = extensions::AppLaunchInfo::GetFullLaunchURL(extension);
@@ -161,7 +177,7 @@ ui::WindowShowState DetermineWindowShowState(
   if (chrome::IsRunningInForcedAppMode())
     return ui::SHOW_STATE_FULLSCREEN;
 
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
   // In ash, LAUNCH_TYPE_FULLSCREEN launches in a maximized app window and
   // LAUNCH_TYPE_WINDOW launches in a default app window.
   extensions::LaunchType launch_type =
@@ -228,7 +244,8 @@ WebContents* OpenApplicationTab(const AppLaunchParams& launch_params,
   Profile* const profile = launch_params.profile;
   WindowOpenDisposition disposition = launch_params.disposition;
 
-  Browser* browser = chrome::FindTabbedBrowser(profile, false);
+  Browser* browser =
+      chrome::FindTabbedBrowser(profile, false, launch_params.display_id);
   WebContents* contents = NULL;
   if (!browser) {
     // No browser for this profile, need to open a new one.
@@ -287,7 +304,7 @@ WebContents* OpenApplicationTab(const AppLaunchParams& launch_params,
     contents = params.target_contents;
   }
 
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
   // In ash, LAUNCH_FULLSCREEN launches in the OpenApplicationWindow function
   // i.e. it should not reach here.
   DCHECK(launch_type != extensions::LAUNCH_TYPE_FULLSCREEN);
@@ -300,7 +317,7 @@ WebContents* OpenApplicationTab(const AppLaunchParams& launch_params,
       !browser->window()->IsFullscreen()) {
     chrome::ToggleFullscreenMode(browser);
   }
-#endif  // USE_ASH
+#endif  // OS_CHROMEOS
   return contents;
 }
 
@@ -349,6 +366,9 @@ WebContents* OpenEnabledApplication(const AppLaunchParams& params) {
   }
 
   if (extension->from_bookmark()) {
+    UMA_HISTOGRAM_ENUMERATION("Extensions.BookmarkAppLaunchSource",
+                              params.source,
+                              extensions::NUM_APP_LAUNCH_SOURCES);
     UMA_HISTOGRAM_ENUMERATION("Extensions.BookmarkAppLaunchContainer",
                               params.container,
                               extensions::NUM_LAUNCH_CONTAINERS);
@@ -412,8 +432,6 @@ WebContents* OpenAppShortcutWindow(Profile* profile,
 
   if (!tab)
     return NULL;
-
-  extensions::TabHelper::FromWebContents(tab)->UpdateShortcutOnLoadComplete();
 
   return tab;
 }

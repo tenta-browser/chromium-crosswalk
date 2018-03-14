@@ -2,23 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/containers/circular_deque.h"
+#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/apps/app_browsertest_util.h"
 #include "chrome/browser/extensions/api/notifications/extension_notification_display_helper.h"
 #include "chrome/browser/extensions/api/notifications/extension_notification_display_helper_factory.h"
+#include "chrome/browser/extensions/api/notifications/extension_notification_handler.h"
 #include "chrome/browser/extensions/api/notifications/notifications_api.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
-#include "chrome/browser/notifications/notification.h"
-#include "chrome/browser/notifications/notification_common.h"
-#include "chrome/browser/notifications/notification_display_service_factory.h"
+#include "chrome/browser/notifications/notification_display_service_tester.h"
+#include "chrome/browser/notifications/notification_handler.h"
 #include "chrome/browser/notifications/notifier_state_tracker.h"
 #include "chrome/browser/notifications/notifier_state_tracker_factory.h"
-#include "chrome/browser/notifications/stub_notification_display_service.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
@@ -31,15 +32,15 @@
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/app_window/native_app_window.h"
 #include "extensions/browser/notification_types.h"
+#include "extensions/common/extension_builder.h"
 #include "extensions/common/features/feature.h"
-#include "extensions/common/test_util.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
-#include "ui/message_center/notifier_settings.h"
+#include "ui/message_center/notification.h"
+#include "ui/message_center/notifier_id.h"
 
 #if defined(OS_MACOSX)
 #include "base/mac/mac_util.h"
-#include "ui/base/test/scoped_fake_nswindow_fullscreen.h"
 #endif
 
 using extensions::AppWindow;
@@ -91,15 +92,15 @@ class UserGestureCatcher : public content::NotificationObserver {
             .ptr()
             ->user_gesture());
     if (waiting_)
-      base::MessageLoopForUI::current()->QuitWhenIdle();
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   content::NotificationRegistrar registrar_;
 
   // A sequential list of user gesture notifications from the test extension(s).
-  std::deque<bool> results_;
+  base::circular_deque<bool> results_;
 
-  // True if we're in a nested message loop waiting for results from
+  // True if we're in a nested run loop waiting for results from
   // the extension.
   bool waiting_;
 };
@@ -164,11 +165,6 @@ class NotificationsApiTest : public ExtensionApiTest {
     return ExtensionNotificationDisplayHelperFactory::GetForProfile(profile());
   }
 
-  StubNotificationDisplayService* GetDisplayService() {
-    return reinterpret_cast<StubNotificationDisplayService*>(
-        NotificationDisplayServiceFactory::GetForProfile(profile()));
-  }
-
   NotifierStateTracker* GetNotifierStateTracker() {
     return NotifierStateTrackerFactory::GetForProfile(profile());
   }
@@ -178,15 +174,20 @@ class NotificationsApiTest : public ExtensionApiTest {
     ExtensionApiTest::SetUpOnMainThread();
 
     DCHECK(profile());
-    NotificationDisplayServiceFactory::GetInstance()->SetTestingFactory(
-        profile(), &StubNotificationDisplayService::FactoryForTests);
+    display_service_tester_ =
+        base::MakeUnique<NotificationDisplayServiceTester>(profile());
+  }
+
+  void TearDownOnMainThread() override {
+    display_service_tester_.reset();
+    ExtensionApiTest::TearDownOnMainThread();
   }
 
   // Returns the notification that's being displayed for |extension|, or nullptr
   // when the notification count is not equal to one. It's not safe to rely on
   // the Notification pointer after closing the notification, but a copy can be
   // made to continue to be able to access the underlying information.
-  Notification* GetNotificationForExtension(
+  message_center::Notification* GetNotificationForExtension(
       const extensions::Extension* extension) {
     DCHECK(extension);
 
@@ -208,20 +209,7 @@ class NotificationsApiTest : public ExtensionApiTest {
         WindowOpenDisposition::NEW_WINDOW, extensions::SOURCE_TEST));
   }
 
-  void EnableFullscreenNotifications() {
-    feature_list_.InitWithFeatures({
-      features::kPreferHtmlOverPlugins,
-      extensions::kAllowFullscreenAppNotificationsFeature}, {});
-  }
-
-  void DisableFullscreenNotifications() {
-    feature_list_.InitWithFeatures(
-        {features::kPreferHtmlOverPlugins},
-        {extensions::kAllowFullscreenAppNotificationsFeature});
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
+  std::unique_ptr<NotificationDisplayServiceTester> display_service_tester_;
 };
 
 }  // namespace
@@ -244,6 +232,8 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestCSP) {
   ASSERT_TRUE(RunExtensionTest("notifications/api/csp")) << message_;
 }
 
+// Native notifications don't support (nor use) observers.
+#if !defined(OS_MACOSX)
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestByUser) {
   const extensions::Extension* extension =
       LoadExtensionAndWait("notifications/api/by_user");
@@ -253,8 +243,9 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestByUser) {
     ResultCatcher catcher;
     const std::string notification_id =
         GetNotificationIdFromDelegateId(extension->id() + "-FOO");
-    GetDisplayService()->RemoveNotification(
-        NotificationCommon::EXTENSION, notification_id, false /* by_user */);
+    display_service_tester_->RemoveNotification(
+        NotificationHandler::Type::EXTENSION, notification_id,
+        false /* by_user */);
     EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
   }
 
@@ -262,24 +253,26 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestByUser) {
     ResultCatcher catcher;
     const std::string notification_id =
         GetNotificationIdFromDelegateId(extension->id() + "-BAR");
-    GetDisplayService()->RemoveNotification(
-        NotificationCommon::EXTENSION, notification_id, true /* by_user */);
+    display_service_tester_->RemoveNotification(
+        NotificationHandler::Type::EXTENSION, notification_id,
+        true /* by_user */);
     EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
   }
 
   {
     ResultCatcher catcher;
-    GetDisplayService()->RemoveAllNotifications(NotificationCommon::EXTENSION,
-                                                false /* by_user */);
+    display_service_tester_->RemoveAllNotifications(
+        NotificationHandler::Type::EXTENSION, false /* by_user */);
     EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
   }
   {
     ResultCatcher catcher;
-    GetDisplayService()->RemoveAllNotifications(NotificationCommon::EXTENSION,
-                                                true /* by_user */);
+    display_service_tester_->RemoveAllNotifications(
+        NotificationHandler::Type::EXTENSION, true /* by_user */);
     EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
   }
 }
+#endif  // !defined(OS_MACOSX)
 
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestPartialUpdate) {
   ASSERT_TRUE(RunExtensionTest("notifications/api/partial_update")) << message_;
@@ -291,10 +284,9 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestPartialUpdate) {
   int kNewPriority = 2;
   const char kButtonTitle[] = "NewButton";
 
-  Notification* notification = GetNotificationForExtension(extension);
+  message_center::Notification* notification =
+      GetNotificationForExtension(extension);
   ASSERT_TRUE(notification);
-
-  LOG(INFO) << "Notification ID: " << notification->id();
 
   EXPECT_EQ(base::ASCIIToUTF16(kNewTitle), notification->title());
   EXPECT_EQ(base::ASCIIToUTF16(kNewMessage), notification->message());
@@ -305,7 +297,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestPartialUpdate) {
 
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestGetPermissionLevel) {
   scoped_refptr<Extension> empty_extension(
-      extensions::test_util::CreateEmptyExtension());
+      extensions::ExtensionBuilder("Test").Build());
 
   // Get permission level for the extension whose notifications are enabled.
   {
@@ -319,7 +311,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestGetPermissionLevel) {
     std::unique_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
         notification_function.get(), "[]", browser(), utils::NONE));
 
-    EXPECT_EQ(base::Value::Type::STRING, result->GetType());
+    EXPECT_EQ(base::Value::Type::STRING, result->type());
     std::string permission_level;
     EXPECT_TRUE(result->GetAsString(&permission_level));
     EXPECT_EQ("granted", permission_level);
@@ -342,7 +334,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestGetPermissionLevel) {
     std::unique_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
         notification_function.get(), "[]", browser(), utils::NONE));
 
-    EXPECT_EQ(base::Value::Type::STRING, result->GetType());
+    EXPECT_EQ(base::Value::Type::STRING, result->type());
     std::string permission_level;
     EXPECT_TRUE(result->GetAsString(&permission_level));
     EXPECT_EQ("denied", permission_level);
@@ -379,12 +371,15 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestOnPermissionLevelChanged) {
   }
 }
 
+// Native notifications don't support (nor use) observers.
+#if !defined(OS_MACOSX)
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestUserGesture) {
   const extensions::Extension* extension =
       LoadExtensionAndWait("notifications/api/user_gesture");
   ASSERT_TRUE(extension) << message_;
 
-  Notification* notification = GetNotificationForExtension(extension);
+  message_center::Notification* notification =
+      GetNotificationForExtension(extension);
   ASSERT_TRUE(notification);
 
   {
@@ -401,20 +396,21 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestUserGesture) {
 
   ASSERT_FALSE(GetNotificationForExtension(extension));
 }
+#endif  // !defined(OS_MACOSX)
 
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestRequireInteraction) {
   const extensions::Extension* extension =
       LoadExtensionAndWait("notifications/api/require_interaction");
   ASSERT_TRUE(extension) << message_;
 
-  Notification* notification = GetNotificationForExtension(extension);
+  message_center::Notification* notification =
+      GetNotificationForExtension(extension);
   ASSERT_TRUE(notification);
 
   EXPECT_TRUE(notification->never_timeout());
 }
 
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestShouldDisplayNormal) {
-  EnableFullscreenNotifications();
   ExtensionTestMessageListener notification_created_listener("created", false);
   const Extension* extension = LoadAppWithWindowState(
       "notifications/api/basic_app", WindowState::NORMAL);
@@ -425,19 +421,20 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestShouldDisplayNormal) {
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(
       GetFirstAppWindow(extension->id())->GetNativeWindow()));
 
-  Notification* notification = GetNotificationForExtension(extension);
+  message_center::Notification* notification =
+      GetNotificationForExtension(extension);
   ASSERT_TRUE(notification);
 
   // If the app hasn't created a fullscreen window, then its notifications
   // shouldn't be displayed when a window is fullscreen.
-  ASSERT_FALSE(notification->delegate()->ShouldDisplayOverFullscreen());
+  EXPECT_EQ(message_center::FullscreenVisibility::NONE,
+            notification->fullscreen_visibility());
 }
 
+// Full screen related tests don't run on Mac as native notifications full
+// screen decisions are done by the OS directly.
+#if !defined(OS_MACOSX)
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestShouldDisplayFullscreen) {
-#if defined(OS_MACOSX)
-  ui::test::ScopedFakeNSWindowFullscreen fake_fullscreen;
-#endif
-  EnableFullscreenNotifications();
   ExtensionTestMessageListener notification_created_listener("created", false);
   const Extension* extension = LoadAppWithWindowState(
       "notifications/api/basic_app", WindowState::FULLSCREEN);
@@ -453,53 +450,25 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestShouldDisplayFullscreen) {
   ASSERT_TRUE(GetFirstAppWindow(extension->id())->GetBaseWindow()->IsActive())
       << "Not Active";
 
-  Notification* notification = GetNotificationForExtension(extension);
+  message_center::Notification* notification =
+      GetNotificationForExtension(extension);
   ASSERT_TRUE(notification);
 
   // If the app has created a fullscreen window, then its notifications should
   // be displayed when a window is fullscreen.
-  ASSERT_TRUE(notification->delegate()->ShouldDisplayOverFullscreen());
-}
-
-IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestShouldDisplayFullscreenOff) {
-#if defined(OS_MACOSX)
-  ui::test::ScopedFakeNSWindowFullscreen fake_fullscreen;
-#endif
-  DisableFullscreenNotifications();
-  ExtensionTestMessageListener notification_created_listener("created", false);
-  const Extension* extension = LoadAppWithWindowState(
-      "notifications/api/basic_app", WindowState::FULLSCREEN);
-  ASSERT_TRUE(extension) << message_;
-  ASSERT_TRUE(notification_created_listener.WaitUntilSatisfied());
-
-  // We start by making sure the window is actually focused.
-  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(
-      GetFirstAppWindow(extension->id())->GetNativeWindow()));
-
-  ASSERT_TRUE(GetFirstAppWindow(extension->id())->IsFullscreen())
-      << "Not Fullscreen";
-  ASSERT_TRUE(GetFirstAppWindow(extension->id())->GetBaseWindow()->IsActive())
-      << "Not Active";
-
-  Notification* notification = GetNotificationForExtension(extension);
-  ASSERT_TRUE(notification);
-
-  // When the experiment flag is off, then ShouldDisplayOverFullscreen should
-  // return false.
-  ASSERT_FALSE(notification->delegate()->ShouldDisplayOverFullscreen());
+  EXPECT_EQ(message_center::FullscreenVisibility::OVER_USER,
+            notification->fullscreen_visibility());
 }
 
 // The Fake OSX fullscreen window doesn't like drawing a second fullscreen
 // window when another is visible.
-#if !defined(OS_MACOSX)
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestShouldDisplayMultiFullscreen) {
   // Start a fullscreen app, and then start another fullscreen app on top of the
   // first. Notifications from the first should not be displayed because it is
   // not the app actually displaying on the screen.
-  EnableFullscreenNotifications();
   ExtensionTestMessageListener notification_created_listener("created", false);
   const Extension* extension1 = LoadAppWithWindowState(
-      "notifications/api/basic_app", WindowState::FULLSCREEN);
+      "notifications/api/notification_on_blur", WindowState::FULLSCREEN);
   ASSERT_TRUE(extension1) << message_;
 
   ExtensionTestMessageListener window_visible_listener("visible", false);
@@ -507,30 +476,27 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestShouldDisplayMultiFullscreen) {
       "notifications/api/other_app", WindowState::FULLSCREEN);
   ASSERT_TRUE(extension2) << message_;
 
-  ASSERT_TRUE(notification_created_listener.WaitUntilSatisfied());
   ASSERT_TRUE(window_visible_listener.WaitUntilSatisfied());
+  ASSERT_TRUE(notification_created_listener.WaitUntilSatisfied());
 
   // We start by making sure the window is actually focused.
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(
       GetFirstAppWindow(extension2->id())->GetNativeWindow()));
 
-  Notification* notification = GetNotificationForExtension(extension1);
+  message_center::Notification* notification =
+      GetNotificationForExtension(extension1);
   ASSERT_TRUE(notification);
 
   // The first app window is superseded by the second window, so its
   // notification shouldn't be displayed.
-  ASSERT_FALSE(notification->delegate()->ShouldDisplayOverFullscreen());
+  EXPECT_EQ(message_center::FullscreenVisibility::NONE,
+            notification->fullscreen_visibility());
 }
-#endif
 
 // Verify that a notification is actually displayed when the app window that
-// creates it is fullscreen with the fullscreen notification flag turned on.
+// creates it is fullscreen.
 IN_PROC_BROWSER_TEST_F(NotificationsApiTest,
                        TestShouldDisplayPopupNotification) {
-#if defined(OS_MACOSX)
-  ui::test::ScopedFakeNSWindowFullscreen fake_fullscreen;
-#endif
-  EnableFullscreenNotifications();
   ExtensionTestMessageListener notification_created_listener("created", false);
   const Extension* extension = LoadAppWithWindowState(
       "notifications/api/basic_app", WindowState::FULLSCREEN);
@@ -546,10 +512,13 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest,
   ASSERT_TRUE(GetFirstAppWindow(extension->id())->GetBaseWindow()->IsActive())
       << "Not Active";
 
-  Notification* notification = GetNotificationForExtension(extension);
+  message_center::Notification* notification =
+      GetNotificationForExtension(extension);
   ASSERT_TRUE(notification);
 
   // The extension's window is being shown and focused, so its expected that
   // the notification displays on top of it.
-  ASSERT_TRUE(notification->delegate()->ShouldDisplayOverFullscreen());
+  EXPECT_EQ(message_center::FullscreenVisibility::OVER_USER,
+            notification->fullscreen_visibility());
 }
+#endif  // !defined(OS_MACOSX)

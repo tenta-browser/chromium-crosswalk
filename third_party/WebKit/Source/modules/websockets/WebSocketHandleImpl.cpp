@@ -9,13 +9,12 @@
 #include "platform/network/NetworkLog.h"
 #include "platform/network/WebSocketHandshakeRequest.h"
 #include "platform/network/WebSocketHandshakeResponse.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "platform/wtf/Functional.h"
 #include "platform/wtf/text/WTFString.h"
-#include "public/platform/InterfaceProvider.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebScheduler.h"
 
 namespace blink {
 namespace {
@@ -36,12 +35,11 @@ WebSocketHandleImpl::~WebSocketHandleImpl() {
     websocket_->StartClosingHandshake(kAbnormalShutdownOpCode, g_empty_string);
 }
 
-void WebSocketHandleImpl::Initialize(InterfaceProvider* interface_provider) {
+void WebSocketHandleImpl::Initialize(mojom::blink::WebSocketPtr websocket) {
   NETWORK_DVLOG(1) << this << " initialize(...)";
 
   DCHECK(!websocket_);
-  interface_provider->GetInterface(mojo::MakeRequest(&websocket_));
-
+  websocket_ = std::move(websocket);
   websocket_.set_connection_error_with_reason_handler(
       ConvertToBaseCallback(WTF::Bind(&WebSocketHandleImpl::OnConnectionError,
                                       WTF::Unretained(this))));
@@ -50,9 +48,10 @@ void WebSocketHandleImpl::Initialize(InterfaceProvider* interface_provider) {
 void WebSocketHandleImpl::Connect(const KURL& url,
                                   const Vector<String>& protocols,
                                   SecurityOrigin* origin,
-                                  const KURL& first_party_for_cookies,
+                                  const KURL& site_for_cookies,
                                   const String& user_agent_override,
-                                  WebSocketHandleClient* client) {
+                                  WebSocketHandleClient* client,
+                                  WebTaskRunner* task_runner) {
   DCHECK(websocket_);
 
   NETWORK_DVLOG(1) << this << " connect(" << url.GetString() << ", "
@@ -62,15 +61,13 @@ void WebSocketHandleImpl::Connect(const KURL& url,
   DCHECK(client);
   client_ = client;
 
+  mojom::blink::WebSocketClientPtr client_proxy;
+  client_binding_.Bind(mojo::MakeRequest(&client_proxy, task_runner));
+
   websocket_->AddChannelRequest(
-      url, protocols, origin, first_party_for_cookies,
+      url, protocols, origin, site_for_cookies,
       user_agent_override.IsNull() ? g_empty_string : user_agent_override,
-      client_binding_.CreateInterfacePtrAndBind(
-          Platform::Current()
-              ->CurrentThread()
-              ->Scheduler()
-              ->LoadingTaskRunner()
-              ->ToSingleThreadTaskRunner()));
+      std::move(client_proxy));
 }
 
 void WebSocketHandleImpl::Send(bool fin,
@@ -161,7 +158,7 @@ void WebSocketHandleImpl::OnStartOpeningHandshake(
   NETWORK_DVLOG(1) << this << " OnStartOpeningHandshake("
                    << request->url.GetString() << ")";
 
-  RefPtr<WebSocketHandshakeRequest> request_to_pass =
+  scoped_refptr<WebSocketHandshakeRequest> request_to_pass =
       WebSocketHandshakeRequest::Create(request->url);
   for (size_t i = 0; i < request->headers.size(); ++i) {
     const mojom::blink::HttpHeaderPtr& header = request->headers[i];

@@ -16,6 +16,8 @@
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/task_scheduler/task_traits.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
@@ -37,6 +39,8 @@
 #include "extensions/common/api/app_runtime.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handlers/kiosk_mode_info.h"
+#include "extensions/common/permissions/api_permission.h"
+#include "extensions/common/permissions/permissions_data.h"
 #include "net/base/filename_util.h"
 #include "url/gurl.h"
 
@@ -150,22 +154,20 @@ class PlatformAppPathLauncher
   }
 
   void LaunchWithRelativePath(const base::FilePath& current_directory) {
-    BrowserThread::PostTask(
-        BrowserThread::FILE,
+    base::PostTaskWithTraits(
         FROM_HERE,
-        base::Bind(&PlatformAppPathLauncher::MakePathAbsolute,
-                   this,
+        {base::TaskPriority::USER_VISIBLE, base::MayBlock(),
+         base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+        base::Bind(&PlatformAppPathLauncher::MakePathAbsolute, this,
                    current_directory));
   }
 
  private:
   friend class base::RefCountedThreadSafe<PlatformAppPathLauncher>;
 
-  virtual ~PlatformAppPathLauncher() {}
+  virtual ~PlatformAppPathLauncher() = default;
 
   void MakePathAbsolute(const base::FilePath& current_directory) {
-    DCHECK_CURRENTLY_ON(BrowserThread::FILE);
-
     for (std::vector<base::FilePath>::iterator it = entry_paths_.begin();
          it != entry_paths_.end(); ++it) {
       if (!DoMakePathAbsolute(current_directory, &*it)) {
@@ -434,6 +436,12 @@ void LaunchPlatformAppWithAction(
     const extensions::Extension* app,
     std::unique_ptr<app_runtime::ActionData> action_data,
     const base::FilePath& file_path) {
+  CHECK(!action_data || !action_data->is_lock_screen_action ||
+        !*action_data->is_lock_screen_action ||
+        app->permissions_data()->HasAPIPermission(
+            extensions::APIPermission::kLockScreen))
+      << "Launching lock screen action handler requires lockScreen permission.";
+
   scoped_refptr<PlatformAppPathLauncher> launcher =
       new PlatformAppPathLauncher(context, app, file_path);
   launcher->set_action_data(std::move(action_data));

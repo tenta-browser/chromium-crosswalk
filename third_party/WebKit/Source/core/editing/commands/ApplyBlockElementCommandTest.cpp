@@ -3,17 +3,17 @@
 // found in the LICENSE file.
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/HTMLNames.h"
 #include "core/dom/Document.h"
 #include "core/dom/QualifiedName.h"
-#include "core/editing/EditingTestBase.h"
 #include "core/editing/FrameSelection.h"
 #include "core/editing/Position.h"
 #include "core/editing/SelectionTemplate.h"
 #include "core/editing/VisibleSelection.h"
 #include "core/editing/commands/FormatBlockCommand.h"
 #include "core/editing/commands/IndentOutdentCommand.h"
+#include "core/editing/testing/EditingTestBase.h"
 #include "core/html/HTMLHeadElement.h"
+#include "core/html_names.h"
 
 #include <memory>
 
@@ -41,7 +41,7 @@ TEST_F(ApplyBlockElementCommandTest, selectionCrossingOverBody) {
       SelectionInDOMTree::Builder()
           .SetBaseAndExtent(
               Position(GetDocument().documentElement(), 1),
-              Position(GetDocument().GetElementById("va")->FirstChild(), 2))
+              Position(GetDocument().getElementById("va")->firstChild(), 2))
           .Build());
 
   FormatBlockCommand* command =
@@ -51,7 +51,7 @@ TEST_F(ApplyBlockElementCommandTest, selectionCrossingOverBody) {
   EXPECT_EQ(
       "<body contenteditable=\"false\">\n"
       "<pre><var id=\"va\" class=\"CLASS13\">\nC\n</var></pre><input></body>",
-      GetDocument().documentElement()->innerHTML());
+      GetDocument().documentElement()->InnerHTMLAsString());
 }
 
 // This is a regression test for https://crbug.com/660801
@@ -75,7 +75,38 @@ TEST_F(ApplyBlockElementCommandTest, visibilityChangeDuringCommand) {
   EXPECT_EQ(
       "<head><style>li:first-child { visibility:visible; }</style></head>"
       "<body><ul style=\"visibility:hidden\"><ul></ul><li>xyz</li></ul></body>",
-      GetDocument().documentElement()->innerHTML());
+      GetDocument().documentElement()->InnerHTMLAsString());
+}
+
+// This is a regression test for https://crbug.com/712510
+TEST_F(ApplyBlockElementCommandTest, IndentHeadingIntoBlockquote) {
+  SetBodyContent(
+      "<div contenteditable=\"true\">"
+      "<h6><button><table></table></button></h6>"
+      "<object></object>"
+      "</div>");
+  Element* button = GetDocument().QuerySelector("button");
+  Element* object = GetDocument().QuerySelector("object");
+  Selection().SetSelection(SelectionInDOMTree::Builder()
+                               .Collapse(Position(button, 0))
+                               .Extend(Position(object, 0))
+                               .Build());
+
+  IndentOutdentCommand* command = IndentOutdentCommand::Create(
+      GetDocument(), IndentOutdentCommand::kIndent);
+  command->Apply();
+
+  // This only records the current behavior, which can be wrong.
+  EXPECT_EQ(
+      "<div contenteditable=\"true\">"
+      "<blockquote style=\"margin: 0 0 0 40px; border: none; padding: 0px;\">"
+      "<h6><button></button></h6>"
+      "<h6><button><table></table></button></h6>"
+      "</blockquote>"
+      "<h6><button></button></h6><br>"
+      "<object></object>"
+      "</div>",
+      GetDocument().body()->InnerHTMLAsString());
 }
 
 }  // namespace blink

@@ -17,6 +17,7 @@ static_library("protocol") {
     "auth_util.h",
     "authenticator.cc",
     "authenticator.h",
+    "bandwidth_estimator.h",
     "capability_names.h",
     "channel_authenticator.h",
     "channel_dispatcher_base.cc",
@@ -48,6 +49,8 @@ static_library("protocol") {
     "connection_to_host.h",
     "content_description.cc",
     "content_description.h",
+    "data_channel_manager.cc",
+    "data_channel_manager.h",
     "datagram_channel_factory.h",
     "errors.cc",
     "errors.h",
@@ -104,6 +107,8 @@ static_library("protocol") {
     "monitored_video_stub.h",
     "mouse_input_filter.cc",
     "mouse_input_filter.h",
+    "named_message_pipe_handler.cc",
+    "named_message_pipe_handler.h",
     "negotiating_authenticator_base.cc",
     "negotiating_authenticator_base.h",
     "negotiating_client_authenticator.cc",
@@ -128,6 +133,7 @@ static_library("protocol") {
     "port_allocator_factory.h",
     "port_range.cc",
     "port_range.h",
+    "process_stats_stub.h",
     "pseudotcp_adapter.cc",
     "pseudotcp_adapter.h",
     "pseudotcp_channel_factory.cc",
@@ -171,6 +177,8 @@ static_library("protocol") {
     "video_renderer.h",
     "video_stats_stub.h",
     "video_stub.h",
+    "webrtc_bandwidth_estimator.cc",
+    "webrtc_bandwidth_estimator.h",
   ]
 
   configs += [
@@ -195,7 +203,18 @@ static_library("protocol") {
     "//third_party/libyuv",
   ]
 
+  defines = []
+
   if (!is_nacl) {
+    # This condition needs to match with //remoting/codec/BUILD.gn
+    if (is_win || is_linux) {
+      defines += [ "USE_H264_ENCODER" ]
+      deps += [
+        "//media",
+        "//skia",
+      ]
+    }
+
     sources += [
       "chromium_port_allocator_factory.cc",
       "chromium_port_allocator_factory.h",
@@ -235,7 +254,12 @@ static_library("protocol") {
       ]
     }
 
-    deps += [ "//third_party/webrtc_overrides:init_webrtc" ]
+    deps += [
+      "//third_party/webrtc/api/audio_codecs:audio_codecs_api",
+      "//third_party/webrtc/api/audio_codecs/opus:audio_decoder_opus",
+      "//third_party/webrtc/api/audio_codecs/opus:audio_encoder_opus",
+      "//third_party/webrtc_overrides:init_webrtc",
+    ]
   }
 
   if (enable_remoting_host) {
@@ -265,6 +289,10 @@ static_library("test_support") {
     "fake_connection_to_host.h",
     "fake_datagram_socket.cc",
     "fake_datagram_socket.h",
+    "fake_message_pipe.cc",
+    "fake_message_pipe.h",
+    "fake_message_pipe_wrapper.cc",
+    "fake_message_pipe_wrapper.h",
     "fake_session.cc",
     "fake_session.h",
     "fake_stream_socket.cc",
@@ -308,7 +336,9 @@ source_set("unit_tests") {
     "connection_tester.cc",
     "connection_tester.h",
     "content_description_unittest.cc",
+    "data_channel_manager_unittest.cc",
     "http_ice_config_request_unittest.cc",
+    "ice_config_unittest.cc",
     "ice_transport_unittest.cc",
     "input_event_tracker_unittest.cc",
     "input_filter_unittest.cc",

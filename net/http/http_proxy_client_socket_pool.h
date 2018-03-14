@@ -5,6 +5,8 @@
 #ifndef NET_HTTP_HTTP_PROXY_CLIENT_SOCKET_POOL_H_
 #define NET_HTTP_HTTP_PROXY_CLIENT_SOCKET_POOL_H_
 
+#include <stdint.h>
+
 #include <memory>
 #include <string>
 
@@ -20,7 +22,7 @@
 #include "net/socket/client_socket_pool.h"
 #include "net/socket/client_socket_pool_base.h"
 #include "net/socket/ssl_client_socket.h"
-#include "net/spdy/spdy_session.h"
+#include "net/spdy/chromium/spdy_session.h"
 
 namespace net {
 
@@ -28,7 +30,9 @@ class HttpAuthCache;
 class HttpAuthHandlerFactory;
 class HttpProxyClientSocketWrapper;
 class NetLog;
+class NetworkQualityProvider;
 class ProxyDelegate;
+class QuicStreamFactory;
 class SSLClientSocketPool;
 class SSLSocketParams;
 class SpdySessionPool;
@@ -36,20 +40,23 @@ class TransportClientSocketPool;
 class TransportSocketParams;
 
 // HttpProxySocketParams only needs the socket params for one of the proxy
-// types.  The other param must be NULL.  When using an HTTP Proxy,
-// |transport_params| must be set.  When using an HTTPS Proxy, |ssl_params|
-// must be set.
+// types.  The other param must be NULL.  When using an HTTP proxy,
+// |transport_params| must be set.  When using an HTTPS proxy or QUIC proxy,
+// |ssl_params| must be set. Also, if using a QUIC proxy, |quic_version| must
+// not be QUIC_VERSION_UNSUPPORTED.
 class NET_EXPORT_PRIVATE HttpProxySocketParams
     : public base::RefCounted<HttpProxySocketParams> {
  public:
   HttpProxySocketParams(
       const scoped_refptr<TransportSocketParams>& transport_params,
       const scoped_refptr<SSLSocketParams>& ssl_params,
+      QuicTransportVersion quic_version,
       const std::string& user_agent,
       const HostPortPair& endpoint,
       HttpAuthCache* http_auth_cache,
       HttpAuthHandlerFactory* http_auth_handler_factory,
       SpdySessionPool* spdy_session_pool,
+      QuicStreamFactory* quic_stream_factory,
       bool tunnel,
       ProxyDelegate* proxy_delegate);
 
@@ -59,6 +66,7 @@ class NET_EXPORT_PRIVATE HttpProxySocketParams
   const scoped_refptr<SSLSocketParams>& ssl_params() const {
     return ssl_params_;
   }
+  QuicTransportVersion quic_version() const { return quic_version_; }
   const std::string& user_agent() const { return user_agent_; }
   const HostPortPair& endpoint() const { return endpoint_; }
   HttpAuthCache* http_auth_cache() const { return http_auth_cache_; }
@@ -67,6 +75,9 @@ class NET_EXPORT_PRIVATE HttpProxySocketParams
   }
   SpdySessionPool* spdy_session_pool() {
     return spdy_session_pool_;
+  }
+  QuicStreamFactory* quic_stream_factory() const {
+    return quic_stream_factory_;
   }
   const HostResolver::RequestInfo& destination() const;
   bool tunnel() const { return tunnel_; }
@@ -81,7 +92,9 @@ class NET_EXPORT_PRIVATE HttpProxySocketParams
 
   const scoped_refptr<TransportSocketParams> transport_params_;
   const scoped_refptr<SSLSocketParams> ssl_params_;
+  QuicTransportVersion quic_version_;
   SpdySessionPool* spdy_session_pool_;
+  QuicStreamFactory* quic_stream_factory_;
   const std::string user_agent_;
   const HostPortPair endpoint_;
   HttpAuthCache* const http_auth_cache_;
@@ -143,6 +156,7 @@ class NET_EXPORT_PRIVATE HttpProxyClientSocketPool
                             int max_sockets_per_group,
                             TransportClientSocketPool* transport_pool,
                             SSLClientSocketPool* ssl_pool,
+                            NetworkQualityProvider* network_quality_provider,
                             NetLog* net_log);
 
   ~HttpProxyClientSocketPool() override;
@@ -159,7 +173,8 @@ class NET_EXPORT_PRIVATE HttpProxyClientSocketPool
   void RequestSockets(const std::string& group_name,
                       const void* params,
                       int num_sockets,
-                      const NetLogWithSource& net_log) override;
+                      const NetLogWithSource& net_log,
+                      HttpRequestInfo::RequestMotivation motivation) override;
 
   void SetPriority(const std::string& group_name,
                    ClientSocketHandle* handle,
@@ -209,6 +224,7 @@ class NET_EXPORT_PRIVATE HttpProxyClientSocketPool
    public:
     HttpProxyConnectJobFactory(TransportClientSocketPool* transport_pool,
                                SSLClientSocketPool* ssl_pool,
+                               NetworkQualityProvider* network_quality_provider,
                                NetLog* net_log);
 
     // ClientSocketPoolBase::ConnectJobFactory methods.
@@ -222,8 +238,11 @@ class NET_EXPORT_PRIVATE HttpProxyClientSocketPool
    private:
     TransportClientSocketPool* const transport_pool_;
     SSLClientSocketPool* const ssl_pool_;
+    NetworkQualityProvider* network_quality_provider_;
+    const int32_t transport_rtt_multiplier_;
+    const base::TimeDelta min_proxy_connection_timeout_;
+    const base::TimeDelta max_proxy_connection_timeout_;
     NetLog* net_log_;
-    base::TimeDelta timeout_;
 
     DISALLOW_COPY_AND_ASSIGN(HttpProxyConnectJobFactory);
   };

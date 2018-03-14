@@ -113,7 +113,7 @@ class ManagementSetEnabledFunction : public UIThreadExtensionFunction {
  private:
   void OnInstallPromptDone(bool did_accept);
 
-  void OnRequirementsChecked(PreloadCheck::Errors errors);
+  void OnRequirementsChecked(const PreloadCheck::Errors& errors);
 
   std::string extension_id_;
 
@@ -225,7 +225,7 @@ class ManagementEventRouter : public ExtensionRegistryObserver {
                          const Extension* extension) override;
   void OnExtensionUnloaded(content::BrowserContext* browser_context,
                            const Extension* extension,
-                           UnloadedExtensionInfo::Reason reason) override;
+                           UnloadedExtensionReason reason) override;
   void OnExtensionInstalled(content::BrowserContext* browser_context,
                             const Extension* extension,
                             bool is_update) override;

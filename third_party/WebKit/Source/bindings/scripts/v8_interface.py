@@ -45,27 +45,28 @@ from v8_globals import includes
 import v8_methods
 import v8_types
 import v8_utilities
-from v8_utilities import (cpp_name_or_partial, cpp_name, has_extended_attribute_value,
-                          runtime_enabled_feature_name, is_legacy_interface_type_checking)
+from v8_utilities import (context_enabled_feature_name, cpp_name_or_partial, cpp_name,
+                          has_extended_attribute_value, runtime_enabled_feature_name,
+                          is_legacy_interface_type_checking)
 
 
 INTERFACE_H_INCLUDES = frozenset([
     'bindings/core/v8/GeneratedCodeHelper.h',
     'bindings/core/v8/NativeValueTraits.h',
-    'bindings/core/v8/ScriptWrappable.h',
+    'platform/bindings/ScriptWrappable.h',
     'bindings/core/v8/ToV8ForCore.h',
-    'bindings/core/v8/V8Binding.h',
-    'bindings/core/v8/V8DOMWrapper.h',
-    'bindings/core/v8/WrapperTypeInfo.h',
+    'bindings/core/v8/V8BindingForCore.h',
+    'platform/bindings/V8DOMWrapper.h',
+    'platform/bindings/WrapperTypeInfo.h',
     'platform/heap/Handle.h',
 ])
 INTERFACE_CPP_INCLUDES = frozenset([
+    'base/memory/scoped_refptr.h',
     'bindings/core/v8/ExceptionState.h',
     'bindings/core/v8/V8DOMConfiguration.h',
-    'bindings/core/v8/V8ObjectConstructor.h',
+    'platform/bindings/V8ObjectConstructor.h',
     'core/dom/ExecutionContext.h',
     'platform/wtf/GetPtr.h',
-    'platform/wtf/RefPtr.h',
 ])
 
 
@@ -121,7 +122,6 @@ def origin_trial_features(interface, constants, attributes, methods):
     origin_trial_attributes = member_filter(attributes)
     origin_trial_methods = member_filter([method for method in methods
                                           if v8_methods.method_is_visible(method, interface.is_partial) and
-                                          not v8_methods.conditionally_exposed(method) and
                                           not v8_methods.custom_registration(method)])
 
     feature_names = set([member[KEY] for member in origin_trial_constants + origin_trial_attributes + origin_trial_methods])
@@ -135,13 +135,54 @@ def origin_trial_features(interface, constants, attributes, methods):
                 for name in feature_names]
     for feature in features:
         members = feature['constants'] + feature['attributes'] + feature['methods']
-        feature['needs_instance'] = reduce(or_, (member.get('on_instance', False) for member in members))
+        feature['needs_instance'] = any(member.get('on_instance', False) for member in members)
+        # TODO(chasej): Need to handle method overloads? e.g.
+        # (method['overloads']['secure_context_test_all'] if 'overloads' in method else method['secure_context_test'])
+        feature['needs_secure_context'] = any(member.get('secure_context_test', False) for member in members)
 
     if features:
-        includes.add('bindings/core/v8/ScriptState.h')
-        includes.add('core/origin_trials/OriginTrials.h')
-    return sorted(features)
+        includes.add('platform/bindings/ScriptState.h')
+        includes.add('core/origin_trials/origin_trials.h')
+    return features
 
+
+def context_enabled_features(attributes):
+    """ Returns a list of context-enabled features from a set of attributes.
+
+    Each element is a dictionary with the feature's |name| and lists of
+    |attributes| associated with the feature.
+    """
+    KEY = 'context_enabled_feature_name'  # pylint: disable=invalid-name
+
+    def member_filter(members):
+        return sorted([member for member in members if member.get(KEY) and not member.get('exposed_test')])
+
+    def member_filter_by_name(members, name):
+        return [member for member in members if member[KEY] == name]
+
+    # Collect all members visible on this interface with a defined origin trial
+    context_enabled_attributes = member_filter(attributes)
+    feature_names = set([member[KEY] for member in context_enabled_attributes])
+    features = [{'name': name,
+                 'attributes': member_filter_by_name(context_enabled_attributes, name),
+                 'needs_instance': False}
+                for name in feature_names]
+    if features:
+        includes.add('platform/bindings/ScriptState.h')
+    return features
+
+
+def runtime_call_stats_context(interface):
+    counter_prefix = 'Blink_' + v8_utilities.cpp_name(interface) + '_'
+    return {
+        'constructor_counter': counter_prefix + 'Constructor',
+        'cross_origin_named_getter_counter': counter_prefix + 'CrossOriginNamedGetter',
+        'cross_origin_named_setter_counter': counter_prefix + 'CrossOriginNamedSetter',
+        'indexed_property_getter_counter': counter_prefix + 'IndexedPropertyGetter',
+        'named_property_getter_counter': counter_prefix + 'NamedPropertyGetter',
+        'named_property_query_counter': counter_prefix + 'NamedPropertyQuery',
+        'named_property_setter_counter': counter_prefix + 'NamedPropertySetter',
+    }
 
 def interface_context(interface, interfaces):
     """Creates a Jinja template context for an interface.
@@ -202,9 +243,6 @@ def interface_context(interface, interfaces):
         includes.add('bindings/core/v8/BindingSecurity.h')
         includes.add('core/frame/LocalDOMWindow.h')
 
-    # [DependentLifetime]
-    is_dependent_lifetime = 'DependentLifetime' in extended_attributes
-
     # [PrimaryGlobal] and [Global]
     is_global = ('PrimaryGlobal' in extended_attributes or
                  'Global' in extended_attributes)
@@ -216,10 +254,10 @@ def interface_context(interface, interfaces):
 
     wrapper_class_id = ('kNodeClassId' if inherits_interface(interface.name, 'Node') else 'kObjectClassId')
 
-    # [ActiveScriptWrappable] must be accompanied with [DependentLifetime].
-    if active_scriptwrappable and not is_dependent_lifetime:
-        raise Exception('[ActiveScriptWrappable] interface must also specify '
-                        '[DependentLifetime]: %s' % interface.name)
+    # [LegacyUnenumerableNamedProperties]
+    # pylint: disable=C0103
+    has_legacy_unenumerable_named_properties = (interface.has_named_property_getter and
+                                                'LegacyUnenumerableNamedProperties' in extended_attributes)
 
     v8_class_name = v8_utilities.v8_class_name(interface)
     cpp_class_name = cpp_name(interface)
@@ -231,6 +269,8 @@ def interface_context(interface, interfaces):
         'V8Window', 'V8HTMLDocument', 'V8Document', 'V8Node', 'V8EventTarget']
 
     context = {
+        'active_scriptwrappable': active_scriptwrappable,
+        'context_enabled_feature_name': context_enabled_feature_name(interface),  # [ContextEnabled]
         'cpp_class': cpp_class_name,
         'cpp_class_or_partial': cpp_class_name_or_partial,
         'is_gc_type': True,
@@ -238,25 +278,24 @@ def interface_context(interface, interfaces):
         'has_access_check_callbacks': (is_check_security and
                                        interface.name != 'EventTarget'),
         'has_custom_legacy_call_as_function': has_extended_attribute_value(interface, 'Custom', 'LegacyCallAsFunction'),  # [Custom=LegacyCallAsFunction]
+        'has_legacy_unenumerable_named_properties': has_legacy_unenumerable_named_properties,
         'has_partial_interface': len(interface.partial_interfaces) > 0,
         'header_includes': header_includes,
         'interface_name': interface.name,
         'is_array_buffer_or_view': is_array_buffer_or_view,
         'is_check_security': is_check_security,
         'is_event_target': is_event_target,
-        'is_exception': interface.is_exception,
         'is_global': is_global,
         'is_immutable_prototype': is_immutable_prototype,
         'is_node': inherits_interface(interface.name, 'Node'),
         'is_partial': interface.is_partial,
         'is_typed_array_type': is_typed_array_type,
-        'lifetime': 'kDependent' if is_dependent_lifetime else 'kIndependent',
         'measure_as': v8_utilities.measure_as(interface, None),  # [MeasureAs]
         'needs_runtime_enabled_installer': needs_runtime_enabled_installer,
         'origin_trial_enabled_function': v8_utilities.origin_trial_enabled_function_name(interface),
         'parent_interface': parent_interface,
         'pass_cpp_type': cpp_name(interface) + '*',
-        'active_scriptwrappable': active_scriptwrappable,
+        'runtime_call_stats': runtime_call_stats_context(interface),
         'runtime_enabled_feature_name': runtime_enabled_feature_name(interface),  # [RuntimeEnabled]
         'v8_class': v8_class_name,
         'v8_class_or_partial': v8_class_name_or_partial,
@@ -298,9 +337,9 @@ def interface_context(interface, interfaces):
                             ' specified on partial interface definitions: '
                             '%s' % interface.name)
         if named_constructor:
-            includes.add('bindings/core/v8/V8PrivateProperty.h')
+            includes.add('platform/bindings/V8PrivateProperty.h')
 
-        includes.add('bindings/core/v8/V8ObjectConstructor.h')
+        includes.add('platform/bindings/V8ObjectConstructor.h')
         includes.add('core/frame/LocalDOMWindow.h')
     elif 'Measure' in extended_attributes or 'MeasureAs' in extended_attributes:
         if not interface.is_partial:
@@ -330,7 +369,7 @@ def interface_context(interface, interfaces):
     has_ce_reactions = any(setter_or_deleter and 'CEReactions' in setter_or_deleter.extended_attributes
                            for setter_or_deleter in setter_or_deleters)
     if has_ce_reactions:
-        includes.add('core/dom/custom/CEReactionsScope.h')
+        includes.add('core/html/custom/CEReactionsScope.h')
 
     context.update({
         'constructors': constructors,
@@ -351,23 +390,44 @@ def interface_context(interface, interfaces):
 
     # Attributes
     attributes = attributes_context(interface, interfaces)
+
     context.update({
         'attributes': attributes,
         # Elements in attributes are broken in following members.
         'accessors': v8_attributes.filter_accessors(attributes),
         'data_attributes': v8_attributes.filter_data_attributes(attributes),
         'lazy_data_attributes': v8_attributes.filter_lazy_data_attributes(attributes),
-        'origin_trial_attributes': v8_attributes.filter_origin_trial_enabled(attributes),
         'runtime_enabled_attributes': v8_attributes.filter_runtime_enabled(attributes),
     })
 
+    # Conditionally enabled attributes
+    conditionally_enabled_attributes = v8_attributes.filter_conditionally_enabled(attributes)
+    conditional_attributes = [attr for attr in conditionally_enabled_attributes if not attr['constructor_type']]
+    conditional_interface_objects = [attr for attr in conditionally_enabled_attributes if attr['constructor_type']]
+    has_conditional_secure_attributes = any(  # pylint: disable=invalid-name
+        v8_attributes.is_secure_context(attr) for attr in conditionally_enabled_attributes)
+    context.update({
+        'conditional_attributes': conditional_attributes,
+        'conditional_interface_objects': conditional_interface_objects,
+        'has_conditional_secure_attributes': has_conditional_secure_attributes,
+    })
+
     # Methods
-    methods, iterator_method = methods_context(interface)
+    context.update(methods_context(interface))
+    methods = context['methods']
     context.update({
         'has_origin_safe_method_setter': any(method['is_cross_origin'] and not method['is_unforgeable']
             for method in methods),
-        'iterator_method': iterator_method,
-        'methods': methods,
+    })
+
+    # Conditionally enabled methods
+    conditional_methods = v8_methods.filter_conditionally_enabled(methods, interface.is_partial)
+    has_conditional_secure_methods = any(  # pylint: disable=invalid-name
+        v8_methods.is_secure_context(method) for method in conditional_methods)
+    context.update({
+        'has_conditional_secure_methods':
+            has_conditional_secure_methods,
+        'conditional_methods': conditional_methods,
     })
 
     # Window.idl in Blink has indexed properties, but the spec says Window
@@ -383,21 +443,13 @@ def interface_context(interface, interfaces):
     })
 
     # Conditionally enabled members
-    has_conditional_attributes_on_prototype = any(  # pylint: disable=invalid-name
-        (attribute['exposed_test'] or attribute['secure_context_test']) and attribute['on_prototype']
-        for attribute in attributes)
-    context.update({
-        'has_conditional_attributes_on_prototype':
-            has_conditional_attributes_on_prototype,
-    })
-
-    prepare_prototype_and_interface_object_func = None  # pylint: disable=invalid-name
-    if (unscopables or has_conditional_attributes_on_prototype or
-            v8_methods.filter_conditionally_exposed(methods, interface.is_partial)):
-        prepare_prototype_and_interface_object_func = '%s::preparePrototypeAndInterfaceObject' % v8_class_name_or_partial  # pylint: disable=invalid-name
+    install_conditional_features_func = None  # pylint: disable=invalid-name
+    if unscopables or conditional_interface_objects or conditional_attributes or conditional_methods:
+        install_conditional_features_func = (  # pylint: disable=invalid-name
+            v8_class_name_or_partial + '::InstallConditionalFeatures')
 
     context.update({
-        'prepare_prototype_and_interface_object_func': prepare_prototype_and_interface_object_func,
+        'install_conditional_features_func': install_conditional_features_func,
     })
 
     context.update({
@@ -414,9 +466,11 @@ def interface_context(interface, interfaces):
         'has_named_properties_object': is_global and context['named_property_getter'],
     })
 
-    # Origin Trials
+    # Origin Trials and ContextEnabled features
     context.update({
-        'origin_trial_features': origin_trial_features(interface, context['constants'], context['attributes'], context['methods']),
+        'optional_features':
+            sorted(origin_trial_features(interface, context['constants'], context['attributes'], context['methods']) +
+                   context_enabled_features(context['attributes'])),
     })
 
     # Cross-origin interceptors
@@ -502,7 +556,11 @@ def methods_context(interface):
         interface: An interface to create contexts for
 
     Returns:
-        A list of method contexts, and an iterator context if available or None
+        A dictionary with 3 keys:
+        'iterator_method': An iterator context if available or None.
+        'iterator_method_alias': A string that can also be used to refer to the
+                                 @@iterator symbol or None.
+        'methods': A list of method contexts.
     """
 
     methods = []
@@ -546,6 +604,10 @@ def methods_context(interface):
 
     # iterable<>, maplike<> and setlike<>
     iterator_method = None
+
+    # Depending on the declaration, @@iterator may be a synonym for e.g.
+    # 'entries' or 'values'.
+    iterator_method_alias = None
 
     # FIXME: support Iterable in partial interfaces. However, we don't
     # need to support iterator overloads between interface and
@@ -597,11 +659,19 @@ def methods_context(interface):
 
             # For value iterators, the |entries|, |forEach|, |keys| and |values| are originally set
             # to corresponding properties in %ArrayPrototype%.
+            # For pair iterators and maplike declarations, |entries| is an alias for @@iterator
+            # itself. For setlike declarations, |values| is an alias for @@iterator.
             if not is_value_iterator:
+                if not interface.setlike:
+                    iterator_method_alias = 'entries'
+                    entries_or_values_method = generated_iterator_method('values')
+                else:
+                    iterator_method_alias = 'values'
+                    entries_or_values_method = generated_iterator_method('entries')
+
                 non_overridable_methods.extend([
                     generated_iterator_method('keys'),
-                    generated_iterator_method('values'),
-                    generated_iterator_method('entries'),
+                    entries_or_values_method,
 
                     # void forEach(Function callback, [Default=Undefined] optional any thisArg)
                     generated_method(IdlType('void'), 'forEach',
@@ -728,7 +798,11 @@ def methods_context(interface):
         method['length'] = (method['overloads']['length'] if 'overloads' in method else
                             method['number_of_required_arguments'])
 
-    return methods, iterator_method
+    return {
+        'iterator_method': iterator_method,
+        'iterator_method_alias': iterator_method_alias,
+        'methods': methods,
+    }
 
 
 def reflected_name(constant_name):
@@ -756,6 +830,7 @@ def constant_context(constant, interface):
         'origin_trial_enabled_function': v8_utilities.origin_trial_enabled_function_name(constant),  # [OriginTrialEnabled]
         'origin_trial_feature_name': v8_utilities.origin_trial_feature_name(constant),  # [OriginTrialEnabled]
         # FIXME: use 'reflected_name' as correct 'name'
+        'rcs_counter': 'Blink_' + v8_utilities.cpp_name(interface) + '_' + constant.name + '_ConstantGetter',
         'reflected_name': extended_attributes.get('Reflect', reflected_name(constant.name)),
         'runtime_enabled_feature_name': runtime_enabled_feature_name(constant),  # [RuntimeEnabled]
         'value': constant.value,
@@ -1269,6 +1344,7 @@ def constructor_context(interface, constructor):
         'is_raises_exception': is_constructor_raises_exception,
         'number_of_required_arguments':
             number_of_required_arguments(constructor),
+        'rcs_counter': 'Blink_' + v8_utilities.cpp_name(interface) + '_ConstructorCallback'
     }
 
 
@@ -1292,7 +1368,7 @@ def named_constructor_context(interface):
 
 def number_of_required_arguments(constructor):
     return len([argument for argument in constructor.arguments
-                if not argument.is_optional])
+                if not (argument.is_optional or argument.is_variadic)])
 
 
 def interface_length(constructors):
@@ -1319,9 +1395,7 @@ def property_getter(getter, cpp_arguments):
         return None
 
     def is_null_expression(idl_type):
-        if idl_type.use_output_parameter_for_result:
-            return 'result.isNull()'
-        if idl_type.is_string_type:
+        if idl_type.use_output_parameter_for_result or idl_type.is_string_type:
             return 'result.IsNull()'
         if idl_type.is_interface_type:
             return '!result'
@@ -1361,6 +1435,8 @@ def property_getter(getter, cpp_arguments):
             getter, 'Custom', 'PropertyEnumerator'),
         'is_custom_property_query': has_extended_attribute_value(
             getter, 'Custom', 'PropertyQuery'),
+        # TODO(rakuco): [NotEnumerable] does not make sense here and is only
+        # used in non-standard IDL operations. We need to get rid of them.
         'is_enumerable': 'NotEnumerable' not in extended_attributes,
         'is_null_expression': is_null_expression(idl_type),
         'is_raises_exception': is_raises_exception,

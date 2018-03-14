@@ -4,47 +4,95 @@
 
 #include "modules/webaudio/AudioWorklet.h"
 
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/Document.h"
+#include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/UseCounter.h"
+#include "core/workers/WorkerClients.h"
 #include "modules/webaudio/AudioWorkletMessagingProxy.h"
-#include "modules/webaudio/AudioWorkletThread.h"
+#include "modules/webaudio/BaseAudioContext.h"
+#include "modules/webaudio/CrossThreadAudioWorkletProcessorInfo.h"
 
 namespace blink {
 
-AudioWorklet* AudioWorklet::Create(LocalFrame* frame) {
-  return new AudioWorklet(frame);
+AudioWorklet* AudioWorklet::Create(BaseAudioContext* context) {
+  return new AudioWorklet(context);
 }
 
-AudioWorklet::AudioWorklet(LocalFrame* frame)
-    : Worklet(frame), worklet_messaging_proxy_(nullptr) {}
+AudioWorklet::AudioWorklet(BaseAudioContext* context)
+    : Worklet(context->GetExecutionContext()->ExecutingWindow()->GetFrame()),
+      context_(context) {}
 
-AudioWorklet::~AudioWorklet() {
-  if (worklet_messaging_proxy_)
-    worklet_messaging_proxy_->ParentObjectDestroyed();
+void AudioWorklet::CreateProcessor(AudioWorkletHandler* handler,
+                                   MessagePortChannel message_port_channel) {
+  DCHECK(IsMainThread());
+  DCHECK(GetMessagingProxy());
+  GetMessagingProxy()->CreateProcessor(handler,
+                                       std::move(message_port_channel));
 }
 
-void AudioWorklet::Initialize() {
-  AudioWorkletThread::EnsureSharedBackingThread();
+void AudioWorklet::NotifyGlobalScopeIsUpdated() {
+  DCHECK(IsMainThread());
 
-  DCHECK(!worklet_messaging_proxy_);
-  DCHECK(GetExecutionContext());
-
-  worklet_messaging_proxy_ =
-      new AudioWorkletMessagingProxy(GetExecutionContext());
-  worklet_messaging_proxy_->Initialize();
+  if (!worklet_started_) {
+    context_->NotifyWorkletIsReady();
+    worklet_started_ = true;
+  }
 }
 
-bool AudioWorklet::IsInitialized() const {
-  return worklet_messaging_proxy_;
+WebThread* AudioWorklet::GetBackingThread() {
+  DCHECK(IsMainThread());
+  DCHECK(GetMessagingProxy());
+  return GetMessagingProxy()->GetWorkletBackingThread();
 }
 
-WorkletGlobalScopeProxy* AudioWorklet::GetWorkletGlobalScopeProxy() const {
-  DCHECK(worklet_messaging_proxy_);
-  return worklet_messaging_proxy_;
+const Vector<CrossThreadAudioParamInfo>
+    AudioWorklet::GetParamInfoListForProcessor(
+    const String& name) {
+  DCHECK(IsMainThread());
+  DCHECK(GetMessagingProxy());
+  return GetMessagingProxy()->GetParamInfoListForProcessor(name);
 }
 
-DEFINE_TRACE(AudioWorklet) {
+bool AudioWorklet::IsProcessorRegistered(const String& name) {
+  DCHECK(IsMainThread());
+  DCHECK(GetMessagingProxy());
+  return GetMessagingProxy()->IsProcessorRegistered(name);
+}
+
+bool AudioWorklet::IsReady() {
+  DCHECK(IsMainThread());
+  return GetMessagingProxy() && GetBackingThread();
+}
+
+bool AudioWorklet::NeedsToCreateGlobalScope() {
+  // This is a callback from |Worklet::FetchAndInvokeScript| call, which only
+  // can be triggered by Worklet.addModule() call.
+  UseCounter::Count(GetFrame(), WebFeature::kAudioWorkletAddModule);
+
+  return GetNumberOfGlobalScopes() == 0;
+}
+
+WorkletGlobalScopeProxy* AudioWorklet::CreateGlobalScope() {
+  DCHECK_EQ(GetNumberOfGlobalScopes(), 0u);
+
+  AudioWorkletMessagingProxy* proxy =
+      new AudioWorkletMessagingProxy(GetExecutionContext(),
+                                     WorkerClients::Create(),
+                                     this);
+  proxy->Initialize();
+  return proxy;
+}
+
+AudioWorkletMessagingProxy* AudioWorklet::GetMessagingProxy() {
+  return GetNumberOfGlobalScopes() == 0
+      ? nullptr
+      : static_cast<AudioWorkletMessagingProxy*>(FindAvailableGlobalScope());
+}
+
+void AudioWorklet::Trace(blink::Visitor* visitor) {
+  visitor->Trace(context_);
   Worklet::Trace(visitor);
 }
 

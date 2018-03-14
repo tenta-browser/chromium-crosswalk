@@ -12,27 +12,18 @@
 
 class GroupedPermissionInfoBarDelegate;
 
+// TODO(timloh): This is incorrectly named as we've removed grouped permissions,
+// rename it to PermissionInfoBar once crbug.com/606138 is done.
 class GroupedPermissionInfoBar : public ConfirmInfoBar {
  public:
   explicit GroupedPermissionInfoBar(
       std::unique_ptr<GroupedPermissionInfoBarDelegate> delegate);
   ~GroupedPermissionInfoBar() override;
 
-  void SetPermissionState(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jbooleanArray>& permissions);
-
-  static bool Register(JNIEnv* env);
-
  private:
-  void ProcessButton(int action) override;
-
   // InfoBarAndroid:
   base::android::ScopedJavaLocalRef<jobject> CreateRenderInfoBar(
       JNIEnv* env) override;
-  void SetJavaInfoBar(
-      const base::android::JavaRef<jobject>& java_info_bar) override;
 
   GroupedPermissionInfoBarDelegate* GetDelegate();
 

@@ -22,7 +22,6 @@ class WebContents;
 }
 
 namespace security_interstitials {
-class MetricsHelper;
 class SecurityInterstitialControllerClient;
 
 class SecurityInterstitialPage : public content::InterstitialPageDelegate {
@@ -42,6 +41,9 @@ class SecurityInterstitialPage : public content::InterstitialPageDelegate {
   // Prevents creating the actual interstitial view for testing.
   void DontCreateViewForTesting();
 
+  // InterstitialPageDelegate method:
+  std::string GetHTMLContents() override;
+
  protected:
   // Returns true if the interstitial should create a new navigation entry.
   virtual bool ShouldCreateNewNavigation() const = 0;
@@ -54,8 +56,7 @@ class SecurityInterstitialPage : public content::InterstitialPageDelegate {
   // interstitial_page_ will now have a value.
   virtual void AfterShow() {}
 
-  // InterstitialPageDelegate method:
-  std::string GetHTMLContents() override;
+  virtual int GetHTMLTemplateId();
 
   // Returns the formatted host name for the request url.
   base::string16 GetFormattedHostName() const;
@@ -64,9 +65,7 @@ class SecurityInterstitialPage : public content::InterstitialPageDelegate {
   content::WebContents* web_contents() const;
   GURL request_url() const;
 
-  SecurityInterstitialControllerClient* controller();
-
-  MetricsHelper* metrics_helper();
+  SecurityInterstitialControllerClient* controller() const;
 
   // Update metrics when the interstitial is closed.
   void UpdateMetricsAfterSecurityInterstitial();
@@ -89,8 +88,6 @@ class SecurityInterstitialPage : public content::InterstitialPageDelegate {
 
   // For subclasses that don't have their own ControllerClients yet.
   std::unique_ptr<SecurityInterstitialControllerClient> controller_;
-
-  std::unique_ptr<MetricsHelper> metrics_helper_;
 
   DISALLOW_COPY_AND_ASSIGN(SecurityInterstitialPage);
 };

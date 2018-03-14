@@ -12,7 +12,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.content.browser.JavaBridgeTestCommon.Controller;
@@ -24,9 +23,9 @@ import org.chromium.content.browser.JavaBridgeTestCommon.Controller;
 @RunWith(BaseJUnit4ClassRunner.class)
 public class JavaBridgeFieldsTest {
     @Rule
-    public JavaBridgeActivityTestRule mActivityTestRule = new JavaBridgeActivityTestRule();
+    public JavaBridgeActivityTestRule mActivityTestRule =
+            new JavaBridgeActivityTestRule().shouldSetUp(true);
 
-    @SuppressFBWarnings({"CHROMIUM_SYNCHRONIZED_METHOD", "URF_UNREAD_PUBLIC_OR_PROTECTED_FIELD"})
     private static class TestObject extends Controller {
         private String mStringValue;
 

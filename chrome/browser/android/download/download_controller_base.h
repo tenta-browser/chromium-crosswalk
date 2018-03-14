@@ -21,7 +21,6 @@ class URLRequest;
 }
 
 namespace content {
-class DownloadItem;
 class WebContents;
 }
 
@@ -29,6 +28,13 @@ class WebContents;
 struct DownloadInfo {
   explicit DownloadInfo(const net::URLRequest* request);
   DownloadInfo(const DownloadInfo& other);
+  DownloadInfo(const GURL& url,
+               const GURL& original_url,
+               const std::string& content_disposition,
+               const std::string& original_mime_type,
+               const std::string& user_agent,
+               const std::string& cookie,
+               const std::string& referer);
   ~DownloadInfo();
 
   // The URL from which we are downloading. This is the final URL after any
@@ -72,16 +78,20 @@ class DownloadControllerBase : public content::DownloadItem::Observer {
   // Called to prompt the user for file access permission. When finished,
   // |callback| will be executed.
   virtual void AcquireFileAccessPermission(
-      content::WebContents* web_contents,
+      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const AcquireFileAccessPermissionCallback& callback) = 0;
 
   // Called by unit test to approve or disapprove file access request.
   virtual void SetApproveFileAccessRequestForTesting(bool approve) {}
 
-  // Starts a new download request with Android DownloadManager.
+  // Starts a new download request with Android DownloadManager. Can be called
+  // on any thread.
   virtual void CreateAndroidDownload(
       const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const DownloadInfo& info) = 0;
+
+  // Called before resuming a download.
+  virtual void AboutToResumeDownload(content::DownloadItem* download_item) = 0;
 
  protected:
   ~DownloadControllerBase() override {}

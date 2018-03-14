@@ -1,14 +1,16 @@
 <!DOCTYPE html>
 <script src="../../../resources/testharness.js"></script>
 <script src="../../../resources/testharnessreport.js"></script>
+<script src="../../../resources/testdriver.js"></script>
+<script src="../../../resources/testdriver-vendor.js"></script>
 <script src="../../../resources/bluetooth/bluetooth-helpers.js"></script>
 <script>
-promise_test(() => {
-  let valid_unicode_name = generate_string(
-    9, '\u2764'); // \u2764's UTF-8 representation is 3 bytes long.
-                  // 9 chars * 3 bytes/char = 27 bytes
-  return setBluetoothFakeAdapter('UnicodeDeviceAdapter')
-    .then(() => requestDeviceWithKeyDown({
+bluetooth_test(() => {
+  // \u2764's UTF-8 representation is 3 bytes long.
+  // 9 chars * 3 bytes/char = 27 bytes
+  let valid_unicode_name = '\u2764'.repeat(9);
+  return setUpPreconnectedDevice({name: valid_unicode_name})
+    .then(() => requestDeviceWithTrustedClick({
       filters: [{namePrefix: valid_unicode_name}]}))
     .then(device => {
       assert_equals(device.name, valid_unicode_name);

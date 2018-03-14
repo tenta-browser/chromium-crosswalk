@@ -6,6 +6,10 @@
 
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 @implementation PrimaryActionButton
 
 - (id)initWithFrame:(CGRect)frame {
@@ -36,7 +40,7 @@
                   forState:UIControlStateNormal];
   [self setBackgroundColor:[UIColor colorWithWhite:0.6f alpha:1.0f]
                   forState:UIControlStateDisabled];
-  self.customTitleColor = [UIColor whiteColor];
+  [self setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
 }
 
 @end

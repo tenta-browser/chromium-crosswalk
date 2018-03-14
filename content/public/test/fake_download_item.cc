@@ -157,6 +157,10 @@ void FakeDownloadItem::SetReceivedBytes(int64_t received_bytes) {
   received_bytes_ = received_bytes;
 }
 
+void FakeDownloadItem::SetTotalBytes(int64_t total_bytes) {
+  total_bytes_ = total_bytes;
+}
+
 int64_t FakeDownloadItem::GetReceivedBytes() const {
   return received_bytes_;
 }
@@ -167,6 +171,39 @@ void FakeDownloadItem::SetLastAccessTime(base::Time time) {
 
 base::Time FakeDownloadItem::GetLastAccessTime() const {
   return last_access_time_;
+}
+
+void FakeDownloadItem::SetIsTransient(bool is_transient) {
+  is_transient_ = is_transient;
+}
+
+bool FakeDownloadItem::IsTransient() const {
+  return is_transient_;
+}
+
+void FakeDownloadItem::SetIsDone(bool is_done) {
+  is_done_ = is_done;
+}
+
+bool FakeDownloadItem::IsDone() const {
+  return is_done_;
+}
+
+void FakeDownloadItem::SetETag(const std::string& etag) {
+  etag_ = etag;
+}
+
+const std::string& FakeDownloadItem::GetETag() const {
+  return etag_;
+}
+
+void FakeDownloadItem::SetLastModifiedTime(
+    const std::string& last_modified_time) {
+  last_modified_time_ = last_modified_time;
+}
+
+const std::string& FakeDownloadItem::GetLastModifiedTime() const {
+  return last_modified_time_;
 }
 
 // The methods below are not supported and are not expected to be called.
@@ -194,7 +231,7 @@ void FakeDownloadItem::Cancel(bool user_cancel) {
 }
 
 void FakeDownloadItem::Remove() {
-  NOTREACHED();
+  removed_ = true;
 }
 
 void FakeDownloadItem::OpenDownload() {
@@ -206,7 +243,6 @@ void FakeDownloadItem::ShowDownloadInShell() {
 }
 
 bool FakeDownloadItem::IsPaused() const {
-  NOTREACHED();
   return false;
 }
 
@@ -218,11 +254,6 @@ bool FakeDownloadItem::IsTemporary() const {
 bool FakeDownloadItem::CanResume() const {
   NOTREACHED();
   return false;
-}
-
-bool FakeDownloadItem::IsDone() const {
-  NOTREACHED();
-  return true;
 }
 
 const GURL& FakeDownloadItem::GetReferrerUrl() const {
@@ -275,23 +306,12 @@ ui::PageTransition FakeDownloadItem::GetTransitionType() const {
   return ui::PageTransition();
 }
 
-const std::string& FakeDownloadItem::GetLastModifiedTime() const {
-  NOTREACHED();
-  return dummy_string;
-}
-
-const std::string& FakeDownloadItem::GetETag() const {
-  NOTREACHED();
-  return dummy_string;
-}
-
 bool FakeDownloadItem::IsSavePackageDownload() const {
   NOTREACHED();
   return false;
 }
 
 const base::FilePath& FakeDownloadItem::GetFullPath() const {
-  NOTREACHED();
   return dummy_file_path;
 }
 
@@ -351,8 +371,7 @@ bool FakeDownloadItem::AllDataSaved() const {
 }
 
 int64_t FakeDownloadItem::GetTotalBytes() const {
-  NOTREACHED();
-  return 1;
+  return total_bytes_;
 }
 
 const std::vector<DownloadItem::ReceivedSlice>&
@@ -392,11 +411,6 @@ bool FakeDownloadItem::GetOpened() const {
   return false;
 }
 
-bool FakeDownloadItem::IsTransient() const {
-  NOTREACHED();
-  return false;
-}
-
 BrowserContext* FakeDownloadItem::GetBrowserContext() const {
   NOTREACHED();
   return nullptr;
@@ -407,7 +421,8 @@ WebContents* FakeDownloadItem::GetWebContents() const {
   return nullptr;
 }
 
-void FakeDownloadItem::OnContentCheckCompleted(DownloadDangerType danger_type) {
+void FakeDownloadItem::OnContentCheckCompleted(DownloadDangerType danger_type,
+                                               DownloadInterruptReason reason) {
   NOTREACHED();
 }
 

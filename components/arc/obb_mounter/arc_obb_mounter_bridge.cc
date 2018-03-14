@@ -4,51 +4,68 @@
 
 #include "components/arc/obb_mounter/arc_obb_mounter_bridge.h"
 
+#include <utility>
+
 #include "base/bind.h"
+#include "base/memory/singleton.h"
 #include "chromeos/dbus/arc_obb_mounter_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "components/arc/arc_bridge_service.h"
+#include "components/arc/arc_browser_context_keyed_service_factory_base.h"
 
 namespace arc {
 
 namespace {
 
-// Used to convert mojo Callback to VoidDBusMethodCallback.
-void RunObbCallback(const base::Callback<void(bool)>& callback,
-                    chromeos::DBusMethodCallStatus result) {
-  callback.Run(result == chromeos::DBUS_METHOD_CALL_SUCCESS);
-}
+// Singleton factory for ArcObbMounterBridge.
+class ArcObbMounterBridgeFactory
+    : public internal::ArcBrowserContextKeyedServiceFactoryBase<
+          ArcObbMounterBridge,
+          ArcObbMounterBridgeFactory> {
+ public:
+  // Factory name used by ArcBrowserContextKeyedServiceFactoryBase.
+  static constexpr const char* kName = "ArcObbMounterBridgeFactory";
+
+  static ArcObbMounterBridgeFactory* GetInstance() {
+    return base::Singleton<ArcObbMounterBridgeFactory>::get();
+  }
+
+ private:
+  friend base::DefaultSingletonTraits<ArcObbMounterBridgeFactory>;
+  ArcObbMounterBridgeFactory() = default;
+  ~ArcObbMounterBridgeFactory() override = default;
+};
 
 }  // namespace
 
-ArcObbMounterBridge::ArcObbMounterBridge(ArcBridgeService* bridge_service)
-    : ArcService(bridge_service), binding_(this) {
-  arc_bridge_service()->obb_mounter()->AddObserver(this);
+// static
+ArcObbMounterBridge* ArcObbMounterBridge::GetForBrowserContext(
+    content::BrowserContext* context) {
+  return ArcObbMounterBridgeFactory::GetForBrowserContext(context);
+}
+
+ArcObbMounterBridge::ArcObbMounterBridge(content::BrowserContext* context,
+                                         ArcBridgeService* bridge_service)
+    : arc_bridge_service_(bridge_service) {
+  arc_bridge_service_->obb_mounter()->SetHost(this);
 }
 
 ArcObbMounterBridge::~ArcObbMounterBridge() {
-  arc_bridge_service()->obb_mounter()->RemoveObserver(this);
-}
-
-void ArcObbMounterBridge::OnInstanceReady() {
-  mojom::ObbMounterInstance* obb_mounter_instance =
-      ARC_GET_INSTANCE_FOR_METHOD(arc_bridge_service()->obb_mounter(), Init);
-  DCHECK(obb_mounter_instance);
-  obb_mounter_instance->Init(binding_.CreateInterfacePtrAndBind());
+  arc_bridge_service_->obb_mounter()->SetHost(nullptr);
 }
 
 void ArcObbMounterBridge::MountObb(const std::string& obb_file,
                                    const std::string& target_path,
                                    int32_t owner_gid,
-                                   const MountObbCallback& callback) {
+                                   MountObbCallback callback) {
   chromeos::DBusThreadManager::Get()->GetArcObbMounterClient()->MountObb(
-      obb_file, target_path, owner_gid, base::Bind(&RunObbCallback, callback));
+      obb_file, target_path, owner_gid, std::move(callback));
 }
 
 void ArcObbMounterBridge::UnmountObb(const std::string& target_path,
-                                     const UnmountObbCallback& callback) {
+                                     UnmountObbCallback callback) {
   chromeos::DBusThreadManager::Get()->GetArcObbMounterClient()->UnmountObb(
-      target_path, base::Bind(&RunObbCallback, callback));
+      target_path, std::move(callback));
 }
 
 }  // namespace arc

@@ -30,11 +30,13 @@
 #include "core/CoreExport.h"
 #include "core/paint/LayerHitTestRects.h"
 #include "platform/geometry/IntRect.h"
+#include "platform/graphics/CompositorElementId.h"
 #include "platform/heap/Handle.h"
 #include "platform/scroll/MainThreadScrollingReason.h"
 #include "platform/scroll/ScrollTypes.h"
 #include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/text/WTFString.h"
+#include "public/platform/WebLayerScrollClient.h"
 
 namespace blink {
 using MainThreadScrollingReasons = uint32_t;
@@ -43,7 +45,7 @@ class CompositorAnimationHost;
 class CompositorAnimationTimeline;
 class LayoutBox;
 class LocalFrame;
-class FrameView;
+class LocalFrameView;
 class GraphicsLayer;
 class Page;
 class PaintLayer;
@@ -52,54 +54,57 @@ class ScrollableArea;
 class WebLayerTreeView;
 class WebScrollbarLayer;
 
+using ScrollbarId = uint64_t;
+
+// ScrollingCoordinator is a page-level object that mediates interactions
+// between Blink and the compositor's scroll-related APIs on WebLayer and
+// WebScrollbarLayer.
+//
+// It's responsible for propagating scroll offsets, main-thread scrolling
+// reasons, touch action regions, and non-fast-scrollable regions into the
+// compositor, as well as creating and managing scrollbar layers.
+
 class CORE_EXPORT ScrollingCoordinator final
-    : public GarbageCollectedFinalized<ScrollingCoordinator> {
+    : public GarbageCollectedFinalized<ScrollingCoordinator>,
+      public WebLayerScrollClient {
   WTF_MAKE_NONCOPYABLE(ScrollingCoordinator);
 
  public:
   static ScrollingCoordinator* Create(Page*);
 
   ~ScrollingCoordinator();
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
-  // The FrameView argument is optional, nullptr causes the the scrolling
+  // The LocalFrameView argument is optional, nullptr causes the the scrolling
   // animation host and timeline to be owned by the ScrollingCoordinator. When
-  // not null, the host and timeline are attached to the specified FrameView.
-  // A FrameView only needs to own them when it is the view for an OOPIF.
-  void LayerTreeViewInitialized(WebLayerTreeView&, FrameView*);
-  void WillCloseLayerTreeView(WebLayerTreeView&, FrameView*);
+  // not null, the host and timeline are attached to the specified
+  // LocalFrameView. A LocalFrameView only needs to own them when it is the view
+  // for an OOPIF.
+  void LayerTreeViewInitialized(WebLayerTreeView&, LocalFrameView*);
+  void WillCloseLayerTreeView(WebLayerTreeView&, LocalFrameView*);
 
   void WillBeDestroyed();
 
   // Return whether this scrolling coordinator handles scrolling for the given
   // frame view.
-  bool CoordinatesScrollingForFrameView(FrameView*) const;
+  bool CoordinatesScrollingForFrameView(LocalFrameView*) const;
 
   // Called when any frame has done its layout or compositing has changed.
-  void NotifyGeometryChanged();
-  // Called when any frame recalculates its overflows after style change.
-  void NotifyOverflowUpdated();
+  void NotifyGeometryChanged(LocalFrameView*);
   // Called when any layoutBox has transform changed
   void NotifyTransformChanged(const LayoutBox&);
 
-  void UpdateAfterCompositingChangeIfNeeded();
-
-  // Should be called whenever a frameview visibility is changed.
-  void FrameViewVisibilityDidChange();
-
-  // Should be called whenever a scrollable area is added or removed, or
-  // gains/loses a composited layer.
-  void ScrollableAreasDidChange();
+  void UpdateAfterCompositingChangeIfNeeded(LocalFrameView*);
 
   // Should be called whenever the slow repaint objects counter changes between
   // zero and one.
-  void FrameViewHasBackgroundAttachmentFixedObjectsDidChange(FrameView*);
+  void FrameViewHasBackgroundAttachmentFixedObjectsDidChange(LocalFrameView*);
 
   // Should be called whenever the set of fixed objects changes.
-  void FrameViewFixedObjectsDidChange(FrameView*);
+  void FrameViewFixedObjectsDidChange(LocalFrameView*);
 
   // Should be called whenever the root layer for the given frame view changes.
-  void FrameViewRootLayerDidChange(FrameView*);
+  void FrameViewRootLayerDidChange(LocalFrameView*);
 
   std::unique_ptr<WebScrollbarLayer> CreateSolidColorScrollbarLayer(
       ScrollbarOrientation,
@@ -108,7 +113,13 @@ class CORE_EXPORT ScrollingCoordinator final
       bool is_left_side_vertical_scrollbar);
 
   void WillDestroyScrollableArea(ScrollableArea*);
-  // Returns true if the coordinator handled this change.
+  // Updates the compositor layers and returns true if the scrolling coordinator
+  // handled this change.
+  // TODO(pdr): Factor the container bounds change out of this function. The
+  // compositor tracks scroll container bounds on the scroll layer whereas
+  // blink uses a separate layer. To ensure the compositor scroll layer has the
+  // updated scroll container bounds, this needs to be called when the scrolling
+  // contents layer is resized.
   bool ScrollableAreaScrollLayerDidChange(ScrollableArea*);
   void ScrollableAreaScrollbarLayerDidChange(ScrollableArea*,
                                              ScrollbarOrientation);
@@ -126,12 +137,17 @@ class CORE_EXPORT ScrollingCoordinator final
 
   void UpdateTouchEventTargetRectsIfNeeded();
 
+  void UpdateUserInputScrollable(ScrollableArea*);
+
   CompositorAnimationHost* GetCompositorAnimationHost() {
     return animation_host_.get();
   }
   CompositorAnimationTimeline* GetCompositorAnimationTimeline() {
     return programmatic_scroll_animator_timeline_.get();
   }
+
+  // Callback for compositor-side layer scrolls.
+  void DidScroll(const gfx::ScrollOffset&, const CompositorElementId&) final;
 
   // For testing purposes only. This ScrollingCoordinator is reused between
   // layout test, and must be reset for the results to be valid.
@@ -147,21 +163,15 @@ class CORE_EXPORT ScrollingCoordinator final
 
   // Dirty flags used to idenfity what really needs to be computed after
   // compositing is updated.
-  bool scroll_gesture_region_is_dirty_;
   bool touch_event_target_rects_are_dirty_;
   bool should_scroll_on_main_thread_dirty_;
 
  private:
-  bool ShouldUpdateAfterCompositingChange() const {
-    return scroll_gesture_region_is_dirty_ ||
-           touch_event_target_rects_are_dirty_ ||
-           should_scroll_on_main_thread_dirty_ || FrameScrollerIsDirty();
-  }
-
   void SetShouldUpdateScrollLayerPositionOnMainThread(
       MainThreadScrollingReasons);
 
-  void SetShouldHandleScrollGestureOnMainThreadRegion(const Region&);
+  void SetShouldHandleScrollGestureOnMainThreadRegion(const Region&,
+                                                      LocalFrameView*);
   void SetTouchEventTargetRects(LayerHitTestRects&);
   void ComputeTouchEventTargetRects(LayerHitTestRects&);
 

@@ -29,28 +29,37 @@
 #include "platform/PlatformExport.h"
 #include "platform/SharedBuffer.h"
 #include "platform/Timer.h"
+#include "platform/WebTaskRunner.h"
 #include "platform/instrumentation/tracing/web_process_memory_dump.h"
+#include "platform/loader/SubresourceIntegrity.h"
 #include "platform/loader/fetch/CachedMetadataHandler.h"
 #include "platform/loader/fetch/IntegrityMetadata.h"
 #include "platform/loader/fetch/ResourceError.h"
 #include "platform/loader/fetch/ResourceLoadPriority.h"
 #include "platform/loader/fetch/ResourceLoaderOptions.h"
+#include "platform/loader/fetch/ResourcePriority.h"
 #include "platform/loader/fetch/ResourceRequest.h"
 #include "platform/loader/fetch/ResourceResponse.h"
 #include "platform/loader/fetch/ResourceStatus.h"
+#include "platform/loader/fetch/TextResourceDecoderOptions.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/AutoReset.h"
 #include "platform/wtf/HashCountedSet.h"
 #include "platform/wtf/HashSet.h"
+#include "platform/wtf/Optional.h"
 #include "platform/wtf/text/AtomicString.h"
+#include "platform/wtf/text/TextEncoding.h"
 #include "platform/wtf/text/WTFString.h"
+#include "public/platform/CORSStatus.h"
 #include "public/platform/WebDataConsumerHandle.h"
+#include "public/platform/WebScopedVirtualTimePauser.h"
 
 namespace blink {
 
 class FetchParameters;
 class ResourceClient;
 class ResourceFetcher;
+class ResourceFinishObserver;
 class ResourceTimingInfo;
 class ResourceLoader;
 class SecurityOrigin;
@@ -68,7 +77,7 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   // |Type| enum values are used in UMAs, so do not change the values of
   // existing |Type|. When adding a new |Type|, append it at the end and update
   // |kLastResourceType|.
-  enum Type {
+  enum Type : uint8_t {
     kMainResource,
     kImage,
     kCSSStyleSheet,
@@ -86,32 +95,19 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   };
   static const int kLastResourceType = kMock + 1;
 
-  // Whether a resource client for a preload should mark the preload as
-  // referenced.
-  enum PreloadReferencePolicy {
-    kMarkAsReferenced,
-    kDontMarkAsReferenced,
-  };
-
   // Used by reloadIfLoFiOrPlaceholderImage().
   enum ReloadLoFiOrPlaceholderPolicy {
     kReloadIfNeeded,
     kReloadAlways,
   };
 
-  virtual ~Resource();
+  ~Resource() override;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
-  virtual void SetEncoding(const String&) {}
-  virtual String Encoding() const { return String(); }
+  virtual WTF::TextEncoding Encoding() const { return WTF::TextEncoding(); }
   virtual void AppendData(const char*, size_t);
-  virtual void GetError(const ResourceError&);
-  virtual void SetCORSFailed() {}
-
-  void SetNeedsSynchronousCacheHit(bool needs_synchronous_cache_hit) {
-    needs_synchronous_cache_hit_ = needs_synchronous_cache_hit;
-  }
+  virtual void FinishAsError(const ResourceError&, WebTaskRunner*);
 
   void SetLinkPreload(bool is_link_preload) { link_preload_ = is_link_preload; }
   bool IsLinkPreload() const { return link_preload_; }
@@ -120,7 +116,10 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
     preload_discovery_time_ = preload_discovery_time;
   }
 
-  const ResourceError& GetResourceError() const { return error_; }
+  const ResourceError& GetResourceError() const {
+    DCHECK(error_);
+    return *error_;
+  }
 
   void SetIdentifier(unsigned long identifier) { identifier_ = identifier; }
   unsigned long Identifier() const { return identifier_; }
@@ -150,19 +149,19 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
     return ResourcePriority();
   }
 
-  // The reference policy indicates that the client should not affect whether
-  // a preload is considered referenced or not. This allows for "passive"
-  // resource clients that simply observe the resource.
-  void AddClient(ResourceClient*, PreloadReferencePolicy = kMarkAsReferenced);
+  void AddClient(ResourceClient*);
   void RemoveClient(ResourceClient*);
+  // Once called, this resource will not be canceled until load finishes
+  // even if associated with no client.
+  void SetDetachable() { detachable_ = true; }
 
-  enum PreloadResult {
-    kPreloadNotReferenced,
-    kPreloadReferenced,
-    kPreloadReferencedWhileLoading,
-    kPreloadReferencedWhileComplete
-  };
-  PreloadResult GetPreloadResult() const { return preload_result_; }
+  // If this Resource is already finished when AddFinishObserver is called, the
+  // ResourceFinishObserver will be notified asynchronously by a task scheduled
+  // on the given WebTaskRunner. Otherwise, the given WebTaskRunner is unused.
+  void AddFinishObserver(ResourceFinishObserver*, WebTaskRunner*);
+  void RemoveFinishObserver(ResourceFinishObserver*);
+
+  bool IsUnusedPreload() const { return is_unused_preload_; }
 
   ResourceStatus GetStatus() const { return status_; }
   void SetStatus(ResourceStatus status) { status_ = status; }
@@ -172,14 +171,14 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   // Returns the size of content (response body) before decoding. Adding a new
   // usage of this function is not recommended (See the TODO below).
   //
-  // TODO(hiroshige): Now encodedSize/decodedSize states are inconsistent and
+  // TODO(hiroshige): Now EncodedSize/DecodedSize states are inconsistent and
   // need to be refactored (crbug/643135).
   size_t EncodedSize() const { return encoded_size_; }
 
   // Returns the current memory usage for the encoded data. Adding a new usage
-  // of this function is not recommended as the same reason as |encodedSize()|.
+  // of this function is not recommended as the same reason as |EncodedSize()|.
   //
-  // |encodedSize()| and |encodedSizeMemoryUsageForTesting()| can return
+  // |EncodedSize()| and |EncodedSizeMemoryUsageForTesting()| can return
   // different values, e.g., when ImageResource purges encoded image data after
   // finishing loading.
   size_t EncodedSizeMemoryUsageForTesting() const {
@@ -197,21 +196,18 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   void SetLoader(ResourceLoader*);
   ResourceLoader* Loader() const { return loader_.Get(); }
 
-  virtual bool IsImage() const { return false; }
   bool ShouldBlockLoadEvent() const;
   bool IsLoadEventBlockingResourceType() const;
 
   // Computes the status of an object after loading. Updates the expire date on
   // the cache entry file
-  virtual void Finish(double finish_time);
-  void Finish() { Finish(0.0); }
+  virtual void Finish(double finish_time, WebTaskRunner*);
+  void FinishForTest() { Finish(0.0, nullptr); }
 
-  bool PassesAccessControlCheck(const SecurityOrigin*) const;
-
-  virtual PassRefPtr<const SharedBuffer> ResourceBuffer() const {
+  virtual scoped_refptr<const SharedBuffer> ResourceBuffer() const {
     return data_;
   }
-  void SetResourceBuffer(PassRefPtr<SharedBuffer>);
+  void SetResourceBuffer(scoped_refptr<SharedBuffer>);
 
   virtual bool WillFollowRedirect(const ResourceRequest&,
                                   const ResourceResponse&);
@@ -235,39 +231,28 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
 
   AtomicString HttpContentType() const;
 
-  bool WasCanceled() const { return error_.IsCancellation(); }
+  bool WasCanceled() const { return error_ && error_->IsCancellation(); }
   bool ErrorOccurred() const {
     return status_ == ResourceStatus::kLoadError ||
            status_ == ResourceStatus::kDecodeError;
   }
-  bool LoadFailedOrCanceled() const { return !error_.IsNull(); }
+  bool LoadFailedOrCanceled() const { return !!error_; }
 
   DataBufferingPolicy GetDataBufferingPolicy() const {
     return options_.data_buffering_policy;
   }
   void SetDataBufferingPolicy(DataBufferingPolicy);
 
-  // The isPreloaded() flag is using a counter in order to make sure that even
-  // when multiple ResourceFetchers are preloading the resource, it will remain
-  // marked as preloaded until *all* of them have used it.
-  bool IsUnusedPreload() const {
-    return IsPreloaded() && GetPreloadResult() == kPreloadNotReferenced;
-  }
-  bool IsPreloaded() const { return preload_count_; }
-  void IncreasePreloadCount() { ++preload_count_; }
-  void DecreasePreloadCount() {
-    DCHECK(preload_count_);
-    --preload_count_;
-  }
+  void MarkAsPreload();
+  // Returns true if |this| resource is matched with the given parameters.
+  virtual bool MatchPreload(const FetchParameters&, WebTaskRunner*);
 
   bool CanReuseRedirectChain() const;
   bool MustRevalidateDueToCacheHeaders() const;
-  bool CanUseCacheValidator() const;
+  virtual bool CanUseCacheValidator() const;
   bool IsCacheValidator() const { return is_revalidating_; }
   bool HasCacheControlNoStoreHeader() const;
   bool MustReloadDueToVaryHeader(const ResourceRequest& new_request) const;
-
-  bool IsEligibleForIntegrityCheck(SecurityOrigin*) const;
 
   void SetIntegrityMetadata(const IntegrityMetadataSet& metadata) {
     integrity_metadata_ = metadata;
@@ -275,17 +260,23 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   const IntegrityMetadataSet& IntegrityMetadata() const {
     return integrity_metadata_;
   }
-  // The argument must never be |NotChecked|.
-  void SetIntegrityDisposition(ResourceIntegrityDisposition);
   ResourceIntegrityDisposition IntegrityDisposition() const {
     return integrity_disposition_;
   }
+  const SubresourceIntegrity::ReportInfo& IntegrityReportInfo() const {
+    return integrity_report_info_;
+  }
   bool MustRefetchDueToIntegrityMetadata(const FetchParameters&) const;
 
-  double CurrentAge() const;
-  double FreshnessLifetime() const;
-
   bool IsAlive() const { return is_alive_; }
+
+  CORSStatus GetCORSStatus() const { return cors_status_; }
+
+  bool IsSameOriginOrCORSSuccessful() const {
+    return cors_status_ == CORSStatus::kSameOrigin ||
+           cors_status_ == CORSStatus::kSuccessful ||
+           cors_status_ == CORSStatus::kServiceWorkerSuccessful;
+  }
 
   void SetCacheIdentifier(const String& cache_identifier) {
     cache_identifier_ = cache_identifier;
@@ -301,14 +292,14 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   void SetEncodedDataLength(int64_t value) {
     response_.SetEncodedDataLength(value);
   }
-  void AddToEncodedBodyLength(int value) {
-    response_.AddToEncodedBodyLength(value);
+  void SetEncodedBodyLength(int value) {
+    response_.SetEncodedBodyLength(value);
   }
-  void AddToDecodedBodyLength(int value) {
-    response_.AddToDecodedBodyLength(value);
+  void SetDecodedBodyLength(int value) {
+    response_.SetDecodedBodyLength(value);
   }
 
-  virtual bool CanReuse(const FetchParameters&) const { return true; }
+  virtual bool CanReuse(const FetchParameters&) const;
 
   // If cache-aware loading is activated, this callback is called when the first
   // disk-cache-only request failed due to cache miss. After this callback,
@@ -317,8 +308,8 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   virtual void WillReloadAfterDiskCacheMiss() {}
 
   // TODO(shaochuan): This is for saving back the actual ResourceRequest sent
-  // in ResourceFetcher::startLoad() for retry in cache-aware loading, remove
-  // once ResourceRequest is not modified in startLoad(). crbug.com/632580
+  // in ResourceFetcher::StartLoad() for retry in cache-aware loading, remove
+  // once ResourceRequest is not modified in StartLoad(). crbug.com/632580
   void SetResourceRequest(const ResourceRequest& resource_request) {
     resource_request_ = resource_request;
   }
@@ -335,20 +326,41 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   virtual void ReloadIfLoFiOrPlaceholderImage(ResourceFetcher*,
                                               ReloadLoFiOrPlaceholderPolicy) {}
 
+  // Used to notify ImageResourceContent of the start of actual loading.
+  // JavaScript calls or client/observer notifications are disallowed inside
+  // NotifyStartLoad().
+  virtual void NotifyStartLoad() {}
+
   static const char* ResourceTypeToString(
       Type,
       const AtomicString& fetch_initiator_name);
 
+  class ProhibitAddRemoveClientInScope : public AutoReset<bool> {
+   public:
+    ProhibitAddRemoveClientInScope(Resource* resource)
+        : AutoReset(&resource->is_add_remove_client_prohibited_, true) {}
+  };
+
+  class RevalidationStartForbiddenScope : public AutoReset<bool> {
+   public:
+    RevalidationStartForbiddenScope(Resource* resource)
+        : AutoReset(&resource->is_revalidation_start_forbidden_, true) {}
+  };
+
+  WebScopedVirtualTimePauser& VirtualTimePauser() {
+    return virtual_time_pauser_;
+  }
+
  protected:
   Resource(const ResourceRequest&, Type, const ResourceLoaderOptions&);
 
-  virtual void CheckNotify();
+  virtual void NotifyFinished();
 
   void MarkClientFinished(ResourceClient*);
 
   virtual bool HasClientsOrObservers() const {
     return !clients_.IsEmpty() || !clients_awaiting_callback_.IsEmpty() ||
-           !finished_clients_.IsEmpty();
+           !finished_clients_.IsEmpty() || !finish_observers_.IsEmpty();
   }
   virtual void DestroyDecodedDataForFailedRevalidation() {}
 
@@ -358,7 +370,7 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   void FinishPendingClients();
 
   virtual void DidAddClient(ResourceClient*);
-  void WillAddClientOrObserver(PreloadReferencePolicy);
+  void WillAddClientOrObserver();
 
   void DidRemoveClientOrObserver();
   virtual void AllClientsAndObserversRemoved();
@@ -384,7 +396,7 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
 
   virtual void DestroyDecodedDataIfPossible() {}
 
-  // Returns the memory dump name used for tracing. See Resource::onMemoryDump.
+  // Returns the memory dump name used for tracing. See Resource::OnMemoryDump.
   String GetMemoryDumpName() const;
 
   const HeapHashCountedSet<WeakMember<ResourceClient>>& Clients() const {
@@ -392,30 +404,21 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   }
 
   void SetCachePolicyBypassingCache();
-  void SetPreviewsStateNoTransform();
+  void SetPreviewsState(WebURLRequest::PreviewsState);
   void ClearRangeRequestHeader();
 
-  SharedBuffer* Data() const { return data_.Get(); }
+  SharedBuffer* Data() const { return data_.get(); }
   void ClearData();
 
-  class ProhibitAddRemoveClientInScope : public AutoReset<bool> {
-   public:
-    ProhibitAddRemoveClientInScope(Resource* resource)
-        : AutoReset(&resource->is_add_remove_client_prohibited_, true) {}
-  };
-
-  class RevalidationStartForbiddenScope : public AutoReset<bool> {
-   public:
-    RevalidationStartForbiddenScope(Resource* resource)
-        : AutoReset(&resource->is_revalidation_start_forbidden_, true) {}
-  };
+  virtual void SetEncoding(const String&) {}
 
  private:
-  class ResourceCallback;
+  // To allow access to SetCORSStatus
+  friend class ResourceLoader;
+  friend class SubresourceIntegrityTest;
+
   class CachedMetadataHandlerImpl;
   class ServiceWorkerResponseCachedMetadataHandler;
-
-  void CancelTimerFired(TimerBase*);
 
   void RevalidationSucceeded(const ResourceResponse&);
   void RevalidationFailed();
@@ -424,47 +427,54 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
 
   String ReasonNotDeletable() const;
 
+  void SetCORSStatus(const CORSStatus cors_status) {
+    cors_status_ = cors_status;
+  }
+
   // MemoryCoordinatorClient overrides:
   void OnPurgeMemory() override;
 
-  Member<CachedMetadataHandlerImpl> cache_handler_;
-  RefPtr<SecurityOrigin> fetcher_security_origin_;
+  void CheckResourceIntegrity();
+  void TriggerNotificationForFinishObservers(WebTaskRunner*);
 
-  ResourceError error_;
+  Type type_;
+  ResourceStatus status_;
+  CORSStatus cors_status_;
+
+  Member<CachedMetadataHandlerImpl> cache_handler_;
+  scoped_refptr<SecurityOrigin> fetcher_security_origin_;
+
+  Optional<ResourceError> error_;
 
   double load_finish_time_;
 
   unsigned long identifier_;
 
+  double preload_discovery_time_;
+
   size_t encoded_size_;
   size_t encoded_size_memory_usage_;
   size_t decoded_size_;
 
-  // Resource::calculateOverheadSize() is affected by changes in
+  // Resource::CalculateOverheadSize() is affected by changes in
   // |m_resourceRequest.url()|, but |m_overheadSize| is not updated after
   // initial |m_resourceRequest| is given, to reduce MemoryCache manipulation
   // and thus potential bugs. crbug.com/594644
   const size_t overhead_size_;
 
-  unsigned preload_count_;
-
-  double preload_discovery_time_;
-
   String cache_identifier_;
 
-  PreloadResult preload_result_;
-  Type type_;
-  ResourceStatus status_;
-
-  bool needs_synchronous_cache_hit_;
   bool link_preload_;
   bool is_revalidating_;
   bool is_alive_;
   bool is_add_remove_client_prohibited_;
   bool is_revalidation_start_forbidden_ = false;
+  bool is_unused_preload_ = false;
+  bool detachable_ = false;
 
   ResourceIntegrityDisposition integrity_disposition_;
   IntegrityMetadataSet integrity_metadata_;
+  SubresourceIntegrity::ReportInfo integrity_report_info_;
 
   // Ordered list of all redirects followed while fetching this resource.
   Vector<RedirectPair> redirect_chain_;
@@ -472,18 +482,21 @@ class PLATFORM_EXPORT Resource : public GarbageCollectedFinalized<Resource>,
   HeapHashCountedSet<WeakMember<ResourceClient>> clients_;
   HeapHashCountedSet<WeakMember<ResourceClient>> clients_awaiting_callback_;
   HeapHashCountedSet<WeakMember<ResourceClient>> finished_clients_;
+  HeapHashSet<WeakMember<ResourceFinishObserver>> finish_observers_;
 
   ResourceLoaderOptions options_;
 
   double response_timestamp_;
 
-  TaskRunnerTimer<Resource> cancel_timer_;
+  TaskHandle async_finish_pending_clients_task_;
 
   ResourceRequest resource_request_;
   Member<ResourceLoader> loader_;
   ResourceResponse response_;
 
-  RefPtr<SharedBuffer> data_;
+  scoped_refptr<SharedBuffer> data_;
+
+  WebScopedVirtualTimePauser virtual_time_pauser_;
 };
 
 class ResourceFactory {
@@ -492,13 +505,35 @@ class ResourceFactory {
  public:
   virtual Resource* Create(const ResourceRequest&,
                            const ResourceLoaderOptions&,
-                           const String&) const = 0;
+                           const TextResourceDecoderOptions&) const = 0;
+
   Resource::Type GetType() const { return type_; }
+  TextResourceDecoderOptions::ContentType ContentType() const {
+    return content_type_;
+  }
 
  protected:
-  explicit ResourceFactory(Resource::Type type) : type_(type) {}
+  explicit ResourceFactory(Resource::Type type,
+                           TextResourceDecoderOptions::ContentType content_type)
+      : type_(type), content_type_(content_type) {}
 
   Resource::Type type_;
+  TextResourceDecoderOptions::ContentType content_type_;
+};
+
+class NonTextResourceFactory : public ResourceFactory {
+ protected:
+  explicit NonTextResourceFactory(Resource::Type type)
+      : ResourceFactory(type, TextResourceDecoderOptions::kPlainTextContent) {}
+
+  virtual Resource* Create(const ResourceRequest&,
+                           const ResourceLoaderOptions&) const = 0;
+
+  Resource* Create(const ResourceRequest& request,
+                   const ResourceLoaderOptions& options,
+                   const TextResourceDecoderOptions&) const final {
+    return Create(request, options);
+  }
 };
 
 #define DEFINE_RESOURCE_TYPE_CASTS(typeName)                      \

@@ -3,12 +3,14 @@
     {
       "name": "LayoutView #document",
       "bounds": [785, 2016],
-      "contentsOpaque": true
+      "contentsOpaque": true,
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF",
+      "transform": 1
     },
     {
       "name": "LayoutBlockFlow HTML",
       "bounds": [785, 2016],
-      "drawsContent": true,
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV",
@@ -20,21 +22,21 @@
           "rect": [0, 50, 100, 100],
           "reason": "subtree"
         }
-      ]
+      ],
+      "transform": 1
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV",
       "position": [0, 250],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backfaceVisibility": "hidden",
-      "backgroundColor": "#FF0000"
+      "backgroundColor": "#FF0000",
+      "transform": 1
     },
     {
       "name": "LayoutBlockFlow HTML (foreground) Layer",
       "bounds": [785, 2016],
-      "drawsContent": true,
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV",
@@ -46,6 +48,18 @@
           "rect": [0, 50, 100, 100],
           "reason": "subtree"
         }
+      ],
+      "transform": 1
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, -200, 0, 1]
       ]
     }
   ],

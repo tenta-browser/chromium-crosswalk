@@ -11,8 +11,8 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/string16.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/test_io_thread.h"
 #include "build/build_config.h"
 #include "content/public/browser/native_web_keyboard_event.h"
@@ -33,6 +33,7 @@ namespace blink {
 namespace scheduler {
 class RendererScheduler;
 }
+class WebGestureEvent;
 class WebInputElement;
 class WebMouseEvent;
 class WebWidget;
@@ -50,6 +51,7 @@ class FakeCompositorDependencies;
 class MockRenderProcess;
 class PageState;
 class RendererMainPlatformDelegate;
+class RendererBlinkPlatformImpl;
 class RendererBlinkPlatformImplTestOverrideImpl;
 class RenderView;
 struct ResizeParams;
@@ -62,7 +64,8 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
    public:
     RendererBlinkPlatformImplTestOverride();
     ~RendererBlinkPlatformImplTestOverride();
-    blink::Platform* Get() const;
+    RendererBlinkPlatformImpl* Get() const;
+    void Initialize();
     void Shutdown();
 
    private:
@@ -75,9 +78,6 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
   ~RenderViewTest() override;
 
  protected:
-  // Spins the message loop to process all messages that are currently pending.
-  void ProcessPendingMessages();
-
   // Returns a pointer to the main frame.
   blink::WebLocalFrame* GetMainFrame();
 
@@ -120,6 +120,9 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
   // Send a raw mouse event to the renderer.
   void SendWebMouseEvent(const blink::WebMouseEvent& mouse_event);
 
+  // Send a raw gesture event to the renderer.
+  void SendWebGestureEvent(const blink::WebGestureEvent& gesture_event);
+
   // Returns the bounds (coordinates and size) of the element with id
   // |element_id|.  Returns an empty rect if such an element was not found.
   gfx::Rect GetElementBounds(const std::string& element_id);
@@ -148,9 +151,6 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
 
   // Simulates a navigation with a type of reload to the given url.
   void Reload(const GURL& url);
-
-  // Returns the IPC message ID of the navigation message.
-  uint32_t GetNavigationIPCType();
 
   // Resize the view.
   void Resize(gfx::Size new_size, bool is_fullscreen);
@@ -190,12 +190,13 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
   // blink::WebLeakDetectorClient implementation.
   void OnLeakDetectionComplete(const Result& result) override;
 
-  base::MessageLoop msg_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
+
   std::unique_ptr<FakeCompositorDependencies> compositor_deps_;
   std::unique_ptr<MockRenderProcess> mock_process_;
   // We use a naked pointer because we don't want to expose RenderViewImpl in
   // the embedder's namespace.
-  RenderView* view_;
+  RenderView* view_ = nullptr;
   RendererBlinkPlatformImplTestOverride blink_platform_impl_;
   std::unique_ptr<ContentClient> content_client_;
   std::unique_ptr<ContentBrowserClient> content_browser_client_;
@@ -218,6 +219,7 @@ class RenderViewTest : public testing::Test, blink::WebLeakDetectorClient {
 
  private:
   void GoToOffset(int offset, const GURL& url, const PageState& state);
+  void SendInputEvent(const blink::WebInputEvent& input_event);
 };
 
 }  // namespace content

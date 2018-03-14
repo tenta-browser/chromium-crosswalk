@@ -4,33 +4,32 @@
 
 #include "ash/shelf/shelf_tooltip_manager.h"
 
+#include <memory>
+
 #include "ash/public/cpp/config.h"
+#include "ash/public/cpp/shelf_model.h"
 #include "ash/shelf/app_list_button.h"
-#include "ash/shelf/shelf_model.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_view.h"
-#include "ash/shelf/wm_shelf.h"
+#include "ash/shelf/shelf_view_test_api.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/shelf_view_test_api.h"
-#include "ash/test/test_shelf_item_delegate.h"
-#include "base/memory/ptr_util.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/views/bubble/bubble_dialog_delegate.h"
 #include "ui/views/widget/widget.h"
 
 namespace ash {
-namespace test {
 
 class ShelfTooltipManagerTest : public AshTestBase {
  public:
-  ShelfTooltipManagerTest() {}
-  ~ShelfTooltipManagerTest() override {}
+  ShelfTooltipManagerTest() = default;
+  ~ShelfTooltipManagerTest() override = default;
 
   void SetUp() override {
     AshTestBase::SetUp();
     shelf_view_ = GetPrimaryShelf()->GetShelfViewForTesting();
-    tooltip_manager_ = test::ShelfViewTestAPI(shelf_view_).tooltip_manager();
+    tooltip_manager_ = ShelfViewTestAPI(shelf_view_).tooltip_manager();
     tooltip_manager_->set_timer_delay_for_test(0);
   }
 
@@ -38,7 +37,7 @@ class ShelfTooltipManagerTest : public AshTestBase {
   views::Widget* GetTooltip() { return tooltip_manager_->bubble_->GetWidget(); }
 
   std::unique_ptr<views::Widget> CreateTestWidget() {
-    std::unique_ptr<views::Widget> widget = base::MakeUnique<views::Widget>();
+    std::unique_ptr<views::Widget> widget = std::make_unique<views::Widget>();
     views::Widget::InitParams params;
     params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
     params.context = CurrentContext();
@@ -86,11 +85,9 @@ TEST_F(ShelfTooltipManagerTest, DoNotShowForInvalidView) {
   // The manager should start the timer for a view on the shelf.
   ShelfModel* model = shelf_view_->model();
   ShelfItem item;
+  item.id = ShelfID("foo");
   item.type = TYPE_PINNED_APP;
   const int index = model->Add(item);
-  const ShelfID id = model->items()[index].id;
-  model->SetShelfItemDelegate(id,
-                              base::MakeUnique<TestShelfItemDelegate>(nullptr));
   // Note: There's no easy way to correlate shelf a model index/id to its view.
   tooltip_manager_->ShowTooltipWithDelay(
       shelf_view_->child_at(shelf_view_->child_count() - 1));
@@ -243,5 +240,4 @@ TEST_F(ShelfTooltipManagerTest, DoNotHideForKeyEvents) {
   EXPECT_TRUE(tooltip_manager_->IsVisible());
 }
 
-}  // namespace test
 }  // namespace ash

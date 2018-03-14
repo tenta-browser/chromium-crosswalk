@@ -6,7 +6,8 @@
 
 #include <string>
 
-#include "base/memory/ptr_util.h"
+#include "base/strings/stringprintf.h"
+#include "base/test/simple_test_tick_clock.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "net/reporting/reporting_client.h"
@@ -35,6 +36,11 @@ class TestReportingObserver : public ReportingObserver {
 class ReportingCacheTest : public ReportingTestBase {
  protected:
   ReportingCacheTest() : ReportingTestBase() {
+    ReportingPolicy policy;
+    policy.max_report_count = 5;
+    policy.max_client_count = 5;
+    UsePolicy(policy);
+
     context()->AddObserver(&observer_);
   }
 
@@ -42,9 +48,21 @@ class ReportingCacheTest : public ReportingTestBase {
 
   TestReportingObserver* observer() { return &observer_; }
 
+  size_t report_count() {
+    std::vector<const ReportingReport*> reports;
+    cache()->GetReports(&reports);
+    return reports.size();
+  }
+
+  size_t client_count() {
+    std::vector<const ReportingClient*> clients;
+    cache()->GetClients(&clients);
+    return clients.size();
+  }
+
   const GURL kUrl1_ = GURL("https://origin1/path");
-  const url::Origin kOrigin1_ = url::Origin(GURL("https://origin1/"));
-  const url::Origin kOrigin2_ = url::Origin(GURL("https://origin2/"));
+  const url::Origin kOrigin1_ = url::Origin::Create(GURL("https://origin1/"));
+  const url::Origin kOrigin2_ = url::Origin::Create(GURL("https://origin2/"));
   const GURL kEndpoint1_ = GURL("https://endpoint1/");
   const GURL kEndpoint2_ = GURL("https://endpoint2/");
   const std::string kGroup1_ = "group1";
@@ -64,7 +82,7 @@ TEST_F(ReportingCacheTest, Reports) {
   EXPECT_TRUE(reports.empty());
 
   cache()->AddReport(kUrl1_, kGroup1_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(), kNow_, 0);
+                     std::make_unique<base::DictionaryValue>(), kNow_, 0);
   EXPECT_EQ(1, observer()->cache_update_count());
 
   cache()->GetReports(&reports);
@@ -89,7 +107,7 @@ TEST_F(ReportingCacheTest, Reports) {
   ASSERT_TRUE(report);
   EXPECT_EQ(1, report->attempts);
 
-  cache()->RemoveReports(reports);
+  cache()->RemoveReports(reports, ReportingReport::Outcome::UNKNOWN);
   EXPECT_EQ(3, observer()->cache_update_count());
 
   cache()->GetReports(&reports);
@@ -98,16 +116,16 @@ TEST_F(ReportingCacheTest, Reports) {
 
 TEST_F(ReportingCacheTest, RemoveAllReports) {
   cache()->AddReport(kUrl1_, kGroup1_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(), kNow_, 0);
+                     std::make_unique<base::DictionaryValue>(), kNow_, 0);
   cache()->AddReport(kUrl1_, kGroup1_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(), kNow_, 0);
+                     std::make_unique<base::DictionaryValue>(), kNow_, 0);
   EXPECT_EQ(2, observer()->cache_update_count());
 
   std::vector<const ReportingReport*> reports;
   cache()->GetReports(&reports);
   EXPECT_EQ(2u, reports.size());
 
-  cache()->RemoveAllReports();
+  cache()->RemoveAllReports(ReportingReport::Outcome::UNKNOWN);
   EXPECT_EQ(3, observer()->cache_update_count());
 
   cache()->GetReports(&reports);
@@ -116,7 +134,7 @@ TEST_F(ReportingCacheTest, RemoveAllReports) {
 
 TEST_F(ReportingCacheTest, RemovePendingReports) {
   cache()->AddReport(kUrl1_, kGroup1_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(), kNow_, 0);
+                     std::make_unique<base::DictionaryValue>(), kNow_, 0);
   EXPECT_EQ(1, observer()->cache_update_count());
 
   std::vector<const ReportingReport*> reports;
@@ -129,7 +147,7 @@ TEST_F(ReportingCacheTest, RemovePendingReports) {
   EXPECT_TRUE(cache()->IsReportPendingForTesting(reports[0]));
   EXPECT_FALSE(cache()->IsReportDoomedForTesting(reports[0]));
 
-  cache()->RemoveReports(reports);
+  cache()->RemoveReports(reports, ReportingReport::Outcome::UNKNOWN);
   EXPECT_TRUE(cache()->IsReportPendingForTesting(reports[0]));
   EXPECT_TRUE(cache()->IsReportDoomedForTesting(reports[0]));
   EXPECT_EQ(2, observer()->cache_update_count());
@@ -147,7 +165,7 @@ TEST_F(ReportingCacheTest, RemovePendingReports) {
 
 TEST_F(ReportingCacheTest, RemoveAllPendingReports) {
   cache()->AddReport(kUrl1_, kGroup1_, kType_,
-                     base::MakeUnique<base::DictionaryValue>(), kNow_, 0);
+                     std::make_unique<base::DictionaryValue>(), kNow_, 0);
   EXPECT_EQ(1, observer()->cache_update_count());
 
   std::vector<const ReportingReport*> reports;
@@ -160,7 +178,7 @@ TEST_F(ReportingCacheTest, RemoveAllPendingReports) {
   EXPECT_TRUE(cache()->IsReportPendingForTesting(reports[0]));
   EXPECT_FALSE(cache()->IsReportDoomedForTesting(reports[0]));
 
-  cache()->RemoveAllReports();
+  cache()->RemoveAllReports(ReportingReport::Outcome::UNKNOWN);
   EXPECT_TRUE(cache()->IsReportPendingForTesting(reports[0]));
   EXPECT_TRUE(cache()->IsReportDoomedForTesting(reports[0]));
   EXPECT_EQ(2, observer()->cache_update_count());
@@ -297,8 +315,9 @@ TEST_F(ReportingCacheTest, RemoveAllClients) {
 }
 
 TEST_F(ReportingCacheTest, ExcludeSubdomainsDifferentPort) {
-  const url::Origin kOrigin(GURL("https://example/"));
-  const url::Origin kDifferentPortOrigin(GURL("https://example:444/"));
+  const url::Origin kOrigin = url::Origin::Create(GURL("https://example/"));
+  const url::Origin kDifferentPortOrigin =
+      url::Origin::Create(GURL("https://example:444/"));
 
   cache()->SetClient(kDifferentPortOrigin, kEndpoint1_,
                      ReportingClient::Subdomains::EXCLUDE, kGroup1_,
@@ -310,8 +329,9 @@ TEST_F(ReportingCacheTest, ExcludeSubdomainsDifferentPort) {
 }
 
 TEST_F(ReportingCacheTest, ExcludeSubdomainsSuperdomain) {
-  const url::Origin kOrigin(GURL("https://foo.example/"));
-  const url::Origin kSuperOrigin(GURL("https://example/"));
+  const url::Origin kOrigin = url::Origin::Create(GURL("https://foo.example/"));
+  const url::Origin kSuperOrigin =
+      url::Origin::Create(GURL("https://example/"));
 
   cache()->SetClient(kSuperOrigin, kEndpoint1_,
                      ReportingClient::Subdomains::EXCLUDE, kGroup1_,
@@ -323,8 +343,9 @@ TEST_F(ReportingCacheTest, ExcludeSubdomainsSuperdomain) {
 }
 
 TEST_F(ReportingCacheTest, IncludeSubdomainsDifferentPort) {
-  const url::Origin kOrigin(GURL("https://example/"));
-  const url::Origin kDifferentPortOrigin(GURL("https://example:444/"));
+  const url::Origin kOrigin = url::Origin::Create(GURL("https://example/"));
+  const url::Origin kDifferentPortOrigin =
+      url::Origin::Create(GURL("https://example:444/"));
 
   cache()->SetClient(kDifferentPortOrigin, kEndpoint1_,
                      ReportingClient::Subdomains::INCLUDE, kGroup1_,
@@ -337,8 +358,9 @@ TEST_F(ReportingCacheTest, IncludeSubdomainsDifferentPort) {
 }
 
 TEST_F(ReportingCacheTest, IncludeSubdomainsSuperdomain) {
-  const url::Origin kOrigin(GURL("https://foo.example/"));
-  const url::Origin kSuperOrigin(GURL("https://example/"));
+  const url::Origin kOrigin = url::Origin::Create(GURL("https://foo.example/"));
+  const url::Origin kSuperOrigin =
+      url::Origin::Create(GURL("https://example/"));
 
   cache()->SetClient(kSuperOrigin, kEndpoint1_,
                      ReportingClient::Subdomains::INCLUDE, kGroup1_,
@@ -351,8 +373,9 @@ TEST_F(ReportingCacheTest, IncludeSubdomainsSuperdomain) {
 }
 
 TEST_F(ReportingCacheTest, IncludeSubdomainsPreferOriginToDifferentPort) {
-  const url::Origin kOrigin(GURL("https://foo.example/"));
-  const url::Origin kDifferentPortOrigin(GURL("https://example:444/"));
+  const url::Origin kOrigin = url::Origin::Create(GURL("https://foo.example/"));
+  const url::Origin kDifferentPortOrigin =
+      url::Origin::Create(GURL("https://example:444/"));
 
   cache()->SetClient(kOrigin, kEndpoint1_, ReportingClient::Subdomains::INCLUDE,
                      kGroup1_, kExpires1_);
@@ -367,8 +390,9 @@ TEST_F(ReportingCacheTest, IncludeSubdomainsPreferOriginToDifferentPort) {
 }
 
 TEST_F(ReportingCacheTest, IncludeSubdomainsPreferOriginToSuperdomain) {
-  const url::Origin kOrigin(GURL("https://foo.example/"));
-  const url::Origin kSuperOrigin(GURL("https://example/"));
+  const url::Origin kOrigin = url::Origin::Create(GURL("https://foo.example/"));
+  const url::Origin kSuperOrigin =
+      url::Origin::Create(GURL("https://example/"));
 
   cache()->SetClient(kOrigin, kEndpoint1_, ReportingClient::Subdomains::INCLUDE,
                      kGroup1_, kExpires1_);
@@ -383,9 +407,12 @@ TEST_F(ReportingCacheTest, IncludeSubdomainsPreferOriginToSuperdomain) {
 }
 
 TEST_F(ReportingCacheTest, IncludeSubdomainsPreferMoreSpecificSuperdomain) {
-  const url::Origin kOrigin(GURL("https://foo.bar.example/"));
-  const url::Origin kSuperOrigin(GURL("https://bar.example/"));
-  const url::Origin kSuperSuperOrigin(GURL("https://example/"));
+  const url::Origin kOrigin =
+      url::Origin::Create(GURL("https://foo.bar.example/"));
+  const url::Origin kSuperOrigin =
+      url::Origin::Create(GURL("https://bar.example/"));
+  const url::Origin kSuperSuperOrigin =
+      url::Origin::Create(GURL("https://example/"));
 
   cache()->SetClient(kSuperOrigin, kEndpoint1_,
                      ReportingClient::Subdomains::INCLUDE, kGroup1_,
@@ -398,6 +425,125 @@ TEST_F(ReportingCacheTest, IncludeSubdomainsPreferMoreSpecificSuperdomain) {
   cache()->GetClientsForOriginAndGroup(kOrigin, kGroup1_, &clients);
   ASSERT_EQ(1u, clients.size());
   EXPECT_EQ(kSuperOrigin, clients[0]->origin);
+}
+
+TEST_F(ReportingCacheTest, EvictOldestReport) {
+  size_t max_report_count = policy().max_report_count;
+
+  ASSERT_LT(0u, max_report_count);
+  ASSERT_GT(std::numeric_limits<size_t>::max(), max_report_count);
+
+  base::TimeTicks earliest_queued = tick_clock()->NowTicks();
+
+  // Enqueue the maximum number of reports, spaced apart in time.
+  for (size_t i = 0; i < max_report_count; ++i) {
+    cache()->AddReport(kUrl1_, kGroup1_, kType_,
+                       std::make_unique<base::DictionaryValue>(),
+                       tick_clock()->NowTicks(), 0);
+    tick_clock()->Advance(base::TimeDelta::FromMinutes(1));
+  }
+  EXPECT_EQ(max_report_count, report_count());
+
+  // Add one more report to force the cache to evict one.
+  cache()->AddReport(kUrl1_, kGroup1_, kType_,
+                     std::make_unique<base::DictionaryValue>(), kNow_, 0);
+
+  // Make sure the cache evicted a report to make room for the new one, and make
+  // sure the report evicted was the earliest-queued one.
+  std::vector<const ReportingReport*> reports;
+  cache()->GetReports(&reports);
+  EXPECT_EQ(max_report_count, reports.size());
+  for (const ReportingReport* report : reports)
+    EXPECT_NE(earliest_queued, report->queued);
+}
+
+TEST_F(ReportingCacheTest, DontEvictPendingReports) {
+  size_t max_report_count = policy().max_report_count;
+
+  ASSERT_LT(0u, max_report_count);
+  ASSERT_GT(std::numeric_limits<size_t>::max(), max_report_count);
+
+  // Enqueue the maximum number of reports, spaced apart in time.
+  for (size_t i = 0; i < max_report_count; ++i) {
+    cache()->AddReport(kUrl1_, kGroup1_, kType_,
+                       std::make_unique<base::DictionaryValue>(),
+                       tick_clock()->NowTicks(), 0);
+    tick_clock()->Advance(base::TimeDelta::FromMinutes(1));
+  }
+  EXPECT_EQ(max_report_count, report_count());
+
+  // Mark all of the queued reports pending.
+  std::vector<const ReportingReport*> queued_reports;
+  cache()->GetReports(&queued_reports);
+  cache()->SetReportsPending(queued_reports);
+
+  // Add one more report to force the cache to evict one. Since the cache has
+  // only pending reports, it will be forced to evict the *new* report!
+  cache()->AddReport(kUrl1_, kGroup1_, kType_,
+                     std::make_unique<base::DictionaryValue>(), kNow_, 0);
+
+  // Make sure the cache evicted a report, and make sure the report evicted was
+  // the new, non-pending one.
+  std::vector<const ReportingReport*> reports;
+  cache()->GetReports(&reports);
+  EXPECT_EQ(max_report_count, reports.size());
+  for (const ReportingReport* report : reports)
+    EXPECT_TRUE(cache()->IsReportPendingForTesting(report));
+}
+
+GURL MakeEndpoint(size_t index) {
+  return GURL(base::StringPrintf("https://endpoint/%zd", index));
+}
+
+TEST_F(ReportingCacheTest, EvictLRUClient) {
+  size_t max_client_count = policy().max_client_count;
+
+  ASSERT_LT(0u, max_client_count);
+  ASSERT_GT(std::numeric_limits<size_t>::max(), max_client_count);
+
+  for (size_t i = 0; i < max_client_count; ++i) {
+    cache()->SetClient(kOrigin1_, MakeEndpoint(i),
+                       ReportingClient::Subdomains::EXCLUDE, kGroup1_,
+                       tomorrow());
+  }
+  EXPECT_EQ(max_client_count, client_count());
+
+  // Use clients in reverse order, so client (max_client_count - 1) is LRU.
+  for (size_t i = 1; i <= max_client_count; ++i) {
+    cache()->MarkClientUsed(kOrigin1_, MakeEndpoint(max_client_count - i));
+    tick_clock()->Advance(base::TimeDelta::FromSeconds(1));
+  }
+
+  // Add one more client, forcing the cache to evict the LRU.
+  cache()->SetClient(kOrigin1_, MakeEndpoint(max_client_count),
+                     ReportingClient::Subdomains::EXCLUDE, kGroup1_,
+                     tomorrow());
+  EXPECT_EQ(max_client_count, client_count());
+  EXPECT_FALSE(FindClientInCache(cache(), kOrigin1_,
+                                 MakeEndpoint(max_client_count - 1)));
+}
+
+TEST_F(ReportingCacheTest, EvictExpiredClient) {
+  size_t max_client_count = policy().max_client_count;
+
+  ASSERT_LT(0u, max_client_count);
+  ASSERT_GT(std::numeric_limits<size_t>::max(), max_client_count);
+
+  for (size_t i = 0; i < max_client_count; ++i) {
+    base::TimeTicks expires =
+        (i == max_client_count - 1) ? yesterday() : tomorrow();
+    cache()->SetClient(kOrigin1_, MakeEndpoint(i),
+                       ReportingClient::Subdomains::EXCLUDE, kGroup1_, expires);
+  }
+  EXPECT_EQ(max_client_count, client_count());
+
+  // Add one more client, forcing the cache to evict the expired one.
+  cache()->SetClient(kOrigin1_, MakeEndpoint(max_client_count),
+                     ReportingClient::Subdomains::EXCLUDE, kGroup1_,
+                     tomorrow());
+  EXPECT_EQ(max_client_count, client_count());
+  EXPECT_FALSE(FindClientInCache(cache(), kOrigin1_,
+                                 MakeEndpoint(max_client_count - 1)));
 }
 
 }  // namespace

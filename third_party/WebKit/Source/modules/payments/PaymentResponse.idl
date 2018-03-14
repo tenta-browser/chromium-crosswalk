@@ -2,23 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// https://w3c.github.io/browser-payment-api/#idl-def-paymentcomplete
+// https://w3c.github.io/payment-request/#dom-paymentcomplete
 
 enum PaymentComplete {
-    "success",
     "fail",
+    "success",
     "unknown"
 };
 
 // https://w3c.github.io/browser-payment-api/#paymentresponse-interface
 
 [
-    RuntimeEnabled=PaymentRequest,
+    RuntimeEnabled=PaymentRequest
 ] interface PaymentResponse {
     serializer = {attribute};
 
+    readonly attribute DOMString requestId;
     readonly attribute DOMString methodName;
-    [RuntimeEnabled=PaymentRequestPayerName] readonly attribute DOMString? payerName;
+    readonly attribute DOMString? payerName;
     readonly attribute DOMString? payerEmail;
     readonly attribute DOMString? payerPhone;
     [CallWith=ScriptState, RaisesException] readonly attribute object details;

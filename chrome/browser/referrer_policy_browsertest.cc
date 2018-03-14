@@ -38,7 +38,7 @@ class ReferrerPolicyTest : public InProcessBrowserTest {
   void SetUpOnMainThread() override {
     content::BrowserThread::PostTask(
         content::BrowserThread::IO, FROM_HERE,
-        base::Bind(&chrome_browser_net::SetUrlRequestMocksEnabled, true));
+        base::BindOnce(&chrome_browser_net::SetUrlRequestMocksEnabled, true));
   }
 
  protected:
@@ -90,6 +90,10 @@ class ReferrerPolicyTest : public InProcessBrowserTest {
         return "origin";
       case blink::kWebReferrerPolicyOriginWhenCrossOrigin:
         return "origin-when-crossorigin";
+      case blink::kWebReferrerPolicySameOrigin:
+        return "same-origin";
+      case blink::kWebReferrerPolicyStrictOrigin:
+        return "strict-origin";
       case blink::kWebReferrerPolicyAlways:
         return "always";
       case blink::kWebReferrerPolicyNever:
@@ -512,6 +516,15 @@ IN_PROC_BROWSER_TEST_F(ReferrerPolicyTest, RequestTabletSite) {
   // Watch for all possible outcomes to avoid timeouts if something breaks.
   AddAllPossibleTitles(start_url, &title_watcher);
 
+  // Erase the current title in the NavigationEntry.
+  //
+  // TitleWatcher overrides WebContentObserver's TitleWasSet() but also
+  // DidStopLoading(). The page that is being reloaded sets its title after load
+  // is complete, so the title change is missed because the title is checked on
+  // load. Clearing the title ensures that TitleWatcher will wait for the actual
+  // title setting.
+  tab->GetController().GetActiveEntry()->SetTitle(base::string16());
+
   // Request tablet version.
   chrome::ToggleRequestTabletSite(browser());
   EXPECT_EQ(expected_title, title_watcher.WaitAndGetTitle());
@@ -597,6 +610,42 @@ IN_PROC_BROWSER_TEST_F(ReferrerPolicyTest,
                   REGULAR_LINK, SERVER_REDIRECT_FROM_HTTP_TO_HTTP,
                   WindowOpenDisposition::CURRENT_TAB,
                   blink::WebMouseEvent::Button::kLeft, EXPECT_FULL_REFERRER);
+}
+
+// Same origin
+
+IN_PROC_BROWSER_TEST_F(ReferrerPolicyTest,
+                       HttpLeftClickHTTPRedirectToHTTPSameOrigin) {
+  RunReferrerTest(blink::kWebReferrerPolicySameOrigin, START_ON_HTTP,
+                  REGULAR_LINK, SERVER_REDIRECT_FROM_HTTP_TO_HTTP,
+                  WindowOpenDisposition::CURRENT_TAB,
+                  blink::WebMouseEvent::Button::kLeft, EXPECT_FULL_REFERRER);
+}
+
+IN_PROC_BROWSER_TEST_F(ReferrerPolicyTest,
+                       HttpLeftClickHTTPRedirectToHTTPSSameOrigin) {
+  RunReferrerTest(blink::kWebReferrerPolicySameOrigin, START_ON_HTTPS,
+                  REGULAR_LINK, SERVER_REDIRECT_FROM_HTTPS_TO_HTTP,
+                  WindowOpenDisposition::CURRENT_TAB,
+                  blink::WebMouseEvent::Button::kLeft, EXPECT_EMPTY_REFERRER);
+}
+
+// Strict origin
+
+IN_PROC_BROWSER_TEST_F(ReferrerPolicyTest,
+                       HttpLeftClickHTTPRedirectToHTTPStrictOrigin) {
+  RunReferrerTest(
+      blink::kWebReferrerPolicyStrictOrigin, START_ON_HTTP, REGULAR_LINK,
+      SERVER_REDIRECT_FROM_HTTP_TO_HTTP, WindowOpenDisposition::CURRENT_TAB,
+      blink::WebMouseEvent::Button::kLeft, EXPECT_ORIGIN_AS_REFERRER);
+}
+
+IN_PROC_BROWSER_TEST_F(ReferrerPolicyTest,
+                       HttpLeftClickHTTPSRedirectToHTTPStrictOrigin) {
+  RunReferrerTest(blink::kWebReferrerPolicyStrictOrigin, START_ON_HTTPS,
+                  REGULAR_LINK, SERVER_REDIRECT_FROM_HTTPS_TO_HTTP,
+                  WindowOpenDisposition::CURRENT_TAB,
+                  blink::WebMouseEvent::Button::kLeft, EXPECT_EMPTY_REFERRER);
 }
 
 // Reduced 'referer' granularity flag tests.

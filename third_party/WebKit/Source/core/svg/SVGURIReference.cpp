@@ -20,11 +20,11 @@
 
 #include "core/svg/SVGURIReference.h"
 
-#include "core/XLinkNames.h"
 #include "core/dom/Document.h"
 #include "core/dom/IdTargetObserver.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/svg/SVGElement.h"
+#include "core/xlink_names.h"
 #include "platform/weborigin/KURL.h"
 
 namespace blink {
@@ -35,13 +35,13 @@ class SVGElementReferenceObserver : public IdTargetObserver {
  public:
   SVGElementReferenceObserver(TreeScope& tree_scope,
                               const AtomicString& id,
-                              std::unique_ptr<WTF::Closure> closure)
+                              WTF::Closure closure)
       : IdTargetObserver(tree_scope.GetIdTargetObserverRegistry(), id),
         closure_(std::move(closure)) {}
 
  private:
-  void IdTargetChanged() override { (*closure_)(); }
-  std::unique_ptr<WTF::Closure> closure_;
+  void IdTargetChanged() override { closure_.Run(); }
+  WTF::RepeatingClosure closure_;
 };
 }
 
@@ -51,7 +51,7 @@ SVGURIReference::SVGURIReference(SVGElement* element)
   href_->AddToPropertyMap(element);
 }
 
-DEFINE_TRACE(SVGURIReference) {
+void SVGURIReference::Trace(blink::Visitor* visitor) {
   visitor->Trace(href_);
 }
 
@@ -88,11 +88,10 @@ bool SVGURLReferenceResolver::IsLocal() const {
 }
 
 AtomicString SVGURLReferenceResolver::FragmentIdentifier() const {
-  // If this is a "fragment-only" URL, then the reference is always local, so
-  // just return what's after the '#' as the fragment.
-  if (is_local_)
-    return AtomicString(relative_url_.Substring(1));
-  return AtomicString(AbsoluteUrl().FragmentIdentifier());
+  // Use KURL's FragmentIdentifier to ensure that we're handling the
+  // fragment in a consistent manner.
+  return AtomicString(
+      DecodeURLEscapeSequences(AbsoluteUrl().FragmentIdentifier()));
 }
 
 AtomicString SVGURIReference::FragmentIdentifierFromIRIString(
@@ -113,7 +112,7 @@ Element* SVGURIReference::TargetElementFromIRIString(
     return nullptr;
   if (fragment_identifier)
     *fragment_identifier = id;
-  return tree_scope.GetElementById(id);
+  return tree_scope.getElementById(id);
 }
 
 Element* SVGURIReference::ObserveTarget(Member<IdTargetObserver>& observer,
@@ -134,13 +133,13 @@ Element* SVGURIReference::ObserveTarget(Member<IdTargetObserver>& observer,
 Element* SVGURIReference::ObserveTarget(Member<IdTargetObserver>& observer,
                                         TreeScope& tree_scope,
                                         const AtomicString& id,
-                                        std::unique_ptr<WTF::Closure> closure) {
+                                        WTF::Closure closure) {
   DCHECK(!observer);
   if (id.IsEmpty())
     return nullptr;
   observer =
       new SVGElementReferenceObserver(tree_scope, id, std::move(closure));
-  return tree_scope.GetElementById(id);
+  return tree_scope.getElementById(id);
 }
 
 void SVGURIReference::UnobserveTarget(Member<IdTargetObserver>& observer) {

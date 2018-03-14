@@ -18,12 +18,14 @@
 #include "base/synchronization/lock.h"
 #include "base/task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "mojo/edk/embedder/embedder.h"
 #include "mojo/public/cpp/bindings/interface_ptr_info.h"
 #include "mojo/public/cpp/system/core.h"
 #include "services/service_manager/public/cpp/standalone_service/switches.h"
 #include "services/service_manager/runner/common/client_util.h"
 #include "services/service_manager/runner/common/switches.h"
+#include "services/service_manager/sandbox/switches.h"
 
 #if defined(OS_LINUX)
 #include "sandbox/linux/services/namespace_sandbox.h"
@@ -41,11 +43,10 @@ namespace service_manager {
 
 ServiceProcessLauncher::ServiceProcessLauncher(
     base::TaskRunner* launch_process_runner,
-    Delegate* delegate,
+    ServiceProcessLauncherDelegate* delegate,
     const base::FilePath& service_path)
     : launch_process_runner_(launch_process_runner),
       delegate_(delegate),
-      start_sandboxed_(false),
       service_path_(service_path),
       start_child_process_event_(
           base::WaitableEvent::ResetPolicy::AUTOMATIC,
@@ -61,11 +62,11 @@ ServiceProcessLauncher::~ServiceProcessLauncher() {
 
 mojom::ServicePtr ServiceProcessLauncher::Start(
     const Identity& target,
-    bool start_sandboxed,
+    SandboxType sandbox_type,
     const ProcessReadyCallback& callback) {
   DCHECK(!child_process_.IsValid());
 
-  start_sandboxed_ = start_sandboxed;
+  sandbox_type_ = sandbox_type;
   target_ = target;
 
   const base::CommandLine& parent_command_line =
@@ -75,28 +76,30 @@ mojom::ServicePtr ServiceProcessLauncher::Start(
       new base::CommandLine(service_path_));
 
   child_command_line->AppendArguments(parent_command_line, false);
-
-  child_command_line->AppendSwitchASCII(::switches::kProcessServiceName,
-                                        target.name());
+  child_command_line->AppendSwitchASCII(switches::kServiceName, target.name());
 #ifndef NDEBUG
   child_command_line->AppendSwitchASCII("u", target.user_id());
 #endif
 
-  if (start_sandboxed_)
-    child_command_line->AppendSwitch(::switches::kEnableSandbox);
-
+  if (!IsUnsandboxedSandboxType(sandbox_type_)) {
+    child_command_line->AppendSwitchASCII(
+        switches::kServiceSandboxType,
+        StringFromUtilitySandboxType(sandbox_type_));
+  }
   mojo_ipc_channel_.reset(new mojo::edk::PlatformChannelPair);
   mojo_ipc_channel_->PrepareToPassClientHandleToChildProcess(
       child_command_line.get(), &handle_passing_info_);
 
   mojom::ServicePtr client = PassServiceRequestOnCommandLine(
-      &process_connection_, child_command_line.get());
+      &broker_client_invitation_, child_command_line.get());
+
   launch_process_runner_->PostTaskAndReply(
       FROM_HERE,
       base::Bind(&ServiceProcessLauncher::DoLaunch, base::Unretained(this),
                  base::Passed(&child_command_line)),
       base::Bind(&ServiceProcessLauncher::DidStart,
                  weak_factory_.GetWeakPtr(), callback));
+
   return client;
 }
 
@@ -131,11 +134,7 @@ void ServiceProcessLauncher::DoLaunch(
 
   base::LaunchOptions options;
 #if defined(OS_WIN)
-  options.handles_to_inherit = &handle_passing_info_;
-#if defined(OFFICIAL_BUILD)
-  CHECK(false) << "Launching mojo process with inherit_handles is insecure!";
-#endif
-  options.inherit_handles = true;
+  options.handles_to_inherit = handle_passing_info_;
   options.stdin_handle = INVALID_HANDLE_VALUE;
   options.stdout_handle = GetStdHandle(STD_OUTPUT_HANDLE);
   options.stderr_handle = GetStdHandle(STD_ERROR_HANDLE);
@@ -152,29 +151,32 @@ void ServiceProcessLauncher::DoLaunch(
   // inherited.
   if (options.stdout_handle &&
       GetFileType(options.stdout_handle) != FILE_TYPE_CHAR) {
-    handle_passing_info_.push_back(options.stdout_handle);
+    options.handles_to_inherit.push_back(options.stdout_handle);
   }
   if (options.stderr_handle &&
       GetFileType(options.stderr_handle) != FILE_TYPE_CHAR &&
       options.stdout_handle != options.stderr_handle) {
-    handle_passing_info_.push_back(options.stderr_handle);
+    options.handles_to_inherit.push_back(options.stderr_handle);
   }
+#elif defined(OS_FUCHSIA)
+  // LaunchProcess will share stdin/out/err with the child process by default.
+  if (!IsUnsandboxedSandboxType(sandbox_type_))
+    NOTIMPLEMENTED();
+  options.handles_to_transfer = std::move(handle_passing_info_);
 #elif defined(OS_POSIX)
   handle_passing_info_.push_back(std::make_pair(STDIN_FILENO, STDIN_FILENO));
   handle_passing_info_.push_back(std::make_pair(STDOUT_FILENO, STDOUT_FILENO));
   handle_passing_info_.push_back(std::make_pair(STDERR_FILENO, STDERR_FILENO));
-  options.fds_to_remap = &handle_passing_info_;
+  options.fds_to_remap = handle_passing_info_;
 #endif
   DVLOG(2) << "Launching child with command line: "
            << child_command_line->GetCommandLineString();
 #if defined(OS_LINUX)
-  if (start_sandboxed_) {
+  if (!IsUnsandboxedSandboxType(sandbox_type_)) {
     child_process_ =
         sandbox::NamespaceSandbox::LaunchProcess(*child_command_line, options);
-    if (!child_process_.IsValid()) {
-      LOG(ERROR) << "Starting the process with a sandbox failed. Missing kernel"
-                 << " support.";
-    }
+    if (!child_process_.IsValid())
+      LOG(ERROR) << "Starting the process with a sandbox failed.";
   } else
 #endif
   {
@@ -203,9 +205,10 @@ void ServiceProcessLauncher::DoLaunch(
 
     if (mojo_ipc_channel_.get()) {
       mojo_ipc_channel_->ChildProcessLaunched();
-      process_connection_.Connect(
+      broker_client_invitation_.Send(
           child_process_.Handle(),
-          mojo::edk::ConnectionParams(mojo_ipc_channel_->PassServerHandle()));
+          mojo::edk::ConnectionParams(mojo::edk::TransportProtocol::kLegacy,
+                                      mojo_ipc_channel_->PassServerHandle()));
     }
   }
   start_child_process_event_.Signal();

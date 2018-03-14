@@ -30,13 +30,13 @@ void AtomicStringTable::ReserveCapacity(unsigned size) {
 }
 
 template <typename T, typename HashTranslator>
-PassRefPtr<StringImpl> AtomicStringTable::AddToStringTable(const T& value) {
+scoped_refptr<StringImpl> AtomicStringTable::AddToStringTable(const T& value) {
   HashSet<StringImpl*>::AddResult add_result =
       table_.AddWithTranslator<HashTranslator>(value);
 
   // If the string is newly-translated, then we need to adopt it.
   // The boolean in the pair tells us if that is so.
-  return add_result.is_new_entry ? AdoptRef(*add_result.stored_value)
+  return add_result.is_new_entry ? base::AdoptRef(*add_result.stored_value)
                                  : *add_result.stored_value;
 }
 
@@ -59,7 +59,10 @@ struct UCharBufferTranslator {
   static void Translate(StringImpl*& location,
                         const UCharBuffer& buf,
                         unsigned hash) {
-    location = StringImpl::Create8BitIfPossible(buf.s, buf.length).LeakRef();
+    auto string = StringImpl::Create8BitIfPossible(buf.s, buf.length);
+    if (string)
+      string->AddRef();
+    location = string.get();
     location->SetHash(hash);
     location->SetIsAtomic(true);
   }
@@ -124,7 +127,7 @@ struct HashAndUTF8CharactersTranslator {
                         const HashAndUTF8Characters& buffer,
                         unsigned hash) {
     UChar* target;
-    RefPtr<StringImpl> new_string =
+    scoped_refptr<StringImpl> new_string =
         StringImpl::CreateUninitialized(buffer.utf16_length, target);
 
     bool is_all_ascii;
@@ -137,13 +140,15 @@ struct HashAndUTF8CharactersTranslator {
     if (is_all_ascii)
       new_string = StringImpl::Create(buffer.characters, buffer.length);
 
-    location = new_string.LeakRef();
+    new_string->AddRef();
+    location = new_string.get();
     location->SetHash(hash);
     location->SetIsAtomic(true);
   }
 };
 
-PassRefPtr<StringImpl> AtomicStringTable::Add(const UChar* s, unsigned length) {
+scoped_refptr<StringImpl> AtomicStringTable::Add(const UChar* s,
+                                                 unsigned length) {
   if (!s)
     return nullptr;
 
@@ -167,13 +172,16 @@ struct LCharBufferTranslator {
   static void Translate(StringImpl*& location,
                         const LCharBuffer& buf,
                         unsigned hash) {
-    location = StringImpl::Create(buf.s, buf.length).LeakRef();
+    auto string = StringImpl::Create(buf.s, buf.length);
+    string->AddRef();
+    location = string.get();
     location->SetHash(hash);
     location->SetIsAtomic(true);
   }
 };
 
-PassRefPtr<StringImpl> AtomicStringTable::Add(const LChar* s, unsigned length) {
+scoped_refptr<StringImpl> AtomicStringTable::Add(const LChar* s,
+                                                 unsigned length) {
   if (!s)
     return nullptr;
 
@@ -197,8 +205,9 @@ StringImpl* AtomicStringTable::Add(StringImpl* string) {
   return result;
 }
 
-PassRefPtr<StringImpl> AtomicStringTable::AddUTF8(const char* characters_start,
-                                                  const char* characters_end) {
+scoped_refptr<StringImpl> AtomicStringTable::AddUTF8(
+    const char* characters_start,
+    const char* characters_end) {
   HashAndUTF8Characters buffer;
   buffer.characters = characters_start;
   buffer.hash = CalculateStringHashAndLengthFromUTF8MaskingTop8Bits(
@@ -213,8 +222,8 @@ PassRefPtr<StringImpl> AtomicStringTable::AddUTF8(const char* characters_start,
 
 void AtomicStringTable::Remove(StringImpl* string) {
   DCHECK(string->IsAtomic());
-  auto iterator = table_.Find(string);
-  RELEASE_ASSERT(iterator != table_.end());
+  auto iterator = table_.find(string);
+  CHECK_NE(iterator, table_.end());
   table_.erase(iterator);
 }
 

@@ -4,10 +4,11 @@
 
 #include "net/test/url_request/url_request_mock_data_job.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -74,8 +75,8 @@ GURL GetMockUrl(const std::string& scheme,
 
 class MockJobInterceptor : public URLRequestInterceptor {
  public:
-  MockJobInterceptor() {}
-  ~MockJobInterceptor() override {}
+  MockJobInterceptor() = default;
+  ~MockJobInterceptor() override = default;
 
   // URLRequestInterceptor implementation
   URLRequestJob* MaybeInterceptRequest(
@@ -116,8 +117,7 @@ void URLRequestMockDataJob::Start() {
                             weak_factory_.GetWeakPtr()));
 }
 
-URLRequestMockDataJob::~URLRequestMockDataJob() {
-}
+URLRequestMockDataJob::~URLRequestMockDataJob() = default;
 
 int URLRequestMockDataJob::ReadRawData(IOBuffer* buf, int buf_size) {
   int bytes_read =
@@ -128,8 +128,8 @@ int URLRequestMockDataJob::ReadRawData(IOBuffer* buf, int buf_size) {
 }
 
 void URLRequestMockDataJob::ContinueWithCertificate(
-    X509Certificate* client_cert,
-    SSLPrivateKey* client_private_key) {
+    scoped_refptr<X509Certificate> client_cert,
+    scoped_refptr<SSLPrivateKey> client_private_key) {
   DCHECK(request_client_certificate_);
   NotifyHeadersComplete();
 }
@@ -177,9 +177,9 @@ void URLRequestMockDataJob::AddUrlHandlerForHostname(
   // Add |hostname| to URLRequestFilter for HTTP and HTTPS.
   URLRequestFilter* filter = URLRequestFilter::GetInstance();
   filter->AddHostnameInterceptor("http", hostname,
-                                 base::MakeUnique<MockJobInterceptor>());
+                                 std::make_unique<MockJobInterceptor>());
   filter->AddHostnameInterceptor("https", hostname,
-                                 base::MakeUnique<MockJobInterceptor>());
+                                 std::make_unique<MockJobInterceptor>());
 }
 
 // static

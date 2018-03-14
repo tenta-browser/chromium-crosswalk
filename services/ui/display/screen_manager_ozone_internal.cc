@@ -14,7 +14,7 @@
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "services/ui/display/output_protection.h"
-#include "third_party/skia/include/core/SkColor.h"
+#include "ui/display/manager/chromeos/default_touch_transform_setter.h"
 #include "ui/display/manager/chromeos/display_change_observer.h"
 #include "ui/display/manager/chromeos/touch_transform_controller.h"
 #include "ui/display/manager/display_layout_store.h"
@@ -28,20 +28,14 @@
 #include "ui/ozone/public/ozone_platform.h"
 
 namespace display {
-namespace {
-
-// Needed for DisplayConfigurator::ForceInitialConfigure.
-const SkColor kChromeOsBootColor = SkColorSetRGB(0xfe, 0xfe, 0xfe);
-
-}  // namespace
 
 // static
 std::unique_ptr<ScreenManager> ScreenManager::Create() {
-  return base::MakeUnique<ScreenManagerOzoneInternal>();
+  return std::make_unique<ScreenManagerOzoneInternal>();
 }
 
 ScreenManagerOzoneInternal::ScreenManagerOzoneInternal()
-    : screen_owned_(base::MakeUnique<ScreenBase>()),
+    : screen_owned_(std::make_unique<ScreenBase>()),
       screen_(screen_owned_.get()) {
   Screen::SetScreenInstance(screen_owned_.get());
 }
@@ -110,10 +104,17 @@ void ScreenManagerOzoneInternal::SetPrimaryDisplayId(int64_t display_id) {
 }
 
 void ScreenManagerOzoneInternal::AddInterfaces(
-    service_manager::BinderRegistry* registry) {
-  registry->AddInterface<mojom::DisplayController>(this);
-  registry->AddInterface<mojom::OutputProtection>(this);
-  registry->AddInterface<mojom::TestDisplayController>(this);
+    service_manager::BinderRegistryWithArgs<
+        const service_manager::BindSourceInfo&>* registry) {
+  registry->AddInterface<mojom::DisplayController>(
+      base::Bind(&ScreenManagerOzoneInternal::BindDisplayControllerRequest,
+                 base::Unretained(this)));
+  registry->AddInterface<mojom::OutputProtection>(
+      base::Bind(&ScreenManagerOzoneInternal::BindOutputProtectionRequest,
+                 base::Unretained(this)));
+  registry->AddInterface<mojom::DevDisplayController>(
+      base::Bind(&ScreenManagerOzoneInternal::BindDevDisplayControllerRequest,
+                 base::Unretained(this)));
 }
 
 void ScreenManagerOzoneInternal::Init(ScreenManagerDelegate* delegate) {
@@ -136,14 +137,14 @@ void ScreenManagerOzoneInternal::Init(ScreenManagerDelegate* delegate) {
 
   // Configure display manager. ScreenManager acts as an observer to find out
   // display changes and as a delegate to find out when changes start/stop.
-  display_manager_ = base::MakeUnique<DisplayManager>(std::move(screen_owned_));
+  display_manager_ = std::make_unique<DisplayManager>(std::move(screen_owned_));
   display_manager_->set_configure_displays(true);
   display_manager_->AddObserver(this);
   display_manager_->set_delegate(this);
 
   // DisplayChangeObserver observes DisplayConfigurator and sends updates to
   // DisplayManager.
-  display_change_observer_ = base::MakeUnique<DisplayChangeObserver>(
+  display_change_observer_ = std::make_unique<DisplayChangeObserver>(
       &display_configurator_, display_manager_.get());
 
   // We want display configuration to happen even off device to keep the control
@@ -155,10 +156,11 @@ void ScreenManagerOzoneInternal::Init(ScreenManagerDelegate* delegate) {
 
   // Perform initial configuration.
   display_configurator_.Init(std::move(native_display_delegate_), false);
-  display_configurator_.ForceInitialConfigure(kChromeOsBootColor);
+  display_configurator_.ForceInitialConfigure();
 
-  touch_transform_controller_ = base::MakeUnique<TouchTransformController>(
-      &display_configurator_, display_manager_.get());
+  touch_transform_controller_ = std::make_unique<TouchTransformController>(
+      &display_configurator_, display_manager_.get(),
+      std::make_unique<display::DefaultTouchTransformSetter>());
 }
 
 void ScreenManagerOzoneInternal::RequestCloseDisplay(int64_t display_id) {
@@ -168,6 +170,10 @@ void ScreenManagerOzoneInternal::RequestCloseDisplay(int64_t display_id) {
   // Tell the NDD to remove the display. ScreenManager will get an update
   // that the display configuration has changed and the display will be gone.
   fake_display_controller_->RemoveDisplay(display_id);
+}
+
+display::ScreenBase* ScreenManagerOzoneInternal::GetScreen() {
+  return screen_;
 }
 
 void ScreenManagerOzoneInternal::ToggleAddRemoveDisplay() {
@@ -186,31 +192,6 @@ void ScreenManagerOzoneInternal::ToggleAddRemoveDisplay() {
     DisplayIdList displays = display_manager_->GetCurrentDisplayIdList();
     fake_display_controller_->RemoveDisplay(displays.back());
   }
-}
-
-void ScreenManagerOzoneInternal::ToggleDisplayResolution() {
-  if (primary_display_id_ == kInvalidDisplayId)
-    return;
-
-  // Internal displays don't have alternate resolutions.
-  if (Display::HasInternalDisplay() &&
-      primary_display_id_ == Display::InternalDisplayId())
-    return;
-
-  DVLOG(1) << "ToggleDisplayResolution";
-
-  const ManagedDisplayInfo& info =
-      display_manager_->GetDisplayInfo(primary_display_id_);
-  scoped_refptr<ManagedDisplayMode> mode =
-      GetDisplayModeForNextResolution(info, true);
-
-  // Loop back to first mode from last.
-  if (mode->size() == info.bounds_in_native().size())
-    mode = info.display_modes()[0];
-
-  // Set mode only if it's different from current.
-  if (mode->size() != info.bounds_in_native().size())
-    display_manager_->SetDisplayMode(primary_display_id_, mode);
 }
 
 void ScreenManagerOzoneInternal::IncreaseInternalDisplayZoom() {
@@ -326,8 +307,7 @@ void ScreenManagerOzoneInternal::PreDisplayConfigurationChange(
   DVLOG(1) << "PreDisplayConfigurationChange";
 }
 
-void ScreenManagerOzoneInternal::PostDisplayConfigurationChange(
-    bool must_clear_window) {
+void ScreenManagerOzoneInternal::PostDisplayConfigurationChange() {
   // Set primary display if not set yet.
   if (primary_display_id_ == kInvalidDisplayId) {
     const Display& primary_display =
@@ -350,23 +330,23 @@ DisplayConfigurator* ScreenManagerOzoneInternal::display_configurator() {
   return &display_configurator_;
 }
 
-void ScreenManagerOzoneInternal::Create(
-    const service_manager::Identity& remote_identity,
-    mojom::DisplayControllerRequest request) {
+void ScreenManagerOzoneInternal::BindDisplayControllerRequest(
+    mojom::DisplayControllerRequest request,
+    const service_manager::BindSourceInfo& source_info) {
   controller_bindings_.AddBinding(this, std::move(request));
 }
 
-void ScreenManagerOzoneInternal::Create(
-    const service_manager::Identity& remote_identity,
-    mojom::OutputProtectionRequest request) {
+void ScreenManagerOzoneInternal::BindOutputProtectionRequest(
+    mojom::OutputProtectionRequest request,
+    const service_manager::BindSourceInfo& source_info) {
   mojo::MakeStrongBinding(
-      base::MakeUnique<OutputProtection>(display_configurator()),
+      std::make_unique<OutputProtection>(display_configurator()),
       std::move(request));
 }
 
-void ScreenManagerOzoneInternal::Create(
-    const service_manager::Identity& remote_identity,
-    mojom::TestDisplayControllerRequest request) {
+void ScreenManagerOzoneInternal::BindDevDisplayControllerRequest(
+    mojom::DevDisplayControllerRequest request,
+    const service_manager::BindSourceInfo& source_info) {
   test_bindings_.AddBinding(this, std::move(request));
 }
 

@@ -7,11 +7,13 @@
 
 #include "core/CoreExport.h"
 #include "core/layout/ng/geometry/ng_logical_offset.h"
-#include "core/layout/ng/ng_writing_mode.h"
 #include "platform/LayoutUnit.h"
 #include "platform/text/TextDirection.h"
+#include "platform/text/WritingMode.h"
 
 namespace blink {
+
+struct NGPhysicalBoxStrut;
 
 // This struct is used for storing margins, borders or padding of a box on all
 // four edges.
@@ -26,14 +28,21 @@ struct CORE_EXPORT NGBoxStrut {
         block_start(block_start),
         block_end(block_end) {}
 
+  LayoutUnit LineLeft(TextDirection direction) const {
+    return IsLtr(direction) ? inline_start : inline_end;
+  }
+  LayoutUnit LineRight(TextDirection direction) const {
+    return IsLtr(direction) ? inline_end : inline_start;
+  }
+
   LayoutUnit InlineSum() const { return inline_start + inline_end; }
   LayoutUnit BlockSum() const { return block_start + block_end; }
 
-  NGLogicalOffset InlineBlockStartOffset() {
-    return {inline_start, block_start};
-  }
+  NGLogicalOffset StartOffset() const { return {inline_start, block_start}; }
 
   bool IsEmpty() const;
+
+  NGPhysicalBoxStrut ConvertToPhysical(WritingMode, TextDirection) const;
 
   // The following two operators exist primarily to have an easy way to access
   // the sum of border and padding.
@@ -63,15 +72,40 @@ struct CORE_EXPORT NGBoxStrut {
 
 CORE_EXPORT std::ostream& operator<<(std::ostream&, const NGBoxStrut&);
 
+struct NGPixelSnappedPhysicalBoxStrut;
+
 // Struct to store physical dimensions, independent of writing mode and
 // direction.
 // See https://drafts.csswg.org/css-writing-modes-3/#abstract-box
 struct CORE_EXPORT NGPhysicalBoxStrut {
-  LayoutUnit left;
-  LayoutUnit right;
+  NGPhysicalBoxStrut() {}
+  NGPhysicalBoxStrut(LayoutUnit top,
+                     LayoutUnit right,
+                     LayoutUnit bottom,
+                     LayoutUnit left)
+      : top(top), right(right), bottom(bottom), left(left) {}
+
+  NGBoxStrut ConvertToLogical(WritingMode, TextDirection) const;
+  NGPixelSnappedPhysicalBoxStrut SnapToDevicePixels() const;
+
+  LayoutUnit HorizontalSum() const { return left + right; }
+  LayoutUnit VerticalSum() const { return top + bottom; }
+
   LayoutUnit top;
+  LayoutUnit right;
   LayoutUnit bottom;
-  NGBoxStrut ConvertToLogical(NGWritingMode, TextDirection) const;
+  LayoutUnit left;
+};
+
+// Struct to store pixel snapped physical dimensions.
+struct CORE_EXPORT NGPixelSnappedPhysicalBoxStrut {
+  NGPixelSnappedPhysicalBoxStrut() {}
+  NGPixelSnappedPhysicalBoxStrut(int top, int right, int bottom, int left)
+      : top(top), right(right), bottom(bottom), left(left) {}
+  int top;
+  int right;
+  int bottom;
+  int left;
 };
 
 }  // namespace blink

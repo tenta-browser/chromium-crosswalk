@@ -17,12 +17,23 @@ namespace blink {
 class WebMouseWheelEvent : public WebMouseEvent {
  public:
   enum Phase {
+    // No phase information is avaiable.
     kPhaseNone = 0,
+    // This wheel event is the beginning of a scrolling sequence.
     kPhaseBegan = 1 << 0,
+    // Shows that scrolling is ongoing but the scroll delta for this wheel event
+    // is zero.
     kPhaseStationary = 1 << 1,
+    // Shows that a scroll is ongoing and the scroll delta for this wheel event
+    // is non-zero.
     kPhaseChanged = 1 << 2,
+    // This wheel event is the last event of a scrolling sequence.
     kPhaseEnded = 1 << 3,
+    // A wheel event with phase cancelled shows that the scrolling sequence is
+    // cancelled.
     kPhaseCancelled = 1 << 4,
+    // A wheel event with phase may begin shows that a scrolling sequence may
+    // start.
     kPhaseMayBegin = 1 << 5,
   };
 
@@ -44,6 +55,10 @@ class WebMouseWheelEvent : public WebMouseEvent {
   Phase phase;
   Phase momentum_phase;
 
+  // True when phase information is added in mouse_wheel_phase_handler based
+  // on its timer.
+  bool has_synthetic_phase;
+
   bool scroll_by_page;
   bool has_precise_scrolling_deltas;
 
@@ -57,7 +72,8 @@ class WebMouseWheelEvent : public WebMouseEvent {
       : WebMouseEvent(sizeof(WebMouseWheelEvent),
                       type,
                       modifiers,
-                      time_stamp_seconds),
+                      time_stamp_seconds,
+                      kMousePointerId),
         delta_x(0.0f),
         delta_y(0.0f),
         wheel_ticks_x(0.0f),
@@ -73,7 +89,7 @@ class WebMouseWheelEvent : public WebMouseEvent {
         dispatch_type(kBlocking) {}
 
   WebMouseWheelEvent()
-      : WebMouseEvent(sizeof(WebMouseWheelEvent)),
+      : WebMouseEvent(sizeof(WebMouseWheelEvent), kMousePointerId),
         delta_x(0.0f),
         delta_y(0.0f),
         wheel_ticks_x(0.0f),
@@ -90,8 +106,8 @@ class WebMouseWheelEvent : public WebMouseEvent {
   BLINK_PLATFORM_EXPORT float DeltaXInRootFrame() const;
   BLINK_PLATFORM_EXPORT float DeltaYInRootFrame() const;
 
-  // Sets any scaled values to be their computed values and sets |frameScale|
-  // back to 1 and |translateX|, |translateY| back to 0.
+  // Sets any scaled values to be their computed values and sets |frame_scale_|
+  // back to 1 and |frame_translate_| X and Y coordinates back to 0.
   BLINK_PLATFORM_EXPORT WebMouseWheelEvent FlattenTransform() const;
 
   bool IsCancelable() const { return dispatch_type == kBlocking; }

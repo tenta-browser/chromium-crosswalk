@@ -11,6 +11,8 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/shared_memory.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
@@ -27,7 +29,10 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/prefs/pref_service.h"
+#include "components/printing/browser/print_composite_client.h"
+#include "components/printing/browser/print_manager_utils.h"
 #include "components/printing/common/print_messages.h"
+#include "components/printing/service/public/cpp/pdf_service_mojo_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
@@ -35,8 +40,10 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
+#include "mojo/public/cpp/system/buffer.h"
 #include "printing/features/features.h"
 #include "printing/pdf_metafile_skia.h"
+#include "printing/print_settings.h"
 #include "printing/printed_document.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -74,10 +81,9 @@ PrintViewManagerBase::PrintViewManagerBase(content::WebContents* web_contents)
       printing_rfh_(nullptr),
       printing_succeeded_(false),
       inside_inner_message_loop_(false),
-#if !defined(OS_MACOSX)
       expecting_first_page_(true),
-#endif
-      queue_(g_browser_process->print_job_manager()->queue()) {
+      queue_(g_browser_process->print_job_manager()->queue()),
+      weak_ptr_factory_(this) {
   DCHECK(queue_.get());
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
@@ -126,8 +132,22 @@ void PrintViewManagerBase::OnDidGetPrintedPagesCount(int cookie,
   OpportunisticallyCreatePrintJob(cookie);
 }
 
+void PrintViewManagerBase::OnComposePdfDone(
+    const PrintHostMsg_DidPrintPage_Params& params,
+    mojom::PdfCompositor::Status status,
+    mojo::ScopedSharedBufferHandle handle) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  if (status != mojom::PdfCompositor::Status::SUCCESS) {
+    DLOG(ERROR) << "Compositing pdf failed with error " << status;
+    return;
+  }
+
+  UpdateForPrintedPage(params, true, GetShmFromMojoHandle(std::move(handle)));
+}
+
 void PrintViewManagerBase::OnDidPrintPage(
-  const PrintHostMsg_DidPrintPage_Params& params) {
+    const PrintHostMsg_DidPrintPage_Params& params) {
+  // Ready to composite. Starting a print job.
   if (!OpportunisticallyCreatePrintJob(params.document_cookie))
     return;
 
@@ -138,12 +158,8 @@ void PrintViewManagerBase::OnDidPrintPage(
     return;
   }
 
-#if defined(OS_MACOSX)
-  const bool metafile_must_be_valid = true;
-#else
   const bool metafile_must_be_valid = expecting_first_page_;
   expecting_first_page_ = false;
-#endif
 
   // Only used when |metafile_must_be_valid| is true.
   std::unique_ptr<base::SharedMemory> shared_buf;
@@ -153,8 +169,18 @@ void PrintViewManagerBase::OnDidPrintPage(
       web_contents()->Stop();
       return;
     }
+
+    auto* client = PrintCompositeClient::FromWebContents(web_contents());
+    if (IsOopifEnabled() && !client->for_preview() &&
+        !document->settings().is_modifiable()) {
+      client->DoComposite(
+          params.metafile_data_handle, params.data_size,
+          base::BindOnce(&PrintViewManagerBase::OnComposePdfDone,
+                         weak_ptr_factory_.GetWeakPtr(), params));
+      return;
+    }
     shared_buf =
-        base::MakeUnique<base::SharedMemory>(params.metafile_data_handle, true);
+        std::make_unique<base::SharedMemory>(params.metafile_data_handle, true);
     if (!shared_buf->Map(params.data_size)) {
       NOTREACHED() << "couldn't map";
       web_contents()->Stop();
@@ -169,27 +195,32 @@ void PrintViewManagerBase::OnDidPrintPage(
     }
   }
 
-  std::unique_ptr<PdfMetafileSkia> metafile(
-      new PdfMetafileSkia(PDF_SKIA_DOCUMENT_TYPE));
-  if (metafile_must_be_valid) {
-    if (!metafile->InitFromData(shared_buf->memory(), params.data_size)) {
-      NOTREACHED() << "Invalid metafile header";
-      web_contents()->Stop();
-      return;
-    }
-  }
+  UpdateForPrintedPage(params, metafile_must_be_valid, std::move(shared_buf));
+}
+
+void PrintViewManagerBase::UpdateForPrintedPage(
+    const PrintHostMsg_DidPrintPage_Params& params,
+    bool has_valid_page_data,
+    std::unique_ptr<base::SharedMemory> shared_buf) {
+  PrintedDocument* document = print_job_->document();
+  if (!document)
+    return;
 
 #if defined(OS_WIN)
   print_job_->AppendPrintedPage(params.page_number);
-  if (metafile_must_be_valid) {
-    scoped_refptr<base::RefCountedBytes> bytes = new base::RefCountedBytes(
+  if (has_valid_page_data) {
+    scoped_refptr<base::RefCountedBytes> bytes(new base::RefCountedBytes(
         reinterpret_cast<const unsigned char*>(shared_buf->memory()),
-        params.data_size);
+        shared_buf->mapped_size()));
+
     document->DebugDumpData(bytes.get(), FILE_PATH_LITERAL(".pdf"));
 
     const auto& settings = document->settings();
-    if ((settings.printer_is_ps2() || settings.printer_is_ps3()) &&
-        base::FeatureList::IsEnabled(features::kPostScriptPrinting)) {
+    if (settings.printer_is_textonly()) {
+      print_job_->StartPdfToTextConversion(bytes, params.page_size);
+    } else if ((settings.printer_is_ps2() || settings.printer_is_ps3()) &&
+               !base::FeatureList::IsEnabled(
+                   features::kDisablePostScriptPrinting)) {
       print_job_->StartPdfToPostScriptConversion(bytes, params.content_area,
                                                  params.physical_offsets,
                                                  settings.printer_is_ps2());
@@ -199,22 +230,27 @@ void PrintViewManagerBase::OnDidPrintPage(
       // Update : The missing letters seem to have been caused by the same
       // problem as https://crbug.com/659604 which was resolved. GDI printing
       // seems to work with the fix for this bug applied.
-      bool print_text_with_gdi = settings.print_text_with_gdi() &&
-                                 !settings.printer_is_xps() &&
-                                 base::FeatureList::IsEnabled(
-                                     features::kGdiTextPrinting);
+      bool print_text_with_gdi =
+          settings.print_text_with_gdi() && !settings.printer_is_xps() &&
+          base::FeatureList::IsEnabled(features::kGdiTextPrinting);
       print_job_->StartPdfToEmfConversion(
           bytes, params.page_size, params.content_area, print_text_with_gdi);
     }
   }
 #else
+  std::unique_ptr<PdfMetafileSkia> metafile =
+      std::make_unique<PdfMetafileSkia>(SkiaDocumentType::PDF);
+  if (has_valid_page_data) {
+    if (!metafile->InitFromData(shared_buf->memory(),
+                                shared_buf->mapped_size())) {
+      NOTREACHED() << "Invalid metafile header";
+      web_contents()->Stop();
+      return;
+    }
+  }
+
   // Update the rendered document. It will send notifications to the listener.
-  document->SetPage(params.page_number,
-                    std::move(metafile),
-#if defined(OS_WIN)
-                    0.0f /* dummy shrink_factor */,
-#endif
-                    params.page_size,
+  document->SetPage(params.page_number, std::move(metafile), params.page_size,
                     params.content_area);
 
   ShouldQuitFromInnerMessageLoop();
@@ -225,7 +261,7 @@ void PrintViewManagerBase::OnPrintingFailed(int cookie) {
   PrintManager::OnPrintingFailed(cookie);
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
-  chrome::ShowPrintErrorDialog();
+  ShowPrintErrorDialog();
 #endif
 
   ReleasePrinterQuery();
@@ -238,9 +274,9 @@ void PrintViewManagerBase::OnPrintingFailed(int cookie) {
 
 void PrintViewManagerBase::OnShowInvalidPrinterSettingsError() {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&ShowWarningMessageBox,
-                            l10n_util::GetStringUTF16(
-                                IDS_PRINT_INVALID_PRINTER_SETTINGS)));
+      FROM_HERE, base::BindOnce(&ShowWarningMessageBox,
+                                l10n_util::GetStringUTF16(
+                                    IDS_PRINT_INVALID_PRINTER_SETTINGS)));
 }
 
 void PrintViewManagerBase::DidStartLoading() {
@@ -269,6 +305,19 @@ void PrintViewManagerBase::RenderFrameDeleted(
     TerminatePrintJob(!document->IsComplete());
   }
 }
+
+#if defined(OS_WIN) && BUILDFLAG(ENABLE_PRINT_PREVIEW)
+void PrintViewManagerBase::SystemDialogCancelled() {
+  // System dialog was cancelled. Clean up the print job and notify the
+  // BackgroundPrintingManager.
+  ReleasePrinterQuery();
+  TerminatePrintJob(true);
+  content::NotificationService::current()->Notify(
+      chrome::NOTIFICATION_PRINT_JOB_RELEASED,
+      content::Source<content::WebContents>(web_contents()),
+      content::NotificationService::NoDetails());
+}
+#endif
 
 bool PrintViewManagerBase::OnMessageReceived(
     const IPC::Message& message,
@@ -363,7 +412,7 @@ bool PrintViewManagerBase::RenderAllMissingPagesNow() {
   // to actually spool the pages, only to have the renderer generate them. Run
   // a message loop until we get our signal that the print job is satisfied.
   // PrintJob will send a ALL_PAGES_REQUESTED after having received all the
-  // pages it needs. MessageLoop::current()->QuitWhenIdle() will be called as
+  // pages it needs. RunLoop::QuitCurrentWhenIdleDeprecated() will be called as
   // soon as print_job_->document()->IsComplete() is true on either
   // ALL_PAGES_REQUESTED or in DidPrintPage(). The check is done in
   // ShouldQuitFromInnerMessageLoop().
@@ -384,7 +433,7 @@ void PrintViewManagerBase::ShouldQuitFromInnerMessageLoop() {
       inside_inner_message_loop_) {
     // We are in a message loop created by RenderAllMissingPagesNow. Quit from
     // it.
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
     inside_inner_message_loop_ = false;
   }
 }
@@ -409,7 +458,7 @@ bool PrintViewManagerBase::CreateNewPrintJob(PrintJobWorkerOwner* job) {
     return false;
 
   print_job_ = new PrintJob();
-  print_job_->Initialize(job, this, number_pages_);
+  print_job_->Initialize(job, RenderSourceName(), number_pages_);
   registrar_.Add(this, chrome::NOTIFICATION_PRINT_JOB_EVENT,
                  content::Source<PrintJob>(print_job_.get()));
   printing_succeeded_ = false;
@@ -432,9 +481,7 @@ void PrintViewManagerBase::DisconnectFromCurrentPrintJob() {
     // DO NOT wait for the job to finish.
     ReleasePrintJob();
   }
-#if !defined(OS_MACOSX)
   expecting_first_page_ = true;
-#endif
 }
 
 void PrintViewManagerBase::TerminatePrintJob(bool cancel) {
@@ -472,7 +519,6 @@ void PrintViewManagerBase::ReleasePrintJob() {
 
   registrar_.Remove(this, chrome::NOTIFICATION_PRINT_JOB_EVENT,
                     content::Source<PrintJob>(print_job_.get()));
-  print_job_->DisconnectSource();
   // Don't close the worker thread.
   print_job_ = nullptr;
 }
@@ -491,9 +537,10 @@ bool PrintViewManagerBase::RunInnerMessageLoop() {
   // memory-bound.
   static const int kPrinterSettingsTimeout = 60000;
   base::OneShotTimer quit_timer;
-  quit_timer.Start(
-      FROM_HERE, TimeDelta::FromMilliseconds(kPrinterSettingsTimeout),
-      base::MessageLoop::current(), &base::MessageLoop::QuitWhenIdle);
+  base::RunLoop run_loop;
+  quit_timer.Start(FROM_HERE,
+                   TimeDelta::FromMilliseconds(kPrinterSettingsTimeout),
+                   run_loop.QuitWhenIdleClosure());
 
   inside_inner_message_loop_ = true;
 
@@ -501,7 +548,7 @@ bool PrintViewManagerBase::RunInnerMessageLoop() {
   {
     base::MessageLoop::ScopedNestableTaskAllower allow(
         base::MessageLoop::current());
-    base::RunLoop().Run();
+    run_loop.Run();
   }
 
   bool success = true;
@@ -575,7 +622,7 @@ void PrintViewManagerBase::ReleasePrinterQuery() {
     return;
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&PrinterQuery::StopWorker, printer_query));
+      base::BindOnce(&PrinterQuery::StopWorker, printer_query));
 }
 
 void PrintViewManagerBase::SendPrintingEnabled(bool enabled,

@@ -4,7 +4,7 @@
 
 #include "modules/sensor/SensorErrorEvent.h"
 
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "v8/include/v8.h"
 
 namespace blink {
@@ -21,13 +21,15 @@ SensorErrorEvent::SensorErrorEvent(const AtomicString& event_type,
 
 SensorErrorEvent::SensorErrorEvent(const AtomicString& event_type,
                                    const SensorErrorEventInit& initializer)
-    : Event(event_type, initializer) {}
+    : Event(event_type, initializer), error_(initializer.error()) {
+  DCHECK(error_);
+}
 
 const AtomicString& SensorErrorEvent::InterfaceName() const {
   return EventNames::SensorErrorEvent;
 }
 
-DEFINE_TRACE(SensorErrorEvent) {
+void SensorErrorEvent::Trace(blink::Visitor* visitor) {
   visitor->Trace(error_);
   Event::Trace(visitor);
 }

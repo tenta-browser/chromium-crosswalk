@@ -23,12 +23,10 @@
 #include "core/html/HTMLTitleElement.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/HTMLNames.h"
 #include "core/dom/ChildListMutationScope.h"
 #include "core/dom/Document.h"
 #include "core/dom/Text.h"
-#include "core/style/ComputedStyle.h"
-#include "core/style/StyleInheritedData.h"
+#include "core/html_names.h"
 #include "platform/wtf/AutoReset.h"
 #include "platform/wtf/text/StringBuilder.h"
 
@@ -65,7 +63,7 @@ void HTMLTitleElement::ChildrenChanged(const ChildrenChange& change) {
 String HTMLTitleElement::text() const {
   StringBuilder result;
 
-  for (Node* n = FirstChild(); n; n = n->nextSibling()) {
+  for (Node* n = firstChild(); n; n = n->nextSibling()) {
     if (n->IsTextNode())
       result.Append(ToText(n)->data());
   }

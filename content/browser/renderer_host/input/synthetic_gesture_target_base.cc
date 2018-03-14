@@ -57,8 +57,8 @@ void SyntheticGestureTargetBase::DispatchInputEventToPlatform(
     // Check that all touch pointers are within the content bounds.
     for (unsigned i = 0; i < web_touch.touches_length; i++)
       CHECK(web_touch.touches[i].state != WebTouchPoint::kStatePressed ||
-            PointIsWithinContents(web_touch.touches[i].position.x,
-                                  web_touch.touches[i].position.y))
+            PointIsWithinContents(web_touch.touches[i].PositionInWidget().x,
+                                  web_touch.touches[i].PositionInWidget().y))
           << "Touch coordinates are not within content bounds on TouchStart.";
 
     DispatchWebTouchEventToPlatform(web_touch, latency_info);
@@ -103,10 +103,6 @@ void SyntheticGestureTargetBase::DispatchWebMouseEventToPlatform(
   host_->ForwardMouseEventWithLatencyInfo(web_mouse, latency_info);
 }
 
-void SyntheticGestureTargetBase::SetNeedsFlush() {
-  host_->SetNeedsFlush();
-}
-
 SyntheticGestureParams::GestureSourceType
 SyntheticGestureTargetBase::GetDefaultSyntheticGestureSourceType() const {
   return SyntheticGestureParams::MOUSE_INPUT;
@@ -126,6 +122,10 @@ float SyntheticGestureTargetBase::GetMinScalingSpanInDips() const {
   // base target doesn't support touch.
   NOTREACHED();
   return 0.0f;
+}
+
+int SyntheticGestureTargetBase::GetMouseWheelMinimumGranularity() const {
+  return host_->GetView()->GetMouseWheelMinimumGranularity();
 }
 
 bool SyntheticGestureTargetBase::PointIsWithinContents(int x, int y) const {

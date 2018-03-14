@@ -4,7 +4,11 @@
 
 package org.chromium.chrome.browser.notifications;
 
+import android.annotation.TargetApi;
 import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationChannelGroup;
+import android.os.Build;
 
 import java.util.List;
 
@@ -12,17 +16,32 @@ import java.util.List;
  * A proxy for the Android Notification Manager. This allows tests to be written without having to
  * use the real Notification Manager.
  *
- * @see http://developer.android.com/reference/android/app/NotificationManager.html
+ * @see <a href="https://developer.android.com/reference/android/app/NotificationManager.html">
+ *     https://developer.android.com/reference/android/app/NotificationManager.html</a>
  */
 public interface NotificationManagerProxy {
     void cancel(int id);
     void cancel(String tag, int id);
     void cancelAll();
-    void createNotificationChannel(ChannelDefinitions.Channel channel);
-    void createNotificationChannelGroup(ChannelDefinitions.ChannelGroup channelGroup);
-    List<String> getNotificationChannelIds();
-    void deleteNotificationChannel(@ChannelDefinitions.ChannelId String id);
+    @TargetApi(Build.VERSION_CODES.O)
+    void createNotificationChannel(NotificationChannel channel);
+    @TargetApi(Build.VERSION_CODES.O)
+    void createNotificationChannelGroup(NotificationChannelGroup channelGroup);
+    @TargetApi(Build.VERSION_CODES.O)
+    List<NotificationChannel> getNotificationChannels();
+
+    @TargetApi(Build.VERSION_CODES.O)
+    List<NotificationChannelGroup> getNotificationChannelGroups();
+
+    @TargetApi(Build.VERSION_CODES.O)
+    void deleteNotificationChannel(String id);
 
     void notify(int id, Notification notification);
     void notify(String tag, int id, Notification notification);
+
+    @TargetApi(Build.VERSION_CODES.O)
+    NotificationChannel getNotificationChannel(String channelId);
+
+    @TargetApi(Build.VERSION_CODES.O)
+    void deleteNotificationChannelGroup(String groupId);
 }

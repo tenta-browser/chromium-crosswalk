@@ -26,12 +26,11 @@
 #ifndef ArrayBufferView_h
 #define ArrayBufferView_h
 
-#include "platform/wtf/PassRefPtr.h"
+#include <limits.h>
+#include "base/memory/scoped_refptr.h"
 #include "platform/wtf/RefCounted.h"
-#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/WTFExport.h"
 #include "platform/wtf/typed_arrays/ArrayBuffer.h"
-#include <limits.h>
 
 namespace WTF {
 
@@ -52,12 +51,13 @@ class WTF_EXPORT ArrayBufferView : public RefCounted<ArrayBufferView> {
   virtual ViewType GetType() const = 0;
   const char* TypeName();
 
-  ArrayBuffer* Buffer() const { return buffer_.Get(); }
+  ArrayBuffer* Buffer() const { return buffer_.get(); }
 
   void* BaseAddress() const {
     DCHECK(!IsShared());
     return base_address_;
   }
+  void* BaseAddressMaybeShared() const { return base_address_; }
 
   unsigned ByteOffset() const { return byte_offset_; }
 
@@ -71,14 +71,14 @@ class WTF_EXPORT ArrayBufferView : public RefCounted<ArrayBufferView> {
   virtual ~ArrayBufferView();
 
  protected:
-  ArrayBufferView(PassRefPtr<ArrayBuffer>, unsigned byte_offset);
+  ArrayBufferView(scoped_refptr<ArrayBuffer>, unsigned byte_offset);
 
   inline bool SetImpl(ArrayBufferView*, unsigned byte_offset);
 
   // Helper to verify that a given sub-range of an ArrayBuffer is
   // within range.
   template <typename T>
-  static bool VerifySubRange(PassRefPtr<ArrayBuffer> buffer,
+  static bool VerifySubRange(const ArrayBuffer* buffer,
                              unsigned byte_offset,
                              unsigned num_elements) {
     if (!buffer)
@@ -104,7 +104,7 @@ class WTF_EXPORT ArrayBufferView : public RefCounted<ArrayBufferView> {
 
  private:
   friend class ArrayBuffer;
-  RefPtr<ArrayBuffer> buffer_;
+  scoped_refptr<ArrayBuffer> buffer_;
   ArrayBufferView* prev_view_;
   ArrayBufferView* next_view_;
 };

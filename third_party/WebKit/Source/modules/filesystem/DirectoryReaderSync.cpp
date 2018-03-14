@@ -55,7 +55,7 @@ class DirectoryReaderSync::EntriesCallbackHelper final
     reader_->AddEntries(sync_entries);
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(reader_);
     EntriesCallback::Trace(visitor);
   }
@@ -71,7 +71,7 @@ class DirectoryReaderSync::ErrorCallbackHelper final
 
   void Invoke(FileError::ErrorCode error) override { reader_->SetError(error); }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(reader_);
     ErrorCallbackBase::Trace(visitor);
   }
@@ -105,11 +105,11 @@ EntrySyncHeapVector DirectoryReaderSync::readEntries(
   }
 
   EntrySyncHeapVector result;
-  result.Swap(entries_);
+  result.swap(entries_);
   return result;
 }
 
-DEFINE_TRACE(DirectoryReaderSync) {
+void DirectoryReaderSync::Trace(blink::Visitor* visitor) {
   visitor->Trace(entries_);
   DirectoryReaderBase::Trace(visitor);
 }

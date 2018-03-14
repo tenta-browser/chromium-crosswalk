@@ -23,7 +23,7 @@ bool Allow(const CSPSourceList& source_list,
 
 TEST(CSPSourceList, MultipleSource) {
   CSPContext context;
-  context.SetSelf(url::Origin(GURL("http://example.com")));
+  context.SetSelf(url::Origin::Create(GURL("http://example.com")));
   CSPSourceList source_list(
       false,  // allow_self
       false,  // allow_star:
@@ -36,7 +36,7 @@ TEST(CSPSourceList, MultipleSource) {
 
 TEST(CSPSourceList, AllowStar) {
   CSPContext context;
-  context.SetSelf(url::Origin(GURL("http://example.com")));
+  context.SetSelf(url::Origin::Create(GURL("http://example.com")));
   CSPSourceList source_list(false,                      // allow_self
                             true,                       // allow_star:
                             std::vector<CSPSource>());  // source_list
@@ -52,14 +52,14 @@ TEST(CSPSourceList, AllowStar) {
   EXPECT_FALSE(Allow(source_list, GURL("applewebdata://a.test"), &context));
 
   // With a protocol of 'file', '*' allow 'file:'
-  context.SetSelf(url::Origin(GURL("file://example.com")));
+  context.SetSelf(url::Origin::Create(GURL("file://example.com")));
   EXPECT_TRUE(Allow(source_list, GURL("file://not-example.com"), &context));
   EXPECT_FALSE(Allow(source_list, GURL("applewebdata://a.test"), &context));
 }
 
 TEST(CSPSourceList, AllowSelf) {
   CSPContext context;
-  context.SetSelf(url::Origin(GURL("http://example.com")));
+  context.SetSelf(url::Origin::Create(GURL("http://example.com")));
   CSPSourceList source_list(true,                       // allow_self
                             false,                      // allow_star:
                             std::vector<CSPSource>());  // source_list
@@ -69,9 +69,29 @@ TEST(CSPSourceList, AllowSelf) {
   EXPECT_FALSE(Allow(source_list, GURL("ws://example.com"), &context));
 }
 
+TEST(CSPSourceList, AllowStarAndSelf) {
+  CSPContext context;
+  context.SetSelf(url::Origin::Create(GURL("https://a.com")));
+  CSPSourceList source_list(false,  // allow_self
+                            false,  // allow_star
+                            std::vector<CSPSource>());
+
+  // If the request is allowed by {*} and not by {'self'} then it should be
+  // allowed by the union {*,'self'}.
+  source_list.allow_self = true;
+  source_list.allow_star = false;
+  EXPECT_FALSE(Allow(source_list, GURL("http://b.com"), &context));
+  source_list.allow_self = false;
+  source_list.allow_star = true;
+  EXPECT_TRUE(Allow(source_list, GURL("http://b.com"), &context));
+  source_list.allow_self = true;
+  source_list.allow_star = true;
+  EXPECT_TRUE(Allow(source_list, GURL("http://b.com"), &context));
+}
+
 TEST(CSPSourceList, AllowSelfWithUnspecifiedPort) {
   CSPContext context;
-  context.SetSelf(url::Origin(GURL("chrome://print")));
+  context.SetSelf(url::Origin::Create(GURL("chrome://print")));
   CSPSourceList source_list(true,                       // allow_self
                             false,                      // allow_star:
                             std::vector<CSPSource>());  // source_list
@@ -84,12 +104,29 @@ TEST(CSPSourceList, AllowSelfWithUnspecifiedPort) {
 
 TEST(CSPSourceList, AllowNone) {
   CSPContext context;
-  context.SetSelf(url::Origin(GURL("http://example.com")));
+  context.SetSelf(url::Origin::Create(GURL("http://example.com")));
   CSPSourceList source_list(false,                      // allow_self
                             false,                      // allow_star:
                             std::vector<CSPSource>());  // source_list
   EXPECT_FALSE(Allow(source_list, GURL("http://example.com"), &context));
   EXPECT_FALSE(Allow(source_list, GURL("https://example.test/"), &context));
+}
+
+TEST(CSPSourceTest, SelfIsUnique) {
+  // Policy: 'self'
+  CSPSourceList source_list(true,                       // allow_self
+                            false,                      // allow_star:
+                            std::vector<CSPSource>());  // source_list
+  CSPContext context;
+
+  context.SetSelf(url::Origin::Create(GURL("http://a.com")));
+  EXPECT_TRUE(Allow(source_list, GURL("http://a.com"), &context));
+  EXPECT_FALSE(Allow(source_list, GURL("data:text/html,hello"), &context));
+
+  context.SetSelf(
+      url::Origin::Create(GURL("data:text/html,<iframe src=[...]>")));
+  EXPECT_FALSE(Allow(source_list, GURL("http://a.com"), &context));
+  EXPECT_FALSE(Allow(source_list, GURL("data:text/html,hello"), &context));
 }
 
 }  // namespace content

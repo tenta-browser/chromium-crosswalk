@@ -28,7 +28,7 @@ MockAudioRendererSink::MockAudioRendererSink(
     const AudioParameters& device_output_params)
     : output_device_info_(device_id, device_status, device_output_params) {}
 
-MockAudioRendererSink::~MockAudioRendererSink() {}
+MockAudioRendererSink::~MockAudioRendererSink() = default;
 
 void MockAudioRendererSink::SwitchOutputDevice(
     const std::string& device_id,
@@ -46,6 +46,10 @@ void MockAudioRendererSink::Initialize(const AudioParameters& params,
 
 OutputDeviceInfo MockAudioRendererSink::GetOutputDeviceInfo() {
   return output_device_info_;
+}
+
+bool MockAudioRendererSink::IsOptimizedForHardwareParameters() {
+  return false;
 }
 
 }  // namespace media

@@ -9,6 +9,10 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 using ContextualSearch::PanelState;
 using ContextualSearch::StateChangeReason;
 
@@ -23,7 +27,7 @@ using ContextualSearch::StateChangeReason;
 
 #define LOGGED_UMA_HISTOGRAM_ENUMERATION(name, sample, boundary, log_level) \
   {                                                                         \
-    int evaluated_sample = sample;                                          \
+    auto evaluated_sample = static_cast<decltype(boundary)>(sample);        \
     VLOG_UMA_HISTOGRAM_ENUMERATION(log_level, name, evaluated_sample);      \
     UMA_HISTOGRAM_ENUMERATION(name, evaluated_sample, boundary);            \
   }

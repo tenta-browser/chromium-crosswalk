@@ -31,23 +31,16 @@
 #ifndef WebView_h
 #define WebView_h
 
-#include "../platform/WebColor.h"
-#include "../platform/WebDisplayMode.h"
-#include "../platform/WebDragOperation.h"
-#include "../platform/WebFocusType.h"
-#include "../platform/WebPageVisibilityState.h"
-#include "../platform/WebString.h"
-#include "../platform/WebVector.h"
 #include "WebWidget.h"
-
-namespace gfx {
-class ICCProfile;
-}
+#include "public/platform/WebColor.h"
+#include "public/platform/WebDisplayMode.h"
+#include "public/platform/WebDragOperation.h"
+#include "public/platform/WebFocusType.h"
+#include "public/platform/WebString.h"
+#include "third_party/WebKit/common/page/page_visibility_state.mojom-shared.h"
 
 namespace blink {
 
-class WebAXObject;
-class WebCompositedDisplayList;
 class WebCredentialManagerClient;
 class WebFrame;
 class WebHitTestResult;
@@ -56,11 +49,9 @@ class WebPageImportanceSignals;
 class WebPrerendererClient;
 class WebRemoteFrame;
 class WebSettings;
-class WebSpellCheckClient;
 class WebString;
 class WebViewClient;
 class WebViewScheduler;
-struct WebActiveWheelFlingParameters;
 struct WebDeviceEmulationParams;
 struct WebFloatPoint;
 struct WebMediaPlayerAction;
@@ -95,16 +86,10 @@ class WebView : protected WebWidget {
   using WebWidget::ThemeChanged;
   using WebWidget::HandleInputEvent;
   using WebWidget::SetCursorVisibilityState;
-  using WebWidget::HasTouchEventHandlersAt;
   using WebWidget::ApplyViewportDeltas;
   using WebWidget::MouseCaptureLost;
   using WebWidget::SetFocus;
-  using WebWidget::CompositionRange;
   using WebWidget::SelectionBounds;
-  using WebWidget::SelectionTextDirection;
-  using WebWidget::IsSelectionAnchorFirst;
-  using WebWidget::CaretOrSelectionRange;
-  using WebWidget::SetTextDirection;
   using WebWidget::IsAcceleratedCompositingActive;
   using WebWidget::IsWebView;
   using WebWidget::IsPagePopup;
@@ -118,22 +103,19 @@ class WebView : protected WebWidget {
 
   // Initialization ------------------------------------------------------
 
-  // Creates a WebView that is NOT yet initialized. You will need to
-  // call setMainFrame to finish the initialization. It is valid
-  // to pass a null client pointer. The WebPageVisibilityState defines the
-  // initial visibility of the page.
-  BLINK_EXPORT static WebView* Create(WebViewClient*, WebPageVisibilityState);
-
-  // After creating a WebView, you should immediately call this method.
-  // You can optionally modify the settings before calling this method.
-  // This WebFrame will receive events for the main frame and must not
-  // be null.
-  virtual void SetMainFrame(WebFrame*) = 0;
+  // Creates a WebView that is NOT yet initialized. To complete initialization,
+  // call WebLocalFrame::CreateMainFrame() or WebRemoteFrame::CreateMainFrame()
+  // as appropriate. It is legal to modify settings before completing
+  // initialization.
+  //
+  // client may be null, while PageVisibilityState defines the initial
+  // visibility of the page.
+  BLINK_EXPORT static WebView* Create(WebViewClient*,
+                                      mojom::PageVisibilityState);
 
   // Initializes the various client interfaces.
   virtual void SetCredentialManagerClient(WebCredentialManagerClient*) = 0;
   virtual void SetPrerendererClient(WebPrerendererClient*) = 0;
-  virtual void SetSpellCheckClient(WebSpellCheckClient*) = 0;
 
   // Options -------------------------------------------------------------
 
@@ -174,15 +156,6 @@ class WebView : protected WebWidget {
 
   virtual WebFrame* MainFrame() = 0;
 
-  // Returns the frame identified by the given name.  This method
-  // supports pseudo-names like _self, _top, and _blank.  It traverses
-  // the entire frame tree containing this tree looking for a frame that
-  // matches the given name.  If the optional relativeToFrame parameter
-  // is specified, then the search begins with the given frame and its
-  // children.
-  virtual WebFrame* FindFrameByName(const WebString& name,
-                                    WebFrame* relative_to_frame = 0) = 0;
-
   // Focus ---------------------------------------------------------------
 
   virtual WebLocalFrame* FocusedFrame() = 0;
@@ -202,12 +175,9 @@ class WebView : protected WebWidget {
   // send it.
   virtual void ClearFocusedElement() = 0;
 
-  // If it is editable, scrolls the element currently in focus into |rect|,
-  // where |rect| is in viewport space.
+  // If it is editable, scrolls the element currently in focus into view.
   // Returns false if there is currently no currently focused element.
-  virtual bool ScrollFocusedEditableElementIntoRect(const WebRect&) {
-    return false;
-  }
+  virtual bool ScrollFocusedEditableElementIntoView() { return false; }
 
   // Smooth scroll the root layer to |targetX|, |targetY| in |durationMs|.
   virtual void SmoothScroll(int target_x, int target_y, long duration_ms) {}
@@ -320,15 +290,15 @@ class WebView : protected WebWidget {
   // level.
   virtual void SetZoomFactorForDeviceScaleFactor(float) = 0;
 
-  // Set and reset the device color profile.
-  virtual void SetDeviceColorProfile(const gfx::ICCProfile&) = 0;
+  virtual float ZoomFactorForDeviceScaleFactor() = 0;
 
   // Resize the view at the same time as changing the state of the top
   // controls. If |browserControlsShrinkLayout| is true, the embedder shrunk the
   // WebView size by the browser controls height.
   virtual void ResizeWithBrowserControls(
       const WebSize&,
-      float browser_controls_height,
+      float top_controls_height,
+      float bottom_controls_height,
       bool browser_controls_shrink_layout) = 0;
 
   // Auto-Resize -----------------------------------------------------------
@@ -358,17 +328,12 @@ class WebView : protected WebWidget {
   // Data exchange -------------------------------------------------------
 
   // Do a hit test at given point and return the HitTestResult.
-  virtual WebHitTestResult HitTestResultAt(const WebPoint&) = 0;
+  WebHitTestResult HitTestResultAt(const WebPoint&) override = 0;
 
   // Do a hit test equivalent to what would be done for a GestureTap event
   // that has width/height corresponding to the supplied |tapArea|.
   virtual WebHitTestResult HitTestResultForTap(const WebPoint& tap_point,
                                                const WebSize& tap_area) = 0;
-
-  // Retrieves a list of spelling markers.
-  virtual void SpellingMarkerOffsetsForTest(WebVector<unsigned>* offsets) = 0;
-  virtual void RemoveSpellingMarkersUnderWords(
-      const WebVector<WebString>& words) = 0;
 
   // Support for resource loading initiated by plugins -------------------
 
@@ -384,17 +349,10 @@ class WebView : protected WebWidget {
   // Cancel emulation started via |enableDeviceEmulation| call.
   virtual void DisableDeviceEmulation() = 0;
 
-  // Accessibility -------------------------------------------------------
-
-  // Returns the accessibility object for this view.
-  virtual WebAXObject AccessibilityObject() = 0;
 
   // Context menu --------------------------------------------------------
 
   virtual void PerformCustomContextMenuAction(unsigned action) = 0;
-
-  // Shows a context menu for the currently focused element.
-  virtual void ShowContextMenu() = 0;
 
   // Notify that context menu has been closed.
   virtual void DidCloseContextMenu() = 0;
@@ -440,18 +398,6 @@ class WebView : protected WebWidget {
   BLINK_EXPORT static void WillEnterModalLoop();
   BLINK_EXPORT static void DidExitModalLoop();
 
-  // Called to inform the WebView that a wheel fling animation was started
-  // externally (for instance by the compositor) but must be completed by the
-  // WebView.
-  virtual void TransferActiveWheelFlingAnimation(
-      const WebActiveWheelFlingParameters&) = 0;
-
-  // Cancels an active fling, returning true if a fling was active.
-  virtual bool EndActiveFlingAnimation() = 0;
-
-  // Returns true if there's an active fling animation.
-  virtual bool IsFlinging() const = 0;
-
   virtual void SetShowPaintRects(bool) = 0;
   virtual void SetShowFPSCounter(bool) = 0;
   virtual void SetShowScrollBottleneckRects(bool) = 0;
@@ -463,12 +409,8 @@ class WebView : protected WebWidget {
   // Visibility -----------------------------------------------------------
 
   // Sets the visibility of the WebView.
-  virtual void SetVisibilityState(WebPageVisibilityState visibility_state,
+  virtual void SetVisibilityState(mojom::PageVisibilityState visibility_state,
                                   bool is_initial_state) {}
-
-  // Graphics -------------------------------------------------------------
-
-  virtual WebCompositedDisplayList* CompositedDisplayList() { return nullptr; }
 
   // PageOverlay ----------------------------------------------------------
 

@@ -24,7 +24,9 @@ class EmulationHandler : public DevToolsDomainHandler,
   ~EmulationHandler() override;
 
   void Wire(UberDispatcher* dispatcher) override;
-  void SetRenderFrameHost(RenderFrameHostImpl* host) override;
+  void SetRenderer(RenderProcessHost* process_host,
+                   RenderFrameHostImpl* frame_host) override;
+
   Response Disable() override;
 
   Response SetGeolocationOverride(Maybe<double> latitude,
@@ -32,8 +34,9 @@ class EmulationHandler : public DevToolsDomainHandler,
                                   Maybe<double> accuracy) override;
   Response ClearGeolocationOverride() override;
 
-  Response SetTouchEmulationEnabled(bool enabled,
-                                    Maybe<std::string> configuration) override;
+  Response SetEmitTouchEventsForMouse(
+      bool enabled,
+      Maybe<std::string> configuration) override;
 
   Response CanEmulate(bool* result) override;
   Response SetDeviceMetricsOverride(
@@ -41,18 +44,22 @@ class EmulationHandler : public DevToolsDomainHandler,
       int height,
       double device_scale_factor,
       bool mobile,
-      bool fit_window,
       Maybe<double> scale,
-      Maybe<double> offset_x,
-      Maybe<double> offset_y,
       Maybe<int> screen_widget,
       Maybe<int> screen_height,
       Maybe<int> position_x,
       Maybe<int> position_y,
-      Maybe<Emulation::ScreenOrientation> screen_orientation) override;
+      Maybe<bool> dont_set_visible_size,
+      Maybe<Emulation::ScreenOrientation> screen_orientation,
+      Maybe<protocol::Page::Viewport> viewport) override;
   Response ClearDeviceMetricsOverride() override;
 
   Response SetVisibleSize(int width, int height) override;
+
+  blink::WebDeviceEmulationParams GetDeviceEmulationParams();
+  void SetDeviceEmulationParams(const blink::WebDeviceEmulationParams& params);
+
+  bool device_emulation_enabled() { return device_emulation_enabled_; }
 
  private:
   WebContentsImpl* GetWebContents();
@@ -63,6 +70,7 @@ class EmulationHandler : public DevToolsDomainHandler,
   std::string touch_emulation_configuration_;
 
   bool device_emulation_enabled_;
+  gfx::Size original_view_size_;
   blink::WebDeviceEmulationParams device_emulation_params_;
 
   RenderFrameHostImpl* host_;

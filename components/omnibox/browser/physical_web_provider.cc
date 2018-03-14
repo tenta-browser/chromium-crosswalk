@@ -4,6 +4,11 @@
 
 #include "components/omnibox/browser/physical_web_provider.h"
 
+#include <memory>
+#include <string>
+#include <utility>
+
+#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
@@ -35,7 +40,7 @@ static const size_t kMaxTitleLengthInOverflow = 15;
 
 // The maximum number of Physical Web URLs to retrieve from the index.
 static const size_t kPhysicalWebIndexMaxMatches = 50;
-}
+}  // namespace
 
 // static
 const size_t PhysicalWebProvider::kPhysicalWebMaxMatches = 1;
@@ -102,8 +107,13 @@ void PhysicalWebProvider::Start(const AutocompleteInput& input,
     // the omnibox causes the current page to reload. If the input field is
     // empty, no default match is required.
     if (!matches_.empty() && !input.text().empty()) {
-      matches_.push_back(VerbatimMatchForURL(
-          client_, input, input.current_url(), history_url_provider_, -1));
+      const base::string16 description =
+          (base::FeatureList::IsEnabled(omnibox::kDisplayTitleForCurrentUrl))
+              ? input.current_title()
+              : base::string16();
+      matches_.push_back(VerbatimMatchForURL(client_, input,
+                                             input.current_url(), description,
+                                             history_url_provider_, -1));
     }
   } else {
     ConstructQuerySuggestMatches(std::move(metadata_list), input);
@@ -227,17 +237,15 @@ void PhysicalWebProvider::ConstructZeroSuggestMatches(
         AutocompleteMatchType::PHYSICAL_WEB);
     match.destination_url = url;
 
-    // Physical Web results should omit http:// (but not https://) and never
-    // appear bold.
-    match.contents = url_formatter::FormatUrl(url,
-        url_formatter::kFormatUrlOmitHTTP, net::UnescapeRule::SPACES,
-        nullptr, nullptr, nullptr);
+    match.contents = url_formatter::FormatUrl(
+        url, AutocompleteMatch::GetFormatTypes(false, false, false),
+        net::UnescapeRule::SPACES, nullptr, nullptr, nullptr);
     match.contents_class.push_back(
         ACMatchClassification(0, ACMatchClassification::URL));
 
     match.fill_into_edit =
         AutocompleteInput::FormattedStringWithEquivalentMeaning(
-            url, match.contents, client_->GetSchemeClassifier());
+            url, url_formatter::FormatUrl(url), client_->GetSchemeClassifier());
 
     match.description = title;
     match.description_class.push_back(

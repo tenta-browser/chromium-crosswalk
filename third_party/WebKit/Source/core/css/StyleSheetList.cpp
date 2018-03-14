@@ -20,11 +20,11 @@
 
 #include "core/css/StyleSheetList.h"
 
-#include "core/HTMLNames.h"
+#include "core/css/StyleEngine.h"
 #include "core/dom/Document.h"
-#include "core/dom/StyleEngine.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLStyleElement.h"
+#include "core/html_names.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
@@ -56,22 +56,29 @@ HTMLStyleElement* StyleSheetList::GetNamedItem(const AtomicString& name) const {
   // and doesn't look for name attribute. But unicity of stylesheet ids is good
   // practice anyway ;)
   // FIXME: We should figure out if we should change this or fix the spec.
-  Element* element = tree_scope_->GetElementById(name);
-  return isHTMLStyleElement(element) ? toHTMLStyleElement(element) : nullptr;
+  Element* element = tree_scope_->getElementById(name);
+  return IsHTMLStyleElement(element) ? ToHTMLStyleElement(element) : nullptr;
 }
 
 CSSStyleSheet* StyleSheetList::AnonymousNamedGetter(const AtomicString& name) {
-  if (GetDocument())
+  if (GetDocument()) {
     UseCounter::Count(*GetDocument(),
-                      UseCounter::kStyleSheetListAnonymousNamedGetter);
+                      WebFeature::kStyleSheetListAnonymousNamedGetter);
+  }
   HTMLStyleElement* item = GetNamedItem(name);
   if (!item)
     return nullptr;
-  return item->sheet();
+  CSSStyleSheet* sheet = item->sheet();
+  if (sheet) {
+    UseCounter::Count(*GetDocument(),
+                      WebFeature::kStyleSheetListNonNullAnonymousNamedGetter);
+  }
+  return sheet;
 }
 
-DEFINE_TRACE(StyleSheetList) {
+void StyleSheetList::Trace(blink::Visitor* visitor) {
   visitor->Trace(tree_scope_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

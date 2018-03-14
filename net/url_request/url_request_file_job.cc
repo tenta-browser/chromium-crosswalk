@@ -96,11 +96,10 @@ int URLRequestFileJob::ReadRawData(IOBuffer* dest, int dest_size) {
   if (!dest_size)
     return 0;
 
-  int rv = stream_->Read(dest,
-                         dest_size,
-                         base::Bind(&URLRequestFileJob::DidRead,
-                                    weak_ptr_factory_.GetWeakPtr(),
-                                    make_scoped_refptr(dest)));
+  int rv = stream_->Read(
+      dest, dest_size,
+      base::Bind(&URLRequestFileJob::DidRead, weak_ptr_factory_.GetWeakPtr(),
+                 base::WrapRefCounted(dest)));
   if (rv >= 0) {
     remaining_bytes_ -= rv;
     DCHECK_GE(remaining_bytes_, 0);
@@ -185,8 +184,7 @@ void URLRequestFileJob::OnSeekComplete(int64_t result) {}
 void URLRequestFileJob::OnReadComplete(IOBuffer* buf, int result) {
 }
 
-URLRequestFileJob::~URLRequestFileJob() {
-}
+URLRequestFileJob::~URLRequestFileJob() = default;
 
 std::unique_ptr<SourceStream> URLRequestFileJob::SetUpSourceStream() {
   std::unique_ptr<SourceStream> source = URLRequestJob::SetUpSourceStream();
@@ -194,6 +192,12 @@ std::unique_ptr<SourceStream> URLRequestFileJob::SetUpSourceStream() {
     return source;
 
   return GzipSourceStream::Create(std::move(source), SourceStream::TYPE_GZIP);
+}
+
+bool URLRequestFileJob::CanAccessFile(const base::FilePath& original_path,
+                                      const base::FilePath& absolute_path) {
+  return !network_delegate() || network_delegate()->CanAccessFile(
+                                    *request(), original_path, absolute_path);
 }
 
 void URLRequestFileJob::FetchMetaInfo(const base::FilePath& file_path,
@@ -208,6 +212,7 @@ void URLRequestFileJob::FetchMetaInfo(const base::FilePath& file_path,
   // done in WorkerPool.
   meta_info->mime_type_result = GetMimeTypeFromFile(file_path,
                                                     &meta_info->mime_type);
+  meta_info->absolute_path = base::MakeAbsoluteFilePath(file_path);
 }
 
 void URLRequestFileJob::DidFetchMetaInfo(const FileMetaInfo* meta_info) {
@@ -227,6 +232,11 @@ void URLRequestFileJob::DidFetchMetaInfo(const FileMetaInfo* meta_info) {
   }
   if (meta_info_.is_directory) {
     DidOpen(OK);
+    return;
+  }
+
+  if (!CanAccessFile(file_path_, meta_info->absolute_path)) {
+    DidOpen(ERR_ACCESS_DENIED);
     return;
   }
 

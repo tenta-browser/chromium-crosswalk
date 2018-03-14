@@ -7,6 +7,7 @@
 #include "base/json/json_reader.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
@@ -118,7 +119,8 @@ class WebstoreInlineInstallerForTest : public WebstoreInlineInstaller {
                                  content::RenderFrameHost* host,
                                  const std::string& extension_id,
                                  const GURL& requestor_url,
-                                 const Callback& callback)
+                                 const Callback& callback,
+                                 bool enable_safebrowsing_redirects)
       : WebstoreInlineInstaller(
             contents,
             host,
@@ -127,6 +129,7 @@ class WebstoreInlineInstallerForTest : public WebstoreInlineInstaller {
             base::Bind(&WebstoreInlineInstallerForTest::InstallCallback,
                        base::Unretained(this))),
         install_result_target_(nullptr),
+        enable_safebrowsing_redirects_(enable_safebrowsing_redirects),
         programmable_prompt_(nullptr) {}
 
   std::unique_ptr<ExtensionInstallPrompt> CreateInstallUI() override {
@@ -137,6 +140,10 @@ class WebstoreInlineInstallerForTest : public WebstoreInlineInstaller {
   // Added here to make it public so that test cases can call it below.
   bool CheckRequestorAlive() const override {
     return WebstoreInlineInstaller::CheckRequestorAlive();
+  }
+
+  bool SafeBrowsingNavigationEventsEnabled() const override {
+    return enable_safebrowsing_redirects_;
   }
 
   // Tests that care about the actual arguments to the install callback can use
@@ -166,13 +173,22 @@ class WebstoreInlineInstallerForTest : public WebstoreInlineInstaller {
   // arguments.
   std::unique_ptr<InstallResult>* install_result_target_;
 
+  // This can be set by tests that want to use the new SafeBrowsing redirect
+  // tracker.
+  bool enable_safebrowsing_redirects_;
+
   ProgrammableInstallPrompt* programmable_prompt_;
 };
 
 class WebstoreInlineInstallerForTestFactory :
     public WebstoreInlineInstallerFactory {
  public:
-  WebstoreInlineInstallerForTestFactory() : last_installer_(nullptr) {}
+  WebstoreInlineInstallerForTestFactory()
+      : last_installer_(nullptr), enable_safebrowsing_redirects_(false) {}
+  explicit WebstoreInlineInstallerForTestFactory(
+      bool enable_safebrowsing_redirects)
+      : last_installer_(nullptr),
+        enable_safebrowsing_redirects_(enable_safebrowsing_redirects) {}
   ~WebstoreInlineInstallerForTestFactory() override {}
 
   WebstoreInlineInstallerForTest* last_installer() { return last_installer_; }
@@ -184,13 +200,16 @@ class WebstoreInlineInstallerForTestFactory :
       const GURL& requestor_url,
       const WebstoreStandaloneInstaller::Callback& callback) override {
     last_installer_ = new WebstoreInlineInstallerForTest(
-        contents, host, webstore_item_id, requestor_url, callback);
+        contents, host, webstore_item_id, requestor_url, callback,
+        enable_safebrowsing_redirects_);
     return last_installer_;
   }
 
  private:
   // The last installer that was created.
   WebstoreInlineInstallerForTest* last_installer_;
+
+  bool enable_safebrowsing_redirects_;
 };
 
 IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerTest,
@@ -327,7 +346,7 @@ IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerTest,
   ExtensionService* extension_service =
       ExtensionSystem::Get(browser()->profile())->extension_service();
   extension_service->DisableExtension(kTestExtensionId,
-                                      Extension::DISABLE_USER_ACTION);
+                                      disable_reason::DISABLE_USER_ACTION);
   EXPECT_TRUE(registry->disabled_extensions().GetByID(kTestExtensionId));
 
   // Revisit the inline install site and reinstall the extension. It should
@@ -342,8 +361,8 @@ IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerTest,
             ExtensionInstallPrompt::g_last_prompt_type_for_tests);
 
   // Disable the extension due to a permissions increase.
-  extension_service->DisableExtension(kTestExtensionId,
-                                      Extension::DISABLE_PERMISSIONS_INCREASE);
+  extension_service->DisableExtension(
+      kTestExtensionId, disable_reason::DISABLE_PERMISSIONS_INCREASE);
   EXPECT_TRUE(registry->disabled_extensions().GetByID(kTestExtensionId));
   ui_test_utils::NavigateToURL(
       browser(), GenerateTestServerUrl(kAppDomain, "install.html"));
@@ -373,13 +392,15 @@ IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerTest, DoubleInlineInstallTest) {
   RunTest("runTest");
 }
 
-class WebstoreInlineInstallerRedirectTest : public WebstoreInlineInstallerTest {
+class WebstoreInlineInstallerRedirectTest
+    : public WebstoreInlineInstallerTest,
+      public ::testing::WithParamInterface<bool> {
  public:
   WebstoreInlineInstallerRedirectTest() : cws_request_received_(false) {}
   ~WebstoreInlineInstallerRedirectTest() override {}
 
-  void SetUpInProcessBrowserTestFixture() override {
-    WebstoreInstallerTest::SetUpInProcessBrowserTestFixture();
+  void SetUpOnMainThread() override {
+    WebstoreInstallerTest::SetUpOnMainThread();
     host_resolver()->AddRule(kRedirect1Domain, "127.0.0.1");
     host_resolver()->AddRule(kRedirect2Domain, "127.0.0.1");
   }
@@ -390,7 +411,7 @@ class WebstoreInlineInstallerRedirectTest : public WebstoreInlineInstallerTest {
     if (request.content.find("redirect_chain") != std::string::npos) {
       std::unique_ptr<base::Value> contents =
           base::JSONReader::Read(request.content);
-      ASSERT_EQ(base::Value::Type::DICTIONARY, contents->GetType());
+      ASSERT_EQ(base::Value::Type::DICTIONARY, contents->type());
       cws_request_json_data_ = base::DictionaryValue::From(std::move(contents));
     }
   }
@@ -401,8 +422,16 @@ class WebstoreInlineInstallerRedirectTest : public WebstoreInlineInstallerTest {
 
 // Test that an install from a page arrived at via redirects includes the
 // redirect information in the webstore request.
-IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerRedirectTest,
+IN_PROC_BROWSER_TEST_P(WebstoreInlineInstallerRedirectTest,
                        IncludesRedirectData) {
+  const bool using_safe_browsing_tracker = GetParam();
+  WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  TabHelper* tab_helper = TabHelper::FromWebContents(web_contents);
+  WebstoreInlineInstallerForTestFactory* factory =
+      new WebstoreInlineInstallerForTestFactory(using_safe_browsing_tracker);
+  tab_helper->SetWebstoreInlineInstallerFactoryForTests(factory);
+
   // Hand craft a url that will cause the test server to issue redirects.
   const std::vector<std::string> redirects = {kRedirect1Domain,
                                               kRedirect2Domain};
@@ -419,7 +448,11 @@ IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerRedirectTest,
 
   AutoAcceptInstall();
   ui_test_utils::NavigateToURL(browser(), install_url);
-  RunTest("runTest");
+
+  RunTestAsync("runTest");
+  while (!ProgrammableInstallPrompt::Ready())
+    base::RunLoop().RunUntilIdle();
+  web_contents->Close();
 
   EXPECT_TRUE(cws_request_received_);
   ASSERT_NE(nullptr, cws_request_json_data_);
@@ -429,15 +462,21 @@ IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerRedirectTest,
   ASSERT_NE(nullptr, redirect_list);
 
   // Check that the expected domains are in the redirect list.
-  const std::vector<std::string> expected_redirect_domains = {
+  const std::set<std::string> expected_redirect_domains = {
       kRedirect1Domain, kRedirect2Domain, kAppDomain};
-  ASSERT_EQ(expected_redirect_domains.size(), redirect_list->GetSize());
-  int i = 0;
+
+  // The SafeBrowsing tracker has a much more liberal definition of "redirect"
+  // and it may (based on timing) pick up additional navigations that occur
+  // shortly before the navigation we mainly care about here. Be somewhat
+  // permissive in what we accept as redirect results.
+  ASSERT_LE(expected_redirect_domains.size(), redirect_list->GetSize());
+
   for (const auto& value : *redirect_list) {
     std::string value_string;
     ASSERT_TRUE(value.GetAsString(&value_string));
     GURL redirect_url(value_string);
-    EXPECT_EQ(expected_redirect_domains[i++], redirect_url.host());
+    EXPECT_TRUE(expected_redirect_domains.find(redirect_url.host()) !=
+                expected_redirect_domains.end());
   }
 }
 
@@ -473,6 +512,13 @@ IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerRedirectTest,
   ASSERT_EQ(nullptr, cws_request_json_data_);
 }
 
+INSTANTIATE_TEST_CASE_P(NetRedirectTracking,
+                        WebstoreInlineInstallerRedirectTest,
+                        testing::Values(false));
+INSTANTIATE_TEST_CASE_P(SafeBrowsingRedirectTracking,
+                        WebstoreInlineInstallerRedirectTest,
+                        testing::Values(true));
+
 class WebstoreInlineInstallerListenerTest : public WebstoreInlineInstallerTest {
  public:
   WebstoreInlineInstallerListenerTest() {}
@@ -506,8 +552,7 @@ IN_PROC_BROWSER_TEST_F(WebstoreInlineInstallerListenerTest, BothListenersTest) {
   // Rinse and repeat: uninstall the extension, open a new tab, and install it
   // again. Regression test for crbug.com/613949.
   extension_service()->UninstallExtension(
-      kTestExtensionId, UNINSTALL_REASON_FOR_TESTING,
-      base::Bind(&base::DoNothing), nullptr);
+      kTestExtensionId, UNINSTALL_REASON_FOR_TESTING, nullptr);
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(registry->enabled_extensions().GetByID(kTestExtensionId));
   int old_tab_index = browser()->tab_strip_model()->active_index();

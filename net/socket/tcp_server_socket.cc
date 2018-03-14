@@ -10,6 +10,7 @@
 #include "base/bind_helpers.h"
 #include "base/logging.h"
 #include "net/base/net_errors.h"
+#include "net/socket/socket_descriptor.h"
 #include "net/socket/tcp_client_socket.h"
 
 namespace net {
@@ -17,8 +18,11 @@ namespace net {
 TCPServerSocket::TCPServerSocket(NetLog* net_log, const NetLogSource& source)
     : socket_(nullptr, net_log, source), pending_accept_(false) {}
 
-TCPServerSocket::~TCPServerSocket() {
+int TCPServerSocket::AdoptSocket(SocketDescriptor socket) {
+  return socket_.AdoptUnconnectedSocket(socket);
 }
+
+TCPServerSocket::~TCPServerSocket() = default;
 
 int TCPServerSocket::Listen(const IPEndPoint& address, int backlog) {
   int result = socket_.Open(address.GetFamily());

@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/barrier_closure.h"
@@ -19,9 +20,6 @@
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
-#include "chrome/browser/browsing_data/browsing_data_remover.h"
-#include "chrome/browser/browsing_data/browsing_data_remover_factory.h"
-#include "chrome/browser/browsing_data/browsing_data_remover_test_util.h"
 #include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
@@ -31,11 +29,8 @@
 #include "chrome/browser/gcm/gcm_profile_service_factory.h"
 #include "chrome/browser/gcm/instance_id/instance_id_profile_service.h"
 #include "chrome/browser/gcm/instance_id/instance_id_profile_service_factory.h"
-#include "chrome/browser/lifetime/keep_alive_registry.h"
-#include "chrome/browser/lifetime/keep_alive_types.h"
-#include "chrome/browser/notifications/message_center_display_service.h"
-#include "chrome/browser/notifications/notification_test_util.h"
-#include "chrome/browser/notifications/platform_notification_service_impl.h"
+#include "chrome/browser/notifications/notification_display_service_tester.h"
+#include "chrome/browser/notifications/notification_handler.h"
 #include "chrome/browser/permissions/permission_request_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/push_messaging/push_messaging_app_identifier.h"
@@ -55,15 +50,21 @@
 #include "components/gcm_driver/gcm_client.h"
 #include "components/gcm_driver/instance_id/fake_gcm_driver_for_instance_id.h"
 #include "components/gcm_driver/instance_id/instance_id_driver.h"
+#include "components/keep_alive_registry/keep_alive_registry.h"
+#include "components/keep_alive_registry/keep_alive_types.h"
+#include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/push_messaging_status.mojom.h"
 #include "content/public/common/push_subscription_options.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/browsing_data_remover_test_util.h"
 #include "content/public/test/test_utils.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/base/window_open_disposition.h"
+#include "ui/message_center/notification.h"
 
 #if BUILDFLAG(ENABLE_BACKGROUND)
 #include "chrome/browser/background/background_mode_manager.h"
@@ -109,8 +110,8 @@ void DidRegister(base::Closure done_callback,
                  const std::string& registration_id,
                  const std::vector<uint8_t>& p256dh,
                  const std::vector<uint8_t>& auth,
-                 content::PushRegistrationStatus status) {
-  EXPECT_EQ(content::PUSH_REGISTRATION_STATUS_SUCCESS_FROM_PUSH_SERVICE,
+                 content::mojom::PushRegistrationStatus status) {
+  EXPECT_EQ(content::mojom::PushRegistrationStatus::SUCCESS_FROM_PUSH_SERVICE,
             status);
   done_callback.Run();
 }
@@ -137,8 +138,6 @@ class PushMessagingBrowserTest : public InProcessBrowserTest {
     https_server_->ServeFilesFromSourceDirectory("chrome/test/data");
     ASSERT_TRUE(https_server_->Start());
 
-    notification_manager_.reset(new StubNotificationUIManager);
-
     SiteEngagementScore::SetParamValuesForTesting();
     InProcessBrowserTest::SetUp();
   }
@@ -146,7 +145,6 @@ class PushMessagingBrowserTest : public InProcessBrowserTest {
     // Enable experimental features for subscription restrictions.
     command_line->AppendSwitch(
         switches::kEnableExperimentalWebPlatformFeatures);
-    InProcessBrowserTest::SetUpCommandLine(command_line);
   }
 
   // InProcessBrowserTest:
@@ -157,15 +155,18 @@ class PushMessagingBrowserTest : public InProcessBrowserTest {
     gcm_driver_ = static_cast<instance_id::FakeGCMDriverForInstanceID*>(
         gcm_service_->driver());
 
+    notification_tester_ = std::make_unique<NotificationDisplayServiceTester>(
+        GetBrowser()->profile());
+
     push_service_ =
         PushMessagingServiceFactory::GetForProfile(GetBrowser()->profile());
-    display_service_.reset(new MessageCenterDisplayService(
-        GetBrowser()->profile(), notification_manager_.get()));
-    notification_service()->SetNotificationDisplayServiceForTesting(
-        display_service_.get());
 
     LoadTestPage();
-    InProcessBrowserTest::SetUpOnMainThread();
+  }
+
+  void TearDownOnMainThread() override {
+    notification_tester_.reset();
+    InProcessBrowserTest::TearDownOnMainThread();
   }
 
   // Calls should be wrapped in the ASSERT_NO_FATAL_FAILURE() macro.
@@ -192,12 +193,6 @@ class PushMessagingBrowserTest : public InProcessBrowserTest {
 #else
     return true;
 #endif
-  }
-
-  // InProcessBrowserTest:
-  void TearDown() override {
-    notification_service()->SetNotificationDisplayServiceForTesting(nullptr);
-    InProcessBrowserTest::TearDown();
   }
 
   void LoadTestPage(const std::string& path) {
@@ -271,24 +266,29 @@ class PushMessagingBrowserTest : public InProcessBrowserTest {
 
   net::EmbeddedTestServer* https_server() const { return https_server_.get(); }
 
+  // Returns a vector of the currently displayed Notification objects.
+  std::vector<message_center::Notification> GetDisplayedNotifications() {
+    return notification_tester_->GetDisplayedNotificationsForType(
+        NotificationHandler::Type::WEB_PERSISTENT);
+  }
+
+  // Returns the number of notifications that are currently being shown.
+  size_t GetNotificationCount() { return GetDisplayedNotifications().size(); }
+
+  // Removes all shown notifications.
+  void RemoveAllNotifications() {
+    notification_tester_->RemoveAllNotifications(
+        NotificationHandler::Type::WEB_PERSISTENT, true /* by_user */);
+  }
+
   // To be called when delivery of a push message has finished. The |run_loop|
   // will be told to quit after |messages_required| messages were received.
   void OnDeliveryFinished(std::vector<size_t>* number_of_notifications_shown,
                           const base::Closure& done_closure) {
     DCHECK(number_of_notifications_shown);
-
-    number_of_notifications_shown->push_back(
-        notification_manager_->GetNotificationCount());
+    number_of_notifications_shown->push_back(GetNotificationCount());
 
     done_closure.Run();
-  }
-
-  StubNotificationUIManager* notification_manager() const {
-    return notification_manager_.get();
-  }
-
-  PlatformNotificationServiceImpl* notification_service() const {
-    return PlatformNotificationServiceImpl::GetInstance();
   }
 
   PushMessagingServiceImpl* push_service() const { return push_service_; }
@@ -304,6 +304,14 @@ class PushMessagingBrowserTest : public InProcessBrowserTest {
     EXPECT_EQ(expected_score, service->GetScore(url));
   }
 
+  // Matches |tag| against the notification's ID to see if the notification's
+  // js-provided tag could have been |tag|. This is not perfect as it might
+  // return true for a |tag| that is a substring of the original tag.
+  static bool TagEquals(const message_center::Notification& notification,
+                        const std::string& tag) {
+    return std::string::npos != notification.id().find(tag);
+  }
+
  protected:
   virtual std::string GetTestURL() { return "/push_messaging/test.html"; }
 
@@ -317,12 +325,11 @@ class PushMessagingBrowserTest : public InProcessBrowserTest {
   instance_id::FakeGCMDriverForInstanceID* gcm_driver_;
   base::HistogramTester histogram_tester_;
 
+  std::unique_ptr<NotificationDisplayServiceTester> notification_tester_;
+
  private:
   std::unique_ptr<net::EmbeddedTestServer> https_server_;
   PushMessagingServiceImpl* push_service_;
-
-  std::unique_ptr<StubNotificationUIManager> notification_manager_;
-  std::unique_ptr<MessageCenterDisplayService> display_service_;
 
   DISALLOW_COPY_AND_ASSIGN(PushMessagingBrowserTest);
 };
@@ -1073,7 +1080,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, PushEventSuccess) {
       0 /* SERVICE_WORKER_OK */, 1);
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.DeliveryStatus",
-       content::PUSH_DELIVERY_STATUS_SUCCESS, 1);
+      static_cast<int>(content::mojom::PushDeliveryStatus::SUCCESS), 1);
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, PushEventOnShutdown) {
@@ -1175,13 +1182,16 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, PushEventNoServiceWorker) {
       "PushMessaging.DeliveryStatus.ServiceWorkerEvent", 0);
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.DeliveryStatus",
-      content::PUSH_DELIVERY_STATUS_NO_SERVICE_WORKER, 1);
+      static_cast<int>(content::mojom::PushDeliveryStatus::NO_SERVICE_WORKER),
+      1);
 
   // Missing Service Workers should trigger an automatic unsubscription attempt.
   EXPECT_EQ(app_id, gcm_driver_->last_deletetoken_app_id());
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_DELIVERY_NO_SERVICE_WORKER, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::DELIVERY_NO_SERVICE_WORKER),
+      1);
 
   // |app_identifier| should no longer be stored in prefs.
   PushMessagingAppIdentifier stored_app_identifier =
@@ -1205,7 +1215,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, NoSubscription) {
   EXPECT_EQ("unsubscribe result: true", script_result);
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_JAVASCRIPT_API, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::JAVASCRIPT_API),
+      1);
 
   gcm::IncomingMessage message;
   message.sender_id = GetTestApplicationServerKey();
@@ -1224,13 +1236,15 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, NoSubscription) {
       "PushMessaging.DeliveryStatus.ServiceWorkerEvent", 0);
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.DeliveryStatus",
-      content::PUSH_DELIVERY_STATUS_UNKNOWN_APP_ID, 1);
+      static_cast<int>(content::mojom::PushDeliveryStatus::UNKNOWN_APP_ID), 1);
 
   // Missing subscriptions should trigger an automatic unsubscription attempt.
   EXPECT_EQ(app_identifier.app_id(), gcm_driver_->last_deletetoken_app_id());
   histogram_tester_.ExpectBucketCount(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_DELIVERY_UNKNOWN_APP_ID, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::DELIVERY_UNKNOWN_APP_ID),
+      1);
 }
 
 // Tests receiving messages for an origin that does not have permission, but
@@ -1273,7 +1287,8 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, PushEventWithoutPermission) {
       "PushMessaging.DeliveryStatus.ServiceWorkerEvent", 0);
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.DeliveryStatus",
-      content::PUSH_DELIVERY_STATUS_PERMISSION_DENIED, 1);
+      static_cast<int>(content::mojom::PushDeliveryStatus::PERMISSION_DENIED),
+      1);
 
   // Missing permission should trigger an automatic unsubscription attempt.
   EXPECT_EQ(app_identifier.app_id(), gcm_driver_->last_deletetoken_app_id());
@@ -1286,7 +1301,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, PushEventWithoutPermission) {
   EXPECT_TRUE(app_identifier_afterwards.is_null());
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_DELIVERY_PERMISSION_DENIED, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::DELIVERY_PERMISSION_DENIED),
+      1);
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
@@ -1305,8 +1322,8 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   ASSERT_TRUE(RunScript("isControlled()", &script_result));
   ASSERT_EQ("true - is controlled", script_result);
 
-  notification_manager()->CancelAll();
-  ASSERT_EQ(0u, notification_manager()->GetNotificationCount());
+  RemoveAllNotifications();
+  ASSERT_EQ(0u, GetNotificationCount());
 
   // We'll need to specify the web_contents in which to eval script, since we're
   // going to run script in a background tab.
@@ -1328,7 +1345,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
     SendMessageAndWaitUntilHandled(app_identifier, message);
     ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result));
     EXPECT_EQ("testdata", script_result);
-    EXPECT_EQ(0u, notification_manager()->GetNotificationCount());
+    EXPECT_EQ(0u, GetNotificationCount());
   }
 
   // Open a blank foreground tab so site is no longer visible.
@@ -1343,10 +1360,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   SendMessageAndWaitUntilHandled(app_identifier, message);
   ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result, web_contents));
   EXPECT_EQ("shownotification", script_result);
-  EXPECT_EQ(1u, notification_manager()->GetNotificationCount());
-  EXPECT_EQ("push_test_tag",
-            notification_manager()->GetNotificationAt(0).tag());
-  notification_manager()->CancelAll();
+  EXPECT_EQ(1u, GetNotificationCount());
+  EXPECT_TRUE(TagEquals(GetDisplayedNotifications()[0], "push_test_tag"));
+  RemoveAllNotifications();
 
   // If the Service Worker push event handler does not show a notification, we
   // should show a forced one, but only once the origin is out of budget.
@@ -1356,7 +1372,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
     SendMessageAndWaitUntilHandled(app_identifier, message);
     ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result, web_contents));
     EXPECT_EQ("testdata", script_result);
-    EXPECT_EQ(0u, notification_manager()->GetNotificationCount());
+    EXPECT_EQ(0u, GetNotificationCount());
   }
 
   // Third missed notification should trigger a default notification, since the
@@ -1366,13 +1382,14 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result, web_contents));
   EXPECT_EQ("testdata", script_result);
 
-  ASSERT_EQ(1u, notification_manager()->GetNotificationCount());
   {
-    const Notification& forced_notification =
-        notification_manager()->GetNotificationAt(0);
+    std::vector<message_center::Notification> notifications =
+        GetDisplayedNotifications();
+    ASSERT_EQ(notifications.size(), 1u);
 
-    EXPECT_EQ(kPushMessagingForcedNotificationTag, forced_notification.tag());
-    EXPECT_TRUE(forced_notification.silent());
+    EXPECT_TRUE(
+        TagEquals(notifications[0], kPushMessagingForcedNotificationTag));
+    EXPECT_TRUE(notifications[0].silent());
   }
 
   // The notification will be automatically dismissed when the developer shows
@@ -1382,12 +1399,13 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result, web_contents));
   EXPECT_EQ("shownotification", script_result);
 
-  ASSERT_EQ(1u, notification_manager()->GetNotificationCount());
   {
-    const Notification& first_notification =
-        notification_manager()->GetNotificationAt(0);
+    std::vector<message_center::Notification> notifications =
+        GetDisplayedNotifications();
+    ASSERT_EQ(notifications.size(), 1u);
 
-    EXPECT_NE(kPushMessagingForcedNotificationTag, first_notification.tag());
+    EXPECT_FALSE(
+        TagEquals(notifications[0], kPushMessagingForcedNotificationTag));
   }
 }
 
@@ -1410,8 +1428,8 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   ASSERT_TRUE(RunScript("isControlled()", &script_result));
   ASSERT_EQ("true - is controlled", script_result);
 
-  notification_manager()->CancelAll();
-  ASSERT_EQ(0u, notification_manager()->GetNotificationCount());
+  RemoveAllNotifications();
+  ASSERT_EQ(0u, GetNotificationCount());
 
   // We'll need to specify the web_contents in which to eval script, since we're
   // going to run script in a background tab.
@@ -1434,7 +1452,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   SendMessageAndWaitUntilHandled(app_identifier, message);
   ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result, web_contents));
   EXPECT_EQ("testdata", script_result);
-  EXPECT_EQ(0u, notification_manager()->GetNotificationCount());
+  EXPECT_EQ(0u, GetNotificationCount());
 
   // If the Service Worker push event handler does not show a notification, we
   // should show a forced one providing there is no foreground tab and the
@@ -1445,16 +1463,17 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   // Because the --allow-silent-push command line flag has not been passed,
   // this should have shown a default notification.
-  ASSERT_EQ(1u, notification_manager()->GetNotificationCount());
   {
-    const Notification& forced_notification =
-        notification_manager()->GetNotificationAt(0);
+    std::vector<message_center::Notification> notifications =
+        GetDisplayedNotifications();
+    ASSERT_EQ(notifications.size(), 1u);
 
-    EXPECT_EQ(kPushMessagingForcedNotificationTag, forced_notification.tag());
-    EXPECT_TRUE(forced_notification.silent());
+    EXPECT_TRUE(
+        TagEquals(notifications[0], kPushMessagingForcedNotificationTag));
+    EXPECT_TRUE(notifications[0].silent());
   }
 
-  notification_manager()->CancelAll();
+  RemoveAllNotifications();
 
   // Send the message again, but this time with the -allow-silent-push command
   // line flag set. The default notification should *not* be shown.
@@ -1465,7 +1484,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   ASSERT_TRUE(RunScript("resultQueue.pop()", &script_result, web_contents));
   EXPECT_EQ("testdata", script_result);
 
-  ASSERT_EQ(0u, notification_manager()->GetNotificationCount());
+  ASSERT_EQ(0u, GetNotificationCount());
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
@@ -1538,7 +1557,7 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   base::Closure quit_barrier =
       base::BarrierClosure(2 /* num_closures */, run_loop.QuitClosure());
   push_service()->SetMessageCallbackForTesting(quit_barrier);
-  notification_manager()->SetNotificationAddedCallback(quit_barrier);
+  notification_tester_->SetNotificationAddedClosure(quit_barrier);
 
   gcm::IncomingMessage message;
   message.sender_id = GetTestApplicationServerKey();
@@ -1553,9 +1572,8 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   run_loop.Run();
 
   EXPECT_TRUE(IsRegisteredKeepAliveEqualTo(false));
-  ASSERT_EQ(1u, notification_manager()->GetNotificationCount());
-  EXPECT_EQ("push_test_tag",
-            notification_manager()->GetNotificationAt(0).tag());
+  ASSERT_EQ(1u, GetNotificationCount());
+  EXPECT_TRUE(TagEquals(GetDisplayedNotifications()[0], "push_test_tag"));
 
   // Verify that the renderer process hasn't crashed.
   ASSERT_TRUE(RunScript("permissionState()", &script_result));
@@ -1616,14 +1634,18 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, UnsubscribeSuccess) {
   EXPECT_EQ("unsubscribe result: true", script_result);
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_JAVASCRIPT_API, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::JAVASCRIPT_API),
+      1);
 
   // Resolves false if there was no longer a subscription.
   ASSERT_TRUE(RunScript("unsubscribeStoredPushSubscription()", &script_result));
   EXPECT_EQ("unsubscribe result: false", script_result);
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_JAVASCRIPT_API, 2);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::JAVASCRIPT_API),
+      2);
 
   // TODO(johnme): Test that doesn't reject if there was a network error (should
   // deactivate subscription locally anyway).
@@ -1644,7 +1666,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, UnsubscribeSuccess) {
   EXPECT_EQ("unsubscribe result: true", script_result);
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_JAVASCRIPT_API, 3);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::JAVASCRIPT_API),
+      3);
 
   // Unsubscribing (with an existing reference to a PushSubscription), after
   // unregistering the Service Worker, should fail.
@@ -1666,7 +1690,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, UnsubscribeSuccess) {
   // Unregistering should have triggered an automatic unsubscribe.
   histogram_tester_.ExpectBucketCount(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_SERVICE_WORKER_UNREGISTERED, 1);
+      static_cast<int>(content::mojom::PushUnregistrationReason::
+                           SERVICE_WORKER_UNREGISTERED),
+      1);
   histogram_tester_.ExpectTotalCount("PushMessaging.UnregistrationReason", 4);
 
   // Now manual unsubscribe should return false.
@@ -1690,14 +1716,18 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, LegacyUnsubscribeSuccess) {
   EXPECT_EQ("unsubscribe result: true", script_result);
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_JAVASCRIPT_API, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::JAVASCRIPT_API),
+      1);
 
   // Resolves false if there was no longer a subscription.
   ASSERT_TRUE(RunScript("unsubscribeStoredPushSubscription()", &script_result));
   EXPECT_EQ("unsubscribe result: false", script_result);
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_JAVASCRIPT_API, 2);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::JAVASCRIPT_API),
+      2);
 
   // Doesn't reject if there was a network error (deactivates subscription
   // locally anyway).
@@ -1709,7 +1739,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, LegacyUnsubscribeSuccess) {
   EXPECT_EQ("unsubscribe result: true", script_result);
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_JAVASCRIPT_API, 3);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::JAVASCRIPT_API),
+      3);
   ASSERT_TRUE(RunScript("hasSubscription()", &script_result));
   EXPECT_EQ("false - not subscribed", script_result);
 
@@ -1725,7 +1757,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, LegacyUnsubscribeSuccess) {
   EXPECT_EQ("unsubscribe result: true", script_result);
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_JAVASCRIPT_API, 4);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::JAVASCRIPT_API),
+      4);
 
   // Unsubscribing (with an existing reference to a PushSubscription), after
   // replacing the Service Worker, actually still works, as the Service Worker
@@ -1743,7 +1777,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, LegacyUnsubscribeSuccess) {
   EXPECT_EQ("unsubscribe result: true", script_result);
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_JAVASCRIPT_API, 5);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::JAVASCRIPT_API),
+      5);
 
   // Unsubscribing (with an existing reference to a PushSubscription), after
   // unregistering the Service Worker, should fail.
@@ -1767,7 +1803,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, LegacyUnsubscribeSuccess) {
   // Unregistering should have triggered an automatic unsubscribe.
   histogram_tester_.ExpectBucketCount(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_SERVICE_WORKER_UNREGISTERED, 1);
+      static_cast<int>(content::mojom::PushUnregistrationReason::
+                           SERVICE_WORKER_UNREGISTERED),
+      1);
   histogram_tester_.ExpectTotalCount("PushMessaging.UnregistrationReason", 6);
 
   // Now manual unsubscribe should return false.
@@ -1791,7 +1829,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, UnsubscribeOffline) {
   EXPECT_EQ("unsubscribe result: true", script_result);
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_JAVASCRIPT_API, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::JAVASCRIPT_API),
+      1);
 
   // Since the service is offline, the network request to GCM is still being
   // retried, so the app handler shouldn't have been unregistered yet.
@@ -1823,7 +1863,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   // This should have unregistered the push subscription.
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_SERVICE_WORKER_UNREGISTERED, 1);
+      static_cast<int>(content::mojom::PushUnregistrationReason::
+                           SERVICE_WORKER_UNREGISTERED),
+      1);
 
   // We should not be able to look up the app id.
   GURL origin = https_server()->GetURL("/").GetOrigin();
@@ -1832,6 +1874,35 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
           GetBrowser()->profile(), origin,
           0LL /* service_worker_registration_id */);
   EXPECT_TRUE(app_identifier.is_null());
+}
+
+IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
+                       ServiceWorkerDatabaseDeletionUnsubscribes) {
+  std::string script_result;
+
+  ASSERT_NO_FATAL_FAILURE(SubscribeSuccessfully());
+
+  LoadTestPage();  // Reload to become controlled.
+  ASSERT_TRUE(RunScript("isControlled()", &script_result));
+  ASSERT_EQ("true - is controlled", script_result);
+
+  // Pretend as if the Service Worker database went away, and wait for callback
+  // to complete.
+  base::RunLoop run_loop;
+  push_service()->SetServiceWorkerDatabaseWipedCallbackForTesting(
+      run_loop.QuitClosure());
+  push_service()->DidDeleteServiceWorkerDatabase();
+  run_loop.Run();
+
+  // This should have unregistered the push subscription.
+  histogram_tester_.ExpectUniqueSample(
+      "PushMessaging.UnregistrationReason",
+      static_cast<int>(content::mojom::PushUnregistrationReason::
+                           SERVICE_WORKER_DATABASE_WIPED),
+      1);
+
+  // There should not be any subscriptions left.
+  EXPECT_EQ(PushMessagingAppIdentifier::GetCount(GetBrowser()->profile()), 0u);
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
@@ -1867,7 +1938,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
   // This should have unsubscribed the push subscription.
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_GET_SUBSCRIPTION_STORAGE_CORRUPT, 1);
+      static_cast<int>(content::mojom::PushUnregistrationReason::
+                           GET_SUBSCRIPTION_STORAGE_CORRUPT),
+      1);
   // We should no longer be able to look up the app id.
   PushMessagingAppIdentifier app_identifier3 =
       PushMessagingAppIdentifier::FindByServiceWorker(
@@ -1911,7 +1984,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest, InvalidSubscribeUnsubscribes) {
   // This should have unsubscribed the original push subscription.
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_SUBSCRIBE_STORAGE_CORRUPT, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::SUBSCRIBE_STORAGE_CORRUPT),
+      1);
   // Looking up the app id should return a different id.
   PushMessagingAppIdentifier app_identifier3 =
       PushMessagingAppIdentifier::FindByServiceWorker(
@@ -1951,7 +2026,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_PERMISSION_REVOKED, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::PERMISSION_REVOKED),
+      1);
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
@@ -1987,7 +2064,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_PERMISSION_REVOKED, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::PERMISSION_REVOKED),
+      1);
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
@@ -2023,7 +2102,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_PERMISSION_REVOKED, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::PERMISSION_REVOKED),
+      1);
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
@@ -2056,7 +2137,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_PERMISSION_REVOKED, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::PERMISSION_REVOKED),
+      1);
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
@@ -2092,7 +2175,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_PERMISSION_REVOKED, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::PERMISSION_REVOKED),
+      1);
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
@@ -2128,7 +2213,9 @@ IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
 
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_PERMISSION_REVOKED, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::PERMISSION_REVOKED),
+      1);
 }
 
 IN_PROC_BROWSER_TEST_F(PushMessagingBrowserTest,
@@ -2221,13 +2308,13 @@ IN_PROC_BROWSER_TEST_F(
   ASSERT_NO_FATAL_FAILURE(SetupOrphanedPushSubscription(&app_id));
 
   // Simulate a user clearing site data (including Service Workers, crucially).
-  BrowsingDataRemover* remover =
-      BrowsingDataRemoverFactory::GetForBrowserContext(GetBrowser()->profile());
-  BrowsingDataRemoverCompletionObserver observer(remover);
+  content::BrowsingDataRemover* remover =
+      content::BrowserContext::GetBrowsingDataRemover(GetBrowser()->profile());
+  content::BrowsingDataRemoverCompletionObserver observer(remover);
   remover->RemoveAndReply(
       base::Time(), base::Time::Max(),
       ChromeBrowsingDataRemoverDelegate::DATA_TYPE_SITE_DATA,
-      BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB, &observer);
+      content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB, &observer);
   observer.BlockUntilCompletion();
 
   base::RunLoop run_loop;
@@ -2249,7 +2336,9 @@ IN_PROC_BROWSER_TEST_F(
 
   histogram_tester_.ExpectUniqueSample(
       "PushMessaging.UnregistrationReason",
-      content::PUSH_UNREGISTRATION_REASON_PERMISSION_REVOKED, 1);
+      static_cast<int>(
+          content::mojom::PushUnregistrationReason::PERMISSION_REVOKED),
+      1);
 
   base::RunLoop().RunUntilIdle();
 

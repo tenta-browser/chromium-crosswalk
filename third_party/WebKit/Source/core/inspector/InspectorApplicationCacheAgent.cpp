@@ -32,7 +32,7 @@
 #include "core/loader/DocumentLoader.h"
 #include "core/loader/FrameLoader.h"
 #include "platform/network/NetworkStateNotifier.h"
-#include "wtf/text/StringBuilder.h"
+#include "platform/wtf/text/StringBuilder.h"
 
 namespace blink {
 
@@ -227,7 +227,7 @@ InspectorApplicationCacheAgent::BuildObjectForApplicationCacheResource(
   return value;
 }
 
-DEFINE_TRACE(InspectorApplicationCacheAgent) {
+void InspectorApplicationCacheAgent::Trace(blink::Visitor* visitor) {
   visitor->Trace(inspected_frames_);
   InspectorBaseAgent::Trace(visitor);
 }

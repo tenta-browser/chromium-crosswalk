@@ -220,6 +220,28 @@ GYP_HACKS_CONFIG = """\
 }
 """
 
+TRYSERVER_CONFIG = """\
+{
+  'masters': {
+    'not_a_tryserver': {
+      'fake_builder': 'fake_config',
+    },
+    'tryserver.chromium.linux': {
+      'try_builder': 'fake_config',
+    },
+    'tryserver.chromium.mac': {
+      'try_builder2': 'fake_config',
+    },
+  },
+  'luci_tryservers': {
+    'luci_tryserver1': ['luci_builder1'],
+    'luci_tryserver2': ['luci_builder2'],
+  },
+  'configs': {},
+  'mixins': {},
+}
+"""
+
 
 class UnitTest(unittest.TestCase):
   def fake_mbw(self, files=None, win32=False):
@@ -286,7 +308,7 @@ class UnitTest(unittest.TestCase):
                      ['/fake_src/out/Debug', '/fake_src/out/Debug'])
     self.assertEqual(mbw.files['/fake_src/out/Debug/mb_type'], 'gyp')
 
-  def test_gn_analyze(self):
+  def test_analyze(self):
     files = {'/tmp/in.json': '''{\
                "files": ["foo/foo_unittest.cc"],
                "test_targets": ["foo_unittests"],
@@ -309,6 +331,81 @@ class UnitTest(unittest.TestCase):
       'compile_targets': ['foo:foo_unittests'],
       'test_targets': ['foo_unittests']
     })
+
+  def test_analyze_optimizes_compile_for_all(self):
+    files = {'/tmp/in.json': '''{\
+               "files": ["foo/foo_unittest.cc"],
+               "test_targets": ["foo_unittests"],
+               "additional_compile_targets": ["all"]
+             }''',
+             '/tmp/out.json.gn': '''{\
+               "status": "Found dependency",
+               "compile_targets": ["//foo:foo_unittests", "all"],
+               "test_targets": ["//foo:foo_unittests"]
+             }'''}
+
+    mbw = self.fake_mbw(files)
+    mbw.Call = lambda cmd, env=None, buffer_output=True: (0, '', '')
+
+    self.check(['analyze', '-c', 'gn_debug_goma', '//out/Default',
+                '/tmp/in.json', '/tmp/out.json'], mbw=mbw, ret=0)
+    out = json.loads(mbw.files['/tmp/out.json'])
+
+    # check that 'foo_unittests' is not in the compile_targets
+    self.assertEqual(['all'], out['compile_targets'])
+
+  def test_analyze_handles_other_toolchains(self):
+    files = {'/tmp/in.json': '''{\
+               "files": ["foo/foo_unittest.cc"],
+               "test_targets": ["foo_unittests"],
+               "additional_compile_targets": ["all"]
+             }''',
+             '/tmp/out.json.gn': '''{\
+               "status": "Found dependency",
+               "compile_targets": ["//foo:foo_unittests",
+                                   "//foo:foo_unittests(bar)"],
+               "test_targets": ["//foo:foo_unittests"]
+             }'''}
+
+    mbw = self.fake_mbw(files)
+    mbw.Call = lambda cmd, env=None, buffer_output=True: (0, '', '')
+
+    self.check(['analyze', '-c', 'gn_debug_goma', '//out/Default',
+                '/tmp/in.json', '/tmp/out.json'], mbw=mbw, ret=0)
+    out = json.loads(mbw.files['/tmp/out.json'])
+
+    # crbug.com/736215: If GN returns a label containing a toolchain,
+    # MB (and Ninja) don't know how to handle it; to work around this,
+    # we give up and just build everything we were asked to build. The
+    # output compile_targets should include all of the input test_targets and
+    # additional_compile_targets.
+    self.assertEqual(['all', 'foo_unittests'], out['compile_targets'])
+
+  def test_analyze_handles_way_too_many_results(self):
+    too_many_files = ', '.join(['"//foo:foo%d"' % i for i in xrange(4 * 1024)])
+    files = {'/tmp/in.json': '''{\
+               "files": ["foo/foo_unittest.cc"],
+               "test_targets": ["foo_unittests"],
+               "additional_compile_targets": ["all"]
+             }''',
+             '/tmp/out.json.gn': '''{\
+               "status": "Found dependency",
+               "compile_targets": [''' + too_many_files + '''],
+               "test_targets": ["//foo:foo_unittests"]
+             }'''}
+
+    mbw = self.fake_mbw(files)
+    mbw.Call = lambda cmd, env=None, buffer_output=True: (0, '', '')
+
+    self.check(['analyze', '-c', 'gn_debug_goma', '//out/Default',
+                '/tmp/in.json', '/tmp/out.json'], mbw=mbw, ret=0)
+    out = json.loads(mbw.files['/tmp/out.json'])
+
+    # If GN returns so many compile targets that we might have command-line
+    # issues, we should give up and just build everything we were asked to
+    # build. The output compile_targets should include all of the input
+    # test_targets and additional_compile_targets.
+    self.assertEqual(['all', 'foo_unittests'], out['compile_targets'])
 
   def test_gn_gen(self):
     mbw = self.fake_mbw()
@@ -555,28 +652,21 @@ class UnitTest(unittest.TestCase):
                     "LLVM_FORCE_HEAD_REVISION=1\n"
                     "python build/gyp_chromium -G output_dir=_path_\n"))
 
-
-if __name__ == '__main__':
-  unittest.main()
-
-  def test_validate(self):
+  def test_buildbucket(self):
     mbw = self.fake_mbw()
-    self.check(['validate'], mbw=mbw, ret=0)
-
-  def test_bad_validate(self):
-    mbw = self.fake_mbw()
-    mbw.files[mbw.default_config] = TEST_BAD_CONFIG
-    self.check(['validate'], mbw=mbw, ret=1)
-
-  def test_gyp_env_hacks(self):
-    mbw = self.fake_mbw()
-    mbw.files[mbw.default_config] = GYP_HACKS_CONFIG
-    self.check(['lookup', '-c', 'fake_config'], mbw=mbw,
+    mbw.files[mbw.default_config] = TRYSERVER_CONFIG
+    self.check(['gerrit-buildbucket-config'], mbw=mbw,
                ret=0,
-               out=("GYP_DEFINES='foo=bar baz=1'\n"
-                    "GYP_LINK_CONCURRENCY=1\n"
-                    "LLVM_FORCE_HEAD_REVISION=1\n"
-                    "python build/gyp_chromium -G output_dir=_path_\n"))
+               out=('# This file was generated using '
+                    '"tools/mb/mb.py gerrit-buildbucket-config".\n'
+                    '[bucket "luci.luci_tryserver1"]\n'
+                    '\tbuilder = luci_builder1\n'
+                    '[bucket "luci.luci_tryserver2"]\n'
+                    '\tbuilder = luci_builder2\n'
+                    '[bucket "master.tryserver.chromium.linux"]\n'
+                    '\tbuilder = try_builder\n'
+                    '[bucket "master.tryserver.chromium.mac"]\n'
+                    '\tbuilder = try_builder2\n'))
 
 
 if __name__ == '__main__':

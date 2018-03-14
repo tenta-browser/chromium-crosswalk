@@ -5,6 +5,7 @@
 #include <limits>
 #include <string>
 
+#include "base/barrier_closure.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_enumerator.h"
@@ -13,14 +14,17 @@
 #include "base/process/process_metrics.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/test/perf_time_logger.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/test_file_util.h"
 #include "base/threading/thread.h"
 #include "net/base/cache_type.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
+#include "net/disk_cache/backend_cleanup_tracker.h"
 #include "net/disk_cache/blockfile/backend_impl.h"
 #include "net/disk_cache/blockfile/block_files.h"
 #include "net/disk_cache/disk_cache.h"
@@ -36,14 +40,6 @@ using base::Time;
 
 namespace {
 
-size_t MaybeGetMaxFds() {
-#if defined(OS_POSIX)
-  return base::GetMaxFds();
-#else
-  return std::numeric_limits<size_t>::max();
-#endif
-}
-
 void MaybeSetFdLimit(unsigned int max_descriptors) {
 #if defined(OS_POSIX)
   base::SetFdLimit(max_descriptors);
@@ -57,7 +53,9 @@ struct TestEntry {
 
 class DiskCachePerfTest : public DiskCacheTestWithCache {
  public:
-  DiskCachePerfTest() : saved_fd_limit_(MaybeGetMaxFds()) {
+  DiskCachePerfTest()
+      : DiskCacheTestWithCache(&scoped_task_environment_),
+        saved_fd_limit_(base::GetMaxFds()) {
     if (saved_fd_limit_ < kFdLimitForCacheTests)
       MaybeSetFdLimit(kFdLimitForCacheTests);
   }
@@ -91,6 +89,7 @@ class DiskCachePerfTest : public DiskCacheTestWithCache {
 
  private:
   const size_t saved_fd_limit_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 // Creates num_entries on the cache, and writes kHeaderSize bytes of metadata
@@ -219,9 +218,9 @@ void DiskCachePerfTest::ResetAndEvictSystemDiskCache() {
        file_path = enumerator.Next()) {
     ASSERT_TRUE(base::EvictFileFromSystemCache(file_path));
   }
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_ANDROID)
   // And, cache directories, on platforms where the eviction utility supports
-  // this (currently Linux only).
+  // this (currently Linux and Android only).
   if (simple_cache_mode_) {
     ASSERT_TRUE(
         base::EvictFileFromSystemCache(cache_path_.AppendASCII("index-dir")));
@@ -307,6 +306,89 @@ TEST_F(DiskCachePerfTest, BlockFilesPerformance) {
   base::RunLoop().RunUntilIdle();
 }
 
+void VerifyRvAndCallClosure(base::Closure* c, int expect_rv, int rv) {
+  EXPECT_EQ(expect_rv, rv);
+  c->Run();
+}
+
+TEST_F(DiskCachePerfTest, SimpleCacheInitialReadPortion) {
+  // A benchmark that aims to measure how much time we take in I/O thread
+  // for initial bookkeeping before returning to the caller, and how much
+  // after (batched up some). The later portion includes some event loop
+  // overhead.
+  const int kBatchSize = 100;
+
+  SetSimpleCacheMode();
+
+  InitCache();
+  // Write out the entries, and keep their objects around.
+  scoped_refptr<net::IOBuffer> buffer1(new net::IOBuffer(kHeadersSize));
+  scoped_refptr<net::IOBuffer> buffer2(new net::IOBuffer(kBodySize));
+
+  CacheTestFillBuffer(buffer1->data(), kHeadersSize, false);
+  CacheTestFillBuffer(buffer2->data(), kBodySize, false);
+
+  disk_cache::Entry* cache_entry[kBatchSize];
+  for (int i = 0; i < kBatchSize; ++i) {
+    net::TestCompletionCallback cb;
+    int rv = cache_->CreateEntry(base::IntToString(i), &cache_entry[i],
+                                 cb.callback());
+    ASSERT_EQ(net::OK, cb.GetResult(rv));
+
+    rv = cache_entry[i]->WriteData(0, 0, buffer1.get(), kHeadersSize,
+                                   cb.callback(), false);
+    ASSERT_EQ(kHeadersSize, cb.GetResult(rv));
+    rv = cache_entry[i]->WriteData(1, 0, buffer2.get(), kBodySize,
+                                   cb.callback(), false);
+    ASSERT_EQ(kBodySize, cb.GetResult(rv));
+  }
+
+  // Now repeatedly read these, batching up the waiting to try to
+  // account for the two portions separately. Note that we need separate entries
+  // since we are trying to keep interesting work from being on the delayed-done
+  // portion.
+  const int kIterations = 50000;
+
+  double elapsed_early = 0.0;
+  double elapsed_late = 0.0;
+
+  for (int i = 0; i < kIterations; ++i) {
+    base::RunLoop event_loop;
+    base::Closure barrier =
+        base::BarrierClosure(kBatchSize, event_loop.QuitWhenIdleClosure());
+    net::CompletionCallback cb_batch(base::Bind(
+        VerifyRvAndCallClosure, base::Unretained(&barrier), kHeadersSize));
+
+    base::ElapsedTimer timer_early;
+    for (int e = 0; e < kBatchSize; ++e) {
+      int rv =
+          cache_entry[e]->ReadData(0, 0, buffer1.get(), kHeadersSize, cb_batch);
+      if (rv != net::ERR_IO_PENDING) {
+        barrier.Run();
+        ASSERT_EQ(kHeadersSize, rv);
+      }
+    }
+    elapsed_early += timer_early.Elapsed().InMillisecondsF();
+
+    base::ElapsedTimer timer_late;
+    event_loop.Run();
+    elapsed_late += timer_late.Elapsed().InMillisecondsF();
+  }
+
+  // Cleanup
+  for (int i = 0; i < kBatchSize; ++i)
+    cache_entry[i]->Close();
+
+  disk_cache::SimpleBackendImpl::FlushWorkerPoolForTesting();
+  base::RunLoop().RunUntilIdle();
+  LOG(ERROR) << "Early portion:" << elapsed_early << " ms";
+  LOG(ERROR) << "\tPer entry:"
+             << 1000 * (elapsed_early / (kIterations * kBatchSize)) << " us";
+  LOG(ERROR) << "Event loop portion: " << elapsed_late << " ms";
+  LOG(ERROR) << "\tPer entry:"
+             << 1000 * (elapsed_late / (kIterations * kBatchSize)) << " us";
+}
+
 // Measures how quickly SimpleIndex can compute which entries to evict.
 TEST(SimpleIndexPerfTest, EvictionPerformance) {
   const int kEntries = 10000;
@@ -323,7 +405,10 @@ TEST(SimpleIndexPerfTest, EvictionPerformance) {
   int iterations = 0;
   while (iterations < 61000) {
     ++iterations;
-    disk_cache::SimpleIndex index(nullptr, &delegate, net::DISK_CACHE, nullptr);
+    disk_cache::SimpleIndex index(/* io_thread = */ nullptr,
+                                  /* cleanup_tracker = */ nullptr, &delegate,
+                                  net::DISK_CACHE,
+                                  /* simple_index_file = */ nullptr);
 
     // Make sure large enough to not evict on insertion.
     index.SetMaxSize(kEntries * 2);

@@ -42,23 +42,21 @@ class MODULES_EXPORT IDBOpenDBRequest final : public IDBRequest {
   static IDBOpenDBRequest* Create(ScriptState*,
                                   IDBDatabaseCallbacks*,
                                   int64_t transaction_id,
-                                  int64_t version);
+                                  int64_t version,
+                                  IDBRequest::AsyncTraceState metrics);
   ~IDBOpenDBRequest() override;
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
-  using IDBRequest::OnSuccess;
+  void EnqueueBlocked(int64_t existing_version) override;
+  void EnqueueUpgradeNeeded(int64_t old_version,
+                            std::unique_ptr<WebIDBDatabase>,
+                            const IDBDatabaseMetadata&,
+                            WebIDBDataLoss,
+                            String data_loss_message) override;
+  void EnqueueResponse(std::unique_ptr<WebIDBDatabase>,
+                       const IDBDatabaseMetadata&) override;
 
-  void OnBlocked(int64_t existing_version) override;
-  void OnUpgradeNeeded(int64_t old_version,
-                       std::unique_ptr<WebIDBDatabase>,
-                       const IDBDatabaseMetadata&,
-                       WebIDBDataLoss,
-                       String data_loss_message) override;
-  void OnSuccess(std::unique_ptr<WebIDBDatabase>,
-                 const IDBDatabaseMetadata&) override;
-  void OnSuccess(int64_t old_version) override;
-
-  // SuspendableObject
+  // PausableObject
   void ContextDestroyed(ExecutionContext*) final;
 
   // EventTarget
@@ -68,6 +66,8 @@ class MODULES_EXPORT IDBOpenDBRequest final : public IDBRequest {
   DEFINE_ATTRIBUTE_EVENT_LISTENER(upgradeneeded);
 
  protected:
+  void EnqueueResponse(int64_t old_version) override;
+
   bool ShouldEnqueueEvent() const override;
 
   // EventTarget
@@ -77,7 +77,8 @@ class MODULES_EXPORT IDBOpenDBRequest final : public IDBRequest {
   IDBOpenDBRequest(ScriptState*,
                    IDBDatabaseCallbacks*,
                    int64_t transaction_id,
-                   int64_t version);
+                   int64_t version,
+                   IDBRequest::AsyncTraceState metrics);
 
   Member<IDBDatabaseCallbacks> database_callbacks_;
   const int64_t transaction_id_;

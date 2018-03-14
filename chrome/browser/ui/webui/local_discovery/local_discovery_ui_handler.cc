@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/webui/local_discovery/local_discovery_ui_handler.h"
 
+#include <memory>
 #include <set>
 #include <utility>
 
@@ -16,8 +17,6 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/local_discovery/service_discovery_shared_client.h"
-#include "chrome/browser/printing/cloud_print/cloud_print_proxy_service.h"
-#include "chrome/browser/printing/cloud_print/cloud_print_proxy_service_factory.h"
 #include "chrome/browser/printing/cloud_print/privet_confirm_api_flow.h"
 #include "chrome/browser/printing/cloud_print/privet_constants.h"
 #include "chrome/browser/printing/cloud_print/privet_device_lister_impl.h"
@@ -39,6 +38,11 @@
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW) && !defined(OS_CHROMEOS)
 #define CLOUD_PRINT_CONNECTOR_UI_AVAILABLE
+#endif
+
+#if defined(CLOUD_PRINT_CONNECTOR_UI_AVAILABLE)
+#include "chrome/browser/printing/cloud_print/cloud_print_proxy_service.h"
+#include "chrome/browser/printing/cloud_print/cloud_print_proxy_service_factory.h"
 #endif
 
 using cloud_print::CloudPrintPrinterList;
@@ -173,7 +177,7 @@ void LocalDiscoveryUIHandler::HandleStart(const base::ListValue* args) {
   }
 
   privet_lister_->Start();
-  privet_lister_->DiscoverNewDevices(false);
+  privet_lister_->DiscoverNewDevices();
 
 #if defined(CLOUD_PRINT_CONNECTOR_UI_AVAILABLE)
   StartCloudPrintConnector();
@@ -380,7 +384,7 @@ void LocalDiscoveryUIHandler::DeviceRemoved(const std::string& name) {
 void LocalDiscoveryUIHandler::DeviceCacheFlushed() {
   web_ui()->CallJavascriptFunctionUnsafe(
       "local_discovery.onDeviceCacheFlushed");
-  privet_lister_->DiscoverNewDevices(false);
+  privet_lister_->DiscoverNewDevices();
 }
 
 void LocalDiscoveryUIHandler::OnDeviceListReady(
@@ -397,8 +401,7 @@ void LocalDiscoveryUIHandler::OnDeviceListUnavailable() {
 
 void LocalDiscoveryUIHandler::GoogleSigninSucceeded(
     const std::string& account_id,
-    const std::string& username,
-    const std::string& password) {
+    const std::string& username) {
   CheckUserLoggedIn();
 }
 
@@ -416,7 +419,7 @@ void LocalDiscoveryUIHandler::SendRegisterDone(
     const std::string& service_name) {
   // HACK(noamsml): Generate network traffic so the Windows firewall doesn't
   // block the printer's announcement.
-  privet_lister_->DiscoverNewDevices(false);
+  privet_lister_->DiscoverNewDevices();
 
   DeviceDescriptionMap::iterator it = device_descriptions_.find(service_name);
 
@@ -593,7 +596,7 @@ void LocalDiscoveryUIHandler::SetupCloudPrintConnectorSection() {
         l10n_util::GetStringUTF16(IDS_GOOGLE_CLOUD_PRINT));
   } else {
     label_str = l10n_util::GetStringFUTF16(
-        IDS_OPTIONS_CLOUD_PRINT_CONNECTOR_ENABLED_LABEL,
+        IDS_CLOUD_PRINT_CONNECTOR_ENABLED_LABEL,
         l10n_util::GetStringUTF16(IDS_GOOGLE_CLOUD_PRINT),
         base::UTF8ToUTF16(email));
   }

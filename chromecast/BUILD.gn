@@ -2,9 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//base/android/jni_generator/jni_exception_list.gni")
 import("//build/buildflag_header.gni")
 import("//build/config/features.gni")
-import("//build/config/locales.gni")
 import("//build/config/sanitizers/sanitizers.gni")
 import("//build/config/ui.gni")
 import("//chromecast/build/tests/cast_test.gni")
@@ -24,25 +24,51 @@ config("playready_config") {
   }
 }
 
+# Depends on all non-test targets that should be built by the Chromecast
+# internal build infrastructure.
+group("all") {
+  deps = []
+  if (is_android && chromecast_branding == "public") {
+    deps += [ ":cast_shell_apk" ]
+  }
+  if (!is_android) {
+    deps += [ ":cast_shell" ]
+  }
+  if (chromecast_branding != "public") {
+    deps += [ "//chromecast/internal:all" ]
+  }
+
+  # No other targets should depend on this target, since it's just a convenience
+  # target for the Chromecast internal build infrastructure.
+  visibility = []
+  testonly = true
+}
+
+# This is a config which is applied on all cast_* targets (which should be all
+# code under chromecast/).
+config("cast_config") {
+}
+
 # A list of all public test() binaries. This is an organizational target that
-# cannot be depended upon or built directly. Build cast_group_test_list instead.
+# cannot be depended upon or built directly. Build cast_test_lists instead.
 cast_test_group("cast_tests") {
   filters = []
   tests = [
     "//base:base_unittests",
+    "//cc:cc_unittests",
     "//chromecast/base:cast_base_unittests",
     "//chromecast/base/component:cast_component_unittests",
     "//chromecast/crypto:cast_crypto_unittests",
     "//chromecast/media:cast_media_unittests",
+    "//chromecast/net:cast_net_unittests",
     "//chromecast/system/reboot:cast_reboot_unittests",
     "//content/test:content_unittests",
     "//crypto:crypto_unittests",
     "//media:media_unittests",
     "//media/midi:midi_unittests",
     "//net:net_unittests",
-    "//sandbox/linux:sandbox_linux_unittests",
     "//sql:sql_unittests",
-    "//storage/browser:storage_unittests",
+    "//storage:storage_unittests",
     "//third_party/cacheinvalidation:cacheinvalidation_unittests",
     "//ui/base:ui_base_unittests",
   ]
@@ -56,11 +82,14 @@ cast_test_group("cast_tests") {
   }
 
   if (is_linux) {
-    tests += [ "//chromecast/crash:cast_crash_unittests" ]
+    tests += [
+      "//chromecast/crash:cast_crash_unittests",
+      "//sandbox/linux:sandbox_linux_unittests",
+    ]
   }
 
-  if (!is_android && use_alsa) {
-    tests += [ "//chromecast/media/cma/backend/alsa:cast_alsa_cma_backend_unittests" ]
+  if (is_linux || is_fuchsia) {
+    tests += [ "//chromecast/media/cma/backend:cast_audio_backend_unittests" ]
   }
 
   if (!is_android) {
@@ -68,9 +97,12 @@ cast_test_group("cast_tests") {
       ":cast_shell_browsertests",
       ":cast_shell_unittests",
       "//ipc:ipc_tests",
-      "//jingle:jingle_unittests",
       "//url:url_unittests",
     ]
+
+    if (!is_fuchsia) {
+      tests += [ "//jingle:jingle_unittests" ]
+    }
 
     cast_media_unittests_filter = {
       test_name = "cast_media_unittests"
@@ -159,19 +191,27 @@ cast_test_group("cast_tests") {
 
   base_unittests_filter = {
     test_name = "base_unittests"
-    if (target_os == "linux" && !is_cast_desktop_build) {
-      # Disable ProcessMetricsTest.GetNumberOfThreads (b/15610509)
-      # Disable ProcessUtilTest.* (need to define OS_ANDROID)
-      # Disable StackContainer.BufferAlignment (don't support 16-byte alignment)
-      # Disable SystemMetrics2Test.GetSystemMemoryInfo (buffers>0 can't be guaranteed)
-      # Disable TimeFormattingTest.TimeFormat* for flakiness on devices (crbug/671429)
-      gtest_excludes = [
-        "ProcessMetricsTest.GetNumberOfThreads",
-        "ProcessUtilTest.*",
-        "StackContainer.BufferAlignment",
-        "SystemMetrics2Test.GetSystemMemoryInfo",
-        "TimeFormattingTest.TimeFormat*",
-      ]
+    gtest_excludes = []
+    if (target_os == "linux") {
+      if (is_cast_desktop_build) {
+        # Disable PartitionAllocTest.RepeatedReturnNullDirect (b/67975693)
+        gtest_excludes += [ "PartitionAllocTest.RepeatedReturnNullDirect" ]
+      } else {
+        # Disable ProcessMetricsTest.GetNumberOfThreads (b/15610509)
+        # Disable ProcessUtilTest.* (need to define OS_ANDROID)
+        # Disable StackContainer.BufferAlignment (don't support 16-byte alignment)
+        # Disable SystemMetrics2Test.GetSystemMemoryInfo (buffers>0 can't be guaranteed)
+        # Disable PostTasksViaTaskRunner/* to green up devices (b/62246873)
+        # Disable WorkerDetaches to green up devices (b/62246873)
+        gtest_excludes += [
+          "ProcessMetricsTest.GetNumberOfThreads",
+          "ProcessUtilTest.*",
+          "StackContainer.BufferAlignment",
+          "SystemMetrics2Test.GetSystemMemoryInfo",
+          "OneTraitsExecutionModePair/TaskSchedulerImplTest.PostTasksViaTaskRunner/*",
+          "TaskSchedulerWorkerTest.WorkerDetaches",
+        ]
+      }
 
       if (is_cast_audio_only) {
         # Also disable TimeFormattingTest on audio-only builds, since we don't
@@ -181,6 +221,21 @@ cast_test_group("cast_tests") {
     }
   }
   filters += [ base_unittests_filter ]
+
+  cc_unittests_filter = {
+    test_name = "cc_unittests"
+    if (!is_cast_desktop_build) {
+      #Disable ToColorSpace/ColorTransformPixelTest*  (b/64346790)
+      #Disable ImageBackgroundFilter* (b/64346875)
+      #Disable LayerTreeHostTilesTestPartialInvalidation* (b/65844132)
+      gtest_excludes = [
+        "ToColorSpace/ColorTransformPixelTest.*",
+        "ImageBackgroundFilter.*",
+        "LayerTreeHostTilesTestPartialInvalidation.*",
+      ]
+    }
+  }
+  filters += [ cc_unittests_filter ]
 
   content_unittests_filter = {
     test_name = "content_unittests"
@@ -206,6 +261,17 @@ cast_test_group("cast_tests") {
     if (is_cast_audio_only) {
       # No way to display URL's on audio only cast devices.
       gtest_excludes += [ "NavigationEntryTest.NavigationEntryURLs" ]
+    }
+    if (enable_assistant && !is_cast_desktop_build) {
+      # Temporarily disable InvalidUUID and DefaultConstructor on assistant
+      # device builds. Cause of failure is unclear, but it's highly likely it's
+      # related to them being DEATH tests. These were passing until the
+      # is_official_build flag was enabled. These tests are considered
+      # non-critical in this context. (b/62469368)
+      gtest_excludes += [
+        "BluetoothBlocklistTest.InvalidUUID",
+        "WebBluetoothDeviceIdTest.DefaultConstructor",
+      ]
     }
   }
   filters += [ content_unittests_filter ]
@@ -294,8 +360,6 @@ cast_test_group_list("cast_test_lists") {
 
   additional_options = [ "--ozone-platform=headless --test-launcher-bot-mode" ]
 
-  build_tests = true
-
   test_groups = [ ":cast_tests" ]
 
   if (chromecast_branding != "public") {
@@ -308,6 +372,7 @@ if (is_android) {
     test_type = "junit"
     tests = [
       "//base:base_junit_tests",
+      "//chromecast/browser/android:cast_shell_junit_tests",
       "//content/public/android:content_junit_tests",
       "//net/android:net_junit_tests",
       "//testing/android/junit:junit_unit_tests",
@@ -320,8 +385,10 @@ if (is_android) {
     build_list_path = "$root_out_dir/junit/build_junit_test_list.txt"
     runtime_deps_path = "$root_out_dir/junit/runtime_deps.json"
     run_list_path = "$root_out_dir/junit/run_junit_test_list.txt"
-    build_tests = true
     test_groups = [ ":cast_junit_tests" ]
+    if (chromecast_branding != "public") {
+      test_groups += [ "//chromecast/internal:internal_cast_junit_tests" ]
+    }
   }
 }
 
@@ -364,7 +431,7 @@ group("cast_shell_lib") {
   }
 }
 
-executable("cast_shell") {
+cast_executable("cast_shell") {
   sources = [
     "app/cast_main.cc",
   ]
@@ -372,21 +439,34 @@ executable("cast_shell") {
   deps = [
     ":cast_shell_lib",
     ":chromecast_locales_pak",
-    "//build/config/sanitizers:deps",
+    "//build/config:exe_and_shlib_deps",
     "//chromecast/app",
     "//content/public/app:both",
   ]
 }
 
+if (is_fuchsia) {
+  fuchsia_executable_runner("cast_shell_fuchsia") {
+    exe_target = ":cast_shell"
+
+    if (chromecast_branding != "public") {
+      data_deps = [
+        "//chromecast/internal:fuchsia_internal_data_deps",
+      ]
+    }
+  }
+}
+
 repack("cast_shell_pak") {
   sources = [
-    "$root_gen_dir/blink/public/resources/blink_image_resources_100_percent.pak",
     "$root_gen_dir/blink/public/resources/blink_resources.pak",
+    "$root_gen_dir/blink/public/resources/blink_scaled_resources_100_percent.pak",
     "$root_gen_dir/chromecast/app/shell_resources.pak",
     "$root_gen_dir/chromecast/browser/cast_browser_resources.pak",
     "$root_gen_dir/content/app/resources/content_resources_100_percent.pak",
     "$root_gen_dir/content/app/strings/content_strings_en-US.pak",
     "$root_gen_dir/content/content_resources.pak",
+    "$root_gen_dir/mojo/public/js/mojo_bindings_resources.pak",
     "$root_gen_dir/net/net_resources.pak",
     "$root_gen_dir/ui/resources/ui_resources_100_percent.pak",
     "$root_gen_dir/ui/resources/webui_resources.pak",
@@ -402,9 +482,10 @@ repack("cast_shell_pak") {
     "//content:resources",
     "//content/app/resources",
     "//content/app/strings",
+    "//mojo/public/js:resources",
     "//net:net_resources",
-    "//third_party/WebKit/public:image_resources_grit",
     "//third_party/WebKit/public:resources",
+    "//third_party/WebKit/public:scaled_resources_100_percent",
     "//ui/resources",
     "//ui/strings",
   ]
@@ -417,11 +498,11 @@ repack("cast_shell_pak") {
 }
 
 # Intermediate targets that repack grit resources by locale. For each locale
-# in |locales_with_fake_bidi| (see //build/config/locales.gni), all resources
+# in |cast_locales| (see //chromecast/chromecast.gni), all resources
 # are packed into a single .pak file in an output directory. These targets
 # should not be depended on directly; depend on ":chromecast_locales_pak"
 # instead.
-foreach(locale, locales_with_fake_bidi) {
+foreach(locale, cast_locales) {
   repack("_cast_repack_${locale}") {
     visibility = [ ":chromecast_locales_pak" ]
     output = "$root_out_dir/chromecast_locales/${locale}.pak"
@@ -447,7 +528,7 @@ foreach(locale, locales_with_fake_bidi) {
 # A meta-target which repacks resources by locale.
 group("chromecast_locales_pak") {
   deps = []
-  foreach(locale, locales_with_fake_bidi) {
+  foreach(locale, cast_locales) {
     deps += [ ":_cast_repack_${locale}" ]
   }
 }
@@ -455,12 +536,22 @@ group("chromecast_locales_pak") {
 buildflag_header("chromecast_features") {
   header = "chromecast_features.h"
   flags = [
+    "ENABLE_ASSISTANT=$enable_assistant",
+    "ENABLE_VOLUME_TABLES_ACCESS=$enable_volume_tables_access",
+    "IS_ANDROID_THINGS=$is_android_things",
     "IS_CAST_AUDIO_ONLY=$is_cast_audio_only",
     "IS_CAST_USING_CMA_BACKEND=$is_cast_using_cma_backend",
+    "SUPPORTS_MULTIZONE=$supports_multizone",
+    "ENABLE_HEADLESS_MUSIC_MODE=$enable_headless_music_mode",
   ]
 }
 
 if (is_android) {
+  generate_jni_registration("cast_shell_jni_registration") {
+    target = ":cast_shell_apk"
+    output = "$root_gen_dir/chromecast/android/${target_name}.h"
+    exception_files = jni_exception_files
+  }
   android_assets("cast_shell_apk_assets") {
     assert(v8_use_external_startup_data)
 
@@ -489,5 +580,7 @@ if (is_android) {
       "//chromecast/android:libcast_shell_android",
       "//chromecast/browser/android:cast_shell_java",
     ]
+
+    command_line_flags_file = "castshell-command-line"
   }
 }

@@ -770,10 +770,16 @@
         Row <ph name="rowIndex">$1</ph> of <ph name="rowTotal">$2</ph>, Column <ph name="colIndex">$3</ph> of <ph name="colTotal">$4</ph>
       </message>
       <message desc="summarizes a table." name="IDS_CHROMEVOX_TABLE_SUMMARY">
-        Table $1, $2 by $3
+        Table <ph name="tableName">$1</ph>, <ph name="tableRows">$2</ph> by <ph name="tableCols">$3</ph>
+      </message>
+      <message desc="summarizes a html data table for braille. If the description for the table (and not the substitutions after the initial description) is longer than 5 characters, try to abbreviate it according to local conventions, and when doing so, if reasonable, use all lowercase and avoid punctuation to keep the number of characters as low as possible." name="IDS_CHROMEVOX_TABLE_SUMMARY_BRL">
+        tbl <ph name="tableName">$1</ph> <ph name="tableRows">$2</ph>x<ph name="tableCols">$3</ph>
       </message>
       <message desc="summarizes a table cell." name="IDS_CHROMEVOX_CELL_SUMMARY">
         row $1 column $2
+      </message>
+      <message desc="summarizes a table cell for braille; for example, r1c2 means row 1, column 2. Try to localize the 'r' and 'c' to the first letter of something that would be recognizable." name="IDS_CHROMEVOX_CELL_SUMMARY_BRL">
+        r$1c$2
       </message>
       <message desc="Spoken if the user attempts to jump to the next checkbox when none exists." name="IDS_CHROMEVOX_NO_NEXT_CHECKBOX">
         No next checkbox.
@@ -973,7 +979,7 @@
       <message desc="Spoken in PowerKey if there are no jumps to display." name="IDS_CHROMEVOX_POWERKEY_NO_JUMPS">
         No jumps.
       </message>
-      <message desc="Describes the list position of a list item." name="IDS_CHROMEVOX_LIST_POSITION">
+      <message desc="Describes the list position of a list item in spoken feedback." name="IDS_CHROMEVOX_LIST_POSITION">
         <ph name="index">$1</ph> of <ph name="total">$2</ph>
       </message>
       <message desc="Describes the list position of a list item in braille." name="IDS_CHROMEVOX_LIST_POSITION_BRL">
@@ -1381,13 +1387,13 @@
       <message desc="Shown on a braille display as a suffix to text fields and combo boxes when suggestions on how to complete the field are shown in a list and the currently selected value is shown as text after the caret in the input field. When translating, try to find a contracted form of the translation for 'autocomplete inline and list' according to local conventions. If reasonable, use all lowercase and avoid punctuation to keep the number of characters as low as possible." name="IDS_CHROMEVOX_ARIA_AUTOCOMPLETE_BOTH_BRL">
         autoinl+lst
       </message>
-      <message desc="Describes an element with the ARIA attribute aria-checked=true." name="IDS_CHROMEVOX_ARIA_CHECKED_TRUE">
+      <message desc="Describes an element that is checked." name="IDS_CHROMEVOX_CHECKED_TRUE">
         Checked
       </message>
-      <message desc="Describes an element with the ARIA attribute aria-checked=false." name="IDS_CHROMEVOX_ARIA_CHECKED_FALSE">
+      <message desc="Describes an element that is unchecked." name="IDS_CHROMEVOX_CHECKED_FALSE">
         Not checked
       </message>
-      <message desc="Describes an element with the ARIA attribute aria-checked=mixed." name="IDS_CHROMEVOX_ARIA_CHECKED_MIXED">
+      <message desc="Describes an element where the checked state is mixed or indeterminate." name="IDS_CHROMEVOX_CHECKED_MIXED">
         Partially checked
       </message>
       <message desc="Describes an element with the ARIA attribute aria-disabled=true." name="IDS_CHROMEVOX_ARIA_DISABLED_TRUE">
@@ -1699,7 +1705,7 @@
       <message desc="In an editable text box, describes a blank line." name="IDS_CHROMEVOX_TEXT_BOX_BLANK">
         Blank
       </message>
-      <message desc="In an editable text box, describes a line with only whitespace." name="IDS_CHROMEVOX_TEXT_BOX_WHITESPACE">
+      <message desc="In an editable text box, describes a line with only whitespace." name="IDS_CHROMEVOX_TEXT_BOX_WHITESPACE" meaning="UI element">
         Space
       </message>
       <message desc="Further describes a list-like element with a number of items. e.g. This will be combined with other messages to produce: List with 3 items." name="IDS_CHROMEVOX_LIST_WITH_ITEMS_NOT_PLURALIZED">
@@ -2515,6 +2521,9 @@
       <message desc="Title displayed in the panel for the ChromeVox menu." name="IDS_CHROMEVOX_PANEL_MENU_CHROMEVOX">
         ChromeVox
       </message>
+      <message desc="Title displayed in the panel for the actions menu." name="IDS_CHROMEVOX_PANEL_MENU_ACTIONS">
+        Actions
+      </message>
       <message desc="Title displayed in the panel when there are no menu items." name="IDS_CHROMEVOX_PANEL_MENU_ITEM_NONE">
         No items.
       </message>
@@ -2524,22 +2533,12 @@
       <message desc="Title of a notification that ChromeVox has been updated." name="IDS_CHROMEVOX_UPDATE_TITLE">
         ChromeVox Updated
       </message>
-      <message desc="Message text for a notification that ChromeVox has been updated for a new experience." name="IDS_CHROMEVOX_UPDATE_MESSAGE_NEXT">
-        Press ChromeVox o, n to learn more about ChromeVox Next.
+      <message desc="Message text for a notification that ChromeVox has been updated for a new release." name="IDS_CHROMEVOX_UPDATE_MESSAGE_NEW">
+        Press ChromeVox o, n to find out what's new
       </message>
       <message desc="Options page description for the command to show ChromeVox's update page." name="IDS_CHROMEVOX_SHOW_NEXT_UPDATE_DESCRIPTION">
         Show update notes
       </message>
-      <message desc="Checkbox label for toggling on/off ChromeVox's new beta experience." name="IDS_CHROMEVOX_OPTIONS_USE_NEXT_LABEL">
-        Use ChromeVox Next (beta)
-      </message>
-      <message desc="Spoken when switching to the classic ChromeVox experience." name="IDS_CHROMEVOX_SWITCH_TO_CLASSIC">
-        Switched to Classic ChromeVox
-      </message>
-      <message desc="Spoken when switching to the new beta experience." name="IDS_CHROMEVOX_SWITCH_TO_NEXT">
-        Switched to ChromeVox Next
-      </message>
-
       <message desc="Description of button that closes the ChromeVox Tutorial" name="IDS_CHROMEVOX_CLOSE_TUTORIAL">
         Close ChromeVox Tutorial
       </message>
@@ -2549,11 +2548,11 @@
       <message desc="Button that goes to the next page in the ChromeVox Tutorial" name="IDS_CHROMEVOX_TUTORIAL_NEXT">
         Next
       </message>
-      <message desc="Heading that welcomes users to the ChromeVox Next tutorial" name="IDS_CHROMEVOX_TUTORIAL_WELCOME_HEADING">
-        Welcome to ChromeVox Next!
+      <message desc="Heading that welcomes users to the ChromeVox tutorial" name="IDS_CHROMEVOX_TUTORIAL_WELCOME_HEADING">
+        Welcome to ChromeVox!
       </message>
-      <message desc="Introductory text for the 'ChromeVox Next' tutorial" name="IDS_CHROMEVOX_TUTORIAL_WELCOME_TEXT">
-        Are you using ChromeVox Next spoken feedback for the first time? This quick tutorial explains the essentials for getting started with ChromeVox Next.
+      <message desc="Introductory text for the 'ChromeVox' tutorial" name="IDS_CHROMEVOX_TUTORIAL_WELCOME_TEXT">
+        Are you using ChromeVox spoken feedback for the first time? This quick tutorial explains the essentials for getting started with ChromeVox.
       </message>
       <message desc="Text that tells users to press the enter key to move to the next page or backspace to move to the previous page in the tutorial" name="IDS_CHROMEVOX_TUTORIAL_ENTER_TO_ADVANCE">
         To advance, press enter; to go back, press backspace.
@@ -2571,7 +2570,7 @@
         The ChromeVox modifier key
       </message>
       <message desc="Text explaining that the Search key on the keyboard will be held down for most ChromeVox shortcuts" name="IDS_CHROMEVOX_TUTORIAL_MODIFIER">
-        In ChromeVox Next, the Search key is the modifier key. Most ChromeVox shortcuts start with the Search key. You’ll also use the arrow keys for navigation.
+        In ChromeVox, the Search key is the modifier key. Most ChromeVox shortcuts start with the Search key. You’ll also use the arrow keys for navigation.
       </message>
       <message desc="Text explaining where to find the Search key on a Chromebook keyboard" name="IDS_CHROMEVOX_TUTORIAL_CHROMEBOOK_SEARCH">
         On the Chromebook, the Search key is immediately above the left Shift key.
@@ -2625,29 +2624,29 @@ To open the Chrome browser menu, press Alt+F.
         Learn More
       </message>
       <message desc="Part of the ChromeVox tutorial, explaining that this is the end of the tutorial and that there are links to more information." name="IDS_CHROMEVOX_TUTORIAL_LEARN_MORE">
-        Congratulations! You’ve learned the essentials to use ChromeVox Next (beta) successfully. Remember that you can open the ChromeVox command menu at any time by pressing Search+Period. To learn even more about ChromeVox and Chrome OS, visit the following articles.
+        Congratulations! You’ve learned the essentials to use ChromeVox successfully. Remember that you can open the ChromeVox command menu at any time by pressing Search+Period. To learn even more about ChromeVox and Chrome OS, visit the following articles.
 If you're done with the tutorial, use ChromeVox to navigate to the Close button and click it.
       </message>
-      <message desc="Part of the ChromeVox update notes for m56, title." name="IDS_CHROMEVOX_UPDATE_56_TITLE">
-        You've been updated to a major new release of ChromeVox!
+      <message desc="Part of the ChromeVox update notes for m63, title." name="IDS_CHROMEVOX_UPDATE_63_TITLE">
+        You've been updated to ChromeVox 63!
       </message>
-      <message desc="Part of the ChromeVox update notes for m56, introductory text." name="IDS_CHROMEVOX_UPDATE_56_INTRO">
-        We've been hard at work on a new and improved ChromeVox experience; here's what's new
+      <message desc="Part of the ChromeVox update notes for m63, introductory text." name="IDS_CHROMEVOX_UPDATE_63_INTRO">
+        We have some exciting changes in this new release; here's what's new:
       </message>
-      <message desc="Part of the ChromeVox update notes for m56, new items 1." name="IDS_CHROMEVOX_UPDATE_56_ITEM_1">
-        New key bindings. We've made Search the ChromeVox modifier and dramatically simplified the key combinations.
+      <message desc="Part of the ChromeVox update notes for 63, new items 1." name="IDS_CHROMEVOX_UPDATE_63_ITEM_1">
+        Classic removed. The keyboard toggle to switch back into ChromeVox Classic has been removed.
       </message>
-      <message desc="Part of the ChromeVox update notes for m56, new items 2." name="IDS_CHROMEVOX_UPDATE_56_ITEM_2">
-        New earcons. We've refreshed the set of audio icons you hear to make browsing more responsive.
+      <message desc="Part of the ChromeVox update notes for m63, new items 2." name="IDS_CHROMEVOX_UPDATE_63_ITEM_2">
+        Rich text support. ChromeVox now supports rich text fields including jump commands, braille cursor routing, selection, and more.
       </message>
-      <message desc="Part of the ChromeVox update notes for m56, new items 3." name="IDS_CHROMEVOX_UPDATE_56_ITEM_3">
-        Under the hood upgrades. We've revamped how ChromeVox works from the bottom up. Expect better performance, stability, and web support/compliance.
+      <message desc="Part of the ChromeVox update notes for m63, new items 3." name="IDS_CHROMEVOX_UPDATE_63_ITEM_3">
+        Android apps for Chrome. If you have Play Store on your device, get a sneak peek at ChromeVox with Android apps. Try the experimental support by downloading Google Chrome Canary from the Play Store.
       </message>
-      <message desc="Part of the ChromeVox update notes for m56, closing paragraph." name="IDS_CHROMEVOX_UPDATE_56_OUTTRO">
-        We're excited to hear from you on this new experience. Send us feedback directly by pressing Search+a, then i. Press the next button to continue onto the tutorial to learn everything you need to get started.
+      <message desc="Part of the ChromeVox update notes for m63, closing paragraph." name="IDS_CHROMEVOX_UPDATE_63_OUTTRO">
+        As always, you can send us feedback directly by pressing Search+a then i. We're eager to hear from you.
       </message>
-      <message desc="Title of an article on the command reference for 'ChromeVox Next'" name="IDS_CHROMEVOX_NEXT_COMMAND_REFERENCE">
-        ChromeVox Next Command Reference
+      <message desc="Title of an article on the command reference for 'ChromeVox'" name="IDS_CHROMEVOX_NEXT_COMMAND_REFERENCE">
+        ChromeVox Command Reference
       </message>
       <message desc="Title of an article on keyboard shortcuts for Chromebooks" name="IDS_CHROMEVOX_CHROME_KEYBOARD_SHORTCUTS">
         Chromebook keyboard shortcuts
@@ -2729,6 +2728,60 @@ If you're done with the tutorial, use ChromeVox to navigate to the Close button 
       </message>
       <message desc="Description of a command that toggles between 6 and 8 dot braille." name="IDS_CHROMEVOX_TOGGLE_BRAILLE_TABLE">
         Toggle between 6 and 8 dot braille
+      </message>
+      <message desc="Spoken when a user navigates to the beginning of a misspelled word." name="IDS_CHROMEVOX_MISSPELLING_START">
+        Misspelling start
+      </message>
+      <message desc="Spoken when a user navigates to the end of a misspelled word." name="IDS_CHROMEVOX_MISSPELLING_END">
+        Misspelling end
+      </message>
+      <message desc="Spoken when a user navigates to the beginning of a grammar error." name="IDS_CHROMEVOX_GRAMMAR_START">
+        Grammar error start
+      </message>
+      <message desc="Spoken when a user navigates to the end of a grammar error." name="IDS_CHROMEVOX_GRAMMAR_END">
+        Grammar error end
+      </message>
+      <message desc="Spoken when a user navigates to the beginning of a text match from a find in page." name="IDS_CHROMEVOX_TEXT_MATCH_START">
+        Text match start
+      </message>
+      <message desc="Spoken when a user navigates to the end of a text match from a find in page." name="IDS_CHROMEVOX_TEXT_MATCH_END">
+        Text match end
+      </message>
+      <message desc="Spoken when a user navigates to the beginning of bolded text." name="IDS_CHROMEVOX_BOLD_START">
+        Bold start
+      </message>
+      <message desc="Spoken when a user navigates to the end of bolded text." name="IDS_CHROMEVOX_BOLD_END">
+        Bold end
+      </message>
+      <message desc="Spoken when a user navigates to the beginning of italic text." name="IDS_CHROMEVOX_ITALIC_START">
+        Italic start
+      </message>
+      <message desc="Spoken when a user navigates to the end of italic text." name="IDS_CHROMEVOX_ITALIC_END">
+        Italic end
+      </message>
+      <message desc="Spoken when a user navigates to the beginning of underline text." name="IDS_CHROMEVOX_UNDERLINE_START">
+        Underline start
+      </message>
+      <message desc="Spoken when a user navigates to the end of underline text." name="IDS_CHROMEVOX_UNDERLINE_END">
+        Underline end
+      </message>
+      <message desc="Spoken when a user navigates to the beginning of strike through text." name="IDS_CHROMEVOX_LINE_THROUGH_START">
+        Strike through start
+      </message>
+      <message desc="Spoken when a user navigates to the end of strike through text." name="IDS_CHROMEVOX_LINE_THROUGH_END">
+        Strike through end
+      </message>
+      <message desc="Spoken when a user navigates to the beginning of a link's text." name="IDS_CHROMEVOX_LINK_START">
+        Link start
+      </message>
+      <message desc="Spoken when a user navigates to the end of a link's text." name="IDS_CHROMEVOX_LINK_END">
+        Link end
+      </message>
+      <message desc="Shown to a user when they press a braille keyboard command that requires on screen keyboard to be enabled." name="IDS_CHROMEVOX_ENABLE_VIRTUAL_KEYBOARD">
+        Please enable the on screen keyboard under status tray, accessibility to use extended braille commands.
+      </message>
+      <message desc="Shown to a user when they invoke the read current title command in a context without a title." name="IDS_CHROMEVOX_NO_TITLE">
+        No title
       </message>
     </messages>
   </release>

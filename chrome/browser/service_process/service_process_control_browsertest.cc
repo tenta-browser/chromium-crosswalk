@@ -8,17 +8,20 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/location.h"
+#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/process/kill.h"
 #include "base/process/process.h"
 #include "base/process/process_iterator.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/test_timeouts.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_constants.h"
-#include "chrome/common/service_messages.h"
+#include "chrome/common/cloud_print.mojom.h"
 #include "chrome/common/service_process_util.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/version_info/version_info.h"
@@ -58,11 +61,12 @@ class ServiceProcessControlBrowserTest
   }
 
   static void QuitMessageLoop() {
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
-  static void CloudPrintInfoCallback(
-      const cloud_print::CloudPrintProxyInfo& proxy_info) {
+  static void CloudPrintInfoCallback(bool enabled,
+                                     const std::string& email,
+                                     const std::string& proxy_id) {
     QuitMessageLoop();
   }
 
@@ -99,6 +103,7 @@ class ServiceProcessControlBrowserTest
   }
 
   void ProcessControlLaunched() {
+    base::ScopedAllowBlockingForTesting allow_blocking;
     base::ProcessId service_pid;
     EXPECT_TRUE(GetServiceProcessData(NULL, &service_pid));
     EXPECT_NE(static_cast<base::ProcessId>(0), service_pid);
@@ -152,8 +157,11 @@ IN_PROC_BROWSER_TEST_F(RealServiceProcessControlBrowserTest,
 
   // Make sure we are connected to the service process.
   ASSERT_TRUE(ServiceProcessControl::GetInstance()->IsConnected());
-  ServiceProcessControl::GetInstance()->GetCloudPrintProxyInfo(
-        base::Bind(&ServiceProcessControlBrowserTest::CloudPrintInfoCallback));
+  cloud_print::mojom::CloudPrintPtr cloud_print_proxy;
+  ServiceProcessControl::GetInstance()->remote_interfaces().GetInterface(
+      &cloud_print_proxy);
+  cloud_print_proxy->GetCloudPrintProxyInfo(
+      base::Bind(&ServiceProcessControlBrowserTest::CloudPrintInfoCallback));
   content::RunMessageLoop();
 
   // And then shutdown the service process.
@@ -165,8 +173,11 @@ IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest, LaunchAndIPC) {
 
   // Make sure we are connected to the service process.
   ASSERT_TRUE(ServiceProcessControl::GetInstance()->IsConnected());
-  ServiceProcessControl::GetInstance()->GetCloudPrintProxyInfo(
-        base::Bind(&ServiceProcessControlBrowserTest::CloudPrintInfoCallback));
+  cloud_print::mojom::CloudPrintPtr cloud_print_proxy;
+  ServiceProcessControl::GetInstance()->remote_interfaces().GetInterface(
+      &cloud_print_proxy);
+  cloud_print_proxy->GetCloudPrintProxyInfo(
+      base::Bind(&ServiceProcessControlBrowserTest::CloudPrintInfoCallback));
   content::RunMessageLoop();
 
   // And then shutdown the service process.
@@ -179,10 +190,15 @@ IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest, LaunchAndReconnect) {
   // Make sure we are connected to the service process.
   ASSERT_TRUE(ServiceProcessControl::GetInstance()->IsConnected());
   // Send an IPC that will keep the service process alive after we disconnect.
-  ServiceProcessControl::GetInstance()->Send(
-      new ServiceMsg_EnableCloudPrintProxyWithRobot(
-          "", "", "", base::DictionaryValue()));
-  ServiceProcessControl::GetInstance()->GetCloudPrintProxyInfo(
+  cloud_print::mojom::CloudPrintPtr cloud_print_proxy;
+  ServiceProcessControl::GetInstance()->remote_interfaces().GetInterface(
+      &cloud_print_proxy);
+  cloud_print_proxy->EnableCloudPrintProxyWithRobot(
+      "", "", "", base::MakeUnique<base::DictionaryValue>());
+
+  ServiceProcessControl::GetInstance()->remote_interfaces().GetInterface(
+      &cloud_print_proxy);
+  cloud_print_proxy->GetCloudPrintProxyInfo(
       base::Bind(&ServiceProcessControlBrowserTest::CloudPrintInfoCallback));
   content::RunMessageLoop();
   Disconnect();
@@ -192,7 +208,9 @@ IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest, LaunchAndReconnect) {
   ASSERT_TRUE(ServiceProcessControl::GetInstance()->IsConnected());
   content::RunMessageLoop();
 
-  ServiceProcessControl::GetInstance()->GetCloudPrintProxyInfo(
+  ServiceProcessControl::GetInstance()->remote_interfaces().GetInterface(
+      &cloud_print_proxy);
+  cloud_print_proxy->GetCloudPrintProxyInfo(
       base::Bind(&ServiceProcessControlBrowserTest::CloudPrintInfoCallback));
   content::RunMessageLoop();
 
@@ -202,8 +220,8 @@ IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest, LaunchAndReconnect) {
 
 // This tests the case when a service process is launched when the browser
 // starts but we try to launch it again while setting up Cloud Print.
-// Flaky on Mac. http://crbug.com/517420
-#if defined(OS_MACOSX)
+// Flaky on Mac. Flaky on Windows ASan. http://crbug.com/517420
+#if defined(OS_MACOSX) || (defined(OS_WIN) && defined(ADDRESS_SANITIZER))
 #define MAYBE_LaunchTwice DISABLED_LaunchTwice
 #else
 #define MAYBE_LaunchTwice LaunchTwice
@@ -214,15 +232,20 @@ IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest, MAYBE_LaunchTwice) {
 
   // Make sure we are connected to the service process.
   ASSERT_TRUE(ServiceProcessControl::GetInstance()->IsConnected());
-  EXPECT_TRUE(ServiceProcessControl::GetInstance()->GetCloudPrintProxyInfo(
-        base::Bind(&ServiceProcessControlBrowserTest::CloudPrintInfoCallback)));
+  cloud_print::mojom::CloudPrintPtr cloud_print_proxy;
+  ServiceProcessControl::GetInstance()->remote_interfaces().GetInterface(
+      &cloud_print_proxy);
+  cloud_print_proxy->GetCloudPrintProxyInfo(
+      base::Bind(&ServiceProcessControlBrowserTest::CloudPrintInfoCallback));
   content::RunMessageLoop();
 
   // Launch the service process again.
   LaunchServiceProcessControl(true);
   ASSERT_TRUE(ServiceProcessControl::GetInstance()->IsConnected());
-  EXPECT_TRUE(ServiceProcessControl::GetInstance()->GetCloudPrintProxyInfo(
-        base::Bind(&ServiceProcessControlBrowserTest::CloudPrintInfoCallback)));
+  ServiceProcessControl::GetInstance()->remote_interfaces().GetInterface(
+      &cloud_print_proxy);
+  cloud_print_proxy->GetCloudPrintProxyInfo(
+      base::Bind(&ServiceProcessControlBrowserTest::CloudPrintInfoCallback));
   content::RunMessageLoop();
 }
 
@@ -233,8 +256,8 @@ static void DecrementUntilZero(int* count) {
         FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
 }
 
-// Flaky on Mac. http://crbug.com/517420
-#if defined(OS_MACOSX)
+// Flaky on Mac and Windows ASan. http://crbug.com/517420
+#if defined(OS_MACOSX) || (defined(OS_WIN) && defined(ADDRESS_SANITIZER))
 #define MAYBE_MultipleLaunchTasks DISABLED_MultipleLaunchTasks
 #else
 #define MAYBE_MultipleLaunchTasks MultipleLaunchTasks
@@ -255,8 +278,8 @@ IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest,
   EXPECT_EQ(0, launch_count);
 }
 
-// Flaky on Mac. http://crbug.com/517420
-#if defined(OS_MACOSX)
+// Flaky on Mac and Windows ASan. http://crbug.com/517420
+#if defined(OS_MACOSX) || (defined(OS_WIN) && defined(ADDRESS_SANITIZER))
 #define MAYBE_SameLaunchTask DISABLED_SameLaunchTask
 #else
 #define MAYBE_SameLaunchTask SameLaunchTask
@@ -277,8 +300,8 @@ IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest, MAYBE_SameLaunchTask) {
 
 // Tests whether disconnecting from the service IPC causes the service process
 // to die.
-// Flaky on Mac. http://crbug.com/517420
-#if defined(OS_MACOSX)
+// Flaky on Mac and Windows ASan. http://crbug.com/517420
+#if defined(OS_MACOSX) || (defined(OS_WIN) && defined(ADDRESS_SANITIZER))
 #define MAYBE_DieOnDisconnect DISABLED_DieOnDisconnect
 #else
 #define MAYBE_DieOnDisconnect DieOnDisconnect
@@ -292,8 +315,8 @@ IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest,
   Disconnect();
 }
 
-// Flaky on Mac. http://crbug.com/517420
-#if defined(OS_MACOSX)
+// Flaky on Mac and Windows ASan. http://crbug.com/517420
+#if defined(OS_MACOSX) || (defined(OS_WIN) && defined(ADDRESS_SANITIZER))
 #define MAYBE_ForceShutdown DISABLED_ForceShutdown
 #else
 #define MAYBE_ForceShutdown ForceShutdown
@@ -304,19 +327,21 @@ IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest, MAYBE_ForceShutdown) {
   // Make sure we are connected to the service process.
   ASSERT_TRUE(ServiceProcessControl::GetInstance()->IsConnected());
   base::ProcessId service_pid;
+  base::ScopedAllowBlockingForTesting allow_blocking;
   EXPECT_TRUE(GetServiceProcessData(NULL, &service_pid));
   EXPECT_NE(static_cast<base::ProcessId>(0), service_pid);
   ForceServiceProcessShutdown(version_info::GetVersionNumber(), service_pid);
 }
 
-// Flaky on Mac. http://crbug.com/517420
-#if defined(OS_MACOSX)
+// Flaky on Mac and Windows ASan. http://crbug.com/517420
+#if defined(OS_MACOSX) || (defined(OS_WIN) && defined(ADDRESS_SANITIZER))
 #define MAYBE_CheckPid DISABLED_CheckPid
 #else
 #define MAYBE_CheckPid CheckPid
 #endif
 IN_PROC_BROWSER_TEST_F(ServiceProcessControlBrowserTest, MAYBE_CheckPid) {
   base::ProcessId service_pid;
+  base::ScopedAllowBlockingForTesting allow_blocking;
   EXPECT_FALSE(GetServiceProcessData(NULL, &service_pid));
   // Launch the service process.
   LaunchServiceProcessControl(true);

@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "KeyboardEventManager.h"
+#include "core/input/KeyboardEventManager.h"
 
-#include "core/dom/DocumentUserGestureToken.h"
+#include <memory>
+
+#include "build/build_config.h"
 #include "core/dom/Element.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "core/editing/Editor.h"
 #include "core/events/KeyboardEvent.h"
 #include "core/frame/LocalFrameClient.h"
@@ -21,13 +24,13 @@
 #include "core/page/Page.h"
 #include "core/page/SpatialNavigation.h"
 #include "platform/KeyboardCodes.h"
-#include "platform/UserGestureIndicator.h"
 #include "platform/WindowsKeyboardCodes.h"
+#include "public/platform/Platform.h"
 #include "public/platform/WebInputEvent.h"
 
-#if OS(WIN)
+#if defined(OS_WIN)
 #include <windows.h>
-#elif OS(MACOSX)
+#elif defined(OS_MACOSX)
 #import <Carbon/Carbon.h>
 #endif
 
@@ -35,7 +38,7 @@ namespace blink {
 
 namespace {
 
-#if OS(WIN)
+#if defined(OS_WIN)
 static const unsigned short kHIGHBITMASKSHORT = 0x8000;
 #endif
 
@@ -61,7 +64,7 @@ bool MapKeyCodeForScroll(int key_code,
                          WebInputEvent::Modifiers modifiers,
                          ScrollDirection* scroll_direction,
                          ScrollGranularity* scroll_granularity,
-                         UseCounter::Feature* scroll_use_uma) {
+                         WebFeature* scroll_use_uma) {
   if (modifiers & WebInputEvent::kShiftKey ||
       modifiers & WebInputEvent::kMetaKey)
     return false;
@@ -88,42 +91,42 @@ bool MapKeyCodeForScroll(int key_code,
     case VKEY_LEFT:
       *scroll_direction = kScrollLeftIgnoringWritingMode;
       *scroll_granularity = kScrollByLine;
-      *scroll_use_uma = UseCounter::kScrollByKeyboardArrowKeys;
+      *scroll_use_uma = WebFeature::kScrollByKeyboardArrowKeys;
       break;
     case VKEY_RIGHT:
       *scroll_direction = kScrollRightIgnoringWritingMode;
       *scroll_granularity = kScrollByLine;
-      *scroll_use_uma = UseCounter::kScrollByKeyboardArrowKeys;
+      *scroll_use_uma = WebFeature::kScrollByKeyboardArrowKeys;
       break;
     case VKEY_UP:
       *scroll_direction = kScrollUpIgnoringWritingMode;
       *scroll_granularity = kScrollByLine;
-      *scroll_use_uma = UseCounter::kScrollByKeyboardArrowKeys;
+      *scroll_use_uma = WebFeature::kScrollByKeyboardArrowKeys;
       break;
     case VKEY_DOWN:
       *scroll_direction = kScrollDownIgnoringWritingMode;
       *scroll_granularity = kScrollByLine;
-      *scroll_use_uma = UseCounter::kScrollByKeyboardArrowKeys;
+      *scroll_use_uma = WebFeature::kScrollByKeyboardArrowKeys;
       break;
     case VKEY_HOME:
       *scroll_direction = kScrollUpIgnoringWritingMode;
       *scroll_granularity = kScrollByDocument;
-      *scroll_use_uma = UseCounter::kScrollByKeyboardHomeEndKeys;
+      *scroll_use_uma = WebFeature::kScrollByKeyboardHomeEndKeys;
       break;
     case VKEY_END:
       *scroll_direction = kScrollDownIgnoringWritingMode;
       *scroll_granularity = kScrollByDocument;
-      *scroll_use_uma = UseCounter::kScrollByKeyboardHomeEndKeys;
+      *scroll_use_uma = WebFeature::kScrollByKeyboardHomeEndKeys;
       break;
     case VKEY_PRIOR:  // page up
       *scroll_direction = kScrollUpIgnoringWritingMode;
       *scroll_granularity = kScrollByPage;
-      *scroll_use_uma = UseCounter::kScrollByKeyboardPageUpDownKeys;
+      *scroll_use_uma = WebFeature::kScrollByKeyboardPageUpDownKeys;
       break;
     case VKEY_NEXT:  // page down
       *scroll_direction = kScrollDownIgnoringWritingMode;
       *scroll_granularity = kScrollByPage;
-      *scroll_use_uma = UseCounter::kScrollByKeyboardPageUpDownKeys;
+      *scroll_use_uma = WebFeature::kScrollByKeyboardPageUpDownKeys;
       break;
     default:
       return false;
@@ -138,7 +141,7 @@ KeyboardEventManager::KeyboardEventManager(LocalFrame& frame,
                                            ScrollManager& scroll_manager)
     : frame_(frame), scroll_manager_(scroll_manager) {}
 
-DEFINE_TRACE(KeyboardEventManager) {
+void KeyboardEventManager::Trace(blink::Visitor* visitor) {
   visitor->Trace(frame_);
   visitor->Trace(scroll_manager_);
 }
@@ -170,12 +173,12 @@ WebInputEventResult KeyboardEventManager::KeyEvent(
     CapsLockStateMayHaveChanged();
 
   if (scroll_manager_->MiddleClickAutoscrollInProgress()) {
-    DCHECK(RuntimeEnabledFeatures::middleClickAutoscrollEnabled());
+    DCHECK(RuntimeEnabledFeatures::MiddleClickAutoscrollEnabled());
     // If a key is pressed while the middleClickAutoscroll is in progress then
     // we want to stop.
     if (initial_key_event.GetType() == WebInputEvent::kKeyDown ||
         initial_key_event.GetType() == WebInputEvent::kRawKeyDown)
-      scroll_manager_->StopAutoscroll();
+      scroll_manager_->StopMiddleClickAutoscroll();
 
     // If we were in panscroll mode, we swallow the key event
     return WebInputEventResult::kHandledSuppressed;
@@ -187,8 +190,15 @@ WebInputEventResult KeyboardEventManager::KeyEvent(
   if (!node)
     return WebInputEventResult::kNotHandled;
 
-  UserGestureIndicator gesture_indicator(
-      DocumentUserGestureToken::Create(frame_->GetDocument()));
+  // To be meaningful enough to indicate user intention, a keyboard event needs
+  // - not to be a modifier event
+  // https://crbug.com/709765
+  bool is_modifier =
+      Platform::Current()->IsDomKeyForModifier(initial_key_event.dom_key);
+
+  std::unique_ptr<UserGestureIndicator> gesture_indicator;
+  if (!is_modifier)
+    gesture_indicator = Frame::NotifyUserActivation(frame_);
 
   // In IE, access keys are special, they are handled after default keydown
   // processing, but cannot be canceled - this is hard to match.  On Mac OS X,
@@ -244,7 +254,7 @@ WebInputEventResult KeyboardEventManager::KeyEvent(
   if (!node)
     return WebInputEventResult::kNotHandled;
 
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
   // According to NSEvents.h, OpenStep reserves the range 0xF700-0xF8FF for
   // function keys. However, some actual private use characters happen to be
   // in this range, e.g. the Apple logo (Option+Shift+K). 0xF7FF is an
@@ -289,8 +299,6 @@ void KeyboardEventManager::DefaultKeyboardEventHandler(
       return;
     if (event->key() == "Tab") {
       DefaultTabEventHandler(event);
-    } else if (event->key() == "Backspace") {
-      DefaultBackspaceEventHandler(event);
     } else if (event->key() == "Escape") {
       DefaultEscapeEventHandler(event);
     } else {
@@ -321,31 +329,10 @@ void KeyboardEventManager::DefaultSpaceEventHandler(
   if (scroll_manager_->LogicalScroll(direction, kScrollByPage, nullptr,
                                      possible_focused_node)) {
     UseCounter::Count(frame_->GetDocument(),
-                      UseCounter::kScrollByKeyboardSpacebarKey);
+                      WebFeature::kScrollByKeyboardSpacebarKey);
     event->SetDefaultHandled();
     return;
   }
-}
-
-void KeyboardEventManager::DefaultBackspaceEventHandler(KeyboardEvent* event) {
-  DCHECK_EQ(event->type(), EventTypeNames::keydown);
-
-  if (!RuntimeEnabledFeatures::backspaceDefaultHandlerEnabled())
-    return;
-
-  if (event->ctrlKey() || event->metaKey() || event->altKey())
-    return;
-
-  if (!frame_->GetEditor().Behavior().ShouldNavigateBackOnBackspace())
-    return;
-  UseCounter::Count(frame_->GetDocument(), UseCounter::kBackspaceNavigatedBack);
-  if (frame_->GetPage()->GetChromeClient().HadFormInteraction())
-    UseCounter::Count(frame_->GetDocument(),
-                      UseCounter::kBackspaceNavigatedBackAfterFormInteraction);
-  bool handled_event = frame_->Loader().Client()->NavigateBackForward(
-      event->shiftKey() ? 1 : -1);
-  if (handled_event)
-    event->SetDefaultHandled();
 }
 
 void KeyboardEventManager::DefaultArrowEventHandler(
@@ -371,7 +358,7 @@ void KeyboardEventManager::DefaultArrowEventHandler(
 
   ScrollDirection scroll_direction;
   ScrollGranularity scroll_granularity;
-  UseCounter::Feature scroll_use_uma;
+  WebFeature scroll_use_uma;
   if (!MapKeyCodeForScroll(event->keyCode(), event->GetModifiers(),
                            &scroll_direction, &scroll_granularity,
                            &scroll_use_uma))
@@ -393,7 +380,7 @@ void KeyboardEventManager::DefaultTabEventHandler(KeyboardEvent* event) {
   if (event->ctrlKey() || event->metaKey())
     return;
 
-#if !OS(MACOSX)
+#if !defined(OS_MACOSX)
   // Option-Tab is a shortcut based on a system-wide preference on Mac but
   // should be ignored on all other platforms.
   if (event->altKey())
@@ -436,10 +423,10 @@ void KeyboardEventManager::SetCurrentCapsLockState(
 bool KeyboardEventManager::CurrentCapsLockState() {
   switch (g_override_caps_lock_state) {
     case OverrideCapsLockState::kDefault:
-#if OS(WIN)
+#if defined(OS_WIN)
       // FIXME: Does this even work inside the sandbox?
       return GetKeyState(VK_CAPITAL) & 1;
-#elif OS(MACOSX)
+#elif defined(OS_MACOSX)
       return GetCurrentKeyModifiers() & alphaLock;
 #else
       // Caps lock state use is limited to Mac password input
@@ -456,14 +443,14 @@ bool KeyboardEventManager::CurrentCapsLockState() {
 
 WebInputEvent::Modifiers KeyboardEventManager::GetCurrentModifierState() {
   unsigned modifiers = 0;
-#if OS(WIN)
+#if defined(OS_WIN)
   if (GetKeyState(VK_SHIFT) & kHIGHBITMASKSHORT)
     modifiers |= WebInputEvent::kShiftKey;
   if (GetKeyState(VK_CONTROL) & kHIGHBITMASKSHORT)
     modifiers |= WebInputEvent::kControlKey;
   if (GetKeyState(VK_MENU) & kHIGHBITMASKSHORT)
     modifiers |= WebInputEvent::kAltKey;
-#elif OS(MACOSX)
+#elif defined(OS_MACOSX)
   UInt32 current_modifiers = GetCurrentKeyModifiers();
   if (current_modifiers & ::shiftKey)
     modifiers |= WebInputEvent::kShiftKey;

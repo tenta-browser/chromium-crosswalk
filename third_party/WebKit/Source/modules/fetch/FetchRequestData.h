@@ -5,16 +5,18 @@
 #ifndef FetchRequestData_h
 #define FetchRequestData_h
 
+#include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "platform/heap/Handle.h"
-#include "platform/network/EncodedFormData.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/Referrer.h"
 #include "platform/weborigin/ReferrerPolicy.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/text/AtomicString.h"
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/WebURLRequest.h"
+#include "public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerRequest.h"
+#include "services/network/public/interfaces/fetch_api.mojom-blink.h"
 
 namespace blink {
 
@@ -26,8 +28,6 @@ class WebServiceWorkerRequest;
 
 class FetchRequestData final
     : public GarbageCollectedFinalized<FetchRequestData> {
-  WTF_MAKE_NONCOPYABLE(FetchRequestData);
-
  public:
   enum Tainting { kBasicTainting, kCORSTainting, kOpaqueTainting };
 
@@ -42,12 +42,10 @@ class FetchRequestData final
   const AtomicString& Method() const { return method_; }
   void SetURL(const KURL& url) { url_ = url; }
   const KURL& Url() const { return url_; }
-  bool UnsafeRequestFlag() const { return unsafe_request_flag_; }
-  void SetUnsafeRequestFlag(bool flag) { unsafe_request_flag_ = flag; }
   WebURLRequest::RequestContext Context() const { return context_; }
   void SetContext(WebURLRequest::RequestContext context) { context_ = context; }
-  PassRefPtr<SecurityOrigin> Origin() { return origin_; }
-  void SetOrigin(PassRefPtr<SecurityOrigin> origin) {
+  scoped_refptr<SecurityOrigin> Origin() { return origin_; }
+  void SetOrigin(scoped_refptr<SecurityOrigin> origin) {
     origin_ = std::move(origin);
   }
   bool SameOriginDataURLFlag() { return same_origin_data_url_flag_; }
@@ -60,16 +58,18 @@ class FetchRequestData final
   void SetReferrerString(const AtomicString& s) { referrer_.referrer = s; }
   ReferrerPolicy GetReferrerPolicy() const { return referrer_.referrer_policy; }
   void SetReferrerPolicy(ReferrerPolicy p) { referrer_.referrer_policy = p; }
-  void SetMode(WebURLRequest::FetchRequestMode mode) { mode_ = mode; }
-  WebURLRequest::FetchRequestMode Mode() const { return mode_; }
-  void SetCredentials(WebURLRequest::FetchCredentialsMode);
-  WebURLRequest::FetchCredentialsMode Credentials() const {
+  void SetMode(network::mojom::FetchRequestMode mode) { mode_ = mode; }
+  network::mojom::FetchRequestMode Mode() const { return mode_; }
+  void SetCredentials(network::mojom::FetchCredentialsMode credentials) {
+    credentials_ = credentials;
+  }
+  network::mojom::FetchCredentialsMode Credentials() const {
     return credentials_;
   }
-  void SetCacheMode(WebURLRequest::FetchRequestCacheMode cache_mode) {
+  void SetCacheMode(mojom::FetchCacheMode cache_mode) {
     cache_mode_ = cache_mode;
   }
-  WebURLRequest::FetchRequestCacheMode CacheMode() const { return cache_mode_; }
+  mojom::FetchCacheMode CacheMode() const { return cache_mode_; }
   void SetRedirect(WebURLRequest::FetchRedirectMode redirect) {
     redirect_ = redirect;
   }
@@ -87,12 +87,8 @@ class FetchRequestData final
   void SetMIMEType(const String& type) { mime_type_ = type; }
   String Integrity() const { return integrity_; }
   void SetIntegrity(const String& integrity) { integrity_ = integrity; }
-  PassRefPtr<EncodedFormData> AttachedCredential() const {
-    return attached_credential_;
-  }
-  void SetAttachedCredential(PassRefPtr<EncodedFormData> attached_credential) {
-    attached_credential_ = std::move(attached_credential);
-  }
+  bool Keepalive() const { return keepalive_; }
+  void SetKeepalive(bool b) { keepalive_ = b; }
 
   // We use these strings instead of "no-referrer" and "client" in the spec.
   static AtomicString NoReferrerString() { return AtomicString(); }
@@ -100,7 +96,7 @@ class FetchRequestData final
     return AtomicString("about:client");
   }
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   FetchRequestData();
@@ -110,10 +106,9 @@ class FetchRequestData final
   AtomicString method_;
   KURL url_;
   Member<FetchHeaderList> header_list_;
-  bool unsafe_request_flag_;
   // FIXME: Support m_skipServiceWorkerFlag;
   WebURLRequest::RequestContext context_;
-  RefPtr<SecurityOrigin> origin_;
+  scoped_refptr<SecurityOrigin> origin_;
   // FIXME: Support m_forceOriginHeaderFlag;
   bool same_origin_data_url_flag_;
   // |m_referrer| consists of referrer string and referrer policy.
@@ -122,12 +117,12 @@ class FetchRequestData final
   Referrer referrer_;
   // FIXME: Support m_authenticationFlag;
   // FIXME: Support m_synchronousFlag;
-  WebURLRequest::FetchRequestMode mode_;
-  WebURLRequest::FetchCredentialsMode credentials_;
+  network::mojom::FetchRequestMode mode_;
+  network::mojom::FetchCredentialsMode credentials_;
   // TODO(yiyix): |cache_mode_| is exposed but does not yet affect fetch
   // behavior. We must transfer the mode to the network layer and service
   // worker.
-  WebURLRequest::FetchRequestCacheMode cache_mode_;
+  mojom::FetchCacheMode cache_mode_;
   WebURLRequest::FetchRedirectMode redirect_;
   // FIXME: Support m_useURLCredentialsFlag;
   // FIXME: Support m_redirectCount;
@@ -135,7 +130,9 @@ class FetchRequestData final
   Member<BodyStreamBuffer> buffer_;
   String mime_type_;
   String integrity_;
-  RefPtr<EncodedFormData> attached_credential_;
+  bool keepalive_;
+
+  DISALLOW_COPY_AND_ASSIGN(FetchRequestData);
 };
 
 }  // namespace blink

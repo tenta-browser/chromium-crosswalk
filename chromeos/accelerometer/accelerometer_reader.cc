@@ -16,6 +16,7 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/singleton.h"
+#include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -187,7 +188,7 @@ class AccelerometerFileReader
     std::vector<ReadingData> reading_data;
   };
 
-  ~AccelerometerFileReader() {}
+  ~AccelerometerFileReader() = default;
 
   // When accelerometers are presented as separate iio_devices this will perform
   // the initialize for one of the devices, at the given |iio_path| and the
@@ -507,8 +508,7 @@ AccelerometerFileReader::ConfigurationData::ConfigurationData() : count(0) {
   }
 }
 
-AccelerometerFileReader::ConfigurationData::~ConfigurationData() {
-}
+AccelerometerFileReader::ConfigurationData::~ConfigurationData() = default;
 
 // static
 AccelerometerReader* AccelerometerReader::GetInstance() {
@@ -538,7 +538,6 @@ AccelerometerReader::AccelerometerReader()
     : accelerometer_file_reader_(new AccelerometerFileReader()) {
 }
 
-AccelerometerReader::~AccelerometerReader() {
-}
+AccelerometerReader::~AccelerometerReader() = default;
 
 }  // namespace chromeos

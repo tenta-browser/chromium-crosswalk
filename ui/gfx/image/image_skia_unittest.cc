@@ -9,6 +9,7 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/threading/simple_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -16,14 +17,6 @@
 #include "ui/gfx/image/image_skia_rep.h"
 #include "ui/gfx/image/image_skia_source.h"
 #include "ui/gfx/switches.h"
-
-// Duplicated from base/threading/non_thread_safe.h so that we can be
-// good citizens there and undef the macro.
-#if (!defined(NDEBUG) || defined(DCHECK_ALWAYS_ON))
-#define ENABLE_NON_THREAD_SAFE 1
-#else
-#define ENABLE_NON_THREAD_SAFE 0
-#endif
 
 namespace gfx {
 
@@ -162,7 +155,7 @@ class ImageSkiaTest : public testing::Test {
 
 TEST_F(ImageSkiaTest, FixedSource) {
   ImageSkiaRep image(Size(100, 200), 0.0f);
-  ImageSkia image_skia(new FixedSource(image), Size(100, 200));
+  ImageSkia image_skia(std::make_unique<FixedSource>(image), Size(100, 200));
   EXPECT_EQ(0U, image_skia.image_reps().size());
 
   const ImageSkiaRep& result_100p = image_skia.GetRepresentation(1.0f);
@@ -199,7 +192,8 @@ TEST_F(ImageSkiaTest, FixedSource) {
 
 TEST_F(ImageSkiaTest, FixedScaledSource) {
   ImageSkiaRep image(Size(100, 200), 1.0f);
-  ImageSkia image_skia(new FixedScaleSource(image), Size(100, 200));
+  ImageSkia image_skia(std::make_unique<FixedScaleSource>(image),
+                       Size(100, 200));
   EXPECT_EQ(0U, image_skia.image_reps().size());
 
   const ImageSkiaRep& result_100p = image_skia.GetRepresentation(1.0f);
@@ -227,7 +221,8 @@ TEST_F(ImageSkiaTest, FixedScaledSource) {
 
 TEST_F(ImageSkiaTest, FixedUnscaledSource) {
   ImageSkiaRep image(Size(100, 200), 0.0f);
-  ImageSkia image_skia(new FixedScaleSource(image), Size(100, 200));
+  ImageSkia image_skia(std::make_unique<FixedScaleSource>(image),
+                       Size(100, 200));
   EXPECT_EQ(0U, image_skia.image_reps().size());
 
   const ImageSkiaRep& result_100p = image_skia.GetRepresentation(1.0f);
@@ -252,7 +247,8 @@ TEST_F(ImageSkiaTest, FixedUnscaledSource) {
 }
 
 TEST_F(ImageSkiaTest, DynamicSource) {
-  ImageSkia image_skia(new DynamicSource(Size(100, 200)), Size(100, 200));
+  ImageSkia image_skia(std::make_unique<DynamicSource>(Size(100, 200)),
+                       Size(100, 200));
   EXPECT_EQ(0U, image_skia.image_reps().size());
   const ImageSkiaRep& result_100p = image_skia.GetRepresentation(1.0f);
   EXPECT_EQ(100, result_100p.GetWidth());
@@ -285,7 +281,8 @@ TEST_F(ImageSkiaTest, ManyRepsPerScaleFactor) {
   const int kSmallIcon2x = 32;
   const int kLargeIcon1x = 32;
 
-  ImageSkia image(new NullSource(), gfx::Size(kSmallIcon1x, kSmallIcon1x));
+  ImageSkia image(std::make_unique<NullSource>(),
+                  gfx::Size(kSmallIcon1x, kSmallIcon1x));
   // Simulate a source which loads images on a delay. Upon
   // GetImageForScaleFactor, it immediately returns null and starts loading
   // image reps slowly.
@@ -316,7 +313,8 @@ TEST_F(ImageSkiaTest, ManyRepsPerScaleFactor) {
 }
 
 TEST_F(ImageSkiaTest, GetBitmap) {
-  ImageSkia image_skia(new DynamicSource(Size(100, 200)), Size(100, 200));
+  ImageSkia image_skia(std::make_unique<DynamicSource>(Size(100, 200)),
+                       Size(100, 200));
   const SkBitmap* bitmap = image_skia.bitmap();
   EXPECT_NE(static_cast<SkBitmap*>(NULL), bitmap);
   EXPECT_FALSE(bitmap->isNull());
@@ -355,7 +353,7 @@ TEST_F(ImageSkiaTest, BackedBySameObjectAs) {
   EXPECT_FALSE(copy.BackedBySameObjectAs(unrelated));
 }
 
-#if ENABLE_NON_THREAD_SAFE
+#if DCHECK_IS_ON()
 TEST_F(ImageSkiaTest, EmptyOnThreadTest) {
   ImageSkia empty;
   test::TestOnThread empty_on_thread(&empty);
@@ -378,7 +376,7 @@ TEST_F(ImageSkiaTest, StaticOnThreadTest) {
   EXPECT_FALSE(image.CanRead());
   EXPECT_FALSE(image.CanModify());
 
-  image.DetachStorageFromThread();
+  image.DetachStorageFromSequence();
   // An image is accessed by this thread,
   // so other thread cannot read/modify it.
   image.image_reps();
@@ -389,7 +387,7 @@ TEST_F(ImageSkiaTest, StaticOnThreadTest) {
   EXPECT_TRUE(image.CanRead());
   EXPECT_TRUE(image.CanModify());
 
-  image.DetachStorageFromThread();
+  image.DetachStorageFromSequence();
   std::unique_ptr<ImageSkia> deep_copy(image.DeepCopy());
   EXPECT_FALSE(deep_copy->IsThreadSafe());
   test::TestOnThread deepcopy_on_thread(deep_copy.get());
@@ -412,7 +410,7 @@ TEST_F(ImageSkiaTest, StaticOnThreadTest) {
   EXPECT_TRUE(deep_copy2->CanRead());
   EXPECT_TRUE(deep_copy2->CanModify());
 
-  image.DetachStorageFromThread();
+  image.DetachStorageFromSequence();
   image.SetReadOnly();
   // A read-only ImageSkia with no source is thread safe.
   EXPECT_TRUE(image.IsThreadSafe());
@@ -423,7 +421,7 @@ TEST_F(ImageSkiaTest, StaticOnThreadTest) {
   EXPECT_TRUE(image.CanRead());
   EXPECT_FALSE(image.CanModify());
 
-  image.DetachStorageFromThread();
+  image.DetachStorageFromSequence();
   image.MakeThreadSafe();
   EXPECT_TRUE(image.IsThreadSafe());
   test::TestOnThread threadsafe_on_thread(&image);
@@ -435,7 +433,8 @@ TEST_F(ImageSkiaTest, StaticOnThreadTest) {
 }
 
 TEST_F(ImageSkiaTest, SourceOnThreadTest) {
-  ImageSkia image(new DynamicSource(Size(100, 200)), Size(100, 200));
+  ImageSkia image(std::make_unique<DynamicSource>(Size(100, 200)),
+                  Size(100, 200));
   EXPECT_FALSE(image.IsThreadSafe());
 
   test::TestOnThread image_on_thread(&image);
@@ -447,7 +446,7 @@ TEST_F(ImageSkiaTest, SourceOnThreadTest) {
   EXPECT_FALSE(image.CanRead());
   EXPECT_FALSE(image.CanModify());
 
-  image.DetachStorageFromThread();
+  image.DetachStorageFromSequence();
   // An image is accessed by this thread,
   // so other thread cannot read/modify it.
   image.image_reps();
@@ -458,7 +457,7 @@ TEST_F(ImageSkiaTest, SourceOnThreadTest) {
   EXPECT_TRUE(image.CanRead());
   EXPECT_TRUE(image.CanModify());
 
-  image.DetachStorageFromThread();
+  image.DetachStorageFromSequence();
   image.SetReadOnly();
   EXPECT_FALSE(image.IsThreadSafe());
   test::TestOnThread readonly_on_thread(&image);
@@ -468,7 +467,7 @@ TEST_F(ImageSkiaTest, SourceOnThreadTest) {
   EXPECT_FALSE(image.CanRead());
   EXPECT_FALSE(image.CanModify());
 
-  image.DetachStorageFromThread();
+  image.DetachStorageFromSequence();
   image.MakeThreadSafe();
   EXPECT_TRUE(image.IsThreadSafe());
   // Check if image reps are generated for supported scale factors.
@@ -481,10 +480,7 @@ TEST_F(ImageSkiaTest, SourceOnThreadTest) {
   EXPECT_TRUE(image.CanRead());
   EXPECT_FALSE(image.CanModify());
 }
-#endif  // ENABLE_NON_THREAD_SAFE
-
-// Just in case we ever get lumped together with other compilation units.
-#undef ENABLE_NON_THREAD_SAFE
+#endif  // DCHECK_IS_ON()
 
 TEST_F(ImageSkiaTest, Unscaled) {
   SkBitmap bitmap;
@@ -518,7 +514,7 @@ std::vector<float> GetSortedScaleFactors(const gfx::ImageSkia& image) {
 TEST_F(ImageSkiaTest, ArbitraryScaleFactor) {
   // source is owned by |image|
   DynamicSource* source = new DynamicSource(Size(100, 200));
-  ImageSkia image(source, gfx::Size(100, 200));
+  ImageSkia image(base::WrapUnique(source), gfx::Size(100, 200));
 
   image.GetRepresentation(1.5f);
   EXPECT_EQ(2.0f, source->GetLastRequestedScaleAndReset());
@@ -590,8 +586,9 @@ TEST_F(ImageSkiaTest, ArbitraryScaleFactor) {
 }
 
 TEST_F(ImageSkiaTest, ArbitraryScaleFactorWithMissingResource) {
-  ImageSkia image(new FixedScaleSource(
-      ImageSkiaRep(Size(100, 200), 1.0f)), Size(100, 200));
+  ImageSkia image(
+      std::make_unique<FixedScaleSource>(ImageSkiaRep(Size(100, 200), 1.0f)),
+      Size(100, 200));
 
   // Requesting 1.5f -- falls back to 2.0f, but couldn't find. It should
   // look up 1.0f and then rescale it. Note that the rescaled ImageSkiaRep will
@@ -605,8 +602,9 @@ TEST_F(ImageSkiaTest, ArbitraryScaleFactorWithMissingResource) {
 
 TEST_F(ImageSkiaTest, UnscaledImageForArbitraryScaleFactor) {
   // 0.0f means unscaled.
-  ImageSkia image(new FixedScaleSource(
-      ImageSkiaRep(Size(100, 200), 0.0f)), Size(100, 200));
+  ImageSkia image(
+      std::make_unique<FixedScaleSource>(ImageSkiaRep(Size(100, 200), 0.0f)),
+      Size(100, 200));
 
   // Requesting 2.0f, which should return 1.0f unscaled image.
   const ImageSkiaRep& rep = image.GetRepresentation(2.0f);

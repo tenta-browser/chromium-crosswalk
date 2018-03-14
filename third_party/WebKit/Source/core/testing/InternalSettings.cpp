@@ -30,8 +30,8 @@
 #include "core/dom/ExceptionCode.h"
 #include "core/frame/Settings.h"
 #include "core/page/Page.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/Supplementable.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/text/LocaleToScriptMapping.h"
 
 #define InternalSettingsGuardForSettingsReturn(returnValue)             \
@@ -59,11 +59,9 @@ namespace blink {
 
 InternalSettings::Backup::Backup(Settings* settings)
     : original_csp_(RuntimeEnabledFeatures::
-                        experimentalContentSecurityPolicyFeaturesEnabled()),
-      original_css_sticky_position_enabled_(
-          RuntimeEnabledFeatures::cssStickyPositionEnabled()),
+                        ExperimentalContentSecurityPolicyFeaturesEnabled()),
       original_overlay_scrollbars_enabled_(
-          RuntimeEnabledFeatures::overlayScrollbarsEnabled()),
+          RuntimeEnabledFeatures::OverlayScrollbarsEnabled()),
       original_editing_behavior_(settings->GetEditingBehaviorType()),
       original_text_autosizing_enabled_(settings->TextAutosizingEnabled()),
       original_text_autosizing_window_size_override_(
@@ -76,21 +74,19 @@ InternalSettings::Backup::Backup(Settings* settings)
       original_mock_gesture_tap_highlights_enabled_(
           settings->GetMockGestureTapHighlightsEnabled()),
       lang_attribute_aware_form_control_ui_enabled_(
-          RuntimeEnabledFeatures::langAttributeAwareFormControlUIEnabled()),
+          RuntimeEnabledFeatures::LangAttributeAwareFormControlUIEnabled()),
       images_enabled_(settings->GetImagesEnabled()),
       default_video_poster_url_(settings->GetDefaultVideoPosterURL()),
       original_image_animation_policy_(settings->GetImageAnimationPolicy()),
       original_scroll_top_left_interop_enabled_(
-          RuntimeEnabledFeatures::scrollTopLeftInteropEnabled()),
-      original_compositor_worker_enabled_(
-          RuntimeEnabledFeatures::compositorWorkerEnabled()) {}
+          RuntimeEnabledFeatures::ScrollTopLeftInteropEnabled()),
+      original_animation_worklet_enabled_(
+          RuntimeEnabledFeatures::AnimationWorkletEnabled()) {}
 
 void InternalSettings::Backup::RestoreTo(Settings* settings) {
-  RuntimeEnabledFeatures::setExperimentalContentSecurityPolicyFeaturesEnabled(
+  RuntimeEnabledFeatures::SetExperimentalContentSecurityPolicyFeaturesEnabled(
       original_csp_);
-  RuntimeEnabledFeatures::setCSSStickyPositionEnabled(
-      original_css_sticky_position_enabled_);
-  RuntimeEnabledFeatures::setOverlayScrollbarsEnabled(
+  RuntimeEnabledFeatures::SetOverlayScrollbarsEnabled(
       original_overlay_scrollbars_enabled_);
   settings->SetEditingBehaviorType(original_editing_behavior_);
   settings->SetTextAutosizingEnabled(original_text_autosizing_enabled_);
@@ -103,16 +99,14 @@ void InternalSettings::Backup::RestoreTo(Settings* settings) {
   settings->SetMockScrollbarsEnabled(original_mock_scrollbars_enabled_);
   settings->SetMockGestureTapHighlightsEnabled(
       original_mock_gesture_tap_highlights_enabled_);
-  RuntimeEnabledFeatures::setLangAttributeAwareFormControlUIEnabled(
+  RuntimeEnabledFeatures::SetLangAttributeAwareFormControlUIEnabled(
       lang_attribute_aware_form_control_ui_enabled_);
   settings->SetImagesEnabled(images_enabled_);
   settings->SetDefaultVideoPosterURL(default_video_poster_url_);
   settings->GetGenericFontFamilySettings().Reset();
   settings->SetImageAnimationPolicy(original_image_animation_policy_);
-  RuntimeEnabledFeatures::setScrollTopLeftInteropEnabled(
+  RuntimeEnabledFeatures::SetScrollTopLeftInteropEnabled(
       original_scroll_top_left_interop_enabled_);
-  RuntimeEnabledFeatures::setCompositorWorkerEnabled(
-      original_compositor_worker_enabled_);
 }
 
 InternalSettings* InternalSettings::From(Page& page) {
@@ -144,7 +138,7 @@ void InternalSettings::ResetToConsistentState() {
 
 Settings* InternalSettings::GetSettings() const {
   if (!GetPage())
-    return 0;
+    return nullptr;
   return &GetPage()->GetSettings();
 }
 
@@ -168,18 +162,14 @@ void InternalSettings::setMockGestureTapHighlightsEnabled(
   GetSettings()->SetMockGestureTapHighlightsEnabled(enabled);
 }
 
-void InternalSettings::setCSSStickyPositionEnabled(bool enabled) {
-  RuntimeEnabledFeatures::setCSSStickyPositionEnabled(enabled);
-}
-
 void InternalSettings::setExperimentalContentSecurityPolicyFeaturesEnabled(
     bool enabled) {
-  RuntimeEnabledFeatures::setExperimentalContentSecurityPolicyFeaturesEnabled(
+  RuntimeEnabledFeatures::SetExperimentalContentSecurityPolicyFeaturesEnabled(
       enabled);
 }
 
 void InternalSettings::setOverlayScrollbarsEnabled(bool enabled) {
-  RuntimeEnabledFeatures::setOverlayScrollbarsEnabled(enabled);
+  RuntimeEnabledFeatures::SetOverlayScrollbarsEnabled(enabled);
 }
 
 void InternalSettings::setViewportEnabled(bool enabled,
@@ -357,7 +347,7 @@ void InternalSettings::setEditingBehavior(const String& editing_behavior,
 }
 
 void InternalSettings::setLangAttributeAwareFormControlUIEnabled(bool enabled) {
-  RuntimeEnabledFeatures::setLangAttributeAwareFormControlUIEnabled(enabled);
+  RuntimeEnabledFeatures::SetLangAttributeAwareFormControlUIEnabled(enabled);
 }
 
 void InternalSettings::setImagesEnabled(bool enabled,
@@ -373,7 +363,7 @@ void InternalSettings::setDefaultVideoPosterURL(
   GetSettings()->SetDefaultVideoPosterURL(url);
 }
 
-DEFINE_TRACE(InternalSettings) {
+void InternalSettings::Trace(blink::Visitor* visitor) {
   InternalSettingsGenerated::Trace(visitor);
   Supplement<Page>::Trace(visitor);
 }
@@ -505,7 +495,7 @@ void InternalSettings::setImageAnimationPolicy(
 }
 
 void InternalSettings::setScrollTopLeftInteropEnabled(bool enabled) {
-  RuntimeEnabledFeatures::setScrollTopLeftInteropEnabled(enabled);
+  RuntimeEnabledFeatures::SetScrollTopLeftInteropEnabled(enabled);
 }
 
 void InternalSettings::SetDnsPrefetchLogging(bool enabled,
@@ -520,11 +510,11 @@ void InternalSettings::SetPreloadLogging(bool enabled,
   GetSettings()->SetLogPreload(enabled);
 }
 
-void InternalSettings::setCompositorWorkerEnabled(
+void InternalSettings::setAnimationWorkletEnabled(
     bool enabled,
     ExceptionState& exception_state) {
   InternalSettingsGuardForSettings();
-  RuntimeEnabledFeatures::setCompositorWorkerEnabled(enabled);
+  RuntimeEnabledFeatures::SetAnimationWorkletEnabled(enabled);
 }
 
 void InternalSettings::setPresentationReceiver(
@@ -532,6 +522,27 @@ void InternalSettings::setPresentationReceiver(
     ExceptionState& exception_state) {
   InternalSettingsGuardForSettings();
   GetSettings()->SetPresentationReceiver(enabled);
+}
+
+void InternalSettings::setAutoplayPolicy(const String& policy_str,
+                                         ExceptionState& exception_state) {
+  InternalSettingsGuardForSettings();
+
+  AutoplayPolicy::Type policy = AutoplayPolicy::Type::kNoUserGestureRequired;
+  if (policy_str == "no-user-gesture-required") {
+    policy = AutoplayPolicy::Type::kNoUserGestureRequired;
+  } else if (policy_str == "user-gesture-required") {
+    policy = AutoplayPolicy::Type::kUserGestureRequired;
+  } else if (policy_str == "user-gesture-required-for-cross-origin") {
+    policy = AutoplayPolicy::Type::kUserGestureRequiredForCrossOrigin;
+  } else if (policy_str == "document-user-activation-required") {
+    policy = AutoplayPolicy::Type::kDocumentUserActivationRequired;
+  } else {
+    exception_state.ThrowDOMException(
+        kSyntaxError, "The autoplay policy ('" + policy_str + ")' is invalid.");
+  }
+
+  GetSettings()->SetAutoplayPolicy(policy);
 }
 
 }  // namespace blink

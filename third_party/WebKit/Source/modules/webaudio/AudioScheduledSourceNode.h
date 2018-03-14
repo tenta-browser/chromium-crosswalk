@@ -62,6 +62,10 @@ class AudioScheduledSourceHandler : public AudioHandler {
   void Start(double when, ExceptionState&);
   void Stop(double when, ExceptionState&);
 
+  // AudioNode
+  double TailTime() const override { return 0; }
+  double LatencyTime() const override { return 0; }
+
   PlaybackState GetPlaybackState() const {
     return static_cast<PlaybackState>(AcquireLoad(&playback_state_));
   }
@@ -127,6 +131,8 @@ class AudioScheduledSourceHandler : public AudioHandler {
   // This is accessed by both the main thread and audio thread.  Use the setter
   // and getter to protect the access to this.
   int playback_state_;
+
+  scoped_refptr<WebTaskRunner> task_runner_;
 };
 
 class AudioScheduledSourceNode
@@ -147,7 +153,7 @@ class AudioScheduledSourceNode
   // ScriptWrappable:
   bool HasPendingActivity() const final;
 
-  DEFINE_INLINE_VIRTUAL_TRACE() { AudioNode::Trace(visitor); }
+  virtual void Trace(blink::Visitor* visitor) { AudioNode::Trace(visitor); }
 
  protected:
   explicit AudioScheduledSourceNode(BaseAudioContext&);

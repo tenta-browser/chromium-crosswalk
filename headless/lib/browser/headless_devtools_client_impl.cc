@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "headless/lib/browser/headless_devtools_client_impl.h"
+#include "headless/public/internal/headless_devtools_client_impl.h"
 
 #include <memory>
 
@@ -31,21 +31,26 @@ HeadlessDevToolsClientImpl* HeadlessDevToolsClientImpl::From(
 
 HeadlessDevToolsClientImpl::HeadlessDevToolsClientImpl()
     : agent_host_(nullptr),
+      raw_protocol_listener_(nullptr),
       next_message_id_(0),
+      next_raw_message_id_(1),
       renderer_crashed_(false),
       accessibility_domain_(this),
       animation_domain_(this),
       application_cache_domain_(this),
+      browser_domain_(this),
       cache_storage_domain_(this),
       console_domain_(this),
       css_domain_(this),
       database_domain_(this),
       debugger_domain_(this),
       device_orientation_domain_(this),
-      dom_debugger_domain_(this),
       dom_domain_(this),
+      dom_debugger_domain_(this),
+      dom_snapshot_domain_(this),
       dom_storage_domain_(this),
       emulation_domain_(this),
+      headless_experimental_domain_(this),
       heap_profiler_domain_(this),
       indexeddb_domain_(this),
       input_domain_(this),
@@ -56,8 +61,8 @@ HeadlessDevToolsClientImpl::HeadlessDevToolsClientImpl()
       memory_domain_(this),
       network_domain_(this),
       page_domain_(this),
+      performance_domain_(this),
       profiler_domain_(this),
-      rendering_domain_(this),
       runtime_domain_(this),
       security_domain_(this),
       service_worker_domain_(this),
@@ -67,16 +72,16 @@ HeadlessDevToolsClientImpl::HeadlessDevToolsClientImpl()
           content::BrowserThread::UI)),
       weak_ptr_factory_(this) {}
 
-HeadlessDevToolsClientImpl::~HeadlessDevToolsClientImpl() {}
+HeadlessDevToolsClientImpl::~HeadlessDevToolsClientImpl() = default;
 
 bool HeadlessDevToolsClientImpl::AttachToHost(
     content::DevToolsAgentHost* agent_host) {
   DCHECK(!agent_host_);
-  if (agent_host->AttachClient(this)) {
-    agent_host_ = agent_host;
-    return true;
-  }
-  return false;
+  if (agent_host->IsAttached())
+    return false;
+  agent_host->AttachClient(this);
+  agent_host_ = agent_host;
+  return true;
 }
 
 void HeadlessDevToolsClientImpl::ForceAttachToHost(
@@ -95,10 +100,46 @@ void HeadlessDevToolsClientImpl::DetachFromHost(
   pending_messages_.clear();
 }
 
+void HeadlessDevToolsClientImpl::SetRawProtocolListener(
+    RawProtocolListener* raw_protocol_listener) {
+  raw_protocol_listener_ = raw_protocol_listener;
+}
+
+int HeadlessDevToolsClientImpl::GetNextRawDevToolsMessageId() {
+  int id = next_raw_message_id_;
+  next_raw_message_id_ += 2;
+  return id;
+}
+
+void HeadlessDevToolsClientImpl::SendRawDevToolsMessage(
+    const std::string& json_message) {
+#ifndef NDEBUG
+  std::unique_ptr<base::Value> message =
+      base::JSONReader::Read(json_message, base::JSON_PARSE_RFC);
+  const base::Value* id_value = message->FindKey("id");
+  if (!id_value) {
+    NOTREACHED() << "Badly formed message " << json_message;
+    return;
+  }
+  DCHECK_EQ((id_value->GetInt() % 2), 1)
+      << "Raw devtools messages must have an odd ID.";
+#endif
+
+  agent_host_->DispatchProtocolMessage(this, json_message);
+}
+
+void HeadlessDevToolsClientImpl::SendRawDevToolsMessage(
+    const base::DictionaryValue& message) {
+  std::string json_message;
+  base::JSONWriter::Write(message, &json_message);
+  SendRawDevToolsMessage(json_message);
+}
+
 void HeadlessDevToolsClientImpl::DispatchProtocolMessage(
     content::DevToolsAgentHost* agent_host,
     const std::string& json_message) {
   DCHECK_EQ(agent_host_, agent_host);
+
   std::unique_ptr<base::Value> message =
       base::JSONReader::Read(json_message, base::JSON_PARSE_RFC);
   const base::DictionaryValue* message_dict;
@@ -106,6 +147,13 @@ void HeadlessDevToolsClientImpl::DispatchProtocolMessage(
     NOTREACHED() << "Badly formed reply";
     return;
   }
+
+  if (raw_protocol_listener_ &&
+      raw_protocol_listener_->OnProtocolMessage(agent_host->GetId(),
+                                                json_message, *message_dict)) {
+    return;
+  }
+
   if (!DispatchMessageReply(*message_dict) &&
       !DispatchEvent(std::move(message), *message_dict)) {
     DLOG(ERROR) << "Unhandled protocol message: " << json_message;
@@ -114,10 +162,10 @@ void HeadlessDevToolsClientImpl::DispatchProtocolMessage(
 
 bool HeadlessDevToolsClientImpl::DispatchMessageReply(
     const base::DictionaryValue& message_dict) {
-  int id = 0;
-  if (!message_dict.GetInteger("id", &id))
+  const base::Value* id_value = message_dict.FindKey("id");
+  if (!id_value)
     return false;
-  auto it = pending_messages_.find(id);
+  auto it = pending_messages_.find(id_value->GetInt());
   if (it == pending_messages_.end()) {
     NOTREACHED() << "Unexpected reply";
     return false;
@@ -145,9 +193,10 @@ bool HeadlessDevToolsClientImpl::DispatchMessageReply(
 bool HeadlessDevToolsClientImpl::DispatchEvent(
     std::unique_ptr<base::Value> owning_message,
     const base::DictionaryValue& message_dict) {
-  std::string method;
-  if (!message_dict.GetString("method", &method))
+  const base::Value* method_value = message_dict.FindKey("method");
+  if (!method_value)
     return false;
+  const std::string& method = method_value->GetString();
   if (method == "Inspector.targetCrashed")
     renderer_crashed_ = true;
   EventHandlerMap::const_iterator it = event_handlers_.find(method);
@@ -180,8 +229,7 @@ void HeadlessDevToolsClientImpl::DispatchEventTask(
 }
 
 void HeadlessDevToolsClientImpl::AgentHostClosed(
-    content::DevToolsAgentHost* agent_host,
-    bool replaced_with_another_client) {
+    content::DevToolsAgentHost* agent_host) {
   DCHECK_EQ(agent_host_, agent_host);
   agent_host = nullptr;
   pending_messages_.clear();
@@ -197,6 +245,10 @@ animation::Domain* HeadlessDevToolsClientImpl::GetAnimation() {
 
 application_cache::Domain* HeadlessDevToolsClientImpl::GetApplicationCache() {
   return &application_cache_domain_;
+}
+
+browser::Domain* HeadlessDevToolsClientImpl::GetBrowser() {
+  return &browser_domain_;
 }
 
 cache_storage::Domain* HeadlessDevToolsClientImpl::GetCacheStorage() {
@@ -223,12 +275,16 @@ device_orientation::Domain* HeadlessDevToolsClientImpl::GetDeviceOrientation() {
   return &device_orientation_domain_;
 }
 
+dom::Domain* HeadlessDevToolsClientImpl::GetDOM() {
+  return &dom_domain_;
+}
+
 dom_debugger::Domain* HeadlessDevToolsClientImpl::GetDOMDebugger() {
   return &dom_debugger_domain_;
 }
 
-dom::Domain* HeadlessDevToolsClientImpl::GetDOM() {
-  return &dom_domain_;
+dom_snapshot::Domain* HeadlessDevToolsClientImpl::GetDOMSnapshot() {
+  return &dom_snapshot_domain_;
 }
 
 dom_storage::Domain* HeadlessDevToolsClientImpl::GetDOMStorage() {
@@ -237,6 +293,11 @@ dom_storage::Domain* HeadlessDevToolsClientImpl::GetDOMStorage() {
 
 emulation::Domain* HeadlessDevToolsClientImpl::GetEmulation() {
   return &emulation_domain_;
+}
+
+headless_experimental::Domain*
+HeadlessDevToolsClientImpl::GetHeadlessExperimental() {
+  return &headless_experimental_domain_;
 }
 
 heap_profiler::Domain* HeadlessDevToolsClientImpl::GetHeapProfiler() {
@@ -279,12 +340,12 @@ page::Domain* HeadlessDevToolsClientImpl::GetPage() {
   return &page_domain_;
 }
 
-profiler::Domain* HeadlessDevToolsClientImpl::GetProfiler() {
-  return &profiler_domain_;
+performance::Domain* HeadlessDevToolsClientImpl::GetPerformance() {
+  return &performance_domain_;
 }
 
-rendering::Domain* HeadlessDevToolsClientImpl::GetRendering() {
-  return &rendering_domain_;
+profiler::Domain* HeadlessDevToolsClientImpl::GetProfiler() {
+  return &profiler_domain_;
 }
 
 runtime::Domain* HeadlessDevToolsClientImpl::GetRuntime() {
@@ -314,7 +375,8 @@ void HeadlessDevToolsClientImpl::FinalizeAndSendMessage(
   if (renderer_crashed_)
     return;
   DCHECK(agent_host_);
-  int id = next_message_id_++;
+  int id = next_message_id_;
+  next_message_id_ += 2;  // We only send even numbered messages.
   message->SetInteger("id", id);
   std::string json_message;
   base::JSONWriter::Write(*message, &json_message);
@@ -354,7 +416,7 @@ void HeadlessDevToolsClientImpl::RegisterEventHandler(
   event_handlers_[method] = callback;
 }
 
-HeadlessDevToolsClientImpl::Callback::Callback() {}
+HeadlessDevToolsClientImpl::Callback::Callback() = default;
 
 HeadlessDevToolsClientImpl::Callback::Callback(Callback&& other) = default;
 
@@ -365,7 +427,7 @@ HeadlessDevToolsClientImpl::Callback::Callback(
     base::Callback<void(const base::Value&)> callback)
     : callback_with_result(callback) {}
 
-HeadlessDevToolsClientImpl::Callback::~Callback() {}
+HeadlessDevToolsClientImpl::Callback::~Callback() = default;
 
 HeadlessDevToolsClientImpl::Callback& HeadlessDevToolsClientImpl::Callback::
 operator=(Callback&& other) = default;

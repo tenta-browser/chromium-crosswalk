@@ -19,7 +19,6 @@
 #include "media/base/key_system_properties.h"
 #include "media/base/media.h"
 #include "media/base/media_switches.h"
-#include "ppapi/features/features.h"
 #include "media/base/media_client.h"
 #include "media/media_features.h"
 #include "third_party/widevine/cdm/widevine_cdm_common.h"
@@ -45,7 +44,10 @@ static const NamedCodec kMimeTypeToCodecMasks[] = {
     {"video/webm", EME_CODEC_WEBM_VIDEO_ALL},
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
     {"audio/mp4", EME_CODEC_MP4_AUDIO_ALL},
-    {"video/mp4", EME_CODEC_MP4_VIDEO_ALL}
+    {"video/mp4", EME_CODEC_MP4_VIDEO_ALL},
+#if BUILDFLAG(ENABLE_MSE_MPEG2TS_STREAM_PARSER)
+    {"video/mp2t", EME_CODEC_MP2T_VIDEO_ALL},
+#endif  // BUILDFLAG(ENABLE_MSE_MPEG2TS_STREAM_PARSER)
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 };
 
@@ -59,12 +61,24 @@ static const NamedCodec kCodecStrings[] = {
     {"vp9.0", EME_CODEC_WEBM_VP9},      // VP9.
     {"vp09", EME_CODEC_COMMON_VP9},     // New multi-part VP9 for WebM and MP4.
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
-    {"mp4a", EME_CODEC_MP4_AAC},   // AAC.
-    {"avc1", EME_CODEC_MP4_AVC1},  // AVC1.
-    {"avc3", EME_CODEC_MP4_AVC1},  // AVC3.
+    {"mp4a", EME_CODEC_MP4_AAC},  // AAC.
+#if BUILDFLAG(ENABLE_AC3_EAC3_AUDIO_DEMUXING)
+    {"ac-3", EME_CODEC_MP4_AC3},   // AC3.
+    {"ec-3", EME_CODEC_MP4_EAC3},  // EAC3.
+#endif
+    {"avc1", EME_CODEC_MP4_AVC1},  // AVC1 for MP4 and MP2T
+    {"avc3", EME_CODEC_MP4_AVC1},  // AVC3 for MP4 and MP2T
 #if BUILDFLAG(ENABLE_HEVC_DEMUXING)
     {"hev1", EME_CODEC_MP4_HEVC},  // HEV1.
     {"hvc1", EME_CODEC_MP4_HEVC},  // HVC1.
+#endif
+#if BUILDFLAG(ENABLE_DOLBY_VISION_DEMUXING)
+    {"dva1", EME_CODEC_MP4_DV_AVC},  // DolbyVision AVC
+    {"dvav", EME_CODEC_MP4_DV_AVC},  // DolbyVision AVC
+#if BUILDFLAG(ENABLE_HEVC_DEMUXING)
+    {"dvh1", EME_CODEC_MP4_DV_HEVC},  // DolbyVision HEVC
+    {"dvhe", EME_CODEC_MP4_DV_HEVC},  // DolbyVision HEVC
+#endif
 #endif
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 };
@@ -175,7 +189,7 @@ class KeySystemsImpl : public KeySystems {
 
   bool UseAesDecryptor(const std::string& key_system) const;
 
-#if BUILDFLAG(ENABLE_PEPPER_CDMS)
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
   std::string GetPepperType(const std::string& key_system) const;
 #endif
 
@@ -223,7 +237,7 @@ class KeySystemsImpl : public KeySystems {
   void UpdateSupportedKeySystems();
 
   void AddSupportedKeySystems(
-      std::vector<std::unique_ptr<KeySystemProperties>>* key_systems);
+      std::vector<std::unique_ptr<KeySystemProperties>> key_systems);
 
   void RegisterMimeType(const std::string& mime_type, EmeCodec codecs_mask);
   bool IsValidMimeTypeCodecsCombination(const std::string& mime_type,
@@ -283,8 +297,7 @@ KeySystemsImpl::KeySystemsImpl()
   UpdateSupportedKeySystems();
 }
 
-KeySystemsImpl::~KeySystemsImpl() {
-}
+KeySystemsImpl::~KeySystemsImpl() = default;
 
 SupportedCodecs KeySystemsImpl::GetCodecMaskForMimeType(
     const std::string& container_mime_type) const {
@@ -325,13 +338,13 @@ void KeySystemsImpl::UpdateSupportedKeySystems() {
   // Clear Key is always supported.
   key_systems_properties.emplace_back(new ClearKeyProperties());
 
-  AddSupportedKeySystems(&key_systems_properties);
+  AddSupportedKeySystems(std::move(key_systems_properties));
 }
 
 // Returns whether distinctive identifiers and persistent state can be reliably
 // blocked for |properties| (and therefore be safely configurable).
 static bool CanBlock(const KeySystemProperties& properties) {
-#if BUILDFLAG(ENABLE_PEPPER_CDMS)
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
   // Distinctive identifiers and persistent state can be reliably blocked for
   // Pepper-hosted key systems.
   DCHECK_EQ(properties.UseAesDecryptor(), properties.GetPepperType().empty());
@@ -356,11 +369,11 @@ static bool CanBlock(const KeySystemProperties& properties) {
 }
 
 void KeySystemsImpl::AddSupportedKeySystems(
-    std::vector<std::unique_ptr<KeySystemProperties>>* key_systems) {
+    std::vector<std::unique_ptr<KeySystemProperties>> key_systems) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(key_system_properties_map_.empty());
 
-  for (auto& properties : *key_systems) {
+  for (auto& properties : key_systems) {
     DCHECK(!properties->GetKeySystemName().empty());
     DCHECK(properties->GetPersistentLicenseSessionSupport() !=
            EmeSessionTypeSupport::INVALID);
@@ -378,7 +391,7 @@ void KeySystemsImpl::AddSupportedKeySystems(
       continue;
     }
 
-    // Supporting persistent state is a prerequsite for supporting persistent
+    // Supporting persistent state is a prerequisite for supporting persistent
     // sessions.
     if (properties->GetPersistentStateSupport() ==
         EmeFeatureSupport::NOT_SUPPORTED) {
@@ -425,7 +438,7 @@ void KeySystemsImpl::AddSupportedKeySystems(
 #endif  // defined(OS_ANDROID)
 
     DVLOG(1) << __func__
-             << " Adding key system:" << properties->GetKeySystemName();
+             << ": Adding key system:" << properties->GetKeySystemName();
     key_system_properties_map_[properties->GetKeySystemName()] =
         std::move(properties);
   }
@@ -495,13 +508,13 @@ bool KeySystemsImpl::UseAesDecryptor(const std::string& key_system) const {
   KeySystemPropertiesMap::const_iterator key_system_iter =
       key_system_properties_map_.find(key_system);
   if (key_system_iter == key_system_properties_map_.end()) {
-    DLOG(ERROR) << key_system << " is not a known system";
+    DLOG(ERROR) << key_system << " is not a known key system";
     return false;
   }
   return key_system_iter->second->UseAesDecryptor();
 }
 
-#if BUILDFLAG(ENABLE_PEPPER_CDMS)
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
 std::string KeySystemsImpl::GetPepperType(const std::string& key_system) const {
   DCHECK(thread_checker_.CalledOnValidThread());
 
@@ -706,7 +719,7 @@ bool CanUseAesDecryptor(const std::string& key_system) {
   return KeySystemsImpl::GetInstance()->UseAesDecryptor(key_system);
 }
 
-#if BUILDFLAG(ENABLE_PEPPER_CDMS)
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
 std::string GetPepperType(const std::string& key_system) {
   return KeySystemsImpl::GetInstance()->GetPepperType(key_system);
 }

@@ -147,9 +147,6 @@ class GFX_EXPORT Canvas {
   // Canvas::TEXT_ALIGN_RIGHT.
   static int DefaultCanvasTextAlignment();
 
-  // Extracts an ImageSkiaRep from the contents of this canvas.
-  ImageSkiaRep ExtractImageRep() const;
-
   // Draws a dashed rectangle of the specified color.
   void DrawDashedRect(const RectF& rect, SkColor color);
 
@@ -194,7 +191,7 @@ class GFX_EXPORT Canvas {
 
   void Translate(const Vector2d& offset);
 
-  void Scale(int x_scale, int y_scale);
+  void Scale(float x_scale, float y_scale);
 
   // Fills the entire canvas' bitmap (restricted to current clip) with
   // specified |color| using a transfer mode of SkBlendMode::kSrcOver.

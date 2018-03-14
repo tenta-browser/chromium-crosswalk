@@ -4,8 +4,6 @@
 
 #import "ios/chrome/browser/ui/settings/sync_encryption_collection_view_controller.h"
 
-#import "base/ios/weak_nsobject.h"
-#import "base/mac/scoped_nsobject.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/browser_sync/profile_sync_service.h"
@@ -28,6 +26,10 @@
 #include "ios/chrome/grit/ios_strings.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "url/gurl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -63,7 +65,9 @@ typedef NS_ENUM(NSInteger, ItemType) {
 
 - (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState {
   DCHECK(browserState);
-  self = [super initWithStyle:CollectionViewControllerStyleAppBar];
+  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+  self =
+      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
   if (self) {
     self.title = l10n_util::GetNSString(IDS_IOS_SYNC_ENCRYPTION_TITLE);
     _browserState = browserState;
@@ -72,6 +76,8 @@ typedef NS_ENUM(NSInteger, ItemType) {
     _isUsingSecondaryPassphrase = syncService->IsEngineInitialized() &&
                                   syncService->IsUsingSecondaryPassphrase();
     _syncObserver = base::MakeUnique<SyncObserverBridge>(self, syncService);
+    // TODO(crbug.com/764578): -loadModel should not be called from
+    // initializer. A possible fix is to move this call to -viewDidLoad.
     [self loadModel];
   }
   return self;
@@ -117,8 +123,8 @@ typedef NS_ENUM(NSInteger, ItemType) {
 }
 
 - (CollectionViewItem*)footerItem {
-  CollectionViewFooterItem* footerItem = [[[CollectionViewFooterItem alloc]
-      initWithType:ItemTypeFooter] autorelease];
+  CollectionViewFooterItem* footerItem =
+      [[CollectionViewFooterItem alloc] initWithType:ItemTypeFooter];
   footerItem.text =
       l10n_util::GetNSString(IDS_IOS_SYNC_ENCRYPTION_PASSPHRASE_HINT);
   footerItem.linkURL = google_util::AppendGoogleLocaleParam(
@@ -191,9 +197,9 @@ typedef NS_ENUM(NSInteger, ItemType) {
           IOSChromeProfileSyncServiceFactory::GetForBrowserState(_browserState);
       if (service->IsEngineInitialized() &&
           !service->IsUsingSecondaryPassphrase()) {
-        base::scoped_nsobject<SyncCreatePassphraseCollectionViewController>
-            controller([[SyncCreatePassphraseCollectionViewController alloc]
-                initWithBrowserState:_browserState]);
+        SyncCreatePassphraseCollectionViewController* controller =
+            [[SyncCreatePassphraseCollectionViewController alloc]
+                initWithBrowserState:_browserState];
         [self.navigationController pushViewController:controller animated:YES];
       }
       break;
@@ -224,8 +230,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
                                text:(NSString*)text
                             checked:(BOOL)checked
                             enabled:(BOOL)enabled {
-  EncryptionItem* item =
-      [[[EncryptionItem alloc] initWithType:type] autorelease];
+  EncryptionItem* item = [[EncryptionItem alloc] initWithType:type];
   item.text = text;
   item.accessoryType = checked ? MDCCollectionViewCellAccessoryCheckmark
                                : MDCCollectionViewCellAccessoryNone;

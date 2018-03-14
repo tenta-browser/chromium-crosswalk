@@ -42,6 +42,7 @@ public class LoadUrlParams {
     boolean mShouldReplaceCurrentEntry;
     long mIntentReceivedTimestamp;
     boolean mHasUserGesture;
+    boolean mShouldClearHistoryList;
 
     /**
      * Creates an instance with default page transition type.
@@ -228,14 +229,14 @@ public class LoadUrlParams {
     }
 
     /**
-     * @return the referrer of this load
+     * Sets the referrer of this load.
      */
     public void setReferrer(Referrer referrer) {
         mReferrer = referrer;
     }
 
     /**
-     * Sets the referrer of this load.
+     * @return the referrer of this load.
      */
     public Referrer getReferrer() {
         return mReferrer;
@@ -466,6 +467,16 @@ public class LoadUrlParams {
      */
     public boolean getHasUserGesture() {
         return mHasUserGesture;
+    }
+
+    /** Sets whether session history should be cleared once the navigation commits. */
+    public void setShouldClearHistoryList(boolean shouldClearHistoryList) {
+        mShouldClearHistoryList = shouldClearHistoryList;
+    }
+
+    /** Returns whether session history should be cleared once the navigation commits. */
+    public boolean getShouldClearHistoryList() {
+        return mShouldClearHistoryList;
     }
 
     public boolean isBaseUrlDataScheme() {

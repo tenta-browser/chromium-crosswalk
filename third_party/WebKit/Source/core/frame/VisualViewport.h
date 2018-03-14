@@ -33,10 +33,11 @@
 
 #include <memory>
 #include "core/CoreExport.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "platform/geometry/FloatRect.h"
 #include "platform/geometry/FloatSize.h"
 #include "platform/geometry/IntSize.h"
+#include "platform/graphics/CompositorElementId.h"
 #include "platform/graphics/GraphicsLayerClient.h"
 #include "platform/scroll/ScrollableArea.h"
 #include "public/platform/WebScrollbar.h"
@@ -59,8 +60,8 @@ class Page;
 // Represents the visual viewport the user is currently seeing the page through.
 // This class corresponds to the InnerViewport on the compositor. It is a
 // ScrollableArea; it's offset is set through the GraphicsLayer <-> CC sync
-// mechanisms. Its contents is the page's main FrameView, which corresponds to
-// the outer viewport. The inner viewport is always contained in the outer
+// mechanisms. Its contents is the page's main LocalFrameView, which corresponds
+// to the outer viewport. The inner viewport is always contained in the outer
 // viewport and can pan within it.
 //
 // When attached, the tree will look like this:
@@ -91,7 +92,7 @@ class CORE_EXPORT VisualViewport final
   static VisualViewport* Create(Page& host) { return new VisualViewport(host); }
   ~VisualViewport() override;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   void CreateLayerTree();
   void AttachLayerTree(GraphicsLayer*);
@@ -147,7 +148,7 @@ class CORE_EXPORT VisualViewport final
   // The viewport rect relative to the document origin, in partial CSS pixels.
   FloatRect VisibleRectInDocument() const;
 
-  // Convert the given rect in the main FrameView's coordinates into a rect
+  // Convert the given rect in the main LocalFrameView's coordinates into a rect
   // in the viewport. The given and returned rects are in CSS pixels, meaning
   // scale isn't applied.
   FloatPoint ViewportCSSPixelsToRootFrame(const FloatPoint&) const;
@@ -157,12 +158,12 @@ class CORE_EXPORT VisualViewport final
   IntPoint ClampDocumentOffsetAtScale(const IntPoint& offset, float scale);
 
   // FIXME: This is kind of a hack. Ideally, we would just resize the
-  // viewports to account for browser controls. However, FrameView includes much
-  // more than just scrolling so we can't simply resize it without incurring
-  // all sorts of side-effects. Until we can seperate out the scrollability
-  // aspect from FrameView, we use this method to let VisualViewport make the
-  // necessary adjustments so that we don't incorrectly clamp scroll offsets
-  // coming from the compositor. crbug.com/422328
+  // viewports to account for browser controls. However, LocalFrameView includes
+  // much more than just scrolling so we can't simply resize it without
+  // incurring all sorts of side-effects. Until we can seperate out the
+  // scrollability aspect from LocalFrameView, we use this method to let
+  // VisualViewport make the necessary adjustments so that we don't incorrectly
+  // clamp scroll offsets coming from the compositor. crbug.com/422328
   void SetBrowserControlsAdjustment(float);
   float BrowserControlsAdjustment() const;
 
@@ -181,7 +182,7 @@ class CORE_EXPORT VisualViewport final
   IntPoint RootFrameToViewport(const IntPoint&) const;
 
   // ScrollableArea implementation
-  HostWindow* GetHostWindow() const override;
+  PlatformChromeClient* GetChromeClient() const override;
   bool ShouldUseIntegerScrollOffset() const override;
   void SetScrollOffset(const ScrollOffset&,
                        ScrollType,
@@ -200,8 +201,9 @@ class CORE_EXPORT VisualViewport final
   IntSize ContentsSize() const override;
   bool ScrollbarsCanBeActive() const override { return false; }
   IntRect ScrollableAreaBoundingBox() const override;
-  bool UserInputScrollable(ScrollbarOrientation) const override { return true; }
+  bool UserInputScrollable(ScrollbarOrientation) const override;
   bool ShouldPlaceVerticalScrollbarOnLeft() const override { return false; }
+  CompositorElementId GetCompositorElementId() const override;
   bool ScrollAnimatorEnabled() const override;
   void ScrollControlWasSetNeedsPaintInvalidation() override {}
   void UpdateScrollOffset(const ScrollOffset&, ScrollType) override;
@@ -209,19 +211,28 @@ class CORE_EXPORT VisualViewport final
   GraphicsLayer* LayerForScrolling() const override;
   GraphicsLayer* LayerForHorizontalScrollbar() const override;
   GraphicsLayer* LayerForVerticalScrollbar() const override;
-  FrameViewBase* GetFrameViewBase() override;
+  bool ScheduleAnimation() override;
   CompositorAnimationHost* GetCompositorAnimationHost() const override;
   CompositorAnimationTimeline* GetCompositorAnimationTimeline() const override;
   IntRect VisibleContentRect(
       IncludeScrollbarsInRect = kExcludeScrollbars) const override;
-  RefPtr<WebTaskRunner> GetTimerTaskRunner() const final;
+  scoped_refptr<WebTaskRunner> GetTimerTaskRunner() const final;
+
+  // VisualViewport scrolling may involve pinch zoom and gets routed through
+  // WebViewImpl explicitly rather than via ScrollingCoordinator::DidScroll
+  // since it needs to be set in tandem with the page scale delta.
+  void DidScroll(const gfx::ScrollOffset&) final { NOTREACHED(); }
 
   // Visual Viewport API implementation.
-  double ScrollLeft();
-  double ScrollTop();
-  double ClientWidth();
-  double ClientHeight();
-  double PageScale();
+  double OffsetLeft() const;
+  double OffsetTop() const;
+  double Width() const;
+  double Height() const;
+  double ScaleForVisualViewport() const;
+
+  // Used to calculate Width and Height above but do not update layout.
+  double VisibleWidthCSSPx() const;
+  double VisibleHeightCSSPx() const;
 
   // Used for gathering data on user pinch-zoom statistics.
   void UserDidChangeScale();
@@ -232,6 +243,8 @@ class CORE_EXPORT VisualViewport final
   // for viewing websites that are not optimized for mobile devices.
   bool ShouldDisableDesktopWorkarounds() const;
 
+  ScrollbarTheme& GetPageScrollbarTheme() const override;
+
  private:
   explicit VisualViewport(Page&);
 
@@ -239,14 +252,14 @@ class CORE_EXPORT VisualViewport final
 
   bool VisualViewportSuppliesScrollbars() const;
 
-  void UpdateStyleAndLayoutIgnorePendingStylesheets();
+  void UpdateStyleAndLayoutIgnorePendingStylesheets() const;
 
   void EnqueueScrollEvent();
   void EnqueueResizeEvent();
 
   // GraphicsLayerClient implementation.
   bool NeedsRepaint(const GraphicsLayer&) const {
-    ASSERT_NOT_REACHED();
+    NOTREACHED();
     return true;
   }
   IntRect ComputeInterestRect(const GraphicsLayer*, const IntRect&) const;
@@ -285,6 +298,7 @@ class CORE_EXPORT VisualViewport final
   float browser_controls_adjustment_;
   float max_page_scale_;
   bool track_pinch_zoom_stats_for_page_;
+  UniqueObjectId unique_id_;
 };
 
 }  // namespace blink

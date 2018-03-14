@@ -14,32 +14,48 @@
 
 namespace blink {
 
-// TODO(alancutter): This class will replace *StyleInterpolation and
-// Interpolation. For now it needs to distinguish itself during the refactor and
-// temporarily has an ugly name.
+// See the documentation of Interpolation for general information about this
+// class hierarchy.
+//
+// The InvalidatableInterpolation subclass stores the start and end keyframes as
+// PropertySpecificKeyframe objects.
+//
+// InvalidatableInterpolation uses conversion checkers and the interpolation
+// environment to respond to changes to the underlying property value during
+// interpolation.
+//
+// InvalidatableInterpolation is used to implement additive animations. During
+// the effect application phase of animation computation, the current animated
+// value of the property is applied to the element by calling the static
+// ApplyStack function with an ordered list of InvalidatableInterpolation
+// objects.
 class CORE_EXPORT InvalidatableInterpolation : public Interpolation {
  public:
-  static PassRefPtr<InvalidatableInterpolation> Create(
+  static scoped_refptr<InvalidatableInterpolation> Create(
       const PropertyHandle& property,
-      PassRefPtr<PropertySpecificKeyframe> start_keyframe,
-      PassRefPtr<PropertySpecificKeyframe> end_keyframe) {
-    return AdoptRef(new InvalidatableInterpolation(
+      scoped_refptr<PropertySpecificKeyframe> start_keyframe,
+      scoped_refptr<PropertySpecificKeyframe> end_keyframe) {
+    return base::AdoptRef(new InvalidatableInterpolation(
         property, std::move(start_keyframe), std::move(end_keyframe)));
   }
 
   const PropertyHandle& GetProperty() const final { return property_; }
-  virtual void Interpolate(int iteration, double fraction);
+  void Interpolate(int iteration, double fraction) override;
   bool DependsOnUnderlyingValue() const final;
   static void ApplyStack(const ActiveInterpolations&,
                          InterpolationEnvironment&);
 
-  virtual bool IsInvalidatableInterpolation() const { return true; }
+  bool IsInvalidatableInterpolation() const override { return true; }
+
+  const TypedInterpolationValue* GetCachedValueForTesting() const {
+    return cached_value_.get();
+  }
 
  private:
   InvalidatableInterpolation(
       const PropertyHandle& property,
-      PassRefPtr<PropertySpecificKeyframe> start_keyframe,
-      PassRefPtr<PropertySpecificKeyframe> end_keyframe)
+      scoped_refptr<PropertySpecificKeyframe> start_keyframe,
+      scoped_refptr<PropertySpecificKeyframe> end_keyframe)
       : Interpolation(),
         property_(property),
         interpolation_types_(nullptr),
@@ -76,8 +92,8 @@ class CORE_EXPORT InvalidatableInterpolation : public Interpolation {
   const PropertyHandle property_;
   mutable const InterpolationTypes* interpolation_types_;
   mutable size_t interpolation_types_version_;
-  RefPtr<PropertySpecificKeyframe> start_keyframe_;
-  RefPtr<PropertySpecificKeyframe> end_keyframe_;
+  scoped_refptr<PropertySpecificKeyframe> start_keyframe_;
+  scoped_refptr<PropertySpecificKeyframe> end_keyframe_;
   double current_fraction_;
   mutable bool is_conversion_cached_;
   mutable std::unique_ptr<PrimitiveInterpolation> cached_pair_conversion_;

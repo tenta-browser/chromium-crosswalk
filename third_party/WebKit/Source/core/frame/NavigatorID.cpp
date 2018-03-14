@@ -31,7 +31,9 @@
 
 #include "core/frame/NavigatorID.h"
 
-#if !OS(MACOSX) && !OS(WIN)
+#include "build/build_config.h"
+
+#if !defined(OS_MACOSX) && !defined(OS_WIN)
 #include <sys/utsname.h>
 #include "platform/wtf/ThreadSpecific.h"
 #include "platform/wtf/Threading.h"
@@ -50,20 +52,19 @@ String NavigatorID::appName() {
 String NavigatorID::appVersion() {
   // Version is everything in the user agent string past the "Mozilla/" prefix.
   const String& agent = userAgent();
-  return agent.Substring(agent.Find('/') + 1);
+  return agent.Substring(agent.find('/') + 1);
 }
 
-String NavigatorID::platform() {
-#if OS(MACOSX)
+String NavigatorID::platform() const {
+#if defined(OS_MACOSX)
   // Match Safari and Mozilla on Mac x86.
   return "MacIntel";
-#elif OS(WIN)
+#elif defined(OS_WIN)
   // Match Safari and Mozilla on Windows.
   return "Win32";
 #else  // Unix-like systems
   struct utsname osname;
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(ThreadSpecific<String>, platform_name,
-                                  new ThreadSpecific<String>());
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(ThreadSpecific<String>, platform_name, ());
   if (platform_name->IsNull()) {
     *platform_name =
         String(uname(&osname) >= 0 ? String(osname.sysname) + String(" ") +

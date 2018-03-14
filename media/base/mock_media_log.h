@@ -16,15 +16,20 @@
 // |outer| is the std::string searched for substring |sub|.
 #define CONTAINS_STRING(outer, sub) (std::string::npos != (outer).find(sub))
 
-// "media_log_" is expected to be a scoped_refptr<MockMediaLog>, optionally a
+// "media_log_" is expected to be a MockMediaLog, optionally a NiceMock or
 // StrictMock, in scope of the usage of this macro.
-#define EXPECT_MEDIA_LOG(x) EXPECT_CALL(*media_log_, DoAddEventLogString((x)))
+#define EXPECT_MEDIA_LOG(x) EXPECT_MEDIA_LOG_ON(media_log_, x)
+
+// |log| is expected to evaluate to a MockMediaLog, optionally a NiceMock or
+// StrictMock, in scope of the usage of this macro.
+#define EXPECT_MEDIA_LOG_ON(log, x) EXPECT_CALL((log), DoAddEventLogString((x)))
 
 namespace media {
 
 class MockMediaLog : public MediaLog {
  public:
   MockMediaLog();
+  ~MockMediaLog() override;
 
   MOCK_METHOD1(DoAddEventLogString, void(const std::string& event));
 
@@ -34,9 +39,6 @@ class MockMediaLog : public MediaLog {
   void AddEvent(std::unique_ptr<MediaLogEvent> event) override {
     DoAddEventLogString(MediaEventToLogString(*event));
   }
-
- protected:
-  virtual ~MockMediaLog();
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockMediaLog);

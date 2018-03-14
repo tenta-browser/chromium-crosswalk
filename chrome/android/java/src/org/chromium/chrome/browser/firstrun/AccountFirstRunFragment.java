@@ -6,7 +6,6 @@ package org.chromium.chrome.browser.firstrun;
 
 import android.app.Fragment;
 import android.os.Bundle;
-import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -40,7 +39,9 @@ public class AccountFirstRunFragment extends FirstRunPage implements AccountSign
     public void onViewCreated(View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        mView.init(getPageDelegate().getProfileDataCache(), this, new AccountSigninView.Listener() {
+        boolean isChildAccount = getProperties().getBoolean(IS_CHILD_ACCOUNT);
+        String forceAccountTo = getProperties().getString(FORCE_SIGNIN_ACCOUNT_TO);
+        AccountSigninView.Listener listener = new AccountSigninView.Listener() {
             @Override
             public void onAccountSelectionCanceled() {
                 getPageDelegate().refuseSignIn();
@@ -49,12 +50,13 @@ public class AccountFirstRunFragment extends FirstRunPage implements AccountSign
 
             @Override
             public void onNewAccount() {
-                getPageDelegate().openAccountAdder(AccountFirstRunFragment.this);
+                FirstRunUtils.openAccountAdder(AccountFirstRunFragment.this);
             }
 
             @Override
-            public void onAccountSelected(String accountName, boolean settingsClicked) {
-                getPageDelegate().acceptSignIn(accountName);
+            public void onAccountSelected(
+                    String accountName, boolean isDefaultAccount, boolean settingsClicked) {
+                getPageDelegate().acceptSignIn(accountName, isDefaultAccount);
                 if (settingsClicked) {
                     getPageDelegate().askToOpenSignInSettings();
                 }
@@ -67,14 +69,13 @@ public class AccountFirstRunFragment extends FirstRunPage implements AccountSign
                 // The user would have to go through the FRE again.
                 getPageDelegate().abortFirstRunExperience();
             }
-        });
+        };
 
-        mView.setIsChildAccount(getProperties().getBoolean(IS_CHILD_ACCOUNT));
-
-        String forcedAccountName =
-                getProperties().getString(FORCE_SIGNIN_ACCOUNT_TO);
-        if (!TextUtils.isEmpty(forcedAccountName)) {
-            mView.switchToForcedAccountMode(forcedAccountName);
+        if (forceAccountTo == null) {
+            mView.initFromSelectionPage(isChildAccount, this, listener);
+        } else {
+            mView.initFromConfirmationPage(isChildAccount, forceAccountTo, false,
+                    AccountSigninView.UNDO_INVISIBLE, this, listener);
         }
 
         RecordUserAction.record("MobileFre.SignInShown");
@@ -86,14 +87,13 @@ public class AccountFirstRunFragment extends FirstRunPage implements AccountSign
 
     @Override
     public boolean interceptBackPressed() {
-        if (!mView.isSignedIn()
-                || (mView.isInForcedAccountMode()
-                            && !getProperties().getBoolean(PRESELECT_BUT_ALLOW_TO_CHANGE))) {
-            return super.interceptBackPressed();
+        boolean forceSignin = getProperties().getString(FORCE_SIGNIN_ACCOUNT_TO) != null;
+        if (!mView.isInConfirmationScreen()
+                || (forceSignin && !getProperties().getBoolean(PRESELECT_BUT_ALLOW_TO_CHANGE))) {
+            return false;
         }
 
-        if (mView.isInForcedAccountMode()
-                && getProperties().getBoolean(PRESELECT_BUT_ALLOW_TO_CHANGE)) {
+        if (forceSignin && getProperties().getBoolean(PRESELECT_BUT_ALLOW_TO_CHANGE)) {
             // Allow the user to choose the account or refuse to sign in,
             // and re-create this fragment.
             getProperties().remove(FORCE_SIGNIN_ACCOUNT_TO);

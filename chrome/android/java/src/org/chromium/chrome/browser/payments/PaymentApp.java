@@ -4,8 +4,10 @@
 
 package org.chromium.chrome.browser.payments;
 
+import org.chromium.payments.mojom.PaymentDetailsModifier;
 import org.chromium.payments.mojom.PaymentMethodData;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,10 +45,12 @@ public interface PaymentApp {
      *                         if PaymentRequest was not invoked from inside an iframe.
      * @param certificateChain The site certificate chain of the merchant. Null for localhost and
      *                         file on disk, which are secure origins without SSL.
+     * @param modifiers        The relevant payment details modifiers.
      * @param callback         The object that will receive the list of instruments.
      */
     void getInstruments(Map<String, PaymentMethodData> methodDataMap, String origin,
-            String iframeOrigin, @Nullable byte[][] certificateChain, InstrumentsCallback callback);
+            String iframeOrigin, @Nullable byte[][] certificateChain,
+            Map<String, PaymentDetailsModifier> modifiers, InstrumentsCallback callback);
 
     /**
      * Returns a list of all payment method names that this app supports. For example, ["visa",
@@ -69,10 +73,38 @@ public interface PaymentApp {
     boolean supportsMethodsAndData(Map<String, PaymentMethodData> methodDataMap);
 
     /**
-     * Returns the identifier for this payment app to be saved in user preferences. For example,
-     * this can be "autofill", "https://android.com/pay", or "com.example.app.ExamplePaymentApp".
+     * Gets the preferred related application Ids of this app. This app will be hidden if the
+     * preferred applications are exist. The return, for example, could be {"com.bobpay",
+     * "com.alicepay"}.
+     */
+    @Nullable
+    default Set<String> getPreferredRelatedApplicationIds() {
+        return null;
+    }
+
+    /**
+     * Gets the app Id this application can dedupe. The return, for example, could be
+     * "https://bobpay.com";
+     */
+    @Nullable
+    default URI getCanDedupedApplicationId() {
+        return null;
+    }
+
+    /**
+     * Returns the identifier for this payment app to be saved in user preferences. For
+     * example, this can be "autofill", "https://android.com/pay", or
+     * "com.example.app.ExamplePaymentApp".
      *
      * @return The identifier for this payment app.
      */
     String getAppIdentifier();
+
+    /**
+     * @return The resource identifier for the additional text that should be displayed to the user
+     * when selecting a payment instrument from this payment app or 0 if not needed.
+     */
+    default int getAdditionalAppTextResourceId() {
+        return 0;
+    }
 }

@@ -31,7 +31,6 @@
 #ifndef WebServiceWorkerContextProxy_h
 #define WebServiceWorkerContextProxy_h
 
-#include "public/platform/WebMessagePortChannel.h"
 #include "public/platform/modules/serviceworker/WebServiceWorker.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerRegistration.h"
 
@@ -39,12 +38,14 @@
 
 namespace blink {
 
+class MessagePortChannel;
 struct WebBackgroundFetchSettledFetch;
+struct WebCanMakePaymentEventData;
 class WebDataConsumerHandle;
 class WebServiceWorkerRequest;
 class WebString;
 struct WebNotificationData;
-struct WebPaymentAppRequest;
+struct WebPaymentRequestEventData;
 struct WebServiceWorkerClientInfo;
 struct WebServiceWorkerError;
 class WebURLResponse;
@@ -62,39 +63,38 @@ class WebServiceWorkerContextProxy {
 
   enum class BackgroundFetchState { kPending, kSucceeded, kFailed };
 
-  virtual void DispatchBackgroundFetchAbortEvent(int event_id,
-                                                 const WebString& tag) = 0;
+  virtual void DispatchBackgroundFetchAbortEvent(
+      int event_id,
+      const WebString& developer_id) = 0;
   virtual void DispatchBackgroundFetchClickEvent(
       int event_id,
-      const WebString& tag,
+      const WebString& developer_id,
       BackgroundFetchState status) = 0;
   virtual void DispatchBackgroundFetchFailEvent(
       int event_id,
-      const WebString& tag,
+      const WebString& developer_id,
       const WebVector<WebBackgroundFetchSettledFetch>& fetches) = 0;
   virtual void DispatchBackgroundFetchedEvent(
       int event_id,
-      const WebString& tag,
+      const WebString& developer_id,
+      const WebString& unique_id,
       const WebVector<WebBackgroundFetchSettledFetch>& fetches) = 0;
   virtual void DispatchExtendableMessageEvent(
       int event_id,
       const WebString& message,
       const WebSecurityOrigin& source_origin,
-      WebMessagePortChannelArray,
+      WebVector<MessagePortChannel>,
       const WebServiceWorkerClientInfo&) = 0;
   virtual void DispatchExtendableMessageEvent(
       int event_id,
       const WebString& message,
       const WebSecurityOrigin& source_origin,
-      WebMessagePortChannelArray,
+      WebVector<MessagePortChannel>,
       std::unique_ptr<WebServiceWorker::Handle>) = 0;
   virtual void DispatchInstallEvent(int event_id) = 0;
   virtual void DispatchFetchEvent(int fetch_event_id,
                                   const WebServiceWorkerRequest& web_request,
                                   bool navigation_preload_sent) = 0;
-  virtual void DispatchForeignFetchEvent(
-      int fetch_event_id,
-      const WebServiceWorkerRequest& web_request) = 0;
   virtual void DispatchNotificationClickEvent(int event_id,
                                               const WebString& notification_id,
                                               const WebNotificationData&,
@@ -115,8 +115,15 @@ class WebServiceWorkerContextProxy {
                                  const WebString& tag,
                                  LastChanceOption) = 0;
 
-  virtual void DispatchPaymentRequestEvent(int event_id,
-                                           const WebPaymentAppRequest&) = 0;
+  virtual void DispatchAbortPaymentEvent(int event_id) = 0;
+
+  virtual void DispatchCanMakePaymentEvent(
+      int event_id,
+      const WebCanMakePaymentEventData&) = 0;
+
+  virtual void DispatchPaymentRequestEvent(
+      int event_id,
+      const WebPaymentRequestEventData&) = 0;
 
   virtual void OnNavigationPreloadResponse(
       int fetch_event_id,
@@ -125,6 +132,11 @@ class WebServiceWorkerContextProxy {
   virtual void OnNavigationPreloadError(
       int fetch_event_id,
       std::unique_ptr<WebServiceWorkerError>) = 0;
+  virtual void OnNavigationPreloadComplete(int fetch_event_id,
+                                           double completion_time,
+                                           int64_t encoded_data_length,
+                                           int64_t encoded_body_length,
+                                           int64_t decoded_body_length) = 0;
 };
 
 }  // namespace blink

@@ -5,6 +5,9 @@
 #ifndef CHROME_BROWSER_UI_BROWSER_WINDOW_H_
 #define CHROME_BROWSER_UI_BROWSER_WINDOW_H_
 
+#include <string>
+#include <vector>
+
 #include "base/callback_forward.h"
 #include "build/build_config.h"
 #include "chrome/browser/lifetime/browser_close_manager.h"
@@ -12,6 +15,7 @@
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/bookmarks/bookmark_bar.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_bubble_type.h"
 #include "chrome/browser/ui/sync/one_click_signin_sync_starter.h"
 #include "chrome/common/features.h"
@@ -22,17 +26,18 @@
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/native_widget_types.h"
 
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/arc/intent_helper/arc_navigation_throttle.h"
+#endif  // defined(OS_CHROMEOS)
+
 class Browser;
 class DownloadShelf;
 class ExclusiveAccessContext;
 class FindBar;
 class GURL;
 class LocationBar;
-class Profile;
 class StatusBubble;
 class ToolbarActionsBar;
-
-struct WebApplicationInfo;
 
 namespace autofill {
 class SaveCardBubbleController;
@@ -54,10 +59,6 @@ namespace gfx {
 class Rect;
 class Size;
 }
-
-namespace security_state {
-struct SecurityInfo;
-}  // namespace security_state
 
 namespace signin_metrics {
 enum class AccessPoint;
@@ -236,24 +237,19 @@ class BrowserWindow : public ui::BaseWindow {
   // Shows the Update Recommended dialog box.
   virtual void ShowUpdateChromeDialog() = 0;
 
+#if defined(OS_CHROMEOS)
+  // Shows the intent picker bubble. |app_info| contains the app candidates to
+  // display and |callback| gives access so we can redirect the user (if needed)
+  // and store UMA metrics.
+  virtual void ShowIntentPickerBubble(
+      std::vector<arc::ArcNavigationThrottle::AppInfo> app_info,
+      IntentPickerResponse callback) = 0;
+  virtual void SetIntentPickerViewVisibility(bool visible) = 0;
+#endif  // defined(OS_CHROMEOS)
+
   // Shows the Bookmark bubble. |url| is the URL being bookmarked,
   // |already_bookmarked| is true if the url is already bookmarked.
   virtual void ShowBookmarkBubble(const GURL& url, bool already_bookmarked) = 0;
-
-  // Callback type used with the ShowBookmarkAppBubble() method. The boolean
-  // parameter is true when the user accepts the dialog. The WebApplicationInfo
-  // parameter contains the WebApplicationInfo as edited by the user.
-  typedef base::Callback<void(bool, const WebApplicationInfo&)>
-      ShowBookmarkAppBubbleCallback;
-
-  // Shows the Bookmark App bubble.
-  // See Extension::InitFromValueFlags::FROM_BOOKMARK for a description of
-  // bookmark apps.
-  //
-  // |web_app_info| is the WebApplicationInfo being converted into an app.
-  virtual void ShowBookmarkAppBubble(
-      const WebApplicationInfo& web_app_info,
-      const ShowBookmarkAppBubbleCallback& callback) = 0;
 
   // Shows the "Save credit card" bubble.
   virtual autofill::SaveCardBubbleView* ShowSaveCreditCardBubble(
@@ -303,16 +299,6 @@ class BrowserWindow : public ui::BaseWindow {
   // ThemeService calls this when a user has changed their theme, indicating
   // that it's time to redraw everything.
   virtual void UserChangedTheme() = 0;
-
-  // Shows Page Info using the specified information. |virtual_url|
-  // is the virtual url of the page/frame the info applies to, |ssl| is the SSL
-  // information for that page/frame. If |show_history| is true, a section
-  // showing how many times that URL has been visited is added to the page info.
-  virtual void ShowPageInfo(
-      Profile* profile,
-      content::WebContents* web_contents,
-      const GURL& virtual_url,
-      const security_state::SecurityInfo& security_info) = 0;
 
   // Shows the app menu (for accessibility).
   virtual void ShowAppMenu() = 0;

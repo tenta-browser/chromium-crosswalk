@@ -25,28 +25,28 @@
 
 #include "core/layout/LayoutTreeAsText.h"
 
-#include "core/HTMLNames.h"
-#include "core/css/StylePropertySet.h"
+#include "core/css/CSSPropertyValueSet.h"
 #include "core/dom/Document.h"
 #include "core/dom/PseudoElement.h"
 #include "core/editing/FrameSelection.h"
-#include "core/frame/FrameView.h"
+#include "core/editing/VisibleSelection.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/html/HTMLElement.h"
+#include "core/html_names.h"
 #include "core/layout/LayoutBlockFlow.h"
 #include "core/layout/LayoutDetailsMarker.h"
+#include "core/layout/LayoutEmbeddedContent.h"
 #include "core/layout/LayoutFileUploadControl.h"
 #include "core/layout/LayoutInline.h"
 #include "core/layout/LayoutListItem.h"
 #include "core/layout/LayoutListMarker.h"
-#include "core/layout/LayoutPart.h"
 #include "core/layout/LayoutTableCell.h"
 #include "core/layout/LayoutView.h"
 #include "core/layout/api/LayoutViewItem.h"
-#include "core/layout/compositing/CompositedLayerMapping.h"
 #include "core/layout/line/InlineTextBox.h"
-#include "core/layout/svg/LayoutSVGGradientStop.h"
+#include "core/layout/ng/layout_ng_list_item.h"
 #include "core/layout/svg/LayoutSVGImage.h"
 #include "core/layout/svg/LayoutSVGInline.h"
 #include "core/layout/svg/LayoutSVGInlineText.h"
@@ -56,6 +56,7 @@
 #include "core/layout/svg/SVGLayoutTreeAsText.h"
 #include "core/page/PrintContext.h"
 #include "core/paint/PaintLayer.h"
+#include "core/paint/compositing/CompositedLayerMapping.h"
 #include "platform/LayoutUnit.h"
 #include "platform/wtf/HexNumber.h"
 #include "platform/wtf/Vector.h"
@@ -67,34 +68,34 @@ using namespace HTMLNames;
 
 static void PrintBorderStyle(TextStream& ts, const EBorderStyle border_style) {
   switch (border_style) {
-    case kBorderStyleNone:
+    case EBorderStyle::kNone:
       ts << "none";
       break;
-    case kBorderStyleHidden:
+    case EBorderStyle::kHidden:
       ts << "hidden";
       break;
-    case kBorderStyleInset:
+    case EBorderStyle::kInset:
       ts << "inset";
       break;
-    case kBorderStyleGroove:
+    case EBorderStyle::kGroove:
       ts << "groove";
       break;
-    case kBorderStyleRidge:
+    case EBorderStyle::kRidge:
       ts << "ridge";
       break;
-    case kBorderStyleOutset:
+    case EBorderStyle::kOutset:
       ts << "outset";
       break;
-    case kBorderStyleDotted:
+    case EBorderStyle::kDotted:
       ts << "dotted";
       break;
-    case kBorderStyleDashed:
+    case EBorderStyle::kDashed:
       ts << "dashed";
       break;
-    case kBorderStyleSolid:
+    case EBorderStyle::kSolid:
       ts << "solid";
       break;
-    case kBorderStyleDouble:
+    case EBorderStyle::kDouble:
       ts << "double";
       break;
   }
@@ -218,7 +219,7 @@ void LayoutTreeAsText::WriteLayoutObject(TextStream& ts,
         ts << o.ResolveColor(CSSPropertyBorderTopColor) << ")";
       }
 
-      if (o.Style()->BorderRight() != prev_border) {
+      if (!o.Style()->BorderRightEquals(prev_border)) {
         prev_border = o.Style()->BorderRight();
         if (!box.BorderRight()) {
           ts << " none";
@@ -229,7 +230,7 @@ void LayoutTreeAsText::WriteLayoutObject(TextStream& ts,
         }
       }
 
-      if (o.Style()->BorderBottom() != prev_border) {
+      if (!o.Style()->BorderBottomEquals(prev_border)) {
         prev_border = box.Style()->BorderBottom();
         if (!box.BorderBottom()) {
           ts << " none";
@@ -240,7 +241,7 @@ void LayoutTreeAsText::WriteLayoutObject(TextStream& ts,
         }
       }
 
-      if (o.Style()->BorderLeft() != prev_border) {
+      if (!o.Style()->BorderLeftEquals(prev_border)) {
         prev_border = o.Style()->BorderLeft();
         if (!box.BorderLeft()) {
           ts << " none";
@@ -450,10 +451,6 @@ void Write(TextStream& ts,
     Write(ts, ToLayoutSVGShape(o), indent);
     return;
   }
-  if (o.IsSVGGradientStop()) {
-    WriteSVGGradientStop(ts, ToLayoutSVGGradientStop(o), indent);
-    return;
-  }
   if (o.IsSVGResourceContainer()) {
     WriteSVGResourceContainer(ts, o, indent);
     return;
@@ -508,16 +505,17 @@ void Write(TextStream& ts,
     Write(ts, *child, indent + 1, behavior);
   }
 
-  if (o.IsLayoutPart()) {
-    FrameView* frame_view = ToLayoutPart(o).ChildFrameView();
+  if (o.IsLayoutEmbeddedContent()) {
+    LocalFrameView* frame_view = ToLayoutEmbeddedContent(o).ChildFrameView();
     if (frame_view) {
       LayoutViewItem root_item = frame_view->GetLayoutViewItem();
       if (!root_item.IsNull()) {
         root_item.UpdateStyleAndLayout();
-        PaintLayer* layer = root_item.Layer();
-        if (layer)
-          LayoutTreeAsText::WriteLayers(ts, layer, layer, layer->Rect(),
-                                        indent + 1, behavior);
+        if (auto* layer = root_item.Layer()) {
+          LayoutTreeAsText::WriteLayers(
+              ts, layer, layer, layer->RectIgnoringNeedsPositionUpdate(),
+              indent + 1, behavior);
+        }
       }
     }
   }
@@ -546,7 +544,7 @@ static void Write(TextStream& ts,
 
   bool report_frame_scroll_info =
       layer.GetLayoutObject().IsLayoutView() &&
-      !RuntimeEnabledFeatures::rootLayerScrollingEnabled();
+      !RuntimeEnabledFeatures::RootLayerScrollingEnabled();
 
   if (report_frame_scroll_info) {
     LayoutView& layout_view = ToLayoutView(layer.GetLayoutObject());
@@ -658,7 +656,7 @@ void LayoutTreeAsText::WriteLayers(TextStream& ts,
   LayoutRect layer_bounds;
   ClipRect damage_rect, clip_rect_to_apply;
   layer->Clipper(PaintLayer::kDoNotUseGeometryMapper)
-      .CalculateRects(ClipRectsContext(root_layer, kUncachedClipRects),
+      .CalculateRects(ClipRectsContext(root_layer, kUncachedClipRects), nullptr,
                       paint_rect, layer_bounds, damage_rect,
                       clip_rect_to_apply);
 
@@ -673,9 +671,16 @@ void LayoutTreeAsText::WriteLayers(TextStream& ts,
           : layer->IntersectsDamageRect(layer_bounds, damage_rect.Rect(),
                                         offset_from_root);
 
-  if (layer->GetLayoutObject().IsLayoutPart() &&
-      ToLayoutPart(layer->GetLayoutObject()).IsThrottledFrameView())
+  if (layer->GetLayoutObject().IsLayoutEmbeddedContent() &&
+      ToLayoutEmbeddedContent(layer->GetLayoutObject()).IsThrottledFrameView())
     should_paint = false;
+
+#if DCHECK_IS_ON()
+  if (layer->NeedsPositionUpdate()) {
+    WriteIndent(ts, indent);
+    ts << " NEEDS POSITION UPDATE\n";
+  }
+#endif
 
   Vector<PaintLayerStackingNode*>* neg_list =
       layer->StackingNode()->NegZOrderList();
@@ -776,8 +781,8 @@ static void WriteSelection(TextStream& ts, const LayoutObject* o) {
   if (!frame)
     return;
 
-  VisibleSelection selection =
-      frame->Selection().ComputeVisibleSelectionInDOMTreeDeprecated();
+  const VisibleSelection& selection =
+      frame->Selection().ComputeVisibleSelectionInDOMTree();
   if (selection.IsCaret()) {
     ts << "caret: position " << selection.Start().ComputeEditingOffset()
        << " of " << NodePosition(selection.Start().AnchorNode());
@@ -788,8 +793,8 @@ static void WriteSelection(TextStream& ts, const LayoutObject* o) {
     ts << "selection start: position "
        << selection.Start().ComputeEditingOffset() << " of "
        << NodePosition(selection.Start().AnchorNode()) << "\n"
-       << "selection end:   position " << selection.end().ComputeEditingOffset()
-       << " of " << NodePosition(selection.end().AnchorNode()) << "\n";
+       << "selection end:   position " << selection.End().ComputeEditingOffset()
+       << " of " << NodePosition(selection.End().AnchorNode()) << "\n";
   }
 }
 
@@ -801,8 +806,9 @@ static String ExternalRepresentation(LayoutBox* layout_object,
     return ts.Release();
 
   PaintLayer* layer = layout_object->Layer();
-  LayoutTreeAsText::WriteLayers(ts, layer, layer, layer->Rect(), 0, behavior,
-                                marked_layer);
+  LayoutTreeAsText::WriteLayers(ts, layer, layer,
+                                layer->RectIgnoringNeedsPositionUpdate(), 0,
+                                behavior, marked_layer);
   WriteSelection(ts, layout_object);
   return ts.Release();
 }
@@ -816,18 +822,19 @@ String ExternalRepresentation(LocalFrame* frame,
   LayoutObject* layout_object = frame->ContentLayoutObject();
   if (!layout_object || !layout_object->IsBox())
     return String();
+  LayoutBox* layout_box = ToLayoutBox(layout_object);
 
   PrintContext print_context(frame);
   bool is_text_printing_mode = !!(behavior & kLayoutAsTextPrintingMode);
   if (is_text_printing_mode) {
-    FloatSize size(ToLayoutBox(layout_object)->Size());
-    print_context.begin(size.Width(), size.Height());
+    print_context.BeginPrintMode(layout_box->ClientWidth(),
+                                 layout_box->ClientHeight());
   }
 
   String representation = ExternalRepresentation(ToLayoutBox(layout_object),
                                                  behavior, marked_layer);
   if (is_text_printing_mode)
-    print_context.end();
+    print_context.EndPrintMode();
   return representation;
 }
 
@@ -878,10 +885,13 @@ String MarkerTextForListItem(Element* element) {
   element->GetDocument().UpdateStyleAndLayout();
 
   LayoutObject* layout_object = element->GetLayoutObject();
-  if (!layout_object || !layout_object->IsListItem())
-    return String();
-
-  return ToLayoutListItem(layout_object)->MarkerText();
+  if (layout_object) {
+    if (layout_object->IsListItem())
+      return ToLayoutListItem(layout_object)->MarkerText();
+    if (layout_object->IsLayoutNGListItem())
+      return ToLayoutNGListItem(layout_object)->MarkerTextWithoutSuffix();
+  }
+  return String();
 }
 
 }  // namespace blink

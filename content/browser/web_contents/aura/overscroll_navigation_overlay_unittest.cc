@@ -12,7 +12,7 @@
 #include "base/test/histogram_tester.h"
 #include "base/test/user_action_tester.h"
 #include "content/browser/frame_host/navigation_entry_impl.h"
-#include "content/browser/web_contents/aura/uma_navigation_type.h"
+#include "content/browser/web_contents/aura/types.h"
 #include "content/browser/web_contents/web_contents_view.h"
 #include "content/common/frame_messages.h"
 #include "content/common/view_messages.h"
@@ -55,22 +55,11 @@ class ImmediateLoadObserver : WebContentsObserver {
   }
   ~ImmediateLoadObserver() override {}
 
-  // TODO: remove this method when PlzNavigate is turned on by default.
   void DidStartNavigationToPendingEntry(const GURL& url,
                                         ReloadType reload_type) override {
-    if (!IsBrowserSideNavigationEnabled()) {
-      // Simulate immediate web page load.
-      contents_->TestSetIsLoading(false);
-      Observe(nullptr);
-    }
-  }
-
-  void DidStartNavigation(NavigationHandle* navigation_handlee) override {
-    if (IsBrowserSideNavigationEnabled()) {
-      // Simulate immediate web page load.
-      contents_->TestSetIsLoading(false);
-      Observe(nullptr);
-    }
+    // Simulate immediate web page load.
+    contents_->TestSetIsLoading(false);
+    Observe(nullptr);
   }
 
  private:
@@ -168,7 +157,7 @@ class OverscrollNavigationOverlayTest : public RenderViewHostImplTestHarness {
           kUmaStarted, source == OverscrollSource::TOUCHPAD ? BACK_TOUCHPAD
                                                             : BACK_TOUCHSCREEN,
           1);
-      EXPECT_EQ(GetOverlay()->direction_, OverscrollNavigationOverlay::BACK);
+      EXPECT_EQ(GetOverlay()->direction_, NavigationDirection::BACK);
       // Performs BACK navigation, sets image from layer_delegate_ on
       // image_delegate_.
       GetOverlay()->OnOverscrollCompleting();
@@ -186,7 +175,7 @@ class OverscrollNavigationOverlayTest : public RenderViewHostImplTestHarness {
                                             1);
       EXPECT_EQ(1, action_tester()->GetActionCount(kActionNavigatedBack));
     } else {
-      EXPECT_EQ(GetOverlay()->direction_, OverscrollNavigationOverlay::NONE);
+      EXPECT_EQ(GetOverlay()->direction_, NavigationDirection::NONE);
       histogram_tester()->ExpectTotalCount(kUmaStarted, 0);
     }
     GetOverlay()->owa_->SetOverscrollSourceForTesting(OverscrollSource::NONE);
@@ -261,10 +250,10 @@ class OverscrollNavigationOverlayTest : public RenderViewHostImplTestHarness {
 
     // Receive a paint update. This is necessary to make sure the size is set
     // correctly in RenderWidgetHostImpl.
-    ViewHostMsg_UpdateRect_Params params;
+    ViewHostMsg_ResizeOrRepaint_ACK_Params params;
     memset(&params, 0, sizeof(params));
     params.view_size = gfx::Size(10, 10);
-    ViewHostMsg_UpdateRect rect(test_rvh()->GetRoutingID(), params);
+    ViewHostMsg_ResizeOrRepaint_ACK rect(test_rvh()->GetRoutingID(), params);
     RenderViewHostTester::TestOnMessageReceived(test_rvh(), rect);
 
     // Reset pending flags for size/paint.
@@ -331,14 +320,14 @@ TEST_F(OverscrollNavigationOverlayTest, CancelNavigation) {
       OverscrollSource::TOUCHSCREEN);
   std::unique_ptr<aura::Window> window =
       GetOverlay()->CreateBackWindow(GetBackSlideWindowBounds());
-  EXPECT_EQ(GetOverlay()->direction_, OverscrollNavigationOverlay::BACK);
+  EXPECT_EQ(GetOverlay()->direction_, NavigationDirection::BACK);
 
   histogram_tester()->ExpectTotalCount(kUmaCancelled, 0);
   EXPECT_EQ(0, action_tester()->GetActionCount(kActionCancelledBack));
 
   GetOverlay()->OnOverscrollCancelled();
   EXPECT_FALSE(contents()->CrossProcessNavigationPending());
-  EXPECT_EQ(GetOverlay()->direction_, OverscrollNavigationOverlay::NONE);
+  EXPECT_EQ(GetOverlay()->direction_, NavigationDirection::NONE);
   histogram_tester()->ExpectTotalCount(kUmaCancelled, 1);
   histogram_tester()->ExpectBucketCount(kUmaCancelled, BACK_TOUCHSCREEN, 1);
   EXPECT_EQ(1, action_tester()->GetActionCount(kActionCancelledBack));
@@ -350,7 +339,7 @@ TEST_F(OverscrollNavigationOverlayTest, ForwardNavigation) {
   GetOverlay()->owa_->SetOverscrollSourceForTesting(OverscrollSource::TOUCHPAD);
   std::unique_ptr<aura::Window> window =
       GetOverlay()->CreateFrontWindow(GetBackSlideWindowBounds());
-  EXPECT_EQ(GetOverlay()->direction_, OverscrollNavigationOverlay::FORWARD);
+  EXPECT_EQ(GetOverlay()->direction_, NavigationDirection::FORWARD);
   histogram_tester()->ExpectTotalCount(kUmaStarted, 2);
   histogram_tester()->ExpectBucketCount(kUmaStarted, FORWARD_TOUCHPAD, 1);
 
@@ -373,7 +362,7 @@ TEST_F(OverscrollNavigationOverlayTest, ForwardNavigationCancelled) {
       OverscrollSource::TOUCHSCREEN);
   std::unique_ptr<aura::Window> window =
       GetOverlay()->CreateFrontWindow(GetBackSlideWindowBounds());
-  EXPECT_EQ(GetOverlay()->direction_, OverscrollNavigationOverlay::FORWARD);
+  EXPECT_EQ(GetOverlay()->direction_, NavigationDirection::FORWARD);
   histogram_tester()->ExpectTotalCount(kUmaStarted, 2);
   histogram_tester()->ExpectBucketCount(kUmaStarted, FORWARD_TOUCHSCREEN, 1);
 
@@ -381,7 +370,7 @@ TEST_F(OverscrollNavigationOverlayTest, ForwardNavigationCancelled) {
   EXPECT_EQ(0, action_tester()->GetActionCount(kActionCancelledForward));
 
   GetOverlay()->OnOverscrollCancelled();
-  EXPECT_EQ(GetOverlay()->direction_, OverscrollNavigationOverlay::NONE);
+  EXPECT_EQ(GetOverlay()->direction_, NavigationDirection::NONE);
   histogram_tester()->ExpectTotalCount(kUmaCancelled, 1);
   histogram_tester()->ExpectBucketCount(kUmaCancelled, FORWARD_TOUCHSCREEN, 1);
   EXPECT_EQ(1, action_tester()->GetActionCount(kActionCancelledForward));
@@ -394,12 +383,12 @@ TEST_F(OverscrollNavigationOverlayTest, CancelAfterSuccessfulNavigation) {
   GetOverlay()->owa_->SetOverscrollSourceForTesting(OverscrollSource::TOUCHPAD);
   std::unique_ptr<aura::Window> wrapper =
       GetOverlay()->CreateBackWindow(GetBackSlideWindowBounds());
-  EXPECT_EQ(GetOverlay()->direction_, OverscrollNavigationOverlay::BACK);
+  EXPECT_EQ(GetOverlay()->direction_, NavigationDirection::BACK);
   histogram_tester()->ExpectTotalCount(kUmaStarted, 2);
   histogram_tester()->ExpectBucketCount(kUmaStarted, BACK_TOUCHPAD, 2);
 
   GetOverlay()->OnOverscrollCancelled();
-  EXPECT_EQ(GetOverlay()->direction_, OverscrollNavigationOverlay::NONE);
+  EXPECT_EQ(GetOverlay()->direction_, NavigationDirection::NONE);
   histogram_tester()->ExpectTotalCount(kUmaCancelled, 1);
   histogram_tester()->ExpectBucketCount(kUmaCancelled, BACK_TOUCHPAD, 1);
   EXPECT_EQ(1, action_tester()->GetActionCount(kActionCancelledBack));
@@ -409,8 +398,9 @@ TEST_F(OverscrollNavigationOverlayTest, CancelAfterSuccessfulNavigation) {
 
   EXPECT_TRUE(contents()->CrossProcessNavigationPending());
   NavigationEntry* pending = contents()->GetController().GetPendingEntry();
-  contents()->GetPendingMainFrame()->SendNavigate(
-      pending->GetUniqueID(), false, pending->GetURL());
+  contents()->GetPendingMainFrame()->SendNavigateWithTransition(
+      pending->GetUniqueID(), false, pending->GetURL(),
+      pending->GetTransitionType());
   EXPECT_EQ(contents()->GetURL(), third());
 }
 
@@ -425,8 +415,9 @@ TEST_F(OverscrollNavigationOverlayTest, Navigation_PaintUpdate) {
   EXPECT_TRUE(GetOverlay()->web_contents());
 
   NavigationEntry* pending = contents()->GetController().GetPendingEntry();
-  contents()->GetPendingMainFrame()->SendNavigate(
-      pending->GetUniqueID(), false, pending->GetURL());
+  contents()->GetPendingMainFrame()->SendNavigateWithTransition(
+      pending->GetUniqueID(), false, pending->GetURL(),
+      pending->GetTransitionType());
   ReceivePaintUpdate();
 
   // Navigation was committed and the paint update was received - we should no
@@ -459,7 +450,7 @@ TEST_F(OverscrollNavigationOverlayTest, CloseDuringAnimation) {
   GetOverlay()->owa_->OnOverscrollModeChange(OVERSCROLL_NONE, OVERSCROLL_EAST,
                                              OverscrollSource::TOUCHSCREEN);
   GetOverlay()->owa_->OnOverscrollComplete(OVERSCROLL_EAST);
-  EXPECT_EQ(GetOverlay()->direction_, OverscrollNavigationOverlay::BACK);
+  EXPECT_EQ(GetOverlay()->direction_, NavigationDirection::BACK);
   OverscrollTestWebContents* test_web_contents =
       static_cast<OverscrollTestWebContents*>(web_contents());
   test_web_contents->set_is_being_destroyed(true);
@@ -505,9 +496,10 @@ TEST_F(OverscrollNavigationOverlayTest, OverlayWindowSwap) {
   int overscroll_complete_distance =
       root_window()->bounds().size().width() *
           content::GetOverscrollConfig(
-              content::OVERSCROLL_CONFIG_HORIZ_THRESHOLD_COMPLETE) +
+              content::OverscrollConfig::THRESHOLD_COMPLETE_TOUCHSCREEN) +
       ui::GestureConfiguration::GetInstance()
-          ->max_touch_move_in_pixels_for_click() + 1;
+          ->max_touch_move_in_pixels_for_click() +
+      1;
 
   // Start and complete a back navigation via a gesture.
   ui::test::EventGenerator generator(root_window());

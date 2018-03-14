@@ -9,15 +9,11 @@
 #include "base/bind.h"
 #include "base/environment.h"
 #include "base/files/file_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/nix/xdg_util.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
-#include "base/strings/string_split.h"
-#include "content/public/browser/browser_thread.h"
-
-using base::Environment;
-using content::BrowserThread;
+#include "base/task_scheduler/post_task.h"
+#include "base/threading/thread_restrictions.h"
 
 namespace {
 
@@ -49,8 +45,8 @@ bool OpenPrinterConfigDialog(const char* const* command) {
 // Detect the command based on the deskop environment and open the printer
 // manager dialog.
 void DetectAndOpenPrinterConfigDialog() {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
-  std::unique_ptr<Environment> env(Environment::Create());
+  base::AssertBlockingAllowed();
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
 
   bool opened = false;
   switch (base::nix::GetDesktopEnvironment(env.get())) {
@@ -61,6 +57,7 @@ void DetectAndOpenPrinterConfigDialog() {
     case base::nix::DESKTOP_ENVIRONMENT_KDE3:
     case base::nix::DESKTOP_ENVIRONMENT_KDE4:
     case base::nix::DESKTOP_ENVIRONMENT_KDE5:
+    case base::nix::DESKTOP_ENVIRONMENT_PANTHEON:
     case base::nix::DESKTOP_ENVIRONMENT_UNITY:
     case base::nix::DESKTOP_ENVIRONMENT_XFCE:
       opened = OpenPrinterConfigDialog(kSystemConfigPrinterCommand);
@@ -73,13 +70,14 @@ void DetectAndOpenPrinterConfigDialog() {
   LOG_IF(ERROR, !opened) << "Failed to open printer manager dialog ";
 }
 
-}  // anonymous namespace
+}  // namespace
 
 namespace printing {
 
 void PrinterManagerDialog::ShowPrinterManagerDialog() {
-  BrowserThread::PostTask(BrowserThread::FILE, FROM_HERE,
-                          base::Bind(&DetectAndOpenPrinterConfigDialog));
+  base::PostTaskWithTraits(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
+      base::BindOnce(&DetectAndOpenPrinterConfigDialog));
 }
 
 }  // namespace printing

@@ -1,112 +1,191 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "platform/feature_policy/FeaturePolicy.h"
 
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/json/JSONValues.h"
 #include "platform/network/HTTPParsers.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/weborigin/SecurityOrigin.h"
+#include "platform/wtf/ASCIICType.h"
+#include "platform/wtf/BitVector.h"
 #include "platform/wtf/PtrUtil.h"
+#include "platform/wtf/text/ParsingUtilities.h"
+#include "platform/wtf/text/StringUTF8Adaptor.h"
+#include "url/gurl.h"
 
 namespace blink {
 
-WebFeaturePolicyFeature GetWebFeaturePolicyFeature(const String& feature) {
-  if (feature == "fullscreen")
-    return WebFeaturePolicyFeature::kFullscreen;
-  if (feature == "payment")
-    return WebFeaturePolicyFeature::kPayment;
-  if (feature == "vibrate")
-    return WebFeaturePolicyFeature::kVibrate;
-  if (RuntimeEnabledFeatures::featurePolicyExperimentalFeaturesEnabled()) {
-    if (feature == "camera")
-      return WebFeaturePolicyFeature::kCamera;
-    if (feature == "eme")
-      return WebFeaturePolicyFeature::kEme;
-    if (feature == "microphone")
-      return WebFeaturePolicyFeature::kMicrophone;
-    if (feature == "speaker")
-      return WebFeaturePolicyFeature::kSpeaker;
-    if (feature == "cookie")
-      return WebFeaturePolicyFeature::kDocumentCookie;
-    if (feature == "domain")
-      return WebFeaturePolicyFeature::kDocumentDomain;
-    if (feature == "docwrite")
-      return WebFeaturePolicyFeature::kDocumentWrite;
-    if (feature == "geolocation")
-      return WebFeaturePolicyFeature::kGeolocation;
-    if (feature == "midi")
-      return WebFeaturePolicyFeature::kMidiFeature;
-    if (feature == "notifications")
-      return WebFeaturePolicyFeature::kNotifications;
-    if (feature == "push")
-      return WebFeaturePolicyFeature::kPush;
-    if (feature == "sync-script")
-      return WebFeaturePolicyFeature::kSyncScript;
-    if (feature == "sync-xhr")
-      return WebFeaturePolicyFeature::kSyncXHR;
-    if (feature == "webrtc")
-      return WebFeaturePolicyFeature::kWebRTC;
+namespace {
+
+// TODO(loonybear): Deprecate the methods in this namesapce when deprecating old
+// allow syntax.
+bool IsValidOldAllowSyntax(const String& policy,
+                           scoped_refptr<SecurityOrigin> src_origin) {
+  // Old syntax enable all features on src_origin, If src_origin does not exist
+  // (example, http header does not have a src_origin), then the syntax cannot
+  // be valid.
+  if (!src_origin)
+    return false;
+  // allow = "feature" is also supported by new syntax.
+  if (!policy.Contains(' '))
+    return false;
+  // Old syntax only allows whitespace as valid delimiter.
+  if (policy.Contains(';') || policy.Contains(','))
+    return false;
+  // An empty policy is also allowed in the new syntax.
+  if (policy.ContainsOnlyWhitespace())
+    return false;
+  // Old syntax does not support specifying wildcards / origins for any feature.
+  if (policy.Contains("self") || policy.Contains("src") ||
+      policy.Contains("none") || policy.Contains("*")) {
+    return false;
   }
-  return WebFeaturePolicyFeature::kNotFound;
+
+  // Verify that the policy follows this syntax:
+  //     allow = "name1 name2 name3 ...", name* = 1*( ALPHA / DIGIT / "-" )
+  auto IsValidFeatureNameCharacter = [](auto c) {
+    return IsASCIIAlphanumeric(c) || c == '-';
+  };
+
+  for (unsigned i = 0; i < policy.length(); i++) {
+    if (!IsValidFeatureNameCharacter(policy[i]) && !IsASCIISpace(policy[i]))
+      return false;
+  }
+  return true;
 }
 
-WebParsedFeaturePolicy ParseFeaturePolicy(const String& policy,
-                                          RefPtr<SecurityOrigin> origin,
-                                          Vector<String>* messages) {
-  Vector<WebParsedFeaturePolicyDeclaration> whitelists;
+ParsedFeaturePolicy ParseOldAllowSyntax(const String& policy,
+                                        const url::Origin& origin,
+                                        Vector<String>* messages,
+                                        const FeatureNameMap& feature_names) {
+  ParsedFeaturePolicy whitelists;
+  if (messages) {
+    messages->push_back(
+        "The old syntax (allow=\"feature1 feature2 feature3 ...\") will soon "
+        "be deprecated");
+  }
+  Vector<String> tokens;
+  policy.Split(' ', tokens);
+  for (const String& token : tokens) {
+    if (!feature_names.Contains(token)) {
+      if (messages)
+        messages->push_back("Unrecognized feature: '" + token + "'.");
+      continue;
+    }
+    ParsedFeaturePolicyDeclaration whitelist;
+    whitelist.feature = feature_names.at(token);
+    whitelist.origins = {origin};
+    whitelists.push_back(whitelist);
+  }
+  return whitelists;
+}
 
-  // Use a reasonable parse depth limit; the actual maximum depth is only going
-  // to be 4 for a valid policy, but we'll give the featurePolicyParser a chance
-  // to report more specific errors, unless the string is really invalid.
-  std::unique_ptr<JSONArray> policy_items = ParseJSONHeader(policy, 50);
-  if (!policy_items) {
-    if (messages)
-      messages->push_back("Unable to parse header.");
-    return whitelists;
+}  // namespace
+
+ParsedFeaturePolicy ParseFeaturePolicyHeader(
+    const String& policy,
+    scoped_refptr<SecurityOrigin> origin,
+    Vector<String>* messages) {
+  return ParseFeaturePolicy(policy, origin, nullptr, messages,
+                            GetDefaultFeatureNameMap());
+}
+
+ParsedFeaturePolicy ParseFeaturePolicyAttribute(
+    const String& policy,
+    scoped_refptr<SecurityOrigin> self_origin,
+    scoped_refptr<SecurityOrigin> src_origin,
+    Vector<String>* messages,
+    bool* old_syntax) {
+  return ParseFeaturePolicy(policy, self_origin, src_origin, messages,
+                            GetDefaultFeatureNameMap(), old_syntax);
+}
+
+ParsedFeaturePolicy ParseFeaturePolicy(
+    const String& policy,
+    scoped_refptr<SecurityOrigin> self_origin,
+    scoped_refptr<SecurityOrigin> src_origin,
+    Vector<String>* messages,
+    const FeatureNameMap& feature_names,
+    bool* old_syntax) {
+  // Temporarily supporting old allow syntax:
+  //     allow = "feature1 feature2 feature3 ... "
+  // TODO(loonybear): depracate this old syntax in the future.
+  if (IsValidOldAllowSyntax(policy, src_origin)) {
+    if (old_syntax)
+      *old_syntax = true;
+    return ParseOldAllowSyntax(policy, src_origin->ToUrlOrigin(), messages,
+                               feature_names);
   }
 
-  for (size_t i = 0; i < policy_items->size(); ++i) {
-    JSONObject* item = JSONObject::Cast(policy_items->at(i));
-    if (!item) {
-      if (messages)
-        messages->push_back("Policy is not an object.");
-      continue;  // Array element is not an object; skip
-    }
+  ParsedFeaturePolicy whitelists;
+  BitVector features_specified(
+      static_cast<int>(FeaturePolicyFeature::LAST_FEATURE));
 
-    for (size_t j = 0; j < item->size(); ++j) {
-      JSONObject::Entry entry = item->at(j);
-      WebFeaturePolicyFeature feature = GetWebFeaturePolicyFeature(entry.first);
-      if (feature == WebFeaturePolicyFeature::kNotFound)
-        continue;  // Unrecognized feature; skip
-      JSONArray* targets = JSONArray::Cast(entry.second);
-      if (!targets) {
+  // RFC2616, section 4.2 specifies that headers appearing multiple times can be
+  // combined with a comma. Walk the header string, and parse each comma
+  // separated chunk as a separate header.
+  Vector<String> policy_items;
+  // policy_items = [ policy *( "," [ policy ] ) ]
+  policy.Split(',', policy_items);
+  for (const String& item : policy_items) {
+    Vector<String> entry_list;
+    // entry_list = [ entry *( ";" [ entry ] ) ]
+    item.Split(';', entry_list);
+    for (const String& entry : entry_list) {
+      // Split removes extra whitespaces by default
+      //     "name value1 value2" or "name".
+      Vector<String> tokens;
+      entry.Split(' ', tokens);
+      // Empty policy. Skip.
+      if (tokens.IsEmpty())
+        continue;
+      if (!feature_names.Contains(tokens[0])) {
         if (messages)
-          messages->push_back("Whitelist is not an array of strings.");
+          messages->push_back("Unrecognized feature: '" + tokens[0] + "'.");
         continue;
       }
 
-      WebParsedFeaturePolicyDeclaration whitelist;
+      FeaturePolicyFeature feature = feature_names.at(tokens[0]);
+      // If a policy has already been specified for the current feature, drop
+      // the new policy.
+      if (features_specified.QuickGet(static_cast<int>(feature)))
+        continue;
+
+      ParsedFeaturePolicyDeclaration whitelist;
       whitelist.feature = feature;
-      Vector<WebSecurityOrigin> origins;
-      String target_string;
-      for (size_t j = 0; j < targets->size(); ++j) {
-        if (targets->at(j)->AsString(&target_string)) {
-          if (DeprecatedEqualIgnoringCase(target_string, "self")) {
-            if (!origin->IsUnique())
-              origins.push_back(origin);
-          } else if (target_string == "*") {
-            whitelist.matches_all_origins = true;
-          } else {
-            WebSecurityOrigin target_origin =
-                WebSecurityOrigin::CreateFromString(target_string);
-            if (!target_origin.IsNull() && !target_origin.IsUnique())
-              origins.push_back(target_origin);
-          }
+      features_specified.QuickSet(static_cast<int>(feature));
+      std::vector<url::Origin> origins;
+      // If a policy entry has no (optional) values (e,g,
+      // allow="feature_name1; feature_name2 value"), enable the feature for:
+      //     a. if header policy (i.e., src_origin does not exist), self_origin;
+      //     or
+      //     b. if allow attribute (i.e., src_origin exists), src_origin.
+      if (tokens.size() == 1) {
+        origins.push_back(src_origin ? src_origin->ToUrlOrigin()
+                                     : self_origin->ToUrlOrigin());
+      }
+
+      for (size_t i = 1; i < tokens.size(); i++) {
+        if (EqualIgnoringASCIICase(tokens[i], "'self'")) {
+          origins.push_back(self_origin->ToUrlOrigin());
+        } else if (src_origin && EqualIgnoringASCIICase(tokens[i], "'src'")) {
+          // Only iframe allow attribute can define src origin.
+          // When parsing feature policy header, src is disallowed and
+          // src_origin = nullptr.
+          origins.push_back(src_origin->ToUrlOrigin());
+        } else if (EqualIgnoringASCIICase(tokens[i], "'none'")) {
+          continue;
+        } else if (tokens[i] == "*") {
+          whitelist.matches_all_origins = true;
+          break;
         } else {
-          if (messages)
-            messages->push_back("Whitelist is not an array of strings.");
+          url::Origin target_origin = url::Origin::Create(
+              GURL(StringUTF8Adaptor(tokens[i]).AsStringPiece()));
+          if (!target_origin.unique())
+            origins.push_back(target_origin);
+          else if (messages)
+            messages->push_back("Unrecognized origin: '" + tokens[i] + "'.");
         }
       }
       whitelist.origins = origins;
@@ -116,19 +195,57 @@ WebParsedFeaturePolicy ParseFeaturePolicy(const String& policy,
   return whitelists;
 }
 
-// TODO(lunalu): also take information of allowfullscreen and
-// allowpaymentrequest into account when constructing the whitelist.
-WebParsedFeaturePolicy GetContainerPolicyFromAllowedFeatures(
-    const WebVector<WebFeaturePolicyFeature>& features,
-    RefPtr<SecurityOrigin> origin) {
-  Vector<WebParsedFeaturePolicyDeclaration> whitelists;
-  for (const WebFeaturePolicyFeature feature : features) {
-    WebParsedFeaturePolicyDeclaration whitelist;
-    whitelist.feature = feature;
-    whitelist.origins = Vector<WebSecurityOrigin>(1UL, {origin});
-    whitelists.push_back(whitelist);
+bool IsSupportedInFeaturePolicy(FeaturePolicyFeature feature) {
+  if (!RuntimeEnabledFeatures::FeaturePolicyEnabled())
+    return false;
+  switch (feature) {
+    case FeaturePolicyFeature::kFullscreen:
+    case FeaturePolicyFeature::kPayment:
+    case FeaturePolicyFeature::kUsb:
+    case FeaturePolicyFeature::kWebVr:
+      return true;
+    case FeaturePolicyFeature::kSyncXHR:
+    case FeaturePolicyFeature::kVibrate:
+      return RuntimeEnabledFeatures::FeaturePolicyExperimentalFeaturesEnabled();
+    default:
+      return false;
   }
-  return whitelists;
+}
+
+const FeatureNameMap& GetDefaultFeatureNameMap() {
+  DEFINE_STATIC_LOCAL(FeatureNameMap, default_feature_name_map, ());
+  if (default_feature_name_map.IsEmpty()) {
+    default_feature_name_map.Set("fullscreen",
+                                 FeaturePolicyFeature::kFullscreen);
+    default_feature_name_map.Set("payment", FeaturePolicyFeature::kPayment);
+    default_feature_name_map.Set("usb", FeaturePolicyFeature::kUsb);
+    default_feature_name_map.Set("camera", FeaturePolicyFeature::kCamera);
+    default_feature_name_map.Set("encrypted-media",
+                                 FeaturePolicyFeature::kEncryptedMedia);
+    default_feature_name_map.Set("microphone",
+                                 FeaturePolicyFeature::kMicrophone);
+    default_feature_name_map.Set("speaker", FeaturePolicyFeature::kSpeaker);
+    default_feature_name_map.Set("geolocation",
+                                 FeaturePolicyFeature::kGeolocation);
+    default_feature_name_map.Set("midi", FeaturePolicyFeature::kMidiFeature);
+    default_feature_name_map.Set("vr", FeaturePolicyFeature::kWebVr);
+    if (RuntimeEnabledFeatures::FeaturePolicyExperimentalFeaturesEnabled()) {
+      default_feature_name_map.Set("vibrate", FeaturePolicyFeature::kVibrate);
+      default_feature_name_map.Set("cookie",
+                                   FeaturePolicyFeature::kDocumentCookie);
+      default_feature_name_map.Set("domain",
+                                   FeaturePolicyFeature::kDocumentDomain);
+      default_feature_name_map.Set("docwrite",
+                                   FeaturePolicyFeature::kDocumentWrite);
+      default_feature_name_map.Set("sync-script",
+                                   FeaturePolicyFeature::kSyncScript);
+      default_feature_name_map.Set("sync-xhr", FeaturePolicyFeature::kSyncXHR);
+    }
+    if (RuntimeEnabledFeatures::FeaturePolicyAutoplayFeatureEnabled()) {
+      default_feature_name_map.Set("autoplay", FeaturePolicyFeature::kAutoplay);
+    }
+  }
+  return default_feature_name_map;
 }
 
 }  // namespace blink

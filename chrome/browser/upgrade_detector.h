@@ -7,12 +7,14 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/observer_list.h"
 #include "base/timer/timer.h"
-#include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/upgrade_observer.h"
 #include "ui/base/idle/idle.h"
 #include "ui/gfx/image/image.h"
 
 class PrefRegistrySimple;
+class UpgradeObserver;
 
 ///////////////////////////////////////////////////////////////////////////////
 // UpgradeDetector
@@ -27,6 +29,8 @@ class PrefRegistrySimple;
 class UpgradeDetector {
  public:
   // The Homeland Security Upgrade Advisory System.
+  // These values are logged in a histogram and shouldn't be renumbered or
+  // removed.
   enum UpgradeNotificationAnnoyanceLevel {
     UPGRADE_ANNOYANCE_NONE = 0,  // What? Me worry?
     UPGRADE_ANNOYANCE_LOW,       // Green.
@@ -34,7 +38,12 @@ class UpgradeDetector {
     UPGRADE_ANNOYANCE_HIGH,      // Red.
     UPGRADE_ANNOYANCE_SEVERE,    // Orange.
     UPGRADE_ANNOYANCE_CRITICAL,  // Red exclamation mark.
+    UPGRADE_ANNOYANCE_LAST = UPGRADE_ANNOYANCE_CRITICAL  // The last value
   };
+
+  // The number of UpgradeNotificationAnnoyanceLevel enum values.
+  static constexpr int kUpgradeNotificationAnnoyanceLevelCount =
+      UPGRADE_ANNOYANCE_LAST + 1;
 
   // Returns the singleton implementation instance.
   static UpgradeDetector* GetInstance();
@@ -79,6 +88,17 @@ class UpgradeDetector {
     return upgrade_notification_stage_;
   }
 
+  void AddObserver(UpgradeObserver* observer);
+
+  void RemoveObserver(UpgradeObserver* observer);
+
+  // Notifies that the current install is outdated. No details are expected.
+  void NotifyOutdatedInstall();
+
+  // Notifies that the current install is outdated and auto-update (AU) is
+  // disabled. No details are expected.
+  void NotifyOutdatedInstallNoAutoUpdate();
+
  protected:
   enum UpgradeAvailable {
     // If no update is available and current install is recent enough.
@@ -98,8 +118,25 @@ class UpgradeDetector {
 
   UpgradeDetector();
 
-  // Sends out UPGRADE_RECOMMENDED notification and set notify_upgrade_.
+  // Notifies that update is recommended and triggers different actions based
+  // on the update availability.
+  void NotifyUpgrade();
+
+  // Notifies that update is recommended.
   void NotifyUpgradeRecommended();
+
+  // Notifies that a critical update has been installed. No details are
+  // expected.
+  void NotifyCriticalUpgradeInstalled();
+
+  // The function that sends out a notification that lets the rest of the UI
+  // know we should notify the user that a new update is available to download
+  // over cellular connection.
+  void NotifyUpdateOverCellularAvailable();
+
+  // Notifies that the user's one time permission on update over cellular
+  // connection has been granted.
+  void NotifyUpdateOverCellularOneTimePermissionGranted();
 
   // Triggers a critical update, which starts a timer that checks the machine
   // idle state. Protected and virtual so that it could be overridden by tests.
@@ -136,6 +173,7 @@ class UpgradeDetector {
  private:
   FRIEND_TEST_ALL_PREFIXES(AppMenuModelTest, Basics);
   FRIEND_TEST_ALL_PREFIXES(SystemTrayClientTest, UpdateTrayIcon);
+  friend class UpgradeMetricsProviderTest;
 
   // Initiates an Idle check. See IdleCallback below.
   void CheckIdle();
@@ -143,9 +181,6 @@ class UpgradeDetector {
   // The callback for the IdleCheck. Tells us whether Chrome has received any
   // input events since the specified time.
   void IdleCallback(ui::IdleState state);
-
-  // Triggers a global notification of the specified |type|.
-  void TriggerNotification(chrome::NotificationType type);
 
   // Whether any software updates are available (experiment updates are tracked
   // separately via additional member variables below).
@@ -174,6 +209,8 @@ class UpgradeDetector {
   // Whether we have waited long enough after detecting an upgrade (to see
   // is we should start nagging about upgrading).
   bool notify_upgrade_;
+
+  base::ObserverList<UpgradeObserver> observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(UpgradeDetector);
 };

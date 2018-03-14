@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "base/json/json_writer.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "components/autofill/core/browser/autofill_profile.h"
@@ -33,11 +34,14 @@ TEST(PaymentRequestDataUtilTest, GetPaymentAddressFromAutofillProfile) {
       "{\"addressLine\":[\"666 Erebus St.\",\"Apt 8\"],"
       "\"city\":\"Elysium\","
       "\"country\":\"US\","
+      "\"dependentLocality\":\"\","
+      "\"languageCode\":\"\","
       "\"organization\":\"Underworld\","
       "\"phone\":\"16502111111\","
       "\"postalCode\":\"91111\","
       "\"recipient\":\"John H. Doe\","
-      "\"region\":\"CA\"}",
+      "\"region\":\"CA\","
+      "\"sortingCode\":\"\"}",
       json_address);
 }
 
@@ -49,8 +53,7 @@ TEST(PaymentRequestDataUtilTest, GetBasicCardResponseFromAutofillCreditCard) {
   card.set_billing_address_id(address.guid());
   std::unique_ptr<base::DictionaryValue> response_value =
       payments::data_util::GetBasicCardResponseFromAutofillCreditCard(
-          card, base::ASCIIToUTF16("123"),
-          std::vector<autofill::AutofillProfile*>{&address}, "en-US")
+          card, base::ASCIIToUTF16("123"), address, "en-US")
           .ToDictionaryValue();
   std::string json_response;
   base::JSONWriter::Write(*response_value, &json_response);
@@ -59,36 +62,20 @@ TEST(PaymentRequestDataUtilTest, GetBasicCardResponseFromAutofillCreditCard) {
       "{\"addressLine\":[\"666 Erebus St.\",\"Apt 8\"],"
       "\"city\":\"Elysium\","
       "\"country\":\"US\","
+      "\"dependentLocality\":\"\","
+      "\"languageCode\":\"\","
       "\"organization\":\"Underworld\","
       "\"phone\":\"16502111111\","
       "\"postalCode\":\"91111\","
       "\"recipient\":\"John H. Doe\","
-      "\"region\":\"CA\"},"
+      "\"region\":\"CA\","
+      "\"sortingCode\":\"\"},"
       "\"cardNumber\":\"4111111111111111\","
       "\"cardSecurityCode\":\"123\","
       "\"cardholderName\":\"Test User\","
       "\"expiryMonth\":\"11\","
       "\"expiryYear\":\"2022\"}",
       json_response);
-}
-
-// Tests that the phone numbers are correctly formatted for the Payment
-// Response.
-TEST(PaymentRequestDataUtilTest, FormatPhoneForResponse) {
-  EXPECT_EQ("+15151231234", payments::data_util::FormatPhoneForResponse(
-                                "(515) 123-1234", "US"));
-  EXPECT_EQ("+15151231234", payments::data_util::FormatPhoneForResponse(
-                                "(1) 515-123-1234", "US"));
-  EXPECT_EQ("+33142685300",
-            payments::data_util::FormatPhoneForResponse("1 42 68 53 00", "FR"));
-}
-
-// Tests that the phone numbers are correctly formatted to display to the user.
-TEST(PaymentRequestDataUtilTest, FormatPhoneForDisplay) {
-  EXPECT_EQ("+1 515-123-1234",
-            payments::data_util::FormatPhoneForDisplay("5151231234", "US"));
-  EXPECT_EQ("+33 1 42 68 53 00",
-            payments::data_util::FormatPhoneForDisplay("142685300", "FR"));
 }
 
 }  // namespace data_util

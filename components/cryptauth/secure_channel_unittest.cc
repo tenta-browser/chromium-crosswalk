@@ -42,10 +42,26 @@ struct ReceivedMessage {
   std::string payload;
 };
 
-class TestObserver : public SecureChannel::Observer {
+class TestObserver final : public SecureChannel::Observer {
  public:
   TestObserver(SecureChannel* secure_channel)
       : secure_channel_(secure_channel) {}
+
+  const std::vector<SecureChannelStatusChange>& connection_status_changes() {
+    return connection_status_changes_;
+  }
+
+  const std::vector<ReceivedMessage>& received_messages() {
+    return received_messages_;
+  }
+
+  const std::vector<int>& sent_sequence_numbers() {
+    return sent_sequence_numbers_;
+  }
+
+  int num_gatt_services_unavailable_events() {
+    return num_gatt_services_unavailable_events_;
+  }
 
   // SecureChannel::Observer:
   void OnSecureChannelStatusChanged(
@@ -64,21 +80,54 @@ class TestObserver : public SecureChannel::Observer {
     received_messages_.push_back(ReceivedMessage(feature, payload));
   }
 
-  std::vector<SecureChannelStatusChange>& connection_status_changes() {
-    return connection_status_changes_;
+  void OnMessageSent(SecureChannel* secure_channel,
+                     int sequence_number) override {
+    DCHECK(secure_channel == secure_channel_);
+    sent_sequence_numbers_.push_back(sequence_number);
   }
 
-  std::vector<ReceivedMessage>& received_messages() {
-    return received_messages_;
+  void OnGattCharacteristicsNotAvailable() override {
+    ++num_gatt_services_unavailable_events_;
   }
 
  private:
   SecureChannel* secure_channel_;
   std::vector<SecureChannelStatusChange> connection_status_changes_;
   std::vector<ReceivedMessage> received_messages_;
+  std::vector<int> sent_sequence_numbers_;
+  int num_gatt_services_unavailable_events_ = 0;
 };
 
-class TestAuthenticatorFactory : public DeviceToDeviceAuthenticator::Factory {
+// Observer used in the ObserverDeletesChannel test. This Observer deletes the
+// SecureChannel when it receives an OnMessageSent() call.
+class DeletingObserver final : public SecureChannel::Observer {
+ public:
+  DeletingObserver(std::unique_ptr<SecureChannel>* secure_channel)
+      : secure_channel_(secure_channel) {}
+
+  // SecureChannel::Observer:
+  void OnSecureChannelStatusChanged(
+      SecureChannel* secure_channel,
+      const SecureChannel::Status& old_status,
+      const SecureChannel::Status& new_status) override {}
+
+  void OnMessageReceived(SecureChannel* secure_channel,
+                         const std::string& feature,
+                         const std::string& payload) override {}
+
+  void OnMessageSent(SecureChannel* secure_channel,
+                     int sequence_number) override {
+    DCHECK(secure_channel == secure_channel_->get());
+    // Delete the channel when an OnMessageSent() call occurs.
+    secure_channel_->reset();
+  }
+
+ private:
+  std::unique_ptr<SecureChannel>* secure_channel_;
+};
+
+class TestAuthenticatorFactory final
+    : public DeviceToDeviceAuthenticator::Factory {
  public:
   TestAuthenticatorFactory() : last_instance_(nullptr) {}
 
@@ -105,13 +154,6 @@ RemoteDevice CreateTestRemoteDevice() {
   return remote_device;
 }
 
-class TestSecureChannel : public SecureChannel {
- public:
-  TestSecureChannel(std::unique_ptr<Connection> connection,
-                    CryptAuthService* cryptauth_service)
-      : SecureChannel(std::move(connection), cryptauth_service) {}
-};
-
 }  // namespace
 
 class CryptAuthSecureChannelTest : public testing::Test {
@@ -121,6 +163,8 @@ class CryptAuthSecureChannelTest : public testing::Test {
         weak_ptr_factory_(this) {}
 
   void SetUp() override {
+    has_verified_gatt_services_event_ = false;
+
     test_authenticator_factory_ = base::MakeUnique<TestAuthenticatorFactory>();
     DeviceToDeviceAuthenticator::Factory::SetInstanceForTesting(
         test_authenticator_factory_.get());
@@ -133,8 +177,8 @@ class CryptAuthSecureChannelTest : public testing::Test {
         new FakeConnection(test_device_, /* should_auto_connect */ false);
 
     EXPECT_FALSE(fake_connection_->observers().size());
-    secure_channel_ = base::MakeUnique<TestSecureChannel>(
-        base::WrapUnique(fake_connection_), fake_cryptauth_service_.get());
+    secure_channel_ = base::WrapUnique(new SecureChannel(
+        base::WrapUnique(fake_connection_), fake_cryptauth_service_.get()));
     EXPECT_EQ(static_cast<size_t>(1), fake_connection_->observers().size());
     EXPECT_EQ(secure_channel_.get(), fake_connection_->observers()[0]);
 
@@ -151,7 +195,11 @@ class CryptAuthSecureChannelTest : public testing::Test {
     VerifyReceivedMessages(std::vector<ReceivedMessage>());
 
     // Same with messages being sent.
-    VerifyNoMessageBeingSent();
+    if (secure_channel_)
+      VerifyNoMessageBeingSent();
+
+    if (!has_verified_gatt_services_event_)
+      EXPECT_EQ(0, test_observer_->num_gatt_services_unavailable_events());
   }
 
   void VerifyConnectionStateChanges(
@@ -243,16 +291,33 @@ class CryptAuthSecureChannelTest : public testing::Test {
     });
   }
 
-  void StartSendingMessage(
-      const std::string& feature, const std::string& payload) {
-    secure_channel_->SendMessage(feature, payload);
+  // Starts sending the message and returns the sequence number.
+  int StartSendingMessage(const std::string& feature,
+                          const std::string& payload) {
+    int sequence_number = secure_channel_->SendMessage(feature, payload);
     VerifyMessageBeingSent(feature, payload);
+    return sequence_number;
+  }
+
+  void FinishSendingMessage(int sequence_number, bool success) {
+    std::vector<int> sent_sequence_numbers_before_send =
+        test_observer_->sent_sequence_numbers();
+
+    fake_connection_->FinishSendingMessageWithSuccess(success);
+
+    if (success) {
+      std::vector<int> sent_sequence_numbers_after_send =
+          test_observer_->sent_sequence_numbers();
+      EXPECT_EQ(sent_sequence_numbers_before_send.size() + 1u,
+                sent_sequence_numbers_after_send.size());
+      EXPECT_EQ(sequence_number, sent_sequence_numbers_after_send.back());
+    }
   }
 
   void StartAndFinishSendingMessage(
       const std::string& feature, const std::string& payload, bool success) {
-    StartSendingMessage(feature, payload);
-    fake_connection_->FinishSendingMessageWithSuccess(success);
+    int sequence_number = StartSendingMessage(feature, payload);
+    FinishSendingMessage(sequence_number, success);
   }
 
   void VerifyNoMessageBeingSent() {
@@ -279,6 +344,13 @@ class CryptAuthSecureChannelTest : public testing::Test {
     EXPECT_EQ(expected_feature, wire_message->feature());
     EXPECT_EQ(expected_payload, wire_message->payload());
   }
+
+  void VerifyGattServicesUnavailableEvent() {
+    EXPECT_EQ(1, test_observer_->num_gatt_services_unavailable_events());
+    has_verified_gatt_services_event_ = true;
+  }
+
+  bool has_verified_gatt_services_event_;
 
   // Owned by secure_channel_.
   FakeConnection* fake_connection_;
@@ -322,6 +394,21 @@ TEST_F(CryptAuthSecureChannelTest, ConnectionAttemptFails) {
         SecureChannel::Status::DISCONNECTED
       }
   });
+}
+
+TEST_F(CryptAuthSecureChannelTest, GattServicesUnavailable) {
+  secure_channel_->Initialize();
+  VerifyConnectionStateChanges(std::vector<SecureChannelStatusChange>{
+      {SecureChannel::Status::DISCONNECTED,
+       SecureChannel::Status::CONNECTING}});
+
+  fake_connection_->NotifyGattCharacteristicsNotAvailable();
+  VerifyGattServicesUnavailableEvent();
+
+  fake_connection_->CompleteInProgressConnection(/* success */ false);
+  VerifyConnectionStateChanges(std::vector<SecureChannelStatusChange>{
+      {SecureChannel::Status::CONNECTING,
+       SecureChannel::Status::DISCONNECTED}});
 }
 
 TEST_F(CryptAuthSecureChannelTest, DisconnectBeforeAuthentication) {
@@ -402,9 +489,33 @@ TEST_F(CryptAuthSecureChannelTest, AuthenticationFails_Failure) {
   });
 }
 
+// Regression test for crbug.com/765810. This test ensures that a crash does not
+// occur if an unexpected message is received before authentication is complete.
+TEST_F(CryptAuthSecureChannelTest, ReceiveMessageBeforeAuth) {
+  secure_channel_->Initialize();
+  VerifyConnectionStateChanges(std::vector<SecureChannelStatusChange>{
+      {SecureChannel::Status::DISCONNECTED,
+       SecureChannel::Status::CONNECTING}});
+
+  fake_connection_->CompleteInProgressConnection(/* success */ true);
+  VerifyConnectionStateChanges(std::vector<SecureChannelStatusChange>{
+      {SecureChannel::Status::CONNECTING, SecureChannel::Status::CONNECTED},
+      {SecureChannel::Status::CONNECTED,
+       SecureChannel::Status::AUTHENTICATING}});
+
+  // Receive an unexpected message (i.e., a non-auth message).
+  fake_connection_->ReceiveMessage("feature", "payload, but encoded");
+
+  // Still should be able to finish authentication.
+  AuthenticateSuccessfully();
+  VerifyConnectionStateChanges(std::vector<SecureChannelStatusChange>{
+      {SecureChannel::Status::AUTHENTICATING,
+       SecureChannel::Status::AUTHENTICATED}});
+}
+
 TEST_F(CryptAuthSecureChannelTest, SendMessage_DisconnectWhileSending) {
   ConnectAndAuthenticate();
-  StartSendingMessage("feature", "payload");
+  int sequence_number = StartSendingMessage("feature", "payload");
 
   fake_connection_->Disconnect();
   VerifyConnectionStateChanges(std::vector<SecureChannelStatusChange> {
@@ -414,7 +525,7 @@ TEST_F(CryptAuthSecureChannelTest, SendMessage_DisconnectWhileSending) {
       }
   });
 
-  fake_connection_->FinishSendingMessageWithSuccess(false);
+  FinishSendingMessage(sequence_number, false);
   // No further state change should have occurred.
   VerifyConnectionStateChanges(std::vector<SecureChannelStatusChange>());
 }
@@ -461,32 +572,32 @@ TEST_F(CryptAuthSecureChannelTest, SendMessage_MultipleMessages_Success) {
   ConnectAndAuthenticate();
 
   // Send a second message before the first has completed.
-  secure_channel_->SendMessage("feature1", "payload1");
-  secure_channel_->SendMessage("feature2", "payload2");
+  int sequence_number1 = secure_channel_->SendMessage("feature1", "payload1");
+  int sequence_number2 = secure_channel_->SendMessage("feature2", "payload2");
 
   // The first message should still be sending.
   VerifyMessageBeingSent("feature1", "payload1");
 
   // Send the first message.
-  fake_connection_->FinishSendingMessageWithSuccess(true);
+  FinishSendingMessage(sequence_number1, true);
 
   // Now, the second message should be sending.
   VerifyMessageBeingSent("feature2", "payload2");
-  fake_connection_->FinishSendingMessageWithSuccess(true);
+  FinishSendingMessage(sequence_number2, true);
 }
 
 TEST_F(CryptAuthSecureChannelTest, SendMessage_MultipleMessages_FirstFails) {
   ConnectAndAuthenticate();
 
   // Send a second message before the first has completed.
-  secure_channel_->SendMessage("feature1", "payload1");
+  int sequence_number1 = secure_channel_->SendMessage("feature1", "payload1");
   secure_channel_->SendMessage("feature2", "payload2");
 
   // The first message should still be sending.
   VerifyMessageBeingSent("feature1", "payload1");
 
   // Fail sending the first message.
-  fake_connection_->FinishSendingMessageWithSuccess(false);
+  FinishSendingMessage(sequence_number1, false);
 
   // The connection should have become disconnected.
   VerifyConnectionStateChanges(std::vector<SecureChannelStatusChange> {
@@ -529,6 +640,22 @@ TEST_F(CryptAuthSecureChannelTest, SendAndReceiveMessages) {
   VerifyReceivedMessages(std::vector<ReceivedMessage> {
       {"feature", "response2"}
   });
+}
+
+TEST_F(CryptAuthSecureChannelTest, ObserverDeletesChannel) {
+  // Add a special Observer which deletes |secure_channel_| once it receives an
+  // OnMessageSent() call.
+  std::unique_ptr<DeletingObserver> deleting_observer =
+      base::WrapUnique(new DeletingObserver(&secure_channel_));
+  secure_channel_->AddObserver(deleting_observer.get());
+
+  ConnectAndAuthenticate();
+
+  // Send a message successfully; this triggers an OnMessageSent() call which
+  // deletes the channel. Note that this would have caused a crash before the
+  // fix for crbug.com/751884.
+  StartAndFinishSendingMessage("feature", "request1", /* success */ true);
+  EXPECT_FALSE(secure_channel_);
 }
 
 }  // namespace cryptauth

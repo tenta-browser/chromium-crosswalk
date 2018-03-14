@@ -30,7 +30,8 @@ import optparse
 import unittest
 
 from webkitpy.common.host_mock import MockHost
-from webkitpy.common.webkit_finder import WebKitFinder
+from webkitpy.common.path_finder import PathFinder
+from webkitpy.layout_tests.builder_list import BuilderList
 from webkitpy.layout_tests.port import android
 from webkitpy.layout_tests.port import factory
 from webkitpy.layout_tests.port import linux
@@ -69,21 +70,30 @@ class FactoryTest(unittest.TestCase):
                          cls=win.WinPort)
 
     def test_unknown_specified(self):
-        self.assertRaises(NotImplementedError, factory.PortFactory(MockHost()).get, port_name='unknown')
+        with self.assertRaises(NotImplementedError):
+            factory.PortFactory(MockHost()).get(port_name='unknown')
 
     def test_unknown_default(self):
-        self.assertRaises(NotImplementedError, factory.PortFactory(MockHost(os_name='vms')).get)
+        with self.assertRaises(NotImplementedError):
+            factory.PortFactory(MockHost(os_name='vms')).get()
 
     def test_get_from_builder_name(self):
-        self.assertEqual(factory.PortFactory(MockHost()).get_from_builder_name('WebKit Mac10.11').name(),
-                         'mac-mac10.11')
+        host = MockHost()
+        host.builders = BuilderList({
+            'My Fake Mac10.12 Builder': {
+                'port_name': 'mac-mac10.12',
+                'specifiers': ['Mac10.12', 'Release'],
+            }
+        })
+        self.assertEqual(factory.PortFactory(host).get_from_builder_name('My Fake Mac10.12 Builder').name(),
+                         'mac-mac10.12')
 
     def get_port(self, target=None, configuration=None, files=None):
         host = MockHost()
-        wkf = WebKitFinder(host.filesystem)
+        finder = PathFinder(host.filesystem)
         files = files or {}
         for path, contents in files.items():
-            host.filesystem.write_text_file(wkf.path_from_chromium_base(path), contents)
+            host.filesystem.write_text_file(finder.path_from_chromium_base(path), contents)
         options = optparse.Values({'target': target, 'configuration': configuration})
         return factory.PortFactory(host).get(options=options)
 
@@ -147,8 +157,10 @@ class FactoryTest(unittest.TestCase):
         self.assertEqual(port._options.target, 'foo')
 
     def test_unknown_dir(self):
-        self.assertRaises(ValueError, self.get_port, target='unknown')
+        with self.assertRaises(ValueError):
+            self.get_port(target='unknown')
 
     def test_both_configuration_and_target_is_an_error(self):
-        self.assertRaises(ValueError, self.get_port, target='Debug', configuration='Release',
+        with self.assertRaises(ValueError):
+            self.get_port(target='Debug', configuration='Release',
                           files={'out/Debug/toolchain.ninja': ''})

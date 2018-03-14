@@ -7,12 +7,12 @@
 
 #include <stdint.h>
 
-#include <deque>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
 
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/media_export.h"
@@ -26,9 +26,9 @@ namespace media {
 
 class MEDIA_EXPORT WebMClusterParser : public WebMParserClient {
  public:
-  typedef StreamParser::TrackId TrackId;
-  typedef std::deque<scoped_refptr<StreamParserBuffer> > BufferQueue;
-  typedef std::map<TrackId, const BufferQueue> TextBufferQueueMap;
+  using TrackId = StreamParser::TrackId;
+  using BufferQueue = base::circular_deque<scoped_refptr<StreamParserBuffer>>;
+  using TextBufferQueueMap = std::map<TrackId, const BufferQueue>;
 
   // Numbers chosen to estimate the duration of a buffer if none is set and
   // there is not enough information to get a better estimate.
@@ -54,7 +54,7 @@ class MEDIA_EXPORT WebMClusterParser : public WebMParserClient {
     Track(int track_num,
           bool is_video,
           base::TimeDelta default_duration,
-          const scoped_refptr<MediaLog>& media_log);
+          MediaLog* media_log);
     Track(const Track& other);
     ~Track();
 
@@ -141,7 +141,7 @@ class MEDIA_EXPORT WebMClusterParser : public WebMParserClient {
     // splicing when these estimates are observed in SourceBufferStream.
     base::TimeDelta estimated_next_frame_duration_;
 
-    scoped_refptr<MediaLog> media_log_;
+    MediaLog* media_log_;
   };
 
   typedef std::map<int, Track> TextTrackMap;
@@ -157,7 +157,7 @@ class MEDIA_EXPORT WebMClusterParser : public WebMParserClient {
                     const std::string& audio_encryption_key_id,
                     const std::string& video_encryption_key_id,
                     const AudioCodec audio_codec,
-                    const scoped_refptr<MediaLog>& media_log);
+                    MediaLog* media_log);
   ~WebMClusterParser() override;
 
   // Resets the parser state so it can accept a new cluster.
@@ -315,7 +315,7 @@ class MEDIA_EXPORT WebMClusterParser : public WebMParserClient {
   // kInfiniteDuration if no buffers are currently missing duration.
   DecodeTimestamp ready_buffer_upper_bound_;
 
-  scoped_refptr<MediaLog> media_log_;
+  MediaLog* media_log_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(WebMClusterParser);
 };

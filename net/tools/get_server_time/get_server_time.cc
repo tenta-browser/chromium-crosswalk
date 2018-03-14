@@ -11,7 +11,6 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <memory>
 #include <string>
 
 #include "base/at_exit.h"
@@ -22,7 +21,6 @@
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -73,13 +71,13 @@ const int64_t kTimeResolutionMs = kTicksResolutionMs;
 // URLFetcher synchronous.
 class QuitDelegate : public net::URLFetcherDelegate {
  public:
-  QuitDelegate() {}
+  QuitDelegate() = default;
 
-  ~QuitDelegate() override {}
+  ~QuitDelegate() override = default;
 
   // net::URLFetcherDelegate implementation.
   void OnURLFetchComplete(const net::URLFetcher* source) override {
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   void OnURLFetchDownloadProgress(const net::URLFetcher* source,
@@ -103,11 +101,11 @@ class QuitDelegate : public net::URLFetcherDelegate {
 // to the logs.
 class PrintingLogObserver : public net::NetLog::ThreadSafeObserver {
  public:
-  PrintingLogObserver() {}
+  PrintingLogObserver() = default;
 
   ~PrintingLogObserver() override {
     // This is guaranteed to be safe as this program is single threaded.
-    net_log()->DeprecatedRemoveObserver(this);
+    net_log()->RemoveObserver(this);
   }
 
   // NetLog::ThreadSafeObserver implementation:
@@ -148,7 +146,7 @@ std::unique_ptr<net::URLRequestContext> BuildURLRequestContext(
   //
   // TODO(akalin): Remove this once http://crbug.com/146421 is fixed.
   builder.set_proxy_config_service(
-      base::MakeUnique<net::ProxyConfigServiceFixed>(net::ProxyConfig()));
+      std::make_unique<net::ProxyConfigServiceFixed>(net::ProxyConfig()));
 #endif
   std::unique_ptr<net::URLRequestContext> context(builder.Build());
   context->set_net_log(net_log);
@@ -230,8 +228,8 @@ int main(int argc, char* argv[]) {
   // printing_log_observer.
   net::NetLog net_log;
   PrintingLogObserver printing_log_observer;
-  net_log.DeprecatedAddObserver(&printing_log_observer,
-                                net::NetLogCaptureMode::IncludeSocketBytes());
+  net_log.AddObserver(&printing_log_observer,
+                      net::NetLogCaptureMode::IncludeSocketBytes());
 
   QuitDelegate delegate;
   std::unique_ptr<net::URLFetcher> fetcher =

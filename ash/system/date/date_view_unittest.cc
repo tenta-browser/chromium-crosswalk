@@ -4,16 +4,16 @@
 
 #include "ash/system/date/date_view.h"
 
-#include "ash/test/ash_test.h"
+#include "ash/test/ash_test_base.h"
 #include "ui/views/controls/label.h"
 
 namespace ash {
 namespace tray {
 
-class TimeViewTest : public AshTest {
+class TimeViewTest : public AshTestBase {
  public:
-  TimeViewTest() {}
-  ~TimeViewTest() override {}
+  TimeViewTest() = default;
+  ~TimeViewTest() override = default;
 
   TimeView* time_view() { return time_view_.get(); }
 

@@ -148,11 +148,22 @@ void USER_MANAGER_EXPORT UpdateReauthReason(const AccountId& account_id,
 bool USER_MANAGER_EXPORT FindReauthReason(const AccountId& account_id,
                                           int* out_value);
 
+// Saves that a minimal migration was attempted for this user's cryptohome.
+void USER_MANAGER_EXPORT
+SetUserHomeMinimalMigrationAttempted(const AccountId& account_id,
+                                     bool minimal_migration_attempted);
+
+// Returns true if minimal migration was attempted for this user's cryptohome.
+bool USER_MANAGER_EXPORT
+WasUserHomeMinimalMigrationAttempted(const AccountId& account_id);
+
 // Removes all user preferences associated with |account_id|.
 // Not exported as code should not be calling this outside this component
-// (with the exception of tests, so a test-only API is exposed).
 void RemovePrefs(const AccountId& account_id);
-void USER_MANAGER_EXPORT RemovePrefsForTesting(const AccountId& account_id);
+
+// Clears kProfileEverInitialized for a user.
+void USER_MANAGER_EXPORT
+RemoveSetProfileEverInitializedPrefForTesting(const AccountId& account_id);
 
 // Register known user prefs.
 void USER_MANAGER_EXPORT RegisterPrefs(PrefRegistrySimple* registry);

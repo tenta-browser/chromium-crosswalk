@@ -18,7 +18,8 @@ class WindowDeleter : public aura::WindowObserver {
   // aura::WindowObserver::
   void OnWindowBoundsChanged(aura::Window* window,
                              const gfx::Rect& old_bounds,
-                             const gfx::Rect& new_bounds) override {
+                             const gfx::Rect& new_bounds,
+                             ui::PropertyChangeReason reason) override {
     delete target_;
   }
 
@@ -30,7 +31,7 @@ class WindowDeleter : public aura::WindowObserver {
 
 }  // namespace
 
-using RootWindowLayoutManagerTest = test::AshTestBase;
+using RootWindowLayoutManagerTest = AshTestBase;
 
 TEST_F(RootWindowLayoutManagerTest, DeleteChildDuringResize) {
   aura::Window* parent = Shell::GetPrimaryRootWindow()->GetChildById(

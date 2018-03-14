@@ -4,19 +4,19 @@
 
 #include "net/websockets/websocket_stream.h"
 
-#include <memory>
 #include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "net/base/load_flags.h"
+#include "net/base/url_util.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
@@ -27,6 +27,34 @@
 #include "net/websockets/websocket_handshake_stream_create_helper.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+namespace {
+
+constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
+    net::DefineNetworkTrafficAnnotation("websocket_stream", R"(
+        semantics {
+          sender: "WebSocket Handshake"
+          description:
+            "Renderer process initiated WebSocket handshake. The WebSocket "
+            "handshake is used to establish a connection between a web page "
+            "and a consenting server for bi-directional communication."
+          trigger:
+            "A handshake is performed every time a new connection is "
+            "established via the Javascript or PPAPI WebSocket API. Any web "
+            "page or extension can create a WebSocket connection."
+          data: "The path and sub-protocols requested when the WebSocket was "
+                "created, plus the origin of the creating page."
+          destination: OTHER
+        }
+        policy {
+          cookies_allowed: YES
+          cookies_store: "user or per-app cookie store"
+          setting: "These requests cannot be disabled."
+          policy_exception_justification:
+            "Not implemented. WebSocket is a core web platform API."
+        })");
+
+}  // namespace
 
 namespace net {
 namespace {
@@ -85,17 +113,18 @@ class WebSocketStreamRequestImpl : public WebSocketStreamRequest {
       const GURL& url,
       const URLRequestContext* context,
       const url::Origin& origin,
-      const GURL& first_party_for_cookies,
+      const GURL& site_for_cookies,
       const std::string& additional_headers,
       std::unique_ptr<WebSocketStream::ConnectDelegate> connect_delegate,
       std::unique_ptr<WebSocketHandshakeStreamCreateHelper> create_helper)
       : delegate_(new Delegate(this)),
-        url_request_(
-            context->CreateRequest(url, DEFAULT_PRIORITY, delegate_.get())),
+        url_request_(context->CreateRequest(url,
+                                            DEFAULT_PRIORITY,
+                                            delegate_.get(),
+                                            kTrafficAnnotation)),
         connect_delegate_(std::move(connect_delegate)),
-        handshake_stream_create_helper_(create_helper.release()),
         handshake_stream_(nullptr) {
-    handshake_stream_create_helper_->set_stream_request(this);
+    create_helper->set_stream_request(this);
     HttpRequestHeaders headers;
     headers.SetHeader(websockets::kUpgrade, websockets::kWebSocketLowercase);
     headers.SetHeader(HttpRequestHeaders::kConnection, websockets::kUpgrade);
@@ -107,20 +136,18 @@ class WebSocketStreamRequestImpl : public WebSocketStreamRequest {
 
     url_request_->SetExtraRequestHeaders(headers);
     url_request_->set_initiator(origin);
-    url_request_->set_first_party_for_cookies(first_party_for_cookies);
+    url_request_->set_site_for_cookies(site_for_cookies);
 
-    // This passes the ownership of |handshake_stream_create_helper_| to
-    // |url_request_|.
     url_request_->SetUserData(
         WebSocketHandshakeStreamBase::CreateHelper::DataKey(),
-        handshake_stream_create_helper_);
+        std::move(create_helper));
     url_request_->SetLoadFlags(LOAD_DISABLE_CACHE | LOAD_BYPASS_CACHE);
     connect_delegate_->OnCreateRequest(url_request_.get());
   }
 
   // Destroying this object destroys the URLRequest, which cancels the request
   // and so terminates the handshake if it is incomplete.
-  ~WebSocketStreamRequestImpl() override {}
+  ~WebSocketStreamRequestImpl() override = default;
 
   void OnHandshakeStreamCreated(
       WebSocketHandshakeStreamBase* handshake_stream) override {
@@ -222,14 +249,11 @@ class WebSocketStreamRequestImpl : public WebSocketStreamRequest {
 
   std::unique_ptr<WebSocketStream::ConnectDelegate> connect_delegate_;
 
-  // Owned by the URLRequest.
-  WebSocketHandshakeStreamCreateHelper* handshake_stream_create_helper_;
-
-  // This is owned by the caller of CreateBaseStream() or
-  // CreateSpdyStream() of WebsocketHandshakeStreamCreateHelper. Both the
-  // stream and this object will be destroyed during the destruction of the
-  // URLRequest object associated with the handshake. This is only guaranteed
-  // to be a valid pointer if the handshake succeeded.
+  // This is owned by the caller of
+  // WebsocketHandshakeStreamCreateHelper::CreateBaseStream().  Both the stream
+  // and this object will be destroyed during the destruction of the URLRequest
+  // object associated with the handshake. This is only guaranteed to be a valid
+  // pointer if the handshake succeeded.
   WebSocketHandshakeStreamBase* handshake_stream_;
 
   // The failure message supplied by WebSocketBasicHandshakeStream, if any.
@@ -290,6 +314,14 @@ void Delegate::OnResponseStarted(URLRequest* request, int net_error) {
   // All error codes, including OK and ABORTED, as with
   // Net.ErrorCodesForMainFrame3
   UMA_HISTOGRAM_SPARSE_SLOWLY("Net.WebSocket.ErrorCodes", -net_error);
+  if (net::IsLocalhost(request->url().HostNoBrackets())) {
+    UMA_HISTOGRAM_SPARSE_SLOWLY("Net.WebSocket.ErrorCodes_Localhost",
+                                -net_error);
+  } else {
+    UMA_HISTOGRAM_SPARSE_SLOWLY("Net.WebSocket.ErrorCodes_NotLocalhost",
+                                -net_error);
+  }
+
   if (net_error != OK) {
     DVLOG(3) << "OnResponseStarted (request failed)";
     owner_->ReportFailure(net_error);
@@ -354,27 +386,27 @@ void Delegate::OnReadCompleted(URLRequest* request, int bytes_read) {
 
 }  // namespace
 
-WebSocketStreamRequest::~WebSocketStreamRequest() {}
+WebSocketStreamRequest::~WebSocketStreamRequest() = default;
 
-WebSocketStream::WebSocketStream() {}
-WebSocketStream::~WebSocketStream() {}
+WebSocketStream::WebSocketStream() = default;
+WebSocketStream::~WebSocketStream() = default;
 
-WebSocketStream::ConnectDelegate::~ConnectDelegate() {}
+WebSocketStream::ConnectDelegate::~ConnectDelegate() = default;
 
 std::unique_ptr<WebSocketStreamRequest> WebSocketStream::CreateAndConnectStream(
     const GURL& socket_url,
     std::unique_ptr<WebSocketHandshakeStreamCreateHelper> create_helper,
     const url::Origin& origin,
-    const GURL& first_party_for_cookies,
+    const GURL& site_for_cookies,
     const std::string& additional_headers,
     URLRequestContext* url_request_context,
     const NetLogWithSource& net_log,
     std::unique_ptr<ConnectDelegate> connect_delegate) {
   std::unique_ptr<WebSocketStreamRequestImpl> request(
-      new WebSocketStreamRequestImpl(
-          socket_url, url_request_context, origin, first_party_for_cookies,
-          additional_headers, std::move(connect_delegate),
-          std::move(create_helper)));
+      new WebSocketStreamRequestImpl(socket_url, url_request_context, origin,
+                                     site_for_cookies, additional_headers,
+                                     std::move(connect_delegate),
+                                     std::move(create_helper)));
   request->Start(std::unique_ptr<base::Timer>(new base::Timer(false, false)));
   return std::move(request);
 }
@@ -384,17 +416,17 @@ WebSocketStream::CreateAndConnectStreamForTesting(
     const GURL& socket_url,
     std::unique_ptr<WebSocketHandshakeStreamCreateHelper> create_helper,
     const url::Origin& origin,
-    const GURL& first_party_for_cookies,
+    const GURL& site_for_cookies,
     const std::string& additional_headers,
     URLRequestContext* url_request_context,
     const NetLogWithSource& net_log,
     std::unique_ptr<WebSocketStream::ConnectDelegate> connect_delegate,
     std::unique_ptr<base::Timer> timer) {
   std::unique_ptr<WebSocketStreamRequestImpl> request(
-      new WebSocketStreamRequestImpl(
-          socket_url, url_request_context, origin, first_party_for_cookies,
-          additional_headers, std::move(connect_delegate),
-          std::move(create_helper)));
+      new WebSocketStreamRequestImpl(socket_url, url_request_context, origin,
+                                     site_for_cookies, additional_headers,
+                                     std::move(connect_delegate),
+                                     std::move(create_helper)));
   request->Start(std::move(timer));
   return std::move(request);
 }
@@ -407,7 +439,7 @@ void WebSocketDispatchOnFinishOpeningHandshake(
   DCHECK(connect_delegate);
   if (headers.get()) {
     connect_delegate->OnFinishOpeningHandshake(
-        base::MakeUnique<WebSocketHandshakeResponseInfo>(
+        std::make_unique<WebSocketHandshakeResponseInfo>(
             url, headers->response_code(), headers->GetStatusText(), headers,
             response_time));
   }

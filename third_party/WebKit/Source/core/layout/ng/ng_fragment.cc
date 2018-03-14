@@ -4,32 +4,35 @@
 
 #include "core/layout/ng/ng_fragment.h"
 
+#include "core/layout/ng/geometry/ng_border_edges.h"
+#include "core/layout/ng/geometry/ng_logical_size.h"
+
 namespace blink {
 
 LayoutUnit NGFragment::InlineSize() const {
-  return writing_mode_ == kHorizontalTopBottom ? physical_fragment_->Width()
-                                               : physical_fragment_->Height();
+  return GetWritingMode() == WritingMode::kHorizontalTb
+             ? physical_fragment_.Size().width
+             : physical_fragment_.Size().height;
 }
 
 LayoutUnit NGFragment::BlockSize() const {
-  return writing_mode_ == kHorizontalTopBottom ? physical_fragment_->Height()
-                                               : physical_fragment_->Width();
+  return GetWritingMode() == WritingMode::kHorizontalTb
+             ? physical_fragment_.Size().height
+             : physical_fragment_.Size().width;
 }
 
-LayoutUnit NGFragment::InlineOffset() const {
-  return writing_mode_ == kHorizontalTopBottom
-             ? physical_fragment_->LeftOffset()
-             : physical_fragment_->TopOffset();
+NGLogicalSize NGFragment::Size() const {
+  return physical_fragment_.Size().ConvertToLogical(
+      static_cast<WritingMode>(writing_mode_));
 }
 
-LayoutUnit NGFragment::BlockOffset() const {
-  return writing_mode_ == kHorizontalTopBottom
-             ? physical_fragment_->TopOffset()
-             : physical_fragment_->LeftOffset();
+NGBorderEdges NGFragment::BorderEdges() const {
+  return NGBorderEdges::FromPhysical(physical_fragment_.BorderEdges(),
+                                     GetWritingMode());
 }
 
 NGPhysicalFragment::NGFragmentType NGFragment::Type() const {
-  return physical_fragment_->Type();
+  return physical_fragment_.Type();
 }
 
 }  // namespace blink

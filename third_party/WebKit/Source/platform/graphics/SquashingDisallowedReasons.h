@@ -22,14 +22,14 @@ enum SquashingDisallowedReason {
   kSquashingDisallowedReasonWouldBreakPaintOrder = 1 << 6,
   kSquashingDisallowedReasonSquashingVideoIsDisallowed = 1 << 7,
   kSquashingDisallowedReasonSquashedLayerClipsCompositingDescendants = 1 << 8,
-  kSquashingDisallowedReasonSquashingLayoutPartIsDisallowed = 1 << 9,
+  kSquashingDisallowedReasonSquashingLayoutEmbeddedContentIsDisallowed = 1 << 9,
   kSquashingDisallowedReasonSquashingBlendingIsDisallowed = 1 << 10,
   kSquashingDisallowedReasonNearestFixedPositionMismatch = 1 << 11,
   kSquashingDisallowedReasonScrollChildWithCompositedDescendants = 1 << 12,
   kSquashingDisallowedReasonSquashingLayerIsAnimating = 1 << 13,
   kSquashingDisallowedReasonRenderingContextMismatch = 1 << 14,
-  kSquashingDisallowedReasonNonTranslationTransform = 1 << 15,
-  kSquashingDisallowedReasonFragmentedContent = 1 << 16,
+  kSquashingDisallowedReasonFragmentedContent = 1 << 15,
+  kSquashingDisallowedReasonPrecedingLayerPrecludesSquashing = 1 << 16,
 };
 
 typedef unsigned SquashingDisallowedReasons;

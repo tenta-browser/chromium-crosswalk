@@ -8,15 +8,12 @@
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/ref_counted.h"
-#include "components/arc/arc_service.h"
 #include "components/arc/common/crash_collector.mojom.h"
-#include "components/arc/instance_holder.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "components/keyed_service/core/keyed_service.h"
 
-namespace base {
-class TaskRunner;
-}  // namespace base
+namespace content {
+class BrowserContext;
+}  // namespace content
 
 namespace arc {
 
@@ -24,16 +21,18 @@ class ArcBridgeService;
 
 // Relays dumps for non-native ARC crashes to the crash reporter in Chrome OS.
 class ArcCrashCollectorBridge
-    : public ArcService,
-      public InstanceHolder<mojom::CrashCollectorInstance>::Observer,
+    : public KeyedService,
       public mojom::CrashCollectorHost {
  public:
-  ArcCrashCollectorBridge(ArcBridgeService* bridge,
-                          scoped_refptr<base::TaskRunner> blocking_task_runner);
-  ~ArcCrashCollectorBridge() override;
+  // Returns singleton instance for the given BrowserContext,
+  // or nullptr if the browser |context| is not allowed to use ARC.
+  static ArcCrashCollectorBridge* GetForBrowserContext(
+      content::BrowserContext* context);
 
-  // InstanceHolder<mojom::CrashCollectorInstance>::Observer overrides.
-  void OnInstanceReady() override;
+  ArcCrashCollectorBridge(content::BrowserContext* context,
+                          ArcBridgeService* bridge);
+
+  ~ArcCrashCollectorBridge() override;
 
   // mojom::CrashCollectorHost overrides.
   void DumpCrash(const std::string& type, mojo::ScopedHandle pipe) override;
@@ -43,9 +42,7 @@ class ArcCrashCollectorBridge
                           const std::string& cpu_abi) override;
 
  private:
-  scoped_refptr<base::TaskRunner> blocking_task_runner_;
-
-  mojo::Binding<mojom::CrashCollectorHost> binding_;
+  ArcBridgeService* const arc_bridge_service_;  // Owned by ArcServiceManager.
 
   std::string device_;
   std::string board_;

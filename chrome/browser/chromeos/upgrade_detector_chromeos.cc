@@ -92,15 +92,23 @@ void UpgradeDetectorChromeos::Shutdown() {
 
 void UpgradeDetectorChromeos::UpdateStatusChanged(
     const UpdateEngineClient::Status& status) {
-  if (status.status != UpdateEngineClient::UPDATE_STATUS_UPDATED_NEED_REBOOT)
-    return;
+  if (status.status == UpdateEngineClient::UPDATE_STATUS_UPDATED_NEED_REBOOT) {
+    upgrade_detected_time_ = base::Time::Now();
 
-  upgrade_detected_time_ = base::Time::Now();
+    channels_requester_.reset(new UpgradeDetectorChromeos::ChannelsRequester());
+    channels_requester_->RequestChannels(
+        base::Bind(&UpgradeDetectorChromeos::OnChannelsReceived,
+                   weak_factory_.GetWeakPtr()));
+  } else if (status.status ==
+             UpdateEngineClient::UPDATE_STATUS_NEED_PERMISSION_TO_UPDATE) {
+    // Update engine broadcasts this state only when update is available but
+    // downloading over cellular connection requires user's agreement.
+    NotifyUpdateOverCellularAvailable();
+  }
+}
 
-  channels_requester_.reset(new UpgradeDetectorChromeos::ChannelsRequester());
-  channels_requester_->RequestChannels(
-      base::Bind(&UpgradeDetectorChromeos::OnChannelsReceived,
-                 weak_factory_.GetWeakPtr()));
+void UpgradeDetectorChromeos::OnUpdateOverCellularOneTimePermissionGranted() {
+  NotifyUpdateOverCellularOneTimePermissionGranted();
 }
 
 void UpgradeDetectorChromeos::NotifyOnUpgrade() {
@@ -128,7 +136,7 @@ void UpgradeDetectorChromeos::NotifyOnUpgrade() {
     return;  // Not ready to recommend upgrade.
   }
 
-  NotifyUpgradeRecommended();
+  NotifyUpgrade();
 }
 
 void UpgradeDetectorChromeos::OnChannelsReceived(

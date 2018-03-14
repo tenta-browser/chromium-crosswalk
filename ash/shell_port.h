@@ -11,23 +11,29 @@
 #include <vector>
 
 #include "ash/ash_export.h"
-#include "ash/metrics/gesture_action_type.h"
-#include "ash/metrics/user_metrics_action.h"
 #include "ash/wm/lock_state_observer.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
+#include "services/viz/public/interfaces/compositing/video_detector_observer.mojom.h"
+#include "ui/aura/client/window_types.h"
+#include "ui/base/cursor/cursor_data.h"
 #include "ui/base/ui_base_types.h"
-#include "ui/compositor/layer_type.h"
-#include "ui/wm/public/activation_change_observer.h"
-#include "ui/wm/public/window_types.h"
+
+namespace aura {
+class Window;
+}
 
 namespace display {
-class Display;
-class ManagedDisplayInfo;
+class NativeDisplayDelegate;
+class TouchTransformSetter;
 }
 
 namespace gfx {
-class Insets;
 class Point;
+}
+
+namespace ui {
+enum class CursorSize;
 }
 
 namespace views {
@@ -37,25 +43,19 @@ enum class PointerWatcherEventTypes;
 
 namespace ash {
 class AcceleratorController;
-class ImmersiveFullscreenController;
-class KeyEventWatcher;
+class AshWindowTreeHost;
+struct AshWindowTreeHostInitParams;
 class KeyboardUI;
 class RootWindowController;
-class ScopedDisableInternalMouseAndKeyboard;
-class SessionStateDelegate;
-struct ShellInitParams;
 class WindowCycleEventFilter;
 class WindowResizer;
-class WmDisplayObserver;
-class WmWindow;
 class WorkspaceEventHandler;
 
 enum class Config;
-enum class LoginStatus;
 enum class TaskSwitchSource;
 
 namespace wm {
-class MaximizeModeEventHandler;
+class TabletModeEventHandler;
 class WindowState;
 }
 
@@ -72,56 +72,18 @@ class ASH_EXPORT ShellPort {
 
   virtual Config GetAshConfig() const = 0;
 
-  // Convenience for GetPrimaryRootWindow()->GetRootWindowController().
-  RootWindowController* GetPrimaryRootWindowController();
-
-  virtual WmWindow* GetPrimaryRootWindow() = 0;
-
-  // Returns the root window for the specified display.
-  virtual WmWindow* GetRootWindowForDisplayId(int64_t display_id) = 0;
-
-  // Retuns the display info associated with |display_id|.
-  // TODO(mash): Remove when DisplayManager has been moved. crbug.com/622480
-  virtual const display::ManagedDisplayInfo& GetDisplayInfo(
-      int64_t display_id) const = 0;
-
-  // Matches that of DisplayManager::IsActiveDisplayId().
-  // TODO(mash): Remove when DisplayManager has been moved. crbug.com/622480
-  virtual bool IsActiveDisplayId(int64_t display_id) const = 0;
-
-  // Returns true if the desktop is in unified mode and there are no mirroring
-  // displays.
-  // TODO(mash): Remove when DisplayManager has been moved. crbug.com/622480
-  virtual bool IsInUnifiedMode() const = 0;
-
-  // Returns true if the desktop is in unified mode.
-  // TODO(mash): Remove when DisplayManager has been moved. crbug.com/622480
-  virtual bool IsInUnifiedModeIgnoreMirroring() const = 0;
-
-  // Returns the first display; this is the first display listed by hardware,
-  // which corresponds to internal displays on devices with integrated displays.
-  // TODO(mash): Remove when DisplayManager has been moved. crbug.com/622480
-  virtual display::Display GetFirstDisplay() const = 0;
-
-  // Returns true if the first window shown on first run should be
-  // unconditionally maximized, overriding the heuristic that normally chooses
-  // the window size.
-  bool IsForceMaximizeOnFirstRun();
-
-  // Sets work area insets of the display containing |window|, pings observers.
-  virtual void SetDisplayWorkAreaInsets(WmWindow* window,
-                                        const gfx::Insets& insets) = 0;
+  // If a system-modal dialog window is currently open, returns the ID of the
+  // system modal window container that contains the window.
+  // If no system-modal dialogs are open it returns -1.
+  int GetOpenSystemModalWindowContainerId();
 
   // Returns true if a system-modal dialog window is currently open.
   bool IsSystemModalWindowOpen();
 
-  // Creates a modal background (a partially-opaque fullscreen window) on all
-  // displays for |window|.
-  void CreateModalBackground(WmWindow* window);
-
-  // Called when a modal window is removed. It will activate another modal
-  // window if any, or remove modal screens on all displays.
-  void OnModalWindowRemoved(WmWindow* removed);
+  // The return value from this is supplied to AshTouchTransformController; see
+  // it and TouchTransformSetter for details.
+  virtual std::unique_ptr<display::TouchTransformSetter>
+  CreateTouchTransformDelegate() = 0;
 
   // For testing only: set simulation that a modal window is open
   void SimulateModalWindowOpenForTesting(bool modal_window_open) {
@@ -131,13 +93,21 @@ class ASH_EXPORT ShellPort {
   // See aura::client::CursorClient for details on these.
   virtual void LockCursor() = 0;
   virtual void UnlockCursor() = 0;
+  virtual void ShowCursor() = 0;
+  virtual void HideCursor() = 0;
+  virtual void SetCursorSize(ui::CursorSize cursor_size) = 0;
+  virtual void SetGlobalOverrideCursor(
+      base::Optional<ui::CursorData> cursor) = 0;
   virtual bool IsMouseEventsEnabled() = 0;
 
-  virtual std::vector<WmWindow*> GetAllRootWindows() = 0;
-
-  virtual void RecordGestureAction(GestureActionType action) = 0;
-  virtual void RecordUserMetricsAction(UserMetricsAction action) = 0;
-  virtual void RecordTaskSwitchMetric(TaskSwitchSource source) = 0;
+  // Tells the window server to enable or disable whether the cursor is visible
+  // due to touch events. This is a separate bit that gets set automatically
+  // when there is a touch event or a mouse event, but some things in ash want
+  // to manually flip this bit.
+  //
+  // Fat interface for just ShellPortMash so we can conditionally access it
+  // from within //ash/magnifier/.
+  virtual void SetCursorTouchVisible(bool enabled) = 0;
 
   // Shows the context menu for the wallpaper or shelf at |location_in_screen|.
   void ShowContextMenu(const gfx::Point& location_in_screen,
@@ -153,27 +123,14 @@ class ASH_EXPORT ShellPort {
   virtual std::unique_ptr<WindowCycleEventFilter>
   CreateWindowCycleEventFilter() = 0;
 
-  virtual std::unique_ptr<wm::MaximizeModeEventHandler>
-  CreateMaximizeModeEventHandler() = 0;
+  virtual std::unique_ptr<wm::TabletModeEventHandler>
+  CreateTabletModeEventHandler() = 0;
 
   virtual std::unique_ptr<WorkspaceEventHandler> CreateWorkspaceEventHandler(
-      WmWindow* workspace_window) = 0;
-
-  virtual std::unique_ptr<ScopedDisableInternalMouseAndKeyboard>
-  CreateScopedDisableInternalMouseAndKeyboard() = 0;
-
-  virtual std::unique_ptr<ImmersiveFullscreenController>
-  CreateImmersiveFullscreenController() = 0;
+      aura::Window* workspace_window) = 0;
 
   // Creates the KeyboardUI. This is called early on.
   virtual std::unique_ptr<KeyboardUI> CreateKeyboardUI() = 0;
-
-  virtual std::unique_ptr<KeyEventWatcher> CreateKeyEventWatcher() = 0;
-
-  virtual SessionStateDelegate* GetSessionStateDelegate() = 0;
-
-  virtual void AddDisplayObserver(WmDisplayObserver* observer) = 0;
-  virtual void RemoveDisplayObserver(WmDisplayObserver* observer) = 0;
 
   // If |events| is PointerWatcherEventTypes::MOVES,
   // PointerWatcher::OnPointerEventObserved() is called for pointer move events.
@@ -196,21 +153,34 @@ class ASH_EXPORT ShellPort {
   // TODO(jamescook): Remove this when VirtualKeyboardController has been moved.
   virtual void ToggleIgnoreExternalKeyboard() = 0;
 
-  // Enable or disable the laser pointer.
-  virtual void SetLaserPointerEnabled(bool enabled) = 0;
-
-  // Enable or disable the partial magnifier.
-  virtual void SetPartialMagnifierEnabled(bool enabled) = 0;
-
   virtual void CreatePointerWatcherAdapter() = 0;
+
+  // Creates an AshWindowTreeHost. A return value of null results in a platform
+  // specific AshWindowTreeHost being created.
+  virtual std::unique_ptr<AshWindowTreeHost> CreateAshWindowTreeHost(
+      const AshWindowTreeHostInitParams& init_params) = 0;
+
+  // Called after the containers of |root_window_controller| have been created.
+  // Allows ShellPort to install any additional state on the containers.
+  virtual void OnCreatedRootWindowContainers(
+      RootWindowController* root_window_controller) = 0;
+
+  // Called any time the set up system modal and blocking containers needs to
+  // sent to the server.
+  virtual void UpdateSystemModalAndBlockingContainers() = 0;
+
+  // Adds an observer for viz::VideoDetector.
+  virtual void AddVideoDetectorObserver(
+      viz::mojom::VideoDetectorObserverPtr observer) = 0;
 
  protected:
   ShellPort();
 
-  // Called during startup to create the primary WindowTreeHost and
-  // the corresponding RootWindowController.
-  virtual void CreatePrimaryHost() = 0;
-  virtual void InitHosts(const ShellInitParams& init_params) = 0;
+  // Called after WindowTreeHostManager::InitHosts().
+  virtual void OnHostsInitialized() = 0;
+
+  virtual std::unique_ptr<display::NativeDisplayDelegate>
+  CreateNativeDisplayDelegate() = 0;
 
   // Called during startup to create the AcceleratorController.
   virtual std::unique_ptr<AcceleratorController>

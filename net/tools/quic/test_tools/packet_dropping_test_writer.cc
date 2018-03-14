@@ -64,7 +64,7 @@ PacketDroppingTestWriter::PacketDroppingTestWriter()
   simple_random_.set_seed(seed);
 }
 
-PacketDroppingTestWriter::~PacketDroppingTestWriter() {}
+PacketDroppingTestWriter::~PacketDroppingTestWriter() = default;
 
 void PacketDroppingTestWriter::Initialize(QuicConnectionHelperInterface* helper,
                                           QuicAlarmFactory* alarm_factory,
@@ -181,8 +181,8 @@ QuicTime PacketDroppingTestWriter::ReleaseNextPacket() {
     delayed_packets_.begin()->send_time = iter->send_time;
   }
 
-  QUIC_DLOG(INFO) << "Releasing packet.  " << (delayed_packets_.size() - 1)
-                  << " remaining.";
+  QUIC_DVLOG(1) << "Releasing packet.  " << (delayed_packets_.size() - 1)
+                << " remaining.";
   // Grab the next one off the queue and send it.
   QuicPacketWriterWrapper::WritePacket(
       iter->buffer.data(), iter->buffer.length(), iter->self_address,
@@ -241,7 +241,7 @@ PacketDroppingTestWriter::DelayedWrite::DelayedWrite(
 // PacketDroppingTestWriter::DelayedWrite::operator=(
 //    PacketDroppingTestWriter::DelayedWrite&& other) = default;
 
-PacketDroppingTestWriter::DelayedWrite::~DelayedWrite() {}
+PacketDroppingTestWriter::DelayedWrite::~DelayedWrite() = default;
 
 }  // namespace test
 }  // namespace net

@@ -10,6 +10,7 @@
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/chromeos/net/network_portal_detector_test_impl.h"
+#include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #include "chrome/browser/extensions/external_provider_impl.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/ui/app_list/app_list_syncable_service.h"
@@ -112,7 +113,7 @@ namespace chromeos {
 using ::testing::DoAll;
 using ::testing::NotNull;
 using ::testing::Return;
-using ::testing::SetArgumentPointee;
+using ::testing::SetArgPointee;
 using ::testing::_;
 
 TEST(StartupCustomizationDocumentTest, Basic) {
@@ -193,12 +194,11 @@ class MockExternalProviderVisitor
                bool(const ExternalInstallInfoUpdateUrl&, bool));
   MOCK_METHOD1(OnExternalProviderReady,
                void(const extensions::ExternalProviderInterface* provider));
-  MOCK_METHOD4(
-      OnExternalProviderUpdateComplete,
-      void(const extensions::ExternalProviderInterface*,
-           const std::vector<std::unique_ptr<ExternalInstallInfoUpdateUrl>>&,
-           const std::vector<std::unique_ptr<ExternalInstallInfoFile>>&,
-           const std::set<std::string>& removed_extensions));
+  MOCK_METHOD4(OnExternalProviderUpdateComplete,
+               void(const extensions::ExternalProviderInterface*,
+                    const std::vector<ExternalInstallInfoUpdateUrl>&,
+                    const std::vector<ExternalInstallInfoFile>&,
+                    const std::set<std::string>& removed_extensions));
 };
 
 class ServicesCustomizationDocumentTest : public testing::Test {
@@ -286,14 +286,15 @@ class ServicesCustomizationDocumentTest : public testing::Test {
         new user_prefs::PrefRegistrySyncable);
     std::unique_ptr<sync_preferences::PrefServiceSyncable> prefs(
         factory.CreateSyncable(registry.get()));
-    chrome::RegisterUserProfilePrefs(registry.get());
+    RegisterUserProfilePrefs(registry.get());
     profile_builder.SetPrefService(std::move(prefs));
     return profile_builder.Build();
   }
 
  private:
-  system::ScopedFakeStatisticsProvider fake_statistics_provider_;
   content::TestBrowserThreadBundle thread_bundle_;
+  system::ScopedFakeStatisticsProvider fake_statistics_provider_;
+  ScopedCrosSettingsTestHelper scoped_cros_settings_test_helper_;
   TestingPrefServiceSimple local_state_;
   TestURLFetcherCallback url_callback_;
   net::FakeURLFetcherFactory factory_;

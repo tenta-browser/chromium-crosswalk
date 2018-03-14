@@ -12,7 +12,7 @@ namespace blink {
 
 PaintFilterEffect::PaintFilterEffect(Filter* filter, const PaintFlags& flags)
     : FilterEffect(filter), flags_(flags) {
-  SetOperatingColorSpace(kColorSpaceDeviceRGB);
+  SetOperatingInterpolationSpace(kInterpolationSpaceSRGB);
 }
 
 PaintFilterEffect::~PaintFilterEffect() {}
@@ -22,8 +22,8 @@ PaintFilterEffect* PaintFilterEffect::Create(Filter* filter,
   return new PaintFilterEffect(filter, flags);
 }
 
-sk_sp<SkImageFilter> PaintFilterEffect::CreateImageFilter() {
-  return SkPaintImageFilter::Make(ToSkPaint(flags_), nullptr);
+sk_sp<PaintFilter> PaintFilterEffect::CreateImageFilter() {
+  return sk_make_sp<PaintFlagsPaintFilter>(flags_);
 }
 
 TextStream& PaintFilterEffect::ExternalRepresentation(TextStream& ts,

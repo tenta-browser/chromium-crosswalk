@@ -1,4 +1,4 @@
-CONSOLE WARNING: line 104: 'window.webkitStorageInfo' is deprecated. Please use 'navigator.webkitTemporaryStorage' or 'navigator.webkitPersistentStorage' instead.
+CONSOLE WARNING: line 121: 'window.webkitStorageInfo' is deprecated. Please use 'navigator.webkitTemporaryStorage' or 'navigator.webkitPersistentStorage' instead.
 Tests property access on a cached DOMWindow after the associated frame is no longer in a web page. Test should not crash and properties should be set to sane defaults.
 
 On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
@@ -8,9 +8,6 @@ PASS childWindow.closed is true
 PASS childWindow.defaultStatus is ''
 PASS childWindow.defaultstatus is ''
 PASS childWindow.devicePixelRatio is 0
-PASS childWindow.history.length is 0
-PASS childWindow.history.scrollRestoration is 'auto'
-PASS childWindow.history.state is null
 PASS childWindow.innerHeight is 0
 PASS childWindow.innerWidth is 0
 PASS childWindow.isSecureContext is false
@@ -37,10 +34,14 @@ PASS childWindow.navigator.userAgent is ''
 PASS childWindow.navigator.vendor is window.navigator.vendor
 PASS childWindow.navigator.vendorSub is ''
 PASS childWindow.onabort is null
+PASS childWindow.onafterprint is null
 PASS childWindow.onanimationend is null
 PASS childWindow.onanimationiteration is null
 PASS childWindow.onanimationstart is null
+PASS childWindow.onappinstalled is null
 PASS childWindow.onauxclick is null
+PASS childWindow.onbeforeinstallprompt is null
+PASS childWindow.onbeforeprint is null
 PASS childWindow.onbeforeunload is null
 PASS childWindow.onblur is null
 PASS childWindow.oncancel is null
@@ -52,7 +53,6 @@ PASS childWindow.onclose is null
 PASS childWindow.oncontextmenu is null
 PASS childWindow.oncuechange is null
 PASS childWindow.ondblclick is null
-PASS childWindow.ondevicelight is null
 PASS childWindow.ondevicemotion is null
 PASS childWindow.ondeviceorientation is null
 PASS childWindow.ondeviceorientationabsolute is null
@@ -82,6 +82,7 @@ PASS childWindow.onloadedmetadata is null
 PASS childWindow.onloadstart is null
 PASS childWindow.onlostpointercapture is null
 PASS childWindow.onmessage is null
+PASS childWindow.onmessageerror is null
 PASS childWindow.onmousedown is null
 PASS childWindow.onmouseenter is null
 PASS childWindow.onmouseleave is null
@@ -116,7 +117,6 @@ PASS childWindow.onsearch is null
 PASS childWindow.onseeked is null
 PASS childWindow.onseeking is null
 PASS childWindow.onselect is null
-PASS childWindow.onshow is null
 PASS childWindow.onstalled is null
 PASS childWindow.onstorage is null
 PASS childWindow.onsubmit is null
@@ -145,7 +145,6 @@ PASS childWindow.pageXOffset is 0
 PASS childWindow.pageYOffset is 0
 PASS childWindow.performance.navigation.redirectCount is 0
 PASS childWindow.performance.navigation.type is 0
-PASS childWindow.performance.onframetimingbufferfull is null
 PASS childWindow.performance.onresourcetimingbufferfull is null
 PASS childWindow.performance.timing.connectEnd is 0
 PASS childWindow.performance.timing.connectStart is 0
@@ -193,6 +192,15 @@ PASS childWindow.status is ''
 PASS childWindow.statusbar.visible is false
 PASS childWindow.styleMedia.type is ''
 PASS childWindow.toolbar.visible is false
+PASS childWindow.visualViewport.height is 0
+PASS childWindow.visualViewport.offsetLeft is 0
+PASS childWindow.visualViewport.offsetTop is 0
+PASS childWindow.visualViewport.onresize is null
+PASS childWindow.visualViewport.onscroll is null
+PASS childWindow.visualViewport.pageLeft is 0
+PASS childWindow.visualViewport.pageTop is 0
+PASS childWindow.visualViewport.scale is 0
+PASS childWindow.visualViewport.width is 0
 PASS successfullyParsed is true
 
 TEST COMPLETE

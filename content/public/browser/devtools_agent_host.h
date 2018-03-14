@@ -31,20 +31,19 @@ namespace content {
 class BrowserContext;
 class DevToolsExternalAgentProxyDelegate;
 class DevToolsSocketFactory;
-class RenderFrameHost;
 class WebContents;
 
 // Describes interface for managing devtools agents from browser process.
 class CONTENT_EXPORT DevToolsAgentHost
     : public base::RefCounted<DevToolsAgentHost> {
  public:
-  static char kTypePage[];
-  static char kTypeFrame[];
-  static char kTypeSharedWorker[];
-  static char kTypeServiceWorker[];
-  static char kTypeExternal[];
-  static char kTypeBrowser[];
-  static char kTypeOther[];
+  static const char kTypePage[];
+  static const char kTypeFrame[];
+  static const char kTypeSharedWorker[];
+  static const char kTypeServiceWorker[];
+  static const char kTypeBrowser[];
+  static const char kTypeGuest[];
+  static const char kTypeOther[];
 
   // Latest DevTools protocol version supported.
   static std::string GetProtocolVersion();
@@ -60,23 +59,9 @@ class CONTENT_EXPORT DevToolsAgentHost
   static scoped_refptr<DevToolsAgentHost> GetOrCreateFor(
       WebContents* web_contents);
 
-  // Returns DevToolsAgentHost that can be used for inspecting |frame_host|.
-  // A new DevToolsAgentHost will be created if it does not exist.
-  // For main frame cases, prefer using the above method which takes WebContents
-  // instead.
-  // TODO(dgozman): this is a temporary measure until we can inspect
-  // cross-process subframes within a single agent.
-  static scoped_refptr<DevToolsAgentHost> GetOrCreateFor(
-      RenderFrameHost* frame_host);
-
   // Returns true iff an instance of DevToolsAgentHost for the |web_contents|
   // does exist.
   static bool HasFor(WebContents* web_contents);
-
-  // Returns DevToolsAgentHost that can be used for inspecting shared worker
-  // with given worker process host id and routing id.
-  static scoped_refptr<DevToolsAgentHost> GetForWorker(int worker_process_id,
-                                                       int worker_route_id);
 
   // Creates DevToolsAgentHost that communicates to the target by means of
   // provided |delegate|. |delegate| ownership is passed to the created agent
@@ -105,11 +90,6 @@ class CONTENT_EXPORT DevToolsAgentHost
   // Returns all DevToolsAgentHosts content is aware of.
   static List GetOrCreateAll();
 
-  using DiscoveryCallback = base::Callback<void(List)>;
-
-  // Returns all possible DevToolsAgentHosts embedder is aware of.
-  static void DiscoverAllHosts(const DiscoveryCallback& callback);
-
   // Starts remote debugging.
   // Takes ownership over |socket_factory|.
   // If |frontend_url| is empty, assumes it's bundled.
@@ -121,20 +101,21 @@ class CONTENT_EXPORT DevToolsAgentHost
       std::unique_ptr<DevToolsSocketFactory> server_socket_factory,
       const std::string& frontend_url,
       const base::FilePath& active_port_output_directory,
-      const base::FilePath& debug_frontend_dir,
-      const std::string& product_name,
-      const std::string& user_agent);
+      const base::FilePath& debug_frontend_dir);
 
   // Stops remote debugging.
   static void StopRemoteDebuggingServer();
+
+  // Starts remote debugging for browser target for the given fd=3
+  // for reading and fd=4 for writing remote debugging messages.
+  static void StartRemoteDebuggingPipeHandler();
 
   // Observer is notified about changes in DevToolsAgentHosts.
   static void AddObserver(DevToolsAgentHostObserver*);
   static void RemoveObserver(DevToolsAgentHostObserver*);
 
   // Attaches |client| to this agent host to start debugging.
-  // Returns true iff attach succeeded.
-  virtual bool AttachClient(DevToolsAgentHostClient* client) = 0;
+  virtual void AttachClient(DevToolsAgentHostClient* client) = 0;
 
   // Attaches |client| to this agent host to start debugging. Disconnects
   // any existing clients.
@@ -152,6 +133,11 @@ class CONTENT_EXPORT DevToolsAgentHost
   virtual bool DispatchProtocolMessage(DevToolsAgentHostClient* client,
                                        const std::string& message) = 0;
 
+  // Sends |message| to the client of the specified session. Returns |true| if
+  // the session exists and the message was sent.
+  virtual bool SendProtocolMessageToClient(int session_id,
+                                           const std::string& message) = 0;
+
   // Starts inspecting element at position (|x|, |y|).
   virtual void InspectElement(DevToolsAgentHostClient* client,
                               int x,
@@ -162,6 +148,9 @@ class CONTENT_EXPORT DevToolsAgentHost
 
   // Returns the id of the parent host, or empty string if no parent.
   virtual std::string GetParentId() = 0;
+
+  // Returns the id of the opener host, or empty string if no opener.
+  virtual std::string GetOpenerId() = 0;
 
   // Returns web contents instance for this host if any.
   virtual WebContents* GetWebContents() = 0;

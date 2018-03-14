@@ -20,8 +20,9 @@
 
 #include "core/html/forms/RadioButtonGroupScope.h"
 
-#include "core/InputTypeNames.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/dom/AXObjectCache.h"
+#include "core/html/forms/HTMLInputElement.h"
+#include "core/input_type_names.h"
 #include "platform/wtf/HashMap.h"
 
 namespace blink {
@@ -39,7 +40,7 @@ class RadioButtonGroup : public GarbageCollected<RadioButtonGroup> {
   bool Contains(HTMLInputElement*) const;
   unsigned size() const;
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
   RadioButtonGroup();
@@ -133,7 +134,7 @@ void RadioButtonGroup::UpdateCheckedState(HTMLInputElement* button) {
 
 void RadioButtonGroup::RequiredAttributeChanged(HTMLInputElement* button) {
   DCHECK_EQ(button->type(), InputTypeNames::radio);
-  auto it = members_.Find(button);
+  auto it = members_.find(button);
   DCHECK_NE(it, members_.end());
   bool was_valid = IsValid();
   // Synchronize the 'required' flag for the button, along with
@@ -145,7 +146,7 @@ void RadioButtonGroup::RequiredAttributeChanged(HTMLInputElement* button) {
 
 void RadioButtonGroup::Remove(HTMLInputElement* button) {
   DCHECK_EQ(button->type(), InputTypeNames::radio);
-  auto it = members_.Find(button);
+  auto it = members_.find(button);
   if (it == members_.end())
     return;
   bool was_valid = IsValid();
@@ -192,7 +193,7 @@ unsigned RadioButtonGroup::size() const {
   return members_.size();
 }
 
-DEFINE_TRACE(RadioButtonGroup) {
+void RadioButtonGroup::Trace(blink::Visitor* visitor) {
   visitor->Trace(members_);
   visitor->Trace(checked_button_);
 }
@@ -214,7 +215,7 @@ void RadioButtonGroupScope::AddButton(HTMLInputElement* element) {
   if (!name_to_group_map_)
     name_to_group_map_ = new NameToGroupMap;
 
-  auto key_value =
+  auto* key_value =
       name_to_group_map_->insert(element->GetName(), nullptr).stored_value;
   if (!key_value->value)
     key_value->value = RadioButtonGroup::Create();
@@ -294,7 +295,7 @@ void RadioButtonGroupScope::RemoveButton(HTMLInputElement* element) {
   }
 }
 
-DEFINE_TRACE(RadioButtonGroupScope) {
+void RadioButtonGroupScope::Trace(blink::Visitor* visitor) {
   visitor->Trace(name_to_group_map_);
 }
 

@@ -5,7 +5,7 @@
 #ifndef V8BindingForModules_h
 #define V8BindingForModules_h
 
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "modules/ModulesExport.h"
 #include "modules/webdatabase/sqlite/SQLValue.h"
 
@@ -34,7 +34,8 @@ MODULES_EXPORT bool CanInjectIDBKeyIntoScriptValue(v8::Isolate*,
                                                    const IDBKeyPath&);
 ScriptValue DeserializeScriptValue(ScriptState*,
                                    SerializedScriptValue*,
-                                   const Vector<WebBlobInfo>*);
+                                   const Vector<WebBlobInfo>*,
+                                   bool read_wasm_from_stream);
 
 #if DCHECK_IS_ON()
 void AssertPrimaryKeyValidOrInjectable(ScriptState*, const IDBValue*);

@@ -1,7 +1,9 @@
-{% from "macros.tmpl" import license %}
+{% from "templates/macros.tmpl" import license, source_files_for_generated_file %}
 {{ license() }}
 
-#include "InternalSettingsGenerated.h"
+{{source_files_for_generated_file(template_file, input_files)}}
+
+#include "{{primary_header_name}}"
 
 #include "core/page/Page.h"
 #include "core/frame/Settings.h"
@@ -30,8 +32,9 @@ void InternalSettingsGenerated::set{{setting.name|upper_first}}({{setting.type|t
 }
 {% endfor %}
 
-DEFINE_TRACE(InternalSettingsGenerated) {
+void InternalSettingsGenerated::Trace(Visitor* visitor) {
   visitor->Trace(m_page);
+  ScriptWrappable::Trace(visitor);
 }
 
 } // namespace blink

@@ -23,64 +23,62 @@ class StructTraitsTest : public testing::Test, public mojom::TraitsTestService {
 
  protected:
   mojom::TraitsTestServicePtr GetTraitsTestProxy() {
-    return traits_test_bindings_.CreateInterfacePtrAndBind(this);
+    mojom::TraitsTestServicePtr proxy;
+    traits_test_bindings_.AddBinding(this, mojo::MakeRequest(&proxy));
+    return proxy;
   }
 
  private:
   // TraitsTestService:
   void EchoDxDiagNode(const DxDiagNode& d,
-                      const EchoDxDiagNodeCallback& callback) override {
-    callback.Run(d);
+                      EchoDxDiagNodeCallback callback) override {
+    std::move(callback).Run(d);
   }
 
   void EchoGpuDevice(const GPUInfo::GPUDevice& g,
-                     const EchoGpuDeviceCallback& callback) override {
-    callback.Run(g);
+                     EchoGpuDeviceCallback callback) override {
+    std::move(callback).Run(g);
   }
 
-  void EchoGpuInfo(const GPUInfo& g,
-                   const EchoGpuInfoCallback& callback) override {
-    callback.Run(g);
+  void EchoGpuInfo(const GPUInfo& g, EchoGpuInfoCallback callback) override {
+    std::move(callback).Run(g);
   }
 
-  void EchoMailbox(const Mailbox& m,
-                   const EchoMailboxCallback& callback) override {
-    callback.Run(m);
+  void EchoMailbox(const Mailbox& m, EchoMailboxCallback callback) override {
+    std::move(callback).Run(m);
   }
 
   void EchoMailboxHolder(const MailboxHolder& r,
-                         const EchoMailboxHolderCallback& callback) override {
-    callback.Run(r);
+                         EchoMailboxHolderCallback callback) override {
+    std::move(callback).Run(r);
   }
 
   void EchoSyncToken(const SyncToken& s,
-                     const EchoSyncTokenCallback& callback) override {
-    callback.Run(s);
+                     EchoSyncTokenCallback callback) override {
+    std::move(callback).Run(s);
   }
 
   void EchoVideoDecodeAcceleratorSupportedProfile(
       const VideoDecodeAcceleratorSupportedProfile& v,
-      const EchoVideoDecodeAcceleratorSupportedProfileCallback& callback)
-      override {
-    callback.Run(v);
+      EchoVideoDecodeAcceleratorSupportedProfileCallback callback) override {
+    std::move(callback).Run(v);
   }
 
   void EchoVideoDecodeAcceleratorCapabilities(
       const VideoDecodeAcceleratorCapabilities& v,
-      const EchoVideoDecodeAcceleratorCapabilitiesCallback& callback) override {
-    callback.Run(v);
+      EchoVideoDecodeAcceleratorCapabilitiesCallback callback) override {
+    std::move(callback).Run(v);
   }
 
   void EchoVideoEncodeAcceleratorSupportedProfile(
       const VideoEncodeAcceleratorSupportedProfile& v,
-      const EchoVideoEncodeAcceleratorSupportedProfileCallback& callback)
-      override {
-    callback.Run(v);
+      EchoVideoEncodeAcceleratorSupportedProfileCallback callback) override {
+    std::move(callback).Run(v);
   }
 
   void EchoGpuPreferences(const GpuPreferences& prefs,
-                          const EchoGpuPreferencesCallback& callback) override {
-    callback.Run(prefs);
+                          EchoGpuPreferencesCallback callback) override {
+    std::move(callback).Run(prefs);
   }
 
   base::MessageLoop loop_;
@@ -170,7 +168,7 @@ TEST_F(StructTraitsTest, GpuInfo) {
   const std::vector<gpu::VideoEncodeAcceleratorSupportedProfile>
       video_encode_accelerator_supported_profiles;
   const bool jpeg_decode_accelerator_supported = true;
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
   const VisualID system_visual = 0x1234;
   const VisualID rgba_visual = 0x5678;
 #endif
@@ -215,7 +213,7 @@ TEST_F(StructTraitsTest, GpuInfo) {
   input.video_encode_accelerator_supported_profiles =
       video_encode_accelerator_supported_profiles;
   input.jpeg_decode_accelerator_supported = jpeg_decode_accelerator_supported;
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
   input.system_visual = system_visual;
   input.rgba_visual = rgba_visual;
 #endif
@@ -290,7 +288,7 @@ TEST_F(StructTraitsTest, GpuInfo) {
       video_decode_accelerator_capabilities.supported_profiles.size());
   EXPECT_EQ(output.video_encode_accelerator_supported_profiles.size(),
             video_encode_accelerator_supported_profiles.size());
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
   EXPECT_EQ(system_visual, output.system_visual);
   EXPECT_EQ(rgba_visual, output.rgba_visual);
 #endif
@@ -318,18 +316,23 @@ TEST_F(StructTraitsTest, Mailbox) {
 
 TEST_F(StructTraitsTest, MailboxHolder) {
   gpu::MailboxHolder input;
+
   const int8_t mailbox_name[GL_MAILBOX_SIZE_CHROMIUM] = {
       0, 9, 8, 7, 6, 5, 4, 3, 2, 1, 9, 7, 5, 3, 1, 2};
   gpu::Mailbox mailbox;
   mailbox.SetName(mailbox_name);
+
   const gpu::CommandBufferNamespace namespace_id = gpu::IN_PROCESS;
   const int32_t extra_data_field = 0xbeefbeef;
   const gpu::CommandBufferId command_buffer_id(
       gpu::CommandBufferId::FromUnsafeValue(0xdeadbeef));
   const uint64_t release_count = 0xdeadbeefdeadL;
-  const gpu::SyncToken sync_token(namespace_id, extra_data_field,
-                                  command_buffer_id, release_count);
+  gpu::SyncToken sync_token(namespace_id, extra_data_field, command_buffer_id,
+                            release_count);
+  sync_token.SetVerifyFlush();
+
   const uint32_t texture_target = 1337;
+
   input.mailbox = mailbox;
   input.sync_token = sync_token;
   input.texture_target = texture_target;
@@ -348,9 +351,9 @@ TEST_F(StructTraitsTest, SyncToken) {
   const gpu::CommandBufferId command_buffer_id(
       gpu::CommandBufferId::FromUnsafeValue(0xdeadbeef));
   const uint64_t release_count = 0xdeadbeefdead;
-  const bool verified_flush = false;
   gpu::SyncToken input(namespace_id, extra_data_field, command_buffer_id,
                        release_count);
+  input.SetVerifyFlush();
   mojom::TraitsTestServicePtr proxy = GetTraitsTestProxy();
   gpu::SyncToken output;
   proxy->EchoSyncToken(input, &output);
@@ -358,7 +361,7 @@ TEST_F(StructTraitsTest, SyncToken) {
   EXPECT_EQ(extra_data_field, output.extra_data_field());
   EXPECT_EQ(command_buffer_id, output.command_buffer_id());
   EXPECT_EQ(release_count, output.release_count());
-  EXPECT_EQ(verified_flush, output.verified_flush());
+  EXPECT_TRUE(output.verified_flush());
 }
 
 TEST_F(StructTraitsTest, VideoDecodeAcceleratorSupportedProfile) {
@@ -429,7 +432,6 @@ TEST_F(StructTraitsTest, GpuPreferences) {
   GpuPreferences prefs;
   prefs.single_process = true;
   prefs.in_process_gpu = true;
-  prefs.ui_prioritize_in_gpu_process = true;
 #if defined(OS_WIN)
   const GpuPreferences::VpxDecodeVendors vendor =
       GpuPreferences::VPX_VENDOR_AMD;
@@ -442,7 +444,6 @@ TEST_F(StructTraitsTest, GpuPreferences) {
   proxy->EchoGpuPreferences(prefs, &echo);
   EXPECT_TRUE(echo.single_process);
   EXPECT_TRUE(echo.in_process_gpu);
-  EXPECT_TRUE(echo.ui_prioritize_in_gpu_process);
   EXPECT_TRUE(echo.enable_gpu_driver_debug_logging);
 #if defined(OS_WIN)
   EXPECT_EQ(vendor, echo.enable_accelerated_vpx_decode);
@@ -453,7 +454,7 @@ TEST_F(StructTraitsTest, GpuFeatureInfo) {
   GpuFeatureInfo input;
   input.status_values[GPU_FEATURE_TYPE_FLASH3D] =
       gpu::kGpuFeatureStatusBlacklisted;
-  input.status_values[GPU_FEATURE_TYPE_PANEL_FITTING] =
+  input.status_values[GPU_FEATURE_TYPE_ACCELERATED_WEBGL] =
       gpu::kGpuFeatureStatusUndefined;
   input.status_values[GPU_FEATURE_TYPE_GPU_RASTERIZATION] =
       gpu::kGpuFeatureStatusDisabled;

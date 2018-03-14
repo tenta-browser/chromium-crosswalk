@@ -5,8 +5,8 @@
 package org.chromium.android_webview;
 
 import android.util.SparseArray;
-import android.webkit.ValueCallback;
 
+import org.chromium.base.Callback;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
@@ -50,22 +50,21 @@ public class AwQuotaManagerBridge {
     }
 
     // This is not owning. The native object is owned by the native AwBrowserContext.
-    private long mNativeAwQuotaManagerBridgeImpl;
+    private long mNativeAwQuotaManagerBridge;
 
     // The Java callbacks are saved here. An incrementing callback id is generated for each saved
     // callback and is passed to the native side to identify callback.
     private int mNextId;
-    private SparseArray<ValueCallback<Origins>> mPendingGetOriginCallbacks;
-    private SparseArray<ValueCallback<Long>> mPendingGetQuotaForOriginCallbacks;
-    private SparseArray<ValueCallback<Long>> mPendingGetUsageForOriginCallbacks;
+    private SparseArray<Callback<Origins>> mPendingGetOriginCallbacks;
+    private SparseArray<Callback<Long>> mPendingGetQuotaForOriginCallbacks;
+    private SparseArray<Callback<Long>> mPendingGetUsageForOriginCallbacks;
 
-    private AwQuotaManagerBridge(long nativeAwQuotaManagerBridgeImpl) {
-        mNativeAwQuotaManagerBridgeImpl = nativeAwQuotaManagerBridgeImpl;
-        mPendingGetOriginCallbacks =
-                new SparseArray<ValueCallback<Origins>>();
-        mPendingGetQuotaForOriginCallbacks = new SparseArray<ValueCallback<Long>>();
-        mPendingGetUsageForOriginCallbacks = new SparseArray<ValueCallback<Long>>();
-        nativeInit(mNativeAwQuotaManagerBridgeImpl);
+    private AwQuotaManagerBridge(long nativeAwQuotaManagerBridge) {
+        mNativeAwQuotaManagerBridge = nativeAwQuotaManagerBridge;
+        mPendingGetOriginCallbacks = new SparseArray<Callback<Origins>>();
+        mPendingGetQuotaForOriginCallbacks = new SparseArray<Callback<Long>>();
+        mPendingGetUsageForOriginCallbacks = new SparseArray<Callback<Long>>();
+        nativeInit(mNativeAwQuotaManagerBridge);
     }
 
     private int getNextId() {
@@ -88,55 +87,54 @@ public class AwQuotaManagerBridge {
      * TODO(boliu): Actually clear Web Storage.
      */
     public void deleteAllData() {
-        nativeDeleteAllData(mNativeAwQuotaManagerBridgeImpl);
+        nativeDeleteAllData(mNativeAwQuotaManagerBridge);
     }
 
     /**
      * Implements WebStorage.deleteOrigin(). Clear the storage of APIs 2-5 for the given origin.
      */
     public void deleteOrigin(String origin) {
-        nativeDeleteOrigin(mNativeAwQuotaManagerBridgeImpl, origin);
+        nativeDeleteOrigin(mNativeAwQuotaManagerBridge, origin);
     }
 
     /**
      * Implements WebStorage.getOrigins. Get the per origin usage and quota of APIs 2-5 in
      * aggregate.
      */
-    public void getOrigins(ValueCallback<Origins> callback) {
+    public void getOrigins(Callback<Origins> callback) {
         int callbackId = getNextId();
         assert mPendingGetOriginCallbacks.get(callbackId) == null;
         mPendingGetOriginCallbacks.put(callbackId, callback);
-        nativeGetOrigins(mNativeAwQuotaManagerBridgeImpl, callbackId);
+        nativeGetOrigins(mNativeAwQuotaManagerBridge, callbackId);
     }
 
     /**
      * Implements WebStorage.getQuotaForOrigin. Get the quota of APIs 2-5 in aggregate for given
      * origin.
      */
-    public void getQuotaForOrigin(String origin, ValueCallback<Long> callback) {
+    public void getQuotaForOrigin(String origin, Callback<Long> callback) {
         int callbackId = getNextId();
         assert mPendingGetQuotaForOriginCallbacks.get(callbackId) == null;
         mPendingGetQuotaForOriginCallbacks.put(callbackId, callback);
-        nativeGetUsageAndQuotaForOrigin(mNativeAwQuotaManagerBridgeImpl, origin, callbackId, true);
+        nativeGetUsageAndQuotaForOrigin(mNativeAwQuotaManagerBridge, origin, callbackId, true);
     }
 
     /**
      * Implements WebStorage.getUsageForOrigin. Get the usage of APIs 2-5 in aggregate for given
      * origin.
      */
-    public void getUsageForOrigin(String origin, ValueCallback<Long> callback) {
+    public void getUsageForOrigin(String origin, Callback<Long> callback) {
         int callbackId = getNextId();
         assert mPendingGetUsageForOriginCallbacks.get(callbackId) == null;
         mPendingGetUsageForOriginCallbacks.put(callbackId, callback);
-        nativeGetUsageAndQuotaForOrigin(mNativeAwQuotaManagerBridgeImpl, origin, callbackId, false);
+        nativeGetUsageAndQuotaForOrigin(mNativeAwQuotaManagerBridge, origin, callbackId, false);
     }
 
     @CalledByNative
     private void onGetOriginsCallback(int callbackId, String[] origin, long[] usages,
             long[] quotas) {
         assert mPendingGetOriginCallbacks.get(callbackId) != null;
-        mPendingGetOriginCallbacks.get(callbackId).onReceiveValue(
-                new Origins(origin, usages, quotas));
+        mPendingGetOriginCallbacks.get(callbackId).onResult(new Origins(origin, usages, quotas));
         mPendingGetOriginCallbacks.remove(callbackId);
     }
 
@@ -145,19 +143,19 @@ public class AwQuotaManagerBridge {
             int callbackId, boolean isQuota, long usage, long quota) {
         if (isQuota) {
             assert mPendingGetQuotaForOriginCallbacks.get(callbackId) != null;
-            mPendingGetQuotaForOriginCallbacks.get(callbackId).onReceiveValue(quota);
+            mPendingGetQuotaForOriginCallbacks.get(callbackId).onResult(quota);
             mPendingGetQuotaForOriginCallbacks.remove(callbackId);
         } else {
             assert mPendingGetUsageForOriginCallbacks.get(callbackId) != null;
-            mPendingGetUsageForOriginCallbacks.get(callbackId).onReceiveValue(usage);
+            mPendingGetUsageForOriginCallbacks.get(callbackId).onResult(usage);
             mPendingGetUsageForOriginCallbacks.remove(callbackId);
         }
     }
 
-    private native void nativeInit(long nativeAwQuotaManagerBridgeImpl);
-    private native void nativeDeleteAllData(long nativeAwQuotaManagerBridgeImpl);
-    private native void nativeDeleteOrigin(long nativeAwQuotaManagerBridgeImpl, String origin);
-    private native void nativeGetOrigins(long nativeAwQuotaManagerBridgeImpl, int callbackId);
-    private native void nativeGetUsageAndQuotaForOrigin(long nativeAwQuotaManagerBridgeImpl,
-            String origin, int callbackId, boolean isQuota);
+    private native void nativeInit(long nativeAwQuotaManagerBridge);
+    private native void nativeDeleteAllData(long nativeAwQuotaManagerBridge);
+    private native void nativeDeleteOrigin(long nativeAwQuotaManagerBridge, String origin);
+    private native void nativeGetOrigins(long nativeAwQuotaManagerBridge, int callbackId);
+    private native void nativeGetUsageAndQuotaForOrigin(
+            long nativeAwQuotaManagerBridge, String origin, int callbackId, boolean isQuota);
 }

@@ -70,7 +70,7 @@ int SVGInlineTextBox::OffsetForPositionInFragment(
     LayoutUnit position,
     bool include_partial_glyphs) const {
   LineLayoutSVGInlineText line_layout_item =
-      LineLayoutSVGInlineText(this->GetLineLayoutItem());
+      LineLayoutSVGInlineText(GetLineLayoutItem());
 
   float scaling_factor = line_layout_item.ScalingFactor();
   DCHECK(scaling_factor);
@@ -106,7 +106,7 @@ FloatRect SVGInlineTextBox::SelectionRectForTextFragment(
   DCHECK_LT(start_position, end_position);
 
   LineLayoutSVGInlineText line_layout_item =
-      LineLayoutSVGInlineText(this->GetLineLayoutItem());
+      LineLayoutSVGInlineText(GetLineLayoutItem());
 
   float scaling_factor = line_layout_item.ScalingFactor();
   DCHECK(scaling_factor);
@@ -134,8 +134,10 @@ FloatRect SVGInlineTextBox::SelectionRectForTextFragment(
   return selection_rect;
 }
 
-LayoutRect SVGInlineTextBox::LocalSelectionRect(int start_position,
-                                                int end_position) const {
+LayoutRect SVGInlineTextBox::LocalSelectionRect(
+    int start_position,
+    int end_position,
+    bool consider_current_selection) const {
   int box_start = Start();
   start_position = std::max(start_position - box_start, 0);
   end_position = std::min(end_position - box_start, static_cast<int>(Len()));
@@ -242,7 +244,7 @@ void SVGInlineTextBox::PaintDocumentMarker(GraphicsContext&,
 void SVGInlineTextBox::PaintTextMatchMarkerForeground(
     const PaintInfo& paint_info,
     const LayoutPoint& point,
-    const DocumentMarker& marker,
+    const TextMatchMarker& marker,
     const ComputedStyle& style,
     const Font& font) const {
   SVGInlineTextBoxPainter(*this).PaintTextMatchMarkerForeground(
@@ -252,30 +254,28 @@ void SVGInlineTextBox::PaintTextMatchMarkerForeground(
 void SVGInlineTextBox::PaintTextMatchMarkerBackground(
     const PaintInfo& paint_info,
     const LayoutPoint& point,
-    const DocumentMarker& marker,
+    const TextMatchMarker& marker,
     const ComputedStyle& style,
     const Font& font) const {
   SVGInlineTextBoxPainter(*this).PaintTextMatchMarkerBackground(
       paint_info, point, marker, style, font);
 }
 
-LayoutRect SVGInlineTextBox::CalculateBoundaries() const {
+FloatRect SVGInlineTextBox::CalculateBoundaries() const {
   LineLayoutSVGInlineText line_layout_item =
-      LineLayoutSVGInlineText(this->GetLineLayoutItem());
+      LineLayoutSVGInlineText(GetLineLayoutItem());
   const SimpleFontData* font_data = line_layout_item.ScaledFont().PrimaryFont();
   DCHECK(font_data);
   if (!font_data)
-    return LayoutRect();
+    return FloatRect();
 
   float scaling_factor = line_layout_item.ScalingFactor();
   DCHECK(scaling_factor);
-  LayoutUnit baseline(font_data->GetFontMetrics().FloatAscent() /
-                      scaling_factor);
+  float baseline = font_data->GetFontMetrics().FloatAscent() / scaling_factor;
 
-  LayoutRect text_bounding_rect;
+  FloatRect text_bounding_rect;
   for (const SVGTextFragment& fragment : text_fragments_)
-    text_bounding_rect.Unite(
-        LayoutRect(fragment.OverflowBoundingBox(baseline)));
+    text_bounding_rect.Unite(fragment.OverflowBoundingBox(baseline));
 
   return text_bounding_rect;
 }
@@ -305,7 +305,7 @@ bool SVGInlineTextBox::NodeAtPoint(HitTestResult& result,
       rect.MoveBy(accumulated_offset);
       if (location_in_container.Intersects(rect)) {
         LineLayoutSVGInlineText line_layout_item =
-            LineLayoutSVGInlineText(this->GetLineLayoutItem());
+            LineLayoutSVGInlineText(GetLineLayoutItem());
         const SimpleFontData* font_data =
             line_layout_item.ScaledFont().PrimaryFont();
         DCHECK(font_data);

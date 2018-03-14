@@ -27,21 +27,22 @@
 #include "core/html/parser/XSSAuditor.h"
 
 #include <memory>
-#include "core/HTMLNames.h"
-#include "core/SVGNames.h"
-#include "core/XLinkNames.h"
 #include "core/dom/Document.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Settings.h"
+#include "core/frame/UseCounter.h"
 #include "core/html/HTMLParamElement.h"
 #include "core/html/LinkRelAttribute.h"
 #include "core/html/parser/HTMLDocumentParser.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/html/parser/TextResourceDecoder.h"
 #include "core/html/parser/XSSAuditorDelegate.h"
+#include "core/html_names.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "core/loader/DocumentLoader.h"
 #include "core/loader/MixedContentChecker.h"
+#include "core/svg_names.h"
+#include "core/xlink_names.h"
 #include "platform/network/EncodedFormData.h"
 #include "platform/text/DecodeEscapeSequences.h"
 #include "platform/wtf/ASCIICType.h"
@@ -109,10 +110,15 @@ static bool IsJSNewline(UChar c) {
   return (c == '\n' || c == '\r' || c == 0x2028 || c == 0x2029);
 }
 
-static bool StartsHTMLCommentAt(const String& string, size_t start) {
+static bool StartsHTMLOpenCommentAt(const String& string, size_t start) {
   return (start + 3 < string.length() && string[start] == '<' &&
           string[start + 1] == '!' && string[start + 2] == '-' &&
           string[start + 3] == '-');
+}
+
+static bool StartsHTMLCloseCommentAt(const String& string, size_t start) {
+  return (start + 2 < string.length() && string[start] == '-' &&
+          string[start + 1] == '-' && string[start + 2] == '>');
 }
 
 static bool StartsSingleLineCommentAt(const String& string, size_t start) {
@@ -130,6 +136,15 @@ static bool StartsOpeningScriptTagAt(const String& string, size_t start) {
     return false;
   // TODO(esprehn): StringView should probably have startsWith.
   StringView script("<script");
+  return EqualIgnoringASCIICase(StringView(string, start, script.length()),
+                                script);
+}
+
+static bool StartsClosingScriptTagAt(const String& string, size_t start) {
+  if (start + 7 >= string.length())
+    return false;
+  // TODO(esprehn): StringView should probably have startsWith.
+  StringView script("</script");
   return EqualIgnoringASCIICase(StringView(string, start, script.length()),
                                 script);
 }
@@ -297,21 +312,30 @@ static void TruncateForScriptLikeAttribute(String& decoded_snippet) {
   }
 }
 
+static void TruncateForSemicolonSeparatedScriptLikeAttribute(
+    String& decoded_snippet) {
+  // Same as script-like attributes, but semicolons can introduce page data.
+  TruncateForScriptLikeAttribute(decoded_snippet);
+  size_t position = decoded_snippet.Find(";");
+  if (position != kNotFound)
+    decoded_snippet.Truncate(position);
+}
+
 static bool IsSemicolonSeparatedAttribute(
     const HTMLToken::Attribute& attribute) {
   return ThreadSafeMatch(attribute.NameAsVector(), SVGNames::valuesAttr);
 }
 
-static String SemicolonSeparatedValueContainingJavaScriptURL(
+static bool IsSemicolonSeparatedValueContainingJavaScriptURL(
     const String& value) {
   Vector<String> value_list;
   value.Split(';', value_list);
   for (size_t i = 0; i < value_list.size(); ++i) {
     String stripped = StripLeadingAndTrailingHTMLSpaces(value_list[i]);
     if (ProtocolIsJavaScript(stripped))
-      return stripped;
+      return true;
   }
-  return g_empty_string;
+  return false;
 }
 
 XSSAuditor::XSSAuditor()
@@ -386,13 +410,13 @@ void XSSAuditor::Init(Document* document,
         header_value, error_details, error_position, report_url);
 
     if (xss_protection_header == kAllowReflectedXSS)
-      UseCounter::Count(*document, UseCounter::kXSSAuditorDisabled);
+      UseCounter::Count(*document, WebFeature::kXSSAuditorDisabled);
     else if (xss_protection_header == kFilterReflectedXSS)
-      UseCounter::Count(*document, UseCounter::kXSSAuditorEnabledFilter);
+      UseCounter::Count(*document, WebFeature::kXSSAuditorEnabledFilter);
     else if (xss_protection_header == kBlockReflectedXSS)
-      UseCounter::Count(*document, UseCounter::kXSSAuditorEnabledBlock);
+      UseCounter::Count(*document, WebFeature::kXSSAuditorEnabledBlock);
     else if (xss_protection_header == kReflectedXSSInvalid)
-      UseCounter::Count(*document, UseCounter::kXSSAuditorInvalid);
+      UseCounter::Count(*document, WebFeature::kXSSAuditorInvalid);
 
     did_send_valid_xss_protection_header_ =
         xss_protection_header != kReflectedXSSUnset &&
@@ -401,6 +425,13 @@ void XSSAuditor::Init(Document* document,
          xss_protection_header == kBlockReflectedXSS) &&
         !report_url.IsEmpty()) {
       xss_protection_report_url = document->CompleteURL(report_url);
+      if (!SecurityOrigin::Create(xss_protection_report_url)
+               ->IsSameSchemeHostPort(document->GetSecurityOrigin())) {
+        error_details =
+            "reporting URL is not same scheme, host, and port as page";
+        xss_protection_header = kReflectedXSSInvalid;
+        xss_protection_report_url = KURL();
+      }
       if (MixedContentChecker::IsMixedContent(document->GetSecurityOrigin(),
                                               xss_protection_report_url)) {
         error_details = "insecure reporting URL for secure page";
@@ -649,7 +680,8 @@ bool XSSAuditor::FilterFormToken(const FilterTokenRequest& request) {
   DCHECK_EQ(request.token.GetType(), HTMLToken::kStartTag);
   DCHECK(HasName(request.token, formTag));
 
-  return EraseAttributeIfInjected(request, actionAttr, kURLWithUniqueOrigin);
+  return EraseAttributeIfInjected(request, actionAttr, kURLWithUniqueOrigin,
+                                  kSrcLikeAttributeTruncation);
 }
 
 bool XSSAuditor::FilterInputToken(const FilterTokenRequest& request) {
@@ -701,15 +733,14 @@ bool XSSAuditor::EraseDangerousAttributesIfInjected(
           Canonicalize(SnippetFromAttribute(request, attribute),
                        kScriptLikeAttributeTruncation));
     } else if (IsSemicolonSeparatedAttribute(attribute)) {
-      String sub_value =
-          SemicolonSeparatedValueContainingJavaScriptURL(attribute.Value());
-      if (!sub_value.IsEmpty()) {
+      if (IsSemicolonSeparatedValueContainingJavaScriptURL(attribute.Value())) {
         value_contains_java_script_url = true;
         erase_attribute =
             IsContainedInRequest(Canonicalize(
                 NameFromAttribute(request, attribute), kNoTruncation)) &&
             IsContainedInRequest(
-                Canonicalize(sub_value, kScriptLikeAttributeTruncation));
+                Canonicalize(SnippetFromAttribute(request, attribute),
+                             kSemicolonSeparatedScriptLikeAttributeTruncation));
       }
     } else if (ProtocolIsJavaScript(
                    StripLeadingAndTrailingHTMLSpaces(attribute.Value()))) {
@@ -762,11 +793,20 @@ bool XSSAuditor::EraseAttributeIfInjected(const FilterTokenRequest& request,
 
 String XSSAuditor::CanonicalizedSnippetForTagName(
     const FilterTokenRequest& request) {
+  String source = request.source_tracker.SourceForToken(request.token);
+
+  // TODO(tsepez): fix HTMLSourceTracker not to include NULs.
+  // Beware that the source tracker may include leading NULs as part of
+  // the souce for the token.
+  unsigned start = 0;
+  for (start = 0; start < source.length() && source[start] == '\0'; ++start)
+    continue;
+
   // Grab a fixed number of characters equal to the length of the token's name
   // plus one (to account for the "<").
-  return Canonicalize(request.source_tracker.SourceForToken(request.token)
-                          .Substring(0, request.token.GetName().size() + 1),
-                      kNoTruncation);
+  return Canonicalize(
+      source.Substring(start, request.token.GetName().size() + 1),
+      kNoTruncation);
 }
 
 String XSSAuditor::NameFromAttribute(const FilterTokenRequest& request,
@@ -815,6 +855,8 @@ String XSSAuditor::Canonicalize(String snippet, TruncationKind treatment) {
       TruncateForSrcLikeAttribute(decoded_snippet);
     else if (treatment == kScriptLikeAttributeTruncation)
       TruncateForScriptLikeAttribute(decoded_snippet);
+    else if (treatment == kSemicolonSeparatedScriptLikeAttributeTruncation)
+      TruncateForSemicolonSeparatedScriptLikeAttribute(decoded_snippet);
   }
 
   return decoded_snippet.RemoveCharacters(&IsNonCanonicalCharacter);
@@ -842,7 +884,7 @@ String XSSAuditor::CanonicalizedSnippetForJavaScript(
 
     // Under HTML rules, both the HTML and JS comment synatx matters, and the
     // HTML comment ends at the end of the line, not with -->.
-    if (StartsHTMLCommentAt(string, start_position) ||
+    if (StartsHTMLOpenCommentAt(string, start_position) ||
         StartsSingleLineCommentAt(string, start_position)) {
       while (start_position < end_position &&
              !IsJSNewline(string[start_position]))
@@ -860,18 +902,22 @@ String XSSAuditor::CanonicalizedSnippetForJavaScript(
   String result;
   while (start_position < end_position && !result.length()) {
     // Stop at next comment (using the same rules as above for SVG/XML vs HTML),
-    // when we encounter a comma, when we encoutner a backtick, when we hit an
-    // opening <script> tag, or when we exceed the maximum length target. The
-    // comma rule covers a common parameter concatenation case performed by some
-    // web servers. The backtick rule covers the ECMA6 multi-line template
-    // string feature.
+    // when we encounter a comma, when we encounter a backtick, when we hit an
+    // opening <script> tag, when we encounter a HTML closing comment, or when
+    // we exceed the maximum length target.
+    // - The comma rule covers a common parameter concatenation case performed
+    //   by some web servers.
+    // - The backtick rule covers the ECMA6 multi-line template string feature.
+    // - The HTML closing comment rule covers the generous interpretation in
+    //   https://tc39.github.io/ecma262/#prod-annexB-HTMLCloseComment.
     last_non_space_position = kNotFound;
     for (found_position = start_position; found_position < end_position;
          found_position++) {
       if (!request.should_allow_cdata) {
         if (StartsSingleLineCommentAt(string, found_position) ||
             StartsMultiLineCommentAt(string, found_position) ||
-            StartsHTMLCommentAt(string, found_position)) {
+            StartsHTMLOpenCommentAt(string, found_position) ||
+            StartsHTMLCloseCommentAt(string, found_position)) {
           break;
         }
       }
@@ -879,7 +925,8 @@ String XSSAuditor::CanonicalizedSnippetForJavaScript(
         break;
 
       if (last_non_space_position != kNotFound &&
-          StartsOpeningScriptTagAt(string, found_position)) {
+          (StartsOpeningScriptTagAt(string, found_position) ||
+           StartsClosingScriptTagAt(string, found_position))) {
         found_position = last_non_space_position + 1;
         break;
       }
@@ -907,14 +954,12 @@ String XSSAuditor::CanonicalizedSnippetForJavaScript(
 bool XSSAuditor::IsContainedInRequest(const String& decoded_snippet) {
   if (decoded_snippet.IsEmpty())
     return false;
-  if (decoded_url_.Find(decoded_snippet, 0, kTextCaseUnicodeInsensitive) !=
-      kNotFound)
+  if (decoded_url_.FindIgnoringCase(decoded_snippet, 0) != kNotFound)
     return true;
   if (decoded_http_body_suffix_tree_ &&
       !decoded_http_body_suffix_tree_->MightContain(decoded_snippet))
     return false;
-  return decoded_http_body_.Find(decoded_snippet, 0,
-                                 kTextCaseUnicodeInsensitive) != kNotFound;
+  return decoded_http_body_.FindIgnoringCase(decoded_snippet, 0) != kNotFound;
 }
 
 bool XSSAuditor::IsLikelySafeResource(const String& url) {

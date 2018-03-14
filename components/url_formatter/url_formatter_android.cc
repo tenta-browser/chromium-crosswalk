@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/url_formatter/url_formatter_android.h"
-
 #include <string>
 
 #include "base/android/jni_android.h"
@@ -19,7 +17,7 @@ using base::android::ScopedJavaLocalRef;
 
 namespace {
 
-GURL ConvertJavaStringToGURL(JNIEnv* env, jstring url) {
+GURL JNI_UrlFormatter_ConvertJavaStringToGURL(JNIEnv* env, jstring url) {
   return url ? GURL(base::android::ConvertJavaStringToUTF8(env, url)) : GURL();
 }
 
@@ -29,9 +27,10 @@ namespace url_formatter {
 
 namespace android {
 
-static ScopedJavaLocalRef<jstring> FixupUrl(JNIEnv* env,
-                                            const JavaParamRef<jclass>& clazz,
-                                            const JavaParamRef<jstring>& url) {
+static ScopedJavaLocalRef<jstring> JNI_UrlFormatter_FixupUrl(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& clazz,
+    const JavaParamRef<jstring>& url) {
   DCHECK(url);
   GURL fixed_url = url_formatter::FixupURL(
       base::android::ConvertJavaStringToUTF8(env, url), std::string());
@@ -41,35 +40,33 @@ static ScopedJavaLocalRef<jstring> FixupUrl(JNIEnv* env,
              : ScopedJavaLocalRef<jstring>();
 }
 
-static ScopedJavaLocalRef<jstring> FormatUrlForDisplay(
+static ScopedJavaLocalRef<jstring> JNI_UrlFormatter_FormatUrlForDisplay(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& url) {
   return base::android::ConvertUTF16ToJavaString(
-      env, url_formatter::FormatUrl(ConvertJavaStringToGURL(env, url)));
+      env, url_formatter::FormatUrl(
+               JNI_UrlFormatter_ConvertJavaStringToGURL(env, url)));
 }
 
-static ScopedJavaLocalRef<jstring> FormatUrlForSecurityDisplay(
+static ScopedJavaLocalRef<jstring> JNI_UrlFormatter_FormatUrlForSecurityDisplay(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& url) {
   return base::android::ConvertUTF16ToJavaString(
       env, url_formatter::FormatUrlForSecurityDisplay(
-               ConvertJavaStringToGURL(env, url)));
+               JNI_UrlFormatter_ConvertJavaStringToGURL(env, url)));
 }
 
-static ScopedJavaLocalRef<jstring> FormatUrlForSecurityDisplayOmitScheme(
+static ScopedJavaLocalRef<jstring>
+JNI_UrlFormatter_FormatUrlForSecurityDisplayOmitScheme(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& url) {
   return base::android::ConvertUTF16ToJavaString(
       env, url_formatter::FormatUrlForSecurityDisplay(
-               ConvertJavaStringToGURL(env, url),
+               JNI_UrlFormatter_ConvertJavaStringToGURL(env, url),
                url_formatter::SchemeDisplay::OMIT_HTTP_AND_HTTPS));
-}
-
-bool RegisterUrlFormatterNatives(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace android

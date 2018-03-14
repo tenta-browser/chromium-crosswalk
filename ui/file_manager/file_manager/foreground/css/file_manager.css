@@ -185,6 +185,7 @@ div.splitter {
 
 #directory-tree .tree-row > .button {
   display: flex;
+  min-width: 0;
 }
 
 #directory-tree .tree-row > .expand-icon {
@@ -212,6 +213,17 @@ div.splitter {
   text-overflow: ellipsis;
 }
 
+#directory-tree .tree-row .rename-placeholder {
+  display: block;
+  flex: auto;
+  font-weight: 500;
+  margin: 0 6px;
+}
+
+#directory-tree .tree-row .rename-placeholder > input {
+  width: 100%;
+}
+
 #directory-tree [renaming] > .tree-row > .label {
   display: none;
 }
@@ -235,17 +247,19 @@ div.splitter {
 }
 
 #directory-tree .tree-item.accepts > .tree-row,
-#directory-tree .tree-row[lead][selected],
-#directory-tree .tree-row[lead],
-#directory-tree .tree-row[selected],
-#directory-tree .tree-row[anchor] {
+#directory-tree .tree-row[selected] {
   color: rgb(51, 103, 214);
+}
+
+#directory-tree:focus .tree-row[selected] {
+  background-color: rgb(216, 223, 240);
 }
 
 #directory-tree .tree-row > .root-eject {
   background: -webkit-image-set(
       url(../images/files/ui/eject.png) 1x,
       url(../images/files/ui/2x/eject.png) 2x) no-repeat center;
+  border-style: none;
   cursor: pointer;
   flex: none;
   height: 40px;
@@ -281,6 +295,7 @@ div.splitter {
 body.check-select .dialog-header {
   background: white;
   border-bottom: 1px solid rgb(219, 219, 219);
+  border-top: 1px solid transparent;
   color: rgb(90, 90, 90);
 }
 
@@ -394,13 +409,13 @@ body.check-select #search-button > .icon {
       url(../images/files/ui/2x/search.png) 2x);
 }
 
-#share-button > .icon {
+#share-menu-button > .icon {
   background-image: -webkit-image-set(
       url(../images/files/ui/share_white.png) 1x,
       url(../images/files/ui/2x/share_white.png) 2x);
 }
 
-body.check-select #share-button > .icon {
+body.check-select #share-menu-button > .icon {
   background-image: -webkit-image-set(
       url(../images/files/ui/share.png) 1x,
       url(../images/files/ui/2x/share.png) 2x);
@@ -461,6 +476,16 @@ body.check-select #sort-button {
 }
 
 body.check-select #gear-button {
+  display: none;
+}
+
+#selection-menu-button > .icon {
+  background-image: -webkit-image-set(
+      url(../images/files/ui/menu.png) 1x,
+      url(../images/files/ui/2x/menu.png) 2x);
+}
+
+body:not(.check-select) #selection-menu-button {
   display: none;
 }
 
@@ -611,6 +636,7 @@ body.check-select #files-selected-label {
 }
 
 #cancel-selection-button {
+  display: flex;
   text-transform: none;
 }
 
@@ -627,6 +653,7 @@ body.check-select #files-selected-label {
       url(../images/files/ui/2x/back.png) 2x);
   background-position: center;
   background-repeat: no-repeat;
+  flex: none;
   height: 16px;
   width: 16px;
 }
@@ -638,6 +665,15 @@ body.check-select #files-selected-label {
 
 #cancel-selection-button > iron-icon {
   -webkit-margin-end: 6px;
+}
+
+#cancel-selection-label {
+  flex: auto;
+  line-height: 31px;
+  overflow: hidden;
+  padding-top: 1px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 body.check-select #cancel-selection-button-wrapper {
@@ -1451,6 +1487,7 @@ html[dir='rtl'] .badge {
 }
 
 input.rename:focus,
+#directory-tree .tree-row .rename-placeholder > input:focus,
 #directory-tree .tree-row > input:focus {
   outline-color: rgb(77, 144, 254);
 }
@@ -1626,6 +1663,7 @@ li[renaming=''] .badge {
   background-position: center;
   background-repeat: no-repeat;
   height: 28px;
+  isolation: isolate;
   opacity: 0;
   position: absolute;
   transition: opacity 220ms ease;
@@ -1661,6 +1699,7 @@ body.check-select #list-container li[selected] .detail-checkmark {
   background-size: cover;
   border-radius: 14px;
   height: 100%;
+  isolation: isolate;
   opacity: 1;
   width: 100%;
 }
@@ -1676,9 +1715,16 @@ body.check-select #list-container list li[selected] .detail-thumbnail
   opacity: 0;
 }
 
+#share-menu cr-menu-item,
 #tasks-menu cr-menu-item:not(.change-default) {
   background-position: left 10px center;
   padding-left: 32px;
+}
+
+#share-menu cr-menu-item[command='#share'] {
+  background-image: -webkit-image-set(
+      url(../images/files/ui/person_add.png) 1x,
+      url(../images/files/ui/2x/person_add.png) 2x);
 }
 
 .detail-name > * {
@@ -1757,6 +1803,10 @@ cr-menu#file-context-menu {
 
 cr-menu#file-context-menu > :not(hr) {
   -webkit-padding-end: 8px;
+}
+
+cr-menu#file-context-menu.toolbar-menu > .hide-on-toolbar {
+  display: none;
 }
 
 cr-menu.chrome-menu hr {
@@ -1964,6 +2014,7 @@ list.autocomplete-suggestions > [lead] {
 }
 
 #gear-menu,
+#share-menu,
 #sort-menu,
 #tasks-menu {
   margin-top: 2px;
@@ -2247,7 +2298,7 @@ li#progress-center-close-view.error.single button.dismiss,
   color: white;
   display: flex;
   flex: 0 0 14px;
-  font-size; 14px;
+  font-size: 14px;
   padding: 20px 15px;
 }
 

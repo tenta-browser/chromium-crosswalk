@@ -7,6 +7,7 @@
 #include "android_webview/browser/aw_browser_context.h"
 #include "android_webview/browser/aw_browser_terminator.h"
 #include "android_webview/browser/aw_content_browser_client.h"
+#include "android_webview/browser/aw_metrics_service_client.h"
 #include "android_webview/browser/aw_result_codes.h"
 #include "android_webview/browser/deferred_gpu_command_service.h"
 #include "android_webview/browser/net/aw_network_change_notifier_factory.h"
@@ -22,6 +23,7 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/i18n/rtl.h"
+#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "components/crash/content/browser/crash_dump_manager_android.h"
 #include "components/crash/content/browser/crash_dump_observer_android.h"
@@ -31,9 +33,6 @@
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
-#include "device/geolocation/access_token_store.h"
-#include "device/geolocation/geolocation_delegate.h"
-#include "device/geolocation/geolocation_provider.h"
 #include "net/android/network_change_notifier_factory_android.h"
 #include "net/base/network_change_notifier.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -44,42 +43,6 @@
 #include "ui/gl/gl_surface.h"
 
 namespace android_webview {
-namespace {
-
-class AwAccessTokenStore : public device::AccessTokenStore {
- public:
-  AwAccessTokenStore() { }
-
-  // device::AccessTokenStore implementation
-  void LoadAccessTokens(const LoadAccessTokensCallback& request) override {
-    AccessTokenStore::AccessTokenMap access_token_map;
-    // AccessTokenMap and net::URLRequestContextGetter not used on Android,
-    // but Run needs to be called to finish the geolocation setup.
-    request.Run(access_token_map, NULL);
-  }
-  void SaveAccessToken(const GURL& server_url,
-                       const base::string16& access_token) override {}
-
- private:
-  ~AwAccessTokenStore() override {}
-
-  DISALLOW_COPY_AND_ASSIGN(AwAccessTokenStore);
-};
-
-// A provider of Geolocation services to override AccessTokenStore.
-class AwGeolocationDelegate : public device::GeolocationDelegate {
- public:
-  AwGeolocationDelegate() = default;
-
-  scoped_refptr<device::AccessTokenStore> CreateAccessTokenStore() final {
-    return new AwAccessTokenStore();
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(AwGeolocationDelegate);
-};
-
-}  // anonymous namespace
 
 AwBrowserMainParts::AwBrowserMainParts(AwContentBrowserClient* browser_client)
     : browser_client_(browser_client) {
@@ -118,17 +81,24 @@ int AwBrowserMainParts::PreCreateThreads() {
 
   base::android::MemoryPressureListenerAndroid::RegisterSystemCallback(
       base::android::AttachCurrentThread());
-  DeferredGpuCommandService::SetInstance();
   breakpad::CrashDumpObserver::Create();
 
+  // We need to create the safe browsing specific directory even if the
+  // AwSafeBrowsingConfigHelper::GetSafeBrowsingEnabled() is false
+  // initially, because safe browsing can be enabled later at runtime
+  // on a per-webview basis.
+  base::FilePath safe_browsing_dir;
+  if (PathService::Get(android_webview::DIR_SAFE_BROWSING,
+                       &safe_browsing_dir)) {
+    if (!base::PathExists(safe_browsing_dir))
+      base::CreateDirectory(safe_browsing_dir);
+  }
+
+  base::FilePath crash_dir;
   if (crash_reporter::IsCrashReporterEnabled()) {
-    base::FilePath crash_dir;
     if (PathService::Get(android_webview::DIR_CRASH_DUMPS, &crash_dir)) {
       if (!base::PathExists(crash_dir))
         base::CreateDirectory(crash_dir);
-      breakpad::CrashDumpObserver::GetInstance()->RegisterClient(
-          base::MakeUnique<breakpad::CrashDumpManager>(
-              crash_dir, kAndroidMinidumpDescriptor));
     }
   }
 
@@ -136,7 +106,12 @@ int AwBrowserMainParts::PreCreateThreads() {
           switches::kWebViewSandboxedRenderer)) {
     // Create the renderers crash manager on the UI thread.
     breakpad::CrashDumpObserver::GetInstance()->RegisterClient(
-        base::MakeUnique<AwBrowserTerminator>());
+        base::MakeUnique<AwBrowserTerminator>(crash_dir));
+  }
+
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableWebViewVariations)) {
+    aw_field_trial_creator_.SetUpFieldTrials();
   }
 
   return content::RESULT_CODE_NORMAL_EXIT;
@@ -145,10 +120,14 @@ int AwBrowserMainParts::PreCreateThreads() {
 void AwBrowserMainParts::PreMainMessageLoopRun() {
   browser_client_->InitBrowserContext()->PreMainMessageLoopRun();
 
-  device::GeolocationProvider::SetGeolocationDelegate(
-      new AwGeolocationDelegate());
-
   content::RenderFrameHost::AllowInjectingJavaScriptForAndroidWebView();
+
+  // TODO(meacer): Remove when PlzNavigate ships.
+  content::RenderFrameHost::AllowDataUrlNavigationForAndroidWebView();
+
+  // This only works because webview uses in-process gpu
+  // which is not started up early by BrowserMainLoop.
+  DeferredGpuCommandService::SetInstance();
 }
 
 bool AwBrowserMainParts::MainMessageLoopRun(int* result_code) {

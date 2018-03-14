@@ -11,7 +11,7 @@
 
 namespace blink {
 
-struct PreconnectTestCase {
+struct HTMLResourcePreconnectTestCase {
   const char* base_url;
   const char* url;
   bool is_cors;
@@ -22,7 +22,7 @@ class PreloaderNetworkHintsMock : public NetworkHintsInterface {
  public:
   PreloaderNetworkHintsMock() : did_preconnect_(false) {}
 
-  void DnsPrefetchHost(const String& host) const {}
+  void DnsPrefetchHost(const String& host) const override {}
   void PreconnectHost(
       const KURL& host,
       const CrossOriginAttributeValue cross_origin) const override {
@@ -41,20 +41,19 @@ class PreloaderNetworkHintsMock : public NetworkHintsInterface {
   mutable bool is_cross_origin_;
 };
 
-class HTMLResourcePreloaderTest : public testing::Test {
+class HTMLResourcePreloaderTest : public ::testing::Test {
  protected:
   HTMLResourcePreloaderTest() : dummy_page_holder_(DummyPageHolder::Create()) {}
 
-  void Test(PreconnectTestCase test_case) {
+  void Test(HTMLResourcePreconnectTestCase test_case) {
     // TODO(yoav): Need a mock loader here to verify things are happenning
     // beyond preconnect.
     PreloaderNetworkHintsMock network_hints;
     auto preload_request = PreloadRequest::CreateIfNeeded(
-        String(), TextPosition(), test_case.url,
-        KURL(ParsedURLStringTag(), test_case.base_url), Resource::kImage,
-        ReferrerPolicy(), PreloadRequest::kDocumentIsReferrer,
-        FetchParameters::ResourceWidth(), ClientHintsPreferences(),
-        PreloadRequest::kRequestTypePreconnect);
+        String(), TextPosition(), test_case.url, KURL(test_case.base_url),
+        Resource::kImage, ReferrerPolicy(), PreloadRequest::kDocumentIsReferrer,
+        ResourceFetcher::kImageNotImageSet, FetchParameters::ResourceWidth(),
+        ClientHintsPreferences(), PreloadRequest::kRequestTypePreconnect);
     DCHECK(preload_request);
     if (test_case.is_cors)
       preload_request->SetCrossOrigin(kCrossOriginAttributeAnonymous);
@@ -71,7 +70,7 @@ class HTMLResourcePreloaderTest : public testing::Test {
 };
 
 TEST_F(HTMLResourcePreloaderTest, testPreconnect) {
-  PreconnectTestCase test_cases[] = {
+  HTMLResourcePreconnectTestCase test_cases[] = {
       {"http://example.test", "http://example.com", false, false},
       {"http://example.test", "http://example.com", true, false},
       {"http://example.test", "https://example.com", true, true},

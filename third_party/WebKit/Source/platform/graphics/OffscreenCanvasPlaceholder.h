@@ -6,8 +6,8 @@
 #define OffscreenCanvasPlaceholder_h
 
 #include <memory>
+#include "base/memory/scoped_refptr.h"
 #include "platform/PlatformExport.h"
-#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/WeakPtr.h"
 
 namespace blink {
@@ -20,35 +20,47 @@ class PLATFORM_EXPORT OffscreenCanvasPlaceholder {
  public:
   ~OffscreenCanvasPlaceholder();
 
-  virtual void SetPlaceholderFrame(RefPtr<StaticBitmapImage>,
+  virtual void SetPlaceholderFrame(scoped_refptr<StaticBitmapImage>,
                                    WeakPtr<OffscreenCanvasFrameDispatcher>,
-                                   RefPtr<WebTaskRunner>,
+                                   scoped_refptr<WebTaskRunner>,
                                    unsigned resource_id);
   void ReleasePlaceholderFrame();
+
+  void SetSuspendOffscreenCanvasAnimation(bool);
 
   static OffscreenCanvasPlaceholder* GetPlaceholderById(
       unsigned placeholder_id);
 
   void RegisterPlaceholder(unsigned placeholder_id);
   void UnregisterPlaceholder();
-  const RefPtr<StaticBitmapImage>& PlaceholderFrame() const {
+  const scoped_refptr<StaticBitmapImage>& PlaceholderFrame() const {
     return placeholder_frame_;
   }
 
- private:
   bool IsPlaceholderRegistered() const {
     return placeholder_id_ != kNoPlaceholderId;
   }
 
-  RefPtr<StaticBitmapImage> placeholder_frame_;
+ private:
+  bool PostSetSuspendAnimationToOffscreenCanvasThread(bool suspend);
+
+  scoped_refptr<StaticBitmapImage> placeholder_frame_;
   WeakPtr<OffscreenCanvasFrameDispatcher> frame_dispatcher_;
-  RefPtr<WebTaskRunner> frame_dispatcher_task_runner_;
+  scoped_refptr<WebTaskRunner> frame_dispatcher_task_runner_;
   unsigned placeholder_frame_resource_id_ = 0;
 
   enum {
     kNoPlaceholderId = -1,
   };
   int placeholder_id_ = kNoPlaceholderId;
+
+  enum AnimationState {
+    kActiveAnimation,
+    kSuspendedAnimation,
+    kShouldSuspendAnimation,
+    kShouldActivateAnimation,
+  };
+  AnimationState animation_state_ = kActiveAnimation;
 };
 
 }  // blink

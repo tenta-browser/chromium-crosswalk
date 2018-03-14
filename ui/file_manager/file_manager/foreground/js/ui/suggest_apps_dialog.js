@@ -238,29 +238,25 @@ SuggestAppsDialog.prototype.showInternal_ =
   var tokenObtained = false;
 
   this.widget_.ready()
-      .then(
-          /** @return {!Promise} */
-          function() {
-            tokenObtained = true;
-            return this.showDialog_(title);
-          }.bind(this))
-      .then(
-          /** @return {!Promise.<CWSWidgetContainer.ResolveReason>} */
-          function() {
-            dialogShown = true;
-            // This is not set before so it doesn't polute state if the previous
-            // dialog hasn't finished hiding.
-            this.onDialogClosed_ = onDialogClosed;
-            return this.widget_.start(options, webStoreUrl);
-          }.bind(this))
-      .then(
-          /** @param {CWSWidgetContainer.ResolveReason} reason */
-          function(reason) {
-            if (reason !== CWSWidgetContainer.ResolveReason.RESET)
-              this.hide();
-          }.bind(this))
+      .then((/** @return {!Promise} */
+             function() {
+               tokenObtained = true;
+               return this.showDialog_(title);
+             }).bind(this))
+      .then((/** @return {!Promise<CWSWidgetContainer.ResolveReason>} */
+             function() {
+               dialogShown = true;
+               // This is not set before so it doesn't polute state if the
+               // previous dialog hasn't finished hiding.
+               this.onDialogClosed_ = onDialogClosed;
+               return this.widget_.start(options, webStoreUrl);
+             }).bind(this))
+      .then((/** @param {CWSWidgetContainer.ResolveReason} reason */
+             function(reason) {
+               if (reason !== CWSWidgetContainer.ResolveReason.RESET)
+                 this.hide();
+             }).bind(this))
       .catch(
-          /** @param {string} error */
           function(error) {
             console.error('Failed to start CWS widget: ' + error);
 
@@ -291,7 +287,7 @@ SuggestAppsDialog.prototype.showInternal_ =
 /**
  * Internal method for showing the dialog in the file manager window.
  * @param {string} title The dialog title.
- * @return {Promise}
+ * @return {!Promise}
  */
 SuggestAppsDialog.prototype.showDialog_ = function(title) {
   return new Promise(function(resolve, reject) {

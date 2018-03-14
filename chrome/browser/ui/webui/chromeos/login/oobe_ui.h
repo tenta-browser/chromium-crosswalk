@@ -20,10 +20,6 @@
 #include "chrome/browser/ui/webui/chromeos/login/core_oobe_handler.h"
 #include "content/public/browser/web_ui_controller.h"
 
-namespace ash {
-class ScreenDimmer;
-}
-
 namespace base {
 class DictionaryValue;
 }  // namespace base
@@ -53,6 +49,7 @@ class NativeWindowDelegate;
 class NetworkDropdownHandler;
 class NetworkStateInformer;
 class NetworkView;
+class OobeDisplayChooser;
 class SigninScreenHandler;
 class SigninScreenHandlerDelegate;
 class SupervisedUserCreationScreenHandler;
@@ -61,6 +58,8 @@ class TermsOfServiceScreenView;
 class UserBoardView;
 class UserImageView;
 class UpdateView;
+class VoiceInteractionValuePropScreenView;
+class WaitForContainerReadyScreenView;
 class WrongHWIDScreenView;
 
 // A custom WebUI that defines datasource for out-of-box-experience (OOBE) UI:
@@ -84,6 +83,8 @@ class OobeUI : public content::WebUIController,
     Observer() {}
     virtual void OnCurrentScreenChanged(OobeScreen current_screen,
                                         OobeScreen new_screen) = 0;
+
+    virtual void OnScreenInitialized(OobeScreen screen) = 0;
 
    protected:
     virtual ~Observer() {}
@@ -116,6 +117,8 @@ class OobeUI : public content::WebUIController,
   HostPairingScreenView* GetHostPairingScreenView();
   DeviceDisabledScreenView* GetDeviceDisabledScreenView();
   EncryptionMigrationScreenView* GetEncryptionMigrationScreenView();
+  VoiceInteractionValuePropScreenView* GetVoiceInteractionValuePropScreenView();
+  WaitForContainerReadyScreenView* GetWaitForContainerReadyScreenView();
   GaiaView* GetGaiaScreenView();
   UserBoardView* GetUserBoardView();
 
@@ -130,6 +133,11 @@ class OobeUI : public content::WebUIController,
 
   // Called when the screen has changed.
   void CurrentScreenChanged(OobeScreen screen);
+
+  // Called when the screen was initialized.
+  void ScreenInitialized(OobeScreen screen);
+
+  bool IsScreenInitialized(OobeScreen screen);
 
   // Invoked after the async assets load. The screen handler that has the same
   // async assets load id will be initialized.
@@ -170,6 +178,9 @@ class OobeUI : public content::WebUIController,
   // changed).
   void UpdateLocalizedStringsIfNeeded();
 
+  // Re-evaluate OOBE display placement.
+  void OnDisplayConfigurationChanged();
+
  private:
   // Lookup a view by its statically registered OobeScreen.
   template <typename TView>
@@ -208,8 +219,9 @@ class OobeUI : public content::WebUIController,
   // forwards calls from native code to JS side.
   SigninScreenHandler* signin_screen_handler_ = nullptr;
 
-  std::vector<BaseWebUIHandler*> webui_handlers_;    // Non-owning pointers.
-  std::vector<BaseScreenHandler*> screen_handlers_;  // Non-owning pointers.
+  std::vector<BaseWebUIHandler*> webui_handlers_;       // Non-owning pointers.
+  std::vector<BaseWebUIHandler*> webui_only_handlers_;  // Non-owning pointers.
+  std::vector<BaseScreenHandler*> screen_handlers_;     // Non-owning pointers.
 
   KioskAppMenuHandler* kiosk_app_menu_handler_ =
       nullptr;  // Non-owning pointers.
@@ -239,7 +251,7 @@ class OobeUI : public content::WebUIController,
   // Observer of CrosSettings watching the kRebootOnShutdown policy.
   std::unique_ptr<ShutdownPolicyHandler> shutdown_policy_handler_;
 
-  std::unique_ptr<ash::ScreenDimmer> screen_dimmer_;
+  std::unique_ptr<OobeDisplayChooser> oobe_display_chooser_;
 
   // Store the deferred JS calls before the screen handler instance is
   // initialized.

@@ -27,12 +27,13 @@
 #define History_h
 
 #include "base/gtest_prod_util.h"
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/core/v8/SerializedScriptValue.h"
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
 #include "core/dom/ContextLifecycleObserver.h"
 #include "core/loader/FrameLoaderTypes.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
+#include "platform/wtf/Time.h"
 
 namespace blink {
 
@@ -43,8 +44,7 @@ class SecurityOrigin;
 class ScriptState;
 
 // This class corresponds to the History interface.
-class CORE_EXPORT History final : public GarbageCollectedFinalized<History>,
-                                  public ScriptWrappable,
+class CORE_EXPORT History final : public ScriptWrappable,
                                   public DOMWindowClient {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(History);
@@ -52,19 +52,19 @@ class CORE_EXPORT History final : public GarbageCollectedFinalized<History>,
  public:
   static History* Create(LocalFrame* frame) { return new History(frame); }
 
-  unsigned length() const;
-  SerializedScriptValue* state();
+  unsigned length(ExceptionState&) const;
+  SerializedScriptValue* state(ExceptionState&);
 
-  void back(ScriptState*);
-  void forward(ScriptState*);
-  void go(ScriptState*, int delta);
+  void back(ScriptState*, ExceptionState&);
+  void forward(ScriptState*, ExceptionState&);
+  void go(ScriptState*, int delta, ExceptionState&);
 
-  void pushState(PassRefPtr<SerializedScriptValue>,
+  void pushState(scoped_refptr<SerializedScriptValue>,
                  const String& title,
                  const String& url,
                  ExceptionState&);
 
-  void replaceState(PassRefPtr<SerializedScriptValue> data,
+  void replaceState(scoped_refptr<SerializedScriptValue> data,
                     const String& title,
                     const String& url,
                     ExceptionState& exception_state) {
@@ -72,13 +72,13 @@ class CORE_EXPORT History final : public GarbageCollectedFinalized<History>,
                      kFrameLoadTypeReplaceCurrentItem, exception_state);
   }
 
-  void setScrollRestoration(const String& value);
-  String scrollRestoration();
+  void setScrollRestoration(const String& value, ExceptionState&);
+  String scrollRestoration(ExceptionState&);
 
   bool stateChanged() const;
   bool IsSameAsCurrentState(SerializedScriptValue*) const;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(HistoryTest, CanChangeToURL);
@@ -93,7 +93,7 @@ class CORE_EXPORT History final : public GarbageCollectedFinalized<History>,
 
   KURL UrlForState(const String& url);
 
-  void StateObjectAdded(PassRefPtr<SerializedScriptValue>,
+  void StateObjectAdded(scoped_refptr<SerializedScriptValue>,
                         const String& title,
                         const String& url,
                         HistoryScrollRestorationType,
@@ -102,7 +102,13 @@ class CORE_EXPORT History final : public GarbageCollectedFinalized<History>,
   SerializedScriptValue* StateInternal() const;
   HistoryScrollRestorationType ScrollRestorationInternal() const;
 
-  RefPtr<SerializedScriptValue> last_state_object_requested_;
+  bool ShouldThrottleStateObjectChanges();
+
+  scoped_refptr<SerializedScriptValue> last_state_object_requested_;
+  struct {
+    int count;
+    TimeTicks last_updated;
+  } state_flood_guard;
 };
 
 }  // namespace blink

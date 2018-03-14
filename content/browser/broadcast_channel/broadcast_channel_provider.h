@@ -19,8 +19,7 @@ class BroadcastChannelProvider
   public blink::mojom::BroadcastChannelProvider {
  public:
   BroadcastChannelProvider();
-  void Connect(
-      mojo::InterfaceRequest<blink::mojom::BroadcastChannelProvider> request);
+  void Connect(blink::mojom::BroadcastChannelProviderRequest request);
 
   void ConnectToChannel(
       const url::Origin& origin,
@@ -37,7 +36,7 @@ class BroadcastChannelProvider
 
   void UnregisterConnection(Connection*);
   void ReceivedMessageOnConnection(Connection*,
-                                   const std::vector<uint8_t>& message);
+                                   const blink::CloneableMessage& message);
 
   mojo::BindingSet<blink::mojom::BroadcastChannelProvider> bindings_;
   std::map<url::Origin, std::multimap<std::string, std::unique_ptr<Connection>>>

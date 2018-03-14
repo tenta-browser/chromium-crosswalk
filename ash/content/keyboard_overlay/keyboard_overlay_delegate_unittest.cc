@@ -5,7 +5,7 @@
 #include "ash/content/keyboard_overlay/keyboard_overlay_delegate.h"
 
 #include "ash/public/cpp/shelf_types.h"
-#include "ash/shelf/wm_shelf.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "base/strings/utf_string_conversions.h"
@@ -17,11 +17,11 @@
 namespace ash {
 
 class KeyboardOverlayDelegateTest
-    : public test::AshTestBase,
+    : public AshTestBase,
       public testing::WithParamInterface<ShelfAlignment> {
  public:
   KeyboardOverlayDelegateTest() : shelf_alignment_(GetParam()) {}
-  virtual ~KeyboardOverlayDelegateTest() {}
+  virtual ~KeyboardOverlayDelegateTest() = default;
   ShelfAlignment shelf_alignment() const { return shelf_alignment_; }
 
  private:

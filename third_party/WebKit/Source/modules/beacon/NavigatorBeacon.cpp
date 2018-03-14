@@ -5,17 +5,17 @@
 #include "modules/beacon/NavigatorBeacon.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/modules/v8/ArrayBufferViewOrBlobOrStringOrFormData.h"
-#include "core/dom/DOMArrayBufferView.h"
+#include "bindings/modules/v8/array_buffer_view_or_blob_or_string_or_form_data.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/fileapi/Blob.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Settings.h"
 #include "core/frame/UseCounter.h"
-#include "core/html/FormData.h"
+#include "core/html/forms/FormData.h"
 #include "core/loader/PingLoader.h"
+#include "core/typed_arrays/DOMArrayBufferView.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/loader/fetch/FetchUtils.h"
 
 namespace blink {
@@ -25,7 +25,7 @@ NavigatorBeacon::NavigatorBeacon(Navigator& navigator)
 
 NavigatorBeacon::~NavigatorBeacon() {}
 
-DEFINE_TRACE(NavigatorBeacon) {
+void NavigatorBeacon::Trace(blink::Visitor* visitor) {
   Supplement<Navigator>::Trace(visitor);
 }
 
@@ -47,14 +47,13 @@ bool NavigatorBeacon::CanSendBeacon(ExecutionContext* context,
                                     const KURL& url,
                                     ExceptionState& exception_state) {
   if (!url.IsValid()) {
-    exception_state.ThrowDOMException(
-        kSyntaxError, "The URL argument is ill-formed or unsupported.");
+    exception_state.ThrowTypeError(
+        "The URL argument is ill-formed or unsupported.");
     return false;
   }
   // For now, only support HTTP and related.
   if (!url.ProtocolIsInHTTPFamily()) {
-    exception_state.ThrowDOMException(
-        kSyntaxError, "Beacons are only supported over HTTP(S).");
+    exception_state.ThrowTypeError("Beacons are only supported over HTTP(S).");
     return false;
   }
 
@@ -115,17 +114,17 @@ bool NavigatorBeacon::SendBeaconImpl(
   size_t beacon_size = 0;
   bool allowed;
 
-  if (data.isArrayBufferView()) {
+  if (data.IsArrayBufferView()) {
     allowed =
         PingLoader::SendBeacon(GetSupplementable()->GetFrame(), allowance, url,
-                               data.getAsArrayBufferView().View(), beacon_size);
-  } else if (data.isBlob()) {
-    Blob* blob = data.getAsBlob();
-    if (!FetchUtils::IsSimpleContentType(AtomicString(blob->type()))) {
+                               data.GetAsArrayBufferView().View(), beacon_size);
+  } else if (data.IsBlob()) {
+    Blob* blob = data.GetAsBlob();
+    if (!FetchUtils::IsCORSSafelistedContentType(AtomicString(blob->type()))) {
       UseCounter::Count(context,
-                        UseCounter::kSendBeaconWithNonSimpleContentType);
+                        WebFeature::kSendBeaconWithNonSimpleContentType);
       if (RuntimeEnabledFeatures::
-              sendBeaconThrowForBlobWithNonSimpleTypeEnabled()) {
+              SendBeaconThrowForBlobWithNonSimpleTypeEnabled()) {
         exception_state.ThrowSecurityError(
             "sendBeacon() with a Blob whose type is not any of the "
             "CORS-safelisted values for the Content-Type request header is "
@@ -135,19 +134,19 @@ bool NavigatorBeacon::SendBeaconImpl(
     }
     allowed = PingLoader::SendBeacon(GetSupplementable()->GetFrame(), allowance,
                                      url, blob, beacon_size);
-  } else if (data.isString()) {
+  } else if (data.IsString()) {
     allowed = PingLoader::SendBeacon(GetSupplementable()->GetFrame(), allowance,
-                                     url, data.getAsString(), beacon_size);
-  } else if (data.isFormData()) {
+                                     url, data.GetAsString(), beacon_size);
+  } else if (data.IsFormData()) {
     allowed = PingLoader::SendBeacon(GetSupplementable()->GetFrame(), allowance,
-                                     url, data.getAsFormData(), beacon_size);
+                                     url, data.GetAsFormData(), beacon_size);
   } else {
     allowed = PingLoader::SendBeacon(GetSupplementable()->GetFrame(), allowance,
                                      url, String(), beacon_size);
   }
 
   if (!allowed) {
-    UseCounter::Count(context, UseCounter::kSendBeaconQuotaExceeded);
+    UseCounter::Count(context, WebFeature::kSendBeaconQuotaExceeded);
     return false;
   }
 

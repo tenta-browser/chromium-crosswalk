@@ -6,29 +6,34 @@
 
 #include <stddef.h>
 
+#include <string>
+#include <vector>
+
 #include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "base/guid.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/prerender/prerender_field_trial.h"
+#include "chrome/browser/prerender/prerender_manager.h"
+#include "chrome/browser/prerender/prerender_test_utils.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/in_memory_database.h"
 #include "components/history/core/browser/url_database.h"
 #include "components/omnibox/browser/autocomplete_match.h"
-#include "content/public/test/test_browser_thread.h"
+#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using base::ASCIIToUTF16;
-using content::BrowserThread;
 using predictors::AutocompleteActionPredictor;
 
 namespace {
@@ -87,37 +92,26 @@ namespace predictors {
 class AutocompleteActionPredictorTest : public testing::Test {
  public:
   AutocompleteActionPredictorTest()
-      : ui_thread_(BrowserThread::UI, &loop_),
-        db_thread_(BrowserThread::DB, &loop_),
-        file_thread_(BrowserThread::FILE, &loop_),
-        profile_(new TestingProfile()),
-        predictor_(nullptr) {
+      : profile_(base::MakeUnique<TestingProfile>()), predictor_(nullptr) {
+    CHECK(profile_->CreateHistoryService(true, false));
+    predictor_ = base::MakeUnique<AutocompleteActionPredictor>(profile_.get());
+    predictor_->CreateLocalCachesFromDatabase();
+    profile_->BlockUntilHistoryProcessesPendingRequests();
+    content::RunAllTasksUntilIdle();
+
+    CHECK(predictor_->initialized_);
+    CHECK(db_cache()->empty());
+    CHECK(db_id_cache()->empty());
   }
 
   ~AutocompleteActionPredictorTest() override {
-    predictor_.reset(NULL);
-    profile_.reset(NULL);
-    base::RunLoop().RunUntilIdle();
-  }
-
-  void SetUp() override {
-    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kPrerenderFromOmnibox,
-        switches::kPrerenderFromOmniboxSwitchValueEnabled);
-
-    ASSERT_TRUE(profile_->CreateHistoryService(true, false));
-    predictor_.reset(new AutocompleteActionPredictor(profile_.get()));
-    predictor_->CreateLocalCachesFromDatabase();
-    profile_->BlockUntilHistoryProcessesPendingRequests();
-
-    ASSERT_TRUE(predictor_->initialized_);
-    ASSERT_TRUE(db_cache()->empty());
-    ASSERT_TRUE(db_id_cache()->empty());
-  }
-
-  void TearDown() override {
+    // Wait for all pending tasks on the DB sequence.
+    content::RunAllTasksUntilIdle();
+    // Since we instantiated the predictor instead of going through a factory
+    // and dependencies, no one else is going to call Shutdown(), which is
+    // supposed to be called as part of being a KeyedService. The behavior of
+    // this method is not explicitly verified.
     predictor_->Shutdown();
-    profile_->DestroyHistoryService();
   }
 
  protected:
@@ -218,10 +212,7 @@ class AutocompleteActionPredictorTest : public testing::Test {
   }
 
  private:
-  base::MessageLoop loop_;
-  content::TestBrowserThread ui_thread_;
-  content::TestBrowserThread db_thread_;
-  content::TestBrowserThread file_thread_;
+  content::TestBrowserThreadBundle test_browser_thread_bundle_;
   std::unique_ptr<TestingProfile> profile_;
   std::unique_ptr<AutocompleteActionPredictor> predictor_;
 };
@@ -346,10 +337,8 @@ TEST_F(AutocompleteActionPredictorTest, DeleteOldIdsFromCaches) {
   for (std::vector<AutocompleteActionPredictorTable::Row::Id>::iterator it =
        all_ids.begin();
        it != all_ids.end(); ++it) {
-    bool in_expected =
-        (std::find(expected.begin(), expected.end(), *it) != expected.end());
-    bool in_list =
-        (std::find(id_list.begin(), id_list.end(), *it) != id_list.end());
+    bool in_expected = base::ContainsValue(expected, *it);
+    bool in_list = base::ContainsValue(id_list, *it);
     EXPECT_EQ(in_expected, in_list);
   }
 }
@@ -359,6 +348,9 @@ TEST_F(AutocompleteActionPredictorTest, RecommendActionURL) {
 
   AutocompleteMatch match;
   match.type = AutocompleteMatchType::HISTORY_URL;
+  prerender::test_utils::RestorePrerenderMode restore_prerender_mode;
+  prerender::PrerenderManager::SetMode(
+      prerender::PrerenderManager::PRERENDER_MODE_NOSTATE_PREFETCH);
 
   for (size_t i = 0; i < arraysize(test_url_db); ++i) {
     match.destination_url = GURL(test_url_db[i].url);
@@ -373,6 +365,9 @@ TEST_F(AutocompleteActionPredictorTest, RecommendActionSearch) {
 
   AutocompleteMatch match;
   match.type = AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED;
+  prerender::test_utils::RestorePrerenderMode restore_prerender_mode;
+  prerender::PrerenderManager::SetMode(
+      prerender::PrerenderManager::PRERENDER_MODE_NOSTATE_PREFETCH);
 
   for (size_t i = 0; i < arraysize(test_url_db); ++i) {
     match.destination_url = GURL(test_url_db[i].url);

@@ -258,10 +258,11 @@ UDPSocketWin::UDPSocketWin(DatagramSocket::BindType bind_type,
       use_non_blocking_io_(false),
       read_iobuffer_len_(0),
       write_iobuffer_len_(0),
-      recv_from_address_(NULL),
+      recv_from_address_(nullptr),
       net_log_(NetLogWithSource::Make(net_log, NetLogSourceType::UDP_SOCKET)),
-      qos_handle_(NULL),
-      qos_flow_id_(0) {
+      qos_handle_(nullptr),
+      qos_flow_id_(0),
+      event_pending_(this) {
   EnsureWinsockInit();
   net_log_.BeginEvent(NetLogEventType::SOCKET_ALIVE,
                       source.ToEventParametersCallback());
@@ -270,12 +271,13 @@ UDPSocketWin::UDPSocketWin(DatagramSocket::BindType bind_type,
 }
 
 UDPSocketWin::~UDPSocketWin() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   Close();
   net_log_.EndEvent(NetLogEventType::SOCKET_ALIVE);
 }
 
 int UDPSocketWin::Open(AddressFamily address_family) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK_EQ(socket_, INVALID_SOCKET);
 
   addr_family_ = ConvertAddressFamily(address_family);
@@ -292,14 +294,13 @@ int UDPSocketWin::Open(AddressFamily address_family) {
 }
 
 void UDPSocketWin::Close() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   if (socket_ == INVALID_SOCKET)
     return;
 
-  if (qos_handle_) {
+  if (qos_handle_)
     QwaveAPI::Get().CloseHandle(qos_handle_);
-  }
 
   // Zero out any pending read/write callback state.
   read_callback_.Reset();
@@ -314,8 +315,16 @@ void UDPSocketWin::Close() {
   addr_family_ = 0;
   is_connected_ = false;
 
+  // Release buffers to free up memory.
+  read_iobuffer_ = nullptr;
+  read_iobuffer_len_ = 0;
+  write_iobuffer_ = nullptr;
+  write_iobuffer_len_ = 0;
+
   read_write_watcher_.StopWatching();
   read_write_event_.Close();
+
+  event_pending_.InvalidateWeakPtrs();
 
   if (core_) {
     core_->Detach();
@@ -324,7 +333,7 @@ void UDPSocketWin::Close() {
 }
 
 int UDPSocketWin::GetPeerAddress(IPEndPoint* address) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(address);
   if (!is_connected())
     return ERR_SOCKET_NOT_CONNECTED;
@@ -345,7 +354,7 @@ int UDPSocketWin::GetPeerAddress(IPEndPoint* address) const {
 }
 
 int UDPSocketWin::GetLocalAddress(IPEndPoint* address) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(address);
   if (!is_connected())
     return ERR_SOCKET_NOT_CONNECTED;
@@ -379,7 +388,7 @@ int UDPSocketWin::RecvFrom(IOBuffer* buf,
                            int buf_len,
                            IPEndPoint* address,
                            const CompletionCallback& callback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK_NE(INVALID_SOCKET, socket_);
   CHECK(read_callback_.is_null());
   DCHECK(!recv_from_address_);
@@ -413,7 +422,7 @@ int UDPSocketWin::SendToOrWrite(IOBuffer* buf,
                                 int buf_len,
                                 const IPEndPoint* address,
                                 const CompletionCallback& callback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK_NE(INVALID_SOCKET, socket_);
   CHECK(write_callback_.is_null());
   DCHECK(!callback.is_null());  // Synchronous operation not supported.
@@ -499,7 +508,7 @@ int UDPSocketWin::BindToNetwork(NetworkChangeNotifier::NetworkHandle network) {
 
 int UDPSocketWin::SetReceiveBufferSize(int32_t size) {
   DCHECK_NE(socket_, INVALID_SOCKET);
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   int rv = SetSocketReceiveBufferSize(socket_, size);
 
   if (rv != 0)
@@ -522,7 +531,7 @@ int UDPSocketWin::SetReceiveBufferSize(int32_t size) {
 
 int UDPSocketWin::SetSendBufferSize(int32_t size) {
   DCHECK_NE(socket_, INVALID_SOCKET);
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   int rv = SetSocketSendBufferSize(socket_, size);
   if (rv != 0)
     return MapSystemError(WSAGetLastError());
@@ -543,7 +552,7 @@ int UDPSocketWin::SetSendBufferSize(int32_t size) {
 
 int UDPSocketWin::SetDoNotFragment() {
   DCHECK_NE(socket_, INVALID_SOCKET);
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   if (addr_family_ == AF_INET6)
     return OK;
@@ -556,7 +565,7 @@ int UDPSocketWin::SetDoNotFragment() {
 
 int UDPSocketWin::AllowAddressReuse() {
   DCHECK_NE(socket_, INVALID_SOCKET);
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(!is_connected());
 
   BOOL true_value = TRUE;
@@ -568,7 +577,7 @@ int UDPSocketWin::AllowAddressReuse() {
 
 int UDPSocketWin::SetBroadcast(bool broadcast) {
   DCHECK_NE(socket_, INVALID_SOCKET);
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   BOOL value = broadcast ? TRUE : FALSE;
   int rv = setsockopt(socket_, SOL_SOCKET, SO_BROADCAST,
@@ -640,34 +649,43 @@ void UDPSocketWin::OnObjectSignaled(HANDLE object) {
   int os_error = 0;
   int rv =
       WSAEnumNetworkEvents(socket_, read_write_event_.Get(), &network_events);
+  // Protects against trying to call the write callback if the read callback
+  // either closes or destroys |this|.
+  base::WeakPtr<UDPSocketWin> event_pending = event_pending_.GetWeakPtr();
   if (rv == SOCKET_ERROR) {
     os_error = WSAGetLastError();
     rv = MapSystemError(os_error);
+
     if (read_iobuffer_) {
-      read_iobuffer_ = NULL;
+      read_iobuffer_ = nullptr;
       read_iobuffer_len_ = 0;
-      recv_from_address_ = NULL;
+      recv_from_address_ = nullptr;
       DoReadCallback(rv);
     }
-    if (write_iobuffer_) {
-      write_iobuffer_ = NULL;
+
+    // Socket may have been closed or destroyed here.
+    if (event_pending && write_iobuffer_) {
+      write_iobuffer_ = nullptr;
       write_iobuffer_len_ = 0;
       send_to_address_.reset();
       DoWriteCallback(rv);
     }
     return;
   }
-  if ((network_events.lNetworkEvents & FD_READ) && read_iobuffer_) {
+
+  if ((network_events.lNetworkEvents & FD_READ) && read_iobuffer_)
     OnReadSignaled();
-  }
-  if ((network_events.lNetworkEvents & FD_WRITE) && write_iobuffer_) {
+  if (!event_pending)
+    return;
+
+  if ((network_events.lNetworkEvents & FD_WRITE) && write_iobuffer_)
     OnWriteSignaled();
-  }
+  if (!event_pending)
+    return;
 
   // There's still pending read / write. Watch for further events.
-  if (read_iobuffer_ || write_iobuffer_) {
+  if (read_iobuffer_ || write_iobuffer_)
     WatchForReadWrite();
-  }
 }
 
 void UDPSocketWin::OnReadSignaled() {
@@ -963,7 +981,6 @@ int UDPSocketWin::DoBind(const IPEndPoint& address) {
   if (rv == 0)
     return OK;
   int last_error = WSAGetLastError();
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Net.UdpSocketBindErrorFromWinOS", last_error);
   // Map some codes that are special to bind() separately.
   // * WSAEACCES: If a port is already bound to a socket, WSAEACCES may be
   //   returned instead of WSAEADDRINUSE, depending on whether the socket
@@ -988,7 +1005,7 @@ int UDPSocketWin::RandomBind(const IPAddress& address) {
 }
 
 int UDPSocketWin::JoinGroup(const IPAddress& group_address) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (!is_connected())
     return ERR_SOCKET_NOT_CONNECTED;
 
@@ -1028,7 +1045,7 @@ int UDPSocketWin::JoinGroup(const IPAddress& group_address) const {
 }
 
 int UDPSocketWin::LeaveGroup(const IPAddress& group_address) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (!is_connected())
     return ERR_SOCKET_NOT_CONNECTED;
 
@@ -1066,7 +1083,7 @@ int UDPSocketWin::LeaveGroup(const IPAddress& group_address) const {
 }
 
 int UDPSocketWin::SetMulticastInterface(uint32_t interface_index) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (is_connected())
     return ERR_SOCKET_IS_CONNECTED;
   multicast_interface_ = interface_index;
@@ -1074,7 +1091,7 @@ int UDPSocketWin::SetMulticastInterface(uint32_t interface_index) {
 }
 
 int UDPSocketWin::SetMulticastTimeToLive(int time_to_live) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (is_connected())
     return ERR_SOCKET_IS_CONNECTED;
 
@@ -1085,7 +1102,7 @@ int UDPSocketWin::SetMulticastTimeToLive(int time_to_live) {
 }
 
 int UDPSocketWin::SetMulticastLoopbackMode(bool loopback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (is_connected())
     return ERR_SOCKET_IS_CONNECTED;
 
@@ -1190,7 +1207,7 @@ int UDPSocketWin::SetDiffServCodePoint(DiffServCodePoint dscp) {
 }
 
 void UDPSocketWin::DetachFromThread() {
-  base::NonThreadSafe::DetachFromThread();
+  DETACH_FROM_THREAD(thread_checker_);
 }
 
 void UDPSocketWin::UseNonBlockingIO() {

@@ -32,6 +32,8 @@ class DefaultAccessPolicy : public AccessPolicy {
   bool CanRemoveTransientWindowFromParent(
       const ServerWindow* window) const override;
   bool CanSetModal(const ServerWindow* window) const override;
+  bool CanSetChildModalParent(const ServerWindow* window,
+                              const ServerWindow* modal_parent) const override;
   bool CanReorderWindow(const ServerWindow* window,
                         const ServerWindow* relative_window,
                         mojom::OrderDirection direction) const override;
@@ -45,6 +47,7 @@ class DefaultAccessPolicy : public AccessPolicy {
   bool CanSetWindowCompositorFrameSink(
       const ServerWindow* window) const override;
   bool CanSetWindowBounds(const ServerWindow* window) const override;
+  bool CanSetWindowTransform(const ServerWindow* window) const override;
   bool CanSetWindowProperties(const ServerWindow* window) const override;
   bool CanSetWindowTextInputState(const ServerWindow* window) const override;
   bool CanSetCapture(const ServerWindow* window) const override;
@@ -56,6 +59,7 @@ class DefaultAccessPolicy : public AccessPolicy {
   bool CanStackAbove(const ServerWindow* above,
                      const ServerWindow* below) const override;
   bool CanStackAtTop(const ServerWindow* window) const override;
+  bool CanPerformWmAction(const ServerWindow* window) const override;
   bool CanSetCursorProperties(const ServerWindow* window) const override;
   bool CanInitiateDragLoop(const ServerWindow* window) const override;
   bool CanInitiateMoveLoop(const ServerWindow* window) const override;

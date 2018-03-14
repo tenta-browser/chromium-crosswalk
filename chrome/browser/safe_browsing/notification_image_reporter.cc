@@ -14,16 +14,19 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task_scheduler/post_task.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
-#include "components/safe_browsing/csd.pb.h"
-#include "components/safe_browsing_db/database_manager.h"
-#include "components/safe_browsing_db/safe_browsing_prefs.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
+#include "components/safe_browsing/db/database_manager.h"
+#include "components/safe_browsing/db/whitelist_checker_client.h"
+#include "components/safe_browsing/proto/csd.pb.h"
 #include "components/variations/variations_associated_data.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/net_errors.h"
+#include "net/http/http_status_code.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/report_sender.h"
 #include "skia/ext/image_operations.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -45,10 +48,41 @@ const char kDefaultMimeType[] = "image/png";
 
 // Passed to ReportSender::Send as an ErrorCallback, so must take a GURL, but it
 // is unused.
-void LogReportResult(const GURL& url, int net_error) {
+void LogReportResult(const GURL& url, int net_error, int http_response_code) {
   UMA_HISTOGRAM_SPARSE_SLOWLY("SafeBrowsing.NotificationImageReporter.NetError",
                               net_error);
 }
+
+constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
+    net::DefineNetworkTrafficAnnotation("notification_image_reporter", R"(
+        semantics {
+          sender: "Safe Browsing"
+          description:
+            "When an Image Notification is show on Android, and the user has "
+            "opted into Safe Browsing Extended Reporting, a small fraction of "
+            "images from non-whitelisted domains will be uploaded to Google to "
+            "look for malicious images."
+          trigger:
+            "An image notification is triggered, the user is opted-in to "
+            "extended reporting, and a random dice-roll picks this image to "
+            "report."
+          data:
+            "The actual image and the origin that triggered the notificaton."
+          destination: GOOGLE_OWNED_SERVICE
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "Users can control this feature via the 'Automatically report "
+            "details of possible security incidents to Google' setting under "
+            "'Privacy'. The feature is disabled by default."
+          chrome_policy {
+            SafeBrowsingExtendedReportingOptInAllowed {
+              policy_options {mode: MANDATORY}
+              SafeBrowsingExtendedReportingOptInAllowed: false
+            }
+          }
+        })");
 
 }  // namespace
 
@@ -58,9 +92,9 @@ const char NotificationImageReporter::kReportingUploadUrl[] =
 
 NotificationImageReporter::NotificationImageReporter(
     net::URLRequestContext* request_context)
-    : NotificationImageReporter(base::MakeUnique<net::ReportSender>(
-          request_context,
-          net::ReportSender::CookiesPreference::DO_NOT_SEND_COOKIES)) {}
+    : NotificationImageReporter(
+          base::MakeUnique<net::ReportSender>(request_context,
+                                              kTrafficAnnotation)) {}
 
 NotificationImageReporter::NotificationImageReporter(
     std::unique_ptr<net::ReportSender> report_sender)
@@ -83,7 +117,25 @@ void NotificationImageReporter::ReportNotificationImageOnIO(
   DCHECK(origin.is_valid());
 
   // Skip whitelisted origins to cut down on report volume.
-  if (!database_manager || database_manager->MatchCsdWhitelistUrl(origin)) {
+  if (!database_manager) {
+    SkippedReporting();
+    return;
+  }
+
+  // Query the CSD Whitelist asynchronously. We're already on the IO thread so
+  // can call WhitelistCheckerClient directly.
+  base::Callback<void(bool)> result_callback =
+      base::Bind(&NotificationImageReporter::OnWhitelistCheckDoneOnIO,
+                 weak_factory_on_io_.GetWeakPtr(), profile, origin, image);
+  WhitelistCheckerClient::StartCheckCsdWhitelist(database_manager, origin,
+                                                 result_callback);
+}
+
+void NotificationImageReporter::OnWhitelistCheckDoneOnIO(Profile* profile,
+                                                         const GURL& origin,
+                                                         const SkBitmap& image,
+                                                         bool match_whitelist) {
+  if (match_whitelist) {
     SkippedReporting();
     return;
   }
@@ -113,8 +165,8 @@ void NotificationImageReporter::ReportNotificationImageOnIO(
 
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&NotificationImageReporter::ReportNotificationImageOnUI,
-                 weak_factory_on_io_.GetWeakPtr(), profile, origin, image));
+      base::BindOnce(&NotificationImageReporter::ReportNotificationImageOnUI,
+                     weak_factory_on_io_.GetWeakPtr(), profile, origin, image));
 }
 
 double NotificationImageReporter::GetReportChance() const {
@@ -146,14 +198,13 @@ void NotificationImageReporter::ReportNotificationImageOnUI(
   if (GetExtendedReportingLevel(*profile->GetPrefs()) != SBER_LEVEL_SCOUT) {
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&NotificationImageReporter::SkippedReporting,
-                   weak_this_on_io));
+        base::BindOnce(&NotificationImageReporter::SkippedReporting,
+                       weak_this_on_io));
     return;
   }
-
-  BrowserThread::GetBlockingPool()->PostWorkerTask(
-      FROM_HERE,
-      base::Bind(
+  base::PostTaskWithTraits(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      base::BindOnce(
           &NotificationImageReporter::DownscaleNotificationImageOnBlockingPool,
           weak_this_on_io, origin, image));
 }
@@ -163,8 +214,6 @@ void NotificationImageReporter::DownscaleNotificationImageOnBlockingPool(
     const base::WeakPtr<NotificationImageReporter>& weak_this_on_io,
     const GURL& origin,
     const SkBitmap& image) {
-  DCHECK(BrowserThread::GetBlockingPool()->RunsTasksOnCurrentThread());
-
   // Downscale to fit within 512x512. TODO(johnme): Get this from Finch.
   const double MAX_SIZE = 512;
   SkBitmap downscaled_image = image;
@@ -187,10 +236,11 @@ void NotificationImageReporter::DownscaleNotificationImageOnBlockingPool(
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&NotificationImageReporter::SendReportOnIO, weak_this_on_io,
-                 origin, base::RefCountedBytes::TakeVector(&png_bytes),
-                 gfx::Size(downscaled_image.width(), downscaled_image.height()),
-                 gfx::Size(image.width(), image.height())));
+      base::BindOnce(
+          &NotificationImageReporter::SendReportOnIO, weak_this_on_io, origin,
+          base::RefCountedBytes::TakeVector(&png_bytes),
+          gfx::Size(downscaled_image.width(), downscaled_image.height()),
+          gfx::Size(image.width(), image.height())));
 }
 
 void NotificationImageReporter::SendReportOnIO(
@@ -215,10 +265,11 @@ void NotificationImageReporter::SendReportOnIO(
 
   std::string serialized_report;
   report.SerializeToString(&serialized_report);
-  report_sender_->Send(
-      GURL(kReportingUploadUrl), "application/octet-stream", serialized_report,
-      base::Bind(&LogReportResult, GURL(kReportingUploadUrl), net::OK),
-      base::Bind(&LogReportResult));
+  report_sender_->Send(GURL(kReportingUploadUrl), "application/octet-stream",
+                       serialized_report,
+                       base::Bind(&LogReportResult, GURL(kReportingUploadUrl),
+                                  net::OK, net::HTTP_OK),
+                       base::Bind(&LogReportResult));
   // TODO(johnme): Consider logging bandwidth and/or duration to UMA.
 }
 

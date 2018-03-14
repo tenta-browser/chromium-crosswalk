@@ -27,29 +27,27 @@
 #include "platform/loader/fetch/ResourceRequest.h"
 
 #include <memory>
-#include "platform/HTTPNames.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/network/NetworkUtils.h"
+#include "platform/network/http_names.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "platform/wtf/PtrUtil.h"
 #include "public/platform/WebAddressSpace.h"
-#include "public/platform/WebCachePolicy.h"
 #include "public/platform/WebURLRequest.h"
 
 namespace blink {
 
 double ResourceRequest::default_timeout_interval_ = INT_MAX;
 
-ResourceRequest::ResourceRequest() : ResourceRequest(KURL()) {}
+ResourceRequest::ResourceRequest() : ResourceRequest(NullURL()) {}
 
 ResourceRequest::ResourceRequest(const String& url_string)
-    : ResourceRequest(KURL(kParsedURLString, url_string)) {}
+    : ResourceRequest(KURL(url_string)) {}
 
 ResourceRequest::ResourceRequest(const KURL& url)
     : url_(url),
-      cache_policy_(WebCachePolicy::kUseProtocolCachePolicy),
       timeout_interval_(default_timeout_interval_),
-      requestor_origin_(SecurityOrigin::CreateUnique()),
+      requestor_origin_(nullptr),
       http_method_(HTTPNames::GET),
       allow_stored_credentials_(true),
       report_upload_progress_(false),
@@ -57,24 +55,31 @@ ResourceRequest::ResourceRequest(const KURL& url)
       has_user_gesture_(false),
       download_to_file_(false),
       use_stream_on_response_(false),
+      keepalive_(false),
       should_reset_app_cache_(false),
+      cache_mode_(mojom::FetchCacheMode::kDefault),
       service_worker_mode_(WebURLRequest::ServiceWorkerMode::kAll),
-      priority_(kResourceLoadPriorityLowest),
+      priority_(ResourceLoadPriority::kLowest),
       intra_priority_value_(0),
       requestor_id_(0),
-      requestor_process_id_(0),
+      plugin_child_id_(-1),
       app_cache_host_id_(0),
+      previews_state_(WebURLRequest::kPreviewsUnspecified),
       request_context_(WebURLRequest::kRequestContextUnspecified),
       frame_type_(WebURLRequest::kFrameTypeNone),
-      fetch_request_mode_(WebURLRequest::kFetchRequestModeNoCORS),
-      fetch_credentials_mode_(WebURLRequest::kFetchCredentialsModeInclude),
+      fetch_request_mode_(network::mojom::FetchRequestMode::kNoCORS),
+      fetch_credentials_mode_(network::mojom::FetchCredentialsMode::kInclude),
       fetch_redirect_mode_(WebURLRequest::kFetchRedirectModeFollow),
-      previews_state_(WebURLRequest::kPreviewsUnspecified),
       referrer_policy_(kReferrerPolicyDefault),
       did_set_http_referrer_(false),
       check_for_browser_side_navigation_(true),
       ui_start_time_(0),
       is_external_request_(false),
+      cors_preflight_policy_(
+          network::mojom::CORSPreflightPolicy::kConsiderPreflight),
+      loading_ipc_type_(RuntimeEnabledFeatures::LoadingWithMojoEnabled()
+                            ? WebURLRequest::LoadingIPCType::kMojo
+                            : WebURLRequest::LoadingIPCType::kChromeIPC),
       is_same_document_navigation_(false),
       input_perf_metric_report_policy_(
           InputToLoadPerfMetricReportPolicy::kNoReport),
@@ -82,9 +87,8 @@ ResourceRequest::ResourceRequest(const KURL& url)
 
 ResourceRequest::ResourceRequest(CrossThreadResourceRequestData* data)
     : ResourceRequest(data->url_) {
-  SetCachePolicy(data->cache_policy_);
   SetTimeoutInterval(data->timeout_interval_);
-  SetFirstPartyForCookies(data->first_party_for_cookies_);
+  SetSiteForCookies(data->site_for_cookies_);
   SetRequestorOrigin(data->requestor_origin_);
   SetHTTPMethod(AtomicString(data->http_method_));
   SetPriority(data->priority_, data->intra_priority_value_);
@@ -92,28 +96,32 @@ ResourceRequest::ResourceRequest(CrossThreadResourceRequestData* data)
   http_header_fields_.Adopt(std::move(data->http_headers_));
 
   SetHTTPBody(data->http_body_);
-  SetAttachedCredential(data->attached_credential_);
   SetAllowStoredCredentials(data->allow_stored_credentials_);
   SetReportUploadProgress(data->report_upload_progress_);
   SetHasUserGesture(data->has_user_gesture_);
   SetDownloadToFile(data->download_to_file_);
   SetUseStreamOnResponse(data->use_stream_on_response_);
+  SetKeepalive(data->keepalive_);
+  SetCacheMode(data->cache_mode_);
   SetServiceWorkerMode(data->service_worker_mode_);
   SetShouldResetAppCache(data->should_reset_app_cache_);
   SetRequestorID(data->requestor_id_);
-  SetRequestorProcessID(data->requestor_process_id_);
+  SetPluginChildID(data->plugin_child_id_);
   SetAppCacheHostID(data->app_cache_host_id_);
+  SetPreviewsState(data->previews_state_);
   SetRequestContext(data->request_context_);
   SetFrameType(data->frame_type_);
   SetFetchRequestMode(data->fetch_request_mode_);
   SetFetchCredentialsMode(data->fetch_credentials_mode_);
   SetFetchRedirectMode(data->fetch_redirect_mode_);
-  SetPreviewsState(data->previews_state_);
+  SetFetchIntegrity(data->fetch_integrity_.IsolatedCopy());
   referrer_policy_ = data->referrer_policy_;
   did_set_http_referrer_ = data->did_set_http_referrer_;
   check_for_browser_side_navigation_ = data->check_for_browser_side_navigation_;
   ui_start_time_ = data->ui_start_time_;
   is_external_request_ = data->is_external_request_;
+  cors_preflight_policy_ = data->cors_preflight_policy_;
+  loading_ipc_type_ = data->loading_ipc_type_;
   input_perf_metric_report_policy_ = data->input_perf_metric_report_policy_;
   redirect_status_ = data->redirect_status_;
 }
@@ -122,14 +130,50 @@ ResourceRequest::ResourceRequest(const ResourceRequest&) = default;
 
 ResourceRequest& ResourceRequest::operator=(const ResourceRequest&) = default;
 
+std::unique_ptr<ResourceRequest> ResourceRequest::CreateRedirectRequest(
+    const KURL& new_url,
+    const AtomicString& new_method,
+    const KURL& new_site_for_cookies,
+    const String& new_referrer,
+    ReferrerPolicy new_referrer_policy,
+    WebURLRequest::ServiceWorkerMode service_worker_mode) const {
+  std::unique_ptr<ResourceRequest> request =
+      std::make_unique<ResourceRequest>(new_url);
+  request->SetHTTPMethod(new_method);
+  request->SetSiteForCookies(new_site_for_cookies);
+  String referrer =
+      new_referrer.IsEmpty() ? Referrer::NoReferrer() : String(new_referrer);
+  request->SetHTTPReferrer(
+      Referrer(referrer, static_cast<ReferrerPolicy>(new_referrer_policy)));
+  request->SetServiceWorkerMode(service_worker_mode);
+  request->SetRedirectStatus(RedirectStatus::kFollowedRedirect);
+
+  // Copy from parameters for |this|.
+  request->SetDownloadToFile(DownloadToFile());
+  request->SetUseStreamOnResponse(UseStreamOnResponse());
+  request->SetRequestContext(GetRequestContext());
+  request->SetFrameType(GetFrameType());
+  request->SetShouldResetAppCache(ShouldResetAppCache());
+  request->SetFetchRequestMode(GetFetchRequestMode());
+  request->SetFetchCredentialsMode(GetFetchCredentialsMode());
+  request->SetKeepalive(GetKeepalive());
+  request->SetPriority(Priority());
+
+  if (request->HttpMethod() == HttpMethod())
+    request->SetHTTPBody(HttpBody());
+  request->SetCheckForBrowserSideNavigation(CheckForBrowserSideNavigation());
+  request->SetCORSPreflightPolicy(CORSPreflightPolicy());
+
+  return request;
+}
+
 std::unique_ptr<CrossThreadResourceRequestData> ResourceRequest::CopyData()
     const {
   std::unique_ptr<CrossThreadResourceRequestData> data =
-      WTF::MakeUnique<CrossThreadResourceRequestData>();
+      std::make_unique<CrossThreadResourceRequestData>();
   data->url_ = Url().Copy();
-  data->cache_policy_ = GetCachePolicy();
   data->timeout_interval_ = TimeoutInterval();
-  data->first_party_for_cookies_ = FirstPartyForCookies().Copy();
+  data->site_for_cookies_ = SiteForCookies().Copy();
   data->requestor_origin_ =
       RequestorOrigin() ? RequestorOrigin()->IsolatedCopy() : nullptr;
   data->http_method_ = HttpMethod().GetString().IsolatedCopy();
@@ -139,36 +183,35 @@ std::unique_ptr<CrossThreadResourceRequestData> ResourceRequest::CopyData()
 
   if (http_body_)
     data->http_body_ = http_body_->DeepCopy();
-  if (attached_credential_)
-    data->attached_credential_ = attached_credential_->DeepCopy();
   data->allow_stored_credentials_ = allow_stored_credentials_;
   data->report_upload_progress_ = report_upload_progress_;
   data->has_user_gesture_ = has_user_gesture_;
   data->download_to_file_ = download_to_file_;
   data->use_stream_on_response_ = use_stream_on_response_;
+  data->keepalive_ = keepalive_;
+  data->cache_mode_ = GetCacheMode();
   data->service_worker_mode_ = service_worker_mode_;
   data->should_reset_app_cache_ = should_reset_app_cache_;
   data->requestor_id_ = requestor_id_;
-  data->requestor_process_id_ = requestor_process_id_;
+  data->plugin_child_id_ = plugin_child_id_;
   data->app_cache_host_id_ = app_cache_host_id_;
+  data->previews_state_ = previews_state_;
   data->request_context_ = request_context_;
   data->frame_type_ = frame_type_;
   data->fetch_request_mode_ = fetch_request_mode_;
   data->fetch_credentials_mode_ = fetch_credentials_mode_;
   data->fetch_redirect_mode_ = fetch_redirect_mode_;
-  data->previews_state_ = previews_state_;
+  data->fetch_integrity_ = fetch_integrity_.IsolatedCopy();
   data->referrer_policy_ = referrer_policy_;
   data->did_set_http_referrer_ = did_set_http_referrer_;
   data->check_for_browser_side_navigation_ = check_for_browser_side_navigation_;
   data->ui_start_time_ = ui_start_time_;
   data->is_external_request_ = is_external_request_;
+  data->cors_preflight_policy_ = cors_preflight_policy_;
+  data->loading_ipc_type_ = loading_ipc_type_;
   data->input_perf_metric_report_policy_ = input_perf_metric_report_policy_;
   data->redirect_status_ = redirect_status_;
   return data;
-}
-
-bool ResourceRequest::IsEmpty() const {
-  return url_.IsEmpty();
 }
 
 bool ResourceRequest::IsNull() const {
@@ -191,12 +234,12 @@ void ResourceRequest::RemoveUserAndPassFromURL() {
   url_.SetPass(String());
 }
 
-WebCachePolicy ResourceRequest::GetCachePolicy() const {
-  return cache_policy_;
+mojom::FetchCacheMode ResourceRequest::GetCacheMode() const {
+  return cache_mode_;
 }
 
-void ResourceRequest::SetCachePolicy(WebCachePolicy cache_policy) {
-  cache_policy_ = cache_policy;
+void ResourceRequest::SetCacheMode(mojom::FetchCacheMode cache_mode) {
+  cache_mode_ = cache_mode;
 }
 
 double ResourceRequest::TimeoutInterval() const {
@@ -207,21 +250,20 @@ void ResourceRequest::SetTimeoutInterval(double timout_interval_seconds) {
   timeout_interval_ = timout_interval_seconds;
 }
 
-const KURL& ResourceRequest::FirstPartyForCookies() const {
-  return first_party_for_cookies_;
+const KURL& ResourceRequest::SiteForCookies() const {
+  return site_for_cookies_;
 }
 
-void ResourceRequest::SetFirstPartyForCookies(
-    const KURL& first_party_for_cookies) {
-  first_party_for_cookies_ = first_party_for_cookies;
+void ResourceRequest::SetSiteForCookies(const KURL& site_for_cookies) {
+  site_for_cookies_ = site_for_cookies;
 }
 
-PassRefPtr<SecurityOrigin> ResourceRequest::RequestorOrigin() const {
+scoped_refptr<SecurityOrigin> ResourceRequest::RequestorOrigin() const {
   return requestor_origin_;
 }
 
 void ResourceRequest::SetRequestorOrigin(
-    PassRefPtr<SecurityOrigin> requestor_origin) {
+    scoped_refptr<SecurityOrigin> requestor_origin) {
   requestor_origin_ = std::move(requestor_origin);
 }
 
@@ -282,7 +324,7 @@ void ResourceRequest::AddHTTPOriginIfNeeded(const SecurityOrigin* origin) {
 
 void ResourceRequest::AddHTTPOriginIfNeeded(const String& origin_string) {
   if (NeedsHTTPOrigin())
-    SetHTTPOrigin(SecurityOrigin::CreateFromString(origin_string).Get());
+    SetHTTPOrigin(SecurityOrigin::CreateFromString(origin_string).get());
 }
 
 void ResourceRequest::ClearHTTPUserAgent() {
@@ -290,20 +332,11 @@ void ResourceRequest::ClearHTTPUserAgent() {
 }
 
 EncodedFormData* ResourceRequest::HttpBody() const {
-  return http_body_.Get();
+  return http_body_.get();
 }
 
-void ResourceRequest::SetHTTPBody(PassRefPtr<EncodedFormData> http_body) {
+void ResourceRequest::SetHTTPBody(scoped_refptr<EncodedFormData> http_body) {
   http_body_ = std::move(http_body);
-}
-
-EncodedFormData* ResourceRequest::AttachedCredential() const {
-  return attached_credential_.Get();
-}
-
-void ResourceRequest::SetAttachedCredential(
-    PassRefPtr<EncodedFormData> attached_credential) {
-  attached_credential_ = std::move(attached_credential);
 }
 
 bool ResourceRequest::AllowStoredCredentials() const {
@@ -318,6 +351,10 @@ ResourceLoadPriority ResourceRequest::Priority() const {
   return priority_;
 }
 
+int ResourceRequest::IntraPriorityValue() const {
+  return intra_priority_value_;
+}
+
 void ResourceRequest::SetPriority(ResourceLoadPriority priority,
                                   int intra_priority_value) {
   priority_ = priority;
@@ -328,7 +365,7 @@ void ResourceRequest::AddHTTPHeaderField(const AtomicString& name,
                                          const AtomicString& value) {
   HTTPHeaderMap::AddResult result = http_header_fields_.Add(name, value);
   if (!result.is_new_entry)
-    result.stored_value->value = result.stored_value->value + ',' + value;
+    result.stored_value->value = result.stored_value->value + ", " + value;
 }
 
 void ResourceRequest::AddHTTPHeaderFields(const HTTPHeaderMap& header_fields) {
@@ -354,7 +391,7 @@ void ResourceRequest::SetExternalRequestStateFromRequestorAddressSpace(
   // TODO(mkwst): This only checks explicit IP addresses. We'll have to move all
   // this up to //net and //content in order to have any real impact on gateway
   // attacks. That turns out to be a TON of work. https://crbug.com/378566
-  if (!RuntimeEnabledFeatures::corsRFC1918Enabled()) {
+  if (!RuntimeEnabledFeatures::CorsRFC1918Enabled()) {
     is_external_request_ = false;
     return;
   }

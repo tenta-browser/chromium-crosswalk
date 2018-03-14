@@ -30,6 +30,7 @@
 /**
  * @unrestricted
  * @implements {SDK.SDKModelObserver<!SDK.DebuggerModel>}
+ * @implements {Bindings.DebuggerSourceMapping}
  */
 Snippets.ScriptSnippetModel = class extends Common.Object {
   /**
@@ -50,6 +51,7 @@ Snippets.ScriptSnippetModel = class extends Common.Object {
     this._project = new Snippets.SnippetsProject(workspace, this);
     this._loadSnippets();
     SDK.targetManager.observeModels(SDK.DebuggerModel, this);
+    Bindings.debuggerWorkspaceBinding.addSourceMapping(this);
   }
 
   /**
@@ -66,6 +68,34 @@ Snippets.ScriptSnippetModel = class extends Common.Object {
    */
   modelRemoved(debuggerModel) {
     this._mappingForDebuggerModel.remove(debuggerModel);
+  }
+
+  /**
+   * @override
+   * @param {!SDK.DebuggerModel.Location} rawLocation
+   * @return {?Workspace.UILocation}
+   */
+  rawLocationToUILocation(rawLocation) {
+    var mapping = this._mappingForDebuggerModel.get(rawLocation.debuggerModel);
+    if (!mapping)
+      return null;
+    return mapping.rawLocationToUILocation(rawLocation);
+  }
+
+  /**
+   * @override
+   * @param {!Workspace.UISourceCode} uiSourceCode
+   * @param {number} lineNumber
+   * @param {number} columnNumber
+   * @return {?SDK.DebuggerModel.Location}
+   */
+  uiLocationToRawLocation(uiSourceCode, lineNumber, columnNumber) {
+    for (var mapping of this._mappingForDebuggerModel.values()) {
+      var rawLocation = mapping.uiLocationToRawLocation(uiSourceCode, lineNumber, columnNumber);
+      if (rawLocation)
+        return rawLocation;
+    }
+    return null;
   }
 
   /**
@@ -191,8 +221,9 @@ Snippets.ScriptSnippetModel = class extends Common.Object {
   /**
    * @param {!SDK.ExecutionContext} executionContext
    * @param {!Workspace.UISourceCode} uiSourceCode
+   * @return {!Promise<undefined>}
    */
-  evaluateScriptSnippet(executionContext, uiSourceCode) {
+  async evaluateScriptSnippet(executionContext, uiSourceCode) {
     console.assert(uiSourceCode.project().type() === Workspace.projectTypes.Snippets);
     var breakpointLocations = this._removeBreakpoints(uiSourceCode);
     this._releaseSnippetScript(uiSourceCode);
@@ -204,40 +235,25 @@ Snippets.ScriptSnippetModel = class extends Common.Object {
     var mapping = this._mappingForDebuggerModel.get(debuggerModel);
     mapping._setEvaluationIndex(evaluationIndex, uiSourceCode);
     var evaluationUrl = mapping._evaluationSourceURL(uiSourceCode);
-    uiSourceCode.requestContent().then(compileSnippet.bind(this));
-
-    /**
-     * @this {Snippets.ScriptSnippetModel}
-     */
-    function compileSnippet() {
-      var expression = uiSourceCode.workingCopy();
-      Common.console.show();
-      runtimeModel.compileScript(expression, '', true, executionContext.id, compileCallback.bind(this));
+    await uiSourceCode.requestContent();
+    var expression = uiSourceCode.workingCopy();
+    Common.console.show();
+    var result = await runtimeModel.compileScript(expression, '', true, executionContext.id);
+    if (!result || mapping.evaluationIndex(uiSourceCode) !== evaluationIndex)
+      return;
+    var script = /** @type {!SDK.Script} */ (
+        debuggerModel.scriptForId(/** @type {string} */ (result.scriptId || result.exceptionDetails.scriptId)));
+    mapping._addScript(script, uiSourceCode);
+    if (!result.scriptId) {
+      this._printRunOrCompileScriptResultFailure(
+          runtimeModel, /** @type {!Protocol.Runtime.ExceptionDetails} */ (result.exceptionDetails), evaluationUrl);
+      return;
     }
 
-    /**
-     * @param {!Protocol.Runtime.ScriptId=} scriptId
-     * @param {?Protocol.Runtime.ExceptionDetails=} exceptionDetails
-     * @this {Snippets.ScriptSnippetModel}
-     */
-    function compileCallback(scriptId, exceptionDetails) {
-      if (mapping.evaluationIndex(uiSourceCode) !== evaluationIndex)
-        return;
+    breakpointLocations = this._removeBreakpoints(uiSourceCode);
+    this._restoreBreakpoints(uiSourceCode, breakpointLocations);
 
-      var script = /** @type {!SDK.Script} */ (
-          debuggerModel.scriptForId(/** @type {string} */ (scriptId || exceptionDetails.scriptId)));
-      mapping._addScript(script, uiSourceCode);
-      if (!scriptId) {
-        this._printRunOrCompileScriptResultFailure(
-            runtimeModel, /** @type {!Protocol.Runtime.ExceptionDetails} */ (exceptionDetails), evaluationUrl);
-        return;
-      }
-
-      var breakpointLocations = this._removeBreakpoints(uiSourceCode);
-      this._restoreBreakpoints(uiSourceCode, breakpointLocations);
-
-      this._runScript(scriptId, executionContext, evaluationUrl);
-    }
+    this._runScript(script.scriptId, executionContext, evaluationUrl);
   }
 
   /**
@@ -245,35 +261,30 @@ Snippets.ScriptSnippetModel = class extends Common.Object {
    * @param {!SDK.ExecutionContext} executionContext
    * @param {?string=} sourceURL
    */
-  _runScript(scriptId, executionContext, sourceURL) {
+  async _runScript(scriptId, executionContext, sourceURL) {
     var runtimeModel = executionContext.runtimeModel;
-    runtimeModel.runScript(
+    var result = await runtimeModel.runScript(
         scriptId, executionContext.id, 'console', /* silent */ false, /* includeCommandLineAPI */ true,
-        /* returnByValue */ false, /* generatePreview */ true, /* awaitPromise */ undefined, runCallback.bind(this));
-
-    /**
-     * @param {?Protocol.Runtime.RemoteObject} result
-     * @param {?Protocol.Runtime.ExceptionDetails=} exceptionDetails
-     * @this {Snippets.ScriptSnippetModel}
-     */
-    function runCallback(result, exceptionDetails) {
-      if (!exceptionDetails)
-        this._printRunScriptResult(runtimeModel, result, scriptId, sourceURL);
-      else
-        this._printRunOrCompileScriptResultFailure(runtimeModel, exceptionDetails, sourceURL);
-    }
+        /* returnByValue */ false, /* generatePreview */ true);
+    if (result.error)
+      return;
+    if (!result.exceptionDetails)
+      this._printRunScriptResult(runtimeModel, result.object || null, scriptId, sourceURL);
+    else
+      this._printRunOrCompileScriptResultFailure(runtimeModel, result.exceptionDetails, sourceURL);
   }
 
   /**
    * @param {!SDK.RuntimeModel} runtimeModel
-   * @param {?Protocol.Runtime.RemoteObject} result
+   * @param {?SDK.RemoteObject} result
    * @param {!Protocol.Runtime.ScriptId} scriptId
    * @param {?string=} sourceURL
    */
   _printRunScriptResult(runtimeModel, result, scriptId, sourceURL) {
     var consoleMessage = new ConsoleModel.ConsoleMessage(
         runtimeModel, ConsoleModel.ConsoleMessage.MessageSource.JS, ConsoleModel.ConsoleMessage.MessageLevel.Info, '',
-        undefined, sourceURL, undefined, undefined, undefined, [result], undefined, undefined, undefined, scriptId);
+        ConsoleModel.ConsoleMessage.MessageType.Result, sourceURL, undefined, undefined, undefined, [result], undefined,
+        undefined, undefined, scriptId);
     ConsoleModel.consoleModel.addMessage(consoleMessage);
   }
 
@@ -337,7 +348,6 @@ Snippets.ScriptSnippetModel = class extends Common.Object {
 Snippets.ScriptSnippetModel.snippetSourceURLPrefix = 'snippets:///';
 
 /**
- * @implements {Bindings.DebuggerSourceMapping}
  * @unrestricted
  */
 Snippets.SnippetScriptMapping = class {
@@ -403,7 +413,6 @@ Snippets.SnippetScriptMapping = class {
   }
 
   /**
-   * @override
    * @param {!SDK.DebuggerModel.Location} rawLocation
    * @return {?Workspace.UILocation}
    */
@@ -417,7 +426,6 @@ Snippets.SnippetScriptMapping = class {
   }
 
   /**
-   * @override
    * @param {!Workspace.UISourceCode} uiSourceCode
    * @param {number} lineNumber
    * @param {number} columnNumber
@@ -437,10 +445,9 @@ Snippets.SnippetScriptMapping = class {
    */
   _addScript(script, uiSourceCode) {
     console.assert(!this._scriptForUISourceCode.get(uiSourceCode));
-    Bindings.debuggerWorkspaceBinding.setSourceMapping(this._debuggerModel, uiSourceCode, this);
     this._uiSourceCodeForScriptId[script.scriptId] = uiSourceCode;
     this._scriptForUISourceCode.set(uiSourceCode, script);
-    Bindings.debuggerWorkspaceBinding.pushSourceMapping(script, this);
+    Bindings.debuggerWorkspaceBinding.updateLocations(script);
   }
 
   /**
@@ -453,27 +460,9 @@ Snippets.SnippetScriptMapping = class {
       return;
     var rawLocation =
         /** @type {!SDK.DebuggerModel.Location} */ (this._debuggerModel.createRawLocation(script, 0, 0));
-    var scriptUISourceCode = Bindings.debuggerWorkspaceBinding.rawLocationToUILocation(rawLocation).uiSourceCode;
-    if (scriptUISourceCode)
-      this._scriptSnippetModel._restoreBreakpoints(scriptUISourceCode, breakpointLocations);
-  }
-
-  /**
-   * @override
-   * @return {boolean}
-   */
-  isIdentity() {
-    return false;
-  }
-
-  /**
-   * @override
-   * @param {!Workspace.UISourceCode} uiSourceCode
-   * @param {number} lineNumber
-   * @return {boolean}
-   */
-  uiLineHasMapping(uiSourceCode, lineNumber) {
-    return true;
+    var uiLocation = Bindings.debuggerWorkspaceBinding.rawLocationToUILocation(rawLocation);
+    if (uiLocation)
+      this._scriptSnippetModel._restoreBreakpoints(uiLocation.uiSourceCode, breakpointLocations);
   }
 };
 
@@ -507,6 +496,14 @@ Snippets.SnippetContentProvider = class {
 
   /**
    * @override
+   * @return {!Promise<boolean>}
+   */
+  contentEncoded() {
+    return Promise.resolve(false);
+  }
+
+  /**
+   * @override
    * @return {!Promise<?string>}
    */
   requestContent() {
@@ -518,18 +515,10 @@ Snippets.SnippetContentProvider = class {
    * @param {string} query
    * @param {boolean} caseSensitive
    * @param {boolean} isRegex
-   * @param {function(!Array.<!Common.ContentProvider.SearchMatch>)} callback
+   * @return {!Promise<!Array<!Common.ContentProvider.SearchMatch>>}
    */
-  searchInContent(query, caseSensitive, isRegex, callback) {
-    /**
-     * @this {Snippets.SnippetContentProvider}
-     */
-    function performSearch() {
-      callback(Common.ContentProvider.performSearchInContent(this._snippet.content, query, caseSensitive, isRegex));
-    }
-
-    // searchInContent should call back later.
-    window.setTimeout(performSearch.bind(this), 0);
+  async searchInContent(query, caseSensitive, isRegex) {
+    return Common.ContentProvider.performSearchInContent(this._snippet.content, query, caseSensitive, isRegex);
   }
 };
 
@@ -552,7 +541,7 @@ Snippets.SnippetsProject = class extends Bindings.ContentProviderBasedProject {
    * @return {!Workspace.UISourceCode}
    */
   addSnippet(name, contentProvider) {
-    return this.addContentProvider(name, contentProvider);
+    return this.addContentProvider(name, contentProvider, 'text/javascript');
   }
 
   /**
@@ -567,9 +556,10 @@ Snippets.SnippetsProject = class extends Bindings.ContentProviderBasedProject {
    * @override
    * @param {!Workspace.UISourceCode} uiSourceCode
    * @param {string} newContent
+   * @param {boolean} isBase64
    * @param {function(?string)} callback
    */
-  setFileContent(uiSourceCode, newContent, callback) {
+  setFileContent(uiSourceCode, newContent, isBase64, callback) {
     this._model._setScriptSnippetContent(uiSourceCode.url(), newContent);
     callback('');
   }
@@ -597,10 +587,11 @@ Snippets.SnippetsProject = class extends Bindings.ContentProviderBasedProject {
    * @param {string} url
    * @param {?string} name
    * @param {string} content
-   * @param {function(?Workspace.UISourceCode)} callback
+   * @param {boolean=} isBase64
+   * @return {!Promise<?Workspace.UISourceCode>}
    */
-  createFile(url, name, content, callback) {
-    callback(this._model.createScriptSnippet(content));
+  createFile(url, name, content, isBase64) {
+    return /** @type {!Promise<?Workspace.UISourceCode>} */ (Promise.resolve(this._model.createScriptSnippet(content)));
   }
 
   /**

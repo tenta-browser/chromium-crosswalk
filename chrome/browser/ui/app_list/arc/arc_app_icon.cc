@@ -32,7 +32,7 @@
 
 namespace {
 
-bool disable_safe_decoding = false;
+bool disable_safe_decoding_for_testing = false;
 
 std::string GetAppFromAppOrGroupId(content::BrowserContext* context,
                                    const std::string& app_or_group_id) {
@@ -148,8 +148,8 @@ gfx::ImageSkiaRep ArcAppIcon::Source::GetImageForScale(float scale) {
   if (it != default_icons_cache_.Get().end())
     return it->second.GetRepresentation(scale);
 
-  const gfx::ImageSkia* default_image = ResourceBundle::GetSharedInstance().
-      GetImageSkiaNamed(resource_id);
+  const gfx::ImageSkia* default_image =
+      ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(resource_id);
   CHECK(default_image);
   gfx::ImageSkia resized_image = gfx::ImageSkiaOperations::CreateResizedImage(
       *default_image, skia::ImageOperations::RESIZE_BEST,
@@ -213,11 +213,7 @@ void ArcAppIcon::DecodeRequest::OnImageDecoded(const SkBitmap& bitmap) {
     return;
   }
 
-  gfx::ImageSkia image_skia;
-  image_skia.AddRepresentation(gfx::ImageSkiaRep(
-      bitmap,
-      ui::GetScaleForScaleFactor(scale_factor_)));
-  host_->Update(&image_skia);
+  host_->Update(scale_factor_, bitmap);
   host_->DiscardDecodeRequest(this);
 }
 
@@ -236,7 +232,12 @@ void ArcAppIcon::DecodeRequest::OnDecodeImageFailed() {
 
 // static
 void ArcAppIcon::DisableSafeDecodingForTesting() {
-  disable_safe_decoding = true;
+  disable_safe_decoding_for_testing = true;
+}
+
+// static
+bool ArcAppIcon::IsSafeDecodingDisabledForTesting() {
+  return disable_safe_decoding_for_testing;
 }
 
 ArcAppIcon::ArcAppIcon(content::BrowserContext* context,
@@ -244,14 +245,16 @@ ArcAppIcon::ArcAppIcon(content::BrowserContext* context,
                        int resource_size_in_dip,
                        Observer* observer)
     : context_(context),
-      app_id_(GetAppFromAppOrGroupId(context, app_id)),
+      app_id_(app_id),
+      mapped_app_id_(GetAppFromAppOrGroupId(context, app_id)),
       resource_size_in_dip_(resource_size_in_dip),
       observer_(observer),
       weak_ptr_factory_(this) {
   CHECK(observer_ != nullptr);
-  source_ = new Source(weak_ptr_factory_.GetWeakPtr(), resource_size_in_dip);
+  auto source = base::MakeUnique<Source>(weak_ptr_factory_.GetWeakPtr(),
+                                         resource_size_in_dip);
   gfx::Size resource_size(resource_size_in_dip, resource_size_in_dip);
-  image_skia_ = gfx::ImageSkia(source_, resource_size);
+  image_skia_ = gfx::ImageSkia(std::move(source), resource_size);
 }
 
 ArcAppIcon::~ArcAppIcon() {
@@ -260,20 +263,20 @@ ArcAppIcon::~ArcAppIcon() {
 void ArcAppIcon::LoadForScaleFactor(ui::ScaleFactor scale_factor) {
   // We provide Play Store icon from Chrome resources and it is not expected
   // that we have external load request.
-  DCHECK_NE(app_id_, arc::kPlayStoreAppId);
+  DCHECK_NE(app_id(), arc::kPlayStoreAppId);
 
   const ArcAppListPrefs* const prefs = ArcAppListPrefs::Get(context_);
   DCHECK(prefs);
 
-  const base::FilePath path = prefs->GetIconPath(app_id_, scale_factor);
+  const base::FilePath path = prefs->GetIconPath(mapped_app_id_, scale_factor);
   if (path.empty())
     return;
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                     base::TaskPriority::BACKGROUND),
-      base::Bind(&ArcAppIcon::ReadOnFileThread, scale_factor, path,
-                 prefs->MaybeGetIconPathForDefaultApp(app_id_, scale_factor)),
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      base::Bind(
+          &ArcAppIcon::ReadOnFileThread, scale_factor, path,
+          prefs->MaybeGetIconPathForDefaultApp(mapped_app_id_, scale_factor)),
       base::Bind(&ArcAppIcon::OnIconRead, weak_ptr_factory_.GetWeakPtr()));
 }
 
@@ -285,7 +288,7 @@ void ArcAppIcon::MaybeRequestIcon(ui::ScaleFactor scale_factor) {
   // ArcAppListPrefs notifies ArcAppModelBuilder via Observer when icon is ready
   // and ArcAppModelBuilder refreshes the icon of the corresponding item by
   // calling LoadScaleFactor.
-  prefs->MaybeRequestIcon(app_id_, scale_factor);
+  prefs->MaybeRequestIcon(mapped_app_id_, scale_factor);
 }
 
 // static
@@ -336,7 +339,7 @@ void ArcAppIcon::OnIconRead(
     decode_requests_.push_back(base::MakeUnique<DecodeRequest>(
         weak_ptr_factory_.GetWeakPtr(), resource_size_in_dip_,
         read_result->scale_factor));
-    if (disable_safe_decoding) {
+    if (disable_safe_decoding_for_testing) {
       SkBitmap bitmap;
       if (!read_result->unsafe_icon_data.empty() &&
           gfx::PNGCodec::Decode(
@@ -355,17 +358,15 @@ void ArcAppIcon::OnIconRead(
   }
 }
 
-void ArcAppIcon::Update(const gfx::ImageSkia* image) {
+void ArcAppIcon::Update(ui::ScaleFactor scale_factor, const SkBitmap& bitmap) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  CHECK(image && !image->isNull());
 
-  std::vector<gfx::ImageSkiaRep> reps = image->image_reps();
-  for (const auto& image_rep : reps) {
-    if (ui::IsSupportedScale(image_rep.scale())) {
-      image_skia_.RemoveRepresentation(image_rep.scale());
-      image_skia_.AddRepresentation(image_rep);
-    }
-  }
+  gfx::ImageSkiaRep image_rep(bitmap, ui::GetScaleForScaleFactor(scale_factor));
+  DCHECK(ui::IsSupportedScale(image_rep.scale()));
+
+  image_skia_.RemoveRepresentation(image_rep.scale());
+  image_skia_.AddRepresentation(image_rep);
+  image_skia_.RemoveUnsupportedRepresentationsForScale(image_rep.scale());
 
   observer_->OnIconUpdated(this);
 }

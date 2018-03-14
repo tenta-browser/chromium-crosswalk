@@ -4,6 +4,9 @@
 
 #include "chromeos/dbus/shill_device_client.h"
 
+#include <map>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
@@ -63,13 +66,6 @@ class ShillDeviceClientImpl : public ShillDeviceClient {
     GetHelper(device_path)->CallDictionaryValueMethod(&method_call, callback);
   }
 
-  void ProposeScan(const dbus::ObjectPath& device_path,
-                   const VoidDBusMethodCallback& callback) override {
-    dbus::MethodCall method_call(shill::kFlimflamDeviceInterface,
-                                 shill::kProposeScanFunction);
-    GetHelper(device_path)->CallVoidMethod(&method_call, callback);
-  }
-
   void SetProperty(const dbus::ObjectPath& device_path,
                    const std::string& name,
                    const base::Value& value,
@@ -87,22 +83,12 @@ class ShillDeviceClientImpl : public ShillDeviceClient {
 
   void ClearProperty(const dbus::ObjectPath& device_path,
                      const std::string& name,
-                     const VoidDBusMethodCallback& callback) override {
+                     VoidDBusMethodCallback callback) override {
     dbus::MethodCall method_call(shill::kFlimflamDeviceInterface,
                                  shill::kClearPropertyFunction);
     dbus::MessageWriter writer(&method_call);
     writer.AppendString(name);
-    GetHelper(device_path)->CallVoidMethod(&method_call, callback);
-  }
-
-  void AddIPConfig(const dbus::ObjectPath& device_path,
-                   const std::string& method,
-                   const ObjectPathDBusMethodCallback& callback) override {
-    dbus::MethodCall method_call(shill::kFlimflamDeviceInterface,
-                                 shill::kAddIPConfigFunction);
-    dbus::MessageWriter writer(&method_call);
-    writer.AppendString(method);
-    GetHelper(device_path)->CallObjectPathMethod(&method_call, callback);
+    GetHelper(device_path)->CallVoidMethod(&method_call, std::move(callback));
   }
 
   void RequirePin(const dbus::ObjectPath& device_path,
@@ -288,9 +274,9 @@ class ShillDeviceClientImpl : public ShillDeviceClient {
 
 }  // namespace
 
-ShillDeviceClient::ShillDeviceClient() {}
+ShillDeviceClient::ShillDeviceClient() = default;
 
-ShillDeviceClient::~ShillDeviceClient() {}
+ShillDeviceClient::~ShillDeviceClient() = default;
 
 // static
 ShillDeviceClient* ShillDeviceClient::Create() {

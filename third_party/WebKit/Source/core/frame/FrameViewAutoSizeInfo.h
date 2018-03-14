@@ -5,34 +5,34 @@
 #ifndef FrameViewAutoSizeInfo_h
 #define FrameViewAutoSizeInfo_h
 
+#include "base/memory/scoped_refptr.h"
 #include "platform/geometry/IntSize.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Noncopyable.h"
-#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
-class FrameView;
+class LocalFrameView;
 
 class FrameViewAutoSizeInfo final
     : public GarbageCollected<FrameViewAutoSizeInfo> {
   WTF_MAKE_NONCOPYABLE(FrameViewAutoSizeInfo);
 
  public:
-  static FrameViewAutoSizeInfo* Create(FrameView* frame_view) {
+  static FrameViewAutoSizeInfo* Create(LocalFrameView* frame_view) {
     return new FrameViewAutoSizeInfo(frame_view);
   }
 
   void ConfigureAutoSizeMode(const IntSize& min_size, const IntSize& max_size);
   void AutoSizeIfNeeded();
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
  private:
-  explicit FrameViewAutoSizeInfo(FrameView*);
+  explicit FrameViewAutoSizeInfo(LocalFrameView*);
 
-  Member<FrameView> frame_view_;
+  Member<LocalFrameView> frame_view_;
 
   // The lower bound on the size when autosizing.
   IntSize min_auto_size_;

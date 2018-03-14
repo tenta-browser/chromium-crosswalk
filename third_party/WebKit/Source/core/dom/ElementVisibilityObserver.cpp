@@ -5,20 +5,20 @@
 #include "core/dom/ElementVisibilityObserver.h"
 
 #include "core/dom/Element.h"
-#include "core/dom/IntersectionObserverEntry.h"
 #include "core/frame/LocalFrame.h"
+#include "core/intersection_observer/IntersectionObserverEntry.h"
 #include "platform/wtf/Functional.h"
 
 namespace blink {
 
 ElementVisibilityObserver::ElementVisibilityObserver(
     Element* element,
-    std::unique_ptr<VisibilityCallback> callback)
+    VisibilityCallback callback)
     : element_(element), callback_(std::move(callback)) {}
 
 ElementVisibilityObserver::~ElementVisibilityObserver() = default;
 
-void ElementVisibilityObserver::Start() {
+void ElementVisibilityObserver::Start(float threshold) {
   DCHECK(!intersection_observer_);
 
   ExecutionContext* context = element_->GetExecutionContext();
@@ -26,8 +26,7 @@ void ElementVisibilityObserver::Start() {
   Document& document = ToDocument(*context);
 
   intersection_observer_ = IntersectionObserver::Create(
-      Vector<Length>(), Vector<float>({std::numeric_limits<float>::min()}),
-      &document,
+      {} /* root_margin */, {threshold}, &document,
       WTF::Bind(&ElementVisibilityObserver::OnVisibilityChanged,
                 WrapWeakPersistent(this)));
   DCHECK(intersection_observer_);
@@ -46,15 +45,16 @@ void ElementVisibilityObserver::DeliverObservationsForTesting() {
   intersection_observer_->Deliver();
 }
 
-DEFINE_TRACE(ElementVisibilityObserver) {
+void ElementVisibilityObserver::Trace(blink::Visitor* visitor) {
   visitor->Trace(element_);
   visitor->Trace(intersection_observer_);
 }
 
 void ElementVisibilityObserver::OnVisibilityChanged(
     const HeapVector<Member<IntersectionObserverEntry>>& entries) {
-  bool is_visible = entries.back()->intersectionRatio() > 0.f;
-  (*callback_.get())(is_visible);
+  bool is_visible = entries.back()->intersectionRatio() >=
+                    intersection_observer_->thresholds()[0];
+  callback_.Run(is_visible);
 }
 
 }  // namespace blink

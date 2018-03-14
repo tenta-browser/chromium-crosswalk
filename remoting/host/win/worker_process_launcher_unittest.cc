@@ -68,6 +68,7 @@ class MockIpcDelegate : public WorkerProcessIpcDelegate {
   MOCK_METHOD1(OnChannelConnected, void(int32_t));
   MOCK_METHOD1(OnMessageReceived, bool(const IPC::Message&));
   MOCK_METHOD1(OnPermanentError, void(int));
+  MOCK_METHOD0(OnWorkerProcessStopped, void());
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockIpcDelegate);
@@ -280,9 +281,9 @@ void WorkerProcessLauncherTest::TerminateWorker(DWORD exit_code) {
 }
 
 void WorkerProcessLauncherTest::ConnectClient() {
-  channel_client_ = IPC::ChannelProxy::Create(client_channel_handle_.release(),
-                                              IPC::Channel::MODE_CLIENT,
-                                              &client_listener_, task_runner_);
+  channel_client_ = IPC::ChannelProxy::Create(
+      client_channel_handle_.release(), IPC::Channel::MODE_CLIENT,
+      &client_listener_, task_runner_, base::ThreadTaskRunnerHandle::Get());
 
   // Pretend that |kLaunchSuccessTimeoutSeconds| passed since launching
   // the worker process. This will make the backoff algorithm think that this
@@ -376,7 +377,8 @@ void WorkerProcessLauncherTest::DoLaunchProcess() {
 
   // Wrap the pipe into an IPC channel.
   channel_server_ = IPC::ChannelProxy::Create(
-      pipe.handle1.release(), IPC::Channel::MODE_SERVER, this, task_runner_);
+      pipe.handle1.release(), IPC::Channel::MODE_SERVER, this, task_runner_,
+      base::ThreadTaskRunnerHandle::Get());
 
   HANDLE temp_handle;
   ASSERT_TRUE(DuplicateHandle(GetCurrentProcess(), worker_process_.Get(),
@@ -393,6 +395,8 @@ TEST_F(WorkerProcessLauncherTest, Start) {
   EXPECT_CALL(server_listener_, OnChannelConnected(_))
       .Times(0);
   EXPECT_CALL(server_listener_, OnPermanentError(_))
+      .Times(0);
+  EXPECT_CALL(server_listener_, OnWorkerProcessStopped())
       .Times(0);
 
   StartWorker();
@@ -413,6 +417,8 @@ TEST_F(WorkerProcessLauncherTest, StartAndConnect) {
       .WillOnce(InvokeWithoutArgs(this,
                                   &WorkerProcessLauncherTest::StopWorker));
   EXPECT_CALL(server_listener_, OnPermanentError(_))
+      .Times(0);
+  EXPECT_CALL(server_listener_, OnWorkerProcessStopped())
       .Times(0);
 
   StartWorker();
@@ -438,6 +444,8 @@ TEST_F(WorkerProcessLauncherTest, Restart) {
 
   EXPECT_CALL(server_listener_, OnPermanentError(_))
       .Times(0);
+  EXPECT_CALL(server_listener_, OnWorkerProcessStopped())
+      .Times(1);
 
   StartWorker();
   base::RunLoop().Run();
@@ -461,6 +469,8 @@ TEST_F(WorkerProcessLauncherTest, DropIpcChannel) {
 
   EXPECT_CALL(server_listener_, OnPermanentError(_))
       .Times(0);
+  EXPECT_CALL(server_listener_, OnWorkerProcessStopped())
+      .Times(1);
 
   StartWorker();
   base::RunLoop().Run();
@@ -484,6 +494,8 @@ TEST_F(WorkerProcessLauncherTest, PermanentError) {
       .Times(1)
       .WillOnce(InvokeWithoutArgs(this,
                                   &WorkerProcessLauncherTest::StopWorker));
+  EXPECT_CALL(server_listener_, OnWorkerProcessStopped())
+      .Times(1);
 
   StartWorker();
   base::RunLoop().Run();
@@ -509,6 +521,8 @@ TEST_F(WorkerProcessLauncherTest, Crash) {
           &WorkerProcessLauncherTest::TerminateWorker,
           base::Unretained(this),
           EXCEPTION_BREAKPOINT)));
+  EXPECT_CALL(server_listener_, OnWorkerProcessStopped())
+      .Times(1);
 
   StartWorker();
   base::RunLoop().Run();
@@ -534,6 +548,8 @@ TEST_F(WorkerProcessLauncherTest, CrashAnyway) {
       .Times(1)
       .WillOnce(InvokeWithoutArgs(
           this, &WorkerProcessLauncherTest::SendFakeMessageToLauncher));
+  EXPECT_CALL(server_listener_, OnWorkerProcessStopped())
+      .Times(1);
 
   StartWorker();
   base::RunLoop().Run();

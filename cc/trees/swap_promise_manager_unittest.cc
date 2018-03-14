@@ -31,7 +31,7 @@ class MockSwapPromise : public SwapPromise {
   ~MockSwapPromise() override {}
 
   void DidActivate() override {}
-  void WillSwap(CompositorFrameMetadata* metadata) override {}
+  void WillSwap(viz::CompositorFrameMetadata* metadata) override {}
   void DidSwap() override {}
   DidNotSwapAction DidNotSwap(DidNotSwapReason reason) override {
     return DidNotSwapAction::BREAK_PROMISE;
@@ -53,7 +53,7 @@ TEST(SwapPromiseManagerTest, SwapPromiseMonitors) {
 TEST(SwapPromiseManagerTest, SwapPromises) {
   SwapPromiseManager manager;
   std::unique_ptr<StrictMock<MockSwapPromise>> swap_promise =
-      base::MakeUnique<StrictMock<MockSwapPromise>>();
+      std::make_unique<StrictMock<MockSwapPromise>>();
   MockSwapPromise* mock_promise = swap_promise.get();
 
   manager.QueueSwapPromise(std::move(swap_promise));

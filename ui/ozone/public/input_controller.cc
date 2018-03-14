@@ -4,6 +4,7 @@
 
 #include "ui/ozone/public/input_controller.h"
 
+#include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -30,7 +31,7 @@ class StubInputController : public InputController {
                          const base::TimeDelta& interval) override;
   void GetAutoRepeatRate(base::TimeDelta* delay,
                          base::TimeDelta* interval) override;
-  bool SetCurrentLayoutByName(const std::string& layout_name) override;
+  void SetCurrentLayoutByName(const std::string& layout_name) override;
   void SetTouchEventLoggingEnabled(bool enabled) override;
   void SetTouchpadSensitivity(int value) override;
   void SetTapToClick(bool enabled) override;
@@ -39,10 +40,11 @@ class StubInputController : public InputController {
   void SetNaturalScroll(bool enabled) override;
   void SetMouseSensitivity(int value) override;
   void SetPrimaryButtonRight(bool right) override;
+  void SetMouseReverseScroll(bool enabled) override;
   void SetTapToClickPaused(bool state) override;
-  void GetTouchDeviceStatus(const GetTouchDeviceStatusReply& reply) override;
+  void GetTouchDeviceStatus(GetTouchDeviceStatusReply reply) override;
   void GetTouchEventLog(const base::FilePath& out_dir,
-                        const GetTouchEventLogReply& reply) override;
+                        GetTouchEventLogReply reply) override;
   void SetInternalTouchpadEnabled(bool enabled) override;
   bool IsInternalTouchpadEnabled() const override;
   void SetTouchscreensEnabled(bool enabled) override;
@@ -92,10 +94,8 @@ void StubInputController::GetAutoRepeatRate(base::TimeDelta* delay,
                                             base::TimeDelta* interval) {
 }
 
-bool StubInputController::SetCurrentLayoutByName(
-    const std::string& layout_name) {
-  return false;
-}
+void StubInputController::SetCurrentLayoutByName(
+    const std::string& layout_name) {}
 
 void StubInputController::SetTouchpadSensitivity(int value) {
 }
@@ -122,17 +122,20 @@ void StubInputController::SetMouseSensitivity(int value) {
 void StubInputController::SetPrimaryButtonRight(bool right) {
 }
 
+void StubInputController::SetMouseReverseScroll(bool enabled) {
+}
+
 void StubInputController::SetTapToClickPaused(bool state) {
 }
 
 void StubInputController::GetTouchDeviceStatus(
-    const GetTouchDeviceStatusReply& reply) {
-  reply.Run(std::unique_ptr<std::string>(new std::string));
+    GetTouchDeviceStatusReply reply) {
+  std::move(reply).Run(std::string());
 }
 
 void StubInputController::GetTouchEventLog(const base::FilePath& out_dir,
-                                           const GetTouchEventLogReply& reply) {
-  reply.Run(base::WrapUnique(new std::vector<base::FilePath>));
+                                           GetTouchEventLogReply reply) {
+  std::move(reply).Run(std::vector<base::FilePath>());
 }
 
 void StubInputController::SetInternalTouchpadEnabled(bool enabled) {

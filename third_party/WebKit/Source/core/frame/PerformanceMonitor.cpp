@@ -10,15 +10,24 @@
 #include "core/CoreProbeSink.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/events/EventListener.h"
+#include "core/dom/events/EventListener.h"
 #include "core/frame/Frame.h"
 #include "core/frame/LocalFrame.h"
 #include "core/html/parser/HTMLDocumentParser.h"
 #include "core/probe/CoreProbes.h"
-#include "platform/wtf/CurrentTime.h"
+#include "platform/Histogram.h"
+#include "platform/wtf/Time.h"
 #include "public/platform/Platform.h"
 
 namespace blink {
+
+namespace {
+static const double kLongTaskSubTaskThresholdInSeconds = 0.012;
+}  // namespace
+
+void PerformanceMonitor::BypassLongCompileThresholdOnceForTesting() {
+  bypass_long_compile_threshold_ = true;
+};
 
 // static
 double PerformanceMonitor::Threshold(ExecutionContext* context,
@@ -65,7 +74,7 @@ PerformanceMonitor::PerformanceMonitor(LocalFrame* local_root)
     : local_root_(local_root) {
   std::fill(std::begin(thresholds_), std::end(thresholds_), 0);
   Platform::Current()->CurrentThread()->AddTaskTimeObserver(this);
-  local_root_->InstrumentingAgents()->addPerformanceMonitor(this);
+  local_root_->GetProbeSink()->addPerformanceMonitor(this);
 }
 
 PerformanceMonitor::~PerformanceMonitor() {
@@ -94,10 +103,10 @@ void PerformanceMonitor::UnsubscribeAll(Client* client) {
 void PerformanceMonitor::Shutdown() {
   if (!local_root_)
     return;
-  subscriptions_.Clear();
+  subscriptions_.clear();
   UpdateInstrumentation();
   Platform::Current()->CurrentThread()->RemoveTaskTimeObserver(this);
-  local_root_->InstrumentingAgents()->removePerformanceMonitor(this);
+  local_root_->GetProbeSink()->removePerformanceMonitor(this);
   local_root_ = nullptr;
 }
 
@@ -127,17 +136,33 @@ void PerformanceMonitor::WillExecuteScript(ExecutionContext* context) {
   // In V2, timing of script execution along with style & layout updates will be
   // accounted for detailed and more accurate attribution.
   ++script_depth_;
-  if (!task_execution_context_)
-    task_execution_context_ = context;
-  else if (task_execution_context_ != context)
-    task_has_multiple_contexts_ = true;
+  UpdateTaskAttribution(context);
 }
 
 void PerformanceMonitor::DidExecuteScript() {
   --script_depth_;
 }
 
+void PerformanceMonitor::UpdateTaskAttribution(ExecutionContext* context) {
+  // If |context| is not a document, unable to attribute a frame context.
+  if (!context || !context->IsDocument())
+    return;
+
+  UpdateTaskShouldBeReported(ToDocument(context)->GetFrame());
+  if (!task_execution_context_)
+    task_execution_context_ = context;
+  else if (task_execution_context_ != context)
+    task_has_multiple_contexts_ = true;
+}
+
+void PerformanceMonitor::UpdateTaskShouldBeReported(LocalFrame* frame) {
+  if (frame && local_root_ == &(frame->LocalFrameRoot()))
+    task_should_be_reported_ = true;
+}
+
 void PerformanceMonitor::Will(const probe::RecalculateStyle& probe) {
+  UpdateTaskShouldBeReported(probe.document ? probe.document->GetFrame()
+                                            : nullptr);
   if (enabled_ && thresholds_[kLongLayout] && script_depth_)
     probe.CaptureStartTime();
 }
@@ -148,6 +173,8 @@ void PerformanceMonitor::Did(const probe::RecalculateStyle& probe) {
 }
 
 void PerformanceMonitor::Will(const probe::UpdateLayout& probe) {
+  UpdateTaskShouldBeReported(probe.document ? probe.document->GetFrame()
+                                            : nullptr);
   ++layout_depth_;
   if (!enabled_)
     return;
@@ -167,10 +194,23 @@ void PerformanceMonitor::Did(const probe::UpdateLayout& probe) {
 
 void PerformanceMonitor::Will(const probe::ExecuteScript& probe) {
   WillExecuteScript(probe.context);
+
+  probe.CaptureStartTime();
 }
 
 void PerformanceMonitor::Did(const probe::ExecuteScript& probe) {
   DidExecuteScript();
+
+  if (!enabled_ || !thresholds_[kLongTask])
+    return;
+
+  if (probe.Duration() <= kLongTaskSubTaskThresholdInSeconds)
+    return;
+  std::unique_ptr<SubTaskAttribution> sub_task_attribution =
+      SubTaskAttribution::Create(String("script-run"),
+                                 probe.context->Url().GetString(),
+                                 probe.CaptureStartTime(), probe.Duration());
+  sub_task_attributions_.push_back(std::move(sub_task_attribution));
 }
 
 void PerformanceMonitor::Will(const probe::CallFunction& probe) {
@@ -196,15 +236,45 @@ void PerformanceMonitor::Did(const probe::CallFunction& probe) {
 
   String name = user_callback->name ? String(user_callback->name)
                                     : String(user_callback->atomicName);
-  String text = String::Format("'%s' handler took %ldms", name.Utf8().Data(),
+  String text = String::Format("'%s' handler took %ldms", name.Utf8().data(),
                                lround(duration * 1000));
   InnerReportGenericViolation(probe.context, handler_type, text, duration,
                               SourceLocation::FromFunction(probe.function));
 }
 
+void PerformanceMonitor::Will(const probe::V8Compile& probe) {
+  UpdateTaskAttribution(probe.context);
+  if (!enabled_ || !thresholds_[kLongTask])
+    return;
+
+  v8_compile_start_time_ = probe.CaptureStartTime();
+}
+
+void PerformanceMonitor::Did(const probe::V8Compile& probe) {
+  if (!enabled_ || !thresholds_[kLongTask])
+    return;
+
+  double v8_compile_duration = probe.Duration();
+
+  if (bypass_long_compile_threshold_) {
+    bypass_long_compile_threshold_ = false;
+  } else {
+    if (v8_compile_duration <= kLongTaskSubTaskThresholdInSeconds)
+      return;
+  }
+
+  std::unique_ptr<SubTaskAttribution> sub_task_attribution =
+      SubTaskAttribution::Create(
+          String("script-compile"),
+          String::Format("%s(%d, %d)", probe.file_name.Utf8().data(),
+                         probe.line, probe.column),
+          v8_compile_start_time_, v8_compile_duration);
+  sub_task_attributions_.push_back(std::move(sub_task_attribution));
+}
+
 void PerformanceMonitor::Will(const probe::UserCallback& probe) {
   ++user_callback_depth_;
-
+  UpdateTaskAttribution(probe.context);
   if (!enabled_ || user_callback_depth_ != 1 ||
       !thresholds_[probe.recurring ? kRecurringHandler : kHandler])
     return;
@@ -217,6 +287,7 @@ void PerformanceMonitor::Did(const probe::UserCallback& probe) {
   --user_callback_depth_;
   if (!user_callback_depth_)
     user_callback_ = nullptr;
+  DCHECK(user_callback_ != &probe);
 }
 
 void PerformanceMonitor::DocumentWriteFetchScript(Document* document) {
@@ -226,12 +297,12 @@ void PerformanceMonitor::DocumentWriteFetchScript(Document* document) {
   InnerReportGenericViolation(document, kBlockedParser, text, 0, nullptr);
 }
 
-void PerformanceMonitor::WillProcessTask(scheduler::TaskQueue*,
-                                         double start_time) {
+void PerformanceMonitor::WillProcessTask(double start_time) {
   // Reset m_taskExecutionContext. We don't clear this in didProcessTask
   // as it is needed in ReportTaskTime which occurs after didProcessTask.
   task_execution_context_ = nullptr;
   task_has_multiple_contexts_ = false;
+  task_should_be_reported_ = false;
 
   if (!enabled_)
     return;
@@ -241,12 +312,12 @@ void PerformanceMonitor::WillProcessTask(scheduler::TaskQueue*,
   layout_depth_ = 0;
   per_task_style_and_layout_time_ = 0;
   user_callback_ = nullptr;
+  v8_compile_start_time_ = 0;
+  sub_task_attributions_.clear();
 }
 
-void PerformanceMonitor::DidProcessTask(scheduler::TaskQueue*,
-                                        double start_time,
-                                        double end_time) {
-  if (!enabled_)
+void PerformanceMonitor::DidProcessTask(double start_time, double end_time) {
+  if (!enabled_ || !task_should_be_reported_)
     return;
   double layout_threshold = thresholds_[kLongLayout];
   if (layout_threshold && per_task_style_and_layout_time_ > layout_threshold) {
@@ -266,7 +337,7 @@ void PerformanceMonitor::DidProcessTask(scheduler::TaskQueue*,
         it.key->ReportLongTask(
             start_time, end_time,
             task_has_multiple_contexts_ ? nullptr : task_execution_context_,
-            task_has_multiple_contexts_);
+            task_has_multiple_contexts_, sub_task_attributions_);
       }
     }
   }
@@ -284,15 +355,12 @@ void PerformanceMonitor::InnerReportGenericViolation(
   if (!location)
     location = SourceLocation::Capture(context);
   for (const auto& it : *client_thresholds) {
-    if (it.value < time) {
-      if (!location)
-        location = SourceLocation::Capture(context);
+    if (it.value < time)
       it.key->ReportGenericViolation(violation, text, time, location.get());
-    }
   }
 }
 
-DEFINE_TRACE(PerformanceMonitor) {
+void PerformanceMonitor::Trace(blink::Visitor* visitor) {
   visitor->Trace(local_root_);
   visitor->Trace(task_execution_context_);
   visitor->Trace(subscriptions_);

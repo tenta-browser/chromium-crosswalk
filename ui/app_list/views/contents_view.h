@@ -9,10 +9,10 @@
 #include <memory>
 #include <utility>
 
+#include "ash/app_list/model/app_list_model.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "ui/app_list/app_list_export.h"
-#include "ui/app_list/app_list_model.h"
 #include "ui/app_list/pagination_model.h"
 #include "ui/app_list/pagination_model_observer.h"
 #include "ui/views/view.h"
@@ -24,17 +24,19 @@ class Rect;
 
 namespace app_list {
 
-class AppsGridView;
 class AppListPage;
+class AppListView;
 class ApplicationDragAndDropHost;
 class AppListFolderItem;
 class AppListMainView;
 class AppsContainerView;
-class CustomLauncherPageView;
+class AppsGridView;
 class PaginationModel;
 class SearchBoxView;
+class SearchResultAnswerCardView;
+class SearchResultListView;
 class SearchResultPageView;
-class StartPageView;
+class SearchResultTileItemListView;
 
 // A view to manage launcher pages within the Launcher (eg. start page, apps
 // grid view, search results). There can be any number of launcher pages, only
@@ -44,7 +46,7 @@ class StartPageView;
 class APP_LIST_EXPORT ContentsView : public views::View,
                                      public PaginationModelObserver {
  public:
-  explicit ContentsView(AppListMainView* app_list_main_view);
+  ContentsView(AppListMainView* app_list_main_view, AppListView* app_list_view);
   ~ContentsView() override;
 
   // Initialize the pages of the launcher. Should be called after
@@ -93,16 +95,26 @@ class APP_LIST_EXPORT ContentsView : public views::View,
   AppsContainerView* apps_container_view() const {
     return apps_container_view_;
   }
-  StartPageView* start_page_view() const { return start_page_view_; }
-  CustomLauncherPageView* custom_page_view() const { return custom_page_view_; }
-  SearchResultPageView* search_results_page_view() {
+  SearchResultPageView* search_results_page_view() const {
     return search_results_page_view_;
+  }
+  SearchResultAnswerCardView* search_result_answer_card_view_for_test() const {
+    return search_result_answer_card_view_;
+  }
+  SearchResultTileItemListView* search_result_tile_item_list_view_for_test()
+      const {
+    return search_result_tile_item_list_view_;
+  }
+  SearchResultListView* search_result_list_view_for_test() const {
+    return search_result_list_view_;
   }
   AppListPage* GetPageView(int index) const;
 
   SearchBoxView* GetSearchBoxView() const;
 
   AppListMainView* app_list_main_view() const { return app_list_main_view_; }
+
+  AppListView* app_list_view() const { return app_list_view_; }
 
   // Returns the pagination model for the ContentsView.
   const PaginationModel& pagination_model() { return pagination_model_; }
@@ -118,20 +130,34 @@ class APP_LIST_EXPORT ContentsView : public views::View,
   // specify their own custom layout.
   gfx::Rect GetDefaultContentsBounds() const;
 
+  // Returns the maximum preferred size of the all pages.
+  gfx::Size GetMaximumContentsSize() const;
+
   // Performs the 'back' action for the active page. Returns whether the action
   // was handled.
   bool Back();
 
   // Overridden from views::View:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
+  const char* GetClassName() const override;
 
   // Overridden from PaginationModelObserver:
   void TotalPagesChanged() override;
   void SelectedPageChanged(int old_selected, int new_selected) override;
   void TransitionStarted() override;
   void TransitionChanged() override;
+  void TransitionEnded() override;
+
+  // Returns the height of current display.
+  int GetDisplayHeight() const;
+
+  // Starts the fade out animation when the app list is closed.
+  void FadeOutOnClose(base::TimeDelta animation_duration);
+
+  // Returns selected view in active page.
+  views::View* GetSelectedView() const;
 
  private:
   // Sets the active launcher page, accounting for whether the change is for
@@ -145,12 +171,6 @@ class APP_LIST_EXPORT ContentsView : public views::View,
 
   // Returns the size of the default content area.
   gfx::Size GetDefaultContentsSize() const;
-
-  // Notifies the view delegate that the custom launcher page's animation has
-  // changed.
-  void NotifyCustomLauncherPageAnimationChanged(double progress,
-                                                int current_page,
-                                                int target_page);
 
   // Calculates and sets the bounds for the subviews. If there is currently an
   // animation, this positions the views as appropriate for the current frame.
@@ -175,17 +195,24 @@ class APP_LIST_EXPORT ContentsView : public views::View,
   // launcher-page pagination.
   PaginationModel* GetAppsPaginationModel();
 
+  // Unowned pointer to application list model.
+  AppListModel* model_ = nullptr;
+
   // Sub-views of the ContentsView. All owned by the views hierarchy.
-  AppsContainerView* apps_container_view_;
-  SearchResultPageView* search_results_page_view_;
-  StartPageView* start_page_view_;
-  CustomLauncherPageView* custom_page_view_;
+  AppsContainerView* apps_container_view_ = nullptr;
+  SearchResultPageView* search_results_page_view_ = nullptr;
+  SearchResultAnswerCardView* search_result_answer_card_view_ = nullptr;
+  SearchResultTileItemListView* search_result_tile_item_list_view_ = nullptr;
+  SearchResultListView* search_result_list_view_ = nullptr;
 
   // The child page views. Owned by the views hierarchy.
   std::vector<AppListPage*> app_list_pages_;
 
   // Parent view. Owned by the views hierarchy.
   AppListMainView* app_list_main_view_;
+
+  // Owned by the views hierarchy.
+  AppListView* const app_list_view_;
 
   // Maps State onto |view_model_| indices.
   std::map<AppListModel::State, int> state_to_view_;
@@ -194,10 +221,12 @@ class APP_LIST_EXPORT ContentsView : public views::View,
   std::map<int, AppListModel::State> view_to_state_;
 
   // The page that was showing before ShowSearchResults(true) was invoked.
-  int page_before_search_;
+  int page_before_search_ = 0;
 
   // Manages the pagination for the launcher pages.
   PaginationModel pagination_model_;
+
+  const bool is_fullscreen_app_list_enabled_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentsView);
 };

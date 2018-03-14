@@ -4,9 +4,9 @@
 
 #include "net/reporting/reporting_garbage_collector.h"
 
+#include <utility>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -24,39 +24,31 @@ class ReportingGarbageCollectorImpl : public ReportingGarbageCollector,
                                       public ReportingObserver {
  public:
   ReportingGarbageCollectorImpl(ReportingContext* context)
-      : context_(context), timer_(base::MakeUnique<base::OneShotTimer>()) {}
+      : context_(context), timer_(std::make_unique<base::OneShotTimer>()) {
+    context_->AddObserver(this);
+  }
 
   // ReportingGarbageCollector implementation:
 
   ~ReportingGarbageCollectorImpl() override {
-    DCHECK(context_->initialized());
     context_->RemoveObserver(this);
   }
 
-  void Initialize() override {
-    context_->AddObserver(this);
-    CollectGarbage();
-  }
-
   void SetTimerForTesting(std::unique_ptr<base::Timer> timer) override {
-    DCHECK(!context_->initialized());
     timer_ = std::move(timer);
   }
 
   // ReportingObserver implementation:
   void OnCacheUpdated() override {
-    DCHECK(context_->initialized());
-    if (!timer_->IsRunning())
-      StartTimer();
-  }
+    if (timer_->IsRunning())
+      return;
 
- private:
-  void StartTimer() {
     timer_->Start(FROM_HERE, context_->policy().garbage_collection_interval,
                   base::Bind(&ReportingGarbageCollectorImpl::CollectGarbage,
                              base::Unretained(this)));
   }
 
+ private:
   void CollectGarbage() {
     base::TimeTicks now = context_->tick_clock()->NowTicks();
     const ReportingPolicy& policy = context_->policy();
@@ -64,17 +56,21 @@ class ReportingGarbageCollectorImpl : public ReportingGarbageCollector,
     std::vector<const ReportingReport*> all_reports;
     context_->cache()->GetReports(&all_reports);
 
-    std::vector<const ReportingReport*> reports_to_remove;
+    std::vector<const ReportingReport*> failed_reports;
+    std::vector<const ReportingReport*> expired_reports;
     for (const ReportingReport* report : all_reports) {
-      if (now - report->queued >= policy.max_report_age ||
-          report->attempts >= policy.max_report_attempts) {
-        reports_to_remove.push_back(report);
-      }
+      if (report->attempts >= policy.max_report_attempts)
+        failed_reports.push_back(report);
+      else if (now - report->queued >= policy.max_report_age)
+        expired_reports.push_back(report);
     }
 
     // Don't restart the timer on the garbage collector's own updates.
     context_->RemoveObserver(this);
-    context_->cache()->RemoveReports(reports_to_remove);
+    context_->cache()->RemoveReports(failed_reports,
+                                     ReportingReport::Outcome::ERASED_FAILED);
+    context_->cache()->RemoveReports(expired_reports,
+                                     ReportingReport::Outcome::ERASED_EXPIRED);
     context_->AddObserver(this);
   }
 
@@ -87,7 +83,7 @@ class ReportingGarbageCollectorImpl : public ReportingGarbageCollector,
 // static
 std::unique_ptr<ReportingGarbageCollector> ReportingGarbageCollector::Create(
     ReportingContext* context) {
-  return base::MakeUnique<ReportingGarbageCollectorImpl>(context);
+  return std::make_unique<ReportingGarbageCollectorImpl>(context);
 }
 
 ReportingGarbageCollector::~ReportingGarbageCollector() {}

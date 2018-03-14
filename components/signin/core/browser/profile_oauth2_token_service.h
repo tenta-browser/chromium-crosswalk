@@ -14,6 +14,10 @@
 #include "google_apis/gaia/oauth2_token_service_delegate.h"
 #include "net/base/backoff_entry.h"
 
+namespace user_prefs {
+class PrefRegistrySyncable;
+}
+
 // ProfileOAuth2TokenService is a KeyedService that retrieves
 // OAuth2 access tokens for a given set of scopes using the OAuth2 login
 // refresh tokens.
@@ -36,19 +40,22 @@ class ProfileOAuth2TokenService : public OAuth2TokenService,
       std::unique_ptr<OAuth2TokenServiceDelegate> delegate);
   ~ProfileOAuth2TokenService() override;
 
+  // Registers per-profile prefs.
+  static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
+
   // KeyedService implementation.
   void Shutdown() override;
 
   // Loads credentials from a backing persistent store to make them available
   // after service is used between profile restarts.
   //
-  // Only call this method if there is at least one account connected to the
-  // profile, otherwise startup will cause unneeded work on the IO thread. The
-  // primary account is specified with the |primary_account_id| argument. If
-  // empty, no credentials will be loaded. For a regular profile, the primary
-  // account id comes from SigninManager. For a supervised user, the id comes
-  // from SupervisedUserService.
-  virtual void LoadCredentials(const std::string& primary_account_id);
+  // The primary account is specified with the |primary_account_id| argument.
+  // For a regular profile, the primary account id comes from SigninManager.
+  // For a supervised user, the id comes from SupervisedUserService.
+  void LoadCredentials(const std::string& primary_account_id);
+
+  // Returns true iff all credentials have been loaded from disk.
+  bool AreAllCredentialsLoaded();
 
   // Updates a |refresh_token| for an |account_id|. Credentials are persisted,
   // and available through |LoadCredentials| after service is restarted.
@@ -61,9 +68,17 @@ class ProfileOAuth2TokenService : public OAuth2TokenService,
   // is no such instance.
   const net::BackoffEntry* GetDelegateBackoffEntry();
 
+  void set_all_credentials_loaded_for_testing(bool loaded) {
+    all_credentials_loaded_ = loaded;
+  }
+
  private:
   void OnRefreshTokenAvailable(const std::string& account_id) override;
   void OnRefreshTokenRevoked(const std::string& account_id) override;
+  void OnRefreshTokensLoaded() override;
+
+  // Whether all credentials have been loaded.
+  bool all_credentials_loaded_;
 
   DISALLOW_COPY_AND_ASSIGN(ProfileOAuth2TokenService);
 };

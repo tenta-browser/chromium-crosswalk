@@ -13,7 +13,7 @@
 #include "base/time/time.h"
 #include "ui/views/controls/menu/menu_runner_impl_interface.h"
 
-@class MenuController;
+@class MenuControllerCocoa;
 
 namespace views {
 namespace internal {
@@ -26,11 +26,11 @@ class VIEWS_EXPORT MenuRunnerImplCocoa : public MenuRunnerImplInterface {
 
   bool IsRunning() const override;
   void Release() override;
-  MenuRunner::RunResult RunMenuAt(Widget* parent,
-                                  MenuButton* button,
-                                  const gfx::Rect& bounds,
-                                  MenuAnchorPosition anchor,
-                                  int32_t run_types) override;
+  void RunMenuAt(Widget* parent,
+                 MenuButton* button,
+                 const gfx::Rect& bounds,
+                 MenuAnchorPosition anchor,
+                 int32_t run_types) override;
   void Cancel() override;
   base::TimeTicks GetClosingEventTime() const override;
 
@@ -38,7 +38,7 @@ class VIEWS_EXPORT MenuRunnerImplCocoa : public MenuRunnerImplInterface {
   ~MenuRunnerImplCocoa() override;
 
   // The Cocoa menu controller that this instance is bridging.
-  base::scoped_nsobject<MenuController> menu_controller_;
+  base::scoped_nsobject<MenuControllerCocoa> menu_controller_;
 
   // Are we in run waiting for it to return?
   bool running_;

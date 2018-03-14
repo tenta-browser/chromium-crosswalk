@@ -16,7 +16,7 @@ TestProxyDelegate::TestProxyDelegate()
       on_tunnel_headers_received_called_(false),
       get_alternative_proxy_invocations_(0) {}
 
-TestProxyDelegate::~TestProxyDelegate() {}
+TestProxyDelegate::~TestProxyDelegate() = default;
 
 void TestProxyDelegate::VerifyOnTunnelRequestCompleted(
     const std::string& endpoint,
@@ -40,10 +40,11 @@ void TestProxyDelegate::VerifyOnTunnelHeadersReceived(
   EXPECT_EQ(status_line, on_tunnel_headers_received_status_line_);
 }
 
-void TestProxyDelegate::OnResolveProxy(const GURL& url,
-                                       const std::string& method,
-                                       const ProxyService& proxy_service,
-                                       ProxyInfo* result) {}
+void TestProxyDelegate::OnResolveProxy(
+    const GURL& url,
+    const std::string& method,
+    const ProxyRetryInfoMap& proxy_retry_info,
+    ProxyInfo* result) {}
 
 void TestProxyDelegate::OnTunnelConnectCompleted(
     const HostPortPair& endpoint,
@@ -95,10 +96,6 @@ void TestProxyDelegate::OnAlternativeProxyBroken(
   EXPECT_TRUE(alternative_proxy_server.is_valid());
   EXPECT_EQ(alternative_proxy_server_, alternative_proxy_server);
   alternative_proxy_server_ = ProxyServer();
-}
-
-ProxyServer TestProxyDelegate::GetDefaultAlternativeProxy() const {
-  return alternative_proxy_server_;
 }
 
 }  // namespace net

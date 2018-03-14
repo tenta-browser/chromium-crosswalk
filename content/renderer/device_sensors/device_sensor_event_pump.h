@@ -26,7 +26,7 @@ class CONTENT_EXPORT DeviceSensorMojoClientMixin : public Base {
   template <typename... Args>
   explicit DeviceSensorMojoClientMixin(Args&&... args)
       : Base(std::forward<Args>(args)...) {
-    mojo::InterfaceRequest<MojoInterface> request(&mojo_interface_);
+    auto request = mojo::MakeRequest(&mojo_interface_);
 
     // When running layout tests, those observers should not listen to the
     // actual hardware changes. In order to make that happen, don't connect
@@ -42,9 +42,9 @@ class CONTENT_EXPORT DeviceSensorMojoClientMixin : public Base {
   }
 
   void SendStartMessage() override {
-    mojo_interface_->StartPolling(
-        base::Bind(&DeviceSensorMojoClientMixin<Base, MojoInterface>::DidStart,
-                   base::Unretained(this)));
+    mojo_interface_->StartPolling(base::BindOnce(
+        &DeviceSensorMojoClientMixin<Base, MojoInterface>::DidStart,
+        base::Unretained(this)));
   }
   void SendStopMessage() override { mojo_interface_->StopPolling(); }
 
@@ -59,7 +59,7 @@ class CONTENT_EXPORT DeviceSensorMojoClientMixin : public Base {
 
 template <typename ListenerType>
 class CONTENT_EXPORT DeviceSensorEventPump
-    : NON_EXPORTED_BASE(public PlatformEventObserver<ListenerType>) {
+    : public PlatformEventObserver<ListenerType> {
  public:
   // Default rate for firing events.
   static const int kDefaultPumpFrequencyHz = 60;

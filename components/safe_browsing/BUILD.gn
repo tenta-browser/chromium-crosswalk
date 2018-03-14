@@ -6,7 +6,13 @@ import("//third_party/protobuf/proto_library.gni")
 
 proto_library("csd_proto") {
   sources = [
-    "csd.proto",
+    "proto/csd.proto",
+  ]
+}
+
+proto_library("webui_proto") {
+  sources = [
+    "proto/webui.proto",
   ]
 }
 
@@ -18,17 +24,22 @@ source_set("safe_browsing") {
     "base_resource_throttle.h",
     "base_ui_manager.cc",
     "base_ui_manager.h",
+    "net_event_logger.cc",
+    "net_event_logger.h",
   ]
-
+  public_deps = [
+    "//components/security_interstitials/content:security_interstitial_page",
+  ]
   deps = [
     ":base_ping_manager",
+    ":features",
     "//base:base",
     "//base:i18n",
-    "//components/safe_browsing_db:database_manager",
-    "//components/safe_browsing_db:safe_browsing_prefs",
-    "//components/security_interstitials/content:security_interstitial_page",
+    "//components/safe_browsing/common:common",
+    "//components/safe_browsing/common:safe_browsing_prefs",
+    "//components/safe_browsing/db:database_manager",
+    "//components/safe_browsing/web_ui:constants",
     "//components/security_interstitials/core:core",
-    "//components/subresource_filter/content/browser:browser",
     "//content/public/browser:browser",
     "//content/public/common:common",
     "//net:net",
@@ -48,8 +59,8 @@ static_library("base_ping_manager") {
   deps = [
     "//base:base",
     "//components/data_use_measurement/core:core",
-    "//components/safe_browsing_db:hit_report",
-    "//components/safe_browsing_db:util",
+    "//components/safe_browsing/db:hit_report",
+    "//components/safe_browsing/db:util",
     "//content/public/browser:browser",
     "//net:net",
   ]
@@ -67,5 +78,16 @@ source_set("base_ping_manager_unittest") {
     "//net:net",
     "//net:test_support",
     "//testing/gtest",
+  ]
+}
+
+static_library("features") {
+  sources = [
+    "features.cc",
+    "features.h",
+  ]
+
+  deps = [
+    "//base:base",
   ]
 }

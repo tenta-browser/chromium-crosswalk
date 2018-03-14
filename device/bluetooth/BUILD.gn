@@ -41,10 +41,33 @@ source_set("mojo") {
   ]
 }
 
+source_set("fake_bluetooth") {
+  sources = [
+    "test/fake_bluetooth.cc",
+    "test/fake_bluetooth.h",
+    "test/fake_central.cc",
+    "test/fake_central.h",
+    "test/fake_peripheral.cc",
+    "test/fake_peripheral.h",
+    "test/fake_read_response.cc",
+    "test/fake_read_response.h",
+    "test/fake_remote_gatt_characteristic.cc",
+    "test/fake_remote_gatt_characteristic.h",
+    "test/fake_remote_gatt_descriptor.cc",
+    "test/fake_remote_gatt_descriptor.h",
+    "test/fake_remote_gatt_service.cc",
+    "test/fake_remote_gatt_service.h",
+  ]
+
+  deps = [
+    ":bluetooth",
+    "//device/bluetooth/public/interfaces:fake_bluetooth_interfaces",
+    "//mojo/public/cpp/bindings",
+  ]
+}
+
 component("bluetooth") {
   sources = [
-    "android/bluetooth_jni_registrar.cc",
-    "android/bluetooth_jni_registrar.h",
     "android/wrappers.cc",
     "android/wrappers.h",
     "bluetooth_adapter.cc",
@@ -57,6 +80,8 @@ component("bluetooth") {
     "bluetooth_adapter_factory_wrapper.h",
     "bluetooth_adapter_mac.h",
     "bluetooth_adapter_mac.mm",
+    "bluetooth_adapter_mac_metrics.h",
+    "bluetooth_adapter_mac_metrics.mm",
     "bluetooth_adapter_win.cc",
     "bluetooth_adapter_win.h",
     "bluetooth_advertisement.cc",
@@ -174,6 +199,7 @@ component("bluetooth") {
     "//device/bluetooth/uribeacon",
     "//ipc",
     "//net",
+    "//third_party/re2",
     "//ui/base",
   ]
 

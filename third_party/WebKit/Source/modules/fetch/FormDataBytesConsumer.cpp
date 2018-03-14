@@ -4,8 +4,8 @@
 
 #include "modules/fetch/FormDataBytesConsumer.h"
 
-#include "core/dom/DOMArrayBuffer.h"
-#include "core/dom/DOMArrayBufferView.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
+#include "core/typed_arrays/DOMArrayBufferView.h"
 #include "modules/fetch/BlobBytesConsumer.h"
 #include "platform/blob/BlobData.h"
 #include "platform/network/EncodedFormData.h"
@@ -28,7 +28,7 @@ bool IsSimple(const EncodedFormData* form_data) {
 
 class SimpleFormDataBytesConsumer : public BytesConsumer {
  public:
-  explicit SimpleFormDataBytesConsumer(PassRefPtr<EncodedFormData> form_data)
+  explicit SimpleFormDataBytesConsumer(scoped_refptr<EncodedFormData> form_data)
       : form_data_(std::move(form_data)) {}
 
   // BytesConsumer implementation
@@ -42,7 +42,7 @@ class SimpleFormDataBytesConsumer : public BytesConsumer {
     }
     if (flatten_form_data_offset_ == flatten_form_data_.size())
       return Result::kDone;
-    *buffer = flatten_form_data_.Data() + flatten_form_data_offset_;
+    *buffer = flatten_form_data_.data() + flatten_form_data_offset_;
     *available = flatten_form_data_.size() - flatten_form_data_offset_;
     return Result::kOk;
   }
@@ -56,7 +56,7 @@ class SimpleFormDataBytesConsumer : public BytesConsumer {
     }
     return Result::kOk;
   }
-  PassRefPtr<BlobDataHandle> DrainAsBlobDataHandle(
+  scoped_refptr<BlobDataHandle> DrainAsBlobDataHandle(
       BlobSizePolicy policy) override {
     if (!form_data_)
       return nullptr;
@@ -65,24 +65,24 @@ class SimpleFormDataBytesConsumer : public BytesConsumer {
     form_data_->Flatten(data);
     form_data_ = nullptr;
     std::unique_ptr<BlobData> blob_data = BlobData::Create();
-    blob_data->AppendBytes(data.Data(), data.size());
+    blob_data->AppendBytes(data.data(), data.size());
     auto length = blob_data->length();
     state_ = PublicState::kClosed;
     return BlobDataHandle::Create(std::move(blob_data), length);
   }
-  PassRefPtr<EncodedFormData> DrainAsFormData() override {
+  scoped_refptr<EncodedFormData> DrainAsFormData() override {
     if (!form_data_)
       return nullptr;
 
     state_ = PublicState::kClosed;
-    return form_data_.Release();
+    return std::move(form_data_);
   }
   void SetClient(BytesConsumer::Client* client) override { DCHECK(client); }
   void ClearClient() override {}
   void Cancel() override {
     state_ = PublicState::kClosed;
     form_data_ = nullptr;
-    flatten_form_data_.Clear();
+    flatten_form_data_.clear();
     flatten_form_data_offset_ = 0;
   }
   PublicState GetPublicState() const override { return state_; }
@@ -94,7 +94,7 @@ class SimpleFormDataBytesConsumer : public BytesConsumer {
 
  private:
   // either one of |m_formData| and |m_flattenFormData| is usable at a time.
-  RefPtr<EncodedFormData> form_data_;
+  scoped_refptr<EncodedFormData> form_data_;
   Vector<char> flatten_form_data_;
   size_t flatten_form_data_offset_ = 0;
   PublicState state_ = PublicState::kReadableOrWaiting;
@@ -103,7 +103,7 @@ class SimpleFormDataBytesConsumer : public BytesConsumer {
 class ComplexFormDataBytesConsumer final : public BytesConsumer {
  public:
   ComplexFormDataBytesConsumer(ExecutionContext* execution_context,
-                               PassRefPtr<EncodedFormData> form_data,
+                               scoped_refptr<EncodedFormData> form_data,
                                BytesConsumer* consumer)
       : form_data_(std::move(form_data)) {
     if (consumer) {
@@ -116,7 +116,7 @@ class ComplexFormDataBytesConsumer final : public BytesConsumer {
     for (const auto& element : form_data_->Elements()) {
       switch (element.type_) {
         case FormDataElement::kData:
-          blob_data->AppendBytes(element.data_.Data(), element.data_.size());
+          blob_data->AppendBytes(element.data_.data(), element.data_.size());
           break;
         case FormDataElement::kEncodedFile: {
           auto file_length = element.file_length_;
@@ -134,27 +134,17 @@ class ComplexFormDataBytesConsumer final : public BytesConsumer {
           break;
         }
         case FormDataElement::kEncodedBlob:
-          if (element.optional_blob_data_handle_)
+          if (element.optional_blob_data_handle_) {
             blob_data->AppendBlob(element.optional_blob_data_handle_, 0,
                                   element.optional_blob_data_handle_->size());
-          break;
-        case FormDataElement::kEncodedFileSystemURL:
-          if (element.file_length_ < 0) {
-            form_data_ = nullptr;
-            blob_bytes_consumer_ = BytesConsumer::CreateErrored(
-                Error("Cannot determine a file size"));
-            return;
           }
-          blob_data->AppendFileSystemURL(
-              element.file_system_url_, element.file_start_,
-              element.file_length_, element.expected_file_modification_time_);
           break;
       }
     }
     // Here we handle m_formData->boundary() as a C-style string. See
     // FormDataEncoder::generateUniqueBoundaryString.
     blob_data->SetContentType(AtomicString("multipart/form-data; boundary=") +
-                              form_data_->Boundary().Data());
+                              form_data_->Boundary().data());
     auto size = blob_data->length();
     blob_bytes_consumer_ = new BlobBytesConsumer(
         execution_context, BlobDataHandle::Create(std::move(blob_data), size));
@@ -171,19 +161,19 @@ class ComplexFormDataBytesConsumer final : public BytesConsumer {
   Result EndRead(size_t read_size) override {
     return blob_bytes_consumer_->EndRead(read_size);
   }
-  PassRefPtr<BlobDataHandle> DrainAsBlobDataHandle(
+  scoped_refptr<BlobDataHandle> DrainAsBlobDataHandle(
       BlobSizePolicy policy) override {
-    RefPtr<BlobDataHandle> handle =
+    scoped_refptr<BlobDataHandle> handle =
         blob_bytes_consumer_->DrainAsBlobDataHandle(policy);
     if (handle)
       form_data_ = nullptr;
-    return handle.Release();
+    return handle;
   }
-  PassRefPtr<EncodedFormData> DrainAsFormData() override {
+  scoped_refptr<EncodedFormData> DrainAsFormData() override {
     if (!form_data_)
       return nullptr;
     blob_bytes_consumer_->Cancel();
-    return form_data_.Release();
+    return std::move(form_data_);
   }
   void SetClient(BytesConsumer::Client* client) override {
     blob_bytes_consumer_->SetClient(client);
@@ -199,13 +189,13 @@ class ComplexFormDataBytesConsumer final : public BytesConsumer {
   Error GetError() const override { return blob_bytes_consumer_->GetError(); }
   String DebugName() const override { return "ComplexFormDataBytesConsumer"; }
 
-  DEFINE_INLINE_TRACE() {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(blob_bytes_consumer_);
     BytesConsumer::Trace(visitor);
   }
 
  private:
-  RefPtr<EncodedFormData> form_data_;
+  scoped_refptr<EncodedFormData> form_data_;
   Member<BytesConsumer> blob_bytes_consumer_;
 };
 
@@ -227,14 +217,14 @@ FormDataBytesConsumer::FormDataBytesConsumer(const void* data, size_t size)
 
 FormDataBytesConsumer::FormDataBytesConsumer(
     ExecutionContext* execution_context,
-    PassRefPtr<EncodedFormData> form_data)
+    scoped_refptr<EncodedFormData> form_data)
     : FormDataBytesConsumer(execution_context, std::move(form_data), nullptr) {}
 
 FormDataBytesConsumer::FormDataBytesConsumer(
     ExecutionContext* execution_context,
-    PassRefPtr<EncodedFormData> form_data,
+    scoped_refptr<EncodedFormData> form_data,
     BytesConsumer* consumer)
-    : impl_(IsSimple(form_data.Get())
+    : impl_(IsSimple(form_data.get())
                 ? static_cast<BytesConsumer*>(
                       new SimpleFormDataBytesConsumer(std::move(form_data)))
                 : static_cast<BytesConsumer*>(

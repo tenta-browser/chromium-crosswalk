@@ -4,27 +4,31 @@
 
 #import <EarlGrey/EarlGrey.h>
 
+#include "base/compiler_specific.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/version_info/version_info.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
-#import "ios/chrome/browser/ui/commands/generic_chrome_command.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
+#include "ios/chrome/test/app/navigation_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
-#import "ios/web/public/test/http_server.h"
-#include "ios/web/public/test/http_server_util.h"
-#include "ios/web/public/test/response_providers/html_response_provider.h"
+#import "ios/web/public/navigation_manager.h"
+#include "ios/web/public/test/http_server/html_response_provider.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#include "ios/web/public/test/http_server/http_server_util.h"
 #include "ios/web/public/test/url_test_util.h"
 #include "url/gurl.h"
 
-using chrome_test_util::WebViewContainingText;
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 using chrome_test_util::OmniboxText;
 
 namespace {
@@ -40,21 +44,17 @@ const char kPage1Link[] = "page-1";
 const char kPage2Link[] = "page-2";
 const char kPage3Link[] = "page-3";
 
-// Purges all cached web view pages, so the next time back navigation will not
-// use cached page. Browsers don't have to use fresh version for back forward
+// Purges cached web view page, so the next time back navigation will not use
+// cached page. Browsers don't have to use fresh version for back forward
 // navigation for HTTP pages and may serve version from the cache even if
 // Cache-Control response header says otherwise.
-void PurgeCachedWebViewPages() {
-  chrome_test_util::ResetAllWebViews();
-
-  BOOL reloaded = [[GREYCondition
-      conditionWithName:@"Wait for reload"
-                  block:^{
-                    return chrome_test_util::GetCurrentWebState()->IsLoading()
-                               ? NO
-                               : YES;
-                  }] waitWithTimeout:10];
-  GREYAssert(reloaded, @"page did not reload");
+bool PurgeCachedWebViewPages() WARN_UNUSED_RESULT;
+bool PurgeCachedWebViewPages() {
+  web::WebState* web_state = chrome_test_util::GetCurrentWebState();
+  web_state->SetWebUsageEnabled(false);
+  web_state->SetWebUsageEnabled(true);
+  web_state->GetNavigationManager()->LoadIfNecessary();
+  return chrome_test_util::WaitForPageToFinishLoading();
 }
 
 // Response provider which can be paused. When it is paused it buffers all
@@ -116,7 +116,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 // Spec of the last request URL that reached the server.
 @property(nonatomic, copy, readonly) NSString* lastRequestURLSpec;
 
-// Pauses reponse server and disables EG synchronization if |paused| is YES.
+// Pauses response server and disables EG synchronization if |paused| is YES.
 // Pending navigation will not complete until server is unpaused.
 - (void)setServerPaused:(BOOL)paused;
 
@@ -177,10 +177,16 @@ class PausableResponseProvider : public HtmlResponseProvider {
 
 // Tests that visible URL is always the same as last committed URL during
 // pending back and forward navigations.
-- (void)testBackForwardNavigation {
+// TODO(crbug.com/787872): Re-enable this test on devices.
+#if TARGET_IPHONE_SIMULATOR
+#define MAYBE_testBackForwardNavigation testBackForwardNavigation
+#else
+#define MAYBE_testBackForwardNavigation FLAKY_testBackForwardNavigation
+#endif
+- (void)MAYBE_testBackForwardNavigation {
   // Purge web view caches and pause the server to make sure that tests can
   // verify omnibox state before server starts responding.
-  PurgeCachedWebViewPages();
+  GREYAssert(PurgeCachedWebViewPages(), @"Pages were not purged");
   [self setServerPaused:YES];
 
   // Tap the back button in the toolbar and verify that URL2 (committed URL) is
@@ -194,14 +200,13 @@ class PausableResponseProvider : public HtmlResponseProvider {
 
   // Make server respond so URL1 becomes committed.
   [self setServerPaused:NO];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kTestPage1)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kTestPage1];
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL1.GetContent())]
       assertWithMatcher:grey_notNil()];
 
   // Purge web view caches and pause the server to make sure that tests can
   // verify omnibox state before server starts responding.
-  PurgeCachedWebViewPages();
+  GREYAssert(PurgeCachedWebViewPages(), @"Pages were not purged");
   [self setServerPaused:YES];
 
   // Tap the forward button in the toolbar and verify that URL1 (committed URL)
@@ -215,8 +220,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 
   // Make server respond so URL2 becomes committed.
   [self setServerPaused:NO];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kTestPage2)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kTestPage2];
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL2.GetContent())]
       assertWithMatcher:grey_notNil()];
 }
@@ -226,9 +230,14 @@ class PausableResponseProvider : public HtmlResponseProvider {
 - (void)testHistoryNavigation {
   // Purge web view caches and pause the server to make sure that tests can
   // verify omnibox state before server starts responding.
-  PurgeCachedWebViewPages();
+  GREYAssert(PurgeCachedWebViewPages(), @"Pages were not purged");
   [self setServerPaused:YES];
 
+  // Re-enable synchronization here to synchronize EarlGrey LongPress and Tap
+  // actions.
+  [[GREYConfiguration sharedInstance]
+          setValue:@(YES)
+      forConfigKey:kGREYConfigKeySynchronizationEnabled];
   // Go back in history and verify that URL2 (committed URL) is displayed even
   // though URL1 is a pending URL.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::BackButton()]
@@ -237,6 +246,11 @@ class PausableResponseProvider : public HtmlResponseProvider {
       base::SysUTF16ToNSString(web::GetDisplayTitleForUrl(_testURL1));
   [[EarlGrey selectElementWithMatcher:grey_text(URL1Title)]
       performAction:grey_tap()];
+
+  [[GREYConfiguration sharedInstance]
+          setValue:@(NO)
+      forConfigKey:kGREYConfigKeySynchronizationEnabled];
+
   GREYAssert([self waitForServerToReceiveRequestWithURL:_testURL1],
              @"Last request URL: %@", self.lastRequestURLSpec);
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL2.GetContent())]
@@ -244,8 +258,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 
   // Make server respond so URL1 becomes committed.
   [self setServerPaused:NO];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kTestPage1)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kTestPage1];
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL1.GetContent())]
       assertWithMatcher:grey_notNil()];
 }
@@ -255,7 +268,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 - (void)testStoppingPendingBackNavigationAndReload {
   // Purge web view caches and pause the server to make sure that tests can
   // verify omnibox state before server starts responding.
-  PurgeCachedWebViewPages();
+  GREYAssert(PurgeCachedWebViewPages(), @"Pages were not purged");
   [self setServerPaused:YES];
 
   // Tap the back button, stop pending navigation and reload.
@@ -277,8 +290,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 
   // Make server respond and verify that page2 was reloaded, not page1.
   [self setServerPaused:NO];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kTestPage2)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kTestPage2];
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL2.GetContent())]
       assertWithMatcher:grey_notNil()];
 }
@@ -288,7 +300,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 - (void)testJSBackForwardNavigation {
   // Purge web view caches and pause the server to make sure that tests can
   // verify omnibox state before server starts responding.
-  PurgeCachedWebViewPages();
+  GREYAssert(PurgeCachedWebViewPages(), @"Pages were not purged");
   [self setServerPaused:YES];
 
   // Tap the back button on the page and verify that URL2 (committed URL) is
@@ -301,14 +313,13 @@ class PausableResponseProvider : public HtmlResponseProvider {
 
   // Make server respond so URL1 becomes committed.
   [self setServerPaused:NO];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kTestPage1)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kTestPage1];
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL1.GetContent())]
       assertWithMatcher:grey_notNil()];
 
   // Purge web view caches and pause the server to make sure that tests can
   // verify omnibox state before server starts responding.
-  PurgeCachedWebViewPages();
+  GREYAssert(PurgeCachedWebViewPages(), @"Pages were not purged");
   [self setServerPaused:YES];
 
   // Tap the forward button on the page and verify that URL1 (committed URL)
@@ -322,8 +333,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 
   // Make server respond so URL2 becomes committed.
   [self setServerPaused:NO];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kTestPage2)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kTestPage2];
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL2.GetContent())]
       assertWithMatcher:grey_notNil()];
 }
@@ -333,7 +343,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 - (void)testJSGoNavigation {
   // Purge web view caches and pause the server to make sure that tests can
   // verify omnibox state before server starts responding.
-  PurgeCachedWebViewPages();
+  GREYAssert(PurgeCachedWebViewPages(), @"Pages were not purged");
   [self setServerPaused:YES];
 
   // Tap the go negative delta button on the page and verify that URL2
@@ -347,14 +357,13 @@ class PausableResponseProvider : public HtmlResponseProvider {
 
   // Make server respond so URL1 becomes committed.
   [self setServerPaused:NO];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kTestPage1)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kTestPage1];
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL1.GetContent())]
       assertWithMatcher:grey_notNil()];
 
   // Purge web view caches and pause the server to make sure that tests can
   // verify omnibox state before server starts responding.
-  PurgeCachedWebViewPages();
+  GREYAssert(PurgeCachedWebViewPages(), @"Pages were not purged");
   [self setServerPaused:YES];
 
   // Tap go positive delta button on the page and verify that URL1 (committed
@@ -368,8 +377,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 
   // Make server respond so URL2 becomes committed.
   [self setServerPaused:NO];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kTestPage2)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kTestPage2];
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL2.GetContent())]
       assertWithMatcher:grey_notNil()];
 }
@@ -379,7 +387,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 - (void)testBackNavigationWithPendingReload {
   // Purge web view caches and pause the server to make sure that tests can
   // verify omnibox state before server starts responding.
-  PurgeCachedWebViewPages();
+  GREYAssert(PurgeCachedWebViewPages(), @"Pages were not purged");
   [self setServerPaused:YES];
 
   // Start reloading the page.
@@ -398,15 +406,14 @@ class PausableResponseProvider : public HtmlResponseProvider {
   // pending URL.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::BackButton()]
       performAction:grey_tap()];
-  GREYAssert([self waitForServerToReceiveRequestWithURL:_testURL1],
-             @"Last request URL: %@", self.lastRequestURLSpec);
+  // TODO(crbug.com/724560): Re-evaluate if necessary to check receiving URL1
+  // request here.
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL2.GetContent())]
       assertWithMatcher:grey_notNil()];
 
   // Make server respond so URL1 becomes committed.
   [self setServerPaused:NO];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kTestPage1)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kTestPage1];
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL1.GetContent())]
       assertWithMatcher:grey_notNil()];
 }
@@ -417,7 +424,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 - (void)testBackNavigationWithPendingRendererInitiatedNavigation {
   // Purge web view caches and pause the server to make sure that tests can
   // verify omnibox state before server starts responding.
-  PurgeCachedWebViewPages();
+  GREYAssert(PurgeCachedWebViewPages(), @"Pages were not purged");
   [self setServerPaused:YES];
 
   // Start renderer initiated navigation.
@@ -428,15 +435,14 @@ class PausableResponseProvider : public HtmlResponseProvider {
   // even though URL1 is a pending URL.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::BackButton()]
       performAction:grey_tap()];
-  GREYAssert([self waitForServerToReceiveRequestWithURL:_testURL1],
-             @"Last request URL: %@", self.lastRequestURLSpec);
+  // TODO(crbug.com/724560): Re-evaluate if necessary to check receiving URL1
+  // request here.
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL2.GetContent())]
       assertWithMatcher:grey_notNil()];
 
   // Make server respond so URL1 becomes committed.
   [self setServerPaused:NO];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kTestPage1)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kTestPage1];
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL1.GetContent())]
       assertWithMatcher:grey_notNil()];
 }
@@ -447,7 +453,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 - (void)testRendererInitiatedNavigationWithPendingBackNavigation {
   // Purge web view caches and pause the server to make sure that tests can
   // verify omnibox state before server starts responding.
-  PurgeCachedWebViewPages();
+  GREYAssert(PurgeCachedWebViewPages(), @"Pages were not purged");
   [self setServerPaused:YES];
 
   // Tap the back button in the toolbar and verify that URL2 (committed URL) is
@@ -466,8 +472,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 
   // Make server respond so URL1 becomes committed.
   [self setServerPaused:NO];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kTestPage3)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kTestPage3];
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL3.GetContent())]
       assertWithMatcher:grey_notNil()];
 }
@@ -480,7 +485,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 
   // Purge web view caches and pause the server to make sure that tests can
   // verify omnibox state before server starts responding.
-  PurgeCachedWebViewPages();
+  GREYAssert(PurgeCachedWebViewPages(), @"Pages were not purged");
   [self setServerPaused:YES];
 
   // Tap the back button twice in the toolbar and verify that URL3 (committed
@@ -497,15 +502,22 @@ class PausableResponseProvider : public HtmlResponseProvider {
 
   // Make server respond so URL1 becomes committed.
   [self setServerPaused:NO];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kTestPage1)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kTestPage1];
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL1.GetContent())]
       assertWithMatcher:grey_notNil()];
 }
 
 // Tests that visible URL is always the same as last committed URL if user
 // issues 2 go forward commands to WebUI page (crbug.com/711465).
-- (void)testDoubleForwardNavigationToWebUIPage {
+// TODO(crbug.com/787872): Re-enable this test on devices.
+#if TARGET_IPHONE_SIMULATOR
+#define MAYBE_testDoubleForwardNavigationToWebUIPage \
+  testDoubleForwardNavigationToWebUIPage
+#else
+#define MAYBE_testDoubleForwardNavigationToWebUIPage \
+  FLAKY_testDoubleForwardNavigationToWebUIPage
+#endif
+- (void)MAYBE_testDoubleForwardNavigationToWebUIPage {
   // Create 3rd entry in the history, to be able to go back twice.
   GURL URL(kChromeUIVersionURL);
   [ChromeEarlGrey loadURL:GURL(kChromeUIVersionURL)];
@@ -515,19 +527,14 @@ class PausableResponseProvider : public HtmlResponseProvider {
       performAction:grey_tap()];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::BackButton()]
       performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kTestPage1)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kTestPage1];
 
-  // Quickly (using chrome command) navigate forward twice and wait for
-  // kChromeUIVersionURL to load.
-  base::scoped_nsobject<GenericChromeCommand> forwardCommand(
-      [[GenericChromeCommand alloc] initWithTag:IDC_FORWARD]);
-  chrome_test_util::RunCommandWithActiveViewController(forwardCommand);
-  chrome_test_util::RunCommandWithActiveViewController(forwardCommand);
+  // Quickly navigate forward twice and wait for kChromeUIVersionURL to load.
+  [chrome_test_util::BrowserCommandDispatcherForMainBVC() goForward];
+  [chrome_test_util::BrowserCommandDispatcherForMainBVC() goForward];
 
   const std::string version = version_info::GetVersionNumber();
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(version)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:version];
 
   // Make sure that kChromeUIVersionURL URL is displayed in the omnibox.
   std::string expectedText = base::UTF16ToUTF8(web::GetDisplayTitleForUrl(URL));
@@ -543,7 +550,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 
   // Purge web view caches and pause the server to make sure that tests can
   // verify omnibox state before server starts responding.
-  PurgeCachedWebViewPages();
+  GREYAssert(PurgeCachedWebViewPages(), @"Pages were not purged");
   [self setServerPaused:YES];
 
   // Tap the back button twice on the page and verify that URL3 (committed URL)
@@ -558,8 +565,7 @@ class PausableResponseProvider : public HtmlResponseProvider {
 
   // Make server respond so URL1 becomes committed.
   [self setServerPaused:NO];
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kTestPage1)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kTestPage1];
   [[EarlGrey selectElementWithMatcher:OmniboxText(_testURL1.GetContent())]
       assertWithMatcher:grey_notNil()];
 }

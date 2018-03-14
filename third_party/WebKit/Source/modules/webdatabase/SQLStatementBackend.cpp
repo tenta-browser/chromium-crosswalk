@@ -106,7 +106,7 @@ SQLStatementBackend::SQLStatementBackend(SQLStatement* frontend,
   frontend_->SetBackend(this);
 }
 
-DEFINE_TRACE(SQLStatementBackend) {
+void SQLStatementBackend::Trace(blink::Visitor* visitor) {
   visitor->Trace(frontend_);
   visitor->Trace(result_set_);
 }
@@ -120,7 +120,7 @@ SQLErrorData* SQLStatementBackend::SqlError() const {
 }
 
 SQLResultSet* SQLStatementBackend::SqlResultSet() const {
-  return result_set_->IsValid() ? result_set_.Get() : 0;
+  return result_set_->IsValid() ? result_set_.Get() : nullptr;
 }
 
 bool SQLStatementBackend::Execute(Database* db) {
@@ -225,7 +225,7 @@ bool SQLStatementBackend::Execute(Database* db) {
     db->ReportExecuteStatementResult(6, SQLError::kConstraintErr, result);
     error_ = SQLErrorData::Create(
         SQLError::kConstraintErr,
-        "could not execute statement due to a constaint failure", result,
+        "could not execute statement due to a constraint failure", result,
         database->LastErrorMsg());
     return false;
   } else {

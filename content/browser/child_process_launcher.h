@@ -13,14 +13,18 @@
 #include "base/memory/weak_ptr.h"
 #include "base/process/kill.h"
 #include "base/process/process.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
 #include "build/build_config.h"
 #include "content/browser/child_process_launcher_helper.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/result_codes.h"
-#include "mojo/edk/embedder/pending_process_connection.h"
+#include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
 #include "mojo/edk/embedder/scoped_platform_handle.h"
+
+#if defined(OS_ANDROID)
+#include "content/public/browser/android/child_process_importance.h"
+#endif
 
 namespace base {
 class CommandLine;
@@ -49,10 +53,23 @@ static_assert(static_cast<int>(LAUNCH_RESULT_START) >
               "LaunchResultCode must not overlap with sandbox::ResultCode");
 #endif
 
+struct ChildProcessLauncherPriority {
+  bool background;
+  bool boost_for_pending_views;
+#if defined(OS_ANDROID)
+  ChildProcessImportance importance;
+#endif
+
+  bool operator==(const ChildProcessLauncherPriority& other) const;
+  bool operator!=(const ChildProcessLauncherPriority& other) const {
+    return !(*this == other);
+  }
+};
+
 // Launches a process asynchronously and notifies the client of the process
 // handle when it's available.  It's used to avoid blocking the calling thread
 // on the OS since often it can take > 100 ms to create the process.
-class CONTENT_EXPORT ChildProcessLauncher : public base::NonThreadSafe {
+class CONTENT_EXPORT ChildProcessLauncher {
  public:
   class CONTENT_EXPORT Client {
    public:
@@ -80,7 +97,8 @@ class CONTENT_EXPORT ChildProcessLauncher : public base::NonThreadSafe {
       std::unique_ptr<base::CommandLine> cmd_line,
       int child_process_id,
       Client* client,
-      std::unique_ptr<mojo::edk::PendingProcessConnection> pending_connection,
+      std::unique_ptr<mojo::edk::OutgoingBrokerClientInvitation>
+          broker_client_invitation,
       const mojo::edk::ProcessErrorCallback& process_error_callback,
       bool terminate_on_shutdown = true);
   ~ChildProcessLauncher();
@@ -107,7 +125,7 @@ class CONTENT_EXPORT ChildProcessLauncher : public base::NonThreadSafe {
 
   // Changes whether the process runs in the background or not.  Only call
   // this after the process has started.
-  void SetProcessBackgrounded(bool background);
+  void SetProcessPriority(const ChildProcessLauncherPriority& priority);
 
   // Terminates the process associated with this ChildProcessLauncher.
   // Returns true if the process was stopped, false if the process had not been
@@ -144,11 +162,8 @@ class CONTENT_EXPORT ChildProcessLauncher : public base::NonThreadSafe {
  private:
   friend class internal::ChildProcessLauncherHelper;
 
-  void UpdateTerminationStatus(bool known_dead);
-
   // Notifies the client about the result of the operation.
   void Notify(internal::ChildProcessLauncherHelper::Process process,
-              mojo::edk::ScopedPlatformHandle server_handle,
               int error_code);
 
   Client* client_;
@@ -161,14 +176,14 @@ class CONTENT_EXPORT ChildProcessLauncher : public base::NonThreadSafe {
   base::TerminationStatus termination_status_;
   int exit_code_;
   bool starting_;
-  std::unique_ptr<mojo::edk::PendingProcessConnection> pending_connection_;
-  const mojo::edk::ProcessErrorCallback process_error_callback_;
 
   // Controls whether the child process should be terminated on browser
   // shutdown. Default behavior is to terminate the child.
   const bool terminate_child_on_shutdown_;
 
   scoped_refptr<internal::ChildProcessLauncherHelper> helper_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   base::WeakPtrFactory<ChildProcessLauncher> weak_factory_;
 

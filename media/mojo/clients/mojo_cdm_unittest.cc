@@ -21,6 +21,8 @@
 #include "media/mojo/services/mojo_cdm_service_context.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/gurl.h"
+#include "url/origin.h"
 
 using ::testing::_;
 using ::testing::DoAll;
@@ -74,12 +76,12 @@ class MojoCdmTest : public ::testing::Test {
   };
 
   MojoCdmTest()
-      : mojo_cdm_service_(base::MakeUnique<MojoCdmService>(
-            mojo_cdm_service_context_.GetWeakPtr(),
-            &cdm_factory_)),
+      : mojo_cdm_service_(
+            base::MakeUnique<MojoCdmService>(&mojo_cdm_service_context_,
+                                             &cdm_factory_)),
         cdm_binding_(mojo_cdm_service_.get()) {}
 
-  virtual ~MojoCdmTest() {}
+  virtual ~MojoCdmTest() = default;
 
   void Initialize(ExpectedResult expected_result) {
     // TODO(xhwang): Add pending init support.
@@ -106,8 +108,8 @@ class MojoCdmTest : public ::testing::Test {
       }
     }
 
-    MojoCdm::Create(key_system, GURL(kTestSecurityOrigin), CdmConfig(),
-                    std::move(remote_cdm),
+    MojoCdm::Create(key_system, url::Origin::Create(GURL(kTestSecurityOrigin)),
+                    CdmConfig(), std::move(remote_cdm),
                     base::Bind(&MockCdmClient::OnSessionMessage,
                                base::Unretained(&cdm_client_)),
                     base::Bind(&MockCdmClient::OnSessionClosed,
@@ -133,6 +135,9 @@ class MojoCdmTest : public ::testing::Test {
     EXPECT_EQ(SUCCESS, expected_result);
     mojo_cdm_ = cdm;
     remote_cdm_ = cdm_factory_.GetCreatedCdm();
+    EXPECT_EQ(kClearKeyKeySystem, remote_cdm_->GetKeySystem());
+    EXPECT_EQ(kTestSecurityOrigin,
+              remote_cdm_->GetSecurityOrigin().Serialize());
   }
 
   void ForceConnectionError() {
@@ -293,7 +298,7 @@ class MojoCdmTest : public ::testing::Test {
         break;
 
       case FAILURE:
-        promise->reject(media::CdmPromise::UNKNOWN_ERROR, 0,
+        promise->reject(media::CdmPromise::Exception::NOT_SUPPORTED_ERROR, 0,
                         "Promise rejected");
         break;
 
@@ -329,7 +334,7 @@ class MojoCdmTest : public ::testing::Test {
         break;
 
       case FAILURE:
-        promise->reject(media::CdmPromise::UNKNOWN_ERROR, 0,
+        promise->reject(media::CdmPromise::Exception::NOT_SUPPORTED_ERROR, 0,
                         "Promise rejected");
         break;
 
@@ -582,8 +587,7 @@ TEST_F(MojoCdmTest, RemoveSession_ConnectionErrorDuring) {
 
 TEST_F(MojoCdmTest, SessionMessageCB_Success) {
   const std::string session_id = "message";
-  const ContentDecryptionModule::MessageType message_type =
-      ContentDecryptionModule::LICENSE_REQUEST;
+  const CdmMessageType message_type = CdmMessageType::LICENSE_REQUEST;
   const std::vector<uint8_t> message = {0, 1, 2};
   Initialize(SUCCESS);
   EXPECT_CALL(cdm_client_, OnSessionMessage(session_id, message_type, message));

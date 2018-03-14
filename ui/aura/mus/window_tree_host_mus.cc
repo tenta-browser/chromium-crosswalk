@@ -10,6 +10,7 @@
 #include "ui/aura/mus/window_port_mus.h"
 #include "ui/aura/mus/window_tree_client.h"
 #include "ui/aura/mus/window_tree_host_mus_delegate.h"
+#include "ui/aura/mus/window_tree_host_mus_init_params.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/class_property.h"
@@ -29,90 +30,70 @@ DEFINE_UI_CLASS_PROPERTY_KEY(
 
 static uint32_t accelerated_widget_count = 1;
 
-bool IsUsingTestContext() {
-  return aura::Env::GetInstance()->context_factory()->DoesCreateTestContexts();
-}
-
 }  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
 // WindowTreeHostMus, public:
 
-WindowTreeHostMus::WindowTreeHostMus(
-    std::unique_ptr<WindowPortMus> window_port,
-    WindowTreeClient* window_tree_client,
-    int64_t display_id,
-    const cc::FrameSinkId& frame_sink_id,
-    const std::map<std::string, std::vector<uint8_t>>* properties)
-    : WindowTreeHostPlatform(std::move(window_port)),
-      display_id_(display_id),
-      delegate_(window_tree_client) {
+WindowTreeHostMus::WindowTreeHostMus(WindowTreeHostMusInitParams init_params)
+    : WindowTreeHostPlatform(std::move(init_params.window_port)),
+      display_id_(init_params.display_id),
+      delegate_(init_params.window_tree_client) {
+  gfx::Rect bounds_in_pixels;
+  display_init_params_ = std::move(init_params.display_init_params);
+  if (display_init_params_) {
+    bounds_in_pixels = display_init_params_->viewport_metrics.bounds_in_pixels;
+    if (display_init_params_->display)
+      DCHECK_EQ(display_id_, display_init_params_->display->id());
+  }
   window()->SetProperty(kWindowTreeHostMusKey, this);
   // TODO(sky): find a cleaner way to set this! Better solution is to likely
   // have constructor take aura::Window.
   WindowPortMus* window_mus = WindowPortMus::Get(window());
   window_mus->window_ = window();
-  if (properties) {
-    // Apply the properties before initializing the window, that way the
-    // server seems them at the time the window is created.
-    for (auto& pair : *properties)
-      window_mus->SetPropertyFromServer(pair.first, &pair.second);
-  }
-  // TODO(fsamuel): Once the display compositor is decoupled from the browser
-  // process then ui::Compositor will not a cc::FrameSinkId.
-  CreateCompositor(frame_sink_id);
+  // Apply the properties before initializing the window, that way the server
+  // seems them at the time the window is created.
+  for (auto& pair : init_params.properties)
+    window_mus->SetPropertyFromServer(pair.first, &pair.second);
+  CreateCompositor(viz::FrameSinkId());
   gfx::AcceleratedWidget accelerated_widget;
-  if (IsUsingTestContext()) {
-    accelerated_widget = gfx::kNullAcceleratedWidget;
-  } else {
 // We need accelerated widget numbers to be different for each
 // window and fit in the smallest sizeof(AcceleratedWidget) uint32_t
 // has this property.
 #if defined(OS_WIN) || defined(OS_ANDROID)
-    accelerated_widget =
-        reinterpret_cast<gfx::AcceleratedWidget>(accelerated_widget_count++);
+  accelerated_widget =
+      reinterpret_cast<gfx::AcceleratedWidget>(accelerated_widget_count++);
 #else
-    accelerated_widget =
-        static_cast<gfx::AcceleratedWidget>(accelerated_widget_count++);
+  accelerated_widget =
+      static_cast<gfx::AcceleratedWidget>(accelerated_widget_count++);
 #endif
-  }
   OnAcceleratedWidgetAvailable(accelerated_widget,
                                GetDisplay().device_scale_factor());
 
   delegate_->OnWindowTreeHostCreated(this);
 
-  SetPlatformWindow(base::MakeUnique<ui::StubWindow>(
-      this,
-      false));  // Do not advertise accelerated widget; already set manually.
+  // Do not advertise accelerated widget; already set manually.
+  const bool use_default_accelerated_widget = false;
+  SetPlatformWindow(std::make_unique<ui::StubWindow>(
+      this, use_default_accelerated_widget, bounds_in_pixels));
 
-  input_method_ = base::MakeUnique<InputMethodMus>(this, window());
-  input_method_->Init(window_tree_client->connector());
-  SetSharedInputMethod(input_method_.get());
+  if (!init_params.use_classic_ime) {
+    input_method_ = std::make_unique<InputMethodMus>(this, window());
+    input_method_->Init(init_params.window_tree_client->connector());
+    SetSharedInputMethod(input_method_.get());
+  }
 
-  compositor()->SetHostHasTransparentBackground(true);
+  compositor()->SetBackgroundColor(SK_ColorTRANSPARENT);
 
   // Mus windows are assumed hidden.
   compositor()->SetVisible(false);
 
-  if (frame_sink_id.is_valid())
-    window_mus->SetFrameSinkIdFromServer(frame_sink_id);
+  if (window_mus->window_mus_type() ==
+      WindowMusType::DISPLAY_MANUALLY_CREATED) {
+    compositor()->SetLocalSurfaceId(
+        window_mus->GetOrAllocateLocalSurfaceId(bounds_in_pixels.size()));
+  }
 }
-
-// Pass |properties| to CreateWindowPortForTopLevel() so that |properties|
-// are passed to the server *and* pass |properties| to the WindowTreeHostMus
-// constructor (above) which applies the properties to the Window. Some of the
-// properties may be server specific and not applied to the Window.
-WindowTreeHostMus::WindowTreeHostMus(
-    WindowTreeClient* window_tree_client,
-    const cc::FrameSinkId& frame_sink_id,
-    const std::map<std::string, std::vector<uint8_t>>* properties)
-    : WindowTreeHostMus(
-          static_cast<WindowTreeHostMusDelegate*>(window_tree_client)
-              ->CreateWindowPortForTopLevel(properties),
-          window_tree_client,
-          display::Screen::GetScreen()->GetPrimaryDisplay().id(),
-          frame_sink_id,
-          properties) {}
 
 WindowTreeHostMus::~WindowTreeHostMus() {
   DestroyCompositor();
@@ -167,6 +148,10 @@ void WindowTreeHostMus::StackAtTop() {
   delegate_->OnWindowTreeHostStackAtTop(this);
 }
 
+void WindowTreeHostMus::PerformWmAction(const std::string& action) {
+  delegate_->OnWindowTreeHostPerformWmAction(this, action);
+}
+
 void WindowTreeHostMus::PerformWindowMove(
     ui::mojom::MoveLoopSource mus_source,
     const gfx::Point& cursor_location,
@@ -179,10 +164,32 @@ void WindowTreeHostMus::CancelWindowMove() {
   delegate_->OnWindowTreeHostCancelWindowMove(this);
 }
 
+void WindowTreeHostMus::ConfineCursorToBounds(
+    const gfx::Rect& bounds_in_pixels) {
+  delegate_->OnWindowTreeHostConfineCursorToBounds(bounds_in_pixels,
+                                                   display_id_);
+}
+
 display::Display WindowTreeHostMus::GetDisplay() const {
   display::Display display;
   display::Screen::GetScreen()->GetDisplayWithDisplayId(display_id_, &display);
   return display;
+}
+
+void WindowTreeHostMus::OverrideAcceleratedWidget(
+    gfx::AcceleratedWidget widget) {
+  bool was_visible = compositor()->IsVisible();
+  if (was_visible)
+    compositor()->SetVisible(false);
+  compositor()->ReleaseAcceleratedWidget();
+  OnAcceleratedWidgetAvailable(widget, GetDisplay().device_scale_factor());
+  if (was_visible)
+    compositor()->SetVisible(true);
+}
+
+std::unique_ptr<DisplayInitParams>
+WindowTreeHostMus::ReleaseDisplayInitParams() {
+  return std::move(display_init_params_);
 }
 
 void WindowTreeHostMus::HideImpl() {
@@ -216,18 +223,25 @@ void WindowTreeHostMus::OnCloseRequest() {
   OnHostCloseRequested();
 }
 
-gfx::ICCProfile WindowTreeHostMus::GetICCProfileForCurrentDisplay() {
-  // TODO: This should read the profile from mus. crbug.com/647510
-  return gfx::ICCProfile();
-}
-
 void WindowTreeHostMus::MoveCursorToScreenLocationInPixels(
     const gfx::Point& location_in_pixels) {
-  // TODO: this needs to message the server http://crbug.com/693340. Setting
-  // the location is really only appropriate in tests, outside of tests this
-  // value is ignored.
-  NOTIMPLEMENTED();
-  Env::GetInstance()->set_last_mouse_location(location_in_pixels);
+  // |location_in_pixels| is relative to the display.
+  delegate_->OnWindowTreeHostMoveCursorToDisplayLocation(location_in_pixels,
+                                                         display_id_);
+}
+
+gfx::Transform WindowTreeHostMus::GetRootTransformForLocalEventCoordinates()
+    const {
+  if (WindowMus::Get(window())->window_mus_type() !=
+      WindowMusType::DISPLAY_MANUALLY_CREATED) {
+    return WindowTreeHost::GetRootTransformForLocalEventCoordinates();
+  }
+  // Local events already have the transform set on the window applied, so
+  // don't apply it again.
+  gfx::Transform transform;
+  const float scale = window()->layer()->device_scale_factor();
+  transform.Scale(scale, scale);
+  return transform;
 }
 
 }  // namespace aura

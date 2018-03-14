@@ -15,11 +15,15 @@
 #import "ios/chrome/test/app/tab_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
-#include "ios/web/public/test/http_server.h"
-#include "ios/web/public/test/http_server_util.h"
-#include "ios/web/public/test/response_providers/html_response_provider.h"
-#include "ios/web/public/test/response_providers/response_provider.h"
+#include "ios/web/public/test/http_server/html_response_provider.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#include "ios/web/public/test/http_server/http_server_util.h"
+#include "ios/web/public/test/http_server/response_provider.h"
 #include "url/gurl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -130,7 +134,11 @@ NSString* const kIncognitoCookieValue = @"rainbow";
 
   // Finally, closes all incognito tabs while still in normal tab.
   // Checks that incognito cookie is gone.
-  chrome_test_util::CloseAllIncognitoTabs();
+  GREYAssert(chrome_test_util::CloseAllIncognitoTabs(), @"Tabs did not close");
+  // TODO(crbug.com/783192): ChromeEarlGrey should have a method to close all
+  // incognito tabs and synchronize with the UI.
+  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
+
   chrome_test_util::OpenNewTab();
   [ChromeEarlGrey
       loadURL:web::test::HttpServer::MakeUrl(kTestUrlIncognitoBrowsing)];
@@ -158,7 +166,11 @@ NSString* const kIncognitoCookieValue = @"rainbow";
                   @"Only one cookie should be found in incognito mode.");
 
   // Closes all incognito tabs and switch back to a normal tab.
-  chrome_test_util::CloseAllIncognitoTabs();
+  GREYAssert(chrome_test_util::CloseAllIncognitoTabs(), @"Tabs did not close");
+  // TODO(crbug.com/783192): ChromeEarlGrey should have a method to close all
+  // incognito tabs and synchronize with the UI.
+  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
+
   chrome_test_util::OpenNewTab();
   [ChromeEarlGrey
       loadURL:web::test::HttpServer::MakeUrl(kTestUrlNormalBrowsing)];
@@ -203,7 +215,11 @@ NSString* const kIncognitoCookieValue = @"rainbow";
 
   // Closes all incognito tabs and then switching back to a normal tab. Verifies
   // that the cookie set earlier is still there.
-  chrome_test_util::CloseAllIncognitoTabs();
+  GREYAssert(chrome_test_util::CloseAllIncognitoTabs(), @"Tabs did not close");
+  // TODO(crbug.com/783192): ChromeEarlGrey should have a method to close all
+  // incognito tabs and synchronize with the UI.
+  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
+
   chrome_test_util::OpenNewTab();
   [ChromeEarlGrey
       loadURL:web::test::HttpServer::MakeUrl(kTestUrlNormalBrowsing)];

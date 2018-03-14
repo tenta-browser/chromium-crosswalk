@@ -34,21 +34,15 @@
 
 namespace blink {
 
-bool AnimatableFilterOperations::UsesDefaultInterpolationWith(
-    const AnimatableValue* value) const {
-  const AnimatableFilterOperations* target =
-      ToAnimatableFilterOperations(value);
-  return !Operations().CanInterpolateWith(target->Operations());
-}
-
-PassRefPtr<AnimatableValue> AnimatableFilterOperations::InterpolateTo(
+scoped_refptr<AnimatableValue> AnimatableFilterOperations::InterpolateTo(
     const AnimatableValue* value,
     double fraction) const {
-  if (UsesDefaultInterpolationWith(value))
-    return DefaultInterpolateTo(this, value, fraction);
-
   const AnimatableFilterOperations* target =
       ToAnimatableFilterOperations(value);
+
+  if (!Operations().CanInterpolateWith(target->Operations()))
+    return DefaultInterpolateTo(this, value, fraction);
+
   FilterOperations result;
   size_t from_size = Operations().size();
   size_t to_size = target->Operations().size();
@@ -56,11 +50,11 @@ PassRefPtr<AnimatableValue> AnimatableFilterOperations::InterpolateTo(
   for (size_t i = 0; i < size; i++) {
     FilterOperation* from =
         (i < from_size) ? operation_wrapper_->Operations().Operations()[i].Get()
-                        : 0;
+                        : nullptr;
     FilterOperation* to =
         (i < to_size)
             ? target->operation_wrapper_->Operations().Operations()[i].Get()
-            : 0;
+            : nullptr;
     FilterOperation* blended_op = FilterOperation::Blend(from, to, fraction);
     if (blended_op)
       result.Operations().push_back(blended_op);
@@ -68,10 +62,6 @@ PassRefPtr<AnimatableValue> AnimatableFilterOperations::InterpolateTo(
       NOTREACHED();
   }
   return AnimatableFilterOperations::Create(result);
-}
-
-bool AnimatableFilterOperations::EqualTo(const AnimatableValue* value) const {
-  return Operations() == ToAnimatableFilterOperations(value)->Operations();
 }
 
 }  // namespace blink

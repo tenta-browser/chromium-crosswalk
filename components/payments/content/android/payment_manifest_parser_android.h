@@ -7,13 +7,9 @@
 
 #include <jni.h>
 
-#include <memory>
-#include <vector>
-
 #include "base/android/jni_android.h"
-#include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
-#include "components/payments/content/payment_manifest_parser_host.h"
+#include "components/payments/content/utility/payment_manifest_parser.h"
 
 namespace payments {
 
@@ -23,9 +19,6 @@ class PaymentManifestParserAndroid {
  public:
   PaymentManifestParserAndroid();
   ~PaymentManifestParserAndroid();
-
-  void StartUtilityProcess(JNIEnv* env,
-                           const base::android::JavaParamRef<jobject>& jcaller);
 
   void ParsePaymentMethodManifest(
       JNIEnv* env,
@@ -39,17 +32,15 @@ class PaymentManifestParserAndroid {
       const base::android::JavaParamRef<jstring>& jcontent,
       const base::android::JavaParamRef<jobject>& jcallback);
 
-  // Deletes this object.
-  void StopUtilityProcess(JNIEnv* env,
-                          const base::android::JavaParamRef<jobject>& jcaller);
+  void DestroyPaymentManifestParserAndroid(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& jcaller);
 
  private:
-  PaymentManifestParserHost host_;
+  PaymentManifestParser parser_;
 
   DISALLOW_COPY_AND_ASSIGN(PaymentManifestParserAndroid);
 };
-
-bool RegisterPaymentManifestParser(JNIEnv* env);
 
 }  // namespace payments
 

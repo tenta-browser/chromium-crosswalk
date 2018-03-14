@@ -6,7 +6,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <utility>
+
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "components/webcrypto/algorithm_dispatch.h"
 #include "components/webcrypto/algorithms/test_helpers.h"
@@ -228,8 +231,8 @@ TEST_F(WebCryptoHmacTest, ImportKeyJwkKeyOpsSignVerify) {
   base::DictionaryValue dict;
   dict.SetString("kty", "oct");
   dict.SetString("k", "GADWrMRHwQfoNaXU5fZvTg");
-  base::ListValue* key_ops = new base::ListValue;
-  dict.Set("key_ops", key_ops);  // Takes ownership.
+  base::ListValue* key_ops =
+      dict.SetList("key_ops", base::MakeUnique<base::ListValue>());
 
   key_ops->AppendString("sign");
 
@@ -258,14 +261,14 @@ TEST_F(WebCryptoHmacTest, ImportKeyJwkUseInconsisteWithKeyOps) {
   base::DictionaryValue dict;
   dict.SetString("kty", "oct");
   dict.SetString("k", "GADWrMRHwQfoNaXU5fZvTg");
-  base::ListValue* key_ops = new base::ListValue;
-  dict.Set("key_ops", key_ops);  // Takes ownership.
-
   dict.SetString("alg", "HS256");
   dict.SetString("use", "sig");
+
+  auto key_ops = base::MakeUnique<base::ListValue>();
   key_ops->AppendString("sign");
   key_ops->AppendString("verify");
   key_ops->AppendString("encrypt");
+  dict.Set("key_ops", std::move(key_ops));
   EXPECT_EQ(
       Status::ErrorJwkUseAndKeyopsInconsistent(),
       ImportKeyJwkFromDict(
@@ -384,7 +387,7 @@ TEST_F(WebCryptoHmacTest, ImportJwkInputConsistency) {
                       extractable, usages, &key));
 
   // Pass: JWK alg missing but input algorithm specified: use input value
-  dict.Remove("alg", NULL);
+  dict.Remove("alg", nullptr);
   EXPECT_EQ(Status::Success(),
             ImportKeyJwkFromDict(dict,
                                  CreateHmacImportAlgorithmNoLength(
@@ -537,7 +540,7 @@ TEST_F(WebCryptoHmacTest, ImportRawKeyWithZeroLength) {
 // Import a huge hmac key (UINT_MAX bytes). This will fail before actually
 // reading the bytes, as the key is too large.
 TEST_F(WebCryptoHmacTest, ImportRawKeyTooLarge) {
-  CryptoData big_data(NULL, UINT_MAX);  // Invalid data of big length.
+  CryptoData big_data(nullptr, UINT_MAX);  // Invalid data of big length.
 
   blink::WebCryptoKey key;
   EXPECT_EQ(Status::ErrorDataTooLarge(),

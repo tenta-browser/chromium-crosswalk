@@ -8,9 +8,7 @@
 
 #include "base/memory/ptr_util.h"
 #include "content/shell/test_runner/mock_web_audio_device.h"
-#include "content/shell/test_runner/mock_web_media_stream_center.h"
 #include "content/shell/test_runner/mock_web_midi_accessor.h"
-#include "content/shell/test_runner/mock_webrtc_peer_connection_handler.h"
 #include "content/shell/test_runner/test_interfaces.h"
 #include "content/shell/test_runner/test_runner.h"
 #include "content/shell/test_runner/web_frame_test_client.h"
@@ -18,6 +16,7 @@
 #include "content/shell/test_runner/web_view_test_proxy.h"
 #include "content/shell/test_runner/web_widget_test_client.h"
 #include "content/shell/test_runner/web_widget_test_proxy.h"
+#include "third_party/WebKit/public/platform/modules/webmidi/WebMIDIAccessor.h"
 
 using namespace blink;
 
@@ -48,8 +47,10 @@ void WebTestInterfaces::SetTestIsRunning(bool running) {
 }
 
 void WebTestInterfaces::ConfigureForTestWithURL(const WebURL& test_url,
-                                                bool generate_pixels) {
-  interfaces_->ConfigureForTestWithURL(test_url, generate_pixels);
+                                                bool generate_pixels,
+                                                bool initial_configuration) {
+  interfaces_->ConfigureForTestWithURL(test_url, generate_pixels,
+                                       initial_configuration);
 }
 
 WebTestRunner* WebTestInterfaces::TestRunner() {
@@ -64,25 +65,15 @@ TestInterfaces* WebTestInterfaces::GetTestInterfaces() {
   return interfaces_.get();
 }
 
-WebMediaStreamCenter* WebTestInterfaces::CreateMediaStreamCenter(
-    WebMediaStreamCenterClient* client) {
-  return new MockWebMediaStreamCenter();
-}
-
-WebRTCPeerConnectionHandler*
-WebTestInterfaces::CreateWebRTCPeerConnectionHandler(
-    WebRTCPeerConnectionHandlerClient* client) {
-  return new MockWebRTCPeerConnectionHandler(client, interfaces_.get());
-}
-
-WebMIDIAccessor* WebTestInterfaces::CreateMIDIAccessor(
+std::unique_ptr<WebMIDIAccessor> WebTestInterfaces::CreateMIDIAccessor(
     WebMIDIAccessorClient* client) {
-  return new MockWebMIDIAccessor(client, interfaces_.get());
+  return std::make_unique<MockWebMIDIAccessor>(client, interfaces_.get());
 }
 
-WebAudioDevice* WebTestInterfaces::CreateAudioDevice(double sample_rate,
-                                                     int frames_per_buffer) {
-  return new MockWebAudioDevice(sample_rate, frames_per_buffer);
+std::unique_ptr<WebAudioDevice> WebTestInterfaces::CreateAudioDevice(
+    double sample_rate,
+    int frames_per_buffer) {
+  return std::make_unique<MockWebAudioDevice>(sample_rate, frames_per_buffer);
 }
 
 std::unique_ptr<WebFrameTestClient> WebTestInterfaces::CreateWebFrameTestClient(
@@ -90,20 +81,20 @@ std::unique_ptr<WebFrameTestClient> WebTestInterfaces::CreateWebFrameTestClient(
     WebFrameTestProxyBase* web_frame_test_proxy_base) {
   // TODO(lukasza): Do not pass the WebTestDelegate below - it's lifetime can
   // differ from the lifetime of WebFrameTestClient - https://crbug.com/606594.
-  return base::MakeUnique<WebFrameTestClient>(interfaces_->GetDelegate(),
+  return std::make_unique<WebFrameTestClient>(interfaces_->GetDelegate(),
                                               web_view_test_proxy_base,
                                               web_frame_test_proxy_base);
 }
 
 std::unique_ptr<WebViewTestClient> WebTestInterfaces::CreateWebViewTestClient(
     WebViewTestProxyBase* web_view_test_proxy_base) {
-  return base::MakeUnique<WebViewTestClient>(web_view_test_proxy_base);
+  return std::make_unique<WebViewTestClient>(web_view_test_proxy_base);
 }
 
 std::unique_ptr<WebWidgetTestClient>
 WebTestInterfaces::CreateWebWidgetTestClient(
     WebWidgetTestProxyBase* web_widget_test_proxy_base) {
-  return base::MakeUnique<WebWidgetTestClient>(web_widget_test_proxy_base);
+  return std::make_unique<WebWidgetTestClient>(web_widget_test_proxy_base);
 }
 
 std::vector<blink::WebView*> WebTestInterfaces::GetWindowList() {

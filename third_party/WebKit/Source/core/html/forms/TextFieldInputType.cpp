@@ -32,19 +32,17 @@
 #include "core/html/forms/TextFieldInputType.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/HTMLNames.h"
-#include "core/dom/NodeComputedStyle.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/editing/FrameSelection.h"
-#include "core/editing/iterators/TextIterator.h"
 #include "core/events/BeforeTextInsertedEvent.h"
 #include "core/events/KeyboardEvent.h"
 #include "core/events/TextEvent.h"
 #include "core/frame/LocalFrame.h"
-#include "core/html/FormData.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/html/forms/FormData.h"
+#include "core/html/forms/HTMLInputElement.h"
 #include "core/html/forms/TextControlInnerElements.h"
 #include "core/html/shadow/ShadowElementNames.h"
+#include "core/html_names.h"
 #include "core/layout/LayoutDetailsMarker.h"
 #include "core/layout/LayoutTextControlSingleLine.h"
 #include "core/layout/LayoutTheme.h"
@@ -63,7 +61,7 @@ class DataListIndicatorElement final : public HTMLDivElement {
   inline DataListIndicatorElement(Document& document)
       : HTMLDivElement(document) {}
   inline HTMLInputElement* HostInput() const {
-    return toHTMLInputElement(OwnerShadowHost());
+    return ToHTMLInputElement(OwnerShadowHost());
   }
 
   LayoutObject* CreateLayoutObject(const ComputedStyle&) override {
@@ -111,7 +109,7 @@ TextFieldInputType::TextFieldInputType(HTMLInputElement& element)
 
 TextFieldInputType::~TextFieldInputType() {}
 
-DEFINE_TRACE(TextFieldInputType) {
+void TextFieldInputType::Trace(blink::Visitor* visitor) {
   InputTypeView::Trace(visitor);
   InputType::Trace(visitor);
 }
@@ -126,7 +124,7 @@ InputType::ValueMode TextFieldInputType::GetValueMode() const {
 
 SpinButtonElement* TextFieldInputType::GetSpinButtonElement() const {
   return ToSpinButtonElementOrDie(
-      GetElement().UserAgentShadowRoot()->GetElementById(
+      GetElement().UserAgentShadowRoot()->getElementById(
           ShadowElementNames::SpinButton()));
 }
 
@@ -157,16 +155,19 @@ void TextFieldInputType::SetValue(const String& sanitized_value,
   else
     GetElement().SetNonAttributeValueByUserEdit(sanitized_value);
 
-  if (value_changed)
-    GetElement().UpdateView();
+  // The following early-return can't be moved to the beginning of this
+  // function. We need to update non-attribute value even if the value is not
+  // changed.  For example, <input type=number> has a badInput string, that is
+  // to say, IDL value=="", and new value is "", which should clear the badInput
+  // string and update validiity.
+  if (!value_changed)
+    return;
+  GetElement().UpdateView();
 
   if (selection == TextControlSetValueSelection::kSetSelectionToEnd) {
     unsigned max = VisibleValue().length();
     GetElement().SetSelectionRange(max, max);
   }
-
-  if (!value_changed)
-    return;
 
   switch (event_behavior) {
     case kDispatchChangeEvent:
@@ -250,12 +251,6 @@ void TextFieldInputType::ForwardEvent(Event* event) {
   }
 }
 
-void TextFieldInputType::HandleFocusEvent(Element* old_focused_node,
-                                          WebFocusType focus_type) {
-  InputTypeView::HandleFocusEvent(old_focused_node, focus_type);
-  GetElement().BeginEditing();
-}
-
 void TextFieldInputType::HandleBlurEvent() {
   InputTypeView::HandleBlurEvent();
   GetElement().EndEditing();
@@ -290,8 +285,7 @@ void TextFieldInputType::CreateShadowSubtree() {
   bool creates_container = should_have_spin_button ||
                            should_have_data_list_indicator || NeedsContainer();
 
-  TextControlInnerEditorElement* inner_editor =
-      TextControlInnerEditorElement::Create(document);
+  HTMLElement* inner_editor = GetElement().CreateInnerEditorElement();
   if (!creates_container) {
     shadow_root->AppendChild(inner_editor);
     return;
@@ -320,7 +314,7 @@ void TextFieldInputType::CreateShadowSubtree() {
 }
 
 Element* TextFieldInputType::ContainerElement() const {
-  return GetElement().UserAgentShadowRoot()->GetElementById(
+  return GetElement().UserAgentShadowRoot()->getElementById(
       ShadowElementNames::TextFieldContainer());
 }
 
@@ -333,7 +327,7 @@ void TextFieldInputType::DestroyShadowSubtree() {
 void TextFieldInputType::ListAttributeTargetChanged() {
   if (ChromeClient* chrome_client = this->GetChromeClient())
     chrome_client->TextFieldDataListChanged(GetElement());
-  Element* picker = GetElement().UserAgentShadowRoot()->GetElementById(
+  Element* picker = GetElement().UserAgentShadowRoot()->getElementById(
       ShadowElementNames::PickerIndicator());
   bool did_have_picker_indicator = picker;
   bool will_have_picker_indicator = GetElement().HasValidDataListOptions();
@@ -420,7 +414,7 @@ void TextFieldInputType::HandleBeforeTextInsertedEvent(
   // that case, and nothing in the text field will be removed.
   unsigned selection_length = 0;
   if (GetElement().IsFocused()) {
-    // TODO(xiaochengh): The use of updateStyleAndLayoutIgnorePendingStylesheets
+    // TODO(editing-dev): Use of updateStyleAndLayoutIgnorePendingStylesheets
     // needs to be audited.  See http://crbug.com/590369 for more details.
     GetElement().GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
 
@@ -465,7 +459,7 @@ void TextFieldInputType::UpdatePlaceholderText() {
   if (!SupportsPlaceholder())
     return;
   HTMLElement* placeholder = GetElement().PlaceholderElement();
-  String placeholder_text = GetElement().StrippedPlaceholder();
+  String placeholder_text = GetElement().GetPlaceholderValue();
   if (placeholder_text.IsEmpty()) {
     if (placeholder)
       placeholder->remove(ASSERT_NO_EXCEPTION);
@@ -530,10 +524,8 @@ void TextFieldInputType::SpinButtonStepUp() {
 }
 
 void TextFieldInputType::UpdateView() {
-  if (!GetElement().SuggestedValue().IsNull()) {
-    GetElement().SetInnerEditorValue(GetElement().SuggestedValue());
-    GetElement().UpdatePlaceholderVisibility();
-  } else if (GetElement().NeedsToUpdateViewValue()) {
+  if (GetElement().SuggestedValue().IsEmpty() &&
+      GetElement().NeedsToUpdateViewValue()) {
     // Update the view only if needsToUpdateViewValue is true. It protects
     // an unacceptable view value from being overwritten with the DOM value.
     //

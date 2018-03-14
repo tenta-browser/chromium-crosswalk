@@ -55,7 +55,7 @@ enum class DeviceInfoKey : unsigned int {
 std::string LoadLocalHtmlAsString(std::string site_id,
                                   std::string site_context) {
   std::string html_data;
-  ResourceBundle::GetSharedInstance()
+  ui::ResourceBundle::GetSharedInstance()
       .GetRawDataResource(IDR_HATS_HTML)
       .CopyToString(&html_data);
 
@@ -125,8 +125,7 @@ void HatsDialog::CreateAndShow(bool is_google_account) {
   std::unique_ptr<HatsDialog> hats_dialog(new HatsDialog);
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                     base::TaskPriority::BACKGROUND),
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
       base::Bind(&GetFormattedSiteContext, user_locale, kDeviceInfoStopKeyword),
       base::Bind(&HatsDialog::Show, base::Passed(&hats_dialog),
                  is_google_account ? kGooglerSiteID : kSiteID));

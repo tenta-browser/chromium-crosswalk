@@ -9,6 +9,7 @@
 
 #include "base/json/json_reader.h"
 #include "base/metrics/field_trial.h"
+#include "base/trace_event/trace_log.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/tracing/crash_service_uploader.h"
@@ -47,7 +48,7 @@ void UploadCallback(const std::string& upload_url,
   if (GURL(upload_url).is_valid())
     uploader->SetUploadURL(upload_url);
 
-#if defined(OS_ANDROID) || defined(OS_IOS)
+#if defined(OS_ANDROID)
   auto connection_type = net::NetworkChangeNotifier::GetConnectionType();
   if (connection_type != net::NetworkChangeNotifier::CONNECTION_WIFI &&
       connection_type != net::NetworkChangeNotifier::CONNECTION_ETHERNET &&
@@ -55,7 +56,7 @@ void UploadCallback(const std::string& upload_url,
     // Allow only 100KiB for uploads over data.
     uploader->SetMaxUploadBytes(100 * 1024);
   }
-#endif  // defined(OS_ANDROID) || defined(OS_IOS)
+#endif
 
   uploader->DoUpload(
       file_contents->data(), content::TraceUploader::UNCOMPRESSED_UPLOAD,
@@ -70,6 +71,9 @@ void SetConfigTextFilterForTesting(ConfigTextFilterForTesting predicate) {
 }
 
 void SetupBackgroundTracingFieldTrial() {
+  if (base::trace_event::TraceLog::GetInstance()->IsEnabled())
+    return;
+
   std::string config_text = variations::GetVariationParamValue(
       kBackgroundTracingFieldTrial, kBackgroundTracingConfig);
   std::string upload_url = variations::GetVariationParamValue(

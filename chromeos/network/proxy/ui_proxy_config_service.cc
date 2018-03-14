@@ -15,6 +15,7 @@
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/network/proxy/proxy_config_handler.h"
 #include "chromeos/network/proxy/proxy_config_service_impl.h"
+#include "chromeos/network/tether_constants.h"
 #include "components/device_event_log/device_event_log.h"
 #include "components/proxy_config/pref_proxy_config_tracker_impl.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
@@ -89,7 +90,7 @@ UIProxyConfigService::UIProxyConfigService(PrefService* profile_prefs,
                  base::Unretained(this)));
 }
 
-UIProxyConfigService::~UIProxyConfigService() {}
+UIProxyConfigService::~UIProxyConfigService() = default;
 
 void UIProxyConfigService::UpdateFromPrefs(const std::string& network_guid) {
   current_ui_network_guid_ = network_guid;
@@ -100,7 +101,7 @@ void UIProxyConfigService::UpdateFromPrefs(const std::string& network_guid) {
             network_guid);
     if (!network) {
       NET_LOG(ERROR) << "No NetworkState for guid: " << network_guid;
-    } else if (!network->IsInProfile()) {
+    } else if (!network->IsNonProfileType() && !network->IsInProfile()) {
       NET_LOG(ERROR) << "Network not in profile: " << network_guid;
       network = nullptr;
     }
@@ -151,6 +152,20 @@ void UIProxyConfigService::SetProxyConfig(const std::string& network_guid,
   ProxyConfigDictionary proxy_config_dict(std::move(proxy_config_value));
   proxy_config::SetProxyConfigForNetwork(proxy_config_dict, *network);
   current_ui_config_.state = ProxyPrefs::CONFIG_SYSTEM;
+}
+
+bool UIProxyConfigService::HasDefaultNetworkProxyConfigured() {
+  const NetworkState* network =
+      NetworkHandler::Get()->network_state_handler()->DefaultNetwork();
+  if (!network)
+    return false;
+  onc::ONCSource onc_source = onc::ONC_SOURCE_NONE;
+  std::unique_ptr<ProxyConfigDictionary> proxy_dict =
+      proxy_config::GetProxyConfigForNetwork(nullptr, local_state_prefs_,
+                                             *network, &onc_source);
+  ProxyPrefs::ProxyMode mode;
+  return (proxy_dict && proxy_dict->GetMode(&mode) &&
+          mode == ProxyPrefs::MODE_FIXED_SERVERS);
 }
 
 void UIProxyConfigService::DetermineEffectiveConfig(

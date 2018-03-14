@@ -29,13 +29,13 @@
 #ifndef Gradient_h
 #define Gradient_h
 
+#include "base/memory/scoped_refptr.h"
 #include "platform/PlatformExport.h"
 #include "platform/graphics/Color.h"
 #include "platform/graphics/GraphicsTypes.h"
 #include "platform/graphics/paint/PaintFlags.h"
 #include "platform/graphics/paint/PaintShader.h"
 #include "platform/wtf/Noncopyable.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/RefCounted.h"
 #include "platform/wtf/Vector.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
@@ -58,13 +58,13 @@ class PLATFORM_EXPORT Gradient : public RefCounted<Gradient> {
     kUnpremultiplied,
   };
 
-  static PassRefPtr<Gradient> CreateLinear(
+  static scoped_refptr<Gradient> CreateLinear(
       const FloatPoint& p0,
       const FloatPoint& p1,
       GradientSpreadMethod = kSpreadMethodPad,
       ColorInterpolation = ColorInterpolation::kUnpremultiplied);
 
-  static PassRefPtr<Gradient> CreateRadial(
+  static scoped_refptr<Gradient> CreateRadial(
       const FloatPoint& p0,
       float r0,
       const FloatPoint& p1,
@@ -73,9 +73,12 @@ class PLATFORM_EXPORT Gradient : public RefCounted<Gradient> {
       GradientSpreadMethod = kSpreadMethodPad,
       ColorInterpolation = ColorInterpolation::kUnpremultiplied);
 
-  static PassRefPtr<Gradient> CreateConic(
+  static scoped_refptr<Gradient> CreateConic(
       const FloatPoint& position,
-      float angle,
+      float rotation,
+      float start_angle,
+      float end_angle,
+      GradientSpreadMethod = kSpreadMethodPad,
       ColorInterpolation = ColorInterpolation::kUnpremultiplied);
 
   virtual ~Gradient();
@@ -102,14 +105,17 @@ class PLATFORM_EXPORT Gradient : public RefCounted<Gradient> {
 
   using ColorBuffer = Vector<SkColor, 8>;
   using OffsetBuffer = Vector<SkScalar, 8>;
-  virtual sk_sp<SkShader> CreateShader(const ColorBuffer&,
-                                       const OffsetBuffer&,
-                                       SkShader::TileMode,
-                                       uint32_t flags,
-                                       const SkMatrix&) const = 0;
+  virtual sk_sp<PaintShader> CreateShader(const ColorBuffer&,
+                                          const OffsetBuffer&,
+                                          SkShader::TileMode,
+                                          uint32_t flags,
+                                          const SkMatrix&,
+                                          SkColor) const = 0;
 
  private:
   sk_sp<PaintShader> CreateShaderInternal(const SkMatrix& local_matrix);
+
+  sk_sp<SkColorFilter> color_filter_;
 
   void SortStopsIfNecessary();
   void FillSkiaStops(ColorBuffer&, OffsetBuffer&) const;

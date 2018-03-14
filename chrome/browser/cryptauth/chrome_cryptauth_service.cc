@@ -11,7 +11,6 @@
 #include "base/version.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_content_browser_client.h"
-#include "chrome/browser/chromeos/login/easy_unlock/secure_message_delegate_chromeos.h"
 #include "chrome/browser/gcm/gcm_profile_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
@@ -22,7 +21,6 @@
 #include "components/cryptauth/cryptauth_device_manager.h"
 #include "components/cryptauth/cryptauth_enroller.h"
 #include "components/cryptauth/cryptauth_enroller_impl.h"
-#include "components/cryptauth/cryptauth_enrollment_manager.h"
 #include "components/cryptauth/cryptauth_enrollment_utils.h"
 #include "components/cryptauth/cryptauth_gcm_manager_impl.h"
 #include "components/cryptauth/proto/cryptauth_api.pb.h"
@@ -38,6 +36,7 @@
 #if defined(OS_CHROMEOS)
 #include "ash/shell.h"
 #include "base/linux_util.h"
+#include "chrome/browser/chromeos/login/easy_unlock/secure_message_delegate_chromeos.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/manager/managed_display_info.h"
 #include "ui/gfx/geometry/rect.h"
@@ -132,21 +131,12 @@ cryptauth::GcmDeviceInfo GetGcmDeviceInfo() {
   return device_info;
 }
 
-std::string GetAccountIdImpl(Profile* profile) {
-#if defined(OS_CHROMEOS)
-  SigninManagerBase* manager = SigninManagerFactory::GetForProfile(profile);
-#else
-  SigninManager* manager = SigninManagerFactory::GetForProfile(profile);
-#endif
-  return manager ? manager->GetAuthenticatedAccountId() : std::string();
-}
-
 std::unique_ptr<cryptauth::CryptAuthClientFactory>
 CreateCryptAuthClientFactoryImpl(Profile* profile) {
   return base::MakeUnique<cryptauth::CryptAuthClientFactoryImpl>(
       ProfileOAuth2TokenServiceFactory::GetForProfile(profile),
-      GetAccountIdImpl(profile), profile->GetRequestContext(),
-      GetDeviceClassifierImpl());
+      SigninManagerFactory::GetForProfile(profile)->GetAuthenticatedAccountId(),
+      profile->GetRequestContext(), GetDeviceClassifierImpl());
 }
 
 std::unique_ptr<cryptauth::SecureMessageDelegate>
@@ -185,13 +175,13 @@ std::unique_ptr<ChromeCryptAuthService> ChromeCryptAuthService::Create(
 
   std::unique_ptr<cryptauth::CryptAuthDeviceManager> device_manager =
       base::MakeUnique<cryptauth::CryptAuthDeviceManager>(
-          base::MakeUnique<base::DefaultClock>(),
+          base::DefaultClock::GetInstance(),
           CreateCryptAuthClientFactoryImpl(profile), gcm_manager.get(),
           profile->GetPrefs());
 
   std::unique_ptr<cryptauth::CryptAuthEnrollmentManager> enrollment_manager =
       base::MakeUnique<cryptauth::CryptAuthEnrollmentManager>(
-          base::MakeUnique<base::DefaultClock>(),
+          base::DefaultClock::GetInstance(),
           base::MakeUnique<CryptAuthEnrollerFactoryImpl>(profile),
           CreateSecureMessageDelegateImpl(), GetGcmDeviceInfo(),
           gcm_manager.get(), profile->GetPrefs());
@@ -201,9 +191,14 @@ std::unique_ptr<ChromeCryptAuthService> ChromeCryptAuthService::Create(
   ProfileOAuth2TokenService* token_service =
       ProfileOAuth2TokenServiceFactory::GetForProfile(profile);
 
+  // Note: ChromeCryptAuthServiceFactory DependsOn(OAuth2TokenServiceFactory),
+  // so |token_service| is guaranteed to outlast this service.
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetForProfile(profile);
+
   return base::WrapUnique(new ChromeCryptAuthService(
       std::move(gcm_manager), std::move(device_manager),
-      std::move(enrollment_manager), profile, token_service));
+      std::move(enrollment_manager), profile, token_service, signin_manager));
 }
 
 ChromeCryptAuthService::ChromeCryptAuthService(
@@ -211,29 +206,53 @@ ChromeCryptAuthService::ChromeCryptAuthService(
     std::unique_ptr<cryptauth::CryptAuthDeviceManager> device_manager,
     std::unique_ptr<cryptauth::CryptAuthEnrollmentManager> enrollment_manager,
     Profile* profile,
-    OAuth2TokenService* token_service)
+    OAuth2TokenService* token_service,
+    SigninManagerBase* signin_manager)
     : KeyedService(),
       cryptauth::CryptAuthService(),
       gcm_manager_(std::move(gcm_manager)),
       enrollment_manager_(std::move(enrollment_manager)),
       device_manager_(std::move(device_manager)),
       profile_(profile),
-      token_service_(token_service) {
+      token_service_(token_service),
+      signin_manager_(signin_manager),
+      weak_ptr_factory_(this) {
   gcm_manager_->StartListening();
 
-  if (!token_service_->RefreshTokenIsAvailable(GetAccountId())) {
+  registrar_.Init(profile_->GetPrefs());
+  registrar_.Add(prefs::kEasyUnlockAllowed,
+                 base::Bind(&ChromeCryptAuthService::OnPrefsChanged,
+                            weak_ptr_factory_.GetWeakPtr()));
+#if defined(OS_CHROMEOS)
+  registrar_.Add(prefs::kInstantTetheringAllowed,
+                 base::Bind(&ChromeCryptAuthService::OnPrefsChanged,
+                            weak_ptr_factory_.GetWeakPtr()));
+#endif  // defined(OS_CHROMEOS)
+
+  if (!signin_manager_->IsAuthenticated()) {
+    PA_LOG(INFO) << "Profile is not authenticated yet; "
+                 << "waiting before starting CryptAuth managers.";
+    signin_manager_->AddObserver(this);
+    return;
+  }
+
+  std::string account_id = signin_manager_->GetAuthenticatedAccountId();
+  if (!token_service_->RefreshTokenIsAvailable(account_id)) {
     PA_LOG(INFO) << "Refresh token not yet available; "
                  << "waiting before starting CryptAuth managers.";
     token_service_->AddObserver(this);
-  } else {
-    enrollment_manager_->Start();
-    device_manager_->Start();
+    return;
   }
+
+  // Profile is authenticated and there is a refresh token available for the
+  // authenticated account id.
+  PerformEnrollmentAndDeviceSyncIfPossible();
 }
 
 ChromeCryptAuthService::~ChromeCryptAuthService() {}
 
 void ChromeCryptAuthService::Shutdown() {
+  signin_manager_->RemoveObserver(this);
   token_service_->RemoveObserver(this);
   enrollment_manager_.reset();
   device_manager_.reset();
@@ -255,7 +274,7 @@ cryptauth::DeviceClassifier ChromeCryptAuthService::GetDeviceClassifier() {
 }
 
 std::string ChromeCryptAuthService::GetAccountId() {
-  return GetAccountIdImpl(profile_);
+  return signin_manager_->GetAuthenticatedAccountId();
 }
 
 std::unique_ptr<cryptauth::SecureMessageDelegate>
@@ -268,11 +287,76 @@ ChromeCryptAuthService::CreateCryptAuthClientFactory() {
   return CreateCryptAuthClientFactoryImpl(profile_);
 }
 
+void ChromeCryptAuthService::OnEnrollmentStarted() {}
+
+void ChromeCryptAuthService::OnEnrollmentFinished(bool success) {
+  if (success)
+    device_manager_->Start();
+  else
+    PA_LOG(ERROR) << "CryptAuth enrollment failed. Device manager was not "
+                  << " started.";
+
+  enrollment_manager_->RemoveObserver(this);
+}
+
+void ChromeCryptAuthService::GoogleSigninSucceeded(
+    const std::string& account_id,
+    const std::string& username) {
+  signin_manager_->RemoveObserver(this);
+  if (!token_service_->RefreshTokenIsAvailable(account_id)) {
+    PA_LOG(INFO) << "Refresh token not yet available; "
+                 << "waiting before starting CryptAuth managers.";
+    token_service_->AddObserver(this);
+    return;
+  }
+
+  PerformEnrollmentAndDeviceSyncIfPossible();
+}
+
 void ChromeCryptAuthService::OnRefreshTokenAvailable(
     const std::string& account_id) {
   if (account_id == GetAccountId()) {
     token_service_->RemoveObserver(this);
-    enrollment_manager_->Start();
-    device_manager_->Start();
+    PerformEnrollmentAndDeviceSyncIfPossible();
   }
+}
+
+void ChromeCryptAuthService::PerformEnrollmentAndDeviceSyncIfPossible() {
+  DCHECK(signin_manager_->IsAuthenticated());
+  DCHECK(token_service_->RefreshTokenIsAvailable(GetAccountId()));
+
+  if (!IsEnrollmentAllowedByPolicy()) {
+    PA_LOG(INFO) << "CryptAuth enrollment is disabled by enterprise policy.";
+    return;
+  }
+
+  if (enrollment_manager_->IsEnrollmentValid()) {
+    device_manager_->Start();
+  } else {
+    // If enrollment is not valid, wait for the new enrollment attempt to finish
+    // before starting CryptAuthDeviceManager. See OnEnrollmentFinished(),
+    enrollment_manager_->AddObserver(this);
+  }
+
+  // Even if enrollment was valid, CryptAuthEnrollmentManager must be started in
+  // order to schedule the next enrollment attempt.
+  enrollment_manager_->Start();
+}
+
+bool ChromeCryptAuthService::IsEnrollmentAllowedByPolicy() {
+  // We allow CryptAuth enrollments if at least one of the features which
+  // depends on CryptAuth is enabled by enterprise policy.
+  PrefService* pref_service = profile_->GetPrefs();
+  bool is_allowed = pref_service->GetBoolean(prefs::kEasyUnlockAllowed);
+#if defined(OS_CHROMEOS)
+  is_allowed |= pref_service->GetBoolean(prefs::kInstantTetheringAllowed);
+#endif  // defined(OS_CHROMEOS)
+  return is_allowed;
+}
+
+void ChromeCryptAuthService::OnPrefsChanged() {
+  // Note: We only start the CryptAuth services if a feature was toggled on. In
+  // the inverse case, we simply leave the services running until the user logs
+  // off.
+  PerformEnrollmentAndDeviceSyncIfPossible();
 }

@@ -4,16 +4,25 @@
 
 #include "ui/ozone/platform/cast/gl_surface_cast.h"
 
+#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
+#include "chromecast/base/cast_features.h"
 #include "ui/gfx/vsync_provider.h"
 #include "ui/ozone/common/egl_util.h"
 #include "ui/ozone/platform/cast/gl_ozone_egl_cast.h"
 
 namespace {
-// Target fixed 30fps.
+// Target fixed 30fps, or 60fps if doing triple-buffer 720p.
 // TODO(halliwell): We might need to customize this value on various devices
 // or make it dynamic that throttles framerate if device is overheating.
-const base::TimeDelta kVSyncInterval = base::TimeDelta::FromSeconds(2) / 59.9;
+base::TimeDelta GetVSyncInterval() {
+  if (base::FeatureList::IsEnabled(chromecast::kTripleBuffer720)) {
+    return base::TimeDelta::FromSeconds(1) / 59.9;
+  } else {
+    return base::TimeDelta::FromSeconds(2) / 59.9;
+  }
+}
+
 }  // namespace
 
 namespace ui {
@@ -22,8 +31,8 @@ GLSurfaceCast::GLSurfaceCast(gfx::AcceleratedWidget widget,
                              GLOzoneEglCast* parent)
     : NativeViewGLSurfaceEGL(
           parent->GetNativeWindow(),
-          base::MakeUnique<gfx::FixedVSyncProvider>(base::TimeTicks(),
-                                                    kVSyncInterval)),
+          std::make_unique<gfx::FixedVSyncProvider>(base::TimeTicks(),
+                                                    GetVSyncInterval())),
       widget_(widget),
       parent_(parent),
       supports_swap_buffer_with_bounds_(
@@ -36,8 +45,9 @@ bool GLSurfaceCast::SupportsSwapBuffersWithBounds() {
   return supports_swap_buffer_with_bounds_;
 }
 
-gfx::SwapResult GLSurfaceCast::SwapBuffers() {
-  gfx::SwapResult result = NativeViewGLSurfaceEGL::SwapBuffers();
+gfx::SwapResult GLSurfaceCast::SwapBuffers(
+    const PresentationCallback& callback) {
+  gfx::SwapResult result = NativeViewGLSurfaceEGL::SwapBuffers(callback);
   if (result == gfx::SwapResult::SWAP_ACK)
     parent_->OnSwapBuffers();
 
@@ -45,7 +55,8 @@ gfx::SwapResult GLSurfaceCast::SwapBuffers() {
 }
 
 gfx::SwapResult GLSurfaceCast::SwapBuffersWithBounds(
-    const std::vector<gfx::Rect>& rects) {
+    const std::vector<gfx::Rect>& rects,
+    const PresentationCallback& callback) {
   DCHECK(supports_swap_buffer_with_bounds_);
 
   // TODO(halliwell): Request new EGL extension so we're not abusing
@@ -58,7 +69,7 @@ gfx::SwapResult GLSurfaceCast::SwapBuffersWithBounds(
     rects_data[i * 4 + 3] = rects[i].height();
   }
   gfx::SwapResult result =
-      NativeViewGLSurfaceEGL::SwapBuffersWithDamage(rects_data);
+      NativeViewGLSurfaceEGL::SwapBuffersWithDamage(rects_data, callback);
   if (result == gfx::SwapResult::SWAP_ACK)
     parent_->OnSwapBuffers();
   return result;
@@ -66,9 +77,11 @@ gfx::SwapResult GLSurfaceCast::SwapBuffersWithBounds(
 
 bool GLSurfaceCast::Resize(const gfx::Size& size,
                            float scale_factor,
+                           ColorSpace color_space,
                            bool has_alpha) {
   return parent_->ResizeDisplay(size) &&
-         NativeViewGLSurfaceEGL::Resize(size, scale_factor, has_alpha);
+         NativeViewGLSurfaceEGL::Resize(size, scale_factor, color_space,
+                                        has_alpha);
 }
 
 bool GLSurfaceCast::ScheduleOverlayPlane(int z_order,

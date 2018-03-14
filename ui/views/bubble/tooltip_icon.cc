@@ -4,10 +4,11 @@
 
 #include "ui/views/bubble/tooltip_icon.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/timer/timer.h"
+#include "components/vector_icons/vector_icons.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/gfx/paint_vector_icon.h"
-#include "ui/vector_icons/vector_icons.h"
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/bubble/info_bubble.h"
 #include "ui/views/mouse_watcher_view_host.h"
@@ -54,6 +55,7 @@ void TooltipIcon::OnGestureEvent(ui::GestureEvent* event) {
 }
 
 void TooltipIcon::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  node_data->role = ui::AX_ROLE_TOOLTIP;
   node_data->SetName(tooltip_);
 }
 
@@ -68,7 +70,7 @@ void TooltipIcon::MouseMovedOutOfHost() {
 }
 
 void TooltipIcon::SetDrawAsHovered(bool hovered) {
-  SetImage(gfx::CreateVectorIcon(ui::kInfoOutlineIcon, 18,
+  SetImage(gfx::CreateVectorIcon(vector_icons::kInfoOutlineIcon, 18,
                                  hovered
                                      ? SkColorSetARGB(0xBD, 0, 0, 0)
                                      : SkColorSetARGB(0xBD, 0x44, 0x44, 0x44)));
@@ -92,9 +94,8 @@ void TooltipIcon::ShowBubble() {
 
   if (mouse_inside_) {
     View* frame = bubble_->GetWidget()->non_client_view()->frame_view();
-    std::unique_ptr<MouseWatcherHost> host(
-        base::MakeUnique<MouseWatcherViewHost>(frame, gfx::Insets()));
-    mouse_watcher_ = base::MakeUnique<MouseWatcher>(host.release(), this);
+    mouse_watcher_ = std::make_unique<MouseWatcher>(
+        std::make_unique<MouseWatcherViewHost>(frame, gfx::Insets()), this);
     mouse_watcher_->Start();
   }
 }

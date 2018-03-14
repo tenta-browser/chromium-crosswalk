@@ -10,14 +10,18 @@ source_set("headers") {
     "connection_params.h",
     "embedder.h",
     "embedder_internal.h",
+    "incoming_broker_client_invitation.h",
     "named_platform_channel_pair.h",
     "named_platform_handle.h",
     "named_platform_handle_utils.h",
-    "pending_process_connection.h",
+    "outgoing_broker_client_invitation.h",
+    "peer_connection.h",
     "platform_channel_pair.h",
     "platform_handle.h",
     "platform_handle_utils.h",
+    "scoped_ipc_support.h",
     "scoped_platform_handle.h",
+    "transport_protocol.h",
   ]
 
   public_deps = [
@@ -37,15 +41,13 @@ source_set("embedder") {
   sources = [
     "configuration.h",
     "connection_params.cc",
-    "connection_params.h",
     "embedder.cc",
-    "embedder.h",
-    "embedder_internal.h",
     "entrypoints.cc",
     "entrypoints.h",
-    "pending_process_connection.cc",
+    "incoming_broker_client_invitation.cc",
+    "outgoing_broker_client_invitation.cc",
+    "peer_connection.cc",
     "scoped_ipc_support.cc",
-    "scoped_ipc_support.h",
 
     # Test-only code:
     # TODO(vtl): It's a little unfortunate that these end up in the same
@@ -57,6 +59,10 @@ source_set("embedder") {
 
   defines = [ "MOJO_SYSTEM_IMPL_IMPLEMENTATION" ]
 
+  deps = [
+    "//mojo/edk/system/ports",
+  ]
+
   public_deps = [
     ":headers",
     ":platform",
@@ -65,9 +71,7 @@ source_set("embedder") {
   ]
 
   if (!is_nacl) {
-    deps = [
-      "//crypto",
-    ]
+    deps += [ "//crypto" ]
   }
 }
 
@@ -87,22 +91,36 @@ source_set("platform") {
     "named_platform_handle_utils_win.cc",
     "platform_channel_pair.cc",
     "platform_channel_pair.h",
-    "platform_channel_pair_posix.cc",
     "platform_channel_pair_win.cc",
-    "platform_channel_utils_posix.cc",
-    "platform_channel_utils_posix.h",
     "platform_handle.cc",
     "platform_handle.h",
     "platform_handle_utils.h",
-    "platform_handle_utils_posix.cc",
     "platform_handle_utils_win.cc",
-    "platform_handle_vector.h",
     "platform_shared_buffer.cc",
     "platform_shared_buffer.h",
     "scoped_platform_handle.h",
   ]
-  if (!is_nacl) {
-    sources += [ "named_platform_handle_utils_posix.cc" ]
+
+  if (is_fuchsia) {
+    sources += [
+      "named_platform_handle_utils_fuchsia.cc",
+      "platform_channel_pair_fuchsia.cc",
+      "platform_handle_utils_fuchsia.cc",
+    ]
+  } else if (is_posix) {
+    sources += [
+      "platform_channel_pair_posix.cc",
+      "platform_channel_utils_posix.cc",
+      "platform_channel_utils_posix.h",
+      "platform_handle_utils_posix.cc",
+    ]
+    if (!is_nacl) {
+      sources += [ "named_platform_handle_utils_posix.cc" ]
+    }
+  }
+
+  if (is_nacl && !is_nacl_nonsfi) {
+    sources -= [ "platform_channel_utils_posix.cc" ]
   }
 
   defines = [ "MOJO_SYSTEM_IMPL_IMPLEMENTATION" ]
@@ -118,10 +136,6 @@ source_set("platform") {
   if (is_android) {
     deps += [ "//third_party/ashmem" ]
   }
-
-  if (is_nacl && !is_nacl_nonsfi) {
-    sources -= [ "platform_channel_utils_posix.cc" ]
-  }
 }
 
 source_set("embedder_unittests") {
@@ -132,9 +146,12 @@ source_set("embedder_unittests") {
 
   sources = [
     "embedder_unittest.cc",
-    "platform_channel_pair_posix_unittest.cc",
     "platform_shared_buffer_unittest.cc",
   ]
+
+  if (is_posix && !is_fuchsia) {
+    sources += [ "platform_channel_pair_posix_unittest.cc" ]
+  }
 
   deps = [
     "//base",

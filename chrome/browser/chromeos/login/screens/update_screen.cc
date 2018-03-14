@@ -38,7 +38,7 @@ namespace {
 
 constexpr const char kContextKeyEstimatedTimeLeftSec[] = "time-left-sec";
 constexpr const char kContextKeyShowEstimatedTimeLeft[] = "show-time-left";
-constexpr const char kContextKeyUpdateMessage[] = "update-msg";
+constexpr const char kContextKeyUpdateCompleted[] = "update-completed";
 constexpr const char kContextKeyShowCurtain[] = "show-curtain";
 constexpr const char kContextKeyShowProgressMessage[] = "show-progress-msg";
 constexpr const char kContextKeyProgress[] = "progress";
@@ -197,6 +197,7 @@ void UpdateScreen::ExitUpdate(UpdateScreen::ExitReason reason) {
         case UpdateEngineClient::UPDATE_STATUS_DOWNLOADING:
         case UpdateEngineClient::UPDATE_STATUS_FINALIZING:
         case UpdateEngineClient::UPDATE_STATUS_VERIFYING:
+        case UpdateEngineClient::UPDATE_STATUS_NEED_PERMISSION_TO_UPDATE:
           DCHECK(!HasCriticalUpdate());
         // Noncritical update, just exit screen as if there is no update.
         // no break
@@ -228,8 +229,8 @@ void UpdateScreen::UpdateStatusChanged(
       status.status > UpdateEngineClient::UPDATE_STATUS_CHECKING_FOR_UPDATE) {
     is_checking_for_update_ = false;
   }
-  if (ignore_idle_status_ && status.status >
-      UpdateEngineClient::UPDATE_STATUS_IDLE) {
+  if (ignore_idle_status_ &&
+      status.status > UpdateEngineClient::UPDATE_STATUS_IDLE) {
     ignore_idle_status_ = false;
   }
 
@@ -258,31 +259,29 @@ void UpdateScreen::UpdateStatusChanged(
       }
       break;
     case UpdateEngineClient::UPDATE_STATUS_DOWNLOADING:
-      {
-        MakeSureScreenIsShown();
-        if (!is_downloading_update_) {
-          // Because update engine doesn't send UPDATE_STATUS_UPDATE_AVAILABLE
-          // we need to is update critical on first downloading notification.
-          is_downloading_update_ = true;
-          download_start_time_ = download_last_time_ = base::Time::Now();
-          download_start_progress_ = status.download_progress;
-          download_last_progress_ = status.download_progress;
-          is_download_average_speed_computed_ = false;
-          download_average_speed_ = 0.0;
-          if (!HasCriticalUpdate()) {
-            VLOG(1) << "Non-critical update available: " << status.new_version;
-            ExitUpdate(REASON_UPDATE_NON_CRITICAL);
-          } else {
-            VLOG(1) << "Critical update available: " << status.new_version;
-            GetContextEditor()
-                .SetString(kContextKeyProgressMessage,
-                           l10n_util::GetStringUTF16(IDS_INSTALLING_UPDATE))
-                .SetBoolean(kContextKeyShowProgressMessage, true)
-                .SetBoolean(kContextKeyShowCurtain, false);
-          }
+      MakeSureScreenIsShown();
+      if (!is_downloading_update_) {
+        // Because update engine doesn't send UPDATE_STATUS_UPDATE_AVAILABLE
+        // we need to is update critical on first downloading notification.
+        is_downloading_update_ = true;
+        download_start_time_ = download_last_time_ = base::Time::Now();
+        download_start_progress_ = status.download_progress;
+        download_last_progress_ = status.download_progress;
+        is_download_average_speed_computed_ = false;
+        download_average_speed_ = 0.0;
+        if (!HasCriticalUpdate()) {
+          VLOG(1) << "Non-critical update available: " << status.new_version;
+          ExitUpdate(REASON_UPDATE_NON_CRITICAL);
+        } else {
+          VLOG(1) << "Critical update available: " << status.new_version;
+          GetContextEditor()
+              .SetString(kContextKeyProgressMessage,
+                         l10n_util::GetStringUTF16(IDS_INSTALLING_UPDATE))
+              .SetBoolean(kContextKeyShowProgressMessage, true)
+              .SetBoolean(kContextKeyShowCurtain, false);
         }
-        UpdateDownloadingStats(status);
       }
+      UpdateDownloadingStats(status);
       break;
     case UpdateEngineClient::UPDATE_STATUS_VERIFYING:
       MakeSureScreenIsShown();
@@ -313,8 +312,7 @@ void UpdateScreen::UpdateStatusChanged(
         DBusThreadManager::Get()->GetUpdateEngineClient()->RebootAfterUpdate();
         reboot_timer_.Start(FROM_HERE,
                             base::TimeDelta::FromSeconds(reboot_check_delay_),
-                            this,
-                            &UpdateScreen::OnWaitForRebootTimeElapsed);
+                            this, &UpdateScreen::OnWaitForRebootTimeElapsed);
       } else {
         ExitUpdate(REASON_UPDATE_NON_CRITICAL);
       }
@@ -327,9 +325,10 @@ void UpdateScreen::UpdateStatusChanged(
         // It is first IDLE status that is sent before we initiated the check.
         break;
       }
-      // else no break
+    // else no break
     case UpdateEngineClient::UPDATE_STATUS_ERROR:
     case UpdateEngineClient::UPDATE_STATUS_REPORTING_ERROR_EVENT:
+    case UpdateEngineClient::UPDATE_STATUS_NEED_PERMISSION_TO_UPDATE:
       ExitUpdate(REASON_UPDATE_ENDED);
       break;
     default:
@@ -359,7 +358,7 @@ void UpdateScreen::OnPortalDetectionCompleted(
     is_first_detection_notification_ = false;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             base::IgnoreResult(&NetworkPortalDetector::StartDetectionIfIdle),
             base::Unretained(network_portal_detector::GetInstance())));
     return;
@@ -455,12 +454,10 @@ void UpdateScreen::UpdateDownloadingStats(
         kDownloadSpeedSmoothFactor * download_rate +
         (1.0 - kDownloadSpeedSmoothFactor) * download_average_speed_;
     if (download_average_speed_ < kDownloadAverageSpeedDropBound) {
-      time_delta =
-          (download_current_time - download_start_time_).InSecondsF();
+      time_delta = (download_current_time - download_start_time_).InSecondsF();
       download_average_speed_ =
           status.new_size *
-          (status.download_progress - download_start_progress_) /
-          time_delta;
+          (status.download_progress - download_start_progress_) / time_delta;
     }
     double work_left = progress_left * status.new_size;
     double time_left = work_left / download_average_speed_;
@@ -474,8 +471,8 @@ void UpdateScreen::UpdateDownloadingStats(
                     static_cast<int>(time_left));
   }
 
-  int download_progress = static_cast<int>(
-      status.download_progress * kDownloadProgressIncrement);
+  int download_progress =
+      static_cast<int>(status.download_progress * kDownloadProgressIncrement);
   GetContextEditor().SetInteger(kContextKeyProgress,
                                 kBeforeDownloadProgress + download_progress);
 }
@@ -502,8 +499,7 @@ bool UpdateScreen::HasCriticalUpdate() {
 void UpdateScreen::OnWaitForRebootTimeElapsed() {
   LOG(ERROR) << "Unable to reboot - asking user for a manual reboot.";
   MakeSureScreenIsShown();
-  GetContextEditor().SetString(kContextKeyUpdateMessage,
-                               l10n_util::GetStringUTF16(IDS_UPDATE_COMPLETED));
+  GetContextEditor().SetBoolean(kContextKeyUpdateCompleted, true);
 }
 
 void UpdateScreen::MakeSureScreenIsShown() {
@@ -534,8 +530,8 @@ void UpdateScreen::SetHostPairingControllerStatus(
     // Send UPDATE_STATUS_UPDATING message every |kHostStatusReportDelay|ms.
     base::SequencedTaskRunnerHandle::Get()->PostNonNestableDelayedTask(
         FROM_HERE,
-        base::Bind(&UpdateScreen::SetHostPairingControllerStatus,
-                   weak_factory_.GetWeakPtr(), update_status),
+        base::BindOnce(&UpdateScreen::SetHostPairingControllerStatus,
+                       weak_factory_.GetWeakPtr(), update_status),
         base::TimeDelta::FromMilliseconds(kHostStatusReportDelay));
   }
 }
@@ -552,6 +548,7 @@ void UpdateScreen::StartUpdateCheck() {
   connect_request_subscription_.reset();
   if (state_ == State::STATE_ERROR)
     HideErrorMessage();
+
   state_ = State::STATE_UPDATE;
   DBusThreadManager::Get()->GetUpdateEngineClient()->AddObserver(this);
   VLOG(1) << "Initiate update check";

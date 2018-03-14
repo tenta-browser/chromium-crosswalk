@@ -28,7 +28,7 @@
 #define TreeScope_h
 
 #include "core/CoreExport.h"
-#include "core/dom/DocumentOrderedMap.h"
+#include "core/dom/TreeOrderedMap.h"
 #include "core/html/forms/RadioButtonGroupScope.h"
 #include "core/layout/HitTestRequest.h"
 #include "platform/heap/Handle.h"
@@ -64,7 +64,7 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
   // TODO(kochi): once this algorithm is named in the spec, rename the method
   // name.
   Element* AdjustedElement(const Element&) const;
-  Element* GetElementById(const AtomicString&) const;
+  Element* getElementById(const AtomicString&) const;
   const HeapVector<Member<Element>>& GetAllElementsById(
       const AtomicString&) const;
   bool HasElementWithId(const AtomicString& id) const;
@@ -83,9 +83,9 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
   void RemoveImageMap(HTMLMapElement*);
   HTMLMapElement* GetImageMap(const String& url) const;
 
-  Element* ElementFromPoint(int x, int y) const;
-  Element* HitTestPoint(int x, int y, const HitTestRequest&) const;
-  HeapVector<Member<Element>> ElementsFromPoint(int x, int y) const;
+  Element* ElementFromPoint(double x, double y) const;
+  Element* HitTestPoint(double x, double y, const HitTestRequest&) const;
+  HeapVector<Member<Element>> ElementsFromPoint(double x, double y) const;
   HeapVector<Member<Element>> ElementsFromHitTestResult(HitTestResult&) const;
 
   DOMSelection* GetSelection() const;
@@ -120,7 +120,7 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
 
   Element* GetElementByAccessKey(const String& key) const;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
   ScopedStyleResolver* GetScopedStyleResolver() const {
     return scoped_style_resolver_.Get();
@@ -145,8 +145,8 @@ class CORE_EXPORT TreeScope : public GarbageCollectedMixin {
   Member<Document> document_;
   Member<TreeScope> parent_tree_scope_;
 
-  Member<DocumentOrderedMap> elements_by_id_;
-  Member<DocumentOrderedMap> image_maps_by_name_;
+  Member<TreeOrderedMap> elements_by_id_;
+  Member<TreeOrderedMap> image_maps_by_name_;
 
   Member<IdTargetObserverRegistry> id_target_observer_registry_;
 
@@ -172,9 +172,9 @@ inline bool TreeScope::ContainsMultipleElementsWithId(
 DEFINE_COMPARISON_OPERATORS_WITH_REFERENCES(TreeScope)
 
 HitTestResult HitTestInDocument(
-    const Document*,
-    int x,
-    int y,
+    Document*,
+    double x,
+    double y,
     const HitTestRequest& = HitTestRequest::kReadOnly |
                             HitTestRequest::kActive);
 

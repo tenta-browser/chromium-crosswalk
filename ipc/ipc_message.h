@@ -15,11 +15,14 @@
 #include "base/pickle.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "ipc/ipc_export.h"
+#include "ipc/ipc_features.h"
+#include "ipc/ipc_message_support_export.h"
 
-#if !defined(NDEBUG)
-#define IPC_MESSAGE_LOG_ENABLED
-#endif
+namespace mojo {
+namespace internal {
+struct UnmappedNativeStructSerializerImpl;
+}
+}  // namespace mojo
 
 namespace IPC {
 
@@ -32,7 +35,7 @@ class ChannelReader;
 struct LogData;
 class MessageAttachmentSet;
 
-class IPC_EXPORT Message : public base::Pickle {
+class IPC_MESSAGE_SUPPORT_EXPORT Message : public base::Pickle {
  public:
   enum PriorityValue {
     PRIORITY_LOW = 1,
@@ -169,7 +172,7 @@ class IPC_EXPORT Message : public base::Pickle {
 
   // The static method FindNext() returns several pieces of information, which
   // are aggregated into an instance of this struct.
-  struct IPC_EXPORT NextMessageInfo {
+  struct IPC_MESSAGE_SUPPORT_EXPORT NextMessageInfo {
     NextMessageInfo();
     ~NextMessageInfo();
 
@@ -207,7 +210,7 @@ class IPC_EXPORT Message : public base::Pickle {
   // Returns true if there are any attachment in this message.
   bool HasAttachments() const override;
 
-#ifdef IPC_MESSAGE_LOG_ENABLED
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   // Adds the outgoing time from Time::Now() at the end of the message and sets
   // a bit to indicate that it's been added.
   void set_sent_time(int64_t time);
@@ -236,6 +239,8 @@ class IPC_EXPORT Message : public base::Pickle {
   friend class internal::ChannelReader;
   friend class MessageReplyDeserializer;
   friend class SyncMessage;
+
+  friend struct mojo::internal::UnmappedNativeStructSerializerImpl;
 
 #pragma pack(push, 4)
   struct Header : base::Pickle::Header {
@@ -275,7 +280,7 @@ class IPC_EXPORT Message : public base::Pickle {
     return attachment_set_.get();
   }
 
-#ifdef IPC_MESSAGE_LOG_ENABLED
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   // Used for logging.
   mutable int64_t received_time_;
   mutable std::string output_params_;

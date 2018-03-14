@@ -10,7 +10,13 @@ namespace ntp_tiles {
 
 const char kPopularSitesFieldTrialName[] = "NTPPopularSites";
 
-extern const base::Feature kPopularSitesBakedInContentFeature{
+const base::Feature kPopularSitesBakedInContentFeature{
     "NTPPopularSitesBakedInContent", base::FEATURE_ENABLED_BY_DEFAULT};
+
+const base::Feature kNtpMostLikelyFaviconsFromServerFeature{
+    "NTPMostLikelyFaviconsFromServer", base::FEATURE_ENABLED_BY_DEFAULT};
+
+const base::Feature kSiteExplorationUiFeature{
+    "SiteExplorationUi", base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace ntp_tiles

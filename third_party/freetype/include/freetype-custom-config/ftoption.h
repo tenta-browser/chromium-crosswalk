@@ -75,7 +75,7 @@ FT_BEGIN_HEADER
   /*************************************************************************/
 
 
-  /*************************************************************************/
+  /*#***********************************************************************/
   /*                                                                       */
   /* If you enable this configuration option, FreeType recognizes an       */
   /* environment variable called `FREETYPE_PROPERTIES', which can be used  */
@@ -107,20 +107,17 @@ FT_BEGIN_HEADER
 
   /*************************************************************************/
   /*                                                                       */
-  /* Uncomment the line below if you want to activate sub-pixel rendering  */
-  /* (a.k.a. LCD rendering, or ClearType) in this build of the library.    */
+  /* Uncomment the line below if you want to activate LCD rendering        */
+  /* technology similar to ClearType in this build of the library.  This   */
+  /* technology triples the resolution in the direction color subpixels.   */
+  /* To mitigate color fringes inherent to this technology, you also need  */
+  /* to explicitly set up LCD filtering.                                   */
   /*                                                                       */
   /* Note that this feature is covered by several Microsoft patents        */
   /* and should not be activated in any default build of the library.      */
-  /*                                                                       */
-  /* This macro has no impact on the FreeType API, only on its             */
-  /* _implementation_.  For example, using FT_RENDER_MODE_LCD when calling */
-  /* FT_Render_Glyph still generates a bitmap that is 3 times wider than   */
-  /* the original size in case this macro isn't defined; however, each     */
-  /* triplet of subpixels has R=G=B.                                       */
-  /*                                                                       */
-  /* This is done to allow FreeType clients to run unmodified, forcing     */
-  /* them to display normal gray-level anti-aliased glyphs.                */
+  /* When this macro is not defined, FreeType offers alternative LCD       */
+  /* rendering technology that produces excellent output without LCD       */
+  /* filtering.                                                            */
   /*                                                                       */
 #define FT_CONFIG_OPTION_SUBPIXEL_RENDERING
 
@@ -268,64 +265,10 @@ FT_BEGIN_HEADER
   /*                                                                       */
   /*   Define this macro if you want to enable this `feature'.             */
   /*                                                                       */
-/* #define FT_CONFIG_OPTION_USE_HARFBUZZ */
-
-
-  /*************************************************************************/
-  /*                                                                       */
-  /* DLL export compilation                                                */
-  /*                                                                       */
-  /*   When compiling FreeType as a DLL, some systems/compilers need a     */
-  /*   special keyword in front OR after the return type of function       */
-  /*   declarations.                                                       */
-  /*                                                                       */
-  /*   Two macros are used within the FreeType source code to define       */
-  /*   exported library functions: FT_EXPORT and FT_EXPORT_DEF.            */
-  /*                                                                       */
-  /*     FT_EXPORT( return_type )                                          */
-  /*                                                                       */
-  /*       is used in a function declaration, as in                        */
-  /*                                                                       */
-  /*         FT_EXPORT( FT_Error )                                         */
-  /*         FT_Init_FreeType( FT_Library*  alibrary );                    */
-  /*                                                                       */
-  /*                                                                       */
-  /*     FT_EXPORT_DEF( return_type )                                      */
-  /*                                                                       */
-  /*       is used in a function definition, as in                         */
-  /*                                                                       */
-  /*         FT_EXPORT_DEF( FT_Error )                                     */
-  /*         FT_Init_FreeType( FT_Library*  alibrary )                     */
-  /*         {                                                             */
-  /*           ... some code ...                                           */
-  /*           return FT_Err_Ok;                                           */
-  /*         }                                                             */
-  /*                                                                       */
-  /*   You can provide your own implementation of FT_EXPORT and            */
-  /*   FT_EXPORT_DEF here if you want.  If you leave them undefined, they  */
-  /*   will be later automatically defined as `extern return_type' to      */
-  /*   allow normal compilation.                                           */
-  /*                                                                       */
-  /*   Do not #undef these macros here since the build system might define */
-  /*   them for certain configurations only.                               */
-  /*                                                                       */
-
-#if defined(_WIN32)
-
-#if defined(FT2_BUILD_DLL)
-#if defined(FT2_BUILD_LIBRARY)
-#define FT_EXPORT(x)     __declspec(dllexport) x
-#define FT_EXPORT_DEF(x) __declspec(dllexport) x
-#else
-#define FT_EXPORT(x)     __declspec(dllimport) x
-#define FT_EXPORT_DEF(x) __declspec(dllimport) x
-#endif
+#if !defined(WITHOUT_HARFBUZZ)
+#define FT_CONFIG_OPTION_USE_HARFBUZZ
 #endif
 
-#else
-#define FT_EXPORT(x)     __attribute__((visibility ("default"))) x
-#define FT_EXPORT_DEF(x) __attribute__((visibility ("default"))) x
-#endif
 
   /*************************************************************************/
   /*                                                                       */
@@ -341,7 +284,7 @@ FT_BEGIN_HEADER
   /*                                                                       */
   /*   - The TrueType driver will provide its own set of glyph names,      */
   /*     if you build it to support postscript names in the TrueType       */
-  /*     `post' table.                                                     */
+  /*     `post' table, but will not synthesize a missing Unicode charmap.  */
   /*                                                                       */
   /*   - The Type 1 driver will not be able to synthesize a Unicode        */
   /*     charmap out of the glyphs found in the fonts.                     */
@@ -813,6 +756,16 @@ FT_BEGIN_HEADER
 
 
   /*************************************************************************/
+  /*                                                                       */
+  /* T1_CONFIG_OPTION_OLD_ENGINE controls whether the pre-Adobe Type 1     */
+  /* engine gets compiled into FreeType.  If defined, it is possible to    */
+  /* switch between the two engines using the `hinting-engine' property of */
+  /* the type1 driver module.                                              */
+  /*                                                                       */
+/* #define T1_CONFIG_OPTION_OLD_ENGINE */
+
+
+  /*************************************************************************/
   /*************************************************************************/
   /****                                                                 ****/
   /****         C F F   D R I V E R    C O N F I G U R A T I O N        ****/
@@ -900,7 +853,9 @@ FT_BEGIN_HEADER
 
   /*************************************************************************/
   /*                                                                       */
-  /* Compile autofit module with Indic script support.                     */
+  /* Compile autofit module with fallback Indic script support, covering   */
+  /* some scripts that the `latin' submodule of the autofit module doesn't */
+  /* (yet) handle.                                                         */
   /*                                                                       */
 #define AF_CONFIG_OPTION_INDIC
 
@@ -918,6 +873,26 @@ FT_BEGIN_HEADER
   /* information; by default it is switched off).                          */
   /*                                                                       */
 /*#define AF_CONFIG_OPTION_USE_WARPER*/
+
+  /*************************************************************************/
+  /*                                                                       */
+  /* Use TrueType-like size metrics for `light' auto-hinting.              */
+  /*                                                                       */
+  /* It is strongly recommended to avoid this option, which exists only to */
+  /* help some legacy applications retain its appearance and behaviour     */
+  /* with respect to auto-hinted TrueType fonts.                           */
+  /*                                                                       */
+  /* The very reason this option exists at all are GNU/Linux distributions */
+  /* like Fedora that did not un-patch the following change (which was     */
+  /* present in FreeType between versions 2.4.6 and 2.7.1, inclusive).     */
+  /*                                                                       */
+  /*   2011-07-16  Steven Chu  <steven.f.chu@gmail.com>                    */
+  /*                                                                       */
+  /*     [truetype] Fix metrics on size request for scalable fonts.        */
+  /*                                                                       */
+  /* This problematic commit is now reverted (more or less).               */
+  /*                                                                       */
+/* #define AF_CONFIG_OPTION_TT_SIZE_METRICS */
 
   /* */
 

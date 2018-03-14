@@ -29,24 +29,6 @@ std::unique_ptr<T[]> WrapArrayUnique(T* ptr) {
   return std::unique_ptr<T[]>(ptr);
 }
 
-// WTF::makeUnique is base::MakeUnique. See base/ptr_util.h for documentation.
-template <typename T, typename... Args>
-auto MakeUnique(Args&&... args)
-    -> decltype(base::MakeUnique<T>(std::forward<Args>(args)...)) {
-  static_assert(
-      !WTF::IsGarbageCollectedType<T>::value,
-      "Garbage collected types should not be stored in std::unique_ptr!");
-  return base::MakeUnique<T>(std::forward<Args>(args)...);
-}
-
-template <typename T>
-auto MakeUnique(size_t size) -> decltype(base::MakeUnique<T>(size)) {
-  static_assert(
-      !WTF::IsGarbageCollectedType<std::remove_extent<T>>::value,
-      "Garbage collected types should not be stored in std::unique_ptr!");
-  return base::MakeUnique<T>(size);
-}
-
 }  // namespace WTF
 
 using WTF::WrapArrayUnique;

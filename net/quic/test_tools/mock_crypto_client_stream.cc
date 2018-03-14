@@ -8,7 +8,9 @@
 #include "net/quic/core/crypto/null_encrypter.h"
 #include "net/quic/core/crypto/quic_decrypter.h"
 #include "net/quic/core/crypto/quic_encrypter.h"
-#include "net/quic/core/quic_client_session_base.h"
+#include "net/quic/core/quic_spdy_client_session_base.h"
+#include "net/quic/test_tools/mock_decrypter.h"
+#include "net/quic/test_tools/mock_encrypter.h"
 #include "net/quic/test_tools/quic_config_peer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -18,21 +20,29 @@ namespace net {
 
 MockCryptoClientStream::MockCryptoClientStream(
     const QuicServerId& server_id,
-    QuicClientSessionBase* session,
+    QuicSpdyClientSessionBase* session,
     ProofVerifyContext* verify_context,
     const QuicConfig& config,
     QuicCryptoClientConfig* crypto_config,
     HandshakeMode handshake_mode,
-    const ProofVerifyDetailsChromium* proof_verify_details)
+    const ProofVerifyDetailsChromium* proof_verify_details,
+    bool use_mock_crypter)
     : QuicCryptoClientStream(server_id,
                              session,
                              verify_context,
                              crypto_config,
                              session),
+      QuicCryptoHandshaker(this, session),
       handshake_mode_(handshake_mode),
+      encryption_established_(false),
+      handshake_confirmed_(false),
+      crypto_negotiated_params_(new QuicCryptoNegotiatedParameters),
+      use_mock_crypter_(use_mock_crypter),
       server_id_(server_id),
       proof_verify_details_(proof_verify_details),
-      config_(config) {}
+      config_(config) {
+  crypto_framer_.set_visitor(this);
+}
 
 MockCryptoClientStream::~MockCryptoClientStream() {}
 
@@ -62,13 +72,20 @@ bool MockCryptoClientStream::CryptoConnect() {
       crypto_negotiated_params_->key_exchange = kC255;
       crypto_negotiated_params_->aead = kAESG;
       if (proof_verify_details_) {
-        reinterpret_cast<QuicClientSessionBase*>(session())
+        reinterpret_cast<QuicSpdyClientSessionBase*>(session())
             ->OnProofVerifyDetailsAvailable(*proof_verify_details_);
       }
-      session()->connection()->SetDecrypter(
-          ENCRYPTION_INITIAL, new NullDecrypter(Perspective::IS_CLIENT));
-      session()->connection()->SetEncrypter(
-          ENCRYPTION_INITIAL, new NullEncrypter(Perspective::IS_CLIENT));
+      if (use_mock_crypter_) {
+        session()->connection()->SetDecrypter(
+            ENCRYPTION_INITIAL, new MockDecrypter(Perspective::IS_CLIENT));
+        session()->connection()->SetEncrypter(
+            ENCRYPTION_INITIAL, new MockEncrypter(Perspective::IS_CLIENT));
+      } else {
+        session()->connection()->SetDecrypter(
+            ENCRYPTION_INITIAL, new NullDecrypter(Perspective::IS_CLIENT));
+        session()->connection()->SetEncrypter(
+            ENCRYPTION_INITIAL, new NullEncrypter(Perspective::IS_CLIENT));
+      }
       session()->connection()->SetDefaultEncryptionLevel(ENCRYPTION_INITIAL);
       session()->OnCryptoHandshakeEvent(
           QuicSession::ENCRYPTION_FIRST_ESTABLISHED);
@@ -81,14 +98,25 @@ bool MockCryptoClientStream::CryptoConnect() {
       crypto_negotiated_params_->key_exchange = kC255;
       crypto_negotiated_params_->aead = kAESG;
       if (proof_verify_details_) {
-        reinterpret_cast<QuicClientSessionBase*>(session())
+        reinterpret_cast<QuicSpdyClientSessionBase*>(session())
             ->OnProofVerifyDetailsAvailable(*proof_verify_details_);
       }
       SetConfigNegotiated();
-      session()->connection()->SetDecrypter(
-          ENCRYPTION_FORWARD_SECURE, new NullDecrypter(Perspective::IS_CLIENT));
-      session()->connection()->SetEncrypter(
-          ENCRYPTION_FORWARD_SECURE, new NullEncrypter(Perspective::IS_CLIENT));
+      if (use_mock_crypter_) {
+        session()->connection()->SetDecrypter(
+            ENCRYPTION_FORWARD_SECURE,
+            new MockDecrypter(Perspective::IS_CLIENT));
+        session()->connection()->SetEncrypter(
+            ENCRYPTION_FORWARD_SECURE,
+            new MockEncrypter(Perspective::IS_CLIENT));
+      } else {
+        session()->connection()->SetDecrypter(
+            ENCRYPTION_FORWARD_SECURE,
+            new NullDecrypter(Perspective::IS_CLIENT));
+        session()->connection()->SetEncrypter(
+            ENCRYPTION_FORWARD_SECURE,
+            new NullEncrypter(Perspective::IS_CLIENT));
+      }
       session()->connection()->SetDefaultEncryptionLevel(
           ENCRYPTION_FORWARD_SECURE);
       session()->OnCryptoHandshakeEvent(QuicSession::HANDSHAKE_CONFIRMED);
@@ -110,16 +138,40 @@ bool MockCryptoClientStream::CryptoConnect() {
   return session()->connection()->connected();
 }
 
+bool MockCryptoClientStream::encryption_established() const {
+  return encryption_established_;
+}
+
+bool MockCryptoClientStream::handshake_confirmed() const {
+  return handshake_confirmed_;
+}
+
+const QuicCryptoNegotiatedParameters&
+MockCryptoClientStream::crypto_negotiated_params() const {
+  return *crypto_negotiated_params_;
+}
+
+CryptoMessageParser* MockCryptoClientStream::crypto_message_parser() {
+  return &crypto_framer_;
+}
+
 void MockCryptoClientStream::SendOnCryptoHandshakeEvent(
     QuicSession::CryptoHandshakeEvent event) {
   encryption_established_ = true;
   if (event == QuicSession::HANDSHAKE_CONFIRMED) {
     handshake_confirmed_ = true;
     SetConfigNegotiated();
-    session()->connection()->SetDecrypter(
-        ENCRYPTION_FORWARD_SECURE, new NullDecrypter(Perspective::IS_CLIENT));
-    session()->connection()->SetEncrypter(
-        ENCRYPTION_FORWARD_SECURE, new NullEncrypter(Perspective::IS_CLIENT));
+    if (use_mock_crypter_) {
+      session()->connection()->SetDecrypter(
+          ENCRYPTION_FORWARD_SECURE, new MockDecrypter(Perspective::IS_CLIENT));
+      session()->connection()->SetEncrypter(
+          ENCRYPTION_FORWARD_SECURE, new MockEncrypter(Perspective::IS_CLIENT));
+    } else {
+      session()->connection()->SetDecrypter(
+          ENCRYPTION_FORWARD_SECURE, new NullDecrypter(Perspective::IS_CLIENT));
+      session()->connection()->SetEncrypter(
+          ENCRYPTION_FORWARD_SECURE, new NullEncrypter(Perspective::IS_CLIENT));
+    }
     session()->connection()->SetDefaultEncryptionLevel(
         ENCRYPTION_FORWARD_SECURE);
   }

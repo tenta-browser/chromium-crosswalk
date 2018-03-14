@@ -5,17 +5,16 @@
 #include "modules/mediasession/MediaSession.h"
 
 #include <memory>
-#include "bindings/modules/v8/MediaSessionActionHandler.h"
+#include "bindings/modules/v8/v8_media_session_action_handler.h"
 #include "core/dom/Document.h"
-#include "core/dom/DocumentUserGestureToken.h"
 #include "core/dom/ExecutionContext.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "core/frame/LocalFrame.h"
 #include "modules/mediasession/MediaMetadata.h"
 #include "modules/mediasession/MediaMetadataSanitizer.h"
-#include "platform/UserGestureIndicator.h"
 #include "platform/wtf/Optional.h"
-#include "public/platform/InterfaceProvider.h"
 #include "public/platform/Platform.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 
 namespace blink {
 
@@ -70,7 +69,7 @@ WTF::Optional<MediaSessionAction> ActionNameToMojomAction(
     return MediaSessionAction::SEEK_FORWARD;
 
   NOTREACHED();
-  return WTF::kNullopt;
+  return WTF::nullopt;
 }
 
 const AtomicString& MediaSessionPlaybackStateToString(
@@ -152,17 +151,16 @@ void MediaSession::OnMetadataChanged() {
 }
 
 void MediaSession::setActionHandler(const String& action,
-                                    MediaSessionActionHandler* handler) {
+                                    V8MediaSessionActionHandler* handler) {
   if (handler) {
-    auto add_result = action_handlers_.Set(
-        action, TraceWrapperMember<MediaSessionActionHandler>(this, handler));
+    auto add_result = action_handlers_.Set(action, handler);
 
     if (!add_result.is_new_entry)
       return;
 
     NotifyActionChange(action, ActionChangeType::kActionEnabled);
   } else {
-    if (action_handlers_.Find(action) == action_handlers_.end())
+    if (action_handlers_.find(action) == action_handlers_.end())
       return;
 
     action_handlers_.erase(action);
@@ -199,20 +197,18 @@ mojom::blink::MediaSessionService* MediaSession::GetService() {
   DCHECK(GetExecutionContext()->IsDocument())
       << "MediaSession::getService() is only available from a frame";
   Document* document = ToDocument(GetExecutionContext());
-  if (!document->GetFrame())
+  LocalFrame* frame = document->GetFrame();
+  if (!frame)
     return nullptr;
 
-  InterfaceProvider* interface_provider =
-      document->GetFrame()->GetInterfaceProvider();
-  if (!interface_provider)
-    return nullptr;
-
-  interface_provider->GetInterface(mojo::MakeRequest(&service_));
+  frame->GetInterfaceProvider().GetInterface(mojo::MakeRequest(&service_));
   if (service_.get()) {
     // Record the eTLD+1 of the frame using the API.
     Platform::Current()->RecordRapporURL("Media.Session.APIUsage.Origin",
                                          document->Url());
-    service_->SetClient(client_binding_.CreateInterfacePtrAndBind());
+    blink::mojom::blink::MediaSessionClientPtr client;
+    client_binding_.Bind(mojo::MakeRequest(&client));
+    service_->SetClient(std::move(client));
   }
 
   return service_.get();
@@ -222,23 +218,24 @@ void MediaSession::DidReceiveAction(
     blink::mojom::blink::MediaSessionAction action) {
   DCHECK(GetExecutionContext()->IsDocument());
   Document* document = ToDocument(GetExecutionContext());
-  UserGestureIndicator gesture_indicator(
-      DocumentUserGestureToken::Create(document));
+  std::unique_ptr<UserGestureIndicator> gesture_indicator =
+      Frame::NotifyUserActivation(document ? document->GetFrame() : nullptr);
 
-  auto iter = action_handlers_.Find(MojomActionToActionName(action));
+  auto iter = action_handlers_.find(MojomActionToActionName(action));
   if (iter == action_handlers_.end())
     return;
 
-  iter->value->call(this);
+  iter->value->InvokeAndReportException(this);
 }
 
-DEFINE_TRACE(MediaSession) {
+void MediaSession::Trace(blink::Visitor* visitor) {
   visitor->Trace(metadata_);
   visitor->Trace(action_handlers_);
+  ScriptWrappable::Trace(visitor);
   ContextClient::Trace(visitor);
 }
 
-DEFINE_TRACE_WRAPPERS(MediaSession) {
+void MediaSession::TraceWrappers(const ScriptWrappableVisitor* visitor) const {
   for (auto handler : action_handlers_.Values())
     visitor->TraceWrappers(handler);
 }

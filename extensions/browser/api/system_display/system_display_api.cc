@@ -16,6 +16,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "extensions/browser/api/system_display/display_info_provider.h"
 #include "extensions/common/api/system_display.h"
+#include "extensions/common/permissions/permissions_data.h"
 
 #if defined(OS_CHROMEOS)
 #include "extensions/common/manifest_handlers/kiosk_mode_info.h"
@@ -141,7 +142,7 @@ OverscanTracker::OverscanWebObserver* OverscanTracker::GetObserver(
     return iter->second.get();
   if (!create)
     return nullptr;
-  auto owned_observer = base::MakeUnique<OverscanWebObserver>(web_contents);
+  auto owned_observer = std::make_unique<OverscanWebObserver>(web_contents);
   auto* observer_ptr = owned_observer.get();
   observers_[web_contents] = std::move(owned_observer);
   return observer_ptr;
@@ -175,6 +176,12 @@ bool SystemDisplayFunction::PreRunValidation(std::string* error) {
 }
 
 bool SystemDisplayFunction::ShouldRestrictToKioskAndWebUI() {
+  // Allow autotest extension to access for Chrome OS testing.
+  if (extension() && extension()->permissions_data()->HasAPIPermission(
+      APIPermission::kAutoTestPrivate)) {
+    return false;
+  }
+
   return true;
 }
 
@@ -215,8 +222,9 @@ SystemDisplaySetDisplayPropertiesFunction::Run() {
 ExtensionFunction::ResponseAction SystemDisplaySetDisplayLayoutFunction::Run() {
   std::unique_ptr<display::SetDisplayLayout::Params> params(
       display::SetDisplayLayout::Params::Create(*args_));
-  if (!DisplayInfoProvider::Get()->SetDisplayLayout(params->layouts))
-    return RespondNow(Error("Unable to set display layout"));
+  std::string error;
+  if (!DisplayInfoProvider::Get()->SetDisplayLayout(params->layouts, &error))
+    return RespondNow(Error("Unable to set display layout: " + error));
   return RespondNow(NoArguments());
 }
 
@@ -285,9 +293,9 @@ SystemDisplayShowNativeTouchCalibrationFunction::Run() {
 
   if (!DisplayInfoProvider::Get()->ShowNativeTouchCalibration(
           params->id, &error,
-          base::Bind(&SystemDisplayShowNativeTouchCalibrationFunction::
-                         OnCalibrationComplete,
-                     this))) {
+          base::BindOnce(&SystemDisplayShowNativeTouchCalibrationFunction::
+                             OnCalibrationComplete,
+                         this))) {
     return RespondNow(Error(error));
   }
   return RespondLater();
@@ -296,7 +304,7 @@ SystemDisplayShowNativeTouchCalibrationFunction::Run() {
 void SystemDisplayShowNativeTouchCalibrationFunction::OnCalibrationComplete(
     bool success) {
   if (success)
-    Respond(OneArgument(base::MakeUnique<base::Value>(true)));
+    Respond(OneArgument(std::make_unique<base::Value>(true)));
   else
     Respond(Error(kTouchCalibrationError));
 }

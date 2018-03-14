@@ -6,9 +6,9 @@
 
 #include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
-#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/vector_icons/vector_icons.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/color_palette.h"
@@ -84,12 +84,24 @@ DeviceChooserContentView::DeviceChooserContentView(
       views::StyledLabel::RangeStyleInfo::CreateForLink());
   turn_adapter_off_help_->SetVisible(false);
   AddChildView(turn_adapter_off_help_);
+
+  if (chooser_controller_->ShouldShowFootnoteView()) {
+    footnote_link_ = base::MakeUnique<views::StyledLabel>(help_text_, this);
+    footnote_link_->set_owned_by_client();
+    footnote_link_->AddStyleRange(
+        help_text_range_, views::StyledLabel::RangeStyleInfo::CreateForLink());
+  }
 }
 
 DeviceChooserContentView::~DeviceChooserContentView() {
   chooser_controller_->set_view(nullptr);
   table_view_->set_observer(nullptr);
   table_view_->SetModel(nullptr);
+}
+
+gfx::Size DeviceChooserContentView::GetMinimumSize() const {
+  // Let the dialog shrink when its parent is smaller than the preferred size.
+  return gfx::Size();
 }
 
 void DeviceChooserContentView::Layout() {
@@ -111,14 +123,8 @@ void DeviceChooserContentView::Layout() {
   views::View::Layout();
 }
 
-gfx::Size DeviceChooserContentView::GetPreferredSize() const {
-  constexpr int kHeight = 320;
-  constexpr int kDefaultWidth = 402;
-  int width =
-      ChromeLayoutProvider::Get()->GetDialogPreferredWidth(DialogWidth::MEDIUM);
-  if (!width)
-    width = kDefaultWidth;
-  return gfx::Size(width, kHeight);
+gfx::Size DeviceChooserContentView::CalculatePreferredSize() const {
+  return gfx::Size(402, 320);
 }
 
 int DeviceChooserContentView::RowCount() {
@@ -160,7 +166,8 @@ gfx::ImageSkia DeviceChooserContentView::GetIcon(int row) {
   DCHECK_LT(row, base::checked_cast<int>(num_options));
 
   if (chooser_controller_->IsConnected(row))
-    return gfx::CreateVectorIcon(kBluetoothConnectedIcon, gfx::kChromeIconGrey);
+    return gfx::CreateVectorIcon(vector_icons::kBluetoothConnectedIcon,
+                                 gfx::kChromeIconGrey);
 
   int level = chooser_controller_->GetSignalStrengthLevel(row);
 
@@ -170,7 +177,7 @@ gfx::ImageSkia DeviceChooserContentView::GetIcon(int row) {
   DCHECK_GE(level, 0);
   DCHECK_LT(level, static_cast<int>(arraysize(kSignalStrengthLevelImageIds)));
 
-  return *ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
+  return *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
       kSignalStrengthLevelImageIds[level]);
 }
 
@@ -287,17 +294,6 @@ bool DeviceChooserContentView::IsDialogButtonEnabled(
     ui::DialogButton button) const {
   return button != ui::DIALOG_BUTTON_OK ||
          !table_view_->selection_model().empty();
-}
-
-views::StyledLabel* DeviceChooserContentView::footnote_link() {
-  if (chooser_controller_->ShouldShowFootnoteView()) {
-    footnote_link_ = base::MakeUnique<views::StyledLabel>(help_text_, this);
-    footnote_link_->set_owned_by_client();
-    footnote_link_->AddStyleRange(
-        help_text_range_, views::StyledLabel::RangeStyleInfo::CreateForLink());
-  }
-
-  return footnote_link_.get();
 }
 
 void DeviceChooserContentView::Accept() {

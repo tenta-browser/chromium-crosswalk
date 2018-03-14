@@ -10,9 +10,9 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "components/payments/content/payment_app.mojom.h"
 #include "content/browser/payments/payment_app_database.h"
 #include "content/common/content_export.h"
+#include "third_party/WebKit/public/platform/modules/payments/payment_app.mojom.h"
 
 namespace content {
 
@@ -35,7 +35,7 @@ class ServiceWorkerContextWrapper;
 //   2) Init()
 //   3) Can now call other public methods in this class in any order.
 //     - Can call CreatePaymentManager() on UI thread.
-//     - Can call GetAllManifests() on UI thread.
+//     - Can call GetAllPaymentApps() on UI thread.
 //     - Can call PaymentManagerHadConnectionError() on IO thread.
 //     - Can call payment_app_database() on IO thread.
 //   4) Shutdown()
@@ -54,8 +54,7 @@ class CONTENT_EXPORT PaymentAppContextImpl
 
   // Create a PaymentManager that is owned by this. Call on the UI
   // thread.
-  void CreatePaymentManager(
-      mojo::InterfaceRequest<payments::mojom::PaymentManager> request);
+  void CreatePaymentManager(payments::mojom::PaymentManagerRequest request);
 
   // Called by PaymentManager objects so that they can
   // be deleted. Call on the IO thread.

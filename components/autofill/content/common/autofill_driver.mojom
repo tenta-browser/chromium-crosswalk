@@ -9,9 +9,10 @@ import "mojo/common/string16.mojom";
 import "mojo/common/text_direction.mojom";
 import "mojo/common/time.mojom";
 import "ui/gfx/geometry/mojo/geometry.mojom";
+import "url/mojo/url.mojom";
 
 // There is one instance of this interface per render frame host in the browser
-// process.
+// process. All methods are called by renderer on browser.
 interface AutofillDriver {
   // Notification that forms have been seen that are candidates for
   // filling/submitting by the AutofillManager.
@@ -26,7 +27,13 @@ interface AutofillDriver {
   // Notification that a form field's value has changed.
   TextFieldDidChange(FormData form,
                      FormFieldData field,
+                     gfx.mojom.RectF bounding_box,
                      mojo.common.mojom.TimeTicks timestamp);
+
+  // Notification that a form field has scrolled.
+  TextFieldDidScroll(FormData form,
+                     FormFieldData field,
+                     gfx.mojom.RectF bounding_box);
 
   // Queries the browser for Autofill suggestions for a form input field.
   // |id| is the request ID which is used to map responses correctly.
@@ -40,6 +47,11 @@ interface AutofillDriver {
 
   // Sent when the current form is no longer focused.
   FocusNoLongerOnForm();
+
+  // Notification that a form field is focused.
+  FocusOnFormField(FormData form,
+                   FormFieldData field,
+                   gfx.mojom.RectF bounding_box);
 
   // Sent when a form is filled with Autofill suggestions.
   DidFillAutofillFormData(FormData form, mojo.common.mojom.TimeTicks timestamp);
@@ -71,6 +83,14 @@ interface PasswordManagerDriver {
   // Notification that this password form was submitted by the user.
   PasswordFormSubmitted(PasswordForm password_form);
 
+  // Notification that a user starts typing in password fields and the omnibox
+  // icon with anchored save/update prompt should be available.
+  ShowManualFallbackForSaving(PasswordForm password_form);
+
+  // Notification that there is no user input in password fields and the
+  // save/update prompt anchored to the omnibox icon should be removed.
+  HideManualFallbackForSaving();
+
   // Notification that in-page navigation happened and at this moment we have
   // filled password form. We use this as a signal for successful login.
   InPageNavigation(PasswordForm password_form);
@@ -80,6 +100,10 @@ interface PasswordManagerDriver {
   // become |log|, because those are guaranteed to be sanitized.
   // Never pass a free-form string as |log|.
   RecordSavePasswordProgress(string log);
+
+  // Notification that the user (not JavaScript) modified the value of a
+  // password field.
+  UserModifiedPasswordField();
 
   // Instructs the browser to show a popup with suggestions filled from data
   // associated with |key|. The popup will use |text_direction| for displaying
@@ -96,6 +120,13 @@ interface PasswordManagerDriver {
   ShowNotSecureWarning(mojo.common.mojom.TextDirection text_direction,
                        gfx.mojom.RectF bounds);
 
+
+  // Instructs the browser to show a suggestion, which will redirect the user to
+  // the list of all saved passwords. The popup will use |text_direction| for
+  // displaying text.
+  ShowManualFallbackSuggestion(mojo.common.mojom.TextDirection text_direction,
+                           gfx.mojom.RectF bounds);
+
   // Instructs the browser to presave the form with generated password.
   PresaveGeneratedPassword(PasswordForm password_form);
 
@@ -107,6 +138,11 @@ interface PasswordManagerDriver {
   // forms where password generation should be available.
   SaveGenerationFieldDetectedByClassifier(
       PasswordForm password_form, mojo.common.mojom.String16 generation_field);
+
+  // Checks the safe browsing reputation of the website where the focused
+  // username/password field is on.
+  CheckSafeBrowsingReputation(
+      url.mojom.Url form_action, url.mojom.Url frame_url);
 };
 
 // There is one instance of this interface per web contents in the browser

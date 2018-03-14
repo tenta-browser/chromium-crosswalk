@@ -25,7 +25,7 @@ bool GLOzoneEGL::InitializeGLOneOffPlatform() {
 
 bool GLOzoneEGL::InitializeStaticGLBindings(
     gl::GLImplementation implementation) {
-  if (!LoadGLES2Bindings())
+  if (!LoadGLES2Bindings(implementation))
     return false;
 
   gl::SetGLImplementation(gl::kGLImplementationEGLGLES2);
@@ -38,6 +38,15 @@ bool GLOzoneEGL::InitializeStaticGLBindings(
 void GLOzoneEGL::InitializeDebugGLBindings() {
   gl::InitializeDebugGLBindingsGL();
   gl::InitializeDebugGLBindingsEGL();
+}
+
+void GLOzoneEGL::SetDisabledExtensionsPlatform(
+    const std::string& disabled_extensions) {
+  gl::SetDisabledExtensionsEGL(disabled_extensions);
+}
+
+bool GLOzoneEGL::InitializeExtensionSettingsOneOffPlatform() {
+  return gl::InitializeExtensionSettingsOneOffEGL();
 }
 
 void GLOzoneEGL::ShutdownGL() {

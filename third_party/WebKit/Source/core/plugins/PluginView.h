@@ -29,26 +29,36 @@
 #define PluginView_h
 
 #include "core/CoreExport.h"
-#include "platform/FrameViewBase.h"
+#include "core/frame/EmbeddedContentView.h"
+#include "platform/geometry/IntRect.h"
 #include "platform/scroll/ScrollTypes.h"
+#include "platform/wtf/text/WTFString.h"
 #include "public/platform/WebFocusType.h"
 #include "v8/include/v8.h"
-#include "wtf/text/WTFString.h"
-
-namespace blink {
-class WebLayer;
-}
 
 namespace blink {
 
+class Event;
 class ResourceResponse;
+class WebLayer;
+class WebPluginContainerImpl;
 
-class CORE_EXPORT PluginView : public FrameViewBase {
+// TODO(joelhockey): Remove this class.
+// The only implementation of this class is web/WebPluginContainerImpl.
+// It can be used directly.
+class CORE_EXPORT PluginView : public EmbeddedContentView {
  public:
-  bool IsPluginView() const final { return true; }
-  virtual void SetFocused(bool, WebFocusType) {}
+  virtual ~PluginView() {}
 
-  virtual WebLayer* PlatformLayer() const { return 0; }
+  bool IsPluginView() const override { return true; }
+
+  virtual void SetFocused(bool, WebFocusType) = 0;
+  virtual void HandleEvent(Event*) = 0;
+  virtual void EventListenersRemoved() = 0;
+  virtual bool IsPluginContainer() const { return false; }
+  virtual bool IsErrorplaceholder() { return false; }
+
+  virtual WebLayer* PlatformLayer() const { return nullptr; }
   virtual v8::Local<v8::Object> ScriptableObject(v8::Isolate*) {
     return v8::Local<v8::Object>();
   }
@@ -61,17 +71,17 @@ class CORE_EXPORT PluginView : public FrameViewBase {
   virtual void DidReceiveData(const char*, int) {}
 
   virtual void UpdateAllLifecyclePhases() {}
-  virtual void InvalidatePaintIfNeeded() {}
-
- protected:
-  PluginView() : FrameViewBase() {}
+  virtual void InvalidatePaint() {}
+  virtual WebPluginContainerImpl* GetWebPluginContainer() const {
+    return nullptr;
+  }
 };
 
 DEFINE_TYPE_CASTS(PluginView,
-                  FrameViewBase,
-                  frameViewBase,
-                  frameViewBase->IsPluginView(),
-                  frameViewBase.IsPluginView());
+                  EmbeddedContentView,
+                  embedded_content_view,
+                  embedded_content_view->IsPluginView(),
+                  embedded_content_view.IsPluginView());
 
 }  // namespace blink
 

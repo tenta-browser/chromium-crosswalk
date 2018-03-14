@@ -58,15 +58,16 @@ template <typename StringType1, typename StringType2>
 StringAppend<StringType1, StringType2>::operator String() const {
   if (Is8Bit()) {
     LChar* buffer;
-    RefPtr<StringImpl> result =
+    scoped_refptr<StringImpl> result =
         StringImpl::CreateUninitialized(length(), buffer);
     WriteTo(buffer);
-    return result.Release();
+    return result;
   }
   UChar* buffer;
-  RefPtr<StringImpl> result = StringImpl::CreateUninitialized(length(), buffer);
+  scoped_refptr<StringImpl> result =
+      StringImpl::CreateUninitialized(length(), buffer);
   WriteTo(buffer);
-  return result.Release();
+  return result;
 }
 
 template <typename StringType1, typename StringType2>
@@ -104,7 +105,8 @@ unsigned StringAppend<StringType1, StringType2>::length() const {
   StringTypeAdapter<StringType2> adapter2(string2_);
   unsigned total = adapter1.length() + adapter2.length();
   // Guard against overflow.
-  RELEASE_ASSERT(total >= adapter1.length() && total >= adapter2.length());
+  CHECK_GE(total, adapter1.length());
+  CHECK_GE(total, adapter2.length());
   return total;
 }
 

@@ -30,9 +30,9 @@ AbsoluteOrientationSensor::AbsoluteOrientationSensor(
     : OrientationSensor(execution_context,
                         options,
                         exception_state,
-                        SensorType::ABSOLUTE_ORIENTATION) {}
+                        SensorType::ABSOLUTE_ORIENTATION_QUATERNION) {}
 
-DEFINE_TRACE(AbsoluteOrientationSensor) {
+void AbsoluteOrientationSensor::Trace(blink::Visitor* visitor) {
   OrientationSensor::Trace(visitor);
 }
 

@@ -23,7 +23,6 @@ class BrowserContext;
 }
 
 namespace guest_view {
-class GuestViewBase;
 class GuestViewManager;
 
 // This class filters out incoming GuestView-specific IPC messages from the
@@ -45,6 +44,12 @@ class GuestViewMessageFilter : public content::BrowserMessageFilter {
   // Returns the GuestViewManager for |browser_context_| if one already exists,
   // or creates and returns one for |browser_context_| otherwise.
   virtual GuestViewManager* GetOrCreateGuestViewManager();
+
+  // Returns the GuestViewManager for |browser_context_| if it exists.
+  // Callers consider the renderer to be misbehaving if we don't have a
+  // GuestViewManager at this point, in which case we kill the renderer and
+  // return nullptr.
+  GuestViewManager* GetGuestViewManagerOrKill();
 
   // content::BrowserMessageFilter implementation.
   void OverrideThreadForMessage(const IPC::Message& message,
@@ -74,8 +79,6 @@ class GuestViewMessageFilter : public content::BrowserMessageFilter {
                                const base::DictionaryValue& params);
   void OnViewCreated(int view_instance_id, const std::string& view_type);
   void OnViewGarbageCollected(int view_instance_id);
-
-  void WillAttachCallback(GuestViewBase* guest);
 
   DISALLOW_COPY_AND_ASSIGN(GuestViewMessageFilter);
 };

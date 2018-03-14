@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <set>
 
@@ -17,24 +18,27 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/synchronization/lock.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
-#include "chrome/browser/browsing_data/browsing_data_remover.h"
-#include "chrome/browser/browsing_data/browsing_data_remover_factory.h"
 #include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
 #include "chrome/browser/net/predictor.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/browsing_data_remover.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
@@ -254,7 +258,7 @@ class ConnectionListener
   // This lock protects all the members below, which each are used on both the
   // IO and UI thread. Members declared after the lock are protected by it.
   mutable base::Lock lock_;
-  typedef base::hash_map<uint16_t, SocketStatus> SocketContainer;
+  typedef std::map<uint16_t, SocketStatus> SocketContainer;
   SocketContainer sockets_;
 
   // If |num_accepted_connections_needed_| is non zero, then the object is
@@ -317,10 +321,11 @@ class CrossSitePredictorObserver
 
   void OnPreconnectUrl(
       const GURL& original_url,
-      const GURL& first_party_for_cookies,
+      const GURL& site_for_cookies,
       chrome_browser_net::UrlInfo::ResolutionMotivation motivation,
       int count) override {
     base::AutoLock lock(lock_);
+    preconnect_url_attempts_.insert(original_url);
     if (original_url == cross_site_host_) {
       cross_site_preconnected_ = std::max(cross_site_preconnected_, count);
     } else if (original_url == source_host_) {
@@ -412,6 +417,11 @@ class CrossSitePredictorObserver
     return HasHostBeenLookedUpLocked(url);
   }
 
+  bool HasHostAttemptedToPreconnect(const GURL& url) {
+    base::AutoLock lock(lock_);
+    return base::ContainsKey(preconnect_url_attempts_, url);
+  }
+
   void CheckForWaitingLoop() {
     lock_.AssertAcquired();
     if (waiting_on_dns_.is_empty())
@@ -466,6 +476,7 @@ class CrossSitePredictorObserver
   int cross_site_preconnected_;
   int same_site_preconnected_;
 
+  std::set<GURL> preconnect_url_attempts_;
   std::set<GURL> successful_dns_lookups_;
   std::set<GURL> unsuccessful_dns_lookups_;
   base::RunLoop* dns_run_loop_;
@@ -498,22 +509,25 @@ class PredictorBrowserTest : public InProcessBrowserTest {
                                                   "127.0.0.1", 44);
     rule_based_resolver_proc_->AddRuleWithLatency("gmail.com", "127.0.0.1", 63);
     rule_based_resolver_proc_->AddSimulatedFailure("*.notfound");
+    rule_based_resolver_proc_->AddRuleWithLatency(
+        "slow*.google.com", "127.0.0.1",
+        Predictor::kMaxSpeculativeResolveQueueDelayMs + 300);
     rule_based_resolver_proc_->AddRuleWithLatency("delay.google.com",
                                                   "127.0.0.1", 1000 * 60);
+    scoped_feature_list_.InitAndEnableFeature(features::kPreconnectMore);
   }
+
+  ~PredictorBrowserTest() override {}
 
  protected:
   void SetUpInProcessBrowserTestFixture() override {
     scoped_host_resolver_proc_.reset(new net::ScopedDefaultHostResolverProc(
         rule_based_resolver_proc_.get()));
-    InProcessBrowserTest::SetUpInProcessBrowserTestFixture();
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     command_line->AppendSwitch(
         switches::kEnableExperimentalWebPlatformFeatures);
-    command_line->AppendSwitchASCII(switches::kEnableFeatures,
-                                    "PreconnectMore");
   }
 
   void SetUpOnMainThread() override {
@@ -567,7 +581,7 @@ class PredictorBrowserTest : public InProcessBrowserTest {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     content::BrowserThread::PostTask(
         content::BrowserThread::IO, FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &PredictorBrowserTest::StartInterceptingHostWithCreateJobCallback,
             cross_site_test_server()->base_url(),
             base::Bind(&CreateEmptyBodyRequestJob)));
@@ -577,8 +591,8 @@ class PredictorBrowserTest : public InProcessBrowserTest {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     content::BrowserThread::PostTask(
         content::BrowserThread::IO, FROM_HERE,
-        base::Bind(&PredictorBrowserTest::StopInterceptingHost,
-                   cross_site_test_server()->base_url()));
+        base::BindOnce(&PredictorBrowserTest::StopInterceptingHost,
+                       cross_site_test_server()->base_url()));
   }
 
   void TearDownOnMainThread() override {
@@ -597,22 +611,22 @@ class PredictorBrowserTest : public InProcessBrowserTest {
   }
 
   void TearDownInProcessBrowserTestFixture() override {
-    InProcessBrowserTest::TearDownInProcessBrowserTestFixture();
     scoped_host_resolver_proc_.reset();
   }
 
   void LearnAboutInitialNavigation(const GURL& url) {
-    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                            base::Bind(&Predictor::LearnAboutInitialNavigation,
-                                       base::Unretained(predictor()), url));
+    BrowserThread::PostTask(
+        BrowserThread::IO, FROM_HERE,
+        base::BindOnce(&Predictor::LearnAboutInitialNavigation,
+                       base::Unretained(predictor()), url));
     content::RunAllPendingInMessageLoop(BrowserThread::IO);
   }
 
   void LearnFromNavigation(const GURL& referring_url, const GURL& target_url) {
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
-        base::Bind(&Predictor::LearnFromNavigation,
-                   base::Unretained(predictor()), referring_url, target_url));
+    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                            base::BindOnce(&Predictor::LearnFromNavigation,
+                                           base::Unretained(predictor()),
+                                           referring_url, target_url));
     content::RunAllPendingInMessageLoop(BrowserThread::IO);
   }
 
@@ -637,8 +651,8 @@ class PredictorBrowserTest : public InProcessBrowserTest {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&PredictorBrowserTest::FloodResolveRequests,
-                   base::Unretained(this), names));
+        base::BindOnce(&PredictorBrowserTest::FloodResolveRequests,
+                       base::Unretained(this), names));
   }
 
   void FloodResolveRequests(const std::vector<GURL>& names) {
@@ -663,8 +677,9 @@ class PredictorBrowserTest : public InProcessBrowserTest {
     base::RunLoop run_loop;
     BrowserThread::PostTaskAndReply(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&PredictorBrowserTest::InstallPredictorObserverOnIOThread,
-                   base::Unretained(this), base::Unretained(predictor())),
+        base::BindOnce(
+            &PredictorBrowserTest::InstallPredictorObserverOnIOThread,
+            base::Unretained(this), base::Unretained(predictor())),
         run_loop.QuitClosure());
     run_loop.Run();
   }
@@ -692,8 +707,8 @@ class PredictorBrowserTest : public InProcessBrowserTest {
     base::RunLoop run_loop;
     BrowserThread::PostTaskAndReply(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&PredictorBrowserTest::FlushClientSockets,
-                   base::Unretained(this)),
+        base::BindOnce(&PredictorBrowserTest::FlushClientSockets,
+                       base::Unretained(this)),
         run_loop.QuitClosure());
     run_loop.Run();
   }
@@ -718,31 +733,46 @@ class PredictorBrowserTest : public InProcessBrowserTest {
   }
 
   // This method verifies that |url| is in the predictor's |results_| map. This
-  // is used for pending lookups, and lookups performed before the observer is
-  // attached.
-  void ExpectUrlRequestedFromPredictorOnUIThread(const GURL& url) {
+  // is used for pending lookups.
+  void ExpectUrlLookupIsInProgressOnUIThread(const GURL& url) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&PredictorBrowserTest::ExpectUrlRequestedFromPredictor,
-                   base::Unretained(this), url));
+        base::BindOnce(&PredictorBrowserTest::ExpectUrlLookupIsInProgress,
+                       base::Unretained(this), url));
   }
 
-  void ExpectUrlRequestedFromPredictor(const GURL& url) {
+  void ExpectUrlLookupIsInProgress(const GURL& url) {
+    DCHECK_CURRENTLY_ON(BrowserThread::IO);
     EXPECT_TRUE(base::ContainsKey(predictor()->results_, url));
+  }
+
+  // This method verifies that the predictor's |results_| map is empty, i.e.
+  // there are no lookups in progress.
+  void ExpectNoLookupsAreInProgressOnUIThread() {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    BrowserThread::PostTask(
+        BrowserThread::IO, FROM_HERE,
+        base::BindOnce(&PredictorBrowserTest::ExpectNoLookupsAreInProgress,
+                       base::Unretained(this)));
+  }
+
+  void ExpectNoLookupsAreInProgress() {
+    DCHECK_CURRENTLY_ON(BrowserThread::IO);
+    EXPECT_TRUE(predictor()->results_.empty());
   }
 
   void DiscardAllResultsOnUIThread() {
     BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                            base::Bind(&Predictor::DiscardAllResults,
-                                       base::Unretained(predictor())));
+                            base::BindOnce(&Predictor::DiscardAllResults,
+                                           base::Unretained(predictor())));
   }
 
   void ExpectValidPeakPendingLookupsOnUI(size_t num_names_requested) {
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&PredictorBrowserTest::ExpectValidPeakPendingLookups,
-                   base::Unretained(this), num_names_requested));
+        base::BindOnce(&PredictorBrowserTest::ExpectValidPeakPendingLookups,
+                       base::Unretained(this), num_names_requested));
   }
 
   void ExpectValidPeakPendingLookups(size_t num_names_requested) {
@@ -775,6 +805,8 @@ class PredictorBrowserTest : public InProcessBrowserTest {
     EXPECT_TRUE(result);
   }
 
+  base::test::ScopedFeatureList scoped_feature_list_;
+
   const GURL startup_url_;
   const GURL referring_url_;
   const GURL target_url_;
@@ -788,6 +820,8 @@ class PredictorBrowserTest : public InProcessBrowserTest {
   std::unique_ptr<net::EmbeddedTestServer> cross_site_test_server_;
   std::unique_ptr<CrossSitePredictorObserver> observer_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+
+  DISALLOW_COPY_AND_ASSIGN(PredictorBrowserTest);
 };
 
 IN_PROC_BROWSER_TEST_F(PredictorBrowserTest, SingleLookupTest) {
@@ -800,6 +834,7 @@ IN_PROC_BROWSER_TEST_F(PredictorBrowserTest, SingleLookupTest) {
   observer()->WaitUntilHostLookedUp(url);
   EXPECT_TRUE(observer()->HostFound(url));
   ExpectValidPeakPendingLookupsOnUI(1u);
+  ExpectNoLookupsAreInProgressOnUIThread();
 }
 
 IN_PROC_BROWSER_TEST_F(PredictorBrowserTest, ConcurrentLookupTest) {
@@ -818,6 +853,7 @@ IN_PROC_BROWSER_TEST_F(PredictorBrowserTest, ConcurrentLookupTest) {
   ExpectFoundUrls(found_names, not_found_names);
   ExpectValidPeakPendingLookupsOnUI(found_names.size() +
                                     not_found_names.size());
+  ExpectNoLookupsAreInProgressOnUIThread();
 }
 
 IN_PROC_BROWSER_TEST_F(PredictorBrowserTest, MassiveConcurrentLookupTest) {
@@ -832,6 +868,7 @@ IN_PROC_BROWSER_TEST_F(PredictorBrowserTest, MassiveConcurrentLookupTest) {
   WaitUntilHostsLookedUp(not_found_names);
   ExpectFoundUrls(std::vector<GURL>(), not_found_names);
   ExpectValidPeakPendingLookupsOnUI(not_found_names.size());
+  ExpectNoLookupsAreInProgressOnUIThread();
 }
 
 IN_PROC_BROWSER_TEST_F(PredictorBrowserTest,
@@ -846,8 +883,30 @@ IN_PROC_BROWSER_TEST_F(PredictorBrowserTest,
       base::TimeDelta::FromMilliseconds(500));
   base::RunLoop().Run();
 
-  ExpectUrlRequestedFromPredictor(delayed_url);
+  ExpectUrlLookupIsInProgressOnUIThread(delayed_url);
   EXPECT_FALSE(observer()->HasHostBeenLookedUp(delayed_url));
+}
+
+IN_PROC_BROWSER_TEST_F(PredictorBrowserTest, CongestionControlTest) {
+  const int queue_max_size = Predictor::kMaxSpeculativeParallelResolves;
+  std::vector<GURL> slow_names;
+  std::vector<GURL> recycled_names;
+  for (int i = 0; i < queue_max_size; ++i)
+    slow_names.emplace_back(base::StringPrintf("http://slow%d.google.com", i));
+  for (int i = queue_max_size; i < 5; ++i) {
+    recycled_names.emplace_back(
+        base::StringPrintf("http://host%d.notfound", i));
+  }
+
+  FloodResolveRequestsOnUIThread(slow_names);
+  FloodResolveRequestsOnUIThread(recycled_names);
+
+  WaitUntilHostsLookedUp(slow_names);
+  ExpectFoundUrls(slow_names, {});
+  for (const auto& name : recycled_names)
+    EXPECT_FALSE(observer()->HasHostBeenLookedUp(name));
+  ExpectValidPeakPendingLookupsOnUI(slow_names.size());
+  ExpectNoLookupsAreInProgressOnUIThread();
 }
 
 IN_PROC_BROWSER_TEST_F(PredictorBrowserTest, SimplePreconnectOne) {
@@ -872,6 +931,18 @@ IN_PROC_BROWSER_TEST_F(PredictorBrowserTest, SimplePreconnectFour) {
       UrlInfo::ResolutionMotivation::EARLY_LOAD_MOTIVATED,
       false /* allow credentials */, 4);
   connection_listener_->WaitForAcceptedConnectionsOnUI(4u);
+}
+
+// Regression test for crbug.com/721981.
+IN_PROC_BROWSER_TEST_F(PredictorBrowserTest, PreconnectNonHttpScheme) {
+  GURL url("chrome-native://dummyurl");
+  predictor()->PreconnectUrlAndSubresources(url, GURL());
+  base::RunLoop().RunUntilIdle();
+  // Since |url| is non-HTTP(s) scheme, Predictor will canonicalize it to an
+  // empty url. Make sure that there is no attempt to preconnect |url| or an
+  // empty url.
+  EXPECT_FALSE(observer()->HasHostAttemptedToPreconnect(url));
+  EXPECT_FALSE(observer()->HasHostAttemptedToPreconnect(GURL()));
 }
 
 // Test the html test harness used to initiate cross site fetches. These
@@ -970,7 +1041,7 @@ IN_PROC_BROWSER_TEST_F(PredictorBrowserTest, DontPredictBasedOnSubresources) {
   // embedded_test_server_.
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &PredictorBrowserTest::StartInterceptingHostWithCreateJobCallback,
           redirector_url,
           base::Bind(
@@ -1408,11 +1479,11 @@ IN_PROC_BROWSER_TEST_F(PredictorBrowserTest, ClearData) {
   EXPECT_THAT(cleared_referral_list, HasSubstr(target_url_.host()));
 
   // Clear cache which should clear all prefs.
-  BrowsingDataRemover* remover =
-      BrowsingDataRemoverFactory::GetForBrowserContext(browser()->profile());
+  content::BrowsingDataRemover* remover =
+      content::BrowserContext::GetBrowsingDataRemover(browser()->profile());
   remover->Remove(base::Time(), base::Time::Max(),
                   ChromeBrowsingDataRemoverDelegate::DATA_TYPE_HISTORY,
-                  BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB);
+                  content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB);
 
   GetListFromPrefsAsString(prefs::kDnsPrefetchingStartupList,
                            &cleared_startup_list);
@@ -1439,7 +1510,7 @@ IN_PROC_BROWSER_TEST_F(PredictorBrowserTest, DoNotEvictRecentlyUsed) {
   base::RunLoop run_loop;
   BrowserThread::PostTaskAndReply(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&Predictor::PredictorGetHtmlInfo, predictor(), &html),
+      base::BindOnce(&Predictor::PredictorGetHtmlInfo, predictor(), &html),
       run_loop.QuitClosure());
   run_loop.Run();
 

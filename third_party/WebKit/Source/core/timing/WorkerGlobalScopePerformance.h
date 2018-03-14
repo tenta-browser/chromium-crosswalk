@@ -31,6 +31,7 @@
 #ifndef WorkerGlobalScopePerformance_h
 #define WorkerGlobalScopePerformance_h
 
+#include "core/CoreExport.h"
 #include "core/timing/WorkerPerformance.h"
 #include "core/workers/WorkerGlobalScope.h"
 #include "platform/Supplementable.h"
@@ -40,7 +41,7 @@ namespace blink {
 
 class WorkerGlobalScope;
 
-class WorkerGlobalScopePerformance final
+class CORE_EXPORT WorkerGlobalScopePerformance final
     : public GarbageCollected<WorkerGlobalScopePerformance>,
       public Supplement<WorkerGlobalScope> {
   USING_GARBAGE_COLLECTED_MIXIN(WorkerGlobalScopePerformance);
@@ -50,7 +51,8 @@ class WorkerGlobalScopePerformance final
 
   static WorkerPerformance* performance(WorkerGlobalScope&);
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*);
+  void TraceWrappers(const ScriptWrappableVisitor*) const override;
 
  private:
   explicit WorkerGlobalScopePerformance(WorkerGlobalScope&);
@@ -58,7 +60,7 @@ class WorkerGlobalScopePerformance final
   WorkerPerformance* performance(WorkerGlobalScope*);
   static const char* SupplementName();
 
-  Member<WorkerPerformance> performance_;
+  TraceWrapperMember<WorkerPerformance> performance_;
 };
 
 }  // namespace blink

@@ -25,6 +25,7 @@
 
 #include "core/layout/LayoutTableRow.h"
 
+#include "build/build_config.h"
 #include "core/layout/LayoutTestHelper.h"
 
 namespace blink {
@@ -33,12 +34,12 @@ namespace {
 
 class LayoutTableRowDeathTest : public RenderingTest {
  protected:
-  virtual void SetUp() {
+  void SetUp() override {
     RenderingTest::SetUp();
     row_ = LayoutTableRow::CreateAnonymous(&GetDocument());
   }
 
-  virtual void TearDown() { row_->Destroy(); }
+  void TearDown() override { row_->Destroy(); }
 
   LayoutTableRow* row_;
 };
@@ -54,11 +55,8 @@ TEST_F(LayoutTableRowDeathTest, CanSetRowToMaxRowIndex) {
   EXPECT_EQ(kMaxRowIndex, row_->RowIndex());
 }
 
-// FIXME: Re-enable these tests once ASSERT_DEATH is supported for Android.
-// See: https://bugs.webkit.org/show_bug.cgi?id=74089
-// TODO(dgrogan): These tests started flaking on Mac try bots around 2016-07-28.
-// https://crbug.com/632816
-#if !OS(ANDROID) && !OS(MACOSX)
+// Death tests don't work properly on Android.
+#if defined(GTEST_HAS_DEATH_TEST) && !defined(OS_ANDROID)
 
 TEST_F(LayoutTableRowDeathTest, CrashIfRowOverflowOnSetting) {
   ASSERT_DEATH(row_->SetRowIndex(kMaxRowIndex + 1), "");
@@ -79,34 +77,37 @@ class LayoutTableRowTest : public RenderingTest {
 
 TEST_F(LayoutTableRowTest,
        BackgroundIsKnownToBeOpaqueWithLayerAndCollapsedBorder) {
-  SetBodyInnerHTML(
-      "<table style='border-collapse: collapse'>"
-      "  <tr id='row' style='will-change: transform;"
-      "      background-color: blue'>"
-      "    <td>Cell</td>"
-      "  </tr>"
-      "</table>");
+  SetBodyInnerHTML(R"HTML(
+    <table style='border-collapse: collapse'>
+      <tr id='row' style='will-change: transform;
+          background-color: blue'>
+        <td>Cell</td>
+      </tr>
+    </table>
+  )HTML");
 
   EXPECT_FALSE(GetRowByElementId("row")->BackgroundIsKnownToBeOpaqueInRect(
       LayoutRect(0, 0, 1, 1)));
 }
 
 TEST_F(LayoutTableRowTest, BackgroundIsKnownToBeOpaqueWithBorderSpacing) {
-  SetBodyInnerHTML(
-      "<table style='border-spacing: 10px'>"
-      "  <tr id='row' style='background-color: blue'><td>Cell</td></tr>"
-      "</table>");
+  SetBodyInnerHTML(R"HTML(
+    <table style='border-spacing: 10px'>
+      <tr id='row' style='background-color: blue'><td>Cell</td></tr>
+    </table>
+  )HTML");
 
   EXPECT_FALSE(GetRowByElementId("row")->BackgroundIsKnownToBeOpaqueInRect(
       LayoutRect(0, 0, 1, 1)));
 }
 
 TEST_F(LayoutTableRowTest, BackgroundIsKnownToBeOpaqueWithEmptyCell) {
-  SetBodyInnerHTML(
-      "<table style='border-spacing: 10px'>"
-      "  <tr id='row' style='background-color: blue'><td>Cell</td></tr>"
-      "  <tr style='background-color: blue'><td>Cell</td><td>Cell</td></tr>"
-      "</table>");
+  SetBodyInnerHTML(R"HTML(
+    <table style='border-spacing: 10px'>
+      <tr id='row' style='background-color: blue'><td>Cell</td></tr>
+      <tr style='background-color: blue'><td>Cell</td><td>Cell</td></tr>
+    </table>
+  )HTML");
 
   EXPECT_FALSE(GetRowByElementId("row")->BackgroundIsKnownToBeOpaqueInRect(
       LayoutRect(0, 0, 1, 1)));
@@ -121,24 +122,25 @@ TEST_F(LayoutTableRowTest, VisualOverflow) {
   // | F |   |   |   |  row3
   // +---+   +---+---+
   // Cell D has an outline which creates overflow.
-  SetBodyInnerHTML(
-      "<style>"
-      "  td { width: 100px; height: 100px; padding: 0 }"
-      "</style>"
-      "<table style='border-spacing: 10px'>"
-      "  <tr id='row1'>"
-      "    <td>A</td>"
-      "    <td rowspan='2'>B</td>"
-      "    <td rowspan='3'>C</td>"
-      "  </tr>"
-      "  <tr id='row2'>"
-      "    <td style='outline: 10px solid blue'>D</td>"
-      "    <td rowspan='2'>E</td>"
-      "  </tr>"
-      "  <tr id='row3'>"
-      "    <td>F</td>"
-      "  </tr>"
-      "</table>");
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      td { width: 100px; height: 100px; padding: 0 }
+    </style>
+    <table style='border-spacing: 10px'>
+      <tr id='row1'>
+        <td>A</td>
+        <td rowspan='2'>B</td>
+        <td rowspan='3'>C</td>
+      </tr>
+      <tr id='row2'>
+        <td style='outline: 10px solid blue'>D</td>
+        <td rowspan='2'>E</td>
+      </tr>
+      <tr id='row3'>
+        <td>F</td>
+      </tr>
+    </table>
+  )HTML");
 
   auto* row1 = GetRowByElementId("row1");
   EXPECT_EQ(LayoutRect(120, 0, 210, 320), row1->ContentsVisualOverflowRect());
@@ -153,16 +155,49 @@ TEST_F(LayoutTableRowTest, VisualOverflow) {
   EXPECT_EQ(LayoutRect(0, 0, 450, 100), row3->SelfVisualOverflowRect());
 }
 
+TEST_F(LayoutTableRowTest, VisualOverflowWithCollapsedBorders) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      table { border-collapse: collapse }
+      td { border: 0px solid blue; padding: 0 }
+      div { width: 100px; height: 100px }
+    </style>
+    <table>
+      <tr id='row'>
+        <td style='border-bottom-width: 10px;
+            outline: 3px solid blue'><div></div></td>
+        <td style='border-width: 3px 15px'><div></div></td>
+      </tr>
+    </table>
+  )HTML");
+
+  auto* row = GetRowByElementId("row");
+
+  // The row's self visual overflow covers the collapsed borders.
+  LayoutRect expected_self_visual_overflow = row->BorderBoxRect();
+  expected_self_visual_overflow.ExpandEdges(LayoutUnit(1), LayoutUnit(8),
+                                            LayoutUnit(5), LayoutUnit(0));
+  EXPECT_EQ(expected_self_visual_overflow, row->SelfVisualOverflowRect());
+
+  // The row's visual overflow covers self visual overflow and visual overflows
+  // of all cells.
+  LayoutRect expected_visual_overflow = row->BorderBoxRect();
+  expected_visual_overflow.ExpandEdges(LayoutUnit(3), LayoutUnit(8),
+                                       LayoutUnit(5), LayoutUnit(3));
+  EXPECT_EQ(expected_visual_overflow, row->VisualOverflowRect());
+}
+
 TEST_F(LayoutTableRowTest, LayoutOverflow) {
-  SetBodyInnerHTML(
-      "<table style='border-spacing: 0'>"
-      "  <tr id='row'>"
-      "    <td style='100px; height: 100px; padding: 0'>"
-      "      <div style='position: relative; top: 50px; left: 50px;"
-      "          width: 100px; height: 100px'></div>"
-      "    </td>"
-      "  </tr>"
-      "</table>");
+  SetBodyInnerHTML(R"HTML(
+    <table style='border-spacing: 0'>
+      <tr id='row'>
+        <td style='100px; height: 100px; padding: 0'>
+          <div style='position: relative; top: 50px; left: 50px;
+              width: 100px; height: 100px'></div>
+        </td>
+      </tr>
+    </table>
+  )HTML");
 
   EXPECT_EQ(LayoutRect(0, 0, 150, 150),
             GetRowByElementId("row")->LayoutOverflowRect());

@@ -19,7 +19,7 @@
 #include "media/base/test_helpers.h"
 #include "media/filters/ffmpeg_demuxer.h"
 #include "media/filters/file_data_source.h"
-#include "media/filters/h264_parser.h"
+#include "media/video/h264_parser.h"
 
 namespace chromecast {
 namespace media {
@@ -313,13 +313,13 @@ DemuxResult FFmpegDemuxForTest(const base::FilePath& filepath,
   ::media::FileDataSource data_source;
   CHECK(data_source.Initialize(filepath));
 
-  ::media::FFmpegDemuxer demuxer(
-      base::ThreadTaskRunnerHandle::Get(), &data_source,
-      base::Bind(&OnEncryptedMediaInitData), base::Bind(&OnMediaTracksUpdated),
-      new ::media::MediaLog());
+  ::media::MediaLog media_log;
+  ::media::FFmpegDemuxer demuxer(base::ThreadTaskRunnerHandle::Get(),
+                                 &data_source,
+                                 base::Bind(&OnEncryptedMediaInitData),
+                                 base::Bind(&OnMediaTracksUpdated), &media_log);
   ::media::WaitableMessageLoopEvent init_event;
-  demuxer.Initialize(&fake_demuxer_host,
-                     init_event.GetPipelineStatusCB(),
+  demuxer.Initialize(&fake_demuxer_host, init_event.GetPipelineStatusCB(),
                      false);
   init_event.RunAndWaitForStatus(::media::PIPELINE_OK);
 
@@ -327,6 +327,7 @@ DemuxResult FFmpegDemuxForTest(const base::FilePath& filepath,
       audio ? ::media::DemuxerStream::AUDIO : ::media::DemuxerStream::VIDEO;
   ::media::DemuxerStream* stream = demuxer.GetFirstStream(stream_type);
   CHECK(stream);
+  stream->EnableBitstreamConverter();
 
   DemuxResult demux_result;
   if (audio) {

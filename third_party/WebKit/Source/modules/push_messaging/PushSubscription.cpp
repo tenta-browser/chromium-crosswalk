@@ -46,6 +46,15 @@ PushSubscription::PushSubscription(
 
 PushSubscription::~PushSubscription() {}
 
+DOMTimeStamp PushSubscription::expirationTime(bool& out_is_null) const {
+  // This attribute reflects the time at which the subscription will expire,
+  // which is not relevant to this implementation yet as subscription refreshes
+  // are not supported.
+  out_is_null = true;
+
+  return 0;
+}
+
 DOMArrayBuffer* PushSubscription::getKey(const AtomicString& name) const {
   if (name == "p256dh")
     return p256dh_;
@@ -64,7 +73,7 @@ ScriptPromise PushSubscription::unsubscribe(ScriptState* script_state) {
 
   web_push_provider->Unsubscribe(
       service_worker_registration_->WebRegistration(),
-      WTF::MakeUnique<CallbackPromiseAdapter<bool, PushError>>(resolver));
+      std::make_unique<CallbackPromiseAdapter<bool, PushError>>(resolver));
   return promise;
 }
 
@@ -73,6 +82,7 @@ ScriptValue PushSubscription::toJSONForBinding(ScriptState* script_state) {
 
   V8ObjectBuilder result(script_state);
   result.AddString("endpoint", endpoint());
+  result.AddNull("expirationTime");
 
   V8ObjectBuilder keys(script_state);
   keys.Add("p256dh",
@@ -85,11 +95,12 @@ ScriptValue PushSubscription::toJSONForBinding(ScriptState* script_state) {
   return result.GetScriptValue();
 }
 
-DEFINE_TRACE(PushSubscription) {
+void PushSubscription::Trace(blink::Visitor* visitor) {
   visitor->Trace(options_);
   visitor->Trace(p256dh_);
   visitor->Trace(auth_);
   visitor->Trace(service_worker_registration_);
+  ScriptWrappable::Trace(visitor);
 }
 
 }  // namespace blink

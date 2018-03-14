@@ -17,7 +17,7 @@
 #include "content/renderer/p2p/empty_network_manager.h"
 #include "media/base/media_permission.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/webrtc/base/ipaddress.h"
+#include "third_party/webrtc/rtc_base/ipaddress.h"
 
 using NetworkList = rtc::NetworkManager::NetworkList;
 
@@ -99,6 +99,8 @@ class MockMediaPermission : public media::MediaPermission {
       camera_callback_ = permission_status_cb;
     }
   }
+
+  bool IsEncryptedMediaEnabled() override { return true; }
 
   void SetMicPermission(bool granted) {
     if (mic_callback_.is_null())

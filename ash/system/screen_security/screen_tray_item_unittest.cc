@@ -9,8 +9,7 @@
 #include "ash/system/screen_security/screen_share_tray_item.h"
 #include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/system_tray_notifier.h"
-#include "ash/system/tray/tray_item_view.h"
-#include "ash/test/ash_test.h"
+#include "ash/test/ash_test_base.h"
 #include "base/callback.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -36,20 +35,15 @@ void ClickViewCenter(views::View* view) {
       ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE));
 }
 
-class ScreenTrayItemTest : public AshTest {
+class ScreenTrayItemTest : public AshTestBase {
  public:
   ScreenTrayItemTest() : tray_item_(NULL), stop_callback_hit_count_(0) {}
-  ~ScreenTrayItemTest() override {}
+  ~ScreenTrayItemTest() override = default;
 
   ScreenTrayItem* tray_item() { return tray_item_; }
   void set_tray_item(ScreenTrayItem* tray_item) { tray_item_ = tray_item; }
 
   int stop_callback_hit_count() const { return stop_callback_hit_count_; }
-
-  void SetUp() override {
-    AshTest::SetUp();
-    TrayItemView::DisableAnimationsForTest();
-  }
 
   void StartSession() {
     tray_item_->Start(
@@ -69,8 +63,8 @@ class ScreenTrayItemTest : public AshTest {
 
 class ScreenCaptureTest : public ScreenTrayItemTest {
  public:
-  ScreenCaptureTest() {}
-  ~ScreenCaptureTest() override {}
+  ScreenCaptureTest() = default;
+  ~ScreenCaptureTest() override = default;
 
   void SetUp() override {
     ScreenTrayItemTest::SetUp();
@@ -87,8 +81,8 @@ class ScreenCaptureTest : public ScreenTrayItemTest {
 
 class ScreenShareTest : public ScreenTrayItemTest {
  public:
-  ScreenShareTest() {}
-  ~ScreenShareTest() override {}
+  ScreenShareTest() = default;
+  ~ScreenShareTest() override = default;
 
   void SetUp() override {
     ScreenTrayItemTest::SetUp();
@@ -192,7 +186,7 @@ void TestSystemTrayInteraction(ScreenTrayItemTest* test) {
   EXPECT_FALSE(tray_item->tray_view()->visible());
 
   std::vector<SystemTrayItem*> tray_items =
-      AshTest::GetPrimarySystemTray()->GetTrayItems();
+      AshTestBase::GetPrimarySystemTray()->GetTrayItems();
   EXPECT_NE(std::find(tray_items.begin(), tray_items.end(), tray_item),
             tray_items.end());
 
@@ -200,16 +194,18 @@ void TestSystemTrayInteraction(ScreenTrayItemTest* test) {
   EXPECT_TRUE(tray_item->tray_view()->visible());
 
   // The default view should be created in a new bubble.
-  AshTest::GetPrimarySystemTray()->ShowDefaultView(BUBBLE_CREATE_NEW);
+  AshTestBase::GetPrimarySystemTray()->ShowDefaultView(
+      BUBBLE_CREATE_NEW, false /* show_by_click */);
   EXPECT_TRUE(tray_item->default_view());
-  AshTest::GetPrimarySystemTray()->CloseSystemBubble();
+  AshTestBase::GetPrimarySystemTray()->CloseBubble();
   EXPECT_FALSE(tray_item->default_view());
 
   test->StopSession();
   EXPECT_FALSE(tray_item->tray_view()->visible());
 
   // The default view should not be visible because session is stopped.
-  AshTest::GetPrimarySystemTray()->ShowDefaultView(BUBBLE_CREATE_NEW);
+  AshTestBase::GetPrimarySystemTray()->ShowDefaultView(
+      BUBBLE_CREATE_NEW, false /* show_by_click */);
   EXPECT_FALSE(tray_item->default_view()->visible());
 }
 

@@ -4,17 +4,19 @@
 
 #include "extensions/renderer/scoped_web_frame.h"
 
+#include "third_party/WebKit/common/page/page_visibility_state.mojom.h"
 #include "third_party/WebKit/public/web/WebHeap.h"
 
 namespace extensions {
 
-ScopedWebFrame::ScopedWebFrame() : view_(nullptr), frame_(nullptr) {
-  view_ =
-      blink::WebView::Create(nullptr, blink::kWebPageVisibilityStateVisible);
-  frame_ = blink::WebLocalFrame::Create(blink::WebTreeScopeType::kDocument,
-                                        &frame_client_, nullptr, nullptr);
-  view_->SetMainFrame(frame_);
-}
+ScopedWebFrame::ScopedWebFrame()
+    : view_(
+          blink::WebView::Create(nullptr,
+                                 blink::mojom::PageVisibilityState::kVisible)),
+      frame_(blink::WebLocalFrame::CreateMainFrame(view_,
+                                                   &frame_client_,
+                                                   nullptr,
+                                                   nullptr)) {}
 
 ScopedWebFrame::~ScopedWebFrame() {
   view_->Close();

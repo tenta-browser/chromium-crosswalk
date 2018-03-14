@@ -8,13 +8,12 @@
 Sources.ObjectEventListenersSidebarPane = class extends UI.VBox {
   constructor() {
     super();
-    this.element.classList.add('event-listeners-sidebar-pane');
-
     this._refreshButton = new UI.ToolbarButton(Common.UIString('Refresh'), 'largeicon-refresh');
     this._refreshButton.addEventListener(UI.ToolbarButton.Events.Click, this._refreshClick, this);
     this._refreshButton.setEnabled(false);
 
-    this._eventListenersView = new EventListeners.EventListenersView(this.element, this.update.bind(this));
+    this._eventListenersView = new EventListeners.EventListenersView(this.update.bind(this));
+    this._eventListenersView.show(this.element);
   }
 
   /**
@@ -63,28 +62,22 @@ Sources.ObjectEventListenersSidebarPane = class extends UI.VBox {
 
   /**
    * @param {!SDK.ExecutionContext} executionContext
-   * @return {!Promise<!SDK.RemoteObject>} object
+   * @return {!Promise<?SDK.RemoteObject>} object
    */
   _windowObjectInContext(executionContext) {
-    return new Promise(windowObjectInContext);
-    /**
-     * @param {function(?)} fulfill
-     * @param {function(*)} reject
-     */
-    function windowObjectInContext(fulfill, reject) {
-      executionContext.evaluate(
-          'self', Sources.ObjectEventListenersSidebarPane._objectGroupName, false, true, false, false, false,
-          mycallback);
-      /**
-       * @param {?SDK.RemoteObject} object
-       */
-      function mycallback(object) {
-        if (object)
-          fulfill(object);
-        else
-          reject(null);
-      }
-    }
+    return executionContext
+        .evaluate(
+            {
+              expression: 'self',
+              objectGroup: Sources.ObjectEventListenersSidebarPane._objectGroupName,
+              includeCommandLineAPI: false,
+              silent: true,
+              returnByValue: false,
+              generatePreview: false
+            },
+            /* userGesture */ false,
+            /* awaitPromise */ false)
+        .then(result => result.object && !result.exceptionDetails ? result.object : null);
   }
 
   /**

@@ -13,7 +13,6 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -61,7 +60,7 @@ class CloseResultWaiter {
     result_ = result;
     have_result_ = true;
     if (waiting_for_result_)
-      base::MessageLoop::current()->QuitWhenIdle();
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
  private:
@@ -85,7 +84,7 @@ class MockHttpStream : public HttpStream {
         is_complete_(false),
         can_reuse_connection_(true),
         weak_factory_(this) {}
-  ~MockHttpStream() override {}
+  ~MockHttpStream() override = default;
 
   // HttpStream implementation.
   int InitializeStream(const HttpRequestInfo* request_info,
@@ -159,6 +158,8 @@ class MockHttpStream : public HttpStream {
   void set_can_reuse_connection(bool can_reuse_connection) {
     can_reuse_connection_ = can_reuse_connection;
   }
+
+  void SetRequestHeadersCallback(RequestHeadersCallback callback) override {}
 
  private:
   int ReadResponseBodyImpl(IOBuffer* buf, int buf_len);
@@ -242,18 +243,18 @@ class HttpResponseBodyDrainerTest : public testing::Test {
         mock_stream_(new MockHttpStream(&result_waiter_)),
         drainer_(new HttpResponseBodyDrainer(mock_stream_)) {}
 
-  ~HttpResponseBodyDrainerTest() override {}
+  ~HttpResponseBodyDrainerTest() override = default;
 
   HttpNetworkSession* CreateNetworkSession() {
-    HttpNetworkSession::Params params;
-    params.proxy_service = proxy_service_.get();
-    params.ssl_config_service = ssl_config_service_.get();
-    params.http_server_properties = http_server_properties_.get();
-    params.cert_verifier = &cert_verifier_;
-    params.transport_security_state = &transport_security_state_;
-    params.cert_transparency_verifier = &ct_verifier_;
-    params.ct_policy_enforcer = &ct_policy_enforcer_;
-    return new HttpNetworkSession(params);
+    HttpNetworkSession::Context context;
+    context.proxy_service = proxy_service_.get();
+    context.ssl_config_service = ssl_config_service_.get();
+    context.http_server_properties = http_server_properties_.get();
+    context.cert_verifier = &cert_verifier_;
+    context.transport_security_state = &transport_security_state_;
+    context.cert_transparency_verifier = &ct_verifier_;
+    context.ct_policy_enforcer = &ct_policy_enforcer_;
+    return new HttpNetworkSession(HttpNetworkSession::Params(), context);
   }
 
   std::unique_ptr<ProxyService> proxy_service_;

@@ -5,6 +5,8 @@
 #include "chrome/browser/installable/installable_manager.h"
 
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
+#include "chrome/common/chrome_features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/WebDisplayMode.h"
 
@@ -12,7 +14,8 @@ using IconPurpose = content::Manifest::Icon::IconPurpose;
 
 class InstallableManagerUnitTest : public testing::Test {
  public:
-  InstallableManagerUnitTest() : manager_(new InstallableManager(nullptr)) { }
+  InstallableManagerUnitTest()
+      : manager_(base::MakeUnique<InstallableManager>(nullptr)) {}
 
  protected:
   static base::NullableString16 ToNullableUTF16(const std::string& str) {
@@ -39,12 +42,12 @@ class InstallableManagerUnitTest : public testing::Test {
 
   bool IsManifestValid(const content::Manifest& manifest) {
     // Explicitly reset the error code before running the method.
-    manager_->set_installable_error(NO_ERROR_DETECTED);
+    manager_->set_valid_manifest_error(NO_ERROR_DETECTED);
     return manager_->IsManifestValidForWebApp(manifest);
   }
 
   InstallableStatusCode GetErrorCode() {
-    return manager_->installable_error();
+    return manager_->valid_manifest_error();
   }
 
  private:
@@ -183,7 +186,9 @@ TEST_F(InstallableManagerUnitTest, ManifestRequiresMinimalSize) {
   EXPECT_EQ(NO_ERROR_DETECTED, GetErrorCode());
 }
 
-TEST_F(InstallableManagerUnitTest, ManifestDisplayStandaloneFullscreen) {
+TEST_F(InstallableManagerUnitTest, ManifestDisplayModes) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(features::kPwaMinimalUi);
   content::Manifest manifest = GetValidManifest();
 
   manifest.display = blink::kWebDisplayModeUndefined;
@@ -203,6 +208,17 @@ TEST_F(InstallableManagerUnitTest, ManifestDisplayStandaloneFullscreen) {
   EXPECT_EQ(NO_ERROR_DETECTED, GetErrorCode());
 
   manifest.display = blink::kWebDisplayModeFullscreen;
+  EXPECT_TRUE(IsManifestValid(manifest));
+  EXPECT_EQ(NO_ERROR_DETECTED, GetErrorCode());
+}
+
+TEST_F(InstallableManagerUnitTest, ManifestDisplayModesMinimalUiEnabled) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kPwaMinimalUi);
+
+  content::Manifest manifest = GetValidManifest();
+  manifest.display = blink::kWebDisplayModeMinimalUi;
+
   EXPECT_TRUE(IsManifestValid(manifest));
   EXPECT_EQ(NO_ERROR_DETECTED, GetErrorCode());
 }

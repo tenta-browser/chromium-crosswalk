@@ -9,7 +9,9 @@
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/KnownPorts.h"
 #include "platform/weborigin/SecurityOrigin.h"
+#include "platform/wtf/Assertions.h"
 #include "platform/wtf/text/WTFString.h"
+#include "public/platform/WebContentSecurityPolicyStruct.h"
 
 namespace blink {
 
@@ -86,16 +88,17 @@ bool CSPSource::HostMatches(const String& host) const {
       match = true;
     } else {
       // host-part = "*." 1*host-char *( "." 1*host-char )
-      match = host.EndsWith(String("." + host_), kTextCaseUnicodeInsensitive);
+      match = host.EndsWithIgnoringCase(String("." + host_));
     }
 
     // Chrome used to, incorrectly, match *.x.y to x.y. This was fixed, but
     // the following count measures when a match fails that would have
     // passed the old, incorrect style, in case a lot of sites were
     // relying on that behavior.
-    if (document && equal_hosts)
+    if (document && equal_hosts) {
       UseCounter::Count(*document,
-                        UseCounter::kCSPSourceWildcardWouldMatchExactHost);
+                        WebFeature::kCSPSourceWildcardWouldMatchExactHost);
+    }
   } else {
     // host-part = 1*host-char *( "." 1*host-char )
     match = equal_hosts;
@@ -129,9 +132,8 @@ CSPSource::PortMatchingResult CSPSource::PortMatches(
   }
 
   bool is_scheme_http;  // needed for detecting an upgrade when the port is 0
-  is_scheme_http = scheme_.IsEmpty()
-                       ? policy_->ProtocolEqualsSelf("http")
-                       : DeprecatedEqualIgnoringCase("http", scheme_);
+  is_scheme_http = scheme_.IsEmpty() ? policy_->ProtocolEqualsSelf("http")
+                                     : EqualIgnoringASCIICase("http", scheme_);
 
   if ((port_ == 80 || (port_ == 0 && is_scheme_http)) &&
       (port == 443 || (port == 0 && DefaultPortForProtocol(protocol) == 443)))
@@ -269,8 +271,11 @@ CSPSource::ExposeForNavigationalChecks() const {
   return source_expression;
 }
 
-DEFINE_TRACE(CSPSource) {
+void CSPSource::Trace(blink::Visitor* visitor) {
   visitor->Trace(policy_);
 }
+
+STATIC_ASSERT_ENUM(kWebWildcardDispositionNoWildcard, CSPSource::kNoWildcard);
+STATIC_ASSERT_ENUM(kWebWildcardDispositionHasWildcard, CSPSource::kHasWildcard);
 
 }  // namespace blink

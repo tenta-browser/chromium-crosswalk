@@ -42,7 +42,7 @@ class MEDIA_EXPORT AudioRendererAlgorithm {
   ~AudioRendererAlgorithm();
 
   // Initializes this object with information about the audio stream.
-  void Initialize(const AudioParameters& params);
+  void Initialize(const AudioParameters& params, bool is_encrypted);
 
   // Allows clients to specify which channels will be considered by the
   // algorithm when adapting for playback rate, other channels will be muted.
@@ -153,11 +153,11 @@ class MEDIA_EXPORT AudioRendererAlgorithm {
   // Sample rate of audio stream.
   int samples_per_second_;
 
+  // Is compressed audio output
+  bool is_bitstream_format_;
+
   // Buffered audio data.
   AudioBufferQueue audio_buffer_;
-
-  // If muted, keep track of partial frames that should have been skipped over.
-  double muted_partial_frame_;
 
   // How many frames to have in the queue before we report the queue is full.
   int capacity_;

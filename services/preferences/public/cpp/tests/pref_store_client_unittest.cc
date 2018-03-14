@@ -41,7 +41,9 @@ class PrefStoreClientTest : public testing::Test {
   bool initialized() { return store_->IsInitializationComplete(); }
   void OnPrefChanged(const std::string& key, const base::Value& value) {
     std::vector<mojom::PrefUpdatePtr> updates;
-    updates.push_back(mojom::PrefUpdate::New(key, value.CreateDeepCopy(), 0));
+    updates.push_back(mojom::PrefUpdate::New(
+        key, mojom::PrefUpdateValue::NewAtomicUpdate(value.CreateDeepCopy()),
+        0));
     observer_ptr_->OnPrefsChanged(std::move(updates));
   }
   void OnInitializationCompleted() {
@@ -52,7 +54,7 @@ class PrefStoreClientTest : public testing::Test {
   void SetUp() override {
     store_ = new PrefStoreClient(mojom::PrefStoreConnection::New(
         mojo::MakeRequest(&observer_ptr_),
-        base::MakeUnique<base::DictionaryValue>(), false));
+        std::make_unique<base::DictionaryValue>(), false));
     store_->AddObserver(&observer_);
   }
   void TearDown() override {
@@ -166,11 +168,11 @@ TEST_F(PrefStoreClientTest, Initialized) {
   const char key[] = "hey";
   const int kValue = 42;
   base::Value pref(kValue);
-  auto prefs = base::MakeUnique<base::DictionaryValue>();
+  auto prefs = std::make_unique<base::DictionaryValue>();
   prefs->Set(key, pref.CreateDeepCopy());
   auto store =
-      make_scoped_refptr(new PrefStoreClient(mojom::PrefStoreConnection::New(
-          mojo::MakeRequest(&observer_ptr), std::move(prefs), true)));
+      base::MakeRefCounted<PrefStoreClient>(mojom::PrefStoreConnection::New(
+          mojo::MakeRequest(&observer_ptr), std::move(prefs), true));
   store->AddObserver(&observer);
 
   const base::Value* value = nullptr;

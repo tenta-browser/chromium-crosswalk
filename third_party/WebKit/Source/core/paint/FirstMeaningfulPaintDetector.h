@@ -6,9 +6,11 @@
 #define FirstMeaningfulPaintDetector_h
 
 #include "core/CoreExport.h"
+#include "core/paint/PaintEvent.h"
 #include "platform/Timer.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Noncopyable.h"
+#include "public/platform/WebLayerTreeView.h"
 
 namespace blink {
 
@@ -45,13 +47,24 @@ class CORE_EXPORT FirstMeaningfulPaintDetector
                                          int contents_height_before_layout,
                                          int contents_height_after_layout,
                                          int visible_height);
+  void NotifyInputEvent();
   void NotifyPaint();
   void CheckNetworkStable();
+  void ReportSwapTime(PaintEvent, WebLayerTreeView::SwapResult, double);
+  void NotifyFirstContentfulPaint(double swap_stamp);
 
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
+
+  enum HadUserInput { kNoUserInput, kHadUserInput, kHadUserInputEnumMax };
 
  private:
   friend class FirstMeaningfulPaintDetectorTest;
+
+  enum DeferFirstMeaningfulPaint {
+    kDoNotDefer,
+    kDeferOutstandingSwapPromises,
+    kDeferFirstContentfulPaintNotSet
+  };
 
   // The page is n-quiet if there are no more than n active network requests for
   // this duration of time.
@@ -64,11 +77,17 @@ class CORE_EXPORT FirstMeaningfulPaintDetector
   void Network0QuietTimerFired(TimerBase*);
   void Network2QuietTimerFired(TimerBase*);
   void ReportHistograms();
+  void RegisterNotifySwapTime(PaintEvent);
+  void SetFirstMeaningfulPaint(double stamp, double swap_stamp);
 
   bool next_paint_is_meaningful_ = false;
+  HadUserInput had_user_input_ = kNoUserInput;
+  HadUserInput had_user_input_before_provisional_first_meaningful_paint_ =
+      kNoUserInput;
 
   Member<PaintTiming> paint_timing_;
   double provisional_first_meaningful_paint_ = 0.0;
+  double provisional_first_meaningful_paint_swap_ = 0.0;
   double max_significance_so_far_ = 0.0;
   double accumulated_significance_while_having_blank_text_ = 0.0;
   unsigned prev_layout_object_count_ = 0;
@@ -77,6 +96,8 @@ class CORE_EXPORT FirstMeaningfulPaintDetector
   bool network2_quiet_reached_ = false;
   double first_meaningful_paint0_quiet_ = 0.0;
   double first_meaningful_paint2_quiet_ = 0.0;
+  unsigned outstanding_swap_promise_count_ = 0;
+  DeferFirstMeaningfulPaint defer_first_meaningful_paint_ = kDoNotDefer;
   TaskRunnerTimer<FirstMeaningfulPaintDetector> network0_quiet_timer_;
   TaskRunnerTimer<FirstMeaningfulPaintDetector> network2_quiet_timer_;
 };

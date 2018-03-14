@@ -37,7 +37,9 @@ function setupMobileNav() {
 document.addEventListener('DOMContentLoaded', setupMobileNav);
 
 function sendCommand(cmd) {
-  window.domAutomationController.setAutomationId(1);
+  // TODO(bauerb): domAutomationController is not defined when this page is
+  // shown in chrome://interstitials. Use a MessageHandler or something to
+  // support interactions.
   window.domAutomationController.send(cmd);
 }
 
@@ -46,14 +48,11 @@ function makeImageSet(url1x, url2x) {
 }
 
 function initialize() {
-  if (loadTimeData.getBoolean('allowAccessRequests')) {
+  var allowAccessRequests = loadTimeData.getBoolean('allowAccessRequests');
+  if (allowAccessRequests) {
     $('request-access-button').onclick = function(event) {
       $('request-access-button').hidden = true;
-      if (window.domAutomationController) {
-        sendCommand('request');
-      } else {
-        window.webRestrictions.requestPermission(setRequestStatus);
-      }
+      sendCommand('request');
     };
   } else {
     $('request-access-button').hidden = true;
@@ -61,7 +60,7 @@ function initialize() {
   var avatarURL1x = loadTimeData.getString('avatarURL1x');
   var avatarURL2x = loadTimeData.getString('avatarURL2x');
   var custodianName = loadTimeData.getString('custodianName');
-  if (custodianName) {
+  if (custodianName && allowAccessRequests) {
     $('custodians-information').hidden = false;
     if (avatarURL1x) {
       $('custodian-avatar-img').style.content =
@@ -84,31 +83,28 @@ function initialize() {
           'secondCustodianEmail');
     }
   }
-  var showDetailsLink = loadTimeData.getString('showDetailsLink');
-  $('show-details-link').hidden = !showDetailsLink;
-  $('back-button').hidden = showDetailsLink || !window.domAutomationController;
   $('back-button').onclick = function(event) {
     sendCommand('back');
   };
-  $('show-details-link').onclick = function(event) {
-    showDetails = true;
-    $('show-details-link').hidden = true;
-    $('hide-details-link').hidden = false;
-    updateDetails();
-  };
-  $('hide-details-link').onclick = function(event) {
-    showDetails = false;
-    $('show-details-link').hidden = false;
-    $('hide-details-link').hidden = true;
-    updateDetails();
-  };
-  if (window.domAutomationController &&
-        loadTimeData.getBoolean('showFeedbackLink')) {
+  if (loadTimeData.getBoolean('showFeedbackLink')) {
+    $('show-details-link').onclick = function(event) {
+      showDetails = true;
+      $('show-details-link').hidden = true;
+      $('hide-details-link').hidden = false;
+      updateDetails();
+    };
+    $('hide-details-link').onclick = function(event) {
+      showDetails = false;
+      $('show-details-link').hidden = false;
+      $('hide-details-link').hidden = true;
+      updateDetails();
+    };
     $('feedback-link').onclick = function(event) {
       sendCommand('feedback');
     };
   } else {
     $('feedback').hidden = true;
+    $('details-button-container').hidden = true;
   }
 }
 
@@ -127,7 +123,7 @@ function setRequestStatus(isSuccessful) {
   if (isSuccessful) {
     $('request-failed-message').hidden = true;
     $('request-sent-message').hidden = false;
-    $('back-button').hidden = !window.domAutomationController;
+    $('back-button').hidden = false;
     $('request-access-button').hidden = true;
     $('show-details-link').hidden = true;
   } else {

@@ -17,7 +17,7 @@ typedef struct {
   const char* output_url;
   float output_density;
   int output_resource_width;
-} TestCase;
+} SrcsetParserTestCase;
 
 TEST(ImageCandidateTest, Basic) {
   ImageCandidate candidate;
@@ -27,7 +27,7 @@ TEST(ImageCandidateTest, Basic) {
 }
 
 TEST(HTMLSrcsetParserTest, Basic) {
-  TestCase test_cases[] = {
+  SrcsetParserTestCase test_cases[] = {
       {2.0, 0.5, "", "data:,a 1w, data:,b 2x", "data:,a", 2.0, 1},
       {2.0, 1, "", "data:,a 2w, data:,b 2x", "data:,a", 2.0, 2},
       {2.0, -1, "", "1x.gif 1x, 2x.gif 2x", "2x.gif", 2.0, -1},
@@ -158,17 +158,18 @@ TEST(HTMLSrcsetParserTest, Basic) {
       {1.0, -1, "", "data:,a 1.0x", "data:,a", 1.0, -1},
       {1.0, -1, "", "1%20and%202.gif 1x", "1%20and%202.gif", 1.0, -1},
       {1.0, 700, "", "data:,a 0.5x, data:,b 1400w", "data:,b", 2.0, 1400},
-      {0, 0, 0, 0, 0, 0}  // Do not remove the terminator line.
+      {0, 0, nullptr, nullptr, nullptr,
+       0}  // Do not remove the terminator line.
   };
 
   for (unsigned i = 0; test_cases[i].src_input; ++i) {
-    TestCase test = test_cases[i];
+    SrcsetParserTestCase test = test_cases[i];
     ImageCandidate candidate = BestFitSourceForImageAttributes(
         test.device_scale_factor, test.effective_size, test.src_input,
         test.srcset_input);
     ASSERT_EQ(test.output_density, candidate.Density());
     ASSERT_EQ(test.output_resource_width, candidate.GetResourceWidth());
-    ASSERT_STREQ(test.output_url, candidate.ToString().Ascii().Data());
+    ASSERT_STREQ(test.output_url, candidate.ToString().Ascii().data());
   }
 }
 

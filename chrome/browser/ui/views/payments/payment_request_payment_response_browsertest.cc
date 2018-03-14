@@ -21,9 +21,7 @@ namespace payments {
 class PaymentRequestPaymentResponseAutofillPaymentInstrumentTest
     : public PaymentRequestBrowserTestBase {
  protected:
-  PaymentRequestPaymentResponseAutofillPaymentInstrumentTest()
-      : PaymentRequestBrowserTestBase(
-            "/payment_request_no_shipping_test.html") {}
+  PaymentRequestPaymentResponseAutofillPaymentInstrumentTest() {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(
@@ -35,6 +33,7 @@ class PaymentRequestPaymentResponseAutofillPaymentInstrumentTest
 IN_PROC_BROWSER_TEST_F(
     PaymentRequestPaymentResponseAutofillPaymentInstrumentTest,
     TestPaymentResponse) {
+  NavigateTo("/payment_request_no_shipping_test.html");
   // Setup a credit card with an associated billing address.
   autofill::AutofillProfile billing_address = autofill::test::GetFullProfile();
   AddAutofillProfile(billing_address);
@@ -44,36 +43,29 @@ IN_PROC_BROWSER_TEST_F(
 
   // Complete the Payment Request.
   InvokePaymentRequestUI();
-  ResetEventObserver(DialogEvent::DIALOG_CLOSED);
+  ResetEventWaiter(DialogEvent::DIALOG_CLOSED);
   PayWithCreditCardAndWait(base::ASCIIToUTF16("123"));
 
   // Test that the card details were sent to the merchant.
-  ExpectBodyContains(std::vector<base::string16>{
-      base::UTF8ToUTF16("\"cardNumber\": \"4111111111111111\""),
-      base::UTF8ToUTF16("\"cardSecurityCode\": \"123\""),
-      base::UTF8ToUTF16("\"cardholderName\": \"Test User\""),
-      base::UTF8ToUTF16("\"expiryMonth\": \"11\""),
-      base::UTF8ToUTF16("\"expiryYear\": \"2022\"")});
+  ExpectBodyContains({"\"cardNumber\": \"4111111111111111\"",
+                      "\"cardSecurityCode\": \"123\"",
+                      "\"cardholderName\": \"Test User\"",
+                      "\"expiryMonth\": \"11\"", "\"expiryYear\": \"2022\""});
 
   // Test that the billing address was sent to the merchant.
-  ExpectBodyContains(std::vector<base::string16>{
-      base::UTF8ToUTF16("\"billingAddress\": {"),
-      base::UTF8ToUTF16("\"666 Erebus St.\""), base::UTF8ToUTF16("\"Apt 8\""),
-      base::UTF8ToUTF16("\"city\": \"Elysium\""),
-      base::UTF8ToUTF16("\"country\": \"US\""),
-      base::UTF8ToUTF16("\"organization\": \"Underworld\""),
-      base::UTF8ToUTF16("\"phone\": \"16502111111\""),
-      base::UTF8ToUTF16("\"postalCode\": \"91111\""),
-      base::UTF8ToUTF16("\"recipient\": \"John H. Doe\""),
-      base::UTF8ToUTF16("\"region\": \"CA\"")});
+  ExpectBodyContains(
+      {"\"billingAddress\": {", "\"666 Erebus St.\"", "\"Apt 8\"",
+       "\"city\": \"Elysium\"", "\"dependentLocality\": \"\"",
+       "\"country\": \"US\"", "\"sortingCode\": \"\"", "\"languageCode\": \"\"",
+       "\"organization\": \"Underworld\"", "\"phone\": \"+16502111111\"",
+       "\"postalCode\": \"91111\"", "\"recipient\": \"John H. Doe\"",
+       "\"region\": \"CA\""});
 }
 
 class PaymentRequestPaymentResponseShippingAddressTest
     : public PaymentRequestBrowserTestBase {
  protected:
-  PaymentRequestPaymentResponseShippingAddressTest()
-      : PaymentRequestBrowserTestBase(
-            "/payment_request_free_shipping_test.html") {}
+  PaymentRequestPaymentResponseShippingAddressTest() {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PaymentRequestPaymentResponseShippingAddressTest);
@@ -83,6 +75,7 @@ class PaymentRequestPaymentResponseShippingAddressTest
 // shipping address and shipping option.
 IN_PROC_BROWSER_TEST_F(PaymentRequestPaymentResponseShippingAddressTest,
                        TestPaymentResponse) {
+  NavigateTo("/payment_request_free_shipping_test.html");
   // Create a billing address and a card that uses it.
   autofill::AutofillProfile billing_address = autofill::test::GetFullProfile();
   AddAutofillProfile(billing_address);
@@ -99,34 +92,26 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestPaymentResponseShippingAddressTest,
 
   // Complete the Payment Request.
   InvokePaymentRequestUI();
-  ResetEventObserver(DialogEvent::DIALOG_CLOSED);
+  ResetEventWaiter(DialogEvent::DIALOG_CLOSED);
   PayWithCreditCardAndWait(base::ASCIIToUTF16("123"));
 
   // Test that the shipping address was sent to the merchant.
-  ExpectBodyContains(std::vector<base::string16>{
-      base::UTF8ToUTF16("\"country\": \"US\""),
-      base::UTF8ToUTF16("\"123 Main Street\""), base::UTF8ToUTF16("\"Unit 1\""),
-      base::UTF8ToUTF16("\"region\": \"MI\""),
-      base::UTF8ToUTF16("\"city\": \"Greensdale\""),
-      base::UTF8ToUTF16("\"dependentLocality\": \"\""),
-      base::UTF8ToUTF16("\"postalCode\": \"48838\""),
-      base::UTF8ToUTF16("\"sortingCode\": \"\""),
-      base::UTF8ToUTF16("\"languageCode\": \"\""),
-      base::UTF8ToUTF16("\"organization\": \"ACME\""),
-      base::UTF8ToUTF16("\"recipient\": \"Jane A. Smith\""),
-      base::UTF8ToUTF16("\"phone\": \"13105557889\"")});
+  ExpectBodyContains({"\"country\": \"US\"", "\"123 Main Street\"",
+                      "\"Unit 1\"", "\"region\": \"MI\"",
+                      "\"city\": \"Greensdale\"", "\"dependentLocality\": \"\"",
+                      "\"postalCode\": \"48838\"", "\"sortingCode\": \"\"",
+                      "\"languageCode\": \"\"", "\"organization\": \"ACME\"",
+                      "\"recipient\": \"Jane A. Smith\"",
+                      "\"phone\": \"+13105557889\""});
 
   // Test that the shipping option was sent to the merchant.
-  ExpectBodyContains(std::vector<base::string16>{
-      base::UTF8ToUTF16("\"shippingOption\": \"freeShippingOption\"")});
+  ExpectBodyContains({"\"shippingOption\": \"freeShippingOption\""});
 }
 
 class PaymentRequestPaymentResponseAllContactDetailsTest
     : public PaymentRequestBrowserTestBase {
  protected:
-  PaymentRequestPaymentResponseAllContactDetailsTest()
-      : PaymentRequestBrowserTestBase(
-            "/payment_request_contact_details_and_free_shipping_test.html") {}
+  PaymentRequestPaymentResponseAllContactDetailsTest() {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PaymentRequestPaymentResponseAllContactDetailsTest);
@@ -136,6 +121,7 @@ class PaymentRequestPaymentResponseAllContactDetailsTest
 // details when all three details are requested.
 IN_PROC_BROWSER_TEST_F(PaymentRequestPaymentResponseAllContactDetailsTest,
                        TestPaymentResponse) {
+  NavigateTo("/payment_request_contact_details_and_free_shipping_test.html");
   // Setup a credit card with an associated billing address.
   autofill::AutofillProfile billing_address = autofill::test::GetFullProfile();
   AddAutofillProfile(billing_address);
@@ -145,22 +131,19 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestPaymentResponseAllContactDetailsTest,
 
   // Complete the Payment Request.
   InvokePaymentRequestUI();
-  ResetEventObserver(DialogEvent::DIALOG_CLOSED);
+  ResetEventWaiter(DialogEvent::DIALOG_CLOSED);
   PayWithCreditCardAndWait(base::ASCIIToUTF16("123"));
 
   // Test that the contact details were sent to the merchant.
-  ExpectBodyContains(std::vector<base::string16>{
-      base::UTF8ToUTF16("\"payerName\": \"John H. Doe\""),
-      base::UTF8ToUTF16("\"payerEmail\": \"johndoe@hades.com\""),
-      base::UTF8ToUTF16("\"payerPhone\": \"+16502111111\"")});
+  ExpectBodyContains({"\"payerName\": \"John H. Doe\"",
+                      "\"payerEmail\": \"johndoe@hades.com\"",
+                      "\"payerPhone\": \"+16502111111\""});
 }
 
 class PaymentRequestPaymentResponseOneContactDetailTest
     : public PaymentRequestBrowserTestBase {
  protected:
-  PaymentRequestPaymentResponseOneContactDetailTest()
-      : PaymentRequestBrowserTestBase(
-            "/payment_request_email_and_free_shipping_test.html") {}
+  PaymentRequestPaymentResponseOneContactDetailTest() {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PaymentRequestPaymentResponseOneContactDetailTest);
@@ -170,6 +153,7 @@ class PaymentRequestPaymentResponseOneContactDetailTest
 // details when all ont detail is requested.
 IN_PROC_BROWSER_TEST_F(PaymentRequestPaymentResponseOneContactDetailTest,
                        TestPaymentResponse) {
+  NavigateTo("/payment_request_email_and_free_shipping_test.html");
   // Setup a credit card with an associated billing address.
   autofill::AutofillProfile billing_address = autofill::test::GetFullProfile();
   AddAutofillProfile(billing_address);
@@ -179,14 +163,13 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestPaymentResponseOneContactDetailTest,
 
   // Complete the Payment Request.
   InvokePaymentRequestUI();
-  ResetEventObserver(DialogEvent::DIALOG_CLOSED);
+  ResetEventWaiter(DialogEvent::DIALOG_CLOSED);
   PayWithCreditCardAndWait(base::ASCIIToUTF16("123"));
 
   // Test that the contact details were sent to the merchant.
-  ExpectBodyContains(std::vector<base::string16>{
-      base::UTF8ToUTF16("\"payerName\": null"),
-      base::UTF8ToUTF16("\"payerEmail\": \"johndoe@hades.com\""),
-      base::UTF8ToUTF16("\"payerPhone\": null")});
+  ExpectBodyContains({"\"payerName\": null",
+                      "\"payerEmail\": \"johndoe@hades.com\"",
+                      "\"payerPhone\": null"});
 }
 
 }  // namespace payments

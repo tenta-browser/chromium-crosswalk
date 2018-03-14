@@ -27,7 +27,7 @@
 #define ApplicationCache_h
 
 #include "core/dom/ContextLifecycleObserver.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/loader/appcache/ApplicationCacheHost.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
@@ -69,7 +69,7 @@ class ApplicationCache final : public EventTargetWithInlineData,
 
   static const AtomicString& ToEventType(ApplicationCacheHost::EventID);
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
 
  private:
   explicit ApplicationCache(LocalFrame*);

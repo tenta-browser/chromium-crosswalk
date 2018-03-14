@@ -8,6 +8,8 @@ Accessibility.AXNodeSubPane = class extends Accessibility.AccessibilitySubPane {
   constructor() {
     super(Common.UIString('Computed Properties'));
 
+    this.contentElement.classList.add('ax-subpane');
+
     this._noNodeInfo = this.createInfo(Common.UIString('No accessibility node'));
     this._ignoredInfo = this.createInfo(Common.UIString('Accessibility node not exposed'), 'ax-ignored-info hidden');
 
@@ -15,6 +17,7 @@ Accessibility.AXNodeSubPane = class extends Accessibility.AccessibilitySubPane {
     this._ignoredReasonsTree = this.createTreeOutline();
 
     this.element.classList.add('accessibility-computed');
+    this.registerRequiredCSS('accessibility/accessibilityNode.css');
   }
 
   /**
@@ -84,22 +87,8 @@ Accessibility.AXNodeSubPane = class extends Accessibility.AccessibilitySubPane {
 
     var roleProperty = /** @type {!Protocol.Accessibility.AXProperty} */ ({name: 'role', value: axNode.role()});
     addProperty(roleProperty);
-
-    var propertyMap = {};
-    var propertiesArray = /** @type {!Array.<!Protocol.Accessibility.AXProperty>} */ (axNode.properties());
-    for (var property of propertiesArray)
-      propertyMap[property.name] = property;
-
-    for (var propertySet
-             of [Protocol.Accessibility.AXWidgetAttributes, Protocol.Accessibility.AXWidgetStates,
-                 Protocol.Accessibility.AXGlobalStates, Protocol.Accessibility.AXLiveRegionAttributes,
-                 Protocol.Accessibility.AXRelationshipAttributes]) {
-      for (var propertyKey in propertySet) {
-        var property = propertySet[propertyKey];
-        if (property in propertyMap)
-          addProperty(propertyMap[property]);
-      }
-    }
+    for (var property of /** @type {!Array.<!Protocol.Accessibility.AXProperty>} */ (axNode.properties()))
+      addProperty(property);
   }
 
   /**
@@ -567,18 +556,14 @@ Accessibility.AXNodeIgnoredReasonTreeElement = class extends Accessibility.AXNod
       case 'activeModalDialog':
         reasonElement = UI.formatLocalized('Element is hidden by active modal dialog:\u00a0', []);
         break;
-      case 'ancestorDisallowsChild':
-        reasonElement = UI.formatLocalized('Element is not permitted as child of ', []);
-        break;
-      // http://www.w3.org/TR/wai-aria/roles#childrenArePresentational
       case 'ancestorIsLeafNode':
         reasonElement = UI.formatLocalized('Ancestor\'s children are all presentational:\u00a0', []);
         break;
-      case 'ariaHidden':
+      case 'ariaHiddenElement':
         var ariaHiddenSpan = createElement('span', 'source-code').textContent = 'aria-hidden';
         reasonElement = UI.formatLocalized('Element is %s.', [ariaHiddenSpan]);
         break;
-      case 'ariaHiddenRoot':
+      case 'ariaHiddenSubtree':
         var ariaHiddenSpan = createElement('span', 'source-code').textContent = 'aria-hidden';
         var trueSpan = createElement('span', 'source-code').textContent = 'true';
         reasonElement = UI.formatLocalized('%s is %s on ancestor:\u00a0', [ariaHiddenSpan, trueSpan]);
@@ -589,8 +574,11 @@ Accessibility.AXNodeIgnoredReasonTreeElement = class extends Accessibility.AXNod
       case 'emptyText':
         reasonElement = UI.formatLocalized('No text content.', []);
         break;
-      case 'inert':
+      case 'inertElement':
         reasonElement = UI.formatLocalized('Element is inert.', []);
+        break;
+      case 'inertSubtree':
+        reasonElement = UI.formatLocalized('Element is in an inert subtree from\u00a0', []);
         break;
       case 'inheritsPresentation':
         reasonElement = UI.formatLocalized('Element inherits presentational role from\u00a0', []);

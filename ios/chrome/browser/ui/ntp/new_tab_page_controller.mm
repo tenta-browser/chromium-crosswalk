@@ -6,9 +6,8 @@
 
 #import <QuartzCore/QuartzCore.h>
 
-#import "base/ios/weak_nsobject.h"
 #include "base/logging.h"
-#include "base/mac/objc_property_releaser.h"
+
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "components/prefs/pref_service.h"
@@ -16,20 +15,24 @@
 #include "components/strings/grit/components_strings.h"
 #include "components/sync_sessions/synced_session.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/content_suggestions/content_suggestions_coordinator.h"
+#import "ios/chrome/browser/content_suggestions/content_suggestions_header_view_controller.h"
+#include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/search_engines/template_url_service_factory.h"
 #include "ios/chrome/browser/sync/sync_setup_service.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/ui/bookmarks/bookmark_controller_factory.h"
-#import "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
-#import "ios/chrome/browser/ui/commands/generic_chrome_command.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
-#import "ios/chrome/browser/ui/ntp/google_landing_controller.h"
-#import "ios/chrome/browser/ui/ntp/incognito_panel_controller.h"
+#import "ios/chrome/browser/ui/bookmarks/bookmark_home_tablet_ntp_controller.h"
+#import "ios/chrome/browser/ui/commands/browser_commands.h"
+#import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
+#import "ios/chrome/browser/ui/ntp/google_landing_mediator.h"
+#import "ios/chrome/browser/ui/ntp/incognito_view_controller.h"
+#import "ios/chrome/browser/ui/ntp/modal_ntp.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_bar_item.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_view.h"
-#import "ios/chrome/browser/ui/ntp/recent_tabs/recent_tabs_panel_controller.h"
+#import "ios/chrome/browser/ui/ntp/recent_tabs/recent_tabs_table_coordinator.h"
 #import "ios/chrome/browser/ui/rtl_geometry.h"
 #include "ios/chrome/browser/ui/toolbar/toolbar_model_ios.h"
 #include "ios/chrome/browser/ui/ui_util.h"
@@ -37,6 +40,10 @@
 #import "ios/web/web_state/ui/crw_swipe_recognizer_provider.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 using base::UserMetricsAction;
 
@@ -51,36 +58,36 @@ const CGFloat kToolbarHeight = 56;
 namespace NewTabPage {
 
 // Converts from a URL #fragment string to an identifier.
-// Defaults to NewTabPage::kNone if the fragment is nil or not recognized.
+// Defaults to ntp_home::NONE if the fragment is nil or not recognized.
 // The strings checked by this function matches the set of fragments
 // supported by chrome://newtab/# on Android.
 // See chrome/browser/resources/mobile_ntp/mobile_ntp.js
-PanelIdentifier IdentifierFromFragment(const std::string& fragment) {
+ntp_home::PanelIdentifier IdentifierFromFragment(const std::string& fragment) {
   if (fragment == kMostVisitedFragment)
-    return NewTabPage::kMostVisitedPanel;
+    return ntp_home::HOME_PANEL;
   else if (fragment == kBookmarksFragment)
-    return NewTabPage::kBookmarksPanel;
+    return ntp_home::BOOKMARKS_PANEL;
   else if (fragment == kOpenTabsFragment)
-    return NewTabPage::kOpenTabsPanel;
+    return ntp_home::RECENT_TABS_PANEL;
   else if (fragment == kIncognitoFragment)
-    return NewTabPage::kIncognitoPanel;
+    return ntp_home::INCOGNITO_PANEL;
   else
-    return NewTabPage::kNone;
+    return ntp_home::NONE;
 }
 
-// Converts from a NewTabPage::PanelIdentifier to a URL #fragment string.
-// Defaults to nil if the fragment is kNone or not recognized.
-std::string FragmentFromIdentifier(PanelIdentifier panel) {
+// Converts from a ntp_home::PanelIdentifier to a URL #fragment string.
+// Defaults to nil if the fragment is NONE or not recognized.
+std::string FragmentFromIdentifier(ntp_home::PanelIdentifier panel) {
   switch (panel) {
-    case NewTabPage::kNone:
+    case ntp_home::NONE:
       return "";
-    case NewTabPage::kMostVisitedPanel:
+    case ntp_home::HOME_PANEL:
       return kMostVisitedFragment;
-    case NewTabPage::kBookmarksPanel:
+    case ntp_home::BOOKMARKS_PANEL:
       return kBookmarksFragment;
-    case NewTabPage::kOpenTabsPanel:
+    case ntp_home::RECENT_TABS_PANEL:
       return kOpenTabsFragment;
-    case NewTabPage::kIncognitoPanel:
+    case ntp_home::INCOGNITO_PANEL:
       return kIncognitoFragment;
     default:
       NOTREACHED();
@@ -106,29 +113,28 @@ enum {
 }  // anonymous namespace
 
 @interface NewTabPageController () {
-  ios::ChromeBrowserState* browserState_;                   // Weak.
-  id<UrlLoader> loader_;                                    // Weak.
-  id<CRWSwipeRecognizerProvider> swipeRecognizerProvider_;  // Weak.
-  id<NewTabPageControllerObserver> newTabPageObserver_;     // Weak.
+  ios::ChromeBrowserState* _browserState;  // weak.
+  __weak id<UrlLoader> _loader;
+  __weak id<NewTabPageControllerObserver> _newTabPageObserver;
+  BookmarkHomeTabletNTPController* _bookmarkController;
+  IncognitoViewController* _incognitoController;
+  // The currently visible controller, one of the above.
+  __weak id<NewTabPagePanelProtocol> _currentController;
 
-  NewTabPageView* newTabPageView_;
-
-  base::scoped_nsobject<RecentTabsPanelController> openTabsController_;
+  RecentTabsTableCoordinator* _openTabsCoordinator;
   // Has the scrollView been initialized.
-  BOOL scrollInitialized_;
+  BOOL _scrollInitialized;
 
   // Dominant color cache. Key: (NSString*)url, val: (UIColor*)dominantColor.
-  NSMutableDictionary* dominantColorCache_;  // Weak, owned by bvc.
+  __weak NSMutableDictionary* _dominantColorCache;  // Owned by bvc.
 
   // Delegate to focus and blur the omnibox.
-  base::WeakNSProtocol<id<OmniboxFocuser>> focuser_;
+  __weak id<OmniboxFocuser> _focuser;
 
   // Delegate to fetch the ToolbarModel and current web state from.
-  base::WeakNSProtocol<id<WebToolbarDelegate>> webToolbarDelegate_;
+  __weak id<IncognitoViewControllerDelegate> _toolbarDelegate;
 
-  base::scoped_nsobject<TabModel> tabModel_;
-
-  base::mac::ObjCPropertyReleaser propertyReleaser_NewTabPageController_;
+  TabModel* _tabModel;
 }
 
 // Load and bring panel into view.
@@ -155,58 +161,99 @@ enum {
 // Enable the horizontal scroll view.
 - (void)enableScroll;
 // Returns the ID for the currently selected panel.
-- (NewTabPage::PanelIdentifier)selectedPanelID;
+- (ntp_home::PanelIdentifier)selectedPanelID;
 
-@property(nonatomic, retain) NewTabPageView* ntpView;
+@property(nonatomic, strong) NewTabPageView* view;
+
+// To ease modernizing the NTP only the internal panels are being converted
+// to UIViewControllers.  This means all the plumbing between the
+// BrowserViewController and the internal NTP panels (WebController, NTP)
+// hierarchy is skipped.  While normally the logic to push and pop a view
+// controller would be owned by a coordinator, in this case the old NTP
+// controller adds and removes child view controllers itself when a load
+// is initiated, and when WebController calls -willBeDismissed.
+@property(nonatomic, weak) UIViewController* parentViewController;
+
+// The command dispatcher.
+@property(nonatomic, weak) id<ApplicationCommands,
+                              BrowserCommands,
+                              OmniboxFocuser,
+                              SnackbarCommands,
+                              UrlLoader>
+    dispatcher;
+
+// Panel displaying the "Home" view, with the logo and the fake omnibox.
+@property(nonatomic, strong) id<NewTabPagePanelProtocol> homePanel;
+
+// Coordinator for the ContentSuggestions.
+@property(nonatomic, strong)
+    ContentSuggestionsCoordinator* contentSuggestionsCoordinator;
+
+// Controller for the header of the Home panel.
+@property(nonatomic, strong) id<LogoAnimationControllerOwnerOwner, ToolbarOwner>
+    headerController;
+
 @end
 
 @implementation NewTabPageController
 
-@synthesize ntpView = newTabPageView_;
-@synthesize swipeRecognizerProvider = swipeRecognizerProvider_;
+@synthesize view = _view;
+@synthesize swipeRecognizerProvider = _swipeRecognizerProvider;
+@synthesize parentViewController = _parentViewController;
+@synthesize dispatcher = _dispatcher;
+@synthesize homePanel = _homePanel;
+@synthesize contentSuggestionsCoordinator = _contentSuggestionsCoordinator;
+@synthesize headerController = _headerController;
 
 - (id)initWithUrl:(const GURL&)url
-                loader:(id<UrlLoader>)loader
-               focuser:(id<OmniboxFocuser>)focuser
-           ntpObserver:(id<NewTabPageControllerObserver>)ntpObserver
-          browserState:(ios::ChromeBrowserState*)browserState
-            colorCache:(NSMutableDictionary*)colorCache
-    webToolbarDelegate:(id<WebToolbarDelegate>)webToolbarDelegate
-              tabModel:(TabModel*)tabModel {
+                  loader:(id<UrlLoader>)loader
+                 focuser:(id<OmniboxFocuser>)focuser
+             ntpObserver:(id<NewTabPageControllerObserver>)ntpObserver
+            browserState:(ios::ChromeBrowserState*)browserState
+              colorCache:(NSMutableDictionary*)colorCache
+         toolbarDelegate:(id<IncognitoViewControllerDelegate>)toolbarDelegate
+                tabModel:(TabModel*)tabModel
+    parentViewController:(UIViewController*)parentViewController
+              dispatcher:(id<ApplicationCommands,
+                             BrowserCommands,
+                             OmniboxFocuser,
+                             SnackbarCommands,
+                             UrlLoader>)dispatcher
+           safeAreaInset:(UIEdgeInsets)safeAreaInset {
   self = [super initWithNibName:nil url:url];
   if (self) {
     DCHECK(browserState);
-    propertyReleaser_NewTabPageController_.Init(self,
-                                                [NewTabPageController class]);
-    browserState_ = browserState;
-    loader_ = loader;
-    newTabPageObserver_ = ntpObserver;
-    focuser_.reset(focuser);
-    webToolbarDelegate_.reset(webToolbarDelegate);
-    tabModel_.reset([tabModel retain]);
-    dominantColorCache_ = colorCache;
+    _browserState = browserState;
+    _loader = loader;
+    _newTabPageObserver = ntpObserver;
+    _parentViewController = parentViewController;
+    _dispatcher = dispatcher;
+    _focuser = focuser;
+    _toolbarDelegate = toolbarDelegate;
+    _tabModel = tabModel;
+    _dominantColorCache = colorCache;
     self.title = l10n_util::GetNSString(IDS_NEW_TAB_TITLE);
-    scrollInitialized_ = NO;
+    _scrollInitialized = NO;
 
-    base::scoped_nsobject<UIScrollView> scrollView(
-        [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, 320, 412)]);
+    // It is necessary to initialize the view with a non-empty frame so the NTP
+    // can be scrolled when the Bookmarks/Recent Tabs are opened from the
+    // toolmenu.
+    UIScrollView* scrollView =
+        [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, 320, 412)];
     [scrollView setAutoresizingMask:(UIViewAutoresizingFlexibleWidth |
                                      UIViewAutoresizingFlexibleHeight)];
-    base::scoped_nsobject<NewTabPageBar> tabBar(
-        [[NewTabPageBar alloc] initWithFrame:CGRectMake(0, 412, 320, 48)]);
-    newTabPageView_ =
-        [[NewTabPageView alloc] initWithFrame:CGRectMake(0, 0, 320, 460)
-                                andScrollView:scrollView
-                                    andTabBar:tabBar];
-    // TODO(crbug.com/607113): Merge view and ntpView.
-    self.view = newTabPageView_;
+    NewTabPageBar* tabBar =
+        [[NewTabPageBar alloc] initWithFrame:CGRectMake(0, 412, 320, 48)];
+    _view = [[NewTabPageView alloc] initWithFrame:CGRectMake(0, 0, 320, 460)
+                                    andScrollView:scrollView
+                                        andTabBar:tabBar];
+    _view.safeAreaInsetForToolbar = safeAreaInset;
     [tabBar setDelegate:self];
 
-    bool isIncognito = browserState_->IsOffTheRecord();
+    bool isIncognito = _browserState->IsOffTheRecord();
 
     NSString* incognito = l10n_util::GetNSString(IDS_IOS_NEW_TAB_INCOGNITO);
-    NSString* mostVisited =
-        l10n_util::GetNSString(IDS_IOS_NEW_TAB_MOST_VISITED);
+    NSString* home = l10n_util::GetNSString(IDS_IOS_NEW_TAB_HOME);
     NSString* bookmarks =
         l10n_util::GetNSString(IDS_IOS_NEW_TAB_BOOKMARKS_PAGE_TITLE_MOBILE);
     NSString* openTabs = l10n_util::GetNSString(IDS_IOS_NEW_TAB_RECENT_TABS);
@@ -216,44 +263,44 @@ enum {
     if (isIncognito) {
       NewTabPageBarItem* incognitoItem = [NewTabPageBarItem
           newTabPageBarItemWithTitle:incognito
-                          identifier:NewTabPage::kIncognitoPanel
+                          identifier:ntp_home::INCOGNITO_PANEL
                                image:[UIImage imageNamed:@"ntp_incognito"]];
-      if (IsIPadIdiom()) {
+      if (!PresentNTPPanelModally()) {
         // Only add the bookmarks tab item for Incognito.
         NewTabPageBarItem* bookmarksItem = [NewTabPageBarItem
             newTabPageBarItemWithTitle:bookmarks
-                            identifier:NewTabPage::kBookmarksPanel
+                            identifier:ntp_home::BOOKMARKS_PANEL
                                  image:[UIImage imageNamed:@"ntp_bookmarks"]];
         [tabBarItems addObject:bookmarksItem];
         [tabBarItems addObject:incognitoItem];
-        self.ntpView.tabBar.items = tabBarItems;
+        self.view.tabBar.items = tabBarItems;
       }
       itemToDisplay = incognitoItem;
     } else {
-      NewTabPageBarItem* mostVisitedItem = [NewTabPageBarItem
-          newTabPageBarItemWithTitle:mostVisited
-                          identifier:NewTabPage::kMostVisitedPanel
+      NewTabPageBarItem* homeItem = [NewTabPageBarItem
+          newTabPageBarItemWithTitle:home
+                          identifier:ntp_home::HOME_PANEL
                                image:[UIImage imageNamed:@"ntp_mv_search"]];
       NewTabPageBarItem* bookmarksItem = [NewTabPageBarItem
           newTabPageBarItemWithTitle:bookmarks
-                          identifier:NewTabPage::kBookmarksPanel
+                          identifier:ntp_home::BOOKMARKS_PANEL
                                image:[UIImage imageNamed:@"ntp_bookmarks"]];
       [tabBarItems addObject:bookmarksItem];
-      if (IsIPadIdiom()) {
-        [tabBarItems addObject:mostVisitedItem];
+      if (!PresentNTPPanelModally()) {
+        [tabBarItems addObject:homeItem];
       }
 
       NewTabPageBarItem* openTabsItem = [NewTabPageBarItem
           newTabPageBarItemWithTitle:openTabs
-                          identifier:NewTabPage::kOpenTabsPanel
+                          identifier:ntp_home::RECENT_TABS_PANEL
                                image:[UIImage imageNamed:@"ntp_opentabs"]];
       [tabBarItems addObject:openTabsItem];
-      self.ntpView.tabBar.items = tabBarItems;
+      self.view.tabBar.items = tabBarItems;
 
-      if (!IsIPadIdiom()) {
-        itemToDisplay = mostVisitedItem;
+      if (PresentNTPPanelModally()) {
+        itemToDisplay = homeItem;
       } else {
-        PrefService* prefs = browserState_->GetPrefs();
+        PrefService* prefs = _browserState->GetPrefs();
         int shownPage = prefs->GetInteger(prefs::kNtpShownPage);
         shownPage = shownPage & ~INDEX_MASK;
 
@@ -262,7 +309,7 @@ enum {
         } else if (shownPage == OPEN_TABS_PAGE_ID) {
           itemToDisplay = openTabsItem;
         } else {
-          itemToDisplay = mostVisitedItem;
+          itemToDisplay = homeItem;
         }
       }
     }
@@ -277,40 +324,61 @@ enum {
 - (void)dealloc {
   // Animations can last past the life of the NTP controller, nil out the
   // delegate.
-  self.ntpView.scrollView.delegate = nil;
-  [googleLandingController_ setDelegate:nil];
-  [bookmarkController_ setDelegate:nil];
-  [openTabsController_ setDelegate:nil];
+  self.view.scrollView.delegate = nil;
+
+  // This is not an ideal place to put view controller contaimnent, rather a
+  // //web -wasDismissed method on CRWNativeContent would be more accurate. If
+  // CRWNativeContent leaks, this will not be called.
+  [_bookmarkController removeFromParentViewController];
+  [_incognitoController removeFromParentViewController];
+  [[self.contentSuggestionsCoordinator viewController]
+      removeFromParentViewController];
+  [[_openTabsCoordinator viewController] removeFromParentViewController];
+
+  [self.contentSuggestionsCoordinator stop];
+  [_openTabsCoordinator stop];
+
+  [self.homePanel setDelegate:nil];
+  [_bookmarkController setDelegate:nil];
+  [_openTabsCoordinator setDelegate:nil];
   [[NSNotificationCenter defaultCenter] removeObserver:self];
-  [super dealloc];
 }
 
 #pragma mark - CRWNativeContent
 
-// Note: No point implementing -handleLowMemory because all native content
-// views but the selected one are dropped, and the selected view doesn't
-// need to do anything.
+- (void)willBeDismissed {
+  // This methods is called by //web immediately before |self|'s view is removed
+  // from the view hierarchy, making it an ideal spot to intiate view controller
+  // containment methods.
+  [_bookmarkController willMoveToParentViewController:nil];
+  [[_openTabsCoordinator viewController] willMoveToParentViewController:nil];
+  [[self.contentSuggestionsCoordinator viewController]
+      willMoveToParentViewController:nil];
+  [_incognitoController willMoveToParentViewController:nil];
+}
 
 - (void)reload {
-  [currentController_ reload];
+  [_currentController reload];
   [super reload];
 }
 
 - (void)wasShown {
-  [currentController_ wasShown];
-  // Ensure that the NTP has the latest data when it is shown.
-  [self reload];
-  [self.ntpView.tabBar updateColorsForScrollView:self.ntpView.scrollView];
-  [self.ntpView.tabBar
-      setShadowAlpha:[currentController_ alphaForBottomShadow]];
+  [_currentController wasShown];
+  if (_currentController != self.homePanel) {
+    // Ensure that the NTP has the latest data when it is shown, except for
+    // Home.
+    [self reload];
+  }
+  [self.view.tabBar updateColorsForScrollView:self.view.scrollView];
+  [self.view.tabBar setShadowAlpha:[_currentController alphaForBottomShadow]];
 }
 
 - (void)wasHidden {
-  [currentController_ wasHidden];
+  [_currentController wasHidden];
 }
 
 - (BOOL)wantsKeyboardShield {
-  return [self selectedPanelID] != NewTabPage::kMostVisitedPanel;
+  return [self selectedPanelID] != ntp_home::HOME_PANEL;
 }
 
 - (BOOL)wantsLocationBarHintText {
@@ -319,9 +387,9 @@ enum {
     return YES;
   // Always show the location bar hint text if the search engine is not Google.
   TemplateURLService* service =
-      ios::TemplateURLServiceFactory::GetForBrowserState(browserState_);
+      ios::TemplateURLServiceFactory::GetForBrowserState(_browserState);
   if (service) {
-    TemplateURL* defaultURL = service->GetDefaultSearchProvider();
+    const TemplateURL* defaultURL = service->GetDefaultSearchProvider();
     if (defaultURL &&
         defaultURL->GetEngineType(service->search_terms_data()) !=
             SEARCH_ENGINE_GOOGLE) {
@@ -330,33 +398,41 @@ enum {
   }
 
   // Always return true when incognito.
-  if (browserState_->IsOffTheRecord())
+  if (_browserState->IsOffTheRecord())
     return YES;
 
-  return [self selectedPanelID] != NewTabPage::kMostVisitedPanel;
+  return [self selectedPanelID] != ntp_home::HOME_PANEL;
 }
 
 - (void)dismissKeyboard {
-  [currentController_ dismissKeyboard];
+  [_currentController dismissKeyboard];
 }
 
 - (void)dismissModals {
-  [currentController_ dismissModals];
+  [_currentController dismissModals];
 }
 
 - (void)willUpdateSnapshot {
-  if ([currentController_ respondsToSelector:@selector(willUpdateSnapshot)]) {
-    [currentController_ willUpdateSnapshot];
+  if ([_currentController respondsToSelector:@selector(willUpdateSnapshot)]) {
+    [_currentController willUpdateSnapshot];
   }
+}
+
+- (CGPoint)scrollOffset {
+  if (_currentController == self.homePanel &&
+      [self.homePanel respondsToSelector:@selector(scrollOffset)]) {
+    return [self.homePanel scrollOffset];
+  }
+  return CGPointZero;
 }
 
 #pragma mark -
 
 - (void)setSwipeRecognizerProvider:(id<CRWSwipeRecognizerProvider>)provider {
-  swipeRecognizerProvider_ = provider;
-  NSSet* recognizers = [swipeRecognizerProvider_ swipeRecognizers];
+  _swipeRecognizerProvider = provider;
+  NSSet* recognizers = [_swipeRecognizerProvider swipeRecognizers];
   for (UISwipeGestureRecognizer* swipeRecognizer in recognizers) {
-    [self.ntpView.scrollView.panGestureRecognizer
+    [self.view.scrollView.panGestureRecognizer
         requireGestureRecognizerToFail:swipeRecognizer];
   }
 }
@@ -372,7 +448,7 @@ enum {
                         name:UIKeyboardWillHideNotification
                       object:nil];
 
-  UIScrollView* scrollView = self.ntpView.scrollView;
+  UIScrollView* scrollView = self.view.scrollView;
   scrollView.pagingEnabled = YES;
   scrollView.showsHorizontalScrollIndicator = NO;
   scrollView.showsVerticalScrollIndicator = NO;
@@ -381,39 +457,39 @@ enum {
   scrollView.delegate = self;
   scrollView.scrollsToTop = NO;
 
-  [self.ntpView updateScrollViewContentSize];
-  [self.ntpView.tabBar updateColorsForScrollView:scrollView];
+  [self.view updateScrollViewContentSize];
+  [self.view.tabBar updateColorsForScrollView:scrollView];
 
-  scrollInitialized_ = YES;
+  _scrollInitialized = YES;
 }
 
 - (void)disableScroll {
-  [self.ntpView.scrollView setScrollEnabled:NO];
+  [self.view.scrollView setScrollEnabled:NO];
 }
 
 - (void)enableScroll {
-  [self.ntpView.scrollView setScrollEnabled:YES];
+  [self.view.scrollView setScrollEnabled:YES];
 }
 
 // Update selectedIndex and scroll position as the scroll view moves.
 - (void)scrollViewDidScroll:(UIScrollView*)scrollView {
-  if (!scrollInitialized_)
+  if (!_scrollInitialized || PresentNTPPanelModally())
     return;
 
   // Position is used to track the exact X position of the scroll view, whereas
   // index is rounded to the panel that is most visible.
   CGFloat panelWidth =
-      scrollView.contentSize.width / self.ntpView.tabBar.items.count;
+      scrollView.contentSize.width / self.view.tabBar.items.count;
   LayoutOffset position =
       LeadingContentOffsetForScrollView(scrollView) / panelWidth;
   NSUInteger index = round(position);
 
   // |scrollView| can be out of range when the frame changes.
-  if (index >= self.ntpView.tabBar.items.count)
+  if (index >= self.view.tabBar.items.count)
     return;
 
   // Only create views when they need to be visible.  This will create a slight
-  // jank on first creation, but it doesn't seem very noticable.  The trade off
+  // jank on first creation, but it doesn't seem very noticeable.  The trade off
   // is loading the adjacent panels, and a longer initial NTP startup.
   if (position - index > 0)
     [self loadControllerWithIndex:index + 1];
@@ -423,21 +499,21 @@ enum {
 
   // If index changed, follow same path as if a tab bar item was pressed.  When
   // |index| == |position|, the panel is completely in view.
-  if (index == position && self.ntpView.tabBar.selectedIndex != index) {
-    NewTabPageBarItem* item = [self.ntpView.tabBar.items objectAtIndex:index];
+  if (index == position && self.view.tabBar.selectedIndex != index) {
+    NewTabPageBarItem* item = [self.view.tabBar.items objectAtIndex:index];
     DCHECK(item);
-    self.ntpView.tabBar.selectedIndex = index;
+    self.view.tabBar.selectedIndex = index;
     [self updateCurrentController:item index:index];
     [self newTabBarItemDidChange:item changePanel:NO];
   }
 
-  [self.ntpView.tabBar updateColorsForScrollView:scrollView];
+  [self.view.tabBar updateColorsForScrollView:scrollView];
   [self updateOverlayScrollPosition];
 }
 
 - (void)scrollViewDidEndScrollingAnimation:(UIScrollView*)scrollView {
-  NSUInteger index = self.ntpView.tabBar.selectedIndex;
-  NewTabPageBarItem* item = [self.ntpView.tabBar.items objectAtIndex:index];
+  NSUInteger index = self.view.tabBar.selectedIndex;
+  NewTabPageBarItem* item = [self.view.tabBar.items objectAtIndex:index];
   DCHECK(item);
   [self updateCurrentController:item index:index];
 }
@@ -451,11 +527,11 @@ enum {
     [self scrollToPanel:selectedItem animate:YES];
   }
 
-  [newTabPageObserver_ selectedPanelDidChange];
+  [_newTabPageObserver selectedPanelDidChange];
 }
 
-- (void)selectPanel:(NewTabPage::PanelIdentifier)panelType {
-  for (NewTabPageBarItem* item in self.ntpView.tabBar.items) {
+- (void)selectPanel:(ntp_home::PanelIdentifier)panelType {
+  for (NewTabPageBarItem* item in self.view.tabBar.items) {
     if (item.identifier == panelType) {
       [self showPanel:item];
       return;  // Early return after finding the first match.
@@ -466,99 +542,121 @@ enum {
 - (void)showPanel:(NewTabPageBarItem*)item {
   if ([self loadPanel:item]) {
     // Intentionally omitting a metric for the Incognito panel.
-    if (item.identifier == NewTabPage::kBookmarksPanel)
+    if (item.identifier == ntp_home::BOOKMARKS_PANEL)
       base::RecordAction(UserMetricsAction("MobileNTPShowBookmarks"));
-    else if (item.identifier == NewTabPage::kMostVisitedPanel)
+    else if (item.identifier == ntp_home::HOME_PANEL)
       base::RecordAction(UserMetricsAction("MobileNTPShowMostVisited"));
-    else if (item.identifier == NewTabPage::kOpenTabsPanel)
+    else if (item.identifier == ntp_home::RECENT_TABS_PANEL)
       base::RecordAction(UserMetricsAction("MobileNTPShowOpenTabs"));
   }
   [self scrollToPanel:item animate:NO];
 }
 
 - (void)loadControllerWithIndex:(NSUInteger)index {
-  if (index >= self.ntpView.tabBar.items.count)
+  if (index >= self.view.tabBar.items.count)
     return;
 
-  NewTabPageBarItem* item = [self.ntpView.tabBar.items objectAtIndex:index];
+  NewTabPageBarItem* item = [self.view.tabBar.items objectAtIndex:index];
   [self loadPanel:item];
 }
 
 - (BOOL)loadPanel:(NewTabPageBarItem*)item {
-  UIView* view;
-  BOOL created = NO;
+  DCHECK(self.parentViewController);
+  UIViewController* panelController = nil;
   // Only load the controllers once.
-  if (item.identifier == NewTabPage::kBookmarksPanel) {
-    if (!bookmarkController_) {
-      base::scoped_nsobject<BookmarkControllerFactory> factory(
-          [[BookmarkControllerFactory alloc] init]);
-      bookmarkController_.reset([[factory
-          bookmarkPanelControllerForBrowserState:browserState_
-                                          loader:loader_
-                                      colorCache:dominantColorCache_] retain]);
+  if (item.identifier == ntp_home::BOOKMARKS_PANEL) {
+    if (!_bookmarkController) {
+      BookmarkControllerFactory* factory =
+          [[BookmarkControllerFactory alloc] init];
+      _bookmarkController =
+          [factory bookmarkPanelControllerForBrowserState:_browserState
+                                                   loader:_loader
+                                               dispatcher:self.dispatcher];
     }
-    view = [bookmarkController_ view];
-    [bookmarkController_ setDelegate:self];
-  } else if (item.identifier == NewTabPage::kMostVisitedPanel) {
-    if (!googleLandingController_) {
-      googleLandingController_.reset([[GoogleLandingController alloc]
-              initWithLoader:loader_
-                browserState:browserState_
-                     focuser:focuser_
-          webToolbarDelegate:webToolbarDelegate_
-                    tabModel:tabModel_]);
+    panelController = _bookmarkController;
+    [_bookmarkController setDelegate:self];
+  } else if (item.identifier == ntp_home::HOME_PANEL) {
+      if (!self.contentSuggestionsCoordinator) {
+        self.contentSuggestionsCoordinator =
+            [[ContentSuggestionsCoordinator alloc]
+                initWithBaseViewController:nil];
+        self.contentSuggestionsCoordinator.URLLoader = _loader;
+        self.contentSuggestionsCoordinator.browserState = _browserState;
+        self.contentSuggestionsCoordinator.dispatcher = self.dispatcher;
+        self.contentSuggestionsCoordinator.webStateList =
+            [_tabModel webStateList];
+        [self.contentSuggestionsCoordinator start];
+        self.headerController =
+            self.contentSuggestionsCoordinator.headerController;
+      }
+      panelController = [self.contentSuggestionsCoordinator viewController];
+      self.homePanel = self.contentSuggestionsCoordinator;
+    [self.homePanel setDelegate:self];
+  } else if (item.identifier == ntp_home::RECENT_TABS_PANEL) {
+    if (!_openTabsCoordinator) {
+      _openTabsCoordinator =
+          [[RecentTabsTableCoordinator alloc] initWithLoader:_loader
+                                                browserState:_browserState
+                                                  dispatcher:self.dispatcher];
+      [_openTabsCoordinator start];
     }
-    view = [googleLandingController_ view];
-    [googleLandingController_ setDelegate:self];
-  } else if (item.identifier == NewTabPage::kOpenTabsPanel) {
-    if (!openTabsController_)
-      openTabsController_.reset([[RecentTabsPanelController alloc]
-          initWithLoader:loader_
-            browserState:browserState_]);
-    view = [openTabsController_ view];
-    [openTabsController_ setDelegate:self];
-  } else if (item.identifier == NewTabPage::kIncognitoPanel) {
-    if (!incognitoController_)
-      incognitoController_.reset([[IncognitoPanelController alloc]
-              initWithLoader:loader_
-                browserState:browserState_
-          webToolbarDelegate:webToolbarDelegate_]);
-    view = [incognitoController_ view];
+    panelController = [_openTabsCoordinator viewController];
+    [_openTabsCoordinator setDelegate:self];
+  } else if (item.identifier == ntp_home::INCOGNITO_PANEL) {
+    if (!_incognitoController)
+      _incognitoController =
+          [[IncognitoViewController alloc] initWithLoader:_loader
+                                          toolbarDelegate:_toolbarDelegate];
+    panelController = _incognitoController;
   } else {
     NOTREACHED();
     return NO;
   }
 
+  UIView* view = panelController.view;
+  if (item.identifier == ntp_home::HOME_PANEL) {
+    // Update the shadow for the toolbar after the view creation.
+    [self.view.tabBar setShadowAlpha:[self.homePanel alphaForBottomShadow]];
+  }
+
   // Add the panel views to the scroll view in the proper location.
   NSUInteger index = [self tabBarItemIndex:item];
+  BOOL created = NO;
   if (view.superview == nil) {
     created = YES;
-    view.frame = [self.ntpView panelFrameForItemAtIndex:index];
+    view.frame = [self.view panelFrameForItemAtIndex:index];
     item.view = view;
-    [self.ntpView.scrollView addSubview:view];
+
+    // To ease modernizing the NTP only the internal panels are being converted
+    // to UIViewControllers.  This means all the plumbing between the
+    // BrowserViewController and the internal NTP panels (WebController, NTP)
+    // hierarchy is skipped.  While normally the logic to push and pop a view
+    // controller would be owned by a coordinator, in this case the old NTP
+    // controller adds and removes child view controllers itself when a load
+    // is initiated, and when WebController calls -willBeDismissed.
+    DCHECK(panelController);
+    [self.parentViewController addChildViewController:panelController];
+    [self.view.scrollView addSubview:view];
+    [panelController didMoveToParentViewController:self.parentViewController];
   }
   return created;
 }
 
 - (void)scrollToPanel:(NewTabPageBarItem*)item animate:(BOOL)animate {
   NSUInteger index = [self tabBarItemIndex:item];
-  if (IsIPadIdiom()) {
-    CGRect itemFrame = [self.ntpView panelFrameForItemAtIndex:index];
+  if (!PresentNTPPanelModally()) {
+    CGRect itemFrame = [self.view panelFrameForItemAtIndex:index];
     CGPoint point = CGPointMake(CGRectGetMinX(itemFrame), 0);
-    [self.ntpView.scrollView setContentOffset:point animated:animate];
+    [self.view.scrollView setContentOffset:point animated:animate];
   } else {
-    if (item.identifier == NewTabPage::kBookmarksPanel) {
-      base::scoped_nsobject<GenericChromeCommand> command(
-          [[GenericChromeCommand alloc] initWithTag:IDC_SHOW_BOOKMARK_MANAGER]);
-      [self.ntpView chromeExecuteCommand:command];
-    } else if (item.identifier == NewTabPage::kOpenTabsPanel) {
-      base::scoped_nsobject<GenericChromeCommand> command(
-          [[GenericChromeCommand alloc] initWithTag:IDC_SHOW_OTHER_DEVICES]);
-      [self.ntpView chromeExecuteCommand:command];
+    if (item.identifier == ntp_home::BOOKMARKS_PANEL) {
+      [self.dispatcher showBookmarksManager];
+    } else if (item.identifier == ntp_home::RECENT_TABS_PANEL) {
+      [self.dispatcher showRecentTabs];
     }
   }
 
-  if (currentController_ == nil) {
+  if (_currentController == nil) {
     [self updateCurrentController:item index:index];
   }
 }
@@ -568,73 +666,74 @@ enum {
 // scroll view. None of this is applicable for iPhone.
 - (NSUInteger)tabBarItemIndex:(NewTabPageBarItem*)item {
   NSUInteger index = 0;
-  if (IsIPadIdiom()) {
-    index = [self.ntpView.tabBar.items indexOfObject:item];
+  if (!PresentNTPPanelModally()) {
+    index = [self.view.tabBar.items indexOfObject:item];
     DCHECK(index != NSNotFound);
   }
   return index;
 }
 
-- (NewTabPage::PanelIdentifier)selectedPanelID {
-  if (IsIPadIdiom()) {
+- (ntp_home::PanelIdentifier)selectedPanelID {
+  if (!PresentNTPPanelModally()) {
     // |selectedIndex| isn't meaningful here with modal buttons on iPhone.
-    NSUInteger index = self.ntpView.tabBar.selectedIndex;
+    NSUInteger index = self.view.tabBar.selectedIndex;
     DCHECK(index != NSNotFound);
-    NewTabPageBarItem* item = self.ntpView.tabBar.items[index];
-    return static_cast<NewTabPage::PanelIdentifier>(item.identifier);
+    NewTabPageBarItem* item = self.view.tabBar.items[index];
+    return item.identifier;
   }
-  return NewTabPage::kMostVisitedPanel;
+  return ntp_home::HOME_PANEL;
 }
 
 - (void)updateCurrentController:(NewTabPageBarItem*)item
                           index:(NSUInteger)index {
-  if (!IsIPadIdiom() && (item.identifier == NewTabPage::kBookmarksPanel ||
-                         item.identifier == NewTabPage::kOpenTabsPanel)) {
-    // Don't update |currentController_| for iPhone since Bookmarks and Recent
+  if (PresentNTPPanelModally() &&
+      (item.identifier == ntp_home::BOOKMARKS_PANEL ||
+       item.identifier == ntp_home::RECENT_TABS_PANEL)) {
+    // Don't update |_currentController| for iPhone since Bookmarks and Recent
     // Tabs are presented in a modal view controller.
     return;
   }
 
-  id<NewTabPagePanelProtocol> oldController = currentController_;
-  self.ntpView.tabBar.selectedIndex = index;
-  if (item.identifier == NewTabPage::kBookmarksPanel)
-    currentController_ = bookmarkController_.get();
-  else if (item.identifier == NewTabPage::kMostVisitedPanel)
-    currentController_ = googleLandingController_.get();
-  else if (item.identifier == NewTabPage::kOpenTabsPanel)
-    currentController_ = openTabsController_.get();
-  else if (item.identifier == NewTabPage::kIncognitoPanel)
-    currentController_ = incognitoController_.get();
+  id<NewTabPagePanelProtocol> oldController = _currentController;
+  self.view.tabBar.selectedIndex = index;
+  if (item.identifier == ntp_home::BOOKMARKS_PANEL)
+    _currentController = _bookmarkController;
+  else if (item.identifier == ntp_home::HOME_PANEL)
+    _currentController = self.homePanel;
+  else if (item.identifier == ntp_home::RECENT_TABS_PANEL)
+    _currentController = _openTabsCoordinator;
+  else if (item.identifier == ntp_home::INCOGNITO_PANEL)
+    _currentController = _incognitoController;
 
-  [bookmarkController_
-      setScrollsToTop:(currentController_ == bookmarkController_.get())];
-  [googleLandingController_
-      setScrollsToTop:(currentController_ == googleLandingController_.get())];
-  [openTabsController_
-      setScrollsToTop:(currentController_ == openTabsController_.get())];
-  [self.ntpView.tabBar
-      setShadowAlpha:[currentController_ alphaForBottomShadow]];
+  [_bookmarkController
+      setScrollsToTop:(_currentController == _bookmarkController)];
+  [self.homePanel setScrollsToTop:(_currentController == self.homePanel)];
+  [_openTabsCoordinator
+      setScrollsToTop:(_currentController == _openTabsCoordinator)];
+  if (oldController) {
+    [self.view.tabBar setShadowAlpha:[_currentController alphaForBottomShadow]];
+  }
 
-  if (oldController != currentController_) {
-    [currentController_ wasShown];
+  if (oldController != _currentController) {
+    [_currentController wasShown];
     [oldController wasHidden];
   }
 }
 
 - (void)panelChanged:(NewTabPageBarItem*)item {
-  if (browserState_->IsOffTheRecord())
+  if (_browserState->IsOffTheRecord())
     return;
 
   // Save state and update metrics. Intentionally omitting a metric for the
   // Incognito panel.
-  PrefService* prefs = browserState_->GetPrefs();
-  if (item.identifier == NewTabPage::kBookmarksPanel) {
+  PrefService* prefs = _browserState->GetPrefs();
+  if (item.identifier == ntp_home::BOOKMARKS_PANEL) {
     base::RecordAction(UserMetricsAction("MobileNTPSwitchToBookmarks"));
     prefs->SetInteger(prefs::kNtpShownPage, BOOKMARKS_PAGE_ID);
-  } else if (item.identifier == NewTabPage::kMostVisitedPanel) {
+  } else if (item.identifier == ntp_home::HOME_PANEL) {
     base::RecordAction(UserMetricsAction("MobileNTPSwitchToMostVisited"));
     prefs->SetInteger(prefs::kNtpShownPage, MOST_VISITED_PAGE_ID);
-  } else if (item.identifier == NewTabPage::kOpenTabsPanel) {
+  } else if (item.identifier == ntp_home::RECENT_TABS_PANEL) {
     base::RecordAction(UserMetricsAction("MobileNTPSwitchToOpenTabs"));
     prefs->SetInteger(prefs::kNtpShownPage, OPEN_TABS_PAGE_ID);
   }
@@ -642,44 +741,59 @@ enum {
 
 - (void)updateOverlayScrollPosition {
   // Update overlay position. This moves the overlay animation on the tab bar.
-  UIScrollView* scrollView = self.ntpView.scrollView;
+  UIScrollView* scrollView = self.view.scrollView;
   if (!scrollView || scrollView.contentSize.width == 0.0)
     return;
-  self.ntpView.tabBar.overlayPercentage =
+  self.view.tabBar.overlayPercentage =
       scrollView.contentOffset.x / scrollView.contentSize.width;
 }
 
 #pragma mark - LogoAnimationControllerOwnerOwner
 
 - (id<LogoAnimationControllerOwner>)logoAnimationControllerOwner {
-  return [googleLandingController_ logoAnimationControllerOwner];
+  return [self.headerController logoAnimationControllerOwner];
 }
 
 #pragma mark -
 #pragma mark ToolbarOwner
 
-- (ToolbarController*)relinquishedToolbarController {
-  return [googleLandingController_ relinquishedToolbarController];
+- (CGRect)toolbarFrame {
+  return [self.headerController toolbarFrame];
 }
 
-- (void)reparentToolbarController {
-  [googleLandingController_ reparentToolbarController];
+- (id<ToolbarSnapshotProviding>)toolbarSnapshotProvider {
+  return self.headerController.toolbarSnapshotProvider;
 }
 
 - (CGFloat)toolbarHeight {
   // If the google landing controller is nil, there is no toolbar visible in the
   // native content view, finally there is no toolbar on iPad.
-  return googleLandingController_ && !IsIPadIdiom() ? kToolbarHeight : 0.0;
+  return self.headerController && !IsIPadIdiom() ? kToolbarHeight : 0.0;
 }
 
 #pragma mark - NewTabPagePanelControllerDelegate
 
 - (void)updateNtpBarShadowForPanelController:
     (id<NewTabPagePanelProtocol>)ntpPanelController {
-  if (currentController_ != ntpPanelController)
+  if (_currentController != ntpPanelController)
     return;
-  [self.ntpView.tabBar
-      setShadowAlpha:[ntpPanelController alphaForBottomShadow]];
+  [self.view.tabBar setShadowAlpha:[ntpPanelController alphaForBottomShadow]];
+}
+
+@end
+
+@implementation NewTabPageController (TestSupport)
+
+- (id<NewTabPagePanelProtocol>)currentController {
+  return _currentController;
+}
+
+- (BookmarkHomeTabletNTPController*)bookmarkController {
+  return _bookmarkController;
+}
+
+- (id<NewTabPagePanelProtocol>)incognitoController {
+  return _incognitoController;
 }
 
 @end

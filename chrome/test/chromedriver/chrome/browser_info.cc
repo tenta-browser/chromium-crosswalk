@@ -47,6 +47,8 @@ BrowserInfo::BrowserInfo(std::string android_package,
       is_android(is_android) {
 }
 
+BrowserInfo::~BrowserInfo() {}
+
 Status ParseBrowserInfo(const std::string& data, BrowserInfo* browser_info) {
   std::unique_ptr<base::Value> value = base::JSONReader::Read(data);
   if (!value.get())
@@ -70,6 +72,10 @@ Status ParseBrowserInfo(const std::string& data, BrowserInfo* browser_info) {
       ParseBrowserString(has_android_package, browser_string, browser_info);
   if (status.IsError())
     return status;
+
+  // "webSocketDebuggerUrl" is only returned on Chrome 62.0.3178 and above,
+  // thus it's not an error if it's missing.
+  dict->GetString("webSocketDebuggerUrl", &browser_info->web_socket_url);
 
   std::string blink_version;
   if (!dict->GetString("WebKit-Version", &blink_version))
@@ -163,9 +169,11 @@ Status ParseBlinkVersionString(const std::string& blink_version,
   // Chrome OS reports its Blink revision as a git hash. In this case, ignore it
   // and don't set |blink_revision|. For Chrome (and for Chrome OS) we use the
   // build number instead of the blink revision for decisions about backwards
-  // compatibility.
+  // compatibility. Also accepts empty Blink revision (happens with some Chrome
+  // OS builds).
   std::string revision = blink_version.substr(before + 1, after - before - 1);
-  if (!IsGitHash(revision) && !base::StringToInt(revision, blink_revision)) {
+  if (!IsGitHash(revision) && !base::StringToInt(revision, blink_revision) &&
+      revision.length() > 0) {
     return Status(kUnknownError, "unrecognized Blink revision: " + revision);
   }
 

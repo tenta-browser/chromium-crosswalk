@@ -4,10 +4,13 @@
 
 #include "modules/media_controls/MediaControlsMediaEventListener.h"
 
-#include "core/events/Event.h"
-#include "core/html/HTMLMediaElement.h"
+#include "core/dom/events/Event.h"
+#include "core/html/media/HTMLMediaElement.h"
 #include "core/html/track/TextTrackList.h"
 #include "modules/media_controls/MediaControlsImpl.h"
+#include "modules/remoteplayback/AvailabilityCallbackWrapper.h"
+#include "modules/remoteplayback/HTMLMediaElementRemotePlayback.h"
+#include "modules/remoteplayback/RemotePlayback.h"
 
 namespace blink {
 
@@ -32,6 +35,12 @@ void MediaControlsMediaEventListener::Attach() {
   GetMediaElement().addEventListener(EventTypeNames::error, this, false);
   GetMediaElement().addEventListener(EventTypeNames::loadedmetadata, this,
                                      false);
+  GetMediaElement().addEventListener(EventTypeNames::keypress, this, false);
+  GetMediaElement().addEventListener(EventTypeNames::keydown, this, false);
+  GetMediaElement().addEventListener(EventTypeNames::keyup, this, false);
+  GetMediaElement().addEventListener(EventTypeNames::waiting, this, false);
+  GetMediaElement().addEventListener(EventTypeNames::progress, this, false);
+  GetMediaElement().addEventListener(EventTypeNames::loadeddata, this, false);
 
   // Listen to two different fullscreen events in order to make sure the new and
   // old APIs are handled.
@@ -51,6 +60,23 @@ void MediaControlsMediaEventListener::Attach() {
     media_controls_->PanelElement()->addEventListener(EventTypeNames::keypress,
                                                       this, false);
   }
+
+  RemotePlayback* remote = GetRemotePlayback();
+  if (remote) {
+    remote->addEventListener(EventTypeNames::connect, this);
+    remote->addEventListener(EventTypeNames::connecting, this);
+    remote->addEventListener(EventTypeNames::disconnect, this);
+
+    // TODO(avayvod, mlamouri): Attach can be called twice. See
+    // https://crbug.com/713275.
+    if (!remote_playback_availability_callback_id_.has_value()) {
+      remote_playback_availability_callback_id_ = WTF::make_optional(
+          remote->WatchAvailabilityInternal(new AvailabilityCallbackWrapper(
+              WTF::Bind(&MediaControlsMediaEventListener::
+                            OnRemotePlaybackAvailabilityChanged,
+                        WrapWeakPersistent(this)))));
+    }
+  }
 }
 
 void MediaControlsMediaEventListener::Detach() {
@@ -68,6 +94,23 @@ void MediaControlsMediaEventListener::Detach() {
     media_controls_->PanelElement()->removeEventListener(
         EventTypeNames::keypress, this, false);
   }
+
+  RemotePlayback* remote = GetRemotePlayback();
+  if (remote) {
+    remote->removeEventListener(EventTypeNames::connect, this);
+    remote->removeEventListener(EventTypeNames::connecting, this);
+    remote->removeEventListener(EventTypeNames::disconnect, this);
+
+    // TODO(avayvod): apparently Detach() can be called without a previous
+    // Attach() call. See https://crbug.com/713275 for more details.
+    if (remote_playback_availability_callback_id_.has_value() &&
+        remote_playback_availability_callback_id_.value() !=
+            RemotePlayback::kWatchAvailabilityNotSupported) {
+      remote->CancelWatchAvailabilityInternal(
+          remote_playback_availability_callback_id_.value());
+      remote_playback_availability_callback_id_.reset();
+    }
+  }
 }
 
 bool MediaControlsMediaEventListener::operator==(
@@ -77,6 +120,10 @@ bool MediaControlsMediaEventListener::operator==(
 
 HTMLMediaElement& MediaControlsMediaEventListener::GetMediaElement() {
   return media_controls_->MediaElement();
+}
+
+RemotePlayback* MediaControlsMediaEventListener::GetRemotePlayback() {
+  return HTMLMediaElementRemotePlayback::remote(GetMediaElement());
 }
 
 void MediaControlsMediaEventListener::handleEvent(
@@ -118,6 +165,18 @@ void MediaControlsMediaEventListener::handleEvent(
     media_controls_->OnLoadedMetadata();
     return;
   }
+  if (event->type() == EventTypeNames::waiting) {
+    media_controls_->OnWaiting();
+    return;
+  }
+  if (event->type() == EventTypeNames::progress) {
+    media_controls_->OnLoadingProgress();
+    return;
+  }
+  if (event->type() == EventTypeNames::loadeddata) {
+    media_controls_->OnLoadedData();
+    return;
+  }
 
   // Fullscreen handling.
   if (event->type() == EventTypeNames::fullscreenchange ||
@@ -142,15 +201,35 @@ void MediaControlsMediaEventListener::handleEvent(
 
   // Keypress events.
   if (event->type() == EventTypeNames::keypress) {
-    if (event->currentTarget() == media_controls_->PanelElement())
+    if (event->currentTarget() == media_controls_->PanelElement()) {
       media_controls_->OnPanelKeypress();
+      return;
+    }
+  }
+
+  if (event->type() == EventTypeNames::keypress ||
+      event->type() == EventTypeNames::keydown ||
+      event->type() == EventTypeNames::keyup) {
+    media_controls_->OnMediaKeyboardEvent(event);
+    return;
+  }
+
+  // RemotePlayback state change events.
+  if (event->type() == EventTypeNames::connect ||
+      event->type() == EventTypeNames::connecting ||
+      event->type() == EventTypeNames::disconnect) {
+    media_controls_->RemotePlaybackStateChanged();
     return;
   }
 
   NOTREACHED();
 }
 
-DEFINE_TRACE(MediaControlsMediaEventListener) {
+void MediaControlsMediaEventListener::OnRemotePlaybackAvailabilityChanged() {
+  media_controls_->RefreshCastButtonVisibility();
+}
+
+void MediaControlsMediaEventListener::Trace(blink::Visitor* visitor) {
   EventListener::Trace(visitor);
   visitor->Trace(media_controls_);
 }

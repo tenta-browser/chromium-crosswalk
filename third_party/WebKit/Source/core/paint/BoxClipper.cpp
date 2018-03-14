@@ -9,10 +9,10 @@
 #include "core/paint/ObjectPaintProperties.h"
 #include "core/paint/PaintInfo.h"
 #include "core/paint/PaintLayer.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/graphics/GraphicsLayer.h"
 #include "platform/graphics/paint/ClipDisplayItem.h"
 #include "platform/graphics/paint/PaintController.h"
+#include "platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -37,21 +37,18 @@ BoxClipper::BoxClipper(const LayoutBox& box,
     : box_(box),
       paint_info_(paint_info),
       clip_type_(DisplayItem::kUninitializedType) {
-  DCHECK(paint_info_.phase != kPaintPhaseSelfBlockBackgroundOnly &&
-         paint_info_.phase != kPaintPhaseSelfOutlineOnly);
+  DCHECK(paint_info_.phase != PaintPhase::kSelfBlockBackgroundOnly &&
+         paint_info_.phase != PaintPhase::kSelfOutlineOnly);
 
-  if (paint_info_.phase == kPaintPhaseMask)
+  if (paint_info_.phase == PaintPhase::kMask)
     return;
 
-  if (RuntimeEnabledFeatures::slimmingPaintV2Enabled()) {
-    const auto* object_properties = box_.PaintProperties();
-    if (object_properties && object_properties->OverflowClip()) {
-      PaintChunkProperties properties(paint_info.context.GetPaintController()
-                                          .CurrentPaintChunkProperties());
-      properties.property_tree_state.SetClip(object_properties->OverflowClip());
-      scoped_clip_property_.emplace(
-          paint_info.context.GetPaintController(), box,
-          paint_info.DisplayItemTypeForClipping(), properties);
+  if (RuntimeEnabledFeatures::SlimmingPaintV175Enabled()) {
+    const auto* properties = box_.FirstFragment().PaintProperties();
+    if (properties && properties->OverflowClip()) {
+      scoped_clip_property_.emplace(paint_info.context.GetPaintController(),
+                                    properties->OverflowClip(), box,
+                                    paint_info.DisplayItemTypeForClipping());
     }
     return;
   }
@@ -70,7 +67,7 @@ BoxClipper::BoxClipper(const LayoutBox& box,
   // Selection may extend beyond visual overflow, so this optimization is
   // invalid if selection is present.
   if (contents_clip_behavior == kSkipContentsClipIfPossible &&
-      box.GetSelectionState() == SelectionNone) {
+      box.GetSelectionState() == SelectionState::kNone) {
     LayoutRect contents_visual_overflow = box_.ContentsVisualOverflowRect();
     if (contents_visual_overflow.IsEmpty())
       return;

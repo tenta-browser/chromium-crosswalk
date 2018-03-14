@@ -6,6 +6,7 @@
 <translation id="1759842336958782510">Chrome</translation>
 <translation id="2147651015520127414">Chrome a confirmé que le certificat de ce site Web a bien été émis par <ph name="ISSUER" />.</translation>
 <translation id="2334084861041072223">Copyright Google Inc. <ph name="YEAR" />. Tous droits réservés.</translation>
+<translation id="2342981853652716282">Connectez-vous à Chrome pour accéder à vos favoris, mots de passe et bien plus sur tous vos appareils.</translation>
 <translation id="2347208864470321755">Lorsque cette fonctionnalité est activée dans Chrome, un message s'affiche pour vous proposer que les pages de ce site rédigées dans d'autres langues soient traduites à l'aide de Google Traduction. <ph name="BEGIN_LINK" />En savoir plus<ph name="END_LINK" /></translation>
 <translation id="2441696206556358796">Pour enregistrer des images, appuyez sur Paramètres afin d'autoriser Chrome à utiliser vos photos.</translation>
 <translation id="2576431527583832481">Google Chrome s'est amélioré ! Une nouvelle version est désormais disponible.</translation>
@@ -16,8 +17,6 @@
 <translation id="3196546062792660320">Chrome vous permet de gagner du temps en connectant vos comptes au Web. Vous pouvez ajouter ou supprimer des comptes dans la section "Paramètres".</translation>
 <translation id="3282568296779691940">Connectez-vous à Chrome</translation>
 <translation id="3345341804167540816">Utilisez Chrome où que vous soyez</translation>
-<translation id="3531621179462011934">Connectez-vous à Chrome pour synchroniser vos paramètres avec tous vos appareils.</translation>
-<translation id="3601960512121168237">Vous aimez Chrome ? <ph name="BEGIN_LINK" />Placez-le dans le dock.<ph name="END_LINK" /></translation>
 <translation id="3678774398092457402">Voulez-vous que Chrome enregistre votre mot de passe pour ce site ?</translation>
 <translation id="384394811301901750">Google Chrome ne peut pas utiliser votre appareil photo pour le moment</translation>
 <translation id="3870154837782082782">Google Inc.</translation>
@@ -43,7 +42,6 @@
 <translation id="7172660552945675509">Conseil : <ph name="BEGIN_LINK" />Placez Chrome dans le dock.<ph name="END_LINK" /></translation>
 <translation id="7265369419224458312">Accédez ici aux onglets ouverts sur votre ordinateur. Il vous suffit d'ouvrir Chrome sur votre ordinateur, d'accéder au menu, puis de sélectionner "Se connecter à Chrome".</translation>
 <translation id="728488472449859922">Activer le lecteur de code QR Google Chrome</translation>
-<translation id="7311395200710390977">Pour un accès plus rapide, <ph name="BEGIN_LINK" />placez Chrome dans le dock<ph name="END_LINK" />.</translation>
 <translation id="7400722733683201933">À propos de Google Chrome</translation>
 <translation id="7437998757836447326">Se déconnecter de Chrome</translation>
 <translation id="756809126120519699">Données de Chrome effacées</translation>

@@ -5,19 +5,25 @@
 #include "bindings/core/v8/serialization/V8ScriptValueDeserializer.h"
 
 #include "bindings/core/v8/ToV8ForCore.h"
-#include "core/dom/CompositorProxy.h"
-#include "core/dom/DOMArrayBuffer.h"
-#include "core/dom/DOMSharedArrayBuffer.h"
+#include "bindings/core/v8/serialization/UnpackedSerializedScriptValue.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/dom/MessagePort.h"
 #include "core/fileapi/Blob.h"
 #include "core/fileapi/File.h"
 #include "core/fileapi/FileList.h"
-#include "core/frame/ImageBitmap.h"
+#include "core/geometry/DOMMatrix.h"
+#include "core/geometry/DOMMatrixReadOnly.h"
+#include "core/geometry/DOMPoint.h"
+#include "core/geometry/DOMPointInit.h"
+#include "core/geometry/DOMPointReadOnly.h"
+#include "core/geometry/DOMQuad.h"
+#include "core/geometry/DOMRect.h"
+#include "core/geometry/DOMRectReadOnly.h"
 #include "core/html/ImageData.h"
+#include "core/imagebitmap/ImageBitmap.h"
 #include "core/offscreencanvas/OffscreenCanvas.h"
-#include "platform/RuntimeEnabledFeatures.h"
-#include "platform/graphics/CompositorMutableProperties.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
+#include "core/typed_arrays/DOMSharedArrayBuffer.h"
 #include "platform/wtf/CheckedNumeric.h"
 #include "platform/wtf/DateMath.h"
 #include "public/platform/WebBlobInfo.h"
@@ -79,11 +85,36 @@ size_t ReadVersionEnvelope(SerializedScriptValue* serialized_script_value,
 }  // namespace
 
 V8ScriptValueDeserializer::V8ScriptValueDeserializer(
-    RefPtr<ScriptState> script_state,
-    RefPtr<SerializedScriptValue> serialized_script_value,
+    scoped_refptr<ScriptState> script_state,
+    UnpackedSerializedScriptValue* unpacked_value,
+    const Options& options)
+    : V8ScriptValueDeserializer(std::move(script_state),
+                                unpacked_value,
+                                unpacked_value->Value(),
+                                options) {}
+
+V8ScriptValueDeserializer::V8ScriptValueDeserializer(
+    scoped_refptr<ScriptState> script_state,
+    scoped_refptr<SerializedScriptValue> value,
+    const Options& options)
+    : V8ScriptValueDeserializer(std::move(script_state),
+                                nullptr,
+                                std::move(value),
+                                options) {
+  DCHECK(!serialized_script_value_->HasPackedContents())
+      << "If the provided SerializedScriptValue could contain packed contents "
+         "due to transfer, then it must be unpacked before deserialization. "
+         "See SerializedScriptValue::Unpack.";
+}
+
+V8ScriptValueDeserializer::V8ScriptValueDeserializer(
+    scoped_refptr<ScriptState> script_state,
+    UnpackedSerializedScriptValue* unpacked_value,
+    scoped_refptr<SerializedScriptValue> value,
     const Options& options)
     : script_state_(std::move(script_state)),
-      serialized_script_value_(std::move(serialized_script_value)),
+      unpacked_value_(unpacked_value),
+      serialized_script_value_(value),
       deserializer_(script_state_->GetIsolate(),
                     serialized_script_value_->Data(),
                     serialized_script_value_->DataLengthInBytes(),
@@ -106,7 +137,7 @@ v8::Local<v8::Value> V8ScriptValueDeserializer::Deserialize() {
   v8::Local<v8::Context> context = script_state_->GetContext();
 
   size_t version_envelope_size =
-      ReadVersionEnvelope(serialized_script_value_.Get(), &version_);
+      ReadVersionEnvelope(serialized_script_value_.get(), &version_);
   if (version_envelope_size) {
     const void* blink_envelope;
     bool read_envelope = ReadRawBytes(version_envelope_size, &blink_envelope);
@@ -136,41 +167,30 @@ v8::Local<v8::Value> V8ScriptValueDeserializer::Deserialize() {
 }
 
 void V8ScriptValueDeserializer::Transfer() {
+  // Thre's nothing to transfer if the deserializer was not given an unpacked
+  // value.
+  if (!unpacked_value_)
+    return;
+
   v8::Isolate* isolate = script_state_->GetIsolate();
   v8::Local<v8::Context> context = script_state_->GetContext();
   v8::Local<v8::Object> creation_context = context->Global();
 
   // Transfer array buffers.
-  if (auto* array_buffer_contents =
-          serialized_script_value_->GetArrayBufferContentsArray()) {
-    for (unsigned i = 0; i < array_buffer_contents->size(); i++) {
-      WTF::ArrayBufferContents& contents = array_buffer_contents->at(i);
-      if (contents.IsShared()) {
-        DOMSharedArrayBuffer* array_buffer =
-            DOMSharedArrayBuffer::Create(contents);
-        v8::Local<v8::Value> wrapper =
-            ToV8(array_buffer, creation_context, isolate);
-        DCHECK(wrapper->IsSharedArrayBuffer());
-        deserializer_.TransferSharedArrayBuffer(
-            i, v8::Local<v8::SharedArrayBuffer>::Cast(wrapper));
-      } else {
-        DOMArrayBuffer* array_buffer = DOMArrayBuffer::Create(contents);
-        v8::Local<v8::Value> wrapper =
-            ToV8(array_buffer, creation_context, isolate);
-        DCHECK(wrapper->IsArrayBuffer());
-        deserializer_.TransferArrayBuffer(
-            i, v8::Local<v8::ArrayBuffer>::Cast(wrapper));
-      }
+  const auto& array_buffers = unpacked_value_->ArrayBuffers();
+  for (unsigned i = 0; i < array_buffers.size(); i++) {
+    DOMArrayBufferBase* array_buffer = array_buffers.at(i);
+    v8::Local<v8::Value> wrapper =
+        ToV8(array_buffer, creation_context, isolate);
+    if (array_buffer->IsShared()) {
+      DCHECK(wrapper->IsSharedArrayBuffer());
+      deserializer_.TransferSharedArrayBuffer(
+          i, v8::Local<v8::SharedArrayBuffer>::Cast(wrapper));
+    } else {
+      DCHECK(wrapper->IsArrayBuffer());
+      deserializer_.TransferArrayBuffer(
+          i, v8::Local<v8::ArrayBuffer>::Cast(wrapper));
     }
-  }
-
-  // Transfer image bitmaps.
-  if (auto* image_bitmap_contents =
-          serialized_script_value_->GetImageBitmapContentsArray()) {
-    transferred_image_bitmaps_.ReserveInitialCapacity(
-        image_bitmap_contents->size());
-    for (const auto& image : *image_bitmap_contents)
-      transferred_image_bitmaps_.push_back(ImageBitmap::Create(image));
   }
 }
 
@@ -204,20 +224,12 @@ ScriptWrappable* V8ScriptValueDeserializer::ReadDOMObject(
       if (!ReadUint32(&index) || index >= blob_info_array_->size())
         return nullptr;
       const WebBlobInfo& info = (*blob_info_array_)[index];
-      return Blob::Create(
-          GetOrCreateBlobDataHandle(info.Uuid(), info.GetType(), info.size()));
-    }
-    case kCompositorProxyTag: {
-      uint64_t element;
-      uint32_t properties;
-      const uint32_t kValidPropertiesMask = static_cast<uint32_t>(
-          (1u << CompositorMutableProperty::kNumProperties) - 1);
-      if (!RuntimeEnabledFeatures::compositorWorkerEnabled() ||
-          !ReadUint64(&element) || !ReadUint32(&properties) || element == 0 ||
-          !properties || (properties & ~kValidPropertiesMask))
-        return nullptr;
-      return CompositorProxy::Create(
-          ExecutionContext::From(script_state_.Get()), element, properties);
+      auto blob_handle = info.GetBlobHandle();
+      if (!blob_handle) {
+        blob_handle =
+            GetOrCreateBlobDataHandle(info.Uuid(), info.GetType(), info.size());
+      }
+      return Blob::Create(blob_handle);
     }
     case kFileTag:
       return ReadFile();
@@ -254,48 +266,209 @@ ScriptWrappable* V8ScriptValueDeserializer::ReadDOMObject(
       return file_list;
     }
     case kImageBitmapTag: {
+      SerializedColorSpace canvas_color_space = SerializedColorSpace::kSRGB;
+      SerializedPixelFormat canvas_pixel_format = SerializedPixelFormat::kRGBA8;
+      SerializedOpacityMode canvas_opacity_mode =
+          SerializedOpacityMode::kOpaque;
       uint32_t origin_clean = 0, is_premultiplied = 0, width = 0, height = 0,
-               pixel_length = 0;
+               byte_length = 0;
       const void* pixels = nullptr;
-      if (!ReadUint32(&origin_clean) || origin_clean > 1 ||
-          !ReadUint32(&is_premultiplied) || is_premultiplied > 1 ||
-          !ReadUint32(&width) || !ReadUint32(&height) ||
-          !ReadUint32(&pixel_length) || !ReadRawBytes(pixel_length, &pixels))
+      if (Version() >= 18) {
+        // read the list of key pair values for color settings, etc.
+        bool is_done = false;
+        do {
+          ImageSerializationTag tag;
+          if (!ReadUint32Enum<ImageSerializationTag>(&tag))
+            return nullptr;
+          switch (tag) {
+            case ImageSerializationTag::kEndTag:
+              is_done = true;
+              break;
+            case ImageSerializationTag::kCanvasColorSpaceTag:
+              if (!ReadUint32Enum<SerializedColorSpace>(&canvas_color_space))
+                return nullptr;
+              break;
+            case ImageSerializationTag::kCanvasPixelFormatTag:
+              if (!ReadUint32Enum<SerializedPixelFormat>(&canvas_pixel_format))
+                return nullptr;
+              break;
+            case ImageSerializationTag::kCanvasOpacityModeTag:
+              if (!ReadUint32Enum<SerializedOpacityMode>(&canvas_opacity_mode))
+                return nullptr;
+              break;
+            case ImageSerializationTag::kOriginCleanTag:
+              if (!ReadUint32(&origin_clean) || origin_clean > 1)
+                return nullptr;
+              break;
+            case ImageSerializationTag::kIsPremultipliedTag:
+              if (!ReadUint32(&is_premultiplied) || is_premultiplied > 1)
+                return nullptr;
+              break;
+            default:
+              NOTREACHED();
+          }
+        } while (!is_done);
+      } else if (!ReadUint32(&origin_clean) || origin_clean > 1 ||
+                 !ReadUint32(&is_premultiplied) || is_premultiplied > 1) {
         return nullptr;
-      CheckedNumeric<uint32_t> computed_pixel_length = width;
-      computed_pixel_length *= height;
-      computed_pixel_length *= 4;
-      if (!computed_pixel_length.IsValid() ||
-          computed_pixel_length.ValueOrDie() != pixel_length)
+      }
+      if (!ReadUint32(&width) || !ReadUint32(&height) ||
+          !ReadUint32(&byte_length) || !ReadRawBytes(byte_length, &pixels))
+        return nullptr;
+      CanvasColorParams color_params =
+          SerializedColorParams(canvas_color_space, canvas_pixel_format,
+                                canvas_opacity_mode,
+                                SerializedImageDataStorageFormat::kUint8Clamped)
+              .GetCanvasColorParams();
+      CheckedNumeric<uint32_t> computed_byte_length = width;
+      computed_byte_length *= height;
+      computed_byte_length *= color_params.BytesPerPixel();
+      if (!computed_byte_length.IsValid() ||
+          computed_byte_length.ValueOrDie() != byte_length)
         return nullptr;
       return ImageBitmap::Create(pixels, width, height, is_premultiplied,
-                                 origin_clean);
+                                 origin_clean, color_params);
     }
     case kImageBitmapTransferTag: {
       uint32_t index = 0;
-      if (!ReadUint32(&index) || index >= transferred_image_bitmaps_.size())
+      if (!unpacked_value_)
         return nullptr;
-      return transferred_image_bitmaps_[index].Get();
+      const auto& transferred_image_bitmaps = unpacked_value_->ImageBitmaps();
+      if (!ReadUint32(&index) || index >= transferred_image_bitmaps.size())
+        return nullptr;
+      return transferred_image_bitmaps[index].Get();
     }
     case kImageDataTag: {
-      uint32_t width = 0, height = 0, pixel_length = 0;
+      SerializedColorSpace canvas_color_space = SerializedColorSpace::kSRGB;
+      SerializedImageDataStorageFormat image_data_storage_format =
+          SerializedImageDataStorageFormat::kUint8Clamped;
+      uint32_t width = 0, height = 0, byte_length = 0;
       const void* pixels = nullptr;
+      if (Version() >= 18) {
+        bool is_done = false;
+        do {
+          ImageSerializationTag tag;
+          if (!ReadUint32Enum<ImageSerializationTag>(&tag))
+            return nullptr;
+          switch (tag) {
+            case ImageSerializationTag::kEndTag:
+              is_done = true;
+              break;
+            case ImageSerializationTag::kCanvasColorSpaceTag:
+              if (!ReadUint32Enum<SerializedColorSpace>(&canvas_color_space))
+                return nullptr;
+              break;
+            case ImageSerializationTag::kImageDataStorageFormatTag:
+              if (!ReadUint32Enum<SerializedImageDataStorageFormat>(
+                      &image_data_storage_format))
+                return nullptr;
+              break;
+            default:
+              NOTREACHED();
+          }
+        } while (!is_done);
+      }
       if (!ReadUint32(&width) || !ReadUint32(&height) ||
-          !ReadUint32(&pixel_length) || !ReadRawBytes(pixel_length, &pixels))
+          !ReadUint32(&byte_length) || !ReadRawBytes(byte_length, &pixels))
         return nullptr;
-      CheckedNumeric<uint32_t> computed_pixel_length = width;
-      computed_pixel_length *= height;
-      computed_pixel_length *= 4;
-      if (!computed_pixel_length.IsValid() ||
-          computed_pixel_length.ValueOrDie() != pixel_length)
+      SerializedColorParams color_params(
+          canvas_color_space, SerializedPixelFormat::kRGBA8,
+          SerializedOpacityMode::kNonOpaque, image_data_storage_format);
+      ImageDataStorageFormat storage_format = color_params.GetStorageFormat();
+      CheckedNumeric<uint32_t> computed_byte_length = width;
+      computed_byte_length *= height;
+      computed_byte_length *= 4;
+      computed_byte_length *= ImageData::StorageFormatDataSize(storage_format);
+      if (!computed_byte_length.IsValid() ||
+          computed_byte_length.ValueOrDie() != byte_length)
         return nullptr;
-      ImageData* image_data = ImageData::Create(IntSize(width, height));
+      ImageData* image_data = ImageData::Create(
+          IntSize(width, height), color_params.GetColorSpace(), storage_format);
       if (!image_data)
         return nullptr;
-      DOMUint8ClampedArray* pixel_array = image_data->data();
-      DCHECK_EQ(pixel_array->length(), pixel_length);
-      memcpy(pixel_array->Data(), pixels, pixel_length);
+      DOMArrayBufferBase* pixel_buffer = image_data->BufferBase();
+      DCHECK_EQ(pixel_buffer->ByteLength(), byte_length);
+      memcpy(pixel_buffer->Data(), pixels, byte_length);
       return image_data;
+    }
+    case kDOMPointTag: {
+      double x = 0, y = 0, z = 0, w = 1;
+      if (!ReadDouble(&x) || !ReadDouble(&y) || !ReadDouble(&z) ||
+          !ReadDouble(&w))
+        return nullptr;
+      return DOMPoint::Create(x, y, z, w);
+    }
+    case kDOMPointReadOnlyTag: {
+      double x = 0, y = 0, z = 0, w = 1;
+      if (!ReadDouble(&x) || !ReadDouble(&y) || !ReadDouble(&z) ||
+          !ReadDouble(&w))
+        return nullptr;
+      return DOMPointReadOnly::Create(x, y, z, w);
+    }
+    case kDOMRectTag: {
+      double x = 0, y = 0, width = 0, height = 0;
+      if (!ReadDouble(&x) || !ReadDouble(&y) || !ReadDouble(&width) ||
+          !ReadDouble(&height))
+        return nullptr;
+      return DOMRect::Create(x, y, width, height);
+    }
+    case kDOMRectReadOnlyTag: {
+      double x = 0, y = 0, width = 0, height = 0;
+      if (!ReadDouble(&x) || !ReadDouble(&y) || !ReadDouble(&width) ||
+          !ReadDouble(&height))
+        return nullptr;
+      return DOMRectReadOnly::Create(x, y, width, height);
+    }
+    case kDOMQuadTag: {
+      DOMPointInit pointInits[4];
+      for (DOMPointInit& init : pointInits) {
+        double x = 0, y = 0, z = 0, w = 0;
+        if (!ReadDouble(&x) || !ReadDouble(&y) || !ReadDouble(&z) ||
+            !ReadDouble(&w))
+          return nullptr;
+        init.setX(x);
+        init.setY(y);
+        init.setZ(z);
+        init.setW(w);
+      }
+      return DOMQuad::Create(pointInits[0], pointInits[1], pointInits[2],
+                             pointInits[3]);
+    }
+    case kDOMMatrix2DTag: {
+      double values[6];
+      for (double& d : values) {
+        if (!ReadDouble(&d))
+          return nullptr;
+      }
+      return DOMMatrix::CreateForSerialization(values,
+                                               WTF_ARRAY_LENGTH(values));
+    }
+    case kDOMMatrix2DReadOnlyTag: {
+      double values[6];
+      for (double& d : values) {
+        if (!ReadDouble(&d))
+          return nullptr;
+      }
+      return DOMMatrixReadOnly::CreateForSerialization(
+          values, WTF_ARRAY_LENGTH(values));
+    }
+    case kDOMMatrixTag: {
+      double values[16];
+      for (double& d : values) {
+        if (!ReadDouble(&d))
+          return nullptr;
+      }
+      return DOMMatrix::CreateForSerialization(values,
+                                               WTF_ARRAY_LENGTH(values));
+    }
+    case kDOMMatrixReadOnlyTag: {
+      double values[16];
+      for (double& d : values) {
+        if (!ReadDouble(&d))
+          return nullptr;
+      }
+      return DOMMatrixReadOnly::CreateForSerialization(
+          values, WTF_ARRAY_LENGTH(values));
     }
     case kMessagePortTag: {
       uint32_t index = 0;
@@ -360,15 +533,20 @@ File* V8ScriptValueDeserializer::ReadFileIndex() {
   const WebBlobInfo& info = (*blob_info_array_)[index];
   // FIXME: transition WebBlobInfo.lastModified to be milliseconds-based also.
   double last_modified_ms = info.LastModified() * kMsPerSecond;
-  return File::CreateFromIndexedSerialization(
-      info.FilePath(), info.FileName(), info.size(), last_modified_ms,
-      GetOrCreateBlobDataHandle(info.Uuid(), info.GetType(), info.size()));
+  auto blob_handle = info.GetBlobHandle();
+  if (!blob_handle) {
+    blob_handle =
+        GetOrCreateBlobDataHandle(info.Uuid(), info.GetType(), info.size());
+  }
+  return File::CreateFromIndexedSerialization(info.FilePath(), info.FileName(),
+                                              info.size(), last_modified_ms,
+                                              blob_handle);
 }
 
-RefPtr<BlobDataHandle> V8ScriptValueDeserializer::GetOrCreateBlobDataHandle(
-    const String& uuid,
-    const String& type,
-    uint64_t size) {
+scoped_refptr<BlobDataHandle>
+V8ScriptValueDeserializer::GetOrCreateBlobDataHandle(const String& uuid,
+                                                     const String& type,
+                                                     uint64_t size) {
   // The containing ssv may have a BDH for this uuid if this ssv is just being
   // passed from main to worker thread (for example). We use those values when
   // creating the new blob instead of cons'ing up a new BDH.
@@ -382,7 +560,7 @@ RefPtr<BlobDataHandle> V8ScriptValueDeserializer::GetOrCreateBlobDataHandle(
   // is deserializing.
   // For example in sharedWorker.postMessage(...).
   BlobDataHandleMap& handles = serialized_script_value_->BlobDataHandles();
-  BlobDataHandleMap::const_iterator it = handles.Find(uuid);
+  BlobDataHandleMap::const_iterator it = handles.find(uuid);
   if (it != handles.end())
     return it->value;
   return BlobDataHandle::Create(uuid, type, size);

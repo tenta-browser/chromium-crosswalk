@@ -8,7 +8,7 @@
 
 #include "net/quic/core/proto/cached_network_parameters.pb.h"
 #include "net/quic/core/quic_connection.h"
-#include "net/quic/core/quic_flags.h"
+#include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_ptr_util.h"
 #include "net/tools/quic/quic_simple_server_stream.h"
@@ -101,15 +101,13 @@ QuicSpdyStream* QuicSimpleServerSession::CreateIncomingDynamicStream(
   return stream;
 }
 
-QuicSimpleServerStream* QuicSimpleServerSession::CreateOutgoingDynamicStream(
-    SpdyPriority priority) {
+QuicSimpleServerStream* QuicSimpleServerSession::CreateOutgoingDynamicStream() {
   if (!ShouldCreateOutgoingDynamicStream()) {
     return nullptr;
   }
 
   QuicSimpleServerStream* stream = new QuicSimpleServerStream(
       GetNextOutgoingStreamId(), this, response_cache_);
-  stream->SetPriority(priority);
   ActivateStream(QuicWrapUnique(stream));
   return stream;
 }
@@ -194,11 +192,12 @@ void QuicSimpleServerSession::HandlePromisedPushRequests() {
     }
 
     QuicSimpleServerStream* promised_stream =
-        static_cast<QuicSimpleServerStream*>(
-            CreateOutgoingDynamicStream(promised_info.priority));
+        static_cast<QuicSimpleServerStream*>(CreateOutgoingDynamicStream());
     DCHECK_NE(promised_stream, nullptr);
     DCHECK_EQ(promised_info.stream_id, promised_stream->id());
     QUIC_DLOG(INFO) << "created server push stream " << promised_stream->id();
+
+    promised_stream->SetPriority(promised_info.priority);
 
     SpdyHeaderBlock request_headers(std::move(promised_info.request_headers));
 

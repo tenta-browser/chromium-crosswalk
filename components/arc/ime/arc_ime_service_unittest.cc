@@ -8,7 +8,6 @@
 #include <set>
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/arc/arc_bridge_service.h"
@@ -100,7 +99,8 @@ class FakeInputMethod : public ui::DummyInputMethod {
 // not depending on the full setup of Exo and Ash.
 class FakeArcWindowDelegate : public ArcImeService::ArcWindowDelegate {
  public:
-  FakeArcWindowDelegate() : next_id_(0) {}
+  explicit FakeArcWindowDelegate(ui::InputMethod* input_method)
+      : next_id_(0), test_input_method_(input_method) {}
 
   bool IsArcWindow(const aura::Window* window) const override {
     return arc_window_id_.count(window->id());
@@ -108,6 +108,11 @@ class FakeArcWindowDelegate : public ArcImeService::ArcWindowDelegate {
 
   void RegisterFocusObserver() override {}
   void UnregisterFocusObserver() override {}
+
+  ui::InputMethod* GetInputMethodForWindow(
+      aura::Window* window) const override {
+    return window ? test_input_method_ : nullptr;
+  }
 
   std::unique_ptr<aura::Window> CreateFakeArcWindow() {
     const int id = next_id_++;
@@ -126,6 +131,7 @@ class FakeArcWindowDelegate : public ArcImeService::ArcWindowDelegate {
   aura::test::TestWindowDelegate dummy_delegate_;
   int next_id_;
   std::set<int> arc_window_id_;
+  ui::InputMethod* test_input_method_;
 };
 
 }  // namespace
@@ -145,15 +151,15 @@ class ArcImeServiceTest : public testing::Test {
 
  private:
   void SetUp() override {
-    arc_bridge_service_ = base::MakeUnique<ArcBridgeService>();
-    instance_ = base::MakeUnique<ArcImeService>(arc_bridge_service_.get());
+    arc_bridge_service_ = std::make_unique<ArcBridgeService>();
+    instance_ =
+        std::make_unique<ArcImeService>(nullptr, arc_bridge_service_.get());
     fake_arc_ime_bridge_ = new FakeArcImeBridge();
     instance_->SetImeBridgeForTesting(base::WrapUnique(fake_arc_ime_bridge_));
 
-    fake_input_method_ = base::MakeUnique<FakeInputMethod>();
-    instance_->SetInputMethodForTesting(fake_input_method_.get());
+    fake_input_method_ = std::make_unique<FakeInputMethod>();
 
-    fake_window_delegate_ = new FakeArcWindowDelegate();
+    fake_window_delegate_ = new FakeArcWindowDelegate(fake_input_method_.get());
     instance_->SetArcWindowDelegateForTesting(
         base::WrapUnique(fake_window_delegate_));
     arc_win_ = fake_window_delegate_->CreateFakeArcWindow();
@@ -263,6 +269,51 @@ TEST_F(ArcImeServiceTest, WindowFocusTracking) {
   instance_->OnWindowFocused(nullptr, arc_win_.get());
   EXPECT_EQ(nullptr, fake_input_method_->GetTextInputClient());
   EXPECT_EQ(2, fake_input_method_->count_set_focused_text_input_client());
+}
+
+TEST_F(ArcImeServiceTest, RootWindowChange) {
+  std::unique_ptr<aura::Window> dummy_root =
+      fake_window_delegate_->CreateFakeNonArcWindow();
+
+  instance_->OnWindowFocused(arc_win_.get(), nullptr);
+  EXPECT_EQ(instance_.get(), fake_input_method_->GetTextInputClient());
+
+  // Moving to another root window with that shares the same input method.
+  // ArcImeService should keep attached to the IME.
+  instance_->OnWindowRemovingFromRootWindow(arc_win_.get(), dummy_root.get());
+  EXPECT_EQ(instance_.get(), fake_input_method_->GetTextInputClient());
+
+  // Removed from a root window. It should be detached.
+  instance_->OnWindowRemovingFromRootWindow(arc_win_.get(), nullptr);
+  EXPECT_NE(instance_.get(), fake_input_method_->GetTextInputClient());
+
+  // Unfocusing afterwards should not cause any trouble like crashing.
+  instance_->OnWindowFocused(nullptr, arc_win_.get());
+}
+
+TEST_F(ArcImeServiceTest, GetTextFromRange) {
+  instance_->OnWindowFocused(arc_win_.get(), nullptr);
+
+  const base::string16 text = base::ASCIIToUTF16("abcdefghijklmn");
+  // Assume the cursor is between 'c' and 'd'.
+  const uint32_t cursor_pos = 3;
+  const gfx::Range text_range(cursor_pos - 1, cursor_pos + 1);
+  const base::string16 text_in_range = text.substr(cursor_pos - 1, 2);
+  const gfx::Range selection_range(cursor_pos, cursor_pos);
+
+  instance_->OnCursorRectChangedWithSurroundingText(
+      gfx::Rect(0, 0, 1, 1), text_range, text_in_range, selection_range);
+
+  gfx::Range temp;
+  instance_->GetTextRange(&temp);
+  EXPECT_EQ(text_range, temp);
+
+  base::string16 temp_str;
+  instance_->GetTextFromRange(text_range, &temp_str);
+  EXPECT_EQ(text_in_range, temp_str);
+
+  instance_->GetSelectionRange(&temp);
+  EXPECT_EQ(selection_range, temp);
 }
 
 }  // namespace arc

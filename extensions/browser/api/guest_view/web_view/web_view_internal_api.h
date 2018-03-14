@@ -109,7 +109,7 @@ class WebViewInternalExecuteCodeFunction
  private:
   // Loads a file url on WebUI.
   bool LoadFileForWebUI(const std::string& file_src,
-                        const WebUIURLFetcher::WebUILoadFileCallback& callback);
+                        WebUIURLFetcher::WebUILoadFileCallback callback);
 
   // Contains extension resource built from path of file which is
   // specified in JSON arguments.
@@ -414,6 +414,51 @@ class WebViewInternalStopFunction : public WebViewInternalExtensionFunction {
   ResponseAction Run() override;
 
   DISALLOW_COPY_AND_ASSIGN(WebViewInternalStopFunction);
+};
+
+class WebViewInternalSetAudioMutedFunction
+    : public WebViewInternalExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webViewInternal.setAudioMuted",
+                             WEBVIEWINTERNAL_SETAUDIOMUTED);
+
+  WebViewInternalSetAudioMutedFunction();
+
+ protected:
+  ~WebViewInternalSetAudioMutedFunction() override;
+  ResponseAction Run() override;
+
+  DISALLOW_COPY_AND_ASSIGN(WebViewInternalSetAudioMutedFunction);
+};
+
+class WebViewInternalIsAudioMutedFunction
+    : public WebViewInternalExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webViewInternal.isAudioMuted",
+                             WEBVIEWINTERNAL_ISAUDIOMUTED);
+
+  WebViewInternalIsAudioMutedFunction();
+
+ protected:
+  ~WebViewInternalIsAudioMutedFunction() override;
+  ResponseAction Run() override;
+
+  DISALLOW_COPY_AND_ASSIGN(WebViewInternalIsAudioMutedFunction);
+};
+
+class WebViewInternalGetAudioStateFunction
+    : public WebViewInternalExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webViewInternal.getAudioState",
+                             WEBVIEWINTERNAL_GETAUDIOSTATE);
+
+  WebViewInternalGetAudioStateFunction();
+
+ protected:
+  ~WebViewInternalGetAudioStateFunction() override;
+  ResponseAction Run() override;
+
+  DISALLOW_COPY_AND_ASSIGN(WebViewInternalGetAudioStateFunction);
 };
 
 class WebViewInternalTerminateFunction

@@ -29,12 +29,13 @@ namespace media {
 
 class AudioDiscardHelper;
 class DecoderBuffer;
+class FFmpegDecodingLoop;
 
 class MEDIA_EXPORT FFmpegAudioDecoder : public AudioDecoder {
  public:
   FFmpegAudioDecoder(
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-      const scoped_refptr<MediaLog>& media_log);
+      MediaLog* media_log);
   ~FFmpegAudioDecoder() override;
 
   // AudioDecoder implementation.
@@ -67,8 +68,7 @@ class MEDIA_EXPORT FFmpegAudioDecoder : public AudioDecoder {
   // kUninitialized -> kNormal:
   //     The decoder is successfully initialized and is ready to decode buffers.
   // kNormal -> kDecodeFinished:
-  //     When buffer->end_of_stream() is true and avcodec_decode_audio4()
-  //     returns 0 data.
+  //     When buffer->end_of_stream() is true.
   // kNormal -> kError:
   //     A decoding error occurs and decoding needs to stop.
   // (any state) -> kNormal:
@@ -86,17 +86,19 @@ class MEDIA_EXPORT FFmpegAudioDecoder : public AudioDecoder {
   // Handles decoding an unencrypted encoded buffer.
   void DecodeBuffer(const scoped_refptr<DecoderBuffer>& buffer,
                     const DecodeCB& decode_cb);
-  bool FFmpegDecode(const scoped_refptr<DecoderBuffer>& buffer,
-                    bool* has_produced_frame);
+  bool FFmpegDecode(const scoped_refptr<DecoderBuffer>& buffer);
+  bool OnNewFrame(bool* decoded_frame_this_loop,
+                  const scoped_refptr<DecoderBuffer>& buffer,
+                  AVFrame* frame);
 
   // Handles (re-)initializing the decoder with a (new) config.
   // Returns true if initialization was successful.
-  bool ConfigureDecoder();
+  bool ConfigureDecoder(const AudioDecoderConfig& config);
 
-  // Releases resources associated with |codec_context_| and |av_frame_|
-  // and resets them to NULL.
+  // Releases resources associated with |codec_context_| .
   void ReleaseFFmpegResources();
-  void ResetTimestampState();
+
+  void ResetTimestampState(const AudioDecoderConfig& config);
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
@@ -106,7 +108,6 @@ class MEDIA_EXPORT FFmpegAudioDecoder : public AudioDecoder {
 
   // FFmpeg structures owned by this object.
   std::unique_ptr<AVCodecContext, ScopedPtrAVFreeContext> codec_context_;
-  std::unique_ptr<AVFrame, ScopedPtrAVFreeFrame> av_frame_;
 
   AudioDecoderConfig config_;
 
@@ -115,9 +116,11 @@ class MEDIA_EXPORT FFmpegAudioDecoder : public AudioDecoder {
 
   std::unique_ptr<AudioDiscardHelper> discard_helper_;
 
-  scoped_refptr<MediaLog> media_log_;
+  MediaLog* media_log_;
 
   scoped_refptr<AudioBufferMemoryPool> pool_;
+
+  std::unique_ptr<FFmpegDecodingLoop> decoding_loop_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(FFmpegAudioDecoder);
 };

@@ -5,24 +5,26 @@
 #include "chrome/browser/extensions/api/tab_capture/offscreen_tab.h"
 
 #include <algorithm>
+#include <vector>
 
 #include "base/bind.h"
+#include "base/lazy_instance.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "chrome/browser/extensions/api/tab_capture/tab_capture_registry.h"
+#include "chrome/browser/media/router/receiver_presentation_service_delegate_impl.h"  // nogncheck
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/web_contents_sizer.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/web_preferences.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/process_manager.h"
-
-#if defined(ENABLE_MEDIA_ROUTER)
-#include "chrome/browser/media/router/receiver_presentation_service_delegate_impl.h"  // nogncheck
-#endif
+#include "third_party/WebKit/public/web/WebPresentationReceiverFlags.h"
 
 using content::WebContents;
 
@@ -32,12 +34,16 @@ namespace {
 
 // Upper limit on the number of simultaneous off-screen tabs per extension
 // instance.
-const int kMaxOffscreenTabsPerExtension = 3;
+const int kMaxOffscreenTabsPerExtension = 4;
 
 // Time intervals used by the logic that detects when the capture of an
 // offscreen tab has stopped, to automatically tear it down and free resources.
 const int kMaxSecondsToWaitForCapture = 60;
 const int kPollIntervalInSeconds = 1;
+
+typedef std::vector<content::BrowserContext*> BrowserContextList;
+static base::LazyInstance<BrowserContextList>::Leaky g_offscreen_profiles =
+    LAZY_INSTANCE_INITIALIZER;
 
 }  // namespace
 
@@ -56,6 +62,13 @@ OffscreenTabsOwner* OffscreenTabsOwner::Get(
   // CreateForWebContents() really means "create if not exists."
   CreateForWebContents(extension_web_contents);
   return FromWebContents(extension_web_contents);
+}
+
+// static
+bool OffscreenTabsOwner::IsOffscreenProfile(const Profile* profile) {
+  const BrowserContextList& offscreen_profiles = g_offscreen_profiles.Get();
+  return std::find(offscreen_profiles.begin(), offscreen_profiles.end(),
+                   profile) != offscreen_profiles.end();
 }
 
 OffscreenTab* OffscreenTabsOwner::OpenNewTab(
@@ -85,17 +98,48 @@ void OffscreenTabsOwner::DestroyTab(OffscreenTab* tab) {
   }
 }
 
+// Navigation policy for presentations, where top-level navigations are not
+// allowed.
+class OffscreenTab::PresentationNavigationPolicy
+    : public OffscreenTab::NavigationPolicy {
+ public:
+  PresentationNavigationPolicy() : first_navigation_started_(false) {}
+  ~PresentationNavigationPolicy() override = default;
+
+ private:
+  // OffscreenTab::NavigationPolicy overrides
+  bool DidStartNavigation(content::NavigationHandle* navigation_handle) final {
+    // We only care about top-level navigations that are cross-document.
+    if (!navigation_handle->IsInMainFrame() ||
+        navigation_handle->IsSameDocument()) {
+      return true;
+    }
+
+    // The initial navigation had already begun.
+    if (first_navigation_started_)
+      return false;
+
+    first_navigation_started_ = true;
+    return true;
+  }
+
+  bool first_navigation_started_;
+};
+
 OffscreenTab::OffscreenTab(OffscreenTabsOwner* owner)
     : owner_(owner),
       profile_(Profile::FromBrowserContext(
                    owner->extension_web_contents()->GetBrowserContext())
-               ->CreateOffTheRecordProfile()),
+                   ->CreateOffTheRecordProfile()),
       capture_poll_timer_(false, false),
-      content_capture_was_detected_(false) {
+      content_capture_was_detected_(false),
+      navigation_policy_(new NavigationPolicy) {
   DCHECK(profile_);
+  g_offscreen_profiles.Get().push_back(profile_.get());
 }
 
 OffscreenTab::~OffscreenTab() {
+  base::Erase(g_offscreen_profiles.Get(), profile_.get());
   DVLOG(1) << "Destroying OffscreenTab for start_url=" << start_url_.spec();
 }
 
@@ -108,8 +152,11 @@ void OffscreenTab::Start(const GURL& start_url,
            << initial_size.ToString() << " for start_url=" << start_url_.spec();
 
   // Create the WebContents to contain the off-screen tab's page.
-  offscreen_tab_web_contents_.reset(
-      WebContents::Create(WebContents::CreateParams(profile_.get())));
+  WebContents::CreateParams params(profile_.get());
+  if (!optional_presentation_id.empty())
+    params.starting_sandbox_flags = blink::kPresentationReceiverSandboxFlags;
+
+  offscreen_tab_web_contents_.reset(WebContents::Create(params));
   offscreen_tab_web_contents_->SetDelegate(this);
   WebContentsObserver::Observe(offscreen_tab_web_contents_.get());
 
@@ -122,13 +169,16 @@ void OffscreenTab::Start(const GURL& start_url,
   // automatically unmuted, but will be captured into the MediaStream.
   offscreen_tab_web_contents_->SetAudioMuted(true);
 
-#if defined(ENABLE_MEDIA_ROUTER)
   if (!optional_presentation_id.empty()) {
-    DVLOG(1) << " Register with ReceiverPresentationServiceDelegateImpl, "
-             << "[presentation_id]: " << optional_presentation_id;
-    // Create a ReceiverPSDImpl associated with the offscreen tab's WebContents.
-    // The new instance will set up the necessary infrastructure to allow
-    // controlling peers the ability to connect to the offscreen tab.
+    // This offscreen tab is a presentation created through the Presentation
+    // API. https://www.w3.org/TR/presentation-api/
+    //
+    // Create a ReceiverPresentationServiceDelegateImpl associated with the
+    // offscreen tab's WebContents.  The new instance will set up the necessary
+    // infrastructure to allow controlling pages the ability to connect to the
+    // offscreen tab.
+    DVLOG(1) << "Register with ReceiverPresentationServiceDelegateImpl, "
+             << "presentation_id=" << optional_presentation_id;
     media_router::ReceiverPresentationServiceDelegateImpl::CreateForWebContents(
         offscreen_tab_web_contents_.get(), optional_presentation_id);
 
@@ -138,8 +188,12 @@ void OffscreenTab::Start(const GURL& start_url,
       web_prefs.presentation_receiver = true;
       render_view_host->UpdateWebkitPreferences(web_prefs);
     }
+
+    // Presentations are not allowed to perform top-level navigations after
+    // initial load.  This is enforced through sandboxing flags, but we also
+    // enforce it here.
+    navigation_policy_.reset(new PresentationNavigationPolicy);
   }
-#endif  // defined(ENABLE_MEDIA_ROUTER)
 
   // Navigate to the initial URL.
   content::NavigationController::LoadURLParams load_params(start_url_);
@@ -151,11 +205,15 @@ void OffscreenTab::Start(const GURL& start_url,
   DieIfContentCaptureEnded();
 }
 
+void OffscreenTab::Close() {
+  if (offscreen_tab_web_contents_)
+    offscreen_tab_web_contents_->ClosePage();
+}
+
 void OffscreenTab::CloseContents(WebContents* source) {
   DCHECK_EQ(offscreen_tab_web_contents_.get(), source);
   // Javascript in the page called window.close().
-  DVLOG(1) << "OffscreenTab will die at renderer's request for start_url="
-           << start_url_.spec();
+  DVLOG(1) << "OffscreenTab for start_url=" << start_url_.spec() << " will die";
   owner_->DestroyTab(this);
   // |this| is no longer valid.
 }
@@ -164,6 +222,7 @@ bool OffscreenTab::ShouldSuppressDialogs(WebContents* source) {
   DCHECK_EQ(offscreen_tab_web_contents_.get(), source);
   // Suppress all because there is no possible direct user interaction with
   // dialogs.
+  // TODO(crbug.com/734191): This does not suppress window.print().
   return true;
 }
 
@@ -224,6 +283,7 @@ bool OffscreenTab::CanDragEnter(
 
 bool OffscreenTab::ShouldCreateWebContents(
     content::WebContents* web_contents,
+    content::RenderFrameHost* opener,
     content::SiteInstance* source_site_instance,
     int32_t route_id,
     int32_t main_frame_route_id,
@@ -348,6 +408,25 @@ void OffscreenTab::DidShowFullscreenWidget() {
       offscreen_tab_web_contents_->GetFullscreenRenderWidgetHostView();
   if (current_fs_view)
     current_fs_view->SetSize(offscreen_tab_web_contents_->GetPreferredSize());
+}
+
+void OffscreenTab::DidStartNavigation(
+    content::NavigationHandle* navigation_handle) {
+  DCHECK(offscreen_tab_web_contents_.get());
+  if (!navigation_policy_->DidStartNavigation(navigation_handle)) {
+    DVLOG(2) << "Closing because NavigationPolicy disallowed "
+             << "StartNavigation to " << navigation_handle->GetURL().spec();
+    Close();
+  }
+}
+
+// Default navigation policy.
+OffscreenTab::NavigationPolicy::NavigationPolicy() = default;
+OffscreenTab::NavigationPolicy::~NavigationPolicy() = default;
+
+bool OffscreenTab::NavigationPolicy::DidStartNavigation(
+    content::NavigationHandle* navigation_handle) {
+  return true;
 }
 
 void OffscreenTab::DieIfContentCaptureEnded() {

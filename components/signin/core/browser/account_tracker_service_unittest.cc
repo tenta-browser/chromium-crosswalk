@@ -9,15 +9,17 @@
 
 #include "base/message_loop/message_loop.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/signin/core/browser/account_fetcher_service.h"
 #include "components/signin/core/browser/account_info.h"
 #include "components/signin/core/browser/account_tracker_service.h"
+#include "components/signin/core/browser/child_account_info_fetcher.h"
 #include "components/signin/core/browser/fake_account_fetcher_service.h"
+#include "components/signin/core/browser/signin_pref_names.h"
 #include "components/signin/core/browser/test_signin_client.h"
-#include "components/signin/core/common/signin_pref_names.h"
 #include "google_apis/gaia/fake_oauth2_token_service.h"
 #include "google_apis/gaia/gaia_oauth_client.h"
 #include "net/http/http_status_code.h"
@@ -255,6 +257,8 @@ class AccountTrackerServiceTest : public testing::Test {
   ~AccountTrackerServiceTest() override {}
 
   void SetUp() override {
+    ChildAccountInfoFetcher::InitializeForTests();
+
     fake_oauth2_token_service_.reset(new FakeOAuth2TokenService());
 
     pref_service_.registry()->RegisterListPref(
@@ -631,14 +635,18 @@ TEST_F(AccountTrackerServiceTest, Persistence) {
     // This will allow testing removal as well as child accounts which is only
     // allowed for a single account.
     SimulateTokenRevoked("alpha");
+#if defined(OS_ANDROID)
     fetcher.FakeSetIsChildAccount("beta", true);
+#else
+    tracker.SetIsChildAccount("beta", true);
+#endif
 
     fetcher.Shutdown();
     tracker.Shutdown();
- }
+  }
 
   // Create a new tracker and make sure it loads the single account from
- // persistence. Also verify it is a child account.
+  // persistence. Also verify it is a child account.
   {
     AccountTrackerService tracker;
     tracker.Initialize(signin_client());
@@ -1083,15 +1091,13 @@ TEST_F(AccountTrackerServiceTest, ChildAccountBasic) {
   tracker.AddObserver(&observer);
   std::string child_id("child");
   {
-    // Responses are processed iff there is a single account with a valid token
-    // and the response is for that account.
-    fetcher.FakeSetIsChildAccount(child_id, true);
-    ASSERT_TRUE(observer.CheckEvents());
-  }
-  {
     SimulateTokenAvailable(child_id);
     IssueAccessToken(child_id);
+#if defined(OS_ANDROID)
     fetcher.FakeSetIsChildAccount(child_id, true);
+#else
+    tracker.SetIsChildAccount(child_id, true);
+#endif
     // Response was processed but observer is not notified as the account state
     // is invalid.
     ASSERT_TRUE(observer.CheckEvents());
@@ -1116,7 +1122,11 @@ TEST_F(AccountTrackerServiceTest, ChildAccountUpdatedAndRevoked) {
 
   SimulateTokenAvailable(child_id);
   IssueAccessToken(child_id);
+#if defined(OS_ANDROID)
   fetcher.FakeSetIsChildAccount(child_id, false);
+#else
+  tracker.SetIsChildAccount(child_id, false);
+#endif
   FakeUserInfoFetchSuccess(&fetcher, child_id);
   ASSERT_TRUE(observer.CheckEvents(TrackingEvent(UPDATED, child_id)));
   AccountInfo info = tracker.GetAccountInfo(child_id);
@@ -1141,14 +1151,23 @@ TEST_F(AccountTrackerServiceTest, ChildAccountUpdatedAndRevokedWithUpdate) {
 
   SimulateTokenAvailable(child_id);
   IssueAccessToken(child_id);
+#if defined(OS_ANDROID)
   fetcher.FakeSetIsChildAccount(child_id, true);
+#else
+  tracker.SetIsChildAccount(child_id, true);
+#endif
   FakeUserInfoFetchSuccess(&fetcher, child_id);
   ASSERT_TRUE(observer.CheckEvents(TrackingEvent(UPDATED, child_id)));
   AccountInfo info = tracker.GetAccountInfo(child_id);
   ASSERT_TRUE(info.is_child_account);
   SimulateTokenRevoked(child_id);
+#if defined(OS_ANDROID)
+  // On Android, is_child_account is set to false before removing it.
   ASSERT_TRUE(observer.CheckEvents(TrackingEvent(UPDATED, child_id),
                                    TrackingEvent(REMOVED, child_id)));
+#else
+  ASSERT_TRUE(observer.CheckEvents(TrackingEvent(REMOVED, child_id)));
+#endif
 
   tracker.RemoveObserver(&observer);
   fetcher.Shutdown();
@@ -1171,12 +1190,21 @@ TEST_F(AccountTrackerServiceTest, ChildAccountUpdatedTwiceThenRevoked) {
   FakeUserInfoFetchSuccess(&fetcher, child_id);
   // Since the account state is already valid, this will notify the
   // observers for the second time.
+#if defined(OS_ANDROID)
   fetcher.FakeSetIsChildAccount(child_id, true);
+#else
+  tracker.SetIsChildAccount(child_id, true);
+#endif
   ASSERT_TRUE(observer.CheckEvents(TrackingEvent(UPDATED, child_id),
                                    TrackingEvent(UPDATED, child_id)));
   SimulateTokenRevoked(child_id);
+#if defined(OS_ANDROID)
+  // On Android, is_child_account is set to false before removing it.
   ASSERT_TRUE(observer.CheckEvents(TrackingEvent(UPDATED, child_id),
                                    TrackingEvent(REMOVED, child_id)));
+#else
+  ASSERT_TRUE(observer.CheckEvents(TrackingEvent(REMOVED, child_id)));
+#endif
 
   tracker.RemoveObserver(&observer);
   fetcher.Shutdown();
@@ -1197,14 +1225,22 @@ TEST_F(AccountTrackerServiceTest, ChildAccountGraduation) {
   IssueAccessToken(child_id);
 
   // Set and verify this is a child account.
+#if defined(OS_ANDROID)
   fetcher.FakeSetIsChildAccount(child_id, true);
+#else
+  tracker.SetIsChildAccount(child_id, true);
+#endif
   AccountInfo info = tracker.GetAccountInfo(child_id);
   ASSERT_TRUE(info.is_child_account);
   FakeUserInfoFetchSuccess(&fetcher, child_id);
   ASSERT_TRUE(observer.CheckEvents(TrackingEvent(UPDATED, child_id)));
 
   // Now simulate child account graduation.
+#if defined(OS_ANDROID)
   fetcher.FakeSetIsChildAccount(child_id, false);
+#else
+  tracker.SetIsChildAccount(child_id, false);
+#endif
   info = tracker.GetAccountInfo(child_id);
   ASSERT_FALSE(info.is_child_account);
   ASSERT_TRUE(observer.CheckEvents(TrackingEvent(UPDATED, child_id)));

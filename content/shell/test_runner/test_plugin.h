@@ -11,15 +11,17 @@
 #include "base/macros.h"
 #include "cc/layers/texture_layer.h"
 #include "cc/layers/texture_layer_client.h"
+#include "gpu/command_buffer/common/mailbox.h"
+#include "gpu/command_buffer/common/sync_token.h"
 #include "third_party/WebKit/public/platform/WebLayer.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebElement.h"
+#include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebPlugin.h"
 #include "third_party/WebKit/public/web/WebPluginContainer.h"
 #include "third_party/khronos/GLES2/gl2.h"
 
 namespace blink {
-class WebFrame;
 class WebGraphicsContext3DProvider;
 class WebLayer;
 struct WebPluginParams;
@@ -33,6 +35,10 @@ namespace gpu {
 namespace gles2 {
 class GLES2Interface;
 }
+}
+
+namespace viz {
+struct TransferableResource;
 }
 
 namespace test_runner {
@@ -53,9 +59,9 @@ class WebTestDelegate;
 // 'accepts-touch' plugin parameter (defaults to false).
 class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
  public:
-  static TestPlugin* create(blink::WebFrame* frame,
-                            const blink::WebPluginParams& params,
-                            WebTestDelegate* delegate);
+  static TestPlugin* Create(const blink::WebPluginParams& params,
+                            WebTestDelegate* delegate,
+                            blink::WebLocalFrame* frame);
   ~TestPlugin() override;
 
   static const blink::WebString& MimeType();
@@ -74,18 +80,18 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
   void UpdateGeometry(const blink::WebRect& window_rect,
                       const blink::WebRect& clip_rect,
                       const blink::WebRect& unobscured_rect,
-                      const blink::WebVector<blink::WebRect>& cut_outs_rects,
                       bool is_visible) override;
   void UpdateFocus(bool focus, blink::WebFocusType focus_type) override {}
   void UpdateVisibility(bool visibility) override {}
   blink::WebInputEventResult HandleInputEvent(
-      const blink::WebInputEvent& event,
+      const blink::WebCoalescedInputEvent& event,
       blink::WebCursorInfo& info) override;
-  bool HandleDragStatusUpdate(blink::WebDragStatus drag_status,
-                              const blink::WebDragData& data,
-                              blink::WebDragOperationsMask mask,
-                              const blink::WebPoint& position,
-                              const blink::WebPoint& screen_position) override;
+  bool HandleDragStatusUpdate(
+      blink::WebDragStatus drag_status,
+      const blink::WebDragData& data,
+      blink::WebDragOperationsMask mask,
+      const blink::WebFloatPoint& position,
+      const blink::WebFloatPoint& screen_position) override;
   void DidReceiveResponse(const blink::WebURLResponse& response) override {}
   void DidReceiveData(const char* data, int data_length) override {}
   void DidFinishLoading() override {}
@@ -93,14 +99,14 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
   bool IsPlaceholder() override;
 
   // cc::TextureLayerClient methods:
-  bool PrepareTextureMailbox(
-      cc::TextureMailbox* mailbox,
-      std::unique_ptr<cc::SingleReleaseCallback>* release_callback) override;
+  bool PrepareTransferableResource(
+      viz::TransferableResource* resource,
+      std::unique_ptr<viz::SingleReleaseCallback>* release_callback) override;
 
  private:
-  TestPlugin(blink::WebFrame* frame,
-             const blink::WebPluginParams& params,
-             WebTestDelegate* delegate);
+  TestPlugin(const blink::WebPluginParams& params,
+             WebTestDelegate* delegate,
+             blink::WebLocalFrame* frame);
 
   enum Primitive { PrimitiveNone, PrimitiveTriangle };
 
@@ -148,17 +154,18 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
   // Functions for drawing scene in Software.
   void DrawSceneSoftware(void* memory);
 
-  blink::WebFrame* frame_;
   WebTestDelegate* delegate_;
   blink::WebPluginContainer* container_;
+  blink::WebLocalFrame* web_local_frame_;
 
   blink::WebRect rect_;
   std::unique_ptr<blink::WebGraphicsContext3DProvider> context_provider_;
   gpu::gles2::GLES2Interface* gl_;
   GLuint color_texture_;
-  cc::TextureMailbox texture_mailbox_;
-  std::unique_ptr<cc::SharedBitmap> shared_bitmap_;
-  bool mailbox_changed_;
+  gpu::Mailbox mailbox_;
+  gpu::SyncToken sync_token_;
+  std::unique_ptr<viz::SharedBitmap> shared_bitmap_;
+  bool content_changed_;
   GLuint framebuffer_;
   Scene scene_;
   scoped_refptr<cc::TextureLayer> layer_;

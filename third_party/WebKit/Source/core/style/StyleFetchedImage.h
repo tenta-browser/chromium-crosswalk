@@ -32,6 +32,8 @@ namespace blink {
 
 class Document;
 
+// This class represents an <image> that loads a single image resource (the
+// url(...) function.)
 class StyleFetchedImage final : public StyleImage,
                                 public ImageResourceObserver {
   USING_PRE_FINALIZER(StyleFetchedImage, Dispose);
@@ -52,22 +54,23 @@ class StyleFetchedImage final : public StyleImage,
   bool CanRender() const override;
   bool IsLoaded() const override;
   bool ErrorOccurred() const override;
-  LayoutSize ImageSize(const LayoutObject&,
+  LayoutSize ImageSize(const Document&,
                        float multiplier,
                        const LayoutSize& default_object_size) const override;
   bool ImageHasRelativeSize() const override;
   bool UsesImageContainerSize() const override;
-  void AddClient(LayoutObject*) override;
-  void RemoveClient(LayoutObject*) override;
+  void AddClient(ImageResourceObserver*) override;
+  void RemoveClient(ImageResourceObserver*) override;
   void ImageNotifyFinished(ImageResourceContent*) override;
   String DebugName() const override { return "StyleFetchedImage"; }
-  PassRefPtr<Image> GetImage(const LayoutObject&,
-                             const IntSize&,
-                             float zoom) const override;
-  bool KnownToBeOpaque(const LayoutObject&) const override;
+  scoped_refptr<Image> GetImage(const ImageResourceObserver&,
+                                const Document&,
+                                const ComputedStyle&,
+                                const IntSize& container_size) const override;
+  bool KnownToBeOpaque(const Document&, const ComputedStyle&) const override;
   ImageResourceContent* CachedImage() const override;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
  private:
   StyleFetchedImage(ImageResourceContent*, const Document&, const KURL&);

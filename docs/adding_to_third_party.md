@@ -65,15 +65,6 @@ Run the following scripts:
 * `src/tools/licenses.py scan` - This will complain about incomplete or missing
   data for third_party checkins. We use 'licenses.py credits' to generate the
   about:credits page in Google Chrome builds.
-* `src/tools/checklicenses/checklicenses.py` - See below for info how to handle
-  possible failures.
-* If you are adding code that will be present in the content layer, please make
-  sure that the license used is compliant with Android tree requirements because
-  this code will also be used in Android WebView. You need to run
-  `src/android_webview/tools/webview_licenses.py scan`
-
-See the ["Odds n' Ends"](adding_to_third_party.md#Odds-n_Ends) Section below if
-you run into any failures running these.
 
 If the library will never be shipped as a part of Chrome (e.g. build-time tools,
 testing tools), make sure to set "License File" as "NOT_SHIPPED" so that the
@@ -159,44 +150,3 @@ ticket](https://bugs.chromium.org/p/chromium/issues/entry?template=Infra-Git)
 for infra and ask the infra team what needs to be done. Note that you'll need
 unlimited quota for at least two role accounts. See the quota status of
 `boringssl` as an example.
-
-## Odds n' Ends
-
-### Handling `licenses_check (checklicenses.py)` failures
-
-This is needed for [Issue
-28291](http://code.google.com/p/chromium/issues/detail?id=28291): Pass the
-Ubuntu license check script:
-
-__If the failure looks like ...   ... the right action is to ... __
-
-* 'filename' has non-whitelisted license 'UNKNOWN'
-    * Ideally make the licensecheck.pl script recognize the license of that
-      file.  Often this requires __adding a license header__. Does it have
-      license header? If it's third party code, ask the upstream project to make
-      sure all their files have license headers.  If the license header is there
-      but is not recognized, we should try to patch licensecheck.pl.  If in
-      doubt please contact phajdan.jr@chromium.org
-* 'filename' has non-whitelisted license 'X' and X is BSD-compatible
-    * Add the license X to WHITELISTED_LICENSES in checklicenses.py . Make sure
-      to respect the OWNERS of that file. You must get an approval before
-      landing. CLs violating this requirement may be reverted.
-* 'filename' has non-whitelisted license 'X' and X is not BSD-compatible (i.e.
-  GPL)
-    * Do you really need to add those files? Chromium is BSD-licensed so the
-      resulting binaries can't use GPL code. Ideally we just shouldn't have
-      those files at all in the tree. If in doubt, please ask mal@chromium.org
-
-### Handling `webview_licenses.py` failures
-
-__If the failure looks like ...   ... the right action is to ... __
-
-* Missing license file
-    * Make sure that the license file is present. It should be called 'LICENSE',
-      or otherwise README.chromium file must point to it explicitly.
-* The following files contain a third-party license but are not in a listed
-  third-party directory...
-    * Check if it's a false positive (e.g. 'copyright' word used in a string
-      literal), if so, update
-      [src/tools/copyright_scanner/third_party_files_whitelist.txt](https://code.google.com/p/chromium/codesearch#chromium/src/tools/copyright_scanner/third_party_files_whitelist.txt)
-      file. Otherwise, please move the code into third_party.

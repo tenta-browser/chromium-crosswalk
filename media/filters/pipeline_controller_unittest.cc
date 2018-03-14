@@ -47,7 +47,7 @@ class PipelineControllerTest : public ::testing::Test, public Pipeline::Client {
                              base::Bind(&PipelineControllerTest::OnError,
                                         base::Unretained(this))) {}
 
-  ~PipelineControllerTest() override {}
+  ~PipelineControllerTest() override = default;
 
   PipelineStatusCB StartPipeline(bool is_streaming, bool is_static) {
     EXPECT_FALSE(pipeline_controller_.IsStable());
@@ -136,6 +136,8 @@ class PipelineControllerTest : public ::testing::Test, public Pipeline::Client {
                       const AddTextTrackDoneCB& done_cb) override {}
   void OnWaitingForDecryptionKey() override {}
   void OnVideoNaturalSizeChange(const gfx::Size& size) override {}
+  void OnAudioConfigChange(const AudioDecoderConfig& config) {}
+  void OnVideoConfigChange(const VideoDecoderConfig& config) {}
   void OnVideoOpacityChange(bool opaque) override {}
   void OnVideoAverageKeyframeDistanceUpdate() override {}
 

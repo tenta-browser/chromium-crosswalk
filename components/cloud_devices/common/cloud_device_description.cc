@@ -40,7 +40,7 @@ bool CloudDeviceDescription::InitFromDictionary(
 
 bool CloudDeviceDescription::InitFromString(const std::string& json) {
   std::unique_ptr<base::Value> parsed = base::JSONReader::Read(json);
-  base::DictionaryValue* description = NULL;
+  base::DictionaryValue* description = nullptr;
   if (!parsed || !parsed->GetAsDictionary(&description))
     return false;
   ignore_result(parsed.release());
@@ -56,30 +56,26 @@ std::string CloudDeviceDescription::ToString() const {
 
 const base::DictionaryValue* CloudDeviceDescription::GetItem(
     const std::string& path) const {
-  const base::DictionaryValue* value = NULL;
+  const base::DictionaryValue* value = nullptr;
   root_->GetDictionary(path, &value);
   return value;
 }
 
 base::DictionaryValue* CloudDeviceDescription::CreateItem(
     const std::string& path) {
-  base::DictionaryValue* value = new base::DictionaryValue;
-  root_->Set(path, value);
-  return value;
+  return root_->SetDictionary(path, base::MakeUnique<base::DictionaryValue>());
 }
 
 const base::ListValue* CloudDeviceDescription::GetListItem(
     const std::string& path) const {
-  const base::ListValue* value = NULL;
+  const base::ListValue* value = nullptr;
   root_->GetList(path, &value);
   return value;
 }
 
 base::ListValue* CloudDeviceDescription::CreateListItem(
     const std::string& path) {
-  base::ListValue* value = new base::ListValue;
-  root_->Set(path, value);
-  return value;
+  return root_->SetList(path, base::MakeUnique<base::ListValue>());
 }
 
 }  // namespace cloud_devices

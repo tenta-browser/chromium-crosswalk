@@ -52,7 +52,7 @@ proc fts3_integrity {tn db tbl} {
     DROP TABLE temp.fts3check2;
     DROP TABLE temp.fts3check3;
   }
-  
+
   uplevel [list do_test $tn [list set {} $m1] $m2]
 }
 
@@ -99,7 +99,7 @@ foreach {tn sql uses constraint data} [subst {
   20   "UPDATE OR REPLACE  $T4"   1 0 {{e f g h} {a b c d}}
 }] {
   db_restore_and_reopen
-  execsql { 
+  execsql {
     BEGIN;
       INSERT INTO t1(rowid, x) VALUES(3, 'i j k l');
   }
@@ -136,52 +136,54 @@ do_execsql_test 2.2.2 { COMMIT }
 do_execsql_test 2.2.3 { SELECT * FROM t1 } {{a b c} {a b c}}
 fts3_integrity 2.2.4 db t1
 
-do_execsql_test 3.1 {
-  CREATE VIRTUAL TABLE t3 USING fts4;
-  REPLACE INTO t3(docid, content) VALUES (1, 'one two');
-  SELECT quote(matchinfo(t3, 'na')) FROM t3 WHERE t3 MATCH 'one'
-} {X'0100000002000000'}
+if {$tcl_platform(byteOrder)=="littleEndian"} {
+  do_execsql_test 3.1 {
+    CREATE VIRTUAL TABLE t3 USING fts4;
+    REPLACE INTO t3(docid, content) VALUES (1, 'one two');
+    SELECT quote(matchinfo(t3, 'na')) FROM t3 WHERE t3 MATCH 'one'
+  } {X'0100000002000000'}
 
-do_execsql_test 3.2 {
-  REPLACE INTO t3(docid, content) VALUES (2, 'one two three four');
-  SELECT quote(matchinfo(t3, 'na')) FROM t3 WHERE t3 MATCH 'four'
-} {X'0200000003000000'}
+  do_execsql_test 3.2 {
+    REPLACE INTO t3(docid, content) VALUES (2, 'one two three four');
+    SELECT quote(matchinfo(t3, 'na')) FROM t3 WHERE t3 MATCH 'four'
+  } {X'0200000003000000'}
 
-do_execsql_test 3.3 {
-  REPLACE INTO t3(docid, content) VALUES (1, 'one two three four five six');
-  SELECT quote(matchinfo(t3, 'na')) FROM t3 WHERE t3 MATCH 'six'
-} {X'0200000005000000'}
+  do_execsql_test 3.3 {
+    REPLACE INTO t3(docid, content) VALUES (1, 'one two three four five six');
+    SELECT quote(matchinfo(t3, 'na')) FROM t3 WHERE t3 MATCH 'six'
+  } {X'0200000005000000'}
 
-do_execsql_test 3.4 {
-  UPDATE OR REPLACE t3 SET docid = 2 WHERE docid=1;
-  SELECT quote(matchinfo(t3, 'na')) FROM t3 WHERE t3 MATCH 'six'
-} {X'0100000006000000'}
+  do_execsql_test 3.4 {
+    UPDATE OR REPLACE t3 SET docid = 2 WHERE docid=1;
+    SELECT quote(matchinfo(t3, 'na')) FROM t3 WHERE t3 MATCH 'six'
+  } {X'0100000006000000'}
 
-do_execsql_test 3.5 {
-  UPDATE OR REPLACE t3 SET docid = 3 WHERE docid=2;
-  SELECT quote(matchinfo(t3, 'na')) FROM t3 WHERE t3 MATCH 'six'
-} {X'0100000006000000'}
+  do_execsql_test 3.5 {
+    UPDATE OR REPLACE t3 SET docid = 3 WHERE docid=2;
+    SELECT quote(matchinfo(t3, 'na')) FROM t3 WHERE t3 MATCH 'six'
+  } {X'0100000006000000'}
 
-do_execsql_test 3.6 {
-  REPLACE INTO t3(docid, content) VALUES (3, 'one two');
-  SELECT quote(matchinfo(t3, 'na')) FROM t3 WHERE t3 MATCH 'one'
-} {X'0100000002000000'}
+  do_execsql_test 3.6 {
+    REPLACE INTO t3(docid, content) VALUES (3, 'one two');
+    SELECT quote(matchinfo(t3, 'na')) FROM t3 WHERE t3 MATCH 'one'
+  } {X'0100000002000000'}
 
-do_execsql_test 3.7 {
-  REPLACE INTO t3(docid, content) VALUES (NULL, 'one two three four');
-  REPLACE INTO t3(docid, content) VALUES (NULL, 'one two three four five six');
-  SELECT docid FROM t3;
-} {3 4 5}
+  do_execsql_test 3.7 {
+    REPLACE INTO t3(docid, content) VALUES(NULL,'one two three four');
+    REPLACE INTO t3(docid, content) VALUES(NULL,'one two three four five six');
+    SELECT docid FROM t3;
+  } {3 4 5}
 
-do_execsql_test 3.8 {
-  UPDATE OR REPLACE t3 SET docid = 5, content='three four' WHERE docid = 4;
-  SELECT quote(matchinfo(t3, 'na')) FROM t3 WHERE t3 MATCH 'one'
-} {X'0200000002000000'}
+  do_execsql_test 3.8 {
+    UPDATE OR REPLACE t3 SET docid = 5, content='three four' WHERE docid = 4;
+    SELECT quote(matchinfo(t3, 'na')) FROM t3 WHERE t3 MATCH 'one'
+  } {X'0200000002000000'}
+}
 
 #-------------------------------------------------------------------------
-# Test that the xSavepoint is invoked correctly if the first write 
-# operation within a transaction is to a virtual table. 
-# 
+# Test that the xSavepoint is invoked correctly if the first write
+# operation within a transaction is to a virtual table.
+#
 do_catchsql_test 4.1.1 {
   CREATE VIRTUAL TABLE t0 USING fts4;
   BEGIN;
@@ -230,23 +232,23 @@ do_execsql_test 4.3.2 {
 do_execsql_test 4.4.1 {
   CREATE TABLE A(ID INTEGER PRIMARY KEY, AnotherID INTEGER, Notes TEXT);
   CREATE VIRTUAL TABLE AFTS USING FTS4 (Notes);
-  CREATE TRIGGER A_DeleteTrigger AFTER DELETE ON A FOR EACH ROW BEGIN 
-    DELETE FROM AFTS WHERE rowid=OLD.ID; 
+  CREATE TRIGGER A_DeleteTrigger AFTER DELETE ON A FOR EACH ROW BEGIN
+    DELETE FROM AFTS WHERE rowid=OLD.ID;
   END;
   CREATE TABLE B(ID INTEGER PRIMARY KEY,Notes TEXT);
   CREATE VIRTUAL TABLE BFTS USING FTS3 (Notes);
-  CREATE TRIGGER B_DeleteTrigger AFTER DELETE ON B FOR EACH ROW BEGIN 
-    DELETE FROM BFTS WHERE rowid=OLD.ID; 
+  CREATE TRIGGER B_DeleteTrigger AFTER DELETE ON B FOR EACH ROW BEGIN
+    DELETE FROM BFTS WHERE rowid=OLD.ID;
   END;
 }
-		
+
 do_execsql_test 4.4.2 {
   BEGIN TRANSACTION;
     DELETE FROM A WHERE AnotherID=1;
     DELETE FROM B WHERE ID=1;
   COMMIT;
 }
-		
+
 
 
 finish_test

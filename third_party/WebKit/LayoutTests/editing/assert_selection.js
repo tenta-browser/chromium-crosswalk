@@ -60,6 +60,10 @@ const DumpAs = {
   FLAT_TREE: 'flattree',
 };
 
+// border-size of IFRAME which hosts sample HTML. This value comes from
+// "core/css/html.css".
+const kIFrameBorderSize = 2;
+
 /** @const @type {string} */
 const kTextArea = 'TEXTAREA';
 
@@ -82,7 +86,7 @@ class Traversal {
   }
 
   /**
-   * @param {!DOMSelection} selection
+   * @param {!Selection} selection
    * @return !SampleSelection
    */
   fromDOMSelection(selection) {
@@ -105,7 +109,7 @@ class DOMTreeTraversal extends Traversal {
   firstChildOf(node) { return node.firstChild; }
 
   /**
-   * @param {!DOMSelection} selection
+   * @param {!Selection} selection
    * @return !SampleSelection
    */
   fromDOMSelection(selection) {
@@ -125,10 +129,10 @@ class FlatTreeTraversal extends Traversal {
    * @param {!Node} node
    * @return {Node}
    */
-  firstChildOf(node) { return internals.firstChildInFlatTree(node); }
+  firstChildOf(node) { return window.internals.firstChildInFlatTree(node); }
 
   /**
-   * @param {!DOMSelection} selection
+   * @param {!Selection} selection
    * @return !SampleSelection
    */
   fromDOMSelection(selection) {
@@ -141,7 +145,7 @@ class FlatTreeTraversal extends Traversal {
    * @param {!Node} node
    * @return {Node}
    */
-  nextSiblingOf(node) { return internals.nextSiblingInFlatTree(node); }
+  nextSiblingOf(node) { return window.internals.nextSiblingInFlatTree(node); }
 }
 
 /**
@@ -474,7 +478,7 @@ class Serializer {
   constructor(selection, traversal) {
     /** @type {!SampleSelection} */
     this.selection_ = selection;
-    /** @type {!Array<strings>} */
+    /** @type {!Array<string>} */
     this.strings_ = [];
     /** @type {!Traversal} */
     this.traversal_ = traversal;
@@ -589,7 +593,7 @@ class Serializer {
 
   /**
    * @private
-   * @param {!HTMLTextArea}
+   * @param {!HTMLTextAreaElement} textArea
    */
   handleTextArea(textArea) {
     /** @type {string} */
@@ -664,7 +668,29 @@ class Serializer {
 }
 
 /**
- * @this {!DOMSelection}
+ * @param {!HTMLElement} element
+ * @return {number}
+ */
+function computeLeft(element) {
+  let left = kIFrameBorderSize + element.ownerDocument.offsetLeft;
+  for (let runner = element; runner; runner = runner.offsetParent)
+    left += runner.offsetLeft;
+  return left;
+}
+
+/**
+ * @param {!HTMLElement} element
+ * @return {number}
+ */
+function computeTop(element) {
+  let top = kIFrameBorderSize + element.ownerDocument.offsetTop;
+  for (let runner = element; runner; runner = runner.offsetParent)
+    top += runner.offsetTop;
+  return top;
+}
+
+/**
+ * @this {!Selection}
  * @param {string} html
  * @param {string=} opt_text
  */
@@ -695,7 +721,7 @@ class Sample {
    * @param {string} sampleText
    */
   constructor(sampleText) {
-    /** @const @type {!HTMLIFame} */
+    /** @const @type {!HTMLIFrameElement} */
     this.iframe_ = document.createElement('iframe');
     if (!document.body)
         document.body = document.createElement("body");
@@ -712,6 +738,8 @@ class Sample {
     this.selection_.document.offsetLeft = this.iframe_.offsetLeft;
     this.selection_.document.offsetTop = this.iframe_.offsetTop;
     this.selection_.setClipboardData = setClipboardData;
+    this.selection_.computeLeft = computeLeft;
+    this.selection_.computeTop = computeTop;
     this.load(sampleText);
   }
 
@@ -865,14 +893,14 @@ function commonPrefixOf(str1, str2) {
 }
 
 /**
- * @param {string} inputText
- * @param {function(!Selection)|string}
+ * @param {string} passedInputText
+ * @param {function(!Selection)|string} tester
  * @param {string} expectedText
  * @param {Object=} opt_options
  * @return {!Sample}
  */
 function assertSelection(
-    inputText, tester, expectedText, opt_options = {}) {
+    passedInputText, tester, passedExpectedText, opt_options = {}) {
   const kDescription = 'description';
   const kDumpAs = 'dumpAs';
   const kRemoveSampleIfSucceeded = 'removeSampleIfSucceeded';
@@ -890,6 +918,22 @@ function assertSelection(
   const dumpAs = options[kDumpAs] || DumpAs.DOM_TREE;
   /** @type {boolean} */
   const dumpFromRoot = options[kDumpFromRoot] || false;
+
+  const inputText = (() => {
+    if (typeof(passedInputText) === 'string')
+      return passedInputText;
+    if (Array.isArray(passedInputText))
+      return passedInputText.join("");
+    throw new Error('InputText must be a string or an array of strings.');
+  })();
+
+  const expectedText = (() => {
+    if (typeof(passedExpectedText) === 'string')
+      return passedExpectedText;
+    if (Array.isArray(passedExpectedText))
+      return passedExpectedText.join("");
+    throw new Error('ExpectedText must be a string or an array of strings.');
+  })();
 
   checkExpectedText(expectedText);
   const sample = new Sample(inputText);
@@ -933,7 +977,24 @@ function assertSelection(
     `\t sameupto ${commonPrefixOf(expectedText, actualText)}`);
 }
 
+/**
+ * @param {string} inputText
+ * @param {function(!Selection)|string} tester
+ * @param {string} expectedText
+ * @param {Object=} opt_options
+ * @param {string=} opt_description
+ */
+function selectionTest(inputText, tester, expectedText, opt_options,
+                       opt_description) {
+  const description = typeof(opt_options) === 'string' ? opt_options
+                                                       : opt_description;
+  const options = typeof(opt_options) === 'string' ? undefined : opt_options;
+  test(() => assertSelection(inputText, tester, expectedText, options),
+       description);
+}
+
 // Export symbols
 window.Sample = Sample;
 window.assert_selection = assertSelection;
+window.selection_test = selectionTest;
 })();

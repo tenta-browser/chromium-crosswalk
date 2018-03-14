@@ -10,7 +10,6 @@
 #include "platform/wtf/DataLog.h"
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/ThreadingPrimitives.h"
-#include "platform/wtf/Vector.h"
 
 #include <bitset>
 #include <utility>
@@ -38,6 +37,7 @@ namespace blink {
 class NormalPageArena;
 class BasePage;
 class ThreadState;
+class ThreadHeap;
 
 class PLATFORM_EXPORT HeapCompact final {
  public:
@@ -50,7 +50,10 @@ class PLATFORM_EXPORT HeapCompact final {
   // Determine if a GC for the given type and reason should also perform
   // additional heap compaction.
   //
-  bool ShouldCompact(ThreadState*, BlinkGC::GCType, BlinkGC::GCReason);
+  bool ShouldCompact(ThreadHeap*,
+                     BlinkGC::StackState,
+                     BlinkGC::GCType,
+                     BlinkGC::GCReason);
 
   // Compaction should be performed as part of the ongoing GC, initialize
   // the heap compaction pass. Returns the appropriate visitor type to
@@ -111,6 +114,17 @@ class PLATFORM_EXPORT HeapCompact final {
   // to the new value, returning old.
   static bool ScheduleCompactionGCForTesting(bool);
 
+  // Test-only: verify that one or more of the vector arenas are
+  // in the process of being compacted.
+  bool IsCompactingVectorArenas() {
+    for (int i = BlinkGC::kVector1ArenaIndex; i <= BlinkGC::kVector4ArenaIndex;
+         ++i) {
+      if (IsCompactingArena(i))
+        return true;
+    }
+    return false;
+  }
+
  private:
   class MovableObjectFixups;
 
@@ -120,7 +134,7 @@ class PLATFORM_EXPORT HeapCompact final {
   // on the freelists of the arenas we're able to compact. The computed
   // numbers will be subsequently used to determine if a heap compaction
   // is on order (shouldCompact().)
-  void UpdateHeapResidency(ThreadState*);
+  void UpdateHeapResidency(ThreadHeap*);
 
   // Parameters controlling when compaction should be done:
 
@@ -161,7 +175,7 @@ class PLATFORM_EXPORT HeapCompact final {
 
 // Logging macros activated by debug switches.
 
-#define LOG_HEAP_COMPACTION_INTERNAL(msg, ...) dataLogF(msg, ##__VA_ARGS__)
+#define LOG_HEAP_COMPACTION_INTERNAL(msg, ...) DataLogF(msg, ##__VA_ARGS__)
 
 #if DEBUG_HEAP_COMPACTION
 #define LOG_HEAP_COMPACTION(msg, ...) \

@@ -17,6 +17,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/previews/core/previews_black_list.h"
@@ -102,7 +103,7 @@ void DatabaseErrorCallback(sql::Connection* db,
     // return errors until the handle is re-opened.
     sql::Recovery::RecoverDatabase(db, db_path);
 
-    // The DLOG(FATAL) below is intended to draw immediate attention to errors
+    // The DLOG(WARNING) below is intended to draw immediate attention to errors
     // in newly-written code.  Database corruption is generally a result of OS
     // or hardware issues, not coding errors at the client level, so displaying
     // the error would probably lead to confusion.  The ignored call signals the
@@ -112,8 +113,11 @@ void DatabaseErrorCallback(sql::Connection* db,
   }
 
   // The default handling is to assert on debug and to ignore on release.
-  if (!sql::Connection::IsExpectedSqliteError(extended_error))
-    DLOG(FATAL) << db->GetErrorMessage();
+  if (!sql::Connection::IsExpectedSqliteError(extended_error)) {
+    DLOG(WARNING) << db->GetErrorMessage();
+    UMA_HISTOGRAM_SPARSE_SLOWLY("Previews.OptOut.SQLiteLoadError",
+                                extended_error);
+  }
 }
 
 void InitDatabase(sql::Connection* db, base::FilePath path) {

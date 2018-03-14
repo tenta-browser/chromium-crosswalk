@@ -12,14 +12,13 @@
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "base/tracked_objects.h"
 #include "components/sync/driver/async_directory_type_controller_mock.h"
 #include "components/sync/driver/data_type_controller_mock.h"
 #include "components/sync/driver/fake_sync_client.h"
@@ -43,7 +42,7 @@ using testing::DoAll;
 using testing::InvokeWithoutArgs;
 using testing::Mock;
 using testing::Return;
-using testing::SetArgumentPointee;
+using testing::SetArgPointee;
 using testing::StrictMock;
 
 const ModelType kType = AUTOFILL_PROFILE;
@@ -71,8 +70,7 @@ class SharedChangeProcessorMock : public SharedChangeProcessor {
   }
   MOCK_METHOD0(Disconnect, bool());
   MOCK_METHOD2(ProcessSyncChanges,
-               SyncError(const tracked_objects::Location&,
-                         const SyncChangeList&));
+               SyncError(const base::Location&, const SyncChangeList&));
   MOCK_CONST_METHOD2(GetAllSyncDataReturnError,
                      SyncError(ModelType, SyncDataList*));
   MOCK_METHOD0(GetSyncCount, int());
@@ -88,7 +86,7 @@ class SharedChangeProcessorMock : public SharedChangeProcessor {
  protected:
   virtual ~SharedChangeProcessorMock() { DCHECK(!connect_return_); }
   MOCK_METHOD2(OnUnrecoverableError,
-               void(const tracked_objects::Location&, const std::string&));
+               void(const base::Location&, const std::string&));
 
  private:
   base::WeakPtr<SyncableService> connect_return_;
@@ -137,7 +135,7 @@ class AsyncDirectoryTypeControllerFake : public AsyncDirectoryTypeController {
   }
 
  protected:
-  bool PostTaskOnModelThread(const tracked_objects::Location& from_here,
+  bool PostTaskOnModelThread(const base::Location& from_here,
                              const base::Closure& task) override {
     if (blocked_) {
       pending_tasks_.push_back(PendingTask(from_here, task));
@@ -157,11 +155,10 @@ class AsyncDirectoryTypeControllerFake : public AsyncDirectoryTypeController {
 
  private:
   struct PendingTask {
-    PendingTask(const tracked_objects::Location& from_here,
-                const base::Closure& task)
+    PendingTask(const base::Location& from_here, const base::Closure& task)
         : from_here(from_here), task(task) {}
 
-    tracked_objects::Location from_here;
+    base::Location from_here;
     base::Closure task;
   };
 
@@ -177,15 +174,18 @@ class AsyncDirectoryTypeControllerFake : public AsyncDirectoryTypeController {
 class SyncAsyncDirectoryTypeControllerTest : public testing::Test,
                                              public FakeSyncClient {
  public:
-  SyncAsyncDirectoryTypeControllerTest() : backend_thread_("dbthread") {}
+  SyncAsyncDirectoryTypeControllerTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI),
+        backend_thread_("dbthread") {}
 
   void SetUp() override {
     backend_thread_.Start();
     change_processor_ = new SharedChangeProcessorMock(kType);
     // All of these are refcounted, so don't need to be released.
     dtc_mock_ =
-        base::MakeUnique<StrictMock<AsyncDirectoryTypeControllerMock>>();
-    non_ui_dtc_ = base::MakeUnique<AsyncDirectoryTypeControllerFake>(
+        std::make_unique<StrictMock<AsyncDirectoryTypeControllerMock>>();
+    non_ui_dtc_ = std::make_unique<AsyncDirectoryTypeControllerFake>(
         this, dtc_mock_.get(), change_processor_.get(),
         backend_thread_.task_runner());
   }
@@ -222,7 +222,7 @@ class SyncAsyncDirectoryTypeControllerTest : public testing::Test,
     EXPECT_CALL(*change_processor_.get(), CryptoReadyIfNecessary())
         .WillOnce(Return(true));
     EXPECT_CALL(*change_processor_.get(), SyncModelHasUserCreatedNodes(_))
-        .WillOnce(DoAll(SetArgumentPointee<0>(true), Return(true)));
+        .WillOnce(DoAll(SetArgPointee<0>(true), Return(true)));
     EXPECT_CALL(*change_processor_.get(), GetAllSyncDataReturnError(_, _))
         .WillOnce(Return(SyncError()));
     EXPECT_CALL(*change_processor_.get(), GetSyncCount()).WillOnce(Return(0));
@@ -253,7 +253,7 @@ class SyncAsyncDirectoryTypeControllerTest : public testing::Test,
 
   static void SignalDone(WaitableEvent* done) { done->Signal(); }
 
-  base::MessageLoopForUI message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::Thread backend_thread_;
 
   StartCallbackMock start_callback_;
@@ -282,7 +282,7 @@ TEST_F(SyncAsyncDirectoryTypeControllerTest, StartFirstRun) {
   EXPECT_CALL(*change_processor_.get(), CryptoReadyIfNecessary())
       .WillOnce(Return(true));
   EXPECT_CALL(*change_processor_.get(), SyncModelHasUserCreatedNodes(_))
-      .WillOnce(DoAll(SetArgumentPointee<0>(false), Return(true)));
+      .WillOnce(DoAll(SetArgPointee<0>(false), Return(true)));
   EXPECT_CALL(*change_processor_.get(), GetAllSyncDataReturnError(_, _))
       .WillOnce(Return(SyncError()));
   EXPECT_CALL(*change_processor_.get(), RecordAssociationTime(_));
@@ -316,7 +316,7 @@ TEST_F(SyncAsyncDirectoryTypeControllerTest, StartAssociationFailed) {
   EXPECT_CALL(*change_processor_.get(), CryptoReadyIfNecessary())
       .WillOnce(Return(true));
   EXPECT_CALL(*change_processor_.get(), SyncModelHasUserCreatedNodes(_))
-      .WillOnce(DoAll(SetArgumentPointee<0>(true), Return(true)));
+      .WillOnce(DoAll(SetArgPointee<0>(true), Return(true)));
   EXPECT_CALL(*change_processor_.get(), GetAllSyncDataReturnError(_, _))
       .WillOnce(Return(SyncError()));
   EXPECT_CALL(*change_processor_.get(), RecordAssociationTime(_));
@@ -341,7 +341,7 @@ TEST_F(SyncAsyncDirectoryTypeControllerTest,
   EXPECT_CALL(*change_processor_.get(), CryptoReadyIfNecessary())
       .WillRepeatedly(Return(true));
   EXPECT_CALL(*change_processor_.get(), SyncModelHasUserCreatedNodes(_))
-      .WillRepeatedly(DoAll(SetArgumentPointee<0>(false), Return(false)));
+      .WillRepeatedly(DoAll(SetArgPointee<0>(false), Return(false)));
   EXPECT_EQ(DataTypeController::NOT_RUNNING, non_ui_dtc_->state());
   Start();
   WaitForDTC();
@@ -377,8 +377,8 @@ TEST_F(SyncAsyncDirectoryTypeControllerTest, AbortDuringAssociation) {
       .WillOnce(Return(true));
   EXPECT_CALL(*change_processor_.get(), SyncModelHasUserCreatedNodes(_))
       .WillOnce(DoAll(SignalEvent(&wait_for_db_thread_pause),
-                      WaitOnEvent(&pause_db_thread),
-                      SetArgumentPointee<0>(true), Return(true)));
+                      WaitOnEvent(&pause_db_thread), SetArgPointee<0>(true),
+                      Return(true)));
   EXPECT_CALL(*change_processor_.get(), GetAllSyncDataReturnError(_, _))
       .WillOnce(Return(SyncError(FROM_HERE, SyncError::DATATYPE_ERROR,
                                  "Disconnected.", kType)));

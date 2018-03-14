@@ -87,7 +87,9 @@ void SelectorFilter::PopParentStackFrame() {
     ancestor_identifier_filter_->Remove(parent_frame.identifier_hashes[i]);
   parent_stack_.pop_back();
   if (parent_stack_.IsEmpty()) {
-    ASSERT(ancestor_identifier_filter_->LikelyEmpty());
+#if DCHECK_IS_ON()
+    DCHECK(ancestor_identifier_filter_->LikelyEmpty());
+#endif
     ancestor_identifier_filter_.reset();
   }
 }
@@ -175,6 +177,7 @@ void SelectorFilter::CollectIdentifierHashes(
         *identifier_hashes = 0;
         return;
       case CSSSelector::kDescendant:
+      case CSSSelector::kShadowDeepAsDescendant:
       case CSSSelector::kChild:
       // Fall through.
       case CSSSelector::kShadowPseudo:
@@ -196,11 +199,11 @@ void SelectorFilter::CollectIdentifierHashes(
   *hash = 0;
 }
 
-DEFINE_TRACE(SelectorFilter::ParentStackFrame) {
+void SelectorFilter::ParentStackFrame::Trace(blink::Visitor* visitor) {
   visitor->Trace(element);
 }
 
-DEFINE_TRACE(SelectorFilter) {
+void SelectorFilter::Trace(blink::Visitor* visitor) {
   visitor->Trace(parent_stack_);
 }
 

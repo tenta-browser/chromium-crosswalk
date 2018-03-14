@@ -14,7 +14,6 @@
 
 #include "base/strings/stringize_macros.h"
 #include "base/strings/stringprintf.h"
-#include "base/test/scoped_async_task_scheduler.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/buffer_format_util.h"
@@ -177,7 +176,6 @@ class GLImageTest : public testing::Test {
   }
 
  protected:
-  base::test::ScopedAsyncTaskScheduler scoped_async_task_scheduler_;
   scoped_refptr<GLSurface> surface_;
   scoped_refptr<GLContext> context_;
   GLImageTestDelegate delegate_;
@@ -186,7 +184,9 @@ class GLImageTest : public testing::Test {
 TYPED_TEST_CASE_P(GLImageTest);
 
 TYPED_TEST_P(GLImageTest, Create) {
-  const gfx::Size small_image_size(4, 4);
+  // NOTE: On some drm devices (mediatek) the mininum width/height to add an fb
+  // for a bo must be 64.
+  const gfx::Size small_image_size(64, 64);
   const gfx::Size large_image_size(512, 512);
   const uint8_t* image_color = this->delegate_.GetImageColor();
 
@@ -329,8 +329,9 @@ TYPED_TEST_P(GLImageBindTest, BindTexImage) {
   DrawTextureQuad(target, image_size);
 
   // Read back pixels to check expectations.
-  GLTestHelper::CheckPixels(0, 0, image_size.width(), image_size.height(),
-                            image_color);
+  GLTestHelper::CheckPixelsWithError(
+      0, 0, image_size.width(), image_size.height(),
+      this->delegate_.GetAdmissibleError(), image_color);
 
   // Clean up.
   glDeleteTextures(1, &texture);
@@ -390,8 +391,9 @@ TYPED_TEST_P(GLImageCopyTest, CopyTexImage) {
   DrawTextureQuad(target, image_size);
 
   // Read back pixels to check expectations.
-  GLTestHelper::CheckPixels(0, 0, image_size.width(), image_size.height(),
-                            image_color);
+  GLTestHelper::CheckPixelsWithError(
+      0, 0, image_size.width(), image_size.height(),
+      this->delegate_.GetAdmissibleError(), image_color);
 
   // Clean up.
   glDeleteTextures(1, &texture);

@@ -7,11 +7,14 @@
 #import <QuartzCore/QuartzCore.h>
 #import <UIKit/UIKit.h>
 
-#import "base/mac/scoped_nsobject.h"
 #import "ios/chrome/browser/ui/animation_util.h"
 #include "ios/chrome/browser/ui/rtl_geometry.h"
 #import "ios/chrome/browser/ui/stack_view/card_view.h"
 #import "ios/chrome/common/material_timing.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 using ios::material::TimingFunction;
 
@@ -56,8 +59,8 @@ const CGFloat kAnimateOutAnchorY = 0;
     const UIEdgeInsets kShadowStretchInsets = {28.0, 28.0, 28.0, 28.0};
     const UIEdgeInsets kShadowLayoutOutset = {-10.0, -11.0, -12.0, -11.0};
     CGRect shadowFrame = UIEdgeInsetsInsetRect(frame, kShadowLayoutOutset);
-    base::scoped_nsobject<UIImageView> frameShadowImageView(
-        [[UIImageView alloc] initWithFrame:shadowFrame]);
+    UIImageView* frameShadowImageView =
+        [[UIImageView alloc] initWithFrame:shadowFrame];
     [frameShadowImageView
         setAutoresizingMask:(UIViewAutoresizingFlexibleWidth |
                              UIViewAutoresizingFlexibleHeight)];
@@ -71,8 +74,6 @@ const CGFloat kAnimateOutAnchorY = 0;
 }
 
 @end
-
-namespace ios_internal {
 
 namespace page_animation_util {
 
@@ -103,12 +104,11 @@ void AnimateInPaperWithAnimationAndCompletion(UIView* view,
   // Create paper background.
   CGRect paperFrame = CGRectOffset(endFrame, 0, paperOffset);
   paperFrame.size.height -= paperOffset;
-  base::scoped_nsobject<PaperView> paper(
-      [[PaperView alloc] initWithFrame:paperFrame]);
+  PaperView* paper = [[PaperView alloc] initWithFrame:paperFrame];
   [parent insertSubview:paper belowSubview:view];
   [paper addSubview:view];
   [paper setBackgroundColor:isOffTheRecord
-                                ? [UIColor colorWithWhite:34 / 255 alpha:1]
+                                ? [UIColor colorWithWhite:34 / 255.0 alpha:1]
                                 : [UIColor whiteColor]];
 
   [CATransaction begin];
@@ -209,8 +209,7 @@ void AnimateNewBackgroundPageWithCompletion(CardView* currentPageCard,
                                             BOOL isPortrait,
                                             void (^completion)(void)) {
   // Create paper background.
-  base::scoped_nsobject<PaperView> paper(
-      [[PaperView alloc] initWithFrame:CGRectZero]);
+  PaperView* paper = [[PaperView alloc] initWithFrame:CGRectZero];
   UIView* parent = [currentPageCard superview];
   [parent insertSubview:paper aboveSubview:currentPageCard];
   CGRect pageBounds = currentPageCard.bounds;
@@ -470,5 +469,3 @@ CGFloat AnimateOutTransformBreadth() {
 }
 
 }  // namespace page_animation_util
-
-}  // namespace ios_internal

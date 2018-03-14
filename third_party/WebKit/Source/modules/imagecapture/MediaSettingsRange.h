@@ -5,13 +5,12 @@
 #ifndef MediaSettingsRange_h
 #define MediaSettingsRange_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "media/capture/mojo/image_capture.mojom-blink.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
-class MediaSettingsRange final : public GarbageCollected<MediaSettingsRange>,
-                                 public ScriptWrappable {
+class MediaSettingsRange final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -28,8 +27,6 @@ class MediaSettingsRange final : public GarbageCollected<MediaSettingsRange>,
   double max() const { return max_; }
   double min() const { return min_; }
   double step() const { return step_; }
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   MediaSettingsRange(double max, double min, double step)

@@ -17,6 +17,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
 #include "base/strings/stringprintf.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
@@ -60,24 +61,20 @@ bool IsUnsafeCharacter(char c) {
 }  // namespace
 
 LocalPolicyTestServer::LocalPolicyTestServer()
-    : net::LocalTestServer(net::BaseTestServer::TYPE_HTTP,
-                           net::BaseTestServer::kLocalhost,
-                           base::FilePath()) {
+    : net::LocalTestServer(net::BaseTestServer::TYPE_HTTP, base::FilePath()) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   CHECK(server_data_dir_.CreateUniqueTempDir());
   config_file_ = server_data_dir_.GetPath().Append(kPolicyFileName);
 }
 
 LocalPolicyTestServer::LocalPolicyTestServer(const base::FilePath& config_file)
-    : net::LocalTestServer(net::BaseTestServer::TYPE_HTTP,
-                           net::BaseTestServer::kLocalhost,
-                           base::FilePath()),
+    : net::LocalTestServer(net::BaseTestServer::TYPE_HTTP, base::FilePath()),
       config_file_(config_file) {}
 
 LocalPolicyTestServer::LocalPolicyTestServer(const std::string& test_name)
-    : net::LocalTestServer(net::BaseTestServer::TYPE_HTTP,
-                           net::BaseTestServer::kLocalhost,
-                           base::FilePath()) {
+    : net::LocalTestServer(net::BaseTestServer::TYPE_HTTP, base::FilePath()) {
   // Read configuration from a file in chrome/test/data/policy.
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::FilePath source_root;
   CHECK(PathService::Get(base::DIR_SOURCE_ROOT, &source_root));
   config_file_ = source_root
@@ -92,6 +89,7 @@ LocalPolicyTestServer::~LocalPolicyTestServer() {}
 
 bool LocalPolicyTestServer::SetSigningKeyAndSignature(
     const crypto::RSAPrivateKey* key, const std::string& signature) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   CHECK(server_data_dir_.IsValid());
 
   std::vector<uint8_t> signing_key_bits;
@@ -140,13 +138,14 @@ void LocalPolicyTestServer::RegisterClient(const std::string& dm_token,
   types->AppendString(dm_protocol::kChromeExtensionPolicyType);
   types->AppendString(dm_protocol::kChromeSigninExtensionPolicyType);
 
-  client_dict->Set(kClientStateKeyAllowedPolicyTypes, types.release());
-  clients_.Set(dm_token, client_dict.release());
+  client_dict->Set(kClientStateKeyAllowedPolicyTypes, std::move(types));
+  clients_.Set(dm_token, std::move(client_dict));
 }
 
 bool LocalPolicyTestServer::UpdatePolicy(const std::string& type,
                                          const std::string& entity_id,
                                          const std::string& policy) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   CHECK(server_data_dir_.IsValid());
 
   std::string selector = GetSelector(type, entity_id);
@@ -160,6 +159,7 @@ bool LocalPolicyTestServer::UpdatePolicy(const std::string& type,
 bool LocalPolicyTestServer::UpdatePolicyData(const std::string& type,
                                              const std::string& entity_id,
                                              const std::string& data) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   CHECK(server_data_dir_.IsValid());
 
   std::string selector = GetSelector(type, entity_id);
@@ -175,6 +175,7 @@ GURL LocalPolicyTestServer::GetServiceURL() const {
 }
 
 bool LocalPolicyTestServer::SetPythonPath() const {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   if (!net::LocalTestServer::SetPythonPath())
     return false;
 
@@ -222,6 +223,7 @@ bool LocalPolicyTestServer::SetPythonPath() const {
 
 bool LocalPolicyTestServer::GetTestServerPath(
     base::FilePath* testserver_path) const {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::FilePath source_root;
   if (!PathService::Get(base::DIR_SOURCE_ROOT, &source_root)) {
     LOG(ERROR) << "Failed to get DIR_SOURCE_ROOT";
@@ -238,6 +240,7 @@ bool LocalPolicyTestServer::GetTestServerPath(
 
 bool LocalPolicyTestServer::GenerateAdditionalArguments(
     base::DictionaryValue* arguments) const {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   if (!net::LocalTestServer::GenerateAdditionalArguments(arguments))
     return false;
 

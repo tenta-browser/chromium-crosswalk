@@ -5,8 +5,15 @@
 #ifndef CHROME_BROWSER_MEDIA_ROUTER_MEDIA_ROUTER_METRICS_H_
 #define CHROME_BROWSER_MEDIA_ROUTER_MEDIA_ROUTER_METRICS_H_
 
+#include <memory>
+
 #include "base/gtest_prod_util.h"
 #include "base/time/time.h"
+#include "chrome/browser/media/router/discovery/dial/safe_dial_device_description_parser.h"
+#include "chrome/browser/ui/webui/media_router/media_cast_mode.h"
+#include "media/base/container_names.h"
+
+class GURL;
 
 namespace media_router {
 
@@ -52,14 +59,36 @@ enum class MediaRouterUserAction {
   TOTAL_COUNT = 6
 };
 
+enum class PresentationUrlType {
+  kOther,
+  kCast,            // cast:
+  kCastDial,        // cast-dial:
+  kCastLegacy,      // URLs that start with |kLegacyCastPresentationUrlPrefix|.
+  kDial,            // dial:
+  kHttp,            // http:
+  kHttps,           // https:
+  kRemotePlayback,  // remote-playback:
+  // Add new types only immediately above this line. Remember to also update
+  // tools/metrics/histograms/enums.xml.
+  kPresentationUrlTypeCount
+};
+
 class MediaRouterMetrics {
  public:
+  MediaRouterMetrics();
+  ~MediaRouterMetrics();
+
   // UMA histogram names.
+  static const char kHistogramDialParsingError[];
   static const char kHistogramIconClickLocation[];
+  static const char kHistogramMediaRouterCastingSource[];
+  static const char kHistogramMediaRouterFileFormat[];
+  static const char kHistogramMediaRouterFileSize[];
+  static const char kHistogramRouteCreationOutcome[];
   static const char kHistogramUiDialogPaint[];
   static const char kHistogramUiDialogLoadedWithData[];
   static const char kHistogramUiFirstAction[];
-  static const char kHistogramRouteCreationOutcome[];
+  static const char kHistogramPresentationUrlType[];
 
   // Records where the user clicked to open the Media Router dialog.
   static void RecordMediaRouterDialogOrigin(
@@ -83,6 +112,23 @@ class MediaRouterMetrics {
   // Records the outcome in a create route response.
   static void RecordRouteCreationOutcome(
       MediaRouterRouteCreationOutcome outcome);
+
+  // Records casting source.
+  static void RecordMediaRouterCastingSource(MediaCastMode source);
+
+  // Records the format of a cast file.
+  static void RecordMediaRouterFileFormat(
+      media::container_names::MediaContainerName format);
+
+  // Records the size of a cast file.
+  static void RecordMediaRouterFileSize(int64_t size);
+
+  // Records why DIAL device description resolution failed.
+  static void RecordDialParsingError(
+      SafeDialDeviceDescriptionParser::ParsingError parsing_error);
+
+  // Records the type of Presentation URL used by a web page.
+  static void RecordPresentationUrlType(const GURL& url);
 };
 
 }  // namespace media_router

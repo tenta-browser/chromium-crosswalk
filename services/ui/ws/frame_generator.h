@@ -8,15 +8,15 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "cc/output/compositor_frame.h"
-#include "cc/output/compositor_frame_sink_client.h"
-#include "cc/scheduler/begin_frame_source.h"
-#include "cc/surfaces/surface_id.h"
-#include "cc/surfaces/surface_info.h"
+#include "components/viz/common/frame_sinks/begin_frame_source.h"
+#include "components/viz/common/surfaces/local_surface_id_allocator.h"
+#include "components/viz/common/surfaces/surface_id.h"
+#include "components/viz/common/surfaces/surface_info.h"
+#include "services/ui/ws/compositor_frame_sink_client_binding.h"
+#include "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace cc {
-class CompositorFrameSink;
 class RenderPass;
 }
 
@@ -25,64 +25,62 @@ namespace ws {
 
 // Responsible for redrawing the display in response to the redraw requests by
 // submitting CompositorFrames to the owned CompositorFrameSink.
-class FrameGenerator : public cc::CompositorFrameSinkClient,
-                       public cc::BeginFrameObserver {
+class FrameGenerator : public viz::mojom::CompositorFrameSinkClient {
  public:
-  explicit FrameGenerator(
-      std::unique_ptr<cc::CompositorFrameSink> compositor_frame_sink);
+  FrameGenerator();
   ~FrameGenerator() override;
 
   void SetDeviceScaleFactor(float device_scale_factor);
   void SetHighContrastMode(bool enabled);
 
   // Updates the WindowManager's SurfaceInfo.
-  void OnSurfaceCreated(const cc::SurfaceInfo& surface_info);
+  void OnFirstSurfaceActivation(const viz::SurfaceInfo& surface_info);
+
+  // Swaps the |window_manager_surface_info_| with that of |other|.
+  void SwapSurfaceWith(FrameGenerator* other);
 
   void OnWindowDamaged();
   void OnWindowSizeChanged(const gfx::Size& pixel_size);
+  void Bind(
+      std::unique_ptr<viz::mojom::CompositorFrameSink> compositor_frame_sink);
 
  private:
-  // cc::CompositorFrameSinkClient implementation:
-  void SetBeginFrameSource(cc::BeginFrameSource* source) override;
-  void ReclaimResources(const cc::ReturnedResourceArray& resources) override;
-  void SetTreeActivationCallback(const base::Closure& callback) override;
-  void DidReceiveCompositorFrameAck() override;
-  void DidLoseCompositorFrameSink() override;
-  void OnDraw(const gfx::Transform& transform,
-              const gfx::Rect& viewport,
-              bool resourceless_software_draw) override;
-  void SetMemoryPolicy(const cc::ManagedMemoryPolicy& policy) override;
-  void SetExternalTilePriorityConstraints(
-      const gfx::Rect& viewport_rect,
-      const gfx::Transform& transform) override;
+  // viz::mojom::CompositorFrameSinkClient implementation:
+  void DidReceiveCompositorFrameAck(
+      const std::vector<viz::ReturnedResource>& resources) override;
+  void DidPresentCompositorFrame(uint32_t presentation_token,
+                                 base::TimeTicks time,
+                                 base::TimeDelta refresh,
+                                 uint32_t flags) override;
+  void DidDiscardCompositorFrame(uint32_t presentation_token) override;
+  void OnBeginFrame(const viz::BeginFrameArgs& args) override;
+  void OnBeginFramePausedChanged(bool paused) override {}
+  void ReclaimResources(
+      const std::vector<viz::ReturnedResource>& resources) override;
 
-  // cc::BeginFrameObserver implementation:
-  void OnBeginFrame(const cc::BeginFrameArgs& args) override;
-  const cc::BeginFrameArgs& LastUsedBeginFrameArgs() const override;
-  void OnBeginFrameSourcePausedChanged(bool paused) override;
+  viz::CompositorFrame GenerateCompositorFrame();
 
-  // Generates the CompositorFrame.
-  cc::CompositorFrame GenerateCompositorFrame();
+  viz::mojom::HitTestRegionListPtr GenerateHitTestRegionList() const;
 
   // DrawWindow creates SurfaceDrawQuad for the window manager and appends it to
-  // the provided cc::RenderPass.
-  void DrawWindow(cc::RenderPass* pass);
+  // the provided viz::RenderPass.
+  void DrawWindow(viz::RenderPass* pass);
 
-  // SetNeedsBeginFrame sets observing_begin_frames_ and add/remove
-  // FrameGenerator as an observer to/from begin_frame_source_ accordingly.
   void SetNeedsBeginFrame(bool needs_begin_frame);
 
   float device_scale_factor_ = 1.f;
   gfx::Size pixel_size_;
 
-  std::unique_ptr<cc::CompositorFrameSink> compositor_frame_sink_;
-  cc::BeginFrameArgs last_begin_frame_args_;
-  cc::BeginFrameAck current_begin_frame_ack_;
-  cc::BeginFrameSource* begin_frame_source_ = nullptr;
-  bool observing_begin_frames_ = false;
+  std::unique_ptr<viz::mojom::CompositorFrameSink> compositor_frame_sink_;
+  viz::BeginFrameArgs last_begin_frame_args_;
+  viz::BeginFrameAck current_begin_frame_ack_;
   bool high_contrast_mode_enabled_ = false;
+  gfx::Size last_submitted_frame_size_;
+  viz::LocalSurfaceId local_surface_id_;
+  viz::LocalSurfaceIdAllocator id_allocator_;
+  float last_device_scale_factor_ = 0.0f;
 
-  cc::SurfaceInfo window_manager_surface_info_;
+  viz::SurfaceInfo window_manager_surface_info_;
 
   DISALLOW_COPY_AND_ASSIGN(FrameGenerator);
 };

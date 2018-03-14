@@ -30,7 +30,6 @@
 
 #include "core/css/RuleSet.h"
 
-#include "core/HTMLNames.h"
 #include "core/css/CSSFontSelector.h"
 #include "core/css/CSSSelector.h"
 #include "core/css/CSSSelectorList.h"
@@ -38,7 +37,7 @@
 #include "core/css/StyleRuleImport.h"
 #include "core/css/StyleSheetContents.h"
 #include "core/html/track/TextTrackCue.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "core/html_names.h"
 #include "platform/heap/HeapTerminatedArrayBuilder.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 #include "platform/weborigin/SecurityOrigin.h"
@@ -48,57 +47,6 @@
 namespace blink {
 
 using namespace HTMLNames;
-
-// -----------------------------------------------------------------
-
-static bool ContainsUncommonAttributeSelector(const CSSSelector&);
-
-static inline bool SelectorListContainsUncommonAttributeSelector(
-    const CSSSelector* selector) {
-  const CSSSelectorList* selector_list = selector->SelectorList();
-  if (!selector_list)
-    return false;
-  for (const CSSSelector* selector = selector_list->First(); selector;
-       selector = CSSSelectorList::Next(*selector)) {
-    if (ContainsUncommonAttributeSelector(*selector))
-      return true;
-  }
-  return false;
-}
-
-static inline bool IsCommonAttributeSelectorAttribute(
-    const QualifiedName& attribute) {
-  // These are explicitly tested for equality in canShareStyleWithElement.
-  return attribute == typeAttr || attribute == readonlyAttr;
-}
-
-static bool ContainsUncommonAttributeSelector(const CSSSelector& selector) {
-  const CSSSelector* current = &selector;
-  for (; current; current = current->TagHistory()) {
-    // Allow certain common attributes (used in the default style) in the
-    // selectors that match the current element.
-    if (current->IsAttributeSelector() &&
-        !IsCommonAttributeSelectorAttribute(current->Attribute()))
-      return true;
-    if (SelectorListContainsUncommonAttributeSelector(current))
-      return true;
-    if (current->RelationIsAffectedByPseudoContent() ||
-        current->GetPseudoType() == CSSSelector::kPseudoSlotted)
-      return false;
-    if (current->Relation() != CSSSelector::kSubSelector) {
-      current = current->TagHistory();
-      break;
-    }
-  }
-
-  for (; current; current = current->TagHistory()) {
-    if (current->IsAttributeSelector())
-      return true;
-    if (SelectorListContainsUncommonAttributeSelector(current))
-      return true;
-  }
-  return false;
-}
 
 static inline PropertyWhitelistType DeterminePropertyWhitelistType(
     const AddRuleFlags add_rule_flags,
@@ -124,8 +72,6 @@ RuleData::RuleData(StyleRule* rule,
       is_last_in_array_(false),
       position_(position),
       specificity_(Selector().Specificity()),
-      contains_uncommon_attribute_selector_(
-          blink::ContainsUncommonAttributeSelector(Selector())),
       link_match_type_(Selector().ComputeLinkMatchType()),
       has_document_security_origin_(add_rule_flags &
                                     kRuleHasDocumentSecurityOrigin),
@@ -147,11 +93,12 @@ void RuleSet::AddToRuleSet(const AtomicString& key,
   rules->Push(rule_data);
 }
 
-static void ExtractValuesforSelector(const CSSSelector* selector,
-                                     AtomicString& id,
-                                     AtomicString& class_name,
-                                     AtomicString& custom_pseudo_element_name,
-                                     AtomicString& tag_name) {
+static void ExtractSelectorValues(const CSSSelector* selector,
+                                  AtomicString& id,
+                                  AtomicString& class_name,
+                                  AtomicString& custom_pseudo_element_name,
+                                  AtomicString& tag_name,
+                                  CSSSelector::PseudoType& pseudo_type) {
   switch (selector->Match()) {
     case CSSSelector::kId:
       id = selector->Value();
@@ -163,12 +110,31 @@ static void ExtractValuesforSelector(const CSSSelector* selector,
       if (selector->TagQName().LocalName() != g_star_atom)
         tag_name = selector->TagQName().LocalName();
       break;
+    case CSSSelector::kPseudoClass:
+    case CSSSelector::kPseudoElement:
+    case CSSSelector::kPagePseudoClass:
+      // Must match the cases in RuleSet::FindBestRuleSetAndAdd.
+      switch (selector->GetPseudoType()) {
+        case CSSSelector::kPseudoCue:
+        case CSSSelector::kPseudoLink:
+        case CSSSelector::kPseudoVisited:
+        case CSSSelector::kPseudoAnyLink:
+        case CSSSelector::kPseudoFocus:
+        case CSSSelector::kPseudoPlaceholder:
+        case CSSSelector::kPseudoHost:
+        case CSSSelector::kPseudoHostContext:
+          pseudo_type = selector->GetPseudoType();
+          break;
+        case CSSSelector::kPseudoWebKitCustomElement:
+        case CSSSelector::kPseudoBlinkInternalElement:
+          custom_pseudo_element_name = selector->Value();
+          break;
+        default:
+          break;
+      }
     default:
       break;
   }
-  if (selector->GetPseudoType() == CSSSelector::kPseudoWebKitCustomElement ||
-      selector->GetPseudoType() == CSSSelector::kPseudoBlinkInternalElement)
-    custom_pseudo_element_name = selector->Value();
 }
 
 bool RuleSet::FindBestRuleSetAndAdd(const CSSSelector& component,
@@ -177,6 +143,7 @@ bool RuleSet::FindBestRuleSetAndAdd(const CSSSelector& component,
   AtomicString class_name;
   AtomicString custom_pseudo_element_name;
   AtomicString tag_name;
+  CSSSelector::PseudoType pseudo_type = CSSSelector::kPseudoUnknown;
 
 #ifndef NDEBUG
   all_rules_.push_back(rule_data);
@@ -184,26 +151,30 @@ bool RuleSet::FindBestRuleSetAndAdd(const CSSSelector& component,
 
   const CSSSelector* it = &component;
   for (; it && it->Relation() == CSSSelector::kSubSelector;
-       it = it->TagHistory())
-    ExtractValuesforSelector(it, id, class_name, custom_pseudo_element_name,
-                             tag_name);
-  if (it)
-    ExtractValuesforSelector(it, id, class_name, custom_pseudo_element_name,
-                             tag_name);
+       it = it->TagHistory()) {
+    ExtractSelectorValues(it, id, class_name, custom_pseudo_element_name,
+                          tag_name, pseudo_type);
+  }
+  if (it) {
+    ExtractSelectorValues(it, id, class_name, custom_pseudo_element_name,
+                          tag_name, pseudo_type);
+  }
 
   // Prefer rule sets in order of most likely to apply infrequently.
   if (!id.IsEmpty()) {
     AddToRuleSet(id, EnsurePendingRules()->id_rules, rule_data);
     return true;
   }
+
   if (!class_name.IsEmpty()) {
     AddToRuleSet(class_name, EnsurePendingRules()->class_rules, rule_data);
     return true;
   }
+
   if (!custom_pseudo_element_name.IsEmpty()) {
     // Custom pseudos come before ids and classes in the order of tagHistory,
     // and have a relation of ShadowPseudo between them. Therefore we should
-    // never be a situation where extractValuesforSelector finsd id and
+    // never be a situation where ExtractSelectorValues finds id and
     // className in addition to custom pseudo.
     DCHECK(id.IsEmpty());
     DCHECK(class_name.IsEmpty());
@@ -212,7 +183,7 @@ bool RuleSet::FindBestRuleSetAndAdd(const CSSSelector& component,
     return true;
   }
 
-  switch (component.GetPseudoType()) {
+  switch (pseudo_type) {
     case CSSSelector::kPseudoCue:
       cue_pseudo_rules_.push_back(rule_data);
       return true;
@@ -225,7 +196,13 @@ bool RuleSet::FindBestRuleSetAndAdd(const CSSSelector& component,
       focus_pseudo_class_rules_.push_back(rule_data);
       return true;
     case CSSSelector::kPseudoPlaceholder:
-      placeholder_pseudo_rules_.push_back(rule_data);
+      AddToRuleSet(AtomicString("-webkit-input-placeholder"),
+                   EnsurePendingRules()->shadow_pseudo_element_rules,
+                   rule_data);
+      return true;
+    case CSSSelector::kPseudoHost:
+    case CSSSelector::kPseudoHostContext:
+      shadow_host_rules_.push_back(rule_data);
       return true;
     default:
       break;
@@ -233,11 +210,6 @@ bool RuleSet::FindBestRuleSetAndAdd(const CSSSelector& component,
 
   if (!tag_name.IsEmpty()) {
     AddToRuleSet(tag_name, EnsurePendingRules()->tag_rules, rule_data);
-    return true;
-  }
-
-  if (component.IsHostPseudoClass()) {
-    shadow_host_rules_.push_back(rule_data);
     return true;
   }
 
@@ -332,8 +304,6 @@ void RuleSet::AddRulesFromSheet(StyleSheetContents* sheet,
       sheet->ImportRules();
   for (unsigned i = 0; i < import_rules.size(); ++i) {
     StyleRuleImport* import_rule = import_rules[i].Get();
-    // TODO(sof): CHECK() added for crbug.com/699269 diagnosis, remove sooner.
-    CHECK_EQ(import_rules.Data(), sheet->ImportRules().Data());
     if (import_rule->GetStyleSheet() &&
         (!import_rule->MediaQueries() ||
          medium.Eval(*import_rule->MediaQueries(),
@@ -372,7 +342,7 @@ void RuleSet::CompactPendingRules(PendingRuleMap& pending_map,
 }
 
 void RuleSet::CompactRules() {
-  ASSERT(pending_rules_);
+  DCHECK(pending_rules_);
   PendingRuleMaps* pending_rules = pending_rules_.Release();
   CompactPendingRules(pending_rules->id_rules, id_rules_);
   CompactPendingRules(pending_rules->class_rules, class_rules_);
@@ -382,7 +352,6 @@ void RuleSet::CompactRules() {
   link_pseudo_class_rules_.ShrinkToFit();
   cue_pseudo_rules_.ShrinkToFit();
   focus_pseudo_class_rules_.ShrinkToFit();
-  placeholder_pseudo_rules_.ShrinkToFit();
   universal_rules_.ShrinkToFit();
   shadow_host_rules_.ShrinkToFit();
   page_rules_.ShrinkToFit();
@@ -393,22 +362,22 @@ void RuleSet::CompactRules() {
   slotted_pseudo_element_rules_.ShrinkToFit();
 }
 
-DEFINE_TRACE(MinimalRuleData) {
+void MinimalRuleData::Trace(blink::Visitor* visitor) {
   visitor->Trace(rule_);
 }
 
-DEFINE_TRACE(RuleData) {
+void RuleData::Trace(blink::Visitor* visitor) {
   visitor->Trace(rule_);
 }
 
-DEFINE_TRACE(RuleSet::PendingRuleMaps) {
+void RuleSet::PendingRuleMaps::Trace(blink::Visitor* visitor) {
   visitor->Trace(id_rules);
   visitor->Trace(class_rules);
   visitor->Trace(tag_rules);
   visitor->Trace(shadow_pseudo_element_rules);
 }
 
-DEFINE_TRACE(RuleSet) {
+void RuleSet::Trace(blink::Visitor* visitor) {
   visitor->Trace(id_rules_);
   visitor->Trace(class_rules_);
   visitor->Trace(tag_rules_);
@@ -416,10 +385,8 @@ DEFINE_TRACE(RuleSet) {
   visitor->Trace(link_pseudo_class_rules_);
   visitor->Trace(cue_pseudo_rules_);
   visitor->Trace(focus_pseudo_class_rules_);
-  visitor->Trace(placeholder_pseudo_rules_);
   visitor->Trace(universal_rules_);
   visitor->Trace(shadow_host_rules_);
-  visitor->Trace(features_);
   visitor->Trace(page_rules_);
   visitor->Trace(font_face_rules_);
   visitor->Trace(keyframes_rules_);

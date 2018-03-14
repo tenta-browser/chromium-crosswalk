@@ -11,67 +11,13 @@
 #include "platform/mojo/ReferrerStructTraits.h"
 #include "platform/weborigin/Referrer.h"
 #include "public/platform/WebReferrerPolicy.h"
+#include "services/network/public/interfaces/fetch_api.mojom-blink.h"
 
 namespace mojo {
 
-namespace {
-
-// Struct traits context for the FetchAPIRequest type. Since getters are invoked
-// twice when serializing the type, this reduces the load for heavy members.
-struct FetchAPIRequestStructTraitsContext {
-  FetchAPIRequestStructTraitsContext() = default;
-  ~FetchAPIRequestStructTraitsContext() = default;
-
-  WTF::HashMap<WTF::String, WTF::String> headers;
-};
-
-}  // namespace
-
-using blink::mojom::FetchCredentialsMode;
 using blink::mojom::FetchRedirectMode;
-using blink::mojom::FetchRequestMode;
 using blink::mojom::RequestContextFrameType;
 using blink::mojom::RequestContextType;
-
-FetchCredentialsMode
-EnumTraits<FetchCredentialsMode, blink::WebURLRequest::FetchCredentialsMode>::
-    ToMojom(blink::WebURLRequest::FetchCredentialsMode input) {
-  switch (input) {
-    case blink::WebURLRequest::kFetchCredentialsModeOmit:
-      return FetchCredentialsMode::OMIT;
-    case blink::WebURLRequest::kFetchCredentialsModeSameOrigin:
-      return FetchCredentialsMode::SAME_ORIGIN;
-    case blink::WebURLRequest::kFetchCredentialsModeInclude:
-      return FetchCredentialsMode::INCLUDE;
-    case blink::WebURLRequest::kFetchCredentialsModePassword:
-      return FetchCredentialsMode::PASSWORD;
-  }
-
-  NOTREACHED();
-  return FetchCredentialsMode::OMIT;
-}
-
-bool EnumTraits<FetchCredentialsMode,
-                blink::WebURLRequest::FetchCredentialsMode>::
-    FromMojom(FetchCredentialsMode input,
-              blink::WebURLRequest::FetchCredentialsMode* out) {
-  switch (input) {
-    case FetchCredentialsMode::OMIT:
-      *out = blink::WebURLRequest::kFetchCredentialsModeOmit;
-      return true;
-    case FetchCredentialsMode::SAME_ORIGIN:
-      *out = blink::WebURLRequest::kFetchCredentialsModeSameOrigin;
-      return true;
-    case FetchCredentialsMode::INCLUDE:
-      *out = blink::WebURLRequest::kFetchCredentialsModeInclude;
-      return true;
-    case FetchCredentialsMode::PASSWORD:
-      *out = blink::WebURLRequest::kFetchCredentialsModePassword;
-      return true;
-  }
-
-  return false;
-}
 
 FetchRedirectMode
 EnumTraits<FetchRedirectMode, blink::WebURLRequest::FetchRedirectMode>::ToMojom(
@@ -101,50 +47,6 @@ bool EnumTraits<FetchRedirectMode, blink::WebURLRequest::FetchRedirectMode>::
       return true;
     case FetchRedirectMode::MANUAL:
       *out = blink::WebURLRequest::kFetchRedirectModeManual;
-      return true;
-  }
-
-  return false;
-}
-
-FetchRequestMode
-EnumTraits<FetchRequestMode, blink::WebURLRequest::FetchRequestMode>::ToMojom(
-    blink::WebURLRequest::FetchRequestMode input) {
-  switch (input) {
-    case blink::WebURLRequest::kFetchRequestModeSameOrigin:
-      return FetchRequestMode::SAME_ORIGIN;
-    case blink::WebURLRequest::kFetchRequestModeNoCORS:
-      return FetchRequestMode::NO_CORS;
-    case blink::WebURLRequest::kFetchRequestModeCORS:
-      return FetchRequestMode::CORS;
-    case blink::WebURLRequest::kFetchRequestModeCORSWithForcedPreflight:
-      return FetchRequestMode::CORS_WITH_FORCED_PREFLIGHT;
-    case blink::WebURLRequest::kFetchRequestModeNavigate:
-      return FetchRequestMode::NAVIGATE;
-  }
-
-  NOTREACHED();
-  return FetchRequestMode::NO_CORS;
-}
-
-bool EnumTraits<FetchRequestMode, blink::WebURLRequest::FetchRequestMode>::
-    FromMojom(FetchRequestMode input,
-              blink::WebURLRequest::FetchRequestMode* out) {
-  switch (input) {
-    case FetchRequestMode::SAME_ORIGIN:
-      *out = blink::WebURLRequest::kFetchRequestModeSameOrigin;
-      return true;
-    case FetchRequestMode::NO_CORS:
-      *out = blink::WebURLRequest::kFetchRequestModeNoCORS;
-      return true;
-    case FetchRequestMode::CORS:
-      *out = blink::WebURLRequest::kFetchRequestModeCORS;
-      return true;
-    case FetchRequestMode::CORS_WITH_FORCED_PREFLIGHT:
-      *out = blink::WebURLRequest::kFetchRequestModeCORSWithForcedPreflight;
-      return true;
-    case FetchRequestMode::NAVIGATE:
-      *out = blink::WebURLRequest::kFetchRequestModeNavigate;
       return true;
   }
 
@@ -380,26 +282,6 @@ bool EnumTraits<RequestContextType, blink::WebURLRequest::RequestContext>::
 }
 
 // static
-void* StructTraits<blink::mojom::FetchAPIRequestDataView,
-                   blink::WebServiceWorkerRequest>::
-    SetUpContext(const blink::WebServiceWorkerRequest& request) {
-  FetchAPIRequestStructTraitsContext* context =
-      new FetchAPIRequestStructTraitsContext();
-  for (const auto& pair : request.Headers())
-    context->headers.insert(pair.key, pair.value);
-
-  return context;
-}
-
-// static
-void StructTraits<blink::mojom::FetchAPIRequestDataView,
-                  blink::WebServiceWorkerRequest>::
-    TearDownContext(const blink::WebServiceWorkerRequest& request,
-                    void* context) {
-  delete static_cast<FetchAPIRequestStructTraitsContext*>(context);
-}
-
-// static
 blink::KURL StructTraits<blink::mojom::FetchAPIRequestDataView,
                          blink::WebServiceWorkerRequest>::
     url(const blink::WebServiceWorkerRequest& request) {
@@ -414,12 +296,14 @@ WTF::String StructTraits<blink::mojom::FetchAPIRequestDataView,
 }
 
 // static
-const WTF::HashMap<WTF::String, WTF::String>&
+WTF::HashMap<WTF::String, WTF::String>
 StructTraits<blink::mojom::FetchAPIRequestDataView,
              blink::WebServiceWorkerRequest>::
-    headers(const blink::WebServiceWorkerRequest& request, void* context) {
-  DCHECK(context);
-  return static_cast<FetchAPIRequestStructTraitsContext*>(context)->headers;
+    headers(const blink::WebServiceWorkerRequest& request) {
+  WTF::HashMap<WTF::String, WTF::String> header_map;
+  for (const auto& pair : request.Headers())
+    header_map.insert(pair.key, pair.value);
+  return header_map;
 }
 
 // static
@@ -450,6 +334,26 @@ uint64_t StructTraits<blink::mojom::FetchAPIRequestDataView,
 }
 
 // static
+blink::mojom::blink::BlobPtr StructTraits<blink::mojom::FetchAPIRequestDataView,
+                                          blink::WebServiceWorkerRequest>::
+    blob(const blink::WebServiceWorkerRequest& request) {
+  if (request.GetBlobDataHandle()) {
+    blink::mojom::blink::BlobPtr result =
+        request.GetBlobDataHandle()->CloneBlobPtr();
+    return result;
+  }
+
+  return nullptr;
+}
+
+// static
+WTF::String StructTraits<blink::mojom::FetchAPIRequestDataView,
+                         blink::WebServiceWorkerRequest>::
+    integrity(const blink::WebServiceWorkerRequest& request) {
+  return request.Integrity();
+}
+
+// static
 WTF::String StructTraits<blink::mojom::FetchAPIRequestDataView,
                          blink::WebServiceWorkerRequest>::
     client_id(const blink::WebServiceWorkerRequest& request) {
@@ -461,16 +365,18 @@ bool StructTraits<blink::mojom::FetchAPIRequestDataView,
                   blink::WebServiceWorkerRequest>::
     Read(blink::mojom::FetchAPIRequestDataView data,
          blink::WebServiceWorkerRequest* out) {
-  blink::WebURLRequest::FetchRequestMode mode;
+  network::mojom::FetchRequestMode mode;
   blink::WebURLRequest::RequestContext requestContext;
   blink::WebURLRequest::FrameType frameType;
   blink::KURL url;
   WTF::String method;
   WTF::HashMap<WTF::String, WTF::String> headers;
   WTF::String blobUuid;
+  blink::mojom::blink::BlobPtr blob;
   blink::Referrer referrer;
-  blink::WebURLRequest::FetchCredentialsMode credentialsMode;
+  network::mojom::FetchCredentialsMode credentialsMode;
   blink::WebURLRequest::FetchRedirectMode redirectMode;
+  WTF::String integrity;
   WTF::String clientId;
 
   if (!data.ReadMode(&mode) || !data.ReadRequestContextType(&requestContext) ||
@@ -478,7 +384,8 @@ bool StructTraits<blink::mojom::FetchAPIRequestDataView,
       !data.ReadMethod(&method) || !data.ReadHeaders(&headers) ||
       !data.ReadBlobUuid(&blobUuid) || !data.ReadReferrer(&referrer) ||
       !data.ReadCredentialsMode(&credentialsMode) ||
-      !data.ReadRedirectMode(&redirectMode) || !data.ReadClientId(&clientId)) {
+      !data.ReadRedirectMode(&redirectMode) || !data.ReadClientId(&clientId) ||
+      !data.ReadIntegrity(&integrity)) {
     return false;
   }
 
@@ -490,11 +397,15 @@ bool StructTraits<blink::mojom::FetchAPIRequestDataView,
   out->SetMethod(method);
   for (const auto& pair : headers)
     out->SetHeader(pair.key, pair.value);
-  out->SetBlob(blobUuid, static_cast<long long>(data.blob_size()));
+  out->SetBlob(blobUuid, static_cast<long long>(data.blob_size()),
+               data.TakeBlob<blink::mojom::blink::BlobPtr>().PassInterface());
   out->SetReferrer(referrer.referrer, static_cast<blink::WebReferrerPolicy>(
                                           referrer.referrer_policy));
   out->SetCredentialsMode(credentialsMode);
+  out->SetCacheMode(data.cache_mode());
   out->SetRedirectMode(redirectMode);
+  out->SetIntegrity(integrity);
+  out->SetKeepalive(data.keepalive());
   out->SetClientId(clientId);
   out->SetIsReload(data.is_reload());
   return true;

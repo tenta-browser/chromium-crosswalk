@@ -8,13 +8,20 @@
 #include <stdint.h>
 
 #include "base/callback.h"
+#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "components/viz/common/gpu/context_provider.h"
+#include "media/base/media_log.h"
 #include "media/base/media_observer.h"
+#include "media/base/media_switches.h"
+#include "media/base/routing_token_callback.h"
 #include "media/blink/media_blink_export.h"
 #include "media/filters/context_3d.h"
+#include "media/mojo/interfaces/video_decode_stats_recorder.mojom.h"
+#include "third_party/WebKit/public/platform/WebVideoFrameSubmitter.h"
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -23,13 +30,18 @@ class TaskRunner;
 
 namespace blink {
 class WebContentDecryptionModule;
-}
+class WebSurfaceLayerBridge;
+class WebSurfaceLayerBridgeObserver;
+}  // namespace blink
 
 namespace media {
 
 class SwitchableAudioRendererSink;
-class MediaLog;
 class SurfaceManager;
+
+namespace mojom {
+class WatchTimeRecorderProvider;
+}
 
 // Holds parameters for constructing WebMediaPlayerImpl without having
 // to plumb arguments through various abstraction layers.
@@ -37,6 +49,14 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
  public:
   typedef base::Callback<void(const base::Closure&)> DeferLoadCB;
   typedef base::Callback<Context3D()> Context3DCB;
+  typedef base::Callback<mojom::VideoDecodeStatsRecorderPtr()>
+      CreateCapabilitiesRecorderCB;
+
+  // Callback to obtain the media ContextProvider.
+  // Requires being called on the media thread.
+  // The argument callback is also called on the media thread as a reply.
+  using ContextProviderCB =
+      base::Callback<void(base::Callback<void(viz::ContextProvider*)>)>;
 
   // Callback to tell V8 about the amount of memory used by the WebMediaPlayer
   // instance.  The input parameter is the delta in bytes since the last call to
@@ -48,22 +68,28 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
   // |defer_load_cb|, |audio_renderer_sink|, |compositor_task_runner|, and
   // |context_3d_cb| may be null.
   WebMediaPlayerParams(
+      std::unique_ptr<MediaLog> media_log,
       const DeferLoadCB& defer_load_cb,
       const scoped_refptr<SwitchableAudioRendererSink>& audio_renderer_sink,
-      const scoped_refptr<MediaLog>& media_log,
       const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner,
       const scoped_refptr<base::TaskRunner>& worker_task_runner,
       const scoped_refptr<base::SingleThreadTaskRunner>& compositor_task_runner,
-      const Context3DCB& context_3d,
+      const scoped_refptr<base::SingleThreadTaskRunner>&
+          video_frame_compositor_task_runner,
       const AdjustAllocatedMemoryCB& adjust_allocated_memory_cb,
       blink::WebContentDecryptionModule* initial_cdm,
       SurfaceManager* surface_manager,
+      RequestRoutingTokenCallback request_routing_token_cb,
       base::WeakPtr<MediaObserver> media_observer,
       base::TimeDelta max_keyframe_distance_to_disable_background_video,
       base::TimeDelta max_keyframe_distance_to_disable_background_video_mse,
       bool enable_instant_source_buffer_gc,
-      bool allow_suspend,
-      bool embedded_media_experience_enabled);
+      bool embedded_media_experience_enabled,
+      mojom::WatchTimeRecorderProvider* provider,
+      CreateCapabilitiesRecorderCB create_capabilities_recorder_cb,
+      base::Callback<std::unique_ptr<blink::WebSurfaceLayerBridge>(
+          blink::WebSurfaceLayerBridgeObserver*)> bridge_callback,
+      scoped_refptr<viz::ContextProvider> context_provider);
 
   ~WebMediaPlayerParams();
 
@@ -74,9 +100,7 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
     return audio_renderer_sink_;
   }
 
-  const scoped_refptr<MediaLog>& media_log() const {
-    return media_log_;
-  }
+  std::unique_ptr<MediaLog> take_media_log() { return std::move(media_log_); }
 
   const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner() const {
     return media_task_runner_;
@@ -91,7 +115,10 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
     return compositor_task_runner_;
   }
 
-  Context3DCB context_3d_cb() const { return context_3d_cb_; }
+  const scoped_refptr<base::SingleThreadTaskRunner>&
+  video_frame_compositor_task_runner() const {
+    return video_frame_compositor_task_runner_;
+  }
 
   blink::WebContentDecryptionModule* initial_cdm() const {
     return initial_cdm_;
@@ -120,30 +147,56 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
     return enable_instant_source_buffer_gc_;
   }
 
-  bool allow_suspend() const { return allow_suspend_; }
-
   bool embedded_media_experience_enabled() const {
     return embedded_media_experience_enabled_;
+  }
+
+  RequestRoutingTokenCallback request_routing_token_cb() {
+    return request_routing_token_cb_;
+  }
+
+  mojom::WatchTimeRecorderProvider* watch_time_recorder_provider() const {
+    return watch_time_recorder_provider_;
+  }
+
+  const base::Callback<std::unique_ptr<blink::WebSurfaceLayerBridge>(
+      blink::WebSurfaceLayerBridgeObserver*)>& create_bridge_callback() const {
+    return create_bridge_callback_;
+  }
+
+  CreateCapabilitiesRecorderCB create_capabilities_recorder_cb() const {
+    return create_capabilities_recorder_cb_;
+  }
+
+  scoped_refptr<viz::ContextProvider> context_provider() {
+    return context_provider_;
   }
 
  private:
   DeferLoadCB defer_load_cb_;
   scoped_refptr<SwitchableAudioRendererSink> audio_renderer_sink_;
-  scoped_refptr<MediaLog> media_log_;
+  std::unique_ptr<MediaLog> media_log_;
   scoped_refptr<base::SingleThreadTaskRunner> media_task_runner_;
   scoped_refptr<base::TaskRunner> worker_task_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner_;
-  Context3DCB context_3d_cb_;
+  scoped_refptr<base::SingleThreadTaskRunner>
+      video_frame_compositor_task_runner_;
   AdjustAllocatedMemoryCB adjust_allocated_memory_cb_;
 
   blink::WebContentDecryptionModule* initial_cdm_;
   SurfaceManager* surface_manager_;
+  RequestRoutingTokenCallback request_routing_token_cb_;
   base::WeakPtr<MediaObserver> media_observer_;
   base::TimeDelta max_keyframe_distance_to_disable_background_video_;
   base::TimeDelta max_keyframe_distance_to_disable_background_video_mse_;
   bool enable_instant_source_buffer_gc_;
-  const bool allow_suspend_;
   const bool embedded_media_experience_enabled_;
+  mojom::WatchTimeRecorderProvider* watch_time_recorder_provider_;
+  CreateCapabilitiesRecorderCB create_capabilities_recorder_cb_;
+  base::Callback<std::unique_ptr<blink::WebSurfaceLayerBridge>(
+      blink::WebSurfaceLayerBridgeObserver*)>
+      create_bridge_callback_;
+  scoped_refptr<viz::ContextProvider> context_provider_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(WebMediaPlayerParams);
 };

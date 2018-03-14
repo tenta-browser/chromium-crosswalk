@@ -9,8 +9,8 @@ source_set("dialogs") {
   ]
 
   sources = [
-    "javascript_dialog_blocking_util.h",
-    "javascript_dialog_blocking_util.mm",
+    "java_script_dialog_blocking_state.h",
+    "java_script_dialog_blocking_state.mm",
   ]
 
   configs += [ "//build/config/compiler:enable_arc" ]
@@ -20,13 +20,13 @@ source_set("unit_tests") {
   testonly = true
 
   sources = [
-    "javascript_dialog_blocking_util_unittest.mm",
+    "java_script_dialog_blocking_state_unittest.mm",
   ]
 
   deps = [
     ":dialogs",
     "//ios/web",
-    "//ios/web:test_support",
+    "//ios/web/public/test/fakes",
     "//testing/gtest",
   ]
 
@@ -34,6 +34,7 @@ source_set("unit_tests") {
 }
 
 source_set("dialogs_internal") {
+  configs += [ "//build/config/compiler:enable_arc" ]
   sources = [
     "dialog_presenter.h",
     "dialog_presenter.mm",
@@ -62,6 +63,7 @@ source_set("unit_tests_internal") {
   testonly = true
   sources = [
     "dialog_presenter_unittest.mm",
+    "java_script_dialog_presenter_impl_unittest.mm",
     "nsurl_protection_space_util_unittest.mm",
   ]
   deps = [
@@ -71,7 +73,7 @@ source_set("unit_tests_internal") {
     "//ios/chrome/app/strings",
     "//ios/chrome/browser/ui/alert_coordinator",
     "//ios/web",
-    "//ios/web:test_support",
+    "//ios/web/public/test/fakes",
     "//testing/gtest",
     "//ui/base",
     "//url",
@@ -90,14 +92,16 @@ source_set("eg_tests") {
     "//components/strings",
     "//ios/chrome/app/strings",
     "//ios/chrome/browser/ui",
-    "//ios/chrome/browser/ui/tools_menu",
+    "//ios/chrome/browser/ui/tools_menu/public",
     "//ios/chrome/test/app:test_support",
     "//ios/chrome/test/earl_grey:test_support",
     "//ios/testing:ios_test_support",
     "//ios/testing/earl_grey:earl_grey_support",
-    "//ios/third_party/earl_grey",
+    "//ios/third_party/earl_grey:earl_grey+link",
     "//ios/web",
-    "//ios/web:test_support",
+    "//ios/web:earl_grey_test_support",
+    "//ios/web/public/test",
+    "//ios/web/public/test/http_server",
     "//ui/base",
     "//url",
   ]

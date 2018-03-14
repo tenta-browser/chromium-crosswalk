@@ -14,7 +14,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/guid.h"
 #include "base/macros.h"
-#include "base/memory/scoped_vector.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -129,7 +128,7 @@ class AutofillTableTest : public testing::Test {
 
  protected:
   void SetUp() override {
-    OSCryptMocker::SetUpWithSingleton();
+    OSCryptMocker::SetUp();
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     file_ = temp_dir_.GetPath().AppendASCII("TestWebDatabase");
 
@@ -736,7 +735,8 @@ TEST_F(AutofillTableTest,
 }
 
 TEST_F(AutofillTableTest, AutofillProfile) {
-  // Add a 'Home' profile.
+  // Add a 'Home' profile with non-default data. The specific values are not
+  // important.
   AutofillProfile home_profile;
   home_profile.set_origin(std::string());
   home_profile.SetRawInfo(NAME_FIRST, ASCIIToUTF16("John"));
@@ -755,6 +755,7 @@ TEST_F(AutofillTableTest, AutofillProfile) {
   home_profile.SetRawInfo(ADDRESS_HOME_COUNTRY, ASCIIToUTF16("US"));
   home_profile.SetRawInfo(PHONE_HOME_WHOLE_NUMBER, ASCIIToUTF16("18181234567"));
   home_profile.set_language_code("en");
+  home_profile.SetValidityFromBitfieldValue(6);
 
   Time pre_creation_time = Time::Now();
   EXPECT_TRUE(table_->AddAutofillProfile(home_profile));
@@ -819,7 +820,8 @@ TEST_F(AutofillTableTest, AutofillProfile) {
             post_modification_time.ToTimeT());
   EXPECT_FALSE(s_billing_updated.Step());
 
-  // Update the 'Billing' profile.
+  // Update the 'Billing' profile with non-default data. The specific values are
+  // not important.
   billing_profile.set_origin(kSettingsOrigin);
   billing_profile.SetRawInfo(NAME_FIRST, ASCIIToUTF16("Janice"));
   billing_profile.SetRawInfo(NAME_MIDDLE, ASCIIToUTF16("C."));
@@ -837,6 +839,7 @@ TEST_F(AutofillTableTest, AutofillProfile) {
   billing_profile.SetRawInfo(ADDRESS_HOME_COUNTRY, ASCIIToUTF16("US"));
   billing_profile.SetRawInfo(PHONE_HOME_WHOLE_NUMBER,
                              ASCIIToUTF16("18181230000"));
+  billing_profile.SetValidityFromBitfieldValue(54);
   Time pre_modification_time_2 = Time::Now();
   EXPECT_TRUE(table_->UpdateAutofillProfile(billing_profile));
   Time post_modification_time_2 = Time::Now();
@@ -1027,6 +1030,24 @@ TEST_F(AutofillTableTest, CreditCard) {
   EXPECT_TRUE(table_->RemoveCreditCard(target_creditcard.guid()));
   db_creditcard = table_->GetCreditCard(target_creditcard.guid());
   EXPECT_FALSE(db_creditcard);
+}
+
+TEST_F(AutofillTableTest, AddFullServerCreditCard) {
+  CreditCard credit_card;
+  credit_card.set_record_type(CreditCard::FULL_SERVER_CARD);
+  credit_card.set_server_id("server_id");
+  credit_card.set_origin("https://www.example.com/");
+  credit_card.SetRawInfo(CREDIT_CARD_NAME_FULL, ASCIIToUTF16("Jack Torrance"));
+  credit_card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("1234567890123456"));
+  credit_card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("04"));
+  credit_card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2013"));
+
+  EXPECT_TRUE(table_->AddFullServerCreditCard(credit_card));
+
+  std::vector<std::unique_ptr<CreditCard>> outputs;
+  ASSERT_TRUE(table_->GetServerCreditCards(&outputs));
+  ASSERT_EQ(1U, outputs.size());
+  EXPECT_EQ(0, credit_card.Compare(*outputs[0]));
 }
 
 TEST_F(AutofillTableTest, UpdateAutofillProfile) {
@@ -1595,6 +1616,40 @@ TEST_F(AutofillTableTest, Autofill_GetAllAutofillEntries_TwoSame) {
   CompareAutofillEntrySets(entry_set, expected_entries);
 }
 
+TEST_F(AutofillTableTest, AutofillProfileValidityBitfield) {
+  // Add an autofill profile with a non default validity state. The value itself
+  // is insignificant for this test since only the serialization and
+  // deserialization are tested.
+  const int kValidityBitfieldValue = 1984;
+  AutofillProfile profile;
+  profile.set_origin(std::string());
+  profile.SetRawInfo(NAME_FIRST, ASCIIToUTF16("John"));
+  profile.SetRawInfo(NAME_LAST, ASCIIToUTF16("Smith"));
+  profile.SetValidityFromBitfieldValue(kValidityBitfieldValue);
+
+  // Add the profile to the table.
+  EXPECT_TRUE(table_->AddAutofillProfile(profile));
+
+  // Get the profile from the table and make sure the validity was set.
+  std::unique_ptr<AutofillProfile> db_profile =
+      table_->GetAutofillProfile(profile.guid());
+  ASSERT_TRUE(db_profile);
+  EXPECT_EQ(kValidityBitfieldValue, db_profile->GetValidityBitfieldValue());
+
+  // Modify the validity of the profile.
+  const int kOtherValidityBitfieldValue = 1999;
+  profile.SetValidityFromBitfieldValue(kOtherValidityBitfieldValue);
+
+  // Update the profile in the table.
+  EXPECT_TRUE(table_->UpdateAutofillProfile(profile));
+
+  // Get the profile from the table and make sure the validity was updated.
+  db_profile = table_->GetAutofillProfile(profile.guid());
+  ASSERT_TRUE(db_profile);
+  EXPECT_EQ(kOtherValidityBitfieldValue,
+            db_profile->GetValidityBitfieldValue());
+}
+
 TEST_F(AutofillTableTest, SetGetServerCards) {
   std::vector<CreditCard> inputs;
   inputs.push_back(CreditCard(CreditCard::FULL_SERVER_CARD, "a123"));
@@ -1609,7 +1664,7 @@ TEST_F(AutofillTableTest, SetGetServerCards) {
   inputs[1].SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("12"));
   inputs[1].SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("1997"));
   inputs[1].SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("1111"));
-  inputs[1].SetTypeForMaskedCard(kVisaCard);
+  inputs[1].SetNetworkForMaskedCard(kVisaCard);
   inputs[1].SetServerStatus(CreditCard::EXPIRED);
 
   test::SetServerCreditCards(table_.get(), inputs);
@@ -1645,7 +1700,7 @@ TEST_F(AutofillTableTest, MaskUnmaskServerCards) {
   inputs[0].SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("1"));
   inputs[0].SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2020"));
   inputs[0].SetRawInfo(CREDIT_CARD_NUMBER, masked_number);
-  inputs[0].SetTypeForMaskedCard(kVisaCard);
+  inputs[0].SetNetworkForMaskedCard(kVisaCard);
   test::SetServerCreditCards(table_.get(), inputs);
 
   // Unmask the number. The full number should be available.
@@ -1681,7 +1736,7 @@ TEST_F(AutofillTableTest, SetServerCardModify) {
   masked_card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("1"));
   masked_card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2020"));
   masked_card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("1111"));
-  masked_card.SetTypeForMaskedCard(kVisaCard);
+  masked_card.SetNetworkForMaskedCard(kVisaCard);
 
   std::vector<CreditCard> inputs;
   inputs.push_back(masked_card);
@@ -1718,7 +1773,7 @@ TEST_F(AutofillTableTest, SetServerCardModify) {
   random_card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("12"));
   random_card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("1997"));
   random_card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("2222"));
-  random_card.SetTypeForMaskedCard(kVisaCard);
+  random_card.SetNetworkForMaskedCard(kVisaCard);
   inputs[0] = random_card;
   test::SetServerCreditCards(table_.get(), inputs);
 
@@ -1744,6 +1799,28 @@ TEST_F(AutofillTableTest, SetServerCardModify) {
   outputs.clear();
 }
 
+TEST_F(AutofillTableTest, ServerCardBankName) {
+  // Add a masked card.
+  CreditCard masked_card(CreditCard::MASKED_SERVER_CARD, "a123");
+  masked_card.SetRawInfo(CREDIT_CARD_NAME_FULL,
+                         ASCIIToUTF16("Paul F. Tompkins"));
+  masked_card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("1"));
+  masked_card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2020"));
+  masked_card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("1111"));
+  masked_card.SetNetworkForMaskedCard(kVisaCard);
+  masked_card.set_bank_name("Chase");
+
+  // Set server credit cards
+  std::vector<CreditCard> inputs = {masked_card};
+  test::SetServerCreditCards(table_.get(), inputs);
+
+  // Get server credit cards and check bank names equal
+  std::vector<std::unique_ptr<CreditCard>> outputs;
+  table_->GetServerCreditCards(&outputs);
+  ASSERT_EQ(1u, outputs.size());
+  EXPECT_EQ("Chase", outputs[0]->bank_name());
+}
+
 TEST_F(AutofillTableTest, SetServerCardUpdateUsageStatsAndBillingAddress) {
   // Add a masked card.
   CreditCard masked_card(CreditCard::MASKED_SERVER_CARD, "a123");
@@ -1753,7 +1830,7 @@ TEST_F(AutofillTableTest, SetServerCardUpdateUsageStatsAndBillingAddress) {
   masked_card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2020"));
   masked_card.SetRawInfo(CREDIT_CARD_NUMBER, ASCIIToUTF16("1111"));
   masked_card.set_billing_address_id("1");
-  masked_card.SetTypeForMaskedCard(kVisaCard);
+  masked_card.SetNetworkForMaskedCard(kVisaCard);
 
   std::vector<CreditCard> inputs;
   inputs.push_back(masked_card);
@@ -1894,7 +1971,7 @@ TEST_F(AutofillTableTest, DeleteUnmaskedCard) {
   masked_card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("1"));
   masked_card.SetRawInfo(CREDIT_CARD_EXP_4_DIGIT_YEAR, ASCIIToUTF16("2020"));
   masked_card.SetRawInfo(CREDIT_CARD_NUMBER, masked_number);
-  masked_card.SetTypeForMaskedCard(kVisaCard);
+  masked_card.SetNetworkForMaskedCard(kVisaCard);
 
   std::vector<CreditCard> inputs;
   inputs.push_back(masked_card);
@@ -1970,7 +2047,7 @@ class GetFormValuesTest : public testing::TestWithParam<GetFormValuesTestCase> {
 
  protected:
   void SetUp() override {
-    OSCryptMocker::SetUpWithSingleton();
+    OSCryptMocker::SetUp();
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     file_ = temp_dir_.GetPath().AppendASCII("TestWebDatabase");
 

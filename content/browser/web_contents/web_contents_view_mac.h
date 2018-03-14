@@ -13,6 +13,7 @@
 
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
+#include "content/browser/frame_host/popup_menu_helper_mac.h"
 #include "content/browser/renderer_host/render_view_host_delegate_view.h"
 #include "content/browser/web_contents/web_contents_view.h"
 #include "content/common/content_export.h"
@@ -20,12 +21,10 @@
 #include "ui/base/cocoa/base_view.h"
 #include "ui/gfx/geometry/size.h"
 
-@class FocusTracker;
 @class WebDragDest;
 @class WebDragSource;
 
 namespace content {
-class PopupMenuHelper;
 class RenderWidgetHostViewMac;
 class WebContentsImpl;
 class WebContentsViewDelegate;
@@ -49,7 +48,6 @@ CONTENT_EXPORT
 }
 
 - (void)setMouseDownCanMoveWindow:(BOOL)canMove;
-- (void)setOpaque:(BOOL)opaque;
 
 // Returns the available drag operations. This is a required method for
 // NSDraggingSource. It is supposedly deprecated, but the non-deprecated API
@@ -62,7 +60,8 @@ namespace content {
 // Mac-specific implementation of the WebContentsView. It owns an NSView that
 // contains all of the contents of the tab and associated child views.
 class WebContentsViewMac : public WebContentsView,
-                           public RenderViewHostDelegateView {
+                           public RenderViewHostDelegateView,
+                           public PopupMenuHelper::Delegate {
  public:
   // The corresponding WebContentsImpl is passed in the constructor, and manages
   // our lifetime. This doesn't need to be the case, but is this way currently
@@ -82,6 +81,7 @@ class WebContentsViewMac : public WebContentsView,
   void SetInitialFocus() override;
   void StoreFocus() override;
   void RestoreFocus() override;
+  void FocusThroughTabTraversal(bool reverse) override;
   DropData* GetDropData() const override;
   gfx::Rect GetViewBounds() const override;
   void SetAllowOtherViews(bool allow) override;
@@ -100,7 +100,16 @@ class WebContentsViewMac : public WebContentsView,
   bool IsEventTracking() const override;
   void CloseTabAfterEventTracking() override;
 
-  // Backend implementation of RenderViewHostDelegateView.
+  // RenderViewHostDelegateView:
+  void StartDragging(const DropData& drop_data,
+                     blink::WebDragOperationsMask allowed_operations,
+                     const gfx::ImageSkia& image,
+                     const gfx::Vector2d& image_offset,
+                     const DragEventSourceInfo& event_info,
+                     RenderWidgetHostImpl* source_rwh) override;
+  void UpdateDragCursor(blink::WebDragOperation operation) override;
+  void GotFocus(RenderWidgetHostImpl* render_widget_host) override;
+  void TakeFocus(bool reverse) override;
   void ShowContextMenu(RenderFrameHost* render_frame_host,
                        const ContextMenuParams& params) override;
   void ShowPopupMenu(RenderFrameHost* render_frame_host,
@@ -112,15 +121,9 @@ class WebContentsViewMac : public WebContentsView,
                      bool right_aligned,
                      bool allow_multiple_selection) override;
   void HidePopupMenu() override;
-  void StartDragging(const DropData& drop_data,
-                     blink::WebDragOperationsMask allowed_operations,
-                     const gfx::ImageSkia& image,
-                     const gfx::Vector2d& image_offset,
-                     const DragEventSourceInfo& event_info,
-                     RenderWidgetHostImpl* source_rwh) override;
-  void UpdateDragCursor(blink::WebDragOperation operation) override;
-  void GotFocus() override;
-  void TakeFocus(bool reverse) override;
+
+  // PopupMenuHelper::Delegate:
+  void OnMenuClosed() override;
 
   // A helper method for closing the tab in the
   // CloseTabAfterEventTracking() implementation.
@@ -147,10 +150,6 @@ class WebContentsViewMac : public WebContentsView,
 
   // The Cocoa NSView that lives in the view hierarchy.
   base::scoped_nsobject<WebContentsViewCocoa> cocoa_view_;
-
-  // Keeps track of which NSView has focus so we can restore the focus when
-  // focus returns.
-  base::scoped_nsobject<FocusTracker> focus_tracker_;
 
   // Our optional delegate.
   std::unique_ptr<WebContentsViewDelegate> delegate_;

@@ -45,6 +45,7 @@ class GoogleServiceAuthError;
 class PrefService;
 class ProfileOAuth2TokenService;
 class SigninClient;
+class SigninErrorController;
 
 class SigninManager : public SigninManagerBase,
                       public AccountTrackerService::Observer,
@@ -66,7 +67,8 @@ class SigninManager : public SigninManagerBase,
   SigninManager(SigninClient* client,
                 ProfileOAuth2TokenService* token_service,
                 AccountTrackerService* account_tracker_service,
-                GaiaCookieManagerService* cookie_manager_service);
+                GaiaCookieManagerService* cookie_manager_service,
+                SigninErrorController* signin_error_controller);
   ~SigninManager() override;
 
   // Returns true if the username is allowed based on the policy string.
@@ -74,8 +76,10 @@ class SigninManager : public SigninManagerBase,
                                         const std::string& policy);
 
   // Attempt to sign in this user with a refresh token.
+  // If |refresh_token| is not empty, then SigninManager will add it to the
+  // |token_service_| when the sign-in flow is completed.
   // If non-null, the passed |oauth_fetched_callback| callback is invoked once
-  // signin has been completed.
+  // sign-in has been completed.
   // The callback should invoke SignOut() or CompletePendingSignin() to either
   // continue or cancel the in-process signin.
   virtual void StartSignInWithRefreshToken(
@@ -90,10 +94,28 @@ class SigninManager : public SigninManagerBase,
   // in-progress credentials to the new profile.
   virtual void CopyCredentialsFrom(const SigninManager& source);
 
-  // Sign a user out, removing the preference, erasing all keys
-  // associated with the user, and canceling all auth in progress.
-  virtual void SignOut(signin_metrics::ProfileSignout signout_source_metric,
-                       signin_metrics::SignoutDelete signout_delete_metric);
+  // Signs a user out, removing the preference, erasing all keys
+  // associated with the authenticated user, and canceling all auth in progress.
+  // On mobile and on desktop pre-DICE, this also removes all accounts from
+  // Chrome by revoking all refresh tokens.
+  // On desktop with DICE enabled, this will not remove all accounts from
+  // Chrome.
+  void SignOut(signin_metrics::ProfileSignout signout_source_metric,
+               signin_metrics::SignoutDelete signout_delete_metric);
+
+  // Signs a user out, removing the preference, erasing all keys
+  // associated with the authenticated user, and canceling all auth in progress.
+  // It removes all accounts from Chrome by revoking all refresh tokens.
+  void SignOutAndRemoveAllAccounts(
+      signin_metrics::ProfileSignout signout_source_metric,
+      signin_metrics::SignoutDelete signout_delete_metric);
+
+  // Signs a user out, removing the preference, erasing all keys
+  // associated with the authenticated user, and canceling all auth in progress.
+  // Does not remove the accounts from the token service.
+  void SignOutAndKeepAllAccounts(
+      signin_metrics::ProfileSignout signout_source_metric,
+      signin_metrics::SignoutDelete signout_delete_metric);
 
   // On platforms where SigninManager is responsible for dealing with
   // invalid username policy updates, we need to check this during
@@ -149,10 +171,15 @@ class SigninManager : public SigninManagerBase,
 
   // The sign out process which is started by SigninClient::PreSignOut()
   virtual void DoSignOut(signin_metrics::ProfileSignout signout_source_metric,
-                         signin_metrics::SignoutDelete signout_delete_metric);
+                         signin_metrics::SignoutDelete signout_delete_metric,
+                         bool remove_all_accounts);
 
  private:
-  enum SigninType { SIGNIN_TYPE_NONE, SIGNIN_TYPE_WITH_REFRESH_TOKEN };
+  enum SigninType {
+    SIGNIN_TYPE_NONE,
+    SIGNIN_TYPE_WITH_REFRESH_TOKEN,
+    SIGNIN_TYPE_WITHOUT_REFRESH_TOKEN
+  };
 
   std::string SigninTypeToString(SigninType type);
   friend class FakeSigninManager;
@@ -178,15 +205,18 @@ class SigninManager : public SigninManagerBase,
   // a sign-in success notification.
   void OnSignedIn();
 
+  // Send all observers |GoogleSigninSucceeded| notifications.
+  void FireGoogleSigninSucceeded();
+
   // Waits for the AccountTrackerService, then sends GoogleSigninSucceeded to
   // the client and clears the local password.
   void PostSignedIn();
 
-  // AccountTrackerService::Observer implementation.
+  // AccountTrackerService::Observer:
   void OnAccountUpdated(const AccountInfo& info) override;
   void OnAccountUpdateFailed(const std::string& account_id) override;
 
-  // OAuth2TokenService::Observer
+  // OAuth2TokenService::Observer:
   void OnRefreshTokensLoaded() override;
 
   // Called when a new request to re-authenticate a user is in progress.
@@ -198,6 +228,11 @@ class SigninManager : public SigninManagerBase,
   // to |error|, sends out a notification of login failure and clears the
   // transient signin data.
   void HandleAuthError(const GoogleServiceAuthError& error);
+
+  // Starts the sign out process.
+  void StartSignOut(signin_metrics::ProfileSignout signout_source_metric,
+                    signin_metrics::SignoutDelete signout_delete_metric,
+                    bool remove_all_accounts);
 
   void OnSigninAllowedPrefChanged();
   void OnGoogleServicesUsernamePatternChanged();

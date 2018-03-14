@@ -44,7 +44,6 @@ const char kDefaultMasterPrefs[] = "master_preferences";
 //      "make_chrome_default_for_user": true,
 //      "ping_delay": 40,
 //      "require_eula": true,
-//      "show_welcome_page": true,
 //      "skip_first_run_ui": true,
 //      "system_level": false,
 //      "verbose_logging": true,
@@ -160,9 +159,6 @@ class MasterPreferences {
 
   // Returns the compressed variations seed entry from the master prefs.
   std::string GetCompressedVariationsSeed() const;
-
-  // Returns the variations seed entry from the master prefs.
-  std::string GetVariationsSeed() const;
 
   // Returns the variations seed signature entry from the master prefs.
   std::string GetVariationsSeedSignature() const;

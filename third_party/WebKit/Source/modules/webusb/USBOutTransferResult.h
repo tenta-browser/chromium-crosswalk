@@ -5,15 +5,13 @@
 #ifndef USBOutTransferResult_h
 #define USBOutTransferResult_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
-class USBOutTransferResult final
-    : public GarbageCollectedFinalized<USBOutTransferResult>,
-      public ScriptWrappable {
+class USBOutTransferResult final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -33,8 +31,6 @@ class USBOutTransferResult final
 
   String status() const { return status_; }
   unsigned bytesWritten() const { return bytes_written_; }
-
-  DEFINE_INLINE_TRACE() {}
 
  private:
   const String status_;

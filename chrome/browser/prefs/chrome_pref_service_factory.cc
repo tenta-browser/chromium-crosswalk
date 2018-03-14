@@ -47,9 +47,10 @@
 #include "components/prefs/pref_service.h"
 #include "components/prefs/pref_store.h"
 #include "components/prefs/pref_value_store.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/search_engines/default_search_manager.h"
 #include "components/search_engines/search_engines_pref_names.h"
-#include "components/signin/core/common/signin_pref_names.h"
+#include "components/signin/core/browser/signin_pref_names.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/base/pref_names.h"
 #include "components/sync_preferences/pref_model_associator.h"
@@ -176,6 +177,8 @@ const prefs::TrackedPreferenceMetadata kTrackedPrefs[] = {
      EnforcementLevel::ENFORCE_ON_LOAD, PrefTrackingStrategy::ATOMIC,
      ValueType::IMPERSONAL},
 #endif  // defined(OS_WIN)
+    {29, prefs::kMediaStorageIdSalt, EnforcementLevel::ENFORCE_ON_LOAD,
+     PrefTrackingStrategy::ATOMIC, ValueType::IMPERSONAL},
 
     // See note at top, new items added here also need to be added to
     // histograms.xml's TrackedPreference enum.
@@ -319,9 +322,9 @@ void HandleReadError(const base::FilePath& pref_filename,
     if (message_id) {
       BrowserThread::PostTask(
           BrowserThread::UI, FROM_HERE,
-          base::Bind(&ShowProfileErrorDialog, ProfileErrorType::PREFERENCES,
-                     message_id,
-                     sql::GetCorruptFileDiagnosticsInfo(pref_filename)));
+          base::BindOnce(&ShowProfileErrorDialog, ProfileErrorType::PREFERENCES,
+                         message_id,
+                         sql::GetCorruptFileDiagnosticsInfo(pref_filename)));
     }
 #else
     // On ChromeOS error screen with message about broken local state
@@ -354,8 +357,9 @@ std::unique_ptr<ProfilePrefStoreManager> CreateProfilePrefStoreManager(
 #endif
   std::string seed;
 #if defined(GOOGLE_CHROME_BUILD)
-  seed = ResourceBundle::GetSharedInstance().GetRawDataResource(
-      IDR_PREF_HASH_SEED_BIN).as_string();
+  seed = ui::ResourceBundle::GetSharedInstance()
+             .GetRawDataResource(IDR_PREF_HASH_SEED_BIN)
+             .as_string();
 #endif
   return base::MakeUnique<ProfilePrefStoreManager>(profile_path, seed,
                                                    legacy_device_id);
@@ -375,8 +379,8 @@ void PrepareFactory(sync_preferences::PrefServiceSyncableFactory* factory,
 
 #if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   if (supervised_user_settings) {
-    scoped_refptr<PrefStore> supervised_user_prefs = make_scoped_refptr(
-        new SupervisedUserPrefStore(supervised_user_settings));
+    scoped_refptr<PrefStore> supervised_user_prefs =
+        base::MakeRefCounted<SupervisedUserPrefStore>(supervised_user_settings);
     DCHECK(async || supervised_user_prefs->IsInitializationComplete());
     factory->set_supervised_user_prefs(supervised_user_prefs);
   }
@@ -384,8 +388,9 @@ void PrepareFactory(sync_preferences::PrefServiceSyncableFactory* factory,
 
   factory->set_async(async);
   factory->set_extension_prefs(extension_prefs);
-  factory->set_command_line_prefs(make_scoped_refptr(
-      new ChromeCommandLinePrefStore(base::CommandLine::ForCurrentProcess())));
+  factory->set_command_line_prefs(
+      base::MakeRefCounted<ChromeCommandLinePrefStore>(
+          base::CommandLine::ForCurrentProcess()));
   factory->set_read_error_callback(base::Bind(&HandleReadError, pref_filename));
   factory->set_user_prefs(user_pref_store);
   factory->SetPrefModelAssociatorClient(
@@ -437,7 +442,8 @@ std::unique_ptr<PrefService> CreateLocalState(
     base::SequencedTaskRunner* pref_io_task_runner,
     policy::PolicyService* policy_service,
     const scoped_refptr<PrefRegistry>& pref_registry,
-    bool async) {
+    bool async,
+    std::unique_ptr<PrefValueStore::Delegate> delegate) {
   sync_preferences::PrefServiceSyncableFactory factory;
   PrepareFactory(&factory, pref_filename, policy_service,
                  NULL,  // supervised_user_settings
@@ -445,7 +451,7 @@ std::unique_ptr<PrefService> CreateLocalState(
                                    std::unique_ptr<PrefFilter>()),
                  NULL,  // extension_prefs
                  async);
-  return factory.Create(pref_registry.get());
+  return factory.Create(pref_registry.get(), std::move(delegate));
 }
 
 std::unique_ptr<sync_preferences::PrefServiceSyncable> CreateProfilePrefs(
@@ -456,7 +462,8 @@ std::unique_ptr<sync_preferences::PrefServiceSyncable> CreateProfilePrefs(
     const scoped_refptr<PrefStore>& extension_prefs,
     const scoped_refptr<user_prefs::PrefRegistrySyncable>& pref_registry,
     bool async,
-    service_manager::Connector* connector) {
+    scoped_refptr<base::SequencedTaskRunner> io_task_runner,
+    std::unique_ptr<PrefValueStore::Delegate> delegate) {
   TRACE_EVENT0("browser", "chrome_prefs::CreateProfilePrefs");
   SCOPED_UMA_HISTOGRAM_TIMER("PrefService.CreateProfilePrefsTime");
 
@@ -469,14 +476,13 @@ std::unique_ptr<sync_preferences::PrefServiceSyncable> CreateProfilePrefs(
       CreateProfilePrefStoreManager(profile_path)
           ->CreateProfilePrefStore(
               GetTrackingConfiguration(), kTrackedPrefsReportingIDsCount,
-              content::BrowserThread::GetBlockingPool(),
-              std::move(reset_on_load_observer), std::move(validation_delegate),
-              connector, pref_registry));
+              std::move(io_task_runner), std::move(reset_on_load_observer),
+              std::move(validation_delegate)));
   PrepareFactory(&factory, profile_path, policy_service,
                  supervised_user_settings, user_pref_store, extension_prefs,
                  async);
   std::unique_ptr<sync_preferences::PrefServiceSyncable> pref_service =
-      factory.CreateSyncable(pref_registry.get(), connector);
+      factory.CreateSyncable(pref_registry.get(), std::move(delegate));
 
   return pref_service;
 }

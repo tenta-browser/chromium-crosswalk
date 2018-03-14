@@ -30,8 +30,9 @@
 
 #include "core/html/forms/TextInputType.h"
 
-#include "core/InputTypeNames.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/frame/WebFeature.h"
+#include "core/html/forms/HTMLInputElement.h"
+#include "core/input_type_names.h"
 
 namespace blink {
 
@@ -42,14 +43,14 @@ InputType* TextInputType::Create(HTMLInputElement& element) {
 }
 
 void TextInputType::CountUsage() {
-  CountUsageIfVisible(UseCounter::kInputTypeText);
+  CountUsageIfVisible(WebFeature::kInputTypeText);
   if (GetElement().FastHasAttribute(maxlengthAttr))
-    CountUsageIfVisible(UseCounter::kInputTypeTextMaxLength);
+    CountUsageIfVisible(WebFeature::kInputTypeTextMaxLength);
   const AtomicString& type = GetElement().FastGetAttribute(typeAttr);
   if (DeprecatedEqualIgnoringCase(type, InputTypeNames::datetime))
-    CountUsageIfVisible(UseCounter::kInputTypeDateTimeFallback);
+    CountUsageIfVisible(WebFeature::kInputTypeDateTimeFallback);
   else if (DeprecatedEqualIgnoringCase(type, InputTypeNames::week))
-    CountUsageIfVisible(UseCounter::kInputTypeWeekFallback);
+    CountUsageIfVisible(WebFeature::kInputTypeWeekFallback);
 }
 
 const AtomicString& TextInputType::FormControlType() const {

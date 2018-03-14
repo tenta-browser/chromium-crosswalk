@@ -7,9 +7,11 @@
 #include <stddef.h>
 
 #include <string>
+#include <utility>
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
@@ -231,7 +233,7 @@ syncer::SyncDataList SupervisedUserWhitelistService::GetAllSyncData(
 }
 
 syncer::SyncError SupervisedUserWhitelistService::ProcessSyncChanges(
-    const tracked_objects::Location& from_here,
+    const base::Location& from_here,
     const syncer::SyncChangeList& change_list) {
   bool whitelists_removed = false;
   syncer::SyncError error;
@@ -282,7 +284,7 @@ void SupervisedUserWhitelistService::AddNewWhitelist(
   RegisterWhitelist(whitelist.id(), whitelist.name(), FROM_SYNC);
   std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
   SetWhitelistProperties(dict.get(), whitelist);
-  pref_dict->SetWithoutPathExpansion(whitelist.id(), dict.release());
+  pref_dict->SetWithoutPathExpansion(whitelist.id(), std::move(dict));
 }
 
 void SupervisedUserWhitelistService::SetWhitelistProperties(

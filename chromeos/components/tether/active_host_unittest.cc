@@ -13,7 +13,7 @@
 #include "chromeos/components/tether/fake_tether_host_fetcher.h"
 #include "components/cryptauth/remote_device.h"
 #include "components/cryptauth/remote_device_test_util.h"
-#include "components/prefs/testing_pref_service.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -37,20 +37,13 @@ struct GetActiveHostResult {
       devices_equal = !other.remote_device;
     }
 
-    LOG(ERROR) << (active_host_status == other.active_host_status);
-    LOG(ERROR) << devices_equal;
-    LOG(ERROR) << (other.tether_network_guid);
-    LOG(ERROR) << (tether_network_guid);
-    LOG(ERROR) << (other.wifi_network_guid);
-    LOG(ERROR) << (wifi_network_guid);
-
     return active_host_status == other.active_host_status && devices_equal &&
            tether_network_guid == other.tether_network_guid &&
            wifi_network_guid == other.wifi_network_guid;
   }
 };
 
-class TestObserver : public ActiveHost::Observer {
+class TestObserver final : public ActiveHost::Observer {
  public:
   void OnActiveHostChanged(
       const ActiveHost::ActiveHostChangeInfo& change_info) override {
@@ -74,7 +67,8 @@ class ActiveHostTest : public testing::Test {
   void SetUp() override {
     get_active_host_results_.clear();
 
-    test_pref_service_ = base::MakeUnique<TestingPrefServiceSimple>();
+    test_pref_service_ =
+        base::MakeUnique<sync_preferences::TestingPrefServiceSyncable>();
     fake_tether_host_fetcher_ = base::MakeUnique<FakeTetherHostFetcher>(
         test_devices_, false /* synchronously_reply_with_results */);
 
@@ -113,7 +107,8 @@ class ActiveHostTest : public testing::Test {
 
   const std::vector<cryptauth::RemoteDevice> test_devices_;
 
-  std::unique_ptr<TestingPrefServiceSimple> test_pref_service_;
+  std::unique_ptr<sync_preferences::TestingPrefServiceSyncable>
+      test_pref_service_;
   std::unique_ptr<FakeTetherHostFetcher> fake_tether_host_fetcher_;
   std::unique_ptr<TestObserver> test_observer_;
 
@@ -265,4 +260,4 @@ TEST_F(ActiveHostTest, TestObserverCalls) {
 
 }  // namespace tether
 
-}  // namespace cryptauth
+}  // namespace chromeos

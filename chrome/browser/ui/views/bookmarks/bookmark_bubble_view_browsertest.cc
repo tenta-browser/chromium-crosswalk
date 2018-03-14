@@ -2,88 +2,69 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ui/views/bookmarks/bookmark_bubble_view.h"
+
+#include "base/command_line.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/signin/fake_signin_manager_builder.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
-#include "chrome/browser/ui/views/bookmarks/bookmark_bubble_view.h"
-#include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/location_bar/star_view.h"
-#include "chrome/browser/ui/views/toolbar/toolbar_view.h"
-#include "chrome/test/base/browser_with_test_window_test.h"
+#include "chrome/common/chrome_switches.h"
+#include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
-
-namespace {
-
-const char kTestBookmarkURL[] = "http://www.google.com";
-const char kTestGaiaID[] = "test";
-const char kTestUserEmail[] = "testuser@gtest.com";
-
-}  // namespace
+#include "ui/views/window/dialog_client_view.h"
 
 class BookmarkBubbleViewBrowserTest : public DialogBrowserTest {
  public:
   BookmarkBubbleViewBrowserTest() {}
 
-  void SetUpOnMainThread() override {
-    TestingProfile::Builder builder;
-    builder.AddTestingFactory(SigninManagerFactory::GetInstance(),
-                              BuildFakeSigninManagerBase);
-    profile_ = builder.Build();
-    profile_->CreateBookmarkModel(true);
-    bookmarks::BookmarkModel* bookmark_model =
-        BookmarkModelFactory::GetForBrowserContext(profile_.get());
-    bookmarks::test::WaitForBookmarkModelToLoad(bookmark_model);
-    bookmarks::AddIfNotBookmarked(bookmark_model, GURL(kTestBookmarkURL),
-                                  base::string16());
-  }
-
-  void TearDownOnMainThread() override { profile_.reset(); }
-
+  // DialogBrowserTest:
   void ShowDialog(const std::string& name) override {
-    BrowserView* browser_view =
-        BrowserView::GetBrowserViewForBrowser(browser());
-
-    if ("bookmark_details" == name) {
 #if !defined(OS_CHROMEOS)
-      SigninManagerFactory::GetForProfile(profile_.get())
+    if (name == "bookmark_details") {
+      SigninManagerFactory::GetForProfile(browser()->profile())
           ->SignOut(signin_metrics::SIGNOUT_TEST,
                     signin_metrics::SignoutDelete::IGNORE_METRIC);
-#endif
-      BookmarkBubbleView::ShowBubble(
-          browser_view->toolbar()->location_bar()->star_view(), gfx::Rect(),
-          nullptr, nullptr, nullptr, profile_.get(), GURL(kTestBookmarkURL),
-          true);
-    } else if ("bookmark_details_signed_in" == name) {
-      SigninManagerFactory::GetForProfile(profile_.get())
+    } else {
+      constexpr char kTestGaiaID[] = "test";
+      constexpr char kTestUserEmail[] = "testuser@gtest.com";
+      SigninManagerFactory::GetForProfile(browser()->profile())
           ->SetAuthenticatedAccountInfo(kTestGaiaID, kTestUserEmail);
-      BookmarkBubbleView::ShowBubble(
-          browser_view->toolbar()->location_bar()->star_view(), gfx::Rect(),
-          nullptr, nullptr, nullptr, profile_.get(), GURL(kTestBookmarkURL),
-          true);
-#if defined(OS_WIN)
-    } else if ("ios_promotion" == name) {
-      SigninManagerFactory::GetForProfile(profile_.get())
-          ->SetAuthenticatedAccountInfo(kTestGaiaID, kTestUserEmail);
-      BookmarkBubbleView::ShowBubble(
-          browser_view->toolbar()->location_bar()->star_view(), gfx::Rect(),
-          nullptr, nullptr, nullptr, profile_.get(), GURL(kTestBookmarkURL),
-          true);
-      BookmarkBubbleView::bookmark_bubble()->ShowIOSPromotion();
+    }
 #endif
+
+    const GURL url = GURL("https://www.google.com");
+    const base::string16 title = base::ASCIIToUTF16("Title");
+    bookmarks::BookmarkModel* bookmark_model =
+        BookmarkModelFactory::GetForBrowserContext(browser()->profile());
+    bookmarks::test::WaitForBookmarkModelToLoad(bookmark_model);
+    bookmarks::AddIfNotBookmarked(bookmark_model, url, title);
+    browser()->window()->ShowBookmarkBubble(url, true);
+
+    if (name == "ios_promotion") {
+      BookmarkBubbleView::bookmark_bubble()
+          ->GetWidget()
+          ->client_view()
+          ->AsDialogClientView()
+          ->AcceptWindow();
     }
   }
 
  private:
-  std::unique_ptr<TestingProfile> profile_;
   DISALLOW_COPY_AND_ASSIGN(BookmarkBubbleViewBrowserTest);
 };
 
+// ChromeOS is always signed in.
+#if !defined(OS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(BookmarkBubbleViewBrowserTest,
                        InvokeDialog_bookmark_details) {
   RunDialog();
 }
+#endif
 
 IN_PROC_BROWSER_TEST_F(BookmarkBubbleViewBrowserTest,
                        InvokeDialog_bookmark_details_signed_in) {
@@ -93,6 +74,8 @@ IN_PROC_BROWSER_TEST_F(BookmarkBubbleViewBrowserTest,
 #if defined(OS_WIN)
 IN_PROC_BROWSER_TEST_F(BookmarkBubbleViewBrowserTest,
                        InvokeDialog_ios_promotion) {
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kForceDesktopIOSPromotion);
   RunDialog();
 }
 #endif

@@ -9,12 +9,13 @@
 
 #include <list>
 #include <map>
+#include <string>
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/threading/thread_checker.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/host_resolver_proc.h"
 
@@ -55,9 +56,9 @@ int ParseAddressList(const std::string& host_list,
 // 127.0.0.1.
 
 // Base class shared by MockHostResolver and MockCachingHostResolver.
-class MockHostResolverBase : public HostResolver,
-                             public base::SupportsWeakPtr<MockHostResolverBase>,
-                             public base::NonThreadSafe {
+class MockHostResolverBase
+    : public HostResolver,
+      public base::SupportsWeakPtr<MockHostResolverBase> {
  private:
   class RequestImpl;
 
@@ -146,6 +147,8 @@ class MockHostResolverBase : public HostResolver,
   size_t num_resolve_;
   size_t num_resolve_from_cache_;
 
+  THREAD_CHECKER(thread_checker_);
+
   DISALLOW_COPY_AND_ASSIGN(MockHostResolverBase);
 };
 
@@ -178,14 +181,13 @@ class RuleBasedHostResolverProc : public HostResolverProc {
   explicit RuleBasedHostResolverProc(HostResolverProc* previous);
 
   // Any hostname matching the given pattern will be replaced with the given
-  // replacement value.  Usually, replacement should be an IP address literal.
-  void AddRule(const std::string& host_pattern,
-               const std::string& replacement);
+  // |ip_literal|.
+  void AddRule(const std::string& host_pattern, const std::string& ip_literal);
 
   // Same as AddRule(), but further restricts to |address_family|.
   void AddRuleForAddressFamily(const std::string& host_pattern,
                                AddressFamily address_family,
-                               const std::string& replacement);
+                               const std::string& ip_literal);
 
   // Same as AddRule(), but the replacement is expected to be an IPv4 or IPv6
   // literal. This can be used in place of AddRule() to bypass the system's
@@ -212,6 +214,11 @@ class RuleBasedHostResolverProc : public HostResolverProc {
   // Deletes all the rules that have been added.
   void ClearRules();
 
+  // Causes method calls that add or delete rules to assert.
+  // TODO(jam): once this class isn't used by tests that use an out of process
+  // network service, remove this method and make Rule private.
+  void DisableModifications();
+
   // HostResolverProc methods:
   int Resolve(const std::string& host,
               AddressFamily address_family,
@@ -219,10 +226,38 @@ class RuleBasedHostResolverProc : public HostResolverProc {
               AddressList* addrlist,
               int* os_error) override;
 
- private:
-  struct Rule;
+  struct Rule {
+    enum ResolverType {
+      kResolverTypeFail,
+      // TODO(mmenke): Is it really reasonable for a "mock" host resolver to
+      // fall back to the system resolver?
+      kResolverTypeSystem,
+      kResolverTypeIPLiteral,
+    };
+
+    Rule(ResolverType resolver_type,
+         const std::string& host_pattern,
+         AddressFamily address_family,
+         HostResolverFlags host_resolver_flags,
+         const std::string& replacement,
+         const std::string& canonical_name,
+         int latency_ms);
+    Rule(const Rule& other);
+
+    ResolverType resolver_type;
+    std::string host_pattern;
+    AddressFamily address_family;
+    HostResolverFlags host_resolver_flags;
+    std::string replacement;
+    std::string canonical_name;
+    int latency_ms;  // In milliseconds.
+  };
+
   typedef std::list<Rule> RuleList;
 
+  RuleList GetRules();
+
+ private:
   ~RuleBasedHostResolverProc() override;
 
   void AddRuleInternal(const Rule& rule);
@@ -231,6 +266,9 @@ class RuleBasedHostResolverProc : public HostResolverProc {
 
   // Must be obtained before writing to or reading from |rules_|.
   base::Lock rule_lock_;
+
+  // Whether changes are allowed.
+  bool modifications_allowed_;
 };
 
 // Create rules that map all requests to localhost.

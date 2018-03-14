@@ -13,6 +13,7 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "components/cookie_config/cookie_store_util.h"
 #include "components/net_log/chrome_net_log.h"
@@ -56,8 +57,6 @@ ChromeBrowserStateImplIOData::Handle::Handle(
 
 ChromeBrowserStateImplIOData::Handle::~Handle() {
   DCHECK_CURRENTLY_ON(web::WebThread::UI);
-  if (io_data_->http_server_properties_manager_)
-    io_data_->http_server_properties_manager_->ShutdownOnPrefThread();
 
   io_data_->ShutdownOnUIThread(GetAllContextGetters());
 }
@@ -85,12 +84,6 @@ void ChromeBrowserStateImplIOData::Handle::Init(
   io_data_->app_cache_max_size_ = cache_max_size;
 
   io_data_->InitializeMetricsEnabledStateOnUIThread();
-
-  base::SequencedWorkerPool* pool = web::WebThread::GetBlockingPool();
-  scoped_refptr<base::SequencedTaskRunner> db_task_runner =
-      pool->GetSequencedTaskRunnerWithShutdownBehavior(
-          pool->GetSequenceToken(),
-          base::SequencedWorkerPool::SKIP_ON_SHUTDOWN);
 }
 
 scoped_refptr<IOSChromeURLRequestContextGetter>
@@ -156,11 +149,6 @@ void ChromeBrowserStateImplIOData::Handle::LazyInitialize() const {
   // Set initialized_ to true at the beginning in case any of the objects
   // below try to get the ResourceContext pointer.
   initialized_ = true;
-  PrefService* pref_service = browser_state_->GetPrefs();
-  io_data_->http_server_properties_manager_ =
-      HttpServerPropertiesManagerFactory::CreateManager(pref_service);
-  io_data_->set_http_server_properties(
-      base::WrapUnique(io_data_->http_server_properties_manager_));
   io_data_->InitializeOnUIThread(browser_state_);
 }
 
@@ -188,7 +176,6 @@ ChromeBrowserStateImplIOData::LazyParams::~LazyParams() {}
 ChromeBrowserStateImplIOData::ChromeBrowserStateImplIOData()
     : ChromeBrowserStateIOData(
           ios::ChromeBrowserStateType::REGULAR_BROWSER_STATE),
-      http_server_properties_manager_(nullptr),
       app_cache_max_size_(0) {}
 
 ChromeBrowserStateImplIOData::~ChromeBrowserStateImplIOData() {}
@@ -200,11 +187,12 @@ void ChromeBrowserStateImplIOData::InitializeInternal(
   // Set up a persistent store for use by the network stack on the IO thread.
   base::FilePath network_json_store_filepath(
       profile_path_.Append(kIOSChromeNetworkPersistentStateFilename));
-  network_json_store_ = new JsonPrefStore(
-      network_json_store_filepath,
-      JsonPrefStore::GetTaskRunnerForFile(network_json_store_filepath,
-                                          web::WebThread::GetBlockingPool()),
-      std::unique_ptr<PrefFilter>());
+  network_json_store_ =
+      new JsonPrefStore(network_json_store_filepath,
+                        base::CreateSequencedTaskRunnerWithTraits(
+                            {base::MayBlock(), base::TaskPriority::BACKGROUND,
+                             base::TaskShutdownBehavior::BLOCK_SHUTDOWN}),
+                        std::unique_ptr<PrefFilter>());
   network_json_store_->ReadPrefsAsync(nullptr);
 
   net::URLRequestContext* main_context = main_request_context();
@@ -214,8 +202,8 @@ void ChromeBrowserStateImplIOData::InitializeInternal(
 
   ApplyProfileParamsToContext(main_context);
 
-  if (http_server_properties_manager_)
-    http_server_properties_manager_->InitializeOnNetworkThread();
+  set_http_server_properties(HttpServerPropertiesManagerFactory::CreateManager(
+      network_json_store_, io_thread->net_log()));
 
   main_context->set_transport_security_state(transport_security_state());
 
@@ -260,8 +248,8 @@ void ChromeBrowserStateImplIOData::InitializeInternal(
     scoped_refptr<net::SQLiteChannelIDStore> channel_id_db =
         new net::SQLiteChannelIDStore(
             lazy_params_->channel_id_path,
-            web::WebThread::GetBlockingPool()->GetSequencedTaskRunner(
-                web::WebThread::GetBlockingPool()->GetSequenceToken()));
+            base::CreateSequencedTaskRunnerWithTraits(
+                {base::MayBlock(), base::TaskPriority::BACKGROUND}));
     channel_id_service = new net::ChannelIDService(
         new net::DefaultChannelIDStore(channel_id_db.get()));
   }
@@ -273,8 +261,7 @@ void ChromeBrowserStateImplIOData::InitializeInternal(
   std::unique_ptr<net::HttpCache::BackendFactory> main_backend(
       new net::HttpCache::DefaultBackend(
           net::DISK_CACHE, net::CACHE_BACKEND_BLOCKFILE,
-          lazy_params_->cache_path, lazy_params_->cache_max_size,
-          web::WebThread::GetTaskRunnerForThread(web::WebThread::CACHE)));
+          lazy_params_->cache_path, lazy_params_->cache_max_size));
   http_network_session_ = CreateHttpNetworkSession(*profile_params);
   main_http_factory_ = CreateMainHttpFactory(http_network_session_.get(),
                                              std::move(main_backend));
@@ -287,8 +274,6 @@ void ChromeBrowserStateImplIOData::InitializeInternal(
   main_job_factory_ = SetUpJobFactoryDefaults(std::move(main_job_factory),
                                               main_context->network_delegate());
   main_context->set_job_factory(main_job_factory_.get());
-  main_context->set_network_quality_estimator(
-      io_thread_globals->network_quality_estimator.get());
 
   lazy_params_.reset();
 }
@@ -305,11 +290,12 @@ ChromeBrowserStateImplIOData::InitializeAppRequestContext(
       new net::ChannelIDService(new net::DefaultChannelIDStore(nullptr)));
 
   // Build a new HttpNetworkSession that uses the new ChannelIDService.
-  net::HttpNetworkSession::Params network_params =
-      http_network_session_->params();
-  network_params.channel_id_service = channel_id_service.get();
+  net::HttpNetworkSession::Context session_context =
+      http_network_session_->context();
+  session_context.channel_id_service = channel_id_service.get();
   std::unique_ptr<net::HttpNetworkSession> http_network_session(
-      new net::HttpNetworkSession(network_params));
+      new net::HttpNetworkSession(http_network_session_->params(),
+                                  session_context));
 
   // Use a separate HTTP disk cache for isolated apps.
   std::unique_ptr<net::HttpCache::BackendFactory> app_backend =
@@ -360,6 +346,6 @@ void ChromeBrowserStateImplIOData::ClearNetworkingHistorySinceOnIOThread(
   DCHECK(transport_security_state());
   // Completes synchronously.
   transport_security_state()->DeleteAllDynamicDataSince(time);
-  DCHECK(http_server_properties_manager_);
-  http_server_properties_manager_->Clear(completion);
+  http_server_properties()->Clear();
+  web::WebThread::PostTask(web::WebThread::UI, FROM_HERE, completion);
 }

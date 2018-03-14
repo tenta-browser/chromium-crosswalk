@@ -62,7 +62,8 @@ void LocalStateUIHandler::RegisterMessages() {
 
 void LocalStateUIHandler::HandleRequestJson(const base::ListValue* args) {
   std::unique_ptr<base::DictionaryValue> local_state_values(
-      g_browser_process->local_state()->GetPreferenceValuesOmitDefaults());
+      g_browser_process->local_state()->GetPreferenceValues(
+          PrefService::EXCLUDE_DEFAULTS));
   if (ENABLE_FILTERING) {
     std::vector<std::string> whitelisted_prefixes = {
         "variations", "user_experience_metrics", "uninstall_metrics"};
@@ -116,6 +117,7 @@ LocalStateUI::LocalStateUI(content::WebUI* web_ui) : WebUIController(web_ui) {
       content::WebUIDataSource::Create(chrome::kChromeUILocalStateHost);
   html_source->SetDefaultResource(IDR_LOCAL_STATE_HTML);
   html_source->AddResourcePath("local_state.js", IDR_LOCAL_STATE_JS);
+  html_source->UseGzip();
   content::WebUIDataSource::Add(Profile::FromWebUI(web_ui), html_source);
   web_ui->AddMessageHandler(base::MakeUnique<LocalStateUIHandler>());
 }

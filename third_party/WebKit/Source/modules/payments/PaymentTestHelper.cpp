@@ -4,10 +4,10 @@
 
 #include "modules/payments/PaymentTestHelper.h"
 
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/Document.h"
 #include "modules/payments/PaymentCurrencyAmount.h"
 #include "modules/payments/PaymentMethodData.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/heap/HeapAllocator.h"
 
 namespace blink {
@@ -135,7 +135,9 @@ PaymentDetailsModifier BuildPaymentDetailsModifierForTest(
     item = BuildPaymentItemForTest();
 
   PaymentDetailsModifier modifier;
-  modifier.setSupportedMethods(Vector<String>(1, "foo"));
+  StringOrStringSequence supportedMethods;
+  supportedMethods.SetStringSequence(Vector<String>(1, "foo"));
+  modifier.setSupportedMethods(supportedMethods);
   modifier.setTotal(total);
   modifier.setAdditionalDisplayItems(HeapVector<PaymentItem>(1, item));
   return modifier;
@@ -191,7 +193,9 @@ PaymentDetailsUpdate BuildPaymentDetailsErrorMsgForTest(
 
 HeapVector<PaymentMethodData> BuildPaymentMethodDataForTest() {
   HeapVector<PaymentMethodData> method_data(1, PaymentMethodData());
-  method_data[0].setSupportedMethods(Vector<String>(1, "foo"));
+  StringOrStringSequence supportedMethods;
+  supportedMethods.SetStringSequence(Vector<String>(1, "foo"));
+  method_data[0].setSupportedMethods(supportedMethods);
   return method_data;
 }
 
@@ -203,7 +207,8 @@ payments::mojom::blink::PaymentResponsePtr BuildPaymentResponseForTest() {
 
 void MakePaymentRequestOriginSecure(Document& document) {
   document.SetSecurityOrigin(
-      SecurityOrigin::Create(KURL(KURL(), "https://www.example.com/")));
+      SecurityOrigin::Create(KURL(NullURL(), "https://www.example.com/")));
+  document.SetSecureContextStateForTesting(SecureContextState::kSecure);
 }
 
 PaymentRequestMockFunctionScope::PaymentRequestMockFunctionScope(
@@ -213,26 +218,26 @@ PaymentRequestMockFunctionScope::PaymentRequestMockFunctionScope(
 PaymentRequestMockFunctionScope::~PaymentRequestMockFunctionScope() {
   v8::MicrotasksScope::PerformCheckpoint(script_state_->GetIsolate());
   for (MockFunction* mock_function : mock_functions_) {
-    testing::Mock::VerifyAndClearExpectations(mock_function);
+    ::testing::Mock::VerifyAndClearExpectations(mock_function);
   }
 }
 
 v8::Local<v8::Function> PaymentRequestMockFunctionScope::ExpectCall(
     String* captor) {
   mock_functions_.push_back(new MockFunction(script_state_, captor));
-  EXPECT_CALL(*mock_functions_.back(), Call(testing::_));
+  EXPECT_CALL(*mock_functions_.back(), Call(::testing::_));
   return mock_functions_.back()->Bind();
 }
 
 v8::Local<v8::Function> PaymentRequestMockFunctionScope::ExpectCall() {
   mock_functions_.push_back(new MockFunction(script_state_));
-  EXPECT_CALL(*mock_functions_.back(), Call(testing::_));
+  EXPECT_CALL(*mock_functions_.back(), Call(::testing::_));
   return mock_functions_.back()->Bind();
 }
 
 v8::Local<v8::Function> PaymentRequestMockFunctionScope::ExpectNoCall() {
   mock_functions_.push_back(new MockFunction(script_state_));
-  EXPECT_CALL(*mock_functions_.back(), Call(testing::_)).Times(0);
+  EXPECT_CALL(*mock_functions_.back(), Call(::testing::_)).Times(0);
   return mock_functions_.back()->Bind();
 }
 
@@ -245,16 +250,16 @@ ACTION_P(SaveValueIn, captor) {
 PaymentRequestMockFunctionScope::MockFunction::MockFunction(
     ScriptState* script_state)
     : ScriptFunction(script_state) {
-  ON_CALL(*this, Call(testing::_)).WillByDefault(testing::ReturnArg<0>());
+  ON_CALL(*this, Call(::testing::_)).WillByDefault(::testing::ReturnArg<0>());
 }
 
 PaymentRequestMockFunctionScope::MockFunction::MockFunction(
     ScriptState* script_state,
     String* captor)
     : ScriptFunction(script_state), value_(captor) {
-  ON_CALL(*this, Call(testing::_))
+  ON_CALL(*this, Call(::testing::_))
       .WillByDefault(
-          testing::DoAll(SaveValueIn(value_), testing::ReturnArg<0>()));
+          ::testing::DoAll(SaveValueIn(value_), ::testing::ReturnArg<0>()));
 }
 
 v8::Local<v8::Function> PaymentRequestMockFunctionScope::MockFunction::Bind() {

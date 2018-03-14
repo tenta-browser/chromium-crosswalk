@@ -5,8 +5,8 @@
 #include <stddef.h>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
 #include "content/renderer/media/webrtc/media_stream_track_metrics.h"
 #include "content/renderer/media/webrtc/mock_peer_connection_dependency_factory.h"
@@ -85,7 +85,11 @@ class MockMediaStreamTrackMetrics : public MediaStreamTrackMetrics {
 
 class MediaStreamTrackMetricsTest : public testing::Test {
  public:
-  MediaStreamTrackMetricsTest() : signaling_thread_("signaling_thread") {}
+  MediaStreamTrackMetricsTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI),
+        signaling_thread_("signaling_thread") {}
+
   void SetUp() override {
     metrics_.reset(new MockMediaStreamTrackMetrics());
     stream_ = new rtc::RefCountedObject<MockMediaStream>("stream");
@@ -95,7 +99,7 @@ class MediaStreamTrackMetricsTest : public testing::Test {
   void TearDown() override {
     signaling_thread_.Stop();
     metrics_.reset();
-    stream_ = NULL;
+    stream_ = nullptr;
   }
 
   // Adds an audio track to |stream_| on the signaling thread to simulate how
@@ -106,8 +110,9 @@ class MediaStreamTrackMetricsTest : public testing::Test {
     // MediaStreamInterface has two methods with the same name.
     typedef bool (MediaStreamInterface::*AddTrack)(TrackType*);
     base::RunLoop run_loop;
-    signaling_thread_.task_runner()->PostTaskAndReply(FROM_HERE,
-        base::Bind(
+    signaling_thread_.task_runner()->PostTaskAndReply(
+        FROM_HERE,
+        base::BindOnce(
             base::IgnoreResult<AddTrack>(&MediaStreamInterface::AddTrack),
             stream_, track),
         run_loop.QuitClosure());
@@ -120,8 +125,9 @@ class MediaStreamTrackMetricsTest : public testing::Test {
     // MediaStreamInterface has two methods with the same name.
     typedef bool (MediaStreamInterface::*RemoveTrack)(TrackType*);
     base::RunLoop run_loop;
-    signaling_thread_.task_runner()->PostTaskAndReply(FROM_HERE,
-        base::Bind(
+    signaling_thread_.task_runner()->PostTaskAndReply(
+        FROM_HERE,
+        base::BindOnce(
             base::IgnoreResult<RemoveTrack>(&MediaStreamInterface::RemoveTrack),
             stream_, track),
         run_loop.QuitClosure());
@@ -146,7 +152,7 @@ class MediaStreamTrackMetricsTest : public testing::Test {
   std::unique_ptr<MockMediaStreamTrackMetrics> metrics_;
   scoped_refptr<MediaStreamInterface> stream_;
 
-  base::MessageLoopForUI message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::Thread signaling_thread_;
 };
 

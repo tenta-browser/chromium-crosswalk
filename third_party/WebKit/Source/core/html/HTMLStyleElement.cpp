@@ -23,13 +23,13 @@
 
 #include "core/html/HTMLStyleElement.h"
 
-#include "core/HTMLNames.h"
 #include "core/css/MediaList.h"
+#include "core/css/StyleEngine.h"
 #include "core/dom/Document.h"
-#include "core/dom/StyleEngine.h"
-#include "core/dom/TaskRunnerHelper.h"
-#include "core/dom/shadow/ShadowRoot.h"
-#include "core/events/Event.h"
+#include "core/dom/ShadowRoot.h"
+#include "core/dom/events/Event.h"
+#include "core/html_names.h"
+#include "public/platform/TaskType.h"
 
 namespace blink {
 
@@ -57,6 +57,9 @@ void HTMLStyleElement::ParseAttribute(
              GetDocument().IsActive() && sheet_) {
     sheet_->SetMediaQueries(MediaQuerySet::Create(params.new_value));
     GetDocument().GetStyleEngine().MediaQueriesChangedInScope(GetTreeScope());
+  } else if (params.name == typeAttr) {
+    HTMLElement::ParseAttribute(params);
+    StyleElement::ChildrenChanged(*this);
   } else {
     HTMLElement::ParseAttribute(params);
   }
@@ -107,9 +110,13 @@ const AtomicString& HTMLStyleElement::type() const {
 
 void HTMLStyleElement::DispatchPendingEvent(
     std::unique_ptr<IncrementLoadEventDelayCount> count) {
-  DispatchEvent(Event::Create(loaded_sheet_ ? EventTypeNames::load
-                                            : EventTypeNames::error));
-
+  if (loaded_sheet_) {
+    if (GetDocument().HasListenerType(
+            Document::kLoadListenerAtCapturePhaseOrAtStyleElement))
+      DispatchEvent(Event::Create(EventTypeNames::load));
+  } else {
+    DispatchEvent(Event::Create(EventTypeNames::error));
+  }
   // Checks Document's load event synchronously here for performance.
   // This is safe because dispatchPendingEvent() is called asynchronously.
   count->ClearAndCheckLoadEvent();
@@ -121,7 +128,8 @@ void HTMLStyleElement::NotifyLoadedSheetAndAllCriticalSubresources(
   if (fired_load_ && is_load_event)
     return;
   loaded_sheet_ = is_load_event;
-  TaskRunnerHelper::Get(TaskType::kDOMManipulation, &GetDocument())
+  GetDocument()
+      .GetTaskRunner(TaskType::kDOMManipulation)
       ->PostTask(BLINK_FROM_HERE,
                  WTF::Bind(&HTMLStyleElement::DispatchPendingEvent,
                            WrapPersistent(this),
@@ -142,7 +150,7 @@ void HTMLStyleElement::setDisabled(bool set_disabled) {
     style_sheet->setDisabled(set_disabled);
 }
 
-DEFINE_TRACE(HTMLStyleElement) {
+void HTMLStyleElement::Trace(blink::Visitor* visitor) {
   StyleElement::Trace(visitor);
   HTMLElement::Trace(visitor);
 }

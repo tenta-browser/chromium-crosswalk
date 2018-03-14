@@ -5,11 +5,11 @@
 #ifndef MOJO_EDK_SYSTEM_NODE_CHANNEL_H_
 #define MOJO_EDK_SYSTEM_NODE_CHANNEL_H_
 
-#include <queue>
-#include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "base/callback.h"
+#include "base/containers/queue.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/process/process_handle.h"
@@ -18,7 +18,6 @@
 #include "build/build_config.h"
 #include "mojo/edk/embedder/connection_params.h"
 #include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/platform_handle_vector.h"
 #include "mojo/edk/embedder/scoped_platform_handle.h"
 #include "mojo/edk/system/channel.h"
 #include "mojo/edk/system/ports/name.h"
@@ -56,7 +55,7 @@ class NodeChannel : public base::RefCountedThreadSafe<NodeChannel>,
     virtual void OnAcceptBrokerClient(const ports::NodeName& from_node,
                                       const ports::NodeName& broker_name,
                                       ScopedPlatformHandle broker_channel) = 0;
-    virtual void OnPortsMessage(const ports::NodeName& from_node,
+    virtual void OnEventMessage(const ports::NodeName& from_node,
                                 Channel::MessagePtr message) = 0;
     virtual void OnRequestPortMerge(const ports::NodeName& from_node,
                                     const ports::PortName& connector_port_name,
@@ -69,11 +68,11 @@ class NodeChannel : public base::RefCountedThreadSafe<NodeChannel>,
     virtual void OnBroadcast(const ports::NodeName& from_node,
                              Channel::MessagePtr message) = 0;
 #if defined(OS_WIN) || (defined(OS_MACOSX) && !defined(OS_IOS))
-    virtual void OnRelayPortsMessage(const ports::NodeName& from_node,
+    virtual void OnRelayEventMessage(const ports::NodeName& from_node,
                                      base::ProcessHandle from_process,
                                      const ports::NodeName& destination,
                                      Channel::MessagePtr message) = 0;
-    virtual void OnPortsMessageFromRelay(const ports::NodeName& from_node,
+    virtual void OnEventMessageFromRelay(const ports::NodeName& from_node,
                                          const ports::NodeName& source_node,
                                          Channel::MessagePtr message) = 0;
 #endif
@@ -95,11 +94,13 @@ class NodeChannel : public base::RefCountedThreadSafe<NodeChannel>,
       scoped_refptr<base::TaskRunner> io_task_runner,
       const ProcessErrorCallback& process_error_callback);
 
-  static Channel::MessagePtr CreatePortsMessage(size_t payload_size,
+  static Channel::MessagePtr CreateEventMessage(size_t capacity,
+                                                size_t payload_size,
                                                 void** payload,
                                                 size_t num_handles);
 
-  static void GetPortsMessageData(Channel::Message* message, void** data,
+  static void GetEventMessageData(Channel::Message* message,
+                                  void** data,
                                   size_t* num_data_bytes);
 
   // Start receiving messages.
@@ -137,12 +138,12 @@ class NodeChannel : public base::RefCountedThreadSafe<NodeChannel>,
                          ScopedPlatformHandle broker_channel);
   void AcceptBrokerClient(const ports::NodeName& broker_name,
                           ScopedPlatformHandle broker_channel);
-  void PortsMessage(Channel::MessagePtr message);
   void RequestPortMerge(const ports::PortName& connector_port_name,
                         const std::string& token);
   void RequestIntroduction(const ports::NodeName& name);
   void Introduce(const ports::NodeName& name,
                  ScopedPlatformHandle channel_handle);
+  void SendChannelMessage(Channel::MessagePtr message);
   void Broadcast(Channel::MessagePtr message);
 
 #if defined(OS_WIN) || (defined(OS_MACOSX) && !defined(OS_IOS))
@@ -150,22 +151,22 @@ class NodeChannel : public base::RefCountedThreadSafe<NodeChannel>,
   // pass windows handles between two processes that do not have permission to
   // duplicate handles into the other's address space. The relay process is
   // assumed to have that permission.
-  void RelayPortsMessage(const ports::NodeName& destination,
+  void RelayEventMessage(const ports::NodeName& destination,
                          Channel::MessagePtr message);
 
   // Sends a message to its destination from a relay. This is interpreted by the
-  // receiver similarly to PortsMessage, but the original source node is
+  // receiver similarly to EventMessage, but the original source node is
   // provided as additional message metadata from the (trusted) relay node.
-  void PortsMessageFromRelay(const ports::NodeName& source,
+  void EventMessageFromRelay(const ports::NodeName& source,
                              Channel::MessagePtr message);
 #endif
 
  private:
   friend class base::RefCountedThreadSafe<NodeChannel>;
 
-  using PendingMessageQueue = std::queue<Channel::MessagePtr>;
+  using PendingMessageQueue = base::queue<Channel::MessagePtr>;
   using PendingRelayMessageQueue =
-      std::queue<std::pair<ports::NodeName, Channel::MessagePtr>>;
+      base::queue<std::pair<ports::NodeName, Channel::MessagePtr>>;
 
   NodeChannel(Delegate* delegate,
               ConnectionParams connection_params,
@@ -176,8 +177,8 @@ class NodeChannel : public base::RefCountedThreadSafe<NodeChannel>,
   // Channel::Delegate:
   void OnChannelMessage(const void* payload,
                         size_t payload_size,
-                        ScopedPlatformHandleVectorPtr handles) override;
-  void OnChannelError() override;
+                        std::vector<ScopedPlatformHandle> handles) override;
+  void OnChannelError(Channel::Error error) override;
 
 #if defined(OS_MACOSX) && !defined(OS_IOS)
   // MachPortRelay::Observer:

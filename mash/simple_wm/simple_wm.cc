@@ -138,7 +138,7 @@ class SimpleWM::WindowListView : public views::WidgetDelegateView,
     stroke_bounds.set_height(1);
     canvas->FillRect(stroke_bounds, SK_ColorDKGRAY);
   }
-  gfx::Size GetPreferredSize() const override {
+  gfx::Size CalculatePreferredSize() const override {
     std::unique_ptr<views::MdTextButton> measure_button(
         views::MdTextButton::Create(nullptr, base::UTF8ToUTF16("Sample")));
     int height =
@@ -193,7 +193,7 @@ class SimpleWM::FrameView : public views::WidgetDelegateView,
       : client_window_(client_window) {
     client_window_->AddObserver(this);
   }
-  ~FrameView() override {}
+  ~FrameView() override = default;
 
   void Init() {
     move_event_handler_ =
@@ -258,7 +258,7 @@ class SimpleWM::WorkspaceLayoutManager : public aura::WindowObserver {
  public:
   explicit WorkspaceLayoutManager(aura::Window* window_root)
       : window_root_(window_root) {}
-  ~WorkspaceLayoutManager() override {}
+  ~WorkspaceLayoutManager() override = default;
 
  private:
   // aura::WindowObserver:
@@ -305,7 +305,7 @@ class SimpleWM::DisplayLayoutManager : public aura::LayoutManager {
       : display_root_(display_root),
         window_root_(window_root),
         window_list_view_(window_list_view) {}
-  ~DisplayLayoutManager() override {}
+  ~DisplayLayoutManager() override = default;
 
  private:
   // aura::LayoutManager:
@@ -344,7 +344,7 @@ class SimpleWM::DisplayLayoutManager : public aura::LayoutManager {
 ////////////////////////////////////////////////////////////////////////////////
 // SimpleWM, public:
 
-SimpleWM::SimpleWM() {}
+SimpleWM::SimpleWM() = default;
 
 SimpleWM::~SimpleWM() {
   // WindowTreeHost uses state from WindowTreeClient, so destroy it first.
@@ -364,9 +364,13 @@ void SimpleWM::OnStart() {
   started_ = true;
   screen_ = base::MakeUnique<display::ScreenBase>();
   display::Screen::SetScreenInstance(screen_.get());
-  aura_init_ = base::MakeUnique<views::AuraInit>(
+  aura_init_ = views::AuraInit::Create(
       context()->connector(), context()->identity(), "views_mus_resources.pak",
       std::string(), nullptr, views::AuraInit::Mode::AURA_MUS_WINDOW_MANAGER);
+  if (!aura_init_) {
+    context()->QuitNow();
+    return;
+  }
   window_tree_client_ = base::MakeUnique<aura::WindowTreeClient>(
       context()->connector(), this, this);
   aura::Env::GetInstance()->SetWindowTreeClient(window_tree_client_.get());
@@ -410,6 +414,8 @@ void SimpleWM::SetWindowManagerClient(
     aura::WindowManagerClient* client) {
   window_manager_client_ = client;
 }
+
+void SimpleWM::OnWmConnected() {}
 
 void SimpleWM::OnWmSetBounds(aura::Window* window, const gfx::Rect& bounds) {
   FrameView* frame_view = GetFrameViewForClientWindow(window);
@@ -524,7 +530,7 @@ void SimpleWM::OnWmNewDisplay(
       std::move(frame_decoration_values));
   focus_controller_ = base::MakeUnique<wm::FocusController>(this);
   aura::client::SetFocusClient(display_root_, focus_controller_.get());
-  aura::client::SetActivationClient(display_root_, focus_controller_.get());
+  wm::SetActivationClient(display_root_, focus_controller_.get());
   display_root_->AddPreTargetHandler(focus_controller_.get());
 }
 
@@ -547,6 +553,8 @@ void SimpleWM::OnWmPerformMoveLoop(
 
 void SimpleWM::OnWmCancelMoveLoop(aura::Window* window) {}
 
+void SimpleWM::OnCursorTouchVisibleChanged(bool enabled) {}
+
 void SimpleWM::OnWmSetClientArea(
     aura::Window* window,
     const gfx::Insets& insets,
@@ -555,6 +563,9 @@ void SimpleWM::OnWmSetClientArea(
 bool SimpleWM::IsWindowActive(aura::Window* window) { return false; }
 
 void SimpleWM::OnWmDeactivateWindow(aura::Window* window) {}
+
+void SimpleWM::OnWmPerformAction(aura::Window* window,
+                                 const std::string& action) {}
 
 ////////////////////////////////////////////////////////////////////////////////
 // SimpleWM, wm::BaseFocusRules implementation:
@@ -587,8 +598,8 @@ SimpleWM::FrameView* SimpleWM::GetFrameViewForClientWindow(
 
 void SimpleWM::OnWindowListViewItemActivated(aura::Window* window) {
   window->Show();
-  aura::client::ActivationClient* activation_client =
-      aura::client::GetActivationClient(window->GetRootWindow());
+  wm::ActivationClient* activation_client =
+      wm::GetActivationClient(window->GetRootWindow());
   activation_client->ActivateWindow(window);
 }
 

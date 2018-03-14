@@ -3,201 +3,407 @@
 // found in the LICENSE file.
 
 /** @fileoverview Suite of tests for site-details. */
-cr.define('site_details', function() {
-  function registerTests() {
-    suite('SiteDetails', function() {
-      /**
-       * A site list element created before each test.
-       * @type {SiteDetails}
-       */
-      var testElement;
+suite('SiteDetails', function() {
+  /**
+   * A site list element created before each test.
+   * @type {SiteDetails}
+   */
+  var testElement;
 
-      /**
-       * An example pref with 1 allowed in each category.
-       */
-      var prefs = {
-        exceptions: {
-          auto_downloads: [
-            {
-              embeddingOrigin: 'https://foo-allow.com:443',
-              origin: 'https://foo-allow.com:443',
-              setting: 'allow',
-              source: 'preference',
-            },
-          ],
-          background_sync: [
-            {
-              embeddingOrigin: 'https://foo-allow.com:443',
-              origin: 'https://foo-allow.com:443',
-              setting: 'allow',
-              source: 'preference',
-            },
-          ],
-          camera: [
-            {
-              embeddingOrigin: 'https://foo-allow.com:443',
-              origin: 'https://foo-allow.com:443',
-              setting: 'allow',
-              source: 'preference',
-            },
-          ],
-          cookies: [
-            {
-              embeddingOrigin: 'https://foo-allow.com:443',
-              origin: 'https://foo-allow.com:443',
-              setting: 'allow',
-              source: 'preference',
-            },
-          ],
-          geolocation: [
-            {
-              embeddingOrigin: 'https://foo-allow.com:443',
-              origin: 'https://foo-allow.com:443',
-              setting: 'allow',
-              source: 'preference',
-            },
-          ],
-          javascript: [
-            {
-              embeddingOrigin: 'https://foo-allow.com:443',
-              origin: 'https://foo-allow.com:443',
-              setting: 'allow',
-              source: 'preference',
-            },
-          ],
-          mic: [
-            {
-              embeddingOrigin: 'https://foo-allow.com:443',
-              origin: 'https://foo-allow.com:443',
-              setting: 'allow',
-              source: 'preference',
-            },
-          ],
-          notifications: [
-            {
-              embeddingOrigin: 'https://foo-allow.com:443',
-              origin: 'https://foo-allow.com:443',
-              setting: 'allow',
-              source: 'preference',
-            },
-          ],
-          plugins: [
-            {
-              embeddingOrigin: 'https://foo-allow.com:443',
-              origin: 'https://foo-allow.com:443',
-              setting: 'allow',
-              source: 'preference',
-            },
-          ],
-          popups: [
-            {
-              embeddingOrigin: 'https://foo-allow.com:443',
-              origin: 'https://foo-allow.com:443',
-              setting: 'allow',
-              source: 'preference',
-            },
-          ],
-          unsandboxed_plugins: [
-            {
-              embeddingOrigin: 'https://foo-allow.com:443',
-              origin: 'https://foo-allow.com:443',
-              setting: 'allow',
-              source: 'preference',
-            },
-          ],
-        }
-      };
+  /**
+   * An example pref with 1 pref in each category.
+   * @type {SiteSettingsPref}
+   */
+  var prefs;
 
-      // Initialize a site-details before each test.
-      setup(function() {
-        browserProxy = new TestSiteSettingsPrefsBrowserProxy();
-        settings.SiteSettingsPrefsBrowserProxyImpl.instance_ = browserProxy;
-        PolymerTest.clearBody();
-        testElement = document.createElement('site-details');
-        document.body.appendChild(testElement);
-      });
-
-      test('empty state', function() {
-        var category = settings.ContentSettingsTypes.NOTIFICATIONS;
-        var site = {
-          origin: 'http://www.google.com',
-          displayName: 'http://www.google.com',
-          embeddingOrigin: '',
-        };
-        browserProxy.setPrefs(prefsEmpty);
-        testElement.category = category;
-        testElement.site = site
-
-        //expect usage to not be rendered
-        assertFalse(!!testElement.$$('#usage'));
-
-        // TODO(finnur): Check for the Permission heading hiding when no
-        // permissions are showing.
-
-        var msg = 'No category should be showing, height';
-        assertEquals(0, testElement.$.camera.offsetHeight, msg);
-        assertEquals(0, testElement.$.cookies.offsetHeight, msg);
-        assertEquals(0, testElement.$.geolocation.offsetHeight, msg);
-        assertEquals(0, testElement.$.javascript.offsetHeight, msg);
-        assertEquals(0, testElement.$.mic.offsetHeight, msg);
-        assertEquals(0, testElement.$.notification.offsetHeight, msg);
-        assertEquals(0, testElement.$.popups.offsetHeight, msg);
-      });
-
-      test('all categories visible', function() {
-        var category = settings.ContentSettingsTypes.NOTIFICATIONS;
-        var site = {
-          origin: 'https://foo-allow.com:443',
-          displayName: 'https://foo-allow.com:443',
-          embeddingOrigin: '',
-        };
-
-        browserProxy.setPrefs(prefs);
-        testElement.category = category;
-        testElement.site = site;
-
-        var msg = 'All categories should be showing';
-        assertFalse(testElement.$.camera.hidden, msg);
-        assertFalse(testElement.$.cookies.hidden, msg);
-        assertFalse(testElement.$.geolocation.hidden, msg);
-        assertFalse(testElement.$.javascript.hidden, msg);
-        assertFalse(testElement.$.mic.hidden, msg);
-        assertFalse(testElement.$.notification.hidden, msg);
-        assertFalse(testElement.$.popups.hidden, msg);
-      });
-
-      test('usage heading shows on storage available', function() {
-        // Remove the current website-usage-private-api element.
-        var parent = testElement.$.usageApi.parentNode;
-        testElement.$.usageApi.remove();
-
-        // Replace it with a mock version.
-        Polymer({
-          is: 'mock-website-usage-private-api',
-
-          fetchUsageTotal: function(origin) {
-            testElement.storedData_ = '1 KB';
-          },
-        });
-        var api = document.createElement('mock-website-usage-private-api');
-        testElement.$.usageApi = api;
-        Polymer.dom(parent).appendChild(api);
-
-        browserProxy.setPrefs(prefs);
-        testElement.site = {
-          origin: 'https://foo-allow.com:443',
-          displayName: 'https://foo-allow.com:443',
-          embeddingOrigin: '',
-        };
-
-        Polymer.dom.flush();
-
-        //expect usage to be rendered
-        assertTrue(!!testElement.$$('#usage'));
-      });
-    });
+  // Helper to create a mock permission preference.
+  function createExceptionForTest(override) {
+    return Object.assign(
+        {
+          embeddingOrigin: 'https://foo.com:443',
+          origin: 'https://foo.com:443',
+          setting: settings.ContentSetting.ALLOW,
+          source: settings.SiteSettingSource.PREFERENCE,
+        },
+        override);
   }
-  return {
-    registerTests: registerTests,
-  };
+
+  // Initialize a site-details before each test.
+  setup(function() {
+    prefs = {
+      defaults: {
+        ads: {
+          setting: settings.ContentSetting.BLOCK,
+        },
+        auto_downloads: {
+          setting: settings.ContentSetting.ASK,
+        },
+        background_sync: {
+          setting: settings.ContentSetting.ALLOW,
+        },
+        camera: {
+          setting: settings.ContentSetting.ASK,
+        },
+        geolocation: {
+          setting: settings.ContentSetting.ASK,
+        },
+        images: {
+          setting: settings.ContentSetting.ALLOW,
+        },
+        javascript: {
+          setting: settings.ContentSetting.ALLOW,
+        },
+        mic: {
+          setting: settings.ContentSetting.ASK,
+        },
+        midi_devices: {
+          setting: settings.ContentSetting.ASK,
+        },
+        notifications: {
+          setting: settings.ContentSetting.ASK,
+        },
+        plugins: {
+          setting: settings.ContentSetting.ASK,
+        },
+        popups: {
+          setting: settings.ContentSetting.BLOCK,
+        },
+        sound: {
+          setting: settings.ContentSetting.ALLOW,
+        },
+        unsandboxed_plugins: {
+          setting: settings.ContentSetting.ASK,
+        },
+        protectedContent: {
+          setting: settings.ContentSetting.ALLOW,
+        },
+        clipboard: {
+          setting: settings.ContentSetting.ALLOW,
+        },
+      },
+      exceptions: {
+        ads: [createExceptionForTest()],
+        auto_downloads: [createExceptionForTest()],
+        background_sync: [createExceptionForTest()],
+        camera: [createExceptionForTest()],
+        geolocation: [createExceptionForTest()],
+        images: [createExceptionForTest({
+          source: settings.SiteSettingSource.DEFAULT,
+        })],
+        javascript: [createExceptionForTest()],
+        mic: [createExceptionForTest()],
+        midi_devices: [createExceptionForTest()],
+        notifications: [createExceptionForTest({
+          setting: settings.ContentSetting.ASK,
+          source: settings.SiteSettingSource.POLICY,
+        })],
+        plugins: [createExceptionForTest({
+          source: settings.SiteSettingSource.EXTENSION,
+        })],
+        popups: [createExceptionForTest({
+          setting: settings.ContentSetting.BLOCK,
+          source: settings.SiteSettingSource.DEFAULT,
+        })],
+        sound: [createExceptionForTest()],
+        unsandboxed_plugins: [createExceptionForTest()],
+        protectedContent: [createExceptionForTest()],
+        clipboard: [createExceptionForTest()],
+      }
+    };
+
+    browserProxy = new TestSiteSettingsPrefsBrowserProxy();
+    settings.SiteSettingsPrefsBrowserProxyImpl.instance_ = browserProxy;
+    PolymerTest.clearBody();
+  });
+
+  function createSiteDetails(origin) {
+    var siteDetailsElement = document.createElement('site-details');
+    document.body.appendChild(siteDetailsElement);
+    siteDetailsElement.origin = origin;
+    return siteDetailsElement;
+  }
+
+  test('all site settings are shown', function() {
+    // Add ContentsSettingsTypes which are not supposed to be shown on the Site
+    // Details page here.
+    var nonSiteDetailsContentSettingsTypes = [
+      settings.ContentSettingsTypes.ADS,
+      settings.ContentSettingsTypes.COOKIES,
+      settings.ContentSettingsTypes.PROTOCOL_HANDLERS,
+      settings.ContentSettingsTypes.USB_DEVICES,
+      settings.ContentSettingsTypes.ZOOM_LEVELS,
+    ];
+    if (!cr.isChromeOS)
+      nonSiteDetailsContentSettingsTypes.push(
+          settings.ContentSettingsTypes.PROTECTED_CONTENT);
+
+    // A list of optionally shown content settings mapped to their loadTimeData
+    // flag string.
+    var optionalSiteDetailsContentSettingsTypes =
+        /** @type {!settings.ContentSettingsType : string} */ ({});
+    optionalSiteDetailsContentSettingsTypes[settings.ContentSettingsTypes
+                                                .SOUND] =
+        'enableSoundContentSetting';
+    optionalSiteDetailsContentSettingsTypes[settings.ContentSettingsTypes
+                                                .CLIPBOARD] =
+        'enableClipboardContentSetting';
+
+    browserProxy.setPrefs(prefs);
+
+    // Iterate over each flag in on / off state, assuming that the on state
+    // means the content setting will show, and off hides it.
+    for (contentSetting in optionalSiteDetailsContentSettingsTypes) {
+      var numContentSettings =
+          Object.keys(settings.ContentSettingsTypes).length -
+          nonSiteDetailsContentSettingsTypes.length -
+          Object.keys(optionalSiteDetailsContentSettingsTypes).length;
+
+      var loadTimeDataOverride = {};
+      loadTimeDataOverride
+          [optionalSiteDetailsContentSettingsTypes[contentSetting]] = true;
+      loadTimeData.overrideValues(loadTimeDataOverride);
+      testElement = createSiteDetails('https://foo.com:443');
+      assertEquals(numContentSettings+1, testElement.getCategoryList_().length);
+
+      // Check for setting = off at the end to ensure that the setting does
+      // not carry over for the next iteration.
+      loadTimeDataOverride
+          [optionalSiteDetailsContentSettingsTypes[contentSetting]] = false;
+      loadTimeData.overrideValues(loadTimeDataOverride);
+      testElement = createSiteDetails('https://foo.com:443');
+      assertEquals(numContentSettings, testElement.getCategoryList_().length);
+    }
+  });
+
+  test('usage heading shows when site settings enabled', function() {
+    browserProxy.setPrefs(prefs);
+    // Expect usage to be hidden when Site Settings is disabled.
+    loadTimeData.overrideValues({enableSiteSettings: false});
+    testElement = createSiteDetails('https://foo.com:443');
+    Polymer.dom.flush();
+    assert(!testElement.$$('#usage'));
+
+    loadTimeData.overrideValues({enableSiteSettings: true});
+    testElement = createSiteDetails('https://foo.com:443');
+    Polymer.dom.flush();
+    assert(!!testElement.$$('#usage'));
+
+    // When there's no usage, there should be a string that says so.
+    assertEquals('', testElement.storedData_);
+    assertFalse(testElement.$$('#noStorage').hidden);
+    assertTrue(testElement.$$('#storage').hidden);
+    assertTrue(
+        testElement.$$('#usage').innerText.indexOf('No usage data') != -1);
+
+    // If there is, check the correct amount of usage is specified.
+    testElement.storedData_ = '1 KB';
+    assertTrue(testElement.$$('#noStorage').hidden);
+    assertFalse(testElement.$$('#storage').hidden);
+    assertTrue(testElement.$$('#usage').innerText.indexOf('1 KB') != -1);
+  });
+
+  test('correct pref settings are shown', function() {
+    browserProxy.setPrefs(prefs);
+    // Make sure all the possible content settings are shown for this test.
+    loadTimeData.overrideValues({enableSoundContentSetting: true});
+    loadTimeData.overrideValues({enableSafeBrowsingSubresourceFilter: true});
+    loadTimeData.overrideValues({enableClipboardContentSetting: true});
+    testElement = createSiteDetails('https://foo.com:443');
+
+    return browserProxy.whenCalled('isOriginValid')
+        .then(() => {
+          return browserProxy.whenCalled('getOriginPermissions');
+        })
+        .then(() => {
+          testElement.root.querySelectorAll('site-details-permission')
+              .forEach((siteDetailsPermission) => {
+                if (!cr.isChromeOS &&
+                    siteDetailsPermission.category ==
+                        settings.ContentSettingsTypes.PROTECTED_CONTENT)
+                  return;
+
+                // Verify settings match the values specified in |prefs|.
+                var expectedSetting = settings.ContentSetting.ALLOW;
+                var expectedSource = settings.SiteSettingSource.PREFERENCE;
+                var expectedMenuValue = settings.ContentSetting.ALLOW;
+
+                // For all the categories with non-user-set 'Allow' preferences,
+                // update expected values.
+                if (siteDetailsPermission.category ==
+                        settings.ContentSettingsTypes.NOTIFICATIONS ||
+                    siteDetailsPermission.category ==
+                        settings.ContentSettingsTypes.PLUGINS ||
+                    siteDetailsPermission.category ==
+                        settings.ContentSettingsTypes.JAVASCRIPT ||
+                    siteDetailsPermission.category ==
+                        settings.ContentSettingsTypes.IMAGES ||
+                    siteDetailsPermission.category ==
+                        settings.ContentSettingsTypes.POPUPS) {
+                  expectedSetting =
+                      prefs.exceptions[siteDetailsPermission.category][0]
+                          .setting;
+                  expectedSource =
+                      prefs.exceptions[siteDetailsPermission.category][0]
+                          .source;
+                  expectedMenuValue =
+                      (expectedSource == settings.SiteSettingSource.DEFAULT) ?
+                      settings.ContentSetting.DEFAULT :
+                      expectedSetting;
+                }
+                assertEquals(
+                    expectedSetting, siteDetailsPermission.site.setting);
+                assertEquals(expectedSource, siteDetailsPermission.site.source);
+                assertEquals(
+                    expectedMenuValue,
+                    siteDetailsPermission.$.permission.value);
+              });
+        });
+  });
+
+  test('show confirmation dialog on reset settings', function() {
+    browserProxy.setPrefs(prefs);
+    testElement = createSiteDetails('https://foo.com:443');
+
+    // Check both cancelling and accepting the dialog closes it.
+    ['cancel-button', 'action-button'].forEach(buttonType => {
+      MockInteractions.tap(testElement.$.clearAndReset);
+      assertTrue(testElement.$.confirmDeleteDialog.open);
+      var actionButtonList =
+          testElement.$.confirmDeleteDialog.getElementsByClassName(buttonType);
+      assertEquals(1, actionButtonList.length);
+      MockInteractions.tap(actionButtonList[0]);
+      assertFalse(testElement.$.confirmDeleteDialog.open);
+    });
+
+    // Accepting the dialog will make a call to setOriginPermissions.
+    return browserProxy.whenCalled('setOriginPermissions').then((args) => {
+      assertEquals(testElement.origin, args[0]);
+      assertDeepEquals(testElement.getCategoryList_(), args[1]);
+      assertEquals(settings.ContentSetting.DEFAULT, args[2]);
+    });
+  });
+
+  test('permissions update dynamically', function() {
+    browserProxy.setPrefs(prefs);
+    testElement = createSiteDetails('https://foo.com:443');
+
+    var siteDetailsPermission =
+        testElement.root.querySelector('#notifications');
+
+    // Wait for all the permissions to be populated initially.
+    return browserProxy.whenCalled('isOriginValid')
+        .then(() => {
+          return browserProxy.whenCalled('getOriginPermissions');
+        })
+        .then(() => {
+          // Make sure initial state is as expected.
+          assertEquals(
+              settings.ContentSetting.ASK, siteDetailsPermission.site.setting);
+          assertEquals(
+              settings.SiteSettingSource.POLICY,
+              siteDetailsPermission.site.source);
+          assertEquals(
+              settings.ContentSetting.ASK,
+              siteDetailsPermission.$.permission.value);
+
+          // Set new prefs and make sure only that permission is updated.
+          var newException = {
+            embeddingOrigin: testElement.origin,
+            origin: testElement.origin,
+            setting: settings.ContentSetting.BLOCK,
+            source: settings.SiteSettingSource.DEFAULT,
+          };
+          browserProxy.resetResolver('getOriginPermissions');
+          browserProxy.setSingleException(
+              settings.ContentSettingsTypes.NOTIFICATIONS, newException);
+          return browserProxy.whenCalled('getOriginPermissions');
+        })
+        .then((args) => {
+          // The notification pref was just updated, so make sure the call to
+          // getOriginPermissions was to check notifications.
+          assertTrue(
+              args[1].includes(settings.ContentSettingsTypes.NOTIFICATIONS));
+
+          // Check |siteDetailsPermission| now shows the new permission value.
+          assertEquals(
+              settings.ContentSetting.BLOCK,
+              siteDetailsPermission.site.setting);
+          assertEquals(
+              settings.SiteSettingSource.DEFAULT,
+              siteDetailsPermission.site.source);
+          assertEquals(
+              settings.ContentSetting.DEFAULT,
+              siteDetailsPermission.$.permission.value);
+        });
+  });
+
+  test('invalid origins navigate back', function() {
+    var invalid_url = 'invalid url';
+    browserProxy.setIsOriginValid(false);
+
+    settings.navigateTo(settings.routes.SITE_SETTINGS);
+    settings.navigateTo(settings.routes.SITE_SETTINGS_SITE_DETAILS);
+    assertEquals(
+        settings.routes.SITE_SETTINGS_SITE_DETAILS.path,
+        settings.getCurrentRoute().path);
+
+    loadTimeData.overrideValues({enableSiteSettings: false});
+    testElement = createSiteDetails(invalid_url);
+
+    return browserProxy.whenCalled('isOriginValid')
+        .then((args) => {
+          assertEquals(invalid_url, args);
+          return new Promise((resolve) => {
+            listenOnce(window, 'popstate', resolve);
+          });
+        })
+        .then(() => {
+          assertEquals(
+              settings.routes.SITE_SETTINGS.path,
+              settings.getCurrentRoute().path);
+        });
+  });
+
+  test('resetting permissions will set ads back to default', function() {
+    browserProxy.setPrefs(prefs);
+    loadTimeData.overrideValues({enableSafeBrowsingSubresourceFilter: true});
+    testElement = createSiteDetails('https://foo.com:443');
+
+    var siteDetailsPermission = testElement.root.querySelector('#ads');
+
+    return browserProxy.whenCalled('isOriginValid')
+        .then(() => {
+          return browserProxy.whenCalled('getOriginPermissions');
+        })
+        .then(() => {
+          browserProxy.resetResolver('getOriginPermissions');
+          // Sanity check prefs are correct and that Ads was set to 'Allow'.
+          assertEquals(
+              settings.ContentSetting.ALLOW,
+              siteDetailsPermission.$.permission.value);
+
+          // Since the ads permission will only show 'Allow' and 'Block',
+          // check the user can still clear this setting by resetting all
+          // permissions.
+          MockInteractions.tap(testElement.$.clearAndReset);
+          assertTrue(testElement.$.confirmDeleteDialog.open);
+          var actionButtonList =
+              testElement.$.confirmDeleteDialog.getElementsByClassName(
+                  'action-button');
+          assertEquals(1, actionButtonList.length);
+          MockInteractions.tap(actionButtonList[0]);
+
+          return browserProxy.whenCalled('setOriginPermissions');
+        })
+        .then(() => {
+          return browserProxy.whenCalled('getOriginPermissions');
+        })
+        .then((args) => {
+          assertTrue(args[1].includes(settings.ContentSettingsTypes.ADS));
+          // Check the ads permission is set to default.
+          assertEquals(
+              settings.ContentSetting.DEFAULT,
+              siteDetailsPermission.$.permission.value);
+        });
+  });
 });

@@ -10,7 +10,7 @@
 #include "net/base/io_buffer.h"
 #include "remoting/base/compound_buffer.h"
 #include "remoting/proto/internal.pb.h"
-#include "third_party/webrtc/base/byteorder.h"
+#include "third_party/webrtc/rtc_base/byteorder.h"
 
 namespace remoting {
 namespace protocol {
@@ -20,7 +20,7 @@ MessageDecoder::MessageDecoder()
       next_payload_known_(false) {
 }
 
-MessageDecoder::~MessageDecoder() {}
+MessageDecoder::~MessageDecoder() = default;
 
 void MessageDecoder::AddData(scoped_refptr<net::IOBuffer> data,
                              int data_size) {

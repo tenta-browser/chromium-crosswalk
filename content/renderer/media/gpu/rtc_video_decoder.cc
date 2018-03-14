@@ -16,12 +16,13 @@
 #include "content/renderer/media/webrtc/webrtc_video_frame_adapter.h"
 #include "gpu/command_buffer/common/mailbox_holder.h"
 #include "media/base/bind_to_current_loop.h"
-#include "media/renderers/gpu_video_accelerator_factories.h"
+#include "media/video/gpu_video_accelerator_factories.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/webrtc/api/video/video_frame.h"
-#include "third_party/webrtc/base/bind.h"
-#include "third_party/webrtc/base/refcount.h"
 #include "third_party/webrtc/modules/video_coding/codecs/h264/include/h264.h"
+#include "third_party/webrtc/rtc_base/bind.h"
+#include "third_party/webrtc/rtc_base/refcount.h"
+#include "third_party/webrtc/rtc_base/refcountedobject.h"
 
 #if defined(OS_WIN)
 #include "base/command_line.h"
@@ -47,9 +48,6 @@ static const size_t kMaxInFlightDecodes = 8;
 // Number of allocated shared memory segments.
 static const size_t kNumSharedMemorySegments = 16;
 
-// Maximum number of pending WebRTC buffers that are waiting for shared memory.
-static const size_t kMaxNumOfPendingBuffers = 8;
-
 RTCVideoDecoder::BufferData::BufferData(int32_t bitstream_buffer_id,
                                         uint32_t timestamp,
                                         size_t size,
@@ -68,8 +66,6 @@ RTCVideoDecoder::RTCVideoDecoder(webrtc::VideoCodecType type,
     : vda_error_counter_(0),
       video_codec_type_(type),
       factories_(factories),
-      decoder_texture_target_(0),
-      pixel_format_(media::PIXEL_FORMAT_UNKNOWN),
       next_picture_buffer_id_(0),
       state_(UNINITIALIZED),
       decode_complete_callback_(nullptr),
@@ -126,10 +122,8 @@ std::unique_ptr<RTCVideoDecoder> RTCVideoDecoder::Create(
   decoder.reset(new RTCVideoDecoder(type, factories));
   decoder->factories_->GetTaskRunner()->PostTask(
       FROM_HERE,
-      base::Bind(&RTCVideoDecoder::CreateVDA,
-                 base::Unretained(decoder.get()),
-                 profile,
-                 &waiter));
+      base::BindOnce(&RTCVideoDecoder::CreateVDA,
+                     base::Unretained(decoder.get()), profile, &waiter));
   waiter.Wait();
   // |decoder->vda_| is nullptr if the codec is not supported.
   if (decoder->vda_)
@@ -177,14 +171,8 @@ int32_t RTCVideoDecoder::Decode(
   if (state_ == DECODE_ERROR) {
     LOG(ERROR) << "Decoding error occurred.";
     // Try reseting the session up to |kNumVDAErrorsHandled| times.
-    // Check if SW H264 implementation is available before falling back.
-    if (vda_error_counter_ > kNumVDAErrorsBeforeSWFallback &&
-        (video_codec_type_ != webrtc::kVideoCodecH264 ||
-         webrtc::H264Decoder::IsSupported())) {
-      DLOG(ERROR) << vda_error_counter_
-                  << " errors reported by VDA, falling back to software decode";
+    if (ShouldFallbackToSoftwareDecode())
       return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
-    }
     base::AutoUnlock auto_unlock(lock_);
     Release();
     return WEBRTC_VIDEO_CODEC_ERROR;
@@ -260,6 +248,9 @@ int32_t RTCVideoDecoder::Decode(
       // remaining buffers, and will provide us with a new keyframe instead.
       // Better to drop any pending buffers and start afresh to catch up faster.
       DVLOG(1) << "Exceeded maximum pending buffer count, dropping";
+      ++vda_error_counter_;
+      if (ShouldFallbackToSoftwareDecode())
+        return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
       ClearPendingBuffers();
       return WEBRTC_VIDEO_CODEC_ERROR;
     }
@@ -272,9 +263,8 @@ int32_t RTCVideoDecoder::Decode(
 
   SaveToDecodeBuffers_Locked(inputImage, std::move(shm_buffer), buffer_data);
   factories_->GetTaskRunner()->PostTask(
-      FROM_HERE,
-      base::Bind(&RTCVideoDecoder::RequestBufferDecode,
-                 weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&RTCVideoDecoder::RequestBufferDecode,
+                                weak_factory_.GetWeakPtr()));
   return WEBRTC_VIDEO_CODEC_OK;
 }
 
@@ -318,22 +308,13 @@ void RTCVideoDecoder::ProvidePictureBuffers(uint32_t buffer_count,
 
   std::vector<uint32_t> texture_ids;
   std::vector<gpu::Mailbox> texture_mailboxes;
-  decoder_texture_target_ = texture_target;
 
   if (format == media::PIXEL_FORMAT_UNKNOWN)
     format = media::PIXEL_FORMAT_ARGB;
 
-  if ((pixel_format_ != media::PIXEL_FORMAT_UNKNOWN) &&
-      (format != pixel_format_)) {
-    NotifyError(media::VideoDecodeAccelerator::PLATFORM_FAILURE);
-    return;
-  }
-
-  pixel_format_ = format;
   const uint32_t texture_count = buffer_count * textures_per_buffer;
   if (!factories_->CreateTextures(texture_count, size, &texture_ids,
-                                  &texture_mailboxes,
-                                  decoder_texture_target_)) {
+                                  &texture_mailboxes, texture_target)) {
     NotifyError(media::VideoDecodeAccelerator::PLATFORM_FAILURE);
     return;
   }
@@ -352,8 +333,9 @@ void RTCVideoDecoder::ProvidePictureBuffers(uint32_t buffer_count,
       mailboxes.push_back(texture_mailboxes[texture_id]);
     }
 
-    picture_buffers.push_back(
-        media::PictureBuffer(next_picture_buffer_id_++, size, ids, mailboxes));
+    picture_buffers.push_back(media::PictureBuffer(next_picture_buffer_id_++,
+                                                   size, ids, mailboxes,
+                                                   texture_target, format));
     const bool inserted =
         assigned_picture_buffers_
             .insert(std::make_pair(picture_buffers.back().id(),
@@ -415,7 +397,7 @@ void RTCVideoDecoder::PictureReady(const media::Picture& picture) {
   }
 
   scoped_refptr<media::VideoFrame> frame =
-      CreateVideoFrame(picture, pb, timestamp, visible_rect, pixel_format_);
+      CreateVideoFrame(picture, pb, timestamp, visible_rect, pb.pixel_format());
   if (!frame) {
     NotifyError(media::VideoDecodeAccelerator::PLATFORM_FAILURE);
     return;
@@ -451,7 +433,7 @@ scoped_refptr<media::VideoFrame> RTCVideoDecoder::CreateVideoFrame(
     uint32_t timestamp,
     const gfx::Rect& visible_rect,
     media::VideoPixelFormat pixel_format) {
-  DCHECK(decoder_texture_target_);
+  DCHECK(pb.texture_target());
   // Convert timestamp from 90KHz to ms.
   base::TimeDelta timestamp_ms = base::TimeDelta::FromInternalValue(
       base::checked_cast<uint64_t>(timestamp) * 1000 / 90);
@@ -464,7 +446,7 @@ scoped_refptr<media::VideoFrame> RTCVideoDecoder::CreateVideoFrame(
   gpu::MailboxHolder holders[media::VideoFrame::kMaxPlanes];
   for (size_t i = 0; i < pb.client_texture_ids().size(); ++i) {
     holders[i].mailbox = pb.texture_mailbox(i);
-    holders[i].texture_target = decoder_texture_target_;
+    holders[i].texture_target = pb.texture_target();
   }
   scoped_refptr<media::VideoFrame> frame =
       media::VideoFrame::WrapNativeTextures(
@@ -474,9 +456,16 @@ scoped_refptr<media::VideoFrame> RTCVideoDecoder::CreateVideoFrame(
                          weak_factory_.GetWeakPtr(), factories_,
                          picture.picture_buffer_id(), pb.client_texture_ids())),
           pb.size(), visible_rect, visible_rect.size(), timestamp_ms);
-  if (frame && picture.allow_overlay()) {
+  if (frame) {
     frame->metadata()->SetBoolean(media::VideoFrameMetadata::ALLOW_OVERLAY,
-                                  true);
+                                  picture.allow_overlay());
+#if defined(OS_ANDROID)
+    frame->metadata()->SetBoolean(media::VideoFrameMetadata::SURFACE_TEXTURE,
+                                  picture.surface_texture());
+    frame->metadata()->SetBoolean(
+        media::VideoFrameMetadata::WANTS_PROMOTION_HINT,
+        picture.wants_promotion_hint());
+#endif
   }
   return frame;
 }
@@ -617,7 +606,7 @@ bool RTCVideoDecoder::SaveToPendingBuffers_Locked(
            << ". decode_buffers_ size=" << decode_buffers_.size()
            << ". available_shm size=" << available_shm_segments_.size();
   // Queued too many buffers. Something goes wrong.
-  if (pending_buffers_.size() >= kMaxNumOfPendingBuffers) {
+  if (pending_buffers_.size() >= rtc_video_decoder::kMaxNumOfPendingBuffers) {
     LOG(WARNING) << "Too many pending buffers!";
     return false;
   }
@@ -669,9 +658,8 @@ void RTCVideoDecoder::Reset_Locked() {
   if (state_ != RESETTING) {
     state_ = RESETTING;
     factories_->GetTaskRunner()->PostTask(
-        FROM_HERE,
-        base::Bind(&RTCVideoDecoder::ResetInternal,
-                   weak_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&RTCVideoDecoder::ResetInternal,
+                                  weak_factory_.GetWeakPtr()));
   }
 }
 
@@ -818,7 +806,7 @@ std::unique_ptr<base::SharedMemory> RTCVideoDecoder::GetSHM_Locked(
     // enough. In the former case we need to wait for buffers to be returned,
     // in the latter we need to wait for all buffers to be returned to drop
     // them and reallocate with a new size.
-    return NULL;
+    return nullptr;
   }
 
   if (num_shm_buffers_ != 0) {
@@ -829,11 +817,11 @@ std::unique_ptr<base::SharedMemory> RTCVideoDecoder::GetSHM_Locked(
   // Create twice as large buffers as required, to avoid frequent reallocation.
   factories_->GetTaskRunner()->PostTask(
       FROM_HERE,
-      base::Bind(&RTCVideoDecoder::CreateSHM, weak_factory_.GetWeakPtr(),
-                 kNumSharedMemorySegments, min_size * 2));
+      base::BindOnce(&RTCVideoDecoder::CreateSHM, weak_factory_.GetWeakPtr(),
+                     kNumSharedMemorySegments, min_size * 2));
 
   // We'll be called again after the shared memory is created.
-  return NULL;
+  return nullptr;
 }
 
 void RTCVideoDecoder::PutSHM_Locked(
@@ -907,6 +895,19 @@ void RTCVideoDecoder::ClearPendingBuffers() {
   for (const auto& pending_buffer : pending_buffers_)
     delete[] pending_buffer.first._buffer;
   pending_buffers_.clear();
+}
+
+bool RTCVideoDecoder::ShouldFallbackToSoftwareDecode() {
+  // Check if SW H264 implementation is available before falling back, because
+  // it might not available on the platform due to licensing issues.
+  if (vda_error_counter_ > kNumVDAErrorsBeforeSWFallback &&
+      (video_codec_type_ != webrtc::kVideoCodecH264 ||
+       webrtc::H264Decoder::IsSupported())) {
+    DLOG(ERROR) << vda_error_counter_
+                << " errors reported by VDA, falling back to software decode";
+    return true;
+  }
+  return false;
 }
 
 }  // namespace content

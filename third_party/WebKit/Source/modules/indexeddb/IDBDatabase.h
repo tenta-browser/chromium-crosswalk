@@ -26,9 +26,11 @@
 #ifndef IDBDatabase_h
 #define IDBDatabase_h
 
+#include <memory>
+
+#include "base/memory/scoped_refptr.h"
 #include "bindings/core/v8/ActiveScriptWrappable.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/modules/v8/StringOrStringSequenceOrDOMStringList.h"
+#include "bindings/modules/v8/string_or_string_sequence.h"
 #include "core/dom/ContextLifecycleObserver.h"
 #include "core/dom/DOMStringList.h"
 #include "modules/EventModules.h"
@@ -41,12 +43,10 @@
 #include "modules/indexeddb/IDBObjectStoreParameters.h"
 #include "modules/indexeddb/IDBTransaction.h"
 #include "modules/indexeddb/IndexedDB.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/heap/Handle.h"
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/RefPtr.h"
 #include "public/platform/modules/indexeddb/WebIDBDatabase.h"
-
-#include <memory>
 
 namespace blink {
 
@@ -69,7 +69,8 @@ class MODULES_EXPORT IDBDatabase final
                              IDBDatabaseCallbacks*,
                              v8::Isolate*);
   ~IDBDatabase() override;
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
+  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
 
   // Overwrites the database metadata, including object store and index
   // metadata. Used to pass metadata to the database when it is opened.
@@ -101,11 +102,10 @@ class MODULES_EXPORT IDBDatabase final
     return createObjectStore(name, IDBKeyPath(options.keyPath()),
                              options.autoIncrement(), exception_state);
   }
-  IDBTransaction* transaction(
-      ScriptState*,
-      const StringOrStringSequenceOrDOMStringList& store_names,
-      const String& mode,
-      ExceptionState&);
+  IDBTransaction* transaction(ScriptState*,
+                              const StringOrStringSequence& store_names,
+                              const String& mode,
+                              ExceptionState&);
   void deleteObjectStore(const String& name, ExceptionState&);
   void close();
 
@@ -144,7 +144,8 @@ class MODULES_EXPORT IDBDatabase final
   }
   void RenameObjectStore(int64_t store_id, const String& new_name);
   void RevertObjectStoreCreation(int64_t object_store_id);
-  void RevertObjectStoreMetadata(RefPtr<IDBObjectStoreMetadata> old_metadata);
+  void RevertObjectStoreMetadata(
+      scoped_refptr<IDBObjectStoreMetadata> old_metadata);
 
   // Will return nullptr if this database is stopped.
   WebIDBDatabase* Backend() const { return backend_.get(); }
@@ -193,7 +194,7 @@ class MODULES_EXPORT IDBDatabase final
   std::unique_ptr<WebIDBDatabase> backend_;
   Member<IDBTransaction> version_change_transaction_;
   HeapHashMap<int64_t, Member<IDBTransaction>> transactions_;
-  HeapHashMap<int32_t, Member<IDBObserver>> observers_;
+  HeapHashMap<int32_t, TraceWrapperMember<IDBObserver>> observers_;
 
   bool close_pending_ = false;
 

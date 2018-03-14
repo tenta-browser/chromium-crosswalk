@@ -20,6 +20,7 @@
 #include "modules/vibration/NavigatorVibration.h"
 
 #include "core/dom/Document.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "core/frame/Deprecation.h"
 #include "core/frame/FrameConsole.h"
 #include "core/frame/LocalDOMWindow.h"
@@ -30,7 +31,7 @@
 #include "core/page/Page.h"
 #include "modules/vibration/VibrationController.h"
 #include "platform/Histogram.h"
-#include "platform/UserGestureIndicator.h"
+#include "platform/feature_policy/FeaturePolicy.h"
 #include "public/platform/site_engagement.mojom-blink.h"
 
 namespace blink {
@@ -81,18 +82,15 @@ bool NavigatorVibration::vibrate(Navigator& navigator,
   if (!frame->GetPage()->IsPageVisible())
     return false;
 
-  // TODO(lunalu): When FeaturePolicy is ready, take out the check for the
-  // runtime flag. Please pay attention to the user gesture code below.
-  if (RuntimeEnabledFeatures::featurePolicyEnabled() &&
-      RuntimeEnabledFeatures::featurePolicyExperimentalFeaturesEnabled() &&
-      !frame->IsFeatureEnabled(blink::WebFeaturePolicyFeature::kVibrate)) {
+  if (IsSupportedInFeaturePolicy(blink::FeaturePolicyFeature::kVibrate) &&
+      !frame->IsFeatureEnabled(blink::FeaturePolicyFeature::kVibrate)) {
     frame->DomWindow()->PrintErrorMessage(
         "Navigator.vibrate() is not enabled in feature policy for this "
         "frame.");
     return false;
   }
 
-  if (!frame->HasReceivedUserGesture()) {
+  if (!frame->HasBeenActivated()) {
     String message;
     MessageLevel level = kErrorMessageLevel;
     if (frame->IsCrossOriginSubframe()) {
@@ -100,7 +98,7 @@ bool NavigatorVibration::vibrate(Navigator& navigator,
           "Blocked call to navigator.vibrate inside a cross-origin "
           "iframe because the frame has never been activated by the user: "
           "https://www.chromestatus.com/feature/5682658461876224.";
-    } else if (RuntimeEnabledFeatures::vibrateRequiresUserGestureEnabled()) {
+    } else if (RuntimeEnabledFeatures::VibrateRequiresUserGestureEnabled()) {
       // The actual blocking is targeting M60.
       message =
           "Blocked call to navigator.vibrate because user hasn't tapped "
@@ -109,7 +107,7 @@ bool NavigatorVibration::vibrate(Navigator& navigator,
     } else {  // Just shows the deprecation message in M59.
       level = kWarningMessageLevel;
       Deprecation::CountDeprecation(frame,
-                                    UseCounter::kVibrateWithoutUserGesture);
+                                    WebFeature::kVibrateWithoutUserGesture);
     }
 
     if (level == kErrorMessageLevel) {
@@ -126,10 +124,10 @@ bool NavigatorVibration::vibrate(Navigator& navigator,
 // static
 void NavigatorVibration::CollectHistogramMetrics(const LocalFrame& frame) {
   NavigatorVibrationType type;
-  bool user_gesture = frame.HasReceivedUserGesture();
-  UseCounter::Count(&frame, UseCounter::kNavigatorVibrate);
+  bool user_gesture = frame.HasBeenActivated();
+  UseCounter::Count(&frame, WebFeature::kNavigatorVibrate);
   if (!frame.IsMainFrame()) {
-    UseCounter::Count(&frame, UseCounter::kNavigatorVibrateSubFrame);
+    UseCounter::Count(&frame, WebFeature::kNavigatorVibrateSubFrame);
     if (frame.IsCrossOriginSubframe()) {
       if (user_gesture)
         type = NavigatorVibrationType::kCrossOriginSubFrameWithUserGesture;
@@ -153,29 +151,29 @@ void NavigatorVibration::CollectHistogramMetrics(const LocalFrame& frame) {
 
   switch (frame.GetDocument()->GetEngagementLevel()) {
     case mojom::blink::EngagementLevel::NONE:
-      UseCounter::Count(&frame, UseCounter::kNavigatorVibrateEngagementNone);
+      UseCounter::Count(&frame, WebFeature::kNavigatorVibrateEngagementNone);
       break;
     case mojom::blink::EngagementLevel::MINIMAL:
-      UseCounter::Count(&frame, UseCounter::kNavigatorVibrateEngagementMinimal);
+      UseCounter::Count(&frame, WebFeature::kNavigatorVibrateEngagementMinimal);
       break;
     case mojom::blink::EngagementLevel::LOW:
-      UseCounter::Count(&frame, UseCounter::kNavigatorVibrateEngagementLow);
+      UseCounter::Count(&frame, WebFeature::kNavigatorVibrateEngagementLow);
       break;
     case mojom::blink::EngagementLevel::MEDIUM:
-      UseCounter::Count(&frame, UseCounter::kNavigatorVibrateEngagementMedium);
+      UseCounter::Count(&frame, WebFeature::kNavigatorVibrateEngagementMedium);
       break;
     case mojom::blink::EngagementLevel::HIGH:
-      UseCounter::Count(&frame, UseCounter::kNavigatorVibrateEngagementHigh);
+      UseCounter::Count(&frame, WebFeature::kNavigatorVibrateEngagementHigh);
       break;
     case mojom::blink::EngagementLevel::MAX:
-      UseCounter::Count(&frame, UseCounter::kNavigatorVibrateEngagementMax);
+      UseCounter::Count(&frame, WebFeature::kNavigatorVibrateEngagementMax);
       break;
   }
 }
 
-VibrationController* NavigatorVibration::Controller(const LocalFrame& frame) {
+VibrationController* NavigatorVibration::Controller(LocalFrame& frame) {
   if (!controller_)
-    controller_ = new VibrationController(*frame.GetDocument());
+    controller_ = new VibrationController(frame);
 
   return controller_.Get();
 }
@@ -187,7 +185,7 @@ void NavigatorVibration::ContextDestroyed(ExecutionContext*) {
   }
 }
 
-DEFINE_TRACE(NavigatorVibration) {
+void NavigatorVibration::Trace(blink::Visitor* visitor) {
   visitor->Trace(controller_);
   Supplement<Navigator>::Trace(visitor);
   ContextLifecycleObserver::Trace(visitor);

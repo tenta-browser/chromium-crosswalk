@@ -11,6 +11,14 @@
 
 namespace arc {
 
+namespace {
+
+std::string GetHistogramName(const std::string& base_name, bool managed) {
+  return base_name + (managed ? "Managed" : "Unmanaged");
+}
+
+}  // namespace
+
 void UpdateOptInActionUMA(OptInActionType type) {
   UMA_HISTOGRAM_ENUMERATION("Arc.OptInAction", static_cast<int>(type),
                             static_cast<int>(OptInActionType::SIZE));
@@ -22,7 +30,8 @@ void UpdateOptInCancelUMA(OptInCancelReason reason) {
 }
 
 void UpdateEnabledStateUMA(bool enabled) {
-  UMA_HISTOGRAM_BOOLEAN("Arc.State", enabled);
+  // Equivalent to UMA_HISTOGRAM_BOOLEAN with the stability flag set.
+  UMA_STABILITY_HISTOGRAM_ENUMERATION("Arc.State", enabled ? 1 : 0, 2);
 }
 
 void UpdateOptInFlowResultUMA(OptInFlowResult result) {
@@ -32,13 +41,9 @@ void UpdateOptInFlowResultUMA(OptInFlowResult result) {
 
 void UpdateProvisioningResultUMA(ProvisioningResult result, bool managed) {
   DCHECK_NE(result, ProvisioningResult::CHROME_SERVER_COMMUNICATION_ERROR);
-  std::string histogram_name = "Arc.Provisioning.Result.";
-  histogram_name += managed ? "Managed" : "Unmanaged";
-  base::LinearHistogram::FactoryGet(
-      histogram_name, 0, static_cast<int>(ProvisioningResult::SIZE),
-      static_cast<int>(ProvisioningResult::SIZE) + 1,
-      base::HistogramBase::kUmaTargetedHistogramFlag)
-      ->Add(static_cast<int>(result));
+  base::UmaHistogramEnumeration(
+      GetHistogramName("Arc.Provisioning.Result.", managed), result,
+      ProvisioningResult::SIZE);
 }
 
 void UpdateProvisioningTiming(const base::TimeDelta& elapsed_time,
@@ -46,15 +51,25 @@ void UpdateProvisioningTiming(const base::TimeDelta& elapsed_time,
                               bool managed) {
   std::string histogram_name = "Arc.Provisioning.TimeDelta.";
   histogram_name += success ? "Success." : "Failure.";
-  histogram_name += managed ? "Managed" : "Unmanaged";
   // The macro UMA_HISTOGRAM_CUSTOM_TIMES expects a constant string, but since
   // this measurement happens very infrequently, we do not need to use a macro
   // here.
-  base::Histogram::FactoryTimeGet(
-      histogram_name, base::TimeDelta::FromSeconds(1),
-      base::TimeDelta::FromMinutes(6), 50,
-      base::HistogramBase::kUmaTargetedHistogramFlag)
-      ->AddTime(elapsed_time);
+  base::UmaHistogramCustomTimes(GetHistogramName(histogram_name, managed),
+                                elapsed_time, base::TimeDelta::FromSeconds(1),
+                                base::TimeDelta::FromMinutes(6), 50);
+}
+
+void UpdateReauthorizationResultUMA(ProvisioningResult result, bool managed) {
+  base::UmaHistogramEnumeration(
+      GetHistogramName("Arc.Reauthorization.Result.", managed), result,
+      ProvisioningResult::SIZE);
+}
+
+void UpdatePlayStoreShowTime(const base::TimeDelta& elapsed_time,
+                             bool managed) {
+  base::UmaHistogramCustomTimes(
+      GetHistogramName("Arc.PlayStoreShown.TimeDelta.", managed), elapsed_time,
+      base::TimeDelta::FromSeconds(1), base::TimeDelta::FromMinutes(10), 50);
 }
 
 void UpdateAuthTiming(const char* histogram_name,
@@ -78,6 +93,11 @@ void UpdateAuthAccountCheckStatus(mojom::AccountCheckStatus status) {
 
 void UpdateSilentAuthCodeUMA(OptInSilentAuthCode state) {
   UMA_HISTOGRAM_SPARSE_SLOWLY("Arc.OptInSilentAuthCode",
+                              static_cast<int>(state));
+}
+
+void UpdateReauthorizationSilentAuthCodeUMA(OptInSilentAuthCode state) {
+  UMA_HISTOGRAM_SPARSE_SLOWLY("Arc.OptInSilentAuthCode.Reauthorization",
                               static_cast<int>(state));
 }
 
@@ -108,6 +128,7 @@ std::ostream& operator<<(std::ostream& os, const ProvisioningResult& result) {
     MAP_PROVISIONING_RESULT(CHROME_SERVER_COMMUNICATION_ERROR);
     MAP_PROVISIONING_RESULT(NO_NETWORK_CONNECTION);
     MAP_PROVISIONING_RESULT(ARC_DISABLED);
+    MAP_PROVISIONING_RESULT(SUCCESS_ALREADY_PROVISIONED);
     MAP_PROVISIONING_RESULT(SIZE);
   }
 

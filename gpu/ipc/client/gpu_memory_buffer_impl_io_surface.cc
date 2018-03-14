@@ -9,7 +9,6 @@
 #include "base/memory/ptr_util.h"
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "ui/gfx/buffer_format_util.h"
-#include "ui/gfx/icc_profile.h"
 #include "ui/gfx/mac/io_surface.h"
 
 namespace gpu {
@@ -21,7 +20,9 @@ uint32_t LockFlags(gfx::BufferUsage usage) {
       return kIOSurfaceLockAvoidSync;
     case gfx::BufferUsage::GPU_READ:
     case gfx::BufferUsage::SCANOUT:
+    case gfx::BufferUsage::SCANOUT_CAMERA_READ_WRITE:
     case gfx::BufferUsage::SCANOUT_CPU_READ_WRITE:
+    case gfx::BufferUsage::SCANOUT_VDA_WRITE:
     case gfx::BufferUsage::GPU_READ_CPU_READ_WRITE_PERSISTENT:
       return 0;
   }
@@ -112,25 +113,12 @@ int GpuMemoryBufferImplIOSurface::stride(size_t plane) const {
   return IOSurfaceGetBytesPerRowOfPlane(io_surface_, plane);
 }
 
-void GpuMemoryBufferImplIOSurface::SetColorSpaceForScanout(
+void GpuMemoryBufferImplIOSurface::SetColorSpace(
     const gfx::ColorSpace& color_space) {
   if (color_space == color_space_)
     return;
   color_space_ = color_space;
-
-  // Retrieve the ICC profile data.
-  gfx::ICCProfile icc_profile;
-  if (!color_space_.GetAsFullRangeRGB().GetICCProfile(&icc_profile)) {
-    DLOG(ERROR) << "Failed to set color space for scanout: no ICC profile.";
-    return;
-  }
-
-  // Package it as a CFDataRef and send it to the IOSurface.
-  base::ScopedCFTypeRef<CFDataRef> cf_data_icc_profile(CFDataCreate(
-      nullptr, reinterpret_cast<const UInt8*>(icc_profile.GetData().data()),
-      icc_profile.GetData().size()));
-  IOSurfaceSetValue(io_surface_, CFSTR("IOSurfaceColorSpace"),
-                    cf_data_icc_profile);
+  IOSurfaceSetColorSpace(io_surface_, color_space);
 }
 
 gfx::GpuMemoryBufferHandle GpuMemoryBufferImplIOSurface::GetHandle() const {

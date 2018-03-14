@@ -7,8 +7,8 @@
 
 #include <string>
 
-#include "ash/accessibility_types.h"
 #include "ash/ash_export.h"
+#include "ash/public/cpp/accessibility_types.h"
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
@@ -22,13 +22,11 @@ class BluetoothObserver;
 class ClockObserver;
 class EnterpriseDomainObserver;
 class IMEObserver;
-class LastWindowClosedObserver;
-class LogoutButtonObserver;
 class NetworkObserver;
 class NetworkPortalDetectorObserver;
 class ScreenCaptureObserver;
 class ScreenShareObserver;
-class SessionLengthLimitObserver;
+class SystemTrayFocusObserver;
 class TracingObserver;
 class VirtualKeyboardObserver;
 
@@ -45,7 +43,7 @@ class ASH_EXPORT SystemTrayNotifier {
   // Accessibility.
   void AddAccessibilityObserver(AccessibilityObserver* observer);
   void RemoveAccessibilityObserver(AccessibilityObserver* observer);
-  void NotifyAccessibilityModeChanged(
+  void NotifyAccessibilityStatusChanged(
       AccessibilityNotificationVisibility notify);
 
   // Bluetooth.
@@ -73,17 +71,6 @@ class ASH_EXPORT SystemTrayNotifier {
   void NotifyRefreshIME();
   void NotifyRefreshIMEMenu(bool is_active);
 
-  // Last window closed.
-  void AddLastWindowClosedObserver(LastWindowClosedObserver* observer);
-  void RemoveLastWindowClosedObserver(LastWindowClosedObserver* observer);
-  void NotifyLastWindowClosed();
-
-  // Logout button.
-  void AddLogoutButtonObserver(LogoutButtonObserver* observer);
-  void RemoveLogoutButtonObserver(LogoutButtonObserver* observer);
-  void NotifyShowLoginButtonChanged(bool show_login_button);
-  void NotifyLogoutDialogDurationChanged(base::TimeDelta duration);
-
   // Network.
   void AddNetworkObserver(NetworkObserver* observer);
   void RemoveNetworkObserver(NetworkObserver* observer);
@@ -110,11 +97,10 @@ class ASH_EXPORT SystemTrayNotifier {
                               const base::string16& helper_name);
   void NotifyScreenShareStop();
 
-  // Session length limit.
-  void AddSessionLengthLimitObserver(SessionLengthLimitObserver* observer);
-  void RemoveSessionLengthLimitObserver(SessionLengthLimitObserver* observer);
-  void NotifySessionStartTimeChanged();
-  void NotifySessionLengthLimitChanged();
+  // System tray focus.
+  void AddSystemTrayFocusObserver(SystemTrayFocusObserver* observer);
+  void RemoveSystemTrayFocusObserver(SystemTrayFocusObserver* observer);
+  void NotifyFocusOut(bool reverse);
 
   // Tracing.
   void AddTracingObserver(TracingObserver* observer);
@@ -132,15 +118,12 @@ class ASH_EXPORT SystemTrayNotifier {
   base::ObserverList<ClockObserver> clock_observers_;
   base::ObserverList<EnterpriseDomainObserver> enterprise_domain_observers_;
   base::ObserverList<IMEObserver> ime_observers_;
-  base::ObserverList<LastWindowClosedObserver> last_window_closed_observers_;
-  base::ObserverList<LogoutButtonObserver> logout_button_observers_;
   base::ObserverList<NetworkObserver> network_observers_;
   base::ObserverList<NetworkPortalDetectorObserver>
       network_portal_detector_observers_;
   base::ObserverList<ScreenCaptureObserver> screen_capture_observers_;
   base::ObserverList<ScreenShareObserver> screen_share_observers_;
-  base::ObserverList<SessionLengthLimitObserver>
-      session_length_limit_observers_;
+  base::ObserverList<SystemTrayFocusObserver> system_tray_focus_observers_;
   base::ObserverList<TracingObserver> tracing_observers_;
   base::ObserverList<VirtualKeyboardObserver> virtual_keyboard_observers_;
 

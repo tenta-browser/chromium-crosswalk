@@ -5,45 +5,50 @@
 #ifndef PlaceholderImage_h
 #define PlaceholderImage_h
 
+#include "base/memory/scoped_refptr.h"
 #include "platform/SharedBuffer.h"
 #include "platform/geometry/IntSize.h"
 #include "platform/graphics/Image.h"
 #include "platform/graphics/ImageOrientation.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 
 namespace blink {
 
+class FloatPoint;
 class FloatRect;
+class FloatSize;
+class GraphicsContext;
 class ImageObserver;
 
 // A generated placeholder image that shows a translucent gray rectangle.
 class PLATFORM_EXPORT PlaceholderImage final : public Image {
  public:
-  static PassRefPtr<PlaceholderImage> Create(ImageObserver* observer,
-                                             const IntSize& size) {
-    return AdoptRef(new PlaceholderImage(observer, size));
+  static scoped_refptr<PlaceholderImage> Create(ImageObserver* observer,
+                                                const IntSize& size) {
+    return base::AdoptRef(new PlaceholderImage(observer, size));
   }
 
   ~PlaceholderImage() override;
 
   IntSize Size() const override { return size_; }
 
-  sk_sp<SkImage> ImageForCurrentFrame() override;
-
   void Draw(PaintCanvas*,
             const PaintFlags&,
             const FloatRect& dest_rect,
             const FloatRect& src_rect,
             RespectImageOrientationEnum,
-            ImageClampingMode) override;
+            ImageClampingMode,
+            ImageDecodingMode) override;
 
   void DestroyDecodedData() override;
 
+  PaintImage PaintImageForCurrentFrame() override;
+
+  bool IsPlaceholderImage() const override { return true; }
+
  private:
-  PlaceholderImage(ImageObserver* observer, const IntSize& size)
-      : Image(observer), size_(size) {}
+  PlaceholderImage(ImageObserver*, const IntSize&);
 
   bool CurrentFrameHasSingleSecurityOrigin() const override { return true; }
 
@@ -53,9 +58,19 @@ class PLATFORM_EXPORT PlaceholderImage final : public Image {
     return false;
   }
 
-  IntSize size_;
+  void DrawPattern(GraphicsContext&,
+                   const FloatRect& src_rect,
+                   const FloatSize& scale,
+                   const FloatPoint& phase,
+                   SkBlendMode,
+                   const FloatRect& dest_rect,
+                   const FloatSize& repeat_spacing) override;
+
+  const IntSize size_;
+
   // Lazily initialized.
-  sk_sp<SkImage> image_for_current_frame_;
+  sk_sp<PaintRecord> paint_record_for_current_frame_;
+  PaintImage::ContentId paint_record_content_id_;
 };
 
 }  // namespace blink

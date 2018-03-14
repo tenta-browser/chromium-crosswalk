@@ -9,6 +9,7 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -32,15 +33,16 @@
 #include "components/history/core/browser/history_db_task.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/search_engines/template_url_service.h"
-#include "components/signin/core/common/profile_management_switches.h"
+#include "components/signin/core/browser/profile_management_switches.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "url/gurl.h"
 
-// This test verifies the Desktop implementation of Guest only.
-#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
+#if defined(OS_CHROMEOS)
+#error "This test verifies the Desktop implementation of Guest only."
+#endif
 
 namespace {
 
@@ -65,7 +67,7 @@ class WaitForHistoryTask : public history::HistoryDBTask {
   }
 
   void DoneRunOnMainThread() override {
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
  private:
@@ -224,6 +226,7 @@ IN_PROC_BROWSER_TEST_F(ProfileWindowBrowserTest, GuestAppMenuLacksBookmarks) {
   EmptyAcceleratorHandler accelerator_handler;
   // Verify the normal browser has a bookmark menu.
   AppMenuModel model_normal_profile(&accelerator_handler, browser());
+  model_normal_profile.Init();
   EXPECT_NE(-1, model_normal_profile.GetIndexOfCommandId(IDC_BOOKMARKS_MENU));
 
   // Guest browser has no bookmark menu.
@@ -256,7 +259,6 @@ IN_PROC_BROWSER_TEST_F(ProfileWindowWebUIBrowserTest,
   base::RunLoop run_loop;
   profiles::CreateSystemProfileForUserManager(
       browser()->profile()->GetPath(),
-      profiles::USER_MANAGER_NO_TUTORIAL,
       profiles::USER_MANAGER_SELECT_PROFILE_NO_ACTION,
       base::Bind(&ProfileWindowWebUIBrowserTest::OnSystemProfileCreated,
                  base::Unretained(this),
@@ -280,7 +282,6 @@ IN_PROC_BROWSER_TEST_F(ProfileWindowWebUIBrowserTest,
   base::RunLoop run_loop;
   profiles::CreateSystemProfileForUserManager(
       expected_path,
-      profiles::USER_MANAGER_NO_TUTORIAL,
       profiles::USER_MANAGER_SELECT_PROFILE_NO_ACTION,
       base::Bind(&ProfileWindowWebUIBrowserTest::OnSystemProfileCreated,
                  base::Unretained(this),
@@ -290,7 +291,5 @@ IN_PROC_BROWSER_TEST_F(ProfileWindowWebUIBrowserTest,
 
   ui_test_utils::NavigateToURL(browser(), GURL(url_to_test));
   EXPECT_TRUE(RunJavascriptTest("testPodFocused",
-                                new base::Value(expected_path.AsUTF8Unsafe())));
+                                base::Value(expected_path.AsUTF8Unsafe())));
 }
-
-#endif  // !defined(OS_CHROMEOS) && !defined(OS_ANDROID)

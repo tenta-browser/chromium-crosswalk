@@ -126,8 +126,8 @@ void OcclusionTracker::EnterRenderTarget(
   if (!stack_.empty() && stack_.back().target == new_target_surface)
     return;
 
-  const RenderSurfaceImpl* old_target_surface = NULL;
-  const RenderSurfaceImpl* old_occlusion_immune_ancestor = NULL;
+  const RenderSurfaceImpl* old_target_surface = nullptr;
+  const RenderSurfaceImpl* old_occlusion_immune_ancestor = nullptr;
   if (!stack_.empty()) {
     old_target_surface = stack_.back().target;
     old_occlusion_immune_ancestor =
@@ -136,7 +136,7 @@ void OcclusionTracker::EnterRenderTarget(
   const RenderSurfaceImpl* new_occlusion_immune_ancestor =
       new_target_surface->nearest_occlusion_immune_ancestor();
 
-  stack_.push_back(StackObject(new_target_surface));
+  stack_.emplace_back(new_target_surface);
 
   // We copy the screen occlusion into the new RenderSurfaceImpl subtree, but we
   // never copy in the occlusion from inside the target, since we are looking
@@ -190,15 +190,18 @@ void OcclusionTracker::FinishedRenderTarget(
 
   // Readbacks always happen on render targets so we only need to check
   // for readbacks here.
-  bool target_is_only_for_copy_request =
-      finished_target_surface->HasCopyRequest() && is_hidden;
+  bool target_is_only_for_copy_request_or_force_render_surface =
+      (finished_target_surface->HasCopyRequest() ||
+       finished_target_surface->ShouldCacheRenderSurface()) &&
+      is_hidden;
 
   // If the occlusion within the surface can not be applied to things outside of
   // the surface's subtree, then clear the occlusion here so it won't be used.
   if (finished_target_surface->HasMask() ||
+      finished_target_surface->HasMaskingContributingSurface() ||
       finished_target_surface->draw_opacity() < 1 ||
       !finished_target_surface->UsesDefaultBlendMode() ||
-      target_is_only_for_copy_request ||
+      target_is_only_for_copy_request_or_force_render_surface ||
       finished_target_surface->Filters().HasFilterThatAffectsOpacity()) {
     stack_.back().occlusion_from_outside_target.Clear();
     stack_.back().occlusion_from_inside_target.Clear();
@@ -213,24 +216,20 @@ static void ReduceOcclusionBelowSurface(
   if (surface_rect.IsEmpty())
     return;
 
-  gfx::Rect affected_area_in_target =
+  gfx::Rect target_rect =
       MathUtil::MapEnclosingClippedRect(surface_transform, surface_rect);
   if (contributing_surface->is_clipped()) {
-    affected_area_in_target.Intersect(contributing_surface->clip_rect());
+    target_rect.Intersect(contributing_surface->clip_rect());
   }
-  if (affected_area_in_target.IsEmpty())
+  if (target_rect.IsEmpty())
     return;
 
-  int outset_top, outset_right, outset_bottom, outset_left;
-  contributing_surface->BackgroundFilters().GetOutsets(
-      &outset_top, &outset_right, &outset_bottom, &outset_left);
+  gfx::Rect affected_area_in_target =
+      contributing_surface->BackgroundFilters().MapRectReverse(target_rect,
+                                                               SkMatrix::I());
+  // Unite target_rect because we only care about positive outsets.
+  affected_area_in_target.Union(target_rect);
 
-  // The filter can move pixels from outside of the clip, so allow affected_area
-  // to expand outside the clip. Notably the content we're concerned with here
-  // is not the affected area, but rather stuff slightly outside it. Thus the
-  // directions of the outsets are reversed from normal.
-  affected_area_in_target.Inset(-outset_right, -outset_bottom, -outset_left,
-                                -outset_top);
   SimpleEnclosedRegion affected_occlusion = *occlusion_from_inside_target;
   affected_occlusion.Intersect(affected_area_in_target);
 
@@ -243,15 +242,20 @@ static void ReduceOcclusionBelowSurface(
     // The left outset of the filters moves pixels on the right side of
     // the occlusion_rect into it, shrinking its right edge.
     int shrink_left =
-        occlusion_rect.x() == affected_area_in_target.x() ? 0 : outset_right;
+        occlusion_rect.x() == affected_area_in_target.x()
+            ? 0
+            : affected_area_in_target.right() - target_rect.right();
     int shrink_top =
-        occlusion_rect.y() == affected_area_in_target.y() ? 0 : outset_bottom;
-    int shrink_right =
-        occlusion_rect.right() == affected_area_in_target.right() ?
-        0 : outset_left;
+        occlusion_rect.y() == affected_area_in_target.y()
+            ? 0
+            : affected_area_in_target.bottom() - target_rect.bottom();
+    int shrink_right = occlusion_rect.right() == affected_area_in_target.right()
+                           ? 0
+                           : target_rect.x() - affected_area_in_target.x();
     int shrink_bottom =
-        occlusion_rect.bottom() == affected_area_in_target.bottom() ?
-        0 : outset_top;
+        occlusion_rect.bottom() == affected_area_in_target.bottom()
+            ? 0
+            : target_rect.y() - affected_area_in_target.y();
 
     occlusion_rect.Inset(shrink_left, shrink_top, shrink_right, shrink_bottom);
 

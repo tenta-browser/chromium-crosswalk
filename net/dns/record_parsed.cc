@@ -25,8 +25,7 @@ RecordParsed::RecordParsed(const std::string& name,
       rdata_(std::move(rdata)),
       time_created_(time_created) {}
 
-RecordParsed::~RecordParsed() {
-}
+RecordParsed::~RecordParsed() = default;
 
 // static
 std::unique_ptr<const RecordParsed> RecordParsed::CreateFrom(
@@ -60,6 +59,9 @@ std::unique_ptr<const RecordParsed> RecordParsed::CreateFrom(
     case NsecRecordRdata::kType:
       rdata = NsecRecordRdata::Create(record.rdata, *parser);
       break;
+    case OptRecordRdata::kType:
+      rdata = OptRecordRdata::Create(record.rdata, *parser);
+      break;
     default:
       DVLOG(1) << "Unknown RData type for received record: " << record.type;
       return std::unique_ptr<const RecordParsed>();
@@ -88,4 +90,5 @@ bool RecordParsed::IsEqual(const RecordParsed* other, bool is_mdns) const {
       type_ == other->type_ &&
       rdata_->IsEqual(other->rdata_.get());
 }
-}
+
+}  // namespace net

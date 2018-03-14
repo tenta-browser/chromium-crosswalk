@@ -16,13 +16,6 @@ message WebApkResponse {
   // Version code of the WebAPK.
   optional string version = 2;
 
-  // URL to download WebAPK. If the URL is empty, the client should not attempt
-  // to download or install anything. For example, this may be empty when the
-  // client requests an update even though no content has changed. The WebAPK
-  // server can then let the client know that it is up-to-date already and does
-  // not need to spend bandwidth re-downloading a WebAPK it has.
-  optional string signed_download_url = 3;
-
   // Unique id identifying session with WebAPK server.
   optional string token = 6;
 
@@ -34,11 +27,26 @@ message WebApkResponse {
   // from spamming update requests too often.
   optional bool relax_updates = 8;
 
-  reserved 4, 5, 7;
+  reserved 3, 4, 5, 7;
 }
 
 // Sent as part of request to create or update a WebAPK.
 message WebApk {
+  enum UpdateReason {
+    NONE = 1;
+    OLD_SHELL_APK = 2;
+    PRIMARY_ICON_HASH_DIFFERS = 3;
+    BADGE_ICON_HASH_DIFFERS = 4;
+    SCOPE_DIFFERS = 5;
+    START_URL_DIFFERS = 6;
+    SHORT_NAME_DIFFERS = 7;
+    NAME_DIFFERS = 8;
+    BACKGROUND_COLOR_DIFFERS = 9;
+    THEME_COLOR_DIFFERS = 10;
+    ORIENTATION_DIFFERS = 11;
+    DISPLAY_MODE_DIFFERS = 12;
+  }
+
   // Package name of the WebAPK.
   optional string package_name = 1;
 
@@ -64,6 +72,9 @@ message WebApk {
   // no longer available.
   optional bool stale_manifest = 9;
 
+  // The reason that a WebAPK update is requested.
+  optional UpdateReason update_reason = 10;
+
   reserved 4;
 }
 
@@ -78,8 +89,9 @@ message WebAppManifest {
   optional string display_mode = 10;
   optional string theme_color = 11;
   optional string background_color = 12;
+  repeated ShareTarget share_targets = 17;
 
-  reserved 3, 7, 8, 13, 14;
+  reserved 3, 7, 8, 13 to 16;
 }
 
 message Image {
@@ -104,4 +116,10 @@ message Image {
   repeated Usage usages = 8;
 
   reserved 2, 3, 4, 7;
+}
+
+message ShareTarget {
+  // The URL template that contains placeholders to be replaced with shared
+  // data.
+  optional string url_template = 1;
 }

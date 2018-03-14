@@ -123,7 +123,7 @@ class WebUIWebViewBrowserTest : public WebUIBrowserTest {
 #if defined(OS_CHROMEOS)
     return GURL(chrome::kChromeUIOobeURL).Resolve("/login");
 #else
-    return GURL(signin::GetPromoURL(
+    return GURL(signin::GetPromoURLForTab(
         signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE,
         signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT, false));
 #endif
@@ -140,15 +140,14 @@ IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest, DisplayNone) {
   ui_test_utils::NavigateToURL(browser(), GetWebViewEnabledWebUIURL());
 
   ASSERT_TRUE(WebUIBrowserTest::RunJavascriptAsyncTest(
-      "testDisplayNone", new base::Value(GetTestUrl("empty.html").spec())));
+      "testDisplayNone", base::Value(GetTestUrl("empty.html").spec())));
 }
 
 IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest, ExecuteScriptCode) {
   ui_test_utils::NavigateToURL(browser(), GetWebViewEnabledWebUIURL());
 
   ASSERT_TRUE(WebUIBrowserTest::RunJavascriptAsyncTest(
-      "testExecuteScriptCode",
-      new base::Value(GetTestUrl("empty.html").spec())));
+      "testExecuteScriptCode", base::Value(GetTestUrl("empty.html").spec())));
 }
 
 IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest, ExecuteScriptCodeFromFile) {
@@ -156,33 +155,52 @@ IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest, ExecuteScriptCodeFromFile) {
 
   ASSERT_TRUE(WebUIBrowserTest::RunJavascriptAsyncTest(
       "testExecuteScriptCodeFromFile",
-      new base::Value(GetTestUrl("empty.html").spec())));
+      base::Value(GetTestUrl("empty.html").spec())));
 }
 
-IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest, AddContentScript) {
+// TODO(crbug.com/751907) Flaky on CrOS trybots.
+#if defined(OS_CHROMEOS)
+#define MAYBE_AddContentScript DISABLED_AddContentScript
+#else
+#define MAYBE_AddContentScript AddContentScript
+#endif
+IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest, MAYBE_AddContentScript) {
   ui_test_utils::NavigateToURL(browser(), GetWebViewEnabledWebUIURL());
 
   ASSERT_TRUE(WebUIBrowserTest::RunJavascriptAsyncTest(
-      "testAddContentScript",
-      new base::Value(GetTestUrl("empty.html").spec())));
+      "testAddContentScript", base::Value(GetTestUrl("empty.html").spec())));
 }
 
-IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest, AddMultiContentScripts) {
+// TODO(crbug.com/751907) Flaky on CrOS trybots.
+#if defined(OS_CHROMEOS)
+#define MAYBE_AddMultiContentScripts DISABLED_AddMultiContentScripts
+#else
+#define MAYBE_AddMultiContentScripts AddMultiContentScripts
+#endif
+IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest, MAYBE_AddMultiContentScripts) {
   ui_test_utils::NavigateToURL(browser(), GetWebViewEnabledWebUIURL());
 
   ASSERT_TRUE(WebUIBrowserTest::RunJavascriptAsyncTest(
       "testAddMultiContentScripts",
-      new base::Value(GetTestUrl("empty.html").spec())));
+      base::Value(GetTestUrl("empty.html").spec())));
 }
 
+// TODO(crbug.com/751907) Flaky on CrOS trybots.
+#if defined(OS_CHROMEOS)
+#define MAYBE_AddContentScriptWithSameNameShouldOverwriteTheExistingOne \
+  DISABLED_AddContentScriptWithSameNameShouldOverwriteTheExistingOne
+#else
+#define MAYBE_AddContentScriptWithSameNameShouldOverwriteTheExistingOne \
+  AddContentScriptWithSameNameShouldOverwriteTheExistingOne
+#endif
 IN_PROC_BROWSER_TEST_F(
     WebUIWebViewBrowserTest,
-    AddContentScriptWithSameNameShouldOverwriteTheExistingOne) {
+    MAYBE_AddContentScriptWithSameNameShouldOverwriteTheExistingOne) {
   ui_test_utils::NavigateToURL(browser(), GetWebViewEnabledWebUIURL());
 
   ASSERT_TRUE(WebUIBrowserTest::RunJavascriptAsyncTest(
       "testAddContentScriptWithSameNameShouldOverwriteTheExistingOne",
-      new base::Value(GetTestUrl("empty.html").spec())));
+      base::Value(GetTestUrl("empty.html").spec())));
 }
 
 IN_PROC_BROWSER_TEST_F(
@@ -192,15 +210,22 @@ IN_PROC_BROWSER_TEST_F(
 
   ASSERT_TRUE(WebUIBrowserTest::RunJavascriptAsyncTest(
       "testAddContentScriptToOneWebViewShouldNotInjectToTheOtherWebView",
-      new base::Value(GetTestUrl("empty.html").spec())));
+      base::Value(GetTestUrl("empty.html").spec())));
 }
 
-IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest, AddAndRemoveContentScripts) {
+// TODO(crbug.com/751907) Flaky on CrOS trybots.
+#if defined(OS_CHROMEOS)
+#define MAYBE_AddAndRemoveContentScripts DISABLED_AddAndRemoveContentScripts
+#else
+#define MAYBE_AddAndRemoveContentScripts AddAndRemoveContentScripts
+#endif
+IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest,
+                       MAYBE_AddAndRemoveContentScripts) {
   ui_test_utils::NavigateToURL(browser(), GetWebViewEnabledWebUIURL());
 
   ASSERT_TRUE(WebUIBrowserTest::RunJavascriptAsyncTest(
       "testAddAndRemoveContentScripts",
-      new base::Value(GetTestUrl("empty.html").spec())));
+      base::Value(GetTestUrl("empty.html").spec())));
 }
 
 IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest,
@@ -209,7 +234,7 @@ IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest,
 
   ASSERT_TRUE(WebUIBrowserTest::RunJavascriptAsyncTest(
       "testAddContentScriptsWithNewWindowAPI",
-      new base::Value(GetTestUrl("guest_from_opener.html").spec())));
+      base::Value(GetTestUrl("guest_from_opener.html").spec())));
 }
 
 // https://crbug.com/665512.
@@ -220,7 +245,7 @@ IN_PROC_BROWSER_TEST_F(
 
   ASSERT_TRUE(WebUIBrowserTest::RunJavascriptAsyncTest(
       "testContentScriptIsInjectedAfterTerminateAndReloadWebView",
-      new base::Value(GetTestUrl("empty.html").spec())));
+      base::Value(GetTestUrl("empty.html").spec())));
 }
 
 // TODO(crbug.com/662673) Flaky on CrOS trybots.
@@ -237,7 +262,7 @@ IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest,
 
   ASSERT_TRUE(WebUIBrowserTest::RunJavascriptAsyncTest(
       "testContentScriptExistsAsLongAsWebViewTagExists",
-      new base::Value(GetTestUrl("empty.html").spec())));
+      base::Value(GetTestUrl("empty.html").spec())));
 }
 
 IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest, AddContentScriptWithCode) {
@@ -245,13 +270,16 @@ IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest, AddContentScriptWithCode) {
 
   ASSERT_TRUE(WebUIBrowserTest::RunJavascriptAsyncTest(
       "testAddContentScriptWithCode",
-      new base::Value(GetTestUrl("empty.html").spec())));
+      base::Value(GetTestUrl("empty.html").spec())));
 }
 
 #if defined(OS_CHROMEOS)
+// TODO(crbug.com/662673) Flaky on CrOS trybots.
+#define MAYBE_AddContentScriptIncognito DISABLED_AddContentScriptIncognito
 // Right now we only have incognito WebUI on CrOS, but this should
 // theoretically work for all platforms.
-IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest, AddContentScriptIncognito) {
+IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest,
+                       MAYBE_AddContentScriptIncognito) {
   Browser* incognito_browser =
       OpenURLOffTheRecord(browser()->profile(), GetWebViewEnabledWebUIURL());
 
@@ -259,8 +287,7 @@ IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest, AddContentScriptIncognito) {
       incognito_browser->tab_strip_model()->GetActiveWebContents()->GetWebUI());
 
   ASSERT_TRUE(WebUIBrowserTest::RunJavascriptAsyncTest(
-      "testAddContentScript",
-      new base::Value(GetTestUrl("empty.html").spec())));
+      "testAddContentScript", base::Value(GetTestUrl("empty.html").spec())));
 }
 #endif
 
@@ -309,11 +336,11 @@ IN_PROC_BROWSER_TEST_F(WebUIWebViewBrowserTest, DISABLED_DragAndDropToInput) {
                                       "destNode.offsetWidth"),
       ExecuteGuestScriptAndExtractInt(embedder_web_contents, "webview",
                                       "destNode.offsetHeight"));
-  const gfx::Point client_pt(
-      guest_dest_rect.x() + guest_dest_rect.width() / 2 + webview_rect.x(),
-      guest_dest_rect.y() + guest_dest_rect.height() / 2 + webview_rect.y());
+  const gfx::PointF client_pt(
+      guest_dest_rect.x() + guest_dest_rect.width() / 2.0 + webview_rect.x(),
+      guest_dest_rect.y() + guest_dest_rect.height() / 2.0 + webview_rect.y());
   gfx::Rect container_bounds = embedder_web_contents->GetContainerBounds();
-  const gfx::Point screen_pt(container_bounds.x(), container_bounds.y());
+  const gfx::PointF screen_pt(container_bounds.x(), container_bounds.y());
   const blink::WebDragOperationsMask drag_operation_mask =
       static_cast<blink::WebDragOperationsMask>(blink::kWebDragOperationCopy |
                                                 blink::kWebDragOperationLink |

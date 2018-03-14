@@ -58,23 +58,24 @@ void LayoutImageResourceStyleImage::Shutdown() {
   cached_image_ = nullptr;
 }
 
-PassRefPtr<Image> LayoutImageResourceStyleImage::GetImage(const IntSize& size,
-                                                          float zoom) const {
+scoped_refptr<Image> LayoutImageResourceStyleImage::GetImage(
+    const IntSize& size) const {
   // Generated content may trigger calls to image() while we're still pending,
   // don't assert but gracefully exit.
   if (style_image_->IsPendingImage())
     return nullptr;
-  return style_image_->GetImage(*layout_object_, size, zoom);
+  return style_image_->GetImage(*layout_object_, layout_object_->GetDocument(),
+                                layout_object_->StyleRef(), size);
 }
 
 LayoutSize LayoutImageResourceStyleImage::ImageSize(float multiplier) const {
   // TODO(davve): Find out the correct default object size in this context.
-  return style_image_->ImageSize(*layout_object_, multiplier,
+  return style_image_->ImageSize(layout_object_->GetDocument(), multiplier,
                                  LayoutSize(LayoutReplaced::kDefaultWidth,
                                             LayoutReplaced::kDefaultHeight));
 }
 
-DEFINE_TRACE(LayoutImageResourceStyleImage) {
+void LayoutImageResourceStyleImage::Trace(blink::Visitor* visitor) {
   visitor->Trace(style_image_);
   LayoutImageResource::Trace(visitor);
 }

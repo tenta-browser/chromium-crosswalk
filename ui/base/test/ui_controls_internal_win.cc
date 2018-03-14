@@ -4,63 +4,194 @@
 
 #include "ui/base/test/ui_controls_internal_win.h"
 
+#include <cmath>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/test_timeouts.h"
+#include "base/threading/thread_checker.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "ui/display/win/screen_win.h"
 #include "ui/events/keycodes/keyboard_code_conversion_win.h"
 #include "ui/events/keycodes/keyboard_codes.h"
+#include "ui/gfx/geometry/point.h"
 
 namespace {
 
 // InputDispatcher ------------------------------------------------------------
 
-// InputDispatcher is used to listen for a mouse/keyboard event. When the
-// appropriate event is received the task is notified.
+// InputDispatcher is used to listen for a mouse/keyboard event. Only one
+// instance may be alive at a time. The callback is run when the appropriate
+// event is received.
 class InputDispatcher : public base::RefCounted<InputDispatcher> {
  public:
-  InputDispatcher(const base::Closure& task, WPARAM message_waiting_for);
+  // Constructs a dispatcher that will invoke |callback| when |message_type| is
+  // received. The returned instance does not hold a ref on itself to keep it
+  // alive while waiting for messages. The caller is responsible for adding one
+  // ref before returning to the message loop. The instance will release this
+  // reference when the message is received.
+  static scoped_refptr<InputDispatcher> CreateForMessage(
+      WPARAM message_type,
+      const base::Closure& callback);
+
+  // Constructs a dispatcher that will invoke |callback| when a mouse move
+  // message has been received. Upon receipt, an error message is logged if the
+  // destination of the move is not |screen_point|. |callback| is run regardless
+  // after a sufficiently long delay. This generally happens when another
+  // process has a window over the test's window, or if |screen_point| is not
+  // over a window owned by the test. The returned instance does not hold a ref
+  // on itself to keep it alive while waiting for messages. The caller is
+  // responsible for adding one ref before returning to the message loop. The
+  // instance will release this reference when the message is received.
+  static scoped_refptr<InputDispatcher> CreateForMouseMove(
+      const gfx::Point& screen_point,
+      const base::Closure& callback);
+
+ private:
+  template <typename T, typename... Args>
+  friend scoped_refptr<T> base::MakeRefCounted(Args&&... args);
+  friend class base::RefCounted<InputDispatcher>;
+
+  InputDispatcher(WPARAM message_waiting_for,
+                  const gfx::Point& screen_point,
+                  const base::Closure& callback);
+  ~InputDispatcher();
+
+  // Installs the dispatcher as the current hook.
+  void InstallHook();
+
+  // Uninstalls the hook set in InstallHook.
+  void UninstallHook();
+
+  // Callback from hook when a mouse message is received.
+  static LRESULT CALLBACK MouseHook(int n_code, WPARAM w_param, LPARAM l_param);
+
+  // Callback from hook when a key message is received.
+  static LRESULT CALLBACK KeyHook(int n_code, WPARAM w_param, LPARAM l_param);
 
   // Invoked from the hook. If mouse_message matches message_waiting_for_
   // MatchingMessageFound is invoked.
   void DispatchedMessage(WPARAM mouse_message);
 
   // Invoked when a matching event is found. Uninstalls the hook and schedules
-  // an event that notifies the task.
+  // an event that runs the callback.
   void MatchingMessageFound();
 
- private:
-  friend class base::RefCounted<InputDispatcher>;
+  // Invoked when the hook for a mouse move is not called within a reasonable
+  // time. This likely means that a window from another process is over a test
+  // window, so the event does not reach this process.
+  void OnTimeout();
 
-  ~InputDispatcher();
+  // The current dispatcher if a hook is installed; otherwise, nullptr;
+  static InputDispatcher* current_dispatcher_;
 
-  // Notifies the task and release this (which should delete it).
-  void NotifyTask();
+  // Return value from SetWindowsHookEx.
+  static HHOOK next_hook_;
 
-  // The task we notify.
-  base::Closure task_;
+  THREAD_CHECKER(thread_checker_);
 
-  // Message we're waiting for. Not used for keyboard events.
+  // The callback to run when the desired message is received.
+  base::Closure callback_;
+
+  // The message on which the instance is waiting -- unsed for WM_KEYUP
+  // messages.
   const WPARAM message_waiting_for_;
+
+  // The desired mouse position for a mouse move event.
+  const gfx::Point expected_mouse_location_;
+
+  base::WeakPtrFactory<InputDispatcher> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(InputDispatcher);
 };
 
-// Have we installed the hook?
-bool installed_hook_ = false;
+// static
+InputDispatcher* InputDispatcher::current_dispatcher_ = nullptr;
 
-// Return value from SetWindowsHookEx.
-HHOOK next_hook_ = NULL;
+// static
+HHOOK InputDispatcher::next_hook_ = nullptr;
 
-// If a hook is installed, this is the dispatcher.
-InputDispatcher* current_dispatcher_ = NULL;
+// static
+scoped_refptr<InputDispatcher> InputDispatcher::CreateForMessage(
+    WPARAM message_type,
+    const base::Closure& callback) {
+  DCHECK_NE(message_type, static_cast<WPARAM>(WM_MOUSEMOVE));
+  return base::MakeRefCounted<InputDispatcher>(message_type, gfx::Point(0, 0),
+                                               callback);
+}
 
-// Callback from hook when a mouse message is received.
-LRESULT CALLBACK MouseHook(int n_code, WPARAM w_param, LPARAM l_param) {
+// static
+scoped_refptr<InputDispatcher> InputDispatcher::CreateForMouseMove(
+    const gfx::Point& screen_point,
+    const base::Closure& callback) {
+  return base::MakeRefCounted<InputDispatcher>(WM_MOUSEMOVE, screen_point,
+                                               callback);
+}
+
+InputDispatcher::InputDispatcher(WPARAM message_waiting_for,
+                                 const gfx::Point& screen_point,
+                                 const base::Closure& callback)
+    : callback_(callback),
+      message_waiting_for_(message_waiting_for),
+      expected_mouse_location_(screen_point),
+      weak_factory_(this) {
+  InstallHook();
+}
+
+InputDispatcher::~InputDispatcher() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  UninstallHook();
+}
+
+void InputDispatcher::InstallHook() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  DCHECK(!current_dispatcher_);
+
+  current_dispatcher_ = this;
+
+  int hook_type;
+  HOOKPROC hook_function;
+  if (message_waiting_for_ == WM_KEYUP) {
+    hook_type = WH_KEYBOARD;
+    hook_function = &KeyHook;
+  } else {
+    // WH_CALLWNDPROCRET does not generate mouse messages for some reason.
+    hook_type = WH_MOUSE;
+    hook_function = &MouseHook;
+    if (message_waiting_for_ == WM_MOUSEMOVE) {
+      // Things don't go well with move events sometimes. Bail out if it takes
+      // too long.
+      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+          FROM_HERE,
+          base::Bind(&InputDispatcher::OnTimeout, weak_factory_.GetWeakPtr()),
+          TestTimeouts::action_timeout());
+    }
+  }
+  next_hook_ =
+      SetWindowsHookEx(hook_type, hook_function, nullptr, GetCurrentThreadId());
+  DCHECK(next_hook_);
+}
+
+void InputDispatcher::UninstallHook() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  if (current_dispatcher_ == this) {
+    current_dispatcher_ = nullptr;
+    UnhookWindowsHookEx(next_hook_);
+    next_hook_ = nullptr;
+    weak_factory_.InvalidateWeakPtrs();
+  }
+}
+
+// static
+LRESULT CALLBACK InputDispatcher::MouseHook(int n_code,
+                                            WPARAM w_param,
+                                            LPARAM l_param) {
   HHOOK next_hook = next_hook_;
   if (n_code == HC_ACTION) {
     DCHECK(current_dispatcher_);
@@ -69,8 +200,10 @@ LRESULT CALLBACK MouseHook(int n_code, WPARAM w_param, LPARAM l_param) {
   return CallNextHookEx(next_hook, n_code, w_param, l_param);
 }
 
-// Callback from hook when a key message is received.
-LRESULT CALLBACK KeyHook(int n_code, WPARAM w_param, LPARAM l_param) {
+// static
+LRESULT CALLBACK InputDispatcher::KeyHook(int n_code,
+                                          WPARAM w_param,
+                                          LPARAM l_param) {
   HHOOK next_hook = next_hook_;
   if (n_code == HC_ACTION) {
     DCHECK(current_dispatcher_);
@@ -82,62 +215,81 @@ LRESULT CALLBACK KeyHook(int n_code, WPARAM w_param, LPARAM l_param) {
   return CallNextHookEx(next_hook, n_code, w_param, l_param);
 }
 
-// Installs dispatcher as the current hook.
-void InstallHook(InputDispatcher* dispatcher, bool key_hook) {
-  DCHECK(!installed_hook_);
-  current_dispatcher_ = dispatcher;
-  installed_hook_ = true;
-  if (key_hook) {
-    next_hook_ = SetWindowsHookEx(WH_KEYBOARD, &KeyHook, NULL,
-                                  GetCurrentThreadId());
-  } else {
-    // NOTE: I originally tried WH_CALLWNDPROCRET, but for some reason I
-    // didn't get a mouse message like I do with MouseHook.
-    next_hook_ = SetWindowsHookEx(WH_MOUSE, &MouseHook, NULL,
-                                  GetCurrentThreadId());
-  }
-  DCHECK(next_hook_);
-}
-
-// Uninstalls the hook set in InstallHook.
-void UninstallHook(InputDispatcher* dispatcher) {
-  if (current_dispatcher_ == dispatcher) {
-    installed_hook_ = false;
-    current_dispatcher_ = NULL;
-    UnhookWindowsHookEx(next_hook_);
-  }
-}
-
-InputDispatcher::InputDispatcher(const base::Closure& task,
-                                 WPARAM message_waiting_for)
-    : task_(task), message_waiting_for_(message_waiting_for) {
-  InstallHook(this, message_waiting_for == WM_KEYUP);
-}
-
-InputDispatcher::~InputDispatcher() {
-  // Make sure the hook isn't installed.
-  UninstallHook(this);
-}
-
-void InputDispatcher::DispatchedMessage(WPARAM message) {
-  if (message == message_waiting_for_)
+void InputDispatcher::DispatchedMessage(WPARAM mouse_message) {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  if (mouse_message == message_waiting_for_) {
+    if (mouse_message == WM_MOUSEMOVE) {
+      // Verify that the mouse ended up at the desired location.
+      POINT current_pos;
+      ::GetCursorPos(&current_pos);
+      LOG_IF(ERROR, expected_mouse_location_ != gfx::Point(current_pos))
+          << "Mouse moved to (" << current_pos.x << ", " << current_pos.y
+          << ") rather than (" << expected_mouse_location_.x() << ", "
+          << expected_mouse_location_.y()
+          << "); check the math in SendMouseMoveImpl.";
+    }
     MatchingMessageFound();
+  }
 }
 
 void InputDispatcher::MatchingMessageFound() {
-  UninstallHook(this);
-  // At the time we're invoked the event has not actually been processed.
-  // Use PostTask to make sure the event has been processed before notifying.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&InputDispatcher::NotifyTask, this));
-}
-
-void InputDispatcher::NotifyTask() {
-  task_.Run();
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  UninstallHook();
+  // The hook proc is invoked before the message is process. Post a task to run
+  // the callback so that handling of this event completes first.
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                std::move(callback_));
   Release();
 }
 
+void InputDispatcher::OnTimeout() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  LOG(ERROR) << "Timed out waiting for mouse move event. The test will now "
+                "continue, but may fail.";
+  MatchingMessageFound();
+}
+
 // Private functions ----------------------------------------------------------
+
+UINT MapVirtualKeyToScanCode(UINT code) {
+  UINT ret_code = MapVirtualKey(code, MAPVK_VK_TO_VSC);
+  // We have to manually mark the following virtual
+  // keys as extended or else their scancodes depend
+  // on NumLock state.
+  // For ex. VK_DOWN will be mapped onto either DOWN or NumPad2
+  // depending on NumLock state which can lead to tests failures.
+  switch (code) {
+    case VK_INSERT:
+    case VK_DELETE:
+    case VK_HOME:
+    case VK_END:
+    case VK_NEXT:
+    case VK_PRIOR:
+    case VK_LEFT:
+    case VK_RIGHT:
+    case VK_UP:
+    case VK_DOWN:
+    case VK_NUMLOCK:
+      ret_code |= KF_EXTENDED;
+    default:
+      break;
+  }
+  return ret_code;
+}
+
+// Whether scan code should be used for |key|.
+// When sending keyboard events by SendInput() function, Windows does not
+// "smartly" add scan code if virtual key-code is used. So these key events
+// won't have scan code or DOM UI Event code string.
+// But we cannot blindly send all events with scan code. For some layout
+// dependent keys, the Windows may not translate them to what they used to be,
+// because the test cases are usually running in headless environment with
+// default keyboard layout. So fall back to use virtual key code for these keys.
+bool ShouldSendThroughScanCode(ui::KeyboardCode key) {
+  const DWORD native_code = ui::WindowsKeyCodeForKeyboardCode(key);
+  const DWORD scan_code = MapVirtualKeyToScanCode(native_code);
+  return native_code == MapVirtualKey(scan_code, MAPVK_VSC_TO_VK);
+}
 
 // Populate the INPUT structure with the appropriate keyboard event
 // parameters required by SendInput
@@ -145,8 +297,16 @@ bool FillKeyboardInput(ui::KeyboardCode key, INPUT* input, bool key_up) {
   memset(input, 0, sizeof(INPUT));
   input->type = INPUT_KEYBOARD;
   input->ki.wVk = ui::WindowsKeyCodeForKeyboardCode(key);
-  input->ki.dwFlags = key_up ? KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP :
-                               KEYEVENTF_EXTENDEDKEY;
+  if (ShouldSendThroughScanCode(key)) {
+    input->ki.wScan = MapVirtualKeyToScanCode(input->ki.wVk);
+    // When KEYEVENTF_SCANCODE is used, ki.wVk is ignored, so we do not need to
+    // clear it.
+    input->ki.dwFlags = KEYEVENTF_SCANCODE;
+    if ((input->ki.wScan & 0xFF00) != 0)
+      input->ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+  }
+  if (key_up)
+    input->ki.dwFlags |= KEYEVENTF_KEYUP;
 
   return true;
 }
@@ -171,8 +331,9 @@ bool SendKeyPressImpl(HWND window,
   if (window && ::GetForegroundWindow() != target_window)
     return false;
 
-  scoped_refptr<InputDispatcher> dispatcher(
-      !task.is_null() ? new InputDispatcher(task, WM_KEYUP) : NULL);
+  scoped_refptr<InputDispatcher> dispatcher;
+  if (task)
+    dispatcher = InputDispatcher::CreateForMessage(WM_KEYUP, task);
 
   // If a pop-up menu is open, it won't receive events sent using SendInput.
   // Check for a pop-up menu using its window class (#32768) and if one
@@ -184,7 +345,7 @@ bool SendKeyPressImpl(HWND window,
     ::SendMessage(popup_menu, WM_KEYDOWN, w_param, l_param);
     ::SendMessage(popup_menu, WM_KEYUP, w_param, l_param);
 
-    if (dispatcher.get())
+    if (dispatcher)
       dispatcher->AddRef();
     return true;
   }
@@ -239,7 +400,7 @@ bool SendKeyPressImpl(HWND window,
   if (::SendInput(i, input, sizeof(INPUT)) != i)
     return false;
 
-  if (dispatcher.get())
+  if (dispatcher)
     dispatcher->AddRef();
 
   return true;
@@ -248,34 +409,51 @@ bool SendKeyPressImpl(HWND window,
 bool SendMouseMoveImpl(long screen_x,
                        long screen_y,
                        const base::Closure& task) {
-  // First check if the mouse is already there.
+  gfx::Point screen_point =
+      display::win::ScreenWin::DIPToScreenPoint({screen_x, screen_y});
+  screen_x = screen_point.x();
+  screen_y = screen_point.y();
+
+  // Get the max screen coordinate for use in computing the normalized absolute
+  // coordinates required by SendInput.
+  const int max_x = ::GetSystemMetrics(SM_CXSCREEN) - 1;
+  const int max_y = ::GetSystemMetrics(SM_CYSCREEN) - 1;
+
+  // Clamp the inputs.
+  if (screen_x < 0)
+    screen_x = 0;
+  else if (screen_x > max_x)
+    screen_x = max_x;
+  if (screen_y < 0)
+    screen_y = 0;
+  else if (screen_y > max_y)
+    screen_y = max_y;
+
+  // Check if the mouse is already there.
   POINT current_pos;
   ::GetCursorPos(&current_pos);
   if (screen_x == current_pos.x && screen_y == current_pos.y) {
-    if (!task.is_null())
+    if (task)
       base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, task);
     return true;
   }
 
-  INPUT input = { 0 };
-
-  int screen_width = ::GetSystemMetrics(SM_CXSCREEN) - 1;
-  int screen_height  = ::GetSystemMetrics(SM_CYSCREEN) - 1;
-  LONG pixel_x  = static_cast<LONG>(screen_x * (65535.0f / screen_width));
-  LONG pixel_y = static_cast<LONG>(screen_y * (65535.0f / screen_height));
-
-  input.type = INPUT_MOUSE;
+  // Form the input data containing the normalized absolute coordinates.
+  INPUT input = {INPUT_MOUSE};
+  input.mi.dx = static_cast<LONG>(std::ceil(screen_x * (65535.0 / max_x)));
+  input.mi.dy = static_cast<LONG>(std::ceil(screen_y * (65535.0 / max_y)));
   input.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
-  input.mi.dx = pixel_x;
-  input.mi.dy = pixel_y;
 
-  scoped_refptr<InputDispatcher> dispatcher(
-      !task.is_null() ? new InputDispatcher(task, WM_MOUSEMOVE) : NULL);
+  scoped_refptr<InputDispatcher> dispatcher;
+  if (task) {
+    dispatcher =
+        InputDispatcher::CreateForMouseMove({screen_x, screen_y}, task);
+  }
 
-  if (!::SendInput(1, &input, sizeof(INPUT)))
+  if (!::SendInput(1, &input, sizeof(input)))
     return false;
 
-  if (dispatcher.get())
+  if (dispatcher)
     dispatcher->AddRef();
 
   return true;
@@ -311,8 +489,9 @@ bool SendMouseEventsImpl(MouseButton type, int state,
       return false;
   }
 
-  scoped_refptr<InputDispatcher> dispatcher(
-      !task.is_null() ? new InputDispatcher(task, last_event) : NULL);
+  scoped_refptr<InputDispatcher> dispatcher;
+  if (task)
+    dispatcher = InputDispatcher::CreateForMessage(last_event, task);
 
   INPUT input = { 0 };
   input.type = INPUT_MOUSE;
@@ -324,8 +503,84 @@ bool SendMouseEventsImpl(MouseButton type, int state,
   if ((state & UP) && !::SendInput(1, &input, sizeof(INPUT)))
     return false;
 
-  if (dispatcher.get())
+  if (dispatcher)
     dispatcher->AddRef();
+
+  return true;
+}
+
+bool SendTouchEventsImpl(int action, int num, int x, int y) {
+  const int kTouchesLengthCap = 16;
+  DCHECK_LE(num, kTouchesLengthCap);
+
+  using InitializeTouchInjectionFn = BOOL(WINAPI*)(UINT32, DWORD);
+  static InitializeTouchInjectionFn initialize_touch_injection =
+      reinterpret_cast<InitializeTouchInjectionFn>(GetProcAddress(
+          GetModuleHandleA("user32.dll"), "InitializeTouchInjection"));
+  if (!initialize_touch_injection ||
+      !initialize_touch_injection(num, TOUCH_FEEDBACK_INDIRECT)) {
+    return false;
+  }
+
+  using InjectTouchInputFn = BOOL(WINAPI*)(UINT32, POINTER_TOUCH_INFO*);
+  static InjectTouchInputFn inject_touch_input =
+      reinterpret_cast<InjectTouchInputFn>(
+          GetProcAddress(GetModuleHandleA("user32.dll"), "InjectTouchInput"));
+  if (!inject_touch_input)
+    return false;
+
+  POINTER_TOUCH_INFO pointer_touch_info[kTouchesLengthCap];
+  for (int i = 0; i < num; i++) {
+    POINTER_TOUCH_INFO& contact = pointer_touch_info[i];
+    memset(&contact, 0, sizeof(POINTER_TOUCH_INFO));
+    contact.pointerInfo.pointerType = PT_TOUCH;
+    contact.pointerInfo.pointerId = i;
+    contact.pointerInfo.ptPixelLocation.y = y;
+    contact.pointerInfo.ptPixelLocation.x = x + 10 * i;
+
+    contact.touchFlags = TOUCH_FLAG_NONE;
+    contact.touchMask =
+        TOUCH_MASK_CONTACTAREA | TOUCH_MASK_ORIENTATION | TOUCH_MASK_PRESSURE;
+    contact.orientation = 90;
+    contact.pressure = 32000;
+
+    // defining contact area
+    contact.rcContact.top = contact.pointerInfo.ptPixelLocation.y - 2;
+    contact.rcContact.bottom = contact.pointerInfo.ptPixelLocation.y + 2;
+    contact.rcContact.left = contact.pointerInfo.ptPixelLocation.x - 2;
+    contact.rcContact.right = contact.pointerInfo.ptPixelLocation.x + 2;
+
+    contact.pointerInfo.pointerFlags =
+        POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
+  }
+  // Injecting the touch down on screen
+  if (!inject_touch_input(num, pointer_touch_info))
+    return false;
+
+  // Injecting the touch move on screen
+  if (action & MOVE) {
+    for (int i = 0; i < num; i++) {
+      POINTER_TOUCH_INFO& contact = pointer_touch_info[i];
+      contact.pointerInfo.ptPixelLocation.y = y + 10;
+      contact.pointerInfo.ptPixelLocation.x = x + 10 * i + 30;
+      contact.pointerInfo.pointerFlags =
+          POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
+    }
+    if (!inject_touch_input(num, pointer_touch_info))
+      return false;
+  }
+
+  // Injecting the touch up on screen
+  if (action & RELEASE) {
+    for (int i = 0; i < num; i++) {
+      POINTER_TOUCH_INFO& contact = pointer_touch_info[i];
+      contact.pointerInfo.ptPixelLocation.y = y + 10;
+      contact.pointerInfo.ptPixelLocation.x = x + 10 * i + 30;
+      contact.pointerInfo.pointerFlags = POINTER_FLAG_UP | POINTER_FLAG_INRANGE;
+    }
+    if (!inject_touch_input(num, pointer_touch_info))
+      return false;
+  }
 
   return true;
 }

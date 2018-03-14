@@ -8,14 +8,16 @@
 #include "core/testing/NullExecutionContext.h"
 #include "modules/notifications/Notification.h"
 #include "modules/notifications/NotificationOptions.h"
-#include "platform/wtf/CurrentTime.h"
+#include "platform/weborigin/KURL.h"
 #include "platform/wtf/HashMap.h"
+#include "platform/wtf/Time.h"
 #include "platform/wtf/Vector.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
 namespace {
 
+const char kNotificationBaseUrl[] = "https://example.com/directory/";
 const char kNotificationTitle[] = "My Notification";
 
 const char kNotificationDir[] = "rtl";
@@ -24,9 +26,9 @@ const char kNotificationBody[] = "Hello, world";
 const char kNotificationTag[] = "my_tag";
 const char kNotificationEmptyTag[] = "";
 const char kNotificationImage[] = "https://example.com/image.jpg";
-const char kNotificationIcon[] = "https://example.com/icon.png";
+const char kNotificationIcon[] = "/icon.png";
 const char kNotificationIconInvalid[] = "https://invalid:icon:url";
-const char kNotificationBadge[] = "https://example.com/badge.png";
+const char kNotificationBadge[] = "badge.png";
 const unsigned kNotificationVibration[] = {42, 10, 20, 30, 40};
 const unsigned long long kNotificationTimestamp = 621046800ull;
 const bool kNotificationRenotify = true;
@@ -44,9 +46,28 @@ const char kNotificationActionPlaceholder[] = "Placeholder...";
 const unsigned kNotificationVibrationUnnormalized[] = {10, 1000000, 50, 42};
 const int kNotificationVibrationNormalized[] = {10, 10000, 50};
 
+// Execution context that implements the CompleteURL method to complete
+// URLs that are assumed to be relative against a given base URL.
+class CompleteUrlExecutionContext final : public NullExecutionContext {
+ public:
+  explicit CompleteUrlExecutionContext(const String& base) : base_(base) {}
+
+ protected:
+  ~CompleteUrlExecutionContext() final = default;
+
+  KURL CompleteURL(const String& url) const override {
+    return KURL(base_, url);
+  }
+
+ private:
+  KURL base_;
+};
+
 class NotificationDataTest : public ::testing::Test {
  public:
-  void SetUp() override { execution_context_ = new NullExecutionContext(); }
+  void SetUp() override {
+    execution_context_ = new CompleteUrlExecutionContext(kNotificationBaseUrl);
+  }
 
   ExecutionContext* GetExecutionContext() { return execution_context_.Get(); }
 
@@ -60,7 +81,7 @@ TEST_F(NotificationDataTest, ReflectProperties) {
     vibration_pattern.push_back(kNotificationVibration[i]);
 
   UnsignedLongOrUnsignedLongSequence vibration_sequence;
-  vibration_sequence.setUnsignedLongSequence(vibration_pattern);
+  vibration_sequence.SetUnsignedLongSequence(vibration_pattern);
 
   HeapVector<NotificationAction> actions;
   for (size_t i = 0; i < Notification::maxActions(); ++i) {
@@ -104,8 +125,12 @@ TEST_F(NotificationDataTest, ReflectProperties) {
   EXPECT_EQ(kNotificationBody, notification_data.body);
   EXPECT_EQ(kNotificationTag, notification_data.tag);
 
-  // TODO(peter): Test the various icon properties when
-  // ExecutionContext::completeURL() works in this test.
+  KURL base(kNotificationBaseUrl);
+
+  // URLs should be resolved against the base URL of the execution context.
+  EXPECT_EQ(WebURL(KURL(base, kNotificationImage)), notification_data.image);
+  EXPECT_EQ(WebURL(KURL(base, kNotificationIcon)), notification_data.icon);
+  EXPECT_EQ(WebURL(KURL(base, kNotificationBadge)), notification_data.badge);
 
   ASSERT_EQ(vibration_pattern.size(), notification_data.vibrate.size());
   for (size_t i = 0; i < vibration_pattern.size(); ++i)
@@ -132,7 +157,7 @@ TEST_F(NotificationDataTest, SilentNotificationWithVibration) {
     vibration_pattern.push_back(kNotificationVibration[i]);
 
   UnsignedLongOrUnsignedLongSequence vibration_sequence;
-  vibration_sequence.setUnsignedLongSequence(vibration_pattern);
+  vibration_sequence.SetUnsignedLongSequence(vibration_pattern);
 
   NotificationOptions options;
   options.setVibrate(vibration_sequence);
@@ -216,7 +241,7 @@ TEST_F(NotificationDataTest, VibrationNormalization) {
     unnormalized_pattern.push_back(kNotificationVibrationUnnormalized[i]);
 
   UnsignedLongOrUnsignedLongSequence vibration_sequence;
-  vibration_sequence.setUnsignedLongSequence(unnormalized_pattern);
+  vibration_sequence.SetUnsignedLongSequence(unnormalized_pattern);
 
   NotificationOptions options;
   options.setVibrate(vibration_sequence);

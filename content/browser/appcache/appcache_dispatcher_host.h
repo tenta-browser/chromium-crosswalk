@@ -46,8 +46,6 @@ class AppCacheDispatcherHost : public BrowserMessageFilter {
                      const GURL& document_url,
                      int64_t cache_document_was_loaded_from,
                      const GURL& opt_manifest_url);
-  void OnSelectCacheForWorker(int host_id, int parent_process_id,
-                              int parent_host_id);
   void OnSelectCacheForSharedWorker(int host_id, int64_t appcache_id);
   void OnMarkAsForeignEntry(int host_id,
                             const GURL& document_url,
@@ -66,9 +64,6 @@ class AppCacheDispatcherHost : public BrowserMessageFilter {
   AppCacheFrontendProxy frontend_proxy_;
   AppCacheBackendImpl backend_impl_;
 
-  content::GetStatusCallback get_status_callback_;
-  content::StartUpdateCallback start_update_callback_;
-  content::SwapCacheCallback swap_cache_callback_;
   std::unique_ptr<IPC::Message> pending_reply_msg_;
 
   // The corresponding ChildProcessHost object's id().

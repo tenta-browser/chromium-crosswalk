@@ -4,11 +4,14 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/run_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "components/crx_file/id_util.h"
 #include "components/update_client/update_client.h"
@@ -21,7 +24,6 @@
 #include "extensions/browser/uninstall_ping_sender.h"
 #include "extensions/browser/updater/update_service.h"
 #include "extensions/common/extension_builder.h"
-#include "extensions/common/test_util.h"
 #include "extensions/common/value_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -51,11 +53,11 @@ class FakeUpdateClient : public update_client::UpdateClient {
   void AddObserver(Observer* observer) override {}
   void RemoveObserver(Observer* observer) override {}
   void Install(const std::string& id,
-               const CrxDataCallback& crx_data_callback,
-               const update_client::Callback& callback) override {}
+               CrxDataCallback crx_data_callback,
+               update_client::Callback callback) override {}
   void Update(const std::vector<std::string>& ids,
-              const CrxDataCallback& crx_data_callback,
-              const update_client::Callback& callback) override;
+              CrxDataCallback crx_data_callback,
+              update_client::Callback callback) override;
   bool GetCrxUpdateState(
       const std::string& id,
       update_client::CrxUpdateItem* update_item) const override {
@@ -65,7 +67,8 @@ class FakeUpdateClient : public update_client::UpdateClient {
   void Stop() override {}
   void SendUninstallPing(const std::string& id,
                          const base::Version& version,
-                         int reason) override {
+                         int reason,
+                         update_client::Callback callback) override {
     uninstall_pings_.emplace_back(id, version, reason);
   }
 
@@ -83,9 +86,9 @@ class FakeUpdateClient : public update_client::UpdateClient {
 FakeUpdateClient::FakeUpdateClient() {}
 
 void FakeUpdateClient::Update(const std::vector<std::string>& ids,
-                              const CrxDataCallback& crx_data_callback,
-                              const update_client::Callback& callback) {
-  crx_data_callback.Run(ids, &data_);
+                              CrxDataCallback crx_data_callback,
+                              update_client::Callback callback) {
+  std::move(crx_data_callback).Run(ids, &data_);
 }
 
 }  // namespace
@@ -122,8 +125,8 @@ class FakeExtensionSystem : public MockExtensionSystem {
     return &install_requests_;
   }
 
-  void set_install_callback(const base::Closure& callback) {
-    next_install_callback_ = callback;
+  void set_install_callback(base::OnceClosure callback) {
+    next_install_callback_ = std::move(callback);
   }
 
   // ExtensionSystem override
@@ -134,28 +137,23 @@ class FakeExtensionSystem : public MockExtensionSystem {
     request.extension_id = extension_id;
     request.temp_dir = temp_dir;
     install_requests_.push_back(request);
-    if (!next_install_callback_.is_null()) {
-      base::Closure tmp = next_install_callback_;
-      next_install_callback_.Reset();
-      tmp.Run();
-    }
+    if (!next_install_callback_.is_null())
+      std::move(next_install_callback_).Run();
   }
 
  private:
   std::vector<InstallUpdateRequest> install_requests_;
-  base::Closure next_install_callback_;
+  base::OnceClosure next_install_callback_;
 };
 
 class UpdateServiceTest : public ExtensionsTest {
  public:
-  UpdateServiceTest() {}
+  UpdateServiceTest()
+      : ExtensionsTest(std::make_unique<content::TestBrowserThreadBundle>()) {}
   ~UpdateServiceTest() override {}
 
   void SetUp() override {
     ExtensionsTest::SetUp();
-    browser_threads_.reset(new content::TestBrowserThreadBundle(
-        content::TestBrowserThreadBundle::DEFAULT));
-
     extensions_browser_client()->set_extension_system_factory(
         &fake_extension_system_factory_);
     extensions_browser_client()->SetUpdateClientFactory(base::Bind(
@@ -172,7 +170,7 @@ class UpdateServiceTest : public ExtensionsTest {
     // We only expect that this will get called once, so consider it an error
     // if our update_client_ is already non-null.
     EXPECT_EQ(nullptr, update_client_.get());
-    update_client_ = new FakeUpdateClient();
+    update_client_ = base::MakeRefCounted<FakeUpdateClient>();
     return update_client_.get();
   }
 
@@ -194,9 +192,8 @@ class UpdateServiceTest : public ExtensionsTest {
   }
 
  private:
-  UpdateService* update_service_;
+  UpdateService* update_service_ = nullptr;
   scoped_refptr<FakeUpdateClient> update_client_;
-  std::unique_ptr<content::TestBrowserThreadBundle> browser_threads_;
   MockExtensionSystemFactory<FakeExtensionSystem>
       fake_extension_system_factory_;
 };
@@ -263,14 +260,16 @@ TEST_F(UpdateServiceTest, BasicUpdateOperations) {
   // Test the install callback.
   base::ScopedTempDir new_version_dir;
   ASSERT_TRUE(new_version_dir.CreateUniqueTempDir());
-  std::unique_ptr<base::DictionaryValue> new_manifest(
-      extension1->manifest()->value()->DeepCopy());
-  new_manifest->SetString("version", "2.0");
 
-  installer->Install(*new_manifest, new_version_dir.GetPath());
+  installer->Install(
+      new_version_dir.GetPath(), std::string(),
+      base::Bind([](const update_client::CrxInstaller::Result& result) {
+        EXPECT_EQ(0, result.error);
+        EXPECT_EQ(0, result.extended_error);
+      }));
 
   scoped_refptr<content::MessageLoopRunner> loop_runner =
-      new content::MessageLoopRunner();
+      base::MakeRefCounted<content::MessageLoopRunner>();
   extension_system()->set_install_callback(loop_runner->QuitClosure());
   loop_runner->Run();
 
@@ -288,18 +287,15 @@ TEST_F(UpdateServiceTest, UninstallPings) {
 
   // Build 3 extensions.
   scoped_refptr<Extension> extension1 =
-      test_util::BuildExtension(ExtensionBuilder())
-          .SetID(crx_file::id_util::GenerateId("1"))
+      ExtensionBuilder("1")
           .MergeManifest(DictionaryBuilder().Set("version", "1.2").Build())
           .Build();
   scoped_refptr<Extension> extension2 =
-      test_util::BuildExtension(ExtensionBuilder())
-          .SetID(crx_file::id_util::GenerateId("2"))
+      ExtensionBuilder("2")
           .MergeManifest(DictionaryBuilder().Set("version", "2.3").Build())
           .Build();
   scoped_refptr<Extension> extension3 =
-      test_util::BuildExtension(ExtensionBuilder())
-          .SetID(crx_file::id_util::GenerateId("3"))
+      ExtensionBuilder("3")
           .MergeManifest(DictionaryBuilder().Set("version", "3.4").Build())
           .Build();
   EXPECT_TRUE(extension1->id() != extension2->id() &&

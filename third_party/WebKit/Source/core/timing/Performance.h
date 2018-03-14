@@ -53,8 +53,8 @@ class CORE_EXPORT Performance final : public PerformanceBase,
   friend class PerformanceTest;
 
  public:
-  static Performance* Create(LocalFrame* frame) {
-    return new Performance(frame);
+  static Performance* Create(LocalDOMWindow* window) {
+    return new Performance(window);
   }
   ~Performance() override;
 
@@ -68,10 +68,11 @@ class CORE_EXPORT Performance final : public PerformanceBase,
 
   ScriptValue toJSONForBinding(ScriptState*) const;
 
-  DECLARE_VIRTUAL_TRACE();
+  void Trace(blink::Visitor*) override;
+  using PerformanceBase::TraceWrappers;
 
  private:
-  explicit Performance(LocalFrame*);
+  explicit Performance(LocalDOMWindow*);
 
   PerformanceNavigationTiming* CreateNavigationTimingInstance() override;
 
@@ -81,10 +82,12 @@ class CORE_EXPORT Performance final : public PerformanceBase,
       LocalFrame* observer_frame);
 
   // PerformanceMonitor::Client implementation.
-  void ReportLongTask(double start_time,
-                      double end_time,
-                      ExecutionContext* task_context,
-                      bool has_multiple_contexts) override;
+  void ReportLongTask(
+      double start_time,
+      double end_time,
+      ExecutionContext* task_context,
+      bool has_multiple_contexts,
+      const SubTaskAttribution::EntriesVector& sub_task_attributions) override;
 
   mutable Member<PerformanceNavigation> navigation_;
   mutable Member<PerformanceTiming> timing_;

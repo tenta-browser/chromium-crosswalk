@@ -80,11 +80,11 @@ bool AXTableCell::ComputeAccessibilityIsIgnored(
 
 AXObject* AXTableCell::ParentTable() const {
   if (!layout_object_ || !layout_object_->IsTableCell())
-    return 0;
+    return nullptr;
 
   // If the document no longer exists, we might not have an axObjectCache.
   if (IsDetached())
-    return 0;
+    return nullptr;
 
   // Do not use getOrCreate. parentTable() can be called while the layout tree
   // is being modified by javascript, and creating a table element may try to
@@ -92,39 +92,45 @@ AXObject* AXTableCell::ParentTable() const {
   // that the AXTable must be created before AXTableCells. This should always be
   // the case when AT clients access a table.
   // https://bugs.webkit.org/show_bug.cgi?id=42652
-  return AxObjectCache().Get(ToLayoutTableCell(layout_object_)->Table());
+  return AXObjectCache().Get(ToLayoutTableCell(layout_object_)->Table());
+}
+
+AXObject* AXTableCell::ParentRow() const {
+  if (!layout_object_ || !layout_object_->IsTableCell())
+    return nullptr;
+
+  // If the document no longer exists, we might not have an axObjectCache.
+  if (IsDetached())
+    return nullptr;
+
+  return AXObjectCache().Get(ToLayoutTableCell(layout_object_)->Row());
 }
 
 bool AXTableCell::IsTableCell() const {
-  AXObject* parent = ParentObjectUnignored();
-  if (!parent || !parent->IsTableRow())
-    return false;
-
-  return true;
+  AXObject* row = ParentRow();
+  return row && row->IsTableRow();
 }
 
 unsigned AXTableCell::AriaColumnIndex() const {
-  const AtomicString& col_index = GetAttribute(aria_colindexAttr);
-  if (col_index.ToInt() >= 1)
-    return col_index.ToInt();
+  uint32_t col_index;
+  if (HasAOMPropertyOrARIAAttribute(AOMUIntProperty::kColIndex, col_index) &&
+      col_index >= 1) {
+    return col_index;
+  }
 
-  AXObject* parent = ParentObjectUnignored();
-  if (!parent || !parent->IsTableRow())
-    return 0;
-
-  return aria_col_index_from_row_;
+  AXObject* parent = ParentRow();
+  return parent ? aria_col_index_from_row_ : 0;
 }
 
 unsigned AXTableCell::AriaRowIndex() const {
-  const AtomicString& row_index = GetAttribute(aria_rowindexAttr);
-  if (row_index.ToInt() >= 1)
-    return row_index.ToInt();
+  uint32_t row_index;
+  if (HasAOMPropertyOrARIAAttribute(AOMUIntProperty::kRowIndex, row_index) &&
+      row_index >= 1) {
+    return row_index;
+  }
 
-  AXObject* parent = ParentObjectUnignored();
-  if (!parent || !parent->IsTableRow())
-    return 0;
-
-  return ToAXTableRow(parent)->AriaRowIndex();
+  AXObject* parent = ParentRow();
+  return parent ? ToAXTableRow(parent)->AriaRowIndex() : 0;
 }
 
 static AccessibilityRole DecideRoleFromSibling(LayoutTableCell* sibling_cell) {
@@ -176,12 +182,14 @@ AccessibilityRole AXTableCell::DetermineAccessibilityRole() {
   if (!IsTableCell())
     return AXLayoutObject::DetermineAccessibilityRole();
 
+  aria_role_ = DetermineAriaRoleAttribute();
   return ScanToDecideHeaderRole();
 }
 
-void AXTableCell::RowIndexRange(std::pair<unsigned, unsigned>& row_range) {
+bool AXTableCell::RowIndexRange(
+    std::pair<unsigned, unsigned>& row_range) const {
   if (!layout_object_ || !layout_object_->IsTableCell())
-    return;
+    return false;
 
   LayoutTableCell* layout_cell = ToLayoutTableCell(layout_object_);
   row_range.first = layout_cell->RowIndex();
@@ -192,7 +200,7 @@ void AXTableCell::RowIndexRange(std::pair<unsigned, unsigned>& row_range) {
   LayoutTableSection* section = layout_cell->Section();
   LayoutTable* table = layout_cell->Table();
   if (!table || !section)
-    return;
+    return false;
 
   LayoutTableSection* table_section = table->TopSection();
   unsigned row_offset = 0;
@@ -204,19 +212,23 @@ void AXTableCell::RowIndexRange(std::pair<unsigned, unsigned>& row_range) {
   }
 
   row_range.first += row_offset;
+  return true;
 }
 
-void AXTableCell::ColumnIndexRange(
-    std::pair<unsigned, unsigned>& column_range) {
+bool AXTableCell::ColumnIndexRange(
+    std::pair<unsigned, unsigned>& column_range) const {
   if (!layout_object_ || !layout_object_->IsTableCell())
-    return;
+    return false;
 
   LayoutTableCell* cell = ToLayoutTableCell(layout_object_);
   column_range.first = cell->Table()->AbsoluteColumnToEffectiveColumn(
       cell->AbsoluteColumnIndex());
+
   column_range.second = cell->Table()->AbsoluteColumnToEffectiveColumn(
                             cell->AbsoluteColumnIndex() + cell->ColSpan()) -
                         column_range.first;
+
+  return true;
 }
 
 SortDirection AXTableCell::GetSortDirection() const {
@@ -233,9 +245,9 @@ SortDirection AXTableCell::GetSortDirection() const {
     return kSortDirectionAscending;
   if (EqualIgnoringASCIICase(aria_sort, "descending"))
     return kSortDirectionDescending;
-  if (EqualIgnoringASCIICase(aria_sort, "other"))
-    return kSortDirectionOther;
-  return kSortDirectionUndefined;
+  // Technically, illegal values should be exposed as is, but this does
+  // not seem to be worth the implementation effort at this time.
+  return kSortDirectionOther;
 }
 
 }  // namespace blink

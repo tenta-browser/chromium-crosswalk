@@ -7,23 +7,25 @@
 
 #include <jni.h>
 
+#include <map>
 #include <memory>
 
 #include "base/android/jni_weak_ref.h"
 #include "base/callback.h"
+#include "base/cancelable_callback.h"
 #include "base/macros.h"
+#include "chrome/browser/android/vr_shell/vr_core_info.h"
 #include "device/vr/android/gvr/gvr_delegate_provider.h"
+#include "device/vr/vr_service.mojom.h"
 #include "third_party/gvr-android-sdk/src/libraries/headers/vr/gvr/capi/include/gvr_types.h"
 
 namespace device {
-class GvrDelegate;
-class GvrDeviceProvider;
-class PresentingGvrDelegate;
+class VRDevice;
 }
 
 namespace vr_shell {
 
-class NonPresentingGvrDelegate;
+class VrShell;
 
 class VrShellDelegate : public device::GvrDelegateProvider {
  public:
@@ -32,11 +34,11 @@ class VrShellDelegate : public device::GvrDelegateProvider {
 
   static device::GvrDelegateProvider* CreateVrShellDelegate();
 
-  static VrShellDelegate* GetNativeVrShellDelegate(JNIEnv* env,
-                                                   jobject jdelegate);
+  static VrShellDelegate* GetNativeVrShellDelegate(
+      JNIEnv* env,
+      const base::android::JavaRef<jobject>& jdelegate);
 
-  void SetPresentingDelegate(device::PresentingGvrDelegate* delegate,
-                             gvr_context* context);
+  void SetDelegate(VrShell* vr_shell, gvr::ViewerType viewer_type);
   void RemoveDelegate();
 
   void SetPresentResult(JNIEnv* env,
@@ -44,44 +46,49 @@ class VrShellDelegate : public device::GvrDelegateProvider {
                         jboolean success);
   void DisplayActivate(JNIEnv* env,
                        const base::android::JavaParamRef<jobject>& obj);
-  void UpdateVSyncInterval(JNIEnv* env,
-                           const base::android::JavaParamRef<jobject>& obj,
-                           jlong timebase_nanos,
-                           jdouble interval_seconds);
   void OnPause(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
   void OnResume(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  bool IsClearActivatePending(JNIEnv* env,
+                              const base::android::JavaParamRef<jobject>& obj);
   void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
 
-  device::GvrDeviceProvider* device_provider() { return device_provider_; }
+  device::VRDevice* GetDevice();
 
   // device::GvrDelegateProvider implementation.
   void ExitWebVRPresent() override;
 
  private:
   // device::GvrDelegateProvider implementation.
-  void SetDeviceProvider(device::GvrDeviceProvider* device_provider) override;
-  void ClearDeviceProvider() override;
+  void SetDeviceId(unsigned int device_id) override;
   void RequestWebVRPresent(device::mojom::VRSubmitFrameClientPtr submit_client,
-                           const base::Callback<void(bool)>& callback) override;
-  device::GvrDelegate* GetDelegate() override;
-  void SetListeningForActivate(bool listening) override;
+                           device::mojom::VRPresentationProviderRequest request,
+                           device::mojom::VRDisplayInfoPtr display_info,
+                           base::Callback<void(bool)> callback) override;
+  void OnListeningForActivateChanged(bool listening) override;
 
-  void CreateNonPresentingDelegate();
+  void OnActivateDisplayHandled(bool will_not_present);
+  void SetListeningForActivate(bool listening);
+  void OnPresentResult(device::mojom::VRSubmitFrameClientPtr submit_client,
+                       device::mojom::VRPresentationProviderRequest request,
+                       device::mojom::VRDisplayInfoPtr display_info,
+                       base::Callback<void(bool)> callback,
+                       bool success);
 
-  std::unique_ptr<NonPresentingGvrDelegate> non_presenting_delegate_;
+  std::unique_ptr<VrCoreInfo> MakeVrCoreInfo(JNIEnv* env);
+
   base::android::ScopedJavaGlobalRef<jobject> j_vr_shell_delegate_;
-  device::GvrDeviceProvider* device_provider_ = nullptr;
-  device::PresentingGvrDelegate* presenting_delegate_ = nullptr;
+  unsigned int device_id_ = 0;
+  VrShell* vr_shell_ = nullptr;
   base::Callback<void(bool)> present_callback_;
-  int64_t timebase_nanos_ = 0;
-  double interval_seconds_ = 0;
-  device::mojom::VRSubmitFrameClientPtr submit_client_;
   bool pending_successful_present_request_ = false;
+
+  base::CancelableClosure clear_activate_task_;
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+
+  base::WeakPtrFactory<VrShellDelegate> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(VrShellDelegate);
 };
-
-bool RegisterVrShellDelegate(JNIEnv* env);
 
 }  // namespace vr_shell
 

@@ -7,7 +7,7 @@
 
 #if DCHECK_IS_ON()
 
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/layout/LayoutObject.h"
 #include "core/paint/ObjectPaintProperties.h"
 #include "core/paint/PaintPropertyTreeBuilder.h"
@@ -17,8 +17,9 @@ namespace blink {
 // This file contains two scope classes for catching cases where paint
 // properties needed an update but were not marked as such. If paint properties
 // will change, the object must be marked as needing a paint property update
-// using {FrameView, LayoutObject}::setNeedsPaintPropertyUpdate() or by forcing
-// a subtree update (see: PaintPropertyTreeBuilderContext::forceSubtreeUpdate).
+// using {LocalFrameView, LayoutObject}::SetNeedsPaintPropertyUpdate() or by
+// forcing a subtree update (see:
+// PaintPropertyTreeBuilderContext::force_subtree_update).
 //
 // Both scope classes work by recording the paint property state of an object
 // before rebuilding properties, forcing the properties to get updated, then
@@ -26,9 +27,9 @@ namespace blink {
 
 #define DUMP_PROPERTIES(original, updated)                           \
   "\nOriginal:\n"                                                    \
-      << (original ? (original)->ToString().Ascii().Data() : "null") \
+      << (original ? (original)->ToString().Ascii().data() : "null") \
       << "\nUpdated:\n"                                              \
-      << (updated ? (updated)->ToString().Ascii().Data() : "null")
+      << (updated ? (updated)->ToString().Ascii().data() : "null")
 
 #define CHECK_PROPERTY_EQ(thing, original, updated)                        \
   do {                                                                     \
@@ -45,16 +46,15 @@ namespace blink {
   } while (0)
 
 #define DCHECK_FRAMEVIEW_PROPERTY_EQ(original, updated) \
-  CHECK_PROPERTY_EQ("the FrameView", original, updated)
+  CHECK_PROPERTY_EQ("the LocalFrameView", original, updated)
 
 class FindFrameViewPropertiesNeedingUpdateScope {
  public:
-  FindFrameViewPropertiesNeedingUpdateScope(
-      FrameView* frame_view,
-      PaintPropertyTreeBuilderContext& context)
+  FindFrameViewPropertiesNeedingUpdateScope(LocalFrameView* frame_view,
+                                            bool force_subtree_update)
       : frame_view_(frame_view),
         needed_paint_property_update_(frame_view->NeedsPaintPropertyUpdate()),
-        needed_forced_subtree_update_(context.force_subtree_update) {
+        needed_forced_subtree_update_(force_subtree_update) {
     // No need to check if an update was already needed.
     if (needed_paint_property_update_ || needed_forced_subtree_update_)
       return;
@@ -66,6 +66,8 @@ class FindFrameViewPropertiesNeedingUpdateScope {
       original_pre_translation_ = pre_translation->Clone();
     if (auto* content_clip = frame_view_->ContentClip())
       original_content_clip_ = content_clip->Clone();
+    if (auto* scroll_node = frame_view_->ScrollNode())
+      original_scroll_node_ = scroll_node->Clone();
     if (auto* scroll_translation = frame_view_->ScrollTranslation())
       original_scroll_translation_ = scroll_translation->Clone();
   }
@@ -77,14 +79,16 @@ class FindFrameViewPropertiesNeedingUpdateScope {
 
     // If these checks fail, the paint properties changed unexpectedly. This is
     // due to missing one of these paint property invalidations:
-    // 1) The FrameView should have been marked as needing an update with
-    //    FrameView::setNeedsPaintPropertyUpdate().
+    // 1) The LocalFrameView should have been marked as needing an update with
+    //    LocalFrameView::SetNeedsPaintPropertyUpdate().
     // 2) The PrePaintTreeWalk should have had a forced subtree update (see:
-    //    PaintPropertyTreeBuilderContext::forceSubtreeUpdate).
+    //    PaintPropertyTreeBuilderContext::force_subtree_update).
     DCHECK_FRAMEVIEW_PROPERTY_EQ(original_pre_translation_,
                                  frame_view_->PreTranslation());
     DCHECK_FRAMEVIEW_PROPERTY_EQ(original_content_clip_,
                                  frame_view_->ContentClip());
+    DCHECK_FRAMEVIEW_PROPERTY_EQ(original_scroll_node_,
+                                 frame_view_->ScrollNode());
     DCHECK_FRAMEVIEW_PROPERTY_EQ(original_scroll_translation_,
                                  frame_view_->ScrollTranslation());
 
@@ -93,12 +97,13 @@ class FindFrameViewPropertiesNeedingUpdateScope {
   }
 
  private:
-  Persistent<FrameView> frame_view_;
+  Persistent<LocalFrameView> frame_view_;
   bool needed_paint_property_update_;
   bool needed_forced_subtree_update_;
-  RefPtr<const TransformPaintPropertyNode> original_pre_translation_;
-  RefPtr<const ClipPaintPropertyNode> original_content_clip_;
-  RefPtr<const TransformPaintPropertyNode> original_scroll_translation_;
+  scoped_refptr<const TransformPaintPropertyNode> original_pre_translation_;
+  scoped_refptr<const ClipPaintPropertyNode> original_content_clip_;
+  scoped_refptr<const ScrollPaintPropertyNode> original_scroll_node_;
+  scoped_refptr<const TransformPaintPropertyNode> original_scroll_translation_;
 };
 
 #define DCHECK_OBJECT_PROPERTY_EQ(object, original, updated)            \
@@ -107,25 +112,27 @@ class FindFrameViewPropertiesNeedingUpdateScope {
 
 class FindObjectPropertiesNeedingUpdateScope {
  public:
-  FindObjectPropertiesNeedingUpdateScope(
-      const LayoutObject& object,
-      PaintPropertyTreeBuilderContext& context)
+  FindObjectPropertiesNeedingUpdateScope(const LayoutObject& object,
+                                         const FragmentData& fragment_data,
+                                         bool force_subtree_update)
       : object_(object),
+        fragment_data_(fragment_data),
         needed_paint_property_update_(object.NeedsPaintPropertyUpdate()),
-        needed_forced_subtree_update_(context.force_subtree_update),
-        original_paint_offset_(object.PaintOffset()) {
+        needed_forced_subtree_update_(force_subtree_update),
+        original_paint_offset_(fragment_data.PaintOffset()) {
     // No need to check if an update was already needed.
     if (needed_paint_property_update_ || needed_forced_subtree_update_)
       return;
 
     // Mark the properties as needing an update to ensure they are rebuilt.
-    object_.GetMutableForPainting()
+    object.GetMutableForPainting()
         .SetOnlyThisNeedsPaintPropertyUpdateForTesting();
 
-    if (const auto* properties = object_.PaintProperties())
+    if (const auto* properties = fragment_data_.PaintProperties())
       original_properties_ = properties->Clone();
 
-    if (const auto* local_border_box = object_.LocalBorderBoxProperties()) {
+    if (const auto* local_border_box =
+            fragment_data_.LocalBorderBoxProperties()) {
       original_local_border_box_properties_ =
           WTF::WrapUnique(new PropertyTreeState(*local_border_box));
     }
@@ -135,9 +142,9 @@ class FindObjectPropertiesNeedingUpdateScope {
     // Paint offset and paintOffsetTranslation should not change under
     // FindObjectPropertiesNeedingUpdateScope no matter if we needed paint
     // property update.
-    DCHECK_OBJECT_PROPERTY_EQ(object_, &original_paint_offset_,
-                              &object_.PaintOffset());
-    const auto* object_properties = object_.PaintProperties();
+    LayoutPoint paint_offset = fragment_data_.PaintOffset();
+    DCHECK_OBJECT_PROPERTY_EQ(object_, &original_paint_offset_, &paint_offset);
+    const auto* object_properties = fragment_data_.PaintProperties();
     if (original_properties_ && object_properties) {
       DCHECK_OBJECT_PROPERTY_EQ(object_,
                                 original_properties_->PaintOffsetTranslation(),
@@ -153,7 +160,7 @@ class FindObjectPropertiesNeedingUpdateScope {
     // 1) The LayoutObject should have been marked as needing an update with
     //    LayoutObject::setNeedsPaintPropertyUpdate().
     // 2) The PrePaintTreeWalk should have had a forced subtree update (see:
-    //    PaintPropertyTreeBuilderContext::forceSubtreeUpdate).
+    //    PaintPropertyTreeBuilderContext::force_subtree_update).
     if (original_properties_ && object_properties) {
       DCHECK_OBJECT_PROPERTY_EQ(object_, original_properties_->Transform(),
                                 object_properties->Transform());
@@ -180,18 +187,17 @@ class FindObjectPropertiesNeedingUpdateScope {
       DCHECK_OBJECT_PROPERTY_EQ(
           object_, original_properties_->SvgLocalToBorderBoxTransform(),
           object_properties->SvgLocalToBorderBoxTransform());
+      DCHECK_OBJECT_PROPERTY_EQ(object_, original_properties_->Scroll(),
+                                object_properties->Scroll());
       DCHECK_OBJECT_PROPERTY_EQ(object_,
                                 original_properties_->ScrollTranslation(),
                                 object_properties->ScrollTranslation());
-      DCHECK_OBJECT_PROPERTY_EQ(object_,
-                                original_properties_->ScrollbarPaintOffset(),
-                                object_properties->ScrollbarPaintOffset());
     } else {
       DCHECK_EQ(!!original_properties_, !!object_properties)
           << " Object: " << object_.DebugName();
     }
 
-    const auto* object_border_box = object_.LocalBorderBoxProperties();
+    const auto* object_border_box = fragment_data_.LocalBorderBoxProperties();
     if (original_local_border_box_properties_ && object_border_box) {
       DCHECK_OBJECT_PROPERTY_EQ(
           object_, original_local_border_box_properties_->Transform(),
@@ -213,6 +219,7 @@ class FindObjectPropertiesNeedingUpdateScope {
 
  private:
   const LayoutObject& object_;
+  const FragmentData& fragment_data_;
   bool needed_paint_property_update_;
   bool needed_forced_subtree_update_;
   LayoutPoint original_paint_offset_;

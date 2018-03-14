@@ -33,12 +33,12 @@
 
 [
     ActiveScriptWrappable,
-    DependentLifetime,
     Custom=LegacyCallAsFunction,
     DoNotCheckConstants,
     ImplementedAs=TestInterfaceImplementation,
     RuntimeEnabled=FeatureName,
-    Exposed=(Worker,Window),
+    ContextEnabled=FeatureName,
+    Exposed=(Worker,Window)
 ] interface TestInterface : TestInterfaceEmpty {
     // members needed to test [ImplementedAs], as this affect attribute
     // configuration and method configuration
@@ -55,6 +55,8 @@
     attribute unrestricted float unrestrictedFloatAttribute;
     attribute TestEnum testEnumAttribute;
     attribute DOMStringOrDouble stringOrDoubleAttribute;
+    attribute [EnforceRange] long withExtendedAttributeStringAttribute;
+    [ImplementedAs=CapitalImplementation] attribute Implementation uncapitalAttribute;
     [RuntimeEnabled=FeatureName] attribute long conditionalLongAttribute;
     [RuntimeEnabled=FeatureName] readonly attribute long conditionalReadOnlyLongAttribute;
     static attribute DOMString staticStringAttribute;

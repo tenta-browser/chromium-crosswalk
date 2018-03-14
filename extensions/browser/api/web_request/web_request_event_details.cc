@@ -4,17 +4,24 @@
 
 #include "extensions/browser/api/web_request/web_request_event_details.h"
 
+#include <utility>
+#include <vector>
+
 #include "base/callback.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/websocket_handshake_request_info.h"
 #include "content/public/common/child_process_host.h"
+#include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/web_request/upload_data_presenter.h"
 #include "extensions/browser/api/web_request/web_request_api_constants.h"
 #include "extensions/browser/api/web_request/web_request_api_helpers.h"
+#include "extensions/browser/api/web_request/web_request_permissions.h"
 #include "extensions/browser/api/web_request/web_request_resource_type.h"
+#include "extensions/common/permissions/permissions_data.h"
 #include "ipc/ipc_message.h"
 #include "net/base/auth.h"
 #include "net/base/upload_data_stream.h"
@@ -63,6 +70,8 @@ WebRequestEventDetails::WebRequestEventDetails(const net::URLRequest* request,
   dict_.SetString(keys::kTypeKey,
                   WebRequestResourceTypeToString(resource_type));
   dict_.SetString(keys::kUrlKey, request->url().spec());
+  if (request->initiator())
+    initiator_ = request->initiator();
 }
 
 WebRequestEventDetails::~WebRequestEventDetails() {}
@@ -126,10 +135,10 @@ void WebRequestEventDetails::SetAuthInfo(
     dict_.SetString(keys::kSchemeKey, auth_info.scheme);
   if (!auth_info.realm.empty())
     dict_.SetString(keys::kRealmKey, auth_info.realm);
-  base::DictionaryValue* challenger = new base::DictionaryValue();
+  auto challenger = std::make_unique<base::DictionaryValue>();
   challenger->SetString(keys::kHostKey, auth_info.challenger.host());
   challenger->SetInteger(keys::kPortKey, auth_info.challenger.port());
-  dict_.Set(keys::kChallengerKey, challenger);
+  dict_.Set(keys::kChallengerKey, std::move(challenger));
 }
 
 void WebRequestEventDetails::SetResponseHeaders(
@@ -151,8 +160,13 @@ void WebRequestEventDetails::SetResponseHeaders(
       size_t iter = 0;
       std::string name;
       std::string value;
-      while (response_headers->EnumerateHeaderLines(&iter, &name, &value))
+      while (response_headers->EnumerateHeaderLines(&iter, &name, &value)) {
+        if (ExtensionsAPIClient::Get()->ShouldHideResponseHeader(request->url(),
+                                                                 name)) {
+          continue;
+        }
         headers->Append(helpers::CreateHeaderDictionary(name, value));
+      }
     }
     response_headers_.reset(headers);
   }
@@ -191,14 +205,32 @@ void WebRequestEventDetails::DetermineFrameDataOnIO(
 }
 
 std::unique_ptr<base::DictionaryValue> WebRequestEventDetails::GetFilteredDict(
-    int extra_info_spec) const {
+    int extra_info_spec,
+    const extensions::InfoMap* extension_info_map,
+    const extensions::ExtensionId& extension_id,
+    bool crosses_incognito) const {
   std::unique_ptr<base::DictionaryValue> result = dict_.CreateDeepCopy();
-  if ((extra_info_spec & ExtraInfoSpec::REQUEST_BODY) && request_body_)
-    result->Set(keys::kRequestBodyKey, request_body_->CreateDeepCopy());
-  if ((extra_info_spec & ExtraInfoSpec::REQUEST_HEADERS) && request_headers_)
-    result->Set(keys::kRequestHeadersKey, request_headers_->CreateDeepCopy());
-  if ((extra_info_spec & ExtraInfoSpec::RESPONSE_HEADERS) && response_headers_)
-    result->Set(keys::kResponseHeadersKey, response_headers_->CreateDeepCopy());
+  if ((extra_info_spec & ExtraInfoSpec::REQUEST_BODY) && request_body_) {
+    result->SetKey(keys::kRequestBodyKey, request_body_->Clone());
+  }
+  if ((extra_info_spec & ExtraInfoSpec::REQUEST_HEADERS) && request_headers_) {
+    result->SetKey(keys::kRequestHeadersKey, request_headers_->Clone());
+  }
+  if ((extra_info_spec & ExtraInfoSpec::RESPONSE_HEADERS) &&
+      response_headers_) {
+    result->SetKey(keys::kResponseHeadersKey, response_headers_->Clone());
+  }
+
+  // Only listeners with a permission for the initiator should recieve it.
+  if (extension_info_map && initiator_) {
+    int tab_id = -1;
+    dict_.GetInteger(keys::kTabIdKey, &tab_id);
+    if (WebRequestPermissions::CanExtensionAccessInitiator(
+            extension_info_map, extension_id, initiator_, tab_id,
+            crosses_incognito)) {
+      result->SetString(keys::kInitiatorKey, initiator_->Serialize());
+    }
+  }
   return result;
 }
 
@@ -209,31 +241,31 @@ WebRequestEventDetails::GetAndClearDict() {
   return result;
 }
 
-void WebRequestEventDetails::FilterForPublicSession() {
-  request_body_ = nullptr;
-  request_headers_ = nullptr;
-  response_headers_ = nullptr;
-
-  extra_info_spec_ = 0;
+std::unique_ptr<WebRequestEventDetails>
+WebRequestEventDetails::CreatePublicSessionCopy() {
+  std::unique_ptr<WebRequestEventDetails> copy(new WebRequestEventDetails);
+  copy->initiator_ = initiator_;
+  copy->render_process_id_ = render_process_id_;
+  copy->render_frame_id_ = render_frame_id_;
 
   static const char* const kSafeAttributes[] = {
     "method", "requestId", "timeStamp", "type", "tabId", "frameId",
     "parentFrameId", "fromCache", "error", "ip", "statusLine", "statusCode"
   };
 
-  auto copy = GetAndClearDict();
-
   for (const char* safe_attr : kSafeAttributes) {
-    std::unique_ptr<base::Value> val;
-    if (copy->Remove(safe_attr, &val))
-      dict_.Set(safe_attr, std::move(val));
+    base::Value* val = dict_.FindKey(safe_attr);
+    if (val)
+      copy->dict_.SetKey(safe_attr, val->Clone());
   }
 
   // URL is stripped down to the origin.
   std::string url;
-  copy->GetString(keys::kUrlKey, &url);
+  dict_.GetString(keys::kUrlKey, &url);
   GURL gurl(url);
-  dict_.SetString(keys::kUrlKey, gurl.GetOrigin().spec());
+  copy->dict_.SetString(keys::kUrlKey, gurl.GetOrigin().spec());
+
+  return copy;
 }
 
 WebRequestEventDetails::WebRequestEventDetails()

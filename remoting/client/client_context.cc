@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "remoting/client/client_context.h"
+#include "base/single_thread_task_runner.h"
 
 namespace remoting {
 
@@ -13,8 +14,7 @@ ClientContext::ClientContext(
       audio_decode_thread_("ChromotingClientAudioDecodeThread") {
 }
 
-ClientContext::~ClientContext() {
-}
+ClientContext::~ClientContext() = default;
 
 void ClientContext::Start() {
   // Start all the threads.

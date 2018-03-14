@@ -23,8 +23,18 @@
 
 namespace media {
 
-// Static POD class for generating unique identifiers for each VideoFrame.
-static base::StaticAtomicSequenceNumber g_unique_id_generator;
+namespace {
+
+// Helper to privide gfx::Rect::Intersect() as an expression.
+gfx::Rect Intersection(gfx::Rect a, const gfx::Rect& b) {
+  a.Intersect(b);
+  return a;
+}
+
+}  // namespace
+
+// Static constexpr class for generating unique identifiers for each VideoFrame.
+static base::AtomicSequenceNumber g_unique_id_generator;
 
 static bool IsPowerOfTwo(size_t x) {
   return x != 0 && (x & (x - 1)) == 0;
@@ -231,7 +241,7 @@ scoped_refptr<VideoFrame> VideoFrame::WrapExternalData(
     base::TimeDelta timestamp) {
   return WrapExternalStorage(format, STORAGE_UNOWNED_MEMORY, coded_size,
                              visible_rect, natural_size, data, data_size,
-                             timestamp, base::SharedMemory::NULLHandle(), 0);
+                             timestamp, base::SharedMemoryHandle(), 0);
 }
 
 // static
@@ -631,6 +641,19 @@ bool VideoFrame::HasTextures() const {
   return !mailbox_holders_[0].mailbox.IsZero();
 }
 
+size_t VideoFrame::NumTextures() const {
+  if (!HasTextures())
+    return 0;
+
+  size_t i = 0;
+  for (; i < NumPlanes(format_); ++i) {
+    if (mailbox_holders_[i].mailbox.IsZero()) {
+      return i;
+    }
+  }
+  return i;
+}
+
 gfx::ColorSpace VideoFrame::ColorSpace() const {
   if (color_space_ == gfx::ColorSpace()) {
     int videoframe_color_space;
@@ -712,13 +735,13 @@ VideoFrame::mailbox_holder(size_t texture_index) const {
 
 base::SharedMemoryHandle VideoFrame::shared_memory_handle() const {
   DCHECK_EQ(storage_type_, STORAGE_SHMEM);
-  DCHECK(shared_memory_handle_ != base::SharedMemory::NULLHandle());
+  DCHECK(shared_memory_handle_.IsValid());
   return shared_memory_handle_;
 }
 
 size_t VideoFrame::shared_memory_offset() const {
   DCHECK_EQ(storage_type_, STORAGE_SHMEM);
-  DCHECK(shared_memory_handle_ != base::SharedMemory::NULLHandle());
+  DCHECK(shared_memory_handle_.IsValid());
   return shared_memory_offset_;
 }
 
@@ -775,12 +798,12 @@ void VideoFrame::SetReleaseMailboxCB(
   mailbox_holders_release_cb_ = release_mailbox_cb;
 }
 
-void VideoFrame::AddDestructionObserver(const base::Closure& callback) {
+void VideoFrame::AddDestructionObserver(base::OnceClosure callback) {
   DCHECK(!callback.is_null());
-  done_callbacks_.push_back(callback);
+  done_callbacks_.push_back(std::move(callback));
 }
 
-void VideoFrame::UpdateReleaseSyncToken(SyncTokenClient* client) {
+gpu::SyncToken VideoFrame::UpdateReleaseSyncToken(SyncTokenClient* client) {
   DCHECK(HasTextures());
   base::AutoLock locker(release_sync_token_lock_);
   // Must wait on the previous sync point before inserting a new sync point so
@@ -789,6 +812,7 @@ void VideoFrame::UpdateReleaseSyncToken(SyncTokenClient* client) {
   if (release_sync_token_.HasData())
     client->WaitSyncToken(release_sync_token_);
   client->GenerateSyncToken(&release_sync_token_);
+  return release_sync_token_;
 }
 
 std::string VideoFrame::AsHumanReadableString() {
@@ -923,14 +947,16 @@ VideoFrame::VideoFrame(VideoPixelFormat format,
     : format_(format),
       storage_type_(storage_type),
       coded_size_(coded_size),
-      visible_rect_(visible_rect),
+      visible_rect_(Intersection(visible_rect, gfx::Rect(coded_size))),
       natural_size_(natural_size),
-      shared_memory_handle_(base::SharedMemory::NULLHandle()),
       shared_memory_offset_(0),
       timestamp_(timestamp),
       unique_id_(g_unique_id_generator.GetNext()) {
   DCHECK(IsValidConfig(format_, storage_type, coded_size_, visible_rect_,
                        natural_size_));
+  DCHECK(visible_rect_ == visible_rect)
+      << "visible_rect " << visible_rect.ToString() << " exceeds coded_size "
+      << coded_size.ToString();
   memset(&mailbox_holders_, 0, sizeof(mailbox_holders_));
   memset(&strides_, 0, sizeof(strides_));
   memset(&data_, 0, sizeof(data_));
@@ -1040,15 +1066,9 @@ scoped_refptr<VideoFrame> VideoFrame::CreateFrameInternal(
     const gfx::Size& natural_size,
     base::TimeDelta timestamp,
     bool zero_initialize_memory) {
-  if (!IsYuvPlanar(format)) {
-    NOTIMPLEMENTED();
-    return nullptr;
-  }
-
-  // Since we're creating a new YUV frame (and allocating memory for it
-  // ourselves), we can pad the requested |coded_size| if necessary if the
-  // request does not line up on sample boundaries. See discussion at
-  // http://crrev.com/1240833003
+  // Since we're creating a new frame (and allocating memory for it ourselves),
+  // we can pad the requested |coded_size| if necessary if the request does not
+  // line up on sample boundaries. See discussion at http://crrev.com/1240833003
   const gfx::Size new_coded_size = DetermineAlignedSize(format, coded_size);
   const StorageType storage = STORAGE_OWNED_MEMORY;
   if (!IsValidConfig(format, storage, new_coded_size, visible_rect,
@@ -1061,7 +1081,7 @@ scoped_refptr<VideoFrame> VideoFrame::CreateFrameInternal(
 
   scoped_refptr<VideoFrame> frame(new VideoFrame(
       format, storage, new_coded_size, visible_rect, natural_size, timestamp));
-  frame->AllocateYUV(zero_initialize_memory);
+  frame->AllocateMemory(zero_initialize_memory);
   return frame;
 }
 
@@ -1177,29 +1197,36 @@ gfx::Size VideoFrame::CommonAlignment(VideoPixelFormat format) {
   return gfx::Size(max_sample_width, max_sample_height);
 }
 
-void VideoFrame::AllocateYUV(bool zero_initialize_memory) {
+void VideoFrame::AllocateMemory(bool zero_initialize_memory) {
   DCHECK_EQ(storage_type_, STORAGE_OWNED_MEMORY);
   static_assert(0 == kYPlane, "y plane data must be index 0");
 
   size_t data_size = 0;
   size_t offset[kMaxPlanes];
-  for (size_t plane = 0; plane < NumPlanes(format_); ++plane) {
-    // The *2 in alignment for height is because some formats (e.g. h264) allow
-    // interlaced coding, and then the size needs to be a multiple of two
-    // macroblocks (vertically). See
-    // libavcodec/utils.c:avcodec_align_dimensions2().
-    const size_t height = RoundUp(rows(plane), kFrameSizeAlignment * 2);
-    strides_[plane] = RoundUp(row_bytes(plane), kFrameSizeAlignment);
-    offset[plane] = data_size;
-    data_size += height * strides_[plane];
-  }
 
-  // The extra line of UV being allocated is because h264 chroma MC
-  // overreads by one line in some cases, see libavcodec/utils.c:
-  // avcodec_align_dimensions2() and libavcodec/x86/h264_chromamc.asm:
-  // put_h264_chroma_mc4_ssse3().
-  DCHECK(IsValidPlane(kUPlane, format_));
-  data_size += strides_[kUPlane] + kFrameSizePadding;
+  // Tightly pack if it is single planar.
+  if (NumPlanes(format_) == 1) {
+    data_size = AllocationSize(format_, coded_size_);
+    offset[0] = 0;
+    strides_[0] = row_bytes(0);
+  } else {
+    for (size_t plane = 0; plane < NumPlanes(format_); ++plane) {
+      // These values were chosen to mirror ffmpeg's get_video_buffer().
+      // TODO(dalecurtis): This should be configurable; eventually ffmpeg wants
+      // us to use av_cpu_max_align(), but... for now, they just hard-code 32.
+      const size_t height = RoundUp(rows(plane), kFrameAddressAlignment);
+      strides_[plane] = RoundUp(row_bytes(plane), kFrameAddressAlignment);
+      offset[plane] = data_size;
+      data_size += height * strides_[plane];
+    }
+
+    // The extra line of UV being allocated is because h264 chroma MC
+    // overreads by one line in some cases, see libavcodec/utils.c:
+    // avcodec_align_dimensions2() and libavcodec/x86/h264_chromamc.asm:
+    // put_h264_chroma_mc4_ssse3().
+    DCHECK(IsValidPlane(kUPlane, format_));
+    data_size += strides_[kUPlane] + kFrameSizePadding;
+  }
 
   uint8_t* data = reinterpret_cast<uint8_t*>(
       base::AlignedAlloc(data_size, kFrameAddressAlignment));

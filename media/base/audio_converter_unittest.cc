@@ -2,18 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// MSVC++ requires this to be set before any other includes to get M_PI.
-#define _USE_MATH_DEFINES
-
 #include "media/base/audio_converter.h"
 
 #include <stddef.h>
 
-#include <cmath>
 #include <memory>
 
 #include "base/macros.h"
-#include "base/memory/scoped_vector.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "media/base/audio_timestamp_helper.h"
 #include "media/base/fake_audio_render_callback.h"
@@ -72,8 +68,9 @@ class AudioConverterTest
         static_cast<double>(output_parameters_.frames_per_buffer()));
 
     for (int i = 0; i < count; ++i) {
-      fake_callbacks_.push_back(new FakeAudioRenderCallback(step, kSampleRate));
-      converter_->AddInput(fake_callbacks_[i]);
+      fake_callbacks_.push_back(
+          base::MakeUnique<FakeAudioRenderCallback>(step, kSampleRate));
+      converter_->AddInput(fake_callbacks_[i].get());
     }
   }
 
@@ -162,7 +159,7 @@ class AudioConverterTest
 
     // Remove every other input.
     for (size_t i = 1; i < fake_callbacks_.size(); i += 2)
-      converter_->RemoveInput(fake_callbacks_[i]);
+      converter_->RemoveInput(fake_callbacks_[i].get());
 
     SetVolume(1);
     float scale = inputs > 1 ? inputs / 2.0f : inputs;
@@ -171,7 +168,7 @@ class AudioConverterTest
   }
 
  protected:
-  virtual ~AudioConverterTest() {}
+  virtual ~AudioConverterTest() = default;
 
   // Converter under test.
   std::unique_ptr<AudioConverter> converter_;
@@ -187,7 +184,7 @@ class AudioConverterTest
   std::unique_ptr<AudioBus> expected_audio_bus_;
 
   // Vector of all input callbacks used to drive AudioConverter::Convert().
-  ScopedVector<FakeAudioRenderCallback> fake_callbacks_;
+  std::vector<std::unique_ptr<FakeAudioRenderCallback>> fake_callbacks_;
 
   // Parallel input callback which generates the expected output.
   std::unique_ptr<FakeAudioRenderCallback> expected_callback_;

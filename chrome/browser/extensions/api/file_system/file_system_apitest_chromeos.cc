@@ -2,13 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/extensions/api/file_system/file_system_api.h"
-
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/apps/app_browsertest_util.h"
@@ -16,20 +15,24 @@
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/file_manager/volume_manager.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
-#include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/extensions/api/file_system/consent_provider.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/extensions/api/file_system.h"
 #include "components/drive/chromeos/file_system_interface.h"
 #include "components/drive/service/fake_drive_service.h"
+#include "components/user_manager/scoped_user_manager.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/api/file_system/file_system_api.h"
 #include "extensions/browser/event_router.h"
+#include "extensions/common/api/file_system.h"
 #include "google_apis/drive/base_requests.h"
 #include "google_apis/drive/drive_api_parser.h"
 #include "google_apis/drive/test_util.h"
 #include "storage/browser/fileapi/external_mount_points.h"
 #include "ui/base/ui_base_types.h"
+
+// TODO(michaelpg): Port these tests to app_shell: crbug.com/505926.
 
 using file_manager::VolumeManager;
 
@@ -80,19 +83,21 @@ class ScopedAddListenerObserver : public EventRouter::Observer {
         callback_(callback),
         event_router_(EventRouter::EventRouter::Get(profile)) {
     DCHECK(profile);
-    DCHECK(event_router_);
     event_router_->RegisterObserver(this, event_name);
   }
 
-  ~ScopedAddListenerObserver() { event_router_->UnregisterObserver(this); }
+  ~ScopedAddListenerObserver() override {
+    event_router_->UnregisterObserver(this);
+  }
 
   // EventRouter::Observer overrides.
   void OnListenerAdded(const EventListenerInfo& details) override {
     // Call the callback only once, as the listener may be added multiple times.
-    if (details.extension_id == extension_id_ && !callback_.is_null()) {
-      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback_);
-      callback_ = base::Closure();
-    }
+    if (details.extension_id != extension_id_ || !callback_)
+      return;
+
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::ResetAndReturn(&callback_));
   }
 
  private:
@@ -135,7 +140,7 @@ class FileSystemApiTestForDrive : public PlatformAppBrowserTest {
     integration_service_->file_system()->GetResourceEntry(
         base::FilePath::FromUTF8Unsafe("drive/root"),  // whatever
         google_apis::test_util::CreateCopyResultCallback(&error, &entry));
-    content::RunAllBlockingPoolTasksUntilIdle();
+    content::RunAllTasksUntilIdle();
     ASSERT_EQ(drive::FILE_ERROR_OK, error);
   }
 
@@ -148,8 +153,11 @@ class FileSystemApiTestForDrive : public PlatformAppBrowserTest {
   drive::DriveIntegrationService* CreateDriveIntegrationService(
       Profile* profile) {
     // Ignore signin profile.
-    if (profile->GetPath() == chromeos::ProfileHelper::GetSigninProfileDir())
+    if (profile->GetPath() == chromeos::ProfileHelper::GetSigninProfileDir() ||
+        profile->GetPath() ==
+            chromeos::ProfileHelper::GetLockScreenAppProfilePath()) {
       return nullptr;
+    }
 
     // FileSystemApiTestForDrive doesn't expect that several user profiles could
     // exist simultaneously.
@@ -232,7 +240,7 @@ class FileSystemApiTestForRequestFileSystem : public PlatformAppBrowserTest {
  protected:
   base::ScopedTempDir temp_dir_;
   chromeos::FakeChromeUserManager* fake_user_manager_;
-  std::unique_ptr<chromeos::ScopedUserManagerEnabler> user_manager_enabler_;
+  std::unique_ptr<user_manager::ScopedUserManager> user_manager_enabler_;
 
   // Creates a testing file system in a testing directory.
   void CreateTestingFileSystem(const std::string& mount_point_name,
@@ -257,8 +265,8 @@ class FileSystemApiTestForRequestFileSystem : public PlatformAppBrowserTest {
   // Simulates entering the kiosk session.
   void EnterKioskSession() {
     fake_user_manager_ = new chromeos::FakeChromeUserManager();
-    user_manager_enabler_.reset(
-        new chromeos::ScopedUserManagerEnabler(fake_user_manager_));
+    user_manager_enabler_ = std::make_unique<user_manager::ScopedUserManager>(
+        base::WrapUnique(fake_user_manager_));
 
     const AccountId kiosk_app_account_id =
         AccountId::FromUserEmail("kiosk@foobar.com");

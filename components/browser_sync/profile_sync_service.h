@@ -25,7 +25,6 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
-#include "components/keyed_service/core/keyed_service.h"
 #include "components/signin/core/browser/gaia_cookie_manager_service.h"
 #include "components/signin/core/browser/signin_manager_base.h"
 #include "components/sync/base/experiments.h"
@@ -71,7 +70,6 @@ class BackendMigrator;
 class BaseTransaction;
 class DataTypeManager;
 class DeviceInfoSyncBridge;
-class DeviceInfoSyncService;
 class DeviceInfoTracker;
 class LocalDeviceInfoProvider;
 class NetworkResources;
@@ -170,7 +168,6 @@ class ProfileSyncService : public syncer::SyncServiceBase,
                            public syncer::SyncPrefObserver,
                            public syncer::DataTypeManagerObserver,
                            public syncer::UnrecoverableErrorHandler,
-                           public KeyedService,
                            public OAuth2TokenService::Consumer,
                            public OAuth2TokenService::Observer,
                            public SigninManagerBase::Observer,
@@ -240,6 +237,7 @@ class ProfileSyncService : public syncer::SyncServiceBase,
     scoped_refptr<net::URLRequestContextGetter> url_request_context;
     std::string debug_identifier;
     version_info::Channel channel = version_info::Channel::UNKNOWN;
+    syncer::ModelTypeStoreFactory model_type_store_factory;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(InitParams);
@@ -297,13 +295,13 @@ class ProfileSyncService : public syncer::SyncServiceBase,
   SyncTokenStatus GetSyncTokenStatus() const override;
   std::string QuerySyncStatusSummaryString() override;
   bool QueryDetailedSyncStatus(syncer::SyncStatus* result) override;
-  base::string16 GetLastSyncedTimeString() const override;
+  base::Time GetLastSyncedTime() const override;
   std::string GetEngineInitializationStateString() const override;
   syncer::SyncCycleSnapshot GetLastCycleSnapshot() const override;
   std::unique_ptr<base::Value> GetTypeStatusMap() override;
   const GURL& sync_service_url() const override;
   std::string unrecoverable_error_message() const override;
-  tracked_objects::Location unrecoverable_error_location() const override;
+  base::Location unrecoverable_error_location() const override;
   void AddProtocolEventObserver(
       syncer::ProtocolEventObserver* observer) override;
   void RemoveProtocolEventObserver(
@@ -315,6 +313,7 @@ class ProfileSyncService : public syncer::SyncServiceBase,
   base::WeakPtr<syncer::JsController> GetJsController() override;
   void GetAllNodes(const base::Callback<void(std::unique_ptr<base::ListValue>)>&
                        callback) override;
+  syncer::GlobalIdMapper* GetGlobalIdMapper() const override;
 
   // Add a sync type preference provider. Each provider may only be added once.
   void AddPreferenceProvider(syncer::SyncTypePreferenceProvider* provider);
@@ -331,9 +330,6 @@ class ProfileSyncService : public syncer::SyncServiceBase,
 
   // Returns the SyncableService for syncer::SESSIONS.
   virtual syncer::SyncableService* GetSessionsSyncableService();
-
-  // Returns the SyncableService for syncer::DEVICE_INFO.
-  virtual syncer::SyncableService* GetDeviceInfoSyncableService();
 
   // Returns the ModelTypeSyncBridge for syncer::DEVICE_INFO.
   virtual syncer::ModelTypeSyncBridge* GetDeviceInfoSyncBridge();
@@ -384,8 +380,7 @@ class ProfileSyncService : public syncer::SyncServiceBase,
 
   // SigninManagerBase::Observer implementation.
   void GoogleSigninSucceeded(const std::string& account_id,
-                             const std::string& username,
-                             const std::string& password) override;
+                             const std::string& username) override;
   void GoogleSignedOut(const std::string& account_id,
                        const std::string& username) override;
 
@@ -437,12 +432,16 @@ class ProfileSyncService : public syncer::SyncServiceBase,
   // Returns whether sync is currently allowed on this platform.
   bool IsSyncAllowedByPlatform() const;
 
+  // Whether sync is currently blocked from starting because the sync
+  // confirmation dialog hasn't been confirmed.
+  virtual bool IsSyncConfirmationNeeded() const;
+
   // Returns whether sync is managed, i.e. controlled by configuration
   // management. If so, the user is not allowed to configure sync.
   virtual bool IsManaged() const;
 
   // syncer::UnrecoverableErrorHandler implementation.
-  void OnUnrecoverableError(const tracked_objects::Location& from_here,
+  void OnUnrecoverableError(const base::Location& from_here,
                             const std::string& message) override;
 
   // The functions below (until ActivateDataType()) should only be
@@ -495,8 +494,6 @@ class ProfileSyncService : public syncer::SyncServiceBase,
 
   // Returns true if the syncer is waiting for new datatypes to be encrypted.
   virtual bool encryption_pending() const;
-
-  SigninManagerBase* signin() const;
 
   syncer::SyncErrorController* sync_error_controller() {
     return sync_error_controller_.get();
@@ -557,14 +554,10 @@ class ProfileSyncService : public syncer::SyncServiceBase,
   void SetPlatformSyncAllowedProvider(
       const PlatformSyncAllowedProvider& platform_sync_allowed_provider);
 
-  // Returns a function for |type| that will create a ModelTypeStore that shares
+  // Returns a function  that will create a ModelTypeStore that shares
   // the sync LevelDB backend. |base_path| should be set to profile path.
-  // |sequenced_worker_pool| is obtained from content::BrowserThread or
-  // web::WebThread depending on platform.
   static syncer::ModelTypeStoreFactory GetModelTypeStoreFactory(
-      syncer::ModelType type,
-      const base::FilePath& base_path,
-      base::SequencedWorkerPool* sequenced_worker_pool);
+      const base::FilePath& base_path);
 
   // Needed to test whether the directory is deleted properly.
   base::FilePath GetDirectoryPathForTest() const;
@@ -641,7 +634,7 @@ class ProfileSyncService : public syncer::SyncServiceBase,
   // Helper for OnUnrecoverableError.
   // TODO(tim): Use an enum for |delete_sync_database| here, in ShutdownImpl,
   // and in SyncEngine::Shutdown.
-  void OnUnrecoverableErrorImpl(const tracked_objects::Location& from_here,
+  void OnUnrecoverableErrorImpl(const base::Location& from_here,
                                 const std::string& message,
                                 bool delete_sync_database);
 
@@ -686,15 +679,9 @@ class ProfileSyncService : public syncer::SyncServiceBase,
       bool sync_everything,
       const syncer::ModelTypeSet chosen_types) const;
 
-#if defined(OS_CHROMEOS)
-  // Refresh spare sync bootstrap token for re-enabling the sync service.
-  // Called on successful sign-in notifications.
-  void RefreshSpareBootstrapToken(const std::string& passphrase);
-#endif
-
   // Internal unrecoverable error handler. Used to track error reason via
   // Sync.UnrecoverableErrors histogram.
-  void OnInternalUnrecoverableError(const tracked_objects::Location& from_here,
+  void OnInternalUnrecoverableError(const base::Location& from_here,
                                     const std::string& message,
                                     bool delete_sync_database,
                                     UnrecoverableErrorReason reason);
@@ -727,6 +714,9 @@ class ProfileSyncService : public syncer::SyncServiceBase,
 
   // Check if previous shutdown is shutdown cleanly.
   void ReportPreviousSessionMemoryWarningCount();
+
+  // Estimates and records memory usage histograms per type.
+  void RecordMemoryUsageHistograms();
 
   // After user switches to custom passphrase encryption a set of steps needs to
   // be performed:
@@ -799,7 +789,7 @@ class ProfileSyncService : public syncer::SyncServiceBase,
   // Information describing an unrecoverable error.
   UnrecoverableErrorReason unrecoverable_error_reason_;
   std::string unrecoverable_error_message_;
-  tracked_objects::Location unrecoverable_error_location_;
+  base::Location unrecoverable_error_location_;
 
   // Manages the start and stop of the data types.
   std::unique_ptr<syncer::DataTypeManager> data_type_manager_;
@@ -870,7 +860,6 @@ class ProfileSyncService : public syncer::SyncServiceBase,
 
   // Locally owned SyncableService and ModelTypeSyncBridge implementations.
   std::unique_ptr<sync_sessions::SessionsSyncManager> sessions_sync_manager_;
-  std::unique_ptr<syncer::DeviceInfoSyncService> device_info_sync_service_;
   std::unique_ptr<syncer::DeviceInfoSyncBridge> device_info_sync_bridge_;
 
   std::unique_ptr<syncer::NetworkResources> network_resources_;
@@ -892,6 +881,12 @@ class ProfileSyncService : public syncer::SyncServiceBase,
   // An object that lets us check whether sync is currently allowed on this
   // platform.
   PlatformSyncAllowedProvider platform_sync_allowed_provider_;
+
+  // The factory used to initialize the ModelTypeStore passed to
+  // sync bridges created by the ProfileSyncService. The default factory
+  // creates an on disk leveldb-backed ModelTypeStore; one might override this
+  // default to, e.g., use an in-memory db for unit tests.
+  syncer::ModelTypeStoreFactory model_type_store_factory_;
 
   // This weak factory invalidates its issued pointers when Sync is disabled.
   base::WeakPtrFactory<ProfileSyncService> sync_enabled_weak_factory_;

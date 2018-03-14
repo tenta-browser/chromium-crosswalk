@@ -4,13 +4,15 @@
 
 package org.chromium.chrome.test.util.browser.notifications;
 
+import android.annotation.TargetApi;
 import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationChannelGroup;
+import android.os.Build;
 
-import org.chromium.chrome.browser.notifications.ChannelDefinitions;
 import org.chromium.chrome.browser.notifications.NotificationManagerProxy;
 
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,8 +25,6 @@ import javax.annotation.Nullable;
  */
 public class MockNotificationManagerProxy implements NotificationManagerProxy {
     private static final String KEY_SEPARATOR = ":";
-    private List<ChannelDefinitions.Channel> mChannels;
-    private List<ChannelDefinitions.ChannelGroup> mNotificationChannelGroups;
 
     /**
      * Holds a notification and the arguments passed to #notify and #cancel.
@@ -49,8 +49,6 @@ public class MockNotificationManagerProxy implements NotificationManagerProxy {
     public MockNotificationManagerProxy() {
         mNotifications = new LinkedHashMap<>();
         mMutationCount = 0;
-        mChannels = new ArrayList<>();
-        mNotificationChannelGroups = new ArrayList<>();
     }
 
     /**
@@ -61,7 +59,7 @@ public class MockNotificationManagerProxy implements NotificationManagerProxy {
      * @return List of the managed notifications.
      */
     public List<NotificationEntry> getNotifications() {
-        return new ArrayList<NotificationEntry>(mNotifications.values());
+        return new ArrayList<>(mNotifications.values());
     }
 
     /**
@@ -97,41 +95,6 @@ public class MockNotificationManagerProxy implements NotificationManagerProxy {
     }
 
     @Override
-    public void createNotificationChannel(ChannelDefinitions.Channel channel) {
-        mChannels.add(channel);
-    }
-
-    public List<ChannelDefinitions.Channel> getChannels() {
-        return mChannels;
-    }
-
-    @Override
-    public void createNotificationChannelGroup(ChannelDefinitions.ChannelGroup channelGroup) {
-        mNotificationChannelGroups.add(channelGroup);
-    }
-
-    public List<ChannelDefinitions.ChannelGroup> getNotificationChannelGroups() {
-        return mNotificationChannelGroups;
-    }
-
-    @Override
-    public List<String> getNotificationChannelIds() {
-        List<String> channelIds = new ArrayList<>();
-        for (ChannelDefinitions.Channel channel : mChannels) {
-            channelIds.add(channel.mId);
-        }
-        return channelIds;
-    }
-
-    @Override
-    public void deleteNotificationChannel(@ChannelDefinitions.ChannelId String id) {
-        for (Iterator<ChannelDefinitions.Channel> it = mChannels.iterator(); it.hasNext();) {
-            ChannelDefinitions.Channel channel = it.next();
-            if (id.equals(channel.mId)) it.remove();
-        }
-    }
-
-    @Override
     public void notify(int id, Notification notification) {
         notify(null /* tag */, id, notification);
     }
@@ -147,4 +110,41 @@ public class MockNotificationManagerProxy implements NotificationManagerProxy {
         if (tag != null) key += KEY_SEPARATOR + tag;
         return key;
     }
+
+    // The following Channel methods are not implemented because a naive implementation would
+    // have compatibility issues (NotificationChannel is new in O), and we currently don't need them
+    // where the MockNotificationManagerProxy is used in tests.
+
+    @TargetApi(Build.VERSION_CODES.O)
+    @Override
+    public void createNotificationChannel(NotificationChannel channel) {}
+
+    @TargetApi(Build.VERSION_CODES.O)
+    @Override
+    public void createNotificationChannelGroup(NotificationChannelGroup channelGroup) {}
+
+    @TargetApi(Build.VERSION_CODES.O)
+    @Override
+    public List<NotificationChannel> getNotificationChannels() {
+        return null;
+    }
+
+    @Override
+    @TargetApi(Build.VERSION_CODES.O)
+    public List<NotificationChannelGroup> getNotificationChannelGroups() {
+        return null;
+    }
+
+    @TargetApi(Build.VERSION_CODES.O)
+    @Override
+    public void deleteNotificationChannel(String id) {}
+
+    @TargetApi(Build.VERSION_CODES.O)
+    @Override
+    public NotificationChannel getNotificationChannel(String channelId) {
+        return null;
+    }
+
+    @Override
+    public void deleteNotificationChannelGroup(String groupId) {}
 }

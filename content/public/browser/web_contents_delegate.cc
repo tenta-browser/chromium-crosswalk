@@ -4,6 +4,8 @@
 
 #include "content/public/browser/web_contents_delegate.h"
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
@@ -14,7 +16,6 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/bindings_policy.h"
 #include "content/public/common/url_constants.h"
-#include "net/cert/x509_certificate.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace content {
@@ -89,29 +90,6 @@ bool WebContentsDelegate::HandleContextMenu(
   return false;
 }
 
-void WebContentsDelegate::ViewSourceForTab(WebContents* source,
-                                           const GURL& page_url) {
-  // Fall back implementation based entirely on the view-source scheme.
-  // It suffers from http://crbug.com/523 and that is why browser overrides
-  // it with proper implementation.
-  GURL url = GURL(kViewSourceScheme + std::string(":") + page_url.spec());
-  OpenURLFromTab(
-      source,
-      OpenURLParams(url, Referrer(), WindowOpenDisposition::NEW_FOREGROUND_TAB,
-                    ui::PAGE_TRANSITION_LINK, false));
-}
-
-void WebContentsDelegate::ViewSourceForFrame(WebContents* source,
-                                             const GURL& frame_url,
-                                             const PageState& page_state) {
-  // Same as ViewSourceForTab, but for given subframe.
-  GURL url = GURL(kViewSourceScheme + std::string(":") + frame_url.spec());
-  OpenURLFromTab(
-      source,
-      OpenURLParams(url, Referrer(), WindowOpenDisposition::NEW_FOREGROUND_TAB,
-                    ui::PAGE_TRANSITION_LINK, false));
-}
-
 KeyboardEventProcessingResult WebContentsDelegate::PreHandleKeyboardEvent(
     WebContents* source,
     const NativeWebKeyboardEvent& event) {
@@ -137,6 +115,7 @@ bool WebContentsDelegate::OnGoToEntryOffset(int offset) {
 
 bool WebContentsDelegate::ShouldCreateWebContents(
     WebContents* web_contents,
+    RenderFrameHost* opener,
     SiteInstance* source_site_instance,
     int32_t route_id,
     int32_t main_frame_route_id,
@@ -216,6 +195,8 @@ WebContentsDelegate::GetContentVideoViewEmbedder() {
 bool WebContentsDelegate::ShouldBlockMediaRequest(const GURL& url) {
   return false;
 }
+
+void WebContentsDelegate::SetOverlayMode(bool use_overlay_mode) {}
 #endif
 
 bool WebContentsDelegate::RequestPpapiBrokerPermission(
@@ -245,7 +226,7 @@ void WebContentsDelegate::Detach(WebContents* web_contents) {
 }
 
 gfx::Size WebContentsDelegate::GetSizeForNewRenderView(
-   WebContents* web_contents) const {
+    WebContents* web_contents) const {
   return gfx::Size();
 }
 
@@ -263,11 +244,6 @@ blink::WebSecurityStyle WebContentsDelegate::GetSecurityStyle(
   return blink::kWebSecurityStyleUnknown;
 }
 
-void WebContentsDelegate::ShowCertificateViewerInDevTools(
-    WebContents* web_contents,
-    scoped_refptr<net::X509Certificate> certificate) {
-}
-
 void WebContentsDelegate::RequestAppBannerFromDevTools(
     content::WebContents* web_contents) {
 }
@@ -278,6 +254,18 @@ bool WebContentsDelegate::ShouldAllowRunningInsecureContent(
     const url::Origin& origin,
     const GURL& resource_url) {
   return allowed_per_prefs;
+}
+
+int WebContentsDelegate::GetTopControlsHeight() const {
+  return 0;
+}
+
+int WebContentsDelegate::GetBottomControlsHeight() const {
+  return 0;
+}
+
+bool WebContentsDelegate::DoBrowserControlsShrinkBlinkSize() const {
+  return false;
 }
 
 }  // namespace content

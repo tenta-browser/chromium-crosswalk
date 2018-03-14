@@ -15,26 +15,18 @@ namespace payments {
 
 class PaymentMethodViewControllerTest : public PaymentRequestBrowserTestBase {
  protected:
-  PaymentMethodViewControllerTest()
-      : PaymentRequestBrowserTestBase(
-            "/payment_request_no_shipping_test.html") {}
+  PaymentMethodViewControllerTest() {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PaymentMethodViewControllerTest);
 };
 
-IN_PROC_BROWSER_TEST_F(PaymentMethodViewControllerTest, EmptyList) {
-  InvokePaymentRequestUI();
-  OpenPaymentMethodScreen();
-
-  views::View* list_view = dialog_view()->GetViewByID(
-      static_cast<int>(DialogViewID::PAYMENT_METHOD_SHEET_LIST_VIEW));
-  EXPECT_TRUE(list_view);
-  EXPECT_FALSE(list_view->has_children());
-}
-
 IN_PROC_BROWSER_TEST_F(PaymentMethodViewControllerTest, OneCardSelected) {
-  const autofill::CreditCard card = autofill::test::GetCreditCard();
+  NavigateTo("/payment_request_no_shipping_test.html");
+  autofill::AutofillProfile billing_profile(autofill::test::GetFullProfile());
+  AddAutofillProfile(billing_profile);
+  autofill::CreditCard card = autofill::test::GetCreditCard();
+  card.set_billing_address_id(billing_profile.guid());
   AddCreditCard(card);
 
   InvokePaymentRequestUI();
@@ -57,7 +49,13 @@ IN_PROC_BROWSER_TEST_F(PaymentMethodViewControllerTest, OneCardSelected) {
 
 IN_PROC_BROWSER_TEST_F(PaymentMethodViewControllerTest,
                        OneCardSelectedOutOfMany) {
+  NavigateTo("/payment_request_no_shipping_test.html");
+  autofill::AutofillProfile billing_profile(autofill::test::GetFullProfile());
+  AddAutofillProfile(billing_profile);
+
   autofill::CreditCard card1 = autofill::test::GetCreditCard();
+  card1.set_billing_address_id(billing_profile.guid());
+
   // Ensure that this card is the first suggestion.
   card1.set_use_count(5U);
   AddCreditCard(card1);
@@ -65,6 +63,7 @@ IN_PROC_BROWSER_TEST_F(PaymentMethodViewControllerTest,
   // Slightly different visa.
   autofill::CreditCard card2 = autofill::test::GetCreditCard();
   card2.SetNumber(base::ASCIIToUTF16("4111111111111112"));
+  card2.set_billing_address_id(billing_profile.guid());
   card2.set_use_count(1U);
   AddCreditCard(card2);
 
@@ -91,7 +90,7 @@ IN_PROC_BROWSER_TEST_F(PaymentMethodViewControllerTest,
       static_cast<int>(DialogViewID::CHECKMARK_VIEW));
   EXPECT_FALSE(checkmark_view2->visible());
 
-  ResetEventObserver(DialogEvent::BACK_NAVIGATION);
+  ResetEventWaiter(DialogEvent::BACK_NAVIGATION);
   // Simulate selecting the second card.
   ClickOnDialogViewAndWait(list_view->child_at(1));
 
@@ -101,18 +100,33 @@ IN_PROC_BROWSER_TEST_F(PaymentMethodViewControllerTest,
   OpenPaymentMethodScreen();
   list_view = dialog_view()->GetViewByID(
       static_cast<int>(DialogViewID::PAYMENT_METHOD_SHEET_LIST_VIEW));
-  // Clicking on the second card again should not modify any state.
-  ClickOnDialogViewAndWait(list_view->child_at(1));
 
-  checkmark_view = list_view->child_at(0)->GetViewByID(
-      static_cast<int>(DialogViewID::CHECKMARK_VIEW));
-  checkmark_view2 = list_view->child_at(1)->GetViewByID(
-      static_cast<int>(DialogViewID::CHECKMARK_VIEW));
-  EXPECT_FALSE(checkmark_view->visible());
-  EXPECT_TRUE(checkmark_view2->visible());
+  ResetEventWaiter(DialogEvent::BACK_NAVIGATION);
+  // Clicking on the second card again should not modify any state, and should
+  // return to the main payment sheet.
+  ClickOnDialogViewAndWait(list_view->child_at(1));
 
   EXPECT_EQ(request->state()->available_instruments().back().get(),
             request->state()->selected_instrument());
+}
+
+IN_PROC_BROWSER_TEST_F(PaymentMethodViewControllerTest, EditButtonOpensEditor) {
+  NavigateTo("/payment_request_no_shipping_test.html");
+  AddCreditCard(autofill::test::GetCreditCard());
+
+  InvokePaymentRequestUI();
+  OpenPaymentMethodScreen();
+
+  views::View* list_view = dialog_view()->GetViewByID(
+      static_cast<int>(DialogViewID::PAYMENT_METHOD_SHEET_LIST_VIEW));
+  EXPECT_TRUE(list_view);
+  EXPECT_EQ(1, list_view->child_count());
+
+  views::View* edit_button = list_view->child_at(0)->GetViewByID(
+      static_cast<int>(DialogViewID::EDIT_ITEM_BUTTON));
+
+  ResetEventWaiter(DialogEvent::CREDIT_CARD_EDITOR_OPENED);
+  ClickOnDialogViewAndWait(edit_button);
 }
 
 }  // namespace payments

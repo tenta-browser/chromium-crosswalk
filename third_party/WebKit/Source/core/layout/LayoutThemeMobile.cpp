@@ -25,32 +25,29 @@
 
 #include "core/layout/LayoutThemeMobile.h"
 
+#include "build/build_config.h"
 #include "core/style/ComputedStyle.h"
+#include "platform/DataResourceHelper.h"
 #include "platform/LayoutTestSupport.h"
-#include "platform/PlatformResourceLoader.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebThemeEngine.h"
 
 namespace blink {
 
-PassRefPtr<LayoutTheme> LayoutThemeMobile::Create() {
-  return AdoptRef(new LayoutThemeMobile());
+scoped_refptr<LayoutTheme> LayoutThemeMobile::Create() {
+  return base::AdoptRef(new LayoutThemeMobile());
 }
 
 LayoutThemeMobile::~LayoutThemeMobile() {}
 
 String LayoutThemeMobile::ExtraDefaultStyleSheet() {
   return LayoutThemeDefault::ExtraDefaultStyleSheet() +
-         LoadResourceAsASCIIString("themeChromiumLinux.css") +
-         LoadResourceAsASCIIString("themeChromiumAndroid.css");
-}
-
-String LayoutThemeMobile::ExtraMediaControlsStyleSheet() {
-  return LoadResourceAsASCIIString("mediaControlsAndroid.css");
+         GetDataResourceAsASCIIString("themeChromiumLinux.css") +
+         GetDataResourceAsASCIIString("themeChromiumAndroid.css");
 }
 
 String LayoutThemeMobile::ExtraFullscreenStyleSheet() {
-  return LoadResourceAsASCIIString("fullscreenAndroid.css");
+  return GetDataResourceAsASCIIString("fullscreenAndroid.css");
 }
 
 void LayoutThemeMobile::AdjustInnerSpinButtonStyle(ComputedStyle& style) const {
@@ -68,7 +65,7 @@ void LayoutThemeMobile::AdjustInnerSpinButtonStyle(ComputedStyle& style) const {
 
 bool LayoutThemeMobile::ShouldUseFallbackTheme(
     const ComputedStyle& style) const {
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
   // Mac WebThemeEngine cannot handle these controls.
   ControlPart part = style.Appearance();
   if (part == kCheckboxPart || part == kRadioPart)

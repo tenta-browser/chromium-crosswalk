@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_UI_APP_LIST_APP_LIST_CONTROLLER_DELEGATE_H_
 #define CHROME_BROWSER_UI_APP_LIST_APP_LIST_CONTROLLER_DELEGATE_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "chrome/common/extensions/extension_constants.h"
@@ -50,16 +52,19 @@ class AppListControllerDelegate {
   // Dismisses the view.
   virtual void DismissView() = 0;
 
-  // Handle the view being closed.
+  // Handles the view being closed.
   virtual void ViewClosing();
 
-  // Get app list window.
+  // Gets app list window.
   virtual gfx::NativeWindow GetAppListWindow() = 0;
 
-  // Get the content bounds of the app list in the screen. On platforms that
-  // use views, this returns the bounds of the AppListView. Without views, this
-  // returns a 0x0 rectangle.
-  virtual gfx::Rect GetAppListBounds();
+  // Gets display ID of app list window.
+  int64_t GetAppListDisplayId();
+
+  // Gets the content bounds of the app info dialog of the app list in the
+  // screen coordinates. On platforms that do not use views, this returns a 0x0
+  // rectangle.
+  virtual gfx::Rect GetAppInfoDialogBounds();
 
   // Control of pinning apps.
   virtual bool IsAppPinned(const std::string& app_id) = 0;
@@ -99,11 +104,12 @@ class AppListControllerDelegate {
                            AppListSource source,
                            int event_flags) = 0;
 
-  // Launch the app.
+  // Launch the app on the display identified by |display_id|.
   virtual void LaunchApp(Profile* profile,
                          const extensions::Extension* extension,
                          AppListSource source,
-                         int event_flags) = 0;
+                         int event_flags,
+                         int64_t display_id) = 0;
 
   static std::string AppListSourceToString(AppListSource source);
 

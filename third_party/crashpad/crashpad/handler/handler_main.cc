@@ -61,6 +61,7 @@
 #include "base/mac/scoped_mach_port.h"
 #include "handler/mac/crash_report_exception_handler.h"
 #include "handler/mac/exception_handler_server.h"
+#include "handler/mac/file_limit_annotation.h"
 #include "util/mach/child_port_handshake.h"
 #include "util/mach/mach_extensions.h"
 #include "util/posix/close_stdio.h"
@@ -109,6 +110,10 @@ void Usage(const base::FilePath& me) {
 "                              set a module annotation in the handler\n"
 "      --monitor-self-argument=ARGUMENT\n"
 "                              provide additional arguments to the second handler\n"
+"      --no-identify-client-via-url\n"
+"                              when uploading crash report, don't add\n"
+"                              client-identifying arguments to URL\n"
+"      --no-periodic-tasks     don't scan for new reports or prune the database\n"
 "      --no-rate-limit         don't rate limit crash uploads\n"
 "      --no-upload-gzip        don't use gzip compression when uploading\n"
 #if defined(OS_WIN)
@@ -141,7 +146,9 @@ struct Options {
   std::string pipe_name;
   InitialClientData initial_client_data;
 #endif  // OS_MACOSX
+  bool identify_client_via_url;
   bool monitor_self;
+  bool periodic_tasks;
   bool rate_limit;
   bool upload_gzip;
 };
@@ -353,6 +360,10 @@ void MonitorSelf(const Options& options) {
     return;
   }
   std::vector<std::string> extra_arguments(options.monitor_self_arguments);
+  if (!options.identify_client_via_url) {
+    extra_arguments.push_back("--no-identify-client-via-url");
+  }
+  extra_arguments.push_back("--no-periodic-tasks");
   if (!options.rate_limit) {
     extra_arguments.push_back("--no-rate-limit");
   }
@@ -416,6 +427,8 @@ int HandlerMain(int argc,
     kOptionMonitorSelf,
     kOptionMonitorSelfAnnotation,
     kOptionMonitorSelfArgument,
+    kOptionNoIdentifyClientViaUrl,
+    kOptionNoPeriodicTasks,
     kOptionNoRateLimit,
     kOptionNoUploadGzip,
 #if defined(OS_WIN)
@@ -431,7 +444,7 @@ int HandlerMain(int argc,
     kOptionVersion = -3,
   };
 
-  const option long_options[] = {
+  static constexpr option long_options[] = {
     {"annotation", required_argument, nullptr, kOptionAnnotation},
     {"database", required_argument, nullptr, kOptionDatabase},
 #if defined(OS_MACOSX)
@@ -456,6 +469,11 @@ int HandlerMain(int argc,
      required_argument,
      nullptr,
      kOptionMonitorSelfArgument},
+    {"no-identify-client-via-url",
+     no_argument,
+     nullptr,
+     kOptionNoIdentifyClientViaUrl},
+    {"no-periodic-tasks", no_argument, nullptr, kOptionNoPeriodicTasks},
     {"no-rate-limit", no_argument, nullptr, kOptionNoRateLimit},
     {"no-upload-gzip", no_argument, nullptr, kOptionNoUploadGzip},
 #if defined(OS_WIN)
@@ -477,6 +495,8 @@ int HandlerMain(int argc,
 #if defined(OS_MACOSX)
   options.handshake_fd = -1;
 #endif
+  options.identify_client_via_url = true;
+  options.periodic_tasks = true;
   options.rate_limit = true;
   options.upload_gzip = true;
 
@@ -538,6 +558,14 @@ int HandlerMain(int argc,
       }
       case kOptionMonitorSelfArgument: {
         options.monitor_self_arguments.push_back(optarg);
+        break;
+      }
+      case kOptionNoIdentifyClientViaUrl: {
+        options.identify_client_via_url = false;
+        break;
+      }
+      case kOptionNoPeriodicTasks: {
+        options.periodic_tasks = false;
         break;
       }
       case kOptionNoRateLimit: {
@@ -687,6 +715,8 @@ int HandlerMain(int argc,
       reset_sigterm.reset(&old_sigterm_action);
     }
   }
+
+  RecordFileLimitAnnotation();
 #elif defined(OS_WIN)
   // Shut down as late as possible relative to programs we're watching.
   if (!SetProcessShutdownParameters(0x100, SHUTDOWN_NORETRY))
@@ -701,8 +731,8 @@ int HandlerMain(int argc,
 
   base::GlobalHistogramAllocator* histogram_allocator = nullptr;
   if (!options.metrics_dir.empty()) {
-    static const char kMetricsName[] = "CrashpadMetrics";
-    const size_t kMetricsFileSize = 1 << 20;
+    static constexpr char kMetricsName[] = "CrashpadMetrics";
+    constexpr size_t kMetricsFileSize = 1 << 20;
     if (base::GlobalHistogramAllocator::CreateWithActiveFileInDir(
             options.metrics_dir, kMetricsFileSize, 0, kMetricsName)) {
       histogram_allocator = base::GlobalHistogramAllocator::Get();
@@ -721,13 +751,23 @@ int HandlerMain(int argc,
   // TODO(scottmg): options.rate_limit should be removed when we have a
   // configurable database setting to control upload limiting.
   // See https://crashpad.chromium.org/bug/23.
-  CrashReportUploadThread upload_thread(
-      database.get(), options.url, options.rate_limit, options.upload_gzip);
+  CrashReportUploadThread::Options upload_thread_options;
+  upload_thread_options.identify_client_via_url =
+      options.identify_client_via_url;
+  upload_thread_options.rate_limit = options.rate_limit;
+  upload_thread_options.upload_gzip = options.upload_gzip;
+  upload_thread_options.watch_pending_reports = options.periodic_tasks;
+  CrashReportUploadThread upload_thread(database.get(),
+                                        options.url,
+                                        upload_thread_options);
   upload_thread.Start();
 
-  PruneCrashReportThread prune_thread(database.get(),
-                                      PruneCondition::GetDefault());
-  prune_thread.Start();
+  std::unique_ptr<PruneCrashReportThread> prune_thread;
+  if (options.periodic_tasks) {
+    prune_thread.reset(new PruneCrashReportThread(
+        database.get(), PruneCondition::GetDefault()));
+    prune_thread->Start();
+  }
 
   CrashReportExceptionHandler exception_handler(database.get(),
                                                 &upload_thread,
@@ -744,7 +784,9 @@ int HandlerMain(int argc,
   exception_handler_server.Run(&exception_handler);
 
   upload_thread.Stop();
-  prune_thread.Stop();
+  if (prune_thread) {
+    prune_thread->Stop();
+  }
 
   return EXIT_SUCCESS;
 }

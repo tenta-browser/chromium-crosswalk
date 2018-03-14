@@ -18,6 +18,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
@@ -28,12 +29,16 @@
 #include "ios/web/webui/url_data_source_ios_impl.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
+#include "net/filter/gzip_source_stream.h"
+#include "net/filter/source_stream.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_job.h"
 #include "net/url_request/url_request_job_factory.h"
+#include "ui/base/template_expressions.h"
+#include "ui/base/webui/i18n_source_stream.h"
 #include "url/url_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -53,17 +58,12 @@ const char kChromeURLContentSecurityPolicyHeaderBase[] =
 
 const char kChromeURLXFrameOptionsHeader[] = "X-Frame-Options: DENY";
 
-bool SchemeIsInSchemes(const std::string& scheme,
-                       const std::vector<std::string>& schemes) {
-  return std::find(schemes.begin(), schemes.end(), scheme) != schemes.end();
-}
-
 // Returns whether |url| passes some sanity checks and is a valid GURL.
 bool CheckURLIsValid(const GURL& url) {
   std::vector<std::string> additional_schemes;
   DCHECK(GetWebClient()->IsAppSpecificURL(url) ||
          (GetWebClient()->GetAdditionalWebUISchemes(&additional_schemes),
-          SchemeIsInSchemes(url.scheme(), additional_schemes)));
+          base::ContainsValue(additional_schemes, url.scheme())));
 
   if (!url.is_valid()) {
     NOTREACHED();
@@ -104,11 +104,12 @@ class URLRequestChromeJob : public net::URLRequestJob {
   void Kill() override;
   int ReadRawData(net::IOBuffer* buf, int buf_size) override;
   bool GetMimeType(std::string* mime_type) const override;
-  int GetResponseCode() const override;
   void GetResponseInfo(net::HttpResponseInfo* info) override;
+  std::unique_ptr<net::SourceStream> SetUpSourceStream() override;
 
   // Used to notify that the requested data's |mime_type| is ready.
-  void MimeTypeAvailable(const std::string& mime_type);
+  void MimeTypeAvailable(URLDataSourceIOSImpl* source,
+                         const std::string& mime_type);
 
   // Called by ChromeURLDataManagerIOS to notify us that the data blob is ready
   // for us.
@@ -132,6 +133,12 @@ class URLRequestChromeJob : public net::URLRequestJob {
 
   void set_deny_xframe_options(bool deny_xframe_options) {
     deny_xframe_options_ = deny_xframe_options;
+  }
+
+  void set_is_gzipped(bool is_gzipped) { is_gzipped_ = is_gzipped; }
+
+  void set_replacements(const ui::TemplateReplacements* replacements) {
+    replacements_ = replacements;
   }
 
   void set_send_content_type_header(bool send_content_type_header) {
@@ -175,6 +182,14 @@ class URLRequestChromeJob : public net::URLRequestJob {
   // If true, sets  the "X-Frame-Options: DENY" header.
   bool deny_xframe_options_;
 
+  // True when gzip encoding should be used. NOTE: this requires the original
+  // resources in resources.pak use compress="gzip".
+  bool is_gzipped_;
+
+  // Replacement dictionary for i18n. Owned by |backend_| and so guaranteed to
+  // outlive us.
+  const ui::TemplateReplacements* replacements_;
+
   // If true, sets the "Content-Type: <mime-type>" header.
   bool send_content_type_header_;
 
@@ -205,6 +220,8 @@ URLRequestChromeJob::URLRequestChromeJob(net::URLRequest* request,
       content_security_policy_object_source_("object-src 'none';"),
       content_security_policy_frame_source_("frame-src 'none';"),
       deny_xframe_options_(true),
+      is_gzipped_(false),
+      replacements_(nullptr),
       send_content_type_header_(false),
       is_incognito_(is_incognito),
       browser_state_(browser_state),
@@ -250,10 +267,6 @@ bool URLRequestChromeJob::GetMimeType(std::string* mime_type) const {
   return !mime_type_.empty();
 }
 
-int URLRequestChromeJob::GetResponseCode() const {
-  return net::HTTP_OK;
-}
-
 void URLRequestChromeJob::GetResponseInfo(net::HttpResponseInfo* info) {
   DCHECK(!info->headers.get());
   // Set the headers so that requests serviced by ChromeURLDataManagerIOS
@@ -275,6 +288,9 @@ void URLRequestChromeJob::GetResponseInfo(net::HttpResponseInfo* info) {
   if (deny_xframe_options_)
     info->headers->AddHeader(kChromeURLXFrameOptionsHeader);
 
+  if (is_gzipped_)
+    info->headers->AddHeader("Content-Encoding: gzip");
+
   if (!allow_caching_)
     info->headers->AddHeader("Cache-Control: no-cache");
 
@@ -285,8 +301,30 @@ void URLRequestChromeJob::GetResponseInfo(net::HttpResponseInfo* info) {
   }
 }
 
-void URLRequestChromeJob::MimeTypeAvailable(const std::string& mime_type) {
+std::unique_ptr<net::SourceStream> URLRequestChromeJob::SetUpSourceStream() {
+  std::unique_ptr<net::SourceStream> source_stream =
+      net::URLRequestJob::SetUpSourceStream();
+
+  if (is_gzipped_) {
+    source_stream = net::GzipSourceStream::Create(std::move(source_stream),
+                                                  net::SourceStream::TYPE_GZIP);
+  }
+
+  if (replacements_) {
+    source_stream = ui::I18nSourceStream::Create(
+        std::move(source_stream), net::SourceStream::TYPE_NONE, replacements_);
+  }
+
+  return source_stream;
+}
+
+void URLRequestChromeJob::MimeTypeAvailable(URLDataSourceIOSImpl* source,
+                                            const std::string& mime_type) {
   set_mime_type(mime_type);
+
+  if (mime_type == "text/html")
+    set_replacements(source->GetReplacements());
+
   NotifyHeadersComplete();
 }
 
@@ -346,9 +384,9 @@ void GetMimeTypeOnUI(URLDataSourceIOSImpl* source,
                      const base::WeakPtr<URLRequestChromeJob>& job) {
   DCHECK_CURRENTLY_ON(WebThread::UI);
   std::string mime_type = source->source()->GetMimeType(path);
-  WebThread::PostTask(
-      WebThread::IO, FROM_HERE,
-      base::Bind(&URLRequestChromeJob::MimeTypeAvailable, job, mime_type));
+  WebThread::PostTask(WebThread::IO, FROM_HERE,
+                      base::Bind(&URLRequestChromeJob::MimeTypeAvailable, job,
+                                 base::RetainedRef(source), mime_type));
 }
 
 }  // namespace
@@ -440,12 +478,11 @@ bool URLDataManagerIOSBackend::StartRequest(const net::URLRequest* request,
   if (!source)
     return false;
 
-  if (!source->source()->ShouldServiceRequest(request))
+  if (!source->source()->ShouldServiceRequest(request->url()))
     return false;
 
   std::string path;
   URLToRequestPath(request->url(), &path);
-  source->source()->WillServiceRequest(request, &path);
 
   // Save this request so we know where to send the data.
   RequestID request_id = next_request_id_++;
@@ -457,6 +494,7 @@ bool URLDataManagerIOSBackend::StartRequest(const net::URLRequest* request,
       source->source()->GetContentSecurityPolicyObjectSrc());
   job->set_content_security_policy_frame_source("frame-src 'none';");
   job->set_deny_xframe_options(source->source()->ShouldDenyXFrameOptions());
+  job->set_is_gzipped(source->source()->IsGzipped(path));
   job->set_send_content_type_header(false);
 
   // Forward along the request to the data source.
@@ -472,7 +510,7 @@ bool URLDataManagerIOSBackend::StartRequest(const net::URLRequest* request,
 
   target_runner->PostTask(
       FROM_HERE, base::Bind(&URLDataManagerIOSBackend::CallStartRequest,
-                            make_scoped_refptr(source), path, request_id));
+                            base::WrapRefCounted(source), path, request_id));
   return true;
 }
 

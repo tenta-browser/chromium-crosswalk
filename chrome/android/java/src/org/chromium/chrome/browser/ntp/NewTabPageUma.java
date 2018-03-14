@@ -11,15 +11,11 @@ import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.IntentHandler;
-import org.chromium.chrome.browser.UrlConstants;
-import org.chromium.chrome.browser.ntp.snippets.SnippetsBridge;
 import org.chromium.chrome.browser.rappor.RapporServiceBridge;
-import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.util.UrlUtilities;
-import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.base.PageTransition;
 
 import java.lang.annotation.Retention;
@@ -87,11 +83,16 @@ public final class NewTabPageUma {
     /** The number of possible NTP impression types */
     private static final int NUM_NTP_IMPRESSION = 2;
 
+    /** The maximal number of suggestions per section. Keep in sync with kMaxSuggestionsPerCategory
+     * in content_suggestions_metrics.cc. */
+    private static final int MAX_SUGGESTIONS_PER_SECTION = 20;
+
     /**
      * Possible results when sizing the NewTabPageLayout.
      * Do not remove or change existing values other than NUM_NTP_LAYOUT_RESULTS.
      */
-    @IntDef({NTP_LAYOUT_DOES_NOT_FIT, NTP_LAYOUT_FITS_WITHOUT_FIELD_TRIAL,
+    @IntDef({NTP_LAYOUT_DOES_NOT_FIT, NTP_LAYOUT_DOES_NOT_FIT_PUSH_MOST_LIKELY,
+            NTP_LAYOUT_FITS_NO_FIELD_TRIAL, NTP_LAYOUT_FITS_WITHOUT_FIELD_TRIAL,
             NTP_LAYOUT_FITS_WITH_FIELD_TRIAL, NTP_LAYOUT_CONDENSED, NUM_NTP_LAYOUT_RESULTS})
     @Retention(RetentionPolicy.SOURCE)
     public @interface NTPLayoutResult {}
@@ -258,16 +259,6 @@ public final class NewTabPageUma {
     }
 
     /**
-     * Records stats related to content suggestion visits, such as the time spent on the website, or
-     * if the user comes back to the NTP.
-     * @param tab Tab opened to load a content suggestion.
-     * @param category The category of the content suggestion.
-     */
-    public static void monitorContentSuggestionVisit(Tab tab, int category) {
-        tab.addObserver(new SnippetVisitRecorder(category));
-    }
-
-    /**
      * Records how often new tabs with a NewTabPage are created. This helps to determine how often
      * users navigate back to already opened NTPs.
      * @param tabModelSelector Model selector controlling the creation of new tabs.
@@ -319,6 +310,27 @@ public final class NewTabPageUma {
     }
 
     /**
+     * Records number of prefetched article suggestions, which were available when content
+     * suggestions surface was opened and there was no network connection.
+     */
+    public static void recordPrefetchedArticleSuggestionsCount(int count) {
+        RecordHistogram.recordEnumeratedHistogram(
+                "NewTabPage.ContentSuggestions.CountOnNtpOpenedIfVisible."
+                        + "Articles.Prefetched.Offline2",
+                count, MAX_SUGGESTIONS_PER_SECTION);
+    }
+
+    /**
+     * Records position of a prefetched article suggestion, which was seen by the user on the
+     * suggestions surface when there was no network connection.
+     */
+    public static void recordPrefetchedArticleSuggestionImpressionPosition(int positionInSection) {
+        RecordHistogram.recordEnumeratedHistogram("NewTabPage.ContentSuggestions.Shown.Articles."
+                        + "Prefetched.Offline2",
+                positionInSection, MAX_SUGGESTIONS_PER_SECTION);
+    }
+
+    /**
      * Records the number of new NTPs opened in a new tab. Use through
      * {@link NewTabPageUma#monitorNTPCreation(TabModelSelector)}.
      */
@@ -327,64 +339,6 @@ public final class NewTabPageUma {
         public void onNewTabCreated(Tab tab) {
             if (!NewTabPage.isNTPUrl(tab.getUrl())) return;
             RecordUserAction.record("MobileNTPOpenedInNewTab");
-        }
-    }
-
-    /**
-     * Records stats related to content suggestion visits, such as the time spent on the website, or
-     * if the user comes back to the NTP. Use through
-     * {@link NewTabPageUma#monitorContentSuggestionVisit(Tab, int)}.
-     */
-    private static class SnippetVisitRecorder extends EmptyTabObserver {
-        private final int mCategory;
-        private final long mStartTimeMs = SystemClock.elapsedRealtime();
-
-        private SnippetVisitRecorder(int category) {
-            mCategory = category;
-        }
-
-        @Override
-        public void onHidden(Tab tab) {
-            endRecording(tab);
-        }
-
-        @Override
-        public void onDestroyed(Tab tab) {
-            endRecording(null);
-        }
-
-        @Override
-        public void onUpdateUrl(Tab tab, String url) {
-            // onLoadUrl below covers many exit conditions to stop recording but not all,
-            // such as navigating back. We therefore stop recording if a URL change
-            // indicates some non-Web page was visited.
-            if (!url.startsWith(UrlConstants.CHROME_URL_PREFIX)
-                    && !url.startsWith(UrlConstants.CHROME_NATIVE_URL_PREFIX)) {
-                assert !NewTabPage.isNTPUrl(url);
-                return;
-            }
-            if (NewTabPage.isNTPUrl(url)) {
-                RecordUserAction.record("MobileNTP.Snippets.VisitEndBackInNTP");
-            }
-            endRecording(tab);
-        }
-
-        @Override
-        public void onLoadUrl(Tab tab, LoadUrlParams params, int loadType) {
-            // End recording if a new URL gets loaded e.g. after entering a new query in
-            // the omnibox. This doesn't cover the navigate-back case so we also need
-            // onUpdateUrl.
-            int transitionTypeMask = PageTransition.FROM_ADDRESS_BAR | PageTransition.HOME_PAGE
-                    | PageTransition.CHAIN_START | PageTransition.CHAIN_END;
-
-            if ((params.getTransitionType() & transitionTypeMask) != 0) endRecording(tab);
-        }
-
-        private void endRecording(Tab removeObserverFromTab) {
-            if (removeObserverFromTab != null) removeObserverFromTab.removeObserver(this);
-            RecordUserAction.record("MobileNTP.Snippets.VisitEnd");
-            long visitTimeMs = SystemClock.elapsedRealtime() - mStartTimeMs;
-            SnippetsBridge.onSuggestionTargetVisited(mCategory, visitTimeMs);
         }
     }
 }

@@ -39,7 +39,7 @@ namespace blink {
 using namespace HTMLNames;
 
 inline HTMLTemplateElement::HTMLTemplateElement(Document& document)
-    : HTMLElement(templateTag, document), content_(this, nullptr) {}
+    : HTMLElement(templateTag, document) {}
 
 DEFINE_NODE_FACTORY(HTMLTemplateElement)
 
@@ -60,7 +60,7 @@ Node* HTMLTemplateElement::cloneNode(bool deep, ExceptionState&) {
 
   Node* clone = CloneElementWithChildren();
   if (content_)
-    content()->CloneChildNodes(toHTMLTemplateElement(clone)->content());
+    content()->CloneChildNodes(ToHTMLTemplateElement(clone)->content());
   return clone;
 }
 
@@ -71,12 +71,13 @@ void HTMLTemplateElement::DidMoveToNewDocument(Document& old_document) {
   GetDocument().EnsureTemplateDocument().AdoptIfNeeded(*content_);
 }
 
-DEFINE_TRACE(HTMLTemplateElement) {
+void HTMLTemplateElement::Trace(blink::Visitor* visitor) {
   visitor->Trace(content_);
   HTMLElement::Trace(visitor);
 }
 
-DEFINE_TRACE_WRAPPERS(HTMLTemplateElement) {
+void HTMLTemplateElement::TraceWrappers(
+    const ScriptWrappableVisitor* visitor) const {
   visitor->TraceWrappers(content_);
   HTMLElement::TraceWrappers(visitor);
 }

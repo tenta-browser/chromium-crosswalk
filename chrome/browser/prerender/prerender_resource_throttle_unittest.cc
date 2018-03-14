@@ -8,9 +8,7 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/net/url_request_mock_util.h"
 #include "chrome/browser/prerender/prerender_contents.h"
 #include "chrome/browser/prerender/prerender_manager.h"
@@ -20,6 +18,8 @@
 #include "content/public/browser/resource_throttle.h"
 #include "content/public/common/previews_state.h"
 #include "content/public/test/test_browser_thread.h"
+#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/test_utils.h"
 #include "ipc/ipc_message.h"
 #include "net/base/request_priority.h"
 #include "net/test/url_request/url_request_mock_http_job.h"
@@ -138,7 +138,6 @@ class DeferredRedirectDelegate : public net::URLRequest::Delegate,
     cancel_called_ = true;
     run_loop_->Quit();
   }
-  void CancelAndIgnore() override { Cancel(); }
   void CancelWithError(int error_code) override { Cancel(); }
   void Resume() override {
     EXPECT_TRUE(was_deferred_);
@@ -166,20 +165,18 @@ class PrerenderResourceThrottleTest : public testing::Test {
   static const int kDefaultChildId = 0;
   static const int kDefaultRouteId = 100;
 
-  PrerenderResourceThrottleTest() :
-      ui_thread_(BrowserThread::UI, &message_loop_),
-      io_thread_(BrowserThread::IO, &message_loop_),
-      test_contents_(&prerender_manager_, kDefaultChildId, kDefaultRouteId) {
+  PrerenderResourceThrottleTest()
+      : test_browser_thread_bundle_(
+            content::TestBrowserThreadBundle::IO_MAINLOOP),
+        test_contents_(&prerender_manager_, kDefaultChildId, kDefaultRouteId) {
     chrome_browser_net::SetUrlRequestMocksEnabled(true);
   }
 
   ~PrerenderResourceThrottleTest() override {
     chrome_browser_net::SetUrlRequestMocksEnabled(false);
 
-    // Cleanup work so the file IO tasks from URLRequestMockHTTPJob
-    // are gone.
-    content::BrowserThread::GetBlockingPool()->FlushForTesting();
-    RunEvents();
+    // Cleanup work so the file IO tasks from URLRequestMockHTTPJob are gone.
+    content::RunAllTasksUntilIdle();
   }
 
   TestPrerenderManager* prerender_manager() {
@@ -194,9 +191,7 @@ class PrerenderResourceThrottleTest : public testing::Test {
   void RunEvents() { base::RunLoop().RunUntilIdle(); }
 
  private:
-  base::MessageLoopForIO message_loop_;
-  content::TestBrowserThread ui_thread_;
-  content::TestBrowserThread io_thread_;
+  content::TestBrowserThreadBundle test_browser_thread_bundle_;
 
   TestPrerenderManager prerender_manager_;
   TestPrerenderContents test_contents_;
@@ -217,9 +212,8 @@ TEST_F(PrerenderResourceThrottleTest, RedirectResume) {
       request.get(), content::RESOURCE_TYPE_IMAGE, NULL, kDefaultChildId,
       kDefaultRouteId, MSG_ROUTING_NONE,
       /*is_main_frame=*/false,
-      /*parent_is_main_frame=*/false,
       /*allow_download=*/true,
-      /*is_async=*/true, content::PREVIEWS_OFF);
+      /*is_async=*/true, content::PREVIEWS_OFF, nullptr);
 
   // Install a prerender throttle.
   PrerenderResourceThrottle throttle(request.get());
@@ -250,14 +244,13 @@ TEST_F(PrerenderResourceThrottleTest, RedirectMainFrame) {
   DeferredRedirectDelegate delegate;
   std::unique_ptr<net::URLRequest> request(url_request_context.CreateRequest(
       net::URLRequestMockHTTPJob::GetMockUrl("prerender/image-deferred.png"),
-      net::DEFAULT_PRIORITY, &delegate));
+      net::DEFAULT_PRIORITY, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
   content::ResourceRequestInfo::AllocateForTesting(
       request.get(), content::RESOURCE_TYPE_MAIN_FRAME, NULL, kDefaultChildId,
       kDefaultRouteId, MSG_ROUTING_NONE,
       /*is_main_frame=*/true,
-      /*parent_is_main_frame=*/false,
       /*allow_download=*/true,
-      /*is_async=*/true, content::PREVIEWS_OFF);
+      /*is_async=*/true, content::PREVIEWS_OFF, nullptr);
 
   // Install a prerender throttle.
   PrerenderResourceThrottle throttle(request.get());
@@ -286,14 +279,13 @@ TEST_F(PrerenderResourceThrottleTest, RedirectSyncXHR) {
   DeferredRedirectDelegate delegate;
   std::unique_ptr<net::URLRequest> request(url_request_context.CreateRequest(
       net::URLRequestMockHTTPJob::GetMockUrl("prerender/image-deferred.png"),
-      net::DEFAULT_PRIORITY, &delegate));
+      net::DEFAULT_PRIORITY, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
   content::ResourceRequestInfo::AllocateForTesting(
       request.get(), content::RESOURCE_TYPE_XHR, NULL, kDefaultChildId,
       kDefaultRouteId, MSG_ROUTING_NONE,
       /*is_main_frame=*/false,
-      /*parent_is_main_frame=*/false,
       /*allow_download=*/true,
-      /*is_async=*/false, content::PREVIEWS_OFF);
+      /*is_async=*/false, content::PREVIEWS_OFF, nullptr);
 
   // Install a prerender throttle.
   PrerenderResourceThrottle throttle(request.get());

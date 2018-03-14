@@ -25,11 +25,11 @@
 #include "platform/fonts/opentype/OpenTypeVerticalData.h"
 
 #include "SkTypeface.h"
-#include "platform/SharedBuffer.h"
+#include "base/memory/scoped_refptr.h"
 #include "platform/fonts/SimpleFontData.h"
 #include "platform/fonts/opentype/OpenTypeTypes.h"
+#include "platform/fonts/skia/SkiaTextMetrics.h"
 #include "platform/geometry/FloatRect.h"
-#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 namespace OpenType {
@@ -123,16 +123,29 @@ struct VORGTable {
 
 }  // namespace OpenType
 
-OpenTypeVerticalData::OpenTypeVerticalData(
-    const FontPlatformData& platform_data)
-    : default_vert_origin_y_(0) {
-  LoadMetrics(platform_data);
+OpenTypeVerticalData::OpenTypeVerticalData(sk_sp<SkTypeface> typeface)
+    : default_vert_origin_y_(0),
+      size_per_unit_(0),
+      ascent_fallback_(0),
+      height_fallback_(0) {
+  LoadMetrics(typeface);
 }
 
-void OpenTypeVerticalData::LoadMetrics(const FontPlatformData& platform_data) {
+static void CopyOpenTypeTable(sk_sp<SkTypeface> typeface,
+                              SkFontTableTag tag,
+                              Vector<char>& destination) {
+  const size_t table_size = typeface->getTableSize(tag);
+  destination.resize(table_size);
+  if (table_size) {
+    typeface->getTableData(tag, 0, table_size, destination.data());
+  }
+}
+
+void OpenTypeVerticalData::LoadMetrics(sk_sp<SkTypeface> typeface) {
   // Load hhea and hmtx to get x-component of vertical origins.
   // If these tables are missing, it's not an OpenType font.
-  RefPtr<SharedBuffer> buffer = platform_data.OpenTypeTable(OpenType::kHheaTag);
+  Vector<char> buffer;
+  CopyOpenTypeTable(typeface, OpenType::kHheaTag, buffer);
   const OpenType::HheaTable* hhea =
       OpenType::ValidateTable<OpenType::HheaTable>(buffer);
   if (!hhea)
@@ -143,20 +156,20 @@ void OpenTypeVerticalData::LoadMetrics(const FontPlatformData& platform_data) {
     return;
   }
 
-  buffer = platform_data.OpenTypeTable(OpenType::kHmtxTag);
+  CopyOpenTypeTable(typeface, OpenType::kHmtxTag, buffer);
   const OpenType::HmtxTable* hmtx =
       OpenType::ValidateTable<OpenType::HmtxTable>(buffer, count_hmtx_entries);
   if (!hmtx) {
     DLOG(ERROR) << "hhea exists but hmtx does not (or broken)";
     return;
   }
-  advance_widths_.Resize(count_hmtx_entries);
+  advance_widths_.resize(count_hmtx_entries);
   for (uint16_t i = 0; i < count_hmtx_entries; ++i)
     advance_widths_[i] = hmtx->entries[i].advance_width;
 
   // Load vhea first. This table is required for fonts that support vertical
   // flow.
-  buffer = platform_data.OpenTypeTable(OpenType::kVheaTag);
+  CopyOpenTypeTable(typeface, OpenType::kVheaTag, buffer);
   const OpenType::VheaTable* vhea =
       OpenType::ValidateTable<OpenType::VheaTable>(buffer);
   if (!vhea)
@@ -168,10 +181,10 @@ void OpenTypeVerticalData::LoadMetrics(const FontPlatformData& platform_data) {
   }
 
   // Load VORG. This table is optional.
-  buffer = platform_data.OpenTypeTable(OpenType::kVORGTag);
+  CopyOpenTypeTable(typeface, OpenType::kVORGTag, buffer);
   const OpenType::VORGTable* vorg =
       OpenType::ValidateTable<OpenType::VORGTable>(buffer);
-  if (vorg && buffer->size() >= vorg->RequiredSize()) {
+  if (vorg && buffer.size() >= vorg->RequiredSize()) {
     default_vert_origin_y_ = vorg->default_vert_origin_y;
     uint16_t count_vert_origin_y_metrics = vorg->num_vert_origin_y_metrics;
     if (!count_vert_origin_y_metrics) {
@@ -188,14 +201,14 @@ void OpenTypeVerticalData::LoadMetrics(const FontPlatformData& platform_data) {
 
   // Load vmtx then. This table is required for fonts that support vertical
   // flow.
-  buffer = platform_data.OpenTypeTable(OpenType::kVmtxTag);
+  CopyOpenTypeTable(typeface, OpenType::kVmtxTag, buffer);
   const OpenType::VmtxTable* vmtx =
       OpenType::ValidateTable<OpenType::VmtxTable>(buffer, count_vmtx_entries);
   if (!vmtx) {
     DLOG(ERROR) << "vhea exists but vmtx does not (or broken)";
     return;
   }
-  advance_heights_.Resize(count_vmtx_entries);
+  advance_heights_.resize(count_vmtx_entries);
   for (uint16_t i = 0; i < count_vmtx_entries; ++i)
     advance_heights_[i] = vmtx->entries[i].advance_height;
 
@@ -205,14 +218,14 @@ void OpenTypeVerticalData::LoadMetrics(const FontPlatformData& platform_data) {
     return;
 
   size_t size_extra =
-      buffer->size() - sizeof(OpenType::VmtxTable::Entry) * count_vmtx_entries;
+      buffer.size() - sizeof(OpenType::VmtxTable::Entry) * count_vmtx_entries;
   if (size_extra % sizeof(OpenType::Int16)) {
     DLOG(ERROR) << "vmtx has incorrect tsb count";
     return;
   }
   size_t count_top_side_bearings =
       count_vmtx_entries + size_extra / sizeof(OpenType::Int16);
-  top_side_bearings_.Resize(count_top_side_bearings);
+  top_side_bearings_.resize(count_top_side_bearings);
   size_t i;
   for (i = 0; i < count_vmtx_entries; ++i)
     top_side_bearings_[i] = vmtx->entries[i].top_side_bearing;
@@ -225,30 +238,34 @@ void OpenTypeVerticalData::LoadMetrics(const FontPlatformData& platform_data) {
   }
 }
 
-float OpenTypeVerticalData::AdvanceHeight(const SimpleFontData* font,
-                                          Glyph glyph) const {
+void OpenTypeVerticalData::SetScaleAndFallbackMetrics(float size_per_unit,
+                                                      float ascent,
+                                                      int height) {
+  size_per_unit_ = size_per_unit;
+  ascent_fallback_ = ascent;
+  height_fallback_ = height;
+}
+
+float OpenTypeVerticalData::AdvanceHeight(Glyph glyph) const {
   size_t count_heights = advance_heights_.size();
   if (count_heights) {
     uint16_t advance_f_unit =
         advance_heights_[glyph < count_heights ? glyph : count_heights - 1];
-    float advance = advance_f_unit * font->SizePerUnit();
+    float advance = advance_f_unit * size_per_unit_;
     return advance;
   }
 
   // No vertical info in the font file; use height as advance.
-  return font->GetFontMetrics().Height();
+  return height_fallback_;
 }
 
 void OpenTypeVerticalData::GetVerticalTranslationsForGlyphs(
-    const SimpleFontData* font,
+    const SkPaint& paint,
     const Glyph* glyphs,
     size_t count,
     float* out_xy_array) const {
   size_t count_widths = advance_widths_.size();
   DCHECK_GT(count_widths, 0u);
-  const FontMetrics& metrics = font->GetFontMetrics();
-  float size_per_unit = font->SizePerUnit();
-  float ascent = metrics.Ascent();
   bool use_vorg = HasVORG();
   size_t count_top_side_bearings = top_side_bearings_.size();
   float default_vert_origin_y = std::numeric_limits<float>::quiet_NaN();
@@ -257,7 +274,7 @@ void OpenTypeVerticalData::GetVerticalTranslationsForGlyphs(
     Glyph glyph = *glyphs;
     uint16_t width_f_unit =
         advance_widths_[glyph < count_widths ? glyph : count_widths - 1];
-    float width = width_f_unit * size_per_unit;
+    float width = width_f_unit * size_per_unit_;
     out_xy_array[0] = -width / 2;
 
     // For Y, try VORG first.
@@ -265,12 +282,12 @@ void OpenTypeVerticalData::GetVerticalTranslationsForGlyphs(
       if (glyph) {
         int16_t vert_origin_yf_unit = vert_origin_y_.at(glyph);
         if (vert_origin_yf_unit) {
-          out_xy_array[1] = -vert_origin_yf_unit * size_per_unit;
+          out_xy_array[1] = -vert_origin_yf_unit * size_per_unit_;
           continue;
         }
       }
       if (std::isnan(default_vert_origin_y))
-        default_vert_origin_y = -default_vert_origin_y_ * size_per_unit;
+        default_vert_origin_y = -default_vert_origin_y_ * size_per_unit_;
       out_xy_array[1] = default_vert_origin_y;
       continue;
     }
@@ -281,14 +298,17 @@ void OpenTypeVerticalData::GetVerticalTranslationsForGlyphs(
           top_side_bearings_[glyph < count_top_side_bearings
                                  ? glyph
                                  : count_top_side_bearings - 1];
-      float top_side_bearing = top_side_bearing_f_unit * size_per_unit;
-      FloatRect bounds = font->BoundsForGlyph(glyph);
+      float top_side_bearing = top_side_bearing_f_unit * size_per_unit_;
+
+      SkRect skiaBounds;
+      SkiaTextMetrics(&paint).GetSkiaBoundsForGlyph(glyph, &skiaBounds);
+      FloatRect bounds(skiaBounds);
       out_xy_array[1] = bounds.Y() - top_side_bearing;
       continue;
     }
 
     // No vertical info in the font file; use ascent as vertical origin.
-    out_xy_array[1] = -ascent;
+    out_xy_array[1] = -ascent_fallback_;
   }
 }
 

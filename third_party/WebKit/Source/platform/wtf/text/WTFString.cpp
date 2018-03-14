@@ -88,7 +88,7 @@ String::String(const char* characters, unsigned length)
                                      length)
                 : nullptr) {}
 
-void String::Append(const StringView& string) {
+void String::append(const StringView& string) {
   if (string.IsEmpty())
     return;
   if (!impl_) {
@@ -103,21 +103,21 @@ void String::Append(const StringView& string) {
 
   if (impl_->Is8Bit() && string.Is8Bit()) {
     LChar* data;
-    RELEASE_ASSERT(string.length() <=
-                   std::numeric_limits<unsigned>::max() - impl_->length());
-    RefPtr<StringImpl> new_impl = StringImpl::CreateUninitialized(
+    CHECK_LE(string.length(),
+             std::numeric_limits<unsigned>::max() - impl_->length());
+    scoped_refptr<StringImpl> new_impl = StringImpl::CreateUninitialized(
         impl_->length() + string.length(), data);
     memcpy(data, impl_->Characters8(), impl_->length() * sizeof(LChar));
     memcpy(data + impl_->length(), string.Characters8(),
            string.length() * sizeof(LChar));
-    impl_ = new_impl.Release();
+    impl_ = std::move(new_impl);
     return;
   }
 
   UChar* data;
-  RELEASE_ASSERT(string.length() <=
-                 std::numeric_limits<unsigned>::max() - impl_->length());
-  RefPtr<StringImpl> new_impl =
+  CHECK_LE(string.length(),
+           std::numeric_limits<unsigned>::max() - impl_->length());
+  scoped_refptr<StringImpl> new_impl =
       StringImpl::CreateUninitialized(impl_->length() + string.length(), data);
 
   if (impl_->Is8Bit())
@@ -132,7 +132,7 @@ void String::Append(const StringView& string) {
     StringImpl::CopyChars(data + impl_->length(), string.Characters16(),
                           string.length());
 
-  impl_ = new_impl.Release();
+  impl_ = std::move(new_impl);
 }
 
 template <typename CharacterType>
@@ -148,22 +148,22 @@ inline void String::AppendInternal(CharacterType c) {
 
   // FIXME: We should be able to create an 8 bit string via this code path.
   UChar* data;
-  RELEASE_ASSERT(impl_->length() < std::numeric_limits<unsigned>::max());
-  RefPtr<StringImpl> new_impl =
+  CHECK_LT(impl_->length(), std::numeric_limits<unsigned>::max());
+  scoped_refptr<StringImpl> new_impl =
       StringImpl::CreateUninitialized(impl_->length() + 1, data);
   if (impl_->Is8Bit())
     StringImpl::CopyChars(data, impl_->Characters8(), impl_->length());
   else
     StringImpl::CopyChars(data, impl_->Characters16(), impl_->length());
   data[impl_->length()] = c;
-  impl_ = new_impl.Release();
+  impl_ = std::move(new_impl);
 }
 
-void String::Append(LChar c) {
+void String::append(LChar c) {
   AppendInternal(c);
 }
 
-void String::Append(UChar c) {
+void String::append(UChar c) {
   AppendInternal(c);
 }
 
@@ -177,18 +177,18 @@ int CodePointCompareIgnoringASCIICase(const String& a, const char* b) {
 }
 
 template <typename CharType>
-PassRefPtr<StringImpl> InsertInternal(PassRefPtr<StringImpl> impl,
-                                      const CharType* characters_to_insert,
-                                      unsigned length_to_insert,
-                                      unsigned position) {
+scoped_refptr<StringImpl> InsertInternal(scoped_refptr<StringImpl> impl,
+                                         const CharType* characters_to_insert,
+                                         unsigned length_to_insert,
+                                         unsigned position) {
   if (!length_to_insert)
     return impl;
 
   DCHECK(characters_to_insert);
   UChar* data;  // FIXME: We should be able to create an 8 bit string here.
-  RELEASE_ASSERT(length_to_insert <=
-                 std::numeric_limits<unsigned>::max() - impl->length());
-  RefPtr<StringImpl> new_impl =
+  CHECK_LE(length_to_insert,
+           std::numeric_limits<unsigned>::max() - impl->length());
+  scoped_refptr<StringImpl> new_impl =
       StringImpl::CreateUninitialized(impl->length() + length_to_insert, data);
 
   if (impl->Is8Bit())
@@ -208,7 +208,7 @@ PassRefPtr<StringImpl> InsertInternal(PassRefPtr<StringImpl> impl,
                           impl->Characters16() + position,
                           impl->length() - position);
 
-  return new_impl.Release();
+  return new_impl;
 }
 
 void String::insert(const StringView& string, unsigned position) {
@@ -222,18 +222,18 @@ void String::insert(const StringView& string, unsigned position) {
 
   if (position >= length()) {
     if (string.Is8Bit())
-      Append(string);
+      append(string);
     else
-      Append(string);
+      append(string);
     return;
   }
 
   DCHECK(impl_);
   if (string.Is8Bit())
-    impl_ = InsertInternal(impl_.Release(), string.Characters8(),
+    impl_ = InsertInternal(std::move(impl_), string.Characters8(),
                            string.length(), position);
   else
-    impl_ = InsertInternal(impl_.Release(), string.Characters16(),
+    impl_ = InsertInternal(std::move(impl_), string.Characters16(),
                            string.length(), position);
 }
 
@@ -274,12 +274,6 @@ String String::DeprecatedLower() const {
   if (!impl_)
     return String();
   return impl_->LowerUnicode();
-}
-
-String String::DeprecatedUpper() const {
-  if (!impl_)
-    return String();
-  return impl_->UpperUnicode();
 }
 
 String String::LowerUnicode(const AtomicString& locale_identifier) const {
@@ -351,7 +345,7 @@ String String::Format(const char* format, ...) {
   Vector<char, kDefaultSize> buffer(kDefaultSize);
 
   va_start(args, format);
-  int length = base::vsnprintf(buffer.Data(), buffer.size(), format, args);
+  int length = base::vsnprintf(buffer.data(), buffer.size(), format, args);
   va_end(args);
 
   // TODO(esprehn): This can only happen if there's an encoding error, what's
@@ -372,12 +366,12 @@ String String::Format(const char* format, ...) {
     // Not calling va_end/va_start here happens to work on lots of systems, but
     // fails e.g. on 64bit Linux.
     va_start(args, format);
-    length = base::vsnprintf(buffer.Data(), buffer.size(), format, args);
+    length = base::vsnprintf(buffer.data(), buffer.size(), format, args);
     va_end(args);
   }
 
   CHECK_LT(static_cast<unsigned>(length), buffer.size());
-  return String(reinterpret_cast<const LChar*>(buffer.Data()), length);
+  return String(reinterpret_cast<const LChar*>(buffer.data()), length);
 }
 
 template <typename IntegerType>
@@ -426,40 +420,49 @@ String String::NumberToStringFixedWidth(double number,
   return String(NumberToFixedWidthString(number, decimal_places, buffer));
 }
 
-int String::ToIntStrict(bool* ok, int base) const {
+int String::ToIntStrict(bool* ok) const {
   if (!impl_) {
     if (ok)
       *ok = false;
     return 0;
   }
-  return impl_->ToIntStrict(ok, base);
+  return impl_->ToInt(NumberParsingOptions::kStrict, ok);
 }
 
-unsigned String::ToUIntStrict(bool* ok, int base) const {
+unsigned String::ToUIntStrict(bool* ok) const {
   if (!impl_) {
     if (ok)
       *ok = false;
     return 0;
   }
-  return impl_->ToUIntStrict(ok, base);
+  return impl_->ToUInt(NumberParsingOptions::kStrict, ok);
 }
 
-int64_t String::ToInt64Strict(bool* ok, int base) const {
+unsigned String::HexToUIntStrict(bool* ok) const {
   if (!impl_) {
     if (ok)
       *ok = false;
     return 0;
   }
-  return impl_->ToInt64Strict(ok, base);
+  return impl_->HexToUIntStrict(ok);
 }
 
-uint64_t String::ToUInt64Strict(bool* ok, int base) const {
+int64_t String::ToInt64Strict(bool* ok) const {
   if (!impl_) {
     if (ok)
       *ok = false;
     return 0;
   }
-  return impl_->ToUInt64Strict(ok, base);
+  return impl_->ToInt64(NumberParsingOptions::kStrict, ok);
+}
+
+uint64_t String::ToUInt64Strict(bool* ok) const {
+  if (!impl_) {
+    if (ok)
+      *ok = false;
+    return 0;
+  }
+  return impl_->ToUInt64(NumberParsingOptions::kStrict, ok);
 }
 
 int String::ToInt(bool* ok) const {
@@ -468,7 +471,7 @@ int String::ToInt(bool* ok) const {
       *ok = false;
     return 0;
   }
-  return impl_->ToInt(ok);
+  return impl_->ToInt(NumberParsingOptions::kLoose, ok);
 }
 
 unsigned String::ToUInt(bool* ok) const {
@@ -477,25 +480,7 @@ unsigned String::ToUInt(bool* ok) const {
       *ok = false;
     return 0;
   }
-  return impl_->ToUInt(ok);
-}
-
-int64_t String::ToInt64(bool* ok) const {
-  if (!impl_) {
-    if (ok)
-      *ok = false;
-    return 0;
-  }
-  return impl_->ToInt64(ok);
-}
-
-uint64_t String::ToUInt64(bool* ok) const {
-  if (!impl_) {
-    if (ok)
-      *ok = false;
-    return 0;
-  }
-  return impl_->ToUInt64(ok);
+  return impl_->ToUInt(NumberParsingOptions::kLoose, ok);
 }
 
 double String::ToDouble(bool* ok) const {
@@ -529,7 +514,7 @@ bool String::IsSafeToSendToAnotherThread() const {
 void String::Split(const StringView& separator,
                    bool allow_empty_entries,
                    Vector<String>& result) const {
-  result.Clear();
+  result.clear();
 
   unsigned start_pos = 0;
   size_t end_pos;
@@ -545,11 +530,11 @@ void String::Split(const StringView& separator,
 void String::Split(UChar separator,
                    bool allow_empty_entries,
                    Vector<String>& result) const {
-  result.Clear();
+  result.clear();
 
   unsigned start_pos = 0;
   size_t end_pos;
-  while ((end_pos = Find(separator, start_pos)) != kNotFound) {
+  while ((end_pos = find(separator, start_pos)) != kNotFound) {
     if (allow_empty_entries || start_pos != end_pos)
       result.push_back(Substring(start_pos, end_pos - start_pos));
     start_pos = end_pos + 1;
@@ -650,7 +635,7 @@ CString String::Utf8(UTF8ConversionMode mode) const {
     return CString();
   Vector<char, 1024> buffer_vector(length * 3);
 
-  char* buffer = buffer_vector.Data();
+  char* buffer = buffer_vector.data();
 
   if (Is8Bit()) {
     const LChar* characters = this->Characters8();
@@ -717,7 +702,7 @@ CString String::Utf8(UTF8ConversionMode mode) const {
     }
   }
 
-  return CString(buffer_vector.Data(), buffer - buffer_vector.Data());
+  return CString(buffer_vector.data(), buffer - buffer_vector.data());
 }
 
 String String::Make8BitFrom16BitSource(const UChar* source, size_t length) {
@@ -745,7 +730,7 @@ String String::Make16BitFrom8BitSource(const LChar* source, size_t length) {
 }
 
 String String::FromUTF8(const LChar* string_start, size_t length) {
-  RELEASE_ASSERT(length <= std::numeric_limits<unsigned>::max());
+  CHECK_LE(length, std::numeric_limits<unsigned>::max());
 
   if (!string_start)
     return String();
@@ -757,7 +742,7 @@ String String::FromUTF8(const LChar* string_start, size_t length) {
     return StringImpl::Create(string_start, length);
 
   Vector<UChar, 1024> buffer(length);
-  UChar* buffer_start = buffer.Data();
+  UChar* buffer_start = buffer.data();
 
   UChar* buffer_current = buffer_start;
   const char* string_current = reinterpret_cast<const char*>(string_start);
@@ -778,7 +763,7 @@ String String::FromUTF8(const LChar* string) {
 }
 
 String String::FromUTF8(const CString& s) {
-  return FromUTF8(s.Data());
+  return FromUTF8(s.data());
 }
 
 String String::FromUTF8WithLatin1Fallback(const LChar* string, size_t size) {
@@ -832,7 +817,7 @@ std::ostream& operator<<(std::ostream& out, const String& string) {
 
 #ifndef NDEBUG
 void String::Show() const {
-  DataLogF("%s\n", AsciiDebug(Impl()).Data());
+  DataLogF("%s\n", AsciiDebug(Impl()).data());
 }
 #endif
 

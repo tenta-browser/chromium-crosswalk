@@ -16,6 +16,7 @@
 #include "ui/gfx/image/image_skia.h"
 #include "ui/message_center/message_center_export.h"
 #include "ui/message_center/notification.h"
+#include "ui/message_center/notification_delegate.h"
 #include "ui/message_center/views/slide_out_controller.h"
 #include "ui/views/view.h"
 
@@ -26,13 +27,9 @@ class ScrollView;
 
 namespace message_center {
 
-class MessageCenterController;
-
-// Individual notifications constants.
-const int kPaddingBetweenItems = 10;
-const int kPaddingHorizontal = 18;
-const int kWebNotificationButtonWidth = 32;
-const int kWebNotificationIconSize = 40;
+class Notification;
+class NotificationControlButtonsView;
+class MessageViewDelegate;
 
 // An base class for a notification entry. Contains background and other
 // elements shared by derived notification views.
@@ -40,25 +37,32 @@ class MESSAGE_CENTER_EXPORT MessageView
     : public views::View,
       public views::SlideOutController::Delegate {
  public:
-  MessageView(MessageCenterController* controller,
-              const Notification& notification);
+  MessageView(MessageViewDelegate* delegate, const Notification& notification);
   ~MessageView() override;
 
   // Updates this view with the new data contained in the notification.
   virtual void UpdateWithNotification(const Notification& notification);
 
-  // Returns the insets for the shadow it will have for rich notification.
-  static gfx::Insets GetShadowInsets();
-
   // Creates a shadow around the notification and changes slide-out behavior.
   void SetIsNested();
 
+  virtual NotificationControlButtonsView* GetControlButtonsView() const = 0;
   virtual bool IsCloseButtonFocused() const = 0;
   virtual void RequestFocusOnCloseButton() = 0;
-  virtual bool IsPinned() const = 0;
   virtual void UpdateControlButtonsVisibility() = 0;
 
+  virtual void SetExpanded(bool expanded);
+  virtual bool IsExpanded() const;
+
+  // Invoked when the container view of MessageView (e.g. MessageCenterView in
+  // ash) is starting the animation that possibly hides some part of
+  // the MessageView.
+  // During the animation, MessageView should comply with the Z order in views.
+  virtual void OnContainerAnimationStarted();
+  virtual void OnContainerAnimationEnded();
+
   void OnCloseButtonPressed();
+  void OnSettingsButtonPressed();
 
   // views::View
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
@@ -76,14 +80,16 @@ class MESSAGE_CENTER_EXPORT MessageView
   void OnSlideChanged() override;
   void OnSlideOut() override;
 
-  void set_scroller(views::ScrollView* scroller) { scroller_ = scroller; }
-  std::string notification_id() { return notification_id_; }
-  NotifierId notifier_id() { return notifier_id_; }
-  const base::string16& display_source() const { return display_source_; }
+  bool GetPinned() const;
 
-  void set_controller(MessageCenterController* controller) {
-    controller_ = controller;
-  }
+  void set_scroller(views::ScrollView* scroller) { scroller_ = scroller; }
+  std::string notification_id() const { return notification_id_; }
+  void set_delegate(MessageViewDelegate* delegate) { delegate_ = delegate; }
+
+#if defined(OS_CHROMEOS)
+  // By calling this, all notifications are treated as non-pinned forcibly.
+  void set_force_disable_pinned() { force_disable_pinned_ = true; }
+#endif
 
  protected:
   // Creates and add close button to view hierarchy when necessary. Derived
@@ -97,18 +103,21 @@ class MESSAGE_CENTER_EXPORT MessageView
 
   views::View* background_view() { return background_view_; }
   views::ScrollView* scroller() { return scroller_; }
-  MessageCenterController* controller() { return controller_; }
+  MessageViewDelegate* delegate() { return delegate_; }
 
  private:
-  MessageCenterController* controller_;  // Weak, lives longer then views.
+  MessageViewDelegate* delegate_;
   std::string notification_id_;
-  NotifierId notifier_id_;
   views::View* background_view_ = nullptr;  // Owned by views hierarchy.
   views::ScrollView* scroller_ = nullptr;
 
   base::string16 accessible_name_;
 
-  base::string16 display_source_;
+  // Flag if the notification is set to pinned or not.
+  bool pinned_ = false;
+  // Flag if pin is forcibly disabled on this view. If true, the view is never
+  // pinned regardless of the value of |pinned_|.
+  bool force_disable_pinned_ = false;
 
   std::unique_ptr<views::Painter> focus_painter_;
 

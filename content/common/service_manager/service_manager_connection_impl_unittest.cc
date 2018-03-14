@@ -21,7 +21,7 @@ constexpr char kTestServiceName[] = "test service";
 std::unique_ptr<service_manager::Service> LaunchService(
     base::WaitableEvent* event) {
   event->Signal();
-  return base::MakeUnique<service_manager::Service>();
+  return std::make_unique<service_manager::Service>();
 }
 
 }  // namespace
@@ -34,22 +34,22 @@ TEST(ServiceManagerConnectionImplTest, ServiceLaunchThreading) {
   ServiceManagerConnectionImpl connection_impl(mojo::MakeRequest(&service),
                                                io_thread.task_runner());
   ServiceManagerConnection& connection = connection_impl;
-  ServiceInfo info;
+  service_manager::EmbeddedServiceInfo info;
   base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
                             base::WaitableEvent::InitialState::NOT_SIGNALED);
   info.factory = base::Bind(&LaunchService, &event);
   info.task_runner = io_thread.task_runner();
   connection.AddEmbeddedService(kTestServiceName, info);
   connection.Start();
-  service_manager::ServiceInfo source_info(
+  service_manager::BindSourceInfo source_info(
       {service_manager::mojom::kServiceName,
        service_manager::mojom::kRootUserID},
-      service_manager::InterfaceProviderSpecMap{});
+      service_manager::CapabilitySet());
   service_manager::mojom::ServiceFactoryPtr factory;
   service->OnBindInterface(source_info,
                            service_manager::mojom::ServiceFactory::Name_,
                            mojo::MakeRequest(&factory).PassMessagePipe(),
-                           base::Bind(&base::DoNothing));
+                           base::BindOnce(&base::DoNothing));
   service_manager::mojom::ServicePtr created_service;
   factory->CreateService(mojo::MakeRequest(&created_service), kTestServiceName);
   event.Wait();

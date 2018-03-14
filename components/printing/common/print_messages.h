@@ -3,7 +3,8 @@
 // found in the LICENSE file.
 
 // IPC messages for printing.
-// Multiply-included message file, hence no include guard.
+#ifndef COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
+#define COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
 
 #include <stdint.h>
 
@@ -15,6 +16,7 @@
 #include "build/build_config.h"
 #include "components/printing/common/printing_param_traits_macros.h"
 #include "ipc/ipc_message_macros.h"
+#include "printing/common/pdf_metafile_utils.h"
 #include "printing/features/features.h"
 #include "printing/page_range.h"
 #include "printing/page_size_margins.h"
@@ -29,8 +31,8 @@
 // Force multiple inclusion of the param traits file to generate all methods.
 #undef COMPONENTS_PRINTING_COMMON_PRINTING_PARAM_TRAITS_MACROS_H_
 
-#ifndef COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
-#define COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
+#ifndef INTERNAL_COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
+#define INTERNAL_COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
 
 struct PrintMsg_Print_Params {
   PrintMsg_Print_Params();
@@ -60,6 +62,7 @@ struct PrintMsg_Print_Params {
   base::string16 title;
   base::string16 url;
   bool should_print_backgrounds;
+  printing::SkiaDocumentType printed_doc_type;
 };
 
 struct PrintMsg_PrintPages_Params {
@@ -95,12 +98,14 @@ struct PrintHostMsg_SetOptionsFromDocument_Params {
 };
 #endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
 
-#endif  // COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
+#endif  // INTERNAL_COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_
 
 #define IPC_MESSAGE_START PrintMsgStart
 
 IPC_ENUM_TRAITS_MAX_VALUE(blink::WebPrintScalingOption,
                           blink::kWebPrintScalingOptionLast)
+IPC_ENUM_TRAITS_MAX_VALUE(printing::SkiaDocumentType,
+                          printing::SkiaDocumentType::MAX)
 
 // Parameters for a render request.
 IPC_STRUCT_TRAITS_BEGIN(PrintMsg_Print_Params)
@@ -166,6 +171,9 @@ IPC_STRUCT_TRAITS_BEGIN(PrintMsg_Print_Params)
 
   // True if print backgrounds is requested by the user.
   IPC_STRUCT_TRAITS_MEMBER(should_print_backgrounds)
+
+  // The document type of printed page(s) from render.
+  IPC_STRUCT_TRAITS_MEMBER(printed_doc_type)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(printing::PageRange)
@@ -253,14 +261,8 @@ IPC_STRUCT_END()
 
 // Parameters sent along with the page count.
 IPC_STRUCT_BEGIN(PrintHostMsg_DidGetPreviewPageCount_Params)
-  // Cookie for the document to ensure correctness.
-  IPC_STRUCT_MEMBER(int, document_cookie)
-
   // Total page count.
   IPC_STRUCT_MEMBER(int, page_count)
-
-  // Indicates whether the previewed document is modifiable.
-  IPC_STRUCT_MEMBER(bool, is_modifiable)
 
   // Scaling % to fit to page
   IPC_STRUCT_MEMBER(int, fit_to_page_scaling)
@@ -353,6 +355,9 @@ IPC_MESSAGE_ROUTED1(PrintMsg_SetPrintingEnabled, bool /* enabled */)
 // called multiple times as the user updates settings.
 IPC_MESSAGE_ROUTED1(PrintMsg_PrintPreview,
                     base::DictionaryValue /* settings */)
+
+// Tells the RenderFrame that print preview dialog was closed.
+IPC_MESSAGE_ROUTED0(PrintMsg_ClosePrintPreviewDialog)
 #endif
 
 // Messages sent from the renderer to the browser.
@@ -404,9 +409,10 @@ IPC_SYNC_MESSAGE_CONTROL1_2(PrintHostMsg_AllocateTempFileForPrinting,
                             int /* render_frame_id */,
                             base::FileDescriptor /* temp file fd */,
                             int /* fd in browser*/)
-IPC_MESSAGE_CONTROL2(PrintHostMsg_TempFileForPrintingWritten,
+IPC_MESSAGE_CONTROL3(PrintHostMsg_TempFileForPrintingWritten,
                      int /* render_frame_id */,
-                     int /* fd in browser */)
+                     int /* fd in browser */,
+                     int /* page count */)
 #endif  // defined(OS_ANDROID)
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
@@ -467,7 +473,7 @@ IPC_MESSAGE_ROUTED1(PrintHostMsg_PrintPreviewCancelled,
 IPC_MESSAGE_ROUTED1(PrintHostMsg_PrintPreviewInvalidPrinterSettings,
                     int /* document cookie */)
 
-// Run a nested message loop in the renderer until print preview for
+// Run a nested run loop in the renderer until print preview for
 // window.print() finishes.
 IPC_SYNC_MESSAGE_ROUTED0_0(PrintHostMsg_SetupScriptedPrintPreview)
 
@@ -480,3 +486,5 @@ IPC_MESSAGE_ROUTED1(PrintHostMsg_ShowScriptedPrintPreview,
 IPC_MESSAGE_ROUTED1(PrintHostMsg_SetOptionsFromDocument,
                     PrintHostMsg_SetOptionsFromDocument_Params /* params */)
 #endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
+
+#endif  // COMPONENTS_PRINTING_COMMON_PRINT_MESSAGES_H_

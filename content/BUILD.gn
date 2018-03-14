@@ -63,8 +63,9 @@ if (!is_nacl_nonsfi) {
     "//content/network:network_sources",
     "//content/public/browser:browser_sources",
     "//content/public/child:child_sources",
-    "//content/public/gpu:gpu_sources",
     "//content/public/common:common_sources",
+    "//content/public/gpu:gpu_sources",
+    "//content/public/network:network_sources",
     "//content/public/renderer:renderer_sources",
     "//content/public/utility:utility_sources",
   ]
@@ -80,15 +81,15 @@ if (is_component_build) {
     public_deps =
         content_shared_components + [ "//content/public/app:both_sources" ]
     deps = [
-      "//build/config/sanitizers:deps",
+      "//build/config:exe_and_shlib_deps",
     ]
   }
 } else if (is_nacl_nonsfi) {
   source_set("content") {
     set_sources_assignment_filter([])
     sources = [
-      "common/sandbox_linux/sandbox_init_linux.cc",
-      "common/sandbox_linux/sandbox_seccomp_bpf_linux.cc",
+      "//services/service_manager/sandbox/linux/sandbox_seccomp_bpf_linux.cc",
+      "common/sandbox_init_linux.cc",
       "common/send_zygote_child_ping_linux.cc",
       "public/common/content_switches.cc",
       "public/common/content_switches.h",
@@ -96,12 +97,12 @@ if (is_component_build) {
       "public/common/mojo_channel_switches.h",
     ]
     set_sources_assignment_filter(sources_assignment_filter)
-
     deps = [
       "//base",
       "//media:media_features",
       "//sandbox:sandbox_features",
       "//sandbox/linux:sandbox",
+      "//services/service_manager/sandbox",
     ]
   }
 } else {
@@ -112,6 +113,10 @@ if (is_component_build) {
 
 grit("resources") {
   source = "content_resources.grd"
+
+  # The .grd contains references to generated files.
+  source_is_generated = true
+
   outputs = [
     "grit/content_resources.h",
     "content_resources.pak",
@@ -127,7 +132,6 @@ grit("resources") {
     "//content/public/app:plugin_manifest",
     "//content/public/app:renderer_manifest",
     "//content/public/app:utility_manifest",
-    "//mojo/public/js:bindings",
     "//services/catalog:manifest",
   ]
 }

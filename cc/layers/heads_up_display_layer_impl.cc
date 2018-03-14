@@ -16,12 +16,14 @@
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "cc/debug/debug_colors.h"
-#include "cc/output/begin_frame_args.h"
-#include "cc/quads/texture_draw_quad.h"
+#include "cc/raster/scoped_gpu_raster.h"
 #include "cc/resources/memory_history.h"
 #include "cc/trees/frame_rate_counter.h"
 #include "cc/trees/layer_tree_host_impl.h"
 #include "cc/trees/layer_tree_impl.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
+#include "components/viz/common/quads/texture_draw_quad.h"
+#include "gpu/command_buffer/client/gles2_interface.h"
 #include "skia/ext/platform_canvas.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkPaint.h"
@@ -75,8 +77,7 @@ HeadsUpDisplayLayerImpl::HeadsUpDisplayLayerImpl(LayerTreeImpl* tree_impl,
       internal_contents_scale_(1.f),
       fps_graph_(60.0, 80.0),
       paint_time_graph_(16.0, 48.0),
-      fade_step_(0) {
-}
+      fade_step_(0) {}
 
 HeadsUpDisplayLayerImpl::~HeadsUpDisplayLayerImpl() {}
 
@@ -94,10 +95,10 @@ void HeadsUpDisplayLayerImpl::AcquireResource(
     }
   }
 
-  auto resource = base::MakeUnique<ScopedResource>(resource_provider);
+  auto resource = std::make_unique<ScopedResource>(resource_provider);
   resource->Allocate(
-      internal_content_bounds_, ResourceProvider::TEXTURE_HINT_IMMUTABLE,
-      resource_provider->best_texture_format(), gfx::ColorSpace());
+      internal_content_bounds_, viz::ResourceTextureHint::kFramebuffer,
+      resource_provider->best_render_buffer_format(), gfx::ColorSpace());
   resources_.push_back(std::move(resource));
 }
 
@@ -109,8 +110,9 @@ void HeadsUpDisplayLayerImpl::ReleaseUnmatchedSizeResources(
                 });
 }
 
-bool HeadsUpDisplayLayerImpl::WillDraw(DrawMode draw_mode,
-                                       ResourceProvider* resource_provider) {
+bool HeadsUpDisplayLayerImpl::WillDraw(
+    DrawMode draw_mode,
+    LayerTreeResourceProvider* resource_provider) {
   if (draw_mode == DRAW_MODE_RESOURCELESS_SOFTWARE)
     return false;
 
@@ -126,19 +128,18 @@ bool HeadsUpDisplayLayerImpl::WillDraw(DrawMode draw_mode,
   return LayerImpl::WillDraw(draw_mode, resource_provider);
 }
 
-void HeadsUpDisplayLayerImpl::AppendQuads(
-    RenderPass* render_pass,
-    AppendQuadsData* append_quads_data) {
+void HeadsUpDisplayLayerImpl::AppendQuads(viz::RenderPass* render_pass,
+                                          AppendQuadsData* append_quads_data) {
   if (!resources_.back()->id())
     return;
 
-  SharedQuadState* shared_quad_state =
+  viz::SharedQuadState* shared_quad_state =
       render_pass->CreateAndAppendSharedQuadState();
   PopulateScaledSharedQuadState(shared_quad_state, internal_contents_scale_,
-                                internal_contents_scale_);
+                                internal_contents_scale_, contents_opaque());
 
   gfx::Rect quad_rect(internal_content_bounds_);
-  gfx::Rect opaque_rect(contents_opaque() ? quad_rect : gfx::Rect());
+  bool needs_blending = contents_opaque() ? false : true;
   gfx::Rect visible_quad_rect(quad_rect);
   bool premultiplied_alpha = true;
   gfx::PointF uv_top_left(0.f, 0.f);
@@ -146,9 +147,8 @@ void HeadsUpDisplayLayerImpl::AppendQuads(
   const float vertex_opacity[] = { 1.f, 1.f, 1.f, 1.f };
   bool flipped = false;
   bool nearest_neighbor = false;
-  TextureDrawQuad* quad =
-      render_pass->CreateAndAppendDrawQuad<TextureDrawQuad>();
-  quad->SetNew(shared_quad_state, quad_rect, opaque_rect, visible_quad_rect,
+  auto* quad = render_pass->CreateAndAppendDrawQuad<viz::TextureDrawQuad>();
+  quad->SetNew(shared_quad_state, quad_rect, visible_quad_rect, needs_blending,
                resources_.back()->id(), premultiplied_alpha, uv_top_left,
                uv_bottom_right, SK_ColorTRANSPARENT, vertex_opacity, flipped,
                nearest_neighbor, false);
@@ -157,48 +157,61 @@ void HeadsUpDisplayLayerImpl::AppendQuads(
 
 void HeadsUpDisplayLayerImpl::UpdateHudTexture(
     DrawMode draw_mode,
-    ResourceProvider* resource_provider) {
+    ResourceProvider* resource_provider,
+    viz::ContextProvider* context_provider,
+    const viz::RenderPassList& list) {
   if (draw_mode == DRAW_MODE_RESOURCELESS_SOFTWARE || !resources_.back()->id())
     return;
 
-  SkISize canvas_size;
-  if (hud_surface_)
-    canvas_size = hud_surface_->getCanvas()->getBaseLayerSize();
-  else
-    canvas_size.set(0, 0);
+  if (context_provider) {
+    ScopedGpuRaster gpu_raster(context_provider);
 
-  if (canvas_size.width() != internal_content_bounds_.width() ||
-      canvas_size.height() != internal_content_bounds_.height() ||
-      !hud_surface_) {
-    TRACE_EVENT0("cc", "ResizeHudCanvas");
+    ResourceProvider::ScopedWriteLockGL lock(resource_provider,
+                                             resources_.back()->id());
 
-    hud_surface_ = SkSurface::MakeRasterN32Premul(
-        internal_content_bounds_.width(), internal_content_bounds_.height());
-  }
+    ResourceProvider::ScopedSkSurface scoped_surface(
+        context_provider->GrContext(), lock.GetTexture(), lock.target(),
+        lock.size(), lock.format(), false /* use_distance_field_text */,
+        false /* can_use_lcd_text */, 0 /* msaa_sample_count */);
 
-  UpdateHudContents();
+    SkSurface* surface = scoped_surface.surface();
+    if (!surface) {
+      EvictHudQuad(list);
+      return;
+    }
 
-  {
-    TRACE_EVENT0("cc", "DrawHudContents");
-    hud_surface_->getCanvas()->clear(SkColorSetARGB(0, 0, 0, 0));
-    hud_surface_->getCanvas()->save();
-    hud_surface_->getCanvas()->scale(internal_contents_scale_,
-                                     internal_contents_scale_);
+    UpdateHudContents();
+
+    DrawHudContents(surface->getCanvas());
+  } else {
+    SkISize canvas_size;
+    if (hud_surface_)
+      canvas_size = hud_surface_->getCanvas()->getBaseLayerSize();
+    else
+      canvas_size.set(0, 0);
+
+    if (canvas_size.width() != internal_content_bounds_.width() ||
+        canvas_size.height() != internal_content_bounds_.height() ||
+        !hud_surface_) {
+      TRACE_EVENT0("cc", "ResizeHudCanvas");
+
+      hud_surface_ = SkSurface::MakeRasterN32Premul(
+          internal_content_bounds_.width(), internal_content_bounds_.height());
+    }
+
+    UpdateHudContents();
 
     DrawHudContents(hud_surface_->getCanvas());
 
-    hud_surface_->getCanvas()->restore();
+    TRACE_EVENT0("cc", "UploadHudTexture");
+    SkPixmap pixmap;
+    hud_surface_->peekPixels(&pixmap);
+    DCHECK(pixmap.addr());
+    DCHECK(pixmap.info().colorType() == kN32_SkColorType);
+    resource_provider->CopyToResource(
+        resources_.back()->id(), static_cast<const uint8_t*>(pixmap.addr()),
+        internal_content_bounds_);
   }
-
-  TRACE_EVENT0("cc", "UploadHudTexture");
-  SkPixmap pixmap;
-  hud_surface_->peekPixels(&pixmap);
-  DCHECK(pixmap.addr());
-  DCHECK(pixmap.info().colorType() == kN32_SkColorType);
-  resource_provider->CopyToResource(resources_.back()->id(),
-                                    static_cast<const uint8_t*>(pixmap.addr()),
-                                    internal_content_bounds_);
-  resource_provider->GenerateSyncTokenForResource(resources_.back()->id());
 }
 
 void HeadsUpDisplayLayerImpl::ReleaseResources() {
@@ -258,6 +271,11 @@ void HeadsUpDisplayLayerImpl::UpdateHudContents() {
 void HeadsUpDisplayLayerImpl::DrawHudContents(SkCanvas* canvas) {
   const LayerTreeDebugState& debug_state = layer_tree_impl()->debug_state();
 
+  TRACE_EVENT0("cc", "DrawHudContents");
+  canvas->clear(SkColorSetARGB(0, 0, 0, 0));
+  canvas->save();
+  canvas->scale(internal_contents_scale_, internal_contents_scale_);
+
   if (debug_state.ShowHudRects()) {
     DrawDebugRects(canvas, layer_tree_impl()->debug_rect_history());
     if (IsAnimatingHUDContents()) {
@@ -265,8 +283,10 @@ void HeadsUpDisplayLayerImpl::DrawHudContents(SkCanvas* canvas) {
     }
   }
 
-  if (!debug_state.show_fps_counter)
+  if (!debug_state.show_fps_counter) {
+    canvas->restore();
     return;
+  }
 
   SkRect area =
       DrawFPSDisplay(canvas, layer_tree_impl()->frame_rate_counter(), 0, 0);
@@ -275,6 +295,8 @@ void HeadsUpDisplayLayerImpl::DrawHudContents(SkCanvas* canvas) {
 
   if (debug_state.ShowMemoryStats() && memory_entry_.total_bytes_used)
     DrawMemoryDisplay(canvas, 0, area.bottom(), SkMaxScalar(area.width(), 150));
+
+  canvas->restore();
 }
 int HeadsUpDisplayLayerImpl::MeasureText(SkPaint* paint,
                                          const std::string& text,
@@ -575,7 +597,7 @@ SkRect HeadsUpDisplayLayerImpl::DrawMemoryDisplay(SkCanvas* canvas,
   paint.setStyle(SkPaint::kFill_Style);
   paint.setColor(SkColorSetARGB(255, 0, 255, 0));
   canvas->drawArc(oval, 180, angle, true, paint);
-  paint.setShader(NULL);
+  paint.setShader(nullptr);
 
   return area;
 }
@@ -606,10 +628,6 @@ SkRect HeadsUpDisplayLayerImpl::DrawGpuRasterizationStatus(SkCanvas* canvas,
     case GpuRasterizationStatus::MSAA_CONTENT:
       status = "MSAA (content)";
       color = SK_ColorCYAN;
-      break;
-    case GpuRasterizationStatus::OFF_CONTENT:
-      status = "off (content)";
-      color = SK_ColorYELLOW;
       break;
   }
 
@@ -735,7 +753,8 @@ void HeadsUpDisplayLayerImpl::DrawDebugRects(
         stroke_color = DebugColors::TouchEventHandlerRectBorderColor();
         fill_color = DebugColors::TouchEventHandlerRectFillColor();
         stroke_width = DebugColors::TouchEventHandlerRectBorderWidth();
-        label_text = "touch event listener";
+        label_text = "touch event listener: ";
+        label_text.append(TouchActionToString(debug_rects[i].touch_action));
         break;
       case WHEEL_EVENT_HANDLER_RECT_TYPE:
         stroke_color = DebugColors::WheelEventHandlerRectBorderColor();
@@ -786,6 +805,25 @@ void HeadsUpDisplayLayerImpl::DrawDebugRects(
                     DebugColors::PaintRectFillColor(fade_step_),
                     DebugColors::PaintRectBorderWidth(),
                     "");
+    }
+  }
+}
+
+void HeadsUpDisplayLayerImpl::EvictHudQuad(const viz::RenderPassList& list) {
+  viz::ResourceId evict_resource_id = resources_.back()->id();
+  // This iterates over the render pass list of quads to evict the hud quad
+  // appended during render pass preparation. We need this eviction when we
+  // have a context loss during SkSurface creation in UpdateHudTexture, and
+  // we early out without updating the Hud contents.
+  for (const auto& render_pass : list) {
+    for (auto it = render_pass->quad_list.begin();
+         it != render_pass->quad_list.end(); ++it) {
+      for (viz::ResourceId resource_id : it->resources) {
+        if (resource_id == evict_resource_id) {
+          render_pass->quad_list.EraseAndInvalidateAllPointers(it);
+          return;
+        }
+      }
     }
   }
 }

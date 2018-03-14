@@ -5,13 +5,15 @@
 #ifndef KeyboardEventManager_h
 #define KeyboardEventManager_h
 
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "core/CoreExport.h"
 #include "platform/heap/Handle.h"
 #include "platform/heap/Visitor.h"
+#include "platform/wtf/Allocator.h"
 #include "public/platform/WebFocusType.h"
 #include "public/platform/WebInputEvent.h"
 #include "public/platform/WebInputEventResult.h"
-#include "wtf/Allocator.h"
 
 namespace blink {
 
@@ -24,19 +26,17 @@ enum class OverrideCapsLockState { kDefault, kOn, kOff };
 
 class CORE_EXPORT KeyboardEventManager
     : public GarbageCollectedFinalized<KeyboardEventManager> {
-  WTF_MAKE_NONCOPYABLE(KeyboardEventManager);
-
  public:
   static const int kAccessKeyModifiers =
 // TODO(crbug.com/618397): Add a settings to control this behavior.
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
       WebInputEvent::kControlKey | WebInputEvent::kAltKey;
 #else
       WebInputEvent::kAltKey;
 #endif
 
   KeyboardEventManager(LocalFrame&, ScrollManager&);
-  DECLARE_TRACE();
+  void Trace(blink::Visitor*);
 
   bool HandleAccessKey(const WebKeyboardEvent&);
   WebInputEventResult KeyEvent(const WebKeyboardEvent&);
@@ -60,6 +60,8 @@ class CORE_EXPORT KeyboardEventManager
   const Member<LocalFrame> frame_;
 
   Member<ScrollManager> scroll_manager_;
+
+  DISALLOW_COPY_AND_ASSIGN(KeyboardEventManager);
 };
 
 }  // namespace blink

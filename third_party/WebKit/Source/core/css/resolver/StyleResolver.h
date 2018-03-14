@@ -23,7 +23,10 @@
 #ifndef StyleResolver_h
 #define StyleResolver_h
 
+#include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "core/CoreExport.h"
+#include "core/animation/Interpolation.h"
 #include "core/animation/PropertyHandle.h"
 #include "core/css/ElementRuleCollector.h"
 #include "core/css/PseudoStyleRequest.h"
@@ -36,9 +39,6 @@
 #include "platform/wtf/Deque.h"
 #include "platform/wtf/HashMap.h"
 #include "platform/wtf/HashSet.h"
-#include "platform/wtf/ListHashSet.h"
-#include "platform/wtf/RefPtr.h"
-#include "platform/wtf/Vector.h"
 
 namespace blink {
 
@@ -50,27 +50,16 @@ class Element;
 class Interpolation;
 class MatchResult;
 class RuleSet;
-class StylePropertySet;
+class CSSPropertyValueSet;
 class StyleRuleUsageTracker;
-
-enum StyleSharingBehavior {
-  kAllowStyleSharing,
-  kDisallowStyleSharing,
-};
+class CSSVariableResolver;
 
 enum RuleMatchingBehavior { kMatchAllRules, kMatchAllRulesExcludingSMIL };
-
-const unsigned kStyleSharingListSize = 15;
-const unsigned kStyleSharingMaxDepth = 32;
-using StyleSharingList = HeapDeque<Member<Element>, kStyleSharingListSize>;
-using ActiveInterpolationsMap =
-    HashMap<PropertyHandle, Vector<RefPtr<Interpolation>, 1>>;
 
 // This class selects a ComputedStyle for a given element based on a collection
 // of stylesheets.
 class CORE_EXPORT StyleResolver final
     : public GarbageCollectedFinalized<StyleResolver> {
-  WTF_MAKE_NONCOPYABLE(StyleResolver);
 
  public:
   static StyleResolver* Create(Document& document) {
@@ -79,30 +68,29 @@ class CORE_EXPORT StyleResolver final
   ~StyleResolver();
   void Dispose();
 
-  PassRefPtr<ComputedStyle> StyleForElement(
+  scoped_refptr<ComputedStyle> StyleForElement(
       Element*,
       const ComputedStyle* parent_style = nullptr,
       const ComputedStyle* layout_parent_style = nullptr,
-      StyleSharingBehavior = kAllowStyleSharing,
       RuleMatchingBehavior = kMatchAllRules);
 
-  static PassRefPtr<AnimatableValue> CreateAnimatableValueSnapshot(
+  static scoped_refptr<AnimatableValue> CreateAnimatableValueSnapshot(
       Element&,
       const ComputedStyle& base_style,
       const ComputedStyle* parent_style,
-      CSSPropertyID,
+      const CSSProperty&,
       const CSSValue*);
 
-  PassRefPtr<ComputedStyle> PseudoStyleForElement(
+  scoped_refptr<ComputedStyle> PseudoStyleForElement(
       Element*,
       const PseudoStyleRequest&,
       const ComputedStyle* parent_style,
       const ComputedStyle* layout_parent_style);
 
-  PassRefPtr<ComputedStyle> StyleForPage(int page_index);
-  PassRefPtr<ComputedStyle> StyleForText(Text*);
+  scoped_refptr<ComputedStyle> StyleForPage(int page_index);
+  scoped_refptr<ComputedStyle> StyleForText(Text*);
 
-  static PassRefPtr<ComputedStyle> StyleForDocument(Document&);
+  static scoped_refptr<ComputedStyle> StyleForViewport(Document&);
 
   // TODO(esprehn): StyleResolver should probably not contain tree walking
   // state, instead we should pass a context object during recalcStyle.
@@ -131,7 +119,7 @@ class CORE_EXPORT StyleResolver final
       unsigned rules_to_include = kAllButEmptyCSSRules);
   StyleRuleList* StyleRulesForElement(Element*, unsigned rules_to_include);
 
-  void ComputeFont(ComputedStyle*, const StylePropertySet&);
+  void ComputeFont(ComputedStyle*, const CSSPropertyValueSet&);
 
   // FIXME: Rename to reflect the purpose, like didChangeFontSize or something.
   void InvalidateMatchedPropertiesCache();
@@ -144,25 +132,23 @@ class CORE_EXPORT StyleResolver final
     return style_not_yet_available_;
   }
 
-  StyleSharingList& GetStyleSharingList();
-
-  void AddToStyleSharingList(Element&);
-  void ClearStyleSharingList();
-
-  void IncreaseStyleSharingDepth() { ++style_sharing_depth_; }
-  void DecreaseStyleSharingDepth() { --style_sharing_depth_; }
-
   PseudoElement* CreatePseudoElementIfNeeded(Element& parent, PseudoId);
 
   void SetRuleUsageTracker(StyleRuleUsageTracker*);
   void UpdateMediaType();
 
-  DECLARE_TRACE();
+  static void ApplyAnimatedCustomProperty(StyleResolverState&,
+                                          CSSVariableResolver&,
+                                          const PropertyHandle&);
+
+  static bool HasAuthorBackground(const StyleResolverState&);
+
+  void Trace(blink::Visitor*);
 
  private:
   explicit StyleResolver(Document&);
 
-  PassRefPtr<ComputedStyle> InitialStyleForElement();
+  static scoped_refptr<ComputedStyle> InitialStyleForElement(Document&);
 
   // FIXME: This should probably go away, folded into FontBuilder.
   void UpdateFont(StyleResolverState&);
@@ -170,7 +156,6 @@ class CORE_EXPORT StyleResolver final
   void AddMatchedRulesToTracker(const ElementRuleCollector&);
 
   void LoadPendingResources(StyleResolverState&);
-  void AdjustComputedStyle(StyleResolverState&, Element*);
 
   void CollectPseudoRulesForElement(const Element&,
                                     ElementRuleCollector&,
@@ -178,6 +163,7 @@ class CORE_EXPORT StyleResolver final
                                     unsigned rules_to_include);
   void MatchRuleSet(ElementRuleCollector&, RuleSet*);
   void MatchUARules(ElementRuleCollector&);
+  void MatchUserRules(ElementRuleCollector&);
   void MatchScopedRules(const Element&, ElementRuleCollector&);
   void MatchAuthorRules(const Element&, ElementRuleCollector&);
   void MatchAuthorRulesV0(const Element&, ElementRuleCollector&);
@@ -272,31 +258,25 @@ class CORE_EXPORT StyleResolver final
                               NeedsApplyPass&);
   template <CSSPropertyPriority priority, ShouldUpdateNeedsApplyPass>
   void ApplyProperties(StyleResolverState&,
-                       const StylePropertySet* properties,
+                       const CSSPropertyValueSet* properties,
                        bool is_important,
                        bool inherited_only,
                        NeedsApplyPass&,
                        PropertyWhitelistType = kPropertyWhitelistNone);
   template <CSSPropertyPriority priority>
-  void ApplyAnimatedProperties(StyleResolverState&,
-                               const ActiveInterpolationsMap&);
+  void ApplyAnimatedStandardProperties(StyleResolverState&,
+                                       const ActiveInterpolationsMap&);
   template <CSSPropertyPriority priority>
   void ApplyAllProperty(StyleResolverState&,
                         const CSSValue&,
                         bool inherited_only,
                         PropertyWhitelistType);
-  template <CSSPropertyPriority priority, ShouldUpdateNeedsApplyPass>
-  void ApplyPropertiesForApplyAtRule(StyleResolverState&,
-                                     const CSSValue&,
-                                     bool is_important,
-                                     NeedsApplyPass&,
-                                     PropertyWhitelistType);
 
   bool PseudoStyleForElementInternal(Element&,
                                      const PseudoStyleRequest&,
                                      const ComputedStyle* parent_style,
                                      StyleResolverState&);
-  bool HasAuthorBackground(const StyleResolverState&);
+
   bool HasAuthorBorder(const StyleResolverState&);
 
   PseudoElement* CreatePseudoElement(Element* parent, PseudoId);
@@ -315,10 +295,7 @@ class CORE_EXPORT StyleResolver final
 
   bool print_media_type_ = false;
   bool was_viewport_resized_ = false;
-
-  unsigned style_sharing_depth_ = 0;
-  HeapVector<Member<StyleSharingList>, kStyleSharingMaxDepth>
-      style_sharing_lists_;
+  DISALLOW_COPY_AND_ASSIGN(StyleResolver);
 };
 
 }  // namespace blink

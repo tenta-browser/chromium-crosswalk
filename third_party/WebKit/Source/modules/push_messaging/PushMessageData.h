@@ -6,8 +6,8 @@
 #define PushMessageData_h
 
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/ModulesExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/WTFString.h"
@@ -20,9 +20,7 @@ class DOMArrayBuffer;
 class ExceptionState;
 class ScriptState;
 
-class MODULES_EXPORT PushMessageData final
-    : public GarbageCollectedFinalized<PushMessageData>,
-      public ScriptWrappable {
+class MODULES_EXPORT PushMessageData final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -36,8 +34,6 @@ class MODULES_EXPORT PushMessageData final
   Blob* blob() const;
   ScriptValue json(ScriptState*, ExceptionState&) const;
   String text() const;
-
-  DECLARE_TRACE();
 
  private:
   PushMessageData(const char* data, unsigned bytes_size);

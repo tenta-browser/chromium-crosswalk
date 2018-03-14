@@ -12,10 +12,12 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "chrome/browser/chromeos/policy/device_cloud_policy_initializer.h"
 #include "chrome/browser/chromeos/policy/device_cloud_policy_validator.h"
 #include "chrome/browser/chromeos/policy/enrollment_config.h"
 #include "chrome/browser/chromeos/settings/install_attributes.h"
+#include "chromeos/dbus/auth_policy_client.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
@@ -56,8 +58,9 @@ class EnrollmentHandlerChromeOS : public CloudPolicyClient::Observer,
                                   public CloudPolicyStore::Observer,
                                   public gaia::GaiaOAuthClient::Delegate {
  public:
-  typedef DeviceCloudPolicyInitializer::EnrollmentCallback
-      EnrollmentCallback;
+  using EnrollmentCallback = DeviceCloudPolicyInitializer::EnrollmentCallback;
+  using AvailableLicensesCallback =
+      DeviceCloudPolicyInitializer::AvailableLicensesCallback;
 
   // |store| and |install_attributes| must remain valid for the life time of the
   // enrollment handler.
@@ -76,9 +79,18 @@ class EnrollmentHandlerChromeOS : public CloudPolicyClient::Observer,
       const EnrollmentCallback& completion_callback);
   ~EnrollmentHandlerChromeOS() override;
 
+  // Checks license types available for enrollment and reports the result
+  // to |callback|.
+  void CheckAvailableLicenses(
+      const AvailableLicensesCallback& completion_callback);
+
   // Starts the enrollment process and reports the result to
   // |completion_callback_|.
   void StartEnrollment();
+
+  // Starts the enrollment process using user-selected |license_type|
+  // and reports the result to |completion_callback_|.
+  void StartEnrollmentWithLicense(LicenseType license_type);
 
   // Releases the client.
   std::unique_ptr<CloudPolicyClient> ReleaseClient();
@@ -157,9 +169,7 @@ class EnrollmentHandlerChromeOS : public CloudPolicyClient::Observer,
 
   // Invoked after the firmware management partition in TPM is updated.
   void OnFirmwareManagementParametersDataSet(
-      chromeos::DBusMethodCallStatus call_status,
-      bool result,
-      const cryptohome::BaseReply& reply);
+      base::Optional<cryptohome::BaseReply> reply);
 
   // Calls InstallAttributes::LockDevice() for enterprise enrollment and
   // DeviceSettingsService::SetManagementSettings() for consumer
@@ -169,6 +179,11 @@ class EnrollmentHandlerChromeOS : public CloudPolicyClient::Observer,
   // Handle callback from InstallAttributes::LockDevice() and retry on failure.
   void HandleLockDeviceResult(
       chromeos::InstallAttributes::LockResult lock_result);
+
+  // Handles the available licenses request.
+  void HandleAvailableLicensesResult(
+      bool success,
+      const CloudPolicyClient::LicenseMap& license_map);
 
   // Initiates storing DM token. For Active Directory devices only.
   void StartStoreDMToken();
@@ -183,7 +198,7 @@ class EnrollmentHandlerChromeOS : public CloudPolicyClient::Observer,
   void HandleStoreRobotAuthTokenResult(bool result);
 
   // Handles result from device policy refresh via authpolicyd.
-  void HandleActiveDirectoryPolicyRefreshed(bool success);
+  void HandleActiveDirectoryPolicyRefreshed(authpolicy::ErrorType error);
 
   // Drops any ongoing actions.
   void Stop();
@@ -209,6 +224,9 @@ class EnrollmentHandlerChromeOS : public CloudPolicyClient::Observer,
   std::string client_id_;
   std::string requisition_;
   EnrollmentCallback completion_callback_;
+  AvailableLicensesCallback available_licenses_callback_;
+  enterprise_management::LicenseType::LicenseTypeEnum license_type_ =
+      enterprise_management::LicenseType::UNDEFINED;
 
   // The current state key provided by |state_keys_broker_|.
   std::string current_state_key_;

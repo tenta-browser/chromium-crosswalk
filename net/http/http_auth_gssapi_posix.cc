@@ -667,8 +667,7 @@ HttpAuthGSSAPI::HttpAuthGSSAPI(GSSAPILibrary* library,
   DCHECK(library_);
 }
 
-HttpAuthGSSAPI::~HttpAuthGSSAPI() {
-}
+HttpAuthGSSAPI::~HttpAuthGSSAPI() = default;
 
 bool HttpAuthGSSAPI::Init() {
   if (!library_)
@@ -818,7 +817,7 @@ int MapInitSecContextStatusToError(OM_uint32 major_status) {
   return ERR_UNDOCUMENTED_SECURITY_LIBRARY_STATUS;
 }
 
-}
+}  // anonymous namespace
 
 int HttpAuthGSSAPI::GetNextSecurityToken(const std::string& spn,
                                          const std::string& channel_bindings,

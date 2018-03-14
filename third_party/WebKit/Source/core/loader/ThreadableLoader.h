@@ -45,36 +45,13 @@ class ResourceRequest;
 class ExecutionContext;
 class ThreadableLoaderClient;
 
-enum CrossOriginRequestPolicy {
-  kDenyCrossOriginRequests,
-  kUseAccessControl,
-  kAllowCrossOriginRequests
-};
-
-enum PreflightPolicy { kConsiderPreflight, kForcePreflight, kPreventPreflight };
-
-enum ContentSecurityPolicyEnforcement {
-  kEnforceContentSecurityPolicy,
-  kDoNotEnforceContentSecurityPolicy,
-};
-
 struct ThreadableLoaderOptions {
   DISALLOW_NEW();
-  ThreadableLoaderOptions()
-      : preflight_policy(kConsiderPreflight),
-        cross_origin_request_policy(kDenyCrossOriginRequests),
-        content_security_policy_enforcement(kEnforceContentSecurityPolicy),
-        timeout_milliseconds(0) {}
+  ThreadableLoaderOptions() : timeout_milliseconds(0) {}
 
   // When adding members, CrossThreadThreadableLoaderOptionsData should
   // be updated.
 
-  // If AccessControl is used, how to determine if a preflight is needed.
-  PreflightPolicy preflight_policy;
-
-  CrossOriginRequestPolicy cross_origin_request_policy;
-  AtomicString initiator;
-  ContentSecurityPolicyEnforcement content_security_policy_enforcement;
   unsigned long timeout_milliseconds;
 };
 
@@ -83,28 +60,14 @@ struct CrossThreadThreadableLoaderOptionsData {
   STACK_ALLOCATED();
   explicit CrossThreadThreadableLoaderOptionsData(
       const ThreadableLoaderOptions& options)
-      : preflight_policy(options.preflight_policy),
-        cross_origin_request_policy(options.cross_origin_request_policy),
-        initiator(options.initiator.GetString().IsolatedCopy()),
-        content_security_policy_enforcement(
-            options.content_security_policy_enforcement),
-        timeout_milliseconds(options.timeout_milliseconds) {}
+      : timeout_milliseconds(options.timeout_milliseconds) {}
 
   operator ThreadableLoaderOptions() const {
     ThreadableLoaderOptions options;
-    options.preflight_policy = preflight_policy;
-    options.cross_origin_request_policy = cross_origin_request_policy;
-    options.initiator = AtomicString(initiator);
-    options.content_security_policy_enforcement =
-        content_security_policy_enforcement;
     options.timeout_milliseconds = timeout_milliseconds;
     return options;
   }
 
-  PreflightPolicy preflight_policy;
-  CrossOriginRequestPolicy cross_origin_request_policy;
-  String initiator;
-  ContentSecurityPolicyEnforcement content_security_policy_enforcement;
   unsigned long timeout_milliseconds;
 };
 
@@ -186,11 +149,17 @@ class CORE_EXPORT ThreadableLoader
   // milliseconds.
   virtual void OverrideTimeout(unsigned long timeout_milliseconds) = 0;
 
+  // Cancel the request.
   virtual void Cancel() = 0;
+
+  // Detach the loader from the request. This function is for "keepalive"
+  // requests. No notification will be sent to the client, but the request
+  // will be processed.
+  virtual void Detach() = 0;
 
   virtual ~ThreadableLoader() {}
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {}
+  virtual void Trace(blink::Visitor* visitor) {}
 
  protected:
   ThreadableLoader() {}

@@ -33,10 +33,9 @@ VideoCaptureDevice::Client::Buffer::~Buffer() = default;
 VideoCaptureDevice::Client::Buffer& VideoCaptureDevice::Client::Buffer::
 operator=(VideoCaptureDevice::Client::Buffer&& other) = default;
 
-VideoCaptureDevice::~VideoCaptureDevice() {}
+VideoCaptureDevice::~VideoCaptureDevice() = default;
 
-void VideoCaptureDevice::GetPhotoCapabilities(
-    GetPhotoCapabilitiesCallback callback) {}
+void VideoCaptureDevice::GetPhotoState(GetPhotoStateCallback callback) {}
 
 void VideoCaptureDevice::SetPhotoOptions(mojom::PhotoSettingsPtr settings,
                                          SetPhotoOptionsCallback callback) {}

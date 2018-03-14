@@ -16,6 +16,7 @@
 #include "chrome/browser/ui/profile_error_dialog.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/payments/content/payment_manifest_web_data_service.h"
 #include "components/search_engines/keyword_web_data_service.h"
 #include "components/signin/core/browser/webdata/token_web_data.h"
 #include "components/webdata_services/web_data_service_wrapper.h"
@@ -45,9 +46,12 @@ ProfileErrorType ProfileErrorFromWebDataServiceWrapperError(
     case WebDataServiceWrapper::ERROR_LOADING_PASSWORD:
       return ProfileErrorType::DB_WEB_DATA;
 
+    case WebDataServiceWrapper::ERROR_LOADING_PAYMENT_MANIFEST:
+      return ProfileErrorType::DB_PAYMENT_MANIFEST_WEB_DATA;
+
     default:
-      NOTREACHED()
-          << "Unknown WebDataServiceWrapper::ErrorType: " << error_type;
+      NOTREACHED() << "Unknown WebDataServiceWrapper::ErrorType: "
+                   << error_type;
       return ProfileErrorType::DB_WEB_DATA;
   }
 }
@@ -69,8 +73,7 @@ WebDataServiceFactory::WebDataServiceFactory()
   // WebDataServiceFactory has no dependecies.
 }
 
-WebDataServiceFactory::~WebDataServiceFactory() {
-}
+WebDataServiceFactory::~WebDataServiceFactory() {}
 
 // static
 WebDataServiceWrapper* WebDataServiceFactory::GetForProfile(
@@ -106,9 +109,8 @@ WebDataServiceFactory::GetAutofillWebDataForProfile(
   WebDataServiceWrapper* wrapper =
       WebDataServiceFactory::GetForProfile(profile, access_type);
   // |wrapper| can be null in Incognito mode.
-  return wrapper ?
-      wrapper->GetAutofillWebData() :
-      scoped_refptr<autofill::AutofillWebDataService>(nullptr);
+  return wrapper ? wrapper->GetAutofillWebData()
+                 : scoped_refptr<autofill::AutofillWebDataService>(nullptr);
 }
 
 // static
@@ -119,9 +121,8 @@ WebDataServiceFactory::GetKeywordWebDataForProfile(
   WebDataServiceWrapper* wrapper =
       WebDataServiceFactory::GetForProfile(profile, access_type);
   // |wrapper| can be null in Incognito mode.
-  return wrapper ?
-      wrapper->GetKeywordWebData() :
-      scoped_refptr<KeywordWebDataService>(nullptr);
+  return wrapper ? wrapper->GetKeywordWebData()
+                 : scoped_refptr<KeywordWebDataService>(nullptr);
 }
 
 // static
@@ -131,8 +132,8 @@ scoped_refptr<TokenWebData> WebDataServiceFactory::GetTokenWebDataForProfile(
   WebDataServiceWrapper* wrapper =
       WebDataServiceFactory::GetForProfile(profile, access_type);
   // |wrapper| can be null in Incognito mode.
-  return wrapper ?
-      wrapper->GetTokenWebData() : scoped_refptr<TokenWebData>(nullptr);
+  return wrapper ? wrapper->GetTokenWebData()
+                 : scoped_refptr<TokenWebData>(nullptr);
 }
 
 #if defined(OS_WIN)
@@ -144,11 +145,23 @@ WebDataServiceFactory::GetPasswordWebDataForProfile(
   WebDataServiceWrapper* wrapper =
       WebDataServiceFactory::GetForProfile(profile, access_type);
   // |wrapper| can be null in Incognito mode.
-  return wrapper ?
-      wrapper->GetPasswordWebData() :
-      scoped_refptr<PasswordWebDataService>(nullptr);
+  return wrapper ? wrapper->GetPasswordWebData()
+                 : scoped_refptr<PasswordWebDataService>(nullptr);
 }
 #endif
+
+// static
+scoped_refptr<payments::PaymentManifestWebDataService>
+WebDataServiceFactory::GetPaymentManifestWebDataForProfile(
+    Profile* profile,
+    ServiceAccessType access_type) {
+  WebDataServiceWrapper* wrapper =
+      WebDataServiceFactory::GetForProfile(profile, access_type);
+  // |wrapper| can be null in Incognito mode.
+  return wrapper
+             ? wrapper->GetPaymentManifestWebData()
+             : scoped_refptr<payments::PaymentManifestWebDataService>(nullptr);
+}
 
 // static
 WebDataServiceFactory* WebDataServiceFactory::GetInstance() {
@@ -166,7 +179,6 @@ KeyedService* WebDataServiceFactory::BuildServiceInstanceFor(
   return new WebDataServiceWrapper(
       profile_path, g_browser_process->GetApplicationLocale(),
       BrowserThread::GetTaskRunnerForThread(BrowserThread::UI),
-      BrowserThread::GetTaskRunnerForThread(BrowserThread::DB),
       sync_start_util::GetFlareForSyncableService(profile_path),
       &ProfileErrorCallback);
 }

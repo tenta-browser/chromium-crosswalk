@@ -14,8 +14,8 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "content/public/child/worker_thread.h"
 #include "content/public/renderer/render_thread.h"
+#include "content/public/renderer/worker_thread.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/renderer/object_backed_native_handler.h"
 #include "extensions/renderer/script_context.h"
@@ -163,7 +163,7 @@ void WakeEventPage::MakeRequest(const std::string& extension_id,
   int request_id = sequence_number.GetNext();
   {
     base::AutoLock lock(requests_lock_);
-    requests_[request_id] = base::MakeUnique<RequestData>(
+    requests_[request_id] = std::make_unique<RequestData>(
         content::WorkerThread::GetCurrentId(), on_response);
   }
   message_filter_->Send(

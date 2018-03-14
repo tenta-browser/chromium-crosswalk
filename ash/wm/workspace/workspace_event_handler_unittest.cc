@@ -9,11 +9,10 @@
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_util.h"
 #include "ash/wm/wm_event.h"
 #include "ash/wm/workspace_controller.h"
-#include "ash/wm/workspace_controller_test_helper.h"
+#include "ash/wm/workspace_controller_test_api.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "services/ui/public/interfaces/window_manager_constants.mojom.h"
 #include "ui/aura/client/aura_constants.h"
@@ -47,16 +46,16 @@ void ClickButtonWithFlags(ui::test::EventGenerator* generator,
 
 }  // namespace
 
-class WorkspaceEventHandlerTest : public test::AshTestBase {
+class WorkspaceEventHandlerTest : public AshTestBase {
  public:
-  WorkspaceEventHandlerTest() {}
-  ~WorkspaceEventHandlerTest() override {}
+  WorkspaceEventHandlerTest() = default;
+  ~WorkspaceEventHandlerTest() override = default;
 
  protected:
   aura::Window* CreateTestWindow(aura::WindowDelegate* delegate,
                                  const gfx::Rect& bounds) {
     aura::Window* window = new aura::Window(delegate);
-    window->SetType(ui::wm::WINDOW_TYPE_NORMAL);
+    window->SetType(aura::client::WINDOW_TYPE_NORMAL);
     window->Init(ui::LAYER_TEXTURED);
     ParentWindowInPrimaryRootWindow(window);
     window->SetBounds(bounds);
@@ -236,7 +235,7 @@ TEST_F(WorkspaceEventHandlerTest, DoubleClickSingleAxisWhenSideSnapped) {
                                      window.get());
   delegate.set_window_component(HTTOP);
   generator.DoubleClickLeftButton();
-  EXPECT_EQ(wm::WINDOW_STATE_TYPE_LEFT_SNAPPED, window_state->GetStateType());
+  EXPECT_EQ(mojom::WindowStateType::LEFT_SNAPPED, window_state->GetStateType());
   EXPECT_EQ(snapped_bounds_in_screen.ToString(),
             window->GetBoundsInScreen().ToString());
 
@@ -464,11 +463,11 @@ TEST_F(WorkspaceEventHandlerTest, DeleteWhileInRunLoop) {
   std::unique_ptr<aura::Window> window(CreateTestWindow(&delegate, bounds));
   delegate.set_window_component(HTCAPTION);
 
-  ASSERT_TRUE(aura::client::GetWindowMoveClient(window->GetRootWindow()));
+  ASSERT_TRUE(::wm::GetWindowMoveClient(window->GetRootWindow()));
   base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, window.get());
-  aura::client::GetWindowMoveClient(window->GetRootWindow())
+  ::wm::GetWindowMoveClient(window->GetRootWindow())
       ->RunMoveLoop(window.release(), gfx::Vector2d(),
-                    aura::client::WINDOW_MOVE_SOURCE_MOUSE);
+                    ::wm::WINDOW_MOVE_SOURCE_MOUSE);
 }
 
 // Verifies that double clicking in the header does not maximize if the target

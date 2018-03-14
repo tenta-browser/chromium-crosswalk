@@ -8,15 +8,19 @@
 
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/threading/thread_restrictions.h"
 #include "components/subresource_filter/core/common/indexed_ruleset.h"
-#include "components/subresource_filter/core/common/proto/rules.pb.h"
 #include "components/subresource_filter/core/common/test_ruleset_utils.h"
-#include "components/subresource_filter/core/common/unindexed_ruleset.h"
+#include "components/url_pattern_index/proto/rules.pb.h"
+#include "components/url_pattern_index/unindexed_ruleset.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/protobuf/src/google/protobuf/io/zero_copy_stream_impl_lite.h"
 
 namespace subresource_filter {
+
+namespace proto = url_pattern_index::proto;
 
 namespace {
 
@@ -25,6 +29,7 @@ static_assert(CHAR_BIT == 8, "Assumed char was 8 bits.");
 
 void WriteRulesetContents(const std::vector<uint8_t>& contents,
                           base::FilePath path) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   int ruleset_size_as_int = base::checked_cast<int>(contents.size());
   int num_bytes_written =
       base::WriteFile(path, reinterpret_cast<const char*>(contents.data()),
@@ -36,7 +41,7 @@ std::vector<uint8_t> SerializeUnindexedRulesetWithMultipleRules(
     const std::vector<proto::UrlRule>& rules) {
   std::string ruleset_contents;
   google::protobuf::io::StringOutputStream output(&ruleset_contents);
-  UnindexedRulesetWriter ruleset_writer(&output);
+  url_pattern_index::UnindexedRulesetWriter ruleset_writer(&output);
   for (const auto& rule : rules)
     ruleset_writer.AddUrlRule(rule);
   ruleset_writer.Finish();
@@ -65,6 +70,7 @@ TestRuleset::~TestRuleset() = default;
 
 // static
 base::File TestRuleset::Open(const TestRuleset& ruleset) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
   base::File file;
   file.Initialize(ruleset.path, base::File::FLAG_OPEN | base::File::FLAG_READ |
                                     base::File::FLAG_SHARE_DELETE);
@@ -105,8 +111,13 @@ TestRulesetPair::~TestRulesetPair() = default;
 
 // TestRulesetCreator ----------------------------------------------------------
 
-TestRulesetCreator::TestRulesetCreator() = default;
-TestRulesetCreator::~TestRulesetCreator() = default;
+TestRulesetCreator::TestRulesetCreator()
+    : scoped_temp_dir_(base::MakeUnique<base::ScopedTempDir>()) {}
+
+TestRulesetCreator::~TestRulesetCreator() {
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  scoped_temp_dir_.reset();
+}
 
 void TestRulesetCreator::CreateRulesetToDisallowURLsWithPathSuffix(
     base::StringPiece suffix,
@@ -161,9 +172,10 @@ void TestRulesetCreator::CreateUnindexedRulesetWithRules(
 
 void TestRulesetCreator::GetUniqueTemporaryPath(base::FilePath* path) {
   DCHECK(path);
-  ASSERT_TRUE(scoped_temp_dir_.IsValid() ||
-              scoped_temp_dir_.CreateUniqueTempDir());
-  *path = scoped_temp_dir_.GetPath().AppendASCII(
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  ASSERT_TRUE(scoped_temp_dir_->IsValid() ||
+              scoped_temp_dir_->CreateUniqueTempDir());
+  *path = scoped_temp_dir_->GetPath().AppendASCII(
       base::IntToString(next_unique_file_suffix++));
 }
 

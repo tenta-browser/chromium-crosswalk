@@ -35,7 +35,7 @@ Sources.SourcesPanel = class extends UI.Panel {
     Sources.SourcesPanel._instance = this;
     this.registerRequiredCSS('sources/sourcesPanel.css');
     new UI.DropTarget(
-        this.element, [UI.DropTarget.Types.Files], Common.UIString('Drop workspace folder here'),
+        this.element, [UI.DropTarget.Type.Folder], Common.UIString('Drop workspace folder here'),
         this._handleDrop.bind(this));
 
     this._workspace = Workspace.workspace;
@@ -47,6 +47,8 @@ Sources.SourcesPanel = class extends UI.Panel {
     this._stepIntoAction =
         /** @type {!UI.Action }*/ (UI.actionRegistry.action('debugger.step-into'));
     this._stepOutAction = /** @type {!UI.Action }*/ (UI.actionRegistry.action('debugger.step-out'));
+    this._stepIntoAsyncAction =
+        /** @type {!UI.Action }*/ (UI.actionRegistry.action('debugger.step-into-async'));
     this._toggleBreakpointsActiveAction =
         /** @type {!UI.Action }*/ (UI.actionRegistry.action('debugger.toggle-breakpoints-active'));
 
@@ -87,8 +89,6 @@ Sources.SourcesPanel = class extends UI.Panel {
 
     this._threadsSidebarPane = null;
     this._watchSidebarPane = /** @type {!UI.View} */ (UI.viewManager.view('sources.watch'));
-    // TODO: Force installing listeners from the model, not the UI.
-    self.runtime.sharedInstance(Sources.XHRBreakpointsSidebarPane);
     this._callstackPane = self.runtime.sharedInstance(Sources.CallStackSidebarPane);
     this._callstackPane.registerShortcuts(this.registerShortcuts.bind(this));
 
@@ -121,7 +121,6 @@ Sources.SourcesPanel = class extends UI.Panel {
     new Sources.WorkspaceMappingTip(this, this._workspace);
     Extensions.extensionServer.addEventListener(
         Extensions.ExtensionServer.Events.SidebarPaneAdded, this._extensionSidebarPaneAdded, this);
-    Components.DataSaverInfobar.maybeShowInPanel(this);
     SDK.targetManager.observeTargets(this);
   }
 
@@ -393,7 +392,7 @@ Sources.SourcesPanel = class extends UI.Panel {
       for (var i = 0; i < objects.length; ++i) {
         var navigatorView = /** @type {!Sources.NavigatorView} */ (objects[i]);
         var viewId = extensions[i].descriptor()['viewId'];
-        if (navigatorView.accept(uiSourceCode)) {
+        if (navigatorView.acceptProject(uiSourceCode.project())) {
           navigatorView.revealUISourceCode(uiSourceCode, true);
           if (skipReveal)
             this._navigatorTabbedLocation.tabbedPane().selectTab(viewId);
@@ -410,8 +409,7 @@ Sources.SourcesPanel = class extends UI.Panel {
   _populateNavigatorMenu(contextMenu) {
     var groupByFolderSetting = Common.moduleSetting('navigatorGroupByFolder');
     contextMenu.appendItemsAtLocation('navigatorMenu');
-    contextMenu.appendSeparator();
-    contextMenu.appendCheckboxItem(
+    contextMenu.viewSection().appendCheckboxItem(
         Common.UIString('Group by folder'), () => groupByFolderSetting.set(!groupByFolderSetting.get()),
         groupByFolderSetting.get());
   }
@@ -476,18 +474,21 @@ Sources.SourcesPanel = class extends UI.Panel {
       this._stepOverAction.setEnabled(false);
       this._stepIntoAction.setEnabled(false);
       this._stepOutAction.setEnabled(false);
+      this._stepIntoAsyncAction.setEnabled(false);
     } else if (this._paused) {
       this._togglePauseAction.setToggled(true);
       this._togglePauseAction.setEnabled(true);
       this._stepOverAction.setEnabled(true);
       this._stepIntoAction.setEnabled(true);
       this._stepOutAction.setEnabled(true);
+      this._stepIntoAsyncAction.setEnabled(true);
     } else {
       this._togglePauseAction.setToggled(false);
       this._togglePauseAction.setEnabled(!currentDebuggerModel.isPausing());
       this._stepOverAction.setEnabled(false);
       this._stepIntoAction.setEnabled(false);
       this._stepOutAction.setEnabled(false);
+      this._stepIntoAsyncAction.setEnabled(false);
     }
 
     var details = currentDebuggerModel ? currentDebuggerModel.debuggerPausedDetails() : null;
@@ -630,6 +631,17 @@ Sources.SourcesPanel = class extends UI.Panel {
   /**
    * @return {boolean}
    */
+  _stepIntoAsync() {
+    var debuggerModel = this._prepareToResume();
+    if (!debuggerModel)
+      return true;
+    debuggerModel.scheduleStepIntoAsync();
+    return true;
+  }
+
+  /**
+   * @return {boolean}
+   */
   _stepOut() {
     var debuggerModel = this._prepareToResume();
     if (!debuggerModel)
@@ -681,6 +693,8 @@ Sources.SourcesPanel = class extends UI.Panel {
     debugToolbar.appendToolbarItem(UI.Toolbar.createActionButton(this._stepOverAction));
     debugToolbar.appendToolbarItem(UI.Toolbar.createActionButton(this._stepIntoAction));
     debugToolbar.appendToolbarItem(UI.Toolbar.createActionButton(this._stepOutAction));
+    if (Runtime.experiments.isEnabled('stepIntoAsync'))
+      debugToolbar.appendToolbarItem(UI.Toolbar.createActionButton(this._stepIntoAsyncAction));
     debugToolbar.appendSeparator();
     debugToolbar.appendToolbarItem(UI.Toolbar.createActionButton(this._toggleBreakpointsActiveAction));
 
@@ -688,29 +702,17 @@ Sources.SourcesPanel = class extends UI.Panel {
     this._pauseOnExceptionButton.addEventListener(UI.ToolbarButton.Events.Click, this._togglePauseOnExceptions, this);
     debugToolbar.appendToolbarItem(this._pauseOnExceptionButton);
 
-    debugToolbar.appendSeparator();
-    debugToolbar.appendToolbarItem(new UI.ToolbarSettingCheckbox(
-        Common.moduleSetting('enableAsyncStackTraces'), Common.UIString('Capture async stack traces'),
-        Common.UIString('Async')));
-
     return debugToolbar;
   }
 
   _createDebugToolbarDrawer() {
     var debugToolbarDrawer = createElementWithClass('div', 'scripts-debug-toolbar-drawer');
 
-    var label = Common.UIString('Pause On Caught Exceptions');
+    var label = Common.UIString('Pause on caught exceptions');
     var setting = Common.moduleSetting('pauseOnCaughtException');
     debugToolbarDrawer.appendChild(UI.SettingsUI.createSettingCheckbox(label, setting, true));
 
     return debugToolbarDrawer;
-  }
-
-  /**
-   * @param {!Workspace.UISourceCode} uiSourceCode
-   */
-  _showLocalHistory(uiSourceCode) {
-    Sources.RevisionHistoryView.showHistory(uiSourceCode);
   }
 
   /**
@@ -742,7 +744,8 @@ Sources.SourcesPanel = class extends UI.Panel {
       if (!networkUISourceCode)
         return;
       var fileSystemPath = Persistence.FileSystemWorkspaceBinding.fileSystemPath(uiSourceCode.project().id());
-      Workspace.fileSystemMapping.addMappingForResource(networkUISourceCode.url(), fileSystemPath, uiSourceCode.url());
+      Persistence.fileSystemMapping.addMappingForResource(
+          networkUISourceCode.url(), fileSystemPath, uiSourceCode.url());
     }
   }
 
@@ -760,7 +763,8 @@ Sources.SourcesPanel = class extends UI.Panel {
       if (!uiSourceCode)
         return;
       var fileSystemPath = Persistence.FileSystemWorkspaceBinding.fileSystemPath(uiSourceCode.project().id());
-      Workspace.fileSystemMapping.addMappingForResource(networkUISourceCode.url(), fileSystemPath, uiSourceCode.url());
+      Persistence.fileSystemMapping.addMappingForResource(
+          networkUISourceCode.url(), fileSystemPath, uiSourceCode.url());
     }
   }
 
@@ -768,7 +772,7 @@ Sources.SourcesPanel = class extends UI.Panel {
    * @param {!Workspace.UISourceCode} uiSourceCode
    */
   _removeNetworkMapping(uiSourceCode) {
-    Workspace.fileSystemMapping.removeMappingForURL(uiSourceCode.url());
+    Persistence.fileSystemMapping.removeMappingForURL(uiSourceCode.url());
   }
 
   /**
@@ -776,20 +780,16 @@ Sources.SourcesPanel = class extends UI.Panel {
    * @param {!Workspace.UISourceCode} uiSourceCode
    */
   _appendUISourceCodeMappingItems(contextMenu, uiSourceCode) {
-    Sources.NavigatorView.appendAddFolderItem(contextMenu);
-
     if (Runtime.experiments.isEnabled('persistence2'))
       return;
     if (uiSourceCode.project().type() === Workspace.projectTypes.FileSystem) {
       var binding = Persistence.persistence.binding(uiSourceCode);
       if (!binding) {
-        contextMenu.appendItem(
-            Common.UIString.capitalize('Map to ^network ^resource\u2026'),
-            this.mapFileSystemToNetwork.bind(this, uiSourceCode));
+        contextMenu.debugSection().appendItem(
+            Common.UIString('Map to network resource\u2026'), this.mapFileSystemToNetwork.bind(this, uiSourceCode));
       } else {
-        contextMenu.appendItem(
-            Common.UIString.capitalize('Remove ^network ^mapping'),
-            this._removeNetworkMapping.bind(this, binding.network));
+        contextMenu.debugSection().appendItem(
+            Common.UIString('Remove network mapping'), this._removeNetworkMapping.bind(this, binding.network));
       }
     }
 
@@ -805,9 +805,8 @@ Sources.SourcesPanel = class extends UI.Panel {
       if (!this._workspace.projects().filter(filterProject).length)
         return;
       if (this._workspace.uiSourceCodeForURL(uiSourceCode.url()) === uiSourceCode) {
-        contextMenu.appendItem(
-            Common.UIString.capitalize('Map to ^file ^system ^resource\u2026'),
-            this.mapNetworkToFileSystem.bind(this, uiSourceCode));
+        contextMenu.debugSection().appendItem(
+            Common.UIString('Map to file system resource\u2026'), this.mapNetworkToFileSystem.bind(this, uiSourceCode));
       }
     }
   }
@@ -824,15 +823,10 @@ Sources.SourcesPanel = class extends UI.Panel {
     var uiSourceCode = /** @type {!Workspace.UISourceCode} */ (target);
     if (!uiSourceCode.project().isServiceProject() &&
         !event.target.isSelfOrDescendant(this._navigatorTabbedLocation.widget().element)) {
-      contextMenu.appendItem(
-          Common.UIString.capitalize('Reveal in ^navigator'), this._handleContextMenuReveal.bind(this, uiSourceCode));
-      contextMenu.appendSeparator();
+      contextMenu.revealSection().appendItem(
+          Common.UIString('Reveal in navigator'), this._handleContextMenuReveal.bind(this, uiSourceCode));
     }
     this._appendUISourceCodeMappingItems(contextMenu, uiSourceCode);
-    if (!uiSourceCode.project().canSetFileContent()) {
-      contextMenu.appendItem(
-          Common.UIString.capitalize('Local ^modifications\u2026'), this._showLocalHistory.bind(this, uiSourceCode));
-    }
   }
 
   /**
@@ -841,9 +835,9 @@ Sources.SourcesPanel = class extends UI.Panel {
    * @param {!Object} target
    */
   _appendUISourceCodeFrameItems(event, contextMenu, target) {
-    if (!(target instanceof SourceFrame.UISourceCodeFrame))
+    if (!(target instanceof Sources.UISourceCodeFrame))
       return;
-    contextMenu.appendAction('debugger.evaluate-selection');
+    contextMenu.debugSection().appendAction('debugger.evaluate-selection');
   }
 
   /**
@@ -861,9 +855,10 @@ Sources.SourcesPanel = class extends UI.Panel {
       var target = UI.context.flavor(SDK.Target);
       var debuggerModel = target ? target.model(SDK.DebuggerModel) : null;
       if (debuggerModel && debuggerModel.isPaused()) {
-        contextMenu.appendItem(
-            Common.UIString.capitalize('Continue to ^here'), this._continueToLocation.bind(this, uiLocation));
+        contextMenu.debugSection().appendItem(
+            Common.UIString('Continue to here'), this._continueToLocation.bind(this, uiLocation));
       }
+
       this._callstackPane.appendBlackboxURLContextMenuItems(contextMenu, uiSourceCode);
     }
   }
@@ -884,12 +879,11 @@ Sources.SourcesPanel = class extends UI.Panel {
     if (!(target instanceof SDK.RemoteObject))
       return;
     var remoteObject = /** @type {!SDK.RemoteObject} */ (target);
-    contextMenu.appendItem(
-        Common.UIString.capitalize('Store as ^global ^variable'), this._saveToTempVariable.bind(this, remoteObject));
+    contextMenu.debugSection().appendItem(
+        Common.UIString('Store as global variable'), this._saveToTempVariable.bind(this, remoteObject));
     if (remoteObject.type === 'function') {
-      contextMenu.appendItem(
-          Common.UIString.capitalize('Show ^function ^definition'),
-          this._showFunctionDefinition.bind(this, remoteObject));
+      contextMenu.debugSection().appendItem(
+          Common.UIString('Show function definition'), this._showFunctionDefinition.bind(this, remoteObject));
     }
   }
 
@@ -904,60 +898,54 @@ Sources.SourcesPanel = class extends UI.Panel {
     var uiSourceCode = this._workspace.uiSourceCodeForURL(request.url());
     if (!uiSourceCode)
       return;
-    var openText = Common.UIString.capitalize('Open in Sources ^panel');
-    contextMenu.appendItem(openText, this.showUILocation.bind(this, uiSourceCode.uiLocation(0, 0)));
+    var openText = Common.UIString('Open in Sources panel');
+    contextMenu.revealSection().appendItem(openText, this.showUILocation.bind(this, uiSourceCode.uiLocation(0, 0)));
   }
 
   /**
    * @param {!SDK.RemoteObject} remoteObject
    */
-  _saveToTempVariable(remoteObject) {
+  async _saveToTempVariable(remoteObject) {
     var currentExecutionContext = UI.context.flavor(SDK.ExecutionContext);
     if (!currentExecutionContext)
       return;
 
-    currentExecutionContext.globalObject('', false, didGetGlobalObject);
-    /**
-     * @param {?SDK.RemoteObject} global
-     * @param {!Protocol.Runtime.ExceptionDetails=} exceptionDetails
-     */
-    function didGetGlobalObject(global, exceptionDetails) {
-      /**
-       * @suppressReceiverCheck
-       * @this {Window}
-       */
-      function remoteFunction(value) {
-        var prefix = 'temp';
-        var index = 1;
-        while ((prefix + index) in this)
-          ++index;
-        var name = prefix + index;
-        this[name] = value;
-        return name;
-      }
-
-      if (!!exceptionDetails || !global) {
-        failedToSave(global);
-      } else {
-        global.callFunction(
-            remoteFunction, [SDK.RemoteObject.toCallArgument(remoteObject)], didSave.bind(null, global));
-      }
+    var result = await currentExecutionContext.globalObject(/* objectGroup */ '', /* generatePreview */ false);
+    if (!!result.exceptionDetails || !result.object) {
+      failedToSave(result.object || null);
+      return;
     }
 
+    var globalObject = result.object;
+    var callFunctionResult =
+        await globalObject.callFunctionPromise(saveVariable, [SDK.RemoteObject.toCallArgument(remoteObject)]);
+    globalObject.release();
+    if (callFunctionResult.wasThrown || !callFunctionResult.object || callFunctionResult.object.type !== 'string') {
+      failedToSave(callFunctionResult.object || null);
+    } else {
+      var executionContext = /** @type {!SDK.ExecutionContext} */ (currentExecutionContext);
+      var text = /** @type {string} */ (callFunctionResult.object.value);
+      var message = ConsoleModel.consoleModel.addCommandMessage(executionContext, text);
+      text = SDK.RuntimeModel.wrapObjectLiteralExpressionIfNeeded(text);
+      ConsoleModel.consoleModel.evaluateCommandInConsole(
+          executionContext, message, text,
+          /* useCommandLineAPI */ false, /* awaitPromise */ false);
+    }
+    if (callFunctionResult.object)
+      callFunctionResult.object.release();
+
     /**
-     * @param {!SDK.RemoteObject} global
-     * @param {?SDK.RemoteObject} result
-     * @param {boolean=} wasThrown
+     * @suppressReceiverCheck
+     * @this {Window}
      */
-    function didSave(global, result, wasThrown) {
-      global.release();
-      if (wasThrown || !result || result.type !== 'string') {
-        failedToSave(result);
-      } else {
-        ConsoleModel.consoleModel.evaluateCommandInConsole(
-            /** @type {!SDK.ExecutionContext} */ (currentExecutionContext), /** @type {string} */ (result.value),
-            /* useCommandLineAPI */ false);
-      }
+    function saveVariable(value) {
+      var prefix = 'temp';
+      var index = 1;
+      while ((prefix + index) in this)
+        ++index;
+      var name = prefix + index;
+      this[name] = value;
+      return name;
     }
 
     /**
@@ -965,10 +953,8 @@ Sources.SourcesPanel = class extends UI.Panel {
      */
     function failedToSave(result) {
       var message = Common.UIString('Failed to save to temp variable.');
-      if (result) {
+      if (result)
         message += ' ' + result.description;
-        result.release();
-      }
       Common.console.error(message);
     }
   }
@@ -1050,12 +1036,18 @@ Sources.SourcesPanel = class extends UI.Panel {
     var jsBreakpoints = /** @type {!UI.View} */ (UI.viewManager.view('sources.jsBreakpoints'));
     var scopeChainView = /** @type {!UI.View} */ (UI.viewManager.view('sources.scopeChain'));
 
+    if (this._tabbedLocationHeader) {
+      this._splitWidget.uninstallResizer(this._tabbedLocationHeader);
+      this._tabbedLocationHeader = null;
+    }
+
     if (!vertically) {
       // Populate the rest of the stack.
       this._sidebarPaneStack.showView(scopeChainView);
       this._sidebarPaneStack.showView(jsBreakpoints);
       this._extensionSidebarPanesContainer = this._sidebarPaneStack;
       this.sidebarPaneView = vbox;
+      this._splitWidget.uninstallResizer(this._debugToolbar.gripElementForResize());
     } else {
       var splitWidget = new UI.SplitWidget(true, true, 'sourcesPanelDebuggerSidebarSplitViewState', 0.5);
       splitWidget.setMainWidget(vbox);
@@ -1065,6 +1057,9 @@ Sources.SourcesPanel = class extends UI.Panel {
 
       var tabbedLocation = UI.viewManager.createTabbedLocation(this._revealDebuggerSidebar.bind(this));
       splitWidget.setSidebarWidget(tabbedLocation.tabbedPane());
+      this._tabbedLocationHeader = tabbedLocation.tabbedPane().headerElement();
+      this._splitWidget.installResizer(this._tabbedLocationHeader);
+      this._splitWidget.installResizer(this._debugToolbar.gripElementForResize());
       tabbedLocation.appendView(scopeChainView);
       tabbedLocation.appendView(this._watchSidebarPane);
       this._extensionSidebarPanesContainer = tabbedLocation;
@@ -1160,8 +1155,10 @@ Sources.SourcesPanel.DebuggerLocationRevealer = class {
   reveal(rawLocation, omitFocus) {
     if (!(rawLocation instanceof SDK.DebuggerModel.Location))
       return Promise.reject(new Error('Internal error: not a debugger location'));
-    Sources.SourcesPanel.instance().showUILocation(
-        Bindings.debuggerWorkspaceBinding.rawLocationToUILocation(rawLocation), omitFocus);
+    var uiLocation = Bindings.debuggerWorkspaceBinding.rawLocationToUILocation(rawLocation);
+    if (!uiLocation)
+      return Promise.resolve();
+    Sources.SourcesPanel.instance().showUILocation(uiLocation, omitFocus);
     return Promise.resolve();
   }
 };
@@ -1244,6 +1241,9 @@ Sources.SourcesPanel.DebuggingActionDelegate = class {
       case 'debugger.step-into':
         panel._stepInto();
         return true;
+      case 'debugger.step-into-async':
+        panel._stepIntoAsync();
+        return true;
       case 'debugger.step-out':
         panel._stepOut();
         return true;
@@ -1254,12 +1254,16 @@ Sources.SourcesPanel.DebuggingActionDelegate = class {
         panel._toggleBreakpointsActive();
         return true;
       case 'debugger.evaluate-selection':
-        var frame = UI.context.flavor(SourceFrame.UISourceCodeFrame);
+        var frame = UI.context.flavor(Sources.UISourceCodeFrame);
         if (frame) {
           var text = frame.textEditor.text(frame.textEditor.selection());
           var executionContext = UI.context.flavor(SDK.ExecutionContext);
-          if (executionContext)
-            ConsoleModel.consoleModel.evaluateCommandInConsole(executionContext, text, /* useCommandLineAPI */ true);
+          if (executionContext) {
+            var message = ConsoleModel.consoleModel.addCommandMessage(executionContext, text);
+            text = SDK.RuntimeModel.wrapObjectLiteralExpressionIfNeeded(text);
+            ConsoleModel.consoleModel.evaluateCommandInConsole(
+                executionContext, message, text, /* useCommandLineAPI */ true, /* awaitPromise */ false);
+          }
         }
         return true;
     }

@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "media/mojo/features.h"
 #include "media/mojo/interfaces/interface_factory.mojom.h"
 #include "media/mojo/services/mojo_cdm_service_context.h"
 #include "mojo/public/cpp/bindings/strong_binding_set.h"
@@ -17,6 +18,7 @@
 namespace media {
 
 class CdmFactory;
+class DelayedReleaseServiceContextRef;
 class MediaLog;
 class MojoMediaClient;
 class RendererFactory;
@@ -25,7 +27,7 @@ class InterfaceFactoryImpl : public mojom::InterfaceFactory {
  public:
   InterfaceFactoryImpl(
       service_manager::mojom::InterfaceProviderPtr interfaces,
-      scoped_refptr<MediaLog> media_log,
+      MediaLog* media_log,
       std::unique_ptr<service_manager::ServiceContextRef> connection_ref,
       MojoMediaClient* mojo_media_client);
   ~InterfaceFactoryImpl() final;
@@ -35,40 +37,44 @@ class InterfaceFactoryImpl : public mojom::InterfaceFactory {
   void CreateVideoDecoder(mojom::VideoDecoderRequest request) final;
   void CreateRenderer(const std::string& audio_device_id,
                       mojom::RendererRequest request) final;
-  void CreateCdm(mojom::ContentDecryptionModuleRequest request) final;
+  void CreateCdm(const std::string& key_system,
+                 mojom::ContentDecryptionModuleRequest request) final;
 
  private:
-#if defined(ENABLE_MOJO_RENDERER)
+#if BUILDFLAG(ENABLE_MOJO_RENDERER)
   RendererFactory* GetRendererFactory();
-#endif  // defined(ENABLE_MOJO_RENDERER)
+#endif  // BUILDFLAG(ENABLE_MOJO_RENDERER)
 
-#if defined(ENABLE_MOJO_CDM)
+#if BUILDFLAG(ENABLE_MOJO_CDM)
   CdmFactory* GetCdmFactory();
-#endif  // defined(ENABLE_MOJO_CDM)
+#endif  // BUILDFLAG(ENABLE_MOJO_CDM)
 
+  // Must be declared before the bindings below because the bound objects might
+  // take a raw pointer of |cdm_service_context_| and assume it's always
+  // available.
   MojoCdmServiceContext cdm_service_context_;
 
-#if defined(ENABLE_MOJO_AUDIO_DECODER)
+#if BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
   mojo::StrongBindingSet<mojom::AudioDecoder> audio_decoder_bindings_;
-#endif  // defined(ENABLE_MOJO_AUDIO_DECODER)
+#endif  // BUILDFLAG(ENABLE_MOJO_AUDIO_DECODER)
 
-#if defined(ENABLE_MOJO_VIDEO_DECODER)
+#if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
   mojo::StrongBindingSet<mojom::VideoDecoder> video_decoder_bindings_;
-#endif  // defined(ENABLE_MOJO_VIDEO_DECODER)
+#endif  // BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
 
-#if defined(ENABLE_MOJO_RENDERER)
+#if BUILDFLAG(ENABLE_MOJO_RENDERER)
+  MediaLog* media_log_;
   std::unique_ptr<RendererFactory> renderer_factory_;
   mojo::StrongBindingSet<mojom::Renderer> renderer_bindings_;
-#endif  // defined(ENABLE_MOJO_RENDERER)
+#endif  // BUILDFLAG(ENABLE_MOJO_RENDERER)
 
-#if defined(ENABLE_MOJO_CDM)
+#if BUILDFLAG(ENABLE_MOJO_CDM)
   std::unique_ptr<CdmFactory> cdm_factory_;
   service_manager::mojom::InterfaceProviderPtr interfaces_;
   mojo::StrongBindingSet<mojom::ContentDecryptionModule> cdm_bindings_;
-#endif  // defined(ENABLE_MOJO_CDM)
+#endif  // BUILDFLAG(ENABLE_MOJO_CDM)
 
-  scoped_refptr<MediaLog> media_log_;
-  std::unique_ptr<service_manager::ServiceContextRef> connection_ref_;
+  std::unique_ptr<DelayedReleaseServiceContextRef> connection_ref_;
   MojoMediaClient* mojo_media_client_;
 
   DISALLOW_COPY_AND_ASSIGN(InterfaceFactoryImpl);

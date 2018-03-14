@@ -4,21 +4,51 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGInlineText #text",
-          "rect": [10, 63, 307, 257],
-          "reason": "layoutObject removal"
+          "rect": [10, 62, 307, 257],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutSVGInlineText #text",
+          "rect": [10, 62, 307, 257],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutSVGInlineText #text",
+          "rect": [10, 62, 307, 257],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutSVGInlineText #text",
+          "rect": [10, 62, 307, 257],
+          "reason": "disappeared"
+        },
+        {
+          "object": "LayoutSVGInlineText #text",
+          "rect": [10, 62, 307, 257],
+          "reason": "disappeared"
+        },
+        {
+          "object": "LayoutSVGTSpan tspan",
+          "rect": [10, 62, 307, 257],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutSVGTSpan tspan",
+          "rect": [10, 62, 307, 257],
+          "reason": "geometry"
         },
         {
           "object": "LayoutSVGTSpan tspan id='remove'",
-          "rect": [10, 63, 307, 257],
-          "reason": "layoutObject removal"
+          "rect": [10, 62, 307, 257],
+          "reason": "disappeared"
         },
         {
           "object": "LayoutSVGText text id='text'",
-          "rect": [10, 63, 307, 257],
+          "rect": [10, 62, 307, 257],
           "reason": "full"
         }
       ]
@@ -27,11 +57,15 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutSVGInlineText #text",
-      "reason": "layoutObject removal"
+      "reason": "disappeared"
     },
     {
       "object": "LayoutSVGTSpan tspan id='remove'",
-      "reason": "layoutObject removal"
+      "reason": "disappeared"
+    },
+    {
+      "object": "LayoutSVGInlineText #text",
+      "reason": "disappeared"
     },
     {
       "object": "LayoutSVGText text id='text'",
@@ -43,47 +77,43 @@
     },
     {
       "object": "LayoutSVGTSpan tspan",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "InlineFlowBox",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutSVGInlineText #text",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "InlineTextBox 'PASS'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutSVGInlineText #text",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "InlineTextBox ' '",
-      "reason": "forced by layout"
-    },
-    {
-      "object": "LayoutSVGInlineText #text",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutSVGTSpan tspan",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "InlineFlowBox",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutSVGInlineText #text",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "InlineTextBox 'PASS'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     }
   ]
 }

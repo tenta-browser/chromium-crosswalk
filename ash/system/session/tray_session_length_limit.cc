@@ -8,14 +8,13 @@
 #include <memory>
 #include <utility>
 
-#include "ash/resources/grit/ash_resources.h"
 #include "ash/resources/vector_icons/vector_icons.h"
+#include "ash/session/session_controller.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/system_notifier.h"
 #include "ash/system/tray/label_tray_view.h"
 #include "ash/system/tray/system_tray.h"
-#include "ash/system/tray/system_tray_delegate.h"
 #include "ash/system/tray/system_tray_notifier.h"
 #include "ash/system/tray/tray_constants.h"
 #include "base/logging.h"
@@ -34,6 +33,12 @@ namespace {
 // informed that the session is about to expire.
 const int kExpiringSoonThresholdInMinutes = 5;
 
+// A notification is shown to the user only if the remaining session time falls
+// under this threshold. e.g. If the user has several days left in their
+// session, there is no use displaying a notification right now.
+constexpr base::TimeDelta kNotificationThreshold =
+    base::TimeDelta::FromMinutes(60);
+
 // Use 500ms interval for updates to notification and tray bubble to reduce the
 // likelihood of a user-visible skip in high load situations (as might happen
 // with 1000ms).
@@ -49,13 +54,14 @@ TraySessionLengthLimit::TraySessionLengthLimit(SystemTray* system_tray)
     : SystemTrayItem(system_tray, UMA_SESSION_LENGTH_LIMIT),
       limit_state_(LIMIT_NONE),
       last_limit_state_(LIMIT_NONE),
+      has_notification_been_shown_(false),
       tray_bubble_view_(nullptr) {
-  Shell::Get()->system_tray_notifier()->AddSessionLengthLimitObserver(this);
+  Shell::Get()->session_controller()->AddObserver(this);
   Update();
 }
 
 TraySessionLengthLimit::~TraySessionLengthLimit() {
-  Shell::Get()->system_tray_notifier()->RemoveSessionLengthLimitObserver(this);
+  Shell::Get()->session_controller()->RemoveObserver(this);
 }
 
 // Add view to tray bubble.
@@ -70,11 +76,12 @@ views::View* TraySessionLengthLimit::CreateDefaultView(LoginStatus status) {
 }
 
 // View has been removed from tray bubble.
-void TraySessionLengthLimit::DestroyDefaultView() {
+void TraySessionLengthLimit::OnDefaultViewDestroyed() {
   tray_bubble_view_ = nullptr;
 }
 
-void TraySessionLengthLimit::OnSessionStartTimeChanged() {
+void TraySessionLengthLimit::OnSessionStateChanged(
+    session_manager::SessionState state) {
   Update();
 }
 
@@ -83,19 +90,24 @@ void TraySessionLengthLimit::OnSessionLengthLimitChanged() {
 }
 
 void TraySessionLengthLimit::Update() {
+  // Don't show notification or tray item until the user is logged in.
+  if (!Shell::Get()->session_controller()->IsActiveUserSessionStarted())
+    return;
+
   UpdateState();
   UpdateNotification();
   UpdateTrayBubbleView();
 }
 
 void TraySessionLengthLimit::UpdateState() {
-  SystemTrayDelegate* delegate = Shell::Get()->system_tray_delegate();
-  if (delegate->GetSessionStartTime(&session_start_time_) &&
-      delegate->GetSessionLengthLimit(&time_limit_)) {
+  SessionController* session = Shell::Get()->session_controller();
+  base::TimeDelta time_limit = session->session_length_limit();
+  base::TimeTicks session_start_time = session->session_start_time();
+  if (!time_limit.is_zero() && !session_start_time.is_null()) {
     const base::TimeDelta expiring_soon_threshold(
         base::TimeDelta::FromMinutes(kExpiringSoonThresholdInMinutes));
     remaining_session_time_ =
-        std::max(time_limit_ - (base::TimeTicks::Now() - session_start_time_),
+        std::max(time_limit - (base::TimeTicks::Now() - session_start_time),
                  base::TimeDelta());
     limit_state_ = remaining_session_time_ <= expiring_soon_threshold
                        ? LIMIT_EXPIRING_SOON
@@ -119,8 +131,9 @@ void TraySessionLengthLimit::UpdateNotification() {
       message_center::MessageCenter::Get();
 
   // If state hasn't changed and the notification has already been acknowledged,
-  // we won't re-create it.
-  if (limit_state_ == last_limit_state_ &&
+  // we won't re-create it. We consider a notification to be acknowledged if it
+  // was shown before, but is no longer visible.
+  if (limit_state_ == last_limit_state_ && has_notification_been_shown_ &&
       !message_center->FindVisibleNotificationById(kNotificationId)) {
     return;
   }
@@ -135,8 +148,10 @@ void TraySessionLengthLimit::UpdateNotification() {
         kNotificationId, false /* by_user */);
   }
 
-  // For LIMIT_NONE, there's nothing more to do.
-  if (limit_state_ == LIMIT_NONE) {
+  // If the session is unlimited or if the remaining time is too far off into
+  // the future, there is nothing more to do.
+  if (limit_state_ == LIMIT_NONE ||
+      remaining_session_time_ > kNotificationThreshold) {
     last_limit_state_ = limit_state_;
     return;
   }
@@ -144,8 +159,8 @@ void TraySessionLengthLimit::UpdateNotification() {
   message_center::RichNotificationData data;
   data.should_make_spoken_feedback_for_popup_updates =
       (limit_state_ != last_limit_state_);
-  std::unique_ptr<message_center::Notification> notification(
-      new message_center::Notification(
+  std::unique_ptr<message_center::Notification> notification =
+      system_notifier::CreateSystemNotification(
           message_center::NOTIFICATION_TYPE_SIMPLE, kNotificationId,
           base::string16() /* title */,
           ComposeNotificationMessage() /* message */,
@@ -155,13 +170,16 @@ void TraySessionLengthLimit::UpdateNotification() {
           message_center::NotifierId(
               message_center::NotifierId::SYSTEM_COMPONENT,
               system_notifier::kNotifierSessionLengthTimeout),
-          data, nullptr /* delegate */));
+          data, nullptr /* delegate */, kNotificationTimerIcon,
+          message_center::SystemNotificationWarningLevel::NORMAL);
   notification->SetSystemPriority();
-  if (message_center->FindVisibleNotificationById(kNotificationId))
+  if (message_center->FindVisibleNotificationById(kNotificationId)) {
     message_center->UpdateNotification(kNotificationId,
                                        std::move(notification));
-  else
+  } else {
     message_center->AddNotification(std::move(notification));
+  }
+  has_notification_been_shown_ = true;
   last_limit_state_ = limit_state_;
 }
 

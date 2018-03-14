@@ -30,6 +30,8 @@
 #include "core/dom/Text.h"
 #include "core/editing/EditingUtilities.h"
 #include "core/editing/Editor.h"
+#include "core/editing/SelectionTemplate.h"
+#include "core/editing/VisiblePosition.h"
 #include "core/editing/VisibleUnits.h"
 #include "core/frame/LocalFrame.h"
 #include "core/html/HTMLSpanElement.h"
@@ -58,7 +60,7 @@ Position InsertTextCommand::PositionInsideTextNode(
     InsertNodeAtTabSpanPosition(text_node, pos, editing_state);
     if (editing_state->IsAborted())
       return Position();
-    return Position::FirstPositionInNode(text_node);
+    return Position::FirstPositionInNode(*text_node);
   }
 
   // Prepare for text input by looking at the specified position.
@@ -68,7 +70,7 @@ Position InsertTextCommand::PositionInsideTextNode(
     InsertNodeAt(text_node, pos, editing_state);
     if (editing_state->IsAborted())
       return Position();
-    return Position::FirstPositionInNode(text_node);
+    return Position::FirstPositionInNode(*text_node);
   }
 
   return pos;
@@ -80,24 +82,31 @@ void InsertTextCommand::SetEndingSelectionWithoutValidation(
   // We could have inserted a part of composed character sequence,
   // so we are basically treating ending selection as a range to avoid
   // validation. <http://bugs.webkit.org/show_bug.cgi?id=15781>
-  SetEndingSelection(SelectionInDOMTree::Builder()
-                         .Collapse(start_position)
-                         .Extend(end_position)
-                         .SetIsDirectional(EndingSelection().IsDirectional())
-                         .Build());
+  SetEndingSelection(SelectionForUndoStep::From(
+      SelectionInDOMTree::Builder()
+          .Collapse(start_position)
+          .Extend(end_position)
+          .SetIsDirectional(EndingSelection().IsDirectional())
+          .Build()));
 }
 
 // This avoids the expense of a full fledged delete operation, and avoids a
 // layout that typically results from text removal.
 bool InsertTextCommand::PerformTrivialReplace(const String& text,
                                               bool select_inserted_text) {
+  // We may need to manipulate neighboring whitespace if we're deleting text.
+  // This case is tested in
+  // InsertTextCommandTest_InsertEmptyTextAfterWhitespaceThatNeedsFixup.
+  if (text.IsEmpty())
+    return false;
+
   if (!EndingSelection().IsRange())
     return false;
 
   if (text.Contains('\t') || text.Contains(' ') || text.Contains('\n'))
     return false;
 
-  Position start = EndingSelection().Start();
+  Position start = EndingVisibleSelection().Start();
   Position end_position = ReplaceSelectedTextInNode(text);
   if (end_position.IsNull())
     return false;
@@ -105,16 +114,17 @@ bool InsertTextCommand::PerformTrivialReplace(const String& text,
   SetEndingSelectionWithoutValidation(start, end_position);
   if (select_inserted_text)
     return true;
-  SetEndingSelection(SelectionInDOMTree::Builder()
-                         .Collapse(EndingSelection().end())
-                         .SetIsDirectional(EndingSelection().IsDirectional())
-                         .Build());
+  SetEndingSelection(SelectionForUndoStep::From(
+      SelectionInDOMTree::Builder()
+          .Collapse(EndingVisibleSelection().End())
+          .SetIsDirectional(EndingSelection().IsDirectional())
+          .Build()));
   return true;
 }
 
 bool InsertTextCommand::PerformOverwrite(const String& text,
                                          bool select_inserted_text) {
-  Position start = EndingSelection().Start();
+  Position start = EndingVisibleSelection().Start();
   if (start.IsNull() || !start.IsOffsetInAnchor() ||
       !start.ComputeContainerNode()->IsTextNode())
     return false;
@@ -134,17 +144,22 @@ bool InsertTextCommand::PerformOverwrite(const String& text,
   SetEndingSelectionWithoutValidation(start, end_position);
   if (select_inserted_text || EndingSelection().IsNone())
     return true;
-  SetEndingSelection(SelectionInDOMTree::Builder()
-                         .Collapse(EndingSelection().end())
-                         .SetIsDirectional(EndingSelection().IsDirectional())
-                         .Build());
+  SetEndingSelection(SelectionForUndoStep::From(
+      SelectionInDOMTree::Builder()
+          .Collapse(EndingVisibleSelection().End())
+          .SetIsDirectional(EndingSelection().IsDirectional())
+          .Build()));
   return true;
 }
 
 void InsertTextCommand::DoApply(EditingState* editing_state) {
-  DCHECK_EQ(text_.Find('\n'), kNotFound);
+  DCHECK_EQ(text_.find('\n'), kNotFound);
 
-  if (!EndingSelection().IsNonOrphanedCaretOrRange())
+  // TODO(editing-dev): We shouldn't construct an InsertTextCommand with none or
+  // invalid selection.
+  const VisibleSelection& visible_selection = EndingVisibleSelection();
+  if (visible_selection.IsNone() ||
+      !visible_selection.IsValidFor(GetDocument()))
     return;
 
   // Delete the current selection.
@@ -154,9 +169,8 @@ void InsertTextCommand::DoApply(EditingState* editing_state) {
       return;
     GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
     bool end_of_selection_was_at_start_of_block =
-        IsStartOfBlock(EndingSelection().VisibleEnd());
-    DeleteSelection(editing_state, false, true, false, false);
-    if (editing_state->IsAborted())
+        IsStartOfBlock(EndingVisibleSelection().VisibleEnd());
+    if (!DeleteSelection(editing_state, false, true, false, false))
       return;
     // deleteSelection eventually makes a new endingSelection out of a Position.
     // If that Position doesn't have a layoutObject (e.g. it is on a <frameset>
@@ -177,7 +191,10 @@ void InsertTextCommand::DoApply(EditingState* editing_state) {
 
   GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
 
-  Position start_position(EndingSelection().Start());
+  // Reached by InsertTextCommandTest.NoVisibleSelectionAfterDeletingSelection
+  ABORT_EDITING_COMMAND_IF(EndingVisibleSelection().IsNone());
+
+  Position start_position(EndingVisibleSelection().Start());
 
   Position placeholder;
   // We want to remove preserved newlines and brs that will collapse (and thus
@@ -285,11 +302,12 @@ void InsertTextCommand::DoApply(EditingState* editing_state) {
 
   if (!select_inserted_text_) {
     SelectionInDOMTree::Builder builder;
-    builder.SetAffinity(EndingSelection().Affinity());
+    const VisibleSelection& selection = EndingVisibleSelection();
+    builder.SetAffinity(selection.Affinity());
     builder.SetIsDirectional(EndingSelection().IsDirectional());
-    if (EndingSelection().end().IsNotNull())
-      builder.Collapse(EndingSelection().end());
-    SetEndingSelection(builder.Build());
+    if (selection.End().IsNotNull())
+      builder.Collapse(selection.End());
+    SetEndingSelection(SelectionForUndoStep::From(builder.Build()));
   }
 }
 
@@ -335,7 +353,7 @@ Position InsertTextCommand::InsertTab(const Position& pos,
     return Position();
 
   // return the position following the new tab
-  return Position::LastPositionInNode(span_element);
+  return Position::LastPositionInNode(*span_element);
 }
 
 }  // namespace blink

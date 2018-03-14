@@ -150,7 +150,7 @@ NetworkingPrivateLinux::~NetworkingPrivateLinux() {
 }
 
 void NetworkingPrivateLinux::AssertOnDBusThread() {
-  DCHECK(dbus_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(dbus_task_runner_->RunsTasksInCurrentSequence());
 }
 
 void NetworkingPrivateLinux::Initialize() {
@@ -571,6 +571,14 @@ void NetworkingPrivateLinux::SetCellularSimState(
   ReportNotSupported("SetCellularSimState", failure_callback);
 }
 
+void NetworkingPrivateLinux::SelectCellularMobileNetwork(
+    const std::string& guid,
+    const std::string& network_id,
+    const VoidCallback& success_callback,
+    const FailureCallback& failure_callback) {
+  ReportNotSupported("SelectCellularMobileNetwork", failure_callback);
+}
+
 std::unique_ptr<base::ListValue>
 NetworkingPrivateLinux::GetEnabledNetworkTypes() {
   std::unique_ptr<base::ListValue> network_list(new base::ListValue);
@@ -591,7 +599,12 @@ NetworkingPrivateLinux::GetDeviceStateList() {
 
 std::unique_ptr<base::DictionaryValue>
 NetworkingPrivateLinux::GetGlobalPolicy() {
-  return base::MakeUnique<base::DictionaryValue>();
+  return std::make_unique<base::DictionaryValue>();
+}
+
+std::unique_ptr<base::DictionaryValue>
+NetworkingPrivateLinux ::GetCertificateLists() {
+  return std::make_unique<base::DictionaryValue>();
 }
 
 bool NetworkingPrivateLinux::EnableNetworkType(const std::string& type) {
@@ -602,7 +615,7 @@ bool NetworkingPrivateLinux::DisableNetworkType(const std::string& type) {
   return false;
 }
 
-bool NetworkingPrivateLinux::RequestScan() {
+bool NetworkingPrivateLinux::RequestScan(const std::string& /* type */) {
   return GetNetworksForScanRequest();
 }
 

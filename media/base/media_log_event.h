@@ -53,7 +53,7 @@ struct MediaLogEvent {
     PIPELINE_STATE_CHANGED,
 
     // An error has occurred in the pipeline.
-    // params: "pipeline_error": <string name of the error>.
+    // params: "pipeline_error": <integral PipelineStatus error code>.
     PIPELINE_ERROR,
 
     // The size of the video has been determined.
@@ -65,20 +65,12 @@ struct MediaLogEvent {
     // These take a single parameter based upon the name of the event and of
     // the appropriate type. e.g. DURATION_SET: "duration" of type TimeDelta.
     DURATION_SET,
-    TOTAL_BYTES_SET,
-    NETWORK_ACTIVITY_SET,
 
     // Audio/Video stream playback has ended.
     ENDED,
 
     // Text stream playback has ended.
     TEXT_ENDED,
-
-    // The extents of the sliding buffer have changed.
-    // params: "buffer_start": <first buffered byte>.
-    //         "buffer_current": <current offset>.
-    //         "buffer_end": <last buffered byte>.
-    BUFFERED_EXTENTS_CHANGED,
 
     // Error log reported by media code such as reasons of playback error.
     MEDIA_ERROR_LOG_ENTRY,
@@ -95,10 +87,7 @@ struct MediaLogEvent {
     // A property has changed without any special event occurring.
     PROPERTY_CHANGE,
 
-    // Indicates that updated watch time statistics are available.
-    WATCH_TIME_UPDATE,
-
-    TYPE_LAST = WATCH_TIME_UPDATE
+    TYPE_LAST = PROPERTY_CHANGE
   };
 
   int32_t id;

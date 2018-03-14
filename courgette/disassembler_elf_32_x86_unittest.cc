@@ -27,7 +27,7 @@ class TestDisassemblerElf32X86 : public DisassemblerElf32X86 {
  public:
   TestDisassemblerElf32X86(const uint8_t* start, size_t length)
       : DisassemblerElf32X86(start, length) {}
-  ~TestDisassemblerElf32X86() override {}
+  ~TestDisassemblerElf32X86() override = default;
 
   void TestSectionHeaderFileOffsetOrder() {
     std::vector<FileOffset> file_offsets;
@@ -91,7 +91,7 @@ void DisassemblerElf32X86Test::TestExe(const char* file_name,
   EXPECT_EQ('L', offset_p[2]);
   EXPECT_EQ('F', offset_p[3]);
 
-  std::unique_ptr<AssemblyProgram> program = disassembler->Disassemble(false);
+  std::unique_ptr<AssemblyProgram> program = disassembler->CreateProgram(false);
   EXPECT_TRUE(nullptr != program.get());
 
   const std::vector<RVA>& abs32_list = disassembler->Abs32Locations();

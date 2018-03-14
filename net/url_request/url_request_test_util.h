@@ -26,7 +26,6 @@
 #include "net/base/net_errors.h"
 #include "net/base/network_delegate_impl.h"
 #include "net/base/request_priority.h"
-#include "net/base/sdch_manager.h"
 #include "net/cert/cert_verifier.h"
 #include "net/cookies/cookie_monster.h"
 #include "net/disk_cache/disk_cache.h"
@@ -77,12 +76,13 @@ class TestURLRequestContext : public URLRequestContext {
   }
 
   void set_http_network_session_params(
-      std::unique_ptr<HttpNetworkSession::Params> params) {
-    http_network_session_params_ = std::move(params);
+      std::unique_ptr<HttpNetworkSession::Params> session_params) {
+    http_network_session_params_ = std::move(session_params);
   }
 
-  void SetSdchManager(std::unique_ptr<SdchManager> sdch_manager) {
-    context_storage_.set_sdch_manager(std::move(sdch_manager));
+  void set_http_network_session_context(
+      std::unique_ptr<HttpNetworkSession::Context> session_context) {
+    http_network_session_context_ = std::move(session_context);
   }
 
   void SetCTPolicyEnforcer(
@@ -93,10 +93,11 @@ class TestURLRequestContext : public URLRequestContext {
  private:
   bool initialized_ = false;
 
-  // Optional parameters to override default values.  Note that values that
-  // point to other objects the TestURLRequestContext creates will be
-  // overwritten.
+  // Optional parameters to override default values.  Note that values in the
+  // HttpNetworkSession::Context that point to other objects the
+  // TestURLRequestContext creates will be overwritten.
   std::unique_ptr<HttpNetworkSession::Params> http_network_session_params_;
+  std::unique_ptr<HttpNetworkSession::Context> http_network_session_context_;
 
   // Not owned:
   ClientSocketFactory* client_socket_factory_ = nullptr;
@@ -353,10 +354,11 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
   bool OnCanGetCookies(const URLRequest& request,
                        const CookieList& cookie_list) override;
   bool OnCanSetCookie(const URLRequest& request,
-                      const std::string& cookie_line,
+                      const net::CanonicalCookie& cookie,
                       CookieOptions* options) override;
   bool OnCanAccessFile(const URLRequest& request,
-                       const base::FilePath& path) const override;
+                       const base::FilePath& original_path,
+                       const base::FilePath& absolute_path) const override;
   bool OnAreExperimentalCookieFeaturesEnabled() const override;
   bool OnCancelURLRequestWithPolicyViolatingReferrerHeader(
       const URLRequest& request,

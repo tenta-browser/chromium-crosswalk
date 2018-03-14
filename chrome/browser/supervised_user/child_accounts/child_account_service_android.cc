@@ -11,7 +11,6 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/supervised_user/child_accounts/child_account_service.h"
 #include "chrome/browser/supervised_user/child_accounts/child_account_service_factory.h"
-#include "content/public/browser/android/content_view_core.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/ChildAccountService_jni.h"
 #include "ui/android/window_android.h"
@@ -23,18 +22,10 @@ using base::android::JavaRef;
 using base::android::RunCallbackAndroid;
 using base::android::ScopedJavaGlobalRef;
 
-jboolean IsChildAccount(JNIEnv* env, const JavaParamRef<jclass>& jcaller) {
-  ProfileManager* profile_manager = g_browser_process->profile_manager();
-  return profile_manager->GetLastUsedProfile()->IsChild();
-}
-
-bool RegisterChildAccountService(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
-void ListenForChildStatusReceived(JNIEnv* env,
-                                  const JavaParamRef<jclass>& jcaller,
-                                  const JavaParamRef<jobject>& callback) {
+void JNI_ChildAccountService_ListenForChildStatusReceived(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& jcaller,
+    const JavaParamRef<jobject>& callback) {
   ProfileManager* profile_manager = g_browser_process->profile_manager();
   ChildAccountService* service = ChildAccountServiceFactory::GetForProfile(
       profile_manager->GetLastUsedProfile());
@@ -50,8 +41,7 @@ void ReauthenticateChildAccount(content::WebContents* web_contents,
                                 const std::string& email,
                                 const base::Callback<void(bool)>& callback) {
   ui::WindowAndroid* window_android =
-      content::ContentViewCore::FromWebContents(web_contents)
-          ->GetWindowAndroid();
+      web_contents->GetNativeView()->GetWindowAndroid();
 
   // Make a copy of the callback which can be passed as a pointer through
   // to Java.
@@ -63,10 +53,11 @@ void ReauthenticateChildAccount(content::WebContents* web_contents,
       reinterpret_cast<jlong>(callback_copy.release()));
 }
 
-void OnReauthenticationResult(JNIEnv* env,
-                              const JavaParamRef<jclass>& jcaller,
-                              jlong jcallbackPtr,
-                              jboolean result) {
+void JNI_ChildAccountService_OnReauthenticationResult(
+    JNIEnv* env,
+    const JavaParamRef<jclass>& jcaller,
+    jlong jcallbackPtr,
+    jboolean result) {
   // Cast the pointer value back to a Callback and take ownership of it.
   std::unique_ptr<base::Callback<void(bool)>> callback(
       reinterpret_cast<base::Callback<void(bool)>*>(jcallbackPtr));

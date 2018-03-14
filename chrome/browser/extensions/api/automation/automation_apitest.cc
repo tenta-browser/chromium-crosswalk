@@ -31,6 +31,7 @@
 #include "ui/accessibility/ax_tree.h"
 #include "ui/accessibility/ax_tree_serializer.h"
 #include "ui/accessibility/tree_generator.h"
+#include "ui/display/display_switches.h"
 
 #if defined(OS_CHROMEOS)
 #include "ash/accelerators/accelerator_controller.h"
@@ -65,12 +66,12 @@ class AutomationApiTest : public ExtensionApiTest {
         test_data.AppendASCII("extensions/api_test")
         .AppendASCII(kSitesDir));
     ASSERT_TRUE(ExtensionApiTest::StartEmbeddedTestServer());
-    host_resolver()->AddRule("*", embedded_test_server()->base_url().host());
   }
 
  public:
-  void SetUpInProcessBrowserTestFixture() override {
-    ExtensionApiTest::SetUpInProcessBrowserTestFixture();
+  void SetUpOnMainThread() override {
+    ExtensionApiTest::SetUpOnMainThread();
+    host_resolver()->AddRule("*", "127.0.0.1");
   }
 };
 
@@ -193,10 +194,18 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopFocusWeb) {
       << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopFocusIframe) {
+// Flaky, see https://crbug.com/724923.
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, DISABLED_DesktopFocusIframe) {
   StartEmbeddedTestServer();
   ASSERT_TRUE(
       RunExtensionSubtest("automation/tests/desktop", "focus_iframe.html"))
+      << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopHitTestIframe) {
+  StartEmbeddedTestServer();
+  ASSERT_TRUE(
+      RunExtensionSubtest("automation/tests/desktop", "hit_test_iframe.html"))
       << message_;
 }
 
@@ -225,6 +234,11 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopActions) {
       ash::FOCUS_SHELF);
 
   ASSERT_TRUE(RunExtensionSubtest("automation/tests/desktop", "actions.html"))
+      << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopHitTest) {
+  ASSERT_TRUE(RunExtensionSubtest("automation/tests/desktop", "hit_test.html"))
       << message_;
 }
 
@@ -261,7 +275,8 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, Find) {
       << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(AutomationApiTest, Attributes) {
+// TODO(crbug.com/725420) Flaky
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, DISABLED_Attributes) {
   StartEmbeddedTestServer();
   ASSERT_TRUE(RunExtensionSubtest("automation/tests/tabs", "attributes.html"))
       << message_;
@@ -270,6 +285,13 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, Attributes) {
 IN_PROC_BROWSER_TEST_F(AutomationApiTest, TreeChange) {
   StartEmbeddedTestServer();
   ASSERT_TRUE(RunExtensionSubtest("automation/tests/tabs", "tree_change.html"))
+      << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, TreeChangeIndirect) {
+  StartEmbeddedTestServer();
+  ASSERT_TRUE(
+      RunExtensionSubtest("automation/tests/tabs", "tree_change_indirect.html"))
       << message_;
 }
 
@@ -285,5 +307,23 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, HitTest) {
   ASSERT_TRUE(RunExtensionSubtest("automation/tests/tabs", "hit_test.html"))
       << message_;
 }
+
+#if defined(OS_CHROMEOS)
+
+class AutomationApiTestWithDeviceScaleFactor : public AutomationApiTest {
+ protected:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    AutomationApiTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitchASCII(switches::kForceDeviceScaleFactor, "2.0");
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(AutomationApiTestWithDeviceScaleFactor, LocationScaled) {
+  StartEmbeddedTestServer();
+  ASSERT_TRUE(RunPlatformAppTest("automation/tests/location_scaled"))
+      << message_;
+}
+
+#endif  // defined(OS_CHROMEOS)
 
 }  // namespace extensions

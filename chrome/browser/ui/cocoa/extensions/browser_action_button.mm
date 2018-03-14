@@ -23,7 +23,6 @@
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_delegate.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
-#include "chrome/grit/theme_resources.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMNSAnimation+Duration.h"
 #import "ui/base/cocoa/menu_controller.h"
@@ -44,7 +43,7 @@ static const CGFloat kMinimumDragDistance = 5;
 @interface BrowserActionButton ()
 - (void)endDrag;
 - (void)updateHighlightedState;
-- (MenuController*)contextMenuController;
+- (MenuControllerCocoa*)contextMenuController;
 - (void)menuDidClose:(NSNotification*)notification;
 @end
 
@@ -147,7 +146,7 @@ void ToolbarActionViewDelegateBridge::UpdateState() {
 }
 
 bool ToolbarActionViewDelegateBridge::IsMenuRunning() const {
-  MenuController* menuController = [owner_ contextMenuController];
+  MenuControllerCocoa* menuController = [owner_ contextMenuController];
   return contextMenuRunning_ || (menuController && [menuController isMenuOpen]);
 }
 
@@ -362,7 +361,7 @@ void ToolbarActionViewDelegateBridge::DoShowContextMenu() {
   }
 }
 
-- (MenuController*)contextMenuController {
+- (MenuControllerCocoa*)contextMenuController {
   return contextMenuController_.get();
 }
 
@@ -502,9 +501,9 @@ void ToolbarActionViewDelegateBridge::DoShowContextMenu() {
 
     ui::MenuModel* contextMenu = viewController_->GetContextMenu();
     if (contextMenu) {
-      contextMenuController_.reset(
-          [[MenuController alloc] initWithModel:contextMenu
-                         useWithPopUpButtonCell:NO]);
+      contextMenuController_.reset([[MenuControllerCocoa alloc]
+                   initWithModel:contextMenu
+          useWithPopUpButtonCell:NO]);
       menu = [contextMenuController_ menu];
     }
   }

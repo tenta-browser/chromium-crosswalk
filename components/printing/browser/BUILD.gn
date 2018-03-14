@@ -4,16 +4,23 @@
 
 static_library("browser") {
   sources = [
+    "print_composite_client.cc",
+    "print_composite_client.h",
     "print_manager.cc",
     "print_manager.h",
     "print_manager_utils.cc",
     "print_manager_utils.h",
   ]
 
+  public_deps = [
+    "//content/public/browser",
+  ]
+
   deps = [
     "//base",
     "//components/printing/common",
-    "//content/public/browser",
+    "//components/printing/service/public/cpp:client",
     "//printing",
+    "//services/service_manager/public/cpp",
   ]
 }

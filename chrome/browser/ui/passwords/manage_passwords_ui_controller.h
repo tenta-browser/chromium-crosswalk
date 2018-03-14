@@ -17,6 +17,10 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 
+namespace base {
+class TimeDelta;
+}
+
 namespace content {
 class WebContents;
 }
@@ -43,6 +47,12 @@ class ManagePasswordsUIController
  public:
   ~ManagePasswordsUIController() override;
 
+#if defined(UNIT_TEST)
+  static void set_save_fallback_timeout_in_seconds(int timeout) {
+    save_fallback_timeout_in_seconds_ = timeout;
+  }
+#endif
+
   // PasswordsClientUIDelegate:
   void OnPasswordSubmitted(
       std::unique_ptr<password_manager::PasswordFormManager> form_manager)
@@ -50,6 +60,11 @@ class ManagePasswordsUIController
   void OnUpdatePasswordSubmitted(
       std::unique_ptr<password_manager::PasswordFormManager> form_manager)
       override;
+  void OnShowManualFallbackForSaving(
+      std::unique_ptr<password_manager::PasswordFormManager> form_manager,
+      bool has_generated_password,
+      bool is_update) override;
+  void OnHideManualFallbackForSaving() override;
   bool OnChooseCredentials(
       std::vector<std::unique_ptr<autofill::PasswordForm>> local_credentials,
       const GURL& origin,
@@ -85,19 +100,25 @@ class ManagePasswordsUIController
   // PasswordsModelDelegate:
   content::WebContents* GetWebContents() const override;
   const GURL& GetOrigin() const override;
+  password_manager::PasswordFormMetricsRecorder*
+  GetPasswordFormMetricsRecorder() override;
   password_manager::ui::State GetState() const override;
   const autofill::PasswordForm& GetPendingPassword() const override;
+  password_manager::metrics_util::CredentialSourceType GetCredentialSource()
+      const override;
   bool IsPasswordOverridden() const override;
   const std::vector<std::unique_ptr<autofill::PasswordForm>>& GetCurrentForms()
       const override;
   const password_manager::InteractionsStats* GetCurrentInteractionStats()
       const override;
+  bool BubbleIsManualFallbackForSaving() const override;
   void OnBubbleShown() override;
   void OnBubbleHidden() override;
   void OnNoInteraction() override;
   void OnNopeUpdateClicked() override;
   void NeverSavePassword() override;
-  void SavePassword() override;
+  void SavePassword(const base::string16& username,
+                    const base::string16& password) override;
   void UpdatePassword(const autofill::PasswordForm& password_form) override;
   void ChooseCredential(
       const autofill::PasswordForm& form,
@@ -158,6 +179,9 @@ class ManagePasswordsUIController
     SHOWN_PENDING_ICON_UPDATE,
   };
 
+  // Returns the timeout for the manual save fallback.
+  static base::TimeDelta GetTimeoutForSaveFallback();
+
   // Shows the password bubble without user interaction.
   void ShowBubbleWithoutUserInteraction();
 
@@ -168,6 +192,9 @@ class ManagePasswordsUIController
   // content::WebContentsObserver:
   void WebContentsDestroyed() override;
 
+  // Timeout in seconds for the manual fallback for saving.
+  static int save_fallback_timeout_in_seconds_;
+
   // The wrapper around current state and data.
   ManagePasswordsState passwords_data_;
 
@@ -175,6 +202,12 @@ class ManagePasswordsUIController
   std::unique_ptr<PasswordDialogControllerImpl> dialog_controller_;
 
   BubbleStatus bubble_status_;
+
+  // The timer that controls whether the fallback for saving should be
+  // available. Should be reset once the fallback is not needed (an automatic
+  // popup will be shown or the user saved/updated the password with the
+  // fallback).
+  base::OneShotTimer save_fallback_timer_;
 
   // The bubbles of different types can pop up unpredictably superseding each
   // other. However, closing the bubble may affect the state of

@@ -31,21 +31,22 @@
 #include "core/fileapi/FileReader.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/StringOrArrayBuffer.h"
-#include "core/dom/DOMArrayBuffer.h"
+#include "bindings/core/v8/string_or_array_buffer.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/dom/TaskRunnerHelper.h"
 #include "core/events/ProgressEvent.h"
 #include "core/fileapi/File.h"
+#include "core/frame/UseCounter.h"
 #include "core/probe/CoreProbes.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
 #include "platform/Supplementable.h"
-#include "wtf/AutoReset.h"
-#include "wtf/CurrentTime.h"
-#include "wtf/Deque.h"
-#include "wtf/HashSet.h"
-#include "wtf/text/CString.h"
+#include "platform/wtf/AutoReset.h"
+#include "platform/wtf/Deque.h"
+#include "platform/wtf/HashSet.h"
+#include "platform/wtf/Time.h"
+#include "platform/wtf/text/CString.h"
+#include "public/platform/TaskType.h"
 
 namespace blink {
 
@@ -75,7 +76,7 @@ class FileReader::ThrottlingController final
  public:
   static ThrottlingController* From(ExecutionContext* context) {
     if (!context)
-      return 0;
+      return nullptr;
 
     ThrottlingController* controller = static_cast<ThrottlingController*>(
         Supplement<ExecutionContext>::From(*context, SupplementName()));
@@ -117,7 +118,7 @@ class FileReader::ThrottlingController final
     probe::AsyncTaskCanceled(context, reader);
   }
 
-  DEFINE_INLINE_TRACE() {
+  void Trace(blink::Visitor* visitor) {
     visitor->Trace(pending_readers_);
     visitor->Trace(running_readers_);
     Supplement<ExecutionContext>::Trace(visitor);
@@ -141,7 +142,7 @@ class FileReader::ThrottlingController final
   }
 
   FinishReaderType RemoveReader(FileReader* reader) {
-    FileReaderHashSet::const_iterator hash_iter = running_readers_.Find(reader);
+    FileReaderHashSet::const_iterator hash_iter = running_readers_.find(reader);
     if (hash_iter != running_readers_.end()) {
       running_readers_.erase(hash_iter);
       return kRunPendingReaders;
@@ -225,8 +226,8 @@ bool FileReader::HasPendingActivity() const {
 void FileReader::readAsArrayBuffer(Blob* blob,
                                    ExceptionState& exception_state) {
   DCHECK(blob);
-  DVLOG(1) << "reading as array buffer: " << Utf8BlobUUID(blob).Data() << " "
-           << Utf8FilePath(blob).Data();
+  DVLOG(1) << "reading as array buffer: " << Utf8BlobUUID(blob).data() << " "
+           << Utf8FilePath(blob).data();
 
   ReadInternal(blob, FileReaderLoader::kReadAsArrayBuffer, exception_state);
 }
@@ -234,8 +235,8 @@ void FileReader::readAsArrayBuffer(Blob* blob,
 void FileReader::readAsBinaryString(Blob* blob,
                                     ExceptionState& exception_state) {
   DCHECK(blob);
-  DVLOG(1) << "reading as binary: " << Utf8BlobUUID(blob).Data() << " "
-           << Utf8FilePath(blob).Data();
+  DVLOG(1) << "reading as binary: " << Utf8BlobUUID(blob).data() << " "
+           << Utf8FilePath(blob).data();
 
   ReadInternal(blob, FileReaderLoader::kReadAsBinaryString, exception_state);
 }
@@ -244,8 +245,8 @@ void FileReader::readAsText(Blob* blob,
                             const String& encoding,
                             ExceptionState& exception_state) {
   DCHECK(blob);
-  DVLOG(1) << "reading as text: " << Utf8BlobUUID(blob).Data() << " "
-           << Utf8FilePath(blob).Data();
+  DVLOG(1) << "reading as text: " << Utf8BlobUUID(blob).data() << " "
+           << Utf8FilePath(blob).data();
 
   encoding_ = encoding;
   ReadInternal(blob, FileReaderLoader::kReadAsText, exception_state);
@@ -257,8 +258,8 @@ void FileReader::readAsText(Blob* blob, ExceptionState& exception_state) {
 
 void FileReader::readAsDataURL(Blob* blob, ExceptionState& exception_state) {
   DCHECK(blob);
-  DVLOG(1) << "reading as data URL: " << Utf8BlobUUID(blob).Data() << " "
-           << Utf8FilePath(blob).Data();
+  DVLOG(1) << "reading as data URL: " << Utf8BlobUUID(blob).data() << " "
+           << Utf8FilePath(blob).data();
 
   ReadInternal(blob, FileReaderLoader::kReadAsDataURL, exception_state);
 }
@@ -271,13 +272,6 @@ void FileReader::ReadInternal(Blob* blob,
   if (state_ == kLoading) {
     exception_state.ThrowDOMException(
         kInvalidStateError, "The object is already busy reading Blobs.");
-    return;
-  }
-
-  if (blob->isClosed()) {
-    exception_state.ThrowDOMException(
-        kInvalidStateError,
-        String(blob->IsFile() ? "File" : "Blob") + " has been closed.");
     return;
   }
 
@@ -352,19 +346,26 @@ void FileReader::abort() {
   // called from the event handler and we do not want the resource loading code
   // to be on the stack when doing so. The persistent reference keeps the
   // reader alive until the task has completed.
-  TaskRunnerHelper::Get(TaskType::kFileReading, GetExecutionContext())
+  GetExecutionContext()
+      ->GetTaskRunner(TaskType::kFileReading)
       ->PostTask(BLINK_FROM_HERE,
                  WTF::Bind(&FileReader::Terminate, WrapPersistent(this)));
 }
 
-void FileReader::result(StringOrArrayBuffer& result_attribute) const {
+void FileReader::result(ScriptState* state,
+                        StringOrArrayBuffer& result_attribute) const {
   if (error_ || !loader_)
     return;
 
+  if (!loader_->HasFinishedLoading()) {
+    UseCounter::Count(ExecutionContext::From(state),
+                      WebFeature::kFileReaderResultBeforeCompletion);
+  }
+
   if (read_type_ == FileReaderLoader::kReadAsArrayBuffer)
-    result_attribute.setArrayBuffer(loader_->ArrayBufferResult());
+    result_attribute.SetArrayBuffer(loader_->ArrayBufferResult());
   else
-    result_attribute.setString(loader_->StringResult());
+    result_attribute.SetString(loader_->StringResult());
 }
 
 void FileReader::Terminate() {
@@ -467,7 +468,7 @@ void FileReader::FireEvent(const AtomicString& type) {
         ProgressEvent::Create(type, false, loader_->BytesLoaded(), 0));
 }
 
-DEFINE_TRACE(FileReader) {
+void FileReader::Trace(blink::Visitor* visitor) {
   visitor->Trace(error_);
   EventTargetWithInlineData::Trace(visitor);
   ContextLifecycleObserver::Trace(visitor);

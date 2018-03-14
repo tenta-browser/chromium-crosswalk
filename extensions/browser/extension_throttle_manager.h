@@ -11,7 +11,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
 #include "base/threading/platform_thread.h"
 #include "extensions/browser/extension_throttle_entry.h"
 #include "net/base/backoff_entry.h"
@@ -40,9 +40,7 @@ namespace extensions {
 // clean out outdated entries. URL ID consists of lowercased scheme, host, port
 // and path. All URLs converted to the same ID will share the same entry.
 class ExtensionThrottleManager
-    : NON_EXPORTED_BASE(public base::NonThreadSafe),
-      public net::NetworkChangeNotifier::IPAddressObserver,
-      public net::NetworkChangeNotifier::ConnectionTypeObserver {
+    : public net::NetworkChangeNotifier::NetworkChangeObserver {
  public:
   ExtensionThrottleManager();
   ~ExtensionThrottleManager() override;
@@ -99,11 +97,8 @@ class ExtensionThrottleManager
   void set_net_log(net::NetLog* net_log);
   net::NetLog* net_log() const;
 
-  // IPAddressObserver interface.
-  void OnIPAddressChanged() override;
-
-  // ConnectionTypeObserver interface.
-  void OnConnectionTypeChanged(
+  // NetworkChangeObserver interface.
+  void OnNetworkChanged(
       net::NetworkChangeNotifier::ConnectionType type) override;
 
   // Method that allows us to transform a URL into an ID that can be used in our
@@ -120,15 +115,6 @@ class ExtensionThrottleManager
 
   // Method that does the actual work of garbage collecting.
   void GarbageCollectEntries();
-
-  // When we switch from online to offline or change IP addresses, we
-  // clear all back-off history. This is a precaution in case the change in
-  // online state now lets us communicate without error with servers that
-  // we were previously getting 500 or 503 responses from (perhaps the
-  // responses are from a badly-written proxy that should have returned a
-  // 502 or 504 because it's upstream connection was down or it had no route
-  // to the server).
-  void OnNetworkChange();
 
   // Used by tests.
   int GetNumberOfEntriesForTests() const { return url_entries_.size(); }
@@ -177,6 +163,8 @@ class ExtensionThrottleManager
 
   // This is NULL when it is not set for tests.
   std::unique_ptr<net::BackoffEntry::Policy> backoff_policy_for_tests_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionThrottleManager);
 };

@@ -6,40 +6,46 @@
 #define CHROME_BROWSER_CHROMEOS_ARC_VIDEO_GPU_ARC_VIDEO_SERVICE_HOST_H_
 
 #include "base/macros.h"
-#include "components/arc/arc_service.h"
 #include "components/arc/common/video.mojom.h"
-#include "components/arc/instance_holder.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "components/keyed_service/core/keyed_service.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
+
+namespace content {
+class BrowserContext;
+}  // namespace content
 
 namespace arc {
 
 class ArcBridgeService;
 
-// This class takes requests for creating channels of video accelerators from
-// arc::VideoInstance and forwards these requests to GpuArcVideoServce. It also
-// returns the created channels back to the arc::VideoInstance.
+// This class takes requests for accessing the VideoAcceleratorFactory, from
+// which video decode (or encode) accelerators could be created.
 //
-// This class is the proxy end of GpuArcVideoService and runs in the browser
-// process. The corresponding end "GpuArcVideoService" runs in the GPU process.
+// This class runs in the browser process, while the created instances of
+// VideoDecodeAccelerator or VideoEncodeAccelerator run in the GPU process.
 //
 // Lives on the UI thread.
-class GpuArcVideoServiceHost
-    : public ArcService,
-      public InstanceHolder<mojom::VideoInstance>::Observer,
-      public mojom::VideoHost {
+class GpuArcVideoServiceHost : public KeyedService,
+                               public mojom::VideoHost {
  public:
-  explicit GpuArcVideoServiceHost(ArcBridgeService* bridge_service);
-  ~GpuArcVideoServiceHost() override;
+  // Returns singleton instance for the given BrowserContext,
+  // or nullptr if the browser |context| is not allowed to use ARC.
+  static GpuArcVideoServiceHost* GetForBrowserContext(
+      content::BrowserContext* context);
 
-  // arc::InstanceHolder<mojom::VideoInstance>::Observer implementation.
-  void OnInstanceReady() override;
+  GpuArcVideoServiceHost(content::BrowserContext* context,
+                         ArcBridgeService* bridge_service);
+  ~GpuArcVideoServiceHost() override;
 
   // arc::mojom::VideoHost implementation.
   void OnBootstrapVideoAcceleratorFactory(
-      const OnBootstrapVideoAcceleratorFactoryCallback& callback) override;
+      OnBootstrapVideoAcceleratorFactoryCallback callback) override;
 
  private:
-  mojo::Binding<mojom::VideoHost> binding_;
+  ArcBridgeService* const arc_bridge_service_;  // Owned by ArcServiceManager.
+  std::unique_ptr<mojom::VideoAcceleratorFactory> video_accelerator_factory_;
+  mojo::BindingSet<mojom::VideoAcceleratorFactory>
+      video_accelerator_factory_bindings_;
 
   DISALLOW_COPY_AND_ASSIGN(GpuArcVideoServiceHost);
 };

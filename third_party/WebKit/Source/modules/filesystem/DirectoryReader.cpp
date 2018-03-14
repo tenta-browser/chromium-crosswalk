@@ -38,6 +38,15 @@
 
 namespace blink {
 
+namespace {
+
+void RunEntriesCallback(EntriesCallback* callback,
+                        HeapVector<Member<Entry>>* entries) {
+  callback->handleEvent(*entries);
+}
+
+}  // namespace
+
 class DirectoryReader::EntriesCallbackHelper final : public EntriesCallback {
  public:
   explicit EntriesCallbackHelper(DirectoryReader* reader) : reader_(reader) {}
@@ -46,7 +55,7 @@ class DirectoryReader::EntriesCallbackHelper final : public EntriesCallback {
     reader_->AddEntries(entries);
   }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(reader_);
     EntriesCallback::Trace(visitor);
   }
@@ -63,7 +72,7 @@ class DirectoryReader::ErrorCallbackHelper final : public ErrorCallbackBase {
 
   void Invoke(FileError::ErrorCode error) override { reader_->OnError(error); }
 
-  DEFINE_INLINE_VIRTUAL_TRACE() {
+  void Trace(blink::Visitor* visitor) override {
     visitor->Trace(reader_);
     ErrorCallbackBase::Trace(visitor);
   }
@@ -103,13 +112,13 @@ void DirectoryReader::readEntries(EntriesCallback* entries_callback,
 
   if (!has_more_entries_ || !entries_.IsEmpty()) {
     if (entries_callback) {
+      auto* entries = new HeapVector<Member<Entry>>(std::move(entries_));
       DOMFileSystem::ScheduleCallback(
           Filesystem()->GetExecutionContext(),
-          WTF::Bind(&EntriesCallback::handleEvent,
-                    WrapPersistent(entries_callback),
-                    PersistentHeapVector<Member<Entry>>(entries_)));
+          WTF::Bind(&RunEntriesCallback, WrapPersistent(entries_callback),
+                    WrapPersistent(entries)));
     }
-    entries_.Clear();
+    entries_.clear();
     return;
   }
 
@@ -123,7 +132,7 @@ void DirectoryReader::AddEntries(const EntryHeapVector& entries) {
   if (entries_callback_) {
     EntriesCallback* entries_callback = entries_callback_.Release();
     EntryHeapVector entries;
-    entries.Swap(entries_);
+    entries.swap(entries_);
     entries_callback->handleEvent(entries);
   }
 }
@@ -135,7 +144,7 @@ void DirectoryReader::OnError(FileError::ErrorCode error) {
     error_callback_->handleEvent(FileError::CreateDOMException(error));
 }
 
-DEFINE_TRACE(DirectoryReader) {
+void DirectoryReader::Trace(blink::Visitor* visitor) {
   visitor->Trace(entries_);
   visitor->Trace(entries_callback_);
   visitor->Trace(error_callback_);

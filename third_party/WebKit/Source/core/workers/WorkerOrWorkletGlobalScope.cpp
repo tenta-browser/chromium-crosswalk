@@ -4,63 +4,200 @@
 
 #include "core/workers/WorkerOrWorkletGlobalScope.h"
 
-#include "core/dom/ExecutionContextTask.h"
+#include "bindings/core/v8/V8AbstractEventListener.h"
+#include "bindings/core/v8/WorkerOrWorkletScriptController.h"
+#include "core/dom/Modulator.h"
 #include "core/frame/Deprecation.h"
 #include "core/inspector/ConsoleMessage.h"
+#include "core/loader/WorkerFetchContext.h"
 #include "core/probe/CoreProbes.h"
+#include "core/workers/MainThreadWorkletGlobalScope.h"
 #include "core/workers/WorkerReportingProxy.h"
 #include "core/workers/WorkerThread.h"
 #include "platform/CrossThreadFunctional.h"
+#include "platform/loader/fetch/ResourceFetcher.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/wtf/Functional.h"
+#include "public/platform/TaskType.h"
 
 namespace blink {
 
-WorkerOrWorkletGlobalScope::WorkerOrWorkletGlobalScope()
-    : deprecation_warning_bits_(UseCounter::kNumberOfFeatures) {}
+WorkerOrWorkletGlobalScope::WorkerOrWorkletGlobalScope(
+    v8::Isolate* isolate,
+    WorkerClients* worker_clients,
+    WorkerReportingProxy& reporting_proxy)
+    : worker_clients_(worker_clients),
+      script_controller_(
+          WorkerOrWorkletScriptController::Create(this, isolate)),
+      event_queue_(WorkerEventQueue::Create(this)),
+      reporting_proxy_(reporting_proxy),
+      used_features_(static_cast<int>(WebFeature::kNumberOfFeatures)) {
+  if (worker_clients_)
+    worker_clients_->ReattachThread();
+}
 
-WorkerOrWorkletGlobalScope::~WorkerOrWorkletGlobalScope() {}
+WorkerOrWorkletGlobalScope::~WorkerOrWorkletGlobalScope() = default;
 
-void WorkerOrWorkletGlobalScope::AddDeprecationMessage(
-    UseCounter::Feature feature) {
-  DCHECK_NE(UseCounter::kOBSOLETE_PageDestruction, feature);
-  DCHECK_GT(UseCounter::kNumberOfFeatures, feature);
+// EventTarget
+const AtomicString& WorkerOrWorkletGlobalScope::InterfaceName() const {
+  NOTREACHED() << "Each global scope that uses events should define its own "
+                  "interface name.";
+  return g_null_atom;
+}
 
-  // For each deprecated feature, send console message at most once
-  // per worker lifecycle.
-  if (deprecation_warning_bits_.QuickGet(feature))
+v8::Local<v8::Object> WorkerOrWorkletGlobalScope::Wrap(
+    v8::Isolate*,
+    v8::Local<v8::Object> creation_context) {
+  LOG(FATAL) << "WorkerOrWorkletGlobalScope must never be wrapped with wrap "
+                "method. The global object of ECMAScript environment is used "
+                "as the wrapper.";
+  return v8::Local<v8::Object>();
+}
+
+v8::Local<v8::Object> WorkerOrWorkletGlobalScope::AssociateWithWrapper(
+    v8::Isolate*,
+    const WrapperTypeInfo*,
+    v8::Local<v8::Object> wrapper) {
+  LOG(FATAL) << "WorkerOrWorkletGlobalScope must never be wrapped with wrap "
+                "method. The global object of ECMAScript environment is used "
+                "as the wrapper.";
+  return v8::Local<v8::Object>();
+}
+
+bool WorkerOrWorkletGlobalScope::HasPendingActivity() const {
+  // The global scope wrapper is kept alive as longs as its execution context is
+  // active.
+  return !ExecutionContext::IsContextDestroyed();
+}
+
+void WorkerOrWorkletGlobalScope::CountFeature(WebFeature feature) {
+  DCHECK(IsContextThread());
+  DCHECK_NE(WebFeature::kOBSOLETE_PageDestruction, feature);
+  DCHECK_GT(WebFeature::kNumberOfFeatures, feature);
+  if (used_features_.QuickGet(static_cast<int>(feature)))
     return;
-  deprecation_warning_bits_.QuickSet(feature);
+  used_features_.QuickSet(static_cast<int>(feature));
+  ReportingProxy().CountFeature(feature);
+}
+
+void WorkerOrWorkletGlobalScope::CountDeprecation(WebFeature feature) {
+  DCHECK(IsContextThread());
+  DCHECK_NE(WebFeature::kOBSOLETE_PageDestruction, feature);
+  DCHECK_GT(WebFeature::kNumberOfFeatures, feature);
+  if (used_features_.QuickGet(static_cast<int>(feature)))
+    return;
+  used_features_.QuickSet(static_cast<int>(feature));
+
+  // Adds a deprecation message to the console.
   DCHECK(!Deprecation::DeprecationMessage(feature).IsEmpty());
   AddConsoleMessage(
       ConsoleMessage::Create(kDeprecationMessageSource, kWarningMessageLevel,
                              Deprecation::DeprecationMessage(feature)));
+  ReportingProxy().CountDeprecation(feature);
 }
 
-void WorkerOrWorkletGlobalScope::PostTask(
-    TaskType,
-    const WebTraceLocation& location,
-    std::unique_ptr<ExecutionContextTask> task,
-    const String& task_name_for_instrumentation) {
-  if (!GetThread())
-    return;
+ResourceFetcher* WorkerOrWorkletGlobalScope::EnsureFetcher() {
+  DCHECK(RuntimeEnabledFeatures::OffMainThreadFetchEnabled());
+  DCHECK(!IsMainThreadWorkletGlobalScope());
+  if (resource_fetcher_)
+    return resource_fetcher_;
+  WorkerFetchContext* fetch_context = WorkerFetchContext::Create(*this);
+  resource_fetcher_ = ResourceFetcher::Create(fetch_context);
+  DCHECK(resource_fetcher_);
+  return resource_fetcher_;
+}
+ResourceFetcher* WorkerOrWorkletGlobalScope::Fetcher() const {
+  DCHECK(RuntimeEnabledFeatures::OffMainThreadFetchEnabled());
+  DCHECK(!IsMainThreadWorkletGlobalScope());
+  DCHECK(resource_fetcher_);
+  return resource_fetcher_;
+}
 
-  bool is_instrumented = !task_name_for_instrumentation.IsEmpty();
-  if (is_instrumented) {
-    probe::AsyncTaskScheduled(this, "Worker task", task.get());
+bool WorkerOrWorkletGlobalScope::IsJSExecutionForbidden() const {
+  return script_controller_->IsExecutionForbidden();
+}
+
+void WorkerOrWorkletGlobalScope::DisableEval(const String& error_message) {
+  script_controller_->DisableEval(error_message);
+}
+
+bool WorkerOrWorkletGlobalScope::CanExecuteScripts(
+    ReasonForCallingCanExecuteScripts) {
+  return !IsJSExecutionForbidden();
+}
+
+EventQueue* WorkerOrWorkletGlobalScope::GetEventQueue() const {
+  return event_queue_.Get();
+}
+
+void WorkerOrWorkletGlobalScope::Dispose() {
+  DCHECK(script_controller_);
+
+  // Event listeners would keep DOMWrapperWorld objects alive for too long.
+  // Also, they have references to JS objects, which become dangling once Heap
+  // is destroyed.
+  HeapHashSet<Member<V8AbstractEventListener>> listeners;
+  listeners.swap(event_listeners_);
+  while (!listeners.IsEmpty()) {
+    for (const auto& listener : listeners)
+      listener->ClearListenerObject();
+    listeners.clear();
+    // Pick up any additions made while iterating.
+    listeners.swap(event_listeners_);
   }
+  RemoveAllEventListeners();
 
-  GetThread()->PostTask(
-      location, CrossThreadBind(&WorkerOrWorkletGlobalScope::RunTask,
-                                WrapCrossThreadWeakPersistent(this),
-                                WTF::Passed(std::move(task)), is_instrumented));
+  event_queue_->Close();
+
+  script_controller_->Dispose();
+  script_controller_.Clear();
+
+  if (resource_fetcher_) {
+    resource_fetcher_->StopFetching();
+    resource_fetcher_->ClearContext();
+  }
 }
 
-void WorkerOrWorkletGlobalScope::RunTask(
-    std::unique_ptr<ExecutionContextTask> task,
-    bool is_instrumented) {
-  DCHECK(GetThread()->IsCurrentThread());
-  probe::AsyncTask async_task(this, task.get(), nullptr, is_instrumented);
-  task->PerformTask(this);
+void WorkerOrWorkletGlobalScope::RegisterEventListener(
+    V8AbstractEventListener* event_listener) {
+  // TODO(sof): remove once crbug.com/677654 has been diagnosed.
+  CHECK(&ThreadState::FromObject(this)->Heap() ==
+        &ThreadState::FromObject(event_listener)->Heap());
+  bool new_entry = event_listeners_.insert(event_listener).is_new_entry;
+  CHECK(new_entry);
+}
+
+void WorkerOrWorkletGlobalScope::DeregisterEventListener(
+    V8AbstractEventListener* event_listener) {
+  auto it = event_listeners_.find(event_listener);
+  CHECK(it != event_listeners_.end() || IsClosing());
+  event_listeners_.erase(it);
+}
+
+void WorkerOrWorkletGlobalScope::SetModulator(Modulator* modulator) {
+  modulator_ = modulator;
+}
+
+scoped_refptr<WebTaskRunner> WorkerOrWorkletGlobalScope::GetTaskRunner(
+    TaskType type) {
+  DCHECK(IsContextThread());
+  return GetThread()->GetTaskRunner(type);
+}
+
+void WorkerOrWorkletGlobalScope::Trace(blink::Visitor* visitor) {
+  visitor->Trace(resource_fetcher_);
+  visitor->Trace(script_controller_);
+  visitor->Trace(event_queue_);
+  visitor->Trace(event_listeners_);
+  visitor->Trace(modulator_);
+  EventTargetWithInlineData::Trace(visitor);
+  ExecutionContext::Trace(visitor);
+}
+
+void WorkerOrWorkletGlobalScope::TraceWrappers(
+    const ScriptWrappableVisitor* visitor) const {
+  visitor->TraceWrappers(modulator_);
+  EventTargetWithInlineData::TraceWrappers(visitor);
 }
 
 }  // namespace blink

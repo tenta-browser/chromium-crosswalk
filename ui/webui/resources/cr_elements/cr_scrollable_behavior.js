@@ -41,15 +41,10 @@ var CrScrollableBehavior = {
   intervalId_: null,
 
   ready: function() {
-    var scrollableElements = this.root.querySelectorAll('[scrollable]');
-
-    // Setup the intial scrolling related classes for each scrollable container.
-    requestAnimationFrame(function() {
-      for (var i = 0; i < scrollableElements.length; i++)
-        this.updateScroll_(scrollableElements[i]);
-    }.bind(this));
+    this.requestUpdateScroll();
 
     // Listen to the 'scroll' event for each scrollable container.
+    var scrollableElements = this.root.querySelectorAll('[scrollable]');
     for (var i = 0; i < scrollableElements.length; i++) {
       scrollableElements[i].addEventListener(
           'scroll', this.updateScrollEvent_.bind(this));
@@ -68,9 +63,14 @@ var CrScrollableBehavior = {
    */
   updateScrollableContents: function() {
     if (this.intervalId_ !== null)
-      return;  // notifyResize is arelady in progress.
+      return;  // notifyResize is already in progress.
+
+    this.requestUpdateScroll();
 
     var nodeList = this.root.querySelectorAll('[scrollable] iron-list');
+    if (!nodeList.length)
+      return;
+
     // Use setInterval to avoid initial render / sizing issues.
     this.intervalId_ = window.setInterval(function() {
       var unreadyNodes = [];
@@ -92,6 +92,19 @@ var CrScrollableBehavior = {
     }.bind(this), 10);
   },
 
+  /**
+   * Setup the initial scrolling related classes for each scrollable container.
+   * Called from ready() and updateScrollableContents(). May also be called
+   * directly when the contents change (e.g. when not using iron-list).
+   */
+  requestUpdateScroll: function() {
+    requestAnimationFrame(function() {
+      var scrollableElements = this.root.querySelectorAll('[scrollable]');
+      for (var i = 0; i < scrollableElements.length; i++)
+        this.updateScroll_(/** @type {!HTMLElement} */ (scrollableElements[i]));
+    }.bind(this));
+  },
+
   /** @param {!IronListElement} list */
   saveScroll: function(list) {
     // Store a FIFO of saved scroll positions so that multiple updates in a
@@ -106,7 +119,7 @@ var CrScrollableBehavior = {
     this.async(function() {
       var scrollTop = list.savedScrollTops.shift();
       // Ignore scrollTop of 0 in case it was intermittent (we do not need to
-      // explicity scroll to 0).
+      // explicitly scroll to 0).
       if (scrollTop != 0)
         list.scroll(0, scrollTop);
     });
@@ -123,7 +136,8 @@ var CrScrollableBehavior = {
   },
 
   /**
-   * This gets called once intially and any time a scrollable container scrolls.
+   * This gets called once initially and any time a scrollable container
+   * scrolls.
    * @param {!HTMLElement} scrollable
    * @private
    */
@@ -132,7 +146,8 @@ var CrScrollableBehavior = {
         'can-scroll', scrollable.clientHeight < scrollable.scrollHeight);
     scrollable.classList.toggle('is-scrolled', scrollable.scrollTop > 0);
     scrollable.classList.toggle(
-        'scrolled-to-bottom', scrollable.scrollTop + scrollable.clientHeight >=
+        'scrolled-to-bottom',
+        scrollable.scrollTop + scrollable.clientHeight >=
             scrollable.scrollHeight);
   },
 };

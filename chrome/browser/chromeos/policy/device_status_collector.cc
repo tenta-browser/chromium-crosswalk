@@ -48,6 +48,7 @@
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/update_engine_client.h"
 #include "chromeos/disks/disk_mount_manager.h"
+#include "chromeos/login/login_state.h"
 #include "chromeos/network/device_state.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state.h"
@@ -106,7 +107,7 @@ int64_t TimestampToDayKey(Time timestamp) {
   Time out_time;
   bool conversion_success = Time::FromUTCExploded(exploded, &out_time);
   DCHECK(conversion_success);
-  return (out_time - Time::UnixEpoch()).InMilliseconds();
+  return out_time.ToJavaTime();
 }
 
 // Helper function (invoked via blocking pool) to fetch information about
@@ -301,6 +302,12 @@ int ConvertWifiSignalStrength(int signal_strength) {
   return signal_strength - 120;
 }
 
+bool IsKioskApp() {
+  auto user_type = chromeos::LoginState::Get()->GetLoggedInUserType();
+  return user_type == chromeos::LoginState::LOGGED_IN_USER_KIOSK_APP ||
+         user_type == chromeos::LoginState::LOGGED_IN_USER_ARC_KIOSK_APP;
+}
+
 }  // namespace
 
 namespace policy {
@@ -357,9 +364,7 @@ class GetStatusState : public base::RefCountedThreadSafe<GetStatusState> {
 
     // Call out to the blocking pool to sample disk volume info.
     base::PostTaskWithTraitsAndReplyWithResult(
-        FROM_HERE,
-        base::TaskTraits().MayBlock().WithPriority(
-            base::TaskPriority::BACKGROUND),
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
         base::Bind(volume_info_fetcher, mount_points),
         base::Bind(&GetStatusState::OnVolumeInfoReceived, this));
   }
@@ -369,9 +374,7 @@ class GetStatusState : public base::RefCountedThreadSafe<GetStatusState> {
       const policy::DeviceStatusCollector::CPUTempFetcher& cpu_temp_fetcher) {
     // Call out to the blocking pool to sample CPU temp.
     base::PostTaskWithTraitsAndReplyWithResult(
-        FROM_HERE,
-        base::TaskTraits().MayBlock().WithPriority(
-            base::TaskPriority::BACKGROUND),
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
         cpu_temp_fetcher,
         base::Bind(&GetStatusState::OnCPUTempInfoReceived, this));
   }
@@ -390,9 +393,9 @@ class GetStatusState : public base::RefCountedThreadSafe<GetStatusState> {
   // async query, the query holds a reference to us, so the destructor is
   // not called.
   ~GetStatusState() {
-    task_runner_->PostTask(FROM_HERE,
-                           base::Bind(response_, base::Passed(&device_status_),
-                                      base::Passed(&session_status_)));
+    task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(response_, base::Passed(&device_status_),
+                                  base::Passed(&session_status_)));
   }
 
   void OnVolumeInfoReceived(const std::vector<em::VolumeInfo>& volume_info) {
@@ -497,22 +500,21 @@ DeviceStatusCollector::DeviceStatusCollector(
   // Fetch the current values of the policies.
   UpdateReportingSettings();
 
-  // Get the the OS and firmware version info.
+  // Get the OS, firmware, and TPM version info.
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE,
-      base::TaskTraits().MayBlock().WithPriority(
-          base::TaskPriority::BACKGROUND),
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
       base::Bind(&chromeos::version_loader::GetVersion,
                  chromeos::version_loader::VERSION_FULL),
       base::Bind(&DeviceStatusCollector::OnOSVersion,
                  weak_factory_.GetWeakPtr()));
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE,
-      base::TaskTraits().MayBlock().WithPriority(
-          base::TaskPriority::BACKGROUND),
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
       base::Bind(&chromeos::version_loader::GetFirmware),
       base::Bind(&DeviceStatusCollector::OnOSFirmware,
                  weak_factory_.GetWeakPtr()));
+  chromeos::version_loader::GetTpmVersion(
+      base::BindOnce(&DeviceStatusCollector::OnTpmVersion,
+                     weak_factory_.GetWeakPtr()));
 }
 
 DeviceStatusCollector::~DeviceStatusCollector() {
@@ -676,7 +678,8 @@ void DeviceStatusCollector::IdleStateCallback(ui::IdleState state) {
 
   Time now = GetCurrentTime();
 
-  if (state == ui::IDLE_STATE_ACTIVE) {
+  // For kiosk apps we report total uptime instead of active time.
+  if (state == ui::IDLE_STATE_ACTIVE || IsKioskApp()) {
     // If it's been too long since the last report, or if the activity is
     // negative (which can happen when the clock changes), assume a single
     // interval of activity.
@@ -727,9 +730,7 @@ void DeviceStatusCollector::SampleResourceUsage() {
 
   // Call out to the blocking pool to sample CPU stats.
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE,
-      base::TaskTraits().MayBlock().WithPriority(
-          base::TaskPriority::BACKGROUND),
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
       cpu_statistics_fetcher_,
       base::Bind(&DeviceStatusCollector::ReceiveCPUStatistics,
                  weak_factory_.GetWeakPtr()));
@@ -826,6 +827,16 @@ bool DeviceStatusCollector::GetVersionInfo(
   status->set_browser_version(version_info::GetVersionNumber());
   status->set_os_version(os_version_);
   status->set_firmware_version(firmware_version_);
+
+  em::TpmVersionInfo* const tpm_version_info =
+      status->mutable_tpm_version_info();
+  tpm_version_info->set_family(tpm_version_info_.family);
+  tpm_version_info->set_spec_level(tpm_version_info_.spec_level);
+  tpm_version_info->set_manufacturer(tpm_version_info_.manufacturer);
+  tpm_version_info->set_tpm_model(tpm_version_info_.tpm_model);
+  tpm_version_info->set_firmware_version(tpm_version_info_.firmware_version);
+  tpm_version_info->set_vendor_specific(tpm_version_info_.vendor_specific);
+
   return true;
 }
 
@@ -955,11 +966,13 @@ bool DeviceStatusCollector::GetNetworkInterfaces(
     if (!state->device_path().empty())
       proto_state->set_device_path(state->device_path());
 
-    if (!state->ip_address().empty())
-      proto_state->set_ip_address(state->ip_address());
+    std::string ip_address = state->GetIpAddress();
+    if (!ip_address.empty())
+      proto_state->set_ip_address(ip_address);
 
-    if (!state->gateway().empty())
-      proto_state->set_gateway(state->gateway());
+    std::string gateway = state->GetGateway();
+    if (!gateway.empty())
+      proto_state->set_gateway(gateway);
   }
   return anything_reported;
 }
@@ -1272,6 +1285,11 @@ void DeviceStatusCollector::OnOSVersion(const std::string& version) {
 
 void DeviceStatusCollector::OnOSFirmware(const std::string& version) {
   firmware_version_ = version;
+}
+
+void DeviceStatusCollector::OnTpmVersion(
+    const chromeos::CryptohomeClient::TpmVersionInfo& tpm_version_info) {
+  tpm_version_info_ = tpm_version_info;
 }
 
 }  // namespace policy

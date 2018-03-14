@@ -7,10 +7,13 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "content/browser/appcache/appcache_group.h"
 #include "content/browser/appcache/appcache_service_impl.h"
@@ -42,15 +45,17 @@ class AppCache;
 class AppCacheFrontend;
 class AppCacheGroupTest;
 class AppCacheHostTest;
+class AppCacheRequest;
 class AppCacheRequestHandler;
 class AppCacheRequestHandlerTest;
 class AppCacheStorageImplTest;
+class AppCacheSubresourceURLFactory;
 class AppCacheTest;
 class AppCacheUpdateJobTest;
 
-typedef base::Callback<void(AppCacheStatus, void*)> GetStatusCallback;
-typedef base::Callback<void(bool, void*)> StartUpdateCallback;
-typedef base::Callback<void(bool, void*)> SwapCacheCallback;
+typedef base::OnceCallback<void(AppCacheStatus, void*)> GetStatusCallback;
+typedef base::OnceCallback<void(bool, void*)> StartUpdateCallback;
+typedef base::OnceCallback<void(bool, void*)> SwapCacheCallback;
 
 // Server-side representation of an application cache host.
 class CONTENT_EXPORT AppCacheHost
@@ -83,17 +88,13 @@ class CONTENT_EXPORT AppCacheHost
   bool SelectCache(const GURL& document_url,
                    const int64_t cache_document_was_loaded_from,
                    const GURL& manifest_url);
-  bool SelectCacheForWorker(int parent_process_id,
-                            int parent_host_id);
   bool SelectCacheForSharedWorker(int64_t appcache_id);
   bool MarkAsForeignEntry(const GURL& document_url,
                           int64_t cache_document_was_loaded_from);
-  void GetStatusWithCallback(const GetStatusCallback& callback,
-                             void* callback_param);
-  void StartUpdateWithCallback(const StartUpdateCallback& callback,
+  void GetStatusWithCallback(GetStatusCallback callback, void* callback_param);
+  void StartUpdateWithCallback(StartUpdateCallback callback,
                                void* callback_param);
-  void SwapCacheWithCallback(const SwapCacheCallback& callback,
-                             void* callback_param);
+  void SwapCacheWithCallback(SwapCacheCallback callback, void* callback_param);
 
   // Called prior to the main resource load. When the system contains multiple
   // candidates for a main resource load, the appcache preferred by the host
@@ -113,8 +114,8 @@ class CONTENT_EXPORT AppCacheHost
 
   // Support for loading resources out of the appcache.
   // May return NULL if the request isn't subject to retrieval from an appache.
-  AppCacheRequestHandler* CreateRequestHandler(
-      net::URLRequest* request,
+  std::unique_ptr<AppCacheRequestHandler> CreateRequestHandler(
+      std::unique_ptr<AppCacheRequest> request,
       ResourceType resource_type,
       bool should_reset_appcache);
 
@@ -190,6 +191,19 @@ class CONTENT_EXPORT AppCacheHost
   // Methods to support cross site navigations.
   void PrepareForTransfer();
   void CompleteTransfer(int host_id, AppCacheFrontend* frontend);
+
+  // Returns a weak pointer reference to the host.
+  base::WeakPtr<AppCacheHost> GetWeakPtr();
+
+  // In the network service world, we need to pass the URLLoaderFactory
+  // instance to the renderer which it can use to request subresources.
+  // This ensures that they can be served out of the AppCache.
+  void MaybePassSubresourceFactory();
+
+  // This is called when the frame is navigated to a page which loads from
+  // the AppCache.
+  void SetAppCacheSubresourceFactory(
+      AppCacheSubresourceURLFactory* subresource_factory);
 
  private:
   friend class content::AppCacheHostTest;
@@ -349,6 +363,11 @@ class CONTENT_EXPORT AppCacheHost
   FRIEND_TEST_ALL_PREFIXES(content::AppCacheHostTest, SelectCacheBlocked);
   FRIEND_TEST_ALL_PREFIXES(content::AppCacheHostTest, SelectCacheTwice);
   FRIEND_TEST_ALL_PREFIXES(content::AppCacheTest, CleanupUnusedCache);
+
+  // In the network service world points to the subresource URLLoaderFactory.
+  base::WeakPtr<AppCacheSubresourceURLFactory> subresource_url_factory_;
+
+  base::WeakPtrFactory<AppCacheHost> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(AppCacheHost);
 };

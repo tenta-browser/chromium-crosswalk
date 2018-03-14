@@ -52,7 +52,7 @@ TEST(MinidumpContextWriter, MinidumpContextX86Writer) {
     SCOPED_TRACE("nonzero");
 
     string_file.Reset();
-    const uint32_t kSeed = 0x8086;
+    constexpr uint32_t kSeed = 0x8086;
 
     MinidumpContextX86Writer context_writer;
     InitializeMinidumpContextX86(context_writer.context(), kSeed);
@@ -69,6 +69,15 @@ TEST(MinidumpContextWriter, MinidumpContextX86Writer) {
 }
 
 TEST(MinidumpContextWriter, MinidumpContextAMD64Writer) {
+  {
+    // Make sure that a heap-allocated context writer has the proper alignment,
+    // because it may be nonstandard.
+    auto context_writer = std::make_unique<MinidumpContextAMD64Writer>();
+    EXPECT_EQ(reinterpret_cast<uintptr_t>(context_writer.get()) &
+                  (alignof(MinidumpContextAMD64Writer) - 1),
+              0u);
+  }
+
   StringFile string_file;
 
   {
@@ -92,7 +101,7 @@ TEST(MinidumpContextWriter, MinidumpContextAMD64Writer) {
     SCOPED_TRACE("nonzero");
 
     string_file.Reset();
-    const uint32_t kSeed = 0x808664;
+    constexpr uint32_t kSeed = 0x808664;
 
     MinidumpContextAMD64Writer context_writer;
     InitializeMinidumpContextAMD64(context_writer.context(), kSeed);
@@ -109,7 +118,7 @@ TEST(MinidumpContextWriter, MinidumpContextAMD64Writer) {
 }
 
 TEST(MinidumpContextWriter, CreateFromSnapshot_X86) {
-  const uint32_t kSeed = 32;
+  constexpr uint32_t kSeed = 32;
 
   CPUContextX86 context_snapshot_x86;
   CPUContext context_snapshot;
@@ -131,7 +140,7 @@ TEST(MinidumpContextWriter, CreateFromSnapshot_X86) {
 }
 
 TEST(MinidumpContextWriter, CreateFromSnapshot_AMD64) {
-  const uint32_t kSeed = 64;
+  constexpr uint32_t kSeed = 64;
 
   CPUContextX86_64 context_snapshot_x86_64;
   CPUContext context_snapshot;

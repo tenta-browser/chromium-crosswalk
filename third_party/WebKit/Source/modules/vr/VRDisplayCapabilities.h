@@ -5,19 +5,17 @@
 #ifndef VRDisplayCapabilities_h
 #define VRDisplayCapabilities_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 
 namespace blink {
 
-class VRDisplayCapabilities final
-    : public GarbageCollected<VRDisplayCapabilities>,
-      public ScriptWrappable {
+class VRDisplayCapabilities final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  VRDisplayCapabilities();
+  VRDisplayCapabilities() = default;
 
   bool hasPosition() const { return has_position_; }
   bool hasExternalDisplay() const { return has_external_display_; }
@@ -29,13 +27,11 @@ class VRDisplayCapabilities final
   void SetCanPresent(bool value) { can_present_ = value; }
   void SetMaxLayers(unsigned value) { max_layers_ = value; }
 
-  DECLARE_VIRTUAL_TRACE()
-
  private:
-  bool has_position_;
-  bool has_external_display_;
-  bool can_present_;
-  unsigned max_layers_;
+  bool has_position_ = false;
+  bool has_external_display_ = false;
+  bool can_present_ = false;
+  unsigned max_layers_ = 0;
 };
 
 }  // namespace blink

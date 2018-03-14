@@ -4,6 +4,7 @@
 
 #include "chrome/browser/sync/sessions/sync_sessions_router_tab_helper.h"
 
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/sync/sessions/sync_sessions_web_contents_router.h"
 #include "components/sync_sessions/synced_tab_delegate.h"
@@ -21,8 +22,9 @@ void SyncSessionsRouterTabHelper::CreateForWebContents(
     SyncSessionsWebContentsRouter* router) {
   DCHECK(web_contents);
   if (!FromWebContents(web_contents)) {
-    web_contents->SetUserData(
-        UserDataKey(), new SyncSessionsRouterTabHelper(web_contents, router));
+    web_contents->SetUserData(UserDataKey(),
+                              base::WrapUnique(new SyncSessionsRouterTabHelper(
+                                  web_contents, router)));
   }
 }
 
@@ -37,11 +39,11 @@ SyncSessionsRouterTabHelper::~SyncSessionsRouterTabHelper() {}
 
 void SyncSessionsRouterTabHelper::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
-  NotifyRouter();
+  if (navigation_handle && navigation_handle->IsInMainFrame())
+    NotifyRouter();
 }
 
-void SyncSessionsRouterTabHelper::TitleWasSet(content::NavigationEntry* entry,
-                                              bool explicit_set) {
+void SyncSessionsRouterTabHelper::TitleWasSet(content::NavigationEntry* entry) {
   NotifyRouter();
 }
 
@@ -52,7 +54,10 @@ void SyncSessionsRouterTabHelper::WebContentsDestroyed() {
 void SyncSessionsRouterTabHelper::DidFinishLoad(
     content::RenderFrameHost* render_frame_host,
     const GURL& validated_url) {
-  NotifyRouter();
+  // Only notify when the main frame finishes loading; only the main frame
+  // doesn't have a parent.
+  if (render_frame_host && !render_frame_host->GetParent())
+    NotifyRouter(true);
 }
 
 void SyncSessionsRouterTabHelper::DidOpenRequestedURL(
@@ -74,9 +79,9 @@ void SyncSessionsRouterTabHelper::DidOpenRequestedURL(
   NotifyRouter();
 }
 
-void SyncSessionsRouterTabHelper::NotifyRouter() {
+void SyncSessionsRouterTabHelper::NotifyRouter(bool page_load_completed) {
   if (router_)
-    router_->NotifyTabModified(web_contents());
+    router_->NotifyTabModified(web_contents(), page_load_completed);
 }
 
 }  // namespace sync_sessions

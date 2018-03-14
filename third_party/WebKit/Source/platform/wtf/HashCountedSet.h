@@ -21,6 +21,7 @@
 #ifndef WTF_HashCountedSet_h
 #define WTF_HashCountedSet_h
 
+#include "base/macros.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/HashMap.h"
 #include "platform/wtf/Vector.h"
@@ -37,7 +38,6 @@ template <typename Value,
           typename Allocator = PartitionAllocator>
 class HashCountedSet {
   USE_ALLOCATOR(HashCountedSet, Allocator);
-  WTF_MAKE_NONCOPYABLE(HashCountedSet);
 
  private:
   typedef HashMap<Value,
@@ -63,10 +63,10 @@ class HashCountedSet {
                   "HeapHashCountedSet<Member<T>> instead.");
   }
 
-  void swap(HashCountedSet& other) { impl_.Swap(other.impl_); }
+  void swap(HashCountedSet& other) { impl_.swap(other.impl_); }
 
   unsigned size() const { return impl_.size(); }
-  unsigned capacity() const { return impl_.capacity(); }
+  unsigned Capacity() const { return impl_.capacity(); }
   bool IsEmpty() const { return impl_.IsEmpty(); }
 
   // Iterators iterate over pairs of values (called key) and counts (called
@@ -76,7 +76,7 @@ class HashCountedSet {
   const_iterator begin() const { return impl_.begin(); }
   const_iterator end() const { return impl_.end(); }
 
-  iterator find(const ValueType& value) { return impl_.Find(value); }
+  iterator find(const ValueType& value) { return impl_.find(value); }
   const_iterator find(const ValueType& value) const {
     return impl_.find(value);
   }
@@ -101,7 +101,7 @@ class HashCountedSet {
   void RemoveAll(iterator);
 
   // Clears the whole set.
-  void clear() { impl_.Clear(); }
+  void clear() { impl_.clear(); }
 
   Vector<Value> AsVector() const;
 
@@ -112,6 +112,8 @@ class HashCountedSet {
 
  private:
   ImplType impl_;
+
+  DISALLOW_COPY_AND_ASSIGN(HashCountedSet);
 };
 
 template <typename T, typename U, typename V, typename W>
@@ -165,7 +167,7 @@ inline void CopyToVector(
   {
     // Disallow GC across resize allocation, see crbug.com/568173
     typename VectorType::GCForbiddenScope scope;
-    vector.Resize(collection.size());
+    vector.resize(collection.size());
   }
 
   auto it = collection.begin();

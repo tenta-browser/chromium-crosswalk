@@ -20,6 +20,8 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
+using base::SysUTF16ToNSString;
+
 namespace {
 
 const CGFloat kDesiredBubbleWidth = 370;
@@ -236,17 +238,18 @@ void SaveCardBubbleViewBridge::Hide() {
   autofill::CreditCard card = bridge_->GetCard();
   base::scoped_nsobject<NSImageView> cardIcon(
       [[NSImageView alloc] initWithFrame:NSZeroRect]);
-  [cardIcon setToolTip:base::SysUTF16ToNSString(card.TypeForDisplay())];
+  [cardIcon setToolTip:base::SysUTF16ToNSString(card.NetworkForDisplay())];
   [cardIcon setWantsLayer:YES];
   [[cardIcon layer] setBorderWidth:1.0];
   [[cardIcon layer] setCornerRadius:2.0];
   [[cardIcon layer] setMasksToBounds:YES];
   [[cardIcon layer]
       setBorderColor:skia::CGColorCreateFromSkColor(kIconBorderColor)];
-  [cardIcon setImage:ResourceBundle::GetSharedInstance()
-                         .GetNativeImageNamed(
-                             autofill::CreditCard::IconResourceId(card.type()))
-                         .AsNSImage()];
+  [cardIcon
+      setImage:ui::ResourceBundle::GetSharedInstance()
+                   .GetNativeImageNamed(
+                       autofill::CreditCard::IconResourceId(card.network()))
+                   .AsNSImage()];
   [cardIcon setFrameSize:[[cardIcon image] size]];
 
   // Midline horizontal ellipsis follwed by last four digits.

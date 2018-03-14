@@ -22,6 +22,11 @@ class PrefService;
 namespace metrics {
 class EnabledStateProvider;
 class MetricsStateManager;
+
+// Used only for testing.
+namespace internal {
+extern const base::Feature kMetricsReportingFeature;
+}
 }
 
 namespace version_info {
@@ -72,12 +77,16 @@ class ChromeMetricsServicesManagerClient
   CreateEntropyProvider() override;
   net::URLRequestContextGetter* GetURLRequestContext() override;
   bool IsMetricsReportingEnabled() override;
-  bool OnlyDoMetricsRecording() override;
+  bool IsMetricsConsentGiven() override;
 
 #if defined(OS_WIN)
   // On Windows, the client controls whether Crashpad can upload crash reports.
   void UpdateRunningServices(bool may_record, bool may_upload) override;
 #endif  // defined(OS_WIN)
+
+  bool IsMetricsReportingForceEnabled() override;
+
+  bool IsIncognitoSessionActive() override;
 
   // Gets the MetricsStateManager, creating it if it has not already been
   // created.
@@ -94,7 +103,7 @@ class ChromeMetricsServicesManagerClient
   base::ThreadChecker thread_checker_;
 
   // Weak pointer to the local state prefs store.
-  PrefService* local_state_;
+  PrefService* const local_state_;
 
 #if defined(OS_CHROMEOS)
   std::unique_ptr<chromeos::CrosSettings::ObserverSubscription>

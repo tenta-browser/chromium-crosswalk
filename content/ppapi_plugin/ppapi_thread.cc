@@ -29,7 +29,6 @@
 #include "components/discardable_memory/client/client_discardable_shared_memory_manager.h"
 #include "content/child/browser_font_resource_trusted.h"
 #include "content/child/child_process.h"
-#include "content/common/child_process_messages.h"
 #include "content/ppapi_plugin/broker_process_dispatcher.h"
 #include "content/ppapi_plugin/plugin_process_dispatcher.h"
 #include "content/ppapi_plugin/ppapi_blink_platform_impl.h"
@@ -43,6 +42,7 @@
 #include "ipc/ipc_platform_file.h"
 #include "ipc/ipc_sync_channel.h"
 #include "ipc/ipc_sync_message_filter.h"
+#include "media/media_features.h"
 #include "ppapi/c/dev/ppp_network_state_dev.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/ppp.h"
@@ -58,15 +58,13 @@
 
 #if defined(OS_WIN)
 #include "base/win/win_util.h"
-#include "base/win/windows_version.h"
 #include "content/child/font_warmup_win.h"
 #include "sandbox/win/src/sandbox.h"
-#elif defined(OS_MACOSX)
-#include "content/common/sandbox_init_mac.h"
 #endif
 
 #if BUILDFLAG(ENABLE_CDM_HOST_VERIFICATION)
-#include "content/common/media/cdm_host_files.h"
+#include "media/cdm/cdm_host_file.h"
+#include "media/cdm/cdm_host_files.h"
 #endif
 
 #if defined(OS_WIN)
@@ -75,10 +73,6 @@ const char kWidevineCdmAdapterFileName[] = "widevinecdmadapter.dll";
 extern sandbox::TargetServices* g_target_services;
 
 // Used by EnumSystemLocales for warming up.
-static BOOL CALLBACK EnumLocalesProc(LPTSTR lpLocaleString) {
-  return TRUE;
-}
-
 static BOOL CALLBACK EnumLocalesProcEx(
     LPWSTR lpLocaleString,
     DWORD dwFlags,
@@ -91,28 +85,19 @@ static void WarmupWindowsLocales(const ppapi::PpapiPermissions& permissions) {
   ::GetUserDefaultLangID();
   ::GetUserDefaultLCID();
 
-  if (permissions.HasPermission(ppapi::PERMISSION_FLASH)) {
-    if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
-      typedef BOOL (WINAPI *PfnEnumSystemLocalesEx)
-          (LOCALE_ENUMPROCEX, DWORD, LPARAM, LPVOID);
-
-      HMODULE handle_kern32 = GetModuleHandleW(L"Kernel32.dll");
-      PfnEnumSystemLocalesEx enum_sys_locales_ex =
-          reinterpret_cast<PfnEnumSystemLocalesEx>
-              (GetProcAddress(handle_kern32, "EnumSystemLocalesEx"));
-
-      enum_sys_locales_ex(EnumLocalesProcEx, LOCALE_WINDOWS, 0, 0);
-    } else {
-      EnumSystemLocalesW(EnumLocalesProc, LCID_INSTALLED);
-    }
-  }
+  if (permissions.HasPermission(ppapi::PERMISSION_FLASH))
+    ::EnumSystemLocalesEx(EnumLocalesProcEx, LOCALE_WINDOWS, 0, 0);
 }
 
 #endif
 
-static bool IsRunningInMash() {
+static bool IsRunningWithMus() {
+#if BUILDFLAG(ENABLE_MUS)
   const base::CommandLine* cmdline = base::CommandLine::ForCurrentProcess();
-  return cmdline->HasSwitch(switches::kIsRunningInMash);
+  return cmdline->HasSwitch(switches::kMus);
+#else
+  return false;
+#endif
 }
 
 namespace content {
@@ -123,10 +108,9 @@ typedef int32_t (*InitializeBrokerFunc)
 PpapiThread::PpapiThread(const base::CommandLine& command_line, bool is_broker)
     : is_broker_(is_broker),
       plugin_globals_(GetIOTaskRunner()),
-      connect_instance_func_(NULL),
+      connect_instance_func_(nullptr),
       local_pp_module_(base::RandInt(0, std::numeric_limits<PP_Module>::max())),
-      next_plugin_dispatcher_id_(1),
-      field_trial_syncer_(this) {
+      next_plugin_dispatcher_id_(1) {
   plugin_globals_.SetPluginProxyDelegate(this);
   plugin_globals_.set_command_line(
       command_line.GetSwitchValueASCII(switches::kPpapiFlashArgs));
@@ -137,7 +121,7 @@ PpapiThread::PpapiThread(const base::CommandLine& command_line, bool is_broker)
   if (!is_broker_) {
     scoped_refptr<ppapi::proxy::PluginMessageFilter> plugin_filter(
         new ppapi::proxy::PluginMessageFilter(
-            NULL, plugin_globals_.resource_reply_thread_registrar()));
+            nullptr, plugin_globals_.resource_reply_thread_registrar()));
     channel()->AddFilter(plugin_filter.get());
     plugin_globals_.RegisterResourceMessageFilters(plugin_filter.get());
   }
@@ -146,7 +130,7 @@ PpapiThread::PpapiThread(const base::CommandLine& command_line, bool is_broker)
   // allocator.
   if (!command_line.HasSwitch(switches::kSingleProcess)) {
     discardable_memory::mojom::DiscardableSharedMemoryManagerPtr manager_ptr;
-    if (IsRunningInMash()) {
+    if (IsRunningWithMus()) {
 #if defined(USE_AURA)
       GetServiceManagerConnection()->GetConnector()->BindInterface(
           ui::mojom::kServiceName, &manager_ptr);
@@ -157,14 +141,12 @@ PpapiThread::PpapiThread(const base::CommandLine& command_line, bool is_broker)
       ChildThread::Get()->GetConnector()->BindInterface(
           mojom::kBrowserServiceName, mojo::MakeRequest(&manager_ptr));
     }
-    discardable_shared_memory_manager_ = base::MakeUnique<
+    discardable_shared_memory_manager_ = std::make_unique<
         discardable_memory::ClientDiscardableSharedMemoryManager>(
         std::move(manager_ptr), GetIOTaskRunner());
     base::DiscardableMemoryAllocator::SetInstance(
         discardable_shared_memory_manager_.get());
   }
-  field_trial_syncer_.InitFieldTrialObserving(command_line,
-                                              switches::kSingleProcess);
 }
 
 PpapiThread::~PpapiThread() {
@@ -316,7 +298,7 @@ void PpapiThread::OnLoadPlugin(const base::FilePath& path,
 
   // If the plugin isn't internal then load it from |path|.
   base::ScopedNativeLibrary library;
-  if (plugin_entry_points_.initialize_module == NULL) {
+  if (plugin_entry_points_.initialize_module == nullptr) {
     // Load the plugin from the specified library.
     base::NativeLibraryLoadError error;
     base::TimeDelta load_time;
@@ -378,18 +360,32 @@ void PpapiThread::OnLoadPlugin(const base::FilePath& path,
 
 #if BUILDFLAG(ENABLE_CDM_HOST_VERIFICATION)
   // Use a local instance of CdmHostFiles so that if we return early for any
-  // error, all files will closed automatically.
-  std::unique_ptr<CdmHostFiles> cdm_host_files;
+  // error, all files will be closed automatically.
+  media::CdmHostFiles cdm_host_files;
+  auto cdm_status = media::CdmHostFiles::Status::kNotCalled;
 
-#if defined(OS_WIN) || defined(OS_MACOSX)
   // Open CDM host files before the process is sandboxed.
-  if (!is_broker_ && IsCdm(path))
-    cdm_host_files = CdmHostFiles::Create(path);
-#elif defined(OS_LINUX)
-  cdm_host_files = CdmHostFiles::TakeGlobalInstance();
-  if (is_broker_ || !IsCdm(path))
-    cdm_host_files.reset();  // Close all opened files.
-#endif  // defined(OS_WIN) || defined(OS_MACOSX)
+  if (!is_broker_ && media::IsCdm(path)) {
+    std::vector<media::CdmHostFilePath> cdm_host_file_paths;
+    GetContentClient()->AddContentDecryptionModules(nullptr,
+                                                    &cdm_host_file_paths);
+    cdm_host_files.InitializeWithAdapter(path, cdm_host_file_paths);
+
+#if defined(OS_WIN)
+    // On Windows, initialize CDM host verification unsandboxed. On other
+    // platforms, this is called sandboxed below.
+    cdm_status =
+        cdm_host_files.InitVerificationWithAdapter(library.get(), path);
+    // Ignore other failures for backward compatibility, e.g. when using an old
+    // CDM which doesn't implement the verification API.
+    if (cdm_status == media::CdmHostFiles::Status::kInitVerificationFailed) {
+      LOG(WARNING) << "CDM host verification failed.";
+      // TODO(xhwang): Add a new load result if needed.
+      ReportLoadResult(path, INIT_FAILED);
+      return;
+    }
+#endif  // defined(OS_WIN)
+  }
 #endif  // BUILDFLAG(ENABLE_CDM_HOST_VERIFICATION)
 
 #if defined(OS_WIN)
@@ -401,28 +397,22 @@ void PpapiThread::OnLoadPlugin(const base::FilePath& path,
   // can be loaded. TODO(cpu): consider changing to the loading style of
   // regular plugins.
   if (g_target_services) {
-    // Let Flash and Widevine CDM adapter load DXVA before lockdown on Vista+.
+    // Let Flash and Widevine CDM adapter load DXVA before lockdown.
     if (permissions.HasPermission(ppapi::PERMISSION_FLASH) ||
         path.BaseName().MaybeAsASCII() == kWidevineCdmAdapterFileName) {
-      if (base::win::OSInfo::GetInstance()->version() >=
-          base::win::VERSION_VISTA) {
-        LoadLibraryA("dxva2.dll");
-      }
+      LoadLibraryA("dxva2.dll");
     }
 
     if (permissions.HasPermission(ppapi::PERMISSION_FLASH)) {
-      if (base::win::OSInfo::GetInstance()->version() >=
-          base::win::VERSION_WIN7) {
-        base::CPU cpu;
-        if (cpu.vendor_name() == "AuthenticAMD") {
-          // The AMD crypto acceleration is only AMD Bulldozer and above.
+      base::CPU cpu;
+      if (cpu.vendor_name() == "AuthenticAMD") {
+        // The AMD crypto acceleration is only AMD Bulldozer and above.
 #if defined(_WIN64)
-          LoadLibraryA("amdhcp64.dll");
+        LoadLibraryA("amdhcp64.dll");
 #else
-          LoadLibraryA("amdhcp32.dll");
+        LoadLibraryA("amdhcp32.dll");
 #endif
         }
-      }
     }
 
     // Cause advapi32 to load before the sandbox is turned on.
@@ -470,26 +460,34 @@ void PpapiThread::OnLoadPlugin(const base::FilePath& path,
     CHECK(InitializeSandbox());
 #endif
 
-    int32_t init_error = plugin_entry_points_.initialize_module(
-        local_pp_module_,
-        &ppapi::proxy::PluginDispatcher::GetBrowserInterface);
-    if (init_error != PP_OK) {
-      LOG(WARNING) << "InitModule failed with error " << init_error;
-      ReportLoadResult(path, INIT_FAILED);
-      return;
-    }
 #if BUILDFLAG(ENABLE_CDM_HOST_VERIFICATION)
-    // Now the process is sandboxed. Verify CDM host.
-    if (cdm_host_files) {
-      DCHECK(IsCdm(path));
-      if (!cdm_host_files->VerifyFiles(library.get(), path)) {
+    if (!is_broker_ && media::IsCdm(path)) {
+#if !defined(OS_WIN)
+      // Now we are sandboxed, initialize CDM host verification.
+      cdm_status =
+          cdm_host_files.InitVerificationWithAdapter(library.get(), path);
+      // Ignore other failures for backward compatibility, e.g. when using an
+      // old CDM which doesn't implement the verification API.
+      if (cdm_status == media::CdmHostFiles::Status::kInitVerificationFailed) {
         LOG(WARNING) << "CDM host verification failed.";
         // TODO(xhwang): Add a new load result if needed.
         ReportLoadResult(path, INIT_FAILED);
         return;
       }
+#endif  // !defined(OS_WIN)
+      UMA_HISTOGRAM_ENUMERATION("Media.EME.CdmHostVerificationStatus",
+                                cdm_status,
+                                media::CdmHostFiles::Status::kStatusCount);
     }
 #endif  // BUILDFLAG(ENABLE_CDM_HOST_VERIFICATION)
+
+    int32_t init_error = plugin_entry_points_.initialize_module(
+        local_pp_module_, &ppapi::proxy::PluginDispatcher::GetBrowserInterface);
+    if (init_error != PP_OK) {
+      LOG(WARNING) << "InitModule failed with error " << init_error;
+      ReportLoadResult(path, INIT_FAILED);
+      return;
+    }
   }
 
   // Initialization succeeded, so keep the plugin DLL loaded.
@@ -543,20 +541,14 @@ void PpapiThread::OnHang() {
     base::PlatformThread::Sleep(base::TimeDelta::FromSeconds(1));
 }
 
-void PpapiThread::OnFieldTrialGroupFinalized(const std::string& trial_name,
-                                             const std::string& group_name) {
-  // IPC to the browser process to tell it the specified trial was activated.
-  Send(new PpapiHostMsg_FieldTrialActivated(trial_name));
-}
-
 bool PpapiThread::SetupChannel(base::ProcessId renderer_pid,
                                int renderer_child_id,
                                bool incognito,
                                IPC::ChannelHandle* handle) {
-  DCHECK(is_broker_ == (connect_instance_func_ != NULL));
+  DCHECK(is_broker_ == (connect_instance_func_ != nullptr));
   mojo::MessagePipe pipe;
 
-  ppapi::proxy::ProxyChannel* dispatcher = NULL;
+  ppapi::proxy::ProxyChannel* dispatcher = nullptr;
   bool init_result = false;
   if (is_broker_) {
     bool peer_is_browser = renderer_pid == base::kNullProcessId;

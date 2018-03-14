@@ -8,6 +8,7 @@
 #include <stddef.h>
 
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/time/tick_clock.h"
 #include "platform/scheduler/base/task_queue_manager.h"
 #include "platform/scheduler/base/task_queue_selector.h"
@@ -15,43 +16,28 @@
 namespace blink {
 namespace scheduler {
 
-class SchedulerTqmDelegate;
-
 // Common scheduler functionality for default tasks.
-class BLINK_PLATFORM_EXPORT SchedulerHelper
-    : public TaskQueueManager::Observer {
+class PLATFORM_EXPORT SchedulerHelper : public TaskQueueManager::Observer {
  public:
-  // Category strings must have application lifetime (statics or
-  // literals). They may not include " chars.
-  SchedulerHelper(
-      scoped_refptr<SchedulerTqmDelegate> task_queue_manager_delegate,
-      const char* tracing_category,
-      const char* disabled_by_default_tracing_category,
-      const char* disabled_by_default_verbose_tracing_category);
-  SchedulerHelper(
-      scoped_refptr<SchedulerTqmDelegate> task_queue_manager_delegate,
-      const char* tracing_category,
-      const char* disabled_by_default_tracing_category,
-      const char* disabled_by_default_verbose_tracing_category,
-      TaskQueue::Spec default_task_queue_spec);
+  explicit SchedulerHelper(
+      std::unique_ptr<TaskQueueManager> task_queue_manager);
   ~SchedulerHelper() override;
 
-  // There is a small overhead to recording task delay histograms, we may not
-  // wish to do this on all threads.
-  void SetRecordTaskDelayHistograms(bool record_task_delay_histograms);
-
   // TaskQueueManager::Observer implementation:
-  void OnUnregisterTaskQueue(const scoped_refptr<TaskQueue>& queue) override;
-  void OnTriedToExecuteBlockedTask(const TaskQueue& queue,
-                                   const base::PendingTask& task) override;
+  void OnTriedToExecuteBlockedTask() override;
+  void OnBeginNestedRunLoop() override;
+  void OnExitNestedRunLoop() override;
 
-  // Returns the default task runner.
-  scoped_refptr<TaskQueue> DefaultTaskRunner();
+  base::TickClock* GetClock() const;
+  base::TimeTicks NowTicks() const;
 
-  // Returns the control task runner.  Tasks posted to this runner are executed
+  // Returns the default task queue.
+  virtual scoped_refptr<TaskQueue> DefaultTaskQueue() = 0;
+
+  // Returns the control task queue.  Tasks posted to this queue are executed
   // with the highest priority. Care must be taken to avoid starvation of other
   // task queues.
-  scoped_refptr<TaskQueue> ControlTaskRunner();
+  virtual scoped_refptr<TaskQueue> ControlTaskQueue() = 0;
 
   // Adds or removes a task observer from the scheduler. The observer will be
   // notified before and after every executed task. These functions can only be
@@ -63,7 +49,7 @@ class BLINK_PLATFORM_EXPORT SchedulerHelper
   void RemoveTaskTimeObserver(TaskTimeObserver* task_time_observer);
 
   // Shuts down the scheduler by dropping any remaining pending work in the work
-  // queues. After this call any work posted to the task runners will be
+  // queues. After this call any work posted to the task queue will be
   // silently dropped.
   void Shutdown();
 
@@ -74,21 +60,19 @@ class BLINK_PLATFORM_EXPORT SchedulerHelper
     DCHECK(thread_checker_.CalledOnValidThread());
   }
 
-  // Creates a new TaskQueue with the given |spec|.
-  scoped_refptr<TaskQueue> NewTaskQueue(const TaskQueue::Spec& spec);
-
-  class BLINK_PLATFORM_EXPORT Observer {
+  class PLATFORM_EXPORT Observer {
    public:
     virtual ~Observer() {}
 
-    // Called when |queue| is unregistered.
-    virtual void OnUnregisterTaskQueue(
-        const scoped_refptr<TaskQueue>& queue) = 0;
-
     // Called when the scheduler tried to execute a task from a disabled
     // queue. See TaskQueue::Spec::SetShouldReportWhenExecutionBlocked.
-    virtual void OnTriedToExecuteBlockedTask(const TaskQueue& queue,
-                                             const base::PendingTask& task) = 0;
+    virtual void OnTriedToExecuteBlockedTask() = 0;
+
+    // Called when scheduler executes task with nested run loop.
+    virtual void OnBeginNestedRunLoop() = 0;
+
+    // Called when the scheduler spots we've exited a nested run loop.
+    virtual void OnExitNestedRunLoop() = 0;
   };
 
   // Called once to set the Observer. This function is called on the main
@@ -103,9 +87,7 @@ class BLINK_PLATFORM_EXPORT SchedulerHelper
   RealTimeDomain* real_time_domain() const;
   void RegisterTimeDomain(TimeDomain* time_domain);
   void UnregisterTimeDomain(TimeDomain* time_domain);
-  const scoped_refptr<SchedulerTqmDelegate>& scheduler_tqm_delegate() const;
   bool GetAndClearSystemIsQuiescentBit();
-  TaskQueue* CurrentlyExecutingTaskQueue() const;
 
   size_t GetNumberOfPendingTasks() const;
 
@@ -113,18 +95,17 @@ class BLINK_PLATFORM_EXPORT SchedulerHelper
   void SetWorkBatchSizeForTesting(size_t work_batch_size);
   TaskQueueManager* GetTaskQueueManagerForTesting();
 
+ protected:
+  void InitDefaultQueues(scoped_refptr<TaskQueue> default_task_queue,
+                         scoped_refptr<TaskQueue> control_task_queue);
+
+  base::ThreadChecker thread_checker_;
+  std::unique_ptr<TaskQueueManager> task_queue_manager_;
+
  private:
   friend class SchedulerHelperTest;
 
-  base::ThreadChecker thread_checker_;
-  scoped_refptr<SchedulerTqmDelegate> task_queue_manager_delegate_;
-  std::unique_ptr<TaskQueueManager> task_queue_manager_;
-  scoped_refptr<TaskQueue> control_task_runner_;
-  scoped_refptr<TaskQueue> default_task_runner_;
-
   Observer* observer_;  // NOT OWNED
-  const char* tracing_category_;
-  const char* disabled_by_default_tracing_category_;
 
   DISALLOW_COPY_AND_ASSIGN(SchedulerHelper);
 };

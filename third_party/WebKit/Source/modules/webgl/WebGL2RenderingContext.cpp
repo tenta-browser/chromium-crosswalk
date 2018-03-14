@@ -5,8 +5,8 @@
 #include "modules/webgl/WebGL2RenderingContext.h"
 
 #include <memory>
-#include "bindings/modules/v8/OffscreenCanvasRenderingContext2DOrWebGLRenderingContextOrWebGL2RenderingContext.h"
-#include "bindings/modules/v8/RenderingContext.h"
+#include "bindings/modules/v8/offscreen_rendering_context.h"
+#include "bindings/modules/v8/rendering_context.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
 #include "core/frame/Settings.h"
@@ -38,18 +38,11 @@ namespace blink {
 // An helper function for the two create() methods. The return value is an
 // indicate of whether the create() should return nullptr or not.
 static bool ShouldCreateContext(WebGraphicsContext3DProvider* context_provider,
-                                HTMLCanvasElement* canvas,
-                                OffscreenCanvas* offscreen_canvas) {
+                                CanvasRenderingContextHost* host) {
   if (!context_provider) {
-    if (canvas) {
-      canvas->DispatchEvent(WebGLContextEvent::Create(
-          EventTypeNames::webglcontextcreationerror, false, true,
-          "Failed to create a WebGL2 context."));
-    } else {
-      offscreen_canvas->DispatchEvent(WebGLContextEvent::Create(
-          EventTypeNames::webglcontextcreationerror, false, true,
-          "Failed to create a WebGL2 context."));
-    }
+    host->HostDispatchEvent(WebGLContextEvent::Create(
+        EventTypeNames::webglcontextcreationerror, false, true,
+        "Failed to create a WebGL2 context."));
     return false;
   }
 
@@ -61,48 +54,25 @@ static bool ShouldCreateContext(WebGraphicsContext3DProvider* context_provider,
   if (extensions_util->SupportsExtension("GL_EXT_debug_marker")) {
     String context_label(
         String::Format("WebGL2RenderingContext-%p", context_provider));
-    gl->PushGroupMarkerEXT(0, context_label.Ascii().Data());
+    gl->PushGroupMarkerEXT(0, context_label.Ascii().data());
   }
   return true;
 }
 
 CanvasRenderingContext* WebGL2RenderingContext::Factory::Create(
-    HTMLCanvasElement* canvas,
-    const CanvasContextCreationAttributes& attrs,
-    Document&) {
-  std::unique_ptr<WebGraphicsContext3DProvider> context_provider(
-      CreateWebGraphicsContext3DProvider(canvas, attrs, 2));
-  if (!ShouldCreateContext(context_provider.get(), canvas, nullptr))
-    return nullptr;
-  WebGL2RenderingContext* rendering_context =
-      new WebGL2RenderingContext(canvas, std::move(context_provider), attrs);
-
-  if (!rendering_context->GetDrawingBuffer()) {
-    canvas->DispatchEvent(WebGLContextEvent::Create(
-        EventTypeNames::webglcontextcreationerror, false, true,
-        "Could not create a WebGL2 context."));
-    return nullptr;
-  }
-
-  rendering_context->InitializeNewContext();
-  rendering_context->RegisterContextExtensions();
-
-  return rendering_context;
-}
-
-CanvasRenderingContext* WebGL2RenderingContext::Factory::Create(
-    ScriptState* script_state,
-    OffscreenCanvas* offscreen_canvas,
+    CanvasRenderingContextHost* host,
     const CanvasContextCreationAttributes& attrs) {
+  bool using_gpu_compositing;
   std::unique_ptr<WebGraphicsContext3DProvider> context_provider(
-      CreateWebGraphicsContext3DProvider(script_state, attrs, 2));
-  if (!ShouldCreateContext(context_provider.get(), nullptr, offscreen_canvas))
+      CreateWebGraphicsContext3DProvider(host, attrs, 2,
+                                         &using_gpu_compositing));
+  if (!ShouldCreateContext(context_provider.get(), host))
     return nullptr;
   WebGL2RenderingContext* rendering_context = new WebGL2RenderingContext(
-      offscreen_canvas, std::move(context_provider), attrs);
+      host, std::move(context_provider), using_gpu_compositing, attrs);
 
   if (!rendering_context->GetDrawingBuffer()) {
-    offscreen_canvas->DispatchEvent(WebGLContextEvent::Create(
+    host->HostDispatchEvent(WebGLContextEvent::Create(
         EventTypeNames::webglcontextcreationerror, false, true,
         "Could not create a WebGL2 context."));
     return nullptr;
@@ -121,35 +91,28 @@ void WebGL2RenderingContext::Factory::OnError(HTMLCanvasElement* canvas,
 }
 
 WebGL2RenderingContext::WebGL2RenderingContext(
-    HTMLCanvasElement* passed_canvas,
+    CanvasRenderingContextHost* host,
     std::unique_ptr<WebGraphicsContext3DProvider> context_provider,
+    bool using_gpu_compositing,
     const CanvasContextCreationAttributes& requested_attributes)
-    : WebGL2RenderingContextBase(passed_canvas,
+    : WebGL2RenderingContextBase(host,
                                  std::move(context_provider),
-                                 requested_attributes) {}
-
-WebGL2RenderingContext::WebGL2RenderingContext(
-    OffscreenCanvas* passed_offscreen_canvas,
-    std::unique_ptr<WebGraphicsContext3DProvider> context_provider,
-    const CanvasContextCreationAttributes& requested_attributes)
-    : WebGL2RenderingContextBase(passed_offscreen_canvas,
-                                 std::move(context_provider),
+                                 using_gpu_compositing,
                                  requested_attributes) {}
 
 void WebGL2RenderingContext::SetCanvasGetContextResult(
     RenderingContext& result) {
-  result.setWebGL2RenderingContext(this);
+  result.SetWebGL2RenderingContext(this);
 }
 
 void WebGL2RenderingContext::SetOffscreenCanvasGetContextResult(
     OffscreenRenderingContext& result) {
-  result.setWebGL2RenderingContext(this);
+  result.SetWebGL2RenderingContext(this);
 }
 
 ImageBitmap* WebGL2RenderingContext::TransferToImageBitmap(
     ScriptState* script_state) {
-  NOTIMPLEMENTED();
-  return nullptr;
+  return TransferToImageBitmapBase(script_state);
 }
 
 void WebGL2RenderingContext::RegisterContextExtensions() {
@@ -168,7 +131,7 @@ void WebGL2RenderingContext::RegisterContextExtensions() {
       webgl_compressed_texture_pvrtc_);
   RegisterExtension<WebGLCompressedTextureS3TC>(webgl_compressed_texture_s3tc_);
   RegisterExtension<WebGLCompressedTextureS3TCsRGB>(
-      webgl_compressed_texture_s3tc_srgb_, kDraftExtension);
+      webgl_compressed_texture_s3tc_srgb_);
   RegisterExtension<WebGLDebugRendererInfo>(webgl_debug_renderer_info_);
   RegisterExtension<WebGLDebugShaders>(webgl_debug_shaders_);
   RegisterExtension<WebGLGetBufferSubDataAsync>(
@@ -176,7 +139,7 @@ void WebGL2RenderingContext::RegisterContextExtensions() {
   RegisterExtension<WebGLLoseContext>(webgl_lose_context_);
 }
 
-DEFINE_TRACE(WebGL2RenderingContext) {
+void WebGL2RenderingContext::Trace(blink::Visitor* visitor) {
   visitor->Trace(ext_color_buffer_float_);
   visitor->Trace(ext_disjoint_timer_query_web_gl2_);
   visitor->Trace(ext_texture_filter_anisotropic_);
@@ -195,7 +158,8 @@ DEFINE_TRACE(WebGL2RenderingContext) {
   WebGL2RenderingContextBase::Trace(visitor);
 }
 
-DEFINE_TRACE_WRAPPERS(WebGL2RenderingContext) {
+void WebGL2RenderingContext::TraceWrappers(
+    const ScriptWrappableVisitor* visitor) const {
   // Extensions are managed by WebGL2RenderingContextBase.
   WebGL2RenderingContextBase::TraceWrappers(visitor);
 }

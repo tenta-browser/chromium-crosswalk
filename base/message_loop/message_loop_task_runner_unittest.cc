@@ -82,14 +82,14 @@ class MessageLoopTaskRunnerTest : public testing::Test {
 
   static void RecordLoopAndQuit(scoped_refptr<LoopRecorder> recorder) {
     recorder->RecordRun();
-    MessageLoop::current()->QuitWhenIdle();
+    RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   void UnblockTaskThread() { thread_sync_.Signal(); }
 
   void BlockTaskThreadHelper() { thread_sync_.Wait(); }
 
-  static StaticAtomicSequenceNumber g_order;
+  static AtomicSequenceNumber g_order;
 
   std::unique_ptr<MessageLoop> current_loop_;
   Thread task_thread_;
@@ -98,14 +98,14 @@ class MessageLoopTaskRunnerTest : public testing::Test {
   base::WaitableEvent thread_sync_;
 };
 
-StaticAtomicSequenceNumber MessageLoopTaskRunnerTest::g_order;
+AtomicSequenceNumber MessageLoopTaskRunnerTest::g_order;
 
 TEST_F(MessageLoopTaskRunnerTest, PostTaskAndReply_Basic) {
-  MessageLoop* task_run_on = NULL;
-  MessageLoop* task_deleted_on = NULL;
+  MessageLoop* task_run_on = nullptr;
+  MessageLoop* task_deleted_on = nullptr;
   int task_delete_order = -1;
-  MessageLoop* reply_run_on = NULL;
-  MessageLoop* reply_deleted_on = NULL;
+  MessageLoop* reply_run_on = nullptr;
+  MessageLoop* reply_deleted_on = nullptr;
   int reply_delete_order = -1;
 
   scoped_refptr<LoopRecorder> task_recorder =
@@ -118,8 +118,8 @@ TEST_F(MessageLoopTaskRunnerTest, PostTaskAndReply_Basic) {
       BindOnce(&RecordLoopAndQuit, reply_recorder)));
 
   // Die if base::Bind doesn't retain a reference to the recorders.
-  task_recorder = NULL;
-  reply_recorder = NULL;
+  task_recorder = nullptr;
+  reply_recorder = nullptr;
   ASSERT_FALSE(task_deleted_on);
   ASSERT_FALSE(reply_deleted_on);
 
@@ -134,11 +134,11 @@ TEST_F(MessageLoopTaskRunnerTest, PostTaskAndReply_Basic) {
 }
 
 TEST_F(MessageLoopTaskRunnerTest, PostTaskAndReplyOnDeletedThreadDoesNotLeak) {
-  MessageLoop* task_run_on = NULL;
-  MessageLoop* task_deleted_on = NULL;
+  MessageLoop* task_run_on = nullptr;
+  MessageLoop* task_deleted_on = nullptr;
   int task_delete_order = -1;
-  MessageLoop* reply_run_on = NULL;
-  MessageLoop* reply_deleted_on = NULL;
+  MessageLoop* reply_run_on = nullptr;
+  MessageLoop* reply_deleted_on = nullptr;
   int reply_delete_order = -1;
 
   scoped_refptr<LoopRecorder> task_recorder =
@@ -168,11 +168,11 @@ TEST_F(MessageLoopTaskRunnerTest, PostTaskAndReplyOnDeletedThreadDoesNotLeak) {
 }
 
 TEST_F(MessageLoopTaskRunnerTest, PostTaskAndReply_SameLoop) {
-  MessageLoop* task_run_on = NULL;
-  MessageLoop* task_deleted_on = NULL;
+  MessageLoop* task_run_on = nullptr;
+  MessageLoop* task_deleted_on = nullptr;
   int task_delete_order = -1;
-  MessageLoop* reply_run_on = NULL;
-  MessageLoop* reply_deleted_on = NULL;
+  MessageLoop* reply_run_on = nullptr;
+  MessageLoop* reply_deleted_on = nullptr;
   int reply_delete_order = -1;
 
   scoped_refptr<LoopRecorder> task_recorder =
@@ -186,8 +186,8 @@ TEST_F(MessageLoopTaskRunnerTest, PostTaskAndReply_SameLoop) {
       BindOnce(&RecordLoopAndQuit, reply_recorder)));
 
   // Die if base::Bind doesn't retain a reference to the recorders.
-  task_recorder = NULL;
-  reply_recorder = NULL;
+  task_recorder = nullptr;
+  reply_recorder = nullptr;
   ASSERT_FALSE(task_deleted_on);
   ASSERT_FALSE(reply_deleted_on);
 
@@ -204,11 +204,11 @@ TEST_F(MessageLoopTaskRunnerTest,
        PostTaskAndReply_DeadReplyTaskRunnerBehavior) {
   // Annotate the scope as having memory leaks to suppress heapchecker reports.
   ANNOTATE_SCOPED_MEMORY_LEAK;
-  MessageLoop* task_run_on = NULL;
-  MessageLoop* task_deleted_on = NULL;
+  MessageLoop* task_run_on = nullptr;
+  MessageLoop* task_deleted_on = nullptr;
   int task_delete_order = -1;
-  MessageLoop* reply_run_on = NULL;
-  MessageLoop* reply_deleted_on = NULL;
+  MessageLoop* reply_run_on = nullptr;
+  MessageLoop* reply_deleted_on = nullptr;
   int reply_delete_order = -1;
 
   scoped_refptr<LoopRecorder> task_recorder =
@@ -222,8 +222,8 @@ TEST_F(MessageLoopTaskRunnerTest,
       BindOnce(&RecordLoopAndQuit, reply_recorder));
 
   // Die if base::Bind doesn't retain a reference to the recorders.
-  task_recorder = NULL;
-  reply_recorder = NULL;
+  task_recorder = nullptr;
+  reply_recorder = nullptr;
   ASSERT_FALSE(task_deleted_on);
   ASSERT_FALSE(reply_deleted_on);
 

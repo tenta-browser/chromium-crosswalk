@@ -17,7 +17,7 @@
 #include "base/threading/thread_local.h"
 #include "components/metrics/leak_detector/custom_allocator.h"
 #include "components/metrics/leak_detector/leak_detector_impl.h"
-#include "components/metrics/proto/memory_leak_report.pb.h"
+#include "third_party/metrics_proto/memory_leak_report.pb.h"
 
 #if defined(OS_CHROMEOS)
 #include <link.h>  // for dl_iterate_phdr
@@ -338,7 +338,7 @@ void LeakDetector::NotifyObservers(
   if (reports.empty())
     return;
 
-  if (!task_runner_->RunsTasksOnCurrentThread()) {
+  if (!task_runner_->RunsTasksInCurrentSequence()) {
     task_runner_->PostTask(FROM_HERE,
                            base::Bind(&LeakDetector::NotifyObservers,
                                       base::Unretained(this), reports));

@@ -32,8 +32,13 @@
 #include "platform/wtf/allocator/PartitionAllocator.h"
 #include <memory>
 
+#if !defined(DUMP_HASHTABLE_STATS)
 #define DUMP_HASHTABLE_STATS 0
+#endif
+
+#if !defined(DUMP_HASHTABLE_STATS_PER_TABLE)
 #define DUMP_HASHTABLE_STATS_PER_TABLE 0
+#endif
 
 #if DUMP_HASHTABLE_STATS
 #include "platform/wtf/Atomics.h"
@@ -52,27 +57,27 @@
   ++probeCount;                                                  \
   HashTableStats::instance().recordCollisionAtCount(probeCount); \
   ++perTableProbeCount;                                          \
-  m_stats->recordCollisionAtCount(perTableProbeCount)
+  stats_->recordCollisionAtCount(perTableProbeCount)
 #define UPDATE_ACCESS_COUNTS()                              \
-  atomicIncrement(&HashTableStats::instance().numAccesses); \
+  AtomicIncrement(&HashTableStats::instance().numAccesses); \
   int probeCount = 0;                                       \
-  ++m_stats->numAccesses;                                   \
+  ++stats_->numAccesses;                                    \
   int perTableProbeCount = 0
 #else
 #define UPDATE_PROBE_COUNTS() \
   ++probeCount;               \
   HashTableStats::instance().recordCollisionAtCount(probeCount)
 #define UPDATE_ACCESS_COUNTS()                              \
-  atomicIncrement(&HashTableStats::instance().numAccesses); \
+  AtomicIncrement(&HashTableStats::instance().numAccesses); \
   int probeCount = 0
 #endif
 #else
 #if DUMP_HASHTABLE_STATS_PER_TABLE
 #define UPDATE_PROBE_COUNTS() \
   ++perTableProbeCount;       \
-  m_stats->recordCollisionAtCount(perTableProbeCount)
+  stats_->recordCollisionAtCount(perTableProbeCount)
 #define UPDATE_ACCESS_COUNTS() \
-  ++m_stats->numAccesses;      \
+  ++stats_->numAccesses;       \
   int perTableProbeCount = 0
 #else
 #define UPDATE_PROBE_COUNTS() \
@@ -99,7 +104,7 @@ template <WeakHandlingFlag weakHandlingFlag,
           typename Traits>
 struct TraceInCollectionTrait;
 
-#if DUMP_HASHTABLE_STATS
+#if DUMP_HASHTABLE_STATS || DUMP_HASHTABLE_STATS_PER_TABLE
 struct WTF_EXPORT HashTableStats {
   HashTableStats()
       : numAccesses(0),
@@ -124,7 +129,7 @@ struct WTF_EXPORT HashTableStats {
 
   void copy(const HashTableStats* other);
   void recordCollisionAtCount(int count);
-  void dumpStats();
+  void DumpStats();
 
   static HashTableStats& instance();
 
@@ -133,7 +138,7 @@ struct WTF_EXPORT HashTableStats {
 };
 
 #if DUMP_HASHTABLE_STATS_PER_TABLE
-template <typename Allocator, bool isGCType = Allocator::isGarbageCollected>
+template <typename Allocator, bool isGCType = Allocator::kIsGarbageCollected>
 class HashTableStatsPtr;
 
 template <typename Allocator>
@@ -141,15 +146,15 @@ class HashTableStatsPtr<Allocator, false> final {
   STATIC_ONLY(HashTableStatsPtr);
 
  public:
-  static std::unique_ptr<HashTableStats> create() {
-    return WTF::wrapUnique(new HashTableStats);
+  static std::unique_ptr<HashTableStats> Create() {
+    return std::make_unique<HashTableStats>();
   }
 
   static std::unique_ptr<HashTableStats> copy(
       const std::unique_ptr<HashTableStats>& other) {
     if (!other)
       return nullptr;
-    return WTF::wrapUnique(new HashTableStats(*other));
+    return std::make_unique<HashTableStats>(*other);
   }
 
   static void swap(std::unique_ptr<HashTableStats>& stats,
@@ -163,20 +168,15 @@ class HashTableStatsPtr<Allocator, true> final {
   STATIC_ONLY(HashTableStatsPtr);
 
  public:
-  static HashTableStats* create() {
-    // Resort to manually allocating this POD on the vector
-    // backing heap, as blink::GarbageCollected<> isn't in scope
-    // in WTF.
-    void* storage = reinterpret_cast<void*>(
-        Allocator::template allocateVectorBacking<unsigned char>(
-            sizeof(HashTableStats)));
-    return new (storage) HashTableStats;
+  static HashTableStats* Create() {
+    // TODO(cavalcantii): fix this.
+    return new HashTableStats;
   }
 
   static HashTableStats* copy(const HashTableStats* other) {
     if (!other)
       return nullptr;
-    HashTableStats* obj = create();
+    HashTableStats* obj = Create();
     obj->copy(other);
     return obj;
   }
@@ -371,7 +371,7 @@ class HashTableConstIterator final {
   std::ostream& PrintTo(std::ostream& stream) const {
     if (position_ == end_position_)
       return stream << "iterator representing <end>";
-    // TODO(tkent): Change |m_position| to |*m_position| to show the
+    // TODO(tkent): Change |position_| to |*position_| to show the
     // pointed object. It requires a lot of new stream printer functions.
     return stream << "iterator pointing to " << position_;
   }
@@ -568,7 +568,7 @@ struct HashTableAddResult final {
                      bool is_new_entry)
       : stored_value(stored_value),
         is_new_entry(is_new_entry)
-#if ENABLE(SECURITY_ASSERT)
+#if ENABLE_SECURITY_ASSERT
         ,
         container_(container),
         container_modifications_(container->Modifications())
@@ -581,7 +581,7 @@ struct HashTableAddResult final {
   ValueType* stored_value;
   bool is_new_entry;
 
-#if ENABLE(SECURITY_ASSERT)
+#if ENABLE_SECURITY_ASSERT
   ~HashTableAddResult() {
     // If rehash happened before accessing storedValue, it's
     // use-after-free. Any modification may cause a rehash, so we check for
@@ -696,7 +696,7 @@ class HashTable final
 
   HashTable(const HashTable&);
   HashTable(HashTable&&);
-  void Swap(HashTable&);
+  void swap(HashTable&);
   HashTable& operator=(const HashTable&);
   HashTable& operator=(HashTable&&);
 
@@ -742,8 +742,8 @@ class HashTable final
   template <typename HashTranslator, typename T, typename Extra>
   AddResult InsertPassingHashCode(T&& key, Extra&&);
 
-  iterator Find(KeyPeekInType key) { return Find<IdentityTranslatorType>(key); }
-  const_iterator Find(KeyPeekInType key) const {
+  iterator find(KeyPeekInType key) { return Find<IdentityTranslatorType>(key); }
+  const_iterator find(KeyPeekInType key) const {
     return Find<IdentityTranslatorType>(key);
   }
   bool Contains(KeyPeekInType key) const {
@@ -760,7 +760,7 @@ class HashTable final
   void erase(KeyPeekInType);
   void erase(iterator);
   void erase(const_iterator);
-  void Clear();
+  void clear();
 
   static bool IsEmptyBucket(const ValueType& value) {
     return IsHashTraitsEmptyValue<KeyTraits>(Extractor::Extract(value));
@@ -774,6 +774,9 @@ class HashTable final
   }
 
   ValueType* Lookup(KeyPeekInType key) {
+    return Lookup<IdentityTranslatorType, KeyPeekInType>(key);
+  }
+  const ValueType* Lookup(KeyPeekInType key) const {
     return Lookup<IdentityTranslatorType, KeyPeekInType>(key);
   }
   template <typename HashTranslator, typename T>
@@ -823,7 +826,7 @@ class HashTable final
   template <typename HashTranslator, typename T>
   LookupType LookupForWriting(const T&);
 
-  void erase(ValueType*);
+  void erase(const ValueType*);
 
   bool ShouldExpand() const {
     return (key_count_ + deleted_count_) * kMaxLoad >= table_size_;
@@ -839,8 +842,8 @@ class HashTable final
            !Allocator::IsObjectResurrectionForbidden() &&
            Allocator::IsAllocationAllowed();
   }
-  ValueType* Expand(ValueType* entry = 0);
-  void Shrink() { Rehash(table_size_ / 2, 0); }
+  ValueType* Expand(ValueType* entry = nullptr);
+  void Shrink() { Rehash(table_size_ / 2, nullptr); }
 
   ValueType* ExpandBuffer(unsigned new_table_size, ValueType* entry, bool&);
   ValueType* RehashTo(ValueType* new_table,
@@ -850,9 +853,10 @@ class HashTable final
   ValueType* Reinsert(ValueType&&);
 
   static void InitializeBucket(ValueType& bucket);
-  static void DeleteBucket(ValueType& bucket) {
+  static void DeleteBucket(const ValueType& bucket) {
     bucket.~ValueType();
-    Traits::ConstructDeletedValue(bucket, Allocator::kIsGarbageCollected);
+    Traits::ConstructDeletedValue(const_cast<ValueType&>(bucket),
+                                  Allocator::kIsGarbageCollected);
   }
 
   FullLookupType MakeLookupResult(ValueType* position,
@@ -864,13 +868,13 @@ class HashTable final
   iterator MakeIterator(ValueType* pos) {
     return iterator(pos, table_ + table_size_, this);
   }
-  const_iterator MakeConstIterator(ValueType* pos) const {
+  const_iterator MakeConstIterator(const ValueType* pos) const {
     return const_iterator(pos, table_ + table_size_, this);
   }
   iterator MakeKnownGoodIterator(ValueType* pos) {
     return iterator(pos, table_ + table_size_, this, kHashItemKnownGood);
   }
-  const_iterator MakeKnownGoodConstIterator(ValueType* pos) const {
+  const_iterator MakeKnownGoodConstIterator(const ValueType* pos) const {
     return const_iterator(pos, table_ + table_size_, this, kHashItemKnownGood);
   }
 
@@ -903,9 +907,14 @@ class HashTable final
 #if DUMP_HASHTABLE_STATS_PER_TABLE
  public:
   mutable
-      typename std::conditional<Allocator::isGarbageCollected,
+      typename std::conditional<Allocator::kIsGarbageCollected,
                                 HashTableStats*,
-                                std::unique_ptr<HashTableStats>>::type m_stats;
+                                std::unique_ptr<HashTableStats>>::type stats_;
+  void DumpStats() {
+    if (stats_) {
+      stats_->DumpStats();
+    }
+  }
 #endif
 
   template <WeakHandlingFlag x,
@@ -947,7 +956,7 @@ inline HashTable<Key,
 #endif
 #if DUMP_HASHTABLE_STATS_PER_TABLE
       ,
-      m_stats(nullptr)
+      stats_(nullptr)
 #endif
 {
   static_assert(Allocator::kIsGarbageCollected ||
@@ -991,10 +1000,10 @@ void HashTable<Key,
     new_capacity = KeyTraits::kMinimumTableSize;
 
   if (new_capacity > Capacity()) {
-    RELEASE_ASSERT(!static_cast<int>(
+    CHECK(!static_cast<int>(
         new_capacity >>
         31));  // HashTable capacity should not overflow 32bit int.
-    Rehash(new_capacity, 0);
+    Rehash(new_capacity, nullptr);
   }
 }
 
@@ -1009,6 +1018,7 @@ template <typename HashTranslator, typename T>
 inline Value*
 HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>::
     Lookup(const T& key) {
+  // Call the const version of Lookup<HashTranslator, T>().
   return const_cast<Value*>(
       const_cast<const HashTable*>(this)->Lookup<HashTranslator>(key));
 }
@@ -1375,10 +1385,10 @@ HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>::
   DCHECK(
       !IsDeletedBucket(*(LookupForWriting(Extractor::Extract(entry)).first)));
 #if DUMP_HASHTABLE_STATS
-  atomicIncrement(&HashTableStats::instance().numReinserts);
+  AtomicIncrement(&HashTableStats::instance().numReinserts);
 #endif
 #if DUMP_HASHTABLE_STATS_PER_TABLE
-  ++m_stats->numReinserts;
+  ++stats_->numReinserts;
 #endif
   Value* new_entry = LookupForWriting(Extractor::Extract(entry)).first;
   Mover<ValueType, Allocator,
@@ -1429,7 +1439,7 @@ inline typename HashTable<Key,
                           Allocator>::const_iterator
 HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>::
     Find(const T& key) const {
-  ValueType* entry = const_cast<HashTable*>(this)->Lookup<HashTranslator>(key);
+  const ValueType* entry = Lookup<HashTranslator>(key);
   if (!entry)
     return end();
 
@@ -1451,7 +1461,7 @@ bool HashTable<Key,
                Traits,
                KeyTraits,
                Allocator>::Contains(const T& key) const {
-  return const_cast<HashTable*>(this)->Lookup<HashTranslator>(key);
+  return Lookup<HashTranslator>(key);
 }
 
 template <typename Key,
@@ -1467,13 +1477,13 @@ void HashTable<Key,
                HashFunctions,
                Traits,
                KeyTraits,
-               Allocator>::erase(ValueType* pos) {
+               Allocator>::erase(const ValueType* pos) {
   RegisterModification();
 #if DUMP_HASHTABLE_STATS
-  atomicIncrement(&HashTableStats::instance().numRemoves);
+  AtomicIncrement(&HashTableStats::instance().numRemoves);
 #endif
 #if DUMP_HASHTABLE_STATS_PER_TABLE
-  ++m_stats->numRemoves;
+  ++stats_->numRemoves;
 #endif
 
   EnterAccessForbiddenScope();
@@ -1498,7 +1508,7 @@ HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>::
     erase(iterator it) {
   if (it == end())
     return;
-  erase(const_cast<ValueType*>(it.iterator_.position_));
+  erase(it.iterator_.position_);
 }
 
 template <typename Key,
@@ -1513,7 +1523,7 @@ HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>::
     erase(const_iterator it) {
   if (it == end())
     return;
-  erase(const_cast<ValueType*>(it.position_));
+  erase(it.position_);
 }
 
 template <typename Key,
@@ -1526,7 +1536,7 @@ template <typename Key,
 inline void
 HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>::
     erase(KeyPeekInType key) {
-  erase(Find(key));
+  erase(find(key));
 }
 
 template <typename Key,
@@ -1624,7 +1634,7 @@ HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>::
     new_size = table_size_;
   } else {
     new_size = table_size_ * 2;
-    RELEASE_ASSERT(new_size > table_size_);
+    CHECK_GT(new_size, table_size_);
   }
 
   return Rehash(new_size, entry);
@@ -1702,13 +1712,13 @@ HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>::
   ValueType* old_table = table_;
 
 #if DUMP_HASHTABLE_STATS
-  if (oldTableSize != 0)
-    atomicIncrement(&HashTableStats::instance().numRehashes);
+  if (old_table_size != 0)
+    AtomicIncrement(&HashTableStats::instance().numRehashes);
 #endif
 
 #if DUMP_HASHTABLE_STATS_PER_TABLE
-  if (oldTableSize != 0)
-    ++m_stats->numRehashes;
+  if (old_table_size != 0)
+    ++stats_->numRehashes;
 #endif
 
   table_ = new_table;
@@ -1730,8 +1740,8 @@ HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>::
   deleted_count_ = 0;
 
 #if DUMP_HASHTABLE_STATS_PER_TABLE
-  if (!m_stats)
-    m_stats = HashTableStatsPtr<Allocator>::create();
+  if (!stats_)
+    stats_ = HashTableStatsPtr<Allocator>::Create();
 #endif
 
   return new_entry;
@@ -1751,16 +1761,16 @@ HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>::
   ValueType* old_table = table_;
 
 #if DUMP_HASHTABLE_STATS
-  if (oldTableSize != 0)
-    atomicIncrement(&HashTableStats::instance().numRehashes);
+  if (old_table_size != 0)
+    AtomicIncrement(&HashTableStats::instance().numRehashes);
 #endif
 
 #if DUMP_HASHTABLE_STATS_PER_TABLE
-  if (oldTableSize != 0)
-    ++m_stats->numRehashes;
+  if (old_table_size != 0)
+    ++stats_->numRehashes;
 #endif
 
-  // The Allocator::isGarbageCollected check is not needed.  The check is just
+  // The Allocator::kIsGarbageCollected check is not needed.  The check is just
   // a static hint for a compiler to indicate that Base::expandBuffer returns
   // false if Allocator is a PartitionAllocator.
   if (Allocator::kIsGarbageCollected && new_table_size > old_table_size) {
@@ -1793,7 +1803,7 @@ void HashTable<Key,
                HashFunctions,
                Traits,
                KeyTraits,
-               Allocator>::Clear() {
+               Allocator>::clear() {
   RegisterModification();
   if (!table_)
     return;
@@ -1827,7 +1837,7 @@ HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>::
 #endif
 #if DUMP_HASHTABLE_STATS_PER_TABLE
       ,
-      m_stats(HashTableStatsPtr<Allocator>::copy(other.m_stats))
+      stats_(HashTableStatsPtr<Allocator>::copy(other.stats_))
 #endif
 {
   if (other.size())
@@ -1860,10 +1870,10 @@ HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>::
 #endif
 #if DUMP_HASHTABLE_STATS_PER_TABLE
       ,
-      m_stats(HashTableStatsPtr<Allocator>::copy(other.m_stats))
+      stats_(HashTableStatsPtr<Allocator>::copy(other.stats_))
 #endif
 {
-  Swap(other);
+  swap(other);
 }
 
 template <typename Key,
@@ -1879,7 +1889,7 @@ void HashTable<Key,
                HashFunctions,
                Traits,
                KeyTraits,
-               Allocator>::Swap(HashTable& other) {
+               Allocator>::swap(HashTable& other) {
   DCHECK(!AccessForbidden());
   std::swap(table_, other.table_);
   std::swap(table_size_, other.table_size_);
@@ -1896,7 +1906,7 @@ void HashTable<Key,
 #endif
 
 #if DUMP_HASHTABLE_STATS_PER_TABLE
-  HashTableStatsPtr<Allocator>::swap(m_stats, other.m_stats);
+  HashTableStatsPtr<Allocator>::swap(stats_, other.stats_);
 #endif
 }
 
@@ -1911,7 +1921,7 @@ HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>&
 HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>::
 operator=(const HashTable& other) {
   HashTable tmp(other);
-  Swap(tmp);
+  swap(tmp);
   return *this;
 }
 
@@ -1925,7 +1935,7 @@ template <typename Key,
 HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>&
 HashTable<Key, Value, Extractor, HashFunctions, Traits, KeyTraits, Allocator>::
 operator=(HashTable&& other) {
-  Swap(other);
+  swap(other);
   return *this;
 }
 
@@ -2064,7 +2074,8 @@ void HashTable<Key,
                KeyTraits,
                Allocator>::Trace(VisitorDispatcher visitor) {
 #if DUMP_HASHTABLE_STATS_PER_TABLE
-  Allocator::markNoTracing(visitor, m_stats);
+// XXX: this will simply crash.
+// Allocator::MarkNoTracing(visitor, stats_);
 #endif
 
   // If someone else already marked the backing and queued up the trace and/or

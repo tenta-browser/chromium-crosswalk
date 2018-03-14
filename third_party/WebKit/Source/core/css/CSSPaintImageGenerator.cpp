@@ -22,12 +22,12 @@ void CSSPaintImageGenerator::Init(
 
 // static
 CSSPaintImageGenerator* CSSPaintImageGenerator::Create(const String& name,
-                                                       Document& document,
+                                                       const Document& document,
                                                        Observer* observer) {
   DCHECK(g_create_function);
   return g_create_function(name, document, observer);
 }
 
-CSSPaintImageGenerator::~CSSPaintImageGenerator() {}
+CSSPaintImageGenerator::~CSSPaintImageGenerator() = default;
 
 }  // namespace blink

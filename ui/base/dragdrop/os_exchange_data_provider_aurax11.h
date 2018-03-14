@@ -6,11 +6,6 @@
 #define UI_BASE_DRAGDROP_OS_EXCHANGE_DATA_PROVIDER_AURAX11_H_
 
 #include <stdint.h>
-#include <X11/Xlib.h>
-
-// Get rid of a macro from Xlib.h that conflicts with Aura's RootWindow class.
-#undef RootWindow
-
 #include <map>
 
 #include "base/files/file_path.h"
@@ -23,7 +18,7 @@
 #include "ui/events/platform/platform_event_dispatcher.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/gfx/x/x11_atom_cache.h"
+#include "ui/gfx/x/x11.h"
 #include "url/gurl.h"
 
 namespace ui {
@@ -93,8 +88,8 @@ class UI_BASE_EXPORT OSExchangeDataProviderAuraX11
   bool HasHtml() const override;
   void SetDragImage(const gfx::ImageSkia& image,
                     const gfx::Vector2d& cursor_offset) override;
-  const gfx::ImageSkia& GetDragImage() const override;
-  const gfx::Vector2d& GetDragImageOffset() const override;
+  gfx::ImageSkia GetDragImage() const override;
+  gfx::Vector2d GetDragImageOffset() const override;
 
   // ui::PlatformEventDispatcher:
   bool CanDispatchEvent(const PlatformEvent& event) override;
@@ -128,8 +123,6 @@ class UI_BASE_EXPORT OSExchangeDataProviderAuraX11
   const bool own_window_;
 
   ::Window x_window_;
-
-  X11AtomCache atom_cache_;
 
   // A representation of data. This is either passed to us from the other
   // process, or built up through a sequence of Set*() calls. It can be passed

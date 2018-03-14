@@ -17,7 +17,7 @@
 #include "extensions/browser/api/generated_api_registration.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_function_registry.h"
-#include "extensions/browser/mojo/service_registration.h"
+#include "extensions/browser/mojo/interface_registration.h"
 #include "extensions/browser/null_app_sorting.h"
 #include "extensions/browser/updater/null_extension_cache.h"
 #include "extensions/browser/url_request_util.h"
@@ -127,13 +127,18 @@ ShellExtensionsBrowserClient::MaybeCreateResourceBundleRequestJob(
 }
 
 bool ShellExtensionsBrowserClient::AllowCrossRendererResourceLoad(
-    net::URLRequest* request,
+    const GURL& url,
+    content::ResourceType resource_type,
+    ui::PageTransition page_transition,
+    int child_id,
     bool is_incognito,
     const Extension* extension,
-    InfoMap* extension_info_map) {
+    const ExtensionSet& extensions,
+    const ProcessMap& process_map) {
   bool allowed = false;
   if (url_request_util::AllowCrossRendererResourceLoad(
-          request, is_incognito, extension, extension_info_map, &allowed)) {
+          url, resource_type, page_transition, child_id, is_incognito,
+          extension, extensions, process_map, &allowed)) {
     return allowed;
   }
 
@@ -191,16 +196,18 @@ void ShellExtensionsBrowserClient::RegisterExtensionFunctions(
   shell::api::ShellGeneratedFunctionRegistry::RegisterAll(registry);
 }
 
-void ShellExtensionsBrowserClient::RegisterMojoServices(
+void ShellExtensionsBrowserClient::RegisterExtensionInterfaces(
+    service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>*
+        registry,
     content::RenderFrameHost* render_frame_host,
     const Extension* extension) const {
-  RegisterServicesForFrame(render_frame_host, extension);
+  RegisterInterfacesForExtension(registry, render_frame_host, extension);
 }
 
 std::unique_ptr<RuntimeAPIDelegate>
 ShellExtensionsBrowserClient::CreateRuntimeAPIDelegate(
     content::BrowserContext* context) const {
-  return base::MakeUnique<ShellRuntimeAPIDelegate>();
+  return std::make_unique<ShellRuntimeAPIDelegate>();
 }
 
 const ComponentExtensionResourceManager*
@@ -272,6 +279,16 @@ KioskDelegate* ShellExtensionsBrowserClient::GetKioskDelegate() {
   if (!kiosk_delegate_)
     kiosk_delegate_.reset(new ShellKioskDelegate());
   return kiosk_delegate_.get();
+}
+
+bool ShellExtensionsBrowserClient::IsLockScreenContext(
+    content::BrowserContext* context) {
+  return false;
+}
+
+std::string ShellExtensionsBrowserClient::GetApplicationLocale() {
+  // TODO(michaelpg): Use system locale.
+  return "en-US";
 }
 
 }  // namespace extensions

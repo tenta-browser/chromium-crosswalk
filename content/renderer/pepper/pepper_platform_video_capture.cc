@@ -14,14 +14,12 @@
 #include "content/renderer/render_thread_impl.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/video_frame.h"
-#include "url/gurl.h"
 
 namespace content {
 
 PepperPlatformVideoCapture::PepperPlatformVideoCapture(
     int render_frame_id,
     const std::string& device_id,
-    const GURL& document_url,
     PepperVideoCaptureHost* handler)
     : render_frame_id_(render_frame_id),
       device_id_(device_id),
@@ -35,9 +33,7 @@ PepperPlatformVideoCapture::PepperPlatformVideoCapture(
   PepperMediaDeviceManager* const device_manager = GetMediaDeviceManager();
   if (device_manager) {
     pending_open_device_id_ = device_manager->OpenDevice(
-        PP_DEVICETYPE_DEV_VIDEOCAPTURE,
-        device_id,
-        document_url,
+        PP_DEVICETYPE_DEV_VIDEOCAPTURE, device_id, handler->pp_instance(),
         base::Bind(&PepperPlatformVideoCapture::OnDeviceOpened,
                    weak_factory_.GetWeakPtr()));
     pending_open_device_ = true;
@@ -71,7 +67,7 @@ void PepperPlatformVideoCapture::StopCapture() {
 }
 
 void PepperPlatformVideoCapture::DetachEventHandler() {
-  handler_ = NULL;
+  handler_ = nullptr;
   StopCapture();
   if (!release_device_cb_.is_null()) {
     release_device_cb_.Run();
@@ -151,8 +147,9 @@ void PepperPlatformVideoCapture::OnFrameReady(
 PepperMediaDeviceManager* PepperPlatformVideoCapture::GetMediaDeviceManager() {
   RenderFrameImpl* const render_frame =
       RenderFrameImpl::FromRoutingID(render_frame_id_);
-  return render_frame ?
-      PepperMediaDeviceManager::GetForRenderFrame(render_frame).get() : NULL;
+  return render_frame
+             ? PepperMediaDeviceManager::GetForRenderFrame(render_frame).get()
+             : nullptr;
 }
 
 }  // namespace content

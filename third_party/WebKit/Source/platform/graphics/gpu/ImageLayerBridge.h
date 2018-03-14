@@ -7,11 +7,11 @@
 
 #include "cc/layers/texture_layer_client.h"
 #include "platform/PlatformExport.h"
+#include "platform/graphics/GraphicsTypes.h"
 #include "platform/graphics/StaticBitmapImage.h"
 #include "platform/heap/Heap.h"
-#include "platform/wtf/WeakPtr.h"
 
-namespace cc {
+namespace viz {
 class SharedBitmap;
 }
 
@@ -22,31 +22,31 @@ class WebExternalTextureLayer;
 
 class PLATFORM_EXPORT ImageLayerBridge
     : public GarbageCollectedFinalized<ImageLayerBridge>,
-      NON_EXPORTED_BASE(public cc::TextureLayerClient) {
+      public cc::TextureLayerClient {
   WTF_MAKE_NONCOPYABLE(ImageLayerBridge);
 
  public:
   ImageLayerBridge(OpacityMode);
   ~ImageLayerBridge();
 
-  void SetImage(PassRefPtr<StaticBitmapImage>);
+  void SetImage(scoped_refptr<StaticBitmapImage>);
   void Dispose();
 
   // cc::TextureLayerClient implementation.
-  bool PrepareTextureMailbox(cc::TextureMailbox* out_mailbox,
-                             std::unique_ptr<cc::SingleReleaseCallback>*
-                                 out_release_callback) override;
+  bool PrepareTransferableResource(viz::TransferableResource* out_resource,
+                                   std::unique_ptr<viz::SingleReleaseCallback>*
+                                       out_release_callback) override;
 
-  void MailboxReleasedGpu(RefPtr<StaticBitmapImage>,
-                          const gpu::SyncToken&,
-                          bool lost_resource);
+  void ResourceReleasedGpu(scoped_refptr<StaticBitmapImage>,
+                           const gpu::SyncToken&,
+                           bool lost_resource);
 
-  void MailboxReleasedSoftware(std::unique_ptr<cc::SharedBitmap>,
-                               const IntSize&,
-                               const gpu::SyncToken&,
-                               bool lost_resource);
+  void ResourceReleasedSoftware(std::unique_ptr<viz::SharedBitmap>,
+                                const IntSize&,
+                                const gpu::SyncToken&,
+                                bool lost_resource);
 
-  RefPtr<StaticBitmapImage> GetImage() { return image_; }
+  scoped_refptr<StaticBitmapImage> GetImage() { return image_; }
 
   WebLayer* PlatformLayer() const;
 
@@ -56,20 +56,19 @@ class PLATFORM_EXPORT ImageLayerBridge
 
   bool IsAccelerated() { return image_->IsTextureBacked(); }
 
-  DEFINE_INLINE_TRACE() {}
+  void Trace(blink::Visitor* visitor) {}
 
  private:
-  std::unique_ptr<cc::SharedBitmap> CreateOrRecycleBitmap();
+  std::unique_ptr<viz::SharedBitmap> CreateOrRecycleBitmap(const IntSize& size);
 
-  WeakPtrFactory<ImageLayerBridge> weak_ptr_factory_;
-  RefPtr<StaticBitmapImage> image_;
+  scoped_refptr<StaticBitmapImage> image_;
   std::unique_ptr<WebExternalTextureLayer> layer_;
   SkFilterQuality filter_quality_ = kLow_SkFilterQuality;
 
   // Shared memory bitmaps that were released by the compositor and can be used
   // again by this ImageLayerBridge.
   struct RecycledBitmap {
-    std::unique_ptr<cc::SharedBitmap> bitmap;
+    std::unique_ptr<viz::SharedBitmap> bitmap;
     IntSize size;
   };
   Vector<RecycledBitmap> recycled_bitmaps_;

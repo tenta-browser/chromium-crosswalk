@@ -16,6 +16,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/sequenced_task_runner.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
@@ -49,11 +50,16 @@ static void CreateFakeRtpPacketHeader(size_t csrc_count,
                        static_cast<uint16_t>(extension_header_count));
 }
 
+static void FlushTaskRunner(base::SequencedTaskRunner* task_runner) {
+  base::RunLoop run_loop;
+  task_runner->PostTask(FROM_HERE, run_loop.QuitClosure());
+  run_loop.Run();
+}
+
 class WebRtcRtpDumpWriterTest : public testing::Test {
  public:
   WebRtcRtpDumpWriterTest()
-      : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP |
-                       content::TestBrowserThreadBundle::REAL_FILE_THREAD),
+      : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
         temp_dir_(new base::ScopedTempDir()) {}
 
   virtual void SetUp() {
@@ -242,9 +248,9 @@ TEST_F(WebRtcRtpDumpWriterTest, NoDumpFileIfNoPacketDumped) {
                      base::Bind(&WebRtcRtpDumpWriterTest::OnEndDumpDone,
                                 base::Unretained(this)));
 
-    content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
+    FlushTaskRunner(writer_->background_task_runner().get());
     base::RunLoop().RunUntilIdle();
-    content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
+    FlushTaskRunner(writer_->background_task_runner().get());
     base::RunLoop().RunUntilIdle();
   }
   EXPECT_FALSE(base::PathExists(incoming_dump_path_));
@@ -269,9 +275,9 @@ TEST_F(WebRtcRtpDumpWriterTest, WriteAndFlushSmallSizeDump) {
                      base::Bind(&WebRtcRtpDumpWriterTest::OnEndDumpDone,
                                 base::Unretained(this)));
 
-    content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
+    FlushTaskRunner(writer_->background_task_runner().get());
     base::RunLoop().RunUntilIdle();
-    content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
+    FlushTaskRunner(writer_->background_task_runner().get());
     base::RunLoop().RunUntilIdle();
   }
 
@@ -311,9 +317,9 @@ TEST_F(WebRtcRtpDumpWriterTest, WriteOverMaxLimit) {
                      base::Bind(&WebRtcRtpDumpWriterTest::OnEndDumpDone,
                                 base::Unretained(this)));
 
-    content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
+    FlushTaskRunner(writer_->background_task_runner().get());
     base::RunLoop().RunUntilIdle();
-    content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
+    FlushTaskRunner(writer_->background_task_runner().get());
     base::RunLoop().RunUntilIdle();
   }
   VerifyDumps(kPacketCount, kPacketCount);
@@ -328,9 +334,9 @@ TEST_F(WebRtcRtpDumpWriterTest, DestroyWriterBeforeEndDumpCallback) {
 
   writer_.reset();
 
-  content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
+  // Two |RunUntilIdle()| calls are needed as the first run posts a task that
+  // we need to give a chance to run with the second call.
   base::RunLoop().RunUntilIdle();
-  content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
   base::RunLoop().RunUntilIdle();
 }
 
@@ -359,9 +365,9 @@ TEST_F(WebRtcRtpDumpWriterTest, EndDumpsSeparately) {
                      base::Bind(&WebRtcRtpDumpWriterTest::OnEndDumpDone,
                                 base::Unretained(this)));
 
-    content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
+    FlushTaskRunner(writer_->background_task_runner().get());
     base::RunLoop().RunUntilIdle();
-    content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
+    FlushTaskRunner(writer_->background_task_runner().get());
     base::RunLoop().RunUntilIdle();
   }
 

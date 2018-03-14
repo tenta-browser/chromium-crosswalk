@@ -31,17 +31,14 @@
 #ifndef SVGTransformTearOff_h
 #define SVGTransformTearOff_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGTransform.h"
 #include "core/svg/properties/SVGPropertyTearOff.h"
-#include "platform/heap/Handle.h"
 
 namespace blink {
 
 class SVGMatrixTearOff;
 
-class SVGTransformTearOff final : public SVGPropertyTearOff<SVGTransform>,
-                                  public ScriptWrappable {
+class SVGTransformTearOff final : public SVGPropertyTearOff<SVGTransform> {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -55,14 +52,14 @@ class SVGTransformTearOff final : public SVGPropertyTearOff<SVGTransform>,
     kSvgTransformSkewy = blink::kSvgTransformSkewy,
   };
 
-  static SVGTransformTearOff* Create(
-      SVGTransform* target,
-      SVGElement* context_element,
-      PropertyIsAnimValType property_is_anim_val,
-      const QualifiedName& attribute_name = QualifiedName::Null()) {
+  static SVGTransformTearOff* Create(SVGTransform* target,
+                                     SVGElement* context_element,
+                                     PropertyIsAnimValType property_is_anim_val,
+                                     const QualifiedName& attribute_name) {
     return new SVGTransformTearOff(target, context_element,
                                    property_is_anim_val, attribute_name);
   }
+  static SVGTransformTearOff* CreateDetached();
   static SVGTransformTearOff* Create(SVGMatrixTearOff*);
 
   ~SVGTransformTearOff() override;
@@ -78,9 +75,7 @@ class SVGTransformTearOff final : public SVGPropertyTearOff<SVGTransform>,
   void setSkewX(float, ExceptionState&);
   void setSkewY(float, ExceptionState&);
 
-  DECLARE_VIRTUAL_TRACE();
-
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+  virtual void Trace(blink::Visitor*);
 
  private:
   SVGTransformTearOff(SVGTransform*,

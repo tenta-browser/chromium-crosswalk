@@ -7,6 +7,7 @@ cr.define('chrome.SnippetsInternals', function() {
 
   // Stores the list of suggestions we received in receiveContentSuggestions.
   var lastSuggestions = [];
+  var lastDebugLog = '';
 
   function initialize() {
     $('submit-download').addEventListener('click', function(event) {
@@ -16,6 +17,11 @@ cr.define('chrome.SnippetsInternals', function() {
 
     $('submit-dump').addEventListener('click', function(event) {
       downloadJson(JSON.stringify(lastSuggestions, null, 2));
+      event.preventDefault();
+    });
+
+    $('debug-log-dump').addEventListener('click', function(event) {
+      downloadDebugLog(lastDebugLog);
       event.preventDefault();
     });
 
@@ -34,13 +40,39 @@ cr.define('chrome.SnippetsInternals', function() {
     });
 
     $('background-fetch-button').addEventListener('click', function(event) {
-      chrome.send('fetchRemoteSuggestionsInTheBackground');
+      chrome.send('fetchRemoteSuggestionsInTheBackgroundIn2Seconds');
       event.preventDefault();
     });
+
+    $('push-dummy-suggestion-10-seconds-button')
+        .addEventListener('click', function(event) {
+          chrome.send('pushDummySuggestionIn10Seconds');
+          event.preventDefault();
+        });
+
+    if (loadTimeData.getBoolean('contextualSuggestionsEnabled')) {
+      $('contextual-suggestions-section').classList.remove('hidden');
+    }
+
+    $('fetch-contextual-suggestions-button')
+        .addEventListener('click', function(event) {
+          let url = $('contextual-url').value;
+          $('contextual-suggestions-request-result').textContent =
+              'Fetching contextual suggestions for ' + url;
+          chrome.send('fetchContextualSuggestions', [url]);
+          event.preventDefault();
+        });
+
+    $('reset-notifications-state-button')
+        .addEventListener('click', function(event) {
+          chrome.send('resetNotificationsState');
+          event.preventDefault();
+        });
 
     window.addEventListener('focus', refreshContent);
     window.setInterval(refreshContent, 1000);
 
+    chrome.send('initializationCompleted');
     refreshContent();
   }
 
@@ -48,10 +80,15 @@ cr.define('chrome.SnippetsInternals', function() {
     $(propertyId).textContent = value;
   }
 
+  function receiveContextualSuggestions(suggestions, status_msg) {
+    $('contextual-suggestions-request-result').textContent = status_msg;
+    displayList(
+        suggestions, 'contextual-suggestions', 'contextual-hidden-toggler');
+  }
+
   function receiveContentSuggestions(categoriesList) {
     lastSuggestions = categoriesList;
-    displayList(categoriesList, 'content-suggestions',
-                'hidden-toggler');
+    displayList(categoriesList, 'content-suggestions', 'hidden-toggler');
 
     var clearCachedButtons =
         document.getElementsByClassName('submit-clear-cached-suggestions');
@@ -74,8 +111,7 @@ cr.define('chrome.SnippetsInternals', function() {
 
   function onClearCachedButtonClicked(event) {
     event.preventDefault();
-    var id = parseInt(event.currentTarget.getAttribute('category-id'), 10);
-    chrome.send('clearCachedSuggestions', [id]);
+    chrome.send('clearCachedSuggestions');
   }
 
   function onClearDismissedButtonClicked(event) {
@@ -89,7 +125,8 @@ cr.define('chrome.SnippetsInternals', function() {
     var id = parseInt(event.currentTarget.getAttribute('category-id'), 10);
     var table = $('dismissed-suggestions-' + id);
     table.classList.toggle('hidden');
-    chrome.send('toggleDismissedSuggestions',
+    chrome.send(
+        'toggleDismissedSuggestions',
         [id, !table.classList.contains('hidden')]);
   }
 
@@ -105,6 +142,14 @@ cr.define('chrome.SnippetsInternals', function() {
     }
   }
 
+  function receiveDebugLog(debugLog) {
+    if (!debugLog) {
+      lastDebugLog = 'empty';
+    } else {
+      lastDebugLog = debugLog;
+    }
+  }
+
   function receiveClassification(
       userClass, timeToOpenNTP, timeToShow, timeToUse) {
     receiveProperty('user-class', userClass);
@@ -113,10 +158,19 @@ cr.define('chrome.SnippetsInternals', function() {
     receiveProperty('avg-time-to-use', timeToUse);
   }
 
+  function receiveRankerDebugData(itemsList) {
+    displayList(itemsList, 'ranker', 'no-togler');
+  }
+
   function receiveLastRemoteSuggestionsBackgroundFetchTime(
       lastRemoteSuggestionsBackgroundFetchTime) {
-    receiveProperty('last-background-fetch-time-label',
+    receiveProperty(
+        'last-background-fetch-time-label',
         lastRemoteSuggestionsBackgroundFetchTime);
+  }
+
+  function receiveWhetherSuggestionPushingPossible(possible) {
+    $('push-dummy-suggestion-10-seconds-button').disabled = !possible;
   }
 
   function downloadJson(json) {
@@ -126,6 +180,17 @@ cr.define('chrome.SnippetsInternals', function() {
     var link = document.createElement('a');
     link.download = 'snippets.json';
     link.href = 'data:application/json,' + encodeURI(json);
+    link.click();
+  }
+
+  function downloadDebugLog(debugLog) {
+    // Redirect the browser to download data in |debugLog| as a file
+    // "debug_log.txt" (Setting Content-Disposition: attachment via a data: URL
+    // is not possible; create a link with download attribute and simulate a
+    // click, instead.)
+    var link = document.createElement('a');
+    link.download = 'debug_log.txt';
+    link.href = 'data:text/plain,' + encodeURI(debugLog);
     link.click();
   }
 
@@ -152,8 +217,10 @@ cr.define('chrome.SnippetsInternals', function() {
       display = 'none';
     }
 
-    if ($(domId + '-empty')) $(domId + '-empty').textContent = text;
-    if ($(domId + '-clear')) $(domId + '-clear').style.display = display;
+    if ($(domId + '-empty'))
+      $(domId + '-empty').textContent = text;
+    if ($(domId + '-clear'))
+      $(domId + '-clear').style.display = display;
 
     var links = document.getElementsByClassName(toggleClass);
     for (var link of links) {
@@ -167,11 +234,16 @@ cr.define('chrome.SnippetsInternals', function() {
     receiveProperty: receiveProperty,
     receiveContentSuggestions: receiveContentSuggestions,
     receiveJson: receiveJson,
+    receiveDebugLog: receiveDebugLog,
     receiveClassification: receiveClassification,
+    receiveRankerDebugData: receiveRankerDebugData,
     receiveLastRemoteSuggestionsBackgroundFetchTime:
         receiveLastRemoteSuggestionsBackgroundFetchTime,
+    receiveWhetherSuggestionPushingPossible:
+        receiveWhetherSuggestionPushingPossible,
+    receiveContextualSuggestions: receiveContextualSuggestions,
   };
 });
 
-document.addEventListener('DOMContentLoaded',
-                          chrome.SnippetsInternals.initialize);
+document.addEventListener(
+    'DOMContentLoaded', chrome.SnippetsInternals.initialize);

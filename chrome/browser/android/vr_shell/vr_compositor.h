@@ -31,11 +31,12 @@ namespace vr_shell {
 
 class VrCompositor : public content::CompositorClient {
  public:
-  VrCompositor(ui::WindowAndroid* window, bool is_transparent);
+  explicit VrCompositor(ui::WindowAndroid* window);
   ~VrCompositor() override;
 
   void SurfaceDestroyed();
   void SetWindowBounds(gfx::Size size);
+  void SetDeferCommits(bool defer_commits);
   void SurfaceChanged(jobject surface);
   void SetLayer(content::WebContents* web_contents);
 
@@ -46,8 +47,6 @@ class VrCompositor : public content::CompositorClient {
 
   cc::Layer* layer_ = nullptr;
   cc::Layer* layer_parent_ = nullptr;
-  SkColor background_color_;
-  bool transparent_;
 
   DISALLOW_COPY_AND_ASSIGN(VrCompositor);
 };

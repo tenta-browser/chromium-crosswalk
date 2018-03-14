@@ -6,12 +6,10 @@
 #define NGBlockChildIterator_h
 
 #include "core/CoreExport.h"
-#include "platform/heap/Handle.h"
-#include "platform/wtf/RefPtr.h"
+#include "core/layout/ng/ng_layout_input_node.h"
 
 namespace blink {
 
-class NGLayoutInputNode;
 class NGBreakToken;
 class NGBlockBreakToken;
 
@@ -24,16 +22,19 @@ class CORE_EXPORT NGBlockChildIterator {
   STACK_ALLOCATED();
 
  public:
-  NGBlockChildIterator(NGLayoutInputNode* first_child,
+  NGBlockChildIterator(NGLayoutInputNode first_child,
                        NGBlockBreakToken* break_token);
 
   // Returns the next input node which should be laid out, along with its
   // respective break token.
+  // @param previous_inline_break_token The previous inline break token is
+  //    needed as multiple line-boxes can exist within the same parent
+  //    fragment, unlike blocks.
   struct Entry;
-  Entry NextChild();
+  Entry NextChild(NGBreakToken* previous_inline_break_token = nullptr);
 
  private:
-  Persistent<NGLayoutInputNode> child_;
+  NGLayoutInputNode child_;
   NGBlockBreakToken* break_token_;
 
   // An index into break_token_'s ChildBreakTokens() vector. Used for keeping
@@ -44,10 +45,10 @@ class CORE_EXPORT NGBlockChildIterator {
 struct NGBlockChildIterator::Entry {
   STACK_ALLOCATED();
 
-  Entry(NGLayoutInputNode* node, NGBreakToken* token)
+  Entry(NGLayoutInputNode node, NGBreakToken* token)
       : node(node), token(token) {}
 
-  Persistent<NGLayoutInputNode> node;
+  NGLayoutInputNode node;
   NGBreakToken* token;
 
   bool operator==(const NGBlockChildIterator::Entry& other) const {

@@ -12,7 +12,7 @@ using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
 
 // static
-ScopedJavaLocalRef<jstring> SanitizeTextForPaste(
+ScopedJavaLocalRef<jstring> JNI_OmniboxViewUtil_SanitizeTextForPaste(
     JNIEnv* env,
     const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& jtext) {
@@ -20,9 +20,4 @@ ScopedJavaLocalRef<jstring> SanitizeTextForPaste(
       base::android::ConvertJavaStringToUTF16(env, jtext));
   pasted_text = OmniboxView::SanitizeTextForPaste(pasted_text);
   return base::android::ConvertUTF16ToJavaString(env, pasted_text);
-}
-
-// static
-bool OmniboxViewUtil::RegisterOmniboxViewUtil(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }

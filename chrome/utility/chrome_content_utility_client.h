@@ -15,16 +15,24 @@ class UtilityMessageHandler;
 
 class ChromeContentUtilityClient : public content::ContentUtilityClient {
  public:
+  using NetworkBinderCreationCallback =
+      base::Callback<void(service_manager::BinderRegistry*)>;
+
   ChromeContentUtilityClient();
   ~ChromeContentUtilityClient() override;
 
   // content::ContentUtilityClient:
   void UtilityThreadStarted() override;
   bool OnMessageReceived(const IPC::Message& message) override;
-  void ExposeInterfacesToBrowser(
-      service_manager::InterfaceRegistry* registry) override;
+  void RegisterServices(StaticServiceMap* services) override;
+  void RegisterNetworkBinders(
+      service_manager::BinderRegistry* registry) override;
 
   static void PreSandboxStartup();
+
+  // See NetworkBinderProvider above.
+  static void SetNetworkBinderCreationCallback(
+      const NetworkBinderCreationCallback& callback);
 
  private:
   // IPC message handlers.

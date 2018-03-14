@@ -29,40 +29,42 @@
 #include "bindings/core/v8/ScriptEventListener.h"
 #include "core/CSSPropertyNames.h"
 #include "core/CSSValueKeywords.h"
-#include "core/HTMLNames.h"
-#include "core/MathMLNames.h"
-#include "core/XMLNames.h"
 #include "core/css/CSSColorValue.h"
 #include "core/css/CSSMarkup.h"
-#include "core/css/StylePropertySet.h"
+#include "core/css/CSSPropertyValueSet.h"
+#include "core/css/StyleChangeReason.h"
 #include "core/dom/DocumentFragment.h"
+#include "core/dom/ElementShadow.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/dom/ExceptionCode.h"
+#include "core/dom/FlatTreeTraversal.h"
 #include "core/dom/NodeComputedStyle.h"
 #include "core/dom/NodeTraversal.h"
-#include "core/dom/StyleChangeReason.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/dom/Text.h"
-#include "core/dom/shadow/ElementShadow.h"
-#include "core/dom/shadow/FlatTreeTraversal.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/events/EventListener.h"
 #include "core/editing/EditingUtilities.h"
 #include "core/editing/serializers/Serialization.h"
 #include "core/editing/spellcheck/SpellChecker.h"
-#include "core/events/EventListener.h"
 #include "core/events/KeyboardEvent.h"
 #include "core/frame/Settings.h"
 #include "core/frame/UseCounter.h"
+#include "core/frame/csp/ContentSecurityPolicy.h"
 #include "core/html/HTMLBRElement.h"
 #include "core/html/HTMLDimension.h"
-#include "core/html/HTMLFormElement.h"
-#include "core/html/HTMLInputElement.h"
-#include "core/html/HTMLMenuElement.h"
+#include "core/html/HTMLFrameOwnerElement.h"
 #include "core/html/HTMLTemplateElement.h"
+#include "core/html/forms/HTMLFormElement.h"
+#include "core/html/forms/HTMLInputElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
+#include "core/html_names.h"
+#include "core/layout/AdjustForAbsoluteZoom.h"
 #include "core/layout/LayoutBoxModelObject.h"
 #include "core/layout/LayoutObject.h"
+#include "core/mathml_names.h"
 #include "core/page/SpatialNavigation.h"
 #include "core/svg/SVGSVGElement.h"
+#include "core/xml_names.h"
 #include "platform/Language.h"
 #include "platform/text/BidiResolver.h"
 #include "platform/text/BidiTextRun.h"
@@ -77,6 +79,16 @@ using namespace HTMLNames;
 using namespace WTF;
 
 using namespace std;
+
+using AttributeChangedFunction =
+    void (HTMLElement::*)(const Element::AttributeModificationParams& params);
+
+struct AttributeTriggers {
+  const QualifiedName& attribute;
+  WebFeature web_feature;
+  const AtomicString& event;
+  AttributeChangedFunction function;
+};
 
 namespace {
 
@@ -103,12 +115,14 @@ bool IsEditable(const Node& node) {
     return false;
   if (node.IsHTMLElement())
     return true;
-  if (isSVGSVGElement(node))
+  if (IsSVGSVGElement(node))
     return true;
   if (node.IsElementNode() && ToElement(node).HasTagName(MathMLNames::mathTag))
     return true;
   return !node.IsElementNode() && node.parentNode()->IsHTMLElement();
 }
+
+const WebFeature kNoWebFeature = static_cast<WebFeature>(0);
 
 }  // anonymous namespace
 
@@ -144,9 +158,8 @@ bool HTMLElement::ShouldSerializeEndTag() const {
       HasTagName(bgsoundTag) || HasTagName(brTag) || HasTagName(colTag) ||
       HasTagName(embedTag) || HasTagName(frameTag) || HasTagName(hrTag) ||
       HasTagName(imgTag) || HasTagName(inputTag) || HasTagName(keygenTag) ||
-      HasTagName(linkTag) || HasTagName(menuitemTag) || HasTagName(metaTag) ||
-      HasTagName(paramTag) || HasTagName(sourceTag) || HasTagName(trackTag) ||
-      HasTagName(wbrTag))
+      HasTagName(linkTag) || HasTagName(metaTag) || HasTagName(paramTag) ||
+      HasTagName(sourceTag) || HasTagName(trackTag) || HasTagName(wbrTag))
     return false;
   return true;
 }
@@ -170,8 +183,9 @@ unsigned HTMLElement::ParseBorderWidthAttribute(
   return border_width;
 }
 
-void HTMLElement::ApplyBorderAttributeToStyle(const AtomicString& value,
-                                              MutableStylePropertySet* style) {
+void HTMLElement::ApplyBorderAttributeToStyle(
+    const AtomicString& value,
+    MutableCSSPropertyValueSet* style) {
   AddPropertyToPresentationAttributeStyle(style, CSSPropertyBorderWidth,
                                           ParseBorderWidthAttribute(value),
                                           CSSPrimitiveValue::UnitType::kPixels);
@@ -179,8 +193,9 @@ void HTMLElement::ApplyBorderAttributeToStyle(const AtomicString& value,
                                           CSSValueSolid);
 }
 
-void HTMLElement::MapLanguageAttributeToLocale(const AtomicString& value,
-                                               MutableStylePropertySet* style) {
+void HTMLElement::MapLanguageAttributeToLocale(
+    const AtomicString& value,
+    MutableCSSPropertyValueSet* style) {
   if (!value.IsEmpty()) {
     // Have to quote so the locale id is treated as a string instead of as a CSS
     // keyword.
@@ -189,25 +204,26 @@ void HTMLElement::MapLanguageAttributeToLocale(const AtomicString& value,
 
     // FIXME: Remove the following UseCounter code when we collect enough
     // data.
-    UseCounter::Count(GetDocument(), UseCounter::kLangAttribute);
-    if (isHTMLHtmlElement(*this))
-      UseCounter::Count(GetDocument(), UseCounter::kLangAttributeOnHTML);
-    else if (isHTMLBodyElement(*this))
-      UseCounter::Count(GetDocument(), UseCounter::kLangAttributeOnBody);
+    UseCounter::Count(GetDocument(), WebFeature::kLangAttribute);
+    if (IsHTMLHtmlElement(*this))
+      UseCounter::Count(GetDocument(), WebFeature::kLangAttributeOnHTML);
+    else if (IsHTMLBodyElement(*this))
+      UseCounter::Count(GetDocument(), WebFeature::kLangAttributeOnBody);
     String html_language = value.GetString();
-    size_t first_separator = html_language.Find('-');
+    size_t first_separator = html_language.find('-');
     if (first_separator != kNotFound)
       html_language = html_language.Left(first_separator);
     String ui_language = DefaultLanguage();
-    first_separator = ui_language.Find('-');
+    first_separator = ui_language.find('-');
     if (first_separator != kNotFound)
       ui_language = ui_language.Left(first_separator);
-    first_separator = ui_language.Find('_');
+    first_separator = ui_language.find('_');
     if (first_separator != kNotFound)
       ui_language = ui_language.Left(first_separator);
-    if (!DeprecatedEqualIgnoringCase(html_language, ui_language))
+    if (!DeprecatedEqualIgnoringCase(html_language, ui_language)) {
       UseCounter::Count(GetDocument(),
-                        UseCounter::kLangAttributeDoesNotMatchToUILocale);
+                        WebFeature::kLangAttributeDoesNotMatchToUILocale);
+    }
   } else {
     // The empty string means the language is explicitly unknown.
     AddPropertyToPresentationAttributeStyle(style, CSSPropertyWebkitLocale,
@@ -232,7 +248,7 @@ static inline bool IsValidDirAttribute(const AtomicString& value) {
 void HTMLElement::CollectStyleForPresentationAttribute(
     const QualifiedName& name,
     const AtomicString& value,
-    MutableStylePropertySet* style) {
+    MutableCSSPropertyValueSet* style) {
   if (name == alignAttr) {
     if (DeprecatedEqualIgnoringCase(value, "middle"))
       AddPropertyToPresentationAttributeStyle(style, CSSPropertyTextAlign,
@@ -248,10 +264,11 @@ void HTMLElement::CollectStyleForPresentationAttribute(
                                               CSSValueBreakWord);
       AddPropertyToPresentationAttributeStyle(style, CSSPropertyWebkitLineBreak,
                                               CSSValueAfterWhiteSpace);
-      UseCounter::Count(GetDocument(), UseCounter::kContentEditableTrue);
-      if (HasTagName(htmlTag))
+      UseCounter::Count(GetDocument(), WebFeature::kContentEditableTrue);
+      if (HasTagName(htmlTag)) {
         UseCounter::Count(GetDocument(),
-                          UseCounter::kContentEditableTrueOnHTML);
+                          WebFeature::kContentEditableTrueOnHTML);
+      }
     } else if (DeprecatedEqualIgnoringCase(value, "plaintext-only")) {
       AddPropertyToPresentationAttributeStyle(
           style, CSSPropertyWebkitUserModify, CSSValueReadWritePlaintextOnly);
@@ -260,7 +277,7 @@ void HTMLElement::CollectStyleForPresentationAttribute(
       AddPropertyToPresentationAttributeStyle(style, CSSPropertyWebkitLineBreak,
                                               CSSValueAfterWhiteSpace);
       UseCounter::Count(GetDocument(),
-                        UseCounter::kContentEditablePlainTextOnly);
+                        WebFeature::kContentEditablePlainTextOnly);
     } else if (DeprecatedEqualIgnoringCase(value, "false")) {
       AddPropertyToPresentationAttributeStyle(
           style, CSSPropertyWebkitUserModify, CSSValueReadOnly);
@@ -269,7 +286,7 @@ void HTMLElement::CollectStyleForPresentationAttribute(
     AddPropertyToPresentationAttributeStyle(style, CSSPropertyDisplay,
                                             CSSValueNone);
   } else if (name == draggableAttr) {
-    UseCounter::Count(GetDocument(), UseCounter::kDraggableAttribute);
+    UseCounter::Count(GetDocument(), WebFeature::kDraggableAttribute);
     if (DeprecatedEqualIgnoringCase(value, "true")) {
       AddPropertyToPresentationAttributeStyle(style, CSSPropertyWebkitUserDrag,
                                               CSSValueElement);
@@ -287,7 +304,7 @@ void HTMLElement::CollectStyleForPresentationAttribute(
       if (IsValidDirAttribute(value))
         AddPropertyToPresentationAttributeStyle(style, CSSPropertyDirection,
                                                 value);
-      else if (isHTMLBodyElement(*this))
+      else if (IsHTMLBodyElement(*this))
         AddPropertyToPresentationAttributeStyle(style, CSSPropertyDirection,
                                                 "ltr");
       if (!HasTagName(bdiTag) && !HasTagName(bdoTag) && !HasTagName(outputTag))
@@ -305,124 +322,237 @@ void HTMLElement::CollectStyleForPresentationAttribute(
   }
 }
 
-const AtomicString& HTMLElement::EventNameForAttributeName(
+// static
+AttributeTriggers* HTMLElement::TriggersForAttributeName(
     const QualifiedName& attr_name) {
-  if (!attr_name.NamespaceURI().IsNull())
-    return g_null_atom;
+  const AtomicString& kNoEvent = g_null_atom;
+  static AttributeTriggers attribute_triggers[] = {
+      {dirAttr, kNoWebFeature, kNoEvent, &HTMLElement::OnDirAttrChanged},
+      {inertAttr, WebFeature::kInertAttribute, kNoEvent,
+       &HTMLElement::OnInertAttrChanged},
+      {langAttr, kNoWebFeature, kNoEvent, &HTMLElement::OnLangAttrChanged},
+      {nonceAttr, kNoWebFeature, kNoEvent, &HTMLElement::OnNonceAttrChanged},
+      {tabindexAttr, kNoWebFeature, kNoEvent,
+       &HTMLElement::OnTabIndexAttrChanged},
+      {XMLNames::langAttr, kNoWebFeature, kNoEvent,
+       &HTMLElement::OnXMLLangAttrChanged},
 
-  if (!attr_name.LocalName().StartsWith("on", kTextCaseASCIIInsensitive))
-    return g_null_atom;
+      {onabortAttr, kNoWebFeature, EventTypeNames::abort, nullptr},
+      {onanimationendAttr, kNoWebFeature, EventTypeNames::animationend,
+       nullptr},
+      {onanimationiterationAttr, kNoWebFeature,
+       EventTypeNames::animationiteration, nullptr},
+      {onanimationstartAttr, kNoWebFeature, EventTypeNames::animationstart,
+       nullptr},
+      {onauxclickAttr, kNoWebFeature, EventTypeNames::auxclick, nullptr},
+      {onbeforecopyAttr, kNoWebFeature, EventTypeNames::beforecopy, nullptr},
+      {onbeforecutAttr, kNoWebFeature, EventTypeNames::beforecut, nullptr},
+      {onbeforepasteAttr, kNoWebFeature, EventTypeNames::beforepaste, nullptr},
+      {onblurAttr, kNoWebFeature, EventTypeNames::blur, nullptr},
+      {oncancelAttr, kNoWebFeature, EventTypeNames::cancel, nullptr},
+      {oncanplayAttr, kNoWebFeature, EventTypeNames::canplay, nullptr},
+      {oncanplaythroughAttr, kNoWebFeature, EventTypeNames::canplaythrough,
+       nullptr},
+      {onchangeAttr, kNoWebFeature, EventTypeNames::change, nullptr},
+      {onclickAttr, kNoWebFeature, EventTypeNames::click, nullptr},
+      {oncloseAttr, kNoWebFeature, EventTypeNames::close, nullptr},
+      {oncontextmenuAttr, kNoWebFeature, EventTypeNames::contextmenu, nullptr},
+      {oncopyAttr, kNoWebFeature, EventTypeNames::copy, nullptr},
+      {oncuechangeAttr, kNoWebFeature, EventTypeNames::cuechange, nullptr},
+      {oncutAttr, kNoWebFeature, EventTypeNames::cut, nullptr},
+      {ondblclickAttr, kNoWebFeature, EventTypeNames::dblclick, nullptr},
+      {ondragAttr, kNoWebFeature, EventTypeNames::drag, nullptr},
+      {ondragendAttr, kNoWebFeature, EventTypeNames::dragend, nullptr},
+      {ondragenterAttr, kNoWebFeature, EventTypeNames::dragenter, nullptr},
+      {ondragleaveAttr, kNoWebFeature, EventTypeNames::dragleave, nullptr},
+      {ondragoverAttr, kNoWebFeature, EventTypeNames::dragover, nullptr},
+      {ondragstartAttr, kNoWebFeature, EventTypeNames::dragstart, nullptr},
+      {ondropAttr, kNoWebFeature, EventTypeNames::drop, nullptr},
+      {ondurationchangeAttr, kNoWebFeature, EventTypeNames::durationchange,
+       nullptr},
+      {onemptiedAttr, kNoWebFeature, EventTypeNames::emptied, nullptr},
+      {onendedAttr, kNoWebFeature, EventTypeNames::ended, nullptr},
+      {onerrorAttr, kNoWebFeature, EventTypeNames::error, nullptr},
+      {onfocusAttr, kNoWebFeature, EventTypeNames::focus, nullptr},
+      {onfocusinAttr, kNoWebFeature, EventTypeNames::focusin, nullptr},
+      {onfocusoutAttr, kNoWebFeature, EventTypeNames::focusout, nullptr},
+      {ongotpointercaptureAttr, kNoWebFeature,
+       EventTypeNames::gotpointercapture, nullptr},
+      {oninputAttr, kNoWebFeature, EventTypeNames::input, nullptr},
+      {oninvalidAttr, kNoWebFeature, EventTypeNames::invalid, nullptr},
+      {onkeydownAttr, kNoWebFeature, EventTypeNames::keydown, nullptr},
+      {onkeypressAttr, kNoWebFeature, EventTypeNames::keypress, nullptr},
+      {onkeyupAttr, kNoWebFeature, EventTypeNames::keyup, nullptr},
+      {onloadAttr, kNoWebFeature, EventTypeNames::load, nullptr},
+      {onloadeddataAttr, kNoWebFeature, EventTypeNames::loadeddata, nullptr},
+      {onloadedmetadataAttr, kNoWebFeature, EventTypeNames::loadedmetadata,
+       nullptr},
+      {onloadstartAttr, kNoWebFeature, EventTypeNames::loadstart, nullptr},
+      {onlostpointercaptureAttr, kNoWebFeature,
+       EventTypeNames::lostpointercapture, nullptr},
+      {onmousedownAttr, kNoWebFeature, EventTypeNames::mousedown, nullptr},
+      {onmouseenterAttr, kNoWebFeature, EventTypeNames::mouseenter, nullptr},
+      {onmouseleaveAttr, kNoWebFeature, EventTypeNames::mouseleave, nullptr},
+      {onmousemoveAttr, kNoWebFeature, EventTypeNames::mousemove, nullptr},
+      {onmouseoutAttr, kNoWebFeature, EventTypeNames::mouseout, nullptr},
+      {onmouseoverAttr, kNoWebFeature, EventTypeNames::mouseover, nullptr},
+      {onmouseupAttr, kNoWebFeature, EventTypeNames::mouseup, nullptr},
+      {onmousewheelAttr, kNoWebFeature, EventTypeNames::mousewheel, nullptr},
+      {onpasteAttr, kNoWebFeature, EventTypeNames::paste, nullptr},
+      {onpauseAttr, kNoWebFeature, EventTypeNames::pause, nullptr},
+      {onplayAttr, kNoWebFeature, EventTypeNames::play, nullptr},
+      {onplayingAttr, kNoWebFeature, EventTypeNames::playing, nullptr},
+      {onpointercancelAttr, kNoWebFeature, EventTypeNames::pointercancel,
+       nullptr},
+      {onpointerdownAttr, kNoWebFeature, EventTypeNames::pointerdown, nullptr},
+      {onpointerenterAttr, kNoWebFeature, EventTypeNames::pointerenter,
+       nullptr},
+      {onpointerleaveAttr, kNoWebFeature, EventTypeNames::pointerleave,
+       nullptr},
+      {onpointermoveAttr, kNoWebFeature, EventTypeNames::pointermove, nullptr},
+      {onpointeroutAttr, kNoWebFeature, EventTypeNames::pointerout, nullptr},
+      {onpointeroverAttr, kNoWebFeature, EventTypeNames::pointerover, nullptr},
+      {onpointerupAttr, kNoWebFeature, EventTypeNames::pointerup, nullptr},
+      {onprogressAttr, kNoWebFeature, EventTypeNames::progress, nullptr},
+      {onratechangeAttr, kNoWebFeature, EventTypeNames::ratechange, nullptr},
+      {onresetAttr, kNoWebFeature, EventTypeNames::reset, nullptr},
+      {onresizeAttr, kNoWebFeature, EventTypeNames::resize, nullptr},
+      {onscrollAttr, kNoWebFeature, EventTypeNames::scroll, nullptr},
+      {onseekedAttr, kNoWebFeature, EventTypeNames::seeked, nullptr},
+      {onseekingAttr, kNoWebFeature, EventTypeNames::seeking, nullptr},
+      {onselectAttr, kNoWebFeature, EventTypeNames::select, nullptr},
+      {onselectstartAttr, kNoWebFeature, EventTypeNames::selectstart, nullptr},
+      {onstalledAttr, kNoWebFeature, EventTypeNames::stalled, nullptr},
+      {onsubmitAttr, kNoWebFeature, EventTypeNames::submit, nullptr},
+      {onsuspendAttr, kNoWebFeature, EventTypeNames::suspend, nullptr},
+      {ontimeupdateAttr, kNoWebFeature, EventTypeNames::timeupdate, nullptr},
+      {ontoggleAttr, kNoWebFeature, EventTypeNames::toggle, nullptr},
+      {ontouchcancelAttr, kNoWebFeature, EventTypeNames::touchcancel, nullptr},
+      {ontouchendAttr, kNoWebFeature, EventTypeNames::touchend, nullptr},
+      {ontouchmoveAttr, kNoWebFeature, EventTypeNames::touchmove, nullptr},
+      {ontouchstartAttr, kNoWebFeature, EventTypeNames::touchstart, nullptr},
+      {ontransitionendAttr, kNoWebFeature, EventTypeNames::webkitTransitionEnd,
+       nullptr},
+      {onvolumechangeAttr, kNoWebFeature, EventTypeNames::volumechange,
+       nullptr},
+      {onwaitingAttr, kNoWebFeature, EventTypeNames::waiting, nullptr},
+      {onwebkitanimationendAttr, kNoWebFeature,
+       EventTypeNames::webkitAnimationEnd, nullptr},
+      {onwebkitanimationiterationAttr, kNoWebFeature,
+       EventTypeNames::webkitAnimationIteration, nullptr},
+      {onwebkitanimationstartAttr, kNoWebFeature,
+       EventTypeNames::webkitAnimationStart, nullptr},
+      {onwebkitfullscreenchangeAttr, kNoWebFeature,
+       EventTypeNames::webkitfullscreenchange, nullptr},
+      {onwebkitfullscreenerrorAttr, kNoWebFeature,
+       EventTypeNames::webkitfullscreenerror, nullptr},
+      {onwebkittransitionendAttr, kNoWebFeature,
+       EventTypeNames::webkitTransitionEnd, nullptr},
+      {onwheelAttr, kNoWebFeature, EventTypeNames::wheel, nullptr},
 
-  typedef HashMap<AtomicString, AtomicString> StringToStringMap;
-  DEFINE_STATIC_LOCAL(StringToStringMap, attribute_name_to_event_name_map, ());
-  if (!attribute_name_to_event_name_map.size()) {
-    struct AttrToEventName {
-      const QualifiedName& attr;
-      const AtomicString& event;
-    };
-    AttrToEventName attr_to_event_names[] = {
-        {onabortAttr, EventTypeNames::abort},
-        {onanimationendAttr, EventTypeNames::animationend},
-        {onanimationiterationAttr, EventTypeNames::animationiteration},
-        {onanimationstartAttr, EventTypeNames::animationstart},
-        {onauxclickAttr, EventTypeNames::auxclick},
-        {onbeforecopyAttr, EventTypeNames::beforecopy},
-        {onbeforecutAttr, EventTypeNames::beforecut},
-        {onbeforepasteAttr, EventTypeNames::beforepaste},
-        {onblurAttr, EventTypeNames::blur},
-        {oncancelAttr, EventTypeNames::cancel},
-        {oncanplayAttr, EventTypeNames::canplay},
-        {oncanplaythroughAttr, EventTypeNames::canplaythrough},
-        {onchangeAttr, EventTypeNames::change},
-        {onclickAttr, EventTypeNames::click},
-        {oncloseAttr, EventTypeNames::close},
-        {oncontextmenuAttr, EventTypeNames::contextmenu},
-        {oncopyAttr, EventTypeNames::copy},
-        {oncuechangeAttr, EventTypeNames::cuechange},
-        {oncutAttr, EventTypeNames::cut},
-        {ondblclickAttr, EventTypeNames::dblclick},
-        {ondragAttr, EventTypeNames::drag},
-        {ondragendAttr, EventTypeNames::dragend},
-        {ondragenterAttr, EventTypeNames::dragenter},
-        {ondragleaveAttr, EventTypeNames::dragleave},
-        {ondragoverAttr, EventTypeNames::dragover},
-        {ondragstartAttr, EventTypeNames::dragstart},
-        {ondropAttr, EventTypeNames::drop},
-        {ondurationchangeAttr, EventTypeNames::durationchange},
-        {onemptiedAttr, EventTypeNames::emptied},
-        {onendedAttr, EventTypeNames::ended},
-        {onerrorAttr, EventTypeNames::error},
-        {onfocusAttr, EventTypeNames::focus},
-        {onfocusinAttr, EventTypeNames::focusin},
-        {onfocusoutAttr, EventTypeNames::focusout},
-        {ongotpointercaptureAttr, EventTypeNames::gotpointercapture},
-        {oninputAttr, EventTypeNames::input},
-        {oninvalidAttr, EventTypeNames::invalid},
-        {onkeydownAttr, EventTypeNames::keydown},
-        {onkeypressAttr, EventTypeNames::keypress},
-        {onkeyupAttr, EventTypeNames::keyup},
-        {onloadAttr, EventTypeNames::load},
-        {onloadeddataAttr, EventTypeNames::loadeddata},
-        {onloadedmetadataAttr, EventTypeNames::loadedmetadata},
-        {onloadstartAttr, EventTypeNames::loadstart},
-        {onlostpointercaptureAttr, EventTypeNames::lostpointercapture},
-        {onmousedownAttr, EventTypeNames::mousedown},
-        {onmouseenterAttr, EventTypeNames::mouseenter},
-        {onmouseleaveAttr, EventTypeNames::mouseleave},
-        {onmousemoveAttr, EventTypeNames::mousemove},
-        {onmouseoutAttr, EventTypeNames::mouseout},
-        {onmouseoverAttr, EventTypeNames::mouseover},
-        {onmouseupAttr, EventTypeNames::mouseup},
-        {onmousewheelAttr, EventTypeNames::mousewheel},
-        {onpasteAttr, EventTypeNames::paste},
-        {onpauseAttr, EventTypeNames::pause},
-        {onplayAttr, EventTypeNames::play},
-        {onplayingAttr, EventTypeNames::playing},
-        {onpointercancelAttr, EventTypeNames::pointercancel},
-        {onpointerdownAttr, EventTypeNames::pointerdown},
-        {onpointerenterAttr, EventTypeNames::pointerenter},
-        {onpointerleaveAttr, EventTypeNames::pointerleave},
-        {onpointermoveAttr, EventTypeNames::pointermove},
-        {onpointeroutAttr, EventTypeNames::pointerout},
-        {onpointeroverAttr, EventTypeNames::pointerover},
-        {onpointerupAttr, EventTypeNames::pointerup},
-        {onprogressAttr, EventTypeNames::progress},
-        {onratechangeAttr, EventTypeNames::ratechange},
-        {onresetAttr, EventTypeNames::reset},
-        {onresizeAttr, EventTypeNames::resize},
-        {onscrollAttr, EventTypeNames::scroll},
-        {onseekedAttr, EventTypeNames::seeked},
-        {onseekingAttr, EventTypeNames::seeking},
-        {onselectAttr, EventTypeNames::select},
-        {onselectstartAttr, EventTypeNames::selectstart},
-        {onshowAttr, EventTypeNames::show},
-        {onstalledAttr, EventTypeNames::stalled},
-        {onsubmitAttr, EventTypeNames::submit},
-        {onsuspendAttr, EventTypeNames::suspend},
-        {ontimeupdateAttr, EventTypeNames::timeupdate},
-        {ontoggleAttr, EventTypeNames::toggle},
-        {ontouchcancelAttr, EventTypeNames::touchcancel},
-        {ontouchendAttr, EventTypeNames::touchend},
-        {ontouchmoveAttr, EventTypeNames::touchmove},
-        {ontouchstartAttr, EventTypeNames::touchstart},
-        {ontransitionendAttr, EventTypeNames::webkitTransitionEnd},
-        {onvolumechangeAttr, EventTypeNames::volumechange},
-        {onwaitingAttr, EventTypeNames::waiting},
-        {onwebkitanimationendAttr, EventTypeNames::webkitAnimationEnd},
-        {onwebkitanimationiterationAttr,
-         EventTypeNames::webkitAnimationIteration},
-        {onwebkitanimationstartAttr, EventTypeNames::webkitAnimationStart},
-        {onwebkitfullscreenchangeAttr, EventTypeNames::webkitfullscreenchange},
-        {onwebkitfullscreenerrorAttr, EventTypeNames::webkitfullscreenerror},
-        {onwebkittransitionendAttr, EventTypeNames::webkitTransitionEnd},
-        {onwheelAttr, EventTypeNames::wheel},
-    };
+      {aria_activedescendantAttr, WebFeature::kARIAActiveDescendantAttribute,
+       kNoEvent, nullptr},
+      {aria_atomicAttr, WebFeature::kARIAAtomicAttribute, kNoEvent, nullptr},
+      {aria_autocompleteAttr, WebFeature::kARIAAutocompleteAttribute, kNoEvent,
+       nullptr},
+      {aria_busyAttr, WebFeature::kARIABusyAttribute, kNoEvent, nullptr},
+      {aria_checkedAttr, WebFeature::kARIACheckedAttribute, kNoEvent, nullptr},
+      {aria_colcountAttr, WebFeature::kARIAColCountAttribute, kNoEvent,
+       nullptr},
+      {aria_colindexAttr, WebFeature::kARIAColIndexAttribute, kNoEvent,
+       nullptr},
+      {aria_colspanAttr, WebFeature::kARIAColSpanAttribute, kNoEvent, nullptr},
+      {aria_controlsAttr, WebFeature::kARIAControlsAttribute, kNoEvent,
+       nullptr},
+      {aria_currentAttr, WebFeature::kARIACurrentAttribute, kNoEvent, nullptr},
+      {aria_describedbyAttr, WebFeature::kARIADescribedByAttribute, kNoEvent,
+       nullptr},
+      {aria_detailsAttr, WebFeature::kARIADetailsAttribute, kNoEvent, nullptr},
+      {aria_disabledAttr, WebFeature::kARIADisabledAttribute, kNoEvent,
+       nullptr},
+      {aria_dropeffectAttr, WebFeature::kARIADropEffectAttribute, kNoEvent,
+       nullptr},
+      {aria_errormessageAttr, WebFeature::kARIAErrorMessageAttribute, kNoEvent,
+       nullptr},
+      {aria_expandedAttr, WebFeature::kARIAExpandedAttribute, kNoEvent,
+       nullptr},
+      {aria_flowtoAttr, WebFeature::kARIAFlowToAttribute, kNoEvent, nullptr},
+      {aria_grabbedAttr, WebFeature::kARIAGrabbedAttribute, kNoEvent, nullptr},
+      {aria_haspopupAttr, WebFeature::kARIAHasPopupAttribute, kNoEvent,
+       nullptr},
+      {aria_helpAttr, WebFeature::kARIAHelpAttribute, kNoEvent, nullptr},
+      {aria_hiddenAttr, WebFeature::kARIAHiddenAttribute, kNoEvent, nullptr},
+      {aria_invalidAttr, WebFeature::kARIAInvalidAttribute, kNoEvent, nullptr},
+      {aria_keyshortcutsAttr, WebFeature::kARIAKeyShortcutsAttribute, kNoEvent,
+       nullptr},
+      {aria_labelAttr, WebFeature::kARIALabelAttribute, kNoEvent, nullptr},
+      {aria_labeledbyAttr, WebFeature::kARIALabeledByAttribute, kNoEvent,
+       nullptr},
+      {aria_labelledbyAttr, WebFeature::kARIALabelledByAttribute, kNoEvent,
+       nullptr},
+      {aria_levelAttr, WebFeature::kARIALevelAttribute, kNoEvent, nullptr},
+      {aria_liveAttr, WebFeature::kARIALiveAttribute, kNoEvent, nullptr},
+      {aria_modalAttr, WebFeature::kARIAModalAttribute, kNoEvent, nullptr},
+      {aria_multilineAttr, WebFeature::kARIAMultilineAttribute, kNoEvent,
+       nullptr},
+      {aria_multiselectableAttr, WebFeature::kARIAMultiselectableAttribute,
+       kNoEvent, nullptr},
+      {aria_orientationAttr, WebFeature::kARIAOrientationAttribute, kNoEvent,
+       nullptr},
+      {aria_ownsAttr, WebFeature::kARIAOwnsAttribute, kNoEvent, nullptr},
+      {aria_placeholderAttr, WebFeature::kARIAPlaceholderAttribute, kNoEvent,
+       nullptr},
+      {aria_posinsetAttr, WebFeature::kARIAPosInSetAttribute, kNoEvent,
+       nullptr},
+      {aria_pressedAttr, WebFeature::kARIAPressedAttribute, kNoEvent, nullptr},
+      {aria_readonlyAttr, WebFeature::kARIAReadOnlyAttribute, kNoEvent,
+       nullptr},
+      {aria_relevantAttr, WebFeature::kARIARelevantAttribute, kNoEvent,
+       nullptr},
+      {aria_requiredAttr, WebFeature::kARIARequiredAttribute, kNoEvent,
+       nullptr},
+      {aria_roledescriptionAttr, WebFeature::kARIARoleDescriptionAttribute,
+       kNoEvent, nullptr},
+      {aria_rowcountAttr, WebFeature::kARIARowCountAttribute, kNoEvent,
+       nullptr},
+      {aria_rowindexAttr, WebFeature::kARIARowIndexAttribute, kNoEvent,
+       nullptr},
+      {aria_rowspanAttr, WebFeature::kARIARowSpanAttribute, kNoEvent, nullptr},
+      {aria_selectedAttr, WebFeature::kARIASelectedAttribute, kNoEvent,
+       nullptr},
+      {aria_setsizeAttr, WebFeature::kARIASetSizeAttribute, kNoEvent, nullptr},
+      {aria_sortAttr, WebFeature::kARIASortAttribute, kNoEvent, nullptr},
+      {aria_valuemaxAttr, WebFeature::kARIAValueMaxAttribute, kNoEvent,
+       nullptr},
+      {aria_valueminAttr, WebFeature::kARIAValueMinAttribute, kNoEvent,
+       nullptr},
+      {aria_valuenowAttr, WebFeature::kARIAValueNowAttribute, kNoEvent,
+       nullptr},
+      {aria_valuetextAttr, WebFeature::kARIAValueTextAttribute, kNoEvent,
+       nullptr},
+  };
 
-    for (const auto& name : attr_to_event_names)
-      attribute_name_to_event_name_map.Set(name.attr.LocalName(), name.event);
+  using AttributeToTriggerIndexMap = HashMap<QualifiedName, int>;
+  DEFINE_STATIC_LOCAL(AttributeToTriggerIndexMap,
+                      attribute_to_trigger_index_map, ());
+  if (!attribute_to_trigger_index_map.size()) {
+    for (size_t i = 0; i < arraysize(attribute_triggers); ++i)
+      attribute_to_trigger_index_map.insert(attribute_triggers[i].attribute, i);
   }
 
-  return attribute_name_to_event_name_map.at(attr_name.LocalName());
+  auto iter = attribute_to_trigger_index_map.find(attr_name);
+  if (iter != attribute_to_trigger_index_map.end())
+    return &attribute_triggers[iter->value];
+  return nullptr;
+}
+
+// static
+const AtomicString& HTMLElement::EventNameForAttributeName(
+    const QualifiedName& attr_name) {
+  AttributeTriggers* triggers = TriggersForAttributeName(attr_name);
+  if (triggers)
+    return triggers->event;
+  return g_null_atom;
 }
 
 void HTMLElement::AttributeChanged(const AttributeModificationParams& params) {
@@ -456,22 +586,27 @@ void HTMLElement::AttributeChanged(const AttributeModificationParams& params) {
 }
 
 void HTMLElement::ParseAttribute(const AttributeModificationParams& params) {
-  if (params.name == tabindexAttr || params.name == XMLNames::langAttr)
-    return Element::ParseAttribute(params);
+  AttributeTriggers* triggers = TriggersForAttributeName(params.name);
+  if (!triggers)
+    return;
 
-  if (params.name == dirAttr) {
-    DirAttributeChanged(params.new_value);
-  } else if (params.name == langAttr) {
-    PseudoStateChanged(CSSSelector::kPseudoLang);
-  } else {
-    const AtomicString& event_name = EventNameForAttributeName(params.name);
-    if (!event_name.IsNull()) {
-      SetAttributeEventListener(
-          event_name,
-          CreateAttributeEventListener(this, params.name, params.new_value,
-                                       EventParameterName()));
+  if (triggers->event != g_null_atom) {
+    SetAttributeEventListener(
+        triggers->event,
+        CreateAttributeEventListener(this, params.name, params.new_value,
+                                     EventParameterName()));
+  }
+
+  if (triggers->web_feature != kNoWebFeature) {
+    // Count usage of attributes but ignore attributes in user agent shadow DOM.
+    if (ShadowRoot* shadow = ContainingShadowRoot()) {
+      if (shadow->GetType() != ShadowRootType::kUserAgent)
+        UseCounter::Count(GetDocument(), triggers->web_feature);
     }
   }
+
+  if (triggers->function)
+    ((*this).*(triggers->function))(params);
 }
 
 DocumentFragment* HTMLElement::TextToFragment(const String& text,
@@ -586,7 +721,7 @@ void HTMLElement::setOuterText(const String& text,
 
 void HTMLElement::ApplyAlignmentAttributeToStyle(
     const AtomicString& alignment,
-    MutableStylePropertySet* style) {
+    MutableCSSPropertyValueSet* style) {
   // Vertical alignment with respect to the current baseline of the text
   // right or left means floating images.
   CSSValueID float_value = CSSValueInvalid;
@@ -680,13 +815,13 @@ void HTMLElement::setSpellcheck(bool enable) {
 }
 
 void HTMLElement::click() {
-  DispatchSimulatedClick(0, kSendNoEvents,
+  DispatchSimulatedClick(nullptr, kSendNoEvents,
                          SimulatedClickCreationScope::kFromScript);
 }
 
 void HTMLElement::AccessKeyAction(bool send_mouse_events) {
   DispatchSimulatedClick(
-      0, send_mouse_events ? kSendMouseUpDownEvents : kSendNoEvents);
+      nullptr, send_mouse_events ? kSendMouseUpDownEvents : kSendNoEvents);
 }
 
 String HTMLElement::title() const {
@@ -764,7 +899,7 @@ HTMLFormElement* HTMLElement::FindFormAncestor() const {
 }
 
 static inline bool ElementAffectsDirectionality(const Node* node) {
-  return node->IsHTMLElement() && (isHTMLBDIElement(ToHTMLElement(*node)) ||
+  return node->IsHTMLElement() && (IsHTMLBDIElement(ToHTMLElement(*node)) ||
                                    ToHTMLElement(*node).hasAttribute(dirAttr));
 }
 
@@ -777,7 +912,7 @@ bool HTMLElement::HasDirectionAuto() const {
   // <bdi> defaults to dir="auto"
   // https://html.spec.whatwg.org/multipage/semantics.html#the-bdi-element
   const AtomicString& direction = FastGetAttribute(dirAttr);
-  return (isHTMLBDIElement(*this) && direction == g_null_atom) ||
+  return (IsHTMLBDIElement(*this) && direction == g_null_atom) ||
          DeprecatedEqualIgnoringCase(direction, "auto");
 }
 
@@ -791,15 +926,16 @@ TextDirection HTMLElement::DirectionalityIfhasDirAutoAttribute(
 
 TextDirection HTMLElement::Directionality(
     Node** strong_directionality_text_node) const {
-  if (isHTMLInputElement(*this)) {
-    HTMLInputElement* input_element =
-        toHTMLInputElement(const_cast<HTMLElement*>(this));
+  if (auto* input_element = ToHTMLInputElementOrNull(*this)) {
     bool has_strong_directionality;
     TextDirection text_direction = DetermineDirectionality(
         input_element->value(), &has_strong_directionality);
-    if (strong_directionality_text_node)
+    if (strong_directionality_text_node) {
       *strong_directionality_text_node =
-          has_strong_directionality ? input_element : 0;
+          has_strong_directionality
+              ? const_cast<HTMLInputElement*>(input_element)
+              : nullptr;
+    }
     return text_direction;
   }
 
@@ -807,7 +943,7 @@ TextDirection HTMLElement::Directionality(
   while (node) {
     // Skip bdi, script, style and text form controls.
     if (DeprecatedEqualIgnoringCase(node->nodeName(), "bdi") ||
-        isHTMLScriptElement(*node) || isHTMLStyleElement(*node) ||
+        IsHTMLScriptElement(*node) || IsHTMLStyleElement(*node) ||
         (node->IsElementNode() && ToElement(node)->IsTextControl()) ||
         (node->IsElementNode() &&
          ToElement(node)->ShadowPseudoId() == "-webkit-input-placeholder")) {
@@ -838,7 +974,7 @@ TextDirection HTMLElement::Directionality(
     node = FlatTreeTraversal::Next(*node, this);
   }
   if (strong_directionality_text_node)
-    *strong_directionality_text_node = 0;
+    *strong_directionality_text_node = nullptr;
   return TextDirection::kLtr;
 }
 
@@ -849,22 +985,6 @@ bool HTMLElement::SelfOrAncestorHasDirAutoAttribute() const {
   if (const ComputedStyle* style = GetComputedStyle())
     return style->SelfOrAncestorHasDirAutoAttribute();
   return false;
-}
-
-void HTMLElement::DirAttributeChanged(const AtomicString& value) {
-  // If an ancestor has dir=auto, and this node has the first character,
-  // changes to dir attribute may affect the ancestor.
-  if (!CanParticipateInFlatTree())
-    return;
-  UpdateDistribution();
-  Element* parent = FlatTreeTraversal::ParentElement(*this);
-  if (parent && parent->IsHTMLElement() &&
-      ToHTMLElement(parent)->SelfOrAncestorHasDirAutoAttribute())
-    ToHTMLElement(parent)
-        ->AdjustDirectionalityIfNeededAfterChildAttributeChanged(this);
-
-  if (DeprecatedEqualIgnoringCase(value, "auto"))
-    CalculateAndAdjustDirectionality();
 }
 
 void HTMLElement::AdjustDirectionalityIfNeededAfterChildAttributeChanged(
@@ -911,7 +1031,21 @@ void HTMLElement::AdjustDirectionalityIfNeededAfterChildrenChanged(
   }
 }
 
-void HTMLElement::AddHTMLLengthToStyle(MutableStylePropertySet* style,
+Node::InsertionNotificationRequest HTMLElement::InsertedInto(
+    ContainerNode* insertion_point) {
+  // Process the superclass first to ensure that `InActiveDocument()` is
+  // updated.
+  Element::InsertedInto(insertion_point);
+
+  if (GetDocument().GetContentSecurityPolicy()->HasHeaderDeliveredPolicy() &&
+      InActiveDocument() && FastHasAttribute(nonceAttr)) {
+    setAttribute(nonceAttr, g_empty_atom);
+  }
+
+  return kInsertionDone;
+}
+
+void HTMLElement::AddHTMLLengthToStyle(MutableCSSPropertyValueSet* style,
                                        CSSPropertyID property_id,
                                        const String& value,
                                        AllowPercentage allow_percentage) {
@@ -920,7 +1054,7 @@ void HTMLElement::AddHTMLLengthToStyle(MutableStylePropertySet* style,
     return;
   if (property_id == CSSPropertyWidth &&
       (dimension.IsPercentage() || dimension.IsRelative())) {
-    UseCounter::Count(GetDocument(), UseCounter::kHTMLElementDeprecatedWidth);
+    UseCounter::Count(GetDocument(), WebFeature::kHTMLElementDeprecatedWidth);
   }
   if (dimension.IsRelative())
     return;
@@ -1033,7 +1167,7 @@ bool HTMLElement::ParseColorWithLegacyRules(const String& attribute_value,
   return success;
 }
 
-void HTMLElement::AddHTMLColorToStyle(MutableStylePropertySet* style,
+void HTMLElement::AddHTMLColorToStyle(MutableCSSPropertyValueSet* style,
                                       CSSPropertyID property_id,
                                       const String& attribute_value) {
   Color parsed_color;
@@ -1045,49 +1179,6 @@ void HTMLElement::AddHTMLColorToStyle(MutableStylePropertySet* style,
 
 bool HTMLElement::IsInteractiveContent() const {
   return false;
-}
-
-HTMLMenuElement* HTMLElement::AssignedContextMenu() const {
-  if (HTMLMenuElement* menu = contextMenu())
-    return menu;
-
-  return parentElement() && parentElement()->IsHTMLElement()
-             ? ToHTMLElement(parentElement())->AssignedContextMenu()
-             : nullptr;
-}
-
-HTMLMenuElement* HTMLElement::contextMenu() const {
-  const AtomicString& context_menu_id(FastGetAttribute(contextmenuAttr));
-  if (context_menu_id.IsNull())
-    return nullptr;
-
-  Element* element = GetTreeScope().GetElementById(context_menu_id);
-  // Not checking if the menu element is of type "popup".
-  // Ignoring menu element type attribute is intentional according to the
-  // standard.
-  return isHTMLMenuElement(element) ? toHTMLMenuElement(element) : nullptr;
-}
-
-void HTMLElement::setContextMenu(HTMLMenuElement* context_menu) {
-  if (!context_menu) {
-    setAttribute(contextmenuAttr, "");
-    return;
-  }
-
-  // http://www.whatwg.org/specs/web-apps/current-work/multipage/infrastructure.html#reflecting-content-attributes-in-idl-attributes
-  // On setting, if the given element has an id attribute, and has the same home
-  // subtree as the element of the attribute being set, and the given element is
-  // the first element in that home subtree whose ID is the value of that id
-  // attribute, then the content attribute must be set to the value of that id
-  // attribute.  Otherwise, the content attribute must be set to the empty
-  // string.
-  const AtomicString& context_menu_id(context_menu->FastGetAttribute(idAttr));
-
-  if (!context_menu_id.IsNull() &&
-      context_menu == GetTreeScope().GetElementById(context_menu_id))
-    setAttribute(contextmenuAttr, context_menu_id);
-  else
-    setAttribute(contextmenuAttr, "");
 }
 
 void HTMLElement::DefaultEventHandler(Event* event) {
@@ -1142,9 +1233,10 @@ const AtomicString& HTMLElement::EventParameterName() {
 }
 
 int HTMLElement::offsetLeftForBinding() {
+  GetDocument().EnsurePaintLocationDataValidForNode(this);
   Element* offset_parent = unclosedOffsetParent();
   if (LayoutBoxModelObject* layout_object = GetLayoutBoxModelObject())
-    return AdjustLayoutUnitForAbsoluteZoom(
+    return AdjustForAbsoluteZoom::AdjustLayoutUnit(
                LayoutUnit(layout_object->PixelSnappedOffsetLeft(offset_parent)),
                layout_object->StyleRef())
         .Round();
@@ -1152,9 +1244,10 @@ int HTMLElement::offsetLeftForBinding() {
 }
 
 int HTMLElement::offsetTopForBinding() {
+  GetDocument().EnsurePaintLocationDataValidForNode(this);
   Element* offset_parent = unclosedOffsetParent();
   if (LayoutBoxModelObject* layout_object = GetLayoutBoxModelObject())
-    return AdjustLayoutUnitForAbsoluteZoom(
+    return AdjustForAbsoluteZoom::AdjustLayoutUnit(
                LayoutUnit(layout_object->PixelSnappedOffsetTop(offset_parent)),
                layout_object->StyleRef())
         .Round();
@@ -1162,9 +1255,10 @@ int HTMLElement::offsetTopForBinding() {
 }
 
 int HTMLElement::offsetWidthForBinding() {
+  GetDocument().EnsurePaintLocationDataValidForNode(this);
   Element* offset_parent = unclosedOffsetParent();
   if (LayoutBoxModelObject* layout_object = GetLayoutBoxModelObject())
-    return AdjustLayoutUnitForAbsoluteZoom(
+    return AdjustForAbsoluteZoom::AdjustLayoutUnit(
                LayoutUnit(
                    layout_object->PixelSnappedOffsetWidth(offset_parent)),
                layout_object->StyleRef())
@@ -1174,9 +1268,10 @@ int HTMLElement::offsetWidthForBinding() {
 
 DISABLE_CFI_PERF
 int HTMLElement::offsetHeightForBinding() {
+  GetDocument().EnsurePaintLocationDataValidForNode(this);
   Element* offset_parent = unclosedOffsetParent();
   if (LayoutBoxModelObject* layout_object = GetLayoutBoxModelObject())
-    return AdjustLayoutUnitForAbsoluteZoom(
+    return AdjustForAbsoluteZoom::AdjustLayoutUnit(
                LayoutUnit(
                    layout_object->PixelSnappedOffsetHeight(offset_parent)),
                layout_object->StyleRef())
@@ -1194,6 +1289,52 @@ Element* HTMLElement::unclosedOffsetParent() {
   return layout_object->OffsetParent(this);
 }
 
+void HTMLElement::OnDirAttrChanged(const AttributeModificationParams& params) {
+  // If an ancestor has dir=auto, and this node has the first character,
+  // changes to dir attribute may affect the ancestor.
+  if (!CanParticipateInFlatTree())
+    return;
+  UpdateDistribution();
+  Element* parent = FlatTreeTraversal::ParentElement(*this);
+  if (parent && parent->IsHTMLElement() &&
+      ToHTMLElement(parent)->SelfOrAncestorHasDirAutoAttribute()) {
+    ToHTMLElement(parent)
+        ->AdjustDirectionalityIfNeededAfterChildAttributeChanged(this);
+  }
+
+  if (DeprecatedEqualIgnoringCase(params.new_value, "auto"))
+    CalculateAndAdjustDirectionality();
+}
+
+void HTMLElement::OnInertAttrChanged(
+    const AttributeModificationParams& params) {
+  UpdateDistribution();
+  if (GetDocument().GetFrame()) {
+    GetDocument().GetFrame()->SetIsInert(GetDocument().LocalOwner() &&
+                                         GetDocument().LocalOwner()->IsInert());
+  }
+}
+
+void HTMLElement::OnLangAttrChanged(const AttributeModificationParams& params) {
+  PseudoStateChanged(CSSSelector::kPseudoLang);
+}
+
+void HTMLElement::OnNonceAttrChanged(
+    const AttributeModificationParams& params) {
+  if (params.new_value != g_empty_atom)
+    setNonce(params.new_value);
+}
+
+void HTMLElement::OnTabIndexAttrChanged(
+    const AttributeModificationParams& params) {
+  Element::ParseAttribute(params);
+}
+
+void HTMLElement::OnXMLLangAttrChanged(
+    const AttributeModificationParams& params) {
+  Element::ParseAttribute(params);
+}
+
 }  // namespace blink
 
 #ifndef NDEBUG
@@ -1202,6 +1343,6 @@ Element* HTMLElement::unclosedOffsetParent() {
 void dumpInnerHTML(blink::HTMLElement*);
 
 void dumpInnerHTML(blink::HTMLElement* element) {
-  printf("%s\n", element->innerHTML().Ascii().Data());
+  printf("%s\n", element->InnerHTMLAsString().Ascii().data());
 }
 #endif

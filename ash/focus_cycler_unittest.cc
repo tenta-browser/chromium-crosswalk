@@ -6,8 +6,8 @@
 
 #include <memory>
 
+#include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_widget.h"
-#include "ash/shelf/wm_shelf.h"
 #include "ash/shell.h"
 #include "ash/system/status_area_widget.h"
 #include "ash/system/status_area_widget_delegate.h"
@@ -23,7 +23,6 @@
 #include "ui/views/widget/widget.h"
 
 namespace ash {
-namespace test {
 
 using aura::Window;
 
@@ -58,7 +57,7 @@ class PanedWidgetDelegate : public views::WidgetDelegate {
 
 class FocusCyclerTest : public AshTestBase {
  public:
-  FocusCyclerTest() {}
+  FocusCyclerTest() = default;
 
   void SetUp() override {
     AshTestBase::SetUp();
@@ -402,5 +401,4 @@ TEST_F(FocusCyclerTest, RemoveWidgetOnDisplayRemoved) {
   EXPECT_TRUE(wm::IsActiveWindow(window.get()));
 }
 
-}  // namespace test
 }  // namespace ash

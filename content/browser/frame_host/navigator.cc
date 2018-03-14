@@ -5,7 +5,6 @@
 #include "content/browser/frame_host/navigator.h"
 
 #include "base/time/time.h"
-#include "content/common/resource_request_body_impl.h"
 #include "content/public/browser/stream_handle.h"
 
 namespace content {
@@ -15,7 +14,7 @@ NavigatorDelegate* Navigator::GetDelegate() {
 }
 
 NavigationController* Navigator::GetController() {
-  return NULL;
+  return nullptr;
 }
 
 bool Navigator::NavigateToPendingEntry(FrameTreeNode* frame_tree_node,

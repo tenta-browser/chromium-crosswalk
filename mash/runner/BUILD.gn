@@ -12,7 +12,8 @@ executable("runner") {
   deps = [
     "//base",
     "//base:i18n",
-    "//build/config/sanitizers:deps",
+    "//base/test:test_support",
+    "//build/config:exe_and_shlib_deps",
     "//mojo/edk/system",
     "//services/service_manager",
     "//services/service_manager/runner:init",

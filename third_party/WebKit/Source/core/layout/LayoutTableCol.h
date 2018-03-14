@@ -31,7 +31,6 @@
 namespace blink {
 
 class LayoutTable;
-class LayoutTableCell;
 
 // LayoutTableCol is used to represent table column or column groups
 // (display: table-column and display: table-column-group).
@@ -80,12 +79,6 @@ class LayoutTableCol final : public LayoutTableBoxComponent {
   // Returns the next column or column-group.
   LayoutTableCol* NextColumn() const;
 
-  const BorderValue& BorderAdjoiningCellStartBorder(
-      const LayoutTableCell*) const;
-  const BorderValue& BorderAdjoiningCellEndBorder(const LayoutTableCell*) const;
-  const BorderValue& BorderAdjoiningCellBefore(const LayoutTableCell*) const;
-  const BorderValue& BorderAdjoiningCellAfter(const LayoutTableCell*) const;
-
   const char* GetName() const override { return "LayoutTableCol"; }
 
  private:
@@ -102,11 +95,11 @@ class LayoutTableCol final : public LayoutTableBoxComponent {
   bool CanHaveChildren() const override;
   PaintLayerType LayerTypeRequired() const override { return kNoPaintLayer; }
 
-  LayoutRect LocalVisualRect() const override;
+  LayoutRect LocalVisualRectIgnoringVisibility() const final;
 
   void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
 
-  LayoutTable* Table() const;
+  LayoutTable* Table() const final;
 
   unsigned span_;
 };

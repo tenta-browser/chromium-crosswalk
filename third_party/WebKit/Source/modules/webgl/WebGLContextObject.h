@@ -26,8 +26,8 @@
 #ifndef WebGLContextObject_h
 #define WebGLContextObject_h
 
-#include "bindings/core/v8/TraceWrapperMember.h"
 #include "modules/webgl/WebGLObject.h"
+#include "platform/bindings/TraceWrapperMember.h"
 
 namespace blink {
 
@@ -42,9 +42,9 @@ class WebGLContextObject : public WebGLObject {
   bool Validate(const WebGLContextGroup*,
                 const WebGLRenderingContextBase*) const final;
 
-  DECLARE_VIRTUAL_TRACE();
+  virtual void Trace(blink::Visitor*);
 
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+  virtual void TraceWrappers(const ScriptWrappableVisitor*) const;
 
  protected:
   explicit WebGLContextObject(WebGLRenderingContextBase*);
